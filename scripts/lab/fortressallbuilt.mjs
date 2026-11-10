@@ -15,10 +15,10 @@ export default async function (lab, args) {
   lab.place('farm', c[0], c[1] - 9);
   lab.build();
   let t = 0;
-  let s = lab.snapshot();
+  let s = (await lab.snapshot());
   while (t < limit) {
     t += (await lab.run(30, args.speed ?? 16)).simSeconds;
-    s = lab.snapshot();
+    s = (await lab.snapshot());
     console.log(`t ${Math.round(t)} s`, JSON.stringify({ progress: s.progress, cutOff: s.cutOff, grain: Math.round(s.stores.grain ?? 0) }));
     if (s.progress.built === s.progress.total) break;
   }

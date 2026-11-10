@@ -840,3 +840,15 @@ fn litterStrip(p: vec2<i32>, tick: u32) -> bool {
   let ws = length(windAt(vec3<f32>(cellPos(p), 0.0)));
   return ws > 5.0 && rand3(u32(p.x), u32(p.y), tick ^ 0x1177u) < (ws - 5.0) * 0.004;
 }
+
+// ---- crops in the vegetation field (DESIGN §15 "crops and farms"; trackA-opps farms) ----
+// The vegetation field's kinds: succession 0..5 (bare → woods, ecology.wgsl), and crops below zero — a farm's
+// field, written by the town that owns it (citygen/bare.wgsl), never grown by ecology. A crop column holds
+// veg = −(1 + stage + 4·dir): stage 0..3 (0 tilled, 1 sown, 2 green, 3 ripe) and its rows' direction (0–3: 0°, 45°,
+// 90°, 135°). Every reader of the field treats a crop as no wild plants (its thresholds are all above zero); the
+// writers that grow or wither the wild field leave crops alone.
+const CROP_TOP: f32 = -0.5;
+fn isCrop(v: f32) -> bool { return v < CROP_TOP; }
+fn cropVeg(stage: f32, dir: u32) -> f32 { return -(1.0 + clamp(stage, 0.0, 3.0) + 4.0 * f32(dir & 3u)); }
+fn cropDir(v: f32) -> u32 { return u32(clamp(floor((-v - 1.0) / 4.0), 0.0, 3.0)); }
+fn cropStage(v: f32) -> f32 { let x = -v - 1.0; return clamp(x - 4.0 * f32(cropDir(v)), 0.0, 3.0); }

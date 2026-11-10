@@ -170,7 +170,8 @@ try {
 
   // the fight: on open ground
   const flat = { heightAt: () => 100 };
-  const fight = (swing) => {
+  // (round 128p, U1: the walker's swing asks who's near (Units.query, async): the frames yield so its answer lands)
+  const fight = async (swing) => {
     const units = new SimpleUnits(flat);
     const hero = new Walker({ ground: flat, units }, [50, 50]);
     units.watch(hero.actor);
@@ -179,19 +180,20 @@ try {
     let t = 0;
     for (; t < 120 && hero.alive && units.get(w)?.alive; t += 1 / 60) {
       const p = hero.position();
-      const foes = units.query([p[0], p[1]], 40, { hostile: true });
+      const foes = units.queryNow([p[0], p[1]], 40, { hostile: true });
       const tg = foes.length <= 2 ? units.get(w) : foes[0];
       const dx = tg.at[0] - p[0];
       const dy = tg.at[1] - p[1];
       const d = Math.hypot(dx, dy);
       hero.update(1 / 60, { move: swing && d > 1.8 ? [dx / d, dy / d] : [0, 0], attack: swing && d < 3 });
       units.update(1 / 60);
+      await Promise.resolve();
     }
-    return { t: +t.toFixed(1), hp: hero.health, warden: units.get(w)?.alive ?? false, left: units.query([50, 50], 60, { hostile: true }).length };
+    return { t: +t.toFixed(1), hp: hero.health, warden: units.get(w)?.alive ?? false, left: units.queryNow([50, 50], 60, { hostile: true }).length };
   };
-  const a = fight(true);
+  const a = await fight(true);
   ok(a.hp > 0 && !a.warden, `swinging: the Bellwarden falls in ${a.t} s, the hero at ${a.hp} hp (${a.left} foes left)`);
-  const b = fight(false);
+  const b = await fight(false);
   ok(b.hp === 0, `standing still: the hero falls in ${b.t} s`);
 
   // (round 97, heroapi) dialog as an event: sightings and deaths fire barks and talks through the run's own

@@ -11,7 +11,7 @@
 //    (a raider bashing a gate stands still; one running mostly isn't). What's drawn is a chip of wood thrown on the
 //    same lob (the particles), dust where it lands on someone.
 //  - After the wave every soldier goes back to its round (FortressCrowd.backToRoutine).
-import type { UnitId, UnitView, V2 } from '../api/contracts/units';
+import { seen, type SeenUnit, type UnitId, type V2 } from '../api/contracts/units';
 import type { FxName } from '../api/fx';
 import { R } from '../units/agent-units';
 import { G, type AgentUnits, type UnitRec } from '../units/agent-units';
@@ -136,14 +136,19 @@ export class FortressDefence {
   update(dt: number): void {
     const U = this.io.units;
     const L = this.io.life;
-    const raiders = this.io.raiders().map((id) => U.get(id)).filter((v): v is UnitView => !!v?.alive);
+    this.observe();
+    // (the raiders: observed by the raid — FortressRaid.observe; one not read yet isn't a mark yet)
+    const raiders = this.io.raiders().map((id) => seen(U.get(id))).filter((v): v is SeenUnit => !!v?.alive);
     for (const [id, p] of this.posted) {
       if (p.role !== 'archer') continue;
-      const v = U.get(id);
-      if (!v?.alive) {
+      const u = U.get(id);
+      if (!u?.alive) {
         this.posted.delete(id);
         continue;
       }
+      // (observed while posted: its place read from the sync after it was posted)
+      const v = seen(u);
+      if (!v) continue;
       const at = this.posts?.archers;
       // (up: on the wall-walk near its point — over the ground the fortress first read there)
       if (!p.up && at && Math.hypot(at[0] - v.at[0], at[1] - v.at[1]) < 6 && v.at[2] > L.keptGround([v.at[0], v.at[1]]) + 1.5) {
@@ -153,7 +158,7 @@ export class FortressDefence {
       if (!p.up) continue;
       p.cool -= dt;
       if (p.cool > 0) continue;
-      let mark: UnitView | null = null;
+      let mark: SeenUnit | null = null;
       let md = ARROW.range;
       for (const r of raiders) {
         const d = Math.hypot(r.at[0] - v.at[0], r.at[1] - v.at[1]);
@@ -172,7 +177,7 @@ export class FortressDefence {
     for (const a of this.arrows) {
       a.t -= dt;
       if (a.t > 0) continue;
-      const m = U.get(a.mark);
+      const m = seen(U.get(a.mark));
       if (!m?.alive || !arrowHits(a.aim, m.at)) continue;
       this.stats.hits++;
       this.io.burst('dust', m.at[0], m.at[1], m.at[2] + 0.9, { count: 6, speed: 1.5, spread: 0.3 });
@@ -181,7 +186,7 @@ export class FortressDefence {
     this.arrows = this.arrows.filter((a) => a.t > 0);
   }
 
-  private shoot(id: UnitId, from: UnitView, mark: UnitView): void {
+  private shoot(id: UnitId, from: SeenUnit, mark: SeenUnit): void {
     this.stats.shots++;
     const f: V3 = [from.at[0], from.at[1], from.at[2] + 1.3];
     const aim: V3 = [mark.at[0], mark.at[1], mark.at[2]];
@@ -190,10 +195,25 @@ export class FortressDefence {
     this.io.burst('chips', f[0], f[1], f[2], { count: 2, speed: 0.2, spread: 0.05, vel });
   }
 
+  /**
+   * (round 128p, U1, DA-B22 (c)(4)) The archers posted are observed (Units.observe) — their place read each sync, for
+   * "up on the wall" and their shots; derived from `posted` each frame. (DA-L4 deletes this loop.)
+   */
+  private observed = new Map<UnitId, () => void>();
+  private observe(): void {
+    for (const [id, release] of this.observed)
+      if (this.posted.get(id)?.role !== 'archer') {
+        release();
+        this.observed.delete(id);
+      }
+    for (const [id, p] of this.posted) if (p.role === 'archer' && !this.observed.has(id)) this.observed.set(id, this.io.units.observe(id));
+  }
+
   /** the wave is over: every soldier back to its round */
   release(): void {
     for (const id of this.posted.keys()) this.io.life.backToRoutine(id);
     this.posted.clear();
+    this.observe();
     this.posts = null;
     this.arrows = [];
   }

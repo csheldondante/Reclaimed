@@ -95,7 +95,7 @@ await run({ name: `opps-${hero}-${want}`, kind: 'behaviour', size: arg('size', '
     });
   // the autopilot: one step (~6 a second while an area plays)
   const pilot = (mode) =>
-    p.evaluate((mode) => {
+    p.evaluate(async (mode) => {
       const R = window.reclaimed;
       const S = R.runhero;
       const A = R.runsit.area;
@@ -117,28 +117,46 @@ await run({ name: `opps-${hero}-${want}`, kind: 'behaviour', size: arg('size', '
           return `standing aside; fires ${A.rules?.fires}`;
         }
         if (mode === 'evacuated' && A.refuge) {
+          // (the followers are observed by UnitFollowers; one not read yet is left out of where they are)
           const F = A.d.followers.members();
           window.__asked = window.__asked ?? 0;
           if (F.length < 4 && window.__asked < 12) {
-            // to the nearest townsman not following, and tell them
+            // to the nearest townsman not following, and tell them. (round 128p, U1: the town's folk asked of the GPU
+            // — one ask, the nearest chosen and observed while the hero rides to it; asked again once it follows or
+            // is gone)
             const sid = A.area.settlement;
-            const folk = A.d.townsfolk(sid).map((id) => A.d.units.get(id)).filter((u) => u && !F.some((f) => f.unit.id === u.id));
-            folk.sort((a, b) => Math.hypot(a.at[0] - at[0], a.at[1] - at[1]) - Math.hypot(b.at[0] - at[0], b.at[1] - at[1]));
-            const u = folk[0];
-            if (u) {
+            const ch = window.__chosen;
+            if (ch && (F.some((f) => f.unit.id === ch.id) || !A.d.units.get(ch.id)?.alive)) {
+              ch.release();
+              window.__chosen = null;
+            }
+            if (!window.__chosen && !window.__asking) {
+              window.__asking = true;
+              const folk = (await A.d.townsfolk(sid)).filter((u) => !F.some((f) => f.unit.id === u.id));
+              folk.sort((a, b) => Math.hypot(a.at[0] - at[0], a.at[1] - at[1]) - Math.hypot(b.at[0] - at[0], b.at[1] - at[1]));
+              window.__asking = false;
+              if (folk[0]) window.__chosen = { id: folk[0].id, release: A.d.units.observe(folk[0].id) };
+            }
+            const u = window.__chosen ? A.d.units.get(window.__chosen.id) : null;
+            if (u && u.at) {
               tgt = [u.at[0], u.at[1]];
               if (Math.hypot(tgt[0] - at[0], tgt[1] - at[1]) < 14) {
-                const n = A.orderFollow();
+                const n = await A.orderFollow();
                 window.__asked++;
                 return `follow me: ${n}`;
               }
-            }
+            } else if (u) return 'the one chosen: not read yet';
           } else {
+            if (window.__chosen) {
+              window.__chosen.release();
+              window.__chosen = null;
+            }
             tgt = A.refuge;
             // (not too far ahead of them: they walk)
-            const cx = F.reduce((s, f) => s + f.unit.at[0], 0) / Math.max(1, F.length);
-            const cy = F.reduce((s, f) => s + f.unit.at[1], 0) / Math.max(1, F.length);
-            const ahead = Math.hypot(cx - at[0], cy - at[1]);
+            const placed = F.filter((f) => f.unit.at);
+            const cx = placed.reduce((s, f) => s + f.unit.at[0], 0) / Math.max(1, placed.length);
+            const cy = placed.reduce((s, f) => s + f.unit.at[1], 0) / Math.max(1, placed.length);
+            const ahead = placed.length ? Math.hypot(cx - at[0], cy - at[1]) : 0;
             slow = ahead > 10 ? 0 : 0.25;
           }
         } else fight = true;
@@ -246,10 +264,11 @@ await run({ name: `opps-${hero}-${want}`, kind: 'behaviour', size: arg('size', '
         const due = st.area ? (st.area.kind === 'town' ? Math.max(4, (await p.evaluate(() => window.reclaimed.runsit.area?.setup?.hordeIn ?? 0)) + 4) : 4) : Infinity;
         if (!enemyChecked && st.area && st.area.t > due) {
           enemyChecked = true;
-          const n = await p.evaluate(() => {
+          const n = await p.evaluate(async () => {
             const A = window.reclaimed.runsit.area;
             const me = window.reclaimed.runhero.hero.position();
-            return A.d.units.query([me[0], me[1]], 400, { hostile: true }).filter((u) => u.alive !== false).length;
+            // (round 128p, U1: a query is asked of the GPU — async)
+            return (await A.d.units.query([me[0], me[1]], 400, { hostile: true })).filter((u) => u.alive !== false).length;
           });
           R.check(`${st.area.kind}: enemies in the encounter (${n} hostile within 400 cells)`, n > 0, { kind: st.area.kind, hostile: n });
           await shot(`${k}-${st.area.kind}-enemies`);

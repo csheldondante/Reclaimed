@@ -11,7 +11,7 @@
 //   the left) and a cell taken as a metre.
 
 import type { Condition, SessionStory } from '../api/contracts/story';
-import type { Units } from '../api/contracts/units';
+import { seen, type Units } from '../api/contracts/units';
 import type { Camera } from '../render/camera';
 import type { StoryRun } from '../run/run';
 import type { Stage } from './play';
@@ -55,11 +55,12 @@ export function objectiveTarget(d: TargetDeps): Target | null {
   const win = (p: [number, number]): [number, number] => (d.toWin ? d.toWin(p) : [p[0], p[1]]);
   const person = (id: string): Target | null => {
     const u = d.unitOf(id);
-    const v = u === undefined ? null : d.units.get(u);
+    // (a cast member's unit: observed by the story while staged — StoryPlay; not read yet, no arrow yet)
+    const v = u === undefined ? null : seen(d.units.get(u));
     const c = story.cast.find((x) => x.id === id);
     if (!v || !v.alive || !c) return null;
     const where = story.locations.find((l) => l.id === c.location)?.name;
-    return behindLock({ objective: o.id, kind: 'person', name: c.name, place: where, at: [...v.at] as V3 }, c.location, c.room ?? firstRoom(c.location));
+    return behindLock({ objective: o.id, kind: 'person', name: c.name, place: where, at: [v.at[0], v.at[1], v.at[2]] }, c.location, c.room ?? firstRoom(c.location));
   };
   const place = (location: string, room?: string): Target | null => {
     const l = story.locations.find((x) => x.id === location);

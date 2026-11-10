@@ -19,6 +19,10 @@ export const LOT_KIND = {
   plaza: 3,
   /** a landmark site: a round plot at a busy junction (a plaza or a big structure — storeys 0 for a plaza) */
   landmark: 4,
+  /** (farms) a field in a farm district or the farm belt: its footprint the field (its crop in the vegetation field —
+   *  common.wgsl cropVeg — at its progress's stage), a hedge round it; words 19–21 a farmhouse at its first corner when
+   *  its height is over 0 */
+  field: 5,
 } as const;
 
 /** u32 words of a record (citygen/streets.wgsl RECW) */
@@ -79,17 +83,58 @@ export interface CityLots {
 export type OpportunityKind = 'housing' | 'market' | 'harbour' | 'workshops' | 'farms' | 'keep';
 export const OPPORTUNITY_PURPOSE: Record<OpportunityKind, number> = { housing: 0, market: 1, harbour: 2, workshops: 3, farms: 4, keep: 5 };
 
+/** (M4d hook) a claim's answer: the town, the district (−1 none left), its centre in the town's frame (world units:
+ *  CityDistricts.inWindow places it in the window as it is now — the window slides), the districts not begun after it */
+export interface TownDistrict {
+  town: string;
+  id: number;
+  at: [number, number];
+  left: number;
+}
+
+/**
+ * (season loop) A card's share of a district and its stage, all 0..1 of the district: its lots are taken in growth order
+ * from the district's centre. A district holds two cards' shares at once (`slot` 0 or 1); a lot in a slot's [a, b]
+ * rises with that slot's stage, from `from` to `to` (each lot a little after the last, so they're all up exactly at b);
+ * any other lot stands if it's before `end` (the parts given out so far: earlier cards', all done) and isn't begun
+ * after it.
+ */
+export interface DistrictStage {
+  slot: 0 | 1;
+  a: number;
+  b: number;
+  from: number;
+  to: number;
+  end: number;
+}
+
 /**
  * (M4d hook) A town's districts for the opportunity UI (citygen/towns.ts FieldTowns implements it; `window.citygen` in
  * the game with ?citygen=fields):
- *   claimDistrict(kind) — the best district not begun for that kind's purpose in the town nearest the view (an argmax on
- *     the GPU; one word read back) starts building now: its lots rise over a few seconds of the town's clock, its roads
- *     appear, its claims follow. Resolves with the district's id (its supercell), −1 when none is left.
+ *   claimDistrict(kind, town?) — the best district not begun for that kind's purpose in `town` (or the town nearest the
+ *     view) — an argmax on the GPU; four words read back — starts building now: its lots rise over a few seconds of the
+ *     town's clock, its roads appear, its claims follow. Resolves with the district (id −1 when none is left).
+ *   districtsLeft(town?) — the districts not begun, counted on the GPU (four words back).
+ *   inWindow(town, at) — a claim's centre (the town's frame) in the window as it is now.
+ *   stageDistrict(town, id, stage, atOnce?) — (the season loop, docs/design/SEASON_LOOP.md) a card's share of the
+ *     district built as far as its stage, eased over the build's span of the town's clock from now, or there at once
+ *     (Skip). Its lots' progress (the per-lot progress buffer) follows on the GPU. 28 bytes up.
  *   timelapse(span) — every district not begun starts, the centre first, over `span` s (a debug view).
  * A town starts with its core built (districts within 0.35 of its growth key); the rest grows by claims.
  */
 export interface CityDistricts {
-  claimDistrict(kind: OpportunityKind): Promise<number>;
+  claimDistrict(kind: OpportunityKind, town?: string): Promise<TownDistrict>;
+  districtsLeft(town?: string): Promise<{ town: string; left: number } | null>;
+  stageDistrict(town: string, id: number, stage: DistrictStage, atOnce?: boolean): boolean;
+  /**
+   * (season life) The town wall: `wallStart` makes its ring round the lots begun (gates where the arterials cross) on
+   * the GPU; `wallStage` its stage, from → to (0..1 of the ring: each piece rises in turn from the first gate), eased
+   * over a build's span from now, or there at once (Skip). False: the town isn't live.
+   */
+  wallStart(town: string): boolean;
+  wallStage(town: string, from: number, to: number, atOnce?: boolean): boolean;
+  /** a point of a town's frame in the window now (null: the town isn't live) */
+  inWindow(town: string, at: readonly [number, number]): [number, number] | null;
   timelapse(span?: number): boolean;
   /** the towns' clock (s) and its speed (×) */
   townTime: number;

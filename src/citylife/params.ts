@@ -10,6 +10,8 @@ const people: Record<string, ParamSpec> = {
   stoneCarts: { label: 'stone carts', units: '', min: 0, max: 400, step: 5, def: 40, help: 'the stores → the face → a load of stone → the stores’ stockpile' },
   woodcutters: { label: 'woodcutters', units: '', min: 0, max: 400, step: 5, def: 40, help: 'home → the camp → fell a tree → logs to the camp' },
   logCarts: { label: 'log carts', units: '', min: 0, max: 400, step: 5, def: 20, help: 'the camp’s logs → the stores' },
+  wagons: { label: 'wagons', units: '', min: 0, max: 200, step: 1, def: 0, help: '(season life) a trade route: in through a gate, unload at a shop, out again, away a while' },
+  ships: { label: 'ships', units: '', min: 0, max: 40, step: 1, def: 0, help: '(season life) a trade route by water: in from the box’s edge to the harbour’s quays, moored, out again' },
   builders: { label: 'builders', units: '', min: 0, max: 400, step: 5, def: 40, help: 'the stores → a building site (a lot rising: progress between 0 and 1) → work → back' },
   walk: { label: 'walking speed', units: 'm/s', min: 0.5, max: 6, step: 0.1, def: 1.4 },
   cart: { label: 'cart speed', units: 'm/s', min: 0.5, max: 8, step: 0.1, def: 2.2 },

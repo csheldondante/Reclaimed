@@ -44,7 +44,7 @@
 //      modules derive them from the traits each tick (src/traits).
 //   f: (round 128o, DA-B2a) x the arrival latch (u32 bits: the field it has arrived on + 1; 0 none: `arrived`
 //      events), (round 128p, notice.wgsl) y its target (u32 bits: a target code), z how near the nearest hostile
-//      hunting it is (inf: none — the hunt's candidates), w unused
+//      hunting it is (inf: none — the hunt's candidates), w its side of the wall + 1 (0: not told; notice.wgsl)
 @group(0) @binding(7) var<storage, read_write> units: array<vec4<f32>>;
 const UNIT_V: u32 = 6u;
 // CAPS (src/traits/prelude.wgsl, contracts/traits.ts): never set alight (nor
@@ -350,6 +350,14 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     let rg = AP.regroups[e / 4u][e % 4u];
     if ((rg & 0xffffu) == u) { grp = rg >> 16u; }
   }
+  // (round 128p, DA-B22 (c)(4): made another kind where it stands — agents.ts rekind; its hp below)
+  var rekindHp = -1.0;
+  for (var e = 0u; e < u32(AP.step.y); e++) {
+    let rk = AP.rekinds[e];
+    if (rk.x != u) { continue; }
+    info = (info & ~(7u << 9u)) | ((rk.y & 7u) << 9u);
+    if (rk.w == 1u) { rekindHp = bitcast<f32>(rk.z); }
+  }
   // (round 128o, DA-B22: a steer is its group's ride's — a unit moved to another group lets it go, here and in its
   // record, so no step before the ride's next run reads the old group's: a STAND there told an arrival at the old
   // goal for the new group, once the ride ran once a frame — fortressallbuilt's builders "working" at the stores)
@@ -373,7 +381,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   let wr = (AP.n.w % 2u) * cols;
   var pos = a.xyz;
   var vel = b.xyz;
-  var hp = cc.x;
+  var hp = select(cc.x, rekindHp, rekindHp >= 0.0);
   var cool = max(cc.y - dt, 0.0);
   var burn = cc.z;
   var heading = cc.w;
@@ -394,11 +402,19 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   // the game's hits
   for (var h = 0u; h < AP.n2.x; h++) {
     let hit = AP.hits[h];
-    let off = pos + vec3<f32>(0.0, 0.0, height * 0.5) - hit.a.xyz;
-    let r = length(off.xy);
-    // (z below -1e8: any height)
-    if (r > hit.a.w + 0.3 || (hit.a.z > -1e8 && abs(off.z) > hit.a.w + height)) { continue; }
-    if (hit.b.z > -1.5 && r > 0.3 && dot(off.xy / r, hit.d.xy) < hit.b.z) { continue; }
+    var off = pos + vec3<f32>(0.0, 0.0, height * 0.5) - hit.a.xyz;
+    var r = length(off.xy);
+    if (hit.a.w < 0.0) {
+      // (round 128p, DA-B22 (c)(4): a hit on one unit, wherever it stands — its id in x's bits, radius −1: a blow
+      // struck at a unit the CPU doesn't read the position of; pushed along its direction)
+      if (bitcast<u32>(hit.a.x) != uid) { continue; }
+      off = vec3<f32>(0.0);
+      r = 0.0;
+    } else {
+      // (z below -1e8: any height)
+      if (r > hit.a.w + 0.3 || (hit.a.z > -1e8 && abs(off.z) > hit.a.w + height)) { continue; }
+      if (hit.b.z > -1.5 && r > 0.3 && dot(off.xy / r, hit.d.xy) < hit.b.z) { continue; }
+    }
     // (c.z: bit 0 fire, bits 1-16 the groups it spares)
     let hz = u32(hit.c.z + 0.5);
     if (((hz >> (1u + grp)) & 1u) != 0u) { continue; }

@@ -69,7 +69,11 @@ struct AgentParams {
   arrive: array<vec4<f32>, 7>,
   // (round 128o, DA-B22) x the units' step's dt (s): a tick's, or at fast-forward the ticks since the last step's
   // (agents.ts stepPlan) — what units.wgsl integrates by in place of G.dt
+  // (y, round 128p) the rekinds this step
   step: vec4<f32>,
+  // (round 128p, DA-B22 (c)(4)) units made another kind where they stand (agents.ts rekind): x the slot, y the kind,
+  // z its hp (f32 bits) when w is 1
+  rekinds: array<vec4<u32>, 8>,
 };
 fn arriveR(f: u32) -> vec2<f32> {
   let i = f * 2u;

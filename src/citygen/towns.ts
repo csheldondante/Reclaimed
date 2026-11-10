@@ -7,7 +7,9 @@
 // the static claims' arena's slots (OWN_SLOTS); when they're all taken, the farthest town not wanted gives its slot up.
 // The CPU picks which (the boxes against the window: integers) and passes the inputs; nothing is read back.
 import { FieldTown, fieldTownBox, type FieldTownBox, type FieldTownIO, type FieldTownSite } from './town';
-import { OPPORTUNITY_PURPOSE, type CityDistricts, type OpportunityKind } from '../api/contracts/citygen';
+import { OPPORTUNITY_PURPOSE, type CityDistricts, type OpportunityKind, type TownDistrict, type DistrictStage } from '../api/contracts/citygen';
+import { CLAIM_COUNT, DISTRICT_SPAN } from './gpu';
+import { TownLogs } from './townlog';
 
 /** a town's box this near the window (columns) is made; this far, let go */
 const PREFETCH = 128;
@@ -19,6 +21,8 @@ const near = (d: number, n: number) => d - Math.round(d / n) * n;
 
 export class FieldTowns implements CityDistricts {
   readonly live = new Map<string, FieldTown>();
+  /** (saving) each town's edit log (citygen/townlog.ts): its inputs, laid over it when it's made again */
+  readonly logs = new TownLogs();
   readonly stats = { made: 0, dropped: 0, slotsFull: 0, lastMakeMs: 0 };
   private boxes = new Map<string, FieldTownBox>();
   private clock = 0;
@@ -76,12 +80,62 @@ export class FieldTowns implements CityDistricts {
 
   /**
    * (M4d hook, api/contracts/citygen.ts CityDistricts) An opportunity of this kind claims the best district not begun of
-   * the nearest town (GPU argmax by purpose; the id read back, a word) and starts it now. −1: none left (or no town).
+   * a town — `town`, or the nearest — (GPU argmax by purpose; four words read back) and starts it now. id −1: none left
+   * (or no town).
    */
-  async claimDistrict(kind: OpportunityKind): Promise<number> {
-    const t = this.nearest();
-    if (!t) return -1;
-    return t.claimDistrict(OPPORTUNITY_PURPOSE[kind], this.townTime);
+  async claimDistrict(kind: OpportunityKind, town?: string): Promise<TownDistrict> {
+    const t = town !== undefined ? (this.live.get(town) ?? null) : this.nearest();
+    if (!t) return { town: town ?? '', id: -1, at: [0, 0], left: 0 };
+    const c = await t.claimDistrict(OPPORTUNITY_PURPOSE[kind], this.townTime);
+    if (c.id >= 0) this.logs.claim(t.site.at, c.id);
+    return { town: t.site.id, ...c };
+  }
+
+  /** (season life) the town wall: its ring made now; its stage (Skip: at once) */
+  wallStart(town: string): boolean {
+    const t = this.live.get(town);
+    if (!t) return false;
+    t.wallStart(this.townTime);
+    // (saving: the ring as made, read back once — a few words, an event)
+    const log = this.logs.of(t.site.at);
+    log.wall = { words: [], to: 0 };
+    void t.gen.readWall().then((w) => {
+      if (log.wall) log.wall.words = w;
+    });
+    return true;
+  }
+  wallStage(town: string, from: number, to: number, atOnce = false): boolean {
+    const t = this.live.get(town);
+    if (!t) return false;
+    const now = this.townTime;
+    t.wallStage(from, to, atOnce ? now - DISTRICT_SPAN - 1 : now, now);
+    const log = this.logs.of(t.site.at);
+    if (log.wall) log.wall.to = to;
+    return true;
+  }
+
+  /** (season loop) a point of a town's frame (a claim's centre) in the window now; null: the town isn't live */
+  inWindow(town: string, at: readonly [number, number]): [number, number] | null {
+    return this.live.get(town)?.inWindow(at) ?? null;
+  }
+
+  /** (season loop) the districts not begun in a town (or the nearest), counted on the GPU (four words back) */
+  async districtsLeft(town?: string): Promise<{ town: string; left: number } | null> {
+    const t = town !== undefined ? (this.live.get(town) ?? null) : this.nearest();
+    if (!t) return null;
+    const c = await t.claimDistrict(CLAIM_COUNT, this.townTime);
+    return { town: t.site.id, left: c.left };
+  }
+
+  /** (season loop) a card's share of a claimed district built as far as its stage, eased over its build from now —
+   *  or there at once (`atOnce`: Skip). A town let go meanwhile: false (its stages aren't kept: BACKLOG SL3). */
+  stageDistrict(town: string, id: number, stage: DistrictStage, atOnce = false): boolean {
+    const t = this.live.get(town);
+    if (!t) return false;
+    const now = this.townTime;
+    t.stageDistrict(id, stage, atOnce ? now - DISTRICT_SPAN - 1 : now, now);
+    this.logs.stage(t.site.at, id, stage);
+    return true;
   }
 
   /** each frame: the towns' clock, their time-lapses; the towns near the window made (one at a time), the far ones
@@ -142,6 +196,13 @@ export class FieldTowns implements CityDistricts {
         this.stats.lastMakeMs = +(performance.now() - t0).toFixed(1);
         console.log(`[citygen] ${s.name} (${s.id}, ${s.size}) made: ${t.lots} lots, ${s.roads.length} approach roads; GPU ms ${t.total?.toFixed(2) ?? 'n/a'}; ${(town.bytes / 1048576).toFixed(1)} MB; ${this.stats.lastMakeMs} ms to made`);
         this.making = null;
+        // (saving: its edit log laid over it — the session's, or the world store's after a reload)
+        void this.logs.load(s.at).then((log) => {
+          if (!log || this.live.get(s.id) !== town) return;
+          town.replay(log, this.townTime);
+          this.replayed.add(s.id);
+          console.log(`[citygen] ${s.name}: its edit log laid over it — ${log.claims.length} districts, ${log.stages.length} stages${log.wall ? ', the wall' : ''}`);
+        });
       },
       (e) => {
         this.making = null;
@@ -151,7 +212,11 @@ export class FieldTowns implements CityDistricts {
     );
   }
 
+  /** (saving) the towns whose edit log was laid over them since they were made (scripts, the season loop) */
+  readonly replayed = new Set<string>();
+
   private drop(id: string, t: FieldTown): void {
+    this.replayed.delete(id);
     t.dispose();
     this.live.delete(id);
     this.stats.dropped++;

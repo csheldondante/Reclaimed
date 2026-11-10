@@ -10,7 +10,9 @@
 //                takes the nearest it may fight within its sight: the buckets in rings out from its own, stopping
 //                once a ring lies farther than the best found (or its sight). A hostile with a target marks the hunt's
 //                candidates (`hunted`): its target, and everyone it may fight within its sight (its whole disk)
-//   huntWrite    each unit's `hunted` into its record (f.z), for the CPU's choice of the hunt's targets
+//   huntWrite    each unit's `hunted` into its record (f.z)
+//   huntTop      (one workgroup) the TOP nearest candidates by `hunted`, with where they stand: the hunt's targets,
+//                read by the CPU in its sync — not every unit's `hunted`
 //
 // A target code (word f.y, u32): 0 none; a unit's id + 1 (generation × MAX_SLOTS + slot: a slot taken again isn't
 // the same target); ACTOR | i the i-th actor of the frame (NP.actors: the game's own, e.g. the hero).
@@ -27,6 +29,10 @@
 // per slot: how near the nearest hostile hunting it is (f32 bits, atomicMin: positive floats order as their bits) —
 // the hunt's candidates (a hunter's target, and whoever it may fight within its sight), copied to unit word f.z
 @group(0) @binding(46) var<storage, read_write> hunted: array<atomic<u32>>;
+// (round 128p, DA-B22 (c)(4)) the hunt's TOP nearest candidates, nearest first: x y z where it stands, w its id + 1
+// (u32 bits; 0: none) — what the CPU reads for the hunt's targets (agents.ts sync)
+@group(0) @binding(47) var<storage, read_write> top: array<vec4<f32>, 8>;
+const TOP: u32 = 8u;
 
 struct NoticeParams {
   // x unit slots, y actors, z targets set this frame, w rule flags (NR_*)
@@ -50,6 +56,8 @@ const NONE: u32 = 0xffffffffu;
 const ACTOR: u32 = 0x80000000u;
 const BUCKET: i32 = 16;
 const EV_NOTICED: u32 = 9u;
+// (round 128p) a unit came to another side of the wall (the side map's): `other` its side
+const EV_SIDE: u32 = 10u;
 const NO_FACTION: u32 = 255u;
 const INF_BITS: u32 = 0x7f800000u;
 
@@ -68,6 +76,8 @@ const CW_HOME: u32 = 0x4000u;
 // the game's rule flags
 const NR_RULES: u32 = 1u;
 const NR_OPEN: u32 = 2u;
+// a side map is in place: units' sides are told (EV_SIDE)
+const NR_SIDES: u32 = 4u;
 
 fn alive(u: u32) -> bool { return ((bitcast<u32>(units[u * UNIT_V].w) >> 8u) & 1u) != 0u; }
 fn idOf(u: u32) -> u32 { return (bitcast<u32>(units[u * UNIT_V].w) >> 16u) * MAX_SLOTS + u; }
@@ -137,12 +147,45 @@ fn huntWrite(@builtin(global_invocation_id) id: vec3<u32>) {
   units[u * UNIT_V + 5u] = rec;
 }
 
-fn emitNoticed(id: u32, code: u32, p: vec3<f32>) {
+/** the candidates' keys: the distance in 1/64 cells over the slot (13 bits) — nearest first, ties by slot */
+var<workgroup> wBest: atomic<u32>;
+var<workgroup> wPrev: u32;
+
+@compute @workgroup_size(256)
+fn huntTop(@builtin(local_invocation_id) l: vec3<u32>) {
+  for (var r = 0u; r < TOP; r++) {
+    if (l.x == 0u) { atomicStore(&wBest, NONE); }
+    workgroupBarrier();
+    let prev = workgroupUniformLoad(&wPrev);
+    for (var u = l.x; u < NP.n.x; u += 256u) {
+      let h = atomicLoad(&hunted[u]);
+      if (h == INF_BITS || !alive(u)) { continue; }
+      let key = (min(u32(bitcast<f32>(h) * 64.0), 0x7ffffu) << 13u) | u;
+      if (r == 0u || key > prev) { atomicMin(&wBest, key); }
+    }
+    workgroupBarrier();
+    if (l.x == 0u) {
+      let k = atomicLoad(&wBest);
+      wPrev = k;
+      if (k == NONE) {
+        top[r] = vec4<f32>(0.0);
+      } else {
+        let s = k & 0x1fffu;
+        top[r] = vec4<f32>(posOf(s), bitcast<f32>(idOf(s) + 1u));
+      }
+    }
+    workgroupBarrier();
+  }
+}
+
+fn emitNoticed(id: u32, code: u32, p: vec3<f32>) { emitEv(EV_NOTICED, id, code, p); }
+
+fn emitEv(kind: u32, id: u32, code: u32, p: vec3<f32>) {
   let e = atomicAdd(&events[0], 1u);
   if (e - atomicLoad(&events[2]) >= NP.dims.z) { return; }
   let o = 4u + (e % NP.dims.z) * 8u;
   atomicStore(&events[o + 7u], e);
-  atomicStore(&events[o], EV_NOTICED);
+  atomicStore(&events[o], kind);
   atomicStore(&events[o + 1u], id);
   atomicStore(&events[o + 2u], code);
   atomicStore(&events[o + 3u], 0u);
@@ -170,17 +213,33 @@ fn notice(@builtin(global_invocation_id) id: vec3<u32>) {
   if (u >= NP.n.x || !alive(u)) { return; }
   let cw = combat[u];
   let hw = cw.x;
+  // (round 128p, DA-B22 (c)(4): its side of the wall, told when it changes — the game asks who's out, not where all are;
+  // unit word f.w: its side + 1, 0 not yet told)
+  if ((NP.n.w & NR_SIDES) != 0u) {
+    let me0 = posOf(u);
+    let sd = sideOf(me0.xy) + 1u;
+    var r5 = units[u * UNIT_V + 5u];
+    if (bitcast<u32>(r5.w) != sd) {
+      r5.w = bitcast<f32>(sd);
+      units[u * UNIT_V + 5u] = r5;
+      emitEv(EV_SIDE, idOf(u), sd - 1u, me0);
+    }
+  }
   if ((hw & CW_BOUND) != 0u) { return; }
   let hostile = (hw & CW_HOSTILE) != 0u;
   let sight = bitcast<f32>(cw.y);
   var rec = units[u * UNIT_V + 5u];
   let was = bitcast<u32>(rec.y);
   var t = was;
-  // (the game's own this frame: an order, a strike answered)
+  // (the game's own this frame: an order, a strike answered — told back whatever comes of it)
+  var aimed = false;
   for (var k = 0u; k < NP.n.z; k++) {
     let s = NP.sets[k / 2u];
     let pair = select(s.zw, s.xy, k % 2u == 0u);
-    if (pair.x == u) { t = pair.y; }
+    if (pair.x == u) {
+      t = pair.y;
+      aimed = true;
+    }
   }
   let me = posOf(u);
   // (kept while it lives, may be fought and is within the leash)
@@ -248,9 +307,11 @@ fn notice(@builtin(global_invocation_id) id: vec3<u32>) {
     let s = (t - 1u) % MAX_SLOTS;
     atomicMin(&hunted[s], bitcast<u32>(length(posOf(s).xy - me.xy)));
   }
-  if (t != was) {
+  if (t != was || aimed) {
     rec.y = bitcast<f32>(t);
     units[u * UNIT_V + 5u] = rec;
-    if (t != 0u && hostile) { emitNoticed(idOf(u), t, me); }
+    // (round 128p: every change told — taken or let go (0), hostile or not: the CPU follows targets by these, not by
+    // reading every unit)
+    emitNoticed(idOf(u), t, me);
   }
 }

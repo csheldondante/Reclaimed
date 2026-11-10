@@ -31,7 +31,7 @@ struct U {
   r: vec4<f32>, // (m3g) the field (0 the distance smoothed, 1 the mask smoothed), the mask's smoothing, grown streets (1), the landmarks kept (top K)
   h: vec4<f32>, // (m3h) a supercell's size (block lengths), the limit's noise (supercells), the empty fraction, the seed
   h2: vec4<f32>, // (m3h) the growth (0–1), the district tint (1), supercells on (1), the limit (× the town's radius)
-  x: vec4<f32>, // (m3i) the town circle's reach (× its radius: with supercells, far enough never to show), 0, 0, 0
+  x: vec4<f32>, // (m3i) the town circle's reach (× its radius: with supercells, far enough never to show); (farms) the farm belt (× the budget, 0 none), a field's size (× a lot), 0
   t: vec4<f32>, // (citygen M4a) an arterial's width, the height-to-plot ratio (0: storeys × a random 0.7–1.3), a deck's clearance over its banks, the longest bridge
   rc: vec4<f32>, // (M4b) the roads' colour (rgb 0–1), its tone (0 the lab's white, 1 dirt, 2 stone)
   pp: vec4<f32>, // (M4b) the population field: its peak density (0 the field off: 0.5 everywhere), the settlement's purpose (0–5; −1 none), 0, 0
@@ -559,14 +559,24 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
   q0.d = 0u;
   st[0] = q0;
   // (M4b: the lots' size by the population field's density there — dense, small lots; sparse, large: 1 at 0.5)
-  let lotK = mix(1.6, 0.4, cityB4(0.25 * (q0.v[0] + q0.v[1] + q0.v[2] + q0.v[3])).dens);
+  let qc = cityB4(0.25 * (q0.v[0] + q0.v[1] + q0.v[2] + q0.v[3]));
+  let farm = u.h2.z > 0.5 && qc.purpose == P_FARMS;
+  let lotK = mix(1.6, 0.4, qc.dens);
   var made = 0u;
   while (n > 0u) {
     n--;
     let q = st[n];
     let A = qArea(q);
     // (halves under the smallest lot's area: not split — the merge)
-    let split = !plaza && A > u.c.x * lotK && q.d < DEPTH && n + 2u <= STACK && A * 0.42 >= u.c.y * lotK;
+    var split = !plaza && A > u.c.x * lotK && q.d < DEPTH && n + 2u <= STACK && A * 0.42 >= u.c.y * lotK;
+    if (farm) {
+      // (farms: a field — split across its longest edge only while it's longer than FIELD_ASPECT + 1 × its width or
+      // bigger than x.z block lengths squared: fields of several blocks, 3:1–4:1)
+      var lmax = 0.0;
+      var lmin = 1e9;
+      for (var j = 0u; j < 4u; j++) { let l = distance(q.v[j], q.v[(j + 1u) % 4u]); lmax = max(lmax, l); lmin = min(lmin, l); }
+      split = q.d < DEPTH && n + 2u <= STACK && (lmax > (FIELD_ASPECT + 1.0) * max(lmin, 1.0) || A > max(u.x.z, 1.0) * u.a.w * u.a.w);
+    }
     if (split) {
       var k = 0u;
       var ll = -1.0;
@@ -579,7 +589,8 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
       var a: Quad;
       a.v = array<vec2<f32>, 4>(v0, c1, c2, v3);
       // (m3f: a big block's first two splits are roads — the cut a street both sides, its segment listed)
-      let road = u.l.z > 0.0 && A >= u.l.z && q.d < 2u;
+      // (farms: only the biggest field block's first split is a track — one every few hundred metres)
+      let road = u.l.z > 0.0 && A >= select(u.l.z, FARM_TRACK_AREA, farm) && q.d < select(2u, 1u, farm);
       let cut = select(0u, 2u, road);
       if (road) {
         let k2 = atomicAdd(&w6[1], 1u);
@@ -679,12 +690,16 @@ fn markRoad(a: vec2<f32>, b: vec2<f32>, hw: f32, za: f32, zb: f32, deck: bool) {
     }
   }
 }
-fn ribbon(at: u32, a: vec2<f32>, b: vec2<f32>, hw: f32, col: u32) {
-  if (roadLive) { markRoad(a, b, hw, 0.0, 0.0, false); }
+/** (farms) the road piece being drawn is a track between fields: narrow, dirt, not paved (no claim) */
+var<private> roadTrack: bool = false;
+fn ribbon(at: u32, a: vec2<f32>, b: vec2<f32>, hw0: f32, col0: u32) {
+  let hw = select(hw0, min(hw0, TRACK_HW), roadTrack);
+  let col = select(col0, C_TRACK, roadTrack);
+  if (roadLive && !roadTrack) { markRoad(a, b, hw, 0.0, 0.0, false); }
   let d = normalize(b - a);
   let s = vec2<f32>(-d.y, d.x) * hw;
-  // (M4b: on the town's paving — the claimed quarter cell over the ground, claimSpans)
-  let lift = 0.27;
+  // (M4b: on the town's paving — the claimed quarter cell over the ground, claimSpans; a track a little lower)
+  let lift = select(0.27, 0.12, roadTrack);
   let p0 = vec3<f32>(a - s, hAt(a - s) + lift);
   let p1 = vec3<f32>(b - s, hAt(b - s) + lift);
   let p2 = vec3<f32>(b + s, hAt(b + s) + lift);
@@ -815,6 +830,29 @@ const REC_BUILDING: u32 = 1u;
 const REC_PARK: u32 = 2u;
 const REC_PLAZA: u32 = 3u;
 const REC_LANDMARK: u32 = 4u;
+/** (farms) a field: its footprint the field (crops — bare.wgsl), a hedge round it, a farmhouse at a corner when its
+ *  height is over 0 (words 20, 21 the farmhouse's) */
+const REC_FIELD: u32 = 5u;
+/** (farms) one farmhouse or barn to about this many fields; its height (one storey and a roof) */
+const FARMHOUSE_SHARE: f32 = 0.3;
+const FARMHOUSE_H: f32 = 3.5;
+/** (farms) a farm belt district's growth key: grown last (under the growth's 1, so shown) */
+const BELT_KEY: f32 = 0.97;
+/** (farms) a track between fields: its half width, and a hedge's height and half width */
+const TRACK_HW: f32 = 0.55;
+const HEDGE_H: f32 = 0.7;
+const HEDGE_HW: f32 = 0.35;
+const C_HEDGE: u32 = 0x4e7436u;
+const C_TRACK: u32 = 0x9c8261u;
+/** (farms) a field's farmhouse: a small square at its first corner, set in from both sides */
+fn farmhouse(q: array<vec2<f32>, 4>) -> array<vec2<f32>, 4> {
+  let a = q[0];
+  let e1 = normalize(q[1] - q[0]);
+  let e2 = normalize(q[3] - q[0]);
+  let s = 3.2;
+  let o = a + (e1 + e2) * 1.2;
+  return array<vec2<f32>, 4>(o, o + e1 * s, o + e1 * s + e2 * s, o + e2 * s);
+}
 /** the edge on the widest street: a major line (class 1) over a minor street (2); 255 none */
 fn frontage(e: u32) -> u32 {
   var best = 255u;
@@ -894,6 +932,28 @@ fn lotRec(@builtin(global_invocation_id) g: vec3<u32>) {
   for (var k = 0u; k < 4u; k++) { pv[k] = mix(v[k], mid, 0.04); }
   let paveOk = u.q.x < 1.5;
   if ((hs & PAVED) != 0u || (paveOk && badQuad(v, 0.0))) { putRec(i, v, pv, front, REC_PLAZA, sc, 0u, 0.0, hAt(mid), hs); return; }
+  // (farms: a farm district's lot is a field — inset from its tracks, a hedge round it, now and then a farmhouse)
+  if (u.h2.z > 0.5 && sc.purpose == P_FARMS) {
+    var fd: array<f32, 4>;
+    for (var k = 0u; k < 4u; k++) { fd[k] = select(0.4, TRACK_HW + 0.4, ecls(e, k) != 0u); }
+    var fq: array<vec2<f32>, 4>;
+    for (var k = 0u; k < 4u; k++) { fq[k] = insetCorner(v, fd, k); }
+    var fa = 0.0;
+    for (var k = 0u; k < 4u; k++) { fa += cross2(fq[k], fq[(k + 1u) % 4u]); }
+    if (fa < 8.0) { putRec(i, v, v, front, REC_NONE, sc, 0u, 0.0, 0.0, hs); return; }
+    var fh = 0.0;
+    var fb = hAt(mid);
+    if (hsh(hs ^ 0xfa12u) < FARMHOUSE_SHARE) {
+      let hq = farmhouse(fq);
+      var zlo = 1e9;
+      var zhi = -1e9;
+      for (var k = 0u; k < 4u; k++) { let z = hAt(hq[k]); zlo = min(zlo, z); zhi = max(zhi, z); }
+      fb = zlo - 0.5;
+      fh = zhi + FARMHOUSE_H - fb;
+    }
+    putRec(i, v, fq, front, REC_FIELD, sc, select(0u, 1u, fh > 0.0), fh, fb, hs);
+    return;
+  }
   var street = false;
   var d: array<f32, 4>;
   for (var k = 0u; k < 4u; k++) {
@@ -942,6 +1002,10 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   if (kind == REC_NONE || kind == REC_LANDMARK) { return; }
   var q: array<vec2<f32>, 4>;
   for (var k = 0u; k < 4u; k++) { q[k] = vec2<f32>(r1(o + 8u + k * 2u), r1(o + 9u + k * 2u)); }
+  if (kind == REC_FIELD) {
+    fieldMesh(i, o, q);
+    return;
+  }
   if (kind != REC_BUILDING) {
     let at = room(6u);
     if (at == NONE) { return; }
@@ -1571,6 +1635,10 @@ fn ground(@builtin(global_invocation_id) g: vec3<u32>) {
 // 1 a plaza, 2 merged away, 3 grown by a merge), 6 the neighbour it asks to merge with, 7 which way (0 ahead, 1 behind),
 // 8 its first seed (its own, until it takes over the block behind it).
 const PAVED: u32 = 0x80000000u;
+/** (farms) a field block is merged along its line until its length is this × its strip's width (3:1–4:1), and no
+ *  longer than FIELD_LEN_MAX */
+const FIELD_ASPECT: f32 = 3.5;
+const FIELD_LEN_MAX: f32 = 140.0;
 /** (m3i) a lot of a block at the town's edge or an empty district's */
 const EDGE_LOT: u32 = 0x40000000u;
 const C_PAVE_W: u32 = 0xdcd0b6u;
@@ -1614,8 +1682,15 @@ fn bqual(@builtin(global_invocation_id) g: vec3<u32>) {
   let c = w5[mo + 2u];
   if (c != NONE) { w5[c * 3u * BQW + BQW + 3u] = id; }
   if (u.q.x > 1.5) { return; }
-  let bad = w5[mo + 4u] == 1u || badQuad(blockQuad(ob), u.c.y);
-  w5[mo + 1u] = select(0u, 1u, bad);
+  let bq = blockQuad(ob);
+  let bad = w5[mo + 4u] == 1u || badQuad(bq, u.c.y);
+  // (farms: a block in a farm district or the farm belt is a field's start — merged along its line, its cross streets
+  // gone, until it's FIELD_ASPECT × as long as its strip is wide: meta word 11 its farm mark, word 1 asks the merge.
+  // Only the truly bad are ever paved)
+  let farm = u.h2.z > 0.5 && cityB4(0.25 * (bq[0] + bq[1] + bq[2] + bq[3])).purpose == P_FARMS;
+  w5[mo + 11u] = select(0u, 1u, farm);
+  let tooShort = farm && distance(bq[0], bq[1]) < FIELD_ASPECT * max(distance(bq[1], bq[2]), 1.0) && distance(bq[0], bq[1]) < FIELD_LEN_MAX;
+  w5[mo + 1u] = select(0u, 1u, bad || tooShort);
   if (bad && (u.q.x > 0.5 || u.n.w == 2u)) { w5[mo + 5u] = 1u; }
 }
 /** one thread a bad block (merge): a neighbour claimed — across the longer cross street, a good one first (the lowest
@@ -1630,8 +1705,9 @@ fn bclaim(@builtin(global_invocation_id) g: vec3<u32>) {
   if (w5[ob] == 0u || w5[mo + 1u] == 0u || w5[mo + 5u] == 1u) { return; }
   let c = w5[mo + 2u];
   let p = w5[mo + 3u];
-  let okC = c != NONE && w5[c * 3u * BQW] == 1u && w5[c * 3u * BQW + BQW + 5u] != 1u;
-  let okP = p != NONE && w5[p * 3u * BQW] == 1u && w5[p * 3u * BQW + BQW + 5u] != 1u;
+  let farm = w5[mo + 11u];
+  let okC = c != NONE && w5[c * 3u * BQW] == 1u && w5[c * 3u * BQW + BQW + 5u] != 1u && w5[c * 3u * BQW + BQW + 11u] == farm;
+  let okP = p != NONE && w5[p * 3u * BQW] == 1u && w5[p * 3u * BQW + BQW + 5u] != 1u && w5[p * 3u * BQW + BQW + 11u] == farm;
   // (the shared streets: ahead c's own, behind this seed's own; a good neighbour first)
   var lc = -1.0;
   var lp = -1.0;
@@ -2432,16 +2508,18 @@ fn sctab(@builtin(local_invocation_index) li: u32) {
     let dens = bitcast<f32>(w7[pi]);
     let thr = lim * (1.0 + u.h.y * (2.0 * vnoise(cc, 2.5, 7u) - 1.0)) * mix(0.55, 1.45, dens);
     let t = scD[c] / max(thr, 1.0);
-    let inside = t < 1.0;
+    // (farms: the farm belt — the cells just past the limit, out to x.y × the budget — in, as farms, grown last)
+    let belt = t >= 1.0 && t < u.x.y;
+    let inside = t < 1.0 || belt;
     // (empty: never at a centre, never at the edge — under 0.6 of the budget)
     let empty = hash2(c, 4u) < u.h.z * 2.0 * (1.0 - dens) && scD[c] > 0.6 * sc && t < 0.6;
     let o = SC_HEAD + c * SCW;
-    w5[o + 6u] = u32(bitcast<f32>(w7[pi + 2u]));
+    w5[o + 6u] = select(u32(bitcast<f32>(w7[pi + 2u])), P_FARMS, belt);
     set5(o + 7u, dens);
     set5(o, scS[c].x);
     set5(o + 1u, scS[c].y);
     w5[o + 2u] = select(0u, select(2u, 1u, empty), inside);
-    set5(o + 3u, t);
+    set5(o + 3u, select(t, BELT_KEY, belt));
     set5(o + 4u, scS[c].x);
     set5(o + 5u, scS[c].y);
   }
@@ -2486,6 +2564,8 @@ fn roadOf(c1: City, c2: City) {
   if (c1.start <= c2.start) { c = c1; }
   curTag = TG_ROAD | ((c.id + 1u) << 8u);
   roadLive = c.start <= u.tl.x;
+  // (farms: between two farm districts — or on through one — a dirt track, not a street)
+  roadTrack = c1.purpose == P_FARMS && c2.purpose == P_FARMS;
 }
 /** a point's supercell — its state, its growth key, its id (the table at b4) */
 fn cityB4(p: vec2<f32>) -> City {
@@ -3016,6 +3096,54 @@ const PAVE_T: f32 = 0.25;
 /** a column with no span the town keeps bare of plants all the same (its owner word, count 0): a building's or a
  *  plaza's parcel round its footprint (bare.wgsl) */
 const BARE_ONLY: u32 = 0x80000000u;
+/** (farms) a field's column, no span: its owner word FIELD_COL | its record — bare.wgsl writes its crop */
+const FIELD_COL: u32 = 0x40000000u;
+/** (farms) a field block this big has a track across it at its first split */
+const FARM_TRACK_AREA: f32 = 9000.0;
+/** (farms) a field's columns marked in the claim grid's owner plane (where nothing else spans them) */
+fn claimField(r: u32, o: u32) {
+  var q: array<vec2<f32>, 4>;
+  var lo = vec2<f32>(1e9);
+  var hi = vec2<f32>(-1e9);
+  for (var k = 0u; k < 4u; k++) {
+    q[k] = vec2<f32>(r1(o + 8u + k * 2u), r1(o + 9u + k * 2u));
+    lo = min(lo, q[k]);
+    hi = max(hi, q[k]);
+  }
+  let N = u32(W() * H());
+  for (var y = max(i32(floor(lo.y / ROW_H)) - 1, 0); y <= min(i32(ceil(hi.y / ROW_H)) + 1, H() - 1); y++) {
+    for (var x = max(i32(floor(lo.x)) - 1, 0); x <= min(i32(ceil(hi.x)) + 1, W() - 1); x++) {
+      let p = cpos(x, y);
+      var inside = true;
+      for (var k = 0u; k < 4u; k++) { if (cross2(q[(k + 1u) % 4u] - q[k], p - q[k]) < 0.0) { inside = false; } }
+      let c = ix(x, y);
+      if (inside && w7[c * 4u + 3u] == 0u) { w7[N * 4u + c * 4u + 3u] = FIELD_COL | r; }
+    }
+  }
+  // (FM3: the farmhouse claimed as a building's columns — its base to its risen height — so units go round it)
+  let h = r1(o + 20u) * clamp(r2(r), 0.0, 1.0);
+  if (h < 0.05) { return; }
+  let hq = farmhouse(q);
+  let base = r1(o + 21u);
+  var hlo = vec2<f32>(1e9);
+  var hhi = vec2<f32>(-1e9);
+  for (var k = 0u; k < 4u; k++) { hlo = min(hlo, hq[k]); hhi = max(hhi, hq[k]); }
+  for (var y = max(i32(floor(hlo.y / ROW_H)) - 1, 0); y <= min(i32(ceil(hhi.y / ROW_H)) + 1, H() - 1); y++) {
+    for (var x = max(i32(floor(hlo.x)) - 1, 0); x <= min(i32(ceil(hhi.x)) + 1, W() - 1); x++) {
+      let p = cpos(x, y);
+      var inside = true;
+      for (var k = 0u; k < 4u; k++) { if (cross2(hq[(k + 1u) % 4u] - hq[k], p - hq[k]) < 0.0) { inside = false; } }
+      if (!inside) { continue; }
+      let c = ix(x, y);
+      let so = N * 4u + c * 4u;
+      w7[c * 4u + 3u] = 1u;
+      set7(so, base);
+      set7(so + 1u, base + h);
+      w7[so + 2u] = M_RUBBLE;
+      w7[so + 3u] = r + 1u;
+    }
+  }
+}
 const M_RUBBLE: u32 = 4u;
 const M_WOOD: u32 = 10u;
 /** one thread a grid column: its road or deck span from ROADS, or none (b1 ROADS, b2 the wet mask, r3 the heights; w7 CG)
@@ -3068,6 +3196,10 @@ fn claimLots(@builtin(global_invocation_id) g: vec3<u32>) {
   let kind = b1[o + 17u];
   let h = r1(o + 20u) * clamp(r2(r), 0.0, 1.0);
   let built = (kind == REC_BUILDING || kind == REC_LANDMARK) && h >= 0.05;
+  if (kind == REC_FIELD) {
+    claimField(r, o);
+    return;
+  }
   if (!built && kind != REC_PLAZA) { return; }
   var q: array<vec2<f32>, 4>;
   var pq: array<vec2<f32>, 4>;
@@ -3194,6 +3326,9 @@ fn clkTimelapse(@builtin(local_invocation_index) li: u32) {
 }
 var<workgroup> ckS: array<f32, 256>;
 var<workgroup> ckI: array<u32, 256>;
+var<workgroup> ckN: array<u32, 256>;
+/** (season loop) clkClaim's purpose that claims nothing: only the districts left counted */
+const CLAIM_COUNT: u32 = 0xffffffffu;
 /** one workgroup: an opportunity's claim — the best district not started for purpose n.w (its purpose that one: 2,
  *  plus its density, less half its growth key: dense and central first), started now (tl.x); its id + 1 (0 none) to
  *  w7[0] — the word read back (w5 SCT, w7 the answer) */
@@ -3202,23 +3337,44 @@ fn clkClaim(@builtin(local_invocation_index) li: u32) {
   let n = min(w5[0] * w5[1], SC_MAX);
   var best = -1e9;
   var bi = NONE;
+  var left = 0u;
   for (var c = li; c < n; c += 256u) {
     let o = SC_HEAD + c * SCW;
     if (w5[o + 2u] != 2u || bitcast<f32>(w5[o + 8u]) < 1e29) { continue; }
+    left++;
     let sc = select(0.0, 2.0, w5[o + 6u] == u.n.w) + bitcast<f32>(w5[o + 7u]) - 0.5 * bitcast<f32>(w5[o + 3u]);
     if (sc > best) { best = sc; bi = c; }
   }
   ckS[li] = best;
   ckI[li] = bi;
+  ckN[li] = left;
   workgroupBarrier();
   if (li != 0u) { return; }
   var b = 0u;
-  for (var k = 1u; k < 256u; k++) { if (ckS[k] > ckS[b] || (ckS[k] == ckS[b] && ckI[k] < ckI[b])) { b = k; } }
-  if (ckI[b] == NONE) { w7[0] = 0u; return; }
-  set5(SC_HEAD + ckI[b] * SCW + 8u, u.tl.x);
+  var total = 0u;
+  for (var k = 0u; k < 256u; k++) {
+    total += ckN[k];
+    if (ckS[k] > ckS[b] || (ckS[k] == ckS[b] && ckI[k] < ckI[b])) { b = k; }
+  }
+  // (season loop: the answer's four words — the id + 1 (0 none), its centre x, y (the grid's frame), the districts
+  // not begun after it)
+  if (ckI[b] == NONE || u.n.w == CLAIM_COUNT) { w7[0] = 0u; w7[1] = 0u; w7[2] = 0u; w7[3] = total; return; }
+  let o = SC_HEAD + ckI[b] * SCW;
+  set5(o + 8u, u.tl.x);
   w7[0] = ckI[b] + 1u;
+  w7[1] = w5[o + 4u];
+  w7[2] = w5[o + 5u];
+  w7[3] = total - 1u;
 }
-/** one thread a record: its progress now (b1 the records, b4 SCT, w6 the counts; w5 PROG) */
+/** (season loop, docs/design/SEASON_LOOP.md) a district's build is all its lots up after 1.75 build times (the last
+ *  lot's delay, ¾, plus its own build) */
+const BUILD_SPAN: f32 = 1.75;
+/** (season loop) how far behind the first a share's last lot starts rising (a share of the card's build) */
+const STAGGER: f32 = 0.5;
+/** one thread a record: its progress now (b1 the records, r2 the district stages — STG: on, from, to, when a
+ *  district; b4 SCT, w6 the counts; w5 PROG). A staged district (the season loop's) is built as far as its stage:
+ *  its build time eased from `from` × the span to `to` × the span over a span of the clock from `when`; the rest run
+ *  on their start alone. */
 @compute @workgroup_size(64)
 fn tlProgress(@builtin(global_invocation_id) g: vec3<u32>) {
   let i = g.x;
@@ -3227,10 +3383,83 @@ fn tlProgress(@builtin(global_invocation_id) g: vec3<u32>) {
   let o = i * RECW;
   if (b1[o + 17u] == REC_NONE) { set5(i, 0.0); return; }
   var start = BUILT_AT;
-  if (u.h2.z > 0.5) { start = r4(SC_HEAD + (b1[o + 18u] & 0xffffffu) * SCW + 8u); }
+  let did = b1[o + 18u] & 0xffffffu;
+  if (u.h2.z > 0.5) { start = r4(SC_HEAD + did * SCW + 8u); }
   // (each lot its own delay in its district: up to three quarters of the build time)
   let delay = hsh(b1[o + 23u] ^ 0x51edu) * 0.75 * u.tl.y;
+  let sg = did * 16u;
+  if (u.h2.z > 0.5 && did < SC_MAX && r2(sg) > 0.5) {
+    // (staged, cards' shares [a, b] of the district — two slots: its lots in growth order from the district's centre,
+    // a lot's key its rank in that order over the district's lots (stgRank), so a share of the key is that share of
+    // the lots. A lot in a slot's share rises as that slot's stage S (eased from `from` to `to` over a span of the clock)
+    // crosses the share, each a little after the last by its key (STAGGER), so all are up exactly when S reaches b —
+    // the card's end; any other lot stands before `end` (earlier cards', done) and isn't begun after it)
+    // (its key: its rank in its district's growth order, 0..1 — stgRank)
+    let key = bitcast<f32>(b3[i]);
+    let span = BUILD_SPAN * max(u.tl.y, 1e-3);
+    for (var sl = 0u; sl < 2u; sl++) {
+      let q = sg + 2u + sl * 5u;
+      let a = r2(q);
+      let b = r2(q + 1u);
+      // (a slot never used: its share empty; the last share's far edge takes the lots keyed past 1)
+      if (b <= a || key < a || (key > b && b < 1.0)) { continue; }
+      let k = clamp((u.tl.x - r2(q + 4u)) / span, 0.0, 1.0);
+      let S = mix(r2(q + 2u), r2(q + 3u), k * k * (3.0 - 2.0 * k));
+      let f = (S - a) / max(b - a, 1e-4);
+      let w = clamp((key - a) / max(b - a, 1e-4), 0.0, 1.0);
+      set5(i, clamp(f * (1.0 + STAGGER) - STAGGER * w, 0.0, 1.0));
+      return;
+    }
+    set5(i, select(0.0, 1.0, key < r2(sg + 1u)));
+    return;
+  }
   set5(i, clamp((u.tl.x - start - delay) / max(u.tl.y, 1e-3), 0.0, 1.0));
+}
+/** (season loop) each record's key in its district's growth order: its rank by distance from the district's centre
+ *  (ties by index) over the district's records, (rank + ½) / n — so a card's share [a, b] of the district is that
+ *  share of its lots (b1 the records, b4 SCT, w6 the counts; w5 the keys). One thread a record, every record of the
+ *  town looked at: n² over a few hundred lots, once a mesh run. */
+fn lotCentre(o: u32) -> vec2<f32> {
+  var c = vec2<f32>(0.0);
+  for (var q = 0u; q < 4u; q++) { c += vec2<f32>(r1(o + 8u + q * 2u), r1(o + 9u + q * 2u)); }
+  return c * 0.25;
+}
+@compute @workgroup_size(64)
+fn stgRank(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  let n = min(atomicLoad(&w6[0]), REC_LM);
+  if (i >= n) { return; }
+  let o = i * RECW;
+  if (b1[o + 17u] == REC_NONE) { w5[i] = 0u; return; }
+  let did = b1[o + 18u] & 0xffffffu;
+  let sco = SC_HEAD + did * SCW;
+  let cen = vec2<f32>(r4(sco + 4u), r4(sco + 5u));
+  let di = length(lotCentre(o) - cen);
+  var rank = 0u;
+  var cnt = 0u;
+  for (var j = 0u; j < n; j++) {
+    let oj = j * RECW;
+    if (b1[oj + 17u] == REC_NONE || (b1[oj + 18u] & 0xffffffu) != did) { continue; }
+    cnt++;
+    let dj = length(lotCentre(oj) - cen);
+    if (dj < di || (dj == di && j < i)) { rank++; }
+  }
+  w5[i] = bitcast<u32>((f32(rank) + 0.5) / f32(max(cnt, 1u)));
+}
+/** (season loop, "the shader for now") a building going up: its tops plank and its roof a scaffold deck, its foot
+ *  dark stone — its own colours back once it's up (a roof's from its seed, as lotMesh drew it) */
+const C_PLANK: u32 = 0xb48853u;
+const C_SCAFFOLD: u32 = 0xc9a46au;
+const C_FOOT: u32 = 0x8c857bu;
+fn riseColour(v: u32, id: u32, top: bool) -> u32 {
+  let p = r2(id);
+  let up = bitcast<f32>(w7[v * 8u + 6u]) > 0.5;
+  if (p > 0.0 && p < 1.0) {
+    if (!top) { return C_FOOT; }
+    return select(C_PLANK, C_SCAFFOLD, up);
+  }
+  if (top && up) { return roofColour(u32(hsh(b1[id * RECW + 23u] * 7u + 3u) * 5.999)); }
+  return C_WALL;
 }
 /** one thread a vertex: the tagged ones moved by their lot's progress or their district's start (b1 the records, r2
  *  PROG, b3 VTAG, b4 SCT; w7 the mesh; args its count) */
@@ -3249,12 +3478,294 @@ fn tlRise(@builtin(global_invocation_id) g: vec3<u32>) {
     z = r1(o + 21u) + r1(o + 20u) * r2(id) + select(0.0, 0.06, (tag & OUTLINE_BIT) != 0u);
     // (a lot not begun: its roof and outline sunk out of sight — its walls' bases with them: TG_BASE)
     if (r2(id) <= 0.0) { z = z0 - 1000.0; }
+    if ((tag & OUTLINE_BIT) == 0u) { w7[v * 8u + 3u] = riseColour(v, id, true); }
   } else if (kind == TG_BASE) {
     if (r2(id) <= 0.0) { z = z0 - 1000.0; }
+    w7[v * 8u + 3u] = riseColour(v, id, false);
   } else if (kind == TG_ROAD) {
     if (u.h2.z > 0.5 && r4(SC_HEAD + id * SCW + 8u) > u.tl.x) { z = z0 - 1000.0; }
   } else if (kind == TG_LOT) {
     if (r2(id) <= 0.0) { z = z0 - 1000.0; }
+  } else if (kind == TG_WALL) {
+    // (season life: a wall piece or a tower — id: its segment, 128 a tower, 256 a foot — risen by its segment's rise;
+    // w6 the WALL words)
+    let seg = id & 127u;
+    let h = select(WALL_H, TOWER_H, (id & 128u) != 0u);
+    let rw = wallRise(seg, atomicLoad(&w6[2]), bitcast<f32>(atomicLoad(&w6[4])), bitcast<f32>(atomicLoad(&w6[5])), bitcast<f32>(atomicLoad(&w6[6])));
+    if (rw <= 0.0 || atomicLoad(&w6[0]) != 1u) { z = z0 - 1000.0; }
+    else if ((id & 256u) == 0u) { z = z0 - h + h * rw; }
   }
   w7[v * 8u + 2u] = bitcast<u32>(z);
+}
+
+// ==== farms: a field's hedges and its farmhouse ================================================================
+/** (farms) a field's mesh (lotMesh's REC_FIELD): a low hedge along each edge — shown once its district starts
+ *  (TG_LOT) — and, when its record has a height, a farmhouse at its first corner: walls and a roof risen with the
+ *  field's progress (TG_TOP / TG_BASE, as a building's). The crops are the vegetation field's (bare.wgsl). */
+fn fieldMesh(i: u32, o: u32, q: array<vec2<f32>, 4>) {
+  let at = room(72u);
+  if (at == NONE) { return; }
+  curTag = TG_LOT | ((i + 1u) << 8u);
+  for (var k = 0u; k < 4u; k++) {
+    let a = q[k];
+    let b = q[(k + 1u) % 4u];
+    if (distance(a, b) < 0.5) {
+      // (a degenerate edge: its room filled with nothing visible — the three faces flat at the corner)
+      for (var j = 0u; j < 18u; j++) { vert(at + k * 18u + j, vec3<f32>(a, hAt(a) - 1000.0), C_HEDGE, vec3<f32>(0.0, 0.0, 1.0)); }
+      continue;
+    }
+    let d = normalize(b - a);
+    let n = vec2<f32>(d.y, -d.x) * HEDGE_HW;
+    let za = hAt(a);
+    let zb = hAt(b);
+    let a0 = vec3<f32>(a + n, za);
+    let b0 = vec3<f32>(b + n, zb);
+    let a1 = vec3<f32>(a + n, za + HEDGE_H);
+    let b1 = vec3<f32>(b + n, zb + HEDGE_H);
+    let a2 = vec3<f32>(a - n, za + HEDGE_H);
+    let b2 = vec3<f32>(b - n, zb + HEDGE_H);
+    let a3 = vec3<f32>(a - n, za);
+    let b3 = vec3<f32>(b - n, zb);
+    let base = at + k * 18u;
+    tri(base, a1, b1, b2, C_HEDGE);
+    tri(base + 3u, a1, b2, a2, C_HEDGE);
+    tri(base + 6u, a0, b0, b1, C_HEDGE);
+    tri(base + 9u, a0, b1, a1, C_HEDGE);
+    tri(base + 12u, a3, a2, b2, C_HEDGE);
+    tri(base + 15u, a3, b2, b3, C_HEDGE);
+  }
+  let h = r1(o + 20u);
+  if (h < 0.05) { return; }
+  let hq = farmhouse(q);
+  let at2 = room(30u);
+  if (at2 == NONE) { return; }
+  let fb = r1(o + 21u);
+  let top = fb + h;
+  let roof = roofColour(u32(hsh(b1[o + 23u] * 7u + 3u) * 5.999));
+  curTag = TG_TOP | ((i + 1u) << 8u);
+  tri(at2, vec3<f32>(hq[0], top), vec3<f32>(hq[1], top), vec3<f32>(hq[2], top), roof);
+  tri(at2 + 3u, vec3<f32>(hq[0], top), vec3<f32>(hq[2], top), vec3<f32>(hq[3], top), roof);
+  for (var k = 0u; k < 4u; k++) {
+    let a = hq[k];
+    let b = hq[(k + 1u) % 4u];
+    tri(at2 + 6u + k * 6u, vec3<f32>(a, fb), vec3<f32>(b, top), vec3<f32>(a, top), C_WALL);
+    tri(at2 + 9u + k * 6u, vec3<f32>(a, fb), vec3<f32>(b, fb), vec3<f32>(b, top), C_WALL);
+    let tb = TG_BASE | ((i + 1u) << 8u);
+    w5[(at2 + 6u + k * 6u) * 2u] = tb;
+    w5[(at2 + 9u + k * 6u) * 2u] = tb;
+    w5[(at2 + 10u + k * 6u) * 2u] = tb;
+  }
+}
+
+// ==== season life: the town wall — a ring round the town as it stands, gates at the arterials, rising in stages ====
+// (docs/design/SEASON_LOOP.md "Season life" 2) WALL (words): 0 made (1), 1 its gates, 2 the first gate's segment (the
+// rising starts there), 3 unused; 4–6 the card's stage: from, to, when (f32: 0..1 of the ring, the town's clock);
+// 8 + b the built lots' furthest reach in direction b (u32, 1/16 unit: an atomic max); 8 + NB + 2b the ring's corner b
+// (x, y: the grid's world units); 8 + 3·NB + b segment b (corner b → b + 1) a gate (1). Made once, when the walls card
+// starts (wallBins, wallShape); drawn in each mesh run at full height (wallMesh: TG_WALL vertices — tlRise sets each
+// piece's height by its segment's rise); claimed after the lots (wallClaim: its columns' spans, the road raster marked
+// WALL_MARK where it stands, so the living town's routes go out through the gates).
+const NB: u32 = 72u;
+const WB_REACH: u32 = 8u;
+const WB_V: u32 = 80u;
+const WB_GATE: u32 = 224u;
+const WALL_H: f32 = 4.5;
+const TOWER_H: f32 = 8.0;
+const WALL_HW: f32 = 1.0;
+const TOWER_HW: f32 = 2.0;
+/** past the built lots' furthest reach in a direction (world units) */
+const WALL_MARGIN: f32 = 7.0;
+/** a wall piece rises over this share of the card's build, each piece after the one before round the ring */
+const WALL_BAND: f32 = 0.12;
+const C_WALLSTONE: u32 = 0xa8977du;
+const C_TOWER: u32 = 0x8f806bu;
+const TG_WALL: u32 = 5u;
+/** (season life) a wall's column in the road raster: not a road — the living town's routes go round it (routes.wgsl
+ *  walkInit: blocked) */
+const WALL_MARK: u32 = 0x40000000u;
+fn binOf(d: vec2<f32>) -> u32 { return min(u32(floor((atan2(d.y, d.x) + 3.14159265) / TAU * f32(NB))), NB - 1u); }
+fn binDir(b: u32) -> vec2<f32> { let a = (f32(b) + 0.5) / f32(NB) * TAU - 3.14159265; return vec2<f32>(cos(a), sin(a)); }
+/** a segment's rise (0..1) at the stage (from, to, when) and its place round the ring from the first gate */
+fn wallRise(seg: u32, gate0: u32, s0: f32, s1: f32, when: f32) -> f32 {
+  let span = 1.75 * max(u.tl.y, 1e-3);
+  let k = clamp((u.tl.x - when) / span, 0.0, 1.0);
+  let S = mix(s0, s1, k * k * (3.0 - 2.0 * k));
+  let w = f32((seg + NB - gate0) % NB) / f32(NB);
+  return clamp((S - w * (1.0 - WALL_BAND)) / WALL_BAND, 0.0, 1.0);
+}
+/** one thread a lot record: begun (progress over 0) — its parcel's far corner from the centre, in its direction (b1
+ *  the records, b2 the progress, b3 the lot counts; w6 WALL) */
+@compute @workgroup_size(64)
+fn wallBins(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= min(b3[0], REC_LM)) { return; }
+  let o = i * RECW;
+  let kind = b1[o + 17u];
+  if (kind == REC_NONE || r2(i) <= 0.0) { return; }
+  var far = 0.0;
+  var c = vec2<f32>(0.0);
+  for (var k = 0u; k < 4u; k++) {
+    let p = vec2<f32>(r1(o + k * 2u), r1(o + 1u + k * 2u));
+    c += 0.25 * p;
+    far = max(far, distance(p, u.d.xy));
+  }
+  atomicMax(&w6[WB_REACH + binOf(c - u.d.xy)], u32(far * 16.0));
+}
+var<workgroup> wbR: array<f32, 72>;
+var<workgroup> wbG: array<u32, 72>;
+fn segsHit(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> bool {
+  let r = b - a;
+  let s = d - c;
+  let den = cross2(r, s);
+  if (abs(den) < 1e-6) { return false; }
+  let t = cross2(c - a, s) / den;
+  let v = cross2(c - a, r) / den;
+  return t >= 0.0 && t <= 1.0 && v >= 0.0 && v <= 1.0;
+}
+/** one workgroup: the ring — each direction's reach widened over ±3 directions (never through a plot) plus the
+ *  margin, the town's core where nothing's built — its corners, its gates where an arterial crosses (at least two:
+ *  DESIGN §13), the first gate (w5 WALL, b1 ART) */
+@compute @workgroup_size(128)
+fn wallShape(@builtin(local_invocation_index) li: u32) {
+  if (li < NB) { wbR[li] = f32(w5[WB_REACH + li]) / 16.0; }
+  workgroupBarrier();
+  var r = 0.0;
+  if (li < NB) {
+    for (var j = 0u; j < 7u; j++) { r = max(r, wbR[(li + NB + j - 3u) % NB]); }
+  }
+  workgroupBarrier();
+  if (li < NB) {
+    if (r <= 0.0) { r = u.d.z * 0.35; }
+    wbR[li] = r + WALL_MARGIN;
+    var v = u.d.xy + binDir(li) * wbR[li];
+    v = clamp(v, vec2<f32>(1.0), vec2<f32>(f32(W()) - 1.0, f32(H()) * ROW_H - 1.0));
+    w5[WB_V + 2u * li] = bitcast<u32>(v.x);
+    w5[WB_V + 2u * li + 1u] = bitcast<u32>(v.y);
+  }
+  workgroupBarrier();
+  if (li < NB) {
+    let p = vec2<f32>(bitcast<f32>(w5[WB_V + 2u * li]), bitcast<f32>(w5[WB_V + 2u * li + 1u]));
+    let q = vec2<f32>(bitcast<f32>(w5[WB_V + 2u * ((li + 1u) % NB)]), bitcast<f32>(w5[WB_V + 2u * ((li + 1u) % NB) + 1u]));
+    var gate = 0u;
+    for (var k = 0u; k < artCount(1u); k++) {
+      let n = artPts(1u, k);
+      for (var j = 0u; j + 1u < n; j++) {
+        if (segsHit(p, q, artPt(1u, k, j), artPt(1u, k, j + 1u))) { gate = 1u; }
+      }
+    }
+    wbG[li] = gate;
+  }
+  workgroupBarrier();
+  if (li == 0u) {
+    var n = 0u;
+    var first = NONE;
+    for (var b = 0u; b < NB; b++) { if (wbG[b] == 1u) { n++; if (first == NONE) { first = b; } } }
+    // (fewer than two: the first, or the ring's start, and the segment across from it)
+    if (n < 2u) {
+      if (first == NONE) { first = 0u; wbG[0] = 1u; }
+      wbG[(first + NB / 2u) % NB] = 1u;
+      n = 2u;
+    }
+    w5[1] = n;
+    w5[2] = first;
+  }
+  workgroupBarrier();
+  if (li < NB) { w5[WB_GATE + li] = wbG[li]; }
+  if (li == 0u) { w5[0] = 1u; }
+}
+fn wbV(b: u32) -> vec2<f32> { let o = WB_V + 2u * (b % NB); return vec2<f32>(r1(o), r1(o + 1u)); }
+fn wbGate(b: u32) -> bool { return b1[WB_GATE + (b % NB)] == 1u; }
+fn wbTower(b: u32) -> bool { return (b % 6u == 0u || wbGate(b) || wbGate(b + NB - 1u)) && !blockedAt(wbV(b)); }
+/** a segment over water or a cliff (b4 the distance field: negative there): no wall piece */
+fn wbWet(b: u32) -> bool {
+  let p = wbV(b);
+  let q = wbV(b + 1u);
+  for (var k = 0u; k <= 4u; k++) { if (blockedAt(mix(p, q, f32(k) / 4.0))) { return true; } }
+  return false;
+}
+/** a quad from p (its foot at zp, top zp + h) to q (zq, zq + h), outward right of p → q; its foot's vertices tagged `tb` */
+fn wquad(at: u32, p: vec2<f32>, q: vec2<f32>, zp: f32, zq: f32, h: f32, col: u32, tb: u32) {
+  tri(at, vec3<f32>(p, zp), vec3<f32>(q, zq), vec3<f32>(q, zq + h), col);
+  tri(at + 3u, vec3<f32>(p, zp), vec3<f32>(q, zq + h), vec3<f32>(p, zp + h), col);
+  w5[at * 2u] = tb;
+  w5[(at + 1u) * 2u] = tb;
+  w5[(at + 3u) * 2u] = tb;
+}
+/** a box from a to b, half width hw, h high: its top and two long sides; `caps` its ends too (18 or 30 vertices) */
+fn wbox(at: u32, a: vec2<f32>, b: vec2<f32>, hw: f32, h: f32, col: u32, tt: u32, tb: u32, caps: bool) {
+  let d = normalize(b - a);
+  let n = vec2<f32>(d.y, -d.x) * hw;
+  let za = hAt(a) - 0.4;
+  let zb = hAt(b) - 0.4;
+  curTag = tt;
+  tri(at, vec3<f32>(a + n, za + h), vec3<f32>(b + n, zb + h), vec3<f32>(b - n, zb + h), col);
+  tri(at + 3u, vec3<f32>(a + n, za + h), vec3<f32>(b - n, zb + h), vec3<f32>(a - n, za + h), col);
+  wquad(at + 6u, a + n, b + n, za, zb, h, col, tb);
+  wquad(at + 12u, b - n, a - n, zb, za, h, col, tb);
+  if (caps) {
+    wquad(at + 18u, a - n, a + n, za, za, h, col, tb);
+    wquad(at + 24u, b + n, b - n, zb, zb, h, col, tb);
+  }
+}
+/** one thread a ring segment (made): its wall piece (not at a gate) and its corner's tower, at full height — TG_WALL
+ *  (tlRise: its rise) (b1 WALL, r3 the heights, b4 the distance field; w5 VTAG, w7 the mesh; args) */
+@compute @workgroup_size(128)
+fn wallMesh(@builtin(local_invocation_index) li: u32) {
+  if (li >= NB || b1[0] != 1u) { return; }
+  let p = wbV(li);
+  let q = wbV(li + 1u);
+  if (!wbGate(li) && !wbWet(li) && distance(p, q) > 0.2) {
+    let at = room(18u);
+    if (at == NONE) { return; }
+    wbox(at, p, q, WALL_HW, WALL_H, C_WALLSTONE, TG_WALL | ((li + 1u) << 8u), TG_WALL | (((li | 256u) + 1u) << 8u), false);
+  }
+  if (wbTower(li)) {
+    let at = room(30u);
+    if (at == NONE) { return; }
+    // (the tower square on the ring's direction there)
+    var d = q - wbV(li + NB - 1u);
+    if (length(d) < 1e-3) { d = vec2<f32>(1.0, 0.0); }
+    let e = normalize(d) * TOWER_HW;
+    let id = li | 128u;
+    wbox(at, p - e, p + e, TOWER_HW, TOWER_H, C_TOWER, TG_WALL | ((id + 1u) << 8u), TG_WALL | (((id | 256u) + 1u) << 8u), true);
+  }
+}
+/** one thread a ring segment: its wall piece's and its tower's columns claimed at their risen height (spans), the road
+ *  raster marked WALL_MARK under them (b1 WALL, r3 the heights, b4 the distance field; w5 ROADS, w7 the claim grid) */
+@compute @workgroup_size(128)
+fn wallClaim(@builtin(local_invocation_index) li: u32) {
+  if (li >= NB || b1[0] != 1u) { return; }
+  let r = wallRise(li, b1[2], r1(4u), r1(5u), r1(6u));
+  if (r <= 0.02) { return; }
+  let p = wbV(li);
+  let q = wbV(li + 1u);
+  if (!wbGate(li) && !wbWet(li)) { wallCols(p, q, WALL_HW, WALL_H * r); }
+  if (wbTower(li)) {
+    var d = q - wbV(li + NB - 1u);
+    if (length(d) < 1e-3) { d = vec2<f32>(1.0, 0.0); }
+    let e = normalize(d) * TOWER_HW;
+    wallCols(p - e, p + e, TOWER_HW, TOWER_H * r);
+  }
+}
+fn wallCols(a: vec2<f32>, b: vec2<f32>, hw: f32, h: f32) {
+  let N = u32(W() * H());
+  let lo = min(a, b) - vec2<f32>(hw + 1.0);
+  let hi = max(a, b) + vec2<f32>(hw + 1.0);
+  let ab = b - a;
+  for (var y = max(i32(floor(lo.y / ROW_H)), 0); y <= min(i32(ceil(hi.y / ROW_H)), H() - 1); y++) {
+    for (var x = max(i32(floor(lo.x)), 0); x <= min(i32(ceil(hi.x)), W() - 1); x++) {
+      let c = cpos(x, y);
+      let t = clamp(dot(c - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+      if (distance(c, a + ab * t) > hw + 0.35) { continue; }
+      let i = ix(x, y);
+      let base = hAt(c) - 0.4;
+      let so = N * 4u + i * 4u;
+      w7[i * 4u + 3u] = 1u;
+      set7(so, base);
+      set7(so + 1u, base + h);
+      w7[so + 2u] = M_RUBBLE;
+      w7[so + 3u] = 0u;
+      w5[i] = WALL_MARK;
+    }
+  }
 }

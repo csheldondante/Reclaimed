@@ -18,9 +18,9 @@
 //    again (a 'raised' event: the same GPU id) in the raiser's group. It's alive again here, keeps its role, and is
 //    `bound`: the raiser's, not this layer's to order — it neither takes jobs nor hunts until the game orders it.
 // Window coordinates (x cells, y world units, z the ground) as the world API's.
-import type { Actor, AreaHit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
+import type { Actor, AreaHit, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
-import type { Agents, AgentEvent, AgentState, Target } from '../agents/agents';
+import type { Agents, AgentEvent, AgentState, HuntCandidate, Target } from '../agents/agents';
 import type { PickAsk } from '../agents/pick';
 import { MAT } from '../world/materials';
 import { timed } from '../gpu/cpustat';
@@ -91,6 +91,9 @@ const HEIGHT_LIMIT = 1.6;
 const MAX_SLOT = 8192;
 /** how near a goal counts as there */
 const THERE = 1.6;
+/** (round 128p) a goal's key: its place to two cells — goals that near share a field (holdGoal), and an arrival there
+ *  is the job's end (goalOf) */
+const goalKey = (p: V2): string => `${Math.round(p[0] / 2)},${Math.round(p[1] / 2)}`;
 
 /** A settlement's worker rounds: the settlements take units with a 'work' job whose `settlement` they run. */
 export interface Routine {
@@ -117,11 +120,14 @@ export interface UnitRec {
   group: number;
   /** what it's after (a unit or an actor), and since when it noticed */
   target: UnitId | string | null;
-  /** (round 128p) how near the nearest hostile hunting it is (Infinity: none; the GPU's — agents/notice.ts) */
-  hunted?: number;
   cool: number;
   /** the goal key it holds */
   goal: string | null;
+  /** (round 128p, DA-B22 (c)(4)) the goal key it was told it arrived at (the agents' `arrived` on its goal field): it
+   *  stands there — no position read to tell */
+  arrived?: string;
+  /** (round 128p) its side of the wall as last told (the side map's number: fightRules) */
+  side?: number;
   /** the routine's own state */
   work?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
   patrolAt?: V2;
@@ -203,6 +209,8 @@ export class AgentUnits implements Units {
     agents.follow(G.foes, F.foes);
     agents.follow(G.hunt, F.targets);
     for (let i = 0; i < GOALS; i++) agents.follow(G.goal0 + i, F.goal0 + i);
+    // (round 128p, DA-B22 (c)(4): arriving at a goal told by the GPU — the jobs that went somewhere stand there)
+    for (let i = 0; i < GOALS; i++) agents.arrivals(F.goal0 + i, THERE, THERE * 2);
   }
 
   // ---- the contract -------------------------------------------------------------------------------
@@ -241,17 +249,58 @@ export class AgentUnits implements Units {
     return u ? this.view(u) : null;
   }
 
-  query(near: V2, radius: number, opts: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): UnitView[] {
-    const out: [number, UnitView][] = [];
-    for (const u of this.recs.values()) {
-      if (!u.v.alive && !opts.dead) continue;
-      if (opts.faction !== undefined && u.v.faction !== opts.faction) continue;
-      if (opts.hostile !== undefined && u.v.hostile !== opts.hostile) continue;
-      const d = Math.hypot(u.v.at[0] - near[0], u.v.at[1] - near[1]);
-      if (d <= radius) out.push([d, this.view(u)]);
+  /**
+   * (round 128p, DA-B22 (c)(4)) Asked of the GPU (Agents.near: the live units within the radius, with where they stand);
+   * the dead by where they fell (their death event's place)
+   */
+  async query(near: V2, radius: number, opts: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): Promise<SeenUnit[]> {
+    const keep = (u: UnitRec) => (opts.faction === undefined || u.v.faction === opts.faction) && (opts.hostile === undefined || u.v.hostile === opts.hostile);
+    const out: [number, SeenUnit][] = [];
+    // (one faction's: looked for on the GPU among its units only — its combat words; NO_FACTION for none)
+    const fac = opts.faction === undefined ? null : opts.faction === null ? NO_FACTION : (this.factionNo.get(opts.faction) ?? -1);
+    for (const f of fac === -1 ? [] : await this.agents.near(near[0], near[1], radius, fac)) {
+      const id = this.byGpu.get(f.id);
+      const u = id !== undefined ? this.recs.get(id) : undefined;
+      if (!u || !u.v.alive || !keep(u)) continue;
+      out.push([Math.hypot(f.x - near[0], f.y - near[1]), { ...this.view(u), at: [f.x, f.y, f.z] }]);
     }
+    if (opts.dead)
+      for (const u of this.recs.values()) {
+        const at = u.v.at;
+        if (u.v.alive || !at || !keep(u)) continue;
+        const d = Math.hypot(at[0] - near[0], at[1] - near[1]);
+        if (d <= radius) out.push([d, { ...this.view(u), at: [at[0], at[1], at[2]] }]);
+      }
     return out.sort((a, b) => a[0] - b[0]).map((x) => x[1]);
   }
+
+  /**
+   * (round 128p, DA-B22 (c)(4)) Keep these units' positions read each frame until released (counted: each observer
+   * releases its own). Everything else is events and queries.
+   */
+  observe(ids: UnitId | readonly UnitId[]): () => void {
+    const list = typeof ids === 'number' ? [ids] : [...ids];
+    for (const id of list) this.observers.set(id, (this.observers.get(id) ?? 0) + 1);
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      for (const id of list) {
+        const n = (this.observers.get(id) ?? 0) - 1;
+        if (n > 0) this.observers.set(id, n);
+        else this.observers.delete(id);
+      }
+    };
+  }
+  /** (round 128p) a unit's side of the wall as the GPU last told it (the side map's number), or null: not told */
+  sideOf(id: UnitId): number | null {
+    return this.recs.get(id)?.side ?? null;
+  }
+
+  /** (round 128p) the observed by the game (observe), and by this layer for what it still does on the CPU (strikes,
+   *  fleeing, following): their positions read each sync */
+  private observers = new Map<UnitId, number>();
+  private auto = new Set<UnitId>();
 
   byCharacter(character: string): UnitView | null {
     for (const u of this.recs.values()) if (u.v.character === character) return this.view(u);
@@ -267,6 +316,8 @@ export class AgentUnits implements Units {
       u.bound = undefined;
       u.v.job = job;
       u.target = job.kind === 'attack' ? job.target : null;
+      u.arrived = undefined;
+      u.patrolAt = undefined;
       this.releaseGoal(u);
       this.assign(u);
     }
@@ -275,20 +326,17 @@ export class AgentUnits implements Units {
   setHostile(id: UnitId, hostile: boolean): void {
     const u = this.recs.get(id);
     if (!u || u.v.hostile === hostile || !u.v.alive) return;
-    // (a hostile kind on the GPU is another kind: put it there again as one, where it stands, as hurt as it was)
+    // (a hostile kind on the GPU is another kind: made one where it stands, as hurt as it was — round 128p: in place)
     u.v.hostile = hostile;
-    this.byGpu.delete(u.gpu);
-    this.agents.remove([u.gpu]);
-    u.gpu = this.place(u, [u.v.at[0], u.v.at[1]], false);
-    u.group = -1;
+    this.agents.rekind(u.gpu, this.kindOf(u, false));
     this.assign(u);
   }
 
   hit(id: UnitId, damage: number, by: UnitId | string | null): void {
     const u = this.recs.get(id);
     if (!u || !u.v.alive) return;
-    // (no group filter: a regroup in flight would miss it; small enough to be the one standing there)
-    const hid = this.agents.hit({ x: u.v.at[0], y: u.v.at[1], z: u.v.at[2] + 0.5, radius: 0.45, damage: damage * HPK });
+    // (round 128p: a hit on that one unit, wherever it stands — no position read for it)
+    const hid = this.agents.hit({ unit: u.gpu, x: 0, y: 0, radius: 0, damage: damage * HPK });
     this.hitBy.set(hid, by);
   }
 
@@ -434,6 +482,8 @@ export class AgentUnits implements Units {
     const u = this.recs.get(t);
     return u && u.v.alive ? u.gpu + 1 : null;
   }
+  /** (round 128p) the hunt's nearest candidates as the last sync read them (notice.wgsl huntTop) */
+  private hunt: HuntCandidate[] = [];
   /** the actors as handed to the GPU this frame (a target code's index) */
   private actorsSent: Actor[] = [];
 
@@ -441,7 +491,7 @@ export class AgentUnits implements Units {
     // (the agents move their own units on the GPU; what's kept here in window coordinates moves with them)
     const m = (p: V2): V2 => [p[0] - dx, p[1] - dy];
     for (const u of this.recs.values()) {
-      u.v.at = [u.v.at[0] - dx, u.v.at[1] - dy, u.v.at[2]];
+      if (u.v.at) u.v.at = [u.v.at[0] - dx, u.v.at[1] - dy, u.v.at[2]];
       const j = u.v.job;
       if (j.kind === 'guard') u.v.job = { ...j, at: m(j.at) };
       else if (j.kind === 'go') u.v.job = { ...j, to: m(j.to) };
@@ -460,7 +510,14 @@ export class AgentUnits implements Units {
   update(dt: number): void {
     if (this.syncing) return;
     const t0 = performance.now();
-    this.syncing = this.agents.sync().then(({ units, events, dropped }) => {
+    // (round 128p, DA-B22 (c)(1): only the observed units read — the game's and this layer's own; the rest is events)
+    const watch: number[] = [];
+    for (const id of new Set([...this.observers.keys(), ...this.auto])) {
+      const u = this.recs.get(id);
+      if (u && u.v.alive) watch.push(u.gpu);
+    }
+    this.syncing = this.agents.sync({ watch }).then(({ units, events, dropped, hunt }) => {
+      this.hunt = hunt;
       const sdt = this.lastSync ? Math.min(0.5, (performance.now() - this.lastSync) / 1000) : dt;
       this.lastSync = performance.now();
       this.stats.syncMs = +(performance.now() - t0).toFixed(1);
@@ -493,12 +550,8 @@ export class AgentUnits implements Units {
     u.v.role = role;
     if (o.health !== undefined) u.v.health = u.v.maxHealth = o.health;
     if (o.damage !== undefined) u.damage = o.damage;
-    const g = u.group;
-    this.byGpu.delete(u.gpu);
-    this.agents.remove([u.gpu]);
-    u.gpu = this.place(u, [u.v.at[0], u.v.at[1]], false);
-    u.group = -1;
-    this.regroup(u, g < 0 ? G.stand : g);
+    // (round 128p: made the new kind where it stands, at full health — not removed and placed again)
+    this.agents.rekind(u.gpu, this.kindOf(u, false), Math.max(u.v.health, 0.1) * HPK);
   }
 
   /**
@@ -551,24 +604,28 @@ export class AgentUnits implements Units {
   }
 
   private view(u: UnitRec): UnitView {
-    return { ...u.v, at: [...u.v.at] as V3, job: structuredClone(u.v.job) };
+    const at = u.v.at;
+    return { ...u.v, at: at ? [at[0], at[1], at[2]] : null, job: structuredClone(u.v.job) };
   }
 
-  /** where a unit's job sends it now (null: it stands where it is) */
+  /**
+   * where a unit's job sends it now (null: it stands where it is). (Round 128p, DA-B22 (c)(4): going somewhere — a post,
+   * a place, a patrol's next point — ends when the GPU says it arrived (`arrived` on its goal field: u.arrived), not by
+   * reading where it is; fleeing and following read the observed)
+   */
   private goalOf(u: UnitRec): V2 | null {
     const j = u.v.job;
-    const at: V2 = [u.v.at[0], u.v.at[1]];
-    const far = (p: V2, d: number) => Math.hypot(p[0] - at[0], p[1] - at[1]) > d;
+    const there = (p: V2) => u.arrived === goalKey(p);
     switch (j.kind) {
       case 'idle':
       case 'work':
         return null;
       case 'guard':
-        return far(j.at, j.radius ?? THERE) ? j.at : null;
+        return there(j.at) ? null : j.at;
       case 'go':
-        return far(j.to, THERE) ? j.to : null;
+        return there(j.to) ? null : j.to;
       case 'patrol': {
-        if (!u.patrolAt || !far(u.patrolAt, THERE)) {
+        if (!u.patrolAt || there(u.patrolAt)) {
           const a = Math.random() * Math.PI * 2;
           const r = Math.sqrt(Math.random()) * j.radius;
           u.patrolAt = [j.around[0] + Math.cos(a) * r, j.around[1] + Math.sin(a) * r];
@@ -577,6 +634,9 @@ export class AgentUnits implements Units {
         return u.patrolAt;
       }
       case 'flee': {
+        // (observed while it flees: this.auto)
+        const at = u.v.at;
+        if (!at) return null;
         const dx = at[0] - j.from[0];
         const dy = at[1] - j.from[1];
         const d = Math.hypot(dx, dy) || 1;
@@ -584,11 +644,20 @@ export class AgentUnits implements Units {
       }
       case 'follow':
       case 'attack': {
+        // (it and its target observed: this.auto)
         const p = this.posOf(j.target);
         if (!p) return null;
-        return far([p[0], p[1]], j.kind === 'follow' ? (j.distance ?? 2.5) : REACH * 0.8) ? [p[0], p[1]] : null;
+        const at = u.v.at;
+        if (!at) return [p[0], p[1]];
+        return Math.hypot(p[0] - at[0], p[1] - at[1]) > (j.kind === 'follow' ? (j.distance ?? 2.5) : REACH * 0.8) ? [p[0], p[1]] : null;
       }
     }
+  }
+
+  /** a target still in play: a living unit, or an actor alive */
+  private alive(t: UnitId | string): boolean {
+    if (typeof t === 'string') return !!this.actors.find((x) => x.id === t)?.alive();
+    return !!this.recs.get(t)?.v.alive;
   }
 
   private posOf(t: UnitId | string): V3 | null {
@@ -602,7 +671,12 @@ export class AgentUnits implements Units {
 
   /** take a goal field for `at` (shared by key), or null when all are held elsewhere */
   private holdGoal(u: UnitRec, at: V2): number | null {
-    const key = `${Math.round(at[0] / 2)},${Math.round(at[1] / 2)}`;
+    const key = goalKey(at);
+    // (round 128p: a new goal — its arrival told afresh)
+    if (u.goal !== key && u.arrived !== undefined) {
+      u.arrived = undefined;
+      this.agents.rearm(u.gpu);
+    }
     if (u.goal) {
       const i = this.goals.findIndex((g) => g?.key === u.goal);
       if (i >= 0 && u.goal === key) return i;
@@ -665,6 +739,9 @@ export class AgentUnits implements Units {
 
   private absorb(units: AgentState[], events: AgentEvent[]): void {
     let n = 0;
+    // (round 128p, DA-B22 (c)(4): where a unit stands is known only for the observed read now — the rest not read: null,
+    // never what it was; the dead keep where they fell)
+    for (const u of this.recs.values()) if (u.v.alive) u.v.at = null;
     for (const s of units) {
       const id = this.byGpu.get(s.id);
       if (id === undefined) continue;
@@ -674,8 +751,6 @@ export class AgentUnits implements Units {
       u.v.health = s.hp / HPK;
       u.seenState = s.state;
       // (round 128p: whom it's after — the GPU's choice, agents/notice.ts)
-      u.target = this.targetOf(s.target);
-      u.hunted = s.hunted;
       if (s.state === 'swing') u.v.state = 'swing';
       else if (s.state === 'tumble') u.v.state = 'hurt';
       else if (s.state === 'chase') u.v.state = 'chase';
@@ -691,13 +766,16 @@ export class AgentUnits implements Units {
         if (!a || t === undefined) continue;
         if (typeof t === 'string') {
           const actor = this.actors.find((x) => x.id === t);
-          if (actor && actor.alive()) actor.hurt(a.damage, this.view(a));
+          // (where it swung from: the swing's event)
+          if (actor && actor.alive()) actor.hurt(a.damage, { ...this.view(a), at: [e.x, e.y, e.z] });
         } else this.hit(t, a.damage, a.v.id);
       } else if (e.type === 'hurt') {
         const id = this.byGpu.get(e.id);
         const u = id !== undefined ? this.recs.get(id) : undefined;
         if (!u) continue;
         const by = typeof e.hit === 'number' ? (this.hitBy.get(e.hit) ?? null) : null;
+        // (round 128p: its health followed by its hurts — an unobserved unit's record isn't read)
+        u.v.health = Math.max(0, u.v.health - e.damage / HPK);
         for (const f of this.hurt) f(this.view(u), e.damage / HPK, by);
         // (struck by someone: a guard or a worker on guard turns on it — given it on the GPU, round 128p)
         if (by !== null && !u.v.hostile && u.target === null && typeof by === 'number' && this.recs.get(by)?.v.hostile) {
@@ -712,6 +790,8 @@ export class AgentUnits implements Units {
         u.v.alive = false;
         u.v.state = 'dead';
         u.v.health = 0;
+        // (round 128p: where it fell, from its death event)
+        u.v.at = [e.x, e.y, e.z];
         this.byGpu.delete(e.id);
         this.fallen.set(e.id, u.v.id);
         if (u.v.job.kind === 'work') this.routine?.drop(u);
@@ -734,17 +814,34 @@ export class AgentUnits implements Units {
         this.byGpu.set(e.id, u.v.id);
         for (const f of this.raised) f(this.view(u), e.group);
       } else if (e.type === 'noticed') {
-        // (round 128p: a hostile took a new target, on the GPU)
+        // (round 128p: a unit took a target, or let one go (0), on the GPU — whom each is after followed by these, not
+        // read from every unit; the game's `noticed` told of a hostile's new one)
         const id = this.byGpu.get(e.id);
         const u = id !== undefined ? this.recs.get(id) : undefined;
+        if (!u) continue;
         const t = this.targetOf(e.target);
-        if (u && t !== null) for (const f of this.noticed) f(this.view(u), t);
+        u.target = t;
+        if (t !== null && u.v.hostile) for (const f of this.noticed) f(this.view(u), t);
+      } else if (e.type === 'side') {
+        // (round 128p: its side of the wall, told when it changes)
+        const id = this.byGpu.get(e.id);
+        const u = id !== undefined ? this.recs.get(id) : undefined;
+        if (u) u.side = e.side;
       } else if (e.type === 'decayed') this.fallen.delete(e.id);
       else if (e.type === 'arrived') {
-        // (round 128o, DA-A6) a working unit's arrival: its routine's
         const id = this.byGpu.get(e.id);
         const u = id !== undefined ? this.recs.get(id) : undefined;
-        if (!u || !u.v.alive || u.v.job.kind !== 'work' || !this.routine?.arrived) continue;
+        if (!u || !u.v.alive) continue;
+        // (round 128p, DA-B22 (c)(4): at its goal — a post, a place, a patrol's point: its job stands it there)
+        const gi = e.field !== undefined ? e.field - F.goal0 : -1;
+        if (gi >= 0 && gi < GOALS) {
+          if (u.goal !== null && this.goals[gi]?.key === u.goal) {
+            u.arrived = u.goal;
+          }
+          continue;
+        }
+        // (round 128o, DA-A6) a working unit's arrival: its routine's
+        if (u.v.job.kind !== 'work' || !this.routine?.arrived) continue;
         this.routine.arrived(u, { field: e.field, ride: e.ride, at: [e.x, e.y, e.z] });
       }
     }
@@ -766,13 +863,23 @@ export class AgentUnits implements Units {
     this.agents.notice.setActors(this.actorsSent.map((a) => ({ at: a.alive() ? a.position() : null, faction: a.faction !== null ? (this.factionNo.get(a.faction) ?? NO_FACTION) : NO_FACTION })));
     const hostiles = live.filter((u) => u.v.hostile);
     const d2 = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+    // (round 128p, DA-B22 (c)(4): what this layer still does on the CPU reads the few it does it to — a defender's
+    // strike (it and its target, till strikes are the GPU's: BACKLOG DA-B32), fleeing, following and attacking by
+    // order (it and whom): observed, read from the next sync)
+    this.auto.clear();
+    for (const u of live) {
+      const j = u.v.job;
+      const t = !u.v.hostile && u.target !== null ? u.target : j.kind === 'follow' || j.kind === 'attack' ? j.target : null;
+      if (t !== null || j.kind === 'flee') this.auto.add(u.v.id);
+      if (typeof t === 'number') this.auto.add(t);
+    }
     // hostiles: hunt what the GPU gave them; else their work, wandering
     let hunting = 0;
     for (const h of hostiles) {
       if (h.v.job.kind === 'attack') {
-        if (!this.posOf(h.v.job.target)) h.v.job = { kind: 'idle' };
+        if (!this.alive(h.v.job.target)) h.v.job = { kind: 'idle' };
       }
-      if (h.target !== null && !this.posOf(h.target)) h.target = null;
+      if (h.target !== null && !this.alive(h.target)) h.target = null;
       if (h.target !== null) {
         this.releaseGoal(h);
         this.regroup(h, G.hunt);
@@ -782,25 +889,29 @@ export class AgentUnits implements Units {
       else if (h.group === G.stand || h.group === G.wander || (h.group >= G.goal0 && h.group < G.goal0 + GOALS)) this.assign(h);
     }
     this.stats.hunting = hunting;
-    // the hunted: the nearest TARGETS to their hunters — the hunters' targets and whoever they may fight within their
-    // sight, as the GPU marked them (u.hunted, agents/notice.ts); an actor hunted, by its hunter's distance
+    // the hunted: the nearest TARGETS to their hunters — the actors hunted first, then the units the GPU ranked
+    // (the hunters' targets and whoever they may fight within their sight, nearest first: notice.wgsl huntTop) with
+    // where they stood as it ranked them, read in the sync — no unit's position read for it
     const hunters = hostiles.filter((h) => h.target !== null);
-    const cand = new Map<UnitId | string, number>();
-    for (const u of live) if (u.hunted !== undefined && u.hunted < Infinity && hunters.length) cand.set(u.v.id, u.hunted);
-    for (const h of hunters) {
-      const t = h.target!;
-      if (typeof t !== 'string') continue;
-      const p = this.posOf(t);
-      if (p) cand.set(t, Math.min(cand.get(t) ?? Infinity, d2(p, h.v.at)));
+    const chosen: (UnitId | string)[] = [];
+    const targets: Target[] = [];
+    if (hunters.length) {
+      for (const t of new Set(hunters.flatMap((h) => (h.target === null ? [] : [h.target])))) {
+        if (typeof t !== 'string' || chosen.length >= TARGETS) continue;
+        const p = this.posOf(t);
+        if (!p) continue;
+        chosen.push(t);
+        targets.push({ x: p[0], y: p[1], z: p[2], radius: 0.4, height: 1.1 });
+      }
+      for (const c of this.hunt) {
+        const id = this.byGpu.get(c.id);
+        if (id === undefined || chosen.length >= TARGETS) continue;
+        chosen.push(id);
+        targets.push({ x: c.x, y: c.y, z: c.z, radius: 0.4, height: 1.1 });
+      }
     }
-    const chosen = [...cand.entries()].sort((a, b) => a[1] - b[1]).slice(0, TARGETS).map((e) => e[0]);
     this.targetsPrev = this.targetsNow;
     this.targetsNow = chosen;
-    const targets: Target[] = [];
-    for (const t of chosen) {
-      const p = this.posOf(t)!;
-      targets.push({ x: p[0], y: p[1], z: p[2], radius: 0.4, height: 1.1 });
-    }
     this.agents.setTargets(targets, hunters.length ? F.targets : -1);
     if (!hunters.length) this.agents.seed(F.targets, []);
     // defenders: guards with a hostile in sight, units ordered to attack, anyone struck — their targets the GPU's: close
@@ -811,7 +922,7 @@ export class AgentUnits implements Units {
       const j = u.v.job;
       // (an order to attack: given on the GPU until it holds, and kept there while the rules allow)
       if (j.kind === 'attack') {
-        if (!this.posOf(j.target)) {
+        if (!this.alive(j.target)) {
           u.v.job = { kind: 'idle' };
           u.target = null;
           this.assign(u);
@@ -827,28 +938,31 @@ export class AgentUnits implements Units {
         if (u.group === G.foes || u.group === G.strike) this.assign(u);
         continue;
       }
-      const p = this.posOf(u.target);
-      if (!p) {
+      if (!this.alive(u.target)) {
         u.target = null;
         this.assign(u);
         continue;
       }
+      // (it and its target observed — read from the sync after it took the target)
+      const p = this.posOf(u.target);
+      const me = u.v.at;
       u.cool -= dt;
-      const d = d2(p, u.v.at);
+      if (!p || !me) continue;
+      const d = d2(p, me);
       if (d < REACH) {
         this.regroup(u, G.strike);
         u.v.state = 'swing';
         if (u.cool <= 0) {
           u.cool = STRIKE;
-          const dx = p[0] - u.v.at[0];
-          const dy = p[1] - u.v.at[1];
+          const dx = p[0] - me[0];
+          const dy = p[1] - me[1];
           if (typeof u.target === 'number') {
             const t = this.recs.get(u.target)!;
             const hid = this.agents.hit({ x: p[0], y: p[1], z: p[2] + 0.5, radius: 0.5, damage: u.damage * HPK, push: 4, dir: [dx, dy], groups: [t.group] });
             this.hitBy.set(hid, u.v.id);
           } else {
             const a = this.actors.find((x) => x.id === u.target);
-            a?.hurt(u.damage, this.view(u));
+            a?.hurt(u.damage, { ...this.view(u), at: me });
           }
         }
       } else {

@@ -24,6 +24,8 @@ struct P {
   f: vec4<f32>,
   pl: vec4<i32>,
   pz: vec4<f32>,
+  /** (season life) the wagons' and the ships' ends (after the builders'), 0, 0 */
+  x: vec4<u32>,
 };
 
 @group(0) @binding(40) var<storage, read_write> LT: array<atomic<u32>>;

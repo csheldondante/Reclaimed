@@ -32,15 +32,20 @@ export default async function (lab, args) {
   // (round 128o: one standing apart — riders on the same trip are placed at the same spots along it, drawn one over the
   // other, and a tap there picks either: a known bug, BACKLOG DA-A12 — lanes, queueing and passing on the roads, the
   // rest of DA-A7. This scenario checks Follow, not that)
+  // (round 128p, U1: where everyone stands asked of the GPU once — Units.query; a unit's place isn't read unless observed)
+  const findAll = async () => new Map((await units.query([lab.dims.w / 2, lab.dims.h / 2], Math.hypot(lab.dims.w, lab.dims.h))).map((v) => [v.id, v.at]));
+  let where = await findAll();
   const apart = (p) => {
-    const a = units.get(p).at;
-    return life.everyone().every((q) => q === p || Math.hypot(units.get(q).at[0] - a[0], units.get(q).at[1] - a[1]) > 1.5);
+    const a = where.get(p);
+    return !!a && life.everyone().every((q) => q === p || !where.get(q) || Math.hypot(where.get(q)[0] - a[0], where.get(q)[1] - a[1]) > 1.5);
   };
   const id = life.people().find((p) => /^s/.test(life.board.jobOf(p) ?? '') && apart(p)) ?? life.people().find(apart) ?? life.people()[0];
-  const u0 = units.get(id);
-  lab.look(u0.at[0], u0.at[1], 16);
+  const a0 = where.get(id);
+  lab.look(a0[0], a0[1], 16);
   await lab.run(0.05, 1);
-  const [sx, sy] = lab.project(u0.at[0], u0.at[1], u0.at[2] + 0.7);
+  where = await findAll();
+  const at0 = where.get(id);
+  const [sx, sy] = lab.project(at0[0], at0[1], at0[2] + 0.7);
   await lab.tap(sx, sy);
   const fol = lab.follow();
   if (fol.selected !== id) throw new Error(`the tap at (${sx.toFixed(0)}, ${sy.toFixed(0)}) didn't pick person ${id}: ${fol.selected}`);
@@ -55,8 +60,10 @@ export default async function (lab, args) {
   let i = 0;
   for (let t = 0; t < seconds; t += step) {
     await lab.run(step, 4);
+    // (the person followed is observed by the game while picked — scenes/level/fortress.ts followFrame)
     const u = units.get(id);
     if (!u?.alive) throw new Error('the person followed is gone');
+    if (!u.at) throw new Error('the person followed is not observed: its place is not read');
     const [px, py] = lab.project(u.at[0], u.at[1], u.at[2] + 0.7);
     samples++;
     if (px >= 0 && py >= 0 && px <= W && py <= H) onScreen++;

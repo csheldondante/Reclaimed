@@ -17,7 +17,7 @@
 // and the sandbox keep what they had); the atlas level, the legacy game's play, sets the round 108 defaults
 // (playDefaults: all baked). ?tiers=live | baked | rain,wind,veg (those live, the rest baked) overrides a scene's.
 
-import type { BakeOpts, BakeReport, LiveHandle, SimTiers, Tier, TierRect, TieredProcess } from '../api/contracts/simtiers';
+import type { BakeOpts, BakeReport, LiveHandle, Showcase, ShowOpts, ShowStep, SimTiers, Tier, TierRect, TieredProcess } from '../api/contracts/simtiers';
 import { TIERED_PROCESSES } from '../api/contracts/simtiers';
 import { CHUNK } from '../world/layout';
 import { ROW_H } from '../world/lattice';
@@ -85,6 +85,8 @@ export interface TierHost {
   awake(k: number): boolean;
   /** the rates into the GPU (world-gpu tierTex: rgba32float, chunks across × down) */
   write(data: Float32Array): void;
+  /** (round 128r) the world's one-tick events waiting for a tick (Globals.events): a showcase's ticks drain them */
+  queued?(): number;
 }
 
 export class Tiers implements SimTiers {
@@ -239,13 +241,44 @@ export class Tiers implements SimTiers {
     }
   }
 
+  private show: Show | null = null;
+
+  showcase(steps: readonly ShowStep[], opts: ShowOpts): Showcase {
+    if (this.show?.playing) throw new Error('tiers.showcase: one is playing (skip it first)');
+    if (!(opts.seconds > 0)) throw new Error(`tiers.showcase: ${opts.seconds} s`);
+    for (const st of steps) if (!(st.at >= 0 && st.at <= 1)) throw new Error(`tiers.showcase: a step at ${st.at} (0..1)`);
+    const s = new Show([...steps].map((x, i) => [x, i] as const).sort((a, b) => a[0].at - b[0].at || a[1] - b[1]).map(([x]) => x), opts);
+    this.show = s;
+    return s;
+  }
+
+  /** the showcase playing, if one is */
+  get showing(): Showcase | null {
+    return this.show?.playing ? this.show : null;
+  }
+
   /**
    * (the scheduler: WorldCore.advance, after the frame's own ticks) a running bake's ticks for this frame, `step`
    * one tick of the whole sim. Returns the ticks run.
    */
-  pump(step: () => void): number {
+  pump(step: () => void, ticked = 1): number {
+    // (round 128r: a showcase's steps due by now; a tick on a frame that ran none, so what they queued lands)
+    // (what a showcase's steps queue — the world's one-tick events: a grow, an edit — is ticked on the frame after, once
+    // the frame's sleep has seen them and woken their chunks (sim/sleep.ts update, before the frame's ticks): a tick in
+    // the same frame would run the edit pass over chunks still asleep there. A tick on each frame that runs none while
+    // events wait — a tick carries MAX_EVENTS, and a skip queues all its steps' at once — until the queue is empty.)
+    let shown = 0;
+    const sh = this.show;
+    if (sh && (sh.playing || sh.draining)) {
+      if ((this.host.queued?.() ?? 0) > 0 && ticked === 0) {
+        step();
+        shown = 1;
+      }
+      if (sh.playing) sh.advance(performance.now());
+      sh.draining = sh.playing || (this.host.queued?.() ?? 0) > 0;
+    }
     const b = this.bakes[0];
-    if (!b) return 0;
+    if (!b) return shown;
     // (its chunks kept awake for it: the passes skip sleeping ones — sim/cull.ts; the sleep mask is made before the
     // frame's ticks, so a bake starts the frame after its first wake)
     this.wakeRegion(b.region);
@@ -262,7 +295,7 @@ export class Tiers implements SimTiers {
       this.apply();
       b.done({ seconds: b.seconds, ticks: b.ticks, gain: b.gain, ms: performance.now() - b.t0 });
     }
-    return n;
+    return n + shown;
   }
 
   private wakeRegion(r: Region): void {
@@ -272,5 +305,61 @@ export class Tiers implements SimTiers {
     const y0 = (r.wy0 - oy) * ROW_H;
     const y1 = (r.wy1 - oy) * ROW_H;
     this.host.wake((x0 + x1) / 2, (y0 + y1) / 2, Math.hypot(x1 - x0, y1 - y0) / 2, 5);
+  }
+}
+
+/** (round 128r) a showcase playing (Tiers.showcase): its steps by fraction, applied as its clock passes them */
+class Show implements Showcase {
+  private next = 0;
+  private t0 = -1;
+  private t = 0;
+  private resolve!: () => void;
+  readonly done: Promise<void>;
+  playing = true;
+  /** ended, the world's events its steps queued still waiting for ticks (Tiers.pump) */
+  draining = true;
+
+  constructor(
+    private steps: ShowStep[],
+    private opts: ShowOpts,
+  ) {
+    this.done = new Promise((r) => (this.resolve = r));
+  }
+
+  get progress(): number {
+    return this.t;
+  }
+
+  /** the steps due at wall time `now` (ms) applied; true if any was */
+  advance(now: number): boolean {
+    if (this.t0 < 0) this.t0 = now;
+    this.t = Math.min(1, (now - this.t0) / 1000 / this.opts.seconds);
+    const any = this.applyTo(this.t);
+    this.opts.frame?.(this.t);
+    if (this.t >= 1) this.finish();
+    return any;
+  }
+
+  skip(): void {
+    if (!this.playing) return;
+    this.t = 1;
+    this.applyTo(1);
+    this.finish();
+  }
+
+  private applyTo(t: number): boolean {
+    let any = false;
+    while (this.next < this.steps.length && this.steps[this.next].at <= t) {
+      this.steps[this.next++].apply();
+      any = true;
+    }
+    return any;
+  }
+
+  private finish(): void {
+    if (!this.playing) return;
+    this.playing = false;
+    this.opts.frame?.(1);
+    this.resolve();
   }
 }

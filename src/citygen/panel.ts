@@ -42,7 +42,7 @@ export function mountTownPanel(ui: HTMLElement, towns: CityDistricts, params: UR
     claims.appendChild(
       btn(`+ ${kind}`, () => {
         status.textContent = `claiming ${kind}…`;
-        void towns.claimDistrict(kind).then((id) => (status.textContent = id >= 0 ? `${kind}: district ${id} building` : `${kind}: no district left`));
+        void towns.claimDistrict(kind).then((c) => (status.textContent = c.id >= 0 ? `${kind}: district ${c.id} building, ${c.left} left` : `${kind}: no district left`));
       }),
     );
   el.append(title, tl, speedRow, claims, status);

@@ -3590,3 +3590,63 @@ world should show what needs clearing and how.
   again; roads shown as their district starts.
 - (via the coordinator) Opportunities claim districts: a GPU argmax by purpose, one word read back, the district's
   clock started. A game town starts with its core built; the rest grows by claims.
+
+## 2026-11-10 — the season loop: the open questions of DESIGN_18_21_DRAFT answered (trackA-opps)
+
+The user, verbatim:
+1. "Sim runs in realtime while you make your opportunity selections so players can enjoy looking at the current active
+   state. The next season happens when you hit a button and all allocated opportunities progress. The building stages
+   depend on the number of seasons required so they may take a variable number of seasons to complete and should show
+   intermediate states (that can use the shader for now)."
+2. Use the six pools: Magic, Might, Labor, Resources, Intel, Unrest (DECISIONS 128r). Retire the card lab's
+   labor/influence/power set from this loop; don't run two resource models.
+3. Raids stay out of this test. Don't touch the parallel raid loop; DA-L4 deletes it later.
+
+How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
+- *Does the player always tap Next season?* Yes: a season ends only on the button. The sim runs live meanwhile.
+- *How many stages does a building have?* As many as its seasons (1–4, set per card). Each season is one visible stage.
+- *Does a project show its stage count before it's committed?* Yes: each card shows its seasons.
+- *Can the player watch a season in real time instead of the time-lapse?* The live sim is what they watch between
+  seasons; the season's change itself plays as the time-lapse (Skip jumps to its end, the same world).
+- Earlier: "players just choose opportunities and we place and build for them" (player painting retired here).
+- Design note: `docs/design/SEASON_LOOP.md`.
+
+## 2026-11-10 — the season loop, round 2 (trackA-opps)
+
+- "Your suggestions work for me" (on the three open questions):
+  - **Partial district claims:** a card's district covers part of a district (a share of its lots, in growth order
+    from its centre); the next card of the kind goes on in the same district. The GPU orders the lots; the CPU sends
+    the share.
+  - **"Resources" is shown as "Materials"** in player text (the pool's id is `materials` too; the decision's pool
+    is the same one).
+  - **Balance:** Labor shouldn't run away; both Labor and Materials limit choices, in small counting numbers.
+- (via the coordinator) "Cards take time to play. The resources are assigned and the district builds as the card
+  finishes." Partial claims only mean how much land a card covers; they never split one card's building across cards.
+- (via the coordinator) "That's the design we already have. Opportunities can take resources for a duration." → the
+  season ledger goes through the opportunity contract's `commit` / `resolve`: people locked for the card's duration,
+  goods spent.
+- **The card model in one sentence:** starting a card ties up its people (Labor, Might) and spends its goods
+  (Materials, Magic, Intel) at once, nothing more is paid while it runs its N seasons, its district part shows a stage
+  each season, and when it finishes its people come back and its building is whole.
+- **Proposed pool mapping (the design docs say agents are locked and goods spent, not which pool is which):** Labor
+  and Might locked (people: `workers`, `army` agents); Materials, Magic and Intel spent (goods); Unrest is the town's
+  state — that many free workers on strike. A table (`POOL_ROLE`, season/ledger.ts); each card's `locks` and `costs`
+  are data. For the user to confirm.
+
+## 2026-11-10 — farms back in, as larger plots (trackA-opps)
+
+- The user: "we need to add farms back in. They should be larger plots."
+- (via the coordinator) Farm parcels in citygen's GPU lot pipeline: farm districts and a farm belt just outside the
+  city limit along the arterials get large field plots, long strips of their blocks, one small farmhouse or barn to a
+  few fields, no tall buildings. Crops go through the vegetation field (DESIGN §15: "crops and farms", "the field's
+  crop stage shows it"): a crop kind with a stage the farms card's progress drives (bare → sown → green → ripe), no
+  per-plant storage. Field edges read as hedges and dirt tracks, not streets. The farms card claims farm parcels and
+  grows them stage by stage, like districts.
+
+## 2026-11-10 — saving first (trackA-seasonlife)
+
+- (via the coordinator) The user's priority: saving first — the season and the town, keyed by world position; town
+  changes saved like terrain changes (a per-town edit log laid over the regenerated town); the existing world store;
+  deterministic restore; GPU state read back only at save points.
+- (via the coordinator) Track B accepted the four soldier calls for U2 (SEASON_LOOP.md), on two conditions: a walkable
+  wall-walk, and route ids for marches.

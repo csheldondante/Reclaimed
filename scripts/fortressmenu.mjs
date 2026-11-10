@@ -84,17 +84,20 @@ await run({ name: 'fortressmenu', kind: 'behaviour', size: '412x915', dpr: 1, ec
   await tapButton('Build');
   await sleep(8000);
   const people = () =>
-    page.evaluate(() => {
+    page.evaluate(async () => {
       const Rc = window.reclaimed;
       const life = Rc.fortressCrowd();
       if (!life) return { life: false };
-      const us = life.ids.map((id) => Rc.units.get(id)).filter(Boolean);
+      // (round 128p, U1: where they stand asked of the GPU — a unit's place isn't read unless observed)
+      const where = new Map((await Rc.units.query([0, 0], 1e7)).map((v) => [v.id, v.at]));
+      const us = life.ids.map((id) => Rc.units.get(id)).filter(Boolean).map((u) => ({ ...u, at: where.get(u.id) ?? null }));
       return {
         life: true,
         n: us.length,
         alive: us.filter((u) => u.alive).length,
-        at: us.slice(0, 3).map((u) => u.at.map((v) => Math.round(v))),
+        at: us.slice(0, 3).map((u) => (u.at ? u.at.map((v) => Math.round(v)) : null)),
         onScreen: us.filter((u) => {
+          if (!u.at) return false;
           const [x, y] = Rc.camera.project(u.at[0], u.at[1], u.at[2]);
           return x >= 0 && y >= 0 && x < 412 && y < 915;
         }).length,
@@ -109,12 +112,13 @@ await run({ name: 'fortressmenu', kind: 'behaviour', size: '412x915', dpr: 1, ec
   console.log('after Build', JSON.stringify(p1), JSON.stringify(crew));
   if (OUT) await page.screenshot({ path: `${OUT}/menu-build.png` });
   // a close look at the first of them
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
     const Rc = window.reclaimed;
-    const u = Rc.units.get(Rc.fortressCrowd().ids[0]);
-    if (!u) return;
-    Rc.camera.target[0] = u.at[0];
-    Rc.camera.target[1] = u.at[1] + 4;
+    const id = Rc.fortressCrowd().ids[0];
+    const at = (new Map((await Rc.units.query([0, 0], 1e7)).map((v) => [v.id, v.at]))).get(id);
+    if (!at) return;
+    Rc.camera.target[0] = at[0];
+    Rc.camera.target[1] = at[1] + 4;
     Rc.camera.zoom = 16;
   });
   await sleep(2500);
@@ -181,21 +185,23 @@ await run({ name: 'fortressmenu', kind: 'behaviour', size: '412x915', dpr: 1, ec
     const life = Rc.fortressCrowd();
     for (let k = 0; k < 60; k++) {
       const h = Rc.settlements.spotsOf(Rc.settlements.pinnedId).find((s) => s.kind === 'pile').w;
-      const u = life.ids.map((id) => Rc.units.get(id)).find((u) => u && Math.hypot(u.at[0] - h[0], u.at[1] - h[1]) > 14);
-      if (u) {
-        Rc.camera.target[0] = u.at[0];
-        Rc.camera.target[1] = u.at[1] + 3;
+      const where = new Map((await Rc.units.query([0, 0], 1e7)).map((v) => [v.id, v.at]));
+      const at = life.ids.map((id) => where.get(id)).find((p) => p && Math.hypot(p[0] - h[0], p[1] - h[1]) > 14);
+      if (at) {
+        Rc.camera.target[0] = at[0];
+        Rc.camera.target[1] = at[1] + 3;
         Rc.camera.zoom = 20;
-        return u.at.map(Math.round);
+        return at.map(Math.round);
       }
       await new Promise((r) => setTimeout(r, 500));
     }
     return null;
   });
   await sleep(600);
-  console.log('out in the open', JSON.stringify(out), JSON.stringify(await page.evaluate(() => {
+  console.log('out in the open', JSON.stringify(out), JSON.stringify(await page.evaluate(async () => {
     const Rc = window.reclaimed;
-    return Rc.fortressCrowd().ids.map((id) => Rc.units.get(id)).map((u) => Rc.camera.project(u.at[0], u.at[1], u.at[2]).map(Math.round).join(','));
+    const where = new Map((await Rc.units.query([0, 0], 1e7)).map((v) => [v.id, v.at]));
+    return Rc.fortressCrowd().ids.map((id) => where.get(id)).map((p) => (p ? Rc.camera.project(p[0], p[1], p[2]).map(Math.round).join(',') : '-'));
   })));
   if (OUT) await page.screenshot({ path: `${OUT}/menu-builder-open.png` });
   R.check("Inspect shows the old town's buildings", townCards.some((c) => c.length > 1 && /before your fortress/.test(c.join(' '))), JSON.stringify(townCards));

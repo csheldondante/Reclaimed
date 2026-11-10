@@ -47,7 +47,7 @@ export default async function (lab, args) {
     shut ||= s.gatesShut;
     bashed ||= s.raiders.some((r) => r.phase === 'bash');
     maxBlows = s.stats.blows;
-    const line = { t: Math.round(s.t), stage: s.stage, shut: s.gatesShut, goal: s.goal, phases: s.raiders.map((r) => `${r.phase}${r.at ? '' : '+'}${r.to ? 'w' : ''}`).join(','), hp: s.hp, stats: s.stats, def: { shots: s.defence.shots, hits: s.defence.hits, posts: s.defence.posted.map((p) => `${p.role[0]}${p.up ? '^' : ''}`).join('') }, stores: lab.snapshot().stores };
+    const line = { t: Math.round(s.t), stage: s.stage, shut: s.gatesShut, goal: s.goal, phases: s.raiders.map((r) => `${r.phase}${r.at ? '' : '+'}${r.to ? 'w' : ''}`).join(','), hp: s.hp, stats: s.stats, def: { shots: s.defence.shots, hits: s.defence.hits, posts: s.defence.posted.map((p) => `${p.role[0]}${p.up ? '^' : ''}`).join('') }, stores: (await lab.snapshot()).stores };
     console.log(JSON.stringify(line));
     log.push(line);
     if (args.shots && t % args.shots === 0) {

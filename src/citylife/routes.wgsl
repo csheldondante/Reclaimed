@@ -34,6 +34,8 @@ struct P {
   pl: vec4<i32>,
   /** z: world → window (add), unused, lateral spread (m), (tests only) a rider forced overridden: its index + 1 */
   pz: vec4<f32>,
+  /** (season life) the wagons' and the ships' ends (after the builders'), 0, 0 */
+  x: vec4<u32>,
 };
 @group(0) @binding(0) var<uniform> u: P;
 
@@ -47,6 +49,8 @@ const F_DEBUG: u32 = 16u;
 const ROW_H: f32 = 0.8660254;
 const NONE: u32 = 0xffffffffu;
 const DECK_BIT: u32 = 0x80000000u;
+/** (season life) a town wall's column in citygen's road raster (streets.wgsl WALL_MARK) */
+const WALL_MARK: u32 = 0x40000000u;
 
 /** hubs */
 const HUBS: u32 = 8u;
@@ -74,7 +78,15 @@ const W_LOTGROUND: u32 = 0x80000u;
 /** FIELD's planes past the hubs: the open ground's distance to the network, the cut-off components' labels */
 const P_OPEN: u32 = 8u;
 const P_LAB: u32 = 9u;
-const PLANES: u32 = 10u;
+/** (season life) the sea field: the water's distance from the harbour's quays (ships) */
+const P_SEA: u32 = 10u;
+const PLANES: u32 = 11u;
+const P_HARBOUR: u32 = 2u;
+/** (season life) ships: the water this near a harbour lot is its quay (columns); a hull's height over the ground under
+ *  the water; moored within this of a quay (the sea field's 1/16 units) */
+const QUAY_R: i32 = 6;
+const SHIP_DRAFT: f32 = 1.2;
+const MOOR: u32 = 48u;
 
 /** citygen streets.wgsl: a record's words, kinds, the district purposes */
 const RECW: u32 = 24u;
@@ -346,6 +358,12 @@ fn walkInit(@builtin(global_invocation_id) g: vec3<u32>) {
   if (i >= N()) { return; }
   let m = ROADS[i];
   var w = 0u;
+  // (season life: a town wall's column — citygen streets.wgsl WALL_MARK — blocked: routes go out through the gates)
+  if (m == WALL_MARK) {
+    atomicStore(&WALK[i], W_BLOCK);
+    for (var h = 0u; h < PLANES; h++) { FIELD[h * N() + i] = NONE; }
+    return;
+  }
   if (m != 0u) { w = select(W_ROAD, W_DECK, (m & DECK_BIT) != 0u); }
   // (a passage laid by an earlier round stays: walked as a track)
   if ((atomicLoad(&WALK[i]) & W_PASS) != 0u) { w = select(w, W_TRACK, w == 0u) | W_PASS; }
@@ -1068,6 +1086,9 @@ const J_WOOD: u32 = 4u;
 const J_LOGS: u32 = 5u;
 const J_BUILDER: u32 = 6u;
 const J_NONE: u32 = 7u;
+/** (season life) a trade route's wagons (a gate → a shop → back out) and ships (the box's edge → the quay → out) */
+const J_WAGON: u32 = 8u;
+const J_SHIP: u32 = 9u;
 
 const LEG_NONE: u32 = 0u;
 const LEG_FWD: u32 = 1u;
@@ -1121,6 +1142,8 @@ fn jobOf(i: u32) -> u32 {
   if (i < u.j1.x) { return J_WOOD; }
   if (i < u.j1.y) { return J_LOGS; }
   if (i < u.j1.z) { return J_BUILDER; }
+  if (i < u.x.x) { return J_WAGON; }
+  if (i < u.x.y) { return J_SHIP; }
   return J_NONE;
 }
 
@@ -1251,6 +1274,8 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
     r.leg = LEG_NONE;
   }
   if (r.job == J_NONE || r.home == NONE || (u.m.z & F_ON) == 0u) { saveRider(i, r); return; }
+  // (a ship is the ships kernel's: on the water, not the roads)
+  if (r.job == J_SHIP) { saveRider(i, r); return; }
   let walk = u.r.y * (0.85 + 0.3 * rnd(i, 9u));
   let cart = u.r.z;
   let homeCol = doorCol(r.home);
@@ -1263,7 +1288,7 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
     r.st = S_REST;
   }
   if (r.leg != LEG_NONE) {
-    let sp = select(walk, cart, r.job == J_STONE || r.job == J_LOGS);
+    let sp = select(walk, cart, r.job == J_STONE || r.job == J_LOGS || r.job == J_WAGON);
     if (!advance(i, &r, sp)) { bump(C_RIDING, 1u); saveRider(i, r); return; }
     bump(C_ARRIVALS, 1u);
   }
@@ -1435,6 +1460,21 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
         r.st = S_REST; r.timer = 2.0 + rnd(i, 40u) * 4.0;
       }
     }
+    case J_WAGON: {
+      // (season life: a trade route's wagon — away (S_REST, not drawn), in through a gate along the roads to its shop
+      // (its home lot's door: the gate nearest it, the GATES field ridden backwards), unloading, out the same way)
+      if (r.st == S_REST) {
+        r.timer -= dt;
+        if (r.timer <= 0.0 && startRoute(&r, homeCol, H_GATES, LEG_BACK)) { r.st = S_HAUL; r.load = 1.0; }
+      } else if (r.st == S_HAUL) {
+        r.st = S_DROP; r.timer = u.r.w * (0.6 + rnd(i, 41u) * 0.6); bump(C_PRODUCE, 1u);
+      } else if (r.st == S_DROP) {
+        r.timer -= dt;
+        if (r.timer <= 0.0 && startRid(&r, r.route, LEG_FWD)) { r.st = S_GO; r.load = 0.0; }
+      } else if (r.st == S_GO) {
+        r.st = S_REST; r.timer = 20.0 + rnd(i, u.n.w / 600u + 42u) * 40.0;
+      }
+    }
     default: {}
   }
   saveRider(i, r);
@@ -1499,11 +1539,15 @@ fn figures(@builtin(global_invocation_id) g: vec3<u32>) {
   if (i >= u.n.z || (u.m.z & F_ON) == 0u) { return; }
   let r = loadRider(i);
   if (r.job == J_NONE || r.st == S_INIT || r.home == NONE) { return; }
-  // (at rest at home: inside)
-  if (r.st == S_REST && r.leg == LEG_NONE && (r.job == J_COMMUTER || r.job == J_FARMER || r.job == J_QUARRY || r.job == J_WOOD)) { return; }
+  // (at rest at home: inside; a wagon or a ship away: off the map)
+  if (r.st == S_REST && r.leg == LEG_NONE && (r.job == J_COMMUTER || r.job == J_FARMER || r.job == J_QUARRY || r.job == J_WOOD || r.job == J_WAGON || r.job == J_SHIP)) { return; }
   let wp = vec3<f32>(r.pos.xy + vec2<f32>(f32(u.pl.x), f32(u.pl.y) * ROW_H), r.pos.z + u.pz.x);
   if (wp.x < 1.0 || wp.y < 1.0 || wp.x > f32(u.pl.z) - 1.0 || wp.y > f32(u.pl.w) * ROW_H - 1.0) { return; }
   let h = r.heading;
+  if (r.job == J_SHIP) {
+    shipVox(wp, h, i);
+    return;
+  }
   let fw = vec2<f32>(cos(h), sin(h));
   let sd = vec2<f32>(-fw.y, fw.x);
   let moving = r.leg != LEG_NONE;
@@ -1514,13 +1558,13 @@ fn figures(@builtin(global_invocation_id) g: vec3<u32>) {
   vox(wp + vec3<f32>(-fw * sw - sd * 0.11, 0.19), M_BASALT, 6u, h);
   vox(wp + vec3<f32>(0.0, 0.0, 0.66 - bob * 0.5), torsoOf(r.job), 9u, h);
   vox(wp + vec3<f32>(fw * bob, 1.13 - bob), M_FLESH, 6u, h);
-  let cartJob = r.job == J_STONE || r.job == J_LOGS;
+  let cartJob = r.job == J_STONE || r.job == J_LOGS || r.job == J_WAGON;
   if (cartJob) {
     // (a cart pushed ahead: its bed, and the load on it)
     vox(wp + vec3<f32>(fw * 0.9, 0.35), M_WOOD, 10u, h);
     vox(wp + vec3<f32>(fw * 1.45, 0.35), M_WOOD, 10u, h);
     if (r.load > 0.0) {
-      let lm = select(M_LOG, M_RUBBLE, r.job == J_STONE);
+      let lm = select(select(M_LOG, M_RUBBLE, r.job == J_STONE), M_CANVAS, r.job == J_WAGON);
       vox(wp + vec3<f32>(fw * 0.9, 0.8), lm, 9u, h);
       vox(wp + vec3<f32>(fw * 1.45, 0.8), lm, 9u, h);
     }
@@ -1602,4 +1646,151 @@ fn passMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     pv(at + k * 3u + 1u, vec3<f32>(c + vec2<f32>(cos(a0), sin(a0)) * 0.62, z));
     pv(at + k * 3u + 2u, vec3<f32>(c + vec2<f32>(cos(a1), sin(a1)) * 0.62, z));
   }
+}
+
+// ---- season life: ships on the water (docs/design/SEASON_LOOP.md "Season life" 3) ----
+// A distance field over the box's open water (P_SEA: 1/16 unit a step) from the water beside the harbour district's
+// built lots, relaxed in place a few sweeps a frame (it settles in a second or two; the graph's rebuild clears it and
+// it's seeded again). A ship is a rider (J_SHIP) moved here, not by `riders` (whose eight storage buffers are taken):
+// away (S_REST, not drawn) for a while, then in at the box's edge where the field reaches, down the field a column at
+// a time to the quay (S_HAUL), moored (S_DROP), and out up the field to the edge (S_GO), away again.
+/** (a thread a record, every 30 frames) the harbour's quays: the water within reach of each built harbour lot */
+@compute @workgroup_size(64)
+fn seaSeed(@builtin(global_invocation_id) g: vec3<u32>) {
+  let r = g.x;
+  if (r >= lotCount() || u.x.y <= u.x.x) { return; }
+  if (lotKind(r) != REC_BUILDING || !built(r) || (REC[r * RECW + 18u] >> 24u) != P_HARBOUR) { return; }
+  let c0 = cat(lotMid(r));
+  for (var dy = -QUAY_R; dy <= QUAY_R; dy++) {
+    for (var dx = -QUAY_R; dx <= QUAY_R; dx++) {
+      let c = c0 + vec2<i32>(dx, dy);
+      if (!inBox(c) || WET[ix(c)] == 0u) { continue; }
+      FIELD[P_SEA * N() + ix(c)] = 0u;
+    }
+  }
+}
+/** (a thread a column, a few times a frame while there are ships) the sea field relaxed one step (in place) */
+@compute @workgroup_size(64)
+fn seaRelax(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= N() || u.x.y <= u.x.x || WET[i] == 0u) { return; }
+  let c = cxy(i);
+  var best = FIELD[P_SEA * N() + i];
+  for (var k = 0u; k < 6u; k++) {
+    let q = nbr(c, k);
+    if (!inBox(q) || WET[ix(q)] == 0u) { continue; }
+    let f = FIELD[P_SEA * N() + ix(q)];
+    if (f != NONE && f + 16u < best) { best = f + 16u; }
+  }
+  FIELD[P_SEA * N() + i] = best;
+}
+fn seaAt(c: vec2<i32>) -> u32 {
+  if (!inBox(c) || WET[ix(c)] == 0u) { return NONE; }
+  return FIELD[P_SEA * N() + ix(c)];
+}
+/** (a thread a ship) one step */
+@compute @workgroup_size(64)
+fn ships(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = u.x.x + g.x;
+  if (i >= u.x.y || i >= u.n.z || (u.m.z & F_ON) == 0u) { return; }
+  var r = loadRider(i);
+  if (r.job != J_SHIP) { return; }
+  let dt = u.t.x;
+  let speed = u.r.z * 1.6;
+  if (r.st == S_INIT || r.st == S_REST) {
+    r.st = S_REST;
+    r.leg = LEG_NONE;
+    r.timer -= dt;
+    if (r.timer <= 0.0) {
+      // (in at the box's edge where the field reaches: a few tries a frame)
+      for (var t = 0u; t < 8u; t++) {
+        let h = hash(i * 7919u + u.n.w * 31u + t);
+        let side = h & 3u;
+        let along = i32((h >> 2u) % u32(max(W(), Hh())));
+        var c = vec2<i32>(along, 0);
+        if (side == 1u) { c = vec2<i32>(along, Hh() - 1); }
+        if (side == 2u) { c = vec2<i32>(0, along); }
+        if (side == 3u) { c = vec2<i32>(W() - 1, along); }
+        if (seaAt(c) != NONE) {
+          r.pos = vec3<f32>(cpos(c), HT[ix(c)] + SHIP_DRAFT);
+          r.st = S_HAUL;
+          r.load = 1.0;
+          break;
+        }
+      }
+      if (r.st == S_REST) { r.timer = 0.5; }
+    }
+    saveRider(i, r);
+    return;
+  }
+  let c = cat(r.pos.xy);
+  let f = seaAt(c);
+  if (r.st == S_DROP) {
+    r.leg = LEG_NONE;
+    r.timer -= dt;
+    if (r.timer <= 0.0) { r.st = S_GO; r.load = 0.0; }
+    saveRider(i, r);
+    return;
+  }
+  // (in: down the field; out: up it — the neighbour lowest or highest, steered to its middle)
+  let inward = r.st == S_HAUL;
+  if (inward && f != NONE && f <= MOOR) {
+    r.st = S_DROP;
+    r.timer = u.r.w * 3.0;
+    saveRider(i, r);
+    return;
+  }
+  var best = c;
+  var bf = select(0u, NONE, inward);
+  if (f != NONE) { bf = f; }
+  for (var k = 0u; k < 6u; k++) {
+    let q = nbr(c, k);
+    let fq = seaAt(q);
+    if (fq == NONE) { continue; }
+    if ((inward && fq < bf) || (!inward && fq > bf)) { bf = fq; best = q; }
+  }
+  let edge = c.x <= 0 || c.y <= 0 || c.x >= W() - 1 || c.y >= Hh() - 1;
+  if (!inward && (all(best == c) || edge)) {
+    // (out at the edge, or nowhere further: away a while)
+    r.st = S_REST;
+    r.timer = 25.0 + rnd(i, u.n.w / 600u) * 40.0;
+    saveRider(i, r);
+    return;
+  }
+  if (all(best == c) && f == NONE) {
+    // (off the water — the field rebuilt under it: back to the edge next time)
+    r.st = S_REST;
+    r.timer = 2.0;
+    saveRider(i, r);
+    return;
+  }
+  let to = cpos(best);
+  let d = to - r.pos.xy;
+  let L = length(d);
+  let st = min(L, speed * dt);
+  if (L > 1e-4) {
+    let h = atan2(d.y, d.x);
+    // (turn smoothly toward the next column)
+    var dh = h - r.heading;
+    dh = dh - round(dh / 6.2831853) * 6.2831853;
+    r.heading += clamp(dh, -2.0 * dt, 2.0 * dt);
+    r.pos = vec3<f32>(r.pos.xy + d / L * st, mix(r.pos.z, HT[ix(best)] + SHIP_DRAFT, 0.1));
+  }
+  r.leg = LEG_OPEN;
+  r.phase += st;
+  saveRider(i, r);
+}
+/** a ship's voxels: a hull of five along its heading, a cabin, a mast and its sail */
+fn shipVox(wp: vec3<f32>, h: f32, i: u32) {
+  let fw = vec2<f32>(cos(h), sin(h));
+  let sd = vec2<f32>(-fw.y, fw.x);
+  // (a hull of five big voxels along its heading — about 9 units — tapered at bow and stern; a cabin aft; a mast and
+  // a square sail across it)
+  for (var k = 0; k < 5; k++) {
+    let a = f32(k - 2) * 1.8;
+    vox(wp + vec3<f32>(fw * a, 0.0), M_WOOD, select(30u, 22u, k == 0 || k == 4), h);
+  }
+  vox(wp + vec3<f32>(-fw * 2.6, 1.4), M_WOOD, 18u, h);
+  for (var k = 0; k < 4; k++) { vox(wp + vec3<f32>(fw * 0.4, 1.4 + f32(k) * 1.3), M_WOOD, 7u, h); }
+  vox(wp + vec3<f32>(fw * 0.6, 3.6), M_CANVAS, 44u, h + 1.5708);
 }

@@ -4,7 +4,7 @@
 // camera. Why narrow: the heroes' logic runs in Node tests on tiny synthetic worlds (play/*.test.ts) with stubs of
 // exactly this, and the engine can change behind it freely. Nothing here reaches into another system's buffers.
 
-import type { AreaHit, UnitId, Units, UnitView, V3 } from '../api/contracts/units';
+import { seen, type AreaHit, type SeenUnit, type UnitId, type Units, type V2, type V3 } from '../api/contracts/units';
 import type { Sim } from '../api/world';
 import type { Camera } from '../render/camera';
 import type { FxName, FxOpts } from '../api/fx';
@@ -13,9 +13,10 @@ import type { Pt } from './core/gestures';
 
 /** The units, with the blows and holds the heroes deal (the Units contract's optional strike/hold/release, required here). */
 export interface PlayUnits {
-  /** living units within `radius` of (x, y) */
-  near(x: number, y: number, radius: number): UnitView[];
-  get(id: UnitId): UnitView | null;
+  /** living units within `radius` of (x, y), nearest first, each where it stands now */
+  near(x: number, y: number, radius: number): SeenUnit[];
+  /** a unit where it stands now, or null: gone, or its place not known (not round the hero: UnitsAround) */
+  get(id: UnitId): SeenUnit | null;
   strike(h: AreaHit): void;
   hold(id: UnitId, at: V3): boolean;
   release(id: UnitId, vel?: V3): void;
@@ -66,13 +67,75 @@ export interface PlayWorld {
   raise?(x: number, y: number, radius: number): void;
 }
 
+/** (round 128p, U1) cells round the hero whose units the play layer sees: the farthest reach its heroes ask within
+ *  (the bike's hook, 40 at most, + 2) and a margin */
+export const AROUND = 48;
+
+/**
+ * (round 128p, U1, DA-B22 (c)(4)) The units round the hero, for the heroes' aim and reach, each frame: asked of the GPU
+ * (Units.query within AROUND of the hero, one ask out at a time, asked again as each answer comes) and observed while
+ * in that answer (Units.observe: their places read each sync) — not every unit's place read every frame. A unit that
+ * walks in is seen from the answer after (a frame or two); its place from the sync after that.
+ */
+export class UnitsAround {
+  /** where the hero is (null: none in play — nothing asked) */
+  centre: () => V2 | null = () => null;
+  private ids = new Map<UnitId, () => void>();
+  private asking = false;
+  private gone = false;
+
+  constructor(readonly units: Units) {}
+
+  /** each frame: asked again when the last answer is in */
+  tick(): void {
+    if (this.asking || this.gone) return;
+    const c = this.centre();
+    if (!c) return;
+    this.asking = true;
+    void this.units.query(c, AROUND).then((found) => {
+      this.asking = false;
+      if (this.gone) return;
+      const now = new Set(found.map((v) => v.id));
+      for (const [id, release] of this.ids)
+        if (!now.has(id)) {
+          release();
+          this.ids.delete(id);
+        }
+      for (const id of now) if (!this.ids.has(id)) this.ids.set(id, this.units.observe(id));
+    });
+  }
+
+  near(x: number, y: number, r: number): SeenUnit[] {
+    if (r > AROUND) throw new Error(`play: units asked for within ${r} cells; the play layer sees ${AROUND} round the hero (AROUND)`);
+    const out: [number, SeenUnit][] = [];
+    for (const id of this.ids.keys()) {
+      const v = seen(this.units.get(id));
+      if (!v?.alive) continue;
+      const d = Math.hypot(v.at[0] - x, v.at[1] - y);
+      if (d <= r) out.push([d, v]);
+    }
+    return out.sort((a, b) => a[0] - b[0]).map((e) => e[1]);
+  }
+
+  get(id: UnitId): SeenUnit | null {
+    return seen(this.units.get(id));
+  }
+
+  dispose(): void {
+    this.gone = true;
+    for (const release of this.ids.values()) release();
+    this.ids.clear();
+  }
+}
+
 /** The units' blows, required: the play layer's heroes shove and hold (AgentUnits implements them). */
-function playUnits(u: Units): PlayUnits {
+function playUnits(a: UnitsAround): PlayUnits {
+  const u = a.units;
   const { strike, hold, release } = u;
   if (!strike || !hold || !release) throw new Error('play: the units implementation has no strike/hold/release (the Units contract, round 117) — AgentUnits has them');
   return {
-    near: (x, y, r) => u.query([x, y], r),
-    get: (id) => u.get(id),
+    near: (x, y, r) => a.near(x, y, r),
+    get: (id) => a.get(id),
     strike: (h) => strike.call(u, h, 'hero'),
     hold: (id, at) => hold.call(u, id, at),
     release: (id, vel) => release.call(u, id, vel),
@@ -85,7 +148,7 @@ function playUnits(u: Units): PlayUnits {
  * near there — a hover never drops through unread ground — and the first read is waited for before a hero is put
  * down (PlaySandbox.start).
  */
-export function makePlayWorld(api: Sim, units: Units, camera: Camera, bounds: [number, number], raise?: PlayWorld['raise']): PlayWorld {
+export function makePlayWorld(api: Sim, units: UnitsAround, camera: Camera, bounds: [number, number], raise?: PlayWorld['raise']): PlayWorld {
   const t = api.terrain;
   const water = api.water;
   const wind = api.wind;

@@ -17,7 +17,7 @@ export default async function (lab, args) {
   while (t < seconds) {
     const r = await lab.run(15, 16);
     t += r.simSeconds;
-    const s = lab.snapshot();
+    const s = (await lab.snapshot());
     for (const w of s.walkers) {
       const was = since.get(w.id);
       if (w.phase !== 'carry') since.delete(w.id);

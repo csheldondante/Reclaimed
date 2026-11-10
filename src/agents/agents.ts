@@ -20,6 +20,7 @@ import { TICK_DT } from '../sim/flow';
 import { stepPlan } from './stepplan';
 import { UnitNotice } from './notice';
 import { UnitPick, type PickAsk } from './pick';
+import { UnitReads, type UnitFound } from './reads';
 import type { WorldGpu } from '../sim/world-gpu';
 import { MAT } from '../world/materials';
 import { materialId, materialName, materialState, type MaterialName } from '../api/common';
@@ -110,12 +111,12 @@ const MAX_TARGETS = 8;
 const MAX_HOLDS = 8;
 const MAX_LAUNCHES = 32;
 const EVENT_CAP = 2048;
-/** (round 128o, DA-B2b) the most units one sync watches (sync({ watch })) */
-const MAX_WATCH = 32;
 /** (round 128o, DA-B2) the most events one sync reads (the rest wait for the next) */
 const EVENT_WINDOW = 256;
 /** (round 128p) the fewest events a sync reads (its window grows with what comes: Agents.sync) */
 const EVENT_MIN = 16;
+/** (round 128p) the hunt's candidates a sync reads (notice.wgsl huntTop: 8 × vec4) */
+const HUNT_BYTES = 8 * 16;
 /** voxels drawn in all (units.wgsl MAX_INST), and in all the kinds' models */
 const MAX_INST = 65536;
 const MAX_MODEL_VOXELS = 8192;
@@ -142,7 +143,10 @@ const P_REGROUPS = P_TARGET_H + MAX_TARGETS;
 const P_ARRIVE = P_REGROUPS + MAX_REGROUPS;
 /** (round 128o, DA-B22) the step's dt (agents.wgsl AgentParams.step) */
 const P_STEP = P_ARRIVE + Math.ceil((NFIELDS * 2) / 4) * 4;
-const PARAMS_BYTES = (P_STEP + 4) * 4;
+/** (round 128p) units made another kind a step (agents.wgsl rekinds) */
+const MAX_REKINDS = 8;
+const P_REKINDS = P_STEP + 4;
+const PARAMS_BYTES = (P_REKINDS + MAX_REKINDS * 4) * 4;
 /** the most a unit may move in a step (cells): the occupancy, the floor it rides and its links are per cell, so a
  *  step past half a cell could skip a column's checks — the units' step's stride is bound by it (stepPlan) */
 const STEP_CELLS = 0.5;
@@ -192,6 +196,8 @@ export interface KindSpec {
 }
 
 export interface HitSpec {
+  /** (round 128p) one unit only (its id), wherever it stands: x, y, z and radius aren't looked at */
+  unit?: number;
   x: number;
   y: number;
   /** height of its centre; default any height */
@@ -240,6 +246,8 @@ export type AgentEvent =
   | { type: 'swing'; id: number; target: number; damage: number; x: number; y: number; z: number }
   /** (round 128p, DA-B22 (c)(3)) a hunter took a new target (a target code: agents/notice.ts — unit id + 1, ACTOR | i) */
   | { type: 'noticed'; id: number; target: number; x: number; y: number; z: number }
+  /** (round 128p, DA-B22 (c)(4)) it came to another side of the wall (the side map's number: notice.setSides) */
+  | { type: 'side'; id: number; side: number; x: number; y: number; z: number }
   | { type: 'hurt'; id: number; hit: number | 'impact'; damage: number; x: number; y: number; z: number }
   | { type: 'death'; id: number; by: number | 'fire' | 'water' | 'impact' | 'lava' | 'effect'; x: number; y: number; z: number }
   /** (LW1, corpse mode) a corpse raised by an effect (`by`, its id) into `group`: the same id, alive again */
@@ -289,6 +297,14 @@ export interface ThrowHit {
   /** only these groups feel it, or these are spared (HitSpec) */
   groups?: readonly number[];
   spare?: readonly number[];
+}
+
+/** (round 128p, DA-B22 (c)(4)) one of the hunt's nearest candidates (notice.wgsl huntTop): its id and where it stands */
+export interface HuntCandidate {
+  id: number;
+  x: number;
+  y: number;
+  z: number;
 }
 
 export interface AgentState {
@@ -476,6 +492,8 @@ export class Agents implements SimSystem {
   private holds = new Map<number, [number, number, number]>();
   private launches: [number, number, number, number][] = [];
   private regroups: number[] = [];
+  /** (round 128p) units to make another kind at the next step: slot, kind, hp (or none) */
+  private rekinds: [number, number, number | null][] = [];
   private ticks = 0;
   /** the surfaces weren't peeled while idle (round 88): peel on the next tick that needs them */
   private navStale = true;
@@ -515,6 +533,15 @@ export class Agents implements SimSystem {
    */
   readonly notice: UnitNotice;
   private picker: UnitPick;
+  private reads: UnitReads;
+
+  /**
+   * (round 128p, DA-B22 (c)(4)) The live units within `r` of (x, y), with where they stand — asked of the GPU (two
+   * small reads), not from positions read every frame.
+   */
+  near(x: number, y: number, r: number, faction: number | null = null): Promise<UnitFound[]> {
+    return this.reads.near(x, y, r, this.count, 1024, faction);
+  }
 
   /**
    * (round 128p, DA-B22 (c)(2)) Of the units `ids`, the one whose figure is drawn nearest the tap (`ask`), or null —
@@ -583,6 +610,7 @@ export class Agents implements SimSystem {
     // (round 128p, DA-B22 (c)(3): combat targeting on the GPU — agents/notice.ts)
     this.notice = new UnitNotice(device, world, this.units, this.events, MAX_UNITS, EVENT_CAP);
     this.picker = new UnitPick(device, this.units);
+    this.reads = new UnitReads(device, this.units, MAX_UNITS, this.notice.combat);
     this.flyBuf = world.buf('agentFly', MAX_FLY * 32, S);
     device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
     // (nothing reached yet: every field starts unreachable)
@@ -1076,6 +1104,18 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     this.regroups.push(slot | (g << 16));
   }
 
+  /**
+   * (round 128p, DA-B22 (c)(4)) Make a unit another kind where it stands (a recruit drilled a soldier, a unit turned
+   * hostile), its hp set when given — not removed and spawned again, which needed where it stood. At the next step.
+   */
+  rekind(id: number, kind: number | string, hp?: number): void {
+    const slot = this.slotOf(id);
+    if (slot < 0) return;
+    const k = typeof kind === 'string' ? this.kindId(kind) : kind;
+    if (!this.kinds[k]) throw new Error(`agents: kind ${kind} isn't defined`);
+    this.rekinds.push([slot, k, hp ?? null]);
+  }
+
   launch(id: number, vel: readonly [number, number, number], opts: LaunchOpts = {}): void {
     const slot = this.slotOf(id);
     if (slot < 0) return;
@@ -1367,7 +1407,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
 
   /**
    * The events since the last sync, and the units: every live one (by default), or (round 128o, DA-B2b) with
-   * `{ watch }` only those ids (the followed, the selected — at most MAX_WATCH; one gone or not alive is left out):
+   * `{ watch }` only those ids (the observed — gathered on the GPU, no cap but the device's; one gone or not alive is left out):
    * their records alone are read, not every unit's. A game built on events (arrived, hurt, death…) watches the few it
    * shows.
    */
@@ -1411,9 +1451,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   }
 
 
-  async sync(opts: { watch?: readonly number[] } = {}): Promise<{ units: AgentState[]; events: AgentEvent[]; dropped: number }> {
+  async sync(opts: { watch?: readonly number[] } = {}): Promise<{ units: AgentState[]; events: AgentEvent[]; dropped: number; hunt: HuntCandidate[] }> {
     const watch = opts.watch;
-    if (watch && watch.length > MAX_WATCH) throw new Error(`agents.sync: ${watch.length} units watched (${MAX_WATCH} at most)`);
     const slots = watch ? watch.map((id) => id % MAX_UNITS).filter((s) => s < this.count) : null;
     const n = slots ? slots.length : this.count;
     // (round 128o, DA-B2: the events a ring — units.wgsl emit — read from where the last sync stopped, at most
@@ -1425,14 +1464,18 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     // are — up to EVENT_WINDOW a sync, as ever — and those are read at once, before the sync returns)
     const W = EVENT_MIN;
     const a = Math.min(W, C - first);
-    const evBytes = 16 + W * 32;
+    // (round 128p: the hunt's 8 nearest candidates after the events, 128 B — notice.wgsl huntTop)
+    const huntAt = 16 + W * 32;
+    const evBytes = huntAt + HUNT_BYTES;
     const size = evBytes + Math.max(n, 1) * UNIT_BYTES;
     const tmp = this.staging(size);
     const enc = this.device.createCommandEncoder({ label: 'agents sync' });
     enc.copyBufferToBuffer(this.events, 0, tmp, 0, 16);
     enc.copyBufferToBuffer(this.events, 16 + first * 32, tmp, 16, a * 32);
     if (a < W) enc.copyBufferToBuffer(this.events, 16, tmp, 16 + a * 32, (W - a) * 32);
-    if (slots) slots.forEach((s, i) => enc.copyBufferToBuffer(this.units, s * UNIT_BYTES, tmp, evBytes + i * UNIT_BYTES, UNIT_BYTES));
+    enc.copyBufferToBuffer(this.notice.top, 0, tmp, huntAt, HUNT_BYTES);
+    // (round 128p: the watched gathered on the GPU into one block, one copy — agents/reads.ts)
+    if (slots) this.reads.gather(enc, slots, tmp, evBytes);
     else if (n) enc.copyBufferToBuffer(this.units, 0, tmp, evBytes, n * UNIT_BYTES);
     this.device.queue.submit([enc.finish()]);
     const units: AgentState[] = [];
@@ -1441,12 +1484,20 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     // (the events' records, 8 words each, as many as the head says to read)
     let rec = new Uint32Array(0);
     let need = 0;
+    const hunt: HuntCandidate[] = [];
     await tmp.mapAsync(GPUMapMode.READ, 0, size).then(() => {
       const b = tmp.getMappedRange(0, size);
       const made = new Uint32Array(b, 0, 4)[0];
       need = Math.min((made - from) >>> 0, EVENT_WINDOW);
       rec = new Uint32Array(need * 8);
       rec.set(new Uint32Array(b, 16, Math.min(need, W) * 8));
+      const hf = new Float32Array(b, huntAt, HUNT_BYTES / 4);
+      const hu = new Uint32Array(b, huntAt, HUNT_BYTES / 4);
+      for (let k = 0; k < HUNT_BYTES / 16; k++) {
+        const code = hu[k * 4 + 3];
+        if (!code) break;
+        hunt.push({ id: code - 1, x: hf[k * 4], y: hf[k * 4 + 1], z: hf[k * 4 + 2] });
+      }
       this.readUnits(b, evBytes, n, slots, watch, units);
       tmp.unmap();
     }, ignoreTeardown);
@@ -1502,6 +1553,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
           this.corpses.delete(id % MAX_UNITS);
         } else if (kind === 9) {
           events.push({ type: 'noticed', id, target: eu[o + 2], ...p });
+        } else if (kind === 10) {
+          events.push({ type: 'side', id, side: eu[o + 2], ...p });
         } else if (kind === 8) {
           const f = eu[o + 2];
           events.push(f >= RIDE_ARRIVED ? { type: 'arrived', id, ride: f - RIDE_ARRIVED, ...p } : { type: 'arrived', id, field: f, dist: ef[o + 3], ...p });
@@ -1520,7 +1573,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     this.fly();
     events.push(...this.landed);
     this.landed = [];
-    return { units, events, dropped };
+    return { units, events, dropped, hunt };
   }
 
   /** The live units now: [x, y, z, group] each. */
@@ -1610,6 +1663,11 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
         spare |= ~only & 0xffff;
       }
       f.set([h.x, h.y, h.z ?? -1e9, h.radius, dir[0], dir[1], cone, h.damage ?? 0, h.push ?? 0, h.outward ? 1 : 0, (h.fire ? 1 : 0) + spare * 2, h.id, axis[0], axis[1], h.lift ?? 0, Math.min(Math.max(h.stun ?? 0, 0), MAX_STUN)], o);
+      // (round 128p: a hit on one unit — its id in x's bits, radius −1: units.wgsl)
+      if (h.unit !== undefined) {
+        u[o] = h.unit >>> 0;
+        f[o + 3] = -1;
+      }
     });
     this.targets.forEach((t, i) => {
       f.set([t.x, t.y, t.z, t.radius ?? 0.5], P_TARGETS + i * 4);
@@ -1621,6 +1679,12 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     u.set([holds.length, launches.length, regroups.length, clear], P_N3);
     u.set(regroups, P_REGROUPS);
     f[P_STEP] = this.stepNow.dt;
+    const rekinds = this.rekinds.splice(0, MAX_REKINDS);
+    f[P_STEP + 1] = rekinds.length;
+    rekinds.forEach(([slot, kind, hp], i) => {
+      u.set([slot, kind, 0, hp === null ? 0 : 1], P_REKINDS + i * 4);
+      if (hp !== null) f[P_REKINDS + i * 4 + 2] = hp;
+    });
     f.set(this.arrive, P_ARRIVE);
     holds.forEach(([slot, p], i) => f.set([p[0], p[1], p[2], slot], P_HOLDS + i * 4));
     launches.forEach((l, i) => f.set(l, P_LAUNCHES + i * 4));

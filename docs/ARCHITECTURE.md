@@ -2217,7 +2217,11 @@ against a contract and knows only its inputs:
 
 - `src/api/contracts/units.ts` — `Units`: spawn(kind, at, faction, { name, character, settlement, role,
   hostile, health, sight, speed, damage, colour, job }), get, query(near, r, filter), byCharacter, order(job),
-  setHostile, hit(id, damage, by), remove, watch(actor), shift, update; events died / hurt / noticed. `Actor`:
+  setHostile, hit(id, damage, by), remove, watch(actor), shift, update; events died / hurt / noticed. (Round 128p,
+  U1, DA-B22 (c)(4): `UnitView.at` is `V3 | null` — known only for a unit `observe(ids)`d (counted; the returned
+  function releases) or the dead (where they fell); `query` is async (`Promise<SeenUnit[]>`, asked of the GPU, each
+  answer with its place); `SeenUnit` / `seen(v)` for a view with its place. A caller observes what it follows and
+  handles an unread place; nothing reads every unit's place every frame.) `Actor`:
   what takes part without being a unit (the hero). `src/units/simple.ts` `SimpleUnits` is the CPU stand-in;
   the GPU agents (`settlements`) are to implement it.
 - `src/api/contracts/hero.ts` — `Hero` (an actor, abilities, a camera preference, position / heading / speed,
@@ -2394,7 +2398,9 @@ iterate on player controls"). Boundaries:
 - **It reaches the world only through contracts**: play/world.ts `makePlayWorld` builds a narrow `PlayWorld` (the
   top a hover rides, the floor, water depth, blows on units, wind wake/gust/blow/blast, fx bursts, craters, the
   camera's projection) from the world API (terrain, water, wind, fx), the Units contract and the camera. The heroes see
-  nothing else, so they run in Node tests on play/testing.ts's synthetic world.
+  nothing else, so they run in Node tests on play/testing.ts's synthetic world. (Round 128p, U1: the units they see
+  are `UnitsAround` — a query within AROUND = 48 cells of the hero, asked again as each answer comes, its answer
+  observed; `near` filters those by their read places.)
 - **Other tracks read it only through `contracts/play.ts`**: `ControllerProfile` (speed, turn radius, climb, jump,
   fly, water, vegetation, bridge, destruction, encounter weights), `ControllerInfo` (params, defaults,
   `profile(params)`), `Playbook` (the library: `src/play/library.ts` `library`), and the pure `crossCost(profile,

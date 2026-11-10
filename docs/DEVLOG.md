@@ -21117,6 +21117,108 @@ the opportunity hook".
     its tops, bases and outline now sink together;
   - the reach's red outlines over unbuilt lots are hidden with them.
 
+## 2026-11-10 — the season loop: cards from the one dealer, districts built in seasons (trackA-opps)
+
+The user: "Sim runs in realtime while you make your opportunity selections … The next season happens when you hit a
+button and all allocated opportunities progress. The building stages depend on the number of seasons required … and
+should show intermediate states (that can use the shader for now)." Design: `docs/design/SEASON_LOOP.md`.
+- **One resource model, one dealer.** The ledger (`src/season/ledger.ts`) is revived from the reverted 6a619edb on the
+  six pools (Magic, Might, Labor, Resources, Intel, Unrest; Unrest lowers the Labor a season brings). Its cards are
+  the town catalog (`season/catalog.ts`, ten cards as data) dealt by `opps/dealer.ts deal` (`season/deal.ts`): each card
+  a proposal with no agents, its cost as goods, the town's filters as its sense (what it needs built, free land, a
+  one-off not started) and score parts (urgency from unrest or short Labor, what it opens, its value). The card lab's
+  labor/influence/power deck isn't used. Quarry, lumber camp, bridge and walls are data with pools-only effects (SL2).
+- **Seasons drive the district clock.** citygen gains a stage table (a vec4 a district: on, from, to, when).
+  `tlProgress` reads it: a staged district's build time is its stage × 1.75 build times, eased from the old stage to the
+  new over one build span of the town's clock. Each lot keeps its own delay, so at 1/3 some lots are part risen and
+  others not begun. Why a table and not the start word: the start word still says when the district's roads appear;
+  the stage is a separate, season-owned input (16 bytes a write).
+- **The look, "the shader for now":** `tlRise` (the compute pass that already moves the risen tops) tints a rising
+  building's tops plank, its roof a scaffold deck and its foot dark stone, and puts the lot's own colours back at 1.
+- **Claims answer four words:** the id, the district's centre (the camera's framing) and the districts left (the
+  dealer offers no district card without land). `CLAIM_COUNT` counts without claiming (the first hand).
+- **Showcase revived** (`SimTiers.showcase`, from 6a619edb): the season's stage changes start in the first third of a
+  10 s showcase (the last still has its 7 s build); Skip lands every stage at once, the same progress as played
+  (`test/unit/season.test.ts`: the GPU is told the same `to` either way).
+- **Camera:** the claim's centre is in the town's frame, placed in the window at each frame. The first try kept it in
+  window coordinates and the camera chased a point that moved with each slide until Muru was let go.
+- Muru has 7 districts free outside its core, so a run of the test fills the town in about 4–5 seasons.
+- **Shots (412x915, 60°, zoom 2; `scratchpad/opps/seasons.gif`, `cards.png`):** four seasons played — houses and farms,
+  houses and farms, market and houses, houses. Rising districts read as tan scaffold roofs and plank tops over dark
+  footings at 1/2, white with their roofs once built. The pools ran Labor 4 → 12 (+8 a season) and Resources stayed
+  short (1–3), so Resources is the limit that bites. The GPU's count of free districts after each claim matched the
+  ledger's: 7 → 5 → 3 → 1 → 0. Each season's claims read back in one 16-byte map each.
+
+## 2026-11-10 — the season loop, round 2: the opportunity contract, district shares, Materials, balance
+
+- **One rule for paying (the user: "Opportunities can take resources for a duration").** The ledger now goes through
+  the opportunity contract: `commit` locks a card's people (Labor and Might are agents, one a unit) and spends its
+  goods (Materials, Magic, Intel); `resolve` at the card's last season brings the people back, and the ledger applies
+  what the card gives. Nothing is paid along the way. Unrest is that many free workers on strike: not with you, so the
+  contract's `available` leaves them out. The dealer reads the same holdings, so it and the ledger can't disagree.
+- **District shares (partial claims).** A district is 6 parts; a card covers 2–6. `allocate` puts it in an open
+  district of its kind with room and a free slot, else claims a new one on the GPU. The GPU ranks each district's lots
+  by distance from its centre (`stgRank`, n² over a few hundred lots a mesh run); a lot's key is rank over count.
+  First try used the distance squared over the supercell's size: districts are smaller than their supercell, so
+  13 of 16 farm lots stood after a one-third share. Ranked, it's 4 of 16 (5 expected; the last was mid-rise).
+- **Whole when the card finishes.** A slot holds a share [a, b] and its stage; a lot in it rises as
+  `f × 1.5 − 0.5 × w`, so the share's lots rise together, staggered, all up at b. Two slots a district, so two cards
+  of a kind can build in one district at once (with one, a second houses card had to open a new district, and Muru
+  ran out). Lots past the shares stand before `end` and aren't begun after it.
+- **Materials:** the pool's id and text are now `materials` / "Materials".
+- **Balance** (`test/unit/season.test.ts` prints a six-season greedy run): Labor is people now (4 workers; houses
+  +2 workers and +1 Unrest; farms −1 Unrest), Materials +2 a season plus what's built. Over six seasons the greedy
+  player was held back by Labor 6 times and by Materials 10 times; Labor stayed 0–1 free of 4–10, Materials 0–5,
+  and 2 of Muru's 7 districts were still free at the end.
+- **UI:** the hand is a two-column grid (no card cut off at the screen's edge); what's missing is its own line;
+  people show free of all (`Labor 2/4`); what's building says when its people come back.
+- **GIF** (`scratchpad/opps/seasons6.gif`, 6 seasons, 412x915, 60°, zoom 2): houses districts fill a third at a time,
+  the second houses card going on in the first's district.
+
+## 2026-11-10 — farms: fields in citygen, crops in the vegetation field
+
+The user: "we need to add farms back in. They should be larger plots."
+- **Where farms are:** a supercell with the farms purpose, and a farm belt — the supercells just past the town's
+  limit, out to `farmBelt` (1.35) × the growth budget, which follows the roads because roads are cheap in the cost
+  distance. A belt cell is in, purpose farms, growth key 0.97 (last), never empty. A game town starts with only its
+  core, so the belt appears as farms cards claim it.
+- **Fields:** in `lots` a farm district's lot area is `farmLot` (6) × a lot, so a block splits once or not at all:
+  long strips along the φ lines. `lotRec` makes a REC_FIELD record (kind 5): the parcel inset from its tracks, and
+  about one in three with a farmhouse (a 3.2-unit square, one storey and a roof) at its first corner. `lotMesh` draws a
+  hedge (0.7 high) round each field, shown once its district starts, and the farmhouse rising with the field.
+- **Tracks:** a road between two farm districts is a dirt track: 0.55 half width, dirt colour, not paved (not
+  claimed), a little lower. Arterials stay roads.
+- **Crops in the vegetation field (DESIGN §15).** The field had only succession (0..5). Crops are its band below zero:
+  `veg = −(1 + stage + 4·dir)` (common.wgsl `cropVeg`), stage 0 tilled … 3 ripe, the rows' direction one of four.
+  Every reader's thresholds are above zero, so a crop is "no wild plants" to all of them; the writers that grow or
+  wither wild plants (ecology, the grow tap, wind-stripped growth, seeds landing) leave crops alone. No CPU mirror is
+  touched (Track B's): the GPU field changes and the town owns its crop columns.
+- **Who writes the crop:** `claimLots` marks a field's columns in the claim grid's owner plane (`FIELD_COL | record`);
+  the town's bare pass (bare.wgsl) writes each marked column's crop from the field's progress (stage = 3 × progress),
+  its rows along the field's first edge. It runs as claims land and after each mesh run while a district rises
+  (every 2 s of the town's clock, and at the end).
+- **The look:** meshdraw paints a crop top as rows of tilled soil along its direction; sown, green specks on the
+  ridges, then full green rows; ripe, gold.
+- **The farms card** takes 2 seasons now (the stages show: tilled → green → ripe) and claims farm land like any
+  district card (2 of a district's 6 parts).
+- **Shots:** `scratchpad/opps/belt-wide.png`, `belt-near.png` (Muru grown by the time-lapse: fields with hedges and
+  tracks), `farms.gif` (two farms cards, tilled to ripe, the second going on in the first's district).
+
+## 2026-11-10 — farms FM2: fields of several blocks, along the contours; farmhouses claimed
+
+At play zoom the fields still read as small yellow lots: a field was at most a block, because the block's cross streets
+cut the land even drawn as tracks.
+- **No cross streets inside farms.** A farm block (its supercell farms or belt; meta word 11) asks the existing
+  bad-cell merge (bqual → bclaim → bapply) to join it with its farm neighbours along its major line until it's 3.5×
+  as long as its strip is wide (at most 140); the merge drops the cross street between them, so only the major lines
+  (level sets of φ, the distance contours) and the arterials bound a field — the strips follow the land. A farm
+  block merges only with farm blocks, and only the truly bad are ever paved.
+- **Lots:** a field splits across its longest edge only while it's over 4.5:1 or bigger than `farmLot` (6) × a block
+  length²; the biggest (over 9000) get a track at their first split.
+- **The belt:** `farmBelt` 1.35 → 1.6 of the budget (Muru showed only a few belt cells).
+- **FM3:** a farmhouse's columns are claimed like a building's (its base to its risen height), so units go round it.
+- Shots: `belt-near.png` (before) and `belt-near-after.png`, `belt-wide-after.png` (fields about half as many, each
+  2–4 blocks, long along the lines); `farms2.gif` (one farms card, 2 seasons: tilled, green, ripe).
 ## 2026-11-10 — living town LT2: routes and riders on the GPU (first pass of the works with it)
 
 - **Graph:** citygen's road raster plus door segments (each built lot's footprint frontage out 3 m past its parcel
@@ -21388,3 +21490,127 @@ none within 3 columns). Not a stale landing height: the deck was in the river.
   decks.
 Muru after it: 374 columns with the river under a deck, no water on any deck top sampled, everything asleep
 (scratchpad liquids/deck7.png: both bridges dry, the river under them, people on the lower one).
+
+## 2026-11-10 — U1: the Units contract's watched-only sync finished (DA-B22 (c)(4) and (1); Track B)
+The WIP `phonefix-observe-wip` 322962a3 (DA-B22 (c)(4)+(1)) taken onto fortress bb5b2e01 and finished: 131 type
+errors to 0, every caller rewritten to the contract, not silenced (no `!`, no `as` added).
+- **The contract** (api/contracts/units.ts): `UnitView.at: V3 | null` (null: not read, never stale); `observe(ids)` →
+  release (counted); `query` async, answering `SeenUnit[]` (each with its place); `SeenUnit` / `seen(v)` for a view
+  with its place. `Actor.hurt(damage, by: SeenUnit)`: AgentUnits passes where the swing came from (the swing event's
+  place, or the defender's observed place). `Followers.recruit` takes `SeenUnit[]` (taken on where they stand).
+- **Callers observe what they follow:** the followed person (fortress followFrame, from the WIP); a raid's raiders and
+  rider, the archers posted; a story's cast (badges, waypoint, who to talk to — no query a frame); a hero run's
+  approached unit; a run stage's foes; runsit's area units (outriders, foes, quarry, horde, allies, captives, trader)
+  and the followers. Each handles an unread place explicitly (waits a frame, or counts without placing).
+- **Queries where it's an ask, not a watch:** the lab's snapshot (async now: every scenario `await lab.snapshot()`),
+  the place bench's walkers, a run's items and "Follow me", the town's folk at a finale, the walker's swing (the
+  blow lands when the answer comes, a frame or two into its 0.25 s).
+- **The play layer's heroes** see `UnitsAround` (play/world.ts): one query within AROUND = 48 cells of the hero, asked
+  again as each answer comes, its answer observed; `near` filters by the read places. Hero levels only (not fortress
+  play): a two-read query in flight continuously there (16 B + 16 B a unit found).
+- **Dropped from the WIP:** the raid's per-frame `atPlaces` polling (and `Agents.nearMany`, its kernel and reads), the
+  per-look raider query, the archers' mark and landing queries and `arrivedAt` — raiders.ts and defence.ts are back to
+  6ab55976's loop, observing the raiders, the rider and the posted archers (DA-L4 deletes that loop). Kept from the
+  WIP: who's outside the walls by the GPU's EV_SIDE events (`sideOf`), not every person's position.
+- **Measured** (headless desktop D3D11, `town` recipe after Build + 20 sim s, 10 s at the game's speed;
+  scratchpad syncmeasure.mjs; the town has 12–13 units then):
+
+  | | before (bb5b2e01) | after |
+  |---|---|---|
+  | bytes a sync | 1680 (head 16 + 16 events 512 + 12 units × 96) | 752 (head 16 + 16 events 512 + hunt 128 + 96 pad), 0 observed |
+  | sync KB/frame, 1x | 1.53 | 0.57 |
+  | sync KB/frame, 16x | 0.64 / 0.59 (two runs) | 0.27 / 0.24 |
+  | sync ask→answer ms p50 / p95, 1x | 2.1 / 11.2 | 5.8 / 15.2 |
+  | same, 16x | 72.3 / 92.9; 27.5 / 111.1 | 18.0 / 58.2; 26.4 / 56.3 |
+
+  Before, a sync grew 96 B per unit in the window; after, 96 B per observed unit. The ms is the GPU queue's latency
+  and swings run to run headless (16x fps 33–81 between runs of either build): no claim on frame time from these.
+- **The transfers gate:** `AgentUnits.update` is still listed as violating §24 (F24): one sync is in flight at a
+  time, so the head is read every frame whether or not anything happened. It's small now (752 B), but the gate
+  counts a per-frame read in play, and rightly. Removing it needs the sync to run only when the GPU has something to
+  say, and knowing that takes a read (or `onSubmittedWorkDone` plus a GPU-written flag — DA-B2's next step).
+- **Gates:** typecheck clean; unit 2 failures, both on bb5b2e01 as well (flags, townfixture); GPU 194 passed, as
+  bb5b2e01. fortressfollow 40/40 samples on screen; fortressallbuilt 708/708 at 362 sim s; fortressraid walled: the
+  gates shut at 59 s and the gate broke at 84–87 s in two runs (bb5b2e01: 53 s and 75 s), looted 2, torched 2, all 4
+  out; with 4 soldiers the archers killed all four before the gate broke on both builds (56/16 vs 65/16 shots/hits).
+
+## 2026-11-10 — after the fortress merge: two unit tests that failed on bb5b2e01, fixed
+
+- **flags:** `streetlab/control.ts` built its site link from `location.search` directly; it now starts from
+  `urlFlags()` (src/flags.ts, the one reader of the URL: the resolved flags, a fresh copy to change).
+- **townfixture:** `data/lab/town.rclt` was made by land generator d341daf70a2dea3d; this tree's is 70e22347a4b0c4f5.
+  What moved the hash: the citygen work added code to generator sources (atlas.ts `rawGroundGpu`, region-land.ts,
+  ways.ts `waysWithout`, settlements.ts `byFields`) — all only used with `?citygen=fields`, so the fortress town's land
+  the fixture holds is the same, but the generator's sources are not, and the rule is that a fixture names the
+  generator that made it. Recaptured properly (`node scripts/labtown.mjs capture` on the fixture's own link,
+  `?town=1&fortress=1&q=low`), not hand-edited.
+- **source encoding:** two files written with CRLF earlier on this branch (citygen/panel.ts, scenes/level/season.ts)
+  back to LF.
+- Checks: typecheck clean; the unit tier 106 files, 861 tests passing (3 expected fails); the season loop plays after
+  the merge (a shot: two cards started, Next season, districts rising).
+
+## 2026-11-10 — season life 1: the living town in the season loop (trackA-seasonlife)
+
+The user: "I do want to see agents moving around and more things to reflect choices …". Design: SEASON_LOOP.md
+"Season life".
+- `?opps=1` brings the living town (LIVING_TOWN.md; its panel off unless `&livingpanel=1`).
+- `season/life.ts townLife(ledger)` (pure, tested): commuters 80 + 60 a houses card built, farmers 30 a farms card,
+  builders 10 + 15 a district card building, the quarry's 40 quarrymen and 16 stone carts while a quarry card is
+  started or built, the clearing's 30 woodcutters and 12 log carts for a lumber camp. The loop passes them after each
+  season to the living town's parameters (LIVING_TUNING: its one input, a uniform).
+- The quarry and lumber camp cards are real (`work: 'works'`): the living town's quarry is picked and dug, its camp
+  picked and felled. They were pools-only stubs.
+- Checked at Muru: quarry + houses + lumber started → 203 people, the quarry dug 146 m³ in 20 s, the camp listed 54
+  trees. Changing the counts re-deals every rider (the living town's own rule: its rows cleared on a new deal).
+
+## 2026-11-10 — season life 2: the walls card raises a town wall (trackA-seasonlife)
+
+- **The ring, on the GPU** (streets.wgsl `wallBins`, `wallShape`, once, when the card starts): each begun lot's parcel's
+  far corner, an atomic max in its direction of 72 round the centre; widened over ±3 directions (so the wall never cuts
+  a plot) plus a 7-unit margin; the core's radius where nothing's built. Gates where an arterial's polyline crosses a
+  segment; at least two (DESIGN §13: the segment across from the first when there's one or none).
+- **Drawn in the town's own mesh** (`wallMesh`, each mesh run): a wall piece a segment (1 unit thick each side,
+  4.5 high), not at gates nor over water or cliffs (the distance field), and a tower (4 × 4, 8 high) at every sixth
+  corner and beside each gate. Tagged TG_WALL: `tlRise` sets each piece's height by its segment's rise — the card's
+  stage eased over a build span, each piece rising in turn round the ring from the first gate — so a season shows a
+  stretch more of it, whole when the card ends. Skip sets the stage at once.
+- **Claimed** (`wallClaim`, after the lots): the pieces' columns as spans at their risen height, and the road raster
+  marked WALL_MARK there, which the living town's walkInit treats as blocked: its routes go out through the gates.
+- Checked at Muru (two seasons of three): 1266 wall vertices; the west town's ring two-thirds up, towers at corners.
+- `SeasonLoop.offer(id)`: a catalog card into the hand for scripts and shots (the dealer had no walls card to give).
+
+## 2026-11-10 — season life 3: wagons and ships on a trade route (trackA-seasonlife)
+
+- **The card:** "Open a trade route" (needs a market; 1 Labor for 2 seasons, 2 Materials and 1 Intel; +1 Materials
+  and +1 Intel a season). Once open: 14 wagons; 3 ships too when a harbour is built (`townLife`).
+- **Wagons** are living-town riders (job J_WAGON, the haul format: job/state/leg): away (not drawn) a while, then in
+  along the roads from the gate nearest their shop — the GATES field ridden backwards from the shop's door — unloading
+  there, and out the same way. A cart with sacks.
+- **Ships** are riders moved by their own kernel (`ships`: `riders` has its eight storage buffers taken): a sea field
+  (FIELD plane P_SEA) — the water's distance from the quays (open water within 6 columns of a built harbour lot,
+  `seaSeed` every 30 frames), relaxed in place 4 steps a frame (`seaRelax`) — a ship comes in at the box's edge where
+  the field reaches, down it a column at a time to the quay, moors, and goes out up it to the edge, away for 25–65 s.
+  Drawn as voxels: a hull, a cabin, a mast and a sail. The living town's parameters gain a vec4 (the wagons' and
+  ships' ends): struct P 176 → 192 bytes, in both kernels' copies.
+- Checked at Muru (the time-lapse built, 20 wagons and 4 ships by URL): wagons riding in and unloading; ships coming in
+  from the edges.
+- `SeasonLoop.grant()` (scripts and shots): pools as a gift, to reach the late cards in a GIF.
+- Ships drawn bigger (a hull of five 30-size voxels, about 9 units, a cabin, a mast and a sail) — at play zoom the
+  first ones were specks. Shots: `scratchpad/opps/seasonlife3.gif` (Muru, 3 seasons: the wall rising round both banks
+  with towers, the trade route opening; wagons are carts at people's size, hard to pick out at this zoom; no ship came
+  into this frame — Muru's harbour district here isn't beside the lake, see SL14).
+
+## 2026-11-10 — saving the season and the town (trackA-seasonlife)
+
+The user's priority: saving first. Design: SEASON_LOOP.md "Saving" (DESIGN §23).
+- The season's state and a per-town edit log, keyed by the town's world position, in the world store (the region
+  store; `?fresh=1` clears it), written at each season's end. Sizes at Muru after 3 seasons: the season 4.4–6.1 KB,
+  the town's log 2.5 KB (1.2 KB of it the wall's words). GPU reads only at save points: the wall's words once after
+  it's made (1.2 KB), the living town's state words' head at each season's end (640 B).
+- Replayed on make: claimed districts started (SCT word 8 written), shares at their stage at once, the wall's words
+  written back, the works' words written into the new living town before its first frame.
+- **Checks** (headless, Muru): 3 seasons played (houses, farms, walls, quarry; then a market) → reload without
+  `fresh=1` → season 4, the same pools, built list, projects and districts, "its edit log laid over it — 3 districts,
+  3 stages, the wall"; the shots side by side match (`scratchpad/opps/save-ab.png`). Pan away until Muru is let go
+  (Thauhaman made), pan back → Muru made again (340 ms), its log laid over it, the same town (`pan-ab.png`).
+- Fixes SL3 (claims and stages lost when a town is let go) and SL4 (no save).

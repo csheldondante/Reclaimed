@@ -362,7 +362,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let cap = MATS[m].eco.x;
     let story = G.rules.x > 0.5;
     // (round 128p: the tap's glow, seed puff and sparkles are plantEmit's; the growth is here)
-    if (!(story && v <= 0.0) && !hostile && cap > 0.0) {
+    if (!(story && v <= 0.0) && !hostile && cap > 0.0 && !isCrop(v)) {
       // near the tap grass comes up at once (tufts show from 1.2); around it a boost
       veg[i] = min(max(max(v, 0.3) + 0.35 * fall, select(0.0, 1.5, fall > 0.45)), max(cap, v));
     }
@@ -533,7 +533,7 @@ fn petalEmit(@builtin(global_invocation_id) id: vec3<u32>) {
     let h = hash3(id.x, id.y, G.tick ^ 0xdeadu);
     if (ws > 7.0 && f32(h & 0xffffu) / 65536.0 < (ws - 7.0) * 0.02) {
       // (round 108, simtiers: the flakes blow either way; the plant goes only where vegetation is live)
-      if (deadGrowth && tierRate(TIER_VEG, vec2<i32>(id.xy)) > 0.0) { veg[i] = max(0.0, v - 0.2); }
+      if (deadGrowth && tierRate(TIER_VEG, vec2<i32>(id.xy)) > 0.0 && !isCrop(v)) { veg[i] = max(0.0, v - 0.2); }
       for (var k = 0u; k < 3u; k++) {
         let hk = hash3(id.x, id.y, G.tick + k * 29u);
         let r = vec2<f32>(f32(hk & 255u), f32((hk >> 8u) & 255u)) / 255.0 - 0.5;
@@ -1059,7 +1059,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       if (water[ci] < 0.05 && moisture[ci] > 0.05) {
         // (round 108, simtiers: baked vegetation — it doesn't sprout; its cleaning stays live, the game's core
         // mechanic, SM3)
-        if (tierRate(TIER_VEG, cell) > 0.0) { veg[ci] = max(veg[ci], select(veg[ci] + 0.15, 0.5, veg[ci] == 0.0)); }
+        if (tierRate(TIER_VEG, cell) > 0.0 && !isCrop(veg[ci])) { veg[ci] = max(veg[ci], select(veg[ci] + 0.15, 0.5, veg[ci] == 0.0)); }
         for (var k = 0u; k <= NDIR; k++) {
           let q = select(nbr(cell, min(k, NDIR - 1u)), cell, k == NDIR);
           if (!inMap(q)) { continue; }

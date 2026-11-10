@@ -11,7 +11,7 @@
 // disjoint levels they should be objectives and situations spawned into the active map with real consequences."
 
 import type { Sim } from '../api/world';
-import type { UnitId, Units } from '../api/contracts/units';
+import { seen, type SeenUnit, type UnitId, type Units } from '../api/contracts/units';
 import type { SituationArea, SituationEnd } from '../api/contracts/situation';
 import type { PlaySession } from '../play/session';
 import type { Part, Voxels } from '../play/draw/shapes';
@@ -62,8 +62,8 @@ export interface AreaDeps {
   bounds: [number, number];
   /** the town's places in the window (the finale, a deliver's hall), once its plan is made; null: not yet */
   places: (settlement: string) => TownPlaces | null;
-  /** the town's own people standing now (its settlement's units, not hostile) */
-  townsfolk: (settlement: string) => UnitId[];
+  /** the town's own people standing now (its settlement's units, not hostile, not its guards: asked of the GPU) */
+  townsfolk: (settlement: string) => Promise<SeenUnit[]>;
 }
 
 export type AreaEnd = { kind: 'area'; result: AreaResult } | { kind: 'finale'; end: SituationEnd; why: string; seconds: number };
@@ -107,6 +107,14 @@ export class AreaPlay {
   private hordeCame = false;
   private reinforced = false;
   private burning = new Set<number>();
+  /**
+   * (round 128p, U1, DA-B22 (c)(4)) the units this area spawned and follows by where they stand (outriders, foes, the
+   * quarry, the horde, allies, captives, the trader) are observed (Units.observe) till they're removed or the area ends
+   */
+  private observing = new Map<UnitId, () => void>();
+  /** the townsfolk asked for (the evacuation's count) */
+  private askedFolk = false;
+  private folk: SeenUnit[] | null = null;
   refuge: V2 | null = null;
   private led = 0;
   private lure: { at: V2; t: number } | null = null;
@@ -194,9 +202,30 @@ export class AreaPlay {
       const a = (2 * Math.PI * i) / Math.max(1, n) + i * 0.37;
       const r = r0 + ((i * 7919) % 97) / 97 * (r1 - r0);
       const p = this.d.session.dryNear(this.inside([at[0] + Math.cos(a) * r, at[1] + Math.sin(a) * r], 8));
-      out.push(this.d.units.spawn(kind, p, faction, { hostile: o.hostile, sight: o.sight, speed: o.speed, health: o.health ?? 3, role: o.role ?? kind, name: o.name, colour: o.colour, job: o.job }));
+      out.push(this.track(this.d.units.spawn(kind, p, faction, { hostile: o.hostile, sight: o.sight, speed: o.speed, health: o.health ?? 3, role: o.role ?? kind, name: o.name, colour: o.colour, job: o.job })));
     }
     return out;
+  }
+
+  /** a unit of the area's, observed from now (its place read each sync) */
+  private track(id: UnitId): UnitId {
+    this.observing.set(id, this.d.units.observe(id));
+    return id;
+  }
+
+  /** a unit of the area's removed: no longer observed */
+  private drop(id: UnitId): void {
+    this.observing.get(id)?.();
+    this.observing.delete(id);
+    this.d.units.remove(id);
+  }
+
+  /** the units of `ids` alive with their places read (observed: one not read yet is left out till the next frame) */
+  private seenAlive(ids: UnitId[]): SeenUnit[] {
+    return ids.flatMap((id) => {
+      const v = seen(this.d.units.get(id));
+      return v?.alive ? [v] : [];
+    });
   }
 
   /** the outriders, `behind` minutes back along the way the hero came (or behind it, at the start) */
@@ -282,7 +311,7 @@ export class AreaPlay {
       case 'trader': {
         this.goal = this.inside(here);
         this.goalName = 'the trader';
-        this.trader = this.d.units.spawn('trader', this.goal, null, { name: 'the trader', role: 'trader', hostile: false, health: 5, colour: '#e8c66a', job: { kind: 'guard', at: this.goal, radius: 1 } });
+        this.trader = this.track(this.d.units.spawn('trader', this.goal, null, { name: 'the trader', role: 'trader', hostile: false, health: 5, colour: '#e8c66a', job: { kind: 'guard', at: this.goal, radius: 1 } }));
         const [ux, uy] = unit([this.entry[0] - this.goal[0], this.entry[1] - this.goal[1]]);
         // (round 124: raiders beset the trader: drive them off, and then it trades)
         if (extra.foes) this.foes = this.spawnAround(this.goal, extra.foes, 5, 12, th.role, th.faction, { hostile: true, sight: 22, speed: 3.6, health: 3, job: { kind: 'guard', at: this.goal, radius: 12 } });
@@ -313,7 +342,7 @@ export class AreaPlay {
     if (this.frontT < MARCH_S) return;
     this.frontT = 0;
     const c = this.town.centre;
-    const dead = this.alive(this.horde).map((id) => this.d.units.get(id)!);
+    const dead = this.seenAlive(this.horde);
     if (!dead.length) return;
     const lure = this.lure?.at;
     const goal = lure ?? c;
@@ -342,20 +371,20 @@ export class AreaPlay {
     this.pursuitAt = { t: this.t, at: me };
     const th = this.d.run.sit.threat;
     this.pursuers = this.pursuers.flatMap((id) => {
-      const u = this.d.units.get(id);
+      const u = seen(this.d.units.get(id));
       if (!u?.alive) return [id];
       const d = Math.hypot(u.at[0] - me[0], u.at[1] - me[1]);
       if (d < PURSUIT_FAR) return [id];
       if (pace >= this.pursuitPace) {
         if (d < PURSUIT_FAR * 2) return [id];
-        this.d.units.remove(id);
+        this.drop(id);
         this.log.push(`an outrider lost at t ${this.t.toFixed(0)}`);
         return [];
       }
-      this.d.units.remove(id);
+      this.drop(id);
       const r = PURSUIT_FAR / 2;
       const at = this.d.session.dryNear([me[0] + back[0] * r + (Math.random() - 0.5) * 8, me[1] + back[1] * r + (Math.random() - 0.5) * 8]);
-      return [this.d.units.spawn(th.role, at, th.faction, { hostile: true, sight: 70, speed: this.pursuitPace, health: u.health, job: { kind: 'attack', target: 'hero' } })];
+      return [this.track(this.d.units.spawn(th.role, at, th.faction, { hostile: true, sight: 70, speed: this.pursuitPace, health: u.health, job: { kind: 'attack', target: 'hero' } }))];
     });
   }
 
@@ -366,6 +395,13 @@ export class AreaPlay {
     const pl = this.d.places(sid);
     this.waitedTown += 1 / 60;
     if (!pl) return false;
+    // (its people out now, asked of the GPU: the levy's faction and the evacuation's count — ready when answered)
+    if (!this.askedFolk) {
+      this.askedFolk = true;
+      void this.d.townsfolk(sid).then((folk) => (this.folk = folk));
+    }
+    if (!this.folk) return false;
+    const folk = this.folk;
     const setup = this.setup!;
     this.town = { ...pl, centre: this.inside(pl.centre) };
     this.goal = this.town.centre;
@@ -376,9 +412,9 @@ export class AreaPlay {
     const [rx, ry] = run.sit.refuge.region === run.sit.target.region ? [-setup.from[0], -setup.from[1]] : unit(delta(run.map.areaAt(this.area), rc, run.map.world));
     this.refuge = this.d.session.dryNear(this.inside([c[0] + rx * (this.town.radius + 70), c[1] + ry * (this.town.radius + 70)]));
     // the town's levy (warned), with its guards
-    if (setup.militia > 0) this.allies.push(...this.spawnAround(c, setup.militia, 3, 8, 'guard', this.d.units.query(c, this.town.radius * 2).find((u) => u.settlement === sid)?.faction ?? null, { hostile: false, sight: 18, speed: 3.2, health: 5, role: 'guard', job: { kind: 'guard', at: c, radius: 10 } }));
+    if (setup.militia > 0) this.allies.push(...this.spawnAround(c, setup.militia, 3, 8, 'guard', folk.find((u) => u.settlement === sid)?.faction ?? null, { hostile: false, sight: 18, speed: 3.2, health: 5, role: 'guard', job: { kind: 'guard', at: c, radius: 10 } }));
     // its people: everyone the town has out now (the evacuation's count)
-    this.led = this.d.townsfolk(sid).length;
+    this.led = folk.length;
     // a town the dead reached first is burning already
     for (let i = 0; i < setup.burning; i++) this.setFire(this.town.centre);
     if (setup.hordeIn <= 0) this.hordeComes(true);
@@ -434,15 +470,22 @@ export class AreaPlay {
     const me = this.heroAt();
     const e = u.effect;
     if (e.kind === 'call-allies') {
-      // (the levy's own if it's marching, else the folk round here)
-      const fac = run.reinforce?.faction ?? this.d.units.query(me, 400).find((x) => !x.hostile && !!x.faction && !!x.settlement)?.faction ?? null;
-      this.allies.push(...this.spawnAround(me, e.count, 4, 10, 'guard', fac, { hostile: false, sight: 20, speed: 3.6, health: 5, role: 'guard', job: { kind: 'follow', target: 'hero', distance: 4 } }));
+      // (the levy's own if it's marching, else the folk round here — asked of the GPU: they come when it answers)
+      const call = (fac: string | null) => {
+        if (this.done) return;
+        this.allies.push(...this.spawnAround(me, e.count, 4, 10, 'guard', fac, { hostile: false, sight: 20, speed: 3.6, health: 5, role: 'guard', job: { kind: 'follow', target: 'hero', distance: 4 } }));
+      };
+      if (run.reinforce) call(run.reinforce.faction);
+      else void this.d.units.query(me, 400).then((near) => call(near.find((x) => !x.hostile && !!x.faction && !!x.settlement)?.faction ?? null));
       this.say(`${run.item(id).name}: ${e.count} come running`);
     } else if (e.kind === 'lure') {
       this.lure = { at: me, t: e.seconds };
-      const ids = this.d.units.query(me, e.radius, { hostile: true }).map((x) => x.id);
-      this.d.units.order(ids, { kind: 'go', to: me });
-      this.say(`${run.item(id).name}: ${ids.length} turn to the sound`);
+      const name = run.item(id).name;
+      void this.d.units.query(me, e.radius, { hostile: true }).then((near) => {
+        const ids = near.map((x) => x.id);
+        this.d.units.order(ids, { kind: 'go', to: me });
+        this.say(`${name}: ${ids.length} turn to the sound`);
+      });
     }
     this.log.push(`used ${id} (${e.kind}) at t ${this.t.toFixed(0)}`);
     this.renderBar(true);
@@ -450,13 +493,12 @@ export class AreaPlay {
   }
 
   /** "Follow me": the town's people near the hero take the order; "Hold here": the followers stay */
-  orderFollow(): number {
+  async orderFollow(): Promise<number> {
     const sid = this.area.settlement;
     const me = this.heroAt();
-    const near = sid ? this.d.townsfolk(sid).filter((id) => {
-      const u = this.d.units.get(id);
-      return u && Math.hypot(u.at[0] - me[0], u.at[1] - me[1]) < 30;
-    }) : [];
+    // (round 128p, U1: the town's people near the hero asked of the GPU — with where each stands)
+    const near = sid ? (await this.d.townsfolk(sid)).filter((u) => Math.hypot(u.at[0] - me[0], u.at[1] - me[1]) < 30) : [];
+    if (this.done) return 0;
     this.d.followers.recruit(near);
     this.d.followers.order({ kind: 'follow', distance: 3 });
     this.log.push(`follow me: ${near.length} near, ${this.d.followers.members().length} following`);
@@ -543,16 +585,12 @@ export class AreaPlay {
         // (units walk their goal only near it: the quarry's goal moved on a stride at a time, toward the escape)
         if (this.quarryT > 1.5) {
           this.quarryT = 0;
-          for (const id of q) {
-            const u = this.d.units.get(id)!;
-            this.d.units.order([id], { kind: 'go', to: this.toward([u.at[0], u.at[1]], this.escape!, 22) });
-          }
+          for (const u of this.seenAlive(q)) this.d.units.order([u.id], { kind: 'go', to: this.toward([u.at[0], u.at[1]], this.escape!, 22) });
         }
         let near: V2 | null = null;
         let nd = Infinity;
         let away = Infinity;
-        for (const id of q) {
-          const u = this.d.units.get(id)!;
+        for (const u of this.seenAlive(q)) {
           const dd = Math.hypot(u.at[0] - me[0], u.at[1] - me[1]);
           if (dd < nd) (nd = dd), (near = [u.at[0], u.at[1]]);
           away = Math.min(away, Math.hypot(u.at[0] - this.escape![0], u.at[1] - this.escape![1]));
@@ -564,14 +602,16 @@ export class AreaPlay {
         break;
       }
       case 'rescue': {
+        // (a guard not read yet counts as round the captives: it was put there)
         const left = this.alive(this.foes).filter((id) => {
-          const u = this.d.units.get(id)!;
-          return Math.hypot(u.at[0] - this.camp![0], u.at[1] - this.camp![1]) < 30;
+          const at = this.d.units.get(id)?.at;
+          return !at || Math.hypot(at[0] - this.camp![0], at[1] - this.camp![1]) < 30;
         }).length;
         if (!this.freed && left === 0 && Math.hypot(this.camp![0] - me[0], this.camp![1] - me[1]) < THERE) {
           this.freed = true;
-          const ids = this.alive(this.captives);
-          this.d.followers.recruit(ids);
+          const freed = this.seenAlive(this.captives);
+          const ids = freed.map((u) => u.id);
+          this.d.followers.recruit(freed);
           this.d.followers.order({ kind: 'follow', distance: 3 });
           this.goal = this.edgeAt;
           this.say(`${ids.length} freed: lead them out!`);
@@ -592,10 +632,7 @@ export class AreaPlay {
     this.point(at, me);
     if (won) {
       // (outriders still close behind leave with the hero; ones far back have lost it)
-      const still = this.alive(this.pursuers).filter((id) => {
-        const u = this.d.units.get(id)!;
-        return Math.hypot(u.at[0] - me[0], u.at[1] - me[1]) < 70;
-      }).length;
+      const still = this.seenAlive(this.pursuers).filter((u) => Math.hypot(u.at[0] - me[0], u.at[1] - me[1]) < 70).length;
       this.finish({ seconds: this.t, won: true, pursuers: still });
     }
   }
@@ -632,17 +669,21 @@ export class AreaPlay {
       }
     }
     const horde = this.alive(this.horde);
+    // (the horde observed: the few not read yet are counted in hordeLeft, not placed)
+    const placed = this.seenAlive(horde);
     const inside: V2[] = [];
-    for (const id of horde) {
-      const u = this.d.units.get(id)!;
+    for (const u of placed) {
       if (Math.hypot(u.at[0] - T.centre[0], u.at[1] - T.centre[1]) < T.radius * INSIDE) inside.push([u.at[0], u.at[1]]);
     }
     let safe = 0;
-    if (this.refuge) for (const m of this.d.followers.members()) if (Math.hypot(m.unit.at[0] - this.refuge[0], m.unit.at[1] - this.refuge[1]) < 14) safe++;
+    if (this.refuge)
+      for (const m of this.d.followers.members()) {
+        const at = m.unit.at;
+        if (at && Math.hypot(at[0] - this.refuge[0], at[1] - this.refuge[1]) < 14) safe++;
+      }
     const was = R.status.state;
     const fallen = R.fallen;
-    const near = horde.some((id) => {
-      const u = this.d.units.get(id)!;
+    const near = placed.some((u) => {
       return Math.hypot(u.at[0] - T.centre[0], u.at[1] - T.centre[1]) < T.radius * 1.5;
     });
     const n = R.step(dt, { t: this.t, heroAlive: this.hero.alive, hordeCame: this.hordeCame, hordeLeft: horde.length, hordeInside: inside.length, hordeNear: near, refugees: s.mode === 'evacuate' ? { led: this.led, safe } : undefined });
@@ -658,13 +699,12 @@ export class AreaPlay {
       this.loggedAt = this.t;
       let far = 0;
       const states: Record<string, number> = {};
-      for (const id of horde) {
-        const u = this.d.units.get(id)!;
+      for (const u of placed) {
         far += Math.hypot(u.at[0] - T.centre[0], u.at[1] - T.centre[1]);
         const k = `${u.state}/${u.job.kind}`;
         states[k] = (states[k] ?? 0) + 1;
       }
-      this.log.push(`t ${this.t.toFixed(0)}: hero ${me.map((v) => v.toFixed(0))}; ${horde.length} dead (mean ${(far / Math.max(1, horde.length)).toFixed(0)} cells off the middle, ${inside.length} inside; ${JSON.stringify(states)}); ${this.alive(this.allies).length} allies; ${this.d.followers.members().length} following, ${safe} safe; fires ${R.fires}`);
+      this.log.push(`t ${this.t.toFixed(0)}: hero ${me.map((v) => v.toFixed(0))}; ${horde.length} dead (mean ${(far / Math.max(1, placed.length)).toFixed(0)} cells off the middle, ${inside.length} inside; ${JSON.stringify(states)}); ${this.alive(this.allies).length} allies; ${this.d.followers.members().length} following, ${safe} safe; fires ${R.fires}`);
     }
     if (this.done) {
       this.text(`${this.area.name}: ${R.status.state === 'ended' ? R.status.why : ''} · ${this.burning.size} houses alight`);
@@ -694,9 +734,7 @@ export class AreaPlay {
   private nearestFoe(me: V2): V2 | null {
     let best: V2 | null = null;
     let bd = Infinity;
-    for (const id of this.horde) {
-      const u = this.d.units.get(id);
-      if (!u?.alive) continue;
+    for (const u of this.seenAlive(this.horde)) {
       const dd = Math.hypot(u.at[0] - me[0], u.at[1] - me[1]);
       if (dd < bd) (bd = dd), (best = [u.at[0], u.at[1]]);
     }
@@ -787,8 +825,10 @@ export class AreaPlay {
     this.arrow.remove();
     this.big.remove();
     this.bar.remove();
-    for (const id of [...this.pursuers, ...this.foes, ...this.allies, ...this.horde, ...this.quarry, ...this.captives]) this.d.units.remove(id);
-    if (this.trader !== null) this.d.units.remove(this.trader);
+    for (const id of [...this.pursuers, ...this.foes, ...this.allies, ...this.horde, ...this.quarry, ...this.captives]) this.drop(id);
+    if (this.trader !== null) this.drop(this.trader);
+    for (const release of this.observing.values()) release();
+    this.observing.clear();
     this.d.followers.dismiss(this.d.followers.members().map((m) => m.unit.id));
   }
 }

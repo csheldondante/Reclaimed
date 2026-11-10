@@ -28,6 +28,7 @@ import { FieldTowns } from '../../citygen/towns';
 import { LivingTowns } from '../../citylife/towns';
 import { livingFromUrl } from '../../citylife/params';
 import { mountTownPanel } from '../../citygen/panel';
+import { startSeasonLoop } from './season';
 import { whenPipelinesReady } from '../../gpu/pipeline';
 
 /** sleep and the streamed window, with what follows its slides */
@@ -395,13 +396,17 @@ export function attachStream(scene: LevelScene): void {
             const go = () => (towns.timelapse(Number(host.params.get('tlspan') ?? 30)) ? undefined : setTimeout(go, 500));
             go();
           }
+          // (trackA-opps, ?opps=1: the season loop on the town — docs/design/SEASON_LOOP.md)
+          if (host.params.get('opps') === '1') startSeasonLoop(scene, towns);
           S.onSlide.push(() => towns.slid());
           S.onWarp.push(() => towns.warped());
           // (living town, docs/design/LIVING_TOWN.md: ?living=1 — each made town's people, its quarry and clearing, on
           // the GPU; the panel with its counters. ?living=0 or absent: none — the toggle diff)
-          if (host.params.get('living') === '1') {
+          // (season life: ?opps=1 brings the living town, its panel off unless asked)
+          if (host.params.get('living') === '1' || host.params.get('opps') === '1') {
             livingFromUrl(host.params);
             const lt = new LivingTowns({
+              logs: towns.logs,
               device: host.gpu.device,
               towns: () => towns.live,
               addVoxels: (i, g) => core.renderer.addVoxels(i, g),
@@ -416,7 +421,7 @@ export function attachStream(scene: LevelScene): void {
             lt.debugGraph = host.params.get('livingdebug') === '1';
             scene.livingTowns = lt;
             (globalThis as { living?: LivingTowns }).living = lt;
-            if (host.params.get('livingpanel') !== '0') lt.mountPanel(host.ui, () => void towns.claimDistrict('housing'));
+            if (host.params.get('livingpanel') !== '0' && !(host.params.get('opps') === '1' && host.params.get('livingpanel') !== '1')) lt.mountPanel(host.ui, () => void towns.claimDistrict('housing'));
           }
           // (the first look now: the town the level opens on made before the first frames)
           towns.update(Infinity);

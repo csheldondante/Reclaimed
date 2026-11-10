@@ -9,7 +9,7 @@
 //   point every REGEN_EVERY s. At 0 it's dead: `died` (the run ends: lost).
 
 import type { Hero, HeroAbility, HeroCamera, HeroIntent, HeroWorld } from '../api/contracts/hero';
-import type { Actor, UnitView, V2, V3 } from '../api/contracts/units';
+import type { Actor, SeenUnit, V2, V3 } from '../api/contracts/units';
 import { canStep, findPath } from './path';
 
 /** cells a second walking (round 94: 5.5 was "way too slow" on the phone), and running (×SPRINT) */
@@ -83,7 +83,7 @@ export class Walker implements Hero {
       faction: this.faction,
       position: () => (self.alive ? self.pos : null),
       alive: () => self.alive,
-      hurt: (d: number, by: UnitView) => self.takeHit(d, by),
+      hurt: (d: number, by: SeenUnit) => self.takeHit(d, by),
     };
     this.abilities = [{ id: 'attack', name: 'Swing', cooldown: () => this.cool }];
   }
@@ -198,16 +198,25 @@ export class Walker implements Hero {
     if (it.attack && this.cool === 0) this.swing();
   }
 
-  /** a swing: turn to the nearest hostile close by, then hit every hostile in the arc */
+  /**
+   * a swing: turn to the nearest hostile close by, then hit every hostile in the arc. (Round 128p, U1: who's close by
+   * is asked when it swings — one query, answered a frame or two into the swing's 0.25 s; the blow lands then)
+   */
   private swing(): void {
     const u = this.world.units;
-    const near = u.query([this.pos[0], this.pos[1]], REACH + 1.5, { hostile: true });
-    if (near.length) this.head = Math.atan2(near[0].at[1] - this.pos[1], near[0].at[0] - this.pos[0]);
     this.cool = COOLDOWN;
     this.swingT = 1e-3;
+    void u.query([this.pos[0], this.pos[1]], REACH + 1.5, { hostile: true }).then((near) => this.land(near));
+  }
+
+  private land(near: SeenUnit[]): void {
+    if (!this.alive) return;
+    const u = this.world.units;
+    if (near.length) this.head = Math.atan2(near[0].at[1] - this.pos[1], near[0].at[0] - this.pos[0]);
     const fx = Math.cos(this.head);
     const fy = Math.sin(this.head);
-    for (const v of u.query([this.pos[0], this.pos[1]], REACH + 0.4, { hostile: true })) {
+    for (const v of near) {
+      if (Math.hypot(v.at[0] - this.pos[0], v.at[1] - this.pos[1]) > REACH + 0.4) continue;
       const dx = v.at[0] - this.pos[0];
       const dy = v.at[1] - this.pos[1];
       const d = Math.hypot(dx, dy) || 1;
@@ -215,7 +224,7 @@ export class Walker implements Hero {
     }
   }
 
-  private takeHit(d: number, by: UnitView): void {
+  private takeHit(d: number, by: SeenUnit): void {
     if (!this.alive || this.flash > 0.1) return;
     this.health = Math.max(0, this.health - d);
     this.flash = 0.6;

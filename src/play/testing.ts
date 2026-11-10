@@ -4,7 +4,7 @@
 // released ones fly ballistically for a moment), every blow, crater and blast recorded. The camera is a plain top-down
 // projection: screen px = world cells x 20.
 
-import type { AreaHit, UnitId, UnitView, V3 } from '../api/contracts/units';
+import type { AreaHit, UnitId, SeenUnit, V3 } from '../api/contracts/units';
 import type { Pt } from './core/gestures';
 import type { Act, Drag, PlayInput } from './input/types';
 import type { Blow, PlayWorld, Vehicle } from './world';
@@ -34,7 +34,7 @@ export function testWorld(height: (x: number, y: number) => number, opts: { wate
   const strikes: AreaHit[] = [];
   const craters: { x: number; y: number; r: number }[] = [];
   let next = 1;
-  const view = (u: FakeUnit): UnitView => ({ id: u.id, kind: 'raider', role: 'raider', faction: null, at: [...u.at], heading: 0, health: u.health, maxHealth: 3, hostile: true, alive: u.health > 0, job: { kind: 'idle' }, state: 'idle', colour: '#fff' });
+  const view = (u: FakeUnit): SeenUnit => ({ id: u.id, kind: 'raider', role: 'raider', faction: null, at: [...u.at], heading: 0, health: u.health, maxHealth: 3, hostile: true, alive: u.health > 0, job: { kind: 'idle' }, state: 'idle', colour: '#fff' });
   const blow = (): Blow => ({ set: () => {}, stop: () => {}, alive: true });
   const w: TestWorld = {
     list,

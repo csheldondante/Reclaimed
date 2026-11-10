@@ -13,9 +13,12 @@ export default async function (lab, args) {
   while (t < (args.seconds ?? 60)) {
     t += (await lab.run(10, 16)).simSeconds;
     await rd.refresh();
-    for (const w of lab.snapshot().walkers) {
+    // (round 128p, U1: exact places asked of the GPU - the snapshot rounds them)
+    const where = new Map((await lab.units.query([0, 0], 1e7)).map((v) => [v.id, v.at]));
+    for (const w of (await lab.snapshot()).walkers) {
       if (w.state !== 'walk') continue;
-      const p = lab.units.get(w.id).at;
+      const p = where.get(w.id);
+      if (!p) continue;
       // (a surface under its feet, and not above them: stepping down it rides a little over its floor, never under it.
       // A unit pressed against a column's edge — a terrace it can't step — stands on the boundary, where the CPU's lattice
       // rounds a half the other way from the GPU's: both columns either side of its point are read)

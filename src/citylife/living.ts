@@ -66,7 +66,8 @@ type K =
   | 'gate' | 'walkInit' | 'doors' | 'pads' | 'lotMask' | 'hubPick' | 'quarryPick' | 'siteFix' | 'sitePads' | 'hubSeed'
   | 'checkClear' | 'checkCols' | 'checkPick' | 'checkLay' | 'checkDoors' | 'checkStep'
   | 'hubSeed1' | 'hashScrub' | 'relax' | 'relaxMark' | 'relaxCheck' | 'trace' | 'traceDone' | 'rampRoute' | 'riders'
-  | 'sites' | 'sitesClear' | 'figuresClear' | 'figures' | 'overlay' | 'poolSwitch' | 'hashClear' | 'passMeshClear' | 'passMesh';
+  | 'sites' | 'sitesClear' | 'figuresClear' | 'figures' | 'overlay' | 'poolSwitch' | 'hashClear' | 'passMeshClear' | 'passMesh'
+  | 'seaSeed' | 'seaRelax' | 'ships';
 /** each kernel's bindings (at most 8 storage buffers) */
 const SPECS: Record<K, BindSpec> = {
   gate: { 0: 'uniform', 10: 'rw', 14: 'rw' },
@@ -103,7 +104,13 @@ const SPECS: Record<K, BindSpec> = {
   figuresClear: { 0: 'uniform', 16: 'rw' },
   figures: { 0: 'uniform', 12: 'rw', 13: 'rw', 16: 'rw' },
   overlay: { 0: 'uniform', 1: 'read', 2: 'read', 8: 'rw', 9: 'rw', 13: 'rw', 16: 'rw' },
+  // (season life: the sea field and the ships)
+  seaSeed: { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 7: 'read', 9: 'rw', 15: 'read' },
+  seaRelax: { 0: 'uniform', 9: 'rw', 15: 'read' },
+  ships: { 0: 'uniform', 2: 'read', 9: 'rw', 12: 'rw', 15: 'read' },
 };
+/** routes.wgsl struct P's bytes (12 vec4s) */
+const P_BYTES = 192;
 
 /** the GPU's ms of each part of the frame (timestamps; null without them) */
 export type LivingTimes = Record<'graph' | 'riders' | 'figures' | 'works', number | null>;
@@ -158,10 +165,10 @@ export class LivingTown {
       return b;
     };
     const N = input.w * input.h;
-    this.uni = buf('params', 176, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.uni = buf('params', P_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.walk = buf('walk', N * 4);
     // (the 8 hubs' fields, then the open ground's distance and the cut-off labels: routes.wgsl PLANES)
-    this.field = buf('fields', N * 10 * 4);
+    this.field = buf('fields', N * 11 * 4);
     this.pass = buf('passages', N * 8);
     // (the passages' dirt mesh: room for 6 000 columns, 18 vertices of 32 B each)
     this.pmesh = buf('passage mesh', 6000 * 18 * 32);
@@ -192,14 +199,14 @@ export class LivingTown {
   /** how many riders: the counts' sum */
   get riders(): number {
     const p = this.values.people;
-    return Math.min(MAX_RIDERS, p.commuters + p.farmers + p.quarrymen + p.stoneCarts + p.woodcutters + p.logCarts + p.builders);
+    return Math.min(MAX_RIDERS, p.commuters + p.farmers + p.quarrymen + p.stoneCarts + p.woodcutters + p.logCarts + p.builders + p.wagons + p.ships);
   }
 
   /** the parameters' uniform for this frame (routes.wgsl struct P) */
   private writeParams(dt: number, place: LivingPlace): void {
     const v = this.values;
     const p = v.people;
-    const a = new ArrayBuffer(176);
+    const a = new ArrayBuffer(P_BYTES);
     const U = new Uint32Array(a);
     const F = new Float32Array(a);
     const I = new Int32Array(a);
@@ -218,13 +225,16 @@ export class LivingTown {
     F.set([v.forest.radius, v.forest.cut, v.forest.replant, v.forest.regrow], 32);
     I.set([place.dx, place.dy, place.winW, place.winH], 36);
     F.set([place.dz, 0, p.spread, this.debugOverride], 40);
+    // (season life: the wagons' and the ships' ends, after the builders')
+    const wEnd = Math.min(MAX_RIDERS, acc + p.wagons);
+    U.set([wEnd, Math.min(MAX_RIDERS, wEnd + p.ships), 0, 0], 44);
     this.device.queue.writeBuffer(this.uni, 0, a);
   }
 
   /** the jobs dealt again when the counts change (the riders' rows cleared: each is dealt at its next frame) */
   private redeal(enc: GPUCommandEncoder): void {
     const p = this.values.people;
-    const key = [p.commuters, p.farmers, p.quarrymen, p.stoneCarts, p.woodcutters, p.logCarts, p.builders].join(',');
+    const key = [p.commuters, p.farmers, p.quarrymen, p.stoneCarts, p.woodcutters, p.logCarts, p.builders, p.wagons, p.ships].join(',');
     if (key === this.dealt) return;
     this.dealt = key;
     enc.clearBuffer(this.rid);
@@ -297,6 +307,13 @@ export class LivingTown {
       }
       run(cp, 'rampRoute', 1);
       run(cp, 'riders', Math.ceil(this.riders / 64) || 1);
+      // (season life: the ships — their sea field seeded now and then and relaxed a few steps a frame)
+      const ships = this.values.people.ships;
+      if (ships > 0) {
+        if (this.frameNo % 30 === 0) run(cp, 'seaSeed', Math.ceil(this.input.lotRoom / 64));
+        for (let k = 0; k < 4; k++) run(cp, 'seaRelax', Math.ceil((this.input.w * this.input.h) / 64));
+        run(cp, 'ships', Math.ceil(ships / 64));
+      }
     });
     if (this.stages.length) pass('works', (cp) => this.stages.forEach((s) => s.encode(cp, this.frameNo)));
     pass('figures', (cp) => {

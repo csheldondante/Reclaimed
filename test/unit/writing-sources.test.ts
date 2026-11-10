@@ -21,6 +21,8 @@ const SOURCES: Record<string, Source> = {
   'fortress/raiders.ts': { who: 'player' },
   'fortress/words.ts': { who: 'words' },
   'opps/words.ts': { who: 'words' },
+  'season/words.ts': { who: 'words' },
+  'season/ui.ts': { who: 'player', helpers: [{ name: 'el', arg: 2 }] },
   'opps/level-opps.ts': { who: 'player', helpers: [{ name: 'h', arg: 1 }, { name: 'btn', arg: 0 }] },
   'dialog/dialog.ts': { who: 'player' },
   'api/atlas-map.ts': { who: 'player' },

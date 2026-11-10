@@ -7,9 +7,10 @@
 // fieldTownBox, level.ts); after that the window may go where it likes. docs/design/CITYGEN.md.
 import { LIQUID } from '../flow/model';
 import type { Settlement } from '../api/contracts/settlement';
-import type { CityLots, CityRoutes } from '../api/contracts/citygen';
+import type { CityLots, CityRoutes, DistrictStage } from '../api/contracts/citygen';
+import type { TownLog } from './townlog';
 import { ROW_H } from '../world/lattice';
-import { BUILD_S, CityGen, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes } from './gpu';
+import { BUILD_S, CityGen, DISTRICT_SPAN, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes, type DistrictClaim } from './gpu';
 import type { StaticClaims, StaticGrid, GridPlace, OwnedSlot } from '../sim/static-claims';
 import { cellAt } from '../world/lattice';
 import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
@@ -197,7 +198,7 @@ export class FieldTown {
     this.xform = io.device.createBuffer({ label: `citygen ${site.id} place`, size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.place();
     io.addMesh(this.gen.verts, this.gen.args, this.xform);
-    this.bare = makeCompute(io.device, 'citygen bare', [commonWgsl, bareWgsl], { 0: 'uniform', 3: 'read', 4: 'rw', 5: 'rw', 6: 'uniform' });
+    this.bare = makeCompute(io.device, 'citygen bare', [commonWgsl, bareWgsl], { 0: 'uniform', 3: 'read', 4: 'rw', 5: 'rw', 6: 'uniform', 7: 'read', 8: 'read' });
     this.bareU = io.device.createBuffer({ label: `citygen ${site.id} bare`, size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     // (the reach's start: the first road's point at the core's distance — on the road into town, not in the river)
     const road = site.roads.map((l) => l.map(local)).find((l) => l.length > 1) ?? [centre];
@@ -213,6 +214,11 @@ export class FieldTown {
         this.claim();
         return t;
       });
+  }
+
+  /** (season loop) the town's centre in the window now (world units): the camera's framing */
+  centreInWindow(): [number, number] {
+    return this.inWindow(this.centre);
   }
 
   /** (M4b) where the grid lies in the window now (columns; z: world z to window z) */
@@ -245,7 +251,16 @@ export class FieldTown {
     void this.checkReach();
   }
 
-  /** (M4b) the plants under the town's claims cleared in these window rectangles (bare.wgsl) */
+  /** (farms) the town's box in the window: its fields' crops written at their stage now (bare.wgsl) — after each mesh
+   *  run while a district rises, so a field's crop follows its progress */
+  private cropsOver(): void {
+    const p = this.gridPlace();
+    const { w, h } = this.io.dims;
+    this.bareOver([[Math.max(0, p.dx), Math.max(0, p.dy), Math.min(w, p.dx + this.box.w), Math.min(h, p.dy + this.box.h)]], p);
+  }
+
+  /** (M4b) the plants under the town's claims cleared in these window rectangles (bare.wgsl); (farms) and the fields'
+   *  crops written */
   private bareOver(rects: [number, number, number, number][], p: GridPlace): void {
     const d = this.io.device;
     const P = this.io.plants;
@@ -259,7 +274,7 @@ export class FieldTown {
       const enc = d.createCommandEncoder({ label: 'citygen bare' });
       const cp = enc.beginComputePass({ label: 'citygen bare' });
       cp.setPipeline(this.bare.pipeline);
-      cp.setBindGroup(0, makeBindGroup(d, 'citygen bare', this.bare.layout, { 0: P.globals, 3: this.gen.claimGrid, 4: P.veg, 5: P.vegNext, 6: this.bareU }));
+      cp.setBindGroup(0, makeBindGroup(d, 'citygen bare', this.bare.layout, { 0: P.globals, 3: this.gen.claimGrid, 4: P.veg, 5: P.vegNext, 6: this.bareU, 7: this.gen.progress, 8: this.gen.lotRecords }));
       cp.dispatchWorkgroups(Math.ceil((x1 - x0) / 8), Math.ceil((y1 - y0) / 8));
       cp.end();
       d.queue.submit([enc.finish()]);
@@ -335,7 +350,10 @@ export class FieldTown {
         () => {
           this.reclaiming = false;
           this.meshRuns++;
-          if (!this.gone && this.grid) this.io.statics()?.reclaim(this.grid);
+          if (!this.gone && this.grid) {
+            this.io.statics()?.reclaim(this.grid);
+            this.cropsOver();
+          }
         },
         (e) => {
           this.reclaiming = false;
@@ -352,12 +370,56 @@ export class FieldTown {
     this.animUntil = Math.max(this.animUntil, now + span + BUILD_S * 1.75 + 0.5);
   }
 
-  /** (M4d hook) the best district not begun for this purpose (streets.wgsl P_*) started now: its id (−1 none left) */
-  async claimDistrict(purpose: number, now: number): Promise<number> {
-    if (this.gone) return -1;
-    const id = await this.gen.claimDistrict(purpose, now);
-    if (id >= 0) this.animUntil = Math.max(this.animUntil, now + BUILD_S * 1.75 + 0.5);
-    return id;
+  /** (M4d hook) the best district not begun for this purpose (streets.wgsl P_*) started now: its id (−1 none left), its
+   *  centre (the grid's frame, world units: inWindow), the districts not begun after it. CLAIM_COUNT: only the count. */
+  async claimDistrict(purpose: number, now: number): Promise<DistrictClaim> {
+    if (this.gone) return { id: -1, at: [0, 0], left: 0 };
+    const c = await this.gen.claimDistrict(purpose, now);
+    if (c.id >= 0) this.animUntil = Math.max(this.animUntil, now + DISTRICT_SPAN + 0.5);
+    return c;
+  }
+
+  /** a point of the town's grid frame (world units) in the window now */
+  inWindow(at: readonly [number, number]): [number, number] {
+    const p = this.gridPlace();
+    return [at[0] + p.dx, at[1] + p.dy * ROW_H];
+  }
+
+  /** (saving) the town's edit log laid over it as made: claims, each share's stage there at once, the wall's words */
+  replay(log: TownLog, now: number): void {
+    if (this.gone) return;
+    for (const id of log.claims) this.gen.markClaimed(id);
+    const past = now - DISTRICT_SPAN - 1;
+    for (const s of log.stages) this.gen.stageDistrict(s.id, s.stage, past);
+    if (log.wall?.words.length) {
+      this.gen.writeWall(log.wall.words);
+      this.gen.wallStage(log.wall.to, log.wall.to, past);
+    }
+    this.animUntil = Math.max(this.animUntil, now + 1);
+    this.gen.animate(now);
+  }
+
+  /** (season life) the town wall begun now (its ring made on the GPU); the next mesh run draws and claims it */
+  wallStart(now: number): void {
+    if (this.gone) return;
+    this.gen.wallStart();
+    this.animUntil = Math.max(this.animUntil, now + 1);
+  }
+  /** (season life) the wall's stage, eased from `when` on the town's clock; animated (and claimed again) till it's there */
+  wallStage(from: number, to: number, when: number, now: number): void {
+    if (this.gone) return;
+    this.gen.wallStage(from, to, when);
+    this.animUntil = Math.max(this.animUntil, Math.max(now, when + DISTRICT_SPAN) + 0.5);
+    this.gen.animate(now);
+  }
+
+  /** (season loop) a card's share of a district and its stage, eased from `when` on the town's clock (its build's span); animated
+   *  till it's there */
+  stageDistrict(id: number, stage: DistrictStage, when: number, now: number): void {
+    if (this.gone) return;
+    this.gen.stageDistrict(id, stage, when);
+    this.animUntil = Math.max(this.animUntil, Math.max(now, when + DISTRICT_SPAN) + 0.5);
+    this.gen.animate(now);
   }
 
   /** (the street skeleton) which main roads show and are walked (citygen/params.ts skelReach, skelMargin,

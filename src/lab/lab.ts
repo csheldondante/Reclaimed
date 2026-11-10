@@ -14,7 +14,7 @@
 //   look(x, y, zoom) / shot(name)       the camera; a screenshot (the runner's: scripts/lab.mjs saves it)
 //   reset()                             the plan erased, the builders gone, the land as it opened, the stores refilled:
 //                                       a new scenario on the same page without a reload
-import type { UnitId, V2 } from '../api/contracts/units';
+import type { UnitId, V2, V3 } from '../api/contracts/units';
 import type { StructureType } from '../api/contracts/fortress';
 import { STRUCTURE_TYPES } from '../api/contracts/fortress';
 import type { WorldCore } from '../scenes/world-core';
@@ -380,7 +380,19 @@ export class Lab {
 
   // ---- reading
 
-  snapshot(): LabSnapshot {
+  /** (round 128p, U1) every live unit in the window where it stands: one GPU query (the agents' answer cap: 1024) */
+  private async where(): Promise<Map<number, V3>> {
+    const { w, h } = this.io.core.dims;
+    const found = await this.io.units.query([w / 2, h / 2], Math.hypot(w, h));
+    return new Map(found.map((v) => [v.id, v.at]));
+  }
+
+  /**
+   * (round 128p, U1, DA-B22 (c)(4)) Where everyone stands is asked of the GPU (one query over the window: Units.query) —
+   * a scenario's read on demand, not a position read every frame.
+   */
+  async snapshot(): Promise<LabSnapshot> {
+    const where = await this.where();
     const f = this.fort();
     const life = this.io.life();
     const units = this.io.units;
@@ -394,21 +406,24 @@ export class Lab {
     const walkers: LabSnapshot['walkers'] = [];
     for (const id of life?.people() ?? []) {
       const u = units.get(id);
-      if (!u) continue;
-      walkers.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: life?.life.phaseOf(id) ?? '-', job: life?.life.jobOf(id) ?? null, onRoad: onRoad(u.at[0], u.at[1]) });
+      const at = where.get(id);
+      if (!u || !at) continue;
+      walkers.push({ id, at: [+at[0].toFixed(1), +at[1].toFixed(1), +at[2].toFixed(1)], state: u.state, phase: life?.life.phaseOf(id) ?? '-', job: life?.life.jobOf(id) ?? null, onRoad: onRoad(at[0], at[1]) });
     }
     // (round 128l, m4) the soldiers: where, doing what (their routine's phase, or 'patrol' on the wall-walk)
     const soldiers: LabSnapshot['soldiers'] = [];
     for (const id of life?.soldiers ?? []) {
       const u = units.get(id);
-      if (!u) continue;
-      soldiers.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: life?.life.phaseOf(id) ?? '-', onRoad: onRoad(u.at[0], u.at[1]) });
+      const at = where.get(id);
+      if (!u || !at) continue;
+      soldiers.push({ id, at: [+at[0].toFixed(1), +at[1].toFixed(1), +at[2].toFixed(1)], state: u.state, phase: life?.life.phaseOf(id) ?? '-', onRoad: onRoad(at[0], at[1]) });
     }
     const carts: LabSnapshot['carts'] = [];
     for (const id of life?.carts ?? []) {
       const u = units.get(id);
-      if (!u) continue;
-      carts.push({ id, at: [+u.at[0].toFixed(1), +u.at[1].toFixed(1), +u.at[2].toFixed(1)], state: u.state, phase: life?.life.phaseOf(id) ?? '-', pile: life?.pileOf(id) ?? null, onRoad: onRoad(u.at[0], u.at[1]) });
+      const at = where.get(id);
+      if (!u || !at) continue;
+      carts.push({ id, at: [+at[0].toFixed(1), +at[1].toFixed(1), +at[2].toFixed(1)], state: u.state, phase: life?.life.phaseOf(id) ?? '-', pile: life?.pileOf(id) ?? null, onRoad: onRoad(at[0], at[1]) });
     }
     const piles = Object.fromEntries([...(life?.piles ?? new Map())].map(([k, g]) => [k, Object.values(g as Record<string, number>).reduce((a, b) => a + b, 0)]));
     const walking = walkers.filter((w) => w.state === 'walk');
@@ -508,10 +523,13 @@ export class Lab {
         build: () => this.build(),
         advance: async (seconds, speed) => void (await this.run(seconds, speed, { keep: false })),
         simTime: () => this.simT,
-        walkers: () => (this.io.life()?.people() ?? []).flatMap((id) => {
-          const u = this.io.units.get(id);
-          return u ? [[u.at[0], u.at[1]] as [number, number]] : [];
-        }),
+        walkers: async () => {
+          const where = await this.where();
+          return (this.io.life()?.people() ?? []).flatMap((id) => {
+            const at = where.get(id);
+            return at ? [[at[0], at[1]] as [number, number]] : [];
+          });
+        },
         log: (l) => console.log(`[placebench] ${l}`),
       },
       o,

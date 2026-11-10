@@ -225,7 +225,7 @@ await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: Nu
     L.unload = (u, w, ok) => {
       if (!ok && w.block) {
         const b = w.block;
-        window.__unloads.push({ t: Math.round(L.t), cell: b.cell, cut: L.isCutOff(b), todo: L.todo().some((x) => x.cell === b.cell && x.level === b.level), cutCells: L.cutCells.size, at: u.v.at.map(Math.round) });
+        window.__unloads.push({ t: Math.round(L.t), cell: b.cell, cut: L.isCutOff(b), todo: L.todo().some((x) => x.cell === b.cell && x.level === b.level), cutCells: L.cutCells.size, at: u.v.at ? u.v.at.map(Math.round) : null });
       }
       return orig(u, w, ok);
     };
@@ -235,14 +235,16 @@ await run({ name: 'fortressoutside', kind: 'behaviour', size: '412x915', dpr: Nu
   while (Date.now() - t0 < LIMIT_S * 1000) {
     await sleep(10000);
     await R.fatal(page);
-    last = await page.evaluate((sites) => {
+    last = await page.evaluate(async (sites) => {
       const Rc = window.reclaimed;
       const f = Rc.fortress;
       const life = Rc.fortressCrowd();
       const built = Object.fromEntries(Object.entries(sites).map(([k, c]) => [k, f.town.has(c, 0)]));
       const at = f.storesAt();
+      // (round 128p, U1: where they stand asked of the GPU)
+      const where = new Map((await Rc.units.query([0, 0], 1e7)).map((v) => [v.id, v.at]));
       const people = life ? life.people().map((id) => Rc.units.get(id)).filter(Boolean) : [];
-      const far = people.map((u) => Math.round(Math.hypot(u.at[0] - at[0], u.at[1] - at[1])));
+      const far = people.flatMap((u) => (where.has(u.id) ? [Math.round(Math.hypot(where.get(u.id)[0] - at[0], where.get(u.id)[1] - at[1]))] : []));
       const states = {};
       for (const u of people) states[u.state] = (states[u.state] ?? 0) + 1;
       const phases = {};
