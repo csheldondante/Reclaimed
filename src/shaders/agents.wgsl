@@ -70,6 +70,7 @@ struct AgentParams {
   // (round 128o, DA-B22) x the units' step's dt (s): a tick's, or at fast-forward the ticks since the last step's
   // (agents.ts stepPlan) — what units.wgsl integrates by in place of G.dt
   // (y, round 128p) the rekinds this step
+  // (z, U2) the GPU-seeded hunt field (NFIELDS: none); (w) 1: it keeps each value's seed (the seed-id fix)
   step: vec4<f32>,
   // (round 128p, DA-B22 (c)(4)) units made another kind where they stand (agents.ts rekind): x the slot, y the kind,
   // z its hp (f32 bits) when w is 1
@@ -112,7 +113,17 @@ fn inScope(q: vec2<i32>) -> bool { return q.x >= i32(AB[0].x) && q.y >= i32(AB[0
 /** (round 107, agentspike) chunks a sweep relaxes at most: a change that reaches over more (a shore drying across a
  *  town, a field starting over) is relaxed over several sweeps, the rest carried — no tick carries more than this */
 const FRONT_CAP: u32 = 32u;
+// (U2, FC10: [k] the k-th chunk of the front, [FRONT_CAP + k] the fields it is relaxed for)
 @group(0) @binding(36) var<storage, read_write> frontList: array<u32>;
+/** (U2, FC10) the fields a chunk's marks name (a bit a field, NFIELDS ≤ 16): the low half of a dirty word; what's marked
+ *  for every field (a surface changed, a chunk come in, the CPU's marks) is all of them */
+const ALL_FIELDS: u32 = 0xffffu;
+/** (U2, FC10) the fields this invocation relaxes: all, unless the front's entry (agents.ts frontSource) says which */
+var<private> frontMask: u32 = 0xffffffffu;
+/** (U2) per surface (as nav), a bit a field: a seed the GPU put there this frame (units.wgsl huntSet); bit 16 + f: there
+ *  last frame (so a seed that stays isn't marked again, one that goes is). Then a second plane (from NS): the hunt
+ *  field's seed each surface's distance came from (+ 1; 0 none) — the seed-id fix (relax, AP.step.w) */
+@group(0) @binding(52) var<storage, read_write> seedMask: array<atomic<u32>>;
 /** (ringwin) column (x, y)'s chunk's slot in the per-chunk marks: its page (common.wgsl pageIdx) */
 fn chunkOfCol(x: u32, y: u32) -> u32 { return pageIdx(vec2<u32>(x, y) / COLS_PAGE); }
 /** (round 107, agentspike) how far a surface's floor moves from the height its cost is reckoned at before that height
@@ -235,7 +246,7 @@ fn surfaces(@builtin(global_invocation_id) id: vec3<u32>) {
       // (round 104: a surface that changed for the fields marks its chunk for the front. Round 107: its cost — a
       // surface come, its height or wet as navCost has them — or its room; the headroom counts through the links,
       // compared in the links pass)
-      if (nc != oc || ov.z != nv.z) { atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u); }
+      if (nc != oc || ov.z != nv.z) { atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], ALL_FIELDS); }
       // (its links kept: the links pass makes them again, the same where nothing moved — so no change is flagged)
       nav[i * NAV_K + out] = vec4<u32>(nv.x, nv.y | (ov.y & ~0x1ffu), nv.z, nv.w);
       out += 1u;
@@ -244,7 +255,7 @@ fn surfaces(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   for (var k = out; k < NAV_K; k++) {
     let none = vec4<u32>(bitcast<u32>(-1.0), 0u, 0u, 0u);
-    if (navMoved(nav[i * NAV_K + k], none)) { atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u); }
+    if (navMoved(nav[i * NAV_K + k], none)) { atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], ALL_FIELDS); }
     nav[i * NAV_K + k] = none;
     navCost[i * NAV_K + k] = 0u;
   }
@@ -297,7 +308,7 @@ fn links(@builtin(global_invocation_id) id: vec3<u32>) {
       bits |= best << (3u * d);
     }
     let ny = (nav[s].y & 0x1ffu) | (bits << 9u);
-    if (ny != nav[s].y) { atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u); }
+    if (ny != nav[s].y) { atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], ALL_FIELDS); }
     nav[s].y = ny;
   }
 }
@@ -352,6 +363,8 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
     // fills again is recomputed from its neighbours the next sweep)
     if (z < 0.0) { break; }
     for (var f = 0u; f < AP.n.z; f++) {
+      // (U2, FC10: a front per field — this chunk relaxed for the fields that changed round it only)
+      if (((frontMask >> f) & 1u) == 0u) { continue; }
       // (confined: off its place, nothing; a field with no seeds: nowhere)
       let fp = AP.fieldPlace[f / 4u][f % 4u];
       if ((AP.n2.w & (1u << f)) == 0u) {
@@ -359,7 +372,7 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
         continue;
       }
       if (fp != 0u && !onPlace(s, fp)) {
-        if (dist[f * N + s] != FAR) { atomicOr(&dirtyNext[ch], 1u); }
+        if (dist[f * N + s] != FAR) { atomicOr(&dirtyNext[ch], 1u << f); }
         dist[f * N + s] = FAR;
         continue;
       }
@@ -371,6 +384,14 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
         if (all(c == p) && surfaceNear(i, sd.z) == k) { d = 0.0; }
       }
       if (f == ROAD_FIELD && onNet(p)) { d = 0.0; }
+      // (U2: seeds the GPU scattered this frame — the hunt's targets, units.wgsl huntSet)
+      if (d > 0.0 && ((atomicLoad(&seedMask[s]) >> f) & 1u) != 0u) { d = 0.0; }
+      // (U2 §5, the seed-id fix — AP.step.w 1: the hunt field keeps, per surface, the seed its distance came from
+      // (seedMask's second plane: that seed's surface + 1). A neighbour whose seed is no longer one (its distance there
+      // isn't 0) is passed over: a seed gone empties the values it made at once, then they refill from the seeds left —
+      // no count-up (FRAMECOST FC4))
+      let bySource = f == u32(AP.step.z) && AP.step.w > 0.5;
+      var src = select(0u, s + 1u, d == 0.0);
       if (d > 0.0) {
         for (var dd = 0u; dd < NDIR; dd++) {
           let l = navLink(s, dd);
@@ -382,9 +403,18 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
           if (costDeep(t) && !deepHere) { continue; }
           let dn = dist[f * N + t];
           if (dn >= FAR) { continue; }
+          var ts = 0u;
+          if (bySource) {
+            ts = atomicLoad(&seedMask[N + t]);
+            if (ts == 0u || dist[f * N + ts - 1u] != 0.0) { continue; }
+          }
           // (FT-46: cheaper along a road — both ends on one ROAD_COST, one end halfway)
           let road = 1.0 - (1.0 - ROAD_COST) * 0.5 * (onRoad(p) + onRoad(qn));
-          d = min(d, dn + stepCost(z, costZ(t), costWet(t)) * road);
+          let dt = dn + stepCost(z, costZ(t), costWet(t)) * road;
+          if (dt < d) {
+            d = dt;
+            src = ts;
+          }
         }
       }
       // (a field cut off from its seeds counts up forever unless capped: past
@@ -394,8 +424,19 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
       // (round 104: a distance that moved marks its chunk — the next sweep relaxes round it; round 107: past DIST_EPS,
       // else it keeps what it has)
       let od = dist[f * N + s];
+      if (bySource) {
+        let os = atomicLoad(&seedMask[N + s]);
+        let ns2 = select(src, 0u, nd >= FAR);
+        // (its seed changed: written, and marked — what came through it is checked again round it)
+        if (os != ns2) {
+          atomicStore(&seedMask[N + s], ns2);
+          atomicOr(&dirtyNext[ch], 1u << f);
+          dist[f * N + s] = nd;
+          continue;
+        }
+      }
       if (abs(nd - od) > DIST_EPS || (nd >= FAR) != (od >= FAR)) {
-        atomicOr(&dirtyNext[ch], 1u);
+        atomicOr(&dirtyNext[ch], 1u << f);
         dist[f * N + s] = nd;
       }
     }
@@ -432,26 +473,29 @@ fn frontBuild(@builtin(global_invocation_id) id: vec3<u32>) {
   let b = boxChunk((id.x + AP.n.w * 37u) % total);
   if (b.z == 0u) { return; }
   let cs = G.chunkSize;
-  var hit = false;
+  // (U2, FC10: per field — the low half a change for that field, reaching the chunks round it; the high half carried
+  // past FRONT_CAP, itself only. The chunk is relaxed for the fields in `fm` alone)
+  var fm = 0u;
   for (var dy = -1; dy <= 1; dy++) {
     for (var dx = -1; dx <= 1; dx++) {
       let i = i32(b.x) + dx;
       let j = i32(b.y) + dy;
       if (i < i32(AB[0].x / cs) || j < i32(AB[0].y / cs) || i >= i32(AB[0].z / cs) || j >= i32(AB[0].w / cs)) { continue; }
-      // (a change — bit 0 — reaches the chunks round it; a chunk carried past FRONT_CAP — bit 1 — only itself)
       let m = atomicLoad(&dirtyCur[pageIdx(vec2<u32>(u32(i), u32(j)))]);
-      if ((m & select(1u, 3u, dx == 0 && dy == 0)) != 0u) { hit = true; }
+      fm |= m & ALL_FIELDS;
+      if (dx == 0 && dy == 0) { fm |= m >> 16u; }
     }
   }
-  if (!hit) { return; }
-  // (round 107: past FRONT_CAP, the chunk is carried to the next sweep — marked bit 1: relaxed then, itself only)
+  if (fm == 0u) { return; }
+  // (round 107: past FRONT_CAP, the chunk is carried to the next sweep — its fields in the high half: relaxed then, itself only)
   let k = atomicAdd(&frontArgs[3], 1u);
   if (k >= FRONT_CAP) {
-    atomicOr(&dirtyNext[pageIdx(b.xy)], 2u);
+    atomicOr(&dirtyNext[pageIdx(b.xy)], fm << 16u);
     return;
   }
   atomicAdd(&frontArgs[0], 4u);
   frontList[k] = b.y * G.chunksX + b.x;
+  frontList[FRONT_CAP + k] = fm;
 }
 
 @compute @workgroup_size(64)
@@ -479,5 +523,5 @@ fn clearFields(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(8, 8)
 fn markChunks(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
-  atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u);
+  atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], ALL_FIELDS);
 }

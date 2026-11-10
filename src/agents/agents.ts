@@ -46,6 +46,9 @@ const MARK_LIST = CUSTOM + 12;
 /** (round 107, agentspike) ?agentprof=1: the agents' tick in one timed pass a stage (agents-in, -peel, -relax, -units),
  *  and a log a tick (window.__agentLog: the scope, what came in, the marks, the peel, each sweep's front) */
 const PROF = typeof location !== 'undefined' && urlFlags().get('agentprof') === '1';
+/** (U2, FC10) a front per field: a chunk relaxed only for the fields that changed round it; ?fieldfront=0 every field
+ *  (the toggle diff's other side) */
+const FIELD_FRONT = typeof location === 'undefined' || urlFlags().get('fieldfront') !== '0';
 export interface AgentTickLog {
   frame: number;
   tick: number;
@@ -76,6 +79,8 @@ function frontSource(src: string, entry: string): string {
 @compute @workgroup_size(8, 8)
 fn ${entry}(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
   let c = frontList[wg.x >> 2u];
+  // (U2, FC10: the fields this chunk is relaxed for; ?fieldfront=0 every field, as before)
+  ${FIELD_FRONT ? 'frontMask = frontList[FRONT_CAP + (wg.x >> 2u)];' : ''}
   let s = wg.x & 3u;
   let q = vec2<u32>((c % G.chunksX) * G.chunkSize + (s & 1u) * 8u + l.x, (c / G.chunksX) * G.chunkSize + (s >> 1u) * 8u + l.y);
   if (q.x >= G.mapW || q.y >= G.mapH) { return; }
@@ -92,6 +97,10 @@ export const NAV_K = 4;
 /** unit slots (units.wgsl MAX_SLOTS: an id is generation × MAX_UNITS + slot) */
 export const MAX_UNITS = 8192;
 export const NFIELDS = 13;
+/** (U2, FC10) agents.wgsl FRONT_CAP: chunks a sweep relaxes at most; the front list holds its chunks then their fields */
+const FRONT_CAP = 32;
+/** (U2) units.wgsl HUNT_LIST: the GPU-seeded hunt's surfaces a frame, two lists */
+const HUNT_LIST = 8192;
 /** (round 128o, DA-A6) units.wgsl RIDE_ARRIVED: an arrival event's `other` at or over it is a ride's (minus it: the group) */
 const RIDE_ARRIVED = 256;
 /**
@@ -387,6 +396,13 @@ export class Agents implements SimSystem {
   private dirty: [GPUBuffer, GPUBuffer];
   private frontArgs: GPUBuffer;
   private frontList: GPUBuffer;
+  /** (U2) agents.wgsl seedMask, units.wgsl huntList: the hunt field's seeds scattered on the GPU (gpuHunt) */
+  private seedMask: GPUBuffer;
+  private huntList: GPUBuffer;
+  private huntField: number | null = null;
+  /** (U2 §5) the seed-id fix: the hunt field keeps each value's seed (agents.wgsl relax) */
+  private huntBySource = false;
+  private hk: { reset: ComputeKernel; unmark: ComputeKernel; set: ComputeKernel; gone: ComputeKernel; flip: ComputeKernel; g: GPUBindGroup[] };
   /** which of `dirty` is the current sweep's at the next tick's start */
   private par = 0;
   private uboxBuf: GPUBuffer;
@@ -621,14 +637,18 @@ export class Agents implements SimSystem {
     // four layouts, each within 8 storage buffers: the peel (it reads the
     // layers and the places), the fields, the units' tick, their draw
     const peelSpec: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 11: 'read', 12: 'read', 34: 'rw', 37: 'rw' };
-    const fieldSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 34: 'rw', 35: 'rw', 37: 'rw', 38: 'uniform', 40: 'read' };
+    const fieldSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 34: 'rw', 35: 'rw', 37: 'rw', 38: 'uniform', 40: 'read', 52: 'rw' };
+    if (NFIELDS > 16) throw new Error("agents: the front marks a field a bit in a dirty word's low half (FC10): at most 16 fields");
+    this.seedMask = world.buf('agentSeedMask', 2 * cols * NAV_K * 4, S);
+    this.huntList = world.buf('agentHuntList', (4 + 2 * HUNT_LIST) * 4, S);
+    device.queue.writeBuffer(this.huntList, 0, new Uint32Array([0, 0, 0, NFIELDS]));
     // (round 104, simscale: agents/scope.ts)
     this.abBuf = world.buf('agentScope', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.abBuf, 0, new Uint32Array([0, 0, world.w, world.h, 0, 0, 0, 0]));
     const nChunks = Math.max(1, (world.w / 16) * (world.h / 16));
     this.dirty = [world.buf('agentDirtyA', nChunks * 4, S), world.buf('agentDirtyB', nChunks * 4, S)];
     this.frontArgs = world.buf('agentFrontArgs', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
-    this.frontList = world.buf('agentFrontList', nChunks * 4, S);
+    this.frontList = world.buf('agentFrontList', Math.max(nChunks, 2 * FRONT_CAP) * 4, S);
     this.uboxBuf = world.buf('agentUnitBox', 16, S);
     this.readBuf = world.buf('agentScopeRead', 16, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.scope = SCOPE && world.tiles ? new AgentScope(world.w / 16, world.h / 16) : null;
@@ -655,7 +675,14 @@ export class Agents implements SimSystem {
       34: this.dirty[0],
       37: this.navCost,
     });
-    this.fieldGroup = makeBindGroup(device, 'agents-fields', this.k.relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: this.dirty[0], 35: this.dirty[1], 37: this.navCost, 38: this.abBuf, 40: this.roads });
+    this.fieldGroup = makeBindGroup(device, 'agents-fields', this.k.relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: this.dirty[0], 35: this.dirty[1], 37: this.navCost, 38: this.abBuf, 40: this.roads, 52: this.seedMask });
+    {
+      // (U2) the hunt's seeds on the GPU: once a frame before the relaxation, marking the current sweep's dirty words
+      const huntSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 7: 'rw', 10: 'uniform', 34: 'rw', 38: 'uniform', 52: 'rw', 53: 'rw' };
+      const hm = (e: string) => mk(e, huntSpec);
+      const k = { reset: hm('huntReset'), unmark: hm('huntUnmark'), set: hm('huntSet'), gone: hm('huntGone'), flip: hm('huntFlip') };
+      this.hk = { ...k, g: this.dirty.map((d, p) => makeBindGroup(device, `agents-hunt ${p}`, k.set.layout, { ...base, 5: this.nav, 7: this.units, 10: this.params, 34: d, 38: this.abBuf, 52: this.seedMask, 53: this.huntList })) };
+    }
     if (this.scope) {
       const t = world.tiles!;
       const src = parts.join('\n');
@@ -704,8 +731,8 @@ export class Agents implements SimSystem {
         boxG: makeBindGroup(device, 'agents-unitBox', box.layout, { ...base, 7: this.units, 10: this.params, 28: this.uboxBuf }),
         resetG: makeBindGroup(device, 'agents-frontReset', reset.layout, { ...base, 33: this.frontArgs }),
         peelG: par((cur, _n, p) => makeBindGroup(device, `agents-peel scoped ${p}`, surfaces.k.layout, { ...base, 1: world.chunks, 3: world.layers, 4: world.water, 5: this.nav, 11: world.places, 12: world.placeTable, 34: cur, 37: this.navCost, [TILES_BINDING]: lists.changed.uniform })),
-        linksG: par((cur, next, p) => makeBindGroup(device, `agents-links scoped ${p}`, links.k.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 37: this.navCost, 38: this.abBuf, 40: this.roads, [TILES_BINDING]: lists.around.uniform })),
-        relaxG: par((cur, next, p) => makeBindGroup(device, `agents-relax front ${p}`, relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 36: this.frontList, 37: this.navCost, 38: this.abBuf, 40: this.roads })),
+        linksG: par((cur, next, p) => makeBindGroup(device, `agents-links scoped ${p}`, links.k.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 37: this.navCost, 38: this.abBuf, 40: this.roads, 52: this.seedMask, [TILES_BINDING]: lists.around.uniform })),
+        relaxG: par((cur, next, p) => makeBindGroup(device, `agents-relax front ${p}`, relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 36: this.frontList, 37: this.navCost, 38: this.abBuf, 40: this.roads, 52: this.seedMask })),
         enterG: par((cur, _n, p) => makeBindGroup(device, `agents-enter ${p}`, enter.k.layout, { ...base, 6: this.dist, 8: this.occ, 16: this.shove, 34: cur, [TILES_BINDING]: enter.buf })),
         buildG: par((cur, next, p) => makeBindGroup(device, `agents-frontBuild ${p}`, build.layout, { ...base, 10: this.params, 33: this.frontArgs, 34: cur, 35: next, 36: this.frontList, 38: this.abBuf })),
         clearG: par((cur, _n, p) => makeBindGroup(device, `agents-frontClear ${p}`, clear.layout, { ...base, 34: cur, 38: this.abBuf })),
@@ -1007,6 +1034,39 @@ export class Agents implements SimSystem {
   keepInScope(key: string, pts: readonly (readonly [number, number])[]): void {
     if (pts.length) this.kept.set(key, pts.slice());
     else this.kept.delete(key);
+  }
+
+  /**
+   * (U2, UNIT_MINDS_U2.md §5) Field `f` seeded on the GPU by every hostile kind's target (its unit word f.y): each a
+   * seed, scattered once a frame before the relaxation (units.wgsl huntSet) — beside its CPU seeds (actors'). Set once.
+   * `bySource`: each value keeps the seed it came from, and a seed gone empties its values at once (no count-up).
+   */
+  gpuHunt(f: number, o: { bySource?: boolean } = {}): void {
+    if (f < 0 || f >= NFIELDS) throw new Error(`agents.gpuHunt: no field ${f} (0..${NFIELDS - 1})`);
+    this.huntBySource = !!o.bySource;
+    if (f === this.huntField) return;
+    if (this.huntField !== null) throw new Error('agents.gpuHunt: one hunt field, set once (its seeds would be left in the mask)');
+    this.huntField = f;
+    this.fieldsUsed = Math.max(this.fieldsUsed, f + 1);
+    this.device.queue.writeBuffer(this.huntList, 12, new Uint32Array([f]));
+  }
+
+  /** (U2) the hunt's seeds: last frame's moved aside, this frame's scattered, those gone marked — before the relaxation */
+  private encodeHunt(pass: GPUComputePassEncoder, p: number): void {
+    if (this.huntField === null || this.count === 0) return;
+    const n = Math.ceil(Math.min(this.count, HUNT_LIST) / 64);
+    pass.setBindGroup(0, this.hk.g[p]);
+    pass.setPipeline(this.hk.reset.pipeline);
+    pass.dispatchWorkgroups(1);
+    pass.setPipeline(this.hk.unmark.pipeline);
+    pass.dispatchWorkgroups(n);
+    pass.setPipeline(this.hk.set.pipeline);
+    pass.dispatchWorkgroups(Math.ceil(this.count / 64));
+    pass.setPipeline(this.hk.gone.pipeline);
+    pass.dispatchWorkgroups(n);
+    pass.setPipeline(this.hk.flip.pipeline);
+    pass.dispatchWorkgroups(1);
+    this.prof.dispatches += 5;
   }
 
   /**
@@ -1597,6 +1657,8 @@ export class Agents implements SimSystem {
     u.set(this.fieldPlace, P_FPLACE);
     let seeded = 0;
     for (const s of this.seeds) seeded |= 1 << s.field;
+    // (U2: the GPU's hunt field always counts as seeded — its seeds are the GPU's to know)
+    if (this.huntField !== null) seeded |= 1 << this.huntField;
     // (round 128i, V128-14: the road field is seeded on the road columns while a group rides)
     if (this.roadRide.riding) {
       seeded |= 1 << ROAD_FIELD;
@@ -1664,6 +1726,8 @@ export class Agents implements SimSystem {
     f[P_STEP] = this.stepNow.dt;
     const rekinds = this.rekinds.splice(0, MAX_REKINDS);
     f[P_STEP + 1] = rekinds.length;
+    f[P_STEP + 2] = this.huntField ?? NFIELDS;
+    f[P_STEP + 3] = this.huntBySource ? 1 : 0;
     rekinds.forEach(([slot, kind, hp], i) => {
       u.set([slot, kind, 0, hp === null ? 0 : 1], P_REKINDS + i * 4);
       if (hp !== null) f[P_REKINDS + i * 4 + 2] = hp;
@@ -1713,6 +1777,7 @@ export class Agents implements SimSystem {
       this.prof.dispatches += 2;
     }
     if (this.frameWork && this.fieldsUsed > 0) {
+      this.encodeHunt(pass, 0);
       pass.setBindGroup(0, this.fieldGroup);
       pass.setPipeline(this.k.relax.pipeline);
       const sweeps = this.frameSweeps();
@@ -1841,6 +1906,10 @@ export class Agents implements SimSystem {
       pass.setPipeline(sk.mark.pipeline);
       pass.dispatchWorkgroups(t.groups(MARK_LIST));
       this.prof.dispatches++;
+    }
+    if (n && this.huntField !== null) {
+      stage('agents-hunt');
+      this.encodeHunt(pass, p);
     }
     if (n) {
       if (this.clearNow) {
