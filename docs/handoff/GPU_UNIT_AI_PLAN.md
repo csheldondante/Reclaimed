@@ -130,6 +130,27 @@ Gate: `AgentUnits.update` leaves the transfers table's violations.
 **U4 — phone bench.** A crowd of 100 / 1,000 / 5,000 fighting and working, with the decision kernels toggled.
 Shared with Track B's units draw bench (one link, one report).
 
+## The gate: a battle playground (the user, 2026-11-10, relayed by Track A)
+
+"Raids will be better when we have physics and agents working properly. I do want to test big agent battles and casting:
+gusts, tornados, meteors, heat rays, lightning, raising the dead, Helsing [healing], hasting units, ensnaring in plants,
+raising stone walls etc."
+
+**U8 — `?level=battle`.**
+- Built on the playground's station pattern (`src/levels/playground.ts`, `traitlab.ts`, `traitstation.ts`), not new
+  infrastructure. The traits station already has a crowd, a lich and a sanctuary.
+- Two armies of 100 / 1,000 / 5,000 and a spell bar.
+- Each spell is a world operation or a trait/status (§14), never a CPU loop over units:
+  - **weather (§6):** gust, tornado, lightning;
+  - **impacts:** meteor, heat ray;
+  - **raised by the trait system:** the dead;
+  - **statuses:** heal, haste, ensnared (plants: a flora-field state plus a status);
+  - **terrain put:** stone wall.
+- Units become bodies on impact (§10, DA-E*; the physics lane is a dependency, not U-scope).
+- Judged at play zoom on the Pixel 9a, with the U4 toggle-diff bench run in the same scene.
+- It is the acceptance scene for U2 (fight/flee overrides), U4, U7 (creatures) and the units draw bench.
+- The raid card (DA-L4) waits on it. Track A keeps raids out of its opportunity test.
+
 ## Not stepping on Track A
 
 - **Ownership:** `src/agents/*`, `src/units/*` and `units.wgsl` are Track A's under CROSS_TRACK_CONTRACT. The user scoped
