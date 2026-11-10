@@ -353,7 +353,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     o += 1u;
   }
   if (stump) {
-    putP(o, mkInst(qx + 1u, qy + 1u, 2u, 2u, top, top + 0.45, MAT_WOOD, FLAG_VEG | FLAG_DETAIL));
+    putP(o, mkInst(qx, qy, 3u, 3u, top, top + 0.7, MAT_LOG, FLAG_VEG | FLAG_DETAIL));
     o += 1u;
   }
   if (pl.tree && G.misc.w < 0.5 && TREE_MESH) {

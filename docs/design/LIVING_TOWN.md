@@ -218,6 +218,31 @@ No route search, job logic, rider state, site pick or material count is on the C
 
 Measured: DEVLOG (living town).
 
+## For Track B: the haul module to absorb
+
+The user (2026-11-10): Track B owns moving agents and plants fully onto the GPU; routine hauling should need no
+readback. Everything the haul cycle is, in one place:
+- **States, legs and jobs:** routes.wgsl, the block under `// ---- riders ----` (`J_*`, `S_*`, `LEG_*`, the `Rider`
+  row, `riders`). One kernel, one thread a rider; nothing else steps them.
+- **Orders (CPU → GPU):** only the parameters' uniform `P` (counts by job, speeds, work time, the works' numbers,
+  flags) and the rebuild word (LT word 0 = 0). The jobs are dealt on the GPU from the counts.
+- **Signals the states move on (GPU only):** a leg's end, a timer, an atomic load taken from a counter, a fell's
+  answer in the row, a route's hash slot leaving PENDING, a lot's progress.
+- **World operations the step issues:** the dig budget (C_DIGBUDGET), the stores' inbox (C_INBOX), the fell queue
+  (L_FELL); applied by works.wgsl's `dig`, `pile`, `fellApply`.
+- **Events (GPU → CPU):** none. The counters (LT `L_C`) are what a game layer would read, async and small, if it ever
+  needs them (the debug panel does).
+- **To absorb into the one crowd:** the row's word 1 (`job | state << 8 | leg << 16`) becomes the unit's behaviour
+  word, the route legs become the unit's ride mode, the open legs its walk on a field; the counters and queues stay as
+  they are.
+
+## Measured (headless D3D11, Muru, phone size 412 × 915, vsync off, settled)
+
+GPU ms a frame (the profiler, smoothed): build 0.036 (empty indirect dispatches), relax 0.087 (32 empty indirect
+sweeps once settled), trace 0.005, riders 0.033 (950 riders), works 0.079, figures 0.020: **0.26 ms in all**.
+Frame interval with `?living=1` against `?living=0`: p50 1.90 / 1.90 ms, p90 17.8 / 17.7, p99 18.7 / 18.6 — no
+difference the desktop can see. The phone bench is the measure (not run).
+
 ## Hacks and limits (kept current)
 
 - Riders aren't the Agents' units yet: a third crowd beside the agents and the inhabitants (open question 1); wind and

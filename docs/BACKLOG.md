@@ -2072,12 +2072,14 @@ The user: "I would like to see agents (many of them) traveling between locations
 |---|---|---|---|
 | LT1 | Design note: the route graph from citygen's road raster, hubs and cached routes, riders, the quarry, the clearing, hauling as real moves, CPU inputs, GPU cost targets | S | done (LT1 commit) |
 | LT2 | Routes and many riders: the graph from citygen's roads + door segments on the GPU, hub fields relaxed without readback, cached routes in a GPU pool, 500–2,000 kinematic riders (commuters, haulers, builders) | L | done (LT2 commit: 950 riders at Muru, 270–280 routes, test/gpu/living.test.ts) |
-| LT3 | The parameterized quarry: a GPU-picked site, benches dug as interval takes, a spiral ramp as a route, stone hauled to a stockpile put through `deposit` | L | open |
-| LT4 | The forest clearing: a GPU-picked camp, woodcutters fell trees (flora field → stump state), logs hauled; clearing radius, cut rate, replant | M | open |
-| LT5 | `?living=1` panel: counts, rates, toggles; building sites take builders (the time-lapse's hook) | M | open |
-| LT6 | GPU ms per system, `?living=0` toggle diff | S | open |
+| LT3 | The parameterized quarry: a GPU-picked site, benches dug as interval takes, a spiral ramp as a route, stone hauled to a stockpile put on the stores' yard | L | done (LT3–6 commit: 6 benches, 18 m, at ltspeed=12; scratchpad living/quarry-deep.png) |
+| LT4 | The forest clearing: a GPU-picked camp, woodcutters fell trees (flora field → stump state), logs hauled; clearing radius, cut rate, replant | M | done (LT3–6 commit; the fall is an animation, DA-E7 open) |
+| LT5 | `?living=1` panel: counts, rates, toggles; building sites take builders (the time-lapse's hook) | M | done (LT3–6 commit: builders go to lots whose progress is between 0 and 1; the button claims a housing district) |
+| LT6 | GPU ms per system, `?living=0` toggle diff | S | done (0.26 ms a frame settled; no frame-time difference on the desktop; phone bench not run) |
 | LT-F1 | Lanes, queueing and passing (§12) for the living town's riders: a bucket sort by (route, direction, distance) a tick, follow the one ahead, overtake on a free window | M | open |
 | LT-F3 | The works' take, put and fell and edit.wgsl's OP_TAKE / OP_PUT / OP_FELL as one WGSL snippet both call (today: the same rules, two copies; edit's apply CPU events, four a tick) | S | open |
 | LT-F4 | Route misses: ~80 of ~280 keys at Muru find no route (a door whose segment meets no live road, a hub seeded in an unbuilt district); their riders idle. Find which and fix the door segments or the seeds | S | open |
 | LT-F5 | The works' sites are picked by distance (0.55–1.1 radii) past the built core: a district claimed later may grow over the pit or the clearing. Claim the works' footprints (a GPU-owned grid) or keep districts off them | M | open (the user decides) |
+| LT-F6 | The settled relax still encodes 32 empty indirect sweeps a frame (0.087 ms): stop encoding them once settled (the phase word can't tell the CPU without a read; a single gated dispatch that loops in-kernel, or fewer sweeps once settled) | S | open |
+| LT-F7 | Stone carts lag the quarrymen at high dig rates (the face's pile grows): carts or loads by the face's pile, or a crane/ramp segment kind | S | open |
 | LT-F2 | One crowd: the living town's riders as rows of the Agents' unit buffer (a rider while on a route; knocked off → stepped unit → rejoins); RoadRide's next-hop tables deleted with the old towns (M4e) | L | open (the user decides) |

@@ -21138,3 +21138,18 @@ the opportunity hook".
   until the one crowd lands (LT-F2, open question 1).
 - Gates: the transfers list has the living town's three sites; writing-sources has its panel. The other failures in
   those gates (citygen's panel and bench, colapply) came with the citygen merge.
+
+## 2026-11-10 — living town LT3–LT6: the quarry dug deep, the clearing's stumps, the panel, GPU ms
+
+- **Quarry:** at `ltspeed=12&qrate=4`, 80 s in, Muru's pit reached bench 6 (18 m, the default depth) with the
+  spiral ramp; 6 328 m³ dug, 200 m³ piled at the stores' yard (the carts lag at that rate: LT-F7). The pit reads as
+  stepped benches with people inside it (scratchpad living/quarry-deep.png, quarry.gif).
+- **Clearing:** a camp at Muru's west woods; woodcutters claim listed trees, fell them to the stump band (the tree
+  goes, a log-coloured stump 0.7 m stays: vegprep's `vegStump`, bigger than the first try, which read as specks),
+  logs to the camp, carts to the stores. A radius of 24 m held 31 trees: once they're down the woodcutters idle.
+- **The stump is one rule:** edit.wgsl's exact fell (plants.fell, the old towns' woodcutters) leaves the same stump
+  band now; a clearing (plants.clear) still cuts to grass.
+- **GPU ms** (profiler, settled): 0.26 ms a frame in all; relax's 32 empty indirect sweeps are a third of it (LT-F6).
+  Toggle diff `living=1` / `living=0`: p50 1.90 / 1.90 ms, p90 17.8 / 17.7 (headless desktop, vsync off).
+- **Track B's ownership** (the user): the haul cycle is documented as a module to absorb (LIVING_TOWN.md "For Track
+  B"); no general unit AI here.

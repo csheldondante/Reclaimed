@@ -128,6 +128,13 @@ export class LivingTowns {
     ].join('\n');
   }
 
+  /** (scripts, the perf overlay) the living town's passes' smoothed GPU ms (the profiler's: with ?perf=1) */
+  gpuMs(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const [k, v] of this.io.profiler?.passMs ?? []) if (k.startsWith('living-')) out[k] = +v.toFixed(3);
+    return out;
+  }
+
   private drop(id: string, l: Live): void {
     this.io.removeVoxels(l.life.vargs);
     this.io.removeVoxels(l.works.vargs);
