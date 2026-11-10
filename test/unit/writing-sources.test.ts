@@ -70,6 +70,7 @@ const SOURCES: Record<string, Source> = {
   'perf/hitch-hud.ts': { who: 'dev', why: 'the hitch HUD (?hitch=1)' },
   'perf/pagebench.ts': { who: 'dev', why: 'a bench' },
   'perf/physbench.ts': { who: 'dev', why: 'a bench' },
+  'perf/flowbench.ts': { who: 'dev', why: 'a bench (the liquid toggle diff)' },
   'runplan/viewer.ts': { who: 'dev', why: 'the run plan viewer page' },
   'scenes/atlas-view.ts': { who: 'dev', why: 'the atlas generator view and its sliders (?atlas)' },
   'terrain/viewer.ts': { who: 'dev', why: 'the terrain viewer page' },

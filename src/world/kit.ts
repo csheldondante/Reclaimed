@@ -180,7 +180,7 @@ export class Kit {
    * continues off the map) and leaving at its end. With no inflow it's a dry
    * gully (a flood's path).
    */
-  river(pts: P[], width = 3, depth = 3, inflow = 0.01): this {
+  river(pts: P[], width = 3, depth = 3, inflow = 0.6): this {
     const bed = new Float32Array(this.N).fill(Infinity);
     // the bed: a running minimum along the path so it only ever descends
     const samples: { x: number; y: number; z: number }[] = [];

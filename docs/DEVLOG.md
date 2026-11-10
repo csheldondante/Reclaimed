@@ -21343,6 +21343,154 @@ The user: "having only main roads near districts in progress works but we may ha
   needs the CPU to stop encoding when the GPU says settled: an event (Track B's ring) rather than a poll.
 - The one route miss seen last round didn't recur in four runs (0 misses); not traced.
 
+## 2026-11-10 — trackA-liquids step 1: the flow model's phone bench (DA-P5, LQ1)
+
+The user chose the unified flow model (DESIGN §7: runs in any gap, momentum, arcing falls, water and lava as one
+kernel) and asked to "benchmark on phone and see if we can afford it or if we should make it cheaper". Before any
+migration, a bench of the round-84 model as it stands: `?skipmenu=1&level=flowlab&flow=1&fresh=1&flowbench=1`
+(src/perf/flowbench.ts, the speedbench pattern: wake lock, Download/Copy/Share, POST to the dev server). The page
+loads twice — the flow model, then the pipes on the same lab — and measures each in three states with the liquids on
+and paused (the frame-time toggle diff, the number to trust on a tiler), GPU timestamps beside it:
+- awake: every chunk kept awake (the breached pool pouring, the tunnel's stream and waterfall, the trenches running
+  off the map, the lava vent), plus lava alone paused;
+- steady: let alone until the steady state (flow) or the settle (pipes) sleeps what's still;
+- disturbed: a dig in the river trench every 1.5 s.
+The pipes get the same scenes as far as they can: the plug dug, a source at the tunnel's mouth (they can't run under
+rock), the sandbox's lava vent. The flow lab now has a Sleep with either model so the pipes sleep too (level.ts).
+
+Desktop (headless, D3D11, 412x915, liquids' passes by timestamp, ms a frame):
+| state | flow | pipes |
+|---|---|---|
+| awake (water + lava) | 1.96 | 0.31 |
+| awake, water only (lava paused) | 0.60 | 0.09 |
+| steady (0 chunks awake) | 0.24 | 0.011 |
+| disturbed (12–16 chunks awake) | 1.24 | 0.08 |
+Frame-time diffs are 0 on the desktop (vsync-bound); the phone's are the numbers that count. Read: the flow model is
+6–20x the pipes; asleep it still costs 0.24 ms (every sleeping column re-stamps its records each step, 5 full-map
+passes a step); a small disturbance costs as much as half the awake map (it un-skips the whole system); and the flow
+lava is ~1.4 ms awake, twice the water.
+
+## 2026-11-10 — trackA-liquids step 2a: the flow model runs only where liquid is; sleeping costs nothing
+
+The bench (step 1) said: asleep the flow model still cost 0.24 ms (every sleeping column re-stamped its records each
+step, five full-window passes), a small disturbance un-skipped the whole system (1.24 ms for 12 chunks awake), and
+its lava cost 1.4 ms for a vent on a ramp. All three were the full-window dispatch, not the work.
+- Two small passes made on the GPU each step: `lqScan` (a workgroup a chunk, only chunks awake or that ran the last
+  step) marks which hold liquid; `lqList` (a thread a chunk) lists the ones to run and the ones to draw, and writes
+  their stamps. The passes run indirect over the lists (the existing cullSource / GpuTileList).
+- Parking: records are valid by their chunk's stamps (L, the last step it ran, and L - 1: both parities), not by the
+  global step only, so a chunk off the list needs no re-stamping. A chunk runs two steps more after it stops
+  qualifying, so both parities hold the same settled records when it parks; on its first step back it reads the
+  stamps it parked with (P).
+- `?lqall=1` runs every chunk (a check): after a breach and 25 s, open water 832.6 (all) vs 850.7 (lists), enclosed
+  24.55 vs 24.65, streams 63 vs 72 — the runs aren't deterministic (sleep is on wall time), the same scene.
+Desktop, liquids' passes by timestamp (ms a frame; "off" is what's left with the liquids paused: the sandbox's own
+lava and the like):
+| state | flow before | flow now (off) | pipes (off) |
+|---|---|---|---|
+| awake, water + lava | 1.96 | 0.55 (0.13) | 0.31 (0.02) |
+| awake, water only | 0.60 | 0.41 | 0.08 |
+| steady, 0 chunks awake | 0.24 | 0.059 (0.012) | 0.019 (0.011) |
+| disturbed, 12–16 chunks awake | 1.24 | 0.25 (0.05) | 0.085 (0.013) |
+So 1.4x the pipes awake, ~2–4x asleep and disturbed (prep still runs every frame over the chunks with liquid: the
+spray is made there). The phone's toggle diffs decide whether that's enough.
+
+## 2026-11-10 — trackA-liquids steps 3–4 (first pass): `?liquid=flow` in the game, decks over the river, the bench v2
+
+- **`?liquid=flow|pipes`** (src/flow/model.ts) installs the flow model on any level (default pipes). The level's sleep
+  is made with it; the streamed window keeps that sleep; the streamer's region writes forget the recycled slots.
+- **No CPU skip**: the old "nothing awake: skip the passes" check kept a claim made while everything slept from ever
+  reaching the water (the deck was drawn under the river). The GPU's lists are empty when nothing runs.
+- **Held rivers** in the flow model's depth pass, in the gap on the column's own ground; the warmup skips the flow
+  water as it skips the pipes' (it ran unheld through the warmup and the upper river drained: scratchpad deck1.png).
+- **Decks claimed** under the flow model (citygen DECKS_CLAIMED); `openGap`: the open run stays in the gap its floor
+  was recorded in, so a deck claimed over water leaves the river under it. Muru: 178 columns with the river as an
+  enclosed run under the decks, the decks dry (scratchpad liquids/deck4.png, against the pipes' deck-pipes.png).
+- **Tried and reverted**: a real step for a sleeping chunk whose columns changed. Alone between frozen neighbours it
+  took their frozen inflow while its outflow went nowhere: a column 16 cells deep downstream of the bridge. Now such a
+  chunk is woken through steady (act bit 2), as a stream arriving wakes one; a real step only on a chunk's first.
+- **The bench v2**: the Pixel 9a's first run (build bb5b2e01, step 1's code) showed vsync caps the frame (every
+  frame diff 0) and the per-pass timestamps are noise; the report now leads with the whole frame's GPU time diffs.
+  The phone's numbers (GPU p50 on/off): awake flow 3.1 ms vs pipes 1.4 (lava ~1.5 of the flow's); steady 0.33 vs 0.26;
+  disturbed 0.9 vs ~0. That run predates the chunk lists (step 2a).
+
+## 2026-11-10 — trackA-liquids: the bench bisected (HEAD vs 6019d20e), idle at the pipes' cost; LQ4 begun
+
+Clean desktop runs (nothing else of this worktree running; liquid passes by timestamp, ms a frame):
+- 6019d20e: steady (0 awake) 0.07, disturbed (12 awake) 0.26. d40b9c3c: steady never reached 0 awake (13: 0.44–0.65),
+  disturbed 0.32–0.41.
+- The steady difference was the lava vent: fed for ever it sets basalt for ever and its chunks are never steady — some
+  runs settled within the bench's 30 s, some didn't (the seeded first step changes how far the lava spreads). The bench
+  now stops the vent before the steady phase and waits until nothing is awake twice running (at most 120 s); the
+  lava's cost is the awake phase's.
+- With everything asleep the remaining cost was the per-step machinery (scan, list, empty indirect dispatches) and prep
+  over every wet chunk every frame: 0.156 ms. Now, idle (the sleep mask: nothing awake or settling — the CPU's own),
+  no step at all; the scan every 15 ticks (a solid come over still water), prep every 4 ticks with 4 ticks' spray
+  (LiquidU.extra): 0.017 ms, the pipes 0.012.
+- Tried first and replaced: waking a sleeping wet chunk on any change of its columns' version — the bed moving under
+  the water (sediment, lava setting) kept chunks awake. Now lqScan scans a sleeping chunk whose columns moved and wakes
+  it only where its open water lies under the column's top by more than 0.5 (COVERED: a deck's slab is 0.8).
+- LQ4: the water on every surface (waterGaps, publishGaps, the peel's surfaceDepth — ARCHITECTURE "The flow model");
+  decks not handed to the reach as plan solid under the flow model. Verification at Muru next.
+
+## 2026-11-10 — trackA-liquids: LQ4 at Muru, first look (not passing yet)
+
+- The idle path kept new land from ever taking its first steps (the atlas's land comes in asleep): not idle while any
+  chunk is drowsy (Sleep.drowsy). publishGaps bumps the water versions for the top's water too (the peel had read the
+  zeros before the first publish).
+- At Muru after 60 s (`?liquid=flow`, citygen fields, living): 207 enclosed runs, 43 chunks awake. Not right yet:
+  - the agents' surfaces over the river read dry (wet 0, water 0) at the columns checked — the peel hasn't re-read
+    them (its scope, or the versions), not traced;
+  - a deck column at (123, 167) holds 3.64 of open water on its top: a pile-up again, with many chunks awake;
+  - roads' paving (a quarter cell, claimed where free) over shallow water makes thin gaps with water under them.
+  BACKLOG LQ4 and LQ5 stay open.
+
+## 2026-11-10 — trackA-liquids: decks over sleeping water woken (the column's top from its layers)
+
+- Traced why Muru's bridge columns kept the river on their records after the deck was claimed (runs ran 2–10 steps,
+  then idle): the "covered" test read the surface buffer, whose z is the walkers' surface (97.4 at (125, 171) under a
+  deck at 100.66), not the topmost solid; and its 0.5 margin was over the deck's own clearance (top 100.57, water
+  surface 100.08). lqScan now reads the column's gaps from its layers (the top gap's floor) and calls it covered past
+  0.05 over water deeper than 0.05. At Muru the deck columns now hold the river under them as enclosed runs while
+  everything else sleeps.
+- Still seen: films of 0.01–0.07 on deck tops, and once a pile of 3.64 (with 43 chunks awake). No water sources or
+  storms there. The likely mechanism: a stream carried over a frozen column keeps the landing height it had before
+  the deck (j2.y, the river's level) and, held aloft while the column sleeps, gathers volume; when it lands, that
+  height is inside the deck slab, and gapForRun puts it in the gap above — on the deck. Not fixed yet (LQ7).
+- The agents' surfaces exist only in their scope (agents/scope.ts: round live units, 48 columns' margin) — the columns
+  checked before were outside it, so their old dry records were never re-read: by design, not a version bug. LQ4's
+  check needs units near the bridge.
+
+## 2026-11-10 — trackA-liquids: LQ7, fords and bridges (citygen)
+
+The user's agreed answer (DESIGN §12: roads become bridges over water): paving isn't claimed over water. citygen's
+claimRoads now skips a road's paving on wet columns (its wet mask, B.M — the same the decks are placed by): the bed
+stays bare under the water. A crossing no longer than FORD_MAX (2.5 world units of wet along the road) is a ford — no
+deck; longer, a deck (artSpan). Both models: under the pipes too a ford's bed is now the river's floor, not a slab.
+Why not "paving displaces water": the claim would have to write the liquid's state from the columns' claim kernel,
+crossing the liquid's contract; and a slab under a river is neither seen nor walked as a road.
+
+Muru after it (45 s, everything asleep): 172 enclosed runs under the decks; one deck column, (125, 168), still holds
+0.52 of open water on its top, frozen (deck top 100.61, the river under it at 99.78 + 0.52). The pile mechanism isn't
+confirmed or fixed yet.
+
+## 2026-11-10 — trackA-liquids: why water stood on the decks, and the rule that drains it
+
+Traced step by step at Muru's lower bridge, column (125, 168), sampled as the deck was claimed: before, the river 0.15
+deep on its bed at 99.78; the deck claimed at 100.61 with its slab DECK_T (0.8) deep — its underside at 99.81, 3 cm over
+the bed and under the river's surface (~100.1). The gap under it was 3 cm tall: the river couldn't pass, backed up and
+went over the deck — every deck column got water on its top (0.04–0.56) as well as under it (no stream landing near:
+none within 3 columns). Not a stale landing height: the deck was in the river.
+- citygen (streets.wgsl artSpan): a deck's ends are now at least DECK_CLAIM_T + DECK_AIR (0.25 + 0.1) over the highest
+  water surface along its crossing (height.wgsl / rawheight.wgsl publish that surface, B.WS); the slab claimed into the
+  columns is DECK_CLAIM_T deep (the drawn deck's sides still go DECK_T down) — so a walker's step from the bank stays
+  under 1.1 where the old clearance allowed it.
+- The steady state's rule (liquid.wgsl depth, Gaps.ext): open water standing on an External's top — a deck, a roof, no
+  bed of its own — counts as change, so its chunk doesn't freeze until it has drained. A rule about External tops, not
+  decks.
+Muru after it: 374 columns with the river under a deck, no water on any deck top sampled, everything asleep
+(scratchpad liquids/deck7.png: both bridges dry, the river under them, people on the lower one).
+
 ## 2026-11-10 — U1: the Units contract's watched-only sync finished (DA-B22 (c)(4) and (1); Track B)
 The WIP `phonefix-observe-wip` 322962a3 (DA-B22 (c)(4)+(1)) taken onto fortress bb5b2e01 and finished: 131 type
 errors to 0, every caller rewritten to the contract, not silenced (no `!`, no `as` added).
@@ -21466,6 +21614,38 @@ The user's priority: saving first. Design: SEASON_LOOP.md "Saving" (DESIGN §23)
   3 stages, the wall"; the shots side by side match (`scratchpad/opps/save-ab.png`). Pan away until Muru is let go
   (Thauhaman made), pan back → Muru made again (340 ms), its log laid over it, the same town (`pan-ab.png`).
 - Fixes SL3 (claims and stages lost when a town is let go) and SL4 (no save).
+
+## 2026-11-10 — trackA-liquids: agents on the deck, PW6, FL11, GIFs
+
+- LQ4/LQ5 verified at Muru with agents' units (their scope then covers the bridge): at deck column (124, 171) the
+  surfaces read deck 100.86 dry and riverbed 98.72 wet with 1.33 of water (waterGaps); six units spawned on the deck
+  walked it east at z 100.87–100.95 and stepped down to the bank at 100.57, never to the riverbed; the living panel's
+  reach, with decks no longer handed to it as plan solid: 23 passages in 1 round, 0 columns and 0 doors cut off.
+- PW6 reproduced as a runaway, not yet a NaN: three river columns of the playground given a waterSource of 6 for 8 s
+  then 1.5 (the river station's surge), their chunks woken — 30 s on, the water peaks at 337 cells in a column, 169
+  columns over 50. The water contract's source is water a *step* in both models (water_depth.wgsl, publishWater): 6
+  is 360 cells^3 a second into one column. Open: what the station means by 6 (a rate a second, as the flow model's
+  springs?) — the contract's unit is the user's/coordinator's call.
+- FL11: the flow lab breached, lava stopped: all asleep 15 s after the breach (the note said ~3 min).
+- GIFs (412x915, 60°): scratchpad liquids/river-under-deck.gif (Muru), waterfall.gif, lava.gif (the flow lab).
+
+## 2026-11-10 — trackA-liquids: PW6 — water sources a rate a second in the contract
+
+The coordinator: "make water sources a rate per second in the contract, for both models, like the flow model's
+springs. A per-step unit makes behaviour depend on tick rate."
+- The contract (`waterSource`, positive): cells^3 a second. The pipes' depth pass (a 60 Hz step) adds src / 60, the flow
+  model's publish src × DTQ; a negative source stays the pipes' held depth (?rivers=hold) and adds nothing to the flow
+  model (it had added it, draining the column).
+- Callers rescaled so their volumes hold: the atlas's river springs (forms.wgsl RIVER_SPRING 0.0008 a step → 0.048 a
+  second), the kit's rivers (0.01 → 0.6), landforms' channel heads (0.004 → 0.24), the valley's river (0.01 → 0.6),
+  the lab recipes' springs, the geysers (0.08 → 4.8), the flow bench's source; the stations' kit already meant a rate a
+  second (it divided by 60) and now writes it as it is.
+- My earlier PW6 "runaway" wrote 6 a step to each of three columns — 180× the station's 6 cells^3 a second in all. At the
+  station's own rate (2 a column, then 0.5, chunks woken): 30 s on, no NaN, nothing over 50, the deepest column 2.6 as
+  before. The round-110 report was the two models sharing one buffer, which can't happen now (installFlow splices the
+  pipes out). PW6 closed.
+- Saved worlds and lab fixtures keep the sources they were saved with (a step's): 60× weaker under the new unit until
+  remade.
 
 ## 2026-11-10 — Track B's two conditions for U2's soldiers (trackA-seasonlife)
 
@@ -21773,3 +21953,26 @@ expected fail. No shot (nothing drawn changed).
   writing lint's fortress sources gone; the transfer list pruned of 26 old-town rows); Dawn: static-claims (rewritten
   on a GPU-owned dense grid), cities, jb6.
 - Net: 229 files, +923 −37 268 (src −28 704, scripts −6 225, test −713, docs −671).
+
+## 2026-11-10 — trackA-liquids: the flow model the one liquid; the pipes retired
+
+The user approved it after the Pixel 9a bench (the flow model awake 1.9 ms against the pipes' 2.6; without lava 1.05
+against 2.4; steady and disturbed within noise): "make the liquid flow the new default" — and "Don't build against a
+system we are deprecating"; "Stop wasting resources on old code." So, no compatibility layer:
+- WorldCore makes the liquid (installFlow, after the surface) with the world's Sleep; every level sleeps and wakes it
+  (?sleep=0: everything awake). `?liquid`, `flow/model.ts`, `?flow=1`'s lab-only throw: gone.
+- Deleted: water_flux.wgsl, water_depth.wgsl, the WaterSystem and its settling passes (?settleiters), the GPU settling
+  hold (sim/settlehold.ts, settlehold.wgsl, waterChange, Sleep's settle candidates and settling rects, ?settletol),
+  `?rivers=hold` / `?riverhold` / RIVER_HOLD, `?riverpull` / RIVER_PULL, `?riverslow` / RIVER_SLOW_N, waterNext, the
+  pipes' tuning group (pipesGain, pipesFriction; the river relax kept as flowRiverRelax), citygen's DECKS_CLAIMED switch
+  and deckSpans (decks are always in the columns), the flow bench's pipes half, scripts/fallcompare.mjs, the --base
+  options of flowlab.mjs and fallstill.mjs, test/gpu/settlehold.test.ts.
+- The chunk lists exist in Node too now (SIM_CULL: on unless ?simcull=0, also without a page), as the flow model needs.
+- The water's writers (unit gate): climate, edit, lava, liquid, placeop. The tests that named the system 'water' name
+  'liquid-water'; data/lab/town.rclt captured again (the generator's hash moved with RIVER_SPRING's unit).
+- Kept, with what still needs them (BACKLOG LQ8): sim/lava.ts with lava.wgsl / lava_flux.wgsl — the sandbox's heat beam
+  (melting the ground into lava), volcano vents with their rising cones, the meteor's melt; world.lava read by
+  renderfields, the warp and snapshots. The OilSystem (oil_flux / oil_depth) — oil floating on water; the flow model
+  reads its depth for the water's head.
+Checks: typecheck (src and test); the unit tier 107 files, 863 passed; the GPU tier 45 files, 194 passed; Muru and the
+flow lab at default (scratchpad liquids/muru-default.png, flowlab-default.png).

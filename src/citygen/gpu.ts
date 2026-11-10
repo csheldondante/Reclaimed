@@ -210,7 +210,7 @@ const KERNELS = [
   'fill', 'blur', 'feat', 'jfa', 'jdist', 'autoPts', 'phi', 'tensor', 'trace', 'mis', 'blocks',
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotRec', 'lotMesh', 'marks', 'meshCap',
   'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'gplace', 'sctab', 'bgrow', 'ctint',
-  'artSpan', 'artRast', 'artEnd', 'artMesh', 'popField', 'townBridge', 'claimRoads', 'claimLots', 'lotReach', 'deckSpans',
+  'artSpan', 'artRast', 'artEnd', 'artMesh', 'popField', 'townBridge', 'claimRoads', 'claimLots', 'lotReach',
   'clkInit', 'clkTimelapse', 'clkClaim', 'tlProgress', 'tlRise', 'stgRank', 'wallBins', 'wallShape', 'wallMesh', 'wallClaim',
 ] as const;
 type Kernel = (typeof KERNELS)[number];
@@ -352,7 +352,7 @@ export class CityGen {
       return b;
     };
     this.uni = buf('passes', SLOT * MAX_PASSES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    for (const n of ['H', 'HT', 'M', 'HS', 'TB', 'T0', 'FDB', 'FD', 'S0', 'S1', 'BLK', 'TX', 'TY', 'AD']) this.B[n] = buf(n, N * 4);
+    for (const n of ['H', 'HT', 'M', 'WS', 'HS', 'TB', 'T0', 'FDB', 'FD', 'S0', 'S1', 'BLK', 'TX', 'TY', 'AD']) this.B[n] = buf(n, N * 4);
     const [mx, my] = this.lattice(MIN_BLOCK);
     const T = mx * my;
     this.B.TR = buf('traces', T * TRW * 4);
@@ -432,8 +432,8 @@ export class CityGen {
     if (gs.kind === 'window' && gs.box[1] % 2) throw new Error(`citygen: the box's first row (${gs.box[1]}) must be even`);
     this.heightK =
       gs.kind === 'window'
-        ? makeCompute(device, 'citygen height', [commonWgsl, layersWgsl, materialsWgsl, heightWgsl], { 0: 'uniform', 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'uniform' })
-        : makeCompute(device, 'citygen raw height', [rawHeightWgsl], { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'rw' });
+        ? makeCompute(device, 'citygen height', [commonWgsl, layersWgsl, materialsWgsl, heightWgsl], { 0: 'uniform', 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'uniform', 8: 'rw' })
+        : makeCompute(device, 'citygen raw height', [rawHeightWgsl], { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'rw', 4: 'rw' });
     const n = ALL.length * 2;
     if (device.features.has('timestamp-query')) {
       this.qs = device.createQuerySet({ type: 'timestamp', count: n });
@@ -501,22 +501,6 @@ export class CityGen {
   }
   private reachJob: { marks: GPUBuffer; gx: number; gy: number; winW: number; winH: number } | null = null;
 
-  /**
-   * (M4b) The town's decks as a reach's plan solid (FortressReachGpu.planSpans: two words a window column, cleared
-   * first): the grid's first column at window column (gx, gy), window z = world z + gz. One submit, nothing read.
-   */
-  deckSpans(spans: GPUBuffer, gx: number, gy: number, gz: number, winW: number, winH: number): void {
-    if (this.dead) return;
-    this.nPass = 0;
-    const enc = this.device.createCommandEncoder({ label: 'citygen deck spans' });
-    enc.clearBuffer(spans);
-    this.cp = enc.beginComputePass({ label: 'citygen deck spans' });
-    const gzBits = new Uint32Array(new Float32Array([gz]).buffer)[0];
-    this.k('deckSpans', { count: gzBits, k: winW, mode: winH, box: [gx >>> 0, gy >>> 0] }, { 1: this.B.ROADS, 5: spans }, Math.ceil(this.world.w / 8), Math.ceil(this.world.h / 8));
-    this.cp.end();
-    this.device.queue.writeBuffer(this.uni, 0, this.uniData, 0, this.nPass * SLOT);
-    this.device.queue.submit([enc.finish()]);
-  }
   /**
    * (time-lapse) The town's clock now (s): each lot's progress from its district's start, the buildings risen, the roads
    * and parks of districts begun shown — one submit, nothing read back, no mesh made again.
@@ -881,8 +865,8 @@ export class CityGen {
       cp.setBindGroup(
         0,
         G.kind === 'window'
-          ? makeBindGroup(device, 'citygen height', this.heightK.layout, { 0: G.globals, 1: G.chunks, 3: G.layers, 4: G.water, 5: B.H, 6: B.M, 7: this.boxUni })
-          : makeBindGroup(device, 'citygen raw height', this.heightK.layout, { 0: this.boxUni, 1: G.raw, 2: B.H, 3: B.M }),
+          ? makeBindGroup(device, 'citygen height', this.heightK.layout, { 0: G.globals, 1: G.chunks, 3: G.layers, 4: G.water, 5: B.H, 6: B.M, 7: this.boxUni, 8: B.WS })
+          : makeBindGroup(device, 'citygen raw height', this.heightK.layout, { 0: this.boxUni, 1: G.raw, 2: B.H, 3: B.M, 4: B.WS }),
       );
       cp.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(h / 8));
       cp.end();
@@ -903,7 +887,7 @@ export class CityGen {
       this.k2('jdist', {}, { 1: fr, 5: p.field === 1 ? B.FDB : B.T0 });
       if (p.field === 0) this.blur(B.T0, B.FDB, 5, 3);
       // (M4a: the arterials — their length and bridges, then the distance to them: their columns flooded)
-      this.k('artSpan', {}, { 1: B.M, 3: B.H, 5: B.ART }, 1);
+      this.k('artSpan', {}, { 1: B.M, 2: B.WS, 3: B.H, 5: B.ART }, 1);
       this.fill(B.S0, w * h, NONE);
       this.k('artRast', {}, { 1: B.ART, 5: B.S0 }, (NART * NAP) / 64);
       this.k2('jdist', {}, { 1: this.jfa(B.S0, B.S1), 5: B.AD });
@@ -987,7 +971,7 @@ export class CityGen {
     // (time-lapse: the tagged vertices where the clock puts them)
     this.k('tlRise', {}, { 1: this.lotRecords, 2: this.progress, 3: B.VTAG, 4: B.SCT, 6: B.WALL, 7: this.verts }, Math.ceil(this.vertRoom / 64), 1, true);
     // (M4b: the claim grid — the roads' and decks' columns, then the buildings' over them)
-    this.k2('claimRoads', {}, { 1: B.ROADS, 3: B.H, 7: this.claimGrid });
+    this.k2('claimRoads', {}, { 1: B.ROADS, 2: B.M, 3: B.H, 7: this.claimGrid });
     this.k('claimLots', { count: LOT_ROOM }, { 1: this.lotRecords, 2: this.progress, 4: B.CNT, 7: this.claimGrid }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
     // (season life: the wall's columns over them, the road raster marked where it stands)
     this.k('wallClaim', {}, { 1: B.WALL, 2: B.AD, 3: HH, 4: B.FD, 5: B.ROADS, 7: this.claimGrid }, 1);

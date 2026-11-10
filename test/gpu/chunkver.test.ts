@@ -282,10 +282,10 @@ async function wets(map: ReturnType<typeof tinyMap>, systems: string[], x: numbe
 }
 
 describe("(DA-B26) every writer of the water moves its chunks' water versions", () => {
-  it('the water pass (water_depth.wgsl): a heap of water spreads', async () => {
+  it('the liquid (liquid.wgsl publishWater): a heap of water spreads', async () => {
     const map = tinyMap(W, H, 32, stone);
     for (let y = 18; y < 22; y++) for (let x = 18; x < 22; x++) map.water[y * W + x] = 2;
-    await wets(map, ['surface', 'water'], 20, 20, () => {}, 6);
+    await wets(map, ['surface', 'liquid-water'], 20, 20, () => {}, 6);
   });
 
   it('the edit pass (edit.wgsl): water poured', async () => {
@@ -304,7 +304,7 @@ describe("(DA-B26) every writer of the water moves its chunks' water versions", 
   it('water that only evaporates moves its depth, not its class (no band crossed)', async () => {
     const map = tinyMap(W, H, 32, stone);
     for (let y = 8; y < 24; y++) for (let x = 8; x < 24; x++) map.water[y * W + x] = 0.3;
-    await wets(map, ['surface', 'water'], 16, 16, () => {}, 6, false);
+    await wets(map, ['surface', 'liquid-water'], 16, 16, () => {}, 6, false);
   });
 
   it("the place ops (placeop.wgsl): a room flooded; the places uploaded move every chunk's", async () => {

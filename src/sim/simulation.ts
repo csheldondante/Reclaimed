@@ -1,7 +1,6 @@
 // Fixed-timestep orchestration of the simulation systems (design doc §24).
 // Systems run in the documented order; each has its own period.
 
-import { SettleHold } from './settlehold';
 import type { Profiler } from '../gpu/profiler';
 import { MAX_EVENTS, writeGlobals, GLOBALS_HEAD_BYTES, globalsBytes, type GlobalsState } from './globals';
 import type { SimSystem } from './system';
@@ -21,7 +20,6 @@ import {
   WiltSystem,
   StructureSystem,
   SurfaceSystem,
-  WaterSystem,
   PlaceOpSystem,
   LayerPullSystem,
   LandBrushSystem,
@@ -53,7 +51,6 @@ export class Simulation {
   /** (round 108, TC20) the weather's cover past the window: its owner (the tiles draw it, a render-only tile seeds it) */
   readonly cover!: WeatherCoverSystem;
   /** (perfopt) the water: its settling passes run while land just come in is drowsy */
-  readonly water!: WaterSystem;
   readonly particles: ParticleSystem;
   /** (round 104, simscale) the projection: over the chunks its inputs touch */
   readonly project!: ProjectSystem;
@@ -95,7 +92,7 @@ export class Simulation {
       (this.project = new ProjectSystem(device, world, profiler)),
       new StructureSystem(device, world, profiler),
       this.surface,
-      (this.water = new WaterSystem(device, world, profiler)),
+      // (the liquid — flow/install.ts — goes here: water and lava as the flow model's runs, after the surface)
       new OilSystem(device, world, profiler),
       new ContaminationSystem(device, world, profiler),
       new MoistureSystem(device, world, profiler),
@@ -149,7 +146,6 @@ export class Simulation {
     return this.tickOfFrame >= this.frameTicks - 1;
   }
   /** (round 128o, DA-B20) the water's settling hold on the GPU, made when a tick first asks for it */
-  private settleHold?: SettleHold;
 
   step(globals: GlobalsState, filter?: (s: SimSystem) => boolean): void {
     globals.tick = this.tick;
@@ -168,14 +164,10 @@ export class Simulation {
       for (const gg of globals.gusts.slice(1)) gg.len = 0;
       globals.strokeSent = true;
     }
-    // (perfopt: land just come in — drowsy — settles its water: WaterSystem.settling)
-    this.water.settling = globals.settle ?? [];
     // (round 85, simcull — sim/cull.ts: the chunks live this tick, from the same masks the kernels read; round 128o: and
     // those still maybe settling their water, which the GPU lets run or not)
-    this.world.tiles?.update(this.tick, globals.sleep, globals.drowse, globals.origin, globals.settleCand);
+    this.world.tiles?.update(this.tick, globals.sleep, globals.drowse, globals.origin);
     const enc = this.device.createCommandEncoder({ label: `tick ${this.tick}` });
-    // (round 128o, DA-B20) the settling hold, before the passes read the masks
-    if (globals.settleCand && globals.sleep) (this.settleHold ??= new SettleHold(this.device, this.world)).encode(enc, globals.settleCand, globals.settleTol ?? 0);
     for (const sys of this.systems) {
       if (this.tick % sys.period !== 0) continue;
       if (filter && !filter(sys)) continue;

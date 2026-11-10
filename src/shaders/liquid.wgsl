@@ -71,12 +71,14 @@ struct PartQ { p: vec4<f32>, v: vec4<f32>, m: vec4<u32> };
 
 const MAX_SPRINGS: u32 = 8u;
 struct LiquidU {
-  // x step, y springs, z the steady wake tolerance (cells a tick), w unused
+  // x step, y springs, z the steady wake tolerance (cells a tick), w 1: every chunk runs (?lqall=1, a check: lqList)
   step: vec4<u32>,
   // springs: x, y (world), z (height it pours in at), rate (cells^3/s)
   springs: array<vec4<f32>, 8>,
   // per chunk, this step only: a frozen chunk's flux rescaled by its supply (src/flow/steady.ts; 1 none, 0 dried up)
   scale: array<vec4<f32>, 512>,
+  // x the ticks prep's spray stands for (1; PREP_IDLE while idle: src/flow/liquid.ts encode)
+  extra: vec4<f32>,
 };
 @group(0) @binding(33) var<uniform> LQ: LiquidU;
 
@@ -97,6 +99,47 @@ const K_SMOKE_Q: u32 = 8u;
 fn stepNow() -> u32 { return LQ.step.x & 0x3ffffu; }
 fn stepPrev() -> u32 { return (LQ.step.x - 1u) & 0x3ffffu; }
 fn stamp24(s: u32) -> u32 { return s & 0xffffffu; }
+
+// ---- the chunks that run (trackA-liquids, DA-P5: sleeping costs nothing) -----------------------------------------
+// The passes run over a list of chunks made on the GPU each step (lqList below; src/flow/liquid.ts): the chunks awake
+// with liquid in or next to them, and the sleeping ones next to those (their edge's balance, a stream arriving), each
+// kept two steps more after it stops qualifying. A chunk off the list is parked: nothing reads or writes it, and its
+// records keep the stamps of the last two steps it ran (L and L - 1: both parities, the same content - the two steps
+// more saw to that). A record is then valid by its chunk's stamps (okPrev / okNow), not only by the global step: a
+// parked chunk's by L or L - 1, a running one's by this step's - and on its first step back, by the ones it was parked
+// with (P: the step it ran before this one). Per slot, lqRun: x L (the last step it ran: this one if it runs now), y P.
+@group(0) @binding(35) var lqRun: texture_2d<u32>;
+// (?rivers=table, riverheld.wgsl — appended by src/flow/liquid.ts) the atlas's river table
+@group(0) @binding(63) var riverFlowTex: texture_2d<f32>;
+const NEVER: u32 = 0xffffffffu;
+fn runOf(q: vec2<i32>) -> vec2<u32> {
+  let c = colSlot(vec2<u32>(q) / COLS_PAGE);
+  return textureLoad(lqRun, vec2<i32>(i32(c % LQ_RUN_W), i32(c / LQ_RUN_W)), 0).xy;
+}
+/** (trackA-liquids) a chunk taking a real step this step though it may be asleep (lqList: its first step since it was
+ *  made or its land came in, or its columns changed — a deck claimed, a cut — with liquid in it) */
+fn realStep(q: vec2<i32>) -> bool {
+  let c = colSlot(vec2<u32>(q) / COLS_PAGE);
+  return (textureLoad(lqRun, vec2<i32>(i32(c % LQ_RUN_W), i32(c / LQ_RUN_W)), 0).w & 2u) != 0u;
+}
+/** (trackA-liquids) a column frozen this step: asleep and not its slow turn — but not on a real step, so the water its
+ *  land came in with, or that a claim closed over, settles into its gaps and its flux is seeded (flux: seed) */
+fn lqFrozen(q: vec2<u32>) -> bool { return flowFrozen(q, FLOW_N) && !realStep(vec2<i32>(q)); }
+fn stampBefore(s: u32) -> u32 { return (s - 1u) & 0x3ffffu; }
+/** parked at step L: its records' stamps L or L - 1 */
+fn parkedOk(L: u32, st: u32) -> bool { return L != NEVER && (st == L || st == stampBefore(L)); }
+/** is stamp st (a record written the step before this one) valid for column q? */
+fn okPrev(q: vec2<i32>, st: u32) -> bool {
+  let r = runOf(q);
+  if (r.x == stepNow()) { return st == stepPrev() || (r.y != stepPrev() && parkedOk(r.y, st)); }
+  return parkedOk(r.x, st);
+}
+/** is stamp st (a record written this step) valid for column q? */
+fn okNow(q: vec2<i32>, st: u32) -> bool {
+  let r = runOf(q);
+  if (r.x == stepNow()) { return st == stepNow(); }
+  return parkedOk(r.x, st);
+}
 /** (round 107, pages P2.3b) the per-chunk state (act, the rescale) is keyed by the chunk's slot */
 fn chunkOf(q: vec2<u32>) -> u32 { return colSlot(q / COLS_PAGE); }
 /** a frozen chunk's rescale this step (1: none) */
@@ -107,7 +150,10 @@ fn chunkScale(q: vec2<u32>) -> f32 {
 }
 
 // ---- gaps -------------------------------------------------------------------------------------------------
-struct Gaps { n: u32, f: array<f32, 6>, c: array<f32, 6> };
+// nat: the top of the column's own ground (its highest solid that isn't an External's — sim/external.ts: a deck, a
+// building): where water the land came in with lies when nothing has been recorded for the column yet
+// ext: the top gap's floor is an External's top (a deck, a roof: sim/external.ts) — it holds no bed of its own
+struct Gaps { n: u32, f: array<f32, 6>, c: array<f32, 6>, nat: f32, ext: bool };
 
 fn gapPush(g: ptr<function, Gaps>, f: f32, c: f32) {
   if ((*g).n == MAXG) {
@@ -123,6 +169,8 @@ fn gapPush(g: ptr<function, Gaps>, f: f32, c: f32) {
 fn gapsAt(q: vec2<i32>) -> Gaps {
   var g: Gaps;
   g.n = 0u;
+  g.nat = 0.0;
+  g.ext = false;
   let cs = colSlots(u32(q.x), u32(q.y));
   var top = -1.0;
   for (var s = 0u; s < cs.y; s++) {
@@ -131,7 +179,9 @@ fn gapsAt(q: vec2<i32>) -> Gaps {
     let st = matState(ivMat(v));
     if (st != ST_SOLID && st != ST_GRANULAR) { continue; }
     if (top >= 0.0 && ivZ0(v) > top + 0.02) { gapPush(&g, top, ivZ0(v)); }
+    if (ivZ1(v) >= top) { g.ext = ivMat(v) == MAT_EXTERNAL; }
     top = max(top, ivZ1(v));
+    if (ivMat(v) != MAT_EXTERNAL) { g.nat = max(g.nat, ivZ1(v)); }
   }
   gapPush(&g, max(max(top, 0.0), bodyTopAt(q)), 1e9);
   return g;
@@ -152,12 +202,14 @@ fn gapForRun(g: Gaps, z: f32) -> u32 {
 }
 
 // ---- a column's runs ----------------------------------------------------------------------------------------
-struct Runs { n: u32, fl: array<f32, 4>, d: array<f32, 4>, h: array<f32, 4> };
+struct Runs { n: u32, fl: array<f32, 4>, d: array<f32, 4>, h: array<f32, 4>, ok: bool };
 
-fn runsAt(i: u32, want: u32) -> Runs {
+/** column q's runs as last written (index i): valid by its chunk's stamps (okPrev) */
+fn runsAt(q: vec2<i32>, i: u32) -> Runs {
   var r: Runs;
   let r0 = runsIn[i * NSLOT];
-  let ok = (u32(r0.w) >> 3u) == want;
+  let ok = okPrev(q, u32(r0.w) >> 3u);
+  r.ok = ok;
   r.d[0] = open[i];
   r.fl[0] = r0.x;
   r.h[0] = select(LQ_HOT, r0.z, ok);
@@ -174,11 +226,19 @@ fn runsAt(i: u32, want: u32) -> Runs {
   return r;
 }
 
+/**
+ * (trackA-liquids, CG15) The gap the open run (the `open` depth) lies in: the one its floor was in when last recorded
+ * (slot 0's x: the top gap's floor then) — so a deck or a roof claimed over water leaves the water under it — and,
+ * with nothing recorded, on the column's own ground (Gaps.nat: the water the land came in with, under a deck claimed
+ * after it). Without a deck or a roof, the top gap.
+ */
+fn openGap(g: Gaps, r: Runs) -> u32 { return gapForRun(g, select(g.nat, r.fl[0], r.ok)); }
+
 /** Depth of column q's run lying in its gap m (gaps g, runs r). */
 fn depthInGap(g: Gaps, r: Runs, m: u32) -> f32 {
-  if (m == g.n - 1u) { return r.d[0]; }
-  for (var s = 1u; s <= r.n; s++) { if (gapForRun(g, r.fl[s]) == m) { return r.d[s]; } }
-  return 0.0;
+  var d = select(0.0, r.d[0], m == openGap(g, r));
+  for (var s = 1u; s <= r.n; s++) { if (gapForRun(g, r.fl[s]) == m) { d += r.d[s]; } }
+  return d;
 }
 
 fn fluxGet(i: u32, s: u32) -> array<f32, 8> {
@@ -202,7 +262,7 @@ fn fluidity(d: f32, h: f32) -> f32 {
 }
 
 /** A run's floor: the open run's is the top gap's. */
-fn runFloor(g: Gaps, r: Runs, s: u32) -> f32 { return select(r.fl[s], g.f[g.n - 1u], s == 0u); }
+fn runFloor(g: Gaps, r: Runs, s: u32) -> f32 { return select(r.fl[s], g.f[openGap(g, r)], s == 0u); }
 
 /** The open water's head carries the oil floating on it. */
 fn oilHead(i: u32, s: u32) -> f32 {
@@ -216,18 +276,18 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
-  let r = runsAt(i, stepPrev());
+  let r = runsAt(p, i);
   var has = r.d[0] > EPS;
   for (var s = 1u; s <= r.n; s++) { has = has || r.d[s] > EPS; }
   if (!has) { return; }
   let now = stepNow();
   // (asleep: last step's flux carried on, stamped for this one)
   // (its supply changed: the flux it keeps rescaled, no simulation; zero, it has dried up)
-  if (flowFrozen(id.xy, FLOW_N)) {
+  if (lqFrozen(id.xy)) {
     let sc = chunkScale(id.xy);
     for (var s = 0u; s <= r.n; s++) {
       let o = (i * NSLOT + s) * 2u;
-      if (fluxStamp(i, s) != stepPrev()) { continue; }
+      if (!okPrev(p, fluxStamp(i, s))) { continue; }
       if (sc != 1.0) {
         let a = fl[o];
         let b = fl[o + 1u];
@@ -238,7 +298,7 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
     let e = emit[i];
-    if ((e >> 6u) == stamp24(stepPrev())) { emit[i] = (stamp24(now) << 6u) | select(e & 63u, 0u, sc == 0.0); }
+    if (okPrev(p, e >> 6u)) { emit[i] = (stamp24(now) << 6u) | select(e & 63u, 0u, sc == 0.0); }
     return;
   }
   let g = gapsAt(p);
@@ -251,7 +311,11 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
     let H = fz + d + oilHead(i, s);
     let fluid = fluidity(d, r.h[s]);
     var prev = array<f32, 8>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-    if (fluxStamp(i, s) == stepPrev()) { prev = fluxGet(i, s); }
+    let had = okPrev(p, fluxStamp(i, s));
+    if (had) { prev = fluxGet(i, s); }
+    // (trackA-liquids: land just come in with no flux recorded takes its steady flux for its levels at once — the pipes'
+    // seed, water_flux.wgsl — so a river that arrives asleep is drawn flowing and feeds what's awake below it)
+    let seed = !had && realStep(p);
     var f = array<f32, 6>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     var codes = 0u;
     for (var k = 0u; k < NDIR; k++) {
@@ -272,7 +336,7 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         if (tg >= 0) {
           let j = colIdxI(q);
-          let rq = runsAt(j, stepPrev());
+          let rq = runsAt(q, j);
           let m = u32(tg);
           Hn = gq.f[m] + depthInGap(gq, rq, m) + select(0.0, oilL[j] * 0.88, LQ_WATER && m == gq.n - 1u);
           code = m;
@@ -281,7 +345,7 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
         }
       }
       if (code != C_WALL) {
-        f[k] = max(0.0, prev[k] * lqFric() + lqGain() * fluid * (H - Hn - lqYield()));
+        f[k] = select(max(0.0, prev[k] * lqFric() + lqGain() * fluid * (H - Hn - lqYield())), max(0.0, lqGain() * fluid * (H - Hn - lqYield()) / max(1.0 - lqFric(), 0.02)), seed);
         if (fluid <= 0.0) { f[k] = 0.0; }
         // (round 86) over a lip no more than the critical flow carries, sqrt(g) d^(3/2) a unit of edge: the pipe's
         // momentum otherwise poured the whole depth off each tick (17x it for a 2.6 deep pool) - with the water
@@ -328,11 +392,11 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
   // (round 86: a stream arriving over a sleeping column that had none - new water, now that streams take their
   // time - wakes its chunk, and is carried on meanwhile (j3.w 1: carried, not frozen), holding what would land
   // in the air until the chunk wakes: a sleeping column's runs can't take it, and it mustn't be lost)
-  let frozen = flowFrozen(id.xy, FLOW_N);
+  let frozen = lqFrozen(id.xy);
   if (frozen) {
     let j2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
     let sc = chunkScale(id.xy);
-    let had = u32(j2.w) == stamp24(stepPrev());
+    let had = okPrev(p, u32(j2.w));
     var carry = had && textureLoad(j3In, texCol(vec2<i32>(p)), 0).w > 0.5;
     if (had && !carry) {
       if (sc > 0.0) {
@@ -350,9 +414,9 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
         let q = nbr(p, k);
         if (!inMap(q)) { continue; }
         let qj2 = textureLoad(j2In, texCol(vec2<i32>(q)), 0);
-        if (u32(qj2.w) == stamp24(stepPrev()) && u32(qj2.x) == (k ^ 1u) && textureLoad(j3In, texCol(vec2<i32>(q)), 0).z > 0.0) { carry = true; }
+        if (okPrev(q, u32(qj2.w)) && u32(qj2.x) == (k ^ 1u) && textureLoad(j3In, texCol(vec2<i32>(q)), 0).z > 0.0) { carry = true; }
         let e = emit[colIdxI(q)];
-        if ((e >> 6u) == stamp24(now) && ((e >> (k ^ 1u)) & 1u) != 0u) { carry = true; }
+        if (okNow(q, e >> 6u) && ((e >> (k ^ 1u)) & 1u) != 0u) { carry = true; }
       }
     }
     if (!carry) { return; }
@@ -364,7 +428,7 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
   // what's in flight over this column already (its entry as it was)
   let o2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
   var age = 0.0;
-  if (u32(o2.w) == stamp24(stepPrev())) {
+  if (okPrev(p, u32(o2.w))) {
     let o0 = textureLoad(j0In, texCol(vec2<i32>(p)), 0);
     let o1 = textureLoad(j1In, texCol(vec2<i32>(p)), 0);
     let o3 = textureLoad(j3In, texCol(vec2<i32>(p)), 0);
@@ -378,7 +442,7 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!inMap(q)) { continue; }
     // a stream coming on from the neighbour: what crossed its column last step, entering as its path leaves it
     let j2 = textureLoad(j2In, texCol(vec2<i32>(q)), 0);
-    if (u32(j2.w) == stamp24(stepPrev()) && u32(j2.x) == (k ^ 1u)) {
+    if (okPrev(q, u32(j2.w)) && u32(j2.x) == (k ^ 1u)) {
       let j3 = textureLoad(j3In, texCol(vec2<i32>(q)), 0);
       if (j3.z > 0.0) {
         let j0 = textureLoad(j0In, texCol(vec2<i32>(q)), 0);
@@ -390,11 +454,11 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
     // a run falling off the neighbour's ledge toward me
     let j = colIdxI(q);
     let e = emit[j];
-    if ((e >> 6u) != stamp24(now) || ((e >> (k ^ 1u)) & 1u) == 0u) { continue; }
+    if (!okNow(q, e >> 6u) || ((e >> (k ^ 1u)) & 1u) == 0u) { continue; }
     let gq = gapsAt(q);
-    let rq = runsAt(j, stepPrev());
+    let rq = runsAt(q, j);
     for (var s = 0u; s <= rq.n; s++) {
-      if (fluxStamp(j, s) != now || ((fluxCodes(j, s) >> (4u * (k ^ 1u))) & 15u) != C_FALL) { continue; }
+      if (!okNow(q, fluxStamp(j, s)) || ((fluxCodes(j, s) >> (4u * (k ^ 1u))) & 15u) != C_FALL) { continue; }
       let f = fluxDir(j, s, k ^ 1u);
       if (f <= 1e-7) { continue; }
       let d = rq.d[s];
@@ -429,7 +493,7 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
   age += DTQ;
   // the level under it here
   let g = gapsAt(p);
-  let r = runsAt(colIdxI(p), stepPrev());
+  let r = runsAt(p, colIdxI(p));
   var gz = gapAtZ(g, jt.z);
   if (gz < 0) { gz = i32(gapForRun(g, jt.z)); }
   let zL = g.f[u32(gz)] + depthInGap(g, r, u32(gz));
@@ -471,8 +535,8 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // ---- B: depth ------------------------------------------------------------------------------------------------
-fn outSum(i: u32, s: u32) -> f32 {
-  if (fluxStamp(i, s) != stepNow()) { return 0.0; }
+fn outSum(p: vec2<i32>, i: u32, s: u32) -> f32 {
+  if (!okNow(p, fluxStamp(i, s))) { return 0.0; }
   let f = fluxGet(i, s);
   return f[0] + f[1] + f[2] + f[3] + f[4] + f[5];
 }
@@ -489,9 +553,9 @@ fn gather(p: vec2<i32>, g: Gaps, r: Runs) -> Gather {
   o.outflow = 0.0;
   o.net = vec2<f32>(0.0);
   for (var s = 0u; s <= r.n; s++) {
-    let m = select(gapForRun(g, r.fl[s]), g.n - 1u, s == 0u);
-    let out = min(outSum(i, s), r.d[s]);
-    if (fluxStamp(i, s) == stepNow() && out > 0.0) {
+    let m = select(gapForRun(g, r.fl[s]), openGap(g, r), s == 0u);
+    let out = min(outSum(p, i, s), r.d[s]);
+    if (okNow(p, fluxStamp(i, s)) && out > 0.0) {
       let fv = fluxGet(i, s);
       for (var k = 0u; k < NDIR; k++) { o.net += fv[k] * DIRV[k]; }
     }
@@ -504,9 +568,9 @@ fn gather(p: vec2<i32>, g: Gaps, r: Runs) -> Gather {
     let q = nbr(p, k);
     if (!inMap(q)) { continue; }
     let j = colIdxI(q);
-    let rq = runsAt(j, stepPrev());
+    let rq = runsAt(q, j);
     for (var s = 0u; s <= rq.n; s++) {
-      if (rq.d[s] <= EPS || fluxStamp(j, s) != stepNow()) { continue; }
+      if (rq.d[s] <= EPS || !okNow(q, fluxStamp(j, s))) { continue; }
       let code = (fluxCodes(j, s) >> (4u * (k ^ 1u))) & 15u;
       if (code >= g.n) { continue; }
       let f = fluxDir(j, s, k ^ 1u);
@@ -519,7 +583,7 @@ fn gather(p: vec2<i32>, g: Gaps, r: Runs) -> Gather {
   // a stream landing here (this step's jets)
   let j2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
   // (what landed this step: j3.z, the volume that came down)
-  if (u32(j2.w) == stamp24(stepNow()) && u32(j2.x) == 6u) {
+  if (okNow(p, u32(j2.w)) && u32(j2.x) == 6u) {
     let j0 = textureLoad(j0In, texCol(vec2<i32>(p)), 0);
     let landed = textureLoad(j3In, texCol(vec2<i32>(p)), 0).z;
     var m = gapAtZ(g, j2.y + 0.01);
@@ -547,20 +611,20 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let now = stepNow();
-  let r = runsAt(i, stepPrev());
+  let r = runsAt(p, i);
   let ch = chunkOf(id.xy);
   let bed = sfZ(surface[i]) + driftAt(p);
-  if (flowFrozen(id.xy, FLOW_N)) {
+  if (lqFrozen(id.xy)) {
     // (asleep: carried through; on the edge of an awake chunk, its balance checked)
     let r0 = runsIn[i * NSLOT];
-    if ((u32(r0.w) >> 3u) == stepPrev()) {
+    if (okPrev(p, u32(r0.w) >> 3u)) {
       for (var s = 0u; s <= r.n; s++) { runsOut[i * NSLOT + s] = runsIn[i * NSLOT + s]; }
       runsOut[i * NSLOT] = vec4<f32>(r0.x, r.d[0], r0.z, f32(now * 8u + r.n));
     }
     var edge = false;
     for (var k = 0u; k < NDIR; k++) {
       let q = nbr(p, k);
-      if (inMap(q) && !asleep(vec2<u32>(q))) { edge = true; }
+      if (inMap(q) && !lqFrozen(vec2<u32>(q))) { edge = true; }
     }
     // (asleep, the chunk's x and y count its edge's inflow and outflow instead: their ratio rescales it)
     if (edge) {
@@ -580,21 +644,33 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
     let q = nbr(p, k);
     if (!inMap(q)) { continue; }
     let j = colIdxI(q);
-    wet = open[j] > EPS || ((u32(runsIn[j * NSLOT].w) >> 3u) == stepPrev() && (u32(runsIn[j * NSLOT].w) & 7u) > 0u);
+    wet = open[j] > EPS || (okPrev(q, u32(runsIn[j * NSLOT].w) >> 3u) && (u32(runsIn[j * NSLOT].w) & 7u) > 0u);
   }
   let j2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
-  wet = wet || (u32(j2.w) == stamp24(now) && u32(j2.x) == 6u);
+  wet = wet || (okNow(p, u32(j2.w)) && u32(j2.x) == 6u);
   for (var s = 0u; s < LQ.step.y; s++) { wet = wet || all(cellAt(LQ.springs[s].xy) == p); }
+  // (trackA-liquids, ?rivers=table: a river's column nothing has woken — at the window's edge, or asleep on its slow
+  // turn or as it comes in — held at the atlas's table: riverheld.wgsl, as the pipes hold it)
+  var rh: RiverHere;
+  rh.on = false;
+  if (LQ_WATER) { rh = riverHere(id.xy); }
+  let held = LQ_WATER && riverHeld(id.xy, rh);
+  wet = wet || (held && rh.depth > 0.0);
   let r0 = runsIn[i * NSLOT];
-  let prevBed = select(bed, r0.x, (u32(r0.w) >> 3u) == stepPrev());
+  let prevBed = select(bed, r0.x, okPrev(p, u32(r0.w) >> 3u));
   if (abs(bed - prevBed) > 1e-4) { atomicAdd(&act[ch * 4u], u32(min(abs(bed - prevBed) * 1e6, 1e8))); }
   if (!wet) {
     runsOut[i * NSLOT] = vec4<f32>(bed, 0.0, LQ_HOT, f32(now * 8u));
     return;
   }
   let g = gapsAt(p);
-  let o = gather(p, g, r);
+  var o = gather(p, g, r);
   let top = g.n - 1u;
+  // (held: in the gap on the column's own ground — under a deck, the river's; Gaps.nat)
+  if (held) {
+    let m = gapForRun(g, g.nat);
+    o.dep[m] = mix(o.dep[m], rh.depth, G.tune.flowRiverRelax);
+  }
   // the enclosed runs: wet gaps under the top, lowest first; past three, the deepest kept (the rest counted)
   var n = 0u;
   var change = 0.0;
@@ -617,7 +693,10 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let dt = max(o.dep[top], 0.0);
   runsOut[i * NSLOT] = vec4<f32>(g.f[top], dt, select(LQ_HOT, o.hv[top] / dt, dt > EPS), f32(now * 8u + n));
-  atomicAdd(&act[ch * 4u], u32(min(change * 1e6, 1e8)));
+  // (trackA-liquids: open water standing on an External's top — a deck, a roof: no bed of its own — keeps its chunk from
+  // freezing until it has drained: counted as change, whatever its balance)
+  let standing = select(0.0, dt, g.ext && dt > EPS);
+  atomicAdd(&act[ch * 4u], u32(min((change + standing) * 1e6, 1e8)));
   atomicAdd(&act[ch * 4u + 1u], u32(min(length(o.net) * (2.0 / f32(NDIR)) * 1e6, 1e8)));
 }
 
@@ -633,7 +712,7 @@ fn publishWater(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let d = open[i];
-  if (flowFrozen(id.xy, FLOW_N)) {
+  if (lqFrozen(id.xy)) {
     waterPrevL[i] = d;
     let sc = chunkScale(id.xy);
     if (sc != 1.0) { fluxC[i] = dScale(fluxC[i], sc); }
@@ -641,7 +720,8 @@ fn publishWater(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let r0 = runsOut[i * NSLOT];
   var nd = select(d, r0.y, (u32(r0.w) >> 3u) == stepNow());
-  nd += rainAt(cellPos(p)) * G.tune.waterRain * (1.0 - snowShare(airTempAt(sfZ(surface[i])))) + waterSourceL[i];
+  // (a source: cells^3 a second — PW6)
+  nd += rainAt(cellPos(p)) * G.tune.waterRain * (1.0 - snowShare(airTempAt(sfZ(surface[i])))) + max(waterSourceL[i], 0.0) * DTQ;
   nd = max(0.0, nd - select(EVAP_DEEP_Q, G.tune.waterEvap, nd < 0.08));
   if (sfCount(surface[i]) == 0u) { nd = 0.0; }
   waterPrevL[i] = d;
@@ -700,7 +780,7 @@ fn setBasalt(x: u32, y: u32, z: f32, dz: f32, ch: u32) {
 /** Lava: each run cools (thin fastest), boils the water over it, and below its setting point turns to basalt. */
 @compute @workgroup_size(8, 8)
 fn publishLava(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= G.mapW || id.y >= G.mapH || flowFrozen(id.xy, FLOW_N)) { return; }
+  if (id.x >= G.mapW || id.y >= G.mapH || lqFrozen(id.xy)) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let r0 = runsOut[i * NSLOT];
@@ -745,7 +825,7 @@ const K_DROP_Q: u32 = 24u;
 const MIST_Q: u32 = 3u;
 
 /** the spray's share of the particle ring (the high tier's 65536: all of it) */
-fn sprayBudget() -> f32 { return min(f32(arrayLength(&parts)) / 65536.0, 1.0) * simStep(); }
+fn sprayBudget() -> f32 { return min(f32(arrayLength(&parts)) / 65536.0, 1.0) * simStep() * LQ.extra.x; }
 fn rnd(i: u32, salt: u32) -> f32 { return f32(hash3(i, G.tick, salt) >> 8u) / 16777216.0; }
 
 @compute @workgroup_size(8, 8)
@@ -753,9 +833,8 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
-  let last = stepNow();
   let r0 = runsIn[i * NSLOT];
-  let ok = (u32(r0.w) >> 3u) == last;
+  let ok = okNow(p, u32(r0.w) >> 3u);
   let cap = arrayLength(&inst) / 3u;
   // enclosed runs (under rock): flat prisms
   if (ok) {
@@ -793,7 +872,7 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   // the stream over this column
   let j2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
-  if (u32(j2.w) != stamp24(last)) { return; }
+  if (!okNow(p, u32(j2.w))) { return; }
   let j0 = textureLoad(j0In, texCol(vec2<i32>(p)), 0);
   let j1 = textureLoad(j1In, texCol(vec2<i32>(p)), 0);
   let j3 = textureLoad(j3In, texCol(vec2<i32>(p)), 0);
@@ -857,4 +936,176 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
       spawnQ(foot + vec3<f32>(rr * width, 0.3), vec3<f32>(rr * 1.5 + j1.xy * 0.2, 0.6), 2.6, K_SMOKE_Q, h, MIST_Q);
     }
   }
+}
+
+// ---- the list of chunks that run (trackA-liquids, DA-P5; src/flow/liquid.ts encode) -----------------------------
+// Each step, before the passes: lqScan marks which chunks hold liquid (those awake, or that ran the last step — a
+// parked chunk keeps its mark), then lqList decides which run this step, writes their stamps (lqState, copied into
+// lqRun for the passes) and lists them: `run` for flux, jets, depth and publish; `wet` (every chunk with liquid, or
+// running) for prep's draw lists. Entries packed as sim/cull.ts packEntry (cullSource's wrapper reads them).
+// per slot: 1 holds liquid (open or enclosed runs, a stream in the air, a water source)
+// (y: the tick its columns' version was last looked at — chunkver.wgsl; 0 never)
+@group(0) @binding(36) var<storage, read_write> lqWet: array<vec2<u32>>;
+// per slot: x L (the last step it ran), y P (the one before), z the steps more it runs, w bit 0 once scanned (0: made,
+// or its land just came in), bit 1 a real step this step (realStep)
+@group(0) @binding(37) var<storage, read_write> lqState: array<vec4<u32>>;
+@group(0) @binding(40) var<storage, read_write> runList: array<u32>;
+@group(0) @binding(41) var<storage, read_write> runArgs: array<atomic<u32>, 3>;
+@group(0) @binding(42) var<storage, read_write> wetList: array<u32>;
+@group(0) @binding(43) var<storage, read_write> wetArgs: array<atomic<u32>, 3>;
+
+
+/** steps a chunk runs on after it stops qualifying: both parities then hold its settled records */
+const LINGER: u32 = 2u;
+/** water deeper than this, and a column's top risen this far over its surface: covered (lqScan) */
+const COVERED: f32 = 0.05;
+
+var<workgroup> wgGo: u32;
+var<workgroup> wgWet: atomic<u32>;
+
+@compute @workgroup_size(64)
+fn lqScan(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let cxN = G.mapW / COLS_PAGE;
+  let c = vec2<u32>(wg.x % cxN, wg.x / cxN);
+  let o = c * COLS_PAGE;
+  let slot = colSlot(c);
+  let st = lqState[slot];
+  let L = st.x;
+  // (asleep with its columns changed since it last looked — chunkver.wgsl: scanned for water a solid now covers — a deck
+  // claimed over its river: woken whatever its balance, as a stream arriving wakes it — flow/steady.ts reads act's bit
+  // 2. Only that: the bed moving under the water (sediment) changes the columns too, and must not keep it awake. Not a
+  // real step of its own here: alone between frozen neighbours it would take their frozen inflow and send nothing on)
+  if (li == 0u) {
+    let frozenC = flowFrozen(o, FLOW_N);
+    let moved = frozenC && chunks[chunkVerAt(o)].x > lqWet[slot].y;
+    lqWet[slot].y = G.tick;
+    // (scanned when it may have changed: awake — water put in from outside — or it ran the last step; and once after
+    // it was made or its land came in, asleep or not: w 1 once scanned)
+    wgGo = select(0u, 1u, c.y < G.mapH / COLS_PAGE && (!frozenC || L == stepPrev() || st.w == 0u || moved)) | select(0u, 2u, moved);
+    if ((wgGo & 1u) != 0u) { lqState[slot].w |= 1u; }
+    atomicStore(&wgWet, 0u);
+  }
+  let go = workgroupUniformLoad(&wgGo);
+  if (go == 0u) { return; }
+  let moved = (go & 2u) != 0u;
+  var w = false;
+  for (var k = 0u; k < 4u; k++) {
+    let l = li * 4u + k;
+    let p = vec2<i32>(o + vec2<u32>(l % COLS_PAGE, l / COLS_PAGE));
+    let i = colIdxI(p);
+    let r0 = runsIn[i * NSLOT];
+    w = w || open[i] > EPS || (parkedOk(L, u32(r0.w) >> 3u) && (u32(r0.w) & 7u) > 0u);
+    if (LQ_WATER) { w = w || waterSourceL[i] != 0.0; }
+    let j2 = textureLoad(j2In, texCol(p), 0);
+    w = w || (parkedOk(L, u32(j2.w)) && textureLoad(j0In, texCol(p), 0).x > 1e-9);
+    // (its open water — not a film — under the column's top now: a solid came over it, a deck. The bed moving under the
+    // water stays under its surface; a film a sediment step covers is no matter)
+    // (the column's top from its layers: the surface buffer's z is the walkers' surface, not the topmost solid)
+    if (moved && open[i] > COVERED && parkedOk(L, u32(r0.w) >> 3u)) {
+      let g = gapsAt(p);
+      if (g.f[g.n - 1u] > r0.x + open[i] + COVERED) { atomicOr(&act[slot * 4u + 2u], 3u); }
+    }
+  }
+  if (w) { atomicStore(&wgWet, 1u); }
+  workgroupBarrier();
+  if (li == 0u) { lqWet[slot].x = atomicLoad(&wgWet); }
+}
+
+fn chunkIn(c: vec2<i32>) -> bool { return c.x >= 0 && c.y >= 0 && u32(c.x) < G.mapW / COLS_PAGE && u32(c.y) < G.mapH / COLS_PAGE; }
+fn chunkFrozen(c: vec2<i32>) -> bool { return flowFrozen(vec2<u32>(c) * COLS_PAGE, FLOW_N); }
+fn wetC(c: vec2<i32>) -> bool { return chunkIn(c) && lqWet[colSlot(vec2<u32>(c))].x != 0u; }
+/** a spring pours into chunk c or next to it */
+fn springNear(c: vec2<i32>) -> bool {
+  for (var s = 0u; s < LQ.step.y; s++) {
+    let q = vec2<i32>(cellAt(LQ.springs[s].xy)) / i32(COLS_PAGE);
+    if (abs(q.x - c.x) <= 1 && abs(q.y - c.y) <= 1) { return true; }
+  }
+  return false;
+}
+/** rain falls on chunk c (its centre or corners) */
+fn rainOver(c: vec2<i32>) -> bool {
+  if (!LQ_WATER || G.numStorms == 0u) { return false; }
+  let o = vec2<i32>(c) * i32(COLS_PAGE);
+  for (var k = 0; k < 5; k++) {
+    let d = select(vec2<i32>(8, 8), vec2<i32>((k & 1) * 15, (k >> 1) * 15), k < 4);
+    if (rainAt(cellPos(o + d)) > 0.0) { return true; }
+  }
+  return false;
+}
+/** an awake chunk runs when it holds liquid or is next to some, or a spring or rain puts some in */
+fn liveRun(c: vec2<i32>) -> bool {
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) { if (wetC(c + vec2<i32>(dx, dy))) { return true; } }
+  }
+  return springNear(c) || rainOver(c);
+}
+
+@compute @workgroup_size(64)
+fn lqList(@builtin(global_invocation_id) id: vec3<u32>) {
+  let cxN = G.mapW / COLS_PAGE;
+  if (id.x >= cxN * (G.mapH / COLS_PAGE)) { return; }
+  let c = vec2<i32>(i32(id.x % cxN), i32(id.x / cxN));
+  let cu = vec2<u32>(c);
+  let slot = colSlot(cu);
+  var st = lqState[slot];
+  var run = LQ.step.w == 1u;
+  if (run) {
+  } else if (!chunkFrozen(c)) {
+    run = liveRun(c);
+  } else {
+    // asleep: run (carried, its edge's balance checked, a stream arriving held) beside an awake chunk that runs; and
+    // when its flux is rescaled this step
+    for (var dy = -1; dy <= 1 && !run; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        let n = c + vec2<i32>(dx, dy);
+        if ((dx != 0 || dy != 0) && chunkIn(n) && !chunkFrozen(n) && liveRun(n)) { run = true; break; }
+      }
+    }
+    run = run || (wetC(c) && chunkScale(cu * COLS_PAGE) != 1.0);
+  }
+  // (holding liquid and never run — just made, or its land just came in: a real step, asleep or not — lqFrozen)
+  let real = wetC(c) && st.x == NEVER;
+  run = run || real;
+  st.w = select(st.w & ~2u, st.w | 2u, real);
+  if (run) { st.z = LINGER; } else if (st.z > 0u) { st.z -= 1u; run = true; }
+  let pl = colPlace(cu);
+  let e = cu.x | (cu.y << 6u) | (pl.x << 12u) | (pl.y << 18u);
+  if (run) {
+    st.y = st.x;
+    st.x = stepNow();
+    let k = atomicAdd(&runArgs[0], 4u) / 4u;
+    runList[k] = e;
+  }
+  lqState[slot] = st;
+  if (run || wetC(c)) {
+    let k = atomicAdd(&wetArgs[0], 4u) / 4u;
+    wetList[k] = e;
+  }
+}
+
+// ---- the water on every surface (trackA-liquids, LQ4; docs/ARCHITECTURE.md "The flow model") ---------------------
+// world.waterGaps, a column's: x the open run's depth (f32 bits), y..w its enclosed runs as pack2x16float(floor, depth)
+// (0: none) — what the agents' peel reads for a surface under the top (agents.ts surfaceDepth). Over the run list after
+// publish (a parked chunk's stays as it froze); a run crossing a walker's band bumps the chunk's water versions (the
+// agents re-peel it).
+@group(0) @binding(45) var<storage, read_write> waterGaps: array<vec4<u32>>;
+
+@compute @workgroup_size(8, 8)
+fn publishGaps(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let i = colIdxI(vec2<i32>(id.xy));
+  let r0 = runsOut[i * NSLOT];
+  let n = select(0u, u32(r0.w) & 7u, (u32(r0.w) >> 3u) == stepNow());
+  var g = vec4<u32>(bitcast<u32>(open[i]), 0u, 0u, 0u);
+  for (var s = 1u; s <= n; s++) {
+    let v = runsOut[i * NSLOT + s];
+    if (v.y > EPS) { g[s] = pack2x16float(vec2<f32>(v.x, v.y)); }
+  }
+  let o = waterGaps[i];
+  // (the top's too: what the peel read before this was first written — 0 — may have been a dry surface)
+  if (o.x != g.x) { bumpWater(id.xy, bitcast<f32>(o.x), bitcast<f32>(g.x)); }
+  for (var s = 1u; s < NSLOT; s++) {
+    if (o[s] != g[s]) { bumpWater(id.xy, select(0.0, unpack2x16float(o[s]).y, o[s] != 0u), select(0.0, unpack2x16float(g[s]).y, g[s] != 0u)); }
+  }
+  waterGaps[i] = g;
 }

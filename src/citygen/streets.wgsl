@@ -2712,6 +2712,14 @@ const WAY_HALF: f32 = 2.2;
 const ART_TAPER: f32 = 12.0;
 /** dry ground after deep water that closes a crossing (world units) */
 const ART_GAP: f32 = 2.0;
+/** (trackA-liquids, LQ7 — DESIGN §12: roads become bridges over water) a crossing no longer than this (world units of
+ *  wet along the road) is a ford: no deck, the road's paving not claimed on its wet columns (claimRoads) — its bed bare
+ *  under the water; longer, a deck */
+const FORD_MAX: f32 = 2.5;
+/** (trackA-liquids) a deck's slab as claimed into the columns (the drawn deck's sides go DECK_T down), and the air it
+ *  keeps over the water's surface */
+const DECK_CLAIM_T: f32 = 0.25;
+const DECK_AIR: f32 = 0.1;
 fn artBase(k: u32) -> u32 { return 4u + k * AW; }
 /** a word of ART, from the binding it's at in this pass (1, 2, 5 or 7) */
 fn artW(src: u32, i: u32) -> u32 {
@@ -2748,6 +2756,8 @@ fn artSpan(@builtin(global_invocation_id) g: vec3<u32>) {
   var pd = artPt(5u, k, 0u);
   var acc = 0.0;
   var out = false;
+  // (trackA-liquids: the highest water surface along this crossing — a deck's claimed slab clears it)
+  var wsMax = -1e9;
   for (var j = 0u; j + 1u < n && !out; j++) {
     let a = artPt(5u, k, j);
     let b = artPt(5u, k, j + 1u);
@@ -2759,7 +2769,8 @@ fn artSpan(@builtin(global_invocation_id) g: vec3<u32>) {
       if (!inb(p)) { out = true; break; }
       end = t;
       let w = r1(ixp(p)) > 0.5;
-      if (w && !wet) { wet = true; t0 = t; p0 = pd; }
+      if (w && !wet) { wet = true; t0 = t; p0 = pd; wsMax = -1e9; }
+      if (w) { wsMax = max(wsMax, r2(ixp(p))); }
       if (w) { tw = t; } else { pd = p; }
       if (!w && wet && t - tw >= ART_GAP) {
         wet = false;
@@ -2767,12 +2778,17 @@ fn artSpan(@builtin(global_invocation_id) g: vec3<u32>) {
         // past the spans' room, ends the arterial at its near shore)
         let sa = max(t0 - 1.0, 0.0);
         let sb = tw + 1.0;
+        // (a short crossing: a ford — no deck)
+        if (tw - t0 <= FORD_MAX) { continue; }
         if (sb - sa > u.t.w || ns == NSPAN) { end = sa; out = true; break; }
         let s5 = o + 4u + ns * 4u;
         set5(s5, sa);
         set5(s5 + 1u, sb);
-        set5(s5 + 2u, r3(ixp(p0)) + u.t.z);
-        set5(s5 + 3u, r3(ixp(p)) + u.t.z);
+        // (trackA-liquids: and its slab — DECK_CLAIM_T, what's claimed into the columns — DECK_AIR over the water's highest
+        // surface along the crossing, so the river runs under it, not into it)
+        let zMin = wsMax + DECK_CLAIM_T + DECK_AIR;
+        set5(s5 + 2u, max(r3(ixp(p0)) + u.t.z, zMin));
+        set5(s5 + 3u, max(r3(ixp(p)) + u.t.z, zMin));
         ns++;
       }
     }
@@ -3075,7 +3091,7 @@ fn townBridge(@builtin(local_invocation_index) li: u32) {
 // slab DECK_T deep under its top; a road a quarter cell of paving on the ground (claimed where free: on it). Made at
 // every mesh run, read where it lies on the GPU (nothing comes back): claimed as the land arrives, kept by the orphan
 // pass, checked after an edit (colapply gridDamage: the damaged records' ids, a few words back). Decks aren't claimed
-// (claimRoads): the reach walks them as plan solid (deckSpans).
+// (claimRoads): a deck a slab DECK_CLAIM_T under its top, over the river, which runs in the gap under it.
 const PAVE_T: f32 = 0.25;
 /** a column with no span the town keeps bare of plants all the same (its owner word, count 0): a building's or a
  *  plaza's parcel round its footprint (bare.wgsl) */
@@ -3130,7 +3146,9 @@ fn claimField(r: u32, o: u32) {
 }
 const M_RUBBLE: u32 = 4u;
 const M_WOOD: u32 = 10u;
-/** one thread a grid column: its road or deck span from ROADS, or none (b1 ROADS, r3 the heights; w7 CG) */
+/** one thread a grid column: its road or deck span from ROADS, or none (b1 ROADS, b2 the wet mask, r3 the heights; w7 CG)
+ *  (trackA-liquids, LQ7: a road's paving isn't claimed on a wet column — a ford's bed stays bare under the water; a
+ *  deck over water is) */
 @compute @workgroup_size(8, 8)
 fn claimRoads(@builtin(global_invocation_id) g: vec3<u32>) {
   let x = i32(g.x); let y = i32(g.y);
@@ -3143,11 +3161,17 @@ fn claimRoads(@builtin(global_invocation_id) g: vec3<u32>) {
   let m = b1[i];
   let so = N * 4u + i * 4u;
   w7[so + 3u] = 0u;
-  // (a deck isn't claimed in the world's columns: a column's top is its water's floor — surface.wgsl, water_flux.wgsl
-  // — so a deck there would lift the river onto it. The reach walks it as the plan's solid instead: deckSpans)
-  if (m == 0u || (m & DECK_BIT) != 0u) { w7[i * 4u + 3u] = 0u; return; }
+  // (a deck is claimed into the columns, a slab under its top: the river runs in the gap under it — trackA-liquids, CG15;
+  // a road's paving isn't claimed on a wet column: a ford's bed stays bare under the water — LQ7)
+  if (m == 0u) { w7[i * 4u + 3u] = 0u; return; }
+  if ((m & DECK_BIT) == 0u && r2(i) > 0.5) { w7[i * 4u + 3u] = 0u; return; }
   w7[i * 4u + 3u] = 1u;
-  {
+  if ((m & DECK_BIT) != 0u) {
+    let dz = f32(m & ~DECK_BIT) / 256.0;
+    set7(so, dz - DECK_CLAIM_T);
+    set7(so + 1u, dz);
+    w7[so + 2u] = M_WOOD;
+  } else {
     let z = r3(i);
     set7(so, z);
     set7(so + 1u, z + PAVE_T);
@@ -3246,24 +3270,6 @@ fn lotReach(@builtin(global_invocation_id) g: vec3<u32>) {
     if (m == 2u) { seen = true; }
   }
   if (seen) { w5[i] = 1u; }
-}
-
-/** one thread a grid column (M4b): a deck's column as the reach's plan solid (fortreach.wgsl planSpans: two words a
- *  window column, z0 | z1 << 16 in eighths, window z) — the grid's column (x, y) at window column (x + o.x, y + o.y),
- *  window z its world z + m.x (f32 bits), the window n.z × n.w (b1 ROADS; w5 the reach's plan spans) */
-@compute @workgroup_size(8, 8)
-fn deckSpans(@builtin(global_invocation_id) g: vec3<u32>) {
-  let x = i32(g.x); let y = i32(g.y);
-  if (x >= W() || y >= H()) { return; }
-  let m = b1[ix(x, y)];
-  if ((m & DECK_BIT) == 0u) { return; }
-  let wx = x + bitcast<i32>(u.o.x);
-  let wy = y + bitcast<i32>(u.o.y);
-  if (wx < 0 || wy < 0 || u32(wx) >= u.n.z || u32(wy) >= u.n.w) { return; }
-  let z = f32(m & ~DECK_BIT) / 256.0 + bitcast<f32>(u.m.x);
-  let z0 = u32(clamp((z - DECK_T) * 8.0, 0.0, 32767.0));
-  let z1 = u32(clamp(z * 8.0, 0.0, 32767.0));
-  w5[(u32(wy) * u.n.z + u32(wx)) * 2u] = z0 | (z1 << 16u);
 }
 
 // ==== the time-lapse: a clock per district, each lot's progress from it, the buildings risen each frame ===========

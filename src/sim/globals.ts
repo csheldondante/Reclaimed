@@ -173,15 +173,6 @@ export interface GlobalsState {
   pages?: Uint16Array;
   /** (P2.2) the table backwards: slot -> window chunk, cx | cy << 8 (Pages.inv) — with `pages` */
   pageInv?: Uint16Array;
-  /** (perfopt) land come in, settling its water: rects of columns (x, y, w, h; CPU only — sim/sleep.ts) */
-  settle?: [number, number, number, number][];
-  /**
-   * (round 128o, DA-B20; CPU only — sim/sleep.ts settleCand) a bit a slot: asleep by its time but maybe still settling
-   * its water — on the culled passes' lists, the GPU deciding each tick (sim/settlehold.ts). Absent: no hold.
-   */
-  settleCand?: Uint32Array;
-  /** the water's change a step that keeps a candidate awake (sim/sleep.ts settleTol) */
-  settleTol?: number;
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
   strokeSent?: boolean;
 }

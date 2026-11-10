@@ -33,6 +33,25 @@ fixture, the town bench, the place bench and the speed bench are **superseded** 
 | SW-G8 | Dormant — the agents' road riding (agents/roadgraph.ts, roads.ts, ride.ts): nothing sets roads since the fortress went; the living town's riders ride citygen's routes on their own GPU rows. Owner B: keep for the GPU units or delete | S | open |
 | SW-G9 | Kept, not the town generator — the sandbox's Town (build/town.ts, towngrid.ts, quadgrid.ts, runs.ts: the world API's `town`, the build crew, the editor's Town tool). Owner A: retire with the sandbox's Town tool when the user says | S | open |
 
+## trackA-liquids (2026-11-10, Track A) — the unified flow model as the one liquid (DA-P5, DESIGN §7), phone bench first
+
+The user: "Yeah option B is correct. I would like the unified flow model and I would like to benchmark on phone and see
+if we can afford it or if we should make it cheaper. Steady states should mean it mostly sleeps." — and "the intent for
+agents is that they can traverse any walkable layer that they are connected to (we do eventually want subterranean
+caves and floating islands even if not all cells have them)".
+
+| id | item | size | status |
+|---|---|---|---|
+| LQ1 | Phone bench of the flow model against the pipes, toggle diffs (awake, steady, disturbed, lava): `?flowbench=1` on the flow lab | M | done (trackA-liquids, src/perf/flowbench.ts) — waiting on the Pixel 9a's run |
+| LQ2 | Make it cheaper where the bench says: sleeping chunks cost nothing (no per-step restamp), gap scans only where liquid is, lava's cost, PW6 (NaN), FL11 (slow drain) | L | wip — chunk lists and parking done (desktop: awake 1.96 → 0.55 ms, asleep 0.24 → 0.06, disturbed 1.24 → 0.25); PW6, FL11 and the per-run gap scans open |
+| LQ3 | Wire it in as the one liquid: river table and held rivers as steady runs, lakes, sea per basin, rain bake; the water contract's readers unchanged | L | wip — the one liquid on every level (trackA-liquids); held rivers, lakes the land brings, seeded arrivals done; sea per basin and the rain bake next round |
+| LQ4 | Agents wet per walkable surface (not only the top) | M | done — waterGaps + the peel's surfaceDepth; verified at Muru with units in scope (deck dry, riverbed under it wet) |
+| LQ5 | Muru with `?citygen=fields&living=1&liquid=flow`: a bridge deck claimed into the columns, the river in the gap under it, people on the deck, reach counting it (CG15) | M | wip — decks claimed under the flow model, the river under them as enclosed runs (178 columns at Muru), the decks dry. Not yet checked: people walking the claimed deck (agents peel it as a surface), the reach (still walks decks as plan solid), the enclosed river drawn (prep's prisms) at play zoom |
+| LQ7 | Muru under the flow model: water piling on a deck's top (3.6 deep at (123, 167) with 43 chunks awake); road paving claimed over shallow water leaves thin gaps with water under them | M | wip — paving not claimed on wet columns, crossings ≤ 2.5 units fords (citygen claimRoads, artSpan FORD_MAX); water on deck tops: the deck was in the river (its slab 0.8 deep under the river's surface) — decks now clear the water's surface, slabs claimed 0.25 deep, and water on an External top keeps its chunk awake till it drains (done) |
+| LQ6 | Retire the pipes (water_flux/water_depth, lava.ts, oil's pipes?) once the phone numbers hold | M | done (trackA-liquids) — the user approved the flow model (Pixel 9a: awake 1.9 ms vs 2.6); the pipes, the settling passes and hold, ?liquid, ?rivers=hold, the per-step source deleted. Lava's beam/vents/meteor (sim/lava.ts) and oil (OilSystem) keep their own systems: LQ8 |
+| LQ8 | Lava and oil into the flow kernel as kinds: the sandbox's heat beam (melting the ground into lava), volcano vents with their rising cones, the meteor's blast melt (sim/lava.ts, lava.wgsl, lava_flux.wgsl; world.lava read by renderfields, warp, snapshots); oil floating on water (OilSystem, oil_flux/oil_depth; the flow model reads oil for the water's head) | L | open |
+| LQ9 | Awake lava on the Pixel 9a drops 28 of 452 frames (the user's bench) | S | open |
+
 ## Round 128o (2026-11-05, session 5, `fortress`) — making the code match DESIGN.md (the work plan from four audits)
 
 The user: "Please work on making the code match the design which is a lot cleaner and intentionally encapsulates and avoids duplicate designs or logic. Let's write this well so it actually works and doesn't have the bugs that slow down development." Plan: https://claude.ai/artifact/JPNnQEzZPggrTzzv6kiKxA; audits in the session scratchpad. Order: gates, then towns working (A) and towns fast (B) in parallel, then the loop (L), the engine (E), pages and the rest (P).
@@ -114,7 +133,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-P2 | Residency planner and wake API, city-centred; replaces the keep rect (§2, §5) | M | open (the keep rect itself is deleted: switchover — only the fortress used it) |
 | DA-P3 | Pages stack in z on overflow; delete merge and rubble-on-overflow (§1, §2) | L | open |
 | DA-P4 | Resume mid-run (§23) | M | open |
-| DA-P5 | Flow model the only liquid; rain-level bake; sea per basin (§7) | L | open |
+| DA-P5 | Flow model the only liquid; rain-level bake; sea per basin (§7) | L | wip — the only liquid (trackA-liquids, the pipes deleted); rain bake and sea per basin next |
 | DA-P6 | Loose material in the flow model (§8) | L | open |
 | DA-P7 | Flora: no per-tick sim; kind and density per column (§15) | M | open |
 | DA-P8 | Delete retired render paths; draw decisions without readbacks (§5) | M | open |
@@ -1008,7 +1027,7 @@ speed up my loading it too right?"
 | TS12 | Re-entering a level in the page without a reload: LevelScene.dispose leaves the Streamer (its store worker, IndexedDB, listeners) and the Atlas (its GPU buffers, plan workers) alive, and a dozen modules read the URL once at import (phone flags, GPUGEN, the river mode, pages mode) — a dispose for both and settings passed in, not read at import | M | open |
 | TS13 | Duplication: the atlas's river rules twice — world/rivertable.ts (`riverAt`, `holdRivers`) a hand copy of atlas/compose.wgsl `riverAt` + the cut, columns.wgsl's levee, forms.wgsl's drop and fill; nothing checks they agree. Merge: one WGSL carve-and-fill per column run for authored maps too (their nodes uploaded as the atlas's); rivertable.ts keeps only the authored path → nodes | M | open |
 | TS14 | Duplication: two falling-piece implementations — game/bodies.ts (`Bodies`) is effectively dead (nothing spawns into it; integrity.ts still makes and updates it) beside game/colbodies.ts. Delete Bodies, its projection and the bodyCpu wiring | S | open |
-| TS15 | Duplication: two water models (the pipes, water_flux/water_depth + the river modes; the flow model, flow/*, only in the flow lab — and with it a second lava model). Decide: the flow model replaces the pipes, or it becomes lab-only code | M | asked |
+| TS15 | Duplication: two water models (the pipes, water_flux/water_depth + the river modes; the flow model, flow/*, only in the flow lab — and with it a second lava model). Decide: the flow model replaces the pipes, or it becomes lab-only code | M | done (trackA-liquids: the flow model replaced the pipes) |
 | TS16 | Duplication: two thinness tests (fracture.ts `legOf` section modulus; rockbodies.ts `findNecks` medial axis) with their own strength scales. One helper (cross-section, I, mass beyond) and one scale | M | open |
 | TS17 | Duplication: three lists of the per-column buffers (pages.ts COLUMN_BUFS, WorldCore.RESTORED, Streamer's bufs) behind restoreChunks, replaceWindow and the streamer's copies — and they disagree (RESTORED leaves out petals, wilt, bend, renderFields; neither WorldCore method writes layersNext; restoreChunks doesn't refresh map.surface): latent bugs. One annotated buffer table and one region write | M | open |
 | TS18 | Small duplications: pcg in two WGSL and two TS copies (+ noise.ts hash2); the lattice's constants in lattice.ts, common.wgsl, forms.wgsl (`ROW_H_A`), lab.wgsl; the station kit's dig/smash events built by hand in level.ts (and in src/test/contract.ts after it) instead of api/terrain's; smoothstep twice | S | open |
@@ -1081,7 +1100,7 @@ function of mass?" Within the CPU rigid rock (round 106's design; the GPU solver
 | PW3 | The river mode is the level's (LevelDef.rivers: the atlas, the playground), not the URL's `level=atlas` — the atlas opened from the title screen ran its rivers unheld | S | done (`playwater`): sim/world-gpu.ts useRivers / riverMode; riverPull, settleLand, settleTol read it when a world is made |
 | PW4 | An authored river's watershed, through riverWetAt as the atlas's: its catchment declared (a rectangle — the playground's, its station), its nodes' catchments and reference discharges made as the atlas's (riverGraph), the same CatchmentWet and RiverWetField (binding 62) | S | done (`playwater`): world/rivertable.ts riverGraph, MapData.riverGraph, LevelScene's wetness for a fixed map |
 | PW5 | The atlas's riverAt / carve / bed / fill rules exist twice — WGSL over the atlas's fields, a CPU mirror over a fixed map's columns (comments tie them). One source would be an authored map run through the atlas's own column kernels (or the rules as shared WGSL run on a fixed map's GPU columns) | M | open (structural, proposal) |
-| PW6 | (found round 110) The places build's playground under the flow model: after the river station's surge (a waterSource spring at 6 then 1.5) the pipes' water buffer ran away (1 000+ cells, then NaN/Infinity over the station and the breach's pool) — the flow model's lab may share it (a spring into the flow model's runs and the pipes' buffer both?) | S | open (the playground no longer runs the flow model) |
+| PW6 | (trackA-liquids: done — sources are cells^3 a second in the contract for both models; at the station's rate no runaway, no NaN; the round-110 cause, two models on one buffer, is gone) (found round 110) The places build's playground under the flow model: after the river station's surge (a waterSource spring at 6 then 1.5) the pipes' water buffer ran away (1 000+ cells, then NaN/Infinity over the station and the breach's pool) — the flow model's lab may share it (a spring into the flow model's runs and the pipes' buffer both?) | S | open (the playground no longer runs the flow model) |
 
 ## Round 109 (2026-10-29, session 5, `places`) — more devices, generators and editors, better runs (DECISIONS round 109)
 
@@ -1381,7 +1400,7 @@ or fighting things for a run story." Ids RS (H is taken).
 | FL8 | Water arriving over a sleeping chunk was lost (a sleeping column took no stream in, nor its landing): now it is carried, held aloft, and wakes the chunk. **Done (this commit).** | S | done |
 | FL9 | The particles stepped 1/60 s a tick at any tick rate (?simhz=30: half speed); now DT x simStep(). The flow model at ?simhz=30|15 (FLOW_SUB substeps). **Done (this commit)** — untested on the phone at 30 Hz. | S | done |
 | FL10 | Still a few strands where a wide lip's columns leave at different speeds (each column's discharge sets its speed); merge a lip's columns into one sheet (or widen with the discharge) if the user wants a single curtain | S | open |
-| FL11 | The pool now drains at the critical flow (~18 s, was ~2 s): the lab's trench stays unsteady longer, everything asleep after ~3 min (was 35 s); check the freeze tolerance against slow drains | S | open |
+| FL11 | (trackA-liquids: all asleep 15 s after the breach — done) The pool now drains at the critical flow (~18 s, was ~2 s): the lab's trench stays unsteady longer, everything asleep after ~3 min (was 35 s); check the freeze tolerance against slow drains | S | open |
 
 ## Round 84 (2026-10-26, session 5, `flow`) — one model of material flow (DECISIONS round 84)
 

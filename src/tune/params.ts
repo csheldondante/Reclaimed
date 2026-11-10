@@ -114,24 +114,15 @@ const SPEC = {
     },
   },
   water: {
-    title: 'Water (both models)',
-    owner: 'water_depth.wgsl (pipes) and liquid.wgsl (the flow model): rain and evaporation',
+    title: 'Water',
+    owner: 'liquid.wgsl (the flow model): rain and evaporation',
     params: {
       rain: { label: 'rain rate', units: 'cells/tick', min: 0, max: 0.01, step: 0.0001, def: 0.0012, gpu: true },
       evap: { label: 'evaporation', units: 'cells/tick', min: 0, max: 0.0005, step: 0.00001, def: 0.00003, gpu: true, help: 'from shallow water (under 0.08)' },
     },
   },
-  pipes: {
-    title: 'Water pipes (the game\'s water)',
-    owner: 'water_flux.wgsl / water_depth.wgsl (GPU: the atlas\'s and the fixed levels\' water)',
-    params: {
-      gain: { label: 'gain', units: '/tick', min: 0.005, max: 0.16, step: 0.005, def: 0.08, gpu: true, help: 'how fast a level difference moves it sideways (> 0.16 is unstable)' },
-      friction: { label: 'flux kept', units: 'share', min: 0.5, max: 0.999, step: 0.001, def: 0.985, gpu: true, help: 'share of last tick\'s flux kept (momentum)' },
-      riverRelax: { label: 'river relax', units: 'share/step', min: 0.001, max: 0.5, step: 0.001, def: 0.02, gpu: true, help: 'how fast a held river comes to its table\'s depth' },
-    },
-  },
   flow: {
-    title: 'Flow model (?flow=1)',
+    title: 'Liquids (the flow model)',
     owner: 'flow/liquid.ts + liquid.wgsl (GPU: runs in the columns, arcing falls)',
     params: {
       waterGain: { label: 'water gain', units: '/tick', min: 0.005, max: 0.16, step: 0.005, def: 0.08, gpu: true },
@@ -143,6 +134,7 @@ const SPEC = {
       lavaThick: { label: 'lava thickness', units: 'cells', min: 0, max: 2, step: 0.05, def: 0.4, gpu: true, help: 'thinner than this it barely flows, as (d / this)²' },
       lavaCool: { label: 'lava cooling', units: 'e-folds/s/cell', min: 0, max: 0.2, step: 0.005, def: 0.02, gpu: true },
       lavaDrop: { label: 'lava fall drop', units: 'cells', min: 0.25, max: 6, step: 0.05, def: 1.25, gpu: true },
+      riverRelax: { label: 'river relax', units: 'share/step', min: 0.001, max: 0.5, step: 0.001, def: 0.02, gpu: true, help: 'how fast a held river comes to its table\'s depth' },
     },
   },
   lava: {

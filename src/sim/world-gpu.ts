@@ -25,17 +25,16 @@ export const EDIT_TAGS = 64;
 const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
 
 /**
- * (round 84) How the atlas's rivers are kept: ?rivers=sim (as before: springs along each river's middle, the pipes
- * from the land as it came in), hold (the perf agent's: each river column topped up to its depth), table (the
- * atlas's steady state, riverFlow: held and drawn flowing with no simulation until something wakes it). Round 110:
- * table is also an authored level's river table's (world/rivertable.ts: the same riverFlow from a declared path).
+ * (round 84) How the atlas's rivers are kept: ?rivers=sim (springs along each river's middle, the liquid from the land
+ * as it came in), table (the atlas's steady state, riverFlow: held and drawn flowing with no simulation until something
+ * wakes it). Round 110: table is also an authored level's river table's (world/rivertable.ts: the same riverFlow from a
+ * declared path). (trackA-liquids: the pipes' `hold` retired with them.)
  */
-export type RiverMode = 'sim' | 'hold' | 'table';
-/** the page's ?rivers= (perfopt's ?riverhold=1 is rivers=hold), if given: it overrides every level's own */
+export type RiverMode = 'sim' | 'table';
+/** the page's ?rivers=, if given: it overrides every level's own */
 const RIVERS_ASKED: RiverMode | null = (() => {
-  const q = urlFlags();
-  const v = q.get('rivers') ?? (q.get('riverhold') === '1' ? 'hold' : null);
-  if (v !== null && v !== 'sim' && v !== 'hold' && v !== 'table') throw new Error(`?rivers=${v}: sim, hold or table`);
+  const v = urlFlags().get('rivers');
+  if (v !== null && v !== 'sim' && v !== 'table') throw new Error(`?rivers=${v}: sim or table`);
   return v;
 })();
 // (round 86: table by default on the atlas level — the user: "the rivers look good!" — the valley levels keep sim,
@@ -55,13 +54,6 @@ export function useRivers(level: RiverMode = 'sim'): void {
 /** the riverFlow rating (above): depth and speed with the discharge */
 export const RIVER_DEPTH_EXP = 0.6;
 export const RIVER_SPEED_EXP = 0.4;
-/** (?rivers=table) ?riverpull=x: a woken river's column is pulled toward the table by x a step (0: the pipes alone;
- *  0.02 by default — the pipes alone empty a reach above a fall down it, and the river upstream past the window
- *  feeds what's woken only by its level's slope, a trickle) */
-const RIVER_PULL_ASKED = typeof location === 'undefined' ? null : urlFlags().get('riverpull');
-export function riverPull(): number {
-  return RIVER_PULL_ASKED === null ? (rivers === 'table' ? 0.02 : 0) : Number(RIVER_PULL_ASKED);
-}
 /** (round 109) cells between the riverWet field's texels (WorldGpu riverWet) */
 export const RIVER_WET_CELLS = 8;
 /** ?riverwet=x: the rivers' wetness held at x, everywhere (the climate's and each watershed's storms' otherwise:
@@ -134,21 +126,15 @@ export class WorldGpu {
   /** per column: top z | top mat << 8 | slot count << 16 (surface system) */
   readonly surface: GPUBuffer;
 
-  // water contract (water system owns writes)
+  // water contract (the liquid owns writes: flow/liquid.ts — the open run's depth)
   readonly water: GPUBuffer;
-  readonly waterNext: GPUBuffer;
   readonly waterPrev: GPUBuffer;
   /** vec4 volume leaving toward +x,-x,+y,-y this tick */
   readonly flux: GPUBuffer;
+  /** (trackA-liquids, LQ4) the water on every surface, per column: x the open run's depth (f32 bits, as `water`), y..w
+   *  the enclosed runs as pack2x16float(floor, depth) — written by the liquid (liquid.wgsl publishGaps) */
+  readonly waterGaps: GPUBuffer;
   readonly waterSource: GPUBuffer;
-  /**
-   * (round 84 — the user: "we can have a tolerance and decide when we are close enough to steady state to freeze")
-   * Per chunk (2 048 at most, sim/sleep.ts), the most an awake column's water changed in a step since the last tick,
-   * as an f32's bits (atomicMax: positive floats order as their bits). water_depth.wgsl writes it; the settling hold
-   * reads and clears it at the next tick's start, on the GPU (round 128o, sim/settlehold.ts: a woken chunk is kept
-   * awake until it's under the tolerance).
-   */
-  readonly waterChange: GPUBuffer;
 
   // oil: second liquid, floats on water (oil system owns writes)
   readonly oil: GPUBuffer;
@@ -412,12 +398,11 @@ export class WorldGpu {
     this.surface = this.buf('surface', N * 4, S);
 
     this.water = this.buf('water', N * 4, S);
-    this.waterNext = this.buf('waterNext', N * 4, S);
     this.waterPrev = this.buf('waterPrev', N * 4, S);
     // per-direction quantities: one f32 per hex direction (common.wgsl Dirs)
     this.flux = this.buf('flux', N * DIRS_BYTES, S);
+    this.waterGaps = this.buf('waterGaps', N * 16, S);
     this.waterSource = this.buf('waterSource', N * 4, S);
-    this.waterChange = this.buf('waterChange', 2048 * 4, S);
     device.queue.writeBuffer(this.water, 0, r.toStore(map.water));
     device.queue.writeBuffer(this.waterSource, 0, r.toStore(map.waterSource));
 

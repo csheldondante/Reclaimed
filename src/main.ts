@@ -196,6 +196,8 @@ async function main() {
   // (living town, RT2-4: ?livingbench=1 — the settled graph's phone bench, its empty dispatches and its awake cost by
   // toggling: src/perf/livingbench.ts)
   if (params.get('livingbench') === '1') void import('./perf/livingbench').then((m) => m.livingBench(params));
+  // (trackA-liquids, DA-P5: ?flowbench=1 — the liquid's phone bench on the flow lab: src/perf/flowbench.ts)
+  if (params.get('flowbench') === '1') void import('./perf/flowbench').then((m) => m.flowBench(params));
   if (pageBench === 'run') void pageBenchRun();
   if (bench === 'level')
     void benchLevel({

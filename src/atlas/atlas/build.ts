@@ -36,7 +36,6 @@ export async function run(atl: Atlas): Promise<void> {
   const bm = makeModule(dev, 'atlas build', atl.parts(buildW));
   // (perfopt, ?caves=mouths: only the caves that can open to the air — forms.wgsl LAZY_CAVES)
   const lazyCaves = urlFlags().get('caves') === 'mouths';
-  // (perfopt's ?riverhold=1, round 84: ?rivers=hold — RIVER_HOLD in parts())
   const cm = makeModule(dev, 'atlas columns', atl.parts(columnsW, `const LAZY_CAVES: bool = ${lazyCaves};
 `, formsW));
   const K = (entry: string, spec: BindSpec, m = bm) => makeComputeAsync(dev, `atlas ${entry}`, m, { 0: 'uniform', ...spec }, entry);

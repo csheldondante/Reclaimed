@@ -13,7 +13,7 @@ const COLUMNS_RW = /var<storage,\s*read_write>\s*(layers|layersE|slots)\s*:\s*ar
 const CPU_WRITE = /writeBuffer\((wg|w|world|this\.world|core\.world)\.layers\b|writeBuffer\(this\.host\.layers\(\)/;
 const WATER_RW = /var<storage,\s*read_write>\s*(water|waterOut|waterB|open)\s*:\s*array<f32>/;
 /** a writeBuffer into the window's water, or a loop of writes over it with its next and previous */
-const CPU_WATER = /writeBuffer\((wg|w|world|this\.world|core\.world)\.water\b|of \[(wg|w|world)\.water\b|of \['water', 'waterNext'/;
+const CPU_WATER = /writeBuffer\((wg|w|world|this\.world|core\.world)\.water\b|of \[(wg|w|world)\.water\b|of \['water', 'waterPrev'/;
 
 describe("the chunks' versions: every writer bumps", () => {
   it('every kernel with the columns writable bumps the chunks it changes', () => {
@@ -51,8 +51,8 @@ describe("the chunks' versions: every writer bumps", () => {
       if (!/\bbumpWater\(/.test(s)) missing.push(f);
     }
     expect(missing).toEqual([]);
-    // (the 6 known: climate, edit, lava, liquid, placeop, water_depth)
-    expect(writers.length).toBeGreaterThanOrEqual(6);
+    // (the 5 known: climate, edit, lava, liquid, placeop)
+    expect(writers.length).toBeGreaterThanOrEqual(5);
   });
 
   it("every CPU write of the window's water tells WorldCore.columnsWritten (DA-B26)", () => {

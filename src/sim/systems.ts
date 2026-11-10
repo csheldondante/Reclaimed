@@ -12,8 +12,6 @@ import flowWgsl from '../shaders/flow.wgsl?raw';
 import slopeWgsl from '../shaders/slope.wgsl?raw';
 import oilFluxWgsl from '../shaders/oil_flux.wgsl?raw';
 import oilDepthWgsl from '../shaders/oil_depth.wgsl?raw';
-import waterFluxWgsl from '../shaders/water_flux.wgsl?raw';
-import waterDepthWgsl from '../shaders/water_depth.wgsl?raw';
 import contamWgsl from '../shaders/contamination.wgsl?raw';
 import moistureWgsl from '../shaders/moisture.wgsl?raw';
 import ecologyWgsl from '../shaders/ecology.wgsl?raw';
@@ -42,35 +40,19 @@ import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
 import { TILES_BINDING as TILES } from './cull';
 import riverHeldWgsl from '../shaders/riverheld.wgsl?raw';
-import { riverMode, riverPull, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS, STATS_COUNT, type WorldGpu } from './world-gpu';
+import { riverMode, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS, STATS_COUNT, type WorldGpu } from './world-gpu';
 import { urlFlags } from '../flags';
 
-/** (round 84) riverheld.wgsl with its constants: the atlas's rivers held at their steady state (world-gpu riverFlow) */
-/**
- * (round 104, simscale) With ?rivers=table the water is dispatched over the live chunks, those next to them, and the
- * rest on a slow turn every RIVER_SLOW_N ticks (sim/cull.ts NEAR): a held river asleep only follows the rivers'
- * wetness (the climate's), slowly — off from anything live it relaxes RIVER_SLOW_N steps at once (water_depth.wgsl).
- * ?riverslow=1: every tick everywhere, as before.
- */
-const RIVER_SLOW_N = (() => {
-  const v = typeof location === 'undefined' ? null : urlFlags().get('riverslow');
-  const n = v === null ? 15 : Number(v);
-  if (!(n >= 1 && Number.isInteger(n))) throw new Error(`?riverslow=${v}: ticks between a far river's updates, 1 or more`);
-  return n;
-})();
-// (round 110: the world's river mode, read as its kernels are made — sim/world-gpu.ts useRivers)
-const riverSlow = () => SIM_CULL && riverMode() === 'table' && RIVER_SLOW_N > 1;
-/** (round 108: exported — the tiles' draw floods a held river's bed to its level: render/renderer.ts) */
-export const riverHeld = () => `const RIVER_SLOW_N: u32 = ${riverSlow() ? RIVER_SLOW_N : 1}u;
-const RIVER_TABLE: bool = ${riverMode() === 'table'};
+/** (round 84) riverheld.wgsl with its constants: the atlas's rivers held at their steady state (world-gpu riverFlow) —
+ *  the liquid's (liquid.wgsl depth) and the tiles' draw (render/renderer.ts) */
+export const riverHeld = () => `const RIVER_TABLE: bool = ${riverMode() === 'table'};
 const RIVER_DEPTH_EXP: f32 = ${RIVER_DEPTH_EXP};
 const RIVER_SPEED_EXP: f32 = ${RIVER_SPEED_EXP};
-const RIVER_PULL: f32 = ${riverPull()};
 const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
 ` + riverHeldWgsl;
-import { settleLand, SLEEP_MORE } from './sleep';
+import { SLEEP_MORE } from './sleep';
 import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst, flowN } from './flow';
-import { CUSTOM, GpuTileList, LIVE, NEAR, SIM_CULL, cullKernel, cullSource, dispatchTiles } from './cull';
+import { CUSTOM, GpuTileList, LIVE, cullKernel, cullSource, dispatchTiles } from './cull';
 import { LIFE_S, WindRects } from './windrect';
 import { EventKind, MAX_EVENTS, type GlobalsState, type WorldEvent } from './globals';
 import { BLOW_TAG, EditBusy, OP, editOpOf } from './edit-ops';
@@ -210,119 +192,6 @@ export class StructureSystem implements SimSystem {
   encode(enc: GPUCommandEncoder): void {
     run(enc, this.prof, 'structure-lateral', this.lat, this.world);
     run(enc, this.prof, this.name, this.s, this.world);
-  }
-}
-
-/**
- * (perfopt, round 83 — the user: "all generators make a steady state so when we arrive nothing is simulated until
- * the player interacts with it") With ?settle=0, land come in is drowsy for a few ticks (sim/sleep.ts) and, asleep,
- * would freeze its water as the generator wrote it — a river filled to its level, not to what its springs keep it
- * at, so it rushed off downstream when anything woke it. While any chunk is drowsy, each tick runs SETTLE_ITERS more
- * water passes over the drowsy columns only (the pipes at the 60 Hz step): the new land's water settles, its flux
- * becomes the flow the river keeps, and then it's frozen so. ?settleiters=N (0 off).
- */
-const SETTLE_ITERS = (() => {
-  const q = typeof location === 'undefined' ? null : urlFlags().get('settleiters');
-  return q !== null ? Math.max(0, Number(q) | 0) : 0;
-})();
-
-export class WaterSystem implements SimSystem {
-  readonly name = 'water';
-  readonly period = 1;
-  private flux;
-  private depth;
-  private settleFlux;
-  private settleDepth;
-  /** (perfopt) the rects of land come in still settling (columns: x, y, w, h; Simulation.step sets them) */
-  settling: [number, number, number, number][] = [];
-  /** its uniform (water_flux.wgsl, water_depth.wgsl SR) */
-  private rect: GPUBuffer;
-  /** the first half of a settling iteration (water → the next buffer): the tick's own kernels with the rect */
-  private settleA?: { flux: ComputeKernel; fg: GPUBindGroup; depth: ComputeKernel; dg: GPUBindGroup };
-  constructor(private device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.rect = device.createBuffer({ label: 'water settle rect', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    // (simcull: not with ?rivers=table — a held river's columns are simulated asleep, riverheld.wgsl: they relax to
-    // the atlas's table and their flux follows, and the flux pass's cost is theirs. A list of the chunks with rivers
-    // made on the GPU each tick cost more (0.04 ms a frame) than the water's passes over the rest saved.)
-    // (round 104, simscale: with rivers=table, the live chunks, those beside them and the rest's slow turns — NEAR)
-    const tiles = riverMode() === 'table' ? (riverSlow() ? NEAR + RIVER_SLOW_N : undefined) : flowN('water');
-    const fluxK = (settle: boolean) =>
-      kernel(
-        device,
-        world,
-        settle ? 'water-settle-flux' : 'water-flux',
-        `const FLUX_SEED: bool = ${!settleLand()};\nconst SETTLE_PASS: bool = ${settle};\n` + flowConst('water') + waterFluxWgsl + riverHeld(),
-        { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 17: 'tex', 21: 'tex', 22: 'tex', 62: 'tex', 31: 'uniform' },
-        { 3: world.surface, 4: settle ? world.waterNext : world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect },
-        false,
-        settle ? undefined : tiles,
-      );
-    const depthK = (settle: boolean) =>
-      kernel(
-        device,
-        world,
-        settle ? 'water-settle-depth' : 'water-depth',
-        `const SETTLE_PASS: bool = ${settle};\n` + flowConst('water') + waterDepthWgsl + riverHeld(),
-        { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'read', 9: 'rw', 22: 'tex', 62: 'tex', 31: 'uniform' },
-        // (a settling pass's second half: from the next buffer back into the water — the passes ping-pong)
-        { 3: settle ? world.waterNext : world.water, 4: world.flux, 5: world.waterSource, 6: settle ? world.water : world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect },
-        // (round 128o, DA-B26: the chunk table, for the water's versions — bumpWater; its eighth storage buffer)
-        true,
-        settle ? undefined : tiles,
-      );
-    // (the settling passes read the next buffer as the water everywhere: a culled tick leaves it stale asleep)
-    if (SETTLE_ITERS && world.tiles) throw new Error('?settleiters= needs ?simcull=0: the settling passes read the next buffer as the water everywhere');
-    this.flux = fluxK(false);
-    this.depth = depthK(false);
-    // (settling: B — flux from the next buffer, depth from it back into the water; A — the same kernels with the
-    // buffers the other way round, so an iteration is A then B and ends in the water, no copies)
-    this.settleFlux = SETTLE_ITERS ? fluxK(true) : undefined;
-    this.settleDepth = SETTLE_ITERS ? depthK(true) : undefined;
-    if (this.settleFlux && this.settleDepth) {
-      const f = this.settleFlux.k;
-      const d = this.settleDepth.k;
-      this.settleA = {
-        flux: f,
-        fg: makeBindGroup(device, 'water-settle-flux-a', f.layout, { 0: world.globals, 2: world.materials, 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect }),
-        depth: d,
-        dg: makeBindGroup(device, 'water-settle-depth-a', d.layout, { 0: world.globals, 1: world.chunks, 2: world.materials, 3: world.water, 4: world.flux, 5: world.waterSource, 6: world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect }),
-      };
-    }
-  }
-  encode(enc: GPUCommandEncoder): void {
-    // (perfopt: land just come in settles first, in one pass over its rect, the tick's own passes after — what the
-    // others read is theirs. The next buffer holds the water at the tick's start everywhere (the last tick's depth
-    // pass wrote all of it, then it was copied over), so outside the rect the two agree throughout.)
-    // (one rect a tick — the oldest first: a slide's strips settle one after another)
-    const r = this.settling[0];
-    if (r && this.settleFlux && this.settleDepth && this.settleA) {
-      this.device.queue.writeBuffer(this.rect, 0, new Uint32Array([Math.max(0, r[0]), Math.max(0, r[1]), r[2] + Math.min(0, r[0]), r[3] + Math.min(0, r[1])]));
-      const A = this.settleA;
-      const gx = Math.ceil(r[2] / 8);
-      const gy = Math.ceil(r[3] / 8);
-      const pass = enc.beginComputePass({ label: 'water-settle', timestampWrites: this.prof.timestamps('water-settle') });
-      for (let s = 0; s < SETTLE_ITERS; s++) {
-        pass.setPipeline(A.flux.pipeline);
-        pass.setBindGroup(0, A.fg);
-        pass.dispatchWorkgroups(gx, gy);
-        pass.setPipeline(A.depth.pipeline);
-        pass.setBindGroup(0, A.dg);
-        pass.dispatchWorkgroups(gx, gy);
-        pass.setPipeline(this.settleFlux.k.pipeline);
-        pass.setBindGroup(0, this.settleFlux.group);
-        pass.dispatchWorkgroups(gx, gy);
-        pass.setPipeline(this.settleDepth.k.pipeline);
-        pass.setBindGroup(0, this.settleDepth.group);
-        pass.dispatchWorkgroups(gx, gy);
-      }
-      pass.end();
-    }
-    // (perfopt, simhz: the pipes stable only at the 60 Hz step — FLOW_SUB of them a tick, sim/flow.ts)
-    for (let s = 0; s < FLOW_SUB; s++) {
-      run(enc, this.prof, 'water-flux', this.flux, this.world);
-      run(enc, this.prof, 'water-depth', this.depth, this.world);
-      copyBack(enc, this.prof, this.world, this.world.waterNext, this.world.water, 1, this.depth.cull);
-    }
   }
 }
 

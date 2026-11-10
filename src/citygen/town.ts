@@ -296,8 +296,7 @@ export class FieldTown {
         const p = this.gridPlace();
         const [cx, cy] = cellAt(this.seed[0] + p.dx, this.seed[1] + p.dy * ROW_H);
         if (this.gone || !this.grid || cx < 0 || cy < 0 || cx >= r.w || cy >= r.h) return;
-        // (the decks as the reach's plan solid: walked, though not in the world's columns)
-        this.gen.deckSpans(r.planSpans, p.dx, p.dy, p.dz, r.w, r.h);
+        // (the decks are in the world's columns, the reach walks them as any ground: trackA-liquids, CG15)
         this.reachRounds = await r.markFrom([cx, cy]);
         if (!this.gone) await this.gen.markReach(r.marks, p.dx, p.dy, r.w, r.h);
       });

@@ -197,7 +197,7 @@ export function labStationKit(scene: LevelScene): StationKit {
       scene.sleep?.wake(x, y, r + 8, Sleep.EVENT_S, now());
     },
     source: (cols, rate) => {
-      const v = new Float32Array([rate / 60 / cols.length]);
+      const v = new Float32Array([rate / cols.length]);
       for (const [x, y] of cols) core.host.gpu.device.queue.writeBuffer(core.world.waterSource, core.ring.i(x, y) * 4, v);
       const [wx, wy] = cellPos(cols[0][0], cols[0][1]);
       scene.sleep?.wake(wx, wy, 24, Sleep.EVENT_S, now());
