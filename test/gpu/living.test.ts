@@ -7,6 +7,8 @@ import { testGpu, type TestGpu } from './dawn';
 import { LivingTown, C, L_C, LT_WORDS } from '../../src/citylife/living';
 import { LIVING_TUNING } from '../../src/citylife/params';
 import { Works } from '../../src/citylife/works';
+import routereadWgsl from '../../src/shaders/routeread.wgsl?raw';
+import { makeBindGroup, makeCompute } from '../../src/gpu/pipeline';
 import { GLOBALS_BYTES } from '../../src/sim/globals';
 import { packMaterialTable } from '../../src/world/materials';
 
@@ -102,7 +104,7 @@ async function rideTown(ptsRoom?: number): Promise<Uint32Array> {
     radius: 40,
   }, LIVING_TUNING.values, ptsRoom);
   const p = LIVING_TUNING.values;
-  Object.assign(p.people, { commuters: 60, farmers: 0, quarrymen: 0, stoneCarts: 0, woodcutters: 0, logCarts: 0, builders: 6, work: 2, speed: 1 });
+  Object.assign(p.people, { commuters: 60, farmers: 0, quarrymen: 0, stoneCarts: 0, woodcutters: 0, logCarts: 0, builders: 6, work: 2, speed: 1, spread: 0 });
   p.quarry.on = 0;
   p.forest.on = 0;
   const place = { dx: 0, dy: 0, dz: 0, winW: W, winH: H };
@@ -129,7 +131,8 @@ async function rideTown(ptsRoom?: number): Promise<Uint32Array> {
   const routes = head[4];
   expect(routes).toBeLessThan(c('arrivals'));
   // (the deck: a route's point on the west arm at the deck's height)
-  const pts = new Float32Array(await town.debugRead(town.pts, head[3] * 16));
+  // (the points, past the route buffer's header and heads: routeread.wgsl's layout)
+  const pts = new Float32Array(await town.debugRead(town.routes, (8 + 8192 * 4 + head[3] * 4) * 4)).subarray(8 + 8192 * 4);
   let onDeck = 0;
   for (let i = 0; i < head[3]; i++) if (pts[i * 4] > 9 && pts[i * 4] < 19 && Math.abs(pts[i * 4 + 2] - 7) < 1e-3) onDeck++;
   expect(onDeck).toBeGreaterThan(0);
@@ -160,9 +163,58 @@ async function rideTown(ptsRoom?: number): Promise<Uint32Array> {
     const held = await rows();
     expect(Array.from(held.slice(k * 16, k * 16 + 16))).toEqual(Array.from(before.slice(k * 16, k * 16 + 16)));
     town.debugOverride = 0;
-    await frames(10);
+    await frames(30);
     const after = await rows();
-    expect(after[k * 16] !== held[k * 16] || after[k * 16 + 1] !== held[k * 16 + 1]).toBe(true);
+    // (resumed: it moved on, or its job stepped — its route's half may have been reused while it was held (a small pool):
+    // then its leg ends where it is and the route is asked again)
+    expect(after[k * 16] !== held[k * 16] || after[k * 16 + 1] !== held[k * 16 + 1] || after[k * 16 + 4] !== held[k * 16 + 4]).toBe(true);
+  }
+  // (the route-read contract, routeread.wgsl: every riding rider's position is routeAt(its route, its distance along);
+  // its id is valid; after the pool's halves have both been reused, an id held from before is stale)
+  {
+    const k = makeCompute(dev, 'routeread test', [routereadWgsl, READ_TEST], { 56: 'read', 1: 'read', 2: 'rw' });
+    const nR = town.riders;
+    const out = dev.createBuffer({ size: nR * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const readAt = async () => {
+      const enc = dev.createCommandEncoder();
+      const cp = enc.beginComputePass();
+      cp.setPipeline(k.pipeline);
+      cp.setBindGroup(0, makeBindGroup(dev, 'routeread test', k.layout, { 56: town.routes, 1: town.rid, 2: out }));
+      cp.dispatchWorkgroups(Math.ceil(nR / 64));
+      cp.end();
+      dev.queue.submit([enc.finish()]);
+      return new Float32Array(await town.debugRead(out, nR * 16));
+    };
+    const at = await readAt();
+    const rows = new Float32Array(await town.debugRead(town.rid, nR * 64));
+    const ru32 = new Uint32Array(rows.buffer);
+    let checked = 0;
+    for (let i = 0; i < nR; i++) {
+      const leg = (ru32[i * 16 + 4] >> 16) & 0xff;
+      if (leg !== 1 && leg !== 2) continue;
+      expect(new Uint32Array(at.buffer)[i * 4 + 3]).toBe(1);
+      for (let c = 0; c < 3; c++) expect(Math.abs(at[i * 4 + c] - rows[i * 16 + c])).toBeLessThan(1e-3);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(5);
+    if (ptsRoom) {
+      // (an id held now, then the halves reused twice: stale)
+      let k0 = -1;
+      for (let i = 0; i < nR && k0 < 0; i++) if ([1, 2].includes((ru32[i * 16 + 4] >> 16) & 0xff)) k0 = i;
+      const held = ru32[k0 * 16 + 5];
+      const sw0 = (await town.counters())![L_C + C.switches];
+      for (let f = 0; f < 3000; f++) {
+        const enc = dev.createCommandEncoder();
+        town.frame(enc, 0.1, place);
+        dev.queue.submit([enc.finish()]);
+        if (f % 100 === 99 && (await town.counters())![L_C + C.switches] >= sw0 + 2) break;
+      }
+      expect((await town.counters())![L_C + C.switches]).toBeGreaterThanOrEqual(sw0 + 2);
+      dev.queue.writeBuffer(town.rid, k0 * 64 + 20, new Uint32Array([held]));
+      // (the rider row's route word set back to the held id, read through routeValid without a frame between)
+      const stale = await readAt();
+      expect(new Uint32Array(stale.buffer)[k0 * 4 + 3]).toBe(0);
+    }
   }
   // (the state words' size as the WGSL's)
   expect(town.lt.size).toBe(LT_WORDS * 4);
@@ -192,3 +244,18 @@ test('the works kernels compile and bind (works.wgsl over the world prelude)', a
   works.dispose();
   town.dispose();
 });
+
+/** (the route-read test) a thread a rider: routeAt(its route word, its distance along) and routeValid(its route word) */
+const READ_TEST = `
+@group(0) @binding(1) var<storage, read> rid: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read_write> outp: array<vec4<f32>>;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= arrayLength(&rid) / 4u) { return; }
+  let w = bitcast<u32>(rid[i * 4u + 1u].y);
+  let s = rid[i * 4u + 2u].x;
+  let p = routeAt(w, s);
+  outp[i] = vec4<f32>(p, bitcast<f32>(select(0u, 1u, routeValid(w))));
+}
+`;

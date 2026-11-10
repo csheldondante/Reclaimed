@@ -6,8 +6,19 @@ Read `README.md` (rules) and `ADDENDUM.md` in this folder first.
 "I want a separate session to work on our procedural building and architecture style generator. It's an independent
 body of work." The city generator gives plain extruded lots; this session turns lot records into buildings with style.
 
+## Priority and why (the user, 2026-11-10, later) — start this next, as its own orchestrator session
+"I actually think we should start the building generator … it makes the most visual quality difference, it helps with
+the cutouts when we want to zoom in to a tower, it potentially avoids having to change to cloudfare build system (we can
+do local builds I can use on wifi for now if we do want to use any assets). It also makes the fortress building more fun
+by making it visually interesting and customizable by the player. We will want it to be dramatic with cool features and
+to look pretty." It runs in parallel with the liquids work and the soldiers (after Track B's GPU agent migration).
+So the generator must: look dramatic and pretty at play zoom (60° pitch) on the phone; support interior cutaways (a
+camera zooming into a tower and cutting away to a room — DESIGN §5); be customizable by the player later (painting comes
+back only for building customization); procedural first, any external assets only via local builds served on wifi
+(never in the public repo — see memory/reference_unity_assets), no Cloudflare dependency.
+
 ## Inputs (the contract — read it, don't read citygen internals)
-`src/api/contracts/citygen.ts` and `docs/design/CITYGEN.md` on branch `trackA-citygen`: one 24-word GPU record per lot
+`src/api/contracts/citygen.ts` and `docs/design/CITYGEN.md` (now on `fortress`): one 24-word GPU record per lot
 and landmark site (parcel, footprint polygon, frontage edge, kind: building / park / plaza / landmark, district and
 purpose id, storeys, height, base z, growth key, a stable seed), a count buffer, a per-lot progress buffer (0–1), and the
 town's placement transform. Claims are per lot record, so this session can take over a building's intervals.

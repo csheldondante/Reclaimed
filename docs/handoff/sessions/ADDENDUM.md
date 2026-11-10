@@ -2,6 +2,12 @@
 
 Changes and decisions made after the handoffs were written (2026-11-10). Newest first. Empty means nothing yet.
 
+- **2026-11-10 — priorities.** Order: saving the season loop and town (Track A, in flight) → the building generator
+  (`BUILDING_GENERATOR.md`, a new orchestrator session, next) in parallel with liquids (`trackA-liquids`, in flight)
+  and soldiers (after Track B's U2 moves unit decisions to the GPU). On presenters for cards (an advisor, a wizard, a
+  scout): "I do like the zoom in for cards to make it more diagetic but it slows play" — keep presentation quick and
+  skippable; design later. Citygen, the living town and the season loop are on `fortress` (6290acba).
+
 - **2026-11-10 — ownership and merges.** Track B (art_improvements session) owns the one GPU crowd, combat, flee
   priority, the inhabitants merge and removing the CPU flora mirror (its `GPU_UNIT_AI_PLAN.md`, `UNIT_MINDS.md`, battle
   playground U8 `?level=battle` with the user's spell list); Track A's `trackA-haul` owns the haul job states (format in

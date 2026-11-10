@@ -1897,6 +1897,24 @@ A citygen town's people, quarry and clearing, all on the GPU (`src/citylife/`, `
   `-riders`, `-works`, `-figures`). The CPU writes the 176 B parameters' uniform a frame and a 4 B rebuild word when
   citygen's mesh runs again; nothing read back in play (the debug panel's 640 B twice a second while open).
 
+### The route-read contract (2026-11-10, branch `trackA-routeread`; src/api/contracts/routes.ts)
+
+Systems that ride a living town's cached routes (Track B's marching units) read them only through
+`src/shaders/routeread.wgsl`, bound at ROUTE_BINDING (56): **one read-only storage buffer a town**
+(`LivingTowns.routeRead(townId).buffer`), so a kernel already at the 8-storage limit spends one slot.
+- Layout (the snippet's to keep; the pool's to change): words 0–7 a header (the two pool halves' generations, route ids a
+  half, where the points start, the grid's place in the window x/y/z, the points' room), then a head a route (first
+  point, count, length, generation), then the points (x, y, z world — decks at their height — and the distance along).
+- Functions: `routeHead(id)`, `routePoint(id, i)` (window), `routePointLocal`, `routeDist`, `routeAt(id, s)` (what a
+  rider's trip interpolates), `routeValid(idWithGen)`.
+- **Ids carry their generation:** `id | generation << 16`. The pool recycles in two halves; reusing a half moves its
+  generation on, so an id from before fails `routeValid`. The living town's own riders hold ids the same way: a held
+  route gone stale is asked for again (it used to be re-stamped with the new generation — a rider could resume a route
+  whose points had been overwritten; found by the contract's test).
+- The living town writes the header's place each frame (12 B with its parameters).
+- Test: test/gpu/living.test.ts — every riding rider's position equals `routeAt(its route, its distance)`, its id valid;
+  after both halves are reused an id held from before is invalid.
+
 ## Agents (round 52, docs/AGENTS.md; branch `agents`)
 
 `installAgents(core)` (src/agents/) adds one system after the particles and

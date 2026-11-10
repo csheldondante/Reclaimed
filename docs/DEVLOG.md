@@ -21500,3 +21500,25 @@ The user's priority: saving first. Design: SEASON_LOOP.md "Saving" (DESIGN §23)
 - `test/unit/wallshape.test.ts`: posts on risen pieces only (none on gates or water) at the walk's height, the rise
   round the ring from the first gate, the gates with their arterials, nothing before the ring is made.
 - Shot: `scratchpad/opps/gate-stairs.png` (play zoom, 60°: the east gate, its towers, a stair up to the walk).
+## 2026-11-10 — the route-read contract (trackA-routeread)
+
+Track B's units ride the living town's routes for the soldiers' `march` (U2) and mustn't read routes.wgsl's internals.
+- **One storage binding** (Track B's unitStep and relax are at the 8-buffer limit): the route heads and the points
+  moved out of the state words and the old points buffer into one route buffer — an 8-word header, a head a route,
+  the points. `src/shaders/routeread.wgsl` reads it (`routeHead`, `routePoint`, `routeDist`, `routeAt`, `routeValid`);
+  `src/api/contracts/routes.ts` hands it over (`LivingTowns.routeRead`).
+- **Ids carry their generation everywhere** (the hash, the ramp, the riders): `startRid` refuses a stale held id and the
+  rider asks for its route again. Before, resuming a held route re-stamped it with the half's new generation, so a
+  rider could ride points overwritten by a newer route — the contract's test caught it (a rider 25 m off its route's
+  points on a 700-point pool).
+- Gates: the transfers list adds the wall's and the works' saved-state sites that came with fortress.
+
+## 2026-11-10 — fortress (the route-read contract) merged into trackA-seasonlife
+
+- origin/fortress 5192c434: one route buffer (header, heads, points) read through shaders/routeread.wgsl; every id
+  carries its generation (`id | gen << 16`). The season-life route kernels follow it: `routeAsk` reads points through
+  `pt()`, `artRouteAnswer` writes them with `setPt` and its head with `setHead` (its half's generation), and answers
+  its id packed `rid | gen << 16` — what `routeValid` takes; the cached routes' ids come packed from the hash already.
+- The transfer gate lists the two season-life reads (`askRoute`, `reachedWall`: event reads, a few words).
+- Checked: typecheck; the unit tier (107 files, 866 tests); `opps=1` at Muru — 3 gates, each march route along its
+  own arterial to the box's edge (94, 125, 144 units), 52 posts, none unreachable (`scratchpad/opps/postmerge2.png`).
