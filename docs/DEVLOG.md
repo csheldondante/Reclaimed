@@ -20988,3 +20988,19 @@ rasterisation of every span, which the user's rule forbids. Flora under old town
 while the land was made; External tops still grow plants. The proposal (GPU-owned static grids, GPU orphan/verify by
 grid, a built mask for the plant passes) is in docs/design/CITYGEN.md "M4b". It changes the External contract and
 adds a WorldGpu buffer, so it waits for the user.
+
+## 2026-11-10 — citygen M4b step 1: a population field; quieter roads
+
+The user approved GPU ownership: "Yes make it gpu owned and driven by the population density map and make roads dirt
+or stone colored (but a bit lighter) and narrower."
+- **No population field existed on the GPU.** settle/field.ts GrowthField is the old planner's, on the CPU. Added
+  `popField` (streets.wgsl) over the town's grid, made from the town's inputs (peak density by size, its purpose, its
+  seed) and the ground (slope, water, the arterials). POP holds density, wealth and purpose (homes, market, harbour,
+  workshops, farms, keep: argmax of simple scores, the settlement's own purpose ×1.6).
+  - A supercell takes its seed's values: its growth budget × 0.55–1.45 by density, empty districts weighted to the
+    sparse ones, its purpose in SCT word 6 (record word 18's top byte).
+  - Lot area scales × 1.6–0.4 by density; the storeys' cap scales × 0.5–1.6 (the height-to-plot rule still caps).
+  - The lab's default is the field off (0.5 everywhere).
+- **Roads:** dirt (small towns) or stone (town, city) tones a little lighter than the ground (`roadTone`). Widths are
+  60% of before: major 2.4, minor 1.5, arterial 3.2. Steep streets are a darker tone instead of orange.
+- Muru: 322 lots (473: the field thins the edge), identical over 9 reruns; GPU 3.98 ms median (headless D3D11).

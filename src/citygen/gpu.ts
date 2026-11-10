@@ -48,6 +48,8 @@ export interface StreetParams {
   maxSpan: number;
   /** the points' markers drawn (1: the lab's; 0: the game's) */
   marks: number;
+  /** (M4b) the roads' tone: 0 the lab's white, 1 dirt, 2 stone (ROAD_TONES) */
+  roadTone: number;
   /** index into MAJORS */
   majors: number;
   /** between the distance contours, between the rings (world units) */
@@ -127,6 +129,20 @@ export type Stage = (typeof STAGES)[number];
 /** a column box [x0, y0, x1, y1) */
 export type Box = [number, number, number, number];
 
+/** (M4b) the roads' colours by tone (rgb 0–1): dirt and stone, a little lighter than the ground's (world/materials.ts
+ *  soil 0.45 0.36 0.27, stone 0.4 0.39 0.37) — the sun lights them as it lights the ground */
+const ROAD_TONES: Record<number, [number, number, number]> = { 1: [0.62, 0.53, 0.42], 2: [0.6, 0.58, 0.54] };
+
+/** (M4b) the town's own inputs to its population field: its peak density (by its size; 0 the field off — the lab's
+ *  default: 0.5 everywhere) and its purpose (POP_PURPOSE; −1 none) */
+export interface TownInputs {
+  density: number;
+  purpose: number;
+}
+/** a settlement's purpose → the district purpose it weights (streets.wgsl P_*: 0 homes, 1 market, 2 harbour, 3
+ *  workshops, 4 farms, 5 keep) */
+export const POP_PURPOSE: Record<string, number> = { trading: 1, port: 2, mining: 3, lumber: 3, farming: 4, hold: 5 };
+
 /** what the town generator needs of the world: its grid — a box of the window, w columns by h rows from window column
  *  box[0], row box[1] (even: a row's hex offset is the window's) — and the world's buffers it reads there */
 export interface StreetWorld {
@@ -137,6 +153,8 @@ export interface StreetWorld {
   chunks: GPUBuffer;
   layers: GPUBuffer;
   water: GPUBuffer;
+  /** (M4b) its population field's inputs; none: the field off */
+  town?: TownInputs;
   /** the town's centre (the grid's world units: its first column's corner at 0, 0) */
   centre: [number, number];
 }
@@ -153,14 +171,14 @@ export interface StreetTimes {
   verts: number;
 }
 
-const SLOT = 256;
+const SLOT = 512;
 const MAX_PASSES = 256;
-const UNI_BYTES = 256;
+const UNI_BYTES = 288;
 const KERNELS = [
   'fill', 'blur', 'feat', 'jfa', 'jdist', 'autoPts', 'phi', 'tensor', 'trace', 'mis', 'blocks',
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotRec', 'lotMesh', 'marks', 'meshCap',
   'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'gplace', 'sctab', 'bgrow', 'ctint',
-  'artSpan', 'artRast', 'artEnd', 'artMesh',
+  'artSpan', 'artRast', 'artEnd', 'artMesh', 'popField',
 ] as const;
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
@@ -236,6 +254,7 @@ export class CityGen {
   private dead = false;
   private all: GPUBuffer[] = [];
   private p!: StreetParams;
+  private town: TownInputs;
   private cp!: GPUComputePassEncoder;
   private seeds: [number, number] = [0, 0];
   private sel = -1;
@@ -252,6 +271,7 @@ export class CityGen {
   ) {
     const { w, h } = world;
     const N = w * h;
+    this.town = world.town ?? { density: 0, purpose: -1 };
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     const buf = (label: string, bytes: number, usage = S) => {
       const b = device.createBuffer({ label: `citygen ${label}`, size: Math.max(16, bytes), usage });
@@ -293,7 +313,9 @@ export class CityGen {
     this.B.NODE = buf('gap nodes', G * 16 * NODEW * 4);
     this.B.GB = buf('gap blocks', GAP_ROOM * 3 * BQW * 4);
     // (m3h: the supercells' table — at the smallest supercell, 8 cells)
-    this.B.SCT = buf('supercells', (4 + this.scCells(8) * 6) * 4);
+    this.B.SCT = buf('supercells', (4 + this.scCells(8) * 8) * 4);
+    // (M4b: the population field — density, wealth, purpose, the arterials' distance — 4 words a column)
+    this.B.POP = buf('population', N * 16);
     // (M4a: the arterials — a count, then each one's direction (the CPU's), length and bridge spans (the GPU's))
     this.B.ART = buf('arterials', (4 + NART * AW) * 4);
     this.boxUni = buf('box', 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
@@ -413,6 +435,8 @@ export class CityGen {
     // (m3i: with supercells the town circle is only a bound, out past any limit)
     [this.cityOn() ? CITY_REACH : 1, 0, 0, 0].forEach((v, j) => dv.setFloat32(224 + j * 4, v, true));
     [p.artWidth, p.hRatio, p.deckClear, p.maxSpan].forEach((v, j) => dv.setFloat32(240 + j * 4, v, true));
+    [...(ROAD_TONES[p.roadTone] ?? [0, 0, 0]), p.roadTone].forEach((v, j) => dv.setFloat32(256 + j * 4, v, true));
+    [this.town.density, this.town.purpose, 0, 0].forEach((v, j) => dv.setFloat32(272 + j * 4, v, true));
     return i;
   }
 
@@ -517,7 +541,7 @@ export class CityGen {
     this.kS('vblock', {}, { 1: B.SD, 5: B.BQ, 7: B.AL1 });
     // (m3h) the supercells: their centres, states and growth starts
     // (m3i: one workgroup — the cost distance relaxed over the supercell graph in its shared memory)
-    if (this.cityOn()) this.k('sctab', {}, { 1: B.PTS, 2: B.LM, 3: B.HS, 4: B.FD, 5: B.SCT, 7: B.AD }, 1);
+    if (this.cityOn()) this.k('sctab', {}, { 1: B.PTS, 2: B.LM, 3: B.HS, 4: B.FD, 5: B.SCT, 7: B.POP }, 1);
     // (M4a: where each arterial leaves the town's limit — the supercells' out; without them, its length)
     this.k('artEnd', {}, { 4: B.SCT, 5: B.ART }, 1);
     // (m3d) the bad blocks: found, then merged (a claim each on a good neighbour, the lowest seed wins) or paved
@@ -625,6 +649,8 @@ export class CityGen {
       this.fill(B.S0, w * h, NONE);
       this.k('artRast', {}, { 1: B.ART, 5: B.S0 }, (NART * NAP) / 64);
       this.k2('jdist', {}, { 1: this.jfa(B.S0, B.S1), 5: B.AD });
+      // (M4b: the population field over the grid)
+      this.k2('popField', {}, { 1: B.HS, 2: B.FDB, 3: B.AD, 4: B.M, 5: B.POP });
       this.cp.end();
     }
     // (m3a) the points (placed, their offsets) and φ — over a changed point's box only, when that's all that changed

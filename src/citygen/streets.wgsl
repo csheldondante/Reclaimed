@@ -33,6 +33,8 @@ struct U {
   h2: vec4<f32>, // (m3h) the growth (0–1), the district tint (1), supercells on (1), the limit (× the town's radius)
   x: vec4<f32>, // (m3i) the town circle's reach (× its radius: with supercells, far enough never to show), 0, 0, 0
   t: vec4<f32>, // (citygen M4a) an arterial's width, the height-to-plot ratio (0: storeys × a random 0.7–1.3), a deck's clearance over its banks, the longest bridge
+  rc: vec4<f32>, // (M4b) the roads' colour (rgb 0–1), its tone (0 the lab's white, 1 dirt, 2 stone)
+  pp: vec4<f32>, // (M4b) the population field: its peak density (0 the field off: 0.5 everywhere), the settlement's purpose (0–5; −1 none), 0, 0
 };
 @group(0) @binding(0) var<uniform> u: U;
 
@@ -554,13 +556,15 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
   }
   q0.d = 0u;
   st[0] = q0;
+  // (M4b: the lots' size by the population field's density there — dense, small lots; sparse, large: 1 at 0.5)
+  let lotK = mix(1.6, 0.4, cityB4(0.25 * (q0.v[0] + q0.v[1] + q0.v[2] + q0.v[3])).dens);
   var made = 0u;
   while (n > 0u) {
     n--;
     let q = st[n];
     let A = qArea(q);
     // (halves under the smallest lot's area: not split — the merge)
-    let split = !plaza && A > u.c.x && q.d < DEPTH && n + 2u <= STACK && A * 0.42 >= u.c.y;
+    let split = !plaza && A > u.c.x * lotK && q.d < DEPTH && n + 2u <= STACK && A * 0.42 >= u.c.y * lotK;
     if (split) {
       var k = 0u;
       var ll = -1.0;
@@ -650,9 +654,16 @@ fn ribbon(at: u32, a: vec2<f32>, b: vec2<f32>, hw: f32, col: u32) {
   tri(at, p0, p1, p2, col);
   tri(at + 3u, p0, p2, p3, col);
 }
-const C_MAJOR: u32 = 0xfbf7eeu;
-const C_MINOR: u32 = 0xeee8dau;
-const C_STEEP: u32 = 0xf08c33u;
+const C_MAJOR_W: u32 = 0xfbf7eeu;
+const C_MINOR_W: u32 = 0xeee8dau;
+const C_STEEP_W: u32 = 0xf08c33u;
+/** (M4b) a road colour: the tone's (u.rc: dirt or stone, a little lighter than the ground) × k, or the lab's white */
+fn rgbOf(c: vec3<f32>) -> u32 { let q = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)) * 255.0; return (u32(q.x) << 16u) | (u32(q.y) << 8u) | u32(q.z); }
+fn roadTone(k: f32, white: u32) -> u32 { return select(white, rgbOf(u.rc.rgb * k), u.rc.w > 0.5); }
+fn cMajor() -> u32 { return roadTone(1.0, C_MAJOR_W); }
+fn cMinor() -> u32 { return roadTone(0.95, C_MINOR_W); }
+/** a street too steep for carts: the lab's orange, the game's a darker tone (stairs) */
+fn cSteep() -> u32 { return roadTone(0.8, C_STEEP_W); }
 fn steep(a: vec2<f32>, b: vec2<f32>) -> bool { return abs(hAt(b) - hAt(a)) > u.d.w * max(distance(a, b), 1e-3); }
 
 /** the major lines: one thread a column, a ribbon piece where a family's line passes it (r3 H, r4 the distance) */
@@ -700,7 +711,7 @@ fn roadMajor(@builtin(global_invocation_id) g: vec3<u32>) {
     }
     let at = room(6u);
     if (at == NONE) { return; }
-    ribbon(at, a, b, u.b.x * 0.5, select(C_MAJOR, C_STEEP, steep(a, b)));
+    ribbon(at, a, b, u.b.x * 0.5, select(cMajor(), cSteep(), steep(a, b)));
   }
 }
 /** the cross streets: one thread a trace's segment (TP a trace), a ribbon piece (r1 the traces, r2 kept, r3 H) */
@@ -719,7 +730,7 @@ fn roadMinor(@builtin(global_invocation_id) g: vec3<u32>) {
   let a = vec2<f32>(r1(b + 16u + k * 2u), r1(b + 17u + k * 2u));
   let c = vec2<f32>(r1(b + 18u + k * 2u), r1(b + 19u + k * 2u));
   let d = normalize(c - a) * 0.3;
-  ribbon(at, a - d, c + d, u.b.y * 0.5, select(C_MINOR, C_STEEP, steep(a, c)));
+  ribbon(at, a - d, c + d, u.b.y * 0.5, select(cMinor(), cSteep(), steep(a, c)));
 }
 const C_WALL: u32 = 0xf3eee6u;
 const C_PARK: u32 = 0x9fcf86u;
@@ -781,7 +792,7 @@ fn putRec(i: u32, par: array<vec2<f32>, 4>, fp: array<vec2<f32>, 4>, front: u32,
   }
   w7[o + 16u] = front;
   w7[o + 17u] = kind;
-  w7[o + 18u] = sc.id;
+  w7[o + 18u] = sc.id | (sc.purpose << 24u);
   w7[o + 19u] = storeys;
   set7(o + 20u, height);
   set7(o + 21u, base);
@@ -869,7 +880,8 @@ fn lotRec(@builtin(global_invocation_id) g: vec3<u32>) {
   if (u.t.y > 0.0) {
     var side = 1e9;
     for (var k = 0u; k < 4u; k++) { side = min(side, distance(q[k], q[(k + 1u) % 4u])); }
-    rise = clamp(u.t.y * side * (0.85 + 0.3 * hsh(hs)), 3.0, max(3.0, u.b.w * 3.0 * 1.3));
+    // (M4b: the storeys' most by the population field — dense, up to 1.6×; sparse, half)
+    rise = clamp(u.t.y * side * (0.85 + 0.3 * hsh(hs)), 3.0, max(3.0, u.b.w * 3.0 * 1.3 * mix(0.5, 1.6, sc.dens)));
   }
   let base = zlo - 0.5;
   putRec(i, v, q, front, REC_BUILDING, sc, u32(max(1.0, round(rise / 3.0))), zhi + rise - base, base, hs);
@@ -889,7 +901,7 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     let at = room(6u);
     if (at == NONE) { return; }
     let lift = select(0.12, 0.15, kind == REC_PLAZA);
-    let col = select(C_PARK, C_PAVE, kind == REC_PLAZA);
+    let col = select(C_PARK, cPave(), kind == REC_PLAZA);
     var z: array<vec3<f32>, 4>;
     for (var k = 0u; k < 4u; k++) { z[k] = vec3<f32>(q[k], hAt(q[k]) + lift); }
     tri(at, z[0], z[1], z[2], col);
@@ -1329,7 +1341,7 @@ fn vroad(@builtin(global_invocation_id) g: vec3<u32>) {
   let at = room(6u);
   if (at == NONE) { return; }
   let d = normalize(b - a) * 0.3;
-  ribbon(at, a - d, b + d, u.b.y * 0.5, select(C_MINOR, C_STEEP, steep(a, b)));
+  ribbon(at, a - d, b + d, u.b.y * 0.5, select(cMinor(), cSteep(), steep(a, b)));
 }
 /** the points as markers: a little hexagonal spire each, red placed by the GPU, blue pinned (r1 the points, r3 H) */
 @compute @workgroup_size(8)
@@ -1443,7 +1455,7 @@ fn roadShape(@builtin(global_invocation_id) g: vec3<u32>) {
   if (at == NONE) { return; }
   // (inside the spiral's smallest radius: stairs — orange)
   let stairs = mode == 2u && distance(p, c) < rmin;
-  ribbon(at, a, b, u.b.y * 0.5, select(C_CART, C_STEEP, stairs));
+  ribbon(at, a, b, u.b.y * 0.5, select(C_CART, cSteep(), stairs));
 }
 /** the shaped ground as a tinted skin (terraces): one thread a column, two triangles to its neighbours, drawn at
  *  the higher of the shaped and the real ground — the bands tinted by their parity, cut ground darker (r1 the real
@@ -1482,7 +1494,8 @@ fn ground(@builtin(global_invocation_id) g: vec3<u32>) {
 const PAVED: u32 = 0x80000000u;
 /** (m3i) a lot of a block at the town's edge or an empty district's */
 const EDGE_LOT: u32 = 0x40000000u;
-const C_PAVE: u32 = 0xdcd0b6u;
+const C_PAVE_W: u32 = 0xdcd0b6u;
+fn cPave() -> u32 { return roadTone(1.02, C_PAVE_W); }
 /** a cell too thin to build on: an interior angle under 25°, area / perimeter² under 0.3 of a circle's, or area under
  *  `minA` */
 fn badQuad(v: array<vec2<f32>, 4>, minA: f32) -> bool {
@@ -1771,7 +1784,7 @@ fn lmMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     let a1 = f32(k + 1u) * TAU / 24.0;
     let at = room(6u);
     if (at == NONE) { return; }
-    ribbon(at, p + r * vec2<f32>(cos(a0), sin(a0)), p + r * vec2<f32>(cos(a1), sin(a1)), u.b.y * 0.5, C_MINOR);
+    ribbon(at, p + r * vec2<f32>(cos(a0), sin(a0)), p + r * vec2<f32>(cos(a1), sin(a1)), u.b.y * 0.5, cMinor());
     return;
   }
   let m = k - 24u;
@@ -1784,7 +1797,7 @@ fn lmMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     let q1 = p + rp * vec2<f32>(cos(a1), sin(a1));
     let at = room(3u);
     if (at == NONE) { return; }
-    tri(at, vec3<f32>(p, z + 0.16), vec3<f32>(q0, hAt(q0) + 0.16), vec3<f32>(q1, hAt(q1) + 0.16), C_PAVE);
+    tri(at, vec3<f32>(p, z + 0.16), vec3<f32>(q0, hAt(q0) + 0.16), vec3<f32>(q1, hAt(q1) + 0.16), cPave());
     return;
   }
   if (m >= 12u) { return; }
@@ -2032,7 +2045,7 @@ fn groad(@builtin(global_invocation_id) g: vec3<u32>) {
   if (blockedAt(0.5 * (a + b)) || !inTown(0.5 * (a + b)) || !shownCity(cityB2(0.5 * (a + b)))) { return; }
   let at = room(6u);
   if (at == NONE) { return; }
-  ribbon(at, a, b, u.b.y * 0.5, C_MINOR);
+  ribbon(at, a, b, u.b.y * 0.5, cMinor());
 }
 
 // ==== milestone 3g: even contours (the mask smoothed, not the distance); streets grown line by line ==============
@@ -2215,7 +2228,7 @@ fn gkeep(@builtin(global_invocation_id) g: vec3<u32>) {
 // within 0.6 supercells of a centre). A point's growth key: half its supercell's start, half its own distance to that
 // centre over the limit — shown when under the growth h2.x. Blocks are kept or dropped whole, so the limit runs along
 // streets; the major lines run on through empty cells, and every third or so cross street (an arterial) too.
-const SCW: u32 = 6u;
+const SCW: u32 = 8u;
 const SC_HEAD: u32 = 4u;
 fn hash2(a: u32, b: u32) -> f32 { return hsh((a * 73856093u) ^ (b * 19349663u) ^ (u32(u.h.w) * 83492791u)); }
 /** (m3i) value noise over the supercell grid (one cell of it every `k` supercells), 0–1 */
@@ -2256,11 +2269,12 @@ fn growCost(a: vec2<f32>, b: vec2<f32>, fa: f32, fb: f32) -> f32 {
     if (dot(g, g) > 1e-10 && abs(dot(normalize(b - a), normalize(g))) < 0.35) { disc = 0.7; }
     if (fdAt(m) < 1.2 * u.a.x) { disc = min(disc, 0.6); }
     // (M4a: along an arterial, as along a shore)
-    if (bitcast<f32>(w7[ixp(m)]) < 0.5 * u.a.x) { disc = min(disc, 0.6); }
+    if (bitcast<f32>(w7[ixp(m) * 4u + 3u]) < 0.5 * u.a.x) { disc = min(disc, 0.6); }
   }
   return L * (1.0 + 3.0 * slope + water) * 0.5 * (fa + fb) * disc;
 }
-/** one workgroup: the supercells — their seeds (a jittered grid), each one's cost distance from the population
+/** one workgroup: the supercells — their seeds (a jittered grid) (M4b: and their density and purpose, the population
+ *  field's at the seed — w7), each one's cost distance from the population
  *  centres over the 8-neighbour graph (Bellman–Ford, a round a step), the limit a budget on it with ±h.y of low-
  *  frequency noise (lobes along the roads and the shore, bites in the steep, fingers), its state and its growth start
  *  (r1 the points, r2 the sites, r3 the smoothed heights, b4 φ; w5 the table) */
@@ -2333,12 +2347,17 @@ fn sctab(@builtin(local_invocation_index) li: u32) {
   }
   for (var c = li; c < n; c += 256u) {
     let cc = vec2<f32>(f32(c % gx), f32(c / gx));
-    let thr = lim * (1.0 + u.h.y * (2.0 * vnoise(cc, 2.5, 7u) - 1.0));
+    // (M4b: the population field at its seed — denser, a bigger budget; sparse, more often an empty district)
+    let pi = ixp(scS[c]) * 4u;
+    let dens = bitcast<f32>(w7[pi]);
+    let thr = lim * (1.0 + u.h.y * (2.0 * vnoise(cc, 2.5, 7u) - 1.0)) * mix(0.55, 1.45, dens);
     let t = scD[c] / max(thr, 1.0);
     let inside = t < 1.0;
     // (empty: never at a centre, never at the edge — under 0.6 of the budget)
-    let empty = hash2(c, 4u) < u.h.z && scD[c] > 0.6 * sc && t < 0.6;
+    let empty = hash2(c, 4u) < u.h.z * 2.0 * (1.0 - dens) && scD[c] > 0.6 * sc && t < 0.6;
     let o = SC_HEAD + c * SCW;
+    w5[o + 6u] = u32(bitcast<f32>(w7[pi + 2u]));
+    set5(o + 7u, dens);
     set5(o, scS[c].x);
     set5(o + 1u, scS[c].y);
     w5[o + 2u] = select(0u, select(2u, 1u, empty), inside);
@@ -2347,13 +2366,15 @@ fn sctab(@builtin(local_invocation_index) li: u32) {
     set5(o + 5u, scS[c].y);
   }
 }
-struct City { state: u32, t: f32, id: u32 }
+struct City { state: u32, t: f32, id: u32, dens: f32, purpose: u32 }
 /** a point's supercell — its state, its growth key, its id (the table at b4) */
 fn cityB4(p: vec2<f32>) -> City {
   var c: City;
   c.state = 2u;
   c.t = 0.0;
   c.id = 0u;
+  c.dens = 0.5;
+  c.purpose = 0u;
   if (u.h2.z < 0.5) { return c; }
   let gx = b4[0];
   let gy = b4[1];
@@ -2375,6 +2396,8 @@ fn cityB4(p: vec2<f32>) -> City {
   // (m3i: its cell's cost distance over its budget, and a little for its distance from the cell's seed)
   c.t = 0.85 * r4(o + 3u) + 0.15 * distance(p, vec2<f32>(r4(o + 4u), r4(o + 5u))) / max(r4(2u), 1.0);
   c.id = bi;
+  c.purpose = b4[o + 6u];
+  c.dens = r4(o + 7u);
   return c;
 }
 /** the same, the table at b2 */
@@ -2383,6 +2406,8 @@ fn cityB2(p: vec2<f32>) -> City {
   c.state = 2u;
   c.t = 0.0;
   c.id = 0u;
+  c.dens = 0.5;
+  c.purpose = 0u;
   if (u.h2.z < 0.5) { return c; }
   let gx = b2[0];
   let gy = b2[1];
@@ -2404,6 +2429,8 @@ fn cityB2(p: vec2<f32>) -> City {
   // (m3i: its cell's cost distance over its budget, and a little for its distance from the cell's seed)
   c.t = 0.85 * r2(o + 3u) + 0.15 * distance(p, vec2<f32>(r2(o + 4u), r2(o + 5u))) / max(r2(2u), 1.0);
   c.id = bi;
+  c.purpose = b2[o + 6u];
+  c.dens = r2(o + 7u);
   return c;
 }
 fn shownCity(c: City) -> bool { return c.state == 2u && c.t <= u.h2.x; }
@@ -2467,7 +2494,8 @@ const NAP: u32 = 128u;
 const AP: u32 = 16u;
 const AW: u32 = AP + 2u * NAP;
 const NSPAN: u32 = 4u;
-const C_ART: u32 = 0xf1eadbu;
+const C_ART_W: u32 = 0xf1eadbu;
+fn cArt() -> u32 { return roadTone(1.05, C_ART_W); }
 const C_DECK: u32 = 0xb08f6au;
 const C_PIER: u32 = 0x8f8a82u;
 /** a deck's thickness; a pillar every this many world units along it; a pillar's half width */
@@ -2651,7 +2679,7 @@ fn artMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   if (deck < -1e8) {
     let at = room(6u);
     if (at == NONE) { return; }
-    ribbon(at, a - d * 0.3, b + d * 0.3, hw, select(C_ART, C_STEEP, steep(a, b)));
+    ribbon(at, a - d * 0.3, b + d * 0.3, hw, select(cArt(), cSteep(), steep(a, b)));
     return;
   }
   // (a pillar where a multiple of PIER_EVERY falls in this piece, the ground well under the deck)
@@ -2674,4 +2702,58 @@ fn artMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   let q = array<vec2<f32>, 4>(pc - u1 - u2, pc + u1 - u2, pc + u1 + u2, pc - u1 + u2);
   let z0 = hAt(pc) - 0.5;
   for (var e = 0u; e < 4u; e++) { wall(at + 18u + e * 6u, q[e], q[(e + 1u) % 4u], z0, lo, C_PIER); }
+}
+
+// ==== M4b: the population field — density, wealth and purpose over the town's grid ===============================
+// DESIGN §17: "The population field is a GPU field … giving density, wealth and purpose by district." Made from the
+// town's inputs (its centre, radius, peak density by its size, its purpose, its seed) and the ground: dense at the
+// centre, falling off over the radius, thin on slopes and nothing on water; up along the arterials; low-frequency
+// noise by the seed. Wealth: the centre and high ground. Purpose (per column; a supercell takes its seed's): the
+// highest of market (the centre, the arterials' junctions), harbour (the shore), workshops (along the arterials, out
+// of the centre), farms (the thin edge), keep (the centre's high ground) and homes (everywhere else) — the
+// settlement's own purpose weighted up. POP: 4 words a column — density, wealth, purpose (f32), the arterials'
+// distance (AD, for growCost). The game's player will change it as the city grows (later).
+const P_HOMES: u32 = 0u;
+const P_MARKET: u32 = 1u;
+const P_HARBOUR: u32 = 2u;
+const P_WORKSHOPS: u32 = 3u;
+const P_FARMS: u32 = 4u;
+const P_KEEP: u32 = 5u;
+/** one thread a column (b1 the smoothed heights, b2 the feature distance, b3 the arterials' distance, b4 the wet
+ *  mask; w5 POP) */
+@compute @workgroup_size(8, 8)
+fn popField(@builtin(global_invocation_id) g: vec3<u32>) {
+  let x = i32(g.x); let y = i32(g.y);
+  if (x >= W() || y >= H()) { return; }
+  let i = ix(x, y);
+  let p = cpos(x, y);
+  let ad = r3(i);
+  set5(i * 4u + 3u, ad);
+  if (u.pp.x <= 0.0) { set5(i * 4u, 0.5); set5(i * 4u + 1u, 0.5); set5(i * 4u + 2u, f32(P_HOMES)); return; }
+  if (r4(i) > 0.5) { set5(i * 4u, 0.0); set5(i * 4u + 1u, 0.0); set5(i * 4u + 2u, f32(P_HARBOUR)); return; }
+  let r = distance(p, u.d.xy) / max(u.d.z, 1.0);
+  let slope = length(grad1(x, y));
+  let flat = 1.0 - smoothstep(0.15, 0.7, slope);
+  let artK = exp(-ad / 12.0);
+  var d = u.pp.x * exp(-1.6 * r * r) * mix(0.35, 1.0, flat);
+  d += 0.25 * u.pp.x * artK * (1.0 - smoothstep(0.8, 1.3, r));
+  d *= mix(0.75, 1.25, vnoise(p / 40.0, 1.0, 11u));
+  d = clamp(d, 0.0, 1.0);
+  let hgt = r1(i);
+  let hc = r1(ixp(u.d.xy));
+  let wealth = clamp(0.35 * vnoise(p / 60.0, 1.0, 12u) + 0.45 * exp(-2.0 * r * r) + 0.2 * clamp((hgt - hc) / 20.0, -1.0, 1.0) + 0.1, 0.0, 1.0);
+  let fd = r2(i);
+  var sc = array<f32, 6>(0.45, 0.0, 0.0, 0.0, 0.0, 0.0);
+  sc[P_MARKET] = exp(-8.0 * r * r) + 0.5 * exp(-ad / 6.0) * exp(-3.0 * r * r);
+  sc[P_HARBOUR] = exp(-fd / 6.0) * select(0.0, 1.0, fd < 12.0) * 0.9;
+  sc[P_WORKSHOPS] = 0.8 * artK * smoothstep(0.3, 0.8, r);
+  sc[P_FARMS] = smoothstep(0.7, 1.1, r) * (1.0 - d);
+  sc[P_KEEP] = 0.7 * exp(-6.0 * r * r) * clamp((hgt - hc) / 10.0, 0.0, 1.0);
+  let k = i32(u.pp.y);
+  if (k >= 0 && k < 6) { sc[k] *= 1.6; }
+  var best = P_HOMES;
+  for (var j = 1u; j < 6u; j++) { if (sc[j] > sc[best]) { best = j; } }
+  set5(i * 4u, d);
+  set5(i * 4u + 1u, wealth);
+  set5(i * 4u + 2u, f32(best));
 }

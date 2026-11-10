@@ -356,7 +356,7 @@ export function attachStream(scene: LevelScene): void {
               dims: { w: dims.w, h: dims.h },
               wrap: { cols: a!.atlas.p.cols, rows: a!.atlas.p.rows },
             },
-            { id: fs.rec.id, name: fs.rec.name, at: fs.rec.at, size: fs.rec.size, roads: st.approachWays(fs.rec.id), seed: fs.seed },
+            { id: fs.rec.id, name: fs.rec.name, at: fs.rec.at, size: fs.rec.size, roads: st.approachWays(fs.rec.id), seed: fs.seed, purpose: fs.rec.purpose?.kind },
           );
           scene.fieldTown = town;
           S.onSlide.push(() => town.place());

@@ -8,11 +8,14 @@
 import type { Settlement } from '../api/contracts/settlement';
 import type { CityLots } from '../api/contracts/citygen';
 import { ROW_H } from '../world/lattice';
-import { CityGen, NAP, NART, type StreetParams, type StreetTimes } from './gpu';
+import { CityGen, NAP, NART, POP_PURPOSE, type StreetParams, type StreetTimes } from './gpu';
 import { cityParams, scaled } from './params';
 
 /** a town's radius (cells) by its size — a town the lab's Muru the user approved (radius 120, 400+ lots) */
 const RADIUS: Record<Settlement['size'], number> = { camp: 30, hamlet: 48, village: 72, town: 120, city: 150 };
+/** (M4b) the population field's peak density by size; the roads' tone (1 dirt for the small, 2 stone for the big) */
+const DENSITY: Record<Settlement['size'], number> = { camp: 0.35, hamlet: 0.45, village: 0.6, town: 0.8, city: 1 };
+const TONE: Record<Settlement['size'], number> = { camp: 1, hamlet: 1, village: 1, town: 2, city: 2 };
 /** the box's half side (× the radius): the lab's sites, 320 columns round a town of 120 — the supercells' limit
  *  (0.9 radii ± 35%) inside it */
 const BOX = 4 / 3;
@@ -31,6 +34,8 @@ export interface FieldTownSite {
   size: Settlement['size'];
   roads: readonly (readonly (readonly [number, number])[])[];
   seed: number;
+  /** what it's for (Settlement.purpose.kind): its population field weights that district purpose up */
+  purpose?: string;
 }
 
 /** a town's box: world columns and rows round its centre (as many rows as columns, the first row even), the regions
@@ -107,7 +112,8 @@ export class FieldTown {
     const oy0 = site.at[1] - near(site.at[1] - box.y0 * ROW_H, rows * ROW_H);
     const local = ([x, y]: readonly [number, number]): [number, number] => [x - ox0, y - oy0];
     const centre = local(site.at);
-    this.gen = new CityGen(io.device, { w: box.w, h: box.h, box: [bx, by], ...io.world, centre });
+    const town = { density: DENSITY[site.size], purpose: site.purpose !== undefined ? (POP_PURPOSE[site.purpose] ?? -1) : -1 };
+    this.gen = new CityGen(io.device, { w: box.w, h: box.h, box: [bx, by], ...io.world, centre, town });
     // (each atlas road from the town's centre out: its points every 4 units, from the one nearest the centre, as far as
     // the box — the GPU cuts it at the box's edge and the town's limit)
     const R2 = Math.hypot(box.w, box.h * ROW_H);
@@ -131,7 +137,7 @@ export class FieldTown {
     this.place();
     io.addMesh(this.gen.verts, this.gen.args, this.xform);
     // (the town's own inputs over the generator's defaults: its radius and seed)
-    this.params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0 }));
+    this.params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0, roadTone: TONE[site.size] }));
     this.made = this.gen.run(this.params, 'field').then((t) => (this.times = t));
   }
 
