@@ -21522,6 +21522,7 @@ Track B's units ride the living town's routes for the soldiers' `march` (U2) and
 - The transfer gate lists the two season-life reads (`askRoute`, `reachedWall`: event reads, a few words).
 - Checked: typecheck; the unit tier (107 files, 866 tests); `opps=1` at Muru — 3 gates, each march route along its
   own arterial to the box's edge (94, 125, 144 units), 52 posts, none unreachable (`scratchpad/opps/postmerge2.png`).
+
 ## 2026-11-10 — U2 round 2: the hunt field seeded on the GPU, a front per field, measured (Track B, trackB-u2)
 
 Why: UNIT_MINDS_U2.md §5 names moving-seed fields as U2's riskiest part (seeds that move, appear and vanish every
