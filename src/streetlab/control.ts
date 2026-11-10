@@ -8,7 +8,7 @@ import { Registry, type ParamSpec } from '../tune/registry';
 import { TunePanel } from '../ui/tunepanel';
 import { whenPipelinesReady } from '../gpu/pipeline';
 import { ROW_H } from '../world/lattice';
-import { AUTO, CROSS, MAJORS, SHAPES, MIN_BLOCK, NPTS, STAGES, StreetLabGpu, type Box, type Stage, type StreetParams, type StreetTimes, type StreetWorld } from './gpu';
+import { AUTO, BAD, CROSS, MAJORS, SHAPES, MIN_BLOCK, NPTS, STAGES, StreetLabGpu, type Box, type Stage, type StreetParams, type StreetTimes, type StreetWorld } from './gpu';
 
 /** the sites (game/levels.ts streetSite), as the panel names them: the mesa is the cliff site */
 export const SITES = ['muru', 'river', 'mesa', 'mountain', 'coast'] as const;
@@ -20,6 +20,10 @@ const P: Record<string, Spec> = {
   site: { label: 'site', units: '', min: 0, max: SITES.length - 1, step: 1, def: 0, choices: SITE_NAMES, help: 'reloads the page on that site, the other keys kept', stage: 'site' },
   majors: { label: 'major lines', units: '', min: 0, max: MAJORS.length - 1, step: 1, def: 1, choices: [...MAJORS], stage: 'phi' },
   cross: { label: 'cross streets', units: '', min: 0, max: CROSS.length - 1, step: 1, def: 0, choices: [...CROSS], stage: 'phi' },
+  scale: { label: 'city scale', units: '×', min: 0.5, max: 2.5, step: 0.05, def: 1, help: 'contour spacing and block length × this, lot areas × its square: bigger reads bigger', stage: 'phi' },
+  bad: { label: 'bad cells →', units: '', min: 0, max: BAD.length - 1, step: 1, def: 0, choices: [...BAD], help: 'a sliver or thin triangle (an angle under 25°, too thin, under the merge area): joined to its neighbour across its longer cross street, or paved', stage: 'trace' },
+  plazaR: { label: 'junction plaza radius', units: 'cells', min: 0, max: 24, step: 0.5, def: 0, help: 'a paved disc where enough cross streets meet one point (0 none)', stage: 'trace' },
+  plazaN: { label: 'junction plaza: streets', units: '', min: 2, max: 8, step: 1, def: 3, help: 'cross streets ending at one point that make it a plaza', stage: 'trace' },
   majorSpacing: { label: 'contour spacing', units: 'cells', min: 12, max: 120, step: 1, def: 28, help: 'between the major lines (φ’s level sets)', stage: 'phi' },
   blend: { label: 'blend width', units: 'cells', min: 0, max: 40, step: 1, def: 12, help: 'the smooth min’s k: how softly a point’s rings join the contours', stage: 'phi' },
   pointR: { label: 'point radius', units: 'cells', min: 8, max: 120, step: 1, def: 40, help: 'beyond this (× the point’s intensity) a point has no effect', stage: 'phi' },
@@ -42,10 +46,10 @@ const P: Record<string, Spec> = {
   height: { label: 'height', units: 'storeys', min: 0.5, max: 12, step: 0.5, def: 2, help: 'three cells a storey, each lot a little more or less', stage: 'mesh' },
   stairs: { label: 'stairs slope', units: 'rise/run', min: 0.05, max: 1.5, step: 0.05, def: 0.35, help: 'a street rising more than this along itself is orange', stage: 'mesh' },
   cut: { label: 'cut above', units: 'cells', min: 0, max: 120, step: 1, def: 30, help: 'nothing drawn higher than this over the town ground (the camera slice; 0 none): tall land out of the way', stage: 'camera' },
-  pitch: { label: 'camera pitch', units: '°', min: 15, max: 85, step: 1, def: 30, help: 'the camera above the ground plane (the game: 30°)', stage: 'camera' },
+  pitch: { label: 'camera pitch', units: '°', min: 15, max: 85, step: 1, def: 60, help: 'the camera above the ground plane (the game: 30°)', stage: 'camera' },
 };
 export const STREET_TUNING = new Registry({ streets: { title: 'Streets', owner: 'streetlab/streets.wgsl', params: P } });
-const values = () => STREET_TUNING.values.streets as unknown as StreetParams & { pitch: number; cut: number; intensity: number; tap: number; site: number };
+const values = () => STREET_TUNING.values.streets as unknown as StreetParams & { pitch: number; cut: number; intensity: number; tap: number; site: number; scale: number };
 
 export interface StreetLabHooks {
   /** the mesh into the renderer (Renderer.addMesh) */
@@ -174,7 +178,11 @@ export class StreetLabControl {
   /** rerun from a stage (the first stage asked for among runs queued wins: they run in order anyway); φ over `box` only */
   request(from: Stage = 'field', box?: Box): void {
     if (from === 'field') this.fit();
-    this.settled = this.gpu.run({ ...values() }, from, box).then(
+    // (the city's scale: the spacings × it, the lot areas × its square)
+    const v = { ...values() };
+    const k = v.scale;
+    Object.assign(v, { majorSpacing: v.majorSpacing * k, ringSpacing: v.ringSpacing * k, blockLen: Math.max(MIN_BLOCK, v.blockLen * k), maxLot: v.maxLot * k * k, minLot: v.minLot * k * k });
+    this.settled = this.gpu.run(v, from, box).then(
       (t) => this.got(t),
       (e) => {
         if (!this.dead) throw e;

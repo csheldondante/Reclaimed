@@ -20754,3 +20754,26 @@ with cross streets made from vectors between isolines. Everything stays on the G
   trace: 2.9–5.6 ms (trace 2.0–4.6). From phi 0.65 ms, from trace 0.50, lots 0.20, mesh 0.15. A moved point reruns
   φ in 0.03 ms over its box, against 0.045 over the window. Before the placement was cached and the search strided,
   the phi stage was 0.23–0.45 ms whether boxed or not.
+
+## 2026-11-10 — trackA-streetlab m3d: slivers and fans merged or paved, junction plazas, city scale
+
+The user liked m3, and the only artifacts left were sliver blocks and fans of thin triangles near the points. All
+of the fixes below run on the GPU, in the trace stage.
+- **Bad cells:** each block is checked in one pass per seed. A block is bad if it has an interior angle under 25°,
+  4πA/P² under 0.3, an area under the merge area, or is a triangle. In **merge** mode (the default), a bad block
+  claims a neighbour across its longer cross street, preferring a good one. The claims are an atomicMin, so the
+  lowest seed wins, and a block that was itself claimed doesn't apply. The winner writes the merged quad into its
+  own slot, removes the neighbour's block, and stops drawing the street between them. The links along the line (next,
+  previous, first seed) stay correct, so 3 rounds collapse a fan pairwise. Whatever is still bad after that is
+  paved. In **plaza** mode a bad block becomes one paved lot. Lots that are slivers, or whose inset fails, are paved
+  too; before, they were dropped and left holes.
+- **Junction plazas:** the cross streets ending at each seed are counted with atomics. A seed reached by 3 or more
+  gets a paved disc, and the streets and lots inside the disc give way to it. A slider sets the radius; 0 turns it
+  off.
+- **City scale:** contour spacing and block length × s, lot areas × s².
+- **Town edge:** a cross street whose next line is outside the town now runs to the town circle. Two such streets
+  bound a block along the edge, with no road on the circle.
+- **Default pitch:** 60°.
+- **Measurements:** headless D3D11, median of 7. Full rebuild 1.04 ms on Muru and 1.15 ms on river; the trace stage
+  is 0.36–0.38 ms, up 0.07 for the merge rounds. On coast, 26 of 44 blocks were triangles; merge leaves 22 blocks
+  and 305 lots.

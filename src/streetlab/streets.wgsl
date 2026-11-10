@@ -26,6 +26,7 @@ struct U {
   e: vec4<f32>, // (m3) blend width (smooth-min k), point radius, point strength, auto points
   o: vec4<u32>, // (m3) a boxed pass's first column (x, y), φ's mode (0 distance, 1 smooth min, 2 bump), cross streets (0 vector JFA, 1 tensor)
   s: vec4<f32>, // (m3c) the band height, the cart grade, the shape (0 none, 1 terraces, 2 spiral, 3 switchbacks), the spiral's point + 1
+  q: vec4<f32>, // (m3d) bad cells (0 merge, 1 plaza), the junction plazas' radius (0 none), the cross streets a junction needs, 0
 };
 @group(0) @binding(0) var<uniform> u: U;
 
@@ -367,7 +368,7 @@ fn mis(@builtin(global_invocation_id) g: vec3<u32>) {
 // (r1 the traces, r2 kept, r4 the feature distance)
 const BQW: u32 = 12u;
 /** a block's quad written counter-clockwise (edges e[k] from v[k] to v[k + 1]); not when it isn't convex */
-fn putBlock(o: u32, v0: array<vec2<f32>, 4>, e0: array<u32, 4>, tr: u32) {
+fn putBlock(o: u32, v0: array<vec2<f32>, 4>, e0: array<u32, 4>, tr: u32) -> bool {
   var v = v0;
   var e = e0;
   var area = 0.0;
@@ -378,12 +379,13 @@ fn putBlock(o: u32, v0: array<vec2<f32>, 4>, e0: array<u32, 4>, tr: u32) {
   }
   for (var k = 0; k < 4; k++) {
     // (a straight corner allowed: a triangle block is a quad with a corner on an edge's middle)
-    if (cross2(v[(k + 1) % 4] - v[k], v[(k + 2) % 4] - v[(k + 1) % 4]) < -1e-3) { return; }
+    if (cross2(v[(k + 1) % 4] - v[k], v[(k + 2) % 4] - v[(k + 1) % 4]) < -1e-3) { return false; }
   }
   w5[o] = 1u;
   w5[o + 1u] = e[0] | (e[1] << 8u) | (e[2] << 16u) | (e[3] << 24u);
   for (var k = 0u; k < 4u; k++) { putV(o + 2u + k * 2u, v[k]); }
   w5[o + 10u] = tr;
+  return true;
 }
 struct Stop { p: vec2<f32>, key: u32, hit: bool }
 /** walk along line `key` (family's level set) from p0 the way `dir` points, up to `most`: where another family's line
@@ -481,7 +483,7 @@ fn blocks(@builtin(global_invocation_id) g: vec3<u32>) {
     let bj = best * TRW;
     let lo2 = vec2<f32>(r1(bj + 2u), r1(bj + 3u));
     let hi2 = vec2<f32>(r1(bj + 5u), r1(bj + 6u));
-    putBlock(o, array<vec2<f32>, 4>(lo, lo2, hi2, hi), array<u32, 4>(cl, 2u, ch, 2u), i);
+    _ = putBlock(o, array<vec2<f32>, 4>(lo, lo2, hi2, hi), array<u32, 4>(cl, 2u, ch, 2u), i);
   }
   // (the strip's ends: its two lines walked out to what cuts them; not along a shore)
   if (cl == 0u || ch == 0u) { return; }
@@ -491,7 +493,7 @@ fn blocks(@builtin(global_invocation_id) g: vec3<u32>) {
     let a = lineWalk(lk, lo, dir, 2.5 * L);
     let b = lineWalk(hk, hi, dir, 2.5 * L);
     let cut = select(0u, 1u, a.hit && b.hit && a.key == b.key);
-    putBlock(o + (1u + side) * BQW, array<vec2<f32>, 4>(lo, a.p, b.p, hi), array<u32, 4>(1u, cut, 1u, 2u), i);
+    _ = putBlock(o + (1u + side) * BQW, array<vec2<f32>, 4>(lo, a.p, b.p, hi), array<u32, 4>(1u, cut, 1u, 2u), i);
   }
 }
 
@@ -514,6 +516,8 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
   if (bi >= 3u * T) { return; }
   let o = bi * BQW;
   if (b1[o] == 0u) { return; }
+  // (m3d: a block made a plaza — its meta, the slot after it, status 1 — is one paved lot, not split)
+  let plaza = bi % 3u == 0u && u.o.w == 0u && b1[o + BQW + 5u] == 1u;
   var st: array<Quad, STACK>;
   var n = 1u;
   var q0: Quad;
@@ -527,7 +531,7 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
     let q = st[n];
     let A = qArea(q);
     // (halves under the smallest lot's area: not split — the merge)
-    let split = A > u.c.x && q.d < DEPTH && n + 2u <= STACK && A * 0.42 >= u.c.y;
+    let split = !plaza && A > u.c.x && q.d < DEPTH && n + 2u <= STACK && A * 0.42 >= u.c.y;
     if (split) {
       var k = 0u;
       var ll = -1.0;
@@ -555,7 +559,7 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
     let lo = li * LW;
     for (var j = 0u; j < 4u; j++) { putV(lo + j * 2u, q.v[j]); }
     w5[lo + 8u] = q.e;
-    w5[lo + 9u] = bi * 256u + made;
+    w5[lo + 9u] = (bi * 256u + made) | select(0u, PAVED, plaza);
     made++;
   }
 }
@@ -614,7 +618,7 @@ fn roadMajor(@builtin(global_invocation_id) g: vec3<u32>) {
   let x = i32(g.x); let y = i32(g.y);
   if (x >= W() || y >= H()) { return; }
   let c = cpos(x, y);
-  if (!inTown(c) || blockedAt(c)) { return; }
+  if (!inTown(c) || blockedAt(c) || inPlazaB1(c)) { return; }
   for (var k = 1u; k <= 3u; k++) {
     if (!fam(k)) { continue; }
     // (the line passes the column: its field's floor differs to one of three neighbours')
@@ -691,6 +695,15 @@ fn insetCorner(v: array<vec2<f32>, 4>, d: array<f32, 4>, k: u32) -> vec2<f32> {
   if (abs(den) < 1e-4) { return pb; }
   return pa + da * (cross2(pb - pa, db) / den);
 }
+/** (m3d) a lot paved: flat, a little in from its corners */
+fn paveLot(v: array<vec2<f32>, 4>, mid: vec2<f32>) {
+  let at = room(6u);
+  if (at == NONE) { return; }
+  var z: array<vec3<f32>, 4>;
+  for (var k = 0u; k < 4u; k++) { z[k] = vec3<f32>(mix(v[k], mid, 0.04), hAt(v[k]) + 0.15); }
+  tri(at, z[0], z[1], z[2], C_PAVE);
+  tri(at + 3u, z[0], z[2], z[3], C_PAVE);
+}
 /** one thread a lot slot: inset, extruded — a park when no street fronts it (r1 the lots, r2 their count, r3 H, r4 the distance) */
 @compute @workgroup_size(64)
 fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
@@ -703,6 +716,8 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   let hs = b1[o + 9u];
   let mid = 0.25 * (v[0] + v[1] + v[2] + v[3]);
   if (blockedAt(mid)) { return; }
+  // (m3d: paved — a plaza block, inside a junction's plaza, or a bad lot (a sliver): flat paving, no building)
+  if ((hs & PAVED) != 0u || inPlazaW5(mid) || (u.q.x < 1.5 && badQuad(v, 0.0))) { paveLot(v, mid); return; }
   var street = false;
   var d: array<f32, 4>;
   for (var k = 0u; k < 4u; k++) {
@@ -713,12 +728,12 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   }
   var q: array<vec2<f32>, 4>;
   for (var k = 0u; k < 4u; k++) { q[k] = insetCorner(v, d, k); }
-  // (an inset turned inside out or too small: nothing)
+  // (an inset turned inside out or too small: paved — m3d; m2 left it empty)
   var area = 0.0;
   for (var k = 0u; k < 4u; k++) { area += cross2(q[k], q[(k + 1u) % 4u]); }
-  if (area < 2.0) { return; }
+  if (area < 2.0) { if (u.q.x < 1.5) { paveLot(v, mid); } return; }
   for (var k = 0u; k < 4u; k++) {
-    if (cross2(q[(k + 1u) % 4u] - q[k], q[(k + 2u) % 4u] - q[(k + 1u) % 4u]) <= 0.0) { return; }
+    if (cross2(q[(k + 1u) % 4u] - q[k], q[(k + 2u) % 4u] - q[(k + 1u) % 4u]) <= 0.0) { if (u.q.x < 1.5) { paveLot(v, mid); } return; }
   }
   if (!street) {
     let at = room(6u);
@@ -893,9 +908,12 @@ fn phi(@builtin(global_invocation_id) g: vec3<u32>) {
 // occupancy grid), a jump flood over the even lines' seeds and one over the odd lines', and each seed's cross street:
 // half a level up the gradient from it, the nearest seed of the other parity — on the next line up. A seed's street and
 // the next seed's along its line bound a block, its corners exactly on the lines.
-// A seed (SDW words): 0 1 its position, 2 its line's level, 3 alive, 4 its street's other end (a seed; NONE none).
+// A seed (SDW words): 0 1 its position, 2 its line's level, 3 alive, 4 its street's other end (a seed; EDGE the town's
+// edge; NONE none), 5 6 where that street ends.
 const SDW: u32 = 8u;
 const SID: u32 = 0x1fffu;
+/** (m3d) a cross street that ends on the town's edge — the circle a closing line */
+const EDGE: u32 = 0xfffffffeu;
 /** the field the seeds sit on: φ's (family 1) or, radial, the rings' */
 fn mainK() -> u32 { return select(2u, 1u, fam(1u)); }
 fn occDims() -> vec2<u32> { return vec2<u32>(u32(f32(W()) / u.a.w) + 2u, u32(f32(H()) * ROW_H / u.a.w) + 2u); }
@@ -960,6 +978,8 @@ fn vthin(@builtin(global_invocation_id) g: vec3<u32>) {
   if (!keep) { w5[o + 3u] = 0u; }
 }
 fn sdPos(j: u32) -> vec2<f32> { return vec2<f32>(r1(j * SDW), r1(j * SDW + 1u)); }
+/** where seed j's cross street ends (words 5 6: a seed's position, or the point on the town's edge) */
+fn sdEnd(j: u32) -> vec2<f32> { return vec2<f32>(r1(j * SDW + 5u), r1(j * SDW + 6u)); }
 /** the kept seeds into the floods' columns: even lines' w5, odd lines' w7 (r1 the seeds) */
 @compute @workgroup_size(64)
 fn vrast(@builtin(global_invocation_id) g: vec3<u32>) {
@@ -1014,14 +1034,33 @@ fn vseg(@builtin(global_invocation_id) g: vec3<u32>) {
   let gl2 = dot(gr, gr);
   if (gl2 < 1e-8) { return; }
   let t = nearestOf((L + 1u) & 1u, s + 0.5 * gr / gl2);
-  if (t == NONE) { return; }
-  let to = t * SDW;
-  if (w5[to + 3u] == 0u || w5[to + 2u] != L + 1u) { return; }
-  let e = vec2<f32>(bitcast<f32>(w5[to]), bitcast<f32>(w5[to + 1u]));
+  var ok = t != NONE;
+  var e = s;
+  if (ok) {
+    let to = t * SDW;
+    ok = w5[to + 3u] == 1u && w5[to + 2u] == L + 1u;
+    e = vec2<f32>(bitcast<f32>(w5[to]), bitcast<f32>(w5[to + 1u]));
+  }
+  var end = t;
+  // (m3d: the next line past the town's edge — the edge's circle closes the strip: the street runs up to it)
+  if (!ok && !inTown(s + gr / gl2)) {
+    let up = gr / sqrt(gl2);
+    let rel = s - u.d.xy;
+    let b = dot(rel, up);
+    let disc = b * b - (dot(rel, rel) - u.d.z * u.d.z);
+    if (disc > 0.0) {
+      e = s + up * (-b + sqrt(disc) - 0.5);
+      end = EDGE;
+      ok = true;
+    }
+  }
+  if (!ok) { return; }
   // (no longer than 2.5 levels' spacing here)
   if (distance(s, e) * sqrt(gl2) > 2.5) { return; }
   for (var k = 1; k < 8; k++) { if (blockedAt(mix(s, e, f32(k) / 8.0))) { return; } }
-  w5[o + 4u] = t;
+  w5[o + 4u] = end;
+  set5(o + 5u, e.x);
+  set5(o + 6u, e.y);
 }
 fn segsCross(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> bool {
   let r = b - a;
@@ -1042,8 +1081,18 @@ fn vblock(@builtin(global_invocation_id) g: vec3<u32>) {
   if (id >= u.m.w * u32(u.c.w)) { return; }
   let ob = id * 3u * BQW;
   w5[ob] = 0u;
-  w5[ob + BQW] = 0u;
   w5[ob + 2u * BQW] = 0u;
+  // (m3d: the block's meta in the slot after it — never a block itself: word 0 stays 0)
+  let mo = ob + BQW;
+  w5[mo] = 0u;
+  w5[mo + 1u] = 0u;
+  w5[mo + 2u] = NONE;
+  w5[mo + 3u] = NONE;
+  w5[mo + 4u] = 0u;
+  w5[mo + 5u] = 0u;
+  w5[mo + 6u] = NONE;
+  w5[mo + 7u] = 0u;
+  w5[mo + 8u] = id;
   w7[id] = 0u;
   let o = id * SDW;
   let ts = b1[o + 4u];
@@ -1066,18 +1115,23 @@ fn vblock(@builtin(global_invocation_id) g: vec3<u32>) {
   var tc = NONE;
   if (c != NONE) { tc = b1[c * SDW + 4u]; }
   if (tc == NONE) { w7[id] = 1u; return; }
-  let es = sdPos(ts);
-  let ec = sdPos(tc);
+  let es = sdEnd(id);
+  let ec = sdEnd(c);
   let sc = sdPos(c);
   if (segsCross(s, es, sc, ec)) { return; }
   w7[id] = 1u;
-  if (tc == ts) {
-    putBlock(ob, array<vec2<f32>, 4>(s, sc, es, 0.5 * (es + s)), array<u32, 4>(1u, 2u, 2u, 2u), id);
+  // (a street to the town's edge beside one to a seed: no block)
+  if ((ts == EDGE) != (tc == EDGE)) { return; }
+  w5[mo + 2u] = c;
+  if (tc == ts && ts != EDGE) {
+    w5[mo + 4u] = 1u;
+    _ = putBlock(ob, array<vec2<f32>, 4>(s, sc, es, 0.5 * (es + s)), array<u32, 4>(1u, 2u, 2u, 2u), id);
   } else {
-    putBlock(ob, array<vec2<f32>, 4>(s, sc, ec, es), array<u32, 4>(1u, 2u, 1u, 2u), id);
+    let far = select(1u, 0u, ts == EDGE);
+    _ = putBlock(ob, array<vec2<f32>, 4>(s, sc, ec, es), array<u32, 4>(1u, 2u, far, 2u), id);
   }
 }
-/** the cross streets: eight ribbon pieces a drawn street, on the ground (r1 the seeds, r2 drawn, r3 H) */
+/** the cross streets: eight ribbon pieces a drawn street, on the ground (r1 the seeds, r2 drawn, r3 H, b4 the plazas) */
 @compute @workgroup_size(64)
 fn vroad(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x / 8u;
@@ -1086,9 +1140,11 @@ fn vroad(@builtin(global_invocation_id) g: vec3<u32>) {
   let t = b1[id * SDW + 4u];
   if (t == NONE) { return; }
   let s = sdPos(id);
-  let e = sdPos(t);
+  let e = sdEnd(id);
   let a = mix(s, e, f32(k) / 8.0);
   let b = mix(s, e, f32(k + 1u) / 8.0);
+  // (m3d: a junction's plaza swallows the street's pieces in it)
+  if (inPlazaB4(0.5 * (a + b))) { return; }
   let at = room(6u);
   if (at == NONE) { return; }
   let d = normalize(b - a) * 0.3;
@@ -1235,4 +1291,185 @@ fn ground(@builtin(global_invocation_id) g: vec3<u32>) {
   if (at == NONE) { return; }
   tri(at, v[0], v[1], v[2], col);
   tri(at + 3u, v[0], v[2], v[3], col);
+}
+
+// ==== milestone 3d: bad cells merged or paved; plazas at the junctions ========================================
+// A block's meta (the slot after it, vblock): 0 always 0 (not a block), 1 bad, 2 the next seed along its line (whose
+// street is its far side), 3 the seed before it (whose block shares its near street), 4 a triangle, 5 its status (0,
+// 1 a plaza, 2 merged away, 3 grown by a merge), 6 the neighbour it asks to merge with, 7 which way (0 ahead, 1 behind),
+// 8 its first seed (its own, until it takes over the block behind it).
+// A junction plaza (PJ): word 0 the count, then x, y each (PJ_ROOM at most).
+const PAVED: u32 = 0x80000000u;
+const C_PAVE: u32 = 0xdcd0b6u;
+const PJ_ROOM: u32 = 64u;
+/** a cell too thin to build on: an interior angle under 25°, area / perimeter² under 0.3 of a circle's, or area under
+ *  `minA` */
+fn badQuad(v: array<vec2<f32>, 4>, minA: f32) -> bool {
+  var a = 0.0;
+  var per = 0.0;
+  // (the largest corner cosine: a corner under 25° has one over 0.906; a triangle's fourth corner, on an edge's middle, is −1)
+  var maxCos = -1.0;
+  for (var k = 0; k < 4; k++) {
+    let p1 = v[k];
+    let p2 = v[(k + 1) % 4];
+    a += cross2(p1, p2);
+    per += distance(p1, p2);
+    let d0 = v[(k + 3) % 4] - p1;
+    let d1 = p2 - p1;
+    let l = length(d0) * length(d1);
+    if (l > 1e-6) { maxCos = max(maxCos, dot(d0, d1) / l); }
+  }
+  a = abs(0.5 * a);
+  return maxCos > 0.906 || 4.0 * 3.14159265 * a / max(per * per, 1e-6) < 0.3 || a < minA;
+}
+fn blockQuad(o: u32) -> array<vec2<f32>, 4> {
+  var v: array<vec2<f32>, 4>;
+  for (var k = 0u; k < 4u; k++) { v[k] = vec2<f32>(bitcast<f32>(w5[o + 2u + k * 2u]), bitcast<f32>(w5[o + 3u + k * 2u])); }
+  return v;
+}
+/** one thread a seed (merge rounds; n.w the step): 0 its block's link from the one before cleared; 1 its quality —
+ *  bad: too thin, too small, a triangle — and its link into the next block along; 2 the last round's: what's still
+ *  bad is paved. q.x 1 (plaza): bad is paved at once; 2: nothing marked (w5 the blocks) */
+@compute @workgroup_size(64)
+fn bqual(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  if (id >= u.m.w * u32(u.c.w)) { return; }
+  let ob = id * 3u * BQW;
+  let mo = ob + BQW;
+  if (u.n.w == 0u) { w5[mo + 3u] = NONE; return; }
+  if (w5[ob] == 0u) { return; }
+  let c = w5[mo + 2u];
+  if (c != NONE) { w5[c * 3u * BQW + BQW + 3u] = id; }
+  if (u.q.x > 1.5) { return; }
+  let bad = w5[mo + 4u] == 1u || badQuad(blockQuad(ob), u.c.y);
+  w5[mo + 1u] = select(0u, 1u, bad);
+  if (bad && (u.q.x > 0.5 || u.n.w == 2u)) { w5[mo + 5u] = 1u; }
+}
+/** one thread a bad block (merge): a neighbour claimed — across the longer cross street, a good one first (the lowest
+ *  seed wins; w6 the claims; w5 the blocks, r1 the seeds) */
+@compute @workgroup_size(64)
+fn bclaim(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  if (id >= u.m.w * u32(u.c.w) || u.q.x > 0.5) { return; }
+  let ob = id * 3u * BQW;
+  let mo = ob + BQW;
+  w5[mo + 6u] = NONE;
+  if (w5[ob] == 0u || w5[mo + 1u] == 0u || w5[mo + 5u] == 1u) { return; }
+  let c = w5[mo + 2u];
+  let p = w5[mo + 3u];
+  let okC = c != NONE && w5[c * 3u * BQW] == 1u && w5[c * 3u * BQW + BQW + 5u] != 1u;
+  let okP = p != NONE && w5[p * 3u * BQW] == 1u && w5[p * 3u * BQW + BQW + 5u] != 1u;
+  // (the shared streets: ahead c's own, behind this seed's own; a good neighbour first)
+  var lc = -1.0;
+  var lp = -1.0;
+  if (okC) { lc = distance(sdPos(c), sdEnd(c)) + select(1e4, 0.0, w5[c * 3u * BQW + BQW + 1u] == 1u); }
+  let st = w5[mo + 8u];
+  if (okP) { lp = distance(sdPos(st), sdEnd(st)) + select(1e4, 0.0, w5[p * 3u * BQW + BQW + 1u] == 1u); }
+  if (lc < 0.0 && lp < 0.0) { return; }
+  let n = select(p, c, lc >= lp);
+  w5[mo + 6u] = n;
+  w5[mo + 7u] = select(1u, 0u, lc >= lp);
+  atomicMin(&w6[n], id);
+}
+/** one thread a bad block that won its claim and wasn't claimed itself: the merged quad into its own slot, the
+ *  neighbour's block gone, the street between them no longer drawn, the links along the line kept (w5 the blocks, b2
+ *  the claims, w7 drawn; r1 the seeds) */
+@compute @workgroup_size(64)
+fn bapply(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  if (id >= u.m.w * u32(u.c.w) || u.q.x > 0.5) { return; }
+  let ob = id * 3u * BQW;
+  let mo = ob + BQW;
+  let n = w5[mo + 6u];
+  if (n == NONE || b2[n] != id || b2[id] != NONE) { return; }
+  let ahead = w5[mo + 7u] == 0u;
+  // (the merged block: from this seed to the one past the neighbour, or from the one before to the next)
+  // (a block's first seed: its own, or after a merge behind, the one it took over)
+  var a = w5[mo + 8u];
+  var b = w5[n * 3u * BQW + BQW + 2u];
+  if (!ahead) { a = w5[n * 3u * BQW + BQW + 8u]; b = w5[mo + 2u]; }
+  if (b == NONE) { return; }
+  let ta = b1[a * SDW + 4u];
+  let tb = b1[b * SDW + 4u];
+  let pa = sdPos(a);
+  let pb = sdPos(b);
+  let ea = sdEnd(a);
+  let eb = sdEnd(b);
+  var ok = false;
+  var tri = 0u;
+  if (ta == tb && ta != EDGE) {
+    tri = 1u;
+    ok = putBlock(ob, array<vec2<f32>, 4>(pa, pb, ea, 0.5 * (ea + pa)), array<u32, 4>(1u, 2u, 2u, 2u), id);
+  } else {
+    ok = putBlock(ob, array<vec2<f32>, 4>(pa, pb, eb, ea), array<u32, 4>(1u, 2u, select(1u, 0u, ta == EDGE), 2u), id);
+  }
+  if (!ok) { return; }
+  // (the street between them: ahead the neighbour's first, behind this block's first)
+  let gone = select(w5[mo + 8u], w5[n * 3u * BQW + BQW + 8u], ahead);
+  w5[mo + 4u] = tri;
+  w5[mo + 5u] = 3u;
+  w5[mo + 8u] = a;
+  w5[n * 3u * BQW] = 0u;
+  w5[n * 3u * BQW + BQW + 5u] = 2u;
+  if (ahead) {
+    w5[mo + 2u] = b;
+  } else {
+    // (the block before the neighbour now leads into this one)
+    let pp = w5[n * 3u * BQW + BQW + 3u];
+    if (pp != NONE) { w5[pp * 3u * BQW + BQW + 2u] = id; }
+  }
+  w7[gone] = 0u;
+}
+/** one thread a drawn cross street: one more at the seed it ends at (w6 the counts; r1 the seeds, b2 drawn) */
+@compute @workgroup_size(64)
+fn jcount(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  if (id >= u.m.w * u32(u.c.w) || b2[id] == 0u) { return; }
+  let t = b1[id * SDW + 4u];
+  if (t == NONE || t == EDGE) { return; }
+  atomicAdd(&w6[t], 1u);
+}
+/** one thread a seed: a plaza where q.z or more cross streets meet (w6 the plazas; r1 the seeds, b2 the counts) */
+@compute @workgroup_size(64)
+fn jlist(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  if (id >= u.m.w * u32(u.c.w) || u.q.y <= 0.0) { return; }
+  if (b1[id * SDW + 3u] == 0u || f32(b2[id]) < u.q.z) { return; }
+  let k = atomicAdd(&w6[0], 1u);
+  if (k >= PJ_ROOM) { return; }
+  let p = sdPos(id);
+  atomicStore(&w6[1u + k * 2u], bitcast<u32>(p.x));
+  atomicStore(&w6[2u + k * 2u], bitcast<u32>(p.y));
+}
+fn inPlazaB1(p: vec2<f32>) -> bool {
+  if (u.q.y <= 0.0) { return false; }
+  for (var k = 0u; k < min(b1[0], PJ_ROOM); k++) { if (distance(p, vec2<f32>(r1(1u + k * 2u), r1(2u + k * 2u))) < u.q.y) { return true; } }
+  return false;
+}
+fn inPlazaB4(p: vec2<f32>) -> bool {
+  if (u.q.y <= 0.0) { return false; }
+  for (var k = 0u; k < min(b4[0], PJ_ROOM); k++) { if (distance(p, vec2<f32>(r4(1u + k * 2u), r4(2u + k * 2u))) < u.q.y) { return true; } }
+  return false;
+}
+fn inPlazaW5(p: vec2<f32>) -> bool {
+  if (u.q.y <= 0.0) { return false; }
+  for (var k = 0u; k < min(w5[0], PJ_ROOM); k++) { if (distance(p, vec2<f32>(bitcast<f32>(w5[1u + k * 2u]), bitcast<f32>(w5[2u + k * 2u]))) < u.q.y) { return true; } }
+  return false;
+}
+/** the junction plazas: a paved disc each (r1 the plazas, r3 H) */
+@compute @workgroup_size(64)
+fn plazas(@builtin(global_invocation_id) g: vec3<u32>) {
+  let j = g.x;
+  if (u.q.y <= 0.0 || j >= min(b1[0], PJ_ROOM)) { return; }
+  let p = vec2<f32>(r1(1u + j * 2u), r1(2u + j * 2u));
+  let at = room(36u);
+  if (at == NONE) { return; }
+  let z = hAt(p) + 0.18;
+  for (var k = 0u; k < 12u; k++) {
+    let a0 = f32(k) * TAU / 12.0;
+    let a1 = f32(k + 1u) * TAU / 12.0;
+    let q0 = p + u.q.y * vec2<f32>(cos(a0), sin(a0));
+    let q1 = p + u.q.y * vec2<f32>(cos(a1), sin(a1));
+    tri(at + k * 3u, vec3<f32>(p, z), vec3<f32>(q0, hAt(q0) + 0.18), vec3<f32>(q1, hAt(q1) + 0.18), C_PAVE);
+  }
 }

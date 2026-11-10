@@ -71,7 +71,13 @@ export interface StreetParams {
   shape: number;
   band: number;
   grade: number;
+  /** (m3d) bad cells: index into BAD; the junction plazas' radius (0 none) and the cross streets a junction needs */
+  bad: number;
+  plazaR: number;
+  plazaN: number;
 }
+/** (m3d) what a bad cell (a sliver, a thin triangle) becomes: merged into its neighbour, or paved */
+export const BAD = ['merge', 'plaza', 'leave (as m3)'] as const;
 /** (m3c) shaping the steep ground — the lab's heights only: terraces, or a cart road (a spiral ramp, switchbacks) */
 export const SHAPES = ['none', 'terraces', 'spiral ramp', 'switchbacks'] as const;
 
@@ -107,11 +113,11 @@ export interface StreetTimes {
 
 const SLOT = 256;
 const MAX_PASSES = 256;
-const UNI_BYTES = 144;
+const UNI_BYTES = 160;
 const KERNELS = [
   'fill', 'blur', 'feat', 'jfa', 'jdist', 'autoPts', 'phi', 'tensor', 'trace', 'mis', 'blocks',
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotMesh', 'marks', 'meshCap',
-  'shape', 'roadShape', 'ground',
+  'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'jcount', 'jlist', 'plazas',
 ] as const;
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
@@ -126,6 +132,8 @@ const LOT_ROOM = 32768;
 const VERT_ROOM = 1_200_000;
 /** conflict rounds between the traces (a greedy independent set: even, so the kept end in AL0) */
 const MIS_ROUNDS = 4;
+/** (m3d) merge rounds for the bad blocks */
+const MERGE_ROUNDS = 3;
 const NONE = 0xffffffff;
 const ALL = ['height', ...STAGES] as const;
 
@@ -195,6 +203,9 @@ export class StreetLabGpu {
     this.B.SD = buf('seeds', T * SDW * 4);
     this.B.OCC = buf('occupancy', this.occWords(MIN_BLOCK) * 4);
     for (const n of ['JE0', 'JE1', 'JO0', 'JO1']) this.B[n] = buf(n, N * 4);
+    // (m3d: the cross streets ending at each seed; the junction plazas — a count, then 64 positions)
+    this.B.JC = buf('junction counts', T * 4);
+    this.B.PJ = buf('plazas', (1 + 64 * 2) * 4);
     this.verts = buf('mesh', VERT_ROOM * 32, GPUBufferUsage.STORAGE);
     this.args = buf('mesh args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     device.queue.writeBuffer(this.args, 0, new Uint32Array([0, 1, 0, 0]));
@@ -274,6 +285,7 @@ export class StreetLabGpu {
     f.forEach((v, j) => dv.setFloat32(32 + j * 4, v, true));
     [u.box?.[0] ?? 0, u.box?.[1] ?? 0, PHI_MODE[p.majors], p.cross].forEach((v, j) => dv.setUint32(112 + j * 4, v >>> 0, true));
     [p.band, p.grade, p.shape, this.sel + 1].forEach((v, j) => dv.setFloat32(128 + j * 4, v, true));
+    [p.bad, p.plazaR, p.plazaN, 0].forEach((v, j) => dv.setFloat32(144 + j * 4, v, true));
     return i;
   }
 
@@ -346,6 +358,21 @@ export class StreetLabGpu {
     this.k2('vjfa', { k: 1 }, { 1: ea, 2: oa, 3: B.SD, 5: eb, 7: ob });
     this.kT('vseg', {}, { 2: eb, 3: ob, 4: B.FD, 5: B.SD });
     this.kT('vblock', {}, { 1: B.SD, 2: eb, 3: ob, 4: B.FD, 5: B.BQ, 7: B.AL1 });
+    // (m3d) the bad blocks: found, then merged (a claim each on a good neighbour, the lowest seed wins) or paved
+    const T = this.seeds[0] * this.seeds[1];
+    // (MERGE_ROUNDS rounds — a fan's triangles merge in pairs, then the pairs — then what's still bad is paved)
+    for (let r = 0; r <= MERGE_ROUNDS; r++) {
+      this.kT('bqual', { mode: 0 }, { 1: B.SD, 5: B.BQ });
+      this.kT('bqual', { mode: r === MERGE_ROUNDS ? 2 : 1 }, { 1: B.SD, 5: B.BQ });
+      if (r === MERGE_ROUNDS || p.bad !== 0) break;
+      this.fill(B.AL0, T, NONE);
+      this.kT('bclaim', {}, { 1: B.SD, 5: B.BQ, 6: B.AL0 });
+      this.kT('bapply', {}, { 1: B.SD, 2: B.AL0, 5: B.BQ, 7: B.AL1 });
+    }
+    // (m3d) the junctions: their cross streets counted, a plaza where enough meet
+    this.fill(B.JC, T, 0);
+    this.kT('jcount', {}, { 1: B.SD, 2: B.AL1, 6: B.JC });
+    this.kT('jlist', {}, { 1: B.SD, 2: B.JC, 6: B.PJ });
   }
 
   private async once(p: StreetParams, from0: Stage, box0?: Box): Promise<StreetTimes> {
@@ -404,6 +431,7 @@ export class StreetLabGpu {
     // medium: the cross streets, the blocks
     if (runs('trace')) {
       this.cp = enc.beginComputePass(this.pass('trace'));
+      this.fill(B.PJ, 1, 0);
       if (vector) this.vectorCross();
       else {
         this.kT('trace', {}, { 1: B.TX, 2: B.TY, 4: B.FD, 5: B.TR, 7: B.AL0 });
@@ -425,11 +453,12 @@ export class StreetLabGpu {
     // the mesh: roads, lots and the points' markers
     enc.clearBuffer(this.args, 0, 4);
     this.cp = enc.beginComputePass(this.pass('mesh'));
-    this.k2('roadMajor', {}, { 3: HH, 4: B.FD, 7: this.verts }, true);
+    this.k2('roadMajor', {}, { 1: B.PJ, 3: HH, 4: B.FD, 7: this.verts }, true);
     // (one thread a street's piece: eight a vector street, TP a trace)
-    if (vector) this.k('vroad', {}, { 1: B.SD, 2: B.AL1, 3: HH, 7: this.verts }, Math.ceil((this.seeds[0] * this.seeds[1] * 8) / 64), 1, true);
+    if (vector) this.k('vroad', {}, { 1: B.SD, 2: B.AL1, 3: HH, 4: B.PJ, 7: this.verts }, Math.ceil((this.seeds[0] * this.seeds[1] * 8) / 64), 1, true);
     else this.k('roadMinor', {}, { 1: B.TR, 2: B.AL0, 3: HH, 7: this.verts }, this.seeds[0] * this.seeds[1], 1, true);
-    this.k('lotMesh', { count: LOT_ROOM }, { 1: B.LOTS, 2: B.CNT, 3: HH, 4: B.FD, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
+    this.k('lotMesh', { count: LOT_ROOM }, { 1: B.LOTS, 2: B.CNT, 3: HH, 4: B.FD, 5: B.PJ, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
+    if (vector && p.plazaR > 0) this.k('plazas', {}, { 1: B.PJ, 3: HH, 7: this.verts }, 1, 1, true);
     if (PHI_MODE[p.majors] !== 0) this.k('marks', { mode: this.sel + 1 }, { 1: B.PTS, 3: HH, 7: this.verts }, 1, 1, true);
     // (m3c: the shaped ground's skin, its bands tinted; the cart road)
     if (p.shape > 0) this.k2('ground', {}, { 1: B.H, 3: HH, 4: B.FD, 7: this.verts }, true);
