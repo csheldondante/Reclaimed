@@ -152,7 +152,8 @@ fn chunkScale(q: vec2<u32>) -> f32 {
 // ---- gaps -------------------------------------------------------------------------------------------------
 // nat: the top of the column's own ground (its highest solid that isn't an External's — sim/external.ts: a deck, a
 // building): where water the land came in with lies when nothing has been recorded for the column yet
-struct Gaps { n: u32, f: array<f32, 6>, c: array<f32, 6>, nat: f32 };
+// ext: the top gap's floor is an External's top (a deck, a roof: sim/external.ts) — it holds no bed of its own
+struct Gaps { n: u32, f: array<f32, 6>, c: array<f32, 6>, nat: f32, ext: bool };
 
 fn gapPush(g: ptr<function, Gaps>, f: f32, c: f32) {
   if ((*g).n == MAXG) {
@@ -169,6 +170,7 @@ fn gapsAt(q: vec2<i32>) -> Gaps {
   var g: Gaps;
   g.n = 0u;
   g.nat = 0.0;
+  g.ext = false;
   let cs = colSlots(u32(q.x), u32(q.y));
   var top = -1.0;
   for (var s = 0u; s < cs.y; s++) {
@@ -177,6 +179,7 @@ fn gapsAt(q: vec2<i32>) -> Gaps {
     let st = matState(ivMat(v));
     if (st != ST_SOLID && st != ST_GRANULAR) { continue; }
     if (top >= 0.0 && ivZ0(v) > top + 0.02) { gapPush(&g, top, ivZ0(v)); }
+    if (ivZ1(v) >= top) { g.ext = ivMat(v) == MAT_EXTERNAL; }
     top = max(top, ivZ1(v));
     if (ivMat(v) != MAT_EXTERNAL) { g.nat = max(g.nat, ivZ1(v)); }
   }
@@ -690,7 +693,10 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let dt = max(o.dep[top], 0.0);
   runsOut[i * NSLOT] = vec4<f32>(g.f[top], dt, select(LQ_HOT, o.hv[top] / dt, dt > EPS), f32(now * 8u + n));
-  atomicAdd(&act[ch * 4u], u32(min(change * 1e6, 1e8)));
+  // (trackA-liquids: open water standing on an External's top — a deck, a roof: no bed of its own — keeps its chunk from
+  // freezing until it has drained: counted as change, whatever its balance)
+  let standing = select(0.0, dt, g.ext && dt > EPS);
+  atomicAdd(&act[ch * 4u], u32(min((change + standing) * 1e6, 1e8)));
   atomicAdd(&act[ch * 4u + 1u], u32(min(length(o.net) * (2.0 / f32(NDIR)) * 1e6, 1e8)));
 }
 

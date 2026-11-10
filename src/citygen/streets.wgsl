@@ -2636,6 +2636,10 @@ const ART_GAP: f32 = 2.0;
  *  wet along the road) is a ford: no deck, the road's paving not claimed on its wet columns (claimRoads) — its bed bare
  *  under the water; longer, a deck */
 const FORD_MAX: f32 = 2.5;
+/** (trackA-liquids) a deck's slab as claimed into the columns (the drawn deck's sides go DECK_T down), and the air it
+ *  keeps over the water's surface */
+const DECK_CLAIM_T: f32 = 0.25;
+const DECK_AIR: f32 = 0.1;
 fn artBase(k: u32) -> u32 { return 4u + k * AW; }
 /** a word of ART, from the binding it's at in this pass (1, 2, 5 or 7) */
 fn artW(src: u32, i: u32) -> u32 {
@@ -2672,6 +2676,8 @@ fn artSpan(@builtin(global_invocation_id) g: vec3<u32>) {
   var pd = artPt(5u, k, 0u);
   var acc = 0.0;
   var out = false;
+  // (trackA-liquids: the highest water surface along this crossing — a deck's claimed slab clears it)
+  var wsMax = -1e9;
   for (var j = 0u; j + 1u < n && !out; j++) {
     let a = artPt(5u, k, j);
     let b = artPt(5u, k, j + 1u);
@@ -2683,7 +2689,8 @@ fn artSpan(@builtin(global_invocation_id) g: vec3<u32>) {
       if (!inb(p)) { out = true; break; }
       end = t;
       let w = r1(ixp(p)) > 0.5;
-      if (w && !wet) { wet = true; t0 = t; p0 = pd; }
+      if (w && !wet) { wet = true; t0 = t; p0 = pd; wsMax = -1e9; }
+      if (w) { wsMax = max(wsMax, r2(ixp(p))); }
       if (w) { tw = t; } else { pd = p; }
       if (!w && wet && t - tw >= ART_GAP) {
         wet = false;
@@ -2697,8 +2704,11 @@ fn artSpan(@builtin(global_invocation_id) g: vec3<u32>) {
         let s5 = o + 4u + ns * 4u;
         set5(s5, sa);
         set5(s5 + 1u, sb);
-        set5(s5 + 2u, r3(ixp(p0)) + u.t.z);
-        set5(s5 + 3u, r3(ixp(p)) + u.t.z);
+        // (trackA-liquids: and its slab — DECK_CLAIM_T, what's claimed into the columns — DECK_AIR over the water's highest
+        // surface along the crossing, so the river runs under it, not into it)
+        let zMin = wsMax + DECK_CLAIM_T + DECK_AIR;
+        set5(s5 + 2u, max(r3(ixp(p0)) + u.t.z, zMin));
+        set5(s5 + 3u, max(r3(ixp(p)) + u.t.z, zMin));
         ns++;
       }
     }
@@ -3032,7 +3042,7 @@ fn claimRoads(@builtin(global_invocation_id) g: vec3<u32>) {
   w7[i * 4u + 3u] = 1u;
   if ((m & DECK_BIT) != 0u) {
     let dz = f32(m & ~DECK_BIT) / 256.0;
-    set7(so, dz - DECK_T);
+    set7(so, dz - DECK_CLAIM_T);
     set7(so + 1u, dz);
     w7[so + 2u] = M_WOOD;
   } else {

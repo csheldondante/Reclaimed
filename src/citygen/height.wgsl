@@ -10,6 +10,8 @@
 @group(0) @binding(6) var<storage, read_write> wetOut: array<f32>;
 /** the box: its first window column and row, its columns and rows (citygen/gpu.ts; the CPU checks it's in the window) */
 @group(0) @binding(7) var<uniform> box: vec4<u32>;
+/** (trackA-liquids) the water's surface where it's water to the streets (window z), else -1e9: a deck clears it */
+@group(0) @binding(8) var<storage, read_write> surfOut: array<f32>;
 
 /** water deeper than this (cells) is water to the streets */
 const WET_DEPTH: f32 = 0.1;
@@ -38,4 +40,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // (the sea: Globals.ocean.x, window z; −1e9 none — M4a: it read G.org.x, the window's world x, by mistake)
   let wet = water[colIdx(x, y)] > WET_DEPTH || t < G.ocean.x;
   wetOut[o] = select(0.0, 1.0, wet);
+  surfOut[o] = select(-1e9, max(t + water[colIdx(x, y)], G.ocean.x), wet);
 }

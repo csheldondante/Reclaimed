@@ -21371,3 +21371,20 @@ crossing the liquid's contract; and a slab under a river is neither seen nor wal
 Muru after it (45 s, everything asleep): 172 enclosed runs under the decks; one deck column, (125, 168), still holds
 0.52 of open water on its top, frozen (deck top 100.61, the river under it at 99.78 + 0.52). The pile mechanism isn't
 confirmed or fixed yet.
+
+## 2026-11-10 — trackA-liquids: why water stood on the decks, and the rule that drains it
+
+Traced step by step at Muru's lower bridge, column (125, 168), sampled as the deck was claimed: before, the river 0.15
+deep on its bed at 99.78; the deck claimed at 100.61 with its slab DECK_T (0.8) deep — its underside at 99.81, 3 cm over
+the bed and under the river's surface (~100.1). The gap under it was 3 cm tall: the river couldn't pass, backed up and
+went over the deck — every deck column got water on its top (0.04–0.56) as well as under it (no stream landing near:
+none within 3 columns). Not a stale landing height: the deck was in the river.
+- citygen (streets.wgsl artSpan): a deck's ends are now at least DECK_CLAIM_T + DECK_AIR (0.25 + 0.1) over the highest
+  water surface along its crossing (height.wgsl / rawheight.wgsl publish that surface, B.WS); the slab claimed into the
+  columns is DECK_CLAIM_T deep (the drawn deck's sides still go DECK_T down) — so a walker's step from the bank stays
+  under 1.1 where the old clearance allowed it.
+- The steady state's rule (liquid.wgsl depth, Gaps.ext): open water standing on an External's top — a deck, a roof, no
+  bed of its own — counts as change, so its chunk doesn't freeze until it has drained. A rule about External tops, not
+  decks.
+Muru after it: 374 columns with the river under a deck, no water on any deck top sampled, everything asleep
+(scratchpad liquids/deck7.png: both bridges dry, the river under them, people on the lower one).

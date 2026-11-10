@@ -12,6 +12,8 @@ struct RawU {
 @group(0) @binding(1) var<storage, read> raw: array<vec4<u32>>;
 @group(0) @binding(2) var<storage, read_write> topOut: array<f32>;
 @group(0) @binding(3) var<storage, read_write> wetOut: array<f32>;
+/** (trackA-liquids) the water's surface where it's water to the streets (world z), else -1e9: a deck clears it */
+@group(0) @binding(4) var<storage, read_write> surfOut: array<f32>;
 
 /** water deeper than this (cells) is water to the streets (height.wgsl's) */
 const WET_DEPTH: f32 = 0.1;
@@ -27,4 +29,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   topOut[o] = t;
   let wet = bitcast<f32>(v.y) > WET_DEPTH || t < RU.s.x;
   wetOut[o] = select(0.0, 1.0, wet);
+  surfOut[o] = select(-1e9, max(t + bitcast<f32>(v.y), RU.s.x), wet);
 }

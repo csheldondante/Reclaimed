@@ -332,7 +332,7 @@ export class CityGen {
       return b;
     };
     this.uni = buf('passes', SLOT * MAX_PASSES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    for (const n of ['H', 'HT', 'M', 'HS', 'TB', 'T0', 'FDB', 'FD', 'S0', 'S1', 'BLK', 'TX', 'TY', 'AD']) this.B[n] = buf(n, N * 4);
+    for (const n of ['H', 'HT', 'M', 'WS', 'HS', 'TB', 'T0', 'FDB', 'FD', 'S0', 'S1', 'BLK', 'TX', 'TY', 'AD']) this.B[n] = buf(n, N * 4);
     const [mx, my] = this.lattice(MIN_BLOCK);
     const T = mx * my;
     this.B.TR = buf('traces', T * TRW * 4);
@@ -407,8 +407,8 @@ export class CityGen {
     if (gs.kind === 'window' && gs.box[1] % 2) throw new Error(`citygen: the box's first row (${gs.box[1]}) must be even`);
     this.heightK =
       gs.kind === 'window'
-        ? makeCompute(device, 'citygen height', [commonWgsl, layersWgsl, materialsWgsl, heightWgsl], { 0: 'uniform', 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'uniform' })
-        : makeCompute(device, 'citygen raw height', [rawHeightWgsl], { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'rw' });
+        ? makeCompute(device, 'citygen height', [commonWgsl, layersWgsl, materialsWgsl, heightWgsl], { 0: 'uniform', 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'uniform', 8: 'rw' })
+        : makeCompute(device, 'citygen raw height', [rawHeightWgsl], { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'rw', 4: 'rw' });
     const n = ALL.length * 2;
     if (device.features.has('timestamp-query')) {
       this.qs = device.createQuerySet({ type: 'timestamp', count: n });
@@ -797,8 +797,8 @@ export class CityGen {
       cp.setBindGroup(
         0,
         G.kind === 'window'
-          ? makeBindGroup(device, 'citygen height', this.heightK.layout, { 0: G.globals, 1: G.chunks, 3: G.layers, 4: G.water, 5: B.H, 6: B.M, 7: this.boxUni })
-          : makeBindGroup(device, 'citygen raw height', this.heightK.layout, { 0: this.boxUni, 1: G.raw, 2: B.H, 3: B.M }),
+          ? makeBindGroup(device, 'citygen height', this.heightK.layout, { 0: G.globals, 1: G.chunks, 3: G.layers, 4: G.water, 5: B.H, 6: B.M, 7: this.boxUni, 8: B.WS })
+          : makeBindGroup(device, 'citygen raw height', this.heightK.layout, { 0: this.boxUni, 1: G.raw, 2: B.H, 3: B.M, 4: B.WS }),
       );
       cp.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(h / 8));
       cp.end();
@@ -819,7 +819,7 @@ export class CityGen {
       this.k2('jdist', {}, { 1: fr, 5: p.field === 1 ? B.FDB : B.T0 });
       if (p.field === 0) this.blur(B.T0, B.FDB, 5, 3);
       // (M4a: the arterials — their length and bridges, then the distance to them: their columns flooded)
-      this.k('artSpan', {}, { 1: B.M, 3: B.H, 5: B.ART }, 1);
+      this.k('artSpan', {}, { 1: B.M, 2: B.WS, 3: B.H, 5: B.ART }, 1);
       this.fill(B.S0, w * h, NONE);
       this.k('artRast', {}, { 1: B.ART, 5: B.S0 }, (NART * NAP) / 64);
       this.k2('jdist', {}, { 1: this.jfa(B.S0, B.S1), 5: B.AD });
