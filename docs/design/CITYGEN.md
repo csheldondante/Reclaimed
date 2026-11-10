@@ -103,7 +103,34 @@ the construction shader read. `FieldTown.lots` hands them over.
 - The height-to-plot rule: a building is no taller than `hRatio` (0.7) × its footprint's shortest side, at least
   a storey and at most the storeys' most × 1.3, so the street behind it stays in sight at 60°.
 
-## M4b: stopped at the claim registry (needs a decision)
+## M4b as built (2026-11-10, approved: "Yes make it gpu owned and driven by the population density map …")
+
+- **Claims, GPU-owned.**
+  - citygen builds its claim grid each mesh run: dense over the box, claimGrid's layout, a span a column. Buildings
+    are footprint × base to height × progress (owner word = lot record + 1). Roads are a quarter cell of paving on the
+    ground (owner 0); a building's or plaza's parcel round its footprint is marked bare only (BARE_ONLY, no span).
+  - `StaticClaims.gpuGrid` claims it with the existing `claimGrid` kernel over the written window and per arriving
+    region.
+  - The orphan pass holds its spans on the GPU (colapply `orphans` binds the owned grid: `ownedJob`). The CPU orphan
+    paths skip its box (`StaticSet.gpuOwns`).
+  - After an edit, colapply `gridDamage` checks its spans in the dirty boxes. The damaged owners come back (≤ 64
+    words, once); the town logs them and keeps them (`FieldTown.damaged`).
+  - The old towns' CPU-span grids are unchanged until M4e, behind the same StaticSet. One GPU-owned grid at a time
+    (the orphan pass binds one).
+- **Decks are not claimed in the world's columns.** A column's top is its water's floor (surface.wgsl,
+  water_flux.wgsl), so a deck there lifted the river onto it. That showed: decks vanished under water in the first
+  try. The reach walks decks as plan solid instead (`CityGen.deckSpans` → `FortressReachGpu.planSpans`). Units' own
+  surfaces won't have decks until the water model allows a gap under a top (BACKLOG).
+- **Plants:** `bare.wgsl` sets the plants' field (veg and the next tick's) to none on claimed and bare-only columns as
+  they're claimed: the old towns' BARE stamp, for a town made after its land. External tops cap growth at moss.
+- **Reach:** `FortressReachGpu.markFrom` runs one solve over the window from the town's road (its point at the core's
+  distance) and writes a mark per column (fortreach.wgsl `reachMark`). citygen `lotReach` samples six points on each
+  building's street. A building none of whose points is joined (and one is ground) is outlined red on its roof.
+  It runs after the claims and again after each slide.
+- **Population field** (`popField`), **road tones and widths**, **raw ground** (`Atlas.rawGroundGpu`, `rawheight.wgsl`),
+  **sloped decks** and the **town bridge** (`townBridge`): DEVLOG 2026-11-10, citygen M4b steps 1–2.
+
+## M4b: stopped at the claim registry (superseded: built as above)
 
 The brief: claim each lot's building, the roads and the decks as External intervals through the existing claim path;
 clear flora under them; run the GPU reach over the result. Stopped before building, because the existing path holds
@@ -143,7 +170,7 @@ contract buffer (the built mask). Both are architecture changes, so they wait fo
 
 ## Later phases (scope)
 
-- **M4b, claims, surfaces, reach** (this body of work). The town claims its buildings' columns as External intervals
+- **M4b, claims, surfaces, reach** (this body of work; built, above). The town claims its buildings' columns as External intervals
   naming the town's grid, per record (the record's index and seed in the owner word). A later physics step or the
   building generator can then take over one building's intervals by its record: release the town's claim, write its
   own, nothing else touched.

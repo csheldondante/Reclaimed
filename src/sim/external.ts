@@ -43,6 +43,10 @@ export type OwnerId = number;
 export const OWNER_ROCK: OwnerId = 1;
 // (round 128m, onetown) a town's claims are owned by its grid's id (build/site.ts gridIdOf: 256 and up), one owner
 // for the generated buildings and the player's alike — the settlements' and the fortress's owner ids are gone
+// (citygen M4b) A town made by the field generator owns its claims on the GPU: a GPU-owned static grid
+// (sim/static-claims.ts gpuGrid) — its spans built, claimed, held by the orphan pass and checked after an edit there,
+// keyed by lot record (a span's owner word); the CPU knows only its box. The old towns' grids (CPU spans) stay as they
+// are until the old planner goes (M4e), behind the same StaticSet.
 
 export interface ExternalCol {
   x: number;
@@ -162,6 +166,13 @@ export interface StaticSet {
   drop(inst: ExternalInstance): void;
   /** the columns an instance's claim can be let go in now (in the window, its land written): window frame */
   releasable(inst: ExternalInstance): ExternalCol[];
+  /** (citygen M4b) whether window column (x, y) lies in a GPU-owned grid's box — its claims are its own, held and
+   *  checked on the GPU (the orphan pass reads its spans: ownedJob), never judged on the CPU */
+  gpuOwns(x: number, y: number): boolean;
+  /** (M4b) the GPU-owned grid as the orphan pass reads it (null: none) */
+  ownedJob?(): import('../game/colapply').OwnedGridJob | null;
+  /** (M4b) an edit's boxes (world units, window frame): the GPU-owned grids' claims there checked on the GPU */
+  damage?(boxes: [number, number, number, number][]): void;
 }
 
 /** The column with [z0, z1) taken out of it (intervals cut at its ends). */
@@ -504,6 +515,8 @@ export class ExternalRegistry {
     for (const k of cols) {
       const x = k % 65536;
       const y = Math.floor(k / 65536);
+      // (M4b: a GPU-owned grid's columns are its own — the GPU's orphan pass holds its spans)
+      if (this.statics?.gpuOwns(x, y)) continue;
       const mine = this.claimedAt(x, y);
       if (this.statics) for (const inst of this.statics.at(x, y)) for (const c of inst.cols) if (c.x === x && c.y === y) mine.push(c);
       const out = orphanColumn(this.cols.read(x, y), mine);

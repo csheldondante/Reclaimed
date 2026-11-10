@@ -4146,3 +4146,15 @@ projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 w
   render/bodies.wgsl vsSkin) added to every vertex. A mesh made in its own frame is placed by 16 bytes when the window
   slides, never remade. Every other mesh source binds a zero vec4.
 - `Settlements.byFields(id)`: the old planner makes nothing for that settlement (plan, stamps, far plan, view, life).
+- **External contract change (M4b): GPU-owned static grids.** `StaticClaims.gpuGrid(name, owner, place, src)`
+  takes a grid whose spans live only on the GPU (dense, claimGrid's layout, a span's 4th word its owner key).
+  - It is claimed by `claimGrid` like any grid.
+  - It is held by the orphan pass (colapply binding 6, Params gw/gh/gOn).
+  - It is checked after edits by `gridDamage` (owners back, ≤ 64 words).
+  - `StaticSet.gpuOwns(x, y)` keeps the CPU orphan paths off its box.
+  - One GPU-owned grid at a time. The registry stays the truth for CPU instances; for a GPU-owned grid the truth is
+    its buffer.
+- citygen writes the plants' field on its claimed columns as they're claimed (bare.wgsl: veg, vegNext), as the atlas's
+  BARE stamp does for land made with a town.
+- `FortressReachGpu.markFrom(stores)` → `marks` (a word a box column) and `planSpans` (the plan solid, GPU-writable)
+  for a town's reach without queries read back.

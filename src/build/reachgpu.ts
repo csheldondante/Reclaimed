@@ -36,7 +36,7 @@ const FIX_MODE = 3;
 /** (B) fix field sweeps a submit (the flag cleared before the last: clear, converged) */
 const FIX_ROUND = 48;
 
-type K = 'peel' | 'init' | 'hook' | 'jump' | 'query' | 'ramps' | 'wet' | 'fixInit' | 'fixRelax' | 'fixTrace';
+type K = 'peel' | 'init' | 'hook' | 'jump' | 'query' | 'ramps' | 'wet' | 'fixInit' | 'fixRelax' | 'fixTrace' | 'mark';
 
 export class FortressReachGpu implements ReachEngine {
   private k: Record<K, ComputeKernel>;
@@ -103,7 +103,9 @@ export class FortressReachGpu implements ReachEngine {
       fixInit: mk('fixInit', { 6: 'rw', 14: 'rw' }),
       fixRelax: mk('fixRelax', { 6: 'rw', 7: 'rw', 9: 'rw', 13: 'rw', 14: 'rw', 16: 'read' }),
       fixTrace: mk('fixTrace', { 6: 'rw', 7: 'rw', 10: 'read', 11: 'rw', 13: 'rw', 14: 'rw', 15: 'rw', 16: 'read' }),
+      mark: mk('reachMark', { 6: 'rw', 7: 'rw', 8: 'rw', 17: 'rw' }),
     };
+    this.marks = device.createBuffer({ label: 'reach marks', size: n * 4, usage: S });
     this.ready = new Promise((r) => whenPipelinesReady(r));
   }
 
@@ -163,6 +165,7 @@ export class FortressReachGpu implements ReachEngine {
         wet: g(this.k.wet, { 4: W.water, 11: this.answerBuf! }),
         fixInit: g(this.k.fixInit, { 6: this.surf, 14: this.fixDist }),
         fixRelax: g(this.k.fixRelax, { 6: this.surf, 7: this.deep, 9: this.flag, 13: this.cutCol, 14: this.fixDist, 16: this.rampRiseBuf }),
+        mark: g(this.k.mark, { 6: this.surf, 7: this.deep, 8: this.label, 17: this.marks }),
         fixTrace: g(this.k.fixTrace, { 6: this.surf, 7: this.deep, 10: this.queryBuf!, 11: this.answerBuf!, 13: this.cutCol, 14: this.fixDist, 15: this.fixBuf, 16: this.rampRiseBuf }),
       };
     });
@@ -283,6 +286,39 @@ export class FortressReachGpu implements ReachEngine {
     throw new Error(`reach: the fix field didn't settle in ${MAX_ROUNDS * 4 * FIX_ROUND} sweeps`);
   }
 
+  /** (citygen M4b) the plan's solid as the reach peels it (two words a box column), for a caller that writes it on the
+   *  GPU (citygen's decks) instead of setSpans */
+  get planSpans(): GPUBuffer {
+    return this.spans;
+  }
+  /** (citygen M4b) a word a box column after markFrom: 0 no surface, 1 joined to the stores', 2 not (reachMark) */
+  readonly marks: GPUBuffer;
+
+  /**
+   * (citygen M4b) The reach from one column (the box's x, y; its top surface — `z` far above), every box column marked in
+   * `marks` (0 no surface, 1 joined, 2 cut off) on the GPU: a town reads them to show what's cut off. What's read back:
+   * the solve's convergence flag a round. Resolves with the rounds.
+   */
+  async markFrom(stores: [number, number], z = 1e6): Promise<number> {
+    await this.ready;
+    if (this.gone) throw new DOMException('reach: disposed', 'AbortError');
+    this.sized(0);
+    const d = this.device;
+    const [ox, oy] = this.origin();
+    const sz = new Uint32Array(new Float32Array([z]).buffer)[0];
+    MODES.forEach((m, i) => d.queue.writeBuffer(this.params[i], 0, new Int32Array([ox, oy, this.w, this.h, stores[0], stores[1], 0, 0, m.lift, m.bit, sz | 0, 0])));
+    const r = await this.solve(0, 0, 1 + 2 * RAMP_CAP, 0);
+    const enc = d.createCommandEncoder({ label: 'reach marks' });
+    const cp = enc.beginComputePass({ label: 'reach marks' });
+    cp.setPipeline(this.k.mark.pipeline);
+    cp.setBindGroup(0, this.groups[0].mark);
+    cp.dispatchWorkgroups(Math.ceil(this.w / 8), Math.ceil(this.h / 8));
+    cp.end();
+    d.queue.submit([enc.finish()]);
+    this.stats.solves++;
+    return r.rounds;
+  }
+
   /** the wet bits of the first solve (later solves don't ask for them: the answer buffer keeps them) */
   private lastWet: Uint32Array | null = null;
 
@@ -356,6 +392,6 @@ export class FortressReachGpu implements ReachEngine {
 
   dispose(): void {
     this.gone = true;
-    for (const b of [this.spans, this.surf, this.deep, this.label, this.flag, this.cutCol, this.fixDist, this.fixBuf, this.fixStage, this.rampRiseBuf, ...this.params, this.queryBuf, this.answerBuf]) b?.destroy();
+    for (const b of [this.marks, this.spans, this.surf, this.deep, this.label, this.flag, this.cutCol, this.fixDist, this.fixBuf, this.fixStage, this.rampRiseBuf, ...this.params, this.queryBuf, this.answerBuf]) b?.destroy();
   }
 }

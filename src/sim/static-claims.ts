@@ -21,7 +21,7 @@
 // The registry sees these instances through the StaticSet below: anchored to their grid (a slide moves nothing on the
 // CPU but where the grid lies), judged by a read of the columns only where their land was written before the read was
 // asked (the region's epoch here, the registry's epoch counter), never orphans.
-import type { ColumnApply, GpuColumns, GridClaimJob } from '../game/colapply';
+import type { ColumnApply, GpuColumns, GridClaimJob, OwnedGridJob } from '../game/colapply';
 import { freeSpans, type ExternalCol, type ExternalInstance, type ExternalRegistry, type OwnerId, type StaticSet } from './external';
 import { ROW_H } from '../world/lattice';
 import { readColumn, type Interval, type PackedWorld } from '../world/layout';
@@ -94,8 +94,25 @@ class StaticInstance implements ExternalInstance {
   }
 }
 
+/**
+ * (citygen M4b) A GPU-owned grid's source: its claim buffer (made on the GPU by its owner — citygen's claim grid, dense:
+ * w × h columns, a span each, the span's owner word its key) and what its owner is told: the window rectangles just
+ * claimed (`claimed`: e.g. the plants cleared there) and the keys damaged by an edit (`damaged`, owner words; `maxKey`
+ * the largest).
+ */
+export interface OwnedGridSource {
+  buf: GPUBuffer;
+  w: number;
+  h: number;
+  maxKey: number;
+  claimed?(rects: [number, number, number, number][], place: GridPlace): void;
+  damaged?(keys: number[]): void;
+}
+
 /** A static grid: its place in the window, its things, its spans' buffer on the GPU. */
 export class StaticGrid {
+  /** (M4b) GPU-owned: no things on the CPU, its buffer its owner's */
+  owned: OwnedGridSource | null = null;
   readonly things = new Map<number, StaticInstance>();
   /** local column key → the instances with a span there, in the grid's order */
   readonly byCol = new Map<number, StaticInstance[]>();
@@ -134,8 +151,67 @@ export class StaticClaims implements StaticSet {
     return g;
   }
 
+  /**
+   * (citygen M4b) A GPU-owned grid: its spans built on the GPU by its owner (OwnedGridSource), claimed as its land is
+   * written like any grid's (claimGrid), held by the orphan pass (ownedJob), checked after an edit (damage). Its
+   * columns over the window's written land are claimed now. One at most (the orphan pass reads one).
+   */
+  gpuGrid(name: string, owner: OwnerId, place: () => GridPlace, src: OwnedGridSource): StaticGrid {
+    if (this.grids.some((g) => g.owned)) throw new Error('static claims: one GPU-owned grid at most (the orphan pass reads one)');
+    const g = this.grid(name, owner, place);
+    g.owned = src;
+    g.buf = src.buf;
+    g.nCols = src.w * src.h;
+    g.stale = false;
+    g.bounds = [0, 0, src.w, src.h];
+    this.claimWritten(g);
+    return g;
+  }
+
+  /** (M4b) the GPU-owned grid as the orphan pass reads it (null: none) */
+  ownedJob(): OwnedGridJob | null {
+    const g = this.grids.find((x) => x.owned);
+    if (!g) return null;
+    const p = g.place();
+    return { buf: g.buf!, nCols: g.nCols, gx: p.dx, gy: p.dy, gz: p.dz, w: g.owned!.w, h: g.owned!.h };
+  }
+
+  /** (M4b) whether window column (x, y) is in a GPU-owned grid's box */
+  gpuOwns(x: number, y: number): boolean {
+    for (const g of this.grids) {
+      if (!g.owned) continue;
+      const p = g.place();
+      if (x >= p.dx && y >= p.dy && x < p.dx + g.owned.w && y < p.dy + g.owned.h) return true;
+    }
+    return false;
+  }
+
+  private damageBusy: Promise<unknown> = Promise.resolve();
+  /**
+   * (M4b) An edit's boxes (world units, window frame: Integrity's dirty boxes): the GPU-owned grids' claims there checked
+   * on the GPU, their owners told the keys damaged (a few words read back, after the edit).
+   */
+  damage(boxes: [number, number, number, number][]): void {
+    for (const g of this.grids) {
+      if (!g.owned?.damaged) continue;
+      const p = g.place();
+      const rects: [number, number, number, number][] = [];
+      for (const [x0, y0, x1, y1] of boxes) {
+        const r: [number, number, number, number] = [Math.max(Math.floor(x0) - 1, p.dx), Math.max(Math.floor(y0 / ROW_H) - 1, p.dy), Math.min(Math.ceil(x1) + 2, p.dx + g.owned.w), Math.min(Math.ceil(y1 / ROW_H) + 2, p.dy + g.owned.h)];
+        if (r[2] > r[0] && r[3] > r[1]) rects.push(r);
+      }
+      if (!rects.length || this.io.held()) continue;
+      const job = this.ownedJob()!;
+      const src = g.owned;
+      this.damageBusy = this.damageBusy
+        .then(() => this.io.apply().gridDamage(this.io.columns(), job, rects, src.maxKey))
+        .then((keys) => keys.length && src.damaged!(keys));
+    }
+  }
+
   /** a grid gone (a settlement dropped): its things let go where they lie (to air), its buffer freed */
   remove(g: StaticGrid): void {
+    if (g.owned) throw new Error('static claims: a GPU-owned grid is its owner\'s to remove (removeOwned)');
     this.set(g, []);
     g.buf?.destroy();
     g.buf = null;
@@ -150,6 +226,7 @@ export class StaticClaims implements StaticSet {
    * Returns each thing's instance by key.
    */
   set(g: StaticGrid, things: StaticThing[]): Map<number, ExternalInstance> {
+    if (g.owned) throw new Error(`static claims: ${g.name} is GPU-owned — its spans are its owner's buffer`);
     const reg = this.io.registry();
     const want = new Map<number, { t: StaticThing; sig: string }>();
     for (const t of things) {
@@ -217,6 +294,7 @@ export class StaticClaims implements StaticSet {
       this.io.apply().claimGrids(this.io.columns(), jobs, [[lx, ly, lx + w, ly + h]]);
       this.stats.passes += jobs.length;
       this.touchOver(jobs, [[lx, ly, lx + w, ly + h]]);
+      for (const j of jobs) j.g.owned?.claimed?.([[lx, ly, lx + w, ly + h]], j.g.place());
     }
     this.stats.lastMs = +(performance.now() - t0).toFixed(3);
     this.stats.ms += performance.now() - t0;
@@ -310,13 +388,14 @@ export class StaticClaims implements StaticSet {
     this.io.apply().claimGrids(this.io.columns(), [job], rects);
     this.stats.passes += rects.length;
     this.touchOver([job], rects);
+    g.owned?.claimed?.(rects, p);
   }
 
   /** the grids overlapping a window rectangle, as claim jobs (their buffers made where stale) */
   private jobsOver(x0: number, y0: number, x1: number, y1: number): (GridClaimJob & { g: StaticGrid })[] {
     const out: (GridClaimJob & { g: StaticGrid })[] = [];
     for (const g of this.grids) {
-      if (!g.things.size) continue;
+      if (!g.things.size && !g.owned) continue;
       const p = g.place();
       const [bx0, by0, bx1, by1] = g.bounds;
       if (x1 <= bx0 + p.dx || x0 >= bx1 + p.dx || y1 <= by0 + p.dy || y0 >= by1 + p.dy) continue;
@@ -459,8 +538,16 @@ export class StaticClaims implements StaticSet {
     return out;
   }
 
+  /** (M4b) a GPU-owned grid gone (its town disposed): no longer claimed nor held — its claims left where they lie
+   *  become orphans at the next orphan pass (their fallback material) */
+  removeOwned(g: StaticGrid): void {
+    this.grids = this.grids.filter((x) => x !== g);
+    this.owed.delete(g);
+    this.stats.grids = this.grids.length;
+  }
+
   dispose(): void {
-    for (const g of this.grids) g.buf?.destroy();
+    for (const g of this.grids) if (!g.owned) g.buf?.destroy();
     this.grids = [];
     this.byId.clear();
   }

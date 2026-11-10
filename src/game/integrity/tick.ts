@@ -208,11 +208,13 @@ export async function pass(ig: Integrity, whole: boolean, want: Set<number> | nu
     if ((whole || ig.orphanCheck) && !pending) {
       ig.orphanCheck = false;
       const claimed = ext.claimedSpans();
-      ig.gpuEdit.orphans(gpuCols(ig), claimed);
+      // (citygen M4b: the GPU-owned grid's spans held on the GPU; its columns not judged on the CPU)
+      ig.gpuEdit.orphans(gpuCols(ig), claimed, ext.statics?.ownedJob?.() ?? null);
       if (!sparse)
         for (const k of externalCols(ig)) {
           const x = k % 65536;
           const y = Math.floor(k / 65536);
+          if (ext.statics?.gpuOwns(x, y)) continue;
           const out = orphanColumn(ig.cols.read(x, y), claimed.get(k) ?? []);
           if (out) {
             ext.stats.orphans++;
@@ -227,6 +229,8 @@ export async function pass(ig: Integrity, whole: boolean, want: Set<number> | nu
   // (round 120, JB6) the structures' boxes asked of the GPU first (anything built in them?), alongside the rock's judge
   const boxes = ig.dirty;
   ig.dirty = [];
+  // (citygen M4b: a GPU-owned grid's claims checked where the edits were — the damaged records' keys come back)
+  if (boxes.length) ext?.statics?.damage?.(boxes.filter((b) => b[4] >= 2).map(([x0, y0, x1, y1]) => [x0, y0, x1, y1] as [number, number, number, number]));
   const built = sparse && boxes.length ? ig.query.count(gpuCols(ig), boxes.map(([x0, y0, x1, y1]) => [x0 - 2, y0 - 2, x1 + 2, y1 + 2]), isStructural) : null;
   // (round 83) rock, by the columns an edit cut: the hanging runs by them, and only those. (Round 88: first —
   // it takes what hangs free whole, whatever it's made of; the structures' boxes then see what's left)

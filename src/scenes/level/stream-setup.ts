@@ -342,6 +342,7 @@ export function attachStream(scene: LevelScene): void {
       // (citygen M4a, ?citygen=fields) the start town made by the GPU field generator over its land in the window, once
       // the level's pipelines are ready; its mesh placed again when the window slides (16 bytes), never remade
       const fid = a!.fieldTown;
+      let fieldReach: FortressReachGpu | undefined;
       if (fid) {
         const fs = st.seeds.find((x) => x.rec.id === fid)!;
         whenPipelinesReady(() => {
@@ -350,6 +351,9 @@ export function attachStream(scene: LevelScene): void {
               device: host.gpu.device,
               rawGround: (x0, y0, w, h, out) => a!.atlas.rawGroundGpu(x0, y0, w, h, out),
               sea: a!.atlas.p.sea,
+              statics: () => staticsFor(scene),
+              plants: { globals: core.world.globals, veg: core.world.veg, vegNext: core.world.vegNext },
+              reach: () => (fieldReach ??= new FortressReachGpu(host.gpu.device, core.world, dims.w, dims.h, () => [0, 0])),
               addMesh: (v, g, x) => core.renderer.addMesh(v, g, x),
               removeMesh: (g) => core.renderer.removeMesh(g),
               origin: () => S.origin,
@@ -360,7 +364,11 @@ export function attachStream(scene: LevelScene): void {
             { id: fs.rec.id, name: fs.rec.name, at: fs.rec.at, size: fs.rec.size, roads: st.approachWays(fs.rec.id), seed: fs.seed, purpose: fs.rec.purpose?.kind },
           );
           scene.fieldTown = town;
-          S.onSlide.push(() => town.place());
+          // (a slide: the mesh placed again; the reach — over the window — looked at again once the land's in)
+          S.onSlide.push(() => {
+            town.place();
+            void town.checkReach();
+          });
           S.onWarp.push(() => town.place());
           void town.made.then((t) => console.log(`[citygen] ${fs.rec.name} (${fs.rec.id}, ${fs.rec.size}): ${t.lots} lots, ${town.site.roads.length} approach roads; GPU ms ${t.total?.toFixed(2) ?? 'n/a'} (heights ${t.height?.toFixed(2) ?? 'n/a'})`));
         });

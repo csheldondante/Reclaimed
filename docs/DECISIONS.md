@@ -3548,3 +3548,16 @@ world should show what needs clearing and how.
   to do as part of the improved building generators." The M4b claims are per record, so that step can take over a
   building's intervals cleanly.
 - DESIGN §17 updated (the player chooses opportunities; painting superseded).
+
+## 2026-11-10 — citygen M4b: GPU-owned towns, a population field, quieter roads
+
+- "Yes make it gpu owned and driven by the population density map and make roads dirt or stone colored (but a bit
+  lighter) and narrower." → a field town's claims are owned on the GPU (static claims' GPU-owned grid, keyed by lot
+  record); a GPU population field (density, wealth, purpose) drives its limit, empty districts, lot size, height and
+  district purposes; roads dirt (small towns) or stone (big), a little lighter than the ground, at 60% width.
+- The window stays its normal size (the coordinator's recommendation, accepted with GPU ownership): the town is made
+  from the atlas's raw ground over its box on the GPU.
+- "I assumed we would stream in the grid generation as needed so when we pan to a new population center it appears
+  but we can ignore it where there is no population or low enough not to necessitate a grid." → towns stream like
+  land (generated as their box nears the window, dropped far behind, regenerated deterministically); no grid below a
+  population threshold.

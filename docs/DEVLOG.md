@@ -21022,3 +21022,21 @@ or stone colored (but a bit lighter) and narrower."
   4 and no arterial within 30. The lowest score (length + half its distance from the centre) wins and is appended
   after the arterials (ART word 2). At Muru it crosses the river south of the centre and joins the east half.
 - GPU 4.99 ms median for the whole town (headless; raw ground 0.05–0.08 ms once, plus the finisher's tiles).
+
+## 2026-11-10 — citygen M4b step 3: GPU-owned claims, bare ground, damage, reach
+
+- **Claims.**
+  - citygen's claim grid (claimRoads, claimLots) is claimed through a GPU-owned static grid (`StaticClaims.gpuGrid`)
+    by the existing claimGrid kernel. It covers 17 550 columns at Muru, 25 claim passes over the window at load.
+  - The orphan pass binds the owned grid so its spans are never orphans. The CPU orphan paths skip its box.
+  - After a pan with slides, no claimed column showed as rubble.
+- **Damage:** a smash on a building gave "an edit damaged 1 building(s) and its roads — records 119" (colapply
+  gridDamage, 65 words back, once).
+- **Decks** were claimed first and vanished: the water floor is a column's top, so the river rose onto them. Now they
+  aren't claimed. The reach walks them as plan solid (CG15).
+- **Plants:** bare.wgsl zeroes the plants' field on claimed and parcel columns as they're claimed. No trees stand in
+  building lots or on roads now.
+- **Reach:** one solve, one round, about 111 ms wall (the flag's readback). Of 322 lots, 1–8 buildings are outlined
+  red depending on the window: lots across the south river branch, and a few on slopes over a step. The first sampler
+  (one point, 1.5 out) flagged 30, mostly where it landed on a neighbour's roof. Six points on the street fixed that.
+- GPU: the whole town 5.34 ms median (4.59–6.21) with the claim passes, headless D3D11.

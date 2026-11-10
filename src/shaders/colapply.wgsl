@@ -50,6 +50,9 @@ struct Params {
    *  spans' world z plus gz: the window's), and the window rectangle written now [rx0, rx1) × [ry0, ry1) */
   gx: i32, gy: i32, gz: f32, rx0: u32,
   ry0: u32, rx1: u32, ry1: u32,
+  /** (citygen M4b) a GPU-owned grid (sim/static-claims.ts gpuGrid: dense, `owned` bound, its place gx, gy, gz):
+   *  its columns across and down, 1 when there is one (orphans: its spans held too; gridDamage: the one checked) */
+  gw: u32, gh: u32, gOn: u32,
 }
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -61,6 +64,20 @@ struct Params {
 /** 8 words an entry: key + 1 (0: empty), cells, six votes */
 @group(0) @binding(4) var<storage, read_write> hash: array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read_write> deposit: array<vec4<f32>>;
+/** (citygen M4b) a GPU-owned static grid, dense (claimGrid's layout: gw × gh columns, a span each after them) */
+@group(0) @binding(6) var<storage, read> owned: array<u32>;
+
+/** (M4b) the owned grid's span over window column (x, y), when it has one: (z0, z1) window z; z1 < z0 none */
+fn ownedSpan(x: u32, y: u32) -> vec2<f32> {
+  if (P.gOn == 0u) { return vec2<f32>(1.0, 0.0); }
+  let lx = i32(x) - P.gx;
+  let ly = i32(y) - P.gy;
+  if (lx < 0 || ly < 0 || u32(lx) >= P.gw || u32(ly) >= P.gh) { return vec2<f32>(1.0, 0.0); }
+  let i = u32(ly) * P.gw + u32(lx);
+  if (owned[i * 4u + 3u] == 0u) { return vec2<f32>(1.0, 0.0); }
+  let so = P.gw * P.gh * 4u + owned[i * 4u + 2u] * 4u;
+  return vec2<f32>(bitcast<f32>(owned[so]) + P.gz, bitcast<f32>(owned[so + 1u]) + P.gz);
+}
 
 const MAX_K: u32 = 16u;
 /** a column's intervals while changed: K (16 at most) plus a split a cut (the host keeps an op's cuts to 32) */
@@ -382,6 +399,8 @@ fn orphans(@builtin(global_invocation_id) gid: vec3<u32>) {
     c0 = inp[P.refOff + ki * 2u];
     nc = inp[P.refOff + ki * 2u + 1u];
   }
+  // (M4b: and the GPU-owned grid's span here — its claims are never orphans)
+  let os = ownedSpan(x, y);
   var out: array<vec4<u32>, MAX_IV>;
   var m = 0u;
   var changed = false;
@@ -402,6 +421,18 @@ fn orphans(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (sz1 <= p.x + EPS_X || sz0 >= p.y - EPS_X) { if (q < 24u) { nx[q] = p; } q++; continue; }
         if (sz0 > p.x + EPS_X) { if (q < 24u) { nx[q] = vec2<f32>(p.x, sz0); } q++; }
         if (sz1 < p.y - EPS_X) { if (q < 24u) { nx[q] = vec2<f32>(sz1, p.y); } q++; }
+      }
+      rest = nx;
+      nr = min(q, 24u);
+    }
+    if (os.y > os.x) {
+      var nx: array<vec2<f32>, 24>;
+      var q = 0u;
+      for (var r = 0u; r < nr; r++) {
+        let p = rest[r];
+        if (os.y <= p.x + EPS_X || os.x >= p.y - EPS_X) { if (q < 24u) { nx[q] = p; } q++; continue; }
+        if (os.x > p.x + EPS_X) { if (q < 24u) { nx[q] = vec2<f32>(p.x, os.x); } q++; }
+        if (os.y < p.y - EPS_X) { if (q < 24u) { nx[q] = vec2<f32>(os.y, p.y); } q++; }
       }
       rest = nx;
       nr = min(q, 24u);
@@ -619,4 +650,51 @@ fn seat(@builtin(global_invocation_id) gid: vec3<u32>) {
     k++;
   }
   store(b, &out, k);
+}
+
+/**
+ * (citygen M4b) The GPU-owned grid's claims checked where an edit was (the window rectangle [rx0, rx1) × [ry0, ry1)): a
+ * thread a window column there; a span of the grid's that has lost a quarter cell or more to what's free (air, a
+ * liquid — dug, blown out, flooded) is damaged: its owner word (a lot record + 1; 0 the town's roads) listed once in
+ * `hash` (0 the count, then the owners, 64 at most; from 128 a flag an owner). What comes back: those few words.
+ */
+@compute @workgroup_size(8, 8)
+fn gridDamage(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let x = P.rx0 + gid.x;
+  let y = P.ry0 + gid.y;
+  if (x >= P.rx1 || y >= P.ry1 || x >= P.mapW || y >= P.mapH) { return; }
+  let os = ownedSpan(x, y);
+  if (os.y <= os.x) { return; }
+  let lx = u32(i32(x) - P.gx);
+  let ly = u32(i32(y) - P.gy);
+  let i = ly * P.gw + lx;
+  let who = owned[P.gw * P.gh * 4u + owned[i * 4u + 2u] * 4u + 3u];
+  var a: array<vec4<u32>, MAX_IV>;
+  let n = load(colBase(x, y), &a);
+  // (the span less every interval that isn't free: what's left is free now)
+  var parts: array<vec2<f32>, 24>;
+  var np = 1u;
+  parts[0] = os;
+  for (var k = 0u; k < n; k++) {
+    let v = a[k];
+    if (freeMat(matOf(v))) { continue; }
+    let iz0 = z0Of(v);
+    let iz1 = z1Of(v);
+    var nx: array<vec2<f32>, 24>;
+    var q = 0u;
+    for (var r = 0u; r < np; r++) {
+      let p = parts[r];
+      if (iz1 <= p.x + EPS_X || iz0 >= p.y - EPS_X) { if (q < 24u) { nx[q] = p; } q++; continue; }
+      if (iz0 > p.x + EPS_X) { if (q < 24u) { nx[q] = vec2<f32>(p.x, iz0); } q++; }
+      if (iz1 < p.y - EPS_X) { if (q < 24u) { nx[q] = vec2<f32>(iz1, p.y); } q++; }
+    }
+    parts = nx;
+    np = min(q, 24u);
+  }
+  var lost = 0.0;
+  for (var r = 0u; r < np; r++) { lost += parts[r].y - parts[r].x; }
+  if (lost < 0.25) { return; }
+  if (atomicExchange(&hash[128u + who], 1u) != 0u) { return; }
+  let k = atomicAdd(&hash[0], 1u);
+  if (k < 64u) { atomicStore(&hash[1u + k], who); }
 }

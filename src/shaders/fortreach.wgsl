@@ -413,3 +413,17 @@ fn fixTrace(@builtin(global_invocation_id) id: vec3<u32>) {
     s = prev;
   }
 }
+
+// ---- (citygen M4b) the reach as marks a box column: what a town reads to show what's cut off ---------------------
+/** a word a box column: 0 no surface, 1 its top surface joined to the stores', 2 a surface not joined */
+@group(0) @binding(17) var<storage, read_write> marks: array<u32>;
+@compute @workgroup_size(8, 8)
+fn reachMark(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= boxW() || id.y >= boxH()) { return; }
+  let b = id.y * boxW() + id.x;
+  let s = b * RNAV_K;
+  if (!live(s)) { marks[b] = 0u; return; }
+  let sn = storesNode();
+  let ok = sn != NODE_NONE && root(s) == root(sn) && !rDeep(s);
+  marks[b] = select(2u, 1u, ok);
+}

@@ -643,10 +643,33 @@ fn room(count: u32) -> u32 {
   return b;
 }
 /** a flat ribbon piece from a to b, half width hw, lifted over the ground */
+/** (M4b) the columns under a road piece from a to b, half width hw, marked in ROADS (w6: 1 a road; a deck its z, as
+ *  DECK_BIT | z × 256 — the higher wins) — what the town claims as paving or deck (claimSpans) */
+const DECK_BIT: u32 = 0x80000000u;
+fn markRoad(a: vec2<f32>, b: vec2<f32>, hw: f32, za: f32, zb: f32, deck: bool) {
+  let L = distance(a, b);
+  if (L < 1e-4) { return; }
+  let d = (b - a) / L;
+  let n = vec2<f32>(-d.y, d.x);
+  let na = u32(ceil(L / 0.5));
+  let nc = u32(ceil(2.0 * hw / 0.5));
+  for (var i = 0u; i <= na; i++) {
+    let t = f32(i) / f32(max(na, 1u));
+    let z = mix(za, zb, t);
+    let v = select(1u, DECK_BIT | u32(clamp(z, 0.0, 8.0e6) * 256.0), deck);
+    for (var j = 0u; j <= nc; j++) {
+      let p = a + d * (t * L) + n * (-hw + 2.0 * hw * f32(j) / f32(max(nc, 1u)));
+      if (!inb(p)) { continue; }
+      atomicMax(&w6[ixp(p)], v);
+    }
+  }
+}
 fn ribbon(at: u32, a: vec2<f32>, b: vec2<f32>, hw: f32, col: u32) {
+  markRoad(a, b, hw, 0.0, 0.0, false);
   let d = normalize(b - a);
   let s = vec2<f32>(-d.y, d.x) * hw;
-  let lift = 0.22;
+  // (M4b: on the town's paving — the claimed quarter cell over the ground, claimSpans)
+  let lift = 0.27;
   let p0 = vec3<f32>(a - s, hAt(a - s) + lift);
   let p1 = vec3<f32>(b - s, hAt(b - s) + lift);
   let p2 = vec3<f32>(b + s, hAt(b + s) + lift);
@@ -733,6 +756,8 @@ fn roadMinor(@builtin(global_invocation_id) g: vec3<u32>) {
   ribbon(at, a - d, c + d, u.b.y * 0.5, select(cMinor(), cSteep(), steep(a, c)));
 }
 const C_WALL: u32 = 0xf3eee6u;
+/** (M4b) the cut-off outline (the fortress's warning red) */
+const C_CUTOFF: u32 = 0xe0322du;
 const C_PARK: u32 = 0x9fcf86u;
 fn roofColour(k: u32) -> u32 {
   switch (k) {
@@ -913,6 +938,22 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   let base = r1(o + 21u);
   let top = base + h;
   let hs = b1[o + 23u];
+  // (M4b: cut off from the town's reach — lotReach — a red line round its roof)
+  if (b4[i] == 1u) {
+    let at2 = room(24u);
+    if (at2 != NONE) {
+      for (var k = 0u; k < 4u; k++) {
+        let a = q[k];
+        let b = q[(k + 1u) % 4u];
+        var n = normalize(vec2<f32>(b.y - a.y, a.x - b.x)) * 0.5;
+        // (wound to face up, whichever way the footprint turns)
+        if (cross2(b - a, n) < 0.0) { n = -n; }
+        let z = top + 0.06;
+        tri(at2 + k * 6u, vec3<f32>(a - n, z), vec3<f32>(b - n, z), vec3<f32>(b + n, z), C_CUTOFF);
+        tri(at2 + k * 6u + 3u, vec3<f32>(a - n, z), vec3<f32>(b + n, z), vec3<f32>(a + n, z), C_CUTOFF);
+      }
+    }
+  }
   let at = room(30u);
   if (at == NONE) { return; }
   let roof = roofColour(u32(hsh(hs * 7u + 3u) * 5.999));
@@ -2709,6 +2750,7 @@ fn artMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   let sv = vec2<f32>(-d.y, d.x) * hw;
   let a2 = a - d * 0.05;
   let b2 = b + d * 0.05;
+  markRoad(a, b, hw, za, zb, true);
   tri(at, vec3<f32>(a2 - sv, za), vec3<f32>(b2 - sv, zb), vec3<f32>(b2 + sv, zb), C_DECK);
   tri(at + 3u, vec3<f32>(a2 - sv, za), vec3<f32>(b2 + sv, zb), vec3<f32>(a2 + sv, za), C_DECK);
   deckSide(at + 6u, a2 - sv, b2 - sv, za, zb);
@@ -2861,4 +2903,150 @@ fn townBridge(@builtin(local_invocation_index) li: u32) {
     set5(o + AP + 2u * j + 1u, v.y);
   }
   w5[2] = 1u;
+}
+
+// ==== M4b: the town's claims — its claim grid, GPU-owned (sim/static-claims.ts gpuGrid; colapply.wgsl claimGrid) ===
+// CG, dense over the grid, colapply's claimGrid layout: a column (x, y as i32 in the grid, its span's index — its own —
+// and its count, 0 or 1), then its span (z0, z1 world z, the fallback material, the owner: its lot record + 1, 0 the
+// town's roads and decks). A building is its footprint's columns from its base to its height × its progress; a deck a
+// slab DECK_T deep under its top; a road a quarter cell of paving on the ground (claimed where free: on it). Made at
+// every mesh run, read where it lies on the GPU (nothing comes back): claimed as the land arrives, kept by the orphan
+// pass, checked after an edit (colapply gridDamage: the damaged records' ids, a few words back). Decks aren't claimed
+// (claimRoads): the reach walks them as plan solid (deckSpans).
+const PAVE_T: f32 = 0.25;
+/** a column with no span the town keeps bare of plants all the same (its owner word, count 0): a building's or a
+ *  plaza's parcel round its footprint (bare.wgsl) */
+const BARE_ONLY: u32 = 0x80000000u;
+const M_RUBBLE: u32 = 4u;
+const M_WOOD: u32 = 10u;
+/** one thread a grid column: its road or deck span from ROADS, or none (b1 ROADS, r3 the heights; w7 CG) */
+@compute @workgroup_size(8, 8)
+fn claimRoads(@builtin(global_invocation_id) g: vec3<u32>) {
+  let x = i32(g.x); let y = i32(g.y);
+  if (x >= W() || y >= H()) { return; }
+  let i = ix(x, y);
+  let N = u32(W() * H());
+  w7[i * 4u] = bitcast<u32>(x);
+  w7[i * 4u + 1u] = bitcast<u32>(y);
+  w7[i * 4u + 2u] = i;
+  let m = b1[i];
+  let so = N * 4u + i * 4u;
+  w7[so + 3u] = 0u;
+  // (a deck isn't claimed in the world's columns: a column's top is its water's floor — surface.wgsl, water_flux.wgsl
+  // — so a deck there would lift the river onto it. The reach walks it as the plan's solid instead: deckSpans)
+  if (m == 0u || (m & DECK_BIT) != 0u) { w7[i * 4u + 3u] = 0u; return; }
+  w7[i * 4u + 3u] = 1u;
+  {
+    let z = r3(i);
+    set7(so, z);
+    set7(so + 1u, z + PAVE_T);
+    w7[so + 2u] = M_RUBBLE;
+  }
+  w7[so + 3u] = 0u;
+}
+/** one thread a lot record: a building's (or a big landmark's) footprint columns claimed base to height × progress,
+ *  over any road there (b1 the records, r2 the progress, b4 the counts — CNT; w7 CG) */
+@compute @workgroup_size(64)
+fn claimLots(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  var r = i;
+  if (i >= u.m.x) {
+    // (the landmark sites' records after the lots')
+    r = REC_LM + (i - u.m.x);
+    if (r >= REC_LM + LM_ROOM) { return; }
+  } else if (i >= min(b4[0], u.m.x)) { return; }
+  let o = r * RECW;
+  let kind = b1[o + 17u];
+  let h = r1(o + 20u) * clamp(r2(r), 0.0, 1.0);
+  let built = (kind == REC_BUILDING || kind == REC_LANDMARK) && h >= 0.05;
+  if (!built && kind != REC_PLAZA) { return; }
+  var q: array<vec2<f32>, 4>;
+  var pq: array<vec2<f32>, 4>;
+  var lo = vec2<f32>(1e9);
+  var hi = vec2<f32>(-1e9);
+  for (var k = 0u; k < 4u; k++) {
+    q[k] = vec2<f32>(r1(o + 8u + k * 2u), r1(o + 9u + k * 2u));
+    pq[k] = vec2<f32>(r1(o + k * 2u), r1(o + 1u + k * 2u));
+    lo = min(lo, pq[k]);
+    hi = max(hi, pq[k]);
+  }
+  let base = r1(o + 21u);
+  let N = u32(W() * H());
+  let y0 = max(i32(floor(lo.y / ROW_H)) - 1, 0);
+  let y1 = min(i32(ceil(hi.y / ROW_H)) + 1, H() - 1);
+  let x0 = max(i32(floor(lo.x)) - 1, 0);
+  let x1 = min(i32(ceil(hi.x)) + 1, W() - 1);
+  for (var y = y0; y <= y1; y++) {
+    for (var x = x0; x <= x1; x++) {
+      let p = cpos(x, y);
+      var inside = true;
+      var inParcel = true;
+      for (var k = 0u; k < 4u; k++) {
+        if (cross2(q[(k + 1u) % 4u] - q[k], p - q[k]) < 0.0) { inside = false; }
+        if (cross2(pq[(k + 1u) % 4u] - pq[k], p - pq[k]) < 0.0) { inParcel = false; }
+      }
+      let c = ix(x, y);
+      let so = N * 4u + c * 4u;
+      // (the parcel round it bare of plants, its spans the roads' where they lie)
+      if (!(inside && built)) {
+        if (inParcel && w7[c * 4u + 3u] == 0u) { w7[so + 3u] = BARE_ONLY; }
+        continue;
+      }
+      w7[c * 4u + 3u] = 1u;
+      set7(so, base);
+      set7(so + 1u, base + h);
+      w7[so + 2u] = M_RUBBLE;
+      w7[so + 3u] = r + 1u;
+    }
+  }
+}
+/** one thread a lot record: cut off from the town's reach — the column across its frontage (its street) a surface the
+ *  reach didn't join (fortreach.wgsl reachMark: 2) — into REACH (w5). The reach's box is the window: the grid's column
+ *  (x, y) at window column (x + o.x, y + o.y) (i32 bits), the window n.z × n.w (b1 the records, b2 the counts, b3 the
+ *  reach's marks) */
+@compute @workgroup_size(64)
+fn lotReach(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= u.m.x) { return; }
+  w5[i] = 0u;
+  if (i >= min(b2[0], u.m.x)) { return; }
+  let o = i * RECW;
+  if (b1[o + 17u] != REC_BUILDING) { return; }
+  let f = b1[o + 16u];
+  if (f == 255u) { return; }
+  let a = vec2<f32>(r1(o + f * 2u), r1(o + f * 2u + 1u));
+  let k = (f + 1u) % 4u;
+  let b = vec2<f32>(r1(o + k * 2u), r1(o + k * 2u + 1u));
+  // (its street: six points across its frontage — a quarter, half and three quarters along, one and two units out
+  // (counter-clockwise: out is right of a → b). Joined if any is; cut off if none is and one is ground the reach saw —
+  // a point on a neighbour's roof, or past the window, says nothing)
+  let out = normalize(vec2<f32>(b.y - a.y, a.x - b.x));
+  var seen = false;
+  for (var j = 0u; j < 6u; j++) {
+    let p = mix(a, b, 0.25 * f32(1u + j % 3u)) + out * (1.0 + f32(j / 3u));
+    let c = cat(p) + vec2<i32>(bitcast<i32>(u.o.x), bitcast<i32>(u.o.y));
+    if (c.x < 0 || c.y < 0 || u32(c.x) >= u.n.z || u32(c.y) >= u.n.w) { continue; }
+    let m = b3[u32(c.y) * u.n.z + u32(c.x)];
+    if (m == 1u) { return; }
+    if (m == 2u) { seen = true; }
+  }
+  if (seen) { w5[i] = 1u; }
+}
+
+/** one thread a grid column (M4b): a deck's column as the reach's plan solid (fortreach.wgsl planSpans: two words a
+ *  window column, z0 | z1 << 16 in eighths, window z) — the grid's column (x, y) at window column (x + o.x, y + o.y),
+ *  window z its world z + m.x (f32 bits), the window n.z × n.w (b1 ROADS; w5 the reach's plan spans) */
+@compute @workgroup_size(8, 8)
+fn deckSpans(@builtin(global_invocation_id) g: vec3<u32>) {
+  let x = i32(g.x); let y = i32(g.y);
+  if (x >= W() || y >= H()) { return; }
+  let m = b1[ix(x, y)];
+  if ((m & DECK_BIT) == 0u) { return; }
+  let wx = x + bitcast<i32>(u.o.x);
+  let wy = y + bitcast<i32>(u.o.y);
+  if (wx < 0 || wy < 0 || u32(wx) >= u.n.z || u32(wy) >= u.n.w) { return; }
+  let z = f32(m & ~DECK_BIT) / 256.0 + bitcast<f32>(u.m.x);
+  let z0 = u32(clamp((z - DECK_T) * 8.0, 0.0, 32767.0));
+  let z1 = u32(clamp(z * 8.0, 0.0, 32767.0));
+  w5[(u32(wy) * u.n.z + u32(wx)) * 2u] = z0 | (z1 << 16u);
 }

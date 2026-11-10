@@ -8,7 +8,12 @@
 import type { Settlement } from '../api/contracts/settlement';
 import type { CityLots } from '../api/contracts/citygen';
 import { ROW_H } from '../world/lattice';
-import { CityGen, NAP, NART, POP_PURPOSE, type StreetParams, type StreetTimes } from './gpu';
+import { CityGen, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, type StreetParams, type StreetTimes } from './gpu';
+import type { StaticClaims, StaticGrid, GridPlace } from '../sim/static-claims';
+import { cellAt } from '../world/lattice';
+import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
+import commonWgsl from '../shaders/common.wgsl?raw';
+import bareWgsl from './bare.wgsl?raw';
 import { cityParams, scaled } from './params';
 
 /** a town's radius (cells) by its size — a town the lab's Muru the user approved (radius 120, 400+ lots) */
@@ -22,6 +27,8 @@ const BOX = 4 / 3;
 /** the core (× the radius) where the atlas's own road and plaza stamps are cleared (Settlements.byFields): the arterials
  *  are drawn at least this far, so they meet the stamped roads past it (the supercells' limit is 0.9 radii ± 35%) */
 const CORE = 0.5;
+/** (M4b) the field towns' claims' owner (sim/external.ts OwnerId; the old towns' grids are 256 and up) */
+const OWNER_FIELD_TOWN = 1 << 20;
 /** the atlas's raw ground's tile (region-land.ts rawGroundGpu) */
 const TILE = 64;
 
@@ -63,6 +70,11 @@ export function fieldTownBox(site: Pick<FieldTownSite, 'at' | 'size'>): FieldTow
 /** what the town needs of the game: the device, the world's buffers, the renderer, and where the window is */
 export interface FieldTownIO {
   device: GPUDevice;
+  /** (M4b) the static claims (the town's claims GPU-owned there), the world's buffers the bare pass writes (the plants)
+   *  and a reach over the window (build/reachgpu.ts FortressReachGpu: markFrom, marks) */
+  statics(): StaticClaims | null;
+  plants: { globals: GPUBuffer; veg: GPUBuffer; vegNext: GPUBuffer };
+  reach(): { markFrom(stores: [number, number]): Promise<number>; marks: GPUBuffer; planSpans: GPUBuffer; w: number; h: number };
   /** the atlas's raw ground over a box into a buffer (Atlas.rawGroundGpu); the sea's level (world z) */
   rawGround(x0: number, y0: number, w: number, h: number, out: GPUBuffer): Promise<void>;
   sea: number;
@@ -89,6 +101,14 @@ export class FieldTown {
   readonly params: StreetParams;
   private xform: GPUBuffer;
   private raw: GPUBuffer;
+  /** (M4b) its claims (GPU-owned), the bare pass, the reach's last rounds, the records an edit damaged */
+  private grid: StaticGrid | null = null;
+  private bare: ComputeKernel;
+  private bareU: GPUBuffer;
+  reachRounds = 0;
+  readonly damaged = new Set<number>();
+  /** a road point at the core's distance (grid world): where the reach starts — on the town's road, past its centre */
+  private seed: [number, number];
 
   constructor(
     private io: FieldTownIO,
@@ -129,10 +149,92 @@ export class FieldTown {
     io.addMesh(this.gen.verts, this.gen.args, this.xform);
     // (the town's own inputs over the generator's defaults: its radius and seed)
     this.params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0, roadTone: TONE[site.size] }));
+    this.bare = makeCompute(io.device, 'citygen bare', [commonWgsl, bareWgsl], { 0: 'uniform', 3: 'read', 4: 'rw', 5: 'rw', 6: 'uniform' });
+    this.bareU = io.device.createBuffer({ label: `citygen ${site.id} bare`, size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    // (the reach's start: the first road's point at the core's distance — on the road into town, not in the river)
+    const road = site.roads.map((l) => l.map(local)).find((l) => l.length > 1) ?? [centre];
+    this.seed = road.reduce((b, p) => (Math.abs(Math.hypot(p[0] - centre[0], p[1] - centre[1]) - box.core) < Math.abs(Math.hypot(b[0] - centre[0], b[1] - centre[1]) - box.core) ? p : b), road[0]);
     this.made = io
       .rawGround(box.x0, box.y0, box.w, box.h, this.raw)
       .then(() => this.gen.run(this.params, 'field'))
-      .then((t) => (this.times = t));
+      .then((t) => {
+        this.times = t;
+        this.claim();
+        return t;
+      });
+  }
+
+  /** (M4b) where the grid lies in the window now (columns; z: world z to window z) */
+  gridPlace(): GridPlace {
+    const [ox, oy] = this.io.origin();
+    const { cols, rows } = this.io.wrap;
+    return { dx: near(this.box.x0 - ox, cols), dy: near(this.box.y0 - oy, rows), dz: -this.io.oz() };
+  }
+
+  /**
+   * (M4b) Its claims GPU-owned in the static claims: its claim grid (made with the town, on the GPU) claimed over the
+   * window's written land now and as land arrives; the plants cleared under them as they're claimed; the damaged lots
+   * told after an edit. Then its reach.
+   */
+  private claim(): void {
+    const st = this.io.statics();
+    if (!st) throw new Error('citygen: no static claims to own the town\'s columns (the level has no integrity registry)');
+    this.grid = st.gpuGrid(`citygen ${this.site.id}`, OWNER_FIELD_TOWN, () => this.gridPlace(), {
+      buf: this.gen.claimGrid,
+      w: this.box.w,
+      h: this.box.h,
+      maxKey: REC_LM + LM_ROOM + 1,
+      claimed: (rects, p) => this.bareOver(rects, p),
+      damaged: (keys) => {
+        for (const k of keys) if (k > 0) this.damaged.add(k - 1);
+        console.log(`[citygen] ${this.site.name}: an edit damaged ${keys.filter((k) => k > 0).length} building(s)${keys.includes(0) ? ' and its roads' : ''} — records ${keys.filter((k) => k > 0).map((k) => k - 1).join(', ')}`);
+      },
+    });
+    void this.checkReach();
+  }
+
+  /** (M4b) the plants under the town's claims cleared in these window rectangles (bare.wgsl) */
+  private bareOver(rects: [number, number, number, number][], p: GridPlace): void {
+    const d = this.io.device;
+    const P = this.io.plants;
+    for (const [x0, y0, x1, y1] of rects) {
+      if (x1 <= x0 || y1 <= y0) continue;
+      const a = new ArrayBuffer(32);
+      new Int32Array(a).set([p.dx, p.dy, this.box.w, this.box.h]);
+      new Uint32Array(a).set([Math.max(0, x0), Math.max(0, y0), Math.max(0, x1), Math.max(0, y1)], 4);
+      // (the uniform written, then its pass submitted: a rectangle a submit)
+      d.queue.writeBuffer(this.bareU, 0, a);
+      const enc = d.createCommandEncoder({ label: 'citygen bare' });
+      const cp = enc.beginComputePass({ label: 'citygen bare' });
+      cp.setPipeline(this.bare.pipeline);
+      cp.setBindGroup(0, makeBindGroup(d, 'citygen bare', this.bare.layout, { 0: P.globals, 3: this.gen.claimGrid, 4: P.veg, 5: P.vegNext, 6: this.bareU }));
+      cp.dispatchWorkgroups(Math.ceil((x1 - x0) / 8), Math.ceil((y1 - y0) / 8));
+      cp.end();
+      d.queue.submit([enc.finish()]);
+    }
+  }
+
+  private reachBusy = false;
+  /**
+   * (M4b) The town's reach over the window (FortressReachGpu: connected components of the walkable surfaces, the town's
+   * claims in them) from its road; the buildings it doesn't join outlined red (CityGen.markReach). Nothing read back but
+   * the solve's flag a round.
+   */
+  async checkReach(): Promise<void> {
+    if (this.reachBusy) return;
+    this.reachBusy = true;
+    try {
+      const r = this.io.reach();
+      const p = this.gridPlace();
+      const [cx, cy] = cellAt(this.seed[0] + p.dx, this.seed[1] + p.dy * ROW_H);
+      if (cx < 0 || cy < 0 || cx >= r.w || cy >= r.h) return;
+      // (the decks as the reach's plan solid: walked, though not in the world's columns)
+      this.gen.deckSpans(r.planSpans, p.dx, p.dy, p.dz, r.w, r.h);
+      this.reachRounds = await r.markFrom([cx, cy]);
+      await this.gen.markReach(r.marks, p.dx, p.dy, r.w, r.h);
+    } finally {
+      this.reachBusy = false;
+    }
   }
 
   /** the mesh placed in the window as it is now: the box's first column's window world position, z less the window's
@@ -152,6 +254,8 @@ export class FieldTown {
   }
 
   dispose(): void {
+    if (this.grid) this.io.statics()?.removeOwned(this.grid);
+    this.bareU.destroy();
     this.io.removeMesh(this.gen.args);
     this.gen.dispose();
     this.xform.destroy();

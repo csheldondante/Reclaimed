@@ -195,7 +195,7 @@ const KERNELS = [
   'fill', 'blur', 'feat', 'jfa', 'jdist', 'autoPts', 'phi', 'tensor', 'trace', 'mis', 'blocks',
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotRec', 'lotMesh', 'marks', 'meshCap',
   'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'gplace', 'sctab', 'bgrow', 'ctint',
-  'artSpan', 'artRast', 'artEnd', 'artMesh', 'popField', 'townBridge',
+  'artSpan', 'artRast', 'artEnd', 'artMesh', 'popField', 'townBridge', 'claimRoads', 'claimLots', 'lotReach', 'deckSpans',
 ] as const;
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
@@ -253,6 +253,11 @@ export class CityGen {
   readonly lotRecords: GPUBuffer;
   readonly lotCounts: GPUBuffer;
   readonly progress: GPUBuffer;
+  /** (M4b) the town's claim grid (colapply claimGrid's layout, dense: w × h columns, a span each) and its columns;
+   *  per lot record 1 when it's cut off from the town's reach (lotReach) */
+  readonly claimGrid: GPUBuffer;
+  readonly claimCols: number;
+  readonly reachCut: GPUBuffer;
   private pipes: Record<Kernel, GPUComputePipeline>;
   private layout: GPUBindGroupLayout;
   private heightK: ComputeKernel;
@@ -310,6 +315,11 @@ export class CityGen {
     this.lotRecords = buf('lot records', (LOT_ROOM + LM_ROOM) * RECW * 4);
     this.progress = buf('lot progress', (LOT_ROOM + LM_ROOM) * 4);
     this.lotCounts = buf('lot counts', 16);
+    // (M4b: the roads' columns as drawn, the claim grid, the records cut off)
+    this.B.ROADS = buf('road columns', N * 4);
+    this.claimCols = N;
+    this.claimGrid = buf('claim grid', N * 8 * 4);
+    this.reachCut = buf('reach cut', (LOT_ROOM + LM_ROOM) * 4);
     device.queue.writeBuffer(this.lotCounts, 0, new Uint32Array([0, 0, RECW, REC_LM]));
     // (the lots' count, the listed roads' and the gap blocks', then the roads: m3f)
     this.B.CNT = buf('counts and roads', (4 + ROAD_ROOM * 4) * 4);
@@ -413,6 +423,33 @@ export class CityGen {
       });
     });
     this.device.queue.writeBuffer(this.B.ART, 0, a);
+  }
+  /**
+   * (M4b) Which buildings the town's reach cuts off: the reach's marks over the window (FortressReachGpu.reachMark: a
+   * word a window column, 2 a surface it didn't join), the grid's first column at window column (gx, gy) — into
+   * reachCut, then the mesh again (a red line round each one's roof). Nothing read back.
+   */
+  markReach(marks: GPUBuffer, gx: number, gy: number, winW: number, winH: number): Promise<StreetTimes> {
+    this.reachJob = { marks, gx, gy, winW, winH };
+    return this.run(this.p, 'mesh');
+  }
+  private reachJob: { marks: GPUBuffer; gx: number; gy: number; winW: number; winH: number } | null = null;
+
+  /**
+   * (M4b) The town's decks as a reach's plan solid (FortressReachGpu.planSpans: two words a window column, cleared
+   * first): the grid's first column at window column (gx, gy), window z = world z + gz. One submit, nothing read.
+   */
+  deckSpans(spans: GPUBuffer, gx: number, gy: number, gz: number, winW: number, winH: number): void {
+    if (this.dead) return;
+    this.nPass = 0;
+    const enc = this.device.createCommandEncoder({ label: 'citygen deck spans' });
+    enc.clearBuffer(spans);
+    this.cp = enc.beginComputePass({ label: 'citygen deck spans' });
+    const gzBits = new Uint32Array(new Float32Array([gz]).buffer)[0];
+    this.k('deckSpans', { count: gzBits, k: winW, mode: winH, box: [gx >>> 0, gy >>> 0] }, { 1: this.B.ROADS, 5: spans }, Math.ceil(this.world.w / 8), Math.ceil(this.world.h / 8));
+    this.cp.end();
+    this.device.queue.writeBuffer(this.uni, 0, this.uniData, 0, this.nPass * SLOT);
+    this.device.queue.submit([enc.finish()]);
   }
   /** every slot handed back to the GPU's placing (the user's emptied) */
   resetPoints(): void {
@@ -736,23 +773,30 @@ export class CityGen {
     // the mesh: roads, lots and the points' markers
     enc.clearBuffer(this.args, 0, 4);
     this.cp = enc.beginComputePass(this.pass('mesh'));
-    this.k2('roadMajor', {}, { 1: B.LM, 2: B.SCT, 3: HH, 4: B.FD, 7: this.verts }, true);
+    // (M4b: the buildings cut off from the reach, when it's been asked: before the mesh that outlines them)
+    const rj = this.reachJob;
+    if (rj) this.k('lotReach', { count: LOT_ROOM, k: rj.winW, mode: rj.winH, box: [rj.gx >>> 0, rj.gy >>> 0] }, { 1: this.lotRecords, 2: B.CNT, 3: rj.marks, 5: this.reachCut }, Math.ceil(LOT_ROOM / 64));
+    this.fill(B.ROADS, w * h, 0);
+    this.k2('roadMajor', {}, { 1: B.LM, 2: B.SCT, 3: HH, 4: B.FD, 6: B.ROADS, 7: this.verts }, true);
     // (one thread a street's piece: eight a vector street, TP a trace)
-    if (vector) this.k('vroad', {}, { 1: B.SD, 2: B.AL1, 3: HH, 4: B.SCT, 7: this.verts }, Math.ceil((this.nS() * 8) / 64), 1, true);
-    else this.k('roadMinor', {}, { 1: B.TR, 2: B.AL0, 3: HH, 7: this.verts }, this.seeds[0] * this.seeds[1], 1, true);
-    this.k('groad', {}, { 1: B.CNT, 2: B.SCT, 3: HH, 4: B.FD, 7: this.verts }, (ROAD_ROOM * 8) / 64, 1, true);
+    if (vector) this.k('vroad', {}, { 1: B.SD, 2: B.AL1, 3: HH, 4: B.SCT, 6: B.ROADS, 7: this.verts }, Math.ceil((this.nS() * 8) / 64), 1, true);
+    else this.k('roadMinor', {}, { 1: B.TR, 2: B.AL0, 3: HH, 6: B.ROADS, 7: this.verts }, this.seeds[0] * this.seeds[1], 1, true);
+    this.k('groad', {}, { 1: B.CNT, 2: B.SCT, 3: HH, 4: B.FD, 6: B.ROADS, 7: this.verts }, (ROAD_ROOM * 8) / 64, 1, true);
     if (this.cityOn() && p.tint === 1) this.k2('ctint', {}, { 2: B.SCT, 3: HH, 4: B.FD, 7: this.verts }, true);
     // (M4a: the lots' records — the contract — then the mesh from them; a landmark site's record too, its mesh lmMesh's)
     this.k('lotRec', { count: LOT_ROOM }, { 1: B.LOTS, 2: B.SCT, 3: HH, 4: B.FD, 5: B.LM, 6: B.CNT, 7: this.lotRecords }, Math.ceil(LOT_ROOM / 64));
     this.k('lotRec', { mode: 1 }, { 1: B.LOTS, 2: B.SCT, 3: HH, 4: B.FD, 5: B.LM, 6: B.CNT, 7: this.lotRecords }, 1);
-    this.k('lotMesh', { count: LOT_ROOM }, { 1: this.lotRecords, 2: this.progress, 3: HH, 6: B.CNT, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
-    this.k('artMesh', {}, { 1: B.ART, 3: HH, 7: this.verts }, (NART * NAP) / 64, 1, true);
-    if (vector && p.lmMult > 0) this.k('lmMesh', {}, { 1: B.LM, 3: HH, 7: this.verts }, (64 * 48) / 64, 1, true);
+    this.k('lotMesh', { count: LOT_ROOM }, { 1: this.lotRecords, 2: this.progress, 3: HH, 4: this.reachCut, 6: B.CNT, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
+    this.k('artMesh', {}, { 1: B.ART, 3: HH, 6: B.ROADS, 7: this.verts }, (NART * NAP) / 64, 1, true);
+    if (vector && p.lmMult > 0) this.k('lmMesh', {}, { 1: B.LM, 3: HH, 6: B.ROADS, 7: this.verts }, (64 * 48) / 64, 1, true);
     if (PHI_MODE[p.majors] !== 0 && p.marks) this.k('marks', { mode: this.sel + 1 }, { 1: B.PTS, 3: HH, 7: this.verts }, 1, 1, true);
     // (m3c: the shaped ground's skin, its bands tinted; the cart road)
     if (p.shape > 0) this.k2('ground', {}, { 1: B.H, 3: HH, 4: B.FD, 7: this.verts }, true);
-    if (p.shape > 1) this.k2('roadShape', {}, { 1: B.HS, 2: B.PTS, 3: HH, 4: B.FD, 7: this.verts }, true);
+    if (p.shape > 1) this.k2('roadShape', {}, { 1: B.HS, 2: B.PTS, 3: HH, 4: B.FD, 6: B.ROADS, 7: this.verts }, true);
     this.k('meshCap', {}, {}, 1, 1, true);
+    // (M4b: the claim grid — the roads' and decks' columns, then the buildings' over them)
+    this.k2('claimRoads', {}, { 1: B.ROADS, 3: B.H, 7: this.claimGrid });
+    this.k('claimLots', { count: LOT_ROOM }, { 1: this.lotRecords, 2: this.progress, 4: B.CNT, 7: this.claimGrid }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
     this.cp.end();
     device.queue.writeBuffer(this.uni, 0, this.uniData, 0, this.nPass * SLOT);
     // (M4a: the counts for the contract — the lots' (CNT word 0) and the sites' (LM word 0))
