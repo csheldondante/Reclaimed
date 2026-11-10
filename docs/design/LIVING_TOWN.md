@@ -302,3 +302,8 @@ difference the desktop can see. The phone bench is the measure (not run).
   regenerated (no edit log for streamed land).
 - Passages aren't drawn as roads yet (only walked; the overlay shows them).
 - A falling tree is an animation (DA-E7). Builders use no stone.
+- (routes2) The wall-walk passes through the corner towers (RT2-8); a run shorter than its two stairs gets one stair
+  (RT2-7, citygen's fixed stair length). The wall's pieces rise on the GPU by the CPU's town clock in the parameters
+  (the same clock citygen draws them by). Unreached pieces drawn as lava voxels (the debug overlay's cut-off colour).
+- (routes2) A rebuild switches the points pool so every route is traced again — a burst of traces, and riders two
+  rebuilds old re-ask (LT-F9's reference counts would keep the live ones).

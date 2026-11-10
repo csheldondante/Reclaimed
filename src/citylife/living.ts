@@ -118,7 +118,7 @@ const SPECS: Record<K, BindSpec> = {
   sitesClear: { 0: 'uniform', 10: 'rw' },
   figuresClear: { 0: 'uniform', 16: 'rw' },
   figures: { 0: 'uniform', 10: 'rw', 12: 'rw', 13: 'rw', 16: 'rw' },
-  overlay: { 0: 'uniform', 1: 'read', 2: 'read', 8: 'rw', 9: 'rw', 13: 'rw', 16: 'rw' },
+  overlay: { 0: 'uniform', 1: 'read', 2: 'read', 8: 'rw', 9: 'rw', 11: 'rw', 13: 'rw', 16: 'rw' },
   // (season life: the sea field and the ships)
   seaSeed: { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 7: 'read', 9: 'rw', 15: 'read' },
   seaRelax: { 0: 'uniform', 9: 'rw', 15: 'read' },
@@ -362,7 +362,8 @@ export class LivingTown {
       run(cp, 'figuresClear', 1);
       // (and past the riders, a thread a wall segment: its red marks where the town doesn't reach its walk)
       run(cp, 'figures', Math.ceil((this.riders + 72) / 64));
-      if (this.debugGraph) run(cp, 'overlay', Math.ceil((this.input.w * this.input.h) / 64));
+      // (and the wall's table's routes with their widths: a thread a route past the columns)
+      if (this.debugGraph) run(cp, 'overlay', Math.ceil((this.input.w * this.input.h + WW_ROOM + GATE_SLOTS) / 64));
     });
     this.frameNo++;
   }

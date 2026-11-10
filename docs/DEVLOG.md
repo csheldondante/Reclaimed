@@ -21728,3 +21728,13 @@ expected fail. No shot (nothing drawn changed).
 - Test (Dawn): the wall's columns drawn into the raster after the first routes, the graph made again → the pool
   switched, the riders' routes at the east gate 9.0 m wide before the wall and 7.2 m after; the gate's march 5.0 m at
   the gate against 8.7 m in the street outside; the stairs 1.1 m.
+
+## 2026-11-10 — RT2-6: the wall's routes drawn (trackA-routes2)
+
+- `?livingdebug=1` draws the wall table's routes over the town (the overlay kernel's threads past the columns, a
+  thread a route): a block on each point (yellow flowers on a wall-walk, brick on a march) and a sand block either
+  side at its free width, so a route's width reads in the world.
+- Shots (Muru, walls for three seasons, play zoom 7, 60°, 412 × 915, `&seasoncam=0`): `wallwalk-overlay.png` (a run's
+  walk up its stair and along the top), `gate-widths.png` (the east gate's march: 5 m at the gate — its edge blocks
+  close in by the towers — 10–12 m in the street out), `unreached-red.png` (the red marks, with the reach bits
+  cleared by the shot's script to show them: in play every Muru piece is reached).

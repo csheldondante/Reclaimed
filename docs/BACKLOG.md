@@ -2125,7 +2125,7 @@ The user: "The CPU paths are supposed to be GPU resident … we should not need 
 | RT2-3 | The order-facing readbacks removed: `askRoute` polling, `marchRoutes`, `unreachablePosts`; unreached wall pieces drawn red from the GPU's reach bits; the ring read back only at a save point | S | done (RT2-3 commit) |
 | RT2-4 | The settled graph with no CPU signal: worldops edits wake it through a GPU word; the ~45 empty indirect dispatches reduced or measured on the phone (toggle bench) | M | done (RT2-4 commit: 53 → 31 indirect dispatches, `?livingbench=1`; the phone run is the user's) |
 | RT2-5 | Width at gates: the width pass sees the wall (a gate narrower than its street, stairs narrower still), in the GPU test | S | done (RT2-5 commit: wall columns blocked in the walk mask; a rebuild retraces every cached route) |
-| RT2-6 | Shots: the wall-walk overlay (`?livingdebug`), widths along a route | S | open |
+| RT2-6 | Shots: the wall-walk overlay (`?livingdebug`), widths along a route | S | done (RT2-6 commit: scratchpad routes2/wallwalk-overlay.png, gate-widths.png, unreached-red.png) |
 | RT2-7 | citygen's stairs are a fixed 9.2 m from a gap's corner: a run of wall shorter than two of them gets overlapping stairs that overhang the gap. Its wall-walk route takes the first stair only (a dead end on the top). Shorten the stairs to fit (fewer, steeper steps) in streets.wgsl | S | open |
 | RT2-8 | The wall-walk passes through the corner towers (8 m, at every sixth corner and beside the gates): no doorway in them yet | S | open |
 | RT2-9 | The wake word: player edits through edit.wgsl (worldops' take) don't set it — only the works' dig does (edit.wgsl doesn't bind the living town's state). A world-visible edit epoch both could bump | S | open |

@@ -1673,7 +1673,9 @@ fn figures(@builtin(global_invocation_id) g: vec3<u32>) {
 @compute @workgroup_size(64)
 fn overlay(@builtin(global_invocation_id) g: vec3<u32>) {
   let i = g.x;
-  if (i >= N() || (u.m.z & F_DEBUG) == 0u) { return; }
+  if ((u.m.z & F_DEBUG) == 0u) { return; }
+  // (past the columns, a thread a route of the wall's table: its points, and its free width drawn either side)
+  if (i >= N()) { overlayRoute(i - N()); return; }
   let w = atomicLoad(&WALK[i]);
   let cls = w & 0xfu;
   if (cls == 0u) { return; }
@@ -1687,6 +1689,33 @@ fn overlay(@builtin(global_invocation_id) g: vec3<u32>) {
   else if (cls == W_DECK) { m = 20u; }
   else if (cls == W_PAD) { m = 15u; }
   vox(wp, m, 10u, 0.0);
+}
+
+/** (?livingdebug=1) route k of the wall's table (the wall-walks, then the gates' marches): a block on each point —
+ *  yellow flowers on a wall-walk, brick on a march — and a sand block either side at its free width (routeWidth),
+ *  across its way */
+fn overlayRoute(k: u32) {
+  var id = NONE;
+  if (k < WW_ROOM) { if (k < RB[RB_WW_COUNT]) { id = RB[RB[RB_WW_AT] + 2u * k]; } }
+  else if (k < WW_ROOM + GATE_SLOTS) { id = RB[RB[RB_GATE_AT] + 2u * (k - WW_ROOM)]; }
+  if (id == NONE) { return; }
+  let n = rCount(id);
+  let f = rFirst(id);
+  let off = vec3<f32>(f32(u.pl.x), f32(u.pl.y) * ROW_H, u.pz.x);
+  for (var j = 0u; j < n; j++) {
+    let p = pt(f + j);
+    let q = pt(f + min(j + 1u, n - 1u));
+    let o = pt(f + max(j, 1u) - 1u);
+    var d = q.xy - o.xy;
+    if (length(d) < 1e-3) { d = vec2<f32>(1.0, 0.0); }
+    let s = normalize(vec2<f32>(-d.y, d.x));
+    let w = bitcast<f32>(RB[RB[3u] + (f + j) * PT_WORDS + 4u]);
+    let at = vec3<f32>(p.xy, p.z + 0.35) + off;
+    if (at.x < 1.0 || at.y < 1.0 || at.x > f32(u.pl.z) - 1.0 || at.y > f32(u.pl.w) * ROW_H - 1.0) { continue; }
+    vox(at, select(11u, 15u, k < WW_ROOM), 22u, 0.0);
+    vox(at + vec3<f32>(s * 0.5 * w, 0.0), 3u, 14u, 0.0);
+    vox(at - vec3<f32>(s * 0.5 * w, 0.0), 3u, 14u, 0.0);
+  }
 }
 
 // ---- the passages drawn (LT-F8): dirt road in citygen's own mesh format and tone, made with the graph (phase 0) ----
