@@ -1,6 +1,6 @@
 // (street lab, milestone 1) The window's top ground height and a water mask, one thread a column, from the layers (the
 // chunk table: layers.wgsl colSlots) and the water depth (common.wgsl colIdx) — fieldmesh.wgsl colTopAt's top: the
-// highest interval's z1, any material. Out in window order (y · w + x), the street lab's own buffers.
+// highest ground interval's z1 (not a structure's or a plant's). Out in window order (y · w + x), the street lab's own buffers.
 // Appended to common.wgsl + layers.wgsl + materials.wgsl.
 @group(0) @binding(3) var<storage, read> layers: array<vec4<u32>>;
 @group(0) @binding(4) var<storage, read> water: array<f32>;
@@ -10,15 +10,22 @@
 /** water deeper than this (cells) is water to the streets */
 const WET_DEPTH: f32 = 0.1;
 
+/** materials that aren't ground: structures (concrete, asphalt, rust, wood, brick, steel, canvas, plaster, tile, an
+ *  external mesh's) and plants (leaves, logs) — world/materials.ts MAT */
+fn builtOrGrown(m: u32) -> bool {
+  return m == 5u || m == 6u || m == 7u || m == 9u || m == 10u || m == 11u || m == 20u || m == 21u || m == 29u || m == 31u || m == 32u || m == 39u;
+}
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let cs = colSlots(id.x, id.y);
+  // (the ground's top: the highest interval of a ground material — what's built or grows on it left out)
   var t = 0.0;
   for (var i = 0u; i < cs.y; i++) {
     let v = layers[cs.x + i];
     if (ivEmpty(v)) { break; }
-    t = ivZ1(v);
+    if (!builtOrGrown(ivMat(v))) { t = ivZ1(v); }
   }
   let o = id.y * G.mapW + id.x;
   topOut[o] = t;

@@ -12,8 +12,9 @@ const OUT = path.join(ROOT, 'data', 'lab', 'town.rclt');
 // (street lab sites: node scripts/labtown.mjs site <name> <cx>,<cy> — a bare 320 x 320 window of atlas land round
 // cell (cx, cy), no towns, into data/lab/site-<name>.rclt: ?level=streetlab&site=<name>)
 if (process.argv[2] === 'site') {
-  const [, , , name, at] = process.argv;
-  if (!name || !/^\d+,\d+$/.test(at ?? '')) throw new Error('node scripts/labtown.mjs site <name> <cx>,<cy>');
+  // (an optional third argument: the town's centre in window world units — the window's middle by default)
+  const [, , , name, at, centre] = process.argv;
+  if (!name || !/^\d+,\d+$/.test(at ?? '')) throw new Error('node scripts/labtown.mjs site <name> <cx>,<cy> [<wx>,<wy>]');
   const out = path.join(ROOT, 'data', 'lab', `site-${name}.rclt`);
   await run({ name: 'labsite', kind: 'behaviour', size: '412x915', dpr: 1 }, async (R) => {
     const page = await R.page();
@@ -21,7 +22,8 @@ if (process.argv[2] === 'site') {
     await page.waitForFunction(() => window.__boot?.at['level-ready'] || document.querySelector('.fatal'), { timeout: 300000, polling: 250 });
     await R.fatal(page);
     await sleep(3000);
-    const b64 = await page.evaluate((n) => window.reclaimed.townFixture(n), name);
+    const c = centre ? centre.split(',').map(Number) : undefined;
+    const b64 = await page.evaluate((n, c) => window.reclaimed.townFixture(n, c), name, c);
     const bytes = Buffer.from(b64, 'base64');
     fs.writeFileSync(out, bytes);
     console.log(`wrote ${out}: ${(bytes.length / 1024).toFixed(0)} KB`);

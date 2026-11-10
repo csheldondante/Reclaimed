@@ -20689,3 +20689,31 @@ moves the standalone prototype's line techniques onto real terrain so they can b
 - GPU ms per stage come from timestamp queries: one 64-byte read after each run, never one per frame. Measured in
   headless D3D11 while the game renders, the result is noisy. L1/L2/radial take 0.6–2.4 ms in total. L4 takes
   4–13 ms (one outlier at 56 ms), almost all of it in its 8 serial trace rounds.
+
+## 2026-11-10 — trackA-streetlab milestone 2: option B, streets → blocks → lots on the GPU
+
+The user picked option B and liked the radial lines. Every tier is a GPU pass over the window's columns
+(`streetlab/streets.wgsl`), and a slider reruns only the stage it touches.
+- **Large tier:** the major lines are level sets of up to three fields. These are the smoothed distance to water and
+  cliffs over the contour spacing, rings, and spokes past the first ring. The panel offers distance, radial, or
+  both. They are drawn as one ribbon piece per column, placed on the exact level set by Newton projection.
+- **Medium tier:** a tensor field takes its minor axis from the blended gradients of the distance and ring fields.
+  One trace runs per seed (a lattice at half the block length), both ways in one dispatch. A trace ends where it
+  crosses a major line (the crossing found by bisection on that line's field), at the water or a cliff (a shore end),
+  or at the town's edge (open, so dropped). Conflicts between traces resolve by seed id over 4 rounds of a greedy
+  independent set.
+- **Blocks:** a kept trace and the nearest kept trace ahead with the same two end lines bound a quad of four exact
+  crossings. A strip's ends are filled by walking its two lines (along the level set) to the line that cuts them,
+  usually a spoke.
+- **Lots:** each block is split across its longest edge at its middle (±8 % jitter) until under the largest lot
+  area. A split that would leave a lot under the merge area is not made. Lots touch street fronts from both sides,
+  and lots with no street front become parks.
+- **Mesh:** lots are inset by their streets' half widths plus the setback and extruded (3 cells a storey, ±30 %).
+  Cross streets are ribbons, one thread per segment. Drawing goes through Renderer.addMesh. The vertices are
+  written plainly rather than as atomics; that change took the mesh stage from about 2 ms to 0.16 ms.
+- **Measurements:** headless D3D11, median of 5 runs, Muru, "both". Full rerun 4.1 ms; from traces 3.3 ms; lots
+  0.22 ms; mesh only 0.16 ms. The trace step went from 0.5 to 1 world unit (crossings stay exact) to cut the serial
+  walk's cost.
+- **Site changes:** sites are recaptured without woods. Muru is now a bare window at the same origin
+  (`site-muru.rclt`, towns=0), with Muru's centre kept. Heights skip structure and plant materials.
+- **Camera:** it fits the town's disc to the view at each pitch (2R across, 2R·sin(pitch) down).

@@ -151,7 +151,8 @@ export const LAB_RECIPES: Record<string, LabRecipe> = {
 /** where a fixture's file is served from (the build copies data/lab/*.rclt: lab/fixtures.ts) */
 const FIXTURE_URLS: Record<string, () => Promise<string>> = {
   town: async () => (await import('../../data/lab/town.rclt?url')).default,
-  // (the street lab's sites: scripts/labtown.mjs site <name> <cx>,<cy>; Muru is `town`)
+  // (the street lab's sites: scripts/labtown.mjs site <name> <cx>,<cy> [centre] — bare land, no towns or woods)
+  muru: async () => (await import('../../data/lab/site-muru.rclt?url')).default,
   river: async () => (await import('../../data/lab/site-river.rclt?url')).default,
   mountain: async () => (await import('../../data/lab/site-mountain.rclt?url')).default,
   mesa: async () => (await import('../../data/lab/site-mesa.rclt?url')).default,

@@ -146,6 +146,21 @@ export function mountStreetLab(scene: LevelScene): void {
   if (!fx) throw new Error('street lab: no site loaded');
   const { w, h } = core.dims;
   const at = fx.town.at;
+  // (the camera over the town's middle at its ground's mean height — the loaded fixture's own authoring copy of the
+  // surface, read once for the framing: a canyon's floor at the middle would drop the view)
+  const surf = scene.opts.made!.map.surface;
+  const [cx, cy] = cellAt(at[0], at[1]);
+  let zs = 0;
+  let zn = 0;
+  for (let y = Math.max(0, cy - 100); y < Math.min(h, cy + 100); y += 4)
+    for (let x = Math.max(0, cx - 100); x < Math.min(w, cx + 100); x += 4) {
+      const [px, py] = cellPos(x, y);
+      if (Math.hypot(px - at[0], py - at[1]) > 100) continue;
+      zs += surf[y * w + x];
+      zn++;
+    }
+  const z = zn ? zs / zn : surf[cy * w + cx];
+  const zoom = host.params.get('zoom');
   scene.streetLab = new StreetLabControl(
     host.gpu.device,
     host.ui,
@@ -153,18 +168,18 @@ export function mountStreetLab(scene: LevelScene): void {
     {
       addMesh: (v, a) => core.renderer.addMesh(v, a),
       removeMesh: (a) => core.renderer.removeMesh(a),
-      setPitch: (rad) => (core.camera.elevation = rad),
+      // (the town's disc fitted to the view: 2R across, 2R sin(pitch) down — ?zoom= a fixed zoom)
+      camera: (pitch, R, cut) => {
+        core.camera.elevation = pitch;
+        core.camera.cut.slice = cut > 0 ? z + cut : null;
+        core.camera.target = [at[0], at[1], z];
+        const fit = Math.min(innerWidth / (2.1 * R), innerHeight / (2.1 * R * Math.sin(pitch) + 40));
+        core.camera.zoom = zoom !== null ? Number(zoom) : fit;
+      },
     },
     host.params,
   );
   (globalThis as { streetlab?: StreetLabControl }).streetlab = scene.streetLab;
-  // (the camera over the town's middle, the town in sight: its z the loaded land's at the middle — the fixture's own
-  // authoring copy, read once here; ?zoom= closer or farther)
-  const [cx, cy] = cellAt(at[0], at[1]);
-  const z = scene.opts.made!.map.surface[Math.min(h - 1, Math.max(0, cy)) * w + Math.min(w - 1, Math.max(0, cx))];
-  core.camera.target = [at[0], at[1], z];
-  const R = scene.streetLab.registry.get('streets.townR');
-  core.camera.zoom = Number(host.params.get('zoom') ?? Math.min(innerWidth, innerHeight) / (2.2 * R));
 }
 
 /** (round 108, AR8) what a station's buttons do: the world's own events and APIs */

@@ -266,12 +266,12 @@ export const LEVELS: LevelDef[] = [
   },
 ];
 
-/** the street lab's site → its fixture (Muru is the lab's `town`) */
+/** the street lab's site → its fixture (data/lab/site-<name>.rclt; muru the start town's window, bare) */
 export function streetSite(site: string | null): string {
   const s = site ?? 'muru';
-  const names: Record<string, string> = { muru: 'town', river: 'river', mountain: 'mountain', mesa: 'mesa', coast: 'coast' };
-  if (!names[s]) throw new Error(`?site=${s}: no such site (${Object.keys(names).join(', ')})`);
-  return names[s];
+  const names = ['muru', 'river', 'mountain', 'mesa', 'coast'];
+  if (!names.includes(s)) throw new Error(`?site=${s}: no such site (${names.join(', ')})`);
+  return s;
 }
 
 /** The levels on the title screen. */

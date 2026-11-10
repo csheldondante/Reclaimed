@@ -8,7 +8,7 @@ import type { LevelScene } from '../level';
 import { urlFlags } from '../../flags';
 import { MAT } from '../../world/materials';
 
-export async function captureTownFixture(scene: LevelScene, siteName?: string): Promise<string> {
+export async function captureTownFixture(scene: LevelScene, siteName?: string, centre?: [number, number]): Promise<string> {
   const S = scene.stream;
   const st = scene.settlements;
   const id = st?.pinnedId;
@@ -23,7 +23,7 @@ export async function captureTownFixture(scene: LevelScene, siteName?: string): 
         link: `?${urlFlags()}`,
         capturedAt: new Date().toISOString(),
         origin: [S.origin[0], S.origin[1]],
-        town: { id: '', name: siteName, at: [(w + 0.5) / 2, (h * ROW_H) / 2], spots: [] },
+        town: { id: '', name: siteName, at: centre ?? [(w + 0.5) / 2, (h * ROW_H) / 2], spots: [] },
         seaZ: core.globals.seaZ ?? -1e9,
         riverWet: core.globals.riverWet ?? 1,
         zMaxWindow: zMax,
@@ -78,7 +78,8 @@ async function windowData(scene: LevelScene) {
     const cut = col.length - (SITE_KEEP - 1);
     return [{ z0: col[0].z0, z1: col[cut - 1].z1, mat: MAT.Stone, aux: 0 }, ...col.slice(cut)];
   });
-  return { cols, water: map.water, vegetation: map.vegetation, waterSource: map.waterSource, riverFlow: rf.data };
+  // (bare land: no woods — the street lab's layout reads without trees in the way)
+  return { cols, water: map.water, vegetation: new Float32Array(map.vegetation.length), waterSource: map.waterSource, riverFlow: rf.data };
 }
 
 function encodeBase64(bytes: Uint8Array): string {
