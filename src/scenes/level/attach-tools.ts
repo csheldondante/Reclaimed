@@ -21,7 +21,7 @@ import { MAT } from '../../world/materials';
 import { cellAt, cellPos, poiWorld, ROW_H } from '../../world/lattice';
 import { sendBuilders } from './town-tools';
 import { undo } from './sandbox-tools';
-import { mountLab, mountNoiseLab } from './labs';
+import { mountLab, mountNoiseLab, mountStreetLab } from './labs';
 import type { LevelScene } from '../level';
 
 /** the HUD, powers, life, and (sandbox) the physics, editor and integrity: the first part of attach */
@@ -177,4 +177,5 @@ export function attachTools(scene: LevelScene): void {
   // (round 108, AR5) the tuning panel and the bug report: open in the test beds (level.lab), anywhere with ?tunepanel=1
   if (scene.level.lab || host.params.get('tunepanel') === '1') mountLab(scene);
   if (scene.level.noiseLab) mountNoiseLab(scene);
+  if (scene.level.streetLab) mountStreetLab(scene);
 }

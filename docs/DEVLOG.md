@@ -20662,3 +20662,30 @@ Gates:
 - The unit tier: 844 passed, 3 expected fail.
 - The start town still reads 1.6 KB a sync (91–95 KB a sim second at 1x, 6.2 at 16x), with a second read only when
   more than 16 events came.
+
+## 2026-11-10 — trackA-streetlab milestone 1: street lines on real land, on the GPU
+
+`?skipmenu=1&level=streetlab&site=muru|river|mountain|mesa|coast` (`&tech=0..3`, `&pitch=deg`, `&zoom=`). A hidden
+level that loads a captured window of atlas land, using the behaviour lab's loader (`loadFixtureLand`). It has no
+fortress or town sim and only one warmup tick. Four new sites (`data/lab/site-*.rclt`) come from
+`node scripts/labtown.mjs site <name> <cx>,<cy>`, chosen from atlas crossings and sites: river near a 100-cell
+bridge, mountain on switchbacks, mesa at a cliffside site, coast at a port. Columns deeper than 10 intervals have
+their buried strata merged into one stone interval. Without that, a mountain chunk needs 18 slots, more than the
+MAX_K of 16, and fails to load.
+
+Why: the user approved a street-lab design in which everything derived from the world runs on the GPU. Milestone 1
+moves the standalone prototype's line techniques onto real terrain so they can be compared site by site.
+- `streetlab/height.wgsl`: one pass at load. It writes each column's top (colTopAt's: the last interval's z1) and a
+  water mask (water deeper than 0.1, or below the sea) from the world's layers, chunk table and water.
+- `streetlab/streets.wgsl`: the prototype's blur, feat, jfa, jdist, center and tensor/trace kernels on the hex
+  lattice, in window world units. They implement L1 height contours, L2 contours of the smoothed distance to water
+  and cliffs, L2 + radial rings and spokes, and L4 tensor streamlines (parallel rounds with occupancy atomics). Streets
+  are widened by class from one truncated JFA. A street is marked for stairs (orange) by its rise along itself, not
+  by the ground's slope across it, so a contour street never needs stairs. Cliffs and water are blocked to streets.
+- The display is temporary: a hexagon for each street column, written on the GPU and drawn through Renderer.addMesh
+  (vsSkin colour words, indirect count).
+- `Camera.elevation` replaces the `ELEVATION` constant. Its default is 30°, and only the street lab's pitch slider
+  sets it.
+- GPU ms per stage come from timestamp queries: one 64-byte read after each run, never one per frame. Measured in
+  headless D3D11 while the game renders, the result is noisy. L1/L2/radial take 0.6–2.4 ms in total. L4 takes
+  4–13 ms (one outlier at 56 ms), almost all of it in its 8 serial trace rounds.

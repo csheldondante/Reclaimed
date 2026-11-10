@@ -178,7 +178,7 @@ export function exposeTestApi(scene: LevelScene, api: ReturnType<typeof testApi>
     // (fortress slice 1) the fortress: plan (TownPlan), town, paint/erase/setGate, cellAt/centre/ringCells, tool
     fortress: scene.fortress,
     // (round 128m, townlab) the window round the start town as the lab's fixture (base64; scripts/labtown.mjs capture)
-    townFixture: () => captureTownFixture(scene),
+    townFixture: (site?: string) => captureTownFixture(scene, site),
     // (milestone 2) its builders once Build was pressed: stats (trips, built, starved), ids, book
     fortressCrowd: () => scene.fortressCrowd,
     // (round 128d) its built blocks' claims in the columns: claimed() per structure, stats

@@ -36,7 +36,8 @@ export interface Fly {
 const NEAR = 0.3;
 const FAR = 3000;
 
-const ELEVATION = (30 * Math.PI) / 180; // classic 2:1 pixel-art dimetric
+/** the default pitch: classic 2:1 pixel-art dimetric (Camera.elevation; the street lab sets its own) */
+export const ELEVATION_DEFAULT = (30 * Math.PI) / 180;
 
 /** how far over and under the target's height the focus's ray looks for the ground (world z), and its step */
 const FOCUS_REACH = 256;
@@ -59,6 +60,8 @@ export function groundFocus(t: readonly number[], eye: readonly number[], ground
 }
 
 export class Camera {
+  /** (street lab) the pitch above the ground plane, radians (default the dimetric 30°) */
+  elevation = ELEVATION_DEFAULT;
   /** World-space point at the centre of the screen. */
   target: [number, number, number] = [128, 128, 10];
   /**
@@ -145,9 +148,9 @@ export class Camera {
       return;
     }
     const az = this.azimuth;
-    const ex = Math.cos(az) * Math.cos(ELEVATION);
-    const ey = Math.sin(az) * Math.cos(ELEVATION);
-    const ez = Math.sin(ELEVATION);
+    const ex = Math.cos(az) * Math.cos(this.elevation);
+    const ey = Math.sin(az) * Math.cos(this.elevation);
+    const ez = Math.sin(this.elevation);
     this.eye[0] = ex;
     this.eye[1] = ey;
     this.eye[2] = ez;
@@ -224,7 +227,7 @@ export class Camera {
     const hx = -Math.cos(az);
     const hy = -Math.sin(az);
     const wx = dx / this.zoom;
-    const wy = dy / this.zoom / Math.sin(ELEVATION);
+    const wy = dy / this.zoom / Math.sin(this.elevation);
     return [rx * wx - hx * wy, ry * wx - hy * wy];
   }
 
@@ -296,7 +299,7 @@ export class Camera {
     let x = tx;
     let y = ty;
     for (let i = 0; i < 6; i++) {
-      const [wx, wy] = this.screenDeltaToWorld(dx, dy + (z - tz) * Math.cos(ELEVATION) * this.zoom);
+      const [wx, wy] = this.screenDeltaToWorld(dx, dy + (z - tz) * Math.cos(this.elevation) * this.zoom);
       x = tx + wx;
       y = ty + wy;
       const h = heightAt(x, y);

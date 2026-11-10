@@ -15,7 +15,7 @@ import { generatePlayground, STATIONS, type Station } from '../levels/playground
 import { generateTraitlab, TRAITLAB_STATIONS } from '../levels/traitlab';
 import { generateNoiselab } from '../levels/noiselab';
 import { generateBestiary } from '../levels/bestiary';
-import { generateLab, labRecipe, loadLabLand, LAB_DIMS } from '../lab/recipes';
+import { generateLab, labRecipe, loadFixtureLand, loadLabLand, LAB_DIMS } from '../lab/recipes';
 import type { TownFixtureHeader } from '../lab/townfixture';
 import type { FlowKit } from '../flow/install';
 import type { RiverMode } from '../sim/world-gpu';
@@ -69,6 +69,8 @@ export interface LevelDef {
   noiseLab?: boolean;
   /** (round 128l, tooling) the behaviour lab (src/lab/: ?level=lab&lab=<recipe>): the fortress on its own town, reclaimed.lab */
   behaviourLab?: boolean;
+  /** (street lab, trackA-streetlab m1) streets drawn over a real site's land on the GPU (streetlab/control.ts) */
+  streetLab?: boolean;
   /** the warmup's ticks before the level opens (default the game's) */
   warmupTicks?: number;
   /** (round 128m, townlab) land loaded rather than made, before the level is (the lab's `town` fixture): null — generate */
@@ -238,6 +240,23 @@ export const LEVELS: LevelDef[] = [
     },
   },
   {
+    // (street lab, milestone 1) street lines over real atlas land: ?skipmenu=1&level=streetlab&site=muru|river|mountain|mesa|coast
+    // (&tech=0..3, &pitch=deg); the land loaded from data/lab/ (the behaviour lab's loader), no fortress or town sim
+    id: 'streetlab',
+    name: 'The Street Lab',
+    blurb: 'Street lines over real land: contours, distance fields, tensor streamlines (?site=).',
+    model: 'sign',
+    generate: () => {
+      throw new Error('the street lab loads its land (LevelDef.load)');
+    },
+    sandbox: true,
+    hidden: true,
+    streetLab: true,
+    rivers: 'table',
+    warmupTicks: 1,
+    load: (params) => loadFixtureLand(streetSite(params.get('site'))),
+  },
+  {
     id: 'sandbox',
     name: 'Sandbox',
     blurb: 'Build, pour, plant and spill — then let the weather loose.',
@@ -246,6 +265,14 @@ export const LEVELS: LevelDef[] = [
     sandbox: true,
   },
 ];
+
+/** the street lab's site → its fixture (Muru is the lab's `town`) */
+export function streetSite(site: string | null): string {
+  const s = site ?? 'muru';
+  const names: Record<string, string> = { muru: 'town', river: 'river', mountain: 'mountain', mesa: 'mesa', coast: 'coast' };
+  if (!names[s]) throw new Error(`?site=${s}: no such site (${Object.keys(names).join(', ')})`);
+  return names[s];
+}
 
 /** The levels on the title screen. */
 export const MENU_LEVELS = LEVELS.filter((l) => !l.hidden);

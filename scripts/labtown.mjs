@@ -9,6 +9,25 @@ import { run, sleep, ROOT } from './lib/runner.mjs';
 const LINK = '?skipmenu=1&level=atlas&town=1&fortress=1&fresh=1&q=low';
 const OUT = path.join(ROOT, 'data', 'lab', 'town.rclt');
 
+// (street lab sites: node scripts/labtown.mjs site <name> <cx>,<cy> — a bare 320 x 320 window of atlas land round
+// cell (cx, cy), no towns, into data/lab/site-<name>.rclt: ?level=streetlab&site=<name>)
+if (process.argv[2] === 'site') {
+  const [, , , name, at] = process.argv;
+  if (!name || !/^\d+,\d+$/.test(at ?? '')) throw new Error('node scripts/labtown.mjs site <name> <cx>,<cy>');
+  const out = path.join(ROOT, 'data', 'lab', `site-${name}.rclt`);
+  await run({ name: 'labsite', kind: 'behaviour', size: '412x915', dpr: 1 }, async (R) => {
+    const page = await R.page();
+    await page.goto(`${R.url}/?skipmenu=1&level=atlas&towns=0&win=320&at=${at}&fresh=1&q=low`, { waitUntil: 'load' });
+    await page.waitForFunction(() => window.__boot?.at['level-ready'] || document.querySelector('.fatal'), { timeout: 300000, polling: 250 });
+    await R.fatal(page);
+    await sleep(3000);
+    const b64 = await page.evaluate((n) => window.reclaimed.townFixture(n), name);
+    const bytes = Buffer.from(b64, 'base64');
+    fs.writeFileSync(out, bytes);
+    console.log(`wrote ${out}: ${(bytes.length / 1024).toFixed(0)} KB`);
+  });
+  process.exit(0);
+}
 if (process.argv[2] !== 'capture') {
   console.log('node scripts/labtown.mjs capture   (the user\'s start town → data/lab/town.rclt)');
   process.exit(1);

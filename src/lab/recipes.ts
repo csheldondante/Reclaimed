@@ -151,15 +151,25 @@ export const LAB_RECIPES: Record<string, LabRecipe> = {
 /** where a fixture's file is served from (the build copies data/lab/*.rclt: lab/fixtures.ts) */
 const FIXTURE_URLS: Record<string, () => Promise<string>> = {
   town: async () => (await import('../../data/lab/town.rclt?url')).default,
+  // (the street lab's sites: scripts/labtown.mjs site <name> <cx>,<cy>; Muru is `town`)
+  river: async () => (await import('../../data/lab/site-river.rclt?url')).default,
+  mountain: async () => (await import('../../data/lab/site-mountain.rclt?url')).default,
+  mesa: async () => (await import('../../data/lab/site-mesa.rclt?url')).default,
+  coast: async () => (await import('../../data/lab/site-coast.rclt?url')).default,
 };
 
 /** (round 128m) a recipe's land when it's a fixture (fetched and decoded), else null: the level generates it */
 export async function loadLabLand(recipe: LabRecipe): Promise<{ map: MapData; fixture: TownFixtureHeader } | null> {
   if (!recipe.fixture) return null;
-  const url = FIXTURE_URLS[recipe.fixture];
-  if (!url) throw new Error(`lab recipe ${recipe.name}: no fixture file "${recipe.fixture}"`);
+  return loadFixtureLand(recipe.fixture);
+}
+
+/** a fixture's land by name (FIXTURE_URLS: the lab's town, the street lab's sites), fetched and decoded */
+export async function loadFixtureLand(name: string): Promise<{ map: MapData; fixture: TownFixtureHeader }> {
+  const url = FIXTURE_URLS[name];
+  if (!url) throw new Error(`no fixture file "${name}" (${Object.keys(FIXTURE_URLS).join(', ')})`);
   const res = await fetch(await url());
-  if (!res.ok) throw new Error(`lab recipe ${recipe.name}: its fixture didn't load (${res.status})`);
+  if (!res.ok) throw new Error(`fixture ${name} didn't load (${res.status})`);
   const { header, map } = await decodeTownFixture(new Uint8Array(await res.arrayBuffer()));
   return { map, fixture: header };
 }

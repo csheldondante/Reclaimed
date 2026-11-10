@@ -69,6 +69,7 @@ import { SettlementsView } from '../settle/view';
 import { ShipsView } from '../settle/shipsview';
 import { Fortress } from '../fortress/fortress';
 import { FortressBar } from '../fortress/ui';
+import type { StreetLabControl } from '../streetlab/control';
 import type { FortressFollow } from '../fortress/follow';
 import { FortressCrowd } from '../fortress/crowd';
 import type { FortressRaid } from '../fortress/raiders';
@@ -310,6 +311,8 @@ export class LevelScene implements Scene {
   lastRun: string | null = null;
   /** (round 111, TG1) the noise lab's recipe, its panel and its runs (level.noiseLab) */
   noiseLab?: NoiseLabControl;
+  /** (street lab, m1) its panel, its GPU runs and the display (level.streetLab) */
+  streetLab?: StreetLabControl;
   /** sandbox: a smash drag in progress */
   smashing = false;
   /** (round 83) flying: a drag turns the view — where the pointer was */
@@ -355,6 +358,8 @@ export class LevelScene implements Scene {
     // growth are baked, run between runs or on a story event: core.tiers.bake; the game asks for them live: tiers.live)
     if (opts.atlas) this.core.tiers.playDefaults();
     if (opts.atlas) this.core.globals.seaZ = opts.atlas.atlas.p.sea - opts.atlas.oz;
+    // (a loaded fixture's sea at its level as the game had it, from the start: past the window's edge the world is sea)
+    else if (opts.made?.fixture) this.core.globals.seaZ = opts.made.fixture.seaZ;
     this.speed = Math.max(1, Number(host.params.get('speed') ?? 1));
     const dq = host.params.get('difficulty');
     const diff: Difficulty = dq === 'easy' || dq === 'medium' || dq === 'hard' ? dq : loadDifficulty();
@@ -706,6 +711,7 @@ export class LevelScene implements Scene {
     this.bugReport?.dispose();
     this.stationsBar?.dispose();
     this.noiseLab?.dispose();
+    this.streetLab?.dispose();
     this.atlasCtl?.remove();
     this.turnCtl?.remove();
     this.compass?.remove();

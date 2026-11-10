@@ -14,10 +14,11 @@ import { experimentChip, experimentControls, startRun } from '../../ui/experimen
 import { JUDGE_ID } from '../../game/judge';
 import { solverVariant } from '../../solver/variant';
 import { NoiseLabControl } from '../../noiselab/control';
+import { StreetLabControl } from '../../streetlab/control';
 import { stationMiddle, type Station, type StationKit } from '../../levels/playground';
 import { cpuLine } from '../../gpu/cpustat';
 import { CHUNK, SLOT_WORDS } from '../../world/layout';
-import { cellPos } from '../../world/lattice';
+import { cellAt, cellPos } from '../../world/lattice';
 import type { LevelScene } from '../level';
 
 /** (round 108, AR5/AR8) the tuning panel, the bug report and (the playground) the stations bar */
@@ -133,6 +134,37 @@ export function mountNoiseLab(scene: LevelScene): void {
     host.params,
   );
   (globalThis as { noiselab?: NoiseLabControl }).noiselab = scene.noiseLab;
+}
+
+/**
+ * (street lab, m1) streets over the loaded site's land: heights and water read from the world's buffers on the GPU,
+ * the lines and their display mesh made there (streetlab/gpu.ts); the camera over the town's middle
+ */
+export function mountStreetLab(scene: LevelScene): void {
+  const { core, host } = scene;
+  const fx = scene.opts.made?.fixture;
+  if (!fx) throw new Error('street lab: no site loaded');
+  const { w, h } = core.dims;
+  const at = fx.town.at;
+  scene.streetLab = new StreetLabControl(
+    host.gpu.device,
+    host.ui,
+    { w, h, globals: core.world.globals, chunks: core.world.chunks, layers: core.world.layers, water: core.world.water, centre: [at[0], at[1]] },
+    {
+      addMesh: (v, a) => core.renderer.addMesh(v, a),
+      removeMesh: (a) => core.renderer.removeMesh(a),
+      setPitch: (rad) => (core.camera.elevation = rad),
+    },
+    host.params,
+  );
+  (globalThis as { streetlab?: StreetLabControl }).streetlab = scene.streetLab;
+  // (the camera over the town's middle, the town in sight: its z the loaded land's at the middle — the fixture's own
+  // authoring copy, read once here; ?zoom= closer or farther)
+  const [cx, cy] = cellAt(at[0], at[1]);
+  const z = scene.opts.made!.map.surface[Math.min(h - 1, Math.max(0, cy)) * w + Math.min(w - 1, Math.max(0, cx))];
+  core.camera.target = [at[0], at[1], z];
+  const R = scene.streetLab.registry.get('streets.townR');
+  core.camera.zoom = Number(host.params.get('zoom') ?? Math.min(innerWidth, innerHeight) / (2.2 * R));
 }
 
 /** (round 108, AR8) what a station's buttons do: the world's own events and APIs */
