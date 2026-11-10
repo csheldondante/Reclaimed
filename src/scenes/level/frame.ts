@@ -9,7 +9,6 @@ import { CUTS, OP, editOpOf } from '../../sim/edit-ops';
 import { abilityHost, lifeFocus, wilderness } from '../../inhabitants/install';
 import { mountViewer } from '../../inhabitants/viewer';
 import { REGION } from '../streamer';
-import { settleTol } from '../../sim/sleep';
 import { CatchmentWet } from '../../weather/catchwet';
 import { RiverWetField } from '../../weather/wetfield';
 import { riverMode } from '../../sim/world-gpu';
@@ -227,10 +226,6 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   if (scene.sleep) {
     globals.sleep = scene.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
     globals.drowse = scene.sleep.drowse;
-    globals.settle = scene.sleep.settling.map((s) => s.rect);
-    // (round 128o, DA-B20: the chunks maybe still settling their water, the GPU holding them while it changes — no read)
-    globals.settleTol = settleTol();
-    globals.settleCand = globals.settleTol > 0 ? scene.sleep.settleCand : undefined;
   }
   // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
   const tSim = performance.now(); // (round 100, hitchrec: timing)

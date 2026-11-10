@@ -118,9 +118,9 @@ const DT = 1 / 60;
  */
 export const LAB_SIMS: Record<string, readonly string[] | null> = {
   all: null,
-  fortress: ['edit', 'layerpull', 'landbrush', 'townstamp', 'placeop', 'project', 'structure', 'surface', 'water', 'physics', 'traits', 'agents', 'structtick', 'renderfields'],
+  fortress: ['edit', 'layerpull', 'landbrush', 'townstamp', 'placeop', 'project', 'structure', 'surface', 'liquid-water', 'flow-steady', 'physics', 'traits', 'agents', 'structtick', 'renderfields'],
   // (round 128l, m4: the attack wave) the fortress's, and the fire and the particles: houses burn, chips and dust fly
-  raid: ['edit', 'layerpull', 'landbrush', 'townstamp', 'placeop', 'project', 'structure', 'surface', 'water', 'physics', 'traits', 'agents', 'structtick', 'renderfields', 'fire', 'particles'],
+  raid: ['edit', 'layerpull', 'landbrush', 'townstamp', 'placeop', 'project', 'structure', 'surface', 'liquid-water', 'flow-steady', 'physics', 'traits', 'agents', 'structtick', 'renderfields', 'fire', 'particles'],
 };
 
 export class Lab {

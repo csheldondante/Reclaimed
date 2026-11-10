@@ -294,11 +294,11 @@ written the trunk and crown boxes (vegplan.wgsl: the same places, species and he
 | sedOut | 7 vec4 per column: outflows, easing, totals, spills | sediment (outflow) | sediment (main) |
 | water / waterPrev / flux | f32 depth / f32 / vec4 volume per tick | water | oil, contamination, moisture, ecology, fire, structure, material, renderfields, stats, draw |
 | waterSource | f32 per tick | map | water |
-| riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (riverheld.wgsl riverWetAt, round 109) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom; round 110: a fixed map's authored river table, world/rivertable.ts holdRivers → MapData.riverFlow), kept with its region by the streamer | water (flux, depth), renderfields |
+| riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (riverheld.wgsl riverWetAt, round 109) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom; round 110: a fixed map's authored river table, world/rivertable.ts holdRivers → MapData.riverFlow), kept with its region by the streamer | the liquid (liquid.wgsl depth), renderfields |
 | riverWet (texture) | r32f at the window's coarse texels (round 109, `watershed`; texel (i, j) the window's cell (i, j) × RIVER_WET_CELLS 8): each river's storm water over its reference discharge — the rain on its own catchment and what its reaches upstream carry, with their lags (weather/catchwet.ts over the atlas's river graph, atlas/rivers.ts Catchments); 0 past the rivers, and everywhere off the atlas. A river's wetness = the climate's (Globals ocean.w: the season, eased; ?riverwet=x holds both) + this, read only through riverheld.wgsl `riverWetAt(cellXY)` (window cells, bilinear; 0 past the window). riverheld.wgsl declares it at @group(0) @binding(62): every pipeline that includes riverheld and calls riverWetAt must bind 62 = world.riverWetView | weather/wetfield.ts (the level, on the atlas level: written while it changes) | water (flux, depth), renderfields (and the tiles, once they call riverWetAt) |
-| (?flow=1) runs, flux, emit, jets per liquid; flowAct | the runs in the columns' gaps, their flux and streams (ARCHITECTURE "The flow model"); per chunk net change, throughput, perturbed, overflow | flow/liquid.ts (water also writes water, waterPrev, flux) | itself, render (addWaterPrisms), flow/steady.ts |
-| (?flow=1) runs, flux, emit, jets per liquid; flowAct | the runs in the columns' gaps, their flux and streams (ARCHITECTURE "The flow model"); per chunk net change, throughput, perturbed, overflow | flow/liquid.ts (water also writes water, waterPrev, flux) | itself, render (addWaterPrisms), flow/steady.ts |
-| riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (riverheld.wgsl riverWetAt, round 109) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom; round 110: a fixed map's authored river table, world/rivertable.ts holdRivers → MapData.riverFlow), kept with its region by the streamer | water (flux, depth), renderfields |
+| runs, flux, emit, jets per liquid; flowAct; waterGaps | the runs in the columns' gaps, their flux and streams (ARCHITECTURE "The flow model"); per chunk net change, throughput, perturbed, overflow | flow/liquid.ts (water also writes water, waterPrev, flux) | itself, render (addWaterPrisms), flow/steady.ts |
+| runs, flux, emit, jets per liquid; flowAct; waterGaps | the runs in the columns' gaps, their flux and streams (ARCHITECTURE "The flow model"); per chunk net change, throughput, perturbed, overflow | flow/liquid.ts (water also writes water, waterPrev, flux) | itself, render (addWaterPrisms), flow/steady.ts |
+| riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (riverheld.wgsl riverWetAt, round 109) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom; round 110: a fixed map's authored river table, world/rivertable.ts holdRivers → MapData.riverFlow), kept with its region by the streamer | the liquid (liquid.wgsl depth), renderfields |
 | oil / oilFlux | f32 depth / vec4 | oil | water (weight), ecology, fire, renderprep, stats |
 | oilStored | vec2 (amount, roof z) sealed in closed tanks | oil (releases on breach, burns inside) | fire (fuel) |
 | contam | vec2 (soil, dissolved) | contamination | ecology, particles, draw, stats |
@@ -1454,21 +1454,23 @@ floor at ~104 holds ~98 levels, the default 64-high level ~13); the
 fortress isn't stamped (`zMax` Infinity). Gaps are allowed: a block over
 an empty level stands on pillars and arches (`design`).
 
-## The flow model (round 84, branch `flow`, `?flow=1`; trackA-liquids: `?liquid=flow` on any level)
+## The flow model — the one liquid (round 84; trackA-liquids: every level, the pipes retired)
 
-(trackA-liquids, DA-P5) `?liquid=flow|pipes` (src/flow/model.ts; `?flow=1` its older spelling) picks the world's liquid
-on any level; the pipes stay the default until the user approves. With the flow model:
+(trackA-liquids, DA-P5; the user, 2026-11-10: "make the liquid flow the new default") The flow model is the world's
+liquid on every level: WorldCore makes it (flow/install.ts installFlow, after the surface) with the world's Sleep. The
+pipes (water_flux/water_depth, the WaterSystem, its settling passes and the GPU settling hold, ?rivers=hold, the
+per-step source) are deleted — no flag selects them. Lava and oil keep their own per-column systems for now (below).
 - **Rivers held** (`?rivers=table`): the depth pass relaxes a held river column (at the window's edge, or asleep when it
   runs) to the atlas's table in the gap on the column's own ground (`Gaps.nat`: the highest solid that isn't an
-  External), as the pipes hold it; the warmup doesn't run the water (as the pipes').
+  External); the warmup doesn't run the water on a held-river level.
 - **Decks claimed** (citygen `DECKS_CLAIMED`, streets.wgsl claimRoads): a deck is a slab under its top claimed into the
   columns; the open run keeps the gap its floor was recorded in (`openGap`), so the river stays in the gap under the
   deck as an enclosed run, the deck's top dry (BACKLOG CG15).
 - **Land coming in**: a slot's records are forgotten when the streamer writes a region into it (LiquidSystem.forget);
   a chunk's first step since is a real one even asleep (`lqFrozen`, `realStep`): its water settles into its gaps and its
-  flux is seeded with the steady flux for its levels (the pipes' seed). A sleeping chunk whose columns' version moved
+  flux is seeded with the steady flux for its levels. A sleeping chunk whose columns' version moved
   (chunkver.wgsl) with liquid in it is woken through steady's act bit 2 (a claim, a cut over still water).
-- **Water sources** (`waterSource`, positive): cells^3 a second, in both models (PW6); negative: the pipes' held depth.
+- **Water sources** (`waterSource`): cells^3 a second (PW6).
 - **No CPU skip**: the lists made on the GPU are empty when nothing runs.
 - **(LQ4) The water on every surface — `waterGaps`, the contract's per-gap part.** The user: agents "can traverse any
   walkable layer that they are connected to" (caves, floating islands, decks). The water contract (`water`, the open
@@ -1477,19 +1479,18 @@ on any level; the pipes stay the default until the user approves. With the flow 
   depth)` (0: none). It is written by its own pass (`publishGaps`, over the run list after publish, so a parked chunk's
   stays as it froze), which bumps the chunk's water versions where a run crosses a walker's band (chunkver bumpWater),
   so the agents re-peel just as for the open water. The agents' peel reads the depth on the surface it makes through
-  `surfaceDepth(i, z, top)`, prepended by agents.ts: under the flow model from `waterGaps` (the top surface its x; a
-  lower one the run whose floor is within 0.3 of the surface — f16 floors are exact to 1/16 at 100 cells), under the
-  pipes from `water` (the top only, as before). The peel stays at 8 storage buffers: `waterGaps` takes `water`'s
+  `surfaceDepth(i, z, top)`, prepended by agents.ts, from `waterGaps` (the top surface its x; a lower one the run whose
+  floor is within 0.3 of the surface — f16 floors are exact to 1/16 at 100 cells). The peel stays at 8 storage buffers: `waterGaps` takes `water`'s
   binding there. The wet and deep bands, the hysteresis (navCost) and the surface's water word follow the surface's own
   depth, so a riverbed under a deck is wet (and deep) like the open river, and the deck over it dry.
-- **(LQ5) Decks as real solid**: under the flow model citygen doesn't hand the reach its decks as plan solid
-  (deckSpans): the claimed deck is in the columns, walked as any surface.
+- **(LQ5) Decks as real solid**: a deck is claimed into the columns (a 0.25 slab clear of the water's surface), walked
+  as any surface; the reach's plan-solid decks (deckSpans) are deleted.
 
 The user: "a unified model of material flow would be great for waterfalls emerging from underground streams or
 lava flows … a water fall that actually arcs out"; "think noita physics which just checks for adjacent emptiness
 and moves pixels over. We are just doing this in a compressed column space and adding in velocity"; steady flow
-frozen and drawn as an animation, woken only when perturbed. Behind `?flow=1`, (round 110) in its own lab only
-(`?flow=1&level=flowlab`, src/levels/flowlab.ts; elsewhere it throws): every other level runs the game's water.
+frozen and drawn as an animation, woken only when perturbed. (Round 84–110 behind `?flow=1` in its own lab; since
+trackA-liquids the world's liquid everywhere — the flow lab, src/levels/flowlab.ts, keeps its test scenes.)
 
 - **(trackA-liquids, DA-P5) Chunk lists and parking.** The passes don't run over the window: each step two small
   passes on the GPU (`liquid.wgsl` lqScan, lqList) mark the chunks holding liquid (awake ones and those that ran

@@ -48,7 +48,7 @@ const PHASES: Phase[] = [
   { name: 'no wind field', off: ['windfield', 'wind-blows'] },
   { name: 'no traits', off: ['traits'] },
   { name: 'no sway', off: ['sway'] },
-  { name: 'no water', off: ['water'] },
+  { name: 'no water', off: ['liquid-water'] },
   { name: 'plants’ particles on', plants: true },
   { name: 'all again' },
 ];

@@ -1,7 +1,7 @@
 // Stills of the flow lab's pool fall (round 86): breach, then side-view shots at given times (ms after the breach),
 // and the stream's state over a few columns (flow.water.probe is runs only; this reads the GPU's frame).
 //   node scripts/fallstill.mjs [--url http://localhost:5247] [--at 800,1600,3000,6000] [--out prefix] [--extra ""]
-//        [--az 1.5708] [--zoom 9] [--base]
+//        [--az 1.5708] [--zoom 9]
 import puppeteer from 'puppeteer-core';
 
 const argv = process.argv.slice(2);
@@ -14,7 +14,6 @@ const out = opt('out', 'fallstill');
 const at = opt('at', '800,1600,3000,6000').split(',').map(Number);
 const az = Number(opt('az', String(Math.PI / 2)));
 const zoom = Number(opt('zoom', '9'));
-const base = argv.includes('--base');
 const dx = Number(opt('dx', '8'));
 const tz = Number(opt('z', '16'));
 const [W, H] = opt('size', '640x480').split('x').map(Number);
@@ -38,7 +37,7 @@ try {
     failed = true;
     console.log(`[pageerror] ${e.message}`);
   });
-  await p.goto(`${url}/?skipmenu=1&level=flowlab&tutorial=0&tod=0.4${base ? '' : '&flow=1'}${opt('extra', '')}`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&level=flowlab&tutorial=0&tod=0.4${opt('extra', '')}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.core, { timeout: 240000 });
   const fatal = await p.$eval('.fatal', (e) => e.textContent).catch(() => null);
   if (fatal) throw new Error(`fatal: ${fatal}`);
@@ -59,15 +58,7 @@ try {
   );
   await sleep(1500);
   const t0 = Date.now();
-  if (base)
-    await p.evaluate(
-      (pts, str) => {
-        for (const [x, y] of pts) for (let k = 0; k < 3; k++) window.reclaimed.globals.events.push({ kind: 5, x, y, z: 2 * 32 + 512, radius: 2.2, strength: str });
-      },
-      [53.5, 55.5].map((y) => cellPos(65, y)),
-      1,
-    );
-  else await p.evaluate(() => window.reclaimed.flow.breach(1.5));
+  await p.evaluate(() => window.reclaimed.flow.breach(1.5));
   for (const ms of at) {
     const wait = t0 + ms - Date.now();
     if (wait > 0) await sleep(wait);
@@ -84,7 +75,7 @@ try {
       });
       console.log(`[water ${ms}] ` + JSON.stringify(r));
     }
-    if (!base && argv.includes('--probe')) {
+    if (argv.includes('--probe')) {
       const r = await p.evaluate(async () => {
         const st = await window.reclaimed.flow.water.probeStreams();
         const keys = ['ez', 'vz', 'tEnd', 'lip', 'rate', 'us'];

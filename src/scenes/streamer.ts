@@ -285,7 +285,6 @@ export class Streamer {
       b('bend', 16, true),
       // in flight or derived: moved with the window so nothing jumps for a tick
       b('surface', 4, false),
-      b('waterNext', 4, false),
       b('waterPrev', 4, false),
       // (perfopt, ?settle=0: frozen with its region, so land that comes back in asleep is drawn flowing as it was)
       b('flux', 24, !settleLand()),

@@ -1,4 +1,4 @@
-// The water system on a tiny world (contract.ts `pool`, moved to Node): a pool on bare stone inside a rim, no spring —
+// The liquid's water (the flow model) on a tiny world (contract.ts `pool`, moved to Node): a pool on bare stone inside a rim, no spring —
 // its volume is kept and it spreads. The real WorldCore, kernels and Simulation, on Dawn.
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { MAT } from '../../src/world/materials';
@@ -23,7 +23,7 @@ test('a pool on flat stone keeps its volume and spreads', async () => {
       map.water[y * W + x] = 2;
       v0 += 2;
     }
-  const w = await tinyWorld(g, map, ['surface', 'water']);
+  const w = await tinyWorld(g, map, ['surface', 'liquid-water']);
   const start = w.sum(await w.read('water'));
   await w.step(600);
   const b = await w.read('water');

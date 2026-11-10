@@ -3091,7 +3091,7 @@ fn townBridge(@builtin(local_invocation_index) li: u32) {
 // slab DECK_T deep under its top; a road a quarter cell of paving on the ground (claimed where free: on it). Made at
 // every mesh run, read where it lies on the GPU (nothing comes back): claimed as the land arrives, kept by the orphan
 // pass, checked after an edit (colapply gridDamage: the damaged records' ids, a few words back). Decks aren't claimed
-// (claimRoads): the reach walks them as plan solid (deckSpans).
+// (claimRoads): a deck a slab DECK_CLAIM_T under its top, over the river, which runs in the gap under it.
 const PAVE_T: f32 = 0.25;
 /** a column with no span the town keeps bare of plants all the same (its owner word, count 0): a building's or a
  *  plaza's parcel round its footprint (bare.wgsl) */
@@ -3161,11 +3161,9 @@ fn claimRoads(@builtin(global_invocation_id) g: vec3<u32>) {
   let m = b1[i];
   let so = N * 4u + i * 4u;
   w7[so + 3u] = 0u;
-  // (under the pipes a deck isn't claimed in the world's columns: a column's top is their water's floor — surface.wgsl,
-  // water_flux.wgsl — so a deck there would lift the river onto it, and the reach walks it as the plan's solid instead:
-  // deckSpans. Under the flow model (DECKS_CLAIMED, ?liquid=flow — trackA-liquids, CG15) the river runs in the gap
-  // under it: the deck is a slab DECK_T deep under its top, claimed where free, wood when let go)
-  if (m == 0u || ((m & DECK_BIT) != 0u && !DECKS_CLAIMED)) { w7[i * 4u + 3u] = 0u; return; }
+  // (a deck is claimed into the columns, a slab under its top: the river runs in the gap under it — trackA-liquids, CG15;
+  // a road's paving isn't claimed on a wet column: a ford's bed stays bare under the water — LQ7)
+  if (m == 0u) { w7[i * 4u + 3u] = 0u; return; }
   if ((m & DECK_BIT) == 0u && r2(i) > 0.5) { w7[i * 4u + 3u] = 0u; return; }
   w7[i * 4u + 3u] = 1u;
   if ((m & DECK_BIT) != 0u) {
@@ -3272,24 +3270,6 @@ fn lotReach(@builtin(global_invocation_id) g: vec3<u32>) {
     if (m == 2u) { seen = true; }
   }
   if (seen) { w5[i] = 1u; }
-}
-
-/** one thread a grid column (M4b): a deck's column as the reach's plan solid (fortreach.wgsl planSpans: two words a
- *  window column, z0 | z1 << 16 in eighths, window z) — the grid's column (x, y) at window column (x + o.x, y + o.y),
- *  window z its world z + m.x (f32 bits), the window n.z × n.w (b1 ROADS; w5 the reach's plan spans) */
-@compute @workgroup_size(8, 8)
-fn deckSpans(@builtin(global_invocation_id) g: vec3<u32>) {
-  let x = i32(g.x); let y = i32(g.y);
-  if (x >= W() || y >= H()) { return; }
-  let m = b1[ix(x, y)];
-  if ((m & DECK_BIT) == 0u) { return; }
-  let wx = x + bitcast<i32>(u.o.x);
-  let wy = y + bitcast<i32>(u.o.y);
-  if (wx < 0 || wy < 0 || u32(wx) >= u.n.z || u32(wy) >= u.n.w) { return; }
-  let z = f32(m & ~DECK_BIT) / 256.0 + bitcast<f32>(u.m.x);
-  let z0 = u32(clamp((z - DECK_T) * 8.0, 0.0, 32767.0));
-  let z1 = u32(clamp(z * 8.0, 0.0, 32767.0));
-  w5[(u32(wy) * u.n.z + u32(wx)) * 2u] = z0 | (z1 << 16u);
 }
 
 // ==== the time-lapse: a clock per district, each lot's progress from it, the buildings risen each frame ===========

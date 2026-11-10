@@ -12,7 +12,6 @@ import { GPUGEN } from '../../atlas/finish';
 import { settleLand, Sleep } from '../../sim/sleep';
 import { riverMode } from '../../sim/world-gpu';
 import { record, timed } from '../../gpu/cpustat';
-import { CHUNK } from '../../world/layout';
 import { ROW_H } from '../../world/lattice';
 import { HybridChunks } from '../hybrid';
 import { SettlementsView } from '../../settle/view';
@@ -35,14 +34,6 @@ import { whenPipelinesReady } from '../../gpu/pipeline';
 export function attachStream(scene: LevelScene): void {
   const { core, host } = scene;
   const { dims } = core;
-  // (round 110) a fixed map with held rivers (an authored river table, world/rivertable.ts): sleep and wake as the
-  // atlas level's (below) — what's still sleeps, its river held at its table; what's done there wakes and settles
-  // (?settletol), then freezes again
-  if (!scene.level.stream && !scene.sleep && riverMode() === 'table' && host.params.get('sleep') !== '0') {
-    scene.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, core.ring);
-    scene.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
-    core.sleep = scene.sleep;
-  }
   if (scene.level.stream) {
     const a = scene.opts.atlas;
     scene.stream = a
@@ -92,11 +83,8 @@ export function attachStream(scene: LevelScene): void {
     // (round 128m, quarry) a slide in z down follows the ground as it is now too: a deep pit looked into
     if (a) scene.stream.groundNow = (x, y) => scene.heightAt(x, y);
     // (round 80) sleep and wake: what's still sleeps, what the player and the world's events touch wakes
-    if (a && (host.params.get('sleep') !== '0' || scene.flow)) {
-      // (?liquid=flow: made with the level, before the flow model was installed — kept)
-      scene.sleep ??= new Sleep(dims.w / CHUNK, dims.h / CHUNK, scene.core.ring);
+    if (a && scene.sleep) {
       scene.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
-      core.sleep = scene.sleep;
       const sl = scene.sleep;
       scene.stream.onSlide.push((dx, dy, dz) => {
         const t = performance.now() / 1000;

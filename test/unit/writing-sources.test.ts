@@ -77,6 +77,7 @@ const SOURCES: Record<string, Source> = {
   'perf/placebench.ts': { who: 'dev', why: 'a bench' },
   'perf/townbench.ts': { who: 'dev', why: 'a bench' },
   'perf/speedbench.ts': { who: 'dev', why: 'a bench (the 16x toggle diff)' },
+  'perf/flowbench.ts': { who: 'dev', why: 'a bench (the liquid toggle diff)' },
   'runplan/viewer.ts': { who: 'dev', why: 'the run plan viewer page' },
   'scenes/atlas-view.ts': { who: 'dev', why: 'the atlas generator view and its sliders (?atlas)' },
   'settle/debug.ts': { who: 'dev', why: 'the settlements\' debug overlay' },

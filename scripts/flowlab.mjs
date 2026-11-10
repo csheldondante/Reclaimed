@@ -1,13 +1,13 @@
-// The flow lab's scenes, headless (docs/ARCHITECTURE.md "The flow model"): ?flow=1&level=flowlab. One browser session:
+// The flow lab's scenes, headless (docs/ARCHITECTURE.md "The flow model"): level=flowlab. One browser session:
 //   tunnel  — the stream out of the hillside (shot + gif)
 //   pool    — the plug dug out, the pool pouring off the ledge as an arc (shots + gif)
 //   lava    — the vent running down the ramp, off the step, setting (shot)
 //   freeze  — the vent stopped; wait until every chunk is near steady and asleep, then a gif of the frozen
 //             world still pouring, with the liquid passes' GPU ms awake vs frozen
-//   cost    — GPU ms of the liquid passes (and the old water's with --base)
+//   cost    — GPU ms of the liquid passes
 //
 //   node scripts/flowlab.mjs [--url http://localhost:5223] [--scenes tunnel,pool,lava,freeze] [--out flowlab]
-//        [--extra "&q=low"] [--base]   (--base: the same level without ?flow=1, the old water's cost)
+//        [--extra "&q=low"]
 import puppeteer from 'puppeteer-core';
 import gifenc from 'gifenc';
 import { PNG } from 'pngjs';
@@ -23,7 +23,6 @@ const has = (k) => argv.includes(`--${k}`);
 const url = opt('url', 'http://localhost:5223');
 const out = opt('out', 'flowlab');
 const scenes = opt('scenes', 'tunnel,pool,lava,freeze').split(',');
-const base = has('base');
 const [W, H] = opt('size', '1000x700').split('x').map(Number);
 
 const browser = await puppeteer.launch({
@@ -45,7 +44,7 @@ try {
     failed = true;
     console.log(`[pageerror] ${e.message}`);
   });
-  await p.goto(`${url}/?skipmenu=1&level=flowlab&tutorial=0&perf=1${base ? '' : '&flow=1'}${opt('extra', '')}`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&level=flowlab&tutorial=0&perf=1${opt('extra', '')}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.core, { timeout: 240000 });
   const fatal = await p.$eval('.fatal', (e) => e.textContent).catch(() => null);
   if (fatal) {
@@ -86,7 +85,6 @@ try {
     p.evaluate(async () => {
       const r = window.reclaimed;
       const f = r.flow;
-      if (!f) return { base: true };
       const w = await f.water.probe(150, 125);
       const l = await f.lava.probe(34, 205);
       const un = [];

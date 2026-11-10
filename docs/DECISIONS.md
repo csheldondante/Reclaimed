@@ -15,6 +15,9 @@ each was implemented.
   + 50%, lava cheaper or asleep unless hot. On the phone, read the whole frame's GPU time diffs (vsync caps the frame;
   per-pass timestamps are tiler noise).
 
+- The user, 2026-11-10, after the Pixel 9a bench (flow awake 1.9 ms vs the pipes' 2.6; without lava 1.05 vs 2.4; steady
+  and disturbed within noise): "make the liquid flow the new default." And on old code generally: "Don't build against
+  a system we are deprecating"; "Stop wasting resources on old code." — the pipes deleted, no compatibility layer.
 - (coordinator, agreed) Road paving isn't claimed over water: a road crossing water is a deck (bridge) or a ford with a
   bare bed (DESIGN §12); short crossings fords, longer ones decks.
 

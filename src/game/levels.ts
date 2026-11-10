@@ -179,7 +179,7 @@ export const LEVELS: LevelDef[] = [
     sandbox: true,
     zMax: 96,
     // (round 110 — the user: "The waterfalls don't use the same system as the main game can you explain why?" — the
-    // game's water: the pipes, its river held at an authored table like the atlas's, sleep and settle-then-freeze)
+    // game's water: the flow model, its river held at an authored table like the atlas's, its steady state asleep)
     rivers: 'table',
     lab: { open: ['world', 'rigid'] },
     stations: STATIONS,

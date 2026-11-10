@@ -88,7 +88,7 @@ export function toggles(bn: Bench): Record<string, { what: string; off: () => vo
     };
   };
   simGroup('simAll', /^(?!edit$|layerpull$|landbrush$|townstamp$|placeop$|stats$)/, 'every sim system but the edits and stamps (events still consumed)');
-  simGroup('water', /^water$/, 'the water flow');
+  simGroup('water', /^liquid-water$/, 'the water flow');
   simGroup('lava', /^lava$/, 'the lava flow');
   simGroup('sediment', /^sediment$/, 'sediment and loose ground');
   simGroup('wind', /^windfield$/, 'the wind field');

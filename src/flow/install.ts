@@ -21,13 +21,13 @@ export function installFlow(core: WorldCore, sleep: Sleep): FlowKit {
   const steady = new Steady(device, world, sleep, chunks);
   const water = new LiquidSystem(device, world, host.profiler, WATER, steady.act, WAKE_TOL);
   const lava = new LiquidSystem(device, world, host.profiler, LAVA, steady.act, WAKE_TOL);
-  const at = sim.systems.findIndex((s) => s.name === 'water');
-  if (at < 0) throw new Error('installFlow: no water system to replace');
-  sim.systems.splice(at, 1, water, lava);
+  const at = sim.systems.findIndex((s) => s.name === 'surface');
+  if (at < 0) throw new Error('installFlow: no surface system to follow');
+  sim.systems.splice(at + 1, 0, water, lava);
   // (everything asleep — the sleep mask's counts: no step, only the idle scan for a solid come over still water)
   // (not while any chunk is drowsy: land just come in takes its first steps — its water into its gaps, its flux seeded,
   // the water on its surfaces published)
-  water.idle = lava.idle = () => sleep.awake === 0 && sleep.candidates === 0 && sleep.drowsy === 0 && core.globals.sleep !== undefined;
+  water.idle = lava.idle = () => sleep.awake === 0 && sleep.drowsy === 0 && core.globals.sleep !== undefined;
   steady.onRescale = (k, r) => {
     water.rescale.set(k, r);
     lava.rescale.set(k, r);

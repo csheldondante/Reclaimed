@@ -22,7 +22,7 @@ import { Streamer, REGION, TIER } from '../scenes/streamer';
 import { WorldCore, type Host } from '../scenes/world-core';
 import { Sleep } from '../sim/sleep';
 import { Integrity } from '../game/integrity';
-import { CHUNK, K_HEADROOM, windowZMax } from '../world/layout';
+import { K_HEADROOM, windowZMax } from '../world/layout';
 import { ROW_H } from '../world/lattice';
 
 export interface AtlasWorldOptions {
@@ -162,9 +162,8 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
   if (opts.band !== false && params.zTop > dims.zMax && core.renderer.enableBand(params.zTop)) stream.refreshBand();
   let sleep: Sleep | undefined;
   if (opts.sleep !== false) {
-    sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, core.ring);
+    sleep = core.sleep;
     sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
-    core.sleep = sleep;
   }
   let integrity: Integrity | undefined;
   if (opts.integrity !== false) {
@@ -235,7 +234,6 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
         const g = core.globals;
         g.sleep = sleep.update(performance.now() / 1000, [target[0], target[1], reach], g.events, core.weather.storms, core.sim.tick);
         g.drowse = sleep.drowse;
-        g.settle = sleep.settling.map((s) => s.rect);
       }
       return stream.busy;
     },

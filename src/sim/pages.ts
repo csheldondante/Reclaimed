@@ -20,7 +20,6 @@ import { urlFlags } from '../flags';
 export const COLUMN_BUFS: Record<string, [stride: number, planes: number]> = {
   surface: [4, 1],
   water: [4, 1],
-  waterNext: [4, 1],
   waterPrev: [4, 1],
   waterSource: [4, 1],
   oil: [4, 1],

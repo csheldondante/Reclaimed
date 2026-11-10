@@ -124,11 +124,11 @@ describe("the agents' re-peel over what changed", () => {
   it("the top surfaces' water follows the water's depth where nothing else changed", async () => {
     const map = tinyMap(W, W, 32, stone);
     for (let y = 24; y < 40; y++) for (let x = 28; x < 44; x++) map.water[y * W + x] = 0.3;
-    const w = await tinyWorld(g, map, ['surface', 'water']);
+    const w = await tinyWorld(g, map, ['surface', 'liquid-water']);
     try {
       const agents = installAgents(w.core);
       const tick = async (n: number, water: boolean) => {
-        for (let i = 0; i < n; i++) w.core.sim.step(w.core.globals, (s) => s.name === 'surface' || s.name === 'agents' || (water && s.name === 'water'));
+        for (let i = 0; i < n; i++) w.core.sim.step(w.core.globals, (s) => s.name === 'surface' || s.name === 'agents' || (water && s.name === 'liquid-water'));
         await g.device.queue.onSubmittedWorkDone();
       };
       agents.spawn(10, 36, 27, { spread: 4 });

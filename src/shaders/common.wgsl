@@ -38,9 +38,6 @@ struct Tune {
   structureFlowRate: f32,
   waterRain: f32,
   waterEvap: f32,
-  pipesGain: f32,
-  pipesFriction: f32,
-  pipesRiverRelax: f32,
   flowWaterGain: f32,
   flowWaterFriction: f32,
   flowWaterDrop: f32,
@@ -50,6 +47,7 @@ struct Tune {
   flowLavaThick: f32,
   flowLavaCool: f32,
   flowLavaDrop: f32,
+  flowRiverRelax: f32,
   lavaGain: f32,
   lavaFriction: f32,
   lavaYield: f32,
@@ -74,8 +72,6 @@ struct Tune {
   sprayDrops: f32,
   spraySplash: f32,
   sprayMist: f32,
-  pad54: f32,
-  pad55: f32,
 };
 
 struct Globals {

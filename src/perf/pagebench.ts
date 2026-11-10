@@ -17,7 +17,7 @@ const BUILD: string = typeof __BENCH_BUILD__ !== 'undefined' ? __BENCH_BUILD__ :
 const KEY = 'reclaimed-pagebench';
 const ORDER = ['ring', 'table', 'storage', 'storage', 'table', 'ring'] as const;
 /** the systems timed (their names on core.sim.systems) */
-const SYSTEMS = ['liquid-water', 'sediment', 'water'];
+const SYSTEMS = ['liquid-water', 'sediment'];
 /** dispatches of a kernel in one timed pass, and samples of that */
 const REPS = 8;
 const SAMPLES = 7;

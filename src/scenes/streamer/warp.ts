@@ -151,7 +151,7 @@ export async function slideZNow(S: Streamer, dz: number): Promise<void> {
   // (ringwin: read in window order, written back in the ring's)
   const waterR = core.ring.toStore(water);
   const lavaR = core.ring.toStore(lava, 4);
-  for (const b of [wg.water, wg.waterNext, wg.waterPrev]) dev.queue.writeBuffer(b, 0, waterR);
+  for (const b of [wg.water, wg.waterPrev]) dev.queue.writeBuffer(b, 0, waterR);
   for (const b of [wg.lava, wg.lavaNext]) dev.queue.writeBuffer(b, 0, lavaR);
   // (particles in the air: dropped, as on a slide sideways)
   const enc = dev.createCommandEncoder({ label: 'stream slide z' });

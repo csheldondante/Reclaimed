@@ -32,8 +32,6 @@ const DROWSE_TICKS = 8;
 /** (round 128d) the ticks a quiet edit's chunks stay drowsy (touch): its event is taken within a tick or two, then the
  *  surface and the mesh look at the chunk again */
 const TOUCH_TICKS = 4;
-/** (perfopt, settle=0) the ticks land come in settles its water for (WaterSystem's settling passes) */
-const SETTLE_TICKS = 64;
 /** (perfopt, ?settle=0 — DECISIONS round 83: "Generated land should come in settled"; "We don't need to simulate a
  *  map cell we stream") land come in — a slide's new chunks, the window cut again in z, a warp, the first window —
  *  doesn't wake to settle: it falls asleep at once (drowsy for a moment: its layers carried through) */
@@ -55,21 +53,6 @@ export function settleLand(): boolean {
  * ring round the player awake.
  */
 export const WAKE_NEAR = typeof location !== 'undefined' && urlFlags().get('wakenear') === '1';
-
-/**
- * (round 84 — the user: "we can have a tolerance and decide when we are close enough to steady state to freeze and
- * treat it as an animation only … the simulation can then take over until it finishes finding another near steady
- * state then freeze things") ?settletol=x: a woken chunk stays awake past its time while its water still changes
- * by more than x in a step (world-gpu waterChange), up to SETTLE_MAX_S; then it sleeps — its last flux the animation,
- * a river's columns back to the atlas's table. 0: off (a woken chunk sleeps at its time). On by default with
- * ?rivers=table.
- */
-const SETTLE_TOL_ASKED = typeof location === 'undefined' ? null : urlFlags().get('settletol');
-export function settleTol(): number {
-  return SETTLE_TOL_ASKED !== null ? Number(SETTLE_TOL_ASKED) : riverMode() === 'table' ? 0.01 : 0;
-}
-/** the longest a chunk is kept awake for its water still settling (s) */
-const SETTLE_MAX_S = 60;
 
 /**
  * (Round 107, pages P2.3b) Every per-chunk state here is keyed by the chunk's slot (its page's: sim/pages.ts), not its
@@ -96,7 +79,6 @@ export class Sleep {
     if (cx * cy > MAX_CHUNKS) throw new Error(`sleep: ${cx} × ${cy} chunks, the mask holds ${MAX_CHUNKS}`);
     if (pages && pages.nx * pages.ny !== cx * cy) throw new Error(`sleep: ${cx} × ${cy} chunks, the page table ${pages.nx} × ${pages.ny}`);
     this.until = new Float32Array(cx * cy);
-    this.wokeAt = new Float32Array(cx * cy);
     this.drowseTick = new Float64Array(cx * cy);
   }
   /** per chunk, the sim's tick it's drowsy until (land come in: its derived fields made, then asleep) */
@@ -154,7 +136,6 @@ export class Sleep {
       for (let i = x0; i <= x1; i++) {
         const k = this.slotOf(j * this.cx + i);
         if (this.filter && !this.filter[k]) continue;
-        if (this.until[k] <= now) this.wokeAt[k] = now;
         this.until[k] = Math.max(this.until[k], now + secs);
       }
   }
@@ -181,19 +162,6 @@ export class Sleep {
   /** (tests, the perf overlay) touches so far */
   touched = 0;
 
-  /** per slot, when it last woke (s): SETTLE_MAX_S counts from it */
-  private wokeAt = new Float32Array(0);
-
-  /**
-   * (round 84, ?settletol; round 128o, DA-B20: decided on the GPU) A woken chunk whose water still settles stays awake
-   * past its time, up to SETTLE_MAX_S from its waking. The GPU decides which (sim/settlehold.ts: the water's change is
-   * there); this says which may be: a bit a slot, set for a chunk asleep by its time that an event woke within
-   * SETTLE_MAX_S — the culled passes list it, and the GPU's mask lets it run or not. After SETTLE_MAX_S it is drowsy
-   * for DROWSE_S (the GPU may have held it to the end: its layers carried through once). Empty with no tolerance.
-   */
-  readonly settleCand = new Uint32Array(MAX_CHUNKS / 32);
-  /** chunks the GPU may be holding (settleCand's bits) at the last update */
-  candidates = 0;
   /** (trackA-liquids) mask words with a drowsy chunk at the last update (0: none — land just come in, an edit's touch) */
   drowsy = 0;
 
@@ -202,7 +170,6 @@ export class Sleep {
   settleAll(secs: number, now: number): void {
     this.wakeAll(settleLand() ? secs : 0, now);
     this.drowseTick.fill(this.tick + DROWSE_TICKS);
-    this.settling = [{ rect: [0, 0, this.cx * CHUNK, this.cy * CHUNK], until: -1 }];
     // (perfopt: counted from the sim's tick at the next update — the first window's comes before any, at tick 0,
     // and the level's warmup had run hundreds by then: it was never drowsy)
     this.settleNext = true;
@@ -215,21 +182,8 @@ export class Sleep {
 
   /** the window slid (dx, dy columns, whole chunks): the chunks go with the land, the new ones wake to settle */
 
-  /**
-   * (perfopt) Land come in and still settling its water: rects of columns (x, y, w, h) and the tick they're done at
-   * (−1: from the next update) — the window's coordinates, moved with it on a slide.
-   */
-  settling: { rect: [number, number, number, number]; until: number }[] = [];
 
   shift(dx: number, dy: number, now: number): void {
-    // (what was settling moves with the land; the strip come in settles from the next update)
-    const W = this.cx * CHUNK;
-    const H = this.cy * CHUNK;
-    this.settling = this.settling
-      .map((s) => ({ rect: [s.rect[0] - dx, s.rect[1] - dy, s.rect[2], s.rect[3]] as [number, number, number, number], until: s.until }))
-      .filter((s) => s.rect[0] + s.rect[2] > 0 && s.rect[1] + s.rect[3] > 0 && s.rect[0] < W && s.rect[1] < H);
-    if (dx) this.settling.push({ rect: dx > 0 ? [W - dx, 0, dx, H] : [0, 0, -dx, H], until: -1 });
-    if (dy) this.settling.push({ rect: dy > 0 ? [0, H - dy, W, dy] : [0, 0, W, -dy], until: -1 });
     const dcx = dx / CHUNK;
     const dcy = dy / CHUNK;
     if (this.pages) {
@@ -245,7 +199,6 @@ export class Sleep {
           if (this.filter) this.filter[k] = 0;
           const settle = !this.filter ? (settleLand() ? SETTLE_S : 0) : 0;
           this.until[k] = now + settle;
-          this.wokeAt[k] = 0;
           this.drowseTick[k] = this.tick + DROWSE_TICKS;
         }
       return;
@@ -273,13 +226,6 @@ export class Sleep {
       this.settleNext = false;
       this.drowseTick.fill(tick + DROWSE_TICKS);
     }
-    // (one at a time — the water's settling pass takes the first: its ticks counted from when it's first)
-    while (this.settling.length) {
-      const s = this.settling[0];
-      if (s.until < 0) s.until = tick + SETTLE_TICKS;
-      if (tick < s.until) break;
-      this.settling.shift();
-    }
     if (near && WAKE_NEAR) this.wake(near[0], near[1], near[2], NEAR_S, now);
     // (round 128d: a quiet edit only touches its chunks — drowsy, not awake)
     for (const e of events) {
@@ -289,25 +235,15 @@ export class Sleep {
     for (const s of storms) if (s.intensity > 0.2) this.wake(s.x, s.y, s.radius, NEAR_S, now);
     this.mask.fill(0);
     this.drowse.fill(0);
-    this.settleCand.fill(0);
-    const hold = settleTol() > 0;
     let awake = 0;
-    let cands = 0;
     for (let k = 0; k < this.until.length; k++) {
       if (this.until[k] > now) awake++;
       else {
         this.mask[k >> 5] |= 1 << (k & 31);
         if (now - this.until[k] < DROWSE_S || tick < this.drowseTick[k]) this.drowse[k >> 5] |= 1 << (k & 31);
-        // (an event woke it within SETTLE_MAX_S: its water may still settle — the GPU says; just past it, drowsy once)
-        const age = now - this.wokeAt[k];
-        if (hold && this.wokeAt[k] > 0 && age < SETTLE_MAX_S) {
-          this.settleCand[k >> 5] |= 1 << (k & 31);
-          cands++;
-        } else if (hold && this.wokeAt[k] > 0 && age < SETTLE_MAX_S + DROWSE_S) this.drowse[k >> 5] |= 1 << (k & 31);
       }
     }
     this.awake = awake;
-    this.candidates = cands;
     let drowsy = 0;
     for (const w of this.drowse) if (w) drowsy++;
     this.drowsy = drowsy;

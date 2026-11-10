@@ -38,7 +38,7 @@ try {
       console.log('console.error:', m.text().slice(0, 800));
     }
   });
-  await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&settletol=0&riverwet=1${extra}`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&riverwet=1${extra}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream && window.reclaimed?.api, { timeout: 240000 });
   await new Promise((r) => setTimeout(r, 8000));
   const r = await p.evaluate(async () => {

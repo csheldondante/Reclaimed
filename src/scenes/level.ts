@@ -42,8 +42,7 @@ import { RiverWet } from '../weather/riverwet';
 import { CatchmentWet } from '../weather/catchwet';
 import { RiverWetField } from '../weather/wetfield';
 import { riverMode, useRivers } from '../sim/world-gpu';
-import { installFlow, type FlowKit } from '../flow/install';
-import { LIQUID } from '../flow/model';
+import { type FlowKit } from '../flow/install';
 import { TunePanel } from '../ui/tunepanel';
 import { BugReport } from '../ui/bugreport';
 import { StationsBar } from '../ui/stations';
@@ -54,7 +53,7 @@ import { Puck } from '../api/puck';
 import { StoryPlay } from '../story/play';
 import type { HeroRun } from '../story/hero-run';
 import { cpuStats } from '../gpu/cpustat';
-import { type Interval, CHUNK, windowZMax } from '../world/layout';
+import { type Interval, windowZMax } from '../world/layout';
 import { Integrity, type Grab } from '../game/integrity';
 import { cellAt, cellPos, ROW_H } from '../world/lattice';
 import { HybridChunks } from './hybrid';
@@ -350,22 +349,10 @@ export class LevelScene implements Scene {
     const dims = { w: level.side ?? 256, h: level.side ?? 256, zMax: level.zMax ?? 64 };
     if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
     this.core = new WorldCore(host, opts.map ?? opts.atlas?.map ?? opts.made?.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, true, level.meshRoom);
-    // (?liquid=flow, docs/ARCHITECTURE.md "The flow model") liquids as runs in the columns, and what's near steady sleeps: before the warmup
-    // (round 110: an opt-in for the flow model's own lab only; trackA-liquids, DA-P5: any level with ?liquid=flow — the
-    // pipes stay the default until the user approves the flow model on the phone)
-    // (trackA-liquids: the flow lab sleeps with either model — the phone bench, perf/flowbench.ts, compares the flow
-    // model's steady sleep with the pipes' sleep on the same scenes; a streamed level's sleep made here too, attachStream
-    // keeps it)
-    const flowOn = LIQUID === 'flow';
-    if (level.flowSetup || flowOn) {
-      this.sleep = new Sleep(this.core.dims.w / CHUNK, this.core.dims.h / CHUNK, this.core.ring);
-      this.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
-      this.core.sleep = this.sleep;
-    }
-    if (flowOn && this.sleep) {
-      const kit = installFlow(this.core, this.sleep);
-      this.flow = { ...kit, lab: level.flowSetup?.(kit) };
-    }
+    // (trackA-liquids, DA-P5: the liquid is the flow model, the world's — docs/ARCHITECTURE.md "The flow model"; what's
+    // near steady sleeps. Every level sleeps and wakes its world — ?sleep=0: all awake — the world's sleep)
+    if (host.params.get('sleep') !== '0') this.sleep = this.core.sleep;
+    this.flow = { ...this.core.flow, lab: level.flowSetup?.(this.core.flow) };
     // (grids, the rendering branch, opens in free play; ?mode=story for the story's rules)
     this.story = !!level.story && !opts.free && host.params.get('mode') === 'story';
     this.core.globals.story = this.story;
@@ -582,7 +569,6 @@ export class LevelScene implements Scene {
     // (round 84, ?rivers=table: a streamed world's water comes in at the atlas's steady state — not run in the warmup,
     // where nothing is asleep yet and its rivers would run unheld)
     // (round 110: a fixed map's authored river table too — its rivers come in at their table)
-    // (trackA-liquids: the flow model's water as the pipes' — ?liquid=flow)
     const still = riverMode() === 'table';
     // (round 112: the level's pipelines, asked for together while it was made, ready before its first tick — gpu/pipeline.ts)
     await endPipelineBatch();
@@ -596,7 +582,7 @@ export class LevelScene implements Scene {
     if (snapKey || warmK) bootMark(snap ? 'snap-loaded' : 'snap-missing');
     if (snap) await s.core.warmFrom(snap);
     else {
-      await s.core.warmup(opts.map ? 30 : level.warmupTicks ?? WARMUP_TICKS, (sys) => sys.name !== 'ecology' && !(still && (sys.name === 'water' || sys.name === 'liquid-water')));
+      await s.core.warmup(opts.map ? 30 : level.warmupTicks ?? WARMUP_TICKS, (sys) => sys.name !== 'ecology' && !(still && sys.name === 'liquid-water'));
       if (snapKey) void saveSnapshot(snapKey, captureWorld(s.core));
       else if (warmK) void saveWarm(warmK, captureWorld(s.core));
     }

@@ -21918,3 +21918,26 @@ expected fail. No shot (nothing drawn changed).
   walk up its stair and along the top), `gate-widths.png` (the east gate's march: 5 m at the gate — its edge blocks
   close in by the towers — 10–12 m in the street out), `unreached-red.png` (the red marks, with the reach bits
   cleared by the shot's script to show them: in play every Muru piece is reached).
+
+## 2026-11-10 — trackA-liquids: the flow model the one liquid; the pipes retired
+
+The user approved it after the Pixel 9a bench (the flow model awake 1.9 ms against the pipes' 2.6; without lava 1.05
+against 2.4; steady and disturbed within noise): "make the liquid flow the new default" — and "Don't build against a
+system we are deprecating"; "Stop wasting resources on old code." So, no compatibility layer:
+- WorldCore makes the liquid (installFlow, after the surface) with the world's Sleep; every level sleeps and wakes it
+  (?sleep=0: everything awake). `?liquid`, `flow/model.ts`, `?flow=1`'s lab-only throw: gone.
+- Deleted: water_flux.wgsl, water_depth.wgsl, the WaterSystem and its settling passes (?settleiters), the GPU settling
+  hold (sim/settlehold.ts, settlehold.wgsl, waterChange, Sleep's settle candidates and settling rects, ?settletol),
+  `?rivers=hold` / `?riverhold` / RIVER_HOLD, `?riverpull` / RIVER_PULL, `?riverslow` / RIVER_SLOW_N, waterNext, the
+  pipes' tuning group (pipesGain, pipesFriction; the river relax kept as flowRiverRelax), citygen's DECKS_CLAIMED switch
+  and deckSpans (decks are always in the columns), the flow bench's pipes half, scripts/fallcompare.mjs, the --base
+  options of flowlab.mjs and fallstill.mjs, test/gpu/settlehold.test.ts.
+- The chunk lists exist in Node too now (SIM_CULL: on unless ?simcull=0, also without a page), as the flow model needs.
+- The water's writers (unit gate): climate, edit, lava, liquid, placeop. The tests that named the system 'water' name
+  'liquid-water'; data/lab/town.rclt captured again (the generator's hash moved with RIVER_SPRING's unit).
+- Kept, with what still needs them (BACKLOG LQ8): sim/lava.ts with lava.wgsl / lava_flux.wgsl — the sandbox's heat beam
+  (melting the ground into lava), volcano vents with their rising cones, the meteor's melt; world.lava read by
+  renderfields, the warp and snapshots. The OilSystem (oil_flux / oil_depth) — oil floating on water; the flow model
+  reads its depth for the water's head.
+Checks: typecheck (src and test); the unit tier 107 files, 863 passed; the GPU tier 45 files, 194 passed; Muru and the
+flow lab at default (scratchpad liquids/muru-default.png, flowlab-default.png).

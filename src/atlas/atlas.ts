@@ -126,7 +126,6 @@ export class Atlas {
     // (round 84: how the rivers are kept — sim/world-gpu.ts RIVERS; columns.wgsl, forms.wgsl)
     // (round 110: the fall, the sheet and the levee shared with an authored river table — world/rivertable.ts)
     const rivers = `const RIVER_TABLE: bool = ${riverMode() === 'table'};
-const RIVER_HOLD: bool = ${riverMode() === 'hold'};
 const RIVER_FALL: f32 = ${RIVER_FALL.toFixed(2)};
 const RIVER_SHEET: f32 = ${RIVER_SHEET.toFixed(2)};
 const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};

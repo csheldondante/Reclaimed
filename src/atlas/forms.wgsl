@@ -729,9 +729,6 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
       // (round 84, ?rivers=table: no springs — the river is held at the atlas's steady state, fed from past the
       // window by its own table: sim/world-gpu.ts riverFlow)
       if (g.rx < 0.6 && !RIVER_TABLE) { o.spring = RIVER_SPRING; }
-      // (?rivers=hold, the perf agent's: the river's water holds its level — a negative source, the depth it's topped
-      // up to, water_depth.wgsl — rather than a spring pouring a constant flow in)
-      if (RIVER_HOLD && o.water > 0.02) { o.spring = -o.water; }
       // (round 84, ?rivers=table) where the bed steps down (a fall, a chute: RIVER_FALL a step) the water is a sheet
       // pouring over it, quick — not a pool the pipes would empty down the step when woken
       var fall = 1.0;

@@ -31,6 +31,8 @@ import { Structures } from '../grids/structures';
 import { Places } from '../game/places';
 import { ColumnApply, type ApplyStage, type GpuColumns } from '../game/colapply';
 import { bootMark } from '../perf/boot-marks';
+import { Sleep } from '../sim/sleep';
+import { installFlow, type FlowKit } from '../flow/install';
 import { restoreWorld, type WorldSnapshot } from '../sim/snapshot';
 
 /** the colour of rock cut open by the cutaway's slice (meshdraw.wgsl fsMesh's section) */
@@ -92,7 +94,9 @@ export class WorldCore {
   private strikeAge = 99;
   pollution = 1;
   /** sleep and wake (round 80, sim/sleep.ts), when the scene has it: what writes the columns wakes them */
-  sleep?: import('../sim/sleep').Sleep;
+  readonly sleep: Sleep;
+  /** (trackA-liquids) the liquid: water and lava as the flow model's runs (flow/install.ts) */
+  readonly flow: FlowKit;
   /** (round 108, simtiers) which slow processes change the map — live or baked — and the bakes (api/contracts/simtiers.ts) */
   readonly tiers: Tiers;
   /** (round 83) what judges what's changed — structures and rock (game/integrity.ts); the world API's edits mark it */
@@ -189,6 +193,12 @@ export class WorldCore {
     this.light = this.dayNight.light(1);
     // (the tiers' rates in before anything runs)
     this.tiers.apply();
+    // (trackA-liquids, DA-P5: the one liquid — the flow model, docs/ARCHITECTURE.md "The flow model" — and the sleep its
+    // steady state decides with; a scene that wakes and sleeps its world updates this sleep, one that doesn't leaves
+    // everything awake)
+    this.sleep = new Sleep(this.dims.w / CHUNK, this.dims.h / CHUNK, this.ring);
+    this.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
+    this.flow = installFlow(this, this.sleep);
   }
 
   /** Settle the generated world with the real systems before anyone looks. */
@@ -598,7 +608,7 @@ export class WorldCore {
   // ---- (round 108, the playground) a station put back as the level opened ----------------------------------
   private pristine?: { layers: GPUBuffer; bufs: { src: GPUBuffer; copy: GPUBuffer; stride: number }[] };
   /** the per-column state a station's reset puts back (sim/pages.ts COLUMN_BUFS order: bytes a column) */
-  private static readonly RESTORED = ['water', 'waterNext', 'waterPrev', 'waterSource', 'oil', 'oilNext', 'oilStored', 'lava', 'lavaNext', 'contam', 'contamNext', 'moisture', 'moistureNext', 'veg', 'vegNext', 'fire', 'fireNext', 'flux'] as const;
+  private static readonly RESTORED = ['water', 'waterPrev', 'waterSource', 'oil', 'oilNext', 'oilStored', 'lava', 'lavaNext', 'contam', 'contamNext', 'moisture', 'moistureNext', 'veg', 'vegNext', 'fire', 'fireNext', 'flux'] as const;
 
   /** Keep the world as it is now (after the warmup) for restoreChunks. A fixed window only (no ring offset). */
   keepPristine(): void {
@@ -667,7 +677,7 @@ export class WorldCore {
     enc.clearBuffer(w.deposit);
     device.queue.submit([enc.finish()]);
     const ring = w.ring.toStore(water);
-    for (const n of ['water', 'waterNext', 'waterPrev'] as const) device.queue.writeBuffer(w[n], 0, ring);
+    for (const n of ['water', 'waterPrev'] as const) device.queue.writeBuffer(w[n], 0, ring);
     this.map.surface.set(w.ring.toStore(surface));
     this.columnsWritten('all');
   }

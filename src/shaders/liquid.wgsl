@@ -669,7 +669,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   // (held: in the gap on the column's own ground — under a deck, the river's; Gaps.nat)
   if (held) {
     let m = gapForRun(g, g.nat);
-    o.dep[m] = mix(o.dep[m], rh.depth, G.tune.pipesRiverRelax);
+    o.dep[m] = mix(o.dep[m], rh.depth, G.tune.flowRiverRelax);
   }
   // the enclosed runs: wet gaps under the top, lowest first; past three, the deepest kept (the rest counted)
   var n = 0u;
@@ -720,7 +720,7 @@ fn publishWater(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let r0 = runsOut[i * NSLOT];
   var nd = select(d, r0.y, (u32(r0.w) >> 3u) == stepNow());
-  // (a source: cells^3 a second — PW6; a negative one is a held depth, the pipes' ?rivers=hold, not water added)
+  // (a source: cells^3 a second — PW6)
   nd += rainAt(cellPos(p)) * G.tune.waterRain * (1.0 - snowShare(airTempAt(sfZ(surface[i])))) + max(waterSourceL[i], 0.0) * DTQ;
   nd = max(0.0, nd - select(EVAP_DEEP_Q, G.tune.waterEvap, nd < 0.08));
   if (sfCount(surface[i]) == 0u) { nd = 0.0; }
