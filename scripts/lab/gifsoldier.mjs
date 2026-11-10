@@ -30,10 +30,13 @@ export default async function (lab, args) {
   let last = null;
   const seen = [];
   for (let i = 0; i < frames; i++) {
-    let u = units.get(id);
+    // (round 128p, U1: where they stand asked of the GPU each frame of the GIF — a unit's place isn't read unless observed)
+    const where = new Map((await lab.units.query([0, 0], 1e7)).map((v) => [v.id, v.at]));
+    const placed = (v) => (v && where.has(v.id) ? { ...v, at: where.get(v.id) } : null);
+    let u = placed(units.get(id));
     if (!u || !u.alive) {
       // (enlisted: the soldier stood up where the recruit stood)
-      const near = life.soldiers.map((s) => units.get(s)).filter(Boolean).sort((a, b) => Math.hypot(a.at[0] - last[0], a.at[1] - last[1]) - Math.hypot(b.at[0] - last[0], b.at[1] - last[1]))[0];
+      const near = life.soldiers.map((s) => placed(units.get(s))).filter(Boolean).sort((a, b) => Math.hypot(a.at[0] - last[0], a.at[1] - last[1]) - Math.hypot(b.at[0] - last[0], b.at[1] - last[1]))[0];
       if (near) {
         id = near.id;
         u = near;

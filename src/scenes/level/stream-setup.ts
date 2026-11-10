@@ -25,6 +25,8 @@ import type { LevelScene } from '../level';
 import { urlFlags } from '../../flags';
 import { worldApiOf } from './world-api';
 import { FieldTowns } from '../../citygen/towns';
+import { LivingTowns } from '../../citylife/towns';
+import { livingFromUrl } from '../../citylife/params';
 import { mountTownPanel } from '../../citygen/panel';
 import { startSeasonLoop } from './season';
 import { whenPipelinesReady } from '../../gpu/pipeline';
@@ -389,6 +391,27 @@ export function attachStream(scene: LevelScene): void {
           if (host.params.get('opps') === '1') startSeasonLoop(scene, towns);
           S.onSlide.push(() => towns.slid());
           S.onWarp.push(() => towns.warped());
+          // (living town, docs/design/LIVING_TOWN.md: ?living=1 — each made town's people, its quarry and clearing, on
+          // the GPU; the panel with its counters. ?living=0 or absent: none — the toggle diff)
+          if (host.params.get('living') === '1') {
+            livingFromUrl(host.params);
+            const lt = new LivingTowns({
+              device: host.gpu.device,
+              towns: () => towns.live,
+              addVoxels: (i, g) => core.renderer.addVoxels(i, g),
+              removeVoxels: (g) => core.renderer.removeVoxels(g),
+              addMesh: (v, g, x) => core.renderer.addMesh(v, g, x),
+              removeMesh: (g) => core.renderer.removeMesh(g),
+              frameCompute: core.renderer.frameCompute,
+              profiler: host.profiler,
+              dims: { w: dims.w, h: dims.h },
+              world: { globals: core.world.globals, chunks: core.world.chunks, materials: core.world.materials, layers: core.world.layers, veg: core.world.veg, vegNext: core.world.vegNext },
+            });
+            lt.debugGraph = host.params.get('livingdebug') === '1';
+            scene.livingTowns = lt;
+            (globalThis as { living?: LivingTowns }).living = lt;
+            if (host.params.get('livingpanel') !== '0') lt.mountPanel(host.ui, () => void towns.claimDistrict('housing'));
+          }
           // (the first look now: the town the level opens on made before the first frames)
           towns.update(Infinity);
         });

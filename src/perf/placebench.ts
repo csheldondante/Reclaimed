@@ -27,7 +27,7 @@ interface Rec {
   settlements?: { pinnedId: string | null; settlement(id: string): { name: string } | null };
   townFixture(): Promise<string>;
   fortress?: Fortress;
-  scene: { speed: number; heightAt(x: number, y: number): number; units?: { get(id: number): { at: [number, number, number] } | undefined } };
+  scene: { speed: number; heightAt(x: number, y: number): number; units?: { query(near: [number, number], radius: number): Promise<{ id: number; at: [number, number, number] }[]> } };
   fortressCrowd?: () => { people(): Iterable<number> } | undefined;
 }
 
@@ -62,10 +62,16 @@ export function gameIO(R: Rec, log?: (l: string) => void): PlaceBenchIO {
       }
     },
     simTime: () => simT,
-    walkers: () => [...(R.fortressCrowd?.()?.people() ?? [])].flatMap((id) => {
-      const u = R.scene.units?.get(id);
-      return u ? [[u.at[0], u.at[1]] as [number, number]] : [];
-    }),
+    // (round 128p, U1: where they stand asked of the GPU — one query over the window, each 5 sim seconds)
+    walkers: async () => {
+      const { w, h } = R.core.dims;
+      const found = (await R.scene.units?.query([w / 2, h / 2], Math.hypot(w, h))) ?? [];
+      const at = new Map(found.map((v) => [v.id, v.at]));
+      return [...(R.fortressCrowd?.()?.people() ?? [])].flatMap((id) => {
+        const p = at.get(id);
+        return p ? [[p[0], p[1]] as [number, number]] : [];
+      });
+    },
     log,
   };
 }

@@ -30,7 +30,10 @@ import windFieldWgsl from '../shaders/windfield.wgsl?raw';
 import sedimentWgsl from '../shaders/sediment.wgsl?raw';
 import climateWgsl from '../shaders/climate.wgsl?raw';
 import tiersWgsl from '../shaders/tiers.wgsl?raw';
-import editWgsl from '../shaders/edit.wgsl?raw';
+import editOnlyWgsl from '../shaders/edit.wgsl?raw';
+import worldopsWgsl from '../shaders/worldops.wgsl?raw';
+/** the edit pass with the world ops it shares with the living town's works (worldops.wgsl) */
+const editWgsl = [worldopsWgsl, editOnlyWgsl].join('\n');
 import placeOpWgsl from '../shaders/placeop.wgsl?raw';
 import layerPullWgsl from '../shaders/layerpull.wgsl?raw';
 import landBrushWgsl from '../shaders/landbrush.wgsl?raw';

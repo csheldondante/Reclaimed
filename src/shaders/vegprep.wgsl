@@ -282,6 +282,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   var top = 0.0;
   var tap = vec4<f32>(0.0);
   var floraKeep = false;
+  var stump = false;
   var plF = pl;
   if (inside) {
     let i = colIdx(id.x, id.y);
@@ -302,6 +303,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     // room in the box lists)
     if (FLORA && G.misc.w < 0.5 && (plF.tufts > 0u || pl.shrub || pl.flower || veg[i] >= 3.6)) { pl.tufts = 0u; floraKeep = true; }
     n = select(0u, 1u, pl.shrub && !floraKeep) + select(0u, 2u, pl.tree && !TREE_MESH) + pl.tufts + select(0u, 1u, pl.flower && !floraKeep);
+    // (living town: a felled tree's stump — vegplan.wgsl vegStump)
+    stump = vegStump(id.x, id.y, veg[i]) && G.misc.w < 0.5;
+    n += select(0u, 1u, stump);
     if (G.misc.w > 0.5) { n = fineCount(veg[i], gm, id.xy); }
     n += plantingCount(floor(tap.z)) + plantingCount(floor(tap.w));
   }
@@ -346,6 +350,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   }
   if (pl.shrub && G.misc.w < 0.5 && !floraKeep) {
     putP(o, mkInst(id.x, id.y, 1u, 1u, top, top + 1.0, MAT_LEAVES, FLAG_VEG));
+    o += 1u;
+  }
+  if (stump) {
+    putP(o, mkInst(qx, qy, 3u, 3u, top, top + 0.7, MAT_LOG, FLAG_VEG | FLAG_DETAIL));
     o += 1u;
   }
   if (pl.tree && G.misc.w < 0.5 && TREE_MESH) {

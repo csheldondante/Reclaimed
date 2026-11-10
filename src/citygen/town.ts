@@ -6,7 +6,7 @@
 // The box must be in the window when the town is made (the level opens the window round it: citygen/town.ts
 // fieldTownBox, level.ts); after that the window may go where it likes. docs/design/CITYGEN.md.
 import type { Settlement } from '../api/contracts/settlement';
-import type { CityLots, DistrictStage } from '../api/contracts/citygen';
+import type { CityLots, CityRoutes, DistrictStage } from '../api/contracts/citygen';
 import { ROW_H } from '../world/lattice';
 import { BUILD_S, CityGen, DISTRICT_SPAN, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes, type DistrictClaim } from './gpu';
 import type { StaticClaims, StaticGrid, GridPlace, OwnedSlot } from '../sim/static-claims';
@@ -15,6 +15,7 @@ import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline'
 import commonWgsl from '../shaders/common.wgsl?raw';
 import bareWgsl from './bare.wgsl?raw';
 import { cityParams, scaled } from './params';
+import { urlFlags } from '../flags';
 
 /** a town's radius (cells) by its size — a town the lab's Muru the user approved (radius 120, 400+ lots) */
 const RADIUS: Record<Settlement['size'], number> = { camp: 30, hamlet: 48, village: 72, town: 120, city: 150 };
@@ -116,7 +117,13 @@ export function townLayout(
     }),
   );
   // (the town's own inputs over the generator's defaults: its radius and seed)
-  const params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0, roadTone: TONE[site.size] }));
+  // (the street skeleton from the address: ?skel=0|1|2 &skelmargin= &minorahead=0|1 — citygen/params.ts)
+  const q = urlFlags();
+  const skel: Partial<StreetParams> = {};
+  if (q.get('skel') !== null) skel.skelReach = Number(q.get('skel'));
+  if (q.get('skelmargin') !== null) skel.skelMargin = Number(q.get('skelmargin'));
+  if (q.get('minorahead') !== null) skel.minorAhead = Number(q.get('minorahead'));
+  const params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0, roadTone: TONE[site.size], ...skel }));
   return { box, raw, gen, params, centre, local };
 }
 
@@ -160,6 +167,7 @@ export class FieldTown {
   private grid: StaticGrid | null = null;
   private slot: OwnedSlot;
   private gone = false;
+  private centreLocal: [number, number];
   private bare: ComputeKernel;
   private bareU: GPUBuffer;
   reachRounds = 0;
@@ -180,7 +188,7 @@ export class FieldTown {
     // (a game town starts with its core built; the rest grows by claims and time-lapses)
     const L = townLayout(io.device, site, io.wrap, io.sea, { claimInto: slot.binding, vertRoom: TOWN_VERT_ROOM, built: 'core' });
     const { box, centre, local } = L;
-    this.centre = centre;
+    this.centreLocal = centre;
     this.box = box;
     this.raw = L.raw;
     this.gen = L.gen;
@@ -206,8 +214,6 @@ export class FieldTown {
       });
   }
 
-  /** the town's centre in the grid's frame (world units) */
-  private centre: [number, number];
   /** (season loop) the town's centre in the window now (world units): the camera's framing */
   centreInWindow(): [number, number] {
     return this.inWindow(this.centre);
@@ -340,6 +346,7 @@ export class FieldTown {
       void this.gen.run(this.params, 'mesh').then(
         () => {
           this.reclaiming = false;
+          this.meshRuns++;
           if (!this.gone && this.grid) {
             this.io.statics()?.reclaim(this.grid);
             this.cropsOver();
@@ -382,6 +389,27 @@ export class FieldTown {
     this.gen.stageDistrict(id, stage, when);
     this.animUntil = Math.max(this.animUntil, Math.max(now, when + DISTRICT_SPAN) + 0.5);
     this.gen.animate(now);
+  }
+
+  /** (the street skeleton) which main roads show and are walked (citygen/params.ts skelReach, skelMargin,
+   *  minorAhead): the mesh run again, the claims after it; the living town's graph follows (meshRuns) */
+  setSkeleton(s: { skelReach?: number; skelMargin?: number; minorAhead?: number }): void {
+    if (this.gone || !this.times) return;
+    Object.assign(this.params, s);
+    void this.gen.run(this.params, 'mesh').then(() => {
+      this.meshRuns++;
+      if (!this.gone && this.grid) this.io.statics()?.reclaim(this.grid);
+    });
+  }
+
+  /** (living town) mesh runs since it was made: its road raster drawn again (the living town's graph follows) */
+  meshRuns = 0;
+  /** (living town) its routes' inputs (api/contracts/citygen.ts CityRoutes), its centre in the grid's frame */
+  get routes(): CityRoutes {
+    return this.gen.routeInputs;
+  }
+  get centre(): [number, number] {
+    return this.centreLocal;
   }
 
   /** the bytes it holds on the GPU (its generator's buffers and its raw ground; its claim slot is the arena's) */

@@ -10,7 +10,7 @@
 //   (`died`), lies there CORPSE s and is gone.
 // - Guarding: a unit goes back to its guard point when its target's gone or out of LEASH of it.
 
-import type { Actor, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
+import type { Actor, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
 import { canStep } from '../hero/path';
 
@@ -31,7 +31,8 @@ const HURT = 0.15;
 const CORPSE = 4;
 
 interface Unit {
-  v: UnitView;
+  /** (round 128p) on the CPU every unit's place is known: its view's `at` is never null here */
+  v: UnitView & { at: V3 };
   sight: number;
   speed: number;
   damage: number;
@@ -65,7 +66,7 @@ export class SimpleUnits implements Units {
     const z = this.ground.heightAt(at[0], at[1]);
     if (z === null) throw new Error(`units.spawn: ${kind} at ${at} is outside the world`);
     const hp = o.health ?? 3;
-    const v: UnitView = {
+    const v: UnitView & { at: V3 } = {
       id,
       kind,
       role: o.role ?? kind,
@@ -97,8 +98,14 @@ export class SimpleUnits implements Units {
     return [...this.units.values()].map((u) => u.v);
   }
 
-  query(near: V2, radius: number, o: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): UnitView[] {
-    const out: { d: number; v: UnitView }[] = [];
+  /** (round 128p: the contract's queries are asked of the GPU and answered later; here at once) */
+  async query(near: V2, radius: number, o: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): Promise<SeenUnit[]> {
+    return this.queryNow(near, radius, o);
+  }
+
+  /** (the CPU's own: at once) */
+  queryNow(near: V2, radius: number, o: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): SeenUnit[] {
+    const out: { d: number; v: SeenUnit }[] = [];
     for (const { v } of this.units.values()) {
       if (!v.alive && !o.dead) continue;
       if (o.faction !== undefined && v.faction !== o.faction) continue;
@@ -107,6 +114,11 @@ export class SimpleUnits implements Units {
       if (d <= radius) out.push({ d, v });
     }
     return out.sort((a, b) => a.d - b.d).map((x) => copy(x.v));
+  }
+
+  /** (round 128p: on the CPU every unit's place is known — nothing to keep read) */
+  observe(_ids: UnitId | readonly UnitId[]): () => void {
+    return () => {};
   }
 
   byCharacter(character: string): UnitView | null {
@@ -358,6 +370,7 @@ export class SimpleUnits implements Units {
 
 const guardPoint = (j: UnitJob): V2 | null => (j.kind === 'guard' ? j.at : j.kind === 'patrol' ? j.around : j.kind === 'work' ? j.at : null);
 
-function copy(v: UnitView): UnitView {
-  return { ...v, at: [...v.at] as V3, job: structuredClone(v.job) };
+/** (on the CPU every unit's place is known: its view always has one) */
+function copy(v: SeenUnit): SeenUnit {
+  return { ...v, at: [v.at[0], v.at[1], v.at[2]], job: structuredClone(v.job) };
 }

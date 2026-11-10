@@ -215,11 +215,11 @@ await run({ name: `m124world-${which}`, kind: 'behaviour', size: arg('size', '41
       return O.sr.map.areaAt(O.sit.areas.find((a) => a.play.kind === 'deliver'));
     });
     await lookAt(holdAt, 'hold-refugees', 20000);
-    const units = await p.evaluate(() => {
+    const units = await p.evaluate(async () => {
       const L = window.reclaimed.opps;
       const O = L.opps;
       const hold = O.sit.areas.find((a) => a.play.kind === 'deliver')?.settlement;
-      const all = L.d.units.query(L.d.toWin(O.sr.map.areaAt(O.sit.areas.find((a) => a.play.kind === 'deliver'))), 200);
+      const all = await L.d.units.query(L.d.toWin(O.sr.map.areaAt(O.sit.areas.find((a) => a.play.kind === 'deliver'))), 200);
       return { here: all.filter((u) => u.settlement === hold).length, refugees: all.filter((u) => u.settlement === hold && u.role === 'refugee').length };
     });
     R.log(`at the hold: ${JSON.stringify(units)}`);

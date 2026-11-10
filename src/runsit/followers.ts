@@ -6,24 +6,28 @@
 // own settlements" — a later Order kind (work, build) is a case here, not a new system.
 
 import type { Followers, Order } from '../api/contracts/orders';
-import type { UnitId, UnitJob, Units, UnitView } from '../api/contracts/units';
+import type { SeenUnit, UnitId, UnitJob, Units, UnitView } from '../api/contracts/units';
 
 export class UnitFollowers implements Followers {
   private orders = new Map<UnitId, Order>();
   /** each one's job when they were taken on (released back to it) */
   private before = new Map<UnitId, UnitJob>();
+  /** (round 128p, U1) the followers observed (Units.observe) while they follow: where they are read each sync */
+  private observing = new Map<UnitId, () => void>();
 
   constructor(
     private units: Units,
     readonly leader: string,
   ) {}
 
-  recruit(ids: UnitId[]): void {
-    for (const id of ids) {
-      const u = this.units.get(id);
-      if (!u?.alive || u.hostile || this.orders.has(id)) continue;
+  /** (round 128p, U1: each taken on where it stands — a query's answer or an observed unit) */
+  recruit(units: readonly SeenUnit[]): void {
+    for (const u of units) {
+      const id = u.id;
+      if (!u.alive || u.hostile || this.orders.has(id)) continue;
       this.before.set(id, u.job);
       this.orders.set(id, { kind: 'hold', at: [u.at[0], u.at[1]] });
+      this.observing.set(id, this.units.observe(id));
     }
   }
 
@@ -32,6 +36,8 @@ export class UnitFollowers implements Followers {
     for (const id of ids) {
       this.orders.delete(id);
       this.before.delete(id);
+      this.observing.get(id)?.();
+      this.observing.delete(id);
     }
   }
 
@@ -62,6 +68,13 @@ export class UnitFollowers implements Followers {
     for (const [id, order] of this.orders) {
       const u = this.units.get(id);
       if (u?.alive) out.push({ unit: u, order });
+      else {
+        // (fallen or gone: no longer a follower, nor observed)
+        this.orders.delete(id);
+        this.before.delete(id);
+        this.observing.get(id)?.();
+        this.observing.delete(id);
+      }
     }
     return out;
   }

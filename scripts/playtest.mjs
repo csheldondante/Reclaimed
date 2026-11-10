@@ -96,7 +96,7 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
   });
   await sleep(300);
   const swipeIfComing = () =>
-    p.evaluate(() => {
+    p.evaluate(async () => {
       const s = window.reclaimed.play;
       const h = s.hero;
       const cam = window.reclaimed.core.camera;
@@ -104,7 +104,8 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
       const a = h.heading();
       const [fx, fy] = [Math.cos(a), Math.sin(a)];
       const sp = h.speed();
-      const coming = window.reclaimed.units.query([x, y], 20, { hostile: true }).some((u) => {
+      // (round 128p, U1: a query is asked of the GPU — async, each answer with its place)
+      const coming = (await window.reclaimed.units.query([x, y], 20, { hostile: true })).some((u) => {
         const dx = u.at[0] - x;
         const dy = u.at[1] - y;
         const along = dx * fx + dy * fy;
@@ -176,8 +177,9 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
   const tapUnit = (id) =>
     p.evaluate((id) => {
       const s = window.reclaimed.play;
+      // (round 128p, U1: its place read while it's round the hero — the play layer observes those, UnitsAround)
       const u = window.reclaimed.units.get(id);
-      if (!u) return false;
+      if (!u?.at) return false;
       s.controls.inject({ kind: 'tap', at: window.reclaimed.core.camera.project(u.at[0], u.at[1], u.at[2] + 0.8) });
       return true;
     }, id);
@@ -193,7 +195,7 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
         const cam = window.reclaimed.core.camera;
         const u = window.reclaimed.units.get(id);
         const [x, y, z] = s.hero.position();
-        if (!u) return;
+        if (!u?.at) return;
         const from = cam.project(u.at[0], u.at[1], u.at[2]);
         const to = cam.project(x, y, z);
         const d = Math.hypot(to[0] - from[0], to[1] - from[1]) || 1;
@@ -235,10 +237,10 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
   const l0 = await state();
   R.check('the lich is up', l0.role === 'lich', l0);
   const tapRaider = () =>
-    p.evaluate(() => {
+    p.evaluate(async () => {
       const s = window.reclaimed.play;
       const [x, y] = s.hero.position();
-      const u = window.reclaimed.units.query([x, y], 30, { hostile: true })[0];
+      const u = (await window.reclaimed.units.query([x, y], 30, { hostile: true }))[0];
       if (!u) return null;
       const sc = window.reclaimed.core.camera.project(u.at[0], u.at[1], u.at[2] + 0.64);
       s.controls.inject({ kind: 'tap', at: sc });
@@ -281,7 +283,7 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
     const r = await p.evaluate((id) => {
       const s = window.reclaimed.play;
       const u = window.reclaimed.units.get(id);
-      return { st: s.hero.status(), dz: u ? u.at[2] - s.hero.position()[2] : null };
+      return { st: s.hero.status(), dz: u?.at ? u.at[2] - s.hero.position()[2] : null };
     }, victim);
     if (/FACE TO FACE/.test(r.st)) faced++;
     if (r.dz !== null) rose = Math.max(rose, r.dz);

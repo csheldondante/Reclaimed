@@ -133,3 +133,21 @@ export interface CityDistricts {
   townTime: number;
   speed: number;
 }
+
+/**
+ * (living town, docs/design/LIVING_TOWN.md) What a town's routes are made from — read only, in the grid's frame, a
+ * word (or f32) a grid column (w × h, row-major) unless said:
+ *   roads   the road raster: 0 none, 1 a road, 0x80000000 | z × 256 a bridge deck at world z (citygen streets.wgsl
+ *           markRoad — every road the town draws: contours, cross, gap, grown streets, arterials, decks)
+ *   heights the ground's world z (f32)
+ *   wet     1.0 where water is (f32)
+ *   pop     the population field, 4 f32 a column: density, wealth, purpose (streets.wgsl P_*), the arterials' distance
+ *   art     the arterials: a count, then per arterial its points and its length to the town's limit (streets.wgsl ART)
+ */
+export interface CityRoutes {
+  readonly roads: GPUBuffer;
+  readonly heights: GPUBuffer;
+  readonly wet: GPUBuffer;
+  readonly pop: GPUBuffer;
+  readonly art: GPUBuffer;
+}

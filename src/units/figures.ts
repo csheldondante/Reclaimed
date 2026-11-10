@@ -5,7 +5,7 @@
 // Readable first: legs that stride, a torso in its faction's colour, a head, a weapon that swings; a wind-up
 // leans in; the dead lie down. Up to MAX figures.
 
-import type { UnitView, V3 } from '../api/contracts/units';
+import type { SeenUnit, UnitView, V3 } from '../api/contracts/units';
 import type { Renderer } from '../render/renderer';
 import { MAT } from '../world/materials';
 
@@ -38,7 +38,7 @@ export interface FigurePose {
 }
 
 /** a unit's figure: its faction's colours (see FACTION_MATS), its state */
-export function unitPose(u: UnitView, t: number): FigurePose {
+export function unitPose(u: SeenUnit, t: number): FigurePose {
   const m = materialsFor(u);
   const swinging = u.state === 'swing';
   return {

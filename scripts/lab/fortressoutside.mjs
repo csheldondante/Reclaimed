@@ -63,7 +63,7 @@ export default async function (lab, args) {
   while (t < duration) {
     const r = await lab.run(step, speed, { dt: args.dt });
     t += r.simSeconds;
-    const s = lab.snapshot();
+    const s = (await lab.snapshot());
     let reached = false;
     for (const p of [...pending]) {
       const [x, y] = f.centre(p.cell);

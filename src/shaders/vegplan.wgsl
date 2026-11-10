@@ -20,6 +20,14 @@ fn birchWood(x: u32, y: u32) -> f32 {
   return smoothstep(0.52, 0.7, n);
 }
 
+// (living town, docs/design/LIVING_TOWN.md §6) A felled tree leaves a stump: a flora-field state, not a stored plant.
+// Felling sets the column's succession to worldops.wgsl VEG_STUMP (2.35: opFell, called by edit.wgsl and the works);
+// a column in the band whose hash stood a tree (vegPlan's: h < 0.045) shows a stump. Grass grows round it (the band is
+// grass). Regrowth past the band (a replant, succession) takes the stump away.
+fn vegStump(x: u32, y: u32, v: f32) -> bool {
+  return v >= 2.25 && v < 2.45 && rand3(x, y, 4242u) < 0.045 && !(x < 2u || y < 2u || x + 3u >= G.mapW || y + 3u >= G.mapH);
+}
+
 fn vegPlan(x: u32, y: u32, v: f32, m: u32) -> VegPlan {
   var pl = VegPlan(false, false, 0.0, 0.0, 0u, false, 0u);
   let h = rand3(x, y, 4242u);

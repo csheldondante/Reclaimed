@@ -43,8 +43,10 @@ export default async function (lab, args) {
   const fol = lab.follow();
   fol.select(id);
   fol.follow(true);
-  const u0 = units.get(id);
-  lab.look(u0.at[0], u0.at[1], args.zoom ?? 16);
+  // (round 128p, U1: where it stands asked of the GPU — it's observed by the follow from the next sync)
+  const a0 = (new Map((await lab.units.query([0, 0], 1e7)).map((v) => [v.id, v.at]))).get(id);
+  if (!a0) throw new Error(`${who} ${id} not found by the query`);
+  lab.look(a0[0], a0[1], args.zoom ?? 16);
   const seen = [];
   for (let i = 0; i < frames; i++) {
     await lab.run(step, 4);

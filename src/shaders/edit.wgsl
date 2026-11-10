@@ -72,7 +72,6 @@ const OP_PUT: u32 = 15u;
 // fell (round 63; op 5 was free: ops have 4 bits): the column's plants cut back to grass (its tree goes);
 // editResult gets what stood there (x the veg it had)
 const OP_FELL: u32 = 5u;
-const FELLED: f32 = 2.2;
 @group(0) @binding(26) var editResult: texture_storage_2d<rgba32float, write>;
 const CRATER_RING: f32 = 2.5;
 const STROKE_START: u32 = 512u;
@@ -203,7 +202,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let mat = code % 32u;
     if (op == OP_FELL) {
       let had = vegE[i];
-      vegE[i] = min(had, FELLED);
+      // (worldops.wgsl opFell: an exact fell of a tree leaves its stump, a clearing cuts to grass)
+      vegE[i] = opFell(had, ev.w <= 0.0);
       // (round 128d) strength > 0: a clearing (plants.clear — the fortress's cells), every column in the radius, no
       // answer; 0: an exact fell (plants.fell), its answer at the tag
       if (ev.w <= 0.0) {
@@ -217,30 +217,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       // (round 128, INT16: never a thing's External cells — a claimed building's roof is its owner's; a unit taking
       // off it took a slice of the claim, the registry found the building cut and let it go to rubble. Dust or snow
       // lying on it is its own interval on top, and taken as any loose ground)
-      if (op == OP_TAKE && n > 0u && ivMat(arr[n - 1u]) != MAT_EXTERNAL) {
-        let t = arr[n - 1u];
-        gm = ivMat(t);
-        got = clamp(ev.w, 0.0, ivZ1(t) - max(ivZ0(t), 2.0));
-        if (got > 0.0) {
-          if (ivZ1(t) - got <= ivZ0(t) + 1e-3) { n -= 1u; arr[n] = IV_NONE; }
-          else { arr[n - 1u] = ivPack(ivZ0(t), ivZ1(t) - got, gm, ivAux(t)); }
-        }
-      } else if (op == OP_PUT) {
-        var top = 0.0;
-        if (n > 0u) { top = ivZ1(arr[n - 1u]); }
-        let a = clamp(ev.w, 0.0, f32(G.zMax) - 2.0 - top);
-        if (a <= 0.0) {
-          got = 0.0;
-        } else if (n > 0u && ivMat(arr[n - 1u]) == mat) {
-          let t = arr[n - 1u];
-          arr[n - 1u] = ivPack(ivZ0(t), top + a, mat, ivAux(t));
-          got = a;
-        } else if (n < cs.y) {
-          arr[n] = ivPack(top, top + a, mat, 0u);
-          n += 1u;
-          got = a;
-        }
-      }
+      // (worldops.wgsl: the one take and put)
+      if (op == OP_TAKE) { got = opTake(&arr, &n, ev.w, &gm); }
+      else { got = opPut(&arr, &n, cs.y, mat, ev.w, f32(G.zMax) - 2.0); }
       textureStore(editResult, vec2<i32>(i32(code >> 10u), 0), vec4<f32>(max(got, 0.0), f32(gm), f32(G.tick), 1.0));
       continue;
     }

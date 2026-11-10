@@ -34,7 +34,7 @@ export default async function (lab, args) {
   let soldierWalk = 0;
   for (let t = 0; t < seconds; t += every) {
     await lab.run(every, 16);
-    const s = lab.snapshot();
+    const s = (await lab.snapshot());
     for (const q of s.soldiers) {
       // (on the wall-walk: more than 2 m over the ground at its feet)
       if (q.phase === "patrol") wall++;
@@ -50,7 +50,7 @@ export default async function (lab, args) {
       await lab.shot('recipes-mid');
     }
   }
-  const s = lab.snapshot();
+  const s = (await lab.snapshot());
   lab.look(at[0], at[1] + 18, 5);
   await lab.shot('recipes-end');
   const out = { plan, onWall: s.stats.onWall, forged: s.stats.forged, trained: s.stats.trained, mustered: s.stats.mustered, patrols: s.stats.patrols, onWallSamples: wall, soldierRoadShare: soldierWalk ? +(soldierRoad / soldierWalk).toFixed(2) : null, riding: s.roads.riding, stores: s.stores };

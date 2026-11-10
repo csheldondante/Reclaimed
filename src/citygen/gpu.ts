@@ -117,6 +117,11 @@ export interface StreetParams {
   citySeed: number;
   growth: number;
   tint: number;
+  /** (the street skeleton) the main roads shown and walked: 0 core only (with their districts), 1 districts begun and a
+   *  margin round them, 2 everywhere; the margin (supercells); minor streets ahead of their buildings (1) */
+  skelReach: number;
+  skelMargin: number;
+  minorAhead: number;
 }
 /** (m3g) how the distance field is made smooth: the distance blurred (m2 to m3f: uneven contours at the creases), or
  *  the water/cliff mask blurred and thresholded first (a true distance) */
@@ -200,7 +205,7 @@ export interface StreetTimes {
 
 const SLOT = 512;
 const MAX_PASSES = 256;
-const UNI_BYTES = 304;
+const UNI_BYTES = 320;
 const KERNELS = [
   'fill', 'blur', 'feat', 'jfa', 'jdist', 'autoPts', 'phi', 'tensor', 'trace', 'mis', 'blocks',
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotRec', 'lotMesh', 'marks', 'meshCap',
@@ -312,6 +317,11 @@ export class CityGen {
   /** (time-lapse) the town's clock (s) and the last time-lapse's start and spread */
   private tl = { now: 0, t0: 0, span: 0 };
   private vertRoom: number;
+  /** (living town, api/contracts/citygen.ts CityRoutes) what the town's routes are made from: its road raster, heights,
+   *  wet mask, population field and arterials — read by citylife/, never written */
+  get routeInputs(): { roads: GPUBuffer; heights: GPUBuffer; wet: GPUBuffer; pop: GPUBuffer; art: GPUBuffer } {
+    return { roads: this.B.ROADS, heights: this.B.H, wet: this.B.M, pop: this.B.POP, art: this.B.ART };
+  }
   /** (M4b) the bytes of its GPU buffers (a town's memory) */
   get bytes(): number {
     return this.all.reduce((s, b) => s + b.size, 0);
@@ -629,6 +639,8 @@ export class CityGen {
     [...(ROAD_TONES[p.roadTone] ?? [0, 0, 0]), p.roadTone].forEach((v, j) => dv.setFloat32(256 + j * 4, v, true));
     [this.town.density, this.town.purpose, 0, 0].forEach((v, j) => dv.setFloat32(272 + j * 4, v, true));
     [this.tl.now, BUILD_S, this.tl.t0, this.tl.span].forEach((v, j) => dv.setFloat32(288 + j * 4, v, true));
+    // (the street skeleton: its reach, its margin in metres — supercells × their size — and minor streets ahead)
+    [p.skelReach, p.skelMargin * p.scSize * p.blockLen, p.minorAhead, 0].forEach((v, j) => dv.setFloat32(304 + j * 4, v, true));
     return i;
   }
 

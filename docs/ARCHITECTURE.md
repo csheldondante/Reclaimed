@@ -1879,6 +1879,24 @@ its centre over those) isn't judged off its leg. ROCK and a material's `bear` ar
 weighs; the columns a piece left are judged again (weighed); intervals within `FILM_GAP` (0.02) touch. The meteor's
 blast melts only columns whose top is within `BLAST_UP` (4) of where it hit (lava.wgsl, `LavaU.blast2.z`).
 
+## The living town (2026-11-10, branch `trackA-haul`; docs/design/LIVING_TOWN.md)
+
+A citygen town's people, quarry and clearing, all on the GPU (`src/citylife/`, `?citygen=fields&living=1`).
+- **Inputs:** citygen's `CityRoutes` (api/contracts/citygen.ts: road raster, heights, wet mask, population field,
+  arterials) and `CityLots` (records, counts, progress — read only). The world's globals, chunks, materials, layers,
+  veg, vegNext for the works.
+- **routes.wgsl** (`LivingTown`): the walk mask from the road raster + door segments + tracks; 8 hub fields relaxed in
+  place, gated by indirect args from a phase word (build → relaxing → settled; no readback); routes traced once per
+  (start column, hub) key into a points pool (a hash in the state words); riders (64 B rows, `job | state | leg`) step
+  their jobs' state machine and ride routes kinematically; figures as body-format voxels (`Renderer.addVoxels`).
+- **works.wgsl** (`Works`, a `LivingStage`): the quarry's bench progress and dig (in-place interval takes, chunk
+  versions bumped), the stockpile's put on the stores' yard, the clearing's site and tree list, fells to the stump band
+  (vegplan.wgsl `VEG_STUMP`, `vegStump`: drawn by vegprep), replanting, riders' z on the live ground, the piles' voxels.
+- **State words (LT):** one u32 buffer, layout in routes.wgsl (works.wgsl repeats it: test/unit/citylife-layout.test.ts).
+- **Frame:** encoded in `Renderer.frameCompute` with the profiler's timestamps (`living-build`, `-relax`, `-trace`,
+  `-riders`, `-works`, `-figures`). The CPU writes the 176 B parameters' uniform a frame and a 4 B rebuild word when
+  citygen's mesh runs again; nothing read back in play (the debug panel's 640 B twice a second while open).
+
 ## Agents (round 52, docs/AGENTS.md; branch `agents`)
 
 `installAgents(core)` (src/agents/) adds one system after the particles and
@@ -2160,7 +2178,11 @@ against a contract and knows only its inputs:
 
 - `src/api/contracts/units.ts` — `Units`: spawn(kind, at, faction, { name, character, settlement, role,
   hostile, health, sight, speed, damage, colour, job }), get, query(near, r, filter), byCharacter, order(job),
-  setHostile, hit(id, damage, by), remove, watch(actor), shift, update; events died / hurt / noticed. `Actor`:
+  setHostile, hit(id, damage, by), remove, watch(actor), shift, update; events died / hurt / noticed. (Round 128p,
+  U1, DA-B22 (c)(4): `UnitView.at` is `V3 | null` — known only for a unit `observe(ids)`d (counted; the returned
+  function releases) or the dead (where they fell); `query` is async (`Promise<SeenUnit[]>`, asked of the GPU, each
+  answer with its place); `SeenUnit` / `seen(v)` for a view with its place. A caller observes what it follows and
+  handles an unread place; nothing reads every unit's place every frame.) `Actor`:
   what takes part without being a unit (the hero). `src/units/simple.ts` `SimpleUnits` is the CPU stand-in;
   the GPU agents (`settlements`) are to implement it.
 - `src/api/contracts/hero.ts` — `Hero` (an actor, abilities, a camera preference, position / heading / speed,
@@ -2337,7 +2359,9 @@ iterate on player controls"). Boundaries:
 - **It reaches the world only through contracts**: play/world.ts `makePlayWorld` builds a narrow `PlayWorld` (the
   top a hover rides, the floor, water depth, blows on units, wind wake/gust/blow/blast, fx bursts, craters, the
   camera's projection) from the world API (terrain, water, wind, fx), the Units contract and the camera. The heroes see
-  nothing else, so they run in Node tests on play/testing.ts's synthetic world.
+  nothing else, so they run in Node tests on play/testing.ts's synthetic world. (Round 128p, U1: the units they see
+  are `UnitsAround` — a query within AROUND = 48 cells of the hero, asked again as each answer comes, its answer
+  observed; `near` filters those by their read places.)
 - **Other tracks read it only through `contracts/play.ts`**: `ControllerProfile` (speed, turn radius, climb, jump,
   fly, water, vegetation, bridge, destruction, encounter weights), `ControllerInfo` (params, defaults,
   `profile(params)`), `Playbook` (the library: `src/play/library.ts` `library`), and the pure `crossCost(profile,

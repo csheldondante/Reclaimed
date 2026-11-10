@@ -21065,6 +21065,23 @@ the default.
   It now waits for the land (`FieldTowns`: the reach is due after a slide and runs once nothing is unwritten). After a
   slide, 1 building is outlined.
 
+## 2026-11-10 — living town LT1: design note (docs/design/LIVING_TOWN.md)
+
+The user: many agents travelling between places, hauling and working; a parameterized quarry that digs deep; a forest
+clearing that leaves stumps. Everything on the GPU, the CPU passing inputs only.
+- **The graph is citygen's road raster.** citygen already draws every road it makes (contours, cross, gap, grown,
+  arterials, decks) into `ROADS`, a word a column, for its claims and the reach. Its hex adjacency is the graph, with
+  junctions for free; door segments, connector tracks and site pads are rasterised into the same mask. The segment
+  lists are five formats whose ends rarely meet, which a GPU graph build would have to weld.
+- **DA-A22 ported, not merged.** trackA-legible's route GPU code sits on DA-A13 (14 k changed lines) and builds its
+  graph on the CPU from the old TownPlan grid. Merging would land a second town model unused. Its relax rule, trace and
+  deck handling carry over.
+- **Fields relax with no readback:** a changed word turns into the next sweep's indirect dispatch size.
+- **Riders are §12 trip records, not Agents units yet:** the Agents' step and its CPU-held groups and events are the
+  per-unit CPU work this task rules out at 2,000 riders. One crowd is open question 1 (LT-F2).
+- **Stone really moves:** an interval take in the pit, counters for the face pile, carts and the stores' inbox, then
+  the one `deposit` inbox (§8) at the stockpile, so the pile slumps like any loose ground.
+- **Stumps are a flora-field state** (a succession band on a tree column), so nothing per plant is stored.
 ## 2026-11-10 — citygen: the town layout's phone bench (`?citygenbench=1`)
 
 `/?skipmenu=1&level=atlas&town=1&fresh=1&citygen=fields&citygenbench=1` (`&benchruns=5&benchsecs=8`). It follows
@@ -21202,3 +21219,169 @@ cut the land even drawn as tracks.
 - **FM3:** a farmhouse's columns are claimed like a building's (its base to its risen height), so units go round it.
 - Shots: `belt-near.png` (before) and `belt-near-after.png`, `belt-wide-after.png` (fields about half as many, each
   2–4 blocks, long along the lines); `farms2.gif` (one farms card, 2 seasons: tilled, green, ripe).
+## 2026-11-10 — living town LT2: routes and riders on the GPU (first pass of the works with it)
+
+- **Graph:** citygen's road raster plus door segments (each built lot's footprint frontage out 3 m past its parcel
+  edge) and tracks to the works. 8 hubs (stores, granary, market, workshops, farms, gates, quarry rim, camp yard)
+  seeded on the GPU from the lot records, the population field's purposes and the arterials' ends.
+- **Relax without readback:** the phase word decides each frame's indirect args (build / 32 sweeps / trace). Found in
+  the test: the frame that builds set the phase to relaxing and its own relax check then read "nothing changed" (no
+  sweep had run) and called it settled. The gate now snapshots whether the sweeps and the trace run this frame.
+- **Muru (headless D3D11, phone size):** 950 riders, ~280 routes traced (12 k points of 262 k), settled in 15–19 frames
+  of 32 sweeps. ~80 keys miss (LT-F4). At play zoom the figures read as people along the streets; crowds gather at
+  the stores' side.
+- **Game towns start with their core only** (citygen merged in, bb7dd64b): homes, the stores and the district hubs'
+  seeds are built lots only (progress ≥ 1), and the graph is made again when citygen redraws its roads (a district
+  started: `FieldTown.meshRuns`). Builders read progress (sites are lots between 0 and 1); they don't write it.
+- **Works' sites near the built core:** at 1.1–1.6 radii the quarry fell outside the phone's window; now 0.55–1.1
+  (LT-F5).
+- **The coordinator's correction (GPU unit AI):** nothing here uses the CPU crews, the per-frame sync or the
+  inhabitants; LIVING_TOWN.md now maps the haul states onto Track B's GPU_UNIT_AI_PLAN. The riders are a third crowd
+  until the one crowd lands (LT-F2, open question 1).
+- Gates: the transfers list has the living town's three sites; writing-sources has its panel. The other failures in
+  those gates (citygen's panel and bench, colapply) came with the citygen merge.
+
+## 2026-11-10 — living town LT3–LT6: the quarry dug deep, the clearing's stumps, the panel, GPU ms
+
+- **Quarry:** at `ltspeed=12&qrate=4`, 80 s in, Muru's pit reached bench 6 (18 m, the default depth) with the
+  spiral ramp; 6 328 m³ dug, 200 m³ piled at the stores' yard (the carts lag at that rate: LT-F7). The pit reads as
+  stepped benches with people inside it (scratchpad living/quarry-deep.png, quarry.gif).
+- **Clearing:** a camp at Muru's west woods; woodcutters claim listed trees, fell them to the stump band (the tree
+  goes, a log-coloured stump 0.7 m stays: vegprep's `vegStump`, bigger than the first try, which read as specks),
+  logs to the camp, carts to the stores. A radius of 24 m held 31 trees: once they're down the woodcutters idle.
+- **The stump is one rule:** edit.wgsl's exact fell (plants.fell, the old towns' woodcutters) leaves the same stump
+  band now; a clearing (plants.clear) still cuts to grass.
+- **GPU ms** (profiler, settled): 0.26 ms a frame in all; relax's 32 empty indirect sweeps are a third of it (LT-F6).
+  Toggle diff `living=1` / `living=0`: p50 1.90 / 1.90 ms, p90 17.8 / 17.7 (headless desktop, vsync off).
+- **Track B's ownership** (the user): the haul cycle is documented as a module to absorb (LIVING_TOWN.md "For Track
+  B"); no general unit AI here.
+
+## 2026-11-10 — living town: Track B's behaviour word
+
+Track B builds the one crowd around the rider row. Byte 3 of the behaviour word (RID word 1) is now its override:
+the haul step skips a row with it set (the job resumes after) and never writes it; the leg reads byte 2 only (it read
+bits 16–31). A Dawn test holds a riding rider 40 frames under an override and sees it ride on once cleared. The row
+stays 64 B. Recorded in LIVING_TOWN.md "Agreed with Track B".
+
+Amended the same day (Track B): the override isn't byte 3 but the unit row's state bits (info 12–14, Track B's
+UNIT_MINDS.md). The riders call an `overridden` stub (false unless a test forces one rider through the uniform), marked
+for Track B's unitstate.wgsl; byte 3 is reserved and unused. The test now forces the stub.
+
+## 2026-11-10 — living town fix round 1: routes never fail in town (DESIGN §13)
+
+The user: "How is it possible not to find a route even every lot has a street adjacent to it?"
+- **Why ~80 of ~280 keys missed** (Muru, read once by a diagnostic script over the walk mask and fields):
+  - 45 started in road pieces cut off from the network: 5 components of 14–100 columns, 2–8 columns from it. They
+    are citygen's own streets of the built core whose joins run through districts not begun (open town edges:
+    streets are drawn only between shown blocks, and a district's roads only once it starts) — not raster gaps;
+  - 30 were door islands: door segments (5–7 columns) whose street isn't drawn yet (lots of districts not begun) or
+    that stop short of it;
+  - 3 doors' own columns weren't walkable (the 0.4 m samples missed the corner cell the route starts from).
+  None came from decks (the deck columns join), the hubs (every hub but the quarry's and camp's was in the main
+  component) or relaxing.
+- **Fix: reach as an invariant, laid on the GPU.** After the hubs settle, a check labels every walkable column the
+  stores' field didn't reach (cut off) and relaxes an open-ground distance from the network (dry, no building, a step
+  dearer by its climb). Each cut-off component lays one passage down that field (W_PASS, kept across rebuilds) and the
+  graph is made again — at most 4 rounds; what's left is counted (`cutLeft`), and the built doors the stores don't
+  reach (`doorsCut`). The works' yards and the clearing are pads joined the same way, so their access roads follow the
+  ground and go round water and buildings (the straight tracks are gone).
+- Door segments only for lots begun (progress > 0), their own column always walkable; plazas, parks and landmark
+  circles are walkable pads.
+- **Result at Muru:** 20 passages in 1 round, nothing left cut off, 365 routes, 2 misses before the door-column fix
+  (0 in the test). test/gpu/living.test.ts adds an orphan street with a building and fails on any miss, cut-off column
+  or cut-off door.
+- **Why not citygen's segment list:** there isn't one for its main streets — `roadMajor` draws them a column at a time
+  from φ's level sets, and the cross, gap and grown streets and arterials are four more formats; the raster is where
+  they all meet. And the cut-off pieces are cut off in citygen's own drawn network too, so a vector graph of what
+  citygen draws would be just as disconnected. Laying passages fixes the world (§13), whichever representation.
+
+## 2026-11-10 — living town fix round 2: one rule for world ops, a pool that recycles, the gates green
+
+- **worldops.wgsl** (`opTake`, `opPut`, `opFell`, `VEG_STUMP`): the edit pass's OP_TAKE / OP_PUT / OP_FELL and the
+  works' dig, stockpile and fells call the same functions (LT-F3 done). The external-take and treequery Dawn tests
+  pass on it.
+- **The points pool in two halves, used in turn:** three quarters full asks for a switch; the other half becomes
+  current, its generation moves on, the hash is cleared so every key is traced again into it, the ramp made again. A
+  route id carries its half's generation in the rider's word; a rider on a reused half ends its leg there. A Dawn test
+  runs the town on a 700-point pool: it switches, nothing misses, riders keep arriving.
+- **One compute pass for the graph** (build, relax sweeps, check, trace, all indirect, sized 0 once settled): the
+  separate passes' overhead was most of the settled relax's 0.087 ms.
+- **Gates:** transfers lists citygen's run, claim, uploads and colapply's damage read (they came with the citygen
+  merge unlisted); writing-sources places citygen's panel and bench and the street lab's panel; the boundaries breach
+  (sim/external.ts importing game/colapply for a type) is gone: `OwnedArenaJob` is the engine's type now.
+
+## 2026-11-10 — living town fix round 3: the works' internal routes, shots, GPU ms
+
+- The quarry's ramp route ends on the working bench's walkway (the face's line, where carts load); its rim yard and
+  the camp's yard and clearing are pads the connectivity check joins to the roads over the ground — at Muru the
+  quarry's access road runs from its yard up the slope to the main road (scratchpad living/quarry-access.png), no
+  straight track over water. Woodcutters ride routes over the clearing to each tree.
+- Muru, after the round: 20 passages in 1 round, 0 columns and 0 built doors cut off, 354–392 routes, 0 misses in
+  three runs and 1 in one (not traced to its cause yet).
+- GPU ms (`ltspeed=12`): graph 0.145, riders 0.031, works 0.087, figures 0.045 — 0.31 ms. The merged graph pass didn't
+  cut the settled cost: the empty indirect dispatches are the cost, not the pass.
+
+## 2026-11-10 — living town fix round 4: the street skeleton, passages drawn, rebuilds paced
+
+The user: "having only main roads near districts in progress works but we may have to tweak and see what looks good".
+- **The street skeleton (citygen streets.wgsl `skelB2`/`skelB4`):** a major line or an arterial cross street shows and
+  is a route from the time the earliest district near it starts — the two beside it, and with the reach "begun + a
+  margin" those within the margin (eight points round it). Minor streets and buildings come with their district (or
+  with the main roads: `minorAhead`). Parameters (`skelReach` 0 with their districts / 1 begun + margin / 2 everywhere,
+  `skelMargin` in supercells, default 1, `minorAhead`): citygen's params, the living panel's "Shown roads" group, and
+  `?skel= &skelmargin= &minorahead=`. Muru's time-lapse: at 10 s the main roads reach the town's edges with few
+  buildings; by 41 s the districts have filled in (scratchpad living/tl-0.png, tl-end.png, timelapse-roads-first.gif).
+  The connectivity check then lays 22 passages, nothing cut off, 0 misses.
+- **Passages drawn** as dirt in citygen's mesh format and dirt tone (a hexagon a column, placed with the town's mesh).
+- **Rebuilds paced:** a time-lapse redraws citygen's roads every 2 s; the graph was rebuilt each time and never
+  settled (425 relax frames, no new routes traced). Now at most every 10 s.
+- **The settled relax cost isn't gone.** Tried: the frame's sweeps as one dispatch of y copies in place — the settled
+  graph pass fell from 0.145 to 0.102 ms, but workgroups of one dispatch run side by side, so it relaxed about one
+  sweep a frame (218 frames to settle instead of 25). Back to sweeps in turn; the hash clear is now indirect (it
+  was 128 workgroups a frame). Settled, the graph pass is still ~45 dispatches of 0 workgroups; the measured cost
+  swung 0.1–0.7 ms between headless runs (every pass ×3 in the last run), so no clean number. Dispatching nothing
+  needs the CPU to stop encoding when the GPU says settled: an event (Track B's ring) rather than a poll.
+- The one route miss seen last round didn't recur in four runs (0 misses); not traced.
+
+## 2026-11-10 — U1: the Units contract's watched-only sync finished (DA-B22 (c)(4) and (1); Track B)
+The WIP `phonefix-observe-wip` 322962a3 (DA-B22 (c)(4)+(1)) taken onto fortress bb5b2e01 and finished: 131 type
+errors to 0, every caller rewritten to the contract, not silenced (no `!`, no `as` added).
+- **The contract** (api/contracts/units.ts): `UnitView.at: V3 | null` (null: not read, never stale); `observe(ids)` →
+  release (counted); `query` async, answering `SeenUnit[]` (each with its place); `SeenUnit` / `seen(v)` for a view
+  with its place. `Actor.hurt(damage, by: SeenUnit)`: AgentUnits passes where the swing came from (the swing event's
+  place, or the defender's observed place). `Followers.recruit` takes `SeenUnit[]` (taken on where they stand).
+- **Callers observe what they follow:** the followed person (fortress followFrame, from the WIP); a raid's raiders and
+  rider, the archers posted; a story's cast (badges, waypoint, who to talk to — no query a frame); a hero run's
+  approached unit; a run stage's foes; runsit's area units (outriders, foes, quarry, horde, allies, captives, trader)
+  and the followers. Each handles an unread place explicitly (waits a frame, or counts without placing).
+- **Queries where it's an ask, not a watch:** the lab's snapshot (async now: every scenario `await lab.snapshot()`),
+  the place bench's walkers, a run's items and "Follow me", the town's folk at a finale, the walker's swing (the
+  blow lands when the answer comes, a frame or two into its 0.25 s).
+- **The play layer's heroes** see `UnitsAround` (play/world.ts): one query within AROUND = 48 cells of the hero, asked
+  again as each answer comes, its answer observed; `near` filters by the read places. Hero levels only (not fortress
+  play): a two-read query in flight continuously there (16 B + 16 B a unit found).
+- **Dropped from the WIP:** the raid's per-frame `atPlaces` polling (and `Agents.nearMany`, its kernel and reads), the
+  per-look raider query, the archers' mark and landing queries and `arrivedAt` — raiders.ts and defence.ts are back to
+  6ab55976's loop, observing the raiders, the rider and the posted archers (DA-L4 deletes that loop). Kept from the
+  WIP: who's outside the walls by the GPU's EV_SIDE events (`sideOf`), not every person's position.
+- **Measured** (headless desktop D3D11, `town` recipe after Build + 20 sim s, 10 s at the game's speed;
+  scratchpad syncmeasure.mjs; the town has 12–13 units then):
+
+  | | before (bb5b2e01) | after |
+  |---|---|---|
+  | bytes a sync | 1680 (head 16 + 16 events 512 + 12 units × 96) | 752 (head 16 + 16 events 512 + hunt 128 + 96 pad), 0 observed |
+  | sync KB/frame, 1x | 1.53 | 0.57 |
+  | sync KB/frame, 16x | 0.64 / 0.59 (two runs) | 0.27 / 0.24 |
+  | sync ask→answer ms p50 / p95, 1x | 2.1 / 11.2 | 5.8 / 15.2 |
+  | same, 16x | 72.3 / 92.9; 27.5 / 111.1 | 18.0 / 58.2; 26.4 / 56.3 |
+
+  Before, a sync grew 96 B per unit in the window; after, 96 B per observed unit. The ms is the GPU queue's latency
+  and swings run to run headless (16x fps 33–81 between runs of either build): no claim on frame time from these.
+- **The transfers gate:** `AgentUnits.update` is still listed as violating §24 (F24): one sync is in flight at a
+  time, so the head is read every frame whether or not anything happened. It's small now (752 B), but the gate
+  counts a per-frame read in play, and rightly. Removing it needs the sync to run only when the GPU has something to
+  say, and knowing that takes a read (or `onSubmittedWorkDone` plus a GPU-written flag — DA-B2's next step).
+- **Gates:** typecheck clean; unit 2 failures, both on bb5b2e01 as well (flags, townfixture); GPU 194 passed, as
+  bb5b2e01. fortressfollow 40/40 samples on screen; fortressallbuilt 708/708 at 362 sim s; fortressraid walled: the
+  gates shut at 59 s and the gate broke at 84–87 s in two runs (bb5b2e01: 53 s and 75 s), looted 2, torched 2, all 4
+  out; with 4 soldiers the archers killed all four before the gate broke on both builds (56/16 vs 65/16 shots/hits).

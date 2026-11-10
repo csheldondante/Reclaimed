@@ -21,8 +21,8 @@ export interface PlaceBenchIO {
   advance(seconds: number, speed: number): Promise<void>;
   /** sim seconds since the start (the world's clock) */
   simTime(): number;
-  /** where the fortress's builders are now (window world) */
-  walkers(): V2[];
+  /** where the fortress's builders are now (window world; round 128p: asked of the GPU) */
+  walkers(): Promise<V2[]>;
   log?(line: string): void;
 }
 
@@ -182,7 +182,7 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
     while (io.simTime() - t0 < arriveS && built.size < sites.size) {
       await io.advance(5, 16);
       const t = +(io.simTime() - t0).toFixed(1);
-      const ws = io.walkers();
+      const ws = await io.walkers();
       for (const [p, s] of sites) {
         // (its middle now: a slide moves the window's frame under the box)
         const [cx, cy] = f.centre(s.cell);
@@ -194,7 +194,7 @@ export async function runPlaceBench(io: PlaceBenchIO, o: { types?: StructureType
     }
     arriveWallS = +((performance.now() - w0) / 1000).toFixed(1);
     for (const [p] of sites) arrive.push({ point: p, arrivedS: got.get(p) ?? null, builtS: built.get(p) ?? null, nearestM: near.has(p) ? +near.get(p)!.toFixed(1) : null });
-    io.log?.(`arrival: ${io.walkers().length} builders seen at the end`);
+    io.log?.(`arrival: ${(await io.walkers()).length} builders seen at the end`);
   }
   return { points, stores, rows, arrive, arriveLimitS: arriveS, arriveWallS, diagnosis };
 }

@@ -9,7 +9,7 @@ export default async function (lab, args) {
   lab.plan({ cells: [{ type: 'house', at: [hx + 12, hy + 6] }, { type: 'farm', at: [hx + 20, hy - 8] }] });
   lab.build();
   const r = await lab.run(args.seconds ?? 20, 16);
-  const s = lab.snapshot();
+  const s = (await lab.snapshot());
   const phases = {};
   for (const w of s.walkers) phases[w.phase] = (phases[w.phase] ?? 0) + 1;
   lab.look(hx + 10, hy + 10, 5);

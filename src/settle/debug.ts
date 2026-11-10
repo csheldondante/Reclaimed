@@ -26,10 +26,26 @@ export class TownDebug {
   /** shown or not (reclaimed.townDebug.show(false) for a clean shot) */
   show(on: boolean): void {
     this.on = on;
+    if (!on) this.observe([]);
     this.svg.style.display = on ? '' : 'none';
     this.panel.style.display = on ? '' : 'none';
   }
   private on = true;
+  /**
+   * (round 128p, U1) the units it draws, observed (Units.observe) while it's shown — their places read each sync; derived
+   * from what it drew last, released when hidden or disposed
+   */
+  private observed = new Map<number, () => void>();
+  private observe(ids: readonly number[]): void {
+    const want = new Set(ids);
+    for (const [id, release] of this.observed)
+      if (!want.has(id)) {
+        release();
+        this.observed.delete(id);
+      }
+    const U = this.st.units;
+    if (U) for (const id of want) if (!this.observed.has(id)) this.observed.set(id, U.observe(id));
+  }
 
   draw(): void {
     // (a few times a second is plenty)
@@ -38,6 +54,7 @@ export class TownDebug {
     const rec = life?.rec;
     const plan = rec ? this.st.plan(rec.id) : null;
     if (!rec || !plan) {
+      this.observe([]);
       this.svg.innerHTML = '';
       this.panel.textContent = `settlements: ${this.st.stats.planned} planned (${this.st.stats.planMs.toFixed(0)} ms), none live here`;
       return;
@@ -99,13 +116,17 @@ export class TownDebug {
       out.push(`<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="3" fill="${SPOT.fell}" stroke="#000"/>`);
     }
     const units = this.st.life ? [...life!.ids, ...life!.raiders] : [];
+    this.observe(units);
     const phases: Record<string, number> = {};
     for (const id of units) {
       const u = this.st.units?.recs.get(id);
       if (!u || !u.v.alive) continue;
       const ph = u.v.hostile ? (u.target !== null ? 'hunt' : 'camp') : u.v.role === 'guard' ? (u.target !== null ? 'fight' : 'guard') : (life!.life.phaseOf(id) ?? '?');
       phases[ph] = (phases[ph] ?? 0) + 1;
-      const [sx, sy] = this.camera.project(u.v.at[0], u.v.at[1], u.v.at[2] + 2.2);
+      // (round 128p, U1: observed while drawn — a unit just added has its dot from the next sync)
+      const at = u.v.at;
+      if (!at) continue;
+      const [sx, sy] = this.camera.project(at[0], at[1], at[2] + 2.2);
       out.push(`<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="2.5" fill="${u.v.hostile ? '#f22' : u.v.role === 'guard' ? '#ccc' : (PHASE[ph] ?? '#999')}"/>`);
     }
     this.svg.innerHTML = unread ? '' : out.join('');
@@ -125,6 +146,7 @@ export class TownDebug {
   }
 
   dispose(): void {
+    this.observe([]);
     this.svg.remove();
     this.panel.remove();
   }
