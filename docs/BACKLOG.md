@@ -2111,3 +2111,18 @@ The user: "I would like to see agents (many of them) traveling between locations
 | SL19 | Wall-walk: the posts' paths (stairs → walk) aren't checked on the GPU here; a post with no path failing visibly is the Units side's (U2). The stairs aren't in the living town's graph (its riders don't climb walls) | S | done (SL18/19 commit: stairs at each run's ends, postCheck — Muru 0 of 52 unreachable); open: the foot's open-ground reach is rays, not a field |
 | LT-R1 | The route-read contract for Track B's march (U2): one storage binding, routeread.wgsl, ids with generations | S | done (trackA-routeread) |
 | SL20 | Shared route pool with per-town ranges, if two towns' routes ever need one unit step (a siege between neighbouring towns in one window). Today a march switches buffers at the window edge (Track B, 2026-11-10) | M | open |
+
+### Routes 2 (2026-11-10, `trackA-routes2`): what Track B's U2 orders read, with no CPU readback
+
+The user: "The CPU paths are supposed to be GPU resident … we should not need CPU readback." Orders carry intent by index only.
+
+| id | item | size | status |
+|---|---|---|---|
+| RT2-1 | Wall-walk stretches as routes: one a run of wall (stair foot → up → along the top → down the next stair), traced on the GPU when the ring is made or a run finishes rising, through `alloc`; 2 m on the walk, 1.1 m on the stairs | M | done (RT2-1/2 commit) |
+| RT2-2 | A per-town GPU table in routeread's header (heads base moved behind a header word): `wallWalkCount/Route/Run`, `gateRoute/Status/Segment(k)` by arterial index, filler gates after; written on the GPU, no polling | M | done (RT2-1/2 commit) |
+| RT2-3 | The order-facing readbacks removed: `askRoute` polling, `marchRoutes`, `unreachablePosts`; unreached wall pieces drawn red from the GPU's reach bits; the ring read back only at a save point | S | open |
+| RT2-4 | The settled graph with no CPU signal: worldops edits wake it through a GPU word; the ~45 empty indirect dispatches reduced or measured on the phone (toggle bench) | M | open |
+| RT2-5 | Width at gates: the width pass sees the wall (a gate narrower than its street, stairs narrower still), in the GPU test | S | open |
+| RT2-6 | Shots: the wall-walk overlay (`?livingdebug`), widths along a route | S | open |
+| RT2-7 | citygen's stairs are a fixed 9.2 m from a gap's corner: a run of wall shorter than two of them gets overlapping stairs that overhang the gap. Its wall-walk route takes the first stair only (a dead end on the top). Shorten the stairs to fit (fewer, steeper steps) in streets.wgsl | S | open |
+| RT2-8 | The wall-walk passes through the corner towers (8 m, at every sixth corner and beside the gates): no doorway in them yet | S | open |

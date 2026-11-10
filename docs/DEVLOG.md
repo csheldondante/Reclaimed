@@ -21532,3 +21532,36 @@ a march) carry their own 2 m. routeread.wgsl `routeWidth(id, i)`, `ROUTE_POINT_W
 test checks every traced point's width is finite and in range and the open streets' mean is over 2 m. Not counted
 yet: the town wall (its geometry is in the wall's words, which the trace doesn't bind), so a gate isn't narrower
 than the street through it.
+
+## 2026-11-10 — RT2-1/2: the wall's routes and a GPU table in routeread's header (trackA-routes2)
+
+Track B's U2 orders (`man {town, side?}`, `march {town, gate: k, leave}`) carry intent by index only; the GPU finds the
+routes (UNIT_MINDS_U2 §9a). The user: "The CPU paths are supposed to be GPU resident … we should not need CPU readback."
+- **The header grew past word 8** (128 words): word 8 says where the heads start, so the layout can change behind
+  routeread.wgsl. Words 9–13: the wall-walk count, the gate slots (10: the 8 arterials, then 2 filler gates), the
+  table's version, where the wall-walk entries and the gate entries start. Accessors: `wallWalkCount`,
+  `wallWalkRoute(i)`, `wallWalkRun(i)` (its segments, reached, risen), `gateSlots`, `gateRoute(k)`, `gateStatus(k)`
+  (GATE_OK, NONE, RISING, WATER, FAILED), `gateSegment(k)`, `wallTableVersion`. An empty entry is ROUTE_NONE, which
+  `routeValid` refuses.
+- **Wall-walk routes.** One a run of wall between two gaps: from the stair's foot at its start, up its six steps, onto
+  the wall's top beside the top step, along the corners, onto the other stair and down to its foot; points written
+  through `alloc`/`setPtW` like every route, ids packed with their generation. Widths: the walk's 2 m, the stairs'
+  1.1 m. A run shorter than its two stairs (citygen's are a fixed 9.2 m from the gap's corner, so they'd overlap)
+  gets its first stair only (RT2-7).
+- **March routes by arterial index**, traced along the arterial from where the ring crosses it (the outer crossing if
+  it crosses twice) to the box's edge, a point every 2 m with its free width; a filler gate's down the GATES field
+  (`traceDown`, the trace kernel's body, now shared).
+- **No CPU signal.** `gate` (one thread, every frame, already there) watches the wall's words: the ring's signature
+  (its kinds, corners, first gate, the pool halves' generations), the pieces risen at the town's clock (the CPU's
+  FieldTowns.townTime in the parameters' spare words, as citygen's own `wallRise`), and whether the graph is settled.
+  When any of it changes it sets an indirect count for `wallWork` (one workgroup; 0 workgroups otherwise): the reach
+  check (SL19's postCheck, now here), each risen run's walk and each gate's march traced if they have none, the table
+  written. A pool switch moves the generations, so every wall route is traced again into the new half — the table's
+  ids never go stale. wallWork is at the 8-storage limit, so the ring is copied into the state words when it's new.
+- Test (Dawn, test/gpu/living.test.ts): a ring of radius 22 round the crossroads with four arterial gates and a stretch
+  of water, its columns, towers and stairs in the raster as citygen claims them. No ring → empty table; the ring made
+  at half its stage → 5 runs, only the risen ones with routes; the stage moved on (a buffer write, as `wallStage`) →
+  every run valid, the four gates OK, the other slots NONE. Every wall-walk route from the ground to 4.1 m over it and
+  back, no gap over 3.5 m; the east gate's march out to the edge. Muru in play (`?opps=1`, walls for three seasons):
+  3 runs for its 52 pieces, all reached; the east arterial's gate a march route; the north one GATE_WATER (its
+  causeway over the lake); table version 1 → 6 as the wall rose.

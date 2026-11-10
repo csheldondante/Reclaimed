@@ -24,7 +24,7 @@ struct P {
   f: vec4<f32>,
   pl: vec4<i32>,
   pz: vec4<f32>,
-  /** (season life) the wagons' and the ships' ends (after the builders'), 0, 0 */
+  /** (season life) the wagons' and the ships' ends; the town's clock and a wall piece's span to rise (f32 bits) */
   x: vec4<u32>,
 };
 

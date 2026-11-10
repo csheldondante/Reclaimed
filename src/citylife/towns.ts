@@ -12,6 +12,7 @@ import { TunePanel } from '../ui/tunepanel';
 import type { CityRouteRead } from '../api/contracts/routes';
 import type { TownLogs } from '../citygen/townlog';
 import { cellAt } from '../world/lattice';
+import { DISTRICT_SPAN } from '../citygen/gpu';
 /** routes.wgsl H_GATES: the arterials' ends */
 const H_GATES = 5;
 
@@ -29,6 +30,8 @@ export interface LivingTownsIO {
   world: WorksWorld;
   /** (saving) the towns' edit logs: the works' state laid back when a town's people are made again */
   logs?: TownLogs;
+  /** (season life) the towns' clock (s: FieldTowns.townTime) — the wall's pieces rise by it on the GPU */
+  townTime?: () => number;
 }
 
 interface Live {
@@ -100,6 +103,7 @@ export class LivingTowns {
       const works = new Works(this.io.device, life, this.io.world);
       life.stages.push(works);
       life.debugGraph = this.debugGraph;
+      life.wallSpan = DISTRICT_SPAN;
       this.io.addVoxels(life.vox, life.vargs);
       this.io.addVoxels(works.vox, works.vargs);
       this.io.addMesh(life.pmesh, life.pargs, lots.place);
@@ -122,6 +126,7 @@ export class LivingTowns {
     const ts = this.io.profiler ? (n: string) => this.io.profiler!.timestamps(n) : undefined;
     for (const l of this.live.values()) {
       const p = l.town.gridPlace();
+      l.life.wallClock = this.io.townTime?.() ?? 0;
       l.life.frame(enc, this.dt, { dx: p.dx, dy: p.dy, dz: p.dz, winW: this.io.dims.w, winH: this.io.dims.h }, ts);
     }
   }
@@ -153,7 +158,7 @@ export class LivingTowns {
   async unreachablePosts(town: string, posts: { seg: number }[]): Promise<number[] | null> {
     const l = this.live.get(town);
     if (!l) return null;
-    const r = await l.life.reachedWall();
+    const r = await l.life.debugWallReach();
     if (!r) return null;
     return posts.filter((p) => !r[p.seg]).map((p) => p.seg);
   }

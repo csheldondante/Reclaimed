@@ -1902,9 +1902,10 @@ A citygen town's people, quarry and clearing, all on the GPU (`src/citylife/`, `
 Systems that ride a living town's cached routes (Track B's marching units) read them only through
 `src/shaders/routeread.wgsl`, bound at ROUTE_BINDING (56): **one read-only storage buffer a town**
 (`LivingTowns.routeRead(townId).buffer`), so a kernel already at the 8-storage limit spends one slot.
-- Layout (the snippet's to keep; the pool's to change): words 0–7 a header (the two pool halves' generations, route ids a
-  half, where the points start, the grid's place in the window x/y/z, the points' room), then a head a route (first
-  point, count, length, generation), then the points (x, y, z world — decks at their height — and the distance along).
+- Layout (the snippet's to keep; the pool's to change): a header (the two pool halves' generations, route ids a half,
+  where the points start, the grid's place in the window x/y/z, the points' room, where the heads start, the wall's
+  table), then a head a route (first point, count, length, generation), then the points (x, y, z world — decks at
+  their height — the distance along, the free width).
 - Functions: `routeHead(id)`, `routePoint(id, i)` (window), `routePointLocal`, `routeDist`, `routeAt(id, s)` (what a
   rider's trip interpolates), `routeValid(idWithGen)`.
 - **Ids carry their generation:** `id | generation << 16`. The pool recycles in two halves; reusing a half moves its
@@ -1912,6 +1913,11 @@ Systems that ride a living town's cached routes (Track B's marching units) read 
   route gone stale is asked for again (it used to be re-stamped with the new generation — a rider could resume a route
   whose points had been overwritten; found by the contract's test).
 - The living town writes the header's place each frame (12 B with its parameters).
+- **The wall's table (RT2-2, `trackA-routes2`):** the header is 128 words; word 8 says where the heads start. Words 9–13
+  and the entries after them hold each town's wall-walk routes (one a run of wall, stair to stair) and each gate's
+  march route by arterial index (filler gates after), with a status; written on the GPU (`gate`'s watch → `wallWork`,
+  indirect) when the ring is made, a piece rises, the graph settles or the pool's halves move on. Track B's `man` and
+  `march` read only these (`wallWalkRoute`, `gateRoute`, …); an empty entry is ROUTE_NONE.
 - Test: test/gpu/living.test.ts — every riding rider's position equals `routeAt(its route, its distance)`, its id valid;
   after both halves are reused an id held from before is invalid.
 
