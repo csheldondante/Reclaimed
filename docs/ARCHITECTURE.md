@@ -4200,3 +4200,30 @@ The edge network is the only roads, reach and routes system. Deleted: `build/lan
 - **Stores and doors.** The stores' vertex is the nearest one on open ground (an edge not inside a structure). A door
   prefers an edge onto open ground; only a structure shut in on every side has its door onto a neighbour's lane.
   `Fortress.storesAt` prefers a warehouse whose door opens on open ground.
+
+### The route network on the GPU (DA-A22, docs/design/ROUTES_ON_GPU.md) — in progress
+
+One graph on the GPU so reach and routes can't differ. Not yet the source of truth in play: the fortress, generation and
+the riders still run the CPU edge net and Router above until the cutover (BACKLOG DA-A22).
+- **`build/routegraph.ts` (pure).** `RouteGraph` — the grid's edges (`edgesOf`, each cell side once), a box column per
+  vertex and per edge middle (`packCol`), lengths, per vertex its edges (CSR) then its x, y; static per grid version.
+  `RoutePlan` — the authored part from the plan only: per edge PLAN_WALL / PLAN_INNER / PLAN_SPAN (a main road's verge
+  beside it) / PLAN_BUILT; door candidates (edge, structure, floor, onto open ground); per structure its candidates, far
+  rule and floor; the gates' far corners; the wall cells; the stores' and middle's vertices. Nothing here reads the land.
+- **`build/routegpu.ts` `TownRouteGpu` + `shaders/townroute.wgsl`.** The ground is read only through `rgValid` / `rgTop`
+  / `rgWater`: `routeground-live.wgsl` (the world's layers through the chunk table and the water sheet; play) or
+  `routeground-raw.wgsl` (a box's raw ground buffer; generation, main's option 2). `solve(place)`: cut every edge (deep
+  water unless spanned, the drop over its length past SLOPE a cliff, past the road grade stairs; External claims are
+  not ground); field 0 from the middle and the uncut verge edges, the gates' far corners traced down it (main streets);
+  field 1 from the main streets, each structure's chosen door traced down it (lanes); five reach solves at once
+  (hook-and-jump, z = the lift: none, wall, water, cliff, every perimeter edge a door) over `walks` (uncut, not a block's
+  inside, drawn or with no structure either side); per structure its word, door, door at grade, terrace level; the gate
+  cells; per vertex "in the stores' component". Answers read async after each phase settles (4 B flags) and once at the
+  end (per structure 16 B, a bit a vertex, a byte an edge of kinds: DA-A23's stopgap).
+- **Riders.** `setRideGoals(g, goals)` relaxes field 2 + g from its goals' vertices over the same `walks` (the routes'
+  costs); `traceRides(requests, pts, routes, cap)` writes each route's points and header (routes.wgsl's format) into the
+  caller's pool. A structure is a route's end at its doors, never a way through — in reach and routes alike.
+- **`fortress/townroutes.ts` `TownRoutes`.** The fortress's: graph by grid version, plan from the plan as it stands, the
+  box placed in the window (`scene.townRoutes`, the test API's `townRoutes()`).
+- Tests: test/gpu/townroute.test.ts (the start town against the CPU, the levelled road, a flood), test/gpu/townride.test.ts
+  (routes reach the stores exactly when reached; the property over random floods).

@@ -21972,3 +21972,8 @@ Measured (test/gpu/townride.test.ts, start town): every structure's door routes 
 of 65; 775 points, the longest route 33). The property over edits: 6 random floods of 40 edges' columns, 1,000 random
 vertices each — in the stores' component exactly when a route from it gets to the stores (3,287 out-of-reach vertices
 among them), and no structure routed that isn't reached.
+
+(DA-A22, same day) The town fixture captured again (`node scripts/labtown.mjs capture`): `edgesOf` moved from
+edgenet.ts to routegraph.ts, which is among GEN_VERSION's inputs (the generator reaches edgenet.ts), so the hash moved.
+No land changed: every measurement above is the same on the new capture (65/65; cliffs 49 → 44, 37 kept; paths and
+doors as listed; the riders' property).
