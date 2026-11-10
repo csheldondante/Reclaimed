@@ -82,9 +82,30 @@ A lot's purpose is its district's **claimed** purpose when a card claimed it (th
 claimDistrict(kind)` records the kind's purpose by district id in the town's edit log, `TownLog.purposes`, uploaded as a
 byte a district in the town's place uniform), else the population field's at its middle — citygen's `clkClaim` takes the
 best district for a kind but doesn't make it that kind, so at Muru the keep card's district is homes on the field. Ties
-are broken by the lot's seed. **Resolved every frame** (a few thousand threads a kernel, eight dispatches a town):
-the district index rebuilt (count, scan, scatter, rank), the picks (an atomic min of a key, then of the seed), the
-header, gates and spawn points. A place's status follows its lot's construction progress as it changes.
+are broken by the lot's seed. **A solve** (a few thousand threads a kernel, eight dispatches a town): the district
+index rebuilt (count, scan, scatter, rank), the picks (an atomic min of a key, then of the seed), the header, gates and
+spawn points. A place's status follows its lot's construction progress as it changes.
+
+**When it's solved — woken on the GPU (UC-8):** `plWatch` (a thread a record, and the ring's and arterials' words)
+sums a hash of everything a solve reads that can move: each record's 24 words and its progress's **class** (not begun,
+rising, built — the status's only input from the progress), the lot counts, the ring's words (WALL, through WB_S: made,
+first gate, the stage and its start, corners, kinds, arterials), the arterials' words. `plWake` (one thread) starts a
+solve when that sum moved, the place uniform's **version** moved, or the towns' clock passed the **wake clock**; the
+eight kernels are indirect dispatches (`PCTL`, `PARGS`: 0 workgroups when nothing woke one).
+- The place uniform (the grid's place: a slide; the claimed purposes; a new town; the lot count) is built on the CPU each
+  frame, compared with the last one written, and written only when it differs — with a new version (one counter over
+  every town, so a town in a reused slot always solves).
+- The clock: a gate's status (rising until its piece is up) is the one status that follows the clock rather than a
+  buffer. Each solve's `plHead` works out the first clock any gate's status flips at — a piece's rise is monotone in the
+  clock inside the wall stage's span, so it bisects there — and keeps it in the slot's private words; the clock passing
+  it wakes the next solve. Chosen over making the status a pure function in the accessor: townplace.wgsl would have to
+  bind the ring's words and the clock (binding 57 and the accessors stay as Track B reads them).
+- Not watched: the world's columns (the table reads none: its z is citygen's height grid) and citygen's height and
+  population grids (made with the lots — the 'field' run — which moves the records' hash too).
+
+At rest at Muru (headless D3D11, the whole `towncontracts` pass): 0.47 ms before, 0.19 ms after; the pass without the
+places 0.125 ms — the place table's share 0.35 → 0.06 ms (the watch's hash dispatch). A wall rising wakes one solve a
+gate; a district rising one solve a lot (each lot's begun and built).
 
 **Track B's `orderFailed`:** an order whose place isn't `placeValid` fails on the GPU, where the order resolves it.
 
@@ -99,7 +120,8 @@ not. In the scenario (`lab` = `window.reclaimed.lab`):
 - `lab.townIndex(lab.town)` — Muru's index: what an order carries; `lab.contracts.places` the buffer to bind at 57;
   the side map is the agents' own `agentSides`.
 - Debug reads (never an order's): `lab.sides()`, `lab.sideCounts(id)`, `lab.places(id)` (decoded: window positions,
-  statuses), `lab.markContracts(id, { step, labels })` (an overlay for shots: inside teal, open red; `labels` the
+  statuses), `lab.contracts.debugRead('pctl')` (a town slot's watch words: `PC.solves` the place solves),
+  `lab.markContracts(id, { step, labels })` (an overlay for shots: inside teal, open red; `labels` the
   solve's own words), `lab.gpuMs('towncontracts')` with `--flags "&perf=1"`.
 - The gate: `scripts/lab/gputown.mjs` (the side map and places at Muru, two shots).
 
@@ -113,7 +135,8 @@ citygen's shapes (`fakeTown`, `ringWords`, `artWords`) on a tinyWorld — the pa
 | a town's slot (index) as it's made or let go, its header's live word cleared | a town made / let go | 4 B |
 | the input epoch, the gate rule | the same, a rule change | 48 B |
 | a town's grid place in the window | made, a slide | 48 B |
-| a town's place uniform (its place, centre, the towns' clock for the gates' rise, the claimed districts' purposes) | each frame a town is live | 336 B |
+| a town's place uniform (its place, centre, the lot kernels' workgroups, the claimed districts' purposes, a version) | when its contents change (a slide, a claim, a new town) — built and compared on the CPU each frame | 336 B |
+| the towns' clock (the gates' rise: compared on the GPU with the wake clock) | each frame the clock moves | 16 B |
 | encoding a fixed list of dispatches | each frame | — |
 
 Nothing is read back but the debug reads above (tests, the lab).

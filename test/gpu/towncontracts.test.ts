@@ -12,7 +12,7 @@ import { tinyWorld, type TinyWorld } from './world';
 import { tinyMap } from '../support/tinymap';
 import { MAT } from '../../src/world/materials';
 import { cellPos } from '../../src/world/lattice';
-import { TownContracts, SC, type ContractTown } from '../../src/towncontracts/contracts';
+import { TownContracts, SC, PC, type ContractTown } from '../../src/towncontracts/contracts';
 import { PLACE, PLACE_STATUS } from '../../src/api/contracts/townplaces';
 import townplaceWgsl from '../../src/shaders/townplace.wgsl?raw';
 import { makeBindGroup, makeCompute } from '../../src/gpu/pipeline';
@@ -230,9 +230,75 @@ describe('the named places', () => {
   const H = 96;
   const C: [number, number] = [48, 48 * ROW_H];
 
+  /** the probe: townplace.wgsl's own accessors read into a buffer (town slot 0) */
+  async function readTable(tc: TownContracts) {
+    const probe = /* wgsl */ `
+@group(0) @binding(58) var<storage, read_write> OUT: array<f32>;
+@compute @workgroup_size(1)
+fn main() {
+  for (var p = 0u; p < 24u; p++) {
+    let o = p * 8u;
+    OUT[o] = f32(placeStatus(0u, p));
+    let a = place(0u, p);
+    let b = placeApproach(0u, p);
+    OUT[o + 1u] = a.x; OUT[o + 2u] = a.y; OUT[o + 3u] = a.z;
+    OUT[o + 4u] = b.x; OUT[o + 5u] = b.y; OUT[o + 6u] = f32(placeAux(0u, p));
+    OUT[o + 7u] = select(0.0, 1.0, placeValid(0u, p));
+  }
+  for (var r = 0u; r < 6u; r++) {
+    let h = houseAt(0u, 3u, r);
+    OUT[200u + r * 2u] = f32(lotSeedOf(0u, h));
+    OUT[201u + r * 2u] = f32(lotStatus(0u, h));
+  }
+  OUT[220u] = f32(lotCount(0u, 3u, 1u));
+  OUT[221u] = f32(select(districtPurpose(0u, 2u), districtPurpose(0u, 7u), lotCount(0u, 7u, 1u) > 0u));
+  OUT[222u] = f32(lotCount(0u, 4u, 3u));
+  OUT[223u] = f32(placeStatus(1u, 0u));
+  OUT[224u] = select(0.0, 1.0, townLive(0u));
+  let h0 = lotAt(0u, 4u, 3u, 0u);
+  OUT[225u] = f32(lotSeedOf(0u, h0));
+}`;
+    const k = makeCompute(g.device, 'townplace probe', [townplaceWgsl, probe], { 57: 'read', 58: 'rw' }, 'main');
+    const out = g.device.createBuffer({ size: 256 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const e2 = g.device.createCommandEncoder();
+    const ps = e2.beginComputePass();
+    ps.setPipeline(k.pipeline);
+    ps.setBindGroup(0, makeBindGroup(g.device, 'probe', k.layout, { 57: tc.places, 58: out }));
+    ps.dispatchWorkgroups(1);
+    ps.end();
+    const st = g.device.createBuffer({ size: 256 * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    e2.copyBufferToBuffer(out, 0, st, 0, 256 * 4);
+    g.device.queue.submit([e2.finish()]);
+    await st.mapAsync(GPUMapMode.READ);
+    const r = new Float32Array(st.getMappedRange().slice(0));
+    st.unmap();
+    st.destroy();
+    out.destroy();
+    const named = (p: number) => ({ status: r[p * 8], at: [r[p * 8 + 1], r[p * 8 + 2], r[p * 8 + 3]], approach: [r[p * 8 + 4], r[p * 8 + 5]], aux: r[p * 8 + 6], valid: r[p * 8 + 7] === 1 });
+    return { named, r };
+  }
+
   async function resolve(withKeep: boolean, ringMade = true, roles?: Record<number, number>) {
-    const w = await tinyWorld(g, tinyMap(64, 64), ['surface']);
+    const s = await townSetup(withKeep, ringMade, roles);
     try {
+      const { tc, t, place } = s;
+      tc.setTowns([t], 0);
+      const enc = g.device.createCommandEncoder();
+      tc.encode(enc);
+      g.device.queue.submit([enc.finish()]);
+      const { named, r } = await readTable(tc);
+      expect(g.takeErrors()).toEqual([]);
+      tc.dispose();
+      return { named, r, place };
+    } finally {
+      s.w.destroy();
+    }
+  }
+
+  /** a town of citygen-shaped records over a tiny world, its contracts made (not yet run) */
+  async function townSetup(withKeep: boolean, ringMade = true, roles?: Record<number, number>, opts: { stage?: [number, number, number] } = {}) {
+    const w = await tinyWorld(g, tinyMap(64, 64), ['surface']);
+    {
       const rec = new ArrayBuffer((REC_LM + 64) * RECW * 4);
       const ru = new Uint32Array(rec);
       const rf = new Float32Array(rec);
@@ -278,61 +344,13 @@ describe('the named places', () => {
       lot(80, 40, 84, 44, 3, 5, 0, 0, 0.3, 402);
       const ring = ringWords(C[0], C[1], 30, [[95, C[1]], [C[0], 94 * ROW_H]]);
       if (!ringMade) ring.words[0] = 0;
+      // (the wall's stage: from, to, its start on the towns' clock — risen long ago unless given)
+      if (opts.stage) new Float32Array(ring.words.buffer).set(opts.stage, 4);
       const art = artWords(C[0], C[1], [[95, C[1]], [C[0], 94 * ROW_H]], 25);
       const place = { dx: 4, dy: 2, dz: 1.5 };
       const t = fakeTown('T', { w: W, h: H, centre: C, R: 40, wall: ring.words, art, records: rec, n, progress, pop, place });
       const tc = new TownContracts(g.device, { globals: w.core.world.globals, chunks: w.core.world.chunks, layers: w.core.world.layers, water: w.core.world.water, w: 64, h: 64 }, w.core.world.buf('agentSides', 64 * 64 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST), { roles: () => roles });
-      tc.setTowns([t], 0);
-      const enc = g.device.createCommandEncoder();
-      tc.encode(enc);
-      g.device.queue.submit([enc.finish()]);
-      // (read through townplace.wgsl: a probe kernel calls its accessors)
-      const probe = /* wgsl */ `
-@group(0) @binding(58) var<storage, read_write> OUT: array<f32>;
-@compute @workgroup_size(1)
-fn main() {
-  for (var p = 0u; p < 24u; p++) {
-    let o = p * 8u;
-    OUT[o] = f32(placeStatus(0u, p));
-    let a = place(0u, p);
-    let b = placeApproach(0u, p);
-    OUT[o + 1u] = a.x; OUT[o + 2u] = a.y; OUT[o + 3u] = a.z;
-    OUT[o + 4u] = b.x; OUT[o + 5u] = b.y; OUT[o + 6u] = f32(placeAux(0u, p));
-    OUT[o + 7u] = select(0.0, 1.0, placeValid(0u, p));
-  }
-  for (var r = 0u; r < 6u; r++) {
-    let h = houseAt(0u, 3u, r);
-    OUT[200u + r * 2u] = f32(lotSeedOf(0u, h));
-    OUT[201u + r * 2u] = f32(lotStatus(0u, h));
-  }
-  OUT[220u] = f32(lotCount(0u, 3u, 1u));
-  OUT[221u] = f32(select(districtPurpose(0u, 2u), districtPurpose(0u, 7u), lotCount(0u, 7u, 1u) > 0u));
-  OUT[222u] = f32(lotCount(0u, 4u, 3u));
-  OUT[223u] = f32(placeStatus(1u, 0u));
-  OUT[224u] = select(0.0, 1.0, townLive(0u));
-  let h0 = lotAt(0u, 4u, 3u, 0u);
-  OUT[225u] = f32(lotSeedOf(0u, h0));
-}`;
-      const k = makeCompute(g.device, 'townplace probe', [townplaceWgsl, probe], { 57: 'read', 58: 'rw' }, 'main');
-      const out = g.device.createBuffer({ size: 256 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-      const e2 = g.device.createCommandEncoder();
-      const ps = e2.beginComputePass();
-      ps.setPipeline(k.pipeline);
-      ps.setBindGroup(0, makeBindGroup(g.device, 'probe', k.layout, { 57: tc.places, 58: out }));
-      ps.dispatchWorkgroups(1);
-      ps.end();
-      const st = g.device.createBuffer({ size: 256 * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-      e2.copyBufferToBuffer(out, 0, st, 0, 256 * 4);
-      g.device.queue.submit([e2.finish()]);
-      await st.mapAsync(GPUMapMode.READ);
-      const r = new Float32Array(st.getMappedRange().slice(0));
-      st.unmap();
-      expect(g.takeErrors()).toEqual([]);
-      tc.dispose();
-      const named = (p: number) => ({ status: r[p * 8], at: [r[p * 8 + 1], r[p * 8 + 2], r[p * 8 + 3]], approach: [r[p * 8 + 4], r[p * 8 + 5]], aux: r[p * 8 + 6], valid: r[p * 8 + 7] === 1 });
-      return { named, r, place };
-    } finally {
-      w.destroy();
+      return { w, t, tc, place, ring, progress, n };
     }
   }
 
@@ -393,5 +411,98 @@ fn main() {
     const c = await resolve(false, true, { 7: 5 });
     expect(c.named(PLACE.keep).aux).toBe(700);
     expect(c.r[221]).toBe(5);
+  }, 120_000);
+
+  // (UC-8) the place table re-solved only when what it reads changes: woken on the GPU, its uniform written only when its
+  // contents change
+  async function frames(tc: TownContracts, t: ContractTown, now: number | ((f: number) => number), n: number) {
+    for (let f = 0; f < n; f++) {
+      tc.setTowns([t], typeof now === 'number' ? now : now(f));
+      const enc = g.device.createCommandEncoder();
+      tc.encode(enc);
+      g.device.queue.submit([enc.finish()]);
+    }
+    return (await tc.debugRead('pctl'))[PC.solves];
+  }
+
+  it('solves only on a change: a lot rising, a ring change, a slide — one solve each, the table right after', async () => {
+    const s = await townSetup(true);
+    const { tc, t, place, ring } = s;
+    // (the CPU's writes to the town's place uniform, counted)
+    const q = g.device.queue;
+    const write0 = q.writeBuffer.bind(q);
+    let uWrites = 0;
+    q.writeBuffer = ((b: GPUBuffer, ...rest: unknown[]) => {
+      if (b.label === 'town places T') uWrites++;
+      return (write0 as (...a: unknown[]) => void)(b, ...rest);
+    }) as typeof q.writeBuffer;
+    try {
+      expect(await frames(tc, t, 0, 1), 'the first frame solves').toBe(1);
+      expect(await frames(tc, t, 0, 12), 'idle: no solve').toBe(1);
+      expect(uWrites, 'the uniform written once').toBe(1);
+      let tab = await readTable(tc);
+      expect(tab.r[201 + 4 * 2], 'seed 303 not begun').toBe(PLACE_STATUS.none);
+      // (a card's lot begins rising: house 303 (record 3) to 0.5 — one solve; rising further within the class: none)
+      q.writeBuffer(t.lots.progress, 3 * 4, new Float32Array([0.5]));
+      expect(await frames(tc, t, 0, 4), 'a lot rising: one solve').toBe(2);
+      tab = await readTable(tc);
+      expect(tab.r[200 + 4 * 2]).toBe(303);
+      expect(tab.r[201 + 4 * 2], 'seed 303 rising').toBe(PLACE_STATUS.rising);
+      q.writeBuffer(t.lots.progress, 3 * 4, new Float32Array([0.7]));
+      expect(await frames(tc, t, 0, 4), 'still rising: no solve').toBe(2);
+      q.writeBuffer(t.lots.progress, 3 * 4, new Float32Array([1]));
+      expect(await frames(tc, t, 0, 4), 'built: one solve').toBe(3);
+      expect((await readTable(tc)).r[201 + 4 * 2]).toBe(PLACE_STATUS.ok);
+      // (a ring change: a filler gate at segment 10 — gate slot 8 valid after one solve)
+      expect(tab.named(PLACE.gate0 + 8).status).toBe(PLACE_STATUS.none);
+      ring.words[WB_KIND + 10] = 1;
+      q.writeBuffer(t.routes.wall, 0, ring.words);
+      expect(await frames(tc, t, 0, 4), 'a ring change: one solve').toBe(4);
+      tab = await readTable(tc);
+      expect(tab.named(PLACE.gate0 + 8).status).toBe(PLACE_STATUS.ok);
+      expect(tab.named(PLACE.gate0 + 8).aux).toBe(10);
+      // (a slide: the grid 6 columns on — one solve, every place moved with it)
+      const before = tab.named(PLACE.stores).at[0];
+      const w0 = uWrites;
+      place.dx += 6;
+      expect(await frames(tc, t, 0, 4), 'a slide: one solve').toBe(5);
+      expect(uWrites - w0, 'the uniform written once for the slide').toBe(1);
+      tab = await readTable(tc);
+      expect(tab.named(PLACE.stores).at[0]).toBeCloseTo(before + 6, 3);
+      expect(tab.named(PLACE.stores).aux).toBe(100);
+      // (the clock moving with no wall rising: no solve, no uniform write)
+      expect(await frames(tc, t, (f) => 100 + f, 12), 'the clock alone: no solve').toBe(5);
+      expect(uWrites - w0).toBe(1);
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      q.writeBuffer = write0;
+      tc.dispose();
+      s.w.destroy();
+    }
+  }, 120_000);
+
+  it('a gate whose wall is rising wakes a solve when the clock passes its rise, not before', async () => {
+    // (the wall's stage 0 → 1 from clock 10 over its span: both gates rising at 0, the first up before the second)
+    const s = await townSetup(true, true, undefined, { stage: [0, 1, 10] });
+    const { tc, t } = s;
+    try {
+      expect(await frames(tc, t, 0, 3)).toBe(1);
+      let tab = await readTable(tc);
+      expect(tab.named(PLACE.gate0).status).toBe(PLACE_STATUS.rising);
+      expect(tab.named(PLACE.gate0 + 1).status).toBe(PLACE_STATUS.rising);
+      // (the clock a quarter second a frame to 25: past the stage's span — each gate's flip one solve)
+      const seen: number[] = [];
+      for (let k = 0; k < 100; k++) seen.push(await frames(tc, t, k * 0.25, 1));
+      expect(seen[seen.length - 1], 'two flips: two solves').toBe(3);
+      expect(seen.indexOf(2), 'the first gate up after the stage began').toBeGreaterThan(40);
+      expect(seen.indexOf(3)).toBeGreaterThan(seen.indexOf(2));
+      tab = await readTable(tc);
+      expect(tab.named(PLACE.gate0).status).toBe(PLACE_STATUS.ok);
+      expect(tab.named(PLACE.gate0 + 1).status).toBe(PLACE_STATUS.ok);
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      tc.dispose();
+      s.w.destroy();
+    }
   }, 120_000);
 });

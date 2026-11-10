@@ -22026,3 +22026,33 @@ GPU resident ("we should not need CPU readback"), orders by index only.
 - Track B's files: agents/notice.ts `sides` private → readonly (one line and its comment).
 Checks: typecheck; the unit tier; test/gpu/towncontracts.test.ts, living, cities; lab gates gputown (with and without
 labkeep), townseason, townfollow.
+
+## 2026-11-10 — the place table solved only when its inputs change (UC-8, `trackA-placedirty`)
+
+Why: the named-place table ran its 8 dispatches a town every frame and the CPU wrote its 336-byte uniform every frame
+(the towns' clock was in it), though the inputs change only when a lot begins or finishes, the ring changes, a card
+claims a district or the window slides. The side map already wakes on the GPU (sidemap.wgsl sideWatch/sideWake); the
+places now copy that pattern.
+- **Watch** (`plWatch`, a thread a record and the ring's/arterials' words): a sum of hashes — each record's 24 words
+  and its progress's class (not begun / rising / built: the only thing a status reads of the progress, so a lot rising
+  0.5 → 0.7 wakes nothing), the counts, the ring's words through WB_S, the arterials'. A sum, so thread order doesn't
+  matter. **Wake** (`plWake`, one thread): a solve when the sum moved, the uniform's version moved, or the clock passed
+  the wake clock; else the 8 kernels' indirect args are 0.
+- **The uniform** is built and compared on the CPU each frame (336 bytes, no readback), written only when it differs,
+  with a version from one counter over every town (a town in a reused slot always solves). The clock moved out of it
+  into its own 16-byte uniform, written as it moves.
+- **The clock**: a gate's status follows its piece's rise at the clock. `plHead` bisects (24 steps) the first clock a
+  gate's status flips at inside the wall stage's span (rise ≥ 1 is monotone in the clock there) and keeps it in the
+  slot's private words (TP_WAKE_AT); the clock passing it wakes the next solve. Not a pure function in the accessor:
+  townplace.wgsl would need the ring's words and the clock bound, and binding 57 and the accessors stay as Track B
+  reads them.
+- Not watched: the world's columns (the table reads none) and citygen's height and population grids (made with the
+  lots in the 'field' run, which moves the records' hash). The watch layout is 8 storage buffers, the stage's limit.
+- Measured (the profiler's `towncontracts` pass, headless D3D11, Muru's gputown recipe, at rest, median of 20 samples
+  over 5 s): before 0.47 / 0.47 ms (an earlier noisier pair 0.69, 0.37), after 0.18 / 0.18 / 0.20 ms; the pass with the
+  places not encoded 0.12 / 0.13 ms. The place table's share 0.35 → ~0.06 ms (the watch's hash dispatch and the empty
+  indirect ones). 2 place solves in all at Muru from boot through the 5 s at rest.
+- Tests (test/gpu/towncontracts.test.ts): idle frames solve nothing and write the uniform once; a lot beginning to rise,
+  built, a ring change (a filler gate) and a slide each make exactly one solve with the table right after; rising
+  further and the clock moving alone make none; a rising wall's two gates make one solve each as the clock passes them.
+Checks: typecheck; test/gpu towncontracts, cities, living; the gputown lab gate (with and without labkeep).

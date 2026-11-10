@@ -1,7 +1,7 @@
 // ---- townplace.wgsl: a town's named places, resolved on the GPU (contract: src/api/contracts/townplaces.ts) ----------
 // For any system that sends units somewhere in a town (Track B's orders: go, muster, man, march …) by intent, without
 // knowing how the town is made. One read-only storage binding, PLACE_BINDING, holding every town slot's table
-// (towncontracts/places.wgsl writes it every frame from citygen's records; nothing passes through the CPU).
+// (towncontracts/places.wgsl writes it from citygen's records when they change; nothing passes through the CPU).
 //
 // An order carries indices only: the town (its slot: TownContracts.townIndex on the CPU), a name (PLACE_*), or a district
 // id, a lot kind and a rank. The GPU resolves them here:

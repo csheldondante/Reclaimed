@@ -26,7 +26,7 @@ intent by index only.
 | UC-5 | A barracks card: the barracks is the keep district's biggest building for now (the keep card raises it) | S | open (A, with the season catalog) |
 | UC-6 | **The lab page's water blows up at Muru** past ~4000 ticks (origin/fortress cb520aa9, `?contracts=0`, no wall, `opps=0`): 6 % of the box's columns deeper than 0.9 at tick 3000, 51 % at 4200, 91 % at 6400, depth up to 35 000; the terrain draws as grey slabs. Pre-existing (the liquid model, trackA-liquids). The gputown recipe holds the ticks (speed 0) after the town is made | M | open (A, liquids) — needs a look |
 | UC-7 | Side map: a slide makes the old map stale until the next solve (a frame or two); the window's other systems shift theirs. Fine for a raid; if Track B's notice needs it exact on the slide's frame, shift it on the GPU in the slide | S | open |
-| UC-8 | The place table is rebuilt every frame (8 small dispatches a town); gate it on a lots/progress version if the phone bench shows it | S | open |
+| UC-8 | The place table is rebuilt every frame (8 small dispatches a town); gate it on a lots/progress version if the phone bench shows it | S | done (`trackA-placedirty`: woken on the GPU by a records/progress-class/ring/arterials hash, the uniform's version, the wake clock; 0.35 → 0.06 ms at rest at Muru) |
 
 ## Switchover (2026-11-10, `trackA-switchover`) — the GPU towns are the towns; the old CPU towns deleted (docs/design/SWITCHOVER.md)
 

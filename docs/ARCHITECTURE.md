@@ -1977,7 +1977,11 @@ name (`PLACE`), a district id and a rank.
 - **The named-place table** (`places.wgsl`, read through `src/shaders/townplace.wgsl` at binding 57; contract
   `api/contracts/townplaces.ts`): per town slot a header (live, key, generation, the grid's place), named entries
   (muster, stores, barracks, market, keep, 10 gate slots in routeread's indexing, 8 spawn points: position, status,
-  approach, aux) and lots by (district, kind, rank in growth-key order). Rebuilt every frame (8 small dispatches a town).
+  approach, aux) and lots by (district, kind, rank in growth-key order). Solved (8 small dispatches a town, indirect)
+  only when woken on the GPU (UC-8): `plWatch` sums a hash a record (its words, its progress's class), of the counts,
+  the ring's and the arterials' words; `plWake` solves when it moved, the place uniform's version moved (the CPU writes
+  the uniform only when its contents change: a slide, a claim, a new town) or the towns' clock (16 B a frame) passed the
+  last solve's wake clock (a gate's piece up).
 - Boundaries: `towncontracts` is a town module (test/unit/boundaries.test.ts: above the engine, never the run layer).
 
 ## Agents (round 52, docs/AGENTS.md; branch `agents`)

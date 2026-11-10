@@ -5,7 +5,8 @@
 //
 // The CPU passes inputs only: which towns are live and their slots (an epoch when that changes), each town's grid place
 // in the window (a slide), the towns' clock (the wall's rise), the gate rule. It encodes a fixed list of dispatches a
-// frame; whether the side map is solved and for how many rounds is decided on the GPU (indirect dispatches from CTL).
+// frame; whether the side map is solved and for how many rounds, and whether a town's places are solved, is decided on
+// the GPU (indirect dispatches from CTL and PCTL: UC-8).
 import { makeBindGroup, makeCompute, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
@@ -25,6 +26,12 @@ const LM_ROOM = 64;
 /** sidemap.wgsl SC_*: the control words (indirect args, state, versions, the rings' boxes) */
 export const SC = { state: 12, solves: 21, lastRounds: 22, box: 32 } as const;
 const CTL_WORDS = 64;
+/** places.wgsl PC_*: a town slot's watch words (PCTL: the hashes' sum, the seen sum and version, solves, why) */
+export const PC = { stride: 8, solves: 3, why: 4 } as const;
+/** places.wgsl PA_STRIDE: a town slot's indirect args (clear, the lot kernels, one workgroup) */
+const PA_WORDS = 12;
+/** places.wgsl ART_WORDS: the watch's threads cover at least the arterials' words (and the ring's) */
+const WATCH_MIN = 2212;
 /** hook + jump rounds encoded a frame (0-workgroup dispatches once a solve has settled) */
 const ROUNDS_PER_FRAME = 8;
 /** the deepest water walked (the agents' DEEP: waterclass.wgsl — a walker is never led into it, and its class version
@@ -65,11 +72,15 @@ interface Slot {
   index: number;
   /** its side uniform as last written (a slide, the epoch) */
   sideKey: string;
+  /** its place uniform's contents as last written (the version word 13 left 0): written again only when they change */
+  placeLast: Uint32Array | null;
   generation: number;
   sideU: GPUBuffer;
   placeU: GPUBuffer;
   side: GPUBindGroup;
   places: GPUBindGroup;
+  /** the watch and wake kernels' group (places.wgsl plWatch, plWake) */
+  watch: GPUBindGroup;
 }
 
 const hashId = (s: string): number => {
@@ -79,7 +90,7 @@ const hashId = (s: string): number => {
 };
 
 type SideK = 'sideWatch' | 'sideWake' | 'sideClear' | 'sideRaster' | 'sidePrep' | 'sideAfterPrep' | 'sideHook' | 'sideJump' | 'sideRound' | 'sideFinal' | 'sideDone';
-type PlaceK = 'plClear' | 'plCount' | 'plScan' | 'plScatter' | 'plRank' | 'plSeedB' | 'plWriteB' | 'plHead';
+type PlaceK = 'plClear' | 'plCount' | 'plScan' | 'plScatter' | 'plRank' | 'plSeedB' | 'plWriteB' | 'plHead' | 'plWatch' | 'plWake';
 
 export class TownContracts implements TownContractsApi {
   readonly places: GPUBuffer;
@@ -87,6 +98,13 @@ export class TownContracts implements TownContractsApi {
   readonly ctl: GPUBuffer;
   /** the solve's indirect dispatches (sidemap.wgsl ARGS) */
   private args: GPUBuffer;
+  /** (debug reads, tests) the places' watch words a town slot (PC); their solves' indirect dispatches; the towns' clock */
+  readonly pctl: GPUBuffer;
+  private pargs: GPUBuffer;
+  private clockU: GPUBuffer;
+  private clockLast = NaN;
+  /** the place uniforms' writes (each one's version: a new town's first differs from its slot's last) */
+  private placeWrites = 0;
   /** (debug reads) the side map's copy and its kernel, made on the first read */
   private dbg?: { buf: GPUBuffer; k: ComputeKernel };
   private mask: GPUBuffer;
@@ -128,11 +146,20 @@ export class TownContracts implements TownContractsApi {
     const watchSpec: BindSpec = { 0: 'uniform', 1: 'read', 5: 'read', 6: 'rw', 9: 'rw', 11: 'uniform' };
     const solveSpec: BindSpec = { 0: 'uniform', 1: 'read', 3: 'read', 4: 'read', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 10: 'rw', 11: 'uniform' };
     const ctlSpec: BindSpec = { 0: 'uniform', 9: 'rw', 11: 'uniform', 12: 'rw' };
-    const placeSpec: BindSpec = { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'rw', 11: 'uniform' };
+    const placeSpec: BindSpec = { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'rw', 11: 'uniform', 13: 'uniform' };
+    // (the watch: the records, counts, progress, ring and arterials it hashes, the table's wake word, its own words and
+    // the indirect args — 8 storage buffers, the stage's limit)
+    const watchPlSpec: BindSpec = { 3: 'read', 4: 'read', 5: 'read', 7: 'read', 8: 'read', 10: 'rw', 11: 'uniform', 12: 'rw', 13: 'uniform', 14: 'rw' };
     for (const e of ['sideWatch', 'sideRaster'] as SideK[]) this.ks[e] = makeCompute(device, `towncontracts-${e}`, SIDE_PARTS, watchSpec, e);
     for (const e of ['sideWake', 'sideAfterPrep', 'sideRound', 'sideDone'] as SideK[]) this.ks[e] = makeCompute(device, `towncontracts-${e}`, SIDE_PARTS, ctlSpec, e);
     for (const e of ['sideClear', 'sidePrep', 'sideHook', 'sideJump', 'sideFinal'] as SideK[]) this.ks[e] = makeCompute(device, `towncontracts-${e}`, SIDE_PARTS, solveSpec, e);
     for (const e of ['plClear', 'plCount', 'plScan', 'plScatter', 'plRank', 'plSeedB', 'plWriteB', 'plHead'] as PlaceK[]) this.kp[e] = makeCompute(device, `towncontracts-${e}`, [commonWgsl, placesWgsl], placeSpec, e);
+    for (const e of ['plWatch', 'plWake'] as PlaceK[]) this.kp[e] = makeCompute(device, `towncontracts-${e}`, [commonWgsl, placesWgsl], watchPlSpec, e);
+    this.pctl = device.createBuffer({ label: 'town places watch', size: TOWN_ROOM * PC.stride * 4, usage: S });
+    this.pargs = device.createBuffer({ label: 'town places args', size: TOWN_ROOM * PA_WORDS * 4, usage: S | GPUBufferUsage.INDIRECT });
+    this.clockU = device.createBuffer({ label: 'town places clock', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(this.pctl, 0, new Uint32Array(TOWN_ROOM * PC.stride));
+    device.queue.writeBuffer(this.pargs, 0, new Uint32Array(TOWN_ROOM * PA_WORDS));
     this.gCtl = makeBindGroup(device, 'towncontracts ctl', this.ks.sideWake.layout, { 0: world.globals, 9: this.ctl, 11: this.globalU, 12: this.args });
     this.gSolve = makeBindGroup(device, 'towncontracts solve', this.ks.sidePrep.layout, { 0: world.globals, 1: world.chunks, 3: world.layers, 4: world.water, 6: this.mask, 7: this.label, 8: this.top, 9: this.ctl, 10: sides, 11: this.globalU });
     device.queue.writeBuffer(this.ctl, 0, new Uint32Array(CTL_WORDS));
@@ -180,10 +207,15 @@ export class TownContracts implements TownContractsApi {
       this.epoch++;
       this.writeGlobal();
     }
+    // (the towns' clock: 4 bytes as it moves — a gate's status flips when it passes the wake clock the GPU keeps)
+    if (now !== this.clockLast) {
+      this.clockLast = now;
+      this.device.queue.writeBuffer(this.clockU, 0, new Float32Array([now, 0, 0, 0]));
+    }
     for (const s of this.slots) {
       if (!s) continue;
       this.writeSide(s);
-      this.writePlace(s, now);
+      this.writePlace(s);
     }
   }
 
@@ -196,8 +228,9 @@ export class TownContracts implements TownContractsApi {
     const side = makeBindGroup(d, `towncontracts watch ${town.site.id}`, this.ks.sideWatch.layout, { 0: w.globals, 1: w.chunks, 5: town.routes.wall, 6: this.mask, 9: this.ctl, 11: sideU });
     const L = town.lots;
     const R = town.routes;
-    const places = makeBindGroup(d, `towncontracts places ${town.site.id}`, this.kp.plCount.layout, { 3: L.records, 4: L.counts, 5: L.progress, 6: R.pop, 7: R.wall, 8: R.art, 9: R.heights, 10: this.places, 11: placeU });
-    return { town, index: i, sideKey: '', generation: ++this.generations, sideU, placeU, side, places };
+    const places = makeBindGroup(d, `towncontracts places ${town.site.id}`, this.kp.plCount.layout, { 3: L.records, 4: L.counts, 5: L.progress, 6: R.pop, 7: R.wall, 8: R.art, 9: R.heights, 10: this.places, 11: placeU, 13: this.clockU });
+    const watch = makeBindGroup(d, `towncontracts places watch ${town.site.id}`, this.kp.plWatch.layout, { 3: L.records, 4: L.counts, 5: L.progress, 7: R.wall, 8: R.art, 10: this.places, 11: placeU, 12: this.pctl, 13: this.clockU, 14: this.pargs });
+    return { town, index: i, sideKey: '', placeLast: null, generation: ++this.generations, sideU, placeU, side, places, watch };
   }
 
   private writeGlobal(): void {
@@ -226,20 +259,30 @@ export class TownContracts implements TownContractsApi {
     this.device.queue.writeBuffer(s.sideU, 0, this.sideData(p.dx, p.dy * ROW_H, s.index, p.dz));
   }
 
-  /** a town's place uniform: its grid's place, its centre and the towns' clock (80 bytes a frame) */
-  private writePlace(s: Slot, now: number): void {
+  /** a town's lot kernels' workgroups: the lots made and the landmarks' room */
+  private lotGroups(s: Slot): number {
+    return Math.ceil((Math.min(s.town.times?.lots ?? REC_LOTS, REC_LOTS) + LM_ROOM) / 64);
+  }
+
+  /** a town's place uniform: its grid's place, its centre, the claimed districts' purposes — built each frame (336
+   *  bytes, compared on the CPU), written only when they changed, with a new version: the GPU's wake (a solve) */
+  private writePlace(s: Slot): void {
     const p = s.town.gridPlace();
     const b = new ArrayBuffer(PLACE_U_BYTES);
     const u = new Uint32Array(b);
     const f = new Float32Array(b);
     u.set([s.town.box.w, s.town.box.h, s.index, s.generation], 0);
     f.set([p.dx, p.dy * ROW_H, p.dz, 0], 4);
-    f.set([s.town.centre[0], s.town.centre[1], s.town.box.R, now], 8);
-    u.set([hashId(s.town.site.id), 0, 0, 0], 12);
+    f.set([s.town.centre[0], s.town.centre[1], s.town.box.R, 0], 8);
+    u.set([hashId(s.town.site.id), 0, this.lotGroups(s), 0], 12);
     f.set([WALL_SPAN, 0, 0, 0], 16);
     // (the claimed districts' purposes: a byte a district, 255 none — the population field's then)
     const roles = new Uint8Array(b, 80, 256).fill(255);
     for (const [k, v] of Object.entries(this.roles(s.town.site.id) ?? {})) if (+k >= 0 && +k < 256) roles[+k] = v;
+    const last = s.placeLast;
+    if (last && last.every((v, i) => v === u[i])) return;
+    s.placeLast = u.slice();
+    u[13] = ++this.placeWrites;
     this.device.queue.writeBuffer(s.placeU, 0, b);
   }
 
@@ -268,25 +311,32 @@ export class TownContracts implements TownContractsApi {
     }
     run(this.ks.sideFinal, this.gSolve, 'final');
     run(this.ks.sideDone, this.gCtl, 1);
-    // (the places: every frame, a few thousand threads a kernel)
+    // (the places: watched every frame — a hash a record — and solved by indirect dispatches only when the watch woke
+    // a solve: 0 workgroups otherwise. UC-8)
+    const runP = (k: ComputeKernel, g: GPUBindGroup, s: Slot, which: 0 | 1 | 2) => {
+      pass.setPipeline(k.pipeline);
+      pass.setBindGroup(0, g);
+      pass.dispatchWorkgroupsIndirect(this.pargs, (s.index * PA_WORDS + which * 3) * 4);
+    };
     for (const s of live) {
-      const lotGroups = Math.ceil((Math.min(s.town.times?.lots ?? REC_LOTS, REC_LOTS) + LM_ROOM) / 64);
-      run(this.kp.plClear, s.places, Math.ceil(3072 / 64));
-      run(this.kp.plCount, s.places, lotGroups);
-      run(this.kp.plScan, s.places, 1);
-      run(this.kp.plScatter, s.places, lotGroups);
-      run(this.kp.plRank, s.places, lotGroups);
-      run(this.kp.plSeedB, s.places, lotGroups);
-      run(this.kp.plWriteB, s.places, lotGroups);
-      run(this.kp.plHead, s.places, 1);
+      run(this.kp.plWatch, s.watch, Math.max(this.lotGroups(s), Math.ceil(WATCH_MIN / 64)));
+      run(this.kp.plWake, s.watch, 1);
+      runP(this.kp.plClear, s.places, s, 0);
+      runP(this.kp.plCount, s.places, s, 1);
+      runP(this.kp.plScan, s.places, s, 2);
+      runP(this.kp.plScatter, s.places, s, 1);
+      runP(this.kp.plRank, s.places, s, 1);
+      runP(this.kp.plSeedB, s.places, s, 1);
+      runP(this.kp.plWriteB, s.places, s, 1);
+      runP(this.kp.plHead, s.places, s, 2);
     }
     pass.end();
   }
 
   /** (debug and tests only: the lab, the GPU tests — never an order) a buffer's words read back */
-  async debugRead(which: 'places' | 'ctl' | 'sides' | 'label' | 'top' | 'mask', bytes?: number): Promise<Uint32Array> {
+  async debugRead(which: 'places' | 'ctl' | 'pctl' | 'sides' | 'label' | 'top' | 'mask', bytes?: number): Promise<Uint32Array> {
     const enc = this.device.createCommandEncoder({ label: 'towncontracts debug read' });
-    let src = { places: this.places, ctl: this.ctl, label: this.label, top: this.top, mask: this.mask, sides: this.ctl }[which];
+    let src = { places: this.places, ctl: this.ctl, pctl: this.pctl, label: this.label, top: this.top, mask: this.mask, sides: this.ctl }[which];
     if (which === 'sides') {
       // (Track B's side map isn't a copy source: a kernel copies it into a debug buffer first)
       const N = this.world.w * this.world.h;
@@ -314,7 +364,7 @@ export class TownContracts implements TownContractsApi {
       s?.sideU.destroy();
       s?.placeU.destroy();
     }
-    for (const b of [this.places, this.ctl, this.mask, this.label, this.top, this.globalU, this.args]) b.destroy();
+    for (const b of [this.places, this.ctl, this.mask, this.label, this.top, this.globalU, this.args, this.pctl, this.pargs, this.clockU]) b.destroy();
     this.dbg?.buf.destroy();
   }
 }

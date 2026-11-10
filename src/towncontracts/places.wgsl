@@ -1,9 +1,15 @@
 // ---- places.wgsl: a town's named places resolved on the GPU from citygen's records (towncontracts/contracts.ts) ----
-// Appended to common.wgsl. One town a set of dispatches, every frame (a few thousand threads: the lots' room); nothing is
-// read back. Inputs are citygen's contract buffers (api/contracts/citygen.ts: CityLots, CityRoutes) and a small
-// uniform the CPU writes on a slide or a new town (where the grid is, the town's clock). Output: the town's slot of the
-// place table, read by src/shaders/townplace.wgsl (keep its layout constants in step with TP_* here).
+// Appended to common.wgsl. One town a set of dispatches when its inputs change (a few thousand threads: the lots' room);
+// nothing is read back. Inputs are citygen's contract buffers (api/contracts/citygen.ts: CityLots, CityRoutes), a small
+// uniform the CPU writes only when its contents change (where the grid is, the claimed purposes: a slide, a claim, a new
+// town) and the towns' clock (CLK). Output: the town's slot of the place table, read by src/shaders/townplace.wgsl (keep
+// its layout constants in step with TP_* here).
 //
+//   plWatch   (a thread a record, and the ring's and arterials' words) a sum of hashes of what a solve reads: each
+//             record's words and its progress's class (not begun, rising, built), the counts, the ring, the arterials
+//   plWake    (one thread) a solve when the sum moved, the uniform's version moved, or the clock passed the last solve's
+//             wake clock (a gate's wall crossing "up"); the eight kernels below are indirect dispatches, 0 workgroups
+//             when nothing woke one (UC-8: they ran every frame before)
 //   plClear   the slot's district index, purposes, fill counters and picks cleared
 //   plCount   (a thread a record) each lot counted into its (district, kind) bin; the district's purpose; stage A picks'
 //             keys (stores, market, keep, muster: an atomic min)
@@ -13,8 +19,8 @@
 //             GPU's thread order — and its entry written there; stage A picks' entries; stage B's key (the barracks:
 //             the keep's seed now known)
 //   plSeedB, plWriteB  stage B's seed and entry
-//   plHead    (one thread) the header, the gates (routeread's slot rule from the wall's words), the spawn points, and
-//             every pick nobody won marked NONE
+//   plHead    (one thread) the header, the gates (routeread's slot rule from the wall's words), the spawn points,
+//             every pick nobody won marked NONE, and the wake clock: the first clock a gate's status flips at
 
 @group(0) @binding(3) var<storage, read> REC: array<u32>;
 @group(0) @binding(4) var<storage, read> CNT: array<u32>;
@@ -30,9 +36,10 @@ struct TownP {
   dims: vec4<u32>,
   /** the grid's place in the window: x, y (world units), z (window z less world z) */
   place: vec4<f32>,
-  /** the town's centre (the grid's frame), its radius, the towns' clock now (s) */
+  /** the town's centre (the grid's frame), its radius; w unused (the clock is CLK's: it moves every frame) */
   town: vec4<f32>,
-  /** x the town's key (its site id's hash), yzw unused */
+  /** x the town's key (its site id's hash), y the uniform's version (moves when the CPU writes it: a solve), z the lot
+   *  kernels' workgroups (the lots made + the landmarks' room), w unused */
   misc: vec4<u32>,
   /** x the wall's build span (s: citygen DISTRICT_SPAN), yzw unused */
   wall: vec4<f32>,
@@ -41,6 +48,29 @@ struct TownP {
   roles: array<vec4<u32>, 16>,
 };
 @group(0) @binding(11) var<uniform> TP: TownP;
+/** (the watch) a town slot's words: PC_* */
+@group(0) @binding(12) var<storage, read_write> PCTL: array<atomic<u32>>;
+/** the towns' clock (s): x — the gates' rise; written by the CPU as it moves (4 bytes, every towns' slot) */
+struct Clock { t: vec4<f32> };
+@group(0) @binding(13) var<uniform> CLK: Clock;
+/** the solve's indirect dispatches: a town slot's 12 words — clear, the lot kernels, one workgroup */
+@group(0) @binding(14) var<storage, read_write> PARGS: array<u32>;
+
+// ---- the watch's words (contracts.ts PC: keep in step) ----
+const PC_STRIDE: u32 = 8u;
+const PC_ACC: u32 = 0u;
+const PC_SEEN: u32 = 1u;
+const PC_VERSION: u32 = 2u;
+const PC_SOLVES: u32 = 3u;
+const PC_WHY: u32 = 4u;
+const PA_STRIDE: u32 = 12u;
+/** the clear kernel's workgroups (its 3072 threads) */
+const CLEAR_GROUPS: u32 = 48u;
+/** the ring's words a solve reads (WB_S + NB) and the arterials' (4 + NART × AW) */
+const WALL_WORDS: u32 = 584u;
+const ART_WORDS: u32 = 2212u;
+/** no wake by the clock */
+const WAKE_NEVER: f32 = 3.0e38;
 
 // ---- the table's layout (townplace.wgsl reads it: keep in step) ----
 const TP_TOWN_WORDS: u32 = 42240u;
@@ -57,6 +87,8 @@ const TP_LOT_ROOM: u32 = 4096u;
 const TP_FILL_AT: u32 = 36296u;
 const TP_LIST_AT: u32 = 37832u;
 const TP_PICK_AT: u32 = 41928u;
+/** the clock a solve must run again by (f32: a gate's wall up, or down), WAKE_NEVER none */
+const TP_WAKE_AT: u32 = 41980u;
 
 const PL_MUSTER: u32 = 0u;
 const PL_STORES: u32 = 1u;
@@ -194,9 +226,11 @@ fn lotEntry(at: u32, r: u32) {
 fn ringMade() -> bool { return WALLW[0] == 1u; }
 fn corner(b: u32) -> vec2<f32> { let o = WB_V + 2u * (b % NB); return vec2<f32>(bitcast<f32>(WALLW[o]), bitcast<f32>(WALLW[o + 1u])); }
 fn segMid(b: u32) -> vec2<f32> { return 0.5 * (corner(b) + corner(b + 1u)); }
-fn rise(seg: u32) -> f32 {
+fn rise(seg: u32) -> f32 { return riseAt(seg, CLK.t.x); }
+/** a piece's rise at clock t: monotone in t (the stage eased from WALLW[4] to [5] over [WALLW[6], + the span]) */
+fn riseAt(seg: u32, t: f32) -> f32 {
   let span = max(TP.wall.x, 1e-3);
-  let k = clamp((TP.town.w - bitcast<f32>(WALLW[6])) / span, 0.0, 1.0);
+  let k = clamp((t - bitcast<f32>(WALLW[6])) / span, 0.0, 1.0);
   let S = mix(bitcast<f32>(WALLW[4]), bitcast<f32>(WALLW[5]), k * k * (3.0 - 2.0 * k));
   let w = f32((seg + NB - WALLW[2] % NB) % NB) / f32(NB);
   return clamp((S - w * (1.0 - W_BAND)) / W_BAND, 0.0, 1.0);
@@ -453,6 +487,27 @@ fn plHead() {
     }
     putEntry(at, p, st, a, b);
   }
+  // (the wake clock: a gate's status follows its piece's rise at the clock, which only moves inside the stage's span;
+  // rise ≥ 1 is monotone in the clock there, so the first clock it flips at is a bisection — the next solve's)
+  var wake = WAKE_NEVER;
+  let now = CLK.t.x;
+  let t1 = bitcast<f32>(WALLW[6]) + max(TP.wall.x, 1e-3);
+  if (ringMade() && now < t1) {
+    for (var k = 0u; k < NART + GATE_FILL; k++) {
+      if (seg[k] == 0u) { continue; }
+      let b = seg[k] - 1u;
+      let end = riseAt(b, t1) >= 1.0;
+      if ((riseAt(b, now) >= 1.0) == end) { continue; }
+      var lo = now;
+      var hi = t1;
+      for (var i = 0u; i < 24u; i++) {
+        let m = 0.5 * (lo + hi);
+        if ((riseAt(b, m) >= 1.0) == end) { hi = m; } else { lo = m; }
+      }
+      wake = min(wake, hi);
+    }
+  }
+  ptSet(TP_WAKE_AT, bitcast<u32>(wake));
   // (the spawn points: each arterial's road past the town's limit — where a raid comes in)
   for (var k = 0u; k < NART; k++) {
     let at = TP_NAMED_AT + (PL_SPAWN0 + k) * TP_ENTRY;
@@ -466,4 +521,45 @@ fn plHead() {
     if (deck > -1e8) { p.z = deck; }
     putEntry(at, p, ST_OK, at3(artAt(k, max(s - APPROACH, 0.0))), k);
   }
+}
+
+// ---- the watch (UC-8): a solve only when what it reads changed ----
+fn progClass(p: f32) -> u32 { return select(select(ST_OK, ST_RISING, p < 1.0), ST_NONE, p <= 0.0); }
+
+@compute @workgroup_size(64)
+fn plWatch(@builtin(global_invocation_id) g: vec3<u32>) {
+  let t = g.x;
+  var h = 0u;
+  let lots = min(CNT[0], CNT[3]);
+  if (t < lots + min(CNT[1], LM_ROOM)) {
+    let r = recOf(t);
+    var x = pcg(r ^ 0x9e3779b9u);
+    for (var w = 0u; w < RECW; w++) { x = pcg(x ^ REC[r * RECW + w]); }
+    h += pcg(x ^ progClass(PROG[r]));
+  }
+  if (t < WALL_WORDS) { h += pcg(WALLW[t] ^ pcg(t + 0x51ed27u)); }
+  if (t < ART_WORDS) { h += pcg(ART[t] ^ pcg(t + 0x2545f491u)); }
+  if (t == 0u) { h += pcg(CNT[0] ^ pcg(CNT[1] + 7u)); }
+  if (h != 0u) { atomicAdd(&PCTL[TP.dims.z * PC_STRIDE + PC_ACC], h); }
+}
+
+fn pargs(at: u32, n: u32) { PARGS[at] = n; PARGS[at + 1u] = 1u; PARGS[at + 2u] = 1u; }
+
+@compute @workgroup_size(1)
+fn plWake() {
+  let o = TP.dims.z * PC_STRIDE;
+  let acc = atomicExchange(&PCTL[o + PC_ACC], 0u);
+  var why = 0u;
+  if (acc != atomicLoad(&PCTL[o + PC_SEEN])) { atomicStore(&PCTL[o + PC_SEEN], acc); why |= 1u; }
+  if (TP.misc.y != atomicLoad(&PCTL[o + PC_VERSION])) { atomicStore(&PCTL[o + PC_VERSION], TP.misc.y); why |= 2u; }
+  if (CLK.t.x >= bitcast<f32>(ptGet(TP_WAKE_AT))) { why |= 4u; }
+  let a = TP.dims.z * PA_STRIDE;
+  if (why != 0u) {
+    atomicAdd(&PCTL[o + PC_SOLVES], 1u);
+    atomicStore(&PCTL[o + PC_WHY], why);
+  }
+  let on = why != 0u;
+  pargs(a, select(0u, CLEAR_GROUPS, on));
+  pargs(a + 3u, select(0u, TP.misc.z, on));
+  pargs(a + 6u, select(0u, 1u, on));
 }
