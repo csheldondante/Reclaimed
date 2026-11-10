@@ -221,6 +221,57 @@ dies; frames until its velocity has any part toward the new one):
 step 33, hunt 8.9, against means of 1.6/0.75/0.12/0.04). That points at a whole-GPU stall rather than notice's own
 work. Whether it was one frame wasn't isolated; not chased further.
 
+### 5d. FC12: block relaxation (round 4, 2026-11-10, built)
+
+`relaxBlock` (agents.wgsl) replaces relax's front kernel:
+- **Shape:** one 16×16 workgroup per front chunk, a thread per column.
+- **Per field:** for each field the chunk's front mask names, it loads the chunk and a one-column halo (18×18 × NAV_K
+  distances, plus the seed-id plane: 10.4 KB of workgroup memory), relaxes that RELAX_K times in place, and writes
+  back what moved past DIST_EPS.
+- **Halo:** stays as loaded for the sweep.
+- **Seed-id:** checked once at load. A value whose seed is gone loads as FAR.
+- **Fixed for the sweep:** seeds, the off-place surfaces of confined fields, links and step costs are computed once.
+- **Front:** dispatches one workgroup per chunk (FRONT_WG 1).
+- **Unchanged:** the unscoped whole-window path keeps relax.
+
+| K (`?relaxk`) | 40-cell reaction, 2 sweeps (frames) | relax ms, town 200 v 200, desktop, mean / p95 | asked a sweep | sweeps carrying |
+|---|---|---|---|---|
+| relax's front kernel (`?blockrelax=0`) | 17–24 | 0.41 / 0.54; 0.42 / 0.53 | 96–103 | 100% |
+| 1 | 12–24 | 0.45 / 0.57 | 99 | 100% |
+| 4 | 11–12 | 0.52 / 0.61 | 95 | 100% |
+| 8 | 10–11 | 0.54 / 0.66 | 102 | 100% |
+| **16 (default)** | **9–10** | 0.81 / 1.13; 0.88 / 1.08 | 85–92 | 96–99% |
+| 24 | 9 | 0.84 / 1.22 | 72 | 83% |
+
+- **Floor:** the steering's floor is 8–9 frames (6 cells off, any K).
+- **Correctness:** the BFS test (huntseed.test.ts) passes with block relaxation. The GPU-seeded field, seed-id
+  included, now matches after a wave in **6–7 frames**, against 45–48 before; it empties in 4. The CPU-seeded baseline
+  takes 5–34: its in-place count-up, which goes when foes and goals move to GPU seeding.
+- **Cost:** K 16 roughly doubles relax on desktop (+0.4 ms at the 32-chunk cap). K 8 is near the floor (10–11 frames)
+  at +0.13 ms. That's the fallback if the phone bench finds K 16 too dear. The phone's slope decides it, not desktop.
+- **The front:** it still asks for more than 32 chunks, because foes and the goals keep moving. At K 24 the carry
+  starts to drain (83% of sweeps).
+
+**Per-page front (§9b) and the block shape:** they fit directly. A page is one field over one chunk, which is exactly
+relaxBlock's workgroup for one field. With pages, the kernel's field loop goes: one workgroup per dirty page, with the
+halo read through the page table from the 8 neighbour pages of the same field (absent ones as FAR). Workgroup memory
+stays 10.4 KB, and the front list holds page ids in place of (chunk, field mask).
+
+**Now the default:** each CPU mark is for the fields whose seeds changed (`u2.y`), not every field (FC11 recommendation 3).
+`frontDbg` is written only under `?agentprof=1` (`u2.w`), which reads and clears it each tick.
+
+**Measurement toggles kept:**
+
+| Toggle | Default | What it does |
+|---|---|---|
+| `?huntgpu=1` | off | the hunt field seeded on the GPU (strikes still the CPU's 8 targets) |
+| `?blockrelax=0` | on | relax's front kernel instead of relaxBlock |
+| `?relaxk=N` | 16 | relaxBlock's passes a sweep |
+| `?frontcap=N` | 32 | chunks a sweep relaxes at most |
+| `?fieldfront=0` | on | relax's front kernel relaxes every field in a chunk, not just the marked ones (only with `?blockrelax=0`) |
+| `?seedcell=1` | off | a CPU seed that stays in its cell is no change |
+| `?agentprof=1` | off | the per-stage timing passes and the tick log, frontDbg's counters included |
+
 ## 6. Interface tests both tracks run (`test/gpu/unitminds-u2.test.ts`)
 
 Through the `Units` contract only, with AgentUnits on Dawn. `update()` drains events and decides nothing.
