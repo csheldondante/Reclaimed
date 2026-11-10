@@ -73,6 +73,40 @@ export interface CitySpec {
   /** (merge124) structures the world placed in the town (a card's outcome, WorldState's `settlement-building`): each
    *  raised as a landmark (a tower on a lone lot near the middle); the plan says which building each became */
   placed?: { id: string; use: string[] }[];
+  /** (round 128s, trackA-legible: an experiment) the readability levers a layout variant sets (structures/legible.ts);
+   *  absent: today's town */
+  legible?: LegibleLayout;
+}
+
+/**
+ * (round 128s, trackA-legible) A layout variant's readability levers — the user: "The city is too vertical uniformly and
+ * not spaced enough horizontal for an isometric view". Each is read by the pass that owns the decision.
+ */
+export interface LegibleLayout {
+  variant: string;
+  /** storeys by the town's density (today) or by its district (a quarter's own height, landmarks the tall ones) */
+  heightBy: 'density' | 'district';
+  /** a lot is built with chance density × fill (today 1.6) */
+  fill: number;
+  /** built lots gathered into clusters with green gaps: noise at `scale` m, built where it passes `cut` (0..1) */
+  clusters?: { scale: number; cut: number };
+  /** a landmark tower's extra storeys: near the middle, in the outer quarters (today 6, 3) */
+  landmarkExtra: [number, number];
+  /** how many outer quarters get a tower (today every one) */
+  quarterTowers: number;
+  /** the market plaza's radius in tiles (today 2.8) and squares besides it (at the quarters' middles) */
+  plazaR: number;
+  squares: number;
+  /** the drawn paths' widths (m): a lane, a main street on the grid's edges (today 2, 3.2), a curve main road (4) */
+  lane: number;
+  main: number;
+  road: number;
+  /** the paving's colours (sRGB hex; today the style's) */
+  pave?: string[];
+  /** the share of the yards with a tree (the green between the houses; today none) */
+  yardTrees?: number;
+  /** the main streets as streamlines of a direction field (roadgen/): their spacing (m) and the bases' weights */
+  field?: { major: number; grid: number; radial: number; water: number; sigmaW: number; spokes: number };
 }
 
 /** (round 120) What a city is for (contracts/settlement.ts SettlementPurpose: the same words). */

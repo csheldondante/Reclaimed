@@ -146,7 +146,11 @@ export function pathPaving(
 }
 
 /** a main road's drawn width (DECISIONS round 128p: a main road the whole cell) */
-export const MAIN_ROAD_WIDTH = 4;
+export let MAIN_ROAD_WIDTH = 4;
+/** (round 128s, trackA-legible) a layout variant's main road width (structures/legible.ts) */
+export function setMainRoadWidth(w: number): void {
+  MAIN_ROAD_WIDTH = w;
+}
 
 /**
  * The main roads' curves drawn smooth (the user: "the smoother roads will make this even better"): each curve's dry runs

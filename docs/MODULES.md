@@ -90,7 +90,7 @@ Interface contracts between tracks (world state, structures, settlement, flora, 
 - `situation.ts` (141) — A situation — a run as one unfolding situation on the live map (round 120, `runsit`; API: `Situation`, `SituationThreat`, `SituationEnd`, `SITUATION_ENDS` +5.
 - `solver.ts` (99) — The node solver's contract (BACKLOG AR4, the physics design: DECISIONS rounds 106, 120). API: `V3`, `Q`, `SolverCell`, `BodySpec` +4.
 - `story.ts` (142) — The session story — what the GM writes, offline, before a run (round 83, docs/SYSTEMS.md system 9). API: `SessionStory`, `StoryLocation`, `StoryCharacter`, `Objective` +3.
-- `structures.ts` (367) — Structures: buildings, districts, cities, linear features (roads, walls, bridges) and the pieces of them … API: `V2`, `V3`, `GroundFn`, `StructureStyleId` +33.
+- `structures.ts` (401) — Structures: buildings, districts, cities, linear features (roads, walls, bridges) and the pieces of them … API: `V2`, `V3`, `GroundFn`, `StructureStyleId` +34.
 - `terrain.ts` (316) — Terrain — the map's partition into regions and the terrain's generative tools (round 117, the `terrain` track; API: `BarrierKind`, `TerrainRegion`, `TerrainPass`, `BorderMeasure` +15.
 - `traits.ts` (171) — Traits and effects (Living World slice 1, BACKLOG LW1; API: `INTRINSIC`, `STATUSES`, `IntrinsicName`, `StatusName` +16.
 - `units.ts` (162) — Units — people and creatures in play (round 88, docs/SYSTEMS.md system 6). API: `UnitId`, `V2`, `V3`, `UnitJob` +5.
@@ -149,8 +149,8 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 - `claims.ts` (119) — A town's built blocks in the world's columns (round 128m, onetown; API: `TownClaimsIO`, `TownClaims`.
 - `curveroad.ts` (374) — Main roads as curves the grid adapts to, and the radial relax (round 128p, DA-A13 step 2; API: `LandIO`, `growRoad`, `chaikin`, `MAX_SNAP` +3.
 - `edgecuts.ts` (177) — (diagnostic, Track A: the user — "Can we identify noise in terrain that makes portions unwalkable near … API: `SHOW_NONE`, `SHOW_WALL`, `SHOW_WATER`, `SHOW_CLIFF` +7.
-- `edgenet.ts` (762) — The town's paths on its grid's edges (round 128p, DA-A13 step 1; API: `PATH_LANE`, `PATH_MAIN`, `CUT_WALL`, `CUT_WATER` +17.
-- `edgeview.ts` (217) — How the edge paths show (round 128p, DA-A13 step 1; API: `insetTiles`, `pathPaving`, `MAIN_ROAD_WIDTH`, `curvePieces`.
+- `edgenet.ts` (766) — The town's paths on its grid's edges (round 128p, DA-A13 step 1; API: `PATH_LANE`, `PATH_MAIN`, `CUT_WALL`, `CUT_WATER` +18.
+- `edgeview.ts` (221) — How the edge paths show (round 128p, DA-A13 step 1; API: `insetTiles`, `pathPaving`, `MAIN_ROAD_WIDTH`, `setMainRoadWidth` +1.
 - `grade.ts` (93) — A road's grade over the land (DA-A10, round 128o; API: `ROAD_GRADE`, `GradeOpts`, `LaneGrade`, `gradeLane` +1.
 - `pit.ts` (215) — A quarry's pit as tiers and ramps down its footprint (round 128m, `quarry`, BACKLOG V128-11): the player … API: `PIT_RAMP_CELLS`, `PIT_SHELF`, `PIT_RAMP`, `PitTopo` +10.
 - `plan.ts` (499) — A town's plan (round 128m, onetown; API: `typeIndex`, `wallTileOf`, `towered`, `StructureAttrs` +4.
@@ -167,7 +167,7 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 - `towngrid.ts` (186) — The town's irregular grid (round 65; API: `TownGridOpts`, `TownGrid`, `CellGrid`.
 - `townroads.ts` (346) — A town's roads laid (round 128p, DA-A13 step 2): the hybrid — the user: "a hybrid with roads that can … API: `TownRoadsIO`, `CurveKind`, `RoadsState`, `TownRoads` +6.
 - `types.ts` (152) — The building types: one table for every town (round 128m, onetown; API: `POWER_RISE`, `DEFS`.
-- `view.ts` (1157) — A town drawn (round 128m, onetown; API: `ViewSite`, `LOOK_GHOST`, `PIECE_PICKED`, `PIECE_WARN` +11.
+- `view.ts` (1168) — A town drawn (round 128m, onetown; API: `ViewSite`, `LOOK_GHOST`, `PIECE_PICKED`, `PIECE_WARN` +11.
 - `ways.ts` (279) — A town's ways that aren't its roads (round 128d; API: `WaysGrid`, `WAY_NONE`, `WAY_SQUARE`, `WAY_STAIR` +12.
 
 ## src/cardlab/
@@ -332,7 +332,7 @@ WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.
 
 ## src/lab/
 
-- `lab.ts` (697) — (round 128l, tooling) The behaviour lab: ?level=lab&lab=<recipe> — the game with less world, for scripted … API: `LabSceneIO`, `LabPlan`, `LabSnapshot`, `LAB_SIMS` +2.
+- `lab.ts` (702) — (round 128l, tooling) The behaviour lab: ?level=lab&lab=<recipe> — the game with less world, for scripted … API: `LabSceneIO`, `LabPlan`, `LabSnapshot`, `LAB_SIMS` +2.
 - `recipes.ts` (212) — (round 128l, tooling) The behaviour lab's land (?level=lab&lab=<recipe>): a few small deterministic … API: `LabTownSpec`, `LabRecipe`, `LAB_DIMS`, `LAB_MID` +4.
 - `town.ts` (97) — (round 128l, tooling) The behaviour lab's town: what the fortress starts from (fortress/host.ts … API: `LabTown`, `stillWindow`.
 - `townfixture.ts` (180) — (round 128m, townlab) The user's start town as a lab fixture (?level=lab&lab=town; API: `TOWN_FIXTURE_FORMAT`, `TownFixtureHeader`, `TownFixture`, `TownCapture` +2.
@@ -521,6 +521,12 @@ The Renderer's internals, split out of render/renderer.ts: free functions over t
 - `mesh-draws.ts` (282) — The field mesh's draws, made once by the Renderer's constructor when the mesh is on: its draw and depth … API: `buildMeshDraws`.
 - `terrain-cache.ts` (177) — The terrain cache: the field mesh drawn once to a cached G-buffer and reused while the camera holds still … API: `terrainCacheMode`, `tcPrepare`, `tcPipesMake`, `encodeTerrainCache`.
 
+## src/roadgen/
+
+- `cpu.ts` (330) — The road generator's CPU reference (round 128p, DA-A13 step 0): the same rounds as the GPU's (gpu.ts, … API: `RoadGenCpu`, `everyAlong`, `resample`.
+- `fieldstreets.ts` (105) — (round 128s, trackA-legible, variant D — a prototype) A town's main streets as streamlines of a direction … API: `FieldStreetsIn`, `fieldStreets`.
+- `roadgen.ts` (231) — The road generator (round 128p, DA-A13 step 0; API: `V2`, `RoadGenParams`, `ROADGEN_STYLE`, `Polyline` +14.
+
 ## src/run/
 
 - `hud.ts` (71) — ---- run/hud.ts ---------------------------------------------------------------- What to do now (round … API: `ObjectiveHud`.
@@ -572,7 +578,7 @@ Scenes and the live world: WorldCore (one live world), the level and the menu, t
 - `atlas-view.ts` (361) — The atlas viewer (round 67): `?atlas=view` (and `?a.<param>=` for the atlas's parameters). API: `AtlasView`.
 - `frame-cap.ts` (15) — (round 128o, DA-B5; DESIGN.md §24, decided 2026-11-05: "Cap at 30 fps while building or paused" — the … API: `CAP_FPS`, `frameDue`.
 - `hybrid.ts` (362) — The hybrid renderer's choice (?hybrid=1, the atlas level): which of the window's mesh chunks are voxels — … API: `HybridStats`, `HybridChunks`.
-- `level.ts` (737) — The playable valley: world + diegetic powers + HUD + level goal. API: `LevelOptions`, `worldSaveOf`, `LevelScene`.
+- `level.ts` (745) — The playable valley: world + diegetic powers + HUD + level goal. API: `LevelOptions`, `worldSaveOf`, `LevelScene`.
 - `menu.ts` (368) — Main menu (design doc §4): a small live diorama — a skull in barren soil — whose state reflects persistent … API: `MenuScene`.
 - `planner.ts` (124) — Round 113 (`tilesfirst`, the streaming design's step 4 — https://claude.ai/artifact/UnqDENhSKGH1abe7pxWiNh; API: `PlanSource`, `Plan`, `StreamPlanner`.
 - `pool-victim.ts` (38) — (merge122) The region pool's eviction choice, out of the Streamer so it is tested on its own … API: `VictimQuery`, `poolVictim`.
@@ -633,7 +639,7 @@ Settlements: towns and cities on the atlas, their plans, the view that draws the
 - `live.ts` (86) — A settlement in play (round 88; API: `LiveSpot`, `LiveSite`, `LifeIO`, `RaidOutcome` +4.
 - `onscreen.ts` (98) — (round 128g, cityrender) Which settlements are drawn as pieces, and which are made ready — by the screen, … API: `SHOW`, `HIDE`, `BUILD`, `DROP` +5.
 - `plan-worker.ts` (113) — (round 94) A settlement planned off the main thread for the land past the window (settlements.ts … API: `FarPlanInit`, `FarPlanJob`, `FarPlanDone`, `ExactPlanJob` +1.
-- `plan.ts` (1067) — A settlement realised (round 88, arrival scale; API: `Iv`, `ColumnPlan`, `Spot`, `SiteSpec` +19.
+- `plan.ts` (1079) — A settlement realised (round 88, arrival scale; API: `Iv`, `ColumnPlan`, `Spot`, `SiteSpec` +19.
 - `purpose.ts` (122) — What a settlement is for (round 120, `cities`; API: `PURPOSES`, `PurposeFacts`, `purposeScores`, `purposeOf`.
 - `raster.ts` (134) — A settlement's plan as the land past the window draws it (round 94; API: `rasterPlan`, `stampMatch`.
 - `records.ts` (98) — The settlements' records from the world wiki (round 88): one per atlas site, with the wiki's stable id … API: `OUTLAWS`, `SettlementSeed`, `recordsFrom`.
@@ -814,12 +820,13 @@ Stories: dialog play, hero runs, the atlas run.
 - `dressmodules.ts` (511) — The purposes' and the dressing's modules (round 120, `cities`; API: `PROP_SIZE`, `dressModules`.
 - `gpu.ts` (429) — The pieces on the GPU (any host: the viewer, the game's renderer): the module library in one vertex and … API: `SP_PAL`, `GRID_CAP`, `GRID_VEC4`, `SP_GRID0` +9.
 - `index.ts` (23) — The structures system (contracts/structures.ts Structures): plan, pieces, columns, buriable assets. API: `structures`, `planCity`, `piecesOf`, `columnsOf` +7.
+- `legible.ts` (75) — (round 128s, trackA-legible) City readability, an experiment: the start town planned as one of four layout … API: `LegibleVariant`, `LEGIBLE`, `legibleVariant`, `applyLegible` +1.
 - `linear.ts` (272) — Linear features (the user, round 117: "linear tile features we can use for bridges, roads, railroads and … API: `Sample`, `resample`, `segFrame`, `BRIDGE_AT` +7.
 - `modules.ts` (861) — The module library: every drawn piece of a building, made in code in a unit frame (u, v, w) and warped … API: `enum`, `PARTS`, `Module`, `Kit` +8.
 - `nav.ts` (285) — Baked navigation (the user, round 117: "bake paths into the tiles we generate so agents can interact with … API: `bakeNav`, `navPath`.
 - `pieces.ts` (472) — Plan → pieces: every module the city shows, each warped into its frame (contracts/structures.ts … API: `PIECE_FLOATS`, `REL`, `DRAPE`, `WIND` +10.
 - `place.ts` (549) — The generator's second half (round 128m, onetown): the draft placed into the town's one plan through the … API: `LOOK_HEDGE`, `WALL_LEVELS`, `levelsFor`, `typeOfBuilding` +9.
-- `plan.ts` (519) — The town generator: a CitySpec and the ground → what the town is and where (a draft: tiles, buildings, … API: `STOREY_H`, `WALL_H`, `HOUSE_D`, `defaultDensity` +4.
+- `plan.ts` (550) — The town generator: a CitySpec and the ground → what the town is and where (a draft: tiles, buildings, … API: `STOREY_H`, `WALL_H`, `HOUSE_D`, `defaultDensity` +4.
 - `purpose.ts` (623) — A city's purpose in its plan (round 120, `cities`; API: `PurposeCtx`, `Works`, `SHIP_DRAFT`, `PIER_DECK` +6.
 - `rng.ts` (62) — Deterministic randomness for the generators: same seed, same city, on every machine (no Math.random). API: `rng`, `hash32`, `hashf`, `vnoise` +1.
 - `styles.ts` (163) — Styles: which modules a look uses and its palette (the shader colours a module's parts from it). API: `RGB`, `Style`, `STYLES`, `styleOf` +2.

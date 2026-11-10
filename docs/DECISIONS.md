@@ -3,6 +3,12 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-09 — round 128s (session 5, `trackA-legible`) — city readability (the user's words, relayed by main)
+
+- "The city is too vertical uniformly and not spaced enough horizontal for an isometric view." Earlier: "Roads probably need to be wider to make it more legible. Look at other games like ano series." Terrain: keep height differences visible with paths, stairs and switchbacks, "As long as it doesn't mess up legibility." And: "I want to see social, economic and political changes visually reflected and evident in the city." → an experiment: the start town as layout variants A (today), B (moderate), C (open), D (field streets), `?legible=`, shots to choose from (DEVLOG round 128s).
+- "We can't see the spaces between buildings or districts and so we can't see the foot traffic. The irregular grids are nice in theory but we may want to focus on more natural looking streets doing something field and contour or distance based like this: https://www.reddit.com/r/proceduralgeneration/comments/g22yhy/city_map_generation_using_tensor_fields_now_with/ Or a smoothed JFA distance field to get lines parallel to water features and mountains." → variant D, the focus: main streets as streamlines of a field (the parked step-0 generator's, plus the water's distance), the tiles filling the blocks.
+- A visual target (an isometric painted river city): "I like this as a rough target. It's much more legible then our cities." Main's reading: clusters of 2–6 houses with green gaps, light wide streets high in contrast with the roofs, quays along the water, mostly 1–2 storeys with a few big landmarks on their own plazas, terraces and stairs, districts parted by river, walls and green belts.
+
 ## 2026-11-06 — round 128p (session 5) — roads and reach rewritten from the design
 
 - On reach and roads: "Yes I think you are fighting the current implementation and ignoring the design. If the current implementation is bad redo it don't fight it. Git history preserves it if we need to go back." → roads and reach are rewritten from DESIGN §12/§13 as one route network (tiles declare paths, reach builds road pieces, cached routes), deleting the lanes/ways/keepReach/fix-field layering instead of patching it. A design note comes first.

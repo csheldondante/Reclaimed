@@ -41,7 +41,11 @@ export const INSET = { [PATH_LANE]: 1, [PATH_MAIN]: 1.6 } as Record<number, numb
  * 1/√3 m from its middle), so the column the step falls in is never a building's (solid.ts leaves the inset open) — a
  * unit put there stands on the ground, not on the roof next door.
  */
-export const DOOR_STEP = INSET[PATH_LANE] - 1 / Math.sqrt(3);
+export let DOOR_STEP = INSET[PATH_LANE] - 1 / Math.sqrt(3);
+/** (round 128s, trackA-legible) the door's step again after a layout variant set the insets (structures/legible.ts) */
+export function setDoorStep(): void {
+  DOOR_STEP = INSET[PATH_LANE] - 1 / Math.sqrt(3);
+}
 export const PATH_WIDTH = { [PATH_LANE]: 2, [PATH_MAIN]: 3.2 } as Record<number, number>;
 
 export interface EdgeNetSite {

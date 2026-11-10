@@ -21997,3 +21997,74 @@ about 9 batches of 8, each needing about one more submit.
 Paused (main, 2026-11-09): the city's readability work (less uniformly tall, more space between buildings for the
 isometric view) may change how roads are made, so the cutover waits. Play stays on the CPU edge net and Router.
 Nothing is deleted.
+
+## 2026-11-09 — round 128s (`trackA-legible`): city readability, an experiment — the start town as four layouts
+
+The user: "The city is too vertical uniformly and not spaced enough horizontal for an isometric view", wider roads
+("Look at other games like ano series"), and then "We can't see the spaces between buildings or districts and so we
+can't see the foot traffic" with field- or distance-based streets (tensor fields; "a smoothed JFA distance field to get
+lines parallel to water features and mountains"), and a painted river city as a rough target (DECISIONS round 128s).
+An experiment, not a feature: `?legible=A|B|C|D` plans the start town as a layout variant, so the user can choose.
+
+**The levers** (structures/legible.ts; each read by the pass that owns the decision; the variant travels in the
+CitySpec as the start town's override, so the plan worker sees it):
+- **Heights** (structures/plan.ts draftCity): `storeys` [middle, rim] lowered (B [2, 1], C [1.4, 1]); `heightBy:
+  'district'` gives each quarter its own level (the middle's 1, the others 0, ½ or 1) instead of "dense is tallest", a
+  little noise; at least four quarters even in a small town; the landmarks' extra storeys (`landmarkExtra`) and how many
+  outer quarters get a tower (`quarterTowers`: B 0, C/D 1 — every quarter's tower made a forest of spires); the dome a
+  landmark too (B/C 5 storeys over 1-2 storey houses).
+- **Space** (draftCity): `fill` (a lot built with chance density × fill; today 1.6, B 1.3, C/D 1.25) and `clusters`
+  (C/D: built lots gathered where a 22 m noise passes 0.36, so houses stand in clumps with yards between); the market
+  plaza wider (`plazaR` tiles) and `squares` paved in the quarters' middles.
+- **Paths** (build/edgenet.ts PATH_WIDTH/INSET, build/edgeview.ts MAIN_ROAD_WIDTH, settle/plan.ts's roads): lanes 3 m
+  (today 2), main streets on the grid's edges 4 m (3.2), curve main roads 4 / 6 / 5.5 m (B / C / D; adaptToCurve and
+  the drawn paving); the buildings' inset is half the path's width as before.
+- **Look** (structures/styles.ts palette via applyLegible; build/view.ts): the paving lightened to '#d9d0bd' (the user,
+  round 128p: "Feel free to lighten it"); a tree on 25 % (B) or 45 % (C/D) of the yards.
+- **D, field streets** (roadgen/fieldstreets.ts): the parked step-0 generator's CPU reference (roadgen/roadgen.ts,
+  cpu.ts from 806c2c41, branch onetown-roadgen) for its major family only, 24 m apart, over the town's middle out to its
+  radius + 20 m, with a basis it lacked: the iso-lines of the smoothed distance to water (a two-pass chamfer and three
+  box blurs on the 2 m field lattice — the JFA's answer on the CPU), weight 2.2, σ 26 m; the grid basis down to 0.25,
+  the radial ×1.4. The lines go to the town's roads as drawn main roads (townroads.ts mainRoads `drawn`): the irregular
+  grid adapts to them and its tiles fill the blocks, so painting and the plan API are unchanged; spokes 2 (the far
+  places). On the start town: 3 streets, 36 ms (unit test, the fixture's land; test/unit/legible.test.ts writes a map
+  preview with LEGIBLE_OUT) — the quays on both banks and one up the slope.
+
+**Why step 0 looked bad, and what D changes.** Step 0 traced majors 26 m and minors 15 m apart over the whole box (11
+majors, 35 minors, 3.36 km of road for a 30 m town) on a regular 4 m lattice, with stand-in houses on 3 of 4 open cells
+facing a road; the grid basis (weight 1) ruled the flat land, so it read as a rotated street grid carpeted with
+identical boxes. D keeps the irregular tiles (the look the user preferred), traces only a few majors, and lets the
+water's distance and the town's middle shape them.
+
+**Measured** (scripts/legible.mjs: the user's link at 412x915 q=low, Build pressed, 20 sim s at 4x, the game's panels
+hidden; shots of the core, an edge, a main street, closer on it, the thickest crowd and an overview; sheets side by
+side by scripts/legiblesheet.mjs):
+- draftCity on a town the start town's size (unit test): houses' mean storeys A 1.87, B 1.30, C 1.04, D 1.11 (all
+  ≤ 2 in B-D, 77 % in A); lots built inside the radius A 41 %, B 32 %, C 19 %, D 20 %; plaza tiles 11, 43, 69, 61.
+- The share of light, unsaturated pixels at play zoom (a rough paving measure: plaster walls count too): core A 6.6 %,
+  B 7.9 %, C 10.0 %, D 9.0 %; along a main street, closer: 8.3, 9.6, 15.6, 15.3 %.
+- The lab gate, fortressallbuilt, on a fixture captured per variant (`node scripts/labtown.mjs capture --legible X`,
+  then `node scripts/lab.mjs run scripts/lab/fortressallbuilt.mjs --flags "&legible=X"`; the lab applies the variant's
+  widths from the URL): every block built, nothing cut off — A 670/670 in 211 sim s, B 629/629 in 331 s, C 590/590 in
+  241 s, D 556/556 in 211 s. The committed fixture is A's, captured again: the generator's sources changed, so
+  GEN_VERSION moved (no land changed).
+
+**What reads, against the reference** (the shots; notes for the user in the report):
+- The start town (Muru) is small (radius 30 m) and walled, on a point between two rivers; its wall and round wall
+  towers face the camera and hide the inside in every variant. That, not the houses' height, is now the tallest
+  thing in B-D.
+- No variant shows foot traffic: 3-12 people within 70 m of the middle after 20 sim s, the thickest spot 3-6 within
+  10 m and mostly out in the fields; at play zoom a person is a few pixels. Readable streets are necessary, not enough.
+- D comes closest on light streets that curve with the water (quays on both banks), trees between clusters and a
+  landmark (the dome) in the open; B is the safe step (lower, lighter, one square); C opens the core so far it looks
+  emptied.
+
+**Hacks and limits.**
+- The variant's widths, paving colour and yard trees are module state (edgenet's PATH_WIDTH/INSET/DOOR_STEP,
+  edgeview's MAIN_ROAD_WIDTH, the styles' palette, legible.ts's tree share), set in the plan worker from the spec and on
+  the page from the URL. Two writers that must agree; production carries them in the plan's layout.
+- D's streets are traced on the CPU in the plan worker (36 ms on the start town); production runs step 0's GPU kernels
+  (branch onetown-roadgen) and the distance by a JFA.
+- Every number in the variants is by eye on one town (fill, cluster scale and cut, plaza and square radii, the field's
+  weights and spacing, widths).
+- `?legible=` reaches only the start town (`?town=1`); the lab reads it for the widths only (its town is the fixture's).

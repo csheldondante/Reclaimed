@@ -6,7 +6,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { run, sleep, ROOT } from './lib/runner.mjs';
 
-const LINK = '?skipmenu=1&level=atlas&town=1&fortress=1&fresh=1&q=low';
+// (round 128s, trackA-legible: --legible X captures the start town planned as that layout variant)
+const lv = process.argv.indexOf('--legible');
+const LINK = `?skipmenu=1&level=atlas&town=1&fortress=1&fresh=1&q=low${lv > 0 ? `&legible=${process.argv[lv + 1]}` : ''}`;
 const OUT = path.join(ROOT, 'data', 'lab', 'town.rclt');
 
 if (process.argv[2] !== 'capture') {

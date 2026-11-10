@@ -9,6 +9,8 @@
 //
 // Everything here is in the box's local coordinates (x cells, y world units; the box's first row even, so
 // local rows have the world's parity). settlements.ts turns them into world and window coordinates.
+import { applyLegible } from '../structures/legible';
+import { fieldStreets } from '../roadgen/fieldstreets';
 import { DOOR_STEP } from '../build/edgenet';
 import type { Building, Job, Settlement } from '../api/contracts/settlement';
 import type { Instance, ThingEvent } from '../api/contracts/recipe';
@@ -458,6 +460,13 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   const site = siteOfDraft(rec.id, draft, { x0: box.x0, y0: box.y0, w: W, h: H }, inp.ground);
   const typeFor = (b: BuildingRec): StructureType => typeOfUse(useOf.get(b.id)!, b);
   // (round 128p, DA-A13: the town's roads laid with it, roads first — build/townroads.ts; a road under any water a bridge)
+  // (round 128s, trackA-legible: a layout variant's widths, and — D — the main streets as a field's streamlines)
+  const le = spec.legible;
+  applyLegible(le);
+  const spokeAngle = hashf(inp.seed, 91) * Math.PI * 2;
+  const streets = le?.field
+    ? fieldStreets({ W: (W - 1.5), H: (H - 1.5) * ROW_H, centre: [cx, cy], radius: R + 20, ground: groundAt, water, seed: inp.seed, major: le.field.major, grid: le.field.grid, radial: le.field.radial, wWater: le.field.water, sigmaW: le.field.sigmaW, theta: spokeAngle })
+    : null;
   const placed = placeDraft(draft, site, {
     typeOf: typeFor,
     standing: (b) => (stand.has(b.id) ? stand.get(b.id)! : b.storeys),
@@ -468,9 +477,11 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
       centre: [cx, cy],
       stores: [cx, cy],
       radial: { radius: R + 20, iters: 12 },
-      spokes: 4,
-      spokeAngle: hashf(inp.seed, 91) * Math.PI * 2,
+      spokes: le?.field?.spokes ?? 4,
+      spokeAngle,
       far: 4,
+      ...(le ? { width: le.road } : {}),
+      ...(streets ? { drawn: streets.lines } : {}),
     },
   });
   const city = townCity(site, { ground: groundAt });

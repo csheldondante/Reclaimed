@@ -168,7 +168,9 @@ export function draftCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, de
 
   // ---- districts: a few quarters round the middle, each its roofs' colour, its height and a landmark (the plan reads
   // from afar: the user's "sprawling fantastic cities" need quarters, not one blob of roofs)
-  const nd = Math.max(1, Math.min(7, Math.round(R / 26)));
+  // (round 128s, legible: quarters even in a small town — each its own height and a square)
+  const le = spec.legible;
+  const nd = le ? Math.max(4, 1 + le.squares, Math.min(7, Math.round(R / 26))) : Math.max(1, Math.min(7, Math.round(R / 26)));
   const dTurn = r() * Math.PI * 2;
   const dCentres: V2[] = [[cx, cy]];
   for (let k = 1; k < nd; k++) {
@@ -177,6 +179,24 @@ export function draftCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, de
   }
   const dRoof = dCentres.map(() => Math.floor(r() * 8));
   const dBias = dCentres.map((_, k) => (k === 0 ? 0.6 : (r() - 0.5) * 1.6));
+  // (round 128s, legible: a quarter's height — the middle's the tallest of the houses, the others from the rim's up)
+  const dLevel = le ? dCentres.map((_, k) => (k === 0 ? 1 : Math.floor(r() * 3) / 2)) : [];
+  // (round 128s, legible: the market plaza wider, and squares in the quarters' middles — paved, open, a place to meet)
+  if (le) {
+    const tile = spec.tile ?? 4;
+    const square = (c: V2, rad: number) => {
+      for (let q = 0; q < nq; q++) {
+        const u = tiles.use[q];
+        if (u !== 'lot' && u !== 'yard' && u !== 'street') continue;
+        const [x, y] = quadCentre(tiles, q);
+        if (Math.hypot(x - c[0], y - c[1]) >= rad || (water && water(x, y) > 0.3)) continue;
+        const [lo, hi] = quadG(q);
+        if (hi - lo < STOREY_H) tiles.use[q] = 'plaza';
+      }
+    };
+    square([cx, cy], tile * le.plazaR);
+    for (let k = 1; k <= le.squares && k < dCentres.length; k++) square(dCentres[k], tile * 1.5);
+  }
   const districtOf = (x: number, y: number) => {
     let best = 0;
     let bd = Infinity;
@@ -210,7 +230,9 @@ export function draftCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, de
     dq[q] = dens(cxq, cyq);
     if (tiles.use[q] !== 'lot') continue;
     const [lo, hi] = quadG(q);
-    const p = isFarm(q) ? 1 : Math.min(1, dq[q] * 1.6);
+    // (round 128s, legible: the fill lowered, and the built lots gathered into clusters with green gaps between them)
+    const clustered = le?.clusters ? smooth01((fbm(cxq / le.clusters.scale, cyq / le.clusters.scale, spec.seed + 77) - le.clusters.cut) / 0.08 + 0.5) : 1;
+    const p = isFarm(q) ? 1 : Math.min(1, dq[q] * (le?.fill ?? 1.6) * clustered);
     if (hi - lo > STOREY_H * (into ? 3 : 1.3) || hashf(q, spec.seed, 1) > p || quadArea(tiles, q) < 2.5) tiles.use[q] = 'yard';
     else built[q] = 1;
   }
@@ -257,7 +279,7 @@ export function draftCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, de
       for (const q of qs) hi = Math.max(hi, quadG(q)[1]);
       const id = buildings.length;
       // (its drum a storey over the middle's houses: the dome stands clear of their roofs)
-      const st = Math.max(3, Math.round(sMid) + 1);
+      const st = Math.max(3, Math.round(sMid) + (le ? le.landmarkExtra[1] - 1 : 1));
       const b: BuildingRec = { id, kind: 'house', quads: qs, base: hi + 0.15, storeys: st, storeyH: STOREY_H, look: Math.floor(r() * 4096), mega: 'dome', district: 0 };
       buildings.push(b);
       for (const q of qs) quadBuilding[q] = id;
@@ -309,8 +331,10 @@ export function draftCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, de
     // storeys by the density: a house from the rim's to the middle's as it rises past the hut line; a hut one (two now
     // and then where it's nearly a town); a farmhouse one or two; a barn one tall one
     const dd = Math.min(1, Math.max(0, (dq[q0] - HOUSE_D) / 0.5));
+    // (round 128s, legible — heightBy 'district': a quarter's own height, a little noise; the landmarks are the tall ones)
     const storeys =
-      kind === 'house' ? Math.max(1, Math.round(sRim + (sMid - sRim) * dd + dBias[dk] + (fbm(bx * 0.04, by * 0.04, spec.seed + 9) - 0.5) * 2.2 + (r() - 0.5) * 0.8))
+      kind === 'house' && le?.heightBy === 'district' ? Math.max(1, Math.round(sRim + (sMid - sRim) * dLevel[dk] + (fbm(bx * 0.04, by * 0.04, spec.seed + 9) - 0.5) * 0.8 + (r() - 0.5) * 0.5))
+      : kind === 'house' ? Math.max(1, Math.round(sRim + (sMid - sRim) * dd + dBias[dk] + (fbm(bx * 0.04, by * 0.04, spec.seed + 9) - 0.5) * 2.2 + (r() - 0.5) * 0.8))
       : kind === 'hut' ? (dq[q0] > HOUSE_D * 0.75 && r() < 0.35 ? 2 : 1)
       : kind === 'farmhouse' ? (r() < 0.5 ? 2 : 1)
       : 1;
@@ -353,10 +377,11 @@ export function draftCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, de
       const db = Math.hypot(quadCentre(tiles, b.quads[0])[0] - c[0], quadCentre(tiles, b.quads[0])[1] - c[1]);
       return da - db;
     };
-    const picks = lone.slice().sort(near([cx, cy])).slice(0, style.towers).map((b): [BuildingRec, number] => [b, 6]);
-    for (let k = 1; k < nd; k++) {
+    const [xMid, xQuarter] = le?.landmarkExtra ?? [6, 3];
+    const picks = lone.slice().sort(near([cx, cy])).slice(0, style.towers).map((b): [BuildingRec, number] => [b, xMid]);
+    for (let k = 1; k < Math.min(nd, 1 + (le?.quarterTowers ?? nd)); k++) {
       const b = lone.filter((x) => x.district === k && !picks.some(([p]) => p === x)).sort(near(dCentres[k]))[0];
-      if (b) picks.push([b, 3]);
+      if (b) picks.push([b, xQuarter]);
     }
     for (const [b, extra] of picks) {
       const q = b.quads[0];
@@ -453,6 +478,12 @@ export function draftCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, de
     hedged,
     stats: { tiles: nq, buildings: buildings.length, props: props.length, berths: berths.length, piers: linear.filter((f) => f.kind === 'pier').length, tilesMs: +(t1 - t0).toFixed(2), planMs: +(t2 - t1).toFixed(2) },
   };
+}
+
+/** 0..1, smoothly */
+function smooth01(t: number): number {
+  const u = Math.max(0, Math.min(1, t));
+  return u * u * (3 - 2 * u);
 }
 
 /** a tile mesh less the tiles with a corner outside x0..x1, y0..y1 (the rest renumbered in order) */

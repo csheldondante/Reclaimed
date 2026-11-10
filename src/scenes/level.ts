@@ -85,6 +85,7 @@ import { labStationKit } from './level/labs';
 import type { StationKit } from '../levels/playground';
 import type { Lab } from '../lab/lab';
 import { urlFlags } from '../flags';
+import { applyLegible, LEGIBLE, legibleVariant } from '../structures/legible';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -499,6 +500,13 @@ export class LevelScene implements Scene {
         cx = Math.round(s.at[0]);
         cy = Math.round(s.at[1] / ROW_H);
         startTown = s.id;
+        // (round 128s, trackA-legible: ?legible=A|B|C|D — the start town planned as a readability layout variant; its
+        // paths' widths set here too, as the plan worker sets them from the spec: structures/legible.ts)
+        const lv = legibleVariant(host.params.get('legible'));
+        if (lv) {
+          settlements.override(s.id, LEGIBLE[lv]);
+          applyLegible(LEGIBLE[lv].legible);
+        }
       }
       // (round 117/119, structures: ?city=<tile system>&cstyle=&cseed= — every settlement is planned by the structures
       // system now; this starts at the town or city nearest the start and plans its town with that tile system / style)

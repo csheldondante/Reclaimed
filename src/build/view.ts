@@ -25,6 +25,7 @@ import { PROP_SIZE } from '../structures/dressmodules';
 import { library } from '../structures/modules';
 import { DRAPE, DRAPE_ANY, PIECE_FLOATS, piecesOf, REL, WALL_T } from '../structures/pieces';
 import { hashf } from '../structures/rng';
+import { yardTrees } from '../structures/legible';
 import { STYLE_IDS, styleOf } from '../structures/styles';
 import { adjacency, quadCorners } from '../structures/tiles/builder';
 import { solve, type WfcProblem } from '../structures/wfc';
@@ -762,6 +763,16 @@ export function townView(site: ViewSite, inp: ViewInputs): { city: CityPlan; ext
   }
   // (a lot no structure stands on is a yard: room to grow, a garden)
   for (let c = 0; c < nq; c++) if (tiles.use[c] === 'lot' && quadBuilding[c] < 0) tiles.use[c] = 'yard';
+  // (round 128s, trackA-legible: a layout variant's gardens — a tree on a share of the yards, the green between the
+  // clusters of houses; structures/legible.ts)
+  const treeShare = yardTrees();
+  if (treeShare > 0)
+    for (let c = 0; c < nq; c++) {
+      if (tiles.use[c] !== 'yard' || plan.owner[c] >= 0 || hashf(c, 71) >= treeShare) continue;
+      const [x, y] = grid.centre(c);
+      const g = groundAt(x, y);
+      extra.add(lib.id('fruittree'), square(x, y, 1.8 + hashf(c, 72) * 0.6), g - 0.1, g + 3.8 + hashf(c, 73) * 1.2, Math.floor(hashf(c, 74) * 4096));
+    }
   // (round 128d) the courtyards (shapes.ts): paved; one cell a tree in the middle, more a fountain
   for (const ct of shapes.courtyards) {
     for (const c of ct.cells) tiles.use[c] = 'plaza';

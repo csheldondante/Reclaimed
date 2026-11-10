@@ -40,6 +40,8 @@ import { edgeNetOf } from '../build/edgenet';
 import { layoutTownRoads, type TownRoads } from '../build/townroads';
 import { typeIndex } from '../build/plan';
 import { DEEP } from '../agents/rules';
+import { applyLegible, LEGIBLE, legibleVariant } from '../structures/legible';
+import { urlFlags } from '../flags';
 
 /** what the lab needs of the scene (scenes/level.ts startLab) */
 export interface LabSceneIO {
@@ -692,5 +694,8 @@ export class Lab {
 }
 
 export function installLab(io: LabSceneIO): Lab {
+  // (round 128s, trackA-legible: a fixture captured with ?legible= is drawn and walked with that variant's path widths)
+  const lv = legibleVariant(urlFlags().get('legible'));
+  if (lv) applyLegible(LEGIBLE[lv].legible);
   return new Lab(io);
 }
