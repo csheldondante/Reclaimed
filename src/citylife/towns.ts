@@ -10,6 +10,9 @@ import { Works, type WorksWorld } from './works';
 import { LIVING_TUNING } from './params';
 import { TunePanel } from '../ui/tunepanel';
 import type { TownLogs } from '../citygen/townlog';
+import { cellAt } from '../world/lattice';
+/** routes.wgsl H_GATES: the arterials' ends */
+const H_GATES = 5;
 
 export interface LivingTownsIO {
   device: GPUDevice;
@@ -120,6 +123,24 @@ export class LivingTowns {
       const p = l.town.gridPlace();
       l.life.frame(enc, this.dt, { dx: p.dx, dy: p.dy, dz: p.dz, winW: this.io.dims.w, winH: this.io.dims.h }, ts);
     }
+  }
+
+  /**
+   * (season life, U2's `march`) The march routes of a town: from each wall gate (the town grid's frame: FieldTowns
+   * wallGates) down the GATES field — along the roads to where the arterial leaves the town — as cached route ids (the
+   * living town's route graph; traced if new, a few words read back). The march back is the same route reversed.
+   */
+  async marchRoutes(town: string, gates: { seg: number; at: [number, number] }[]): Promise<{ seg: number; route: number; gen: number; length: number; from: [number, number]; to: [number, number] }[]> {
+    const l = this.live.get(town);
+    if (!l) return [];
+    const out = [];
+    for (const g of gates) {
+      const [cx, cy] = cellAt(g.at[0], g.at[1]);
+      if (cx < 0 || cy < 0 || cx >= l.life.input.w || cy >= l.life.input.h) continue;
+      const r = await l.life.askRoute(cy * l.life.input.w + cx, H_GATES);
+      if (r) out.push({ seg: g.seg, route: r.id, gen: r.gen, length: r.length, from: r.from, to: r.to });
+    }
+    return out;
   }
 
   /** (saving, a save point) each town's works read back (its state words' head: a few hundred bytes) into its log */

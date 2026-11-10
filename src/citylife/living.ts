@@ -9,7 +9,9 @@ import { makeBindGroup, makeCompute, type BindSpec, type ComputeKernel } from '.
 import { LIVING_TUNING, type LivingValues } from './params';
 
 /** routes.wgsl's LT layout: its words (L_RH + ROUTES × 4), the counters' first word, the quarry's, the clearing's */
-export const LT_WORDS = 52520 + 256 * 2;
+export const LT_WORDS = 52520 + 256 * 2 + 16;
+/** (season life) the route-ask words (routes.wgsl L_ASK) */
+const L_ASK = 53032;
 export const L_C = 48;
 export const L_Q = 96;
 export const L_F = 128;
@@ -67,7 +69,7 @@ type K =
   | 'checkClear' | 'checkCols' | 'checkPick' | 'checkLay' | 'checkDoors' | 'checkStep'
   | 'hubSeed1' | 'hashScrub' | 'relax' | 'relaxMark' | 'relaxCheck' | 'trace' | 'traceDone' | 'rampRoute' | 'riders'
   | 'sites' | 'sitesClear' | 'figuresClear' | 'figures' | 'overlay' | 'poolSwitch' | 'hashClear' | 'passMeshClear' | 'passMesh'
-  | 'seaSeed' | 'seaRelax' | 'ships';
+  | 'seaSeed' | 'seaRelax' | 'ships' | 'routeAsk';
 /** each kernel's bindings (at most 8 storage buffers) */
 const SPECS: Record<K, BindSpec> = {
   gate: { 0: 'uniform', 10: 'rw', 14: 'rw' },
@@ -108,6 +110,7 @@ const SPECS: Record<K, BindSpec> = {
   seaSeed: { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 7: 'read', 9: 'rw', 15: 'read' },
   seaRelax: { 0: 'uniform', 9: 'rw', 15: 'read' },
   ships: { 0: 'uniform', 2: 'read', 9: 'rw', 12: 'rw', 15: 'read' },
+  routeAsk: { 0: 'uniform', 8: 'rw', 10: 'rw', 11: 'rw' },
 };
 /** routes.wgsl struct P's bytes (12 vec4s) */
 const P_BYTES = 192;
@@ -306,6 +309,7 @@ export class LivingTown {
         run(cp, 'sites', Math.ceil(this.input.lotRoom / 64));
       }
       run(cp, 'rampRoute', 1);
+      if (this.asking) run(cp, 'routeAsk', 1);
       run(cp, 'riders', Math.ceil(this.riders / 64) || 1);
       // (season life: the ships — their sea field seeded now and then and relaxed a few steps a frame)
       const ships = this.values.people.ships;
@@ -322,6 +326,39 @@ export class LivingTown {
       if (this.debugGraph) run(cp, 'overlay', Math.ceil((this.input.w * this.input.h) / 64));
     });
     this.frameNo++;
+  }
+
+  private asking = false;
+  /**
+   * (season life, U2's marches) A route by id: from `col` (a column of the box) down hub `hub`'s field (5: the GATES —
+   * the arterials' ends), asked of the cached routes like a rider's and traced if it's new. Polled a few words a few
+   * frames apart (an event's read, never a frame's); null if it can't be traced. The id is good while its generation
+   * holds (the points pool switches halves when full: ask again).
+   */
+  async askRoute(col: number, hub: number): Promise<{ id: number; points: number; length: number; from: [number, number]; to: [number, number]; gen: number } | null> {
+    while (this.asking) await new Promise((r) => setTimeout(r, 50));
+    this.asking = true;
+    try {
+      this.device.queue.writeBuffer(this.lt, L_ASK * 4, new Uint32Array([col + 1, hub, 0xfffffffe]));
+      for (let k = 0; k < 100; k++) {
+        await new Promise((r) => setTimeout(r, 100));
+        // (ten words read: the answer)
+        const tmp = this.device.createBuffer({ label: 'living route ask', size: 40, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+        const enc = this.device.createCommandEncoder({ label: 'living route ask' });
+        enc.copyBufferToBuffer(this.lt, L_ASK * 4, tmp, 0, 40);
+        this.device.queue.submit([enc.finish()]);
+        await tmp.mapAsync(GPUMapMode.READ);
+        const w = new Uint32Array(tmp.getMappedRange().slice(0));
+        tmp.destroy();
+        const f = new Float32Array(w.buffer);
+        if (w[2] === 0xfffffffd) return null;
+        if (w[2] !== 0xfffffffe && w[3] > 1) return { id: w[2], points: w[3], length: f[4], from: [f[5], f[6]], to: [f[7], f[8]], gen: w[9] };
+      }
+      return null;
+    } finally {
+      this.device.queue.writeBuffer(this.lt, L_ASK * 4, new Uint32Array([0]));
+      this.asking = false;
+    }
   }
 
   /** the graph made again (the town's road raster was drawn again: a district's roads appeared): 4 bytes */

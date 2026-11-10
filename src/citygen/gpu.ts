@@ -257,7 +257,7 @@ export const SC_ROOM = 256;
 /** (season loop) clkClaim's purpose that only counts the districts left (streets.wgsl CLAIM_COUNT) */
 export const CLAIM_COUNT = 0xffffffff;
 /** (season life) the town wall's words (streets.wgsl WALL: 8 + 4 × NB) */
-const WALL_WORDS = 8 + 4 * 72;
+const WALL_WORDS = 8 + 6 * 72;
 /** (season loop) a district's stage record (streets.wgsl tlProgress: 16 f32) */
 const STG_BYTES = 64;
 /** (M4d hook) a claim's answer: the district (−1 none left), its centre (the grid's frame, world units), the districts
@@ -578,7 +578,7 @@ export class CityGen {
     this.device.queue.writeBuffer(this.B.WALL, 0, new Uint32Array(WALL_WORDS));
     this.encodeOnly('citygen wall', () => {
       this.k('wallBins', {}, { 1: this.lotRecords, 2: this.progress, 3: this.lotCounts, 6: this.B.WALL }, Math.ceil(REC_LM / 64));
-      this.k('wallShape', {}, { 1: this.B.ART, 5: this.B.WALL }, 1);
+      this.k('wallShape', {}, { 1: this.B.ART, 3: this.p.shape === 1 ? this.B.HT : this.B.H, 4: this.B.FD, 5: this.B.WALL }, 1);
     });
   }
   /** (saving) the wall's words (its ring, gates, stage) read back — once, after it's made: a save point's event */
@@ -990,7 +990,7 @@ export class CityGen {
     this.k2('claimRoads', {}, { 1: B.ROADS, 3: B.H, 7: this.claimGrid });
     this.k('claimLots', { count: LOT_ROOM }, { 1: this.lotRecords, 2: this.progress, 4: B.CNT, 7: this.claimGrid }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
     // (season life: the wall's columns over them, the road raster marked where it stands)
-    this.k('wallClaim', {}, { 1: B.WALL, 3: HH, 4: B.FD, 5: B.ROADS, 7: this.claimGrid }, 1);
+    this.k('wallClaim', {}, { 1: B.WALL, 2: B.AD, 3: HH, 4: B.FD, 5: B.ROADS, 7: this.claimGrid }, 1);
     this.cp.end();
     device.queue.writeBuffer(this.uni, 0, this.uniData, 0, this.nPass * SLOT);
     // (M4a: the counts for the contract — the lots' (CNT word 0) and the sites' (LM word 0))

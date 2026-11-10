@@ -10,6 +10,7 @@ import { FieldTown, fieldTownBox, type FieldTownBox, type FieldTownIO, type Fiel
 import { OPPORTUNITY_PURPOSE, type CityDistricts, type OpportunityKind, type TownDistrict, type DistrictStage } from '../api/contracts/citygen';
 import { CLAIM_COUNT, DISTRICT_SPAN } from './gpu';
 import { TownLogs } from './townlog';
+import { wallGates, wallPosts } from './wallshape';
 
 /** a town's box this near the window (columns) is made; this far, let go */
 const PREFETCH = 128;
@@ -112,6 +113,26 @@ export class FieldTowns implements CityDistricts {
     const log = this.logs.of(t.site.at);
     if (log.wall) log.wall.to = to;
     return true;
+  }
+
+  /**
+   * (season life, U2's `man`) The wall's posts in the window (x, y; z window): one on the wall-walk's middle of each
+   * piece fully risen — reached by the stairs beside the gates. Empty: no wall yet (or its ring not read back yet).
+   */
+  wallPosts(town: string): { seg: number; at: [number, number, number] }[] {
+    const t = this.live.get(town);
+    const wall = t ? this.logs.of(t.site.at).wall : undefined;
+    if (!t || !wall?.words.length) return [];
+    return wallPosts(wall.words, wall.to).map((p) => {
+      const [x, y] = t.inWindow([p.at[0], p.at[1]]);
+      return { seg: p.seg, at: [x, y, p.at[2] - t.oz()] };
+    });
+  }
+  /** (season life) the wall's gates, in the town grid's frame (a march's start: LivingTowns.marchRoutes) */
+  wallGates(town: string): { seg: number; at: [number, number] }[] {
+    const t = this.live.get(town);
+    const wall = t ? this.logs.of(t.site.at).wall : undefined;
+    return t && wall?.words.length ? wallGates(wall.words) : [];
   }
 
   /** (season loop) a point of a town's frame (a claim's centre) in the window now; null: the town isn't live */

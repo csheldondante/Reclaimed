@@ -141,7 +141,12 @@ const ROUTES: u32 = 8192u;
 /** (works.wgsl) the felled columns waiting to be replanted: column + 1, the time felled (f32 bits) */
 const L_REGROW: u32 = 52520u;
 const REGROW_ROOM: u32 = 256u;
-// (L_REGROW + REGROW_ROOM × 2 = 53032 words: living.ts LT_WORDS)
+// (L_REGROW + REGROW_ROOM × 2 = 53032 words)
+/** (season life, U2's marches) a route asked by the CPU: 0 its start column (NONE: none asked), 1 its hub; the answer:
+ *  2 the route's id (R_PENDING while it's traced), 3 its points, 4 its length (f32), 5–6 its first point, 7–8 its last
+ *  (the grid's world units), 9 its points' generation (the id is good while it's the same) — 16 words: living.ts
+ *  LT_WORDS */
+const L_ASK: u32 = 53032u;
 
 /** counters (L_C + …): volumes in litres (1e-3 m³) */
 const C_DUG: u32 = 0u;
@@ -616,8 +621,9 @@ fn hubSeed1() {
       if (c != 0u) { FIELD[h * N() + c - 1u] = 0u; atomicAdd(&LT[L_SEEDS + h], 1u); }
     }
   }
-  // (the gates: where each arterial ends — ART word o+3, its length to the town's limit)
-  let na = min(ART[0] + ART[2], NART);
+  // (the gates: where each arterial ends — ART word o+3, its length to the town's limit; the atlas roads' only — season
+  // life: the town's own bridges after them (ART[2]) are inside it, no way out)
+  let na = min(ART[0], NART);
   for (var k = 0u; k < na; k++) {
     let o = 4u + k * AW;
     let n = min(ART[o], NAP);
@@ -1793,4 +1799,28 @@ fn shipVox(wp: vec3<f32>, h: f32, i: u32) {
   vox(wp + vec3<f32>(-fw * 2.6, 1.4), M_WOOD, 18u, h);
   for (var k = 0; k < 4; k++) { vox(wp + vec3<f32>(fw * 0.4, 1.4 + f32(k) * 1.3), M_WOOD, 7u, h); }
   vox(wp + vec3<f32>(fw * 0.6, 3.6), M_CANVAS, 44u, h + 1.5708);
+}
+
+// ---- season life: a route asked for by the CPU (U2's marches: gate → the arterial's end, by id) ----
+/** (one thread, every frame while one's asked) the asked (column, hub)'s route — asked of the cache like a rider's,
+ *  traced if it's new — and, once it's there, its id, points, length and ends written for the CPU's few-word read */
+@compute @workgroup_size(1)
+fn routeAsk() {
+  let col = lt(L_ASK);
+  if (col == NONE || col == 0u) { return; }
+  // (the asked column onto the graph: the nearest walkable within three)
+  let id = routeFor(snapWalk(cxy(col - 1u)), lt(L_ASK + 1u));
+  setLt(L_ASK + 2u, id);
+  if (id == R_PENDING || id == R_FAILED) { return; }
+  let f = rFirst(id);
+  let n = rCount(id);
+  setLt(L_ASK + 3u, n);
+  setLtf(L_ASK + 4u, rLen(id));
+  let a = PTS[f];
+  let b = PTS[f + n - 1u];
+  setLtf(L_ASK + 5u, a.x);
+  setLtf(L_ASK + 6u, a.y);
+  setLtf(L_ASK + 7u, b.x);
+  setLtf(L_ASK + 8u, b.y);
+  setLt(L_ASK + 9u, genOf(rId(id)));
 }

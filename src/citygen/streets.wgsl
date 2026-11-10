@@ -3464,7 +3464,9 @@ fn tlRise(@builtin(global_invocation_id) g: vec3<u32>) {
     // (season life: a wall piece or a tower — id: its segment, 128 a tower, 256 a foot — risen by its segment's rise;
     // w6 the WALL words)
     let seg = id & 127u;
-    let h = select(WALL_H, TOWER_H, (id & 128u) != 0u);
+    var h = select(WALL_H, TOWER_H, (id & 128u) != 0u);
+    // (a stair's step k: 512 set, k at bit 10)
+    if ((id & 512u) != 0u) { h = WALL_H * f32(((id >> 10u) & 15u) + 1u) / f32(STAIR_STEPS + 1u); }
     let rw = wallRise(seg, atomicLoad(&w6[2]), bitcast<f32>(atomicLoad(&w6[4])), bitcast<f32>(atomicLoad(&w6[5])), bitcast<f32>(atomicLoad(&w6[6])));
     if (rw <= 0.0 || atomicLoad(&w6[0]) != 1u) { z = z0 - 1000.0; }
     else if ((id & 256u) == 0u) { z = z0 - h + h * rw; }
@@ -3543,6 +3545,14 @@ const NB: u32 = 72u;
 const WB_REACH: u32 = 8u;
 const WB_V: u32 = 80u;
 const WB_GATE: u32 = 224u;
+/** (season life, U2's posts) each corner's ground (world z: hAt), and each segment's piece: 0 a wall, 1 a gate, 2 over
+ *  water or a cliff (none) — the CPU's posts read them from the saved words */
+const WB_Z: u32 = 296u;
+const WB_KIND: u32 = 368u;
+/** a stair up to the wall-walk beside each gate: this many steps, a step this long, set in from the wall */
+const STAIR_STEPS: u32 = 6u;
+const STAIR_RUN: f32 = 1.1;
+const STAIR_HW: f32 = 0.55;
 const WALL_H: f32 = 4.5;
 const TOWER_H: f32 = 8.0;
 const WALL_HW: f32 = 1.0;
@@ -3644,7 +3654,15 @@ fn wallShape(@builtin(local_invocation_index) li: u32) {
     w5[2] = first;
   }
   workgroupBarrier();
-  if (li < NB) { w5[WB_GATE + li] = wbG[li]; }
+  if (li < NB) {
+    w5[WB_GATE + li] = wbG[li];
+    let p = vec2<f32>(bitcast<f32>(w5[WB_V + 2u * li]), bitcast<f32>(w5[WB_V + 2u * li + 1u]));
+    let q = vec2<f32>(bitcast<f32>(w5[WB_V + 2u * ((li + 1u) % NB)]), bitcast<f32>(w5[WB_V + 2u * ((li + 1u) % NB) + 1u]));
+    w5[WB_Z + li] = bitcast<u32>(hAt(p));
+    var wet = false;
+    for (var k = 0u; k <= 4u; k++) { if (blockedAt(mix(p, q, f32(k) / 4.0))) { wet = true; } }
+    w5[WB_KIND + li] = select(select(0u, 2u, wet), 1u, wbG[li] == 1u);
+  }
   if (li == 0u) { w5[0] = 1u; }
 }
 fn wbV(b: u32) -> vec2<f32> { let o = WB_V + 2u * (b % NB); return vec2<f32>(r1(o), r1(o + 1u)); }
@@ -3693,6 +3711,17 @@ fn wallMesh(@builtin(local_invocation_index) li: u32) {
     if (at == NONE) { return; }
     wbox(at, p, q, WALL_HW, WALL_H, C_WALLSTONE, TG_WALL | ((li + 1u) << 8u), TG_WALL | (((li | 256u) + 1u) << 8u), false);
   }
+  // (the stair up to the wall-walk beside a gate: on the town's side of the piece before the gate, rising away from it)
+  if (wbStair(li)) {
+    let at = room(30u * STAIR_STEPS);
+    if (at == NONE) { return; }
+    for (var k = 0u; k < STAIR_STEPS; k++) {
+      let sq = stairStep(li, k);
+      let h = WALL_H * f32(k + 1u) / f32(STAIR_STEPS + 1u);
+      let id = li | 128u | 512u | (k << 10u);
+      wbox(at + 30u * k, sq[0], sq[1], STAIR_HW, h, C_WALLSTONE, TG_WALL | ((id + 1u) << 8u), TG_WALL | (((id | 256u) + 1u) << 8u), true);
+    }
+  }
   if (wbTower(li)) {
     let at = room(30u);
     if (at == NONE) { return; }
@@ -3714,12 +3743,31 @@ fn wallClaim(@builtin(local_invocation_index) li: u32) {
   let p = wbV(li);
   let q = wbV(li + 1u);
   if (!wbGate(li) && !wbWet(li)) { wallCols(p, q, WALL_HW, WALL_H * r); }
+  if (wbStair(li)) {
+    for (var k = 0u; k < STAIR_STEPS; k++) {
+      let sq = stairStep(li, k);
+      wallCols(sq[0], sq[1], STAIR_HW, WALL_H * r * f32(k + 1u) / f32(STAIR_STEPS + 1u));
+    }
+  }
   if (wbTower(li)) {
     var d = q - wbV(li + NB - 1u);
     if (length(d) < 1e-3) { d = vec2<f32>(1.0, 0.0); }
     let e = normalize(d) * TOWER_HW;
     wallCols(p - e, p + e, TOWER_HW, TOWER_H * r);
   }
+}
+/** a stair beside segment `b` (a wall piece whose next segment is a gate): its steps along the piece from the gate's
+ *  corner back, on the town's side */
+fn wbStair(b: u32) -> bool { return wbGate(b + 1u) && !wbGate(b) && !wbWet(b); }
+fn stairStep(b: u32, k: u32) -> array<vec2<f32>, 2> {
+  let p = wbV(b);
+  let q = wbV(b + 1u);
+  let d = normalize(p - q);
+  // (the town's side: toward the centre)
+  var n = vec2<f32>(-d.y, d.x);
+  if (dot(n, u.d.xy - q) < 0.0) { n = -n; }
+  let a = q + d * (TOWER_HW + 0.6 + f32(k) * STAIR_RUN) + n * (WALL_HW + STAIR_HW);
+  return array<vec2<f32>, 2>(a, a + d * STAIR_RUN);
 }
 fn wallCols(a: vec2<f32>, b: vec2<f32>, hw: f32, h: f32) {
   let N = u32(W() * H());
@@ -3732,6 +3780,9 @@ fn wallCols(a: vec2<f32>, b: vec2<f32>, hw: f32, h: f32) {
       let t = clamp(dot(c - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
       if (distance(c, a + ab * t) > hw + 0.35) { continue; }
       let i = ix(x, y);
+      // (an arterial's columns never walled: its gate stays open whatever stands at the gate's corners — b2 the
+      // arterials' distance)
+      if (r2(i) < u.t.x * 0.5 + 1.0) { continue; }
       let base = hAt(c) - 0.4;
       let so = N * 4u + i * 4u;
       w7[i * 4u + 3u] = 1u;

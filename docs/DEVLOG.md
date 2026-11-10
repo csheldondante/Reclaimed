@@ -21466,3 +21466,19 @@ The user's priority: saving first. Design: SEASON_LOOP.md "Saving" (DESIGN §23)
   3 stages, the wall"; the shots side by side match (`scratchpad/opps/save-ab.png`). Pan away until Muru is let go
   (Thauhaman made), pan back → Muru made again (340 ms), its log laid over it, the same town (`pan-ab.png`).
 - Fixes SL3 (claims and stages lost when a town is let go) and SL4 (no save).
+
+## 2026-11-10 — Track B's two conditions for U2's soldiers (trackA-seasonlife)
+
+- **A walkable wall-walk.** The wall pieces are 2 units thick and claimed solid to their height, so their tops are a
+  walk. Each piece before a gate now has a stair on the town's side: 6 steps of 1.1 units, rising 0.64 a step to the
+  walk (`wallMesh`, `wallClaim`; TG_WALL ids with a step bit, risen with their piece). The ring's words now also keep
+  each corner's ground and each segment's piece (wall, gate, or none over water) — WALL 296 → 440 words — so the CPU
+  has the posts without another read: `FieldTowns.wallPosts(town)` (citygen/wallshape.ts, pure) gives one post on the
+  walk's middle of each piece fully risen, in window coordinates. Muru after 3 seasons: 52 posts.
+- **Route ids for marches.** `LivingTowns.marchRoutes(town, FieldTowns.wallGates(town))`: from each gate (snapped to
+  the graph) down the GATES field, as a cached route of the living town's graph — asked through a new one-thread
+  kernel (`routeAsk`, LT's 16 words at L_ASK), traced if new, and read back ten words a poll (an event). The id holds
+  while its points' generation does. The GATES hub is now seeded at the atlas roads' ends only (the town's own bridges
+  are inside it). Muru: 4 of 5 gates give a route (the fifth is over the lake), lengths 102–132.
+- An arterial's columns are never walled (b2 the arterials' distance), so a tower or a stair at a gate's corner
+  doesn't close the gate.
