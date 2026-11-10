@@ -196,8 +196,9 @@ export class AgentUnits implements Units {
   /** live units at the last sync, and how long that sync took to come back (ms) */
   stats = { units: 0, hunting: 0, syncMs: 0, syncs: 0 };
 
-  /** (U2) the hunt field's seeds the GPU's (Agents.gpuHunt): ?huntgpu=1, or a test's */
-  readonly huntGpu: boolean;
+  /** (U2) the hunt field's seeds the GPU's (Agents.gpuHunt): ?huntgpu=1, or a test's; the field bench toggles it (with
+   *  Agents.huntOn) */
+  huntGpu: boolean;
 
   constructor(
     readonly agents: Agents,

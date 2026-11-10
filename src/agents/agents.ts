@@ -443,6 +443,14 @@ export class Agents implements SimSystem {
   /** (FC11) the fields whose CPU seeds changed this tick, and those started over (the log's) */
   private seedChanged = 0;
   private huntField: number | null = null;
+  /** (the field bench, ?fieldbench=1) the GPU-seeded hunt field on (its seeds scattered) or off: the CPU's seeds then */
+  huntOn = true;
+  /** (the field bench) relax not dispatched at all: the fields frozen as they stand — the fields' cost by difference */
+  benchFrozen = false;
+  /** the front relax kernel's workgroups a chunk (agents.wgsl FRONT_WG: 4 relax's front kernel, 1 relaxBlock) */
+  private frontWG = BLOCK_RELAX ? 1 : 4;
+  private frontVariant?: (block: boolean, k: number) => { relax: ComputeKernel; build: ComputeKernel; wg: number; relaxG: GPUBindGroup[]; buildG: GPUBindGroup[] };
+  private frontVariants = new Map<string, ReturnType<NonNullable<Agents['frontVariant']>>>();
   private hk: { reset: ComputeKernel; unmark: ComputeKernel; set: ComputeKernel; gone: ComputeKernel; flip: ComputeKernel; g: GPUBindGroup[] };
   /** which of `dirty` is the current sweep's at the next tick's start */
   private par = 0;
@@ -687,20 +695,24 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   return 0.0;
 }
 `;
-    // (the measurement toggles' constants: ?frontcap, ?blockrelax, ?relaxk)
-    const consts: [string, string][] = [
-      ['const FRONT_CAP: u32 = 32u;', `const FRONT_CAP: u32 = ${FRONT_CAP}u;`],
-      ['const FRONT_WG: u32 = 4u;', `const FRONT_WG: u32 = ${BLOCK_RELAX ? 1 : 4}u;`],
-      ['const RELAX_K: u32 = 16u;', `const RELAX_K: u32 = ${RELAX_K}u;`],
-    ];
+    // (the measurement toggles' constants: ?frontcap, ?blockrelax, ?relaxk — and the field bench's variants, made at
+    // its start: partsFor)
     const unitsSrc = unitsWgsl.replace('const JFA_LOS: u32 = 0u;', `const JFA_LOS: u32 = ${JFA_LOS_BISECT ? 1 : 0}u;`);
     if (!unitsWgsl.includes('const JFA_LOS: u32 = 0u;')) throw new Error('agents: JFA_LOS not found in units.wgsl');
-    let agentsSrc = agentsWgsl;
-    for (const [a, b] of consts) {
-      if (!agentsSrc.includes(a)) throw new Error(`agents: "${a}" not found in agents.wgsl`);
-      agentsSrc = agentsSrc.replace(a, b);
-    }
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, waterclassWgsl, agentsSrc, surfaceDepth + unitsSrc];
+    const partsFor = (block: boolean, k: number): string[] => {
+      const consts: [string, string][] = [
+        ['const FRONT_CAP: u32 = 32u;', `const FRONT_CAP: u32 = ${FRONT_CAP}u;`],
+        ['const FRONT_WG: u32 = 4u;', `const FRONT_WG: u32 = ${block ? 1 : 4}u;`],
+        ['const RELAX_K: u32 = 16u;', `const RELAX_K: u32 = ${k}u;`],
+      ];
+      let agentsSrc = agentsWgsl;
+      for (const [a, b] of consts) {
+        if (!agentsSrc.includes(a)) throw new Error(`agents: "${a}" not found in agents.wgsl`);
+        agentsSrc = agentsSrc.replace(a, b);
+      }
+      return [commonWgsl, layersWgsl, materialsWgsl, waterclassWgsl, agentsSrc, surfaceDepth + unitsSrc];
+    };
+    const parts = partsFor(BLOCK_RELAX, RELAX_K);
     const mk = (e: string, sp: BindSpec) => makeCompute(device, `agents-${e}`, parts, sp, e);
     // four layouts, each within 8 storage buffers: the peel (it reads the
     // layers and the places), the fields, the units' tick, their draw
@@ -785,10 +797,28 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       // (the front's relax: the fields' bindings but the JFA's (8 storage buffers at most), and the front list)
       const { 55: _jfa, ...relaxFields } = fieldSpec;
       const relaxSpec: BindSpec = { ...relaxFields, 36: 'rw' };
-      const relax = BLOCK_RELAX ? makeCompute(device, 'agents-relax block', parts, relaxSpec, 'relaxBlock') : makeCompute(device, 'agents-relax front', [frontSource(src, 'relax')], relaxSpec, 'relax');
+      // (the front's relax and its build, a variant at a time: relax's front kernel (FRONT_WG 4) or relaxBlock with K passes
+      // (FRONT_WG 1). One made here, as the flags say; the field bench makes the others at its start: benchRelax)
+      const buildSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 10: 'uniform', 33: 'rw', 34: 'rw', 35: 'rw', 36: 'rw', 38: 'uniform', 54: 'rw' };
+      const frontVariant = (block: boolean, k: number) => {
+        const vp = partsFor(block, k);
+        const r = block ? makeCompute(device, `agents-relax block k${k}`, vp, relaxSpec, 'relaxBlock') : makeCompute(device, 'agents-relax front', [frontSource(vp.join('\n'), 'relax')], relaxSpec, 'relax');
+        const b = makeCompute(device, `agents-frontBuild ${block ? 'block' : 'front'}`, vp, buildSpec, 'frontBuild');
+        const pr = <T,>(f: (cur: GPUBuffer, next: GPUBuffer, p: number) => T): T[] => [f(this.dirty[0], this.dirty[1], 0), f(this.dirty[1], this.dirty[0], 1)];
+        return {
+          relax: r,
+          build: b,
+          wg: block ? 1 : 4,
+          relaxG: pr((cur, next, p) => makeBindGroup(device, `agents-relax ${p}`, r.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 36: this.frontList, 37: this.navCost, 38: this.abBuf, 40: this.roads, 52: this.seedMask })),
+          buildG: pr((cur, next, p) => makeBindGroup(device, `agents-frontBuild ${p}`, b.layout, { ...base, 10: this.params, 33: this.frontArgs, 34: cur, 35: next, 36: this.frontList, 38: this.abBuf, 54: this.frontDbg })),
+        };
+      };
+      this.frontVariant = frontVariant;
+      const fv = frontVariant(BLOCK_RELAX, RELAX_K);
+      const relax = fv.relax;
       const box = makeCompute(device, 'agents-unitBox', parts, { 0: 'uniform', 2: 'uniform', 7: 'rw', 10: 'uniform', 28: 'rw' }, 'unitBox');
       const reset = makeCompute(device, 'agents-frontReset', parts, { 0: 'uniform', 2: 'uniform', 33: 'rw' }, 'frontReset');
-      const build = makeCompute(device, 'agents-frontBuild', parts, { 0: 'uniform', 2: 'uniform', 10: 'uniform', 33: 'rw', 34: 'rw', 35: 'rw', 36: 'rw', 38: 'uniform', 54: 'rw' }, 'frontBuild');
+      const build = fv.build;
       const clear = makeCompute(device, 'agents-frontClear', parts, { 0: 'uniform', 2: 'uniform', 34: 'rw', 38: 'uniform' }, 'frontClear');
       const L = t.list(SCOPE_LIST);
       const par = <T,>(f: (cur: GPUBuffer, next: GPUBuffer, p: number) => T): T[] => [f(this.dirty[0], this.dirty[1], 0), f(this.dirty[1], this.dirty[0], 1)];
@@ -814,9 +844,9 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
         resetG: makeBindGroup(device, 'agents-frontReset', reset.layout, { ...base, 33: this.frontArgs }),
         peelG: par((cur, _n, p) => makeBindGroup(device, `agents-peel scoped ${p}`, surfaces.k.layout, { ...base, 1: world.chunks, 3: world.layers, 4: world.waterGaps, 5: this.nav, 11: world.places, 12: world.placeTable, 34: cur, 37: this.navCost, [TILES_BINDING]: lists.changed.uniform })),
         linksG: par((cur, next, p) => makeBindGroup(device, `agents-links scoped ${p}`, links.k.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 37: this.navCost, 38: this.abBuf, 40: this.roads, 52: this.seedMask, 55: this.jfaBuf, [TILES_BINDING]: lists.around.uniform })),
-        relaxG: par((cur, next, p) => makeBindGroup(device, `agents-relax front ${p}`, relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 36: this.frontList, 37: this.navCost, 38: this.abBuf, 40: this.roads, 52: this.seedMask })),
+        relaxG: fv.relaxG,
         enterG: par((cur, _n, p) => makeBindGroup(device, `agents-enter ${p}`, enter.k.layout, { ...base, 6: this.dist, 8: this.occ, 16: this.shove, 34: cur, 55: this.jfaBuf, [TILES_BINDING]: enter.buf })),
-        buildG: par((cur, next, p) => makeBindGroup(device, `agents-frontBuild ${p}`, build.layout, { ...base, 10: this.params, 33: this.frontArgs, 34: cur, 35: next, 36: this.frontList, 38: this.abBuf, 54: this.frontDbg })),
+        buildG: fv.buildG,
         clearG: par((cur, _n, p) => makeBindGroup(device, `agents-frontClear ${p}`, clear.layout, { ...base, 34: cur, 38: this.abBuf })),
         markG: par((cur, _n, p) => makeBindGroup(device, `agents-mark ${p}`, mark.k.layout, { ...base, 10: this.params, 34: cur, [TILES_BINDING]: mark.buf })),
       };
@@ -1175,6 +1205,25 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     pass.dispatchWorkgroups(1);
   }
 
+  /**
+   * (the field bench, ?fieldbench=1) The front's relax as `variant`: relax's front kernel, or relaxBlock with K passes
+   * — each variant's pipelines made the first time it's asked for (the bench asks for all at its start), then switched
+   * to without a reload. Only with the scope (the front).
+   */
+  benchRelax(variant: 'front' | 'block8' | 'block16'): void {
+    if (!this.sk || !this.frontVariant) throw new Error('agents.benchRelax: no front (the scope is off)');
+    let v = this.frontVariants.get(variant);
+    if (!v) {
+      v = this.frontVariant(variant !== 'front', variant === 'block8' ? 8 : 16);
+      this.frontVariants.set(variant, v);
+    }
+    this.sk.relax = v.relax;
+    this.sk.build = v.build;
+    this.sk.relaxG = v.relaxG;
+    this.sk.buildG = v.buildG;
+    this.frontWG = v.wg;
+  }
+
   /** (U2) the hunt's seeds: last frame's moved aside, this frame's scattered, those gone marked — before the relaxation */
   private encodeHunt(pass: GPUComputePassEncoder, p: number): void {
     if (this.huntField === null || this.count === 0) return;
@@ -1184,8 +1233,11 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     pass.dispatchWorkgroups(1);
     pass.setPipeline(this.hk.unmark.pipeline);
     pass.dispatchWorkgroups(n);
-    pass.setPipeline(this.hk.set.pipeline);
-    pass.dispatchWorkgroups(Math.ceil(this.count / 64));
+    // (huntOn off — the field bench's toggle: no new seeds; last frame's are let go, the field emptied of them)
+    if (this.huntOn) {
+      pass.setPipeline(this.hk.set.pipeline);
+      pass.dispatchWorkgroups(Math.ceil(this.count / 64));
+    }
     pass.setPipeline(this.hk.gone.pipeline);
     pass.dispatchWorkgroups(n);
     pass.setPipeline(this.hk.flip.pipeline);
@@ -1783,7 +1835,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     let seeded = 0;
     for (const s of this.seeds) seeded |= 1 << s.field;
     // (U2: the GPU's hunt field always counts as seeded — its seeds are the GPU's to know)
-    if (this.huntField !== null) seeded |= 1 << this.huntField;
+    if (this.huntField !== null && this.huntOn) seeded |= 1 << this.huntField;
     // (round 128i, V128-14: the road field is seeded on the road columns while a group rides)
     if (this.roadRide.riding) {
       seeded |= 1 << ROAD_FIELD;
@@ -1860,7 +1912,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     f[P_STEP] = this.stepNow.dt;
     const rekinds = this.rekinds.splice(0, MAX_REKINDS);
     f[P_STEP + 1] = rekinds.length;
-    u.set([this.huntField ?? NFIELDS, this.marksFor, 0, PROF ? 1 : 0], P_U2);
+    u.set([this.huntOn ? (this.huntField ?? NFIELDS) : NFIELDS, this.marksFor, 0, PROF ? 1 : 0], P_U2);
     rekinds.forEach(([slot, kind, hp], i) => {
       u.set([slot, kind, 0, hp === null ? 0 : 1], P_REKINDS + i * 4);
       if (hp !== null) f[P_REKINDS + i * 4 + 2] = hp;
@@ -1909,7 +1961,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       pass.dispatchWorkgroups(gx, gy);
       this.prof.dispatches += 2;
     }
-    if (this.frameWork && this.fieldsUsed > 0) {
+    if (this.frameWork && this.fieldsUsed > 0 && !this.benchFrozen) {
       this.encodeHunt(pass, 0);
       pass.setBindGroup(0, this.fieldGroup);
       pass.setPipeline(this.k.relax.pipeline);
@@ -2069,7 +2121,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       pass.setPipeline(sk.water.pipeline);
       sk.depths.changed.dispatch(pass);
       this.prof.dispatches += 3;
-      if (this.fieldsUsed > 0) {
+      if (this.fieldsUsed > 0 && !this.benchFrozen) {
         const chunks = Math.ceil(list.length / 64);
         stage('agents-relax');
         const sweeps = this.frameSweeps();
@@ -2157,7 +2209,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
         const u = new Uint32Array(q.buf.getMappedRange().slice(0));
         q.buf.unmap();
         for (let i = 0; i < q.n; i++) {
-          q.log.front.push(u[i] / (BLOCK_RELAX ? 1 : 4));
+          q.log.front.push(u[i] / this.frontWG);
           q.log.asked.push(u[8 + i]);
         }
         if (q.peeled) q.log.peel = u[16] / 4;
