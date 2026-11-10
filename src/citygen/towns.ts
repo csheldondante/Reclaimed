@@ -25,7 +25,7 @@ export class FieldTowns {
   private dead = false;
 
   constructor(
-    private io: FieldTownIO & { freeSlots(): number },
+    private io: FieldTownIO & { freeSlots(): number; landIn(): boolean },
     readonly sites: FieldTownSite[],
   ) {
     for (const s of sites) this.boxes.set(s.id, fieldTownBox(s));
@@ -47,6 +47,10 @@ export class FieldTowns {
     this.clock -= dt;
     if (this.clock > 0 || this.dead) return;
     this.clock = EVERY;
+    if (this.reachDue && this.io.landIn()) {
+      this.reachDue = false;
+      for (const t of this.live.values()) void t.checkReach();
+    }
     for (const [id, t] of this.live) {
       if (this.gap(id) <= DROP) continue;
       this.drop(id, t);
@@ -109,13 +113,13 @@ export class FieldTowns {
     console.log(`[citygen] ${t.site.name} (${id}) let go`);
   }
 
-  /** the window slid: each town's mesh placed again, its reach looked at again */
+  /** the window slid: each town's mesh placed again; its reach looked at again once the land the slide brings is in
+   *  (update: a reach over land still coming in joins nothing there) */
   slid(): void {
-    for (const t of this.live.values()) {
-      t.place();
-      void t.checkReach();
-    }
+    for (const t of this.live.values()) t.place();
+    this.reachDue = true;
   }
+  private reachDue = false;
 
   /** the window warped: placed again */
   warped(): void {

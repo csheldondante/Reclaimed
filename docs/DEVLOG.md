@@ -21061,3 +21061,6 @@ the default.
   - Unpaced, the generation added a 69 ms frame when Bumku was made. Paced, nothing over 41 ms.
   - So background pre-generation isn't needed on the desktop. The phone needs measuring (CG19).
 - Sequence: scratchpad citygen/m4b/pan-sequence.png, pan.gif.
+- Fixed after the shots: the reach ran at the slide, over regions still coming in, and outlined most of the town red.
+  It now waits for the land (`FieldTowns`: the reach is due after a slide and runs once nothing is unwritten). After a
+  slide, 1 building is outlined.

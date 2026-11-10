@@ -360,6 +360,7 @@ export function attachStream(scene: LevelScene): void {
               sea: a!.atlas.p.sea,
               statics: () => staticsFor(scene),
               freeSlots: () => staticsFor(scene)?.freeSlots() ?? 0,
+              landIn: () => !S.busy && !S.unwritten.length,
               plants: { globals: core.world.globals, veg: core.world.veg, vegNext: core.world.vegNext },
               reach: () => (fieldReach ??= new FortressReachGpu(host.gpu.device, core.world, dims.w, dims.h, () => [0, 0])),
               reachTurn: (f) => (reachChain = reachChain.then(f, f)),
