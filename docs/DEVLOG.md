@@ -22244,3 +22244,42 @@ Found and fixed at their causes:
   the chain working (archers 58–254 shots a phase); the GPU numbers wait for the phone.
 
 Gates: typecheck clean; touched-file GPU tests (los ×2, huntseed, huntreact, notice, agentevents, traits, unitminds-u2) pass; unit flags passes. Headless bench with the phone flags: every phase a valid fight (engaged ≥ 5%, combat deaths only); shot looked at (the armies fighting on high dry ground).
+
+## 2026-11-10 — Field bench round 3: the per-unit GPU cost at 1,000 units, the grounds, time to act fixed (trackB-fieldbench-r2)
+
+Why: the Pixel run on 918fd61c was valid everywhere.
+- **Decided:** K 16 stays (relax's cost is noise against frozen); line of sight and seen-only become U2's defaults
+  (500 v 500 with archers: time to act 38 vs 119, landed 108 vs 58).
+- **Open:** at 500 v 500 the GPU sits at 16.5–21 ms even with the fields frozen, so something per unit is the cost.
+- **The user, watching:** "definitely an open field"; most agents on screen.
+
+- **Per-unit cost at 500 v 500**, by toggling (Agents bench switches):
+  - `draw`: the units not drawn (no voxel instances made);
+  - `notice`: not dispatched (targets held);
+  - `step`: every other tick skipped (its time lost: the units move at half speed).
+  - The report gives the voxel instances the units' draw makes at 1,000 units, the units alive and on screen (one
+    read of the rows, each projected), instances per unit, and the draw's GPU ms per unit on screen. unitDraw has no
+    view cull: every unit's instances are made, on screen or not.
+- **Grounds** (`?benchground=open,walls` by default; `town` adds Muru's streets). The line-of-sight phases run on each,
+  with open as the control:
+  - walls: four basalt segments, 5 high, raised through the world API's `terrain.put` between the armies, with a gap;
+  - town: the armies either side of the town's middle, each place moved to street level nearby (not a roof).
+  - Per phase, the share of fighters with their target in sight at the end (aimTick's flags, one read of `mail`).
+- **Time to act was measured wrong.** It counted from the first tick a target came into sight, often far out of range,
+  so it included the archer's walk into range (the phone's 38–60 against the test's 2). It now counts from the first
+  tick in range and in sight (the step marks it: AIM_INRANGE, mail word 10) to the first shot, in ticks.
+- K 16 decided: block8 and front only with `?benchrelax=1`.
+- **The melee test** asserts that with sight the unit turns within 12 frames and spends over 70% of 40 frames moving at
+  its target. The control is the direct-step counter: 39 with sight, 0 without. "The first frame toward it" and
+  "the share without sight" were flaky, because a wander's heading points at the target by chance (0.12–1.0 of
+  frames).
+
+**Headless check** (412 × 915, q=low, the phone's flags, 1 s windows; desktop GPU numbers are noise):
+- Every phase valid, combat deaths only. The units' draw makes 46,755–51,468 voxel instances at 1,000 units (47–51 a
+  unit), 634–656 of them on screen.
+- Fighters with their target in sight at a phase's end: open 1.0; walls 0.14–0.75. Town: Muru's streets, the armies
+  either side of the middle. 20–79 combat deaths a phase, fewer than open: they fight through lots and streets.
+- Time to act (in range and in sight → first shot): 8–43 ticks. That is the cooldown left from the shot at the
+  archer's previous target, since the measure restarts per target; the test's first target fires at frame 2.
+- Shots: we looked at the 500 v 500 archers phase on open ground (archers at the back, white-headed) and the town
+  ground (raiders in the streets, guards in a garden).

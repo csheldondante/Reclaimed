@@ -726,15 +726,22 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
         // (a ranged kind in range and in sight: it stands — backs off inside its standoff — and shoots on its cooldown)
         want = select(vec2<f32>(0.0), -(aimAt.xy - pos.xy) / max(aimD, 1e-3), aimD < range * 0.4);
         heading = atan2(aimAt.y - pos.y, aimAt.x - pos.x);
+        // (time to act counts from the first tick in range and in sight: its own slot's words, the step's)
+        var fl = aimFlags;
+        if ((fl & AIM_INRANGE) == 0u) {
+          fl |= AIM_INRANGE;
+          atomicStore(&mail[aimO + 10u], AP.n.w);
+        }
         if (cool <= 0.0) {
           fireArrow(uid, aimCode, kind.b.y, pos, aimAt);
           cool = kind.b.z;
-          if ((aimFlags & AIM_SHOT) == 0u) {
-            atomicStore(&mail[aimO + 7u], aimFlags | AIM_SHOT);
-            atomicAdd(&mail[1], AP.n.w - atomicLoad(&mail[aimO + 9u]));
+          if ((fl & AIM_SHOT) == 0u) {
+            fl |= AIM_SHOT;
+            atomicAdd(&mail[1], AP.n.w - atomicLoad(&mail[aimO + 10u]));
             atomicAdd(&mail[2], 1u);
           }
         }
+        atomicStore(&mail[aimO + 7u], fl);
       } else if (aimSeen && state == ST_CHASE && aimD > 0.6) {
         // (melee in sight: straight at it, the field not waited for)
         want = (aimAt.xy - pos.xy) / aimD;
@@ -1370,7 +1377,8 @@ fn jfaRApply(@builtin(global_invocation_id) id: vec3<u32>) {
 //   aim    12 a slot, written once a frame by aimTick (after notice) and read by the step — the target as the last frame
 //          left it, so no unit reads another's row while that one's own thread writes it: 0-2 the target's feet, 3 its
 //          code, 4-6 where it was last seen, 7 flags (AIM_SEEN now, AIM_EVER seen since taken, AIM_SHOT fired since it
-//          came into sight), 8 the tick it was last seen, 9 the tick it came into sight
+//          came into sight, AIM_INRANGE in its range and sight — the step's), 8 the tick it was last seen, 9 the tick
+//          it came into sight, 10 the tick it came into range and sight (the step's: time to act counts from it)
 //   acc    2 a slot: damage landing on it (×256), and who (the highest shooter's id + 1) — added by arrowStep, taken and
 //          cleared by the unit's own step
 //   arrows MAIL_ARROWS of 12: 0 the target's code, 1 the shooter's id + 1, 2 damage, 3 seconds left, 4 seconds in all,
@@ -1386,6 +1394,7 @@ const ARROW_W: u32 = 12u;
 const AIM_SEEN: u32 = 1u;
 const AIM_EVER: u32 = 2u;
 const AIM_SHOT: u32 = 4u;
+const AIM_INRANGE: u32 = 8u;
 /** a hurt's or death's `other`: a unit's id (its arrow) — agents.ts BY_UNIT */
 const BY_UNIT: u32 = 0x40000000u;
 /** AP.u2.z: line of sight on (melee steers straight at a target in sight; ranged kinds shoot), seen-only targets */
@@ -1495,7 +1504,7 @@ fn aimTick(@builtin(global_invocation_id) id: vec3<u32>) {
     mailSetV3(o + 4u, ta.xyz);
     atomicStore(&mail[o + 8u], AP.n.w);
   } else {
-    flags &= ~AIM_SEEN;
+    flags &= ~(AIM_SEEN | AIM_INRANGE);
   }
   atomicStore(&mail[o + 7u], flags);
 }

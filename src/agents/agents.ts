@@ -458,6 +458,24 @@ export class Agents implements SimSystem {
   private huntField: number | null = null;
   /** (the field bench) frontDbg counted without ?agentprof=1 (read by benchFront: the front's asks a sweep) */
   benchProbe = false;
+  /** (the field bench) the per-unit GPU cost by toggles: the units not drawn; notice not dispatched; the step at half
+   *  rate (every other tick skipped — its time lost) */
+  benchNoDraw = false;
+  benchNoNotice = false;
+  benchStepHalf = false;
+  private benchStepParity = 0;
+
+  /** (the field bench) the voxel instances the units' draw made last frame (the indirect args' instance count) */
+  async benchInstances(): Promise<number> {
+    const tmp = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = this.device.createCommandEncoder();
+    enc.copyBufferToBuffer(this.indirect, 0, tmp, 0, 16);
+    this.device.queue.submit([enc.finish()]);
+    await tmp.mapAsync(GPUMapMode.READ);
+    const n = new Uint32Array(tmp.getMappedRange().slice(0))[1];
+    tmp.destroy();
+    return n;
+  }
 
   /**
    * (the field bench) Since the last call: chunks that asked to be relaxed and sweeps run (agents.wgsl frontDbg 45, 46,
@@ -712,7 +730,7 @@ export class Agents implements SimSystem {
     this.mail = world.buf('agentMail', MAIL_WORDS * 4, S);
     this.events = world.buf('agentEvents', (4 + EVENT_CAP * 8) * 4, S);
     this.inst = world.buf('agentInst', MAX_INST * 32, GPUBufferUsage.STORAGE);
-    this.indirect = world.buf('agentIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
+    this.indirect = world.buf('agentIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     this.models = world.buf('agentModels', MAX_MODEL_VOXELS * 16, S);
     this.kindModelsBuf = world.buf('agentKindModels', MAX_KINDS * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.params = world.buf('agentParams', PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
@@ -2045,9 +2063,13 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
    *  units' step, the traits, the ride, the draw apart — and returns it; the pass the units ended in comes back) */
   private encodeUnits(pass: GPUComputePassEncoder, stage: (name: string) => GPUComputePassEncoder = () => pass): GPUComputePassEncoder {
     pass = stage('agents-step');
-    pass.setBindGroup(0, this.unitGroup);
-    pass.setPipeline(this.k.unitStep.pipeline);
-    pass.dispatchWorkgroups(Math.ceil(this.count / 64));
+    // (the field bench: the step at half rate — every other tick's skipped, its time lost: the units move at half speed)
+    this.benchStepParity ^= 1;
+    if (!(this.benchStepHalf && this.benchStepParity)) {
+      pass.setBindGroup(0, this.unitGroup);
+      pass.setPipeline(this.k.unitStep.pipeline);
+      pass.dispatchWorkgroups(Math.ceil(this.count / 64));
+    }
     // (FC12 stage 2: the arrows counted down after the step; one landing goes to its target's next step)
     if (this.ranged) {
       pass.setBindGroup(0, this.arrows.g);
@@ -2062,7 +2084,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     if (!this.frameWork) return pass;
     // (round 128p, DA-B22 (c)(3): who fights whom, on the frame's last state)
     pass = stage('agents-notice');
-    this.notice.encode(pass, this.count);
+    // (the field bench: notice not dispatched — every unit keeps the target it had)
+    if (!this.benchNoNotice) this.notice.encode(pass, this.count);
     // (FC12 stage 2: each fighter's target and its sight, for the next frame's steps)
     if (this.aim && (this.los || this.seenOnly)) {
       pass.setBindGroup(0, this.aim.g);
@@ -2075,6 +2098,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     // the draw's instance count restarts each tick (written before this tick's submit)
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
     pass = stage('agents-draw');
+    // (the field bench: the units not drawn — no voxel instances made, so none drawn: the draw's cost by difference)
+    if (this.benchNoDraw) return pass;
     pass.setBindGroup(0, this.drawGroup);
     pass.setPipeline(this.k.unitDraw.pipeline);
     pass.dispatchWorkgroups(Math.ceil(Math.max(this.count, 1) / 64));

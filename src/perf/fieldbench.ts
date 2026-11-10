@@ -9,6 +9,9 @@
 //   block8    relaxBlock with K 8                       against frozen
 //   front     relax's front kernel (the old relax)      against frozen
 //   huntgpu   the hunt field's seeds on the GPU on      against off (the CPU's 8 targets), with block16
+// (round 3: K 16 decided — block8 and front only with ?benchrelax=1; at 500 v 500 the per-unit GPU cost by toggling —
+// draw (the units drawn or not), notice (dispatched or not: targets held), step (every tick or every other); the
+// grounds ?benchground=open,walls (default) | open,town | open,walls,town — the LOS phases on each, open the control)
 // (stage 2, line of sight on the obstacle JFA's clearance, units.wgsl aimTick)
 //   los             melee straight at a target in sight, archers shooting   against block16 alone
 //   seenonly        + seen-only targets (seeds at the last-seen place)      against line of sight
@@ -35,9 +38,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 interface Rec {
   core: { host: Parameters<typeof deviceFacts>[0] & { profiler: Profiler }; onShift: ((dx: number, dy: number, dz: number) => void)[] };
-  camera: { elevation: number; zoom: number; target: [number, number, number] };
+  camera: { elevation: number; zoom: number; target: [number, number, number]; project(x: number, y: number, z: number): readonly [number, number] | null };
   agents: Agents;
   world: { w: number; h: number; ring: { idx(x: number, y: number): number } };
+  api: { terrain?: { put(x: number, y: number, material: 'Basalt', amount: number): Promise<number> } };
   scene: { livingTowns?: LivingTowns; units?: AgentUnits };
 }
 
@@ -99,8 +103,9 @@ interface Side {
   frames: number;
   /** the front: chunks that asked to be relaxed, a sweep (Agents.benchCounters) */
   asksPerSweep: number | null;
-  /** arrows shot and landed; frames from a target coming into sight to the shooter's first shot (mean); melee steps
-   *  taken straight at a target in sight */
+  /** arrows shot and landed; time to act — the ticks from a shooter's first tick in range and in sight of its target
+   *  to its first shot at it (mean; the step records both: units.wgsl AIM_INRANGE); melee steps taken straight at a
+   *  target in sight */
   shots: number;
   landed: number;
   toActFrames: number | null;
@@ -119,6 +124,10 @@ interface Phase {
   alive: { start: number; end: number };
   deaths: number;
   causes: Record<string, number>;
+  /** the ground it ran on: open (the control), walls (stone walls raised between the armies), town (Muru's streets) */
+  ground: string;
+  /** of the fighters with a target at the phase's end, the share with it in sight (aimTick's, one read of mail) */
+  sightShare: number | null;
   /** engaged: the units with a target at the phase's end (their unit word f.y, one read of the rows a phase — the
    *  bench's own) plus the combat deaths in it */
   targeted: number;
@@ -205,10 +214,12 @@ const ARCHER_KIND = 2;
 
 /** two armies of n facing each other on open ground by the town: raiders (hostile; `archers` of them archers) and
  *  guards */
-function armies(units: AgentUnits, agents: Agents, centre: V2, n: number, archers = 0): UnitId[] {
+function armies(units: AgentUnits, agents: Agents, centre: V2, n: number, archers = 0, snap: ((p: V2) => V2) | null = null): UnitId[] {
   const ids: UnitId[] = [];
   const cols = Math.ceil(Math.sqrt(n * 2));
-  const at = (k: number, y0: number, dir: number): V2 => [centre[0] - (cols / 2) * 1.1 + (k % cols) * 1.1, y0 + dir * Math.floor(k / cols) * 1.1 * ROW_H];
+  const grid = (k: number, y0: number, dir: number): V2 => [centre[0] - (cols / 2) * 1.1 + (k % cols) * 1.1, y0 + dir * Math.floor(k / cols) * 1.1 * ROW_H];
+  // (the town's ground: each place moved to street level nearby — not a roof)
+  const at = (k: number, y0: number, dir: number): V2 => (snap ? snap(grid(k, y0, dir)) : grid(k, y0, dir));
   for (let k = 0; k < n; k++) {
     const id = units.spawn('raider', at(k, centre[1] - 12, -1), 'f-bench-raid', { role: 'raider', hostile: true, sight: 40, health: 3 });
     // (the back rows shoot: made the archers' kind where they stand)
@@ -242,6 +253,8 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
   const found = (await openGround(R, [t[0], t[1]], l.town.box.R * 1.1, 44, 80)) ?? (await openGround(R, [t[0], t[1]], l.town.box.R * 1.1, 30, 50));
   if (!found) throw new Error('field bench: no open dry ground near the town for the armies');
   const centre: V2 = [found[0], found[1]];
+  // (the town's middle, where the level opened: the town ground's place)
+  const townAt: [number, number, number] = [t[0], t[1], t[2]];
   R.camera.target = [found[0], found[1], found[2]];
   R.camera.elevation = Math.PI / 3;
   R.camera.zoom = Number(params.get('benchzoom') ?? 14);
@@ -253,6 +266,9 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
   const look: [number, number, number] = [found[0], found[1], found[2]];
   // (the window slides as the camera nears its edge: the armies' place and the camera's move with it, as units do)
   R.core.onShift.push((dx, dy, dz) => {
+    townAt[0] -= dx;
+    townAt[1] -= dy;
+    townAt[2] -= dz;
     look[0] -= dx;
     look[1] -= dy;
     look[2] -= dz;
@@ -302,9 +318,11 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
   };
   const aliveOf = (ids: UnitId[]) => ids.filter((id) => units.get(id)?.alive).length;
   const phases: Record<string, Phase[]> = {};
+  let ground = 'open';
+  let snap: ((p: V2) => V2) | null = null;
   const phase = async (n: number, name: string, on: string, off: string, setOn: (on: boolean) => void, rest: () => void, archers = 0): Promise<Phase> => {
     // (fresh armies a phase: each phase's fight from the same start)
-    const ids = armies(units, agents, centre, n, archers);
+    const ids = armies(units, agents, centre, n, archers, snap);
     await sleep(3000);
     const a0 = aliveOf(ids);
     const d0 = deaths.n;
@@ -317,7 +335,8 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
     const at0 = new Map(watched.map((id) => [id, units.get(id)?.at ?? null]));
     panel.say(`field bench — ${n} v ${n}: ${name} (${on} vs ${off}, ${WINDOWS} × ${windowS} s each way)…`);
     const sides = await toggled(P, agents, windowS, setOn);
-    rest();
+    // (the windows end on the "on" side: what's read below is read with the thing on; rest() after)
+    const losOn = agents.los;
     const moves: number[] = [];
     for (const id of watched) {
       const a = at0.get(id);
@@ -334,6 +353,23 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
       if (r && r.v.alive && rows[(r.gpu % 8192) * 24 + 21] !== 0) targeted++;
     }
     const engaged = targeted + (causes.combat ?? 0);
+    // (of those with a target, how many have it in sight — aimTick's flags; only with line of sight on)
+    let sightShare: number | null = null;
+    if (losOn) {
+      const mail = new Uint32Array(await agents.readRaw('mail'));
+      let withT = 0;
+      let seen = 0;
+      for (const id of ids) {
+        const r = units.recs.get(id);
+        if (!r || !r.v.alive) continue;
+        const o = 16 + (r.gpu % 8192) * 12;
+        if (mail[o + 3] === 0) continue;
+        withT++;
+        if (mail[o + 7] & 1) seen++;
+      }
+      sightShare = withT ? r3(seen / withT) : null;
+    }
+    rest();
     const capped = (s: Side) => [16.667, 8.333].some((c) => Math.abs(s.p50 - c) < 0.35);
     const p: Phase = {
       name,
@@ -344,6 +380,8 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
       alive: { start: a0, end: aliveOf(ids) },
       deaths: dead,
       causes,
+      ground,
+      sightShare,
       targeted,
       engaged,
       valid: engaged >= MIN_FIGHT * a0,
@@ -364,10 +402,62 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
   const restDefault = () => {
     agents.benchRelax('block16');
     agents.benchFrozen = false;
+    agents.benchNoDraw = false;
+    agents.benchNoNotice = false;
+    agents.benchStepHalf = false;
     agents.huntOn = true;
     units.huntGpu = true;
     agents.los = false;
     agents.seenOnly = false;
+  };
+  // (the walls ground: on the open patch, stone walls between the armies — two long segments with a gap in the middle
+  // and two short ones staggered behind — through the world API's put, as the battle playground's raised wall will)
+  const raiseWalls = async () => {
+    const T = R.api.terrain;
+    if (!T) {
+      errors.push('walls: no world terrain API');
+      return;
+    }
+    panel.say('field bench — raising the walls…');
+    const segs: [number, number, number][] = [
+      [-26, -5, 0],
+      [5, 26, 0],
+      [-14, -6, -5],
+      [6, 14, 5],
+    ];
+    const cols: [number, number][] = [];
+    for (const [x0, x1, dy] of segs) for (let x = x0; x <= x1; x++) for (const r of [0, 1]) cols.push([centre[0] + x, centre[1] + dy + r * ROW_H]);
+    for (let i = 0; i < cols.length; i += 48) await Promise.all(cols.slice(i, i + 48).map(([x, y]) => T.put(x, y, 'Basalt', 5)));
+    await sleep(2000);
+  };
+  // (the town ground: the armies either side of the town's middle, through its streets and lots — each place moved to
+  // street level nearby (a surface within 1.5 of the town's ground), not a roof; read once, the bench's own)
+  const toTown = async () => {
+    panel.say('field bench — to the town…');
+    const { nav } = await agents.readField(F.targets);
+    const navF = new Float32Array(nav.buffer);
+    const top = (x: number, y: number) => navF[R.world.ring.idx(x, y) * 4 * 4];
+    const [cx, cy] = cellAt(townAt[0], townAt[1]);
+    // (the street level: the lowest of the town's middle's tops)
+    let street = Infinity;
+    for (let y = cy - 20; y <= cy + 20; y += 2) for (let x = cx - 20; x <= cx + 20; x += 2) street = Math.min(street, top(x, y) >= 0 ? top(x, y) : Infinity);
+    snap = (p: V2): V2 => {
+      const [x, y] = cellAt(p[0], p[1]);
+      for (let r = 0; r <= 5; r++)
+        for (let dy = -r; dy <= r; dy++)
+          for (let dx = -r; dx <= r; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+            const z = top(x + dx, y + dy);
+            if (z >= 0 && z <= street + 1.5) return cellPos(x + dx, y + dy);
+          }
+      return p;
+    };
+    centre[0] = townAt[0];
+    centre[1] = townAt[1];
+    look[0] = townAt[0];
+    look[1] = townAt[1];
+    look[2] = street;
+    keep();
   };
   // (stage 2: line of sight — melee straight at a target in sight, archers shooting — and seen-only targets, each
   // also with archers: ?ranged=N a side, default a fifth of the army)
@@ -379,44 +469,96 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
     agents.los = true;
     agents.seenOnly = on;
   };
-  for (const n of [100, 500]) {
-    const list: Phase[] = [];
+  // (the grounds: open — the control — and, by default, one cluttered (?benchground=open,walls | open,town |
+  // open,walls,town). K 16 is decided (the phone's run): the relax variants only with ?benchrelax=1)
+  const grounds = (params.get('benchground') ?? 'open,walls').split(',').filter((g) => ['open', 'walls', 'town'].includes(g));
+  const warm = async (n: number) => {
     // (a warm-up fight first, not measured: the first armies at a place fill every field round them — a cost the
     // first measured phase would carry alone; the phone's first run showed block16, first, at +2.7 ms)
-    {
-      panel.say(`field bench — ${n} v ${n}: warm-up…`);
-      const ids = armies(units, agents, centre, n);
-      await sleep(6000);
-      for (const id of ids) units.remove(id);
-      await sleep(500);
-    }
-    list.push(await phase(n, 'block16', 'relaxBlock K 16', 'fields frozen', relaxed('block16'), restDefault));
-    // (500 v 500 only if 100 v 100 held 30 fps with the default on)
-    if (n === 500 && phases['100']?.[0] && phases['100'][0].sides.on.p50 > 33.4) {
-      errors.push(`500 v 500 skipped: 100 v 100 ran at ${phases['100'][0].sides.on.p50} ms (p50) with block16`);
-      break;
-    }
-    list.push(await phase(n, 'block8', 'relaxBlock K 8', 'fields frozen', relaxed('block8'), restDefault));
-    list.push(await phase(n, 'front', "relax's front kernel (old)", 'fields frozen', relaxed('front'), restDefault));
-    list.push(
-      await phase(
-        n,
-        'huntgpu',
-        'hunt seeds on the GPU',
-        "hunt seeds the CPU's 8",
-        (on) => {
-          agents.huntOn = on;
-          units.huntGpu = on;
-        },
-        restDefault,
-      ),
-    );
+    panel.say(`field bench — ${ground} ${n} v ${n}: warm-up…`);
+    const ids = armies(units, agents, centre, n, 0, snap);
+    await sleep(6000);
+    for (const id of ids) units.remove(id);
+    await sleep(500);
+  };
+  const losPhases = async (n: number, list: Phase[]) => {
     const archers = Math.min(n, Number(params.get('ranged') ?? Math.round(n / 5)));
     list.push(await phase(n, 'los', 'line of sight', 'block16 alone', los, restDefault));
     list.push(await phase(n, 'seenonly', 'line of sight + seen-only', 'line of sight', seen, restDefault));
     list.push(await phase(n, 'los+archers', `line of sight, ${archers} archers`, `block16 alone, ${archers} archers`, los, restDefault, archers));
     list.push(await phase(n, 'seenonly+archers', `line of sight + seen-only, ${archers} archers`, `line of sight, ${archers} archers`, seen, restDefault, archers));
-    phases[String(n)] = list;
+  };
+  let instances: number | null = null;
+  let alive = 0;
+  let onScreen = 0;
+  const drawFacts = () => {
+    const d = phases['open:500']?.find((p) => p.name === 'draw');
+    const ms = d?.gpu.diff ?? null;
+    return { instances, alive, onScreen, instancesPerUnit: instances !== null && alive ? r3(instances / alive) : null, gpuMsPerVisibleUnit: ms !== null && onScreen ? +(ms / onScreen).toFixed(6) : null, drawGpuMs: ms };
+  };
+  for (const g of grounds) {
+    ground = g;
+    if (g === 'walls') await raiseWalls();
+    if (g === 'town') await toTown();
+    for (const n of [100, 500]) {
+      const list: Phase[] = [];
+      await warm(n);
+      if (g === 'open') {
+        list.push(await phase(n, 'block16', 'relaxBlock K 16', 'fields frozen', relaxed('block16'), restDefault));
+        // (500 v 500 only if 100 v 100 held 30 fps with the default on)
+        if (n === 500 && phases['open:100']?.[0] && phases['open:100'][0].sides.on.p50 > 33.4) {
+          errors.push(`500 v 500 skipped: 100 v 100 ran at ${phases['open:100'][0].sides.on.p50} ms (p50) with block16`);
+          break;
+        }
+        if (params.get('benchrelax') === '1') {
+          list.push(await phase(n, 'block8', 'relaxBlock K 8', 'fields frozen', relaxed('block8'), restDefault));
+          list.push(await phase(n, 'front', "relax's front kernel (old)", 'fields frozen', relaxed('front'), restDefault));
+        }
+        list.push(
+          await phase(
+            n,
+            'huntgpu',
+            'hunt seeds on the GPU',
+            "hunt seeds the CPU's 8",
+            (on) => {
+              agents.huntOn = on;
+              units.huntGpu = on;
+            },
+            restDefault,
+          ),
+        );
+        if (n === 500) {
+          // (the per-unit GPU cost at 1,000 units, each by toggling: the draw, notice, the step)
+          list.push(await phase(n, 'draw', 'units drawn', 'units not drawn', (on) => (agents.benchNoDraw = !on), restDefault));
+          {
+            const ids = armies(units, agents, centre, n, 0, snap);
+            await sleep(2000);
+            instances = await agents.benchInstances();
+            // (the units alive and on screen now: one read of the rows, each projected by the camera)
+            const rows = new Float32Array(await agents.readRaw('units'));
+            const ru = new Uint32Array(rows.buffer);
+            const [vw, vh] = [innerWidth, innerHeight];
+            alive = 0;
+            onScreen = 0;
+            for (const id of ids) {
+              const r = units.recs.get(id);
+              if (!r) continue;
+              const o = (r.gpu % 8192) * 24;
+              if (!((ru[o + 3] >>> 8) & 1)) continue;
+              alive++;
+              const sp = R.camera.project(rows[o], rows[o + 1], rows[o + 2]);
+              if (sp && sp[0] >= 0 && sp[1] >= 0 && sp[0] <= vw && sp[1] <= vh) onScreen++;
+            }
+            for (const id of ids) units.remove(id);
+            await sleep(500);
+          }
+          list.push(await phase(n, 'notice', 'notice dispatched', 'notice not dispatched (targets held)', (on) => (agents.benchNoNotice = !on), restDefault));
+          list.push(await phase(n, 'step', 'the step every tick', 'the step every other tick', (on) => (agents.benchStepHalf = !on), restDefault));
+        }
+      }
+      await losPhases(n, list);
+      phases[`${g}:${n}`] = list;
+    }
   }
   holding = false;
   agents.keepInScope('fieldbench', []);
@@ -434,6 +576,12 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
     town: townId,
     // (where the armies stood: the patch's middle and ground, the raiders' and the guards' first rows, the gap)
     patch: { centre, ground: found[2] },
+    grounds,
+    townAt,
+    /** at 500 v 500: the voxel instances the units' draw made (unitDraw has no view cull: every unit, on screen or not),
+     *  the units alive and on screen then, instances a unit, and the draw's GPU ms (the draw phase's on less off) a
+     *  unit on screen */
+    draw: drawFacts(),
     armies: { raiders: [centre[0], centre[1] - 12], guards: [centre[0], centre[1] + 12], gap: 24 },
     phases,
     errors,
@@ -447,9 +595,11 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
   }
   // (the headline is the GPU span: the frame interval sits at the display's vsync on a phone; a phase with no fight says so)
   const line = (n: string, p: Phase) =>
-    `${p.valid ? '' : 'NO FIGHT — INVALID: '}${n} v ${n} ${p.name}: GPU ${p.gpu.off ?? 'n/a'} → ${p.gpu.on ?? 'n/a'} ms (${p.gpu.diff !== null && p.gpu.diff >= 0 ? '+' : ''}${p.gpu.diff ?? 'n/a'}) ${p.off} → ${p.on}; frame p50/p95 ${p.sides.off.p50}/${p.sides.off.p95} → ${p.sides.on.p50}/${p.sides.on.p95}${p.vsync ? ' (at the vsync cap)' : ''}; asks/sweep ${p.sides.off.asksPerSweep ?? '–'} → ${p.sides.on.asksPerSweep ?? '–'}${p.sides.on.shots || p.sides.off.shots ? `; shots ${p.sides.off.shots} → ${p.sides.on.shots}, to act ${p.sides.off.toActFrames ?? '–'} → ${p.sides.on.toActFrames ?? '–'} frames` : ''}; alive ${p.alive.start} → ${p.alive.end}, ${p.deaths} died (${Object.entries(p.causes).map(([k, v]) => `${k} ${v}`).join(', ') || '—'}); engaged ${p.engaged} (with a target ${p.targeted}); chain: noticed ${p.chain.noticed}, windups ${p.chain.windup}, blows ${p.chain.swing}, hurts ${p.chain.hurt}, moved ${p.chain.moved} cells`;
+    `${p.valid ? '' : 'NO FIGHT — INVALID: '}${p.ground} ${n.split(':')[1]} v ${n.split(':')[1]} ${p.name}: GPU ${p.gpu.off ?? 'n/a'} → ${p.gpu.on ?? 'n/a'} ms (${p.gpu.diff !== null && p.gpu.diff >= 0 ? '+' : ''}${p.gpu.diff ?? 'n/a'}) ${p.off} → ${p.on}; frame p50/p95 ${p.sides.off.p50}/${p.sides.off.p95} → ${p.sides.on.p50}/${p.sides.on.p95}${p.vsync ? ' (at the vsync cap)' : ''}; asks/sweep ${p.sides.off.asksPerSweep ?? '–'} → ${p.sides.on.asksPerSweep ?? '–'}${p.sides.on.shots || p.sides.off.shots ? `; shots ${p.sides.off.shots} → ${p.sides.on.shots}, landed ${p.sides.off.landed} → ${p.sides.on.landed}, to act ${p.sides.off.toActFrames ?? '–'} → ${p.sides.on.toActFrames ?? '–'} ticks` : ''}${p.sightShare !== null ? `; in sight ${p.sightShare}` : ''}; alive ${p.alive.start} → ${p.alive.end}, ${p.deaths} died (${Object.entries(p.causes).map(([k, v]) => `${k} ${v}`).join(', ') || '—'}); engaged ${p.engaged} (with a target ${p.targeted}); chain: noticed ${p.chain.noticed}, windups ${p.chain.windup}, blows ${p.chain.swing}, hurts ${p.chain.hurt}, moved ${p.chain.moved} cells`;
   panel.say(`field bench done — town ${townId}; armies at ${centre.map((v) => v.toFixed(1)).join(', ')} (ground ${found[2].toFixed(1)}), 24 apart.`);
-  panel.text([...Object.entries(phases).flatMap(([n, list]) => list.map((p) => line(n, p))), ...errors.map((e) => `error: ${e}`)].join(NL), true);
+  const df = drawFacts();
+  const drawLine = `draw at 500 v 500: ${df.instances ?? 'n/a'} voxel instances for ${df.alive} units (${df.instancesPerUnit ?? 'n/a'} a unit; ${df.onScreen} on screen, no view cull); the draw ${df.drawGpuMs ?? 'n/a'} ms GPU, ${df.gpuMsPerVisibleUnit ?? 'n/a'} ms a unit on screen`;
+  panel.text([...Object.entries(phases).flatMap(([n, list]) => list.map((p) => line(n, p))), drawLine, ...errors.map((e) => `error: ${e}`)].join(NL), true);
   const kept = await postDev(body, 'fieldbench');
   if (kept) panel.text(kept, true);
   reportButtons(panel, body, false, 'fieldbench', 'Reclaimed field bench', true);

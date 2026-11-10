@@ -137,7 +137,7 @@ test('two arrows on one target in one tick both count: the accumulator sums them
 });
 
 test('melee with a clear line turns toward its target without waiting on the field (the fields frozen)', async () => {
-  const out: Record<string, number> = {};
+  const out: Record<string, { turned: number; toward: number; direct: number }> = {};
   for (const los of [true, false]) {
     const { agents, frame, pair, arm, row } = await world(false);
     agents.los = los;
@@ -146,19 +146,33 @@ test('melee with a clear line turns toward its target without waiting on the fie
     const { t, h } = pair(4, [30, 40], [50, 40]);
     frame(10);
     arm(t, [h]);
+    // (the first frame it moves toward its target, and the share of 40 frames it does: with sight it closes in; without,
+    // only a wander's chance heading points it that way now and then)
     let turned = -1;
-    for (let f = 1; f <= 60 && turned < 0; f++) {
+    let toward = 0;
+    await agents.benchCounters();
+    for (let f = 1; f <= 40; f++) {
       frame(1);
       const r = await row(h);
-      const dx = cellPos(50, 40)[0] - r.at[0];
-      if (r.vel[0] * Math.sign(dx) > 0.5) turned = f;
+      const tp = cellPos(50, 40);
+      const dx = tp[0] - r.at[0];
+      const dy = tp[1] - r.at[1];
+      const sp = Math.hypot(r.vel[0], r.vel[1]);
+      const ok = sp > 0.5 && (r.vel[0] * dx + r.vel[1] * dy) / (sp * Math.hypot(dx, dy)) > 0.9;
+      if (ok) {
+        toward++;
+        if (turned < 0) turned = f;
+      }
     }
-    out[los ? 'los' : 'off'] = turned;
+    // (the steps taken straight at a target in sight: units.wgsl's direct-step counter)
+    out[los ? 'los' : 'off'] = { turned, toward: toward / 40, direct: (await agents.benchCounters()).direct };
   }
   log(`melee: ${JSON.stringify(out)}`);
-  // (with sight it turns at once; without, only a wander's chance heading ever points it that way, later)
-  expect(out.los).toBeGreaterThan(0);
-  expect(out.los).toBeLessThanOrEqual(12);
-  expect(out.off === -1 || out.off > out.los + 10).toBe(true);
+  expect(out.los.turned).toBeGreaterThan(0);
+  expect(out.los.turned).toBeLessThanOrEqual(12);
+  expect(out.los.toward).toBeGreaterThan(0.7);
+  // (without sight no step goes straight at it — what moves it is a wander's heading, logged as the control)
+  expect(out.los.direct).toBeGreaterThan(0);
+  expect(out.off.direct).toBe(0);
   expect(g.takeErrors()).toEqual([]);
 });
