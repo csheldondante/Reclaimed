@@ -21064,3 +21064,21 @@ the default.
 - Fixed after the shots: the reach ran at the slide, over regions still coming in, and outlined most of the town red.
   It now waits for the land (`FieldTowns`: the reach is due after a slide and runs once nothing is unwritten). After a
   slide, 1 building is outlined.
+
+## 2026-11-10 — citygen: the town layout's phone bench (`?citygenbench=1`)
+
+`/?skipmenu=1&level=atlas&town=1&fresh=1&citygen=fields&citygenbench=1` (`&benchruns=5&benchsecs=8`). It follows
+speedbench's pattern: screen kept awake, a result card, Download / Copy / Share, and on the dev server a POST to
+/__hitch?kind=citygenbench (perf-reports/).
+- **generate:** the whole town pipeline (`townLayout`, now shared by FieldTown and the bench) for the street lab's five
+  sites at their atlas places (from the fixtures' headers) and the three nearest atlas towns. For each, N runs give GPU
+  ms per stage, the raw ground's wall time, lots and MB.
+- **toggle:** the frame without town generation, with a town generated every frame, and without again (the diff is the
+  number a tiler can be trusted for).
+- **pan:** the streamed-town pan, Muru to its nearest town and 700 units on, then back with the streaming paused
+  (`FieldTowns.paused`).
+- Desktop proxy (headless D3D11, 3 runs):
+  - GPU p50 per town 4.1–6.8 ms (Vagug, a city, 6.0); raw ground about 320 ms wall a town (paced by the tile gate),
+    655 for the city; 33 MB a town, 55 MB the city.
+  - Toggle: 49 towns a second and no change in the 10 ms (vsync) frame.
+  - Pan: p95 10.1 ms; the 644 ms streamer spike again; Bumku made at 1.2 s, Muru let go at 17.7 s.

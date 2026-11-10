@@ -23,6 +23,8 @@ export class FieldTowns {
   private clock = 0;
   private making: Promise<unknown> | null = null;
   private dead = false;
+  /** (the phone bench's pan back) no town made or let go while set */
+  paused = false;
 
   constructor(
     private io: FieldTownIO & { freeSlots(): number; landIn(): boolean },
@@ -45,7 +47,7 @@ export class FieldTowns {
   /** each frame: the towns near the window made (one at a time), the far ones let go */
   update(dt: number): void {
     this.clock -= dt;
-    if (this.clock > 0 || this.dead) return;
+    if (this.clock > 0 || this.dead || this.paused) return;
     this.clock = EVERY;
     if (this.reachDue && this.io.landIn()) {
       this.reachDue = false;
