@@ -4,12 +4,17 @@
 // (RouteNet.main) as orange dots; a panel with the counts. Built from the CPU net when the roads are laid again
 // (Fortress.roads changes); each frame only compares that and the camera's matrix, and projects the lines again when the
 // camera moved. No GPU work, no readback. Changes nothing the net decides.
+// (DA-A22) `setPaths(kinds, label)`: the drawn paths instead — main streets white, lanes cyan — from a kinds array (the
+// CPU net's, or the GPU route solve's: fortress/townroutes.ts), for the lanes' before/after shots.
 import type { Camera } from '../render/camera';
 import type { Fortress } from './fortress';
 import type { TownRoads } from '../build/townroads';
 import { edgeCutsOf, summariseEdgeCuts, SHOW_CLIFF, SHOW_NONE, SHOW_STEEP, SHOW_TERRACE, SHOW_WALL, SHOW_WATER, type EdgeCutSummary } from '../build/edgecuts';
 
 const NEAR = 3;
+/** (DA-A22) the paths mode's lines */
+const PATH_LANE_SHOW = 101;
+const PATH_MAIN_SHOW = 102;
 const LIFT = 0.3;
 const STYLE: Record<number, { colour: string; width: number; dash?: string }> = {
   [SHOW_WALL]: { colour: '#ff3b30', width: 2.2 },
@@ -17,6 +22,8 @@ const STYLE: Record<number, { colour: string; width: number; dash?: string }> = 
   [SHOW_CLIFF]: { colour: '#ff2bd6', width: 2.6 },
   [SHOW_TERRACE]: { colour: '#ffd400', width: 1.6, dash: '3 2' },
   [SHOW_STEEP]: { colour: '#3dff6a', width: 1.4 },
+  [PATH_LANE_SHOW]: { colour: '#00e5ff', width: 1.8 },
+  [PATH_MAIN_SHOW]: { colour: '#ffffff', width: 2.6 },
 };
 
 export class RouteDebug {
@@ -31,12 +38,14 @@ export class RouteDebug {
   private cam = new Float32Array(18);
   summary: EdgeCutSummary | null = null;
   private on = true;
+  /** (DA-A22) the drawn paths to show instead of the cuts (per edge 1 a lane, 2 a main street), and what they are */
+  private pathKinds: { kinds: ArrayLike<number>; label: string } | null = null;
 
   constructor(ui: HTMLElement, private fort: Fortress, private camera: Camera) {
     const NS = 'http://www.w3.org/2000/svg';
     this.svg = document.createElementNS(NS, 'svg') as SVGSVGElement;
     this.svg.setAttribute('style', 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:5');
-    for (const k of [SHOW_STEEP, SHOW_TERRACE, SHOW_WATER, SHOW_WALL, SHOW_CLIFF]) {
+    for (const k of [SHOW_STEEP, SHOW_TERRACE, SHOW_WATER, SHOW_WALL, SHOW_CLIFF, PATH_LANE_SHOW, PATH_MAIN_SHOW]) {
       const p = document.createElementNS(NS, 'path');
       const s = STYLE[k];
       p.setAttribute('fill', 'none');
@@ -64,6 +73,15 @@ export class RouteDebug {
     this.on = on;
     this.svg.style.display = on ? '' : 'none';
     this.panel.style.display = on ? '' : 'none';
+  }
+
+  /** (DA-A22) show the drawn paths of `kinds` (per grid edge: 1 a lane, 2 a main street) instead of the cuts; null: the
+   *  cuts again */
+  setPaths(kinds: ArrayLike<number> | null, label = ''): void {
+    this.pathKinds = kinds ? { kinds, label } : null;
+    this.of = this.fort.roads;
+    this.rebuild();
+    this.project();
   }
 
   draw(): void {
@@ -116,6 +134,25 @@ export class RouteDebug {
       if (k === SHOW_NONE) continue;
       const l = lists.get(k) ?? lists.set(k, []).get(k)!;
       l.push(...at(net.ends[e * 2]), ...at(net.ends[e * 2 + 1]));
+    }
+    if (this.pathKinds) {
+      lists.clear();
+      const K = this.pathKinds.kinds;
+      const n = { main: 0, lane: 0 };
+      for (let e = 0; e < net.ends.length / 2; e++) {
+        const k = K[e];
+        if (!k) continue;
+        if (k === 2) n.main++;
+        else n.lane++;
+        const key = k === 2 ? PATH_MAIN_SHOW : PATH_LANE_SHOW;
+        const l = lists.get(key) ?? lists.set(key, []).get(key)!;
+        l.push(...at(net.ends[e * 2]), ...at(net.ends[e * 2 + 1]));
+      }
+      for (const [k, l] of lists) this.segs.set(k, Float32Array.from(l));
+      this.panel.textContent = `paths: ${this.pathKinds.label}
+main streets ${n.main} edges (white)
+lanes ${n.lane} edges (cyan)`;
+      return;
     }
     for (const [k, l] of lists) this.segs.set(k, Float32Array.from(l));
     if (main) {
