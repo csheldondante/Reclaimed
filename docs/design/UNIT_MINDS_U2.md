@@ -23,8 +23,8 @@ tests only. No implementation until main reviews this note.
 The override stays in info bits 12-14: WANDER(0)=NONE, CHASE, SWING, TUMBLE, HELD, and the new **FLEE(5)**.
 `unitstate.wgsl` exports `overridden(info)`, `jobOf(g)` and `stateOf(g)`. It replaces the `routes.wgsl:1101` stub at U5.
 
-Jobs (byte0): IDLE 0, GO 1, GUARD 2, PATROL 3, FOLLOW 4, ATTACK 5, FLEE_FROM 6, WORK 7 (the CPU routine: TownLife,
-unchanged). Track A's haul jobs are numbered from 16.
+Jobs (byte0): IDLE 0, GO 1, GUARD 2, PATROL 3, FOLLOW 4, ATTACK 5, FLEE_FROM 6. WORK (TownLife's routine) is replaced
+by the living town's riders (§9g). Track A's haul jobs are numbered from 16.
 
 ## 2. think()'s decisions → GPU transitions
 
@@ -43,15 +43,15 @@ All of these run in `unitStep` (`units.wgsl:330`) unless a row says otherwise. A
 | 8 | swing → CPU applies damage (:762-771) | swing lands at SWING_HIT, in reach and seen | the strike accumulates into the target's mail; the target applies it next step (§3) | step | mail |
 | 9 | defenders: REACH/STRIKE timer, F.foes ≤ 6 seeds (:917-975) | `f.y≠0`, the kind fights | the same CHASE/SWING machine, down HUNT_D (seeded at defenders' targets) | step + huntSeed | f.y, mail |
 | 10 | struck → turn on the striker (:781-785, CPU `aim`) | the strike's `by` is a unit, `f.y==0` and the kind fights | `f.y = by+1`, EV_NOTICED | step (own row; notice runs later, in sequence) | mail.by |
-| 11 | hostile: hunt / work / wander regroup (:877-890) | override bits | no regroup: the step picks the field. FLEE→FLEE, FIGHT→HUNT_H/D, else the job's slot or group field | step | info, g |
+| 11 | hostile: hunt / wander regroup (:877-890); the `work` branch is **replaced by living-town riders** (§9g) | override bits | no regroup: the step picks the field. FLEE→FLEE, FIGHT→HUNT_H/D, else the job's slot or group field | step | info, g |
 | 12 | FLEE entry, new (U0) | hp < kind.fleeFrac·maxhp, or `f.z` (nearest hunter) < kind.fear while it can't fight | → FLEE; `g.w` reset while `f.z` < fear; out after 3 s with `f.z` > 1.5·fear | step | f.z, kind |
-| 13 | combat words, actors, side map (:860-863) | — | unchanged: CPU orders written on change. Actors are written each frame (the hero moves). | — | — |
+| 13 | combat words, actors, side map (:860-863) | — | Combat words: CPU orders written on change. Actors: written each frame (the hero moves). The side map: GPU-labelled by Track A into `agentSides` (same layout), no CPU upload (§9a). | — | — |
 
 ### 2b. Fixed fields (NFIELDS 13 → 20). *HUNT/THREAT/FLEE become per side: §9e*
 
 | Field | Seeds | Written by |
 |---|---|---|
-| 0-6 | rounds (TownLife) | CPU, unchanged |
+| 0-6 | rounds (TownLife): **replaced by living-town riders** (§9g); the fields go | — |
 | 7 HUNT_H (was `targets`) | each hostile fighter's target | `huntSeed` |
 | 8 HUNT_D (was `foes`) | each defender's target | `huntSeed` |
 | 9 THREAT | each hostile with `f.y≠0`, plus CPU danger places (FLEE_FROM `from`, ≤ 8) | `huntSeed` + CPU |
@@ -236,7 +236,7 @@ work. Whether it was one frame wasn't isolated; not chased further.
 
 | K (`?relaxk`) | 40-cell reaction, 2 sweeps (frames) | relax ms, town 200 v 200, desktop, mean / p95 | asked a sweep | sweeps carrying |
 |---|---|---|---|---|
-| relax's front kernel (`?blockrelax=0`) | 17–24 | 0.41 / 0.54; 0.42 / 0.53 | 96–103 | 100% |
+| relax's front kernel (`?blockrelax=0`) | 17–24 | 0.41 / 0.54; 0.42 / 0.53 (old town) | 96–103 | 100% |
 | 1 | 12–24 | 0.45 / 0.57 | 99 | 100% |
 | 4 | 11–12 | 0.52 / 0.61 | 95 | 100% |
 | 8 | 10–11 | 0.54 / 0.66 | 102 | 100% |
@@ -271,6 +271,71 @@ stays 10.4 KB, and the front list holds page ids in place of (chunk, field mask)
 | `?fieldfront=0` | on | relax's front kernel relaxes every field in a chunk, not just the marked ones (only with `?blockrelax=0`) |
 | `?seedcell=1` | off | a CPU seed that stays in its cell is no change |
 | `?agentprof=1` | off | the per-stage timing passes and the tick log, frontDbg's counters included |
+| `?jfa=1` / `?jfa=2&jfar=R` | off | the JFA-started hunt field (§5e): obstacles JFA, targets JFA, the line check; R rounds |
+| `?jfalos=bisect` | trace | the line check by halves |
+
+### 5e. FC12 variants: JFA-started fields (round 4, the user's three refinements, built behind `?jfa`)
+
+**What was built** (units.wgsl `jfa*`, binding 55). All of it runs on the top surface of each window column:
+
+| Variant | Design |
+|---|---|
+| Obstacle JFA | An obstacle column is a top surface missing a link in any direction (a wall, a drop, a climb past STEP, the window's edge, no ground), or one that is wet, or with a linked neighbour more than LOS_DZ (0.25) above or below it. Each column gets its nearest obstacle column; its distance is the **clearance** (`clearanceAt(p)`, plane 4). The plane is static: it is made again only when the links pass runs (the columns changed) or a chunk enters the scope. It is the clearance §9d's formations and §9f's line of sight use. |
+| `?jfa=1` | A targets JFA (each column's nearest hunt seed), on frames the seeds change cell. Then a line check on the clearance: sphere trace (`?jfalos=trace`, the default) or bisection (`bisect`). A clear line (clearance ≥ 1.5 all along) starts the surface at hexDist × 1.375: a walk along the line on flat, dry ground, never under the true cost. Blocked lines keep FAR. The seed-id is the seed. |
+| `?jfa=2&jfar=R` | Iterated rounds: the resolved columns on the edge of the resolved ground become weighted seeds (value + line cost). A JFA picks each column's best, and a clear line resolves it. R rounds, or stop at a round that resolves nothing. |
+| Stacked surfaces | Seeded only on top surfaces, where both the seed and the column are tops. Lower surfaces (under bridges, in caves, a wall-walk) are filled by relax from their links. The 2D JFA's nearest seed may be up on a deck; its line then fails or doesn't apply, and relax fixes it. |
+
+**The gate:** frames to turning toward the new target, at 2 sweeps (`huntreact.test.ts`; the floor is 8–9).
+
+| Variant | Near (6 cells) | Far (40 cells) |
+|---|---|---|
+| Baseline (relax's front kernel) | 9–11 | 24–27 |
+| Block relaxation alone (K 16) | 8–9 | 9 |
+| JFA + plain relax | 11–13 | 7–17 |
+| JFA + block | 8–9 | 8–9 |
+| JFA (bisect) + block | 8–9 | 9–10 |
+| JFA×R + block, R = 1 / 2 / 4 | 8–9 | 9–10 / 9–10 / 8–10 |
+| JFA×R + plain, R = 1 / 2 / 4 | 10–13 | 9–21 / 8–21 / 9–21 |
+
+**Correctness** against the CPU BFS (frames until within 1 step everywhere in scope; resolved share = ground a JFA start
+covered; no JFA value ever fell under the BFS):
+
+| Variant | Open | Wall with one gap | S-bend |
+|---|---|---|---|
+| Baseline (relax's front kernel) | 72 | 72–73 | not within 120 (the bends are ~230 cells at 1–2 a sweep) |
+| Block | 7 | 7 | 11 (5 runs out of 5) |
+| JFA + plain | 79–80 (97.5% resolved) | 80 (48%) | not within 120 (30%) |
+| JFA + block | 7 | 9 | 12; bisect 13 |
+| JFA×1 / ×2 / ×4 + plain | 79–89 | 80–88 (54 / 59 / 63% resolved) | not within 120 (31–32%) |
+| JFA×1 / ×2 / ×4 + block | 7 / 7 / 7 | 8 / 8 / 9 | 13 / 12 / 12 |
+
+- The rounds resolve 48% → 63% of the walled map, and only 30% → 32% of the S-bend.
+- A first version of this test also compared columns outside the agents' scope on the S-bend (left 16), where every
+  field is FAR. It failed there depending on when the scope's own read landed, so it looked like a convergence bug. The
+  comparison is now scoped. Block relaxation converges on all three maps in every run.
+
+**Cost** (old town: the `town` recipe, 200 v 200, `?huntgpu=1`, block K 16, desktop; the old town is being deleted, so no
+more runs on it):
+
+| | agents-jfa ms, mean / p95 | targets JFA ran | obstacles JFA ran | town ground a round-0 start resolved |
+|---|---|---|---|---|
+| `?jfa=1` (trace) | 2.69 / 4.32 | 262 of 1,200 ticks | 4 | 8.5% |
+| `?jfa=1&jfalos=bisect` | 2.56 / 4.14 | 195 | 5 | 1.2% |
+
+- The cost is mostly whole-window dispatches. Every frame dispatches ~2 × (2·9 + 3) passes and returns early when
+  nothing changed, so the cost is paid even on idle frames.
+- relax with JFA was 0.61–0.68 ms against 0.71 without (noise).
+
+**Recommendation:**
+- **Don't start the hunt field from a JFA.** Block relaxation alone is already at the floor on every map at 2 sweeps,
+  and it converges as fast or faster (S-bend 11 vs 12–13). The JFA adds 2.6 ms on desktop and resolves under 10% of a
+  town's ground (towns are cluttered, so lines fail). With plain relax it helps (far reaction 24–27 → 7–21 frames) but
+  stays off the floor.
+- **Keep the obstacle JFA as the clearance plane** for line of sight (§9f), formation width (§9d), cover and search.
+  It is static (4–5 runs in 20 s) and is the user's "cheap JFA builds and lookups".
+- Its dispatch must become conditional: indirect args written by the links pass, not early-returning whole-window
+  dispatches every frame. Its own cost, apart from the targets JFA, was not measured separately.
+- Trace vs. bisect: no clear winner on cost (2.69 vs 2.56 ms, within noise). Trace is simpler; keep it.
 
 ## 6. Interface tests both tracks run (`test/gpu/unitminds-u2.test.ts`)
 
@@ -319,17 +384,26 @@ GPU first, it becomes an index the GPU resolves. **A row whose source is a GPU r
 | Order (CPU → GPU) | Argument | Where the CPU got it |
 |---|---|---|
 | spawn | kind, place, side, hp | the game's own: the plan, a scenario, a raid |
-| go / guard | a place (x, y) | The plan, authored on the CPU, or a tap (the camera's ray on the CPU's ground). The GPU picks the surface. |
+| go / guard | **a lot index** (the GPU town), or a tap's place | A lot index from the GPU towns' plan (`citygen=fields`), resolved on the GPU from citygen's lot records (asked of Track A). A tap's place comes from the camera's ray on the CPU's ground; the GPU picks the surface. |
 | follow / attack | a unit id | the CPU's spawn result, or an event (noticed, hurt, death) |
 | patrol | centre, radius, ≤ 4 points | authored |
 | flee_from | a place or a unit id | authored (a spell's aim) or an event |
-| **man** | town index, side? | The town's index in the CPU's plan. The GPU builds the slots from the town's wall-walk routes in routeread (a per-town table, asked of Track A). |
-| **march** | town index, **arterial index**, leave | The plan's arterial number. The GPU reads routeread's header table (by arterial; filler gates after the arterials) and checks the entry and its generation (`routeValid`). An empty or stale entry rejects the order with **`orderFailed(g, why)`** on the event ring. |
+| **man** | town index, side? | The town's index in the CPU's plan. The GPU builds the slots along routeread's wall-walk table (`wallWalkCount`, `wallWalkRoute(i)`, `wallWalkRun(i)`; Muru: 3 runs, 52 pieces). The wall routes are traced again at every pool switch, so table ids never go stale. |
+| **march** | town index, **arterial index**, leave | The plan's arterial number. The GPU reads `gateRoute(k)` (`gateSlots` 10: the 8 arterials first, then 2 fillers; `routeValid` refuses `ROUTE_NONE`) and `gateStatus(k)`. Any status but a usable gate rejects the order with **`orderFailed(g, why)`**: NONE → 'no-gate', RISING → 'gate-rising', WATER → 'gate-water', FAILED → 'gate-failed', and a stale id → 'route-stale'. |
 | formation | rows, spacing; rank k = the unit's place in the order's id list | authored, and the CPU's own list |
 | side relations | the side × side matrix (9e) | the game's diplomacy, authored |
-| combat word, side map | a unit's side and flags; a column's side of the wall | the CPU's records; the plan's walls |
+| combat word | a unit's side and flags | the CPU's records |
+| side map | — | **No CPU upload.** A GPU-labelled side map from the ring (asked of Track A) replaces `setSides` from the old walls. |
 | hits, strikes | place, radius, push | the player's aim, or the game's spell |
 | actors | the hero's position | the CPU simulates the hero |
+
+**Deprecated, not built against** (the user, relayed by Track A: "Don't build against a system we are deprecating
+switch over"): the old CPU town is deprecated, and the default is the GPU towns (`citygen=fields` plus the living
+town). That covers the TownSite plan, `settle/plan.ts`, the CPU lanes and road graph, painting and the parallel raid
+loop. U2 adds nothing to `fortress/{crowd,defence,raiders}.ts` or anything that reads the old plan. It builds only
+against the GPU contracts: routeread's wall-walk and gate tables, citygen's lot records and claims, and the Units
+contract. This round's benchmarks ran on the `town` recipe and are marked "old town"; later rounds measure on Track
+A's GPU-town recipe (asked).
 
 **Bugs found, to remove:**
 - Track A's order-facing readbacks go: `LivingTowns.marchRoutes` (route ids and generations read back), `askRoute`
@@ -338,8 +412,8 @@ GPU first, it becomes an index the GPU resolves. **A row whose source is a GPU r
 - Any game code that turns `Units.query` or an observed `UnitView.at` into an order's place should order by unit id
   (follow/attack) or by an authored place instead.
 
-**`orderFailed(g, why)`** is a new event, EV_ORDER_FAILED; its `other` is the reason: NO_GATE, ROUTE_STALE or POOL_FULL.
-- The contract gains `readonly orderFailed?: ((ids: UnitId[], why: 'no-gate' | 'route-stale' | 'pool-full') => void)[]`.
+**`orderFailed(g, why)`** is a new event, EV_ORDER_FAILED; its `other` is the reason: NO_GATE, GATE_RISING, GATE_WATER, GATE_FAILED (from `gateStatus`), ROUTE_STALE or POOL_FULL.
+- The contract gains `readonly orderFailed?: ((ids: UnitId[], why: 'no-gate' | 'gate-rising' | 'gate-water' | 'gate-failed' | 'route-stale' | 'pool-full') => void)[]`.
 - Interface test: march to an arterial with no gate yet → `orderFailed(ids, 'no-gate')`, and no unit moves.
 
 ### 9b. The paged field atlas (replaces §2c's fixed pool of 8; the user: "yes move to pages for the fields")
@@ -371,10 +445,12 @@ GPU first, it becomes an index the GPU resolves. **A row whose source is a GPU r
 |---|---|
 | Anchor | One record per group on the GPU: a route position `s` (through `routeAt`), or on a field march a unit-like point steering down the group's field. It moves at its slowest soldier's speed, held back while the rear slots lag. |
 | Trail | A field march keeps a ring of the anchor's last N positions with their distance along, so a rank is placed on the path behind it, not in a straight line. A route march uses `routeAt` itself. |
-| Slots | Rank k (from the order's id list) gives row r and column c. `cols = clamp(floor(width(s_r) / spacing), 1, maxCols)`; rows follow from cols. The slot is pathAt(s_anchor − r·spacing) + normal · (c − (cols − 1)/2) · spacing. Where the way narrows, cols drop and the column lengthens. |
-| Width | From routes, if Track A supplies it per point (asked). Otherwise a **clearance field**: a static paged field seeded at every surface edge a walker can't cross (a missing link, a drop, deep water), relaxed only on the dirty front (terrain changes). width = 2 × clearance at the path point. |
+| Slots | Rank k (from the order's id list) gives row r and column c, as a function of (k, width) computed in the step, with no per-soldier search. `cols = clamp(floor((width(s_r) − margin) / spacing), 1, maxCols)`; rows follow from cols. The slot is pathAt(s_anchor − r·spacing) + normal · (offset + (c − (cols − 1)/2) · spacing). Where the way narrows, cols drop and the column lengthens: on a 1.1 m stair, single file. |
+| Width on roads | `routeWidth(id, i)` from routeread (Track A's routes2, fortress 40edc898). No lookup of our own, so it's the cheapest path: marches prefer roads. Muru's march is 5 m at the gate and 10–12 m outside; its stairs are 1.1 m. |
+| Width off-road | **The obstacle JFA's clearance** (round 4's `clearanceAt`; no extra field), sampled left and right of the anchor along its heading: `left`, `right`. width = left + right − margin. `offset = (right − left) / 2` puts the formation off-centre where one side is tighter. |
 | Units | Each soldier's step reads the anchor and trail, written by an anchor kernel before the step, so there is no race. It steers straight to its slot when within a few cells and `sightClear`; otherwise it follows the group's route or field. |
-| Cost | One anchor kernel per group per tick, plus one static clearance field. |
+| Cost | One anchor kernel per group per tick. The clearance plane is shared with the line of sight (§9f), and is static: it is made again only when columns change. |
+| Test skeletons | "a column narrows to single file through a 1.1 m stair and re-forms after"; "an off-road formation squeezes through a gap between two walls" (`unitminds-u2.test.ts`). |
 
 ### 9e. Sides: a hunt field and a threat field per army (replaces "one threat field in v1")
 
@@ -386,6 +462,61 @@ GPU first, it becomes an index the GPU resolves. **A row whose source is a GPU r
 | Who is an enemy | The CPU writes a **side relation matrix** (≤ 16 × 16 bits: hostile, ally, neutral) once, as an order, and again when diplomacy changes. notice reads it in place of today's faction test (`mayFight`). FIGHT closes in down its own side's hunt field, which is seeded only at its targets, already enemies. FLEE reads one flee field per side, relaxed from the min over its enemies' threat fields. |
 | Scaling | Pages grow with the ground each army covers, not with the number of sides: a side whose army stands in one corner costs that corner's pages. Relax work grows with the dirty pages of moving armies. Seeds: one pass over the units per frame for all sides (a unit adds to its side's hunt and threat fields), and only cell changes mark. Flee fields: one per side that can flee, each reading its enemies' threat pages where they overlap its own. |
 | Dirty bits | The front is per page (9b), so the 16-field bit limit of FC10's dirty word goes; FC10 was a step on the way. |
+
+### 9f. Line of sight: seen-only targets, then ranged units (the user's next variants; design and skeletons only)
+
+Both use the obstacle JFA's clearance plane (round 4, `?jfa=1`): `clearanceAt(p)` in units.wgsl reads plane 4 of the
+`jfa` buffer (window order, f32 cells to the nearest obstacle column). notice binds the same buffer and the same
+snippet, so a `losClear(a, b)` sphere trace is a few reads, not ~40 samples. Today the plane is made only with
+`?jfa=1`. Both features need it always on: the obstacle JFA runs only when columns change (the links pass) or a chunk
+comes into the scope.
+
+**Seen-only targets (`?seenonly=1`)**
+
+| Part | Design |
+|---|---|
+| Notice | A fighter takes or keeps a target only with line of sight to it: `losClear(eye, target's chest)` on the clearance, from the fighter's eye height. A lost line doesn't drop the target at once. It keeps the target as *last seen*. |
+| Last seen | A new row word (row `g`, §1) holds the target's last-seen place, written by notice while the line is clear. The hunt seed (huntSet) is that place, not the live position. It moves only while seen, so the seeds move far less often: this is FC11's main demand source. |
+| Giving up | At the last-seen place (the arrival latch on the hunt field) with no target in sight: after T seconds (the kind's), the target is dropped (EV_NOTICED 0). The job resumes, or a SEARCH state walks a short spiral first. |
+| Effects | Fewer seed moves, so less front demand. Cover and ambushes start to matter: a raider behind a wall isn't chased by a guard who can't see it. |
+| Benchmark (huntbench, `?seenonly=0/1`) | The reaction gate; front asks a tick by field; how often units lose a target (EV_NOTICED 0 per minute); deaths. |
+| Test skeletons | "a target behind a wall is not taken"; "a target that steps behind cover is chased to its last-seen place, then dropped after T". |
+
+**Ranged units**, on the same fight machine as melee (§3, DA-B32), built after melee strikes are on the GPU:
+
+| Part | Design |
+|---|---|
+| Reach | For a ranged kind, in reach = within its range **and** `losClear` from its eye height to the target's chest. An archer on the wall-walk traces from its eye over the parapet: the trace samples the clearance of the columns under the line, so a parapet column whose top is below the line doesn't block it. That needs the trace's height test: the line's z at the sample against the column's top. This is the one addition to the 2D clearance. |
+| Firing | The wind-up (EV_WINDUP, as melee) fires instead of swinging, through one narrow interface: **`fire(from, to, kind)` → a hit lands in the per-target accumulators** (damage, push, `by` = the shooter, as a blow, §3). Today's flights (`Agents.toss`, `throwItem`) are CPU-stepped, and the particles don't hit units, so neither can carry it. The user's ruling (GPU physics with rigid bodies is being reworked): **the laziest cheap version behind that interface.** An instant hit applied after a flight-time delay (distance ÷ arrow speed, counted down in a small GPU list of pending hits), with a drawn tracer. If the line is still clear when it lands, it hits; if not, it misses. It is marked `// REPLACE: GPU physics rigid bodies` at its definition, has a BACKLOG item, and is listed in Hacks and limits. Arrows as bodies drop in behind `fire()` later. |
+| Movement | A ranged unit holds a standoff band (min and max range) instead of closing in: it walks down the hunt field while it is past its max range, stands inside the band, and backs off below its min. Out of sight (seen-only), it repositions toward its target's last-seen place until the line clears. |
+| Replaces | Today's archers: CPU timers and reach in `src/fortress/defence.ts`. |
+| Order | After melee strikes on the GPU. |
+| Test skeletons | "an archer with line of sight hits, without it holds fire"; "two arrows on one target in one tick both count" (the accumulator, as §3's race test). |
+
+**Direction** (the user, 2026-11-10): "My guess is a few cheap JFA builds and lookups on GPU will be faster and better
+than the alternatives and lead to cool AI that can take cover, search, etc." It is direction, not a verdict: the
+benchmark comparison in §5e's comparison is the evidence.
+
+**Cover and search** (later rounds; both are lookups on the obstacle field and the line check):
+
+| Behaviour | Design | Extra field |
+|---|---|---|
+| Cover | A cover cell lies next to an obstacle (clearance < 1.5) and has no line of sight to the threat's last-seen place. A unit under fire takes the nearest one. | **A cover field per side**, a paged JFA field (§9b) seeded at the side's cover cells for its threat (rebuilt when the threat's last-seen places move a cell), so "nearest cover" is a walk down a field, not a search. |
+| Search | Go to the last-seen place. Then visit nearby cells hidden from it (no line of sight from the last-seen place), ring by ring outward, each visited cell marked. | **A per-search visited mask** (a small window round the last-seen place, a bit a column, one per searching group), so cells already looked at aren't seen twice. The hidden test is the line check from the last-seen place. |
+
+### 9g. Scope after the switchover (Track A, 2026-11-10)
+
+- **Routine town work leaves AgentUnits.** The living town's GPU riders take every TownLife routine order (work, home,
+  haul, farm, build, quarry, woodcut); none goes through AgentUnits. Replaced by living-town riders: §2's WORK job and
+  its `Routine` bridge, the rounds fields 0–6, and `goalGroup`/`rearm` for routines. U2's AgentUnits ports only
+  **soldiers, raiders and combatants**.
+- **Replaced by GPU contracts, not ported:** what AgentUnits takes from the old town (fortress/crowd.ts' legs and
+  goals, defence.ts' archers, raiders.ts' raid loop, `fightRules`' `sideAt` from the old walls) is not ported:
+  - places → the named-place table in `townplace.wgsl` (muster yard, stores, barracks, gates → GPU positions);
+  - walls and gates → routeread's wall-walk and gate tables;
+  - lots → citygen's lot records;
+  - the side map → `agentSides`, GPU-labelled.
+- **Measurements** after this round run on Track A's `gputown` lab recipe. The `town` numbers here are marked "old town".
 
 ## Rejected
 
