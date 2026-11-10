@@ -23,6 +23,9 @@ struct U {
   b: vec4<f32>, // major width, minor width, setback, height (storeys)
   c: vec4<f32>, // largest lot area, smallest lot area, cliff slope, seeds down (as f32)
   d: vec4<f32>, // the town's centre (world x, y), its radius, the stairs slope
+  e: vec4<f32>, // (m3) blend width (smooth-min k), point radius, point strength, auto points
+  o: vec4<u32>, // (m3) a boxed pass's first column (x, y), φ's mode (0 distance, 1 smooth min, 2 bump), cross streets (0 vector JFA, 1 tensor)
+  s: vec4<f32>, // (m3c) the band height, the cart grade, the shape (0 none, 1 terraces, 2 spiral, 3 switchbacks), the spiral's point + 1
 };
 @group(0) @binding(0) var<uniform> u: U;
 
@@ -147,17 +150,19 @@ fn jdist(@builtin(global_invocation_id) g: vec3<u32>) {
   set5(i, distance(ppos(v), cpos(x, y)));
 }
 
-// ---- the major lines' fields at a point: b4 the smoothed feature distance, negative where blocked (`fdpack`) ----
+// ---- the major lines' fields at a point: b4 the smoothed feature distance, negative where blocked (`phi`) ----
 fn fdAt(p: vec2<f32>) -> f32 {
   let t = triAt(p);
   return t.w.x * r4(ixq(t.c[0])) + t.w.y * r4(ixq(t.c[1])) + t.w.z * r4(ixq(t.c[2]));
 }
+const QUAY: f32 = 3.0;
 fn fam(k: u32) -> bool { return (u.m.z & (1u << (k - 1u))) != 0u; }
 fn ringF(p: vec2<f32>) -> f32 { return distance(p, u.d.xy) / u.a.y; }
 fn spokeF(p: vec2<f32>) -> f32 { let r = p - u.d.xy; return (atan2(r.y, r.x) / TAU + 0.5) * u.a.z; }
 /** family k's field at p (1 the feature distance over the major spacing, 2 rings, 3 spokes) */
 fn fieldAt(k: u32, p: vec2<f32>) -> f32 {
-  if (k == 1u) { return fdAt(p) / u.a.x; }
+  // (m3: line 0 a quay QUAY off the water — the shore strip has a line to build against)
+  if (k == 1u) { return (fdAt(p) - QUAY) / u.a.x; }
   if (k == 2u) { return ringF(p); }
   return spokeF(p);
 }
@@ -198,18 +203,11 @@ fn minorAxis(p: vec2<f32>) -> vec2<f32> {
   if (length(t) < 1e-6) { let g = gradAt(3u, p); let th = atan2(g.y, g.x); t = vec2<f32>(cos(2.0 * th), sin(2.0 * th)); }
   return t;
 }
-/** the blocked mask into the smoothed distance (r1 the distance, r2 the mask): negative where blocked */
-@compute @workgroup_size(8, 8)
-fn fdpack(@builtin(global_invocation_id) g: vec3<u32>) {
-  let x = i32(g.x); let y = i32(g.y);
-  if (x >= W() || y >= H()) { return; }
-  let i = ix(x, y);
-  set5(i, select(max(r1(i), 0.0), -1.0, r2(i) > 0.5));
-}
 /** the tensor field a column (w5, w7: its minor axis's doubled angle), for the traces to interpolate */
 @compute @workgroup_size(8, 8)
 fn tensor(@builtin(global_invocation_id) g: vec3<u32>) {
-  let x = i32(g.x); let y = i32(g.y);
+  // (a boxed pass: from column o.xy — a moved point's disc)
+  let x = i32(g.x + u.o.x); let y = i32(g.y + u.o.y);
   if (x >= W() || y >= H()) { return; }
   let i = ix(x, y);
   let t = minorAxis(cpos(x, y));
@@ -379,7 +377,8 @@ fn putBlock(o: u32, v0: array<vec2<f32>, 4>, e0: array<u32, 4>, tr: u32) {
     e = array<u32, 4>(e0[3], e0[2], e0[1], e0[0]);
   }
   for (var k = 0; k < 4; k++) {
-    if (cross2(v[(k + 1) % 4] - v[k], v[(k + 2) % 4] - v[(k + 1) % 4]) <= 0.0) { return; }
+    // (a straight corner allowed: a triangle block is a quad with a corner on an edge's middle)
+    if (cross2(v[(k + 1) % 4] - v[k], v[(k + 2) % 4] - v[(k + 1) % 4]) < -1e-3) { return; }
   }
   w5[o] = 1u;
   w5[o + 1u] = e[0] | (e[1] << 8u) | (e[2] << 16u) | (e[3] << 24u);
@@ -753,4 +752,487 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
 fn meshCap() {
   let n = atomicLoad(&args[0]);
   atomicStore(&args[0], min(n, u.m.y));
+}
+
+// ==== milestone 3a: one blended field φ ======================================================================
+// φ = the smoothed distance to water and cliffs, bent near a few points: a smooth min with a cone round each point
+// (o.z 1) or a bump taken off it (o.z 2), each point's term faded out by its radius — beyond it φ is the distance.
+// The major lines are φ's level sets; near a point they close into rings and ∇φ turns radial (spokes for free).
+// A point (PW words): 0 1 its position, 2 its intensity (× its radius and its strength), 3 its cone's offset (GPU), 4 its flag (the CPU's: 0 placed
+// by the GPU, 1 pinned — placed or moved by a tap, 2 removed), 5 alive (the GPU's), 6 7 unused.
+const NPTS: u32 = 8u;
+const PW: u32 = 8u;
+const AUTO: u32 = 4u;
+var<workgroup> wsc: array<f32, 256>;
+var<workgroup> wid: array<u32, 256>;
+var<workgroup> chosen: array<vec2<f32>, 4>;
+/** how far a column stands above the ground round it (r1 the smoothed heights): a knoll's score */
+fn prominence(x: i32, y: i32) -> f32 {
+  let p = cpos(x, y);
+  var s = 0.0;
+  for (var k = 0; k < 6; k++) {
+    let a = f32(k) * TAU / 6.0;
+    s += r1(ixp(p + 12.0 * vec2<f32>(cos(a), sin(a))));
+  }
+  return r1(ix(x, y)) - s / 6.0;
+}
+fn fdbAt(p: vec2<f32>) -> f32 {
+  let t = triAt(p);
+  return t.w.x * r2(ixq(t.c[0])) + t.w.y * r2(ixq(t.c[1])) + t.w.z * r2(ixq(t.c[2]));
+}
+/** one workgroup: the auto points (the town's middle moved inland, then the most prominent knoll, a shore point nearest the centre,
+ *  the next knoll — each 1.6 point radii from those before) into the slots the CPU left to the GPU, and every live
+ *  point's cone offset (r1 the smoothed heights, r2 the smoothed distance, r3 the blocked mask; w5 the points) */
+@compute @workgroup_size(256)
+fn autoPts(@builtin(local_invocation_index) li: u32) {
+  let nAuto = u32(u.e.w);
+  let R = u.e.y;
+  let c = u.d.xy;
+  let x0 = max(i32(c.x - u.d.z) - 1, 0);
+  let x1 = min(i32(c.x + u.d.z) + 1, W() - 1);
+  let y0 = max(i32((c.y - u.d.z) / ROW_H) - 1, 0);
+  let y1 = min(i32((c.y + u.d.z) / ROW_H) + 1, H() - 1);
+  // (every fourth column each way; n.w 1: nothing they're placed from changed — the auto points stay, offsets only)
+  let bw = u32(max((x1 - x0) / 4 + 1, 1));
+  let bh = u32(max((y1 - y0) / 4 + 1, 1));
+  let place = u.n.w == 0u;
+  for (var k = 0u; k < AUTO; k++) {
+    if (!place) { break; }
+    var best = -1e30;
+    var bi = NONE;
+    for (var j = li; j < bw * bh; j += 256u) {
+      let x = x0 + 4 * i32(j % bw);
+      let y = y0 + 4 * i32(j / bw);
+      let p = cpos(x, y);
+      if (distance(p, c) > select(0.8, 0.4, k == 0u) * u.d.z) { continue; }
+      let i = ix(x, y);
+      if (r3(i) > 0.5) { continue; }
+      var far = true;
+      for (var m = 0u; m < k; m++) { if (distance(p, chosen[m]) < 1.6 * R) { far = false; } }
+      if (!far) { continue; }
+      var sc = 0.0;
+      if (k == 0u) {
+        // (the centre: the town's middle, moved inland — off the water, where its rings have room)
+        sc = r2(i) - 0.5 * distance(p, c);
+      } else if (k == 2u) {
+        let d = r2(i);
+        if (d < 3.0 || d > 10.0) { continue; }
+        sc = -distance(p, c);
+      } else {
+        sc = prominence(x, y);
+      }
+      if (sc > best) { best = sc; bi = pk(u32(x), u32(y), 0u); }
+    }
+    wsc[li] = best;
+    wid[li] = bi;
+    workgroupBarrier();
+    for (var st = 128u; st > 0u; st >>= 1u) {
+      if (li < st && wsc[li + st] > wsc[li]) { wsc[li] = wsc[li + st]; wid[li] = wid[li + st]; }
+      workgroupBarrier();
+    }
+    if (li == 0u) { chosen[k] = select(ppos(wid[0]), vec2<f32>(-1e5), wid[0] == NONE); }
+    workgroupBarrier();
+  }
+  if (li >= NPTS) { return; }
+  let o = li * PW;
+  let flag = w5[o + 4u];
+  var alive = flag == 1u;
+  if (li < AUTO && flag == 0u && !place) {
+    alive = w5[o + 5u] == 1u;
+  } else if (li < AUTO && flag == 0u) {
+    alive = li < nAuto && chosen[li].x > -1e4;
+    if (alive) {
+      putV(o, chosen[li]);
+      // (the intensities: the centre largest, the minor points smaller)
+      set5(o + 2u, array<f32, 4>(1.0, 0.7, 0.55, 0.45)[li]);
+    }
+  }
+  w5[o + 5u] = select(0u, 1u, alive);
+  if (alive) {
+    let p = vec2<f32>(bitcast<f32>(w5[o]), bitcast<f32>(w5[o + 1u]));
+    let I = bitcast<f32>(w5[o + 2u]);
+    // (the cone meets the distance strength × radius out — both × the point's intensity: its rings inside its radius.
+    // Near the water the offset goes negative: φ is 0 out to the shore's distance — a plaza — and rings past it)
+    set5(o + 3u, fdbAt(p) - u.e.z * I * R * I);
+  }
+}
+fn smin(a: f32, b: f32, k: f32) -> f32 {
+  let h = max(k - abs(a - b), 0.0) / max(k, 1e-4);
+  return min(a, b) - h * h * k * 0.25;
+}
+/** φ a column, negative where blocked — the field the major lines are level sets of (r1 the smoothed distance, r2 the
+ *  blocked mask, r3 the points; w5 φ). A boxed pass from o.xy: a point's change touches only its radius */
+@compute @workgroup_size(8, 8)
+fn phi(@builtin(global_invocation_id) g: vec3<u32>) {
+  let x = i32(g.x + u.o.x); let y = i32(g.y + u.o.y);
+  if (x >= W() || y >= H()) { return; }
+  let i = ix(x, y);
+  if (r2(i) > 0.5) { set5(i, -1.0); return; }
+  let p = cpos(x, y);
+  var f = max(r1(i), 0.0);
+  if (u.o.z != 0u) {
+    for (var j = 0u; j < NPTS; j++) {
+      let o = j * PW;
+      if (b3[o + 5u] == 0u) { continue; }
+      let R = u.e.y * r3(o + 2u);
+      let r = distance(p, vec2<f32>(r3(o), r3(o + 1u)));
+      if (r >= R) { continue; }
+      if (u.o.z == 1u) {
+        f = mix(smin(f, r3(o + 3u) + r, u.e.x), f, smoothstep(0.7, 1.0, r / R));
+      } else {
+        let q = 1.0 - (r / R) * (r / R);
+        f -= u.e.z * r3(o + 2u) * R * q * q;
+      }
+    }
+  }
+  set5(i, max(f, 0.0));
+}
+
+// ==== milestone 3b: cross streets by vector JFA ==============================================================
+// Seeds on the major lines (a lattice point snapped onto its nearest line, thinned to a block length apart by an
+// occupancy grid), a jump flood over the even lines' seeds and one over the odd lines', and each seed's cross street:
+// half a level up the gradient from it, the nearest seed of the other parity — on the next line up. A seed's street and
+// the next seed's along its line bound a block, its corners exactly on the lines.
+// A seed (SDW words): 0 1 its position, 2 its line's level, 3 alive, 4 its street's other end (a seed; NONE none).
+const SDW: u32 = 8u;
+const SID: u32 = 0x1fffu;
+/** the field the seeds sit on: φ's (family 1) or, radial, the rings' */
+fn mainK() -> u32 { return select(2u, 1u, fam(1u)); }
+fn occDims() -> vec2<u32> { return vec2<u32>(u32(f32(W()) / u.a.w) + 2u, u32(f32(H()) * ROW_H / u.a.w) + 2u); }
+fn occAt(c: vec2<i32>, L: u32) -> u32 {
+  let d = occDims();
+  let q = vec2<u32>(clamp(c, vec2<i32>(0), vec2<i32>(d) - 1));
+  return ((L & 3u) * d.y + q.y) * d.x + q.x;
+}
+/** one thread a lattice point: snapped onto its nearest line (Newton on the field), its claim on its occupancy cell
+ *  (w5 the seeds, w6 the grid: the lowest key — nearest the cell's middle — wins; b4 φ) */
+@compute @workgroup_size(64)
+fn vseed(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  let mx = u.m.w;
+  let my = u32(u.c.w);
+  if (id >= mx * my) { return; }
+  let o = id * SDW;
+  w5[o + 3u] = 0u;
+  w5[o + 4u] = NONE;
+  let sp = u.a.w * 0.5;
+  let p0 = (vec2<f32>(f32(id % mx), f32(id / mx)) + 0.5) * sp;
+  if (!inb(p0) || !inTown(p0) || blockedAt(p0)) { return; }
+  let k = mainK();
+  let L = round(fieldAt(k, p0));
+  if (L < 0.0) { return; }
+  var p = p0;
+  for (var it = 0; it < 5; it++) {
+    let gr = gradAt(k, p);
+    p -= (fieldAt(k, p) - L) * gr / max(dot(gr, gr), 1e-8);
+  }
+  if (abs(fieldAt(k, p) - L) > 0.02 || distance(p, p0) > sp || !inb(p) || !inTown(p) || blockedAt(p)) { return; }
+  putV(o, p);
+  w5[o + 2u] = u32(L);
+  w5[o + 3u] = 1u;
+  let cc = (floor(p / u.a.w) + 0.5) * u.a.w;
+  let key = (u32(min(distance(p, cc) / u.a.w, 0.99) * 4096.0) << 13u) | id;
+  atomicMin(&w6[occAt(vec2<i32>(floor(p / u.a.w)), u32(L))], key);
+}
+/** a seed kept: it won its cell, and no neighbouring cell's winner of its line with a lower key is nearer than 0.6
+ *  block lengths (w5 the seeds — only alive written; b2 the grid) */
+@compute @workgroup_size(64)
+fn vthin(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  if (id >= u.m.w * u32(u.c.w)) { return; }
+  let o = id * SDW;
+  if (w5[o + 3u] == 0u) { return; }
+  let p = vec2<f32>(bitcast<f32>(w5[o]), bitcast<f32>(w5[o + 1u]));
+  let L = w5[o + 2u];
+  let c = vec2<i32>(floor(p / u.a.w));
+  let mine = b2[occAt(c, L)];
+  var keep = (mine & SID) == id;
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      if (!keep || (dx == 0 && dy == 0)) { continue; }
+      let v = b2[occAt(c + vec2<i32>(dx, dy), L)];
+      if (v == NONE || v >= mine) { continue; }
+      let j = (v & SID) * SDW;
+      if (w5[j + 2u] != L) { continue; }
+      if (distance(vec2<f32>(bitcast<f32>(w5[j]), bitcast<f32>(w5[j + 1u])), p) < 0.6 * u.a.w) { keep = false; }
+    }
+  }
+  if (!keep) { w5[o + 3u] = 0u; }
+}
+fn sdPos(j: u32) -> vec2<f32> { return vec2<f32>(r1(j * SDW), r1(j * SDW + 1u)); }
+/** the kept seeds into the floods' columns: even lines' w5, odd lines' w7 (r1 the seeds) */
+@compute @workgroup_size(64)
+fn vrast(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  if (id >= u.m.w * u32(u.c.w)) { return; }
+  let o = id * SDW;
+  if (b1[o + 3u] == 0u) { return; }
+  let i = ixp(sdPos(id));
+  if ((b1[o + 2u] & 1u) == 0u) { w5[i] = id; } else { w7[i] = id; }
+}
+/** a jump-flood step of size k over both floods (b1 even, b2 odd → w5, w7; b3 the seeds) */
+@compute @workgroup_size(8, 8)
+fn vjfa(@builtin(global_invocation_id) g: vec3<u32>) {
+  let x = i32(g.x); let y = i32(g.y);
+  if (x >= W() || y >= H()) { return; }
+  let k = i32(u.n.z);
+  let p = cpos(x, y);
+  var be = NONE; var de = 1e30;
+  var bo = NONE; var dd = 1e30;
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      let qx = x + dx * k; let qy = y + dy * k;
+      if (qx < 0 || qy < 0 || qx >= W() || qy >= H()) { continue; }
+      let qi = u32(qy * W() + qx);
+      let ve = b1[qi];
+      if (ve != NONE) { let d = distance(vec2<f32>(r3(ve * SDW), r3(ve * SDW + 1u)), p); if (d < de) { de = d; be = ve; } }
+      let vo = b2[qi];
+      if (vo != NONE) { let d = distance(vec2<f32>(r3(vo * SDW), r3(vo * SDW + 1u)), p); if (d < dd) { dd = d; bo = vo; } }
+    }
+  }
+  w5[ix(x, y)] = be;
+  w7[ix(x, y)] = bo;
+}
+/** the nearest kept seed of line parity `par` to p (b2 even, b3 odd) */
+fn nearestOf(par: u32, p: vec2<f32>) -> u32 {
+  if (!inb(p)) { return NONE; }
+  if (par == 0u) { return b2[ixp(p)]; }
+  return b3[ixp(p)];
+}
+/** one thread a seed: its cross street — half a level up the gradient from it, the other parity's nearest seed, kept
+ *  when it's on the next line up, near enough, and no water or cliff between (w5 the seeds: only word 4 written; b2 b3
+ *  the floods, b4 φ) */
+@compute @workgroup_size(64)
+fn vseg(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  if (id >= u.m.w * u32(u.c.w)) { return; }
+  let o = id * SDW;
+  if (w5[o + 3u] == 0u) { return; }
+  let s = vec2<f32>(bitcast<f32>(w5[o]), bitcast<f32>(w5[o + 1u]));
+  let L = w5[o + 2u];
+  let gr = gradAt(mainK(), s);
+  let gl2 = dot(gr, gr);
+  if (gl2 < 1e-8) { return; }
+  let t = nearestOf((L + 1u) & 1u, s + 0.5 * gr / gl2);
+  if (t == NONE) { return; }
+  let to = t * SDW;
+  if (w5[to + 3u] == 0u || w5[to + 2u] != L + 1u) { return; }
+  let e = vec2<f32>(bitcast<f32>(w5[to]), bitcast<f32>(w5[to + 1u]));
+  // (no longer than 2.5 levels' spacing here)
+  if (distance(s, e) * sqrt(gl2) > 2.5) { return; }
+  for (var k = 1; k < 8; k++) { if (blockedAt(mix(s, e, f32(k) / 8.0))) { return; } }
+  w5[o + 4u] = t;
+}
+fn segsCross(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> bool {
+  let r = b - a;
+  let s = d - c;
+  let den = cross2(r, s);
+  if (abs(den) < 1e-6) { return false; }
+  let t = cross2(c - a, s) / den;
+  let v = cross2(c - a, r) / den;
+  return t > 0.02 && t < 0.98 && v > 0.02 && v < 0.98;
+}
+/** one thread a seed with a street: the next seed along its line (ahead, the tangent's way: the same-parity flood
+ *  looked up a block length ahead) and the block between their streets — a quad, or a triangle when they end at the
+ *  same seed; the street drawn unless it crosses that next one's (r1 the seeds, b2 b3 the floods, b4 φ; w5 the
+ *  blocks, w7 drawn) */
+@compute @workgroup_size(64)
+fn vblock(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  if (id >= u.m.w * u32(u.c.w)) { return; }
+  let ob = id * 3u * BQW;
+  w5[ob] = 0u;
+  w5[ob + BQW] = 0u;
+  w5[ob + 2u * BQW] = 0u;
+  w7[id] = 0u;
+  let o = id * SDW;
+  let ts = b1[o + 4u];
+  if (b1[o + 3u] == 0u || ts == NONE) { return; }
+  let s = sdPos(id);
+  let L = b1[o + 2u];
+  let gr = gradAt(mainK(), s);
+  let tn = normalize(vec2<f32>(-gr.y, gr.x));
+  let bl = u.a.w;
+  let reach = array<f32, 3>(1.0, 1.5, 0.7);
+  var c = NONE;
+  for (var k = 0; k < 3; k++) {
+    let n = nearestOf(L & 1u, s + tn * bl * reach[k]);
+    if (n == NONE || n == id || b1[n * SDW + 2u] != L || b1[n * SDW + 3u] == 0u) { continue; }
+    let dv = sdPos(n) - s;
+    if (dot(dv, tn) < 0.3 * bl || length(dv) > 2.5 * bl) { continue; }
+    c = n;
+    break;
+  }
+  var tc = NONE;
+  if (c != NONE) { tc = b1[c * SDW + 4u]; }
+  if (tc == NONE) { w7[id] = 1u; return; }
+  let es = sdPos(ts);
+  let ec = sdPos(tc);
+  let sc = sdPos(c);
+  if (segsCross(s, es, sc, ec)) { return; }
+  w7[id] = 1u;
+  if (tc == ts) {
+    putBlock(ob, array<vec2<f32>, 4>(s, sc, es, 0.5 * (es + s)), array<u32, 4>(1u, 2u, 2u, 2u), id);
+  } else {
+    putBlock(ob, array<vec2<f32>, 4>(s, sc, ec, es), array<u32, 4>(1u, 2u, 1u, 2u), id);
+  }
+}
+/** the cross streets: eight ribbon pieces a drawn street, on the ground (r1 the seeds, r2 drawn, r3 H) */
+@compute @workgroup_size(64)
+fn vroad(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x / 8u;
+  let k = g.x % 8u;
+  if (id >= u.m.w * u32(u.c.w) || b2[id] == 0u) { return; }
+  let t = b1[id * SDW + 4u];
+  if (t == NONE) { return; }
+  let s = sdPos(id);
+  let e = sdPos(t);
+  let a = mix(s, e, f32(k) / 8.0);
+  let b = mix(s, e, f32(k + 1u) / 8.0);
+  let at = room(6u);
+  if (at == NONE) { return; }
+  let d = normalize(b - a) * 0.3;
+  ribbon(at, a - d, b + d, u.b.y * 0.5, select(C_MINOR, C_STEEP, steep(a, b)));
+}
+/** the points as markers: a little hexagonal spire each, red placed by the GPU, blue pinned (r1 the points, r3 H) */
+@compute @workgroup_size(8)
+fn marks(@builtin(global_invocation_id) g: vec3<u32>) {
+  let j = g.x;
+  if (j >= NPTS) { return; }
+  let o = j * PW;
+  if (b1[o + 5u] == 0u) { return; }
+  let p = vec2<f32>(r1(o), r1(o + 1u));
+  // (its size its intensity)
+  let I = r1(o + 2u);
+  let z0 = hAt(p);
+  let z1 = z0 + 4.0 + 10.0 * I;
+  let rr = 1.0 + 3.0 * I;
+  // (n.w: the selected point + 1 — gold)
+  var col = select(0xe0483cu, 0x3c7be0u, b1[o + 4u] == 1u);
+  if (u.n.w == j + 1u) { col = 0xf0c020u; }
+  let at = room(36u);
+  if (at == NONE) { return; }
+  for (var k = 0u; k < 6u; k++) {
+    let a0 = f32(k) * TAU / 6.0;
+    let a1 = f32(k + 1u) * TAU / 6.0;
+    let q0 = p + rr * vec2<f32>(cos(a0), sin(a0));
+    let q1 = p + rr * vec2<f32>(cos(a1), sin(a1));
+    tri(at + k * 6u, vec3<f32>(q0, z0), vec3<f32>(q1, z0), vec3<f32>(q1, z1), col);
+    tri(at + k * 6u + 3u, vec3<f32>(q0, z1), vec3<f32>(q1, z1), vec3<f32>(p, z1 + 1.0), col);
+  }
+}
+
+// ==== milestone 3c: shaping steep ground (the lab's heights only — the world's columns aren't touched) ==========
+// s.z the shape: 1 terraces — h' = band·(floor(h/band) + a smoothed step of its fraction); 2 a spiral ramp and 3
+// switchbacks leave the heights and draw a cart road (roadShape): the spiral the level sets of h/band − θ/2π round a
+// point (one band a turn; inside the radius the grade allows, band / (2π grade), stairs); the switchbacks the level
+// sets of h/band + a triangle wave along the contours (its period from the grade). s.x the band, s.y the grade, s.w
+// the point the spiral winds round + 1 (0: the knoll, else the town's centre).
+fn bandH() -> f32 { return max(u.s.x, 0.25); }
+fn gradeG() -> f32 { return max(u.s.y, 0.01); }
+/** the shaped heights: r1 the heights → w5 */
+@compute @workgroup_size(8, 8)
+fn shape(@builtin(global_invocation_id) g: vec3<u32>) {
+  let x = i32(g.x); let y = i32(g.y);
+  if (x >= W() || y >= H()) { return; }
+  let i = ix(x, y);
+  let h = r1(i);
+  let b = bandH();
+  let f = h / b;
+  set5(i, b * (floor(f) + smoothstep(0.25, 0.75, fract(f))));
+}
+fn tri01(t: f32) -> f32 { return 1.0 - abs(2.0 * fract(t) - 1.0); }
+/** the road field ψ at p for a shape (r1 the smoothed heights): its integer level sets are the cart road */
+fn psiAt(p: vec2<f32>, mode: u32, c: vec2<f32>, dir: vec2<f32>) -> f32 {
+  let hb = hsAt(p) / bandH();
+  if (mode == 2u) {
+    let r = p - c;
+    return hb - (atan2(r.y, r.x) / TAU + 0.5);
+  }
+  // (switchbacks: half a band up and back along the contours, over the length the grade allows a band)
+  let s = dot(p - c, vec2<f32>(-dir.y, dir.x));
+  let lam = 2.0 * bandH() / gradeG();
+  return hb + 0.5 * tri01(s / lam);
+}
+fn hsAt(p: vec2<f32>) -> f32 {
+  let t = triAt(p);
+  return t.w.x * r1(ixq(t.c[0])) + t.w.y * r1(ixq(t.c[1])) + t.w.z * r1(ixq(t.c[2]));
+}
+const C_CART: u32 = 0xb07a48u;
+/** the cart road: one thread a column, a ribbon piece where ψ crosses an integer (r1 the smoothed heights, r2 the
+ *  points, r3 H, r4 φ) */
+@compute @workgroup_size(8, 8)
+fn roadShape(@builtin(global_invocation_id) g: vec3<u32>) {
+  let x = i32(g.x); let y = i32(g.y);
+  if (x >= W() || y >= H()) { return; }
+  let p = cpos(x, y);
+  if (!inTown(p) || blockedAt(p)) { return; }
+  let mode = u32(u.s.z);
+  var c = u.d.xy;
+  var ps = u32(u.s.w);
+  if (ps == 0u && b2[PW + 5u] == 1u) { ps = 2u; }
+  if (ps > 0u && b2[(ps - 1u) * PW + 5u] == 1u) { c = vec2<f32>(r2((ps - 1u) * PW), r2((ps - 1u) * PW + 1u)); }
+  // (the town's slope: the smoothed heights' gradient over 40 cells round the centre)
+  let e = 20.0;
+  var dir = vec2<f32>(hsAt(u.d.xy + vec2<f32>(e, 0.0)) - hsAt(u.d.xy - vec2<f32>(e, 0.0)), hsAt(u.d.xy + vec2<f32>(0.0, e)) - hsAt(u.d.xy - vec2<f32>(0.0, e)));
+  dir = select(vec2<f32>(1.0, 0.0), normalize(dir), length(dir) > 1e-4);
+  let rmin = bandH() / (TAU * gradeG());
+  if (mode == 2u && distance(p, c) > 3.0 * u.e.y) { return; }
+  let f0 = psiAt(p, mode, c, dir);
+  var crosses = false;
+  var q = p;
+  for (var j = 0; j < 3; j++) {
+    var n = cpos(x + 1, y);
+    if (j == 1) { n = cpos(x, y + 1); }
+    if (j == 2) { n = cpos(x - 1 + 2 * (y & 1), y + 1); }
+    var f1 = psiAt(n, mode, c, dir);
+    // (the spiral's seam: ψ jumps by one there — unwrapped, so the road runs on round it)
+    if (f1 - f0 > 0.5) { f1 -= 1.0; } else if (f0 - f1 > 0.5) { f1 += 1.0; }
+    if (floor(f0) != floor(f1)) { crosses = true; q = n; }
+  }
+  if (!crosses) { return; }
+  // (the road's direction: across ψ's gradient, by differences)
+  let d = 0.5;
+  var gx = psiAt(p + vec2<f32>(d, 0.0), mode, c, dir) - psiAt(p - vec2<f32>(d, 0.0), mode, c, dir);
+  var gy = psiAt(p + vec2<f32>(0.0, d), mode, c, dir) - psiAt(p - vec2<f32>(0.0, d), mode, c, dir);
+  if (abs(gx) > 0.5) { gx -= sign(gx); }
+  if (abs(gy) > 0.5) { gy -= sign(gy); }
+  let gr = vec2<f32>(gx, gy);
+  if (length(gr) < 1e-6) { return; }
+  let t = normalize(vec2<f32>(-gr.y, gr.x));
+  let a = p - t * 0.85;
+  let b = p + t * 0.85;
+  let at = room(6u);
+  if (at == NONE) { return; }
+  // (inside the spiral's smallest radius: stairs — orange)
+  let stairs = mode == 2u && distance(p, c) < rmin;
+  ribbon(at, a, b, u.b.y * 0.5, select(C_CART, C_STEEP, stairs));
+}
+/** the shaped ground as a tinted skin (terraces): one thread a column, two triangles to its neighbours, drawn at
+ *  the higher of the shaped and the real ground — the bands tinted by their parity, cut ground darker (r1 the real
+ *  heights, r3 the shaped) */
+@compute @workgroup_size(8, 8)
+fn ground(@builtin(global_invocation_id) g: vec3<u32>) {
+  let x = i32(g.x); let y = i32(g.y);
+  if (x >= W() - 1 || y >= H() - 1) { return; }
+  let p = cpos(x, y);
+  if (!inTown(p) || blockedAt(p)) { return; }
+  let q0 = vec2<i32>(x, y);
+  let q1 = vec2<i32>(x + 1, y);
+  let q2 = vec2<i32>(x + (y & 1), y + 1);
+  let q3 = vec2<i32>(x + (y & 1) - 1, y + 1);
+  var v: array<vec3<f32>, 4>;
+  let qs = array<vec2<i32>, 4>(q0, q1, q2, q3);
+  for (var k = 0; k < 4; k++) {
+    let i = ixq(qs[k]);
+    v[k] = vec3<f32>(cpos(qs[k].x, qs[k].y), max(r3(i), r1(i)) + 0.12);
+  }
+  let i0 = ixq(q0);
+  let band = u32(floor(r3(i0) / bandH() + 0.001));
+  var col = select(0x8fae6au, 0x6f8f52u, (band & 1u) == 1u);
+  if (r3(i0) < r1(i0) - 0.5) { col = select(0x8a7a5cu, 0x6e6046u, (band & 1u) == 1u); }
+  let at = room(6u);
+  if (at == NONE) { return; }
+  tri(at, v[0], v[1], v[2], col);
+  tri(at + 3u, v[0], v[2], v[3], col);
 }

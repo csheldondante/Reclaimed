@@ -20717,3 +20717,40 @@ The user picked option B and liked the radial lines. Every tier is a GPU pass ov
 - **Site changes:** sites are recaptured without woods. Muru is now a bare window at the same origin
   (`site-muru.rclt`, towns=0), with Muru's centre kept. Heights skip structure and plant materials.
 - **Camera:** it fits the town's disc to the view at each pitch (2R across, 2R·sin(pitch) down).
+
+## 2026-11-10 — trackA-streetlab milestone 3: one blended field φ, cross streets by vector JFA, shaped ground
+
+The user's verdict on m2: the radial rings were too dominant and too large, and a boolean "both" mode gave odd
+intersections and slivers. They asked for the water distance field and local radial points blended into one field,
+with cross streets made from vectors between isolines. Everything stays on the GPU (`streetlab/streets.wgsl`).
+- **M3a, φ:** φ = the smoothed water/cliff distance, bent near up to 8 points. The default is a smooth min with a cone
+  (offset + r) per point. The other choice is an additive bump, d − A·(1 − (r/R)²)². Each point's term fades out by
+  its radius, so beyond it φ is the plain distance. The cone's offset is d(point) − strength·I·R·I, where I is the
+  point's own intensity. Near the shore the offset goes negative, which gives a flat plaza with rings past it. The
+  major lines are φ's level sets, and line 0 is a quay 3 cells off the water so the shore strip gets blocks. The pure
+  distance and pure radial modes stay as radio options.
+- **Points:** a points buffer (8 × 8 words). One workgroup places the auto points: the town's middle moved inland,
+  the most prominent knoll, a shore point, then a second knoll, each with a smaller intensity than the one before.
+  It writes every point's offset too. The auto points are placed again only when something they are placed from
+  changes; otherwise the pass only remakes offsets. A tap selects, moves, places or removes a point (an authored
+  edit written by the CPU). The positions come from a 256-byte read appended to the run's timestamp read. An edit
+  reruns φ over the moved point's disc box only. The panel has a selected-point intensity slider.
+- **M3b, cross streets:** each seed-lattice point is snapped onto its nearest line by Newton steps, then thinned to
+  one per occupancy cell (block-length cells, one layer per line mod 4). A neighbouring winner within 0.6 block
+  lengths also removes it. Two jump floods run in one pass, one over the even lines' seeds and one over the odd
+  lines'. A seed's cross street goes to the other parity's nearest seed, looked up half a level up ∇φ; it is kept
+  only if that seed is on the next line, the street is under 2.5 spacings long, and no water lies between. The block
+  is this street and the next seed's street along the line (looked up in the same-parity flood), with its corners
+  exactly on the lines. Two streets that end at the same seed make a triangle. A street that crosses its neighbour
+  is dropped. The m2 tensor trace is kept as a radio option.
+- **M3c, shaped ground (lab heights only):** terraces are band·(floor + smoothstep(0.25, 0.75, frac)), with a tinted
+  skin and the cut ground drawn darker. The spiral cart road is the level sets of h/band − θ/2π round the selected
+  point or the knoll; inside band/(2π·grade) it becomes stairs (orange). Switchbacks are the level sets of
+  h/band + ½·tri(s/λ), with λ = 2·band/grade.
+- **Also:** a site radio (it reloads with the keys kept, and `?site=` still works) and a hide/show button for the
+  game's HUD (`?hud=0`).
+- **Measurements:** headless D3D11 while the game renders, median of 7. Full rebuild with vector JFA:
+  Muru 0.96, river 1.10 ms (field 0.35, phi 0.12, trace 0.30, lots 0.05, mesh 0.14). The same with the m2 tensor
+  trace: 2.9–5.6 ms (trace 2.0–4.6). From phi 0.65 ms, from trace 0.50, lots 0.20, mesh 0.15. A moved point reruns
+  φ in 0.03 ms over its box, against 0.045 over the window. Before the placement was cached and the search strided,
+  the phi stage was 0.23–0.45 ms whether boxed or not.

@@ -40,6 +40,12 @@ export function wireInput(scene: LevelScene): void {
   const tap = (sx: number, sy: number): void => {
     // (round 83: flying, the pointer only turns the view)
     if (camera.fly) return;
+    // (street lab, m3a: a tap places, moves, selects or removes a point)
+    if (scene.streetLab) {
+      const g = under(sx, sy);
+      if (!g) return void requestAnimationFrame(() => tap(sx, sy));
+      return void scene.streetLab.tapAt(g[0], g[1]);
+    }
     if (scene.fortress) return void fortressAt(scene, sx, sy);
     if (scene.editor?.tool === 'smash') return void smashAt(scene, sx, sy, true);
     if (scene.editor?.tool === 'place') return void placeAtPick(scene, sx, sy);
