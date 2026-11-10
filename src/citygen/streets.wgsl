@@ -2632,6 +2632,10 @@ const WAY_HALF: f32 = 2.2;
 const ART_TAPER: f32 = 12.0;
 /** dry ground after deep water that closes a crossing (world units) */
 const ART_GAP: f32 = 2.0;
+/** (trackA-liquids, LQ7 — DESIGN §12: roads become bridges over water) a crossing no longer than this (world units of
+ *  wet along the road) is a ford: no deck, the road's paving not claimed on its wet columns (claimRoads) — its bed bare
+ *  under the water; longer, a deck */
+const FORD_MAX: f32 = 2.5;
 fn artBase(k: u32) -> u32 { return 4u + k * AW; }
 /** a word of ART, from the binding it's at in this pass (1, 2, 5 or 7) */
 fn artW(src: u32, i: u32) -> u32 {
@@ -2687,6 +2691,8 @@ fn artSpan(@builtin(global_invocation_id) g: vec3<u32>) {
         // past the spans' room, ends the arterial at its near shore)
         let sa = max(t0 - 1.0, 0.0);
         let sb = tw + 1.0;
+        // (a short crossing: a ford — no deck)
+        if (tw - t0 <= FORD_MAX) { continue; }
         if (sb - sa > u.t.w || ns == NSPAN) { end = sa; out = true; break; }
         let s5 = o + 4u + ns * 4u;
         set5(s5, sa);
@@ -3002,7 +3008,9 @@ const PAVE_T: f32 = 0.25;
 const BARE_ONLY: u32 = 0x80000000u;
 const M_RUBBLE: u32 = 4u;
 const M_WOOD: u32 = 10u;
-/** one thread a grid column: its road or deck span from ROADS, or none (b1 ROADS, r3 the heights; w7 CG) */
+/** one thread a grid column: its road or deck span from ROADS, or none (b1 ROADS, b2 the wet mask, r3 the heights; w7 CG)
+ *  (trackA-liquids, LQ7: a road's paving isn't claimed on a wet column — a ford's bed stays bare under the water; a
+ *  deck over water is) */
 @compute @workgroup_size(8, 8)
 fn claimRoads(@builtin(global_invocation_id) g: vec3<u32>) {
   let x = i32(g.x); let y = i32(g.y);
@@ -3020,6 +3028,7 @@ fn claimRoads(@builtin(global_invocation_id) g: vec3<u32>) {
   // deckSpans. Under the flow model (DECKS_CLAIMED, ?liquid=flow — trackA-liquids, CG15) the river runs in the gap
   // under it: the deck is a slab DECK_T deep under its top, claimed where free, wood when let go)
   if (m == 0u || ((m & DECK_BIT) != 0u && !DECKS_CLAIMED)) { w7[i * 4u + 3u] = 0u; return; }
+  if ((m & DECK_BIT) == 0u && r2(i) > 0.5) { w7[i * 4u + 3u] = 0u; return; }
   w7[i * 4u + 3u] = 1u;
   if ((m & DECK_BIT) != 0u) {
     let dz = f32(m & ~DECK_BIT) / 256.0;

@@ -15,6 +15,9 @@ each was implemented.
   + 50%, lava cheaper or asleep unless hot. On the phone, read the whole frame's GPU time diffs (vsync caps the frame;
   per-pass timestamps are tiler noise).
 
+- (coordinator, agreed) Road paving isn't claimed over water: a road crossing water is a deck (bridge) or a ford with a
+  bare bed (DESIGN §12); short crossings fords, longer ones decks.
+
 ## 2026-11-09 — round 128r (session 5, Track A) — the shortlist answered: seasons, discrete stages, a visible city
 
 Answers to Orchestrator A's shortlist questions (audit + ranked slices), verbatim:

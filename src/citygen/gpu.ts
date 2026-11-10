@@ -899,7 +899,7 @@ export class CityGen {
     // (time-lapse: the tagged vertices where the clock puts them)
     this.k('tlRise', {}, { 1: this.lotRecords, 2: this.progress, 3: B.VTAG, 4: B.SCT, 7: this.verts }, Math.ceil(this.vertRoom / 64), 1, true);
     // (M4b: the claim grid — the roads' and decks' columns, then the buildings' over them)
-    this.k2('claimRoads', {}, { 1: B.ROADS, 3: B.H, 7: this.claimGrid });
+    this.k2('claimRoads', {}, { 1: B.ROADS, 2: B.M, 3: B.H, 7: this.claimGrid });
     this.k('claimLots', { count: LOT_ROOM }, { 1: this.lotRecords, 2: this.progress, 4: B.CNT, 7: this.claimGrid }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
     this.cp.end();
     device.queue.writeBuffer(this.uni, 0, this.uniData, 0, this.nPass * SLOT);

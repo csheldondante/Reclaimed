@@ -21358,3 +21358,16 @@ Clean desktop runs (nothing else of this worktree running; liquid passes by time
 - The agents' surfaces exist only in their scope (agents/scope.ts: round live units, 48 columns' margin) — the columns
   checked before were outside it, so their old dry records were never re-read: by design, not a version bug. LQ4's
   check needs units near the bridge.
+
+## 2026-11-10 — trackA-liquids: LQ7, fords and bridges (citygen)
+
+The user's agreed answer (DESIGN §12: roads become bridges over water): paving isn't claimed over water. citygen's
+claimRoads now skips a road's paving on wet columns (its wet mask, B.M — the same the decks are placed by): the bed
+stays bare under the water. A crossing no longer than FORD_MAX (2.5 world units of wet along the road) is a ford — no
+deck; longer, a deck (artSpan). Both models: under the pipes too a ford's bed is now the river's floor, not a slab.
+Why not "paving displaces water": the claim would have to write the liquid's state from the columns' claim kernel,
+crossing the liquid's contract; and a slab under a river is neither seen nor walked as a road.
+
+Muru after it (45 s, everything asleep): 172 enclosed runs under the decks; one deck column, (125, 168), still holds
+0.52 of open water on its top, frozen (deck top 100.61, the river under it at 99.78 + 0.52). The pile mechanism isn't
+confirmed or fixed yet.
