@@ -23,7 +23,7 @@ const RECW = 24;
 const LOT_ROOM = 64;
 const DECK_BIT = 0x80000000;
 
-test('riders ride routes traced on the GPU from the road raster, over a deck at its height', async () => {
+async function rideTown(ptsRoom?: number): Promise<Uint32Array> {
   const dev = g.device;
   const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
   const mk = (data: ArrayBufferView) => {
@@ -100,7 +100,7 @@ test('riders ride routes traced on the GPU from the road raster, over a deck at 
     lotRoom: LOT_ROOM,
     centre: [48, 48 * ROW_H],
     radius: 40,
-  });
+  }, LIVING_TUNING.values, ptsRoom);
   const p = LIVING_TUNING.values;
   Object.assign(p.people, { commuters: 60, farmers: 0, quarrymen: 0, stoneCarts: 0, woodcutters: 0, logCarts: 0, builders: 6, work: 2, speed: 1 });
   p.quarry.on = 0;
@@ -168,6 +168,17 @@ test('riders ride routes traced on the GPU from the road raster, over a deck at 
   expect(town.lt.size).toBe(LT_WORDS * 4);
   console.log(`[living test] routes ${routes}, traced ${c('traced')}, arrivals ${c('arrivals')}, sweeps ${head[7]}, points ${head[3]}, deck points ${onDeck}, build work ${c('buildWork')}`);
   town.dispose();
+  return head;
+}
+
+test('riders ride routes traced on the GPU from the road raster, over a deck at its height', async () => {
+  await rideTown();
+}, 120_000);
+
+test('a small points pool switches halves and every route is traced again: no misses, riders keep arriving', async () => {
+  const head = await rideTown(700);
+  expect(head[L_C + C.switches]).toBeGreaterThan(0);
+  expect(head[L_C + C.miss]).toBe(0);
 }, 120_000);
 
 test('the works kernels compile and bind (works.wgsl over the world prelude)', async () => {

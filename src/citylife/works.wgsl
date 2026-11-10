@@ -484,7 +484,7 @@ fn riderZ(@builtin(global_invocation_id) g: vec3<u32>) {
   let b = bitcast<vec4<u32>>(RID[i * 4u + 1u]);
   let leg = (b.x >> 16u) & 0xffu;
   let ramp = lt(L_Q + 4u);
-  if ((leg == LEG_FWD || leg == LEG_BACK) && !(ramp != 0u && b.y == ramp - 1u)) { return; }
+  if ((leg == LEG_FWD || leg == LEG_BACK) && !(ramp != 0u && (b.y & 0xffffu) == ramp - 1u)) { return; }
   let a = RID[i * 4u];
   let r = (a.y - 0.5 * ROWH) / ROWH;
   let ax = vec2<f32>(a.x - 0.5 - 0.5 * r, r);

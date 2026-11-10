@@ -35,6 +35,13 @@ import { urlFlags } from '../flags';
  * (round 99) the experiment's switch: `?meshinst=1` (default off until measured) — now the trees' only (round 110: the
  * resting rock's registry is on wherever the rigid rock is, game/integrity.ts)
  */
+/** (citygen M4b) the static claims' arena of GPU-owned grids as the orphan and damage passes read it (game/colapply.ts):
+ *  its buffer and the table at its head — the engine's type, which the game layer's passes take */
+export interface OwnedArenaJob {
+  buf: GPUBuffer;
+  table: Uint32Array;
+}
+
 export const MESHINST = typeof location !== 'undefined' && urlFlags().get('meshinst') === '1';
 
 /** Who owns an instance (a small id; ExternalRegistry.owner). */
@@ -170,7 +177,7 @@ export interface StaticSet {
    *  checked on the GPU (the orphan pass reads its spans: ownedJob), never judged on the CPU */
   gpuOwns(x: number, y: number): boolean;
   /** (M4b) the GPU-owned grid as the orphan pass reads it (null: none) */
-  ownedJob?(): import('../game/colapply').OwnedArenaJob | null;
+  ownedJob?(): OwnedArenaJob | null;
   /** (M4b) an edit's boxes (world units, window frame): the GPU-owned grids' claims there checked on the GPU */
   damage?(boxes: [number, number, number, number][]): void;
 }

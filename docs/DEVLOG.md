@@ -21192,3 +21192,18 @@ The user: "How is it possible not to find a route even every lot has a street ad
   from φ's level sets, and the cross, gap and grown streets and arterials are four more formats; the raster is where
   they all meet. And the cut-off pieces are cut off in citygen's own drawn network too, so a vector graph of what
   citygen draws would be just as disconnected. Laying passages fixes the world (§13), whichever representation.
+
+## 2026-11-10 — living town fix round 2: one rule for world ops, a pool that recycles, the gates green
+
+- **worldops.wgsl** (`opTake`, `opPut`, `opFell`, `VEG_STUMP`): the edit pass's OP_TAKE / OP_PUT / OP_FELL and the
+  works' dig, stockpile and fells call the same functions (LT-F3 done). The external-take and treequery Dawn tests
+  pass on it.
+- **The points pool in two halves, used in turn:** three quarters full asks for a switch; the other half becomes
+  current, its generation moves on, the hash is cleared so every key is traced again into it, the ramp made again. A
+  route id carries its half's generation in the rider's word; a rider on a reused half ends its leg there. A Dawn test
+  runs the town on a 700-point pool: it switches, nothing misses, riders keep arriving.
+- **One compute pass for the graph** (build, relax sweeps, check, trace, all indirect, sized 0 once settled): the
+  separate passes' overhead was most of the settled relax's 0.087 ms.
+- **Gates:** transfers lists citygen's run, claim, uploads and colapply's damage read (they came with the citygen
+  merge unlisted); writing-sources places citygen's panel and bench and the street lab's panel; the boundaries breach
+  (sim/external.ts importing game/colapply for a type) is gone: `OwnedArenaJob` is the engine's type now.

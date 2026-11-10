@@ -20,7 +20,7 @@ export const C = {
   dug: 0, face: 1, cartStone: 2, inbox: 3, deposited: 4, felled: 5, logCamp: 6, logCart: 7, logStores: 8, produce: 9,
   arrivals: 10, miss: 11, traced: 12, poolFull: 13, idle: 14, buildWork: 15, digBudget: 16, riding: 17, trees: 18,
   treeCur: 19, sites: 20, working: 21, logsCut: 22, regrown: 23,
-  orphans: 24, passages: 25, rounds: 26, doorsCut: 27, cutLeft: 28,
+  orphans: 24, passages: 25, rounds: 26, doorsCut: 27, cutLeft: 28, switches: 29, stale: 30,
 } as const;
 /** the points pool (vec4 a point) and the riders' room */
 const PTS_ROOM = 262_144;
@@ -66,7 +66,7 @@ type K =
   | 'gate' | 'walkInit' | 'doors' | 'pads' | 'lotMask' | 'hubPick' | 'quarryPick' | 'siteFix' | 'sitePads' | 'hubSeed'
   | 'checkClear' | 'checkCols' | 'checkPick' | 'checkLay' | 'checkDoors' | 'checkStep'
   | 'hubSeed1' | 'hashScrub' | 'relax' | 'relaxMark' | 'relaxCheck' | 'trace' | 'traceDone' | 'rampRoute' | 'riders'
-  | 'sites' | 'sitesClear' | 'figuresClear' | 'figures' | 'overlay';
+  | 'sites' | 'sitesClear' | 'figuresClear' | 'figures' | 'overlay' | 'poolSwitch' | 'hashClear';
 /** each kernel's bindings (at most 8 storage buffers) */
 const SPECS: Record<K, BindSpec> = {
   gate: { 0: 'uniform', 10: 'rw', 14: 'rw' },
@@ -92,6 +92,8 @@ const SPECS: Record<K, BindSpec> = {
   relaxCheck: { 0: 'uniform', 10: 'rw' },
   trace: { 0: 'uniform', 1: 'read', 2: 'read', 9: 'rw', 10: 'rw', 11: 'rw' },
   traceDone: { 0: 'uniform', 10: 'rw' },
+  poolSwitch: { 0: 'uniform', 10: 'rw' },
+  hashClear: { 0: 'uniform', 10: 'rw' },
   rampRoute: { 0: 'uniform', 2: 'read', 10: 'rw', 11: 'rw' },
   riders: { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 7: 'read', 10: 'rw', 11: 'rw', 12: 'rw' },
   sites: { 0: 'uniform', 3: 'read', 4: 'read', 7: 'read', 10: 'rw' },
@@ -102,7 +104,7 @@ const SPECS: Record<K, BindSpec> = {
 };
 
 /** the GPU's ms of each part of the frame (timestamps; null without them) */
-export type LivingTimes = Record<'build' | 'relax' | 'trace' | 'riders' | 'figures' | 'works', number | null>;
+export type LivingTimes = Record<'graph' | 'riders' | 'figures' | 'works', number | null>;
 
 /** an extra stage (the works: quarry and clearing) encoded in the frame after the riders */
 export interface LivingStage {
@@ -141,6 +143,8 @@ export class LivingTown {
     private device: GPUDevice,
     readonly input: LivingInput,
     readonly values: LivingValues = LIVING_TUNING.values,
+    /** (tests) the points pool's size (default PTS_ROOM) */
+    ptsRoom = PTS_ROOM,
   ) {
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     const buf = (label: string, bytes: number, usage = S) => {
@@ -155,7 +159,7 @@ export class LivingTown {
     this.field = buf('fields', N * 10 * 4);
     this.pass = buf('passages', N * 8);
     this.lt = buf('state', LT_WORDS * 4);
-    this.pts = buf('points', PTS_ROOM * 16);
+    this.pts = buf('points', ptsRoom * 16);
     this.rid = buf('riders', MAX_RIDERS * 64);
     // (room for the figures and, with ?livingdebug=1, a block a walkable column)
     this.vox = buf('voxels', (MAX_RIDERS * VOX_PER + input.w * input.h) * 32);
@@ -240,7 +244,10 @@ export class LivingTown {
       body(cp);
       cp.end();
     };
-    pass('build', (cp) => {
+    // (one pass for the graph: the build, the relax sweeps, the connectivity check, the trace — each indirect, sized by
+    // the phase word: settled, they're dispatches of 0 workgroups)
+    pass('graph', (cp) => {
+      // (build)
       run(cp, 'gate', 1);
       run(cp, 'walkInit', ind(0));
       run(cp, 'doors', ind(3));
@@ -253,24 +260,22 @@ export class LivingTown {
       run(cp, 'hubSeed', ind(3));
       run(cp, 'hubSeed1', ind(6));
       run(cp, 'hashScrub', ind(15));
-    });
-    pass('relax', (cp) => {
+    // (relax)
       const n = Math.max(2, this.values.graph.sweeps);
       for (let s = 0; s < n - 1; s++) run(cp, 'relax', ind(9));
       run(cp, 'relaxMark', 1);
       run(cp, 'relax', ind(9));
       run(cp, 'relaxCheck', 1);
-    });
-    // (the connectivity check: cut-off components found after the hubs settle, a passage laid for each — DESIGN §13)
-    pass('check', (cp) => {
+    // (check)
       run(cp, 'checkClear', ind(24));
       run(cp, 'checkCols', ind(18));
       run(cp, 'checkDoors', ind(21));
       run(cp, 'checkPick', ind(18));
       run(cp, 'checkLay', ind(18));
       run(cp, 'checkStep', ind(24));
-    });
-    pass('trace', (cp) => {
+    // (trace)
+      run(cp, 'poolSwitch', 1);
+      run(cp, 'hashClear', 8192 / 64);
       run(cp, 'trace', ind(12));
       run(cp, 'traceDone', 1);
     });

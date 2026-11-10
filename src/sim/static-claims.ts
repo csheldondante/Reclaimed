@@ -21,7 +21,8 @@
 // The registry sees these instances through the StaticSet below: anchored to their grid (a slide moves nothing on the
 // CPU but where the grid lies), judged by a read of the columns only where their land was written before the read was
 // asked (the region's epoch here, the registry's epoch counter), never orphans.
-import type { ColumnApply, GpuColumns, GridClaimJob, OwnedArenaJob } from '../game/colapply';
+import type { ColumnApply, GpuColumns, GridClaimJob } from '../game/colapply';
+import type { OwnedArenaJob } from './external';
 import { freeSpans, type ExternalCol, type ExternalInstance, type ExternalRegistry, type OwnerId, type StaticSet } from './external';
 import { ROW_H } from '../world/lattice';
 import { readColumn, type Interval, type PackedWorld } from '../world/layout';

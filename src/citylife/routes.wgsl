@@ -101,6 +101,13 @@ const L_RELAXING: u32 = 8u;
 const L_TRACING: u32 = 9u;
 /** the gate's snapshot of the phase (the phase-specific single kernels act on it) */
 const L_GPH: u32 = 10u;
+/** the points pool in two halves, used in turn: the half routes go into now, each half's generation (a route carries
+ *  its half's generation; a rider on a route whose half was reused ends its leg), the switch asked (the half three
+ *  quarters full), the hash being cleared (every key traced again into the new half) */
+const L_HALF: u32 = 11u;
+const L_GEN0: u32 = 12u;
+const L_SWITCH: u32 = 14u;
+const L_CLEARHASH: u32 = 15u;
 const L_PICK: u32 = 16u;
 const L_SEEDS: u32 = 24u;
 const L_HUBCOL: u32 = 32u;
@@ -156,6 +163,9 @@ const C_PASSAGES: u32 = 25u;
 const C_ROUNDS: u32 = 26u;
 const C_DOORS_CUT: u32 = 27u;
 const C_CUT_LEFT: u32 = 28u;
+/** pool switches; legs ended because their route's half was reused */
+const C_SWITCHES: u32 = 29u;
+const C_STALE: u32 = 30u;
 /** the most passage rounds before the check gives up and says what's left (a place no open ground reaches: water) */
 const MAX_ROUNDS: u32 = 4u;
 
@@ -834,9 +844,9 @@ fn routeFor(col: u32, hub: u32) -> u32 {
   bump(C_MISS, 1u);
   return R_FAILED;
 }
-fn rFirst(r: u32) -> u32 { return lt(L_RH + r * 4u); }
-fn rCount(r: u32) -> u32 { return lt(L_RH + r * 4u + 1u); }
-fn rLen(r: u32) -> f32 { return ltf(L_RH + r * 4u + 2u); }
+fn rFirst(r: u32) -> u32 { return lt(L_RH + rId(r) * 4u); }
+fn rCount(r: u32) -> u32 { return lt(L_RH + rId(r) * 4u + 1u); }
+fn rLen(r: u32) -> f32 { return ltf(L_RH + rId(r) * 4u + 2u); }
 /** a route's last point's column (where it ended: its hub's seed) */
 fn rEndCol(r: u32) -> u32 {
   let p = PTS[rFirst(r) + rCount(r) - 1u];
@@ -848,6 +858,46 @@ fn pointZ(c: u32) -> f32 {
   let m = ROADS[c];
   if ((m & DECK_BIT) != 0u) { return f32(m & ~DECK_BIT) / 256.0; }
   return HT[c] + select(0.05, 0.27, m != 0u);
+}
+
+/** a route's id (the low 16 bits: the high are its half's generation, in a rider's word) */
+fn rId(x: u32) -> u32 { return x & 0xffffu; }
+fn halfOf(id: u32) -> u32 { return select(0u, 1u, id >= ROUTES / 2u); }
+fn genOf(id: u32) -> u32 { return lt(L_GEN0 + halfOf(id)) & 0xffffu; }
+/** np points and a route id in the current half: (first point, route id), or NONE when the half is full; three
+ *  quarters full asks for the switch */
+fn alloc(np: u32) -> vec2<u32> {
+  let h = lt(L_HALF);
+  let room = arrayLength(&PTS) / 2u;
+  let at = atomicAdd(&LT[L_PTS], np);
+  let rid = atomicAdd(&LT[L_ROUTES], 1u);
+  if (at + np > room * 3u / 4u || rid >= ROUTES * 3u / 8u) { setLt(L_SWITCH, 1u); }
+  if (at + np > room || rid >= ROUTES / 2u) { return vec2<u32>(NONE); }
+  return vec2<u32>(h * room + at, h * (ROUTES / 2u) + rid);
+}
+/** (one thread, before the trace) the switch: the other half becomes the current one, its generation moves on (riders
+ *  still on its old routes end their legs), every key is traced again (the hash cleared), the ramp made again */
+@compute @workgroup_size(1)
+fn poolSwitch() {
+  setLt(L_CLEARHASH, 0u);
+  if (lt(L_SWITCH) == 0u || lt(L_GPH) != 4u) { return; }
+  let h = 1u - lt(L_HALF);
+  setLt(L_HALF, h);
+  atomicAdd(&LT[L_GEN0 + h], 1u);
+  setLt(L_PTS, 0u);
+  setLt(L_ROUTES, 0u);
+  setLt(L_SWITCH, 0u);
+  setLt(L_TQ, 0u);
+  setLt(L_Q + Q_RAMPV, 0u);
+  setLt(L_Q + Q_RAMP, 0u);
+  setLt(L_CLEARHASH, 1u);
+  atomicAdd(&LT[L_C + C_SWITCHES], 1u);
+}
+@compute @workgroup_size(64)
+fn hashClear(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (g.x >= HASH || lt(L_CLEARHASH) == 0u) { return; }
+  setLt(L_HASH + g.x * 2u, 0u);
+  setLt(L_HASH + g.x * 2u + 1u, 0u);
 }
 
 /** (a thread a queued key, phase 2) traced down its hub's field: counted, room taken, written — a point every second
@@ -883,9 +933,11 @@ fn trace(@builtin(global_invocation_id) g: vec3<u32>) {
   }
   if (FIELD[o + c] != 0u) { setLt(L_HASH + s * 2u + 1u, R_FAILED); bump(C_MISS, 1u); return; }
   let np = (n + 1u) / 2u + 1u;
-  let first = atomicAdd(&LT[L_PTS], np);
-  let rid = atomicAdd(&LT[L_ROUTES], 1u);
-  if (first + np > arrayLength(&PTS) || rid >= ROUTES) { setLt(L_HASH + s * 2u + 1u, R_FAILED); bump(C_POOLFULL, 1u); return; }
+  let al = alloc(np);
+  // (the half full: the key stays asked — traced again into the next half after the switch)
+  if (al.x == NONE) { setLt(L_HASH + s * 2u + 1u, R_PENDING); bump(C_POOLFULL, 1u); return; }
+  let first = al.x;
+  let rid = al.y;
   // (write)
   c = start;
   var w = 0u;
@@ -947,9 +999,10 @@ fn rampRoute() {
   let rimc = lt(L_Q + Q_RIM);
   if (rimc == 0u) { return; }
   let z0 = HT[rimc - 1u];
-  let first = atomicAdd(&LT[L_PTS], 2u + bench * 2u + 2u);
-  let rid = atomicAdd(&LT[L_ROUTES], 1u);
-  if (first + 4u + bench * 2u > arrayLength(&PTS) || rid >= ROUTES) { bump(C_POOLFULL, 1u); return; }
+  let al = alloc(2u + bench * 2u + 2u);
+  if (al.x == NONE) { bump(C_POOLFULL, 1u); return; }
+  let first = al.x;
+  let rid = al.y;
   var w = 0u;
   var acc = 0.0;
   var prev = cpos(cxy(rimc - 1u));
@@ -1063,7 +1116,7 @@ fn startRoute(r: ptr<function, Rider>, col: u32, hub: u32, dir: u32) -> bool {
 }
 fn startRid(r: ptr<function, Rider>, id: u32, dir: u32) -> bool {
   if (rCount(id) < 2u) { return false; }
-  (*r).route = id;
+  (*r).route = rId(id) | (genOf(rId(id)) << 16u);
   (*r).leg = dir;
   if (dir == LEG_FWD) { (*r).s = 0.0; (*r).cursor = 0u; } else { (*r).s = rLen(id); (*r).cursor = rCount(id) - 2u; }
   return true;
@@ -1089,7 +1142,9 @@ fn advance(i: u32, r: ptr<function, Rider>, speed: f32) -> bool {
     return false;
   }
   if ((*r).leg != LEG_FWD && (*r).leg != LEG_BACK) { return true; }
-  let id = (*r).route;
+  let id = rId((*r).route);
+  // (its half reused since it set out: the leg ends where it is — the next leg is asked afresh)
+  if (((*r).route >> 16u) != genOf(id)) { (*r).leg = LEG_NONE; bump(C_STALE, 1u); return true; }
   let f = rFirst(id);
   let n = rCount(id);
   let len = rLen(id);

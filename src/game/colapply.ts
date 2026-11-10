@@ -147,10 +147,8 @@ export interface GridClaimJob {
 
 /** (citygen M4b) the GPU-owned static grids' arena (sim/static-claims.ts OwnedArena): its buffer (bound whole: the
  *  table at its head, colapply.wgsl ownedSpanOf) and the table's words as they are now (written before a pass) */
-export interface OwnedArenaJob {
-  buf: GPUBuffer;
-  table: Uint32Array;
-}
+export type { OwnedArenaJob } from '../sim/external';
+import type { OwnedArenaJob } from '../sim/external';
 
 const MAX_CUTS = 32;
 /** (round 128g) the materials a free claim takes (sim/external.ts freeMat), as the kernel's mask */
