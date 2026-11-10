@@ -21240,3 +21240,46 @@ The user: "having only main roads near districts in progress works but we may ha
   swung 0.1–0.7 ms between headless runs (every pass ×3 in the last run), so no clean number. Dispatching nothing
   needs the CPU to stop encoding when the GPU says settled: an event (Track B's ring) rather than a poll.
 - The one route miss seen last round didn't recur in four runs (0 misses); not traced.
+
+## 2026-11-10 — U1: the Units contract's watched-only sync finished (DA-B22 (c)(4) and (1); Track B)
+The WIP `phonefix-observe-wip` 322962a3 (DA-B22 (c)(4)+(1)) taken onto fortress bb5b2e01 and finished: 131 type
+errors to 0, every caller rewritten to the contract, not silenced (no `!`, no `as` added).
+- **The contract** (api/contracts/units.ts): `UnitView.at: V3 | null` (null: not read, never stale); `observe(ids)` →
+  release (counted); `query` async, answering `SeenUnit[]` (each with its place); `SeenUnit` / `seen(v)` for a view
+  with its place. `Actor.hurt(damage, by: SeenUnit)`: AgentUnits passes where the swing came from (the swing event's
+  place, or the defender's observed place). `Followers.recruit` takes `SeenUnit[]` (taken on where they stand).
+- **Callers observe what they follow:** the followed person (fortress followFrame, from the WIP); a raid's raiders and
+  rider, the archers posted; a story's cast (badges, waypoint, who to talk to — no query a frame); a hero run's
+  approached unit; a run stage's foes; runsit's area units (outriders, foes, quarry, horde, allies, captives, trader)
+  and the followers. Each handles an unread place explicitly (waits a frame, or counts without placing).
+- **Queries where it's an ask, not a watch:** the lab's snapshot (async now: every scenario `await lab.snapshot()`),
+  the place bench's walkers, a run's items and "Follow me", the town's folk at a finale, the walker's swing (the
+  blow lands when the answer comes, a frame or two into its 0.25 s).
+- **The play layer's heroes** see `UnitsAround` (play/world.ts): one query within AROUND = 48 cells of the hero, asked
+  again as each answer comes, its answer observed; `near` filters by the read places. Hero levels only (not fortress
+  play): a two-read query in flight continuously there (16 B + 16 B a unit found).
+- **Dropped from the WIP:** the raid's per-frame `atPlaces` polling (and `Agents.nearMany`, its kernel and reads), the
+  per-look raider query, the archers' mark and landing queries and `arrivedAt` — raiders.ts and defence.ts are back to
+  6ab55976's loop, observing the raiders, the rider and the posted archers (DA-L4 deletes that loop). Kept from the
+  WIP: who's outside the walls by the GPU's EV_SIDE events (`sideOf`), not every person's position.
+- **Measured** (headless desktop D3D11, `town` recipe after Build + 20 sim s, 10 s at the game's speed;
+  scratchpad syncmeasure.mjs; the town has 12–13 units then):
+
+  | | before (bb5b2e01) | after |
+  |---|---|---|
+  | bytes a sync | 1680 (head 16 + 16 events 512 + 12 units × 96) | 752 (head 16 + 16 events 512 + hunt 128 + 96 pad), 0 observed |
+  | sync KB/frame, 1x | 1.53 | 0.57 |
+  | sync KB/frame, 16x | 0.64 / 0.59 (two runs) | 0.27 / 0.24 |
+  | sync ask→answer ms p50 / p95, 1x | 2.1 / 11.2 | 5.8 / 15.2 |
+  | same, 16x | 72.3 / 92.9; 27.5 / 111.1 | 18.0 / 58.2; 26.4 / 56.3 |
+
+  Before, a sync grew 96 B per unit in the window; after, 96 B per observed unit. The ms is the GPU queue's latency
+  and swings run to run headless (16x fps 33–81 between runs of either build): no claim on frame time from these.
+- **The transfers gate:** `AgentUnits.update` is still listed as violating §24 (F24): one sync is in flight at a
+  time, so the head is read every frame whether or not anything happened. It's small now (752 B), but the gate
+  counts a per-frame read in play, and rightly. Removing it needs the sync to run only when the GPU has something to
+  say, and knowing that takes a read (or `onSubmittedWorkDone` plus a GPU-written flag — DA-B2's next step).
+- **Gates:** typecheck clean; unit 2 failures, both on bb5b2e01 as well (flags, townfixture); GPU 194 passed, as
+  bb5b2e01. fortressfollow 40/40 samples on screen; fortressallbuilt 708/708 at 362 sim s; fortressraid walled: the
+  gates shut at 59 s and the gate broke at 84–87 s in two runs (bb5b2e01: 53 s and 75 s), looted 2, torched 2, all 4
+  out; with 4 soldiers the archers killed all four before the gate broke on both builds (56/16 vs 65/16 shots/hits).
