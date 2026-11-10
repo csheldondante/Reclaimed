@@ -19,6 +19,10 @@ export const LOT_KIND = {
   plaza: 3,
   /** a landmark site: a round plot at a busy junction (a plaza or a big structure — storeys 0 for a plaza) */
   landmark: 4,
+  /** (farms) a field in a farm district or the farm belt: its footprint the field (its crop in the vegetation field —
+   *  common.wgsl cropVeg — at its progress's stage), a hedge round it; words 19–21 a farmhouse at its first corner when
+   *  its height is over 0 */
+  field: 5,
 } as const;
 
 /** u32 words of a record (citygen/streets.wgsl RECW) */

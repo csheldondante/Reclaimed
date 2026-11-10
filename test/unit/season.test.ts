@@ -62,7 +62,7 @@ describe('season ledger (the opportunity contract: people locked, goods spent)',
     expect(pools(l).unrest).toBe(1);
     expect(pools(l).labor).toBe(5);
     l = commit(l, card('farms'));
-    l = nextSeason(l).ledger;
+    l = nextSeason(nextSeason(l).ledger).ledger;
     expect(pools(l).unrest).toBe(0);
     expect(pools(l).labor).toBe(6);
   });
@@ -121,7 +121,8 @@ describe('season words', () => {
     const bad = lines.flatMap((t) => lint(t).map((p) => `${p} — ${t}`));
     expect(bad).toEqual([]);
     expect(costLine(card('houses'))).toBe('Takes 2 Labor for 2 seasons. Uses 2 Materials.');
-    expect(summaryLine(r, card)).toBe('Season 1 is over. The farms are finished. One building is still going up.');
+    expect(summaryLine(r, card)).toBe('Season 1 is over. 2 buildings are still going up.');
+    expect(summaryLine(nextSeason(r.ledger), card)).toBe('Season 2 is over. The farms are finished. The houses are finished.');
     expect(POOLS).toEqual(['magic', 'might', 'labor', 'materials', 'intel', 'unrest']);
   });
 });

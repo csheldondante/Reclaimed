@@ -188,7 +188,7 @@ export class FieldTown {
     this.xform = io.device.createBuffer({ label: `citygen ${site.id} place`, size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.place();
     io.addMesh(this.gen.verts, this.gen.args, this.xform);
-    this.bare = makeCompute(io.device, 'citygen bare', [commonWgsl, bareWgsl], { 0: 'uniform', 3: 'read', 4: 'rw', 5: 'rw', 6: 'uniform' });
+    this.bare = makeCompute(io.device, 'citygen bare', [commonWgsl, bareWgsl], { 0: 'uniform', 3: 'read', 4: 'rw', 5: 'rw', 6: 'uniform', 7: 'read', 8: 'read' });
     this.bareU = io.device.createBuffer({ label: `citygen ${site.id} bare`, size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     // (the reach's start: the first road's point at the core's distance — on the road into town, not in the river)
     const road = site.roads.map((l) => l.map(local)).find((l) => l.length > 1) ?? [centre];
@@ -243,7 +243,16 @@ export class FieldTown {
     void this.checkReach();
   }
 
-  /** (M4b) the plants under the town's claims cleared in these window rectangles (bare.wgsl) */
+  /** (farms) the town's box in the window: its fields' crops written at their stage now (bare.wgsl) — after each mesh
+   *  run while a district rises, so a field's crop follows its progress */
+  private cropsOver(): void {
+    const p = this.gridPlace();
+    const { w, h } = this.io.dims;
+    this.bareOver([[Math.max(0, p.dx), Math.max(0, p.dy), Math.min(w, p.dx + this.box.w), Math.min(h, p.dy + this.box.h)]], p);
+  }
+
+  /** (M4b) the plants under the town's claims cleared in these window rectangles (bare.wgsl); (farms) and the fields'
+   *  crops written */
   private bareOver(rects: [number, number, number, number][], p: GridPlace): void {
     const d = this.io.device;
     const P = this.io.plants;
@@ -257,7 +266,7 @@ export class FieldTown {
       const enc = d.createCommandEncoder({ label: 'citygen bare' });
       const cp = enc.beginComputePass({ label: 'citygen bare' });
       cp.setPipeline(this.bare.pipeline);
-      cp.setBindGroup(0, makeBindGroup(d, 'citygen bare', this.bare.layout, { 0: P.globals, 3: this.gen.claimGrid, 4: P.veg, 5: P.vegNext, 6: this.bareU }));
+      cp.setBindGroup(0, makeBindGroup(d, 'citygen bare', this.bare.layout, { 0: P.globals, 3: this.gen.claimGrid, 4: P.veg, 5: P.vegNext, 6: this.bareU, 7: this.gen.progress, 8: this.gen.lotRecords }));
       cp.dispatchWorkgroups(Math.ceil((x1 - x0) / 8), Math.ceil((y1 - y0) / 8));
       cp.end();
       d.queue.submit([enc.finish()]);
@@ -331,7 +340,10 @@ export class FieldTown {
       void this.gen.run(this.params, 'mesh').then(
         () => {
           this.reclaiming = false;
-          if (!this.gone && this.grid) this.io.statics()?.reclaim(this.grid);
+          if (!this.gone && this.grid) {
+            this.io.statics()?.reclaim(this.grid);
+            this.cropsOver();
+          }
         },
         (e) => {
           this.reclaiming = false;

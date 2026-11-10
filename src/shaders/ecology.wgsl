@@ -37,6 +37,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let mf = smoothstep(0.06, 0.35, wet);
   let d = water[i];
   var v = vegIn[i];
+  // (a crop: a farm's field, the town's to write — common.wgsl isCrop — never grown or withered here)
+  if (isCrop(v)) {
+    vegOut[i] = v;
+    return;
+  }
   let r = rand3(id.x, id.y, G.tick ^ 0x5eedu);
   // (round 108, simtiers: growth, spread and dying back at the vegetation tier's rate here — 0 baked: only fire
   // changes it in play; a bake's gain speeds it)

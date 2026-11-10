@@ -31,7 +31,7 @@ struct U {
   r: vec4<f32>, // (m3g) the field (0 the distance smoothed, 1 the mask smoothed), the mask's smoothing, grown streets (1), the landmarks kept (top K)
   h: vec4<f32>, // (m3h) a supercell's size (block lengths), the limit's noise (supercells), the empty fraction, the seed
   h2: vec4<f32>, // (m3h) the growth (0–1), the district tint (1), supercells on (1), the limit (× the town's radius)
-  x: vec4<f32>, // (m3i) the town circle's reach (× its radius: with supercells, far enough never to show), 0, 0, 0
+  x: vec4<f32>, // (m3i) the town circle's reach (× its radius: with supercells, far enough never to show); (farms) the farm belt (× the budget, 0 none), a field's size (× a lot), 0
   t: vec4<f32>, // (citygen M4a) an arterial's width, the height-to-plot ratio (0: storeys × a random 0.7–1.3), a deck's clearance over its banks, the longest bridge
   rc: vec4<f32>, // (M4b) the roads' colour (rgb 0–1), its tone (0 the lab's white, 1 dirt, 2 stone)
   pp: vec4<f32>, // (M4b) the population field: its peak density (0 the field off: 0.5 everywhere), the settlement's purpose (0–5; −1 none), 0, 0
@@ -558,7 +558,9 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
   q0.d = 0u;
   st[0] = q0;
   // (M4b: the lots' size by the population field's density there — dense, small lots; sparse, large: 1 at 0.5)
-  let lotK = mix(1.6, 0.4, cityB4(0.25 * (q0.v[0] + q0.v[1] + q0.v[2] + q0.v[3])).dens);
+  let qc = cityB4(0.25 * (q0.v[0] + q0.v[1] + q0.v[2] + q0.v[3]));
+  // (farms: a farm district's lots are fields, x.z × a lot — long strips of the block, mostly a block or half a block)
+  let lotK = mix(1.6, 0.4, qc.dens) * select(1.0, max(u.x.z, 1.0), u.h2.z > 0.5 && qc.purpose == P_FARMS);
   var made = 0u;
   while (n > 0u) {
     n--;
@@ -678,12 +680,16 @@ fn markRoad(a: vec2<f32>, b: vec2<f32>, hw: f32, za: f32, zb: f32, deck: bool) {
     }
   }
 }
-fn ribbon(at: u32, a: vec2<f32>, b: vec2<f32>, hw: f32, col: u32) {
-  if (roadLive) { markRoad(a, b, hw, 0.0, 0.0, false); }
+/** (farms) the road piece being drawn is a track between fields: narrow, dirt, not paved (no claim) */
+var<private> roadTrack: bool = false;
+fn ribbon(at: u32, a: vec2<f32>, b: vec2<f32>, hw0: f32, col0: u32) {
+  let hw = select(hw0, min(hw0, TRACK_HW), roadTrack);
+  let col = select(col0, C_TRACK, roadTrack);
+  if (roadLive && !roadTrack) { markRoad(a, b, hw, 0.0, 0.0, false); }
   let d = normalize(b - a);
   let s = vec2<f32>(-d.y, d.x) * hw;
-  // (M4b: on the town's paving — the claimed quarter cell over the ground, claimSpans)
-  let lift = 0.27;
+  // (M4b: on the town's paving — the claimed quarter cell over the ground, claimSpans; a track a little lower)
+  let lift = select(0.27, 0.12, roadTrack);
   let p0 = vec3<f32>(a - s, hAt(a - s) + lift);
   let p1 = vec3<f32>(b - s, hAt(b - s) + lift);
   let p2 = vec3<f32>(b + s, hAt(b + s) + lift);
@@ -814,6 +820,29 @@ const REC_BUILDING: u32 = 1u;
 const REC_PARK: u32 = 2u;
 const REC_PLAZA: u32 = 3u;
 const REC_LANDMARK: u32 = 4u;
+/** (farms) a field: its footprint the field (crops — bare.wgsl), a hedge round it, a farmhouse at a corner when its
+ *  height is over 0 (words 20, 21 the farmhouse's) */
+const REC_FIELD: u32 = 5u;
+/** (farms) one farmhouse or barn to about this many fields; its height (one storey and a roof) */
+const FARMHOUSE_SHARE: f32 = 0.3;
+const FARMHOUSE_H: f32 = 3.5;
+/** (farms) a farm belt district's growth key: grown last (under the growth's 1, so shown) */
+const BELT_KEY: f32 = 0.97;
+/** (farms) a track between fields: its half width, and a hedge's height and half width */
+const TRACK_HW: f32 = 0.55;
+const HEDGE_H: f32 = 0.7;
+const HEDGE_HW: f32 = 0.35;
+const C_HEDGE: u32 = 0x4e7436u;
+const C_TRACK: u32 = 0x9c8261u;
+/** (farms) a field's farmhouse: a small square at its first corner, set in from both sides */
+fn farmhouse(q: array<vec2<f32>, 4>) -> array<vec2<f32>, 4> {
+  let a = q[0];
+  let e1 = normalize(q[1] - q[0]);
+  let e2 = normalize(q[3] - q[0]);
+  let s = 3.2;
+  let o = a + (e1 + e2) * 1.2;
+  return array<vec2<f32>, 4>(o, o + e1 * s, o + e1 * s + e2 * s, o + e2 * s);
+}
 /** the edge on the widest street: a major line (class 1) over a minor street (2); 255 none */
 fn frontage(e: u32) -> u32 {
   var best = 255u;
@@ -893,6 +922,28 @@ fn lotRec(@builtin(global_invocation_id) g: vec3<u32>) {
   for (var k = 0u; k < 4u; k++) { pv[k] = mix(v[k], mid, 0.04); }
   let paveOk = u.q.x < 1.5;
   if ((hs & PAVED) != 0u || (paveOk && badQuad(v, 0.0))) { putRec(i, v, pv, front, REC_PLAZA, sc, 0u, 0.0, hAt(mid), hs); return; }
+  // (farms: a farm district's lot is a field — inset from its tracks, a hedge round it, now and then a farmhouse)
+  if (u.h2.z > 0.5 && sc.purpose == P_FARMS) {
+    var fd: array<f32, 4>;
+    for (var k = 0u; k < 4u; k++) { fd[k] = select(0.4, TRACK_HW + 0.4, ecls(e, k) != 0u); }
+    var fq: array<vec2<f32>, 4>;
+    for (var k = 0u; k < 4u; k++) { fq[k] = insetCorner(v, fd, k); }
+    var fa = 0.0;
+    for (var k = 0u; k < 4u; k++) { fa += cross2(fq[k], fq[(k + 1u) % 4u]); }
+    if (fa < 8.0) { putRec(i, v, v, front, REC_NONE, sc, 0u, 0.0, 0.0, hs); return; }
+    var fh = 0.0;
+    var fb = hAt(mid);
+    if (hsh(hs ^ 0xfa12u) < FARMHOUSE_SHARE) {
+      let hq = farmhouse(fq);
+      var zlo = 1e9;
+      var zhi = -1e9;
+      for (var k = 0u; k < 4u; k++) { let z = hAt(hq[k]); zlo = min(zlo, z); zhi = max(zhi, z); }
+      fb = zlo - 0.5;
+      fh = zhi + FARMHOUSE_H - fb;
+    }
+    putRec(i, v, fq, front, REC_FIELD, sc, select(0u, 1u, fh > 0.0), fh, fb, hs);
+    return;
+  }
   var street = false;
   var d: array<f32, 4>;
   for (var k = 0u; k < 4u; k++) {
@@ -941,6 +992,10 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   if (kind == REC_NONE || kind == REC_LANDMARK) { return; }
   var q: array<vec2<f32>, 4>;
   for (var k = 0u; k < 4u; k++) { q[k] = vec2<f32>(r1(o + 8u + k * 2u), r1(o + 9u + k * 2u)); }
+  if (kind == REC_FIELD) {
+    fieldMesh(i, o, q);
+    return;
+  }
   if (kind != REC_BUILDING) {
     let at = room(6u);
     if (at == NONE) { return; }
@@ -2429,16 +2484,18 @@ fn sctab(@builtin(local_invocation_index) li: u32) {
     let dens = bitcast<f32>(w7[pi]);
     let thr = lim * (1.0 + u.h.y * (2.0 * vnoise(cc, 2.5, 7u) - 1.0)) * mix(0.55, 1.45, dens);
     let t = scD[c] / max(thr, 1.0);
-    let inside = t < 1.0;
+    // (farms: the farm belt — the cells just past the limit, out to x.y × the budget — in, as farms, grown last)
+    let belt = t >= 1.0 && t < u.x.y;
+    let inside = t < 1.0 || belt;
     // (empty: never at a centre, never at the edge — under 0.6 of the budget)
     let empty = hash2(c, 4u) < u.h.z * 2.0 * (1.0 - dens) && scD[c] > 0.6 * sc && t < 0.6;
     let o = SC_HEAD + c * SCW;
-    w5[o + 6u] = u32(bitcast<f32>(w7[pi + 2u]));
+    w5[o + 6u] = select(u32(bitcast<f32>(w7[pi + 2u])), P_FARMS, belt);
     set5(o + 7u, dens);
     set5(o, scS[c].x);
     set5(o + 1u, scS[c].y);
     w5[o + 2u] = select(0u, select(2u, 1u, empty), inside);
-    set5(o + 3u, t);
+    set5(o + 3u, select(t, BELT_KEY, belt));
     set5(o + 4u, scS[c].x);
     set5(o + 5u, scS[c].y);
   }
@@ -2450,6 +2507,8 @@ fn roadOf(c1: City, c2: City) {
   if (c1.start <= c2.start) { c = c1; }
   curTag = TG_ROAD | ((c.id + 1u) << 8u);
   roadLive = c.start <= u.tl.x;
+  // (farms: between two farm districts — or on through one — a dirt track, not a street)
+  roadTrack = c1.purpose == P_FARMS && c2.purpose == P_FARMS;
 }
 /** a point's supercell — its state, its growth key, its id (the table at b4) */
 fn cityB4(p: vec2<f32>) -> City {
@@ -2964,6 +3023,29 @@ const PAVE_T: f32 = 0.25;
 /** a column with no span the town keeps bare of plants all the same (its owner word, count 0): a building's or a
  *  plaza's parcel round its footprint (bare.wgsl) */
 const BARE_ONLY: u32 = 0x80000000u;
+/** (farms) a field's column, no span: its owner word FIELD_COL | its record — bare.wgsl writes its crop */
+const FIELD_COL: u32 = 0x40000000u;
+/** (farms) a field's columns marked in the claim grid's owner plane (where nothing else spans them) */
+fn claimField(r: u32, o: u32) {
+  var q: array<vec2<f32>, 4>;
+  var lo = vec2<f32>(1e9);
+  var hi = vec2<f32>(-1e9);
+  for (var k = 0u; k < 4u; k++) {
+    q[k] = vec2<f32>(r1(o + 8u + k * 2u), r1(o + 9u + k * 2u));
+    lo = min(lo, q[k]);
+    hi = max(hi, q[k]);
+  }
+  let N = u32(W() * H());
+  for (var y = max(i32(floor(lo.y / ROW_H)) - 1, 0); y <= min(i32(ceil(hi.y / ROW_H)) + 1, H() - 1); y++) {
+    for (var x = max(i32(floor(lo.x)) - 1, 0); x <= min(i32(ceil(hi.x)) + 1, W() - 1); x++) {
+      let p = cpos(x, y);
+      var inside = true;
+      for (var k = 0u; k < 4u; k++) { if (cross2(q[(k + 1u) % 4u] - q[k], p - q[k]) < 0.0) { inside = false; } }
+      let c = ix(x, y);
+      if (inside && w7[c * 4u + 3u] == 0u) { w7[N * 4u + c * 4u + 3u] = FIELD_COL | r; }
+    }
+  }
+}
 const M_RUBBLE: u32 = 4u;
 const M_WOOD: u32 = 10u;
 /** one thread a grid column: its road or deck span from ROADS, or none (b1 ROADS, r3 the heights; w7 CG) */
@@ -3006,6 +3088,10 @@ fn claimLots(@builtin(global_invocation_id) g: vec3<u32>) {
   let kind = b1[o + 17u];
   let h = r1(o + 20u) * clamp(r2(r), 0.0, 1.0);
   let built = (kind == REC_BUILDING || kind == REC_LANDMARK) && h >= 0.05;
+  if (kind == REC_FIELD) {
+    claimField(r, o);
+    return;
+  }
   if (!built && kind != REC_PLAZA) { return; }
   var q: array<vec2<f32>, 4>;
   var pq: array<vec2<f32>, 4>;
@@ -3294,4 +3380,63 @@ fn tlRise(@builtin(global_invocation_id) g: vec3<u32>) {
     if (r2(id) <= 0.0) { z = z0 - 1000.0; }
   }
   w7[v * 8u + 2u] = bitcast<u32>(z);
+}
+
+// ==== farms: a field's hedges and its farmhouse ================================================================
+/** (farms) a field's mesh (lotMesh's REC_FIELD): a low hedge along each edge — shown once its district starts
+ *  (TG_LOT) — and, when its record has a height, a farmhouse at its first corner: walls and a roof risen with the
+ *  field's progress (TG_TOP / TG_BASE, as a building's). The crops are the vegetation field's (bare.wgsl). */
+fn fieldMesh(i: u32, o: u32, q: array<vec2<f32>, 4>) {
+  let at = room(72u);
+  if (at == NONE) { return; }
+  curTag = TG_LOT | ((i + 1u) << 8u);
+  for (var k = 0u; k < 4u; k++) {
+    let a = q[k];
+    let b = q[(k + 1u) % 4u];
+    if (distance(a, b) < 0.5) {
+      // (a degenerate edge: its room filled with nothing visible — the three faces flat at the corner)
+      for (var j = 0u; j < 18u; j++) { vert(at + k * 18u + j, vec3<f32>(a, hAt(a) - 1000.0), C_HEDGE, vec3<f32>(0.0, 0.0, 1.0)); }
+      continue;
+    }
+    let d = normalize(b - a);
+    let n = vec2<f32>(d.y, -d.x) * HEDGE_HW;
+    let za = hAt(a);
+    let zb = hAt(b);
+    let a0 = vec3<f32>(a + n, za);
+    let b0 = vec3<f32>(b + n, zb);
+    let a1 = vec3<f32>(a + n, za + HEDGE_H);
+    let b1 = vec3<f32>(b + n, zb + HEDGE_H);
+    let a2 = vec3<f32>(a - n, za + HEDGE_H);
+    let b2 = vec3<f32>(b - n, zb + HEDGE_H);
+    let a3 = vec3<f32>(a - n, za);
+    let b3 = vec3<f32>(b - n, zb);
+    let base = at + k * 18u;
+    tri(base, a1, b1, b2, C_HEDGE);
+    tri(base + 3u, a1, b2, a2, C_HEDGE);
+    tri(base + 6u, a0, b0, b1, C_HEDGE);
+    tri(base + 9u, a0, b1, a1, C_HEDGE);
+    tri(base + 12u, a3, a2, b2, C_HEDGE);
+    tri(base + 15u, a3, b2, b3, C_HEDGE);
+  }
+  let h = r1(o + 20u);
+  if (h < 0.05) { return; }
+  let hq = farmhouse(q);
+  let at2 = room(30u);
+  if (at2 == NONE) { return; }
+  let fb = r1(o + 21u);
+  let top = fb + h;
+  let roof = roofColour(u32(hsh(b1[o + 23u] * 7u + 3u) * 5.999));
+  curTag = TG_TOP | ((i + 1u) << 8u);
+  tri(at2, vec3<f32>(hq[0], top), vec3<f32>(hq[1], top), vec3<f32>(hq[2], top), roof);
+  tri(at2 + 3u, vec3<f32>(hq[0], top), vec3<f32>(hq[2], top), vec3<f32>(hq[3], top), roof);
+  for (var k = 0u; k < 4u; k++) {
+    let a = hq[k];
+    let b = hq[(k + 1u) % 4u];
+    tri(at2 + 6u + k * 6u, vec3<f32>(a, fb), vec3<f32>(b, top), vec3<f32>(a, top), C_WALL);
+    tri(at2 + 9u + k * 6u, vec3<f32>(a, fb), vec3<f32>(b, fb), vec3<f32>(b, top), C_WALL);
+    let tb = TG_BASE | ((i + 1u) << 8u);
+    w5[(at2 + 6u + k * 6u) * 2u] = tb;
+    w5[(at2 + 9u + k * 6u) * 2u] = tb;
+    w5[(at2 + 10u + k * 6u) * 2u] = tb;
+  }
 }

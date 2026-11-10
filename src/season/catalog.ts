@@ -28,7 +28,7 @@ export const CATALOG: readonly SeasonCard[] = [
     pitch: 'Grain feeds the town and keeps it calm.',
     locks: { labor: 1 },
     costs: { materials: 1 },
-    seasons: 1,
+    seasons: 2,
     work: { kind: 'district', district: 'farms', parts: 2 },
     unrestOnDone: -1,
   },

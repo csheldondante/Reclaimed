@@ -3617,3 +3617,13 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   and Might locked (people: `workers`, `army` agents); Materials, Magic and Intel spent (goods); Unrest is the town's
   state — that many free workers on strike. A table (`POOL_ROLE`, season/ledger.ts); each card's `locks` and `costs`
   are data. For the user to confirm.
+
+## 2026-11-10 — farms back in, as larger plots (trackA-opps)
+
+- The user: "we need to add farms back in. They should be larger plots."
+- (via the coordinator) Farm parcels in citygen's GPU lot pipeline: farm districts and a farm belt just outside the
+  city limit along the arterials get large field plots, long strips of their blocks, one small farmhouse or barn to a
+  few fields, no tall buildings. Crops go through the vegetation field (DESIGN §15: "crops and farms", "the field's
+  crop stage shows it"): a crop kind with a stage the farms card's progress drives (bare → sown → green → ripe), no
+  per-plant storage. Field edges read as hedges and dirt tracks, not streets. The farms card claims farm parcels and
+  grows them stage by stage, like districts.

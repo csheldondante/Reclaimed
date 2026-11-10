@@ -411,6 +411,26 @@ fn meshSurf(in: MOut) -> Surf {
   }
   // wet ground darkens
   alb *= 1.0 - MATS[mat].eco.w * 0.5 * smoothstep(0.15, 0.9, cf.z);
+  // (farms, DESIGN §15: "the field's crop stage shows it") a crop on a top — the vegetation field's crop band
+  // (common.wgsl isCrop): rows of tilled soil along the field's direction; sown, the rows green up; then ripen gold
+  if (isTop && isCrop(cf.y) && !noDetail(ND_PLANTS)) {
+    let cs = cropStage(cf.y);
+    let ang = f32(cropDir(cf.y)) * 0.7853982;
+    let along = dot(wo(in.wpos.xy), vec2<f32>(-sin(ang), cos(ang)));
+    // (a row every 1.4 units: 0 in a furrow, 1 on the ridge)
+    let ridge = 1.0 - abs(fract(along / 1.4) - 0.5) * 2.0;
+    var soil = mix(vec3<f32>(0.30, 0.22, 0.14), vec3<f32>(0.47, 0.35, 0.22), smoothstep(0.2, 0.8, ridge));
+    // (the plants on the ridges: from specks (sown) to full rows (green), then gold (ripe))
+    let width = clamp(cs - 1.0, 0.0, 1.0) * 0.85 + clamp(cs - 2.0, 0.0, 1.0) * 0.15;
+    let speck = randv(vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 3.0)), 7121));
+    let plant = ridge > 1.0 - width && (cs >= 1.6 || speck < (cs - 1.0) * 1.6);
+    var c = soil * (0.9 + 0.2 * n2);
+    if (plant) {
+      let crop = mix(vec3<f32>(0.30, 0.50, 0.16), vec3<f32>(0.80, 0.66, 0.27), smoothstep(2.2, 3.0, cs));
+      c = crop * (0.82 + 0.3 * n1);
+    }
+    alb = toLinear(c);
+  }
   // plant cover on tops, a few tufts of it up the slopes
   // (plants on a face only near its top: a cut face isn't green all the way down — round 79)
   let v = select(cf.y, 0.0, (!isTop && in.wpos.z < lk.top - 2.5) || noDetail(ND_PLANTS));

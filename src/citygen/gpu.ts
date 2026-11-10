@@ -42,6 +42,9 @@ export interface StreetPoint {
 }
 
 export interface StreetParams {
+  /** (farms) the farm belt past the limit (× the growth budget; 0 none) and a field's size (× a lot) */
+  farmBelt: number;
+  farmLot: number;
   /** (citygen M4a) an arterial's width (cells); the height-to-plot ratio (a building no taller than this × its plot's
    *  shortest side; 0 the lab's storeys × 0.7–1.3); a bridge deck's height over its higher bank; the longest bridge */
   artWidth: number;
@@ -620,7 +623,8 @@ export class CityGen {
     [p.scSize, p.limitNoise, p.emptyFrac, p.citySeed].forEach((v, j) => dv.setFloat32(192 + j * 4, v, true));
     [p.growth, p.tint, this.cityOn() ? 1 : 0, p.limit].forEach((v, j) => dv.setFloat32(208 + j * 4, v, true));
     // (m3i: with supercells the town circle is only a bound, out past any limit)
-    [this.cityOn() ? CITY_REACH : 1, 0, 0, 0].forEach((v, j) => dv.setFloat32(224 + j * 4, v, true));
+    // (farms: the farm belt (× the budget; 0 none) and a field's size (× a lot))
+    [this.cityOn() ? CITY_REACH : 1, p.farmBelt, p.farmLot, 0].forEach((v, j) => dv.setFloat32(224 + j * 4, v, true));
     [p.artWidth, p.hRatio, p.deckClear, p.maxSpan].forEach((v, j) => dv.setFloat32(240 + j * 4, v, true));
     [...(ROAD_TONES[p.roadTone] ?? [0, 0, 0]), p.roadTone].forEach((v, j) => dv.setFloat32(256 + j * 4, v, true));
     [this.town.density, this.town.purpose, 0, 0].forEach((v, j) => dv.setFloat32(272 + j * 4, v, true));

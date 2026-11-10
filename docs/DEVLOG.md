@@ -21157,3 +21157,32 @@ should show intermediate states (that can use the shader for now)." Design: `doc
   people show free of all (`Labor 2/4`); what's building says when its people come back.
 - **GIF** (`scratchpad/opps/seasons6.gif`, 6 seasons, 412x915, 60°, zoom 2): houses districts fill a third at a time,
   the second houses card going on in the first's district.
+
+## 2026-11-10 — farms: fields in citygen, crops in the vegetation field
+
+The user: "we need to add farms back in. They should be larger plots."
+- **Where farms are:** a supercell with the farms purpose, and a farm belt — the supercells just past the town's
+  limit, out to `farmBelt` (1.35) × the growth budget, which follows the roads because roads are cheap in the cost
+  distance. A belt cell is in, purpose farms, growth key 0.97 (last), never empty. A game town starts with only its
+  core, so the belt appears as farms cards claim it.
+- **Fields:** in `lots` a farm district's lot area is `farmLot` (6) × a lot, so a block splits once or not at all:
+  long strips along the φ lines. `lotRec` makes a REC_FIELD record (kind 5): the parcel inset from its tracks, and
+  about one in three with a farmhouse (a 3.2-unit square, one storey and a roof) at its first corner. `lotMesh` draws a
+  hedge (0.7 high) round each field, shown once its district starts, and the farmhouse rising with the field.
+- **Tracks:** a road between two farm districts is a dirt track: 0.55 half width, dirt colour, not paved (not
+  claimed), a little lower. Arterials stay roads.
+- **Crops in the vegetation field (DESIGN §15).** The field had only succession (0..5). Crops are its band below zero:
+  `veg = −(1 + stage + 4·dir)` (common.wgsl `cropVeg`), stage 0 tilled … 3 ripe, the rows' direction one of four.
+  Every reader's thresholds are above zero, so a crop is "no wild plants" to all of them; the writers that grow or
+  wither wild plants (ecology, the grow tap, wind-stripped growth, seeds landing) leave crops alone. No CPU mirror is
+  touched (Track B's): the GPU field changes and the town owns its crop columns.
+- **Who writes the crop:** `claimLots` marks a field's columns in the claim grid's owner plane (`FIELD_COL | record`);
+  the town's bare pass (bare.wgsl) writes each marked column's crop from the field's progress (stage = 3 × progress),
+  its rows along the field's first edge. It runs as claims land and after each mesh run while a district rises
+  (every 2 s of the town's clock, and at the end).
+- **The look:** meshdraw paints a crop top as rows of tilled soil along its direction; sown, green specks on the
+  ridges, then full green rows; ripe, gold.
+- **The farms card** takes 2 seasons now (the stages show: tilled → green → ripe) and claims farm land like any
+  district card (2 of a district's 6 parts).
+- **Shots:** `scratchpad/opps/belt-wide.png`, `belt-near.png` (Muru grown by the time-lapse: fields with hedges and
+  tracks), `farms.gif` (two farms cards, tilled to ripe, the second going on in the first's district).
