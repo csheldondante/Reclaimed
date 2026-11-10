@@ -72,6 +72,7 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoo
       const t = loop.town !== null ? towns.live.get(loop.town) : undefined;
       if (!st || !t) return;
       await scene.livingTowns?.saveWorks();
+      await towns.saveWall(loop.town!);
       const b = new TextEncoder().encode(JSON.stringify(s));
       const n = b.byteLength;
       await st.put(seasonKey(t.site.at), b, { session: 'season', hash: 0 });

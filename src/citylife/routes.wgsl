@@ -142,13 +142,7 @@ const ROUTES: u32 = 8192u;
 /** (works.wgsl) the felled columns waiting to be replanted: column + 1, the time felled (f32 bits) */
 const L_REGROW: u32 = 52520u;
 const REGROW_ROOM: u32 = 256u;
-// (L_REGROW + REGROW_ROOM × 2 = 53032 words)
-/** (season life, U2's marches) a route asked by the CPU: 0 its start column (NONE: none asked), 1 its hub; the answer:
- *  2 the route's id (R_PENDING while it's traced), 3 its points, 4 its length (f32), 5–6 its first point, 7–8 its last
- *  (the grid's world units), 9 its points' generation (the id is good while it's the same) — 16 words: living.ts
- *  LT_WORDS */
-const L_ASK: u32 = 53032u;
-
+// (L_REGROW + REGROW_ROOM × 2 = 53032 words: the wall's block, L_WALL, after)
 /** counters (L_C + …): volumes in litres (1e-3 m³) */
 const C_DUG: u32 = 0u;
 const C_FACE: u32 = 1u;
@@ -1856,37 +1850,6 @@ fn shipVox(wp: vec3<f32>, h: f32, i: u32) {
   vox(wp + vec3<f32>(fw * 0.6, 3.6), M_CANVAS, 44u, h + 1.5708);
 }
 
-// ---- season life: a route asked for by the CPU (U2's marches: gate → the arterial's end, by id) ----
-/** (one thread, every frame while one's asked) the asked (column, hub)'s route — asked of the cache like a rider's,
- *  traced if it's new — and, once it's there, its id, points, length and ends written for the CPU's few-word read */
-@compute @workgroup_size(1)
-fn routeAsk() {
-  let col = lt(L_ASK);
-  if (col == NONE || col == 0u) { return; }
-  // (SL18: an arterial's route — word 1 0x100 + its index, word 10 where along it to start: its own points from there
-  // out to its last in the box, a route of the pool (made once: the ask's flag cleared once answered))
-  if (lt(L_ASK + 1u) >= 0x100u) {
-    artRouteAnswer(lt(L_ASK + 1u) - 0x100u, ltf(L_ASK + 10u));
-    setLt(L_ASK, 0u);
-    return;
-  }
-  // (the asked column onto the graph: the nearest walkable within three)
-  let id = routeFor(snapWalk(cxy(col - 1u)), lt(L_ASK + 1u));
-  setLt(L_ASK + 2u, id);
-  if (id == R_PENDING || id == R_FAILED) { return; }
-  let f = rFirst(id);
-  let n = rCount(id);
-  setLt(L_ASK + 3u, n);
-  setLtf(L_ASK + 4u, rLen(id));
-  let a = pt(f);
-  let b = pt(f + n - 1u);
-  setLtf(L_ASK + 5u, a.x);
-  setLtf(L_ASK + 6u, a.y);
-  setLtf(L_ASK + 7u, b.x);
-  setLtf(L_ASK + 8u, b.y);
-  setLt(L_ASK + 9u, genOf(rId(id)));
-}
-
 /** (SL18) a route made along arterial k from `s0` (world units along it from its centre end) out to its last point in
  *  the box — the atlas road's way out — its points at the ground's (or a deck's) height, each with its free width (a
  *  gate narrower than the street out: the wall's columns are blocked in the walk mask). Its id with its generation, or
@@ -1946,25 +1909,6 @@ fn artRoute(k: u32, s0: f32) -> u32 {
 }
 /** a march route's points: about this far apart (m) */
 const ART_STEP: f32 = 2.0;
-/** (the route ask's answer for an arterial: artRoute's, written as routeAsk's) */
-fn artRouteAnswer(k: u32, s0: f32) {
-  setLt(L_ASK + 2u, R_FAILED);
-  let id = artRoute(k, s0);
-  if (id == NONE) { return; }
-  let f = rFirst(id);
-  let n = rCount(id);
-  let a = pt(f);
-  let b = pt(f + n - 1u);
-  setLt(L_ASK + 2u, id);
-  setLt(L_ASK + 3u, n);
-  setLtf(L_ASK + 4u, rLen(id));
-  setLtf(L_ASK + 5u, a.x);
-  setLtf(L_ASK + 6u, a.y);
-  setLtf(L_ASK + 7u, b.x);
-  setLtf(L_ASK + 8u, b.y);
-  setLt(L_ASK + 9u, genOf(rId(id)));
-}
-
 // ---- season life: the town wall's words ----
 // (citygen streets.wgsl WALL, its layout repeated: keep the same): NB segments; corner b at WB_V + 2b, its ground at
 // WB_Z + b; segment b's piece at WB_KIND + b (0 a wall, 1 a gate, 2 none), a gate's arterial + 1 at WB_ART + b and
@@ -2007,7 +1951,7 @@ const G_FAILED: u32 = 4u;
  *  made (1), each run (first segment | last << 8) and its route, each gate slot's segment + 1, where along its arterial
  *  the ring crosses (f32) and its route, the ring's corners (x, y), their ground (world z), each segment's piece (0 a
  *  wall, 1 a gate, 2 none) */
-const L_WALL: u32 = 53048u;
+const L_WALL: u32 = 53032u;
 const WL_FULL: u32 = 0u;
 const WL_RISEN: u32 = 2u;
 const WL_REACH: u32 = 5u;

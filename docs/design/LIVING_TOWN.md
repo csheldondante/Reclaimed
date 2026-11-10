@@ -227,6 +227,7 @@ run: a district's roads appear), the living town's graph is made again (a 4-byte
 | the grid's place in the window | a slide | 16 B |
 | encoding the frame's dispatches (fixed: relax sweeps, trace, riders, dig, pile, fell, figures) | a frame | — |
 | the graph made again when citygen draws its roads again (a district started) | a mesh run of citygen's | 4 B |
+| (season life) the towns' clock, so the wall's pieces rise on the GPU as citygen draws them (the wall's table) | a frame, in the parameters | 8 B |
 | the panel's counters (debug only, `?living=1` with the panel open) | every 0.5 s | 256 B read |
 
 No route search, job logic, rider state, site pick or material count is on the CPU.

@@ -97,13 +97,16 @@ export class FieldTowns implements CityDistricts {
     const t = this.live.get(town);
     if (!t) return false;
     t.wallStart(this.townTime);
-    // (saving: the ring as made, read back once — a few words, an event)
-    const log = this.logs.of(t.site.at);
-    log.wall = { words: [], to: 0 };
-    void t.gen.readWall().then((w) => {
-      if (log.wall) log.wall.words = w;
-    });
+    // (saving: the ring's words read back at the next save point — saveWall — not now: nothing in play reads them)
+    this.logs.of(t.site.at).wall = { words: [], to: 0 };
     return true;
+  }
+  /** (saving, a save point) the wall's words read back into the town's edit log (a few hundred bytes), if it has one */
+  async saveWall(town: string): Promise<void> {
+    const t = this.live.get(town);
+    const log = t ? this.logs.of(t.site.at) : undefined;
+    if (!t || !log?.wall) return;
+    log.wall.words = await t.gen.readWall();
   }
   wallStage(town: string, from: number, to: number, atOnce = false): boolean {
     const t = this.live.get(town);
@@ -116,8 +119,9 @@ export class FieldTowns implements CityDistricts {
   }
 
   /**
-   * (season life, U2's `man`) The wall's posts in the window (x, y; z window): one on the wall-walk's middle of each
-   * piece fully risen — reached by the stairs beside the gates. Empty: no wall yet (or its ring not read back yet).
+   * (debug and tests only) The wall's posts in the window (x, y; z window): one on the wall-walk's middle of each piece
+   * fully risen. From the ring's words as last saved (saveWall) — empty before the first save point. Orders don't use
+   * it: Track B's `man` reads the wall-walk routes on the GPU (routeread.wgsl wallWalkRoute).
    */
   wallPosts(town: string): { seg: number; at: [number, number, number] }[] {
     const t = this.live.get(town);
@@ -128,7 +132,8 @@ export class FieldTowns implements CityDistricts {
       return { seg: p.seg, at: [x, y, p.at[2] - t.oz()] };
     });
   }
-  /** (season life) the wall's gates, in the town grid's frame (a march's start: LivingTowns.marchRoutes) */
+  /** (debug and tests only) the wall's gates in the town grid's frame, from the ring's words as last saved; orders use
+   *  routeread.wgsl gateRoute(k) on the GPU */
   wallGates(town: string): WallGate[] {
     const t = this.live.get(town);
     const wall = t ? this.logs.of(t.site.at).wall : undefined;

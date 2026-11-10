@@ -21678,3 +21678,16 @@ What it says:
 
 Gates: typecheck clean; GPU tier 197 passed, 10 expected fail (the U2 skeletons; the orderFailed skeleton added after is an 11th, run on its own), 5 skipped; unit tier 858 passed, 3
 expected fail. No shot (nothing drawn changed).
+
+## 2026-11-10 — RT2-3: the order-facing readbacks removed (trackA-routes2)
+
+- Gone: `LivingTown.askRoute` (a GPU route ask polled 40 B at a time), the `routeAsk` kernel and its 16 state words,
+  `LivingTowns.marchRoutes` (ids handed to the CPU) and `unreachablePosts` (three words read back). Track B's orders
+  find their routes in the GPU's wall table (RT2-2); nothing about a route comes back to the CPU.
+- The reach verdict is shown, not read: each risen piece whose walk the town doesn't reach is marked along its top
+  with red (lava) voxels by the figures kernel's spare threads (a thread a segment past the riders: no new dispatch),
+  as the debug overlay marks cut-off columns. `debugWallReach` reads the bits for tests only.
+- The wall's ring is read back only at a save point (`FieldTowns.saveWall`, before the edit log is written at a
+  season's end), no longer when the wall starts. `wallPosts` / `wallGates` (CPU, from those saved words) stay as
+  debug and test helpers.
+- Transfers gate: `askRoute` struck; `readWall` now a save point's read.

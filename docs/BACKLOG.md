@@ -2122,7 +2122,7 @@ The user: "The CPU paths are supposed to be GPU resident … we should not need 
 |---|---|---|---|
 | RT2-1 | Wall-walk stretches as routes: one a run of wall (stair foot → up → along the top → down the next stair), traced on the GPU when the ring is made or a run finishes rising, through `alloc`; 2 m on the walk, 1.1 m on the stairs | M | done (RT2-1/2 commit) |
 | RT2-2 | A per-town GPU table in routeread's header (heads base moved behind a header word): `wallWalkCount/Route/Run`, `gateRoute/Status/Segment(k)` by arterial index, filler gates after; written on the GPU, no polling | M | done (RT2-1/2 commit) |
-| RT2-3 | The order-facing readbacks removed: `askRoute` polling, `marchRoutes`, `unreachablePosts`; unreached wall pieces drawn red from the GPU's reach bits; the ring read back only at a save point | S | open |
+| RT2-3 | The order-facing readbacks removed: `askRoute` polling, `marchRoutes`, `unreachablePosts`; unreached wall pieces drawn red from the GPU's reach bits; the ring read back only at a save point | S | done (RT2-3 commit) |
 | RT2-4 | The settled graph with no CPU signal: worldops edits wake it through a GPU word; the ~45 empty indirect dispatches reduced or measured on the phone (toggle bench) | M | open |
 | RT2-5 | Width at gates: the width pass sees the wall (a gate narrower than its street, stairs narrower still), in the GPU test | S | open |
 | RT2-6 | Shots: the wall-walk overlay (`?livingdebug`), widths along a route | S | open |

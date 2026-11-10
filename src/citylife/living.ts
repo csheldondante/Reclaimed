@@ -10,9 +10,7 @@ import { LIVING_TUNING, type LivingValues } from './params';
 
 /** routes.wgsl's LT layout: its words (to the wall's block's end: L_WALL + WL_WORDS), the counters' first word, the
  *  quarry's, the clearing's */
-export const LT_WORDS = 53048 + 416;
-/** (season life) the route-ask words (routes.wgsl L_ASK) */
-const L_ASK = 53032;
+export const LT_WORDS = 53032 + 416;
 export const L_C = 48;
 export const L_Q = 96;
 export const L_F = 128;
@@ -36,7 +34,7 @@ const WW_ROOM = 36;
 const GATE_AT = WW_AT + 2 * WW_ROOM;
 const GATE_SLOTS = 10;
 /** the wall's state words (routes.wgsl L_WALL: … the reached pieces at + 5) */
-const L_WALL = 53048;
+const L_WALL = 53032;
 export const MAX_RIDERS = 4096;
 /** voxels a rider at most (figures: legs, torso, head, a cart and its load, a falling trunk) */
 const VOX_PER = 14;
@@ -82,7 +80,7 @@ type K =
   | 'checkClear' | 'checkCols' | 'checkPick' | 'checkLay' | 'checkDoors' | 'checkStep'
   | 'hubSeed1' | 'hashScrub' | 'relax' | 'relaxMark' | 'relaxCheck' | 'trace' | 'traceDone' | 'rampRoute' | 'riders'
   | 'sites' | 'sitesClear' | 'figuresClear' | 'figures' | 'overlay' | 'poolSwitch' | 'hashClear' | 'passMeshClear' | 'passMesh'
-  | 'seaSeed' | 'seaRelax' | 'ships' | 'routeAsk' | 'wallWork';
+  | 'seaSeed' | 'seaRelax' | 'ships' | 'wallWork';
 /** each kernel's bindings (at most 8 storage buffers) */
 const SPECS: Record<K, BindSpec> = {
   gate: { 0: 'uniform', 10: 'rw', 11: 'rw', 14: 'rw', 20: 'read' },
@@ -123,7 +121,6 @@ const SPECS: Record<K, BindSpec> = {
   seaSeed: { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 7: 'read', 9: 'rw', 15: 'read' },
   seaRelax: { 0: 'uniform', 9: 'rw', 15: 'read' },
   ships: { 0: 'uniform', 2: 'read', 9: 'rw', 12: 'rw', 15: 'read' },
-  routeAsk: { 0: 'uniform', 1: 'read', 2: 'read', 6: 'read', 8: 'rw', 10: 'rw', 11: 'rw', 15: 'read' },
   // (the wall's routes and table: gate's watch dispatches it)
   wallWork: { 0: 'uniform', 1: 'read', 2: 'read', 6: 'read', 8: 'rw', 9: 'rw', 10: 'rw', 11: 'rw', 15: 'read' },
 };
@@ -341,7 +338,6 @@ export class LivingTown {
         run(cp, 'sites', Math.ceil(this.input.lotRoom / 64));
       }
       run(cp, 'rampRoute', 1);
-      if (this.asking) run(cp, 'routeAsk', 1);
       run(cp, 'riders', Math.ceil(this.riders / 64) || 1);
       // (season life: the ships — their sea field seeded now and then and relaxed a few steps a frame)
       const ships = this.values.people.ships;
@@ -361,45 +357,10 @@ export class LivingTown {
     this.frameNo++;
   }
 
-  private asking = false;
   /**
-   * (season life, U2's marches) A route by id: from `col` (a column of the box) down hub `hub`'s field (5: the GATES —
-   * the arterials' ends), asked of the cached routes like a rider's and traced if it's new. Polled a few words a few
-   * frames apart (an event's read, never a frame's); null if it can't be traced. The id is good while its generation
-   * holds (the points pool switches halves when full: ask again).
-   */
-  async askRoute(col: number, hub: number, along = 0): Promise<{ id: number; points: number; length: number; from: [number, number]; to: [number, number]; gen: number } | null> {
-    while (this.asking) await new Promise((r) => setTimeout(r, 50));
-    this.asking = true;
-    try {
-      this.device.queue.writeBuffer(this.lt, L_ASK * 4, new Uint32Array([col + 1, hub, 0xfffffffe]));
-      this.device.queue.writeBuffer(this.lt, (L_ASK + 10) * 4, new Float32Array([along]));
-      for (let k = 0; k < 100; k++) {
-        await new Promise((r) => setTimeout(r, 100));
-        // (ten words read: the answer)
-        const tmp = this.device.createBuffer({ label: 'living route ask', size: 40, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-        const enc = this.device.createCommandEncoder({ label: 'living route ask' });
-        enc.copyBufferToBuffer(this.lt, L_ASK * 4, tmp, 0, 40);
-        this.device.queue.submit([enc.finish()]);
-        await tmp.mapAsync(GPUMapMode.READ);
-        const w = new Uint32Array(tmp.getMappedRange().slice(0));
-        tmp.destroy();
-        const f = new Float32Array(w.buffer);
-        if (w[2] === 0xfffffffd) return null;
-        if (w[2] !== 0xfffffffe && w[3] > 1) return { id: w[2], points: w[3], length: f[4], from: [f[5], f[6]], to: [f[7], f[8]], gen: w[9] };
-      }
-      return null;
-    } finally {
-      this.device.queue.writeBuffer(this.lt, L_ASK * 4, new Uint32Array([0]));
-      this.asking = false;
-    }
-  }
-
-  /**
-   * (season life, SL19) Which wall pieces' walk is reached from the town: a piece's run of risen wall (between gates,
-   * water and pieces not yet up) is reached when a stair in it has its foot on the living town's graph, joined to the
-   * stores (the STORES field there). One workgroup over the 72 segments, three words read back (an event). Null: no
-   * wall input.
+   * (tests only) Which wall segments' walk the town reaches (routes.wgsl wallWork's reach bits: a piece risen in a run
+   * of risen pieces with a stair whose foot is on the graph joined to the stores). In play the GPU draws the unreached
+   * pieces red itself (wallMark) and Track B reads `wallWalkRun(i)`; nothing reads this but tests. Null: no wall input.
    */
   async debugWallReach(): Promise<boolean[] | null> {
     if (!this.input.wall) return null;

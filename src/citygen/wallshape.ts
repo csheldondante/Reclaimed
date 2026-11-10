@@ -1,7 +1,7 @@
-// (season life, U2's soldiers) The town wall's shape as the CPU knows it: from its words, read back once when it was
-// made (citygen/townlog.ts; streets.wgsl WALL). Pure: posts on its walk and its gates, in the town grid's frame (world
-// units; z world). Track B's `man` takes the posts (one a soldier, on the wall-walk, reached by the stairs beside each
-// gate); `march` starts at a gate (LivingTowns.marchRoutes).
+// (season life; debug and tests only) The town wall's shape as the CPU knows it: from its words, read back at a save
+// point (FieldTowns.saveWall; citygen/townlog.ts; streets.wgsl WALL). Pure: posts on its walk and its gates, in the
+// town grid's frame (world units; z world). Orders don't use it: Track B's `man` and `march` read the GPU's wall table
+// (routeread.wgsl wallWalkRoute, gateRoute), made on the GPU from the same words.
 
 /** streets.wgsl's WALL layout: NB directions; the corners at WB_V, their ground at WB_Z, each segment's piece at WB_KIND */
 export const NB = 72;
