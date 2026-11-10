@@ -35,6 +35,7 @@ struct U {
   t: vec4<f32>, // (citygen M4a) an arterial's width, the height-to-plot ratio (0: storeys × a random 0.7–1.3), a deck's clearance over its banks, the longest bridge
   rc: vec4<f32>, // (M4b) the roads' colour (rgb 0–1), its tone (0 the lab's white, 1 dirt, 2 stone)
   pp: vec4<f32>, // (M4b) the population field: its peak density (0 the field off: 0.5 everywhere), the settlement's purpose (0–5; −1 none), 0, 0
+  tl: vec4<f32>, // (time-lapse) the town's clock now (s), a lot's build time (s), a time-lapse's start and its spread (s)
 };
 @group(0) @binding(0) var<uniform> u: U;
 
@@ -617,8 +618,21 @@ fn hAt(p: vec2<f32>) -> f32 {
   return t.w.x * r3(ixq(t.c[0])) + t.w.y * r3(ixq(t.c[1])) + t.w.z * r3(ixq(t.c[2]));
 }
 /** a vertex into the mesh (w7) */
+/** (time-lapse) what the next vertices are (tlRise moves them each frame): TG_* | an id + 1 << 8 (a record, a district);
+ *  OUTLINE_BIT a roof's outline, over it */
+const TG_STATIC: u32 = 0u;
+const TG_TOP: u32 = 1u;
+const TG_BASE: u32 = 2u;
+const TG_ROAD: u32 = 3u;
+const TG_LOT: u32 = 4u;
+const OUTLINE_BIT: u32 = 8u;
+var<private> curTag: u32 = 0u;
+/** (time-lapse) whether the road piece being drawn marks its columns for the claims (its district started) */
+var<private> roadLive: bool = true;
 fn vert(at: u32, p: vec3<f32>, col: u32, n: vec3<f32>) {
   let o = at * 8u;
+  w5[at * 2u] = curTag;
+  w5[at * 2u + 1u] = bitcast<u32>(p.z);
   w7[o] = bitcast<u32>(p.x);
   w7[o + 1u] = bitcast<u32>(p.y);
   w7[o + 2u] = bitcast<u32>(p.z);
@@ -665,7 +679,7 @@ fn markRoad(a: vec2<f32>, b: vec2<f32>, hw: f32, za: f32, zb: f32, deck: bool) {
   }
 }
 fn ribbon(at: u32, a: vec2<f32>, b: vec2<f32>, hw: f32, col: u32) {
-  markRoad(a, b, hw, 0.0, 0.0, false);
+  if (roadLive) { markRoad(a, b, hw, 0.0, 0.0, false); }
   let d = normalize(b - a);
   let s = vec2<f32>(-d.y, d.x) * hw;
   // (M4b: on the town's paving — the claimed quarter cell over the ground, claimSpans)
@@ -734,6 +748,11 @@ fn roadMajor(@builtin(global_invocation_id) g: vec3<u32>) {
     }
     let at = room(6u);
     if (at == NONE) { return; }
+    // (time-lapse: shown when the first district beside it starts)
+    if (u.h2.z > 0.5) {
+      let side = normalize(gr) * 0.35 * u.a.x;
+      roadOf(cityB2(p + side), cityB2(p - side));
+    }
     ribbon(at, a, b, u.b.x * 0.5, select(cMajor(), cSteep(), steep(a, b)));
   }
 }
@@ -925,6 +944,7 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   if (kind != REC_BUILDING) {
     let at = room(6u);
     if (at == NONE) { return; }
+    curTag = TG_LOT | ((i + 1u) << 8u);
     let lift = select(0.12, 0.15, kind == REC_PLAZA);
     let col = select(C_PARK, cPave(), kind == REC_PLAZA);
     var z: array<vec3<f32>, 4>;
@@ -933,7 +953,8 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     tri(at + 3u, z[0], z[2], z[3], col);
     return;
   }
-  let h = r1(o + 20u) * clamp(r2(i), 0.0, 1.0);
+  // (time-lapse: made full height — tlRise sets the tops' z by the lot's progress each frame)
+  let h = r1(o + 20u);
   if (h < 0.05) { return; }
   let base = r1(o + 21u);
   let top = base + h;
@@ -941,6 +962,7 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   // (M4b: cut off from the town's reach — lotReach — a red line round its roof)
   if (b4[i] == 1u) {
     let at2 = room(24u);
+    curTag = TG_TOP | OUTLINE_BIT | ((i + 1u) << 8u);
     if (at2 != NONE) {
       for (var k = 0u; k < 4u; k++) {
         let a = q[k];
@@ -957,6 +979,9 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   let at = room(30u);
   if (at == NONE) { return; }
   let roof = roofColour(u32(hsh(hs * 7u + 3u) * 5.999));
+  // (the tops tagged, the bases left: TG_TOP vertices at `top` go to base + height × progress)
+  let tg = TG_TOP | ((i + 1u) << 8u);
+  curTag = tg;
   tri(at, vec3<f32>(q[0], top), vec3<f32>(q[1], top), vec3<f32>(q[2], top), roof);
   tri(at + 3u, vec3<f32>(q[0], top), vec3<f32>(q[2], top), vec3<f32>(q[3], top), roof);
   for (var k = 0u; k < 4u; k++) {
@@ -965,6 +990,11 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     // (counter-clockwise: outward is right of a → b)
     tri(at + 6u + k * 6u, vec3<f32>(a, base), vec3<f32>(b, top), vec3<f32>(a, top), C_WALL);
     tri(at + 9u + k * 6u, vec3<f32>(a, base), vec3<f32>(b, base), vec3<f32>(b, top), C_WALL);
+    // (the base vertices: where they're made — or, the lot not begun, sunk with its tops)
+    let tb = TG_BASE | ((i + 1u) << 8u);
+    w5[(at + 6u + k * 6u) * 2u] = tb;
+    w5[(at + 9u + k * 6u) * 2u] = tb;
+    w5[(at + 10u + k * 6u) * 2u] = tb;
   }
 }
 /** the count clamped to the room (threads past it wrote nothing) */
@@ -1382,6 +1412,11 @@ fn vroad(@builtin(global_invocation_id) g: vec3<u32>) {
   let at = room(6u);
   if (at == NONE) { return; }
   let d = normalize(b - a) * 0.3;
+  if (u.h2.z > 0.5) {
+    let mid = 0.5 * (a + b);
+    let side = normalize(vec2<f32>(a.y - b.y, b.x - a.x)) * 0.5 * u.a.w;
+    roadOf(cityB4(mid + side), cityB4(mid - side));
+  }
   ribbon(at, a - d, b + d, u.b.y * 0.5, select(cMinor(), cSteep(), steep(a, b)));
 }
 /** the points as markers: a little hexagonal spire each, red placed by the GPU, blue pinned (r1 the points, r3 H) */
@@ -2086,6 +2121,7 @@ fn groad(@builtin(global_invocation_id) g: vec3<u32>) {
   if (blockedAt(0.5 * (a + b)) || !inTown(0.5 * (a + b)) || !shownCity(cityB2(0.5 * (a + b)))) { return; }
   let at = room(6u);
   if (at == NONE) { return; }
+  if (u.h2.z > 0.5) { let c = cityB2(0.5 * (a + b)); roadOf(c, c); }
   ribbon(at, a, b, u.b.y * 0.5, cMinor());
 }
 
@@ -2269,7 +2305,7 @@ fn gkeep(@builtin(global_invocation_id) g: vec3<u32>) {
 // within 0.6 supercells of a centre). A point's growth key: half its supercell's start, half its own distance to that
 // centre over the limit — shown when under the growth h2.x. Blocks are kept or dropped whole, so the limit runs along
 // streets; the major lines run on through empty cells, and every third or so cross street (an arterial) too.
-const SCW: u32 = 8u;
+const SCW: u32 = 9u;
 const SC_HEAD: u32 = 4u;
 fn hash2(a: u32, b: u32) -> f32 { return hsh((a * 73856093u) ^ (b * 19349663u) ^ (u32(u.h.w) * 83492791u)); }
 /** (m3i) value noise over the supercell grid (one cell of it every `k` supercells), 0–1 */
@@ -2407,7 +2443,14 @@ fn sctab(@builtin(local_invocation_index) li: u32) {
     set5(o + 5u, scS[c].y);
   }
 }
-struct City { state: u32, t: f32, id: u32, dens: f32, purpose: u32 }
+struct City { state: u32, t: f32, id: u32, dens: f32, purpose: u32, start: f32 }
+/** (time-lapse) a road between two districts: tagged with the one that starts first; marked for the claims once it has */
+fn roadOf(c1: City, c2: City) {
+  var c = c2;
+  if (c1.start <= c2.start) { c = c1; }
+  curTag = TG_ROAD | ((c.id + 1u) << 8u);
+  roadLive = c.start <= u.tl.x;
+}
 /** a point's supercell — its state, its growth key, its id (the table at b4) */
 fn cityB4(p: vec2<f32>) -> City {
   var c: City;
@@ -2416,6 +2459,7 @@ fn cityB4(p: vec2<f32>) -> City {
   c.id = 0u;
   c.dens = 0.5;
   c.purpose = 0u;
+  c.start = -1e30;
   if (u.h2.z < 0.5) { return c; }
   let gx = b4[0];
   let gy = b4[1];
@@ -2439,6 +2483,7 @@ fn cityB4(p: vec2<f32>) -> City {
   c.id = bi;
   c.purpose = b4[o + 6u];
   c.dens = r4(o + 7u);
+  c.start = r4(o + 8u);
   return c;
 }
 /** the same, the table at b2 */
@@ -2449,6 +2494,7 @@ fn cityB2(p: vec2<f32>) -> City {
   c.id = 0u;
   c.dens = 0.5;
   c.purpose = 0u;
+  c.start = -1e30;
   if (u.h2.z < 0.5) { return c; }
   let gx = b2[0];
   let gy = b2[1];
@@ -2472,6 +2518,7 @@ fn cityB2(p: vec2<f32>) -> City {
   c.id = bi;
   c.purpose = b2[o + 6u];
   c.dens = r2(o + 7u);
+  c.start = r2(o + 8u);
   return c;
 }
 fn shownCity(c: City) -> bool { return c.state == 2u && c.t <= u.h2.x; }
@@ -3049,4 +3096,103 @@ fn deckSpans(@builtin(global_invocation_id) g: vec3<u32>) {
   let z0 = u32(clamp((z - DECK_T) * 8.0, 0.0, 32767.0));
   let z1 = u32(clamp(z * 8.0, 0.0, 32767.0));
   w5[(u32(wy) * u.n.z + u32(wx)) * 2u] = z0 | (z1 << 16u);
+}
+
+// ==== the time-lapse: a clock per district, each lot's progress from it, the buildings risen each frame ===========
+// The user: "see districts fill out in time lapse and buildings rise up". A district's start (SCT word 8; −1e30 built,
+// 1e30 not started) is set on the GPU — at load (clkInit: all built, or only the core), a time-lapse's (clkTimelapse:
+// each district at T0 + its growth key × the spread, the centre first), an opportunity's claim (clkClaim: the best
+// unbuilt district for a purpose, started now). From it each lot's progress (tlProgress) = clamp((now − start −
+// its own delay) / the build time); tlRise moves the tagged vertices: a building's tops to base + height × progress,
+// a road or a park, a plaza hidden till its district starts. The CPU passes only the clock and which start.
+const BUILT_AT: f32 = -1e30;
+const NOT_YET: f32 = 1e30;
+/** the core built at the start (clkInit mode 1): districts this near the centre (their growth key) */
+const CORE_KEY: f32 = 0.35;
+/** one workgroup: every district's start — mode (n.w) 0 all built, 1 the core built, the rest not yet (w5 SCT) */
+@compute @workgroup_size(256)
+fn clkInit(@builtin(local_invocation_index) li: u32) {
+  let n = min(w5[0] * w5[1], SC_MAX);
+  for (var c = li; c < n; c += 256u) {
+    let o = SC_HEAD + c * SCW;
+    let core = w5[o + 2u] == 2u && bitcast<f32>(w5[o + 3u]) < CORE_KEY;
+    set5(o + 8u, select(NOT_YET, BUILT_AT, u.n.w == 0u || core));
+  }
+}
+/** one workgroup: a time-lapse — every district not started (and not an empty one) starts at T0 + its growth key × the
+ *  spread (tl.z, tl.w) (w5 SCT) */
+@compute @workgroup_size(256)
+fn clkTimelapse(@builtin(local_invocation_index) li: u32) {
+  let n = min(w5[0] * w5[1], SC_MAX);
+  for (var c = li; c < n; c += 256u) {
+    let o = SC_HEAD + c * SCW;
+    if (w5[o + 2u] != 2u || bitcast<f32>(w5[o + 8u]) < 1e29) { continue; }
+    set5(o + 8u, u.tl.z + clamp(bitcast<f32>(w5[o + 3u]), 0.0, 1.0) * u.tl.w);
+  }
+}
+var<workgroup> ckS: array<f32, 256>;
+var<workgroup> ckI: array<u32, 256>;
+/** one workgroup: an opportunity's claim — the best district not started for purpose n.w (its purpose that one: 2,
+ *  plus its density, less half its growth key: dense and central first), started now (tl.x); its id + 1 (0 none) to
+ *  w7[0] — the word read back (w5 SCT, w7 the answer) */
+@compute @workgroup_size(256)
+fn clkClaim(@builtin(local_invocation_index) li: u32) {
+  let n = min(w5[0] * w5[1], SC_MAX);
+  var best = -1e9;
+  var bi = NONE;
+  for (var c = li; c < n; c += 256u) {
+    let o = SC_HEAD + c * SCW;
+    if (w5[o + 2u] != 2u || bitcast<f32>(w5[o + 8u]) < 1e29) { continue; }
+    let sc = select(0.0, 2.0, w5[o + 6u] == u.n.w) + bitcast<f32>(w5[o + 7u]) - 0.5 * bitcast<f32>(w5[o + 3u]);
+    if (sc > best) { best = sc; bi = c; }
+  }
+  ckS[li] = best;
+  ckI[li] = bi;
+  workgroupBarrier();
+  if (li != 0u) { return; }
+  var b = 0u;
+  for (var k = 1u; k < 256u; k++) { if (ckS[k] > ckS[b] || (ckS[k] == ckS[b] && ckI[k] < ckI[b])) { b = k; } }
+  if (ckI[b] == NONE) { w7[0] = 0u; return; }
+  set5(SC_HEAD + ckI[b] * SCW + 8u, u.tl.x);
+  w7[0] = ckI[b] + 1u;
+}
+/** one thread a record: its progress now (b1 the records, b4 SCT, w6 the counts; w5 PROG) */
+@compute @workgroup_size(64)
+fn tlProgress(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= REC_LM + LM_ROOM) { return; }
+  if (i < REC_LM && i >= min(atomicLoad(&w6[0]), REC_LM)) { return; }
+  let o = i * RECW;
+  if (b1[o + 17u] == REC_NONE) { set5(i, 0.0); return; }
+  var start = BUILT_AT;
+  if (u.h2.z > 0.5) { start = r4(SC_HEAD + (b1[o + 18u] & 0xffffffu) * SCW + 8u); }
+  // (each lot its own delay in its district: up to three quarters of the build time)
+  let delay = hsh(b1[o + 23u] ^ 0x51edu) * 0.75 * u.tl.y;
+  set5(i, clamp((u.tl.x - start - delay) / max(u.tl.y, 1e-3), 0.0, 1.0));
+}
+/** one thread a vertex: the tagged ones moved by their lot's progress or their district's start (b1 the records, r2
+ *  PROG, b3 VTAG, b4 SCT; w7 the mesh; args its count) */
+@compute @workgroup_size(64)
+fn tlRise(@builtin(global_invocation_id) g: vec3<u32>) {
+  let v = g.x;
+  if (v >= min(atomicLoad(&args[0]), u.m.y)) { return; }
+  let tag = b3[v * 2u];
+  let kind = tag & 7u;
+  if (kind == TG_STATIC) { return; }
+  let id = (tag >> 8u) - 1u;
+  let z0 = bitcast<f32>(b3[v * 2u + 1u]);
+  var z = z0;
+  if (kind == TG_TOP) {
+    let o = id * RECW;
+    z = r1(o + 21u) + r1(o + 20u) * r2(id) + select(0.0, 0.06, (tag & OUTLINE_BIT) != 0u);
+    // (a lot not begun: its roof and outline sunk out of sight — its walls' bases with them: TG_BASE)
+    if (r2(id) <= 0.0) { z = z0 - 1000.0; }
+  } else if (kind == TG_BASE) {
+    if (r2(id) <= 0.0) { z = z0 - 1000.0; }
+  } else if (kind == TG_ROAD) {
+    if (u.h2.z > 0.5 && r4(SC_HEAD + id * SCW + 8u) > u.tl.x) { z = z0 - 1000.0; }
+  } else if (kind == TG_LOT) {
+    if (r2(id) <= 0.0) { z = z0 - 1000.0; }
+  }
+  w7[v * 8u + 2u] = bitcast<u32>(z);
 }

@@ -8,7 +8,7 @@
 import type { Settlement } from '../api/contracts/settlement';
 import type { CityLots } from '../api/contracts/citygen';
 import { ROW_H } from '../world/lattice';
-import { CityGen, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes } from './gpu';
+import { BUILD_S, CityGen, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes } from './gpu';
 import type { StaticClaims, StaticGrid, GridPlace, OwnedSlot } from '../sim/static-claims';
 import { cellAt } from '../world/lattice';
 import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
@@ -73,6 +73,53 @@ export function fieldTownBox(site: Pick<FieldTownSite, 'at' | 'size'>): FieldTow
   return { x0, y0, w: side, h: side, R, core: CORE * R };
 }
 
+/**
+ * (M4b) A town's layout set up — its box, its raw ground's buffer (to fill: Atlas.rawGroundGpu), its generator with its
+ * inputs (centre, population field, its roads as arterials) and its run's parameters — the one setup FieldTown and the
+ * phone bench (perf/citygenbench.ts) share. The caller fills `raw`, then runs `gen.run(params, 'field')`.
+ */
+export function townLayout(
+  device: GPUDevice,
+  site: FieldTownSite,
+  wrap: { cols: number; rows: number },
+  sea: number,
+  opts: { claimInto?: GPUBufferBinding; vertRoom?: number; built?: 'all' | 'core' } = {},
+): { box: FieldTownBox; raw: GPUBuffer; gen: CityGen; params: StreetParams; centre: [number, number]; local: (p: readonly [number, number]) => [number, number] } {
+  const box = fieldTownBox(site);
+  const { cols, rows } = wrap;
+  // (its ground the atlas's raw ground over the whole box, made on the GPU — the window may be anywhere)
+  const raw = device.createBuffer({ label: `citygen ${site.id} raw ground`, size: box.w * box.h * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  if (site.roads.length > NART) throw new Error(`citygen: ${site.id} has ${site.roads.length} roads, room for ${NART}`);
+  // (the grid's world units: its first column's corner at 0, 0)
+  const ox0 = site.at[0] - near(site.at[0] - box.x0, cols);
+  const oy0 = site.at[1] - near(site.at[1] - box.y0 * ROW_H, rows * ROW_H);
+  const local = ([x, y]: readonly [number, number]): [number, number] => [x - ox0, y - oy0];
+  const centre = local(site.at);
+  const town = { density: DENSITY[site.size], purpose: site.purpose !== undefined ? (POP_PURPOSE[site.purpose] ?? -1) : -1 };
+  const gen = new CityGen(device, { w: box.w, h: box.h, ground: { kind: 'raw', raw, sea }, centre, town, claimInto: opts.claimInto, vertRoom: opts.vertRoom ?? TOWN_VERT_ROOM, built: opts.built });
+  // (each atlas road from the town's centre out: its points every 4 units, from the one nearest the centre, as far as
+  // the box — the GPU cuts it at the box's edge and the town's limit)
+  const R2 = Math.hypot(box.w, box.h * ROW_H);
+  gen.setArterials(
+    box.core,
+    site.roads.map((line) => {
+      let k0 = 0;
+      line.forEach((p, k) => {
+        if (Math.hypot(p[0] - site.at[0], p[1] - site.at[1]) < Math.hypot(line[k0][0] - site.at[0], line[k0][1] - site.at[1])) k0 = k;
+      });
+      const out: [number, number][] = [centre];
+      for (let k = k0; k < line.length && out.length < NAP; k += 2) {
+        out.push(local(line[k]));
+        if (Math.hypot(line[k][0] - site.at[0], line[k][1] - site.at[1]) > R2) break;
+      }
+      return out;
+    }),
+  );
+  // (the town's own inputs over the generator's defaults: its radius and seed)
+  const params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0, roadTone: TONE[site.size] }));
+  return { box, raw, gen, params, centre, local };
+}
+
 /** what the town needs of the game: the device, the world's buffers, the renderer, and where the window is */
 export interface FieldTownIO {
   device: GPUDevice;
@@ -124,47 +171,22 @@ export class FieldTown {
     private io: FieldTownIO,
     readonly site: FieldTownSite,
   ) {
-    const box = (this.box = fieldTownBox(site));
-    const { cols, rows } = io.wrap;
-    // (M4b: its ground the atlas's raw ground over the whole box, made on the GPU — the window may be anywhere)
-    this.raw = io.device.createBuffer({ label: `citygen ${site.id} raw ground`, size: box.w * box.h * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    if (site.roads.length > NART) throw new Error(`citygen: ${site.id} has ${site.roads.length} roads, room for ${NART}`);
-    // (the grid's world units: its first column's corner at 0, 0)
-    const ox0 = site.at[0] - near(site.at[0] - box.x0, cols);
-    const oy0 = site.at[1] - near(site.at[1] - box.y0 * ROW_H, rows * ROW_H);
-    const local = ([x, y]: readonly [number, number]): [number, number] => [x - ox0, y - oy0];
-    const centre = local(site.at);
-    const town = { density: DENSITY[site.size], purpose: site.purpose !== undefined ? (POP_PURPOSE[site.purpose] ?? -1) : -1 };
     // (M4b: its claim grid in a slot of the static claims' arena — the slot its owner's while it lives)
     const st = io.statics();
     if (!st) throw new Error('citygen: no static claims to own the town\'s columns (the level has no integrity registry)');
     const slot = st.ownedSlot();
     if (!slot) throw new Error(`citygen: no claim slot free for ${site.id} (FieldTowns frees one first)`);
     this.slot = slot;
-    this.gen = new CityGen(io.device, { w: box.w, h: box.h, ground: { kind: 'raw', raw: this.raw, sea: io.sea }, centre, town, claimInto: slot.binding, vertRoom: TOWN_VERT_ROOM });
-    // (each atlas road from the town's centre out: its points every 4 units, from the one nearest the centre, as far as
-    // the box — the GPU cuts it at the box's edge and the town's limit)
-    const R2 = Math.hypot(box.w, box.h * ROW_H);
-    this.gen.setArterials(
-      box.core,
-      site.roads.map((line) => {
-        let k0 = 0;
-        line.forEach((p, k) => {
-          if (Math.hypot(p[0] - site.at[0], p[1] - site.at[1]) < Math.hypot(line[k0][0] - site.at[0], line[k0][1] - site.at[1])) k0 = k;
-        });
-        const out: [number, number][] = [centre];
-        for (let k = k0; k < line.length && out.length < NAP; k += 2) {
-          out.push(local(line[k]));
-          if (Math.hypot(line[k][0] - site.at[0], line[k][1] - site.at[1]) > R2) break;
-        }
-        return out;
-      }),
-    );
+    // (a game town starts with its core built; the rest grows by claims and time-lapses)
+    const L = townLayout(io.device, site, io.wrap, io.sea, { claimInto: slot.binding, vertRoom: TOWN_VERT_ROOM, built: 'core' });
+    const { box, centre, local } = L;
+    this.box = box;
+    this.raw = L.raw;
+    this.gen = L.gen;
+    this.params = L.params;
     this.xform = io.device.createBuffer({ label: `citygen ${site.id} place`, size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.place();
     io.addMesh(this.gen.verts, this.gen.args, this.xform);
-    // (the town's own inputs over the generator's defaults: its radius and seed)
-    this.params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0, roadTone: TONE[site.size] }));
     this.bare = makeCompute(io.device, 'citygen bare', [commonWgsl, bareWgsl], { 0: 'uniform', 3: 'read', 4: 'rw', 5: 'rw', 6: 'uniform' });
     this.bareU = io.device.createBuffer({ label: `citygen ${site.id} bare`, size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     // (the reach's start: the first road's point at the core's distance — on the road into town, not in the river)
@@ -277,6 +299,53 @@ export class FieldTown {
   /** the town's lots for what builds on it (api/contracts/citygen.ts) */
   get lots(): CityLots {
     return { records: this.gen.lotRecords, counts: this.gen.lotCounts, progress: this.gen.progress, place: this.xform };
+  }
+
+  /** (time-lapse) the clock it animates till (the town's clock, s), and when its claims were last made again */
+  private animUntil = -Infinity;
+  private lastClaim = -Infinity;
+  private reclaiming = false;
+
+  /**
+   * (time-lapse) Each frame, the town's clock (s): while districts are building, the lots' progress and the buildings
+   * risen on the GPU (CityGen.animate: one submit, nothing read); every 2 s of it and once at the end, the claim grid
+   * made again from the progress and claimed over the window (a mesh run: the claims follow what's risen).
+   */
+  frame(now: number): void {
+    if (this.gone || !this.grid) return;
+    const busy = now < this.animUntil;
+    if (busy) this.gen.animate(now);
+    const due = busy ? now - this.lastClaim > 2 : this.lastClaim < this.animUntil && this.animUntil > -Infinity;
+    if (due && !this.reclaiming) {
+      this.lastClaim = now;
+      this.reclaiming = true;
+      this.gen.animate(now);
+      void this.gen.run(this.params, 'mesh').then(
+        () => {
+          this.reclaiming = false;
+          if (!this.gone && this.grid) this.io.statics()?.reclaim(this.grid);
+        },
+        (e) => {
+          this.reclaiming = false;
+          if (!this.gone) throw e;
+        },
+      );
+    }
+  }
+
+  /** (time-lapse) every district not begun starts from now, the centre first, over `span` s of the town's clock */
+  timelapse(now: number, span: number): void {
+    if (this.gone || !this.grid) return;
+    this.gen.timelapse(now, span, now);
+    this.animUntil = Math.max(this.animUntil, now + span + BUILD_S * 1.75 + 0.5);
+  }
+
+  /** (M4d hook) the best district not begun for this purpose (streets.wgsl P_*) started now: its id (−1 none left) */
+  async claimDistrict(purpose: number, now: number): Promise<number> {
+    if (this.gone) return -1;
+    const id = await this.gen.claimDistrict(purpose, now);
+    if (id >= 0) this.animUntil = Math.max(this.animUntil, now + BUILD_S * 1.75 + 0.5);
+    return id;
   }
 
   /** the bytes it holds on the GPU (its generator's buffers and its raw ground; its claim slot is the arena's) */

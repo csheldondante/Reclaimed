@@ -21082,3 +21082,37 @@ clearing that leaves stumps. Everything on the GPU, the CPU passing inputs only.
 - **Stone really moves:** an interval take in the pit, counters for the face pile, carts and the stores' inbox, then
   the one `deposit` inbox (§8) at the stockpile, so the pile slumps like any loose ground.
 - **Stumps are a flora-field state** (a succession band on a tree column), so nothing per plant is stored.
+## 2026-11-10 — citygen: the town layout's phone bench (`?citygenbench=1`)
+
+`/?skipmenu=1&level=atlas&town=1&fresh=1&citygen=fields&citygenbench=1` (`&benchruns=5&benchsecs=8`). It follows
+speedbench's pattern: screen kept awake, a result card, Download / Copy / Share, and on the dev server a POST to
+/__hitch?kind=citygenbench (perf-reports/).
+- **generate:** the whole town pipeline (`townLayout`, now shared by FieldTown and the bench) for the street lab's five
+  sites at their atlas places (from the fixtures' headers) and the three nearest atlas towns. For each, N runs give GPU
+  ms per stage, the raw ground's wall time, lots and MB.
+- **toggle:** the frame without town generation, with a town generated every frame, and without again (the diff is the
+  number a tiler can be trusted for).
+- **pan:** the streamed-town pan, Muru to its nearest town and 700 units on, then back with the streaming paused
+  (`FieldTowns.paused`).
+- Desktop proxy (headless D3D11, 3 runs):
+  - GPU p50 per town 4.1–6.8 ms (Vagug, a city, 6.0); raw ground about 320 ms wall a town (paced by the tile gate),
+    655 for the city; 33 MB a town, 55 MB the city.
+  - Toggle: 49 towns a second and no change in the 10 ms (vsync) frame.
+  - Pan: p95 10.1 ms; the 644 ms streamer spike again; Bumku made at 1.2 s, Muru let go at 17.7 s.
+
+## 2026-11-10 — citygen: districts fill in a time-lapse; opportunities claim districts
+
+The user: "see districts fill out in time lapse and buildings rise up". The design is in CITYGEN.md "Time-lapse and
+the opportunity hook".
+- **Clocks:** a clock per district (SCT word 8), each lot's progress from it (`tlProgress`), and the tagged vertices
+  moved each frame (`tlRise`): no mesh made again. Roads and parks are hidden until their district starts.
+  - It's a compute pass, not the vertex shader, because the draw stage's 8 storage buffers are taken.
+  - A game town starts with its core built.
+- **Claims:** `clkClaim` is a GPU argmax by purpose; the id is read back (one word) and the district starts now.
+  `citygen.claimDistrict(kind)`; a debug panel (`?citypanel=1`, `?timelapse=1`).
+- **Measured** (headless): claims return in 14–65 ms (the first 536 ms, its first use). The seven districts outside
+  Muru's core went one per claim, and the eighth returned −1. A 30 s time-lapse fills Muru in about 40 s of clock.
+- **Shots:**
+  - a lot not begun showed its roof flat on the ground, then its walls stretched down where the land wasn't drawn;
+    its tops, bases and outline now sink together;
+  - the reach's red outlines over unbuilt lots are hidden with them.

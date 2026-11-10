@@ -195,6 +195,13 @@ export class StaticClaims implements StaticSet {
     this.arenaUsed[k] = 'taken';
     return { binding: { buffer: this.arena, offset: OWN_HEAD_BYTES + k * OWN_SLOT_BYTES, size: OWN_SLOT_BYTES }, index: k };
   }
+  /** (time-lapse) a GPU-owned grid's spans changed on the GPU (a district risen): claimed again over the window's written
+   *  land (claimGrid where free: what grew is taken, nothing let go) */
+  reclaim(g: StaticGrid): void {
+    if (!g.owned) throw new Error(`static claims: ${g.name} isn't GPU-owned (set its things instead)`);
+    this.claimWritten(g);
+  }
+
   /** (M4b) the arena's free slots */
   freeSlots(): number {
     return this.arenaUsed.filter((x) => x === null).length;

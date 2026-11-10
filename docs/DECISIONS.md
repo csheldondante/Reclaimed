@@ -3566,3 +3566,12 @@ world should show what needs clearing and how.
   streaming proves too slow, generate the start town and nearby towns ahead in the background so there's never a
   hitch — measured first (DEVLOG M4b step 4: no hitch from generation on the desktop with the raw ground paced; the
   phone not yet measured).
+
+## 2026-11-10 — citygen: the time-lapse and the opportunity hook
+
+- "The town and the bridges look good."
+- "see districts fill out in time lapse and buildings rise up (until the visual improvements and build shader work)"
+  → a clock per district on the GPU; each lot's progress from it; the buildings risen per frame with no mesh made
+  again; roads shown as their district starts.
+- (via the coordinator) Opportunities claim districts: a GPU argmax by purpose, one word read back, the district's
+  clock started. A game town starts with its core built; the rest grows by claims.
