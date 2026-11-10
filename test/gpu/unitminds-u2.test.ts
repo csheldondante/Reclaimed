@@ -28,6 +28,10 @@ type Why = 'arrived' | 'target-gone' | 'safe';
 interface U2Units extends Units {
   readonly jobDone: ((u: UnitView, job: UnitJob, why: Why) => void)[];
   readonly lost: ((count: number) => void)[];
+  /** (§9a) an order the GPU couldn't resolve: no gate at that arterial yet, a stale route, the page pool full */
+  readonly orderFailed: ((ids: UnitId[], why: 'no-gate' | 'route-stale' | 'pool-full') => void)[];
+  /** (§9a) march by index: town, arterial (routeread's header table), leave the town or come home */
+  march(ids: UnitId[], o: { town: number; arterial: number; leave: boolean }): void;
 }
 /** the U2 contract's optional members, required here: missing today, so each test fails at its first use */
 function u2(units: AgentUnits): U2Units {
@@ -135,6 +139,26 @@ test.fails('interface: a soldier ordered to guard p, knocked down, returns to p'
   await run(15 * TPS, () => arrivals === 2);
   expect(arrivals).toBe(2);
   expect((await units.query(p, 1.6)).map((v) => v.id)).toContain(s);
+  expect(g.takeErrors()).toEqual([]);
+});
+
+test.fails('interface: a march to an arterial with no gate yet fails with orderFailed(ids, "no-gate"), and nobody moves', async () => {
+  const { units, run } = await world();
+  const U = u2(units);
+  if (!U.orderFailed || !U.march) throw new Error('U2: orderFailed / march not on the Units contract yet');
+  // (the tiny world has no town: routeread's table has no entry for arterial 0 of town 0 — the GPU's check, §9a)
+  const ids = Array.from({ length: 6 }, (_, i) => units.spawn('guard', [MID[0] + i, MID[1]], 'f-town', { role: 'guard' }));
+  const failed: [UnitId[], string][] = [];
+  U.orderFailed.push((who, why) => failed.push([who, why]));
+  const before = await units.query(MID, 20);
+  U.march(ids, { town: 0, arterial: 0, leave: true });
+  await run(TPS);
+  expect(failed).toEqual([[ids, 'no-gate']]);
+  const after = await units.query(MID, 20);
+  for (const v of after) {
+    const b = before.find((x) => x.id === v.id)!;
+    expect(Math.hypot(v.at[0] - b.at[0], v.at[1] - b.at[1])).toBeLessThan(0.5);
+  }
   expect(g.takeErrors()).toEqual([]);
 });
 

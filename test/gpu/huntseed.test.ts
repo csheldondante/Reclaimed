@@ -33,7 +33,7 @@ function rnd(seed: number) {
   return () => (s = (s * 1664525 + 1013904223) >>> 0) / 4294967296;
 }
 
-type Mode = 'gpu' | 'cpu' | 'src';
+type Mode = 'gpu' | 'cpu';
 
 async function world(mode: Mode) {
   const map = tinyMap(W, H, 32, () => [{ z0: 0, z1: 10, mat: MAT.Stone }]);
@@ -42,8 +42,7 @@ async function world(mode: Mode) {
   agents.notice.setRules({ on: false, open: false, heightLimit: 1.6, leash: 1000 });
   // (gpu: the hunt's seeds the GPU's; cpu: today's path — the CPU seeds the field each frame (Agents.seed: a seed gone
   // far starts the field over), the baseline)
-  // (src: the GPU's, with the seed-id fix)
-  if (mode !== 'cpu') agents.gpuHunt(HUNT, { bySource: mode === 'src' });
+  if (mode === 'gpu') agents.gpuHunt(HUNT);
   else agents.follow(3, HUNT);
   // (the hunters and their prey stand: groups following nothing)
   agents.follow(1, -1);
@@ -169,22 +168,11 @@ test('baseline: the CPU-seeded hunt field (today) matches the BFS after every wa
   for (const w of waves) expect(w.frames, `wave ${w.wave}: ${JSON.stringify(w)}`).toBeGreaterThan(0);
 });
 
-// (expected to fail: without the seed-id fix the field never empties once the last target dies — the values left
-// round the last seeds count up a step a sweep toward the cap, FRAMECOST FC4; the waves before it pass. Measured, kept
-// as the reason for the fix — UNIT_MINDS_U2.md §5)
-test.fails("without the seed-id fix: the GPU-seeded hunt field matches the BFS while targets die, and empties when the last does", async () => {
+test("the GPU-seeded hunt field (each value keeps its seed: U2 §5b) matches the BFS as fast as today's, and empties", async () => {
   const waves = (results.gpu = await scenario('gpu'));
   log(`gpu ${JSON.stringify(waves)}`);
   for (const w of waves) expect(w.frames, `wave ${w.wave}: ${JSON.stringify(w)}`).toBeGreaterThan(0);
   // (no slower than the CPU's seeds by more than a few frames, wave by wave)
   const base = results.cpu;
   if (base) for (const w of waves) expect(w.frames, `wave ${w.wave}: gpu ${w.frames} vs cpu ${base[w.wave]?.frames}`).toBeLessThanOrEqual((base[w.wave]?.frames ?? 0) + 5);
-});
-
-test('the seed-id fix: the GPU-seeded field with each value\'s seed kept matches the BFS as fast as today\'s, and empties', async () => {
-  const waves = (results.src = await scenario('src'));
-  log(`src ${JSON.stringify(waves)}`);
-  for (const w of waves) expect(w.frames, `wave ${w.wave}: ${JSON.stringify(w)}`).toBeGreaterThan(0);
-  const base = results.cpu;
-  if (base) for (const w of waves) expect(w.frames, `wave ${w.wave}: src ${w.frames} vs cpu ${base[w.wave]?.frames}`).toBeLessThanOrEqual((base[w.wave]?.frames ?? 0) + 5);
 });

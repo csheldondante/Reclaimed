@@ -70,11 +70,13 @@ struct AgentParams {
   // (round 128o, DA-B22) x the units' step's dt (s): a tick's, or at fast-forward the ticks since the last step's
   // (agents.ts stepPlan) — what units.wgsl integrates by in place of G.dt
   // (y, round 128p) the rekinds this step
-  // (z, U2) the GPU-seeded hunt field (NFIELDS: none); (w) 1: it keeps each value's seed (the seed-id fix)
   step: vec4<f32>,
   // (round 128p, DA-B22 (c)(4)) units made another kind where they stand (agents.ts rekind): x the slot, y the kind,
   // z its hp (f32 bits) when w is 1
   rekinds: array<vec4<u32>, 8>,
+  // (U2) x the GPU-seeded hunt field (NFIELDS: none; it keeps each value's seed: relax), y the fields the CPU's marks
+  // this tick are for (FC11: a seed moved; all for a confine, a scope drawn in, the roads), zw unused
+  u2: vec4<u32>,
 };
 fn arriveR(f: u32) -> vec2<f32> {
   let i = f * 2u;
@@ -122,8 +124,11 @@ const ALL_FIELDS: u32 = 0xffffu;
 var<private> frontMask: u32 = 0xffffffffu;
 /** (U2) per surface (as nav), a bit a field: a seed the GPU put there this frame (units.wgsl huntSet); bit 16 + f: there
  *  last frame (so a seed that stays isn't marked again, one that goes is). Then a second plane (from NS): the hunt
- *  field's seed each surface's distance came from (+ 1; 0 none) — the seed-id fix (relax, AP.step.w) */
+ *  field's seed each surface's distance came from (+ 1; 0 none) — the seed-id fix (relax) */
 @group(0) @binding(52) var<storage, read_write> seedMask: array<atomic<u32>>;
+/** (FC11, ?agentprof=1) counters: [f] a chunk asked for field f by a change round it, [16 + f] carried only; [32] seeds
+ *  new this frame, [33] seeds gone (huntSet / huntGone) — read and cleared each tick (agents.ts probeLog) */
+@group(0) @binding(54) var<storage, read_write> frontDbg: array<atomic<u32>>;
 /** (ringwin) column (x, y)'s chunk's slot in the per-chunk marks: its page (common.wgsl pageIdx) */
 fn chunkOfCol(x: u32, y: u32) -> u32 { return pageIdx(vec2<u32>(x, y) / COLS_PAGE); }
 /** (round 107, agentspike) how far a surface's floor moves from the height its cost is reckoned at before that height
@@ -386,11 +391,11 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
       if (f == ROAD_FIELD && onNet(p)) { d = 0.0; }
       // (U2: seeds the GPU scattered this frame — the hunt's targets, units.wgsl huntSet)
       if (d > 0.0 && ((atomicLoad(&seedMask[s]) >> f) & 1u) != 0u) { d = 0.0; }
-      // (U2 §5, the seed-id fix — AP.step.w 1: the hunt field keeps, per surface, the seed its distance came from
+      // (U2 §5, the seed-id fix: the GPU-seeded hunt field keeps, per surface, the seed its distance came from
       // (seedMask's second plane: that seed's surface + 1). A neighbour whose seed is no longer one (its distance there
       // isn't 0) is passed over: a seed gone empties the values it made at once, then they refill from the seeds left —
       // no count-up (FRAMECOST FC4))
-      let bySource = f == u32(AP.step.z) && AP.step.w > 0.5;
+      let bySource = f == AP.u2.x;
       var src = select(0u, s + 1u, d == 0.0);
       if (d > 0.0) {
         for (var dd = 0u; dd < NDIR; dd++) {
@@ -487,6 +492,21 @@ fn frontBuild(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   if (fm == 0u) { return; }
+  // (FC11: what asks, a field at a time — a change round it (low) or carried (high, not also changed); read under
+  // ?agentprof=1)
+  for (var f = 0u; f < NFIELDS; f++) {
+    if (((fm >> f) & 1u) == 0u) { continue; }
+    var changed = false;
+    for (var dy = -1; dy <= 1; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        let i = i32(b.x) + dx;
+        let j = i32(b.y) + dy;
+        if (i < i32(AB[0].x / cs) || j < i32(AB[0].y / cs) || i >= i32(AB[0].z / cs) || j >= i32(AB[0].w / cs)) { continue; }
+        if (((atomicLoad(&dirtyCur[pageIdx(vec2<u32>(u32(i), u32(j)))]) >> f) & 1u) != 0u) { changed = true; }
+      }
+    }
+    atomicAdd(&frontDbg[select(16u + f, f, changed)], 1u);
+  }
   // (round 107: past FRONT_CAP, the chunk is carried to the next sweep — its fields in the high half: relaxed then, itself only)
   let k = atomicAdd(&frontArgs[3], 1u);
   if (k >= FRONT_CAP) {
@@ -523,5 +543,6 @@ fn clearFields(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(8, 8)
 fn markChunks(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
-  atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], ALL_FIELDS);
+  // (FC11 (c): for the fields whose seeds moved — not every field)
+  atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], AP.u2.y & ALL_FIELDS);
 }

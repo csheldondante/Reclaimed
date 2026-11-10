@@ -47,7 +47,7 @@ All of these run in `unitStep` (`units.wgsl:330`) unless a row says otherwise. A
 | 12 | FLEE entry, new (U0) | hp < kind.fleeFrac·maxhp, or `f.z` (nearest hunter) < kind.fear while it can't fight | → FLEE; `g.w` reset while `f.z` < fear; out after 3 s with `f.z` > 1.5·fear | step | f.z, kind |
 | 13 | combat words, actors, side map (:860-863) | — | unchanged: CPU orders written on change. Actors are written each frame (the hero moves). | — | — |
 
-### 2b. Fixed fields (NFIELDS 13 → 20)
+### 2b. Fixed fields (NFIELDS 13 → 20). *HUNT/THREAT/FLEE become per side: §9e*
 
 | Field | Seeds | Written by |
 |---|---|---|
@@ -65,7 +65,7 @@ All of these run in `unitStep` (`units.wgsl:330`) unless a row says otherwise. A
 from their own previous-seed lists. A field's "has seeds" bit and its restart bit become GPU words. Today they are CPU
 uniforms (`AP.n2.w`, `n3.w`).
 
-## 2c. The field pool (replaces GOALS=3 and TARGETS=8)
+## 2c. The field pool (replaces GOALS=3 and TARGETS=8). *Superseded by §9b, the paged field atlas*
 
 | Question | Answer |
 |---|---|
@@ -155,7 +155,7 @@ reaches exactly 8 with seedMask.
 
 | Finding | Number |
 |---|---|
-| Correctness vs. a CPU BFS while targets die (`test/gpu/huntseed.test.ts`, 128² flat, 5 waves) | CPU seeds, GPU seeds, and GPU seeds + seed-id all match the BFS again in 45–54 frames a wave. It is the same in every mode: the front's cap sets it, not the count-up. |
+| Correctness vs. a CPU BFS while targets die (`test/gpu/huntseed.test.ts`, 128² flat, 5 waves) | CPU seeds, GPU seeds, and GPU seeds + seed-id all match the BFS again in 45–54 frames a wave. It is the same in every mode: the propagation sets it (5c), not the count-up. |
 | The last target dies (no seeds left) | CPU: empty in 3 frames (its restart). GPU: **never** within 240 frames (the FC4 count-up). GPU + seed-id: 4 frames. |
 | Town, 200 v 200, 1x: relax ms, mean / p95 (two runs each) | huntgpu=0: 0.29–0.38 / 0.48–0.61. huntgpu=1: 0.23–0.31 / 0.34–0.47. +huntsrc: 0.25–0.31 / 0.46–0.52. fieldfront=0: 0.34–0.37 / 0.61–0.65. The run-to-run spread is as large as the differences. |
 | Seed kernels | 0.02–0.03 ms a frame |
@@ -166,6 +166,61 @@ seed-id fix, or an equivalent, to empty. The cost risk has moved: in a 400-unit 
 whichever way the field is seeded, so fields lag by the cap, not by the seeding. FC4's "what is left" is the next thing
 to examine before 1,000 units. Notice (0.5–1.1 ms) is the largest agents stage, ahead of relax.
 
+*(Corrected by 5c: the 45–54 frames on the tiny map are the relaxation's propagation at the low tier's 2 sweeps a
+frame, not the cap. That map never fills the cap.)* The seed-id fix is now the only GPU path (`?huntsrc` is gone).
+
+### 5c. FC11: why the front is saturated, and what to change (round 3, 2026-11-10)
+
+**What asks** (town, 200 v 200, `?huntgpu=1`, q=low: 2 sweeps a tick; chunk asks summed over a tick's sweeps; one run
+each, see the DEVLOG for every run):
+
+| Field | Asks a tick (changed / carried) | Its CPU seeds changed | Why |
+|---|---|---|---|
+| foes (defenders' targets, CPU-seeded ≤ 6) | 80 / 67 | 1,189 of 1,200 ticks | moving seeds re-marked every tick: the whole basin shifts by more than DIST_EPS |
+| goal0–2 (AgentUnits' 3 shared goals) | up to 80–100 / 70–80 for whichever goal churns | 114–1,192 ticks, by run | goals handed between guards' posts, seeds moved within RESEED_NEAR: relaxed in place (count-up) |
+| hunt (GPU-seeded, every raider's target) | 12–25 / 16–21 | — (0.04–0.23 seeds new a tick) | its seeds (guards) mostly stand, and only a cell change marks |
+| each static field (rounds 0–6, road) | 12–16 / 12–14 | never | **the CPU's marks mark every field** (markChunks: ALL_FIELDS) |
+
+There are no peel or column changes to speak of (1–5 peel ticks in 1,200).
+
+**The hypotheses, each a toggle:**
+
+| | Toggle | Result |
+|---|---|---|
+| (a) direct steering near the target | `?direct=R` (measured, then removed) | **Rejected.** Only 3–8% of hunters are within 10 cells of their target at any moment (hunter-to-target: <10 cells 116–315 of ~3,900 samples; 15–40 cells for 80%). Near a target the field is fresh anyway: reaction at gap 6 is 9–12 frames with or without it. It also read another unit's row in the step's own dispatch (a race). |
+| (b) the cap | `?frontcap=64/128` | At 128 the demand fits: 92 chunks a sweep (the whole scope), 0 carried. relax ms (desktop, mean/p95): cap 32: 0.46/0.65; 64: 0.71/1.21 (a noisy run: notice was up too); 128: 0.53/0.65. On desktop relax is not bound by chunks; the phone's slope is unknown and must be benched. |
+| (c) seeds that stay in a cell | `?seedcell=1` (a CPU seed that stays in its cell is no change; marks only for the fields whose seeds changed) | foes' seed changes fall from 1,189 to 116 ticks. The static fields' asks fall from 12–16 to 0.1, **but the total doesn't fall** (105 asked a sweep): the moving goal and foes basins fill the freed room. GPU seeds already behave this way (a seed marks only on a cell change). |
+
+**Reaction latency, the acceptance number** (`test/gpu/huntreact.test.ts`: one hunter between two prey, its target
+dies; frames until its velocity has any part toward the new one):
+
+| Gap to the new target | 2 sweeps (phone tier) | 8 sweeps | 16 sweeps |
+|---|---|---|---|
+| 6 cells | 9–12 | — | — |
+| 40 cells | 11–27 | 10–12 | 9–10 |
+
+- Notice retargets in 1 frame.
+- About 7–9 frames is the steering's own floor: velocity eases at 6/s, and a unit walking at 3 cells/s must cross zero.
+- The cap made no difference here (32/64/128 the same), because one seed never fills it.
+- Far reaction is set by how far a change travels per sweep, about 1–2 cells, times the sweeps per frame.
+
+**Recommendation** (to build next, each with its toggle diff and the reaction test as the gate):
+1. **Relax a chunk several times in workgroup memory per sweep** (a block Gauss–Seidel / fast-iterative relax: the 16×16
+   chunk plus halo loaded once, K inner iterations, written once). A change then crosses a chunk per sweep instead of
+   1–2 cells. At the phone's 2 sweeps this should bring 40-cell reaction from 11–27 frames to the floor, as 16 sweeps do
+   today, with the same memory traffic per chunk. This addresses the acceptance number directly.
+2. **Retire the CPU's moving-seed fields:** foes becomes HUNT_D, seeded on the GPU like hunt, and the 3 goals become the
+   pool (§2c). They are the measured demand. The GPU-seeded field with 200 seeds asks ~¼ of what foes with ≤ 6 does.
+3. **Mark per field** (seedcell's second half) by default: correct, and static fields stop paying for others' seeds.
+   The cell quantisation of CPU seeds becomes moot once foes and goals are GPU-seeded.
+4. **The cap:** keep 32 until (1) lands, then size it to the scope (128 fit this fight) and run the phone bench. A
+   per-chunk ms slope on the phone decides it, not desktop.
+5. Not (a).
+
+**Notice spikes:** one run caught one. In that run every agents stage had a spike (maxima: notice 122 ms, relax 40,
+step 33, hunt 8.9, against means of 1.6/0.75/0.12/0.04). That points at a whole-GPU stall rather than notice's own
+work. Whether it was one frame wasn't isolated; not chased further.
+
 ## 6. Interface tests both tracks run (`test/gpu/unitminds-u2.test.ts`)
 
 Through the `Units` contract only, with AgentUnits on Dawn. `update()` drains events and decides nothing.
@@ -175,6 +230,7 @@ Through the `Units` contract only, with AgentUnits on Dawn. `update()` drains ev
 | an order for group g produces an arrival event | 12 units, `order(ids, go p)`, 40 cells away on open stone | each id gets `arrived` once within 30 s of simulated time; no `observe` is called |
 | a hit in the step produces hurt/death with `by` | a guard and a raider (hp 3, damage 1) facing each other; no CPU `hit` | `hurt` with `by` = the striker's id, then `died` with `by` = the striker's id |
 | a soldier ordered to guard p, knocked down, returns to p | guard at p, `strike` it 6 cells off with a lift | within 15 s, `query(p, 1.6)` finds it; `arrived` fires again for the guard |
+| a march to an arterial with no gate yet fails with `orderFailed` (§9a) | 6 guards, `march(ids, {town 0, arterial 0, leave})` on a world with no town | `orderFailed(ids, 'no-gate')` once; nobody moves more than 0.5 cells |
 
 ## 7. Failure modes as GPU tests (same file, `test.fails` until U2 lands)
 
@@ -202,6 +258,84 @@ march?(ids: UnitId[], route: RouteId, to: V2, whole?: () => void): void;
 formation?(ids: UnitId[], at: V2, facing: V2, shape: { rows: number; spacing: number }): void;
 ```
 
+## 9. The user's answers (2026-11-10): design only, not built this round
+
+### 9a. Every order argument comes from the CPU's own state (the GPU-resident rule)
+
+Soldier orders carry intent by index, never GPU-derived data. If the CPU would have to read an argument back from the
+GPU first, it becomes an index the GPU resolves. **A row whose source is a GPU read is a design bug.**
+
+| Order (CPU → GPU) | Argument | Where the CPU got it |
+|---|---|---|
+| spawn | kind, place, side, hp | the game's own: the plan, a scenario, a raid |
+| go / guard | a place (x, y) | The plan, authored on the CPU, or a tap (the camera's ray on the CPU's ground). The GPU picks the surface. |
+| follow / attack | a unit id | the CPU's spawn result, or an event (noticed, hurt, death) |
+| patrol | centre, radius, ≤ 4 points | authored |
+| flee_from | a place or a unit id | authored (a spell's aim) or an event |
+| **man** | town index, side? | The town's index in the CPU's plan. The GPU builds the slots from the town's wall-walk routes in routeread (a per-town table, asked of Track A). |
+| **march** | town index, **arterial index**, leave | The plan's arterial number. The GPU reads routeread's header table (by arterial; filler gates after the arterials) and checks the entry and its generation (`routeValid`). An empty or stale entry rejects the order with **`orderFailed(g, why)`** on the event ring. |
+| formation | rows, spacing; rank k = the unit's place in the order's id list | authored, and the CPU's own list |
+| side relations | the side × side matrix (9e) | the game's diplomacy, authored |
+| combat word, side map | a unit's side and flags; a column's side of the wall | the CPU's records; the plan's walls |
+| hits, strikes | place, radius, push | the player's aim, or the game's spell |
+| actors | the hero's position | the CPU simulates the hero |
+
+**Bugs found, to remove:**
+- Track A's order-facing readbacks go: `LivingTowns.marchRoutes` (route ids and generations read back), `askRoute`
+  polling, and the `wallPosts`/`unreachablePosts` reads. Route ids stay on the GPU.
+- Unreachable wall posts show as a **red in-world marker** drawn from Track A's GPU label, not as an error.
+- Any game code that turns `Units.query` or an observed `UnitView.at` into an order's place should order by unit id
+  (follow/attack) or by an authored place instead.
+
+**`orderFailed(g, why)`** is a new event, EV_ORDER_FAILED; its `other` is the reason: NO_GATE, ROUTE_STALE or POOL_FULL.
+- The contract gains `readonly orderFailed?: ((ids: UnitId[], why: 'no-gate' | 'route-stale' | 'pool-full') => void)[]`.
+- Interface test: march to an arterial with no gate yet → `orderFailed(ids, 'no-gate')`, and no unit moves.
+
+### 9b. The paged field atlas (replaces §2c's fixed pool of 8; the user: "yes move to pages for the fields")
+
+| Part | Design |
+|---|---|
+| Page | One field over one chunk: 16×16 columns × NAV_K surfaces × f32 = **4 KB**. A dynamic field (GPU-seeded: hunt, threat, unit-target goals) has a second 4 KB plane for the seed-id (§5b). |
+| Pool | One buffer of P pages and a GPU free stack (an atomic count and a list). Sized by measurement. 2,048 pages = 8 MB; today's 13 window-wide planes are 18.8 MB. |
+| Page table | Per field id, chunk → page + 1 (0: no page, which reads as FAR): `u32 pageOf[f * nChunks + chunk]`. At today's window (~400 chunks) that is 1.6 KB a field; 256 field ids cost 410 KB. Field ids are what the CPU allocates (a goal, an order, a side's hunt): many, cheap, no fixed 8. |
+| Who allocates pages | **The GPU, as the field grows.** When relax finds a finite value at a page's border toward a chunk with no page for that field, it pops one. The table entry is claimed with atomicCAS, so there is one pop per chunk. Growth is bounded by the field's reach budget: set by the order, default the scope. The CPU can't allocate pages, because where a field reaches isn't known without a readback (9a). The CPU allocates only field ids, and releases them on the events that end the last holder's job. |
+| Freeing | A released field id's pages go back to the stack (a kernel over its table row). So do pages whose chunk leaves the scope. |
+| Front | **Per page.** A dirty word per page replaces a bit per field in a chunk's word, so the 16-field limit of FC10 goes. frontBuild lists dirty pages and their same-field neighbour pages (through the table). relax runs one workgroup per page. FRONT_CAP becomes a page cap. FC12's block relaxation (tile + halo in workgroup memory) loads the 8 neighbour pages' borders once a workgroup. |
+| Indirection cost | Relax: one table read per neighbour page per workgroup (9 per page), not per cell. Steer (`downField`): one table read for the unit's chunk, and one per neighbour across a chunk border (on average under one a step). Expected to be noise next to the 6 neighbour distance reads. To be measured by a toggle diff in the battle scene. |
+| Pool full | A failed pop sets `pageFails` and emits EV_ORDER_FAILED(POOL_FULL) once a frame. The CPU shows it as the **fatal overlay**. The field still works where it has pages. |
+
+### 9c. Manning walls: a formation along the wall-walk
+
+`man {town, side?}`:
+- The group marches by the town's routes to the stairs, then spreads along the wall-walk.
+- Slot k sits at `s = k · spacing` along the town's wall-walk routes, concatenated and filtered by side. They come from
+  a per-town table of wall-walk route ids in routeread, asked of Track A.
+- There is no field per post.
+- Arrival is the group's: one EV_ARRIVED when its last slot is filled.
+- Unreachable posts are Track A's GPU label (the red marker).
+
+### 9d. Formations on every march (road route or flow field)
+
+| Part | Design |
+|---|---|
+| Anchor | One record per group on the GPU: a route position `s` (through `routeAt`), or on a field march a unit-like point steering down the group's field. It moves at its slowest soldier's speed, held back while the rear slots lag. |
+| Trail | A field march keeps a ring of the anchor's last N positions with their distance along, so a rank is placed on the path behind it, not in a straight line. A route march uses `routeAt` itself. |
+| Slots | Rank k (from the order's id list) gives row r and column c. `cols = clamp(floor(width(s_r) / spacing), 1, maxCols)`; rows follow from cols. The slot is pathAt(s_anchor − r·spacing) + normal · (c − (cols − 1)/2) · spacing. Where the way narrows, cols drop and the column lengthens. |
+| Width | From routes, if Track A supplies it per point (asked). Otherwise a **clearance field**: a static paged field seeded at every surface edge a walker can't cross (a missing link, a drop, deep water), relaxed only on the dirty front (terrain changes). width = 2 × clearance at the path point. |
+| Units | Each soldier's step reads the anchor and trail, written by an anchor kernel before the step, so there is no race. It steers straight to its slot when within a few cells and `sightClear`; otherwise it follows the group's route or field. |
+| Cost | One anchor kernel per group per tick, plus one static clearance field. |
+
+### 9e. Sides: a hunt field and a threat field per army (replaces "one threat field in v1")
+
+| Part | Design |
+|---|---|
+| Side | A unit's side (army) is a small number in its combat word (today's faction byte, ≤ 255). |
+| A side's fields | Two field ids in the atlas: **hunt[s]**, seeded at every unit side s's fighters target (§5b's kernels, filtered by side), and **threat[s]**, seeded at every unit side s's hostile fighters are, for others to flee. Being paged, each covers only the ground around its own army. |
+| Finding them | A small table, `sideFields[side] = (hunt id, threat id, flee id)`, written by the CPU when a side is made (an order). A unit reads its side from its combat word, and its side's ids from the table: one uniform-sized lookup, no field index in the row. |
+| Who is an enemy | The CPU writes a **side relation matrix** (≤ 16 × 16 bits: hostile, ally, neutral) once, as an order, and again when diplomacy changes. notice reads it in place of today's faction test (`mayFight`). FIGHT closes in down its own side's hunt field, which is seeded only at its targets, already enemies. FLEE reads one flee field per side, relaxed from the min over its enemies' threat fields. |
+| Scaling | Pages grow with the ground each army covers, not with the number of sides: a side whose army stands in one corner costs that corner's pages. Relax work grows with the dirty pages of moving armies. Seeds: one pass over the units per frame for all sides (a unit adds to its side's hunt and threat fields), and only cell changes mark. Flee fields: one per side that can flee, each reading its enemies' threat pages where they overlap its own. |
+| Dirty bits | The front is per page (9b), so the 16-field bit limit of FC10's dirty word goes; FC10 was a step on the way. |
+
 ## Rejected
 
 | Alternative | Why rejected |
@@ -209,4 +343,7 @@ formation?(ids: UnitId[], at: V2, facing: V2, shape: { rows: number; spacing: nu
 | A GPU-side pool allocator (atomic free list) | Every allocation follows a CPU order. A second allocator would be a second copy of who holds what. |
 | Each attacker writes the target's hp | A cross-row write race: the target's own thread writes the same word in the same dispatch. |
 | A per-strike EV_HURT from the attacker | Event volume grows with blows, not units (5,000-unit battles), and the hurt would arrive before it is applied. |
-| One field per guard post | Exhausts the pool for wall posts. Posts ride ROUTE (U5), or share a group slot. Open question 2. |
+| One field per guard post | Exhausts the pool for wall posts. Walls are manned as a formation along the wall-walk (§9c). |
+| A fixed pool of 8 field slots (§2c) | Replaced by the paged field atlas (§9b): the limit is pages, and memory follows the ground covered. |
+| The CPU allocating pages for an order's reach | It can't know where a field reaches without a readback (§9a). |
+| One threat field for everyone | Replaced by a hunt and a threat field per side (§9e). |

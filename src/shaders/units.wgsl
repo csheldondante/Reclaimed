@@ -954,6 +954,7 @@ const HUNT_LIST: u32 = 8192u;
 const HUNT_HEAD: u32 = 4u;
 fn huntAt(l: u32, k: u32) -> u32 { return HUNT_HEAD + l * HUNT_LIST + k; }
 fn huntField() -> u32 { return atomicLoad(&huntList[3]); }
+// (FC11's reaction test: the frame's new seeds and gone ones, counted in frontDbg)
 
 @compute @workgroup_size(1)
 fn huntReset() {
@@ -998,7 +999,10 @@ fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   let n = atomicAdd(&huntList[cur], 1u);
   if (n < HUNT_LIST) { atomicStore(&huntList[huntAt(cur, n)], s); }
   // (new here: the field falls round it)
-  if (((old >> (16u + f)) & 1u) == 0u) { atomicOr(&dirtyCur[chunkOfCol(u32(c.x), u32(c.y))], 1u << f); }
+  if (((old >> (16u + f)) & 1u) == 0u) {
+    atomicOr(&dirtyCur[chunkOfCol(u32(c.x), u32(c.y))], 1u << f);
+    atomicAdd(&frontDbg[32], 1u);
+  }
 }
 
 @compute @workgroup_size(64)
@@ -1012,6 +1016,7 @@ fn huntGone(@builtin(global_invocation_id) id: vec3<u32>) {
   if (((m >> f) & 1u) == 0u && ((m >> (16u + f)) & 1u) != 0u) {
     // (a column's chunk: its page's slot — common.wgsl colIdx)
     atomicOr(&dirtyCur[(s / NAV_K) / (COLS_PAGE * COLS_PAGE)], 1u << f);
+    atomicAdd(&frontDbg[33], 1u);
   }
 }
 

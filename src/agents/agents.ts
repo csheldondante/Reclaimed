@@ -31,7 +31,7 @@ import { RoadStamp } from './roads';
 import { RoadRide } from './ride';
 import type { RoadGraph } from './roadgraph';
 import { CHUNK_CLASS, CHUNK_COLUMNS, CHUNK_DEPTH, CUSTOM, ChangedTiles, TILES_BINDING, cullKernel } from '../sim/cull';
-import { ROW_H } from '../world/lattice';
+import { ROW_H, cellAt } from '../world/lattice';
 import { TUNE, worldG } from '../tune/params';
 import { urlFlags } from '../flags';
 
@@ -49,6 +49,11 @@ const PROF = typeof location !== 'undefined' && urlFlags().get('agentprof') === 
 /** (U2, FC10) a front per field: a chunk relaxed only for the fields that changed round it; ?fieldfront=0 every field
  *  (the toggle diff's other side) */
 const FIELD_FRONT = typeof location === 'undefined' || urlFlags().get('fieldfront') !== '0';
+/** (FC11 (b)) ?frontcap=N: chunks a sweep relaxes at most (agents.wgsl FRONT_CAP; default 32) */
+const FRONT_CAP = Math.max(1, Number((typeof location !== 'undefined' && urlFlags().get('frontcap')) || 32));
+/** (FC11 (c)) ?seedcell=1: a CPU seed that stays in its cell isn't a change, and the CPU's marks name only the fields
+ *  whose seeds changed (off: any move marks, and marks every field — as before) */
+const SEED_CELL = typeof location !== 'undefined' && urlFlags().get('seedcell') === '1';
 export interface AgentTickLog {
   frame: number;
   tick: number;
@@ -62,6 +67,15 @@ export interface AgentTickLog {
   /** each sweep's front (chunks relaxed) and the chunks that asked to be in it (past FRONT_CAP: carried), filled in when read back */
   front: number[];
   asked: number[];
+  /** (FC11) chunk asks over the tick's sweeps, by field: a change round it, or carried only; the hunt's seeds new and
+   *  gone; the fields whose CPU seeds changed, those started over (clearFields), those the CPU's marks were for */
+  fieldAsk?: number[];
+  fieldCarry?: number[];
+  seedsNew?: number;
+  seedsGone?: number;
+  seedChanged?: number;
+  restarted?: number;
+  marksFor?: number;
 }
 
 /**
@@ -97,8 +111,8 @@ export const NAV_K = 4;
 /** unit slots (units.wgsl MAX_SLOTS: an id is generation × MAX_UNITS + slot) */
 export const MAX_UNITS = 8192;
 export const NFIELDS = 13;
-/** (U2, FC10) agents.wgsl FRONT_CAP: chunks a sweep relaxes at most; the front list holds its chunks then their fields */
-const FRONT_CAP = 32;
+/** (FC11) every field's bit (agents.wgsl ALL_FIELDS) */
+const ALL_FIELDS = 0xffff;
 /** (U2) units.wgsl HUNT_LIST: the GPU-seeded hunt's surfaces a frame, two lists */
 const HUNT_LIST = 8192;
 /** (round 128o, DA-A6) units.wgsl RIDE_ARRIVED: an arrival event's `other` at or over it is a ride's (minus it: the group) */
@@ -155,7 +169,8 @@ const P_STEP = P_ARRIVE + Math.ceil((NFIELDS * 2) / 4) * 4;
 /** (round 128p) units made another kind a step (agents.wgsl rekinds) */
 const MAX_REKINDS = 8;
 const P_REKINDS = P_STEP + 4;
-const PARAMS_BYTES = (P_REKINDS + MAX_REKINDS * 4) * 4;
+const P_U2 = P_REKINDS + MAX_REKINDS * 4;
+const PARAMS_BYTES = (P_U2 + 4) * 4;
 /** the most a unit may move in a step (cells): the occupancy, the floor it rides and its links are per cell, so a
  *  step past half a cell could skip a column's checks — the units' step's stride is bound by it (stepPlan) */
 const STEP_CELLS = 0.5;
@@ -399,9 +414,15 @@ export class Agents implements SimSystem {
   /** (U2) agents.wgsl seedMask, units.wgsl huntList: the hunt field's seeds scattered on the GPU (gpuHunt) */
   private seedMask: GPUBuffer;
   private huntList: GPUBuffer;
+  /** (FC11, ?agentprof=1) agents.wgsl frontDbg: what asked, a field at a time; seeds new and gone */
+  private frontDbg: GPUBuffer;
+  /** (FC11 (c)) the fields whose CPU seeds changed since the last marks (ALL_FIELDS: something else marked) */
+  private markFields = 0;
+  private marksFor = 0;
+  private restartLog = 0;
+  /** (FC11) the fields whose CPU seeds changed this tick, and those started over (the log's) */
+  private seedChanged = 0;
   private huntField: number | null = null;
-  /** (U2 §5) the seed-id fix: the hunt field keeps each value's seed (agents.wgsl relax) */
-  private huntBySource = false;
   private hk: { reset: ComputeKernel; unmark: ComputeKernel; set: ComputeKernel; gone: ComputeKernel; flip: ComputeKernel; g: GPUBindGroup[] };
   /** which of `dirty` is the current sweep's at the next tick's start */
   private par = 0;
@@ -632,7 +653,9 @@ export class Agents implements SimSystem {
     // (nothing reached yet: every field starts unreachable)
     device.queue.writeBuffer(this.dist, 0, new Float32Array(NFIELDS * cols * NAV_K).fill(1e9));
     device.queue.writeBuffer(this.kindModelsBuf, 0, this.kindModel);
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, waterclassWgsl, agentsWgsl, unitsWgsl];
+    const agentsSrc = agentsWgsl.replace('const FRONT_CAP: u32 = 32u;', `const FRONT_CAP: u32 = ${FRONT_CAP}u;`);
+    if (FRONT_CAP !== 32 && agentsSrc === agentsWgsl) throw new Error('agents: FRONT_CAP not found in agents.wgsl');
+    const parts = [commonWgsl, layersWgsl, materialsWgsl, waterclassWgsl, agentsSrc, unitsWgsl];
     const mk = (e: string, sp: BindSpec) => makeCompute(device, `agents-${e}`, parts, sp, e);
     // four layouts, each within 8 storage buffers: the peel (it reads the
     // layers and the places), the fields, the units' tick, their draw
@@ -641,6 +664,7 @@ export class Agents implements SimSystem {
     if (NFIELDS > 16) throw new Error("agents: the front marks a field a bit in a dirty word's low half (FC10): at most 16 fields");
     this.seedMask = world.buf('agentSeedMask', 2 * cols * NAV_K * 4, S);
     this.huntList = world.buf('agentHuntList', (4 + 2 * HUNT_LIST) * 4, S);
+    this.frontDbg = world.buf('agentFrontDbg', 64 * 4, S);
     device.queue.writeBuffer(this.huntList, 0, new Uint32Array([0, 0, 0, NFIELDS]));
     // (round 104, simscale: agents/scope.ts)
     this.abBuf = world.buf('agentScope', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
@@ -678,10 +702,10 @@ export class Agents implements SimSystem {
     this.fieldGroup = makeBindGroup(device, 'agents-fields', this.k.relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: this.dirty[0], 35: this.dirty[1], 37: this.navCost, 38: this.abBuf, 40: this.roads, 52: this.seedMask });
     {
       // (U2) the hunt's seeds on the GPU: once a frame before the relaxation, marking the current sweep's dirty words
-      const huntSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 7: 'rw', 10: 'uniform', 34: 'rw', 38: 'uniform', 52: 'rw', 53: 'rw' };
+      const huntSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 7: 'rw', 10: 'uniform', 34: 'rw', 38: 'uniform', 52: 'rw', 53: 'rw', 54: 'rw' };
       const hm = (e: string) => mk(e, huntSpec);
       const k = { reset: hm('huntReset'), unmark: hm('huntUnmark'), set: hm('huntSet'), gone: hm('huntGone'), flip: hm('huntFlip') };
-      this.hk = { ...k, g: this.dirty.map((d, p) => makeBindGroup(device, `agents-hunt ${p}`, k.set.layout, { ...base, 5: this.nav, 7: this.units, 10: this.params, 34: d, 38: this.abBuf, 52: this.seedMask, 53: this.huntList })) };
+      this.hk = { ...k, g: this.dirty.map((d, p) => makeBindGroup(device, `agents-hunt ${p}`, k.set.layout, { ...base, 5: this.nav, 7: this.units, 10: this.params, 34: d, 38: this.abBuf, 52: this.seedMask, 53: this.huntList, 54: this.frontDbg })) };
     }
     if (this.scope) {
       const t = world.tiles!;
@@ -701,12 +725,12 @@ export class Agents implements SimSystem {
       const clearFields = ck('clearFields', { 0: 'uniform', 2: 'uniform', 6: 'rw', 10: 'uniform' }, SCOPE_LIST);
       const occ = ck('occClearCols', occSpec, SCOPE_LIST);
       const enter = ck('scopeIn', enterSpec, ENTER_LIST);
-      const mark = ck('markChunks', { 0: 'uniform', 2: 'uniform', 34: 'rw' }, MARK_LIST);
+      const mark = ck('markChunks', { 0: 'uniform', 2: 'uniform', 10: 'uniform', 34: 'rw' }, MARK_LIST);
       const relaxSpec: BindSpec = { ...fieldSpec, 36: 'rw' };
       const relax = makeCompute(device, 'agents-relax front', [frontSource(src, 'relax')], relaxSpec, 'relax');
       const box = makeCompute(device, 'agents-unitBox', parts, { 0: 'uniform', 2: 'uniform', 7: 'rw', 10: 'uniform', 28: 'rw' }, 'unitBox');
       const reset = makeCompute(device, 'agents-frontReset', parts, { 0: 'uniform', 2: 'uniform', 33: 'rw' }, 'frontReset');
-      const build = makeCompute(device, 'agents-frontBuild', parts, { 0: 'uniform', 2: 'uniform', 10: 'uniform', 33: 'rw', 34: 'rw', 35: 'rw', 36: 'rw', 38: 'uniform' }, 'frontBuild');
+      const build = makeCompute(device, 'agents-frontBuild', parts, { 0: 'uniform', 2: 'uniform', 10: 'uniform', 33: 'rw', 34: 'rw', 35: 'rw', 36: 'rw', 38: 'uniform', 54: 'rw' }, 'frontBuild');
       const clear = makeCompute(device, 'agents-frontClear', parts, { 0: 'uniform', 2: 'uniform', 34: 'rw', 38: 'uniform' }, 'frontClear');
       const L = t.list(SCOPE_LIST);
       const par = <T,>(f: (cur: GPUBuffer, next: GPUBuffer, p: number) => T): T[] => [f(this.dirty[0], this.dirty[1], 0), f(this.dirty[1], this.dirty[0], 1)];
@@ -734,9 +758,9 @@ export class Agents implements SimSystem {
         linksG: par((cur, next, p) => makeBindGroup(device, `agents-links scoped ${p}`, links.k.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 37: this.navCost, 38: this.abBuf, 40: this.roads, 52: this.seedMask, [TILES_BINDING]: lists.around.uniform })),
         relaxG: par((cur, next, p) => makeBindGroup(device, `agents-relax front ${p}`, relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 36: this.frontList, 37: this.navCost, 38: this.abBuf, 40: this.roads, 52: this.seedMask })),
         enterG: par((cur, _n, p) => makeBindGroup(device, `agents-enter ${p}`, enter.k.layout, { ...base, 6: this.dist, 8: this.occ, 16: this.shove, 34: cur, [TILES_BINDING]: enter.buf })),
-        buildG: par((cur, next, p) => makeBindGroup(device, `agents-frontBuild ${p}`, build.layout, { ...base, 10: this.params, 33: this.frontArgs, 34: cur, 35: next, 36: this.frontList, 38: this.abBuf })),
+        buildG: par((cur, next, p) => makeBindGroup(device, `agents-frontBuild ${p}`, build.layout, { ...base, 10: this.params, 33: this.frontArgs, 34: cur, 35: next, 36: this.frontList, 38: this.abBuf, 54: this.frontDbg })),
         clearG: par((cur, _n, p) => makeBindGroup(device, `agents-frontClear ${p}`, clear.layout, { ...base, 34: cur, 38: this.abBuf })),
-        markG: par((cur, _n, p) => makeBindGroup(device, `agents-mark ${p}`, mark.k.layout, { ...base, 34: cur, [TILES_BINDING]: mark.buf })),
+        markG: par((cur, _n, p) => makeBindGroup(device, `agents-mark ${p}`, mark.k.layout, { ...base, 10: this.params, 34: cur, [TILES_BINDING]: mark.buf })),
       };
     }
     this.unitGroup = makeBindGroup(device, 'agents-units', this.k.unitStep.layout, {
@@ -1010,7 +1034,15 @@ export class Agents implements SimSystem {
     if (rest.length + seeds.length > MAX_SEEDS) throw new Error(`agents: more than ${MAX_SEEDS} seeds`);
     // (round 104, simscale: seeds that moved disturb the field — relaxed until it settles again)
     const was = this.seeds.filter((s) => s.field === f);
-    const same = was.length === seeds.length && was.every((s, i) => Math.abs(s.x - seeds[i].x) < 1e-3 && Math.abs(s.y - seeds[i].y) < 1e-3 && (s.z ?? 1e4) === (seeds[i].z ?? 1e4));
+    // (FC11 (c), ?seedcell=1: a seed that stays in its cell — the relaxation reads cells — is no change)
+    const at = (s: Seed) => cellAt(s.x, s.y).join(',');
+    const same =
+      was.length === seeds.length &&
+      was.every((s, i) => (SEED_CELL ? at(s) === at(seeds[i]) : Math.abs(s.x - seeds[i].x) < 1e-3 && Math.abs(s.y - seeds[i].y) < 1e-3) && (s.z ?? 1e4) === (seeds[i].z ?? 1e4));
+    if (!same) {
+      this.markFields |= 1 << f;
+      this.seedChanged |= 1 << f;
+    }
     if (!same && this.scope) {
       for (const s of [...was, ...seeds]) this.scope.mark(s.x, s.y / ROW_H);
       // (round 107, agentspike: a seed gone, or moved more than RESEED_NEAR, leaves the values round where it was too
@@ -1039,11 +1071,10 @@ export class Agents implements SimSystem {
   /**
    * (U2, UNIT_MINDS_U2.md §5) Field `f` seeded on the GPU by every hostile kind's target (its unit word f.y): each a
    * seed, scattered once a frame before the relaxation (units.wgsl huntSet) — beside its CPU seeds (actors'). Set once.
-   * `bySource`: each value keeps the seed it came from, and a seed gone empties its values at once (no count-up).
+   * Each value keeps the seed it came from: a seed gone empties its values at once (no count-up; U2 §5b).
    */
-  gpuHunt(f: number, o: { bySource?: boolean } = {}): void {
+  gpuHunt(f: number): void {
     if (f < 0 || f >= NFIELDS) throw new Error(`agents.gpuHunt: no field ${f} (0..${NFIELDS - 1})`);
-    this.huntBySource = !!o.bySource;
     if (f === this.huntField) return;
     if (this.huntField !== null) throw new Error('agents.gpuHunt: one hunt field, set once (its seeds would be left in the mask)');
     this.huntField = f;
@@ -1672,6 +1703,7 @@ export class Agents implements SimSystem {
       this.shrunk = false;
       this.restart |= seeded;
       for (const s of this.seeds) this.scope.mark(s.x, s.y / ROW_H);
+      this.markFields = ALL_FIELDS;
     }
     // (round 107: and the fields whose seeds went or moved far start over — clearFields — and refill from their seeds)
     // (round 128o, DA-B22: the fields start over where they're relaxed — on the frame's last tick; a step before it
@@ -1681,8 +1713,16 @@ export class Agents implements SimSystem {
     // (round 128i: the road field's seeds are the network's columns, not points the scope marks — a road field set
     // unreachable, or starting over, refills from them: round 128k, the network's nodes' chunks marked, not the whole
     // scope relaxed again each time the scope drew in)
-    if (clear & seeded & (1 << ROAD_FIELD) && this.scope) for (const [x, y] of this.roadRide.nodePoints()) this.scope.mark(x, y / ROW_H);
+    if (clear & seeded & (1 << ROAD_FIELD) && this.scope) {
+      for (const [x, y] of this.roadRide.nodePoints()) this.scope.mark(x, y / ROW_H);
+      this.markFields |= 1 << ROAD_FIELD;
+    }
     if (this.frameWork) this.wasSeeded = seeded;
+    // (FC11 (c): the marks this tick are for these fields — every one for a confine, the roads, a scope drawn in)
+    if (this.scope?.markAll) this.markFields = ALL_FIELDS;
+    this.marksFor = this.markFields;
+    this.restartLog = clear;
+    if (this.frameWork) this.markFields = 0;
     this.clearNow = clear;
     this.kinds.forEach((k, i) => {
       if (!k) return;
@@ -1726,8 +1766,7 @@ export class Agents implements SimSystem {
     f[P_STEP] = this.stepNow.dt;
     const rekinds = this.rekinds.splice(0, MAX_REKINDS);
     f[P_STEP + 1] = rekinds.length;
-    f[P_STEP + 2] = this.huntField ?? NFIELDS;
-    f[P_STEP + 3] = this.huntBySource ? 1 : 0;
+    u.set([this.huntField ?? NFIELDS, SEED_CELL ? this.marksFor : ALL_FIELDS, 0, 0], P_U2);
     rekinds.forEach(([slot, kind, hp], i) => {
       u.set([slot, kind, 0, hp === null ? 0 : 1], P_REKINDS + i * 4);
       if (hp !== null) f[P_REKINDS + i * 4 + 2] = hp;
@@ -1892,7 +1931,8 @@ export class Agents implements SimSystem {
       pass.end();
       pass = enc.beginComputePass({ label: name, timestampWrites: this.prof.timestamps(name) });
     };
-    const log: AgentTickLog | null = PROF ? { frame: this.prof.frameNo, tick: this.ticks, scope: list.length, enter: enter.length, marks: marks.length, peel: 0, units: this.count - this.free.length, fields: this.fieldsUsed, front: [], asked: [] } : null;
+    const log: AgentTickLog | null = PROF ? { frame: this.prof.frameNo, tick: this.ticks, scope: list.length, enter: enter.length, marks: marks.length, peel: 0, units: this.count - this.free.length, fields: this.fieldsUsed, front: [], asked: [], seedChanged: this.seedChanged, restarted: this.restartLog, marksFor: SEED_CELL ? this.marksFor : ALL_FIELDS } : null;
+    if (this.frameWork) this.seedChanged = 0;
     const n = list.length ? t.groups(SCOPE_LIST) : 0;
     let p = this.par;
     if (enter.length) {
@@ -2004,9 +2044,11 @@ export class Agents implements SimSystem {
     const w = window as unknown as { __agentLog?: AgentTickLog[] };
     (w.__agentLog ??= []).push(log);
     if (w.__agentLog.length > 20000) w.__agentLog.splice(0, 10000);
-    if (!n && !peeled) return;
-    const buf = this.probeStage.pop() ?? this.device.createBuffer({ label: 'agentProbeRead', size: 80, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const buf = this.probeStage.pop() ?? this.device.createBuffer({ label: 'agentProbeRead', size: 80 + 256, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     enc.copyBufferToBuffer(this.probe(), 0, buf, 0, 80);
+    // (FC11: what asked this tick, by field; the hunt's seeds new and gone — then cleared for the next)
+    enc.copyBufferToBuffer(this.frontDbg, 0, buf, 80, 256);
+    enc.clearBuffer(this.frontDbg);
     this.probePending.push({ buf, log, n, peeled });
   }
 
@@ -2021,6 +2063,10 @@ export class Agents implements SimSystem {
           q.log.asked.push(u[8 + i]);
         }
         if (q.peeled) q.log.peel = u[16] / 4;
+        q.log.fieldAsk = [...u.slice(20, 20 + 16)];
+        q.log.fieldCarry = [...u.slice(36, 36 + 16)];
+        q.log.seedsNew = u[52];
+        q.log.seedsGone = u[53];
         this.probeStage.push(q.buf);
       }, ignoreTeardown);
     const r = this.readIssued;

@@ -3,10 +3,12 @@
 // lab's), at 1x. Run it with the page's flags, each its own page:
 //   node scripts/lab.mjs run scripts/lab/huntbench.mjs --flags "&agentprof=1&huntgpu=0"
 //   node scripts/lab.mjs run scripts/lab/huntbench.mjs --flags "&agentprof=1&huntgpu=1"
-//   node scripts/lab.mjs run scripts/lab/huntbench.mjs --flags "&agentprof=1&huntgpu=1&huntsrc=1"
+//   node scripts/lab.mjs run scripts/lab/huntbench.mjs --flags "&agentprof=1&huntgpu=1&frontcap=128"   (FC11 (b))
+//   node scripts/lab.mjs run scripts/lab/huntbench.mjs --flags "&agentprof=1&huntgpu=1&seedcell=1"     (FC11 (c))
 // Reports, over the fight's `seconds` (args; default 20): the agents' GPU a frame by stage (ms mean / p95 / max: relax,
 // hunt — the seed kernels —, in, peel, units), each sweep's front (chunks relaxed) and the chunks that asked (past
-// FRONT_CAP 32: carried), the hunters and the dead.
+// FRONT_CAP: carried), the hunters and the dead; (FC11) the asks by field — a change round the chunk or carried only —
+// with the ticks each field's CPU seeds changed, restarted, were marked; the hunters' distances to their targets.
 export const recipe = 'town';
 
 export default async function (lab, args) {
@@ -43,7 +45,29 @@ export default async function (lab, args) {
     g.set(f, { span: ms, a });
   };
   window.__agentLog = [];
-  const run = await lab.run(seconds, 1, { renderEvery: 1 });
+  // (FC11 (a): every second, how far each hunter is from its target — a raw read of the rows, the bench's own)
+  const agents = units.agents;
+  const near = [];
+  const run = { simSeconds: 0, frames: 0, wallMs: 0 };
+  for (let t = 0; t < seconds; t++) {
+    const r = await lab.run(1, 1, { renderEvery: 1 });
+    run.simSeconds += r.simSeconds;
+    run.frames += r.frames;
+    run.wallMs += r.wallMs;
+    const u = new Float32Array(await agents.readRaw('units'));
+    const w = new Uint32Array(u.buffer);
+    for (const id of raiders) {
+      // (its slot: AgentUnits' record — the lab runs this function in the page, so no helpers outside it)
+      const rec = units.recs.get(id);
+      const o = rec ? (rec.gpu % 8192) * 24 : -1;
+      if (o < 0 || !((w[o + 3] >>> 8) & 1)) continue;
+      const code = w[o + 21];
+      if (!code || code & 0x80000000) continue;
+      const t2 = ((code - 1) % 8192) * 24;
+      near.push(Math.hypot(u[t2] - u[o], u[t2 + 1] - u[o + 1]));
+    }
+  }
+  run.xRealtime = +(run.simSeconds / (run.wallMs / 1000)).toFixed(2);
   on = false;
   await new Promise((r) => setTimeout(r, 400));
   prof.onFrame = prev;
@@ -61,10 +85,26 @@ export default async function (lab, args) {
   const total = stat(frames.map((f) => Object.values(f.a).reduce((s, x) => s + x, 0)));
   const fronts = ticks.flatMap((t) => t.front);
   const asked = ticks.flatMap((t) => t.asked ?? []);
-  const carried = asked.map((a) => Math.max(0, a - 32));
   const flags = new URLSearchParams(location.search);
+  const cap = Number(flags.get('frontcap') ?? 32);
+  const carried = asked.map((a) => Math.max(0, a - cap));
+  // (FC11: the asks by field — a change round the chunk, or carried only — and what the CPU did to each field)
+  const NAMES = ['farm', 'fell', 'quarry', 'home', 'store', 'pile', 'site', 'hunt', 'foes', 'goal0', 'goal1', 'goal2', 'road'];
+  const logged = ticks.filter((t) => t.fieldAsk);
+  const perTick = (k, f) => +(logged.reduce((s, t) => s + (t[k]?.[f] ?? 0), 0) / Math.max(1, logged.length)).toFixed(1);
+  const bit = (k, f) => ticks.filter((t) => ((t[k] ?? 0) >> f) & 1).length;
+  const byField = Object.fromEntries(
+    NAMES.map((nm, f) => [nm, { ask: perTick('fieldAsk', f), carry: perTick('fieldCarry', f), seedTicks: bit('seedChanged', f), restarts: bit('restarted', f), markTicks: bit('marksFor', f) }]).filter(([, v]) => v.ask + v.carry + v.seedTicks + v.restarts > 0),
+  );
+  const hist = (v, edges) => Object.fromEntries(edges.map((e, i) => [`<${e}`, v.filter((x) => x < e && (i === 0 || x >= edges[i - 1])).length]).concat([[`>=${edges[edges.length - 1]}`, v.filter((x) => x >= edges[edges.length - 1]).length]]));
   const out = {
-    flags: { huntgpu: flags.get('huntgpu'), huntsrc: flags.get('huntsrc') },
+    flags: Object.fromEntries(['huntgpu', 'frontcap', 'seedcell', 'fieldfront'].map((k) => [k, flags.get(k)])),
+    ticks: ticks.length,
+    byField,
+    seeds: { newPerTick: +(logged.reduce((s, t) => s + (t.seedsNew ?? 0), 0) / Math.max(1, logged.length)).toFixed(2), gonePerTick: +(logged.reduce((s, t) => s + (t.seedsGone ?? 0), 0) / Math.max(1, logged.length)).toFixed(2) },
+    peelTicks: ticks.filter((t) => t.peel).length,
+    markTicks: ticks.filter((t) => t.marks).length,
+    targetDist: { n: near.length, hist: hist(near, [3, 6, 10, 15, 25, 40]) },
     run,
     frames: frames.length,
     agentsGpu: total,
@@ -76,7 +116,7 @@ export default async function (lab, args) {
     dead,
     left: { guards: guards.filter((id) => units.get(id)?.alive).length, raiders: raiders.filter((id) => units.get(id)?.alive).length },
   };
-  await lab.shot(`huntbench-${flags.get('huntgpu') ?? '0'}${flags.get('huntsrc') === '1' ? 'src' : ''}`);
+  await lab.shot(`huntbench-${location.search.replace(/[^\w]+/g, '_').slice(-60)}`);
   console.log(JSON.stringify(out));
   return out;
 }

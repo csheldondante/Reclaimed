@@ -86,8 +86,6 @@ const TARGETS = 8;
 /** (U2, UNIT_MINDS_U2.md §5: the riskiest part, measured) ?huntgpu=1: the hunt field seeded on the GPU from every
  *  hostile's target (Agents.gpuHunt) — the actors' targets still seeded here; off: the TARGETS nearest, as before */
 const HUNT_GPU = typeof location !== 'undefined' && urlFlags().get('huntgpu') === '1';
-/** (U2 §5) ?huntsrc=1 with it: the seed-id fix (Agents.gpuHunt bySource) */
-const HUNT_SRC = typeof location !== 'undefined' && urlFlags().get('huntsrc') === '1';
 const REACH = 1.5;
 const STRIKE = 1.0;
 const LEASH = 28;
@@ -203,10 +201,10 @@ export class AgentUnits implements Units {
 
   constructor(
     readonly agents: Agents,
-    o: { huntGpu?: boolean; huntBySource?: boolean } = {},
+    o: { huntGpu?: boolean } = {},
   ) {
     this.huntGpu = o.huntGpu ?? HUNT_GPU;
-    if (this.huntGpu) agents.gpuHunt(F.targets, { bySource: o.huntBySource ?? HUNT_SRC });
+    if (this.huntGpu) agents.gpuHunt(F.targets);
     agents.defineKind(K.guard, { name: 'guard', height: 1.45, mass: 1.2, hp: 10, speed: 2.7, colours: { torso: MAT.Steel, head: MAT.Steel } });
     agents.defineKind(K.character, { name: 'character', height: 1.4, mass: 1, hp: 10, speed: 2.5, colours: { torso: MAT.Brick, legs: MAT.Wood } });
     agents.defineKind(K.raider, { name: 'raider', height: 1.6, mass: 1, hp: 10, speed: 3.1, reach: 1.35, damage: 1, swingPeriod: 1.1, notice: 160, colours: { torso: MAT.Tile, legs: MAT.Basalt, head: MAT.Obsidian }, model: { voxels: raiderModel(), voxel: 0.25 } });
