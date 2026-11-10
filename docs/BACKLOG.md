@@ -2099,3 +2099,4 @@ The user: "I would like to see agents (many of them) traveling between locations
 | LT-F8 | Passages drawn: the check's passages and the works' access roads as dirt tracks in the town's mesh (citygen's road ribbon from the walk mask) | S | open |
 | LT-F9 | Points pool: switching halves retraces every key (a burst); per-route reference counts would keep the live ones | S | open |
 | LT-F2 | One crowd: the living town's riders as rows of the Agents' unit buffer (a rider while on a route; knocked off → stepped unit → rejoins); RoadRide's next-hop tables deleted with the old towns (M4e) | L | open (the user decides) |
+| SL10 | (done, after the fortress merge) the flags gate (streetlab/control.ts read the URL directly) and the town fixture (stale: the citygen code in the generator's sources moved its hash; recaptured) failed on bb5b2e01 | S | done |

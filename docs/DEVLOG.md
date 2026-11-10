@@ -21385,3 +21385,18 @@ errors to 0, every caller rewritten to the contract, not silenced (no `!`, no `a
   bb5b2e01. fortressfollow 40/40 samples on screen; fortressallbuilt 708/708 at 362 sim s; fortressraid walled: the
   gates shut at 59 s and the gate broke at 84–87 s in two runs (bb5b2e01: 53 s and 75 s), looted 2, torched 2, all 4
   out; with 4 soldiers the archers killed all four before the gate broke on both builds (56/16 vs 65/16 shots/hits).
+
+## 2026-11-10 — after the fortress merge: two unit tests that failed on bb5b2e01, fixed
+
+- **flags:** `streetlab/control.ts` built its site link from `location.search` directly; it now starts from
+  `urlFlags()` (src/flags.ts, the one reader of the URL: the resolved flags, a fresh copy to change).
+- **townfixture:** `data/lab/town.rclt` was made by land generator d341daf70a2dea3d; this tree's is 70e22347a4b0c4f5.
+  What moved the hash: the citygen work added code to generator sources (atlas.ts `rawGroundGpu`, region-land.ts,
+  ways.ts `waysWithout`, settlements.ts `byFields`) — all only used with `?citygen=fields`, so the fortress town's land
+  the fixture holds is the same, but the generator's sources are not, and the rule is that a fixture names the
+  generator that made it. Recaptured properly (`node scripts/labtown.mjs capture` on the fixture's own link,
+  `?town=1&fortress=1&q=low`), not hand-edited.
+- **source encoding:** two files written with CRLF earlier on this branch (citygen/panel.ts, scenes/level/season.ts)
+  back to LF.
+- Checks: typecheck clean; the unit tier 106 files, 861 tests passing (3 expected fails); the season loop plays after
+  the merge (a shot: two cards started, Next season, districts rising).

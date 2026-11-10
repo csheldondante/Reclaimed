@@ -11,6 +11,7 @@ import { whenPipelinesReady } from '../gpu/pipeline';
 import { ROW_H } from '../world/lattice';
 import { AUTO, MAJORS, NAP, NPTS, STAGES, CityGen, type Box, type Stage, type StreetParams, type StreetTimes, type StreetWorld } from '../citygen/gpu';
 import { CITY_PARAMS, scaled } from '../citygen/params';
+import { urlFlags } from '../flags';
 
 /** the sites (game/levels.ts streetSite), as the panel names them: the mesa is the cliff site */
 export const SITES = ['muru', 'river', 'mesa', 'mountain', 'coast'] as const;
@@ -161,7 +162,8 @@ export class StreetLabControl {
 
   /** (the site radio) the page again on that site, every changed panel key kept in the URL */
   private goSite(): void {
-    const q = new URLSearchParams(location.search);
+    // (the page's flags as resolved — src/flags.ts, the one reader of the URL — a fresh copy to build the link)
+    const q = urlFlags();
     const v = values() as unknown as Record<string, number>;
     for (const key of Object.keys(P)) {
       if (key === 'site') q.set('site', SITES[v.site]);
