@@ -9,7 +9,7 @@
 //
 // Bindings (each kernel's layout lists the ones it uses — at most 8 storage buffers a kernel):
 //   0 P (uniform)   1 ROADS  2 H  3 REC  4 CNT  5 POP  6 ART  15 M (citygen's, read)   7 PROG (citygen's progress, read)
-//   8 WALK  9 FIELD  10 LT (state, atomic)  11 PTS  12 RID  13 VOX  14 IND (indirect args)  16 VARGS (draw args)
+//   8 WALK  9 FIELD  10 LT (state, atomic)  11 RB (the route buffer: routeread.wgsl)  12 RID  13 VOX  14 IND (indirect args)  16 VARGS (draw args)
 
 struct P {
   /** w, h (the box), riders, frame */
@@ -221,7 +221,14 @@ const R_FAILED: u32 = 0xfffffffdu;
 @group(0) @binding(8) var<storage, read_write> WALK: array<atomic<u32>>;
 @group(0) @binding(9) var<storage, read_write> FIELD: array<u32>;
 @group(0) @binding(10) var<storage, read_write> LT: array<atomic<u32>>;
-@group(0) @binding(11) var<storage, read_write> PTS: array<vec4<f32>>;
+/** the route buffer (the contract src/shaders/routeread.wgsl reads: keep the two the same): an 8-word header (the
+ *  halves' generations, ids a half, where the points start, the grid's place, the points' room), a head a route
+ *  (first point, count, length, generation), then the points (x, y, z, distance along) */
+@group(0) @binding(11) var<storage, read_write> RB: array<u32>;
+fn ptsRoom() -> u32 { return RB[7u]; }
+fn pt(i: u32) -> vec4<f32> { let o = RB[3u] + i * 4u; return bitcast<vec4<f32>>(vec4<u32>(RB[o], RB[o + 1u], RB[o + 2u], RB[o + 3u])); }
+fn setPt(i: u32, v: vec4<f32>) { let o = RB[3u] + i * 4u; let b = bitcast<vec4<u32>>(v); RB[o] = b.x; RB[o + 1u] = b.y; RB[o + 2u] = b.z; RB[o + 3u] = b.w; }
+fn setHead(rid: u32, first: u32, count: u32, len: f32, gen: u32) { let o = 8u + rid * 4u; RB[o] = first; RB[o + 1u] = count; RB[o + 2u] = bitcast<u32>(len); RB[o + 3u] = gen; }
 @group(0) @binding(12) var<storage, read_write> RID: array<vec4<f32>>;
 @group(0) @binding(13) var<storage, read_write> VOX: array<vec4<u32>>;
 @group(0) @binding(14) var<storage, read_write> IND: array<u32>;
@@ -867,12 +874,12 @@ fn routeFor(col: u32, hub: u32) -> u32 {
   bump(C_MISS, 1u);
   return R_FAILED;
 }
-fn rFirst(r: u32) -> u32 { return lt(L_RH + rId(r) * 4u); }
-fn rCount(r: u32) -> u32 { return lt(L_RH + rId(r) * 4u + 1u); }
-fn rLen(r: u32) -> f32 { return ltf(L_RH + rId(r) * 4u + 2u); }
+fn rFirst(r: u32) -> u32 { return RB[8u + rId(r) * 4u]; }
+fn rCount(r: u32) -> u32 { return RB[8u + rId(r) * 4u + 1u]; }
+fn rLen(r: u32) -> f32 { return bitcast<f32>(RB[8u + rId(r) * 4u + 2u]); }
 /** a route's last point's column (where it ended: its hub's seed) */
 fn rEndCol(r: u32) -> u32 {
-  let p = PTS[rFirst(r) + rCount(r) - 1u];
+  let p = pt(rFirst(r) + rCount(r) - 1u);
   let c = cat(p.xy);
   return select(NONE, ix(c), inBox(c));
 }
@@ -886,12 +893,12 @@ fn pointZ(c: u32) -> f32 {
 /** a route's id (the low 16 bits: the high are its half's generation, in a rider's word) */
 fn rId(x: u32) -> u32 { return x & 0xffffu; }
 fn halfOf(id: u32) -> u32 { return select(0u, 1u, id >= ROUTES / 2u); }
-fn genOf(id: u32) -> u32 { return lt(L_GEN0 + halfOf(id)) & 0xffffu; }
+fn genOf(id: u32) -> u32 { return RB[halfOf(id)] & 0xffffu; }
 /** np points and a route id in the current half: (first point, route id), or NONE when the half is full; three
  *  quarters full asks for the switch */
 fn alloc(np: u32) -> vec2<u32> {
   let h = lt(L_HALF);
-  let room = arrayLength(&PTS) / 2u;
+  let room = ptsRoom() / 2u;
   let at = atomicAdd(&LT[L_PTS], np);
   let rid = atomicAdd(&LT[L_ROUTES], 1u);
   if (at + np > room * 3u / 4u || rid >= ROUTES * 3u / 8u) { setLt(L_SWITCH, 1u); }
@@ -906,7 +913,7 @@ fn poolSwitch() {
   if (lt(L_SWITCH) == 0u || lt(L_GPH) != 4u) { return; }
   let h = 1u - lt(L_HALF);
   setLt(L_HALF, h);
-  atomicAdd(&LT[L_GEN0 + h], 1u);
+  RB[h] = RB[h] + 1u;
   setLt(L_PTS, 0u);
   setLt(L_ROUTES, 0u);
   setLt(L_SWITCH, 0u);
@@ -967,7 +974,7 @@ fn trace(@builtin(global_invocation_id) g: vec3<u32>) {
   var w = 0u;
   var acc = 0.0;
   var prev = cpos(cxy(start));
-  PTS[first] = vec4<f32>(prev, pointZ(start), 0.0);
+  setPt(first, vec4<f32>(prev, pointZ(start), 0.0));
   w = 1u;
   for (var step = 1u; step < n; step++) {
     let cc = cxy(c);
@@ -984,14 +991,11 @@ fn trace(@builtin(global_invocation_id) g: vec3<u32>) {
     if ((step & 1u) == 0u || step == n - 1u) {
       acc += distance(p, prev);
       prev = p;
-      if (w < np) { PTS[first + w] = vec4<f32>(p, pointZ(c), acc); w++; }
+      if (w < np) { setPt(first + w, vec4<f32>(p, pointZ(c), acc)); w++; }
     }
   }
-  setLt(L_RH + rid * 4u, first);
-  setLt(L_RH + rid * 4u + 1u, w);
-  setLtf(L_RH + rid * 4u + 2u, acc);
-  setLt(L_RH + rid * 4u + 3u, key);
-  setLt(L_HASH + s * 2u + 1u, rid);
+  setHead(rid, first, w, acc, genOf(rid));
+  setLt(L_HASH + s * 2u + 1u, rid | (genOf(rid) << 16u));
   bump(C_TRACED, 1u);
 }
 /** after the trace: the queue emptied (only when it was traced: phase 2) */
@@ -1030,7 +1034,7 @@ fn rampRoute() {
   var w = 0u;
   var acc = 0.0;
   var prev = cpos(cxy(rimc - 1u));
-  PTS[first] = vec4<f32>(prev, z0 + 0.05, 0.0);
+  setPt(first, vec4<f32>(prev, z0 + 0.05, 0.0));
   w = 1u;
   for (var k = 0u; k <= bench; k++) {
     // (bench k's ramp down side k mod 4, along the face's strip: from its corner k to corner k + 1, k benches in)
@@ -1039,13 +1043,13 @@ fn rampRoute() {
     let a = pitCorner(k, d);
     let zA = z0 - f32(k) * u.q.y;
     acc += distance(a, prev);
-    PTS[first + w] = vec4<f32>(a, zA + 0.05, acc);
+    setPt(first + w, vec4<f32>(a, zA + 0.05, acc));
     w++;
     prev = a;
     if (k == bench) { break; }
     let b = pitCorner(k + 1u, d);
     acc += distance(b, prev);
-    PTS[first + w] = vec4<f32>(b, zA - u.q.y + 0.05, acc);
+    setPt(first + w, vec4<f32>(b, zA - u.q.y + 0.05, acc));
     w++;
     prev = b;
   }
@@ -1056,15 +1060,12 @@ fn rampRoute() {
     let ww = max(u.q.y / tan(radians(clamp(u.q.w, 20.0, 80.0))), 2.0);
     let wk = vec2<f32>(o.x + f32(bench) * run + ww, o.y + u.q.x * 0.5);
     acc += distance(wk, prev);
-    PTS[first + w] = vec4<f32>(wk, z0 - f32(bench) * u.q.y + 0.05, acc);
+    setPt(first + w, vec4<f32>(wk, z0 - f32(bench) * u.q.y + 0.05, acc));
     w++;
     prev = wk;
   }
-  setLt(L_RH + rid * 4u, first);
-  setLt(L_RH + rid * 4u + 1u, w);
-  setLtf(L_RH + rid * 4u + 2u, acc);
-  setLt(L_RH + rid * 4u + 3u, 0u);
-  setLt(L_Q + Q_RAMP, rid + 1u);
+  setHead(rid, first, w, acc, genOf(rid));
+  setLt(L_Q + Q_RAMP, (rid | (genOf(rid) << 16u)) + 1u);
   setLt(L_Q + Q_RAMPV, bench + 1u);
   setLtf(L_Q + Q_ENDX, prev.x);
   setLtf(L_Q + Q_ENDY, prev.y);
@@ -1155,8 +1156,9 @@ fn startRoute(r: ptr<function, Rider>, col: u32, hub: u32, dir: u32) -> bool {
   return startRid(r, id, dir);
 }
 fn startRid(r: ptr<function, Rider>, id: u32, dir: u32) -> bool {
-  if (rCount(id) < 2u) { return false; }
-  (*r).route = rId(id) | (genOf(rId(id)) << 16u);
+  // (an id carries its generation: a held route whose half was reused since is stale — the caller asks again)
+  if ((id >> 16u) != genOf(rId(id)) || rCount(id) < 2u) { return false; }
+  (*r).route = id;
   (*r).leg = dir;
   if (dir == LEG_FWD) { (*r).s = 0.0; (*r).cursor = 0u; } else { (*r).s = rLen(id); (*r).cursor = rCount(id) - 2u; }
   return true;
@@ -1192,13 +1194,13 @@ fn advance(i: u32, r: ptr<function, Rider>, speed: f32) -> bool {
   (*r).s = clamp((*r).s + select(-1.0, 1.0, fwd) * speed * dt, 0.0, len);
   var k = min((*r).cursor, n - 2u);
   for (var g = 0u; g < 64u; g++) {
-    if (fwd && k + 2u < n && PTS[f + k + 1u].w < (*r).s) { k++; continue; }
-    if (!fwd && k > 0u && PTS[f + k].w > (*r).s) { k--; continue; }
+    if (fwd && k + 2u < n && pt(f + k + 1u).w < (*r).s) { k++; continue; }
+    if (!fwd && k > 0u && pt(f + k).w > (*r).s) { k--; continue; }
     break;
   }
   (*r).cursor = k;
-  let a = PTS[f + k];
-  let b = PTS[f + k + 1u];
+  let a = pt(f + k);
+  let b = pt(f + k + 1u);
   let t = clamp(((*r).s - a.w) / max(b.w - a.w, 1e-4), 0.0, 1.0);
   let dir = select(a.xy - b.xy, b.xy - a.xy, fwd);
   let L = max(length(dir), 1e-4);
@@ -1304,7 +1306,7 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
         r.st = S_WORK; r.timer = u.r.w * (0.5 + rnd(i, u.n.w / 600u));
       } else if (r.st == S_WORK) {
         r.timer -= dt; bump(C_WORKING, 1u);
-        if (r.timer <= 0.0 && startRid(&r, r.route, LEG_BACK)) { r.st = S_BACK; }
+        if (r.timer <= 0.0 && (startRid(&r, r.route, LEG_BACK) || startRoute(&r, homeCol, hub2, LEG_BACK))) { r.st = S_BACK; }
       } else if (r.st == S_BACK) {
         r.st = S_REST; r.timer = u.r.w * (0.3 + rnd(i, 13u));
       }
@@ -1423,7 +1425,7 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
           if (q < FELL_ROOM) { setLt(L_FELL + 1u + q, i + 1u); r.st = S_FELL; r.load = -1.0; }
         }
       } else if (r.st == S_FELL) {
-        if (r.load >= 0.0 && startRid(&r, r.route, LEG_FWD)) { r.st = S_YARD; }
+        if (r.load >= 0.0 && (startRid(&r, r.route, LEG_FWD) || startRoute(&r, r.aux - 1u, H_CAMP, LEG_FWD))) { r.st = S_YARD; }
       } else if (r.st == S_YARD) {
         bump(C_LOG_CAMP, u32(r.load)); r.load = 0.0; r.aux = 0u; r.st = S_DROP; r.timer = 0.0;
       } else if (r.st == S_LOAD) {
@@ -1455,7 +1457,7 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
         // builder works while it's rising and leaves once it's built)
         let p = PROG[r.aux - 1u];
         if (p < 1.0) { bump(C_BUILDWORK, 1u); }
-        if ((r.timer <= 0.0 || p >= 1.0) && startRid(&r, r.route, LEG_FWD)) { r.st = S_BACK; }
+        if ((r.timer <= 0.0 || p >= 1.0) && (startRid(&r, r.route, LEG_FWD) || startRoute(&r, doorCol(r.aux - 1u), H_STORES, LEG_FWD))) { r.st = S_BACK; }
       } else if (r.st == S_BACK) {
         r.st = S_REST; r.timer = 2.0 + rnd(i, 40u) * 4.0;
       }
@@ -1470,7 +1472,7 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
         r.st = S_DROP; r.timer = u.r.w * (0.6 + rnd(i, 41u) * 0.6); bump(C_PRODUCE, 1u);
       } else if (r.st == S_DROP) {
         r.timer -= dt;
-        if (r.timer <= 0.0 && startRid(&r, r.route, LEG_FWD)) { r.st = S_GO; r.load = 0.0; }
+        if (r.timer <= 0.0 && (startRid(&r, r.route, LEG_FWD) || startRoute(&r, homeCol, H_GATES, LEG_FWD))) { r.st = S_GO; r.load = 0.0; }
       } else if (r.st == S_GO) {
         r.st = S_REST; r.timer = 20.0 + rnd(i, u.n.w / 600u + 42u) * 40.0;
       }

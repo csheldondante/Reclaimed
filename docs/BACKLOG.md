@@ -2107,3 +2107,4 @@ The user: "I would like to see agents (many of them) traveling between locations
 | SL15 | Season life: wagons come in through the gate nearest their shop (the GATES field), not along the atlas road from the map's edge; there's no gate-to-edge leg | S | open |
 | SL16 | Saving: the hand is dealt again on a reload (not saved); a save mid-showcase is the season's end state (the showcase isn't resumed); the works' log needs a season's end after the quarry or camp starts | S | open |
 | SL17 | Track B's conditions for U2's soldiers: the wall-walk walkable (stairs or a gate tower; a post without a path fails naming it) and stable route ids gate → the arterial's map edge for `march` | M | open (next) |
+| LT-R1 | The route-read contract for Track B's march (U2): one storage binding, routeread.wgsl, ids with generations | S | done (trackA-routeread) |

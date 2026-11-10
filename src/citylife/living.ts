@@ -24,6 +24,9 @@ export const C = {
 } as const;
 /** the points pool (vec4 a point) and the riders' room */
 const PTS_ROOM = 262_144;
+/** routes.wgsl ROUTES (ids, both halves) and routeread.wgsl's header words */
+const ROUTE_IDS = 8192;
+const ROUTE_HEAD_WORDS = 8;
 export const MAX_RIDERS = 4096;
 /** voxels a rider at most (figures: legs, torso, head, a cart and its load, a falling trunk) */
 const VOX_PER = 14;
@@ -93,7 +96,7 @@ const SPECS: Record<K, BindSpec> = {
   relaxCheck: { 0: 'uniform', 10: 'rw' },
   trace: { 0: 'uniform', 1: 'read', 2: 'read', 9: 'rw', 10: 'rw', 11: 'rw' },
   traceDone: { 0: 'uniform', 10: 'rw' },
-  poolSwitch: { 0: 'uniform', 10: 'rw', 14: 'rw' },
+  poolSwitch: { 0: 'uniform', 10: 'rw', 11: 'rw', 14: 'rw' },
   passMeshClear: { 0: 'uniform', 19: 'rw' },
   passMesh: { 0: 'uniform', 2: 'read', 8: 'rw', 18: 'rw', 19: 'rw' },
   hashClear: { 0: 'uniform', 10: 'rw' },
@@ -126,7 +129,8 @@ export class LivingTown {
   /** the state words (LT), the walk mask, the points pool, the riders, the parameters — the works bind them */
   readonly lt: GPUBuffer;
   readonly walk: GPUBuffer;
-  readonly pts: GPUBuffer;
+  /** the route buffer (api/contracts/routes.ts CityRouteRead; shaders/routeread.wgsl reads it): header, heads, points */
+  readonly routes: GPUBuffer;
   readonly rid: GPUBuffer;
   readonly uni: GPUBuffer;
   readonly field: GPUBuffer;
@@ -174,7 +178,9 @@ export class LivingTown {
     this.pmesh = buf('passage mesh', 6000 * 18 * 32);
     this.pargs = buf('passage mesh args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.lt = buf('state', LT_WORDS * 4);
-    this.pts = buf('points', ptsRoom * 16);
+    // (the route buffer: an 8-word header, ROUTE_IDS heads of 4 words, then the points — routeread.wgsl's layout)
+    this.routes = buf('routes', (ROUTE_HEAD_WORDS + ROUTE_IDS * 4 + ptsRoom * 4) * 4);
+    device.queue.writeBuffer(this.routes, 0, new Uint32Array([0, 0, ROUTE_IDS / 2, ROUTE_HEAD_WORDS + ROUTE_IDS * 4, 0, 0, 0, ptsRoom]));
     this.rid = buf('riders', MAX_RIDERS * 64);
     // (room for the figures and, with ?livingdebug=1, a block a walkable column)
     this.vox = buf('voxels', (MAX_RIDERS * VOX_PER + input.w * input.h) * 32);
@@ -184,7 +190,7 @@ export class LivingTown {
     device.queue.writeBuffer(this.vargs, 0, new Uint32Array([36, 0, 0, 0]));
     const R: Record<number, GPUBuffer> = {
       1: input.roads, 2: input.heights, 3: input.records, 4: input.counts, 5: input.pop, 6: input.art, 7: input.progress,
-      8: this.walk, 9: this.field, 17: this.pass, 18: this.pmesh, 19: this.pargs, 10: this.lt, 11: this.pts, 12: this.rid, 13: this.vox, 14: this.ind, 15: input.wet, 16: this.vargs,
+      8: this.walk, 9: this.field, 17: this.pass, 18: this.pmesh, 19: this.pargs, 10: this.lt, 11: this.routes, 12: this.rid, 13: this.vox, 14: this.ind, 15: input.wet, 16: this.vargs,
     };
     R[0] = this.uni;
     this.k = {} as Record<K, ComputeKernel>;
@@ -229,6 +235,8 @@ export class LivingTown {
     const wEnd = Math.min(MAX_RIDERS, acc + p.wagons);
     U.set([wEnd, Math.min(MAX_RIDERS, wEnd + p.ships), 0, 0], 44);
     this.device.queue.writeBuffer(this.uni, 0, a);
+    // (the route buffer's place: where the grid's frame is in the window — routeread.wgsl routePoint)
+    this.device.queue.writeBuffer(this.routes, 16, new Float32Array([place.dx, place.dy * 0.8660254, place.dz]));
   }
 
   /** the jobs dealt again when the counts change (the riders' rows cleared: each is dealt at its next frame) */

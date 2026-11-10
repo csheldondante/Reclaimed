@@ -9,6 +9,7 @@ import { LivingTown, C, L_C, L_Q, L_F } from './living';
 import { Works, type WorksWorld } from './works';
 import { LIVING_TUNING } from './params';
 import { TunePanel } from '../ui/tunepanel';
+import type { CityRouteRead } from '../api/contracts/routes';
 import type { TownLogs } from '../citygen/townlog';
 
 export interface LivingTownsIO {
@@ -173,6 +174,12 @@ export class LivingTowns {
       `clearing: ${h[L_F + 1] ? 'camp' : 'no camp yet'} · trees listed ${c('trees')} · felled ${c('felled')} · logs at the camp ${c('logCamp')}, carts ${c('logCart')}, stores ${c('logStores')} · regrown ${c('regrown')}`,
       `produce ${c('produce')} · building sites ${c('sites')} · build work ${c('buildWork')}`,
     ].join('\n');
+  }
+
+  /** (api/contracts/routes.ts) a town's routes for systems that ride them; null when it has no living town */
+  routeRead(id: string): CityRouteRead | null {
+    const l = this.live.get(id);
+    return l ? { buffer: l.life.routes } : null;
   }
 
   /** (scripts, the perf overlay) the living town's passes' smoothed GPU ms (the profiler's: with ?perf=1) */

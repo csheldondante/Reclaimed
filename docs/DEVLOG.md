@@ -21466,3 +21466,16 @@ The user's priority: saving first. Design: SEASON_LOOP.md "Saving" (DESIGN §23)
   3 stages, the wall"; the shots side by side match (`scratchpad/opps/save-ab.png`). Pan away until Muru is let go
   (Thauhaman made), pan back → Muru made again (340 ms), its log laid over it, the same town (`pan-ab.png`).
 - Fixes SL3 (claims and stages lost when a town is let go) and SL4 (no save).
+
+## 2026-11-10 — the route-read contract (trackA-routeread)
+
+Track B's units ride the living town's routes for the soldiers' `march` (U2) and mustn't read routes.wgsl's internals.
+- **One storage binding** (Track B's unitStep and relax are at the 8-buffer limit): the route heads and the points
+  moved out of the state words and the old points buffer into one route buffer — an 8-word header, a head a route,
+  the points. `src/shaders/routeread.wgsl` reads it (`routeHead`, `routePoint`, `routeDist`, `routeAt`, `routeValid`);
+  `src/api/contracts/routes.ts` hands it over (`LivingTowns.routeRead`).
+- **Ids carry their generation everywhere** (the hash, the ramp, the riders): `startRid` refuses a stale held id and the
+  rider asks for its route again. Before, resuming a held route re-stamped it with the half's new generation, so a
+  rider could ride points overwritten by a newer route — the contract's test caught it (a rider 25 m off its route's
+  points on a 700-point pool).
+- Gates: the transfers list adds the wall's and the works' saved-state sites that came with fortress.
