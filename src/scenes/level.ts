@@ -12,7 +12,6 @@ import { Powers } from '../game/powers';
 import { Director } from '../game/director';
 import { Reach } from '../game/reach';
 import { levelById, type LevelDef, type LoadedLand } from '../game/levels';
-import { windowHolding } from './streamer/keep';
 import { DIFFICULTY_LEVEL, loadDifficulty, type Difficulty } from '../game/progress';
 import { Editor } from '../ui/editor';
 import { Controls } from '../input/controls';
@@ -21,7 +20,6 @@ import { Physics } from '../physics/physics';
 import type { LavaSystem } from '../sim/lava';
 import type { InhabitantsGpu } from '../inhabitants/system';
 import { Settlements } from '../settle/settlements';
-import { TownDebug } from '../settle/debug';
 import { AgentUnits } from '../units/agent-units';
 import type { TraitSystem } from '../traits/system';
 import { TraitStation } from '../levels/traitstation';
@@ -65,27 +63,18 @@ import { beginPipelineBatch, endPipelineBatch } from '../gpu/pipeline';
 import { captureWorld, loadSnapshot, saveSnapshot } from '../sim/snapshot';
 import { loadWarm, saveWarm, warmKey } from '../sim/warm-cache';
 import { StreamPlanner } from './planner';
-import { SettlementsView } from '../settle/view';
-import { ShipsView } from '../settle/shipsview';
-import { Fortress } from '../fortress/fortress';
-import { FortressBar } from '../fortress/ui';
 import type { StreetLabControl } from '../streetlab/control';
 import { fieldTownBox, hasGrid } from '../citygen/town';
 import type { FieldTowns } from '../citygen/towns';
 import type { LivingTowns } from '../citylife/towns';
-import type { FortressFollow } from '../fortress/follow';
-import { FortressCrowd } from '../fortress/crowd';
-import type { FortressRaid } from '../fortress/raiders';
 import { StaticClaims } from '../sim/static-claims';
-import type { GridStyle } from '../api/contracts/settlement';
-import type { CitySpec } from '../api/contracts/structures';
 import { editTool } from './level/sandbox-tools';
 import { NON_METAL, SANDBOX_K, ATLAS_COL_K, WARMUP_TICKS } from './level/flags';
 import { attach } from './level/attach';
 import { levelFrame } from './level/frame';
 import { labStationKit } from './level/labs';
 import type { StationKit } from '../levels/playground';
-import type { Lab } from '../lab/lab';
+import type { TownLab } from '../lab/lab';
 import { urlFlags } from '../flags';
 
 export interface LevelOptions {
@@ -249,32 +238,8 @@ export class LevelScene implements Scene {
   /** (round 88, the atlas level) the settlements, and the units (the Units contract on the agents) */
   settlements?: Settlements;
   units?: AgentUnits;
-  townDebug?: TownDebug;
-  /** (fortress slice 1, ?fortress=1 with ?town=) the town held as the player's fortress, and its planning bar */
-  fortress?: Fortress;
-  fortressBar?: FortressBar;
-  /** (fortress slice 1, milestone 2) its builders, from the first Build */
-  fortressCrowd?: FortressCrowd;
-  /** (round 128l, m4) the attack wave on the fortress (fortress/raiders.ts), from the first Build */
-  fortressRaid?: FortressRaid;
-  fortressBarAt = 0;
-  /** (round 128e, FT-50) Skip to done running; how long (sim s) it has found the plan blocked; the speed to go back to */
-  fortressSkip = false;
-  fortressSkipBlocked = 0;
-  fortressRunSpeed = 1;
-  /** (round 128d) its built blocks claimed in the columns: the agents, the water and the ground go round them */
   /** (round 128j) the static grids' claims (the towns', the fortress's), written with the land (sim/static-claims.ts) */
   statics?: StaticClaims;
-  /** (round 128f) read the window's columns again for the fortress's reach check (fortress/reach.ts) */
-  fortressReadCols?: () => void;
-  /** (round 128l, m4; V128-10) the person a tap picked, and whether the camera follows them (fortress/follow.ts) */
-  fortressFollow?: FortressFollow;
-  /** (round 128o, B) the town's places joined by the one reach when its land came in: still out, fixes made, asks */
-  fortressJoined?: { out: number; fixes: number; asks: number };
-  /** (round 128m, quarry) the near walls of a pit looked into dithered out round its floor (fortress.ts pitView) */
-  fortressPitCut?: import('../api/cutaway').Dither;
-  /** (round 128m) the pit's cut on (?pitcut=1; off by default — scripts toggle it to compare) */
-  pitCut?: boolean;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   worldApi?: Sim;
   /** round 83, V21: ?cutaway (api/puck.ts, api/cutaway.ts) */
@@ -303,9 +268,6 @@ export class LevelScene implements Scene {
   beamPicking = false;
   /** sandbox: structural integrity and falling pieces (F7) */
   integrity?: Integrity;
-  /** (round 117, structures: ?city=) the structures track's city on the window's ground */
-  settlementsView?: SettlementsView;
-  shipsView?: ShipsView;
   /** (round 108, AR5/AR8) the tuning panel, the bug report, the playground's stations */
   tunePanel?: TunePanel;
   bugReport?: BugReport;
@@ -500,7 +462,7 @@ export class LevelScene implements Scene {
       let [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
       if (town && settlements) {
         const sp = atlas.spawn();
-        // (the nearest town or city with a camp by it: workers and a raid to see)
+        // (the nearest town or city with a camp by it: Muru on the default world, the season loop's start town)
         const camped = new Set(settlements.seeds.filter((x) => x.campId).map((x) => x.rec.id));
         const s = town === '1' ? settlements.near([sp[0], sp[1] * ROW_H], 1e9).find((x) => (x.size === 'town' || x.size === 'city') && camped.has(x.id)) : settlements.settlement(town);
         if (!s) throw new Error(`?town=${town}: no such settlement`);
@@ -508,44 +470,18 @@ export class LevelScene implements Scene {
         cy = Math.round(s.at[1] / ROW_H);
         startTown = s.id;
       }
-      // (round 117/119, structures: ?city=<tile system>&cstyle=&cseed= — every settlement is planned by the structures
-      // system now; this starts at the town or city nearest the start and plans its town with that tile system / style)
-      if (host.params.get('city') && settlements && !at) {
-        const near = settlements.near([cx, cy * ROW_H], 1e9).find((x) => x.size === 'town' || x.size === 'city');
-        if (near) {
-          cx = Math.round(near.at[0]);
-          cy = Math.round(near.at[1] / ROW_H);
-          const q = host.params;
-          const ov: Partial<CitySpec> = { system: q.get('city') as GridStyle };
-          if (!['irregular', 'contour-voronoi', 'radial', 'orthogonal'].includes(ov.system!)) throw new Error(`?city= must be irregular, contour-voronoi, radial or orthogonal`);
-          if (q.has('cstyle')) ov.style = q.get('cstyle') as CitySpec['style'];
-          if (q.has('cseed')) ov.seed = Number(q.get('cseed'));
-          if (q.has('croads')) ov.roads = Number(q.get('croads'));
-          if (q.get('cwalls') === '1') ov.walls = true;
-          // (round 120: ?cpurpose= — its town planned for that purpose, whatever the land made it)
-          if (q.has('cpurpose')) ov.purpose = q.get('cpurpose') as CitySpec['purpose'];
-          settlements.override(near.id, ov);
-        }
-      }
       // (?win=: a wider window, whole regions — round 79, the user: "stream in a few more blocks out to see
       // more of the terrain at a time … nice for debugging even if too slow for mobile")
       // (round 90: or the viewer's range setting, the phone tier's default wider — scenes/range.ts)
-      // (round 128m townlab C; onetown: the window holds the fortress's town's site box — its grid, its reach, its claims —
-      // from the start, and keeps it: startFortress asks the Streamer to keep it, scenes/streamer/keep.ts)
-      // (citygen M4b, ?citygen=fields: every settlement whose population warrants a grid (a village and up) made by the
-      // GPU field generator — nothing of the old planner's for it, the atlas's stamps cleared in its core — streamed in
-      // as the window nears it (citygen/towns.ts FieldTowns); smaller ones keep the old planner's hamlets and farms)
-      const cg = host.params.get('citygen');
-      if (cg !== null && cg !== 'fields') throw new Error(`?citygen= must be fields (towns by the GPU field generator)`);
-      if (cg && !settlements) throw new Error('?citygen=fields needs the settlements (not with ?towns=0)');
-      if (cg && host.params.get('fortress') === '1') throw new Error('?citygen=fields: not with ?fortress=1 (the fortress edits the old planner\'s town)');
-      const fieldTowns = cg ? settlements!.byFields((s) => (hasGrid(s.rec.size) ? fieldTownBox(s.rec).core : null)).map((s) => s.rec.id) : undefined;
-      const keepBox = host.params.get('fortress') === '1' && startTown ? settlements!.seeds.find((x) => x.rec.id === startTown)!.box : null;
-      const W = Math.max(keepBox?.w ?? 0, atlasRange(host.params));
+      // (switchover, 2026-11-10: the towns are the GPU field generator's — every settlement whose population warrants a
+      // grid (a village and up), streamed in as the window nears it (citygen/towns.ts FieldTowns), the atlas's stamps
+      // cleared in its core. The old CPU planner is gone: smaller settlements (hamlets, farms) have no town yet — BACKLOG
+      // SW-G1. The user: "Don't build against a system we are deprecating switch over.")
+      const fieldTowns = settlements ? settlements.byFields((s) => (hasGrid(s.rec.size) ? fieldTownBox(s.rec).core : null)).map((s) => s.rec.id) : undefined;
+      const W = atlasRange(host.params);
       // (round 93, ?winh=: an experiment — rows other than the side)
-      const Hr = Math.max(keepBox?.h ?? 0, atlasRows(host.params, W));
-      const near: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - Hr / 2) / REGION) * REGION];
-      const origin: [number, number] = keepBox ? windowHolding({ x0: keepBox.x0, y0: keepBox.y0, x1: keepBox.x0 + keepBox.w, y1: keepBox.y0 + keepBox.h }, W, Hr, near) : near;
+      const Hr = atlasRows(host.params, W);
+      const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - Hr / 2) / REGION) * REGION];
       const { map, oz, outside, ground } = await atlas.window({ w: W, h: Hr, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
       // (round 80: its column batches timed in the perf overlay)
       bootMark('window');
@@ -653,8 +589,6 @@ export class LevelScene implements Scene {
     // alone would allow (the map is a diamond, its middle is what matters)
     // (a story level opens close on its green)
     if (first) this.core.camera.zoom = this.story ? 7 : (this.level.zoom ?? Math.max(1.5, Math.min(cssW * 1.9, cssH * 1.6) / 300));
-    // (fortress: close enough on the town to tap a cell)
-    if (first && this.fortress) this.core.camera.zoom = Math.max(this.core.camera.zoom, 6);
   }
 
   /**
@@ -701,17 +635,17 @@ export class LevelScene implements Scene {
       }, ignoreTeardown);
   }
 
-  /** (round 128o, DA-B5; DESIGN.md §24) 30 fps while the player plans the fortress or the game is paused */
+  /** (round 128o, DA-B5; DESIGN.md §24) 30 fps while the game is paused */
   maxFps(): number | null {
-    return this.speed === 0 || this.fortress?.mode === 'plan' ? CAP_FPS : null;
+    return this.speed === 0 ? CAP_FPS : null;
   }
 
   frame(now: number, dt: number, driven = false): void {
     levelFrame(this, now, dt, driven);
   }
 
-  /** (round 128l, tooling) the behaviour lab (?level=lab: src/lab/) — its town, its still window, its pieces' draw */
-  lab?: Lab;
+  /** (switchover) the town lab (?lab=1 on the atlas level: src/lab/) — scripted gates drive the scene through it */
+  lab?: TownLab;
 
   /** the playground stations' kit (labs.ts; scripts drive it through window.reclaimed.scene) */
   stationKit(): StationKit {
@@ -721,9 +655,6 @@ export class LevelScene implements Scene {
   dispose(): void {
     this.abort.abort();
     this.tunePanel?.dispose();
-    this.fortressBar?.dispose();
-    this.fortressRaid?.dispose();
-    this.fortressCrowd?.dispose();
     this.statics?.dispose();
     this.bugReport?.dispose();
     this.stationsBar?.dispose();

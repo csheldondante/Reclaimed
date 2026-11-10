@@ -15,14 +15,13 @@ import { RiverWetField } from '../../weather/wetfield';
 import { riverMode } from '../../sim/world-gpu';
 import { Dither, Orbit, Slice } from '../../api/cutaway';
 import { Puck } from '../../api/puck';
-import { cpuLine, frameSteps, record, timed } from '../../gpu/cpustat';
+import { cpuLine, frameSteps, record } from '../../gpu/cpustat';
 import { CHUNK } from '../../world/layout';
 import { poiWorld, ROW_H } from '../../world/lattice';
 import { StreamPlanner } from '../planner';
 import { driveOn, flyKeys, panOn } from './camera-moves';
 import { stepGeysers } from './atlas-controls';
 import { birdArrivals, confineToReach, hearing, refreshReach, showComplete } from './valley';
-import { followFrame, pitView, skipFrame } from './fortress';
 import { brush, drawRing } from './sandbox-tools';
 import { aimBeam, stepMeteors } from './impacts';
 import { CUTAWAY, PLANNER_OFF, COARSE_PARTS, CAM_CLAMP, PLAN_OFF } from './flags';
@@ -30,7 +29,8 @@ import type { LevelScene } from '../level';
 import { worldApiOf } from './world-api';
 
 export function levelFrame(scene: LevelScene, now: number, dt: number, driven = false): void {
-  // (round 128l, tooling: lab.run steps the scene itself, as fast as the GPU goes — the display's frames wait)
+  // (round 128l, tooling: lab.run steps the scene itself, as fast as the GPU goes — the display's frames wait; the town
+  // lab since the switchover)
   if (scene.lab?.driving && !driven) return;
   const cpu0 = performance.now();
   const { core, audio, powers, hud } = scene;
@@ -100,7 +100,7 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   // (round 128i, FT-67; the user on the Pixel 9a: "flickering of the town (position jumping)") The slide runs here,
   // right after the camera moved and before anything this frame reads or writes window coordinates: its synchronous
   // part moves the camera, the window's origin and what the game keeps in window coordinates (onShift, onSlide), so
-  // the towns' grid rows (SettlementsView.update), the fortress's road stamp (FortressCrowd.update) and the rest are
+  // what's kept in window coordinates is
   // written for the window as it is now and land before this frame's draw. Run after them (as it was), the slide
   // moved the camera after the rows were written: the town drew a region off for one frame (131.6 px at zoom 2.6,
   // scripts/townslide.mjs) and jumped back the next.
@@ -117,38 +117,15 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     if (!COARSE_PARTS) k === 0 && c.step(1);
     else if (k < 3) c.stepPart();
   }
-  // (round 88) the units' sync and thinking, the settlements' rounds and rates, the debug view
-  // (round 94: the settlements past the window planned for the bake, whatever the streamer's doing)
-  scene.settlements?.farUpdate(dt);
+  // (round 88) the units' sync and thinking
   // (citygen M4b: the field towns near the window made, the far ones let go)
   scene.fieldTowns?.update(dt);
   // (living town: new towns' people; the frame's GPU work is in the renderer's frameCompute)
   scene.livingTowns?.update(dt * scene.speed);
-  // (round 119) the settlements' pieces: made again when a plan, a storey or the window changed
-  scene.settlementsView?.update();
-  scene.lab?.frame();
   scene.statics?.frame();
-  scene.shipsView?.update();
   if (scene.inhabitants) lifeFrame(scene, dt * scene.speed);
   if (scene.units && !scene.stream?.busy) {
     scene.units.update(dt * scene.speed);
-    timed('settle', () => scene.settlements?.update(dt * scene.speed));
-    // (round 128o: the fortress waits while the window's ground is read again after a slide — scene.groundReady)
-    if (scene.fortressCrowd && scene.groundReady) {
-      scene.fortressCrowd.update(dt * scene.speed);
-      // (round 128l, m4) the attack wave: its clock, its raiders, the gates
-      scene.fortressRaid?.update(dt * scene.speed);
-      if (scene.fortressSkip) skipFrame(scene, dt * scene.speed);
-      // (round 128l, m4) Follow: the camera on the person picked
-      followFrame(scene);
-      pitView(scene, dt);
-      // (the stores and progress lines: twice a second)
-      if ((scene.fortressBarAt += dt) > 0.5) {
-        scene.fortressBarAt = 0;
-        scene.fortressBar?.render();
-      }
-    }
-    scene.townDebug?.draw();
   }
 
   const simDt = dt * scene.speed;
@@ -168,7 +145,7 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   scene.life += (health.life - scene.life) * Math.min(1, dt * 0.5);
   scene.nature.update(simDt, stats);
   // (round 128o, DA-B5) the sandbox valley's reads — the painted wind for its storms, smoke and grime for its Nature,
-  // veg and water for its ambience — none in fortress play (level/valley-reads.ts)
+  // veg and water for its ambience (level/valley-reads.ts)
   scene.valleyReads?.frame(dt);
 
   scene.lensK += ((scene.lensOn ? 1 : 0) - scene.lensK) * Math.min(1, dt * 8);
@@ -240,8 +217,7 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     core.clock.pause(simDt, scene.speed);
     scene.simHeld[held] = (scene.simHeld[held] ?? 0) + 1;
   }
-  // (round 128l: the lab may run only some of the sim's systems — lab.sims, src/lab/lab.ts)
-  const ticks = held ? 0 : core.advance(now, simDt, scene.speed, scene.lab?.simFilter);
+  const ticks = held ? 0 : core.advance(now, simDt, scene.speed);
   record('sim', performance.now() - tSim); // (round 100, hitchrec: timing)
   scene.ticksAvg = scene.ticksAvg * 0.95 + ticks * 0.05;
   // (round 83, V21: ?cutaway=1 — the camera's puck, the slice and the orbit round it; `cutFeet` a script's

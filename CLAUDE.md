@@ -3,7 +3,7 @@
 Browser prototype (TypeScript + WebGPU): an isometric voxel sandbox where the
 player nudges natural processes (storms, lightning, gusts, fire, floods) to
 clean a ruined industrial valley so life can return (the original thesis; the game is now a
-legacy fortress game on one persistent world). Design authority:
+town over seasons on one persistent world: the GPU towns, docs/design/SWITCHOVER.md). Design authority:
 `.claude/docs/design/DESIGN.md` (agreed with the user 2026-11-05; every design note
 names its section). `.claude/docs/design/Reclaimed_Overview.md` is the original handoff.
 
@@ -64,10 +64,10 @@ first (perf toggle-diff, a play-zoom shot, edge cases as tests), no patches, gat
 - **Headless checks run on the shared runner** (`scripts/lib/runner.mjs`, round 112 — see "Running checks fast"):
   `node scripts/shot.mjs --url "/?skipmenu=1&level=atlas" --out a.png`, `node scripts/contract.mjs`,
   `node scripts/run.mjs status|build|serve|daemon|boot|selfcheck`.
-- **Behaviour checks go to the lab first** (docs/TOOLING.md, round 128l): `node scripts/lab.mjs run scripts/lab/<x>.mjs
-  [--recipe flat|hill|valley|walled]` runs a scenario on `?level=lab` (a small fixed world, the real fortress, agents
-  and roads; `reclaimed.lab.place/plan/build/run/snapshot/shot/reset`) in a page kept open: ~9 s a loop, ~25 s after a
-  code edit, against 1-4 min for an atlas script. Unit tests for logic first; the full-game scripts only at the gate.
+- **The town lab** (docs/TOOLING.md; switchover 2026-11-10): `node scripts/lab.mjs run scripts/lab/<x>.mjs` runs a
+  scenario on the town game itself (`?skipmenu=1&level=atlas&town=1&fresh=1&lab=1`: Muru, its GPU town, living town and
+  season loop; `reclaimed.lab.run/look/shot/riders`, `.towns/.living/.season`). Gates: townfollow, townseason. Unit and
+  Dawn GPU tests for logic first.
 - `node scripts/shot.mjs` — headless Chrome on the real GPU (D3D11): screenshot,
   console capture, scripted input, GIF capture. Exits non-zero on page errors or
   the fatal overlay.

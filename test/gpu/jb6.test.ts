@@ -17,10 +17,10 @@ import { EventKind } from '../../src/sim/globals';
 import { OP } from '../../src/sim/edit-ops';
 import { cellPos } from '../../src/world/lattice';
 import { readColumn, type Interval } from '../../src/world/layout';
-import { gridIdOf } from '../../src/build/site';
 
 /** (onetown) a town's claims are owned by its grid's id */
-const OWNER_TOWN = gridIdOf('test');
+/** a town's claims' owner (256 and up: sim/external.ts OwnerId — the small ids are the other owners') */
+const OWNER_TOWN = 0x10000;
 
 const W = 64;
 const FLOOR = 10;

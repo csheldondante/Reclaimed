@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 import { CellRuns } from './runs';
 import { LEVEL_H, Town } from './town';
 import { TownGrid } from './towngrid';
-import { TownPlan } from './plan';
 
 const spans = (r: CellRuns, c: number) => r.runsOf(c).map((x) => [x.lo, x.hi, x.owner, x.type]);
 
@@ -140,36 +139,5 @@ describe('the Town on runs', () => {
     t.add(inner, 1, 4, 6);
     expect(t.plans.runsOf(inner).map((r) => [r.lo, r.hi, r.owner, r.type])).toEqual([[0, 2, 4, 6]]);
     expect(t.built.runsOf(inner).map((r) => [r.lo, r.hi, r.owner, r.type])).toEqual([[1, 2, 4, 6]]);
-  });
-});
-
-describe('the fortress plan on runs', () => {
-  it('a keep 20 levels high; a house too (the old caps were the 8 levels\')', () => {
-    const p = new TownPlan(grid);
-    for (let L = 0; L < 20; L++) expect(p.paint(inner, L, 'fortress')).toBe(true);
-    const s = p.structureAt(inner)!;
-    expect(p.blocks(s)).toBe(20);
-    expect(s.cells.get(inner)).toEqual([{ lo: 0, hi: 20, owner: s.id, type: 0 }]);
-    const h = nbr(nbr(inner, 1), 1);
-    for (let L = 0; L < 12; L++) expect(p.paint(h, L, 'house')).toBe(true);
-    // (yards stay flat)
-    expect(p.paint(nbr(nbr(inner, 3), 3), 1, 'farm')).toBe(false);
-  });
-
-  it('a block over an empty level is held by the block under it or one beside it at its level, else refused', () => {
-    const p = new TownPlan(grid);
-    const a = inner;
-    const b = nbr(a, 0);
-    // nothing under b's level 2 and nothing beside it: refused
-    expect(p.paint(b, 2, 'wall')).toBe(false);
-    for (const L of [0, 1, 2]) p.paint(a, L, 'wall');
-    // beside a's level 2: a wall over two empty levels, a bridge's span
-    expect(p.paint(b, 2, 'wall')).toBe(true);
-    expect(p.has(b, 0)).toBe(false);
-    expect(p.structureAt(b)!.cells.get(b)).toEqual([{ lo: 2, hi: 3, owner: p.structureAt(a)!.id, type: 6 }]);
-    // erasing a level in the middle of a stack splits it; what's above stays
-    p.erase(a, 1);
-    expect(p.structureAt(a)!.cells.get(a)!.map((r) => [r.lo, r.hi])).toEqual([[0, 1], [2, 3]]);
-    expect(p.blocks(p.structureAt(a)!)).toBe(3);
   });
 });

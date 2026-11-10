@@ -1,8 +1,9 @@
-// (round 128l, tooling) The behaviour lab's runner: one headless Chrome and one lab page kept open on this worktree's
-// build, so a scenario's edit → result loop doesn't pay a minute of atlas boot each time (docs/TOOLING.md).
+// (round 128l, tooling) The lab's runner: one headless Chrome and one lab page kept open on this worktree's build
+// (docs/TOOLING.md). Since the switchover (2026-11-10) the page is the town game — the atlas level at the start town
+// (Muru), its GPU town, living town and season loop, ?lab=1 (src/lab/lab.ts) — not the behaviour lab's fortress recipes.
 //
-//   node scripts/lab.mjs serve [--recipe flat]     keep Chrome + the lab page up (started by `run` when it isn't)
-//   node scripts/lab.mjs run <scenario> [--recipe r] [--args '{"k":1}'] [--out dir] [--reload] [--flags "&agentprof=1"]
+//   node scripts/lab.mjs serve                     keep Chrome + the lab page up (started by `run` when it isn't)
+//   node scripts/lab.mjs run <scenario> [--args '{"k":1}'] [--out dir] [--reload] [--flags "&agentprof=1"]
 //                                                  (round 128o: --flags, the page's own URL flags — a page loaded
 //                                                  with other flags is loaded again)
 //                                                  run a scenario on it: prints its console and its JSON result,
@@ -10,20 +11,18 @@
 //   node scripts/lab.mjs status | stop
 //
 // A scenario is an ES module run IN THE PAGE (no closures over the module's variables):
-//   export const recipe = 'walled';                 // optional: the land (src/lab/recipes.ts); --recipe overrides
 //   export default async function (lab, args) {     // lab: window.reclaimed.lab (src/lab/lab.ts)
-//     lab.plan({ cells: [{ type: 'house', at: [100, 120] }] });
-//     lab.build();
+//     const S = lab.season;                         // the season loop; lab.towns, lab.living, lab.town (its id)
 //     await lab.run(30, 16);
 //     await lab.shot('after');
-//     return await lab.snapshot();                   // printed as JSON (round 128p: async)
+//     return { left: S.left };                      // printed as JSON
 //   }
 // or a plain .js file: the body of `async (lab, args) => { … }`.
 //
 // Each run: the build checked (vite build, cached by the sources' content: ~2 s when something changed); the page
-// reloaded only when the build or the recipe changed (or --reload, or the last run left the fatal overlay); otherwise
-// lab.reset() puts the world back on the same page (no reload, no pipelines compiled again). The GPU is leased as a
-// behaviour check for the run (scripts/lib/runner.mjs: shared with other worktrees' checks).
+// loaded again for every scenario (the town game's world can't be put back: lab.resettable is false), its storage
+// cleared first (?fresh=1's). The GPU is leased as a behaviour check for the run (scripts/lib/runner.mjs: shared with
+// other worktrees' checks).
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -127,7 +126,8 @@ async function serve() {
       await cdp.detach();
       const t1 = now();
       // (midday, the day held: shots read the same every run)
-      const q = new URLSearchParams({ skipmenu: '1', level: 'lab', lab: recipe, tutorial: '0', warmcache: '0', q: 'low', tod: '0.3', day: '100000' });
+      if (recipe !== 'town') throw new Error(`lab: the page is the town game (recipe 'town'), not "${recipe}" — the behaviour lab's recipes went with the fortress`);
+      const q = new URLSearchParams({ skipmenu: '1', level: 'atlas', town: '1', fresh: '1', lab: '1', tutorial: '0', warmcache: '0', q: 'low', tod: '0.3', day: '100000' });
       for (const [k, v] of new URLSearchParams(flags)) q.set(k, v);
       await page.goto(`${srv.url}/?${q}`, { waitUntil: 'load' });
       await page.waitForFunction(() => window.reclaimed?.lab?.ready || document.querySelector('.fatal'), { timeout: 300000, polling: 100 });
@@ -166,7 +166,7 @@ async function serve() {
       src = mod.default.toString();
       recipe ??= mod.recipe;
     } else src = `async function (lab, args) {\n${fs.readFileSync(file, 'utf8')}\n}`;
-    recipe ??= 'flat';
+    recipe ??= 'town';
     out.dir = req.out ? path.resolve(req.cwd ?? ROOT, req.out) : path.join(CACHE, 'lab-shots');
     const tLease = now();
     const release = await lease('behaviour', `lab ${path.basename(file)}`);
@@ -244,12 +244,12 @@ async function serve() {
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
-  // (warm: the first recipe's page opened now, so the first run finds it up. In the queue the runs wait in: a run sent
+  // (warm: the page opened now, so the first run finds it up. In the queue the runs wait in: a run sent
   // while it opens waits for it — two opening the page at once both bound __labShot on the second page, and the run failed)
   const warm = busy.then(async () => {
     const release = await lease('behaviour', 'lab boot');
     try {
-      const t = await ready(opt('recipe', 'flat'), false);
+      const t = await ready('town', false);
       say(`lab up: ${JSON.stringify(t)}`);
     } catch (e) {
       say(`lab didn't open: ${e?.message ?? e}`);
@@ -269,7 +269,7 @@ async function ensureServer() {
   console.log(`[lab] starting the lab server (log: ${path.relative(ROOT, LOG)}) …`);
   fs.mkdirSync(CACHE, { recursive: true });
   const fd = fs.openSync(LOG, 'a');
-  const child = spawn(process.execPath, [fileURLToPathSafe(import.meta.url), 'serve', ...(opt('recipe') ? ['--recipe', opt('recipe')] : [])], { cwd: ROOT, detached: true, stdio: ['ignore', fd, fd], windowsHide: true });
+  const child = spawn(process.execPath, [fileURLToPathSafe(import.meta.url), 'serve'], { cwd: ROOT, detached: true, stdio: ['ignore', fd, fd], windowsHide: true });
   child.unref();
   for (let i = 0; i < 120; i++) {
     await new Promise((r) => setTimeout(r, 500));
@@ -291,10 +291,10 @@ else if (cmd === 'status') {
   console.log(s ? 'stopped' : 'no lab server running');
 } else if (cmd === 'run') {
   const file = argv[1];
-  if (!file) throw new Error('lab.mjs run <scenario.mjs|.js> [--recipe r] [--args json] [--out dir] [--reload]');
+  if (!file) throw new Error('lab.mjs run <scenario.mjs|.js> [--args json] [--out dir] [--reload] [--flags f]');
   const t0 = now();
   await ensureServer();
-  const r = await ask('POST', '/run', { file, cwd: process.cwd(), recipe: opt('recipe'), args: opt('args') ? JSON.parse(opt('args')) : {}, out: opt('out'), reload: flag('reload'), flags: opt('flags') ?? '' });
+  const r = await ask('POST', '/run', { file, cwd: process.cwd(), args: opt('args') ? JSON.parse(opt('args')) : {}, out: opt('out'), reload: flag('reload'), flags: opt('flags') ?? '' });
   if (!r) throw new Error('the lab server went away');
   for (const l of r.logs ?? []) console.log(l);
   for (const e of r.errors ?? []) console.log(`ERROR ${e}`);

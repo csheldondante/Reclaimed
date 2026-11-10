@@ -18,24 +18,14 @@
 // is made again and claimed over the window's written land (never over a region still coming in: its place holds the
 // land that left until it's frozen).
 //
-// The registry sees these instances through the StaticSet below: anchored to their grid (a slide moves nothing on the
-// CPU but where the grid lies), judged by a read of the columns only where their land was written before the read was
-// asked (the region's epoch here, the registry's epoch counter), never orphans.
+// (citygen M4b) The grids are GPU-owned: a town made by the field generator builds its spans on the GPU (its slot of the
+// arena), and the registry sees them through the StaticSet below (gpuOwns, ownedJob, damage) — held by the GPU's orphan
+// pass, checked after an edit on the GPU. (Switchover, 2026-11-10: the CPU grids — a thing's spans set from the CPU, its
+// StaticInstance in the registry, judged on the CPU — served the old towns and the fortress only, and went with them.)
 import type { ColumnApply, GpuColumns, GridClaimJob } from '../game/colapply';
 import type { OwnedArenaJob } from './external';
-import { freeSpans, type ExternalCol, type ExternalInstance, type ExternalRegistry, type OwnerId, type StaticSet } from './external';
+import type { ExternalRegistry, OwnerId, StaticSet } from './external';
 import { ROW_H } from '../world/lattice';
-import { readColumn, type Interval, type PackedWorld } from '../world/layout';
-import { MAT } from '../world/materials';
-
-/** a thing of a static grid: its key in the grid (a building's index, a structure's id), its spans in the grid's frame */
-export interface StaticThing {
-  key: number;
-  /** column spans: x, y the grid's local columns; z0, z1 in the grid's z (window z = z + place().dz) */
-  cols: ExternalCol[];
-  /** what its cells become when it's let go (not to air) */
-  fallback: number;
-}
 
 /** where a grid lies in the window now: its local column (0, 0) at window column (dx, dy); window z = its z + dz */
 export interface GridPlace {
@@ -52,47 +42,12 @@ export interface StaticClaimsIO {
   dims: { w: number; h: number };
   /** the streamer's region side (columns) */
   R: number;
-  /** the window's world origin (columns, rows) */
-  origin: () => [number, number];
   /** the regions a slide is bringing in and hasn't written (local corners): their places hold the land that left */
   unwritten: () => [number, number][];
   /** the window's columns held (a warp, a restore under way): edits wait for the land, which brings the claims */
   held: () => boolean;
   /** the hybrid's chunks over claimed columns (window world units): drawn as voxels */
   touched?: (x0: number, y0: number, x1: number, y1: number) => void;
-  /** an edit's new claims in window box [x0, x1) × [y0, y1) (cells, rows): their chunks touched, not woken (a claim is
-   *  quiet: sim/sleep.ts touch — the surface and the mesh look at it again, the ground's systems stay asleep) */
-  quiet?: (x0: number, y0: number, x1: number, y1: number) => void;
-}
-
-/** the static instances' ids, apart from the registry's own (it counts up from 1) */
-const ID_BASE = 1 << 30;
-
-class StaticInstance implements ExternalInstance {
-  readonly free = true;
-  private at = '';
-  private cached: ExternalCol[] = [];
-  constructor(
-    readonly id: number,
-    readonly owner: OwnerId,
-    readonly fallback: number,
-    readonly key: number,
-    readonly sig: string,
-    readonly local: ExternalCol[],
-    readonly grid: StaticGrid,
-    public epoch: number,
-  ) {}
-
-  /** its spans in the window's frame now (out of the window too) */
-  get cols(): ExternalCol[] {
-    const p = this.grid.place();
-    const k = `${p.dx},${p.dy},${p.dz}`;
-    if (k !== this.at) {
-      this.at = k;
-      this.cached = this.local.map((c) => ({ x: c.x + p.dx, y: c.y + p.dy, z0: c.z0 + p.dz, z1: c.z1 + p.dz }));
-    }
-    return this.cached;
-  }
 }
 
 /**
@@ -122,19 +77,13 @@ const OWN_HEAD_BYTES = 512;
 export const OWN_SLOTS = 4;
 export const OWN_SLOT_BYTES = 448 * 448 * 8 * 4;
 
-/** A static grid: its place in the window, its things, its spans' buffer on the GPU. */
+/** A static grid: its place in the window and its spans' buffer on the GPU (its owner's: OwnedGridSource). */
 export class StaticGrid {
-  /** (M4b) GPU-owned: no things on the CPU, its buffer its owner's */
-  owned: OwnedGridSource | null = null;
-  readonly things = new Map<number, StaticInstance>();
-  /** local column key → the instances with a span there, in the grid's order */
-  readonly byCol = new Map<number, StaticInstance[]>();
-  /** its things' local bounds [x0, y0, x1, y1) (columns) */
+  owned!: OwnedGridSource;
+  /** its local bounds [x0, y0, x1, y1) (columns) */
   bounds: [number, number, number, number] = [0, 0, 0, 0];
-  buf: GPUBuffer | GPUBufferBinding | null = null;
+  buf: GPUBufferBinding | null = null;
   nCols = 0;
-  /** the buffer is out of date with `things` */
-  stale = true;
   constructor(
     readonly name: string,
     readonly owner: OwnerId,
@@ -142,27 +91,13 @@ export class StaticGrid {
   ) {}
 }
 
-const colKey = (x: number, y: number) => (y + 32768) * 65536 + (x + 32768);
-
 export class StaticClaims implements StaticSet {
   private grids: StaticGrid[] = [];
-  private byId = new Map<number, StaticInstance>();
-  private nextId = ID_BASE;
-  /** world region key → the registry's epoch when its land (and claims) were written */
-  private written = new Map<string, number>();
   /** grids whose claims over the window's written land are owed (an edit while the columns were held) */
   private owed = new Set<StaticGrid>();
-  readonly stats = { grids: 0, things: 0, columns: 0, regions: 0, passes: 0, edits: 0, ms: 0, lastMs: 0, uploadKB: 0 };
+  readonly stats = { grids: 0, regions: 0, passes: 0, ms: 0, lastMs: 0 };
 
   constructor(private io: StaticClaimsIO) {}
-
-  /** A static grid (claimed in the order made: a later grid's spans over an earlier's are buried in them). */
-  grid(name: string, owner: OwnerId, place: () => GridPlace): StaticGrid {
-    const g = new StaticGrid(name, owner, place);
-    this.grids.push(g);
-    this.stats.grids = this.grids.length;
-    return g;
-  }
 
   /**
    * (citygen M4b) A GPU-owned grid: its spans built on the GPU by its owner (OwnedGridSource), claimed as its land is
@@ -172,12 +107,14 @@ export class StaticClaims implements StaticSet {
   gpuGrid(name: string, owner: OwnerId, place: () => GridPlace, src: OwnedGridSource): StaticGrid {
     if (this.arenaUsed[src.slot.index] !== 'taken') throw new Error(`static claims: slot ${src.slot.index} isn't taken`);
     if (src.w * src.h * 32 > OWN_SLOT_BYTES) throw new Error(`static claims: a ${src.w} x ${src.h} grid is past a slot`);
-    const g = this.grid(name, owner, place);
+    // (claimed in the order made: a later grid's spans over an earlier's are buried in them)
+    const g = new StaticGrid(name, owner, place);
+    this.grids.push(g);
+    this.stats.grids = this.grids.length;
     this.arenaUsed[src.slot.index] = g;
     g.owned = src;
     g.buf = { ...src.slot.binding, size: src.w * src.h * 32 };
     g.nCols = src.w * src.h;
-    g.stale = false;
     g.bounds = [0, 0, src.w, src.h];
     this.claimWritten(g);
     return g;
@@ -199,7 +136,6 @@ export class StaticClaims implements StaticSet {
   /** (time-lapse) a GPU-owned grid's spans changed on the GPU (a district risen): claimed again over the window's written
    *  land (claimGrid where free: what grew is taken, nothing let go) */
   reclaim(g: StaticGrid): void {
-    if (!g.owned) throw new Error(`static claims: ${g.name} isn't GPU-owned (set its things instead)`);
     this.claimWritten(g);
   }
 
@@ -216,7 +152,7 @@ export class StaticClaims implements StaticSet {
 
   /** the GPU-owned grids in table order */
   private ownedGrids(): StaticGrid[] {
-    return this.grids.filter((g) => g.owned);
+    return this.grids;
   }
   /** (M4b) the GPU-owned grids as the orphan pass and the damage check read them: the arena and its table now (each
    *  grid's place, size and base; colapply.wgsl ownedSpanOf). Null: none */
@@ -243,7 +179,6 @@ export class StaticClaims implements StaticSet {
   /** (M4b) whether window column (x, y) is in a GPU-owned grid's box */
   gpuOwns(x: number, y: number): boolean {
     for (const g of this.grids) {
-      if (!g.owned) continue;
       const p = g.place();
       if (x >= p.dx && y >= p.dy && x < p.dx + g.owned.w && y < p.dy + g.owned.h) return true;
     }
@@ -258,7 +193,7 @@ export class StaticClaims implements StaticSet {
   damage(boxes: [number, number, number, number][]): void {
     const gs = this.ownedGrids();
     gs.forEach((g, e) => {
-      if (!g.owned?.damaged) return;
+      if (!g.owned.damaged) return;
       const p = g.place();
       const rects: [number, number, number, number][] = [];
       for (const [x0, y0, x1, y1] of boxes) {
@@ -274,74 +209,6 @@ export class StaticClaims implements StaticSet {
     });
   }
 
-  /** a grid gone (a settlement dropped): its things let go where they lie (to air), its buffer freed */
-  remove(g: StaticGrid): void {
-    if (g.owned) throw new Error('static claims: a GPU-owned grid is its owner\'s to remove (removeOwned)');
-    this.set(g, []);
-    if (g.buf instanceof GPUBuffer) g.buf.destroy();
-    g.buf = null;
-    this.grids = this.grids.filter((x) => x !== g);
-    this.owed.delete(g);
-    this.stats.grids = this.grids.length;
-  }
-
-  /**
-   * The grid's things are these now: unchanged ones keep their instance; changed and gone ones are let go where they lie
-   * in the window (to air: the owner draws what stands there); new ones are claimed over the window's written land.
-   * Returns each thing's instance by key.
-   */
-  set(g: StaticGrid, things: StaticThing[]): Map<number, ExternalInstance> {
-    if (g.owned) throw new Error(`static claims: ${g.name} is GPU-owned — its spans are its owner's buffer`);
-    const reg = this.io.registry();
-    const want = new Map<number, { t: StaticThing; sig: string }>();
-    for (const t of things) {
-      const cols = t.cols.filter((c) => c.z1 - c.z0 >= 0.05);
-      if (!cols.length) continue;
-      want.set(t.key, { t: { ...t, cols }, sig: `${t.fallback}|` + cols.map((c) => `${c.x},${c.y},${c.z0.toFixed(3)},${c.z1.toFixed(3)}`).join(';') });
-    }
-    let changed = false;
-    const fresh: StaticInstance[] = [];
-    for (const [key, inst] of [...g.things]) {
-      if (want.get(key)?.sig === inst.sig) continue;
-      // (the registry's release: let go where it lies in the window — it calls drop, which takes it out of the grid)
-      if (reg) reg.release(inst.id, true);
-      else this.drop(inst);
-      changed = true;
-    }
-    for (const [key, { t, sig }] of want) {
-      if (g.things.has(key)) continue;
-      const inst = new StaticInstance(this.nextId++, g.owner, t.fallback, key, sig, t.cols.map((c) => ({ ...c })), g, reg ? ++reg.epoch : 0);
-      g.things.set(key, inst);
-      this.byId.set(inst.id, inst);
-      fresh.push(inst);
-      changed = true;
-    }
-    if (changed) {
-      this.index(g);
-      g.stale = true;
-      this.stats.edits++;
-      this.claimWritten(g);
-      if (this.io.quiet && !this.io.held())
-        for (const inst of fresh) {
-          const cs = this.releasable(inst);
-          if (!cs.length) continue;
-          let x0 = Infinity;
-          let y0 = Infinity;
-          let x1 = -Infinity;
-          let y1 = -Infinity;
-          for (const c of cs) {
-            x0 = Math.min(x0, c.x);
-            y0 = Math.min(y0, c.y);
-            x1 = Math.max(x1, c.x + 1);
-            y1 = Math.max(y1, c.y + 1);
-          }
-          this.io.quiet(x0, y0, x1, y1);
-        }
-    }
-    this.count();
-    return new Map([...g.things].map(([k, i]) => [k, i]));
-  }
-
   /**
    * (the streamer's onWritten) Window rectangle [lx, lx + w) × [ly, ly + h) was just written with arriving land: every
    * grid's columns there claimed where free, on the GPU, in the same frame (before anything reads it).
@@ -349,17 +216,14 @@ export class StaticClaims implements StaticSet {
   landWritten(lx: number, ly: number, w: number, h: number): void {
     const t0 = performance.now();
     const reg = this.io.registry();
-    const e = reg ? ++reg.epoch : 0;
-    const { R } = this.io;
-    const [ox, oy] = this.io.origin();
-    for (let y = ly; y < ly + h; y += R) for (let x = lx; x < lx + w; x += R) this.written.set(this.regionKey(ox + x, oy + y), e);
+    if (reg) ++reg.epoch;
     this.stats.regions++;
     const jobs = this.jobsOver(lx, ly, lx + w, ly + h);
     if (jobs.length) {
       this.io.apply().claimGrids(this.io.columns(), jobs, [[lx, ly, lx + w, ly + h]]);
       this.stats.passes += jobs.length;
       this.touchOver(jobs, [[lx, ly, lx + w, ly + h]]);
-      for (const j of jobs) j.g.owned?.claimed?.([[lx, ly, lx + w, ly + h]], j.g.place());
+      for (const j of jobs) j.g.owned.claimed?.([[lx, ly, lx + w, ly + h]], j.g.place());
     }
     this.stats.lastMs = +(performance.now() - t0).toFixed(3);
     this.stats.ms += performance.now() - t0;
@@ -373,64 +237,9 @@ export class StaticClaims implements StaticSet {
     for (const g of gs) this.claimWritten(g);
   }
 
-  // ---- StaticSet (the registry's view) ----------------------------------------------------------------------------
-
-  instances(): Iterable<ExternalInstance> {
-    return this.byId.values();
-  }
-
-  get(id: number): ExternalInstance | undefined {
-    return this.byId.get(id);
-  }
-
-  at(x: number, y: number): ExternalInstance[] {
-    let out: ExternalInstance[] | null = null;
-    for (const g of this.grids) {
-      const p = g.place();
-      const l = g.byCol.get(colKey(x - p.dx, y - p.dy));
-      if (l) (out ??= []).push(...l);
-    }
-    return out ?? [];
-  }
-
-  judged(x: number, y: number, asOf: number): boolean {
-    const { R } = this.io;
-    const lx = Math.floor(x / R) * R;
-    const ly = Math.floor(y / R) * R;
-    if (this.io.unwritten().some(([ux, uy]) => ux === lx && uy === ly)) return false;
-    const [ox, oy] = this.io.origin();
-    return (this.written.get(this.regionKey(ox + lx, oy + ly)) ?? 0) <= asOf;
-  }
-
-  inWindow(x: number, y: number): boolean {
-    return x >= 0 && y >= 0 && x < this.io.dims.w && y < this.io.dims.h;
-  }
-
-  drop(inst: ExternalInstance): void {
-    const si = this.byId.get(inst.id);
-    if (!si) return;
-    this.byId.delete(si.id);
-    const g = si.grid;
-    if (g.things.get(si.key) === si) g.things.delete(si.key);
-    this.index(g);
-    g.stale = true;
-    this.count();
-  }
-
-  releasable(inst: ExternalInstance): ExternalCol[] {
-    const { R } = this.io;
-    const un = this.io.unwritten();
-    return inst.cols.filter((c) => this.inWindow(c.x, c.y) && !un.some(([ux, uy]) => c.x >= ux && c.x < ux + R && c.y >= uy && c.y < uy + R));
-  }
-
   // ---- inside ----------------------------------------------------------------------------------------------------
 
-  private regionKey(wx: number, wy: number): string {
-    const { R } = this.io;
-    return `${Math.floor(wx / R)},${Math.floor(wy / R)}`;
-  }
-
-  /** a grid's things claimed over the window's written land now (an edit) — owed till the columns aren't held */
+  /** a grid's spans claimed over the window's written land now (an edit) — owed till the columns aren't held */
   private claimWritten(g: StaticGrid): void {
     if (this.io.held()) {
       this.owed.add(g);
@@ -453,14 +262,13 @@ export class StaticClaims implements StaticSet {
     this.io.apply().claimGrids(this.io.columns(), [job], rects);
     this.stats.passes += rects.length;
     this.touchOver([job], rects);
-    g.owned?.claimed?.(rects, p);
+    g.owned.claimed?.(rects, p);
   }
 
-  /** the grids overlapping a window rectangle, as claim jobs (their buffers made where stale) */
+  /** the grids overlapping a window rectangle, as claim jobs */
   private jobsOver(x0: number, y0: number, x1: number, y1: number): (GridClaimJob & { g: StaticGrid })[] {
     const out: (GridClaimJob & { g: StaticGrid })[] = [];
     for (const g of this.grids) {
-      if (!g.things.size && !g.owned) continue;
       const p = g.place();
       const [bx0, by0, bx1, by1] = g.bounds;
       if (x1 <= bx0 + p.dx || x0 >= bx1 + p.dx || y1 <= by0 + p.dy || y0 >= by1 + p.dy) continue;
@@ -471,77 +279,9 @@ export class StaticClaims implements StaticSet {
   }
 
   private job(g: StaticGrid): (GridClaimJob & { g: StaticGrid }) | null {
-    if (g.stale) this.upload(g);
     if (!g.buf || !g.nCols) return null;
     const p = g.place();
     return { g, buf: g.buf, nCols: g.nCols, gx: p.dx, gy: p.dy, gz: p.dz };
-  }
-
-  /** the grid's columns and spans to its buffer (ColumnApply.claimGrids' layout): its things' spans in the grid's order */
-  private upload(g: StaticGrid): void {
-    g.stale = false;
-    // (a column's spans in the grid's order: its things in order, each thing's spans there in order)
-    const cols = new Map<number, ExternalCol[]>();
-    const aux = new Map<ExternalCol, number>();
-    let nSpans = 0;
-    for (const inst of g.things.values())
-      for (const c of inst.local) {
-        const k = colKey(c.x, c.y);
-        const l = cols.get(k);
-        if (l) l.push(c);
-        else cols.set(k, [c]);
-        aux.set(c, inst.fallback & 0xff);
-        nSpans++;
-      }
-    g.nCols = cols.size;
-    if (!cols.size) return;
-    const words = new Uint32Array(cols.size * 4 + nSpans * 4);
-    const fw = new Float32Array(words.buffer);
-    const iw = new Int32Array(words.buffer);
-    let s = 0;
-    const spanBase = cols.size * 4;
-    let i = 0;
-    for (const l of cols.values()) {
-      const first = s;
-      for (const c of l) {
-        fw[spanBase + s * 4] = c.z0;
-        fw[spanBase + s * 4 + 1] = c.z1;
-        words[spanBase + s * 4 + 2] = aux.get(c)!;
-        s++;
-      }
-      iw[i * 4] = l[0].x;
-      iw[i * 4 + 1] = l[0].y;
-      words[i * 4 + 2] = first;
-      words[i * 4 + 3] = s - first;
-      i++;
-    }
-    if (!(g.buf instanceof GPUBuffer) || g.buf.size < words.byteLength) {
-      if (g.buf instanceof GPUBuffer) g.buf.destroy();
-      g.buf = this.io.device.createBuffer({ label: `static claims ${g.name}`, size: Math.max(256, words.byteLength * 2), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    }
-    this.io.device.queue.writeBuffer(g.buf, 0, words);
-    this.stats.uploadKB += words.byteLength / 1024;
-  }
-
-  /** the grid's column index and bounds made again from its things */
-  private index(g: StaticGrid): void {
-    g.byCol.clear();
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -Infinity;
-    let y1 = -Infinity;
-    for (const inst of g.things.values())
-      for (const c of inst.local) {
-        const k = colKey(c.x, c.y);
-        const l = g.byCol.get(k);
-        if (!l) g.byCol.set(k, [inst]);
-        else if (l[l.length - 1] !== inst) l.push(inst);
-        x0 = Math.min(x0, c.x);
-        y0 = Math.min(y0, c.y);
-        x1 = Math.max(x1, c.x + 1);
-        y1 = Math.max(y1, c.y + 1);
-      }
-    g.bounds = g.byCol.size ? [x0, y0, x1, y1] : [0, 0, 0, 0];
   }
 
   /** the hybrid's chunks over what was claimed (each grid's bounds within each rectangle) drawn as voxels */
@@ -560,49 +300,6 @@ export class StaticClaims implements StaticSet {
     }
   }
 
-  private count(): void {
-    let n = 0;
-    let c = 0;
-    for (const g of this.grids) {
-      n += g.things.size;
-      c += g.byCol.size;
-    }
-    this.stats.things = n;
-    this.stats.columns = c;
-  }
-
-  /**
-   * (scripts: staticclaims.mjs) The GPU's columns (the layers read back whole) against the static things: every column of
-   * one in the window, on written land, is External or ground over each of its spans (claimed, or buried where ground
-   * was); and the External cells in the window that no claim covers (orphans to be).
-   */
-  audit(slots: Uint32Array, packed: PackedWorld): { checked: number; held: number; missing: { x: number; y: number; id: number; col: Interval[] }[]; external: number; unclaimed: number } {
-    const reg = this.io.registry();
-    const out = { checked: 0, held: 0, missing: [] as { x: number; y: number; id: number; col: Interval[] }[], external: 0, unclaimed: 0 };
-    for (const inst of this.byId.values())
-      for (const c of inst.cols) {
-        if (!this.inWindow(c.x, c.y) || !this.judged(c.x, c.y, Infinity)) continue;
-        out.checked++;
-        const col = readColumn(packed, slots, c.x, c.y);
-        if (freeSpans(col, c.z0, c.z1).length === 0) out.held++;
-        else if (out.missing.length < 12) out.missing.push({ x: c.x, y: c.y, id: inst.id, col });
-      }
-    const claimed = reg?.claimedSpans() ?? new Map<number, { z0: number; z1: number }[]>();
-    const { w, h } = this.io.dims;
-    for (let y = 0; y < h; y++)
-      for (let x = 0; x < w; x++) {
-        if (!this.judged(x, y, Infinity)) continue;
-        const col = readColumn(packed, slots, x, y);
-        const mine = claimed.get(y * 65536 + x) ?? [];
-        for (const iv of col) {
-          if (iv.mat !== MAT.External) continue;
-          out.external++;
-          if (!mine.some((s) => s.z0 < iv.z1 - 1e-3 && s.z1 > iv.z0 + 1e-3)) out.unclaimed++;
-        }
-      }
-    return out;
-  }
-
   /** (M4b) a GPU-owned grid gone (its town disposed): no longer claimed nor held — its claims left where they lie
    *  become orphans at the next orphan pass (their fallback material) */
   removeOwned(g: StaticGrid): void {
@@ -614,16 +311,7 @@ export class StaticClaims implements StaticSet {
   }
 
   dispose(): void {
-    for (const g of this.grids) if (!g.owned && g.buf instanceof GPUBuffer) g.buf.destroy();
     this.arena?.destroy();
     this.grids = [];
-    this.byId.clear();
   }
-}
-
-/** (tests) the spans of a static grid's column as claimGrid takes them: its things in the grid's order */
-export function gridColumnSpans(g: StaticGrid, x: number, y: number): { z0: number; z1: number; aux: number }[] {
-  const out: { z0: number; z1: number; aux: number }[] = [];
-  for (const inst of g.things.values()) for (const c of inst.local) if (c.x === x && c.y === y) out.push({ z0: c.z0, z1: c.z1, aux: inst.fallback & 0xff });
-  return out;
 }

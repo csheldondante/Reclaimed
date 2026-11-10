@@ -1,16 +1,12 @@
-// (round 128m, townlab) The lab's town fixture (data/lab/town.rclt): it decodes, it's this land generator's (else it's
-// stale: capture it again — node scripts/labtown.mjs capture), and it holds the user's town as the game had it.
+// (round 128m, townlab) The land fixtures (data/lab/site-*.rclt, the street lab's sites): the format round-trips, and
+// each site decodes. (Switchover: the behaviour lab's old-town fixture, data/lab/town.rclt, is retired with the old
+// towns — its test with it.)
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { decodeTownFixture, encodeTownFixture, TOWN_FIXTURE_FORMAT } from '../../src/lab/townfixture';
-import { GEN_VERSION } from '../../src/world/region-record';
-import { LabTown } from '../../src/lab/town';
-import { siteFromJson } from '../../src/build/site';
 
-const FILE = path.resolve(import.meta.dirname, '../../data/lab/town.rclt');
-
-describe('the town fixture', () => {
+describe('the land fixture', () => {
   it('round-trips a small capture (z shifted to its base, the sea with it)', async () => {
     const w = 16;
     const h = 16;
@@ -20,7 +16,7 @@ describe('the town fixture', () => {
       { z0: 90, z1: 100 + (i % 3), mat: 2 },
     ]);
     const bytes = await encodeTownFixture({
-      header: { gen: 'g', link: '?x', capturedAt: 't', origin: [64, 128], riverWet: 1, seaZ: 95, zMaxWindow: 504, town: { id: 's1', name: 'A', at: [8, 7], spots: [{ kind: 'pile', what: 'stone', at: [3, 4], w: [3, 4] }] } },
+      header: { gen: 'g', link: '?x', capturedAt: 't', origin: [64, 128], riverWet: 1, seaZ: 95, zMaxWindow: 504, town: { id: 's1', name: 'A', at: [8, 7] } },
       w,
       h,
       cols,
@@ -43,26 +39,15 @@ describe('the town fixture', () => {
     expect(map.riverFlow![N * 4 - 1]).toBe(0.25);
   });
 
-  it("is the user's start town, made by this land generator", async () => {
-    const { header, map } = await decodeTownFixture(new Uint8Array(fs.readFileSync(FILE)));
-    // (stale: the land generator changed since it was captured — node scripts/labtown.mjs capture)
-    expect(header.gen, 'data/lab/town.rclt is stale: capture it again (node scripts/labtown.mjs capture)').toBe(GEN_VERSION);
-    expect(header.link).toContain('town=1');
-    expect(header.link).toContain('fortress=1');
-    const { w, h } = header.dims;
-    expect(w * h).toBe(map.surface.length);
-    // (the town's heap, doors and the wall's gate posts, as the game gave the fortress)
-    // (onetown: the town's site — its one plan — as the game had it)
-    expect(header.site, 'data/lab/town.rclt has no town site: capture it again (node scripts/labtown.mjs capture)').toBeTruthy();
-    const town = LabTown.of(header.town, siteFromJson(header.site));
-    expect(town.site.plan.structures().length).toBeGreaterThan(20);
-    expect(town.homes.length).toBeGreaterThan(0);
-    expect(town.spotsOf(header.town.id)!.some((s) => s.kind === 'post' && s.ref === `${header.town.id}:wall`)).toBe(true);
-    // (its land: dry ground at the heap, water — the river and the sea — in the window)
-    const [hx, hy] = town.heap;
-    const hc = Math.floor(hy / (Math.sqrt(3) / 2)) * w + Math.floor(hx);
-    expect(map.water[hc]).toBeLessThan(0.3);
-    expect(map.water.filter((v) => v > 0.9).length).toBeGreaterThan(1000);
-    expect(map.riverFlow!.some((v) => v > 0)).toBe(true);
-  });
+  it('the street lab’s sites decode, each a window of land with its town’s place in it', async () => {
+    for (const site of ['muru', 'river', 'mountain', 'mesa', 'coast']) {
+      const file = path.resolve(import.meta.dirname, `../../data/lab/site-${site}.rclt`);
+      const { header, map } = await decodeTownFixture(new Uint8Array(fs.readFileSync(file)));
+      const { w, h } = header.dims;
+      expect(w * h, site).toBe(map.surface.length);
+      expect(header.town.name, site).toBe(site);
+      const [x, y] = header.town.at;
+      expect(x > 0 && x < w && y > 0 && y < h * (Math.sqrt(3) / 2), site).toBe(true);
+    }
+  }, 60_000);
 });

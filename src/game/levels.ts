@@ -15,12 +15,11 @@ import { generatePlayground, STATIONS, type Station } from '../levels/playground
 import { generateTraitlab, TRAITLAB_STATIONS } from '../levels/traitlab';
 import { generateNoiselab } from '../levels/noiselab';
 import { generateBestiary } from '../levels/bestiary';
-import { generateLab, labRecipe, loadFixtureLand, loadLabLand, LAB_DIMS } from '../lab/recipes';
+import { loadFixtureLand } from '../lab/fixtures';
 import type { TownFixtureHeader } from '../lab/townfixture';
 import type { FlowKit } from '../flow/install';
 import type { RiverMode } from '../sim/world-gpu';
 import type { GateSpec } from '../world/kit';
-import { urlFlags } from '../flags';
 
 /** What the title-screen model for a level looks like (menumap.ts builds it). */
 export type LevelModel = 'dam' | 'car' | 'tent' | 'ship' | 'sign';
@@ -45,8 +44,7 @@ export interface LevelDef {
   hidden?: boolean;
   /** (round 92) the camera's zoom it opens at (default: from the screen's size) — the rock lab's pieces close */
   zoom?: number;
-  /** (round 128m, townlab) its side (columns and rows; default 256) — the lab's 320: the town's site box
-   *  must fit (its keep: scenes/streamer/keep.ts) */
+  /** (round 128m, townlab) its side (columns and rows; default 256) */
   side?: number;
   /** its height limit (cells; default 64): the wilds' ranges want more (round 64) */
   zMax?: number;
@@ -67,20 +65,18 @@ export interface LevelDef {
   stations?: Station[];
   /** (round 111, TG1) the noise lab: its land made and remade by a layer recipe on the GPU (noiselab/control.ts) */
   noiseLab?: boolean;
-  /** (round 128l, tooling) the behaviour lab (src/lab/: ?level=lab&lab=<recipe>): the fortress on its own town, reclaimed.lab */
-  behaviourLab?: boolean;
   /** (street lab, trackA-streetlab m1) streets drawn over a real site's land on the GPU (streetlab/control.ts) */
   streetLab?: boolean;
   /** the warmup's ticks before the level opens (default the game's) */
   warmupTicks?: number;
-  /** (round 128m, townlab) land loaded rather than made, before the level is (the lab's `town` fixture): null — generate */
+  /** (round 128m, townlab) land loaded rather than made, before the level is (the street lab's site fixture): null — generate */
   load?: (params: URLSearchParams) => Promise<LoadedLand | null>;
 }
 
 /** (round 128m) land a level loaded (LevelDef.load) and what came with it */
 export interface LoadedLand {
   map: MapData;
-  /** the lab's town fixture's header (src/lab/townfixture.ts) */
+  /** the fixture's header (src/lab/townfixture.ts) */
   fixture?: TownFixtureHeader;
 }
 
@@ -219,29 +215,8 @@ export const LEVELS: LevelDef[] = [
     hidden: true,
   },
   {
-    // (round 128l, tooling: docs/TOOLING.md) scripted behaviour checks on a small fixed world — the fortress, its
-    // builders, roads and claims, no atlas; scripts/lab.mjs drives it
-    id: 'lab',
-    name: 'The Behaviour Lab',
-    blurb: 'A small fixed world from a recipe (flat, hill, valley, walled) with the fortress: scripted checks (?lab=<recipe>).',
-    model: 'sign',
-    generate: (dims) => generateLab(dims, labRecipe(urlFlags().get('lab'))),
-    sandbox: true,
-    hidden: true,
-    zMax: LAB_DIMS.zMax,
-    side: LAB_DIMS.w,
-    behaviourLab: true,
-    warmupTicks: 120,
-    // (round 128m, townlab: the `town` recipe's land is the user's start town, loaded from data/lab/; its rivers held at
-    // the atlas's table as in the game)
-    load: (params) => loadLabLand(labRecipe(params.get('lab'))),
-    get rivers() {
-      return typeof location === 'undefined' ? undefined : labRecipe(urlFlags().get('lab')).rivers;
-    },
-  },
-  {
     // (street lab, milestone 1) street lines over real atlas land: ?skipmenu=1&level=streetlab&site=muru|river|mountain|mesa|coast
-    // (&tech=0..3, &pitch=deg); the land loaded from data/lab/ (the behaviour lab's loader), no fortress or town sim
+    // (&tech=0..3, &pitch=deg); the land loaded from data/lab/ (lab/fixtures.ts), no town sim
     id: 'streetlab',
     name: 'The Street Lab',
     blurb: 'Street lines over real land: contours, distance fields, tensor streamlines (?site=).',

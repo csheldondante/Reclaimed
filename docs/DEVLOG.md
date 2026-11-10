@@ -21738,3 +21738,38 @@ expected fail. No shot (nothing drawn changed).
   walk up its stair and along the top), `gate-widths.png` (the east gate's march: 5 m at the gate — its edge blocks
   close in by the towers — 10–12 m in the street out), `unreached-red.png` (the red marks, with the reach bits
   cleared by the shot's script to show them: in play every Muru piece is reached).
+
+## 2026-11-10 — the switchover: the GPU towns are the towns (trackA-switchover; docs/design/SWITCHOVER.md)
+
+- Why: the user — "Don't build against a system we are deprecating switch over." "Stop wasting resources on old code."
+  Two town systems ran side by side: the old CPU planner (settle/plan, structures' plan/place/pieces, build/site …
+  lanes, its view, its far rasters, its people as AgentUnits, fortress mode editing it) and the GPU town (citygen, the
+  living town, the season loop) behind `?citygen=fields&living=1&opps=1`. Every change had to keep both working.
+- What: the GPU town is plain default play (`?opps=0`, `?living=0`, `?towns=0` turn parts off; nothing turns the old
+  generator on). Deleted, not ported: the old planner and everything only it served; fortress mode (painting, the bar,
+  Skip to done, Inspect, follow, quarry, economy, the raid clock, defence, raiders, its crowd); src/town (one crowd);
+  the structures draw (StructureGpu, structmesh/structgame.wgsl, the light pools) and the structures viewer page; the
+  ships; the far towns baked into the far land; the CPU static grids (only GPU-owned grids remain: `gpuGrid`, the arena,
+  the GPU orphan pass and damage check); the streamer's keep rect (only the fortress kept one); the behaviour lab
+  (`?level=lab`, its recipes, the old-town fixture data/lab/town.rclt) and every fortress scenario; the town, place and
+  speed benches; ~20 atlas scripts of the old towns. `Settlements` is the records only (names, sizes, purposes, stories,
+  camps, the roads into a site, which sites citygen makes). The situation runs keep the record's centre and reach for
+  their town (no doors, no townsfolk: SW-G5). Kept: structures/tiles/* (vertical cities), modules/dressmodules (art),
+  build/reachgpu (citygen's reach), the sandbox's Town (build/town …).
+- Gaps listed, not rebuilt (BACKLOG SW-G1..G9): hamlets and farms have no town; raids and defence come back on Track
+  B's GPU units; far view of towns from the GPU layout; ships; the run's town; night light pools; tile-system cities;
+  the agents' dormant road riding; the sandbox's Town.
+- The records' random draws are kept in order (two draws the old civ/era used, still made) so each site's camp roll is
+  unchanged: `?town=1` still lands on Muru (s84).
+- The town lab replaces the behaviour lab: `?lab=1` on the default page (src/lab/lab.ts), driven by scripts/lab.mjs.
+  New gates on it:
+  - townfollow: a commuter at Muru picked as it sets out (24 s of sim waited for one: the graph settles, the first
+    rests run out), followed 15 s of sim: 29 samples riding, 10.5 m along its route, the leg ended and its job stepped
+    to WORK, on screen above the card sheet 30/30. (A slide moved the window under it by 64 rows mid-follow: positions
+    are compared in world units.)
+  - townseason: Muru, walls + houses then farms: 14 → 12 districts not begun, 2 stages in its edit log, the wall to
+    0.67 with 35 posts on risen pieces, the save point written (season 5.6 KB, edit log 3.7 KB); season 1 → 3.
+- Gates: typecheck; unit 75 files / 587 tests (the boundary rules now name the town as citygen/citylife/season; the
+  writing lint's fortress sources gone; the transfer list pruned of 26 old-town rows); Dawn: static-claims (rewritten
+  on a GPU-owned dense grid), cities, jb6.
+- Net: 229 files, +923 −37 268 (src −28 704, scripts −6 225, test −713, docs −671).

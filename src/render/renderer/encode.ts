@@ -10,13 +10,11 @@ import { BGCHECK, BgCheck } from '../bgcheck';
 import { encodeTerrainCache, terrainCacheMode } from './terrain-cache';
 import { encodeGBuffer, encodeShadow, writeLight } from './gbuffer-shadow';
 import { drawGrid, gridCull, gridLive } from './grid';
-import { structGroups } from './features';
 import { VERTS_PER_PRISM, VERTS_PER_BOX, VERTS_PER_TOP, INST_GROW, RenderOptions, SKIP, SHADOW_STILL_BIT, cutOn } from './defs';
 import { Renderer } from '../renderer';
 
 /** Renderer.encode (the class keeps the method, documented there) */
 export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
-  if (rd.structs) rd.structs.lod = cam.zoom < rd.structLodZoom;
   syncMeshPool(rd);
   syncInst(rd);
   cam.write(rd.camData);
@@ -164,14 +162,6 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
     rd.profiler.draws += rd.meshInst.draw(pass, rd.indirect);
     pass.setPipeline(rd.opaquePipe);
   }
-  // (round 117) the city's pieces
-  if (rd.structs?.pipe && rd.structs.sg.ranges.length && !SKIP.has('structures')) {
-    structGroups(rd);
-    pass.setPipeline(rd.structs.pipe);
-    pass.setBindGroup(0, rd.structs.group!);
-    rd.profiler.draws += rd.structs.sg.draw(pass, rd.structs.lod);
-    pass.setPipeline(rd.opaquePipe);
-  }
   for (const s of SKIP.has('prisms') ? [] : rd.prismSources) {
     pass.setBindGroup(0, s.group);
     pass.drawIndirect(s.indirect, 0);
@@ -225,13 +215,6 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
     pass.setBindGroup(0, v.group);
     pass.drawIndirect(v.indirect, 0);
     rd.profiler.draws++;
-  }
-  // (round 120, cities) the towns' light pools at night, over everything opaque, under the water
-  if (rd.structs?.glow && rd.structNight > 0.3 && rd.structs.sg.glow.length && !SKIP.has('structures') && !SKIP.has('pools')) {
-    structGroups(rd);
-    pass.setPipeline(rd.structs.glow);
-    pass.setBindGroup(0, rd.structs.group!);
-    rd.profiler.draws += rd.structs.sg.drawGlow(pass);
   }
   // (watersurf) the water's surface, then the blended prisms (oil, ice and crystal; without the field mesh the water)
   const flat = SKIP.has('waterflat');

@@ -11,7 +11,7 @@ const SRC = path.join(ROOT, 'src');
 
 /** the split classes: class file, its folder, what's where (listed when the folder exists) */
 const SPLIT = [
-  ['scenes/level.ts', 'scenes/level', 'LevelScene: `attach.ts` wires a level once (attach-tools, input-wiring, test-api, stream-setup); `frame.ts` is a frame of play; the tools, runs, fortress, valley, atlas controls, camera moves and labs beside them.'],
+  ['scenes/level.ts', 'scenes/level', 'LevelScene: `attach.ts` wires a level once (attach-tools, input-wiring, test-api, stream-setup); `frame.ts` is a frame of play; the tools, runs, season loop, valley, atlas controls, camera moves and labs beside them.'],
   ['scenes/streamer.ts', 'scenes/streamer', 'Streamer: `slide.ts` (follow the camera, the slide), `freeze.ts`, `generate.ts`, `write.ts`, `store.ts`, `jobs.ts`, `warp.ts`, `regions.ts`; `defs.ts` its flags, records and public types.'],
   ['game/integrity.ts', 'game/integrity', 'Integrity: `tick.ts` (update and the analysis pass), `rigid.ts`, `metal.ts`, `resting.ts`, `columns.ts`, `loose.ts`, `lattice.ts`, `window.ts`; `defs.ts`.'],
   ['render/renderer.ts', 'render/renderer', 'Renderer: `encode.ts` (a frame\'s draw), `mesh-draws.ts` (the field mesh\'s pipelines, made by the constructor), `gbuffer-shadow.ts`, `terrain-cache.ts`, `grid.ts`, `features.ts`; `defs.ts`.'],
@@ -26,7 +26,6 @@ const NOTES = {
   api: 'The engine\'s public APIs over a live world (the Sim facade `world.ts`, terrain, atlas map, cutaway, puck); game layers use these, not system internals.',
   'api/contracts': 'Interface contracts between tracks (world state, structures, settlement, flora, units ...): types only, no behaviour.',
   atlas: 'The atlas: the whole generated world map (coarse sim, GPU finish, far land, geysers), from which the streamed window\'s land comes.',
-  fortress: 'Fortress mode: the fortress, its economy, pieces, claims, life (workers) and its UI bar; started on a level by scenes/level/fortress.ts.',
   game: 'Game rules over the world: powers, Nature, progress, levels, and Integrity (structures that break and fall).',
   'game/integrity': 'Integrity\'s internals, split out of game/integrity.ts: free functions over the Integrity instance (`ig`). Only integrity.ts and these modules call them.',
   gpu: 'WebGPU plumbing: device, pipelines and bind-group layouts, CPU timing stats.',
@@ -37,7 +36,10 @@ const NOTES = {
   scenes: 'Scenes and the live world: WorldCore (one live world), the level and the menu, the streamer (the sliding window), the planner, the region pool and copier.',
   'scenes/level': 'LevelScene\'s internals, split out of scenes/level.ts: free functions over the scene (`scene`). Only level.ts and these modules call them.',
   'scenes/streamer': 'The Streamer\'s internals, split out of scenes/streamer.ts: free functions over the streamer (`S`). Its public API stays on the class.',
-  settle: 'Settlements: towns and cities on the atlas, their plans, the view that draws them, ships.',
+  settle: 'Settlements: the atlas sites’ records (names, sizes, purposes, stories) and the roads into them; the towns themselves are citygen’s.',
+  citygen: 'The GPU town generator: field towns streamed as the window nears them, their districts and walls (the season loop’s API).',
+  citylife: 'The living town on the GPU: its people’s routes and rides, the quarry and the clearing.',
+  season: 'The season loop: the card sheet, the ledger, the dealer’s hand, the showcase of each season’s stages.',
   shaders: 'WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slope appended to kernels that declare them.',
   sim: 'GPU world buffers (the WorldGpu contracts), the systems\' wrappers, the fixed-step scheduler, Globals, particles, sleep, snapshots, static claims.',
   story: 'Stories: dialog play, hero runs, the atlas run.',

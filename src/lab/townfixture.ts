@@ -1,8 +1,8 @@
-// (round 128m, townlab) The user's start town as a lab fixture (?level=lab&lab=town; docs/TOOLING.md). The user: "copy
-// the land data around the town for your own fast load tests so you see the same issues I do". Captured once from the
-// full game on the user's link (scripts/labtown.mjs capture: the atlas's window round the start town as it opened, the
-// town's buildings stamped into its columns, its held rivers, its heap, doors and gate posts) into data/lab/town.rclt;
-// the lab loads it instead of generating anything. Pure: no GPU, no DOM (CompressionStream is in Node and browsers).
+// (round 128m, townlab) A window of the atlas's land as a fixture (docs/TOOLING.md): the street lab's sites
+// (data/lab/site-*.rclt, ?level=streetlab&site=), captured once from the full game (scripts/labtown.mjs site) and
+// loaded instead of generating anything. The user: "copy the land data around the town for your own fast load tests so
+// you see the same issues I do". (Switchover: the behaviour lab's old-town fixture, data/lab/town.rclt, is retired.)
+// Pure: no GPU, no DOM (CompressionStream is in Node and browsers).
 //
 // The file: gzip of  u32 magic 'RCLT' | u32 header length | header JSON | pad to 4 | the columns' interval counts (u8 a
 // column) | their intervals (z0 f32, z1 f32 — window z less the header's zBase — then mat u8, aux u8) | water, vegetation,
@@ -12,7 +12,6 @@
 import { ColumnGrid, type WorldDims } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { cellAt } from '../world/lattice';
-import type { LiveSpot } from '../settle/live';
 
 const MAGIC = 0x544c4352; // 'RCLT'
 /** (2, round 128m onetown: the town's site — its one plan — and the window's oz in the header) */
@@ -33,12 +32,11 @@ export interface TownFixtureHeader {
   /** the sea's level (fixture z; -1e9 none) and the rivers' wetness when captured */
   seaZ: number;
   riverWet: number;
-  /** the town that becomes the fortress: its record's place (window world units) and its spots (window coordinates) */
-  town: { id: string; name: string; at: [number, number]; spots: LiveSpot[] };
+  /** the site: its name and its town's place (window world units). (Switchover: the old town's fixture, data/lab/town.rclt,
+   *  also carried its spots and its site — retired with the old towns) */
+  town: { id: string; name: string; at: [number, number] };
   /** (onetown) the window's oz when captured (the site's heights are world z: lab z = world z − oz − zBase) */
   oz?: number;
-  /** (onetown) the town's site as the game had it (build/site.ts siteToJson) */
-  site?: unknown;
 }
 
 export interface TownFixture {
@@ -157,8 +155,7 @@ export async function decodeTownFixture(bytes: Uint8Array): Promise<TownFixture>
   const vegetation = at(1, N);
   const waterSource = at(2, N);
   const riverFlow = at(3, 4 * N);
-  const heap = header.town.spots.find((s) => s.kind === 'pile')?.w ?? header.town.at;
-  const heapCell = cellAt(heap[0], heap[1]);
+  const heapCell = cellAt(header.town.at[0], header.town.at[1]);
   const f = (n: number) => new Float32Array(n);
   const map: MapData = {
     grid,

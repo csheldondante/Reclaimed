@@ -95,10 +95,9 @@ export async function startSituationRun(scene: LevelScene, hero: string, opps = 
   const W = a.atlas.worldW;
   const H = a.atlas.p.rows * ROW_H;
   const wrap = (d: number, n: number) => d - Math.round(d / n) * n;
-  // (merge124) one world for the run and the systems that realise it: the settlements (condition, holder, people, a
-  // structure placed; their diplomacy over its facts: LW-F10) and the rivers (a region's inflow)
+  // (merge124) one world for the run and the systems that realise it: the rivers (a region's inflow). (Switchover: the
+  // old towns realised its settlement events too — charred, peopled — deleted with them: BACKLOG SW-G5)
   const world = MemoryWorldState.restore(structuredClone(st.wiki.snapshot));
-  st.useWorld(world);
   useRiverWorld(scene, world);
   const sit = new Run({
     world,
@@ -118,7 +117,6 @@ export async function startSituationRun(scene: LevelScene, hero: string, opps = 
     ready: (x, y) => warpReady(a.atlas, S, dims, x, y),
     warp: (x, y) => warpWindow(a.atlas, S, dims, x, y),
     say: (s, sec) => scene.hud.say(s, sec ?? 4),
-    remake: () => S.warp(S.origin[0], S.origin[1], S.oz, true),
     gm: scene.host.params.get('runsitgm') !== '0',
   });
   scene.situationRun = sit;

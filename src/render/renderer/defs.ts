@@ -56,7 +56,6 @@ export interface RenderOptions {
 }
 
 /** (perfopt) the winding of the mesh's faces out of the solid on screen (fieldmesh.wgsl makeQuads; ?front=cw to try the other) */
-export const STRUCT_CULL: GPUCullMode = (urlFlags().get('scull') ?? 'back') as GPUCullMode;
 export const MESH_FRONT: GPUFrontFace = urlFlags().get('front') === 'cw' ? 'cw' : 'ccw';
 /** (round 86) ?hybrid=1 (flags.ts LITE_SET on the low tier): the window's heightfield chunks drawn as a grid
  *  (meshdraw.wgsl vsGrid) — its pipelines made */

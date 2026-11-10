@@ -1,11 +1,11 @@
-// (round 128o, DA-B28) The field mesh's rebuilds and GPU time on the atlas, by phase: at rest, building (the fortress's
-// Build), a storm's rain on the camera, a pan across the land (slides; without the fortress, whose window stays put),
+// (round 128o, DA-B28) The field mesh's rebuilds and GPU time on the atlas, by phase: at rest (the town game; switchover:
+// the fortress's Build phase is gone with it), a storm's rain on the camera, a pan across the land (slides; without the fortress, whose window stays put),
 // and after. Per phase: frames, mesh chunks rebuilt (a frame's state[0], read back each frame — a debug readback of
 // 64 B), the fieldmesh passes' GPU ms (mean, max) and, for the pan, the rebuilds and ms by frames since the last slide.
 // Run it on two builds (before / after a change) for a rebuild count and a toggle diff. Its own Chrome on a dev server
 // you start on a port no one else uses; not on the shared runner (it doesn't take the GPU lease: run it only when the
 // timing runs are yours).
-//   node scripts/meshderisk.mjs --url http://127.0.0.1:PORT [--seconds 15] [--nofort] [--pan 30] [--json out.json]
+//   node scripts/meshderisk.mjs --url http://127.0.0.1:PORT [--seconds 15] [--pan 30] [--json out.json]
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 const argv = process.argv.slice(2);
@@ -18,7 +18,6 @@ if (!url) throw new Error('meshderisk: --url of a dev server (its own port)');
 const secs = Number(opt('seconds', 15));
 const pan = Number(opt('pan', 30));
 const out = opt('json', '');
-const fort = !argv.includes('--nofort');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -30,7 +29,7 @@ const browser = await puppeteer.launch({
 try {
   const p = await browser.newPage();
   p.on('pageerror', (e) => console.log('pageerror', e.message));
-  const u = `${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&town=1&fresh=1${fort ? '&fortress=1' : ''}&perf=1&world=md-${Date.now().toString(36)}`;
+  const u = `${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&town=1&fresh=1&perf=1&world=md-${Date.now().toString(36)}`;
   console.log(u);
   await p.goto(u, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream && window.reclaimed?.renderer?.fieldMesh && window.reclaimed?.camera, { timeout: 300000 });
@@ -69,11 +68,6 @@ try {
   });
   const phase = (name) => p.evaluate((n) => (window.__md.phase = n), name);
   await sleep(secs * 1000);
-  if (fort) {
-    await phase('build');
-    await p.evaluate(() => document.querySelector('.fort-bar button.go')?.click());
-    await sleep(secs * 2000);
-  }
   await phase('rain');
   await p.evaluate(() => {
     const R = window.reclaimed;

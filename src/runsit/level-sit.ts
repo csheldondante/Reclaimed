@@ -33,11 +33,10 @@ import { situationFor } from './gm';
 import { carried, displaced, totals } from './items';
 import { PLAY_TITLE, SituationRun, along, delta, LEVY_PACE, type V2 } from './state';
 
-/** what the run needs of the settlements system (its public API: settlements.ts). (merge124) A settlement's condition
- *  isn't set from here: the world state's `settlement-condition` event is its one owner, and the settlements system,
- *  wired to the run's world (Settlements.useWorld), realises it */
+/** what the run needs of the settlements' records (settle/settlements.ts): where a settlement is and how far it reaches.
+ *  (Switchover: its doors and its people came from the old CPU town, deleted — BACKLOG SW-G5) */
 export interface SettlementsView {
-  places(id: string): { centre: V2; radius: number; doors: { at: V2; ref: string }[] } | null;
+  settlement(id: string): { at: V2; radius: number } | null;
 }
 
 export interface LevelSitDeps {
@@ -58,8 +57,6 @@ export interface LevelSitDeps {
   ready: (cx: number, cy: number) => boolean;
   warp: (cx: number, cy: number) => Promise<void>;
   say: (s: string, seconds?: number) => void;
-  /** the window made again where it is (the streamer's warp to its own place): land a system changed comes in as it is now */
-  remake: () => Promise<void>;
   /** false: the template even where the GM wrote one (?runsitgm=0) */
   gm?: boolean;
   /** (merge124) the world the run plays in (the level's: the settlements and the rivers realise its events); absent, one
@@ -68,8 +65,6 @@ export interface LevelSitDeps {
 }
 
 const toCell = (x: number, y: number): [number, number] => [x, y / ROW_H];
-/** seconds a fallen town burns live before the window is made again with it charred */
-const CHAR_AFTER_S = 25;
 const PLAY_COLOUR: Record<string, string> = { flee: '#f08a4b', ambush: '#e0483a', deliver: '#f2c14e', trader: '#8fd16a', town: '#ffffff', chase: '#ff9c3a', rescue: '#7fd6c8', scout: '#b8c4ff' };
 const PLAY_GLYPH: Record<string, string> = { flee: '⇢', ambush: '⚔', deliver: '✉', trader: '⚖', town: '♜', chase: '⇉', rescue: '⛓', scout: '👁' };
 
@@ -156,11 +151,11 @@ export class LevelSit {
     return this.run.sit;
   }
 
-  /** the town's places in the window, once planned */
+  /** the town's places in the window: its record's centre and reach (no doors: the GPU town has none for the run yet) */
   private places = (sid: string): TownPlaces | null => {
-    const p = this.d.settlements.places(sid);
+    const p = this.d.settlements.settlement(sid);
     if (!p) return null;
-    return { centre: this.d.toWin(p.centre), radius: p.radius, doors: p.doors.map((x) => this.d.toWin(x.at)) };
+    return { centre: this.d.toWin(p.at), radius: p.radius, doors: [] };
   };
 
   /** the town's people out now: its units, not hostile, not its guards (round 128p: asked of the GPU, where each stands) */
@@ -232,15 +227,6 @@ export class LevelSit {
     const run = this.run;
     this.record = this.finishRecord();
     const ending = run.sit.endings[run.end!];
-    if (ending.settlement === 'ruined' || ending.settlement === 'abandoned') {
-      // (the settlements system realises it charred from now on — told by the world's `settlement-condition` event, which
-      // finishRecord applied; the window is made again once the fires have had their time, so what stands of a town of
-      // plaster and tile — which the fire's heat only cracks — comes down to its stumps: DEVLOG round 120)
-      const n = this.runs;
-      setTimeout(() => {
-        if (this.runs === n && !this.journey) void this.d.remake().then(() => this.log.push(`${run.sit.target.name}: the window made again, the town charred`));
-      }, CHAR_AFTER_S * 1000);
-    }
     this.log.push(`end ${run.end}: ${this.record.events.length} events; ${run.sit.target.name} ${ending.settlement ?? 'as it was'}`);
     this.render();
   }

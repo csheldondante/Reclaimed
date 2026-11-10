@@ -191,17 +191,11 @@ async function main() {
   if (params.get('florabench') === '1') void import('./flora/bench').then((m) => m.floraBench(params));
   // (round 120: ?physbench=1 — the physics phone bench, every solver × judge on the playground: src/perf/physbench.ts)
   if (params.get('physbench') === '1') void import('./perf/physbench').then((m) => m.physBench(params));
-  // (round 128g: ?townbench=1 — the town pan phone bench, on the atlas at ?town=: src/perf/townbench.ts)
-  if (params.get('townbench') === '1') void import('./perf/townbench').then((m) => m.townBench(params));
-  // (citygen: ?citygenbench=1 — the town layout's phone bench, on the atlas with &citygen=fields: src/perf/citygenbench.ts)
+  // (citygen: ?citygenbench=1 — the town layout's phone bench, on the atlas: src/perf/citygenbench.ts)
   if (params.get('citygenbench') === '1') void import('./perf/citygenbench').then((m) => m.citygenBench(params));
   // (living town, RT2-4: ?livingbench=1 — the settled graph's phone bench, its empty dispatches and its awake cost by
   // toggling: src/perf/livingbench.ts)
   if (params.get('livingbench') === '1') void import('./perf/livingbench').then((m) => m.livingBench(params));
-  // (round 128p, DA-B22: ?speedbench=1 — the 16x toggle-diff phone bench, on the fortress: src/perf/speedbench.ts)
-  if (params.get('speedbench') === '1') void import('./perf/speedbench').then((m) => m.speedBench(params));
-  // (round 128m, townlab: ?bench=place — the placement phone bench, on the fortress at ?town=: src/perf/placebench.ts)
-  if (params.get('bench') === 'place') void import('./perf/placebench').then((m) => m.placeBench(params));
   if (pageBench === 'run') void pageBenchRun();
   if (bench === 'level')
     void benchLevel({
@@ -239,7 +233,7 @@ async function main() {
     showFatal(msg);
   };
   const frame = (now: number) => {
-    // (round 128o, DA-B5: a scene capped — the fortress planned, the game paused — skips display frames to its rate)
+    // (round 128o, DA-B5: a scene capped — the game paused — skips display frames to its rate)
     const cap = scene?.maxFps?.() ?? null;
     const interval = now - lastRaf;
     lastRaf = now;

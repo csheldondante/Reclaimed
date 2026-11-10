@@ -22,10 +22,11 @@
 //  - Owners say when the window slides: what leaves it is released first (the streamer freezes ordinary ground) —
 //    but for the static ones (round 128j, below).
 //  - (round 128j, claims at load; the user: "If we compute the town and intersect grids can't it load the terrain with
-//    the intervals for town already stored?") Things that don't move (a town's buildings, the fortress's blocks) are
-//    *static*: their claims are written with the land by the kernel that writes an arriving region (sim/static-claims.ts),
-//    kept in it when it leaves, never released on a slide nor claimed again after one. The registry sees them through a
-//    StaticSet (`statics`): in its lookups, verify, orphans and release alike, anchored to their grid (not shifted).
+//    the intervals for town already stored?") Things that don't move (a town's buildings and walls) are *static*: their
+//    claims are written with the land by the kernel that writes an arriving region (sim/static-claims.ts), kept in it
+//    when it leaves, never released on a slide nor claimed again after one. Since citygen M4b and the switchover they
+//    are GPU-owned grids: the registry sees them through a StaticSet (`statics`) only to leave their columns to the
+//    GPU's orphan pass and edit check.
 
 import { MAT, MATERIALS } from '../world/materials';
 import type { Interval } from '../world/layout';
@@ -48,12 +49,10 @@ export const MESHINST = typeof location !== 'undefined' && urlFlags().get('meshi
 export type OwnerId = number;
 /** the resting rock (game/integrity.ts: a rigid body come to rest stays its mesh) */
 export const OWNER_ROCK: OwnerId = 1;
-// (round 128m, onetown) a town's claims are owned by its grid's id (build/site.ts gridIdOf: 256 and up), one owner
-// for the generated buildings and the player's alike — the settlements' and the fortress's owner ids are gone
 // (citygen M4b) A town made by the field generator owns its claims on the GPU: a GPU-owned static grid
 // (sim/static-claims.ts gpuGrid) — its spans built, claimed, held by the orphan pass and checked after an edit there,
-// keyed by lot record (a span's owner word); the CPU knows only its box. The old towns' grids (CPU spans) stay as they
-// are until the old planner goes (M4e), behind the same StaticSet.
+// keyed by lot record (a span's owner word); the CPU knows only its box. (Switchover: the old towns' CPU grids, owned
+// by their grid ids — 256 and up — are gone.)
 
 export interface ExternalCol {
   x: number;
@@ -156,25 +155,13 @@ export interface ColumnAccess {
 const EPS = 1e-3;
 
 /**
- * (round 128j) The static things' claims as the registry sees them (sim/static-claims.ts StaticClaims): instances whose
- * cells are written with the land, anchored to their grids — `cols` in the window's frame now, some maybe out of it.
+ * (round 128j; citygen M4b) The static grids' claims as the registry sees them (sim/static-claims.ts StaticClaims): GPU-
+ * owned grids, written with the land, held by the GPU's orphan pass and checked after an edit on the GPU — never judged
+ * on the CPU. (Switchover, 2026-11-10: the CPU grids' instances — the old towns' and the fortress's — are gone.)
  */
 export interface StaticSet {
-  instances(): Iterable<ExternalInstance>;
-  get(id: number): ExternalInstance | undefined;
-  /** the static instances with an interval in window column (x, y) */
-  at(x: number, y: number): ExternalInstance[];
-  /** whether window column (x, y) holds its static claims in a read of the columns asked at registry epoch `asOf`: its
-   *  land written (with the claims) by then — not coming in, not written after the read was asked */
-  judged(x: number, y: number, asOf: number): boolean;
-  /** whether window column (x, y) is in the window */
-  inWindow(x: number, y: number): boolean;
-  /** an instance let go (its owner's release or forget): out of its grid, never claimed with the land again */
-  drop(inst: ExternalInstance): void;
-  /** the columns an instance's claim can be let go in now (in the window, its land written): window frame */
-  releasable(inst: ExternalInstance): ExternalCol[];
-  /** (citygen M4b) whether window column (x, y) lies in a GPU-owned grid's box — its claims are its own, held and
-   *  checked on the GPU (the orphan pass reads its spans: ownedJob), never judged on the CPU */
+  /** whether window column (x, y) lies in a GPU-owned grid's box — its claims are its own, held and checked on the GPU
+   *  (the orphan pass reads its spans: ownedJob), never judged on the CPU */
   gpuOwns(x: number, y: number): boolean;
   /** (M4b) the GPU-owned grid as the orphan pass reads it (null: none) */
   ownedJob?(): OwnedArenaJob | null;
@@ -308,20 +295,15 @@ export class ExternalRegistry {
     this.owners.set(id, o);
   }
 
-  /** every instance: the moving ones', then the static ones' (round 128j: their cols may lie out of the window) */
+  /** every instance */
   get instances(): IterableIterator<ExternalInstance> {
-    const st = this.statics;
-    const list = this.list;
-    return (function* () {
-      yield* list.values();
-      if (st) yield* st.instances();
-    })();
+    return this.list.values();
   }
   get size(): number {
     return this.list.size;
   }
   get(id: number): ExternalInstance | undefined {
-    return this.list.get(id) ?? this.statics?.get(id);
+    return this.list.get(id);
   }
 
   /**
@@ -418,23 +400,6 @@ export class ExternalRegistry {
 
   /** Let go of an instance: what's left of its cells becomes its fallback material, in place (or air: `toAir`). */
   release(id: number, toAir = false): void {
-    const st = this.statics?.get(id);
-    if (st) {
-      // (round 128j: a static thing — let go where it lies in the window now; out of its grid, so the land written
-      // later doesn't claim it again: what was frozen with its cells claimed comes back orphaned, its fallback)
-      const cols = this.statics!.releasable(st);
-      this.statics!.drop(st);
-      if (cols.length) {
-        if (this.cols.release) this.cols.release(cols.map((c) => ({ ...c, fallback: st.fallback, toAir })));
-        else
-          for (const c of cols) {
-            const out = releaseSpan(this.cols.read(c.x, c.y), c, st.fallback, toAir);
-            if (out) this.cols.write(c.x, c.y, out);
-          }
-      }
-      this.stats.released++;
-      return;
-    }
     const inst = this.list.get(id);
     if (!inst) return;
     this.forget(inst);
@@ -451,10 +416,6 @@ export class ExternalRegistry {
 
   /** Forget an instance without touching the columns (its owner rewrote them itself, or the world under it went). */
   forget(inst: ExternalInstance): void {
-    if (this.statics?.get(inst.id)) {
-      this.statics.drop(inst);
-      return;
-    }
     if (!this.list.delete(inst.id)) return;
     for (const c of inst.cols) {
       const k = c.y * 65536 + c.x;
@@ -465,8 +426,8 @@ export class ExternalRegistry {
     this.count();
   }
 
-  /** Forget every instance (undo, a warp: the columns under them are someone else's now). Not the static ones (round
-   *  128j): they're their grids', written again with the land wherever it comes. */
+  /** Forget every instance (undo, a warp: the columns under them are someone else's now). Not the static grids' (round
+   *  128j): they're their GPU owners', written again with the land wherever it comes. */
   clear(): void {
     this.list.clear();
     this.byCol.clear();
@@ -480,8 +441,6 @@ export class ExternalRegistry {
       const inst = this.list.get(id)!;
       if (inst.cols.some((c) => c.x === x && c.y === y && c.z1 > z0 + EPS && c.z0 < z1 - EPS)) out.push(inst);
     }
-    if (this.statics)
-      for (const inst of this.statics.at(x, y)) if (inst.cols.some((c) => c.x === x && c.y === y && c.z1 > z0 + EPS && c.z0 < z1 - EPS)) out.push(inst);
     return out;
   }
 
@@ -491,16 +450,11 @@ export class ExternalRegistry {
    */
   verify(known?: (x: number, y: number) => boolean, cols?: Iterable<number>, asOf = Infinity): void {
     const lost: ExternalInstance[] = [];
-    const st = this.statics;
     for (const inst of this.instances) {
       // (round 128g: claimed after the read was asked for — the read can't show it yet; the next one judges it)
       if ((inst.epoch ?? 0) > asOf) continue;
-      const isStatic = !!st && !this.list.has(inst.id);
       let ok = true;
       for (const c of inst.cols) {
-        // (round 128j: a static thing judged only in the window, where its land — and so its claim — was written before
-        // the read was asked)
-        if (isStatic && !(st.inWindow(c.x, c.y) && st.judged(c.x, c.y, asOf))) continue;
         if (known && !known(c.x, c.y)) continue;
         const col = this.cols.read(c.x, c.y);
         if (!(inst.free ? heldOrBuried(col, c.z0, c.z1) : heldBy(col, c.z0, c.z1))) {
@@ -525,7 +479,6 @@ export class ExternalRegistry {
       // (M4b: a GPU-owned grid's columns are its own — the GPU's orphan pass holds its spans)
       if (this.statics?.gpuOwns(x, y)) continue;
       const mine = this.claimedAt(x, y);
-      if (this.statics) for (const inst of this.statics.at(x, y)) for (const c of inst.cols) if (c.x === x && c.y === y) mine.push(c);
       const out = orphanColumn(this.cols.read(x, y), mine);
       if (!out) continue;
       this.stats.orphans++;
@@ -537,16 +490,6 @@ export class ExternalRegistry {
   claimedSpans(): Map<number, { z0: number; z1: number }[]> {
     const out = new Map<number, { z0: number; z1: number }[]>();
     for (const k of this.byCol.keys()) out.set(k, this.claimedAt(k % 65536, Math.floor(k / 65536)));
-    // (round 128j: the static things' spans in the window, written with their land or still to be — never orphans)
-    if (this.statics)
-      for (const inst of this.statics.instances())
-        for (const c of inst.cols) {
-          if (!this.statics.inWindow(c.x, c.y)) continue;
-          const k = c.y * 65536 + c.x;
-          const l = out.get(k);
-          if (l) l.push({ z0: c.z0, z1: c.z1 });
-          else out.set(k, [{ z0: c.z0, z1: c.z1 }]);
-        }
     return out;
   }
 

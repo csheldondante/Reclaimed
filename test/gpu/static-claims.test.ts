@@ -1,17 +1,16 @@
-// (round 128j, claims at load) Static grids' claims written with the land (sim/static-claims.ts, colapply.wgsl
-// claimGrid): the GPU's columns after regions are written one by one equal the CPU's rule (claimFreeColumn with the
-// grid's spans of each column, in its order, its frame moved into the window's), only inside what was written; an edit
-// (a thing changed) lets the old go where it lies (to air, the GPU's release) and claims the grid again over the written
-// land; and the registry sees the static things — found by column, judged only where their land was written before the
-// read was asked, never orphans.
+// (round 128j, claims at load; switchover: GPU-owned grids only) Static grids' claims written with the land
+// (sim/static-claims.ts, colapply.wgsl claimGrid): a GPU-owned grid (its dense spans in its slot of the arena, as
+// citygen's claim grid writes them) — the GPU's columns after regions are written one by one equal the CPU's rule
+// (claimFreeColumn with the grid's span of each column, its frame moved into the window's), only inside what was
+// written. (The CPU grids' tests — a thing's edit let go and claimed again, the registry's view of static instances —
+// went with the CPU grids: the old towns' and the fortress's.)
 import { describe, expect, test } from 'vitest';
 import { ColumnApply, fitColumn, type GpuColumns } from '../../src/game/colapply';
-import { claimFreeColumn, ExternalRegistry, releaseSpan, type ExternalCol } from '../../src/sim/external';
-import { gridIdOf } from '../../src/build/site';
+import { claimFreeColumn, ExternalRegistry } from '../../src/sim/external';
 
-/** (onetown) a town's claims are owned by its grid's id */
-const OWNER_TOWN = gridIdOf('test');
-import { StaticClaims, gridColumnSpans, type StaticThing } from '../../src/sim/static-claims';
+/** a town's claims' owner (256 and up: sim/external.ts OwnerId — the small ids are the other owners') */
+const OWNER_TOWN = 0x10000;
+import { StaticClaims, type StaticGrid } from '../../src/sim/static-claims';
 import { columnSlots, readColumn, type Interval } from '../../src/world/layout';
 import { MAT } from '../../src/world/materials';
 import { RockWorld } from '../support/rockworld';
@@ -49,26 +48,46 @@ function stampWorld(seed: number): RockWorld {
   return w;
 }
 
-/** random buildings in a grid's frame (some past the window's edges): each a box of columns, a span or two a column */
-function things(seed: number, n: number): StaticThing[] {
+/** a dense grid's spans (citygen's claim grid's layout: w × h columns, a span or none each) — random boxes, some past the
+ *  window's edges: local column (x, y) → its span (grid z) and its fallback */
+const GW = 40;
+function spans(seed: number, n: number): Map<number, { z0: number; z1: number; aux: number }> {
   const r = rng(seed);
-  const out: StaticThing[] = [];
+  const out = new Map<number, { z0: number; z1: number; aux: number }>();
   for (let k = 0; k < n; k++) {
-    const x0 = Math.floor(r() * 40) - 8;
-    const y0 = Math.floor(r() * 40) - 8;
+    const x0 = Math.floor(r() * (GW - 5));
+    const y0 = Math.floor(r() * (GW - 5));
     const bw = 1 + Math.floor(r() * 5);
     const bh = 1 + Math.floor(r() * 5);
     const z0 = Math.round(r() * 20 * 4) / 4;
     const z1 = z0 + 1 + Math.round(r() * 10 * 4) / 4;
-    const cols: ExternalCol[] = [];
-    for (let y = y0; y < y0 + bh; y++)
-      for (let x = x0; x < x0 + bw; x++) {
-        cols.push({ x, y, z0, z1 });
-        if (r() < 0.2) cols.push({ x, y, z0: z1 + 1, z1: z1 + 3 });
-      }
-    out.push({ key: k, cols, fallback: [MAT.Rubble, MAT.Stone, MAT.Brick][k % 3] });
+    for (let y = y0; y < y0 + bh; y++) for (let x = x0; x < x0 + bw; x++) out.set(y * GW + x, { z0, z1, aux: [MAT.Rubble, MAT.Stone, MAT.Brick][k % 3] });
   }
   return out;
+}
+
+/** the grid written into a slot of the arena (ColumnApply.claimGrids' layout: a column table, x y first count, then the
+ *  spans, z0 z1 aux 0) and made GPU-owned */
+function ownedGrid(r: Rig, sp: Map<number, { z0: number; z1: number; aux: number }>): StaticGrid {
+  const slot = r.sc.ownedSlot()!;
+  const N = GW * GW;
+  const words = new Uint32Array(N * 8);
+  const iw = new Int32Array(words.buffer);
+  const fw = new Float32Array(words.buffer);
+  for (let i = 0; i < N; i++) {
+    const s = sp.get(i);
+    iw[i * 4] = i % GW;
+    iw[i * 4 + 1] = Math.floor(i / GW);
+    words[i * 4 + 2] = i;
+    words[i * 4 + 3] = s ? 1 : 0;
+    if (s) {
+      fw[N * 4 + i * 4] = s.z0;
+      fw[N * 4 + i * 4 + 1] = s.z1;
+      words[N * 4 + i * 4 + 2] = s.aux;
+    }
+  }
+  r.dev.queue.writeBuffer(slot.binding.buffer, slot.binding.offset ?? 0, words);
+  return r.sc.gpuGrid('town', OWNER_TOWN, () => r.place, { slot, w: GW, h: GW, maxKey: 0 });
 }
 
 interface Rig {
@@ -76,6 +95,7 @@ interface Rig {
   cols: GpuColumns;
   ap: ColumnApply;
   sc: StaticClaims;
+  dev: GPUDevice;
   ext: ExternalRegistry;
   unwritten: [number, number][];
   place: { dx: number; dy: number; dz: number };
@@ -99,7 +119,7 @@ async function rig(seed: number, unwritten: [number, number][]): Promise<Rig> {
     },
     release: (spans) => ap.run(cols, [{ cuts: [], release: spans }]),
   });
-  const r: Rig = { w, cols, ap, ext, unwritten, place: { dx: 3, dy: -2, dz: 1.5 }, sc: null! };
+  const r: Rig = { w, cols, ap, ext, unwritten, dev, place: { dx: 3, dy: -2, dz: 1.5 }, sc: null! };
   r.sc = new StaticClaims({
     device: dev,
     apply: () => ap,
@@ -107,7 +127,6 @@ async function rig(seed: number, unwritten: [number, number][]): Promise<Rig> {
     registry: () => ext,
     dims: { w: W, h: W },
     R,
-    origin: () => [64, 32],
     unwritten: () => r.unwritten,
     held: () => false,
   });
@@ -127,14 +146,28 @@ function same(r: Rig, got: Uint32Array, what: string): void {
     for (let x = 0; x < W; x++) expect(readColumn(r.w.packed, got, x, y), `${what}: column ${x},${y}`).toEqual(readColumn(r.w.packed, r.w.packed.slots, x, y));
 }
 
-/** the CPU's rule over window box [x0, x1) × [y0, y1): each column's grid spans (window z) claimed where free, fitted */
-function cpuClaim(r: Rig, x0: number, y0: number, x1: number, y1: number, g: Parameters<typeof gridColumnSpans>[0]): void {
+/** touching intervals of one material and aux joined, as the GPU's claim stores a column it loaded */
+function joined(col: Interval[]): Interval[] {
+  const out: Interval[] = [];
+  for (const iv of col) {
+    const last = out[out.length - 1];
+    if (last && last.mat === iv.mat && (last.aux ?? 0) === (iv.aux ?? 0) && Math.abs(last.z1 - iv.z0) < 1e-4) last.z1 = iv.z1;
+    else out.push({ ...iv });
+  }
+  return out;
+}
+
+/** the CPU's rule over window box [x0, x1) × [y0, y1): each column's grid span (window z) claimed where free, fitted */
+function cpuClaim(r: Rig, x0: number, y0: number, x1: number, y1: number, sp: Map<number, { z0: number; z1: number; aux: number }>): void {
   const { dx, dy, dz } = r.place;
   for (let y = y0; y < y1; y++)
     for (let x = x0; x < x1; x++) {
-      const spans = gridColumnSpans(g, x - dx, y - dy).map((s) => ({ z0: s.z0 + dz, z1: s.z1 + dz, aux: s.aux }));
-      if (!spans.length) continue;
-      r.w.write(x, y, fitColumn(claimFreeColumn(r.w.read(x, y), spans), columnSlots(r.w.packed, x, y).k, r.w.packed.dims.zMax));
+      const lx = x - dx;
+      const ly = y - dy;
+      if (lx < 0 || ly < 0 || lx >= GW || ly >= GW) continue;
+      // (a dense grid: every column of its box is a claim — one with no span is loaded and stored as it is, fitted)
+      const s = sp.get(ly * GW + lx);
+      r.w.write(x, y, fitColumn(joined(claimFreeColumn(r.w.read(x, y), s ? [{ z0: s.z0 + dz, z1: s.z1 + dz, aux: s.aux }] : [])), columnSlots(r.w.packed, x, y).k, r.w.packed.dims.zMax));
     }
 }
 
@@ -148,14 +181,14 @@ describe('static grids claimed with the land (round 128j)', () => {
         [16, 16],
       ];
       const r = await rig(s * 97, all.slice());
-      const g = r.sc.grid('town', OWNER_TOWN, () => r.place);
-      r.sc.set(g, things(s * 31, 12));
+      const sp = spans(s * 31, 12);
+      ownedGrid(r, sp);
       // (nothing written yet: nothing claimed)
       same(r, await gpuSlots(r), `seed ${s} before any land`);
       for (const [lx, ly] of all) {
         r.sc.landWritten(lx, ly, R, R);
         r.unwritten = r.unwritten.filter(([x, y]) => x !== lx || y !== ly);
-        cpuClaim(r, lx, ly, lx + R, ly + R, g);
+        cpuClaim(r, lx, ly, lx + R, ly + R, sp);
         same(r, await gpuSlots(r), `seed ${s} region ${lx},${ly}`);
       }
       // (written again — a region thawed from the pool with its claims in it: unchanged)
@@ -164,69 +197,4 @@ describe('static grids claimed with the land (round 128j)', () => {
       expect(r.sc.stats.passes).toBeGreaterThan(0);
     }
   }, 120_000);
-
-  test('an edit: a thing changed let go where it lies (to air) and the grid claimed again over the written land', async () => {
-    for (let s = 1; s <= 6; s++) {
-      // (the right half still coming in)
-      const r = await rig(s * 113, [
-        [16, 0],
-        [16, 16],
-      ]);
-      const g = r.sc.grid('fort', OWNER_TOWN, () => r.place);
-      const t = things(s * 7, 10);
-      const before = r.sc.set(g, t);
-      cpuClaim(r, 0, 0, 16, W, g);
-      same(r, await gpuSlots(r), `seed ${s} set`);
-      // (thing 2 moved up two cells, thing 5 gone)
-      const old2 = before.get(2)!.cols.map((c) => ({ ...c }));
-      const old5 = before.get(5)!.cols.map((c) => ({ ...c }));
-      const t2 = t.filter((x) => x.key !== 5).map((x) => (x.key === 2 ? { ...x, cols: x.cols.map((c) => ({ ...c, z0: c.z0 + 2, z1: c.z1 + 2 })) } : x));
-      const after = r.sc.set(g, t2);
-      expect(after.get(0)!.id, 'an unchanged thing keeps its instance').toBe(before.get(0)!.id);
-      expect(after.get(2)!.id).not.toBe(before.get(2)!.id);
-      expect(after.has(5)).toBe(false);
-      for (const [old, fb] of [
-        [old2, t[2].fallback],
-        [old5, t[5].fallback],
-      ] as const)
-        for (const c of old) {
-          if (c.x < 0 || c.y < 0 || c.x >= 16 || c.y >= W) continue;
-          const out = releaseSpan(r.w.read(c.x, c.y), c, fb, true);
-          if (out) r.w.write(c.x, c.y, fitColumn(out, columnSlots(r.w.packed, c.x, c.y).k, r.w.packed.dims.zMax));
-        }
-      cpuClaim(r, 0, 0, 16, W, g);
-      same(r, await gpuSlots(r), `seed ${s} edit`);
-    }
-  }, 120_000);
-
-  test('the registry sees them: by column, judged where written before the read, never orphans, released through it', async () => {
-    const r = await rig(5, [[16, 16]]);
-    const g = r.sc.grid('town', OWNER_TOWN, () => r.place);
-    const inst = r.sc.set(g, [{ key: 1, cols: [{ x: 0, y: 2, z0: 30, z1: 33 }, { x: 14, y: 15, z0: 30, z1: 31 }], fallback: MAT.Brick }]).get(1)!;
-    const { dx, dy } = r.place;
-    expect(r.ext.at(dx, dy + 2).map((i) => i.id)).toEqual([inst.id]);
-    expect(r.ext.at(dx + 1, dy + 2)).toEqual([]);
-    expect(r.ext.get(inst.id)).toBe(inst);
-    expect([...r.ext.instances].map((i) => i.id)).toContain(inst.id);
-    // (window column (17, 13) lies in region (16, 0): written; a read asked before the thing was made doesn't judge it)
-    const asOf = r.ext.epoch;
-    expect(r.sc.judged(17, 13, asOf)).toBe(true);
-    expect(r.sc.judged(17, 13, -1)).toBe(false);
-    expect(r.sc.judged(16, 16, asOf), 'land still coming in').toBe(false);
-    r.sc.landWritten(16, 16, R, R);
-    r.unwritten = [];
-    expect(r.sc.judged(16, 16, asOf), 'written after the read was asked').toBe(false);
-    expect(r.sc.judged(16, 16, r.ext.epoch)).toBe(true);
-    // (its spans in the window are claimed: the orphan pass keeps them)
-    const spans = r.ext.claimedSpans();
-    expect(spans.get((dy + 2) * 65536 + dx)).toEqual([{ z0: 31.5, z1: 34.5 }]);
-    expect(spans.get((15 + dy) * 65536 + 14 + dx)).toEqual([{ z0: 31.5, z1: 32.5 }]);
-    // (released through the registry: let go on the GPU, out of the grid, not claimed with the land again)
-    r.ext.release(inst.id, true);
-    expect(r.ext.get(inst.id)).toBeUndefined();
-    expect(r.ext.at(dx, dy + 2)).toEqual([]);
-    expect(g.things.size).toBe(0);
-    const got = await gpuSlots(r);
-    expect(readColumn(r.w.packed, got, dx, dy + 2).some((iv) => iv.mat === MAT.External)).toBe(false);
-  }, 60_000);
 });

@@ -43,10 +43,6 @@ export function testApi(scene: LevelScene) {
     readBuffer: (n: Parameters<WorldCore['readBuffer']>[0]) => core.readBuffer(n),
     probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
     integrity: () => scene.integrity,
-    // (round 117, structures) the city (?city=): its plan, stats
-    // (round 119) the settlements' structures: what's drawn and claimed (settle/view.ts)
-    settlementsView: () => scene.settlementsView,
-    shipsView: () => scene.shipsView,
     // (round 95) the rigid rock's knobs (?rockbody=1): rb.breakSpeed = 12
     rb: RB,
     // (round 108, AR5) the tuning registry: tune.set('rigid.friction', 0.3), tune.changed(), tune.encode()
@@ -167,25 +163,16 @@ export function testApi(scene: LevelScene) {
 /** window.reclaimed: the base and the rest, once the streamed world is up */
 export function exposeTestApi(scene: LevelScene, api: ReturnType<typeof testApi>): void {
   (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, {
-    // (round 128l, tooling) the behaviour lab's scenario API (src/lab/lab.ts; docs/TOOLING.md)
-    lab: scene.lab?.api,
     // (round 117, flora) the flora contract (api/contracts/flora.ts), for scripted checks: reclaimed.flora().passability…
     flora: () => worldApiOf(scene).flora,
-    // (round 88, the atlas level) settlements.near([x, y]) / settlement('s12') / live() / raid() / plan(id), its
-    // events (built, died, raided); units: the Units contract (api/contracts/units.ts) on the agents
+    // (round 88, the atlas level) settlements.near([x, y]) / settlement('s12') / seeds (records only since the
+    // switchover: the towns are citygen's — window.citygen); units: the Units contract (api/contracts/units.ts) on the agents
     settlements: scene.settlements,
     units: scene.units,
-    // (fortress slice 1) the fortress: plan (TownPlan), town, paint/erase/setGate, cellAt/centre/ringCells, tool
-    fortress: scene.fortress,
-    // (round 128m, townlab) the window round the start town as the lab's fixture (base64; scripts/labtown.mjs capture)
-    townFixture: (site?: string, centre?: [number, number]) => captureTownFixture(scene, site, centre),
-    // (milestone 2) its builders once Build was pressed: stats (trips, built, starved), ids, book
-    fortressCrowd: () => scene.fortressCrowd,
-    // (round 128d) its built blocks' claims in the columns: claimed() per structure, stats
-    fortressClaims: () => (scene.fortress ? (scene.settlementsView ?? scene.lab?.view)?.claimsOf(scene.fortress.site.id) ?? null : null),
+    // (round 128m, townlab) the window round a site as a street-lab fixture (base64; scripts/labtown.mjs site)
+    townFixture: (site: string, centre?: [number, number]) => captureTownFixture(scene, site, centre),
     // (round 128j) the static grids' claims written with the land: stats, audit(slots, packed) (scripts/staticclaims.mjs)
     statics: () => scene.statics,
-    townDebug: scene.townDebug,
     // (?flow=1) the flow model: flow.water / flow.lava (LiquidSystem: addSpring), flow.steady (last read),
     // flow.breach() (the lab's plug dug out), flow.sleep (awake chunks)
     flow: scene.flow && {

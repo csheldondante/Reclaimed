@@ -1,10 +1,9 @@
 // The level's pointer and key input: Controls' taps, drags, pinches and wheel routed to the powers, the tools, the
-// fortress, the story and the camera; the window's key bindings (debug keys, the lens, flying). API: wireInput(scene).
+// the story and the camera; the window's key bindings (debug keys, the lens, flying). API: wireInput(scene).
 // Listeners are removed by the scene's abort signal.
 import { Controls } from '../../input/controls';
 import { cellAt } from '../../world/lattice';
 import { worldAt } from './atlas-controls';
-import { fortressAt } from './fortress';
 import { pickTown, townAtPick } from './town-tools';
 import { pickSmash, smashAt, undo } from './sandbox-tools';
 import { beamAim, dropAtPick, meteorAtPick, placeAtPick, ventAtPick } from './impacts';
@@ -46,7 +45,6 @@ export function wireInput(scene: LevelScene): void {
       if (!g) return void requestAnimationFrame(() => tap(sx, sy));
       return void scene.streetLab.tapAt(g[0], g[1]);
     }
-    if (scene.fortress) return void fortressAt(scene, sx, sy);
     if (scene.editor?.tool === 'smash') return void smashAt(scene, sx, sy, true);
     if (scene.editor?.tool === 'place') return void placeAtPick(scene, sx, sy);
     if (scene.editor?.tool === 'town') return void townAtPick(scene, sx, sy);
@@ -74,9 +72,6 @@ export function wireInput(scene: LevelScene): void {
         scene.flyDrag = [sx, sy];
         return true;
       }
-      // (round 128d, the user: "I think pause prevents both panning and building in build mode": the fortress has no
-      // wind to call — a drag there pans, with a finger or the mouse; dragPans)
-      if (scene.fortress) return false;
       if (scene.editor?.tool === 'smash') {
         smashAt(scene, sx, sy, true);
         scene.smashing = true;
@@ -122,7 +117,6 @@ export function wireInput(scene: LevelScene): void {
       if (scene.reach && !scene.reach.contains(wx, wy)) return false;
       return scene.powers.gustStart(wx, wy);
     },
-    dragPans: () => !!scene.fortress,
     dragMove: (sx, sy) => {
       if (scene.flyDrag) {
         const [px, py] = scene.flyDrag;

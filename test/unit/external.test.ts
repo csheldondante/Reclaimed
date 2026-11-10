@@ -4,10 +4,10 @@
 // owner that doesn't decide is released for it; a slide moves the instances with the land.
 import { describe, expect, test } from 'vitest';
 import { cutOut, ExternalRegistry, OWNER_ROCK, type ExternalInstance } from '../../src/sim/external';
-import { gridIdOf } from '../../src/build/site';
 
 /** (onetown) a town's claims are owned by its grid's id */
-const OWNER_TOWN = gridIdOf('test');
+/** a town's claims' owner (256 and up: sim/external.ts OwnerId — the small ids are the other owners') */
+const OWNER_TOWN = 0x10000;
 import type { Interval } from '../../src/world/layout';
 import { MAT } from '../../src/world/materials';
 

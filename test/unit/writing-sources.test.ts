@@ -4,8 +4,7 @@
 // placed. In a player's file, the literals its sinks and label helpers are given are linted; a words module (its job is
 // the player's lines) is linted whole (test/support/player-text.ts says how text is told from code). What fails today is
 // in KNOWN with its BACKLOG row; a new failure fails, and a known one that's fixed must be dropped. Text built from data
-// at run time (cards dealt, templates filled, the fortress's cards) is linted as produced by writing.test.ts and the
-// fortress tests.
+// at run time (cards dealt, templates filled) is linted as produced by writing.test.ts.
 
 import { describe, expect, it } from 'vitest';
 import { hasSink, keyText, type LabelHelper, moduleText, sinkText, type TextLine } from '../support/player-text';
@@ -16,10 +15,7 @@ type Source = { who: 'player'; helpers?: LabelHelper[]; keys?: string[] } | { wh
 
 /** every file that shows text, and whose text it is */
 const SOURCES: Record<string, Source> = {
-  // ---- the player's: the fortress, runs, levels, the menu, the HUD ----
-  'fortress/ui.ts': { who: 'player', helpers: [{ name: 'toggle', arg: 0 }], keys: ['text'] },
-  'fortress/raiders.ts': { who: 'player' },
-  'fortress/words.ts': { who: 'words' },
+  // ---- the player's: the season loop, runs, levels, the menu, the HUD ----
   'opps/words.ts': { who: 'words' },
   'season/words.ts': { who: 'words' },
   'season/ui.ts': { who: 'player', helpers: [{ name: 'el', arg: 2 }] },
@@ -74,13 +70,8 @@ const SOURCES: Record<string, Source> = {
   'perf/hitch-hud.ts': { who: 'dev', why: 'the hitch HUD (?hitch=1)' },
   'perf/pagebench.ts': { who: 'dev', why: 'a bench' },
   'perf/physbench.ts': { who: 'dev', why: 'a bench' },
-  'perf/placebench.ts': { who: 'dev', why: 'a bench' },
-  'perf/townbench.ts': { who: 'dev', why: 'a bench' },
-  'perf/speedbench.ts': { who: 'dev', why: 'a bench (the 16x toggle diff)' },
   'runplan/viewer.ts': { who: 'dev', why: 'the run plan viewer page' },
   'scenes/atlas-view.ts': { who: 'dev', why: 'the atlas generator view and its sliders (?atlas)' },
-  'settle/debug.ts': { who: 'dev', why: 'the settlements\' debug overlay' },
-  'structures/viewer/main.ts': { who: 'dev', why: 'the structures viewer page' },
   'terrain/viewer.ts': { who: 'dev', why: 'the terrain viewer page' },
   'ui/audio-debug.ts': { who: 'dev', why: 'the audio debug panel' },
   'ui/bugreport.ts': { who: 'dev', why: 'the bug report form, for the user testing builds' },
@@ -215,9 +206,9 @@ describe('the writing lint over every source of the player\'s words (docs/WRITIN
     expect(stale).toEqual([]);
   });
 
-  it('the reader finds the fortress bar\'s labels and lines', () => {
-    const texts = textOf('fortress/ui.ts', SOURCES['fortress/ui.ts']).map((l) => l.text);
-    for (const t of ['Erase', 'Inspect', 'Skip to done', 'Call raiders now', 'Tap a block to take it away.', 'Press Plan to stop time and plan more.']) expect(texts).toContain(t);
-    expect(texts.some((t) => t.includes('fort-bar') || t.includes('pointer-events'))).toBe(false);
+  it('the reader finds the season sheet\'s words', () => {
+    const texts = textOf('season/words.ts', SOURCES['season/words.ts']).map((l) => l.text);
+    for (const t of ['Next season', 'Skip']) expect(texts).toContain(t);
+    expect(texts.some((t) => t.includes('season-sheet') || t.includes('pointer-events'))).toBe(false);
   });
 });

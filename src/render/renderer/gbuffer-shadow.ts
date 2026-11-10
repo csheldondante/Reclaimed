@@ -3,7 +3,6 @@
 import { FieldMesh } from '../fieldmesh';
 import { CAMERA_BYTES, CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, type Camera } from '../camera';
 import { drawGrid, gridCull, gridLive } from './grid';
-import { structGroups } from './features';
 import { SKIP, cutOn } from './defs';
 import { Renderer } from '../renderer';
 
@@ -188,13 +187,6 @@ export function encodeShadow(rd: Renderer, enc: GPUCommandEncoder, due: 'all' | 
     pass.setBindGroup(0, rd.miShadowGroup);
     // (round 117, flora: only the kinds that cast a shadow worth its triangles — trees and thickets, not the grass)
     rd.meshInst.draw(pass, rd.indirect, rd.flora?.shadowKinds);
-  }
-  if (rd.structs?.shadow && rd.structs.sg.ranges.length) {
-    structGroups(rd);
-    pass.setPipeline(rd.structs.shadow);
-    pass.setBindGroup(0, rd.structs.shadowGroup!);
-    // (the sun's map: always the far look — its texels are bigger than a window frame)
-    rd.structs.sg.draw(pass, true);
   }
   pass.setPipeline(rd.shadowBodyPipe!);
   if (rd.world.strVoxels > 0) {

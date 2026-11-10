@@ -97,7 +97,7 @@ literals. Each gate has one checked-in table, and a known breach is an entry wit
 Every GPU→CPU read, and every GPU→GPU copy or CPU→GPU upload the call doesn't show to be at most 64 KB
 (`SMALL_BYTES`), is an entry in `src/gpu/transfers.ts`: kind (`read`, `copy`, `upload`), file, enclosing function, how
 many calls, what moves and its bytes, why, its rate (`frame`, `timed`, `edit`, `demand`, or `via` for a read wrapper),
-whether it runs in fortress play (`yes`, `flag`, `debug`, `no`) and, for a copy or upload, `small` or `large`. The gate
+whether it runs in play (`yes`, `flag`, `debug`, `no`) and, for a copy or upload, `small` or `large`. The gate
 finds every `.mapAsync(`, every call of a listed read wrapper (an entry with `wrapper: /pattern/`, e.g.
 `WorldCore.readBuffer`, `attachSim` which starts the mirror's timer, `Agents.sync`), and every copy and upload. It fails
 when a transfer isn't listed, when a listed one is gone or its count changed, and when a read every frame or on a timer
@@ -134,8 +134,8 @@ id by running the small WGSL function as JS); and `MAX_MATERIALS` fits every 8-b
 ### The writing lint over every source (test/unit/writing-sources.test.ts, DA-G4)
 
 Every file under src/ that writes text to the page (`textContent`, `innerHTML`, `title`, …), the HUD (`say`, `hint`) or
-a canvas (`fillText`) is in `SOURCES`: the player's (with its label helpers, e.g. fortress/ui.ts `toggle(label)`, and
-the object keys that carry lines), a words module (fortress/words.ts, opps/words.ts: linted whole) or a developer's
+a canvas (`fillText`) is in `SOURCES`: the player's (with its label helpers, e.g. season/ui.ts `el(tag, cls, text)`, and
+the object keys that carry lines), a words module (season/words.ts, opps/words.ts: linted whole) or a developer's
 (with why). A new such file fails until placed. test/support/player-text.ts reads the literals a sink or helper is given,
 leaving out code by where it sits and skipping CSS. What fails today is in `KNOWN` with BACKLOG DA-G6; a fixed one must
 be dropped. Fix a new failure by rewriting the string (docs/WRITING.md), not by adding it to `KNOWN`.

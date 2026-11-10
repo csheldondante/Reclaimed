@@ -3,6 +3,18 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-10 — the switchover (Track A): the GPU towns are the towns
+
+Verbatim:
+- "Don't build against a system we are deprecating switch over."
+- "Stop wasting resources on old code."
+- Earlier: "players just choose opportunities and we place and build for them" (player painting retired).
+- Earlier: "we still may want the irregular grids for vertical surfaces" (keep `src/structures/tiles/*`).
+
+→ The GPU town (citygen, the living town, the season loop) is plain default play; the old CPU towns, fortress mode and
+everything only they served are deleted, not ported — no bridges, no readback to feed old code. A feature only the old
+towns had is removed and listed as a gap (BACKLOG SW-G*), to come back on the GPU towns. docs/design/SWITCHOVER.md.
+
 ## 2026-11-09 — round 128r (session 5, Track A) — the shortlist answered: seasons, discrete stages, a visible city
 
 Answers to Orchestrator A's shortlist questions (audit + ranked slices), verbatim:

@@ -25,7 +25,6 @@ describe('the world (seed 1): every settlement has a purpose and a story, on the
   it('the records carry them, and the wiki’s page says them', () => {
     const recs = recordsFrom(wiki, 1);
     expect(recs.every((r) => r.rec.purpose && r.rec.story)).toBe(true);
-    expect(recs.some((r) => r.approaches.length >= 2)).toBe(true);
     const md = wikiMarkdown(wiki, undefined as never);
     expect(md).toMatch(/Purpose: \*\*/);
   });

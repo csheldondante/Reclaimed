@@ -1,14 +1,9 @@
 // Settlements' purposes and stories (round 120, `cities`; BACKLOG STR30, STR36): read from the land and the world state,
-// on the record the GM and the wiki read, and what the planner makes of them. Node, no GPU: `npx vitest run src/settle`.
+// on the record the GM and the wiki read, and (switchover: the old planner's part of them gone). Node, no GPU: `npx vitest run src/settle`.
 import { describe, expect, it } from 'vitest';
-import type { Settlement, SettlementPurpose } from '../api/contracts/settlement';
 import { purposeOf, purposeScores, type PurposeFacts } from './purpose';
 import { storyOf } from './story';
 import { kindTraits } from '../atlas/kind-traits';
-import { planSettlement, type PlanInput } from './plan';
-import { civById } from './catalogue';
-import { MAT } from '../world/materials';
-import { cellPos, ROW_H } from '../world/lattice';
 
 const facts = (o: Partial<PurposeFacts> & { kind?: string; tier?: string | null; rivers?: number; dryness?: number; temp?: number; stamps?: string[] } = {}): PurposeFacts => {
   const kind = o.kind ?? 'plains';
@@ -71,51 +66,5 @@ describe('a story from the world state', () => {
     expect(quiet.events.map((e) => e.what)).toEqual(['founded']);
     const burnt = storyOf({ ...base, setting: 'plain', ground: 120, hostiles: [], history: [{ id: 'e1', kind: 'burn', regions: [0], magnitude: 1, run: 2, cause: { by: 'story' } }] });
     expect(burnt.events.find((e) => e.what === 'burned')?.cause).toBe('e1');
-  });
-});
-
-/** a box with the sea along its east side (the plan's port test) */
-function coastInput(purpose: SettlementPurpose, story = false): PlanInput {
-  const W = 256;
-  const H = 288;
-  const N = W * H;
-  const ground = new Float32Array(N);
-  const water = new Float32Array(N);
-  for (let y = 0; y < H; y++)
-    for (let x = 0; x < W; x++) {
-      const [wx] = cellPos(x, y);
-      const g = 24 - Math.max(0, wx - 150) * 0.3 + 0.6 * Math.sin(y * 0.1);
-      ground[y * W + x] = g;
-      water[y * W + x] = Math.max(0, 20 - g);
-    }
-  const rec: Settlement = { id: 's9', name: 'Saltmere', region: 0, faction: 'f-x', at: [130, (H / 2) * ROW_H], radius: 30, size: 'town', condition: 'thriving', grids: [], buildings: [], people: [], stores: {}, needs: [] };
-  rec.purpose = { kind: purpose, why: 'test', scores: { port: 0, mining: 0, lumber: 0, farming: 0, trading: 0, hold: 0 }, trades: [] };
-  if (story) rec.story = { founding: 'test', owner: 'f-x', events: [{ what: 'walled', run: -5, note: '' }, { what: 'burned', run: -8, note: '', at: [110, (H / 2) * ROW_H + 10], radius: 14 }] };
-  return { rec, civ: civById('river-guilds'), camp: null, seed: 5, setting: 'port', ruin: false, box: { x0: 0, y0: 0, w: W, h: H }, ground, water, top: new Uint8Array(N).fill(MAT.Soil), veg: new Float32Array(N), sea: 20 };
-}
-
-describe('the planner makes the purpose', () => {
-  it('a port: piers, moored ships, warehouses on its record; dockers and sailors; loading at the piers', () => {
-    const p = planSettlement(coastInput('port'));
-    expect(p.city.linear.some((f) => f.kind === 'pier')).toBe(true);
-    expect(p.city.berths.length).toBeGreaterThan(0);
-    expect(p.rec.buildings.some((b) => b.use.includes('dock'))).toBe(true);
-    expect(p.rec.buildings.some((b) => b.use.includes('trade'))).toBe(true);
-    expect(p.rec.people.map((x) => x.role)).toEqual(expect.arrayContaining(['docker', 'sailor', 'fisher']));
-    expect(p.rec.needs.some((n) => n.kind === 'load')).toBe(true);
-    expect(p.rec.stores.fish).toBeTruthy();
-  });
-  it('a hold: Bulwark’s rings, walls, a keep; mostly guards', () => {
-    const p = planSettlement(coastInput('hold'));
-    expect(p.city.spec.system).toBe('radial');
-    expect(p.city.spec.walls).toBe(true);
-    expect(p.rec.people.find((x) => x.role === 'guard')!.count).toBeGreaterThan(p.rec.people.find((x) => x.role === 'farmer')!.count);
-  });
-  it('its story in its fabric: a burned quarter gutted, walls raised', () => {
-    const p = planSettlement(coastInput('farming', true));
-    expect(p.city.spec.walls).toBe(true);
-    expect(p.city.buildings.some((b) => b.wear === 'burned')).toBe(true);
-    const gutted = p.rec.buildings.filter((b) => p.things.get(b.thing)!.condition < 0.2);
-    expect(gutted.length).toBeGreaterThan(0);
   });
 });

@@ -38,7 +38,6 @@ import { record, timed } from '../gpu/cpustat';
 import { RegionPool, type PoolSlot } from './region-pool';
 import { RegionCopier } from './region-copy';
 import { RegionStore } from '../world/region-store';
-import { keepAllows, keepHeld, type KeepRect } from './streamer/keep';
 import { GEN_VERSION, columnsHash, regionLayout, type RegionLayout } from '../world/region-record';
 import { CHUNK, K_HEADROOM, PHYS_COL_WORDS, SLOT_WORDS, WORLD_FLOOR, joinColumn, readSlot, type Interval } from '../world/layout';
 import { PROJ_K } from '../grids/structures';
@@ -549,27 +548,8 @@ export class Streamer {
   }
   tileSrc: TileLandSource | null = null;
 
-  /**
-   * (round 128m, townlab) The world columns every slide must leave in the window (the fortress's box and a margin:
-   * scenes/streamer/keep.ts). The window doesn't slide off them; the camera may pan past, over the far land. Null: none.
-   */
-  keepRect: KeepRect | null = null;
-
-  /** Keep `k` in the window from now on (null: let it go). Throws when the window doesn't hold it now. */
-  keep(k: KeepRect | null): void {
-    if (k && !keepHeld(this.origin, this.W, this.H, k)) throw new Error(`the window (${this.origin} + ${this.W} x ${this.H}) doesn't hold the rect it's asked to keep (${k.x0},${k.y0} - ${k.x1},${k.y1})`);
-    this.keepRect = k;
-  }
-
-  /** whether a slide of (dx, dy) leaves what's kept in the window */
-  slideKeeps(dx: number, dy: number): boolean {
-    return keepAllows(this.origin, this.W, this.H, this.keepRect, dx, dy);
-  }
-
   /** Start making the land a slide of (dx, dy) would bring in (round 100: into the pool — what's there needs nothing). */
   prefetch(dx: number, dy: number): void {
-    // (round 128m: no slide that way while the window keeps a rect it would leave: nothing to make for it)
-    if (!this.slideKeeps(dx, dy)) return;
     const R = this.R;
     for (const [lx, ly] of nearFirst(this, enteringFor(this, dx, dy), dx, dy)) {
       const wx = this.origin[0] + dx + lx;
@@ -645,7 +625,6 @@ export class Streamer {
   /** Move the window by (dx, dy) columns (one of them ±REGION, the other 0). */
   async slide(dx: number, dy: number): Promise<void> {
     if ((dx !== 0) === (dy !== 0) || Math.abs(dx + dy) !== this.R) throw new Error('a slide is one region along one axis');
-    if (!this.slideKeeps(dx, dy)) throw new Error(`a slide of (${dx}, ${dy}) would leave the kept rect out of the window`);
     this.busyWhy = 'slide';
     this.busy = true;
     const t0 = performance.now();
@@ -757,7 +736,6 @@ export class Streamer {
    * session's are let go; the land made ahead (before the stage) dropped. The sim waits.
    */
   warp(ox: number, oy: number, oz: number, fresh = false): Promise<void> {
-    if (this.keepRect && !keepHeld([ox, oy], this.W, this.H, this.keepRect)) throw new Error('a warp away from the rect the window keeps (let it go first: keep(null))');
     return warp(this, ox, oy, oz, fresh);
   }
 

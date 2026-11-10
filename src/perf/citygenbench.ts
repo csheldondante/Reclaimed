@@ -16,7 +16,7 @@ import { postDev } from './report-io';
 import { townLayout, type FieldTownSite } from '../citygen/town';
 import type { FieldTowns } from '../citygen/towns';
 import { STAGES, type StreetTimes } from '../citygen/gpu';
-import { loadFixtureLand } from '../lab/recipes';
+import { loadFixtureLand } from '../lab/fixtures';
 import { ROW_H } from '../world/lattice';
 
 const NL = String.fromCharCode(10);

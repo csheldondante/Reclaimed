@@ -2426,272 +2426,27 @@ them over Agents.hit/hold/launch); the play world requires them.
   `founded.over` records adaptive reuse.
 - Test: scripts/recipetest.mjs.
 
-## Settlements and units in play (round 88, branch `settlements`; docs/SYSTEMS.md 6, 7, 12)
+## Settlements: the records (round 88; switchover 2026-11-10)
 
-(Round 119, branch `structures`: the planning, the buildings and their stamping moved onto the structures contract —
-ARCHITECTURE "Structures", *Settlements on it*. Below, what each building is and what's stamped is as of round 88;
-the records, rights, life and rates still hold.)
+`Settlements` (src/settle/settlements.ts) makes one `Settlement` record (api/contracts/settlement.ts) per atlas site
+from the world wiki built live (`buildWiki(atlasFacts(atlas))`: ids `s<n>`, names, regions, realms, sizes, purposes
+and stories); records.ts adds the raider camp near it (the region's hostile power, else `f-outlaws`) and the town
+generator's seed. API: `near(at, r)`, `settlement(id)`, `all()`, `seeds`, `approachWays(id)` (the atlas roads into a
+site: citygen's arterials), `byFields(pick)` (the sites citygen makes: the atlas's own stamps cleared in each core),
+`regionAt(x, y)`. Nothing is planned, stamped, drawn or peopled here: the towns are citygen's ("Towns from fields"
+below); the units (AgentUnits on the agents) are made beside the records for play and runs. (Before the switchover
+this module planned every town on the CPU, stamped it into the land, drew it, peopled it as units and raided it:
+docs/design/SWITCHOVER.md lists what went.) A record's purpose (settle/purpose.ts: the land's facts → port, mining,
+lumber, farming, trading, hold) and story (settle/story.ts: founding and the world state's events) are made while the
+wiki is built (gm/wiki.ts), so the GM reads them before any land arrives.
 
-- **Records (atlas scale).** `Settlements` (src/settle/settlements.ts) makes one `Settlement` (settlement.ts) per
-  atlas site from the world wiki built live (`buildWiki(atlasFacts(atlas))`: the ids `s<n>`, names, regions and
-  realms the GM's stories use). records.ts picks each one's `CivProfile` (data/recipes/civs.json, by the realm's
-  era and the site's setting), whether it stands over an older ruin, whether raiders camp near it (the region's
-  hostile power, else `f-outlaws`), and its box: whole streamer regions round it. A settlement not in play
-  advances its `stores` by their rates (a day is `DAY_S` = 600 s). Rights: each realm holds land rights over its
-  settlements' regions and mineral rights over those and some neighbours (MemoryDiplomacy); a quarry outside its
-  own region is worked only with mineral rights there (`diplomacy.rights(region, at)`).
-- **Arrival.** `Atlas.landHooks`: after the ways, each region's land goes through the hooks (raw lands skip
-  them). The first region of a settlement's box that's made plans it (plan.ts) on the raw ground of the whole box
-  (`regionLand(…, raw = true)`, a tile a frame while streaming), once; every region of the box then gets the
-  plan's columns stamped in (what stands is real matter: intervals in world z, cut and frozen by the streamer like
-  any land). Deterministic: the same settlement plans the same whichever region comes first.
-- **The plan.** Districts on overlay grids (src/settle/grids.ts): `radial` (rings and spokes, sectors doubling
-  outward), `contour-voronoi` (Voronoi seeded on the ground's height contours), `irregular` (Townscaper's merged
-  triangles), `orthogonal` (a turned square lattice). Every style makes lots (polygons); `LotGrid` cuts each lot
-  into a ring of yard quads and its inset polygon cut centre-to-midpoints (the footprint), as a `CellGrid`
-  (build/towngrid.ts: what `Town` builds on; Townscaper's `TownGrid` is one). The core district is the profile's
-  first style; a town or city has a second round it; the fields are an orthogonal district past the wall.
-  Buildings are `Town` blocks (walls, floors, doors, windows, roofs from the neighbours) in the building's
-  materials (the profile's `look`), each a `Building` whose `thing` is an `Instance` (house, hall, granary,
-  workshop, megastructure …) with parts (rooms, hearths, a forge, bins), its `use` derived (compose.ts) by the
-  rules in data/recipes/core.json. Also: the plaza's well and stalls, a wall ring with gates and towers, furrowed
-  fields, the quarry spot, a ruined tower adapted into homes (`founded.over`, its history `adapted`), a camp of
-  tents round a fire (its own Settlement record, `size: 'camp'`, hostile people). `spots` are where agents go:
-  homes, stores, posts, farm, mine, repair, make, trade, the camp.
-- **Units.** src/units/agent-units.ts implements the `Units` contract (api/contracts/units.ts, runstory's) on the
-  GPU agents. Per unit on the CPU: the job, faction, health (GPU hp = 3 × it), its target. Groups and fields:
-  striking (0, standing, the work pose), standing (1), three shared goal fields for go / patrol / follow / flee /
-  back-to-post (agents fields 9–11, groups 2–4, keyed by where), the defenders' field on the foes (field 8, group
-  5), the hunt (targets, field 7, group 6), hostiles loafing (7); fields 0–6 and groups 8–15 are the settlements'
-  rounds (the one crowd's legs: settle/crowd.ts, fortress/crowd.ts). Hostile units notice what's within their sight and join the hunt; the GPU swings, its
-  swing events become damage (an actor's `hurt`, a unit's `agents.hit`). Guards and units ordered to attack close
-  in on the foes' field and strike on the CPU. Window coordinates.
-- **Life (play).** The planned settlement nearest the camera inside the window (40 cells in from its edge) is live
-  (round 128o, DA-A6: src/settle/crowd.ts SettlementCrowd, the units' `Routine` for its 'work' jobs, wiring the one
-  crowd — town/life.ts TownLife over settle/work.ts SettleWork, each person keeping its record's trade — to the agents;
-  settle/life.ts SettlementLife is gone): its people within the tier's budget (28 on the
-  phone tier, 48 otherwise; `?townfolk=`) — guards at their posts; each role on its own round, a field a leg
-  (farm 0, fell 1, quarry 2, home 3, store 4, the heaps 5, the house going up 6): miners take the quarry's floor
-  exactly (terrain.take) and put it on the stone heap (terrain.put), woodcutters fell real trees (plants.fell) and
-  heap the logs, builders carry from the heaps to the site, where every 1.2 cells³ a block of the house stands (a
-  `Town` over the site's lot in window coordinates, stamped through the town system; its floors fixed relative to
-  the door's ground so the grid can be made again when the window moves); a finished house is a Building +
-  Instance on the record and four more people. Farmers carry sheaves to the granary. Standing at work, a group's
-  units are drawn bent to a tool (`agents.workPose`). The growth field (field.ts: the settlement's intensity and
-  style over its box, the ecology pass's shape) steps every 8 s while the grain lasts; when nothing's being built,
-  the free lot it's strongest on becomes the next site. A raid (`settlements.raid()`): the camp's raiders march on the plaza, workers run home, guards meet them;
-  it ends repelled (all raiders dead) or looted (70 s: a quarter of the stores gone). Events: built, died, raided.
-- **Agents' changes.** `NFIELDS` 12 (was 4; `fieldPlace` three vec4s), `MAX_SEEDS` 48 (was 32), `spawn(…, { hp })`,
-  `workPose(group, on)` (bit 8 of the group's material word: unitDraw bends the figure and adds a tool voxel; a
-  swing bends it too); a field left without seeds is set unreachable once (`n3.w`, the fields to clear) and then
-  skipped by the sweeps; with no unit, nothing in flight and no field seeded, the agents' pass does nothing (no
-  peel, no sweeps); the first tick that needs the surfaces peels them.
-- **The plan's ground work.** `ColumnPlan.cut` (the ground let down: benches, an apron, a well) and `.hole` (a gap
-  through a column: an adit under the rock that stays over it).
-- Debug: `?towndebug=1` (src/settle/debug.ts). Tests: scripts/settletest.mjs (the planner, no browser),
-  scripts/settlementtest.mjs (in play).
+## Structures (round 117; switchover 2026-11-10)
 
-## Structures: buildings, districts, cities (round 117, branch `structures`; BACKLOG STR1-STR17)
-
-The user (DECISIONS round 117): "beautiful structures, sprawling fantastic cities"; megastructures as "various procedural
-building assets for various tile systems plus some WFC and mega tile features (features multiple tiles big)"; "Irregular
-tiles like towscraper, voronoi tilings of isolines to make city streets and plot lots, radial tiles like bulwark. Let's
-bake paths into the tiles we generate so agents can interact with them. Taking elevators, stairs, walking on ramparts. I
-would also have linear tile features we can use for bridges, roads, railroads and extrude along splines."
-
-**Contract:** `src/api/contracts/structures.ts` (`Structures`: `plan`, `pieces`, `columns`, `asset`); implementation
-`src/structures/` (index.ts). Pure functions of their inputs: no GPU, no world state, deterministic from the spec and the
-ground. Other tracks use only the contract.
-
-**One representation per use, converted at the boundaries** (the user: "Please don't make assumptions … just because we
-have voxel assets currently doesn't mean we don't want to switch to meshes"):
-
-| stage | representation | who reads it | why this one |
-|---|---|---|---|
-| `CitySpec` | seed, tile system, style, centre, radius, storeys, density, walls, sunk | stored (a city is its spec; progress beside it) | tiny; the plan is re-made from it (towns grow as stored progress, round 110) |
-| `CityPlan` | a planar quad mesh (`TileMesh`) + occupancy `Span`s per tile + buildings + `Facade`s + megas + `NavGraph` | the pieces, the columns, the nav, the city game later | the truth (the spans design, round 102: "each grid be store intervals like the terrain but for building types"); ~100 KB for a town |
-| `StructurePieces` | warped module instances: a module id + 16 floats (4 corners, 4 foot heights, top, look, seed, flags) | the renderer (any host) | the look wants detail finer than a column (windows, eaves, sharp edges — "structures stay sharp", round 39); a module is stored once on the GPU however many thousand walls use it |
-| `ColumnSpan[]` | one solid span per hex column (foot to mid-roof) | the External registry (sim/external.ts) | the sims only need "solid here"; one span a column is what an External instance holds |
-| `NavGraph` | nodes (street, plaza, ground, floor, roof, rampart) and links (walk, stairs, door, gate, lift) | agents (inhabitants), the play track | paths, not fields (round 104) |
-
-**Tile systems → one quad mesh** (`tiles/systems.ts`, `tiles/builder.ts`). Every system ends as counter-clockwise quads
-with shared vertices, each tagged lot / street / plaza / yard / wall / gate and a block (buildings never cross blocks), so
-one massing, one module set and one nav baker serve them all. Polygons become quads Townscaper's way (centre to edge
-midpoints); slivers under 0.05 m² are dropped.
-- *irregular*: a triangle lattice in the disc, pairs merged at random (82%), every face cut into quads, 30 rounds of
-  Townscaper's squaring relax (the rim pinned); lanes: 3-5 noisy rays and a ring through the quads, a plaza at the centre.
-- *contour-voronoi*: seeds on a jittered lattice pulled onto the ground's contours (Newton along the gradient to the
-  nearest multiple of `contour` m), thinned; Voronoi cells (clipped to the disc) are plots; each plot's inset (street
-  half-width, none along the rim) is its lots, the band between is street; all subdivided once.
-- *radial*: rings a tile apart, sectors doubling outward to stay a tile across; a ring road near half way, the spokes,
-  the outermost ring the wall with gates on the spokes, a plaza at the heart.
-- *orthogonal*: a lattice turned at random, a street every 4-5 tiles.
-
-**Massing** (`plan.ts`): lots are built by density × fall-off × noise (too steep, too small → yard); buildings grow tile by
-tile inside a block up to the style's size, on ground spanning less than 0.9 of a storey; storeys fall from the centre
-to the rim with noise; a tile now and then a storey up or down (stepped skylines). Foundations to the ground under the
-floor; ramparts 7 m over the ground. Landmarks: the tallest lone tiles near the centre become towers; a fountain where
-the plaza's tiles meet. The planner is on the CPU on purpose: a plan is small, made once when its land arrives, and its
-hard parts (WFC, growing buildings) are sequential; what is large or per-frame (drawing pieces, stamping columns) is on
-the GPU.
-
-**Façades by WFC** (`wfc.ts`, a general solver: ≤ 32 tiles, any graph, weighted, arc-consistent, restarts on a
-contradiction and throws after 12). Per building: a node per exposed storey of each side (hidden where a neighbour's
-storeys cover it); relation 0 *above* (bays line up: a window2 only under a window2, a door or shop under windows or a
-balcony), relation 1 *beside* (round a corner or along a wall: no two doors, no two balconies). Doors and shops on the
-ground floor only, balconies above it; the front door is the longest street-facing ground wall. Blank is always allowed,
-so the rules can always be met.
-
-**Modules** (`modules.ts`): made in code in a unit frame (u, v, w), a vertex (u, v, w, part), part a palette slot.
-Walls run along a side (v 0 the outer face, 1 the inner, 0.35 m; v < 0 sticks out): openings cut as boxes round them,
-frames, sills, shutters, glazing bars, timber framing and braces for the timber looks. Roofs are a height field — h(u, v)
-= the least distance to the roof's free sides and free corners — so ridges, hips and valleys meet across tiles without a
-table; all creases lie on u, v ∈ {0, ½, 1} and the diagonals through the centre, so 8 triangles are exact. Roof masks
-(sides, corners, verge, eaves, clip) are made on first use. Gables close a ridge's end; verges run past them.
-
-**Pieces** (`pieces.ts`): walls from the façades on mitred frames (inner corners slide along the neighbouring sides, so
-walls meet on the corner's line); posts or quoins at convex corners; a roof on every top — a side is joined if the
-neighbour is the same building as tall or taller, or another building taller (the roof leans on its wall); eaves only over
-what is lower (never into a neighbour's wall as tall), corners clipped where a tile as tall touches diagonally, the roof
-lifted 0.14 m over the walls (a warped tile's roof is flat between its warped corners, not the bilinear surface).
-Unit-tested: no wall top pokes through a roof at its height (structures.test.ts).
-
-**Drawing** (`gpu.ts` + `shaders/structmesh.wgsl`, shared by every host): the library in one vertex and one index buffer;
-the palette (styles × 14 parts × 8 variants, linear) then 4 vec4s a piece in one storage buffer (read in the vertex
-stage only); pieces sorted by module, one `drawIndexed` a module in use with `firstInstance` (core WebGPU). The vertex
-stage warps (x, y bilinear over the corners, z from the foot's bilinear height to the top; flag 1: top relative to the
-foot) and picks the palette variant per building; the fragment makes the patterns in world space (coursed stone, roof
-tile courses and moss, cobbles, limewash, timber grain) and the glow (a share of windows and the lamps at night).
-Hosts declare `spData` and `hostNight()` and their own entry points: the viewer (viewer/viewer.wgsl: sun, sky, bounce,
-a 2048² shadow map, fog, filmic curve) and the game's (shaders/structgame.wgsl: render.wgsl's `lighting`, `haze`,
-`cutAway`, the pick; `Renderer.enableStructures`, the pieces at the draw group's binding 3, back faces culled).
-
-**Mega tiles** (STR12): a domed temple over four tiles meeting at a vertex (its frame the patch's outer corners: a
-module warps over a patch as over a tile), a radial city's keep on its plaza (its own frame, no tiles). **Into the earth**
-(STR13, `spec.sunk`): floors on the ground's low side, backs in the hill, buried walls blank. **Growth** (STR16):
-`plan.order` (the old core first) and `grown(plan, p)` — stored progress is one number. **Placed assets** (STR14): affine
-pieces (flags bit 2: a 3 × 4 transform, the module in metres) via `assetPieces`, for the terrain track's buried things.
-**Frames:** a plan's coordinates are its spec's frame (a settlement's: its box's — on the GPU a grid of the grid table
-places it in the window's, see below; its claims are moved into the window's on the CPU); `shiftPlan` moves a plan's own
-frame where a host needs it.
-
-**The draw contract: grids and slabs** (round 128g, `cityrender`; the user: "There should be multiple grids with their
-own coordinate system on the GPU and everything should be instanced without CPU readback"). `StructureGpu`'s data buffer
-is the palette, then the **grid table** (`GRID_CAP` 256 rows of two vec4s: position xyz and a uniform scale, then a unit
-quaternion — a full rigid transform, so a grid may later be a physics body, a floating island or a creature's back, and
-move every frame), then the pieces (64 bytes each: `MOVING_CAP` ships rewritten each frame, then slabs). Grid 0 is the
-identity (the host's own frame: the viewer's world, the game's window). A **slab** (`put(key, pieces, grid)`) is one
-owner's pieces in its grid's frame, sorted by module within it, uploaded once a change — never when the grid moves —
-its grid id in each piece's flags (bits 8-23; the flags under bit 8 are the pieces' own). `structmesh.wgsl spVertex`
-works in the grid's frame (the corners, an affine piece's transform, the ground a draped piece is laid on: the host's
-ground under the corner as the grid places it, the difference taken back into the grid's z) and composes grid ∘ local
-at the end; the normals follow (the fragment shader's derivatives of the composed position). `setGrid(g, t)` writes one
-row (32 bytes); `show(key, on)` keeps a slab on the GPU without drawing it; draws are one instanced draw per module per
-shown slab. No CPU per-instance transforms, no readback. A grid isn't "one per settlement" in the table: settlements and
-the fortress use it now; grids that intersect (nature, voxel structures, WFC) take rows the same way.
-*Who draws what* (settle/view.ts, settle/onscreen.ts): a settlement's slab is drawn while any of its box is on screen,
-with hysteresis (shown from 0.35 screens off, kept to 0.75); its pieces are made ahead (one a frame, nearest first) from
-1 screen off and let go past 2; an unplanned settlement within a screen has its plan asked for
-(`Settlements.prepare`). A slide writes each grid's row and nothing else. *Claims are the sims' alone*: drawing never
-depends on them (below). *Grids that move or turn are not claimed* (as physics bodies aren't): only still, axis-aligned
-grids (the settlements', the fortress's) claim columns, through the CPU's own copy of their row (a window offset in
-whole cells and rows) — a moving grid's row may be the GPU's to write, and its matter is the physics' to say.
-
-**The far look** (STR10): walls and roofs have a far module (`Library.lodOf`: flat openings and beams on the slab; roofs'
-tops only); `StructureGpu.draw(pass, lod)` draws the same instances with it. The game picks it by zoom
-(`Renderer.structLodZoom`, 7 px a cell: the camera is orthographic), the shadow map always.
-
-**Linear features** (`linear.ts`): a profile module warped segment by segment along a Catmull-Rom spline (each
-segment's frame its right and left edges at either end). Roads: the ground sampled every 2 m, a profile never steeper
-than 14% (passes that only raise: valleys and water filled by the deck); over 2.6 m above the ground, or over water, a
-bridge — deck pieces on the profile and arch pieces from the ground (spans ≈ the height, 5-12 m). Walls: a loop at
-1.06 R, the walk 8 m over the ground, towers every 28 m and at the gates. Each wall run and bridge is its own External
-instance; nav nodes every 4 m (street, bridge, rampart), stairs at a wall run's ends.
-
-**Viewer:** structures.html (src/structures/viewer/): tile system, style, seed, size, storeys, density, ground (flat,
-hill, slope), time of day; building (one building isolated: `isolate` re-works its façades and roofs alone), district,
-city; drag to turn, wheel or pinch to zoom, right-drag or two fingers to pan; tile and nav overlays; every setting in the
-URL. scripts/structshot.mjs shoots it; scripts/perf/structures.mjs measures it.
-
-**Density** (round 119; the user: "Can we get farms and smaller huts for lower population density? Is it density
-driven+grid based now?"): `planCity(spec, ground, water?, density?)` takes a `DensityFn` (people per area, 0..1). The
-tile systems (and the farmland's) are the grid; the density decides what is built on each tile: whether a lot is built
-(p = 1.6 × density), its kind — a town `house` at or over `HOUSE_D` (0.42), a thatched `hut` under it (one storey, two
-now and then near the line), a house's storeys rising from the rim's to the middle's with the density — and the
-farmland's plots: `farmstead` (a farmhouse and a barn on the plot's lots; likelier where there are more people and by the
-roads), else crop strips, orchards, pastures (fewest people: pastures and fields). No hard rings: the kinds follow the
-field, and where houses and huts meet they mix. Without a field (the viewer) `defaultDensity(spec)`: a smooth fall-off
-with noise plus a thin country out to the farmland's edge.
-
-**The farmland** (`tiles/farmland.ts`, `spec.farmland` the outer radius): Voronoi plots over the ring past the town, each
-inset by a lane; a field cut into strips 5-7 m wide along its long way, each strip a quad (its straightest corners
-dropped; a wedge left as pasture) cut every ~6 m along; a farmstead's plot cut into lots; its outline a fence or hedge
-(a linear feature, straight between its posts). Modules: `crop` (tilled soil, five ridges, in four along its length),
-`fruittree`, `fence`, `hedge`; huts (`hut:*`: daub between timbers, small shuttered windows), barns (`barn:*`: planks, a
-wide door), thatch roofs (`roof:…:thatch`, deep eaves). Parts 15-18 (Thatch, Plank, Soil, Crop).
-
-**Draped pieces** (flags bit 4): what lies on the ground — paving, crops, fences, hedges — is laid by the host on the
-ground as it is now (`hostGround`: the game's column top plus its loose ground; the viewer's the plan's), not as the plan
-saw it (a road graded, a bank eroded since).
-
-**Settlements on it** (round 119, STR15; src/settle/): one concern each —
-- `plan.ts` *plans*: a settlement's record, civ profile and box ground → `planCity` (its tile system the profile's first
-  grid style, its style from its architecture — fortified/squat: bastion; terraces, flat roofs, tall: terrace; else
-  hearth —, storeys from the profile, walls if fortified, farmland out to R + 36 m, the quarry kept out) with the density
-  from the settlement's growth field (`field.ts`, by size: a hamlet's middle reaches huts, a city's town houses, plus a
-  thin country). Then the record: each standing building a `Building` + `Instance` (the hall, the granary, the workshop,
-  the temple (the dome), an adapted ruin (a tower), houses and huts; barns are granaries), doors as spots; the frontier
-  (the last 10% of the town's build order) not up yet: two sites, the rest room to grow; fields from the farmland's crop
-  plots. `SettlementPlan.city` is the structures plan, `standing` its storeys up per building. The land gets only the
-  ground works (stalls, piles, the quarry, the camp, bare ground under fields, streets and buildings).
-- `view.ts` *shows and claims*: every planned settlement within 1400 m drawn as pieces (`Renderer.enableStructures`), each
-  standing building's columns an External instance (`OWNER_STRUCT`); cut or loose → rubble + dust, the building no longer
-  standing; slides let go and claim again. `reclaimed.settlementsView()`.
-- `life.ts` *lives*: builders raise a site storey by storey (`LifeIO.raise` → the plan's `standing` → the view), its roof
-  when the last is up; the rest as before.
-- `raster.ts` (the far land's stamps) is told where the roofs are (`rasterColumns`): buildings aren't in the columns.
-- `?city=<system>&cstyle=&cseed=&croads=&cwalls=1` plans the town nearest the start with those (`Settlements.override`).
-
-## Cities: purposes, stories, ports, dressing, night lights (round 120, branch `cities`; BACKLOG STR30-STR36)
-
-The user (DECISIONS round 120): "different settlements have different purposes like trading posts, mines, lumber camps,
-etc. towns should have stories"; ships "both anchored at harbor and sailing"; night lights as emissive surfaces and a
-cheap pool of light ("Yes absolutely enough"). One concern a file:
-
-- **Purpose** (`settle/purpose.ts`, pure): a site's `PurposeFacts` (the atlas's setting, its region's kind, tier, rivers,
-  climate, stamps and kind traits — `atlas/kind-traits.ts`, carried in the atlas facts so the wiki needs no atlas —, its
-  roads and fords, its height in its region, the enemies present, a realm's seat) → a score per purpose, the highest
-  wins; `why`, `scores` and `trades` kept. The wiki calls it while it's built (`gm/wiki.ts`), so `Settlement.purpose` is
-  on the record the GM reads before any land arrives; the wiki's page says it.
-- **Story** (`settle/story.ts`, pure): founding (by its owner, for its purpose's reason), then the world state: enemies
-  in its region at odds with its owner raided it (walled after; a strong one burned a quarter), a port or river town
-  low by the water flooded, and WorldState.history's burn / flood / ruin / rebuild events in its region.
-  `Settlement.story` (contracts/settlement.ts).
-- **The plan** (`settle/plan.ts`) turns them into the structures spec: `CitySpec.purpose`, `works` (a mine's quarry
-  mouth), `approaches` (records.ts: the roads' ways out), `marks` (the story's burned quarter, flood level, new walls); a
-  hold is radial, bastion, walled; a port or a lumber camp moves to front its water. The record gets the purpose's
-  buildings (warehouse, sawmill, stables, granary; the headframe, lighthouse, windmill and piers as things — core.json
-  kinds and rules: dock, mine, mill, stable, sawmill, lighthouse), people by the purpose's mix, stores (ore, fish, goods,
-  planks, flour, arms), jobs (load, saw, tend, mill). In play the new trades walk the existing rounds (life.ts ROUTINE).
-- **Structures** (`structures/purpose.ts`, called by `planCity`): `purposeBuildings` (after the buildings grow: the work
-  site, a port's quay tiles, re-kinded buildings, a market widened, history's wear), `purposeWorks` (after the landmarks:
-  piers to water a ship can lie in, berths, a lighthouse, a headframe and rails, a windmill, props), `dressing` (after
-  the façades: street lamps ~12 m apart, torches at doors and gates, banners; `plan.lights`). CityPlan adds `works`,
-  `berths`, `props`, `lights`; TileUse `quay`; BuildingKind warehouse / sawmill / granary / stable; MegaKind lighthouse /
-  headframe / windmill; LinearKind pier; BuildingRec.wear. Modules: `structures/dressmodules.ts` (props, ships and the
-  sails in metres as affine pieces; the quay edge, kerb, pier, lighthouse, headframe, windmill, pool in tile frames).
-  Parts Cloth (19) and Flame (20).
-- **Drawing** (structmesh.wgsl): flags WIND (8: a banner's cloth streams downwind from its pole, droops in calm) and SPIN
-  (16: waterwheels and sails turn); look bits 20-22 soot / damp / fresh stone; flames flicker; `spPoolLight` a pool's
-  warm fall-off at night. Hosts add `hostWind(xy)` (the game: the plants' lean, sway.wgsl's `bend` / 0.3; past the window
-  the prevailing wind) and `hostTime()`. `StructureGpu` keeps the pools' ranges apart (`drawGlow`: the game's
-  `structures-glow` pipeline, one + one, no depth written, only when `Renderer.structNight` > 0.3; the viewer's likewise)
-  and MOVING_CAP (64) slots after the palette for what moves (`setMoving`).
-- **Ships** (`settle/ships.ts`, pure): `shipRoutes` charts routes once over the atlas's sea (a coarse cell is water when
-  all its texels are 1.5 under the sea; Dijkstra kept off coasts; string-pulled), each port to its two nearest reachable;
-  `Fleet.at(t, sea)` places every ship by the time alone (out, rest 40 s, back). `Settlements.fleet` charts on first ask;
-  `settle/shipsview.ts` draws the ships within 900 of the camera each frame (`?ships=0` off).
-- **Viewer**: purpose, coast / river / mountain grounds with water, day / dusk / night, wind, the history toggle.
+What's left of the structures system: `structures/tiles/*` (the irregular, contour-voronoi, radial and orthogonal tile
+systems — kept for cliff and vertical cities), `structures/modules.ts` and `dressmodules.ts` (the module library: art
+for Track B's building generator) and `rng.ts`. The old planner on them (plan, place, pieces, nav, wfc, the structures
+draw and its viewer, structures.html) is deleted: docs/design/SWITCHOVER.md. The contract `api/contracts/structures.ts`
+keeps the types the tile systems use.
 
 ## Instrumentation (round 100, branch `hitchrec`)
 
@@ -3606,321 +3361,12 @@ Contract for text: every string a player reads follows docs/WRITING.md; test/uni
 writing.ts `lint`) checks the templates, the dealt cards and petitions on seed 1, Briar Hollow's, the cast, the
 screens and the GM's situation file.
 
-## Fortress mode (round 128c, `fortress`; contract src/api/contracts/fortress.ts; docs/design/FORTRESS_SLICE1.md)
+## Fortress mode — deleted (switchover, 2026-11-10)
 
-The building rule (the user's): select what (a structure type), then plan it with stacking tiles.
-
-- **The plan** (`fortress/plan.ts`, pure): per cell of the fortress Town's grid its structure id, its levels (a bit a
-  level) and a gate flag. Painting a type next to the same type joins that structure (a cell between two joins them
-  into one). A structure's cost and capacity are blocks × the type's per-block numbers (`fortress/defs.ts`:
-  `StructureDef` cost, perBlock {beds, storage, jobs, posts, makes}, form block | wall | yard, maxLevels, joins, look).
-  `wallTileOf` names a wall tile by which sides meet a wall (post, end, straight, corner, tee, cross); a gate only on a
-  straight run.
-- **The Town's box** (`fortress/fortress.ts`): a `Town` (build/town.ts) on its own world-anchored box round the town
-  (240 world units; its row origin even, so the hex lattice's odd-row shift is the same in the box and the window). Its
-  columns are box-local: the TownIO maps them through the box's origin and the window's, so a slide only changes the
-  offset. Milestone 1 keeps the plan in `Town.plans` (floors lined up with the neighbours'); nothing is stamped (the
-  Town's stamp throws: milestone 2's builders stamp).
-- **The look** (`fortress/pieces.ts`): the plan made into one CityPlan per style and drawn by the towns' pieces
-  (structures/pieces.ts `piecesOf`): blocks are lots with a building a structure and floor (a building a cell for a
-  type whose `joins` is false), a façade on every storey side no block of the same building covers; walls are wall and
-  gate tiles (rampart, merlons on sides that meet no wall, gate arches) plus a tower where a run ends, meets another or
-  turns by more than 50 degrees; farms are fields, the quarry a yard; each type's props set down. Why pieces, not
-  matter: in the atlas world the window's land is drawn as a heightfield, where a Town stamped as column matter reads
-  as a lumpy mound (DEVLOG round 128c). The pieces join the settlements' (one draw): `SettlementsView.extra`, in the
-  box's frame, placed in the window's by a grid of its own (round 128g: uploaded again only when the pieces are new).
-- **Round 128d (milestone 2 and the user's fixes).** Types: nine (the Fortress — the keep, form `keep`: solid stone,
-  crenellated, a tower at each outer corner; walls join it). `PerBlock.power`: a built block gives power × (1 +
-  POWER_RISE × level) a day (`FortressPlan.power(s, only?)`); the level sets the pinned settlement's `stores.power.rate`
-  from the built blocks, so the stores advance it (a ledger number, nothing spends it). Walls are thin by rule (a band
-  from the cell's middle to each side meeting a wall or the keep; the cell stays the unit of planning and cost); a
-  player tower per wall cell (`FortressPlan.tower`). The Town is not stamped (pieces only) and has no z ceiling, and
-  (round 128d, runs) no level cap. **Picking** (`fortress/pick.ts`, pure): the tap's ray (`Camera.ray`) marched through the plan's
-  blocks; a top face stacks, a side face puts a block in the cell it came from at the same level; missing every block,
-  the GPU pick's ground cell (round 128d: the ground along the same ray, in the box's frame — the GPU pick's column sat
-  a column or two off the ray; the GPU column the fallback; a ray under a block's ground floor, down a level, hits its
-  foundation). **Modes** (`Fortress.mode`): `plan` (speed 0; the plan drawn whole; a "Planning
-  (paused)" banner and an amber frame) and `build` (speed back to `?speed=`; blocks not built drawn see-through:
-  `PieceInputs.ghost` → look bit 23 `LOOK_GHOST`, structgame.wgsl discards every other pixel and paints it pale).
-  **The people** (round 128o, DA-A6: the one crowd). `town/life.ts` TownLife is every town's people's routine, pure and
-  on events: each unit's phase moves only on what happens to it (`LifeEvent`: a leg's arrival — the agents' `arrived`,
-  on a field or a ride —, a world operation's answer, a death; the town's own: stores, sites, spot, pile, room,
-  shelter; a lost event throws) and its orders out (`Order`: the leg a unit follows, with a target for a cart's pile or
-  a soldier's wall point; what it carries; a dig or a felling; a newcomer; a recruit turned soldier). Nothing polled, no
-  positions read, no give-up timers. People work the job board (`town/jobs.ts` JobBoard over the plan's `jobSlots`):
-  builders, farmers, miners, woodcutters, smiths and recruits (batches, `fortress/recipes.ts`); soldiers muster, drill,
-  march to the wall's stairs, walk the wall; carts take long hauls from the piles; newcomers walk in to a house. What it
-  asks of the town is `TownWork`: the fortress's is `fortress/townwork.ts` FortressWork (BuildBook — what a block lacks,
-  loads on their way counted —, the build order `buildOrder(town, stores)` lowest first without the reach's cut-off
-  cells, the farms' ripe grain, the trees and the pit's spots, the piles and the carts' claims, the wall points, beds and
-  grain for newcomers, Erase's refunds). `fortress/crowd.ts` FortressCrowd is the wiring and the units' Routine: a leg is
-  a group (R.toPile, R.toSite/R.toStore by the load's good, R.toQuarry, R.toFell, R.toFarm, R.toHome; R4 ride-only legs
-  to the smithy, the barracks, the stairs, a cart's pile; a wall point one of the units' goal fields) following its field
-  or riding the roads; an arrival is the unit's own leg's (its group's field or ride) or it's ignored; digs and fellings
-  are timed there (QuarryDig) and answered as events. R, R4 and F, G live in units/agent-units.ts. Builders stand just
-  outside the cell (a block that stands claims its columns: one inside is buried). `Settlements.pin(id, true)`: no
-  SettlementLife for the pinned town — FortressCrowd uses the same fields and groups. NFIELDS and MAX_GROUPS unchanged.
-  The fortress's crops and fences are draped with `DRAPE_ANY` (structures flag 32, structmesh.wgsl: follow the host's
-  ground however far off the plan's): the fortress's ground is the surface read, without the loose ground the GPU
-  draws on it.
-- **The level** (`?fortress=1` with `?town=`): `Settlements.pin(id)` keeps the town live wherever the camera is and
-  stops its `grow()`; its stores are topped up to `START_STORES`; the level's speed is 0 (the existing pause: sim,
-  units, settlements and the day wait; `?fpause=0` to compare); the sandbox's editor panel is hidden; planning waits
-  for one surface read over the whole window (`Fortress.ready`: a far chunk's surface words aren't made till it
-  wakes). A tap picks (renderer.pick) and presses with the bar's tool (`Fortress.press` → `Town.pickBlock` on the
-  plan). `window.reclaimed.fortress` for scripted checks.
-- **Round 128d (runs, the fortress grows huge).** `FortressPlan.levels` is a `CellRuns` (owner = the structure's id,
-  type = `typeIndex(type)`), so a cell's levels have no cap and may have gaps; `Structure.cells` maps a cell to its runs
-  (`LevelRun[]`, the plan's own, read only). Cell → structure ownership stays a per-cell `owner` (a cell is one type;
-  folding it into the runs would let structures stack in a cell — not wanted yet); folding two structures re-owns the
-  folded cells' runs and the Fortress's sync re-owns the Town's (`CellRuns.ownAll`). **Gaps:** `FortressPlan.held(c,
-  L)`: a block is allowed on the ground, on the block under it, or beside a block at its level (any structure's): a wall
-  can span an empty level between two stacks (a bridge's span); nothing floats. Erasing never cascades (a block left
-  held by nothing stays). A wall cell whose lowest level is off the ground is drawn from that level's floor with an
-  arch in each face under it; a building's floating storey has its façades and no underside yet; the keep is drawn
-  solid. Block types have no height cap (`maxLevels` Infinity); yards stay 1. **Plants (FT-26):** the fortress's
-  changed cells (painted and the cells round them) and each block as it stands clear their plants
-  (`FortressIO.clearPlants` → `world.plants.clear(x, y, r)`: edit.wgsl OP_FELL with a strength — every column in the
-  radius to grass, no answer read back); done at the sim's next tick, so a plan's clearing waits for Build. **Input:**
-  the amber frame and the banners take no presses (`#ui>.fort-frame`); a one-finger drag pans (dragStart declines in
-  the fortress; `ControlHandlers.dragPans` lets the mouse's drag pan too).
-- **Round 128d (ways: the fortress bakes its own paths).** `fortress/ways.ts` `waysOf(plan, grid, courtyards)` → `Ways`
-  (per cell WAY_NONE/ROAD/SQUARE/STAIR; `doors` {structure, cell, side, out}; `stairs` {structure, wall, side, cells,
-  foot, axis}; `gates`; `cutOff`): pure, from the plan (built or not), memoised on the Fortress (`Fortress.ways()`,
-  dropped on every plan change; ~4 ms for a 240x278 box with a ring and 20 houses). Order: doors → a road tree over free
-  cells joining doors and both sides of each gate (Dijkstra from the net, 0.3x along road already laid) → stairs on
-  free cells no road or door uses (a flight never cuts a way) → the stairs' feet joined → squares. Readers: pieces.ts
-  (`PieceInputs.ways`: road and square cells become the CityPlan's 'street' and 'plaza' tiles in one style; a façade
-  door only where the ways put it; the keep's door an arch; stairs as stone steps along the axis; no merlons on the
-  face a stair meets), solid.ts (`SolidInputs.ways`: a stair's steps claimed with its wall once the wall's ground run
-  stands — each column within STAIR_HALF of the axis, from the wall's top at its band to the ground at its foot, no
-  steeper than SLOPE 0.75), `Fortress.nav()` (`waysNav`: a NavGraph of roads, doors, gates, the wall-walk and stairs —
-  data; no unit walks it yet). **Units walk the GPU field** (agents.wgsl over the columns): roads are open ground to it
-  (no preference yet, FT-46); the stairs and the wall-walk are claimed solid, so it climbs them. A gate's lintel is
-  0.8 under the wall's top (solid and drawn: FT-45).
-- **Round 128e (the user's fixes).** Inspect also picks the town that was there (`settle/thing.ts` townThingAt on the
-  town's CityPlan, `Settlements.thingAt(id, window xy)`; `FortressIO.townAt(x, y, z)`; `Fortress.inspectedTown`;
-  card `fortress/townpick.ts`): the tap's ray is marched, box frame, to the first building or wall it goes under the top
-  of (the plan's world z less the window's oz). Plan and Build put Inspect away. While building the bar has 1x/4x/16x and
-  Skip to done (`FortressBarHooks.speed/skip/now`; scenes/level/fortress.ts `skipFrame`: SKIP_SPEED 32 until `Fortress.progress()` is
-  whole, or `FortressLife.blocked()` — all left cut off, or nobody carrying and the stores short — for SKIP_GRACE 4 sim
-  s; the reason in `Fortress.note`). `Fortress.crew` (FortressLife: builders by phase) for the bar; the first Build frames
-  `FortressLife.focus()`. Blocks still to build, while building, aren't drawn (LOOK_GHOST marks them to drop): a plot
-  outline on the ground (`plotsOf`, the fence module draped 0.9 m) until `Fortress.markStarted` (the first load in),
-  then scaffolding (the fence module a storey high, 0.35 m off each side). A façade off a cell's outer side is placed
-  by its building's nearest cell.
-- **Milestone 3 (round 128e): the economy feeds the building.** `fortress/economy.ts` (pure, tested): `JobBoard`
-  (people → slots in priority order, keeping a job while its slot still wants them), `jobSlots` (a built block of a
-  farm, quarry or lumber camp gives its type's `jobs`; ECON.builders while there's building; order JOB_ORDER build,
-  farm, quarry, lumber — builders first since round 128o, DA-A2), `perWorker`/`workSeconds` (a worker's share of `makes` a day; the work a load of ECON.haul
-  takes), `quarryLoad` (ECON.oreShare of it ore — Good 'ore' added), `grown`/`eaten` (a farm block's grain a day; a
-  person eats ECON.eat), `bedsOf` (ECON.startBeds + house blocks' beds), `roomOf` (ECON.townRoom + warehouse blocks'
-  storage), `storedOf`/`fits`/`putIn` (goods that take room: log, stone, ore, grain, weapons), `mayArrive`, `refundOf`
-  (ECON.refund of a built block's cost), `reachOf` (a lumber camp's reach). The economy's day is ECON.daySec (60 sim s;
-  the day counter is milestone 5). `FortressLife` (life.ts) runs every person: a unit each, its job the JobBoard's
-  (every JOBS_S); phases idle/home/wait, builders toPile/toSite/working (BuildBook as before), workers
-  toWork/gather/lifting/carry. Fields (0-6, all FortressLife's): F.pile the stores (the first built warehouse's door
-  — `Fortress.doorOf` — else the town's heap), F.site/F.store sites lacking stone/wood, F.quarry the built quarry cells'
-  middles, F.fell the trees in the lumber camps' reach (`plants.treesNear`, asked of the GPU when the camps change, after a fell and once a sim day: round 128o), F.farm the built farm cells,
-  F.home house doors and the town's homes; groups R.* (settle/life.ts). Miners dig the ground (`terrain.take`, a quiet
-  edit: sim/sleep.ts touch — the chunk isn't woken) every ECON.digSec within ECON.digR of the cell's middle, as a bowl
-  no deeper than `pitDepth(d)` (1 m down a metre in, ECON.pitMax at most) under the ground they first found there; woodcutters fell
-  (`plants.fell`, quiet). Goods reach the stores only carried (the fortress's store rates are zeroed at the start; power
-  keeps its rate). A trip isn't started when the stores' room can't take a load (`Fortress.status.full`). Grain eaten
-  each frame; a newcomer every ECON.arriveSec while `mayArrive` — at the farthest point the stores' field reaches from
-  the heap, along the road that reaches out farthest. Erase: `Fortress.onErased` → FortressLife refunds (`refundOf`; a
-  block not built: `BuildBook.forget`, all of it), as far as the room takes. `Fortress.status` (people, jobs, per
-  structure workers / brought / ripe, full, hungry) for the bar (`jobsLine`, FULL/HUNGRY/BEDS lines, top line
-  `peopleLine`) and Inspect (`InspectLive`). **Roads (FT-46):** `Agents.setRoads(window columns)` → agents.wgsl `roads`
-  (binding 40, a bit per window column, window order): a step between road columns costs ROAD_COST 0.5, one end on a
-  road 0.75; FortressLife sets `Fortress.roadCols()` (road and square cells) every JOBS_S (and after a slide).
-- **Round 128o, B (one reach, the passage chosen on the GPU).** The reach lives in the town engine: `build/reach.ts`
-  (the ask and answer: `ReachAsk` with `fix` and `open`, `ReachReply.fixes`, `FIX_COST`, `FIX_CAP`; `packSpan`'s bit 31
-  a cuttable ground floor; `CpuReach` the reference), `build/reachgpu.ts` (`FortressReachGpu`, now any town's box:
-  the modes, then `solveFix` — the fix field relaxed on the GPU, a 16 B flag a round, then the walk back's fixes read),
-  `build/sitereach.ts` (`cuttableCell`, `siteSpans`, `applyReachFixes`, `standsOfCell`, `joinPlaces`: a town's places
-  joined one way at a time). The fortress judges a batch on one answer and its fixes (no variants tried); a must-open
-  place (no side open) is asked by the sides a passage would open; a stand counts only at its floor's surface (within
-  DROP). Asked again on a plan edit, a slide, the land read again, a pit's tier dug — no timer. `Fortress.joinTown` and
-  `Settlements.reachLive` (LiveIO `reach`, `oz`) join a town's places in play; the generator keeps keepReach (cells).
-- **Round 128f (reach: the check at placement).** `fortress/reach.ts` (pure, tested): `ReachMap(columns, stores, {box,
-  extra, deep})` — the agents' rules on the CPU (AGENT_H, STEP, DROP, DEEP, NAV_K mirrored from agents.wgsl: keep them in
-  step), a search each way from the stores; `reached(x, y)` = a walker from the stores gets to the column's top surface
-  and back. `FortressIO.columns()` (`ReachColumns`: the window's solid runs and water, read by scenes/level/fortress.ts from 'layers' and
-  'water' when planning starts and every 3 s while building) and `FortressIO.townHeap()`. `Fortress.reachMap(extra,
-  {deep, fortress})` lays the plan over the columns as if built (solid.ts with a Town whose built levels are the plan's),
-  `standsOf`, `reachedIn`, `placeWhy` (paint refuses with `Fortress.refusal`, the panel's line), gates shut likewise.
-  FortressLife's cut-off (`unreachable`, Skip's reason) is this check on each new read, not the heap's GPU field.
-  `Agents.keepInScope(key, points)`: places the fields' scope (agents/scope.ts) must cover; FortressLife keeps every
-  block still to build in it.
-- **Round 128h (reach: variants, V128-13).** `Fortress.paint` no longer refuses a placement that cuts planned blocks
-  off: it paints, judges the cut with the block painted (a wall cell joins its neighbours' bands), and `keepOpen` tries
-  variants by rule in the plan's own data — `FortressPlan.gate` (a closing wall: the straight wall cell nearest the
-  stores), `FortressPlan.passage` (a block's ground floor open under a lintel: `setPassage`), `FortressPlan.ramp` (a free
-  cell's ramp up to side e: `setRamp`, found by `rampTo` from `ReachMap.oneWay`/`topZ` — a column reached one way beside
-  one reached both, a rise over STEP and within DROP). None works: `Fortress.warnCells` + `warning` (pieces.ts
-  `warnPieces`, flags bit 7 PIECE_WARN → structmesh.wgsl look bit 25 → structgame.wgsl red). A spot not reached at all
-  is refused unless a ramp reaches it. **The check and the GPU agree through solid.ts:** a passage's solid is a lintel
-  (`WALL_LINTEL`, as a gate's), a ramp's is `rampSpans` under key `RAMPS_ID` (0: no structure; planned is enough, so
-  FortressClaims stamps it at once), both read by `Fortress.reachMap` and by `FortressClaims` alike; the ramp's shape
-  (`rampShape`) is shared with its pieces (`rampPieces`: the wall stairs' treads). `Fortress.variant`/`variantAt`: the
-  panel's line for the way kept open. `ringCells` (FT-57) joins consecutive cells side to side along the circle.
-- **Round 128f-i (lanes: roads narrower than a cell, FT-58).** `fortress/lanes.ts` `lanesOf(plan, grid, ways, ground,
-  opts, blocked)` → `Lanes` (segments per cell, each its kind: road, plaza, ramp, lane, cross, ring, track): a second
-  grid over the tiles as two families of level lines of corner fields — A along the contours (the ground smoothed, over
-  the district's mean slope; a lattice turned to the land on the flat), B across them (stepped past `STEEP`) — marched
-  per tile from its four corners alone (a side's crossing from that side's two corners, lower id first, so tiles meet
-  exactly); the spacing per district from the distance to the plan's structures (`LaneOpts`: every line in town, every
-  k-th out in the fields, a ring lane at the town's edge); none on structures, squares, stairs, ramps, the town that was
-  there or water (`Fortress.lanes`: `blocked`, the columns' water over `LANE_WATER`); the main roads of ways.ts on top,
-  a lane wide (each road cell's middle to each side that leads on). Drawn as pieces in the fortress's grid (pieces.ts
-  `lanePieces`: paving, the tracks trodden earth — module `earth`, `Part.Soil`; steps on steep climbs); the units' road
-  bits stamped on the GPU from the same shapes (`roadShapesOf` → agents/roads.ts `RoadStamp`, shaders/roadstamp.wgsl:
-  a slide moves only the offset). Pure and memoised on the plan (made again when the plan changes or the columns are
-  first read); the corner fields are the GPU's work later (a jump flood, a blur) — today on the CPU.
-- **Round 128i (the people ride the roads, V128-14, FT-70).** The road graph: `agents/roadgraph.ts` (pure) —
-  `graphOf(segments)` (ends merged within 2 cm; within a cell pieces that cross, or one ending on another, split and
-  joined), `hopsCpu` (the GPU's reference), `subgraph`; `lanes.ts laneGraph` (a stepped climb costs more, the main roads
-  less; `noRide` roads over the town that was there or water left out; spurs, family -2, join a road cell's middle to
-  the lanes through it or a free cell beside it); `Fortress.roadGraph()` the part the most doors are on, memoised with
-  the lanes. The agents' side (`agents/ride.ts` RoadRide, `shaders/roadride.wgsl`): `Agents.setRoadGraph(graph, ox, oy)`
-  each frame (the same object: no change) and `Agents.ride(group, goals | null)` (goals in the graph's frame; false
-  unless every goal has a node within RIDE_NEAR 6 m). When the graph or the goals change, `rideHops` (a workgroup a goal
-  slot, Bellman-Ford in workgroup memory) writes per slot and node the cost and the next node; with them, and on every
-  slide, `rideNetStamp` writes the network's plane of the road bits (the buffer's second half: the columns of edges that
-  lead to a goal). `ROAD_FIELD` (the last of NFIELDS 13) is seeded on that plane (agents.wgsl `onNet`); a riding group
-  follows it. The ride stage (after the step, a thread a unit) keeps per slot a mode (off, on, last leg), a node, a goal
-  slot and a stuck count, and writes the step's steer into the unit's fifth word's w (units.wgsl: 0 its field, < 0
-  stand, else a heading + 10): off, standing on or beside the network it joins on the edge under its feet at the end
-  cheapest to its nearest goal (or, nearer that goal as the crow flies, makes straight for it); on, node to node by the
-  table; at the goal's node, straight to the goal, where it stands; no way made for 90 ticks, off for 120. Nothing read
-  back. FortressLife rides the stores, the houses and the farms (`riding`), seeds their own fields only when they don't.
-- **(Superseded in round 128o: roads come from the ways' cells, not the borders — "Towns: one plan", Routes.)**
-- **Round 128k (roads on the cell borders; the columns read before a slide).** `fortress/lanes.ts lanesOf(plan,
-  grid, ways, ground, opts, blocked, roots)` → `Lanes` {segs: 'road' (by a building, paving) | 'track' (in the open,
-  earth) | 'plaza' (across a thoroughfare tile) | 'ramp', tiles, joined, unjoined}: a graph of the town grid's vertices
-  (merged by position: each lot has its own) and borders (a way if a free cell lies beside it; a vertex on a wall line
-  no way), the thoroughfare tiles' middles (gates and passages through their way's sides only; the cells beside them,
-  squares, the big buildings' door cells, the cells the roots open on), grown as a tree from `roots`
-  (`FortressIO.townGates`: the old town's wall's gate posts, box frame; each rooted on every piece of land within
-  45 m) to every door and yard, nearest first, cheapest (climb × 4, reuse × 0.25). `blocked`: the old town where it
-  stands 1 m over the ground (`STANDS`: not its fields), water over `LANE_WATER` 0.8 m. The ride graph (`laneGraph`)
-  from the same pieces. **ReachColumns after a slide:** scenes/level/fortress.ts `readCols` keeps the window origin it read at; `runs` and
-  `water` take the window as it is now and shift back (outside what was read: no solid, no water); every slide reads
-  again. `RoadStamp.set` / `RoadRide.encodeHops` return true only for new shapes / a new network (an offset alone needs
-  no relax: the fields slide with the window).
-- **Round 128l, m4 (reach on the GPU, TL-6 / FT-61).** The check at placement no longer reads the world back.
-  `fortress/reachgpu.ts FortressReachGpu` (shaders/fortreach.wgsl) implements `ReachEngine` (fortress/reach.ts):
-  `setSpans(spans)` (the plan's solid as if built, two packed spans a box column — `packSpan`, eighths of a metre — from
-  solid.ts with the plan's levels as built; only the rows that changed are written) and `check({stores, queries, wet,
-  why})` → `ReachReply {bits, ramps, wet, rounds}`. A check: `reachPeel` (the box's columns peeled as agents.wgsl does,
-  the spans merged in), `reachInit`, ROUND × (`reachHook`, 2 × `reachJump`: the atlas's label propagation with pointer
-  jumping) with the flag cleared before the last, `reachRamps` (box columns under a drop of STEP..DROP up to the stores'
-  component), `reachQuery` (per query — a block's up to four stands — bit 0: a stand's top surface has the stores'
-  label), `reachWet` (a bit a box column with water over 0.8 m, for the lanes); the flag and the answer words copied to
-  a staging buffer and mapped: settled → done, else another ROUND. Asked `why` (an edit to judge) with a query not
-  reached: the same solve with deep water no bar (`REACH_BITS.dry`), then with the plan's solid left out
-  (`REACH_BITS.unplanned`); neither: a cliff. Joins are two-way steps only (|rise| ≤ STEP, AGENT_H of room, both deep or
-  both dry), so a component is where a walker gets to and back from. `Fortress` asks (`requestReach(wet)`: one check in
-  flight, asks folded) after every plan change (`sync`), when planning starts (with the water), after a slide, every
-  3 s while building (level/frame.ts); `paint`/`setGate` commit at once and leave a `ReachEdit` (the cell, and the cells
-  reached before) that the answer judges (`judgeEdit`): the block itself unreached and below a drop → ramp tries; blocks
-  cut off → a `Trial` of variants (gate, passage, ramps) each put in the plan and judged by the next answer; none →
-  `warnCells` + `warning` (`reachWarnLine` / `cutWarnLine`); a gate shut that cuts blocks off opens again
-  (`wouldCutLine`). A press during a trial takes its variant out. `Fortress.cutCells()` / `reachedNow` / `whyNot` /
-  `settled()` / `onReach`; FortressLife reads `cutCells()` on each answer. `CpuReach` (reach.ts) is the same solve on the
-  CPU over `ReachColumns`, for unit tests only. `FortressIO.columns` and scenes/level/fortress.ts `readCols` are gone.
-  `Fortress.probeReach(cells)`: a check of its own for any cells (scripted checks).
-- **Round 128m (RT-6: unreachable blocks refused).** The placement contract: `Fortress.paint` puts a level-0 block in
-  at once and adds its cell to `pending` (`isPending(cell)`; while planning `ghost()` draws pending cells as the plan's
-  ghost; `cutCells()` includes them, so FortressLife never sites them). The next answer whose check took them
-  (`pumpReach` snapshots the pending cells and `pendingBefore`, the cells reached before the first of them; none while a
-  `Trial` runs) judges them as one batch (`judgeBatch`): all reached and nothing cut off → kept; else a `Trial` of
-  variants (ramps for blocks below a drop; gates in the batch's walls and passages through its blocks when it cut
-  planned blocks off or walls its own in; ramps for what it cut off), kept when everything cut off is reached again or,
-  cutting nothing, one of its own is; then `judged`: cut off still → the whole batch refused (`wouldCutLine`); else its
-  blocks out of reach refused (`refuse`: every level of the cell erased) with `refusedLine(refused, placed, why)` and the
-  rest kept. `paintMany(cells, level, type)` places many at once (one batch). `setGate` (also the Gate tool's tap) shut:
-  judged by `judgeGate`, opened again if it cuts blocks off. `erase` forgets a pending cell. `warning`/`warnCells` are
-  gone (pieces.ts `warnPieces` stays, unfed). Nothing unreachable stays in the plan.
-- **Round 128l, m4 (milestone 4: recipes, smiths, recruits, soldiers — FT-4).** `fortress/recipes.ts` (pure, tested):
-  `Recipe {id, at, kind: craft | train, worker, in, people?, out, seconds}` from `data/recipes/fortress.json` (`forge`:
-  the blacksmith, 2 ore + 1 wood → a weapon in 20 s; `drill`: the barracks, a weapon + a person → a soldier in 30 s);
-  `RecipeRunner` — `canStart(type, stores, TrainRoom)` (the `in` in the stores; train: a bed for one more), `start(worker,
-  type, structure, stores)` → the goods to take, `work(worker, dt)` → the out when done, `giveBack(worker)`,
-  `inProgress`, `made`; `recipeTakes(type, makes)` (Inspect's In). DEFS: blacksmith jobs 2 makes 6 weapons, barracks
-  jobs 1 makes 2 soldiers (a block a day); JOB_ORDER ends `blacksmith`, `barracks`; `jobSlots(…, cap)` lets FortressLife
-  open them only while a batch can start (or one is on its way). FortressLife: a smith or recruit `fetch`es a batch at
-  the stores, carries it (`toWork`) to its structure's door, works it (`gather` → `RecipeRunner.work`); a weapon is
-  carried to the stores (`carry`), a recruit is `enlist`ed at the next update — its unit removed, a `guard` unit (role
-  guard: agents kind 3, steel) spawned there with a `work` job, kept in `FortressLife.soldiers` (not people: no bed in
-  the houses, no grain; `stores.soldiers` follows their count). A soldier's routine (`stepSoldier`): `muster` (to the
-  barracks) → `drill` (ECON.drillSec) → `march` (to the foot of a built wall's stairs, `Ways.stairs`) → the wall-walk:
-  AgentUnits `go` orders to built wall cells' middles (the goal fields seed at the top surface), `walkTheWalls` moving
-  each on to a wall cell 8 m+ along until ECON.patrolPoints, a new economy day or PATROL_STUCK s with no way up, then
-  back to `muster`. The legs to the smithy, the barracks and the stairs ride the road graph only (groups `R4` 16-18,
-  `Agents.ride`, no fields: they wait when no road reaches the goal). **Agents:** MAX_GROUPS 16 → 24 (a table size:
-  agents.wgsl `groupField`/`groupMat` array<vec4<u32>, 6>, roadride.wgsl `group` array<vec4<u32>, 24>, ride.ts GROUPS,
-  agents.ts P_GMAT/P_FPLACE); NFIELDS unchanged (13). The bar: `storesLine` + Weapons, `peopleLine` + Soldiers, `jobsLine`
-  smiths and recruits; Inspect's In from the recipe ("In: up to 18 wood and 36 ore a day").
-- **Round 128l, m4 (on the roads: carts, newcomers, a person's day).** Carts: AgentUnits kind 7 `cart` (a voxel model: a
-  wooden bed on four wheels; speed 1.7, mass 4), role `cart`, `FortressLife.carts` (not people) — `cartsOf(warehouse
-  blocks)` (ECON.carts 2, +1 a warehouse block, ≤ cartsMax 3), spawned at the stores. A worker of a quarry, lumber camp
-  or farm whose structure's door is past ECON.cartDist (40 m) from the stores (`haulBy(dist, {carts, pile, road})`)
-  leaves its load on the structure's pile (`FortressLife.piles`, ≤ pileMax) and goes back to work; a parked cart
-  (`stepCart`: park → out → load → back) takes the fullest pile no other cart is after, rides to its pile point
-  (`pilePoint`: the road node nearest the door within 14 m that isn't on a cell the plan digs — never in a quarry's pit;
-  none: no cart serves it) on its own group, R4.cart0 + i, ride only (a ride made for that pile that fails: the pile is
-  marked and walked from then on). Carts spawn on the road node nearest the stores, takes up to ECON.cartLoad (8) and
-  rides back on R.toPile (only while it rides), where `deliver` puts it in. Newcomers: `edgeEntry` — the road graph's
-  node nearest the window's edge, the edge straight out from it; they start there in phase `arrive` (R.toHome, riding)
-  and work once at a house. A person's day: from ECON.daySec × 0.45 a meal at the stores (`eat`, once a day), from × 0.9
-  home to rest (`rest`) till the next day. `FortressLife.personFacts(id)` (follow.ts PersonFacts: job, workplace,
-  doing, carrying, today, hungry) and `everyone()`: what the follow card (round 128l C) reads; `today` is logged each
-  step (DAY_WORD).
-- **Round 128l, m4 (Follow a person, V128-10 minimal).** `fortress/follow.ts` (pure, tested and linted): `PersonFacts`,
-  `nameOf(id)` and `thoughtOf(facts)` (made up from the number, the economy's day and the state: nothing simulated),
-  `doingLine`, `personCard` (a title and plain lines: number, doing, carrying, "Today: …", a thought), `FortressFollow`
-  {selected, following, select, follow}. scenes/level/fortress.ts: `personAt(scene, sx, sy)` (the fortress's people,
-  soldiers and carts projected, the nearest within 26 px) — `fortressAt` picks one while building or with Inspect on
-  (planning's taps stay the plan's), or lets go when one is picked and the tap lands elsewhere; `followFrame` (level/frame.ts, each frame while following) puts the camera's target
-  on the person (the streamed window slides with the camera). FortressBar hooks `person`, `following`, `follow`: the card
-  first in the panel whatever the mode, a Follow / Stop following row. Lab: `lab.tap(sx, sy)` (the level's fortressAt),
-  `lab.follow()`, `lab.project`, `lab.viewport`.
-- **Round 128m (deep quarries, `quarry`, V128-11).** The player paints a quarry's footprint at the surface; its miners
-  grow the pit down. `fortress/pit.ts` (pure, tested): `ringsOf` (steps in from the footprint's outside), `pitOf(grid,
-  cells, {rampCells, maxTiers, prefer})` → `Pit` {ring, tiers, ramps, top, topSide}: tier k is ring k and in, k levels
-  (LEVEL_H 4 m) down; ramp k runs down `rampCells` (ECON.pitRampCells, 2) consecutive cells of ring k-1 and ends on a
-  ring-k cell where ramp k+1 starts (one road spiralling down); the depth is the most tiers whose ramps fit (a search
-  over the spirals, budget 20k steps, the start nearest the stores — `FortressPlan.pitPrefer` — among the deepest).
-  ECON.pitMax is gone. `layPit` writes it as **negative levels** in a `CellRuns` (build/runs.ts now takes negative
-  levels; `highest`/`lowest` return null for none): `FortressPlan.pit` (a ring-d cell holds -1..-min(d, tiers), type
-  PIT_SHELF; a ramp k cell also -k, PIT_RAMP), laid again whenever a quarry's footprint changes (paint, erase, fold) —
-  apart from `levels`, so nothing that reads the blocks meets them. `Fortress.dug` (CellRuns) holds the tiers dug;
-  `depthAt(pit, geo, cell, x, y)` a column's depth when whole (a ramp cell: from its high side's middle to its low
-  side's). **Digging** (`fortress/quarry.ts` QuarryDig, owned by FortressLife; every JobBoard turn `update`): once
-  every cell of a footprint is built, the tier being dug is cut down ECON.pitStep (1 m) at a time over all its columns
-  (ring k and in, and ramp k), so the ramp from the shelf above to the floor going down stays walkable; a column's goal
-  is the reference (the lowest top of the footprint as the miners found it — the layers' top, loose ground included:
-  `FortressLifeIO.top`, world API terrain.heightAt; the surface buffer's z is the solid's) less its depth, ramp 1 from
-  the ground at the ramp's top (`top0`). A miner's dig (every ECON.digSec 0.5 s) takes ECON.dig (1 m) off ECON.digCols
-  (6) columns within 7 m still over their goal (world API terrain.take, exact, quiet; 40 in flight at most), the
-  surface read lagging (`groundRead`: a take is remembered over two newer mirror reads). A tier done: its levels into
-  `Fortress.dug`, the pit's ground woken (`FortressLifeIO.settle`: Sleep.wake + Integrity.markDirty — its walls go
-  through the stability check, slumps are dug out again), the next tier. The miners' field (F.quarry) is seeded on
-  the cells with ground left, nearest the ramp's foot first (`QuarryDig.spots`); a miner with nothing in reach goes on
-  to another, its load's work kept (`Work.moved`). Hauling: up the ramps by the agents' field; the lanes'
-  (`lanesOf(..., entries)`) road to a quarry comes to its ramp's top edge (`Fortress.pitEntry`). The quarry's props
-  stand on the rim (ring 0 off the ramp). **The window's z** (`Fortress.zShift`, `slidZ(dz)`: the ground as first
-  read and the Town's floors — `Town.shiftZ` — follow a slide in z; pit heights are kept in fortress z = window z +
-  zShift). **Seeing in** (`scenes/level/fortress.ts pitView`): while the camera's target is over a pit dug 6 m or more,
-  api/cutaway.ts Dither keeps its floor's middle seen — what stands in front of it toward the eye in the pit's box
-  (the footprint, floor to just under the rim) dithers out as an iris, only while the floor is hidden (`?pitcut=0`:
-  off). **The world's floor** (`world/layout.ts WORLD_FLOOR` -300): a rule in `splitColumn`, not data — a column's
-  bottom starting at z 0 or under goes on down to it (its material if solid, else stone); none of it is kept outside
-  the window unless a column was dug under z 0 out of it (a metre kept). The streamer slides the window down past z 0
-  when the ground under the camera now (`Streamer.groundNow`, the level's surface read) is under 24 and lower than the
-  land's own (a pit), never under WORLD_FLOOR (slide.ts); the sea's floor near z 0 slides nothing, as before.
+Fortress mode (`?fortress=1`, src/fortress/*, scenes/level/fortress.ts: painting a town's plan, its builders, economy,
+quarry, follow and inspect, the raid clock and defence) is deleted with the old towns it edited. The user: "players just
+choose opportunities and we place and build for them". The town game is the season loop on the GPU town
+("The season loop" in docs/design/SEASON_LOOP.md; "Towns from fields" below). docs/design/SWITCHOVER.md.
 
 ## Source layout: the split classes (2026-11-04)
 
@@ -3968,147 +3414,14 @@ module is docs/MODULES.md.
   judge.wgsl mean these parts (docs/MODULES.md lists which holds what).
 
 
-## The attack wave (round 128l, `m4`: fortress M5-lite; DECISIONS round 128l "the attack wave")
+## The town lab (switchover, 2026-11-10; was the behaviour lab of round 128l)
 
-Raiders come for the fortress on a clock. The rules are pure (`fortress/raid.ts`, tested in raid.test.ts); the
-runtime moves them through the systems that already exist (`fortress/raiders.ts` FortressRaid, made with FortressLife
-at the first Build, updated after it each frame in sim seconds).
-
-- **The clock** (`RaidClock`): a wave at dusk (`RAID.dusk` of an economy day) on day `RAID.firstDay`, then every
-  `RAID.everyDays`; `waveSize(n)` grows by `RAID.grow` a wave to `RAID.most`. The warning sets out `RAID.warnLead` days
-  before: a rider (a unit) walks in from the window's edge to the stores, and the bar shows his line when he gets
-  there. "Call raiders now" (the bar's time row, a test button) brings the next wave at once and moves the clock on.
-- **The goal** (`raidGoal` over a `RaidLayout`, `layoutOf(fortress)`): two floods over the fortress grid's cells, one
-  from the box's edge and one from the stores, through cells nothing stands on at the ground (a farm or quarry yard is
-  open; a gate is open unless the gates are shut). Joined: the raiders go for the stores. Not: the wall cell (gate or
-  wall) touching both sides with the least health left (`blockHp`: a gate `RAID.gateHp`, a wall `RAID.wallHp` a level),
-  nearest the raiders on a tie; walls two deep, the outer cell nearest the stores. Then the houses, then out.
-- **Moving**: raiders are AgentUnits hostiles (role `raider`, faction `f-raiders`, `RAID.raiderHealth`,
-  `raiderDamage`, `raiderSight`) walking on the units' goal fields ('go' orders: one field a place, shared; roads cost
-  less on every field). They don't ride the road graph: in the lab's flat recipe the rides stopped at a road's end and
-  never went on (BACKLOG M4-14's family). Bashing and waiting are a 'work' job the raid's routine poses (FortressLife
-  routes the raid's units to it; AgentUnits now steps a hostile's routine when it has no target).
-- **Who fights whom** (`AgentUnits.mayFight`, a game rule asked by hostiles noticing and by defenders choosing): while
-  raiders are about, a raider and its foe only on the same side of the wall (the floods) and the same ground (not up on
-  the wall-walk); nobody in at home (FortressLife.inside); never a cart.
-- **Gates** (`Fortress.setGatesShut`): shut when a raider comes within `RAID.shutAt` of one, or when none of the
-  fortress's people is outside. A shut gate is solid wall to the ground (solid.ts `shut`, claimed) and drawn closed
-  (pieces.ts `shut`). Open again when the wave is over.
-- **Breaking** (`Fortress.breakBlock(cell, level)`): the block and every built level over it come down; the painted plan
-  keeps them, so they are planned blocks again and the builders rebuild them as any other (the job board, the stores
-  paying again). A broken wall pours rubble where it stood (terrain deposit) with dust and chips (fx).
-- **Burning**: a raider at a house's door torches it: flames and smoke over it for `RAID.burnSec`, its people go to
-  another house (FortressLife.unsafe), then the block falls and its timber is put on the ground (terrain put, `log`)
-  and set alight (fire.ignite): the fire sim burns it to ash.
-- **Loot**: at the stores each raider takes `RAID.loot` goods, dearest first (`LOOT_ORDER`); a raider who falls drops
-  his back into the stores; those who get out take it away. The wave runs once `RAID.breakShare` of it is down, or when
-  the houses are done.
-- **The defence** (`fortress/defence.ts` FortressDefence, part B): when the word comes (or the wave) every soldier is
-  posted. `swordsOf(n)` of them (a third, at least one of two) guard the inside of the wall cell the raiders will go
-  for (`FortressRaid.postsNow`: raidGoal with the gates shut), the units' 'guard' job; the rest walk onto the wall-walk
-  beside it and stand. An archer up there shoots the nearest raider in `ARROW.range` every `ARROW.every`: a CPU arrow
-  (`arrowFlight`, `arrowHits`: it hits if the mark is still near where it was aimed), a chip drawn on the same lob.
-  Posted soldiers are the raid's routine (FortressCrowd routes them; TownLife holds them `away`); after the wave
-  `backToRoutine` (TownLife `back`: they muster).
-- **The villagers** shelter at home while raiders are about (FortressCrowd.shelter → TownLife's `shelter` event: home
-  and in, no work, no newcomers); those caught
-  outside are the raiders' to kill.
-- **The bar** (`FortressBarHooks.raidLines`): the rider's word, the raid as it goes (`raidNowLine`), then the summary
-  (`raidOverLines`: what was taken, broken and burned, who fell by name) as a card with Close (`raidSummary`,
-  `closeRaid`). Words in fortress/words.ts, linted by raid.test.ts.
-
-## Towns: one plan (round 128m-128o, `onetown`; DESIGN.md section 17)
-
-Every town, generated or the player's, is one `TownSite` (build/site.ts): its grid (`QuadGrid`, Townscaper's or the
-generator's tiles over the town's box, whole regions: settle/records.ts), its `TownPlan` (build/plan.ts: cells,
-structures, levels of 4 m, gates, passages, ramps, pits; the layout layer: roads out, piers, props), its `Town` (what
-stands) and its `gridId` (FNV-1a of the settlement's id, 256 and up). One building-type table, `DEFS`
-(build/types.ts): the player's types and the generator's (huts, farmsteads, landmarks, orchards, pastures) are rows of
-it, so claims, reach, jobs, lanes, damage and repair are the same for all.
-- **Generation** (settle/plan.ts, structures/place.ts `placeDraft`): the generator's draft (structures/plan.ts, its
-  layout) is placed through the plan's own API (`place`, `setGate`, `setPassage`) and dropped; the generator's only
-  extra writes are layout (uses, roads out, piers, props).
-- **The player** (fortress/fortress.ts) edits the same site: the Build bar paints into the town's plan; there is no box,
-  grid, plan or slab of the fortress's own (its 240 m box, `townAt`, `townGates`, the OWNER_FORT/OWNER_STRUCT owners are
-  gone). The fortress's edit state (ghosts, ways, lanes, Inspect's pick) is drawn and claimed with the town through
-  the view host's hook (`TownViewHost.setHook`).
-- **Drawing and claims**: build/view.ts `townPieces` draws the plan; build/claims.ts claims what stands as External
-  intervals owned by the site's `gridId` (a static grid: sim/static-claims.ts).
-- **Jobs** (fortress/economy.ts `jobSlots`, JOB_ORDER): the builders first while there's building, then the farms,
-  the quarry, the lumber camps, the smiths, the recruits. A town's generated farmland is farm structures, so it gives
-  farm jobs like the player's farms.
-- **Entrances and routes (round 128o, DA-A7's core).** build/entrances.ts `entrancesOf(plan, grid, courtyards,
-  blocked)` is the one rule every structure is entered by: a block's or the keep's door (a ground-floor side opening on
-  free ground, else on another block's passage or a field), a wall's gates, a yard's edge, a quarry's pit top. Fields
-  (`StructureDef.crossed`: farms, orchards, pastures) are open ground: walked across, crossed by roads at
-  `CROSS_COST` (3) a metre. fortress/ways.ts joins every entrance with its road tree (over free cells, gates, passages
-  and fields; not over `blocked` wet cells — the reach's wet bits) and counts a structure with no entrance cut off.
-  fortress/lanes.ts `lanesOf(plan, grid, ways, ground)`: a lane from each way cell's middle to the middle of the side it
-  shares with the next way cell — inside the free cells, into a claimed cell only through a gate or a passage; the ride
-  graph (`laneGraph`) from the same pieces. `Fortress.doorOf` is an entrance's way-out cell's middle (no fallback: null
-  when it has none); `Fortress.standsOf` (the reach's and the builders' one stand rule) counts a passage as open.
-  Generation: `keepReach` also cuts a passage to every structure with no entrance, and `assertEntered` throws if one
-  is left (placeDraft and a settlement's growth). Tests: test/unit/townroutes.test.ts on the start town.
-- **The window's keep** is the site box itself, with no margin past it: the box already holds BOX_PAD (57 m) round the
-  built radius, and the reach, the claims and the plan stop at the box.
-- **Open** (BACKLOG): the generator still drafts buildings in its own model before placing them (3 m storeys mapped to
-  levels: `levelsFor`); keepReach (structures/place.ts) is generation's own reach repair beside the fortress's GPU reach
-  (DA-A3 makes them one); two people sims (DA-A6); saves of the plan's edits only and grid-named claims (DA-A5).
-
-## The window keeps the town (round 128m, `townlab`)
-
-What lives in the window (the reach's columns, the builders on the agents, the claims) must stay in it.
-`Streamer.keep(rect)` (scenes/streamer/keep.ts; `FortressWindow.keep` on the contract) names world columns no slide may
-leave: `slideWhenReady`/`prefetch` skip such slides, `slide`/`warp` throw, and `keep` throws when the window doesn't hold
-the rect now. (`onetown`) The fortress keeps its town's site box (build/site.ts: the town's one grid, whole regions,
-settle/records.ts) — there is no fortress box of its own. With `?fortress=1` the atlas level opens its window at least the
-box's size and round it (`windowHolding`: a loud error when the box can't fit); the lab's still window throws when it
-doesn't hold the box. The z slide isn't affected.
-
-## The placement bench (round 128m, `townlab`; docs/TOOLING.md)
-
-`?bench=place` (perf/placebench.ts) on the game and `lab.placeBench()` in the lab run one function,
-`runPlaceBench(io)` (perf/placebench/run.ts), over a small IO: the fortress, frames, the ground, Build, sim time
-forward, the builders' positions. It reads only what the game already has on the CPU (the reach's answers and wet
-bits); its points (points.ts) and summary (summary.ts) are pure.
-
-## The behaviour lab (round 128l, `tooling`; docs/TOOLING.md)
-
-`?level=lab&lab=<recipe>` (LevelDef `behaviourLab`, `warmupTicks: 120`): the game with less world for scripted
-behaviour checks. One fixed 256² window (the plain levels' size) of a recipe's land made on the CPU
-(`lab/recipes.ts`: flat, hill, valley, walled — the ground as a function, water, springs, woods, the heap and the
-houses' doors, what of the fortress stands at the start). No atlas, no streamer, no settlements.
-  (round 128l, `m4`) The fortress's built blocks are claimed in the lab's columns as in the atlas: the static claims
-  take the fortress's window (`staticsFor(scene, win)`), and the lab runs the rigid rock (`rockbodyFor`), whose
-  External registry holds the claims. Before, nothing was claimed in the lab and units walked through its walls.
-
-  (round 128m, `townlab`) The `town` recipe is a fixture, not a function: `LevelDef.load` reads `data/lab/town.rclt`
-  (lab/townfixture.ts: the window round the user's start town as the game made it — columns, water, held rivers, sea,
-  the town's record and spots — named by GEN_VERSION) before the level is made; `LabTown.of` gives the fortress the
-  captured town. Captured by `scripts/labtown.mjs capture` through `reclaimed.townFixture()`, never read back in play.
-
-- **The fortress's start takes contracts, not the atlas** (`fortress/host.ts`): `startFortress(town, view, id, win)`
-  reads a `FortressTownSource` (pin, spotsOf, thingAt, toWindow — the atlas's Settlements meets it; the lab's
-  `LabTown`, lab/town.ts: a record, a heap, homes), a `FortressWindow` (origin, oz, the unwritten regions, the slide
-  hooks — the Streamer meets it; the lab's still window never slides) and a `FortressPiecesHost` (`extra` — the
-  SettlementsView; the lab's `LabPiecesView`, lab/view.ts, the structures draw with the fortress's grid alone).
-  Everything after — Fortress, FortressLife on AgentUnits, FortressClaims, the bar, taps — is the game's own code.
-- **The scene's hooks** (since the monolith split: `startLab` in scenes/level/fortress.ts, called from level/attach.ts; `lab` on window.reclaimed in level/test-api.ts; `lab.frame`, `driven` and `simFilter` in level/frame.ts; the attach batch in level.ts `create`): `startLab()` after attach's systems (AgentUnits on the
-  agents, `installLab`); `this.lab?.frame()` beside the settlements' view update; `frame(now, dt, driven)` returns at
-  once while `lab.driving` (lab.run steps the scene itself, each frame once the GPU has done the last, with
-  `Renderer.skip` 'render' on all but every Nth); `core.advance(…, this.lab?.simFilter)` (lab.sims: which systems
-  tick); `reclaimed.lab` = the Lab's api.
-- **Reset** (`lab.reset`): the plan erased top down, FortressLife disposed (its units removed), the window's chunks
-  put back from `WorldCore.keepPristine` (taken when the lab opens), the stores refilled, the recipe's town re-planned.
-- **The pipeline batch covers attach** (LevelScene.create, every level): attach's ~60 pipelines (agents, physics, the
-  structures draw …) compile together with the level's instead of one at a time at their first use; work a
-  constructor encodes at once waits for the batch's end (`gpu/pipeline.ts whenPipelinesReady`: the agents' prime,
-  the fortress's first surface read). Boot mark `attach-pipelines`.
-- **The runner** (`scripts/lab.mjs`): a long-lived process with one Chrome (its own profile slot), one lab page and its
-  own static server (`serveBuild(b, {own: true})`: answers `own:<hash>`, so no check reuses it), a control port
-  (basePort + 8: /run, /status, /stop). A scenario module's default export is evaluated in the page; `__labShot`
-  (an exposed function) saves screenshots. Reload only on a new build hash or recipe; `lab.reset()` otherwise.
-
+`?lab=1` on the atlas level (the default town game: `?skipmenu=1&level=atlas&town=1&fresh=1`) installs `TownLab`
+(src/lab/lab.ts) once the start town is made, its people given and its first hand dealt: `reclaimed.lab` with
+`run(seconds, speed)` (the lab steps the scene itself, the display's frames wait: `scene.lab.driving`), `look`, `shot`,
+`project`, `viewport`, the game's objects (`towns`, `living`, `season`, `town`) and `riders(id)` (a debug read of a
+living town's rider rows). scripts/lab.mjs keeps one page open per worktree build and loads it again for each scenario
+(the world can't be put back). Gates: scripts/lab/townfollow.mjs, townseason.mjs. docs/TOOLING.md.
 
 ## Module boundaries (round 128o, DA-G2; test/unit/boundaries.test.ts)
 
@@ -4117,17 +3430,17 @@ this is its summary. Type-only imports count: a type is still a dependency on th
 
 | rule | who | may not import | why (DESIGN.md) |
 |---|---|---|---|
-| run-not-town | the run layer: opps, living, gm, runplan, runsit, runplay, dialog | fortress | §21: one opportunity contract; a raid is a card the town executes through an adapter the scene wires |
-| town-not-run | fortress | the run layer, ui, scenes, story, play, game, levels, lab, perf | §18: the economy is pure logic over the world's channels |
+| run-not-town | the run layer: opps, living, gm, runplan, runsit, runplay, dialog | citygen, citylife, season | §21: one opportunity contract; a card is executed by the town through an adapter the scene wires |
+| town-not-run | the town: citygen, citylife | the run layer, scenes, story, play, game, levels, lab, perf | §18, §21: the town is the world's, reached through its contracts (the districts API) |
 | contracts-alone | api/contracts | anything but api/contracts | §1: systems talk through contracts, which depend on nothing |
-| engine-not-game | the engine: sim, gpu, world, shaders, agents, physics, solver, flow, atlas, terrain, grids, render, weather, traits, inhabitants, flora, structures, build, tune, audio, input, units (not their viewers and benches) | scenes, game, levels, fortress, settle, the run layer, story, play, run, ui, lab, perf, the pages, main | §1: games sit on the engine, never the other way |
+| engine-not-game | the engine: sim, gpu, world, shaders, agents, physics, solver, flow, atlas, terrain, grids, render, weather, traits, inhabitants, flora, structures, build, tune, audio, input, units (not their viewers and benches) | scenes, game, levels, citygen, citylife, season, settle, the run layer, story, play, run, ui, lab, perf, the pages, main | §1: games sit on the engine, never the other way |
 | api-not-game | api (not api/contracts) | the same | the world API is the engine's face to games |
 | run-not-ui | the run layer | ui, scenes | §22: UI reads game state through contracts; the run layer stays Node-testable |
 | no-kernels-above | the run layer, ui, scenes, story, play | shaders | §1: kernels belong to the systems that own their buffers |
 
 Known breaches today (each listed in the test with its row): the engine's live world — `WorldCore`, the Streamer's
 `LandChange`, `Integrity` and `colapply` — lives in scenes/ and game/, so six engine `install.ts`/wake files, the atlas,
-static claims and eight api modules import it (DA-P9); the fortress takes the streamer's `KeepRect` (DA-P2);
+static claims and eight api modules import it (DA-P9);
 `opps/level-opps.ts` (scene wiring) imports the tune panel and `runplan/viewer.ts` (a page) imports WorldCore (DA-L9).
 Folders not named above (`hero`, whose path finder `units` uses, among them) aren't ruled yet.
 
@@ -4184,8 +3497,8 @@ projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 w
 
 ## Towns from fields (citygen M4a)
 
-- `src/citygen/` is the one town generator, shared by the street lab (`?level=streetlab`) and the game
-  (`?citygen=fields`, `citygen/town.ts` FieldTown). docs/design/CITYGEN.md.
+- `src/citygen/` is the one town generator, shared by the street lab (`?level=streetlab`) and the game (by default
+  since the switchover, 2026-11-10; was `?citygen=fields`; `citygen/town.ts` FieldTown). docs/design/CITYGEN.md.
 - Inputs are uploads only: the box of the window it reads (height.wgsl binding 7), the passes' uniforms (centre,
   radius, seed, parameters) and the approach directions (`ART`).
 - Output contract: `src/api/contracts/citygen.ts` (`CityLots`). Lot records (24 words), counts, a progress buffer
@@ -4193,7 +3506,7 @@ projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 w
 - `Renderer.addMesh(verts, indirect, xform?)`: an optional uniform vec4 (draw binding 28, `MESH_XF` in
   render/bodies.wgsl vsSkin) added to every vertex. A mesh made in its own frame is placed by 16 bytes when the window
   slides, never remade. Every other mesh source binds a zero vec4.
-- `Settlements.byFields(id)`: the old planner makes nothing for that settlement (plan, stamps, far plan, view, life).
+- `Settlements.byFields(pick)`: the sites citygen makes (a village and up), their atlas stamps cleared in each core.
 - **External contract change (M4b): GPU-owned static grids.** `StaticClaims.gpuGrid(name, owner, place, src)`
   takes a grid whose spans live only on the GPU (dense, claimGrid's layout, a span's 4th word its owner key).
   - It is claimed by `claimGrid` like any grid.
@@ -4201,8 +3514,8 @@ projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 w
   - It is checked after edits by `gridDamage` (owners back, ≤ 64 words).
   - `StaticSet.gpuOwns(x, y)` keeps the CPU orphan paths off its box.
   - (step 4) GPU-owned grids live in the static claims' arena (`ownedSlot`, 4 slots of 6.4 MB, a table at its head
-    read by colapply's orphan and damage passes). The registry stays the truth for CPU instances; for a GPU-owned grid
-    the truth is its slot.
+    read by colapply's orphan and damage passes). For a GPU-owned grid the truth is its slot. (Switchover: the CPU
+    grids — `grid()`, `set()`, StaticInstance in the registry — are deleted; every static grid is GPU-owned.)
 - `FieldTowns` (citygen/towns.ts) streams the field towns: made as their box nears the window, let go far behind.
 - citygen writes the plants' field on its claimed columns as they're claimed (bare.wgsl: veg, vegNext), as the atlas's
   BARE stamp does for land made with a town.

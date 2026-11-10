@@ -1,10 +1,8 @@
 // The level's world over time, set up once at attach: sleep for a fixed map's held rivers, and for a streamed level
-// (level.stream) the Streamer, its slides' hooks (camera, sea, settlements, ships, fortress), the far land and the
+// (level.stream) the Streamer, its slides' hooks (camera, sea, settlements, the GPU towns), the far land and the
 // warm cache. API: attachStream(scene). Talks to the streamer only through its public hooks.
 import { FortressReachGpu } from '../../build/reachgpu';
 import { EventKind } from '../../sim/globals';
-import { PK } from '../../sim/particles';
-import { TownDebug } from '../../settle/debug';
 import { AgentUnits } from '../../units/agent-units';
 import { Streamer, REGION, boxOf } from '../streamer';
 import { FarLand } from '../../atlas/far';
@@ -15,15 +13,13 @@ import { record, timed } from '../../gpu/cpustat';
 import { CHUNK } from '../../world/layout';
 import { ROW_H } from '../../world/lattice';
 import { HybridChunks } from '../hybrid';
-import { SettlementsView } from '../../settle/view';
-import { ShipsView } from '../../settle/shipsview';
 import { atlasControls, worldEventHere } from './atlas-controls';
-import { startFortress, staticsFor } from './fortress';
+import { staticsFor } from './statics';
+import { startTownLab } from '../../lab/lab';
 import { ARRIVE_PREP } from './flags';
 import { worldSaveOf } from '../level';
 import type { LevelScene } from '../level';
 import { urlFlags } from '../../flags';
-import { worldApiOf } from './world-api';
 import { FieldTowns } from '../../citygen/towns';
 import { LivingTowns } from '../../citylife/towns';
 import { livingFromUrl } from '../../citylife/params';
@@ -290,8 +286,9 @@ export function attachStream(scene: LevelScene): void {
             if (b) integ.markBox(...b);
           }
     }
-    // (round 88) the settlements: planned and built as their land comes in (Atlas.stampHooks, set before the
-    // first window); lived in near the camera — their people as units on the agents
+    // (round 88) the settlements' records (settle/settlements.ts), and the units (the Units contract on the agents)
+    // (switchover, 2026-11-10: the towns are the GPU field generator's alone — citygen/towns.ts — with the living town
+    // and the season loop on by default; the old CPU planner, its view, its far plans, its ships and its people are gone)
     const st = a?.settlements;
     if (st) {
       const units = new AgentUnits(scene.agents);
@@ -299,55 +296,10 @@ export function attachStream(scene: LevelScene): void {
       scene.traits.kindTraits('shambler', ['undead']);
       scene.units = units;
       scene.settlements = st;
-      // (round 94) the settlements past the window planned on the atlas's rough ground and baked into the land there
-      const bake = scene.far?.bake;
-      if (bake) {
-        const far = scene.far!;
-        st.farPlans({ rough: (x0, y0, w, h) => bake.roughGround(x0, y0, w, h), camera: () => [far.mid[0] + far.org[0], far.mid[1] + far.org[1]], radius: Number(host.params.get('fbr') ?? 2600) });
-        st.onStamps.push((list) => bake.setStamps(list));
-      }
       core.onShift.push((dx, dy, dz) => units.shift(dx, dy, dz));
       const S = scene.stream;
-      S.onWarp.push(() => {
-        st.life?.dispose();
-        st.life = null;
-      });
-      // (the window's moves: a house being built has its grid made again in the new window)
-      let epoch = 0;
-      S.onSlide.push(() => epoch++);
-      S.onWarp.push(() => epoch++);
-      const terrainApi = () => {
-        const t = worldApiOf(scene).terrain;
-        if (!t) throw new Error('settlements: the world API has no terrain');
-        return t;
-      };
-      const plants = () => {
-        const p = worldApiOf(scene).plants;
-        if (!p) throw new Error('settlements: the world API has no plants');
-        return p;
-      };
-      st.play({
-        units,
-        origin: () => [S.origin[0], S.origin[1]],
-        dims: { w: dims.w, h: dims.h },
-        focus: () => [core.camera.target[0], core.camera.target[1]],
-        // (round 128o, DA-B6: the nearest trees found on the GPU, a short list back)
-        trees: (at, r, n) => plants().treesNear(at[0], at[1], r, n).then((ts) => ts && ts.map((t) => [t.x, t.y] as [number, number])),
-        fell: (at) => plants().fell(at[0], at[1]).then((t) => t?.logs ?? 0),
-        take: (at, n) => terrainApi().take(at[0], at[1], n),
-        put: (at, m, n) => terrainApi().put(at[0], at[1], m, n),
-        epoch: () => epoch,
-        ready: (at) => terrainApi().heightAt(at[0], at[1]) !== null,
-        budget: Number(host.params.get('townfolk') ?? ((host.quality.agentSweeps ?? 8) <= 2 ? 28 : 48)),
-        // (round 128o, B: one reach — a live town's places joined to its stores on the GPU, its fixes made in its plan)
-        reach: (w, h, origin) => new FortressReachGpu(host.gpu.device, core.world, w, h, origin),
-        oz: () => S.oz,
-      });
-      // (citygen M4a, ?citygen=fields) the start town made by the GPU field generator over its land in the window, once
-      // the level's pipelines are ready; its mesh placed again when the window slides (16 bytes), never remade
-      // (citygen M4b, ?citygen=fields) the towns with a grid made by the GPU field generator as the window nears them,
-      // let go far behind (citygen/towns.ts), once the level's pipelines are ready; one reach over the window, a town's
-      // solve at a time
+      // (citygen M4b) the towns with a grid made by the GPU field generator as the window nears them, let go far behind
+      // (citygen/towns.ts), once the level's pipelines are ready; one reach over the window, a town's solve at a time
       const fids = a!.fieldTowns;
       if (fids) {
         let fieldReach: FortressReachGpu | undefined;
@@ -387,14 +339,15 @@ export function attachStream(scene: LevelScene): void {
             const go = () => (towns.timelapse(Number(host.params.get('tlspan') ?? 30)) ? undefined : setTimeout(go, 500));
             go();
           }
-          // (trackA-opps, ?opps=1: the season loop on the town — docs/design/SEASON_LOOP.md)
-          if (host.params.get('opps') === '1') startSeasonLoop(scene, towns);
+          // (trackA-opps: the season loop on the town — docs/design/SEASON_LOOP.md; switchover: the default, ?opps=0 off)
+          const opps = host.params.get('opps') !== '0';
+          if (opps) startSeasonLoop(scene, towns);
           S.onSlide.push(() => towns.slid());
           S.onWarp.push(() => towns.warped());
-          // (living town, docs/design/LIVING_TOWN.md: ?living=1 — each made town's people, its quarry and clearing, on
-          // the GPU; the panel with its counters. ?living=0 or absent: none — the toggle diff)
-          // (season life: ?opps=1 brings the living town, its panel off unless asked)
-          if (host.params.get('living') === '1' || host.params.get('opps') === '1') {
+          // (living town, docs/design/LIVING_TOWN.md — each made town's people, its quarry and clearing, on the GPU; the
+          // panel with its counters. Switchover: on by default, ?living=0 off — the toggle diff. The panel: off in the
+          // season loop unless ?livingpanel=1, on otherwise unless ?livingpanel=0)
+          if (host.params.get('living') !== '0') {
             livingFromUrl(host.params);
             const lt = new LivingTowns({
               logs: towns.logs,
@@ -413,41 +366,14 @@ export function attachStream(scene: LevelScene): void {
             lt.debugGraph = host.params.get('livingdebug') === '1';
             scene.livingTowns = lt;
             (globalThis as { living?: LivingTowns }).living = lt;
-            if (host.params.get('livingpanel') !== '0' && !(host.params.get('opps') === '1' && host.params.get('livingpanel') !== '1')) lt.mountPanel(host.ui, () => void towns.claimDistrict('housing'));
+            const panel = opps ? host.params.get('livingpanel') === '1' : host.params.get('livingpanel') !== '0';
+            if (panel) lt.mountPanel(host.ui, () => void towns.claimDistrict('housing'));
           }
           // (the first look now: the town the level opens on made before the first frames)
           towns.update(Infinity);
+          // (switchover: the town lab, ?lab=1 — scripted gates drive the scene: src/lab/lab.ts)
+          if (host.params.get('lab') === '1') startTownLab(scene);
         });
-      }
-      // (round 128i, FT-67) ?townview=0: the towns not drawn nor claimed (no settlements view) — the town bench's split of
-      // a slide's cost between the towns and the terrain streaming (src/perf/townbench.ts)
-      if (host.params.get('townview') === '0') {
-        if (host.params.get('fortress') === '1') throw new Error('?fortress=1 needs the settlements view: not with ?townview=0');
-      } else {
-        // (round 119) the settlements drawn as structures and their buildings' columns claimed (settle/view.ts); its
-        // slide hooks after Integrity's (the registry has moved when it claims again)
-        const view = new SettlementsView(
-          {
-            device: host.gpu.device,
-            renderer: core.renderer,
-            external: () => scene.integrity?.external ?? null,
-            statics: () => staticsFor(scene),
-            dims: { w: dims.w, h: dims.h },
-            oz: () => S.oz,
-            viewProj: () => core.camera.viewProj,
-            focusZ: () => core.camera.focus?.[2] ?? core.camera.target[2],
-            dust: (x, y, z, n) => core.sim.particles.burst({ kind: PK.Dust, x, y, z, count: n, speed: 2, spread: 1.2 }),
-          },
-          st,
-        );
-        scene.settlementsView = view;
-        // (round 120) the sailing ships between the ports (settle/ships.ts, shipsview.ts), drawn with the towns' pieces
-        if (host.params.get('ships') !== '0')
-          scene.shipsView = new ShipsView({ sg: view.sg, toWindow: (p) => st.toWindow(p), oz: () => S.oz, focus: () => [core.camera.target[0], core.camera.target[1]], time: () => core.globals.time, sea: a!.atlas.p.sea, style: 'hearth' }, st.fleet);
-        // (round 128j: a slide waits for the plans of the towns over the land it brings — their claims come with it)
-        S.readyFor.push((wx, wy, R) => st.ready(wx, wy, R, R));
-        if (host.params.get('towndebug') === '1') scene.townDebug = new TownDebug(host.ui, st, core.camera, (x, y) => scene.heightAt(x, y));
-        if (host.params.get('fortress') === '1') startFortress(scene, st, view, a!.startTown);
       }
     }
   }

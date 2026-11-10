@@ -41,7 +41,8 @@ export type TransferKind = 'read' | 'copy' | 'upload';
 export type TransferRate = 'frame' | 'timed' | 'edit' | 'demand' | 'via';
 
 /**
- * Whether it runs in fortress play (scenes/level/fortress.ts on the atlas level, frame.ts the play frame):
+ * Whether it runs in play (the town game on the atlas level — scenes/level/stream-setup.ts — frame.ts the play frame;
+ * fortress play until the switchover):
  * - `yes`: by default;
  * - `flag`: only behind a URL flag that turns on a game or engine path (`flag` names it);
  * - `debug`: only behind a measuring flag (perf overlay, hitch HUD, verify), never a player's;
@@ -132,11 +133,8 @@ export const TRANSFERS: TransferSite[] = [
   { file: 'scenes/level/test-api.ts', fn: 'dropMesh', via: 'scenes/world-core.ts#WorldCore.readRaw', what: 'layers', why: 'test API', rate: 'demand', play: 'no' },
   { file: 'scenes/level/test-api.ts', fn: 'spawn', via: 'scenes/world-core.ts#WorldCore.readRaw', what: 'layers', why: 'test API', rate: 'demand', play: 'no' },
   { file: 'scenes/level/test-api.ts', fn: 'column', via: 'scenes/world-core.ts#WorldCore.readRaw', what: 'layers', why: 'test API', rate: 'demand', play: 'no' },
-  { file: 'scenes/level/town-fixture.ts', fn: 'captureTownFixture', via: 'scenes/world-core.ts#WorldCore.readTextureRaw', what: 'riverFlow texture', why: 'the town fixture capture script', rate: 'demand', play: 'no' },
   { file: 'game/trial.ts', fn: 'Trial.snap', n: 5, via: 'scenes/world-core.ts#WorldCore.readRaw', what: 'five world buffers', why: 'the trial measurement', rate: 'demand', play: 'no' },
   { file: 'game/trial.ts', fn: 'Trial.snap', via: 'scenes/world-core.ts#WorldCore.readTextureRaw', what: 'drift texture', why: 'the trial measurement', rate: 'demand', play: 'no' },
-  { file: 'perf/placebench.ts', fn: 'diagnose', via: 'scenes/world-core.ts#WorldCore.readRaw', what: 'layers', why: 'bench diagnosis', rate: 'demand', play: 'no' },
-  { file: 'perf/placebench/diagnose.ts', fn: 'diagnose', n: 2, via: 'scenes/world-core.ts#WorldCore.readRaw', what: 'layers and water', why: 'bench diagnosis', rate: 'demand', play: 'no' },
   { file: 'flora/bench.ts', fn: 'floraBench', via: 'scenes/world-core.ts#WorldCore.readRaw', what: 'veg', why: 'the flora bench', rate: 'demand', play: 'no' },
   { file: 'test/contract.ts', fn: 'world', via: 'scenes/world-core.ts#WorldCore.readRaw', what: 'any buffer', why: 'contract tests (contract.html)', rate: 'demand', play: 'no' },
 
@@ -167,18 +165,6 @@ export const TRANSFERS: TransferSite[] = [
 
   // ---- town ----
   { file: 'build/reachgpu.ts', fn: 'FortressReachGpu.solve', wrapper: /\.requestReach\(/, what: 'a 16 B flag and the answer words (+ wet bits on the first solve), once a round until it converges', why: 'which planned blocks the stores reach; the convergence loop is driven from the CPU', rate: 'via', play: 'yes', violates: '§13 the reach converges on the GPU, one small read per edit', backlog: 'DA-B4' },
-  { file: 'fortress/fortress.ts', fn: 'Fortress.probeReach', via: 'build/reachgpu.ts#FortressReachGpu.solve', what: 'reach answers', why: 'a plan tap\'s trial', rate: 'edit', play: 'yes' },
-  { file: 'fortress/fortress.ts', fn: 'Fortress.probeReach', via: 'build/reachgpu.ts#FortressReachGpu.solveFix', what: 'reach fixes', why: 'a plan tap\'s trial', rate: 'edit', play: 'yes' },
-  { file: 'fortress/fortress.ts', fn: 'Fortress.sync', via: 'build/reachgpu.ts#FortressReachGpu.solve', what: 'reach answers', why: 'after plan edits', rate: 'edit', play: 'yes' },
-  { file: 'fortress/fortress.ts', fn: 'Fortress.sync', via: 'build/reachgpu.ts#FortressReachGpu.solveFix', what: 'reach fixes', why: 'after plan edits', rate: 'edit', play: 'yes' },
-  { file: 'scenes/level/fortress.ts', fn: 'startFortress', n: 5, via: 'build/reachgpu.ts#FortressReachGpu.solve', what: 'reach answers', why: 'mode changes, slides and warps', rate: 'edit', play: 'yes' },
-  { file: 'scenes/level/fortress.ts', fn: 'startFortress', n: 5, via: 'build/reachgpu.ts#FortressReachGpu.solveFix', what: 'reach fixes', why: 'mode changes, slides and warps', rate: 'edit', play: 'yes' },
-  { file: 'fortress/fortress.ts', fn: 'Fortress.joinTown', via: 'build/reachgpu.ts#FortressReachGpu.solve', what: 'reach answers', why: 'the town as generated joined to its stores once its land is in (round 128o, B)', rate: 'edit', play: 'yes' },
-  { file: 'fortress/fortress.ts', fn: 'Fortress.joinTown', via: 'build/reachgpu.ts#FortressReachGpu.solveFix', what: 'reach fixes', why: 'the town as generated joined to its stores', rate: 'edit', play: 'yes' },
-  { file: 'fortress/crowd.ts', fn: 'FortressCrowd.update', via: 'build/reachgpu.ts#FortressReachGpu.solve', what: 'reach answers', why: 'a tier of a pit dug: the land under the town changed (round 128o, B: the 3 s re-ask gone)', rate: 'edit', play: 'yes' },
-  { file: 'fortress/crowd.ts', fn: 'FortressCrowd.update', via: 'build/reachgpu.ts#FortressReachGpu.solveFix', what: 'reach fixes', why: 'a tier of a pit dug', rate: 'edit', play: 'yes' },
-  { file: 'perf/placebench/run.ts', fn: 'runPlaceBench', via: 'build/reachgpu.ts#FortressReachGpu.solve', what: 'reach answers', why: 'the place bench', rate: 'demand', play: 'no' },
-  { file: 'perf/placebench/run.ts', fn: 'runPlaceBench', via: 'build/reachgpu.ts#FortressReachGpu.solveFix', what: 'reach fixes', why: 'the place bench', rate: 'demand', play: 'no' },
   { file: 'build/reachgpu.ts', fn: 'FortressReachGpu.solveFix', n: 3, wrapper: /\.requestReach\(/, what: 'a 16 B flag once a round of the fix field until it settles; then the answer words and the fixes (up to 6 KB: 512 triples)', why: 'the cheapest passage, gate or ramp from each place out of reach (round 128o, B): only after an edit that left a place out', rate: 'via', play: 'yes', violates: '§13 the reach converges on the GPU, one small read per edit', backlog: 'DA-B4' },
   { file: 'build/reachgpu.ts', fn: 'FortressReachGpu.surfacesAt', what: '32 B', why: 'bench diagnosis', rate: 'demand', play: 'no' },
 
@@ -224,7 +210,6 @@ export const TRANSFERS: TransferSite[] = [
   { file: 'atlas/atlas/window.ts', fn: 'window', via: 'atlas/atlas/columns.ts#columns', what: 'regions', why: 'the window at boot', rate: 'demand', play: 'no' },
   { file: 'api/atlas-world.ts', fn: 'createAtlasWorld', via: 'atlas/atlas/columns.ts#columns', what: 'regions', why: 'an atlas world at boot', rate: 'demand', play: 'no' },
   { file: 'scenes/level/stream-setup.ts', fn: 'attachStream', n: 2, via: 'atlas/atlas/columns.ts#columns', what: 'regions', why: 'regions on the CPU generation path', rate: 'edit', play: 'flag', flag: '?gpugen=0' },
-  { file: 'settle/settlements.ts', fn: 'Settlements.makePlan', via: 'atlas/atlas/columns.ts#columns', what: 'the settlement\'s box', why: 'planning a settlement against its land', rate: 'edit', play: 'yes' },
   { file: 'perf/bench/regions.ts', fn: 'makeRegion', via: 'atlas/atlas/columns.ts#columns', what: 'a region', why: 'bench', rate: 'demand', play: 'no' },
   { file: 'perf/bench/regions.ts', fn: 'storeIO', via: 'atlas/atlas/columns.ts#columns', what: 'a region', why: 'bench', rate: 'demand', play: 'no' },
   { file: 'atlas/bake.ts', fn: 'SurfaceBake.roughGround', what: 'a settlement box, w×h×16 B', why: 'a far settlement\'s plan when it comes in reach', rate: 'edit', play: 'yes' },
@@ -240,7 +225,6 @@ export const TRANSFERS: TransferSite[] = [
   { file: 'render/meshinst.ts', fn: 'MeshInstances.counts', what: 'indirect args, tens of bytes', why: 'the flora bench', rate: 'demand', play: 'no' },
   { file: 'render/bgcheck.ts', fn: 'BgCheck.afterSubmit', n: 2, what: 'sample classes 32 KB (a snapshot); totals 64 B (250 ms)', why: 'background-coverage check', rate: 'timed', every: '250 ms', play: 'debug', flag: '?bgcheck=1' },
   { file: 'gpu/profiler.ts', fn: 'Profiler.endFrame', what: 'timestamps, up to 1 KB', why: 'the perf overlay', rate: 'frame', play: 'debug', flag: '?perf=1 / ?hitch=1' },
-  { file: 'structures/viewer/render.ts', fn: 'ViewerRenderer.frame', what: 'timestamps, 32 B', why: 'the structures viewer page', rate: 'frame', play: 'no' },
 
   // ---- labs, benches, tests ----
   { file: 'noiselab/lab.ts', fn: 'NoiseLabGpu.once', what: 'the lab window, w×h×16 B', why: 'the noise lab page', rate: 'edit', play: 'no' },
@@ -381,7 +365,6 @@ export const TRANSFERS: TransferSite[] = [
   { kind: 'upload', file: 'sim/particles.ts', fn: 'ParticleSystem.encode', n: 1, size: 'small', what: 'the burst requests, up to 64 bursts x 48 B, 3 KB', why: 'queued particle bursts (impacts, chips, dust, animals) spawned on the GPU', rate: 'edit', play: 'yes' },
   { kind: 'upload', file: 'sim/simulation.ts', fn: 'Simulation.uploadGlobals', n: 1, size: 'small', what: 'the Globals head (~2-3 KB: 480 words plus the tuning floats) every tick; the page tables with it after a slide (32 B with the default ring addressing, up to 16 KB with ?pages=table)', why: 'each tick\'s time, tick, events, weather and tuning for every kernel', rate: 'frame', play: 'yes' },
   { kind: 'upload', file: 'sim/snapshot.ts', fn: 'restoreWorld', n: 2, size: 'large', what: 'every buffer and texture the world keeps, whole (tens of MB at 320: layers ~25 MB, the per-column fields, the rgba32float textures)', why: 'boot from the warm cache (or ?warmsnap=) instead of running the warmup', rate: 'demand', play: 'yes' },
-  { kind: 'upload', file: 'sim/static-claims.ts', fn: 'StaticClaims.upload', n: 1, size: 'large', what: 'one static grid\'s whole column and span table, 16 B a column + 16 B a span (a town or the fortress\'s 240-wide box: thousands of columns, ~100s of KB)', why: 'a static grid\'s claims rebuilt after its things change, for the claim pass on arriving land', rate: 'edit', play: 'yes' },
   { kind: 'copy', file: 'sim/systems.ts', fn: 'copyBack', n: 1, size: 'large', what: 'a whole per-column field next -> current (water/oil/moisture/veg/fire 4 B a column ~400 KB, contam 8 B ~800 KB at 320); by default every caller is culled and goes through TileCopy instead', why: 'ping-pong copy back of a field when its kernel is not culled', rate: 'frame', play: 'debug', flag: '?simcull=0' },
   { kind: 'copy', file: 'sim/systems.ts', fn: 'WindFieldSystem.run', n: 1, size: 'large', what: 'a rect of the wind field (half-res rgba32float, 16 B a texel): the map wind\'s band (1/16, ~26 KB at 320) and the strips a slide brings in per update; the whole field (~410 KB at 320) only with ?windbox=0 (DA-B16: the painted box, things landing included, is copied by the windCopy pass over the GPU-made box, not here)', why: 'ping-pong copy back of the wind field where it was updated', rate: 'frame', play: 'yes', violates: '§24 work scales with activity: the map\'s own wind refreshed and copied a band every update everywhere, nothing having changed', backlog: 'DA-B25' },
   { kind: 'upload', file: 'sim/boxsum.ts', fn: 'BoxMeans.query', n: 1, size: 'small', what: 'the boxes, 16 B each (<= 1 KB)', why: 'a box means query (DA-B13)', rate: 'edit', play: 'no' },
@@ -398,14 +381,6 @@ export const TRANSFERS: TransferSite[] = [
   { kind: 'upload', file: 'solver/solver.ts', fn: 'Solver.add', n: 3, size: 'small', what: 'one body: its lanes 8 KB, pose 4 KB, body record 256 B', why: 'a body freed into the node solver', rate: 'edit', play: 'flag', flag: '?solver=nodes (or hybrid)' },
   { kind: 'upload', file: 'solver/solver.ts', fn: 'Solver.encode', n: 3, size: 'large', what: 'the uniform (96 B every tick while bodies exist), the material table (2.5 KB on a tuning change), and every body\'s skin cells re-sent whole (16 B a cell, room starts at 4096 cells = 64 KB) when a body is added or removed; rate is the large part\'s', why: 'solver step parameters and the cells the projection marks', rate: 'edit', play: 'flag', flag: '?solver=nodes (or hybrid)' },
   { kind: 'copy', file: 'solver/solver.ts', fn: 'Solver.encode', n: 1, size: 'large', what: 'the lanes of every awake body into the snapshot, 8 KB a body, in runs of neighbouring slots (> 64 KB once 9 awake bodies sit together)', why: 'what other bodies feel this tick (the pair pass reads the snapshot)', rate: 'frame', play: 'flag', flag: '?solver=nodes (or hybrid)', violates: 'AGENT_RULES 1b: every awake body\'s whole lane block copied each tick, no measured reason (scales with awake bodies, not with contacts)', backlog: 'DA-E5' },
-  { kind: 'upload', file: 'structures/gpu.ts', fn: 'StructureGpu.uploadLibrary', n: 2, size: 'large', what: 'the whole module library, vertices (16 B each) and indices, re-sent whole whenever a module is added (est. 100s of KB)', why: 'a new module or LOD look made on first use', rate: 'edit', play: 'yes' },
-  { kind: 'copy', file: 'structures/gpu.ts', fn: 'StructureGpu.ensureData', n: 1, size: 'large', what: 'the old structure data buffer into the grown one: palette, grid table and every piece (64 B a piece; 1.5x growth)', why: 'room for more slab pieces', rate: 'demand', play: 'yes' },
-  { kind: 'upload', file: 'structures/gpu.ts', fn: 'StructureGpu.ensureData', n: 2, size: 'small', what: 'the palette (styles x 21 parts x 8 variants x 16 B, ~8 KB) and the grid table (256 x 32 B = 8 KB)', why: 'the data buffer\'s first creation', rate: 'demand', play: 'yes' },
-  { kind: 'upload', file: 'structures/gpu.ts', fn: 'StructureGpu.setGrid', n: 1, size: 'small', what: 'one grid row, 32 B', why: 'a structure grid\'s frame set or moved', rate: 'edit', play: 'yes' },
-  { kind: 'upload', file: 'structures/gpu.ts', fn: 'StructureGpu.put', n: 1, size: 'large', what: 'one slab\'s pieces, 64 B a piece (a town\'s or the fortress\'s pieces: thousands, 100s of KB)', why: 'a town\'s or building\'s pieces placed or replaced', rate: 'edit', play: 'yes' },
-  { kind: 'upload', file: 'structures/gpu.ts', fn: 'StructureGpu.setMoving', n: 1, size: 'small', what: 'the moving pieces, at most 64 x 64 B = 4 KB', why: 'the sailing ships near the camera, written in place', rate: 'frame', play: 'yes' },
-  { kind: 'upload', file: 'structures/viewer/render.ts', fn: 'ViewerRenderer.setGround', n: 2, size: 'large', what: 'the viewer\'s ground grid (at least 101 x 101 verts x 16 B = 160 KB) and its index (24 B a quad)', why: 'the structure viewer\'s ground under a planned city', rate: 'edit', play: 'no' },
-  { kind: 'upload', file: 'structures/viewer/render.ts', fn: 'ViewerRenderer.setLines', n: 1, size: 'large', what: 'the overlay lines, 32 B a segment (a city plan\'s tile and nav lines, est. > 2000 segments)', why: 'the structure viewer\'s tiles/nav overlay', rate: 'edit', play: 'no' },
   { kind: 'upload', file: 'terrain/flood.ts', fn: 'FloodGpu.params', n: 1, size: 'small', what: 'the flood params, 16 B', why: 'grid size, seed and level for the flood passes', rate: 'demand', play: 'no' },
   { kind: 'upload', file: 'terrain/flood.ts', fn: 'FloodGpu.flood', n: 3, size: 'large', what: 'the flood grid\'s heights, initial water and walled heights, 4 B a texel each (m x m: 256 KB at m 256)', why: 'a basin flood fill (the terrain viewer\'s flood tool via Terrain.flood)', rate: 'demand', play: 'no' },
   { kind: 'upload', file: 'terrain/sample.ts', fn: 'LandSampler.sample', n: 1, size: 'small', what: 'the sample params, 32 B', why: 'a rectangle of atlas land sampled on the GPU (run stage graphs, buried props, the terrain viewer)', rate: 'demand', play: 'flag', flag: '?runplan= (planned/situation runs; also the terrain viewer)' },

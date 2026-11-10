@@ -55,7 +55,7 @@ export function openValley(scene: LevelScene): void {
     setTimeout(() => scene.hud.say(`Life clings on by the pond. Tap the green to loose its seeds; drag to make wind and carry them to ground that is ready (${lens}: blue). ${look}`, 10), 800);
     return;
   }
-  if (scene.level.sandbox && !scene.fortress) {
+  if (scene.level.sandbox) {
     setTimeout(() => scene.hud.say('Sandbox: pick a tool on the right. Try 💥 Break on the towers and overhangs in the physics garden (bottom left), or on a wall of the sand basin.', 10), 800);
     return;
   }

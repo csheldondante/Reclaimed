@@ -17,7 +17,6 @@ import rainWgsl from '../shaders/rain.wgsl?raw';
 import particlesDrawWgsl from '../shaders/particles_draw.wgsl?raw';
 import gridsWgsl from '../shaders/grids.wgsl?raw';
 import structPrepWgsl from '../shaders/structprep.wgsl?raw';
-import { StructureGpu } from '../structures/gpu';
 import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
 import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import type { CoverSource } from '../weather/cover';
@@ -44,7 +43,7 @@ import { FloraLibrary, GAME_LIBRARY } from '../flora/library';
 import { BGCHECK, BgCheck } from './bgcheck';
 import { encode, encodeCeiling } from './renderer/encode';
 import { drawGrid, windowDrawn, windowMoved } from './renderer/grid';
-import { enableBand, enableRockMesh, enableStructures } from './renderer/features';
+import { enableBand, enableRockMesh } from './renderer/features';
 import { CAM_BYTES, SHADOW_SIZE, SHADOW_FORMAT, VEG_INSTANCES, INST_GROW, INST_START, INST_GROW_AT, PICK_FORMAT, PickHit, DEPTH_FORMAT, RenderOptions, DETAIL_BITS, SKIP, type ShadowViews } from './renderer/defs';
 import { urlFlags } from '../flags';
 export { SKIP } from './renderer/defs';
@@ -172,16 +171,6 @@ export class Renderer {
   miGroup?: GPUBindGroup;
   miShadowPipe?: GPURenderPipeline;
   miShadowGroup?: GPUBindGroup;
-  /** (round 117, structures) the city's pieces (enableStructures): drawn as the trees are, in the world and shadow passes */
-  structs?: { sg: StructureGpu; pipe?: GPURenderPipeline; shadow?: GPURenderPipeline; glow?: GPURenderPipeline; group?: GPUBindGroup; shadowGroup?: GPUBindGroup; version: number; lod: boolean };
-  /** (round 120, cities) how dark it is (the day/night's night, 0..1: Globals sky.w), set by the scene each frame — the
-   *  towns' light pools are drawn only when it's past dusk */
-  structNight = 0;
-  /**
-   * (round 117, STR10) the zoom (screen pixels a cell) under which the city's pieces draw their far look: the camera is
-   * orthographic, so one zoom says how small every piece is; `?structlod=` to tune (0: always full, 99: always far)
-   */
-  structLodZoom = Number(urlFlags().get('structlod') ?? 7);
   /** the draw pipelines' layout (render.wgsl's), for draws enabled after construction */
   drawPl!: GPUPipelineLayout;
   /** (round 95, ?rockbody=1) the rigid rock's own mesh (enableRockMesh), its pipeline and group */
@@ -903,15 +892,6 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
    */
   enableRockMesh(): RockMesh | undefined {
     return enableRockMesh(this);
-  }
-
-  /**
-   * (round 117, structures) Draw these pieces (src/structures/gpu.ts) with the game's light, as the trees are: render.wgsl's
-   * layout with the pieces' buffer at binding 3, in the world pass and the sun's shadow pass. Window coordinates: the
-   * owner moves them when the window slides.
-   */
-  enableStructures(sg: StructureGpu): void {
-    return enableStructures(this, sg);
   }
 
   /** (solver step 2) The node solver's buffers, for the rock mesh's skinned draws (the metal's); again when they grow. */

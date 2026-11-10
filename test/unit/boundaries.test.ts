@@ -16,9 +16,9 @@ const RUN = ['opps', 'living', 'gm', 'runplan', 'runsit', 'runplay', 'dialog'];
 /** the engine: the world's systems and their public API (§1-§16); `api` is ruled separately below */
 const ENGINE = ['sim', 'gpu', 'world', 'shaders', 'agents', 'physics', 'solver', 'flow', 'atlas', 'terrain', 'grids', 'render', 'weather', 'traits', 'inhabitants', 'flora', 'structures', 'build', 'tune', 'audio', 'input', 'units'];
 /** what sits on the engine: scenes (the wiring), game rules, the town, the run layer, UI, pages, benches, tests */
-const ABOVE = ['scenes', 'game', 'levels', 'fortress', 'settle', 'town', ...RUN, 'story', 'play', 'run', 'ui', 'lab', 'perf', 'noiselab', 'cardlab', 'inspector', 'test', 'main.ts', 'fresh-start.ts'];
+const ABOVE = ['scenes', 'game', 'levels', 'citygen', 'citylife', 'season', 'settle', ...RUN, 'story', 'play', 'run', 'ui', 'lab', 'perf', 'noiselab', 'cardlab', 'inspector', 'test', 'main.ts', 'fresh-start.ts'];
 /** pages that live beside an engine module (a viewer or a bench is a page, not the engine) */
-const PAGES = ['terrain/viewer.ts', 'inhabitants/viewer.ts', 'flora/viewer.ts', 'flora/bench.ts', 'structures/viewer/'];
+const PAGES = ['terrain/viewer.ts', 'inhabitants/viewer.ts', 'flora/viewer.ts', 'flora/bench.ts'];
 
 interface Rule {
   id: string;
@@ -35,9 +35,10 @@ interface Rule {
 }
 
 export const RULES: Rule[] = [
-  { id: 'run-not-town', from: RUN, not: ['fortress'], why: '§21: one opportunity contract and one dealer; a raid is a card the town executes through an adapter in the scene wiring, so the run layer never reaches into the fortress' },
-  { id: 'town-not-run', from: ['fortress'], not: [...RUN, 'ui', 'scenes', 'story', 'play', 'game', 'levels', 'lab', 'perf'], why: '§18: the economy is pure, testable logic touching the world only through its channels; §21: holdings go to the run layer through an adapter the scene wires' },
-  { id: 'town-pure', from: ['town'], not: ['scenes', 'ui', 'fortress', 'settle', ...RUN, 'lab', 'perf', 'game', 'levels', 'story', 'play', 'gpu', 'shaders', 'render'], why: '§11, §17: one crowd — every town’s people and jobs are one pure routine (generated towns and the player’s); the fortress and the settlements adapt it, it never reaches into them, a scene or a kernel' },
+  // (switchover, 2026-11-10: the town is the GPU town — citygen, its living town citylife, its season loop — not the
+  // fortress, deleted with the old towns and their one crowd, src/town)
+  { id: 'run-not-town', from: RUN, not: ['citygen', 'citylife', 'season'], why: '§21: one opportunity contract and one dealer; a card is executed by the town through an adapter in the scene wiring (the season loop over the districts API), so the run layer never reaches into the town' },
+  { id: 'town-not-run', from: ['citygen', 'citylife'], not: [...RUN, 'scenes', 'story', 'play', 'game', 'levels', 'lab', 'perf'], why: '§18, §21: the town is the world’s, touching the game only through its contracts (api/contracts/citygen.ts districts); the scene wires it to the run layer' },
   { id: 'contracts-alone', from: ['api/contracts'], only: ['api/contracts'], why: '§1: systems talk only through contracts; a contract is types and pure reference code, depending on nothing but contracts' },
   { id: 'engine-not-game', from: ENGINE, except: PAGES, not: ABOVE, why: '§1: the engine is the world and its systems; game layers sit on it through its API and contracts, never the other way' },
   { id: 'api-not-game', from: ['api'], except: ['api/contracts'], not: ABOVE, why: 'the world API is the engine\'s face to games (docs/WORLD_API.md); it may not depend on a game or a scene' },
@@ -55,8 +56,6 @@ export const KNOWN: { rule: string; file: string; imports: string; backlog: stri
   ...['api/atlas-world.ts', 'api/fire.ts', 'api/fx.ts', 'api/plants.ts', 'api/terrain.ts', 'api/water.ts', 'api/wind.ts', 'api/world.ts'].map((file) => ({ rule: 'api-not-game', file, imports: 'scenes/world-core', backlog: 'DA-P9' })),
   { rule: 'api-not-game', file: 'api/atlas-world.ts', imports: 'scenes/streamer', backlog: 'DA-P9' },
   { rule: 'api-not-game', file: 'api/atlas-world.ts', imports: 'game/integrity', backlog: 'DA-P9' },
-  // the fortress keeps its box in the window through the streamer's KeepRect (the residency planner replaces it)
-  { rule: 'town-not-run', file: 'fortress/host.ts', imports: 'scenes/streamer/keep', backlog: 'DA-P2' },
   // scene wiring and a page that live in the run layer's folders
   { rule: 'run-not-ui', file: 'opps/level-opps.ts', imports: 'ui/tunepanel', backlog: 'DA-L9' },
   { rule: 'run-not-ui', file: 'runplan/viewer.ts', imports: 'scenes/world-core', backlog: 'DA-L9' },
@@ -107,9 +106,9 @@ describe('the import-boundary gate (DESIGN.md; docs/ARCHITECTURE.md "Module boun
     for (const r of RULES) for (const p of r.from) expect(files.some((f) => under(f, [p])), `${r.id}: ${p}`).toBe(true);
   });
 
-  it('the rules catch what they say: a fortress import from opps fails', () => {
+  it('the rules catch what they say: a town import from opps fails', () => {
     const r = RULES.find((x) => x.id === 'run-not-town')!;
-    expect(under('opps/run.ts', r.from) && under('fortress/fortress', r.not!)).toBe(true);
+    expect(under('opps/run.ts', r.from) && under('citygen/towns', r.not!)).toBe(true);
     expect(under('opps/run.ts', ['opp'])).toBe(false);
   });
 });

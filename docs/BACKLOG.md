@@ -12,6 +12,27 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Switchover (2026-11-10, `trackA-switchover`) — the GPU towns are the towns; the old CPU towns deleted (docs/design/SWITCHOVER.md)
+
+The user: "Don't build against a system we are deprecating switch over." "Stop wasting resources on old code." Delete,
+don't port: no bridges, no readback to feed old code. The gaps below are features only the old towns had; each comes
+back on the GPU towns, never on the old code. Rows elsewhere in this file about fortress mode, its painting, raid clock
+and defence, the old planner (settle/*, structures' plan/place/pieces, build/site … lanes), the behaviour lab and its
+fixture, the town bench, the place bench and the speed bench are **superseded** by this row's deletion: their code is gone.
+
+| id | item | size | status |
+|---|---|---|---|
+| SW-1 | The GPU towns the default (`?citygen=fields&living=1&opps=1` → plain play; `?opps=0`, `?living=0`, `?towns=0` turn parts off); the old generator and everything only it served deleted; the CPU static grids deleted (GPU-owned grids only); the keep rect deleted; the town lab (`?lab=1`) and its gates townfollow, townseason | L | done (`trackA-switchover`) |
+| SW-G1 | Gap — hamlets and farms (sizes without a grid) have no town now: the old planner made them; citygen makes a village and up. Owner A: citygen's small-settlement layout (a farmstead cluster, a hamlet's lane) | M | open |
+| SW-G2 | Gap — raids and defence: the camp's raiders, the guards, the raid clock and "Call raiders now" (DA-L4's parallel loop), the attack wave on the fortress — deleted with fortress/{crowd,defence,raiders}.ts and settle/crowd.ts. Owner B: they come back on Track B's GPU units against the new contracts (the wall's routes: routeread.wgsl wallWalkRoute, gateRoute; the districts API), with their own lab gates | L | open |
+| SW-G3 | Gap — the far view of distant towns: the old planner's far plans (settle/raster.ts) baked into the far land are gone, so towns past the window aren't drawn until they stream in. Owner A: far view of towns from the GPU layout (citygen's lots, coarse, into the tiles or the far land) | M | open |
+| SW-G4 | Gap — the sailing ships between ports (settle/ships.ts, the structures draw) are gone; the living town's ships (riders on the water) remain. Owner A (routes), B (the hulls' art) | M | open |
+| SW-G5 | Gap — a situation run's town (?runplan=, ?run=opps): its finale's doors (the houses that burn), its townsfolk (the old town's people as units: the evacuation's count, "Follow me"), a fallen town charred, a structure a card placed: the run now gets the record's centre and reach only. Owner A: the run's town from the GPU town (lots as doors, the living town's people) or the run retired | M | open |
+| SW-G6 | Gap — the towns' night light pools and lit windows (the structures draw's glow pass) are gone. Owner B: the GPU town's buildings' night look | S | open |
+| SW-G7 | Gap — the old planner's tile-system cities (`?city=irregular|contour-voronoi|radial|orthogonal`, `?cstyle=`, `?cpurpose=`): the tile systems are kept (structures/tiles/*) for cliff and vertical cities; nothing places them now. Owner B (vertical surfaces), A (where they go) | L | open |
+| SW-G8 | Dormant — the agents' road riding (agents/roadgraph.ts, roads.ts, ride.ts): nothing sets roads since the fortress went; the living town's riders ride citygen's routes on their own GPU rows. Owner B: keep for the GPU units or delete | S | open |
+| SW-G9 | Kept, not the town generator — the sandbox's Town (build/town.ts, towngrid.ts, quadgrid.ts, runs.ts: the world API's `town`, the build crew, the editor's Town tool). Owner A: retire with the sandbox's Town tool when the user says | S | open |
+
 ## Round 128o (2026-11-05, session 5, `fortress`) — making the code match DESIGN.md (the work plan from four audits)
 
 The user: "Please work on making the code match the design which is a lot cleaner and intentionally encapsulates and avoids duplicate designs or logic. Let's write this well so it actually works and doesn't have the bugs that slow down development." Plan: https://claude.ai/artifact/JPNnQEzZPggrTzzv6kiKxA; audits in the session scratchpad. Order: gates, then towns working (A) and towns fast (B) in parallel, then the loop (L), the engine (E), pages and the rest (P).
@@ -74,7 +95,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-L1 | One run clock for economy, day/night, raids and cards (§21) | M | open |
 | DA-L2 | Mana ledger that can be spent (§14) | S | open |
 | DA-L3 | Holdings adapter: fortress soldiers and stores as holdings cards lock and spend (§20, §21) | M | open |
-| DA-L4 | The raid as the first opportunity card; button deals it; the rider a named presenter; the parallel raid loop deleted (§19, §21) | M | open |
+| DA-L4 | The raid as the first opportunity card; button deals it; the rider a named presenter; the parallel raid loop deleted (§19, §21) | M | the parallel raid loop deleted (switchover: with fortress mode); the raid card is SW-G2's, on Track B's GPU units |
 | DA-L5 | One persistent world: no pruning or fresh world per run; saves hold play changes only (§23) | M | open |
 | DA-L6 | Run end and carry-over (§21) | M | open |
 | DA-L7 | Atlas button and card icons, UX playground first (§22) | M | open |
@@ -90,7 +111,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-E7 | Felled trees as bodies, logs when grabbed (§15) | M | open |
 | DA-E8 | Budgeted voxel deformation and fracture; town buildings on the physics lattice like spawned buildings (§10) | L | open |
 | DA-P1 | Page table in its own binding, world-cell coordinates (§2) | L | open |
-| DA-P2 | Residency planner and wake API, city-centred; replaces the keep rect (§2, §5) | M | open |
+| DA-P2 | Residency planner and wake API, city-centred; replaces the keep rect (§2, §5) | M | open (the keep rect itself is deleted: switchover — only the fortress used it) |
 | DA-P3 | Pages stack in z on overflow; delete merge and rubble-on-overflow (§1, §2) | L | open |
 | DA-P4 | Resume mid-run (§23) | M | open |
 | DA-P5 | Flow model the only liquid; rain-level bake; sea per basin (§7) | L | open |

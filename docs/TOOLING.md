@@ -8,108 +8,71 @@ planned) and then plays in real time. Typecheck (~8 s) and the unit tests were n
 
 ## The loop, cheapest first
 
-1. **Unit tests for logic** (`npx vitest run src/fortress`, docs/TESTING.md): a rule, a plan, a field's numbers. Seconds.
-2. **A lab scenario for behaviour** (`node scripts/lab.mjs run scripts/lab/<x>.mjs`): workers walking, building,
-   hauling, roads ridden — the real systems on a small world, in a page kept open. 9-60 s.
-3. **The full-game scripts only at the gate** (`scripts/fortressoutside.mjs`, `fortresslanes.mjs`, the town bench …):
-   the atlas's land and its own town, by finger at the phone's size. Once, before handing a branch over.
+1. **Unit tests for logic** (`npx vitest run --project unit`, docs/TESTING.md): a rule, a ledger, a field's numbers. Seconds.
+2. **GPU kernel tests on Dawn** (`npx vitest run --project gpu test/gpu/<x>.test.ts`): a town's routes, its riders.
+3. **A lab scenario at the gate** (`node scripts/lab.mjs run scripts/lab/<x>.mjs`): the town game itself at Muru,
+   driven by a script — ~60 s a load, the scenario's sim after. Once, before handing a branch over.
 4. **The full suite at commit**: `npm run typecheck`, `npx vitest run`, and the gate's scripts.
 
-## The behaviour lab
+## The town lab (switchover, 2026-11-10; the behaviour lab of round 128l before)
 
-`?level=lab&lab=<recipe>` (src/lab/; docs/ARCHITECTURE.md "The behaviour lab"): a fixed 320² window (256² before round 128m: the fortress's box must lie in it) of a recipe's
-land made on the CPU (no atlas, no generation, a 120-tick warmup), the real fortress on the lab's own town, its builders
-the real FortressLife on the real agents, its pieces drawn by the structures draw, its built blocks claimed in the
-columns. Recipes (src/lab/recipes.ts):
+The behaviour lab — `?level=lab&lab=<recipe>`, the fortress on small CPU-made land — went with fortress mode and the old
+towns (docs/design/SWITCHOVER.md). The lab page is now **the town game itself**: `?skipmenu=1&level=atlas&town=1&fresh=1`
+with `&lab=1` (and the runner's `tutorial=0&warmcache=0&q=low&tod=0.3&day=100000`) — the atlas at Muru, its GPU town,
+living town and season loop, 412 × 915. `?lab=1` installs `reclaimed.lab` (src/lab/lab.ts) once the start town is made,
+its people given and its first hand dealt.
 
-| recipe | land |
+### The scenario API (`reclaimed.lab`)
+
+| | |
 |---|---|
-| `flat` | a dry plain; a wood to the north-east |
-| `hill` | the plain with a broad hill east of the heap (about 1 in 5 on its flanks: stepped lanes) |
-| `valley` | two slopes down to a river east of the town, a lake at its foot |
-| `plateau` | (round 128m) a dry plain 44 m up the window (the others lie at 10): room under it for a quarry's pit (scripts/lab/quarry.mjs, quarrygif.mjs; scripts/lab-gif.mjs joins a scenario's shots into a GIF) |
-| `town` | (round 128m) **the user's start town**: the window the game made round it on the user's link (`?town=1&fortress=1&fresh=1&q=low`), loaded from `data/lab/town.rclt`: its land, rivers and sea, its buildings in the columns (solid, not drawn), its heap, doors and gate posts; the fortress's box where the game has it. Capture it again with `node scripts/labtown.mjs capture` when its test says it's stale (GEN_VERSION) |
-| `walled` | the flat plain with a small walled town already standing round the heap, its gate east (the atlas's starting town, small) |
-
-A recipe is a few lines: the ground's height as a function, water, springs and woods, the heap (the stores until a
-warehouse stands) and the houses' doors, and what of the fortress stands at the start (`town`).
-
-### The scenario API (`reclaimed.lab` in the page; src/lab/lab.ts)
-
-| call | what |
-|---|---|
-| `place(kind, x, y, {level, built})` | one block of a structure type (or `'gate'` on a wall cell) at window world (x, y) |
-| `plan({at, walls: {r, gate}, blocks: [{type, d, level}], cells: [{type, at, level}], built})` | a whole plan at once: a ring of wall round `at` (default the heap) with a gate on a side, blocks by offset or position; `built: true` stands it at once. Returns `{cells, types, cutOff, skipped}` (a block whose cell the ring took is skipped, not an error) |
-| `drag(kind, x0, y0, x1, y1)` | (RT-6) the cells along a line placed together (`Fortress.paintMany`): the reach judges them as one batch and refuses only those out of reach (`fortress().refusal` says how many). Returns the cells |
-| `standAll()` | every planned block standing at once |
-| `stores({stone: 200})` | set the stores |
-| `build()` / `planMode()` | the bar's Build and Plan (the game's own buttons) |
-| `sims('all' \| 'fortress' \| [names])` | which of the sim's systems tick. `fortress` leaves out the land's slow processes (oil, contamination, moisture, fire, sediment, climate, cover, wilt, ecology, lava, sway, wind, particles, stats): about twice the sim seconds a wall second. `reset()` puts `all` back |
-| `run(seconds, speed = 16, {renderEvery = 8, keep, dt})` | `seconds` of **sim** time at the game's `speed`, as fast as the GPU goes: the display's frames wait, the lab steps the scene a frame after another (each once the GPU has done the last), drawing every Nth. Time stops after (unless `keep`). `dt` (default 1/60: every tick runs) is a frame's wall time; `0.1` is the game's longest frame — the people step 0.1 × speed while the world's ticks are capped (the tier's maxTicksPerFrame × speed), as on a loaded phone at 16x: ~10x real time, but the walkers cover less ground a sim second (fortressoutside: 304 s to reach the sites against 90-121). Returns `{simSeconds, frames, wallMs, xRealtime}` |
-| `snapshot()` | JSON: sim time, mode, progress, stores, people, jobs, every walker (where, state, phase, job, on a road or not), the roads (shapes, walking, on a road, the roads' share of the ground round the walkers, which legs ride the road graph), structures (cells, planned and built blocks), cut off, the bar's note, the builders' stats |
-| `look(x, y, zoom)` / `await shot(name)` | the camera; a screenshot after two drawn frames (the runner saves `<name>.png`) |
-| `await reset()` | the builders gone, the plan erased, the land as it opened (WorldCore.restoreChunks), the stores refilled, the recipe's town put back |
-| `raid()` | (round 128l, m4) the attack wave (fortress/raiders.ts): `state()`, `callNow()`, `clock`; `lab.sims('raid')` adds the fire and the particles to the fortress preset |
-| `heap`, `recipe`, `dims`, `ground(x, y)`, `fortress()`, `life()`, `units` | where things are; the game's own objects for what the API doesn't cover |
+| `ready`, `town` | the lab is ready; the start town's id (`s84`, Muru, on the default world) |
+| `towns`, `living`, `season` | the game's objects: FieldTowns (citygen/towns.ts), LivingTowns (citylife/towns.ts), SeasonLoop (season/loop.ts) |
+| `run(seconds, speed = 16, {renderEvery = 8, keep, dt})` | `seconds` of sim (the world's ticks) at `speed`, as fast as the GPU goes: the lab steps the scene itself, the display's frames wait, drawing every Nth. Time stops after unless `keep`. The towns' clock runs with the frames' dt: set a season's stages at once with `season.skip()` |
+| `look(x, y, zoom, aimY = 0.32)` | the camera on a window point, sat `aimY` down the screen (above the card sheet) |
+| `shot(name)`, `project(x, y, z)`, `viewport()`, `ground(x, y)` | a screenshot (the runner saves it); a window point on the screen; the screen; the ground's height |
+| `riders(id)` | (debug read) a living town's rider rows (routes.wgsl Rider, 16 words: pos, heading, job/state/leg, route, …, goal) and where its grid is in the window |
 
 ### The runner (`scripts/lab.mjs`)
 
-(round 128m) A worktree's ports come from a hash of its path, and two can meet: set `RECLAIMED_PORT` (e.g. 7540) to give yours its own.
-
 ```
-node scripts/lab.mjs run scripts/lab/example.mjs [--recipe hill] [--args '{"seconds":40}'] [--out dir] [--reload]
+node scripts/lab.mjs run scripts/lab/townfollow.mjs [--args '{"seconds":90,"shots":true}'] [--out dir] [--flags "&perf=1"]
 node scripts/lab.mjs serve | status | stop
 ```
 
-`run` starts the lab server if it isn't up (one headless Chrome on this worktree's own profile slot, one lab page, its
-own static server — never shared with other checks, so stopping it can't pull a page from under one), sends it the
-scenario and prints the page's console, the shots and the scenario's JSON result. Each run: the build checked (cached
-by the sources' content; ~2-4 s when something changed); the page **reloaded only when the build or the recipe
-changed** (or `--reload`, or the last run left the fatal overlay), otherwise **`lab.reset()` on the same page** — no
-boot, no pipelines compiled again. The GPU is leased as a behaviour check for the run (shared with other worktrees'
-checks: scripts/lib/runner.mjs). The console lines also go to `.testcache/lab-serve.log` as they come (tail it to
-watch a long scenario). `stop` closes Chrome and the servers.
-
-### Writing a scenario
-
-An ES module whose default export runs **in the page** (no closures over the module's variables; `args` comes from
-`--args`):
+One headless Chrome and one lab page per worktree build (its own server; `RECLAIMED_PORT` gives a worktree its ports:
+the page's server at it, the lab's control at +8). The page is loaded again for every scenario — the town game's world
+can't be put back — its storage cleared first. A scenario is an ES module run in the page:
 
 ```js
-export const recipe = 'flat'; // optional; --recipe overrides
 export default async function (lab, args) {
-  lab.sims(args.sims ?? 'fortress');
-  const [hx, hy] = lab.heap;
-  lab.plan({ cells: [{ type: 'house', at: [hx + 12, hy + 6] }, { type: 'farm', at: [hx + 20, hy - 8] }] });
-  lab.build();
-  await lab.run(20, 16);
+  const S = lab.season;
+  S.start(S.hand.findIndex((o) => o.card.id === 'houses'));
+  await S.next();
+  S.skip();
+  await lab.run(6, 8);
   await lab.shot('after');
-  return lab.snapshot(); // printed as JSON
+  return { left: S.left };
 }
 ```
 
-Or a plain `.js` file: the body of `async (lab, args) => { … }` — handy for a one-off probe. Throw to fail the run
-(the runner exits non-zero). Examples: `scripts/lab/example.mjs` (the template), `scripts/lab/fortressoutside.mjs`
-(do the builders get out of a walled town to sites outside it), `scripts/lab/fortressrefuse.mjs` (unreachable placements refused: a house on the valley's lake, a block in a shut ring, a drag across the lake), `scripts/lab/fortresslanes.mjs` (the lanes of a walled
-site, and the share of walking on them).
+### Gates
+
+- `scripts/lab/townfollow.mjs` — one living-town person at Muru followed: rides its route (its distance along it moves
+  forward, its place moves), reaches its destination (the leg ends, its job steps on), on screen above the card sheet,
+  no page error. `{"shots":true}` saves follow_000 … (scripts/lab/frames2gif.mjs joins them).
+- `scripts/lab/townseason.mjs` — two seasons with a walls card (and houses, then farms): districts claimed on the GPU and
+  staged (the town's edit log), the wall's ring made and risen (posts on its saved pieces), the save point written
+  (`season:<x>,<y>` in the world store), no page error.
 
 ## The field mesh's rebuilds (round 128o, DA-B28)
 
-`node scripts/meshderisk.mjs --url http://127.0.0.1:PORT [--nofort] [--pan 30]` on a dev server of your own port: the
-atlas at rest, building (with the fortress), in a storm's rain, panning (slides), after; per phase the mesh chunks
+`node scripts/meshderisk.mjs --url http://127.0.0.1:PORT [--pan 30]` on a dev server of your own port: the
+atlas at rest, in a storm's rain, panning (slides), after; per phase the mesh chunks
 rebuilt a frame and the fieldmesh passes' GPU ms, and for the pan by frames since a slide. Run on two builds for a
 rebuild count and a toggle diff. It loads the GPU: only when the timing runs are yours.
 
-## The placement bench (round 128m)
-
-The user's phone: `/?skipmenu=1&level=atlas&town=1&fortress=1&fresh=1&q=low&bench=place` (`&placetypes=house,wall`
-fewer types, `&placearrive=300` the arrival check's sim seconds). Each building type at 31 points round the start town,
-the reach's answer and the panel's line, tap CPU, the answer's delay, frames; then whether builders reach houses at the
-points. A summary on screen and a report downloaded. The same on the desktop:
-`node scripts/placebench.mjs [--types house]` (the user's link at 412x915, the report and a shot of the summary in
-`.testcache/placebench/`) and `node scripts/lab.mjs run scripts/lab/placebench.mjs` (the lab's `town`, ~2 min).
-
-## Measured (2026-11-04, Intel Arc 140T iGPU, other agents' checks sharing the GPU)
+## Measured (2026-11-04, the behaviour lab of the time — kept for the record; Intel Arc 140T iGPU)
 
 | | before (atlas scripts) | the lab |
 |---|---|---|
@@ -126,11 +89,9 @@ scenarios should ask for the sim seconds they need, not more.
 
 ## When to use which
 
-- A rule, a number, a plan's shape → a unit test (no browser).
-- How the people behave on a plan (reach, routes, roads, jobs, timings in sim seconds) → a lab scenario.
-- Anything about the atlas's land, its towns, streaming and slides, the phone's frame time, or the player's fingers on
-  the real UI → the full-game script, at the gate (the lab's window never slides, its land isn't the atlas's, its town
-  has no settlement buildings — only fortress blocks).
+- A rule, a number, a ledger's shape → a unit test (no browser).
+- A kernel's behaviour (routes, riders, claims) → a GPU test on Dawn on a tiny world.
+- The town game as played (the season loop, the living town, saving, streaming) → a town lab scenario, at the gate.
 - Frame cost → a timing check alone on the GPU (scripts/lib/runner.mjs `kind: 'timing'`) or the phone bench, never the
   lab.
 
