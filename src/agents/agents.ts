@@ -51,9 +51,13 @@ const PROF = typeof location !== 'undefined' && urlFlags().get('agentprof') === 
 const FIELD_FRONT = typeof location === 'undefined' || urlFlags().get('fieldfront') !== '0';
 /** (FC11 (b)) ?frontcap=N: chunks a sweep relaxes at most (agents.wgsl FRONT_CAP; default 32) */
 const FRONT_CAP = Math.max(1, Number((typeof location !== 'undefined' && urlFlags().get('frontcap')) || 32));
-/** (FC11 (c)) ?seedcell=1: a CPU seed that stays in its cell isn't a change, and the CPU's marks name only the fields
- *  whose seeds changed (off: any move marks, and marks every field — as before) */
+/** (FC11 (c)) ?seedcell=1: a CPU seed that stays in its cell isn't a change (off: any move is). The CPU's marks name
+ *  only the fields whose seeds changed either way (FC12 round: the default) */
 const SEED_CELL = typeof location !== 'undefined' && urlFlags().get('seedcell') === '1';
+/** (FC12) the front relaxed a chunk at a time in workgroup memory, RELAX_K passes a sweep (agents.wgsl relaxBlock);
+ *  ?blockrelax=0 relax's front kernel, ?relaxk=N the passes */
+const BLOCK_RELAX = typeof location === 'undefined' || urlFlags().get('blockrelax') !== '0';
+const RELAX_K = Math.max(1, Math.round(Number((typeof location !== 'undefined' && urlFlags().get('relaxk')) || 16)));
 export interface AgentTickLog {
   frame: number;
   tick: number;
@@ -667,8 +671,17 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   return 0.0;
 }
 `;
-    const agentsSrc = agentsWgsl.replace('const FRONT_CAP: u32 = 32u;', `const FRONT_CAP: u32 = ${FRONT_CAP}u;`);
-    if (FRONT_CAP !== 32 && agentsSrc === agentsWgsl) throw new Error('agents: FRONT_CAP not found in agents.wgsl');
+    // (the measurement toggles' constants: ?frontcap, ?blockrelax, ?relaxk)
+    const consts: [string, string][] = [
+      ['const FRONT_CAP: u32 = 32u;', `const FRONT_CAP: u32 = ${FRONT_CAP}u;`],
+      ['const FRONT_WG: u32 = 4u;', `const FRONT_WG: u32 = ${BLOCK_RELAX ? 1 : 4}u;`],
+      ['const RELAX_K: u32 = 16u;', `const RELAX_K: u32 = ${RELAX_K}u;`],
+    ];
+    let agentsSrc = agentsWgsl;
+    for (const [a, b] of consts) {
+      if (!agentsSrc.includes(a)) throw new Error(`agents: "${a}" not found in agents.wgsl`);
+      agentsSrc = agentsSrc.replace(a, b);
+    }
     const parts = [commonWgsl, layersWgsl, materialsWgsl, waterclassWgsl, agentsSrc, surfaceDepth + unitsWgsl];
     const mk = (e: string, sp: BindSpec) => makeCompute(device, `agents-${e}`, parts, sp, e);
     // four layouts, each within 8 storage buffers: the peel (it reads the
@@ -741,7 +754,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       const enter = ck('scopeIn', enterSpec, ENTER_LIST);
       const mark = ck('markChunks', { 0: 'uniform', 2: 'uniform', 10: 'uniform', 34: 'rw' }, MARK_LIST);
       const relaxSpec: BindSpec = { ...fieldSpec, 36: 'rw' };
-      const relax = makeCompute(device, 'agents-relax front', [frontSource(src, 'relax')], relaxSpec, 'relax');
+      const relax = BLOCK_RELAX ? makeCompute(device, 'agents-relax block', parts, relaxSpec, 'relaxBlock') : makeCompute(device, 'agents-relax front', [frontSource(src, 'relax')], relaxSpec, 'relax');
       const box = makeCompute(device, 'agents-unitBox', parts, { 0: 'uniform', 2: 'uniform', 7: 'rw', 10: 'uniform', 28: 'rw' }, 'unitBox');
       const reset = makeCompute(device, 'agents-frontReset', parts, { 0: 'uniform', 2: 'uniform', 33: 'rw' }, 'frontReset');
       const build = makeCompute(device, 'agents-frontBuild', parts, { 0: 'uniform', 2: 'uniform', 10: 'uniform', 33: 'rw', 34: 'rw', 35: 'rw', 36: 'rw', 38: 'uniform', 54: 'rw' }, 'frontBuild');
@@ -1780,7 +1793,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     f[P_STEP] = this.stepNow.dt;
     const rekinds = this.rekinds.splice(0, MAX_REKINDS);
     f[P_STEP + 1] = rekinds.length;
-    u.set([this.huntField ?? NFIELDS, SEED_CELL ? this.marksFor : ALL_FIELDS, 0, 0], P_U2);
+    u.set([this.huntField ?? NFIELDS, this.marksFor, 0, PROF ? 1 : 0], P_U2);
     rekinds.forEach(([slot, kind, hp], i) => {
       u.set([slot, kind, 0, hp === null ? 0 : 1], P_REKINDS + i * 4);
       if (hp !== null) f[P_REKINDS + i * 4 + 2] = hp;
@@ -1945,7 +1958,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       pass.end();
       pass = enc.beginComputePass({ label: name, timestampWrites: this.prof.timestamps(name) });
     };
-    const log: AgentTickLog | null = PROF ? { frame: this.prof.frameNo, tick: this.ticks, scope: list.length, enter: enter.length, marks: marks.length, peel: 0, units: this.count - this.free.length, fields: this.fieldsUsed, front: [], asked: [], seedChanged: this.seedChanged, restarted: this.restartLog, marksFor: SEED_CELL ? this.marksFor : ALL_FIELDS } : null;
+    const log: AgentTickLog | null = PROF ? { frame: this.prof.frameNo, tick: this.ticks, scope: list.length, enter: enter.length, marks: marks.length, peel: 0, units: this.count - this.free.length, fields: this.fieldsUsed, front: [], asked: [], seedChanged: this.seedChanged, restarted: this.restartLog, marksFor: this.marksFor } : null;
     if (this.frameWork) this.seedChanged = 0;
     const n = list.length ? t.groups(SCOPE_LIST) : 0;
     let p = this.par;
@@ -2073,7 +2086,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
         const u = new Uint32Array(q.buf.getMappedRange().slice(0));
         q.buf.unmap();
         for (let i = 0; i < q.n; i++) {
-          q.log.front.push(u[i] / 4);
+          q.log.front.push(u[i] / (BLOCK_RELAX ? 1 : 4));
           q.log.asked.push(u[8 + i]);
         }
         if (q.peeled) q.log.peel = u[16] / 4;
