@@ -132,7 +132,7 @@ export interface Structure {
   /** (onetown) its quarter of the town (0 the middle; the generator's) */
   district?: number;
   /** (onetown) what history left on it: gutted by a fire, abandoned to a flood (the generator's marks) */
-  wear?: 'burned' | 'flooded';
+  wear?: import('./structures').Wear;
   /**
    * cell → its levels as runs [lo, hi), bottom up (round 128d: no level cap; a gap is two runs — build/runs.ts, the
    * plan's own runs, read only)

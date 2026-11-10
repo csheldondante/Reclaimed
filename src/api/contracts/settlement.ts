@@ -92,7 +92,7 @@ export interface SettlementPurposeRec {
 
 /** One thing that happened to a settlement (round 120: "towns should have stories"). */
 export interface SettlementStoryEvent {
-  what: 'founded' | 'raided' | 'walled' | 'burned' | 'flooded' | 'adapted' | 'grew' | 'ruined';
+  what: 'founded' | 'raided' | 'walled' | 'burned' | 'flooded' | 'adapted' | 'grew' | 'ruined' | 'overgrown';
   /** the run it happened in (negative: before the first run — the deep past) */
   run: number;
   note: string;
