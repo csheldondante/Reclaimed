@@ -22092,3 +22092,28 @@ with block relaxation on the same gate. UNIT_MINDS_U2.md §5e has the design, th
   - seen-only targets, ranged units behind a narrow `fire()` (the placeholder marked for GPU rigid bodies), cover and
     search;
   - §9g: routine town work leaves AgentUnits for the living town's riders; the old town is not built against.
+
+## 2026-11-10 — The field bench (`?fieldbench=1`): block relaxation's variants on the phone, one tap (trackB-fieldbench)
+
+Why: the user wants to test FC12 on the Pixel 9a. src/perf/fieldbench.ts follows the living bench: a wake lock, the
+device facts, a result card, and a JSON to download, copy or share (kept in perf-reports/ on the dev server).
+
+- **Link:** `/?skipmenu=1&level=atlas&town=1&fresh=1&q=low&fieldbench=1` (`&benchsecs=3` a window, `&benchzoom=14`).
+  The default GPU town (Muru).
+- **Armies** (bench-only, through the Units contract): raiders (hostile) and guards, n v n, on open dry ground near the
+  town. The ground is picked from one read of the surfaces at the start: rings out from the town past its radius, the
+  first 44 × 80-cell patch whose tops all stand dry within 2.5 of each other. The camera goes on them, and the season
+  sheet is folded. Fresh armies are stood up for every phase, so each fight starts the same.
+- **Phases** (toggle diffs in alternating windows, 3 × 3 s each way; frame interval p50/p95/mean, GPU span; alive at
+  the start and end, deaths):
+  - `block16`, `block8` and `front` (relax's old kernel), each against the fields frozen (relax not dispatched);
+  - `huntgpu` on against off.
+  - 100 v 100, then 500 v 500 if 100 v 100 held 30 fps with block16.
+- **Agents for it:**
+  - `benchRelax(variant)` makes each relax variant's pipelines and bind groups once (WGSL constants RELAX_K and FRONT_WG
+    per variant) and switches between them without a reload;
+  - `benchFrozen` skips relax and the hunt kernels;
+  - `huntOn` stops the GPU hunt's new seeds (last frame's are let go). AgentUnits' `huntGpu` became writable for it.
+- **Headless check** (412 × 915, q=low, 1 s windows): it runs end to end. 100 v 100 fights go 200 → 76–101 alive; 500 v
+  500 go 1,000 → 817–932. The shot shows raiders in Muru's streets by the forest. Desktop frames sit at the headless
+  cap (p50 10 ms both ways), so only the phone's numbers mean anything.
