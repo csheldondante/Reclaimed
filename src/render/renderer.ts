@@ -300,7 +300,9 @@ export class Renderer {
   blendSources: { indirect: GPUBuffer; group: GPUBindGroup }[] = [];
   /** the shadow pass's own groups: stand-in texels for both maps (the pass draws into them) */
   noShadowViews?: ShadowViews;
-  groupFor!: (inst: GPUBuffer | GPUBufferBinding, cam?: GPUBuffer, shadow?: ShadowViews) => GPUBindGroup;
+  groupFor!: (inst: GPUBuffer | GPUBufferBinding, cam?: GPUBuffer, shadow?: ShadowViews, xform?: GPUBuffer) => GPUBindGroup;
+  /** (citygen M4a) a mesh source's place: none (vec4 0) — render/common.wgsl MESH_XF */
+  private noXform!: GPUBuffer;
   shadowGroups?: { opaque: GPUBindGroup; tops: GPUBindGroup; plants: GPUBindGroup; struct: GPUBindGroup; bodies: GPUBindGroup; mesh: GPUBindGroup };
   /** ?smooth=0: tops lit flat, a hexagon at a time (the look before G13). */
   flatTops = urlFlags().get('smooth') === '0';
@@ -548,6 +550,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
         25: 'depth',
         27: 'depth',
         26: 'csampler',
+        28: 'uniform',
       },
       VF,
     );
@@ -599,7 +602,8 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       depthStencil: depthStencil(false),
     }, (p) => (this.waterFlatPipe = p));
 
-    const groupFor = (inst: GPUBuffer | GPUBufferBinding, cam: GPUBuffer = this.camBuf, shadow: ShadowViews = this.shadowViews) =>
+    this.noXform = world.buf('mesh place none', 16, GPUBufferUsage.UNIFORM);
+    const groupFor = (inst: GPUBuffer | GPUBufferBinding, cam: GPUBuffer = this.camBuf, shadow: ShadowViews = this.shadowViews, xform: GPUBuffer = this.noXform) =>
       makeBindGroup(device, 'draw', drawLayout, {
         0: world.globals,
         2: world.materials,
@@ -621,6 +625,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
         25: shadow.live,
         27: shadow.still,
         26: this.shadowSampler,
+        28: xform,
       });
     this.groupFor = groupFor;
     this.opaqueGroup = groupFor(this.instOpaque);
@@ -757,11 +762,13 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
   /** (round 120) compute run at the start of each frame's encode, before anything's drawn (bodies' meshes skinned) */
   readonly frameCompute: ((enc: GPUCommandEncoder) => void)[] = [];
 
-  addMesh(verts: GPUBuffer, indirect: GPUBuffer): void {
+  /** `xform` (citygen M4a): where the mesh is — a uniform vec4, xyz added to every vertex (a town's grid placed in the
+   *  window: its owner writes 16 bytes when the window slides, the mesh stays as it is on the GPU); none: as written */
+  addMesh(verts: GPUBuffer, indirect: GPUBuffer, xform?: GPUBuffer): void {
     this.meshSources.push({
       indirect,
-      group: this.groupFor(verts),
-      shadow: this.shadowGroups ? this.groupFor(verts, this.lightCamBuf, this.noShadowViews!) : undefined,
+      group: this.groupFor(verts, undefined, undefined, xform),
+      shadow: this.shadowGroups ? this.groupFor(verts, this.lightCamBuf, this.noShadowViews!, xform) : undefined,
     });
   }
 

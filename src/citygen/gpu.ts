@@ -1,7 +1,9 @@
-// (street lab, milestones 2–3) The street lab's GPU runner: the window's ground heights and water read from the
-// world's own buffers (height.wgsl, at load), then the streets, blocks, lots and their mesh (streets.wgsl) — every pass
-// on the GPU; the CPU writes the passes' numbers, the points a tap places (an authored edit), and encodes the
-// dispatches. A run starts at the first stage a change needs (field → phi → trace → lots → mesh); what the stages
+// (street lab m2–m3; citygen M4a) The town generator — one pipeline, the street lab's and the game's: a town grid's
+// ground heights and water read from the world's own buffers (height.wgsl: a box of the window), then the arterials and
+// their bridges, the streets, blocks, lots and their mesh (streets.wgsl) — every pass on the GPU; the CPU writes the
+// passes' numbers, the town's inputs (its centre, radius, seed, approach directions) and the points a tap places (an
+// authored edit), and encodes the dispatches. The mesh is in the grid's own frame (its first column at 0, 0): the
+// caller places it (Renderer.addMesh's transform). A run starts at the first stage a change needs (field → phi → trace → lots → mesh); what the stages
 // before it made stays in their buffers. A point's change reruns φ over its radius's box only. The one read back is the
 // run's timestamps, two counts and the points (360 bytes, after a run — never a frame's). It owns its buffers; it knows
 // the world only through StreetWorld.
@@ -38,6 +40,12 @@ export interface StreetPoint {
 }
 
 export interface StreetParams {
+  /** (citygen M4a) an arterial's width (cells); the height-to-plot ratio (a building no taller than this × its plot's
+   *  shortest side; 0 the lab's storeys × 0.7–1.3); a bridge deck's height over its higher bank; the longest bridge */
+  artWidth: number;
+  hRatio: number;
+  deckClear: number;
+  maxSpan: number;
   /** index into MAJORS */
   majors: number;
   /** between the distance contours, between the rings (world units) */
@@ -117,15 +125,17 @@ export type Stage = (typeof STAGES)[number];
 /** a column box [x0, y0, x1, y1) */
 export type Box = [number, number, number, number];
 
-/** what the street lab needs of the world */
+/** what the town generator needs of the world: its grid — a box of the window, w columns by h rows from window column
+ *  box[0], row box[1] (even: a row's hex offset is the window's) — and the world's buffers it reads there */
 export interface StreetWorld {
   w: number;
   h: number;
+  box: [number, number];
   globals: GPUBuffer;
   chunks: GPUBuffer;
   layers: GPUBuffer;
   water: GPUBuffer;
-  /** the town's centre (window world) */
+  /** the town's centre (the grid's world units: its first column's corner at 0, 0) */
   centre: [number, number];
 }
 
@@ -143,11 +153,12 @@ export interface StreetTimes {
 
 const SLOT = 256;
 const MAX_PASSES = 256;
-const UNI_BYTES = 240;
+const UNI_BYTES = 256;
 const KERNELS = [
   'fill', 'blur', 'feat', 'jfa', 'jdist', 'autoPts', 'phi', 'tensor', 'trace', 'mis', 'blocks',
-  'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotMesh', 'marks', 'meshCap',
+  'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotRec', 'lotMesh', 'marks', 'meshCap',
   'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'sctab', 'bgrow', 'ctint',
+  'artSpan', 'artMesh',
 ] as const;
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
@@ -159,6 +170,11 @@ const SDW = 12;
 export const MIN_BLOCK = 8;
 /** room: lots, vertices (32 bytes each) */
 const LOT_ROOM = 32768;
+/** (M4a) streets.wgsl RECW, REC_LM: a lot record's words; the landmark sites' records from this one (LOT_ROOM); the
+ *  sites' room (LM_ROOM) — api/contracts/citygen.ts */
+export const RECW = 24;
+export const REC_LM = LOT_ROOM;
+export const LM_ROOM = 64;
 const VERT_ROOM = 1_200_000;
 /** conflict rounds between the traces (a greedy independent set: even, so the kept end in AL0) */
 const MIS_ROUNDS = 4;
@@ -177,6 +193,10 @@ const GROW_LINES = 8;
 /** (m3i) the town circle's reach with supercells (× its radius): past the largest limit (1.2) and its noise */
 const CITY_REACH = 1.6;
 const ALL = ['height', ...STAGES] as const;
+/** (M4a) streets.wgsl NART, AW, ART_PIECES: the arterials (approach roads) a town has room for, words each, pieces each */
+export const NART = 8;
+const AW = 16;
+const ART_PIECES = 512;
 
 interface Uni {
   k?: number;
@@ -187,12 +207,17 @@ interface Uni {
 }
 type Bufs = Partial<Record<1 | 2 | 3 | 4 | 5 | 6 | 7, GPUBuffer>>;
 
-export class StreetLabGpu {
+export class CityGen {
   readonly verts: GPUBuffer;
   readonly args: GPUBuffer;
+  /** (M4a, the contract: api/contracts/citygen.ts) the lot records, their counts, each one's construction progress */
+  readonly lotRecords: GPUBuffer;
+  readonly lotCounts: GPUBuffer;
+  readonly progress: GPUBuffer;
   private pipes: Record<Kernel, GPUComputePipeline>;
   private layout: GPUBindGroupLayout;
   private heightK: ComputeKernel;
+  private boxUni: GPUBuffer;
   private uni: GPUBuffer;
   private uniData = new ArrayBuffer(SLOT * MAX_PASSES);
   private nPass = 0;
@@ -225,7 +250,7 @@ export class StreetLabGpu {
     const N = w * h;
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     const buf = (label: string, bytes: number, usage = S) => {
-      const b = device.createBuffer({ label: `streetlab ${label}`, size: Math.max(16, bytes), usage });
+      const b = device.createBuffer({ label: `citygen ${label}`, size: Math.max(16, bytes), usage });
       this.all.push(b);
       return b;
     };
@@ -239,6 +264,12 @@ export class StreetLabGpu {
     this.B.AL1 = buf('kept b', 2 * T * 4);
     this.B.BQ = buf('blocks', 3 * 2 * T * BQW * 4);
     this.B.LOTS = buf('lots', LOT_ROOM * LW * 4);
+    // (M4a: the lot records and their construction progress (f32 0–1, 1 when the lots are made), the counts — lots,
+    // sites, words a record, the sites' first record)
+    this.lotRecords = buf('lot records', (LOT_ROOM + LM_ROOM) * RECW * 4);
+    this.progress = buf('lot progress', (LOT_ROOM + LM_ROOM) * 4);
+    this.lotCounts = buf('lot counts', 16);
+    device.queue.writeBuffer(this.lotCounts, 0, new Uint32Array([0, 0, RECW, REC_LM]));
     // (the lots' count, the listed roads' and the gap blocks', then the roads: m3f)
     this.B.CNT = buf('counts and roads', (4 + ROAD_ROOM * 4) * 4);
     // (m3: the points, the seeds, their occupancy grid, the two floods ping-ponged; AL1 the streets drawn)
@@ -259,15 +290,20 @@ export class StreetLabGpu {
     this.B.GB = buf('gap blocks', GAP_ROOM * 3 * BQW * 4);
     // (m3h: the supercells' table — at the smallest supercell, 8 cells)
     this.B.SCT = buf('supercells', (4 + this.scCells(8) * 6) * 4);
+    // (M4a: the arterials — a count, then each one's direction (the CPU's), length and bridge spans (the GPU's))
+    this.B.ART = buf('arterials', (4 + NART * AW) * 4);
+    this.boxUni = buf('box', 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    device.queue.writeBuffer(this.boxUni, 0, new Uint32Array([world.box[0], world.box[1], w, h]));
     this.verts = buf('mesh', VERT_ROOM * 32, GPUBufferUsage.STORAGE);
     this.args = buf('mesh args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     device.queue.writeBuffer(this.args, 0, new Uint32Array([0, 1, 0, 0]));
     this.dummies = [1, 2, 3, 4, 5, 6, 7, 8].map((k) => buf(`dummy ${k}`, 16));
-    this.layout = makeLayout(device, 'streetlab', { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' }, GPUShaderStage.COMPUTE);
-    const module = makeModule(device, 'streetlab', [streetsWgsl]);
+    this.layout = makeLayout(device, 'citygen', { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' }, GPUShaderStage.COMPUTE);
+    const module = makeModule(device, 'citygen', [streetsWgsl]);
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
-    this.pipes = Object.fromEntries(KERNELS.map((k) => [k, device.createComputePipeline({ label: `streetlab ${k}`, layout: pl, compute: { module, entryPoint: k } })])) as Record<Kernel, GPUComputePipeline>;
-    this.heightK = makeCompute(device, 'streetlab height', [commonWgsl, layersWgsl, materialsWgsl, heightWgsl], { 0: 'uniform', 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw' });
+    this.pipes = Object.fromEntries(KERNELS.map((k) => [k, device.createComputePipeline({ label: `citygen ${k}`, layout: pl, compute: { module, entryPoint: k } })])) as Record<Kernel, GPUComputePipeline>;
+    if (world.box[1] % 2) throw new Error(`citygen: the box's first row (${world.box[1]}) must be even`);
+    this.heightK = makeCompute(device, 'citygen height', [commonWgsl, layersWgsl, materialsWgsl, heightWgsl], { 0: 'uniform', 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'uniform' });
     const n = ALL.length * 2;
     if (device.features.has('timestamp-query')) {
       this.qs = device.createQuerySet({ type: 'timestamp', count: n });
@@ -301,6 +337,19 @@ export class StreetLabGpu {
     new Uint32Array(a)[4] = flag;
     this.device.queue.writeBuffer(this.B.PTS, slot * PW * 4, a);
   }
+  /** (M4a, the town's input) its approach roads: the unit directions its atlas roads leave by (at most NART) — the
+   *  arterials and their bridges are made from them on the GPU; the next run from 'field' */
+  setArterials(dirs: readonly (readonly [number, number])[]): void {
+    if (dirs.length > NART) throw new Error(`citygen: ${dirs.length} approach roads, room for ${NART}`);
+    const a = new ArrayBuffer((4 + NART * AW) * 4);
+    new Uint32Array(a)[0] = dirs.length;
+    const f = new Float32Array(a);
+    dirs.forEach(([x, y], k) => {
+      f[4 + k * AW] = x;
+      f[5 + k * AW] = y;
+    });
+    this.device.queue.writeBuffer(this.B.ART, 0, a);
+  }
   /** every slot handed back to the GPU's placing (the user's emptied) */
   resetPoints(): void {
     this.device.queue.writeBuffer(this.B.PTS, 0, new Uint32Array(NPTS * PW));
@@ -325,7 +374,7 @@ export class StreetLabGpu {
   }
 
   private slot(u: Uni): number {
-    if (this.nPass >= MAX_PASSES) throw new Error(`streetlab: more than ${MAX_PASSES} passes in a run`);
+    if (this.nPass >= MAX_PASSES) throw new Error(`citygen: more than ${MAX_PASSES} passes in a run`);
     const i = this.nPass++;
     const dv = new DataView(this.uniData, i * SLOT, UNI_BYTES);
     const p = this.p;
@@ -349,6 +398,7 @@ export class StreetLabGpu {
     [p.growth, p.tint, this.cityOn() ? 1 : 0, p.limit].forEach((v, j) => dv.setFloat32(208 + j * 4, v, true));
     // (m3i: with supercells the town circle is only a bound, out past any limit)
     [this.cityOn() ? CITY_REACH : 1, 0, 0, 0].forEach((v, j) => dv.setFloat32(224 + j * 4, v, true));
+    [p.artWidth, p.hRatio, p.deckClear, p.maxSpan].forEach((v, j) => dv.setFloat32(240 + j * 4, v, true));
     return i;
   }
 
@@ -357,7 +407,7 @@ export class StreetLabGpu {
     const entries: Record<number, GPUBuffer | GPUBufferBinding> = { 0: { buffer: this.uni, offset: i * SLOT, size: UNI_BYTES }, 8: args ? this.args : this.dummies[7] };
     for (let b = 1; b <= 7; b++) entries[b] = bufs[b as 1] ?? this.dummies[b - 1];
     this.cp.setPipeline(this.pipes[name]);
-    this.cp.setBindGroup(0, makeBindGroup(this.device, `streetlab ${name}`, this.layout, entries));
+    this.cp.setBindGroup(0, makeBindGroup(this.device, `citygen ${name}`, this.layout, entries));
     this.cp.dispatchWorkgroups(Math.max(1, wx), Math.max(1, wy));
     this.dispatches++;
   }
@@ -395,7 +445,7 @@ export class StreetLabGpu {
   }
   private pass(stage: (typeof ALL)[number]): GPUComputePassDescriptor {
     const s = ALL.indexOf(stage) * 2;
-    return { label: `streetlab ${stage}`, timestampWrites: this.qs ? { querySet: this.qs, beginningOfPassWriteIndex: s, endOfPassWriteIndex: s + 1 } : undefined };
+    return { label: `citygen ${stage}`, timestampWrites: this.qs ? { querySet: this.qs, beginningOfPassWriteIndex: s, endOfPassWriteIndex: s + 1 } : undefined };
   }
   /** (m3b) the vector jump floods: the seeds on the lines, thinned, flooded by line parity; each seed's cross street and
    *  the block to the next one along its line. (m3g) Grown: the streets grown up from line 0 a line at a time instead
@@ -452,7 +502,7 @@ export class StreetLabGpu {
     this.kS('vblock', {}, { 1: B.SD, 5: B.BQ, 7: B.AL1 });
     // (m3h) the supercells: their centres, states and growth starts
     // (m3i: one workgroup — the cost distance relaxed over the supercell graph in its shared memory)
-    if (this.cityOn()) this.k('sctab', {}, { 1: B.PTS, 2: B.LM, 3: B.HS, 4: B.FD, 5: B.SCT }, 1);
+    if (this.cityOn()) this.k('sctab', {}, { 1: B.PTS, 2: B.LM, 3: B.HS, 4: B.FD, 5: B.SCT, 7: B.ART }, 1);
     // (m3d) the bad blocks: found, then merged (a claim each on a good neighbour, the lowest seed wins) or paved
     // (MERGE_ROUNDS rounds — a fan's triangles merge in pairs, then the pairs — then what's still bad is paved)
     for (let r = 0; r <= MERGE_ROUNDS; r++) {
@@ -512,14 +562,14 @@ export class StreetLabGpu {
   }
 
   private async once(p: StreetParams, from0: Stage, box0?: Box): Promise<StreetTimes> {
-    if (this.dead) throw new Error('streetlab: disposed');
+    if (this.dead) throw new Error('citygen: disposed');
     this.p = p;
     this.nPass = 0;
     this.dispatches = 0;
     const { device } = this;
     const { w, h } = this.world;
     const B = this.B;
-    const enc = device.createCommandEncoder({ label: 'streetlab run' });
+    const enc = device.createCommandEncoder({ label: 'citygen run' });
     const firstHeights = !this.haveHeights;
     // (the first run makes everything; a new block length a new seed lattice)
     const from: Stage = firstHeights ? 'field' : from0;
@@ -534,7 +584,7 @@ export class StreetLabGpu {
       const cp = enc.beginComputePass(this.pass('height'));
       const W = this.world;
       cp.setPipeline(this.heightK.pipeline);
-      cp.setBindGroup(0, makeBindGroup(device, 'streetlab height', this.heightK.layout, { 0: W.globals, 1: W.chunks, 3: W.layers, 4: W.water, 5: B.H, 6: B.M }));
+      cp.setBindGroup(0, makeBindGroup(device, 'citygen height', this.heightK.layout, { 0: W.globals, 1: W.chunks, 3: W.layers, 4: W.water, 5: B.H, 6: B.M, 7: this.boxUni }));
       cp.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(h / 8));
       cp.end();
       this.haveHeights = true;
@@ -550,6 +600,8 @@ export class StreetLabGpu {
         this.blur(B.BLK, B.T0, Math.max(1, Math.round(p.maskR)), 2);
         this.k2('mseed', {}, { 1: B.T0, 5: B.S0 });
       }
+      // (M4a: the arterials — their length and bridges)
+      this.k('artSpan', {}, { 1: B.M, 3: B.H, 5: B.ART }, 1);
       const fr = this.jfa(B.S0, B.S1);
       this.k2('jdist', {}, { 1: fr, 5: p.field === 1 ? B.FDB : B.T0 });
       if (p.field === 0) this.blur(B.T0, B.FDB, 5, 3);
@@ -588,14 +640,16 @@ export class StreetLabGpu {
     if (runs('lots')) {
       this.cp = enc.beginComputePass(this.pass('lots'));
       this.fill(B.CNT, 4, 0);
+      // (M4a: new lots, built: each one's progress 1 — the construction's to set from here)
+      this.fill(this.progress, LOT_ROOM + LM_ROOM, 0x3f800000);
       if (p.gap) this.gapFill();
       // (m3h) each block's supercell state and growth key, into its meta
       if (this.cityOn()) {
         this.k('bgrow', { count: 3 * this.nS() }, { 4: B.SCT, 5: B.BQ }, Math.ceil(this.nS() / 64));
         if (p.gap) this.k('bgrow', { count: 3 * GAP_ROOM }, { 4: B.SCT, 5: B.GB }, Math.ceil(GAP_ROOM / 64));
       }
-      this.k('lots', { count: LOT_ROOM }, { 1: B.BQ, 4: B.SCT, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * this.nS()) / 64));
-      if (p.gap) this.k('lots', { count: LOT_ROOM }, { 1: B.GB, 4: B.SCT, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * GAP_ROOM) / 64));
+      this.k('lots', { count: LOT_ROOM }, { 1: B.BQ, 2: B.ART, 4: B.SCT, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * this.nS()) / 64));
+      if (p.gap) this.k('lots', { count: LOT_ROOM }, { 1: B.GB, 2: B.ART, 4: B.SCT, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * GAP_ROOM) / 64));
       this.cp.end();
     }
     // the mesh: roads, lots and the points' markers
@@ -607,7 +661,11 @@ export class StreetLabGpu {
     else this.k('roadMinor', {}, { 1: B.TR, 2: B.AL0, 3: HH, 7: this.verts }, this.seeds[0] * this.seeds[1], 1, true);
     this.k('groad', {}, { 1: B.CNT, 2: B.SCT, 3: HH, 4: B.FD, 7: this.verts }, (ROAD_ROOM * 8) / 64, 1, true);
     if (this.cityOn() && p.tint === 1) this.k2('ctint', {}, { 2: B.SCT, 3: HH, 4: B.FD, 7: this.verts }, true);
-    this.k('lotMesh', { count: LOT_ROOM }, { 1: B.LOTS, 2: B.CNT, 3: HH, 4: B.FD, 5: B.LM, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
+    // (M4a: the lots' records — the contract — then the mesh from them; a landmark site's record too, its mesh lmMesh's)
+    this.k('lotRec', { count: LOT_ROOM }, { 1: B.LOTS, 2: B.SCT, 3: HH, 4: B.FD, 5: B.LM, 6: B.CNT, 7: this.lotRecords }, Math.ceil(LOT_ROOM / 64));
+    this.k('lotRec', { mode: 1 }, { 1: B.LOTS, 2: B.SCT, 3: HH, 4: B.FD, 5: B.LM, 6: B.CNT, 7: this.lotRecords }, 1);
+    this.k('lotMesh', { count: LOT_ROOM }, { 1: this.lotRecords, 2: this.progress, 3: HH, 6: B.CNT, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
+    this.k('artMesh', {}, { 1: B.ART, 3: HH, 7: this.verts }, (NART * ART_PIECES) / 64, 1, true);
     if (vector && p.lmMult > 0) this.k('lmMesh', {}, { 1: B.LM, 3: HH, 7: this.verts }, (64 * 48) / 64, 1, true);
     if (PHI_MODE[p.majors] !== 0) this.k('marks', { mode: this.sel + 1 }, { 1: B.PTS, 3: HH, 7: this.verts }, 1, 1, true);
     // (m3c: the shaped ground's skin, its bands tinted; the cart road)
@@ -616,6 +674,9 @@ export class StreetLabGpu {
     this.k('meshCap', {}, {}, 1, 1, true);
     this.cp.end();
     device.queue.writeBuffer(this.uni, 0, this.uniData, 0, this.nPass * SLOT);
+    // (M4a: the counts for the contract — the lots' (CNT word 0) and the sites' (LM word 0))
+    enc.copyBufferToBuffer(B.CNT, 0, this.lotCounts, 0, 4);
+    enc.copyBufferToBuffer(B.LM, 0, this.lotCounts, 4, 4);
     const n = ALL.length * 2;
     if (this.qs) {
       enc.resolveQuerySet(this.qs, 0, n, this.qRes!, 0);

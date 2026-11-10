@@ -20911,3 +20911,42 @@ The season slice (6a619edb, 806f2cbc) reached fortress without the user's sign-o
 The round 128r docs (the user's answers, NEXT_SEASON.md, the DESIGN 18/21 draft) stay. The code stays on the
 `trackA-season` branch for parts worth taking later: the GPU basin fill and the wear states. Track A goes on in the
 street lab (`trackA-streetlab`).
+
+## 2026-11-10 — citygen M4a: Muru from fields in the game (`?citygen=fields`)
+
+The user: players choose opportunities and the game places and builds for them; bridges where the main roads come in.
+M4a puts the street lab's GPU pipeline in the game for the start town. docs/design/CITYGEN.md has the design.
+- **One pipeline.** `src/streetlab/gpu.ts`, `streets.wgsl` and `height.wgsl` moved to `src/citygen/` (`CityGen`). The
+  parameter table moved to `citygen/params.ts`. The lab's panel (`streetlab/control.ts`) keeps only its own controls
+  (the site, the camera, taps, test arterials). The game's `citygen/town.ts` (`FieldTown`) takes the defaults plus the
+  town's radius and seed.
+- **A box of the window.** `height.wgsl` reads a box of the window (uniform: first column and row, size; the row
+  even, so hex parity holds). The town's box is whole regions round its centre: 1.6 radii and a margin (256 x 256
+  for a town of radius 60). The level opens the first window round it (the fortress's `windowHolding`). The town is
+  made once from the live land. Its mesh is in the box's frame, placed by a new `Renderer.addMesh` transform (draw
+  binding 28, `vsSkin` adds `MESH_XF`). A slide or warp writes 16 bytes. Checked: pan, warp 704 columns away and
+  back, a +64 slide; the town sits on the same land.
+- **Fixed in passing:** `height.wgsl` tested the sea against `G.org.x` (the window's world x) instead of
+  `G.ocean.x`. In the lab the origin is 0, so it never fired. In the game every column would have been sea.
+- **The old town off, per settlement.** `Settlements.byFields(id)`: no plan, no stamps, no far plan, no view, no life
+  for it. Its record stays.
+- **Arterials and bridges.** The site's approach directions go up as `ART`. `artSpan` finds each arterial's length and
+  its water crossings (a deck at the higher bank + 1.5; over 60 cells, or water to the edge, ends it at the shore).
+  `artMesh` draws ribbons, decks and pillars every 6 units. Arterials drop the lots they cross and make supercell
+  growth cheap along them (× 0.6). First try, dropped: arterials as distance-flood seeds. φ became a star at the
+  centre and the river lab site went from 390 lots to 199, with streets piled up. With the corridor instead it has
+  365.
+- **Height to plot.** A building is no taller than 0.7 × its footprint's shortest side (at least a storey, at most
+  the storeys' most × 1.3). `hRatio` 0 gives the lab's old rule.
+- **The contract** (the coordinator: buildings stay plain extrusions; the style generator and the construction shader
+  are other sessions). `lotRec` writes a 24-word record a lot slot and a landmark site: parcel, footprint, frontage,
+  kind, district, storeys, height, base z, growth key, seed. There is a progress buffer (f32 0–1, 1 when made) and
+  counts. `lotMesh` now draws from the records, scaling height by progress.
+  `src/api/contracts/citygen.ts`; `FieldTown.lots`.
+- **Measurements** (headless D3D11, Muru, 9 reruns from the field stage): median 1.87 / 1.96 ms GPU (1.51–2.35);
+  heights 0.20 ms once; 6.2–7.1 ms for the first run in a page (first pipeline use). 123 lots, 3 approach roads.
+  Lab regression: Muru with `hRatio=0` matches the old shot (467 lots vs 473, from the sea fix).
+- **Look** (sheet in the session scratchpad, citygen/m4a): the old walled Muru is gone with the flag. The field town
+  spans both banks with an east–west arterial and a deck over the river. Trees still grow through it (no claims until
+  M4b). The straight arterial doesn't follow the stamped atlas road, which curves away to the south-west (CG6). At
+  radius 60 the town is sparser than the lab's radius-120 Muru.

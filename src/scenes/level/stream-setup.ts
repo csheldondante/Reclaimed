@@ -24,6 +24,8 @@ import { worldSaveOf } from '../level';
 import type { LevelScene } from '../level';
 import { urlFlags } from '../../flags';
 import { worldApiOf } from './world-api';
+import { FieldTown } from '../../citygen/town';
+import { whenPipelinesReady } from '../../gpu/pipeline';
 
 /** sleep and the streamed window, with what follows its slides */
 export function attachStream(scene: LevelScene): void {
@@ -337,6 +339,31 @@ export function attachStream(scene: LevelScene): void {
         reach: (w, h, origin) => new FortressReachGpu(host.gpu.device, core.world, w, h, origin),
         oz: () => S.oz,
       });
+      // (citygen M4a, ?citygen=fields) the start town made by the GPU field generator over its land in the window, once
+      // the level's pipelines are ready; its mesh placed again when the window slides (16 bytes), never remade
+      const fid = a!.fieldTown;
+      if (fid) {
+        const fs = st.seeds.find((x) => x.rec.id === fid)!;
+        whenPipelinesReady(() => {
+          const town = new FieldTown(
+            {
+              device: host.gpu.device,
+              world: { globals: core.world.globals, chunks: core.world.chunks, layers: core.world.layers, water: core.world.water },
+              addMesh: (v, g, x) => core.renderer.addMesh(v, g, x),
+              removeMesh: (g) => core.renderer.removeMesh(g),
+              origin: () => S.origin,
+              oz: () => S.oz,
+              dims: { w: dims.w, h: dims.h },
+              wrap: { cols: a!.atlas.p.cols, rows: a!.atlas.p.rows },
+            },
+            { id: fs.rec.id, name: fs.rec.name, at: fs.rec.at, size: fs.rec.size, approaches: fs.approaches, seed: fs.seed },
+          );
+          scene.fieldTown = town;
+          S.onSlide.push(() => town.place());
+          S.onWarp.push(() => town.place());
+          void town.made.then((t) => console.log(`[citygen] ${fs.rec.name} (${fs.rec.id}, ${fs.rec.size}): ${t.lots} lots, ${fs.approaches.length} approach roads; GPU ms ${t.total?.toFixed(2) ?? 'n/a'} (heights ${t.height?.toFixed(2) ?? 'n/a'})`));
+        });
+      }
       // (round 128i, FT-67) ?townview=0: the towns not drawn nor claimed (no settlements view) — the town bench's split of
       // a slide's cost between the towns and the terrain streaming (src/perf/townbench.ts)
       if (host.params.get('townview') === '0') {

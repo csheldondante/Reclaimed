@@ -4133,3 +4133,16 @@ buffers into one or splitting the kernel.
 
 **Other counts:** structure-piece grids `GRID_CAP` 256 (structures/gpu.ts); voxel structure grids `MAX_STRUCTS` 8 and
 projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 window chunks (`MAX_PAGES`, sim/pages.ts).
+
+## Towns from fields (citygen M4a)
+
+- `src/citygen/` is the one town generator, shared by the street lab (`?level=streetlab`) and the game
+  (`?citygen=fields`, `citygen/town.ts` FieldTown). docs/design/CITYGEN.md.
+- Inputs are uploads only: the box of the window it reads (height.wgsl binding 7), the passes' uniforms (centre,
+  radius, seed, parameters) and the approach directions (`ART`).
+- Output contract: `src/api/contracts/citygen.ts` (`CityLots`). Lot records (24 words), counts, a progress buffer
+  and the place transform. Consumers never read the generator's other buffers.
+- `Renderer.addMesh(verts, indirect, xform?)`: an optional uniform vec4 (draw binding 28, `MESH_XF` in
+  render/bodies.wgsl vsSkin) added to every vertex. A mesh made in its own frame is placed by 16 bytes when the window
+  slides, never remade. Every other mesh source binds a zero vec4.
+- `Settlements.byFields(id)`: the old planner makes nothing for that settlement (plan, stamps, far plan, view, life).

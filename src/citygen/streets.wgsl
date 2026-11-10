@@ -32,6 +32,7 @@ struct U {
   h: vec4<f32>, // (m3h) a supercell's size (block lengths), the limit's noise (supercells), the empty fraction, the seed
   h2: vec4<f32>, // (m3h) the growth (0–1), the district tint (1), supercells on (1), the limit (× the town's radius)
   x: vec4<f32>, // (m3i) the town circle's reach (× its radius: with supercells, far enough never to show), 0, 0, 0
+  t: vec4<f32>, // (citygen M4a) an arterial's width, the height-to-plot ratio (0: storeys × a random 0.7–1.3), a deck's clearance over its banks, the longest bridge
 };
 @group(0) @binding(0) var<uniform> u: U;
 
@@ -591,6 +592,8 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
       n += 2u;
       continue;
     }
+    // (M4a: a lot on an arterial's corridor isn't made — the arterial runs through the block)
+    if (artHitB2(q.v)) { continue; }
     let li = atomicAdd(&w6[0], 1u);
     if (li >= u.m.x) { continue; }
     let lo = li * LW;
@@ -738,31 +741,100 @@ fn insetCorner(v: array<vec2<f32>, 4>, d: array<f32, 4>, k: u32) -> vec2<f32> {
   if (abs(den) < 1e-4) { return pb; }
   return pa + da * (cross2(pb - pa, db) / den);
 }
-/** (m3d) a lot paved: flat, a little in from its corners */
-fn paveLot(v: array<vec2<f32>, 4>, mid: vec2<f32>) {
-  let at = room(6u);
-  if (at == NONE) { return; }
-  var z: array<vec3<f32>, 4>;
-  for (var k = 0u; k < 4u; k++) { z[k] = vec3<f32>(mix(v[k], mid, 0.04), hAt(v[k]) + 0.15); }
-  tri(at, z[0], z[1], z[2], C_PAVE);
-  tri(at + 3u, z[0], z[2], z[3], C_PAVE);
+// ---- (citygen M4a) the lot records: the town's contract with what builds on it (api/contracts/citygen.ts) ---------
+// One record a lot slot (RECW words), then one a landmark site from REC_LM: what's on each plot and its shape, in the
+// grid's frame. Made from the lots (and the widths and setback: the mesh stage), read by the mesh here and by whatever
+// dresses or animates the buildings. Words: 0–7 the parcel (4 corners, x y, counter-clockwise), 8–15 the footprint (the
+// parcel inset by its streets' half widths and the setback: the building's; a park's or a plaza's own), 16 the frontage
+// (the parcel's edge k → k+1 on the widest street; 255 none), 17 the kind (REC_*), 18 the supercell (district) id,
+// 19 storeys, 20 the height (f32: base to roof, world units), 21 the base z (f32, window z when made — the grid's frame),
+// 22 the growth key (f32: blocks show out from the centres as growth passes it), 23 the lot's seed (its identity).
+const RECW: u32 = 24u;
+const REC_LM: u32 = 32768u;
+const REC_NONE: u32 = 0u;
+const REC_BUILDING: u32 = 1u;
+const REC_PARK: u32 = 2u;
+const REC_PLAZA: u32 = 3u;
+const REC_LANDMARK: u32 = 4u;
+/** the edge on the widest street: a major line (class 1) over a minor street (2); 255 none */
+fn frontage(e: u32) -> u32 {
+  var best = 255u;
+  var bc = 0u;
+  for (var k = 0u; k < 4u; k++) {
+    let c = ecls(e, k);
+    if (c == 1u && bc != 1u) { best = k; bc = 1u; }
+    else if (c == 2u && bc == 0u) { best = k; bc = 2u; }
+  }
+  return best;
 }
-/** one thread a lot slot: inset, extruded — a park when no street fronts it (r1 the lots, r2 their count, r3 H, r4 the distance) */
+/** a record into w7 */
+fn putRec(i: u32, par: array<vec2<f32>, 4>, fp: array<vec2<f32>, 4>, front: u32, kind: u32, sc: City, storeys: u32, height: f32, base: f32, seed: u32) {
+  let o = i * RECW;
+  for (var k = 0u; k < 4u; k++) {
+    set7(o + k * 2u, par[k].x);
+    set7(o + k * 2u + 1u, par[k].y);
+    set7(o + 8u + k * 2u, fp[k].x);
+    set7(o + 9u + k * 2u, fp[k].y);
+  }
+  w7[o + 16u] = front;
+  w7[o + 17u] = kind;
+  w7[o + 18u] = sc.id;
+  w7[o + 19u] = storeys;
+  set7(o + 20u, height);
+  set7(o + 21u, base);
+  set7(o + 22u, sc.t);
+  w7[o + 23u] = seed;
+}
+/** one thread a lot slot (mode 0) or a landmark site (mode 1): its record — what stands there, its footprint, its
+ *  height by the height-to-plot rule (r1 the lots, b2 the supercells, r3 H, r4 the distance, w5 the sites, w6 the
+ *  counts; w7 the records) */
 @compute @workgroup_size(64)
-fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
+fn lotRec(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (u.n.w == 1u) {
+    let k = g.x;
+    if (k >= LM_ROOM) { return; }
+    let o = 1u + k * LMW;
+    var none: array<vec2<f32>, 4>;
+    if (k >= min(w5[0], LM_ROOM) || u.q.y <= 0.0 || bitcast<f32>(w5[o + 2u]) <= 0.0) {
+      putRec(REC_LM + k, none, none, 255u, REC_NONE, cityB2(vec2<f32>(0.0)), 0u, 0.0, 0.0, 0u);
+      return;
+    }
+    let p = vec2<f32>(bitcast<f32>(w5[o]), bitcast<f32>(w5[o + 1u]));
+    let r = bitcast<f32>(w5[o + 2u]);
+    let big = w5[o + 3u] == 1u;
+    // (the circle as its inscribed square, corners on it: the centre their mean, the radius to a corner)
+    var par: array<vec2<f32>, 4>;
+    var fp: array<vec2<f32>, 4>;
+    let rs = max(r - u.b.y * 0.5 - u.b.z - 1.0, 1.0);
+    for (var j = 0u; j < 4u; j++) {
+      let a = f32(j) * TAU / 4.0 + TAU / 8.0;
+      par[j] = p + r * vec2<f32>(cos(a), sin(a));
+      fp[j] = p + select(r - u.b.y * 0.5, rs, big) * vec2<f32>(cos(a), sin(a));
+    }
+    let z = hAt(p);
+    let zlo = z - 1.5;
+    let top = z + max(3.0, u.b.w * 9.0);
+    putRec(REC_LM + k, par, fp, 255u, REC_LANDMARK, cityB2(p), select(0u, u32(max(1.0, round((top - z) / 3.0))), big), select(0.0, top - zlo, big), zlo, 0x40000000u | k);
+    return;
+  }
   let i = g.x;
-  if (i >= min(b2[0], u.m.x)) { return; }
-  let o = i * LW;
+  if (i >= u.m.x) { return; }
   var v: array<vec2<f32>, 4>;
+  if (i >= min(atomicLoad(&w6[0]), u.m.x)) { putRec(i, v, v, 255u, REC_NONE, cityB2(vec2<f32>(0.0)), 0u, 0.0, 0.0, 0u); return; }
+  let o = i * LW;
   for (var k = 0u; k < 4u; k++) { v[k] = vec2<f32>(r1(o + k * 2u), r1(o + 1u + k * 2u)); }
   let e = b1[o + 8u];
   let hs = b1[o + 9u];
   let mid = 0.25 * (v[0] + v[1] + v[2] + v[3]);
-  if (blockedAt(mid)) { return; }
+  let sc = cityB2(mid);
+  let front = frontage(e);
+  // (blocked, or a landmark's (its own record): nothing)
+  if (blockedAt(mid) || inLandmarkW5(mid)) { putRec(i, v, v, 255u, REC_NONE, sc, 0u, 0.0, 0.0, hs); return; }
   // (m3d: paved — a plaza block, inside a junction's plaza, or a bad lot (a sliver): flat paving, no building)
-  // (m3e: a lot whose middle is in a landmark's circle is the landmark's: none)
-  if (inLandmarkW5(mid)) { return; }
-  if ((hs & PAVED) != 0u || (u.q.x < 1.5 && badQuad(v, 0.0))) { paveLot(v, mid); return; }
+  var pv: array<vec2<f32>, 4>;
+  for (var k = 0u; k < 4u; k++) { pv[k] = mix(v[k], mid, 0.04); }
+  let paveOk = u.q.x < 1.5;
+  if ((hs & PAVED) != 0u || (paveOk && badQuad(v, 0.0))) { putRec(i, v, pv, front, REC_PLAZA, sc, 0u, 0.0, hAt(mid), hs); return; }
   var street = false;
   var d: array<f32, 4>;
   for (var k = 0u; k < 4u; k++) {
@@ -776,29 +848,58 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   // (an inset turned inside out or too small: paved — m3d; m2 left it empty)
   var area = 0.0;
   for (var k = 0u; k < 4u; k++) { area += cross2(q[k], q[(k + 1u) % 4u]); }
-  if (area < 2.0) { if (u.q.x < 1.5) { paveLot(v, mid); } return; }
+  var bad = area < 2.0;
   for (var k = 0u; k < 4u; k++) {
-    if (cross2(q[(k + 1u) % 4u] - q[k], q[(k + 2u) % 4u] - q[(k + 1u) % 4u]) <= 0.0) { if (u.q.x < 1.5) { paveLot(v, mid); } return; }
+    if (cross2(q[(k + 1u) % 4u] - q[k], q[(k + 2u) % 4u] - q[(k + 1u) % 4u]) <= 0.0) { bad = true; }
   }
+  if (bad) { putRec(i, v, pv, front, select(REC_NONE, REC_PLAZA, paveOk), sc, 0u, 0.0, hAt(mid), hs); return; }
   // (m3i: an edge block's lots: one with no street is open land, and now and then one fronting a street is left
   // empty too — a ragged edge)
-  if ((hs & EDGE_LOT) != 0u && (!street || hsh(hs ^ 0x9e37u) < 0.15)) { return; }
-  if (!street) {
-    let at = room(6u);
-    if (at == NONE) { return; }
-    var z: array<vec3<f32>, 4>;
-    for (var k = 0u; k < 4u; k++) { z[k] = vec3<f32>(q[k], hAt(q[k]) + 0.12); }
-    tri(at, z[0], z[1], z[2], C_PARK);
-    tri(at + 3u, z[0], z[2], z[3], C_PARK);
-    return;
-  }
+  if ((hs & EDGE_LOT) != 0u && (!street || hsh(hs ^ 0x9e37u) < 0.15)) { putRec(i, v, q, front, REC_NONE, sc, 0u, 0.0, 0.0, hs); return; }
+  if (!street) { putRec(i, v, q, front, REC_PARK, sc, 0u, 0.0, hAt(mid), hs); return; }
   var zlo = 1e9;
   var zhi = -1e9;
   for (var k = 0u; k < 4u; k++) { let z = hAt(q[k]); zlo = min(zlo, z); zhi = max(zhi, z); }
+  // (M4a, the height-to-plot rule: a building no taller than t.y × its plot's shortest side — never over the storeys'
+  // most, never under a storey — so the street behind it stays in sight at 60°; t.y 0: the lab's storeys × 0.7–1.3)
+  var rise = max(1.0, u.b.w * 3.0 * (0.7 + 0.6 * hsh(hs)));
+  if (u.t.y > 0.0) {
+    var side = 1e9;
+    for (var k = 0u; k < 4u; k++) { side = min(side, distance(q[k], q[(k + 1u) % 4u])); }
+    rise = clamp(u.t.y * side * (0.85 + 0.3 * hsh(hs)), 3.0, max(3.0, u.b.w * 3.0 * 1.3));
+  }
+  let base = zlo - 0.5;
+  putRec(i, v, q, front, REC_BUILDING, sc, u32(max(1.0, round(rise / 3.0))), zhi + rise - base, base, hs);
+}
+/** one thread a lot's record: a building extruded to its height × its construction progress (r2: 0–1), a park or a
+ *  plaza flat; a landmark's is drawn by lmMesh (r1 the records, r2 the progress, r3 H, w6 the counts) */
+@compute @workgroup_size(64)
+fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= min(atomicLoad(&w6[0]), u.m.x)) { return; }
+  let o = i * RECW;
+  let kind = b1[o + 17u];
+  if (kind == REC_NONE || kind == REC_LANDMARK) { return; }
+  var q: array<vec2<f32>, 4>;
+  for (var k = 0u; k < 4u; k++) { q[k] = vec2<f32>(r1(o + 8u + k * 2u), r1(o + 9u + k * 2u)); }
+  if (kind != REC_BUILDING) {
+    let at = room(6u);
+    if (at == NONE) { return; }
+    let lift = select(0.12, 0.15, kind == REC_PLAZA);
+    let col = select(C_PARK, C_PAVE, kind == REC_PLAZA);
+    var z: array<vec3<f32>, 4>;
+    for (var k = 0u; k < 4u; k++) { z[k] = vec3<f32>(q[k], hAt(q[k]) + lift); }
+    tri(at, z[0], z[1], z[2], col);
+    tri(at + 3u, z[0], z[2], z[3], col);
+    return;
+  }
+  let h = r1(o + 20u) * clamp(r2(i), 0.0, 1.0);
+  if (h < 0.05) { return; }
+  let base = r1(o + 21u);
+  let top = base + h;
+  let hs = b1[o + 23u];
   let at = room(30u);
   if (at == NONE) { return; }
-  let top = zhi + max(1.0, u.b.w * 3.0 * (0.7 + 0.6 * hsh(hs)));
-  let base = zlo - 0.5;
   let roof = roofColour(u32(hsh(hs * 7u + 3u) * 5.999));
   tri(at, vec3<f32>(q[0], top), vec3<f32>(q[1], top), vec3<f32>(q[2], top), roof);
   tri(at + 3u, vec3<f32>(q[0], top), vec3<f32>(q[2], top), vec3<f32>(q[3], top), roof);
@@ -2105,7 +2206,7 @@ var<workgroup> scS: array<vec2<f32>, 256>;
 var<workgroup> scW: array<f32, 2048>;
 /** what it costs the town to grow from supercell seed a to b: their distance × (1 + its slope × 3, + 4 across
  *  water or a cliff — a bridge) × the two cells' random factors' mean × a discount along a major line (the cross
- *  street runs across ∇φ: × 0.7) and along a shore (× 0.6) (r3 the smoothed heights, b4 φ) */
+ *  street runs across ∇φ: × 0.7) and along a shore or an arterial (× 0.6) (r3 the smoothed heights, b4 φ, w7 ART) */
 fn growCost(a: vec2<f32>, b: vec2<f32>, fa: f32, fb: f32) -> f32 {
   let L = max(distance(a, b), 1e-3);
   let slope = abs(hsAt3(b) - hsAt3(a)) / L;
@@ -2117,6 +2218,8 @@ fn growCost(a: vec2<f32>, b: vec2<f32>, fa: f32, fb: f32) -> f32 {
     let g = gradAt(1u, m);
     if (dot(g, g) > 1e-10 && abs(dot(normalize(b - a), normalize(g))) < 0.35) { disc = 0.7; }
     if (fdAt(m) < 1.2 * u.a.x) { disc = min(disc, 0.6); }
+    // (M4a: along an arterial, as along a shore)
+    if (artDistW7(m) < 0.5 * u.a.x) { disc = min(disc, 0.6); }
   }
   return L * (1.0 + 3.0 * slope + water) * 0.5 * (fa + fb) * disc;
 }
@@ -2306,4 +2409,153 @@ fn ctint(@builtin(global_invocation_id) g: vec3<u32>) {
   let v3 = vec3<f32>(cpos(q3.x, q3.y), r3(ixq(q3)) + 0.08);
   tri(at, v0, v1, v2, col);
   tri(at + 3u, v0, v2, v3, col);
+}
+
+// ==== citygen M4a: arterials and their bridges ===================================================================
+// A town's approach roads: up to NART spokes from its centre out along the directions its atlas roads leave by (the
+// CPU's upload: the directions, nothing else), each to the grid's edge. On the GPU: where each crosses water (the wet
+// mask) its spans — a deck at a fixed height (its higher bank + t.z) with pillars down to the bed; a crossing longer
+// than t.w, or water that runs on to the grid's edge, ends the arterial at its shore instead (no bridge to nowhere).
+// The arterials cut through the blocks they cross (a lot on one isn't made: `lots`), the supercells grow cheaply along
+// them (growCost: × 0.6, as along a shore), and they're always drawn, centre to edge, whatever the growth. (Tried
+// first: the arterials as seeds of the distance flood, like a shore — the major lines ran along them, but where they
+// meet at the centre φ collapsed into a star and the town fell apart: half the lots, streets piled up.)
+// ART (words): 0 the count (the CPU's), 1–3 unused; arterial k at 4 + k · AW: 0 1 its direction (the CPU's), 2 its
+// length (GPU), 3 its spans (GPU), 4 + 3s: span s's start and end (along it) and its deck's z.
+const NART: u32 = 8u;
+const AW: u32 = 16u;
+const NSPAN: u32 = 4u;
+const ART_PIECES: u32 = 512u;
+const C_ART: u32 = 0xe9dfc9u;
+const C_DECK: u32 = 0xb08f6au;
+const C_PIER: u32 = 0x8f8a82u;
+/** a deck's thickness; a pillar every this many pieces (world units); a pillar's half width */
+const DECK_T: f32 = 0.8;
+const PIER_EVERY: u32 = 6u;
+const PIER_HW: f32 = 0.6;
+fn artBase(k: u32) -> u32 { return 4u + k * AW; }
+/** how far from c along d the grid's edge is (a column in) */
+fn edgeT(c: vec2<f32>, d: vec2<f32>) -> f32 {
+  let lo = vec2<f32>(1.0, 1.0);
+  let hi = vec2<f32>(f32(W()) - 1.0, f32(H()) * ROW_H - 1.0);
+  var t = 1e9;
+  if (d.x > 1e-5) { t = min(t, (hi.x - c.x) / d.x); }
+  if (d.x < -1e-5) { t = min(t, (lo.x - c.x) / d.x); }
+  if (d.y > 1e-5) { t = min(t, (hi.y - c.y) / d.y); }
+  if (d.y < -1e-5) { t = min(t, (lo.y - c.y) / d.y); }
+  return max(t, 0.0);
+}
+/** one thread an arterial: its length and its bridges' spans (b1 the wet mask, b3 the heights; w5 ART) */
+@compute @workgroup_size(8)
+fn artSpan(@builtin(global_invocation_id) g: vec3<u32>) {
+  let k = g.x;
+  if (k >= min(w5[0], NART)) { return; }
+  let o = artBase(k);
+  let d = normalize(vec2<f32>(bitcast<f32>(w5[o]), bitcast<f32>(w5[o + 1u])));
+  let c = u.d.xy;
+  let tE = edgeT(c, d);
+  var end = tE;
+  var n = 0u;
+  var wet = false;
+  var t0 = 0.0;
+  for (var t = 0.0; t < tE; t += 0.5) {
+    let w = r1(ixp(c + d * t)) > 0.5;
+    if (w && !wet) { wet = true; t0 = t; }
+    if (!w && wet) {
+      wet = false;
+      // (the deck runs a unit onto each bank; its height the higher bank's, a little over)
+      let a = max(t0 - 1.0, 0.0);
+      let b = min(t + 1.0, tE);
+      if (b - a > u.t.w || n == NSPAN) { end = a; break; }
+      let s = o + 4u + n * 3u;
+      set5(s, a);
+      set5(s + 1u, b);
+      set5(s + 2u, max(r3(ixp(c + d * a)), r3(ixp(c + d * b))) + u.t.z);
+      n++;
+    }
+  }
+  if (wet) { end = min(end, max(t0 - 1.0, 0.0)); }
+  set5(o + 2u, end);
+  w5[o + 3u] = n;
+}
+/** whether a quad meets an arterial's corridor (its half width and a cell): the quad's extent across the arterial and
+ *  along it against the corridor's (ART at b2) */
+fn artHitB2(v: array<vec2<f32>, 4>) -> bool {
+  let c = u.d.xy;
+  let m = u.t.x * 0.5 + 1.0;
+  for (var k = 0u; k < min(b2[0], NART); k++) {
+    let o = artBase(k);
+    let d = normalize(vec2<f32>(r2(o), r2(o + 1u)));
+    let n = vec2<f32>(-d.y, d.x);
+    var s0 = 1e9; var s1 = -1e9; var t0 = 1e9; var t1 = -1e9;
+    for (var j = 0u; j < 4u; j++) {
+      let r = v[j] - c;
+      s0 = min(s0, dot(r, n)); s1 = max(s1, dot(r, n));
+      t0 = min(t0, dot(r, d)); t1 = max(t1, dot(r, d));
+    }
+    if (s1 > -m && s0 < m && t1 > 0.0 && t0 < r2(o + 2u)) { return true; }
+  }
+  return false;
+}
+/** how near p is to an arterial (ART at w7; 1e9 none) */
+fn artDistW7(p: vec2<f32>) -> f32 {
+  let c = u.d.xy;
+  var best = 1e9;
+  for (var k = 0u; k < min(w7[0], NART); k++) {
+    let o = artBase(k);
+    let d = normalize(vec2<f32>(bitcast<f32>(w7[o]), bitcast<f32>(w7[o + 1u])));
+    let t = clamp(dot(p - c, d), 0.0, bitcast<f32>(w7[o + 2u]));
+    best = min(best, distance(p, c + d * t));
+  }
+  return best;
+}
+/** a wall from p to q (outward: to the right of p → q), z0 up to z1 */
+fn wall(at: u32, p: vec2<f32>, q: vec2<f32>, z0: f32, z1: f32, col: u32) {
+  tri(at, vec3<f32>(p, z0), vec3<f32>(q, z0), vec3<f32>(q, z1), col);
+  tri(at + 3u, vec3<f32>(p, z0), vec3<f32>(q, z1), vec3<f32>(p, z1), col);
+}
+/** one thread an arterial's piece (a world unit): a ribbon on the ground, or over a span a deck piece and, every
+ *  PIER_EVERY, a pillar to the bed (b1 ART, r3 the heights; w7 the mesh) */
+@compute @workgroup_size(64)
+fn artMesh(@builtin(global_invocation_id) g: vec3<u32>) {
+  let k = g.x / ART_PIECES;
+  let j = g.x % ART_PIECES;
+  if (k >= min(b1[0], NART)) { return; }
+  let o = artBase(k);
+  let d = normalize(vec2<f32>(r1(o), r1(o + 1u)));
+  let L = r1(o + 2u);
+  let t0 = f32(j);
+  if (t0 >= L) { return; }
+  let t1 = min(t0 + 1.0, L);
+  let c = u.d.xy;
+  let a = c + d * t0;
+  let b = c + d * t1;
+  let hw = u.t.x * 0.5;
+  let mid = 0.5 * (t0 + t1);
+  var deck = -1e9;
+  for (var s = 0u; s < min(b1[o + 3u], NSPAN); s++) {
+    let q = o + 4u + s * 3u;
+    if (mid >= r1(q) && mid <= r1(q + 1u)) { deck = r1(q + 2u); }
+  }
+  if (deck < -1e8) {
+    let at = room(6u);
+    if (at == NONE) { return; }
+    ribbon(at, a - d * 0.05, b + d * 0.05, hw, select(C_ART, C_STEEP, steep(a, b)));
+    return;
+  }
+  let pier = j % PIER_EVERY == 0u && hAt(a) < deck - DECK_T - 0.5;
+  let at = room(select(18u, 42u, pier));
+  if (at == NONE) { return; }
+  let s = vec2<f32>(-d.y, d.x) * hw;
+  let lo = deck - DECK_T;
+  tri(at, vec3<f32>(a - s, deck), vec3<f32>(b - s, deck), vec3<f32>(b + s, deck), C_DECK);
+  tri(at + 3u, vec3<f32>(a - s, deck), vec3<f32>(b + s, deck), vec3<f32>(a + s, deck), C_DECK);
+  wall(at + 6u, a - s, b - s, lo, deck, C_DECK);
+  wall(at + 12u, b + s, a + s, lo, deck, C_DECK);
+  if (!pier) { return; }
+  let u1 = d * PIER_HW;
+  let u2 = vec2<f32>(-d.y, d.x) * PIER_HW;
+  let q = array<vec2<f32>, 4>(a - u1 - u2, a + u1 - u2, a + u1 + u2, a - u1 + u2);
+  let z0 = hAt(a) - 0.5;
+  for (var e = 0u; e < 4u; e++) { wall(at + 18u + e * 6u, q[e], q[(e + 1u) % 4u], z0, lo, C_PIER); }
 }

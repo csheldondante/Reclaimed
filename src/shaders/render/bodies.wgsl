@@ -55,13 +55,14 @@ fn vsBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
 // Two vec4<u32> a vertex, three a triangle (no index buffer): its world
 // position (f32 bits) and the material word (as vsBody's), then its
 // triangle's normal. Lit and shaded like a body's voxel (fsBody), flat per
-// triangle: lo-fi on purpose.
+// triangle: lo-fi on purpose. (citygen M4a) Placed by its source's MESH_XF: a town's grid moved with the window.
+@group(0) @binding(28) var<uniform> MESH_XF: vec4<f32>;
 @vertex
 fn vsSkin(@builtin(vertex_index) vi: u32) -> VOut {
   var o: VOut;
   let a = instances[vi * 2u];
   let nb = instances[vi * 2u + 1u];
-  let wp = bitcast<vec3<f32>>(a.xyz);
+  let wp = bitcast<vec3<f32>>(a.xyz) + MESH_XF.xyz;
   o.pos = CAM.viewProj * vec4<f32>(wp, 1.0);
   o.wpos = wp;
   o.nrm = bitcast<vec3<f32>>(nb.xyz);

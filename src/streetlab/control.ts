@@ -1,5 +1,6 @@
 // (street lab, milestones 1–3) The street lab in a level: its panel (the tuning editor shell on the lab's own registry —
-// the noise lab's pattern), its GPU runs (gpu.ts) and the mesh in the game's renderer. A change reruns from the stage
+// the noise lab's pattern) over the town generator (citygen/: the game's towns run the same pipeline, M4a), its GPU
+// runs and the mesh in the game's renderer. A change reruns from the stage
 // it touches (a width: the mesh only; a lot slider: the lots; the block length: the cross streets; the points' sliders:
 // φ; the cliffs: all), and the panel shows that run's GPU ms. A tap places, moves, selects or removes a point (m3a):
 // φ is rerun over that point's radius only. The camera's pitch is the camera's own (Camera.elevation), the town fitted
@@ -8,65 +9,28 @@ import { Registry, type ParamSpec } from '../tune/registry';
 import { TunePanel } from '../ui/tunepanel';
 import { whenPipelinesReady } from '../gpu/pipeline';
 import { ROW_H } from '../world/lattice';
-import { AUTO, BAD, CROSS, FIELDS, LANDMARKS, MAJORS, SHAPES, MIN_BLOCK, NPTS, STAGES, StreetLabGpu, type Box, type Stage, type StreetParams, type StreetTimes, type StreetWorld } from './gpu';
+import { AUTO, MAJORS, NPTS, STAGES, CityGen, type Box, type Stage, type StreetParams, type StreetTimes, type StreetWorld } from '../citygen/gpu';
+import { CITY_PARAMS, scaled } from '../citygen/params';
 
 /** the sites (game/levels.ts streetSite), as the panel names them: the mesa is the cliff site */
 export const SITES = ['muru', 'river', 'mesa', 'mountain', 'coast'] as const;
 const SITE_NAMES = ['Muru', 'river', 'cliff (mesa)', 'mountain', 'coast'];
 const TAP = ['place / move / select', 'remove'];
 
-type Spec = ParamSpec & { stage: Stage | 'camera' | 'point' | 'site' | 'none' };
+type Spec = ParamSpec & { stage: Stage | 'camera' | 'point' | 'site' | 'arterials' | 'none' };
+/** the lab's own controls (the site, taps, the camera, test arterials) and every town parameter (citygen/params.ts) */
 const P: Record<string, Spec> = {
   site: { label: 'site', units: '', min: 0, max: SITES.length - 1, step: 1, def: 0, choices: SITE_NAMES, help: 'reloads the page on that site, the other keys kept', stage: 'site' },
-  majors: { label: 'major lines', units: '', min: 0, max: MAJORS.length - 1, step: 1, def: 1, choices: [...MAJORS], stage: 'phi' },
-  cross: { label: 'cross streets', units: '', min: 0, max: CROSS.length - 1, step: 1, def: 0, choices: [...CROSS], stage: 'phi' },
-  field: { label: 'distance field', units: '', min: 0, max: FIELDS.length - 1, step: 1, def: 1, choices: [...FIELDS], help: 'blurring the mask, not the distance, keeps the contours evenly spaced at the creases', stage: 'field' },
-  maskR: { label: 'mask smoothing', units: 'cells', min: 1, max: 10, step: 1, def: 3, help: 'the water/cliff mask’s blur radius (two passes) before the threshold', stage: 'field' },
-  grown: { label: 'cross streets made', units: '', min: 0, max: 1, step: 1, def: 1, choices: ['paired per strip (old)', 'grown line by line'], help: 'grown: each street climbs on across the lines; too near another it ends at a T; where they spread, a new one starts', stage: 'trace' },
-  lmTopK: { label: 'landmark sites kept', units: '', min: 1, max: 16, step: 1, def: 2, help: 'only the busiest, most acute junctions', stage: 'trace' },
-  city: { label: 'supercells', units: '', min: 0, max: 1, step: 1, def: 1, choices: ['off (m3g)', 'on'], help: 'large cells that decide the city’s limit (whole blocks), its empty districts and its growth', stage: 'trace' },
-  limit: { label: 'growth budget', units: '× radius', min: 0.2, max: 2, step: 0.05, def: 0.9, help: 'a supercell is in while its cost distance from the centres (slopes and water dear, roads and shores cheap, each cell its own factor) is under this', stage: 'trace' },
-  limitNoise: { label: 'budget noise', units: '±', min: 0, max: 0.8, step: 0.05, def: 0.35, help: 'low-frequency noise on each supercell’s budget', stage: 'trace' },
-  scSize: { label: 'supercell size', units: 'blocks', min: 2, max: 8, step: 0.25, def: 3, stage: 'trace' },
-  emptyFrac: { label: 'empty districts', units: 'share', min: 0, max: 0.8, step: 0.05, def: 0.2, help: 'supercells left empty (their major roads and arterials stay); never at a centre or the edge', stage: 'trace' },
-  citySeed: { label: 'city seed', units: '', min: 0, max: 99, step: 1, def: 1, stage: 'trace' },
-  growth: { label: 'city growth', units: '0–1', min: 0, max: 1, step: 0.01, def: 1, help: 'blocks show out from the centres as this grows (each block’s key kept on the GPU)', stage: 'lots' },
-  tint: { label: 'district tint', units: '', min: 0, max: 1, step: 1, def: 0, choices: ['off', 'on'], stage: 'mesh' },
-  scale: { label: 'city scale', units: '×', min: 0.5, max: 2.5, step: 0.05, def: 1, help: 'contour spacing and block length × this, lot areas × its square: bigger reads bigger', stage: 'phi' },
-  bad: { label: 'bad cells →', units: '', min: 0, max: BAD.length - 1, step: 1, def: 0, choices: [...BAD], help: 'a sliver or thin triangle (an angle under 25°, too thin, under the merge area): joined to its neighbour across its longer cross street, or paved', stage: 'trace' },
-  lmMult: { label: 'landmark sites', units: '×', min: 0, max: 2, step: 0.05, def: 1, help: 'round plots at the busy junctions (their radius ×; 0 none): the fans’ streets end at a ring road round them', stage: 'trace' },
-  lmKind: { label: 'landmark sites →', units: '', min: 0, max: LANDMARKS.length - 1, step: 1, def: 0, choices: [...LANDMARKS], stage: 'trace' },
-  lmN: { label: 'busy junction: streets', units: '', min: 2, max: 8, step: 1, def: 4, help: 'cross streets ending at one point that make it busy (or two meeting under 30°)', stage: 'trace' },
-  lmRmin: { label: 'landmark radius min', units: 'cells', min: 2, max: 40, step: 0.5, def: 7, stage: 'trace' },
-  lmRmax: { label: 'landmark radius max', units: 'cells', min: 4, max: 60, step: 0.5, def: 16, help: 'r = block length / the smallest angle between its streets, between these', stage: 'trace' },
-  majorSpacing: { label: 'contour spacing', units: 'cells', min: 12, max: 120, step: 1, def: 28, help: 'between the major lines (φ’s level sets)', stage: 'phi' },
-  blend: { label: 'blend width', units: 'cells', min: 0, max: 40, step: 1, def: 12, help: 'the smooth min’s k: how softly a point’s rings join the contours', stage: 'phi' },
-  pointR: { label: 'point radius', units: 'cells', min: 8, max: 120, step: 1, def: 40, help: 'beyond this (× the point’s intensity) a point has no effect', stage: 'phi' },
-  strength: { label: 'point strength', units: '×', min: 0, max: 2, step: 0.05, def: 1, help: 'how deep a point bends the contours (× its intensity): its rings reach strength × radius', stage: 'phi' },
-  autoPts: { label: 'auto points', units: '', min: 0, max: AUTO, step: 1, def: 3, help: 'the town’s middle moved inland, then a knoll, a shore point, another knoll', stage: 'phi' },
   intensity: { label: 'selected point intensity', units: '×', min: 0.1, max: 2, step: 0.05, def: 1, help: 'tap a point to select it (gold); this scales its radius and strength only', stage: 'point' },
   tap: { label: 'a tap', units: '', min: 0, max: 1, step: 1, def: 0, choices: TAP, help: 'a tap near a point selects it, a tap away moves the selected one there (or places a new one)', stage: 'none' },
-  shape: { label: 'shape the ground', units: '', min: 0, max: SHAPES.length - 1, step: 1, def: 0, choices: [...SHAPES], help: 'the lab’s heights only: terraces, or a cart road up the slope (spiral round the selected point or the knoll)', stage: 'field' },
-  band: { label: 'band height', units: 'cells', min: 1, max: 16, step: 0.5, def: 4, help: 'a terrace’s step; the spiral climbs one a turn, the switchbacks one a leg', stage: 'field' },
-  grade: { label: 'cart grade', units: 'rise/run', min: 0.03, max: 0.5, step: 0.01, def: 0.12, help: 'the carts’ steepest climb: the spiral’s smallest radius (stairs inside it), the switchbacks’ leg length', stage: 'mesh' },
-  ringSpacing: { label: 'ring spacing (radial)', units: 'cells', min: 12, max: 120, step: 1, def: 38, help: 'between the rings (and so the spokes)', stage: 'phi' },
-  townR: { label: 'town radius', units: 'cells', min: 32, max: 200, step: 1, def: 120, stage: 'phi' },
-  cliff: { label: 'cliff slope', units: 'rise/run', min: 0.3, max: 4, step: 0.05, def: 1.2, help: 'smoothed ground steeper than this is a cliff: a barrier, like the water', stage: 'field' },
-  blockLen: { label: 'block length', units: 'cells', min: MIN_BLOCK, max: 64, step: 1, def: 18, help: 'cross streets this far apart along a line', stage: 'trace' },
-  gap: { label: 'gap fill', units: '', min: 0, max: 1, step: 1, def: 1, choices: ['off', 'on'], help: 'the town’s empty land (no block, no landmark) split into blocks along minor roads', stage: 'lots' },
-  bigBlock: { label: 'big block', units: 'cells²', min: 0, max: 4000, step: 50, def: 900, help: 'a block this big gets a minor road at its first two splits (0 none)', stage: 'lots' },
-  maxLot: { label: 'max lot area', units: 'cells²', min: 16, max: 600, step: 4, def: 90, stage: 'lots' },
-  minLot: { label: 'merge (min lot area)', units: 'cells²', min: 4, max: 300, step: 2, def: 30, help: 'a split that would leave a lot under this is not made', stage: 'lots' },
-  majorWidth: { label: 'major street width', units: 'cells', min: 1, max: 12, step: 0.5, def: 4, stage: 'mesh' },
-  minorWidth: { label: 'minor street width', units: 'cells', min: 1, max: 8, step: 0.5, def: 2.5, stage: 'mesh' },
-  setback: { label: 'setback', units: 'cells', min: 0, max: 6, step: 0.25, def: 0.75, stage: 'mesh' },
-  height: { label: 'height', units: 'storeys', min: 0.5, max: 12, step: 0.5, def: 2, help: 'three cells a storey, each lot a little more or less', stage: 'mesh' },
-  stairs: { label: 'stairs slope', units: 'rise/run', min: 0.05, max: 1.5, step: 0.05, def: 0.35, help: 'a street rising more than this along itself is orange', stage: 'mesh' },
   cut: { label: 'cut above', units: 'cells', min: 0, max: 120, step: 1, def: 30, help: 'nothing drawn higher than this over the town ground (the camera slice; 0 none): tall land out of the way', stage: 'camera' },
   pitch: { label: 'camera pitch', units: '°', min: 15, max: 85, step: 1, def: 60, help: 'the camera above the ground plane (the game: 30°)', stage: 'camera' },
+  artN: { label: 'test arterials', units: '', min: 0, max: 6, step: 1, def: 0, help: 'approach roads evenly round the centre (the game: the site’s atlas roads)', stage: 'arterials' },
+  artAngle: { label: 'arterials’ turn', units: '°', min: 0, max: 360, step: 5, def: 20, stage: 'arterials' },
+  ...CITY_PARAMS,
 };
-export const STREET_TUNING = new Registry({ streets: { title: 'Streets', owner: 'streetlab/streets.wgsl', params: P } });
-const values = () => STREET_TUNING.values.streets as unknown as StreetParams & { pitch: number; cut: number; intensity: number; tap: number; site: number; scale: number };
+export const STREET_TUNING = new Registry({ streets: { title: 'Streets', owner: 'citygen/streets.wgsl', params: P } });
+const values = () => STREET_TUNING.values.streets as unknown as StreetParams & { pitch: number; cut: number; intensity: number; tap: number; site: number; scale: number; artN: number; artAngle: number };
 
 export interface StreetLabHooks {
   /** the mesh into the renderer (Renderer.addMesh) */
@@ -81,7 +45,7 @@ const NOHUD = 'streetlab-nohud';
 const KEEP = 'streetlab-keep';
 
 export class StreetLabControl {
-  readonly gpu: StreetLabGpu;
+  readonly gpu: CityGen;
   readonly panel: TunePanel;
   readonly registry = STREET_TUNING;
   readonly majors = MAJORS;
@@ -106,7 +70,7 @@ export class StreetLabControl {
     private hooks: StreetLabHooks,
     params: URLSearchParams,
   ) {
-    this.gpu = new StreetLabGpu(device, world);
+    this.gpu = new CityGen(device, world);
     hooks.addMesh(this.gpu.verts, this.gpu.args);
     // (?majors=0..3 &pitch= &height= … any parameter by its key; ?site= by its name)
     for (const key of Object.keys(P)) {
@@ -161,11 +125,23 @@ export class StreetLabControl {
         if (st === 'camera') this.fit();
         else if (st === 'site') this.goSite();
         else if (st === 'point') this.setIntensity(values().intensity);
+        else if (st === 'arterials') {
+          this.arterials();
+          this.request('field');
+        }
         else if (st !== 'none') this.request(st ?? 'field');
       });
       this.fit();
+      this.arterials();
       this.request('field');
     });
+  }
+
+  /** (M4a) the test arterials: artN directions evenly round the centre from artAngle (the game's: its atlas roads') */
+  private arterials(): void {
+    const v = values();
+    const a0 = (v.artAngle * Math.PI) / 180;
+    this.gpu.setArterials(Array.from({ length: v.artN }, (_, k) => [Math.cos(a0 + (k * 2 * Math.PI) / v.artN), Math.sin(a0 + (k * 2 * Math.PI) / v.artN)] as const));
   }
 
   /** the game's HUD shown or hidden */
@@ -196,10 +172,7 @@ export class StreetLabControl {
   request(from: Stage = 'field', box?: Box): void {
     if (from === 'field') this.fit();
     // (the city's scale: the spacings × it, the lot areas × its square)
-    const v = { ...values() };
-    const k = v.scale;
-    Object.assign(v, { majorSpacing: v.majorSpacing * k, ringSpacing: v.ringSpacing * k, blockLen: Math.max(MIN_BLOCK, v.blockLen * k), maxLot: v.maxLot * k * k, minLot: v.minLot * k * k });
-    this.settled = this.gpu.run(v, from, box).then(
+    this.settled = this.gpu.run(scaled({ ...values() }), from, box).then(
       (t) => this.got(t),
       (e) => {
         if (!this.dead) throw e;

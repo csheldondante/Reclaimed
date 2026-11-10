@@ -637,7 +637,7 @@ Also: "Looking heavy and moving at a consistent speed matter more than preventin
 - **Tiles carry their rules.** Each building tile declares the paths it connects (doors, stairs, wall-walks, elevators). Roads run between neighbouring tiles of different types. Dense housing gets passages through its tiles. Large roads can be laid across the map, and the grid's roads join them.
 - **The town claims its space** as External intervals naming the town's grid. Inside, a building's own material tick (section 3) happens only when needed.
 - **Saving** keeps only the player's edits to the plan, keyed by world position. The generated town is re-derived from the seed. A claimed interval with no owner is an error.
-- **Building in the game.** The player picks a type and paints cells. Blocks are built by builders with materials. Unreachable placements get a passage or are refused (section 13).
+- **Building in the game.** The player chooses opportunities, and the game places and builds for them (decided 2026-11-10, below). Blocks are built by builders with materials. Unreachable placements get a passage or are refused (section 13).
 
 **Rules.**
 - One building system. No second plan, grid or claim path for any kind of building.
@@ -645,8 +645,14 @@ Also: "Looking heavy and moving at a consistent speed matter more than preventin
 
 **Decided 2026-11-05.**
 - **The population field is a GPU field,** coarse at atlas scale and fine around a town, giving density, wealth and purpose by district. **The player's city changes it as it grows,** and generation reads it.
-- **Painting stays as it is** for most buildings: pick a type, paint cells, and the tiles are chosen. The fortress may get several types of its own (keep, walls, towers and so on).
+- ~~**Painting stays as it is** for most buildings: pick a type, paint cells, and the tiles are chosen.~~ Superseded 2026-11-10 (below).
 - **One home town per run (session).** Within a run, the rest of the world is reached through opportunities. Other places can be played as the home town in other runs. The user: "One town per run/session not per season". (Runs are covered in section 21.)
+
+**Decided 2026-11-10 (towns from fields: docs/design/CITYGEN.md).**
+- **Towns are laid out by the street lab's GPU field generator** (`src/citygen/`): contours, cross streets, blocks, lots, supercells. The user: "If we are switching to this layout then I think players just choose opportunities and we place and build for them. The only painting would be future work to make buildings customizable."
+- **Player painting is retired** (in a later phase, M4e). The irregular tile grids stay for vertical surfaces and cliff cities: "we still may want the irregular grids for vertical surfaces but you can retire the player painting and migrate to this system."
+- **Bridges where the main roads come in.** "Do add bridges though across the water that's needed. I would do that with the main roads coming into the city." A town's approach roads are arterials from its edge to its centre, with a deck and pillars where they cross water.
+- **Buildings are plain lot extrusions in the generator.** Their look and the construction animation are built by other sessions from the generator's per-lot GPU records and progress buffer (`src/api/contracts/citygen.ts`). Physics integration of buildings is a separate step.
 
 ## 18. The fortress loop and economy (agreed)
 

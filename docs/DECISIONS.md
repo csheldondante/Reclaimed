@@ -3529,3 +3529,22 @@ world should show what needs clearing and how.
   dispatch (WorldCore.plantParticles). Leaves stay.
 - → Plant sway is not turned off. It sleeps per region while the wind there is low and wakes for gusts.
 - Trees and leaves responding to real weather is wanted later (BACKLOG DA-B31).
+
+## 2026-11-10 — towns from fields in the game (citygen M4a)
+
+- "If we are switching to this layout then I think players just choose opportunities and we place and build for
+  them. The only painting would be future work to make buildings customizable."
+- "we still may want the irregular grids for vertical surfaces but you can retire the player painting and migrate
+  to this system." → the street lab's GPU pipeline becomes the game's town generator (`src/citygen/`). Player
+  painting is retired in M4e, not now. `structures/tiles/*` stays for vertical and cliff cities.
+- "Do add bridges though across the water that's needed. I would do that with the main roads coming into the city."
+  → each approach road (the site's atlas roads' directions) is an arterial from the centre to the town's edge. Where
+  it crosses water it gets a deck at a fixed height (the higher bank + 1.5) and pillars.
+- Scope (via the coordinator): buildings stay plain extruded lot shapes. Facades, dressing, superstructures and the
+  construction animation shader belong to two other sessions, which read a per-lot GPU record and a per-lot progress
+  buffer (`src/api/contracts/citygen.ts`).
+- Scope: wiring paths (M4c) and claiming the town's columns (M4b) are part of this work. Physics integration of
+  buildings is a separate step: "Physics integration is a must but can be a separate step as well. It may make sense
+  to do as part of the improved building generators." The M4b claims are per record, so that step can take over a
+  building's intervals cleanly.
+- DESIGN §17 updated (the player chooses opportunities; painting superseded).

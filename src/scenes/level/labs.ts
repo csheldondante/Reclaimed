@@ -138,7 +138,7 @@ export function mountNoiseLab(scene: LevelScene): void {
 
 /**
  * (street lab, m1) streets over the loaded site's land: heights and water read from the world's buffers on the GPU,
- * the lines and their display mesh made there (streetlab/gpu.ts); the camera over the town's middle
+ * the lines and their display mesh made there (citygen/gpu.ts); the camera over the town's middle
  */
 export function mountStreetLab(scene: LevelScene): void {
   const { core, host } = scene;
@@ -164,7 +164,7 @@ export function mountStreetLab(scene: LevelScene): void {
   scene.streetLab = new StreetLabControl(
     host.gpu.device,
     host.ui,
-    { w, h, globals: core.world.globals, chunks: core.world.chunks, layers: core.world.layers, water: core.world.water, centre: [at[0], at[1]] },
+    { w, h, box: [0, 0], globals: core.world.globals, chunks: core.world.chunks, layers: core.world.layers, water: core.world.water, centre: [at[0], at[1]] },
     {
       addMesh: (v, a) => core.renderer.addMesh(v, a),
       removeMesh: (a) => core.renderer.removeMesh(a),

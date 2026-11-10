@@ -70,6 +70,7 @@ import { ShipsView } from '../settle/shipsview';
 import { Fortress } from '../fortress/fortress';
 import { FortressBar } from '../fortress/ui';
 import type { StreetLabControl } from '../streetlab/control';
+import { fieldTownBox, type FieldTown } from '../citygen/town';
 import type { FortressFollow } from '../fortress/follow';
 import { FortressCrowd } from '../fortress/crowd';
 import type { FortressRaid } from '../fortress/raiders';
@@ -95,7 +96,7 @@ export interface LevelOptions {
   /** (create's: land the level loaded — LevelDef.load, the lab's town fixture) */
   made?: LoadedLand;
   /** (create's, for an atlas level: the atlas, the window it made, and where that window is) */
-  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array; settlements?: Settlements; startTown?: string };
+  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array; settlements?: Settlements; startTown?: string; fieldTown?: string };
 }
 
 /**
@@ -313,6 +314,8 @@ export class LevelScene implements Scene {
   noiseLab?: NoiseLabControl;
   /** (street lab, m1) its panel, its GPU runs and the display (level.streetLab) */
   streetLab?: StreetLabControl;
+  /** (citygen M4a, ?citygen=fields) the start town made by the GPU field generator (citygen/town.ts) */
+  fieldTown?: FieldTown;
   /** sandbox: a smash drag in progress */
   smashing = false;
   /** (round 83) flying: a drag turns the view — where the pointer was */
@@ -523,7 +526,15 @@ export class LevelScene implements Scene {
       // (round 90: or the viewer's range setting, the phone tier's default wider — scenes/range.ts)
       // (round 128m townlab C; onetown: the window holds the fortress's town's site box — its grid, its reach, its claims —
       // from the start, and keeps it: startFortress asks the Streamer to keep it, scenes/streamer/keep.ts)
-      const keepBox = host.params.get('fortress') === '1' && startTown ? settlements!.seeds.find((x) => x.rec.id === startTown)!.box : null;
+      // (citygen M4a, ?citygen=fields: the start town made by the GPU field generator — nothing of the old planner's for
+      // it — and the first window holds its box: its land is what it's made from; the window is free to slide after)
+      const cg = host.params.get('citygen');
+      if (cg !== null && cg !== 'fields') throw new Error(`?citygen= must be fields (the start town by the GPU field generator)`);
+      if (cg && !(settlements && startTown)) throw new Error('?citygen=fields needs the settlements and a start town: ?town=1 or ?town=<id>');
+      if (cg && host.params.get('fortress') === '1') throw new Error('?citygen=fields: not with ?fortress=1 (the fortress edits the old planner\'s town)');
+      const fieldTown = cg ? settlements!.byFields(startTown!).rec : null;
+      const fb = fieldTown ? fieldTownBox(fieldTown) : null;
+      const keepBox = host.params.get('fortress') === '1' && startTown ? settlements!.seeds.find((x) => x.rec.id === startTown)!.box : fb;
       const W = Math.max(keepBox?.w ?? 0, atlasRange(host.params));
       // (round 93, ?winh=: an experiment — rows other than the side)
       const Hr = Math.max(keepBox?.h ?? 0, atlasRows(host.params, W));
@@ -537,7 +548,7 @@ export class LevelScene implements Scene {
       atlas.profiler = host.profiler;
       // (round 102: the tile pacer's GPU budget by the timestamps, when they're read)
       atlas.pacer.profiler = host.profiler;
-      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements, startTown } };
+      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements, startTown, fieldTown: fieldTown?.id } };
     }
     // (round 128m, townlab) land the level loads instead of making (the lab's `town` fixture)
     if (!opts.map && level.load) {
@@ -712,6 +723,7 @@ export class LevelScene implements Scene {
     this.stationsBar?.dispose();
     this.noiseLab?.dispose();
     this.streetLab?.dispose();
+    this.fieldTown?.dispose();
     this.atlasCtl?.remove();
     this.turnCtl?.remove();
     this.compass?.remove();

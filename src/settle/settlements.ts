@@ -225,7 +225,7 @@ export class Settlements {
    */
   prepare(id: string): void {
     const s = this.byId.get(id);
-    if (!s || this.plans.has(id)) return;
+    if (!s || this.plans.has(id) || this.fieldTowns.has(id)) return;
     void this.planOf(s, true).catch((e) => console.error(`settlements: ${id}'s plan ahead of the screen failed`, e));
   }
 
@@ -253,6 +253,23 @@ export class Settlements {
     const s = this.byId.get(id);
     if (!s) throw new Error(`settlements: no ${id} to override`);
     s.override = spec;
+  }
+
+  /** (citygen M4a) the settlements whose towns the GPU field generator makes (citygen/town.ts), not this system */
+  private fieldTowns = new Set<string>();
+
+  /**
+   * (citygen M4a, ?citygen=fields) This settlement's town is made by the GPU field generator (citygen/): the old
+   * generator makes nothing for it — no plan (so nothing drawn or claimed by the settlements' view, no life), no stamps
+   * on its land (the land stays the atlas's), no far plan. Asked before its land comes in (the level, before the first
+   * window). Its record stays (its name, its roads, its people for the stories).
+   */
+  byFields(id: string): SettlementSeed {
+    const s = this.byId.get(id);
+    if (!s) throw new Error(`settlements: no ${id} for the field generator`);
+    if (this.plans.has(id)) throw new Error(`settlements: ${id} is planned already — ask for the field generator before its land comes in`);
+    this.fieldTowns.add(id);
+    return s;
   }
 
   /** (fortress slice 1) the settlement the player holds as a fortress: live whenever it's in the window, not grown */
@@ -466,10 +483,11 @@ export class Settlements {
     return ((v % n) + n) % n;
   }
 
-  /** the settlements whose box meets a region's */
+  /** the settlements whose box meets a region's (the field generator's towns left out: not this system's) */
   private meeting(x0: number, y0: number, w: number, h: number): SettlementSeed[] {
     const out: SettlementSeed[] = [];
     for (const s of this.seeds) {
+      if (this.fieldTowns.has(s.rec.id)) continue;
       const b = s.box;
       const dx = this.mod(x0 - b.x0, this.cols);
       const dy = this.mod(y0 - b.y0, this.rows);
@@ -830,7 +848,7 @@ export class Settlements {
     if (this.farClock > 0) return;
     this.farClock = 0.2;
     const at = io.camera();
-    const near = this.seeds.map((s) => [this.dist(s.rec.at, at), s] as const).filter(([d]) => d <= io.radius * 1.15);
+    const near = this.seeds.filter((s) => !this.fieldTowns.has(s.rec.id)).map((s) => [this.dist(s.rec.at, at), s] as const).filter(([d]) => d <= io.radius * 1.15);
     if (!this.farBusy) {
       let best: SettlementSeed | null = null;
       let bd = io.radius;
