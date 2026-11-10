@@ -46,6 +46,8 @@ const F_FOREST: u32 = 4u;
 const F_REPLANT: u32 = 8u;
 /** ?livingdebug=1: the graph drawn over the town (figures' pass) */
 const F_DEBUG: u32 = 16u;
+/** (the living bench, ?livingbench=1) the relax sweeps dispatched every frame even when settled: the graph forced awake */
+const F_AWAKE: u32 = 32u;
 
 const ROW_H: f32 = 0.8660254;
 const NONE: u32 = 0xffffffffu;
@@ -76,6 +78,9 @@ const W_CLAIM: u32 = 0x10000u;
 const W_PASS: u32 = 0x20000u;
 const W_BLOCK: u32 = 0x40000u;
 const W_LOTGROUND: u32 = 0x80000u;
+/** bit 20: a walked column the works dug out more than a step (works.wgsl dig): blocked from the next build on, kept
+ *  across rebuilds (a pit across a road) */
+const W_DUG: u32 = 0x100000u;
 /** FIELD's planes past the hubs: the open ground's distance to the network, the cut-off components' labels */
 const P_OPEN: u32 = 8u;
 const P_LAB: u32 = 9u;
@@ -109,6 +114,9 @@ const L_TQ: u32 = 2u;
 const L_PTS: u32 = 3u;
 const L_ROUTES: u32 = 4u;
 const L_SWEEPS: u32 = 7u;
+/** the wake word: a GPU edit that changed what the graph is made from (works.wgsl: a walked column dug out, the
+ *  clearing's camp placed) sets it; `gate` turns it into a rebuild once the graph is settled. No CPU signal */
+const L_WAKE: u32 = 40u;
 /** the gate's snapshot: relax sweeps run this frame (the phase was 1 at its start), the trace ran (it was 2) */
 const L_RELAXING: u32 = 8u;
 const L_TRACING: u32 = 9u;
@@ -341,17 +349,23 @@ fn doorCol(r: u32) -> u32 {
 }
 
 // ---- the gate: the build's and the relax's indirect args from the phase ----
-// IND: [0..3) build over columns, [3..6) build over lots, [6..9) build one thread, [9..12) relax sweeps,
+// IND: [0..3) build over columns, [3..6) build over lots, [6..9) build one thread, [9..12) relax (8 × 8 tiles),
 // [12..15) trace, [15..18) build over hash slots
 @compute @workgroup_size(1)
 fn gate() {
-  let ph = lt(L_PHASE);
+  var ph = lt(L_PHASE);
+  // (woken by a GPU edit while settled: the graph made again)
+  if (ph == 4u && lt(L_WAKE) != 0u) {
+    setLt(L_WAKE, 0u);
+    setLt(L_PHASE, 0u);
+    ph = 0u;
+  }
   let b = ph == 0u;
   let cols = (N() + 63u) / 64u;
   IND[0] = select(0u, cols, b); IND[1] = 1u; IND[2] = 1u;
   IND[3] = select(0u, (u.m.x + 63u) / 64u, b); IND[4] = 1u; IND[5] = 1u;
   IND[6] = select(0u, 1u, b); IND[7] = 1u; IND[8] = 1u;
-  IND[9] = select(0u, cols, ph == 1u || ph == 3u); IND[10] = 1u; IND[11] = 1u;
+  IND[9] = select(0u, (u.n.x + 7u) / 8u, ph == 1u || ph == 3u || (u.m.z & F_AWAKE) != 0u); IND[10] = (u.n.y + 7u) / 8u; IND[11] = 1u;
   // (the hash cleared only on a pool switch: poolSwitch writes these)
   IND[27] = 0u; IND[28] = 1u; IND[29] = 1u;
   IND[12] = select(0u, (min(lt(L_TQ), TQ_ROOM) + 63u) / 64u, ph == 4u); IND[13] = 1u; IND[14] = 1u;
@@ -384,8 +398,8 @@ fn walkInit(@builtin(global_invocation_id) g: vec3<u32>) {
   let m = ROADS[i];
   var w = 0u;
   // (season life: a town wall's column — citygen streets.wgsl WALL_MARK — blocked: routes go out through the gates)
-  if (m == WALL_MARK) {
-    atomicStore(&WALK[i], W_BLOCK);
+  if (m == WALL_MARK || (atomicLoad(&WALK[i]) & W_DUG) != 0u) {
+    atomicStore(&WALK[i], W_BLOCK | (atomicLoad(&WALK[i]) & W_DUG));
     for (var h = 0u; h < PLANES; h++) { FIELD[h * N() + i] = NONE; }
     return;
   }
@@ -695,11 +709,20 @@ fn stepCost(w: u32) -> u32 {
 }
 /** a sweep (a thread a column, every hub): each walkable column takes the least of its neighbours' + its step, in
  *  place (monotone: a value only falls to a path's true cost, so a neighbour's fresh or stale value are both safe) */
-@compute @workgroup_size(64)
+/** sweeps a relax dispatch makes in place over its 8 × 8 tile (a storage barrier between): fewer dispatches for the same
+ *  sweeps — settled, fewer empty ones (RT2-4) — and a value carried across a tile within one */
+const RELAX_INNER: u32 = 4u;
+@compute @workgroup_size(8, 8)
 fn relax(@builtin(global_invocation_id) g: vec3<u32>) {
-  let i = g.x;
-  if (i >= N()) { return; }
-  if (lt(L_GPH) == 3u) { relaxOpen(i); return; }
+  let inb = g.x < u.n.x && g.y < u.n.y;
+  let i = select(0u, g.y * u.n.x + g.x, inb);
+  let open = lt(L_GPH) == 3u;
+  for (var k = 0u; k < RELAX_INNER; k++) {
+    if (inb) { if (open) { relaxOpen(i); } else { relaxCol(i); } }
+    storageBarrier();
+  }
+}
+fn relaxCol(i: u32) {
   let cost = stepCost(walkClass(i));
   if (cost == NONE) { return; }
   let c = cxy(i);

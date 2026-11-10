@@ -296,7 +296,8 @@ difference the desktop can see. The phone bench is the measure (not run).
 - A third crowd until Track B's one crowd (U5); no knock-off by wind (Track B's).
 - The `overridden()` stub (Track B's unitstate.wgsl replaces it).
 - No lanes or queueing (LT-F1); a fixed spread across the road.
-- The relax is fixed sweeps a frame, gated by indirect counts: settled, they're 0-workgroup dispatches, not skipped.
+- The relax is fixed sweeps a frame (four in place a dispatch over 8 × 8 tiles), gated by indirect counts: settled,
+  they're 0-workgroup dispatches (31 of them), not skipped — no CPU signal unless the phone bench says they cost.
 - Quarry rock is judged from the ground's slope; the pit digs only inside the window and is lost when streamed land is
   regenerated (no edit log for streamed land).
 - Passages aren't drawn as roads yet (only walked; the overlay shows them).

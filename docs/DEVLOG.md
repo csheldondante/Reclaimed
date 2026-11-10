@@ -21691,3 +21691,28 @@ expected fail. No shot (nothing drawn changed).
   season's end), no longer when the wall starts. `wallPosts` / `wallGates` (CPU, from those saved words) stay as
   debug and test helpers.
 - Transfers gate: `askRoute` struck; `readWall` now a save point's read.
+
+## 2026-11-10 — RT2-4: the settled graph with no CPU signal; fewer empty dispatches; the living bench (trackA-routes2)
+
+- **Woken on the GPU.** A wake word (LT 40): the works' dig sets it when it takes a walked column (a road, a deck, a
+  door, a track — not a pad) more than a step below where it was, and marks that column W_DUG, which the next build
+  keeps blocked (a pit across a road is routed round). `gate` turns the word into a rebuild once the graph is settled.
+  Fells don't wake it: the walk mask isn't made from trees, so a rebuild would make the same graph. The clearing's
+  camp already set the phase word itself. Player edits (edit.wgsl) don't reach it yet (RT2-9).
+- **Fewer empty dispatches.** The relax kernel makes four sweeps in place over an 8 × 8 tile, a storage barrier between
+  (monotone, so stale or fresh neighbours are both safe, as before): 9 relax dispatches a frame instead of 33 at the
+  default 32 sweeps. Settled, the graph pass encodes 31 indirect dispatches of 0 workgroups instead of 53 (and 5
+  one-thread ones). Unlike the one-dispatch loop tried before (settling 9× slower), it keeps every tile in parallel.
+- **Measured** (headless D3D11, Intel Xe-LPG, Muru, `?living=1`, the bench below; the profiler's smoothed pass ms):
+  | | before | tiles |
+  |---|---|---|
+  | the settled graph pass | 0.16–0.31 ms | 0.093 ms |
+  | forced awake (32 sweeps a frame) | 8.5 ms | 1.9 ms |
+  | settled after the town's made | 8.7 s | 7.5 s (34 relax frames) |
+  Misses 0, nothing cut off, 352 routes. The empty dispatches' toggle (encoded vs not): +0.24 / +0.58 ms of GPU span
+  over two runs — within the desktop's noise; the frame interval (vsync) unchanged. A CPU "settled" signal waits on
+  the phone's number.
+- **The living bench** (`?livingbench=1`, src/perf/livingbench.ts, the citygen/physics bench pattern: wake lock, a
+  result card, Download / Copy / Share, perf-reports/ on the dev server). Once settled, two toggle diffs in four
+  alternating 2 s windows: the graph pass encoded vs not (what the empty dispatches cost), and forced awake vs settled
+  (`LivingTown.debugAwake`: the sweeps every frame). Bench-only flags; never in play.

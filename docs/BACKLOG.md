@@ -2096,7 +2096,7 @@ The user: "I would like to see agents (many of them) traveling between locations
 | LT-F3 | The works' take, put and fell and edit.wgsl's OP_TAKE / OP_PUT / OP_FELL as one WGSL snippet both call | S | done (worldops.wgsl) |
 | LT-F4 | Route misses (~80 of ~280 at Muru): reach as an invariant — the GPU connectivity check lays passages; doors for begun lots | S | done (fix round: 0 cut off, 0 doors cut, test fails on any miss) |
 | LT-F5 | The works keep off the town's districts | M | done (sited off every lot's ground, built or not) |
-| LT-F6 | The settled relax still encodes 32 empty indirect sweeps a frame (0.087 ms): stop encoding them once settled (the phase word can't tell the CPU without a read; a single gated dispatch that loops in-kernel, or fewer sweeps once settled) | S | open |
+| LT-F6 | The settled relax still encodes 32 empty indirect sweeps a frame (0.087 ms): stop encoding them once settled (the phase word can't tell the CPU without a read; a single gated dispatch that loops in-kernel, or fewer sweeps once settled) | S | done (RT2-4: four sweeps in place a dispatch over 8 × 8 tiles — 9 relax dispatches, not 33; a CPU signal only if the phone bench shows empty dispatches cost) |
 | LT-F7 | Carts scale with the piles | S | done (one cart a two loads at the face or camp, at least one, at most the count) |
 | LT-F8 | Passages drawn: the check's passages and the works' access roads as dirt tracks in the town's mesh (citygen's road ribbon from the walk mask) | S | open |
 | LT-F9 | Points pool: switching halves retraces every key (a burst); per-route reference counts would keep the live ones | S | open |
@@ -2123,8 +2123,9 @@ The user: "The CPU paths are supposed to be GPU resident … we should not need 
 | RT2-1 | Wall-walk stretches as routes: one a run of wall (stair foot → up → along the top → down the next stair), traced on the GPU when the ring is made or a run finishes rising, through `alloc`; 2 m on the walk, 1.1 m on the stairs | M | done (RT2-1/2 commit) |
 | RT2-2 | A per-town GPU table in routeread's header (heads base moved behind a header word): `wallWalkCount/Route/Run`, `gateRoute/Status/Segment(k)` by arterial index, filler gates after; written on the GPU, no polling | M | done (RT2-1/2 commit) |
 | RT2-3 | The order-facing readbacks removed: `askRoute` polling, `marchRoutes`, `unreachablePosts`; unreached wall pieces drawn red from the GPU's reach bits; the ring read back only at a save point | S | done (RT2-3 commit) |
-| RT2-4 | The settled graph with no CPU signal: worldops edits wake it through a GPU word; the ~45 empty indirect dispatches reduced or measured on the phone (toggle bench) | M | open |
+| RT2-4 | The settled graph with no CPU signal: worldops edits wake it through a GPU word; the ~45 empty indirect dispatches reduced or measured on the phone (toggle bench) | M | done (RT2-4 commit: 53 → 31 indirect dispatches, `?livingbench=1`; the phone run is the user's) |
 | RT2-5 | Width at gates: the width pass sees the wall (a gate narrower than its street, stairs narrower still), in the GPU test | S | open |
 | RT2-6 | Shots: the wall-walk overlay (`?livingdebug`), widths along a route | S | open |
 | RT2-7 | citygen's stairs are a fixed 9.2 m from a gap's corner: a run of wall shorter than two of them gets overlapping stairs that overhang the gap. Its wall-walk route takes the first stair only (a dead end on the top). Shorten the stairs to fit (fewer, steeper steps) in streets.wgsl | S | open |
 | RT2-8 | The wall-walk passes through the corner towers (8 m, at every sixth corner and beside the gates): no doorway in them yet | S | open |
+| RT2-9 | The wake word: player edits through edit.wgsl (worldops' take) don't set it — only the works' dig does (edit.wgsl doesn't bind the living town's state). A world-visible edit epoch both could bump | S | open |

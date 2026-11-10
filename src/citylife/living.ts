@@ -36,6 +36,8 @@ const GATE_SLOTS = 10;
 /** the wall's state words (routes.wgsl L_WALL: … the reached pieces at + 5) */
 const L_WALL = 53032;
 export const MAX_RIDERS = 4096;
+/** routes.wgsl RELAX_INNER: sweeps a relax dispatch makes */
+const RELAX_INNER = 4;
 /** voxels a rider at most (figures: legs, torso, head, a cart and its load, a falling trunk) */
 const VOX_PER = 14;
 const NONE = 0xffffffff;
@@ -162,6 +164,12 @@ export class LivingTown {
   readonly stages: LivingStage[] = [];
   /** (?livingdebug=1) the graph drawn over the town: reached, cut off, doors, passages, decks */
   debugGraph = false;
+  /** (the living bench, ?livingbench=1, only) the graph forced awake: its relax sweeps dispatched every frame even when
+   *  settled — the toggle diff's "awake" side */
+  debugAwake = false;
+  /** (the living bench only) the graph's pass not encoded at all — the toggle diff's measure of what the settled graph's
+   *  empty indirect dispatches cost. Never in play: the graph would never wake */
+  debugSkipGraph = false;
   /** (tests only) a rider forced overridden (its index + 1; 0 none): routes.wgsl's `overridden` stub */
   debugOverride = 0;
   /** the last counters read (the panel's) */
@@ -240,7 +248,7 @@ export class LivingTown {
     const ends: number[] = [];
     let acc = 0;
     for (const n of [p.commuters, p.farmers, p.quarrymen, p.stoneCarts, p.woodcutters, p.logCarts, p.builders]) ends.push((acc = Math.min(MAX_RIDERS, acc + n)));
-    const flags = 1 | (v.quarry.on ? 2 : 0) | (v.forest.on ? 4 : 0) | (v.forest.replant ? 8 : 0) | (this.debugGraph ? 16 : 0);
+    const flags = 1 | (v.quarry.on ? 2 : 0) | (v.forest.on ? 4 : 0) | (v.forest.replant ? 8 : 0) | (this.debugGraph ? 16 : 0) | (this.debugAwake ? 32 : 0);
     U.set([this.input.w, this.input.h, this.riders, this.frameNo], 0);
     U.set([this.input.lotRoom, this.input.lotRoom, flags, v.graph.sweeps], 4);
     U.set([ends[0], ends[1], ends[2], ends[3]], 8);
@@ -294,7 +302,7 @@ export class LivingTown {
     };
     // (one pass for the graph: the build, the relax sweeps, the connectivity check, the trace — each indirect, sized by
     // the phase word: settled, they're dispatches of 0 workgroups)
-    pass('graph', (cp) => {
+    if (!this.debugSkipGraph) pass('graph', (cp) => {
       // (build)
       run(cp, 'gate', 1);
       // (season life: the wall's routes and table — 0 workgroups unless the wall changed)
@@ -314,8 +322,10 @@ export class LivingTown {
       run(cp, 'passMeshClear', ind(6));
       run(cp, 'passMesh', ind(0));
     // (relax)
-      // (the frame's sweeps in turn: one after another is what carries a distance far; settled, each is 0 workgroups)
-      for (let k = 0; k < Math.max(2, this.values.graph.sweeps) - 1; k++) run(cp, 'relax', ind(9));
+      // (the frame's sweeps in turn, RELAX_INNER in place a dispatch: one after another is what carries a distance far;
+      // settled, each is 0 workgroups)
+      const disp = Math.max(2, Math.ceil(this.values.graph.sweeps / RELAX_INNER));
+      for (let k = 0; k < disp - 1; k++) run(cp, 'relax', ind(9));
       run(cp, 'relaxMark', 1);
       run(cp, 'relax', ind(9));
       run(cp, 'relaxCheck', 1);

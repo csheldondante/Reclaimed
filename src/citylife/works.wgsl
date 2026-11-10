@@ -93,6 +93,10 @@ const F_LISTING: u32 = 5u;
 const H_STORES: u32 = 0u;
 const H_GRANARY: u32 = 1u;
 const W_CLAIM: u32 = 0x10000u;
+/** routes.wgsl W_DUG, L_WAKE: a walked column dug out more than a step is blocked from the next build, and the graph
+ *  woken (no CPU signal) */
+const W_DUG: u32 = 0x100000u;
+const L_WAKE: u32 = 40u;
 const J_WOOD: u32 = 4u;
 const LEG_FWD: u32 = 1u;
 const LEG_BACK: u32 = 2u;
@@ -246,6 +250,14 @@ fn dig(@builtin(global_invocation_id) g: vec3<u32>) {
     let lit = u32(taken * CELL_AREA * 1000.0);
     bumpC(C_DUG, lit);
     bumpC(C_FACE, lit);
+    // (a walked column — a road, a deck, a door, a track: not a pad — dug more than a step below where it was: the
+    // graph woken, the column blocked from its next build)
+    let wk = atomicLoad(&WALK[bix(c)]);
+    let cls = wk & 0xfu;
+    if (cls != 0u && cls != 5u && (wk & W_DUG) == 0u && g0 - (tgt - u.pz.x) > 1.1) {
+      atomicOr(&WALK[bix(c)], W_DUG);
+      atomicStore(&LT[L_WAKE], 1u);
+    }
     // (the pit's floor bare: no plants on fresh-cut rock)
     let vi = colIdx(u32(w.x), u32(w.y));
     vegW[vi] = 0.0;
