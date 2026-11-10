@@ -241,6 +241,19 @@ const CITY_REACH = 1.6;
 const ALL = ['height', ...STAGES] as const;
 /** (time-lapse) a lot's build time on the town's clock (s); each lot starts up to 3/4 of it after its district */
 export const BUILD_S = 4;
+/** (season loop) a district's whole build, all its lots up (streets.wgsl BUILD_SPAN × the build time) */
+export const DISTRICT_SPAN = 1.75 * BUILD_S;
+/** (season loop) the districts a stage table holds (streets.wgsl SC_MAX) */
+export const SC_ROOM = 256;
+/** (season loop) clkClaim's purpose that only counts the districts left (streets.wgsl CLAIM_COUNT) */
+export const CLAIM_COUNT = 0xffffffff;
+/** (M4d hook) a claim's answer: the district (−1 none left), its centre (the grid's frame, world units), the districts
+ *  not begun after it */
+export interface DistrictClaim {
+  id: number;
+  at: [number, number];
+  left: number;
+}
 /** (M4a) streets.wgsl NART, NAP, AP, AW: the arterials (approach roads) a town has room for, the points each, where
  *  its points start in its words, its words */
 export const NART = 8;
@@ -366,6 +379,8 @@ export class CityGen {
     // (time-lapse: a tag and the made z a vertex — tlRise moves the tagged ones; a claim's answer)
     this.B.VTAG = buf('vertex tags', (world.vertRoom ?? VERT_ROOM) * 8);
     this.B.CLAIM = buf('claim answer', 16);
+    // (season loop: a vec4 a district — on, from, to, when — the season's stage; tlProgress reads it)
+    this.B.STG = buf('district stages', SC_ROOM * 16);
     this.claimRead = buf('claim read', 16, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.builtMode = world.built === 'core' ? 1 : 0;
     // (M4b: the population field — density, wealth, purpose, the arterials' distance — 4 words a column)
@@ -488,7 +503,7 @@ export class CityGen {
     this.tl.now = now;
     this.encodeOnly('citygen animate', () => {
       const B = this.B;
-      this.k('tlProgress', {}, { 1: this.lotRecords, 4: B.SCT, 5: this.progress, 6: B.CNT }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
+      this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 4: B.SCT, 5: this.progress, 6: B.CNT }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
       this.k('tlRise', {}, { 1: this.lotRecords, 2: this.progress, 3: B.VTAG, 4: B.SCT, 7: this.verts }, Math.ceil(this.vertRoom / 64), 1, true);
     });
   }
@@ -504,23 +519,37 @@ export class CityGen {
   private claimBusy: Promise<unknown> = Promise.resolve();
   /**
    * (M4d hook) An opportunity's district: the best one not begun for `purpose` (streets.wgsl P_*: 0 homes, 1 market, 2
-   * harbour, 3 workshops, 4 farms, 5 keep) picked on the GPU and started now — its id read back (a word); −1 none left.
+   * harbour, 3 workshops, 4 farms, 5 keep) picked on the GPU and started now — its id read back with its centre (the
+   * grid's frame) and the districts not begun after it (four words); id −1 none left. `purpose` CLAIM_COUNT: nothing
+   * claimed, only the count.
    */
-  claimDistrict(purpose: number, now: number): Promise<number> {
-    const r = this.claimBusy.then(async () => {
-      if (this.dead || !this.p) return -1;
+  claimDistrict(purpose: number, now: number): Promise<DistrictClaim> {
+    const r = this.claimBusy.then(async (): Promise<DistrictClaim> => {
+      if (this.dead || !this.p) return { id: -1, at: [0, 0], left: 0 };
       this.tl.now = now;
       this.encodeOnly('citygen claim', () => this.k('clkClaim', { mode: purpose }, { 5: this.B.SCT, 7: this.B.CLAIM }, 1), (enc) =>
-        enc.copyBufferToBuffer(this.B.CLAIM, 0, this.claimRead, 0, 4),
+        enc.copyBufferToBuffer(this.B.CLAIM, 0, this.claimRead, 0, 16),
       );
       await this.claimRead.mapAsync(GPUMapMode.READ);
-      const id = new Uint32Array(this.claimRead.getMappedRange().slice(0))[0] - 1;
+      const w = this.claimRead.getMappedRange().slice(0);
       this.claimRead.unmap();
-      this.animate(now);
-      return id;
+      const u = new Uint32Array(w);
+      const f = new Float32Array(w);
+      if (purpose !== CLAIM_COUNT) this.animate(now);
+      return { id: u[0] - 1, at: [f[1], f[2]], left: u[3] };
     });
     this.claimBusy = r.catch(() => undefined);
     return r;
+  }
+
+  /**
+   * (season loop, docs/design/SEASON_LOOP.md) A district's stage: built as far as `from` → `to` (0..1 of its build),
+   * eased over the build's span of the town's clock from `when` (s) — 16 bytes up; the next animate shows it.
+   */
+  stageDistrict(id: number, from: number, to: number, when: number): void {
+    if (this.dead) return;
+    if (!(id >= 0 && id < SC_ROOM)) throw new Error(`citygen: district ${id} has no stage (room for ${SC_ROOM})`);
+    this.device.queue.writeBuffer(this.B.STG, id * 16, new Float32Array([1, from, to, when]));
   }
 
   /** one compute pass of `f`'s dispatches (their uniforms with the run's parameters) and `after` on the encoder */
@@ -872,7 +901,7 @@ export class CityGen {
     this.k('lotRec', { count: LOT_ROOM }, { 1: B.LOTS, 2: B.SCT, 3: HH, 4: B.FD, 5: B.LM, 6: B.CNT, 7: this.lotRecords }, Math.ceil(LOT_ROOM / 64));
     this.k('lotRec', { mode: 1 }, { 1: B.LOTS, 2: B.SCT, 3: HH, 4: B.FD, 5: B.LM, 6: B.CNT, 7: this.lotRecords }, 1);
     // (time-lapse: each record's progress now, before the mesh and the claims read it)
-    this.k('tlProgress', {}, { 1: this.lotRecords, 4: B.SCT, 5: this.progress, 6: B.CNT }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
+    this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 4: B.SCT, 5: this.progress, 6: B.CNT }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
     this.k('lotMesh', { count: LOT_ROOM }, { 5: B.VTAG, 1: this.lotRecords, 2: this.progress, 3: HH, 4: this.reachCut, 6: B.CNT, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
     this.k('artMesh', {}, { 5: B.VTAG, 1: B.ART, 3: HH, 6: B.ROADS, 7: this.verts }, (NART * NAP) / 64, 1, true);
     if (vector && p.lmMult > 0) this.k('lmMesh', {}, { 5: B.VTAG, 1: B.LM, 3: HH, 6: B.ROADS, 7: this.verts }, (64 * 48) / 64, 1, true);

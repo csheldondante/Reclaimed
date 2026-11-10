@@ -7,7 +7,8 @@
 // the static claims' arena's slots (OWN_SLOTS); when they're all taken, the farthest town not wanted gives its slot up.
 // The CPU picks which (the boxes against the window: integers) and passes the inputs; nothing is read back.
 import { FieldTown, fieldTownBox, type FieldTownBox, type FieldTownIO, type FieldTownSite } from './town';
-import { OPPORTUNITY_PURPOSE, type CityDistricts, type OpportunityKind } from '../api/contracts/citygen';
+import { OPPORTUNITY_PURPOSE, type CityDistricts, type OpportunityKind, type TownDistrict } from '../api/contracts/citygen';
+import { CLAIM_COUNT, DISTRICT_SPAN } from './gpu';
 
 /** a town's box this near the window (columns) is made; this far, let go */
 const PREFETCH = 128;
@@ -76,12 +77,36 @@ export class FieldTowns implements CityDistricts {
 
   /**
    * (M4d hook, api/contracts/citygen.ts CityDistricts) An opportunity of this kind claims the best district not begun of
-   * the nearest town (GPU argmax by purpose; the id read back, a word) and starts it now. −1: none left (or no town).
+   * a town — `town`, or the nearest — (GPU argmax by purpose; four words read back) and starts it now. id −1: none left
+   * (or no town).
    */
-  async claimDistrict(kind: OpportunityKind): Promise<number> {
-    const t = this.nearest();
-    if (!t) return -1;
-    return t.claimDistrict(OPPORTUNITY_PURPOSE[kind], this.townTime);
+  async claimDistrict(kind: OpportunityKind, town?: string): Promise<TownDistrict> {
+    const t = town !== undefined ? (this.live.get(town) ?? null) : this.nearest();
+    if (!t) return { town: town ?? '', id: -1, at: [0, 0], left: 0 };
+    return { town: t.site.id, ...(await t.claimDistrict(OPPORTUNITY_PURPOSE[kind], this.townTime)) };
+  }
+
+  /** (season loop) a point of a town's frame (a claim's centre) in the window now; null: the town isn't live */
+  inWindow(town: string, at: readonly [number, number]): [number, number] | null {
+    return this.live.get(town)?.inWindow(at) ?? null;
+  }
+
+  /** (season loop) the districts not begun in a town (or the nearest), counted on the GPU (four words back) */
+  async districtsLeft(town?: string): Promise<{ town: string; left: number } | null> {
+    const t = town !== undefined ? (this.live.get(town) ?? null) : this.nearest();
+    if (!t) return null;
+    const c = await t.claimDistrict(CLAIM_COUNT, this.townTime);
+    return { town: t.site.id, left: c.left };
+  }
+
+  /** (season loop) a claimed district built as far as its stage: from → to (0..1), eased over its build from now —
+   *  or there at once (`atOnce`: Skip). A town let go meanwhile: false (its stages aren't kept: BACKLOG SL3). */
+  stageDistrict(town: string, id: number, from: number, to: number, atOnce = false): boolean {
+    const t = this.live.get(town);
+    if (!t) return false;
+    const now = this.townTime;
+    t.stageDistrict(id, from, to, atOnce ? now - DISTRICT_SPAN - 1 : now, now);
+    return true;
   }
 
   /** each frame: the towns' clock, their time-lapses; the towns near the window made (one at a time), the far ones

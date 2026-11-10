@@ -3132,6 +3132,9 @@ fn clkTimelapse(@builtin(local_invocation_index) li: u32) {
 }
 var<workgroup> ckS: array<f32, 256>;
 var<workgroup> ckI: array<u32, 256>;
+var<workgroup> ckN: array<u32, 256>;
+/** (season loop) clkClaim's purpose that claims nothing: only the districts left counted */
+const CLAIM_COUNT: u32 = 0xffffffffu;
 /** one workgroup: an opportunity's claim — the best district not started for purpose n.w (its purpose that one: 2,
  *  plus its density, less half its growth key: dense and central first), started now (tl.x); its id + 1 (0 none) to
  *  w7[0] — the word read back (w5 SCT, w7 the answer) */
@@ -3140,23 +3143,42 @@ fn clkClaim(@builtin(local_invocation_index) li: u32) {
   let n = min(w5[0] * w5[1], SC_MAX);
   var best = -1e9;
   var bi = NONE;
+  var left = 0u;
   for (var c = li; c < n; c += 256u) {
     let o = SC_HEAD + c * SCW;
     if (w5[o + 2u] != 2u || bitcast<f32>(w5[o + 8u]) < 1e29) { continue; }
+    left++;
     let sc = select(0.0, 2.0, w5[o + 6u] == u.n.w) + bitcast<f32>(w5[o + 7u]) - 0.5 * bitcast<f32>(w5[o + 3u]);
     if (sc > best) { best = sc; bi = c; }
   }
   ckS[li] = best;
   ckI[li] = bi;
+  ckN[li] = left;
   workgroupBarrier();
   if (li != 0u) { return; }
   var b = 0u;
-  for (var k = 1u; k < 256u; k++) { if (ckS[k] > ckS[b] || (ckS[k] == ckS[b] && ckI[k] < ckI[b])) { b = k; } }
-  if (ckI[b] == NONE) { w7[0] = 0u; return; }
-  set5(SC_HEAD + ckI[b] * SCW + 8u, u.tl.x);
+  var total = 0u;
+  for (var k = 0u; k < 256u; k++) {
+    total += ckN[k];
+    if (ckS[k] > ckS[b] || (ckS[k] == ckS[b] && ckI[k] < ckI[b])) { b = k; }
+  }
+  // (season loop: the answer's four words — the id + 1 (0 none), its centre x, y (the grid's frame), the districts
+  // not begun after it)
+  if (ckI[b] == NONE || u.n.w == CLAIM_COUNT) { w7[0] = 0u; w7[1] = 0u; w7[2] = 0u; w7[3] = total; return; }
+  let o = SC_HEAD + ckI[b] * SCW;
+  set5(o + 8u, u.tl.x);
   w7[0] = ckI[b] + 1u;
+  w7[1] = w5[o + 4u];
+  w7[2] = w5[o + 5u];
+  w7[3] = total - 1u;
 }
-/** one thread a record: its progress now (b1 the records, b4 SCT, w6 the counts; w5 PROG) */
+/** (season loop, docs/design/SEASON_LOOP.md) a district's build is all its lots up after 1.75 build times (the last
+ *  lot's delay, ¾, plus its own build) */
+const BUILD_SPAN: f32 = 1.75;
+/** one thread a record: its progress now (b1 the records, r2 the district stages — STG: on, from, to, when a
+ *  district; b4 SCT, w6 the counts; w5 PROG). A staged district (the season loop's) is built as far as its stage:
+ *  its build time eased from `from` × the span to `to` × the span over a span of the clock from `when`; the rest run
+ *  on their start alone. */
 @compute @workgroup_size(64)
 fn tlProgress(@builtin(global_invocation_id) g: vec3<u32>) {
   let i = g.x;
@@ -3165,10 +3187,32 @@ fn tlProgress(@builtin(global_invocation_id) g: vec3<u32>) {
   let o = i * RECW;
   if (b1[o + 17u] == REC_NONE) { set5(i, 0.0); return; }
   var start = BUILT_AT;
-  if (u.h2.z > 0.5) { start = r4(SC_HEAD + (b1[o + 18u] & 0xffffffu) * SCW + 8u); }
+  let did = b1[o + 18u] & 0xffffffu;
+  if (u.h2.z > 0.5) { start = r4(SC_HEAD + did * SCW + 8u); }
   // (each lot its own delay in its district: up to three quarters of the build time)
   let delay = hsh(b1[o + 23u] ^ 0x51edu) * 0.75 * u.tl.y;
-  set5(i, clamp((u.tl.x - start - delay) / max(u.tl.y, 1e-3), 0.0, 1.0));
+  var built = u.tl.x - start;
+  if (u.h2.z > 0.5 && did < SC_MAX && r2(did * 4u) > 0.5) {
+    let span = BUILD_SPAN * max(u.tl.y, 1e-3);
+    let k = clamp((u.tl.x - r2(did * 4u + 3u)) / span, 0.0, 1.0);
+    built = mix(r2(did * 4u + 1u), r2(did * 4u + 2u), k * k * (3.0 - 2.0 * k)) * span;
+  }
+  set5(i, clamp((built - delay) / max(u.tl.y, 1e-3), 0.0, 1.0));
+}
+/** (season loop, "the shader for now") a building going up: its tops plank and its roof a scaffold deck, its foot
+ *  dark stone — its own colours back once it's up (a roof's from its seed, as lotMesh drew it) */
+const C_PLANK: u32 = 0xb48853u;
+const C_SCAFFOLD: u32 = 0xc9a46au;
+const C_FOOT: u32 = 0x8c857bu;
+fn riseColour(v: u32, id: u32, top: bool) -> u32 {
+  let p = r2(id);
+  let up = bitcast<f32>(w7[v * 8u + 6u]) > 0.5;
+  if (p > 0.0 && p < 1.0) {
+    if (!top) { return C_FOOT; }
+    return select(C_PLANK, C_SCAFFOLD, up);
+  }
+  if (top && up) { return roofColour(u32(hsh(b1[id * RECW + 23u] * 7u + 3u) * 5.999)); }
+  return C_WALL;
 }
 /** one thread a vertex: the tagged ones moved by their lot's progress or their district's start (b1 the records, r2
  *  PROG, b3 VTAG, b4 SCT; w7 the mesh; args its count) */
@@ -3187,8 +3231,10 @@ fn tlRise(@builtin(global_invocation_id) g: vec3<u32>) {
     z = r1(o + 21u) + r1(o + 20u) * r2(id) + select(0.0, 0.06, (tag & OUTLINE_BIT) != 0u);
     // (a lot not begun: its roof and outline sunk out of sight — its walls' bases with them: TG_BASE)
     if (r2(id) <= 0.0) { z = z0 - 1000.0; }
+    if ((tag & OUTLINE_BIT) == 0u) { w7[v * 8u + 3u] = riseColour(v, id, true); }
   } else if (kind == TG_BASE) {
     if (r2(id) <= 0.0) { z = z0 - 1000.0; }
+    w7[v * 8u + 3u] = riseColour(v, id, false);
   } else if (kind == TG_ROAD) {
     if (u.h2.z > 0.5 && r4(SC_HEAD + id * SCW + 8u) > u.tl.x) { z = z0 - 1000.0; }
   } else if (kind == TG_LOT) {

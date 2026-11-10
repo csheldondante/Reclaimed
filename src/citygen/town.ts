@@ -8,7 +8,7 @@
 import type { Settlement } from '../api/contracts/settlement';
 import type { CityLots } from '../api/contracts/citygen';
 import { ROW_H } from '../world/lattice';
-import { BUILD_S, CityGen, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes } from './gpu';
+import { BUILD_S, CityGen, DISTRICT_SPAN, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes, type DistrictClaim } from './gpu';
 import type { StaticClaims, StaticGrid, GridPlace, OwnedSlot } from '../sim/static-claims';
 import { cellAt } from '../world/lattice';
 import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
@@ -180,6 +180,7 @@ export class FieldTown {
     // (a game town starts with its core built; the rest grows by claims and time-lapses)
     const L = townLayout(io.device, site, io.wrap, io.sea, { claimInto: slot.binding, vertRoom: TOWN_VERT_ROOM, built: 'core' });
     const { box, centre, local } = L;
+    this.centre = centre;
     this.box = box;
     this.raw = L.raw;
     this.gen = L.gen;
@@ -203,6 +204,13 @@ export class FieldTown {
         this.claim();
         return t;
       });
+  }
+
+  /** the town's centre in the grid's frame (world units) */
+  private centre: [number, number];
+  /** (season loop) the town's centre in the window now (world units): the camera's framing */
+  centreInWindow(): [number, number] {
+    return this.inWindow(this.centre);
   }
 
   /** (M4b) where the grid lies in the window now (columns; z: world z to window z) */
@@ -340,12 +348,28 @@ export class FieldTown {
     this.animUntil = Math.max(this.animUntil, now + span + BUILD_S * 1.75 + 0.5);
   }
 
-  /** (M4d hook) the best district not begun for this purpose (streets.wgsl P_*) started now: its id (−1 none left) */
-  async claimDistrict(purpose: number, now: number): Promise<number> {
-    if (this.gone) return -1;
-    const id = await this.gen.claimDistrict(purpose, now);
-    if (id >= 0) this.animUntil = Math.max(this.animUntil, now + BUILD_S * 1.75 + 0.5);
-    return id;
+  /** (M4d hook) the best district not begun for this purpose (streets.wgsl P_*) started now: its id (−1 none left), its
+   *  centre (the grid's frame, world units: inWindow), the districts not begun after it. CLAIM_COUNT: only the count. */
+  async claimDistrict(purpose: number, now: number): Promise<DistrictClaim> {
+    if (this.gone) return { id: -1, at: [0, 0], left: 0 };
+    const c = await this.gen.claimDistrict(purpose, now);
+    if (c.id >= 0) this.animUntil = Math.max(this.animUntil, now + DISTRICT_SPAN + 0.5);
+    return c;
+  }
+
+  /** a point of the town's grid frame (world units) in the window now */
+  inWindow(at: readonly [number, number]): [number, number] {
+    const p = this.gridPlace();
+    return [at[0] + p.dx, at[1] + p.dy * ROW_H];
+  }
+
+  /** (season loop) a district's stage from → to, eased from `when` on the town's clock (its build's span); animated
+   *  till it's there */
+  stageDistrict(id: number, from: number, to: number, when: number, now: number): void {
+    if (this.gone) return;
+    this.gen.stageDistrict(id, from, to, when);
+    this.animUntil = Math.max(this.animUntil, Math.max(now, when + DISTRICT_SPAN) + 0.5);
+    this.gen.animate(now);
   }
 
   /** the bytes it holds on the GPU (its generator's buffers and its raw ground; its claim slot is the arena's) */

@@ -317,6 +317,8 @@ export class LevelScene implements Scene {
   streetLab?: StreetLabControl;
   /** (citygen M4b, ?citygen=fields) the towns made by the GPU field generator, streamed (citygen/towns.ts) */
   fieldTowns?: FieldTowns;
+  /** (trackA-opps, ?opps=1) the season loop's card sheet, removed on dispose (scenes/level/season.ts) */
+  seasonUi?: () => void;
   /** sandbox: a smash drag in progress */
   smashing = false;
   /** (round 83) flying: a drag turns the view — where the pointer was */
@@ -724,6 +726,7 @@ export class LevelScene implements Scene {
     this.stationsBar?.dispose();
     this.noiseLab?.dispose();
     this.streetLab?.dispose();
+    this.seasonUi?.();
     this.fieldTowns?.dispose();
     this.atlasCtl?.remove();
     this.turnCtl?.remove();

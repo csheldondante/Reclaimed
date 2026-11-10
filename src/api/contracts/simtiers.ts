@@ -83,4 +83,34 @@ export interface SimTiers {
    * rain erosion has runoff to work with). Resolves when done; one bake at a time (a second waits for the first).
    */
   bake(region: TierRect | 'all', ps: readonly TieredProcess[], seconds: number, opts?: BakeOpts): Promise<BakeReport>;
+  /**
+   * (round 128r, Track A "Next season"; docs/SYSTEMS.md "The showcase") Play a change on screen over `opts.seconds`:
+   * each step is applied when its fraction of the showcase comes (the world written through its owners' APIs — what a
+   * season resolved, realised now in the window), with a tick of the sim on frames that ran none so what a step queued
+   * (a grow, an edit) lands while time is stopped. Presentation only: `skip` applies the steps left at once, in order,
+   * so the world is the same whether it played or was skipped. One at a time: a second throws while one plays.
+   */
+  showcase(steps: readonly ShowStep[], opts: ShowOpts): Showcase;
+}
+
+/** (round 128r) a showcase's step: applied at `at` (0..1 of the showcase), once */
+export interface ShowStep {
+  at: number;
+  apply(): void;
+}
+
+export interface ShowOpts {
+  /** wall seconds it plays over */
+  seconds: number;
+  /** each frame while it plays, its progress (0..1): the camera's framing, a crane's swing — presentation */
+  frame?(t: number): void;
+}
+
+export interface Showcase {
+  readonly playing: boolean;
+  /** 0..1 */
+  readonly progress: number;
+  /** the steps left applied now, in order; resolves `done` */
+  skip(): void;
+  readonly done: Promise<void>;
 }

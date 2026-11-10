@@ -26,6 +26,7 @@ import { urlFlags } from '../../flags';
 import { worldApiOf } from './world-api';
 import { FieldTowns } from '../../citygen/towns';
 import { mountTownPanel } from '../../citygen/panel';
+import { startSeasonLoop } from './season';
 import { whenPipelinesReady } from '../../gpu/pipeline';
 
 /** sleep and the streamed window, with what follows its slides */
@@ -384,6 +385,8 @@ export function attachStream(scene: LevelScene): void {
             const go = () => (towns.timelapse(Number(host.params.get('tlspan') ?? 30)) ? undefined : setTimeout(go, 500));
             go();
           }
+          // (trackA-opps, ?opps=1: the season loop on the town — docs/design/SEASON_LOOP.md)
+          if (host.params.get('opps') === '1') startSeasonLoop(scene, towns);
           S.onSlide.push(() => towns.slid());
           S.onWarp.push(() => towns.warped());
           // (the first look now: the town the level opens on made before the first frames)

@@ -21,6 +21,8 @@ const SOURCES: Record<string, Source> = {
   'fortress/raiders.ts': { who: 'player' },
   'fortress/words.ts': { who: 'words' },
   'opps/words.ts': { who: 'words' },
+  'season/words.ts': { who: 'words' },
+  'season/ui.ts': { who: 'player', helpers: [{ name: 'el', arg: 2 }] },
   'opps/level-opps.ts': { who: 'player', helpers: [{ name: 'h', arg: 1 }, { name: 'btn', arg: 0 }] },
   'dialog/dialog.ts': { who: 'player' },
   'api/atlas-map.ts': { who: 'player' },
@@ -54,6 +56,9 @@ const SOURCES: Record<string, Source> = {
   'ui/stations.ts': { who: 'player' },
   // ---- a developer's ----
   'cardlab/main.ts': { who: 'dev', why: 'the card lab page' },
+  'citygen/panel.ts': { who: 'dev', why: 'the towns debug panel (?citypanel=1)' },
+  'perf/citygenbench.ts': { who: 'dev', why: 'a bench' },
+  'streetlab/control.ts': { who: 'dev', why: 'the street lab' },
   'flora/bench.ts': { who: 'dev', why: 'a bench' },
   'flora/viewer.ts': { who: 'dev', why: 'the flora viewer page' },
   'inhabitants/viewer.ts': { who: 'dev', why: 'the inhabitants viewer page' },

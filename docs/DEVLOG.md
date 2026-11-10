@@ -21099,3 +21099,30 @@ the opportunity hook".
   - a lot not begun showed its roof flat on the ground, then its walls stretched down where the land wasn't drawn;
     its tops, bases and outline now sink together;
   - the reach's red outlines over unbuilt lots are hidden with them.
+
+## 2026-11-10 — the season loop: cards from the one dealer, districts built in seasons (trackA-opps)
+
+The user: "Sim runs in realtime while you make your opportunity selections … The next season happens when you hit a
+button and all allocated opportunities progress. The building stages depend on the number of seasons required … and
+should show intermediate states (that can use the shader for now)." Design: `docs/design/SEASON_LOOP.md`.
+- **One resource model, one dealer.** The ledger (`src/season/ledger.ts`) is revived from the reverted 6a619edb on the
+  six pools (Magic, Might, Labor, Resources, Intel, Unrest; Unrest lowers the Labor a season brings). Its cards are
+  the town catalog (`season/catalog.ts`, ten cards as data) dealt by `opps/dealer.ts deal` (`season/deal.ts`): each card
+  a proposal with no agents, its cost as goods, the town's filters as its sense (what it needs built, free land, a
+  one-off not started) and score parts (urgency from unrest or short Labor, what it opens, its value). The card lab's
+  labor/influence/power deck isn't used. Quarry, lumber camp, bridge and walls are data with pools-only effects (SL2).
+- **Seasons drive the district clock.** citygen gains a stage table (a vec4 a district: on, from, to, when).
+  `tlProgress` reads it: a staged district's build time is its stage × 1.75 build times, eased from the old stage to the
+  new over one build span of the town's clock. Each lot keeps its own delay, so at 1/3 some lots are part risen and
+  others not begun. Why a table and not the start word: the start word still says when the district's roads appear;
+  the stage is a separate, season-owned input (16 bytes a write).
+- **The look, "the shader for now":** `tlRise` (the compute pass that already moves the risen tops) tints a rising
+  building's tops plank, its roof a scaffold deck and its foot dark stone, and puts the lot's own colours back at 1.
+- **Claims answer four words:** the id, the district's centre (the camera's framing) and the districts left (the
+  dealer offers no district card without land). `CLAIM_COUNT` counts without claiming (the first hand).
+- **Showcase revived** (`SimTiers.showcase`, from 6a619edb): the season's stage changes start in the first third of a
+  10 s showcase (the last still has its 7 s build); Skip lands every stage at once, the same progress as played
+  (`test/unit/season.test.ts`: the GPU is told the same `to` either way).
+- **Camera:** the claim's centre is in the town's frame, placed in the window at each frame. The first try kept it in
+  window coordinates and the camera chased a point that moved with each slide until Muru was let go.
+- Muru has 7 districts free outside its core, so a run of the test fills the town in about 4–5 seasons.
