@@ -21064,3 +21064,21 @@ the default.
 - Fixed after the shots: the reach ran at the slide, over regions still coming in, and outlined most of the town red.
   It now waits for the land (`FieldTowns`: the reach is due after a slide and runs once nothing is unwritten). After a
   slide, 1 building is outlined.
+
+## 2026-11-10 — living town LT1: design note (docs/design/LIVING_TOWN.md)
+
+The user: many agents travelling between places, hauling and working; a parameterized quarry that digs deep; a forest
+clearing that leaves stumps. Everything on the GPU, the CPU passing inputs only.
+- **The graph is citygen's road raster.** citygen already draws every road it makes (contours, cross, gap, grown,
+  arterials, decks) into `ROADS`, a word a column, for its claims and the reach. Its hex adjacency is the graph, with
+  junctions for free; door segments, connector tracks and site pads are rasterised into the same mask. The segment
+  lists are five formats whose ends rarely meet, which a GPU graph build would have to weld.
+- **DA-A22 ported, not merged.** trackA-legible's route GPU code sits on DA-A13 (14 k changed lines) and builds its
+  graph on the CPU from the old TownPlan grid. Merging would land a second town model unused. Its relax rule, trace and
+  deck handling carry over.
+- **Fields relax with no readback:** a changed word turns into the next sweep's indirect dispatch size.
+- **Riders are §12 trip records, not Agents units yet:** the Agents' step and its CPU-held groups and events are the
+  per-unit CPU work this task rules out at 2,000 riders. One crowd is open question 1 (LT-F2).
+- **Stone really moves:** an interval take in the pit, counters for the face pile, carts and the stores' inbox, then
+  the one `deposit` inbox (§8) at the stockpile, so the pile slumps like any loose ground.
+- **Stumps are a flora-field state** (a succession band on a tree column), so nothing per plant is stored.

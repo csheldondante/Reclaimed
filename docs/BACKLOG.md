@@ -2040,7 +2040,7 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | ST11 | Trees and doodads in the gaps (not to build yet; designing with the user): a GPU scatter over the gaps, off roads and lots, with JFA clearance. Reuse the instanced tree meshes (`render/meshinst.ts`) and the prop modules (`structures/dressmodules.ts`), chosen by context: empty districts get orchards, gardens and haystacks; slivers get trees and crates; plazas get a well, stalls and banners; shores get a quay, cranes, piers and boats; arterials past the edge get sparse trees and a wagon. It follows the growth slider. | M | open |
 | CG1 | Citygen M4a: Muru made in the game by the street lab's GPU pipeline behind `?citygen=fields` (`src/citygen/`; shared with the lab; approach-road arterials, bridges, the height-to-plot rule, lot records and progress; docs/design/CITYGEN.md) | M | done (citygen M4a commit) |
 | CG2 | (done, M4b step 3) Citygen M4b: claims, surfaces and reach on the GPU from the new layout. Claims are per lot record (index and seed in the owner word), so a later physics or building-generator step can take a building's intervals over cleanly. Stopped at design (2026-11-10): the External registry holds static ownership on the CPU, and its orphan pass wipes GPU-only claims. Proposal: GPU-owned static grids plus a built mask for flora (docs/design/CITYGEN.md "M4b") | L | open (the user decides the contract change) |
-| CG3 | Citygen M4c: merge the legible route graph (trackA-legible, DA-A22) and feed it the new road segments and the arterials' decks; cached routes; riders | L | open |
+| CG3 | Citygen M4c: merge the legible route graph (trackA-legible, DA-A22) and feed it the new road segments and the arterials' decks; cached routes; riders | L | taken over by LT2 (living town: DA-A22 ported to citygen's road raster, not merged — docs/design/LIVING_TOWN.md §1) |
 | CG4 | Citygen M4d: the plan buffer; opportunities claim districts and sites, which fill in growth order with construction progress per lot | L | open |
 | CG5 | Citygen M4e: delete the old CPU town generator, player painting and their consumers (keep `structures/tiles/*` for vertical and cliff cities) | M | open |
 | CG6 | Citygen arterials are straight spokes along the approach directions. The atlas road stamped in the land curves elsewhere, so Muru shows two roads west (the stamped one and the arterial). Route the arterial on the GPU along the stamped way, or stop stamping the way inside a field town's box | M | done (M4a polish: the atlas roads' points are the arterials; the stamps cleared in the core) |
@@ -2060,3 +2060,18 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | CG11 | Physics integration of buildings (structural integrity, collapse, rigid bodies: DESIGN §9, §10) — a separate step, not citygen; maybe with the improved building generators. The user: "Physics integration is a must but can be a separate step as well." | L | open |
 | CG12 | Building style generator (facades, dressing, superstructures) and the construction animation shader: other sessions, from `src/api/contracts/citygen.ts` (lot records, progress) | L | open (other sessions) |
 | ST12 | Superstructures for large or irregular plots (not to build yet; designing with the user): a perimeter block with a courtyard that follows any outline, with corner towers at sharp turns. Round landmark sites get a ring building and a central tower. Height scales with plot size: wide plots get low buildings and only towers are tall, so the streets stay visible at 60°. District styles (warehouse, university, keep) come later. | M | open |
+
+## Living town (2026-11-10, `trackA-haul`; docs/design/LIVING_TOWN.md)
+
+The user: "I would like to see agents (many of them) traveling between locations, hauling and doing stuff. I would like a parameterized quarry that digs deep and forest clearing that leaves stumps." Takes over CG3 (M4c).
+
+| id | item | size | status |
+|---|---|---|---|
+| LT1 | Design note: the route graph from citygen's road raster, hubs and cached routes, riders, the quarry, the clearing, hauling as real moves, CPU inputs, GPU cost targets | S | done (LT1 commit) |
+| LT2 | Routes and many riders: the graph from citygen's roads + door segments on the GPU, hub fields relaxed without readback, cached routes in a GPU pool, 500–2,000 kinematic riders (commuters, haulers, builders) | L | open |
+| LT3 | The parameterized quarry: a GPU-picked site, benches dug as interval takes, a spiral ramp as a route, stone hauled to a stockpile put through `deposit` | L | open |
+| LT4 | The forest clearing: a GPU-picked camp, woodcutters fell trees (flora field → stump state), logs hauled; clearing radius, cut rate, replant | M | open |
+| LT5 | `?living=1` panel: counts, rates, toggles; building sites take builders (the time-lapse's hook) | M | open |
+| LT6 | GPU ms per system, `?living=0` toggle diff | S | open |
+| LT-F1 | Lanes, queueing and passing (§12) for the living town's riders: a bucket sort by (route, direction, distance) a tick, follow the one ahead, overtake on a free window | M | open |
+| LT-F2 | One crowd: the living town's riders as rows of the Agents' unit buffer (a rider while on a route; knocked off → stepped unit → rejoins); RoadRide's next-hop tables deleted with the old towns (M4e) | L | open (the user decides) |
