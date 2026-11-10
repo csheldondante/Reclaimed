@@ -211,19 +211,6 @@ export class TownPlan implements TownPlanApi {
     }
     for (const c of cells) this.changed.add(c);
   }
-  /**
-   * (round 128r, Track A "Next season") What history left on a structure (a history mark realised on the live plan:
-   * season/realise.ts, the rule structures/purpose.ts markWear); undefined clears it. Its cells are marked changed (it
-   * is drawn again). Saved with the plan (toData).
-   */
-  setWear(id: number, wear: Structure['wear']): void {
-    const s = this.byId.get(id);
-    if (!s) throw new Error(`plan: no structure ${id}`);
-    if (wear === undefined) delete s.wear;
-    else s.wear = wear;
-    for (const c of s.cells.keys()) this.changed.add(c);
-  }
-
   typeAt(cell: number): StructureType | null {
     const id = cell >= 0 ? this.owner[cell] : -1;
     return id >= 0 ? this.byId.get(id)!.type : null;

@@ -81,10 +81,7 @@ export type CityPurpose = 'mining' | 'port' | 'lumber' | 'farming' | 'trading' |
 /** A mark of a city's history: a quarter burned (its buildings gutted, soot), the lower town flooded (below `level`:
  *  abandoned, a waterline), walls newer than the town (fresh stone). */
 export interface CityMark {
-  /** (round 128r, Track A "Next season") 'raided', 'ruined', 'overgrown': a quarter damaged (a storey lost), ruined
-   *  (down to its ground storey), overgrown (a ruin under green) — the season's district outcomes, realised by the same
-   *  rule (structures/purpose.ts markWear) in a generated town and on the live plan */
-  kind: 'burned' | 'flooded' | 'newwalls' | 'raided' | 'ruined' | 'overgrown';
+  kind: 'burned' | 'flooded' | 'newwalls';
   at?: V2;
   r?: number;
   level?: number;
@@ -155,15 +152,8 @@ export interface BuildingRec {
   /** its quarter of the city (0 the middle) */
   district?: number;
   /** (round 120) what its history left on it: gutted by a fire (no roof, soot), abandoned to a flood (a waterline) */
-  wear?: Wear;
+  wear?: 'burned' | 'flooded';
 }
-
-/**
- * What history left on a building (round 120: burned, flooded; round 128r, Track A: damaged, ruined, overgrown — the
- * season's decay, from CityMark 'raided', 'ruined', 'overgrown'). A structure's stage past built is read from it
- * (season/stage.ts stageOf); how each looks is the pieces' (Track B's).
- */
-export type Wear = 'burned' | 'flooded' | 'damaged' | 'ruined' | 'overgrown';
 
 /** Features several tiles big. */
 export type MegaKind = 'tower' | 'dome' | 'keep' | 'fountain'

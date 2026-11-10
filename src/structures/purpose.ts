@@ -13,7 +13,7 @@
 // stables —, widens a market, wears what history marked); `purposeWorks` once the landmarks stand (piers, berths, the
 // lighthouse, the headframe and its rails, the windmill, the props); `dressing` once the façades are chosen (street
 // lamps, torches at doors and gates, banners, and every light's pool). Pure and deterministic, like the planner.
-import type { Berth, BuildingRec, CityMark, Wear, CitySpec, Facade, GroundFn, LightSource, LinearFeature, MegaFeature, Prop, PropKind, TileMesh, V2, V3 } from '../api/contracts/structures';
+import type { Berth, BuildingRec, CityMark, CitySpec, Facade, GroundFn, LightSource, LinearFeature, MegaFeature, Prop, PropKind, TileMesh, V2, V3 } from '../api/contracts/structures';
 import { quadCentre, quadCorners } from './tiles/builder';
 import { hashf } from './rng';
 
@@ -274,31 +274,16 @@ function plazaCentre(t: TileMesh): V2 | null {
   return n ? [x / n, y / n] : null;
 }
 
-/**
- * What a history mark does to one building (one rule for a generated town and the live plan — the season's realisation,
- * season/realise.ts): its wear and its storeys after, or null if the mark misses it. `centre` world units, `base` its
- * floor (z), `id` its hash key. A burned quarter guts what it touches (a storey lost, no roof, soot); a flood's lower
- * town is abandoned (a waterline); (round 128r, Track A) a raided quarter is damaged (a storey lost), a ruined one is
- * down to its ground storey, an overgrown one keeps what stood under green. New walls are the pieces' (spec.marks).
- */
-export function markWear(m: CityMark, centre: V2, base: number, id: number, storeys: number): { wear: Wear; storeys: number } | null {
-  const near = () => m.at !== undefined && Math.hypot(centre[0] - m.at[0], centre[1] - m.at[1]) < (m.r ?? 12) * (0.75 + 0.5 * hashf(id, 71));
-  if (m.kind === 'burned' && near()) return { wear: 'burned', storeys: Math.max(1, storeys - 1) };
-  if (m.kind === 'flooded' && m.level !== undefined && base < m.level) return { wear: 'flooded', storeys };
-  if (m.kind === 'raided' && near()) return { wear: 'damaged', storeys: Math.max(1, storeys - 1) };
-  if (m.kind === 'ruined' && near()) return { wear: 'ruined', storeys: 1 };
-  if (m.kind === 'overgrown' && near()) return { wear: 'overgrown', storeys: Math.min(storeys, 1) };
-  return null;
-}
-
-/** a mark worn into the buildings it touches (markWear) */
+/** a mark worn into the buildings it touches: a burned quarter gutted (a storey lost, no roof, soot); a flood's lower
+ *  town abandoned (a waterline); new walls are the pieces' (pieces.ts reads spec.marks) */
 function wear(ctx: PurposeCtx, m: CityMark): void {
   for (const b of ctx.buildings) {
     if (b.mega) continue;
-    const w = markWear(m, buildingCentre(ctx.tiles, b), b.base, b.id, b.storeys);
-    if (!w) continue;
-    b.wear = w.wear;
-    b.storeys = w.storeys;
+    const [x, y] = buildingCentre(ctx.tiles, b);
+    if (m.kind === 'burned' && m.at && Math.hypot(x - m.at[0], y - m.at[1]) < (m.r ?? 12) * (0.75 + 0.5 * hashf(b.id, 71))) {
+      b.wear = 'burned';
+      b.storeys = Math.max(1, b.storeys - 1);
+    } else if (m.kind === 'flooded' && m.level !== undefined && b.base < m.level) b.wear = 'flooded';
   }
 }
 

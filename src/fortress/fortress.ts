@@ -18,7 +18,7 @@ import { typeIndex, type TownPlan } from '../build/plan';
 import { pickFace, placeFor } from './pick';
 import { shapesOf } from '../build/shapes';
 import { groundSteps, waysOf, waysNav, type Ways } from '../build/ways';
-import type { NavGraph, Wear } from '../api/contracts/structures';
+import type { NavGraph } from '../api/contracts/structures';
 import { LEVEL_H } from '../build/town';
 import { bedsOf, roomOf } from './economy';
 import { REACH_BITS, type ReachAsk, type ReachEngine, type ReachFix, type ReachReply } from '../build/reach';
@@ -1044,42 +1044,6 @@ export class Fortress {
     for (const h of this.onBroken) h(cell, down);
     for (const h of this.onChange) h();
     return down;
-  }
-
-  /**
-   * (round 128r, Track A "Next season") A structure brought down to its lowest `storeys` levels: a history mark realised
-   * on the live plan (season/realise.ts, the rule structures/purpose.ts markWear) — a raided quarter loses a storey, a
-   * ruin is down to its ground storey. The levels above leave the plan and come down if they stood; a ruin isn't
-   * planned again (unlike breakBlock's breach) and pays nothing back. Returns the blocks taken out.
-   */
-  lowerTo(id: number, storeys: number): number {
-    const s = this.plan.structure(id);
-    if (!s) throw new Error(`fortress: no structure ${id}`);
-    if (!(storeys >= 1)) throw new Error(`fortress: lowerTo ${storeys} storeys (a ruin keeps its ground storey)`);
-    let n = 0;
-    for (const c of [...s.cells.keys()])
-      for (let l = this.plan.top(c); l >= storeys; l--) {
-        if (!this.plan.has(c, l)) continue;
-        // (out of the Town first, built or planned: sync sees nothing erased, so nothing is paid back)
-        if (this.town.has(c, l)) this.town.remove(c, l);
-        else if (this.town.planned(c, l)) this.town.plan(c, l, false);
-        this.begun.delete(`${c}:${l}`);
-        this.plan.erase(c, l);
-        n++;
-      }
-    if (!n) return 0;
-    this.sync();
-    this.io.changed(true);
-    for (const h of this.onChange) h();
-    return n;
-  }
-
-  /** (round 128r, Track A) what history left on a structure (TownPlan.setWear), drawn again */
-  setWear(id: number, wear: Wear | undefined): void {
-    this.plan.setWear(id, wear);
-    this.sync();
-    this.io.changed(false);
-    for (const h of this.onChange) h();
   }
 
   /**

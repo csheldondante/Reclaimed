@@ -193,25 +193,19 @@ export class FloodGpu {
     return this.kernels;
   }
 
-  /**
-   * (round 128r, Track A "Next season") The flood on buffers already on the GPU: `h` the heights the fill rises over,
-   * `hm` the heights the mark spreads under (outlets walled: 1e30), `w0` the fill's start (the ground at the outlets,
-   * 1e30 elsewhere), all m x m. To `level`, or to the seed's spill height (4 bytes read back: the level). The mark
-   * stays on the GPU (1 in the basin, else 0) for the caller's passes: the live window's flood (terrain/basin.ts) never
-   * reads it whole. The caller destroys the result.
-   */
-  async run(inp: { m: number; seed: number; h: GPUBuffer; hm: GPUBuffer; w0: GPUBuffer }, level?: number): Promise<{ level: number; mark: GPUBuffer; filled: GPUBuffer | null; destroy(): void }> {
+  /** the flood of grid G from `seed` (a texel): to `level`, or to the basin's spill height */
+  async flood(G: FloodGrid, seed: number, level?: number): Promise<FloodMask & { filled?: Float32Array }> {
     const dev = this.device;
     const K = await this.k();
-    const { m, seed } = inp;
+    const { m } = G;
     const N = m * m;
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     const uni = dev.createBuffer({ label: 'flood params', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const hB = dev.createBuffer({ label: 'flood h', size: N * 4, usage: S });
     const A = dev.createBuffer({ label: 'flood a', size: N * 4, usage: S });
     const B = dev.createBuffer({ label: 'flood b', size: N * 4, usage: S });
-    const C = dev.createBuffer({ label: 'flood c', size: N * 4, usage: S });
-    const D = dev.createBuffer({ label: 'flood d', size: N * 4, usage: S });
     const ch = dev.createBuffer({ label: 'flood changed', size: 4, usage: S });
+    const rd = dev.createBuffer({ label: 'flood read', size: N * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const chR = dev.createBuffer({ label: 'flood changed read', size: 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const params = (lv: number) => {
       const ab = new ArrayBuffer(16);
@@ -219,21 +213,13 @@ export class FloodGpu {
       new Float32Array(ab)[2] = lv;
       dev.queue.writeBuffer(uni, 0, ab);
     };
+    dev.queue.writeBuffer(hB, 0, G.h);
     const groups = Math.ceil(m / 8);
-    const bg = (k: ComputeKernel, hgt: GPUBuffer, src: GPUBuffer, dst: GPUBuffer) => makeBindGroup(dev, 'flood', k.layout, { 0: uni, 1: hgt, 2: src, 3: dst, 4: ch });
-    const read4 = async (b: GPUBuffer, at: number): Promise<number> => {
-      const enc = dev.createCommandEncoder();
-      enc.copyBufferToBuffer(b, at * 4, chR, 0, 4);
-      dev.queue.submit([enc.finish()]);
-      await chR.mapAsync(GPUMapMode.READ);
-      const v = new Float32Array(chR.getMappedRange().slice(0))[0];
-      chR.unmap();
-      return v;
-    };
-    /** passes in batches of `batch`, ping-pong P↔Q; until a batch changes nothing; the result's buffer */
-    const iterate = async (k: ComputeKernel, hgt: GPUBuffer, P: GPUBuffer, Q: GPUBuffer, batch: number, max: number): Promise<[GPUBuffer, number]> => {
-      const g1 = bg(k, hgt, P, Q);
-      const g2 = bg(k, hgt, Q, P);
+    const bgAB = (k: ComputeKernel, src: GPUBuffer, dst: GPUBuffer) => makeBindGroup(dev, 'flood', k.layout, { 0: uni, 1: hB, 2: src, 3: dst, 4: ch });
+    /** passes in batches of `batch`, ping-pong A↔B; until a batch changes nothing; the result's buffer */
+    const iterate = async (k: ComputeKernel, batch: number, max: number): Promise<[GPUBuffer, number]> => {
+      const g1 = bgAB(k, A, B);
+      const g2 = bgAB(k, B, A);
       let n = 0;
       for (;;) {
         dev.queue.writeBuffer(ch, 0, new Uint32Array([0]));
@@ -251,57 +237,9 @@ export class FloodGpu {
         await chR.mapAsync(GPUMapMode.READ);
         const c = new Uint32Array(chR.getMappedRange().slice(0))[0];
         chR.unmap();
-        if (c === 0 || n >= max) return [n % 2 === 0 ? P : Q, n];
+        if (c === 0 || n >= max) return [n % 2 === 0 ? A : B, n];
       }
     };
-    const own = [uni, A, B, C, D, ch, chR];
-    try {
-      let filled: GPUBuffer | null = null;
-      let L = level;
-      if (L === undefined) {
-        // the fill: from w0 (the ground at the outlets, +inf elsewhere)
-        const enc = dev.createCommandEncoder();
-        enc.copyBufferToBuffer(inp.w0, 0, A, 0, N * 4);
-        dev.queue.submit([enc.finish()]);
-        params(0);
-        const [out, n] = await iterate(K.fill, inp.h, A, B, 32, 8 * m);
-        this.passes[0] = n;
-        filled = out;
-        L = await read4(out, seed);
-      }
-      // the mark: from the seed under the level (strictly: at the spill height the spill point itself stays dry, or the
-      // water would run out through it into the next basin); the standing sea and the outlets wall it (hm)
-      params(L);
-      {
-        const enc = dev.createCommandEncoder();
-        const cp = enc.beginComputePass();
-        cp.setPipeline(K.markI.pipeline);
-        cp.setBindGroup(0, bg(K.markI, inp.hm, D, C));
-        cp.dispatchWorkgroups(groups, groups);
-        cp.end();
-        dev.queue.submit([enc.finish()]);
-      }
-      const [mark, n] = await iterate(K.mark, inp.hm, C, D, 32, 8 * m);
-      this.passes[1] = n;
-      const keep = new Set<GPUBuffer>([mark, ...(filled ? [filled] : [])]);
-      for (const b of own) if (!keep.has(b)) b.destroy();
-      return { level: L, mark, filled, destroy: () => keep.forEach((b) => b.destroy()) };
-    } catch (e) {
-      for (const b of own) b.destroy();
-      throw e;
-    }
-  }
-
-  /** the flood of grid G from `seed` (a texel): to `level`, or to the basin's spill height */
-  async flood(G: FloodGrid, seed: number, level?: number): Promise<FloodMask & { filled?: Float32Array }> {
-    const dev = this.device;
-    const { m } = G;
-    const N = m * m;
-    const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
-    const hB = dev.createBuffer({ label: 'flood h', size: N * 4, usage: S });
-    const hmB = dev.createBuffer({ label: 'flood hm', size: N * 4, usage: S });
-    const w0B = dev.createBuffer({ label: 'flood w0', size: N * 4, usage: S });
-    const rd = dev.createBuffer({ label: 'flood read', size: N * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const read = async (b: GPUBuffer) => {
       const enc = dev.createCommandEncoder();
       enc.copyBufferToBuffer(b, 0, rd, 0, N * 4);
@@ -311,24 +249,45 @@ export class FloodGpu {
       rd.unmap();
       return out;
     };
-    dev.queue.writeBuffer(hB, 0, G.h);
-    // the fill's start: the ground at the outlets (the grid's edge, the standing sea), +inf elsewhere
-    const W0 = new Float32Array(N).fill(1e30);
-    for (let i = 0; i < N; i++) {
-      const x = i % m;
-      const y = (i - x) / m;
-      if (x === 0 || y === 0 || x === m - 1 || y === m - 1 || G.outlet?.[i]) W0[i] = G.h[i];
-    }
-    dev.queue.writeBuffer(w0B, 0, W0);
-    // (the standing sea walls the mark: a flood stops at its shore — markCpu's rule)
-    const hm = Float32Array.from(G.h);
-    if (G.outlet) for (let i = 0; i < N; i++) if (G.outlet[i]) hm[i] = 1e30;
-    dev.queue.writeBuffer(hmB, 0, hm);
-    let r: Awaited<ReturnType<FloodGpu['run']>> | null = null;
     try {
-      r = await this.run({ m, seed, h: hB, hm: hmB, w0: w0B }, level);
-      const filled = r.filled ? await read(r.filled) : undefined;
-      const mk = await read(r.mark);
+      let filled: Float32Array | undefined;
+      let L = level;
+      if (L === undefined) {
+        // the fill: W0 the ground at the outlets, +inf elsewhere
+        const W0 = new Float32Array(N).fill(1e30);
+        for (let i = 0; i < N; i++) {
+          const x = i % m;
+          const y = (i - x) / m;
+          if (x === 0 || y === 0 || x === m - 1 || y === m - 1 || G.outlet?.[i]) W0[i] = G.h[i];
+        }
+        dev.queue.writeBuffer(A, 0, W0);
+        params(0);
+        const [out, n] = await iterate(K.fill, 32, 8 * m);
+        this.passes[0] = n;
+        filled = await read(out);
+        L = filled[seed];
+      }
+      // the mark: from the seed under the level (strictly: at the spill height the spill point itself stays dry, or the
+      // water would run out through it into the next basin)
+      params(L);
+      // (the standing sea walls the mark: a flood stops at its shore — markCpu's rule)
+      if (G.outlet) {
+        const hm = Float32Array.from(G.h);
+        for (let i = 0; i < N; i++) if (G.outlet[i]) hm[i] = 1e30;
+        dev.queue.writeBuffer(hB, 0, hm);
+      }
+      {
+        const enc = dev.createCommandEncoder();
+        const cp = enc.beginComputePass();
+        cp.setPipeline(K.markI.pipeline);
+        cp.setBindGroup(0, bgAB(K.markI, B, A));
+        cp.dispatchWorkgroups(groups, groups);
+        cp.end();
+        dev.queue.submit([enc.finish()]);
+      }
+      const [out, n] = await iterate(K.mark, 32, 8 * m);
+      this.passes[1] = n;
+      const mk = await read(out);
       const mask = new Uint8Array(N);
       let count = 0;
       let floor = Infinity;
@@ -338,10 +297,9 @@ export class FloodGpu {
           count++;
           floor = Math.min(floor, G.h[i]);
         }
-      return { level: r.level, mask, count, floor, spill: spillOf(G, mask), filled };
+      return { level: L, mask, count, floor, spill: spillOf(G, mask), filled };
     } finally {
-      r?.destroy();
-      for (const b of [hB, hmB, w0B, rd]) b.destroy();
+      for (const b of [uni, hB, A, B, ch, rd, chR]) b.destroy();
     }
   }
 }
