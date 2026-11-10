@@ -80,7 +80,7 @@ export default async function (lab, args) {
     return { mean: +(v.reduce((s, x) => s + x, 0) / Math.max(1, v.length)).toFixed(3), p95: +pct(v, 0.95).toFixed(2), max: +(v[v.length - 1] ?? 0).toFixed(2), n: v.length };
   };
   const frames = [...g.values()];
-  const stages = ['agents-in', 'agents-hunt', 'agents-peel', 'agents-relax', 'agents-units', 'agents-step', 'agents-notice'];
+  const stages = ['agents-in', 'agents-hunt', 'agents-jfa', 'agents-peel', 'agents-relax', 'agents-units', 'agents-step', 'agents-notice'];
   const by = Object.fromEntries(stages.map((k) => [k, stat(frames.map((f) => f.a[k] ?? 0))]));
   const total = stat(frames.map((f) => Object.values(f.a).reduce((s, x) => s + x, 0)));
   const fronts = ticks.flatMap((t) => t.front);
@@ -98,11 +98,20 @@ export default async function (lab, args) {
   );
   const hist = (v, edges) => Object.fromEntries(edges.map((e, i) => [`<${e}`, v.filter((x) => x < e && (i === 0 || x >= edges[i - 1])).length]).concat([[`>=${edges[edges.length - 1]}`, v.filter((x) => x >= edges[edges.length - 1]).length]]));
   const out = {
-    flags: Object.fromEntries(['huntgpu', 'frontcap', 'seedcell', 'fieldfront', 'blockrelax', 'relaxk'].map((k) => [k, flags.get(k)])),
+    flags: Object.fromEntries(['huntgpu', 'frontcap', 'seedcell', 'fieldfront', 'blockrelax', 'relaxk', 'jfa', 'jfar', 'jfalos'].map((k) => [k, flags.get(k)])),
     ticks: ticks.length,
     byField,
     seeds: { newPerTick: +(logged.reduce((s, t) => s + (t.seedsNew ?? 0), 0) / Math.max(1, logged.length)).toFixed(2), gonePerTick: +(logged.reduce((s, t) => s + (t.seedsGone ?? 0), 0) / Math.max(1, logged.length)).toFixed(2) },
     peelTicks: ticks.filter((t) => t.peel).length,
+    // (?jfa=1/2: the ticks the targets JFA and the obstacles JFA ran; the ground resolved by each round, as a share)
+    jfa: {
+      targetRuns: logged.filter((t) => t.jfaRuns).length,
+      obstacleRuns: logged.filter((t) => t.obsRuns).length,
+      resolved: [0, 1, 2, 3, 4].map((r) => {
+        const rs = logged.filter((t) => t.jfaRuns && t.ground);
+        return +(rs.reduce((s, t) => s + (t.resolved?.[r] ?? 0) / t.ground, 0) / Math.max(1, rs.length)).toFixed(3);
+      }),
+    },
     markTicks: ticks.filter((t) => t.marks).length,
     targetDist: { n: near.length, hist: hist(near, [3, 6, 10, 15, 25, 40]) },
     run,

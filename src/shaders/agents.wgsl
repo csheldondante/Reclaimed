@@ -318,6 +318,8 @@ fn links(@builtin(global_invocation_id) id: vec3<u32>) {
       bits |= best << (3u * d);
     }
     let ny = (nav[s].y & 0x1ffu) | (bits << 9u);
+    // (?jfa=1: the columns' links were made again here — the obstacles JFA runs again)
+    if (k == 0u) { atomicStore(&jfa[2], 1u); }
     if (ny != nav[s].y) { atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], ALL_FIELDS); }
     nav[s].y = ny;
   }
