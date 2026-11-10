@@ -31,7 +31,8 @@ const HURT = 0.15;
 const CORPSE = 4;
 
 interface Unit {
-  v: UnitView;
+  /** (round 128p) on the CPU every unit's place is known: its view's `at` is never null here */
+  v: UnitView & { at: V3 };
   sight: number;
   speed: number;
   damage: number;
@@ -65,7 +66,7 @@ export class SimpleUnits implements Units {
     const z = this.ground.heightAt(at[0], at[1]);
     if (z === null) throw new Error(`units.spawn: ${kind} at ${at} is outside the world`);
     const hp = o.health ?? 3;
-    const v: UnitView = {
+    const v: UnitView & { at: V3 } = {
       id,
       kind,
       role: o.role ?? kind,
@@ -97,7 +98,13 @@ export class SimpleUnits implements Units {
     return [...this.units.values()].map((u) => u.v);
   }
 
-  query(near: V2, radius: number, o: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): UnitView[] {
+  /** (round 128p: the contract's queries are asked of the GPU and answered later; here at once) */
+  async query(near: V2, radius: number, o: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): Promise<UnitView[]> {
+    return this.queryNow(near, radius, o);
+  }
+
+  /** (the CPU's own: at once) */
+  queryNow(near: V2, radius: number, o: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): UnitView[] {
     const out: { d: number; v: UnitView }[] = [];
     for (const { v } of this.units.values()) {
       if (!v.alive && !o.dead) continue;
@@ -107,6 +114,11 @@ export class SimpleUnits implements Units {
       if (d <= radius) out.push({ d, v });
     }
     return out.sort((a, b) => a.d - b.d).map((x) => copy(x.v));
+  }
+
+  /** (round 128p: on the CPU every unit's place is known — nothing to keep read) */
+  observe(_ids: UnitId | readonly UnitId[]): () => void {
+    return () => {};
   }
 
   byCharacter(character: string): UnitView | null {
@@ -359,5 +371,5 @@ export class SimpleUnits implements Units {
 const guardPoint = (j: UnitJob): V2 | null => (j.kind === 'guard' ? j.at : j.kind === 'patrol' ? j.around : j.kind === 'work' ? j.at : null);
 
 function copy(v: UnitView): UnitView {
-  return { ...v, at: [...v.at] as V3, job: structuredClone(v.job) };
+  return { ...v, at: v.at ? ([...v.at] as V3) : null, job: structuredClone(v.job) };
 }

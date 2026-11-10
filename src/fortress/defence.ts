@@ -11,7 +11,7 @@
 //    (a raider bashing a gate stands still; one running mostly isn't). What's drawn is a chip of wood thrown on the
 //    same lob (the particles), dust where it lands on someone.
 //  - After the wave every soldier goes back to its round (FortressCrowd.backToRoutine).
-import type { UnitId, UnitView, V2 } from '../api/contracts/units';
+import type { UnitId, V2 } from '../api/contracts/units';
 import type { FxName } from '../api/fx';
 import { R } from '../units/agent-units';
 import { G, type AgentUnits, type UnitRec } from '../units/agent-units';
@@ -61,6 +61,8 @@ export interface DefenceIO {
   burst(name: FxName, x: number, y: number, z: number, opts?: { count?: number; speed?: number; spread?: number; vel?: readonly [number, number, number] }): void;
   /** the raiders alive now */
   raiders(): UnitId[];
+  /** (round 128p) the raiders' faction: an archer's mark asked of the GPU among theirs (AgentUnits.query) */
+  raidFaction: string;
 }
 
 /** where the soldiers stand: the archers' point on the wall-walk and the swordsmen's inside the gate (or the stores) */
@@ -75,12 +77,15 @@ interface Post {
   cool: number;
   /** up on the wall at its point: it shoots */
   up: boolean;
+  /** (round 128p) where it stands up there (the GPU's arrival), and a mark being asked for */
+  at?: V3;
+  aiming?: boolean;
 }
 
 export class FortressDefence {
   readonly posted = new Map<UnitId, Post>();
   private posts: Posts | null = null;
-  private arrows: { from: UnitId; mark: UnitId; aim: V3; t: number }[] = [];
+  private arrows: { from: UnitId; mark: UnitId; aim: V3; t: number; landing?: boolean; done?: boolean }[] = [];
   readonly stats = { posted: 0, shots: 0, hits: 0 };
 
   constructor(private io: DefenceIO) {}
@@ -132,11 +137,16 @@ export class FortressDefence {
     });
   }
 
-  /** each frame (sim seconds): the archers up on the wall shoot; the arrows land */
+  /**
+   * each frame (sim seconds): the archers up on the wall shoot; the arrows land. (Round 128p, DA-B22 (c)(4): an archer is
+   * up when the GPU tells it arrived at its point on the wall-walk — where it stands then; its mark the nearest raider in
+   * range, asked of the GPU when it shoots (a query of the raiders' faction); an arrow lands on its mark if the mark,
+   * asked again then, stands where it was aimed — no unit's position read every frame)
+   */
   update(dt: number): void {
     const U = this.io.units;
     const L = this.io.life;
-    const raiders = this.io.raiders().map((id) => U.get(id)).filter((v): v is UnitView => !!v?.alive);
+    const raiders = new Set(this.io.raiders());
     for (const [id, p] of this.posted) {
       if (p.role !== 'archer') continue;
       const v = U.get(id);
@@ -144,49 +154,55 @@ export class FortressDefence {
         this.posted.delete(id);
         continue;
       }
-      const at = this.posts?.archers;
-      // (up: on the wall-walk near its point — over the ground the fortress first read there)
-      if (!p.up && at && Math.hypot(at[0] - v.at[0], at[1] - v.at[1]) < 6 && v.at[2] > L.keptGround([v.at[0], v.at[1]]) + 1.5) {
-        p.up = true;
-        U.order(id, { kind: 'work', at: [v.at[0], v.at[1]], what: 'soldier' });
-      }
-      if (!p.up) continue;
-      p.cool -= dt;
-      if (p.cool > 0) continue;
-      let mark: UnitView | null = null;
-      let md = ARROW.range;
-      for (const r of raiders) {
-        const d = Math.hypot(r.at[0] - v.at[0], r.at[1] - v.at[1]);
-        if (d < md) {
-          md = d;
-          mark = r;
+      // (up: arrived at its point, on the wall-walk — over the ground the fortress first read there)
+      if (!p.up) {
+        const at = U.arrivedAt(id);
+        if (at && at[2] > L.keptGround([at[0], at[1]]) + 1.5) {
+          p.up = true;
+          p.at = at;
+          U.order(id, { kind: 'work', at: [at[0], at[1]], what: 'soldier' });
         }
       }
-      if (!mark) {
-        p.cool = 0.3;
-        continue;
-      }
-      p.cool = ARROW.every;
-      this.shoot(id, v, mark);
+      if (!p.up || !p.at || p.aiming) continue;
+      p.cool -= dt;
+      if (p.cool > 0) continue;
+      const from = p.at;
+      p.aiming = true;
+      void U.query([from[0], from[1]], ARROW.range, { faction: this.io.raidFaction }).then((near) => {
+        p.aiming = false;
+        const mark = near.find((r) => raiders.has(r.id) && r.at);
+        if (!mark?.at || !this.posted.has(id)) {
+          p.cool = 0.3;
+          return;
+        }
+        p.cool = ARROW.every;
+        this.shoot(id, from, mark.id, mark.at);
+      });
     }
     for (const a of this.arrows) {
+      if (a.landing) continue;
       a.t -= dt;
       if (a.t > 0) continue;
-      const m = U.get(a.mark);
-      if (!m?.alive || !arrowHits(a.aim, m.at)) continue;
-      this.stats.hits++;
-      this.io.burst('dust', m.at[0], m.at[1], m.at[2] + 0.9, { count: 6, speed: 1.5, spread: 0.3 });
-      U.hit(a.mark, ARROW.damage, a.from);
+      a.landing = true;
+      // (where it lands: the mark asked for there)
+      void U.query([a.aim[0], a.aim[1]], 3, { faction: this.io.raidFaction }).then((near) => {
+        a.done = true;
+        const m = near.find((r) => r.id === a.mark);
+        if (!m?.alive || !m.at || !arrowHits(a.aim, m.at)) return;
+        this.stats.hits++;
+        this.io.burst('dust', m.at[0], m.at[1], m.at[2] + 0.9, { count: 6, speed: 1.5, spread: 0.3 });
+        U.hit(a.mark, ARROW.damage, a.from);
+      });
     }
-    this.arrows = this.arrows.filter((a) => a.t > 0);
+    this.arrows = this.arrows.filter((a) => !a.done);
   }
 
-  private shoot(id: UnitId, from: UnitView, mark: UnitView): void {
+  private shoot(id: UnitId, from: V3, mark: UnitId, at: V3): void {
     this.stats.shots++;
-    const f: V3 = [from.at[0], from.at[1], from.at[2] + 1.3];
-    const aim: V3 = [mark.at[0], mark.at[1], mark.at[2]];
+    const f: V3 = [from[0], from[1], from[2] + 1.3];
+    const aim: V3 = [at[0], at[1], at[2]];
     const { t, vel } = arrowFlight(f, [aim[0], aim[1], aim[2] + 0.8]);
-    this.arrows.push({ from: id, mark: mark.id, aim, t });
+    this.arrows.push({ from: id, mark, aim, t });
     this.io.burst('chips', f[0], f[1], f[2], { count: 2, speed: 0.2, spread: 0.05, vel });
   }
 

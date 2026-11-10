@@ -292,7 +292,10 @@ export class FortressCrowd implements Routine {
   backToRoutine(id: UnitId): void {
     const v = this.io.units.get(id);
     if (!v?.alive) return;
-    this.io.units.order(id, { kind: 'work', at: [v.at[0], v.at[1]], what: 'soldier' });
+    // (round 128p: a work job's place is its routine's — the agents' units don't read it; the stores as its anchor, not
+    // where it stood, which isn't read)
+    const h = this.heap();
+    this.io.units.order(id, { kind: 'work', at: [h[0], h[1]], what: 'soldier' });
     this.life.back(id);
   }
 
@@ -421,7 +424,9 @@ export class FortressCrowd implements Routine {
     if ('fell' in o) return void this.tasks.set(id, { kind: 'fell', at: o.fell, t: workSeconds(DEFS.lumber), next: 0 });
     if ('become' in o) {
       U.restyle(id, 'guard', { health: ECON.soldierHealth, damage: ECON.soldierDamage });
-      u.v.job = { kind: 'work', at: [u.v.at[0], u.v.at[1]], what: 'soldier' };
+      // (round 128p: its routine's job; its place the stores as an anchor — where it stands isn't read)
+      const h = this.heap();
+      u.v.job = { kind: 'work', at: [h[0], h[1]], what: 'soldier' };
       this.stats.trained++;
     }
   }

@@ -109,6 +109,14 @@ test('the ring search finds what a brute force over every unit finds', async () 
     expect(s.hunted(x), `hunted ${x}`).toBeCloseTo(want === Infinity ? Infinity : want, 4);
   }
   expect(marked).toBeGreaterThan(50);
+  // (the hunt's 8 nearest candidates, read in the sync: the marked ones nearest first, ties by slot)
+  const want8 = ids
+    .filter((x) => Number.isFinite(s.hunted(x)))
+    .sort((a, b) => Math.floor(s.hunted(a) * 64) - Math.floor(s.hunted(b) * 64) || slotOf(a) - slotOf(b))
+    .slice(0, 8);
+  const { hunt } = await agents.sync();
+  expect(hunt.map((c) => c.id)).toEqual(want8);
+  for (const c of hunt) expect(c.x).toBeCloseTo(s.pos(c.id)[0], 4);
   expect(g.takeErrors()).toEqual([]);
 });
 
