@@ -21943,10 +21943,12 @@ expected fail. No shot (nothing drawn changed).
   unchanged: `?town=1` still lands on Muru (s84).
 - The town lab replaces the behaviour lab: `?lab=1` on the default page (src/lab/lab.ts), driven by scripts/lab.mjs.
   New gates on it:
-  - townfollow: a commuter at Muru picked as it sets out (24 s of sim waited for one: the graph settles, the first
-    rests run out), followed 15 s of sim: 29 samples riding, 10.5 m along its route, the leg ended and its job stepped
-    to WORK, on screen above the card sheet 30/30. (A slide moved the window under it by 64 rows mid-follow: positions
-    are compared in world units.)
+  - townfollow: a commuter at Muru picked as it sets out (18-24 s of sim waited for one: the graph settles, the first
+    rests run out), followed: 161 samples riding over 81 s of sim, 53 m along its route, the leg ended and its job
+    stepped to WORK, on screen above the card sheet 162/162 (after the merge of origin/fortress). An earlier run's
+    rider ended its leg at 10.5 m: a leg also ends when its route's half of the points pool is reused (C_STALE) and the
+    gate can't tell the two apart yet. A slide moved the window 64 rows under the rider mid-follow: positions are
+    compared in world units (a 55 m "jump" otherwise).
   - townseason: Muru, walls + houses then farms: 14 → 12 districts not begun, 2 stages in its edit log, the wall to
     0.67 with 35 posts on risen pieces, the save point written (season 5.6 KB, edit log 3.7 KB); season 1 → 3.
 - Gates: typecheck; unit 75 files / 587 tests (the boundary rules now name the town as citygen/citylife/season; the
@@ -21976,3 +21978,16 @@ system we are deprecating"; "Stop wasting resources on old code." So, no compati
   reads its depth for the water's head.
 Checks: typecheck (src and test); the unit tier 107 files, 863 passed; the GPU tier 45 files, 194 passed; Muru and the
 flow lab at default (scratchpad liquids/muru-default.png, flowlab-default.png).
+
+## 2026-11-10 — the switchover, after the merge of origin/fortress (the flow model the one liquid)
+
+- Re-checked on 79eca712: typecheck; unit 74 files / 584 tests; Dawn static-claims, cities, jb6, living; the gates
+  townfollow and townseason as above.
+- The default link `?skipmenu=1&level=atlas&town=1&fresh=1` at 412 × 915, 60°: Muru (s84, 344 lots) made ~13 s after
+  level-ready, its living town 950 people (90 riding by the season's counts), the season sheet dealt (houses, farms,
+  quarry, lumber). Three seasons with walls, houses and farms: 14 → 12 districts not begun, the wall to 1 with 52 posts,
+  a save point each season (season 5.1-5.6 KB, edit log 3.6-3.8 KB). Two Next seasons with no frame between leave the
+  ring's words unread at the second save (314 → 450 B): the ring is made on a frame — in play a frame always passes.
+- A pan from Muru to the nearest other town, Bumku (s53, 615 m): made as it neared the window (208 lots, 1.2 s to
+  made), its living town given (90 people), nothing dropped, no page error.
+
