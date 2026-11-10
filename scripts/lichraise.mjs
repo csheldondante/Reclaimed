@@ -38,10 +38,11 @@ await run({ name: 'lichraise', kind: 'behaviour', size: '412x915', dpr: 2 }, asy
       window.reclaimed.play.session.controls.script = b ? { stick: [0, 0], buttons: b } : null;
     }, buttons);
   const count = () =>
-    p.evaluate(() => {
+    p.evaluate(async () => {
       const r = window.reclaimed;
       const [x, y] = r.play.session.hero.position();
-      const all = r.units.query([x, y], 14, { dead: true });
+      // (round 128p, U1: a query is asked of the GPU — async; each answer with its place)
+      const all = await r.units.query([x, y], 14, { dead: true });
       const live = all.filter((u) => u.alive);
       const h = r.play.session.hero;
       return {

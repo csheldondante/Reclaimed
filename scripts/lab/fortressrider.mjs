@@ -22,9 +22,10 @@ export default async function (lab, args) {
   for (let t = 0; t < (args.seconds ?? 90); t += 2) {
     await lab.run(2, 8);
     const s = raid.state();
+    // (the rider is observed by the raid — its place read each sync; null the frame it's spawned)
     const v = raid.rider !== null ? lab.units.get(raid.rider) : null;
-    if (v) riderAt = [v.at[0], v.at[1]];
-    log.push({ t: Math.round(s.t), rider: v ? v.at.map((n) => Math.round(n)).join(',') : null, lines: s.lines });
+    if (v?.at) riderAt = [v.at[0], v.at[1]];
+    log.push({ t: Math.round(s.t), rider: v?.at ? v.at.map((n) => Math.round(n)).join(',') : null, lines: s.lines });
     if (!told && s.lines.length) {
       told = { t: s.t, line: s.lines[0], riderAt, heap: lab.life().heap() };
       lab.look(riderAt?.[0] ?? lab.heap[0], riderAt?.[1] ?? lab.heap[1], 14);

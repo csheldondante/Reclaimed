@@ -128,11 +128,13 @@ await run({ name: 'fortressfar', kind: 'behaviour', size: '412x915', dpr: 1, ech
       const rw = A.reader(4);
       await rs.refresh();
       await rw.refresh();
+      // (round 128p, U1: where they stand asked of the GPU)
+      const where = new Map((await Rc.units.query([0, 0], 1e7)).map((v) => [v.id, v.at]));
       return life.people().map((id) => {
         const u = Rc.units.recs.get(id);
         const w = u.work;
-        if (!w || !w.load) return null;
-        const p = u.v.at;
+        const p = where.get(id);
+        if (!w || !w.load || !p) return null;
         const r = w.load.good === 'log' ? rw : rs;
         const q = r.sample(p[0], p[1]);
         const stands = w.block ? life.standsFor(w.block) : [];

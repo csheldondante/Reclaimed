@@ -319,7 +319,7 @@ await run({ name: 'fortresslanes', kind: 'behaviour', size: '412x915', dpr: 1, e
     while (Date.now() - t0 < BUILD_S * 1000) {
       await sleep(1000);
       await R.fatal(page);
-      const r = await page.evaluate(() => {
+      const r = await page.evaluate(async () => {
         const Rc = window.reclaimed;
         const f = Rc.fortress;
         const life = Rc.fortressCrowd();
@@ -352,10 +352,13 @@ await run({ name: 'fortresslanes', kind: 'behaviour', size: '412x915', dpr: 1, e
         let on = 0;
         let walking = 0;
         const pts = [];
+        // (round 128p, U1: where they stand asked of the GPU)
+        const where = new Map((await Rc.units.query([0, 0], 1e7)).map((v) => [v.id, v.at]));
         for (const id of life.people()) {
           const u = Rc.units.get(id);
-          if (!u || u.state !== 'walk') continue;
-          const [bx, by] = f.toBox(u.at[0], u.at[1]);
+          const p = where.get(id);
+          if (!u || u.state !== 'walk' || !p) continue;
+          const [bx, by] = f.toBox(p[0], p[1]);
           walking++;
           pts.push([bx, by]);
           if (inside(bx, by)) on++;
@@ -415,10 +418,11 @@ await run({ name: 'fortresslanes', kind: 'behaviour', size: '412x915', dpr: 1, e
       await sleep(1500);
       await gif(`lanes-${kind}-near`, 24);
       // (closer still, on the walkers: the camera on the middle of those walking)
-      await page.evaluate(() => {
+      await page.evaluate(async () => {
         const Rc = window.reclaimed;
         const life = Rc.fortressCrowd();
-        const pts = life.people().map((id) => Rc.units.get(id)).filter((u) => u && u.state === 'walk').map((u) => u.at);
+        const where = new Map((await Rc.units.query([0, 0], 1e7)).map((v) => [v.id, v.at]));
+        const pts = life.people().map((id) => Rc.units.get(id)).filter((u) => u && u.state === 'walk' && where.has(u.id)).map((u) => where.get(u.id));
         if (!pts.length) return;
         pts.sort((a, b) => a[0] - b[0]);
         const m = pts[Math.floor(pts.length / 2)];

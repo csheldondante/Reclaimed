@@ -121,7 +121,7 @@ const state = (p) =>
 const onFigure = (p, sx, sy) =>
   p.evaluate(
     (sx, sy) => window.reclaimed.run.units.all().some((u) => {
-      if (!u.alive) return false;
+      if (!u.alive || !u.at) return false;
       const [x, y] = window.reclaimed.camera.project(u.at[0], u.at[1], u.at[2] + 1.2);
       return Math.hypot(x - sx, y - sy) < 44;
     }),
@@ -134,10 +134,11 @@ const onFigure = (p, sx, sy) =>
 async function fightOff(p) {
   let fought = false;
   for (let k = 0; k < 400; k++) {
-    const f = await p.evaluate(() => {
+    const f = await p.evaluate(async () => {
       const r = window.reclaimed.run;
       const h = r.hero.position();
-      const foes = r.hero.alive ? r.units.query([h[0], h[1]], 9, { hostile: true }) : [];
+      // (round 128p, U1: a query is async — each answer with its place)
+      const foes = r.hero.alive ? await r.units.query([h[0], h[1]], 9, { hostile: true }) : [];
       if (!foes.length) {
         r.pad.scripted = null;
         return false;
@@ -190,7 +191,7 @@ async function walkTo(p, to, what, tol = 1.6) {
     last = s.h;
     if (still > 10) {
       console.log(`     stuck at ${s.h.map((v) => v.toFixed(1))} on the way to ${what}`);
-      const dbg = await p.evaluate((st) => {
+      const dbg = await p.evaluate(async (st) => {
         const r = window.reclaimed.run;
         const to = r.winOf(st);
         const t = window.reclaimed.api.terrain;
@@ -204,7 +205,7 @@ async function walkTo(p, to, what, tol = 1.6) {
           }
           rows.push(s);
         }
-        const near = r.units.query([h[0], h[1]], 4, { dead: true }).map((u) => `${u.role}${u.alive ? '' : '(dead)'}@${u.at.map((v) => v.toFixed(1))}`);
+        const near = (await r.units.query([h[0], h[1]], 4, { dead: true })).map((u) => `${u.role}${u.alive ? '' : '(dead)'}@${u.at.map((v) => v.toFixed(1))}`);
         return { water: window.reclaimed.api.water?.depthAt(h[0], h[1]), route: r.route([h[0], h[1]], to), rows, near, mat: t.materialAt(h[0], h[1]), flat: t.heightAt(h[0], h[1]), smooth: t.heightAt(h[0], h[1], { smooth: true }) };
       }, to);
       console.log(`     ${JSON.stringify({ ...dbg, rows: undefined })}\n     ${dbg.rows.join('\n     ')}`);
@@ -233,7 +234,9 @@ async function talkTo(p, who) {
     const s = await p.evaluate((who) => {
       const r = window.reclaimed.run;
       if (r.play.dialog.isOpen) return { open: true };
+      // (a cast member: observed while staged — StoryPlay; not read yet, wait a beat)
       const u = r.units.get(r.play.unitOf(who));
+      if (!u?.at) return { open: false, sx: -1, sy: -1, busy: true };
       const [sx, sy] = window.reclaimed.camera.project(u.at[0], u.at[1], u.at[2] + 1.2);
       return { open: false, sx, sy, busy: r.play.cam.busy };
     }, who);
@@ -241,15 +244,19 @@ async function talkTo(p, who) {
     const on = s.sx > 20 && s.sx < 392 && s.sy > 120 && s.sy < 700;
     if (!s.busy && !on) {
       // (off the screen: walk toward them until they're in view)
-      const at = await p.evaluate((who) => window.reclaimed.run.worldOf(window.reclaimed.run.units.byCharacter(who).at), who);
-      await walkTo(p, at, who, 8);
+      const at = await p.evaluate((who) => {
+        const u = window.reclaimed.run.units.byCharacter(who);
+        return u?.at ? window.reclaimed.run.worldOf(u.at) : null;
+      }, who);
+      if (at) await walkTo(p, at, who, 8);
+      else await sleep(300);
       continue;
     }
     if (!s.busy) await p.mouse.click(s.sx, s.sy);
     else if (s.busy) await p.mouse.click(206, 300);
     await sleep(800);
   }
-  console.log(`     could not talk to ${who}: ${JSON.stringify(await p.evaluate((who) => { const r = window.reclaimed.run; const u = r.units.get(r.play.unitOf(who)); const h = r.hero.position(); const sp = u && window.reclaimed.camera.project(u.at[0], u.at[1], u.at[2] + 1.2); const el = sp && document.elementFromPoint(sp[0], sp[1]); return { sp, el: el && (el.className || el.tagName), u: u && { at: u.at, alive: u.alive, hostile: u.hostile, state: u.state }, can: r.play.canTalk(who), hero: h, busy: r.play.cam.busy, open: r.play.dialog.isOpen, ended: r.play.run.over, queued: r.play.talks, talks: window.__talks, cam: window.reclaimed.camera.target.map((v) => +v.toFixed(1)), zoom: window.reclaimed.camera.zoom, follows: !!r.play.cam.following }; }, who))}`);
+  console.log(`     could not talk to ${who}: ${JSON.stringify(await p.evaluate((who) => { const r = window.reclaimed.run; const u = r.units.get(r.play.unitOf(who)); const h = r.hero.position(); const sp = u?.at && window.reclaimed.camera.project(u.at[0], u.at[1], u.at[2] + 1.2); const el = sp && document.elementFromPoint(sp[0], sp[1]); return { sp, el: el && (el.className || el.tagName), u: u && { at: u.at, alive: u.alive, hostile: u.hostile, state: u.state }, can: r.play.canTalk(who), hero: h, busy: r.play.cam.busy, open: r.play.dialog.isOpen, ended: r.play.run.over, queued: r.play.talks, talks: window.__talks, cam: window.reclaimed.camera.target.map((v) => +v.toFixed(1)), zoom: window.reclaimed.camera.zoom, follows: !!r.play.cam.following }; }, who))}`);
   return false;
 }
 
@@ -346,10 +353,10 @@ async function won() {
   const fight = async () => {
     const t0 = Date.now();
     while (Date.now() - t0 < 90000) {
-      const f = await p.evaluate(() => {
+      const f = await p.evaluate(async () => {
         const r = window.reclaimed.run;
         const h = r.hero.position();
-        const foes = r.units.query([h[0], h[1]], 40, { hostile: true });
+        const foes = await r.units.query([h[0], h[1]], 40, { hostile: true });
         const warden = r.units.byCharacter('bellwarden');
         if (!r.hero.alive || !warden?.alive || !foes.length) {
           r.pad.scripted = null;
@@ -357,6 +364,8 @@ async function won() {
         }
         // (the Bellwarden first once its dead thin out; else the nearest)
         const t = foes.length <= 2 ? warden : foes[0];
+        // (the warden's place: a cast member, observed while staged; not read yet, wait a beat)
+        if (!t.at) return { done: false };
         const dx = t.at[0] - h[0];
         const dy = t.at[1] - h[1];
         const d = Math.hypot(dx, dy);

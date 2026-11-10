@@ -250,10 +250,14 @@ await run({ name: 'fortresseconomy', kind: 'behaviour', size: '412x915', dpr: 1,
     const q = f.centre(window.__m3.quarry[0]);
     const home = Rc.units.agents.reader(3);
     await home.refresh();
+    // (round 128p, U1: where they stand asked of the GPU — a unit's place isn't read unless observed)
+    const where = new Map((await Rc.units.query([0, 0], 1e7)).map((v) => [v.id, v.at]));
     return life.ids.map((id) => {
       const u = Rc.units.recs.get(id);
-      const h = home.sample(u.v.at[0], u.v.at[1], u.v.at[2]);
-      return `${u.work?.job ?? '-'}/${u.work?.phase}@${Math.round(Math.hypot(u.v.at[0] - q[0], u.v.at[1] - q[1]))} g${u.group} ${u.v.state} home ${h ? Math.round(h.dist) : '?'}`;
+      const p = where.get(id);
+      if (!p) return `${id}: not found`;
+      const h = home.sample(p[0], p[1], p[2]);
+      return `${u.work?.job ?? '-'}/${u.work?.phase}@${Math.round(Math.hypot(p[0] - q[0], p[1] - q[1]))} g${u.group} ${u.v.state} home ${h ? Math.round(h.dist) : '?'}`;
     }).join(' | ');
   })));
   await shot('m3-lumber', 'lumber', 6);
