@@ -314,3 +314,76 @@ test.fails('F7: a slot reused during an in-flight event — the events name the 
   expect((await mind(agents, gpuOf(c))).hp).toBeCloseTo(3 * 3, 3);
   expect(g.takeErrors()).toEqual([]);
 });
+
+// ---- §9f (later rounds): line of sight — seen-only targets, ranged units --------------------------------------------
+/** the §9f surface: kinds that shoot, and the seen-only flag's effect, as the contract would show them */
+interface LosUnits extends U2Units {
+  /** (§9f) a ranged kind: range (cells), eye height, the standoff band */
+  defineRanged(kind: string, o: { range: number; eye: number; standoff: [number, number] }): void;
+}
+function los(units: AgentUnits): LosUnits {
+  const u = u2(units) as Partial<LosUnits> & U2Units;
+  if (!u.defineRanged) throw new Error('§9f: ranged kinds not on the contract yet');
+  return u as LosUnits;
+}
+
+test.fails('§9f seen-only: a target behind a wall is not taken; one that steps behind cover is chased to its last-seen place, then dropped after T', async () => {
+  const { units, run } = await world();
+  los(units);
+  // (setup when built: a wall between a raider and a guard → no `noticed`; open the line → noticed; the guard walks
+  // behind the wall → the raider's hunt seed stays at the last-seen place, it walks there, and after the kind's T
+  // seconds with nothing in sight it lets go: noticed(0), its job resumes)
+  const raider = units.spawn('raider', [MID[0] - 10, MID[1]], 'f-raid', { role: 'raider', hostile: true, sight: 30 });
+  const seen: (UnitId | string)[] = [];
+  units.noticed.push((u, t) => u.id === raider && seen.push(t));
+  await run(TPS);
+  expect(seen).toEqual([]);
+});
+
+test.fails('§9f ranged: an archer with line of sight hits, without it holds fire; two arrows on one target in one tick both count', async () => {
+  const { units, run } = await world();
+  const L = los(units);
+  L.defineRanged('archer', { range: 20, eye: 1.4, standoff: [6, 16] });
+  // (setup when built: an archer 12 cells from a raider in the open → hurt events by the archer; a wall between them
+  // → no EV_WINDUP, no hurt. Two archers releasing on the same tick at one raider → its hp falls by both arrows' damage,
+  // two hurts (or one with their sum) naming them — the per-target accumulator, §3)
+  const archer = units.spawn('archer', [MID[0] - 12, MID[1]], 'f-town', { role: 'archer', damage: 1 });
+  const raider = units.spawn('raider', [MID[0], MID[1]], 'f-raid', { role: 'raider', hostile: true, health: 10 });
+  const by: (UnitId | string | null)[] = [];
+  units.hurt.push((u, _d, b) => u.id === raider && by.push(b));
+  await run(5 * TPS, () => by.length > 0);
+  expect(by[0]).toBe(archer);
+});
+
+// ---- §9d (later rounds): formations ------------------------------------------------------------------------------------
+/** the §9d surface: a march in formation */
+interface FormationUnits extends U2Units {
+  formation(ids: UnitId[], o: { at: V2; facing: V2; rows: number; spacing: number }): void;
+}
+function formed(units: AgentUnits): FormationUnits {
+  const u = u2(units) as Partial<FormationUnits> & U2Units;
+  if (!u.formation) throw new Error('§9d: formations not on the contract yet');
+  return u as FormationUnits;
+}
+
+test.fails('§9d: a column narrows to single file through a 1.1 m stair and re-forms after', async () => {
+  const { units, run } = await world();
+  const F = formed(units);
+  // (setup when built: on the gputown recipe, 12 soldiers march by a route whose routeWidth falls to 1.1 m on a stair →
+  // every row there has one soldier (cols 1); past the stair, back to its rows; nobody leaves the route's width)
+  const ids = Array.from({ length: 12 }, (_, i) => units.spawn('soldier', [MID[0] + (i % 4), MID[1] + Math.floor(i / 4)], 'f-town', { role: 'guard' }));
+  F.formation(ids, { at: [MID[0] + 30, MID[1]], facing: [1, 0], rows: 3, spacing: 1.2 });
+  await run(TPS);
+  expect(ids.length).toBe(12);
+});
+
+test.fails('§9d: an off-road formation squeezes through a gap between two walls (the clearance on each side)', async () => {
+  const { units, run } = await world();
+  const F = formed(units);
+  // (setup when built: two walls with a 3-cell gap across a field march → the rows narrow to what left + right
+  // clearance allow, off-centre where one side is tighter, the column lengthens, all pass, and it re-forms beyond)
+  const ids = Array.from({ length: 9 }, (_, i) => units.spawn('soldier', [MID[0] - 10 + (i % 3), MID[1] + Math.floor(i / 3)], 'f-town', { role: 'guard' }));
+  F.formation(ids, { at: [MID[0] + 20, MID[1]], facing: [1, 0], rows: 3, spacing: 1.2 });
+  await run(TPS);
+  expect(ids.length).toBe(9);
+});

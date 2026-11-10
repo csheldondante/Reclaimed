@@ -22115,3 +22115,46 @@ Cost (huntbench, town recipe, 200 v 200, 412×915, q=low, 20 s at 1x, `?huntgpu=
 Gates: typecheck clean; GPU tier 197 passed, 11 expected fail (the U2 skeletons), 5 skipped; unit tier 863 passed, 3
 expected fail. fortressfollow: 40 of 40 samples on screen, plus 14 of 14 in a 20 s run with shots — looked at
 (follow_012: villagers on the roads, a miner at the quarry).
+
+## 2026-11-10 — U2 round 4b: JFA-started fields measured beside block relaxation (trackB-u2)
+
+Why: the user asked whether JFA spreads fields faster: "an obstacle JFA then a targets JFA then binary search pixels to
+see if an obstacle is in the way of the nearest target". Then iterated: "keep all the JFA to targets that don't hit an
+obstacle and then JFA to those pixels on the remaining ones". Built behind `?jfa=1` / `?jfa=2&jfar=R` and compared
+with block relaxation on the same gate. UNIT_MINDS_U2.md §5e has the design, the tables and the recommendation.
+
+- **Built** in units.wgsl `jfa*` (binding 55):
+  - the obstacle JFA (the clearance plane, static, `clearanceAt`);
+  - the targets JFA plus a line check, sphere-traced or bisected on the clearance; a clear line starts at
+    hexDist × 1.375, never under;
+  - iterated rounds from the resolved ground's edge.
+  - All on top surfaces only. `Agents.readRaw('jfa')` gives tests the planes.
+- **Results** (GPU-test maps, 2 sweeps):
+  - Every variant with block relaxation is at the steering floor: 8–10 frames, near or far.
+  - JFA + plain relax cuts far reaction from 24–27 to 7–21 frames.
+  - JFA starts never fall under the BFS. They cover 97.5% of open ground, 48–63% of the walled map (by rounds), and
+    30–32% of the S-bend.
+  - Field vs. BFS, frames to match (open / wall / S-bend): block 7 / 7 / 11; JFA + block 7 / 9 / 12; plain relax
+    72 / 73 / over 120.
+  - A first version of the map test compared the S-bend outside the agents' scope (where fields are FAR) and failed
+    by timing. That looked like a convergence bug (FC13); it was the test. Now scoped: block converges in every run.
+- **Old town** (`town` recipe; no more runs, it's being deleted):
+  - agents-jfa 2.6–2.7 ms mean on desktop;
+  - the targets JFA ran on 195–262 of 1,200 ticks, the obstacles JFA 4–5 times;
+  - a round-0 start resolved 1–9% of the town's ground.
+- **Gates:** typecheck clean; GPU tier 197 passed, 15 expected fail (the U2 skeletons), 5 skipped, with the map test then failing on its own scope bug; fixed, that file and the U2 files then 4 passed, 15 expected fail; unit tier 863 passed, 3 expected fail.
+- **Recommendation:** block relaxation alone for the hunt field. Keep the obstacle JFA as the clearance plane for line
+  of sight, formations, cover and search, with its dispatch made conditional (FC14). Trace and bisect tie, so keep
+  trace.
+- **Tests:**
+  - `huntreact.test.ts` gains the three maps against the BFS, compared only inside the agents' scope (outside it
+    every field is FAR);
+  - `unitminds-u2.test.ts` gains §9d and §9f skeletons (formations, seen-only, ranged).
+- **Design** (§9, folded from the user's and Track A's notes):
+  - order arguments by index, with routes2's real names (gate status → `orderFailed` reasons);
+  - lot indices for places;
+  - `agentSides` GPU-labelled;
+  - formations off-road from the clearance and on roads from `routeWidth`;
+  - seen-only targets, ranged units behind a narrow `fire()` (the placeholder marked for GPU rigid bodies), cover and
+    search;
+  - §9g: routine town work leaves AgentUnits for the living town's riders; the old town is not built against.
