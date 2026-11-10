@@ -1,6 +1,41 @@
 # GPU unit AI — plan (DA-B2 finished, DA-B32, DESIGN §11/§12)
 
-Status: **proposed 2026-11-09**, waiting on the user (ownership) and on Track A's landing of the onetown line.
+Status: **owned by Track B (2026-11-10)**; code waits on Track A's citygen/haul landing in fortress.
+
+The user (2026-11-10, relayed by Track A): "tell track B to move the agents and plants to the GPU. I'm ok with async
+readback for state changes if needed (like a behavior tree or something) but I prefer it's lightweight and that a lot
+of routine behaviors like hauling between locations don't need it." They also asked:
+- whether a state can shift flow-field priority (fleeing over a job);
+- whether behaviours are bundled by group.
+
+Reactions must come within a few frames; about 2 s is too slow.
+
+**Scope, extended** (Track A brief `docs/handoff/sessions/GPU_AGENTS_FLORA.md` on trackA-citygen 5081e6b4):
+- the units and combat below;
+- work crews (`agents/crew.ts`, `buildcrew.ts`);
+- one crowd: the inhabitants (`src/inhabitants/system.ts`) and trackA-haul's riders (`src/citylife/`) merge into it;
+- flora with no CPU mirror: `flora/placement.ts standsAt`, `api/plants.ts planTree` and CPU felling go.
+
+**Formats agreed with Track A** (sent 2026-11-10). One behaviour word per unit, trackA-haul's RID word 1, generalised:
+
+| Byte | Meaning |
+|---|---|
+| byte0 | job: the behaviour bundle that picks the state machine |
+| byte1 | state |
+| byte2 | leg/mode: ROUTE trip or SURFACE field |
+| byte3 | override (FLEE / FIGHT / DOWNED) plus the preempted state to resume |
+
+- Overrides preempt job states in the same tick on the GPU, so reaction takes 1–2 ticks.
+- A group is a shared goal field or route that units of any job may follow.
+- Events reuse units.wgsl EV_*; haul events are numbered above 32.
+- Routine hauling emits no events; totals are GPU counters, read async on demand.
+- `src/shaders/unitstate.wgsl` holds all of this (U0).
+- trackA-haul keeps the haul job states. Track B owns the crowd, the overrides, combat, the inhabitants merge and flora.
+- Added slices:
+  - **U5:** riders become unit rows (after haul lands);
+  - **U6:** crews onto job states;
+  - **U7:** the inhabitants merged;
+  - **F1:** the flora mirror removed.
 The user: "The whole point of flow fields was to make the AI entirely GPU and let units path and target based on their
 state. So yes I would like that explicitly planned and half finished work merged if applicable but make sure you aren't
 stepping on other agents."
