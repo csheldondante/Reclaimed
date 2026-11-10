@@ -21207,3 +21207,14 @@ The user: "How is it possible not to find a route even every lot has a street ad
 - **Gates:** transfers lists citygen's run, claim, uploads and colapply's damage read (they came with the citygen
   merge unlisted); writing-sources places citygen's panel and bench and the street lab's panel; the boundaries breach
   (sim/external.ts importing game/colapply for a type) is gone: `OwnedArenaJob` is the engine's type now.
+
+## 2026-11-10 — living town fix round 3: the works' internal routes, shots, GPU ms
+
+- The quarry's ramp route ends on the working bench's walkway (the face's line, where carts load); its rim yard and
+  the camp's yard and clearing are pads the connectivity check joins to the roads over the ground — at Muru the
+  quarry's access road runs from its yard up the slope to the main road (scratchpad living/quarry-access.png), no
+  straight track over water. Woodcutters ride routes over the clearing to each tree.
+- Muru, after the round: 20 passages in 1 round, 0 columns and 0 built doors cut off, 354–392 routes, 0 misses in
+  three runs and 1 in one (not traced to its cause yet).
+- GPU ms (`ltspeed=12`): graph 0.145, riders 0.031, works 0.087, figures 0.045 — 0.31 ms. The merged graph pass didn't
+  cut the settled cost: the empty indirect dispatches are the cost, not the pass.

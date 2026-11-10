@@ -999,7 +999,7 @@ fn rampRoute() {
   let rimc = lt(L_Q + Q_RIM);
   if (rimc == 0u) { return; }
   let z0 = HT[rimc - 1u];
-  let al = alloc(2u + bench * 2u + 2u);
+  let al = alloc(2u + bench * 2u + 3u);
   if (al.x == NONE) { bump(C_POOLFULL, 1u); return; }
   let first = al.x;
   let rid = al.y;
@@ -1024,6 +1024,17 @@ fn rampRoute() {
     PTS[first + w] = vec4<f32>(b, zA - u.q.y + 0.05, acc);
     w++;
     prev = b;
+  }
+  // (the bench's walkway: from the ramp's foot to the face's line across the working bench's floor, where the carts
+  // load — the face moves along that line as the bench is dug)
+  {
+    let o = pitCorner(0u, 0.0);
+    let ww = max(u.q.y / tan(radians(clamp(u.q.w, 20.0, 80.0))), 2.0);
+    let wk = vec2<f32>(o.x + f32(bench) * run + ww, o.y + u.q.x * 0.5);
+    acc += distance(wk, prev);
+    PTS[first + w] = vec4<f32>(wk, z0 - f32(bench) * u.q.y + 0.05, acc);
+    w++;
+    prev = wk;
   }
   setLt(L_RH + rid * 4u, first);
   setLt(L_RH + rid * 4u + 1u, w);
@@ -1525,8 +1536,8 @@ fn figures(@builtin(global_invocation_id) g: vec3<u32>) {
   }
 }
 
-/** (?livingdebug=1, a thread a column) the graph over the town: a small block on each walkable column — green reached
- *  from the stores, red cut off, crystal a door, sand a passage the check laid, white a deck */
+/** (?livingdebug=1, a thread a column) the graph over the town: a small block on each walkable column — quartz reached
+ *  from the stores, lava cut off, flesh a door, sand a passage the check laid, steel a deck, flowers a pad */
 @compute @workgroup_size(64)
 fn overlay(@builtin(global_invocation_id) g: vec3<u32>) {
   let i = g.x;
@@ -1537,10 +1548,11 @@ fn overlay(@builtin(global_invocation_id) g: vec3<u32>) {
   let c = cxy(i);
   let wp = vec3<f32>(cpos(c) + vec2<f32>(f32(u.pl.x), f32(u.pl.y) * ROW_H), pointZ(i) + u.pz.x + 0.5);
   if (wp.x < 1.0 || wp.y < 1.0 || wp.x > f32(u.pl.z) - 1.0 || wp.y > f32(u.pl.w) * ROW_H - 1.0) { return; }
-  var m = 14u;
-  if (FIELD[H_STORES * N() + i] == NONE) { m = 7u; }
-  else if (cls == W_DOOR) { m = 28u; }
+  var m = 36u;
+  if (FIELD[H_STORES * N() + i] == NONE) { m = 24u; }
+  else if (cls == W_DOOR) { m = 33u; }
   else if ((w & W_PASS) != 0u) { m = 3u; }
-  else if (cls == W_DECK) { m = 5u; }
+  else if (cls == W_DECK) { m = 20u; }
+  else if (cls == W_PAD) { m = 15u; }
   vox(wp, m, 10u, 0.0);
 }

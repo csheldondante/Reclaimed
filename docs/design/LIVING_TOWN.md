@@ -45,6 +45,31 @@ the trace (follow the steepest descent, a point a step, decks at their fixed z),
 the river rides the deck). The CPU graph build (`routeGraphOf`, `routePlanOf`) does not carry over: here the graph is
 made on the GPU.
 
+### Reach is an invariant (fix round, 2026-11-10; DESIGN §13)
+
+The user: "How is it possible not to find a route even every lot has a street adjacent to it?" At Muru 78 of ~280
+keys missed: 45 started in citygen's own street pieces cut off from the network (the built core's streets whose joins
+run through districts not begun — citygen draws a street only between shown blocks and a district's roads only once it
+starts), 30 in door segments whose street isn't drawn yet, 3 in door columns the raster missed. None came from decks,
+hubs or relaxing. Not citygen segment lists: its main streets are drawn a column at a time from φ's level sets (no
+segment list exists), and its drawn network is itself disconnected in a part-built town, so a vector graph of it would
+be too. The fix changes the world, as §13 says:
+- **The check** (after the hubs settle, all GPU): every walkable column the stores' field didn't reach is cut off;
+  components are labelled (least column); an open-ground distance from the network (dry, no building, dearer by the
+  climb) gives each component its cheapest **passage**, laid as a track (W_PASS, kept across rebuilds); the graph is
+  made again, at most 4 rounds. Reported in the state words: passages, rounds, cut-off columns left, built doors cut
+  off. test/gpu/living.test.ts fails on any miss, cut-off column or cut-off door.
+- **Doors** for lots begun (progress > 0), their own column always walkable; plazas, parks and landmark circles are
+  walkable pads.
+- **The works' internal routes:** the quarry's rim yard and the camp's yard and clearing are pads, joined to the roads
+  by the check's passages — an access road that follows the ground and goes round water and buildings. The quarry's
+  ramp route runs rim → each bench's ramp → landings → the working bench's walkway to the face's line. Woodcutters
+  ride routes traced over the clearing (CAMP's field) to each tree and back.
+- **The works keep off the town:** sited only on ground no lot (built or not) covers (W_LOTGROUND), so no district
+  grows over them. (Not citygen's claim grid: the quarry's pit is dug in the world's columns, and keeping off every
+  lot's ground is what stops districts.)
+- `?livingdebug=1` draws the graph: quartz reached, lava cut off, flesh doors, sand passages, steel decks, flowers pads.
+
 ## 2. Hubs, fields and cached routes
 
 **Hubs** are the places people go. Each is a distance field over `WALK`, seeded on the GPU (`hubSeed`) from the lot
@@ -261,21 +286,17 @@ haul job states. Track B builds the one crowd around this rider row.
 
 GPU ms a frame (the profiler, smoothed): build 0.036 (empty indirect dispatches), relax 0.087 (32 empty indirect
 sweeps once settled), trace 0.005, riders 0.033 (950 riders), works 0.079, figures 0.020: **0.26 ms in all**.
-Frame interval with `?living=1` against `?living=0`: p50 1.90 / 1.90 ms, p90 17.8 / 17.7, p99 18.7 / 18.6 — no
+After the fix round (one graph pass, the check, `ltspeed=12`): graph 0.145, riders 0.031, works 0.087, figures 0.045:
+**0.31 ms**. Frame interval with `?living=1` against `?living=0`: p50 1.90 / 1.90 ms, p90 17.8 / 17.7, p99 18.7 / 18.6 — no
 difference the desktop can see. The phone bench is the measure (not run).
 
 ## Hacks and limits (kept current)
 
-- Riders aren't the Agents' units yet: a third crowd beside the agents and the inhabitants (open question 1); wind and
-  blasts don't knock them off. Their row and state formats are written to be the one crowd's when Track B's unit-AI
-  slices land.
-- The works' take, put and fell kernels follow edit.wgsl's rules but aren't one shared snippet with its OP_TAKE/OP_PUT
-  (those apply CPU events, four a tick). One snippet both call is the follow-up (LT-F3).
-- No lanes or queueing (LT-F1); riders on a route are spread by a fixed lateral offset.
-- The pool reset when full is wholesale, not per stale route.
-- The quarry only digs where its columns are in the window; past the window the land isn't resident. When the window
-  slides away and back, streamed land comes back as generated: the pit is lost (no edit log for streamed land yet:
-  CITYGEN "Saving").
-- Builders don't consume stone; a site's progress is citygen's time-lapse's (read on the GPU), the builders work there
-  while it rises.
-- The falling tree is an animation, not a body (DA-E7).
+- A third crowd until Track B's one crowd (U5); no knock-off by wind (Track B's).
+- The `overridden()` stub (Track B's unitstate.wgsl replaces it).
+- No lanes or queueing (LT-F1); a fixed spread across the road.
+- The relax is fixed sweeps a frame, gated by indirect counts: settled, they're 0-workgroup dispatches, not skipped.
+- Quarry rock is judged from the ground's slope; the pit digs only inside the window and is lost when streamed land is
+  regenerated (no edit log for streamed land).
+- Passages aren't drawn as roads yet (only walked; the overlay shows them).
+- A falling tree is an animation (DA-E7). Builders use no stone.
