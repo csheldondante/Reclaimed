@@ -23,7 +23,9 @@ test('works.wgsl agrees with routes.wgsl', () => {
   expect(shared).toBeGreaterThan(30);
   expect(struct(w)).toEqual(struct(r));
   const n = (k: string) => parseInt(rc.get(k)!, 10);
-  expect(LT_WORDS).toBe(n('L_REGROW') + n('REGROW_ROOM') * 2);
+  // (season life: the route ask's 16 words after the regrow list)
+  expect(n('L_ASK')).toBe(n('L_REGROW') + n('REGROW_ROOM') * 2);
+  expect(LT_WORDS).toBe(n('L_ASK') + 16);
   expect(n('L_RH') + n('ROUTES') * 4).toBeLessThanOrEqual(n('L_REGROW'));
   expect([L_C, L_Q, L_F]).toEqual([n('L_C'), n('L_Q'), n('L_F')]);
 });
