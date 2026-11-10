@@ -7,6 +7,7 @@
 // the static claims' arena's slots (OWN_SLOTS); when they're all taken, the farthest town not wanted gives its slot up.
 // The CPU picks which (the boxes against the window: integers) and passes the inputs; nothing is read back.
 import { FieldTown, fieldTownBox, type FieldTownBox, type FieldTownIO, type FieldTownSite } from './town';
+import { OPPORTUNITY_PURPOSE, type CityDistricts, type OpportunityKind } from '../api/contracts/citygen';
 
 /** a town's box this near the window (columns) is made; this far, let go */
 const PREFETCH = 128;
@@ -16,7 +17,7 @@ const EVERY = 0.25;
 
 const near = (d: number, n: number) => d - Math.round(d / n) * n;
 
-export class FieldTowns {
+export class FieldTowns implements CityDistricts {
   readonly live = new Map<string, FieldTown>();
   readonly stats = { made: 0, dropped: 0, slotsFull: 0, lastMakeMs: 0 };
   private boxes = new Map<string, FieldTownBox>();
@@ -44,8 +45,50 @@ export class FieldTowns {
     return Math.max(0, dx, dy);
   }
 
-  /** each frame: the towns near the window made (one at a time), the far ones let go */
+  /** (time-lapse) the towns' clock (s) and how fast it runs (the debug panel's slider, ?tlspeed=) */
+  townTime = 0;
+  speed = 1;
+
+  /** (time-lapse) the live town nearest the window's middle (null: none) */
+  nearest(): FieldTown | null {
+    let best: FieldTown | null = null;
+    let bd = Infinity;
+    const [ox, oy] = this.io.origin();
+    const { w, h } = this.io.dims;
+    for (const t of this.live.values()) {
+      if (!t.times) continue;
+      const d = Math.hypot(t.box.x0 + t.box.w / 2 - (ox + w / 2), t.box.y0 + t.box.h / 2 - (oy + h / 2));
+      if (d < bd) {
+        bd = d;
+        best = t;
+      }
+    }
+    return best;
+  }
+
+  /** (time-lapse) the nearest town's districts not begun start one after another from its centre over `span` s */
+  timelapse(span = 30): boolean {
+    const t = this.nearest();
+    if (!t) return false;
+    t.timelapse(this.townTime, span);
+    return true;
+  }
+
+  /**
+   * (M4d hook, api/contracts/citygen.ts CityDistricts) An opportunity of this kind claims the best district not begun of
+   * the nearest town (GPU argmax by purpose; the id read back, a word) and starts it now. −1: none left (or no town).
+   */
+  async claimDistrict(kind: OpportunityKind): Promise<number> {
+    const t = this.nearest();
+    if (!t) return -1;
+    return t.claimDistrict(OPPORTUNITY_PURPOSE[kind], this.townTime);
+  }
+
+  /** each frame: the towns' clock, their time-lapses; the towns near the window made (one at a time), the far ones
+   *  let go */
   update(dt: number): void {
+    if (Number.isFinite(dt)) this.townTime += dt * this.speed;
+    for (const t of this.live.values()) t.frame(this.townTime);
     this.clock -= dt;
     if (this.clock > 0 || this.dead || this.paused) return;
     this.clock = EVERY;

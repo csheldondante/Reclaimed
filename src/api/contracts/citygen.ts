@@ -73,3 +73,25 @@ export interface CityLots {
 // claim on that record and write its own, with nothing else of the town's touched. Physics integration is a separate
 // step, not citygen's (the user: "Physics integration is a must but can be a separate step as well. It may make sense
 // to do as part of the improved building generators").
+
+/** (M4d hook) the kinds of opportunity that claim a town's district, and the district purpose each looks for
+ *  (citygen/streets.wgsl P_*: 0 homes, 1 market, 2 harbour, 3 workshops, 4 farms, 5 keep) */
+export type OpportunityKind = 'housing' | 'market' | 'harbour' | 'workshops' | 'farms' | 'keep';
+export const OPPORTUNITY_PURPOSE: Record<OpportunityKind, number> = { housing: 0, market: 1, harbour: 2, workshops: 3, farms: 4, keep: 5 };
+
+/**
+ * (M4d hook) A town's districts for the opportunity UI (citygen/towns.ts FieldTowns implements it; `window.citygen` in
+ * the game with ?citygen=fields):
+ *   claimDistrict(kind) — the best district not begun for that kind's purpose in the town nearest the view (an argmax on
+ *     the GPU; one word read back) starts building now: its lots rise over a few seconds of the town's clock, its roads
+ *     appear, its claims follow. Resolves with the district's id (its supercell), −1 when none is left.
+ *   timelapse(span) — every district not begun starts, the centre first, over `span` s (a debug view).
+ * A town starts with its core built (districts within 0.35 of its growth key); the rest grows by claims.
+ */
+export interface CityDistricts {
+  claimDistrict(kind: OpportunityKind): Promise<number>;
+  timelapse(span?: number): boolean;
+  /** the towns' clock (s) and its speed (×) */
+  townTime: number;
+  speed: number;
+}

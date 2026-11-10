@@ -8,7 +8,7 @@
 import type { Settlement } from '../api/contracts/settlement';
 import type { CityLots } from '../api/contracts/citygen';
 import { ROW_H } from '../world/lattice';
-import { CityGen, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes } from './gpu';
+import { BUILD_S, CityGen, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes } from './gpu';
 import type { StaticClaims, StaticGrid, GridPlace, OwnedSlot } from '../sim/static-claims';
 import { cellAt } from '../world/lattice';
 import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
@@ -83,7 +83,7 @@ export function townLayout(
   site: FieldTownSite,
   wrap: { cols: number; rows: number },
   sea: number,
-  opts: { claimInto?: GPUBufferBinding; vertRoom?: number } = {},
+  opts: { claimInto?: GPUBufferBinding; vertRoom?: number; built?: 'all' | 'core' } = {},
 ): { box: FieldTownBox; raw: GPUBuffer; gen: CityGen; params: StreetParams; centre: [number, number]; local: (p: readonly [number, number]) => [number, number] } {
   const box = fieldTownBox(site);
   const { cols, rows } = wrap;
@@ -96,7 +96,7 @@ export function townLayout(
   const local = ([x, y]: readonly [number, number]): [number, number] => [x - ox0, y - oy0];
   const centre = local(site.at);
   const town = { density: DENSITY[site.size], purpose: site.purpose !== undefined ? (POP_PURPOSE[site.purpose] ?? -1) : -1 };
-  const gen = new CityGen(device, { w: box.w, h: box.h, ground: { kind: 'raw', raw, sea }, centre, town, claimInto: opts.claimInto, vertRoom: opts.vertRoom ?? TOWN_VERT_ROOM });
+  const gen = new CityGen(device, { w: box.w, h: box.h, ground: { kind: 'raw', raw, sea }, centre, town, claimInto: opts.claimInto, vertRoom: opts.vertRoom ?? TOWN_VERT_ROOM, built: opts.built });
   // (each atlas road from the town's centre out: its points every 4 units, from the one nearest the centre, as far as
   // the box — the GPU cuts it at the box's edge and the town's limit)
   const R2 = Math.hypot(box.w, box.h * ROW_H);
@@ -177,7 +177,8 @@ export class FieldTown {
     const slot = st.ownedSlot();
     if (!slot) throw new Error(`citygen: no claim slot free for ${site.id} (FieldTowns frees one first)`);
     this.slot = slot;
-    const L = townLayout(io.device, site, io.wrap, io.sea, { claimInto: slot.binding, vertRoom: TOWN_VERT_ROOM });
+    // (a game town starts with its core built; the rest grows by claims and time-lapses)
+    const L = townLayout(io.device, site, io.wrap, io.sea, { claimInto: slot.binding, vertRoom: TOWN_VERT_ROOM, built: 'core' });
     const { box, centre, local } = L;
     this.box = box;
     this.raw = L.raw;
@@ -298,6 +299,53 @@ export class FieldTown {
   /** the town's lots for what builds on it (api/contracts/citygen.ts) */
   get lots(): CityLots {
     return { records: this.gen.lotRecords, counts: this.gen.lotCounts, progress: this.gen.progress, place: this.xform };
+  }
+
+  /** (time-lapse) the clock it animates till (the town's clock, s), and when its claims were last made again */
+  private animUntil = -Infinity;
+  private lastClaim = -Infinity;
+  private reclaiming = false;
+
+  /**
+   * (time-lapse) Each frame, the town's clock (s): while districts are building, the lots' progress and the buildings
+   * risen on the GPU (CityGen.animate: one submit, nothing read); every 2 s of it and once at the end, the claim grid
+   * made again from the progress and claimed over the window (a mesh run: the claims follow what's risen).
+   */
+  frame(now: number): void {
+    if (this.gone || !this.grid) return;
+    const busy = now < this.animUntil;
+    if (busy) this.gen.animate(now);
+    const due = busy ? now - this.lastClaim > 2 : this.lastClaim < this.animUntil && this.animUntil > -Infinity;
+    if (due && !this.reclaiming) {
+      this.lastClaim = now;
+      this.reclaiming = true;
+      this.gen.animate(now);
+      void this.gen.run(this.params, 'mesh').then(
+        () => {
+          this.reclaiming = false;
+          if (!this.gone && this.grid) this.io.statics()?.reclaim(this.grid);
+        },
+        (e) => {
+          this.reclaiming = false;
+          if (!this.gone) throw e;
+        },
+      );
+    }
+  }
+
+  /** (time-lapse) every district not begun starts from now, the centre first, over `span` s of the town's clock */
+  timelapse(now: number, span: number): void {
+    if (this.gone || !this.grid) return;
+    this.gen.timelapse(now, span, now);
+    this.animUntil = Math.max(this.animUntil, now + span + BUILD_S * 1.75 + 0.5);
+  }
+
+  /** (M4d hook) the best district not begun for this purpose (streets.wgsl P_*) started now: its id (−1 none left) */
+  async claimDistrict(purpose: number, now: number): Promise<number> {
+    if (this.gone) return -1;
+    const id = await this.gen.claimDistrict(purpose, now);
+    if (id >= 0) this.animUntil = Math.max(this.animUntil, now + BUILD_S * 1.75 + 0.5);
+    return id;
   }
 
   /** the bytes it holds on the GPU (its generator's buffers and its raw ground; its claim slot is the arena's) */

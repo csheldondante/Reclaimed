@@ -21082,3 +21082,20 @@ speedbench's pattern: screen kept awake, a result card, Download / Copy / Share,
     655 for the city; 33 MB a town, 55 MB the city.
   - Toggle: 49 towns a second and no change in the 10 ms (vsync) frame.
   - Pan: p95 10.1 ms; the 644 ms streamer spike again; Bumku made at 1.2 s, Muru let go at 17.7 s.
+
+## 2026-11-10 — citygen: districts fill in a time-lapse; opportunities claim districts
+
+The user: "see districts fill out in time lapse and buildings rise up". The design is in CITYGEN.md "Time-lapse and
+the opportunity hook".
+- **Clocks:** a clock per district (SCT word 8), each lot's progress from it (`tlProgress`), and the tagged vertices
+  moved each frame (`tlRise`): no mesh made again. Roads and parks are hidden until their district starts.
+  - It's a compute pass, not the vertex shader, because the draw stage's 8 storage buffers are taken.
+  - A game town starts with its core built.
+- **Claims:** `clkClaim` is a GPU argmax by purpose; the id is read back (one word) and the district starts now.
+  `citygen.claimDistrict(kind)`; a debug panel (`?citypanel=1`, `?timelapse=1`).
+- **Measured** (headless): claims return in 14–65 ms (the first 536 ms, its first use). The seven districts outside
+  Muru's core went one per claim, and the eighth returned −1. A 30 s time-lapse fills Muru in about 40 s of clock.
+- **Shots:**
+  - a lot not begun showed its roof flat on the ground, then its walls stretched down where the land wasn't drawn;
+    its tops, bases and outline now sink together;
+  - the reach's red outlines over unbuilt lots are hidden with them.

@@ -152,6 +152,32 @@ appears but we can ignore it where there is no population or low enough not to n
   ~26; the records 3.1 MB; the mesh room 160 000 vertices = 5.1 MB; the raw ground 1.6 MB.
 - **Saving (later, if needed):** a per-town edit log keyed by world position, laid over the regenerated town.
 
+## Time-lapse and the opportunity hook (M4d's start)
+
+- **A clock per district:** SCT word 8, a supercell's start on the town's clock (−1e30 built, 1e30 not begun). It is
+  set on the GPU:
+  - `clkInit`, after the supercells: all built (the lab, the bench), or only the core (growth key < 0.35: a game town);
+  - `clkTimelapse`: every district not begun starts at T0 + its growth key × the spread, the centre first;
+  - `clkClaim`: an opportunity's district.
+- **A lot's progress** (`tlProgress`) is clamp((now − its district's start − its own delay, up to 3 s) / 4 s), into the
+  progress buffer of the contract.
+- **The mesh is made full height,** each vertex tagged (VTAG: its kind and record or district, its z as made).
+  `tlRise` moves the tagged vertices each frame:
+  - a building's tops to base + height × progress (its bases and outline sunk out of sight until it begins);
+  - a road or a park, a plaza hidden until its district begins.
+  - This is a compute pass, not the vertex shader: the draw stage already binds its 8 storage buffers, and the
+    progress buffer (33k floats) is past a uniform's size.
+- **The claims follow:** while districts build, every 2 s of the town's clock and once at the end, the town runs its
+  mesh stage again (the claim grid from the progress) and `StaticClaims.reclaim` claims it over the window.
+- **The CPU passes only the clock and which start:** the town's clock (s, `FieldTowns.townTime` × `speed`), a
+  time-lapse's T0 and spread, a claim's kind. A claim reads back one word (the district's id).
+- **API** (`src/api/contracts/citygen.ts` CityDistricts; `window.citygen` in the game):
+  - `claimDistrict(kind) → Promise<districtId>`, with kinds housing, market, harbour, workshops, farms, keep → the
+    purposes;
+  - `timelapse(span)`;
+  - `townTime`, `speed`.
+  - Debug panel: `?citypanel=1`; `?timelapse=1` starts one (`&tlspan=30&tlspeed=1`).
+
 ## M4b: stopped at the claim registry (superseded: built as above)
 
 The brief: claim each lot's building, the roads and the decks as External intervals through the existing claim path;
