@@ -40,7 +40,7 @@ import { derive } from '../api/contracts/compose';
 import { catalogue } from './catalogue';
 import type { AgentUnits } from '../units/agent-units';
 import { timed } from '../gpu/cpustat';
-import { waysNear } from '../atlas/ways';
+import { waysNear, waysWithout } from '../atlas/ways';
 import type { SurfaceStamp } from '../atlas/bake';
 import { rasterPlan, stampMatch } from './raster';
 import type { ExactPlanDone, ExactPlanJob, FarPlanDone, FarPlanInit, FarPlanJob } from './plan-worker';
@@ -255,21 +255,59 @@ export class Settlements {
     s.override = spec;
   }
 
-  /** (citygen M4a) the settlements whose towns the GPU field generator makes (citygen/town.ts), not this system */
+  /** (citygen M4a) the settlements whose towns the GPU field generator makes (citygen/town.ts), not this system — and
+   *  their atlas roads as they were before their cores were cleared */
   private fieldTowns = new Set<string>();
+  private fieldRoads = new Map<string, [number, number][][]>();
 
   /**
    * (citygen M4a, ?citygen=fields) This settlement's town is made by the GPU field generator (citygen/): the old
    * generator makes nothing for it — no plan (so nothing drawn or claimed by the settlements' view, no life), no stamps
-   * on its land (the land stays the atlas's), no far plan. Asked before its land comes in (the level, before the first
-   * window). Its record stays (its name, its roads, its people for the stories).
+   * on its land (the land stays the atlas's), no far plan. Within `core` of its centre the atlas's own stamps go too —
+   * its plaza and its roads' graded fill (atlas/ways.ts waysWithout): the town lays its roads there itself. Asked before
+   * its land comes in (the level, before the first window). Its record stays (its name, its roads, its people).
    */
-  byFields(id: string): SettlementSeed {
+  byFields(id: string, core: number): SettlementSeed {
     const s = this.byId.get(id);
     if (!s) throw new Error(`settlements: no ${id} for the field generator`);
     if (this.plans.has(id)) throw new Error(`settlements: ${id} is planned already — ask for the field generator before its land comes in`);
+    this.fieldRoads.set(id, this.approachWays(id));
     this.fieldTowns.add(id);
+    const i = this.seeds.indexOf(s);
+    this.atlas.ways = waysWithout(this.atlas.ways, s.rec.at[0], s.rec.at[1], core, i, this.atlas.worldW, this.atlas.worldH);
     return s;
+  }
+
+  /**
+   * (citygen M4a) The atlas roads into a settlement as they're stamped in the land (atlas/ways.ts: a point every 2
+   * world units, graded and smoothed), each from its end at the settlement, unwrapped round its centre — authored data
+   * the field generator takes for its arterials, so the town's main roads are the roads that come in.
+   */
+  approachWays(id: string): [number, number][][] {
+    // (a field town's: as they were before its core was cleared)
+    const kept = this.fieldRoads.get(id);
+    if (kept) return kept;
+    const i = this.seeds.findIndex((x) => x.rec.id === id);
+    if (i < 0) throw new Error(`settlements: no ${id}`);
+    const at = this.seeds[i].rec.at;
+    const site = this.atlas.settlement.sites[i];
+    if (!site || Math.hypot(site.x - at[0], site.y - at[1]) > 1) throw new Error(`settlements: ${id} isn't atlas site ${i}`);
+    const roads = this.atlas.settlement.roads;
+    const W = this.atlas.worldW;
+    const H = this.atlas.worldH;
+    const wrap = (d: number, n: number) => d - Math.round(d / n) * n;
+    const byWay = new Map<number, { i: number; x: number; y: number }[]>();
+    for (const p of this.atlas.ways.points) {
+      const r = roads[p.way];
+      if (!r || (r.a !== i && r.b !== i)) continue;
+      (byWay.get(p.way) ?? byWay.set(p.way, []).get(p.way)!).push({ i: p.i, x: at[0] + wrap(p.x - at[0], W), y: at[1] + wrap(p.y - at[1], H) });
+    }
+    return [...byWay.values()].map((ps) => {
+      ps.sort((a, b) => a.i - b.i);
+      const line = ps.map((p): [number, number] => [p.x, p.y]);
+      const d = (p: [number, number]) => Math.hypot(p[0] - at[0], p[1] - at[1]);
+      return d(line[0]) <= d(line[line.length - 1]) ? line : line.reverse();
+    });
   }
 
   /** (fortress slice 1) the settlement the player holds as a fortress: live whenever it's in the window, not grown */

@@ -9,7 +9,7 @@ import { Registry, type ParamSpec } from '../tune/registry';
 import { TunePanel } from '../ui/tunepanel';
 import { whenPipelinesReady } from '../gpu/pipeline';
 import { ROW_H } from '../world/lattice';
-import { AUTO, MAJORS, NPTS, STAGES, CityGen, type Box, type Stage, type StreetParams, type StreetTimes, type StreetWorld } from '../citygen/gpu';
+import { AUTO, MAJORS, NAP, NPTS, STAGES, CityGen, type Box, type Stage, type StreetParams, type StreetTimes, type StreetWorld } from '../citygen/gpu';
 import { CITY_PARAMS, scaled } from '../citygen/params';
 
 /** the sites (game/levels.ts streetSite), as the panel names them: the mesa is the cliff site */
@@ -66,7 +66,7 @@ export class StreetLabControl {
   constructor(
     device: GPUDevice,
     private parent: HTMLElement,
-    world: StreetWorld,
+    private world: StreetWorld,
     private hooks: StreetLabHooks,
     params: URLSearchParams,
   ) {
@@ -141,7 +141,16 @@ export class StreetLabControl {
   private arterials(): void {
     const v = values();
     const a0 = (v.artAngle * Math.PI) / 180;
-    this.gpu.setArterials(Array.from({ length: v.artN }, (_, k) => [Math.cos(a0 + (k * 2 * Math.PI) / v.artN), Math.sin(a0 + (k * 2 * Math.PI) / v.artN)] as const));
+    // (straight spokes from the centre: the GPU cuts each at the grid's edge)
+    const [cx, cy] = this.world.centre;
+    this.gpu.setArterials(
+      0,
+      Array.from({ length: v.artN }, (_, k) => {
+        const a = a0 + (k * 2 * Math.PI) / v.artN;
+        // (a point every 3 units, as the atlas roads' are every 2–4: the ribbon follows the ground)
+        return Array.from({ length: NAP }, (_, j) => [cx + Math.cos(a) * j * 3, cy + Math.sin(a) * j * 3] as const);
+      }),
+    );
   }
 
   /** the game's HUD shown or hidden */

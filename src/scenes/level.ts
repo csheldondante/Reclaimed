@@ -532,9 +532,9 @@ export class LevelScene implements Scene {
       if (cg !== null && cg !== 'fields') throw new Error(`?citygen= must be fields (the start town by the GPU field generator)`);
       if (cg && !(settlements && startTown)) throw new Error('?citygen=fields needs the settlements and a start town: ?town=1 or ?town=<id>');
       if (cg && host.params.get('fortress') === '1') throw new Error('?citygen=fields: not with ?fortress=1 (the fortress edits the old planner\'s town)');
-      const fieldTown = cg ? settlements!.byFields(startTown!).rec : null;
-      const fb = fieldTown ? fieldTownBox(fieldTown) : null;
-      const keepBox = host.params.get('fortress') === '1' && startTown ? settlements!.seeds.find((x) => x.rec.id === startTown)!.box : fb;
+      const fb = cg ? fieldTownBox(settlements!.settlement(startTown!)!) : null;
+      const fieldTown = cg ? settlements!.byFields(startTown!, fb!.core).rec : null;
+      const keepBox = host.params.get('fortress') === '1' && startTown ? settlements!.seeds.find((x) => x.rec.id === startTown)!.box : (fb?.cover ?? null);
       const W = Math.max(keepBox?.w ?? 0, atlasRange(host.params));
       // (round 93, ?winh=: an experiment — rows other than the side)
       const Hr = Math.max(keepBox?.h ?? 0, atlasRows(host.params, W));

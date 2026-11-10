@@ -27,7 +27,7 @@ records → mesh. The street lab (`?level=streetlab`, `src/streetlab/control.ts`
 |---|---|---|
 | the town's box in the window (first column, row; columns, rows) | `height.wgsl` uniform | 16 B, once |
 | centre, radius, seed, parameters | the passes' uniforms | 256 B a pass |
-| approach directions (the site's atlas roads: `SettlementSeed.approaches`) | `ART` | ≤ 8 × 2 floats, once |
+| the site's atlas roads as stamped (`Settlements.approachWays`: way points every 4 units, centre outward) and the core radius | `ART` | ≤ 8 × 128 points, once |
 | the mesh's place in the window | `Renderer.addMesh` transform | 16 B on a slide |
 
 The one read back is the run's timestamps and two counts, once, after the town is made (an event, never a frame).
@@ -42,13 +42,22 @@ The one read back is the run's timestamps and two counts, once, after the town i
 
 ## Arterials and bridges
 
-Each approach direction is a spoke from the centre to the grid's edge. `artSpan` (one thread an arterial) marches it
-over the wet mask: each wet run becomes a span with a deck at the higher bank's height + `deckClear`. A crossing
-longer than `maxSpan`, or water that runs on to the edge, ends the arterial at its shore. `artMesh` draws a ribbon on
-the ground, or over a span a deck piece and a pillar every 6 units down to the bed.
+Each arterial is one of the site's atlas roads as it is stamped in the land (its way points, uploaded once, from the
+centre outward); the lab's are straight test spokes. On the GPU:
+- `artSpan` (a thread an arterial) marches it a segment at a time over the wet mask. Each wet run, closed by 2 units
+  of dry ground, becomes a span with a deck at the higher bank's height + `deckClear`. A crossing longer than
+  `maxSpan` (120), or water that runs on to the grid's edge, ends it at its shore.
+- `artRast` + a jump flood make the arterials' distance field `AD`. Lots read it (`lots` drops a lot whose middle or
+  edge comes within the corridor) and so does growth (`growCost` × 0.6 within half a contour spacing).
+- `artEnd` (after the supercells) ends each arterial where it leaves the town's limit, never short of the core.
+- `artMesh` draws a ribbon tapering over its last 12 units to the atlas road's width, and over a span a deck piece and
+  pillars every 6 units.
 
-Arterials cut the blocks they cross (`lots` drops a lot meeting the corridor) and the supercells grow cheaply along
-them (`growCost` × 0.6, as along a shore). Tried first and dropped: the arterials as seeds of the distance flood.
+**One road, not two.** Within the core (0.5 radii) of a field town's centre the atlas's own stamps are dropped before
+the land is made (`Settlements.byFields` → `atlas/ways.ts waysWithout`): the site's plaza disc and the roads' graded
+fill. Past the core the stamped road carries on; the arterial is drawn at least to the core, so they meet. At Muru the
+plaza and the north road's fill had dammed the river at the centre. With them gone, the north road comes in on a deck
+along the lake shore. Tried first and dropped: the arterials as seeds of the distance flood.
 φ collapsed into a star where they met at the centre, and the river site lost half its lots.
 
 ## The window and streaming (the derisk)
@@ -56,9 +65,14 @@ them (`growCost` × 0.6, as along a shore). Tried first and dropped: the arteria
 - The window is a ring of whole regions (64 columns). Every per-column buffer is addressed by window column through
   `colSlots`/`colIdx`, so a box of the window reads like the lab's whole window. The box's first row is even, so its
   rows' hex offsets are the window's (`cellPos` parity).
-- A town's box is fixed in the world: whole regions round its centre, 1.6 radii (the supercells' bound) and a margin
-  each way (`fieldTownBox`). For a town (radius 60) that is 256 × 256. It does not depend on the device's window size,
-  so the town is the same on every device.
+- A town's size comes from its settlement size: radius camp 30, hamlet 48, village 72, town 120, city 150. A town
+  matches the lab's Muru the user approved. The box is fixed in the world: 4/3 radii each way, as many rows as columns
+  (the lab's 320 × 320 sites), the first row even (`fieldTownBox`). It does not depend on the device's window size, so
+  the town is the same on every device.
+- **Trade-off (to decide):** a town's 320 box needs the window to cover its regions, 384 × 384 at Muru. That is 2.25×
+  the desktop default (256) and 1.44× the phone's (320). The level opens the window that size, so streaming and the
+  sims cover more columns everywhere, not only near the town. Not measured on the phone yet. Shrinking the town
+  instead was ruled out (the coordinator).
 - The town is made once, from the live land, when its box is in the window. The level opens the window round the box
   (the fortress's `windowHolding`; the window grows to the box when smaller). After that the window may slide
   anywhere. The layout and mesh stay in the box's frame on the GPU. A slide or a warp writes the 16-byte transform
@@ -104,7 +118,22 @@ the construction shader read. `FieldTown.lots` hands them over.
   separate step, maybe with the improved building generators. The building style generator and the construction
   animation shader belong to their own sessions.
 
-## Measurements (M4a, headless D3D11, Muru)
+## Determinism
+
+The layout is a pure function of the seed and the ground. 9 reruns give the same lots (473) and the same vertex count.
+Three atomic orders used to decide it:
+- a grown street's landing slot (`gplace`: a workgroup scan by source id, not an atomic counter);
+- a gap block's key (its region node, not its slot);
+- ties among the landmark sites (by position, not list order).
+
+Lot record indices still follow the lots' atomic order. The seed is the lot's identity.
+
+## Measurements (M4a polish, headless D3D11, Muru radius 120)
+
+- The whole town from the field stage: median 3.74 ms GPU over 9 runs (3.27–4.15). Field 0.83, φ 0.13, trace 1.34,
+  lots 0.87, mesh 0.55; heights 0.26 ms once. 473 lots, 3 approach roads; box 320 × 320, window 384.
+
+## Measurements (M4a, headless D3D11, Muru radius 60, superseded)
 
 - The whole town from the field stage: median 1.87–1.96 ms GPU over 9 runs (1.51–2.35); heights 0.20 ms once.
   Field 0.39–0.43, φ 0.07, trace 0.71–0.78, lots 0.35–0.39, mesh 0.20–0.44.

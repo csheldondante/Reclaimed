@@ -250,6 +250,24 @@ export function buildWays(inp: WayInput): Ways {
 
 const binKey = (bx: number, by: number) => by * 65536 + bx;
 
+/**
+ * (citygen M4a) The ways without what's within r of (x, y) — the roads' points and site `site`'s plaza — binned again: a
+ * town made by the field generator lays its own roads there (its arterials over the same lines, its bridges where they
+ * meet water), so the atlas's stamps (a graded fill, a flat disc) don't dam its river or double its roads. Before the
+ * land there is made.
+ */
+export function waysWithout(ways: Ways, x: number, y: number, r: number, site: number, W: number, H: number): Ways {
+  const keep = ways.points.filter((p) => p.way !== -1 - site && Math.hypot(wrapD(p.x - x, W), wrapD(p.y - y, H)) > r);
+  const bins = new Map<number, number[]>();
+  const counts = [0, 0, 0, 0, 0, 0];
+  keep.forEach((p, k) => {
+    const key = binKey(Math.floor(p.x / BIN), Math.floor(p.y / BIN));
+    (bins.get(key) ?? bins.set(key, []).get(key)!).push(k);
+    counts[p.kind]++;
+  });
+  return { points: keep, lifts: ways.lifts, bins, counts, ms: ways.ms };
+}
+
 /** a polyline resampled every `step` along it */
 function resample(pts: [number, number][], step: number): [number, number][] {
   const out: [number, number][] = [pts[0]];

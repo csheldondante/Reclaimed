@@ -528,6 +528,9 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
   if (u.h2.z > 0.5 && bi % 3u == 0u && !(b1[o + BQW + 10u] == 2u && bitcast<f32>(b1[o + BQW + 9u]) <= u.h2.x)) { return; }
   // (m3d: a block made a plaza — its meta, the slot after it, status 1 — is one paved lot, not split)
   let plaza = bi % 3u == 0u && u.o.w == 0u && b1[o + BQW + 5u] == 1u;
+  // (M4a: the block's key — its jitter and its lots' seeds: a field block its slot (a seed's), a gap block (mode 1) its
+  // region node (word 10), not its slot, which the gap fill hands out in whatever order its threads run)
+  let bk = select(bi, 3u * T + 3u * b1[o + 10u] + bi % 3u, u.n.w == 1u);
   var st: array<Quad, STACK>;
   var n = 1u;
   var q0: Quad;
@@ -562,7 +565,7 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
       var k = 0u;
       var ll = -1.0;
       for (var j = 0u; j < 4u; j++) { let l = distance(q.v[j], q.v[(j + 1u) % 4u]); if (l > ll) { ll = l; k = j; } }
-      let t = 0.5 + (hsh(bi * 977u + q.d * 131u + made * 17u + n) - 0.5) * 0.16;
+      let t = 0.5 + (hsh(bk * 977u + q.d * 131u + made * 17u + n) - 0.5) * 0.16;
       let v0 = q.v[k]; let v1 = q.v[(k + 1u) % 4u]; let v2 = q.v[(k + 2u) % 4u]; let v3 = q.v[(k + 3u) % 4u];
       let c1 = mix(v0, v1, t);
       let c2 = mix(v3, v2, t);
@@ -599,7 +602,7 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
     let lo = li * LW;
     for (var j = 0u; j < 4u; j++) { putV(lo + j * 2u, q.v[j]); }
     w5[lo + 8u] = q.e;
-    w5[lo + 9u] = (bi * 256u + made) | select(0u, PAVED, plaza) | select(0u, EDGE_LOT, edge);
+    w5[lo + 9u] = (bk * 256u + made) | select(0u, PAVED, plaza) | select(0u, EDGE_LOT, edge);
     made++;
   }
 }
@@ -1693,9 +1696,11 @@ fn lmprune(@builtin(global_invocation_id) g: vec3<u32>) {
     let oj = 1u + j * LMW;
     let rj = abs(bitcast<f32>(w5[oj + 2u]));
     let sj = bitcast<f32>(w5[oj + 4u]);
-    let above = sj > si || (sj == si && j < i);
+    // (M4a: a tie by position — the list's order is whatever order lmlist's threads ran)
+    let pj = vec2<f32>(bitcast<f32>(w5[oj]), bitcast<f32>(w5[oj + 1u]));
+    let above = sj > si || (sj == si && (pj.x < pi.x || (pj.x == pi.x && pj.y < pi.y)));
     if (above) { rank++; }
-    if (distance(pi, vec2<f32>(bitcast<f32>(w5[oj]), bitcast<f32>(w5[oj + 1u]))) < ri + rj && above) { w5[oi + 2u] = bitcast<u32>(-ri); return; }
+    if (distance(pi, pj) < ri + rj && above) { w5[oi + 2u] = bitcast<u32>(-ri); return; }
   }
   // (m3g: only the K busiest, most acute kept)
   if (f32(rank) >= u.r.w) { w5[oi + 2u] = bitcast<u32>(-ri); }
@@ -2011,7 +2016,8 @@ fn gleaf(@builtin(global_invocation_id) g: vec3<u32>) {
   w7[o] = 1u;
   w7[o + 1u] = 2u | (2u << 8u) | (2u << 16u) | (2u << 24u);
   for (var j = 0u; j < 4u; j++) { w7[o + 2u + j * 2u] = bitcast<u32>(v[j].x); w7[o + 3u + j * 2u] = bitcast<u32>(v[j].y); }
-  w7[o + 10u] = NONE;
+  // (M4a: its region node — the lots' key for it, whatever slot it got)
+  w7[o + 10u] = i;
 }
 /** the listed roads (gap splits, big blocks' first cuts): eight ribbon pieces each (r1 the counts and roads, r3 H) */
 @compute @workgroup_size(64)
@@ -2092,8 +2098,8 @@ fn ginit(@builtin(global_invocation_id) g: vec3<u32>) {
   if (w5[o + 3u] == 0u) { w5[o + 11u] = 0u; return; }
   if (w5[o + 2u] == 0u) { w5[o + 11u] = 2u; } else { w5[o + 3u] = 0u; w5[o + 11u] = 1u; }
 }
-/** one thread a seed slot: line n.z's live seeds marched up to the next line — a landing a new seed (w5 the seeds,
- *  w6 the grown seeds' count; b4 φ) */
+/** one thread a seed slot: line n.z's live seeds marched up to the next line — where none meets it, its street's end
+ *  is LINE_END and its landing waits for a slot (gplace) (w5 the seeds; b4 φ) */
 @compute @workgroup_size(64)
 fn gmarch(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x;
@@ -2101,29 +2107,60 @@ fn gmarch(@builtin(global_invocation_id) g: vec3<u32>) {
   let o = id * SDW;
   if (w5[o + 3u] == 0u || w5[o + 2u] != u.n.z) { return; }
   let s = vec2<f32>(bitcast<f32>(w5[o]), bitcast<f32>(w5[o + 1u]));
-  let L = w5[o + 2u];
-  let m = marchUp(s, L);
+  let m = marchUp(s, w5[o + 2u]);
   if (!m.ok) { return; }
-  var end = m.end;
-  if (end == LINE_END) {
-    let T = u.m.w * u32(u.c.w);
-    let k = atomicAdd(&w6[0], 1u);
-    if (k < T) {
-      let nid = T + k;
-      let no = nid * SDW;
-      set5(no, m.e.x);
-      set5(no + 1u, m.e.y);
-      w5[no + 2u] = L + 1u;
-      w5[no + 3u] = 1u;
-      w5[no + 4u] = NONE;
-      w5[no + 7u] = id;
-      w5[no + 11u] = 3u;
-      end = nid;
-    }
-  }
-  w5[o + 4u] = end;
+  w5[o + 4u] = m.end;
   set5(o + 5u, m.e.x);
   set5(o + 6u, m.e.y);
+}
+/** wants a landing this round: on line n.z, alive, its march ended on the next line with no seed (gmarch) */
+fn wantsLanding(id: u32) -> bool {
+  let o = id * SDW;
+  return w5[o + 3u] == 1u && w5[o + 2u] == u.n.z && w5[o + 4u] == LINE_END;
+}
+var<workgroup> gpN: array<u32, 256>;
+/** one workgroup (M4a): the landings made — each wanting source its slot T + the landings so far + its rank among this
+ *  round's by id (a scan), so a seed's slot is the same whatever order the threads run (it was an atomic counter: the
+ *  town came out a lot different now and then) (w5 the seeds, w6 the landings so far) */
+@compute @workgroup_size(256)
+fn gplace(@builtin(local_invocation_index) li: u32) {
+  let nS = nSeeds();
+  let T = u.m.w * u32(u.c.w);
+  let chunk = (nS + 255u) / 256u;
+  let i0 = li * chunk;
+  let i1 = min(i0 + chunk, nS);
+  // (only the slots below the landings so far can be sources: the slots past them are this round's new landings)
+  let base = atomicLoad(&w6[0]);
+  let top = min(i1, T + base);
+  var c = 0u;
+  for (var id = i0; id < top; id++) { if (wantsLanding(id)) { c++; } }
+  gpN[li] = c;
+  workgroupBarrier();
+  if (li == 0u) {
+    var acc = 0u;
+    for (var k = 0u; k < 256u; k++) { let v = gpN[k]; gpN[k] = acc; acc += v; }
+  }
+  workgroupBarrier();
+  var r = gpN[li];
+  for (var id = i0; id < top; id++) {
+    if (!wantsLanding(id)) { continue; }
+    let k = base + r;
+    r++;
+    if (k >= T) { continue; }
+    let o = id * SDW;
+    let nid = T + k;
+    let no = nid * SDW;
+    w5[no] = w5[o + 5u];
+    w5[no + 1u] = w5[o + 6u];
+    w5[no + 2u] = u.n.z + 1u;
+    w5[no + 3u] = 1u;
+    w5[no + 4u] = NONE;
+    w5[no + 7u] = id;
+    w5[no + 11u] = 3u;
+    w5[o + 4u] = nid;
+  }
+  workgroupBarrier();
+  if (li == 255u) { atomicStore(&w6[0], base + r); }
 }
 fn ggDims() -> vec2<u32> { let cs = 0.8 * u.a.w; return vec2<u32>(u32(f32(W()) / cs) + 2u, u32(f32(H()) * ROW_H / cs) + 2u); }
 fn ggCell(p: vec2<f32>) -> vec2<i32> { return vec2<i32>(floor(p / (0.8 * u.a.w))); }
@@ -2219,7 +2256,7 @@ fn growCost(a: vec2<f32>, b: vec2<f32>, fa: f32, fb: f32) -> f32 {
     if (dot(g, g) > 1e-10 && abs(dot(normalize(b - a), normalize(g))) < 0.35) { disc = 0.7; }
     if (fdAt(m) < 1.2 * u.a.x) { disc = min(disc, 0.6); }
     // (M4a: along an arterial, as along a shore)
-    if (artDistW7(m) < 0.5 * u.a.x) { disc = min(disc, 0.6); }
+    if (bitcast<f32>(w7[ixp(m)]) < 0.5 * u.a.x) { disc = min(disc, 0.6); }
   }
   return L * (1.0 + 3.0 * slope + water) * 0.5 * (fa + fb) * disc;
 }
@@ -2412,150 +2449,229 @@ fn ctint(@builtin(global_invocation_id) g: vec3<u32>) {
 }
 
 // ==== citygen M4a: arterials and their bridges ===================================================================
-// A town's approach roads: up to NART spokes from its centre out along the directions its atlas roads leave by (the
-// CPU's upload: the directions, nothing else), each to the grid's edge. On the GPU: where each crosses water (the wet
-// mask) its spans — a deck at a fixed height (its higher bank + t.z) with pillars down to the bed; a crossing longer
-// than t.w, or water that runs on to the grid's edge, ends the arterial at its shore instead (no bridge to nowhere).
-// The arterials cut through the blocks they cross (a lot on one isn't made: `lots`), the supercells grow cheaply along
-// them (growCost: × 0.6, as along a shore), and they're always drawn, centre to edge, whatever the growth. (Tried
-// first: the arterials as seeds of the distance flood, like a shore — the major lines ran along them, but where they
-// meet at the centre φ collapsed into a star and the town fell apart: half the lots, streets piled up.)
-// ART (words): 0 the count (the CPU's), 1–3 unused; arterial k at 4 + k · AW: 0 1 its direction (the CPU's), 2 its
-// length (GPU), 3 its spans (GPU), 4 + 3s: span s's start and end (along it) and its deck's z.
+// A town's approach roads: up to NART polylines from its centre outward — the game's: the atlas roads into the town as
+// they're stamped in the land (their points, the CPU's upload of authored data); the lab's: straight test spokes. On
+// the GPU: each one's length inside the grid, where it crosses water (the wet mask) its spans — a deck at a fixed
+// height (its higher bank + t.z) with pillars down to the bed; a crossing longer than t.w, or water that runs on to the
+// grid's edge, ends it at its shore (no bridge to nowhere) — and, once the supercells are made, where it leaves the
+// town's limit (`artEnd`): drawn to there, tapering to the atlas road's width; past it the stamped road carries on.
+// The arterials cut the blocks they cross (a lot on one isn't made: `lots`) and the supercells grow cheaply along them
+// (growCost: × 0.6, as along a shore). (Tried first: the arterials as seeds of the distance flood, like a shore — where
+// they meet at the centre φ collapsed into a star and the town fell apart: half the lots, streets piled up.)
+// ART (words): 0 the count (the CPU's), 1–3 unused; arterial k at 4 + k · AW: 0 its points (the CPU's), 1 its length
+// along them inside the grid (GPU), 2 its spans (GPU), 3 where it ends — the town's limit, or its length (GPU), 4 + 3s
+// span s's start and end (along it) and its deck's z; from AP its points (x, y, the grid's world units), the centre's
+// end first.
 const NART: u32 = 8u;
-const AW: u32 = 16u;
+const NAP: u32 = 128u;
+const AP: u32 = 16u;
+const AW: u32 = AP + 2u * NAP;
 const NSPAN: u32 = 4u;
-const ART_PIECES: u32 = 512u;
-const C_ART: u32 = 0xe9dfc9u;
+const C_ART: u32 = 0xf1eadbu;
 const C_DECK: u32 = 0xb08f6au;
 const C_PIER: u32 = 0x8f8a82u;
-/** a deck's thickness; a pillar every this many pieces (world units); a pillar's half width */
+/** a deck's thickness; a pillar every this many world units along it; a pillar's half width */
 const DECK_T: f32 = 0.8;
-const PIER_EVERY: u32 = 6u;
+const PIER_EVERY: f32 = 6.0;
 const PIER_HW: f32 = 0.6;
+/** the atlas road's half width (atlas/ways.ts HALF): an arterial tapers to it over ART_TAPER at the town's limit */
+const WAY_HALF: f32 = 2.2;
+const ART_TAPER: f32 = 12.0;
+/** dry ground after deep water that closes a crossing (world units) */
+const ART_GAP: f32 = 2.0;
 fn artBase(k: u32) -> u32 { return 4u + k * AW; }
-/** how far from c along d the grid's edge is (a column in) */
-fn edgeT(c: vec2<f32>, d: vec2<f32>) -> f32 {
-  let lo = vec2<f32>(1.0, 1.0);
-  let hi = vec2<f32>(f32(W()) - 1.0, f32(H()) * ROW_H - 1.0);
-  var t = 1e9;
-  if (d.x > 1e-5) { t = min(t, (hi.x - c.x) / d.x); }
-  if (d.x < -1e-5) { t = min(t, (lo.x - c.x) / d.x); }
-  if (d.y > 1e-5) { t = min(t, (hi.y - c.y) / d.y); }
-  if (d.y < -1e-5) { t = min(t, (lo.y - c.y) / d.y); }
-  return max(t, 0.0);
+/** a word of ART, from the binding it's at in this pass (1, 2, 5 or 7) */
+fn artW(src: u32, i: u32) -> u32 {
+  switch (src) {
+    case 1u: { return b1[i]; }
+    case 2u: { return b2[i]; }
+    case 5u: { return w5[i]; }
+    default: { return w7[i]; }
+  }
 }
-/** one thread an arterial: its length and its bridges' spans (b1 the wet mask, b3 the heights; w5 ART) */
+fn artF(src: u32, i: u32) -> f32 { return bitcast<f32>(artW(src, i)); }
+fn artCount(src: u32) -> u32 { return min(artW(src, 0u), NART); }
+// (the arterials' distance field, AD: a flood from their columns — artRast, the jump flood, jdist; lots and growCost
+// read it)
+fn artPts(src: u32, k: u32) -> u32 { return min(artW(src, artBase(k)), NAP); }
+fn artPt(src: u32, k: u32, j: u32) -> vec2<f32> { let o = artBase(k) + AP + 2u * j; return vec2<f32>(artF(src, o), artF(src, o + 1u)); }
+/** one thread an arterial: its length inside the grid and its bridges' spans, marched a segment at a time (b1 the
+ *  wet mask, b3 the heights; w5 ART) */
 @compute @workgroup_size(8)
 fn artSpan(@builtin(global_invocation_id) g: vec3<u32>) {
   let k = g.x;
-  if (k >= min(w5[0], NART)) { return; }
+  if (k >= artCount(5u)) { return; }
   let o = artBase(k);
-  let d = normalize(vec2<f32>(bitcast<f32>(w5[o]), bitcast<f32>(w5[o + 1u])));
-  let c = u.d.xy;
-  let tE = edgeT(c, d);
-  var end = tE;
-  var n = 0u;
+  let n = artPts(5u, k);
+  var end = 0.0;
+  var ns = 0u;
   var wet = false;
   var t0 = 0.0;
-  for (var t = 0.0; t < tE; t += 0.5) {
-    let w = r1(ixp(c + d * t)) > 0.5;
-    if (w && !wet) { wet = true; t0 = t; }
-    if (!w && wet) {
-      wet = false;
-      // (the deck runs a unit onto each bank; its height the higher bank's, a little over)
-      let a = max(t0 - 1.0, 0.0);
-      let b = min(t + 1.0, tE);
-      if (b - a > u.t.w || n == NSPAN) { end = a; break; }
-      let s = o + 4u + n * 3u;
-      set5(s, a);
-      set5(s + 1u, b);
-      set5(s + 2u, max(r3(ixp(c + d * a)), r3(ixp(c + d * b))) + u.t.z);
-      n++;
+  var p0 = vec2<f32>(0.0);
+  // (the last deep sample: a crossing closes ART_GAP of dry ground after it — a bank's puddle isn't a second bridge)
+  var tw = 0.0;
+  var pd = artPt(5u, k, 0u);
+  var acc = 0.0;
+  var out = false;
+  for (var j = 0u; j + 1u < n && !out; j++) {
+    let a = artPt(5u, k, j);
+    let b = artPt(5u, k, j + 1u);
+    let L = distance(a, b);
+    for (var f = 0.0; f < L; f += 0.5) {
+      let t = acc + f;
+      let p = mix(a, b, f / max(L, 1e-4));
+      // (its length inside the grid: to its last point, or where it leaves the grid)
+      if (!inb(p)) { out = true; break; }
+      end = t;
+      let w = r1(ixp(p)) > 0.5;
+      if (w && !wet) { wet = true; t0 = t; p0 = pd; }
+      if (w) { tw = t; } else { pd = p; }
+      if (!w && wet && t - tw >= ART_GAP) {
+        wet = false;
+        // (the deck runs a unit onto each bank — its height the higher bank's, a little over; a crossing too long, or
+        // past the spans' room, ends the arterial at its near shore)
+        let sa = max(t0 - 1.0, 0.0);
+        let sb = tw + 1.0;
+        if (sb - sa > u.t.w || ns == NSPAN) { end = sa; out = true; break; }
+        let s5 = o + 4u + ns * 3u;
+        set5(s5, sa);
+        set5(s5 + 1u, sb);
+        set5(s5 + 2u, max(r3(ixp(p0)), r3(ixp(p))) + u.t.z);
+        ns++;
+      }
     }
+    if (!out) { acc += L; end = acc; }
   }
-  if (wet) { end = min(end, max(t0 - 1.0, 0.0)); }
-  set5(o + 2u, end);
-  w5[o + 3u] = n;
+  if (wet) { end = max(t0 - 1.0, 0.0); }
+  set5(o + 1u, end);
+  w5[o + 2u] = ns;
+  set5(o + 3u, end);
 }
-/** whether a quad meets an arterial's corridor (its half width and a cell): the quad's extent across the arterial and
- *  along it against the corridor's (ART at b2) */
-fn artHitB2(v: array<vec2<f32>, 4>) -> bool {
-  let c = u.d.xy;
-  let m = u.t.x * 0.5 + 1.0;
-  for (var k = 0u; k < min(b2[0], NART); k++) {
-    let o = artBase(k);
-    let d = normalize(vec2<f32>(r2(o), r2(o + 1u)));
-    let n = vec2<f32>(-d.y, d.x);
-    var s0 = 1e9; var s1 = -1e9; var t0 = 1e9; var t1 = -1e9;
-    for (var j = 0u; j < 4u; j++) {
-      let r = v[j] - c;
-      s0 = min(s0, dot(r, n)); s1 = max(s1, dot(r, n));
-      t0 = min(t0, dot(r, d)); t1 = max(t1, dot(r, d));
+/** one thread an arterial's segment: its columns, up to its length, seeds of the arterials' distance flood (b1 ART;
+ *  w5 the seeds) */
+@compute @workgroup_size(64)
+fn artRast(@builtin(global_invocation_id) g: vec3<u32>) {
+  let k = g.x / NAP;
+  let j = g.x % NAP;
+  if (k >= artCount(1u) || j + 1u >= artPts(1u, k)) { return; }
+  let len = r1(artBase(k) + 1u);
+  var acc = 0.0;
+  for (var i = 0u; i < j; i++) { acc += distance(artPt(1u, k, i), artPt(1u, k, i + 1u)); }
+  let a = artPt(1u, k, j);
+  let b = artPt(1u, k, j + 1u);
+  let L = distance(a, b);
+  for (var f = 0.0; f <= L; f += 0.5) {
+    if (acc + f > len) { return; }
+    let c = cat(mix(a, b, f / max(L, 1e-4)));
+    if (c.x < 0 || c.y < 0 || c.x >= W() || c.y >= H()) { continue; }
+    w5[ixq(c)] = pk(u32(c.x), u32(c.y), 0u);
+  }
+}
+/** one thread an arterial, once the supercells are made: where it leaves the town's limit (a supercell out) — a
+ *  bridge it's on carried to its far bank (w5 ART, b4 the supercells) */
+@compute @workgroup_size(8)
+fn artEnd(@builtin(global_invocation_id) g: vec3<u32>) {
+  let k = g.x;
+  if (k >= artCount(5u)) { return; }
+  let o = artBase(k);
+  let len = bitcast<f32>(w5[o + 1u]);
+  let n = artPts(5u, k);
+  // (never short of the core — past it the atlas's stamped road carries on; ART word 1)
+  let core = bitcast<f32>(w5[1u]);
+  let c0 = artPt(5u, k, 0u);
+  var lim = len;
+  var acc = 0.0;
+  var done = false;
+  for (var j = 0u; j + 1u < n && !done; j++) {
+    let a = artPt(5u, k, j);
+    let b = artPt(5u, k, j + 1u);
+    let L = distance(a, b);
+    for (var f = 0.0; f < L; f += 1.0) {
+      if (acc + f >= len) { done = true; break; }
+      let p = mix(a, b, f / max(L, 1e-4));
+      if (distance(p, c0) >= core && cityB4(p).state == 0u) { lim = acc + f; done = true; break; }
     }
-    if (s1 > -m && s0 < m && t1 > 0.0 && t0 < r2(o + 2u)) { return true; }
+    acc += L;
+  }
+  for (var s = 0u; s < min(w5[o + 2u], NSPAN); s++) {
+    let sa = bitcast<f32>(w5[o + 4u + s * 3u]);
+    let sb = bitcast<f32>(w5[o + 5u + s * 3u]);
+    if (lim > sa && lim < sb) { lim = sb; }
+  }
+  set5(o + 3u, lim);
+}
+/** whether a quad meets an arterial's corridor (its half width and a cell): its middle, or a point every unit round
+ *  its edges, that near an arterial (b2 the arterials' distance) */
+fn artHitB2(v: array<vec2<f32>, 4>) -> bool {
+  let m = u.t.x * 0.5 + 1.0;
+  if (r2(ixp(0.25 * (v[0] + v[1] + v[2] + v[3]))) < m) { return true; }
+  for (var e = 0u; e < 4u; e++) {
+    let a = v[e];
+    let b = v[(e + 1u) % 4u];
+    let n = min(u32(ceil(distance(a, b))), 64u);
+    for (var i = 0u; i <= n; i++) { if (r2(ixp(mix(a, b, f32(i) / f32(max(n, 1u))))) < m) { return true; } }
   }
   return false;
-}
-/** how near p is to an arterial (ART at w7; 1e9 none) */
-fn artDistW7(p: vec2<f32>) -> f32 {
-  let c = u.d.xy;
-  var best = 1e9;
-  for (var k = 0u; k < min(w7[0], NART); k++) {
-    let o = artBase(k);
-    let d = normalize(vec2<f32>(bitcast<f32>(w7[o]), bitcast<f32>(w7[o + 1u])));
-    let t = clamp(dot(p - c, d), 0.0, bitcast<f32>(w7[o + 2u]));
-    best = min(best, distance(p, c + d * t));
-  }
-  return best;
 }
 /** a wall from p to q (outward: to the right of p → q), z0 up to z1 */
 fn wall(at: u32, p: vec2<f32>, q: vec2<f32>, z0: f32, z1: f32, col: u32) {
   tri(at, vec3<f32>(p, z0), vec3<f32>(q, z0), vec3<f32>(q, z1), col);
   tri(at + 3u, vec3<f32>(p, z0), vec3<f32>(q, z1), vec3<f32>(p, z1), col);
 }
-/** one thread an arterial's piece (a world unit): a ribbon on the ground, or over a span a deck piece and, every
- *  PIER_EVERY, a pillar to the bed (b1 ART, r3 the heights; w7 the mesh) */
+/** one thread an arterial's segment: a ribbon on the ground to the town's limit (tapering into the atlas road's
+ *  width), or over a span a deck piece and, where a pillar falls in it, a pillar to the bed (b1 ART, r3 the heights;
+ *  w7 the mesh) */
 @compute @workgroup_size(64)
 fn artMesh(@builtin(global_invocation_id) g: vec3<u32>) {
-  let k = g.x / ART_PIECES;
-  let j = g.x % ART_PIECES;
-  if (k >= min(b1[0], NART)) { return; }
+  let k = g.x / NAP;
+  let j = g.x % NAP;
+  if (k >= artCount(1u) || j + 1u >= artPts(1u, k)) { return; }
   let o = artBase(k);
-  let d = normalize(vec2<f32>(r1(o), r1(o + 1u)));
-  let L = r1(o + 2u);
-  let t0 = f32(j);
-  if (t0 >= L) { return; }
-  let t1 = min(t0 + 1.0, L);
-  let c = u.d.xy;
-  let a = c + d * t0;
-  let b = c + d * t1;
-  let hw = u.t.x * 0.5;
-  let mid = 0.5 * (t0 + t1);
+  let lim = r1(o + 3u);
+  var acc = 0.0;
+  for (var i = 0u; i < j; i++) { acc += distance(artPt(1u, k, i), artPt(1u, k, i + 1u)); }
+  if (acc >= lim) { return; }
+  let p0 = artPt(1u, k, j);
+  let p1 = artPt(1u, k, j + 1u);
+  let L = distance(p0, p1);
+  if (L < 1e-3) { return; }
+  let s0 = acc;
+  let s1 = min(acc + L, lim);
+  let d = (p1 - p0) / L;
+  let a = p0 + d * (s0 - acc);
+  let b = p0 + d * (s1 - acc);
+  let mid = 0.5 * (s0 + s1);
+  // (the taper: the last ART_TAPER units to the limit narrow to the atlas road's width)
+  let hw = mix(WAY_HALF, u.t.x * 0.5, clamp((lim - mid) / ART_TAPER, 0.0, 1.0));
   var deck = -1e9;
-  for (var s = 0u; s < min(b1[o + 3u], NSPAN); s++) {
+  for (var s = 0u; s < min(b1[o + 2u], NSPAN); s++) {
     let q = o + 4u + s * 3u;
     if (mid >= r1(q) && mid <= r1(q + 1u)) { deck = r1(q + 2u); }
   }
   if (deck < -1e8) {
     let at = room(6u);
     if (at == NONE) { return; }
-    ribbon(at, a - d * 0.05, b + d * 0.05, hw, select(C_ART, C_STEEP, steep(a, b)));
+    ribbon(at, a - d * 0.3, b + d * 0.3, hw, select(C_ART, C_STEEP, steep(a, b)));
     return;
   }
-  let pier = j % PIER_EVERY == 0u && hAt(a) < deck - DECK_T - 0.5;
+  // (a pillar where a multiple of PIER_EVERY falls in this piece, the ground well under the deck)
+  let ps = ceil(s0 / PIER_EVERY) * PIER_EVERY;
+  let pc = a + d * (ps - s0);
+  let pier = ps < s1 && hAt(pc) < deck - DECK_T - 0.5;
   let at = room(select(18u, 42u, pier));
   if (at == NONE) { return; }
-  let s = vec2<f32>(-d.y, d.x) * hw;
+  let sv = vec2<f32>(-d.y, d.x) * hw;
   let lo = deck - DECK_T;
-  tri(at, vec3<f32>(a - s, deck), vec3<f32>(b - s, deck), vec3<f32>(b + s, deck), C_DECK);
-  tri(at + 3u, vec3<f32>(a - s, deck), vec3<f32>(b + s, deck), vec3<f32>(a + s, deck), C_DECK);
-  wall(at + 6u, a - s, b - s, lo, deck, C_DECK);
-  wall(at + 12u, b + s, a + s, lo, deck, C_DECK);
+  let a2 = a - d * 0.05;
+  let b2 = b + d * 0.05;
+  tri(at, vec3<f32>(a2 - sv, deck), vec3<f32>(b2 - sv, deck), vec3<f32>(b2 + sv, deck), C_DECK);
+  tri(at + 3u, vec3<f32>(a2 - sv, deck), vec3<f32>(b2 + sv, deck), vec3<f32>(a2 + sv, deck), C_DECK);
+  wall(at + 6u, a2 - sv, b2 - sv, lo, deck, C_DECK);
+  wall(at + 12u, b2 + sv, a2 + sv, lo, deck, C_DECK);
   if (!pier) { return; }
   let u1 = d * PIER_HW;
   let u2 = vec2<f32>(-d.y, d.x) * PIER_HW;
-  let q = array<vec2<f32>, 4>(a - u1 - u2, a + u1 - u2, a + u1 + u2, a - u1 + u2);
-  let z0 = hAt(a) - 0.5;
+  let q = array<vec2<f32>, 4>(pc - u1 - u2, pc + u1 - u2, pc + u1 + u2, pc - u1 + u2);
+  let z0 = hAt(pc) - 0.5;
   for (var e = 0u; e < 4u; e++) { wall(at + 18u + e * 6u, q[e], q[(e + 1u) % 4u], z0, lo, C_PIER); }
 }

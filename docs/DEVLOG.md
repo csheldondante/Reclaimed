@@ -20950,3 +20950,30 @@ M4a puts the street lab's GPU pipeline in the game for the start town. docs/desi
   spans both banks with an east–west arterial and a deck over the river. Trees still grow through it (no claims until
   M4b). The straight arterial doesn't follow the stamped atlas road, which curves away to the south-west (CG6). At
   radius 60 the town is sparser than the lab's radius-120 Muru.
+
+## 2026-11-10 — citygen M4a polish: Muru at the lab's size, arterials on the atlas roads, a deterministic layout
+
+The coordinator's three points after M4a.
+- **Town size.** Radius by settlement size: town 120 (the lab's Muru, which the user approved), city 150. The box is
+  4/3 radii each way (320 × 320, the lab sites' size), no longer whole regions; the window covers its regions (384 at
+  Muru). 473 lots (M4a: 123). The trade-off is the window: 2.25× the desktop default's columns (BACKLOG CG13).
+- **Arterials on the atlas roads.** `Settlements.approachWays` hands over the site's way points (authored, every
+  2 units, kept every 4). ART holds up to 8 polylines of 128 points.
+  - `artSpan` marches them a segment at a time. A wet run is closed only by 2 units of dry ground: the plaza's edge had
+    made four 1-unit "bridges" and used up the spans.
+  - `artRast` + a jump flood make a distance field (AD) for the lots' corridor test and the growth discount. Testing
+    segments per lot cost 22.6 ms in the lots stage; AD costs 0.35 ms.
+  - `artEnd` ends each arterial at the supercells' limit, tapering to the atlas road's width.
+  - The point markers are hidden in the game (`marks` 0).
+  - Muru's plaza disc and the north road's graded fill had dammed the river at the centre, so the roads saw no water.
+    `Settlements.byFields` now drops the site's plaza and the ways' points within 0.5 radii before the land is made.
+    The arterials are drawn at least that far, so they meet the stamped road. The north road now comes in on a deck
+    along the lake shore. maxSpan defaults to 120 (60 ended a shared stretch at the shore and left a gap to the road).
+- **Determinism.**
+  - A grown street's landing took its slot from an atomic counter. gclaim/gkeep then preferred the lowest slot, so the
+    streets depended on thread order. `gplace` now hands out slots by a workgroup scan over the source ids.
+  - Gap blocks hashed their atomic slot for jitter and lot seeds; they now use their region node.
+  - Landmark top-K ties fell back to list order; they now break by position.
+  - Result: 9 reruns give 473 lots and 30 960 vertices every time (lab river with 3 arterials: 360 every time).
+- **GPU** (headless D3D11, 9 reruns): median 3.74 ms (3.27–4.15) for the radius-120 town with polylines. M4a's was
+  1.87 ms for radius 60.

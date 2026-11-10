@@ -1,6 +1,6 @@
 // (citygen M4a) A settlement's town made in the game by the GPU field generator (?citygen=fields): the street lab's
 // pipeline (gpu.ts) over the town's box of the live window — its land as the world has it — with the town's inputs
-// uploaded (its centre, radius, seed, the directions its atlas roads leave by) and nothing read back but the run's
+// uploaded (its centre, radius, seed, its atlas roads' points) and nothing read back but the run's
 // timestamps and two counts, once. Its layout and mesh are in the box's own frame and stay on the GPU; the mesh is placed
 // in the window by a 16-byte transform (Renderer.addMesh), written again when the window slides — never remade.
 // The box must be in the window when the town is made (the level opens the window round it: citygen/town.ts
@@ -8,46 +8,56 @@
 import type { Settlement } from '../api/contracts/settlement';
 import type { CityLots } from '../api/contracts/citygen';
 import { ROW_H } from '../world/lattice';
-import { CityGen, NART, type StreetParams, type StreetTimes } from './gpu';
+import { CityGen, NAP, NART, type StreetParams, type StreetTimes } from './gpu';
 import { cityParams, scaled } from './params';
 
-/** a town's radius (cells) by its size: the field generator's, round its centre */
-const RADIUS: Record<Settlement['size'], number> = { camp: 24, hamlet: 32, village: 44, town: 60, city: 80 };
-/** the town circle's bound with supercells (× its radius: gpu.ts CITY_REACH) and a few columns' margin */
-const REACH = 1.6;
-const MARGIN = 4;
-/** the streamer's region: a box is whole ones (its first row even, so its rows' hex offsets are the window's) */
+/** a town's radius (cells) by its size — a town the lab's Muru the user approved (radius 120, 400+ lots) */
+const RADIUS: Record<Settlement['size'], number> = { camp: 30, hamlet: 48, village: 72, town: 120, city: 150 };
+/** the box's half side (× the radius): the lab's sites, 320 columns round a town of 120 — the supercells' limit
+ *  (0.9 radii ± 35%) inside it */
+const BOX = 4 / 3;
+/** the core (× the radius) where the atlas's own road and plaza stamps are cleared (Settlements.byFields): the arterials
+ *  are drawn at least this far, so they meet the stamped roads past it (the supercells' limit is 0.9 radii ± 35%) */
+const CORE = 0.5;
+/** the streamer's region: the window holds the box's regions */
 const REGION = 64;
 
-/** what the generator takes of a settlement: its id, centre (world units), size, its roads' directions and its seed */
+/** what the generator takes of a settlement: its id, centre (world units), size, its atlas roads (world polylines,
+ *  each from its end at the town: Settlements.approachWays) and its seed */
 export interface FieldTownSite {
   id: string;
   name: string;
   at: readonly [number, number];
   size: Settlement['size'];
-  approaches: readonly (readonly [number, number])[];
+  roads: readonly (readonly (readonly [number, number])[])[];
   seed: number;
 }
 
-/** a town's box: world columns and rows, whole regions round its centre — its radius's bound and a margin each way */
+/** a town's box: world columns and rows round its centre (as many rows as columns, the first row even), the regions
+ *  the window must hold for it, and the town's radius (cells) */
 export interface FieldTownBox {
   x0: number;
   y0: number;
   w: number;
   h: number;
-  /** the town's radius (cells) */
+  cover: { x0: number; y0: number; w: number; h: number };
   R: number;
+  /** the core: the atlas's stamps cleared within it (world units) */
+  core: number;
 }
 export function fieldTownBox(site: Pick<FieldTownSite, 'at' | 'size'>): FieldTownBox {
   const R = RADIUS[site.size];
-  const reach = REACH * R + MARGIN;
-  const cx = site.at[0];
-  const cy = site.at[1] / ROW_H;
-  const x0 = Math.floor((cx - reach) / REGION) * REGION;
-  const y0 = Math.floor((cy - reach / ROW_H) / REGION) * REGION;
-  const x1 = Math.ceil((cx + reach) / REGION) * REGION;
-  const y1 = Math.ceil((cy + reach / ROW_H) / REGION) * REGION;
-  return { x0, y0, w: x1 - x0, h: y1 - y0, R };
+  const half = Math.ceil(BOX * R);
+  const cx = Math.round(site.at[0]);
+  const cy = Math.round(site.at[1] / ROW_H);
+  const x0 = cx - half;
+  const y0 = 2 * Math.floor((cy - half) / 2);
+  const w = 2 * half;
+  const h = 2 * half;
+  const rx0 = Math.floor(x0 / REGION) * REGION;
+  const ry0 = Math.floor(y0 / REGION) * REGION;
+  const cover = { x0: rx0, y0: ry0, w: Math.ceil((x0 + w) / REGION) * REGION - rx0, h: Math.ceil((y0 + h) / REGION) * REGION - ry0 };
+  return { x0, y0, w, h, cover, R, core: CORE * R };
 }
 
 /** what the town needs of the game: the device, the world's buffers, the renderer, and where the window is */
@@ -91,16 +101,37 @@ export class FieldTown {
     const by = mod(box.y0 - oy, rows);
     if (bx + box.w > io.dims.w || by + box.h > io.dims.h)
       throw new Error(`citygen: ${site.id}'s box (${box.w} x ${box.h} at ${box.x0}, ${box.y0}) isn't in the window (${io.dims.w} x ${io.dims.h} at ${ox}, ${oy}) — the level opens the window round it`);
-    if (site.approaches.length > NART) throw new Error(`citygen: ${site.id} has ${site.approaches.length} roads, room for ${NART}`);
-    const centre: [number, number] = [near(site.at[0] - box.x0, cols), near(site.at[1] - box.y0 * ROW_H, rows * ROW_H)];
+    if (site.roads.length > NART) throw new Error(`citygen: ${site.id} has ${site.roads.length} roads, room for ${NART}`);
+    // (the grid's world units: its first column's corner at 0, 0)
+    const ox0 = site.at[0] - near(site.at[0] - box.x0, cols);
+    const oy0 = site.at[1] - near(site.at[1] - box.y0 * ROW_H, rows * ROW_H);
+    const local = ([x, y]: readonly [number, number]): [number, number] => [x - ox0, y - oy0];
+    const centre = local(site.at);
     this.gen = new CityGen(io.device, { w: box.w, h: box.h, box: [bx, by], ...io.world, centre });
-    this.gen.setArterials(site.approaches);
+    // (each atlas road from the town's centre out: its points every 4 units, from the one nearest the centre, as far as
+    // the box — the GPU cuts it at the box's edge and the town's limit)
+    const R2 = Math.hypot(box.w, box.h * ROW_H);
+    this.gen.setArterials(
+      box.core,
+      site.roads.map((line) => {
+        let k0 = 0;
+        line.forEach((p, k) => {
+          if (Math.hypot(p[0] - site.at[0], p[1] - site.at[1]) < Math.hypot(line[k0][0] - site.at[0], line[k0][1] - site.at[1])) k0 = k;
+        });
+        const out: [number, number][] = [centre];
+        for (let k = k0; k < line.length && out.length < NAP; k += 2) {
+          out.push(local(line[k]));
+          if (Math.hypot(line[k][0] - site.at[0], line[k][1] - site.at[1]) > R2) break;
+        }
+        return out;
+      }),
+    );
     this.xform = io.device.createBuffer({ label: `citygen ${site.id} place`, size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.oz0 = io.oz();
     this.place();
     io.addMesh(this.gen.verts, this.gen.args, this.xform);
     // (the town's own inputs over the generator's defaults: its radius and seed)
-    this.params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973 }));
+    this.params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0 }));
     this.made = this.gen.run(this.params, 'field').then((t) => (this.times = t));
   }
 

@@ -46,6 +46,8 @@ export interface StreetParams {
   hRatio: number;
   deckClear: number;
   maxSpan: number;
+  /** the points' markers drawn (1: the lab's; 0: the game's) */
+  marks: number;
   /** index into MAJORS */
   majors: number;
   /** between the distance contours, between the rings (world units) */
@@ -157,8 +159,8 @@ const UNI_BYTES = 256;
 const KERNELS = [
   'fill', 'blur', 'feat', 'jfa', 'jdist', 'autoPts', 'phi', 'tensor', 'trace', 'mis', 'blocks',
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotRec', 'lotMesh', 'marks', 'meshCap',
-  'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'sctab', 'bgrow', 'ctint',
-  'artSpan', 'artMesh',
+  'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'gplace', 'sctab', 'bgrow', 'ctint',
+  'artSpan', 'artRast', 'artEnd', 'artMesh',
 ] as const;
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
@@ -193,10 +195,12 @@ const GROW_LINES = 8;
 /** (m3i) the town circle's reach with supercells (× its radius): past the largest limit (1.2) and its noise */
 const CITY_REACH = 1.6;
 const ALL = ['height', ...STAGES] as const;
-/** (M4a) streets.wgsl NART, AW, ART_PIECES: the arterials (approach roads) a town has room for, words each, pieces each */
+/** (M4a) streets.wgsl NART, NAP, AP, AW: the arterials (approach roads) a town has room for, the points each, where
+ *  its points start in its words, its words */
 export const NART = 8;
-const AW = 16;
-const ART_PIECES = 512;
+export const NAP = 128;
+const AP = 16;
+const AW = AP + 2 * NAP;
 
 interface Uni {
   k?: number;
@@ -255,7 +259,7 @@ export class CityGen {
       return b;
     };
     this.uni = buf('passes', SLOT * MAX_PASSES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    for (const n of ['H', 'HT', 'M', 'HS', 'TB', 'T0', 'FDB', 'FD', 'S0', 'S1', 'BLK', 'TX', 'TY']) this.B[n] = buf(n, N * 4);
+    for (const n of ['H', 'HT', 'M', 'HS', 'TB', 'T0', 'FDB', 'FD', 'S0', 'S1', 'BLK', 'TX', 'TY', 'AD']) this.B[n] = buf(n, N * 4);
     const [mx, my] = this.lattice(MIN_BLOCK);
     const T = mx * my;
     this.B.TR = buf('traces', T * TRW * 4);
@@ -337,16 +341,26 @@ export class CityGen {
     new Uint32Array(a)[4] = flag;
     this.device.queue.writeBuffer(this.B.PTS, slot * PW * 4, a);
   }
-  /** (M4a, the town's input) its approach roads: the unit directions its atlas roads leave by (at most NART) — the
-   *  arterials and their bridges are made from them on the GPU; the next run from 'field' */
-  setArterials(dirs: readonly (readonly [number, number])[]): void {
-    if (dirs.length > NART) throw new Error(`citygen: ${dirs.length} approach roads, room for ${NART}`);
+  /** (M4a, the town's input) its approach roads: each a polyline from the centre's end outward (the grid's world
+   *  units; at most NART of NAP points) — the game's the atlas roads into the town, the lab's test spokes — and the core
+   *  they're drawn to at least (the game's: where the atlas's stamps were cleared). Their length in the grid, bridges and
+   *  end at the town's limit are made on the GPU; the next run from 'field' */
+  setArterials(core: number, lines: readonly (readonly (readonly [number, number])[])[]): void {
+    if (lines.length > NART) throw new Error(`citygen: ${lines.length} approach roads, room for ${NART}`);
     const a = new ArrayBuffer((4 + NART * AW) * 4);
-    new Uint32Array(a)[0] = dirs.length;
+    const u = new Uint32Array(a);
     const f = new Float32Array(a);
-    dirs.forEach(([x, y], k) => {
-      f[4 + k * AW] = x;
-      f[5 + k * AW] = y;
+    u[0] = lines.length;
+    // (drawn at least this far from the centre — past it the atlas's stamped road carries on; 0 none)
+    f[1] = core;
+    lines.forEach((pts, k) => {
+      if (pts.length > NAP) throw new Error(`citygen: an approach road of ${pts.length} points, room for ${NAP}`);
+      const o = 4 + k * AW;
+      u[o] = pts.length;
+      pts.forEach(([x, y], j) => {
+        f[o + AP + 2 * j] = x;
+        f[o + AP + 2 * j + 1] = y;
+      });
     });
     this.device.queue.writeBuffer(this.B.ART, 0, a);
   }
@@ -467,7 +481,8 @@ export class CityGen {
       this.fill(B.GCNT, 4, 0);
       const gg = this.ggWords(bl);
       for (let k = 0; k < GROW_LINES; k++) {
-        this.kS('gmarch', { k }, { 4: B.FD, 5: B.SD, 6: B.GCNT });
+        this.kS('gmarch', { k }, { 4: B.FD, 5: B.SD });
+        this.k('gplace', { k }, { 5: B.SD, 6: B.GCNT }, 1);
         this.fill(B.GG, gg, NONE);
         this.kS('gclaim', { k: k + 1 }, { 1: B.SD, 6: B.GG });
         this.kS('gkeep', { k: k + 1 }, { 2: B.GG, 5: B.SD });
@@ -502,7 +517,9 @@ export class CityGen {
     this.kS('vblock', {}, { 1: B.SD, 5: B.BQ, 7: B.AL1 });
     // (m3h) the supercells: their centres, states and growth starts
     // (m3i: one workgroup — the cost distance relaxed over the supercell graph in its shared memory)
-    if (this.cityOn()) this.k('sctab', {}, { 1: B.PTS, 2: B.LM, 3: B.HS, 4: B.FD, 5: B.SCT, 7: B.ART }, 1);
+    if (this.cityOn()) this.k('sctab', {}, { 1: B.PTS, 2: B.LM, 3: B.HS, 4: B.FD, 5: B.SCT, 7: B.AD }, 1);
+    // (M4a: where each arterial leaves the town's limit — the supercells' out; without them, its length)
+    this.k('artEnd', {}, { 4: B.SCT, 5: B.ART }, 1);
     // (m3d) the bad blocks: found, then merged (a claim each on a good neighbour, the lowest seed wins) or paved
     // (MERGE_ROUNDS rounds — a fan's triangles merge in pairs, then the pairs — then what's still bad is paved)
     for (let r = 0; r <= MERGE_ROUNDS; r++) {
@@ -600,11 +617,14 @@ export class CityGen {
         this.blur(B.BLK, B.T0, Math.max(1, Math.round(p.maskR)), 2);
         this.k2('mseed', {}, { 1: B.T0, 5: B.S0 });
       }
-      // (M4a: the arterials — their length and bridges)
-      this.k('artSpan', {}, { 1: B.M, 3: B.H, 5: B.ART }, 1);
       const fr = this.jfa(B.S0, B.S1);
       this.k2('jdist', {}, { 1: fr, 5: p.field === 1 ? B.FDB : B.T0 });
       if (p.field === 0) this.blur(B.T0, B.FDB, 5, 3);
+      // (M4a: the arterials — their length and bridges, then the distance to them: their columns flooded)
+      this.k('artSpan', {}, { 1: B.M, 3: B.H, 5: B.ART }, 1);
+      this.fill(B.S0, w * h, NONE);
+      this.k('artRast', {}, { 1: B.ART, 5: B.S0 }, (NART * NAP) / 64);
+      this.k2('jdist', {}, { 1: this.jfa(B.S0, B.S1), 5: B.AD });
       this.cp.end();
     }
     // (m3a) the points (placed, their offsets) and φ — over a changed point's box only, when that's all that changed
@@ -648,8 +668,8 @@ export class CityGen {
         this.k('bgrow', { count: 3 * this.nS() }, { 4: B.SCT, 5: B.BQ }, Math.ceil(this.nS() / 64));
         if (p.gap) this.k('bgrow', { count: 3 * GAP_ROOM }, { 4: B.SCT, 5: B.GB }, Math.ceil(GAP_ROOM / 64));
       }
-      this.k('lots', { count: LOT_ROOM }, { 1: B.BQ, 2: B.ART, 4: B.SCT, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * this.nS()) / 64));
-      if (p.gap) this.k('lots', { count: LOT_ROOM }, { 1: B.GB, 2: B.ART, 4: B.SCT, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * GAP_ROOM) / 64));
+      this.k('lots', { count: LOT_ROOM }, { 1: B.BQ, 2: B.AD, 4: B.SCT, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * this.nS()) / 64));
+      if (p.gap) this.k('lots', { count: LOT_ROOM, mode: 1 }, { 1: B.GB, 2: B.AD, 4: B.SCT, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * GAP_ROOM) / 64));
       this.cp.end();
     }
     // the mesh: roads, lots and the points' markers
@@ -665,9 +685,9 @@ export class CityGen {
     this.k('lotRec', { count: LOT_ROOM }, { 1: B.LOTS, 2: B.SCT, 3: HH, 4: B.FD, 5: B.LM, 6: B.CNT, 7: this.lotRecords }, Math.ceil(LOT_ROOM / 64));
     this.k('lotRec', { mode: 1 }, { 1: B.LOTS, 2: B.SCT, 3: HH, 4: B.FD, 5: B.LM, 6: B.CNT, 7: this.lotRecords }, 1);
     this.k('lotMesh', { count: LOT_ROOM }, { 1: this.lotRecords, 2: this.progress, 3: HH, 6: B.CNT, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
-    this.k('artMesh', {}, { 1: B.ART, 3: HH, 7: this.verts }, (NART * ART_PIECES) / 64, 1, true);
+    this.k('artMesh', {}, { 1: B.ART, 3: HH, 7: this.verts }, (NART * NAP) / 64, 1, true);
     if (vector && p.lmMult > 0) this.k('lmMesh', {}, { 1: B.LM, 3: HH, 7: this.verts }, (64 * 48) / 64, 1, true);
-    if (PHI_MODE[p.majors] !== 0) this.k('marks', { mode: this.sel + 1 }, { 1: B.PTS, 3: HH, 7: this.verts }, 1, 1, true);
+    if (PHI_MODE[p.majors] !== 0 && p.marks) this.k('marks', { mode: this.sel + 1 }, { 1: B.PTS, 3: HH, 7: this.verts }, 1, 1, true);
     // (m3c: the shaped ground's skin, its bands tinted; the cart road)
     if (p.shape > 0) this.k2('ground', {}, { 1: B.H, 3: HH, 4: B.FD, 7: this.verts }, true);
     if (p.shape > 1) this.k2('roadShape', {}, { 1: B.HS, 2: B.PTS, 3: HH, 4: B.FD, 7: this.verts }, true);

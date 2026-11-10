@@ -356,12 +356,12 @@ export function attachStream(scene: LevelScene): void {
               dims: { w: dims.w, h: dims.h },
               wrap: { cols: a!.atlas.p.cols, rows: a!.atlas.p.rows },
             },
-            { id: fs.rec.id, name: fs.rec.name, at: fs.rec.at, size: fs.rec.size, approaches: fs.approaches, seed: fs.seed },
+            { id: fs.rec.id, name: fs.rec.name, at: fs.rec.at, size: fs.rec.size, roads: st.approachWays(fs.rec.id), seed: fs.seed },
           );
           scene.fieldTown = town;
           S.onSlide.push(() => town.place());
           S.onWarp.push(() => town.place());
-          void town.made.then((t) => console.log(`[citygen] ${fs.rec.name} (${fs.rec.id}, ${fs.rec.size}): ${t.lots} lots, ${fs.approaches.length} approach roads; GPU ms ${t.total?.toFixed(2) ?? 'n/a'} (heights ${t.height?.toFixed(2) ?? 'n/a'})`));
+          void town.made.then((t) => console.log(`[citygen] ${fs.rec.name} (${fs.rec.id}, ${fs.rec.size}): ${t.lots} lots, ${town.site.roads.length} approach roads; GPU ms ${t.total?.toFixed(2) ?? 'n/a'} (heights ${t.height?.toFixed(2) ?? 'n/a'})`));
         });
       }
       // (round 128i, FT-67) ?townview=0: the towns not drawn nor claimed (no settlements view) — the town bench's split of
