@@ -116,6 +116,18 @@ export const CATALOG: readonly SeasonCard[] = [
     income: { intel: 1 },
   },
   {
+    id: 'trade',
+    title: 'Open a trade route',
+    name: 'the trade route',
+    pitch: 'Wagons bring goods in by road. Ships come too if you have a harbour.',
+    locks: { labor: 1 },
+    costs: { materials: 2, intel: 1 },
+    seasons: 2,
+    work: { kind: 'route' },
+    income: { materials: 1, intel: 1 },
+    needs: ['market'],
+  },
+  {
     id: 'walls',
     title: 'Build town walls',
     name: 'the walls',

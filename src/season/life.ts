@@ -11,6 +11,9 @@ export interface TownLife {
   stoneCarts: number;
   woodcutters: number;
   logCarts: number;
+  /** (season life) wagons and ships on the trade routes open */
+  wagons: number;
+  ships: number;
   /** the living town's quarry and clearing on (a quarry or lumber card started or built) */
   quarry: boolean;
   camp: boolean;
@@ -29,6 +32,9 @@ export const LIFE = {
   stoneCarts: 16,
   woodcutters: 30,
   logCarts: 12,
+  /** a trade route open: its wagons; its ships, with a harbour built */
+  wagons: 14,
+  ships: 3,
 } as const;
 
 export function townLife(l: SeasonLedger): TownLife {
@@ -45,6 +51,8 @@ export function townLife(l: SeasonLedger): TownLife {
     stoneCarts: quarry ? LIFE.stoneCarts : 0,
     woodcutters: camp ? LIFE.woodcutters : 0,
     logCarts: camp ? LIFE.logCarts : 0,
+    wagons: LIFE.wagons * built('trade'),
+    ships: built('harbour') > 0 ? LIFE.ships * built('trade') : 0,
     quarry,
     camp,
   };

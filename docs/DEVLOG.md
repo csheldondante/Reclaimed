@@ -21430,3 +21430,20 @@ The user: "I do want to see agents moving around and more things to reflect choi
   marked WALL_MARK there, which the living town's walkInit treats as blocked: its routes go out through the gates.
 - Checked at Muru (two seasons of three): 1266 wall vertices; the west town's ring two-thirds up, towers at corners.
 - `SeasonLoop.offer(id)`: a catalog card into the hand for scripts and shots (the dealer had no walls card to give).
+
+## 2026-11-10 — season life 3: wagons and ships on a trade route (trackA-seasonlife)
+
+- **The card:** "Open a trade route" (needs a market; 1 Labor for 2 seasons, 2 Materials and 1 Intel; +1 Materials
+  and +1 Intel a season). Once open: 14 wagons; 3 ships too when a harbour is built (`townLife`).
+- **Wagons** are living-town riders (job J_WAGON, the haul format: job/state/leg): away (not drawn) a while, then in
+  along the roads from the gate nearest their shop — the GATES field ridden backwards from the shop's door — unloading
+  there, and out the same way. A cart with sacks.
+- **Ships** are riders moved by their own kernel (`ships`: `riders` has its eight storage buffers taken): a sea field
+  (FIELD plane P_SEA) — the water's distance from the quays (open water within 6 columns of a built harbour lot,
+  `seaSeed` every 30 frames), relaxed in place 4 steps a frame (`seaRelax`) — a ship comes in at the box's edge where
+  the field reaches, down it a column at a time to the quay, moors, and goes out up it to the edge, away for 25–65 s.
+  Drawn as voxels: a hull, a cabin, a mast and a sail. The living town's parameters gain a vec4 (the wagons' and
+  ships' ends): struct P 176 → 192 bytes, in both kernels' copies.
+- Checked at Muru (the time-lapse built, 20 wagons and 4 ships by URL): wagons riding in and unloading; ships coming in
+  from the edges.
+- `SeasonLoop.grant()` (scripts and shots): pools as a gift, to reach the late cards in a GIF.

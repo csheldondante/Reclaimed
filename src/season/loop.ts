@@ -11,7 +11,7 @@ import type { Showcase, SimTiers } from '../api/contracts/simtiers';
 import type { DealerTune } from '../opps/tune';
 import { card, START_INCOME, START_POOLS } from './catalog';
 import { allocate, dealHand, hasLand, type Land, type Offer } from './deal';
-import { commit, DISTRICT_PARTS, newLedger, nextSeason, short, uncommit, type SeasonLedger, type SeasonResult } from './ledger';
+import { commit, DISTRICT_PARTS, grant, newLedger, nextSeason, short, uncommit, type SeasonLedger, type SeasonResult } from './ledger';
 import { summaryLine } from './words';
 import { townLife, type TownLife } from './life';
 
@@ -108,6 +108,12 @@ export class SeasonLoop {
     this.hand = offers;
     this.started.clear();
     for (const o of offers) this.recent.push({ template: o.card.id, place: 'town', turn: this.ledger.season });
+  }
+
+  /** (scripts and shots only) pools granted */
+  grant(g: Partial<Record<'magic' | 'might' | 'labor' | 'materials' | 'intel', number>>): void {
+    this.ledger = grant(this.ledger, g);
+    this.changed();
   }
 
   /** (scripts and shots only) a catalog card put in the hand as if dealt — the dealer is the player's only source */

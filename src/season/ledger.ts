@@ -40,6 +40,8 @@ export type CardWork =
   | { kind: 'works'; site: 'quarry' | 'camp' }
   /** (season life) the town wall: a ring round the town as it stands, gates at the arterials, rising each season */
   | { kind: 'walls' }
+  /** (season life) an external trade route: wagons on the roads, ships at the harbour once it's open */
+  | { kind: 'route' }
   /** no world change yet: pools only (bridges wait for a builder) */
   | { kind: 'stub'; waits: string };
 
@@ -156,6 +158,14 @@ function gain(h: Holdings, g: Partial<Pools>): void {
       addPeople(h, k, v);
     } else h.goods[k] = Math.max(0, (h.goods[k] ?? 0) + v);
   }
+}
+
+/** (scripts, shots and tests only) pools added as a gift: people join, goods arrive */
+export function grant(l: SeasonLedger, g: Partial<Pools>): SeasonLedger {
+  const h = structuredClone(l.holdings);
+  gain(h, g);
+  strike(h);
+  return { ...l, holdings: h };
 }
 
 export function newLedger(start: Partial<Pools> = {}, income: Partial<Pools> = {}): SeasonLedger {

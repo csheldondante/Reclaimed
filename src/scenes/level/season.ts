@@ -42,7 +42,7 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoo
     // (season life: the living town's counts and works — its parameters, the one input; LIVING_TUNING is every
     // living town's)
     life: (s) => {
-      for (const k of ['commuters', 'farmers', 'builders', 'quarrymen', 'stoneCarts', 'woodcutters', 'logCarts'] as const) LIVING_TUNING.set(`people.${k}`, s[k]);
+      for (const k of ['commuters', 'farmers', 'builders', 'quarrymen', 'stoneCarts', 'woodcutters', 'logCarts', 'wagons', 'ships'] as const) LIVING_TUNING.set(`people.${k}`, s[k]);
       LIVING_TUNING.set('quarry.on', s.quarry ? 1 : 0);
       LIVING_TUNING.set('forest.on', s.camp ? 1 : 0);
     },
