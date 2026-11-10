@@ -559,15 +559,23 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
   st[0] = q0;
   // (M4b: the lots' size by the population field's density there — dense, small lots; sparse, large: 1 at 0.5)
   let qc = cityB4(0.25 * (q0.v[0] + q0.v[1] + q0.v[2] + q0.v[3]));
-  // (farms: a farm district's lots are fields, x.z × a lot — long strips of the block, mostly a block or half a block)
-  let lotK = mix(1.6, 0.4, qc.dens) * select(1.0, max(u.x.z, 1.0), u.h2.z > 0.5 && qc.purpose == P_FARMS);
+  let farm = u.h2.z > 0.5 && qc.purpose == P_FARMS;
+  let lotK = mix(1.6, 0.4, qc.dens);
   var made = 0u;
   while (n > 0u) {
     n--;
     let q = st[n];
     let A = qArea(q);
     // (halves under the smallest lot's area: not split — the merge)
-    let split = !plaza && A > u.c.x * lotK && q.d < DEPTH && n + 2u <= STACK && A * 0.42 >= u.c.y * lotK;
+    var split = !plaza && A > u.c.x * lotK && q.d < DEPTH && n + 2u <= STACK && A * 0.42 >= u.c.y * lotK;
+    if (farm) {
+      // (farms: a field — split across its longest edge only while it's longer than FIELD_ASPECT + 1 × its width or
+      // bigger than x.z block lengths squared: fields of several blocks, 3:1–4:1)
+      var lmax = 0.0;
+      var lmin = 1e9;
+      for (var j = 0u; j < 4u; j++) { let l = distance(q.v[j], q.v[(j + 1u) % 4u]); lmax = max(lmax, l); lmin = min(lmin, l); }
+      split = q.d < DEPTH && n + 2u <= STACK && (lmax > (FIELD_ASPECT + 1.0) * max(lmin, 1.0) || A > max(u.x.z, 1.0) * u.a.w * u.a.w);
+    }
     if (split) {
       var k = 0u;
       var ll = -1.0;
@@ -580,7 +588,8 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
       var a: Quad;
       a.v = array<vec2<f32>, 4>(v0, c1, c2, v3);
       // (m3f: a big block's first two splits are roads — the cut a street both sides, its segment listed)
-      let road = u.l.z > 0.0 && A >= u.l.z && q.d < 2u;
+      // (farms: only the biggest field block's first split is a track — one every few hundred metres)
+      let road = u.l.z > 0.0 && A >= select(u.l.z, FARM_TRACK_AREA, farm) && q.d < select(2u, 1u, farm);
       let cut = select(0u, 2u, road);
       if (road) {
         let k2 = atomicAdd(&w6[1], 1u);
@@ -1623,6 +1632,10 @@ fn ground(@builtin(global_invocation_id) g: vec3<u32>) {
 // 1 a plaza, 2 merged away, 3 grown by a merge), 6 the neighbour it asks to merge with, 7 which way (0 ahead, 1 behind),
 // 8 its first seed (its own, until it takes over the block behind it).
 const PAVED: u32 = 0x80000000u;
+/** (farms) a field block is merged along its line until its length is this × its strip's width (3:1–4:1), and no
+ *  longer than FIELD_LEN_MAX */
+const FIELD_ASPECT: f32 = 3.5;
+const FIELD_LEN_MAX: f32 = 140.0;
 /** (m3i) a lot of a block at the town's edge or an empty district's */
 const EDGE_LOT: u32 = 0x40000000u;
 const C_PAVE_W: u32 = 0xdcd0b6u;
@@ -1666,8 +1679,15 @@ fn bqual(@builtin(global_invocation_id) g: vec3<u32>) {
   let c = w5[mo + 2u];
   if (c != NONE) { w5[c * 3u * BQW + BQW + 3u] = id; }
   if (u.q.x > 1.5) { return; }
-  let bad = w5[mo + 4u] == 1u || badQuad(blockQuad(ob), u.c.y);
-  w5[mo + 1u] = select(0u, 1u, bad);
+  let bq = blockQuad(ob);
+  let bad = w5[mo + 4u] == 1u || badQuad(bq, u.c.y);
+  // (farms: a block in a farm district or the farm belt is a field's start — merged along its line, its cross streets
+  // gone, until it's FIELD_ASPECT × as long as its strip is wide: meta word 11 its farm mark, word 1 asks the merge.
+  // Only the truly bad are ever paved)
+  let farm = u.h2.z > 0.5 && cityB4(0.25 * (bq[0] + bq[1] + bq[2] + bq[3])).purpose == P_FARMS;
+  w5[mo + 11u] = select(0u, 1u, farm);
+  let tooShort = farm && distance(bq[0], bq[1]) < FIELD_ASPECT * max(distance(bq[1], bq[2]), 1.0) && distance(bq[0], bq[1]) < FIELD_LEN_MAX;
+  w5[mo + 1u] = select(0u, 1u, bad || tooShort);
   if (bad && (u.q.x > 0.5 || u.n.w == 2u)) { w5[mo + 5u] = 1u; }
 }
 /** one thread a bad block (merge): a neighbour claimed — across the longer cross street, a good one first (the lowest
@@ -1682,8 +1702,9 @@ fn bclaim(@builtin(global_invocation_id) g: vec3<u32>) {
   if (w5[ob] == 0u || w5[mo + 1u] == 0u || w5[mo + 5u] == 1u) { return; }
   let c = w5[mo + 2u];
   let p = w5[mo + 3u];
-  let okC = c != NONE && w5[c * 3u * BQW] == 1u && w5[c * 3u * BQW + BQW + 5u] != 1u;
-  let okP = p != NONE && w5[p * 3u * BQW] == 1u && w5[p * 3u * BQW + BQW + 5u] != 1u;
+  let farm = w5[mo + 11u];
+  let okC = c != NONE && w5[c * 3u * BQW] == 1u && w5[c * 3u * BQW + BQW + 5u] != 1u && w5[c * 3u * BQW + BQW + 11u] == farm;
+  let okP = p != NONE && w5[p * 3u * BQW] == 1u && w5[p * 3u * BQW + BQW + 5u] != 1u && w5[p * 3u * BQW + BQW + 11u] == farm;
   // (the shared streets: ahead c's own, behind this seed's own; a good neighbour first)
   var lc = -1.0;
   var lp = -1.0;
@@ -3025,6 +3046,8 @@ const PAVE_T: f32 = 0.25;
 const BARE_ONLY: u32 = 0x80000000u;
 /** (farms) a field's column, no span: its owner word FIELD_COL | its record — bare.wgsl writes its crop */
 const FIELD_COL: u32 = 0x40000000u;
+/** (farms) a field block this big has a track across it at its first split */
+const FARM_TRACK_AREA: f32 = 9000.0;
 /** (farms) a field's columns marked in the claim grid's owner plane (where nothing else spans them) */
 fn claimField(r: u32, o: u32) {
   var q: array<vec2<f32>, 4>;
@@ -3043,6 +3066,29 @@ fn claimField(r: u32, o: u32) {
       for (var k = 0u; k < 4u; k++) { if (cross2(q[(k + 1u) % 4u] - q[k], p - q[k]) < 0.0) { inside = false; } }
       let c = ix(x, y);
       if (inside && w7[c * 4u + 3u] == 0u) { w7[N * 4u + c * 4u + 3u] = FIELD_COL | r; }
+    }
+  }
+  // (FM3: the farmhouse claimed as a building's columns — its base to its risen height — so units go round it)
+  let h = r1(o + 20u) * clamp(r2(r), 0.0, 1.0);
+  if (h < 0.05) { return; }
+  let hq = farmhouse(q);
+  let base = r1(o + 21u);
+  var hlo = vec2<f32>(1e9);
+  var hhi = vec2<f32>(-1e9);
+  for (var k = 0u; k < 4u; k++) { hlo = min(hlo, hq[k]); hhi = max(hhi, hq[k]); }
+  for (var y = max(i32(floor(hlo.y / ROW_H)) - 1, 0); y <= min(i32(ceil(hhi.y / ROW_H)) + 1, H() - 1); y++) {
+    for (var x = max(i32(floor(hlo.x)) - 1, 0); x <= min(i32(ceil(hhi.x)) + 1, W() - 1); x++) {
+      let p = cpos(x, y);
+      var inside = true;
+      for (var k = 0u; k < 4u; k++) { if (cross2(hq[(k + 1u) % 4u] - hq[k], p - hq[k]) < 0.0) { inside = false; } }
+      if (!inside) { continue; }
+      let c = ix(x, y);
+      let so = N * 4u + c * 4u;
+      w7[c * 4u + 3u] = 1u;
+      set7(so, base);
+      set7(so + 1u, base + h);
+      w7[so + 2u] = M_RUBBLE;
+      w7[so + 3u] = r + 1u;
     }
   }
 }

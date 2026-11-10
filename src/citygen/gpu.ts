@@ -744,7 +744,8 @@ export class CityGen {
     // (MERGE_ROUNDS rounds — a fan's triangles merge in pairs, then the pairs — then what's still bad is paved)
     for (let r = 0; r <= MERGE_ROUNDS; r++) {
       this.kS('bqual', { mode: 0 }, { 1: B.SD, 5: B.BQ });
-      this.kS('bqual', { mode: r === MERGE_ROUNDS ? 2 : 1 }, { 1: B.SD, 5: B.BQ });
+      // (farms: b4 the supercells — a farm block wants merging along its line until it's a field's length)
+      this.kS('bqual', { mode: r === MERGE_ROUNDS ? 2 : 1 }, { 1: B.SD, 4: B.SCT, 5: B.BQ });
       if (r === MERGE_ROUNDS || p.bad !== 0) break;
       this.fill(B.AL0, S, NONE);
       this.kS('bclaim', {}, { 1: B.SD, 5: B.BQ, 6: B.AL0 });

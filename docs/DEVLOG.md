@@ -21186,3 +21186,19 @@ The user: "we need to add farms back in. They should be larger plots."
   district card (2 of a district's 6 parts).
 - **Shots:** `scratchpad/opps/belt-wide.png`, `belt-near.png` (Muru grown by the time-lapse: fields with hedges and
   tracks), `farms.gif` (two farms cards, tilled to ripe, the second going on in the first's district).
+
+## 2026-11-10 — farms FM2: fields of several blocks, along the contours; farmhouses claimed
+
+At play zoom the fields still read as small yellow lots: a field was at most a block, because the block's cross streets
+cut the land even drawn as tracks.
+- **No cross streets inside farms.** A farm block (its supercell farms or belt; meta word 11) asks the existing
+  bad-cell merge (bqual → bclaim → bapply) to join it with its farm neighbours along its major line until it's 3.5×
+  as long as its strip is wide (at most 140); the merge drops the cross street between them, so only the major lines
+  (level sets of φ, the distance contours) and the arterials bound a field — the strips follow the land. A farm
+  block merges only with farm blocks, and only the truly bad are ever paved.
+- **Lots:** a field splits across its longest edge only while it's over 4.5:1 or bigger than `farmLot` (6) × a block
+  length²; the biggest (over 9000) get a track at their first split.
+- **The belt:** `farmBelt` 1.35 → 1.6 of the budget (Muru showed only a few belt cells).
+- **FM3:** a farmhouse's columns are claimed like a building's (its base to its risen height), so units go round it.
+- Shots: `belt-near.png` (before) and `belt-near-after.png`, `belt-wide-after.png` (fields about half as many, each
+  2–4 blocks, long along the lines); `farms2.gif` (one farms card, 2 seasons: tilled, green, ripe).
