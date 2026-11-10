@@ -89,6 +89,22 @@ export interface TownDistrict {
 }
 
 /**
+ * (season loop) A card's share of a district and its stage, all 0..1 of the district: its lots are taken in growth order
+ * from the district's centre. A district holds two cards' shares at once (`slot` 0 or 1); a lot in a slot's [a, b]
+ * rises with that slot's stage, from `from` to `to` (each lot a little after the last, so they're all up exactly at b);
+ * any other lot stands if it's before `end` (the parts given out so far: earlier cards', all done) and isn't begun
+ * after it.
+ */
+export interface DistrictStage {
+  slot: 0 | 1;
+  a: number;
+  b: number;
+  from: number;
+  to: number;
+  end: number;
+}
+
+/**
  * (M4d hook) A town's districts for the opportunity UI (citygen/towns.ts FieldTowns implements it; `window.citygen` in
  * the game with ?citygen=fields):
  *   claimDistrict(kind, town?) — the best district not begun for that kind's purpose in `town` (or the town nearest the
@@ -96,16 +112,16 @@ export interface TownDistrict {
  *     town's clock, its roads appear, its claims follow. Resolves with the district (id −1 when none is left).
  *   districtsLeft(town?) — the districts not begun, counted on the GPU (four words back).
  *   inWindow(town, at) — a claim's centre (the town's frame) in the window as it is now.
- *   stageDistrict(town, id, from, to, atOnce?) — (the season loop, docs/design/SEASON_LOOP.md) the district built as
- *     far as its stage: from → to (0..1 of its build), eased over the build's span of the town's clock from now, or
- *     there at once (Skip). Its lots' progress (the per-lot progress buffer) follows on the GPU. 16 bytes up.
+ *   stageDistrict(town, id, stage, atOnce?) — (the season loop, docs/design/SEASON_LOOP.md) a card's share of the
+ *     district built as far as its stage, eased over the build's span of the town's clock from now, or there at once
+ *     (Skip). Its lots' progress (the per-lot progress buffer) follows on the GPU. 28 bytes up.
  *   timelapse(span) — every district not begun starts, the centre first, over `span` s (a debug view).
  * A town starts with its core built (districts within 0.35 of its growth key); the rest grows by claims.
  */
 export interface CityDistricts {
   claimDistrict(kind: OpportunityKind, town?: string): Promise<TownDistrict>;
   districtsLeft(town?: string): Promise<{ town: string; left: number } | null>;
-  stageDistrict(town: string, id: number, from: number, to: number, atOnce?: boolean): boolean;
+  stageDistrict(town: string, id: number, stage: DistrictStage, atOnce?: boolean): boolean;
   /** a point of a town's frame in the window now (null: the town isn't live) */
   inWindow(town: string, at: readonly [number, number]): [number, number] | null;
   timelapse(span?: number): boolean;

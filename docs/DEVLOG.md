@@ -21131,3 +21131,29 @@ should show intermediate states (that can use the shader for now)." Design: `doc
   footings at 1/2, white with their roofs once built. The pools ran Labor 4 → 12 (+8 a season) and Resources stayed
   short (1–3), so Resources is the limit that bites. The GPU's count of free districts after each claim matched the
   ledger's: 7 → 5 → 3 → 1 → 0. Each season's claims read back in one 16-byte map each.
+
+## 2026-11-10 — the season loop, round 2: the opportunity contract, district shares, Materials, balance
+
+- **One rule for paying (the user: "Opportunities can take resources for a duration").** The ledger now goes through
+  the opportunity contract: `commit` locks a card's people (Labor and Might are agents, one a unit) and spends its
+  goods (Materials, Magic, Intel); `resolve` at the card's last season brings the people back, and the ledger applies
+  what the card gives. Nothing is paid along the way. Unrest is that many free workers on strike: not with you, so the
+  contract's `available` leaves them out. The dealer reads the same holdings, so it and the ledger can't disagree.
+- **District shares (partial claims).** A district is 6 parts; a card covers 2–6. `allocate` puts it in an open
+  district of its kind with room and a free slot, else claims a new one on the GPU. The GPU ranks each district's lots
+  by distance from its centre (`stgRank`, n² over a few hundred lots a mesh run); a lot's key is rank over count.
+  First try used the distance squared over the supercell's size: districts are smaller than their supercell, so
+  13 of 16 farm lots stood after a one-third share. Ranked, it's 4 of 16 (5 expected; the last was mid-rise).
+- **Whole when the card finishes.** A slot holds a share [a, b] and its stage; a lot in it rises as
+  `f × 1.5 − 0.5 × w`, so the share's lots rise together, staggered, all up at b. Two slots a district, so two cards
+  of a kind can build in one district at once (with one, a second houses card had to open a new district, and Muru
+  ran out). Lots past the shares stand before `end` and aren't begun after it.
+- **Materials:** the pool's id and text are now `materials` / "Materials".
+- **Balance** (`test/unit/season.test.ts` prints a six-season greedy run): Labor is people now (4 workers; houses
+  +2 workers and +1 Unrest; farms −1 Unrest), Materials +2 a season plus what's built. Over six seasons the greedy
+  player was held back by Labor 6 times and by Materials 10 times; Labor stayed 0–1 free of 4–10, Materials 0–5,
+  and 2 of Muru's 7 districts were still free at the end.
+- **UI:** the hand is a two-column grid (no card cut off at the screen's edge); what's missing is its own line;
+  people show free of all (`Labor 2/4`); what's building says when its people come back.
+- **GIF** (`scratchpad/opps/seasons6.gif`, 6 seasons, 412x915, 60°, zoom 2): houses districts fill a third at a time,
+  the second houses card going on in the first's district.

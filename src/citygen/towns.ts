@@ -7,7 +7,7 @@
 // the static claims' arena's slots (OWN_SLOTS); when they're all taken, the farthest town not wanted gives its slot up.
 // The CPU picks which (the boxes against the window: integers) and passes the inputs; nothing is read back.
 import { FieldTown, fieldTownBox, type FieldTownBox, type FieldTownIO, type FieldTownSite } from './town';
-import { OPPORTUNITY_PURPOSE, type CityDistricts, type OpportunityKind, type TownDistrict } from '../api/contracts/citygen';
+import { OPPORTUNITY_PURPOSE, type CityDistricts, type OpportunityKind, type TownDistrict, type DistrictStage } from '../api/contracts/citygen';
 import { CLAIM_COUNT, DISTRICT_SPAN } from './gpu';
 
 /** a town's box this near the window (columns) is made; this far, let go */
@@ -99,13 +99,13 @@ export class FieldTowns implements CityDistricts {
     return { town: t.site.id, left: c.left };
   }
 
-  /** (season loop) a claimed district built as far as its stage: from → to (0..1), eased over its build from now —
+  /** (season loop) a card's share of a claimed district built as far as its stage, eased over its build from now —
    *  or there at once (`atOnce`: Skip). A town let go meanwhile: false (its stages aren't kept: BACKLOG SL3). */
-  stageDistrict(town: string, id: number, from: number, to: number, atOnce = false): boolean {
+  stageDistrict(town: string, id: number, stage: DistrictStage, atOnce = false): boolean {
     const t = this.live.get(town);
     if (!t) return false;
     const now = this.townTime;
-    t.stageDistrict(id, from, to, atOnce ? now - DISTRICT_SPAN - 1 : now, now);
+    t.stageDistrict(id, stage, atOnce ? now - DISTRICT_SPAN - 1 : now, now);
     return true;
   }
 

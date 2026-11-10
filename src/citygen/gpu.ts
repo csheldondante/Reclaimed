@@ -7,6 +7,7 @@
 // before it made stays in their buffers. A point's change reruns φ over its radius's box only. The one read back is the
 // run's timestamps, two counts and the points (360 bytes, after a run — never a frame's). It owns its buffers; it knows
 // the world only through StreetWorld.
+import type { DistrictStage } from '../api/contracts/citygen';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
@@ -202,7 +203,7 @@ const KERNELS = [
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotRec', 'lotMesh', 'marks', 'meshCap',
   'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'gplace', 'sctab', 'bgrow', 'ctint',
   'artSpan', 'artRast', 'artEnd', 'artMesh', 'popField', 'townBridge', 'claimRoads', 'claimLots', 'lotReach', 'deckSpans',
-  'clkInit', 'clkTimelapse', 'clkClaim', 'tlProgress', 'tlRise',
+  'clkInit', 'clkTimelapse', 'clkClaim', 'tlProgress', 'tlRise', 'stgRank',
 ] as const;
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
@@ -247,6 +248,8 @@ export const DISTRICT_SPAN = 1.75 * BUILD_S;
 export const SC_ROOM = 256;
 /** (season loop) clkClaim's purpose that only counts the districts left (streets.wgsl CLAIM_COUNT) */
 export const CLAIM_COUNT = 0xffffffff;
+/** (season loop) a district's stage record (streets.wgsl tlProgress: 16 f32) */
+const STG_BYTES = 64;
 /** (M4d hook) a claim's answer: the district (−1 none left), its centre (the grid's frame, world units), the districts
  *  not begun after it */
 export interface DistrictClaim {
@@ -379,8 +382,11 @@ export class CityGen {
     // (time-lapse: a tag and the made z a vertex — tlRise moves the tagged ones; a claim's answer)
     this.B.VTAG = buf('vertex tags', (world.vertRoom ?? VERT_ROOM) * 8);
     this.B.CLAIM = buf('claim answer', 16);
-    // (season loop: a vec4 a district — on, from, to, when — the season's stage; tlProgress reads it)
-    this.B.STG = buf('district stages', SC_ROOM * 16);
+    // (season loop: each lot's key in its district's growth order — stgRank, a mesh run)
+    this.B.KEY = buf('lot keys', (LOT_ROOM + LM_ROOM) * 4);
+    // (season loop: 16 f32 a district — on, end, then two slots of a, b, from, to, when — two cards' shares and their
+    // stages; tlProgress reads it)
+    this.B.STG = buf('district stages', SC_ROOM * STG_BYTES);
     this.claimRead = buf('claim read', 16, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.builtMode = world.built === 'core' ? 1 : 0;
     // (M4b: the population field — density, wealth, purpose, the arterials' distance — 4 words a column)
@@ -503,7 +509,7 @@ export class CityGen {
     this.tl.now = now;
     this.encodeOnly('citygen animate', () => {
       const B = this.B;
-      this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 4: B.SCT, 5: this.progress, 6: B.CNT }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
+      this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 3: B.KEY, 4: B.SCT, 5: this.progress, 6: B.CNT }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
       this.k('tlRise', {}, { 1: this.lotRecords, 2: this.progress, 3: B.VTAG, 4: B.SCT, 7: this.verts }, Math.ceil(this.vertRoom / 64), 1, true);
     });
   }
@@ -543,13 +549,16 @@ export class CityGen {
   }
 
   /**
-   * (season loop, docs/design/SEASON_LOOP.md) A district's stage: built as far as `from` → `to` (0..1 of its build),
-   * eased over the build's span of the town's clock from `when` (s) — 16 bytes up; the next animate shows it.
+   * (season loop, docs/design/SEASON_LOOP.md) A card's share of a district [a, b] built as far as its stage `from` →
+   * `to`, eased over the build's span of the town's clock from `when` (s) — 28 bytes up; the next animate shows it.
    */
-  stageDistrict(id: number, from: number, to: number, when: number): void {
+  stageDistrict(id: number, s: DistrictStage, when: number): void {
     if (this.dead) return;
     if (!(id >= 0 && id < SC_ROOM)) throw new Error(`citygen: district ${id} has no stage (room for ${SC_ROOM})`);
-    this.device.queue.writeBuffer(this.B.STG, id * 16, new Float32Array([1, from, to, when]));
+    if (!(s.a >= 0 && s.a < s.b && s.b <= s.end && s.end <= 1)) throw new Error(`citygen: district ${id}'s share ${s.a}..${s.b} of ${s.end}`);
+    // (the district's on and end; its slot's share, stage and when)
+    this.device.queue.writeBuffer(this.B.STG, id * STG_BYTES, new Float32Array([1, s.end]));
+    this.device.queue.writeBuffer(this.B.STG, id * STG_BYTES + (2 + s.slot * 5) * 4, new Float32Array([s.a, s.b, s.from, s.to, when]));
   }
 
   /** one compute pass of `f`'s dispatches (their uniforms with the run's parameters) and `after` on the encoder */
@@ -901,7 +910,9 @@ export class CityGen {
     this.k('lotRec', { count: LOT_ROOM }, { 1: B.LOTS, 2: B.SCT, 3: HH, 4: B.FD, 5: B.LM, 6: B.CNT, 7: this.lotRecords }, Math.ceil(LOT_ROOM / 64));
     this.k('lotRec', { mode: 1 }, { 1: B.LOTS, 2: B.SCT, 3: HH, 4: B.FD, 5: B.LM, 6: B.CNT, 7: this.lotRecords }, 1);
     // (time-lapse: each record's progress now, before the mesh and the claims read it)
-    this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 4: B.SCT, 5: this.progress, 6: B.CNT }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
+    // (season loop: each lot's rank in its district's growth order, before its progress)
+    if (this.cityOn()) this.k('stgRank', {}, { 1: this.lotRecords, 4: B.SCT, 5: B.KEY, 6: B.CNT }, Math.ceil(LOT_ROOM / 64));
+    this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 3: B.KEY, 4: B.SCT, 5: this.progress, 6: B.CNT }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
     this.k('lotMesh', { count: LOT_ROOM }, { 5: B.VTAG, 1: this.lotRecords, 2: this.progress, 3: HH, 4: this.reachCut, 6: B.CNT, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
     this.k('artMesh', {}, { 5: B.VTAG, 1: B.ART, 3: HH, 6: B.ROADS, 7: this.verts }, (NART * NAP) / 64, 1, true);
     if (vector && p.lmMult > 0) this.k('lmMesh', {}, { 5: B.VTAG, 1: B.LM, 3: HH, 6: B.ROADS, 7: this.verts }, (64 * 48) / 64, 1, true);

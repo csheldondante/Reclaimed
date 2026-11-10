@@ -3,8 +3,8 @@
 // (test/unit/writing-sources.test.ts) and as produced (test/unit/season.test.ts).
 import { POOLS, type Pool, type Pools, type SeasonCard, type SeasonResult } from './ledger';
 
-export const POOL_NAME: Record<Pool, string> = { magic: 'Magic', might: 'Might', labor: 'Labor', resources: 'Resources', intel: 'Intel', unrest: 'Unrest' };
-export const POOL_ICON: Record<Pool, string> = { magic: '✦', might: '⚔', labor: '⚒', resources: '▣', intel: '👁', unrest: '✊' };
+export const POOL_NAME: Record<Pool, string> = { magic: 'Magic', might: 'Might', labor: 'Labor', materials: 'Materials', intel: 'Intel', unrest: 'Unrest' };
+export const POOL_ICON: Record<Pool, string> = { magic: '✦', might: '⚔', labor: '⚒', materials: '▣', intel: '👁', unrest: '✊' };
 
 export const NEXT_SEASON = 'Next season';
 export const SKIP = 'Skip';
@@ -19,33 +19,47 @@ export function seasonTitle(n: number): string {
   return `Season ${n}`;
 }
 
-/** "2 Labor, 1 Resources" (the pools in their order) */
+/** "2 Labor, 1 Materials" (the pools in their order) */
 export function poolsLine(p: Partial<Pools>, sign = false): string {
   const parts = POOLS.filter((k) => (p[k] ?? 0) !== 0).map((k) => `${sign && p[k]! > 0 ? '+' : ''}${p[k]} ${POOL_NAME[k]}`);
   return parts.join(', ');
 }
 
+/** what it ties up and what it spends: "Takes 2 Labor for 2 seasons. Uses 2 Materials." */
 export function costLine(c: SeasonCard): string {
-  const cost = poolsLine(c.cost);
-  return `Costs ${cost || 'nothing'}.`;
+  const out: string[] = [];
+  const locks = poolsLine(c.locks);
+  if (locks) out.push(`Takes ${locks} for ${c.seasons === 1 ? '1 season' : `${c.seasons} seasons`}.`);
+  else out.push(seasonsLine(c.seasons));
+  const costs = poolsLine(c.costs);
+  if (costs) out.push(`Uses ${costs}.`);
+  return out.join(' ');
+}
+
+/** a card in progress: "2 Labor back in season 4." or "Done in season 4." */
+export function backLine(locks: Partial<Pools>, season: number): string {
+  const p = poolsLine(locks);
+  return p ? `${p} back in season ${season}.` : `Done in season ${season}.`;
 }
 
 export function seasonsLine(n: number): string {
   return n === 1 ? 'Takes 1 season.' : `Takes ${n} seasons.`;
 }
 
-/** what it gives once built: "When built: +1 Labor each season." and its Unrest once */
+/** what it gives once built: "When built: +2 Labor." "+1 Materials each season." and its Unrest once */
 export function givesLine(c: SeasonCard): string {
-  const each = poolsLine(c.income, true);
+  const once = poolsLine(c.gives ?? {}, true);
+  const each = poolsLine(c.income ?? {}, true);
   const out: string[] = [];
-  if (each) out.push(`When built: ${each} each season.`);
+  if (once) out.push(`When built: ${once}.`);
+  if (each) out.push(`${once ? '' : 'When built: '}${each} each season.`);
   if (c.unrestOnDone) out.push(`Unrest ${c.unrestOnDone > 0 ? '+' : ''}${c.unrestOnDone} when built.`);
   if (c.unrestOnStart) out.push(`Unrest ${c.unrestOnStart > 0 ? '+' : ''}${c.unrestOnStart} when you start.`);
   return out.join(' ');
 }
 
 export function shortLine(miss: Partial<Pools>): string {
-  return `You need ${poolsLine(miss)} more.`;
+  return `Needs ${poolsLine(miss)} more.`;
 }
 
 export const NO_ROOM = 'There is no free land left in town.';

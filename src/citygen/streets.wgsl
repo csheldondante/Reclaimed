@@ -3175,6 +3175,8 @@ fn clkClaim(@builtin(local_invocation_index) li: u32) {
 /** (season loop, docs/design/SEASON_LOOP.md) a district's build is all its lots up after 1.75 build times (the last
  *  lot's delay, ¾, plus its own build) */
 const BUILD_SPAN: f32 = 1.75;
+/** (season loop) how far behind the first a share's last lot starts rising (a share of the card's build) */
+const STAGGER: f32 = 0.5;
 /** one thread a record: its progress now (b1 the records, r2 the district stages — STG: on, from, to, when a
  *  district; b4 SCT, w6 the counts; w5 PROG). A staged district (the season loop's) is built as far as its stage:
  *  its build time eased from `from` × the span to `to` × the span over a span of the clock from `when`; the rest run
@@ -3191,13 +3193,64 @@ fn tlProgress(@builtin(global_invocation_id) g: vec3<u32>) {
   if (u.h2.z > 0.5) { start = r4(SC_HEAD + did * SCW + 8u); }
   // (each lot its own delay in its district: up to three quarters of the build time)
   let delay = hsh(b1[o + 23u] ^ 0x51edu) * 0.75 * u.tl.y;
-  var built = u.tl.x - start;
-  if (u.h2.z > 0.5 && did < SC_MAX && r2(did * 4u) > 0.5) {
+  let sg = did * 16u;
+  if (u.h2.z > 0.5 && did < SC_MAX && r2(sg) > 0.5) {
+    // (staged, cards' shares [a, b] of the district — two slots: its lots in growth order from the district's centre,
+    // a lot's key its rank in that order over the district's lots (stgRank), so a share of the key is that share of
+    // the lots. A lot in a slot's share rises as that slot's stage S (eased from `from` to `to` over a span of the clock)
+    // crosses the share, each a little after the last by its key (STAGGER), so all are up exactly when S reaches b —
+    // the card's end; any other lot stands before `end` (earlier cards', done) and isn't begun after it)
+    // (its key: its rank in its district's growth order, 0..1 — stgRank)
+    let key = bitcast<f32>(b3[i]);
     let span = BUILD_SPAN * max(u.tl.y, 1e-3);
-    let k = clamp((u.tl.x - r2(did * 4u + 3u)) / span, 0.0, 1.0);
-    built = mix(r2(did * 4u + 1u), r2(did * 4u + 2u), k * k * (3.0 - 2.0 * k)) * span;
+    for (var sl = 0u; sl < 2u; sl++) {
+      let q = sg + 2u + sl * 5u;
+      let a = r2(q);
+      let b = r2(q + 1u);
+      // (a slot never used: its share empty; the last share's far edge takes the lots keyed past 1)
+      if (b <= a || key < a || (key > b && b < 1.0)) { continue; }
+      let k = clamp((u.tl.x - r2(q + 4u)) / span, 0.0, 1.0);
+      let S = mix(r2(q + 2u), r2(q + 3u), k * k * (3.0 - 2.0 * k));
+      let f = (S - a) / max(b - a, 1e-4);
+      let w = clamp((key - a) / max(b - a, 1e-4), 0.0, 1.0);
+      set5(i, clamp(f * (1.0 + STAGGER) - STAGGER * w, 0.0, 1.0));
+      return;
+    }
+    set5(i, select(0.0, 1.0, key < r2(sg + 1u)));
+    return;
   }
-  set5(i, clamp((built - delay) / max(u.tl.y, 1e-3), 0.0, 1.0));
+  set5(i, clamp((u.tl.x - start - delay) / max(u.tl.y, 1e-3), 0.0, 1.0));
+}
+/** (season loop) each record's key in its district's growth order: its rank by distance from the district's centre
+ *  (ties by index) over the district's records, (rank + ½) / n — so a card's share [a, b] of the district is that
+ *  share of its lots (b1 the records, b4 SCT, w6 the counts; w5 the keys). One thread a record, every record of the
+ *  town looked at: n² over a few hundred lots, once a mesh run. */
+fn lotCentre(o: u32) -> vec2<f32> {
+  var c = vec2<f32>(0.0);
+  for (var q = 0u; q < 4u; q++) { c += vec2<f32>(r1(o + 8u + q * 2u), r1(o + 9u + q * 2u)); }
+  return c * 0.25;
+}
+@compute @workgroup_size(64)
+fn stgRank(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  let n = min(atomicLoad(&w6[0]), REC_LM);
+  if (i >= n) { return; }
+  let o = i * RECW;
+  if (b1[o + 17u] == REC_NONE) { w5[i] = 0u; return; }
+  let did = b1[o + 18u] & 0xffffffu;
+  let sco = SC_HEAD + did * SCW;
+  let cen = vec2<f32>(r4(sco + 4u), r4(sco + 5u));
+  let di = length(lotCentre(o) - cen);
+  var rank = 0u;
+  var cnt = 0u;
+  for (var j = 0u; j < n; j++) {
+    let oj = j * RECW;
+    if (b1[oj + 17u] == REC_NONE || (b1[oj + 18u] & 0xffffffu) != did) { continue; }
+    cnt++;
+    let dj = length(lotCentre(oj) - cen);
+    if (dj < di || (dj == di && j < i)) { rank++; }
+  }
+  w5[i] = bitcast<u32>((f32(rank) + 0.5) / f32(max(cnt, 1u)));
 }
 /** (season loop, "the shader for now") a building going up: its tops plank and its roof a scaffold deck, its foot
  *  dark stone — its own colours back once it's up (a roof's from its seed, as lotMesh drew it) */

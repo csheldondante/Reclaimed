@@ -3595,3 +3595,25 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   seasons; the season's change itself plays as the time-lapse (Skip jumps to its end, the same world).
 - Earlier: "players just choose opportunities and we place and build for them" (player painting retired here).
 - Design note: `docs/design/SEASON_LOOP.md`.
+
+## 2026-11-10 — the season loop, round 2 (trackA-opps)
+
+- "Your suggestions work for me" (on the three open questions):
+  - **Partial district claims:** a card's district covers part of a district (a share of its lots, in growth order
+    from its centre); the next card of the kind goes on in the same district. The GPU orders the lots; the CPU sends
+    the share.
+  - **"Resources" is shown as "Materials"** in player text (the pool's id is `materials` too; the decision's pool
+    is the same one).
+  - **Balance:** Labor shouldn't run away; both Labor and Materials limit choices, in small counting numbers.
+- (via the coordinator) "Cards take time to play. The resources are assigned and the district builds as the card
+  finishes." Partial claims only mean how much land a card covers; they never split one card's building across cards.
+- (via the coordinator) "That's the design we already have. Opportunities can take resources for a duration." → the
+  season ledger goes through the opportunity contract's `commit` / `resolve`: people locked for the card's duration,
+  goods spent.
+- **The card model in one sentence:** starting a card ties up its people (Labor, Might) and spends its goods
+  (Materials, Magic, Intel) at once, nothing more is paid while it runs its N seasons, its district part shows a stage
+  each season, and when it finishes its people come back and its building is whole.
+- **Proposed pool mapping (the design docs say agents are locked and goods spent, not which pool is which):** Labor
+  and Might locked (people: `workers`, `army` agents); Materials, Magic and Intel spent (goods); Unrest is the town's
+  state — that many free workers on strike. A table (`POOL_ROLE`, season/ledger.ts); each card's `locks` and `costs`
+  are data. For the user to confirm.

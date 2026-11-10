@@ -6,7 +6,7 @@
 // The box must be in the window when the town is made (the level opens the window round it: citygen/town.ts
 // fieldTownBox, level.ts); after that the window may go where it likes. docs/design/CITYGEN.md.
 import type { Settlement } from '../api/contracts/settlement';
-import type { CityLots } from '../api/contracts/citygen';
+import type { CityLots, DistrictStage } from '../api/contracts/citygen';
 import { ROW_H } from '../world/lattice';
 import { BUILD_S, CityGen, DISTRICT_SPAN, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes, type DistrictClaim } from './gpu';
 import type { StaticClaims, StaticGrid, GridPlace, OwnedSlot } from '../sim/static-claims';
@@ -363,11 +363,11 @@ export class FieldTown {
     return [at[0] + p.dx, at[1] + p.dy * ROW_H];
   }
 
-  /** (season loop) a district's stage from → to, eased from `when` on the town's clock (its build's span); animated
+  /** (season loop) a card's share of a district and its stage, eased from `when` on the town's clock (its build's span); animated
    *  till it's there */
-  stageDistrict(id: number, from: number, to: number, when: number, now: number): void {
+  stageDistrict(id: number, stage: DistrictStage, when: number, now: number): void {
     if (this.gone) return;
-    this.gen.stageDistrict(id, from, to, when);
+    this.gen.stageDistrict(id, stage, when);
     this.animUntil = Math.max(this.animUntil, Math.max(now, when + DISTRICT_SPAN) + 0.5);
     this.gen.animate(now);
   }
