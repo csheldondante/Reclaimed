@@ -83,3 +83,44 @@ catalog (data) ──proposals──▶ dealer.deal (opps/dealer.ts, the one dea
   timing. Inputs to the GPU: which purpose to claim (a word), a card's stage (28 bytes), the town's clock.
 - **GPU:** which district a new card gets (argmax), each district's lot order, each lot's progress, the buildings
   risen and tinted, roads shown, claims. Read back: the claim's 4 words once per new district — an event.
+
+## Season life (trackA-seasonlife): the town shows the choices
+
+The user: "I do want to see agents moving around and more things to reflect choices like soldiers amassing and
+defenses going up or marching out to other areas of the map as well as ships and wagons coming in as external routes
+get established." Everything here runs on the GPU; the CPU sends the season's choices (counts, a stage, an on bit).
+
+**1. The living town in the loop.** `?opps=1` turns on `?living=1` (LIVING_TOWN.md). What's built sets the living
+town's job counts, its one input (the parameters' uniform): commuters from the houses built, farmers from the farms,
+builders while cards are building. The quarry and lumber camp cards are real: starting one turns the living town's
+quarry (or clearing) on — its pit is picked and dug, its camp picked and the trees felled — with its quarrymen and
+stone carts (woodcutters and log carts). They were pools-only stubs.
+
+**2. The walls card: a ring that rises.** On citygen's GPU (streets.wgsl, the town's own mesh):
+- **The ring** is made when the card starts: the built lots' furthest reach in each of 72 directions round the centre
+  (an atomic max), smoothed, plus a margin — the town's limit as it stands.
+- **Gates** where an arterial crosses the ring (DESIGN §13: at least two; the two longest gaps get one if fewer).
+- **Towers** at every sixth corner and both sides of each gate.
+- **Rising in stages:** each wall piece rises as the card's stage passes it (going round from the first gate), so
+  each season shows more of the ring up; whole when the card finishes.
+- **Claimed** in the world like a building (the town's claim grid), and the road raster cut where the wall stands
+  (not at the gates), so the living town's routes go out through the gates.
+
+**3. Wagons and ships on external routes.** A trade route card (needs a market; a harbour for ships):
+- **Wagons:** haul riders in the living town's format (job/state/leg): from a gate (the GATES hub) along the roads to
+  the stores, unload, back out the gate, and away off the map for a while before the next trip.
+- **Ships:** riders on a water path — a distance field over the window's open water from the harbour's shore, relaxed
+  on the GPU; a ship comes in from where that field is largest at the window's edge, follows it down to the quay,
+  moors, and leaves the way it came. Drawn as voxel hulls with a mast and sail.
+
+**Soldiers wait for U2** (the user: soldiers wait until the agents are on the GPU; Track B: soldiers are unit rows
+from the start, ordered through the Units contract). The calls the season loop needs after U2 (`api/contracts/units.ts`):
+- `units.spawnGroup(kind: 'soldier', n: number, at: V2, faction, opts) → GroupId` — a squad a point of Might.
+- `units.orderGroup(g, { kind: 'drill', yard: V2, radius: number, formation: 'column' | 'line' })` — march in
+  formation loops on the drill yard (amassing).
+- `units.orderGroup(g, { kind: 'man', posts: V3[] })` — one soldier a post on the wall's walk (posts at wall height;
+  today's `guard` has no z).
+- `units.orderGroup(g, { kind: 'march', route: V2[], to: V2, leave: true })` — a column along a route (the arterial,
+  then the atlas road) to a place; `leave`: off the window, resolved by clock (DESIGN §12), with an `arrived` / `left`
+  event; and back the same way when the card finishes.
+- Events: `arrived(g)`, `left(g)` (off the window). Until then, the walls get no soldiers and the patrol card waits.
