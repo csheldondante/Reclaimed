@@ -67,6 +67,7 @@ import type { StreetLabControl } from '../streetlab/control';
 import { fieldTownBox, hasGrid } from '../citygen/town';
 import type { FieldTowns } from '../citygen/towns';
 import type { LivingTowns } from '../citylife/towns';
+import type { TownContracts } from '../towncontracts/contracts';
 import { StaticClaims } from '../sim/static-claims';
 import { editTool } from './level/sandbox-tools';
 import { NON_METAL, SANDBOX_K, ATLAS_COL_K, WARMUP_TICKS } from './level/flags';
@@ -284,6 +285,8 @@ export class LevelScene implements Scene {
   seasonUi?: () => void;
   /** (living town, ?living=1) the field towns' people, quarry and clearing (citylife/towns.ts) */
   livingTowns?: LivingTowns;
+  /** (Track B's unit contracts) the towns' side map and named places on the GPU (towncontracts/contracts.ts) */
+  townContracts?: TownContracts;
   /** sandbox: a smash drag in progress */
   smashing = false;
   /** (round 83) flying: a drag turns the view — where the pointer was */
@@ -656,6 +659,7 @@ export class LevelScene implements Scene {
     this.streetLab?.dispose();
     this.seasonUi?.();
     this.livingTowns?.dispose();
+    this.townContracts?.dispose();
     this.fieldTowns?.dispose();
     this.atlasCtl?.remove();
     this.turnCtl?.remove();

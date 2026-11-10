@@ -88,7 +88,7 @@ export class FieldTowns implements CityDistricts {
     const t = town !== undefined ? (this.live.get(town) ?? null) : this.nearest();
     if (!t) return { town: town ?? '', id: -1, at: [0, 0], left: 0 };
     const c = await t.claimDistrict(OPPORTUNITY_PURPOSE[kind], this.townTime);
-    if (c.id >= 0) this.logs.claim(t.site.at, c.id);
+    if (c.id >= 0) this.logs.claim(t.site.at, c.id, OPPORTUNITY_PURPOSE[kind]);
     return { town: t.site.id, ...c };
   }
 

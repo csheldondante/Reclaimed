@@ -21991,3 +21991,38 @@ flow lab at default (scratchpad liquids/muru-default.png, flowlab-default.png).
 - A pan from Muru to the nearest other town, Bumku (s53, 615 m): made as it neared the window (208 lots, 1.2 s to
   made), its living town given (90 people), nothing dropped, no page error.
 
+
+## 2026-11-10 — town contracts for Track B's unit minds: the side map and the named places on the GPU (`trackA-unitcontracts`)
+
+docs/design/TOWN_CONTRACTS.md, BACKLOG UC-1…UC-8. The brief: U2/U3 need a town's sides of the wall and its named places,
+GPU resident ("we should not need CPU readback"), orders by index only.
+- **Side map** (`src/towncontracts/sidemap.wgsl`) writes Track B's own `agentSides` in notice.wgsl's layout (0 open, town
+  index + 1). Connected components over the walkable columns (tops from the columns' slots, water ≤ the agents' DEEP,
+  steps ≤ their STEP) with the outside as label 0; the ring's gates (a parameter: closed by default) and water/cliff
+  gaps barriers; a standing wall piece (2 over its foot) the wall itself. Why each rule — found at Muru, in order:
+  - the surface pass's top lags the claim by a tick, so a solve woken by the claim saw the old ground: read the slots;
+  - the river's banks ran under the ring's water gap round the last tower: the gap counts as closed (UC-4 for citygen);
+  - a road running along the ring left an ungated hole — citygen left a piece's columns unclaimed anywhere near an
+    arterial; now only beside a gate (streets.wgsl wallClaim/wallCols);
+  - the wall-walk joined the hillside outside where the ground rises near the wall's top: a standing piece is a barrier,
+    not a walkable top (a breach brings it back to ground);
+  - the wake: the columns' and water class's chunk versions move every tick over Muru's ring (the river), so the solve
+    ran every frame (25–60 solves a second); the **shape** versions move every few seconds — they wake a solve at once,
+    the water class at most every 120 frames.
+  Measured: Muru's inside 18 040 columns (40 % of the ring's area is the gate's bar), ~5 hook/jump rounds a solve; the
+  GPU test seals two rings, opens one by its gate rule and one by a breach (spans let go), each by its own number.
+- **Named places** (`places.wgsl`, read by `src/shaders/townplace.wgsl` at binding 57, contract
+  `api/contracts/townplaces.ts`): muster (the walls card's: open land inside the ring nearest its first gate), stores (the
+  living town's rule), market, keep and barracks (the keep card's district), gates in routeread's slot order, spawn points,
+  lots by (district, kind, rank by growth key then seed). A lot's purpose is its district's claimed purpose when a card
+  claimed it (an input: `TownLog.purposes`, a byte a district in the uniform) — citygen's claim picks the best district
+  for a kind without making it that kind, so the keep card's district at Muru reads homes on the population field.
+- **The gputown recipe** (`scripts/lab.mjs --recipe gputown`, `src/lab/lab.ts`): Muru, its living town, no season loop,
+  the walls risen at once, ticks held (speed 0). Gate `scripts/lab/gputown.mjs`: ok, with `&labkeep=1` keep and barracks
+  valid; spawn points outside (0), the muster yard inside (1).
+- GPU ms (the profiler, headless D3D11, Muru, settled): the town contracts' pass 0.31 ms a frame — the place table rebuilt
+  every frame and the side map's empty indirect rounds (UC-8 if the phone bench shows it).
+- Found: the lab page's water blows up at Muru past ~4000 ticks with the contracts off (UC-6).
+- Track B's files: agents/notice.ts `sides` private → readonly (one line and its comment).
+Checks: typecheck; the unit tier; test/gpu/towncontracts.test.ts, living, cities; lab gates gputown (with and without
+labkeep), townseason, townfollow.

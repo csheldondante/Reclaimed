@@ -3772,19 +3772,22 @@ fn wallClaim(@builtin(local_invocation_index) li: u32) {
   if (r <= 0.02) { return; }
   let p = wbV(li);
   let q = wbV(li + 1u);
-  if (!wbGate(li) && !wbWet(li)) { wallCols(p, q, WALL_HW, WALL_H * r); }
+  // (a piece is open over an arterial only beside a gate: elsewhere a road the ring runs over or along is walled — an
+  // ungated hole let walkers round the wall: trackA-unitcontracts, the side map at Muru's river road)
+  let byGate = wbGate(li + NB - 1u) || wbGate(li + 1u);
+  if (!wbGate(li) && !wbWet(li)) { wallCols(p, q, WALL_HW, WALL_H * r, byGate); }
   for (var e = 0u; e < 2u; e++) {
     if (!wbStair(li, e)) { continue; }
     for (var k = 0u; k < STAIR_STEPS; k++) {
       let sq = stairStep(li, k, e);
-      wallCols(sq[0], sq[1], STAIR_HW, WALL_H * r * f32(k + 1u) / f32(STAIR_STEPS + 1u));
+      wallCols(sq[0], sq[1], STAIR_HW, WALL_H * r * f32(k + 1u) / f32(STAIR_STEPS + 1u), true);
     }
   }
   if (wbTower(li)) {
     var d = q - wbV(li + NB - 1u);
     if (length(d) < 1e-3) { d = vec2<f32>(1.0, 0.0); }
     let e = normalize(d) * TOWER_HW;
-    wallCols(p - e, p + e, TOWER_HW, TOWER_H * r);
+    wallCols(p - e, p + e, TOWER_HW, TOWER_H * r, byGate || wbGate(li));
   }
 }
 /** a gap in the ring: a gate, or water or a cliff (no piece) */
@@ -3805,7 +3808,7 @@ fn stairStep(b: u32, k: u32, e: u32) -> array<vec2<f32>, 2> {
   let a = c + d * (TOWER_HW + 0.6 + f32(k) * STAIR_RUN) + n * (WALL_HW + STAIR_HW);
   return array<vec2<f32>, 2>(a, a + d * STAIR_RUN);
 }
-fn wallCols(a: vec2<f32>, b: vec2<f32>, hw: f32, h: f32) {
+fn wallCols(a: vec2<f32>, b: vec2<f32>, hw: f32, h: f32, openArt: bool) {
   let N = u32(W() * H());
   let lo = min(a, b) - vec2<f32>(hw + 1.0);
   let hi = max(a, b) + vec2<f32>(hw + 1.0);
@@ -3818,7 +3821,7 @@ fn wallCols(a: vec2<f32>, b: vec2<f32>, hw: f32, h: f32) {
       let i = ix(x, y);
       // (an arterial's columns never walled: its gate stays open whatever stands at the gate's corners — b2 the
       // arterials' distance)
-      if (r2(i) < u.t.x * 0.5 + 1.0) { continue; }
+      if (openArt && r2(i) < u.t.x * 0.5 + 1.0) { continue; }
       let base = hAt(c) - 0.4;
       let so = N * 4u + i * 4u;
       w7[i * 4u + 3u] = 1u;

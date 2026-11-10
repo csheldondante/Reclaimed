@@ -16,7 +16,7 @@ const RUN = ['opps', 'living', 'gm', 'runplan', 'runsit', 'runplay', 'dialog'];
 /** the engine: the world's systems and their public API (§1-§16); `api` is ruled separately below */
 const ENGINE = ['sim', 'gpu', 'world', 'shaders', 'agents', 'physics', 'solver', 'flow', 'atlas', 'terrain', 'grids', 'render', 'weather', 'traits', 'inhabitants', 'flora', 'structures', 'build', 'tune', 'audio', 'input', 'units'];
 /** what sits on the engine: scenes (the wiring), game rules, the town, the run layer, UI, pages, benches, tests */
-const ABOVE = ['scenes', 'game', 'levels', 'citygen', 'citylife', 'season', 'settle', ...RUN, 'story', 'play', 'run', 'ui', 'lab', 'perf', 'noiselab', 'cardlab', 'inspector', 'test', 'main.ts', 'fresh-start.ts'];
+const ABOVE = ['scenes', 'game', 'levels', 'citygen', 'citylife', 'towncontracts', 'season', 'settle', ...RUN, 'story', 'play', 'run', 'ui', 'lab', 'perf', 'noiselab', 'cardlab', 'inspector', 'test', 'main.ts', 'fresh-start.ts'];
 /** pages that live beside an engine module (a viewer or a bench is a page, not the engine) */
 const PAGES = ['terrain/viewer.ts', 'inhabitants/viewer.ts', 'flora/viewer.ts', 'flora/bench.ts'];
 
@@ -38,7 +38,7 @@ export const RULES: Rule[] = [
   // (switchover, 2026-11-10: the town is the GPU town — citygen, its living town citylife, its season loop — not the
   // fortress, deleted with the old towns and their one crowd, src/town)
   { id: 'run-not-town', from: RUN, not: ['citygen', 'citylife', 'season'], why: '§21: one opportunity contract and one dealer; a card is executed by the town through an adapter in the scene wiring (the season loop over the districts API), so the run layer never reaches into the town' },
-  { id: 'town-not-run', from: ['citygen', 'citylife'], not: [...RUN, 'scenes', 'story', 'play', 'game', 'levels', 'lab', 'perf'], why: '§18, §21: the town is the world’s, touching the game only through its contracts (api/contracts/citygen.ts districts); the scene wires it to the run layer' },
+  { id: 'town-not-run', from: ['citygen', 'citylife', 'towncontracts'], not: [...RUN, 'scenes', 'story', 'play', 'game', 'levels', 'lab', 'perf'], why: '§18, §21: the town is the world’s, touching the game only through its contracts (api/contracts/citygen.ts districts); the scene wires it to the run layer' },
   { id: 'contracts-alone', from: ['api/contracts'], only: ['api/contracts'], why: '§1: systems talk only through contracts; a contract is types and pure reference code, depending on nothing but contracts' },
   { id: 'engine-not-game', from: ENGINE, except: PAGES, not: ABOVE, why: '§1: the engine is the world and its systems; game layers sit on it through its API and contracts, never the other way' },
   { id: 'api-not-game', from: ['api'], except: ['api/contracts'], not: ABOVE, why: 'the world API is the engine\'s face to games (docs/WORLD_API.md); it may not depend on a game or a scene' },

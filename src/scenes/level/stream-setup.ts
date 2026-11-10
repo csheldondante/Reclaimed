@@ -21,6 +21,7 @@ import type { LevelScene } from '../level';
 import { urlFlags } from '../../flags';
 import { FieldTowns } from '../../citygen/towns';
 import { LivingTowns } from '../../citylife/towns';
+import { TownContracts } from '../../towncontracts/contracts';
 import { livingFromUrl } from '../../citylife/params';
 import { mountTownPanel } from '../../citygen/panel';
 import { startSeasonLoop } from './season';
@@ -365,6 +366,28 @@ export function attachStream(scene: LevelScene): void {
             (globalThis as { living?: LivingTowns }).living = lt;
             const panel = opps ? host.params.get('livingpanel') === '1' : host.params.get('livingpanel') !== '0';
             if (panel) lt.mountPanel(host.ui, () => void towns.claimDistrict('housing'));
+          }
+          // (Track B's unit contracts — docs/design/TOWN_CONTRACTS.md: the towns' side map written into the agents' own
+          // side map, the named places' table; on the GPU, each frame's inputs the live towns, their places and clock.
+          // ?contracts=0 off: the toggle diff; ?sidegates=open the gate rule)
+          if (host.params.get('contracts') !== '0') {
+            const tc = new TownContracts(
+              host.gpu.device,
+              { globals: core.world.globals, chunks: core.world.chunks, layers: core.world.layers, water: core.world.water, w: core.world.w, h: core.world.h },
+              scene.agents.notice.sides,
+              {
+                gates: host.params.get('sidegates') === 'open' ? 'open' : 'closed',
+                roles: (id) => {
+                  const t = towns.live.get(id);
+                  return t ? towns.logs.of(t.site.at).purposes : undefined;
+                },
+              },
+            );
+            scene.townContracts = tc;
+            core.renderer.frameCompute.push((enc) => {
+              tc.setTowns([...towns.live.values()].filter((t) => t.times), towns.townTime);
+              tc.encode(enc, host.profiler?.timestamps('towncontracts'));
+            });
           }
           // (the first look now: the town the level opens on made before the first frames)
           towns.update(Infinity);

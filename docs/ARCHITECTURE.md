@@ -1962,6 +1962,24 @@ Systems that ride a living town's cached routes (Track B's marching units) read 
 - Test: test/gpu/living.test.ts — every riding rider's position equals `routeAt(its route, its distance)`, its id valid;
   after both halves are reused an id held from before is invalid.
 
+### The town contracts (2026-11-10, branch `trackA-unitcontracts`; docs/design/TOWN_CONTRACTS.md)
+
+What Track B's unit minds (U2/U3) read of a town, resolved on the GPU from citygen's contract buffers (CityLots,
+CityRoutes) and the world's columns, nothing read back (`src/towncontracts/`, made in `scenes/level/stream-setup.ts`;
+`?contracts=0` off). Orders carry indices only: a town's index (`TownContracts.townIndex(id)`, its slot of 4), a place's
+name (`PLACE`), a district id and a rank.
+- **The side map** (`sidemap.wgsl`) writes Track B's own `agentSides` (`UnitNotice.sides`, now readonly-public — the one
+  line touched in agents/notice.ts): u32 a window column, 0 open, town index + 1 inside its sealed wall. Connected
+  components of the walkable surface (water ≤ the agents' DEEP, tops within their STEP), barriers the risen wall in the
+  columns, the ring's water/cliff gaps, and the gates by the gate rule (`closed` default, `open`). Woken on the GPU: the
+  shape versions over each ring's box (chunkver.wgsl), its ring's words' hash, the window's origin/ring, the CPU's input
+  epoch; the water class at most every 120 frames. Solved in indirect rounds (0 workgroups when idle).
+- **The named-place table** (`places.wgsl`, read through `src/shaders/townplace.wgsl` at binding 57; contract
+  `api/contracts/townplaces.ts`): per town slot a header (live, key, generation, the grid's place), named entries
+  (muster, stores, barracks, market, keep, 10 gate slots in routeread's indexing, 8 spawn points: position, status,
+  approach, aux) and lots by (district, kind, rank in growth-key order). Rebuilt every frame (8 small dispatches a town).
+- Boundaries: `towncontracts` is a town module (test/unit/boundaries.test.ts: above the engine, never the run layer).
+
 ## Agents (round 52, docs/AGENTS.md; branch `agents`)
 
 `installAgents(core)` (src/agents/) adds one system after the particles and

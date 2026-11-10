@@ -13,6 +13,9 @@ export interface TownLog {
   at: [number, number];
   /** districts claimed (their ids, in order) */
   claims: number[];
+  /** (town contracts) the purpose (streets.wgsl P_*) each claimed district was claimed for, by id — a keep card's
+   *  district is the keep's whatever the population field said there */
+  purposes?: Record<number, number>;
   /** each district's slots' stages, as last set (its `to` reached) */
   stages: { id: number; stage: DistrictStage }[];
   /** the wall: its words (streets.wgsl WALL: the ring, gates; read back once made) and its stage reached */
@@ -62,9 +65,10 @@ export class TownLogs {
     return l;
   }
 
-  claim(at: readonly [number, number], id: number): void {
+  claim(at: readonly [number, number], id: number, purpose?: number): void {
     const l = this.of(at);
     if (!l.claims.includes(id)) l.claims.push(id);
+    if (purpose !== undefined) (l.purposes ??= {})[id] = purpose;
   }
 
   stage(at: readonly [number, number], id: number, stage: DistrictStage): void {

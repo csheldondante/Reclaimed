@@ -70,7 +70,8 @@ export interface FightRules {
 export class UnitNotice {
   /** the units' combat words (also read by a query of one faction: agents/reads.ts) */
   readonly combat: GPUBuffer;
-  private sides: GPUBuffer;
+  /** the side map (notice.wgsl `sides`): written by setSides, or on the GPU by Track A's town contracts */
+  readonly sides: GPUBuffer;
   private head: GPUBuffer;
   private next: GPUBuffer;
   private hunted: GPUBuffer;

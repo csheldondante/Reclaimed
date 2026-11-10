@@ -12,6 +12,22 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Town contracts for Track B's unit minds (2026-11-10, `trackA-unitcontracts`; docs/design/TOWN_CONTRACTS.md)
+
+The coordinator's brief: three GPU contracts on the GPU towns for U2/U3 — GPU resident, no CPU readback, orders carry
+intent by index only.
+
+| id | item | size | status |
+|---|---|---|---|
+| UC-1 | The side map: a town's wall's inside as connected components on the GPU, written into Track B's `agentSides` (0 open, town index + 1), gates a parameter (closed default), several towns, woken by the shape versions / ring hash / slide / input epoch; test/gpu/towncontracts.test.ts | M | done (`trackA-unitcontracts`) |
+| UC-2 | The named-place table: muster, stores, barracks, market, keep, gates (routeread's slots), spawn points, lots by (district, kind, rank); townplace.wgsl + api/contracts/townplaces.ts; the GPU test | M | done (`trackA-unitcontracts`) |
+| UC-3 | The `gputown` lab recipe (Muru, living town, walls risen, muster yard) and its gate scripts/lab/gputown.mjs | S | done (`trackA-unitcontracts`) |
+| UC-4 | citygen: the ring's water gaps leave dry banks a walker can go round the last tower on (Muru's river). The side map counts a water gap as closed (by design); the wall's pieces should reach the water's edge (or a gap's banks get a piece) so the world agrees | S | open (A) |
+| UC-5 | A barracks card: the barracks is the keep district's biggest building for now (the keep card raises it) | S | open (A, with the season catalog) |
+| UC-6 | **The lab page's water blows up at Muru** past ~4000 ticks (origin/fortress cb520aa9, `?contracts=0`, no wall, `opps=0`): 6 % of the box's columns deeper than 0.9 at tick 3000, 51 % at 4200, 91 % at 6400, depth up to 35 000; the terrain draws as grey slabs. Pre-existing (the liquid model, trackA-liquids). The gputown recipe holds the ticks (speed 0) after the town is made | M | open (A, liquids) — needs a look |
+| UC-7 | Side map: a slide makes the old map stale until the next solve (a frame or two); the window's other systems shift theirs. Fine for a raid; if Track B's notice needs it exact on the slide's frame, shift it on the GPU in the slide | S | open |
+| UC-8 | The place table is rebuilt every frame (8 small dispatches a town); gate it on a lots/progress version if the phone bench shows it | S | open |
+
 ## Switchover (2026-11-10, `trackA-switchover`) — the GPU towns are the towns; the old CPU towns deleted (docs/design/SWITCHOVER.md)
 
 The user: "Don't build against a system we are deprecating switch over." "Stop wasting resources on old code." Delete,
