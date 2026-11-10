@@ -21614,3 +21614,17 @@ The user's priority: saving first. Design: SEASON_LOOP.md "Saving" (DESIGN §23)
   3 stages, the wall"; the shots side by side match (`scratchpad/opps/save-ab.png`). Pan away until Muru is let go
   (Thauhaman made), pan back → Muru made again (340 ms), its log laid over it, the same town (`pan-ab.png`).
 - Fixes SL3 (claims and stages lost when a town is let go) and SL4 (no save).
+
+## 2026-11-10 — trackA-liquids: agents on the deck, PW6, FL11, GIFs
+
+- LQ4/LQ5 verified at Muru with agents' units (their scope then covers the bridge): at deck column (124, 171) the
+  surfaces read deck 100.86 dry and riverbed 98.72 wet with 1.33 of water (waterGaps); six units spawned on the deck
+  walked it east at z 100.87–100.95 and stepped down to the bank at 100.57, never to the riverbed; the living panel's
+  reach, with decks no longer handed to it as plan solid: 23 passages in 1 round, 0 columns and 0 doors cut off.
+- PW6 reproduced as a runaway, not yet a NaN: three river columns of the playground given a waterSource of 6 for 8 s
+  then 1.5 (the river station's surge), their chunks woken — 30 s on, the water peaks at 337 cells in a column, 169
+  columns over 50. The water contract's source is water a *step* in both models (water_depth.wgsl, publishWater): 6
+  is 360 cells^3 a second into one column. Open: what the station means by 6 (a rate a second, as the flow model's
+  springs?) — the contract's unit is the user's/coordinator's call.
+- FL11: the flow lab breached, lava stopped: all asleep 15 s after the breach (the note said ~3 min).
+- GIFs (412x915, 60°): scratchpad liquids/river-under-deck.gif (Muru), waterfall.gif, lava.gif (the flow lab).
