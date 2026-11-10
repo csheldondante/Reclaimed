@@ -31,6 +31,7 @@ struct U {
   r: vec4<f32>, // (m3g) the field (0 the distance smoothed, 1 the mask smoothed), the mask's smoothing, grown streets (1), the landmarks kept (top K)
   h: vec4<f32>, // (m3h) a supercell's size (block lengths), the limit's noise (supercells), the empty fraction, the seed
   h2: vec4<f32>, // (m3h) the growth (0–1), the district tint (1), supercells on (1), the limit (× the town's radius)
+  x: vec4<f32>, // (m3i) the town circle's reach (× its radius: with supercells, far enough never to show), 0, 0, 0
 };
 @group(0) @binding(0) var<uniform> u: U;
 
@@ -73,7 +74,8 @@ fn triAt(w: vec2<f32>) -> Tri {
   return t;
 }
 fn inb(p: vec2<f32>) -> bool { return p.x >= 0.5 && p.y >= 0.5 && p.x < f32(W()) - 0.5 && p.y < f32(H()) * ROW_H - 0.5; }
-fn inTown(p: vec2<f32>) -> bool { return distance(p, u.d.xy) < u.d.z; }
+/** (m3i: with supercells the circle is only a bound, x.x radii out — the supercells' limit is the town's) */
+fn inTown(p: vec2<f32>) -> bool { return distance(p, u.d.xy) < u.d.z * max(u.x.x, 1.0); }
 fn pk(x: u32, y: u32, c: u32) -> u32 { return x | (y << 10u) | (c << 20u); }
 fn pxy(v: u32) -> vec2<i32> { return vec2<i32>(i32(v & 1023u), i32((v >> 10u) & 1023u)); }
 fn ppos(v: u32) -> vec2<f32> { let q = pxy(v); return cpos(q.x, q.y); }
@@ -530,6 +532,22 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
   var q0: Quad;
   for (var k = 0u; k < 4u; k++) { q0.v[k] = vec2<f32>(r1(o + 2u + k * 2u), r1(o + 3u + k * 2u)); }
   q0.e = b1[o + 1u];
+  // (m3i: a side facing a hidden block — out past the limit, an empty district, not grown — is open land, no street:
+  // the lots face the inside streets, their backs to the open land)
+  var edge = false;
+  if (u.h2.z > 0.5 && bi % 3u == 0u) {
+    for (var k = 0u; k < 4u; k++) {
+      let a = q0.v[k];
+      let b = q0.v[(k + 1u) % 4u];
+      let d = b - a;
+      if (dot(d, d) < 1e-6) { continue; }
+      let out = normalize(vec2<f32>(d.y, -d.x));
+      if (!shownCity(cityB4(0.5 * (a + b) + out * 0.5 * u.a.w))) {
+        q0.e = q0.e & ~(255u << (8u * k));
+        edge = true;
+      }
+    }
+  }
   q0.d = 0u;
   st[0] = q0;
   var made = 0u;
@@ -578,7 +596,7 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
     let lo = li * LW;
     for (var j = 0u; j < 4u; j++) { putV(lo + j * 2u, q.v[j]); }
     w5[lo + 8u] = q.e;
-    w5[lo + 9u] = (bi * 256u + made) | select(0u, PAVED, plaza);
+    w5[lo + 9u] = (bi * 256u + made) | select(0u, PAVED, plaza) | select(0u, EDGE_LOT, edge);
     made++;
   }
 }
@@ -668,11 +686,11 @@ fn roadMajor(@builtin(global_invocation_id) g: vec3<u32>) {
     let t = normalize(vec2<f32>(-gr.y, gr.x));
     let a = p - t * 0.85;
     let b = p + t * 0.85;
-    // (m3h: drawn where a block either side is shown, and on through the empty supercells as they grow)
+    // (m3i: drawn where the blocks both sides are shown, and on through the empty supercells as they grow)
     if (u.h2.z > 0.5) {
       let side = normalize(gr) * 0.35 * u.a.x;
       let c = cityB2(p);
-      if (!(shownCity(cityB2(p + side)) || shownCity(cityB2(p - side)) || (c.state == 1u && c.t <= u.h2.x))) { continue; }
+      if (!((shownCity(cityB2(p + side)) && shownCity(cityB2(p - side))) || (c.state == 1u && c.t <= u.h2.x))) { continue; }
     }
     let at = room(6u);
     if (at == NONE) { return; }
@@ -762,6 +780,9 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   for (var k = 0u; k < 4u; k++) {
     if (cross2(q[(k + 1u) % 4u] - q[k], q[(k + 2u) % 4u] - q[(k + 1u) % 4u]) <= 0.0) { if (u.q.x < 1.5) { paveLot(v, mid); } return; }
   }
+  // (m3i: an edge block's lots: one with no street is open land, and now and then one fronting a street is left
+  // empty too — a ragged edge)
+  if ((hs & EDGE_LOT) != 0u && (!street || hsh(hs ^ 0x9e37u) < 0.15)) { return; }
   if (!street) {
     let at = room(6u);
     if (at == NONE) { return; }
@@ -1192,14 +1213,14 @@ fn vroad(@builtin(global_invocation_id) g: vec3<u32>) {
   let e = sdEnd(id);
   let a = mix(s, e, f32(k) / 8.0);
   let b = mix(s, e, f32(k + 1u) / 8.0);
-  // (m3h: drawn where a block either side of it is shown; an arterial — about one street in three — also through
-  // the empty supercells; not out past the limit: alone there they read as stray stubs)
+  // (m3h, m3i: drawn where the blocks both sides are shown — a street only where lots face it; the edge blocks face
+  // inwards — and an arterial, about one street in three, also through the empty supercells)
   if (u.h2.z > 0.5) {
     let mid = 0.5 * (a + b);
     let side = normalize(vec2<f32>(a.y - b.y, b.x - a.x)) * 0.5 * u.a.w;
     let c = cityB4(mid);
     let arterial = hsh(id * 31u + 5u) < 0.33;
-    if (!(shownCity(cityB4(mid + side)) || shownCity(cityB4(mid - side)) || (arterial && c.state == 1u && c.t <= u.h2.x))) { return; }
+    if (!((shownCity(cityB4(mid + side)) && shownCity(cityB4(mid - side))) || (arterial && c.state == 1u && c.t <= u.h2.x))) { return; }
   }
   let at = room(6u);
   if (at == NONE) { return; }
@@ -1355,6 +1376,8 @@ fn ground(@builtin(global_invocation_id) g: vec3<u32>) {
 // 1 a plaza, 2 merged away, 3 grown by a merge), 6 the neighbour it asks to merge with, 7 which way (0 ahead, 1 behind),
 // 8 its first seed (its own, until it takes over the block behind it).
 const PAVED: u32 = 0x80000000u;
+/** (m3i) a lot of a block at the town's edge or an empty district's */
+const EDGE_LOT: u32 = 0x40000000u;
 const C_PAVE: u32 = 0xdcd0b6u;
 /** a cell too thin to build on: an interior angle under 25°, area / perimeter² under 0.3 of a circle's, or area under
  *  `minA` */
@@ -2044,6 +2067,8 @@ fn gkeep(@builtin(global_invocation_id) g: vec3<u32>) {
 }
 
 // ==== milestone 3h: supercells — the city's limit, its sparse interior, its growth ==============================
+// (m3i: the limit is now a growth budget on a cost distance over the supercell graph — sctab below; this paragraph's
+// first rule, a noisy distance to the nearest centre, read as a disc.)
 // Supercells: a jittered grid h.x block lengths apart, each point's supercell the nearest grid seed among the 3 × 3
 // round it. The population centres are the live points and the kept landmark sites (none: the town's centre). A
 // supercell (SCT: a header — across, down, its size, the limit radius — then SCW words a cell: seed x, y, state (0
@@ -2055,45 +2080,132 @@ fn gkeep(@builtin(global_invocation_id) g: vec3<u32>) {
 const SCW: u32 = 6u;
 const SC_HEAD: u32 = 4u;
 fn hash2(a: u32, b: u32) -> f32 { return hsh((a * 73856093u) ^ (b * 19349663u) ^ (u32(u.h.w) * 83492791u)); }
-/** one thread a supercell: its seed, its centre, its state and its growth start (r1 the points, r2 the sites; w5
- *  the table) */
-@compute @workgroup_size(64)
-fn sctab(@builtin(global_invocation_id) g: vec3<u32>) {
-  let sc = max(u.h.x * u.a.w, 8.0);
+/** (m3i) value noise over the supercell grid (one cell of it every `k` supercells), 0–1 */
+fn vnoise(c: vec2<f32>, k: f32, salt: u32) -> f32 {
+  let q = c / k;
+  let i = vec2<u32>(floor(q) + 64.0);
+  let f = q - floor(q);
+  let s = f * f * (3.0 - 2.0 * f);
+  let h00 = hash2(i.x * 977u + i.y, salt);
+  let h10 = hash2((i.x + 1u) * 977u + i.y, salt);
+  let h01 = hash2(i.x * 977u + i.y + 1u, salt);
+  let h11 = hash2((i.x + 1u) * 977u + i.y + 1u, salt);
+  return mix(mix(h00, h10, s.x), mix(h01, h11, s.x), s.y);
+}
+fn hsAt3(p: vec2<f32>) -> f32 {
+  let t = triAt(p);
+  return t.w.x * r3(ixq(t.c[0])) + t.w.y * r3(ixq(t.c[1])) + t.w.z * r3(ixq(t.c[2]));
+}
+const SC_MAX: u32 = 256u;
+var<workgroup> scD: array<f32, 256>;
+var<workgroup> scN: array<f32, 256>;
+var<workgroup> scF: array<f32, 256>;
+var<workgroup> scS: array<vec2<f32>, 256>;
+/** each cell's 8 edge costs, made once (−1: no edge) */
+var<workgroup> scW: array<f32, 2048>;
+/** what it costs the town to grow from supercell seed a to b: their distance × (1 + its slope × 3, + 4 across
+ *  water or a cliff — a bridge) × the two cells' random factors' mean × a discount along a major line (the cross
+ *  street runs across ∇φ: × 0.7) and along a shore (× 0.6) (r3 the smoothed heights, b4 φ) */
+fn growCost(a: vec2<f32>, b: vec2<f32>, fa: f32, fb: f32) -> f32 {
+  let L = max(distance(a, b), 1e-3);
+  let slope = abs(hsAt3(b) - hsAt3(a)) / L;
+  var water = 0.0;
+  for (var k = 1; k < 6; k++) { if (blockedAt(mix(a, b, f32(k) / 6.0))) { water = 4.0; } }
+  let m = 0.5 * (a + b);
+  var disc = 1.0;
+  if (water == 0.0) {
+    let g = gradAt(1u, m);
+    if (dot(g, g) > 1e-10 && abs(dot(normalize(b - a), normalize(g))) < 0.35) { disc = 0.7; }
+    if (fdAt(m) < 1.2 * u.a.x) { disc = min(disc, 0.6); }
+  }
+  return L * (1.0 + 3.0 * slope + water) * 0.5 * (fa + fb) * disc;
+}
+/** one workgroup: the supercells — their seeds (a jittered grid), each one's cost distance from the population
+ *  centres over the 8-neighbour graph (Bellman–Ford, a round a step), the limit a budget on it with ±h.y of low-
+ *  frequency noise (lobes along the roads and the shore, bites in the steep, fingers), its state and its growth start
+ *  (r1 the points, r2 the sites, r3 the smoothed heights, b4 φ; w5 the table) */
+@compute @workgroup_size(256)
+fn sctab(@builtin(local_invocation_index) li: u32) {
+  // (no smaller than keeps the grid within SC_MAX cells)
+  let sc = max(u.h.x * u.a.w, sqrt(f32(W()) * f32(H()) * ROW_H / 200.0));
   let gx = u32(f32(W()) / sc) + 1u;
   let gy = u32(f32(H()) * ROW_H / sc) + 1u;
-  let i = g.x;
+  let n = min(gx * gy, SC_MAX);
   let lim = u.d.z * u.h2.w;
-  if (i == 0u) { w5[0] = gx; w5[1] = gy; set5(2u, sc); set5(3u, lim); }
-  if (i >= gx * gy) { return; }
-  let cx = i % gx;
-  let cy = i / gx;
-  let s = (vec2<f32>(f32(cx), f32(cy)) + 0.5 + 0.7 * (vec2<f32>(hash2(i, 1u), hash2(i, 2u)) - 0.5)) * sc;
-  var best = 1e9;
-  var bc = u.d.xy;
-  for (var k = 0u; k < NPTS; k++) {
-    if (b1[k * PW + 5u] == 0u) { continue; }
-    let c = vec2<f32>(r1(k * PW), r1(k * PW + 1u));
-    let dd = distance(s, c);
-    if (dd < best) { best = dd; bc = c; }
+  if (li == 0u) { w5[0] = gx; w5[1] = gy; set5(2u, sc); set5(3u, lim); }
+  for (var c = li; c < n; c += 256u) {
+    let cc = vec2<f32>(f32(c % gx), f32(c / gx));
+    let s = (cc + 0.5 + 0.7 * (vec2<f32>(hash2(c, 1u), hash2(c, 2u)) - 0.5)) * sc;
+    scS[c] = s;
+    // (a strong random factor a cell: 0.5–2, half hash, half low-frequency noise)
+    scF[c] = mix(0.5, 2.0, 0.5 * hash2(c, 5u) + 0.5 * vnoise(cc, 3.0, 6u));
+    var d = 1e9;
+    for (var k = 0u; k < NPTS; k++) {
+      if (b1[k * PW + 5u] == 0u) { continue; }
+      let e = distance(s, vec2<f32>(r1(k * PW), r1(k * PW + 1u)));
+      if (e < 0.75 * sc) { d = min(d, e); }
+    }
+    for (var k = 0u; k < min(b2[0], LM_ROOM); k++) {
+      let o = 1u + k * LMW;
+      if (r2(o + 2u) <= 0.0) { continue; }
+      let e = distance(s, vec2<f32>(r2(o), r2(o + 1u)));
+      if (e < 0.75 * sc) { d = min(d, e); }
+    }
+    let e0 = distance(s, u.d.xy);
+    if (e0 < 0.75 * sc) { d = min(d, e0); }
+    scD[c] = d;
   }
-  for (var k = 0u; k < min(b2[0], LM_ROOM); k++) {
-    let o = 1u + k * LMW;
-    if (r2(o + 2u) <= 0.0) { continue; }
-    let c = vec2<f32>(r2(o), r2(o + 1u));
-    let dd = distance(s, c);
-    if (dd < best) { best = dd; bc = c; }
+  workgroupBarrier();
+  for (var c = li; c < n; c += 256u) {
+    let x = i32(c % gx);
+    let y = i32(c / gx);
+    for (var k = 0; k < 9; k++) {
+      if (k == 4) { continue; }
+      let nx = x + k % 3 - 1;
+      let ny = y + k / 3 - 1;
+      let e = u32(k - select(0, 1, k > 4));
+      scW[c * 8u + e] = -1.0;
+      if (nx < 0 || ny < 0 || nx >= i32(gx) || ny >= i32(gy)) { continue; }
+      let j = u32(ny) * gx + u32(nx);
+      if (j >= n) { continue; }
+      scW[c * 8u + e] = growCost(scS[j], scS[c], scF[j], scF[c]);
+    }
   }
-  if (best > 1e8) { best = distance(s, u.d.xy); }
-  let inside = best + u.h.y * sc * 2.0 * (hash2(i, 3u) - 0.5) < lim;
-  let empty = hash2(i, 4u) < u.h.z && best > 0.6 * sc;
-  let o = SC_HEAD + i * SCW;
-  set5(o, s.x);
-  set5(o + 1u, s.y);
-  w5[o + 2u] = select(0u, select(2u, 1u, empty), inside);
-  set5(o + 3u, best / max(lim, 1.0));
-  set5(o + 4u, bc.x);
-  set5(o + 5u, bc.y);
+  workgroupBarrier();
+  for (var r = 0u; r < 40u; r++) {
+    if (r > gx + gy + 2u) { break; }
+    for (var c = li; c < n; c += 256u) {
+      var best = scD[c];
+      let x = i32(c % gx);
+      let y = i32(c / gx);
+      for (var k = 0; k < 9; k++) {
+        if (k == 4) { continue; }
+        let w = scW[c * 8u + u32(k - select(0, 1, k > 4))];
+        if (w < 0.0) { continue; }
+        let j = u32(y + k / 3 - 1) * gx + u32(x + k % 3 - 1);
+        best = min(best, scD[j] + w);
+      }
+      scN[c] = best;
+    }
+    workgroupBarrier();
+    for (var c = li; c < n; c += 256u) { scD[c] = scN[c]; }
+    workgroupBarrier();
+  }
+  for (var c = li; c < n; c += 256u) {
+    let cc = vec2<f32>(f32(c % gx), f32(c / gx));
+    let thr = lim * (1.0 + u.h.y * (2.0 * vnoise(cc, 2.5, 7u) - 1.0));
+    let t = scD[c] / max(thr, 1.0);
+    let inside = t < 1.0;
+    // (empty: never at a centre, never at the edge — under 0.6 of the budget)
+    let empty = hash2(c, 4u) < u.h.z && scD[c] > 0.6 * sc && t < 0.6;
+    let o = SC_HEAD + c * SCW;
+    set5(o, scS[c].x);
+    set5(o + 1u, scS[c].y);
+    w5[o + 2u] = select(0u, select(2u, 1u, empty), inside);
+    set5(o + 3u, t);
+    set5(o + 4u, scS[c].x);
+    set5(o + 5u, scS[c].y);
+  }
 }
 struct City { state: u32, t: f32, id: u32 }
 /** a point's supercell — its state, its growth key, its id (the table at b4) */
@@ -2120,7 +2232,8 @@ fn cityB4(p: vec2<f32>) -> City {
   }
   let o = SC_HEAD + bi * SCW;
   c.state = b4[o + 2u];
-  c.t = 0.5 * r4(o + 3u) + 0.5 * distance(p, vec2<f32>(r4(o + 4u), r4(o + 5u))) / max(r4(3u), 1.0);
+  // (m3i: its cell's cost distance over its budget, and a little for its distance from the cell's seed)
+  c.t = 0.85 * r4(o + 3u) + 0.15 * distance(p, vec2<f32>(r4(o + 4u), r4(o + 5u))) / max(r4(2u), 1.0);
   c.id = bi;
   return c;
 }
@@ -2148,7 +2261,8 @@ fn cityB2(p: vec2<f32>) -> City {
   }
   let o = SC_HEAD + bi * SCW;
   c.state = b2[o + 2u];
-  c.t = 0.5 * r2(o + 3u) + 0.5 * distance(p, vec2<f32>(r2(o + 4u), r2(o + 5u))) / max(r2(3u), 1.0);
+  // (m3i: its cell's cost distance over its budget, and a little for its distance from the cell's seed)
+  c.t = 0.85 * r2(o + 3u) + 0.15 * distance(p, vec2<f32>(r2(o + 4u), r2(o + 5u))) / max(r2(2u), 1.0);
   c.id = bi;
   return c;
 }

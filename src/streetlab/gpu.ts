@@ -143,7 +143,7 @@ export interface StreetTimes {
 
 const SLOT = 256;
 const MAX_PASSES = 256;
-const UNI_BYTES = 224;
+const UNI_BYTES = 240;
 const KERNELS = [
   'fill', 'blur', 'feat', 'jfa', 'jdist', 'autoPts', 'phi', 'tensor', 'trace', 'mis', 'blocks',
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotMesh', 'marks', 'meshCap',
@@ -174,6 +174,8 @@ const GAP_ROOM = 512;
 const LABEL_ROUNDS = 12;
 /** (m3g) lines the grown streets climb (a step each: march, grid, keep) */
 const GROW_LINES = 8;
+/** (m3i) the town circle's reach with supercells (× its radius): past the largest limit (1.2) and its noise */
+const CITY_REACH = 1.6;
 const ALL = ['height', ...STAGES] as const;
 
 interface Uni {
@@ -345,6 +347,8 @@ export class StreetLabGpu {
     [p.field, p.maskR, p.cross === 0 && p.grown === 1 ? 1 : 0, p.lmTopK].forEach((v, j) => dv.setFloat32(176 + j * 4, v, true));
     [p.scSize, p.limitNoise, p.emptyFrac, p.citySeed].forEach((v, j) => dv.setFloat32(192 + j * 4, v, true));
     [p.growth, p.tint, this.cityOn() ? 1 : 0, p.limit].forEach((v, j) => dv.setFloat32(208 + j * 4, v, true));
+    // (m3i: with supercells the town circle is only a bound, out past any limit)
+    [this.cityOn() ? CITY_REACH : 1, 0, 0, 0].forEach((v, j) => dv.setFloat32(224 + j * 4, v, true));
     return i;
   }
 
@@ -447,7 +451,8 @@ export class StreetLabGpu {
     }
     this.kS('vblock', {}, { 1: B.SD, 5: B.BQ, 7: B.AL1 });
     // (m3h) the supercells: their centres, states and growth starts
-    if (this.cityOn()) this.k('sctab', {}, { 1: B.PTS, 2: B.LM, 5: B.SCT }, Math.ceil(this.scCells(Math.max(p.scSize * p.blockLen, 8)) / 64));
+    // (m3i: one workgroup — the cost distance relaxed over the supercell graph in its shared memory)
+    if (this.cityOn()) this.k('sctab', {}, { 1: B.PTS, 2: B.LM, 3: B.HS, 4: B.FD, 5: B.SCT }, 1);
     // (m3d) the bad blocks: found, then merged (a claim each on a good neighbour, the lowest seed wins) or paved
     // (MERGE_ROUNDS rounds — a fan's triangles merge in pairs, then the pairs — then what's still bad is paved)
     for (let r = 0; r <= MERGE_ROUNDS; r++) {

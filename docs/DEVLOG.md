@@ -20867,3 +20867,28 @@ between the landmarks; and districts that grow out from the population centres d
 - **Measurements:** headless D3D11, noisy. Full rebuild about 1.9 ms with everything on (Muru): sctab and bgrow are
   tiny, and the city tests add a little to the mesh. The growth slider reruns from the lots stage (gap fill, lots,
   mesh) in 0.41–0.56 ms. The tint costs about 0.25 ms of mesh.
+
+## 2026-11-10 — trackA-streetlab m3i: open town edges, an organic limit
+
+The user: "I would place buildings along the exterior roads and just not box in their cells", and "the city limit
+... still looks way too round and perfect and needs to be irregularly shaped".
+- **Open edges:** in the lots pass, each block side whose outside sample, half a block length out, is hidden (past
+  the limit, an empty district, not grown) loses its street class. The block's lots then face the inside streets,
+  with their backs to the open land. Of an edge block's lots, those with no street front are dropped, and about 15%
+  of the ones that do front a street are left empty too, so the edge is ragged. Streets (cross and major) are drawn
+  only where the blocks on both sides are shown, plus arterials and major lines through empty districts. That also
+  removes the stray stubs past the limit.
+- **No round cap:** with supercells on, the town circle is only a bound at 1.6 radii (`CITY_REACH`, past the largest
+  budget), so nothing is clipped round, the tint included. The supercells' limit is the town's limit.
+- **Organic limit:** `sctab` is now one workgroup. It builds the supercell seeds, computes each cell's 8 edge costs
+  once in shared memory, and relaxes a Bellman–Ford cost distance from the population centres for gx + gy + 2
+  rounds. An edge costs its length × (1 + 3 × slope + 4 across water or a cliff) × the mean of the two cells'
+  random factors (0.5–2: half a hash, half low-frequency noise), × 0.7 when it runs along a major line (across ∇φ)
+  and × 0.6 along a shore. A cell is in while its cost is under the budget (`growth budget` × the town radius) times
+  1 ± 35% of low-frequency noise. Growth uses the same cost (its key is 0.85 × cost/budget + 0.15 × its distance from
+  the cell's seed), so the slider grows the town in the same shape. Supercells now default to 3 block lengths.
+  Empty districts default to 20% and only fall under 0.6 of the budget, never at the edge.
+- **What the shots show:** Muru stretches along its river, the river town follows its banks, and coast follows its
+  shore. A second seed gives a different outline. None reads as a disc.
+- **Measurements:** headless D3D11, noisy. sctab is small. The trace stage is up to 0.9–1.2 ms because the larger
+  bound brings in more seeds. The user said the speed is fine.
