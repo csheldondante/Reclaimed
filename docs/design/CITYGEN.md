@@ -103,6 +103,44 @@ the construction shader read. `FieldTown.lots` hands them over.
 - The height-to-plot rule: a building is no taller than `hRatio` (0.7) × its footprint's shortest side, at least
   a storey and at most the storeys' most × 1.3, so the street behind it stays in sight at 60°.
 
+## M4b: stopped at the claim registry (needs a decision)
+
+The brief: claim each lot's building, the roads and the decks as External intervals through the existing claim path;
+clear flora under them; run the GPU reach over the result. Stopped before building, because the existing path holds
+ownership on the CPU:
+- `sim/static-claims.ts` (StaticClaims) takes each thing as CPU column spans (`StaticThing.cols`), indexes them by
+  column on the CPU and uploads a grid buffer. colapply.wgsl `claimGrid` writes them as each region arrives.
+- `sim/external.ts` (ExternalRegistry) is "the truth of who owns what". Its orphan rule runs after every whole read
+  and every slide (game/integrity/tick.ts → `gpuEdit.orphans(cols, ext.claimedSpans())`): any External interval the
+  CPU doesn't list becomes its fallback material. Claims written only by a GPU kernel would be wiped at the first
+  slide. `verify`/`cut` (a building dug into) also work from CPU spans against the integrity's CPU copy.
+- Old towns cleared plants with atlas stamps (`BARE` in atlas/stamps.ts) while their land was made. The field town is
+  made after its land, and External tops have growthCap 1.2, so a claim alone doesn't stop growth either.
+
+Feeding the existing path means reading back every lot record (~45 KB at Muru) and rasterising tens of thousands of
+column spans on the CPU, every regeneration. That breaks the GPU rule, so it wasn't built.
+
+**Proposed: GPU-owned static grids** (each step a GPU pass; the CPU passes ids, boxes and a few words after an edit):
+1. citygen rasterises its claim grid on the GPU in claimGrid's layout: a column list over the box (x, y, first span,
+   count) and spans (z0, z1, fallback). Buildings are the footprint × [base, base + height × progress]; decks are
+   [deck − 0.8, deck]; roads are a paving span. Each span also carries an owner word, (town grid id, record index):
+   the contract's per-record keying.
+2. `StaticClaims.gpuGrid(name, owner, place, buf, cols)`: claimed per arriving region by the same `claimGrid` kernel;
+   the CPU never sees its spans.
+3. The orphan pass reads the GPU grids' buffers as "claimed" on the GPU (colapply `orphans` gets the grid buffers
+   bound). The CPU-copy orphan path skips columns a GPU grid covers (its box, known on the CPU).
+4. Verify/cut on the GPU: after an edit, a pass compares a grid's spans with the columns and writes the cut records'
+   ids (a few words back). The owner is told; a later physics step takes the record over (release by record, then its
+   own claim).
+5. Flora: a per-column "built" mask on the GPU (the claim grid's coverage), read by the plant passes (vegprep,
+   florafield, the growth kernel) as a cap of 0: a new WorldGpu contract buffer. vegprep already uses all eight storage
+   bindings, so the mask has to be packed into an existing one (e.g. renderFields) or vegprep split.
+6. Reach: `build/reachgpu.ts` FortressReachGpu over the window once the claims are in. Its seeds are the town's
+   centre (an input); the cut-off components show in its red outline.
+
+The user's call: this changes the External contract (static ownership no longer all on the CPU) and adds a WorldGpu
+contract buffer (the built mask). Both are architecture changes, so they wait for sign-off.
+
 ## Later phases (scope)
 
 - **M4b, claims, surfaces, reach** (this body of work). The town claims its buildings' columns as External intervals

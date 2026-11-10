@@ -20977,3 +20977,14 @@ The coordinator's three points after M4a.
   - Result: 9 reruns give 473 lots and 30 960 vertices every time (lab river with 3 arterials: 360 every time).
 - **GPU** (headless D3D11, 9 reruns): median 3.74 ms (3.27–4.15) for the radius-120 town with polylines. M4a's was
   1.87 ms for radius 60.
+
+## 2026-11-10 — citygen M4b: stopped at the claim registry (design only)
+
+Read the claim path (sim/static-claims.ts, sim/external.ts, colapply.wgsl claimGrid / orphans, game/integrity/tick.ts)
+before building. Static ownership is CPU truth: each thing's column spans live on the CPU, and the orphan pass after
+every whole read and slide turns any External interval the CPU doesn't list back into its fallback. A GPU-only claim
+would be wiped at the first slide. Using the path as it is means a ~45 KB readback of the lot records and CPU
+rasterisation of every span, which the user's rule forbids. Flora under old towns was cleared by atlas BARE stamps
+while the land was made; External tops still grow plants. The proposal (GPU-owned static grids, GPU orphan/verify by
+grid, a built mask for the plant passes) is in docs/design/CITYGEN.md "M4b". It changes the External contract and
+adds a WorldGpu buffer, so it waits for the user.
