@@ -236,6 +236,25 @@ readback. Everything the haul cycle is, in one place:
   word, the route legs become the unit's ride mode, the open legs its walk on a field; the counters and queues stay as
   they are.
 
+### Agreed with Track B (2026-11-10, via the coordinator)
+
+Track B owns the one crowd, combat, flee priority, the inhabitants merge and the CPU flora mirror; Track A keeps the
+haul job states. Track B builds the one crowd around this rider row.
+1. **The behaviour word is RID word 1, for every unit:** byte 0 job (the behaviour bundle), byte 1 state, byte 2
+   leg/mode (route trip, open walk; Track B adds surface field steering), **byte 3 Track B's override** (FLEE / FIGHT /
+   DOWNED and the preempted state). The haul code never writes byte 3: it reads it, and keeps it when it saves.
+2. **Overrides preempt in the same tick:** `riders` returns at once for a row whose byte 3 is set, so the job resumes
+   where it was once it's cleared (test/gpu/living.test.ts, the override block).
+3. **Events:** routine hauling emits none. If haul ever needs one it takes a code above 32 in the agents' ring
+   (units.wgsl EV_*: EV_ARRIVED 8, …). Totals (stone delivered, logs, produce) stay GPU counters, read async on demand.
+4. **Orders:** the parameters' uniform for haul; per-unit orders through the agents' paths (Track B's U1).
+5. **Flora:** all felling through `fellApply` and edit.wgsl's exact fell (the same stump band), never the CPU Plants
+   API's mirror.
+6. **One snippet:** Track B adds `src/shaders/unitstate.wgsl` (U0: the word layout, override and event codes); when
+   haul merges with it, routes.wgsl's `J_*`, `S_*`, `LEG_*` move into it.
+- **The row stays 64 B:** position and heading; the behaviour word, route, cursor, home; distance along, timer, load,
+  walk phase; the open leg's end, a claimed tree or site, the job's column. Nothing more is needed for haul.
+
 ## Measured (headless D3D11, Muru, phone size 412 × 915, vsync off, settled)
 
 GPU ms a frame (the profiler, smoothed): build 0.036 (empty indirect dispatches), relax 0.087 (32 empty indirect

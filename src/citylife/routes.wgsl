@@ -746,9 +746,11 @@ fn rampRoute() {
 }
 
 // ---- riders ----
-// RID, 4 vec4s a rider:
+// RID, 4 vec4s a rider (64 B):
 //   0 x, y, z (grid world, world z), heading
-//   1 (u32 bits) job | state << 8 | leg << 16 (0 none, 1 route forward, 2 back, 3 open), route id, cursor, home lot
+//   1 (u32 bits) the behaviour word — byte 0 job, byte 1 state, byte 2 leg (0 none, 1 route forward, 2 back, 3 open
+//     walk), byte 3 Track B's override (never written here: a set override skips the job); then route id, cursor,
+//     home lot
 //   2 s (along the route), timer, load (m³ or logs), walk phase
 //   3 the open leg's end x, y; aux (u32 bits: a claimed tree's column + 1, a site's record + 1), the job's column
 //     (u32 bits: a farm's door, the base)
@@ -772,6 +774,8 @@ struct Rider {
   job: u32,
   st: u32,
   leg: u32,
+  /** byte 3: Track B's override (FLEE / FIGHT / DOWNED and the state to resume) — never written here */
+  ovr: u32,
   route: u32,
   cursor: u32,
   home: u32,
@@ -788,11 +792,11 @@ fn loadRider(i: u32) -> Rider {
   let b = bitcast<vec4<u32>>(RID[i * 4u + 1u]);
   let c = RID[i * 4u + 2u];
   let d = RID[i * 4u + 3u];
-  return Rider(a.xyz, a.w, b.x & 0xffu, (b.x >> 8u) & 0xffu, b.x >> 16u, b.y, b.z, b.w, c.x, c.y, c.z, c.w, d.xy, bitcast<u32>(d.z), bitcast<u32>(d.w));
+  return Rider(a.xyz, a.w, b.x & 0xffu, (b.x >> 8u) & 0xffu, (b.x >> 16u) & 0xffu, b.x >> 24u, b.y, b.z, b.w, c.x, c.y, c.z, c.w, d.xy, bitcast<u32>(d.z), bitcast<u32>(d.w));
 }
 fn saveRider(i: u32, r: Rider) {
   RID[i * 4u] = vec4<f32>(r.pos, r.heading);
-  RID[i * 4u + 1u] = bitcast<vec4<f32>>(vec4<u32>(r.job | (r.st << 8u) | (r.leg << 16u), r.route, r.cursor, r.home));
+  RID[i * 4u + 1u] = bitcast<vec4<f32>>(vec4<u32>(r.job | (r.st << 8u) | (r.leg << 16u) | (r.ovr << 24u), r.route, r.cursor, r.home));
   RID[i * 4u + 2u] = vec4<f32>(r.s, r.timer, r.load, r.phase);
   RID[i * 4u + 3u] = vec4<f32>(r.goal, bitcast<f32>(r.aux), bitcast<f32>(r.col));
 }
@@ -919,6 +923,8 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
   let i = g.x;
   if (i >= u.n.z) { return; }
   var r = loadRider(i);
+  // (an override set — Track B's fight, flee, downed: the job steps not at all this tick; it resumes where it was)
+  if (r.ovr != 0u) { return; }
   let dt = u.t.x;
   if (r.st == S_INIT && r.job == 0u && r.home == 0u) {
     // (a fresh row: dealt its job and home, placed at its door — or its base: the stores)

@@ -21153,3 +21153,10 @@ the opportunity hook".
   Toggle diff `living=1` / `living=0`: p50 1.90 / 1.90 ms, p90 17.8 / 17.7 (headless desktop, vsync off).
 - **Track B's ownership** (the user): the haul cycle is documented as a module to absorb (LIVING_TOWN.md "For Track
   B"); no general unit AI here.
+
+## 2026-11-10 — living town: Track B's behaviour word
+
+Track B builds the one crowd around the rider row. Byte 3 of the behaviour word (RID word 1) is now its override:
+the haul step skips a row with it set (the job resumes after) and never writes it; the leg reads byte 2 only (it read
+bits 16–31). A Dawn test holds a riding rider 40 frames under an override and sees it ride on once cleared. The row
+stays 64 B. Recorded in LIVING_TOWN.md "Agreed with Track B".
