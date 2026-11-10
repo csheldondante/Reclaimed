@@ -8,7 +8,7 @@ import { Registry, type ParamSpec } from '../tune/registry';
 import { TunePanel } from '../ui/tunepanel';
 import { whenPipelinesReady } from '../gpu/pipeline';
 import { ROW_H } from '../world/lattice';
-import { AUTO, BAD, CROSS, LANDMARKS, MAJORS, SHAPES, MIN_BLOCK, NPTS, STAGES, StreetLabGpu, type Box, type Stage, type StreetParams, type StreetTimes, type StreetWorld } from './gpu';
+import { AUTO, BAD, CROSS, FIELDS, LANDMARKS, MAJORS, SHAPES, MIN_BLOCK, NPTS, STAGES, StreetLabGpu, type Box, type Stage, type StreetParams, type StreetTimes, type StreetWorld } from './gpu';
 
 /** the sites (game/levels.ts streetSite), as the panel names them: the mesa is the cliff site */
 export const SITES = ['muru', 'river', 'mesa', 'mountain', 'coast'] as const;
@@ -20,6 +20,10 @@ const P: Record<string, Spec> = {
   site: { label: 'site', units: '', min: 0, max: SITES.length - 1, step: 1, def: 0, choices: SITE_NAMES, help: 'reloads the page on that site, the other keys kept', stage: 'site' },
   majors: { label: 'major lines', units: '', min: 0, max: MAJORS.length - 1, step: 1, def: 1, choices: [...MAJORS], stage: 'phi' },
   cross: { label: 'cross streets', units: '', min: 0, max: CROSS.length - 1, step: 1, def: 0, choices: [...CROSS], stage: 'phi' },
+  field: { label: 'distance field', units: '', min: 0, max: FIELDS.length - 1, step: 1, def: 1, choices: [...FIELDS], help: 'blurring the mask, not the distance, keeps the contours evenly spaced at the creases', stage: 'field' },
+  maskR: { label: 'mask smoothing', units: 'cells', min: 1, max: 10, step: 1, def: 3, help: 'the water/cliff mask’s blur radius (two passes) before the threshold', stage: 'field' },
+  grown: { label: 'cross streets made', units: '', min: 0, max: 1, step: 1, def: 1, choices: ['paired per strip (old)', 'grown line by line'], help: 'grown: each street climbs on across the lines; too near another it ends at a T; where they spread, a new one starts', stage: 'trace' },
+  lmTopK: { label: 'landmark sites kept', units: '', min: 1, max: 16, step: 1, def: 2, help: 'only the busiest, most acute junctions', stage: 'trace' },
   scale: { label: 'city scale', units: '×', min: 0.5, max: 2.5, step: 0.05, def: 1, help: 'contour spacing and block length × this, lot areas × its square: bigger reads bigger', stage: 'phi' },
   bad: { label: 'bad cells →', units: '', min: 0, max: BAD.length - 1, step: 1, def: 0, choices: [...BAD], help: 'a sliver or thin triangle (an angle under 25°, too thin, under the merge area): joined to its neighbour across its longer cross street, or paved', stage: 'trace' },
   lmMult: { label: 'landmark sites', units: '×', min: 0, max: 2, step: 0.05, def: 1, help: 'round plots at the busy junctions (their radius ×; 0 none): the fans’ streets end at a ring road round them', stage: 'trace' },

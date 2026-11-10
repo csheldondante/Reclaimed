@@ -20819,3 +20819,26 @@ land to be partitioned and big blocks to be split.
 - **Measurements:** headless D3D11, median of 7. Full rebuild 1.44–1.52 ms on Muru and 1.61–1.83 ms on river. The
   lots stage is 0.33–0.43 ms, against 0.05–0.09 ms before, so the gap fill costs about 0.27 ms. River lots go from
   338 to 428, Muru from 306 to 356, coast from 193 to 264.
+
+## 2026-11-10 — trackA-streetlab m3g: even contours, streets grown line by line, top-K landmark sites
+
+Two root causes the user approved fixing, each a radio option so the old way stays for comparison:
+- **Even contours:** the distance used to be box-blurred after the JFA (radius 5, 3 passes). That flattens |∇| at
+  the creases, so contours bunched and closed into small loops inside river bends. Now the water/cliff **mask** is
+  blurred (radius `mask smoothing`, 2 passes) and thresholded at 0.5 (`mseed`) before the flood, and the flood's
+  distance is used as it comes: a true distance with |∇| = 1. The field stage also got cheaper, from 0.35–0.39 ms to
+  0.29–0.33 ms. No spine road is drawn at the crease.
+- **Grown streets (Jobard–Lefer):** line 0's snapped seeds, thinned to 0.85 block lengths, are live; the others
+  are dormant. Each line is one step of 4 dispatches (march, clear grid, claim, keep). Each live seed on line k
+  marches up ∇φ (`marchUp`, shared with the old pairing's fallback) to line k+1 and becomes a new seed there,
+  appended past the lattice's slots (seed buffers doubled). On k+1, a landing closer than 0.6 block lengths to a
+  lower id stops, and its source's street ends at a T on the line. A dormant seed with no landing within 0.8 block
+  lengths wakes, which starts a new street where streets spread apart or where a strip has nothing below it.
+  Streets therefore run on across the contours, and fans can't form. A block whose two streets end differently (one
+  on the next line, one at a ridge or the town edge) is now built, with no street on its far side.
+- **Landmark sites:** each has a score (its streets + π − its sharpest angle), and only the top K (default 2) are
+  kept. With grown streets, busy junctions are rare, so usually none are kept.
+- **Gap fill:** still needed (default on). Without it, river lots drop from 418 to 313 and Muru from 405 to 287.
+- **Measurements:** headless D3D11, median of 7. Full rebuild 1.67–1.74 ms: field 0.31–0.35, phi 0.13, trace
+  0.66–0.70 (grown: 8 lines × 4 dispatches plus the floods and merges), lots 0.35–0.37 (gap fill about 0.29),
+  mesh 0.20 ms. With M3f's defaults it was 1.45–1.6 ms. 8 growth lines give the same lots as 12, for 0.04 ms less.

@@ -84,7 +84,16 @@ export interface StreetParams {
    *  two splits (0 none) */
   gap: number;
   bigBlock: number;
+  /** (m3g) the field: index into FIELDS; the mask's smoothing radius (cells); grown streets (1) or paired (0); the
+   *  landmark sites kept (the top K) */
+  field: number;
+  maskR: number;
+  grown: number;
+  lmTopK: number;
 }
+/** (m3g) how the distance field is made smooth: the distance blurred (m2 to m3f: uneven contours at the creases), or
+ *  the water/cliff mask blurred and thresholded first (a true distance) */
+export const FIELDS = ['distance blurred (old)', 'mask blurred'] as const;
 /** (m3e) what a landmark site holds */
 export const LANDMARKS = ['plaza', 'big structure'] as const;
 /** (m3d) what a bad cell (a sliver, a thin triangle) becomes: merged into its neighbour, or paved */
@@ -124,11 +133,11 @@ export interface StreetTimes {
 
 const SLOT = 256;
 const MAX_PASSES = 256;
-const UNI_BYTES = 176;
+const UNI_BYTES = 192;
 const KERNELS = [
   'fill', 'blur', 'feat', 'jfa', 'jdist', 'autoPts', 'phi', 'tensor', 'trace', 'mis', 'blocks',
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotMesh', 'marks', 'meshCap',
-  'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad',
+  'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep',
 ] as const;
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
@@ -153,6 +162,8 @@ const GAP_LEVELS = 3;
 const ROAD_ROOM = 1024;
 const GAP_ROOM = 512;
 const LABEL_ROUNDS = 12;
+/** (m3g) lines the grown streets climb (a step each: march, grid, keep) */
+const GROW_LINES = 8;
 const ALL = ['height', ...STAGES] as const;
 
 interface Uni {
@@ -211,21 +222,24 @@ export class StreetLabGpu {
     const [mx, my] = this.lattice(MIN_BLOCK);
     const T = mx * my;
     this.B.TR = buf('traces', T * TRW * 4);
-    this.B.AL0 = buf('kept a', T * 4);
-    this.B.AL1 = buf('kept b', T * 4);
-    this.B.BQ = buf('blocks', 3 * T * BQW * 4);
+    // (seed-indexed: room for the grown streets' landings too — m3g, twice the lattice)
+    this.B.AL0 = buf('kept a', 2 * T * 4);
+    this.B.AL1 = buf('kept b', 2 * T * 4);
+    this.B.BQ = buf('blocks', 3 * 2 * T * BQW * 4);
     this.B.LOTS = buf('lots', LOT_ROOM * LW * 4);
     // (the lots' count, the listed roads' and the gap blocks', then the roads: m3f)
     this.B.CNT = buf('counts and roads', (4 + ROAD_ROOM * 4) * 4);
     // (m3: the points, the seeds, their occupancy grid, the two floods ping-ponged; AL1 the streets drawn)
     this.B.PTS = buf('points', NPTS * PW * 4);
-    this.B.SD = buf('seeds', T * SDW * 4);
+    this.B.SD = buf('seeds', 2 * T * SDW * 4);
+    this.B.GG = buf('landing grid', this.ggWords(MIN_BLOCK) * 4);
+    this.B.GCNT = buf('grown count', 16);
     this.B.OCC = buf('occupancy', this.occWords(MIN_BLOCK) * 4);
     for (const n of ['JE0', 'JE1', 'JO0', 'JO1']) this.B[n] = buf(n, N * 4);
     // (m3e: the cross streets ending at each seed and their smallest angle there; the landmark sites — a count, then
     // 64 of x, y, r, kind)
-    this.B.JC = buf('junctions', 2 * T * 4);
-    this.B.LM = buf('landmarks', (1 + 64 * 4) * 4);
+    this.B.JC = buf('junctions', 2 * 2 * T * 4);
+    this.B.LM = buf('landmarks', (1 + 64 * 5) * 4);
     // (m3f: the gap fill's tiles — coverage, labels ping-ponged, heap indices — its region nodes and its blocks)
     const G = this.tiles();
     for (const n of ['GC', 'GL0', 'GL1', 'GS']) this.B[n] = buf(n, G * 4);
@@ -316,6 +330,7 @@ export class StreetLabGpu {
     [p.band, p.grade, p.shape, this.sel + 1].forEach((v, j) => dv.setFloat32(128 + j * 4, v, true));
     [p.bad, p.lmMult, p.lmN, p.lmKind].forEach((v, j) => dv.setFloat32(144 + j * 4, v, true));
     [p.lmRmin, p.lmRmax, p.bigBlock, p.gap].forEach((v, j) => dv.setFloat32(160 + j * 4, v, true));
+    [p.field, p.maskR, p.cross === 0 && p.grown === 1 ? 1 : 0, p.lmTopK].forEach((v, j) => dv.setFloat32(176 + j * 4, v, true));
     return i;
   }
 
@@ -365,17 +380,34 @@ export class StreetLabGpu {
     return { label: `streetlab ${stage}`, timestampWrites: this.qs ? { querySet: this.qs, beginningOfPassWriteIndex: s, endOfPassWriteIndex: s + 1 } : undefined };
   }
   /** (m3b) the vector jump floods: the seeds on the lines, thinned, flooded by line parity; each seed's cross street and
-   *  the block to the next one along its line */
+   *  the block to the next one along its line. (m3g) Grown: the streets grown up from line 0 a line at a time instead
+   *  of paired across each strip */
   private vectorCross(): void {
     const B = this.B;
     const N = this.world.w * this.world.h;
     const p = this.p;
-    this.fill(B.OCC, this.occWords(Math.max(MIN_BLOCK, p.blockLen)), NONE);
+    const grown = p.grown === 1;
+    const S = this.nS();
+    const bl = Math.max(MIN_BLOCK, p.blockLen);
+    this.fill(B.OCC, this.occWords(bl), NONE);
     this.kT('vseed', {}, { 4: B.FD, 5: B.SD, 6: B.OCC });
     this.kT('vthin', {}, { 2: B.OCC, 5: B.SD });
+    if (grown) {
+      // (a line a step: its live seeds marched to the next line, the landings too near each other stopped, the dormant
+      // seeds where none landed woken)
+      this.kS('ginit', {}, { 5: B.SD });
+      this.fill(B.GCNT, 4, 0);
+      const gg = this.ggWords(bl);
+      for (let k = 0; k < GROW_LINES; k++) {
+        this.kS('gmarch', { k }, { 4: B.FD, 5: B.SD, 6: B.GCNT });
+        this.fill(B.GG, gg, NONE);
+        this.kS('gclaim', { k: k + 1 }, { 1: B.SD, 6: B.GG });
+        this.kS('gkeep', { k: k + 1 }, { 2: B.GG, 5: B.SD });
+      }
+    }
     this.fill(B.JE0, N, NONE);
     this.fill(B.JO0, N, NONE);
-    this.kT('vrast', {}, { 1: B.SD, 5: B.JE0, 7: B.JO0 });
+    this.kS('vrast', {}, { 1: B.SD, 5: B.JE0, 7: B.JO0 });
     // (the floods only need to reach about a line spacing: the lookups are within that of a seed)
     const reach = p.majors < 3 ? p.majorSpacing : p.ringSpacing;
     let k = 1;
@@ -386,45 +418,55 @@ export class StreetLabGpu {
       [ea, oa, eb, ob] = [eb, ob, ea, oa];
     }
     this.k2('vjfa', { k: 1 }, { 1: ea, 2: oa, 3: B.SD, 5: eb, 7: ob });
-    this.kT('vseg', {}, { 2: eb, 3: ob, 4: B.FD, 5: B.SD });
-    this.kT('vnext', {}, { 2: eb, 3: ob, 4: B.FD, 5: B.SD });
-    // (m3e) the busy junctions: their streets counted and their smallest angle, a landmark site each (the bigger of
-    // two that overlap kept), every cross street clipped at the sites
-    const T = this.seeds[0] * this.seeds[1];
+    if (!grown) this.kS('vseg', {}, { 2: eb, 3: ob, 4: B.FD, 5: B.SD });
+    this.kS('vnext', {}, { 2: eb, 3: ob, 4: B.FD, 5: B.SD });
+    // (m3e) the busy junctions: their streets counted and their smallest angle, a landmark site each (the top K, the
+    // higher-scoring of two that overlap), every cross street clipped at the sites
     if (p.lmMult > 0) {
-      this.fill(B.JC, T, 0);
+      this.fill(B.JC, S, 0);
       // (the angles start at 10 rad, as f32 bits: more than any angle)
-      this.fill(B.JC, T, 0x41200000, T);
-      this.kT('jstat', {}, { 1: B.SD, 6: B.JC });
-      this.kT('lmlist', {}, { 1: B.SD, 2: B.JC, 6: B.LM });
+      this.fill(B.JC, S, 0x41200000, S);
+      this.kS('jstat', {}, { 1: B.SD, 6: B.JC });
+      this.kS('lmlist', {}, { 1: B.SD, 2: B.JC, 6: B.LM });
       this.k('lmprune', {}, { 5: B.LM }, 1);
-      this.kT('vclip', {}, { 2: B.LM, 5: B.SD });
+      this.kS('vclip', {}, { 2: B.LM, 5: B.SD });
     }
-    this.kT('vblock', {}, { 1: B.SD, 5: B.BQ, 7: B.AL1 });
+    this.kS('vblock', {}, { 1: B.SD, 5: B.BQ, 7: B.AL1 });
     // (m3d) the bad blocks: found, then merged (a claim each on a good neighbour, the lowest seed wins) or paved
     // (MERGE_ROUNDS rounds — a fan's triangles merge in pairs, then the pairs — then what's still bad is paved)
     for (let r = 0; r <= MERGE_ROUNDS; r++) {
-      this.kT('bqual', { mode: 0 }, { 1: B.SD, 5: B.BQ });
-      this.kT('bqual', { mode: r === MERGE_ROUNDS ? 2 : 1 }, { 1: B.SD, 5: B.BQ });
+      this.kS('bqual', { mode: 0 }, { 1: B.SD, 5: B.BQ });
+      this.kS('bqual', { mode: r === MERGE_ROUNDS ? 2 : 1 }, { 1: B.SD, 5: B.BQ });
       if (r === MERGE_ROUNDS || p.bad !== 0) break;
-      this.fill(B.AL0, T, NONE);
-      this.kT('bclaim', {}, { 1: B.SD, 5: B.BQ, 6: B.AL0 });
-      this.kT('bapply', {}, { 1: B.SD, 2: B.AL0, 5: B.BQ, 7: B.AL1 });
+      this.fill(B.AL0, S, NONE);
+      this.kS('bclaim', {}, { 1: B.SD, 5: B.BQ, 6: B.AL0 });
+      this.kS('bapply', {}, { 1: B.SD, 2: B.AL0, 5: B.BQ, 7: B.AL1 });
     }
+  }
+  /** the seed slots this run (streets.wgsl nSeeds): the lattice's, twice that grown */
+  private nS(): number {
+    return this.seeds[0] * this.seeds[1] * (this.p.cross === 0 && this.p.grown === 1 ? 2 : 1);
+  }
+  private kS(name: Kernel, u: Uni, bufs: Bufs, args = false): void {
+    this.k(name, u, bufs, Math.ceil(this.nS() / 64), 1, args);
+  }
+  /** (m3g) the grown streets' landing grid (streets.wgsl ggDims: cells 0.8 block lengths) */
+  private ggWords(bl: number): number {
+    const cs = 0.8 * bl;
+    return (Math.floor(this.world.w / cs) + 2) * (Math.floor((this.world.h * ROW_H) / cs) + 2);
   }
 
   /** (m3f) the gap fill: the empty tiles labelled into regions, split recursively, the leaves blocks (GB) */
   private gapFill(): void {
     const B = this.B;
     const G = this.tiles();
-    const T = this.seeds[0] * this.seeds[1];
     const kG = (name: Kernel, u: Uni, bufs: Bufs) => this.k(name, u, bufs, Math.ceil(G / 64));
     const kN = (name: Kernel, u: Uni, bufs: Bufs) => this.k(name, u, bufs, Math.ceil((G * 16) / 64));
     this.fill(B.GC, G, 0);
     this.fill(B.GS, G, 1);
     this.fill(B.NODE, G * 16 * NODEW, 0);
     this.fill(B.GB, GAP_ROOM * 3 * BQW, 0);
-    this.k('gcov', {}, { 1: B.BQ, 5: B.GC }, Math.ceil((3 * T) / 64));
+    this.k('gcov', {}, { 1: B.BQ, 5: B.GC }, Math.ceil((3 * this.nS()) / 64));
     kG('gmask', {}, { 1: B.GC, 2: B.LM, 4: B.FD, 5: B.GL0 });
     let [a, b] = [B.GL0, B.GL1];
     for (let r = 0; r < LABEL_ROUNDS; r++) {
@@ -474,9 +516,14 @@ export class StreetLabGpu {
       if (p.shape === 1) this.k2('shape', {}, { 1: B.H, 5: B.HT });
       this.blur(HH, B.HS, 2, 2);
       this.k2('feat', {}, { 1: B.HS, 2: B.M, 5: B.S0, 7: B.BLK });
+      // (m3g: the mask smoothed and thresholded — the flood's seeds — so the distance stays a distance)
+      if (p.field === 1) {
+        this.blur(B.BLK, B.T0, Math.max(1, Math.round(p.maskR)), 2);
+        this.k2('mseed', {}, { 1: B.T0, 5: B.S0 });
+      }
       const fr = this.jfa(B.S0, B.S1);
-      this.k2('jdist', {}, { 1: fr, 5: B.T0 });
-      this.blur(B.T0, B.FDB, 5, 3);
+      this.k2('jdist', {}, { 1: fr, 5: p.field === 1 ? B.FDB : B.T0 });
+      if (p.field === 0) this.blur(B.T0, B.FDB, 5, 3);
       this.cp.end();
     }
     // (m3a) the points (placed, their offsets) and φ — over a changed point's box only, when that's all that changed
@@ -513,7 +560,7 @@ export class StreetLabGpu {
       this.cp = enc.beginComputePass(this.pass('lots'));
       this.fill(B.CNT, 4, 0);
       if (p.gap) this.gapFill();
-      this.k('lots', { count: LOT_ROOM }, { 1: B.BQ, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * this.seeds[0] * this.seeds[1]) / 64));
+      this.k('lots', { count: LOT_ROOM }, { 1: B.BQ, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * this.nS()) / 64));
       if (p.gap) this.k('lots', { count: LOT_ROOM }, { 1: B.GB, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * GAP_ROOM) / 64));
       this.cp.end();
     }
@@ -522,7 +569,7 @@ export class StreetLabGpu {
     this.cp = enc.beginComputePass(this.pass('mesh'));
     this.k2('roadMajor', {}, { 1: B.LM, 3: HH, 4: B.FD, 7: this.verts }, true);
     // (one thread a street's piece: eight a vector street, TP a trace)
-    if (vector) this.k('vroad', {}, { 1: B.SD, 2: B.AL1, 3: HH, 7: this.verts }, Math.ceil((this.seeds[0] * this.seeds[1] * 8) / 64), 1, true);
+    if (vector) this.k('vroad', {}, { 1: B.SD, 2: B.AL1, 3: HH, 7: this.verts }, Math.ceil((this.nS() * 8) / 64), 1, true);
     else this.k('roadMinor', {}, { 1: B.TR, 2: B.AL0, 3: HH, 7: this.verts }, this.seeds[0] * this.seeds[1], 1, true);
     this.k('groad', {}, { 1: B.CNT, 3: HH, 4: B.FD, 7: this.verts }, (ROAD_ROOM * 8) / 64, 1, true);
     this.k('lotMesh', { count: LOT_ROOM }, { 1: B.LOTS, 2: B.CNT, 3: HH, 4: B.FD, 5: B.LM, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);

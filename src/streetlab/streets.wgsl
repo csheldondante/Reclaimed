@@ -28,6 +28,7 @@ struct U {
   s: vec4<f32>, // (m3c) the band height, the cart grade, the shape (0 none, 1 terraces, 2 spiral, 3 switchbacks), the spiral's point + 1
   q: vec4<f32>, // (m3d) bad cells (0 merge, 1 plaza, 2 left); (m3e) the landmarks' radius × (0 none), the cross streets a busy junction has, their kind (0 plaza, 1 big structure)
   l: vec4<f32>, // (m3e) a landmark's smallest and largest radius; (m3f) a big block's area (0: no roads in them), gap fill (1 on)
+  r: vec4<f32>, // (m3g) the field (0 the distance smoothed, 1 the mask smoothed), the mask's smoothing, grown streets (1), the landmarks kept (top K)
 };
 @group(0) @binding(0) var<uniform> u: U;
 
@@ -514,7 +515,7 @@ fn ecls(e: u32, k: u32) -> u32 { return (e >> (8u * (k % 4u))) & 255u; }
 @compute @workgroup_size(64)
 fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
   let bi = g.x;
-  let T = u.m.w * u32(u.c.w);
+  let T = nSeeds();
   if (bi >= 3u * T) { return; }
   let o = bi * BQW;
   if (b1[o] == 0u) { return; }
@@ -928,7 +929,7 @@ fn phi(@builtin(global_invocation_id) g: vec3<u32>) {
 // edge; NONE none), 5 6 where that street ends (m3e: clipped at a landmark's circle), 7 the next seed along its line,
 // 8 9 where its street starts (clipped), 10 flags (1 start clipped, 2 end clipped).
 const SDW: u32 = 12u;
-const SID: u32 = 0x1fffu;
+const SID: u32 = 0x3fffu;
 /** (m3d) a cross street that ends on the town's edge — the circle a closing line */
 const EDGE: u32 = 0xfffffffeu;
 /** (m3f) a cross street that ends on a ridge of φ (no next line there), or on the next line with no seed to meet */
@@ -939,6 +940,8 @@ fn isOpen(t: u32) -> bool { return t >= LINE_END && t != NONE; }
 fn onLine(t: u32) -> bool { return t <= LINE_END; }
 /** the field the seeds sit on: φ's (family 1) or, radial, the rings' */
 fn mainK() -> u32 { return select(2u, 1u, fam(1u)); }
+/** the seed slots: the lattice's, and (m3g, grown streets) as many again for the landings */
+fn nSeeds() -> u32 { return u.m.w * u32(u.c.w) * select(1u, 2u, u.r.z > 0.5); }
 fn occDims() -> vec2<u32> { return vec2<u32>(u32(f32(W()) / u.a.w) + 2u, u32(f32(H()) * ROW_H / u.a.w) + 2u); }
 fn occAt(c: vec2<i32>, L: u32) -> u32 {
   let d = occDims();
@@ -972,7 +975,7 @@ fn vseed(@builtin(global_invocation_id) g: vec3<u32>) {
   w5[o + 2u] = u32(L);
   w5[o + 3u] = 1u;
   let cc = (floor(p / u.a.w) + 0.5) * u.a.w;
-  let key = (u32(min(distance(p, cc) / u.a.w, 0.99) * 4096.0) << 13u) | id;
+  let key = (u32(min(distance(p, cc) / u.a.w, 0.99) * 4096.0) << 14u) | id;
   atomicMin(&w6[occAt(vec2<i32>(floor(p / u.a.w)), u32(L))], key);
 }
 /** a seed kept: it won its cell, and no neighbouring cell's winner of its line with a lower key is nearer than 0.6
@@ -995,7 +998,8 @@ fn vthin(@builtin(global_invocation_id) g: vec3<u32>) {
       if (v == NONE || v >= mine) { continue; }
       let j = (v & SID) * SDW;
       if (w5[j + 2u] != L) { continue; }
-      if (distance(vec2<f32>(bitcast<f32>(w5[j]), bitcast<f32>(w5[j + 1u])), p) < 0.6 * u.a.w) { keep = false; }
+      // (m3g, grown: thinned to 0.85 — the first line's streets evenly spaced)
+      if (distance(vec2<f32>(bitcast<f32>(w5[j]), bitcast<f32>(w5[j + 1u])), p) < select(0.6, 0.85, u.r.z > 0.5) * u.a.w) { keep = false; }
     }
   }
   if (!keep) { w5[o + 3u] = 0u; }
@@ -1009,7 +1013,7 @@ fn sdStart(j: u32) -> vec2<f32> { return vec2<f32>(r1(j * SDW + 8u), r1(j * SDW 
 @compute @workgroup_size(64)
 fn vrast(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x;
-  if (id >= u.m.w * u32(u.c.w)) { return; }
+  if (id >= nSeeds()) { return; }
   let o = id * SDW;
   if (b1[o + 3u] == 0u) { return; }
   let i = ixp(sdPos(id));
@@ -1050,7 +1054,7 @@ fn nearestOf(par: u32, p: vec2<f32>) -> u32 {
 @compute @workgroup_size(64)
 fn vseg(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x;
-  if (id >= u.m.w * u32(u.c.w)) { return; }
+  if (id >= nSeeds()) { return; }
   let o = id * SDW;
   if (w5[o + 3u] == 0u) { return; }
   let s = vec2<f32>(bitcast<f32>(w5[o]), bitcast<f32>(w5[o + 1u]));
@@ -1121,7 +1125,7 @@ fn segsCross(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> bool {
 @compute @workgroup_size(64)
 fn vblock(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x;
-  if (id >= u.m.w * u32(u.c.w)) { return; }
+  if (id >= nSeeds()) { return; }
   let ob = id * 3u * BQW;
   w5[ob] = 0u;
   w5[ob + 2u * BQW] = 0u;
@@ -1150,8 +1154,9 @@ fn vblock(@builtin(global_invocation_id) g: vec3<u32>) {
   let sc = sdStart(c);
   if (segsCross(s, es, sc, ec)) { return; }
   w7[id] = 1u;
-  // (a street to the town's edge beside one to a seed: no block)
-  if (onLine(ts) != onLine(tc)) { return; }
+  // (a street to the next line beside one to a ridge or the town's edge: a block whose far side has no street —
+  // m3g; before, none)
+  let mixed = onLine(ts) != onLine(tc);
   w5[mo + 2u] = c;
   // (m3e: streets that end on a landmark's circle — the far side the ring road, a trapezoid, never a triangle)
   let ring = (b1[o + 10u] & 2u) != 0u && (b1[c * SDW + 10u] & 2u) != 0u;
@@ -1160,7 +1165,7 @@ fn vblock(@builtin(global_invocation_id) g: vec3<u32>) {
     _ = putBlock(ob, array<vec2<f32>, 4>(s, sc, es, 0.5 * (es + s)), array<u32, 4>(1u, 2u, 2u, 2u), id);
   } else {
     // (the far side: the next line, the ring road, or — the town's edge, a ridge — no street: lots back to back)
-    let far = select(select(1u, 2u, ring), 0u, !onLine(ts));
+    let far = select(select(1u, 2u, ring), 0u, !onLine(ts) || mixed);
     _ = putBlock(ob, array<vec2<f32>, 4>(s, sc, ec, es), array<u32, 4>(1u, 2u, far, 2u), id);
   }
 }
@@ -1170,7 +1175,7 @@ fn vblock(@builtin(global_invocation_id) g: vec3<u32>) {
 fn vroad(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x / 8u;
   let k = g.x % 8u;
-  if (id >= u.m.w * u32(u.c.w) || b2[id] == 0u) { return; }
+  if (id >= nSeeds() || b2[id] == 0u) { return; }
   let t = b1[id * SDW + 4u];
   if (t == NONE) { return; }
   let s = sdStart(id);
@@ -1363,7 +1368,7 @@ fn blockQuad(o: u32) -> array<vec2<f32>, 4> {
 @compute @workgroup_size(64)
 fn bqual(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x;
-  if (id >= u.m.w * u32(u.c.w)) { return; }
+  if (id >= nSeeds()) { return; }
   let ob = id * 3u * BQW;
   let mo = ob + BQW;
   if (u.n.w == 0u) { w5[mo + 3u] = NONE; return; }
@@ -1380,7 +1385,7 @@ fn bqual(@builtin(global_invocation_id) g: vec3<u32>) {
 @compute @workgroup_size(64)
 fn bclaim(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x;
-  if (id >= u.m.w * u32(u.c.w) || u.q.x > 0.5) { return; }
+  if (id >= nSeeds() || u.q.x > 0.5) { return; }
   let ob = id * 3u * BQW;
   let mo = ob + BQW;
   w5[mo + 6u] = NONE;
@@ -1407,7 +1412,7 @@ fn bclaim(@builtin(global_invocation_id) g: vec3<u32>) {
 @compute @workgroup_size(64)
 fn bapply(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x;
-  if (id >= u.m.w * u32(u.c.w) || u.q.x > 0.5) { return; }
+  if (id >= nSeeds() || u.q.x > 0.5) { return; }
   let ob = id * 3u * BQW;
   let mo = ob + BQW;
   let n = w5[mo + 6u];
@@ -1431,7 +1436,7 @@ fn bapply(@builtin(global_invocation_id) g: vec3<u32>) {
     tri = 1u;
     ok = putBlock(ob, array<vec2<f32>, 4>(pa, pb, ea, 0.5 * (ea + pa)), array<u32, 4>(1u, 2u, 2u, 2u), id);
   } else {
-    ok = putBlock(ob, array<vec2<f32>, 4>(pa, pb, eb, ea), array<u32, 4>(1u, 2u, select(1u, 0u, !onLine(ta)), 2u), id);
+    ok = putBlock(ob, array<vec2<f32>, 4>(pa, pb, eb, ea), array<u32, 4>(1u, 2u, select(1u, 0u, !onLine(ta) || !onLine(tb)), 2u), id);
   }
   if (!ok) { return; }
   // (the street between them: ahead the neighbour's first, behind this block's first)
@@ -1456,17 +1461,17 @@ fn bapply(@builtin(global_invocation_id) g: vec3<u32>) {
 // r = clamp(max(rmin, blockLen / θmin), rmin, rmax) × the multiplier. Overlapping sites: the bigger kept. Every cross
 // street is clipped at the circles (it starts where it leaves one, ends where it enters one), so a fan's triangles
 // become a ring of trapezoids round the site, its circle a ring road; the bad-cell merge runs after, on what's left.
-// The sites (LM): word 0 the count, then LMW words each — x, y, r (negative: dropped for a bigger one), kind (0 a
-// plaza, 1 a big structure). Later systems claim them from this buffer.
+// The sites (LM): word 0 the count, then LMW words each — x, y, r (negative: dropped), kind (0 a plaza, 1 a big
+// structure), its score (streets + π − its sharpest angle). Later systems claim them from this buffer.
 const LM_ROOM: u32 = 64u;
-const LMW: u32 = 4u;
+const LMW: u32 = 5u;
 const C_LANDMARK: u32 = 0xc9b3e6u;
 /** one thread a seed: the next seed along its line (ahead, the tangent's way: the same-parity flood looked up a block
  *  length ahead), and its street's start before any clipping (w5 the seeds: words 7–10; b2 b3 the floods, b4 φ) */
 @compute @workgroup_size(64)
 fn vnext(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x;
-  if (id >= u.m.w * u32(u.c.w)) { return; }
+  if (id >= nSeeds()) { return; }
   let o = id * SDW;
   w5[o + 7u] = NONE;
   w5[o + 8u] = w5[o];
@@ -1478,8 +1483,8 @@ fn vnext(@builtin(global_invocation_id) g: vec3<u32>) {
   let gr = gradAt(mainK(), s);
   let tn = normalize(vec2<f32>(-gr.y, gr.x));
   let bl = u.a.w;
-  let reach = array<f32, 3>(1.0, 1.5, 0.7);
-  for (var k = 0; k < 3; k++) {
+  let reach = array<f32, 4>(1.0, 1.5, 0.7, 2.0);
+  for (var k = 0; k < 4; k++) {
     let n = nearestOf(L & 1u, s + tn * bl * reach[k]);
     if (n == NONE || n == id || w5[n * SDW + 2u] != L || w5[n * SDW + 3u] == 0u) { continue; }
     let dv = vec2<f32>(bitcast<f32>(w5[n * SDW]), bitcast<f32>(w5[n * SDW + 1u])) - s;
@@ -1493,7 +1498,7 @@ fn vnext(@builtin(global_invocation_id) g: vec3<u32>) {
 @compute @workgroup_size(64)
 fn jstat(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x;
-  let T = u.m.w * u32(u.c.w);
+  let T = nSeeds();
   if (id >= T) { return; }
   let o = id * SDW;
   let t = b1[o + 4u];
@@ -1511,7 +1516,7 @@ fn jstat(@builtin(global_invocation_id) g: vec3<u32>) {
 @compute @workgroup_size(64)
 fn lmlist(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x;
-  let T = u.m.w * u32(u.c.w);
+  let T = nSeeds();
   if (id >= T || u.q.y <= 0.0 || b1[id * SDW + 3u] == 0u) { return; }
   let n = b2[id];
   let ang = bitcast<f32>(b2[T + id]);
@@ -1525,8 +1530,11 @@ fn lmlist(@builtin(global_invocation_id) g: vec3<u32>) {
   atomicStore(&w6[o + 1u], bitcast<u32>(p.y));
   atomicStore(&w6[o + 2u], bitcast<u32>(r));
   atomicStore(&w6[o + 3u], u32(u.q.w));
+  // (m3g: its score — its streets, and how acute its sharpest angle — for the top K)
+  atomicStore(&w6[o + 4u], bitcast<u32>(f32(n) + 3.1416 - min(ang, 3.1416)));
 }
-/** one thread a site: dropped (its radius negated) when it overlaps a bigger one — or an equal one listed first (w5) */
+/** one thread a site: dropped (its radius negated) when it overlaps a higher-scoring one, or isn't among the top
+ *  r.w (w5) */
 @compute @workgroup_size(64)
 fn lmprune(@builtin(global_invocation_id) g: vec3<u32>) {
   let i = g.x;
@@ -1535,20 +1543,26 @@ fn lmprune(@builtin(global_invocation_id) g: vec3<u32>) {
   let oi = 1u + i * LMW;
   let pi = vec2<f32>(bitcast<f32>(w5[oi]), bitcast<f32>(w5[oi + 1u]));
   let ri = abs(bitcast<f32>(w5[oi + 2u]));
+  let si = bitcast<f32>(w5[oi + 4u]);
+  var rank = 0u;
   for (var j = 0u; j < n; j++) {
     if (j == i) { continue; }
     let oj = 1u + j * LMW;
     let rj = abs(bitcast<f32>(w5[oj + 2u]));
-    if (distance(pi, vec2<f32>(bitcast<f32>(w5[oj]), bitcast<f32>(w5[oj + 1u]))) >= ri + rj) { continue; }
-    if (rj > ri || (rj == ri && j < i)) { w5[oi + 2u] = bitcast<u32>(-ri); return; }
+    let sj = bitcast<f32>(w5[oj + 4u]);
+    let above = sj > si || (sj == si && j < i);
+    if (above) { rank++; }
+    if (distance(pi, vec2<f32>(bitcast<f32>(w5[oj]), bitcast<f32>(w5[oj + 1u]))) < ri + rj && above) { w5[oi + 2u] = bitcast<u32>(-ri); return; }
   }
+  // (m3g: only the K busiest, most acute kept)
+  if (f32(rank) >= u.r.w) { w5[oi + 2u] = bitcast<u32>(-ri); }
 }
 /** one thread a seed with a street: the street clipped at every site — its start moved out to where it leaves one,
  *  its end in to where it enters one; inside one altogether, or through one, it's gone (w5 the seeds; b2 the sites) */
 @compute @workgroup_size(64)
 fn vclip(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x;
-  if (id >= u.m.w * u32(u.c.w) || u.q.y <= 0.0) { return; }
+  if (id >= nSeeds() || u.q.y <= 0.0) { return; }
   let o = id * SDW;
   if (w5[o + 3u] == 0u || w5[o + 4u] == NONE) { return; }
   var a = vec2<f32>(bitcast<f32>(w5[o + 8u]), bitcast<f32>(w5[o + 9u]));
@@ -1661,7 +1675,7 @@ fn gPos(t: u32) -> vec2<f32> { let d = gDims(); return (vec2<f32>(f32(t % d.x), 
 @compute @workgroup_size(64)
 fn gcov(@builtin(global_invocation_id) g: vec3<u32>) {
   let bi = g.x;
-  if (bi >= 3u * u.m.w * u32(u.c.w)) { return; }
+  if (bi >= 3u * nSeeds()) { return; }
   let o = bi * BQW;
   if (b1[o] == 0u) { return; }
   var v: array<vec2<f32>, 4>;
@@ -1870,4 +1884,142 @@ fn groad(@builtin(global_invocation_id) g: vec3<u32>) {
   let at = room(6u);
   if (at == NONE) { return; }
   ribbon(at, a, b, u.b.y * 0.5, C_MINOR);
+}
+
+// ==== milestone 3g: even contours (the mask smoothed, not the distance); streets grown line by line ==============
+/** (field mode 1) the smoothed blocked mask thresholded: the flood's seeds (r1 the smoothed mask; w5 the seeds) */
+@compute @workgroup_size(8, 8)
+fn mseed(@builtin(global_invocation_id) g: vec3<u32>) {
+  let x = i32(g.x); let y = i32(g.y);
+  if (x >= W() || y >= H()) { return; }
+  let i = ix(x, y);
+  w5[i] = select(NONE, pk(u32(x), u32(y), 0u), r1(i) > 0.5);
+}
+// Grown streets (Jobard–Lefer, a line a step): the snapped, thinned seeds on line 0 are live, the rest dormant. Line k's
+// live seeds march up ∇φ to line k + 1; each landing is a new seed there (appended past the lattice's), its street the
+// march. On line k + 1 a landing nearer than 0.6 block lengths to a lower one stops — its street ends at a T on the
+// line — and a dormant seed with no landing within 0.8 block lengths wakes: a new street where they spread apart, or
+// a strip with nothing below it. Seed word 11: 0 none, 1 dormant, 2 live, 3 landed (its word 7 its source until vnext).
+struct March { e: vec2<f32>, end: u32, ok: bool }
+/** from s on line L up the gradient in 2-cell steps: to line L + 1 (the crossing interpolated), to the ridge where φ
+ *  stops rising, or to the town's edge; not ok into water or a cliff, or past 2.5 levels' spacing (b4 φ) */
+fn marchUp(s: vec2<f32>, L: u32) -> March {
+  var m: March;
+  m.ok = false;
+  m.e = s;
+  m.end = NONE;
+  let g0 = gradAt(mainK(), s);
+  if (dot(g0, g0) < 1e-10) { return m; }
+  let most = 2.5 / length(g0);
+  var q = s;
+  var fq = fieldAt(mainK(), s);
+  for (var k = 0; k < 64; k++) {
+    if (distance(q, s) > most) { break; }
+    let gq = gradAt(mainK(), q);
+    if (dot(gq, gq) < 1e-10) { m.e = q; m.end = RIDGE; m.ok = true; break; }
+    let n = q + 2.0 * normalize(gq);
+    if (!inTown(n)) {
+      let up = normalize(n - q);
+      let rel = q - u.d.xy;
+      let b = dot(rel, up);
+      let disc = b * b - (dot(rel, rel) - u.d.z * u.d.z);
+      m.e = q + up * max(-b + sqrt(max(disc, 0.0)) - 0.5, 0.0);
+      m.end = EDGE;
+      m.ok = true;
+      break;
+    }
+    if (blockedAt(n)) { break; }
+    let fn1 = fieldAt(mainK(), n);
+    if (fn1 >= f32(L + 1u)) { m.e = mix(q, n, clamp((f32(L + 1u) - fq) / max(fn1 - fq, 1e-6), 0.0, 1.0)); m.end = LINE_END; m.ok = true; break; }
+    if (fn1 <= fq + 1e-3) { m.e = q; m.end = RIDGE; m.ok = true; break; }
+    q = n;
+    fq = fn1;
+  }
+  if (distance(m.e, s) < 1.0) { m.ok = false; }
+  return m;
+}
+/** one thread a seed slot: line 0's seeds live, the others' dormant, the grown slots emptied (w5 the seeds) */
+@compute @workgroup_size(64)
+fn ginit(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  if (id >= nSeeds()) { return; }
+  let o = id * SDW;
+  if (id >= u.m.w * u32(u.c.w)) { w5[o + 3u] = 0u; w5[o + 4u] = NONE; w5[o + 11u] = 0u; return; }
+  w5[o + 4u] = NONE;
+  if (w5[o + 3u] == 0u) { w5[o + 11u] = 0u; return; }
+  if (w5[o + 2u] == 0u) { w5[o + 11u] = 2u; } else { w5[o + 3u] = 0u; w5[o + 11u] = 1u; }
+}
+/** one thread a seed slot: line n.z's live seeds marched up to the next line — a landing a new seed (w5 the seeds,
+ *  w6 the grown seeds' count; b4 φ) */
+@compute @workgroup_size(64)
+fn gmarch(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  if (id >= nSeeds()) { return; }
+  let o = id * SDW;
+  if (w5[o + 3u] == 0u || w5[o + 2u] != u.n.z) { return; }
+  let s = vec2<f32>(bitcast<f32>(w5[o]), bitcast<f32>(w5[o + 1u]));
+  let L = w5[o + 2u];
+  let m = marchUp(s, L);
+  if (!m.ok) { return; }
+  var end = m.end;
+  if (end == LINE_END) {
+    let T = u.m.w * u32(u.c.w);
+    let k = atomicAdd(&w6[0], 1u);
+    if (k < T) {
+      let nid = T + k;
+      let no = nid * SDW;
+      set5(no, m.e.x);
+      set5(no + 1u, m.e.y);
+      w5[no + 2u] = L + 1u;
+      w5[no + 3u] = 1u;
+      w5[no + 4u] = NONE;
+      w5[no + 7u] = id;
+      w5[no + 11u] = 3u;
+      end = nid;
+    }
+  }
+  w5[o + 4u] = end;
+  set5(o + 5u, m.e.x);
+  set5(o + 6u, m.e.y);
+}
+fn ggDims() -> vec2<u32> { let cs = 0.8 * u.a.w; return vec2<u32>(u32(f32(W()) / cs) + 2u, u32(f32(H()) * ROW_H / cs) + 2u); }
+fn ggCell(p: vec2<f32>) -> vec2<i32> { return vec2<i32>(floor(p / (0.8 * u.a.w))); }
+fn ggAt(c: vec2<i32>) -> u32 { let d = ggDims(); let q = vec2<u32>(clamp(c, vec2<i32>(0), vec2<i32>(d) - 1)); return q.y * d.x + q.x; }
+/** one thread a seed slot: line n.z's landings claim their grid cell — the lowest id (r1 the seeds; w6 the grid) */
+@compute @workgroup_size(64)
+fn gclaim(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  if (id >= nSeeds()) { return; }
+  let o = id * SDW;
+  if (b1[o + 3u] == 0u || b1[o + 11u] != 3u || b1[o + 2u] != u.n.z) { return; }
+  atomicMin(&w6[ggAt(ggCell(sdPos(id)))], id);
+}
+/** one thread a seed slot on line n.z: a landing too near a lower one stops (its source's street ends at a T on the
+ *  line); a dormant seed with no landing near wakes (w5 the seeds; b2 the grid) */
+@compute @workgroup_size(64)
+fn gkeep(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  if (id >= nSeeds()) { return; }
+  let o = id * SDW;
+  if (w5[o + 2u] != u.n.z) { return; }
+  let st = w5[o + 11u];
+  let landed = st == 3u && w5[o + 3u] == 1u;
+  if (!landed && st != 1u) { return; }
+  let p = vec2<f32>(bitcast<f32>(w5[o]), bitcast<f32>(w5[o + 1u]));
+  let c = ggCell(p);
+  let r = select(0.8, 0.6, landed) * u.a.w;
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      let v = b2[ggAt(c + vec2<i32>(dx, dy))];
+      if (v == NONE || v == id || (landed && v > id)) { continue; }
+      let q = vec2<f32>(bitcast<f32>(w5[v * SDW]), bitcast<f32>(w5[v * SDW + 1u]));
+      if (distance(p, q) >= r) { continue; }
+      if (landed) {
+        w5[o + 3u] = 0u;
+        w5[w5[o + 7u] * SDW + 4u] = LINE_END;
+      }
+      return;
+    }
+  }
+  if (!landed) { w5[o + 3u] = 1u; w5[o + 11u] = 2u; }
 }
