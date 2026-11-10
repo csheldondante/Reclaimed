@@ -8,8 +8,8 @@
 import type { Settlement } from '../api/contracts/settlement';
 import type { CityLots } from '../api/contracts/citygen';
 import { ROW_H } from '../world/lattice';
-import { CityGen, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, type StreetParams, type StreetTimes } from './gpu';
-import type { StaticClaims, StaticGrid, GridPlace } from '../sim/static-claims';
+import { CityGen, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes } from './gpu';
+import type { StaticClaims, StaticGrid, GridPlace, OwnedSlot } from '../sim/static-claims';
 import { cellAt } from '../world/lattice';
 import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
 import commonWgsl from '../shaders/common.wgsl?raw';
@@ -20,6 +20,12 @@ import { cityParams, scaled } from './params';
 const RADIUS: Record<Settlement['size'], number> = { camp: 30, hamlet: 48, village: 72, town: 120, city: 150 };
 /** (M4b) the population field's peak density by size; the roads' tone (1 dirt for the small, 2 stone for the big) */
 const DENSITY: Record<Settlement['size'], number> = { camp: 0.35, hamlet: 0.45, village: 0.6, town: 0.8, city: 1 };
+/** (M4b) the population a grid needs (its peak density): below it a settlement is a hamlet, farms or nothing — no grid
+ *  (the user: "we can ignore it where there is no population or low enough not to necessitate a grid") */
+const GRID_DENSITY = 0.6;
+export function hasGrid(size: Settlement['size']): boolean {
+  return DENSITY[size] >= GRID_DENSITY;
+}
 const TONE: Record<Settlement['size'], number> = { camp: 1, hamlet: 1, village: 1, town: 2, city: 2 };
 /** the box's half side (× the radius): the lab's sites, 320 columns round a town of 120 — the supercells' limit
  *  (0.9 radii ± 35%) inside it */
@@ -75,6 +81,8 @@ export interface FieldTownIO {
   statics(): StaticClaims | null;
   plants: { globals: GPUBuffer; veg: GPUBuffer; vegNext: GPUBuffer };
   reach(): { markFrom(stores: [number, number]): Promise<number>; marks: GPUBuffer; planSpans: GPUBuffer; w: number; h: number };
+  /** the reach's turn: one town's solve at a time */
+  reachTurn(f: () => Promise<void>): Promise<void>;
   /** the atlas's raw ground over a box into a buffer (Atlas.rawGroundGpu); the sea's level (world z) */
   rawGround(x0: number, y0: number, w: number, h: number, out: GPUBuffer): Promise<void>;
   sea: number;
@@ -103,6 +111,8 @@ export class FieldTown {
   private raw: GPUBuffer;
   /** (M4b) its claims (GPU-owned), the bare pass, the reach's last rounds, the records an edit damaged */
   private grid: StaticGrid | null = null;
+  private slot: OwnedSlot;
+  private gone = false;
   private bare: ComputeKernel;
   private bareU: GPUBuffer;
   reachRounds = 0;
@@ -125,7 +135,13 @@ export class FieldTown {
     const local = ([x, y]: readonly [number, number]): [number, number] => [x - ox0, y - oy0];
     const centre = local(site.at);
     const town = { density: DENSITY[site.size], purpose: site.purpose !== undefined ? (POP_PURPOSE[site.purpose] ?? -1) : -1 };
-    this.gen = new CityGen(io.device, { w: box.w, h: box.h, ground: { kind: 'raw', raw: this.raw, sea: io.sea }, centre, town });
+    // (M4b: its claim grid in a slot of the static claims' arena — the slot its owner's while it lives)
+    const st = io.statics();
+    if (!st) throw new Error('citygen: no static claims to own the town\'s columns (the level has no integrity registry)');
+    const slot = st.ownedSlot();
+    if (!slot) throw new Error(`citygen: no claim slot free for ${site.id} (FieldTowns frees one first)`);
+    this.slot = slot;
+    this.gen = new CityGen(io.device, { w: box.w, h: box.h, ground: { kind: 'raw', raw: this.raw, sea: io.sea }, centre, town, claimInto: slot.binding, vertRoom: TOWN_VERT_ROOM });
     // (each atlas road from the town's centre out: its points every 4 units, from the one nearest the centre, as far as
     // the box — the GPU cuts it at the box's edge and the town's limit)
     const R2 = Math.hypot(box.w, box.h * ROW_H);
@@ -156,7 +172,10 @@ export class FieldTown {
     this.seed = road.reduce((b, p) => (Math.abs(Math.hypot(p[0] - centre[0], p[1] - centre[1]) - box.core) < Math.abs(Math.hypot(b[0] - centre[0], b[1] - centre[1]) - box.core) ? p : b), road[0]);
     this.made = io
       .rawGround(box.x0, box.y0, box.w, box.h, this.raw)
-      .then(() => this.gen.run(this.params, 'field'))
+      .then(() => {
+        if (this.gone) throw new DOMException('citygen: the town was let go', 'AbortError');
+        return this.gen.run(this.params, 'field');
+      })
       .then((t) => {
         this.times = t;
         this.claim();
@@ -179,8 +198,9 @@ export class FieldTown {
   private claim(): void {
     const st = this.io.statics();
     if (!st) throw new Error('citygen: no static claims to own the town\'s columns (the level has no integrity registry)');
+    if (this.gone) return;
     this.grid = st.gpuGrid(`citygen ${this.site.id}`, OWNER_FIELD_TOWN, () => this.gridPlace(), {
-      buf: this.gen.claimGrid,
+      slot: this.slot,
       w: this.box.w,
       h: this.box.h,
       maxKey: REC_LM + LM_ROOM + 1,
@@ -224,14 +244,20 @@ export class FieldTown {
     if (this.reachBusy) return;
     this.reachBusy = true;
     try {
-      const r = this.io.reach();
-      const p = this.gridPlace();
-      const [cx, cy] = cellAt(this.seed[0] + p.dx, this.seed[1] + p.dy * ROW_H);
-      if (cx < 0 || cy < 0 || cx >= r.w || cy >= r.h) return;
-      // (the decks as the reach's plan solid: walked, though not in the world's columns)
-      this.gen.deckSpans(r.planSpans, p.dx, p.dy, p.dz, r.w, r.h);
-      this.reachRounds = await r.markFrom([cx, cy]);
-      await this.gen.markReach(r.marks, p.dx, p.dy, r.w, r.h);
+      // (the window's one reach, a town at a time: its decks written, solved from its road, its marks read)
+      await this.io.reachTurn(async () => {
+        const r = this.io.reach();
+        const p = this.gridPlace();
+        const [cx, cy] = cellAt(this.seed[0] + p.dx, this.seed[1] + p.dy * ROW_H);
+        if (this.gone || !this.grid || cx < 0 || cy < 0 || cx >= r.w || cy >= r.h) return;
+        // (the decks as the reach's plan solid: walked, though not in the world's columns)
+        this.gen.deckSpans(r.planSpans, p.dx, p.dy, p.dz, r.w, r.h);
+        this.reachRounds = await r.markFrom([cx, cy]);
+        if (!this.gone) await this.gen.markReach(r.marks, p.dx, p.dy, r.w, r.h);
+      });
+    } catch (e) {
+      // (let go meanwhile: its generator's gone — nothing to show)
+      if (!this.gone) throw e;
     } finally {
       this.reachBusy = false;
     }
@@ -253,8 +279,14 @@ export class FieldTown {
     return { records: this.gen.lotRecords, counts: this.gen.lotCounts, progress: this.gen.progress, place: this.xform };
   }
 
+  /** the bytes it holds on the GPU (its generator's buffers and its raw ground; its claim slot is the arena's) */
+  get bytes(): number {
+    return this.gen.bytes + this.raw.size;
+  }
+
   dispose(): void {
-    if (this.grid) this.io.statics()?.removeOwned(this.grid);
+    this.gone = true;
+    this.io.statics()?.freeSlot(this.slot);
     this.bareU.destroy();
     this.io.removeMesh(this.gen.args);
     this.gen.dispose();

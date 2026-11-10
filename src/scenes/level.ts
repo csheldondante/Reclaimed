@@ -70,7 +70,8 @@ import { ShipsView } from '../settle/shipsview';
 import { Fortress } from '../fortress/fortress';
 import { FortressBar } from '../fortress/ui';
 import type { StreetLabControl } from '../streetlab/control';
-import { fieldTownBox, type FieldTown } from '../citygen/town';
+import { fieldTownBox, hasGrid } from '../citygen/town';
+import type { FieldTowns } from '../citygen/towns';
 import type { FortressFollow } from '../fortress/follow';
 import { FortressCrowd } from '../fortress/crowd';
 import type { FortressRaid } from '../fortress/raiders';
@@ -96,7 +97,7 @@ export interface LevelOptions {
   /** (create's: land the level loaded — LevelDef.load, the lab's town fixture) */
   made?: LoadedLand;
   /** (create's, for an atlas level: the atlas, the window it made, and where that window is) */
-  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array; settlements?: Settlements; startTown?: string; fieldTown?: string };
+  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array; settlements?: Settlements; startTown?: string; fieldTowns?: string[] };
 }
 
 /**
@@ -314,8 +315,8 @@ export class LevelScene implements Scene {
   noiseLab?: NoiseLabControl;
   /** (street lab, m1) its panel, its GPU runs and the display (level.streetLab) */
   streetLab?: StreetLabControl;
-  /** (citygen M4a, ?citygen=fields) the start town made by the GPU field generator (citygen/town.ts) */
-  fieldTown?: FieldTown;
+  /** (citygen M4b, ?citygen=fields) the towns made by the GPU field generator, streamed (citygen/towns.ts) */
+  fieldTowns?: FieldTowns;
   /** sandbox: a smash drag in progress */
   smashing = false;
   /** (round 83) flying: a drag turns the view — where the pointer was */
@@ -526,14 +527,14 @@ export class LevelScene implements Scene {
       // (round 90: or the viewer's range setting, the phone tier's default wider — scenes/range.ts)
       // (round 128m townlab C; onetown: the window holds the fortress's town's site box — its grid, its reach, its claims —
       // from the start, and keeps it: startFortress asks the Streamer to keep it, scenes/streamer/keep.ts)
-      // (citygen M4a, ?citygen=fields: the start town made by the GPU field generator — nothing of the old planner's for
-      // it; M4b: made from the atlas's raw ground over its box on the GPU, the window its usual size wherever it is)
+      // (citygen M4b, ?citygen=fields: every settlement whose population warrants a grid (a village and up) made by the
+      // GPU field generator — nothing of the old planner's for it, the atlas's stamps cleared in its core — streamed in
+      // as the window nears it (citygen/towns.ts FieldTowns); smaller ones keep the old planner's hamlets and farms)
       const cg = host.params.get('citygen');
-      if (cg !== null && cg !== 'fields') throw new Error(`?citygen= must be fields (the start town by the GPU field generator)`);
-      if (cg && !(settlements && startTown)) throw new Error('?citygen=fields needs the settlements and a start town: ?town=1 or ?town=<id>');
+      if (cg !== null && cg !== 'fields') throw new Error(`?citygen= must be fields (towns by the GPU field generator)`);
+      if (cg && !settlements) throw new Error('?citygen=fields needs the settlements (not with ?towns=0)');
       if (cg && host.params.get('fortress') === '1') throw new Error('?citygen=fields: not with ?fortress=1 (the fortress edits the old planner\'s town)');
-      const fb = cg ? fieldTownBox(settlements!.settlement(startTown!)!) : null;
-      const fieldTown = cg ? settlements!.byFields(startTown!, fb!.core).rec : null;
+      const fieldTowns = cg ? settlements!.byFields((s) => (hasGrid(s.rec.size) ? fieldTownBox(s.rec).core : null)).map((s) => s.rec.id) : undefined;
       const keepBox = host.params.get('fortress') === '1' && startTown ? settlements!.seeds.find((x) => x.rec.id === startTown)!.box : null;
       const W = Math.max(keepBox?.w ?? 0, atlasRange(host.params));
       // (round 93, ?winh=: an experiment — rows other than the side)
@@ -548,7 +549,7 @@ export class LevelScene implements Scene {
       atlas.profiler = host.profiler;
       // (round 102: the tile pacer's GPU budget by the timestamps, when they're read)
       atlas.pacer.profiler = host.profiler;
-      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements, startTown, fieldTown: fieldTown?.id } };
+      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements, startTown, fieldTowns } };
     }
     // (round 128m, townlab) land the level loads instead of making (the lab's `town` fixture)
     if (!opts.map && level.load) {
@@ -723,7 +724,7 @@ export class LevelScene implements Scene {
     this.stationsBar?.dispose();
     this.noiseLab?.dispose();
     this.streetLab?.dispose();
-    this.fieldTown?.dispose();
+    this.fieldTowns?.dispose();
     this.atlasCtl?.remove();
     this.turnCtl?.remove();
     this.compass?.remove();

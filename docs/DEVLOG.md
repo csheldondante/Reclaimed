@@ -21040,3 +21040,24 @@ or stone colored (but a bit lighter) and narrower."
   red depending on the window: lots across the south river branch, and a few on slopes over a step. The first sampler
   (one point, 1.5 out) flagged 30, mostly where it landed on a neighbour's roof. Six points on the street fixed that.
 - GPU: the whole town 5.34 ms median (4.59–6.21) with the claim passes, headless D3D11.
+
+## 2026-11-10 — citygen M4b step 4: towns stream like land
+
+The user: towns appear as the window nears a population centre, nothing where the population is too low; streaming is
+the default.
+- **Which towns:** village and up (a peak density of 0.6 or more): 140 sites. `Settlements.byFields` takes them all at
+  load: one pass over the ways for their roads and one to clear their cores.
+- **`FieldTowns`** makes the nearest town whose box is within 128 columns of the window (one at a time) and lets go any
+  past 448. Muru goes the same way.
+- **The static claims' arena:** 4 slots of 6.4 MB and a table at its head. colapply's orphan pass loops the table; its
+  damage pass takes a table entry. No CPU spans.
+- **Memory:** 29.8 MB of generator buffers per town plus its claim slot (CG18).
+- **Pan Muru → Bumku → 700 units on** (headless, 55 units/s, phone size):
+  - Bumku made at 2.7–3.1 s. Muru let go at 17.7 s. The second town takes 610 ms to be made with the raw ground paced
+    by the tile gate (62–130 ms unpaced).
+  - Frame intervals: p50 10 ms, p95 10.2, p99 19.5.
+  - The one 740–800 ms spike comes 1.2–2.4 s in, and the same pan without citygen has it (760 ms at 1.3 s): it's the
+    streamer's.
+  - Unpaced, the generation added a 69 ms frame when Bumku was made. Paced, nothing over 41 ms.
+  - So background pre-generation isn't needed on the desktop. The phone needs measuring (CG19).
+- Sequence: scratchpad citygen/m4b/pan-sequence.png, pan.gif.

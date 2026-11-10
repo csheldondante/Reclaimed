@@ -4152,8 +4152,10 @@ projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 w
   - It is held by the orphan pass (colapply binding 6, Params gw/gh/gOn).
   - It is checked after edits by `gridDamage` (owners back, ≤ 64 words).
   - `StaticSet.gpuOwns(x, y)` keeps the CPU orphan paths off its box.
-  - One GPU-owned grid at a time. The registry stays the truth for CPU instances; for a GPU-owned grid the truth is
-    its buffer.
+  - (step 4) GPU-owned grids live in the static claims' arena (`ownedSlot`, 4 slots of 6.4 MB, a table at its head
+    read by colapply's orphan and damage passes). The registry stays the truth for CPU instances; for a GPU-owned grid
+    the truth is its slot.
+- `FieldTowns` (citygen/towns.ts) streams the field towns: made as their box nears the window, let go far behind.
 - citygen writes the plants' field on its claimed columns as they're claimed (bare.wgsl: veg, vegNext), as the atlas's
   BARE stamp does for land made with a town.
 - `FortressReachGpu.markFrom(stores)` → `marks` (a word a box column) and `planSpans` (the plan solid, GPU-writable)

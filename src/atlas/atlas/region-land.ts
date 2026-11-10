@@ -129,8 +129,8 @@ export async function rawGround(atl: Atlas, x0: number, y0: number, w: number, h
  * (citygen M4b) The raw ground over a box (whole 64-column tiles, y0 even) into `out` on the GPU, nothing read back:
  * tile by tile (row-major tiles, each 64 × 64 columns row-major), 4 words a column — its top (world z), the water on
  * it, its top's material, its plants (finish.wgsl mode 1: after the ways, before the stamps). The same ground the
- * window's land is made of (rawGround's, which reads it back for the old planner). Resolves once every tile's passes
- * are submitted.
+ * window's land is made of (rawGround's, which reads it back for the old planner), paced by the tile gate. Resolves
+ * once every tile's passes are submitted.
  */
 export async function rawGroundGpu(atl: Atlas, x0: number, y0: number, w: number, h: number, out: GPUBuffer): Promise<void> {
   const T = 64;
@@ -142,10 +142,11 @@ export async function rawGroundGpu(atl: Atlas, x0: number, y0: number, w: number
   for (let ty = 0; ty < h; ty += T) for (let tX = 0; tX < w; tX += T) tiles.push([tX, ty]);
   await Promise.all(
     tiles.map(async ([tX, ty]) => {
-      const c = await atl.columnsGpu(x0 + tX, y0 + ty, T, T, false);
+      // (paced: each tile's columns and finish the atlas's tile gate's turn — a town streamed in shouldn't hitch a frame)
+      const c = await atl.columnsGpu(x0 + tX, y0 + ty, T, T, true);
       try {
         const k = (ty / T) * tx + tX / T;
-        await atl.finisher.run(c, x0 + tX, y0 + ty, waysOf(atl, x0 + tX, y0 + ty, T, T), ventsIn(atl, x0 + tX, y0 + ty, T, T), GEYSER_STENCIL, null, null, atl.profiler, undefined, FINISH_TILE, { buf: out, off: k * T * T * 16 });
+        await atl.finisher.run(c, x0 + tX, y0 + ty, waysOf(atl, x0 + tX, y0 + ty, T, T), ventsIn(atl, x0 + tX, y0 + ty, T, T), GEYSER_STENCIL, null, null, atl.profiler, () => tileGate(atl), FINISH_TILE, { buf: out, off: k * T * T * 16 });
       } finally {
         c.done();
       }

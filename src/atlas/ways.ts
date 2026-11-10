@@ -251,13 +251,35 @@ export function buildWays(inp: WayInput): Ways {
 const binKey = (bx: number, by: number) => by * 65536 + bx;
 
 /**
- * (citygen M4a) The ways without what's within r of (x, y) — the roads' points and site `site`'s plaza — binned again: a
+ * (citygen M4a) The ways without what's within each core (x, y, r) — the roads' points and its site's plaza — binned again: a
  * town made by the field generator lays its own roads there (its arterials over the same lines, its bridges where they
  * meet water), so the atlas's stamps (a graded fill, a flat disc) don't dam its river or double its roads. Before the
  * land there is made.
  */
-export function waysWithout(ways: Ways, x: number, y: number, r: number, site: number, W: number, H: number): Ways {
-  const keep = ways.points.filter((p) => p.way !== -1 - site && Math.hypot(wrapD(p.x - x, W), wrapD(p.y - y, H)) > r);
+export function waysWithout(ways: Ways, cores: readonly { x: number; y: number; r: number; site: number }[], W: number, H: number): Ways {
+  // (the cores binned CORE_BIN apart: a point looks at the bins round it, not every core)
+  const CORE_BIN = 128;
+  const nbx = Math.ceil(W / CORE_BIN);
+  const nby = Math.ceil(H / CORE_BIN);
+  const cbins = new Map<number, number[]>();
+  cores.forEach((c, k) => {
+    if (c.r > CORE_BIN) throw new Error(`waysWithout: a core of ${c.r} (bins of ${CORE_BIN})`);
+    const key = Math.floor((((c.y % H) + H) % H) / CORE_BIN) * nbx + Math.floor((((c.x % W) + W) % W) / CORE_BIN);
+    (cbins.get(key) ?? cbins.set(key, []).get(key)!).push(k);
+  });
+  const plazas = new Set(cores.map((c) => -1 - c.site));
+  const inCore = (p: WayPoint) => {
+    const bx = Math.floor(p.x / CORE_BIN);
+    const by = Math.floor(p.y / CORE_BIN);
+    for (let j = -1; j <= 1; j++)
+      for (let i = -1; i <= 1; i++)
+        for (const k of cbins.get((((by + j) % nby) + nby) % nby * nbx + ((((bx + i) % nbx) + nbx) % nbx)) ?? []) {
+          const c = cores[k];
+          if (Math.hypot(wrapD(p.x - c.x, W), wrapD(p.y - c.y, H)) <= c.r) return true;
+        }
+    return false;
+  };
+  const keep = ways.points.filter((p) => !plazas.has(p.way) && !inCore(p));
   const bins = new Map<number, number[]>();
   const counts = [0, 0, 0, 0, 0, 0];
   keep.forEach((p, k) => {

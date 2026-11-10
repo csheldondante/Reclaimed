@@ -21,7 +21,7 @@
 // The registry sees these instances through the StaticSet below: anchored to their grid (a slide moves nothing on the
 // CPU but where the grid lies), judged by a read of the columns only where their land was written before the read was
 // asked (the region's epoch here, the registry's epoch counter), never orphans.
-import type { ColumnApply, GpuColumns, GridClaimJob, OwnedGridJob } from '../game/colapply';
+import type { ColumnApply, GpuColumns, GridClaimJob, OwnedArenaJob } from '../game/colapply';
 import { freeSpans, type ExternalCol, type ExternalInstance, type ExternalRegistry, type OwnerId, type StaticSet } from './external';
 import { ROW_H } from '../world/lattice';
 import { readColumn, type Interval, type PackedWorld } from '../world/layout';
@@ -101,13 +101,25 @@ class StaticInstance implements ExternalInstance {
  * the largest).
  */
 export interface OwnedGridSource {
-  buf: GPUBuffer;
+  /** its slot of the arena (StaticClaims.ownedSlot) — its owner writes the grid there */
+  slot: OwnedSlot;
   w: number;
   h: number;
   maxKey: number;
   claimed?(rects: [number, number, number, number][], place: GridPlace): void;
   damaged?(keys: number[]): void;
 }
+
+/** (M4b) a slot of the GPU-owned grids' arena: its binding (the grid written there) and its index */
+export interface OwnedSlot {
+  binding: GPUBufferBinding;
+  index: number;
+}
+/** the arena: its table's words at its head (colapply.wgsl ownedSpanOf: a count, then 8 words a grid from word 16),
+ *  then OWN_SLOTS slots of OWN_SLOT_BYTES (a city's box — 448 × 448 columns, 8 words each) */
+const OWN_HEAD_BYTES = 512;
+export const OWN_SLOTS = 4;
+export const OWN_SLOT_BYTES = 448 * 448 * 8 * 4;
 
 /** A static grid: its place in the window, its things, its spans' buffer on the GPU. */
 export class StaticGrid {
@@ -118,7 +130,7 @@ export class StaticGrid {
   readonly byCol = new Map<number, StaticInstance[]>();
   /** its things' local bounds [x0, y0, x1, y1) (columns) */
   bounds: [number, number, number, number] = [0, 0, 0, 0];
-  buf: GPUBuffer | null = null;
+  buf: GPUBuffer | GPUBufferBinding | null = null;
   nCols = 0;
   /** the buffer is out of date with `things` */
   stale = true;
@@ -157,10 +169,12 @@ export class StaticClaims implements StaticSet {
    * columns over the window's written land are claimed now. One at most (the orphan pass reads one).
    */
   gpuGrid(name: string, owner: OwnerId, place: () => GridPlace, src: OwnedGridSource): StaticGrid {
-    if (this.grids.some((g) => g.owned)) throw new Error('static claims: one GPU-owned grid at most (the orphan pass reads one)');
+    if (this.arenaUsed[src.slot.index] !== 'taken') throw new Error(`static claims: slot ${src.slot.index} isn't taken`);
+    if (src.w * src.h * 32 > OWN_SLOT_BYTES) throw new Error(`static claims: a ${src.w} x ${src.h} grid is past a slot`);
     const g = this.grid(name, owner, place);
+    this.arenaUsed[src.slot.index] = g;
     g.owned = src;
-    g.buf = src.buf;
+    g.buf = { ...src.slot.binding, size: src.w * src.h * 32 };
     g.nCols = src.w * src.h;
     g.stale = false;
     g.bounds = [0, 0, src.w, src.h];
@@ -168,12 +182,54 @@ export class StaticClaims implements StaticSet {
     return g;
   }
 
-  /** (M4b) the GPU-owned grid as the orphan pass reads it (null: none) */
-  ownedJob(): OwnedGridJob | null {
-    const g = this.grids.find((x) => x.owned);
-    if (!g) return null;
-    const p = g.place();
-    return { buf: g.buf!, nCols: g.nCols, gx: p.dx, gy: p.dy, gz: p.dz, w: g.owned!.w, h: g.owned!.h };
+  private arena: GPUBuffer | null = null;
+  private arenaUsed: (StaticGrid | 'taken' | null)[] = new Array(OWN_SLOTS).fill(null);
+  /**
+   * (M4b) A slot of the GPU-owned grids' arena (made at the first): its owner writes its grid there, then gpuGrid. Null:
+   * every slot taken. Its bytes: OWN_SLOT_BYTES.
+   */
+  ownedSlot(): OwnedSlot | null {
+    const k = this.arenaUsed.indexOf(null);
+    if (k < 0) return null;
+    this.arena ??= this.io.device.createBuffer({ label: 'static claims owned arena', size: OWN_HEAD_BYTES + OWN_SLOTS * OWN_SLOT_BYTES, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    this.arenaUsed[k] = 'taken';
+    return { binding: { buffer: this.arena, offset: OWN_HEAD_BYTES + k * OWN_SLOT_BYTES, size: OWN_SLOT_BYTES }, index: k };
+  }
+  /** (M4b) the arena's free slots */
+  freeSlots(): number {
+    return this.arenaUsed.filter((x) => x === null).length;
+  }
+  /** (M4b) a slot handed back (its grid removed first, if it had one) */
+  freeSlot(s: OwnedSlot): void {
+    const g = this.arenaUsed[s.index];
+    if (g && g !== 'taken') this.removeOwned(g);
+    this.arenaUsed[s.index] = null;
+  }
+
+  /** the GPU-owned grids in table order */
+  private ownedGrids(): StaticGrid[] {
+    return this.grids.filter((g) => g.owned);
+  }
+  /** (M4b) the GPU-owned grids as the orphan pass and the damage check read them: the arena and its table now (each
+   *  grid's place, size and base; colapply.wgsl ownedSpanOf). Null: none */
+  ownedJob(): OwnedArenaJob | null {
+    const gs = this.ownedGrids();
+    if (!gs.length || !this.arena) return null;
+    const t = new Uint32Array(OWN_HEAD_BYTES / 4);
+    const ti = new Int32Array(t.buffer);
+    const tf = new Float32Array(t.buffer);
+    t[0] = gs.length;
+    gs.forEach((g, e) => {
+      const p = g.place();
+      const o = 16 + e * 8;
+      ti[o] = p.dx;
+      ti[o + 1] = p.dy;
+      t[o + 2] = g.owned!.w;
+      t[o + 3] = g.owned!.h;
+      tf[o + 4] = p.dz;
+      t[o + 5] = (g.owned!.slot.binding.offset ?? 0) / 4;
+    });
+    return { buf: this.arena, table: t };
   }
 
   /** (M4b) whether window column (x, y) is in a GPU-owned grid's box */
@@ -192,28 +248,29 @@ export class StaticClaims implements StaticSet {
    * on the GPU, their owners told the keys damaged (a few words read back, after the edit).
    */
   damage(boxes: [number, number, number, number][]): void {
-    for (const g of this.grids) {
-      if (!g.owned?.damaged) continue;
+    const gs = this.ownedGrids();
+    gs.forEach((g, e) => {
+      if (!g.owned?.damaged) return;
       const p = g.place();
       const rects: [number, number, number, number][] = [];
       for (const [x0, y0, x1, y1] of boxes) {
         const r: [number, number, number, number] = [Math.max(Math.floor(x0) - 1, p.dx), Math.max(Math.floor(y0 / ROW_H) - 1, p.dy), Math.min(Math.ceil(x1) + 2, p.dx + g.owned.w), Math.min(Math.ceil(y1 / ROW_H) + 2, p.dy + g.owned.h)];
         if (r[2] > r[0] && r[3] > r[1]) rects.push(r);
       }
-      if (!rects.length || this.io.held()) continue;
+      if (!rects.length || this.io.held()) return;
       const job = this.ownedJob()!;
       const src = g.owned;
       this.damageBusy = this.damageBusy
-        .then(() => this.io.apply().gridDamage(this.io.columns(), job, rects, src.maxKey))
+        .then(() => this.io.apply().gridDamage(this.io.columns(), job, e, rects, src.maxKey))
         .then((keys) => keys.length && src.damaged!(keys));
-    }
+    });
   }
 
   /** a grid gone (a settlement dropped): its things let go where they lie (to air), its buffer freed */
   remove(g: StaticGrid): void {
     if (g.owned) throw new Error('static claims: a GPU-owned grid is its owner\'s to remove (removeOwned)');
     this.set(g, []);
-    g.buf?.destroy();
+    if (g.buf instanceof GPUBuffer) g.buf.destroy();
     g.buf = null;
     this.grids = this.grids.filter((x) => x !== g);
     this.owed.delete(g);
@@ -450,8 +507,8 @@ export class StaticClaims implements StaticSet {
       words[i * 4 + 3] = s - first;
       i++;
     }
-    if (!g.buf || g.buf.size < words.byteLength) {
-      g.buf?.destroy();
+    if (!(g.buf instanceof GPUBuffer) || g.buf.size < words.byteLength) {
+      if (g.buf instanceof GPUBuffer) g.buf.destroy();
       g.buf = this.io.device.createBuffer({ label: `static claims ${g.name}`, size: Math.max(256, words.byteLength * 2), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     }
     this.io.device.queue.writeBuffer(g.buf, 0, words);
@@ -541,13 +598,16 @@ export class StaticClaims implements StaticSet {
   /** (M4b) a GPU-owned grid gone (its town disposed): no longer claimed nor held — its claims left where they lie
    *  become orphans at the next orphan pass (their fallback material) */
   removeOwned(g: StaticGrid): void {
+    const k = this.arenaUsed.indexOf(g);
+    if (k >= 0) this.arenaUsed[k] = 'taken';
     this.grids = this.grids.filter((x) => x !== g);
     this.owed.delete(g);
     this.stats.grids = this.grids.length;
   }
 
   dispose(): void {
-    for (const g of this.grids) if (!g.owned) g.buf?.destroy();
+    for (const g of this.grids) if (!g.owned && g.buf instanceof GPUBuffer) g.buf.destroy();
+    this.arena?.destroy();
     this.grids = [];
     this.byId.clear();
   }

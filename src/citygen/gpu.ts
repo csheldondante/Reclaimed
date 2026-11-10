@@ -172,6 +172,10 @@ export interface StreetWorld {
   ground: WindowGround | RawGround;
   /** (M4b) its population field's inputs; none: the field off */
   town?: TownInputs;
+  /** (M4b) where its claim grid is written (a slot of the static claims' arena); none: its own buffer */
+  claimInto?: GPUBufferBinding;
+  /** (M4b) its mesh's room (vertices; VERT_ROOM by default) */
+  vertRoom?: number;
   /** the town's centre (the grid's world units: its first column's corner at 0, 0) */
   centre: [number, number];
 }
@@ -213,6 +217,8 @@ export const RECW = 24;
 export const REC_LM = LOT_ROOM;
 export const LM_ROOM = 64;
 const VERT_ROOM = 1_200_000;
+/** (M4b) a game town's mesh room (vertices): Muru makes ~31 000, a city more — the lab keeps VERT_ROOM for its sliders */
+export const TOWN_VERT_ROOM = 160_000;
 /** conflict rounds between the traces (a greedy independent set: even, so the kept end in AL0) */
 const MIS_ROUNDS = 4;
 /** (m3d) merge rounds for the bad blocks */
@@ -244,7 +250,7 @@ interface Uni {
   /** a boxed pass's first column */
   box?: [number, number];
 }
-type Bufs = Partial<Record<1 | 2 | 3 | 4 | 5 | 6 | 7, GPUBuffer>>;
+type Bufs = Partial<Record<1 | 2 | 3 | 4 | 5 | 6 | 7, GPUBuffer | GPUBufferBinding>>;
 
 export class CityGen {
   readonly verts: GPUBuffer;
@@ -255,7 +261,7 @@ export class CityGen {
   readonly progress: GPUBuffer;
   /** (M4b) the town's claim grid (colapply claimGrid's layout, dense: w × h columns, a span each) and its columns;
    *  per lot record 1 when it's cut off from the town's reach (lotReach) */
-  readonly claimGrid: GPUBuffer;
+  readonly claimGrid: GPUBuffer | GPUBufferBinding;
   readonly claimCols: number;
   readonly reachCut: GPUBuffer;
   private pipes: Record<Kernel, GPUComputePipeline>;
@@ -277,6 +283,11 @@ export class CityGen {
   private all: GPUBuffer[] = [];
   private p!: StreetParams;
   private town: TownInputs;
+  private vertRoom: number;
+  /** (M4b) the bytes of its GPU buffers (a town's memory) */
+  get bytes(): number {
+    return this.all.reduce((s, b) => s + b.size, 0);
+  }
   private cp!: GPUComputePassEncoder;
   private seeds: [number, number] = [0, 0];
   private sel = -1;
@@ -318,7 +329,9 @@ export class CityGen {
     // (M4b: the roads' columns as drawn, the claim grid, the records cut off)
     this.B.ROADS = buf('road columns', N * 4);
     this.claimCols = N;
-    this.claimGrid = buf('claim grid', N * 8 * 4);
+    // (the claim grid written where its owner says — a slot of the static claims' arena — or its own)
+    this.claimGrid = world.claimInto ? { ...world.claimInto, size: N * 8 * 4 } : buf('claim grid', N * 8 * 4);
+    if (world.claimInto && (world.claimInto.size ?? 0) < N * 8 * 4) throw new Error(`citygen: a ${w} x ${h} claim grid is past its slot`);
     this.reachCut = buf('reach cut', (LOT_ROOM + LM_ROOM) * 4);
     device.queue.writeBuffer(this.lotCounts, 0, new Uint32Array([0, 0, RECW, REC_LM]));
     // (the lots' count, the listed roads' and the gap blocks', then the roads: m3f)
@@ -355,7 +368,8 @@ export class CityGen {
       new Float32Array(a)[4] = gs.sea;
       device.queue.writeBuffer(this.boxUni, 0, a);
     }
-    this.verts = buf('mesh', VERT_ROOM * 32, GPUBufferUsage.STORAGE);
+    this.vertRoom = world.vertRoom ?? VERT_ROOM;
+    this.verts = buf('mesh', this.vertRoom * 32, GPUBufferUsage.STORAGE);
     this.args = buf('mesh args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     device.queue.writeBuffer(this.args, 0, new Uint32Array([0, 1, 0, 0]));
     this.dummies = [1, 2, 3, 4, 5, 6, 7, 8].map((k) => buf(`dummy ${k}`, 16));
@@ -481,7 +495,7 @@ export class CityGen {
     const p = this.p;
     const { w, h, centre } = this.world;
     const spokes = Math.max(6, Math.round((Math.PI * p.townR) / (2 * p.ringSpacing)));
-    [w, h, u.k ?? 0, u.mode ?? 0, u.count ?? 0, VERT_ROOM, families(p.majors, p.cross), this.seeds[0]].forEach((v, j) => dv.setUint32(j * 4, v >>> 0, true));
+    [w, h, u.k ?? 0, u.mode ?? 0, u.count ?? 0, this.vertRoom, families(p.majors, p.cross), this.seeds[0]].forEach((v, j) => dv.setUint32(j * 4, v >>> 0, true));
     const f = [
       p.majorSpacing, p.ringSpacing, spokes, p.blockLen,
       p.majorWidth, p.minorWidth, p.setback, p.height,

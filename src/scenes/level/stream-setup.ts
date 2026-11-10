@@ -24,7 +24,7 @@ import { worldSaveOf } from '../level';
 import type { LevelScene } from '../level';
 import { urlFlags } from '../../flags';
 import { worldApiOf } from './world-api';
-import { FieldTown } from '../../citygen/town';
+import { FieldTowns } from '../../citygen/towns';
 import { whenPipelinesReady } from '../../gpu/pipeline';
 
 /** sleep and the streamed window, with what follows its slides */
@@ -341,19 +341,28 @@ export function attachStream(scene: LevelScene): void {
       });
       // (citygen M4a, ?citygen=fields) the start town made by the GPU field generator over its land in the window, once
       // the level's pipelines are ready; its mesh placed again when the window slides (16 bytes), never remade
-      const fid = a!.fieldTown;
-      let fieldReach: FortressReachGpu | undefined;
-      if (fid) {
-        const fs = st.seeds.find((x) => x.rec.id === fid)!;
+      // (citygen M4b, ?citygen=fields) the towns with a grid made by the GPU field generator as the window nears them,
+      // let go far behind (citygen/towns.ts), once the level's pipelines are ready; one reach over the window, a town's
+      // solve at a time
+      const fids = a!.fieldTowns;
+      if (fids) {
+        let fieldReach: FortressReachGpu | undefined;
+        let reachChain: Promise<void> = Promise.resolve();
+        const sites = fids.map((id) => {
+          const fs = st.seeds.find((x) => x.rec.id === id)!;
+          return { id, name: fs.rec.name, at: fs.rec.at, size: fs.rec.size, roads: st.approachWays(id), seed: fs.seed, purpose: fs.rec.purpose?.kind };
+        });
         whenPipelinesReady(() => {
-          const town = new FieldTown(
+          const towns = new FieldTowns(
             {
               device: host.gpu.device,
               rawGround: (x0, y0, w, h, out) => a!.atlas.rawGroundGpu(x0, y0, w, h, out),
               sea: a!.atlas.p.sea,
               statics: () => staticsFor(scene),
+              freeSlots: () => staticsFor(scene)?.freeSlots() ?? 0,
               plants: { globals: core.world.globals, veg: core.world.veg, vegNext: core.world.vegNext },
               reach: () => (fieldReach ??= new FortressReachGpu(host.gpu.device, core.world, dims.w, dims.h, () => [0, 0])),
+              reachTurn: (f) => (reachChain = reachChain.then(f, f)),
               addMesh: (v, g, x) => core.renderer.addMesh(v, g, x),
               removeMesh: (g) => core.renderer.removeMesh(g),
               origin: () => S.origin,
@@ -361,16 +370,13 @@ export function attachStream(scene: LevelScene): void {
               dims: { w: dims.w, h: dims.h },
               wrap: { cols: a!.atlas.p.cols, rows: a!.atlas.p.rows },
             },
-            { id: fs.rec.id, name: fs.rec.name, at: fs.rec.at, size: fs.rec.size, roads: st.approachWays(fs.rec.id), seed: fs.seed, purpose: fs.rec.purpose?.kind },
+            sites,
           );
-          scene.fieldTown = town;
-          // (a slide: the mesh placed again; the reach — over the window — looked at again once the land's in)
-          S.onSlide.push(() => {
-            town.place();
-            void town.checkReach();
-          });
-          S.onWarp.push(() => town.place());
-          void town.made.then((t) => console.log(`[citygen] ${fs.rec.name} (${fs.rec.id}, ${fs.rec.size}): ${t.lots} lots, ${town.site.roads.length} approach roads; GPU ms ${t.total?.toFixed(2) ?? 'n/a'} (heights ${t.height?.toFixed(2) ?? 'n/a'})`));
+          scene.fieldTowns = towns;
+          S.onSlide.push(() => towns.slid());
+          S.onWarp.push(() => towns.warped());
+          // (the first look now: the town the level opens on made before the first frames)
+          towns.update(Infinity);
         });
       }
       // (round 128i, FT-67) ?townview=0: the towns not drawn nor claimed (no settlements view) — the town bench's split of

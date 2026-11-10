@@ -138,18 +138,18 @@ export interface ApplyStage {
  * a column's spans in order. Its local column (0, 0) lies at window column (gx, gy); window z = world z + gz.
  */
 export interface GridClaimJob {
-  buf: GPUBuffer;
+  buf: GPUBuffer | GPUBufferBinding;
   nCols: number;
   gx: number;
   gy: number;
   gz: number;
 }
 
-/** (citygen M4b) a GPU-owned static grid (sim/static-claims.ts gpuGrid): dense, w × h columns, a span each — its place
- *  as a claim job's */
-export interface OwnedGridJob extends GridClaimJob {
-  w: number;
-  h: number;
+/** (citygen M4b) the GPU-owned static grids' arena (sim/static-claims.ts OwnedArena): its buffer (bound whole: the
+ *  table at its head, colapply.wgsl ownedSpanOf) and the table's words as they are now (written before a pass) */
+export interface OwnedArenaJob {
+  buf: GPUBuffer;
+  table: Uint32Array;
 }
 
 const MAX_CUTS = 32;
@@ -221,7 +221,7 @@ export class ColumnApply {
    * (citygen M4b) A GPU-owned grid's claims checked in window rectangles (an edit's boxes): the owners (lot records + 1;
    * 0 the town's roads) whose span lost cells — 4 + 4 × 64 bytes read back, once.
    */
-  async gridDamage(cols: GpuColumns, job: OwnedGridJob, rects: [number, number, number, number][], maxOwner: number): Promise<number[]> {
+  async gridDamage(cols: GpuColumns, arena: OwnedArenaJob, entry: number, rects: [number, number, number, number][], maxOwner: number): Promise<number[]> {
     const { packed } = cols;
     const W = packed.dims.w;
     const H = packed.dims.h;
@@ -232,22 +232,19 @@ export class ColumnApply {
     const ps = rects.map(([x0, y0, x1, y1]) => {
       const b = new ArrayBuffer(PARAM_BYTES);
       const pu = new Uint32Array(b);
-      const pi = new Int32Array(b);
       const pf = new Float32Array(b);
       pu.set([W, H, packed.chunksX, CHUNK]);
       pf[15] = packed.dims.zMax;
       pu[30] = cols.stamp;
-      pi[36] = job.gx;
-      pi[37] = job.gy;
-      pf[38] = job.gz;
       pu.set([Math.max(0, x0), Math.max(0, y0), Math.min(W, x1), Math.min(H, y1)], 39);
-      pu.set([job.w, job.h, 1], 43);
+      pu[45] = entry + 1;
       return { b, w: Math.max(0, Math.min(W, x1) - Math.max(0, x0)), h: Math.max(0, Math.min(H, y1) - Math.max(0, y0)) };
     });
     this.gridParams = grow(dev, this.gridParams, 'colapply grid params', ps.length * PARAM_STRIDE, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const pdata = new Uint8Array(ps.length * PARAM_STRIDE);
     ps.forEach((p, i) => pdata.set(new Uint8Array(p.b), i * PARAM_STRIDE));
     dev.queue.writeBuffer(this.gridParams, 0, pdata);
+    dev.queue.writeBuffer(arena.buf, 0, arena.table);
     const enc = dev.createCommandEncoder({ label: 'colapply gridDamage' });
     enc.clearBuffer(this.dmg, 0, words * 4);
     ps.forEach((p, i) => {
@@ -259,7 +256,7 @@ export class ColumnApply {
         3: this.noOwned,
         4: this.dmg!,
         5: this.noDeposit,
-        6: job.buf,
+        6: arena.buf,
       });
       const pass = enc.beginComputePass({ label: 'colapply gridDamage' });
       pass.setPipeline(this.pipes.gridDamage);
@@ -286,7 +283,7 @@ export class ColumnApply {
    * External intervals no claimed span holds made ground again over the whole window (sim/external.ts orphans; the
    * registry's claimedSpans: column key y · 65536 + x → spans in its order).
    */
-  orphans(cols: GpuColumns, claimed: Map<number, { z0: number; z1: number }[]>, owned: OwnedGridJob | null = null): void {
+  orphans(cols: GpuColumns, claimed: Map<number, { z0: number; z1: number }[]>, owned: OwnedArenaJob | null = null): void {
     const enc = this.encode(cols, [], claimed, undefined, owned);
     if (enc) this.device.queue.submit([enc.finish()]);
     for (const f of this.onApply) f();
@@ -351,7 +348,7 @@ export class ColumnApply {
     for (const f of this.onApply) f();
   }
 
-  private encode(cols: GpuColumns, stages: ApplyStage[], claimed: Map<number, { z0: number; z1: number }[]> | null, target?: SpillTarget, owned: OwnedGridJob | null = null): GPUCommandEncoder | null {
+  private encode(cols: GpuColumns, stages: ApplyStage[], claimed: Map<number, { z0: number; z1: number }[]> | null, target?: SpillTarget, owned: OwnedArenaJob | null = null): GPUCommandEncoder | null {
     const { packed } = cols;
     const W = packed.dims.w;
     const H = packed.dims.h;
@@ -499,12 +496,10 @@ export class ColumnApply {
       const spanOff = words.length;
       for (const k of keys) for (const c of claimed.get(k)!) words.push(bits(c.z0), bits(c.z1));
       param('orphans', Math.ceil((W * H) / 64), { nKeys: keys.length, keyOff, refOff, spanOff });
-      // (M4b: the GPU-owned grid's place, its spans held too)
+      // (M4b: the GPU-owned grids' spans held too — their table written to the arena's head first)
       if (owned) {
-        const b = dispatches[dispatches.length - 1].params;
-        new Int32Array(b).set([owned.gx, owned.gy], 36);
-        new Float32Array(b)[38] = owned.gz;
-        new Uint32Array(b).set([owned.w, owned.h, 1], 43);
+        new Uint32Array(dispatches[dispatches.length - 1].params)[45] = 1;
+        this.device.queue.writeBuffer(owned.buf, 0, owned.table);
       }
     }
     if (!dispatches.length) return null;

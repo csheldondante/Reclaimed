@@ -120,6 +120,8 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   // (round 88) the units' sync and thinking, the settlements' rounds and rates, the debug view
   // (round 94: the settlements past the window planned for the bake, whatever the streamer's doing)
   scene.settlements?.farUpdate(dt);
+  // (citygen M4b: the field towns near the window made, the far ones let go)
+  scene.fieldTowns?.update(dt);
   // (round 119) the settlements' pieces: made again when a plan, a storey or the window changed
   scene.settlementsView?.update();
   scene.lab?.frame();

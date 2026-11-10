@@ -170,7 +170,7 @@ export interface StaticSet {
    *  checked on the GPU (the orphan pass reads its spans: ownedJob), never judged on the CPU */
   gpuOwns(x: number, y: number): boolean;
   /** (M4b) the GPU-owned grid as the orphan pass reads it (null: none) */
-  ownedJob?(): import('../game/colapply').OwnedGridJob | null;
+  ownedJob?(): import('../game/colapply').OwnedArenaJob | null;
   /** (M4b) an edit's boxes (world units, window frame): the GPU-owned grids' claims there checked on the GPU */
   damage?(boxes: [number, number, number, number][]): void;
 }

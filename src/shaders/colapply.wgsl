@@ -50,8 +50,8 @@ struct Params {
    *  spans' world z plus gz: the window's), and the window rectangle written now [rx0, rx1) × [ry0, ry1) */
   gx: i32, gy: i32, gz: f32, rx0: u32,
   ry0: u32, rx1: u32, ry1: u32,
-  /** (citygen M4b) a GPU-owned grid (sim/static-claims.ts gpuGrid: dense, `owned` bound, its place gx, gy, gz):
-   *  its columns across and down, 1 when there is one (orphans: its spans held too; gridDamage: the one checked) */
+  /** (citygen M4b) the GPU-owned grids (`owned`, the arena): orphans — 1 when its table's grids are held too;
+   *  gridDamage — the grid checked + 1. gw, gh unused */
   gw: u32, gh: u32, gOn: u32,
 }
 
@@ -64,20 +64,33 @@ struct Params {
 /** 8 words an entry: key + 1 (0: empty), cells, six votes */
 @group(0) @binding(4) var<storage, read_write> hash: array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read_write> deposit: array<vec4<f32>>;
-/** (citygen M4b) a GPU-owned static grid, dense (claimGrid's layout: gw × gh columns, a span each after them) */
+/** (citygen M4b) the GPU-owned static grids' arena (sim/static-claims.ts OwnedArena): a table at its head — 0 the
+ *  count; grid e at 16 + 8e: its first window column (gx, gy, i32), its columns and rows, gz (f32: world z to window z),
+ *  its base (words), 0, 0 — then each grid dense in claimGrid's layout from its base (w × h columns, a span each) */
 @group(0) @binding(6) var<storage, read> owned: array<u32>;
-
-/** (M4b) the owned grid's span over window column (x, y), when it has one: (z0, z1) window z; z1 < z0 none */
-fn ownedSpan(x: u32, y: u32) -> vec2<f32> {
-  if (P.gOn == 0u) { return vec2<f32>(1.0, 0.0); }
-  let lx = i32(x) - P.gx;
-  let ly = i32(y) - P.gy;
-  if (lx < 0 || ly < 0 || u32(lx) >= P.gw || u32(ly) >= P.gh) { return vec2<f32>(1.0, 0.0); }
-  let i = u32(ly) * P.gw + u32(lx);
-  if (owned[i * 4u + 3u] == 0u) { return vec2<f32>(1.0, 0.0); }
-  let so = P.gw * P.gh * 4u + owned[i * 4u + 2u] * 4u;
-  return vec2<f32>(bitcast<f32>(owned[so]) + P.gz, bitcast<f32>(owned[so + 1u]) + P.gz);
+const OWN_MAX: u32 = 8u;
+struct OwnSpan { z: vec2<f32>, who: u32, ok: bool }
+/** grid e's span over window column (x, y): its z (window z) and owner word; ok false when it has none there */
+fn ownedSpanOf(e: u32, x: u32, y: u32) -> OwnSpan {
+  var r: OwnSpan;
+  r.ok = false;
+  let t = 16u + e * 8u;
+  let lx = i32(x) - bitcast<i32>(owned[t]);
+  let ly = i32(y) - bitcast<i32>(owned[t + 1u]);
+  let gw = owned[t + 2u];
+  let gh = owned[t + 3u];
+  if (lx < 0 || ly < 0 || u32(lx) >= gw || u32(ly) >= gh) { return r; }
+  let base = owned[t + 5u];
+  let i = u32(ly) * gw + u32(lx);
+  if (owned[base + i * 4u + 3u] == 0u) { return r; }
+  let so = base + gw * gh * 4u + owned[base + i * 4u + 2u] * 4u;
+  let gz = bitcast<f32>(owned[t + 4u]);
+  r.z = vec2<f32>(bitcast<f32>(owned[so]) + gz, bitcast<f32>(owned[so + 1u]) + gz);
+  r.who = owned[so + 3u];
+  r.ok = true;
+  return r;
 }
+fn ownedN() -> u32 { return select(0u, min(owned[0], OWN_MAX), P.gOn != 0u); }
 
 const MAX_K: u32 = 16u;
 /** a column's intervals while changed: K (16 at most) plus a split a cut (the host keeps an op's cuts to 32) */
@@ -399,8 +412,8 @@ fn orphans(@builtin(global_invocation_id) gid: vec3<u32>) {
     c0 = inp[P.refOff + ki * 2u];
     nc = inp[P.refOff + ki * 2u + 1u];
   }
-  // (M4b: and the GPU-owned grid's span here — its claims are never orphans)
-  let os = ownedSpan(x, y);
+  // (M4b: and the GPU-owned grids' spans here — their claims are never orphans)
+  let on = ownedN();
   var out: array<vec4<u32>, MAX_IV>;
   var m = 0u;
   var changed = false;
@@ -425,7 +438,10 @@ fn orphans(@builtin(global_invocation_id) gid: vec3<u32>) {
       rest = nx;
       nr = min(q, 24u);
     }
-    if (os.y > os.x) {
+    for (var e = 0u; e < on; e++) {
+      let osp = ownedSpanOf(e, x, y);
+      if (!osp.ok) { continue; }
+      let os = osp.z;
       var nx: array<vec2<f32>, 24>;
       var q = 0u;
       for (var r = 0u; r < nr; r++) {
@@ -663,12 +679,11 @@ fn gridDamage(@builtin(global_invocation_id) gid: vec3<u32>) {
   let x = P.rx0 + gid.x;
   let y = P.ry0 + gid.y;
   if (x >= P.rx1 || y >= P.ry1 || x >= P.mapW || y >= P.mapH) { return; }
-  let os = ownedSpan(x, y);
-  if (os.y <= os.x) { return; }
-  let lx = u32(i32(x) - P.gx);
-  let ly = u32(i32(y) - P.gy);
-  let i = ly * P.gw + lx;
-  let who = owned[P.gw * P.gh * 4u + owned[i * 4u + 2u] * 4u + 3u];
+  // (the grid checked: P.gOn − 1)
+  let osp = ownedSpanOf(P.gOn - 1u, x, y);
+  if (!osp.ok) { return; }
+  let os = osp.z;
+  let who = osp.who;
   var a: array<vec4<u32>, MAX_IV>;
   let n = load(colBase(x, y), &a);
   // (the span less every interval that isn't free: what's left is free now)

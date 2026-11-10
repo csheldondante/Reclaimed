@@ -3561,3 +3561,8 @@ world should show what needs clearing and how.
   but we can ignore it where there is no population or low enough not to necessitate a grid." → towns stream like
   land (generated as their box nears the window, dropped far behind, regenerated deterministically); no grid below a
   population threshold.
+- (the user, via the coordinator) Streaming is the default. Town changes (opportunities built, damage) can be saved
+  like terrain changes if needed: a per-town edit log keyed by world position, laid over the regenerated town. If
+  streaming proves too slow, generate the start town and nearby towns ahead in the background so there's never a
+  hitch — measured first (DEVLOG M4b step 4: no hitch from generation on the desktop with the raw ground paced; the
+  phone not yet measured).

@@ -130,6 +130,28 @@ the construction shader read. `FieldTown.lots` hands them over.
 - **Population field** (`popField`), **road tones and widths**, **raw ground** (`Atlas.rawGroundGpu`, `rawheight.wgsl`),
   **sloped decks** and the **town bridge** (`townBridge`): DEVLOG 2026-11-10, citygen M4b steps 1–2.
 
+## Streaming (M4b step 4)
+
+The user: "I assumed we would stream in the grid generation as needed so when we pan to a new population center it
+appears but we can ignore it where there is no population or low enough not to necessitate a grid."
+
+- **Which settlements get a grid:** those with a peak density of 0.6 or more (village, town, city: `hasGrid`) — 140
+  in this world. Below it, no grid: the old planner's hamlets and farms until M4e. At level start
+  `Settlements.byFields` takes them all in one pass: their roads kept, the atlas's stamps cleared in their cores.
+- **`FieldTowns`** (citygen/towns.ts) streams them.
+  - Every 0.25 s it compares each town's box with the window.
+  - Within 128 columns, the nearest such town is made (one at a time, from the raw ground, paced by the atlas's tile
+    gate).
+  - Beyond 448 columns, a town is let go: its buffers freed, its claim slot back.
+  - On return it is made again the same way (a pure function of seed, ground and population field).
+  - Muru has no special case; it is the first made because the level opens on it.
+- **The pool:** the static claims' arena has 4 slots of a city's box (448² columns × 32 B = 6.4 MB each, 25.7 MB) and
+  a table of grids at its head that colapply's orphan and damage passes read. When every slot is taken, the farthest
+  town not wanted gives its slot up.
+- **Memory per town:** 29.8 MB of generator buffers plus its 6.4 MB claim slot. The fields are 4 bytes a column ×
+  ~26; the records 3.1 MB; the mesh room 160 000 vertices = 5.1 MB; the raw ground 1.6 MB.
+- **Saving (later, if needed):** a per-town edit log keyed by world position, laid over the regenerated town.
+
 ## M4b: stopped at the claim registry (superseded: built as above)
 
 The brief: claim each lot's building, the roads and the decks as External intervals through the existing claim path;
