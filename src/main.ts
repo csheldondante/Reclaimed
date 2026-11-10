@@ -197,6 +197,8 @@ async function main() {
   if (params.get('citygenbench') === '1') void import('./perf/citygenbench').then((m) => m.citygenBench(params));
   // (round 128p, DA-B22: ?speedbench=1 — the 16x toggle-diff phone bench, on the fortress: src/perf/speedbench.ts)
   if (params.get('speedbench') === '1') void import('./perf/speedbench').then((m) => m.speedBench(params));
+  // (trackA-liquids, DA-P5: ?flowbench=1 — the flow model against the pipes, a phone bench on the flow lab: src/perf/flowbench.ts)
+  if (params.get('flowbench') === '1') void import('./perf/flowbench').then((m) => m.flowBench(params));
   // (round 128m, townlab: ?bench=place — the placement phone bench, on the fortress at ?town=: src/perf/placebench.ts)
   if (params.get('bench') === 'place') void import('./perf/placebench').then((m) => m.placeBench(params));
   if (pageBench === 'run') void pageBenchRun();

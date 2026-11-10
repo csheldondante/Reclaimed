@@ -349,11 +349,16 @@ export class LevelScene implements Scene {
     this.core = new WorldCore(host, opts.map ?? opts.atlas?.map ?? opts.made?.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, true, level.meshRoom);
     // (?flow=1, docs/ARCHITECTURE.md "The flow model") liquids as runs in the columns, and what's near steady sleeps: before the warmup
     // (round 110: an opt-in for the flow model's own lab only — every other level runs the game's water)
-    if (host.params.get('flow') === '1') {
-      if (!level.flowSetup) throw new Error(`?flow=1: the flow model runs in its own lab only (level=flowlab), not "${level.id}"`);
+    // (trackA-liquids, DA-P5: the flow lab sleeps with either model — the phone bench, perf/flowbench.ts, compares the
+    // flow model's steady sleep with the pipes' sleep on the same scenes)
+    const flowOn = host.params.get('flow') === '1';
+    if (flowOn && !level.flowSetup) throw new Error(`?flow=1: the flow model runs in its own lab only (level=flowlab), not "${level.id}"`);
+    if (level.flowSetup) {
       this.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, this.core.ring);
       this.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
       this.core.sleep = this.sleep;
+    }
+    if (flowOn && this.sleep) {
       const kit = installFlow(this.core, this.sleep);
       this.flow = { ...kit, lab: level.flowSetup?.(kit) };
     }

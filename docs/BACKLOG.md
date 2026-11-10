@@ -12,6 +12,22 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## trackA-liquids (2026-11-10, Track A) — the unified flow model as the one liquid (DA-P5, DESIGN §7), phone bench first
+
+The user: "Yeah option B is correct. I would like the unified flow model and I would like to benchmark on phone and see
+if we can afford it or if we should make it cheaper. Steady states should mean it mostly sleeps." — and "the intent for
+agents is that they can traverse any walkable layer that they are connected to (we do eventually want subterranean
+caves and floating islands even if not all cells have them)".
+
+| id | item | size | status |
+|---|---|---|---|
+| LQ1 | Phone bench of the flow model against the pipes, toggle diffs (awake, steady, disturbed, lava): `?flowbench=1` on the flow lab | M | done (trackA-liquids, src/perf/flowbench.ts) — waiting on the Pixel 9a's run |
+| LQ2 | Make it cheaper where the bench says: sleeping chunks cost nothing (no per-step restamp), gap scans only where liquid is, lava's cost, PW6 (NaN), FL11 (slow drain) | L | open |
+| LQ3 | Wire it in as the one liquid behind `?liquid=flow\|pipes` (default pipes until the user approves): river table and held rivers as steady runs, lakes, sea per basin, rain bake; the water contract's readers unchanged | L | open |
+| LQ4 | Agents wet per walkable surface (not only the top) | S | open |
+| LQ5 | Muru with `?citygen=fields&living=1&liquid=flow`: a bridge deck claimed into the columns, the river in the gap under it, people on the deck, reach counting it (CG15) | M | open |
+| LQ6 | Retire the pipes (water_flux/water_depth, lava.ts, oil's pipes?) once the phone numbers hold | M | open |
+
 ## Round 128o (2026-11-05, session 5, `fortress`) — making the code match DESIGN.md (the work plan from four audits)
 
 The user: "Please work on making the code match the design which is a lot cleaner and intentionally encapsulates and avoids duplicate designs or logic. Let's write this well so it actually works and doesn't have the bugs that slow down development." Plan: https://claude.ai/artifact/JPNnQEzZPggrTzzv6kiKxA; audits in the session scratchpad. Order: gates, then towns working (A) and towns fast (B) in parallel, then the loop (L), the engine (E), pages and the rest (P).

@@ -21240,3 +21240,30 @@ The user: "having only main roads near districts in progress works but we may ha
   swung 0.1–0.7 ms between headless runs (every pass ×3 in the last run), so no clean number. Dispatching nothing
   needs the CPU to stop encoding when the GPU says settled: an event (Track B's ring) rather than a poll.
 - The one route miss seen last round didn't recur in four runs (0 misses); not traced.
+
+## 2026-11-10 — trackA-liquids step 1: the flow model's phone bench (DA-P5, LQ1)
+
+The user chose the unified flow model (DESIGN §7: runs in any gap, momentum, arcing falls, water and lava as one
+kernel) and asked to "benchmark on phone and see if we can afford it or if we should make it cheaper". Before any
+migration, a bench of the round-84 model as it stands: `?skipmenu=1&level=flowlab&flow=1&fresh=1&flowbench=1`
+(src/perf/flowbench.ts, the speedbench pattern: wake lock, Download/Copy/Share, POST to the dev server). The page
+loads twice — the flow model, then the pipes on the same lab — and measures each in three states with the liquids on
+and paused (the frame-time toggle diff, the number to trust on a tiler), GPU timestamps beside it:
+- awake: every chunk kept awake (the breached pool pouring, the tunnel's stream and waterfall, the trenches running
+  off the map, the lava vent), plus lava alone paused;
+- steady: let alone until the steady state (flow) or the settle (pipes) sleeps what's still;
+- disturbed: a dig in the river trench every 1.5 s.
+The pipes get the same scenes as far as they can: the plug dug, a source at the tunnel's mouth (they can't run under
+rock), the sandbox's lava vent. The flow lab now has a Sleep with either model so the pipes sleep too (level.ts).
+
+Desktop (headless, D3D11, 412x915, liquids' passes by timestamp, ms a frame):
+| state | flow | pipes |
+|---|---|---|
+| awake (water + lava) | 1.96 | 0.31 |
+| awake, water only (lava paused) | 0.60 | 0.09 |
+| steady (0 chunks awake) | 0.24 | 0.011 |
+| disturbed (12–16 chunks awake) | 1.24 | 0.08 |
+Frame-time diffs are 0 on the desktop (vsync-bound); the phone's are the numbers that count. Read: the flow model is
+6–20x the pipes; asleep it still costs 0.24 ms (every sleeping column re-stamps its records each step, 5 full-map
+passes a step); a small disturbance costs as much as half the awake map (it un-skips the whole system); and the flow
+lava is ~1.4 ms awake, twice the water.
