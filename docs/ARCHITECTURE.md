@@ -1462,6 +1462,17 @@ and moves pixels over. We are just doing this in a compressed column space and a
 frozen and drawn as an animation, woken only when perturbed. Behind `?flow=1`, (round 110) in its own lab only
 (`?flow=1&level=flowlab`, src/levels/flowlab.ts; elsewhere it throws): every other level runs the game's water.
 
+- **(trackA-liquids, DA-P5) Chunk lists and parking.** The passes don't run over the window: each step two small
+  passes on the GPU (`liquid.wgsl` lqScan, lqList) mark the chunks holding liquid (awake ones and those that ran
+  the last step are scanned: open depth, enclosed runs, a stream in the air, a water source) and list the chunks to
+  run — awake with liquid in or next to them (or a spring, or rain on them), and sleeping ones beside those (their
+  edge's balance, a stream arriving), each kept two steps more after it stops qualifying — and the chunks to draw
+  (everything with liquid). flux, jets, depth and publish are dispatched indirect over the run list (sim/cull.ts
+  cullSource, GpuTileList), prep over the wet list; the CPU never knows the counts. A chunk off the list is
+  *parked*: nothing reads or writes it, and its records keep the stamps of the last two steps it ran (both parities,
+  the same content). Validity is by the chunk's stamps (`okPrev`/`okNow` against `lqRun`, per slot: L the last step
+  it ran, P the one before), so a parked chunk's records stay valid and a chunk coming back reads the ones it was
+  parked with. `?lqall=1` runs every chunk every step (a check). Requires the chunk lists (`?simcull=0` throws).
 - **Gaps and runs.** A column's empty space is its gaps: the air between two solid or granular intervals of
   the layers, and the open air on top (floor: the column's top, or a sleeping body on it). A liquid lies in a
   gap as a run on its floor: slot 0 the open run, slots 1..3 runs under rock (a cave's, a tunnel's floor).

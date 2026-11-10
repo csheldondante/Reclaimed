@@ -21267,3 +21267,28 @@ Frame-time diffs are 0 on the desktop (vsync-bound); the phone's are the numbers
 6–20x the pipes; asleep it still costs 0.24 ms (every sleeping column re-stamps its records each step, 5 full-map
 passes a step); a small disturbance costs as much as half the awake map (it un-skips the whole system); and the flow
 lava is ~1.4 ms awake, twice the water.
+
+## 2026-11-10 — trackA-liquids step 2a: the flow model runs only where liquid is; sleeping costs nothing
+
+The bench (step 1) said: asleep the flow model still cost 0.24 ms (every sleeping column re-stamped its records each
+step, five full-window passes), a small disturbance un-skipped the whole system (1.24 ms for 12 chunks awake), and
+its lava cost 1.4 ms for a vent on a ramp. All three were the full-window dispatch, not the work.
+- Two small passes made on the GPU each step: `lqScan` (a workgroup a chunk, only chunks awake or that ran the last
+  step) marks which hold liquid; `lqList` (a thread a chunk) lists the ones to run and the ones to draw, and writes
+  their stamps. The passes run indirect over the lists (the existing cullSource / GpuTileList).
+- Parking: records are valid by their chunk's stamps (L, the last step it ran, and L - 1: both parities), not by the
+  global step only, so a chunk off the list needs no re-stamping. A chunk runs two steps more after it stops
+  qualifying, so both parities hold the same settled records when it parks; on its first step back it reads the
+  stamps it parked with (P).
+- `?lqall=1` runs every chunk (a check): after a breach and 25 s, open water 832.6 (all) vs 850.7 (lists), enclosed
+  24.55 vs 24.65, streams 63 vs 72 — the runs aren't deterministic (sleep is on wall time), the same scene.
+Desktop, liquids' passes by timestamp (ms a frame; "off" is what's left with the liquids paused: the sandbox's own
+lava and the like):
+| state | flow before | flow now (off) | pipes (off) |
+|---|---|---|---|
+| awake, water + lava | 1.96 | 0.55 (0.13) | 0.31 (0.02) |
+| awake, water only | 0.60 | 0.41 | 0.08 |
+| steady, 0 chunks awake | 0.24 | 0.059 (0.012) | 0.019 (0.011) |
+| disturbed, 12–16 chunks awake | 1.24 | 0.25 (0.05) | 0.085 (0.013) |
+So 1.4x the pipes awake, ~2–4x asleep and disturbed (prep still runs every frame over the chunks with liquid: the
+spray is made there). The phone's toggle diffs decide whether that's enough.

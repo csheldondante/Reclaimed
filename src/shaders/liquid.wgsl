@@ -71,7 +71,7 @@ struct PartQ { p: vec4<f32>, v: vec4<f32>, m: vec4<u32> };
 
 const MAX_SPRINGS: u32 = 8u;
 struct LiquidU {
-  // x step, y springs, z the steady wake tolerance (cells a tick), w unused
+  // x step, y springs, z the steady wake tolerance (cells a tick), w 1: every chunk runs (?lqall=1, a check: lqList)
   step: vec4<u32>,
   // springs: x, y (world), z (height it pours in at), rate (cells^3/s)
   springs: array<vec4<f32>, 8>,
@@ -97,6 +97,36 @@ const K_SMOKE_Q: u32 = 8u;
 fn stepNow() -> u32 { return LQ.step.x & 0x3ffffu; }
 fn stepPrev() -> u32 { return (LQ.step.x - 1u) & 0x3ffffu; }
 fn stamp24(s: u32) -> u32 { return s & 0xffffffu; }
+
+// ---- the chunks that run (trackA-liquids, DA-P5: sleeping costs nothing) -----------------------------------------
+// The passes run over a list of chunks made on the GPU each step (lqList below; src/flow/liquid.ts): the chunks awake
+// with liquid in or next to them, and the sleeping ones next to those (their edge's balance, a stream arriving), each
+// kept two steps more after it stops qualifying. A chunk off the list is parked: nothing reads or writes it, and its
+// records keep the stamps of the last two steps it ran (L and L - 1: both parities, the same content - the two steps
+// more saw to that). A record is then valid by its chunk's stamps (okPrev / okNow), not only by the global step: a
+// parked chunk's by L or L - 1, a running one's by this step's - and on its first step back, by the ones it was parked
+// with (P: the step it ran before this one). Per slot, lqRun: x L (the last step it ran: this one if it runs now), y P.
+@group(0) @binding(35) var lqRun: texture_2d<u32>;
+const NEVER: u32 = 0xffffffffu;
+fn runOf(q: vec2<i32>) -> vec2<u32> {
+  let c = colSlot(vec2<u32>(q) / COLS_PAGE);
+  return textureLoad(lqRun, vec2<i32>(i32(c % LQ_RUN_W), i32(c / LQ_RUN_W)), 0).xy;
+}
+fn stampBefore(s: u32) -> u32 { return (s - 1u) & 0x3ffffu; }
+/** parked at step L: its records' stamps L or L - 1 */
+fn parkedOk(L: u32, st: u32) -> bool { return L != NEVER && (st == L || st == stampBefore(L)); }
+/** is stamp st (a record written the step before this one) valid for column q? */
+fn okPrev(q: vec2<i32>, st: u32) -> bool {
+  let r = runOf(q);
+  if (r.x == stepNow()) { return st == stepPrev() || (r.y != stepPrev() && parkedOk(r.y, st)); }
+  return parkedOk(r.x, st);
+}
+/** is stamp st (a record written this step) valid for column q? */
+fn okNow(q: vec2<i32>, st: u32) -> bool {
+  let r = runOf(q);
+  if (r.x == stepNow()) { return st == stepNow(); }
+  return parkedOk(r.x, st);
+}
 /** (round 107, pages P2.3b) the per-chunk state (act, the rescale) is keyed by the chunk's slot */
 fn chunkOf(q: vec2<u32>) -> u32 { return colSlot(q / COLS_PAGE); }
 /** a frozen chunk's rescale this step (1: none) */
@@ -154,10 +184,11 @@ fn gapForRun(g: Gaps, z: f32) -> u32 {
 // ---- a column's runs ----------------------------------------------------------------------------------------
 struct Runs { n: u32, fl: array<f32, 4>, d: array<f32, 4>, h: array<f32, 4> };
 
-fn runsAt(i: u32, want: u32) -> Runs {
+/** column q's runs as last written (index i): valid by its chunk's stamps (okPrev) */
+fn runsAt(q: vec2<i32>, i: u32) -> Runs {
   var r: Runs;
   let r0 = runsIn[i * NSLOT];
-  let ok = (u32(r0.w) >> 3u) == want;
+  let ok = okPrev(q, u32(r0.w) >> 3u);
   r.d[0] = open[i];
   r.fl[0] = r0.x;
   r.h[0] = select(LQ_HOT, r0.z, ok);
@@ -216,7 +247,7 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
-  let r = runsAt(i, stepPrev());
+  let r = runsAt(p, i);
   var has = r.d[0] > EPS;
   for (var s = 1u; s <= r.n; s++) { has = has || r.d[s] > EPS; }
   if (!has) { return; }
@@ -227,7 +258,7 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
     let sc = chunkScale(id.xy);
     for (var s = 0u; s <= r.n; s++) {
       let o = (i * NSLOT + s) * 2u;
-      if (fluxStamp(i, s) != stepPrev()) { continue; }
+      if (!okPrev(p, fluxStamp(i, s))) { continue; }
       if (sc != 1.0) {
         let a = fl[o];
         let b = fl[o + 1u];
@@ -238,7 +269,7 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
     let e = emit[i];
-    if ((e >> 6u) == stamp24(stepPrev())) { emit[i] = (stamp24(now) << 6u) | select(e & 63u, 0u, sc == 0.0); }
+    if (okPrev(p, e >> 6u)) { emit[i] = (stamp24(now) << 6u) | select(e & 63u, 0u, sc == 0.0); }
     return;
   }
   let g = gapsAt(p);
@@ -251,7 +282,7 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
     let H = fz + d + oilHead(i, s);
     let fluid = fluidity(d, r.h[s]);
     var prev = array<f32, 8>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-    if (fluxStamp(i, s) == stepPrev()) { prev = fluxGet(i, s); }
+    if (okPrev(p, fluxStamp(i, s))) { prev = fluxGet(i, s); }
     var f = array<f32, 6>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     var codes = 0u;
     for (var k = 0u; k < NDIR; k++) {
@@ -272,7 +303,7 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         if (tg >= 0) {
           let j = colIdxI(q);
-          let rq = runsAt(j, stepPrev());
+          let rq = runsAt(q, j);
           let m = u32(tg);
           Hn = gq.f[m] + depthInGap(gq, rq, m) + select(0.0, oilL[j] * 0.88, LQ_WATER && m == gq.n - 1u);
           code = m;
@@ -332,7 +363,7 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
   if (frozen) {
     let j2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
     let sc = chunkScale(id.xy);
-    let had = u32(j2.w) == stamp24(stepPrev());
+    let had = okPrev(p, u32(j2.w));
     var carry = had && textureLoad(j3In, texCol(vec2<i32>(p)), 0).w > 0.5;
     if (had && !carry) {
       if (sc > 0.0) {
@@ -350,9 +381,9 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
         let q = nbr(p, k);
         if (!inMap(q)) { continue; }
         let qj2 = textureLoad(j2In, texCol(vec2<i32>(q)), 0);
-        if (u32(qj2.w) == stamp24(stepPrev()) && u32(qj2.x) == (k ^ 1u) && textureLoad(j3In, texCol(vec2<i32>(q)), 0).z > 0.0) { carry = true; }
+        if (okPrev(q, u32(qj2.w)) && u32(qj2.x) == (k ^ 1u) && textureLoad(j3In, texCol(vec2<i32>(q)), 0).z > 0.0) { carry = true; }
         let e = emit[colIdxI(q)];
-        if ((e >> 6u) == stamp24(now) && ((e >> (k ^ 1u)) & 1u) != 0u) { carry = true; }
+        if (okNow(q, e >> 6u) && ((e >> (k ^ 1u)) & 1u) != 0u) { carry = true; }
       }
     }
     if (!carry) { return; }
@@ -364,7 +395,7 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
   // what's in flight over this column already (its entry as it was)
   let o2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
   var age = 0.0;
-  if (u32(o2.w) == stamp24(stepPrev())) {
+  if (okPrev(p, u32(o2.w))) {
     let o0 = textureLoad(j0In, texCol(vec2<i32>(p)), 0);
     let o1 = textureLoad(j1In, texCol(vec2<i32>(p)), 0);
     let o3 = textureLoad(j3In, texCol(vec2<i32>(p)), 0);
@@ -378,7 +409,7 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!inMap(q)) { continue; }
     // a stream coming on from the neighbour: what crossed its column last step, entering as its path leaves it
     let j2 = textureLoad(j2In, texCol(vec2<i32>(q)), 0);
-    if (u32(j2.w) == stamp24(stepPrev()) && u32(j2.x) == (k ^ 1u)) {
+    if (okPrev(q, u32(j2.w)) && u32(j2.x) == (k ^ 1u)) {
       let j3 = textureLoad(j3In, texCol(vec2<i32>(q)), 0);
       if (j3.z > 0.0) {
         let j0 = textureLoad(j0In, texCol(vec2<i32>(q)), 0);
@@ -390,11 +421,11 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
     // a run falling off the neighbour's ledge toward me
     let j = colIdxI(q);
     let e = emit[j];
-    if ((e >> 6u) != stamp24(now) || ((e >> (k ^ 1u)) & 1u) == 0u) { continue; }
+    if (!okNow(q, e >> 6u) || ((e >> (k ^ 1u)) & 1u) == 0u) { continue; }
     let gq = gapsAt(q);
-    let rq = runsAt(j, stepPrev());
+    let rq = runsAt(q, j);
     for (var s = 0u; s <= rq.n; s++) {
-      if (fluxStamp(j, s) != now || ((fluxCodes(j, s) >> (4u * (k ^ 1u))) & 15u) != C_FALL) { continue; }
+      if (!okNow(q, fluxStamp(j, s)) || ((fluxCodes(j, s) >> (4u * (k ^ 1u))) & 15u) != C_FALL) { continue; }
       let f = fluxDir(j, s, k ^ 1u);
       if (f <= 1e-7) { continue; }
       let d = rq.d[s];
@@ -429,7 +460,7 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
   age += DTQ;
   // the level under it here
   let g = gapsAt(p);
-  let r = runsAt(colIdxI(p), stepPrev());
+  let r = runsAt(p, colIdxI(p));
   var gz = gapAtZ(g, jt.z);
   if (gz < 0) { gz = i32(gapForRun(g, jt.z)); }
   let zL = g.f[u32(gz)] + depthInGap(g, r, u32(gz));
@@ -471,8 +502,8 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // ---- B: depth ------------------------------------------------------------------------------------------------
-fn outSum(i: u32, s: u32) -> f32 {
-  if (fluxStamp(i, s) != stepNow()) { return 0.0; }
+fn outSum(p: vec2<i32>, i: u32, s: u32) -> f32 {
+  if (!okNow(p, fluxStamp(i, s))) { return 0.0; }
   let f = fluxGet(i, s);
   return f[0] + f[1] + f[2] + f[3] + f[4] + f[5];
 }
@@ -490,8 +521,8 @@ fn gather(p: vec2<i32>, g: Gaps, r: Runs) -> Gather {
   o.net = vec2<f32>(0.0);
   for (var s = 0u; s <= r.n; s++) {
     let m = select(gapForRun(g, r.fl[s]), g.n - 1u, s == 0u);
-    let out = min(outSum(i, s), r.d[s]);
-    if (fluxStamp(i, s) == stepNow() && out > 0.0) {
+    let out = min(outSum(p, i, s), r.d[s]);
+    if (okNow(p, fluxStamp(i, s)) && out > 0.0) {
       let fv = fluxGet(i, s);
       for (var k = 0u; k < NDIR; k++) { o.net += fv[k] * DIRV[k]; }
     }
@@ -504,9 +535,9 @@ fn gather(p: vec2<i32>, g: Gaps, r: Runs) -> Gather {
     let q = nbr(p, k);
     if (!inMap(q)) { continue; }
     let j = colIdxI(q);
-    let rq = runsAt(j, stepPrev());
+    let rq = runsAt(q, j);
     for (var s = 0u; s <= rq.n; s++) {
-      if (rq.d[s] <= EPS || fluxStamp(j, s) != stepNow()) { continue; }
+      if (rq.d[s] <= EPS || !okNow(q, fluxStamp(j, s))) { continue; }
       let code = (fluxCodes(j, s) >> (4u * (k ^ 1u))) & 15u;
       if (code >= g.n) { continue; }
       let f = fluxDir(j, s, k ^ 1u);
@@ -519,7 +550,7 @@ fn gather(p: vec2<i32>, g: Gaps, r: Runs) -> Gather {
   // a stream landing here (this step's jets)
   let j2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
   // (what landed this step: j3.z, the volume that came down)
-  if (u32(j2.w) == stamp24(stepNow()) && u32(j2.x) == 6u) {
+  if (okNow(p, u32(j2.w)) && u32(j2.x) == 6u) {
     let j0 = textureLoad(j0In, texCol(vec2<i32>(p)), 0);
     let landed = textureLoad(j3In, texCol(vec2<i32>(p)), 0).z;
     var m = gapAtZ(g, j2.y + 0.01);
@@ -547,13 +578,13 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let now = stepNow();
-  let r = runsAt(i, stepPrev());
+  let r = runsAt(p, i);
   let ch = chunkOf(id.xy);
   let bed = sfZ(surface[i]) + driftAt(p);
   if (flowFrozen(id.xy, FLOW_N)) {
     // (asleep: carried through; on the edge of an awake chunk, its balance checked)
     let r0 = runsIn[i * NSLOT];
-    if ((u32(r0.w) >> 3u) == stepPrev()) {
+    if (okPrev(p, u32(r0.w) >> 3u)) {
       for (var s = 0u; s <= r.n; s++) { runsOut[i * NSLOT + s] = runsIn[i * NSLOT + s]; }
       runsOut[i * NSLOT] = vec4<f32>(r0.x, r.d[0], r0.z, f32(now * 8u + r.n));
     }
@@ -580,13 +611,13 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
     let q = nbr(p, k);
     if (!inMap(q)) { continue; }
     let j = colIdxI(q);
-    wet = open[j] > EPS || ((u32(runsIn[j * NSLOT].w) >> 3u) == stepPrev() && (u32(runsIn[j * NSLOT].w) & 7u) > 0u);
+    wet = open[j] > EPS || (okPrev(q, u32(runsIn[j * NSLOT].w) >> 3u) && (u32(runsIn[j * NSLOT].w) & 7u) > 0u);
   }
   let j2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
-  wet = wet || (u32(j2.w) == stamp24(now) && u32(j2.x) == 6u);
+  wet = wet || (okNow(p, u32(j2.w)) && u32(j2.x) == 6u);
   for (var s = 0u; s < LQ.step.y; s++) { wet = wet || all(cellAt(LQ.springs[s].xy) == p); }
   let r0 = runsIn[i * NSLOT];
-  let prevBed = select(bed, r0.x, (u32(r0.w) >> 3u) == stepPrev());
+  let prevBed = select(bed, r0.x, okPrev(p, u32(r0.w) >> 3u));
   if (abs(bed - prevBed) > 1e-4) { atomicAdd(&act[ch * 4u], u32(min(abs(bed - prevBed) * 1e6, 1e8))); }
   if (!wet) {
     runsOut[i * NSLOT] = vec4<f32>(bed, 0.0, LQ_HOT, f32(now * 8u));
@@ -753,9 +784,8 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
-  let last = stepNow();
   let r0 = runsIn[i * NSLOT];
-  let ok = (u32(r0.w) >> 3u) == last;
+  let ok = okNow(p, u32(r0.w) >> 3u);
   let cap = arrayLength(&inst) / 3u;
   // enclosed runs (under rock): flat prisms
   if (ok) {
@@ -793,7 +823,7 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   // the stream over this column
   let j2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
-  if (u32(j2.w) != stamp24(last)) { return; }
+  if (!okNow(p, u32(j2.w))) { return; }
   let j0 = textureLoad(j0In, texCol(vec2<i32>(p)), 0);
   let j1 = textureLoad(j1In, texCol(vec2<i32>(p)), 0);
   let j3 = textureLoad(j3In, texCol(vec2<i32>(p)), 0);
@@ -856,5 +886,122 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
       let rr = vec2<f32>(f32(h & 255u), f32((h >> 8u) & 255u)) / 255.0 - 0.5;
       spawnQ(foot + vec3<f32>(rr * width, 0.3), vec3<f32>(rr * 1.5 + j1.xy * 0.2, 0.6), 2.6, K_SMOKE_Q, h, MIST_Q);
     }
+  }
+}
+
+// ---- the list of chunks that run (trackA-liquids, DA-P5; src/flow/liquid.ts encode) -----------------------------
+// Each step, before the passes: lqScan marks which chunks hold liquid (those awake, or that ran the last step — a
+// parked chunk keeps its mark), then lqList decides which run this step, writes their stamps (lqState, copied into
+// lqRun for the passes) and lists them: `run` for flux, jets, depth and publish; `wet` (every chunk with liquid, or
+// running) for prep's draw lists. Entries packed as sim/cull.ts packEntry (cullSource's wrapper reads them).
+// per slot: 1 holds liquid (open or enclosed runs, a stream in the air, a water source)
+@group(0) @binding(36) var<storage, read_write> lqWet: array<u32>;
+// per slot: x L (the last step it ran), y P (the one before), z the steps more it runs, w -
+@group(0) @binding(37) var<storage, read_write> lqState: array<vec4<u32>>;
+@group(0) @binding(40) var<storage, read_write> runList: array<u32>;
+@group(0) @binding(41) var<storage, read_write> runArgs: array<atomic<u32>, 3>;
+@group(0) @binding(42) var<storage, read_write> wetList: array<u32>;
+@group(0) @binding(43) var<storage, read_write> wetArgs: array<atomic<u32>, 3>;
+
+/** steps a chunk runs on after it stops qualifying: both parities then hold its settled records */
+const LINGER: u32 = 2u;
+
+var<workgroup> wgGo: u32;
+var<workgroup> wgWet: atomic<u32>;
+
+@compute @workgroup_size(64)
+fn lqScan(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let cxN = G.mapW / COLS_PAGE;
+  let c = vec2<u32>(wg.x % cxN, wg.x / cxN);
+  let o = c * COLS_PAGE;
+  let slot = colSlot(c);
+  let L = lqState[slot].x;
+  if (li == 0u) {
+    // (scanned when it may have changed: awake — water put in from outside — or it ran the last step)
+    wgGo = select(0u, 1u, c.y < G.mapH / COLS_PAGE && (!flowFrozen(o, FLOW_N) || L == stepPrev()));
+    atomicStore(&wgWet, 0u);
+  }
+  if (workgroupUniformLoad(&wgGo) == 0u) { return; }
+  var w = false;
+  for (var k = 0u; k < 4u; k++) {
+    let l = li * 4u + k;
+    let p = vec2<i32>(o + vec2<u32>(l % COLS_PAGE, l / COLS_PAGE));
+    let i = colIdxI(p);
+    let r0 = runsIn[i * NSLOT];
+    w = w || open[i] > EPS || (parkedOk(L, u32(r0.w) >> 3u) && (u32(r0.w) & 7u) > 0u);
+    if (LQ_WATER) { w = w || waterSourceL[i] != 0.0; }
+    let j2 = textureLoad(j2In, texCol(p), 0);
+    w = w || (parkedOk(L, u32(j2.w)) && textureLoad(j0In, texCol(p), 0).x > 1e-9);
+  }
+  if (w) { atomicStore(&wgWet, 1u); }
+  workgroupBarrier();
+  if (li == 0u) { lqWet[slot] = atomicLoad(&wgWet); }
+}
+
+fn chunkIn(c: vec2<i32>) -> bool { return c.x >= 0 && c.y >= 0 && u32(c.x) < G.mapW / COLS_PAGE && u32(c.y) < G.mapH / COLS_PAGE; }
+fn chunkFrozen(c: vec2<i32>) -> bool { return flowFrozen(vec2<u32>(c) * COLS_PAGE, FLOW_N); }
+fn wetC(c: vec2<i32>) -> bool { return chunkIn(c) && lqWet[colSlot(vec2<u32>(c))] != 0u; }
+/** a spring pours into chunk c or next to it */
+fn springNear(c: vec2<i32>) -> bool {
+  for (var s = 0u; s < LQ.step.y; s++) {
+    let q = vec2<i32>(cellAt(LQ.springs[s].xy)) / i32(COLS_PAGE);
+    if (abs(q.x - c.x) <= 1 && abs(q.y - c.y) <= 1) { return true; }
+  }
+  return false;
+}
+/** rain falls on chunk c (its centre or corners) */
+fn rainOver(c: vec2<i32>) -> bool {
+  if (!LQ_WATER || G.numStorms == 0u) { return false; }
+  let o = vec2<i32>(c) * i32(COLS_PAGE);
+  for (var k = 0; k < 5; k++) {
+    let d = select(vec2<i32>(8, 8), vec2<i32>((k & 1) * 15, (k >> 1) * 15), k < 4);
+    if (rainAt(cellPos(o + d)) > 0.0) { return true; }
+  }
+  return false;
+}
+/** an awake chunk runs when it holds liquid or is next to some, or a spring or rain puts some in */
+fn liveRun(c: vec2<i32>) -> bool {
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) { if (wetC(c + vec2<i32>(dx, dy))) { return true; } }
+  }
+  return springNear(c) || rainOver(c);
+}
+
+@compute @workgroup_size(64)
+fn lqList(@builtin(global_invocation_id) id: vec3<u32>) {
+  let cxN = G.mapW / COLS_PAGE;
+  if (id.x >= cxN * (G.mapH / COLS_PAGE)) { return; }
+  let c = vec2<i32>(i32(id.x % cxN), i32(id.x / cxN));
+  let cu = vec2<u32>(c);
+  let slot = colSlot(cu);
+  var st = lqState[slot];
+  var run = LQ.step.w == 1u;
+  if (run) {
+  } else if (!chunkFrozen(c)) {
+    run = liveRun(c);
+  } else {
+    // asleep: run (carried, its edge's balance checked, a stream arriving held) beside an awake chunk that runs; and
+    // when its flux is rescaled this step
+    for (var dy = -1; dy <= 1 && !run; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        let n = c + vec2<i32>(dx, dy);
+        if ((dx != 0 || dy != 0) && chunkIn(n) && !chunkFrozen(n) && liveRun(n)) { run = true; break; }
+      }
+    }
+    run = run || (wetC(c) && chunkScale(cu * COLS_PAGE) != 1.0);
+  }
+  if (run) { st.z = LINGER; } else if (st.z > 0u) { st.z -= 1u; run = true; }
+  let pl = colPlace(cu);
+  let e = cu.x | (cu.y << 6u) | (pl.x << 12u) | (pl.y << 18u);
+  if (run) {
+    st.y = st.x;
+    st.x = stepNow();
+    let k = atomicAdd(&runArgs[0], 4u) / 4u;
+    runList[k] = e;
+  }
+  lqState[slot] = st;
+  if (run || wetC(c)) {
+    let k = atomicAdd(&wetArgs[0], 4u) / 4u;
+    wetList[k] = e;
   }
 }

@@ -22,7 +22,7 @@ caves and floating islands even if not all cells have them)".
 | id | item | size | status |
 |---|---|---|---|
 | LQ1 | Phone bench of the flow model against the pipes, toggle diffs (awake, steady, disturbed, lava): `?flowbench=1` on the flow lab | M | done (trackA-liquids, src/perf/flowbench.ts) — waiting on the Pixel 9a's run |
-| LQ2 | Make it cheaper where the bench says: sleeping chunks cost nothing (no per-step restamp), gap scans only where liquid is, lava's cost, PW6 (NaN), FL11 (slow drain) | L | open |
+| LQ2 | Make it cheaper where the bench says: sleeping chunks cost nothing (no per-step restamp), gap scans only where liquid is, lava's cost, PW6 (NaN), FL11 (slow drain) | L | wip — chunk lists and parking done (desktop: awake 1.96 → 0.55 ms, asleep 0.24 → 0.06, disturbed 1.24 → 0.25); PW6, FL11 and the per-run gap scans open |
 | LQ3 | Wire it in as the one liquid behind `?liquid=flow\|pipes` (default pipes until the user approves): river table and held rivers as steady runs, lakes, sea per basin, rain bake; the water contract's readers unchanged | L | open |
 | LQ4 | Agents wet per walkable surface (not only the top) | S | open |
 | LQ5 | Muru with `?citygen=fields&living=1&liquid=flow`: a bridge deck claimed into the columns, the river in the gap under it, people on the deck, reach counting it (CG15) | M | open |
