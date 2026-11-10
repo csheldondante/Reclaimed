@@ -20672,3 +20672,13 @@ kernel, because none exists. Derisk with scripts/lab/seasonderisk.mjs on the `to
   from 0.13 to 1.44 ms while the water moves.
 - The added water runs off into the sea, so the flood needs a standing basin or a held level.
 - Scaffolding reads as construction up close, but weakly at play zoom.
+
+## 2026-11-10 — Track A: the Next season code reverted on fortress
+
+The season slice (6a619edb, 806f2cbc) reached fortress without the user's sign-off. The user agreed to revert it:
+- the showcase hitched to a 20-98 ms p95;
+- the first season's scenario site search took 15-30 s (NS-12: about 150 flood fills, each awaited one after the other);
+- it never got a design review.
+The round 128r docs (the user's answers, NEXT_SEASON.md, the DESIGN 18/21 draft) stay. The code stays on the
+`trackA-season` branch for parts worth taking later: the GPU basin fill and the wear states. Track A goes on in the
+street lab (`trackA-streetlab`).
