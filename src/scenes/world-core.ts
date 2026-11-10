@@ -136,7 +136,6 @@ export class WorldCore {
       tickDt: TICK_DT,
       wake: (x, y, r, secs) => this.sleep?.wake(x, y, r, secs, performance.now() / 1000),
       awake: (k) => this.sleep?.isAwake(k, performance.now() / 1000) ?? false,
-      queued: () => this.globals.events.length,
       write: (data) => {
         const t = this.world.tierTex;
         device.queue.writeTexture({ texture: t }, data, { bytesPerRow: t.width * 16 }, { width: t.width, height: t.height });
@@ -306,7 +305,7 @@ export class WorldCore {
     this.sim.frameTicks = 1;
     this.sim.tickOfFrame = 0;
     // (round 108, simtiers: a bake's ticks — the baked processes run in its region at its gain, the rest alongside)
-    ticks += this.tiers.pump(() => this.sim.step(g, filter), ticks);
+    ticks += this.tiers.pump(() => this.sim.step(g, filter));
     return ticks;
   }
 

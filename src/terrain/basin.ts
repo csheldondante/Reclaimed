@@ -35,8 +35,6 @@ export class Basin {
     private owner: LiveFlood,
     /** the level found (window z): the given one, or the basin's spill height */
     readonly level: number,
-    /** the ground at the seed (window z): where a rising flood starts */
-    readonly floor: number,
     /** the grid's first column and its side */
     readonly origin: [number, number],
     readonly m: number,
@@ -129,28 +127,11 @@ export class LiveFlood {
     cp.end();
     dev.queue.submit([enc.finish()]);
     try {
-      const seed = (cy - oy) * m + (cx - ox);
-      const r = await this.gpu.run({ m, seed, h, hm, w0 }, opts.level);
+      const r = await this.gpu.run({ m, seed: (cy - oy) * m + (cx - ox), h, hm, w0 }, opts.level);
       r.filled?.destroy();
-      const floor = await this.read4(h, seed);
-      return new Basin(this, r.level, floor, [ox, oy], m, r.mark, () => r.mark.destroy());
+      return new Basin(this, r.level, [ox, oy], m, r.mark, () => r.mark.destroy());
     } finally {
       for (const b of [h, hm, w0]) b.destroy();
-    }
-  }
-
-  /** a float of a buffer (4 B back) */
-  private async read4(b: GPUBuffer, at: number): Promise<number> {
-    const dev = this.device;
-    const rb = dev.createBuffer({ label: 'basin read4', size: 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-    try {
-      const enc = dev.createCommandEncoder({ label: 'basin read4' });
-      enc.copyBufferToBuffer(b, at * 4, rb, 0, 4);
-      dev.queue.submit([enc.finish()]);
-      await rb.mapAsync(GPUMapMode.READ);
-      return new Float32Array(rb.getMappedRange().slice(0))[0];
-    } finally {
-      rb.destroy();
     }
   }
 

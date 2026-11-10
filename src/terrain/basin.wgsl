@@ -4,8 +4,8 @@
 // user: "We don't need the actual water simulation to flood an area just an actual elevation difference and a single
 // flood fill to see what gets submerged." Prepended with common.wgsl, layers.wgsl, materials.wgsl (terrain/basin.ts).
 //
-//   extract: the window's columns over an m x m grid from `origin` as the fill's heights (the ground's top — the
-//            surface's solid plus its drift — plus the water standing on it). Outlets — the grid's edge, the standing
+//   extract: the window's columns over an m x m grid from `origin` as the fill's heights (the ground's top: the surface's
+//            solid plus its drift; a held river's water surface over its bed). Outlets — the grid's edge, the standing
 //            sea, a held river's columns, columns with nothing in them — start the fill at their height and wall the
 //            mark (1e30): a flood never joins the sea or a river; anything that would is excluded by construction.
 //   write:   over the mark, the held depth to level `level` (BP.level): mode 0 raises (the water at least that deep),
@@ -57,9 +57,7 @@ fn basinExtract(@builtin(global_invocation_id) id: vec3<u32>) {
   let held = textureLoad(riverIn, texCol(p), 0).z;
   let edge = id.x == 0u || id.y == 0u || id.x == BP.m - 1u || id.y == BP.m - 1u;
   let outlet = edge || sfCount(s) == 0u || held > 0.0 || top < G.ocean.x;
-  // (what stands on the ground counts: a lake's or the sea's surface, a river's — a flood rises over the water that's
-  // there, and a seed in a lake finds the lake's own level, nothing to add)
-  let h = top + waterB[colIdxI(p)];
+  let h = select(top, top + waterB[colIdxI(p)], held > 0.0);
   hOut[i] = h;
   hmOut[i] = select(h, BASIN_WALL, outlet);
   w0Out[i] = select(BASIN_WALL, h, outlet);

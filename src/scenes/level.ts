@@ -249,8 +249,6 @@ export class LevelScene implements Scene {
   /** (fortress slice 1, ?fortress=1 with ?town=) the town held as the player's fortress, and its planning bar */
   fortress?: Fortress;
   fortressBar?: FortressBar;
-  /** (round 128r, Track A) the season on the fortress's town (scenes/level/season.ts) */
-  season?: import('./level/season').SeasonOnTown;
   /** (fortress slice 1, milestone 2) its builders, from the first Build */
   fortressCrowd?: FortressCrowd;
   /** (round 128l, m4) the attack wave on the fortress (fortress/raiders.ts), from the first Build */

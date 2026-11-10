@@ -122,9 +122,9 @@ export function piecesOf(plan: CityPlan): StructurePieces {
   const seed = plan.spec.seed;
   const wearOf = (b: number) => {
     const w = b >= 0 ? plan.buildings[b].wear : undefined;
-    // (round 128r, Track A: a ruin — and a ruin under green — drawn as a gutted building, no roof, soot, until Track B
-    // gives each stage its own look; damaged has none yet)
-    return w === 'burned' || w === 'ruined' || w === 'overgrown' ? LOOK_BURNED : w === 'flooded' ? LOOK_FLOODED : 0;
+    // (round 128r, Track A: a ruin drawn as a gutted building — no roof, soot — until Track B gives each stage its own
+    // look; damaged and overgrown have none yet)
+    return w === 'burned' || w === 'ruined' ? LOOK_BURNED : w === 'flooded' ? LOOK_FLOODED : 0;
   };
   const look = (b: number) => styleIxB(b) * 65536 + (b >= 0 ? plan.buildings[b].look : Math.floor(hashf(seed, 77) * 65536)) + wearOf(b);
   // (the town's walls newer than the town: fresh stone — a history mark, spec.marks)
@@ -174,7 +174,7 @@ export function piecesOf(plan: CityPlan): StructurePieces {
       }
       if (b.base > lo + 0.05) out.add(lib.id('plinth'), p, footOf(q, 0.6), b.base, look(b.id), 0);
       // (a site — going up in a grown plan — has no roof yet; a gutted one — burned — none any more)
-      if (plan.sites?.has(b.id) || b.wear === 'burned' || b.wear === 'ruined' || b.wear === 'overgrown') continue;
+      if (plan.sites?.has(b.id) || b.wear === 'burned' || b.wear === 'ruined') continue;
       // the roof: which sides and corners end it
       const joined = (n: number) => {
         if (n < 0) return false;

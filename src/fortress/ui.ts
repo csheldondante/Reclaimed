@@ -12,7 +12,6 @@ import { DEFS } from './defs';
 import type { Fortress } from './fortress';
 import { inspectCard, inspectFacts } from './inspect';
 import { ECON } from './defs';
-import { NEXT_SEASON, SEASON_PLAYING, SKIP_SEASON } from '../season/words';
 import { BEDS_LINE, buildingLine, crewLine, cutOffLine, FULL_LINE, HUNGRY_LINE, jobsLine, PAUSED_LINE, peopleLine, planLines, SKIP_DONE, SKIPPING_LINE, storesLine, structureLines, typeCard } from './words';
 
 const CSS = `
@@ -62,8 +61,6 @@ export interface FortressBarHooks {
   /** (m4, part B) whether the raid's lines are the summary card after a wave, and its Close */
   raidSummary?(): boolean;
   closeRaid?(): void;
-  /** (round 128r, Track A) the season: Next season, Skip while it plays, whether it plays, what the last one did */
-  season?: { next(): void; skip(): void; playing(): boolean; line(): string | null };
 }
 
 /** (round 128e, FT-50) the speeds a tap picks while building */
@@ -93,10 +90,6 @@ export class FortressBar {
   private followBtn: HTMLButtonElement;
   /** (m4) Close, under the raid's summary card */
   private raidRow: HTMLDivElement;
-  /** (round 128r) Next season, and Skip while a season plays */
-  private seasonRow: HTMLDivElement | null = null;
-  private seasonBtn: HTMLButtonElement | null = null;
-  private seasonSkip: HTMLButtonElement | null = null;
   private hooks: FortressBarHooks;
 
   private now: () => { speed: number; skipping: boolean } = () => ({ speed: 1, skipping: false });
@@ -232,28 +225,6 @@ export class FortressBar {
     };
     this.raidRow.appendChild(close);
     this.root.appendChild(this.raidRow);
-    // (round 128r, Track A) the season: planning or building, a tap resolves it and the showcase plays it
-    if (hooks.season) {
-      const S = hooks.season;
-      this.seasonRow = document.createElement('div');
-      this.seasonRow.className = 'fort-row';
-      this.seasonBtn = document.createElement('button');
-      this.seasonBtn.className = 'season';
-      this.seasonBtn.textContent = NEXT_SEASON;
-      this.seasonBtn.onclick = () => {
-        S.next();
-        this.render();
-      };
-      this.seasonSkip = document.createElement('button');
-      this.seasonSkip.className = 'season-skip';
-      this.seasonSkip.textContent = SKIP_SEASON;
-      this.seasonSkip.onclick = () => {
-        S.skip();
-        this.render();
-      };
-      this.seasonRow.append(this.seasonBtn, this.seasonSkip);
-      this.root.appendChild(this.seasonRow);
-    }
     this.root.appendChild(goRow);
     this.now = () => hooks.now();
     this.planOnly = [grid, row];
@@ -276,10 +247,6 @@ export class FortressBar {
       for (const l of who.lines) out.push({ text: l });
       return out;
     }
-    // (round 128r) what the last season did, or that one is passing
-    const S = this.hooks.season;
-    if (S?.playing()) out.push({ text: SEASON_PLAYING, title: true });
-    if (S?.line()) out.push({ text: S.line()!, card: true });
     if (f.tool.inspect) {
       // (round 128d) Inspect: the picked structure's card (inspect.ts), from its data and the ledger now
       const s = f.inspected !== null ? f.plan.structure(f.inspected) : null;
@@ -379,12 +346,6 @@ export class FortressBar {
     this.raidRow.style.display = card ? '' : 'none';
     if (card) this.timeRow.style.display = 'none';
     this.followBtn.textContent = this.hooks.following?.() ? 'Stop following' : 'Follow';
-    if (this.seasonRow && this.seasonBtn && this.seasonSkip && this.hooks.season) {
-      const playing = this.hooks.season.playing();
-      this.seasonRow.style.display = who || t.inspect ? 'none' : '';
-      this.seasonBtn.disabled = playing;
-      this.seasonSkip.style.display = playing ? '' : 'none';
-    }
     this.followBtn.classList.toggle('on', !!this.hooks.following?.());
     if (who) {
       for (const el of this.planOnly) el.style.display = 'none';
