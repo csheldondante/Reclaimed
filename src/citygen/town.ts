@@ -382,6 +382,20 @@ export class FieldTown {
     return [at[0] + p.dx, at[1] + p.dy * ROW_H];
   }
 
+  /** (season life) the town wall begun now (its ring made on the GPU); the next mesh run draws and claims it */
+  wallStart(now: number): void {
+    if (this.gone) return;
+    this.gen.wallStart();
+    this.animUntil = Math.max(this.animUntil, now + 1);
+  }
+  /** (season life) the wall's stage, eased from `when` on the town's clock; animated (and claimed again) till it's there */
+  wallStage(from: number, to: number, when: number, now: number): void {
+    if (this.gone) return;
+    this.gen.wallStage(from, to, when);
+    this.animUntil = Math.max(this.animUntil, Math.max(now, when + DISTRICT_SPAN) + 0.5);
+    this.gen.animate(now);
+  }
+
   /** (season loop) a card's share of a district and its stage, eased from `when` on the town's clock (its build's span); animated
    *  till it's there */
   stageDistrict(id: number, stage: DistrictStage, when: number, now: number): void {

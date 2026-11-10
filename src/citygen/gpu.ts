@@ -211,7 +211,7 @@ const KERNELS = [
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotRec', 'lotMesh', 'marks', 'meshCap',
   'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'gplace', 'sctab', 'bgrow', 'ctint',
   'artSpan', 'artRast', 'artEnd', 'artMesh', 'popField', 'townBridge', 'claimRoads', 'claimLots', 'lotReach', 'deckSpans',
-  'clkInit', 'clkTimelapse', 'clkClaim', 'tlProgress', 'tlRise', 'stgRank',
+  'clkInit', 'clkTimelapse', 'clkClaim', 'tlProgress', 'tlRise', 'stgRank', 'wallBins', 'wallShape', 'wallMesh', 'wallClaim',
 ] as const;
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
@@ -256,6 +256,8 @@ export const DISTRICT_SPAN = 1.75 * BUILD_S;
 export const SC_ROOM = 256;
 /** (season loop) clkClaim's purpose that only counts the districts left (streets.wgsl CLAIM_COUNT) */
 export const CLAIM_COUNT = 0xffffffff;
+/** (season life) the town wall's words (streets.wgsl WALL: 8 + 4 × NB) */
+const WALL_WORDS = 8 + 4 * 72;
 /** (season loop) a district's stage record (streets.wgsl tlProgress: 16 f32) */
 const STG_BYTES = 64;
 /** (M4d hook) a claim's answer: the district (−1 none left), its centre (the grid's frame, world units), the districts
@@ -395,6 +397,8 @@ export class CityGen {
     // (time-lapse: a tag and the made z a vertex — tlRise moves the tagged ones; a claim's answer)
     this.B.VTAG = buf('vertex tags', (world.vertRoom ?? VERT_ROOM) * 8);
     this.B.CLAIM = buf('claim answer', 16);
+    // (season life: the town wall — its ring, gates and stage: streets.wgsl WALL)
+    this.B.WALL = buf('wall', WALL_WORDS * 4);
     // (season loop: each lot's key in its district's growth order — stgRank, a mesh run)
     this.B.KEY = buf('lot keys', (LOT_ROOM + LM_ROOM) * 4);
     // (season loop: 16 f32 a district — on, end, then two slots of a, b, from, to, when — two cards' shares and their
@@ -523,7 +527,7 @@ export class CityGen {
     this.encodeOnly('citygen animate', () => {
       const B = this.B;
       this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 3: B.KEY, 4: B.SCT, 5: this.progress, 6: B.CNT }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
-      this.k('tlRise', {}, { 1: this.lotRecords, 2: this.progress, 3: B.VTAG, 4: B.SCT, 7: this.verts }, Math.ceil(this.vertRoom / 64), 1, true);
+      this.k('tlRise', {}, { 1: this.lotRecords, 2: this.progress, 3: B.VTAG, 4: B.SCT, 6: B.WALL, 7: this.verts }, Math.ceil(this.vertRoom / 64), 1, true);
     });
   }
 
@@ -565,6 +569,24 @@ export class CityGen {
    * (season loop, docs/design/SEASON_LOOP.md) A card's share of a district [a, b] built as far as its stage `from` →
    * `to`, eased over the build's span of the town's clock from `when` (s) — 28 bytes up; the next animate shows it.
    */
+  /**
+   * (season life) The town wall begun now: its ring made round the lots begun (their parcels' reach in 72 directions,
+   * widened, plus a margin), its gates where the arterials cross — on the GPU; the next mesh run draws it and claims it.
+   */
+  wallStart(): void {
+    if (this.dead || !this.p) return;
+    this.device.queue.writeBuffer(this.B.WALL, 0, new Uint32Array(WALL_WORDS));
+    this.encodeOnly('citygen wall', () => {
+      this.k('wallBins', {}, { 1: this.lotRecords, 2: this.progress, 3: this.lotCounts, 6: this.B.WALL }, Math.ceil(REC_LM / 64));
+      this.k('wallShape', {}, { 1: this.B.ART, 5: this.B.WALL }, 1);
+    });
+  }
+  /** (season life) the wall's stage: from → to (0..1 of the ring), eased over a build's span of the clock from `when` */
+  wallStage(from: number, to: number, when: number): void {
+    if (this.dead) return;
+    this.device.queue.writeBuffer(this.B.WALL, 16, new Float32Array([from, to, when]));
+  }
+
   stageDistrict(id: number, s: DistrictStage, when: number): void {
     if (this.dead) return;
     if (!(id >= 0 && id < SC_ROOM)) throw new Error(`citygen: district ${id} has no stage (room for ${SC_ROOM})`);
@@ -932,6 +954,8 @@ export class CityGen {
     this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 3: B.KEY, 4: B.SCT, 5: this.progress, 6: B.CNT }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
     this.k('lotMesh', { count: LOT_ROOM }, { 5: B.VTAG, 1: this.lotRecords, 2: this.progress, 3: HH, 4: this.reachCut, 6: B.CNT, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
     this.k('artMesh', {}, { 5: B.VTAG, 1: B.ART, 3: HH, 6: B.ROADS, 7: this.verts }, (NART * NAP) / 64, 1, true);
+    // (season life: the town wall, once begun — at full height; tlRise sets its pieces' rise)
+    this.k('wallMesh', {}, { 1: B.WALL, 3: HH, 4: B.FD, 5: B.VTAG, 7: this.verts }, 1, 1, true);
     if (vector && p.lmMult > 0) this.k('lmMesh', {}, { 5: B.VTAG, 1: B.LM, 3: HH, 6: B.ROADS, 7: this.verts }, (64 * 48) / 64, 1, true);
     if (PHI_MODE[p.majors] !== 0 && p.marks) this.k('marks', { mode: this.sel + 1 }, { 5: B.VTAG, 1: B.PTS, 3: HH, 7: this.verts }, 1, 1, true);
     // (m3c: the shaped ground's skin, its bands tinted; the cart road)
@@ -939,10 +963,12 @@ export class CityGen {
     if (p.shape > 1) this.k2('roadShape', {}, { 5: B.VTAG, 1: B.HS, 2: B.PTS, 3: HH, 4: B.FD, 6: B.ROADS, 7: this.verts }, true);
     this.k('meshCap', {}, {}, 1, 1, true);
     // (time-lapse: the tagged vertices where the clock puts them)
-    this.k('tlRise', {}, { 1: this.lotRecords, 2: this.progress, 3: B.VTAG, 4: B.SCT, 7: this.verts }, Math.ceil(this.vertRoom / 64), 1, true);
+    this.k('tlRise', {}, { 1: this.lotRecords, 2: this.progress, 3: B.VTAG, 4: B.SCT, 6: B.WALL, 7: this.verts }, Math.ceil(this.vertRoom / 64), 1, true);
     // (M4b: the claim grid — the roads' and decks' columns, then the buildings' over them)
     this.k2('claimRoads', {}, { 1: B.ROADS, 3: B.H, 7: this.claimGrid });
     this.k('claimLots', { count: LOT_ROOM }, { 1: this.lotRecords, 2: this.progress, 4: B.CNT, 7: this.claimGrid }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
+    // (season life: the wall's columns over them, the road raster marked where it stands)
+    this.k('wallClaim', {}, { 1: B.WALL, 3: HH, 4: B.FD, 5: B.ROADS, 7: this.claimGrid }, 1);
     this.cp.end();
     device.queue.writeBuffer(this.uni, 0, this.uniData, 0, this.nPass * SLOT);
     // (M4a: the counts for the contract — the lots' (CNT word 0) and the sites' (LM word 0))

@@ -47,6 +47,8 @@ const F_DEBUG: u32 = 16u;
 const ROW_H: f32 = 0.8660254;
 const NONE: u32 = 0xffffffffu;
 const DECK_BIT: u32 = 0x80000000u;
+/** (season life) a town wall's column in citygen's road raster (streets.wgsl WALL_MARK) */
+const WALL_MARK: u32 = 0x40000000u;
 
 /** hubs */
 const HUBS: u32 = 8u;
@@ -346,6 +348,12 @@ fn walkInit(@builtin(global_invocation_id) g: vec3<u32>) {
   if (i >= N()) { return; }
   let m = ROADS[i];
   var w = 0u;
+  // (season life: a town wall's column — citygen streets.wgsl WALL_MARK — blocked: routes go out through the gates)
+  if (m == WALL_MARK) {
+    atomicStore(&WALK[i], W_BLOCK);
+    for (var h = 0u; h < PLANES; h++) { FIELD[h * N() + i] = NONE; }
+    return;
+  }
   if (m != 0u) { w = select(W_ROAD, W_DECK, (m & DECK_BIT) != 0u); }
   // (a passage laid by an earlier round stays: walked as a track)
   if ((atomicLoad(&WALK[i]) & W_PASS) != 0u) { w = select(w, W_TRACK, w == 0u) | W_PASS; }

@@ -126,6 +126,13 @@ export interface CityDistricts {
   claimDistrict(kind: OpportunityKind, town?: string): Promise<TownDistrict>;
   districtsLeft(town?: string): Promise<{ town: string; left: number } | null>;
   stageDistrict(town: string, id: number, stage: DistrictStage, atOnce?: boolean): boolean;
+  /**
+   * (season life) The town wall: `wallStart` makes its ring round the lots begun (gates where the arterials cross) on
+   * the GPU; `wallStage` its stage, from → to (0..1 of the ring: each piece rises in turn from the first gate), eased
+   * over a build's span from now, or there at once (Skip). False: the town isn't live.
+   */
+  wallStart(town: string): boolean;
+  wallStage(town: string, from: number, to: number, atOnce?: boolean): boolean;
   /** a point of a town's frame in the window now (null: the town isn't live) */
   inWindow(town: string, at: readonly [number, number]): [number, number] | null;
   timelapse(span?: number): boolean;

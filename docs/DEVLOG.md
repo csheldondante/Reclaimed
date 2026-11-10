@@ -21414,3 +21414,19 @@ The user: "I do want to see agents moving around and more things to reflect choi
   picked and felled. They were pools-only stubs.
 - Checked at Muru: quarry + houses + lumber started → 203 people, the quarry dug 146 m³ in 20 s, the camp listed 54
   trees. Changing the counts re-deals every rider (the living town's own rule: its rows cleared on a new deal).
+
+## 2026-11-10 — season life 2: the walls card raises a town wall (trackA-seasonlife)
+
+- **The ring, on the GPU** (streets.wgsl `wallBins`, `wallShape`, once, when the card starts): each begun lot's parcel's
+  far corner, an atomic max in its direction of 72 round the centre; widened over ±3 directions (so the wall never cuts
+  a plot) plus a 7-unit margin; the core's radius where nothing's built. Gates where an arterial's polyline crosses a
+  segment; at least two (DESIGN §13: the segment across from the first when there's one or none).
+- **Drawn in the town's own mesh** (`wallMesh`, each mesh run): a wall piece a segment (1 unit thick each side,
+  4.5 high), not at gates nor over water or cliffs (the distance field), and a tower (4 × 4, 8 high) at every sixth
+  corner and beside each gate. Tagged TG_WALL: `tlRise` sets each piece's height by its segment's rise — the card's
+  stage eased over a build span, each piece rising in turn round the ring from the first gate — so a season shows a
+  stretch more of it, whole when the card ends. Skip sets the stage at once.
+- **Claimed** (`wallClaim`, after the lots): the pieces' columns as spans at their risen height, and the road raster
+  marked WALL_MARK there, which the living town's walkInit treats as blocked: its routes go out through the gates.
+- Checked at Muru (two seasons of three): 1266 wall vertices; the west town's ring two-thirds up, towers at corners.
+- `SeasonLoop.offer(id)`: a catalog card into the hand for scripts and shots (the dealer had no walls card to give).

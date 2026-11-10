@@ -123,7 +123,7 @@ export const CATALOG: readonly SeasonCard[] = [
     locks: { labor: 2, might: 1 },
     costs: { materials: 3 },
     seasons: 3,
-    work: { kind: 'stub', waits: 'a wall builder on the town limit' },
+    work: { kind: 'walls' },
     gives: { might: 1 },
     unrestOnStart: 1,
   },

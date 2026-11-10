@@ -137,6 +137,8 @@ function fake(districts = 7) {
       districtsLeft: async () => ({ town: 't', left: n }),
       stageDistrict: (_t, id, s: DistrictStage, atOnce) => (told.push(`${id} ${s.slot} [${s.a.toFixed(2)},${s.b.toFixed(2)}] ${s.from.toFixed(2)}>${s.to.toFixed(2)} end ${s.end.toFixed(2)}${atOnce ? ' now' : ''}`), true),
       inWindow: (_t, at) => [at[0], at[1]],
+      wallStart: () => (told.push('wall start'), true),
+      wallStage: (_t, from, to, atOnce) => (told.push(`wall ${from.toFixed(2)}>${to.toFixed(2)}${atOnce ? ' now' : ''}`), true),
     },
     tiers: {
       showcase: (s) => {

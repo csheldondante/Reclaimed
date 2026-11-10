@@ -38,6 +38,8 @@ export type CardWork =
   | { kind: 'district'; district: OpportunityKind; parts: number }
   /** the living town's works (citylife): the quarry dug, the clearing felled — on from the card's start */
   | { kind: 'works'; site: 'quarry' | 'camp' }
+  /** (season life) the town wall: a ring round the town as it stands, gates at the arterials, rising each season */
+  | { kind: 'walls' }
   /** no world change yet: pools only (bridges wait for a builder) */
   | { kind: 'stub'; waits: string };
 

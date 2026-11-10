@@ -16,7 +16,7 @@ import { summaryLine } from './words';
 import { townLife, type TownLife } from './life';
 
 export interface SeasonHost {
-  districts: Pick<CityDistricts, 'claimDistrict' | 'districtsLeft' | 'stageDistrict' | 'inWindow'>;
+  districts: Pick<CityDistricts, 'claimDistrict' | 'districtsLeft' | 'stageDistrict' | 'inWindow' | 'wallStart' | 'wallStage'>;
   tiers: Pick<SimTiers, 'showcase'>;
   tune: DealerTune;
   /** each frame of the showcase: the district it's on (window world, as the window is now) — the camera's framing */
@@ -110,6 +110,14 @@ export class SeasonLoop {
     for (const o of offers) this.recent.push({ template: o.card.id, place: 'town', turn: this.ledger.season });
   }
 
+  /** (scripts and shots only) a catalog card put in the hand as if dealt — the dealer is the player's only source */
+  offer(id: string): number {
+    const c = card(id);
+    this.hand.push({ card: c, reason: c.pitch, affordable: true, missing: {}, score: 0 });
+    this.changed();
+    return this.hand.length - 1;
+  }
+
   /** whether a hand card can be started now: its people free, its goods held, land for it */
   canStart(i: number): { ok: boolean; short: ReturnType<typeof short>; land: boolean } {
     const o = this.hand[i];
@@ -175,7 +183,11 @@ export class SeasonLoop {
       for (const ch of r.changes) {
         const c = card(ch.card);
         if (ch.first && c.work.kind === 'district') await this.place(ch.project, c.work.district, c.work.parts);
+        // (season life: the walls card's first season makes the ring round the town as it stands)
+        if (ch.first && c.work.kind === 'walls' && this.town !== null) this.host.districts.wallStart(this.town);
       }
+      const walls = r.changes.filter((ch) => card(ch.card).work.kind === 'walls');
+      this.lastWalls = walls;
       this.ledger = r.ledger;
       this.last = r;
       this.summary = summaryLine(r, card);
@@ -193,7 +205,7 @@ export class SeasonLoop {
       this.lastSteps = shown;
       const when = (st: Step) => st.at * (STEPS_WITHIN / 0.5);
       this.show = this.host.tiers.showcase(
-        shown.map((st) => ({ at: when(st), apply: () => this.stage(st, false) })),
+        [...shown.map((st) => ({ at: when(st), apply: () => this.stage(st, false) })), ...walls.map((ch) => ({ at: ch.at * (STEPS_WITHIN / 0.5), apply: () => this.wall(ch.from, ch.to, false) }))],
         {
           seconds: this.host.seconds,
           frame: (t) => {
@@ -228,11 +240,18 @@ export class SeasonLoop {
     if (d) this.host.districts.stageDistrict(d.town, d.id, { slot: st.slot, a: st.a, b: st.b, from: st.from, to: st.to, end }, atOnce);
   }
 
+  /** (season life) the walls' stage */
+  private wall(from: number, to: number, atOnce: boolean): void {
+    if (this.town !== null) this.host.districts.wallStage(this.town, from, to, atOnce);
+  }
+  private lastWalls: { from: number; to: number }[] = [];
+
   /** Skip: every stage of the season there at once — the same as played */
   skip(): void {
     if (!this.show?.playing) return;
     this.show.skip();
     for (const st of this.lastSteps) this.stage(st, true);
+    for (const w of this.lastWalls) this.wall(w.from, w.to, true);
     this.changed();
   }
 

@@ -3460,6 +3460,14 @@ fn tlRise(@builtin(global_invocation_id) g: vec3<u32>) {
     if (u.h2.z > 0.5 && r4(SC_HEAD + id * SCW + 8u) > u.tl.x) { z = z0 - 1000.0; }
   } else if (kind == TG_LOT) {
     if (r2(id) <= 0.0) { z = z0 - 1000.0; }
+  } else if (kind == TG_WALL) {
+    // (season life: a wall piece or a tower — id: its segment, 128 a tower, 256 a foot — risen by its segment's rise;
+    // w6 the WALL words)
+    let seg = id & 127u;
+    let h = select(WALL_H, TOWER_H, (id & 128u) != 0u);
+    let rw = wallRise(seg, atomicLoad(&w6[2]), bitcast<f32>(atomicLoad(&w6[4])), bitcast<f32>(atomicLoad(&w6[5])), bitcast<f32>(atomicLoad(&w6[6])));
+    if (rw <= 0.0 || atomicLoad(&w6[0]) != 1u) { z = z0 - 1000.0; }
+    else if ((id & 256u) == 0u) { z = z0 - h + h * rw; }
   }
   w7[v * 8u + 2u] = bitcast<u32>(z);
 }
@@ -3520,5 +3528,218 @@ fn fieldMesh(i: u32, o: u32, q: array<vec2<f32>, 4>) {
     w5[(at2 + 6u + k * 6u) * 2u] = tb;
     w5[(at2 + 9u + k * 6u) * 2u] = tb;
     w5[(at2 + 10u + k * 6u) * 2u] = tb;
+  }
+}
+
+// ==== season life: the town wall — a ring round the town as it stands, gates at the arterials, rising in stages ====
+// (docs/design/SEASON_LOOP.md "Season life" 2) WALL (words): 0 made (1), 1 its gates, 2 the first gate's segment (the
+// rising starts there), 3 unused; 4–6 the card's stage: from, to, when (f32: 0..1 of the ring, the town's clock);
+// 8 + b the built lots' furthest reach in direction b (u32, 1/16 unit: an atomic max); 8 + NB + 2b the ring's corner b
+// (x, y: the grid's world units); 8 + 3·NB + b segment b (corner b → b + 1) a gate (1). Made once, when the walls card
+// starts (wallBins, wallShape); drawn in each mesh run at full height (wallMesh: TG_WALL vertices — tlRise sets each
+// piece's height by its segment's rise); claimed after the lots (wallClaim: its columns' spans, the road raster marked
+// WALL_MARK where it stands, so the living town's routes go out through the gates).
+const NB: u32 = 72u;
+const WB_REACH: u32 = 8u;
+const WB_V: u32 = 80u;
+const WB_GATE: u32 = 224u;
+const WALL_H: f32 = 4.5;
+const TOWER_H: f32 = 8.0;
+const WALL_HW: f32 = 1.0;
+const TOWER_HW: f32 = 2.0;
+/** past the built lots' furthest reach in a direction (world units) */
+const WALL_MARGIN: f32 = 7.0;
+/** a wall piece rises over this share of the card's build, each piece after the one before round the ring */
+const WALL_BAND: f32 = 0.12;
+const C_WALLSTONE: u32 = 0xa8977du;
+const C_TOWER: u32 = 0x8f806bu;
+const TG_WALL: u32 = 5u;
+/** (season life) a wall's column in the road raster: not a road — the living town's routes go round it (routes.wgsl
+ *  walkInit: blocked) */
+const WALL_MARK: u32 = 0x40000000u;
+fn binOf(d: vec2<f32>) -> u32 { return min(u32(floor((atan2(d.y, d.x) + 3.14159265) / TAU * f32(NB))), NB - 1u); }
+fn binDir(b: u32) -> vec2<f32> { let a = (f32(b) + 0.5) / f32(NB) * TAU - 3.14159265; return vec2<f32>(cos(a), sin(a)); }
+/** a segment's rise (0..1) at the stage (from, to, when) and its place round the ring from the first gate */
+fn wallRise(seg: u32, gate0: u32, s0: f32, s1: f32, when: f32) -> f32 {
+  let span = 1.75 * max(u.tl.y, 1e-3);
+  let k = clamp((u.tl.x - when) / span, 0.0, 1.0);
+  let S = mix(s0, s1, k * k * (3.0 - 2.0 * k));
+  let w = f32((seg + NB - gate0) % NB) / f32(NB);
+  return clamp((S - w * (1.0 - WALL_BAND)) / WALL_BAND, 0.0, 1.0);
+}
+/** one thread a lot record: begun (progress over 0) — its parcel's far corner from the centre, in its direction (b1
+ *  the records, b2 the progress, b3 the lot counts; w6 WALL) */
+@compute @workgroup_size(64)
+fn wallBins(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= min(b3[0], REC_LM)) { return; }
+  let o = i * RECW;
+  let kind = b1[o + 17u];
+  if (kind == REC_NONE || r2(i) <= 0.0) { return; }
+  var far = 0.0;
+  var c = vec2<f32>(0.0);
+  for (var k = 0u; k < 4u; k++) {
+    let p = vec2<f32>(r1(o + k * 2u), r1(o + 1u + k * 2u));
+    c += 0.25 * p;
+    far = max(far, distance(p, u.d.xy));
+  }
+  atomicMax(&w6[WB_REACH + binOf(c - u.d.xy)], u32(far * 16.0));
+}
+var<workgroup> wbR: array<f32, 72>;
+var<workgroup> wbG: array<u32, 72>;
+fn segsHit(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> bool {
+  let r = b - a;
+  let s = d - c;
+  let den = cross2(r, s);
+  if (abs(den) < 1e-6) { return false; }
+  let t = cross2(c - a, s) / den;
+  let v = cross2(c - a, r) / den;
+  return t >= 0.0 && t <= 1.0 && v >= 0.0 && v <= 1.0;
+}
+/** one workgroup: the ring — each direction's reach widened over ±3 directions (never through a plot) plus the
+ *  margin, the town's core where nothing's built — its corners, its gates where an arterial crosses (at least two:
+ *  DESIGN §13), the first gate (w5 WALL, b1 ART) */
+@compute @workgroup_size(128)
+fn wallShape(@builtin(local_invocation_index) li: u32) {
+  if (li < NB) { wbR[li] = f32(w5[WB_REACH + li]) / 16.0; }
+  workgroupBarrier();
+  var r = 0.0;
+  if (li < NB) {
+    for (var j = 0u; j < 7u; j++) { r = max(r, wbR[(li + NB + j - 3u) % NB]); }
+  }
+  workgroupBarrier();
+  if (li < NB) {
+    if (r <= 0.0) { r = u.d.z * 0.35; }
+    wbR[li] = r + WALL_MARGIN;
+    var v = u.d.xy + binDir(li) * wbR[li];
+    v = clamp(v, vec2<f32>(1.0), vec2<f32>(f32(W()) - 1.0, f32(H()) * ROW_H - 1.0));
+    w5[WB_V + 2u * li] = bitcast<u32>(v.x);
+    w5[WB_V + 2u * li + 1u] = bitcast<u32>(v.y);
+  }
+  workgroupBarrier();
+  if (li < NB) {
+    let p = vec2<f32>(bitcast<f32>(w5[WB_V + 2u * li]), bitcast<f32>(w5[WB_V + 2u * li + 1u]));
+    let q = vec2<f32>(bitcast<f32>(w5[WB_V + 2u * ((li + 1u) % NB)]), bitcast<f32>(w5[WB_V + 2u * ((li + 1u) % NB) + 1u]));
+    var gate = 0u;
+    for (var k = 0u; k < artCount(1u); k++) {
+      let n = artPts(1u, k);
+      for (var j = 0u; j + 1u < n; j++) {
+        if (segsHit(p, q, artPt(1u, k, j), artPt(1u, k, j + 1u))) { gate = 1u; }
+      }
+    }
+    wbG[li] = gate;
+  }
+  workgroupBarrier();
+  if (li == 0u) {
+    var n = 0u;
+    var first = NONE;
+    for (var b = 0u; b < NB; b++) { if (wbG[b] == 1u) { n++; if (first == NONE) { first = b; } } }
+    // (fewer than two: the first, or the ring's start, and the segment across from it)
+    if (n < 2u) {
+      if (first == NONE) { first = 0u; wbG[0] = 1u; }
+      wbG[(first + NB / 2u) % NB] = 1u;
+      n = 2u;
+    }
+    w5[1] = n;
+    w5[2] = first;
+  }
+  workgroupBarrier();
+  if (li < NB) { w5[WB_GATE + li] = wbG[li]; }
+  if (li == 0u) { w5[0] = 1u; }
+}
+fn wbV(b: u32) -> vec2<f32> { let o = WB_V + 2u * (b % NB); return vec2<f32>(r1(o), r1(o + 1u)); }
+fn wbGate(b: u32) -> bool { return b1[WB_GATE + (b % NB)] == 1u; }
+fn wbTower(b: u32) -> bool { return (b % 6u == 0u || wbGate(b) || wbGate(b + NB - 1u)) && !blockedAt(wbV(b)); }
+/** a segment over water or a cliff (b4 the distance field: negative there): no wall piece */
+fn wbWet(b: u32) -> bool {
+  let p = wbV(b);
+  let q = wbV(b + 1u);
+  for (var k = 0u; k <= 4u; k++) { if (blockedAt(mix(p, q, f32(k) / 4.0))) { return true; } }
+  return false;
+}
+/** a quad from p (its foot at zp, top zp + h) to q (zq, zq + h), outward right of p → q; its foot's vertices tagged `tb` */
+fn wquad(at: u32, p: vec2<f32>, q: vec2<f32>, zp: f32, zq: f32, h: f32, col: u32, tb: u32) {
+  tri(at, vec3<f32>(p, zp), vec3<f32>(q, zq), vec3<f32>(q, zq + h), col);
+  tri(at + 3u, vec3<f32>(p, zp), vec3<f32>(q, zq + h), vec3<f32>(p, zp + h), col);
+  w5[at * 2u] = tb;
+  w5[(at + 1u) * 2u] = tb;
+  w5[(at + 3u) * 2u] = tb;
+}
+/** a box from a to b, half width hw, h high: its top and two long sides; `caps` its ends too (18 or 30 vertices) */
+fn wbox(at: u32, a: vec2<f32>, b: vec2<f32>, hw: f32, h: f32, col: u32, tt: u32, tb: u32, caps: bool) {
+  let d = normalize(b - a);
+  let n = vec2<f32>(d.y, -d.x) * hw;
+  let za = hAt(a) - 0.4;
+  let zb = hAt(b) - 0.4;
+  curTag = tt;
+  tri(at, vec3<f32>(a + n, za + h), vec3<f32>(b + n, zb + h), vec3<f32>(b - n, zb + h), col);
+  tri(at + 3u, vec3<f32>(a + n, za + h), vec3<f32>(b - n, zb + h), vec3<f32>(a - n, za + h), col);
+  wquad(at + 6u, a + n, b + n, za, zb, h, col, tb);
+  wquad(at + 12u, b - n, a - n, zb, za, h, col, tb);
+  if (caps) {
+    wquad(at + 18u, a - n, a + n, za, za, h, col, tb);
+    wquad(at + 24u, b + n, b - n, zb, zb, h, col, tb);
+  }
+}
+/** one thread a ring segment (made): its wall piece (not at a gate) and its corner's tower, at full height — TG_WALL
+ *  (tlRise: its rise) (b1 WALL, r3 the heights, b4 the distance field; w5 VTAG, w7 the mesh; args) */
+@compute @workgroup_size(128)
+fn wallMesh(@builtin(local_invocation_index) li: u32) {
+  if (li >= NB || b1[0] != 1u) { return; }
+  let p = wbV(li);
+  let q = wbV(li + 1u);
+  if (!wbGate(li) && !wbWet(li) && distance(p, q) > 0.2) {
+    let at = room(18u);
+    if (at == NONE) { return; }
+    wbox(at, p, q, WALL_HW, WALL_H, C_WALLSTONE, TG_WALL | ((li + 1u) << 8u), TG_WALL | (((li | 256u) + 1u) << 8u), false);
+  }
+  if (wbTower(li)) {
+    let at = room(30u);
+    if (at == NONE) { return; }
+    // (the tower square on the ring's direction there)
+    var d = q - wbV(li + NB - 1u);
+    if (length(d) < 1e-3) { d = vec2<f32>(1.0, 0.0); }
+    let e = normalize(d) * TOWER_HW;
+    let id = li | 128u;
+    wbox(at, p - e, p + e, TOWER_HW, TOWER_H, C_TOWER, TG_WALL | ((id + 1u) << 8u), TG_WALL | (((id | 256u) + 1u) << 8u), true);
+  }
+}
+/** one thread a ring segment: its wall piece's and its tower's columns claimed at their risen height (spans), the road
+ *  raster marked WALL_MARK under them (b1 WALL, r3 the heights, b4 the distance field; w5 ROADS, w7 the claim grid) */
+@compute @workgroup_size(128)
+fn wallClaim(@builtin(local_invocation_index) li: u32) {
+  if (li >= NB || b1[0] != 1u) { return; }
+  let r = wallRise(li, b1[2], r1(4u), r1(5u), r1(6u));
+  if (r <= 0.02) { return; }
+  let p = wbV(li);
+  let q = wbV(li + 1u);
+  if (!wbGate(li) && !wbWet(li)) { wallCols(p, q, WALL_HW, WALL_H * r); }
+  if (wbTower(li)) {
+    var d = q - wbV(li + NB - 1u);
+    if (length(d) < 1e-3) { d = vec2<f32>(1.0, 0.0); }
+    let e = normalize(d) * TOWER_HW;
+    wallCols(p - e, p + e, TOWER_HW, TOWER_H * r);
+  }
+}
+fn wallCols(a: vec2<f32>, b: vec2<f32>, hw: f32, h: f32) {
+  let N = u32(W() * H());
+  let lo = min(a, b) - vec2<f32>(hw + 1.0);
+  let hi = max(a, b) + vec2<f32>(hw + 1.0);
+  let ab = b - a;
+  for (var y = max(i32(floor(lo.y / ROW_H)), 0); y <= min(i32(ceil(hi.y / ROW_H)), H() - 1); y++) {
+    for (var x = max(i32(floor(lo.x)), 0); x <= min(i32(ceil(hi.x)), W() - 1); x++) {
+      let c = cpos(x, y);
+      let t = clamp(dot(c - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+      if (distance(c, a + ab * t) > hw + 0.35) { continue; }
+      let i = ix(x, y);
+      let base = hAt(c) - 0.4;
+      let so = N * 4u + i * 4u;
+      w7[i * 4u + 3u] = 1u;
+      set7(so, base);
+      set7(so + 1u, base + h);
+      w7[so + 2u] = M_RUBBLE;
+      w7[so + 3u] = 0u;
+      w5[i] = WALL_MARK;
+    }
   }
 }

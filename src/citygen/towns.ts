@@ -86,6 +86,21 @@ export class FieldTowns implements CityDistricts {
     return { town: t.site.id, ...(await t.claimDistrict(OPPORTUNITY_PURPOSE[kind], this.townTime)) };
   }
 
+  /** (season life) the town wall: its ring made now; its stage (Skip: at once) */
+  wallStart(town: string): boolean {
+    const t = this.live.get(town);
+    if (!t) return false;
+    t.wallStart(this.townTime);
+    return true;
+  }
+  wallStage(town: string, from: number, to: number, atOnce = false): boolean {
+    const t = this.live.get(town);
+    if (!t) return false;
+    const now = this.townTime;
+    t.wallStage(from, to, atOnce ? now - DISTRICT_SPAN - 1 : now, now);
+    return true;
+  }
+
   /** (season loop) a point of a town's frame (a claim's centre) in the window now; null: the town isn't live */
   inWindow(town: string, at: readonly [number, number]): [number, number] | null {
     return this.live.get(town)?.inWindow(at) ?? null;
