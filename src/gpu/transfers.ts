@@ -87,6 +87,10 @@ const S24 = '§24 reads are small and only after edits';
 export const TRANSFERS: TransferSite[] = [
   // ==== GPU→CPU reads ====
   // ---- the world's own buffers (WorldCore): the wrappers, then every caller ----
+  // (living town, docs/design/LIVING_TOWN.md: the CPU passes inputs only; the one read is the debug panel's)
+  { file: 'citylife/living.ts', fn: 'LivingTown.counters', what: 'the state words' head, 640 B', why: 'the living town's debug panel (?living=1): counters read twice a second while the panel is open, never by the game', rate: 'timed', every: '500 ms while the panel is open', play: 'no' },
+  { file: 'citylife/living.ts', fn: 'LivingTown.debugRead', what: 'a buffer's head for a test or script', why: 'tests and scripts only', rate: 'demand', play: 'no' },
+  { kind: 'upload', file: 'citylife/living.ts', fn: 'LivingTown.writeParams', size: 'small', what: 'the parameters' uniform, 176 B', why: 'the living town's inputs: counts, rates, the works' numbers, the grid's place in the window, the clock', rate: 'frame', play: 'yes' },
   { file: 'scenes/world-core.ts', fn: 'WorldCore.readRaw', wrapper: /\.readBuffer\(/, what: 'a whole WorldGpu buffer (surface, veg, water N×4 B; layers ~16 MB at window 256)', why: 'the generic buffer read behind WorldCore.readBuffer', rate: 'via', play: 'yes' },
   { file: 'scenes/world-core.ts', fn: 'WorldCore.readTextureRaw', wrapper: /\.(readTexture|readWindField)\(/, what: 'a whole rgba32f texture (windField W/2×H/2×16 B, drift N×16 B)', why: 'the generic texture read behind readTexture and readWindField', rate: 'via', play: 'yes' },
   { file: 'scenes/world-core.ts', fn: 'WorldCore.readWindField', via: 'scenes/world-core.ts#WorldCore.readTextureRaw', what: 'the wind field texture', why: 'plumbing: readWindField is readTexture(windField)', rate: 'via', play: 'yes' },

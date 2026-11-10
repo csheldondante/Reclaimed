@@ -95,7 +95,32 @@ thread a rider a frame (`riders`):
   torso in the job's colour, head, a load box when carrying; haulers push a cart. A kernel writes them each frame
   (`figures`), culled to the window.
 
-**One crowd (§11).** These riders are not rows of the Agents' unit buffer yet. Agents steps every unit on surfaces and
+**Fits Track B's GPU unit AI plan** (`origin/trackB:docs/handoff/GPU_UNIT_AI_PLAN.md`; U0 isn't written yet, so the
+haul states are defined here to fit it). Nothing of the CPU crews is used: not `agents/crew.ts`, `buildcrew.ts`,
+`town/life.ts`, not `agents.sync()`, not the inhabitants.
+- **Behaviour is a state on the GPU row.** RID word 1: `job | state << 8 | leg << 16`. States (routes.wgsl `S_*`):
+  INIT, REST (a timer at home or base), GO (riding out), WORK (a timer at the job; a quarryman adds dig budget, a
+  builder works a rising lot), BACK, RAMP, FACE / UPFACE (the open legs in the pit), UPRAMP, HAUL (riding a load in),
+  LOAD (waiting at a source for a whole load), TREE (walking to a claimed tree), FELL (the fell asked, waiting for its
+  answer), YARD (carrying logs to the yard), DROP, IDLE.
+- **Transitions come from GPU signals:** a leg's end (arrived: the trip's distance reaches its route's length, or the
+  open leg its point), a timer, a load taken (an atomic on a counter), a fell's answer (fellApply writes the logs into
+  the row), a route traced (its hash slot leaves PENDING), a site's progress (citygen's buffer).
+- **The haul cycle** is go to source → work (dig / fell) → carry → deposit → repeat, entirely in that state machine.
+- **Goals are routes and fields seeded on the GPU:** the hubs' fields from the lot records and the population field,
+  routes traced down them; the quarry's ramp route from the pit's shape; the face and the trees from the works' state.
+- **Job sites are GPU buffers:** the quarry's bench, progress and face (LT `L_Q`), the clearing's tree list and claims
+  (LT `L_TREES`, WALK bit 16), the building sites (LT `L_SITES`, lots whose progress is between 0 and 1).
+- **World operations are issued from the GPU:** the unit step writes the dig budget (a counter), the stores' inbox (a
+  counter) and the fell queue (`L_FELL`, rider ids); the works' kernels apply them to the columns and the flora field
+  (`dig`, `pile`, `fellApply`), following edit.wgsl's take and put rules and its fell's stump. Not yet one snippet with
+  edit.wgsl's OP_TAKE/OP_PUT (they apply CPU events, a tick's four): see Hacks.
+- **CPU → GPU is orders only** (the parameters' uniform: counts, rates, the works' numbers; the grid's place; a
+  rebuild word when citygen draws its roads again). **GPU → CPU is nothing in play**; the debug panel's counters only.
+- **The scope** isn't needed: every rider is a trip record stepped by one thread, a few reads each.
+
+**One crowd (§11): this is a third crowd for now.** The Agents' units (CPU-brained crews, a per-frame sync) and the
+inhabitants (src/inhabitants) are the other two. These riders are not rows of the Agents' unit buffer yet. Agents steps every unit on surfaces and
 fields, with ids and groups held on the CPU (the old towns' TownLife drives them by events read back); at 500–2,000
 riders that is both the CPU work this task forbids and a step the riders don't need. The riders here are the §12 trip
 records. Merging them into the one crowd (a unit is a rider while on a route; knocked off by wind or a blast it becomes
@@ -131,11 +156,12 @@ versions (chunkver.wgsl `bumpColumn`), so the mesh, the reach and the agents' su
 
 - **Stone:** taken from the quarry's columns into the face pile (a counter) → a hauler takes a load (atomic subtract,
   only if a whole load is there) → carried (the row's load) → put at the stores: added to the stockpile's inbox
-  counter → `pile` (a thread a column of the yard) moves it into the world through the one `deposit` inbox (§8) as
-  rubble, shaped as a cone (a column takes its share only up to the cone's height there), so sediment folds it in and
-  slumps it at its angle of repose. Totals hold: dug = face pile + in carts + inbox + deposited, all GPU counters the
-  panel shows. Why `deposit` rather than a put kernel of our own: it is the design's one inbox for loose material, and
-  the pile then behaves like any loose ground.
+  counter → `pile` (a thread a column of the yard: the open lot, park or plaza, nearest the stores) puts it on the
+  columns as rubble — an exact put, edit.wgsl OP_PUT's rule: onto the top interval if it's rubble, else a new one —
+  shaped as a cone at rubble's angle of repose (a column takes its share up to the cone's height there). Totals hold:
+  dug = face pile + in carts + inbox + piled, all GPU counters the panel shows. Why a put rather than the `deposit`
+  inbox: sediment folds `deposit` in only on awake chunks, so a pile in a sleeping chunk would not show while its
+  material was already counted; the put shows at once and the loose ground's passes slump it once the chunk wakes.
 - **Logs:** trees are a field, not material (§15). A felled tree gives logs (its trunk's size, vegplan.wgsl's numbers)
   into the camp's log pile (a counter) → log haulers carry them to the stores' log pile. Both piles are drawn as log
   stacks sized by their counters.
@@ -162,11 +188,11 @@ the field set back to young woods, 3.0, after a delay; off: stumps stay).
 
 ## 7. Building sites take builders
 
-A building site is any lot record whose construction progress (`CityLots.progress`) is under 1. Builders ride STORES →
-the site's door and, while there, raise its progress by the build rate. That's the hook the time-lapse plugs into: it
-sets progress to 0 for the lots it wants built, and the town's builders build them. The panel has "start N sites" for
-testing. The town's mesh shows progress on its next mesh run (`CityGen.run(p, 'mesh')`), which the living town asks for
-every few seconds while sites are active (a dispatch, nothing read).
+A building site is a lot whose construction progress (`CityLots.progress`) is between 0 and 1, read on the GPU (`sites`
+lists them every 30 frames). citygen's time-lapse owns the progress (it computes it on the GPU each frame from its
+districts' start times; `claimDistrict` starts one). Builders ride STORES → the site's door and work there while it
+rises. The panel's button claims a housing district (citygen's own hook). When citygen draws its roads again (a mesh
+run: a district's roads appear), the living town's graph is made again (a 4-byte write).
 
 ## 8. What runs on the CPU (inputs only)
 
@@ -175,7 +201,7 @@ every few seconds while sites are active (a dispatch, nothing read).
 | the parameters uniform (counts, rates, quarry, clearing, toggles) | at start, on a panel change | 256 B |
 | the grid's place in the window | a slide | 16 B |
 | encoding the frame's dispatches (fixed: relax sweeps, trace, riders, dig, pile, fell, figures) | a frame | — |
-| a mesh run for building progress | every 4 s while sites are active | a dispatch |
+| the graph made again when citygen draws its roads again (a district started) | a mesh run of citygen's | 4 B |
 | the panel's counters (debug only, `?living=1` with the panel open) | every 0.5 s | 256 B read |
 
 No route search, job logic, rider state, site pick or material count is on the CPU.
@@ -194,11 +220,16 @@ Measured: DEVLOG (living town).
 
 ## Hacks and limits (kept current)
 
-- Riders aren't the Agents' units yet (open question 1); wind and blasts don't knock them off.
+- Riders aren't the Agents' units yet: a third crowd beside the agents and the inhabitants (open question 1); wind and
+  blasts don't knock them off. Their row and state formats are written to be the one crowd's when Track B's unit-AI
+  slices land.
+- The works' take, put and fell kernels follow edit.wgsl's rules but aren't one shared snippet with its OP_TAKE/OP_PUT
+  (those apply CPU events, four a tick). One snippet both call is the follow-up (LT-F3).
 - No lanes or queueing (LT-F1); riders on a route are spread by a fixed lateral offset.
 - The pool reset when full is wholesale, not per stale route.
 - The quarry only digs where its columns are in the window; past the window the land isn't resident. When the window
   slides away and back, streamed land comes back as generated: the pit is lost (no edit log for streamed land yet:
   CITYGEN "Saving").
-- Builders don't consume stone yet; progress is by work time.
+- Builders don't consume stone; a site's progress is citygen's time-lapse's (read on the GPU), the builders work there
+  while it rises.
 - The falling tree is an animation, not a body (DA-E7).

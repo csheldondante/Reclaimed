@@ -1879,6 +1879,24 @@ its centre over those) isn't judged off its leg. ROCK and a material's `bear` ar
 weighs; the columns a piece left are judged again (weighed); intervals within `FILM_GAP` (0.02) touch. The meteor's
 blast melts only columns whose top is within `BLAST_UP` (4) of where it hit (lava.wgsl, `LavaU.blast2.z`).
 
+## The living town (2026-11-10, branch `trackA-haul`; docs/design/LIVING_TOWN.md)
+
+A citygen town's people, quarry and clearing, all on the GPU (`src/citylife/`, `?citygen=fields&living=1`).
+- **Inputs:** citygen's `CityRoutes` (api/contracts/citygen.ts: road raster, heights, wet mask, population field,
+  arterials) and `CityLots` (records, counts, progress — read only). The world's globals, chunks, materials, layers,
+  veg, vegNext for the works.
+- **routes.wgsl** (`LivingTown`): the walk mask from the road raster + door segments + tracks; 8 hub fields relaxed in
+  place, gated by indirect args from a phase word (build → relaxing → settled; no readback); routes traced once per
+  (start column, hub) key into a points pool (a hash in the state words); riders (64 B rows, `job | state | leg`) step
+  their jobs' state machine and ride routes kinematically; figures as body-format voxels (`Renderer.addVoxels`).
+- **works.wgsl** (`Works`, a `LivingStage`): the quarry's bench progress and dig (in-place interval takes, chunk
+  versions bumped), the stockpile's put on the stores' yard, the clearing's site and tree list, fells to the stump band
+  (vegplan.wgsl `VEG_STUMP`, `vegStump`: drawn by vegprep), replanting, riders' z on the live ground, the piles' voxels.
+- **State words (LT):** one u32 buffer, layout in routes.wgsl (works.wgsl repeats it: test/unit/citylife-layout.test.ts).
+- **Frame:** encoded in `Renderer.frameCompute` with the profiler's timestamps (`living-build`, `-relax`, `-trace`,
+  `-riders`, `-works`, `-figures`). The CPU writes the 176 B parameters' uniform a frame and a 4 B rebuild word when
+  citygen's mesh runs again; nothing read back in play (the debug panel's 640 B twice a second while open).
+
 ## Agents (round 52, docs/AGENTS.md; branch `agents`)
 
 `installAgents(core)` (src/agents/) adds one system after the particles and

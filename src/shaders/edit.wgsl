@@ -203,7 +203,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let mat = code % 32u;
     if (op == OP_FELL) {
       let had = vegE[i];
-      vegE[i] = min(had, FELLED);
+      // (living town: an exact fell of a tree leaves its stump — vegplan.wgsl VEG_STUMP; a clearing cuts to grass)
+      vegE[i] = min(had, select(FELLED, 2.35, ev.w <= 0.0 && had >= 3.6));
       // (round 128d) strength > 0: a clearing (plants.clear — the fortress's cells), every column in the radius, no
       // answer; 0: an exact fell (plants.fell), its answer at the tag
       if (ev.w <= 0.0) {

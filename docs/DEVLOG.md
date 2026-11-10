@@ -21116,3 +21116,25 @@ the opportunity hook".
   - a lot not begun showed its roof flat on the ground, then its walls stretched down where the land wasn't drawn;
     its tops, bases and outline now sink together;
   - the reach's red outlines over unbuilt lots are hidden with them.
+
+## 2026-11-10 — living town LT2: routes and riders on the GPU (first pass of the works with it)
+
+- **Graph:** citygen's road raster plus door segments (each built lot's footprint frontage out 3 m past its parcel
+  edge) and tracks to the works. 8 hubs (stores, granary, market, workshops, farms, gates, quarry rim, camp yard)
+  seeded on the GPU from the lot records, the population field's purposes and the arterials' ends.
+- **Relax without readback:** the phase word decides each frame's indirect args (build / 32 sweeps / trace). Found in
+  the test: the frame that builds set the phase to relaxing and its own relax check then read "nothing changed" (no
+  sweep had run) and called it settled. The gate now snapshots whether the sweeps and the trace run this frame.
+- **Muru (headless D3D11, phone size):** 950 riders, ~280 routes traced (12 k points of 262 k), settled in 15–19 frames
+  of 32 sweeps. ~80 keys miss (LT-F4). At play zoom the figures read as people along the streets; crowds gather at
+  the stores' side.
+- **Game towns start with their core only** (citygen merged in, bb7dd64b): homes, the stores and the district hubs'
+  seeds are built lots only (progress ≥ 1), and the graph is made again when citygen redraws its roads (a district
+  started: `FieldTown.meshRuns`). Builders read progress (sites are lots between 0 and 1); they don't write it.
+- **Works' sites near the built core:** at 1.1–1.6 radii the quarry fell outside the phone's window; now 0.55–1.1
+  (LT-F5).
+- **The coordinator's correction (GPU unit AI):** nothing here uses the CPU crews, the per-frame sync or the
+  inhabitants; LIVING_TOWN.md now maps the haul states onto Track B's GPU_UNIT_AI_PLAN. The riders are a third crowd
+  until the one crowd lands (LT-F2, open question 1).
+- Gates: the transfers list has the living town's three sites; writing-sources has its panel. The other failures in
+  those gates (citygen's panel and bench, colapply) came with the citygen merge.

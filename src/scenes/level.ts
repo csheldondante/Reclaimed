@@ -72,6 +72,7 @@ import { FortressBar } from '../fortress/ui';
 import type { StreetLabControl } from '../streetlab/control';
 import { fieldTownBox, hasGrid } from '../citygen/town';
 import type { FieldTowns } from '../citygen/towns';
+import type { LivingTowns } from '../citylife/towns';
 import type { FortressFollow } from '../fortress/follow';
 import { FortressCrowd } from '../fortress/crowd';
 import type { FortressRaid } from '../fortress/raiders';
@@ -317,6 +318,8 @@ export class LevelScene implements Scene {
   streetLab?: StreetLabControl;
   /** (citygen M4b, ?citygen=fields) the towns made by the GPU field generator, streamed (citygen/towns.ts) */
   fieldTowns?: FieldTowns;
+  /** (living town, ?living=1) the field towns' people, quarry and clearing (citylife/towns.ts) */
+  livingTowns?: LivingTowns;
   /** sandbox: a smash drag in progress */
   smashing = false;
   /** (round 83) flying: a drag turns the view — where the pointer was */
@@ -724,6 +727,7 @@ export class LevelScene implements Scene {
     this.stationsBar?.dispose();
     this.noiseLab?.dispose();
     this.streetLab?.dispose();
+    this.livingTowns?.dispose();
     this.fieldTowns?.dispose();
     this.atlasCtl?.remove();
     this.turnCtl?.remove();

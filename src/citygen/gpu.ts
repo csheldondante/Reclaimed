@@ -293,6 +293,11 @@ export class CityGen {
   /** (time-lapse) the town's clock (s) and the last time-lapse's start and spread */
   private tl = { now: 0, t0: 0, span: 0 };
   private vertRoom: number;
+  /** (living town, api/contracts/citygen.ts CityRoutes) what the town's routes are made from: its road raster, heights,
+   *  wet mask, population field and arterials — read by citylife/, never written */
+  get routeInputs(): { roads: GPUBuffer; heights: GPUBuffer; wet: GPUBuffer; pop: GPUBuffer; art: GPUBuffer } {
+    return { roads: this.B.ROADS, heights: this.B.H, wet: this.B.M, pop: this.B.POP, art: this.B.ART };
+  }
   /** (M4b) the bytes of its GPU buffers (a town's memory) */
   get bytes(): number {
     return this.all.reduce((s, b) => s + b.size, 0);

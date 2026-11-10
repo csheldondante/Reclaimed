@@ -6,7 +6,7 @@
 // The box must be in the window when the town is made (the level opens the window round it: citygen/town.ts
 // fieldTownBox, level.ts); after that the window may go where it likes. docs/design/CITYGEN.md.
 import type { Settlement } from '../api/contracts/settlement';
-import type { CityLots } from '../api/contracts/citygen';
+import type { CityLots, CityRoutes } from '../api/contracts/citygen';
 import { ROW_H } from '../world/lattice';
 import { BUILD_S, CityGen, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes } from './gpu';
 import type { StaticClaims, StaticGrid, GridPlace, OwnedSlot } from '../sim/static-claims';
@@ -160,6 +160,7 @@ export class FieldTown {
   private grid: StaticGrid | null = null;
   private slot: OwnedSlot;
   private gone = false;
+  private centreLocal: [number, number];
   private bare: ComputeKernel;
   private bareU: GPUBuffer;
   reachRounds = 0;
@@ -180,6 +181,7 @@ export class FieldTown {
     // (a game town starts with its core built; the rest grows by claims and time-lapses)
     const L = townLayout(io.device, site, io.wrap, io.sea, { claimInto: slot.binding, vertRoom: TOWN_VERT_ROOM, built: 'core' });
     const { box, centre, local } = L;
+    this.centreLocal = centre;
     this.box = box;
     this.raw = L.raw;
     this.gen = L.gen;
@@ -323,6 +325,7 @@ export class FieldTown {
       void this.gen.run(this.params, 'mesh').then(
         () => {
           this.reclaiming = false;
+          this.meshRuns++;
           if (!this.gone && this.grid) this.io.statics()?.reclaim(this.grid);
         },
         (e) => {
@@ -346,6 +349,16 @@ export class FieldTown {
     const id = await this.gen.claimDistrict(purpose, now);
     if (id >= 0) this.animUntil = Math.max(this.animUntil, now + BUILD_S * 1.75 + 0.5);
     return id;
+  }
+
+  /** (living town) mesh runs since it was made: its road raster drawn again (the living town's graph follows) */
+  meshRuns = 0;
+  /** (living town) its routes' inputs (api/contracts/citygen.ts CityRoutes), its centre in the grid's frame */
+  get routes(): CityRoutes {
+    return this.gen.routeInputs;
+  }
+  get centre(): [number, number] {
+    return this.centreLocal;
   }
 
   /** the bytes it holds on the GPU (its generator's buffers and its raw ground; its claim slot is the arena's) */
