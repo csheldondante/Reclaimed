@@ -42,7 +42,11 @@ async function rideTown(ptsRoom?: number, wall = false): Promise<Uint32Array> {
   for (let x = 70; x < 90; x++) roads[80 * W + x] = 1;
   const heights = new Float32Array(N).fill(2);
   // (season life: the town wall, its ring not made yet — its columns in the raster as citygen claims them)
-  const wallData = wall ? makeWall(roads, false, 0) : null;
+  // (the wall's columns kept aside: drawn into the raster after the first routes are traced, as citygen claims them
+  // when the wall rises — the graph made again then)
+  const marked = roads.slice();
+  const wallData = wall ? makeWall(marked, false, 0) : null;
+  const roadsBuf = mk(roads);
   const wallBuf = wallData ? mk(wallData.words) : undefined;
   // (the population field: market east of x 60, homes elsewhere)
   const pop = new Float32Array(N * 4);
@@ -94,7 +98,7 @@ async function rideTown(ptsRoom?: number, wall = false): Promise<Uint32Array> {
   const town = new LivingTown(dev, {
     w: W,
     h: H,
-    roads: mk(roads),
+    roads: roadsBuf,
     heights: mk(heights),
     wet: mk(new Uint32Array(N)),
     pop: mk(pop),
@@ -189,6 +193,61 @@ async function rideTown(ptsRoom?: number, wall = false): Promise<Uint32Array> {
     expect(t0[0]).toBe(0);
     expect(t0[1]).toBe(10);
     for (let k = 0; k < 10; k++) expect([t0[120 + k * 3], t0[122 + k * 3] & 0xff]).toEqual([NONE_ID, 1]);
+    // (the wall's columns claimed in the raster and the graph made again (citygen's mesh run, LivingTowns' rebuild): every
+    // cached route traced again over it — the pool switched, and no route's point on a wall column)
+    // (the riders' routes' points where the east gate will stand: their mean width, the current half's)
+    const gateWidth = async () => {
+      const hn = (await town.counters())!;
+      const rb = new Uint32Array(await town.debugRead(town.routes, town.routes.size));
+      const rf = new Float32Array(rb.buffer);
+      const at = rb[3] + hn[11] * (rb[7] / 2) * 5;
+      let sum = 0;
+      let n = 0;
+      for (let i = 0; i < hn[3]; i++) {
+        const o = at + i * 5;
+        if (Math.hypot(rf[o] - (48.75 + WALL_R), rf[o + 1] - (48 + 0.5) * ROW_H) < 1.2) ((sum += rf[o + 4]), n++);
+      }
+      return n ? sum / n : NaN;
+    };
+    const before = await gateWidth();
+    expect(before).toBeGreaterThan(0);
+    const sw0 = (await town.counters())![L_C + C.switches];
+    dev.queue.writeBuffer(roadsBuf, 0, marked);
+    town.rebuild();
+    for (let k = 0; k < 40; k++) {
+      await frames(25);
+      const h = (await town.counters())!;
+      if (h[0] === 4 && h[L_C + C.switches] > sw0) break;
+    }
+    const hw = (await town.counters())!;
+    expect(hw[0]).toBe(4);
+    expect(hw[L_C + C.switches]).toBeGreaterThan(sw0);
+    await frames(60);
+    // (traced again, the routes through the gate narrower there than before the wall)
+    const after = await gateWidth();
+    console.log(`[living test] the riders' routes at the east gate: ${before.toFixed(2)} m before the wall, ${after.toFixed(2)} m after`);
+    expect(after).toBeLessThan(before);
+    {
+      const hn = (await town.counters())!;
+      const rb = new Uint32Array(await town.debugRead(town.routes, town.routes.size));
+      const rf = new Float32Array(rb.buffer);
+      const half = hn[11];
+      const room = rb[7] / 2;
+      let onWall = 0;
+      let seen = 0;
+      for (let i = half * room; i < half * room + hn[3]; i++) {
+        const o = rb[3] + i * 5;
+        const x = rf[o];
+        const y = rf[o + 1];
+        if (x === 0 && y === 0) continue;
+        seen++;
+        const cy = Math.round(y / ROW_H - 0.5);
+        const cx = Math.round(x - 0.5 - 0.5 * (cy & 1));
+        if (cx >= 0 && cy >= 0 && cx < W && cy < H && marked[cy * W + cx] === 0x40000000) onWall++;
+      }
+      expect(seen).toBeGreaterThan(50);
+      expect(onWall).toBe(0);
+    }
     // (the ring made, half of it risen)
     wallData.words[0] = 1;
     new Float32Array(wallData.words.buffer).set([0.5, 0.5, -1e9], 4);

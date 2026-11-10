@@ -21716,3 +21716,15 @@ expected fail. No shot (nothing drawn changed).
   result card, Download / Copy / Share, perf-reports/ on the dev server). Once settled, two toggle diffs in four
   alternating 2 s windows: the graph pass encoded vs not (what the empty dispatches cost), and forced awake vs settled
   (`LivingTown.debugAwake`: the sweeps every frame). Bench-only flags; never in play.
+
+## 2026-11-10 — RT2-5: width at gates (trackA-routes2)
+
+- The width pass already sees the wall where the walk mask was built after it: citygen's claim marks the wall's
+  columns (pieces, towers, stairs; never an arterial's) WALL_MARK in the road raster, the build blocks them (W_BLOCK)
+  and `freeWidth` stops at W_BLOCK. What it missed: routes traced *before* the wall rose. A rebuild kept every cached
+  route — its width, and its path, possibly through where the wall now stands. Now a build that finds routes in the
+  pool asks for the pool's switch: once the graph settles every key is traced again over it (riders on the old half
+  ride on until it's reused). March routes (RT2-2) carry their free width every 2 m too.
+- Test (Dawn): the wall's columns drawn into the raster after the first routes, the graph made again → the pool
+  switched, the riders' routes at the east gate 9.0 m wide before the wall and 7.2 m after; the gate's march 5.0 m at
+  the gate against 8.7 m in the street outside; the stairs 1.1 m.

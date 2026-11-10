@@ -683,6 +683,10 @@ fn hubSeed1() {
   }
   setLt(L_PHASE, 1u);
   setLt(L_CHANGED, 1u);
+  // (a rebuild — the raster drawn again: a district's roads, the wall rising, a column dug out — with routes already
+  // traced: every key traced again over the new graph once it settles (the pool's switch clears the hash), so no
+  // cached route runs through a wall or keeps a width from before it. Riders on the old half ride on till it's reused)
+  if (lt(L_ROUTES) > 0u) { setLt(L_SWITCH, 1u); }
 }
 
 /** B10 (a thread a hash slot): routes that failed traced again over the new graph */
