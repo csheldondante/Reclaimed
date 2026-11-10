@@ -40,7 +40,7 @@ import { Coarse, type CoarseSnap } from './coarse';
 import type { LandChange } from '../scenes/streamer';
 import { run } from './atlas/build';
 import { changes, columns, columnsGpu } from './atlas/columns';
-import { rawGround, regionInto, regionLand, stampsFor, tileGate } from './atlas/region-land';
+import { rawGround, rawGroundGpu, regionInto, regionLand, stampsFor, tileGate } from './atlas/region-land';
 import { window } from './atlas/window';
 import { Extra, PARAM_BYTES, MakeHow, WINDOW_MAKE, Geyser, GEYSER_SPACING, CRATER_BLOCK, GIANT_FLOATS, FLOOD_SPARE, AtlasStats, AtlasColumns } from './atlas/defs';
 import { AtlasParams } from './atlas/params';
@@ -341,6 +341,11 @@ const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};
    */
   rawGround(x0: number, y0: number, w: number, h: number, spread = false): Promise<RawGround> {
     return rawGround(this, x0, y0, w, h, spread);
+  }
+
+  /** (citygen M4b) the raw ground over a box into a GPU buffer, nothing read back (region-land.ts rawGroundGpu) */
+  rawGroundGpu(x0: number, y0: number, w: number, h: number, out: GPUBuffer): Promise<void> {
+    return rawGroundGpu(this, x0, y0, w, h, out);
   }
 
   /**

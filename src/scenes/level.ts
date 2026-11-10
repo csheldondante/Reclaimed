@@ -527,14 +527,14 @@ export class LevelScene implements Scene {
       // (round 128m townlab C; onetown: the window holds the fortress's town's site box — its grid, its reach, its claims —
       // from the start, and keeps it: startFortress asks the Streamer to keep it, scenes/streamer/keep.ts)
       // (citygen M4a, ?citygen=fields: the start town made by the GPU field generator — nothing of the old planner's for
-      // it — and the first window holds its box: its land is what it's made from; the window is free to slide after)
+      // it; M4b: made from the atlas's raw ground over its box on the GPU, the window its usual size wherever it is)
       const cg = host.params.get('citygen');
       if (cg !== null && cg !== 'fields') throw new Error(`?citygen= must be fields (the start town by the GPU field generator)`);
       if (cg && !(settlements && startTown)) throw new Error('?citygen=fields needs the settlements and a start town: ?town=1 or ?town=<id>');
       if (cg && host.params.get('fortress') === '1') throw new Error('?citygen=fields: not with ?fortress=1 (the fortress edits the old planner\'s town)');
       const fb = cg ? fieldTownBox(settlements!.settlement(startTown!)!) : null;
       const fieldTown = cg ? settlements!.byFields(startTown!, fb!.core).rec : null;
-      const keepBox = host.params.get('fortress') === '1' && startTown ? settlements!.seeds.find((x) => x.rec.id === startTown)!.box : (fb?.cover ?? null);
+      const keepBox = host.params.get('fortress') === '1' && startTown ? settlements!.seeds.find((x) => x.rec.id === startTown)!.box : null;
       const W = Math.max(keepBox?.w ?? 0, atlasRange(host.params));
       // (round 93, ?winh=: an experiment — rows other than the side)
       const Hr = Math.max(keepBox?.h ?? 0, atlasRows(host.params, W));

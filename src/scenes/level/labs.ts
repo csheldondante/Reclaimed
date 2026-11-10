@@ -164,7 +164,7 @@ export function mountStreetLab(scene: LevelScene): void {
   scene.streetLab = new StreetLabControl(
     host.gpu.device,
     host.ui,
-    { w, h, box: [0, 0], globals: core.world.globals, chunks: core.world.chunks, layers: core.world.layers, water: core.world.water, centre: [at[0], at[1]] },
+    { w, h, ground: { kind: 'window', box: [0, 0], globals: core.world.globals, chunks: core.world.chunks, layers: core.world.layers, water: core.world.water }, centre: [at[0], at[1]] },
     {
       addMesh: (v, a) => core.renderer.addMesh(v, a),
       removeMesh: (a) => core.renderer.removeMesh(a),

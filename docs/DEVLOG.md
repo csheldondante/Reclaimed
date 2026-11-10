@@ -21004,3 +21004,21 @@ or stone colored (but a bit lighter) and narrower."
 - **Roads:** dirt (small towns) or stone (town, city) tones a little lighter than the ground (`roadTone`). Widths are
   60% of before: major 2.4, minor 1.5, arterial 3.2. Steep streets are a darker tone instead of orange.
 - Muru: 322 lots (473: the field thins the edge), identical over 9 reruns; GPU 3.98 ms median (headless D3D11).
+
+## 2026-11-10 — citygen M4b step 2: the town from the atlas's raw ground (no bigger window); walkable decks; a town bridge
+
+- **No bigger window.** The town is made from the atlas's raw ground over its whole box on the GPU.
+  - `Atlas.rawGroundGpu`: the finisher's raw mode, a 64-column tile at a time, its summary copied into one buffer,
+    nothing read back. It is the same ground the window's land is made of (after the ways, before the stamps).
+  - `rawheight.wgsl` turns it into the grid's heights (world z) and wet mask.
+  - The box no longer needs to be in the window. The level opens its usual window again (320 here; CG13's 384 is gone).
+  - Raw vs live ground: the same 322 lots and the same vertex count (19 566) as the window-read run before it. The
+    layout didn't move.
+  - The mesh is placed with z = −oz, since its heights are world z now.
+- **Decks slope bank to bank** (near bank + clearance to far bank + clearance; clearance 1, under a walker's 1.1 step),
+  so a walker steps on at either end. Spans hold four words.
+- **The town's own bridge** (`townBridge`, one workgroup). Candidates are shore columns of the shown town. A ray runs
+  across the water to the first dry ground, which must be in the shown town, at most 120 cells away, with banks within
+  4 and no arterial within 30. The lowest score (length + half its distance from the centre) wins and is appended
+  after the arterials (ART word 2). At Muru it crosses the river south of the centre and joins the east half.
+- GPU 4.99 ms median for the whole town (headless; raw ground 0.05–0.08 ms once, plus the finisher's tiles).

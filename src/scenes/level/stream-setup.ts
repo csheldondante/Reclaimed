@@ -348,7 +348,8 @@ export function attachStream(scene: LevelScene): void {
           const town = new FieldTown(
             {
               device: host.gpu.device,
-              world: { globals: core.world.globals, chunks: core.world.chunks, layers: core.world.layers, water: core.world.water },
+              rawGround: (x0, y0, w, h, out) => a!.atlas.rawGroundGpu(x0, y0, w, h, out),
+              sea: a!.atlas.p.sea,
               addMesh: (v, g, x) => core.renderer.addMesh(v, g, x),
               removeMesh: (g) => core.renderer.removeMesh(g),
               origin: () => S.origin,

@@ -2485,13 +2485,14 @@ fn ctint(@builtin(global_invocation_id) g: vec3<u32>) {
 // The arterials cut the blocks they cross (a lot on one isn't made: `lots`) and the supercells grow cheaply along them
 // (growCost: × 0.6, as along a shore). (Tried first: the arterials as seeds of the distance flood, like a shore — where
 // they meet at the centre φ collapsed into a star and the town fell apart: half the lots, streets piled up.)
-// ART (words): 0 the count (the CPU's), 1–3 unused; arterial k at 4 + k · AW: 0 its points (the CPU's), 1 its length
-// along them inside the grid (GPU), 2 its spans (GPU), 3 where it ends — the town's limit, or its length (GPU), 4 + 3s
-// span s's start and end (along it) and its deck's z; from AP its points (x, y, the grid's world units), the centre's
-// end first.
+// ART (words): 0 the count (the CPU's), 1 the core (the CPU's), 2 the town's own bridges after them (GPU: townBridge),
+// 3 unused; arterial k at 4 + k · AW: 0 its points, 1 its length along them inside the grid (GPU), 2 its spans (GPU), 3
+// where it ends — the town's limit, or its length (GPU), 4 + 4s span s's start and end (along it) and its deck's z at
+// each (M4b: a deck slopes from its near bank's height + t.z to its far bank's, so a walker steps on at either end);
+// from AP its points (x, y, the grid's world units), the centre's end first.
 const NART: u32 = 8u;
 const NAP: u32 = 128u;
-const AP: u32 = 16u;
+const AP: u32 = 20u;
 const AW: u32 = AP + 2u * NAP;
 const NSPAN: u32 = 4u;
 const C_ART_W: u32 = 0xf1eadbu;
@@ -2518,7 +2519,9 @@ fn artW(src: u32, i: u32) -> u32 {
   }
 }
 fn artF(src: u32, i: u32) -> f32 { return bitcast<f32>(artW(src, i)); }
-fn artCount(src: u32) -> u32 { return min(artW(src, 0u), NART); }
+/** the arterials: the CPU's (the atlas roads), and the town's bridges after them */
+fn artCount(src: u32) -> u32 { return min(artW(src, 0u) + artW(src, 2u), NART); }
+fn artCountCpu(src: u32) -> u32 { return min(artW(src, 0u), NART); }
 // (the arterials' distance field, AD: a flood from their columns — artRast, the jump flood, jdist; lots and growCost
 // read it)
 fn artPts(src: u32, k: u32) -> u32 { return min(artW(src, artBase(k)), NAP); }
@@ -2528,7 +2531,7 @@ fn artPt(src: u32, k: u32, j: u32) -> vec2<f32> { let o = artBase(k) + AP + 2u *
 @compute @workgroup_size(8)
 fn artSpan(@builtin(global_invocation_id) g: vec3<u32>) {
   let k = g.x;
-  if (k >= artCount(5u)) { return; }
+  if (k >= artCountCpu(5u)) { return; }
   let o = artBase(k);
   let n = artPts(5u, k);
   var end = 0.0;
@@ -2561,10 +2564,11 @@ fn artSpan(@builtin(global_invocation_id) g: vec3<u32>) {
         let sa = max(t0 - 1.0, 0.0);
         let sb = tw + 1.0;
         if (sb - sa > u.t.w || ns == NSPAN) { end = sa; out = true; break; }
-        let s5 = o + 4u + ns * 3u;
+        let s5 = o + 4u + ns * 4u;
         set5(s5, sa);
         set5(s5 + 1u, sb);
-        set5(s5 + 2u, max(r3(ixp(p0)), r3(ixp(p))) + u.t.z);
+        set5(s5 + 2u, r3(ixp(p0)) + u.t.z);
+        set5(s5 + 3u, r3(ixp(p)) + u.t.z);
         ns++;
       }
     }
@@ -2581,7 +2585,7 @@ fn artSpan(@builtin(global_invocation_id) g: vec3<u32>) {
 fn artRast(@builtin(global_invocation_id) g: vec3<u32>) {
   let k = g.x / NAP;
   let j = g.x % NAP;
-  if (k >= artCount(1u) || j + 1u >= artPts(1u, k)) { return; }
+  if (k >= artCountCpu(1u) || j + 1u >= artPts(1u, k)) { return; }
   let len = r1(artBase(k) + 1u);
   var acc = 0.0;
   for (var i = 0u; i < j; i++) { acc += distance(artPt(1u, k, i), artPt(1u, k, i + 1u)); }
@@ -2600,7 +2604,7 @@ fn artRast(@builtin(global_invocation_id) g: vec3<u32>) {
 @compute @workgroup_size(8)
 fn artEnd(@builtin(global_invocation_id) g: vec3<u32>) {
   let k = g.x;
-  if (k >= artCount(5u)) { return; }
+  if (k >= artCountCpu(5u)) { return; }
   let o = artBase(k);
   let len = bitcast<f32>(w5[o + 1u]);
   let n = artPts(5u, k);
@@ -2622,8 +2626,8 @@ fn artEnd(@builtin(global_invocation_id) g: vec3<u32>) {
     acc += L;
   }
   for (var s = 0u; s < min(w5[o + 2u], NSPAN); s++) {
-    let sa = bitcast<f32>(w5[o + 4u + s * 3u]);
-    let sb = bitcast<f32>(w5[o + 5u + s * 3u]);
+    let sa = bitcast<f32>(w5[o + 4u + s * 4u]);
+    let sb = bitcast<f32>(w5[o + 5u + s * 4u]);
     if (lim > sa && lim < sb) { lim = sb; }
   }
   set5(o + 3u, lim);
@@ -2645,6 +2649,11 @@ fn artHitB2(v: array<vec2<f32>, 4>) -> bool {
 fn wall(at: u32, p: vec2<f32>, q: vec2<f32>, z0: f32, z1: f32, col: u32) {
   tri(at, vec3<f32>(p, z0), vec3<f32>(q, z0), vec3<f32>(q, z1), col);
   tri(at + 3u, vec3<f32>(p, z0), vec3<f32>(q, z1), vec3<f32>(p, z1), col);
+}
+/** a deck's side from p (its top at zp) to q (zq), DECK_T deep (outward: right of p → q) */
+fn deckSide(at: u32, p: vec2<f32>, q: vec2<f32>, zp: f32, zq: f32) {
+  tri(at, vec3<f32>(p, zp - DECK_T), vec3<f32>(q, zq - DECK_T), vec3<f32>(q, zq), C_DECK);
+  tri(at + 3u, vec3<f32>(p, zp - DECK_T), vec3<f32>(q, zq), vec3<f32>(p, zp), C_DECK);
 }
 /** one thread an arterial's segment: a ribbon on the ground to the town's limit (tapering into the atlas road's
  *  width), or over a span a deck piece and, where a pillar falls in it, a pillar to the bed (b1 ART, r3 the heights;
@@ -2672,9 +2681,17 @@ fn artMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   // (the taper: the last ART_TAPER units to the limit narrow to the atlas road's width)
   let hw = mix(WAY_HALF, u.t.x * 0.5, clamp((lim - mid) / ART_TAPER, 0.0, 1.0));
   var deck = -1e9;
+  var za = 0.0;
+  var zb = 0.0;
   for (var s = 0u; s < min(b1[o + 2u], NSPAN); s++) {
-    let q = o + 4u + s * 3u;
-    if (mid >= r1(q) && mid <= r1(q + 1u)) { deck = r1(q + 2u); }
+    let q = o + 4u + s * 4u;
+    if (mid >= r1(q) && mid <= r1(q + 1u)) {
+      // (the deck's height at this piece's ends: a slope from bank to bank)
+      let L0 = max(r1(q + 1u) - r1(q), 1e-3);
+      za = mix(r1(q + 2u), r1(q + 3u), clamp((s0 - r1(q)) / L0, 0.0, 1.0));
+      zb = mix(r1(q + 2u), r1(q + 3u), clamp((s1 - r1(q)) / L0, 0.0, 1.0));
+      deck = max(za, zb);
+    }
   }
   if (deck < -1e8) {
     let at = room(6u);
@@ -2685,23 +2702,23 @@ fn artMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   // (a pillar where a multiple of PIER_EVERY falls in this piece, the ground well under the deck)
   let ps = ceil(s0 / PIER_EVERY) * PIER_EVERY;
   let pc = a + d * (ps - s0);
-  let pier = ps < s1 && hAt(pc) < deck - DECK_T - 0.5;
+  let pz = mix(za, zb, clamp((ps - s0) / max(s1 - s0, 1e-3), 0.0, 1.0));
+  let pier = ps < s1 && hAt(pc) < pz - DECK_T - 0.5;
   let at = room(select(18u, 42u, pier));
   if (at == NONE) { return; }
   let sv = vec2<f32>(-d.y, d.x) * hw;
-  let lo = deck - DECK_T;
   let a2 = a - d * 0.05;
   let b2 = b + d * 0.05;
-  tri(at, vec3<f32>(a2 - sv, deck), vec3<f32>(b2 - sv, deck), vec3<f32>(b2 + sv, deck), C_DECK);
-  tri(at + 3u, vec3<f32>(a2 - sv, deck), vec3<f32>(b2 + sv, deck), vec3<f32>(a2 + sv, deck), C_DECK);
-  wall(at + 6u, a2 - sv, b2 - sv, lo, deck, C_DECK);
-  wall(at + 12u, b2 + sv, a2 + sv, lo, deck, C_DECK);
+  tri(at, vec3<f32>(a2 - sv, za), vec3<f32>(b2 - sv, zb), vec3<f32>(b2 + sv, zb), C_DECK);
+  tri(at + 3u, vec3<f32>(a2 - sv, za), vec3<f32>(b2 + sv, zb), vec3<f32>(a2 + sv, za), C_DECK);
+  deckSide(at + 6u, a2 - sv, b2 - sv, za, zb);
+  deckSide(at + 12u, b2 + sv, a2 + sv, zb, za);
   if (!pier) { return; }
   let u1 = d * PIER_HW;
   let u2 = vec2<f32>(-d.y, d.x) * PIER_HW;
   let q = array<vec2<f32>, 4>(pc - u1 - u2, pc + u1 - u2, pc + u1 + u2, pc - u1 + u2);
   let z0 = hAt(pc) - 0.5;
-  for (var e = 0u; e < 4u; e++) { wall(at + 18u + e * 6u, q[e], q[(e + 1u) % 4u], z0, lo, C_PIER); }
+  for (var e = 0u; e < 4u; e++) { wall(at + 18u + e * 6u, q[e], q[(e + 1u) % 4u], z0, pz - DECK_T, C_PIER); }
 }
 
 // ==== M4b: the population field — density, wealth and purpose over the town's grid ===============================
@@ -2756,4 +2773,92 @@ fn popField(@builtin(global_invocation_id) g: vec3<u32>) {
   set5(i * 4u, d);
   set5(i * 4u + 1u, wealth);
   set5(i * 4u + 2u, f32(best));
+}
+
+// ==== M4b: the town's own bridge — where water splits the town and no arterial crosses ===========================
+// The user: "Do add bridges though across the water that's needed." One workgroup: every other column of the grid a
+// candidate where it's dry, in the shown town, on a shore; a ray from it straight across the water (against the
+// feature distance's gradient) to the first dry ground; kept when that's in the shown town too, the water at least
+// 3 wide, no longer than the longest bridge, the banks within 4 of each other and no arterial within 30 (POP.w). Its
+// score its length + half its distance from the centre; the lowest wins (ties by candidate): a bridge appended to the
+// arterials (ART word 2: 1, else 0) — two points, one span bank to bank, drawn and claimed as theirs. (b1 the wet
+// mask, b2 the feature distance, r3 the heights, b4 the supercells, w5 ART, w7 POP)
+var<workgroup> tbS: array<f32, 256>;
+var<workgroup> tbI: array<u32, 256>;
+var<workgroup> tbL: array<f32, 256>;
+fn fdb2(p: vec2<f32>) -> f32 { return r2(ixp(p)); }
+@compute @workgroup_size(256)
+fn townBridge(@builtin(local_invocation_index) li: u32) {
+  let cw = u32(W()) / 2u;
+  let n = cw * (u32(H()) / 2u);
+  var best = 1e9;
+  var bi = NONE;
+  var bl = 0.0;
+  for (var c = li; c < n; c += 256u) {
+    let x = i32(c % cw) * 2;
+    let y = i32(c / cw) * 2;
+    let p = cpos(x, y);
+    if (r1(ix(x, y)) > 0.5 || !inb(p)) { continue; }
+    let e = 0.75;
+    let gr = vec2<f32>(fdb2(p + vec2<f32>(e, 0.0)) - fdb2(p - vec2<f32>(e, 0.0)), fdb2(p + vec2<f32>(0.0, e)) - fdb2(p - vec2<f32>(0.0, e)));
+    if (dot(gr, gr) < 1e-8) { continue; }
+    let d = -normalize(gr);
+    if (r1(ixp(p + d * 1.0)) < 0.5) { continue; }
+    if (!shownCity(cityB4(p))) { continue; }
+    var t = 1.0;
+    var ok = false;
+    loop {
+      if (t > u.t.w + 1.0) { break; }
+      let q = p + d * t;
+      if (!inb(q)) { break; }
+      if (r1(ixp(q)) < 0.5) { ok = true; break; }
+      t += 0.5;
+    }
+    if (!ok || t < 3.0) { continue; }
+    let q = p + d * t;
+    let m = 0.5 * (p + q);
+    if (!shownCity(cityB4(q)) || abs(r3(ixp(q)) - r3(ixp(p))) > 4.0 || bitcast<f32>(w7[ixp(m) * 4u + 3u]) < 30.0) { continue; }
+    let sc = t + 0.5 * distance(m, u.d.xy);
+    if (sc < best) { best = sc; bi = c; bl = t; }
+  }
+  tbS[li] = best;
+  tbI[li] = bi;
+  tbL[li] = bl;
+  workgroupBarrier();
+  if (li != 0u) { return; }
+  var b = 0u;
+  for (var k = 1u; k < 256u; k++) {
+    if (tbS[k] < tbS[b] || (tbS[k] == tbS[b] && tbI[k] < tbI[b])) { b = k; }
+  }
+  let kk = min(w5[0], NART);
+  w5[2] = 0u;
+  if (tbI[b] == NONE || kk >= NART) { return; }
+  let c = tbI[b];
+  let x = i32(c % cw) * 2;
+  let y = i32(c / cw) * 2;
+  let p = cpos(x, y);
+  let e = 0.75;
+  let gr = vec2<f32>(fdb2(p + vec2<f32>(e, 0.0)) - fdb2(p - vec2<f32>(e, 0.0)), fdb2(p + vec2<f32>(0.0, e)) - fdb2(p - vec2<f32>(0.0, e)));
+  let d = -normalize(gr);
+  // (a unit onto each bank)
+  let a = p - d;
+  let q = p + d * (tbL[b] + 1.0);
+  let L = distance(a, q);
+  let o = artBase(kk);
+  // (a point every 4 units: a piece and a pillar a stretch)
+  let np = min(u32(ceil(L / 4.0)) + 1u, NAP);
+  w5[o] = np;
+  set5(o + 1u, L);
+  w5[o + 2u] = 1u;
+  set5(o + 3u, L);
+  set5(o + 4u, 0.0);
+  set5(o + 5u, L);
+  set5(o + 6u, r3(ixp(p)) + u.t.z);
+  set5(o + 7u, r3(ixp(p + d * tbL[b])) + u.t.z);
+  for (var j = 0u; j < np; j++) {
+    let v = mix(a, q, f32(j) / f32(np - 1u));
+    set5(o + AP + 2u * j, v.x);
+    set5(o + AP + 2u * j + 1u, v.y);
+  }
+  w5[2] = 1u;
 }

@@ -11,6 +11,7 @@ import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import heightWgsl from './height.wgsl?raw';
+import rawHeightWgsl from './rawheight.wgsl?raw';
 import streetsWgsl from './streets.wgsl?raw';
 import { makeBindGroup, makeCompute, makeLayout, makeModule, type ComputeKernel } from '../gpu/pipeline';
 import { ROW_H } from '../world/lattice';
@@ -143,16 +144,32 @@ export interface TownInputs {
  *  workshops, 4 farms, 5 keep) */
 export const POP_PURPOSE: Record<string, number> = { trading: 1, port: 2, mining: 3, lumber: 3, farming: 4, hold: 5 };
 
-/** what the town generator needs of the world: its grid — a box of the window, w columns by h rows from window column
- *  box[0], row box[1] (even: a row's hex offset is the window's) — and the world's buffers it reads there */
-export interface StreetWorld {
-  w: number;
-  h: number;
+/** the window's columns: the grid's column (x, y) is window column (x + box[0], y + box[1]) — box[1] even; heights
+ *  in window z */
+export interface WindowGround {
+  kind: 'window';
   box: [number, number];
   globals: GPUBuffer;
   chunks: GPUBuffer;
   layers: GPUBuffer;
   water: GPUBuffer;
+}
+/** (M4b) the atlas's raw ground over the grid (Atlas.rawGroundGpu's layout: 64 × 64 tiles), heights in world z; the
+ *  sea's level (world z) */
+export interface RawGround {
+  kind: 'raw';
+  raw: GPUBuffer;
+  sea: number;
+}
+
+/** what the town generator needs of the world: its grid — a box of the window, w columns by h rows from window column
+ *  box[0], row box[1] (even: a row's hex offset is the window's) — and the world's buffers it reads there */
+export interface StreetWorld {
+  w: number;
+  h: number;
+  /** where its ground comes from: a box of the window's columns (the lab's), or the atlas's raw ground over the whole
+   *  grid (the game's: Atlas.rawGroundGpu — the box needn't be in the window) */
+  ground: WindowGround | RawGround;
   /** (M4b) its population field's inputs; none: the field off */
   town?: TownInputs;
   /** the town's centre (the grid's world units: its first column's corner at 0, 0) */
@@ -178,7 +195,7 @@ const KERNELS = [
   'fill', 'blur', 'feat', 'jfa', 'jdist', 'autoPts', 'phi', 'tensor', 'trace', 'mis', 'blocks',
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotRec', 'lotMesh', 'marks', 'meshCap',
   'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'gplace', 'sctab', 'bgrow', 'ctint',
-  'artSpan', 'artRast', 'artEnd', 'artMesh', 'popField',
+  'artSpan', 'artRast', 'artEnd', 'artMesh', 'popField', 'townBridge',
 ] as const;
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
@@ -217,7 +234,7 @@ const ALL = ['height', ...STAGES] as const;
  *  its points start in its words, its words */
 export const NART = 8;
 export const NAP = 128;
-const AP = 16;
+const AP = 20;
 const AW = AP + 2 * NAP;
 
 interface Uni {
@@ -318,8 +335,16 @@ export class CityGen {
     this.B.POP = buf('population', N * 16);
     // (M4a: the arterials — a count, then each one's direction (the CPU's), length and bridge spans (the GPU's))
     this.B.ART = buf('arterials', (4 + NART * AW) * 4);
-    this.boxUni = buf('box', 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    device.queue.writeBuffer(this.boxUni, 0, new Uint32Array([world.box[0], world.box[1], w, h]));
+    this.boxUni = buf('box', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    const gs = world.ground;
+    if (gs.kind === 'window') device.queue.writeBuffer(this.boxUni, 0, new Uint32Array([gs.box[0], gs.box[1], w, h]));
+    else {
+      if (w % 64 || h % 64) throw new Error(`citygen: a raw-ground grid is whole 64-column tiles (${w} x ${h})`);
+      const a = new ArrayBuffer(32);
+      new Uint32Array(a).set([w, h, w / 64, 0]);
+      new Float32Array(a)[4] = gs.sea;
+      device.queue.writeBuffer(this.boxUni, 0, a);
+    }
     this.verts = buf('mesh', VERT_ROOM * 32, GPUBufferUsage.STORAGE);
     this.args = buf('mesh args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     device.queue.writeBuffer(this.args, 0, new Uint32Array([0, 1, 0, 0]));
@@ -328,8 +353,11 @@ export class CityGen {
     const module = makeModule(device, 'citygen', [streetsWgsl]);
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     this.pipes = Object.fromEntries(KERNELS.map((k) => [k, device.createComputePipeline({ label: `citygen ${k}`, layout: pl, compute: { module, entryPoint: k } })])) as Record<Kernel, GPUComputePipeline>;
-    if (world.box[1] % 2) throw new Error(`citygen: the box's first row (${world.box[1]}) must be even`);
-    this.heightK = makeCompute(device, 'citygen height', [commonWgsl, layersWgsl, materialsWgsl, heightWgsl], { 0: 'uniform', 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'uniform' });
+    if (gs.kind === 'window' && gs.box[1] % 2) throw new Error(`citygen: the box's first row (${gs.box[1]}) must be even`);
+    this.heightK =
+      gs.kind === 'window'
+        ? makeCompute(device, 'citygen height', [commonWgsl, layersWgsl, materialsWgsl, heightWgsl], { 0: 'uniform', 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'uniform' })
+        : makeCompute(device, 'citygen raw height', [rawHeightWgsl], { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'rw' });
     const n = ALL.length * 2;
     if (device.features.has('timestamp-query')) {
       this.qs = device.createQuerySet({ type: 'timestamp', count: n });
@@ -544,6 +572,8 @@ export class CityGen {
     if (this.cityOn()) this.k('sctab', {}, { 1: B.PTS, 2: B.LM, 3: B.HS, 4: B.FD, 5: B.SCT, 7: B.POP }, 1);
     // (M4a: where each arterial leaves the town's limit — the supercells' out; without them, its length)
     this.k('artEnd', {}, { 4: B.SCT, 5: B.ART }, 1);
+    // (M4b: the town's own bridge where water splits it and no arterial crosses — after the town's limit is known)
+    this.k('townBridge', {}, { 1: B.M, 2: B.FDB, 3: B.H, 4: B.SCT, 5: B.ART, 7: B.POP }, 1);
     // (m3d) the bad blocks: found, then merged (a claim each on a good neighbour, the lowest seed wins) or paved
     // (MERGE_ROUNDS rounds — a fan's triangles merge in pairs, then the pairs — then what's still bad is paved)
     for (let r = 0; r <= MERGE_ROUNDS; r++) {
@@ -623,9 +653,14 @@ export class CityGen {
     // the ground's heights and the water, once (the land doesn't change yet: later, on dirty chunks only)
     if (firstHeights) {
       const cp = enc.beginComputePass(this.pass('height'));
-      const W = this.world;
+      const G = this.world.ground;
       cp.setPipeline(this.heightK.pipeline);
-      cp.setBindGroup(0, makeBindGroup(device, 'citygen height', this.heightK.layout, { 0: W.globals, 1: W.chunks, 3: W.layers, 4: W.water, 5: B.H, 6: B.M, 7: this.boxUni }));
+      cp.setBindGroup(
+        0,
+        G.kind === 'window'
+          ? makeBindGroup(device, 'citygen height', this.heightK.layout, { 0: G.globals, 1: G.chunks, 3: G.layers, 4: G.water, 5: B.H, 6: B.M, 7: this.boxUni })
+          : makeBindGroup(device, 'citygen raw height', this.heightK.layout, { 0: this.boxUni, 1: G.raw, 2: B.H, 3: B.M }),
+      );
       cp.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(h / 8));
       cp.end();
       this.haveHeights = true;

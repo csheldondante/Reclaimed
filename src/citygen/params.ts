@@ -29,7 +29,7 @@ export const CITY_PARAMS: Record<string, CitySpec> = {
   lmRmax: { label: 'landmark radius max', units: 'cells', min: 4, max: 60, step: 0.5, def: 16, help: 'r = block length / the smallest angle between its streets, between these', stage: 'trace' },
   artWidth: { label: 'arterial width', units: 'cells', min: 1, max: 12, step: 0.1, def: 3.2, help: 'the approach roads, centre to edge', stage: 'mesh' },
   hRatio: { label: 'height to plot', units: '× side', min: 0, max: 2, step: 0.05, def: 0.7, help: 'a building no taller than this × its plot’s shortest side (a storey at least, the storeys’ most at most), so the streets stay in sight at 60°; 0: storeys × 0.7–1.3', stage: 'mesh' },
-  deckClear: { label: 'deck clearance', units: 'cells', min: 0, max: 8, step: 0.25, def: 1.5, help: 'a bridge deck’s height over its higher bank', stage: 'field' },
+  deckClear: { label: 'deck clearance', units: 'cells', min: 0, max: 8, step: 0.25, def: 1, help: 'a bridge deck’s height over each bank (it slopes between them): at most a walker’s step (1.1) so the deck is walkable', stage: 'field' },
   maxSpan: { label: 'longest bridge', units: 'cells', min: 8, max: 240, step: 2, def: 120, help: 'a crossing longer than this ends the approach road at the shore', stage: 'field' },
   roadTone: { label: 'road tone', units: '', min: 0, max: 2, step: 1, def: 1, choices: ['white (old)', 'dirt', 'stone'], help: 'dirt or stone, a little lighter than the ground (the game: dirt for small towns, stone for big)', stage: 'mesh' },
   marks: { label: 'point markers', units: '', min: 0, max: 1, step: 1, def: 1, choices: ['hidden', 'shown'], help: 'the φ points as red markers (the game hides them)', stage: 'mesh' },
