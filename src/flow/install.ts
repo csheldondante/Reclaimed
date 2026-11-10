@@ -25,7 +25,9 @@ export function installFlow(core: WorldCore, sleep: Sleep): FlowKit {
   if (at < 0) throw new Error('installFlow: no water system to replace');
   sim.systems.splice(at, 1, water, lava);
   // (everything asleep — the sleep mask's counts: no step, only the idle scan for a solid come over still water)
-  water.idle = lava.idle = () => sleep.awake === 0 && sleep.candidates === 0 && core.globals.sleep !== undefined;
+  // (not while any chunk is drowsy: land just come in takes its first steps — its water into its gaps, its flux seeded,
+  // the water on its surfaces published)
+  water.idle = lava.idle = () => sleep.awake === 0 && sleep.candidates === 0 && sleep.drowsy === 0 && core.globals.sleep !== undefined;
   steady.onRescale = (k, r) => {
     water.rescale.set(k, r);
     lava.rescale.set(k, r);

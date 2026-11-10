@@ -194,6 +194,8 @@ export class Sleep {
   readonly settleCand = new Uint32Array(MAX_CHUNKS / 32);
   /** chunks the GPU may be holding (settleCand's bits) at the last update */
   candidates = 0;
+  /** (trackA-liquids) mask words with a drowsy chunk at the last update (0: none — land just come in, an edit's touch) */
+  drowsy = 0;
 
   /** land come in everywhere (the first window, a slide in z, a warp): woken to settle for `secs` — or, with
    *  ?settle=0, only drowsy (asleep at once, its layers carried through) */
@@ -306,6 +308,9 @@ export class Sleep {
     }
     this.awake = awake;
     this.candidates = cands;
+    let drowsy = 0;
+    for (const w of this.drowse) if (w) drowsy++;
+    this.drowsy = drowsy;
     return this.mask;
   }
 

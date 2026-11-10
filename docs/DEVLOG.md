@@ -21330,3 +21330,15 @@ Clean desktop runs (nothing else of this worktree running; liquid passes by time
   it only where its open water lies under the column's top by more than 0.5 (COVERED: a deck's slab is 0.8).
 - LQ4: the water on every surface (waterGaps, publishGaps, the peel's surfaceDepth — ARCHITECTURE "The flow model");
   decks not handed to the reach as plan solid under the flow model. Verification at Muru next.
+
+## 2026-11-10 — trackA-liquids: LQ4 at Muru, first look (not passing yet)
+
+- The idle path kept new land from ever taking its first steps (the atlas's land comes in asleep): not idle while any
+  chunk is drowsy (Sleep.drowsy). publishGaps bumps the water versions for the top's water too (the peel had read the
+  zeros before the first publish).
+- At Muru after 60 s (`?liquid=flow`, citygen fields, living): 207 enclosed runs, 43 chunks awake. Not right yet:
+  - the agents' surfaces over the river read dry (wet 0, water 0) at the columns checked — the peel hasn't re-read
+    them (its scope, or the versions), not traced;
+  - a deck column at (123, 167) holds 3.64 of open water on its top: a pile-up again, with many chunks awake;
+  - roads' paving (a quarter cell, claimed where free) over shallow water makes thin gaps with water under them.
+  BACKLOG LQ4 and LQ5 stay open.

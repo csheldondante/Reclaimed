@@ -1091,6 +1091,8 @@ fn publishGaps(@builtin(global_invocation_id) id: vec3<u32>) {
     if (v.y > EPS) { g[s] = pack2x16float(vec2<f32>(v.x, v.y)); }
   }
   let o = waterGaps[i];
+  // (the top's too: what the peel read before this was first written — 0 — may have been a dry surface)
+  if (o.x != g.x) { bumpWater(id.xy, bitcast<f32>(o.x), bitcast<f32>(g.x)); }
   for (var s = 1u; s < NSLOT; s++) {
     if (o[s] != g[s]) { bumpWater(id.xy, select(0.0, unpack2x16float(o[s]).y, o[s] != 0u), select(0.0, unpack2x16float(g[s]).y, g[s] != 0u)); }
   }
