@@ -12,7 +12,7 @@ import { levelFrame } from './frame';
 import { FortressReachGpu } from '../../build/reachgpu';
 import { ROW_H } from '../../world/lattice';
 import { Fortress } from '../../fortress/fortress';
-import { FortressBar } from '../../fortress/ui';
+import { FortressBar, type FortressBarHooks } from '../../fortress/ui';
 import { SKIP_DONE, skipCutOffLine, skipShortLine } from '../../fortress/words';
 import { FortressCrowd } from '../../fortress/crowd';
 import { FortressRaid } from '../../fortress/raiders';
@@ -24,6 +24,7 @@ import { Dither } from '../../api/cutaway';
 import { LEVEL_H } from '../../build/town';
 import type { LevelScene } from '../level';
 import { worldApiOf } from './world-api';
+import { startSeason } from './season';
 
 /**
  * (fortress slice 1, milestone 1) The town at the start becomes the player's fortress: pinned (live, no houses of its
@@ -83,6 +84,8 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
     clearPlants: (x, y, r) => worldApiOf(scene).plants!.clear(x, y, r),
   });
   scene.fortress = fort;
+  // (round 128r, Track A "Next season") the season on the town: Next season resolves it, the showcase plays it
+  const season = (scene.season = startSeason(scene, fort, rec.name));
   fort.status.people = ECON.startPeople;
   // (onetown) the fortress's edit state drawn and claimed with its town (the view host's: one slab, one static grid)
   view.setHook(rec.id, {
@@ -132,7 +135,7 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
   // (round 128e, FT-50) the speed picked while building (1x, 4x, 16x), and Skip to done
   let runSpeed = Math.max(1, Number(scene.host.params.get('speed') ?? 1));
   scene.fortressSkip = false;
-  scene.fortressBar = new FortressBar(scene.host.ui, fort, {
+  const barHooks: FortressBarHooks = {
     build: () => {
       // (the world API attached: the agents get the terrain, so a load a builder drops — it falls, it's knocked down —
       // falls to the ground as the settlements' do; without it the agents' toss threw)
@@ -233,7 +236,23 @@ export function startFortress(scene: LevelScene, st: FortressTownSource, view: T
     callRaid: () => scene.fortressRaid?.callNow(),
     raidSummary: () => scene.fortressRaid?.summary ?? false,
     closeRaid: () => scene.fortressRaid?.closeSummary(),
-  });
+    // (round 128r, Track A) Next season, Skip while it plays, and what the last season did
+    season: {
+      next: () => void season.next().catch(() => scene.fortressBar?.render()),
+      skip: () => season.play.skip(),
+      playing: () => season.busy,
+      line: () => season.play.summary,
+    },
+  };
+  scene.fortressBar = new FortressBar(scene.host.ui, fort, barHooks);
+  // (round 128r) a season shows the town as it stands: the build view (what stands drawn, what's planned as its plot,
+  // what's begun scaffolded), time stopped while the season plays — Build pressed first if planning
+  season.enter = () => {
+    if (fort.mode === 'plan') barHooks.build();
+    scene.speed = 0;
+  };
+  // (round 128r) a season starting or ending: the bar again
+  season.play.onChange.push(() => scene.fortressBar?.render());
   // the power coming in: the fortress's built blocks (a ledger number: nothing spends it yet)
   fort.onChange.push(() => {
     const p = (rec.stores.power ??= { stock: 0, rate: 0 });

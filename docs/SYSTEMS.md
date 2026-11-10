@@ -66,8 +66,10 @@ realises what was completed meanwhile (BACKLOG ST18).
 
 **Today** (contracts): `SimTiers` (src/api/contracts/simtiers.ts) holds rain erosion, wind erosion and growth baked
 in play, `live(processes, rect)` for a player's direct invocation, `bake(rect|'all', …)` over the window only.
-Missing: the atlas-scale bake per region (SM4), the showcase (a bake shown over time), latency priority for the
-reactive systems' wake (the frame budget's first claim).
+Missing: the atlas-scale bake per region (SM4), latency priority for the reactive systems' wake (the frame budget's
+first claim). (Round 128r, Track A) **The showcase is built:** `SimTiers.showcase(steps, {seconds, frame})` plays a
+change's steps over a few seconds and `skip` applies the rest at once — the same world either way (scripts/seasongate.mjs);
+the season (src/season/, docs/design/NEXT_SEASON.md) is its first user. Its steps are owners' writes, not a bake yet.
 
 ## Three time scales
 
@@ -138,7 +140,9 @@ Turns a region's ground plus its state plus a brief into columns, settled.
   - the shore field.
 - **Not yet:**
   - region briefs: rooms, paths, key/door layouts;
-  - state realisation: ash, ice, overgrowth, ruin and flood applied from RegionState;
+  - state realisation: ash, ice, overgrowth, ruin and flood applied from RegionState (round 128r: for the live window,
+    ruin and overgrowth through history marks — CityMark → wear by purpose.ts markWear, on the live plan by
+    Fortress.lowerTo/setWear — and a flood by one fill into held still water, terrain/basin.ts; not yet at arrival);
   - steady-state rivers. Branch `rivers`: the atlas's watersheds, discharge as a function of dryness, flow
     render-only.
 - **API:**

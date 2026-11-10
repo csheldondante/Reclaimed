@@ -208,6 +208,7 @@ export const TRANSFERS: TransferSite[] = [
   { file: 'terrain/flood.ts', fn: 'FloodGpu.iterate', what: 'a 4 B changed flag per batch', why: 'flood fill converges (terrain viewer, scripts)', rate: 'demand', play: 'no' },
   { file: 'terrain/flood.ts', fn: 'FloodGpu.read', what: 'the flood grid', why: 'flood fill result', rate: 'demand', play: 'no' },
   { file: 'terrain/flood.ts', fn: 'FloodGpu.read4', what: 'the fill at the seed, 4 B: the spill height', why: 'a flood to its spill height needs the level for the mark pass (round 128r: the season flood, terrain/basin.ts)', rate: 'edit', play: 'yes' },
+  { file: 'terrain/basin.ts', fn: 'LiveFlood.read4', what: 'the ground at a flood seed, 4 B', why: 'where a rising flood starts (the season showcase)', rate: 'edit', play: 'yes' },
   { file: 'terrain/basin.ts', fn: 'LiveFlood.query', what: 'a word a structure asked about, 4 B each (~100 B)', why: 'which structures a flood covers: their wear (round 128r, the season flood)', rate: 'edit', play: 'yes' },
 
   // ---- drawing ----

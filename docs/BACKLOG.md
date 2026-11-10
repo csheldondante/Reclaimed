@@ -12,6 +12,25 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 128r (2026-11-09, session 5, Track A `trackA-season`) — Next season: the season resolved at once, played as the showcase
+
+docs/design/NEXT_SEASON.md. The user: "large visual instant modifiers and time lapse playback not realtime simulation".
+
+| id | item | size | status |
+|---|---|---|---|
+| NS-1 | The season ledger (pools, projects, history marks), `nextSeason` pure; the start town's scenario (tower, quarter, flood); Next season and Skip on the bar | M | done (trackA-season) |
+| NS-2 | The showcase on SimTiers (`showcase(steps, {seconds, frame})`): steps at fractions, ticks for what they queue, skip = the same writes | S | done (trackA-season) |
+| NS-3 | The live flood: one FloodGpu fill over the window's columns, still water held over its mark (riverFlow depth), structures covered by a GPU query | M | done (trackA-season) |
+| NS-4 | Wear extended (damaged, ruined, overgrown) with one rule (purpose.ts markWear) for generated towns and the live plan; `stageOf` derived for Track B | S | done (trackA-season) |
+| NS-5 | Track B: stage visuals that read at play zoom (scaffolding is thin and dark; a plot outline is faint; damaged and overgrown have no look of their own; ruined/overgrown borrow the burned look) | M | open (Track B) |
+| NS-6 | River surge / drought as a season modifier: the held rivers' wetness factor (AtlasEvent 'river-inflow', living/mutations.ts setRiverInflow; riverheld.wgsl riverWet / riverWetAt, Globals ocean.w; the live window's riverFlow texture), instant, drawn with the bake's falls and rapids | M | open (next slice candidate) |
+| NS-7 | Burial / volcano: the same fill with ash, sand or magma (FloodRequest.fluid) realised in the live window as columns, not water | M | open |
+| NS-8 | The town view's pieces are made again whole for any block change (settle/view.ts `changed`: pieces = null): 20-100 ms hitches while a season stands blocks (the builders pay it too) — make the view incremental per structure | M | open |
+| NS-9 | The flood in the atlas: the season's flood also as Atlas.addBasin (FloodField.flood with the level the live fill found), so a regenerated region keeps it; the generator's flooded mark is level-only (purpose.ts markWear), the live one the fill's mask | S | open |
+| NS-10 | The fortress's town has no Settlement record or FactWorld in play: the season's history marks are kept on the ledger and its AtlasEvents go to a one-region MemoryWorldState; move both to the world model when fortress play has one | M | open |
+| NS-11 | Save: the ledger, the standing floods (re-made from their card's seed and level) and the plan's wear in the fortress's save, once fortress play saves (SeasonPlay.settle first) | M | open |
+| NS-12 | The scenario's site search costs 15-30 s of fills on the first Next season (about 150 seeds); one fill over the window with a GPU argmax of the depression, or an authored seed | S | open |
+
 ## Round 128o (2026-11-05, session 5, `fortress`) — making the code match DESIGN.md (the work plan from four audits)
 
 The user: "Please work on making the code match the design which is a lot cleaner and intentionally encapsulates and avoids duplicate designs or logic. Let's write this well so it actually works and doesn't have the bugs that slow down development." Plan: https://claude.ai/artifact/JPNnQEzZPggrTzzv6kiKxA; audits in the session scratchpad. Order: gates, then towns working (A) and towns fast (B) in parallel, then the loop (L), the engine (E), pages and the rest (P).
