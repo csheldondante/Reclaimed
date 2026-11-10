@@ -18,7 +18,7 @@
 //    again (a 'raised' event: the same GPU id) in the raiser's group. It's alive again here, keeps its role, and is
 //    `bound`: the raiser's, not this layer's to order — it neither takes jobs nor hunts until the game orders it.
 // Window coordinates (x cells, y world units, z the ground) as the world API's.
-import type { Actor, AreaHit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
+import type { Actor, AreaHit, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
 import type { Agents, AgentEvent, AgentState, HuntCandidate, Target } from '../agents/agents';
 import type { PickAsk } from '../agents/pick';
@@ -124,9 +124,8 @@ export interface UnitRec {
   /** the goal key it holds */
   goal: string | null;
   /** (round 128p, DA-B22 (c)(4)) the goal key it was told it arrived at (the agents' `arrived` on its goal field): it
-   *  stands there — no position read to tell; and where the GPU told it arrived */
+   *  stands there — no position read to tell */
   arrived?: string;
-  arrivedAt?: V3;
   /** (round 128p) its side of the wall as last told (the side map's number: fightRules) */
   side?: number;
   /** the routine's own state */
@@ -254,9 +253,9 @@ export class AgentUnits implements Units {
    * (round 128p, DA-B22 (c)(4)) Asked of the GPU (Agents.near: the live units within the radius, with where they stand);
    * the dead by where they fell (their death event's place)
    */
-  async query(near: V2, radius: number, opts: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): Promise<UnitView[]> {
+  async query(near: V2, radius: number, opts: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): Promise<SeenUnit[]> {
     const keep = (u: UnitRec) => (opts.faction === undefined || u.v.faction === opts.faction) && (opts.hostile === undefined || u.v.hostile === opts.hostile);
-    const out: [number, UnitView][] = [];
+    const out: [number, SeenUnit][] = [];
     // (one faction's: looked for on the GPU among its units only — its combat words; NO_FACTION for none)
     const fac = opts.faction === undefined ? null : opts.faction === null ? NO_FACTION : (this.factionNo.get(opts.faction) ?? -1);
     for (const f of fac === -1 ? [] : await this.agents.near(near[0], near[1], radius, fac)) {
@@ -267,9 +266,10 @@ export class AgentUnits implements Units {
     }
     if (opts.dead)
       for (const u of this.recs.values()) {
-        if (u.v.alive || !u.v.at || !keep(u)) continue;
-        const d = Math.hypot(u.v.at[0] - near[0], u.v.at[1] - near[1]);
-        if (d <= radius) out.push([d, this.view(u)]);
+        const at = u.v.at;
+        if (u.v.alive || !at || !keep(u)) continue;
+        const d = Math.hypot(at[0] - near[0], at[1] - near[1]);
+        if (d <= radius) out.push([d, { ...this.view(u), at: [at[0], at[1], at[2]] }]);
       }
     return out.sort((a, b) => a[0] - b[0]).map((x) => x[1]);
   }
@@ -292,29 +292,9 @@ export class AgentUnits implements Units {
       }
     };
   }
-  /**
-   * (round 128p, DA-B22 (c)(4)) Who stands within each place's radius (`places`: x, y, radius; at most 32) — one GPU
-   * pass, answered a frame or two later: each a place's index, a unit and where it stands. A raid's "has one come to
-   * the stores, the gate, the edge" without reading where everyone is.
-   */
-  async atPlaces(places: readonly (readonly [number, number, number])[]): Promise<{ k: number; id: UnitId; at: V2 }[]> {
-    const out: { k: number; id: UnitId; at: V2 }[] = [];
-    for (const f of await this.agents.nearMany(places)) {
-      const id = this.byGpu.get(f.id);
-      if (id !== undefined) out.push({ k: f.k, id, at: [f.x, f.y] });
-    }
-    return out;
-  }
-
   /** (round 128p) a unit's side of the wall as the GPU last told it (the side map's number), or null: not told */
   sideOf(id: UnitId): number | null {
     return this.recs.get(id)?.side ?? null;
-  }
-
-  /** (round 128p) where a unit was told it arrived at its job's place (a 'go', a post), or null: not there */
-  arrivedAt(id: UnitId): V3 | null {
-    const u = this.recs.get(id);
-    return u && u.arrived !== undefined && u.arrivedAt ? [...u.arrivedAt] as V3 : null;
   }
 
   /** (round 128p) the observed by the game (observe), and by this layer for what it still does on the CPU (strikes,
@@ -785,7 +765,8 @@ export class AgentUnits implements Units {
         if (!a || t === undefined) continue;
         if (typeof t === 'string') {
           const actor = this.actors.find((x) => x.id === t);
-          if (actor && actor.alive()) actor.hurt(a.damage, this.view(a));
+          // (where it swung from: the swing's event)
+          if (actor && actor.alive()) actor.hurt(a.damage, { ...this.view(a), at: [e.x, e.y, e.z] });
         } else this.hit(t, a.damage, a.v.id);
       } else if (e.type === 'hurt') {
         const id = this.byGpu.get(e.id);
@@ -855,7 +836,6 @@ export class AgentUnits implements Units {
         if (gi >= 0 && gi < GOALS) {
           if (u.goal !== null && this.goals[gi]?.key === u.goal) {
             u.arrived = u.goal;
-            u.arrivedAt = [e.x, e.y, e.z];
           }
           continue;
         }
@@ -981,7 +961,7 @@ export class AgentUnits implements Units {
             this.hitBy.set(hid, u.v.id);
           } else {
             const a = this.actors.find((x) => x.id === u.target);
-            a?.hurt(u.damage, this.view(u));
+            a?.hurt(u.damage, { ...this.view(u), at: me });
           }
         }
       } else {

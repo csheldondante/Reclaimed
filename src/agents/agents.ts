@@ -20,7 +20,7 @@ import { TICK_DT } from '../sim/flow';
 import { stepPlan } from './stepplan';
 import { UnitNotice } from './notice';
 import { UnitPick, type PickAsk } from './pick';
-import { UnitReads, type UnitAt, type UnitFound } from './reads';
+import { UnitReads, type UnitFound } from './reads';
 import type { WorldGpu } from '../sim/world-gpu';
 import { MAT } from '../world/materials';
 import { materialId, materialName, materialState, type MaterialName } from '../api/common';
@@ -541,11 +541,6 @@ export class Agents implements SimSystem {
    */
   near(x: number, y: number, r: number, faction: number | null = null): Promise<UnitFound[]> {
     return this.reads.near(x, y, r, this.count, 1024, faction);
-  }
-
-  /** (round 128p) the live units within each point's radius, one GPU pass (agents/reads.ts nearMany) */
-  nearMany(pts: readonly (readonly [number, number, number])[]): Promise<UnitAt[]> {
-    return this.reads.nearMany(pts, this.count);
   }
 
   /**

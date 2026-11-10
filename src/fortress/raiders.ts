@@ -17,7 +17,7 @@
 //  - the villagers shelter at home while raiders are about (FortressCrowd.shelter).
 // Its numbers are raid.ts RAID; what it says, words.ts.
 import type { Good, Goods } from '../api/contracts/fortress';
-import type { UnitId, UnitView, V2 } from '../api/contracts/units';
+import { seen, type UnitId, type UnitView, type V2 } from '../api/contracts/units';
 import { R } from '../units/agent-units';
 import { G, type AgentUnits, type UnitRec } from '../units/agent-units';
 import type { FxName } from '../api/fx';
@@ -67,8 +67,6 @@ interface Raider {
   loot: Goods;
   /** where it walks now (AgentUnits 'go': a goal field, roads cheaper on it), or null: it stands (bashing, waiting) */
   to: V2 | null;
-  /** (round 128p) where the GPU found it when it came to bash */
-  at?: V2;
 }
 
 type Stage = 'none' | 'breach' | 'stores' | 'houses' | 'out';
@@ -123,6 +121,7 @@ export class FortressRaid {
   private onChange = () => (this.dirty = true);
   private onDied = (u: UnitView, by: UnitId | string | null) => {
     const k = typeof by === 'number' ? this.io.units.get(by) : null;
+    // (round 128p, U1: where it fell from its death event; its killer's place only if observed — else '?')
     const where = (v: UnitView) => (v.at ? `${this.sideAt([v.at[0], v.at[1]])} z${v.at[2].toFixed(1)}` : '?');
     this.log.push(`${Math.round(this.t)}s ${u.role} ${where(u)} by ${k ? `${k.role} ${where(k)}` : String(by)}`);
     if (this.raiders.has(u.id) && typeof by === 'number') {
@@ -142,7 +141,7 @@ export class FortressRaid {
     // (round 128p: the rules as data for the GPU's targeting — AgentUnits.fightRules; the sides as they're looked at)
     this.rules();
     io.life.raid = this;
-    this.defence = new FortressDefence({ units: io.units, life: io.life, burst: io.burst, raiders: () => [...this.raiders.keys()], raidFaction: RAID_FACTION });
+    this.defence = new FortressDefence({ units: io.units, life: io.life, burst: io.burst, raiders: () => [...this.raiders.keys()] });
   }
   /** (part B) the soldiers on their posts, the archers' arrows */
   readonly defence: FortressDefence;
@@ -151,6 +150,8 @@ export class FortressRaid {
 
   dispose(): void {
     const U = this.io.units;
+    for (const release of this.observed.values()) release();
+    this.observed.clear();
     for (const id of this.raiders.keys()) U.remove(id);
     if (this.rider !== null) U.remove(this.rider);
     this.raiders.clear();
@@ -217,8 +218,7 @@ export class FortressRaid {
       if (e.kind === 'warn') this.warn(e.size);
       else if (!this.active) this.arrive(e);
     }
-    // (round 128p: who has come to the raid's places — asked of the GPU, answered a frame or two later)
-    this.askPlaces();
+    this.observe();
     this.stepRider();
     this.burn(dt);
     // (round 128p: who's in at home and who holds a post, for the GPU's rules)
@@ -266,74 +266,36 @@ export class FortressRaid {
     if (this.rider === null) return;
     const v = this.io.units.get(this.rider);
     if (!v?.alive) return void (this.rider = null);
-    // (round 128p, DA-B22 (c)(4): at the stores, at the edge — as the GPU found it, not by reading where it is)
+    // (observed: its place read from the sync after it was — not read yet, nothing to do)
+    if (!v.at) return;
+    const at: V2 = [v.at[0], v.at[1]];
     if (this.warnPending) {
-      if (this.isAt(this.rider, 'heap')) {
+      const h = this.io.life.heap();
+      if (Math.hypot(h[0] - at[0], h[1] - at[1]) < THERE) {
         this.told();
         if (this.exit) this.io.units.order(this.rider, { kind: 'go', to: this.exit });
       }
-    } else if (this.isAt(this.rider, 'exit')) {
+    } else if (this.exit && Math.hypot(this.exit[0] - at[0], this.exit[1] - at[1]) < GONE) {
       this.io.units.remove(this.rider);
       this.rider = null;
     }
   }
 
-  // ---- (round 128p, DA-B22 (c)(4)) who has come to the raid's places: asked of the GPU, not read off every unit ----
-
-  /** who the GPU found at which place (tag → ids), as last answered, and where it stood */
-  private found = new Map<string, Map<UnitId, V2>>();
-  private asking = false;
-  /** the raiders as the last look's query found them (where each stood) */
-  private seen = new Map<UnitId, V2>();
-  private seeing = false;
-
-  /** a unit at a place (its tag) when the GPU last looked */
-  private isAt(id: UnitId, tag: string): boolean {
-    return this.found.get(tag)?.has(id) ?? false;
-  }
-
-  /** the places that matter now and their radii: asked of the GPU (AgentUnits.atPlaces), answered a frame or two later */
-  private askPlaces(): void {
-    if (this.asking) return;
-    const places: [number, number, number][] = [];
-    const tags: string[] = [];
-    const add = (tag: string, at: V2 | null, r: number) => {
-      if (!at || places.length >= 32) return;
-      places.push([at[0], at[1], r]);
-      tags.push(tag);
-    };
-    const heap = this.io.life.heap();
-    if (this.rider !== null || this.stage === 'stores') add('heap', heap, THERE);
-    add('exit', this.exit, GONE);
-    if (this.active && this.stage === 'breach' && this.goal?.kind === 'breach') add('breach', this.io.fort.centre(this.goal.cell), RAID.bashReach);
-    if (this.active && this.stage === 'houses') for (const h of this.houses()) if (!this.torched.has(h.id)) add(`door:${h.id}`, h.door, THERE);
-    const f = this.io.fort;
-    if (this.active && !f.gatesShut)
-      for (const s of f.plan.structures()) for (const c of s.cells.keys()) if (f.plan.gate[c] && f.town.has(c, 0)) add(`gate:${c}`, f.centre(c), RAID.shutAt);
-    if (!places.length) return void this.found.clear();
-    this.asking = true;
-    void this.io.units.atPlaces(places).then((hits) => {
-      const found = new Map<string, Map<UnitId, V2>>();
-      for (const h of hits) {
-        const tag = tags[h.k];
-        let m = found.get(tag);
-        if (!m) found.set(tag, (m = new Map()));
-        m.set(h.id, h.at);
+  /**
+   * (round 128p, U1, DA-B22 (c)(4)) The units this loop follows by where they stand — the raiders and the rider — are
+   * observed (Units.observe) while they're in it: their positions read each sync, nobody else's. Derived from the
+   * raiders map and the rider each frame, so a raider gone is released with it. (DA-L4 deletes this loop.)
+   */
+  private observed = new Map<UnitId, () => void>();
+  private observe(): void {
+    const want = new Set<UnitId>(this.raiders.keys());
+    if (this.rider !== null) want.add(this.rider);
+    for (const [id, release] of this.observed)
+      if (!want.has(id)) {
+        release();
+        this.observed.delete(id);
       }
-      this.found = found;
-      this.asking = false;
-    });
-  }
-
-  /** the raiders where they stand, every look (a query of their faction: their positions only) */
-  private seeRaiders(): void {
-    if (this.seeing) return;
-    this.seeing = true;
-    const [w, h] = [this.io.dims.w, this.io.dims.h];
-    void this.io.units.query([w / 2, h / 2], Math.hypot(w, h), { faction: RAID_FACTION }).then((vs) => {
-      this.seen = new Map(vs.filter((v) => v.at).map((v) => [v.id, [v.at![0], v.at![1]] as V2]));
-      this.seeing = false;
-    });
+    for (const id of want) if (!this.observed.has(id)) this.observed.set(id, this.io.units.observe(id));
   }
 
   /** the rider's word on the bar; the soldiers to their posts */
@@ -444,7 +406,6 @@ export class FortressRaid {
   private look(): void {
     this.lookAt = this.t;
     this.dirty = false;
-    this.seeRaiders();
     this.layout = layoutOf(this.io.fort, this.io.life.heap(), (c) => this.hpOf(c));
     this.sides = raidSides(this.layout);
     this.rules();
@@ -469,10 +430,10 @@ export class FortressRaid {
     let y = 0;
     let n = 0;
     for (const r of this.raiders.values()) {
-      const at = this.seen.get(r.id);
-      if (!at) continue;
-      x += at[0];
-      y += at[1];
+      const v = seen(this.io.units.get(r.id));
+      if (!v?.alive) continue;
+      x += v.at[0];
+      y += v.at[1];
       n++;
     }
     return n ? [x / n, y / n] : (this.entry ?? [0, 0]);
@@ -532,11 +493,9 @@ export class FortressRaid {
 
   private walkTo(r: Raider, goals: V2[]): void {
     const U = this.io.units;
-    const v = U.get(r.id);
+    const v = seen(U.get(r.id));
     if (!v?.alive) return;
-    // (round 128p: where it stood at the last look — or the raid's middle)
-    const at = this.seen.get(r.id) ?? this.middle();
-    const to = goals.length ? goals.slice().sort((a, b) => Math.hypot(a[0] - at[0], a[1] - at[1]) - Math.hypot(b[0] - at[0], b[1] - at[1]))[0] : null;
+    const to = goals.length ? goals.slice().sort((a, b) => Math.hypot(a[0] - v.at[0], a[1] - v.at[1]) - Math.hypot(b[0] - v.at[0], b[1] - v.at[1]))[0] : null;
     if (to && r.to && Math.hypot(to[0] - r.to[0], to[1] - r.to[1]) < 1) return;
     this.stand(r, to);
   }
@@ -547,10 +506,14 @@ export class FortressRaid {
     const v = U.get(r.id);
     if (!v?.alive) return;
     if (!to && !r.to) return;
-    // (standing where it is: the raid's routine poses it — its work's place the one it came to)
-    const here = r.to ?? this.seen.get(r.id) ?? this.middle();
-    r.to = to;
-    U.order(r.id, to ? { kind: 'go', to } : { kind: 'work', at: [here[0], here[1]], what: 'raid' });
+    if (to) {
+      r.to = to;
+      return U.order(r.id, { kind: 'go', to });
+    }
+    // (standing where it is: its place read — it's observed; stood only from where stepRaider read it)
+    if (!v.at) return;
+    r.to = null;
+    U.order(r.id, { kind: 'work', at: [v.at[0], v.at[1]], what: 'raid' });
   }
 
   /** the gates shut when a raider comes near one, or once nobody of the fortress is left outside */
@@ -560,14 +523,20 @@ export class FortressRaid {
     const gates = [...f.plan.structures()].flatMap((s) => [...s.cells.keys()].filter((c) => f.plan.gate[c] && f.town.has(c, 0)));
     if (!gates.length) return;
     const U = this.io.units;
-    // (round 128p, DA-B22 (c)(4): a raider within shutAt of a gate as the GPU found them; who's outside by the sides
-    // the GPU tells — not every person's position read)
-    const near = [...this.raiders.values()].some((r) => gates.some((c) => this.isAt(r.id, `gate:${c}`)));
+    const near = [...this.raiders.values()].some((r) => {
+      const v = seen(U.get(r.id));
+      return v?.alive && gates.some((c) => {
+        const [x, y] = f.centre(c);
+        return Math.hypot(x - v.at[0], y - v.at[1]) < RAID.shutAt;
+      });
+    });
+    // (round 128p, U1, DA-B22 (c)(4): who's outside by the side the GPU tells when it changes (EV_SIDE) — not every
+    // person's position read)
     const outside = this.io.life.people().some((id) => U.get(id)?.alive && U.sideOf(id) === SIDE_NO.out);
     if (near || !outside) {
       this.log.push(`${Math.round(this.t)}s gates shut: ${near ? 'raiders near' : 'nobody outside'}; raiders ${[...this.raiders.values()].map((r) => {
-        const at = this.seen.get(r.id);
-        return at ? `${this.sideAt(at)}@${at[0].toFixed(0)},${at[1].toFixed(0)}` : '-';
+        const v = seen(U.get(r.id));
+        return v ? `${this.sideAt([v.at[0], v.at[1]])}@${v.at[0].toFixed(0)},${v.at[1].toFixed(0)}` : '-';
       }).join(' ')}; gates ${gates.map((c) => f.centre(c).map(Math.round).join(',')).join(' ')}`);
       f.setGatesShut(true);
       this.dirty = true;
@@ -587,12 +556,12 @@ export class FortressRaid {
 
   private stepRaider(r: Raider, dt: number): void {
     const U = this.io.units;
-    const v = U.get(r.id);
+    const v = seen(U.get(r.id));
     if (!v?.alive) return;
-    // (round 128p, DA-B22 (c)(4): at a place as the GPU found it — and where it stood then)
-    const placeOf = (tag: string): V2 | null => this.found.get(tag)?.get(r.id) ?? null;
+    const at: V2 = [v.at[0], v.at[1]];
+    const near = (p: V2, d = THERE) => Math.hypot(p[0] - at[0], p[1] - at[1]) < d;
     if (r.phase === 'out') {
-      if (placeOf('exit')) this.escaped(r);
+      if (this.exit && near(this.exit, GONE)) this.escaped(r);
       return;
     }
     if (r.phase === 'bash') {
@@ -601,7 +570,7 @@ export class FortressRaid {
       r.t -= dt;
       if (r.t > 0) return;
       r.t = RAID.bashSec;
-      this.blow(g.cell, r.at ?? this.io.fort.centre(g.cell));
+      this.blow(g.cell, at);
       return;
     }
     if (r.phase === 'looted') {
@@ -610,21 +579,16 @@ export class FortressRaid {
     }
     // in: to the wave's goal
     if (this.stage === 'breach' && this.goal?.kind === 'breach') {
-      const at = placeOf('breach');
-      if (at) {
+      const c = this.io.fort.centre(this.goal.cell);
+      if (near(c, RAID.bashReach)) {
         r.phase = 'bash';
-        r.at = at;
         r.t = RAID.bashSec * Math.random();
         this.stand(r, null);
       }
     } else if (this.stage === 'stores') {
-      const at = placeOf('heap');
-      if (at) this.loot(r, at);
+      if (near(this.io.life.heap())) this.loot(r, at);
     } else if (this.stage === 'houses') {
-      for (const h of this.houses()) {
-        const at = placeOf(`door:${h.id}`);
-        if (!this.torched.has(h.id) && at) this.torch(h, at);
-      }
+      for (const h of this.houses()) if (!this.torched.has(h.id) && near(h.door)) this.torch(h, at);
     }
   }
 

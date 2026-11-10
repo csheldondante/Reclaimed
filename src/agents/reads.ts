@@ -16,20 +16,8 @@ export interface UnitFound {
   z: number;
 }
 
-/** A unit at one of the points asked (nearMany): the point's index, its id, where it stands (x, y) */
-export interface UnitAt {
-  k: number;
-  id: number;
-  x: number;
-  y: number;
-}
-
-/** the points one nearMany asks about at most (unitreads.wgsl MANY) */
-export const MANY = 32;
-
 export class UnitReads {
-  private k: Record<'gather' | 'near' | 'nearMany', ComputeKernel>;
-  private pts: GPUBuffer;
+  private k: Record<'gather' | 'near', ComputeKernel>;
   private slots!: GPUBuffer;
   private out!: GPUBuffer;
   private count: GPUBuffer;
@@ -49,9 +37,8 @@ export class UnitReads {
     /** the units' combat words (agents/notice.ts): a query of one faction */
     private combat: GPUBuffer,
   ) {
-    const spec = { 1: 'read', 2: 'rw', 3: 'uniform', 4: 'rw', 5: 'uniform', 6: 'read', 7: 'read' } as const;
-    this.k = { gather: makeCompute(device, 'agents-gather', [readsWgsl], spec, 'gather'), near: makeCompute(device, 'agents-near', [readsWgsl], spec, 'near'), nearMany: makeCompute(device, 'agents-near-many', [readsWgsl], spec, 'nearMany') };
-    this.pts = device.createBuffer({ label: 'unitReads points', size: MANY * 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const spec = { 1: 'read', 2: 'rw', 3: 'uniform', 4: 'rw', 6: 'read', 7: 'read' } as const;
+    this.k = { gather: makeCompute(device, 'agents-gather', [readsWgsl], spec, 'gather'), near: makeCompute(device, 'agents-near', [readsWgsl], spec, 'near') };
     this.count = device.createBuffer({ label: 'unitReads count', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     this.params = device.createBuffer({ label: 'unitReads params', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.nearOut = device.createBuffer({ label: 'unitReads near', size: maxUnits * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
@@ -66,8 +53,8 @@ export class UnitReads {
     this.out?.destroy();
     this.slots = this.device.createBuffer({ label: 'unitReads slots', size: room * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.out = this.device.createBuffer({ label: 'unitReads out', size: room * UNIT_BYTES, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-    this.group = makeBindGroup(this.device, 'agents-reads', this.k.gather.layout, { 1: this.slots, 2: this.out, 3: this.params, 4: this.count, 5: this.pts, 6: this.combat, 7: this.units });
-    this.nearGroup = makeBindGroup(this.device, 'agents-near', this.k.near.layout, { 1: this.slots, 2: this.nearOut, 3: this.params, 4: this.count, 5: this.pts, 6: this.combat, 7: this.units });
+    this.group = makeBindGroup(this.device, 'agents-reads', this.k.gather.layout, { 1: this.slots, 2: this.out, 3: this.params, 4: this.count, 6: this.combat, 7: this.units });
+    this.nearGroup = makeBindGroup(this.device, 'agents-near', this.k.near.layout, { 1: this.slots, 2: this.nearOut, 3: this.params, 4: this.count, 6: this.combat, 7: this.units });
     this.room = room;
   }
 
@@ -99,29 +86,11 @@ export class UnitReads {
     return run;
   }
 
-  /**
-   * The live units within each point's radius (`pts`: x, y, radius; at most MANY), one pass: each a point's index, an id
-   * and where it stands. Asks are taken in turn.
-   */
-  nearMany(pts: readonly (readonly [number, number, number])[], count: number, most = 1024): Promise<UnitAt[]> {
-    if (pts.length > MANY) throw new Error(`agents.nearMany: ${pts.length} points (${MANY} at most)`);
-    const run = this.busy.then(async () => {
-      if (!count || !pts.length) return [];
-      const p = new Float32Array(MANY * 4);
-      pts.forEach((q, i) => p.set([q[0], q[1], q[2], 0], i * 4));
-      this.device.queue.writeBuffer(this.pts, 0, p);
-      const raw = await this.query('nearMany', count, most, [0, 0, 0], pts.length);
-      return raw.map((r) => ({ k: r.w, id: r.z, x: r.x, y: r.y }));
-    });
-    this.busy = run.catch(() => undefined);
-    return run;
-  }
-
   /** a query's kernel run, its count read, then as many answers (vec4: x y as floats, z w as u32) */
-  private async query(entry: 'near' | 'nearMany', count: number, most: number, at: readonly [number, number, number], npts = 0, faction: number | null = null): Promise<{ x: number; y: number; z: number; w: number; zf: number }[]> {
+  private async query(entry: 'near', count: number, most: number, at: readonly [number, number, number], faction: number | null = null): Promise<{ x: number; y: number; z: number; w: number; zf: number }[]> {
     const m = Math.min(most, this.maxUnits);
     const b = new ArrayBuffer(32);
-    new Uint32Array(b, 0, 4).set([count, m, npts, faction === null ? 0 : faction + 1]);
+    new Uint32Array(b, 0, 4).set([count, m, 0, faction === null ? 0 : faction + 1]);
     new Float32Array(b, 16, 4).set([at[0], at[1], at[2], 0]);
     this.device.queue.writeBuffer(this.params, 0, b);
     this.device.queue.writeBuffer(this.count, 0, new Uint32Array(4));
@@ -159,7 +128,7 @@ export class UnitReads {
 
   private async runNear(x: number, y: number, r: number, count: number, most: number, faction: number | null): Promise<UnitFound[]> {
     if (!count) return [];
-    return (await this.query('near', count, most, [x, y, r], 0, faction)).map((q) => ({ id: q.w, x: q.x, y: q.y, z: q.zf }));
+    return (await this.query('near', count, most, [x, y, r], faction)).map((q) => ({ id: q.w, x: q.x, y: q.y, z: q.zf }));
   }
 
 
