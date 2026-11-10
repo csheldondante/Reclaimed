@@ -15,6 +15,7 @@ import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline'
 import commonWgsl from '../shaders/common.wgsl?raw';
 import bareWgsl from './bare.wgsl?raw';
 import { cityParams, scaled } from './params';
+import { urlFlags } from '../flags';
 
 /** a town's radius (cells) by its size — a town the lab's Muru the user approved (radius 120, 400+ lots) */
 const RADIUS: Record<Settlement['size'], number> = { camp: 30, hamlet: 48, village: 72, town: 120, city: 150 };
@@ -116,7 +117,13 @@ export function townLayout(
     }),
   );
   // (the town's own inputs over the generator's defaults: its radius and seed)
-  const params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0, roadTone: TONE[site.size] }));
+  // (the street skeleton from the address: ?skel=0|1|2 &skelmargin= &minorahead=0|1 — citygen/params.ts)
+  const q = urlFlags();
+  const skel: Partial<StreetParams> = {};
+  if (q.get('skel') !== null) skel.skelReach = Number(q.get('skel'));
+  if (q.get('skelmargin') !== null) skel.skelMargin = Number(q.get('skelmargin'));
+  if (q.get('minorahead') !== null) skel.minorAhead = Number(q.get('minorahead'));
+  const params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0, roadTone: TONE[site.size], ...skel }));
   return { box, raw, gen, params, centre, local };
 }
 
@@ -349,6 +356,17 @@ export class FieldTown {
     const id = await this.gen.claimDistrict(purpose, now);
     if (id >= 0) this.animUntil = Math.max(this.animUntil, now + BUILD_S * 1.75 + 0.5);
     return id;
+  }
+
+  /** (the street skeleton) which main roads show and are walked (citygen/params.ts skelReach, skelMargin,
+   *  minorAhead): the mesh run again, the claims after it; the living town's graph follows (meshRuns) */
+  setSkeleton(s: { skelReach?: number; skelMargin?: number; minorAhead?: number }): void {
+    if (this.gone || !this.times) return;
+    Object.assign(this.params, s);
+    void this.gen.run(this.params, 'mesh').then(() => {
+      this.meshRuns++;
+      if (!this.gone && this.grid) this.io.statics()?.reclaim(this.grid);
+    });
   }
 
   /** (living town) mesh runs since it was made: its road raster drawn again (the living town's graph follows) */

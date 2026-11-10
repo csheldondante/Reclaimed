@@ -34,6 +34,12 @@ const forest: Record<string, ParamSpec> = {
   replant: { label: 'replant', units: '', min: 0, max: 1, step: 1, def: 0, choices: ['off', 'on'], help: 'on: a stump is young woods again after the regrow time' },
   regrow: { label: 'regrow time', units: 's', min: 10, max: 900, step: 10, def: 120 },
 };
+/** (the street skeleton: citygen's own parameters, citygen/params.ts — set on every field town from here) */
+const roads: Record<string, ParamSpec> = {
+  skelReach: { label: 'main roads shown', units: '', min: 0, max: 2, step: 1, def: 1, choices: ['with their districts', 'districts begun + a margin', 'everywhere'] },
+  skelMargin: { label: 'main roads’ margin', units: 'supercells', min: 0, max: 4, step: 0.25, def: 1 },
+  minorAhead: { label: 'minor streets ahead', units: '', min: 0, max: 1, step: 1, def: 0, choices: ['with their buildings', 'with the main roads'] },
+};
 const graph: Record<string, ParamSpec> = {
   sweeps: { label: 'relax sweeps a frame', units: '', min: 2, max: 128, step: 2, def: 32, help: 'while the hubs’ fields settle (none once settled)' },
 };
@@ -42,6 +48,7 @@ export const LIVING_TUNING = new Registry({
   people: { title: 'People', owner: 'citylife/routes.wgsl', params: people },
   quarry: { title: 'Quarry', owner: 'citylife/works.wgsl', params: quarry },
   forest: { title: 'Clearing', owner: 'citylife/works.wgsl', params: forest },
+  roads: { title: 'Shown roads', owner: 'citygen/streets.wgsl', params: roads },
   graph: { title: 'Routes', owner: 'citylife/routes.wgsl', params: graph },
 });
 export type LivingValues = typeof LIVING_TUNING.values;
@@ -52,7 +59,7 @@ export function livingFromUrl(q: URLSearchParams): void {
   for (const [k, v] of q) {
     if (k.startsWith('lt.')) LIVING_TUNING.set(k.slice(3), Number(v));
   }
-  const short: Record<string, string> = { qside: 'quarry.side', qbench: 'quarry.bench', qdepth: 'quarry.depth', qslope: 'quarry.slope', qrate: 'quarry.digRate', qledge: 'quarry.ledge', fradius: 'forest.radius', fcut: 'forest.cut', freplant: 'forest.replant', ltspeed: 'people.speed' };
+  const short: Record<string, string> = { skel: 'roads.skelReach', skelmargin: 'roads.skelMargin', minorahead: 'roads.minorAhead', qside: 'quarry.side', qbench: 'quarry.bench', qdepth: 'quarry.depth', qslope: 'quarry.slope', qrate: 'quarry.digRate', qledge: 'quarry.ledge', fradius: 'forest.radius', fcut: 'forest.cut', freplant: 'forest.replant', ltspeed: 'people.speed' };
   for (const [k, id] of Object.entries(short)) {
     const v = q.get(k);
     if (v !== null) LIVING_TUNING.set(id, Number(v));

@@ -217,6 +217,9 @@ const R_FAILED: u32 = 0xfffffffdu;
 @group(0) @binding(16) var<storage, read_write> VARGS: array<atomic<u32>>;
 /** per column two words: a cut-off component's cheapest passage (its cost, then its column), keyed by its label */
 @group(0) @binding(17) var<storage, read_write> PASS: array<atomic<u32>>;
+/** the passages' mesh (citygen's vertex format: x, y, z, colour, normal, 0) and its draw args */
+@group(0) @binding(18) var<storage, read_write> PMESH: array<u32>;
+@group(0) @binding(19) var<storage, read_write> PARGS: array<atomic<u32>>;
 
 // ---- the lattice (common.wgsl's, in the box) ----
 fn W() -> i32 { return i32(u.n.x); }
@@ -314,6 +317,8 @@ fn gate() {
   IND[3] = select(0u, (u.m.x + 63u) / 64u, b); IND[4] = 1u; IND[5] = 1u;
   IND[6] = select(0u, 1u, b); IND[7] = 1u; IND[8] = 1u;
   IND[9] = select(0u, cols, ph == 1u || ph == 3u); IND[10] = 1u; IND[11] = 1u;
+  // (the hash cleared only on a pool switch: poolSwitch writes these)
+  IND[27] = 0u; IND[28] = 1u; IND[29] = 1u;
   IND[12] = select(0u, (min(lt(L_TQ), TQ_ROOM) + 63u) / 64u, ph == 4u); IND[13] = 1u; IND[14] = 1u;
   IND[15] = select(0u, HASH / 64u, b); IND[16] = 1u; IND[17] = 1u;
   // (the connectivity check: over the columns at phase 2 and 5, over the lots at 2, one thread at 2 and 5)
@@ -891,6 +896,7 @@ fn poolSwitch() {
   setLt(L_Q + Q_RAMPV, 0u);
   setLt(L_Q + Q_RAMP, 0u);
   setLt(L_CLEARHASH, 1u);
+  IND[27] = HASH / 64u;
   atomicAdd(&LT[L_C + C_SWITCHES], 1u);
 }
 @compute @workgroup_size(64)
@@ -1555,4 +1561,45 @@ fn overlay(@builtin(global_invocation_id) g: vec3<u32>) {
   else if (cls == W_DECK) { m = 20u; }
   else if (cls == W_PAD) { m = 15u; }
   vox(wp, m, 10u, 0.0);
+}
+
+// ---- the passages drawn (LT-F8): dirt road in citygen's own mesh format and tone, made with the graph (phase 0) ----
+/** citygen's dirt tone (gpu.ts ROAD_TONES[1] × 0.95, its minor streets'), as its rgb word */
+const DIRT_RGB: u32 = 0x8f7a60u;
+@compute @workgroup_size(1)
+fn passMeshClear() {
+  atomicStore(&PARGS[0], 0u);
+  atomicStore(&PARGS[1], 1u);
+  atomicStore(&PARGS[2], 0u);
+  atomicStore(&PARGS[3], 0u);
+}
+fn pv(at: u32, p: vec3<f32>) {
+  let o = at * 8u;
+  PMESH[o] = bitcast<u32>(p.x);
+  PMESH[o + 1u] = bitcast<u32>(p.y);
+  PMESH[o + 2u] = bitcast<u32>(p.z);
+  PMESH[o + 3u] = DIRT_RGB;
+  PMESH[o + 4u] = 0u;
+  PMESH[o + 5u] = 0u;
+  PMESH[o + 6u] = bitcast<u32>(1.0);
+  PMESH[o + 7u] = 0u;
+}
+/** (a thread a column) a passage's column as a flat hexagon of dirt over the ground (citygen's paving lift) */
+@compute @workgroup_size(64)
+fn passMesh(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= N()) { return; }
+  let w = atomicLoad(&WALK[i]);
+  if ((w & W_PASS) == 0u || (w & 0xfu) != W_TRACK) { return; }
+  let at = atomicAdd(&PARGS[0], 18u);
+  if ((at + 18u) * 8u > arrayLength(&PMESH)) { atomicSub(&PARGS[0], 18u); return; }
+  let c = cpos(cxy(i));
+  let z = HT[i] + 0.22;
+  for (var k = 0u; k < 6u; k++) {
+    let a0 = 0.5235988 + f32(k) * 1.0471976;
+    let a1 = a0 + 1.0471976;
+    pv(at + k * 3u, vec3<f32>(c, z));
+    pv(at + k * 3u + 1u, vec3<f32>(c + vec2<f32>(cos(a0), sin(a0)) * 0.62, z));
+    pv(at + k * 3u + 2u, vec3<f32>(c + vec2<f32>(cos(a1), sin(a1)) * 0.62, z));
+  }
 }

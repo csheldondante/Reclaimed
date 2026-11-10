@@ -397,6 +397,8 @@ export function attachStream(scene: LevelScene): void {
               towns: () => towns.live,
               addVoxels: (i, g) => core.renderer.addVoxels(i, g),
               removeVoxels: (g) => core.renderer.removeVoxels(g),
+              addMesh: (v, g, x) => core.renderer.addMesh(v, g, x),
+              removeMesh: (g) => core.renderer.removeMesh(g),
               frameCompute: core.renderer.frameCompute,
               profiler: host.profiler,
               dims: { w: dims.w, h: dims.h },

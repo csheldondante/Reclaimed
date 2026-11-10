@@ -36,6 +36,7 @@ struct U {
   rc: vec4<f32>, // (M4b) the roads' colour (rgb 0–1), its tone (0 the lab's white, 1 dirt, 2 stone)
   pp: vec4<f32>, // (M4b) the population field: its peak density (0 the field off: 0.5 everywhere), the settlement's purpose (0–5; −1 none), 0, 0
   tl: vec4<f32>, // (time-lapse) the town's clock now (s), a lot's build time (s), a time-lapse's start and its spread (s)
+  sk: vec4<f32>, // (the street skeleton) its reach (0 core only, 1 districts begun + a margin, 2 everywhere), the margin (m), minor streets ahead of their buildings (1), 0
 };
 @group(0) @binding(0) var<uniform> u: U;
 
@@ -751,7 +752,7 @@ fn roadMajor(@builtin(global_invocation_id) g: vec3<u32>) {
     // (time-lapse: shown when the first district beside it starts)
     if (u.h2.z > 0.5) {
       let side = normalize(gr) * 0.35 * u.a.x;
-      roadOf(cityB2(p + side), cityB2(p - side));
+      skelB2(p, cityB2(p + side), cityB2(p - side));
     }
     ribbon(at, a, b, u.b.x * 0.5, select(cMajor(), cSteep(), steep(a, b)));
   }
@@ -1415,7 +1416,9 @@ fn vroad(@builtin(global_invocation_id) g: vec3<u32>) {
   if (u.h2.z > 0.5) {
     let mid = 0.5 * (a + b);
     let side = normalize(vec2<f32>(a.y - b.y, b.x - a.x)) * 0.5 * u.a.w;
-    roadOf(cityB4(mid + side), cityB4(mid - side));
+    // (an arterial is the skeleton's: shown with the main roads; a minor street with its district, or ahead with u.sk.z)
+    if (hsh(id * 31u + 5u) < 0.33 || u.sk.z > 0.5) { skelB4(mid, cityB4(mid + side), cityB4(mid - side)); }
+    else { roadOf(cityB4(mid + side), cityB4(mid - side)); }
   }
   ribbon(at, a - d, b + d, u.b.y * 0.5, select(cMinor(), cSteep(), steep(a, b)));
 }
@@ -2444,6 +2447,39 @@ fn sctab(@builtin(local_invocation_index) li: u32) {
   }
 }
 struct City { state: u32, t: f32, id: u32, dens: f32, purpose: u32, start: f32 }
+/**
+ * (the street skeleton: the user, "having only main roads near districts in progress works") A main road — a major
+ * line, an arterial cross street — shows and is a route from the time the earliest district near it starts: the two
+ * beside it and, by the skeleton's reach (u.sk.x: 0 core only, 1 begun + a margin, 2 everywhere), those within the margin
+ * (u.sk.y m, eight points round it). Everywhere: untagged, always shown and live. So the main roads join districts
+ * begun to each other before their minor streets and buildings come. (b2 or b4 the supercells' table: one each)
+ */
+fn skelB2(p: vec2<f32>, c1: City, c2: City) {
+  if (u.sk.x > 1.5) { curTag = 0u; roadLive = true; return; }
+  var c = c2;
+  if (c1.start <= c2.start) { c = c1; }
+  if (u.sk.x > 0.5 && u.sk.y > 0.0) {
+    for (var k = 0u; k < 8u; k++) {
+      let a = f32(k) * 0.7853982;
+      let o = cityB2(p + vec2<f32>(cos(a), sin(a)) * u.sk.y);
+      if (o.start < c.start) { c = o; }
+    }
+  }
+  roadOf(c, c);
+}
+fn skelB4(p: vec2<f32>, c1: City, c2: City) {
+  if (u.sk.x > 1.5) { curTag = 0u; roadLive = true; return; }
+  var c = c2;
+  if (c1.start <= c2.start) { c = c1; }
+  if (u.sk.x > 0.5 && u.sk.y > 0.0) {
+    for (var k = 0u; k < 8u; k++) {
+      let a = f32(k) * 0.7853982;
+      let o = cityB4(p + vec2<f32>(cos(a), sin(a)) * u.sk.y);
+      if (o.start < c.start) { c = o; }
+    }
+  }
+  roadOf(c, c);
+}
 /** (time-lapse) a road between two districts: tagged with the one that starts first; marked for the claims once it has */
 fn roadOf(c1: City, c2: City) {
   var c = c2;

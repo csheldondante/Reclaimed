@@ -66,7 +66,7 @@ type K =
   | 'gate' | 'walkInit' | 'doors' | 'pads' | 'lotMask' | 'hubPick' | 'quarryPick' | 'siteFix' | 'sitePads' | 'hubSeed'
   | 'checkClear' | 'checkCols' | 'checkPick' | 'checkLay' | 'checkDoors' | 'checkStep'
   | 'hubSeed1' | 'hashScrub' | 'relax' | 'relaxMark' | 'relaxCheck' | 'trace' | 'traceDone' | 'rampRoute' | 'riders'
-  | 'sites' | 'sitesClear' | 'figuresClear' | 'figures' | 'overlay' | 'poolSwitch' | 'hashClear';
+  | 'sites' | 'sitesClear' | 'figuresClear' | 'figures' | 'overlay' | 'poolSwitch' | 'hashClear' | 'passMeshClear' | 'passMesh';
 /** each kernel's bindings (at most 8 storage buffers) */
 const SPECS: Record<K, BindSpec> = {
   gate: { 0: 'uniform', 10: 'rw', 14: 'rw' },
@@ -92,7 +92,9 @@ const SPECS: Record<K, BindSpec> = {
   relaxCheck: { 0: 'uniform', 10: 'rw' },
   trace: { 0: 'uniform', 1: 'read', 2: 'read', 9: 'rw', 10: 'rw', 11: 'rw' },
   traceDone: { 0: 'uniform', 10: 'rw' },
-  poolSwitch: { 0: 'uniform', 10: 'rw' },
+  poolSwitch: { 0: 'uniform', 10: 'rw', 14: 'rw' },
+  passMeshClear: { 0: 'uniform', 19: 'rw' },
+  passMesh: { 0: 'uniform', 2: 'read', 8: 'rw', 18: 'rw', 19: 'rw' },
   hashClear: { 0: 'uniform', 10: 'rw' },
   rampRoute: { 0: 'uniform', 2: 'read', 10: 'rw', 11: 'rw' },
   riders: { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 7: 'read', 10: 'rw', 11: 'rw', 12: 'rw' },
@@ -122,6 +124,9 @@ export class LivingTown {
   readonly uni: GPUBuffer;
   readonly field: GPUBuffer;
   private pass: GPUBuffer;
+  /** the passages drawn as dirt (citygen's mesh format: Renderer.addMesh with the town's place) */
+  readonly pmesh: GPUBuffer;
+  readonly pargs: GPUBuffer;
   private ind: GPUBuffer;
   private read: GPUBuffer;
   private reading = false;
@@ -158,18 +163,21 @@ export class LivingTown {
     // (the 8 hubs' fields, then the open ground's distance and the cut-off labels: routes.wgsl PLANES)
     this.field = buf('fields', N * 10 * 4);
     this.pass = buf('passages', N * 8);
+    // (the passages' dirt mesh: room for 6 000 columns, 18 vertices of 32 B each)
+    this.pmesh = buf('passage mesh', 6000 * 18 * 32);
+    this.pargs = buf('passage mesh args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.lt = buf('state', LT_WORDS * 4);
     this.pts = buf('points', ptsRoom * 16);
     this.rid = buf('riders', MAX_RIDERS * 64);
     // (room for the figures and, with ?livingdebug=1, a block a walkable column)
     this.vox = buf('voxels', (MAX_RIDERS * VOX_PER + input.w * input.h) * 32);
     this.vargs = buf('voxel args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
-    this.ind = buf('indirect', 27 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
+    this.ind = buf('indirect', 30 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.read = buf('read', HEAD_WORDS * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.vargs, 0, new Uint32Array([36, 0, 0, 0]));
     const R: Record<number, GPUBuffer> = {
       1: input.roads, 2: input.heights, 3: input.records, 4: input.counts, 5: input.pop, 6: input.art, 7: input.progress,
-      8: this.walk, 9: this.field, 17: this.pass, 10: this.lt, 11: this.pts, 12: this.rid, 13: this.vox, 14: this.ind, 15: input.wet, 16: this.vargs,
+      8: this.walk, 9: this.field, 17: this.pass, 18: this.pmesh, 19: this.pargs, 10: this.lt, 11: this.pts, 12: this.rid, 13: this.vox, 14: this.ind, 15: input.wet, 16: this.vargs,
     };
     R[0] = this.uni;
     this.k = {} as Record<K, ComputeKernel>;
@@ -260,9 +268,12 @@ export class LivingTown {
       run(cp, 'hubSeed', ind(3));
       run(cp, 'hubSeed1', ind(6));
       run(cp, 'hashScrub', ind(15));
+      // (the passages' dirt, made with the graph)
+      run(cp, 'passMeshClear', ind(6));
+      run(cp, 'passMesh', ind(0));
     // (relax)
-      const n = Math.max(2, this.values.graph.sweeps);
-      for (let s = 0; s < n - 1; s++) run(cp, 'relax', ind(9));
+      // (the frame's sweeps in turn: one after another is what carries a distance far; settled, each is 0 workgroups)
+      for (let k = 0; k < Math.max(2, this.values.graph.sweeps) - 1; k++) run(cp, 'relax', ind(9));
       run(cp, 'relaxMark', 1);
       run(cp, 'relax', ind(9));
       run(cp, 'relaxCheck', 1);
@@ -275,7 +286,7 @@ export class LivingTown {
       run(cp, 'checkStep', ind(24));
     // (trace)
       run(cp, 'poolSwitch', 1);
-      run(cp, 'hashClear', 8192 / 64);
+      run(cp, 'hashClear', ind(27));
       run(cp, 'trace', ind(12));
       run(cp, 'traceDone', 1);
     });

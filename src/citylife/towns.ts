@@ -15,6 +15,8 @@ export interface LivingTownsIO {
   towns(): ReadonlyMap<string, FieldTown>;
   addVoxels(inst: GPUBuffer, args: GPUBuffer): void;
   removeVoxels(args: GPUBuffer): void;
+  addMesh(verts: GPUBuffer, args: GPUBuffer, xform: GPUBuffer): void;
+  removeMesh(args: GPUBuffer): void;
   frameCompute: ((enc: GPUCommandEncoder) => void)[];
   profiler?: Profiler;
   dims: { w: number; h: number };
@@ -28,7 +30,10 @@ interface Live {
   works: Works;
   /** the town's mesh runs its graph was built from (a new run: a district's roads appeared — the graph made again) */
   meshRuns: number;
+  sinceRebuild: number;
 }
+/** the least time between the graph's rebuilds for citygen's road redraws (s) */
+const REBUILD_S = 10;
 
 export class LivingTowns {
   readonly live = new Map<string, Live>();
@@ -40,6 +45,12 @@ export class LivingTowns {
 
   constructor(private io: LivingTownsIO) {
     io.frameCompute.push(this.hook);
+    // (the panel's shown-road rule: set on every field town — citygen's own parameters)
+    LIVING_TUNING.onChange((id) => {
+      if (!id || !id.startsWith('roads.')) return;
+      const r = LIVING_TUNING.values.roads;
+      for (const t of this.io.towns().values()) t.setSkeleton({ skelReach: r.skelReach, skelMargin: r.skelMargin, minorAhead: r.minorAhead });
+    });
   }
 
   /** each frame: new towns given their people, let-go ones' let go */
@@ -70,12 +81,17 @@ export class LivingTowns {
       life.debugGraph = this.debugGraph;
       this.io.addVoxels(life.vox, life.vargs);
       this.io.addVoxels(works.vox, works.vargs);
-      this.live.set(id, { town: t, life, works, meshRuns: t.meshRuns });
+      this.io.addMesh(life.pmesh, life.pargs, lots.place);
+      this.live.set(id, { town: t, life, works, meshRuns: t.meshRuns, sinceRebuild: 0 });
       console.log(`[living] ${t.site.name}: ${life.riders} people, ${((life.bytes + works.bytes) / 1048576).toFixed(1)} MB`);
     }
+    // (citygen redrew its roads — a time-lapse does every 2 s: the graph made again at most every REBUILD_S, so routes
+    // get traced between; riders on routes already traced ride on meanwhile)
     for (const l of this.live.values()) {
-      if (l.town.meshRuns !== l.meshRuns) {
+      l.sinceRebuild += dt;
+      if (l.town.meshRuns !== l.meshRuns && l.sinceRebuild >= REBUILD_S) {
         l.meshRuns = l.town.meshRuns;
+        l.sinceRebuild = 0;
         l.life.rebuild();
       }
     }
@@ -107,7 +123,7 @@ export class LivingTowns {
       label: 'living',
       cls: 'lab',
       top,
-      open: ['people', 'quarry', 'forest'],
+      open: ['roads', 'people', 'quarry', 'forest'],
       shown: !matchMedia('(pointer: coarse)').matches,
       stats: () => this.stats(),
     });
@@ -142,6 +158,7 @@ export class LivingTowns {
   private drop(id: string, l: Live): void {
     this.io.removeVoxels(l.life.vargs);
     this.io.removeVoxels(l.works.vargs);
+    this.io.removeMesh(l.life.pargs);
     l.works.dispose();
     l.life.dispose();
     this.live.delete(id);

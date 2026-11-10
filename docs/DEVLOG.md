@@ -21218,3 +21218,25 @@ The user: "How is it possible not to find a route even every lot has a street ad
   three runs and 1 in one (not traced to its cause yet).
 - GPU ms (`ltspeed=12`): graph 0.145, riders 0.031, works 0.087, figures 0.045 — 0.31 ms. The merged graph pass didn't
   cut the settled cost: the empty indirect dispatches are the cost, not the pass.
+
+## 2026-11-10 — living town fix round 4: the street skeleton, passages drawn, rebuilds paced
+
+The user: "having only main roads near districts in progress works but we may have to tweak and see what looks good".
+- **The street skeleton (citygen streets.wgsl `skelB2`/`skelB4`):** a major line or an arterial cross street shows and
+  is a route from the time the earliest district near it starts — the two beside it, and with the reach "begun + a
+  margin" those within the margin (eight points round it). Minor streets and buildings come with their district (or
+  with the main roads: `minorAhead`). Parameters (`skelReach` 0 with their districts / 1 begun + margin / 2 everywhere,
+  `skelMargin` in supercells, default 1, `minorAhead`): citygen's params, the living panel's "Shown roads" group, and
+  `?skel= &skelmargin= &minorahead=`. Muru's time-lapse: at 10 s the main roads reach the town's edges with few
+  buildings; by 41 s the districts have filled in (scratchpad living/tl-0.png, tl-end.png, timelapse-roads-first.gif).
+  The connectivity check then lays 22 passages, nothing cut off, 0 misses.
+- **Passages drawn** as dirt in citygen's mesh format and dirt tone (a hexagon a column, placed with the town's mesh).
+- **Rebuilds paced:** a time-lapse redraws citygen's roads every 2 s; the graph was rebuilt each time and never
+  settled (425 relax frames, no new routes traced). Now at most every 10 s.
+- **The settled relax cost isn't gone.** Tried: the frame's sweeps as one dispatch of y copies in place — the settled
+  graph pass fell from 0.145 to 0.102 ms, but workgroups of one dispatch run side by side, so it relaxed about one
+  sweep a frame (218 frames to settle instead of 25). Back to sweeps in turn; the hash clear is now indirect (it
+  was 128 workgroups a frame). Settled, the graph pass is still ~45 dispatches of 0 workgroups; the measured cost
+  swung 0.1–0.7 ms between headless runs (every pass ×3 in the last run), so no clean number. Dispatching nothing
+  needs the CPU to stop encoding when the GPU says settled: an event (Track B's ring) rather than a poll.
+- The one route miss seen last round didn't recur in four runs (0 misses); not traced.
