@@ -10,7 +10,7 @@ import { FieldTown, fieldTownBox, type FieldTownBox, type FieldTownIO, type Fiel
 import { OPPORTUNITY_PURPOSE, type CityDistricts, type OpportunityKind, type TownDistrict, type DistrictStage } from '../api/contracts/citygen';
 import { CLAIM_COUNT, DISTRICT_SPAN } from './gpu';
 import { TownLogs } from './townlog';
-import { wallGates, wallPosts } from './wallshape';
+import { wallGates, wallPosts, type WallGate } from './wallshape';
 
 /** a town's box this near the window (columns) is made; this far, let go */
 const PREFETCH = 128;
@@ -129,7 +129,7 @@ export class FieldTowns implements CityDistricts {
     });
   }
   /** (season life) the wall's gates, in the town grid's frame (a march's start: LivingTowns.marchRoutes) */
-  wallGates(town: string): { seg: number; at: [number, number] }[] {
+  wallGates(town: string): WallGate[] {
     const t = this.live.get(town);
     const wall = t ? this.logs.of(t.site.at).wall : undefined;
     return t && wall?.words.length ? wallGates(wall.words) : [];

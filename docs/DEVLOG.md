@@ -21482,3 +21482,21 @@ The user's priority: saving first. Design: SEASON_LOOP.md "Saving" (DESIGN §23)
   are inside it). Muru: 4 of 5 gates give a route (the fifth is over the lake), lengths 102–132.
 - An arterial's columns are never walled (b2 the arterials' distance), so a tower or a stair at a gate's corner
   doesn't close the gate.
+
+## 2026-11-10 — SL18 and SL19: each gate's march follows its own arterial; every post reached (trackA-seasonlife)
+
+- **SL18.** The ring keeps, for each gate segment, the arterial through it and where along it the ring crosses
+  (WALL 440 → 584 words; the atlas roads only — the town's own bridges are inside it, so Muru now has three gates).
+  `marchRoutes` asks for a route made along that arterial from the crossing out to its last point in the box — the
+  atlas road's way out — as a route of the living town's pool (`routeAsk` → `artRouteAnswer`: its points at the
+  ground's or a deck's height). Muru: gate 8 → the north edge (94 units, over the lake's causeway), gates 34 and 35 →
+  the east edge (125, 144). A gate with no arterial (one the rule of two adds) falls back to the GATES field.
+- **SL19.** Stairs at both ends of each run of wall — beside a gate, and where water or a cliff breaks the ring —
+  not only before gates. A GPU check (`postCheck`, one workgroup, three words back): a segment's walk is reached when
+  its run of risen wall has a stair whose foot reaches a column of the town's graph joined to the stores over open
+  ground (16 rays out to 14 columns, stopped by water, a wall or a building). `LivingTowns.unreachablePosts(town,
+  posts)` names the posts' segments that aren't. Muru after 3 seasons: 52 posts, 0 unreachable (before the stairs at
+  water gaps: 29, then 20 with roads-only feet).
+- `test/unit/wallshape.test.ts`: posts on risen pieces only (none on gates or water) at the walk's height, the rise
+  round the ring from the first gate, the gates with their arterials, nothing before the ring is made.
+- Shot: `scratchpad/opps/gate-stairs.png` (play zoom, 60°: the east gate, its towers, a stair up to the walk).

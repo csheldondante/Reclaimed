@@ -130,17 +130,31 @@ export class LivingTowns {
    * wallGates) down the GATES field — along the roads to where the arterial leaves the town — as cached route ids (the
    * living town's route graph; traced if new, a few words read back). The march back is the same route reversed.
    */
-  async marchRoutes(town: string, gates: { seg: number; at: [number, number] }[]): Promise<{ seg: number; route: number; gen: number; length: number; from: [number, number]; to: [number, number] }[]> {
+  async marchRoutes(town: string, gates: { seg: number; at: [number, number]; art?: number; along?: number }[]): Promise<{ seg: number; route: number; gen: number; length: number; from: [number, number]; to: [number, number] }[]> {
     const l = this.live.get(town);
     if (!l) return [];
     const out = [];
     for (const g of gates) {
       const [cx, cy] = cellAt(g.at[0], g.at[1]);
       if (cx < 0 || cy < 0 || cx >= l.life.input.w || cy >= l.life.input.h) continue;
-      const r = await l.life.askRoute(cy * l.life.input.w + cx, H_GATES);
+      // (SL18: a gate on an arterial follows that arterial out, from where the ring crosses it to its last point in the
+      // town's box — the atlas road's way; a gate with none, the GATES field's nearest end)
+      const r = g.art !== undefined && g.art >= 0 ? await l.life.askRoute(cy * l.life.input.w + cx, 0x100 + g.art, g.along ?? 0) : await l.life.askRoute(cy * l.life.input.w + cx, H_GATES);
       if (r) out.push({ seg: g.seg, route: r.id, gen: r.gen, length: r.length, from: r.from, to: r.to });
     }
     return out;
+  }
+
+  /**
+   * (season life, SL19) The wall's posts not reached from the town (their segments): a post's piece in a run of
+   * risen wall with no stair whose foot is on the town's graph. Empty: every post reached.
+   */
+  async unreachablePosts(town: string, posts: { seg: number }[]): Promise<number[] | null> {
+    const l = this.live.get(town);
+    if (!l) return null;
+    const r = await l.life.reachedWall();
+    if (!r) return null;
+    return posts.filter((p) => !r[p.seg]).map((p) => p.seg);
   }
 
   /** (saving, a save point) each town's works read back (its state words' head: a few hundred bytes) into its log */

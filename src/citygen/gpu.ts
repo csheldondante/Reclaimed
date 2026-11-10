@@ -257,7 +257,7 @@ export const SC_ROOM = 256;
 /** (season loop) clkClaim's purpose that only counts the districts left (streets.wgsl CLAIM_COUNT) */
 export const CLAIM_COUNT = 0xffffffff;
 /** (season life) the town wall's words (streets.wgsl WALL: 8 + 4 × NB) */
-const WALL_WORDS = 8 + 6 * 72;
+const WALL_WORDS = 8 + 8 * 72;
 /** (season loop) a district's stage record (streets.wgsl tlProgress: 16 f32) */
 const STG_BYTES = 64;
 /** (M4d hook) a claim's answer: the district (−1 none left), its centre (the grid's frame, world units), the districts
@@ -321,8 +321,8 @@ export class CityGen {
   private vertRoom: number;
   /** (living town, api/contracts/citygen.ts CityRoutes) what the town's routes are made from: its road raster, heights,
    *  wet mask, population field and arterials — read by citylife/, never written */
-  get routeInputs(): { roads: GPUBuffer; heights: GPUBuffer; wet: GPUBuffer; pop: GPUBuffer; art: GPUBuffer } {
-    return { roads: this.B.ROADS, heights: this.B.H, wet: this.B.M, pop: this.B.POP, art: this.B.ART };
+  get routeInputs(): { roads: GPUBuffer; heights: GPUBuffer; wet: GPUBuffer; pop: GPUBuffer; art: GPUBuffer; wall: GPUBuffer } {
+    return { roads: this.B.ROADS, heights: this.B.H, wet: this.B.M, pop: this.B.POP, art: this.B.ART, wall: this.B.WALL };
   }
   /** (M4b) the bytes of its GPU buffers (a town's memory) */
   get bytes(): number {

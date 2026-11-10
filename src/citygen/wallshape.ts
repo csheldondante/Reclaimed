@@ -8,6 +8,8 @@ export const NB = 72;
 const WB_V = 80;
 const WB_Z = 296;
 const WB_KIND = 368;
+const WB_ART = 440;
+const WB_S = 512;
 /** streets.wgsl WALL_H, WALL_BAND */
 export const WALL_H = 4.5;
 const WALL_BAND = 0.12;
@@ -43,15 +45,25 @@ export function wallPosts(w: readonly number[], to: number): WallPost[] {
   return out;
 }
 
-/** the gates: each gate segment's middle (where the arterial goes through) */
-export function wallGates(w: readonly number[]): { seg: number; at: [number, number] }[] {
+export interface WallGate {
+  seg: number;
+  /** the gate segment's middle */
+  at: [number, number];
+  /** the arterial through it (its index in the town's ART; −1: none — a gate the rule of two added) and where along
+   *  it the ring crosses (world units from its centre end) */
+  art: number;
+  along: number;
+}
+
+/** the gates: each gate segment's middle, and the arterial through it */
+export function wallGates(w: readonly number[]): WallGate[] {
   if (w[0] !== 1) return [];
-  const out: { seg: number; at: [number, number] }[] = [];
+  const out: WallGate[] = [];
   for (let b = 0; b < NB; b++) {
     if (w[WB_KIND + b] !== 1) continue;
     const p = corner(w, b);
     const q = corner(w, b + 1);
-    out.push({ seg: b, at: [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2] });
+    out.push({ seg: b, at: [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], art: (w[WB_ART + b] ?? 0) - 1, along: f32(w[WB_S + b] ?? 0) });
   }
   return out;
 }

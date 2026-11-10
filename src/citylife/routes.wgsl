@@ -237,6 +237,8 @@ const R_FAILED: u32 = 0xfffffffdu;
 /** the passages' mesh (citygen's vertex format: x, y, z, colour, normal, 0) and its draw args */
 @group(0) @binding(18) var<storage, read_write> PMESH: array<u32>;
 @group(0) @binding(19) var<storage, read_write> PARGS: array<atomic<u32>>;
+/** (season life) the town wall's words (citygen streets.wgsl WALL; postCheck) */
+@group(0) @binding(20) var<storage, read> WALLW: array<u32>;
 
 // ---- the lattice (common.wgsl's, in the box) ----
 fn W() -> i32 { return i32(u.n.x); }
@@ -1808,6 +1810,13 @@ fn shipVox(wp: vec3<f32>, h: f32, i: u32) {
 fn routeAsk() {
   let col = lt(L_ASK);
   if (col == NONE || col == 0u) { return; }
+  // (SL18: an arterial's route — word 1 0x100 + its index, word 10 where along it to start: its own points from there
+  // out to its last in the box, a route of the pool (made once: the ask's flag cleared once answered))
+  if (lt(L_ASK + 1u) >= 0x100u) {
+    artRouteAnswer(lt(L_ASK + 1u) - 0x100u, ltf(L_ASK + 10u));
+    setLt(L_ASK, 0u);
+    return;
+  }
   // (the asked column onto the graph: the nearest walkable within three)
   let id = routeFor(snapWalk(cxy(col - 1u)), lt(L_ASK + 1u));
   setLt(L_ASK + 2u, id);
@@ -1823,4 +1832,140 @@ fn routeAsk() {
   setLtf(L_ASK + 7u, b.x);
   setLtf(L_ASK + 8u, b.y);
   setLt(L_ASK + 9u, genOf(rId(id)));
+}
+
+/** (SL18) a route made along arterial k from `s0` (world units along it from its centre end) out to its last point in
+ *  the box — the atlas road's way out — its points at the ground's (or a deck's) height; the answer written as
+ *  routeAsk's */
+fn artRouteAnswer(k: u32, s0: f32) {
+  setLt(L_ASK + 2u, R_FAILED);
+  if (k >= min(ART[0], NART)) { return; }
+  let o = 4u + k * AW;
+  let n = min(ART[o], NAP);
+  if (n < 2u) { return; }
+  // (the pieces from s0 on: the first point where s0 falls, then each vertex after, while in the box)
+  var acc = 0.0;
+  var j0 = 0u;
+  var start = vec2<f32>(bitcast<f32>(ART[o + AP]), bitcast<f32>(ART[o + AP + 1u]));
+  for (var j = 0u; j + 1u < n; j++) {
+    let a = vec2<f32>(bitcast<f32>(ART[o + AP + 2u * j]), bitcast<f32>(ART[o + AP + 2u * j + 1u]));
+    let b = vec2<f32>(bitcast<f32>(ART[o + AP + 2u * j + 2u]), bitcast<f32>(ART[o + AP + 2u * j + 3u]));
+    let L = distance(a, b);
+    if (acc + L >= s0) { start = mix(a, b, clamp((s0 - acc) / max(L, 1e-4), 0.0, 1.0)); j0 = j + 1u; break; }
+    acc += L;
+  }
+  var np = 1u;
+  for (var j = j0; j < n; j++) {
+    let b = vec2<f32>(bitcast<f32>(ART[o + AP + 2u * j]), bitcast<f32>(ART[o + AP + 2u * j + 1u]));
+    if (!inBox(cat(b))) { break; }
+    np++;
+  }
+  if (np < 2u) { return; }
+  let al = alloc(np);
+  if (al.x == NONE) { return; }
+  let first = al.x;
+  let rid = al.y;
+  var prev = start;
+  var len = 0.0;
+  PTS[first] = vec4<f32>(start, pointZ(ix(clamp(cat(start), vec2<i32>(0), vec2<i32>(W() - 1, Hh() - 1)))), 0.0);
+  var w = 1u;
+  for (var j = j0; j < n && w < np; j++) {
+    let b = vec2<f32>(bitcast<f32>(ART[o + AP + 2u * j]), bitcast<f32>(ART[o + AP + 2u * j + 1u]));
+    len += distance(prev, b);
+    PTS[first + w] = vec4<f32>(b, pointZ(ix(cat(b))), len);
+    prev = b;
+    w++;
+  }
+  setLt(L_RH + rid * 4u, first);
+  setLt(L_RH + rid * 4u + 1u, w);
+  setLtf(L_RH + rid * 4u + 2u, len);
+  setLt(L_RH + rid * 4u + 3u, 0u);
+  setLt(L_ASK + 2u, rid);
+  setLt(L_ASK + 3u, w);
+  setLtf(L_ASK + 4u, len);
+  setLtf(L_ASK + 5u, start.x);
+  setLtf(L_ASK + 6u, start.y);
+  setLtf(L_ASK + 7u, prev.x);
+  setLtf(L_ASK + 8u, prev.y);
+  setLt(L_ASK + 9u, genOf(rid));
+}
+
+// ---- season life, SL19: are the wall's posts reached from the town? ----
+// The wall's words (citygen streets.wgsl WALL, its layout repeated: keep the same): NB segments; corner b at WB_V + 2b;
+// segment b's piece at WB_KIND + b (0 a wall, 1 a gate, 2 none); the stage at 4–6, the first gate at 2.
+const WNB: u32 = 72u;
+const WB_V2: u32 = 80u;
+const WB_KIND2: u32 = 368u;
+/** streets.wgsl WALL_BAND, TOWER_HW, WALL_HW, STAIR_HW */
+const W_BAND: f32 = 0.12;
+const W_TOWER_HW: f32 = 2.0;
+const W_WALL_HW: f32 = 1.0;
+const W_STAIR_HW: f32 = 0.55;
+var<workgroup> wpUp: array<u32, 72>;
+/** a stair's foot reached from the town: a column of the graph joined to the stores within FOOT_R, over open ground —
+ *  rays from the foot in 16 directions, each stopped by water, a wall or a standing building */
+const FOOT_R: i32 = 14;
+fn footReached(at: vec2<f32>) -> bool {
+  for (var a = 0u; a < 16u; a++) {
+    let dir = vec2<f32>(cos(f32(a) * 0.3926991), sin(f32(a) * 0.3926991));
+    for (var r = 0; r <= FOOT_R; r++) {
+      let c = cat(at + dir * f32(r));
+      if (!inBox(c)) { break; }
+      let i = ix(c);
+      if (walkClass(i) != 0u && FIELD[H_STORES * N() + i] != NONE) { return true; }
+      if (WET[i] != 0u || (atomicLoad(&WALK[i]) & W_BLOCK) != 0u) { break; }
+    }
+  }
+  return false;
+}
+var<workgroup> wpFoot: array<u32, 72>;
+fn wCorner(b: u32) -> vec2<f32> { let o = WB_V2 + 2u * (b % WNB); return vec2<f32>(bitcast<f32>(WALLW[o]), bitcast<f32>(WALLW[o + 1u])); }
+/** (one workgroup) each segment reached: a piece risen (at the stage's end) in a run of them along the ring with a
+ *  stair (before a gate) whose foot is on the graph joined to the stores — bits to LT L_ASK + 11… */
+@compute @workgroup_size(128)
+fn postCheck(@builtin(local_invocation_index) li: u32) {
+  let made = WALLW[0] == 1u;
+  if (li < WNB) {
+    // (risen: the stage's end past its place round the ring, from the first gate)
+    let to = bitcast<f32>(WALLW[5]);
+    let w = f32((li + WNB - WALLW[2]) % WNB) / f32(WNB);
+    let up = made && WALLW[WB_KIND2 + li] == 0u && (to - w * (1.0 - W_BAND)) / W_BAND >= 1.0;
+    wpUp[li] = select(0u, 1u, up);
+    // (its stairs: at each end of a run of wall — a gap (a gate, water) next to it; the first step's foot, a little out
+    // from the gap's corner on the town's side — on the graph joined to the stores)
+    var foot = 0u;
+    for (var e = 0u; e < 2u; e++) {
+      let nb = select((li + 1u) % WNB, (li + WNB - 1u) % WNB, e == 1u);
+      if (!up || WALLW[WB_KIND2 + nb] == 0u) { continue; }
+      let p = wCorner(li);
+      let q = wCorner(li + 1u);
+      let c0 = select(q, p, e == 1u);
+      let o0 = select(p, q, e == 1u);
+      let d = normalize(o0 - c0);
+      var n = vec2<f32>(-d.y, d.x);
+      if (dot(n, u.t.zw - c0) < 0.0) { n = -n; }
+      let at = c0 + d * (W_TOWER_HW + 0.6 - 0.8) + n * (W_WALL_HW + W_STAIR_HW + 0.8);
+      if (footReached(at)) { foot = 1u; }
+    }
+    wpFoot[li] = foot;
+  }
+  workgroupBarrier();
+  // (along the ring both ways while the walk runs on: reached if any piece of the run has a reached stair)
+  let me = min(li, WNB - 1u);
+  var ok = li < WNB && wpUp[me] == 1u && wpFoot[me] == 1u;
+  if (li < WNB && wpUp[me] == 1u) {
+    for (var k = 1u; k < WNB && !ok; k++) {
+      let b = (me + k) % WNB;
+      if (wpUp[b] == 0u) { break; }
+      if (wpFoot[b] == 1u) { ok = true; }
+    }
+    for (var k = 1u; k < WNB && !ok; k++) {
+      let b = (me + WNB - k) % WNB;
+      if (wpUp[b] == 0u) { break; }
+      if (wpFoot[b] == 1u) { ok = true; }
+    }
+  }
+  if (li < 3u) { setLt(L_ASK + 11u + li, 0u); }
+  workgroupBarrier();
+  if (ok && li < WNB) { atomicOr(&LT[L_ASK + 11u + li / 32u], 1u << (li % 32u)); }
 }

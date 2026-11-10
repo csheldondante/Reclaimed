@@ -40,6 +40,8 @@ export interface LivingInput {
   roads: GPUBuffer;
   heights: GPUBuffer;
   wet: GPUBuffer;
+  /** (season life) the town wall's words (citygen streets.wgsl WALL; SL19's post check) */
+  wall?: GPUBuffer;
   pop: GPUBuffer;
   art: GPUBuffer;
   /** the contract's lot records, counts and progress (api/contracts/citygen.ts; progress read only: the time-lapse's) */
@@ -69,7 +71,7 @@ type K =
   | 'checkClear' | 'checkCols' | 'checkPick' | 'checkLay' | 'checkDoors' | 'checkStep'
   | 'hubSeed1' | 'hashScrub' | 'relax' | 'relaxMark' | 'relaxCheck' | 'trace' | 'traceDone' | 'rampRoute' | 'riders'
   | 'sites' | 'sitesClear' | 'figuresClear' | 'figures' | 'overlay' | 'poolSwitch' | 'hashClear' | 'passMeshClear' | 'passMesh'
-  | 'seaSeed' | 'seaRelax' | 'ships' | 'routeAsk';
+  | 'seaSeed' | 'seaRelax' | 'ships' | 'routeAsk' | 'postCheck';
 /** each kernel's bindings (at most 8 storage buffers) */
 const SPECS: Record<K, BindSpec> = {
   gate: { 0: 'uniform', 10: 'rw', 14: 'rw' },
@@ -110,7 +112,8 @@ const SPECS: Record<K, BindSpec> = {
   seaSeed: { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 7: 'read', 9: 'rw', 15: 'read' },
   seaRelax: { 0: 'uniform', 9: 'rw', 15: 'read' },
   ships: { 0: 'uniform', 2: 'read', 9: 'rw', 12: 'rw', 15: 'read' },
-  routeAsk: { 0: 'uniform', 8: 'rw', 10: 'rw', 11: 'rw' },
+  routeAsk: { 0: 'uniform', 1: 'read', 2: 'read', 6: 'read', 8: 'rw', 10: 'rw', 11: 'rw' },
+  postCheck: { 0: 'uniform', 8: 'rw', 9: 'rw', 10: 'rw', 15: 'read', 20: 'read' },
 };
 /** routes.wgsl struct P's bytes (12 vec4s) */
 const P_BYTES = 192;
@@ -187,7 +190,7 @@ export class LivingTown {
     device.queue.writeBuffer(this.vargs, 0, new Uint32Array([36, 0, 0, 0]));
     const R: Record<number, GPUBuffer> = {
       1: input.roads, 2: input.heights, 3: input.records, 4: input.counts, 5: input.pop, 6: input.art, 7: input.progress,
-      8: this.walk, 9: this.field, 17: this.pass, 18: this.pmesh, 19: this.pargs, 10: this.lt, 11: this.pts, 12: this.rid, 13: this.vox, 14: this.ind, 15: input.wet, 16: this.vargs,
+      8: this.walk, 9: this.field, 17: this.pass, 20: input.wall ?? this.ind, 18: this.pmesh, 19: this.pargs, 10: this.lt, 11: this.pts, 12: this.rid, 13: this.vox, 14: this.ind, 15: input.wet, 16: this.vargs,
     };
     R[0] = this.uni;
     this.k = {} as Record<K, ComputeKernel>;
@@ -335,11 +338,12 @@ export class LivingTown {
    * frames apart (an event's read, never a frame's); null if it can't be traced. The id is good while its generation
    * holds (the points pool switches halves when full: ask again).
    */
-  async askRoute(col: number, hub: number): Promise<{ id: number; points: number; length: number; from: [number, number]; to: [number, number]; gen: number } | null> {
+  async askRoute(col: number, hub: number, along = 0): Promise<{ id: number; points: number; length: number; from: [number, number]; to: [number, number]; gen: number } | null> {
     while (this.asking) await new Promise((r) => setTimeout(r, 50));
     this.asking = true;
     try {
       this.device.queue.writeBuffer(this.lt, L_ASK * 4, new Uint32Array([col + 1, hub, 0xfffffffe]));
+      this.device.queue.writeBuffer(this.lt, (L_ASK + 10) * 4, new Float32Array([along]));
       for (let k = 0; k < 100; k++) {
         await new Promise((r) => setTimeout(r, 100));
         // (ten words read: the answer)
@@ -359,6 +363,29 @@ export class LivingTown {
       this.device.queue.writeBuffer(this.lt, L_ASK * 4, new Uint32Array([0]));
       this.asking = false;
     }
+  }
+
+  /**
+   * (season life, SL19) Which wall pieces' walk is reached from the town: a piece's run of risen wall (between gates,
+   * water and pieces not yet up) is reached when a stair in it has its foot on the living town's graph, joined to the
+   * stores (the STORES field there). One workgroup over the 72 segments, three words read back (an event). Null: no
+   * wall input.
+   */
+  async reachedWall(): Promise<boolean[] | null> {
+    if (!this.input.wall) return null;
+    const enc = this.device.createCommandEncoder({ label: 'living post check' });
+    const cp = enc.beginComputePass({ label: 'living post check' });
+    cp.setPipeline(this.k.postCheck.pipeline);
+    cp.setBindGroup(0, this.g.postCheck);
+    cp.dispatchWorkgroups(1);
+    cp.end();
+    const tmp = this.device.createBuffer({ label: 'living post check read', size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    enc.copyBufferToBuffer(this.lt, (L_ASK + 11) * 4, tmp, 0, 16);
+    this.device.queue.submit([enc.finish()]);
+    await tmp.mapAsync(GPUMapMode.READ);
+    const w = new Uint32Array(tmp.getMappedRange().slice(0));
+    tmp.destroy();
+    return Array.from({ length: 72 }, (_, b) => ((w[b >> 5] >> (b & 31)) & 1) === 1);
   }
 
   /** the graph made again (the town's road raster was drawn again: a district's roads appeared): 4 bytes */
