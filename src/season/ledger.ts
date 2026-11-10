@@ -36,7 +36,9 @@ export type CardWork =
    *  the district's centre — complete when the card finishes. The next card of the kind goes on in the same district
    *  until it's full; then a new one is claimed for the purpose (citygen claimDistrict) */
   | { kind: 'district'; district: OpportunityKind; parts: number }
-  /** no world change yet: pools only (quarry and lumber wait for trackA-haul; walls and bridges for a builder) */
+  /** the living town's works (citylife): the quarry dug, the clearing felled — on from the card's start */
+  | { kind: 'works'; site: 'quarry' | 'camp' }
+  /** no world change yet: pools only (bridges wait for a builder) */
   | { kind: 'stub'; waits: string };
 
 export interface SeasonCard {

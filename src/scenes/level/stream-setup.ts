@@ -393,7 +393,8 @@ export function attachStream(scene: LevelScene): void {
           S.onWarp.push(() => towns.warped());
           // (living town, docs/design/LIVING_TOWN.md: ?living=1 — each made town's people, its quarry and clearing, on
           // the GPU; the panel with its counters. ?living=0 or absent: none — the toggle diff)
-          if (host.params.get('living') === '1') {
+          // (season life: ?opps=1 brings the living town, its panel off unless asked)
+          if (host.params.get('living') === '1' || host.params.get('opps') === '1') {
             livingFromUrl(host.params);
             const lt = new LivingTowns({
               device: host.gpu.device,
@@ -410,7 +411,7 @@ export function attachStream(scene: LevelScene): void {
             lt.debugGraph = host.params.get('livingdebug') === '1';
             scene.livingTowns = lt;
             (globalThis as { living?: LivingTowns }).living = lt;
-            if (host.params.get('livingpanel') !== '0') lt.mountPanel(host.ui, () => void towns.claimDistrict('housing'));
+            if (host.params.get('livingpanel') !== '0' && !(host.params.get('opps') === '1' && host.params.get('livingpanel') !== '1')) lt.mountPanel(host.ui, () => void towns.claimDistrict('housing'));
           }
           // (the first look now: the town the level opens on made before the first frames)
           towns.update(Infinity);

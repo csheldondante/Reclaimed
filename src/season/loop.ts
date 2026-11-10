@@ -13,6 +13,7 @@ import { card, START_INCOME, START_POOLS } from './catalog';
 import { allocate, dealHand, hasLand, type Land, type Offer } from './deal';
 import { commit, DISTRICT_PARTS, newLedger, nextSeason, short, uncommit, type SeasonLedger, type SeasonResult } from './ledger';
 import { summaryLine } from './words';
+import { townLife, type TownLife } from './life';
 
 export interface SeasonHost {
   districts: Pick<CityDistricts, 'claimDistrict' | 'districtsLeft' | 'stageDistrict' | 'inWindow'>;
@@ -22,6 +23,8 @@ export interface SeasonHost {
   look?(at: [number, number]): void;
   /** wall seconds a season plays over */
   seconds: number;
+  /** (season life) the town's people from the ledger: the living town's counts and works (season/life.ts) */
+  life?(l: TownLife): void;
 }
 
 /** a district the season builds in: its town and id (from its claim), its centre (the town's frame) */
@@ -88,6 +91,7 @@ export class SeasonLoop {
       await new Promise((r) => setTimeout(r, 500));
     }
     this.deal();
+    this.host.life?.(townLife(this.ledger));
     this.changed();
   }
 
@@ -202,6 +206,7 @@ export class SeasonLoop {
         },
       );
       this.deal();
+      this.host.life?.(townLife(this.ledger));
       void this.show.done.then(() => this.changed());
       return r;
     })();

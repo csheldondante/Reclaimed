@@ -21400,3 +21400,17 @@ errors to 0, every caller rewritten to the contract, not silenced (no `!`, no `a
   back to LF.
 - Checks: typecheck clean; the unit tier 106 files, 861 tests passing (3 expected fails); the season loop plays after
   the merge (a shot: two cards started, Next season, districts rising).
+
+## 2026-11-10 — season life 1: the living town in the season loop (trackA-seasonlife)
+
+The user: "I do want to see agents moving around and more things to reflect choices …". Design: SEASON_LOOP.md
+"Season life".
+- `?opps=1` brings the living town (LIVING_TOWN.md; its panel off unless `&livingpanel=1`).
+- `season/life.ts townLife(ledger)` (pure, tested): commuters 80 + 60 a houses card built, farmers 30 a farms card,
+  builders 10 + 15 a district card building, the quarry's 40 quarrymen and 16 stone carts while a quarry card is
+  started or built, the clearing's 30 woodcutters and 12 log carts for a lumber camp. The loop passes them after each
+  season to the living town's parameters (LIVING_TUNING: its one input, a uniform).
+- The quarry and lumber camp cards are real (`work: 'works'`): the living town's quarry is picked and dug, its camp
+  picked and felled. They were pools-only stubs.
+- Checked at Muru: quarry + houses + lumber started → 203 people, the quarry dug 146 m³ in 20 s, the camp listed 54
+  trees. Changing the counts re-deals every rider (the living town's own rule: its rows cleared on a new deal).

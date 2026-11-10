@@ -103,7 +103,7 @@ describe('season hand (the one dealer)', () => {
 
   it('no district cards without land', () => {
     expect(hasLand(start(), land(0), card('houses'))).toBe(false);
-    expect(hand(start(), land(0)).offers.every((o) => o.card.work.kind === 'stub')).toBe(true);
+    expect(hand(start(), land(0)).offers.every((o) => o.card.work.kind !== 'district')).toBe(true);
   });
 });
 
@@ -222,5 +222,17 @@ describe('season loop (fake town, fake showcase)', () => {
     expect(pools(loop.ledger).labor).toBeLessThanOrEqual(8);
     expect(pools(loop.ledger).materials).toBeLessThanOrEqual(10);
     expect(left()).toBeGreaterThan(0);
+  });
+});
+
+describe('season life (the living town from the ledger)', () => {
+  it('houses bring commuters, a quarry card turns the quarry on from its start, builders while districts build', async () => {
+    const { townLife, LIFE } = await import('../../src/season/life');
+    const l0 = start();
+    expect(townLife(l0)).toMatchObject({ commuters: LIFE.commuters, farmers: 0, quarry: false, camp: false, quarrymen: 0 });
+    let l = commit(commit(l0, card('quarry')), card('houses'));
+    expect(townLife(l)).toMatchObject({ quarry: true, quarrymen: LIFE.quarrymen, builders: LIFE.builders + LIFE.perBuild });
+    l = nextSeason(nextSeason(l).ledger).ledger;
+    expect(townLife(l)).toMatchObject({ quarry: true, commuters: LIFE.commuters + LIFE.perHouses, builders: LIFE.builders });
   });
 });

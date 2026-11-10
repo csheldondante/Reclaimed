@@ -8,6 +8,7 @@ import { DISTRICT_SPAN } from '../../citygen/gpu';
 import { OPP_TUNE } from '../../opps/tune';
 import { SeasonLoop } from '../../season/loop';
 import { mountSeasonUi } from '../../season/ui';
+import { LIVING_TUNING } from '../../citylife/params';
 import type { LevelScene } from '../level';
 
 /** the showcase: the steps start in its first third, the last district then rises for its build's span */
@@ -38,6 +39,13 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoo
           core.camera.target = [t[0] + (at[0] - t[0]) * EASE, t[1] + (at[1] - t[1]) * EASE, t[2]];
         }
       : undefined,
+    // (season life: the living town's counts and works — its parameters, the one input; LIVING_TUNING is every
+    // living town's)
+    life: (s) => {
+      for (const k of ['commuters', 'farmers', 'builders', 'quarrymen', 'stoneCarts', 'woodcutters', 'logCarts'] as const) LIVING_TUNING.set(`people.${k}`, s[k]);
+      LIVING_TUNING.set('quarry.on', s.quarry ? 1 : 0);
+      LIVING_TUNING.set('forest.on', s.camp ? 1 : 0);
+    },
   });
   // (the sandbox's tool panel hidden: the cards are the player's only tool here)
   scene.editor?.setVisible(false);

@@ -90,7 +90,7 @@ export const CATALOG: readonly SeasonCard[] = [
     locks: { labor: 1 },
     costs: {},
     seasons: 1,
-    work: { kind: 'stub', waits: 'trackA-haul: the quarry and its haulers' },
+    work: { kind: 'works', site: 'quarry' },
     income: { materials: 1 },
   },
   {
@@ -101,7 +101,7 @@ export const CATALOG: readonly SeasonCard[] = [
     locks: { labor: 1 },
     costs: {},
     seasons: 1,
-    work: { kind: 'stub', waits: 'trackA-haul: forest clearing and its haulers' },
+    work: { kind: 'works', site: 'camp' },
     income: { materials: 1 },
   },
   {
