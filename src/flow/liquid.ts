@@ -16,6 +16,7 @@ import { FLOW_SUB, flowConst } from '../sim/flow';
 import { cullSource, GpuTileList, TILES_BINDING } from '../sim/cull';
 import { CHUNK } from '../world/layout';
 import { urlFlags } from '../flags';
+import { riverHeld } from '../sim/systems';
 
 /** A liquid's numbers: what makes water water and lava lava. */
 export interface LiquidKind {
@@ -94,10 +95,8 @@ export class LiquidSystem implements SimSystem {
   readonly indirectO: GPUBuffer;
   /** the open runs' depth (water: world.water) */
   readonly open: GPUBuffer;
-  /** the step the records carry; it stands still while the whole system is skipped */
+  /** the step the records carry */
   step = 1;
-  /** skip the simulation passes (everything with liquid frozen: only the draw lists made) */
-  skip: () => boolean = () => false;
   /** passes dispatched at the last encode (the cost report) */
   ran = 0;
   /** (one a substep: ?simhz=30|15 runs FLOW_SUB 60 Hz steps a tick, sim/flow.ts) */
@@ -111,6 +110,7 @@ export class LiquidSystem implements SimSystem {
   private runList: GpuTileList;
   private wetList: GpuTileList;
   private lqState: GPUBuffer;
+  private lqWet: GPUBuffer;
   private lqRun: GPUTexture;
   private emptyArgs: GPUBuffer;
   private nChunks: number;
@@ -149,7 +149,7 @@ export class LiquidSystem implements SimSystem {
     this.runW = Math.ceil(this.nChunks / 16) * 16;
     this.runList = new GpuTileList(device, `${kind.name} run`, tiles);
     this.wetList = new GpuTileList(device, `${kind.name} wet`, tiles);
-    const lqWet = world.buf(`${kind.name}LqWet`, this.runW * 4, S);
+    this.lqWet = world.buf(`${kind.name}LqWet`, this.runW * 8, S | GPUBufferUsage.COPY_DST);
     this.lqState = world.buf(`${kind.name}LqState`, this.runW * 16, S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
     this.lqRun = device.createTexture({ label: `${kind.name}LqRun`, size: { width: this.runW, height: 1 }, format: 'rgba32uint', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
     const never = new Uint32Array(this.runW * 4);
@@ -163,17 +163,17 @@ export class LiquidSystem implements SimSystem {
     const tex = () => device.createTexture({ label: `${kind.name}Jet`, size, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
     const jets = [0, 1].map(() => [tex(), tex(), tex(), tex()].map((t) => t.createView()));
 
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, prelude(kind, this.runW) + flowConst(kind.name) + liquidWgsl];
+    const parts = [commonWgsl, layersWgsl, materialsWgsl, prelude(kind, this.runW) + flowConst(kind.name) + liquidWgsl + riverHeld()];
     const base: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 21: 'tex', 33: 'uniform', 35: 'utex', [TILES_BINDING]: 'uniform' };
     const specs: Record<string, BindSpec> = {
       flux: { 3: 'rw', 5: 'rw', 6: 'read', 8: 'rw', 9: 'rw', 10: 'read' },
       jets: { 3: 'rw', 5: 'rw', 6: 'read', 8: 'rw', 9: 'rw', 11: 'rw', 22: 'tex', 23: 'tex', 24: 'tex', 28: 'tex', 25: 'stex', 26: 'stex', 27: 'stex', 34: 'stex' },
-      depth: { 3: 'rw', 4: 'read', 5: 'rw', 6: 'read', 7: 'rw', 8: 'rw', 11: 'rw', 17: 'tex', 22: 'tex', 23: 'tex', 24: 'tex', 28: 'tex' },
+      depth: { 3: 'rw', 4: 'read', 5: 'rw', 6: 'read', 7: 'rw', 8: 'rw', 11: 'rw', 17: 'tex', 22: 'tex', 23: 'tex', 24: 'tex', 28: 'tex', 62: 'tex', 63: 'tex' },
       publishWater: { 4: 'read', 5: 'rw', 7: 'rw', 8: 'rw', 14: 'rw', 16: 'read', 19: 'rw' },
       publishLava: { 3: 'rw', 5: 'rw', 7: 'rw', 11: 'rw', 12: 'rw', 13: 'rw', 20: 'rw' },
       prep: { 5: 'rw', 6: 'read', 12: 'rw', 13: 'rw', 22: 'tex', 23: 'tex', 24: 'tex', 28: 'tex', 29: 'rw', 30: 'rw', 31: 'rw', 32: 'rw' },
       lqScan: { 5: 'rw', 6: 'read', 16: 'read', 22: 'tex', 24: 'tex', 36: 'rw', 37: 'rw' },
-      lqList: { 36: 'rw', 37: 'rw', 40: 'rw', 41: 'rw', 42: 'rw', 43: 'rw' },
+      lqList: { 1: 'read', 11: 'rw', 36: 'rw', 37: 'rw', 40: 'rw', 41: 'rw', 42: 'rw', 43: 'rw' },
     };
     const entries = ['flux', 'jets', 'depth', kind.name === 'water' ? 'publishWater' : 'publishLava', 'prep', 'lqScan', 'lqList'];
     /** the passes dispatched over a chunk list (cullSource's wrapper); lqScan and lqList over every chunk */
@@ -182,7 +182,7 @@ export class LiquidSystem implements SimSystem {
       // (the prep doesn't read the layers' chunk table: one storage slot fewer. Round 128o, DA-B26: the water's publish
       // does, for the water's versions — bumpWater; its eighth storage buffer)
       const spec: BindSpec = { ...base, ...specs[e] };
-      if (e === 'prep' || !listed(e)) delete spec[1];
+      if (e === 'prep' || e === 'lqScan') delete spec[1];
       if (!listed(e)) {
         delete spec[TILES_BINDING];
         delete spec[21];
@@ -229,7 +229,9 @@ export class LiquidSystem implements SimSystem {
           32: this.indirectO,
           33: uni,
           35: lqRunView,
-          36: lqWet,
+          62: world.riverWetView,
+          63: world.riverFlowView,
+          36: this.lqWet,
           37: this.lqState,
           [TILES_BINDING]: e === 'prep' ? this.wetList.uniform : this.runList.uniform,
           40: this.runList.list,
@@ -242,6 +244,23 @@ export class LiquidSystem implements SimSystem {
     }
   }
 
+  /**
+   * (trackA-liquids) Window rectangle [lx, lx + w) x [ly, ly + h) was just written with arriving land (the streamer's
+   * onWritten): its chunks' slots hold another place's records now — forgotten (never ran: every record of theirs
+   * invalid; the open depth is the land's own, written with it). A few words a chunk, once a region.
+   */
+  forget(lx: number, ly: number, w: number, h: number): void {
+    const cx = this.world.w / CHUNK;
+    const never = new Uint32Array([0xffffffff, 0xffffffff, 0, 0]);
+    for (let y = Math.max(0, Math.floor(ly / CHUNK)); y < Math.min(this.world.h / CHUNK, Math.ceil((ly + h) / CHUNK)); y++)
+      for (let x = Math.max(0, Math.floor(lx / CHUNK)); x < Math.min(cx, Math.ceil((lx + w) / CHUNK)); x++)
+      {
+        const slot = this.world.ring.table[y * cx + x];
+        this.device.queue.writeBuffer(this.lqState, slot * 16, never);
+        this.device.queue.writeBuffer(this.lqWet, slot * 8, never, 2, 2);
+      }
+  }
+
   /** Pour `rate` cells^3/s in at world (x, y), height z (a tunnel's floor, a crater); the oldest goes past MAX_SPRINGS. */
   addSpring(x: number, y: number, z: number, rate: number): void {
     if (this.springs.length >= MAX_SPRINGS) this.springs.shift();
@@ -252,7 +271,7 @@ export class LiquidSystem implements SimSystem {
    * (scripts) The runs as they stand: the enclosed runs' count and volume over the map, the instances drawn
    * (runs under rock + stream segments), and column (x, y)'s runs (floor, depth, heat; slot 0 the open run's floor).
    */
-  async probe(x = -1, y = -1): Promise<{ enclosed: number; enclosedVol: number; drawn: number; col?: number[][] }> {
+  async probe(x = -1, y = -1): Promise<{ enclosed: number; enclosedVol: number; drawn: number; col?: number[][]; at: [number, number][] }> {
     const dev = this.device;
     const src = this.runs[1 - (this.step & 1)];
     const a = dev.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -269,6 +288,8 @@ export class LiquidSystem implements SimSystem {
     const L = new Uint32Array(st.getMappedRange());
     let enclosed = 0;
     let enclosedVol = 0;
+    /** (window columns) where some enclosed runs lie, the first 16 */
+    const at: [number, number][] = [];
     // (a record is valid by its chunk's stamps — liquid.wgsl parkedOk: the last step the chunk ran, or the one before)
     const per = CHUNK * CHUNK;
     for (let i = 0; i < this.world.cells; i++) {
@@ -278,6 +299,7 @@ export class LiquidSystem implements SimSystem {
       for (let s = 1; s <= (w & 7); s++) {
         enclosed++;
         enclosedVol += r[i * 16 + s * 4 + 1];
+        if (at.length < 16 && r[i * 16 + s * 4 + 1] > 0.05) at.push(this.world.ring.xy(i));
       }
     }
     let col: number[][] | undefined;
@@ -288,7 +310,7 @@ export class LiquidSystem implements SimSystem {
     a.destroy();
     b.destroy();
     st.destroy();
-    return { enclosed, enclosedVol, drawn, col };
+    return { enclosed, enclosedVol, drawn, col, at };
   }
 
   /** substep `sub`'s uniforms: its step, the springs, and (the first substep only) the frozen chunks' rescale */
@@ -335,17 +357,16 @@ export class LiquidSystem implements SimSystem {
   }
 
   encode(enc: GPUCommandEncoder): void {
-    // (a rescale to apply: the passes run this step, whatever's frozen — their frozen paths apply it)
-    const sim = !this.skip() || this.rescale.size > 0;
     this.ran = 0;
     // (?simhz=30|15: FLOW_SUB 60 Hz steps a tick, each its own uniforms - the streams' time across a column is
     // the 60 Hz step's, so a fall takes as long at any tick rate)
-    const subs = sim ? FLOW_SUB : 1;
+    // (trackA-liquids: every step, whatever sleeps — the lists made on the GPU are empty when nothing runs: a few
+    // tiny passes and empty indirect dispatches)
+    const subs = FLOW_SUB;
     let sub = 0;
     for (; sub < subs; sub++) {
-      if (sim) this.step++;
+      this.step++;
       this.writeUniforms(sub);
-      if (!sim) break;
       const par = this.step & 1;
       // (trackA-liquids, DA-P5) which chunks run this step, on the GPU: lqScan marks those with liquid, lqList lists
       // the ones to run and those to draw and stamps them; the lists into the culled passes' uniforms
@@ -363,7 +384,7 @@ export class LiquidSystem implements SimSystem {
     const last = Math.min(sub, subs - 1);
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([VERTS_PER_PRISM, 0, 0, 0]));
     this.device.queue.writeBuffer(this.indirectO, 0, new Uint32Array([30, 0, 0, 0]));
-    // (the draw lists over the chunks with liquid — the last step's list; kept as it was while the sim is skipped)
+    // (the draw lists over the chunks with liquid — the last step's list)
     this.listed(enc, 'prep', this.g.prep[last][this.step & 1], this.wetList);
     this.ran++;
   }

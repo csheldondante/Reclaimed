@@ -3015,11 +3015,18 @@ fn claimRoads(@builtin(global_invocation_id) g: vec3<u32>) {
   let m = b1[i];
   let so = N * 4u + i * 4u;
   w7[so + 3u] = 0u;
-  // (a deck isn't claimed in the world's columns: a column's top is its water's floor — surface.wgsl, water_flux.wgsl
-  // — so a deck there would lift the river onto it. The reach walks it as the plan's solid instead: deckSpans)
-  if (m == 0u || (m & DECK_BIT) != 0u) { w7[i * 4u + 3u] = 0u; return; }
+  // (under the pipes a deck isn't claimed in the world's columns: a column's top is their water's floor — surface.wgsl,
+  // water_flux.wgsl — so a deck there would lift the river onto it, and the reach walks it as the plan's solid instead:
+  // deckSpans. Under the flow model (DECKS_CLAIMED, ?liquid=flow — trackA-liquids, CG15) the river runs in the gap
+  // under it: the deck is a slab DECK_T deep under its top, claimed where free, wood when let go)
+  if (m == 0u || ((m & DECK_BIT) != 0u && !DECKS_CLAIMED)) { w7[i * 4u + 3u] = 0u; return; }
   w7[i * 4u + 3u] = 1u;
-  {
+  if ((m & DECK_BIT) != 0u) {
+    let dz = f32(m & ~DECK_BIT) / 256.0;
+    set7(so, dz - DECK_T);
+    set7(so + 1u, dz);
+    w7[so + 2u] = M_WOOD;
+  } else {
     let z = r3(i);
     set7(so, z);
     set7(so + 1u, z + PAVE_T);

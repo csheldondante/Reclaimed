@@ -13,6 +13,7 @@ import materialsWgsl from '../shaders/materials.wgsl?raw';
 import heightWgsl from './height.wgsl?raw';
 import rawHeightWgsl from './rawheight.wgsl?raw';
 import streetsWgsl from './streets.wgsl?raw';
+import { LIQUID } from '../flow/model';
 import { makeBindGroup, makeCompute, makeLayout, makeModule, type ComputeKernel } from '../gpu/pipeline';
 import { ROW_H } from '../world/lattice';
 
@@ -398,7 +399,9 @@ export class CityGen {
     device.queue.writeBuffer(this.args, 0, new Uint32Array([0, 1, 0, 0]));
     this.dummies = [1, 2, 3, 4, 5, 6, 7, 8].map((k) => buf(`dummy ${k}`, 16));
     this.layout = makeLayout(device, 'citygen', { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' }, GPUShaderStage.COMPUTE);
-    const module = makeModule(device, 'citygen', [streetsWgsl]);
+    // (trackA-liquids, CG15: a deck claimed into the columns only under the flow model — its river runs in the gap under it)
+    const module = makeModule(device, 'citygen', [`const DECKS_CLAIMED: bool = ${LIQUID === 'flow'};
+` + streetsWgsl]);
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     this.pipes = Object.fromEntries(KERNELS.map((k) => [k, device.createComputePipeline({ label: `citygen ${k}`, layout: pl, compute: { module, entryPoint: k } })])) as Record<Kernel, GPUComputePipeline>;
     if (gs.kind === 'window' && gs.box[1] % 2) throw new Error(`citygen: the box's first row (${gs.box[1]}) must be even`);

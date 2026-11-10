@@ -1454,7 +1454,21 @@ floor at ~104 holds ~98 levels, the default 64-high level ~13); the
 fortress isn't stamped (`zMax` Infinity). Gaps are allowed: a block over
 an empty level stands on pillars and arches (`design`).
 
-## The flow model (round 84, branch `flow`, `?flow=1`)
+## The flow model (round 84, branch `flow`, `?flow=1`; trackA-liquids: `?liquid=flow` on any level)
+
+(trackA-liquids, DA-P5) `?liquid=flow|pipes` (src/flow/model.ts; `?flow=1` its older spelling) picks the world's liquid
+on any level; the pipes stay the default until the user approves. With the flow model:
+- **Rivers held** (`?rivers=table`): the depth pass relaxes a held river column (at the window's edge, or asleep when it
+  runs) to the atlas's table in the gap on the column's own ground (`Gaps.nat`: the highest solid that isn't an
+  External), as the pipes hold it; the warmup doesn't run the water (as the pipes').
+- **Decks claimed** (citygen `DECKS_CLAIMED`, streets.wgsl claimRoads): a deck is a slab under its top claimed into the
+  columns; the open run keeps the gap its floor was recorded in (`openGap`), so the river stays in the gap under the
+  deck as an enclosed run, the deck's top dry (BACKLOG CG15).
+- **Land coming in**: a slot's records are forgotten when the streamer writes a region into it (LiquidSystem.forget);
+  a chunk's first step since is a real one even asleep (`lqFrozen`, `realStep`): its water settles into its gaps and its
+  flux is seeded with the steady flux for its levels (the pipes' seed). A sleeping chunk whose columns' version moved
+  (chunkver.wgsl) with liquid in it is woken through steady's act bit 2 (a claim, a cut over still water).
+- **No CPU skip**: the lists made on the GPU are empty when nothing runs.
 
 The user: "a unified model of material flow would be great for waterfalls emerging from underground streams or
 lava flows … a water fall that actually arcs out"; "think noita physics which just checks for adjacent emptiness

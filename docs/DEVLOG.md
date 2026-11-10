@@ -21292,3 +21292,22 @@ lava and the like):
 | disturbed, 12–16 chunks awake | 1.24 | 0.25 (0.05) | 0.085 (0.013) |
 So 1.4x the pipes awake, ~2–4x asleep and disturbed (prep still runs every frame over the chunks with liquid: the
 spray is made there). The phone's toggle diffs decide whether that's enough.
+
+## 2026-11-10 — trackA-liquids steps 3–4 (first pass): `?liquid=flow` in the game, decks over the river, the bench v2
+
+- **`?liquid=flow|pipes`** (src/flow/model.ts) installs the flow model on any level (default pipes). The level's sleep
+  is made with it; the streamed window keeps that sleep; the streamer's region writes forget the recycled slots.
+- **No CPU skip**: the old "nothing awake: skip the passes" check kept a claim made while everything slept from ever
+  reaching the water (the deck was drawn under the river). The GPU's lists are empty when nothing runs.
+- **Held rivers** in the flow model's depth pass, in the gap on the column's own ground; the warmup skips the flow
+  water as it skips the pipes' (it ran unheld through the warmup and the upper river drained: scratchpad deck1.png).
+- **Decks claimed** under the flow model (citygen DECKS_CLAIMED); `openGap`: the open run stays in the gap its floor
+  was recorded in, so a deck claimed over water leaves the river under it. Muru: 178 columns with the river as an
+  enclosed run under the decks, the decks dry (scratchpad liquids/deck4.png, against the pipes' deck-pipes.png).
+- **Tried and reverted**: a real step for a sleeping chunk whose columns changed. Alone between frozen neighbours it
+  took their frozen inflow while its outflow went nowhere: a column 16 cells deep downstream of the bridge. Now such a
+  chunk is woken through steady (act bit 2), as a stream arriving wakes one; a real step only on a chunk's first.
+- **The bench v2**: the Pixel 9a's first run (build bb5b2e01, step 1's code) showed vsync caps the frame (every
+  frame diff 0) and the per-pass timestamps are noise; the report now leads with the whole frame's GPU time diffs.
+  The phone's numbers (GPU p50 on/off): awake flow 3.1 ms vs pipes 1.4 (lava ~1.5 of the flow's); steady 0.33 vs 0.26;
+  disturbed 0.9 vs ~0. That run predates the chunk lists (step 2a).

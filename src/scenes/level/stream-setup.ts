@@ -37,7 +37,7 @@ export function attachStream(scene: LevelScene): void {
   // (round 110) a fixed map with held rivers (an authored river table, world/rivertable.ts): sleep and wake as the
   // atlas level's (below) — what's still sleeps, its river held at its table; what's done there wakes and settles
   // (?settletol), then freezes again
-  if (!scene.level.stream && !scene.flow && riverMode() === 'table' && host.params.get('sleep') !== '0') {
+  if (!scene.level.stream && !scene.sleep && riverMode() === 'table' && host.params.get('sleep') !== '0') {
     scene.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, core.ring);
     scene.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
     core.sleep = scene.sleep;
@@ -78,13 +78,22 @@ export function attachStream(scene: LevelScene): void {
     // (round 79) the atlas's columns run past the window: what's above and below it drawn too (round 100: only when
     // the window doesn't hold the world's whole height)
     if (a && a.atlas.p.zTop > dims.zMax && core.renderer.enableBand(a.atlas.p.zTop)) scene.stream.refreshBand();
+    // (trackA-liquids, ?liquid=flow) the flow model's records of the chunks a region's land is written into: forgotten
+    if (scene.flow) {
+      const fl = scene.flow;
+      scene.stream.onWritten.push((lx, ly, w, h) => {
+        fl.water.forget(lx, ly, w, h);
+        fl.lava.forget(lx, ly, w, h);
+      });
+    }
     // (round 79) the sea past the window's edge: the sea in it stays
     if (a) core.globals.seaZ = a.atlas.p.sea - scene.stream.oz;
     // (round 128m, quarry) a slide in z down follows the ground as it is now too: a deep pit looked into
     if (a) scene.stream.groundNow = (x, y) => scene.heightAt(x, y);
     // (round 80) sleep and wake: what's still sleeps, what the player and the world's events touch wakes
-    if (a && host.params.get('sleep') !== '0') {
-      scene.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, scene.core.ring);
+    if (a && (host.params.get('sleep') !== '0' || scene.flow)) {
+      // (?liquid=flow: made with the level, before the flow model was installed — kept)
+      scene.sleep ??= new Sleep(dims.w / CHUNK, dims.h / CHUNK, scene.core.ring);
       scene.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
       core.sleep = scene.sleep;
       const sl = scene.sleep;

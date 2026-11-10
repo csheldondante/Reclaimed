@@ -3,6 +3,18 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-10 — trackA-liquids (Track A) — the unified flow model, phone bench first
+
+- "Yeah option B is correct. I would like the unified flow model and I would like to benchmark on phone and see if we
+  can afford it or if we should make it cheaper. Steady states should mean it mostly sleeps."
+- "the intent for agents is that they can traverse any walkable layer that they are connected to (we do eventually
+  want subterranean caves and floating islands even if not all cells have them)"
+- Working rules from the coordinator: `?liquid=flow|pipes` selects the model; the pipes stay the default until the user
+  approves the flow model on the phone; the pipes are retired only once the flow model holds the phone budget. Bench
+  targets after the Pixel 9a's first run: steady ~0, disturbed proportional to awake chunks, awake whole window ≤ pipes
+  + 50%, lava cheaper or asleep unless hot. On the phone, read the whole frame's GPU time diffs (vsync caps the frame;
+  per-pass timestamps are tiler noise).
+
 ## 2026-11-09 — round 128r (session 5, Track A) — the shortlist answered: seasons, discrete stages, a visible city
 
 Answers to Orchestrator A's shortlist questions (audit + ranked slices), verbatim:

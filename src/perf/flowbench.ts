@@ -2,7 +2,9 @@
 // (water_flux/water_depth, lava.ts) on the flow lab's scenes, each a frame-time toggle diff (memory "toggle, don't
 // timestamp": on a tiler the frame with a part against the frame without is the number to trust; GPU timestamps are
 // kept beside it where the device has them). One link; the page loads twice — the flow model, then the pipes:
-//   /?skipmenu=1&level=flowlab&flow=1&fresh=1&flowbench=1                 (&benchsecs=8 &benchspeed=1)
+//   /?skipmenu=1&level=flowlab&liquid=flow&fresh=1&flowbench=1                 (&benchsecs=8 &benchspeed=1)
+// (v2) Read the whole frame's GPU time diffs (gpuCostP50): a phone's frame is capped by vsync, and its per-pass
+// timestamps are noise (memory "toggle, don't timestamp" — here the toggle is read on the frame's GPU time).
 // States, each measured with the liquids on and with them paused:
 //   awake      every chunk kept awake: the pool pouring through its breach, the tunnel's stream and its waterfall, the
 //              trenches running off the map (the rivers), the lava vent — the model's whole cost
@@ -16,6 +18,7 @@ import { deviceFacts, keepAwake, letSleep, Panel, reportButtons, stat, wakeLog, 
 import { postDev } from './report-io';
 import { EventKind } from '../sim/globals';
 import { cellPos } from '../world/lattice';
+import { LIQUID } from '../flow/model';
 
 const NL = String.fromCharCode(10);
 declare const __BUILD_COMMIT__: string;
@@ -82,9 +85,12 @@ interface Row {
   liquidPassMs: number | null;
   /** each pass's ms a frame (mean), heaviest 10 */
   passes: [string, number][];
-  /** this phase's p50 against its state's all-on p50 (ms): what the paused part costs */
+  /** this phase's frame p50 against its state's all-on p50 (ms) — 0 where vsync caps the frame (a phone at 60 Hz) */
   costP50: number | null;
   costMean: number | null;
+  /** (v2) the whole frame's GPU time p50 against its state's all-on (ms): the number to read — per-pass timestamps on a
+   *  tiler are noise, and the frame time is capped by vsync */
+  gpuCostP50: number | null;
 }
 
 const LIQUID_PASS = /^(liquid-|water|lava|flow-)/;
@@ -97,7 +103,7 @@ function systemsOff(model: 'flow' | 'pipes', off: Phase['off'], known: Set<strin
 
 export async function flowBench(params: URLSearchParams): Promise<void> {
   const R = (window as unknown as { reclaimed: Rec }).reclaimed;
-  const model: 'flow' | 'pipes' = params.get('flow') === '1' ? 'flow' : 'pipes';
+  const model: 'flow' | 'pipes' = LIQUID;
   const panel = new Panel(document.body);
   const held = await keepAwake();
   const prev = localStorage.getItem(LAST);
@@ -141,6 +147,7 @@ export async function flowBench(params: URLSearchParams): Promise<void> {
     panel.say('flow model done — loading the pipes…');
     const u = new URL(location.href);
     u.searchParams.delete('flow');
+    u.searchParams.set('liquid', 'pipes');
     await wait(500);
     location.href = u.toString();
     return;
@@ -154,7 +161,7 @@ export async function flowBench(params: URLSearchParams): Promise<void> {
   const device = await deviceFacts(R.core.host);
   const report = {
     kind: 'reclaimed-flowbench',
-    version: 1,
+    version: 2,
     build: BUILD,
     startedAt: flowPart?.startedAt ?? null,
     finishedAt: new Date().toISOString(),
@@ -164,7 +171,11 @@ export async function flowBench(params: URLSearchParams): Promise<void> {
     wakeLog: [...wakeLog],
     secs,
     speed,
-    note: flowPart ? '' : 'the flow page’s rows were lost (the page opened without ?flow=1 first)',
+    notes: [
+      ...(flowPart ? [] : ['the flow page’s rows were lost (the page opened without ?liquid=flow first)']),
+      'read gpuCostP50 (the whole frame’s GPU time, liquids on minus off): the frame time is capped by vsync, so its diffs are 0 at 60 Hz',
+      'per-pass timestamps (passes, liquidPassMs) are unreliable on a tiler GPU (a phone): kept for the desktop only',
+    ],
     summary: summarise(all),
     rows: all,
   };
@@ -177,7 +188,7 @@ export async function flowBench(params: URLSearchParams): Promise<void> {
   }
   panel.say('flow bench done.');
   panel.text(
-    all.map((r) => `${r.model} ${r.phase}: p50 ${r.frameMs?.p50} p95 ${r.frameMs?.p95} ms, awake ${r.awake}${r.costP50 === null ? '' : `; costs ${r.costP50} ms p50 (${r.costMean} mean)`}${r.liquidPassMs === null ? '' : `; ts ${r.liquidPassMs} ms`}`).join(NL),
+    all.map((r) => `${r.model} ${r.phase}: GPU p50 ${r.gpuMs?.p50 ?? '-'} ms, frame p50 ${r.frameMs?.p50} ms, awake ${r.awake}${r.gpuCostP50 === null ? '' : `; the paused part costs ${r.gpuCostP50} ms GPU`}`).join(NL),
     true,
   );
   reportButtons(panel, body, false, 'flowbench', 'Reclaimed flow model bench', true);
@@ -188,7 +199,7 @@ export async function flowBench(params: URLSearchParams): Promise<void> {
 /** each state's cost, flow and pipes side by side (ms a frame: p50 diffs; timestamps where kept) */
 function summarise(rows: Row[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const r of rows) if (r.costP50 !== null) out[`${r.model}: ${r.phase}`] = { costP50: r.costP50, costMean: r.costMean, timestampsOn: rows.find((o) => o.model === r.model && o.phase === r.phase.split(',')[0])?.liquidPassMs ?? null };
+  for (const r of rows) if (r.costP50 !== null) out[`${r.model}: ${r.phase}`] = { gpuCostP50: r.gpuCostP50, frameCostP50: r.costP50 };
   return out;
 }
 
@@ -265,6 +276,7 @@ async function phaseRow(R: Rec, model: 'flow' | 'pipes', p: Phase, secs: number,
       passes: [...passes].map(([k, v]) => [k, per(v)] as [string, number]).sort((a, b) => b[1] - a[1]).slice(0, 10),
       costP50: base && base.frameMs && fm ? +(base.frameMs.p50 - fm.p50).toFixed(2) : null,
       costMean: base && base.frameMs && fm ? +(base.frameMs.mean - fm.mean).toFixed(2) : null,
+      gpuCostP50: base && base.gpuMs && g.length ? +(base.gpuMs.p50 - stat(g, 'ms')!.p50).toFixed(2) : null,
     };
   } finally {
     for (const n of off) R.core.sim.paused.delete(n);
