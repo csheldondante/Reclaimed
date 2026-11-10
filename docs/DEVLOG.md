@@ -21991,3 +21991,61 @@ flow lab at default (scratchpad liquids/muru-default.png, flowlab-default.png).
 - A pan from Muru to the nearest other town, Bumku (s53, 615 m): made as it neared the window (208 lots, 1.2 s to
   made), its living town given (90 people), nothing dropped, no page error.
 
+## 2026-11-10 — U2 round 4 (FC12): block relaxation, a change crosses a chunk a sweep (trackB-u2)
+
+Why: FC11 found far reaction set by propagation, about 1–2 cells a sweep at the phone's 2 sweeps a frame (11–27
+frames at 40 cells), not by the cap. Main approved FC12 first, gated on 40-cell reaction at the steering's floor.
+
+- **relaxBlock** (agents.wgsl) is one 16×16 workgroup a front chunk.
+  - For each field the chunk's mask names, it loads the chunk plus a one-column halo (distances and the seed-id plane,
+    10.4 KB) into workgroup memory.
+  - It relaxes RELAX_K passes there and writes back what moved past DIST_EPS, marking the chunk for that field.
+  - Relax's rules are kept: confined fields, CPU and GPU seeds, the road field, deep water, roads, the cap. The seed-id
+    check happens at load: a value whose seed is gone loads as FAR.
+  - frontBuild adds FRONT_WG (1) workgroups a chunk.
+  - `?blockrelax=0` gets relax's front kernel back, `?relaxk=N` sets K (default 16). The unscoped whole-window path is
+    unchanged.
+- **Per-field CPU marks are the default:** markChunks marks only the fields whose CPU seeds changed (FC11's
+  recommendation 3). `?seedcell=1` now only quantises seed moves to cells.
+- **frontDbg** is counted only under `?agentprof=1` (`u2.w`); probeLog reads and clears it each tick. No unbounded
+  growth without it.
+
+Reaction latency (huntreact.test.ts, 128² flat, 2 sweeps, frames to the hunter's velocity turning toward its new
+target; 6-cell gap 8–9 = the steering floor):
+
+| | 40-cell gap |
+|---|---|
+| relax's front kernel | 17–24 |
+| K 1 | 12–24 |
+| K 4 | 11–12 |
+| K 8 | 10–11 |
+| K 16 (default) | 9–10 |
+| K 24 | 9 |
+
+The test's bound is now ≤ 10 frames for every case: FC12's gate, passing.
+
+Correctness (huntseed.test.ts): with block relaxation the GPU-seeded field (seed-id included) matches the CPU BFS after
+each wave in 6–7 frames; with relax's front kernel it took 45–48. It empties in 4 frames once the last target dies.
+The CPU-seeded baseline takes 5–34 frames: its in-place count-up.
+
+Cost (huntbench, town recipe, 200 v 200, 412×915, q=low, 20 s at 1x, `?huntgpu=1`; relax ms mean / p95, desktop):
+
+| Kernel | relax ms | asked a sweep | sweeps carrying |
+|---|---|---|---|
+| relax's front kernel | 0.41 / 0.54; 0.42 / 0.53 | 96–103 | 100% |
+| K 1 | 0.45 / 0.57 | 99 | 100% |
+| K 4 | 0.52 / 0.61 | 95 | 100% |
+| K 8 | 0.54 / 0.66 | 102 | 100% |
+| K 16 | 0.81 / 1.13; 0.88 / 1.08 | 85–92 | 96–99% |
+| K 24 | 0.84 / 1.22 | 72 | 83% |
+
+- K 16 roughly doubles relax on desktop (+0.4 ms at the 32-chunk cap). K 8 is near the floor for +0.13 ms.
+- The phone bench must set K: the desktop slope says little about a tiler GPU's workgroup memory.
+- The front still saturates, because foes and the goals still move CPU seeds; they go next (the round order: foes and
+  goals onto GPU seeding, then the paged atlas).
+- The per-page front fits the block shape directly: a page is one field over one chunk, which is relaxBlock's
+  workgroup for one field (UNIT_MINDS_U2.md §5d).
+
+Gates: typecheck clean; GPU tier 197 passed, 11 expected fail (the U2 skeletons), 5 skipped; unit tier 863 passed, 3
+expected fail. fortressfollow: 40 of 40 samples on screen, plus 14 of 14 in a 20 s run with shots — looked at
+(follow_012: villagers on the roads, a miner at the quarry).

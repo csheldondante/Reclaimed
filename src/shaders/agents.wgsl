@@ -75,7 +75,8 @@ struct AgentParams {
   // z its hp (f32 bits) when w is 1
   rekinds: array<vec4<u32>, 8>,
   // (U2) x the GPU-seeded hunt field (NFIELDS: none; it keeps each value's seed: relax), y the fields the CPU's marks
-  // this tick are for (FC11: a seed moved; all for a confine, a scope drawn in, the roads), zw unused
+  // this tick are for (FC11: a seed moved; all for a confine, a scope drawn in, the roads), z unused, w 1: ?agentprof=1
+  // (frontDbg counted)
   u2: vec4<u32>,
 };
 fn arriveR(f: u32) -> vec2<f32> {
@@ -115,6 +116,8 @@ fn inScope(q: vec2<i32>) -> bool { return q.x >= i32(AB[0].x) && q.y >= i32(AB[0
 /** (round 107, agentspike) chunks a sweep relaxes at most: a change that reaches over more (a shore drying across a
  *  town, a field starting over) is relaxed over several sweeps, the rest carried — no tick carries more than this */
 const FRONT_CAP: u32 = 32u;
+/** (FC12) workgroups a front chunk's relax takes: 4 for relax's front kernel, 1 for relaxBlock (agents.ts sets it) */
+const FRONT_WG: u32 = 4u;
 // (U2, FC10: [k] the k-th chunk of the front, [FRONT_CAP + k] the fields it is relaxed for)
 @group(0) @binding(36) var<storage, read_write> frontList: array<u32>;
 /** (U2, FC10) the fields a chunk's marks name (a bit a field, NFIELDS ≤ 16): the low half of a dirty word; what's marked
@@ -450,6 +453,164 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 }
 
+// ---- (FC12, UNIT_MINDS_U2.md §5c) block relaxation ------------------------------------------------------------------
+// One workgroup a front chunk (16 x 16 columns, a thread a column). For each field the front names: the chunk's
+// distances and a one-column halo from its neighbours are loaded into workgroup memory once, relaxed RELAX_K times
+// there (each pass reads the last: a change crosses the chunk in one sweep, not a column or two), and written back
+// where they moved past DIST_EPS (marking the chunk for that field, as relax does). The halo stays as loaded: the
+// neighbours' own sweeps carry what changes there. The rules are relax's: confined fields, the CPU's and the GPU's seeds,
+// the road field, deep water, roads, the cap, and the hunt field's seed-id (each value's seed, checked as it's loaded:
+// a value whose seed is gone is loaded as FAR, so the values it made empty at once).
+// (?blockrelax=0: relax's front kernel instead; ?relaxk=N the passes)
+const RELAX_K: u32 = 16u;
+const BT: u32 = 18u;
+const BCELLS: u32 = 324u;
+var<workgroup> bDist: array<f32, 1296>;
+var<workgroup> bSrc: array<u32, 1296>;
+var<workgroup> bMask: u32;
+fn bAt(lx: u32, ly: u32, k: u32) -> u32 { return (ly * BT + lx) * NAV_K + k; }
+const BNONE: u32 = 0xffffffffu;
+
+@compute @workgroup_size(16, 16)
+fn relaxBlock(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let c = frontList[wg.x];
+  if (li == 0u) { bMask = frontList[FRONT_CAP + wg.x]; }
+  let fm = workgroupUniformLoad(&bMask);
+  let cxy = vec2<u32>(c % G.chunksX, c / G.chunksX);
+  let o = vec2<i32>(cxy * G.chunkSize);
+  let ch = pageIdx(cxy);
+  let p = o + vec2<i32>(lid.xy);
+  let inside = u32(p.x) < G.mapW && u32(p.y) < G.mapH;
+  let N = ns();
+  let cap = f32(min(G.mapW + G.mapH, (AB[0].z - AB[0].x) + (AB[0].w - AB[0].y))) * 6.0;
+  var i = 0u;
+  if (inside) { i = colIdxI(p); }
+  // (this column's surfaces, their links into the tile and each step's cost: fixed through the sweep)
+  var nk = 0u;
+  var nT: array<u32, 24>;
+  var nC: array<f32, 24>;
+  if (inside) {
+    for (var k = 0u; k < NAV_K; k++) {
+      let s = i * NAV_K + k;
+      if (navZ(s) < 0.0) { break; }
+      let z = costZ(s);
+      if (z < 0.0) { break; }
+      nk = k + 1u;
+      let deepHere = costDeep(s);
+      for (var dd = 0u; dd < NDIR; dd++) {
+        nT[k * NDIR + dd] = BNONE;
+        let l = navLink(s, dd);
+        if (l == 0u) { continue; }
+        let qn = nbr(p, dd);
+        if (!inScope(qn)) { continue; }
+        let t = colIdxI(qn) * NAV_K + l - 1u;
+        if (costDeep(t) && !deepHere) { continue; }
+        let lq = vec2<u32>(qn - o + vec2<i32>(1));
+        nT[k * NDIR + dd] = bAt(lq.x, lq.y, l - 1u);
+        let road = 1.0 - (1.0 - ROAD_COST) * 0.5 * (onRoad(p) + onRoad(qn));
+        nC[k * NDIR + dd] = stepCost(z, costZ(t), costWet(t)) * road;
+      }
+    }
+  }
+  for (var f = 0u; f < AP.n.z; f++) {
+    if (((fm >> f) & 1u) == 0u) { continue; }
+    // (a field with no seeds: nowhere — set once, as relax)
+    if ((AP.n2.w & (1u << f)) == 0u) {
+      if (((AP.n3.w >> f) & 1u) != 0u) { for (var k = 0u; k < nk; k++) { dist[f * N + i * NAV_K + k] = FAR; } }
+      continue;
+    }
+    let bySource = f == AP.u2.x;
+    // the tile and its halo, loaded (a value whose seed is gone: FAR)
+    for (var e = li; e < BCELLS; e += 256u) {
+      let q = o + vec2<i32>(i32(e % BT), i32(e / BT)) - vec2<i32>(1);
+      let ok = q.x >= 0 && q.y >= 0 && u32(q.x) < G.mapW && u32(q.y) < G.mapH && inScope(q);
+      var qi = 0u;
+      if (ok) { qi = colIdxI(q); }
+      for (var k = 0u; k < NAV_K; k++) {
+        var v = FAR;
+        var sv = 0u;
+        if (ok) {
+          v = dist[f * N + qi * NAV_K + k];
+          if (bySource && v < FAR) {
+            sv = atomicLoad(&seedMask[N + qi * NAV_K + k]);
+            let live = sv != 0u && ((((atomicLoad(&seedMask[sv - 1u]) >> f) & 1u) != 0u) || dist[f * N + sv - 1u] == 0.0);
+            if (!live) {
+              v = FAR;
+              sv = 0u;
+            }
+          }
+        }
+        bDist[e * NAV_K + k] = v;
+        bSrc[e * NAV_K + k] = sv;
+      }
+    }
+    workgroupBarrier();
+    // (this column's fixed values: seeds, and off a confined field's place)
+    let fp = AP.fieldPlace[f / 4u][f % 4u];
+    var fixed: array<u32, 4>;
+    for (var k = 0u; k < nk; k++) {
+      let s = i * NAV_K + k;
+      fixed[k] = 0u;
+      if (fp != 0u && !onPlace(s, fp)) { fixed[k] = 2u; continue; }
+      var seed = (f == ROAD_FIELD && onNet(p)) || ((atomicLoad(&seedMask[s]) >> f) & 1u) != 0u;
+      for (var e = 0u; e < AP.n.y && !seed; e++) {
+        let sd = AP.seeds[e];
+        if (u32(sd.w) == f && all(cellAt(sd.xy) == p) && surfaceNear(i, sd.z) == k) { seed = true; }
+      }
+      if (seed) { fixed[k] = 1u; }
+    }
+    let me = vec2<u32>(lid.xy) + vec2<u32>(1u);
+    for (var it = 0u; it < RELAX_K; it++) {
+      var nv: array<f32, 4>;
+      var nsrc: array<u32, 4>;
+      for (var k = 0u; k < nk; k++) {
+        if (fixed[k] == 1u) { nv[k] = 0.0; nsrc[k] = i * NAV_K + k + 1u; continue; }
+        if (fixed[k] == 2u) { nv[k] = FAR; nsrc[k] = 0u; continue; }
+        var d = FAR;
+        var sv = 0u;
+        for (var dd = 0u; dd < NDIR; dd++) {
+          let t = nT[k * NDIR + dd];
+          if (t == BNONE) { continue; }
+          let dn = bDist[t];
+          if (dn >= FAR) { continue; }
+          let dt = dn + nC[k * NDIR + dd];
+          if (dt < d) {
+            d = dt;
+            sv = bSrc[t];
+          }
+        }
+        nv[k] = select(d, FAR, d > cap);
+        nsrc[k] = select(sv, 0u, nv[k] >= FAR);
+      }
+      workgroupBarrier();
+      for (var k = 0u; k < nk; k++) {
+        bDist[bAt(me.x, me.y, k)] = nv[k];
+        bSrc[bAt(me.x, me.y, k)] = nsrc[k];
+      }
+      workgroupBarrier();
+    }
+    // written back where it moved (DIST_EPS, as relax), the chunk marked for the field
+    for (var k = 0u; k < nk; k++) {
+      let s = i * NAV_K + k;
+      let nd = bDist[bAt(me.x, me.y, k)];
+      let od = dist[f * N + s];
+      var moved = abs(nd - od) > DIST_EPS || (nd >= FAR) != (od >= FAR);
+      if (bySource) {
+        let ns2 = bSrc[bAt(me.x, me.y, k)];
+        if (atomicLoad(&seedMask[N + s]) != ns2) {
+          atomicStore(&seedMask[N + s], ns2);
+          moved = true;
+        }
+      }
+      if (moved) {
+        dist[f * N + s] = nd;
+        atomicOr(&dirtyNext[ch], 1u << f);
+      }
+    }
+    workgroupBarrier();
+  }
+}
+
 // ---- the front (round 104, simscale — agents/scope.ts) ------------------------------------------------------------
 // A sweep relaxes only the chunks of the scope (the box AB[0], whole chunks) where something changed in the last one,
 // and those next to them: frontReset, frontBuild (one thread a chunk of the box: it, or a neighbour in the box,
@@ -494,9 +655,9 @@ fn frontBuild(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   if (fm == 0u) { return; }
-  // (FC11: what asks, a field at a time — a change round it (low) or carried (high, not also changed); read under
-  // ?agentprof=1)
-  for (var f = 0u; f < NFIELDS; f++) {
+  // (FC11: what asks, a field at a time — a change round it (low) or carried (high, not also changed); counted only
+  // under ?agentprof=1, which reads and clears them each tick: AP.u2.w)
+  for (var f = 0u; f < NFIELDS && AP.u2.w != 0u; f++) {
     if (((fm >> f) & 1u) == 0u) { continue; }
     var changed = false;
     for (var dy = -1; dy <= 1; dy++) {
@@ -515,7 +676,8 @@ fn frontBuild(@builtin(global_invocation_id) id: vec3<u32>) {
     atomicOr(&dirtyNext[pageIdx(b.xy)], fm << 16u);
     return;
   }
-  atomicAdd(&frontArgs[0], 4u);
+  // (FC12: the relax kernel's workgroups a chunk — relax's front 4 (8 x 8 each), relaxBlock 1)
+  atomicAdd(&frontArgs[0], FRONT_WG);
   frontList[k] = b.y * G.chunksX + b.x;
   frontList[FRONT_CAP + k] = fm;
 }
