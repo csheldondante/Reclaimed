@@ -21977,3 +21977,23 @@ among them), and no structure routed that isn't reached.
 edgenet.ts to routegraph.ts, which is among GEN_VERSION's inputs (the generator reaches edgenet.ts), so the hash moved.
 No land changed: every measurement above is the same on the new capture (65/65; cliffs 49 → 44, 37 kept; paths and
 doors as listed; the riders' property).
+
+## 2026-11-09 — DA-A22 paused before the cutover: curves and decks in the graph; the lanes' look
+
+The curved main roads and bridge decks are now in the GPU graph. Each curve becomes nodes 2 m apart, and a node on a deck
+takes the deck's height (world z, from the layout's linear features). Curve nodes are chained to each other, and nodes off
+a deck join the grid vertices within 2.6 m. These curve edges aren't the layout's: the lanes are still laid on the grid's
+edges. The cut kernel uses a deck end's fixed height and sees no water on it. Test (townride): a rider crossing the
+river rides the deck, 6 points at 101.03 m on the 100.98 m deck.
+
+The lanes' look: `?routedebug=1` has a paths mode (`setPaths`), and scripts/lab/routelanes.mjs shoots today's lanes
+against the GPU's. The GPU lays 114 lane edges to the CPU's 84 because its lanes form one shortest-path tree, not laid
+nearest-first onto each other. Main asked for merged lanes. A first try relaxed field 1 again with the first pass's lanes at half cost and
+traced again. It changed nothing (still 114): every structure's own lane is the cheapest way down, so it keeps it. The
+try was dropped, not committed. What would merge the lanes: lay them in batches nearest the middle first, each batch's
+field seeded with the lanes laid before it (relaxed on from the last field: costs only fall). On the start town that is
+about 9 batches of 8, each needing about one more submit.
+
+Paused (main, 2026-11-09): the city's readability work (less uniformly tall, more space between buildings for the
+isometric view) may change how roads are made, so the cutover waits. Play stays on the CPU edge net and Router.
+Nothing is deleted.

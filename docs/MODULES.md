@@ -156,7 +156,7 @@ The atlas: the whole generated world map (coarse sim, GPU finish, far land, geys
 - `plan.ts` (499) — A town's plan (round 128m, onetown; API: `typeIndex`, `wallTileOf`, `towered`, `StructureAttrs` +4.
 - `quadgrid.ts` (218) — (round 128m, onetown) A town's cells from any quad mesh: the grid one plan is painted on (build/plan.ts). API: `CellGrid`, `QuadGrid`.
 - `routegpu.ts` (577) — The town's route network on the GPU (DA-A22, docs/design/ROUTES_ON_GPU.md; API: `REACH_BIT`, `RC`, `GATE_CAP`, `RIDE_GROUPS` +7.
-- `routegraph.ts` (261) — The town's route graph as the GPU walks it (DA-A22, docs/design/ROUTES_ON_GPU.md; API: `PLAN_WALL`, `PLAN_INNER`, `PLAN_SPAN`, `PLAN_BUILT` +8.
+- `routegraph.ts` (356) — The town's route graph as the GPU walks it (DA-A22, docs/design/ROUTES_ON_GPU.md; API: `PLAN_WALL`, `PLAN_INNER`, `PLAN_SPAN`, `PLAN_BUILT` +12.
 - `runs.ts` (219) — (round 128d) Occupancy as runs per cell: the levels a cell holds, as sorted half-open runs [lo, hi), each … API: `Run`, `CellRuns`.
 - `shapes.ts` (163) — (round 128d) Painted shapes make landmarks, Townscaper's way: the player paints blocks, and some shapes … API: `COURT_MAX`, `TOWER_LEVELS`, `ShapeGrid`, `Dome` +3.
 - `site.ts` (170) — A town as one thing (round 128m, onetown): its grid, its plan and what stands of it. API: `SiteBox`, `gridIdOf`, `SiteData`, `TownSite` +2.
@@ -222,7 +222,7 @@ Fortress mode: the fortress, its economy, pieces, claims, life (workers) and its
 - `raid.ts` (289) — The attack wave's rules (round 128l, m4: fortress M5-lite, docs/DECISIONS.md round 128l "the attack wave"). API: `RAID`, `LOOT_ORDER`, `waveSize`, `Side` +13.
 - `raiders.ts` (744) — The attack wave on the fortress (round 128l, m4: fortress M5-lite; API: `RAID_FACTION`, `RaidIO`, `RaidReport`, `FortressRaid`.
 - `recipes.ts` (161) — The fortress's recipes (round 128l, m4: fortress slice 1, milestone 4 — "the blacksmith makes weapons from … API: `Recipe`, `RECIPES`, `recipeTakes`, `TrainRoom` +2.
-- `routedebug.ts` (173) — ?routedebug=1 (diagnostic, Track A): the fortress town's edge network over the view — every edge the … API: `RouteDebug`.
+- `routedebug.ts` (210) — ?routedebug=1 (diagnostic, Track A): the fortress town's edge network over the view — every edge the … API: `RouteDebug`.
 - `testing.ts` (12) — (round 128m, onetown) Tests' fortress: the player editing a town with nothing on it yet (build/site.ts … API: `fortressOn`.
 - `townroutes.ts` (48) — (DA-A22) The fortress town's route network on the GPU (build/routegpu.ts): its graph made from the town's … API: `TownRoutes`.
 - `townwork.ts` (391) — A town's work as TownLife asks for it (DA-A6, round 128o; API: `LOAD`, `SITES`, `RIPE_LOAD`, `FortressWorkIO` +1.
@@ -722,7 +722,7 @@ WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slo
 - `tilelandgpu.wgsl` (101) — ---- a render-only tile's bake, set up on the GPU (round 105, tilelatency;
 - `tilelist.wgsl` (77) — ---- tilelist.wgsl …
 - `tiles.wgsl` (417) — ---- the world-anchored tile cache (round 103, ?tiles=1;
-- `townroute.wgsl` (562) — ---- the town's route network on the GPU (DA-A22, docs/design/ROUTES_ON_GPU.md;
+- `townroute.wgsl` (575) — ---- the town's route network on the GPU (DA-A22, docs/design/ROUTES_ON_GPU.md;
 - `townstamp.wgsl` (127) — ---- the town's columns (round 65, build/town.ts) --------------------------- The town is real matter: its …
 - `treequery.wgsl` (107) — ---- treequery.wgsl …
 - `unitpick.wgsl` (38) — ---- unitpick.wgsl …
