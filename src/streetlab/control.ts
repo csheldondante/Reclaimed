@@ -41,6 +41,8 @@ const P: Record<string, Spec> = {
   townR: { label: 'town radius', units: 'cells', min: 32, max: 200, step: 1, def: 120, stage: 'phi' },
   cliff: { label: 'cliff slope', units: 'rise/run', min: 0.3, max: 4, step: 0.05, def: 1.2, help: 'smoothed ground steeper than this is a cliff: a barrier, like the water', stage: 'field' },
   blockLen: { label: 'block length', units: 'cells', min: MIN_BLOCK, max: 64, step: 1, def: 18, help: 'cross streets this far apart along a line', stage: 'trace' },
+  gap: { label: 'gap fill', units: '', min: 0, max: 1, step: 1, def: 1, choices: ['off', 'on'], help: 'the town’s empty land (no block, no landmark) split into blocks along minor roads', stage: 'lots' },
+  bigBlock: { label: 'big block', units: 'cells²', min: 0, max: 4000, step: 50, def: 900, help: 'a block this big gets a minor road at its first two splits (0 none)', stage: 'lots' },
   maxLot: { label: 'max lot area', units: 'cells²', min: 16, max: 600, step: 4, def: 90, stage: 'lots' },
   minLot: { label: 'merge (min lot area)', units: 'cells²', min: 4, max: 300, step: 2, def: 30, help: 'a split that would leave a lot under this is not made', stage: 'lots' },
   majorWidth: { label: 'major street width', units: 'cells', min: 1, max: 12, step: 0.5, def: 4, stage: 'mesh' },

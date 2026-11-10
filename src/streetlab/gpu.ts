@@ -80,6 +80,10 @@ export interface StreetParams {
   lmKind: number;
   lmRmin: number;
   lmRmax: number;
+  /** (m3f) the town's empty land partitioned into blocks (1 on); a block this big (cells²) gets roads at its first
+   *  two splits (0 none) */
+  gap: number;
+  bigBlock: number;
 }
 /** (m3e) what a landmark site holds */
 export const LANDMARKS = ['plaza', 'big structure'] as const;
@@ -124,7 +128,7 @@ const UNI_BYTES = 176;
 const KERNELS = [
   'fill', 'blur', 'feat', 'jfa', 'jdist', 'autoPts', 'phi', 'tensor', 'trace', 'mis', 'blocks',
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotMesh', 'marks', 'meshCap',
-  'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh',
+  'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad',
 ] as const;
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
@@ -142,6 +146,13 @@ const MIS_ROUNDS = 4;
 /** (m3d) merge rounds for the bad blocks */
 const MERGE_ROUNDS = 3;
 const NONE = 0xffffffff;
+/** (m3f) streets.wgsl TILE, NODEW, GAP_LEVELS, ROAD_ROOM, GAP_ROOM; rounds of the gap regions' labelling */
+const TILE = 4;
+const NODEW = 12;
+const GAP_LEVELS = 3;
+const ROAD_ROOM = 1024;
+const GAP_ROOM = 512;
+const LABEL_ROUNDS = 12;
 const ALL = ['height', ...STAGES] as const;
 
 interface Uni {
@@ -204,7 +215,8 @@ export class StreetLabGpu {
     this.B.AL1 = buf('kept b', T * 4);
     this.B.BQ = buf('blocks', 3 * T * BQW * 4);
     this.B.LOTS = buf('lots', LOT_ROOM * LW * 4);
-    this.B.CNT = buf('lot count', 16);
+    // (the lots' count, the listed roads' and the gap blocks', then the roads: m3f)
+    this.B.CNT = buf('counts and roads', (4 + ROAD_ROOM * 4) * 4);
     // (m3: the points, the seeds, their occupancy grid, the two floods ping-ponged; AL1 the streets drawn)
     this.B.PTS = buf('points', NPTS * PW * 4);
     this.B.SD = buf('seeds', T * SDW * 4);
@@ -214,6 +226,11 @@ export class StreetLabGpu {
     // 64 of x, y, r, kind)
     this.B.JC = buf('junctions', 2 * T * 4);
     this.B.LM = buf('landmarks', (1 + 64 * 4) * 4);
+    // (m3f: the gap fill's tiles — coverage, labels ping-ponged, heap indices — its region nodes and its blocks)
+    const G = this.tiles();
+    for (const n of ['GC', 'GL0', 'GL1', 'GS']) this.B[n] = buf(n, G * 4);
+    this.B.NODE = buf('gap nodes', G * 16 * NODEW * 4);
+    this.B.GB = buf('gap blocks', GAP_ROOM * 3 * BQW * 4);
     this.verts = buf('mesh', VERT_ROOM * 32, GPUBufferUsage.STORAGE);
     this.args = buf('mesh args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     device.queue.writeBuffer(this.args, 0, new Uint32Array([0, 1, 0, 0]));
@@ -236,6 +253,10 @@ export class StreetLabGpu {
   private lattice(blockLen: number): [number, number] {
     const sp = blockLen / 2;
     return [Math.ceil((this.world.w + 0.5) / sp), Math.ceil((this.world.h * ROW_H) / sp)];
+  }
+  /** (m3f) the gap fill's tiles (streets.wgsl gDims, TILE) */
+  private tiles(): number {
+    return (Math.floor(this.world.w / TILE) + 1) * (Math.floor((this.world.h * ROW_H) / TILE) + 1);
   }
   /** the occupancy grid's words for a block length (streets.wgsl occDims, four line layers) */
   private occWords(bl: number): number {
@@ -294,7 +315,7 @@ export class StreetLabGpu {
     [u.box?.[0] ?? 0, u.box?.[1] ?? 0, PHI_MODE[p.majors], p.cross].forEach((v, j) => dv.setUint32(112 + j * 4, v >>> 0, true));
     [p.band, p.grade, p.shape, this.sel + 1].forEach((v, j) => dv.setFloat32(128 + j * 4, v, true));
     [p.bad, p.lmMult, p.lmN, p.lmKind].forEach((v, j) => dv.setFloat32(144 + j * 4, v, true));
-    [p.lmRmin, p.lmRmax, 0, 0].forEach((v, j) => dv.setFloat32(160 + j * 4, v, true));
+    [p.lmRmin, p.lmRmax, p.bigBlock, p.gap].forEach((v, j) => dv.setFloat32(160 + j * 4, v, true));
     return i;
   }
 
@@ -392,6 +413,33 @@ export class StreetLabGpu {
     }
   }
 
+  /** (m3f) the gap fill: the empty tiles labelled into regions, split recursively, the leaves blocks (GB) */
+  private gapFill(): void {
+    const B = this.B;
+    const G = this.tiles();
+    const T = this.seeds[0] * this.seeds[1];
+    const kG = (name: Kernel, u: Uni, bufs: Bufs) => this.k(name, u, bufs, Math.ceil(G / 64));
+    const kN = (name: Kernel, u: Uni, bufs: Bufs) => this.k(name, u, bufs, Math.ceil((G * 16) / 64));
+    this.fill(B.GC, G, 0);
+    this.fill(B.GS, G, 1);
+    this.fill(B.NODE, G * 16 * NODEW, 0);
+    this.fill(B.GB, GAP_ROOM * 3 * BQW, 0);
+    this.k('gcov', {}, { 1: B.BQ, 5: B.GC }, Math.ceil((3 * T) / 64));
+    kG('gmask', {}, { 1: B.GC, 2: B.LM, 4: B.FD, 5: B.GL0 });
+    let [a, b] = [B.GL0, B.GL1];
+    for (let r = 0; r < LABEL_ROUNDS; r++) {
+      kG('glabel', {}, { 1: a, 5: b });
+      [a, b] = [b, a];
+    }
+    for (let lv = 0; lv <= GAP_LEVELS; lv++) {
+      kG('gacc', {}, { 1: a, 2: B.GS, 6: B.NODE });
+      if (lv === GAP_LEVELS) break;
+      kN('gnode', { k: lv }, { 4: B.FD, 5: B.NODE, 6: B.CNT });
+      kG('gsplit', {}, { 1: a, 2: B.NODE, 5: B.GS });
+    }
+    kN('gleaf', {}, { 1: B.GC, 4: B.FD, 5: B.NODE, 6: B.CNT, 7: B.GB });
+  }
+
   private async once(p: StreetParams, from0: Stage, box0?: Box): Promise<StreetTimes> {
     if (this.dead) throw new Error('streetlab: disposed');
     this.p = p;
@@ -463,8 +511,10 @@ export class StreetLabGpu {
     // fine: the lots
     if (runs('lots')) {
       this.cp = enc.beginComputePass(this.pass('lots'));
-      this.k('fill', { count: 4, k: 0 }, { 5: B.CNT }, 1);
+      this.fill(B.CNT, 4, 0);
+      if (p.gap) this.gapFill();
       this.k('lots', { count: LOT_ROOM }, { 1: B.BQ, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * this.seeds[0] * this.seeds[1]) / 64));
+      if (p.gap) this.k('lots', { count: LOT_ROOM }, { 1: B.GB, 5: B.LOTS, 6: B.CNT }, Math.ceil((3 * GAP_ROOM) / 64));
       this.cp.end();
     }
     // the mesh: roads, lots and the points' markers
@@ -474,6 +524,7 @@ export class StreetLabGpu {
     // (one thread a street's piece: eight a vector street, TP a trace)
     if (vector) this.k('vroad', {}, { 1: B.SD, 2: B.AL1, 3: HH, 7: this.verts }, Math.ceil((this.seeds[0] * this.seeds[1] * 8) / 64), 1, true);
     else this.k('roadMinor', {}, { 1: B.TR, 2: B.AL0, 3: HH, 7: this.verts }, this.seeds[0] * this.seeds[1], 1, true);
+    this.k('groad', {}, { 1: B.CNT, 3: HH, 4: B.FD, 7: this.verts }, (ROAD_ROOM * 8) / 64, 1, true);
     this.k('lotMesh', { count: LOT_ROOM }, { 1: B.LOTS, 2: B.CNT, 3: HH, 4: B.FD, 5: B.LM, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
     if (vector && p.lmMult > 0) this.k('lmMesh', {}, { 1: B.LM, 3: HH, 7: this.verts }, (64 * 48) / 64, 1, true);
     if (PHI_MODE[p.majors] !== 0) this.k('marks', { mode: this.sel + 1 }, { 1: B.PTS, 3: HH, 7: this.verts }, 1, 1, true);

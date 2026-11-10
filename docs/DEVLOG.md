@@ -20796,3 +20796,26 @@ or big structures, so that no triangles are left, and the merge picks up whateve
 - **Measurements:** headless D3D11, median of 7. Full rebuild 1.2 ms on Muru and 1.2–1.4 ms on river: trace
   0.41–0.52 ms, mesh 0.19–0.21 ms. The site mesh was 0.15 ms slower until it ran one thread per piece instead of
   one thread per site.
+
+## 2026-11-10 — trackA-streetlab m3f: why the river bend was empty, gap fill, roads in big blocks
+
+The user asked why some areas, such as the bend in the river, got no buildings or roads, and asked for the empty
+land to be partitioned and big blocks to be split.
+- **Diagnosis:** at the river bend, the seeds on line 0 (the quay) had no cross street. In the tongue of land between
+  the river's arms, φ never reaches the next level, so there is no line 1 and no seed of the other parity to pair
+  with. The nearest one is across the water or more than 2.5 spacings away. **Fix:** when pairing fails, `vseg`
+  marches up ∇φ in 2-cell steps. It ends at the next line (a line end with no seed), at the ridge where φ stops
+  rising, or at the town's edge. A block between two ridge ends or edge ends has no street on its far side, so its
+  lots sit back to back.
+- **Gap fill (lots stage, 4-unit tiles):** tiles that no block quad or landmark covers, inside the town and
+  buildable, are eroded by one tile so slivers and shore strips drop out. They are then labelled into regions by 12
+  rounds of min label plus a pointer jump. Each region is split recursively, 3 levels, while it is bigger than a
+  block or its box is under 3/4 full. Moments are accumulated per (root, heap index) with u32 atomics. Each split
+  goes through the centroid, across the major axis snapped to ∇φ or the contour, and becomes a listed minor road. Each
+  leaf that is at least 0.6 full becomes a block: its oriented box from the moments, shrunk until its corners and
+  edge middles are clear of the blocks and the water. Leaves are lotted like the other blocks.
+- **Big blocks:** a piece of at least `bigBlock` cells² gets a road at its first two longest-edge splits. The cut is
+  a street on both sides, and its segment goes into the same road list, which lives in the lot-count buffer.
+- **Measurements:** headless D3D11, median of 7. Full rebuild 1.44–1.52 ms on Muru and 1.61–1.83 ms on river. The
+  lots stage is 0.33–0.43 ms, against 0.05–0.09 ms before, so the gap fill costs about 0.27 ms. River lots go from
+  338 to 428, Muru from 306 to 356, coast from 193 to 264.

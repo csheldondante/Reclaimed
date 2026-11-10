@@ -27,7 +27,7 @@ struct U {
   o: vec4<u32>, // (m3) a boxed pass's first column (x, y), φ's mode (0 distance, 1 smooth min, 2 bump), cross streets (0 vector JFA, 1 tensor)
   s: vec4<f32>, // (m3c) the band height, the cart grade, the shape (0 none, 1 terraces, 2 spiral, 3 switchbacks), the spiral's point + 1
   q: vec4<f32>, // (m3d) bad cells (0 merge, 1 plaza, 2 left); (m3e) the landmarks' radius × (0 none), the cross streets a busy junction has, their kind (0 plaza, 1 big structure)
-  l: vec4<f32>, // (m3e) a landmark's smallest and largest radius, 0, 0
+  l: vec4<f32>, // (m3e) a landmark's smallest and largest radius; (m3f) a big block's area (0: no roads in them), gap fill (1 on)
 };
 @group(0) @binding(0) var<uniform> u: U;
 
@@ -545,11 +545,23 @@ fn lots(@builtin(global_invocation_id) g: vec3<u32>) {
       let ek = ecls(q.e, k); let e1 = ecls(q.e, k + 1u); let e2 = ecls(q.e, k + 2u); let e3 = ecls(q.e, k + 3u);
       var a: Quad;
       a.v = array<vec2<f32>, 4>(v0, c1, c2, v3);
-      a.e = ek | (e2 << 16u) | (e3 << 24u);
+      // (m3f: a big block's first two splits are roads — the cut a street both sides, its segment listed)
+      let road = u.l.z > 0.0 && A >= u.l.z && q.d < 2u;
+      let cut = select(0u, 2u, road);
+      if (road) {
+        let k2 = atomicAdd(&w6[1], 1u);
+        if (k2 < ROAD_ROOM) {
+          atomicStore(&w6[4u + k2 * 4u], bitcast<u32>(c1.x));
+          atomicStore(&w6[5u + k2 * 4u], bitcast<u32>(c1.y));
+          atomicStore(&w6[6u + k2 * 4u], bitcast<u32>(c2.x));
+          atomicStore(&w6[7u + k2 * 4u], bitcast<u32>(c2.y));
+        }
+      }
+      a.e = ek | (cut << 8u) | (e2 << 16u) | (e3 << 24u);
       a.d = q.d + 1u;
       var b: Quad;
       b.v = array<vec2<f32>, 4>(c1, v1, v2, c2);
-      b.e = ek | (e1 << 8u) | (e2 << 16u);
+      b.e = ek | (e1 << 8u) | (e2 << 16u) | (cut << 24u);
       b.d = q.d + 1u;
       st[n] = a;
       st[n + 1u] = b;
@@ -919,6 +931,12 @@ const SDW: u32 = 12u;
 const SID: u32 = 0x1fffu;
 /** (m3d) a cross street that ends on the town's edge — the circle a closing line */
 const EDGE: u32 = 0xfffffffeu;
+/** (m3f) a cross street that ends on a ridge of φ (no next line there), or on the next line with no seed to meet */
+const RIDGE: u32 = 0xfffffffdu;
+const LINE_END: u32 = 0xfffffffcu;
+fn isOpen(t: u32) -> bool { return t >= LINE_END && t != NONE; }
+/** an end on the next line: a seed, or a line end */
+fn onLine(t: u32) -> bool { return t <= LINE_END; }
 /** the field the seeds sit on: φ's (family 1) or, radial, the rings' */
 fn mainK() -> u32 { return select(2u, 1u, fam(1u)); }
 fn occDims() -> vec2<u32> { return vec2<u32>(u32(f32(W()) / u.a.w) + 2u, u32(f32(H()) * ROW_H / u.a.w) + 2u); }
@@ -1049,19 +1067,37 @@ fn vseg(@builtin(global_invocation_id) g: vec3<u32>) {
     e = vec2<f32>(bitcast<f32>(w5[to]), bitcast<f32>(w5[to + 1u]));
   }
   var end = t;
-  // (m3d: the next line past the town's edge — the edge's circle closes the strip: the street runs up to it)
-  if (!ok && !inTown(s + gr / gl2)) {
-    let up = gr / sqrt(gl2);
-    let rel = s - u.d.xy;
-    let b = dot(rel, up);
-    let disc = b * b - (dot(rel, rel) - u.d.z * u.d.z);
-    if (disc > 0.0) {
-      e = s + up * (-b + sqrt(disc) - 0.5);
-      end = EDGE;
-      ok = true;
+  // (m3f: no seed to pair with — march up the gradient instead: to the next line (no seed there: a line end), to the
+  // ridge where φ stops rising before the next line (a river's tongue, a saddle: before, no street and an empty
+  // strip), or (m3d) to the town's edge)
+  if (!ok) {
+    var q = s;
+    var fq = fieldAt(mainK(), s);
+    let most = 2.5 / sqrt(gl2);
+    for (var k = 0; k < 64; k++) {
+      if (distance(q, s) > most) { break; }
+      let gq = gradAt(mainK(), q);
+      if (dot(gq, gq) < 1e-10) { e = q; end = RIDGE; ok = true; break; }
+      let n = q + 2.0 * normalize(gq);
+      if (!inTown(n)) {
+        let up = normalize(n - q);
+        let rel = q - u.d.xy;
+        let b = dot(rel, up);
+        let disc = b * b - (dot(rel, rel) - u.d.z * u.d.z);
+        e = q + up * max(-b + sqrt(max(disc, 0.0)) - 0.5, 0.0);
+        end = EDGE;
+        ok = true;
+        break;
+      }
+      if (blockedAt(n)) { break; }
+      let fn1 = fieldAt(mainK(), n);
+      if (fn1 >= f32(L + 1u)) { e = mix(q, n, clamp((f32(L + 1u) - fq) / max(fn1 - fq, 1e-6), 0.0, 1.0)); end = LINE_END; ok = true; break; }
+      if (fn1 <= fq + 1e-3) { e = q; end = RIDGE; ok = true; break; }
+      q = n;
+      fq = fn1;
     }
   }
-  if (!ok) { return; }
+  if (!ok || distance(s, e) < 1.0) { return; }
   // (no longer than 2.5 levels' spacing here)
   if (distance(s, e) * sqrt(gl2) > 2.5) { return; }
   for (var k = 1; k < 8; k++) { if (blockedAt(mix(s, e, f32(k) / 8.0))) { return; } }
@@ -1115,15 +1151,16 @@ fn vblock(@builtin(global_invocation_id) g: vec3<u32>) {
   if (segsCross(s, es, sc, ec)) { return; }
   w7[id] = 1u;
   // (a street to the town's edge beside one to a seed: no block)
-  if ((ts == EDGE) != (tc == EDGE)) { return; }
+  if (onLine(ts) != onLine(tc)) { return; }
   w5[mo + 2u] = c;
   // (m3e: streets that end on a landmark's circle — the far side the ring road, a trapezoid, never a triangle)
   let ring = (b1[o + 10u] & 2u) != 0u && (b1[c * SDW + 10u] & 2u) != 0u;
-  if (tc == ts && ts != EDGE && !ring) {
+  if (tc == ts && !isOpen(ts) && !ring) {
     w5[mo + 4u] = 1u;
     _ = putBlock(ob, array<vec2<f32>, 4>(s, sc, es, 0.5 * (es + s)), array<u32, 4>(1u, 2u, 2u, 2u), id);
   } else {
-    let far = select(select(1u, 2u, ring), 0u, ts == EDGE);
+    // (the far side: the next line, the ring road, or — the town's edge, a ridge — no street: lots back to back)
+    let far = select(select(1u, 2u, ring), 0u, !onLine(ts));
     _ = putBlock(ob, array<vec2<f32>, 4>(s, sc, ec, es), array<u32, 4>(1u, 2u, far, 2u), id);
   }
 }
@@ -1390,11 +1427,11 @@ fn bapply(@builtin(global_invocation_id) g: vec3<u32>) {
   let eb = sdEnd(b);
   var ok = false;
   var tri = 0u;
-  if (ta == tb && ta != EDGE && ((b1[a * SDW + 10u] & b1[b * SDW + 10u] & 2u) == 0u)) {
+  if (ta == tb && !isOpen(ta) && ((b1[a * SDW + 10u] & b1[b * SDW + 10u] & 2u) == 0u)) {
     tri = 1u;
     ok = putBlock(ob, array<vec2<f32>, 4>(pa, pb, ea, 0.5 * (ea + pa)), array<u32, 4>(1u, 2u, 2u, 2u), id);
   } else {
-    ok = putBlock(ob, array<vec2<f32>, 4>(pa, pb, eb, ea), array<u32, 4>(1u, 2u, select(1u, 0u, ta == EDGE), 2u), id);
+    ok = putBlock(ob, array<vec2<f32>, 4>(pa, pb, eb, ea), array<u32, 4>(1u, 2u, select(1u, 0u, !onLine(ta)), 2u), id);
   }
   if (!ok) { return; }
   // (the street between them: ahead the neighbour's first, behind this block's first)
@@ -1460,7 +1497,7 @@ fn jstat(@builtin(global_invocation_id) g: vec3<u32>) {
   if (id >= T) { return; }
   let o = id * SDW;
   let t = b1[o + 4u];
-  if (b1[o + 3u] == 0u || t == NONE || t == EDGE) { return; }
+  if (b1[o + 3u] == 0u || t == NONE || isOpen(t)) { return; }
   atomicAdd(&w6[t], 1u);
   let c = b1[o + 7u];
   if (c == NONE || b1[c * SDW + 4u] != t) { return; }
@@ -1602,4 +1639,235 @@ fn lmMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   tri(at, vec3<f32>(p, top), vec3<f32>(q0, top), vec3<f32>(q1, top), C_LANDMARK);
   tri(at + 3u, vec3<f32>(q0, zlo), vec3<f32>(q1, top), vec3<f32>(q0, top), C_WALL);
   tri(at + 6u, vec3<f32>(q0, zlo), vec3<f32>(q1, zlo), vec3<f32>(q1, top), C_WALL);
+}
+
+// ==== milestone 3f: gap fill — the town's empty land partitioned into blocks; roads through the big blocks ======
+// On a coarse grid (TILE world units a tile): the tiles no block or landmark covers, in town and buildable, labelled
+// into connected regions (min label + pointer jumping), each region split recursively (GAP_LEVELS levels: through its
+// centroid, across its major axis snapped to φ's gradient or contour) while bigger than a block; each split a minor
+// road, each leaf its oriented box from its moments — a block, lotted like the others. A region node (NODEW words) is
+// region root × 16 + its heap index: 0–5 the tiles' count and sums (x, y, xx, xy, yy, in tiles), 6 split, 7 8 the
+// split axis, 9 10 the centroid (world). The roads (the lots' count buffer, CNT): 0 lots, 1 roads, 2 gap blocks, 3 0,
+// then 4 words a road (x0, y0, x1, y1).
+const TILE: f32 = 4.0;
+const NODEW: u32 = 12u;
+const GAP_LEVELS: u32 = 3u;
+const ROAD_ROOM: u32 = 1024u;
+const GAP_ROOM: u32 = 512u;
+const DONE: u32 = 0x80000000u;
+fn gDims() -> vec2<u32> { return vec2<u32>(u32(f32(W()) / TILE) + 1u, u32(f32(H()) * ROW_H / TILE) + 1u); }
+fn gPos(t: u32) -> vec2<f32> { let d = gDims(); return (vec2<f32>(f32(t % d.x), f32(t / d.x)) + 0.5) * TILE; }
+/** one thread a block slot: the tiles whose middle its quad holds, covered (r1 the blocks; w5 the coverage) */
+@compute @workgroup_size(64)
+fn gcov(@builtin(global_invocation_id) g: vec3<u32>) {
+  let bi = g.x;
+  if (bi >= 3u * u.m.w * u32(u.c.w)) { return; }
+  let o = bi * BQW;
+  if (b1[o] == 0u) { return; }
+  var v: array<vec2<f32>, 4>;
+  var lo = vec2<f32>(1e9);
+  var hi = vec2<f32>(-1e9);
+  for (var k = 0u; k < 4u; k++) { v[k] = vec2<f32>(r1(o + 2u + k * 2u), r1(o + 3u + k * 2u)); lo = min(lo, v[k]); hi = max(hi, v[k]); }
+  let d = gDims();
+  let t0 = vec2<i32>(max(floor(lo / TILE), vec2<f32>(0.0)));
+  let t1 = vec2<i32>(min(floor(hi / TILE), vec2<f32>(d) - 1.0));
+  for (var ty = t0.y; ty <= t1.y; ty++) {
+    for (var tx = t0.x; tx <= t1.x; tx++) {
+      let p = (vec2<f32>(f32(tx), f32(ty)) + 0.5) * TILE;
+      var inside = true;
+      for (var k = 0u; k < 4u; k++) { if (cross2(v[(k + 1u) % 4u] - v[k], p - v[k]) < 0.0) { inside = false; } }
+      if (inside) { w5[u32(ty) * d.x + u32(tx)] = 1u; }
+    }
+  }
+}
+/** one thread a tile: its label — itself when it's empty (in town, buildable, no block, no landmark), else NONE
+ *  (r1 the coverage, r2 the landmarks, b4 φ; w5 the labels) */
+@compute @workgroup_size(64)
+fn gmask(@builtin(global_invocation_id) g: vec3<u32>) {
+  let t = g.x;
+  let d = gDims();
+  if (t >= d.x * d.y) { return; }
+  let p = gPos(t);
+  var empty = b1[t] == 0u && inb(p) && inTown(p) && !blockedAt(p);
+  // (eroded by a tile: a sliver between blocks, a strip along the water, isn't land to fill)
+  let x = i32(t % d.x);
+  let y = i32(t / d.x);
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      let q = vec2<i32>(x + dx, y + dy);
+      if (q.x < 0 || q.y < 0 || q.x >= i32(d.x) || q.y >= i32(d.y)) { empty = false; continue; }
+      let qt = u32(q.y) * d.x + u32(q.x);
+      if (b1[qt] != 0u || blockedAt(gPos(qt))) { empty = false; }
+    }
+  }
+  for (var k = 0u; k < min(b2[0], LM_ROOM); k++) {
+    let ok = 1u + k * LMW;
+    if (lmHit(p, vec2<f32>(r2(ok), r2(ok + 1u)), r2(ok + 2u))) { empty = false; }
+  }
+  w5[t] = select(NONE, t, empty);
+}
+/** a round of the labelling: the least label of the tile and its four neighbours, then that label's own (a jump)
+ *  (r1 → w5) */
+@compute @workgroup_size(64)
+fn glabel(@builtin(global_invocation_id) g: vec3<u32>) {
+  let t = g.x;
+  let d = gDims();
+  if (t >= d.x * d.y) { return; }
+  var m = b1[t];
+  if (m == NONE) { w5[t] = NONE; return; }
+  let x = t % d.x;
+  let y = t / d.x;
+  if (x > 0u) { m = min(m, b1[t - 1u]); }
+  if (x + 1u < d.x) { m = min(m, b1[t + 1u]); }
+  if (y > 0u) { m = min(m, b1[t - d.x]); }
+  if (y + 1u < d.y) { m = min(m, b1[t + d.x]); }
+  w5[t] = min(m, b1[m]);
+}
+/** one thread a tile not yet done: its moments into its region node (r1 the labels, r2 the heap indices; w6 the nodes) */
+@compute @workgroup_size(64)
+fn gacc(@builtin(global_invocation_id) g: vec3<u32>) {
+  let t = g.x;
+  let d = gDims();
+  if (t >= d.x * d.y || b1[t] == NONE || (b2[t] & DONE) != 0u) { return; }
+  let n = (b1[t] * 16u + b2[t]) * NODEW;
+  let x = t % d.x;
+  let y = t / d.x;
+  atomicAdd(&w6[n], 1u);
+  atomicAdd(&w6[n + 1u], x);
+  atomicAdd(&w6[n + 2u], y);
+  atomicAdd(&w6[n + 3u], x * x);
+  atomicAdd(&w6[n + 4u], x * y);
+  atomicAdd(&w6[n + 5u], y * y);
+}
+struct Mom { c: vec2<f32>, e1: vec2<f32>, l1: f32, l2: f32, area: f32 }
+/** a node's centroid (world), its major axis and the variances along both (world²), its area */
+fn moments(n: u32) -> Mom {
+  var m: Mom;
+  let k = f32(w5[n]);
+  let mx = f32(w5[n + 1u]) / k;
+  let my = f32(w5[n + 2u]) / k;
+  let sxx = f32(w5[n + 3u]) / k - mx * mx + 1.0 / 12.0;
+  let sxy = f32(w5[n + 4u]) / k - mx * my;
+  let syy = f32(w5[n + 5u]) / k - my * my + 1.0 / 12.0;
+  let tr = 0.5 * (sxx + syy);
+  let dt = sqrt(max(0.25 * (sxx - syy) * (sxx - syy) + sxy * sxy, 0.0));
+  m.l1 = (tr + dt) * TILE * TILE;
+  m.l2 = max(tr - dt, 0.0) * TILE * TILE;
+  let th = 0.5 * atan2(2.0 * sxy, sxx - syy);
+  m.e1 = vec2<f32>(cos(th), sin(th));
+  m.c = (vec2<f32>(mx, my) + 0.5) * TILE;
+  m.area = k * TILE * TILE;
+  return m;
+}
+/** one thread a node of level n.z: split across its major axis (snapped to φ's gradient or its contour, whichever is
+ *  nearer) while bigger than a block — the split a minor road, listed (w5 the nodes, b4 φ; w6 the roads) */
+@compute @workgroup_size(64)
+fn gnode(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  let d = gDims();
+  if (i >= d.x * d.y * 16u) { return; }
+  let h = i % 16u;
+  let lv = u.n.z;
+  if (h < (1u << lv) || h >= (2u << lv)) { return; }
+  let n = i * NODEW;
+  if (w5[n] == 0u) { return; }
+  let m = moments(n);
+  // (split while bigger than a block, or while its box is under 3/4 full — a bent region)
+  let fill = m.area / max(12.0 * sqrt(m.l1 * m.l2), 1e-3);
+  if ((m.area <= u.a.w * u.a.x && (fill >= 0.75 || m.area < 2.0 * u.c.x)) || lv >= GAP_LEVELS) { return; }
+  var ax = m.e1;
+  let gr = gradAt(mainK(), m.c);
+  if (dot(gr, gr) > 1e-10) {
+    let gn = normalize(gr);
+    let tn = vec2<f32>(-gn.y, gn.x);
+    ax = select(tn, gn, abs(dot(gn, m.e1)) >= abs(dot(tn, m.e1)));
+  }
+  w5[n + 6u] = 1u;
+  set5(n + 7u, ax.x);
+  set5(n + 8u, ax.y);
+  set5(n + 9u, m.c.x);
+  set5(n + 10u, m.c.y);
+  // (the road: across the region through its centroid, as far as its spread that way)
+  let across = vec2<f32>(-ax.y, ax.x);
+  let c1 = dot(across, m.e1);
+  let half = sqrt(3.0 * max(m.l1 * c1 * c1 + m.l2 * (1.0 - c1 * c1), 1.0));
+  let k = atomicAdd(&w6[1], 1u);
+  if (k >= ROAD_ROOM) { return; }
+  let a = m.c - across * half;
+  let b = m.c + across * half;
+  atomicStore(&w6[4u + k * 4u], bitcast<u32>(a.x));
+  atomicStore(&w6[5u + k * 4u], bitcast<u32>(a.y));
+  atomicStore(&w6[6u + k * 4u], bitcast<u32>(b.x));
+  atomicStore(&w6[7u + k * 4u], bitcast<u32>(b.y));
+}
+/** one thread a tile not yet done: to the split child its side of its node's line, or done (r1 the labels, r2 the
+ *  nodes; w5 the heap indices) */
+@compute @workgroup_size(64)
+fn gsplit(@builtin(global_invocation_id) g: vec3<u32>) {
+  let t = g.x;
+  let d = gDims();
+  if (t >= d.x * d.y || b1[t] == NONE) { return; }
+  let h = w5[t];
+  if ((h & DONE) != 0u) { return; }
+  let n = (b1[t] * 16u + h) * NODEW;
+  if (b2[n + 6u] == 0u) { w5[t] = h | DONE; return; }
+  let ax = vec2<f32>(r2(n + 7u), r2(n + 8u));
+  let side = select(0u, 1u, dot(gPos(t) - vec2<f32>(r2(n + 9u), r2(n + 10u)), ax) > 0.0);
+  w5[t] = h * 2u + side;
+}
+/** one thread a node: a leaf (tiles, not split) bigger than a lot and at least 0.6 full is a block — its oriented box
+ *  from its moments, shrunk until clear of the blocks and the water, every side a street (r1 the coverage, b4 φ;
+ *  w5 the nodes; w6 the counts — 2 the gap blocks; w7 the gap blocks) */
+@compute @workgroup_size(64)
+fn gleaf(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  let d = gDims();
+  if (i >= d.x * d.y * 16u) { return; }
+  let n = i * NODEW;
+  if (w5[n] == 0u || w5[n + 6u] != 0u) { return; }
+  let m = moments(n);
+  if (m.area < u.c.x || m.area / max(12.0 * sqrt(m.l1 * m.l2), 1e-3) < 0.6) { return; }
+  let e2 = vec2<f32>(-m.e1.y, m.e1.x);
+  // (the box shrunk until its corners and edge middles are on empty land: covered tiles, water, a cliff — not)
+  var sh = 0.0;
+  for (var j = 0; j < 4; j++) {
+    let f = 0.92 - 0.12 * f32(j);
+    let a = f * sqrt(3.0 * m.l1);
+    let b = f * sqrt(3.0 * m.l2);
+    var clear = true;
+    for (var q = 0; q < 8; q++) {
+      let an = f32(q) * TAU / 8.0;
+      let pt = m.c + m.e1 * a * sign(cos(an)) * select(1.0, 0.0, abs(cos(an)) < 0.1) + e2 * b * sign(sin(an)) * select(1.0, 0.0, abs(sin(an)) < 0.1);
+      let tc = vec2<i32>(floor(pt / TILE));
+      if (tc.x < 0 || tc.y < 0 || tc.x >= i32(d.x) || tc.y >= i32(d.y) || b1[u32(tc.y) * d.x + u32(tc.x)] != 0u || blockedAt(pt) || !inTown(pt)) { clear = false; }
+    }
+    if (clear) { sh = f; break; }
+  }
+  if (sh == 0.0) { return; }
+  let a = sh * sqrt(3.0 * m.l1);
+  let b = sh * sqrt(3.0 * m.l2);
+  if (b < 2.0) { return; }
+  let k = atomicAdd(&w6[2], 1u);
+  if (k >= GAP_ROOM) { return; }
+  let o = k * 3u * BQW;
+  let v = array<vec2<f32>, 4>(m.c - m.e1 * a - e2 * b, m.c + m.e1 * a - e2 * b, m.c + m.e1 * a + e2 * b, m.c - m.e1 * a + e2 * b);
+  w7[o] = 1u;
+  w7[o + 1u] = 2u | (2u << 8u) | (2u << 16u) | (2u << 24u);
+  for (var j = 0u; j < 4u; j++) { w7[o + 2u + j * 2u] = bitcast<u32>(v[j].x); w7[o + 3u + j * 2u] = bitcast<u32>(v[j].y); }
+  w7[o + 10u] = NONE;
+}
+/** the listed roads (gap splits, big blocks' first cuts): eight ribbon pieces each (r1 the counts and roads, r3 H) */
+@compute @workgroup_size(64)
+fn groad(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x / 8u;
+  let k = g.x % 8u;
+  if (i >= min(b1[1], ROAD_ROOM)) { return; }
+  let s = vec2<f32>(r1(4u + i * 4u), r1(5u + i * 4u));
+  let e = vec2<f32>(r1(6u + i * 4u), r1(7u + i * 4u));
+  let a = mix(s, e, f32(k) / 8.0);
+  let b = mix(s, e, f32(k + 1u) / 8.0);
+  if (blockedAt(0.5 * (a + b)) || !inTown(0.5 * (a + b))) { return; }
+  let at = room(6u);
+  if (at == NONE) { return; }
+  ribbon(at, a, b, u.b.y * 0.5, C_MINOR);
 }
