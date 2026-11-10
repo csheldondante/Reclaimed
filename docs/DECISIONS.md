@@ -3575,3 +3575,23 @@ world should show what needs clearing and how.
   again; roads shown as their district starts.
 - (via the coordinator) Opportunities claim districts: a GPU argmax by purpose, one word read back, the district's
   clock started. A game town starts with its core built; the rest grows by claims.
+
+## 2026-11-10 — the season loop: the open questions of DESIGN_18_21_DRAFT answered (trackA-opps)
+
+The user, verbatim:
+1. "Sim runs in realtime while you make your opportunity selections so players can enjoy looking at the current active
+   state. The next season happens when you hit a button and all allocated opportunities progress. The building stages
+   depend on the number of seasons required so they may take a variable number of seasons to complete and should show
+   intermediate states (that can use the shader for now)."
+2. Use the six pools: Magic, Might, Labor, Resources, Intel, Unrest (DECISIONS 128r). Retire the card lab's
+   labor/influence/power set from this loop; don't run two resource models.
+3. Raids stay out of this test. Don't touch the parallel raid loop; DA-L4 deletes it later.
+
+How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
+- *Does the player always tap Next season?* Yes: a season ends only on the button. The sim runs live meanwhile.
+- *How many stages does a building have?* As many as its seasons (1–4, set per card). Each season is one visible stage.
+- *Does a project show its stage count before it's committed?* Yes: each card shows its seasons.
+- *Can the player watch a season in real time instead of the time-lapse?* The live sim is what they watch between
+  seasons; the season's change itself plays as the time-lapse (Skip jumps to its end, the same world).
+- Earlier: "players just choose opportunities and we place and build for them" (player painting retired here).
+- Design note: `docs/design/SEASON_LOOP.md`.
