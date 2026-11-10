@@ -199,6 +199,8 @@ fn scopeIn(@builtin(global_invocation_id) id: vec3<u32>) {
     for (var k = 0u; k < NAV_K; k++) { dist[f * N + i * NAV_K + k] = FAR; }
   }
   atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], ALL_FIELDS);
+  // (?jfa=1: the obstacles JFA made again — a chunk came in)
+  atomicStore(&jfa[2], 1u);
   for (var h = 0u; h < 2u; h++) {
     atomicStore(&occ[h * cols + i], 0u);
     for (var k = 0u; k < 4u; k++) { atomicStore(&shove[(h * cols + i) * 4u + k], 0); }
@@ -1001,6 +1003,8 @@ fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   // (new here: the field falls round it)
   if (((old >> (16u + f)) & 1u) == 0u) {
     atomicOr(&dirtyCur[chunkOfCol(u32(c.x), u32(c.y))], 1u << f);
+    // (?jfa=1: the targets JFA runs again this frame)
+    atomicStore(&jfa[0], 1u);
     if (AP.u2.w != 0u) { atomicAdd(&frontDbg[32], 1u); }
   }
 }
@@ -1016,6 +1020,7 @@ fn huntGone(@builtin(global_invocation_id) id: vec3<u32>) {
   if (((m >> f) & 1u) == 0u && ((m >> (16u + f)) & 1u) != 0u) {
     // (a column's chunk: its page's slot — common.wgsl colIdx)
     atomicOr(&dirtyCur[(s / NAV_K) / (COLS_PAGE * COLS_PAGE)], 1u << f);
+    atomicStore(&jfa[0], 1u);
     if (AP.u2.w != 0u) { atomicAdd(&frontDbg[33], 1u); }
   }
 }
@@ -1023,4 +1028,285 @@ fn huntGone(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(1)
 fn huntFlip() {
   atomicStore(&huntList[2], 1u - atomicLoad(&huntList[2]));
+}
+
+// ---- (FC12 variant, ?jfa=1: the user's "an obstacle JFA, then a targets JFA, then a line check on the obstacle
+// distance") ---------------------------------------------------------------------------------------------------------
+// Over the window's columns, on their top surfaces (k 0: the open ground a fighter crosses):
+//   * the obstacle JFA: each column's nearest obstacle column — a top surface missing a link in any direction (a wall,
+//     a drop, a climb past STEP, the window's edge, no ground), wet, or with a neighbour more than LOS_DZ above or below
+//     it. Its distance is the clearance (jfaClear, world cells): static, made again only when the links pass ran (the
+//     columns changed) or a chunk came into the scope (jfa[2]). It is also the formations' width where a march has no
+//     route (UNIT_MINDS_U2.md §9d): width = 2 × clearance.
+//   * the targets JFA: each column's nearest hunt seed on a top surface, on frames the seeds change cell (jfa[0], set
+//     by huntSet / huntGone).
+//   * then each top surface checks the straight line to its seed on the clearance (?jfalos=trace: steps of the
+//     clearance; bisect: halves, a half clear when its midpoint's clearance passes its half-length). Clear (clearance
+//     ≥ LOS_CLEAR all along): it starts at hexDist × LOS_CMAX — the cost of a walk along the line, every step on flat dry
+//     ground (≤ 1 + 1.5 × LOS_DZ), so never under what relax will find. Blocked: it keeps what it has (FAR or relax's).
+//     The value takes the seed as its seed-id (§5b), so it empties with the seed.
+// Lower surfaces (under a bridge, in a cave, a wall-walk) aren't seeded this way: relax fills them from their links.
+// jfa (binding 55): [0] targets changed, [1] its pass, [2] obstacles changed, [3] its pass, [4] passes (CPU), [5]–[7]
+// ?jfa=2's (below), then planes of a window column each (window order): targets A, B, obstacles A, B, the clearance
+// (f32 bits), ?jfa=2's resolved value (f32 bits) and root
+@group(0) @binding(55) var<storage, read_write> jfa: array<atomic<u32>>;
+const JFA_HEAD: u32 = 8u;
+const LOS_DZ: f32 = 0.25;
+const LOS_CMAX: f32 = 1.375;
+const LOS_CLEAR: f32 = 1.5;
+/** 0 trace, 1 bisect (agents.ts sets it: ?jfalos) */
+const JFA_LOS: u32 = 0u;
+fn jfaPlane(k: u32) -> u32 { return JFA_HEAD + k * G.mapW * G.mapH; }
+fn jfaXY(w: u32) -> vec2<i32> { return vec2<i32>(i32(w % G.mapW), i32(w / G.mapW)); }
+/** the clearance at a window column (cells to the nearest obstacle column; FAR none) */
+fn clearanceAt(p: vec2<i32>) -> f32 { return bitcast<f32>(atomicLoad(&jfa[jfaPlane(4u) + winIdx(clampCell(p))])); }
+fn hexDist(a: vec2<i32>, b: vec2<i32>) -> f32 {
+  let qa = a.x - (a.y - (a.y & 1)) / 2;
+  let qb = b.x - (b.y - (b.y & 1)) / 2;
+  let dq = qb - qa;
+  let dr = b.y - a.y;
+  return f32(abs(dq) + abs(dr) + abs(dq + dr)) / 2.0;
+}
+/** one JFA step over a pair of planes: the nearest of the 9 candidates `step` apart (in world distance) */
+fn jfaStep(p: vec2<i32>, src: u32, dst: u32, step: i32) {
+  let me = cellPos(p);
+  var best = atomicLoad(&jfa[src + winIdx(p)]);
+  var bd = FAR;
+  if (best != 0u) { bd = length(cellPos(jfaXY((best - 1u) >> 2u)) - me); }
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      let q = p + vec2<i32>(dx, dy) * step;
+      if (!inMap(q) || (dx == 0 && dy == 0)) { continue; }
+      let c = atomicLoad(&jfa[src + winIdx(q)]);
+      if (c == 0u) { continue; }
+      let d = length(cellPos(jfaXY((c - 1u) >> 2u)) - me);
+      if (d < bd) {
+        bd = d;
+        best = c;
+      }
+    }
+  }
+  atomicStore(&jfa[dst + winIdx(p)], best);
+}
+
+@compute @workgroup_size(8, 8)
+fn jfaObsInit(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (atomicLoad(&jfa[2]) == 0u || id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let p = vec2<i32>(id.xy);
+  let s = colIdxI(p) * NAV_K;
+  var obstacle = navZ(s) < 0.0 || costWet(s) || costDeep(s);
+  if (!obstacle) {
+    let z = costZ(s);
+    for (var d = 0u; d < NDIR; d++) {
+      let l = navLink(s, d);
+      let q = nbr(p, d);
+      if (l == 0u || !inMap(q)) { obstacle = true; break; }
+      if (abs(costZ(colIdxI(q) * NAV_K + l - 1u) - z) > LOS_DZ) { obstacle = true; break; }
+    }
+  }
+  atomicStore(&jfa[jfaPlane(2u) + winIdx(p)], select(0u, (winIdx(p) << 2u) + 1u, obstacle));
+  if (all(id.xy == vec2<u32>(0u))) { atomicStore(&jfa[3], 0u); }
+}
+@compute @workgroup_size(8, 8)
+fn jfaObsPass(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (atomicLoad(&jfa[2]) == 0u || id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let k = atomicLoad(&jfa[3]);
+  let n = atomicLoad(&jfa[4]);
+  let a = select(3u, 2u, k % 2u == 0u);
+  jfaStep(vec2<i32>(id.xy), jfaPlane(a), jfaPlane(5u - a), 1 << (n - 1u - k));
+}
+@compute @workgroup_size(1)
+fn jfaObsNext() { atomicAdd(&jfa[3], 1u); }
+@compute @workgroup_size(8, 8)
+fn jfaObsClear(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (atomicLoad(&jfa[2]) == 0u || id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let p = vec2<i32>(id.xy);
+  let c = atomicLoad(&jfa[jfaPlane(select(3u, 2u, atomicLoad(&jfa[4]) % 2u == 0u)) + winIdx(p)]);
+  let d = select(length(cellPos(jfaXY((c - 1u) >> 2u)) - cellPos(p)), FAR, c == 0u);
+  atomicStore(&jfa[jfaPlane(4u) + winIdx(p)], bitcast<u32>(d));
+  if (AP.u2.w != 0u && all(id.xy == vec2<u32>(0u))) { atomicAdd(&frontDbg[35], 1u); }
+}
+@compute @workgroup_size(1)
+fn jfaObsEnd() { atomicStore(&jfa[2], 0u); }
+
+@compute @workgroup_size(8, 8)
+fn jfaInit(@builtin(global_invocation_id) id: vec3<u32>) {
+  let f = AP.u2.x;
+  if (atomicLoad(&jfa[0]) == 0u || f >= NFIELDS || id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let p = vec2<i32>(id.xy);
+  let s = colIdxI(p) * NAV_K;
+  // (a seed on the top surface only: see the header)
+  let seeded = inScope(p) && ((atomicLoad(&seedMask[s]) >> f) & 1u) != 0u;
+  atomicStore(&jfa[jfaPlane(0u) + winIdx(p)], select(0u, (winIdx(p) << 2u) + 1u, seeded));
+  // (?jfa=2's planes: a seed resolved at 0, its own root; the rest not yet)
+  atomicStore(&jfa[jfaPlane(5u) + winIdx(p)], bitcast<u32>(select(FAR, 0.0, seeded)));
+  atomicStore(&jfa[jfaPlane(6u) + winIdx(p)], winIdx(p));
+  if (AP.u2.w != 0u && inScope(p) && navZ(s) >= 0.0) { atomicAdd(&frontDbg[44], 1u); }
+  if (all(id.xy == vec2<u32>(0u))) {
+    atomicStore(&jfa[1], 0u);
+    atomicStore(&jfa[5], 0u);
+    atomicStore(&jfa[6], 0u);
+    atomicStore(&jfa[7], 0u);
+  }
+}
+@compute @workgroup_size(8, 8)
+fn jfaPass(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (atomicLoad(&jfa[0]) == 0u || AP.u2.x >= NFIELDS || id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let k = atomicLoad(&jfa[1]);
+  let n = atomicLoad(&jfa[4]);
+  let a = select(1u, 0u, k % 2u == 0u);
+  jfaStep(vec2<i32>(id.xy), jfaPlane(a), jfaPlane(1u - a), 1 << (n - 1u - k));
+}
+@compute @workgroup_size(1)
+fn jfaNext() { atomicAdd(&jfa[1], 1u); }
+
+/** the straight line from a to b clear by LOS_CLEAR all along, on the clearance */
+fn losClear(a: vec2<f32>, b: vec2<f32>) -> bool {
+  let L = length(b - a);
+  if (L < 1e-3) { return true; }
+  let dir = (b - a) / L;
+  if (JFA_LOS == 0u) {
+    // (sphere tracing: each step as long as the clearance allows)
+    var t = 0.0;
+    for (var it = 0u; it < 256u; it++) {
+      if (t >= L) { return true; }
+      let c = clearanceAt(cellAt(a + dir * t));
+      if (c < LOS_CLEAR) { return false; }
+      t += max(c - LOS_CLEAR, 0.5);
+    }
+    return false;
+  }
+  // (bisection: a half clear when its midpoint's clearance covers its half-length)
+  var stack: array<vec2<f32>, 24>;
+  var top = 1u;
+  stack[0] = vec2<f32>(0.0, L);
+  for (var it = 0u; it < 256u && top > 0u; it++) {
+    top -= 1u;
+    let seg = stack[top];
+    let h = (seg.y - seg.x) * 0.5;
+    let c = clearanceAt(cellAt(a + dir * (seg.x + h)));
+    if (c < LOS_CLEAR) { return false; }
+    if (c >= h + LOS_CLEAR) { continue; }
+    if (top + 2u > 24u) { return false; }
+    stack[top] = vec2<f32>(seg.x, seg.x + h);
+    stack[top + 1u] = vec2<f32>(seg.x + h, seg.y);
+    top += 2u;
+  }
+  return top == 0u;
+}
+
+@compute @workgroup_size(8, 8)
+fn jfaApply(@builtin(global_invocation_id) id: vec3<u32>) {
+  let f = AP.u2.x;
+  if (atomicLoad(&jfa[0]) == 0u || f >= NFIELDS || id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let p = vec2<i32>(id.xy);
+  if (!inScope(p)) { return; }
+  let c = atomicLoad(&jfa[jfaPlane(select(1u, 0u, atomicLoad(&jfa[4]) % 2u == 0u)) + winIdx(p)]);
+  if (c == 0u) { return; }
+  let sp = jfaXY((c - 1u) >> 2u);
+  let s = colIdxI(p) * NAV_K;
+  if (navZ(s) < 0.0 || all(sp == p)) { return; }
+  if (!losClear(cellPos(p), cellPos(sp))) { return; }
+  jfaResolve(p, s, hexDist(p, sp) * LOS_CMAX, winIdx(sp));
+}
+
+/** column p's top surface s resolved at v from the root seed at window column `root`: the value kept for ?jfa=2's rounds,
+ *  and the field's value and seed-id written where it has none live or a higher one */
+fn jfaResolve(p: vec2<i32>, s: u32, v: f32, root: u32) {
+  let f = AP.u2.x;
+  let N = ns();
+  let w = winIdx(p);
+  atomicStore(&jfa[jfaPlane(5u) + w], bitcast<u32>(v));
+  atomicStore(&jfa[jfaPlane(6u) + w], root);
+  atomicAdd(&jfa[5], 1u);
+  if (AP.u2.w != 0u) { atomicAdd(&frontDbg[36u + min(atomicLoad(&jfa[7]), 7u)], 1u); }
+  let seedS = colIdxI(jfaXY(root)) * NAV_K;
+  let od = dist[f * N + s];
+  let os = atomicLoad(&seedMask[N + s]);
+  let live = os != 0u && ((((atomicLoad(&seedMask[os - 1u]) >> f) & 1u) != 0u) || dist[f * N + os - 1u] == 0.0);
+  if (live && od <= v) { return; }
+  dist[f * N + s] = v;
+  atomicStore(&seedMask[N + s], seedS + 1u);
+  atomicOr(&dirtyCur[chunkOfCol(u32(p.x), u32(p.y))], 1u << f);
+}
+@compute @workgroup_size(1)
+fn jfaEnd() {
+  if (AP.u2.w != 0u && atomicLoad(&jfa[0]) != 0u) { atomicAdd(&frontDbg[34], 1u); }
+  atomicStore(&jfa[0], 0u);
+}
+
+// ---- (?jfa=2: the user's iterated JFA — "keep all the JFA to targets that don't hit an obstacle and then JFA to those
+// pixels on the remaining ones. A few iterations and you can go around bends") ------------------------------------------
+// Round 0 is ?jfa=1's (targets JFA, the line check). Each later round: the resolved columns on the edge of the resolved
+// ground (one with an unresolved neighbour — the inside sees nothing the edge doesn't) are seeds weighted by their value;
+// a JFA over all columns gives each its best by value + line cost (approximate: additive weights can pick a worse seed —
+// still an achievable path, an overestimate relax polishes); an unresolved column with a clear line to it takes value +
+// line cost, and the root seed's id. Stops after the rounds agents.ts dispatches, or at a round that resolves nothing.
+// jfa words: [5] columns resolved in the last round, [6] stop, [7] the round; planes 5 the resolved value (f32 bits, FAR
+// none), 6 its root seed's window column
+@compute @workgroup_size(1)
+fn jfaRBegin() {
+  if (atomicLoad(&jfa[0]) == 0u) { return; }
+  if (atomicLoad(&jfa[5]) == 0u) { atomicStore(&jfa[6], 1u); }
+  atomicStore(&jfa[5], 0u);
+  atomicStore(&jfa[1], 0u);
+  atomicAdd(&jfa[7], 1u);
+}
+fn jfaRound() -> bool { return atomicLoad(&jfa[0]) != 0u && atomicLoad(&jfa[6]) == 0u && AP.u2.x < NFIELDS; }
+fn jfaVal(w: u32) -> f32 { return bitcast<f32>(atomicLoad(&jfa[jfaPlane(5u) + w])); }
+
+@compute @workgroup_size(8, 8)
+fn jfaRInit(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (!jfaRound() || id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let p = vec2<i32>(id.xy);
+  var edge = false;
+  if (jfaVal(winIdx(p)) < FAR) {
+    for (var d = 0u; d < NDIR; d++) {
+      let q = nbr(p, d);
+      if (inMap(q) && inScope(q) && jfaVal(winIdx(q)) >= FAR) { edge = true; }
+    }
+  }
+  atomicStore(&jfa[jfaPlane(0u) + winIdx(p)], select(0u, (winIdx(p) << 2u) + 1u, edge));
+}
+@compute @workgroup_size(8, 8)
+fn jfaRPass(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (!jfaRound() || id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let k = atomicLoad(&jfa[1]);
+  let n = atomicLoad(&jfa[4]);
+  let src = jfaPlane(select(1u, 0u, k % 2u == 0u));
+  let dst = jfaPlane(select(0u, 1u, k % 2u == 0u));
+  let p = vec2<i32>(id.xy);
+  let step = 1 << (n - 1u - k);
+  var best = 0u;
+  var bd = FAR;
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      let q = p + vec2<i32>(dx, dy) * step;
+      if (!inMap(q)) { continue; }
+      let c = atomicLoad(&jfa[src + winIdx(q)]);
+      if (c == 0u) { continue; }
+      let cw = (c - 1u) >> 2u;
+      let d = jfaVal(cw) + hexDist(p, jfaXY(cw)) * LOS_CMAX;
+      if (d < bd) {
+        bd = d;
+        best = c;
+      }
+    }
+  }
+  atomicStore(&jfa[dst + winIdx(p)], best);
+}
+@compute @workgroup_size(8, 8)
+fn jfaRApply(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (!jfaRound() || id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let f = AP.u2.x;
+  let p = vec2<i32>(id.xy);
+  let w = winIdx(p);
+  if (!inScope(p) || jfaVal(w) < FAR) { return; }
+  let c = atomicLoad(&jfa[jfaPlane(select(1u, 0u, atomicLoad(&jfa[4]) % 2u == 0u)) + w]);
+  if (c == 0u) { return; }
+  let cw = (c - 1u) >> 2u;
+  let sp = jfaXY(cw);
+  let s = colIdxI(p) * NAV_K;
+  if (navZ(s) < 0.0 || !losClear(cellPos(p), cellPos(sp))) { return; }
+  jfaResolve(p, s, jfaVal(cw) + hexDist(p, sp) * LOS_CMAX, atomicLoad(&jfa[jfaPlane(6u) + cw]));
 }
