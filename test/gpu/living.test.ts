@@ -132,10 +132,27 @@ async function rideTown(ptsRoom?: number): Promise<Uint32Array> {
   expect(routes).toBeLessThan(c('arrivals'));
   // (the deck: a route's point on the west arm at the deck's height)
   // (the points, past the route buffer's header and heads: routeread.wgsl's layout)
-  const pts = new Float32Array(await town.debugRead(town.routes, (8 + 8192 * 4 + head[3] * 4) * 4)).subarray(8 + 8192 * 4);
+  const pts = new Float32Array(await town.debugRead(town.routes, (8 + 8192 * 4 + head[3] * 5) * 4)).subarray(8 + 8192 * 4);
   let onDeck = 0;
-  for (let i = 0; i < head[3]; i++) if (pts[i * 4] > 9 && pts[i * 4] < 19 && Math.abs(pts[i * 4 + 2] - 7) < 1e-3) onDeck++;
+  for (let i = 0; i < head[3]; i++) if (pts[i * 5] > 9 && pts[i * 5] < 19 && Math.abs(pts[i * 5 + 2] - 7) < 1e-3) onDeck++;
   expect(onDeck).toBeGreaterThan(0);
+  // (routeWidth: every traced point's free width is finite and sensible; on the open box's streets (no buildings in
+  // the way: their footprints are 4 m off the road) at least a couple of metres; on the deck narrower than the open
+  // road beside it — the water under it is a drop)
+  let deckW = 0;
+  let deckN = 0;
+  let roadW = 0;
+  let roadN = 0;
+  for (let i = 0; i < head[3]; i++) {
+    const w = pts[i * 5 + 4];
+    // (a trace reserves a point or two more than it writes: those stay empty)
+    if (pts[i * 5] === 0 && pts[i * 5 + 1] === 0) continue;
+    expect(Number.isFinite(w) && w > 0 && w <= 12.5).toBe(true);
+    if (Math.abs(pts[i * 5 + 2] - 7) < 1e-3) ((deckW += w), deckN++);
+    else if (pts[i * 5] > 25 && pts[i * 5] < 44) ((roadW += w), roadN++);
+  }
+  expect(roadN).toBeGreaterThan(0);
+  expect(roadW / roadN).toBeGreaterThan(2);
   // (the builders: at the two sites (progress between 0 and 1, read on the GPU), working)
   expect(c('buildWork')).toBeGreaterThan(50);
   // (Track B's interface: a rider whose override is set — its `overridden`, a forced stub here — is not advanced by the

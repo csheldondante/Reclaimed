@@ -21522,3 +21522,13 @@ Track B's units ride the living town's routes for the soldiers' `march` (U2) and
 - The transfer gate lists the two season-life reads (`askRoute`, `reachedWall`: event reads, a few words).
 - Checked: typecheck; the unit tier (107 files, 866 tests); `opps=1` at Muru — 3 gates, each march route along its
   own arterial to the box's edge (94, 125, 144 units), 52 posts, none unreachable (`scratchpad/opps/postmerge2.png`).
+
+## 2026-11-10 — routes2 item 3: routeWidth (trackA-routes2)
+
+A route point is 5 words now: x, y, z, distance along, and its free width — along each of the lattice's three axes
+how far either way before a building's footprint, water, a drop or a climb over a step against the route's own height,
+or the box's edge; the least span, at most 12 m. Written when the route is traced; generated routes (the quarry's ramp,
+a march) carry their own 2 m. routeread.wgsl `routeWidth(id, i)`, `ROUTE_POINT_WORDS`; one binding still. The Dawn
+test checks every traced point's width is finite and in range and the open streets' mean is over 2 m. Not counted
+yet: the town wall (its geometry is in the wall's words, which the trace doesn't bind), so a gate isn't narrower
+than the street through it.

@@ -9,8 +9,10 @@
 //                   4–6   the grid's place in the window (f32: x, y, z added to a point to put it in the window)
 //                   7     the points' room (points)
 //   words 8 + id·4  a route's head: its first point, its point count, its length (f32 m), the generation it was traced in
-//   points        at word header[3] + i·4: x, y, z (f32, the town grid's frame and world z: a bridge deck's points at the
-//                 deck's height), the distance along the route to that point (f32 m)
+//   points        at word header[3] + i·5 (ROUTE_POINT_WORDS): x, y, z (f32, the town grid's frame and world z: a bridge
+//                 deck's points at the deck's height), the distance along the route to that point (f32 m), the free width
+//                 there (f32 m: across the way, to buildings, water, drops and climbs; at most 12; a generated route's
+//                 — a quarry ramp, a march — its own, 2)
 //
 // A route id handed out to a rider is packed `id | generation << 16` (id < 65536, the generation's low 16 bits). The
 // pool is recycled in two halves: when a half is reused its generation moves on, so an id from before is stale and
@@ -18,6 +20,7 @@
 // read routes only through them.
 
 const ROUTE_BINDING: u32 = 56u;
+const ROUTE_POINT_WORDS: u32 = 5u;
 @group(0) @binding(56) var<storage, read> routeBuf: array<u32>;
 
 struct RouteHead { first: u32, count: u32, length: f32, gen: u32 }
@@ -39,13 +42,15 @@ fn routeValid(idWithGen: u32) -> bool {
 }
 /** point i of a route (0 ≤ i < count) in the grid's frame, and the distance along to it */
 fn routePointLocal(id: u32, i: u32) -> vec4<f32> {
-  let o = routeBuf[3u] + (routeHead(id).first + i) * 4u;
+  let o = routeBuf[3u] + (routeHead(id).first + i) * ROUTE_POINT_WORDS;
   return bitcast<vec4<f32>>(vec4<u32>(routeBuf[o], routeBuf[o + 1u], routeBuf[o + 2u], routeBuf[o + 3u]));
 }
 /** point i of a route in the window (x, y, z: decks at their height) */
 fn routePoint(id: u32, i: u32) -> vec3<f32> {
   return routePointLocal(id, i).xyz + bitcast<vec3<f32>>(vec3<u32>(routeBuf[4u], routeBuf[5u], routeBuf[6u]));
 }
+/** the free width at point i (m) */
+fn routeWidth(id: u32, i: u32) -> f32 { return bitcast<f32>(routeBuf[routeBuf[3u] + (routeHead(id).first + i) * ROUTE_POINT_WORDS + 4u]); }
 /** the distance along the route to point i (m) */
 fn routeDist(id: u32, i: u32) -> f32 { return routePointLocal(id, i).w; }
 /** the position s metres along the route, in the window (clamped to its ends): what a rider's trip interpolates */

@@ -98,7 +98,7 @@ const SPECS: Record<K, BindSpec> = {
   relax: { 0: 'uniform', 2: 'read', 8: 'rw', 9: 'rw', 10: 'rw', 15: 'read' },
   relaxMark: { 0: 'uniform', 10: 'rw' },
   relaxCheck: { 0: 'uniform', 10: 'rw' },
-  trace: { 0: 'uniform', 1: 'read', 2: 'read', 9: 'rw', 10: 'rw', 11: 'rw' },
+  trace: { 0: 'uniform', 1: 'read', 2: 'read', 8: 'rw', 9: 'rw', 10: 'rw', 11: 'rw', 15: 'read' },
   traceDone: { 0: 'uniform', 10: 'rw' },
   poolSwitch: { 0: 'uniform', 10: 'rw', 11: 'rw', 14: 'rw' },
   passMeshClear: { 0: 'uniform', 19: 'rw' },
@@ -185,7 +185,7 @@ export class LivingTown {
     this.pargs = buf('passage mesh args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.lt = buf('state', LT_WORDS * 4);
     // (the route buffer: an 8-word header, ROUTE_IDS heads of 4 words, then the points — routeread.wgsl's layout)
-    this.routes = buf('routes', (ROUTE_HEAD_WORDS + ROUTE_IDS * 4 + ptsRoom * 4) * 4);
+    this.routes = buf('routes', (ROUTE_HEAD_WORDS + ROUTE_IDS * 4 + ptsRoom * 5) * 4);
     device.queue.writeBuffer(this.routes, 0, new Uint32Array([0, 0, ROUTE_IDS / 2, ROUTE_HEAD_WORDS + ROUTE_IDS * 4, 0, 0, 0, ptsRoom]));
     this.rid = buf('riders', MAX_RIDERS * 64);
     // (room for the figures and, with ?livingdebug=1, a block a walkable column)

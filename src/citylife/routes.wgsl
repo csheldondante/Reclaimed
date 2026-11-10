@@ -231,8 +231,12 @@ const R_FAILED: u32 = 0xfffffffdu;
  *  (first point, count, length, generation), then the points (x, y, z, distance along) */
 @group(0) @binding(11) var<storage, read_write> RB: array<u32>;
 fn ptsRoom() -> u32 { return RB[7u]; }
-fn pt(i: u32) -> vec4<f32> { let o = RB[3u] + i * 4u; return bitcast<vec4<f32>>(vec4<u32>(RB[o], RB[o + 1u], RB[o + 2u], RB[o + 3u])); }
-fn setPt(i: u32, v: vec4<f32>) { let o = RB[3u] + i * 4u; let b = bitcast<vec4<u32>>(v); RB[o] = b.x; RB[o + 1u] = b.y; RB[o + 2u] = b.z; RB[o + 3u] = b.w; }
+/** a point's words (routeread.wgsl ROUTE_POINT_WORDS): x, y, z, distance along, free width */
+const PT_WORDS: u32 = 5u;
+fn pt(i: u32) -> vec4<f32> { let o = RB[3u] + i * PT_WORDS; return bitcast<vec4<f32>>(vec4<u32>(RB[o], RB[o + 1u], RB[o + 2u], RB[o + 3u])); }
+fn setPtW(i: u32, v: vec4<f32>, width: f32) { let o = RB[3u] + i * PT_WORDS; let b = bitcast<vec4<u32>>(v); RB[o] = b.x; RB[o + 1u] = b.y; RB[o + 2u] = b.z; RB[o + 3u] = b.w; RB[o + 4u] = bitcast<u32>(width); }
+/** a generated route's point (the quarry's ramp, a march): its width the ramp's own, 2 m */
+fn setPt(i: u32, v: vec4<f32>) { setPtW(i, v, 2.0); }
 fn setHead(rid: u32, first: u32, count: u32, len: f32, gen: u32) { let o = 8u + rid * 4u; RB[o] = first; RB[o + 1u] = count; RB[o + 2u] = bitcast<u32>(len); RB[o + 3u] = gen; }
 @group(0) @binding(12) var<storage, read_write> RID: array<vec4<f32>>;
 @group(0) @binding(13) var<storage, read_write> VOX: array<vec4<u32>>;
@@ -939,6 +943,33 @@ fn hashClear(@builtin(global_invocation_id) g: vec3<u32>) {
   setLt(L_HASH + g.x * 2u + 1u, 0u);
 }
 
+/**
+ * The free width at a route's point (m): along each of the hex lattice's three axes, how far either way before a
+ * building's footprint, water, a drop or a climb of more than a step (1.1 m against the route's own height — a deck's
+ * points against the deck), or the box's edge; the least of the three spans (across the way, the narrowest), at most
+ * 12 m. Written when the route is traced (routeread.wgsl routeWidth).
+ */
+fn freeWidth(p: vec2<f32>, z: f32) -> f32 {
+  let axes = array<vec2<f32>, 3>(vec2<f32>(1.0, 0.0), vec2<f32>(0.5, 0.8660254), vec2<f32>(-0.5, 0.8660254));
+  var best = 12.0;
+  for (var a = 0u; a < 3u; a++) {
+    var span = 0.0;
+    for (var sgn = 0u; sgn < 2u; sgn++) {
+      let d = axes[a] * select(1.0, -1.0, sgn == 1u);
+      var k = 1u;
+      for (; k <= 12u; k++) {
+        let c = cat(p + d * 0.5 * f32(k));
+        if (!inBox(c)) { break; }
+        let i = ix(c);
+        if ((atomicLoad(&WALK[i]) & W_BLOCK) != 0u || WET[i] != 0u || abs(pointZ(i) - z) > 1.1) { break; }
+      }
+      span += 0.5 * f32(k - 1u);
+    }
+    best = min(best, span + 0.5);
+  }
+  return best;
+}
+
 /** (a thread a queued key, phase 2) traced down its hub's field: counted, room taken, written — a point every second
  *  step, the last always */
 @compute @workgroup_size(64)
@@ -982,7 +1013,7 @@ fn trace(@builtin(global_invocation_id) g: vec3<u32>) {
   var w = 0u;
   var acc = 0.0;
   var prev = cpos(cxy(start));
-  setPt(first, vec4<f32>(prev, pointZ(start), 0.0));
+  setPtW(first, vec4<f32>(prev, pointZ(start), 0.0), freeWidth(prev, pointZ(start)));
   w = 1u;
   for (var step = 1u; step < n; step++) {
     let cc = cxy(c);
@@ -999,7 +1030,7 @@ fn trace(@builtin(global_invocation_id) g: vec3<u32>) {
     if ((step & 1u) == 0u || step == n - 1u) {
       acc += distance(p, prev);
       prev = p;
-      if (w < np) { setPt(first + w, vec4<f32>(p, pointZ(c), acc)); w++; }
+      if (w < np) { setPtW(first + w, vec4<f32>(p, pointZ(c), acc), freeWidth(p, pointZ(c))); w++; }
     }
   }
   setHead(rid, first, w, acc, genOf(rid));
