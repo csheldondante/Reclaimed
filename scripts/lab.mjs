@@ -3,7 +3,7 @@
 // (Muru), its GPU town, living town and season loop, ?lab=1 (src/lab/lab.ts) — not the behaviour lab's fortress recipes.
 //
 //   node scripts/lab.mjs serve                     keep Chrome + the lab page up (started by `run` when it isn't)
-//   node scripts/lab.mjs run <scenario> [--args '{"k":1}'] [--out dir] [--reload] [--flags "&agentprof=1"]
+//   node scripts/lab.mjs run <scenario> [--args '{"k":1}'] [--out dir] [--reload] [--flags "&agentprof=1"] [--recipe gputown]
 //                                                  (round 128o: --flags, the page's own URL flags — a page loaded
 //                                                  with other flags is loaded again)
 //                                                  run a scenario on it: prints its console and its JSON result,
@@ -31,6 +31,15 @@ import { overlayBlocks } from './lib/overlaycheck.mjs';
 import { pathToFileURL } from 'node:url';
 import { ROOT, basePort, browser, build, lease, serveBuild, stages } from './lib/runner.mjs';
 
+/**
+ * The recipes: the page's flags over the town game's. A scenario names one (`export const recipe = 'gputown'`, or
+ * `--recipe gputown`); --flags add to it.
+ *   town     the town game as it opens (Muru, its living town, the season loop)
+ *   gputown  (Track B's benches and gates, docs/design/TOWN_CONTRACTS.md) Muru's GPU town and living town, no season
+ *            loop, the walls card risen at once and its muster yard; ready once the side map is solved over the wall
+ *            (src/lab/lab.ts gputown; `--flags "&labkeep=1"` raises a keep district too: the keep and barracks)
+ */
+const RECIPES = { town: {}, gputown: { labrecipe: 'gputown', opps: '0', livingpanel: '0' } };
 const CACHE = path.join(ROOT, '.testcache');
 const STATE = path.join(CACHE, 'lab.json');
 const LOG = path.join(CACHE, 'lab-serve.log');
@@ -126,8 +135,8 @@ async function serve() {
       await cdp.detach();
       const t1 = now();
       // (midday, the day held: shots read the same every run)
-      if (recipe !== 'town') throw new Error(`lab: the page is the town game (recipe 'town'), not "${recipe}" — the behaviour lab's recipes went with the fortress`);
-      const q = new URLSearchParams({ skipmenu: '1', level: 'atlas', town: '1', fresh: '1', lab: '1', tutorial: '0', warmcache: '0', q: 'low', tod: '0.3', day: '100000' });
+      if (!RECIPES[recipe]) throw new Error(`lab: the page is the town game (recipes ${Object.keys(RECIPES).join(', ')}), not "${recipe}" — the behaviour lab's recipes went with the fortress`);
+      const q = new URLSearchParams({ skipmenu: '1', level: 'atlas', town: '1', fresh: '1', lab: '1', tutorial: '0', warmcache: '0', q: 'low', tod: '0.3', day: '100000', ...RECIPES[recipe] });
       for (const [k, v] of new URLSearchParams(flags)) q.set(k, v);
       await page.goto(`${srv.url}/?${q}`, { waitUntil: 'load' });
       await page.waitForFunction(() => window.reclaimed?.lab?.ready || document.querySelector('.fatal'), { timeout: 300000, polling: 100 });
@@ -294,7 +303,7 @@ else if (cmd === 'status') {
   if (!file) throw new Error('lab.mjs run <scenario.mjs|.js> [--args json] [--out dir] [--reload] [--flags f]');
   const t0 = now();
   await ensureServer();
-  const r = await ask('POST', '/run', { file, cwd: process.cwd(), args: opt('args') ? JSON.parse(opt('args')) : {}, out: opt('out'), reload: flag('reload'), flags: opt('flags') ?? '' });
+  const r = await ask('POST', '/run', { file, cwd: process.cwd(), args: opt('args') ? JSON.parse(opt('args')) : {}, out: opt('out'), reload: flag('reload'), flags: opt('flags') ?? '', recipe: opt('recipe') });
   if (!r) throw new Error('the lab server went away');
   for (const l of r.logs ?? []) console.log(l);
   for (const e of r.errors ?? []) console.log(`ERROR ${e}`);
