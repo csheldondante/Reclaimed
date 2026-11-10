@@ -218,28 +218,27 @@ fn dig(@builtin(global_invocation_id) g: vec3<u32>) {
   let key = clamp((l.x - lo) / max(hi - lo, 1.0), 0.0, 1.0);
   if (key <= ltf(L_Q + Q_PROG) || lt(L_Q + Q_DONE) != 0u) { allowed = min(full, f32(b + 1u) * bh); }
   let tgt = max(g0 - allowed + u.pz.x, 2.0);
+  // (worldops.wgsl opTake, the edit pass's own take: off the top, never External, never under z 2 — down to the target,
+  // DIG_STEP a frame at most)
   let cs = colSlots(u32(w.x), u32(w.y));
+  var arr: array<vec4<u32>, MAX_K>;
+  var old: array<vec4<u32>, MAX_K>;
   var n = 0u;
-  for (var k = 0u; k < cs.y; k++) { if (ivEmpty(layersW[cs.x + k])) { break; } n = k + 1u; }
+  for (var k = 0u; k < cs.y; k++) { let v = layersW[cs.x + k]; old[k] = v; arr[k] = v; if (ivEmpty(v)) { break; } n = k + 1u; }
+  let n0 = n;
   var left = DIG_STEP;
   var taken = 0.0;
-  while (n > 0u && left > 1e-4) {
-    let at = cs.x + n - 1u;
-    let t = layersW[at];
-    if (ivMat(t) == MAT_EXTERNAL) { break; }
-    let z1 = ivZ1(t);
+  var mt = 0u;
+  for (var k = 0u; k < MAX_K && n > 0u && left > 1e-4; k++) {
+    let z1 = ivZ1(arr[n - 1u]);
     if (z1 <= tgt + 1e-3) { break; }
-    let z0 = ivZ0(t);
-    let nt = max(max(tgt, z1 - left), max(z0, 2.0));
-    let cut = z1 - nt;
-    if (cut <= 0.0) { break; }
-    taken += cut;
-    left -= cut;
-    var nv = IV_NONE;
-    if (nt > z0 + 1e-3) { nv = ivPack(z0, nt, ivMat(t), ivAux(t)); }
-    layersW[at] = nv;
-    bumpColumn(vec2<u32>(w), t, nv);
-    if (ivEmpty(nv)) { n -= 1u; } else { break; }
+    let got = opTake(&arr, &n, min(left, z1 - tgt), &mt);
+    if (got <= 0.0) { break; }
+    taken += got;
+    left -= got;
+  }
+  for (var k = 0u; k < n0; k++) {
+    if (any(arr[k] != old[k])) { layersW[cs.x + k] = arr[k]; bumpColumn(vec2<u32>(w), old[k], arr[k]); }
   }
   if (taken > 0.0) {
     let lit = u32(taken * CELL_AREA * 1000.0);
@@ -321,24 +320,19 @@ fn pile(@builtin(global_invocation_id) g: vec3<u32>) {
     if (r.exchanged) { got = true; } else { have = r.old_value; }
   }
   if (!got) { return; }
+  // (worldops.wgsl opPut, the edit pass's own put)
   let cs = colSlots(u32(w.x), u32(w.y));
+  var arr: array<vec4<u32>, MAX_K>;
   var n = 0u;
-  for (var k = 0u; k < cs.y; k++) { if (ivEmpty(layersW[cs.x + k])) { break; } n = k + 1u; }
-  let top = select(0.0, ivZ1(layersW[cs.x + n - 1u]), n > 0u);
-  var put = false;
-  if (n > 0u && ivMat(layersW[cs.x + n - 1u]) == M_RUBBLE_W) {
-    let t = layersW[cs.x + n - 1u];
-    let nv = ivPack(ivZ0(t), top + want, M_RUBBLE_W, ivAux(t));
-    layersW[cs.x + n - 1u] = nv;
-    bumpColumn(vec2<u32>(w), t, nv);
-    put = true;
-  } else if (n < cs.y) {
-    let nv = ivPack(top, top + want, M_RUBBLE_W, 0u);
-    layersW[cs.x + n] = nv;
-    bumpColumn(vec2<u32>(w), IV_NONE, nv);
-    put = true;
-  }
+  for (var k = 0u; k < cs.y; k++) { let v = layersW[cs.x + k]; arr[k] = v; if (ivEmpty(v)) { break; } n = k + 1u; }
+  let n0 = n;
+  let put = opPut(&arr, &n, cs.y, M_RUBBLE_W, want, f32(G.zMax) - 2.0) > 0.0;
   if (put) {
+    for (var k = max(n0, 1u) - 1u; k < n; k++) {
+      let ov = layersW[cs.x + k];
+      layersW[cs.x + k] = arr[k];
+      bumpColumn(vec2<u32>(w), ov, arr[k]);
+    }
     PUT[pi] += want;
     bumpC(C_DEPOSITED, lit);
   } else {
@@ -449,8 +443,9 @@ fn fellApply(@builtin(global_invocation_id) g: vec3<u32>) {
       let pl = vegPlan(u32(w.x), u32(w.y), v, 0u);
       if (v >= 3.6 && pl.tree) {
         logs = max(1.0, round(0.3 * pl.trunk + 0.15 * pl.crown));
-        vegW[vi] = VEG_STUMP;
-        vegNextW[vi] = VEG_STUMP;
+        // (worldops.wgsl opFell: the edit pass's own fell — a tree's stump)
+        vegW[vi] = opFell(v, true);
+        vegNextW[vi] = opFell(v, true);
         bumpC(C_FELLED, 1u);
         bumpC(C_LOGS_CUT, u32(logs));
         let h = atomicAdd(&LT[L_F + F_RHEAD], 1u) % REGROW_ROOM;

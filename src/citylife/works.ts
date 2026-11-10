@@ -7,6 +7,7 @@ import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import vegplanWgsl from '../shaders/vegplan.wgsl?raw';
+import worldopsWgsl from '../shaders/worldops.wgsl?raw';
 import { makeBindGroup, makeCompute, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
 import type { LivingStage, LivingTown } from './living';
 
@@ -75,7 +76,7 @@ export class Works implements LivingStage {
     };
     this.k = {} as Record<K, ComputeKernel>;
     this.g = {} as Record<K, GPUBindGroup>;
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, vegplanWgsl, worksWgsl];
+    const parts = [commonWgsl, layersWgsl, materialsWgsl, vegplanWgsl, worldopsWgsl, worksWgsl];
     for (const [name, spec] of Object.entries(SPECS) as [K, BindSpec][]) {
       const k = makeCompute(device, `living ${name}`, parts, spec, name);
       this.k[name] = k;
