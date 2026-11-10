@@ -22153,3 +22153,64 @@ device facts, a result card, and a JSON to download, copy or share (kept in perf
 - **Headless check** (412 × 915, q=low, 1 s windows): it runs end to end. 100 v 100 fights go 200 → 76–101 alive; 500 v
   500 go 1,000 → 817–932. The shot shows raiders in Muru's streets by the forest. Desktop frames sit at the headless
   cap (p50 10 ms both ways), so only the phone's numbers mean anything.
+
+## 2026-11-10 — Field bench, fixed after the Pixel's first run; FC12 stage 2: line of sight, seen-only targets, ranged units (trackB-fieldbench)
+
+**The phone's first run (build 777bb1d4) was not a fight.** There were 0 deaths in every phase on the Pixel 9a (town
+s129, armies at [65, 242]). Headless with the phone's exact flags (`tufts=0&shadowcache=4&prepevery=2&bandh=2&
+shadowsize=512&hybrid=1&settle=0&sleepmore=1`) the armies fought in every phase: 105–124 deaths at 100 v 100, 236–338
+at 500 v 500, a full chain of targets, windups, blows and hurts, ~7–13 cells moved. So the flags don't stop the fight.
+The phone ran a different town (s129; headless s84), so a different patch.
+
+Found and fixed at their causes:
+- **The armies' ground flooded.** The first passing patch could be low ground by a river. Headless, every army there
+  drowned ~70 s in (death causes: water 1,000 of 1,000). The pick now takes the highest patch that is dry and level,
+  with no water within 24 cells.
+- **The armies outside the agents' scope.** The scope follows the units' box, read back every 8 ticks. Fields outside
+  it read no way, so nothing chases. The bench now keeps the armies' ground in scope, as a raid's place would be
+  (`Agents.keepInScope`).
+- **The window slid under the camera**, and the camera and army centre stayed in old window coordinates. Both now move
+  with `core.onShift`.
+- **The season loop's camera** eased away from the armies; the bench holds the camera on them.
+- **The phone's single death** may have been environmental. Causes are now reported per phase: combat (`by` a unit's
+  blow or arrow) or the world's (water, fire, impact, lava).
+
+**The report now:**
+- **Headline: the GPU span** on, off and the difference. Frame time is second, and the card says when both sides sit at
+  the vsync cap (the phone: 16.7 ms everywhere).
+- **Validity:** engaged = units with a target at the phase's end (one read of the rows a phase) plus combat deaths. A
+  phase with engaged < 5% of its units is "NO FIGHT — INVALID".
+- **The fight's chain:** noticed, windups, blows, hurts, and how far 32 observed units moved.
+- **Where it was:** the town, the patch (centre, ground), the armies' first rows, the 24-unit gap.
+- **A warm-up fight** per size before the first measured phase. On the phone, block16 (the first phase) was +2.74 ms
+  and block8 +0.20. The likeliest cause is order, not K: the first armies at a place fill every field round them, and
+  only the first phase pays for it. The warm-up takes that out. If K16 still costs more after it, the next suspects are
+  occupancy (256 threads with 10.4 KB of workgroup memory) and registers (`nT`/`nC`, 48 a thread). A smaller layout
+  would keep the seed-id plane only for the hunt field, for 5.2 KB. Not built: the phone's next run decides.
+
+**Stage 2 (UNIT_MINDS_U2 §9f), behind `?los=1`, `?seenonly=1`, and the bench's `?ranged=N`:**
+- **No races.** `occ` and the shoves share one buffer (five words a column a half), which frees the step's eighth
+  storage binding for `mail`:
+  - aimTick, once a frame after notice, writes each fighter's target as the frame left it, plus its sight on the
+    obstacle JFA's clearance;
+  - the hits landing on each unit go in an accumulator, applied by the unit's own thread;
+  - the arrows in flight have their own ring.
+  The step reads only its own slot's words. No unit reads another's row mid-dispatch.
+- **Melee with its target in sight** chases at once and steers straight at it, not waiting on the field.
+- **Seen-only:** the hunt seed is the target's last-seen place, and it stops after 4 s out of sight.
+- **Ranged kinds** (KindSpec `range`): in range and in sight, the archer stands, backs off inside 0.4 of its range, and
+  shoots on its cooldown through `fireArrow`. That is the `fire(from, to, kind)` placeholder, marked
+  `// REPLACE: GPU physics rigid bodies`: a delayed hit in the target's accumulator, with a drawn tracer.
+  - Two arrows in one tick add up.
+  - The hurt names the shooter (`BY_UNIT | id`; AgentUnits decodes it).
+  - Melee strikes are still the CPU's (DA-B32).
+- **Tests** (`test/gpu/los.test.ts`, 4 passing):
+  - an archer in sight fires at frame 2 and its arrow lands naming it;
+  - an archer behind a wall holds fire, walks round and fires (845 frames on that map);
+  - two still archers either side, their arrows landing in one tick, give one hurt of 2 damage, hp −2 (3 runs of 3);
+  - melee in sight turns in 5 frames with the fields frozen.
+- **Bench phases:** los, seenonly, los+archers, seenonly+archers, each per side with the front's asks a sweep (frontDbg
+  under `benchProbe`), shots, arrows landed, frames from sight to the first shot, and melee direct steps. Desktop shows
+  the chain working (archers 58–254 shots a phase); the GPU numbers wait for the phone.
+
+Gates: typecheck clean; touched-file GPU tests (los ×2, huntseed, huntreact, notice, agentevents, traits, unitminds-u2) pass; unit flags passes. Headless bench with the phone flags: every phase a valid fight (engaged ≥ 5%, combat deaths only); shot looked at (the armies fighting on high dry ground).

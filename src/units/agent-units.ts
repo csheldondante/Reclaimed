@@ -83,6 +83,8 @@ function raiderModel(): [number, number, number, number][] {
   return v;
 }
 const TARGETS = 8;
+/** units.wgsl / agents.ts BY_UNIT: a hurt's or a death's hit with this bit is a unit's id (its arrow, FC12 stage 2) */
+const BY_UNIT = 0x40000000;
 /** (U2, UNIT_MINDS_U2.md §5: the riskiest part, measured) ?huntgpu=1: the hunt field seeded on the GPU from every
  *  hostile's target (Agents.gpuHunt) — the actors' targets still seeded here; off: the TARGETS nearest, as before */
 const HUNT_GPU = typeof location !== 'undefined' && urlFlags().get('huntgpu') === '1';
@@ -750,6 +752,12 @@ export class AgentUnits implements Units {
     u.v.state = 'walk';
   }
 
+  /** who a hurt or a death names: a hit of ours (its id), or (FC12 stage 2) a unit's arrow (BY_UNIT | its GPU id) */
+  private byOf(n: number): UnitId | string | null {
+    if (n >= BY_UNIT && n < BY_UNIT * 2) return this.byGpu.get(n - BY_UNIT) ?? null;
+    return this.hitBy.get(n) ?? null;
+  }
+
   private absorb(units: AgentState[], events: AgentEvent[]): void {
     let n = 0;
     // (round 128p, DA-B22 (c)(4): where a unit stands is known only for the observed read now — the rest not read: null,
@@ -786,7 +794,7 @@ export class AgentUnits implements Units {
         const id = this.byGpu.get(e.id);
         const u = id !== undefined ? this.recs.get(id) : undefined;
         if (!u) continue;
-        const by = typeof e.hit === 'number' ? (this.hitBy.get(e.hit) ?? null) : null;
+        const by = typeof e.hit === 'number' ? this.byOf(e.hit) : null;
         // (round 128p: its health followed by its hurts — an unobserved unit's record isn't read)
         u.v.health = Math.max(0, u.v.health - e.damage / HPK);
         for (const f of this.hurt) f(this.view(u), e.damage / HPK, by);
@@ -809,7 +817,7 @@ export class AgentUnits implements Units {
         this.fallen.set(e.id, u.v.id);
         if (u.v.job.kind === 'work') this.routine?.drop(u);
         this.releaseGoal(u);
-        const by = typeof e.by === 'number' ? (this.hitBy.get(e.by) ?? null) : null;
+        const by = typeof e.by === 'number' ? this.byOf(e.by) : null;
         for (const f of this.died) f(this.view(u), by);
       } else if (e.type === 'raised') {
         const id = this.fallen.get(e.id);

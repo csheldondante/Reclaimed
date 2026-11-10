@@ -73,7 +73,13 @@ const LOOK_CORPSE: u32 = 0x4000000u;
 @group(0) @binding(25) var<storage, read> lava: array<vec4<f32>>;
 // shoves per column, two halves as occ: what tumbling units carried through
 // it (x, y momentum and mass, ×SHOVE_FIX) and how many burning units (w)
-@group(0) @binding(16) var<storage, read_write> shove: array<atomic<i32>>;
+// (FC12 stage 2: the shoves live in `occ`'s words now — five a column a half: the count, then the shove's four, i32
+// as u32 bits — so the step's eighth storage binding is free for `mail`)
+fn occAt(hc: u32) -> u32 { return hc * 5u; }
+fn shoveAt(hc: u32, k: u32) -> u32 { return hc * 5u + 1u + k; }
+fn shoveLoad(hc: u32, k: u32) -> f32 { return f32(bitcast<i32>(atomicLoad(&occ[shoveAt(hc, k)]))); }
+fn shoveAdd(hc: u32, k: u32, v: i32) { atomicAdd(&occ[shoveAt(hc, k)], bitcast<u32>(v)); }
+fn occClearAt(hc: u32) { for (var k = 0u; k < 5u; k++) { atomicStore(&occ[hc * 5u + k], 0u); } }
 // embers landed (particles.wgsl): x the tick it landed
 @group(0) @binding(19) var sparkTex: texture_2d<f32>;
 // (unitDraw; bindings past common.wgsl's) the draw: voxels in the body
@@ -201,10 +207,7 @@ fn scopeIn(@builtin(global_invocation_id) id: vec3<u32>) {
   atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], ALL_FIELDS);
   // (?jfa=1: the obstacles JFA made again — a chunk came in)
   atomicStore(&jfa[2], 1u);
-  for (var h = 0u; h < 2u; h++) {
-    atomicStore(&occ[h * cols + i], 0u);
-    for (var k = 0u; k < 4u; k++) { atomicStore(&shove[(h * cols + i) * 4u + k], 0); }
-  }
+  for (var h = 0u; h < 2u; h++) { occClearAt(h * cols + i); }
 }
 
 /** occClear over the scope's columns (8 x 8 a workgroup: the tile list's shape) */
@@ -214,8 +217,7 @@ fn occClearCols(@builtin(global_invocation_id) id: vec3<u32>) {
   let c = colIdx(id.x, id.y);
   let cols = G.mapW * G.mapH;
   let wr = AP.n.w % 2u;
-  atomicStore(&occ[wr * cols + c], 0u);
-  for (var k = 0u; k < 4u; k++) { atomicStore(&shove[(wr * cols + c) * 4u + k], 0); }
+  occClearAt(wr * cols + c);
 }
 
 // the live units' box (columns: min x, min y, max x, max y), read back now and then
@@ -240,8 +242,7 @@ fn occClear(@builtin(global_invocation_id) id: vec3<u32>) {
   let cols = G.mapW * G.mapH;
   if (id.x >= cols) { return; }
   let wr = AP.n.w % 2u;
-  atomicStore(&occ[wr * cols + id.x], 0u);
-  for (var k = 0u; k < 4u; k++) { atomicStore(&shove[(wr * cols + id.x) * 4u + k], 0); }
+  occClearAt(wr * cols + id.x);
 }
 
 /** The way down field `fld` from surface s of cell c, at pos (0 at a seed, or none). */
@@ -434,6 +435,19 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     if ((hz & 1u) != 0u && !alight && !noBurn) { alight = true; burn = BURN_TIME; emit(EV_ALIGHT, uid, hid, 0.0, pos); }
   }
 
+  // (FC12 stage 2) the arrows landed on it since its last step (arrowStep's sum: two in one tick both count), taken and
+  // cleared by its own thread — no other unit's thread writes its hp
+  let accO = MAIL_ACC + u * 2u;
+  let landed = atomicExchange(&mail[accO], 0u);
+  if (landed > 0u) {
+    let shot = atomicExchange(&mail[accO + 1u], 0u);
+    let dmg = f32(landed) / 256.0;
+    hp -= dmg;
+    flash = 0.15;
+    emit(EV_HURT, uid, BY_UNIT | (shot - 1u), dmg, pos);
+    if (hp <= 0.0 && !dead) { dead = true; killedBy = BY_UNIT | (shot - 1u); }
+  }
+
   // held by the game, or launched: holds and launches name its slot
   var held = false;
   for (var e = 0u; e < AP.n3.x; e++) {
@@ -506,9 +520,9 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   // knocked over by what tumbled through here last tick (not itself: it
   // was tumbling then, and a tumbling unit doesn't take shoves)
   if (state != ST_TUMBLE && state != ST_HELD && !rooted) {
-    let sm = f32(atomicLoad(&shove[(rd + i) * 4u + 2u])) / SHOVE_FIX;
+    let sm = shoveLoad(rd + i, 2u) / SHOVE_FIX;
     if (sm > 0.0) {
-      let p = vec2<f32>(f32(atomicLoad(&shove[(rd + i) * 4u])), f32(atomicLoad(&shove[(rd + i) * 4u + 1u]))) / SHOVE_FIX;
+      let p = vec2<f32>(shoveLoad(rd + i, 0u), shoveLoad(rd + i, 1u)) / SHOVE_FIX;
       let v = p / (sm + mass);
       if (length(v) > KNOCK_SPEED) { vel = vec3<f32>(v, length(v) * 0.3); state = ST_TUMBLE; stT = 0.0; stun = 0.0; }
     }
@@ -531,10 +545,10 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     let sk = textureLoad(sparkTex, texCol(vec2<i32>(c)), 0).x;
     if (sk > 0.0 && f32(G.tick) - sk < 2.5) { lit = true; }
     // (a burning unit here or next door: a chance a second)
-    var near = f32(atomicLoad(&shove[(rd + i) * 4u + 3u]));
+    var near = shoveLoad(rd + i, 3u);
     for (var d = 0u; d < NDIR; d++) {
       let q = nbr(c, d);
-      if (inMap(q)) { near += 0.5 * f32(atomicLoad(&shove[(rd + colIdxI(q)) * 4u + 3u])); }
+      if (inMap(q)) { near += 0.5 * shoveLoad(rd + colIdxI(q), 3u); }
     }
     if (near > 0.0 && rand3(u, G.tick, 12u) < near * dt * 1.5) { lit = true; }
     if (lit) { alight = true; burn = BURN_TIME; emit(EV_ALIGHT, uid, BY_FIRE, 0.0, pos); }
@@ -617,10 +631,9 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // what it carries knocks over the units in its way
     if (length(vel.xy) > KNOCK_SPEED) {
-      let o = (wr + ni) * 4u;
-      atomicAdd(&shove[o], i32(vel.x * mass * SHOVE_FIX));
-      atomicAdd(&shove[o + 1u], i32(vel.y * mass * SHOVE_FIX));
-      atomicAdd(&shove[o + 2u], i32(mass * SHOVE_FIX));
+      shoveAdd(wr + ni, 0u, i32(vel.x * mass * SHOVE_FIX));
+      shoveAdd(wr + ni, 1u, i32(vel.y * mass * SHOVE_FIX));
+      shoveAdd(wr + ni, 2u, i32(mass * SHOVE_FIX));
     }
   } else if (kind.b.w <= 0.0 && steer < RIDE_TRIP + 0.5) {
     // (round 128o, DA-A7: on a trip — placed by the ride, roadride.wgsl, after the last step: its x, y and velocity are
@@ -676,9 +689,21 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
         reachD = g.w;
         if (reachD < kind.b.x * 1.3) { seen = sightClear(pos + vec3<f32>(0.0, 0.0, height * 0.6), g.xyz); }
       }
+      // (FC12 stage 2: its target as the last frame left it — mail's aim — in sight or not; a ranged kind's range)
+      let aimO = MAIL_AIM + u * AIM_W;
+      let aimCode = atomicLoad(&mail[aimO + 3u]);
+      let aimFlags = atomicLoad(&mail[aimO + 7u]);
+      let aimOk = !worker && aimCode != 0u && aimCode == bitcast<u32>(units[u * UNIT_V + 5u].y);
+      let aimSeen = aimOk && (aimFlags & AIM_SEEN) != 0u;
+      let aimAt = mailV3(aimO);
+      let range = bitcast<f32>(kind.c.w);
+      let ranged = range > 0.0;
+      let aimD = length(aimAt.xy - pos.xy);
       if (!worker) {
+        // (in sight: closing in at once, the field not waited for)
+        if (state == ST_WANDER && aimSeen) { state = ST_CHASE; stT = 0.0; }
         if (state == ST_WANDER && here < kind.b.w) { state = ST_CHASE; stT = 0.0; }
-        if (state == ST_CHASE && here > kind.b.w * 1.5) { state = ST_WANDER; stT = 0.0; }
+        if (state == ST_CHASE && here > kind.b.w * 1.5 && !aimSeen) { state = ST_WANDER; stT = 0.0; }
         if (state == ST_CHASE && reachD < kind.b.x && seen && cool <= 0.0) {
           state = ST_SWING;
           stT = 0.0;
@@ -697,6 +722,23 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
         // (a new heading now and then; slower than closing in)
         if (rand3(u, G.tick, 7u) < dt * 0.4) { wanderH = rand3(u, G.tick, 8u) * 6.2832; }
         want = vec2<f32>(cos(wanderH), sin(wanderH)) * 0.4;
+      } else if (ranged && aimSeen && aimD <= range) {
+        // (a ranged kind in range and in sight: it stands — backs off inside its standoff — and shoots on its cooldown)
+        want = select(vec2<f32>(0.0), -(aimAt.xy - pos.xy) / max(aimD, 1e-3), aimD < range * 0.4);
+        heading = atan2(aimAt.y - pos.y, aimAt.x - pos.x);
+        if (cool <= 0.0) {
+          fireArrow(uid, aimCode, kind.b.y, pos, aimAt);
+          cool = kind.b.z;
+          if ((aimFlags & AIM_SHOT) == 0u) {
+            atomicStore(&mail[aimO + 7u], aimFlags | AIM_SHOT);
+            atomicAdd(&mail[1], AP.n.w - atomicLoad(&mail[aimO + 9u]));
+            atomicAdd(&mail[2], 1u);
+          }
+        }
+      } else if (aimSeen && state == ST_CHASE && aimD > 0.6) {
+        // (melee in sight: straight at it, the field not waited for)
+        want = (aimAt.xy - pos.xy) / aimD;
+        atomicAdd(&mail[6], 1u);
       } else if (worker && steer != 0.0) {
         // (round 128i, V128-14: riding the roads — shaders/roadride.wgsl steers it: a heading, or stand at its goal)
         want = select(vec2<f32>(cos(steer - STEER_BIAS), sin(steer - STEER_BIAS)), vec2<f32>(0.0), steer < 0.0);
@@ -711,12 +753,12 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
         speed *= 1.5;
       }
       // apart from the crowd: away from the busier neighbours
-      let mine = f32(atomicLoad(&occ[rd + i]));
+      let mine = f32(atomicLoad(&occ[occAt(rd + i)]));
       var crowd = vec2<f32>(0.0);
       for (var d = 0u; d < NDIR; d++) {
         let q = nbr(c, d);
         if (!inMap(q) || navLink(s, d) == 0u) { continue; }
-        crowd -= DIRV[d] * f32(atomicLoad(&occ[rd + colIdxI(q)]));
+        crowd -= DIRV[d] * f32(atomicLoad(&occ[occAt(rd + colIdxI(q))]));
       }
       let jit = vec2<f32>(rand3(u, G.tick, 1u), rand3(u, G.tick, 2u)) - 0.5;
       want += crowd * 0.25 + jit * 0.2 * max(mine - 1.0, 0.0);
@@ -786,7 +828,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
   let fi = colIdxI(clampCell(cellAt(np.xy)));
-  if (alight) { atomicAdd(&shove[(wr + fi) * 4u + 3u], 1); }
+  if (alight) { shoveAdd(wr + fi, 3u, 1); }
   let phase = fract(b.w + dt * length(vel.xy) * 0.9);
   info = (info & ~((7u << 12u) | (1u << 15u) | 0xffu)) | (state << 12u) | (select(0u, 1u, alight) << 15u) | grp;
   units[u * UNIT_V] = vec4<f32>(np, bitcast<f32>(info));
@@ -794,7 +836,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   units[u * UNIT_V + 2u] = vec4<f32>(hp, cool, burn, heading);
   units[u * UNIT_V + 3u] = vec4<f32>(flash, stT, under, wanderH);
   units[u * UNIT_V + 5u].x = bitcast<f32>(latch);
-  atomicAdd(&occ[wr + fi], 1u);
+  atomicAdd(&occ[occAt(wr + fi)], 1u);
 }
 
 fn putVoxel(o: u32, c: vec3<f32>, word: u32, q: vec4<f32>) {
@@ -989,10 +1031,20 @@ fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   let ta = units[t * UNIT_V];
   let ti = unitInfo(ta);
   if (((ti >> 8u) & 1u) == 0u || unitId(t, ti) != code - 1u) { return; }
-  let c = clampCell(cellAt(ta.xy));
+  // (?seenonly=1: the seed is where the target was last seen — none if never, or out of sight past SEEN_GIVEUP; the
+  // aim is last frame's, for this target)
+  var seedAt = ta.xyz;
+  if ((AP.u2.z & SEEN_ONLY) != 0u) {
+    let ao = MAIL_AIM + u * AIM_W;
+    let fl = atomicLoad(&mail[ao + 7u]);
+    let lostS = f32(AP.n.w - atomicLoad(&mail[ao + 8u])) * AIM_TICK_S;
+    if (atomicLoad(&mail[ao + 3u]) != code || (fl & AIM_EVER) == 0u || lostS > SEEN_GIVEUP) { return; }
+    seedAt = mailV3(ao + 4u);
+  }
+  let c = clampCell(cellAt(seedAt.xy));
   if (!inScope(c)) { return; }
   let i = colIdxI(c);
-  let k = surfaceNear(i, ta.z);
+  let k = surfaceNear(i, seedAt.z);
   if (k >= NAV_K) { return; }
   let s = i * NAV_K + k;
   let old = atomicOr(&seedMask[s], 1u << f);
@@ -1309,4 +1361,141 @@ fn jfaRApply(@builtin(global_invocation_id) id: vec3<u32>) {
   let s = colIdxI(p) * NAV_K;
   if (navZ(s) < 0.0 || !losClear(cellPos(p), cellPos(sp))) { return; }
   jfaResolve(p, s, jfaVal(cw) + hexDist(p, sp) * LOS_CMAX, atomicLoad(&jfa[jfaPlane(6u) + cw]));
+}
+
+// ---- (FC12 stage 2, UNIT_MINDS_U2.md §9f) line of sight, seen-only targets, ranged units --------------------------------
+// mail (binding 16; agents.ts MAIL_*), u32 words:
+//   head   [0] arrows fired (the ring's cursor), [1] frames from a target coming into sight to the first shot, summed,
+//          [2] how many, [3] shots, [4] arrows landed on their target, [5] missed (the target gone), [6] direct steps
+//   aim    12 a slot, written once a frame by aimTick (after notice) and read by the step — the target as the last frame
+//          left it, so no unit reads another's row while that one's own thread writes it: 0-2 the target's feet, 3 its
+//          code, 4-6 where it was last seen, 7 flags (AIM_SEEN now, AIM_EVER seen since taken, AIM_SHOT fired since it
+//          came into sight), 8 the tick it was last seen, 9 the tick it came into sight
+//   acc    2 a slot: damage landing on it (×256), and who (the highest shooter's id + 1) — added by arrowStep, taken and
+//          cleared by the unit's own step
+//   arrows MAIL_ARROWS of 12: 0 the target's code, 1 the shooter's id + 1, 2 damage, 3 seconds left, 4 seconds in all,
+//          5-7 from, 8-10 to, 11 alive
+@group(0) @binding(16) var<storage, read_write> mail: array<atomic<u32>>;
+const MAIL_HEAD: u32 = 16u;
+const MAIL_AIM: u32 = 16u;
+const AIM_W: u32 = 12u;
+const MAIL_ACC: u32 = MAIL_AIM + MAX_SLOTS * AIM_W;
+const MAIL_ARR: u32 = MAIL_ACC + MAX_SLOTS * 2u;
+const MAIL_ARROWS: u32 = 2048u;
+const ARROW_W: u32 = 12u;
+const AIM_SEEN: u32 = 1u;
+const AIM_EVER: u32 = 2u;
+const AIM_SHOT: u32 = 4u;
+/** a hurt's or death's `other`: a unit's id (its arrow) — agents.ts BY_UNIT */
+const BY_UNIT: u32 = 0x40000000u;
+/** AP.u2.z: line of sight on (melee steers straight at a target in sight; ranged kinds shoot), seen-only targets */
+const LOS_ON: u32 = 1u;
+const SEEN_ONLY: u32 = 2u;
+/** cells a second an arrow flies (its flight time: the distance over this) */
+const ARROW_SPEED: f32 = 24.0;
+/** seconds out of sight after which a seen-only target's last-seen place stops being chased */
+const SEEN_GIVEUP: f32 = 4.0;
+/** a tick's seconds (sim/flow.ts TICK_DT): AP.n.w counts ticks */
+const AIM_TICK_S: f32 = 1.0 / 60.0;
+fn mailF(i: u32) -> f32 { return bitcast<f32>(atomicLoad(&mail[i])); }
+fn mailSetF(i: u32, v: f32) { atomicStore(&mail[i], bitcast<u32>(v)); }
+fn mailV3(i: u32) -> vec3<f32> { return vec3<f32>(mailF(i), mailF(i + 1u), mailF(i + 2u)); }
+fn mailSetV3(i: u32, v: vec3<f32>) { mailSetF(i, v.x); mailSetF(i + 1u, v.y); mailSetF(i + 2u, v.z); }
+
+/**
+ * REPLACE: GPU physics rigid bodies. fireArrow — fire(from, to, kind) → a hit lands in the target's accumulator: today an arrow is
+ * a delayed hit (the flight time) with a drawn tracer, not a body. The interface — a shooter, a target code, a damage,
+ * from, to — is what arrows as rigid bodies keep (BACKLOG U2-RANGED).
+ */
+fn fireArrow(shooter: u32, code: u32, damage: f32, at: vec3<f32>, to: vec3<f32>) {
+  let k = atomicAdd(&mail[0], 1u) % MAIL_ARROWS;
+  let o = MAIL_ARR + k * ARROW_W;
+  let t = max(length(to.xy - at.xy) / ARROW_SPEED, 0.05);
+  atomicStore(&mail[o], code);
+  atomicStore(&mail[o + 1u], shooter + 1u);
+  mailSetF(o + 2u, damage);
+  mailSetF(o + 3u, t);
+  mailSetF(o + 4u, t);
+  mailSetV3(o + 5u, at);
+  mailSetV3(o + 8u, to);
+  atomicStore(&mail[o + 11u], 1u);
+  atomicAdd(&mail[3], 1u);
+}
+
+/** (once a step, after it) the arrows in flight counted down; one landing adds to its target's accumulator */
+@compute @workgroup_size(64)
+fn arrowStep(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= MAIL_ARROWS) { return; }
+  let o = MAIL_ARR + id.x * ARROW_W;
+  if (atomicLoad(&mail[o + 11u]) == 0u) { return; }
+  let left = mailF(o + 3u) - AP.step.x;
+  mailSetF(o + 3u, left);
+  if (left > 0.0) { return; }
+  atomicStore(&mail[o + 11u], 0u);
+  let code = atomicLoad(&mail[o]);
+  let t = (code - 1u) % MAX_SLOTS;
+  let info = unitInfo(units[t * UNIT_V]);
+  if (code == 0u || t >= AP.n.x || ((info >> 8u) & 1u) == 0u || unitId(t, info) != code - 1u) {
+    atomicAdd(&mail[5], 1u);
+    return;
+  }
+  atomicAdd(&mail[MAIL_ACC + t * 2u], u32(max(mailF(o + 2u), 0.0) * 256.0));
+  atomicMax(&mail[MAIL_ACC + t * 2u + 1u], atomicLoad(&mail[o + 1u]));
+  atomicAdd(&mail[4], 1u);
+}
+
+/** (the draw) an arrow in flight: three voxels along its way, on an arc */
+@compute @workgroup_size(64)
+fn arrowDraw(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= MAIL_ARROWS) { return; }
+  let o = MAIL_ARR + id.x * ARROW_W;
+  if (atomicLoad(&mail[o + 11u]) == 0u) { return; }
+  let start = mailV3(o + 5u) + vec3<f32>(0.0, 0.0, 1.2);
+  let to = mailV3(o + 8u) + vec3<f32>(0.0, 0.0, 0.9);
+  let f = clamp(1.0 - mailF(o + 3u) / max(mailF(o + 4u), 1e-3), 0.0, 1.0);
+  let L = length(to.xy - start.xy);
+  let p = mix(start, to, f) + vec3<f32>(0.0, 0.0, 0.12 * L * 4.0 * f * (1.0 - f));
+  let d = normalize(to - start + vec3<f32>(0.0, 0.0, 0.48 * L * (1.0 - 2.0 * f)) + vec3<f32>(1e-4, 0.0, 0.0));
+  let k = atomicAdd(&drawArgs[1], 3u);
+  for (var j = 0u; j < 3u; j++) { putVoxel(k + j, p - d * (f32(j) * 0.2), MAT_WOOD | (3u << 24u), vec4<f32>(0.0, 0.0, 0.0, 1.0)); }
+}
+
+/** (once a frame, after notice) each fighter's target as it stands now, and whether it's in sight (the clearance) */
+@compute @workgroup_size(64)
+fn aimTick(@builtin(global_invocation_id) id: vec3<u32>) {
+  let u = id.x;
+  if (u >= AP.n.x) { return; }
+  let o = MAIL_AIM + u * AIM_W;
+  let a = units[u * UNIT_V];
+  let info = unitInfo(a);
+  let code = bitcast<u32>(units[u * UNIT_V + 5u].y);
+  if (((info >> 8u) & 1u) == 0u || code == 0u || (code & 0x80000000u) != 0u) {
+    atomicStore(&mail[o + 3u], 0u);
+    atomicStore(&mail[o + 7u], 0u);
+    return;
+  }
+  let t = (code - 1u) % MAX_SLOTS;
+  let ta = units[t * UNIT_V];
+  if (t >= AP.n.x || ((unitInfo(ta) >> 8u) & 1u) == 0u || unitId(t, unitInfo(ta)) != code - 1u) {
+    atomicStore(&mail[o + 3u], 0u);
+    atomicStore(&mail[o + 7u], 0u);
+    return;
+  }
+  var flags = atomicLoad(&mail[o + 7u]);
+  if (atomicLoad(&mail[o + 3u]) != code) { flags = 0u; }
+  atomicStore(&mail[o + 3u], code);
+  mailSetV3(o, ta.xyz);
+  let seen = (AP.u2.z & LOS_ON) != 0u && losClear(cellPos(cellAt(a.xy)), cellPos(cellAt(ta.xy)));
+  if (seen) {
+    if ((flags & AIM_SEEN) == 0u) {
+      atomicStore(&mail[o + 9u], AP.n.w);
+      flags &= ~AIM_SHOT;
+    }
+    flags |= AIM_SEEN | AIM_EVER;
+    mailSetV3(o + 4u, ta.xyz);
+    atomicStore(&mail[o + 8u], AP.n.w);
+  } else {
+    flags &= ~AIM_SEEN;
+  }
+  atomicStore(&mail[o + 7u], flags);
 }
