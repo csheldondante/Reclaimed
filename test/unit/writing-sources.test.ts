@@ -54,7 +54,7 @@ const SOURCES: Record<string, Source> = {
   'ui/stations.ts': { who: 'player' },
   // ---- a developer's ----
   'cardlab/main.ts': { who: 'dev', why: 'the card lab page' },
-  'citylife/towns.ts': { who: 'dev', why: 'the living town's debug panel (?living=1)' },
+  'citylife/towns.ts': { who: 'dev', why: 'the living town’s debug panel (?living=1)' },
   'flora/bench.ts': { who: 'dev', why: 'a bench' },
   'flora/viewer.ts': { who: 'dev', why: 'the flora viewer page' },
   'inhabitants/viewer.ts': { who: 'dev', why: 'the inhabitants viewer page' },
