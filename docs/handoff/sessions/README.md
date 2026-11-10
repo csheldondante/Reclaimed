@@ -9,6 +9,7 @@ at its file, and tell it to read `ADDENDUM.md` first: that file collects anythin
 | `STREAMING_PHONE.md` | Panning keeps up on the phone: the light height layer (SF5), the city cache (DA-P2), sim asleep unless woken (SF6) | — |
 | `BUILDING_GENERATOR.md` | Procedural building and architecture style generator on the lot records (plus trees and doodads in the gaps) | citygen contract |
 | `CONSTRUCTION_SHADER.md` | The construction time-lapse shader (FONDACO technique) driven by per-lot progress | citygen contract |
+| `GPU_AGENTS_FLORA.md` | Agents and plants fully on the GPU as designed: brains as GPU states, no per-frame unit sync, one crowd, no CPU flora mirror | Track B's GPU_UNIT_AI_PLAN |
 | `BUILDING_PHYSICS.md` | Generated buildings as physical structures: integrity, collapse, rigid bodies | citygen claims; best alongside the building generator |
 
 ## Rules every session follows (the user's, 2026-11-10)
