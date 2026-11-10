@@ -13,7 +13,7 @@
 
 import type { RegionGraph, RunRecord, TravelLeg } from '../api/contracts/run';
 import type { Situation } from '../api/contracts/situation';
-import type { UnitId, Units } from '../api/contracts/units';
+import type { SeenUnit, Units } from '../api/contracts/units';
 import type { Terrain } from '../api/contracts/terrain';
 import type { Sim } from '../api/world';
 import { MemoryWorldState } from '../api/contracts/world-state';
@@ -163,14 +163,11 @@ export class LevelSit {
     return { centre: this.d.toWin(p.centre), radius: p.radius, doors: p.doors.map((x) => this.d.toWin(x.at)) };
   };
 
-  /** the town's people out now: its units, not hostile, not its guards */
-  private townsfolk = (sid: string): UnitId[] => {
+  /** the town's people out now: its units, not hostile, not its guards (round 128p: asked of the GPU, where each stands) */
+  private townsfolk = async (sid: string): Promise<SeenUnit[]> => {
     const p = this.places(sid);
     if (!p) return [];
-    return this.d.units
-      .query(p.centre, p.radius * 2 + 40)
-      .filter((u) => u.settlement === sid && !u.hostile && u.role !== 'guard')
-      .map((u) => u.id);
+    return (await this.d.units.query(p.centre, p.radius * 2 + 40)).filter((u) => u.settlement === sid && !u.hostile && u.role !== 'guard');
   };
 
   /** play the area the run is at */

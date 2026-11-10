@@ -9,7 +9,7 @@
 
 import type { ControllerProfile } from '../api/contracts/play';
 import type { RunStage } from '../api/contracts/run';
-import type { UnitId, Units } from '../api/contracts/units';
+import { seen, type UnitId, type Units } from '../api/contracts/units';
 import type { Sim } from '../api/world';
 import type { PlaySession } from '../play/session';
 import { tunedParams } from '../play/session';
@@ -87,6 +87,8 @@ export class StagePlay {
   private quarryHeading: number | null = null;
   // fight / smash
   private foes: UnitId[] = [];
+  /** (round 128p, U1) the foes observed (Units.observe) while the stage stands: the arrow points at the nearest */
+  private observing: (() => void)[] = [];
   private towers: { at: P2; base: number; down: boolean }[] = [];
   private towerT = 0;
   private done: ((r: StageResult) => void) | null = null;
@@ -217,7 +219,9 @@ export class StagePlay {
       const a = (2 * Math.PI * i) / n + Math.random() * 0.4;
       const r = r0 + Math.random() * (r1 - r0);
       const p: P2 = [c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r];
-      this.foes.push(this.d.units.spawn('raider', p, 'f-raiders', { hostile: true, health: this.spec.foeHealth ?? 3, sight: 40, speed: 3.5, role: 'raider' }));
+      const id = this.d.units.spawn('raider', p, 'f-raiders', { hostile: true, health: this.spec.foeHealth ?? 3, sight: 40, speed: 3.5, role: 'raider' });
+      this.foes.push(id);
+      this.observing.push(this.d.units.observe(id));
     }
   }
 
@@ -276,7 +280,8 @@ export class StagePlay {
         let best: P2 | null = null;
         let bd = Infinity;
         for (const id of this.foes) {
-          const u = this.d.units.get(id);
+          // (observed: one not read yet is pointed at from the next frame)
+          const u = seen(this.d.units.get(id));
           if (!u?.alive) continue;
           const dd = Math.hypot(u.at[0] - me[0], u.at[1] - me[1]);
           if (dd < bd) (bd = dd), (best = [u.at[0], u.at[1]]);
@@ -452,6 +457,8 @@ export class StagePlay {
     this.banner.remove();
     for (const a of this.arrows) a.el.remove();
     this.big.remove();
+    for (const release of this.observing) release();
+    this.observing = [];
     for (const id of this.foes) this.d.units.remove(id);
     this.foes = [];
     this.world.vehicles = undefined;

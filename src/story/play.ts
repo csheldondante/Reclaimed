@@ -133,6 +133,8 @@ export class StoryPlay {
   readonly cam: StoryCamera;
   readonly hud: ObjectiveHud;
   private placed = new Map<string, Placed>();
+  /** (round 128p, U1) the cast's units observed while staged (Units.observe), released on dispose */
+  private observing: (() => void)[] = [];
   private reached = new Set<string>();
   private lockSaid = new Map<string, number>();
   private look = 0;
@@ -197,6 +199,8 @@ export class StoryPlay {
       // (round 88: as a unit, when there are units; else a pillar of their material)
       const big = /lich|warden|lord|king/.test(c.role);
       const unit = d.units?.spawn(c.role, at, c.faction, { name: c.name, character: c.id, role: c.role, health: big ? 12 : 4, damage: big ? 2 : 1, sight: 12, speed: big ? 2.6 : 3 });
+      // (round 128p, U1: a cast member's badge and the waypoint follow where its unit stands — observed while staged)
+      if (d.units && unit !== undefined) p.observing.push(d.units.observe(unit));
       const height = unit !== undefined ? 2.6 : (s.height ?? 6);
       if (unit === undefined) p.build(at, s.material, 1.3, height, `pillar:${c.id}`);
       const badge = document.createElement('button');
@@ -221,7 +225,8 @@ export class StoryPlay {
     d.units?.died.push((u) => {
       if (u.character && p.placed.has(u.character)) {
         p.placed.get(u.character)!.badge.classList.add('gone');
-        p.build([u.at[0], u.at[1]], 'stone', 1.1, 1, `grave:${u.character}`);
+        // (where it fell: its death's place)
+        if (u.at) p.build([u.at[0], u.at[1]], 'stone', 1.1, 1, `grave:${u.character}`);
       }
       p.run.note({ kind: 'killed', character: u.character, unitKind: u.role });
     });
@@ -460,7 +465,8 @@ export class StoryPlay {
     }
     const u = this.d.units!.get(p.unit);
     if (!u) return;
-    p.at = u.at;
+    // (observed: its place read from the sync after it was staged — till then where it was put)
+    if (u.at) p.at = u.at;
     p.badge.classList.toggle('foe', u.hostile);
   }
 
@@ -500,6 +506,8 @@ export class StoryPlay {
   }
 
   dispose(): void {
+    for (const release of this.observing) release();
+    this.observing = [];
     this.dialog.dispose();
     this.hud.dispose();
     this.layer.remove();

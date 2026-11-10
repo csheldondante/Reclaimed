@@ -35,7 +35,7 @@ export default async function (lab, args) {
   const backFrom = new Map();
   for (let t = 0; t < seconds; t += every) {
     await lab.run(every, 16);
-    const s = lab.snapshot();
+    const s = (await lab.snapshot());
     for (const c of s.carts) {
       const from = c.pile;
       if (c.phase === 'back') backFrom.set(c.id, from);
@@ -63,7 +63,7 @@ export default async function (lab, args) {
     }
     if (t % 40 === 0) console.log(JSON.stringify({ t: s.simT, people: s.people, carts: s.carts.map((c) => `${c.phase}@${Math.round(c.at[0])},${Math.round(c.at[1])}`).join(" "), piles: s.piles, carted: s.stats.carted, cs: lab.life().cartsState(), arrived: s.stats.arrived, stone: Math.round(s.stores.stone ?? 0), grain: Math.round(s.stores.grain ?? 0) }));
   }
-  const s = lab.snapshot();
+  const s = (await lab.snapshot());
   const out = {
     plan,
     carts: s.carts.length,

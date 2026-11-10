@@ -604,7 +604,8 @@ export class AgentUnits implements Units {
   }
 
   private view(u: UnitRec): UnitView {
-    return { ...u.v, at: u.v.at ? ([...u.v.at] as V3) : null, job: structuredClone(u.v.job) };
+    const at = u.v.at;
+    return { ...u.v, at: at ? [at[0], at[1], at[2]] : null, job: structuredClone(u.v.job) };
   }
 
   /**
@@ -895,7 +896,7 @@ export class AgentUnits implements Units {
     const chosen: (UnitId | string)[] = [];
     const targets: Target[] = [];
     if (hunters.length) {
-      for (const t of new Set(hunters.map((h) => h.target!))) {
+      for (const t of new Set(hunters.flatMap((h) => (h.target === null ? [] : [h.target])))) {
         if (typeof t !== 'string' || chosen.length >= TARGETS) continue;
         const p = this.posOf(t);
         if (!p) continue;

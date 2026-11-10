@@ -79,7 +79,7 @@ export default async function (lab, args) {
   let last = null;
   for (let t = 0; t < measure; t += sample) {
     await lab.run(sample, speed);
-    last = lab.snapshot();
+    last = (await lab.snapshot());
     on += last.roads.onRoad;
     walking += last.roads.walking;
     if (last.roads.areaShare !== null) shares.push(last.roads.areaShare);

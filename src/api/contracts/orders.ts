@@ -6,7 +6,7 @@
 // system's business (contracts/units.ts UnitJob) — an Order is turned into a job at this boundary (src/runsit/
 // followers.ts), and nothing here knows the GPU agents.
 
-import type { UnitId, UnitView, V2 } from './units';
+import type { SeenUnit, UnitId, UnitView, V2 } from './units';
 
 export type Order =
   /** walk after the leader, keeping about `distance` cells off */
@@ -22,7 +22,7 @@ export interface Followers {
   /** the actor they follow (contracts/units.ts Actor id: 'hero') */
   readonly leader: string;
   /** take these units on (they keep doing what they did until ordered) */
-  recruit(ids: UnitId[]): void;
+  recruit(units: readonly SeenUnit[]): void;
   /** let them go (released to their routine) */
   dismiss(ids: UnitId[]): void;
   /** order every follower, or these */

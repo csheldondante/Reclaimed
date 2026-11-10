@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import type { Situation } from '../../src/api/contracts/situation';
-import type { UnitId, UnitJob, Units, UnitView } from '../../src/api/contracts/units';
+import type { SeenUnit, UnitId, UnitJob, Units } from '../../src/api/contracts/units';
 import { MemoryWorldState } from '../../src/api/contracts/world-state';
 import { fillSituation, situationMap } from '../../src/runsit/fill';
 import { SituationRun, HORDE_CAP_S, PURSUIT_CLOSE, pathEstimates } from '../../src/runsit/state';
@@ -199,7 +199,13 @@ describe('items (items.ts)', () => {
 describe('followers (followers.ts)', () => {
   class FakeUnits {
     jobs = new Map<UnitId, UnitJob>();
-    views = new Map<UnitId, UnitView>();
+    views = new Map<UnitId, SeenUnit>();
+    /** (round 128p, U1) how many observe each unit now */
+    observed = new Map<UnitId, number>();
+    observe(id: UnitId) {
+      this.observed.set(id, (this.observed.get(id) ?? 0) + 1);
+      return () => this.observed.set(id, (this.observed.get(id) ?? 0) - 1);
+    }
     add(id: UnitId, hostile = false) {
       const job: UnitJob = { kind: 'work', at: [id, 0], what: 'farm' };
       this.jobs.set(id, job);
@@ -218,8 +224,10 @@ describe('followers (followers.ts)', () => {
     for (const id of [1, 2, 3]) U.add(id);
     U.add(4, true);
     const F = new UnitFollowers(U as unknown as Units, 'hero');
-    F.recruit([1, 2, 3, 4]);
+    F.recruit([...U.views.values()]);
     expect(F.members().length).toBe(3);
+    // (followers are observed while they follow — the hostile one isn't taken on, nor observed)
+    expect([1, 2, 3, 4].map((id) => U.observed.get(id) ?? 0)).toEqual([1, 1, 1, 0]);
     F.order({ kind: 'follow' });
     expect(U.jobs.get(1)).toEqual({ kind: 'follow', target: 'hero', distance: 3 });
     F.order({ kind: 'hold', at: [5, 5] }, [2]);
@@ -227,6 +235,7 @@ describe('followers (followers.ts)', () => {
     F.order({ kind: 'go', to: [9, 9] }, [3]);
     expect(U.jobs.get(3)).toEqual({ kind: 'go', to: [9, 9] });
     F.dismiss([1]);
+    expect(U.observed.get(1)).toBe(0);
     expect(U.jobs.get(1)).toEqual({ kind: 'work', at: [1, 0], what: 'farm' });
     expect(F.members().map((m) => m.unit.id).sort()).toEqual([2, 3]);
   });

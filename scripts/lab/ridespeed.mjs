@@ -89,7 +89,7 @@ export default async function (lab, args) {
     p.dist = +p.dist.toFixed(1);
     p.time = +p.time.toFixed(1);
   }
-  const out = { speed, seconds: +t.toFixed(1), progress: lab.snapshot().progress, riders: per, tripsBegun: begun, turnBacks: turns, trips: args.trips ? trips : undefined, riding: args.trips ? [...open.values()].map((tr) => ({ ...tr, path: +tr.path.toFixed(1) })) : undefined };
+  const out = { speed, seconds: +t.toFixed(1), progress: (await lab.snapshot()).progress, riders: per, tripsBegun: begun, turnBacks: turns, trips: args.trips ? trips : undefined, riding: args.trips ? [...open.values()].map((tr) => ({ ...tr, path: +tr.path.toFixed(1) })) : undefined };
   console.log(JSON.stringify(out));
   return out;
 }

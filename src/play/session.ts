@@ -20,7 +20,7 @@ import type { PlayHero } from './heroes/base';
 import { Controls } from './input/controls';
 import { readInput } from './input/read';
 import { library } from './library';
-import { makePlayWorld, type PlayWorld } from './world';
+import { makePlayWorld, UnitsAround, type PlayWorld } from './world';
 import './sandbox/sandbox.css';
 
 export interface SessionDeps {
@@ -72,8 +72,17 @@ export class PlaySession {
   /** the main thread's cost of the play layer each frame (ms: its input, hero, draw writes; scripts/perf/play.mjs) */
   readonly stats = { frames: 0, ms: 0, max: 0 };
 
+  /** (round 128p, U1) the units round the hero the heroes see (asked and observed: play/world.ts UnitsAround) */
+  private around: UnitsAround;
+
   private constructor(readonly d: SessionDeps) {
-    this.world = makePlayWorld(d.api, d.units, d.camera, d.bounds, d.raise);
+    this.around = new UnitsAround(d.units);
+    this.around.centre = () => {
+      if (this.paused || !this.hero?.alive) return null;
+      const p = this.hero.position();
+      return [p[0], p[1]];
+    };
+    this.world = makePlayWorld(d.api, this.around, d.camera, d.bounds, d.raise);
     // (one actor for the units to chase, whichever hero it is now)
     const actor: Actor = {
       id: 'hero',
@@ -163,6 +172,7 @@ export class PlaySession {
   }
 
   private step(dt: number): void {
+    this.around.tick();
     const h = this.hero;
     this.controls.hidden = this.paused;
     this.info.style.display = this.paused ? 'none' : '';
@@ -240,6 +250,7 @@ export class PlaySession {
   }
 
   dispose(): void {
+    this.around.dispose();
     this.keepFresh?.();
     this.controls.dispose();
     this.draw.dispose();

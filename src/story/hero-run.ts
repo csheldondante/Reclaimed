@@ -19,7 +19,7 @@
 
 import type { AtlasEvent, RunRecord, SessionStory, StoryLocation, WorldState } from '../api/contracts';
 import type { Hero, HeroWorld, RunController } from '../api/contracts/hero';
-import type { Units, UnitView } from '../api/contracts/units';
+import { seen, type SeenUnit, type Units } from '../api/contracts/units';
 import type { Sim } from '../api/world';
 import type { Dither, Orbit } from '../api/cutaway';
 import type { Camera } from '../render/camera';
@@ -100,7 +100,12 @@ export class HeroRun {
   play!: StoryPlay;
   stage!: Stage;
   /** walking up to someone: to talk, or (hostile) to fight */
-  private approach: { id: number; talk: boolean } | null = null;
+  private approach: { id: number; talk: boolean; release: () => void } | null = null;
+  /** (round 128p, U1) walking up to a unit: it's observed (its place read each sync) while the hero walks to it */
+  private setApproach(a: { id: number; talk: boolean } | null): void {
+    this.approach?.release();
+    this.approach = a ? { ...a, release: this.units.observe(a.id) } : null;
+  }
   private goTo: [number, number] | null = null;
   private t = 0;
   private ended: RunRecord | null = null;
@@ -211,7 +216,7 @@ export class HeroRun {
 
   /** Talk to a cast member (as a tap on them, once there). */
   async talk(id: string): Promise<void> {
-    this.approach = null;
+    this.setApproach(null);
     this.goTo = null;
     await this.play.talk(id);
   }
@@ -223,7 +228,7 @@ export class HeroRun {
 
   /** Send the hero to a point (window x, y), as a tap on the ground would. */
   walkTo(at: [number, number]): void {
-    this.approach = null;
+    this.setApproach(null);
     this.goTo = at;
   }
 
@@ -236,11 +241,13 @@ export class HeroRun {
     // (round 97) a hero that doesn't walk itself to a point (a vehicle): near enough, the talk opens; else it's told to go closer
     if (this.hero.goesTo === false) {
       const p = this.hero.position();
-      if (talk && Math.hypot(u.at[0] - p[0], u.at[1] - p[1]) <= TALK + 1) void this.talk(who!);
+      // (a unit tapped: one drawn, so one whose place is known — SimpleUnits' all(), or a cast member observed)
+      const at = u.at;
+      if (talk && at && Math.hypot(at[0] - p[0], at[1] - p[1]) <= TALK + 1) void this.talk(who!);
       else if (talk) this.d.say(`Go closer to talk to ${u.name ?? who}`, 3);
       return;
     }
-    this.approach = { id: unit, talk };
+    this.setApproach({ id: unit, talk });
     this.goTo = null;
   }
 
@@ -257,7 +264,7 @@ export class HeroRun {
     } else {
       const it = this.pad.intent();
       if (Math.hypot(...it.move) > 0.05) {
-        this.approach = null;
+        this.setApproach(null);
         this.goTo = null;
       }
       // walking up to someone
@@ -265,12 +272,13 @@ export class HeroRun {
       let attack = !!it.attack;
       if (a) {
         const u = this.units.get(a.id);
-        if (!u?.alive || (a.talk && u.hostile)) this.approach = null;
-        else {
+        if (!u?.alive || (a.talk && u.hostile)) this.setApproach(null);
+        // (observed from seek: its place read from the next sync — till then the hero waits a frame)
+        else if (u.at) {
           const p = hero.position();
           const dist = Math.hypot(u.at[0] - p[0], u.at[1] - p[1]);
           if (a.talk && dist <= TALK) {
-            this.approach = null;
+            this.setApproach(null);
             void this.talk(u.character!);
           } else if (!a.talk && dist <= 2.2) attack = true;
           else it.goTo = [u.at[0], u.at[1]];
@@ -361,7 +369,7 @@ export class HeroRun {
    */
   warped(dx: number, dy: number, dz: number, at: [number, number]): void {
     this.shift(dx, dy, dz);
-    this.approach = null;
+    this.setApproach(null);
     this.goTo = null;
     this.placeAt = at;
   }
@@ -382,6 +390,7 @@ export class HeroRun {
   land: StageLand | null = null;
 
   dispose(): void {
+    this.setApproach(null);
     for (const f of this.cleanup) f();
     this.waypoint.dispose();
     this.pad.dispose();
@@ -392,9 +401,19 @@ export class HeroRun {
 
   /** the nearest cast member near enough to talk to */
   private talkable(): string | null {
+    // (round 128p, U1: whom it can talk to are the cast's units, observed while staged (StoryPlay) — their places read,
+    // no query each frame; the nearest within reach)
     const p = this.hero.position();
-    for (const u of this.units.query([p[0], p[1]], TALK + 0.5)) if (u.character && this.play.canTalk(u.character)) return u.character;
-    return null;
+    let best: string | null = null;
+    let bd = TALK + 0.5;
+    for (const c of this.d.story.cast) {
+      const id = this.play.unitOf(c.id);
+      const u = id === undefined ? null : seen(this.units.get(id));
+      if (!u || !this.play.canTalk(c.id)) continue;
+      const d = Math.hypot(u.at[0] - p[0], u.at[1] - p[1]);
+      if (d <= bd) [best, bd] = [c.id, d];
+    }
+    return best;
   }
 
   private tap(sx: number, sy: number): void {
@@ -404,10 +423,11 @@ export class HeroRun {
     if (this.hero.claims?.(sx, sy)) return;
     // (a person under the finger: the nearest figure on the screen within reach of it)
     const cam = this.d.camera;
-    let best: UnitView | null = null;
+    let best: SeenUnit | null = null;
     let bd = PICK_PX;
-    for (const u of this.units.all?.() ?? []) {
-      if (!u.alive) continue;
+    for (const v of this.units.all?.() ?? []) {
+      const u = seen(v);
+      if (!u?.alive) continue;
       const [x, y] = cam.project(u.at[0], u.at[1], u.at[2] + 1.2);
       const dd = Math.hypot(x - sx, y - sy);
       if (dd < bd) {
@@ -428,7 +448,11 @@ export class HeroRun {
     const h = this.hero instanceof Walker ? this.hero : null;
     if (h) poses.push(walkerPose(h));
     // (a game's own units draw themselves)
-    if (!this.d.units) for (const u of this.units.all?.() ?? []) poses.push(unitPose(u, this.t));
+    if (!this.d.units)
+      for (const v of this.units.all?.() ?? []) {
+        const u = seen(v);
+        if (u) poses.push(unitPose(u, this.t));
+      }
     this.figures.draw(poses);
   }
 }

@@ -16,7 +16,7 @@
 //     lab.build();
 //     await lab.run(30, 16);
 //     await lab.shot('after');
-//     return lab.snapshot();                         // printed as JSON
+//     return await lab.snapshot();                   // printed as JSON (round 128p: async)
 //   }
 // or a plain .js file: the body of `async (lab, args) => { … }`.
 //

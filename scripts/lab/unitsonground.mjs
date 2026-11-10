@@ -13,7 +13,7 @@ export default async function (lab, args) {
   while (t < (args.seconds ?? 60)) {
     t += (await lab.run(10, 16)).simSeconds;
     await rd.refresh();
-    for (const w of lab.snapshot().walkers) {
+    for (const w of (await lab.snapshot()).walkers) {
       if (w.state !== 'walk') continue;
       const p = lab.units.get(w.id).at;
       // (a surface under its feet, and not above them: stepping down it rides a little over its floor, never under it.

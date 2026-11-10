@@ -105,7 +105,10 @@ export class TownDebug {
       if (!u || !u.v.alive) continue;
       const ph = u.v.hostile ? (u.target !== null ? 'hunt' : 'camp') : u.v.role === 'guard' ? (u.target !== null ? 'fight' : 'guard') : (life!.life.phaseOf(id) ?? '?');
       phases[ph] = (phases[ph] ?? 0) + 1;
-      const [sx, sy] = this.camera.project(u.v.at[0], u.v.at[1], u.v.at[2] + 2.2);
+      // (round 128p, U1: a dot only for a unit whose place is read — observed; the rest are counted, not drawn)
+      const at = u.v.at;
+      if (!at) continue;
+      const [sx, sy] = this.camera.project(at[0], at[1], at[2] + 2.2);
       out.push(`<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="2.5" fill="${u.v.hostile ? '#f22' : u.v.role === 'guard' ? '#ccc' : (PHASE[ph] ?? '#999')}"/>`);
     }
     this.svg.innerHTML = unread ? '' : out.join('');

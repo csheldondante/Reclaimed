@@ -27,7 +27,7 @@ export default async function (lab, args) {
   let deepest = Infinity;
   for (let t = 0; t < seconds; t += every) {
     await lab.run(every, args.speed ?? 16, { keep: true });
-    const s = lab.snapshot();
+    const s = (await lab.snapshot());
     // (the miners in the pit: under the rim's ground by a tier or more)
     const inPit = s.walkers.filter((w) => Math.hypot(w.at[0] - at[0], w.at[1] - at[1]) < r && w.at[2] < lab.ground(at[0] + r + 4, at[1]) - 3).length;
     for (const w of s.walkers) if (Math.hypot(w.at[0] - at[0], w.at[1] - at[1]) < r) deepest = Math.min(deepest, w.at[2]);
@@ -37,7 +37,7 @@ export default async function (lab, args) {
     if (args.shots) await lab.shot(`quarry-${Math.round(s.simT)}`);
   }
   lab.planMode();
-  const end = lab.snapshot();
+  const end = (await lab.snapshot());
   out.end = end.pits[0];
   out.deepestMiner = deepest;
   out.floor = lab.ground(...f.centre([...pit.ring].sort((a, b) => b[1] - a[1])[0][0]));

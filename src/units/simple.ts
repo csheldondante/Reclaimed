@@ -10,7 +10,7 @@
 //   (`died`), lies there CORPSE s and is gone.
 // - Guarding: a unit goes back to its guard point when its target's gone or out of LEASH of it.
 
-import type { Actor, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
+import type { Actor, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
 import { canStep } from '../hero/path';
 
@@ -99,13 +99,13 @@ export class SimpleUnits implements Units {
   }
 
   /** (round 128p: the contract's queries are asked of the GPU and answered later; here at once) */
-  async query(near: V2, radius: number, o: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): Promise<UnitView[]> {
+  async query(near: V2, radius: number, o: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): Promise<SeenUnit[]> {
     return this.queryNow(near, radius, o);
   }
 
   /** (the CPU's own: at once) */
-  queryNow(near: V2, radius: number, o: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): UnitView[] {
-    const out: { d: number; v: UnitView }[] = [];
+  queryNow(near: V2, radius: number, o: { faction?: FactionId | null; hostile?: boolean; dead?: boolean } = {}): SeenUnit[] {
+    const out: { d: number; v: SeenUnit }[] = [];
     for (const { v } of this.units.values()) {
       if (!v.alive && !o.dead) continue;
       if (o.faction !== undefined && v.faction !== o.faction) continue;
@@ -370,6 +370,7 @@ export class SimpleUnits implements Units {
 
 const guardPoint = (j: UnitJob): V2 | null => (j.kind === 'guard' ? j.at : j.kind === 'patrol' ? j.around : j.kind === 'work' ? j.at : null);
 
-function copy(v: UnitView): UnitView {
-  return { ...v, at: v.at ? ([...v.at] as V3) : null, job: structuredClone(v.job) };
+/** (on the CPU every unit's place is known: its view always has one) */
+function copy(v: SeenUnit): SeenUnit {
+  return { ...v, at: [v.at[0], v.at[1], v.at[2]], job: structuredClone(v.job) };
 }
