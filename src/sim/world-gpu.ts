@@ -140,6 +140,9 @@ export class WorldGpu {
   readonly waterPrev: GPUBuffer;
   /** vec4 volume leaving toward +x,-x,+y,-y this tick */
   readonly flux: GPUBuffer;
+  /** (trackA-liquids, LQ4) the water on every surface, per column (flow/liquid.ts, liquid.wgsl publishGaps): set by
+   *  the flow model when it runs (null under the pipes: the top's `water` is all there is) */
+  waterGaps: GPUBuffer | null = null;
   readonly waterSource: GPUBuffer;
   /**
    * (round 84 — the user: "we can have a tolerance and decide when we are close enough to steady state to freeze")

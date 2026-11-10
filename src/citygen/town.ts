@@ -5,6 +5,7 @@
 // in the window by a 16-byte transform (Renderer.addMesh), written again when the window slides — never remade.
 // The box must be in the window when the town is made (the level opens the window round it: citygen/town.ts
 // fieldTownBox, level.ts); after that the window may go where it likes. docs/design/CITYGEN.md.
+import { LIQUID } from '../flow/model';
 import type { Settlement } from '../api/contracts/settlement';
 import type { CityLots, CityRoutes } from '../api/contracts/citygen';
 import { ROW_H } from '../world/lattice';
@@ -281,8 +282,9 @@ export class FieldTown {
         const p = this.gridPlace();
         const [cx, cy] = cellAt(this.seed[0] + p.dx, this.seed[1] + p.dy * ROW_H);
         if (this.gone || !this.grid || cx < 0 || cy < 0 || cx >= r.w || cy >= r.h) return;
-        // (the decks as the reach's plan solid: walked, though not in the world's columns)
-        this.gen.deckSpans(r.planSpans, p.dx, p.dy, p.dz, r.w, r.h);
+        // (the decks as the reach's plan solid: walked, though not in the world's columns — under the pipes. Under the flow
+        // model the decks are claimed into the columns, real solid the reach walks as any ground: trackA-liquids, CG15)
+        if (LIQUID !== 'flow') this.gen.deckSpans(r.planSpans, p.dx, p.dy, p.dz, r.w, r.h);
         this.reachRounds = await r.markFrom([cx, cy]);
         if (!this.gone) await this.gen.markReach(r.marks, p.dx, p.dy, r.w, r.h);
       });

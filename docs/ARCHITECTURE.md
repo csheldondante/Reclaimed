@@ -1469,6 +1469,20 @@ on any level; the pipes stay the default until the user approves. With the flow 
   flux is seeded with the steady flux for its levels (the pipes' seed). A sleeping chunk whose columns' version moved
   (chunkver.wgsl) with liquid in it is woken through steady's act bit 2 (a claim, a cut over still water).
 - **No CPU skip**: the lists made on the GPU are empty when nothing runs.
+- **(LQ4) The water on every surface — `waterGaps`, the contract's per-gap part.** The user: agents "can traverse any
+  walkable layer that they are connected to" (caves, floating islands, decks). The water contract (`water`, the open
+  run) only says what lies on a column's top. Under the flow model the liquid also publishes `world.waterGaps`, a
+  vec4<u32> a column: x the open run's depth (f32 bits, as `water`), y..w the enclosed runs as `pack2x16float(floor,
+  depth)` (0: none). It is written by its own pass (`publishGaps`, over the run list after publish, so a parked chunk's
+  stays as it froze), which bumps the chunk's water versions where a run crosses a walker's band (chunkver bumpWater),
+  so the agents re-peel just as for the open water. The agents' peel reads the depth on the surface it makes through
+  `surfaceDepth(i, z, top)`, prepended by agents.ts: under the flow model from `waterGaps` (the top surface its x; a
+  lower one the run whose floor is within 0.3 of the surface — f16 floors are exact to 1/16 at 100 cells), under the
+  pipes from `water` (the top only, as before). The peel stays at 8 storage buffers: `waterGaps` takes `water`'s
+  binding there. The wet and deep bands, the hysteresis (navCost) and the surface's water word follow the surface's own
+  depth, so a riverbed under a deck is wet (and deep) like the open river, and the deck over it dry.
+- **(LQ5) Decks as real solid**: under the flow model citygen doesn't hand the reach its decks as plan solid
+  (deckSpans): the claimed deck is in the columns, walked as any surface.
 
 The user: "a unified model of material flow would be great for waterfalls emerging from underground streams or
 lava flows … a water fall that actually arcs out"; "think noita physics which just checks for adjacent emptiness

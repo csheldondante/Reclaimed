@@ -24,8 +24,8 @@ export function installFlow(core: WorldCore, sleep: Sleep): FlowKit {
   const at = sim.systems.findIndex((s) => s.name === 'water');
   if (at < 0) throw new Error('installFlow: no water system to replace');
   sim.systems.splice(at, 1, water, lava);
-  // (trackA-liquids: no CPU skip — the GPU's run list is empty when everything with liquid is frozen, and a claim or
-  // a cut over still water (the columns' versions) still gets its step: liquid.wgsl lqList)
+  // (everything asleep — the sleep mask's counts: no step, only the idle scan for a solid come over still water)
+  water.idle = lava.idle = () => sleep.awake === 0 && sleep.candidates === 0 && core.globals.sleep !== undefined;
   steady.onRescale = (k, r) => {
     water.rescale.set(k, r);
     lava.rescale.set(k, r);

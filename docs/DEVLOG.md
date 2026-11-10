@@ -21311,3 +21311,22 @@ spray is made there). The phone's toggle diffs decide whether that's enough.
   frame diff 0) and the per-pass timestamps are noise; the report now leads with the whole frame's GPU time diffs.
   The phone's numbers (GPU p50 on/off): awake flow 3.1 ms vs pipes 1.4 (lava ~1.5 of the flow's); steady 0.33 vs 0.26;
   disturbed 0.9 vs ~0. That run predates the chunk lists (step 2a).
+
+## 2026-11-10 — trackA-liquids: the bench bisected (HEAD vs 6019d20e), idle at the pipes' cost; LQ4 begun
+
+Clean desktop runs (nothing else of this worktree running; liquid passes by timestamp, ms a frame):
+- 6019d20e: steady (0 awake) 0.07, disturbed (12 awake) 0.26. d40b9c3c: steady never reached 0 awake (13: 0.44–0.65),
+  disturbed 0.32–0.41.
+- The steady difference was the lava vent: fed for ever it sets basalt for ever and its chunks are never steady — some
+  runs settled within the bench's 30 s, some didn't (the seeded first step changes how far the lava spreads). The bench
+  now stops the vent before the steady phase and waits until nothing is awake twice running (at most 120 s); the
+  lava's cost is the awake phase's.
+- With everything asleep the remaining cost was the per-step machinery (scan, list, empty indirect dispatches) and prep
+  over every wet chunk every frame: 0.156 ms. Now, idle (the sleep mask: nothing awake or settling — the CPU's own),
+  no step at all; the scan every 15 ticks (a solid come over still water), prep every 4 ticks with 4 ticks' spray
+  (LiquidU.extra): 0.017 ms, the pipes 0.012.
+- Tried first and replaced: waking a sleeping wet chunk on any change of its columns' version — the bed moving under
+  the water (sediment, lava setting) kept chunks awake. Now lqScan scans a sleeping chunk whose columns moved and wakes
+  it only where its open water lies under the column's top by more than 0.5 (COVERED: a deck's slab is 0.8).
+- LQ4: the water on every surface (waterGaps, publishGaps, the peel's surfaceDepth — ARCHITECTURE "The flow model");
+  decks not handed to the reach as plan solid under the flow model. Verification at Muru next.

@@ -77,6 +77,8 @@ struct LiquidU {
   springs: array<vec4<f32>, 8>,
   // per chunk, this step only: a frozen chunk's flux rescaled by its supply (src/flow/steady.ts; 1 none, 0 dried up)
   scale: array<vec4<f32>, 512>,
+  // x the ticks prep's spray stands for (1; PREP_IDLE while idle: src/flow/liquid.ts encode)
+  extra: vec4<f32>,
 };
 @group(0) @binding(33) var<uniform> LQ: LiquidU;
 
@@ -816,7 +818,7 @@ const K_DROP_Q: u32 = 24u;
 const MIST_Q: u32 = 3u;
 
 /** the spray's share of the particle ring (the high tier's 65536: all of it) */
-fn sprayBudget() -> f32 { return min(f32(arrayLength(&parts)) / 65536.0, 1.0) * simStep(); }
+fn sprayBudget() -> f32 { return min(f32(arrayLength(&parts)) / 65536.0, 1.0) * simStep() * LQ.extra.x; }
 fn rnd(i: u32, salt: u32) -> f32 { return f32(hash3(i, G.tick, salt) >> 8u) / 16777216.0; }
 
 @compute @workgroup_size(8, 8)
@@ -948,6 +950,8 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
 
 /** steps a chunk runs on after it stops qualifying: both parities then hold its settled records */
 const LINGER: u32 = 2u;
+/** a column's top risen this far over its water's surface: covered (lqScan) */
+const COVERED: f32 = 0.5;
 
 var<workgroup> wgGo: u32;
 var<workgroup> wgWet: atomic<u32>;
@@ -960,14 +964,23 @@ fn lqScan(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
   let slot = colSlot(c);
   let st = lqState[slot];
   let L = st.x;
+  // (asleep with its columns changed since it last looked — chunkver.wgsl: scanned for water a solid now covers — a deck
+  // claimed over its river: woken whatever its balance, as a stream arriving wakes it — flow/steady.ts reads act's bit
+  // 2. Only that: the bed moving under the water (sediment) changes the columns too, and must not keep it awake. Not a
+  // real step of its own here: alone between frozen neighbours it would take their frozen inflow and send nothing on)
   if (li == 0u) {
+    let frozenC = flowFrozen(o, FLOW_N);
+    let moved = frozenC && chunks[chunkVerAt(o)].x > lqWet[slot].y;
+    lqWet[slot].y = G.tick;
     // (scanned when it may have changed: awake — water put in from outside — or it ran the last step; and once after
     // it was made or its land came in, asleep or not: w 1 once scanned)
-    wgGo = select(0u, 1u, c.y < G.mapH / COLS_PAGE && (!flowFrozen(o, FLOW_N) || L == stepPrev() || st.w == 0u));
-    if (wgGo == 1u) { lqState[slot].w |= 1u; }
+    wgGo = select(0u, 1u, c.y < G.mapH / COLS_PAGE && (!frozenC || L == stepPrev() || st.w == 0u || moved)) | select(0u, 2u, moved);
+    if ((wgGo & 1u) != 0u) { lqState[slot].w |= 1u; }
     atomicStore(&wgWet, 0u);
   }
-  if (workgroupUniformLoad(&wgGo) == 0u) { return; }
+  let go = workgroupUniformLoad(&wgGo);
+  if (go == 0u) { return; }
+  let moved = (go & 2u) != 0u;
   var w = false;
   for (var k = 0u; k < 4u; k++) {
     let l = li * 4u + k;
@@ -978,6 +991,9 @@ fn lqScan(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
     if (LQ_WATER) { w = w || waterSourceL[i] != 0.0; }
     let j2 = textureLoad(j2In, texCol(p), 0);
     w = w || (parkedOk(L, u32(j2.w)) && textureLoad(j0In, texCol(p), 0).x > 1e-9);
+    // (its open water under the column's top now, by more than the bed's moving under it: a solid came over it — a
+    // deck's slab is DECK_T 0.8 deep, citygen streets.wgsl)
+    if (moved && open[i] > EPS && parkedOk(L, u32(r0.w) >> 3u) && sfZ(surface[i]) > r0.x + open[i] + COVERED) { atomicOr(&act[slot * 4u + 2u], 3u); }
   }
   if (w) { atomicStore(&wgWet, 1u); }
   workgroupBarrier();
@@ -1039,12 +1055,6 @@ fn lqList(@builtin(global_invocation_id) id: vec3<u32>) {
   // (holding liquid and never run — just made, or its land just came in: a real step, asleep or not — lqFrozen)
   let real = wetC(c) && st.x == NEVER;
   run = run || real;
-  // (asleep, holding liquid, and its columns changed since it last looked — a deck claimed over its river, a cut: woken,
-  // whatever its balance, as a stream arriving wakes it — flow/steady.ts reads act's bit 2. Not a real step of its own
-  // here: alone between frozen neighbours it would take their frozen inflow without their outflow taking its own)
-  let ver = chunks[chunkVerAt(cu * COLS_PAGE)].x;
-  if (chunkFrozen(c) && wetC(c) && ver > lqWet[slot].y) { atomicOr(&act[slot * 4u + 2u], 3u); }
-  lqWet[slot].y = G.tick;
   st.w = select(st.w & ~2u, st.w | 2u, real);
   if (run) { st.z = LINGER; } else if (st.z > 0u) { st.z -= 1u; run = true; }
   let pl = colPlace(cu);
@@ -1060,4 +1070,29 @@ fn lqList(@builtin(global_invocation_id) id: vec3<u32>) {
     let k = atomicAdd(&wetArgs[0], 4u) / 4u;
     wetList[k] = e;
   }
+}
+
+// ---- the water on every surface (trackA-liquids, LQ4; docs/ARCHITECTURE.md "The flow model") ---------------------
+// world.waterGaps, a column's: x the open run's depth (f32 bits), y..w its enclosed runs as pack2x16float(floor, depth)
+// (0: none) — what the agents' peel reads for a surface under the top (agents.ts surfaceDepth). Over the run list after
+// publish (a parked chunk's stays as it froze); a run crossing a walker's band bumps the chunk's water versions (the
+// agents re-peel it).
+@group(0) @binding(45) var<storage, read_write> waterGaps: array<vec4<u32>>;
+
+@compute @workgroup_size(8, 8)
+fn publishGaps(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let i = colIdxI(vec2<i32>(id.xy));
+  let r0 = runsOut[i * NSLOT];
+  let n = select(0u, u32(r0.w) & 7u, (u32(r0.w) >> 3u) == stepNow());
+  var g = vec4<u32>(bitcast<u32>(open[i]), 0u, 0u, 0u);
+  for (var s = 1u; s <= n; s++) {
+    let v = runsOut[i * NSLOT + s];
+    if (v.y > EPS) { g[s] = pack2x16float(vec2<f32>(v.x, v.y)); }
+  }
+  let o = waterGaps[i];
+  for (var s = 1u; s < NSLOT; s++) {
+    if (o[s] != g[s]) { bumpWater(id.xy, select(0.0, unpack2x16float(o[s]).y, o[s] != 0u), select(0.0, unpack2x16float(g[s]).y, g[s] != 0u)); }
+  }
+  waterGaps[i] = g;
 }

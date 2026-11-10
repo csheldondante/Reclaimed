@@ -208,23 +208,25 @@ fn surfaces(@builtin(global_invocation_id) id: vec3<u32>) {
     var head = 31.0;
     if (u32(r) + 1u < n) { head = bots[r + 1] - z; }
     if (head >= AGENT_H) {
-      // (only the top surface carries the water sheet)
-      let wet = r == i32(n) - 1 && water[i] > WADE;
+      // (trackA-liquids, LQ4: the water on this surface — the top's open water, or under the flow model a run lying on a
+      // lower one: a riverbed under a deck, a cave's pool — agents.ts surfaceDepth)
+      let wd = surfaceDepth(i, z, r == i32(n) - 1);
+      let wet = wd > WADE;
       let room = select(underRoom, topRoom, out == 0u);
       let region = select(0u, placeTable[room], room != 0u);
-      let nv = vec4<u32>(bitcast<u32>(z), u32(min(head, 31.0) * 8.0) | (select(0u, 1u, wet) << 8u), (room & 0xffffu) | (region << 16u), bitcast<u32>(select(0.0, water[i], out == 0u)));
+      let nv = vec4<u32>(bitcast<u32>(z), u32(min(head, 31.0) * 8.0) | (select(0u, 1u, wet) << 8u), (room & 0xffffu) | (region << 16u), bitcast<u32>(wd));
       // (the links' bits are the links pass's: compared there)
       let ov = nav[i * NAV_K + out];
       // (round 107: the cost's height and wet follow the floor with hysteresis — navCost)
       let oc = navCost[i * NAV_K + out];
       var cz = z;
       var cw = wet;
-      var cd = r == i32(n) - 1 && water[i] > DEEP;
+      var cd = wd > DEEP;
       if (oc != 0u) {
         let ocz = f32((oc >> 2u) - 1u) / 8.0;
         if (abs(z - ocz) <= NAV_DZ) { cz = ocz; }
-        cw = r == i32(n) - 1 && water[i] > select(WADE, WADE_OFF, (oc & 1u) != 0u);
-        cd = r == i32(n) - 1 && water[i] > select(DEEP, DEEP_OFF, (oc & 2u) != 0u);
+        cw = wd > select(WADE, WADE_OFF, (oc & 1u) != 0u);
+        cd = wd > select(DEEP, DEEP_OFF, (oc & 2u) != 0u);
       }
       let nc = ((u32(round(max(cz, 0.0) * 8.0)) + 1u) << 2u) | select(0u, 2u, cd) | select(0u, 1u, cw);
       navCost[i * NAV_K + out] = nc;

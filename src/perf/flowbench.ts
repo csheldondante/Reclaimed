@@ -8,8 +8,8 @@
 // States, each measured with the liquids on and with them paused:
 //   awake      every chunk kept awake: the pool pouring through its breach, the tunnel's stream and its waterfall, the
 //              trenches running off the map (the rivers), the lava vent — the model's whole cost
-//   steady     let alone until the steady state (flow) or the settle (pipes) puts what's still to sleep — what a quiet
-//              map costs: it should mostly sleep
+//   steady     the lava vent stopped, then let alone until the steady state (flow) or the settle (pipes) puts what's
+//              still to sleep — what a quiet map costs: it should mostly sleep
 //   disturbed  a dig in the river trench every 1.5 s: a small area woken, the rest asleep
 //   lava       (awake) only the lava paused — what the lava costs
 // A result card and a JSON to download, copy or share (on the dev server, kept in perf-reports/).
@@ -44,9 +44,9 @@ interface Rec {
     world: { waterSource: GPUBuffer; w: number; ring: { idx(x: number, y: number): number } };
     globals: { events: { kind: number; x: number; y: number; z?: number; radius: number; strength: number }[] };
   };
-  scene: { speed: number; lava?: { addVent(x: number, y: number, seconds?: number, rate?: number, radius?: number, height?: number, riseS?: number): void } };
+  scene: { speed: number; lava?: { vents: unknown[]; addVent(x: number, y: number, seconds?: number, rate?: number, radius?: number, height?: number, riseS?: number): void } };
   camera: { target: number[] };
-  flow?: { breach(spring?: number): void; sleep?: SleepView; steady: { last: Record<string, number> } };
+  flow?: { breach(spring?: number): void; sleep?: SleepView; steady: { last: Record<string, number> }; lava: { springs: unknown[] } };
   // (the pipes page: the lab's sleep through the scene)
 }
 interface SleepView {
@@ -221,14 +221,18 @@ function setup(R: Rec, model: 'flow' | 'pipes'): void {
 async function phaseRow(R: Rec, model: 'flow' | 'pipes', p: Phase, secs: number, gpu: number[], passes: Map<string, number>, sleep: SleepView, base: Row | null, panel: Panel): Promise<Row> {
   const known = new Set(R.core.sim.systems.map((s) => s.name));
   const off = systemsOff(model, p.off, known);
-  // (steady: let what's still go to sleep first — up to 30 s, until the awake count stops falling)
+  // (steady: the lava vent stopped first — lava fed for ever sets basalt for ever, never steady; its cost is the awake
+  // phase's — then let what's still go to sleep — up to 30 s, until the awake count stops falling)
   if (p.state === 'steady' && !p.off) {
-    let last = Infinity;
-    for (let t0 = performance.now(); performance.now() - t0 < 30000; ) {
+    if (model === 'flow') R.flow!.lava.springs.length = 0;
+    else if (R.scene.lava) R.scene.lava.vents.length = 0;
+    // (v2: until nothing is awake twice running, at most 120 s — a draining pool settles slowly, BACKLOG FL11; the
+    // chunks still awake at the end are in the row)
+    let calm = 0;
+    for (let t0 = performance.now(); performance.now() - t0 < 120000 && calm < 2; ) {
       await wait(3000);
       panel.say(`${model}: waiting for the steady state — ${sleep.awake} chunks awake…`);
-      if (sleep.awake >= last && performance.now() - t0 > 9000) break;
-      last = sleep.awake;
+      calm = sleep.awake === 0 ? calm + 1 : 0;
     }
   }
   for (const n of off) R.core.sim.paused.add(n);

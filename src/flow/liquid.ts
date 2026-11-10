@@ -50,6 +50,10 @@ export const WATER: LiquidKind = { name: 'water', mat: 8, gain: { tune: 'flowWat
 export const LAVA: LiquidKind = { name: 'lava', mat: 24, gain: { tune: 'flowLavaGain' }, friction: { tune: 'flowLavaFriction' }, yieldZ: { tune: 'flowLavaYield' }, thick: { tune: 'flowLavaThick' }, hot: 1250, set: 750, runny: 1150, drop: { tune: 'flowLavaDrop' }, cool: { tune: 'flowLavaCool' } };
 
 export const MAX_SPRINGS = 8;
+/** ticks between the idle scans (encode) */
+const SCAN_IDLE = 15;
+/** ticks between the idle preps (encode) */
+const PREP_IDLE = 4;
 /** (trackA-liquids) ?lqall=1: every chunk on the run list every step (a check against the lists: the same water) */
 const LQ_ALL = typeof location !== 'undefined' && urlFlags().get('lqall') === '1';
 export interface Spring {
@@ -95,14 +99,19 @@ export class LiquidSystem implements SimSystem {
   readonly indirectO: GPUBuffer;
   /** the open runs' depth (water: world.water) */
   readonly open: GPUBuffer;
-  /** the step the records carry */
+  /** the step the records carry (it stands still while idle) */
   step = 1;
+  /** nothing awake or settling (install.ts: the sleep mask's counts — the CPU's own, no readback) */
+  idle: () => boolean = () => false;
+  private idleTicks = 0;
   /** passes dispatched at the last encode (the cost report) */
   ran = 0;
   /** (one a substep: ?simhz=30|15 runs FLOW_SUB 60 Hz steps a tick, sim/flow.ts) */
   private unis: GPUBuffer[];
   private runs: GPUBuffer[];
-  private uniData = new ArrayBuffer(16 + 16 * MAX_SPRINGS + 16 * 512);
+  private uniData = new ArrayBuffer(16 + 16 * MAX_SPRINGS + 16 * 512 + 16);
+  /** the ticks the next prep's spray stands for (LiquidU.extra.x) */
+  private prepTicks = 1;
   /** frozen chunks' flux rescaled next step (chunk -> factor; steady.ts: their supply changed) */
   readonly rescale = new Map<number, number>();
   private k: Record<string, ComputeKernel> = {};
@@ -111,6 +120,7 @@ export class LiquidSystem implements SimSystem {
   private wetList: GpuTileList;
   private lqState: GPUBuffer;
   private lqWet: GPUBuffer;
+  private gaps: GPUBuffer | null = null;
   private lqRun: GPUTexture;
   private emptyArgs: GPUBuffer;
   private nChunks: number;
@@ -149,6 +159,8 @@ export class LiquidSystem implements SimSystem {
     this.runW = Math.ceil(this.nChunks / 16) * 16;
     this.runList = new GpuTileList(device, `${kind.name} run`, tiles);
     this.wetList = new GpuTileList(device, `${kind.name} wet`, tiles);
+    // (LQ4) the water on every surface: the water's runs published per gap (liquid.wgsl publishGaps)
+    if (kind.name === 'water') world.waterGaps = this.gaps = world.buf('waterGaps', N * 16, S);
     this.lqWet = world.buf(`${kind.name}LqWet`, this.runW * 8, S | GPUBufferUsage.COPY_DST);
     this.lqState = world.buf(`${kind.name}LqState`, this.runW * 16, S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
     this.lqRun = device.createTexture({ label: `${kind.name}LqRun`, size: { width: this.runW, height: 1 }, format: 'rgba32uint', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
@@ -172,17 +184,18 @@ export class LiquidSystem implements SimSystem {
       publishWater: { 4: 'read', 5: 'rw', 7: 'rw', 8: 'rw', 14: 'rw', 16: 'read', 19: 'rw' },
       publishLava: { 3: 'rw', 5: 'rw', 7: 'rw', 11: 'rw', 12: 'rw', 13: 'rw', 20: 'rw' },
       prep: { 5: 'rw', 6: 'read', 12: 'rw', 13: 'rw', 22: 'tex', 23: 'tex', 24: 'tex', 28: 'tex', 29: 'rw', 30: 'rw', 31: 'rw', 32: 'rw' },
-      lqScan: { 5: 'rw', 6: 'read', 16: 'read', 22: 'tex', 24: 'tex', 36: 'rw', 37: 'rw' },
-      lqList: { 1: 'read', 11: 'rw', 36: 'rw', 37: 'rw', 40: 'rw', 41: 'rw', 42: 'rw', 43: 'rw' },
+      publishGaps: { 5: 'rw', 7: 'rw', 45: 'rw' },
+      lqScan: { 1: 'read', 4: 'read', 5: 'rw', 6: 'read', 11: 'rw', 16: 'read', 22: 'tex', 24: 'tex', 36: 'rw', 37: 'rw' },
+      lqList: { 36: 'rw', 37: 'rw', 40: 'rw', 41: 'rw', 42: 'rw', 43: 'rw' },
     };
-    const entries = ['flux', 'jets', 'depth', kind.name === 'water' ? 'publishWater' : 'publishLava', 'prep', 'lqScan', 'lqList'];
+    const entries = ['flux', 'jets', 'depth', kind.name === 'water' ? 'publishWater' : 'publishLava', 'prep', 'lqScan', 'lqList', ...(kind.name === 'water' ? ['publishGaps'] : [])];
     /** the passes dispatched over a chunk list (cullSource's wrapper); lqScan and lqList over every chunk */
     const listed = (e: string) => e !== 'lqScan' && e !== 'lqList';
     for (const e of entries) {
       // (the prep doesn't read the layers' chunk table: one storage slot fewer. Round 128o, DA-B26: the water's publish
       // does, for the water's versions — bumpWater; its eighth storage buffer)
       const spec: BindSpec = { ...base, ...specs[e] };
-      if (e === 'prep' || e === 'lqScan') delete spec[1];
+      if (e === 'prep' || e === 'lqList') delete spec[1];
       if (!listed(e)) {
         delete spec[TILES_BINDING];
         delete spec[21];
@@ -232,6 +245,7 @@ export class LiquidSystem implements SimSystem {
           62: world.riverWetView,
           63: world.riverFlowView,
           36: this.lqWet,
+          45: this.gaps ?? this.lqWet,
           37: this.lqState,
           [TILES_BINDING]: e === 'prep' ? this.wetList.uniform : this.runList.uniform,
           40: this.runList.list,
@@ -350,7 +364,8 @@ export class LiquidSystem implements SimSystem {
     u[3] = LQ_ALL ? 1 : 0;
     const fv = new Float32Array(this.uniData, 16);
     this.springs.forEach((s, i) => fv.set([s.x, s.y, s.z, s.rate], i * 4));
-    const sc = new Float32Array(this.uniData, 16 + 16 * MAX_SPRINGS);
+    new Float32Array(this.uniData, 16 + 16 * MAX_SPRINGS + 16 * 512, 4)[0] = this.prepTicks;
+    const sc = new Float32Array(this.uniData, 16 + 16 * MAX_SPRINGS, 4 * 512);
     sc.fill(1);
     if (sub === 0) for (const [k, r] of this.rescale) if (k < sc.length) sc[k] = r;
     this.device.queue.writeBuffer(this.unis[sub], 0, this.uniData);
@@ -360,8 +375,31 @@ export class LiquidSystem implements SimSystem {
     this.ran = 0;
     // (?simhz=30|15: FLOW_SUB 60 Hz steps a tick, each its own uniforms - the streams' time across a column is
     // the 60 Hz step's, so a fall takes as long at any tick rate)
-    // (trackA-liquids: every step, whatever sleeps — the lists made on the GPU are empty when nothing runs: a few
-    // tiny passes and empty indirect dispatches)
+    // (trackA-liquids: nothing awake or settling — the sleep mask, the CPU's own — and nothing to rescale: no step. Only
+    // the scan every SCAN_IDLE ticks, for a solid come over sleeping water (a deck claimed: it wakes it through steady,
+    // which reads every STEADY_WIN ticks anyway). Otherwise every step; the GPU's lists say what runs.)
+    // (idle, the draw lists are kept as they were and made again every PREP_IDLE ticks only — the spray off the frozen
+    // falls goes on, PREP_IDLE ticks' worth at a time: LiquidU.extra)
+    if (this.idle() && this.rescale.size === 0) {
+      const t = ++this.idleTicks;
+      if (t % SCAN_IDLE === 0 || t % PREP_IDLE === 0) {
+        this.prepTicks = PREP_IDLE;
+        this.writeUniforms(0);
+      }
+      if (t % SCAN_IDLE === 0) {
+        dispatch(enc, this.prof, `${this.name}-lqScan`, this.k.lqScan, this.g.lqScan[0][this.step & 1], [this.nChunks, 1]);
+        this.ran++;
+      }
+      if (t % PREP_IDLE === 0) {
+        this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([VERTS_PER_PRISM, 0, 0, 0]));
+        this.device.queue.writeBuffer(this.indirectO, 0, new Uint32Array([30, 0, 0, 0]));
+        this.listed(enc, 'prep', this.g.prep[0][this.step & 1], this.wetList);
+        this.ran++;
+      }
+      return;
+    }
+    this.idleTicks = 0;
+    this.prepTicks = 1;
     const subs = FLOW_SUB;
     let sub = 0;
     for (; sub < subs; sub++) {
@@ -377,7 +415,7 @@ export class LiquidSystem implements SimSystem {
       enc.copyBufferToTexture({ buffer: this.lqState, bytesPerRow: this.runW * 16 }, { texture: this.lqRun }, { width: this.runW, height: 1 });
       this.runList.publish(enc);
       this.wetList.publish(enc);
-      for (const e of ['flux', 'jets', 'depth', this.kind.name === 'water' ? 'publishWater' : 'publishLava']) this.listed(enc, e, this.g[e][sub][par], this.runList);
+      for (const e of ['flux', 'jets', 'depth', ...(this.kind.name === 'water' ? ['publishWater', 'publishGaps'] : ['publishLava'])]) this.listed(enc, e, this.g[e][sub][par], this.runList);
       this.ran += 6;
     }
     this.rescale.clear();

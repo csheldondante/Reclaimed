@@ -588,7 +588,24 @@ export class Agents implements SimSystem {
     // (nothing reached yet: every field starts unreachable)
     device.queue.writeBuffer(this.dist, 0, new Float32Array(NFIELDS * cols * NAV_K).fill(1e9));
     device.queue.writeBuffer(this.kindModelsBuf, 0, this.kindModel);
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, waterclassWgsl, agentsWgsl, unitsWgsl];
+    // (trackA-liquids, LQ4 — docs/ARCHITECTURE.md "The flow model") the water on a surface the peel makes: under the flow
+    // model its runs per gap (world.waterGaps, at the water's binding: the peel stays at 8 storage buffers), else the
+    // top's `water`
+    const surfaceDepth = world.waterGaps
+      ? `@group(0) @binding(4) var<storage, read> waterGaps: array<vec4<u32>>;
+fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
+  let g = waterGaps[i];
+  if (top) { return bitcast<f32>(g.x); }
+  for (var k = 1u; k < 4u; k++) {
+    if (g[k] == 0u) { continue; }
+    let fd = unpack2x16float(g[k]);
+    if (abs(fd.x - z) < 0.3) { return fd.y; }
+  }
+  return 0.0;
+}
+`
+      : 'fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 { return select(0.0, water[i], top); }' + String.fromCharCode(10);
+    const parts = [commonWgsl, layersWgsl, materialsWgsl, waterclassWgsl, agentsWgsl, surfaceDepth + unitsWgsl];
     const mk = (e: string, sp: BindSpec) => makeCompute(device, `agents-${e}`, parts, sp, e);
     // four layouts, each within 8 storage buffers: the peel (it reads the
     // layers and the places), the fields, the units' tick, their draw
@@ -620,7 +637,7 @@ export class Agents implements SimSystem {
       ...base,
       1: world.chunks,
       3: world.layers,
-      4: world.water,
+      4: world.waterGaps ?? world.water,
       5: this.nav,
       11: world.places,
       12: world.placeTable,
@@ -675,7 +692,7 @@ export class Agents implements SimSystem {
         occG: makeBindGroup(device, 'agents-occ scoped', occ.k.layout, { ...base, 8: this.occ, 10: this.params, 16: this.shove, [TILES_BINDING]: L }),
         boxG: makeBindGroup(device, 'agents-unitBox', box.layout, { ...base, 7: this.units, 10: this.params, 28: this.uboxBuf }),
         resetG: makeBindGroup(device, 'agents-frontReset', reset.layout, { ...base, 33: this.frontArgs }),
-        peelG: par((cur, _n, p) => makeBindGroup(device, `agents-peel scoped ${p}`, surfaces.k.layout, { ...base, 1: world.chunks, 3: world.layers, 4: world.water, 5: this.nav, 11: world.places, 12: world.placeTable, 34: cur, 37: this.navCost, [TILES_BINDING]: lists.changed.uniform })),
+        peelG: par((cur, _n, p) => makeBindGroup(device, `agents-peel scoped ${p}`, surfaces.k.layout, { ...base, 1: world.chunks, 3: world.layers, 4: world.waterGaps ?? world.water, 5: this.nav, 11: world.places, 12: world.placeTable, 34: cur, 37: this.navCost, [TILES_BINDING]: lists.changed.uniform })),
         linksG: par((cur, next, p) => makeBindGroup(device, `agents-links scoped ${p}`, links.k.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 37: this.navCost, 38: this.abBuf, 40: this.roads, [TILES_BINDING]: lists.around.uniform })),
         relaxG: par((cur, next, p) => makeBindGroup(device, `agents-relax front ${p}`, relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 36: this.frontList, 37: this.navCost, 38: this.abBuf, 40: this.roads })),
         enterG: par((cur, _n, p) => makeBindGroup(device, `agents-enter ${p}`, enter.k.layout, { ...base, 6: this.dist, 8: this.occ, 16: this.shove, 34: cur, [TILES_BINDING]: enter.buf })),
