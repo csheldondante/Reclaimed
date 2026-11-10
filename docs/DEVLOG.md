@@ -21126,3 +21126,8 @@ should show intermediate states (that can use the shader for now)." Design: `doc
 - **Camera:** the claim's centre is in the town's frame, placed in the window at each frame. The first try kept it in
   window coordinates and the camera chased a point that moved with each slide until Muru was let go.
 - Muru has 7 districts free outside its core, so a run of the test fills the town in about 4–5 seasons.
+- **Shots (412x915, 60°, zoom 2; `scratchpad/opps/seasons.gif`, `cards.png`):** four seasons played — houses and farms,
+  houses and farms, market and houses, houses. Rising districts read as tan scaffold roofs and plank tops over dark
+  footings at 1/2, white with their roofs once built. The pools ran Labor 4 → 12 (+8 a season) and Resources stayed
+  short (1–3), so Resources is the limit that bites. The GPU's count of free districts after each claim matched the
+  ledger's: 7 → 5 → 3 → 1 → 0. Each season's claims read back in one 16-byte map each.
