@@ -3627,3 +3627,11 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   crop stage shows it"): a crop kind with a stage the farms card's progress drives (bare → sown → green → ripe), no
   per-plant storage. Field edges read as hedges and dirt tracks, not streets. The farms card claims farm parcels and
   grows them stage by stage, like districts.
+
+## 2026-11-10 — saving first (trackA-seasonlife)
+
+- (via the coordinator) The user's priority: saving first — the season and the town, keyed by world position; town
+  changes saved like terrain changes (a per-town edit log laid over the regenerated town); the existing world store;
+  deterministic restore; GPU state read back only at save points.
+- (via the coordinator) Track B accepted the four soldier calls for U2 (SEASON_LOOP.md), on two conditions: a walkable
+  wall-walk, and route ids for marches.

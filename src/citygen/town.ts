@@ -7,6 +7,7 @@
 // fieldTownBox, level.ts); after that the window may go where it likes. docs/design/CITYGEN.md.
 import type { Settlement } from '../api/contracts/settlement';
 import type { CityLots, CityRoutes, DistrictStage } from '../api/contracts/citygen';
+import type { TownLog } from './townlog';
 import { ROW_H } from '../world/lattice';
 import { BUILD_S, CityGen, DISTRICT_SPAN, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes, type DistrictClaim } from './gpu';
 import type { StaticClaims, StaticGrid, GridPlace, OwnedSlot } from '../sim/static-claims';
@@ -380,6 +381,20 @@ export class FieldTown {
   inWindow(at: readonly [number, number]): [number, number] {
     const p = this.gridPlace();
     return [at[0] + p.dx, at[1] + p.dy * ROW_H];
+  }
+
+  /** (saving) the town's edit log laid over it as made: claims, each share's stage there at once, the wall's words */
+  replay(log: TownLog, now: number): void {
+    if (this.gone) return;
+    for (const id of log.claims) this.gen.markClaimed(id);
+    const past = now - DISTRICT_SPAN - 1;
+    for (const s of log.stages) this.gen.stageDistrict(s.id, s.stage, past);
+    if (log.wall?.words.length) {
+      this.gen.writeWall(log.wall.words);
+      this.gen.wallStage(log.wall.to, log.wall.to, past);
+    }
+    this.animUntil = Math.max(this.animUntil, now + 1);
+    this.gen.animate(now);
   }
 
   /** (season life) the town wall begun now (its ring made on the GPU); the next mesh run draws and claims it */

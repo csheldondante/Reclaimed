@@ -21451,3 +21451,18 @@ The user: "I do want to see agents moving around and more things to reflect choi
   first ones were specks. Shots: `scratchpad/opps/seasonlife3.gif` (Muru, 3 seasons: the wall rising round both banks
   with towers, the trade route opening; wagons are carts at people's size, hard to pick out at this zoom; no ship came
   into this frame — Muru's harbour district here isn't beside the lake, see SL14).
+
+## 2026-11-10 — saving the season and the town (trackA-seasonlife)
+
+The user's priority: saving first. Design: SEASON_LOOP.md "Saving" (DESIGN §23).
+- The season's state and a per-town edit log, keyed by the town's world position, in the world store (the region
+  store; `?fresh=1` clears it), written at each season's end. Sizes at Muru after 3 seasons: the season 4.4–6.1 KB,
+  the town's log 2.5 KB (1.2 KB of it the wall's words). GPU reads only at save points: the wall's words once after
+  it's made (1.2 KB), the living town's state words' head at each season's end (640 B).
+- Replayed on make: claimed districts started (SCT word 8 written), shares at their stage at once, the wall's words
+  written back, the works' words written into the new living town before its first frame.
+- **Checks** (headless, Muru): 3 seasons played (houses, farms, walls, quarry; then a market) → reload without
+  `fresh=1` → season 4, the same pools, built list, projects and districts, "its edit log laid over it — 3 districts,
+  3 stages, the wall"; the shots side by side match (`scratchpad/opps/save-ab.png`). Pan away until Muru is let go
+  (Thauhaman made), pan back → Muru made again (340 ms), its log laid over it, the same town (`pan-ab.png`).
+- Fixes SL3 (claims and stages lost when a town is let go) and SL4 (no save).

@@ -124,3 +124,30 @@ from the start, ordered through the Units contract). The calls the season loop n
   then the atlas road) to a place; `leave`: off the window, resolved by clock (DESIGN §12), with an `arrived` / `left`
   event; and back the same way when the card finishes.
 - Events: `arrived(g)`, `left(g)` (off the window). Until then, the walls get no soldiers and the patrol card waits.
+
+## Saving (DESIGN §23)
+
+The town is a pure function of its seed, ground and population field, so it isn't saved: it's made again, and what
+play changed is laid over it — the user's rule, town changes saved like terrain changes, a per-town edit log keyed by
+world position.
+- **The season** (`SeasonLoop.snapshot`): the ledger (pools and holdings: the people and their commitments, the cards
+  in progress and their seasons), the land (districts left, the open shares), the districts and each card's share,
+  what was dealt. Key `season:<x>,<y>` (the town's place). About 5 KB.
+- **The town's edit log** (`citygen/townlog.ts`, key `town:<x>,<y>`): the districts claimed (ids, in order), each
+  share's stage as reached, the wall's words (its ring and gates — read back once, after it's made) and stage, and the
+  living town's works (the quarry's site, bench and progress, the clearing's camp: its state words' head, read back at
+  each season's end). About 2.5 KB.
+- **Where:** the world store (the region store, IndexedDB; `?fresh=1` clears it). Written at each season's end.
+- **Restore:** at boot the season is read before the first hand; when a town is made (at boot, or again after it was
+  let go) its log is laid over it — each claimed district started (its roads shown), each share set at its stage at
+  once, the wall's words written back — then a mesh run draws and claims it. The living town's works are written into
+  its state words before its first frame, so the quarry isn't picked anew (its ramp's route is traced again). The pit
+  itself is the world's columns: the region store's.
+- Crops are derived (the fields' progress): nothing saved for them.
+
+**Soldiers (Track B accepted the four calls for U2, with notes):** a group is a set of units, not a field;
+`posts.length` must equal the group's size, spare soldiers stand at the nearest gate; the march back is a second
+`march` order with the route reversed; `arrived(g)` and `left(g)` are per group. Two conditions on this side: the
+walls card makes the wall-walk walkable (reached by stairs or a gate tower; a post with no path fails visibly, naming
+the post), and `march` takes a route id from the living town's route graph — stable ids for gate → the arterial's map
+edge (out, and back reversed).

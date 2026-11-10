@@ -25,6 +25,21 @@ export interface SeasonHost {
   seconds: number;
   /** (season life) the town's people from the ledger: the living town's counts and works (season/life.ts) */
   life?(l: TownLife): void;
+  /** (saving) a season's end: the loop's state written (with the town's edit log — the host's); at boot, read back */
+  persist?(s: SeasonSave): Promise<void>;
+  restore?(): Promise<SeasonSave | null>;
+}
+
+/** (saving) the season loop's state: the ledger, the land, its districts and shares, what was dealt (plain data) */
+export interface SeasonSave {
+  v: 1;
+  ledger: SeasonLedger;
+  land: Land;
+  town: string | null;
+  districts: [string, District][];
+  shares: [string, Share][];
+  recent: { template: string; place: string; turn: number }[];
+  summary: string | null;
 }
 
 /** a district the season builds in: its town and id (from its claim), its centre (the town's frame) */
@@ -79,8 +94,9 @@ export class SeasonLoop {
     return this.land.left;
   }
 
-  /** the town found and counted (retried until it's made), then the first hand */
+  /** the town found and counted (retried until it's made), then the first hand — or the saved season, restored */
   async init(): Promise<void> {
+    const saved = (await this.host.restore?.()) ?? null;
     for (;;) {
       const c = await this.host.districts.districtsLeft();
       if (c) {
@@ -90,6 +106,7 @@ export class SeasonLoop {
       }
       await new Promise((r) => setTimeout(r, 500));
     }
+    if (saved) this.load(saved);
     this.deal();
     this.host.life?.(townLife(this.ledger));
     this.changed();
@@ -108,6 +125,32 @@ export class SeasonLoop {
     this.hand = offers;
     this.started.clear();
     for (const o of offers) this.recent.push({ template: o.card.id, place: 'town', turn: this.ledger.season });
+  }
+
+  /** (saving) the loop's state as plain data */
+  snapshot(): SeasonSave {
+    return {
+      v: 1,
+      ledger: this.ledger,
+      land: this.land,
+      town: this.town,
+      districts: [...this.districts],
+      shares: [...this.shares],
+      recent: this.recent,
+      summary: this.summary,
+    };
+  }
+  /** (saving) a saved state taken back (its town's edit log is laid over the town by the town itself) */
+  private load(s: SeasonSave): void {
+    if (s.v !== 1) throw new Error(`season: a save of version ${s.v} (this build reads 1)`);
+    this.ledger = s.ledger;
+    this.land = s.land;
+    this.town = s.town ?? this.town;
+    this.districts.clear();
+    for (const [k, d] of s.districts) this.districts.set(k, d);
+    this.shares = new Map(s.shares);
+    this.recent = s.recent;
+    this.summary = s.summary;
   }
 
   /** (scripts and shots only) pools granted */
@@ -225,6 +268,8 @@ export class SeasonLoop {
       );
       this.deal();
       this.host.life?.(townLife(this.ledger));
+      // (saving: a season's end is the save point — the season's stages all set by now, the GPU's few words read after)
+      void this.host.persist?.(this.snapshot());
       void this.show.done.then(() => this.changed());
       return r;
     })();

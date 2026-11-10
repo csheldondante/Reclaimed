@@ -9,6 +9,7 @@ import { LivingTown, C, L_C, L_Q, L_F } from './living';
 import { Works, type WorksWorld } from './works';
 import { LIVING_TUNING } from './params';
 import { TunePanel } from '../ui/tunepanel';
+import type { TownLogs } from '../citygen/townlog';
 
 export interface LivingTownsIO {
   device: GPUDevice;
@@ -22,6 +23,8 @@ export interface LivingTownsIO {
   dims: { w: number; h: number };
   /** the world's buffers the works use (quarry, clearing, stockpile) */
   world: WorksWorld;
+  /** (saving) the towns' edit logs: the works' state laid back when a town's people are made again */
+  logs?: TownLogs;
 }
 
 interface Live {
@@ -32,6 +35,11 @@ interface Live {
   meshRuns: number;
   sinceRebuild: number;
 }
+/** (saving) the works' words kept: the quarry's head (routes.wgsl Q_*: site, bench, progress, rim, benches …) and the
+ *  clearing's (F_CAMP, F_YARD); the quarry's words made again on restore (its ramp's route, its pick, the yard's) */
+const WORKS_Q = 20;
+const WORKS_F = 8;
+const WORKS_REMADE = [4, 9, 10, 15];
 /** the least time between the graph's rebuilds for citygen's road redraws (s) */
 const REBUILD_S = 10;
 
@@ -76,6 +84,15 @@ export class LivingTowns {
         centre: t.centre,
         radius: t.box.R,
       });
+      // (saving: the works as they were — the quarry's site and benches dug, the camp — so the pit isn't picked anew;
+      // its ramp's route made again from them)
+      const saved = this.io.logs?.has(t.site.at) ? this.io.logs.of(t.site.at).works : undefined;
+      if (saved) {
+        const q = [...saved.q];
+        for (const k of WORKS_REMADE) q[k] = 0;
+        this.io.device.queue.writeBuffer(life.lt, L_Q * 4, new Uint32Array(q));
+        this.io.device.queue.writeBuffer(life.lt, L_F * 4, new Uint32Array(saved.f));
+      }
       const works = new Works(this.io.device, life, this.io.world);
       life.stages.push(works);
       life.debugGraph = this.debugGraph;
@@ -102,6 +119,16 @@ export class LivingTowns {
     for (const l of this.live.values()) {
       const p = l.town.gridPlace();
       l.life.frame(enc, this.dt, { dx: p.dx, dy: p.dy, dz: p.dz, winW: this.io.dims.w, winH: this.io.dims.h }, ts);
+    }
+  }
+
+  /** (saving, a save point) each town's works read back (its state words' head: a few hundred bytes) into its log */
+  async saveWorks(): Promise<void> {
+    if (!this.io.logs) return;
+    for (const l of this.live.values()) {
+      const h = await l.life.counters();
+      if (!h) continue;
+      this.io.logs.of(l.town.site.at).works = { q: [...h.slice(L_Q, L_Q + WORKS_Q)], f: [...h.slice(L_F, L_F + WORKS_F)] };
     }
   }
 

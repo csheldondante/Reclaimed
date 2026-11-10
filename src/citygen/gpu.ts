@@ -581,6 +581,28 @@ export class CityGen {
       this.k('wallShape', {}, { 1: this.B.ART, 5: this.B.WALL }, 1);
     });
   }
+  /** (saving) the wall's words (its ring, gates, stage) read back — once, after it's made: a save point's event */
+  async readWall(): Promise<number[]> {
+    const tmp = this.device.createBuffer({ label: 'citygen wall read', size: WALL_WORDS * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = this.device.createCommandEncoder({ label: 'citygen wall read' });
+    enc.copyBufferToBuffer(this.B.WALL, 0, tmp, 0, WALL_WORDS * 4);
+    this.device.queue.submit([enc.finish()]);
+    await tmp.mapAsync(GPUMapMode.READ);
+    const out = [...new Uint32Array(tmp.getMappedRange().slice(0))];
+    tmp.destroy();
+    return out;
+  }
+  /** (saving) the wall's words written back (a replay: the ring as it was made) */
+  writeWall(words: readonly number[]): void {
+    if (this.dead) return;
+    this.device.queue.writeBuffer(this.B.WALL, 0, new Uint32Array(words));
+  }
+  /** (saving) a district claimed before (a replay): its start set to built — its roads shown, never claimed again */
+  markClaimed(id: number): void {
+    if (this.dead) return;
+    // (SCT: a 4-word header, then SCW (9) words a district — word 8 its start; streets.wgsl BUILT_AT)
+    this.device.queue.writeBuffer(this.B.SCT, (4 + id * 9 + 8) * 4, new Float32Array([-1e30]));
+  }
   /** (season life) the wall's stage: from → to (0..1 of the ring), eased over a build's span of the clock from `when` */
   wallStage(from: number, to: number, when: number): void {
     if (this.dead) return;

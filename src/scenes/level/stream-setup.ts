@@ -397,6 +397,7 @@ export function attachStream(scene: LevelScene): void {
           if (host.params.get('living') === '1' || host.params.get('opps') === '1') {
             livingFromUrl(host.params);
             const lt = new LivingTowns({
+              logs: towns.logs,
               device: host.gpu.device,
               towns: () => towns.live,
               addVoxels: (i, g) => core.renderer.addVoxels(i, g),
