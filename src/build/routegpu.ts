@@ -138,7 +138,7 @@ export class TownRouteGpu {
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     const { nv, ne } = graph;
     const buf = (label: string, size: number) => device.createBuffer({ label, size: Math.max(16, size), usage: S });
-    this.colOf = buf('route cols', (nv + ne) * 4);
+    this.colOf = buf('route cols', graph.colOf.byteLength);
     device.queue.writeBuffer(this.colOf, 0, graph.colOf);
     this.csr = buf('route csr', graph.csr.byteLength);
     device.queue.writeBuffer(this.csr, 0, graph.csr);

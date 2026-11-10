@@ -67,6 +67,9 @@ const RB_WALL: u32 = 1u;
 const RB_INNER: u32 = 2u;
 const RB_SPAN: u32 = 4u;
 const RB_BUILT: u32 = 8u;
+/** a main road's curve chained node to node; a curve's node joined to the grid beside it (neither the layout's) */
+const RB_CURVE: u32 = 16u;
+const RB_LINK: u32 = 32u;
 /** the cut's bits (routegpu.ts RC: edgenet.ts's CUT_WALL, CUT_WATER, CUT_CLIFF; then steep, inner, off the ground) */
 const RC_WALL: u32 = 1u;
 const RC_WATER: u32 = 2u;
@@ -111,15 +114,24 @@ fn routeCut(@builtin(global_invocation_id) id: vec3<u32>) {
   var bits = 0u;
   if ((ed.w & RB_WALL) != 0u) { bits |= RC_WALL; }
   if ((ed.w & RB_INNER) != 0u) { bits |= RC_INNER; }
-  if (pa.x < 0 || pb.x < 0 || pm.x < 0) {
+  // (a bridge's deck: its vertex's fixed height, world z — the deck is no ground's and has no water on it)
+  let za = bitcast<f32>(colOf[RP.counts.x + RP.counts.y + ed.x]);
+  let zb = bitcast<f32>(colOf[RP.counts.x + RP.counts.y + ed.y]);
+  let fa = za == za;
+  let fb = zb == zb;
+  if ((!fa && pa.x < 0) || (!fb && pb.x < 0) || (!fa && !fb && pm.x < 0)) {
     cut[e] = vec4<u32>(bits | RC_OFF, bitcast<u32>(-1e9), bitcast<u32>(-1e9), bitcast<u32>(-1e9));
     return;
   }
-  let ga = rgTop(pa);
-  let gb = rgTop(pb);
-  let gm = rgTop(pm);
+  let ga = select(rgTop(pa), za - RP.rules.x, fa);
+  let gb = select(rgTop(pb), zb - RP.rules.x, fb);
+  var gm = (ga + gb) * 0.5;
   let deep = RP.rules.w;
-  let wet = rgWater(pa) > deep || rgWater(pb) > deep || rgWater(pm) > deep;
+  var wet = (!fa && rgWater(pa) > deep) || (!fb && rgWater(pb) > deep);
+  if (!fa && !fb) {
+    gm = rgTop(pm);
+    wet = wet || rgWater(pm) > deep;
+  }
   if (wet && (ed.w & RB_SPAN) == 0u) { bits |= RC_WATER; }
   // (the drop along it: the highest of its three samples less the lowest, over its length — the stair pitch's rule)
   let rise = (max(max(ga, gb), gm) - min(min(ga, gb), gm)) / max(bitcast<f32>(ed.z), 1e-3);
@@ -132,7 +144,7 @@ fn routeCut(@builtin(global_invocation_id) id: vec3<u32>) {
 // ---- the fields --------------------------------------------------------------------------------------------------
 
 /** whether the layout walks edge e (edgenet.ts's walks: not cut, not inside a block) */
-fn layoutWalks(e: u32) -> bool { return (cut[e].x & (RC_CUTS | RC_INNER | RC_OFF)) == 0u; }
+fn layoutWalks(e: u32) -> bool { return (cut[e].x & (RC_CUTS | RC_INNER | RC_OFF)) == 0u && (edges[e].w & (RB_CURVE | RB_LINK)) == 0u; }
 
 /** whether a walker takes edge e with `lift` lifted: not cut, not a block's inside, and drawn or with no structure
  *  either side (never along a building's wall no path was drawn by) — the reach's and the routes' one rule */
@@ -158,7 +170,8 @@ fn edgeCost(e: u32, p: u32) -> f32 {
     return len * select(1.0, 3.0, steep) * select(1.0, 0.5, drawn);
   }
   if (!walks(e, 0u)) { return -1.0; }
-  let per = select(select(1.0, 0.7, k == KIND_LANE), 0.5, (k & KIND_MAIN) != 0u);
+  let curve = (edges[e].w & RB_CURVE) != 0u;
+  let per = select(select(1.0, 0.7, k == KIND_LANE), 0.5, (k & KIND_MAIN) != 0u || curve);
   return len * per * select(1.0, 1.6, steep);
 }
 

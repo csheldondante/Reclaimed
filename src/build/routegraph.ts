@@ -62,23 +62,118 @@ export interface RouteGraph {
   cells: Int32Array;
   edgeOf: Int32Array;
   len: Float32Array;
-  /** per vertex its box column (packCol), then per edge its middle's */
+  /** per vertex its box column (packCol), then per edge its middle's, then per vertex its fixed height (f32 bits: a
+   *  deck's world z; NaN the ground's) */
   colOf: Uint32Array;
   /** per vertex its first edge in the list after (nv + 1 words), then the edges, then each vertex's x, y (f32 bits) */
   csr: Uint32Array;
   /** per vertex box-local x, y */
   verts: ArrayLike<number>;
   quads: ArrayLike<number>;
+  /** the grid's own vertices and edges (the first of each); the curves' after */
+  nvGrid: number;
+  neGrid: number;
+  /** per edge its static bits (PLAN_CURVE, PLAN_LINK) */
+  bits: Uint32Array;
+  /** the curves it was made with (a graph is made again when they change) */
+  roads?: RouteCurves;
 }
 
-export function routeGraphOf(grid: { count: number; verts: ArrayLike<number>; quads: ArrayLike<number>; version?: number }): RouteGraph {
-  const { ends, cells, edgeOf } = edgesOf(grid);
-  const nv = grid.verts.length / 2;
-  const ne = ends.length / 2;
-  const V = grid.verts;
-  const colOf = new Uint32Array(nv + ne);
+/** the static bits per edge (townroute.wgsl RB_CURVE, RB_LINK): a main road's curve, chained node to node (a main
+ *  street's cost); a curve's node joined to a grid vertex beside it (open ground's) — neither is the layout's */
+export const PLAN_CURVE = 16;
+export const PLAN_LINK = 32;
+/** (routes.ts townRouteNet's) a curve's nodes at least this far apart (m); a node joins the grid's vertices this near */
+const CURVE_STEP = 2;
+const CURVE_JOIN = 2.6;
+
+/** where a town's main roads cross water: their bridges' decks (plan.layout.linear, of 'mainroad') — z there, or null */
+export function deckOf(linear: readonly { of?: string; points: readonly (readonly number[])[] }[]): (x: number, y: number) => number | null {
+  const bridges = linear.filter((f) => f.of === 'mainroad');
+  return (x, y) => {
+    for (const f of bridges)
+      for (let i = 1; i < f.points.length; i++) {
+        const a = f.points[i - 1];
+        const b = f.points[i];
+        const ex = b[0] - a[0];
+        const ey = b[1] - a[1];
+        const L2 = ex * ex + ey * ey || 1;
+        const t = Math.max(0, Math.min(1, ((x - a[0]) * ex + (y - a[1]) * ey) / L2));
+        if (Math.hypot(x - a[0] - ex * t, y - a[1] - ey * t) < 1.5) return a[2] + (b[2] - a[2]) * t;
+      }
+    return null;
+  };
+}
+
+/** a town's main roads as the graph takes them: their curves (box-local) and their bridges' decks */
+export interface RouteCurves {
+  curves: readonly (readonly (readonly [number, number])[])[];
+  deck(x: number, y: number): number | null;
+}
+
+/**
+ * The graph: the grid's vertices and edges (each cell side once, its edges first: `edgeOf` indexes them), then each
+ * main road's curve as nodes every CURVE_STEP m (a bridge's at its deck: a fixed height, and no way off it but its
+ * ends), chained, each node off a deck joined to the grid's vertices within CURVE_JOIN.
+ */
+export function routeGraphOf(grid: { count: number; verts: ArrayLike<number>; quads: ArrayLike<number>; version?: number }, roads?: RouteCurves): RouteGraph {
+  const { ends: gEnds, cells: gCells, edgeOf } = edgesOf(grid);
+  const nvGrid = grid.verts.length / 2;
+  const neGrid = gEnds.length / 2;
+  const xyl: number[] = Array.from(grid.verts as ArrayLike<number>);
+  const fixed: number[] = new Array(nvGrid).fill(NaN);
+  const endl: number[] = Array.from(gEnds);
+  const cellsl: number[] = Array.from(gCells);
+  const bits: number[] = new Array(neGrid).fill(0);
+  if (roads) {
+    // (the grid's vertices binned by 4 m: a node's neighbours)
+    const B = 4;
+    const bins = new Map<number, number[]>();
+    const key = (x: number, y: number) => Math.floor(x / B) * 100003 + Math.floor(y / B);
+    for (let v = 0; v < nvGrid; v++) {
+      const k = key(xyl[v * 2], xyl[v * 2 + 1]);
+      (bins.get(k) ?? bins.set(k, []).get(k)!).push(v);
+    }
+    const add = (a: number, b: number, bit: number) => {
+      endl.push(a, b);
+      cellsl.push(-1, -1);
+      bits.push(bit);
+    };
+    for (const c of roads.curves) {
+      let prev = -1;
+      let px = 0;
+      let py = 0;
+      for (let i = 0; i < c.length; i++) {
+        const [x, y] = c[i];
+        if (prev >= 0 && i < c.length - 1 && Math.hypot(x - px, y - py) < CURVE_STEP) continue;
+        const d = roads.deck(x, y);
+        const s = xyl.length / 2;
+        xyl.push(x, y);
+        fixed.push(d ?? NaN);
+        if (prev >= 0) add(prev, s, PLAN_CURVE);
+        if (d === null)
+          for (let ii = -1; ii <= 1; ii++)
+            for (let jj = -1; jj <= 1; jj++)
+              for (const v of bins.get((Math.floor(x / B) + ii) * 100003 + Math.floor(y / B) + jj) ?? []) if (Math.hypot(xyl[v * 2] - x, xyl[v * 2 + 1] - y) <= CURVE_JOIN) add(s, v, PLAN_LINK);
+        prev = s;
+        px = x;
+        py = y;
+      }
+    }
+  }
+  const nv = xyl.length / 2;
+  const ne = endl.length / 2;
+  const V = Float64Array.from(xyl);
+  const ends = Int32Array.from(endl);
+  const cells = Int32Array.from(cellsl);
+  // (per vertex its column; per edge its middle's; per vertex its fixed height — a deck's, world z; NaN the ground's)
+  const colOf = new Uint32Array(nv + ne + nv);
+  const zf = new Float32Array(colOf.buffer, (nv + ne) * 4, nv);
   const len = new Float32Array(ne);
-  for (let v = 0; v < nv; v++) colOf[v] = packCol(...cellAt(V[v * 2], V[v * 2 + 1]));
+  for (let v = 0; v < nv; v++) {
+    colOf[v] = packCol(...cellAt(V[v * 2], V[v * 2 + 1]));
+    zf[v] = fixed[v];
+  }
   const deg = new Uint32Array(nv);
   for (let e = 0; e < ne; e++) {
     const a = ends[e * 2];
@@ -98,7 +193,7 @@ export function routeGraphOf(grid: { count: number; verts: ArrayLike<number>; qu
   // (then each vertex's x, y as f32 bits: a route's points)
   const xy = new Float32Array(csr.buffer, (nv + 1 + ne * 2) * 4, nv * 2);
   for (let i = 0; i < nv * 2; i++) xy[i] = V[i];
-  return { version: grid.version ?? 0, nv, ne, ends, cells, edgeOf, len, colOf, csr, verts: V, quads: grid.quads };
+  return { version: grid.version ?? 0, nv, ne, nvGrid, neGrid, ends, cells, edgeOf, len, colOf, csr, bits: Uint32Array.from(bits), verts: V, quads: grid.quads, roads };
 }
 
 export interface RoutePlan {
@@ -162,7 +257,7 @@ export function routePlanOf(site: RoutePlanSite, g: RouteGraph, io: RoutePlanIO)
     if (s0 && s0 === sid(c1) && solid(c0)) b |= PLAN_INNER;
     if (roads.has(c0) || roads.has(c1)) b |= PLAN_SPAN;
     if (s0 || sid(c1)) b |= PLAN_BUILT;
-    edgeBits[e] = b;
+    edgeBits[e] = b | g.bits[e];
   }
   /** the far rule for one structure: no other (not a wall) within io.far cells, and not beside a road */
   const isFar = (st: { id: number; cells: Map<number, unknown> }): boolean => {
@@ -230,8 +325,8 @@ export function routePlanOf(site: RoutePlanSite, g: RouteGraph, io: RoutePlanIO)
   // (the stores and the middle on the ground between things: the nearest vertex with an edge not inside a structure)
   const open = new Uint8Array(g.nv);
   for (let e = 0; e < g.ne; e++) if (!(edgeBits[e] & PLAN_INNER)) open[g.ends[e * 2]] = open[g.ends[e * 2 + 1]] = 1;
-  const storesV = nearestV(io.stores, (v) => !!open[v]);
-  const centreV = nearestV(io.centre, (v) => !!open[v]);
+  const storesV = nearestV(io.stores, (v) => v < g.nvGrid && !!open[v]);
+  const centreV = nearestV(io.centre, (v) => v < g.nvGrid && !!open[v]);
   // the gates' far corners (main streets reach them), then the wall cells
   const jobs: number[] = [];
   for (let c = 0; c < cellCount(g); c++) {

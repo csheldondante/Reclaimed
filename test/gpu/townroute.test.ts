@@ -14,7 +14,7 @@ import { decodeTownFixture, type TownFixtureHeader } from '../../src/lab/townfix
 import { siteFromJson, TownSite } from '../../src/build/site';
 import { relayRoads, type TownRoads } from '../../src/build/townroads';
 import { CUT_CLIFF, CUT_WALL, CUT_WATER, PATH_LANE } from '../../src/build/edgenet';
-import { routeGraphOf, routePlanOf, type RouteGraph, type RoutePlan } from '../../src/build/routegraph';
+import { deckOf, routeGraphOf, routePlanOf, type RouteGraph, type RoutePlan } from '../../src/build/routegraph';
 import { RC, REACH_BIT, TownRouteGpu, type RoutePlace } from '../../src/build/routegpu';
 import type { MapData } from '../../src/world/mapgen';
 import { SLOPE } from '../../src/build/ways';
@@ -38,7 +38,7 @@ beforeAll(async () => {
   site = TownSite.fromData(siteFromJson(header.site));
   roads = relayRoads(site)!;
   w = await tinyWorld(g, map, [], 'table');
-  graph = routeGraphOf(site.grid);
+  graph = routeGraphOf(site.grid, { curves: site.plan.layout.roads!.curves.map((c) => c.pts), deck: deckOf(site.plan.layout.linear) });
   const r = site.plan.layout.roads!;
   plan = routePlanOf({ plan: site.plan, grid: site.grid, floor: (c) => site.town.base[c] }, graph, { roads: new Set(r.verge), stores: r.stores, centre: r.centre, far: 4 });
   place = { dx: site.box.x0 - header.origin[0], dy: site.box.y0 - header.origin[1], oz: header.oz! + header.zBase };
@@ -52,7 +52,7 @@ afterAll(() => {
 
 describe("the start town's routes on the GPU", () => {
   it('the same graph and stores as the CPU net', () => {
-    expect(graph.ne).toBe(roads.net.cut.length);
+    expect(graph.neGrid).toBe(roads.net.cut.length);
     expect(plan.storesV).toBe(roads.net.storesV);
     expect(plan.ids.length).toBe(roads.net.reach.structures);
   });
@@ -77,7 +77,7 @@ describe("the start town's routes on the GPU", () => {
     const net = roads.net;
     const ends = { cliff: 0, kept: 0 };
     const drops: number[] = [];
-    for (let e = 0; e < graph.ne; e++) {
+    for (let e = 0; e < graph.neGrid; e++) {
       const c = net.cut[e];
       const b = bits[e];
       n.cpu.wall += +!!(c & CUT_WALL);
@@ -118,7 +118,7 @@ describe("the start town's routes on the GPU", () => {
     const V = site.grid.verts;
     let best = -1;
     let bd = Infinity;
-    for (let e = 0; e < graph.ne; e++) {
+    for (let e = 0; e < graph.neGrid; e++) {
       if (!(net.cut[e] & CUT_CLIFF)) continue;
       const kinds = net.kind[e];
       const c0 = net.cells[e * 2];
@@ -145,7 +145,7 @@ describe("the start town's routes on the GPU", () => {
     }
     // every CPU cliff the live surface doesn't cut: the ends as the CPU had them and as the columns are
     const gone: unknown[] = [];
-    for (let e = 0; e < graph.ne; e++) {
+    for (let e = 0; e < graph.neGrid; e++) {
       if (!(net.cut[e] & CUT_CLIFF) || bits[e] & RC.cliff) continue;
       const a = net.ends[e * 2];
       const b = net.ends[e * 2 + 1];
@@ -162,7 +162,7 @@ describe("the start town's routes on the GPU", () => {
     const s = await gpu.solve(place);
     const net = roads.net;
     const n = { cpu: { main: 0, lane: 0 }, gpu: { main: 0, lane: 0 }, both: 0, cpuOnly: 0, gpuOnly: 0, mainBoth: 0 };
-    for (let e = 0; e < graph.ne; e++) {
+    for (let e = 0; e < graph.neGrid; e++) {
       const c = net.kind[e];
       const k = s.kinds[e];
       if (c === 2) n.cpu.main++;
@@ -196,7 +196,7 @@ describe("the start town's routes on the GPU", () => {
     const t: number[] = [];
     for (let i = 0; i < 8; i++) t.push((await gpu.solve(place)).ms);
     t.sort((a, b) => a - b);
-    console.log(JSON.stringify({ solveMs: { min: +t[0].toFixed(2), median: +t[4].toFixed(2), max: +t[7].toFixed(2) }, rounds: gpu.stats.rounds, edges: graph.ne, nodes: graph.nv + plan.ids.length, doors: plan.doors.length / 4 }));
+    console.log(JSON.stringify({ solveMs: { min: +t[0].toFixed(2), median: +t[4].toFixed(2), max: +t[7].toFixed(2) }, rounds: gpu.stats.rounds, edges: graph.neGrid, nodes: graph.nv + plan.ids.length, doors: plan.doors.length / 4 }));
   });
 });
 
@@ -206,7 +206,7 @@ describe('the live columns change: the cuts follow', () => {
     const before = await gpu.cuts();
     const net = roads.net;
     let lane = -1;
-    for (let e = 0; e < graph.ne && lane < 0; e++) if (net.kind[e] === PATH_LANE && !before.bits[e]) lane = e;
+    for (let e = 0; e < graph.neGrid && lane < 0; e++) if (net.kind[e] === PATH_LANE && !before.bits[e]) lane = e;
     expect(lane).toBeGreaterThanOrEqual(0);
     const W = header.dims.w;
     const unpack = (p: number) => [(p & 0xffff) - 32768 + place.dx, (p >>> 16) - 32768 + place.dy];
