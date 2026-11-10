@@ -185,7 +185,7 @@ export class LiquidSystem implements SimSystem {
       publishLava: { 3: 'rw', 5: 'rw', 7: 'rw', 11: 'rw', 12: 'rw', 13: 'rw', 20: 'rw' },
       prep: { 5: 'rw', 6: 'read', 12: 'rw', 13: 'rw', 22: 'tex', 23: 'tex', 24: 'tex', 28: 'tex', 29: 'rw', 30: 'rw', 31: 'rw', 32: 'rw' },
       publishGaps: { 5: 'rw', 7: 'rw', 45: 'rw' },
-      lqScan: { 1: 'read', 4: 'read', 5: 'rw', 6: 'read', 11: 'rw', 16: 'read', 22: 'tex', 24: 'tex', 36: 'rw', 37: 'rw' },
+      lqScan: { 1: 'read', 3: 'rw', 5: 'rw', 6: 'read', 11: 'rw', 16: 'read', 22: 'tex', 24: 'tex', 36: 'rw', 37: 'rw' },
       lqList: { 36: 'rw', 37: 'rw', 40: 'rw', 41: 'rw', 42: 'rw', 43: 'rw' },
     };
     const entries = ['flux', 'jets', 'depth', kind.name === 'water' ? 'publishWater' : 'publishLava', 'prep', 'lqScan', 'lqList', ...(kind.name === 'water' ? ['publishGaps'] : [])];
@@ -198,9 +198,12 @@ export class LiquidSystem implements SimSystem {
       if (e === 'prep' || e === 'lqList') delete spec[1];
       if (!listed(e)) {
         delete spec[TILES_BINDING];
-        delete spec[21];
-        delete spec[2];
-        if (e === 'lqList') delete spec[35];
+        // (lqScan reads a column's gaps where a solid may have come over its water: the materials, the bodies)
+        if (e === 'lqList') {
+          delete spec[21];
+          delete spec[2];
+          delete spec[35];
+        }
       }
       const k = makeCompute(device, `${this.name}-${e}`, listed(e) ? [cullSource(parts.join(String.fromCharCode(10)), e, tiles.vec4s)] : parts, spec, e);
       this.k[e] = k;

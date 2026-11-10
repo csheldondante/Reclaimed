@@ -21342,3 +21342,19 @@ Clean desktop runs (nothing else of this worktree running; liquid passes by time
   - a deck column at (123, 167) holds 3.64 of open water on its top: a pile-up again, with many chunks awake;
   - roads' paving (a quarter cell, claimed where free) over shallow water makes thin gaps with water under them.
   BACKLOG LQ4 and LQ5 stay open.
+
+## 2026-11-10 — trackA-liquids: decks over sleeping water woken (the column's top from its layers)
+
+- Traced why Muru's bridge columns kept the river on their records after the deck was claimed (runs ran 2–10 steps,
+  then idle): the "covered" test read the surface buffer, whose z is the walkers' surface (97.4 at (125, 171) under a
+  deck at 100.66), not the topmost solid; and its 0.5 margin was over the deck's own clearance (top 100.57, water
+  surface 100.08). lqScan now reads the column's gaps from its layers (the top gap's floor) and calls it covered past
+  0.05 over water deeper than 0.05. At Muru the deck columns now hold the river under them as enclosed runs while
+  everything else sleeps.
+- Still seen: films of 0.01–0.07 on deck tops, and once a pile of 3.64 (with 43 chunks awake). No water sources or
+  storms there. The likely mechanism: a stream carried over a frozen column keeps the landing height it had before
+  the deck (j2.y, the river's level) and, held aloft while the column sleeps, gathers volume; when it lands, that
+  height is inside the deck slab, and gapForRun puts it in the gap above — on the deck. Not fixed yet (LQ7).
+- The agents' surfaces exist only in their scope (agents/scope.ts: round live units, 48 columns' margin) — the columns
+  checked before were outside it, so their old dry records were never re-read: by design, not a version bug. LQ4's
+  check needs units near the bridge.

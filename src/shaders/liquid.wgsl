@@ -950,8 +950,8 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
 
 /** steps a chunk runs on after it stops qualifying: both parities then hold its settled records */
 const LINGER: u32 = 2u;
-/** a column's top risen this far over its water's surface: covered (lqScan) */
-const COVERED: f32 = 0.5;
+/** water deeper than this, and a column's top risen this far over its surface: covered (lqScan) */
+const COVERED: f32 = 0.05;
 
 var<workgroup> wgGo: u32;
 var<workgroup> wgWet: atomic<u32>;
@@ -991,9 +991,13 @@ fn lqScan(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
     if (LQ_WATER) { w = w || waterSourceL[i] != 0.0; }
     let j2 = textureLoad(j2In, texCol(p), 0);
     w = w || (parkedOk(L, u32(j2.w)) && textureLoad(j0In, texCol(p), 0).x > 1e-9);
-    // (its open water under the column's top now, by more than the bed's moving under it: a solid came over it — a
-    // deck's slab is DECK_T 0.8 deep, citygen streets.wgsl)
-    if (moved && open[i] > EPS && parkedOk(L, u32(r0.w) >> 3u) && sfZ(surface[i]) > r0.x + open[i] + COVERED) { atomicOr(&act[slot * 4u + 2u], 3u); }
+    // (its open water — not a film — under the column's top now: a solid came over it, a deck. The bed moving under the
+    // water stays under its surface; a film a sediment step covers is no matter)
+    // (the column's top from its layers: the surface buffer's z is the walkers' surface, not the topmost solid)
+    if (moved && open[i] > COVERED && parkedOk(L, u32(r0.w) >> 3u)) {
+      let g = gapsAt(p);
+      if (g.f[g.n - 1u] > r0.x + open[i] + COVERED) { atomicOr(&act[slot * 4u + 2u], 3u); }
+    }
   }
   if (w) { atomicStore(&wgWet, 1u); }
   workgroupBarrier();
