@@ -8,7 +8,7 @@ import { Registry, type ParamSpec } from '../tune/registry';
 import { TunePanel } from '../ui/tunepanel';
 import { whenPipelinesReady } from '../gpu/pipeline';
 import { ROW_H } from '../world/lattice';
-import { AUTO, BAD, CROSS, MAJORS, SHAPES, MIN_BLOCK, NPTS, STAGES, StreetLabGpu, type Box, type Stage, type StreetParams, type StreetTimes, type StreetWorld } from './gpu';
+import { AUTO, BAD, CROSS, LANDMARKS, MAJORS, SHAPES, MIN_BLOCK, NPTS, STAGES, StreetLabGpu, type Box, type Stage, type StreetParams, type StreetTimes, type StreetWorld } from './gpu';
 
 /** the sites (game/levels.ts streetSite), as the panel names them: the mesa is the cliff site */
 export const SITES = ['muru', 'river', 'mesa', 'mountain', 'coast'] as const;
@@ -22,8 +22,11 @@ const P: Record<string, Spec> = {
   cross: { label: 'cross streets', units: '', min: 0, max: CROSS.length - 1, step: 1, def: 0, choices: [...CROSS], stage: 'phi' },
   scale: { label: 'city scale', units: '×', min: 0.5, max: 2.5, step: 0.05, def: 1, help: 'contour spacing and block length × this, lot areas × its square: bigger reads bigger', stage: 'phi' },
   bad: { label: 'bad cells →', units: '', min: 0, max: BAD.length - 1, step: 1, def: 0, choices: [...BAD], help: 'a sliver or thin triangle (an angle under 25°, too thin, under the merge area): joined to its neighbour across its longer cross street, or paved', stage: 'trace' },
-  plazaR: { label: 'junction plaza radius', units: 'cells', min: 0, max: 24, step: 0.5, def: 0, help: 'a paved disc where enough cross streets meet one point (0 none)', stage: 'trace' },
-  plazaN: { label: 'junction plaza: streets', units: '', min: 2, max: 8, step: 1, def: 3, help: 'cross streets ending at one point that make it a plaza', stage: 'trace' },
+  lmMult: { label: 'landmark sites', units: '×', min: 0, max: 2, step: 0.05, def: 1, help: 'round plots at the busy junctions (their radius ×; 0 none): the fans’ streets end at a ring road round them', stage: 'trace' },
+  lmKind: { label: 'landmark sites →', units: '', min: 0, max: LANDMARKS.length - 1, step: 1, def: 0, choices: [...LANDMARKS], stage: 'trace' },
+  lmN: { label: 'busy junction: streets', units: '', min: 2, max: 8, step: 1, def: 4, help: 'cross streets ending at one point that make it busy (or two meeting under 30°)', stage: 'trace' },
+  lmRmin: { label: 'landmark radius min', units: 'cells', min: 2, max: 40, step: 0.5, def: 7, stage: 'trace' },
+  lmRmax: { label: 'landmark radius max', units: 'cells', min: 4, max: 60, step: 0.5, def: 16, help: 'r = block length / the smallest angle between its streets, between these', stage: 'trace' },
   majorSpacing: { label: 'contour spacing', units: 'cells', min: 12, max: 120, step: 1, def: 28, help: 'between the major lines (φ’s level sets)', stage: 'phi' },
   blend: { label: 'blend width', units: 'cells', min: 0, max: 40, step: 1, def: 12, help: 'the smooth min’s k: how softly a point’s rings join the contours', stage: 'phi' },
   pointR: { label: 'point radius', units: 'cells', min: 8, max: 120, step: 1, def: 40, help: 'beyond this (× the point’s intensity) a point has no effect', stage: 'phi' },

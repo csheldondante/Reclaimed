@@ -20777,3 +20777,22 @@ of the fixes below run on the GPU, in the trace stage.
 - **Measurements:** headless D3D11, median of 7. Full rebuild 1.04 ms on Muru and 1.15 ms on river; the trace stage
   is 0.36–0.38 ms, up 0.07 for the merge rounds. On coast, 26 of 44 blocks were triangles; merge leaves 22 blocks
   and 305 lots.
+
+## 2026-11-10 — trackA-streetlab m3e: landmark sites at the busy junctions
+
+The user's plaza idea, which m3d misread: the over-busy intersections should become large round plots for plazas
+or big structures, so that no triangles are left, and the merge picks up whatever remains.
+- A junction is a seed where `lmN` (default 4) or more cross streets end, or where two neighbouring streets meet at
+  under 30°. Both are counted with atomics (`jstat`: an add, and a min of the angle's float bits). Its site radius
+  is r = clamp(max(rmin, blockLen/θmin), rmin, rmax) × the "landmark sites" multiplier; 0 turns sites off. When two
+  sites overlap, the bigger is kept.
+- `vclip` clips every cross street at the circles: a street now starts where it leaves a circle and ends where it
+  enters one, and a street wholly inside a circle, or running through one, is dropped. The blocks are built from
+  the clipped ends, so a fan becomes a ring of trapezoids round the site. Their far side is the ring road (a
+  minor-width ribbon). The bad-cell merge runs after this, as the default pipeline.
+- Each site is a (centre, radius, kind) entry in a small GPU buffer (`LM`) for later systems to claim. The kind is a
+  radio: a plaza (flat paving) or a big structure (a 12-sided block inset from the ring, 3× a lot's height). The
+  m3d junction-plaza discs are removed.
+- **Measurements:** headless D3D11, median of 7. Full rebuild 1.2 ms on Muru and 1.2–1.4 ms on river: trace
+  0.41–0.52 ms, mesh 0.19–0.21 ms. The site mesh was 0.15 ms slower until it ran one thread per piece instead of
+  one thread per site.

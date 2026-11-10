@@ -26,7 +26,8 @@ struct U {
   e: vec4<f32>, // (m3) blend width (smooth-min k), point radius, point strength, auto points
   o: vec4<u32>, // (m3) a boxed pass's first column (x, y), φ's mode (0 distance, 1 smooth min, 2 bump), cross streets (0 vector JFA, 1 tensor)
   s: vec4<f32>, // (m3c) the band height, the cart grade, the shape (0 none, 1 terraces, 2 spiral, 3 switchbacks), the spiral's point + 1
-  q: vec4<f32>, // (m3d) bad cells (0 merge, 1 plaza), the junction plazas' radius (0 none), the cross streets a junction needs, 0
+  q: vec4<f32>, // (m3d) bad cells (0 merge, 1 plaza, 2 left); (m3e) the landmarks' radius × (0 none), the cross streets a busy junction has, their kind (0 plaza, 1 big structure)
+  l: vec4<f32>, // (m3e) a landmark's smallest and largest radius, 0, 0
 };
 @group(0) @binding(0) var<uniform> u: U;
 
@@ -97,7 +98,8 @@ fn grad1(x: i32, y: i32) -> vec2<f32> { return vec2<f32>((r1(ix(x + 1, y)) - r1(
 // ---- the fields (as milestone 1) ---------------------------------------------------------------------------
 @compute @workgroup_size(64)
 fn fill(@builtin(global_invocation_id) g: vec3<u32>) {
-  if (g.x < u.m.x) { w5[g.x] = u.n.z; }
+  // (from o.x: a fill's offset)
+  if (g.x < u.m.x) { w5[g.x + u.o.x] = u.n.z; }
 }
 /** a box blur of r1 along x (mode 0) or y (mode 1), radius k columns */
 @compute @workgroup_size(8, 8)
@@ -618,7 +620,7 @@ fn roadMajor(@builtin(global_invocation_id) g: vec3<u32>) {
   let x = i32(g.x); let y = i32(g.y);
   if (x >= W() || y >= H()) { return; }
   let c = cpos(x, y);
-  if (!inTown(c) || blockedAt(c) || inPlazaB1(c)) { return; }
+  if (!inTown(c) || blockedAt(c) || inLandmarkB1(c)) { return; }
   for (var k = 1u; k <= 3u; k++) {
     if (!fam(k)) { continue; }
     // (the line passes the column: its field's floor differs to one of three neighbours')
@@ -717,7 +719,9 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   let mid = 0.25 * (v[0] + v[1] + v[2] + v[3]);
   if (blockedAt(mid)) { return; }
   // (m3d: paved — a plaza block, inside a junction's plaza, or a bad lot (a sliver): flat paving, no building)
-  if ((hs & PAVED) != 0u || inPlazaW5(mid) || (u.q.x < 1.5 && badQuad(v, 0.0))) { paveLot(v, mid); return; }
+  // (m3e: a lot whose middle is in a landmark's circle is the landmark's: none)
+  if (inLandmarkW5(mid)) { return; }
+  if ((hs & PAVED) != 0u || (u.q.x < 1.5 && badQuad(v, 0.0))) { paveLot(v, mid); return; }
   var street = false;
   var d: array<f32, 4>;
   for (var k = 0u; k < 4u; k++) {
@@ -909,8 +913,9 @@ fn phi(@builtin(global_invocation_id) g: vec3<u32>) {
 // half a level up the gradient from it, the nearest seed of the other parity — on the next line up. A seed's street and
 // the next seed's along its line bound a block, its corners exactly on the lines.
 // A seed (SDW words): 0 1 its position, 2 its line's level, 3 alive, 4 its street's other end (a seed; EDGE the town's
-// edge; NONE none), 5 6 where that street ends.
-const SDW: u32 = 8u;
+// edge; NONE none), 5 6 where that street ends (m3e: clipped at a landmark's circle), 7 the next seed along its line,
+// 8 9 where its street starts (clipped), 10 flags (1 start clipped, 2 end clipped).
+const SDW: u32 = 12u;
 const SID: u32 = 0x1fffu;
 /** (m3d) a cross street that ends on the town's edge — the circle a closing line */
 const EDGE: u32 = 0xfffffffeu;
@@ -978,8 +983,10 @@ fn vthin(@builtin(global_invocation_id) g: vec3<u32>) {
   if (!keep) { w5[o + 3u] = 0u; }
 }
 fn sdPos(j: u32) -> vec2<f32> { return vec2<f32>(r1(j * SDW), r1(j * SDW + 1u)); }
-/** where seed j's cross street ends (words 5 6: a seed's position, or the point on the town's edge) */
+/** where seed j's cross street ends (words 5 6: a seed's position, the point on the town's edge, or on a circle) */
 fn sdEnd(j: u32) -> vec2<f32> { return vec2<f32>(r1(j * SDW + 5u), r1(j * SDW + 6u)); }
+/** where it starts (8 9: the seed, or where its street leaves a landmark's circle) */
+fn sdStart(j: u32) -> vec2<f32> { return vec2<f32>(r1(j * SDW + 8u), r1(j * SDW + 9u)); }
 /** the kept seeds into the floods' columns: even lines' w5, odd lines' w7 (r1 the seeds) */
 @compute @workgroup_size(64)
 fn vrast(@builtin(global_invocation_id) g: vec3<u32>) {
@@ -1097,41 +1104,31 @@ fn vblock(@builtin(global_invocation_id) g: vec3<u32>) {
   let o = id * SDW;
   let ts = b1[o + 4u];
   if (b1[o + 3u] == 0u || ts == NONE) { return; }
-  let s = sdPos(id);
-  let L = b1[o + 2u];
-  let gr = gradAt(mainK(), s);
-  let tn = normalize(vec2<f32>(-gr.y, gr.x));
-  let bl = u.a.w;
-  let reach = array<f32, 3>(1.0, 1.5, 0.7);
-  var c = NONE;
-  for (var k = 0; k < 3; k++) {
-    let n = nearestOf(L & 1u, s + tn * bl * reach[k]);
-    if (n == NONE || n == id || b1[n * SDW + 2u] != L || b1[n * SDW + 3u] == 0u) { continue; }
-    let dv = sdPos(n) - s;
-    if (dot(dv, tn) < 0.3 * bl || length(dv) > 2.5 * bl) { continue; }
-    c = n;
-    break;
-  }
+  let s = sdStart(id);
+  let c = b1[o + 7u];
   var tc = NONE;
   if (c != NONE) { tc = b1[c * SDW + 4u]; }
   if (tc == NONE) { w7[id] = 1u; return; }
   let es = sdEnd(id);
   let ec = sdEnd(c);
-  let sc = sdPos(c);
+  let sc = sdStart(c);
   if (segsCross(s, es, sc, ec)) { return; }
   w7[id] = 1u;
   // (a street to the town's edge beside one to a seed: no block)
   if ((ts == EDGE) != (tc == EDGE)) { return; }
   w5[mo + 2u] = c;
-  if (tc == ts && ts != EDGE) {
+  // (m3e: streets that end on a landmark's circle — the far side the ring road, a trapezoid, never a triangle)
+  let ring = (b1[o + 10u] & 2u) != 0u && (b1[c * SDW + 10u] & 2u) != 0u;
+  if (tc == ts && ts != EDGE && !ring) {
     w5[mo + 4u] = 1u;
     _ = putBlock(ob, array<vec2<f32>, 4>(s, sc, es, 0.5 * (es + s)), array<u32, 4>(1u, 2u, 2u, 2u), id);
   } else {
-    let far = select(1u, 0u, ts == EDGE);
+    let far = select(select(1u, 2u, ring), 0u, ts == EDGE);
     _ = putBlock(ob, array<vec2<f32>, 4>(s, sc, ec, es), array<u32, 4>(1u, 2u, far, 2u), id);
   }
 }
-/** the cross streets: eight ribbon pieces a drawn street, on the ground (r1 the seeds, r2 drawn, r3 H, b4 the plazas) */
+/** the cross streets: eight ribbon pieces a drawn street, on the ground, clipped at the landmarks (r1 the seeds, r2
+ *  drawn, r3 H) */
 @compute @workgroup_size(64)
 fn vroad(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x / 8u;
@@ -1139,12 +1136,10 @@ fn vroad(@builtin(global_invocation_id) g: vec3<u32>) {
   if (id >= u.m.w * u32(u.c.w) || b2[id] == 0u) { return; }
   let t = b1[id * SDW + 4u];
   if (t == NONE) { return; }
-  let s = sdPos(id);
+  let s = sdStart(id);
   let e = sdEnd(id);
   let a = mix(s, e, f32(k) / 8.0);
   let b = mix(s, e, f32(k + 1u) / 8.0);
-  // (m3d: a junction's plaza swallows the street's pieces in it)
-  if (inPlazaB4(0.5 * (a + b))) { return; }
   let at = room(6u);
   if (at == NONE) { return; }
   let d = normalize(b - a) * 0.3;
@@ -1298,10 +1293,8 @@ fn ground(@builtin(global_invocation_id) g: vec3<u32>) {
 // street is its far side), 3 the seed before it (whose block shares its near street), 4 a triangle, 5 its status (0,
 // 1 a plaza, 2 merged away, 3 grown by a merge), 6 the neighbour it asks to merge with, 7 which way (0 ahead, 1 behind),
 // 8 its first seed (its own, until it takes over the block behind it).
-// A junction plaza (PJ): word 0 the count, then x, y each (PJ_ROOM at most).
 const PAVED: u32 = 0x80000000u;
 const C_PAVE: u32 = 0xdcd0b6u;
-const PJ_ROOM: u32 = 64u;
 /** a cell too thin to build on: an interior angle under 25°, area / perimeter² under 0.3 of a circle's, or area under
  *  `minA` */
 fn badQuad(v: array<vec2<f32>, 4>, minA: f32) -> bool {
@@ -1362,9 +1355,9 @@ fn bclaim(@builtin(global_invocation_id) g: vec3<u32>) {
   // (the shared streets: ahead c's own, behind this seed's own; a good neighbour first)
   var lc = -1.0;
   var lp = -1.0;
-  if (okC) { lc = distance(sdPos(c), sdEnd(c)) + select(1e4, 0.0, w5[c * 3u * BQW + BQW + 1u] == 1u); }
+  if (okC) { lc = distance(sdStart(c), sdEnd(c)) + select(1e4, 0.0, w5[c * 3u * BQW + BQW + 1u] == 1u); }
   let st = w5[mo + 8u];
-  if (okP) { lp = distance(sdPos(st), sdEnd(st)) + select(1e4, 0.0, w5[p * 3u * BQW + BQW + 1u] == 1u); }
+  if (okP) { lp = distance(sdStart(st), sdEnd(st)) + select(1e4, 0.0, w5[p * 3u * BQW + BQW + 1u] == 1u); }
   if (lc < 0.0 && lp < 0.0) { return; }
   let n = select(p, c, lc >= lp);
   w5[mo + 6u] = n;
@@ -1391,13 +1384,13 @@ fn bapply(@builtin(global_invocation_id) g: vec3<u32>) {
   if (b == NONE) { return; }
   let ta = b1[a * SDW + 4u];
   let tb = b1[b * SDW + 4u];
-  let pa = sdPos(a);
-  let pb = sdPos(b);
+  let pa = sdStart(a);
+  let pb = sdStart(b);
   let ea = sdEnd(a);
   let eb = sdEnd(b);
   var ok = false;
   var tri = 0u;
-  if (ta == tb && ta != EDGE) {
+  if (ta == tb && ta != EDGE && ((b1[a * SDW + 10u] & b1[b * SDW + 10u] & 2u) == 0u)) {
     tri = 1u;
     ok = putBlock(ob, array<vec2<f32>, 4>(pa, pb, ea, 0.5 * (ea + pa)), array<u32, 4>(1u, 2u, 2u, 2u), id);
   } else {
@@ -1420,56 +1413,193 @@ fn bapply(@builtin(global_invocation_id) g: vec3<u32>) {
   }
   w7[gone] = 0u;
 }
-/** one thread a drawn cross street: one more at the seed it ends at (w6 the counts; r1 the seeds, b2 drawn) */
+// ==== milestone 3e: landmark sites at the busy junctions ======================================================
+// A junction is busy when q.z or more cross streets end at one seed, or two neighbouring ones meet there at under 30°.
+// It gets a round plot — a landmark site — whose radius spreads its streets a block length apart:
+// r = clamp(max(rmin, blockLen / θmin), rmin, rmax) × the multiplier. Overlapping sites: the bigger kept. Every cross
+// street is clipped at the circles (it starts where it leaves one, ends where it enters one), so a fan's triangles
+// become a ring of trapezoids round the site, its circle a ring road; the bad-cell merge runs after, on what's left.
+// The sites (LM): word 0 the count, then LMW words each — x, y, r (negative: dropped for a bigger one), kind (0 a
+// plaza, 1 a big structure). Later systems claim them from this buffer.
+const LM_ROOM: u32 = 64u;
+const LMW: u32 = 4u;
+const C_LANDMARK: u32 = 0xc9b3e6u;
+/** one thread a seed: the next seed along its line (ahead, the tangent's way: the same-parity flood looked up a block
+ *  length ahead), and its street's start before any clipping (w5 the seeds: words 7–10; b2 b3 the floods, b4 φ) */
 @compute @workgroup_size(64)
-fn jcount(@builtin(global_invocation_id) g: vec3<u32>) {
+fn vnext(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x;
-  if (id >= u.m.w * u32(u.c.w) || b2[id] == 0u) { return; }
-  let t = b1[id * SDW + 4u];
-  if (t == NONE || t == EDGE) { return; }
-  atomicAdd(&w6[t], 1u);
+  if (id >= u.m.w * u32(u.c.w)) { return; }
+  let o = id * SDW;
+  w5[o + 7u] = NONE;
+  w5[o + 8u] = w5[o];
+  w5[o + 9u] = w5[o + 1u];
+  w5[o + 10u] = 0u;
+  if (w5[o + 3u] == 0u || w5[o + 4u] == NONE) { return; }
+  let s = vec2<f32>(bitcast<f32>(w5[o]), bitcast<f32>(w5[o + 1u]));
+  let L = w5[o + 2u];
+  let gr = gradAt(mainK(), s);
+  let tn = normalize(vec2<f32>(-gr.y, gr.x));
+  let bl = u.a.w;
+  let reach = array<f32, 3>(1.0, 1.5, 0.7);
+  for (var k = 0; k < 3; k++) {
+    let n = nearestOf(L & 1u, s + tn * bl * reach[k]);
+    if (n == NONE || n == id || w5[n * SDW + 2u] != L || w5[n * SDW + 3u] == 0u) { continue; }
+    let dv = vec2<f32>(bitcast<f32>(w5[n * SDW]), bitcast<f32>(w5[n * SDW + 1u])) - s;
+    if (dot(dv, tn) < 0.3 * bl || length(dv) > 2.5 * bl) { continue; }
+    w5[o + 7u] = n;
+    break;
+  }
 }
-/** one thread a seed: a plaza where q.z or more cross streets meet (w6 the plazas; r1 the seeds, b2 the counts) */
+/** one thread a seed with a street to a seed: one more street at that seed, and the angle there to the next seed's
+ *  street when it ends there too (w6: counts, then from T the smallest angles' bits; r1 the seeds) */
 @compute @workgroup_size(64)
-fn jlist(@builtin(global_invocation_id) g: vec3<u32>) {
+fn jstat(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  let T = u.m.w * u32(u.c.w);
+  if (id >= T) { return; }
+  let o = id * SDW;
+  let t = b1[o + 4u];
+  if (b1[o + 3u] == 0u || t == NONE || t == EDGE) { return; }
+  atomicAdd(&w6[t], 1u);
+  let c = b1[o + 7u];
+  if (c == NONE || b1[c * SDW + 4u] != t) { return; }
+  let pt = sdPos(t);
+  let a = normalize(sdPos(id) - pt);
+  let b = normalize(sdPos(c) - pt);
+  let ang = acos(clamp(dot(a, b), -1.0, 1.0));
+  atomicMin(&w6[T + t], bitcast<u32>(ang));
+}
+/** one thread a seed: a landmark site where it's a busy junction (w6 the sites; r1 the seeds, b2 the counts) */
+@compute @workgroup_size(64)
+fn lmlist(@builtin(global_invocation_id) g: vec3<u32>) {
+  let id = g.x;
+  let T = u.m.w * u32(u.c.w);
+  if (id >= T || u.q.y <= 0.0 || b1[id * SDW + 3u] == 0u) { return; }
+  let n = b2[id];
+  let ang = bitcast<f32>(b2[T + id]);
+  if (!(f32(n) >= u.q.z || (n >= 2u && ang < 0.5236))) { return; }
+  let r = clamp(max(u.l.x, u.a.w / max(ang, 1e-3)), u.l.x, u.l.y) * u.q.y;
+  let k = atomicAdd(&w6[0], 1u);
+  if (k >= LM_ROOM) { return; }
+  let p = sdPos(id);
+  let o = 1u + k * LMW;
+  atomicStore(&w6[o], bitcast<u32>(p.x));
+  atomicStore(&w6[o + 1u], bitcast<u32>(p.y));
+  atomicStore(&w6[o + 2u], bitcast<u32>(r));
+  atomicStore(&w6[o + 3u], u32(u.q.w));
+}
+/** one thread a site: dropped (its radius negated) when it overlaps a bigger one — or an equal one listed first (w5) */
+@compute @workgroup_size(64)
+fn lmprune(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  let n = min(w5[0], LM_ROOM);
+  if (i >= n) { return; }
+  let oi = 1u + i * LMW;
+  let pi = vec2<f32>(bitcast<f32>(w5[oi]), bitcast<f32>(w5[oi + 1u]));
+  let ri = abs(bitcast<f32>(w5[oi + 2u]));
+  for (var j = 0u; j < n; j++) {
+    if (j == i) { continue; }
+    let oj = 1u + j * LMW;
+    let rj = abs(bitcast<f32>(w5[oj + 2u]));
+    if (distance(pi, vec2<f32>(bitcast<f32>(w5[oj]), bitcast<f32>(w5[oj + 1u]))) >= ri + rj) { continue; }
+    if (rj > ri || (rj == ri && j < i)) { w5[oi + 2u] = bitcast<u32>(-ri); return; }
+  }
+}
+/** one thread a seed with a street: the street clipped at every site — its start moved out to where it leaves one,
+ *  its end in to where it enters one; inside one altogether, or through one, it's gone (w5 the seeds; b2 the sites) */
+@compute @workgroup_size(64)
+fn vclip(@builtin(global_invocation_id) g: vec3<u32>) {
   let id = g.x;
   if (id >= u.m.w * u32(u.c.w) || u.q.y <= 0.0) { return; }
-  if (b1[id * SDW + 3u] == 0u || f32(b2[id]) < u.q.z) { return; }
-  let k = atomicAdd(&w6[0], 1u);
-  if (k >= PJ_ROOM) { return; }
-  let p = sdPos(id);
-  atomicStore(&w6[1u + k * 2u], bitcast<u32>(p.x));
-  atomicStore(&w6[2u + k * 2u], bitcast<u32>(p.y));
-}
-fn inPlazaB1(p: vec2<f32>) -> bool {
-  if (u.q.y <= 0.0) { return false; }
-  for (var k = 0u; k < min(b1[0], PJ_ROOM); k++) { if (distance(p, vec2<f32>(r1(1u + k * 2u), r1(2u + k * 2u))) < u.q.y) { return true; } }
-  return false;
-}
-fn inPlazaB4(p: vec2<f32>) -> bool {
-  if (u.q.y <= 0.0) { return false; }
-  for (var k = 0u; k < min(b4[0], PJ_ROOM); k++) { if (distance(p, vec2<f32>(r4(1u + k * 2u), r4(2u + k * 2u))) < u.q.y) { return true; } }
-  return false;
-}
-fn inPlazaW5(p: vec2<f32>) -> bool {
-  if (u.q.y <= 0.0) { return false; }
-  for (var k = 0u; k < min(w5[0], PJ_ROOM); k++) { if (distance(p, vec2<f32>(bitcast<f32>(w5[1u + k * 2u]), bitcast<f32>(w5[2u + k * 2u]))) < u.q.y) { return true; } }
-  return false;
-}
-/** the junction plazas: a paved disc each (r1 the plazas, r3 H) */
-@compute @workgroup_size(64)
-fn plazas(@builtin(global_invocation_id) g: vec3<u32>) {
-  let j = g.x;
-  if (u.q.y <= 0.0 || j >= min(b1[0], PJ_ROOM)) { return; }
-  let p = vec2<f32>(r1(1u + j * 2u), r1(2u + j * 2u));
-  let at = room(36u);
-  if (at == NONE) { return; }
-  let z = hAt(p) + 0.18;
-  for (var k = 0u; k < 12u; k++) {
-    let a0 = f32(k) * TAU / 12.0;
-    let a1 = f32(k + 1u) * TAU / 12.0;
-    let q0 = p + u.q.y * vec2<f32>(cos(a0), sin(a0));
-    let q1 = p + u.q.y * vec2<f32>(cos(a1), sin(a1));
-    tri(at + k * 3u, vec3<f32>(p, z), vec3<f32>(q0, hAt(q0) + 0.18), vec3<f32>(q1, hAt(q1) + 0.18), C_PAVE);
+  let o = id * SDW;
+  if (w5[o + 3u] == 0u || w5[o + 4u] == NONE) { return; }
+  var a = vec2<f32>(bitcast<f32>(w5[o + 8u]), bitcast<f32>(w5[o + 9u]));
+  var e = vec2<f32>(bitcast<f32>(w5[o + 5u]), bitcast<f32>(w5[o + 6u]));
+  var fl = 0u;
+  for (var k = 0u; k < min(b2[0], LM_ROOM); k++) {
+    let ok = 1u + k * LMW;
+    let r = bitcast<f32>(b2[ok + 2u]);
+    if (r <= 0.0) { continue; }
+    let c = vec2<f32>(bitcast<f32>(b2[ok]), bitcast<f32>(b2[ok + 1u]));
+    let d = e - a;
+    let f = a - c;
+    let A = max(dot(d, d), 1e-6);
+    let B = 2.0 * dot(f, d);
+    let disc = B * B - 4.0 * A * (dot(f, f) - r * r);
+    if (disc <= 0.0) { continue; }
+    let t1 = (-B - sqrt(disc)) / (2.0 * A);
+    let t2 = (-B + sqrt(disc)) / (2.0 * A);
+    if (t2 <= 0.0 || t1 >= 1.0) { continue; }
+    if ((t1 <= 0.0 && t2 >= 1.0) || (t1 > 0.0 && t2 < 1.0)) { w5[o + 4u] = NONE; return; }
+    if (t1 <= 0.0) { a = a + d * t2; fl = fl | 1u; } else { e = a + d * t1; fl = fl | 2u; }
   }
+  set5(o + 8u, a.x);
+  set5(o + 9u, a.y);
+  set5(o + 5u, e.x);
+  set5(o + 6u, e.y);
+  w5[o + 10u] = fl;
+}
+fn lmHit(p: vec2<f32>, c: vec2<f32>, r: f32) -> bool { return r > 0.0 && distance(p, c) < r; }
+fn inLandmarkB1(p: vec2<f32>) -> bool {
+  if (u.q.y <= 0.0) { return false; }
+  for (var k = 0u; k < min(b1[0], LM_ROOM); k++) { let o = 1u + k * LMW; if (lmHit(p, vec2<f32>(r1(o), r1(o + 1u)), r1(o + 2u))) { return true; } }
+  return false;
+}
+fn inLandmarkW5(p: vec2<f32>) -> bool {
+  if (u.q.y <= 0.0) { return false; }
+  for (var k = 0u; k < min(w5[0], LM_ROOM); k++) {
+    let o = 1u + k * LMW;
+    if (lmHit(p, vec2<f32>(bitcast<f32>(w5[o]), bitcast<f32>(w5[o + 1u])), bitcast<f32>(w5[o + 2u]))) { return true; }
+  }
+  return false;
+}
+/** 48 threads a site: 24 its ring road's pieces, 24 inside it — the plaza's paving, or the big structure (a tall
+ *  12-sided block inset from the ring, a side a thread) (r1 the sites, r3 H) */
+@compute @workgroup_size(64)
+fn lmMesh(@builtin(global_invocation_id) g: vec3<u32>) {
+  let j = g.x / 48u;
+  let k = g.x % 48u;
+  if (u.q.y <= 0.0 || j >= min(b1[0], LM_ROOM)) { return; }
+  let o = 1u + j * LMW;
+  let r = r1(o + 2u);
+  if (r <= 0.0) { return; }
+  let p = vec2<f32>(r1(o), r1(o + 1u));
+  let big = b1[o + 3u] == 1u;
+  if (k < 24u) {
+    // (the ring road: a minor street's width, on the circle)
+    let a0 = f32(k) * TAU / 24.0;
+    let a1 = f32(k + 1u) * TAU / 24.0;
+    let at = room(6u);
+    if (at == NONE) { return; }
+    ribbon(at, p + r * vec2<f32>(cos(a0), sin(a0)), p + r * vec2<f32>(cos(a1), sin(a1)), u.b.y * 0.5, C_MINOR);
+    return;
+  }
+  let m = k - 24u;
+  let z = hAt(p);
+  if (!big) {
+    let rp = r - u.b.y * 0.5;
+    let a0 = f32(m) * TAU / 24.0;
+    let a1 = f32(m + 1u) * TAU / 24.0;
+    let q0 = p + rp * vec2<f32>(cos(a0), sin(a0));
+    let q1 = p + rp * vec2<f32>(cos(a1), sin(a1));
+    let at = room(3u);
+    if (at == NONE) { return; }
+    tri(at, vec3<f32>(p, z + 0.16), vec3<f32>(q0, hAt(q0) + 0.16), vec3<f32>(q1, hAt(q1) + 0.16), C_PAVE);
+    return;
+  }
+  if (m >= 12u) { return; }
+  // (a big structure: inset from the ring by the street's half width and the setback, three times a lot's height)
+  let rs = max(r - u.b.y * 0.5 - u.b.z - 1.0, 1.0);
+  let a0 = f32(m) * TAU / 12.0;
+  let a1 = f32(m + 1u) * TAU / 12.0;
+  let q0 = p + rs * vec2<f32>(cos(a0), sin(a0));
+  let q1 = p + rs * vec2<f32>(cos(a1), sin(a1));
+  let zlo = min(z, min(hAt(q0), hAt(q1))) - 1.5;
+  let top = z + max(3.0, u.b.w * 9.0);
+  let at = room(9u);
+  if (at == NONE) { return; }
+  tri(at, vec3<f32>(p, top), vec3<f32>(q0, top), vec3<f32>(q1, top), C_LANDMARK);
+  tri(at + 3u, vec3<f32>(q0, zlo), vec3<f32>(q1, top), vec3<f32>(q0, top), C_WALL);
+  tri(at + 6u, vec3<f32>(q0, zlo), vec3<f32>(q1, zlo), vec3<f32>(q1, top), C_WALL);
 }
