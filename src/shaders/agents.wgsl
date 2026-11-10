@@ -619,6 +619,8 @@ fn relaxBlock(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id
 // marked → listed), frontClear (the marks read, cleared), then relax dispatched indirect over the list.
 @compute @workgroup_size(1)
 fn frontReset() {
+  // (the field bench / ?agentprof=1: sweeps run, frontDbg 46)
+  if (AP.u2.w != 0u) { atomicAdd(&frontDbg[46], 1u); }
   atomicStore(&frontArgs[0], 0u);
   atomicStore(&frontArgs[1], 1u);
   atomicStore(&frontArgs[2], 1u);
@@ -657,6 +659,8 @@ fn frontBuild(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   if (fm == 0u) { return; }
+  // (the field bench / ?agentprof=1: a chunk asking, frontDbg 45)
+  if (AP.u2.w != 0u) { atomicAdd(&frontDbg[45], 1u); }
   // (FC11: what asks, a field at a time — a change round it (low) or carried (high, not also changed); counted only
   // under ?agentprof=1, which reads and clears them each tick: AP.u2.w)
   for (var f = 0u; f < NFIELDS && AP.u2.w != 0u; f++) {
