@@ -402,6 +402,7 @@ export function attachStream(scene: LevelScene): void {
               dims: { w: dims.w, h: dims.h },
               world: { globals: core.world.globals, chunks: core.world.chunks, materials: core.world.materials, layers: core.world.layers, veg: core.world.veg, vegNext: core.world.vegNext },
             });
+            lt.debugGraph = host.params.get('livingdebug') === '1';
             scene.livingTowns = lt;
             (globalThis as { living?: LivingTowns }).living = lt;
             if (host.params.get('livingpanel') !== '0') lt.mountPanel(host.ui, () => void towns.claimDistrict('housing'));

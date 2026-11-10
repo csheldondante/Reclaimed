@@ -422,7 +422,8 @@ fn treeList(@builtin(global_invocation_id) g: vec3<u32>) {
   let c = cc + vec2<i32>(i32(g.x) - i32(ceil(rr)), i32(g.y) - i32(ceil(rr / ROWH)));
   if (!inBoxW(c) || distance(bpos(c), campCentre()) > rr) { return; }
   let i = bix(c);
-  if ((atomicLoad(&WALK[i]) & W_CLAIM) != 0u || !treeAt(c)) { return; }
+  // (on the clearing's pad only: its route to the yard is traced over it)
+  if ((atomicLoad(&WALK[i]) & W_CLAIM) != 0u || (atomicLoad(&WALK[i]) & 0xfu) == 0u || !treeAt(c)) { return; }
   let k = atomicAdd(&LT[L_C + C_TREES], 1u);
   if (k >= TREE_ROOM) { return; }
   atomicOr(&WALK[i], W_CLAIM);

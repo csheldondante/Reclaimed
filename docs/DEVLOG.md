@@ -21164,3 +21164,31 @@ stays 64 B. Recorded in LIVING_TOWN.md "Agreed with Track B".
 Amended the same day (Track B): the override isn't byte 3 but the unit row's state bits (info 12–14, Track B's
 UNIT_MINDS.md). The riders call an `overridden` stub (false unless a test forces one rider through the uniform), marked
 for Track B's unitstate.wgsl; byte 3 is reserved and unused. The test now forces the stub.
+
+## 2026-11-10 — living town fix round 1: routes never fail in town (DESIGN §13)
+
+The user: "How is it possible not to find a route even every lot has a street adjacent to it?"
+- **Why ~80 of ~280 keys missed** (Muru, read once by a diagnostic script over the walk mask and fields):
+  - 45 started in road pieces cut off from the network: 5 components of 14–100 columns, 2–8 columns from it. They
+    are citygen's own streets of the built core whose joins run through districts not begun (open town edges:
+    streets are drawn only between shown blocks, and a district's roads only once it starts) — not raster gaps;
+  - 30 were door islands: door segments (5–7 columns) whose street isn't drawn yet (lots of districts not begun) or
+    that stop short of it;
+  - 3 doors' own columns weren't walkable (the 0.4 m samples missed the corner cell the route starts from).
+  None came from decks (the deck columns join), the hubs (every hub but the quarry's and camp's was in the main
+  component) or relaxing.
+- **Fix: reach as an invariant, laid on the GPU.** After the hubs settle, a check labels every walkable column the
+  stores' field didn't reach (cut off) and relaxes an open-ground distance from the network (dry, no building, a step
+  dearer by its climb). Each cut-off component lays one passage down that field (W_PASS, kept across rebuilds) and the
+  graph is made again — at most 4 rounds; what's left is counted (`cutLeft`), and the built doors the stores don't
+  reach (`doorsCut`). The works' yards and the clearing are pads joined the same way, so their access roads follow the
+  ground and go round water and buildings (the straight tracks are gone).
+- Door segments only for lots begun (progress > 0), their own column always walkable; plazas, parks and landmark
+  circles are walkable pads.
+- **Result at Muru:** 20 passages in 1 round, nothing left cut off, 365 routes, 2 misses before the door-column fix
+  (0 in the test). test/gpu/living.test.ts adds an orphan street with a building and fails on any miss, cut-off column
+  or cut-off door.
+- **Why not citygen's segment list:** there isn't one for its main streets — `roadMajor` draws them a column at a time
+  from φ's level sets, and the cross, gap and grown streets and arterials are four more formats; the raster is where
+  they all meet. And the cut-off pieces are cut off in citygen's own drawn network too, so a vector graph of what
+  citygen draws would be just as disconnected. Laying passages fixes the world (§13), whichever representation.

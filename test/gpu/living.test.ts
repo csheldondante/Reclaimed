@@ -36,6 +36,8 @@ test('riders ride routes traced on the GPU from the road raster, over a deck at 
   const roads = new Uint32Array(N);
   for (let x = 0; x < W; x++) roads[48 * W + x] = x >= 8 && x <= 20 ? (DECK_BIT | (7 * 256)) >>> 0 : 1;
   for (let y = 0; y < H; y++) roads[y * W + 48] = 1;
+  // (an orphan street: a stub of road joined to nothing, with a building on it — the check must lay its passage)
+  for (let x = 70; x < 90; x++) roads[80 * W + x] = 1;
   const heights = new Float32Array(N).fill(2);
   // (the population field: market east of x 60, homes elsewhere)
   const pop = new Float32Array(N * 4);
@@ -61,6 +63,24 @@ test('riders ride routes traced on the GPU from the road raster, over a deck at 
     rf[o + 20] = 6;
     rf[o + 21] = 2;
     ru[o + 23] = 1000 + k;
+    n++;
+  }
+  {
+    // (the orphan street's building, fronting it from the north)
+    const yR = (80 + 0.5) * ROW_H;
+    const x0 = 76;
+    const x1 = 79.5;
+    const y0 = yR + 1.4;
+    const y1 = y0 + 5;
+    const o = n * RECW;
+    rf.set([x0, y0, x1, y0, x1, y1, x0, y1], o);
+    rf.set([x0 + 0.4, y0 + 1, x1 - 0.4, y0 + 1, x1 - 0.4, y1 - 0.4, x0 + 0.4, y1 - 0.4], o + 8);
+    ru[o + 16] = 0;
+    ru[o + 17] = 1;
+    ru[o + 19] = 2;
+    rf[o + 20] = 6;
+    rf[o + 21] = 2;
+    ru[o + 23] = 2000;
     n++;
   }
   const progress = new Float32Array(LOT_ROOM + 64).fill(1);
@@ -96,9 +116,13 @@ test('riders ride routes traced on the GPU from the road raster, over a deck at 
   expect(g.takeErrors()).toEqual([]);
   const c = (k: keyof typeof C) => head[L_C + C[k]];
   // (settled, routes traced, nobody without a route)
-  expect(head[0]).toBe(2);
+  expect(head[0]).toBe(4);
   expect(c('traced')).toBeGreaterThan(10);
   expect(c('miss')).toBe(0);
+  // (the connectivity check: the orphan street joined by a passage, nothing left cut off, every built door reached)
+  expect(c('passages')).toBeGreaterThan(0);
+  expect(c('cutLeft')).toBe(0);
+  expect(c('doorsCut')).toBe(0);
   expect(c('poolFull')).toBe(0);
   expect(c('arrivals')).toBeGreaterThan(60);
   // (shared: fewer routes than riders' trips — a home's route is one key however many ride it)

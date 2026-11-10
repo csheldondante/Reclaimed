@@ -41,6 +41,8 @@ const F_ON: u32 = 1u;
 const F_QUARRY: u32 = 2u;
 const F_FOREST: u32 = 4u;
 const F_REPLANT: u32 = 8u;
+/** ?livingdebug=1: the graph drawn over the town (figures' pass) */
+const F_DEBUG: u32 = 16u;
 
 const ROW_H: f32 = 0.8660254;
 const NONE: u32 = 0xffffffffu;
@@ -64,6 +66,15 @@ const W_DOOR: u32 = 3u;
 const W_TRACK: u32 = 4u;
 const W_PAD: u32 = 5u;
 const W_CLAIM: u32 = 0x10000u;
+/** bit 17: a passage the connectivity check laid (kept across rebuilds, walked as a track); bit 18: a building stands
+ *  there (open ground's passages go round it); bit 19: a lot's ground, built or not (the works keep off it) */
+const W_PASS: u32 = 0x20000u;
+const W_BLOCK: u32 = 0x40000u;
+const W_LOTGROUND: u32 = 0x80000u;
+/** FIELD's planes past the hubs: the open ground's distance to the network, the cut-off components' labels */
+const P_OPEN: u32 = 8u;
+const P_LAB: u32 = 9u;
+const PLANES: u32 = 10u;
 
 /** citygen streets.wgsl: a record's words, kinds, the district purposes */
 const RECW: u32 = 24u;
@@ -88,6 +99,8 @@ const L_SWEEPS: u32 = 7u;
 /** the gate's snapshot: relax sweeps run this frame (the phase was 1 at its start), the trace ran (it was 2) */
 const L_RELAXING: u32 = 8u;
 const L_TRACING: u32 = 9u;
+/** the gate's snapshot of the phase (the phase-specific single kernels act on it) */
+const L_GPH: u32 = 10u;
 const L_PICK: u32 = 16u;
 const L_SEEDS: u32 = 24u;
 const L_HUBCOL: u32 = 32u;
@@ -136,6 +149,15 @@ const C_SITES: u32 = 20u;
 const C_WORKING: u32 = 21u;
 const C_LOGS_CUT: u32 = 22u;
 const C_REGROWN: u32 = 23u;
+/** the connectivity check (DESIGN §13): walkable columns cut off from the stores, passages laid, rounds, built doors
+ *  cut off, and what's left cut off after the last round (0: every door and hub joined) */
+const C_ORPHANS: u32 = 24u;
+const C_PASSAGES: u32 = 25u;
+const C_ROUNDS: u32 = 26u;
+const C_DOORS_CUT: u32 = 27u;
+const C_CUT_LEFT: u32 = 28u;
+/** the most passage rounds before the check gives up and says what's left (a place no open ground reaches: water) */
+const MAX_ROUNDS: u32 = 4u;
 
 /** quarry state (L_Q + …) */
 const Q_X0: u32 = 0u;     // footprint's first column + 1 (0: no site yet)
@@ -183,6 +205,8 @@ const R_FAILED: u32 = 0xfffffffdu;
 @group(0) @binding(14) var<storage, read_write> IND: array<u32>;
 @group(0) @binding(15) var<storage, read> WET: array<u32>;
 @group(0) @binding(16) var<storage, read_write> VARGS: array<atomic<u32>>;
+/** per column two words: a cut-off component's cheapest passage (its cost, then its column), keyed by its label */
+@group(0) @binding(17) var<storage, read_write> PASS: array<atomic<u32>>;
 
 // ---- the lattice (common.wgsl's, in the box) ----
 fn W() -> i32 { return i32(u.n.x); }
@@ -279,15 +303,20 @@ fn gate() {
   IND[0] = select(0u, cols, b); IND[1] = 1u; IND[2] = 1u;
   IND[3] = select(0u, (u.m.x + 63u) / 64u, b); IND[4] = 1u; IND[5] = 1u;
   IND[6] = select(0u, 1u, b); IND[7] = 1u; IND[8] = 1u;
-  IND[9] = select(0u, cols, ph == 1u); IND[10] = 1u; IND[11] = 1u;
-  IND[12] = select(0u, (min(lt(L_TQ), TQ_ROOM) + 63u) / 64u, ph == 2u); IND[13] = 1u; IND[14] = 1u;
+  IND[9] = select(0u, cols, ph == 1u || ph == 3u); IND[10] = 1u; IND[11] = 1u;
+  IND[12] = select(0u, (min(lt(L_TQ), TQ_ROOM) + 63u) / 64u, ph == 4u); IND[13] = 1u; IND[14] = 1u;
   IND[15] = select(0u, HASH / 64u, b); IND[16] = 1u; IND[17] = 1u;
+  // (the connectivity check: over the columns at phase 2 and 5, over the lots at 2, one thread at 2 and 5)
+  IND[18] = select(0u, cols, ph == 2u || ph == 5u); IND[19] = 1u; IND[20] = 1u;
+  IND[21] = select(0u, (u.m.x + 63u) / 64u, ph == 2u); IND[22] = 1u; IND[23] = 1u;
+  IND[24] = select(0u, 1u, ph == 2u || ph == 5u); IND[25] = 1u; IND[26] = 1u;
+  setLt(L_GPH, ph);
   // (the frame's own counts: riding, working, idle — what the panel shows is one frame's)
   setLt(L_C + C_RIDING, 0u);
   setLt(L_C + C_WORKING, 0u);
   setLt(L_C + C_IDLE, 0u);
-  setLt(L_RELAXING, select(0u, 1u, ph == 1u));
-  setLt(L_TRACING, select(0u, 1u, ph == 2u));
+  setLt(L_RELAXING, select(0u, 1u, ph == 1u || ph == 3u));
+  setLt(L_TRACING, select(0u, 1u, ph == 4u));
   if (b) {
     for (var h = 0u; h < HUBS; h++) { setLt(L_PICK + h, NONE); setLt(L_SEEDS + h, 0u); }
     setLt(L_Q + Q_PICK, 0u);
@@ -303,8 +332,10 @@ fn walkInit(@builtin(global_invocation_id) g: vec3<u32>) {
   let m = ROADS[i];
   var w = 0u;
   if (m != 0u) { w = select(W_ROAD, W_DECK, (m & DECK_BIT) != 0u); }
+  // (a passage laid by an earlier round stays: walked as a track)
+  if ((atomicLoad(&WALK[i]) & W_PASS) != 0u) { w = select(w, W_TRACK, w == 0u) | W_PASS; }
   atomicStore(&WALK[i], w);
-  for (var h = 0u; h < HUBS; h++) { FIELD[h * N() + i] = NONE; }
+  for (var h = 0u; h < PLANES; h++) { FIELD[h * N() + i] = NONE; }
 }
 
 /** rasterise a straight piece into WALK as class `cls` where nothing walkable is (half width hw) */
@@ -330,8 +361,55 @@ fn doors(@builtin(global_invocation_id) g: vec3<u32>) {
   let r = g.x;
   if (r >= lotCount()) { return; }
   let d = doorOf(r);
-  if (!d.ok) { return; }
+  // (lots begun only: a lot not begun has no street drawn to it yet — the graph is made again when its district
+  // starts; a rising lot is a building site, its builders need its door)
+  if (!d.ok || PROG[r] <= 0.0) { return; }
   rasterWalk(d.at, d.street, 0.0, W_DOOR);
+  // (the door's own column, which the 0.4 m samples can miss at a corner: where its routes start)
+  let dc = doorCol(r);
+  if (dc != NONE && walkClass(dc) == 0u) { atomicOr(&WALK[dc], W_DOOR); }
+}
+
+/** B2b (a thread a record: the lots, then the landmark sites): open ground people cross — a plaza's or a park's parcel, a
+ *  landmark's circle — walkable pads (W_PAD) where its district is built. citygen clips its streets at a landmark's
+ *  circle and lets a plaza's paving join them; without these the streets round a landmark were islands */
+@compute @workgroup_size(64)
+fn pads(@builtin(global_invocation_id) g: vec3<u32>) {
+  var r = g.x;
+  let nl = lotCount();
+  if (r >= nl) {
+    if (r - nl >= min(CNT[1], 64u)) { return; }
+    r = u.m.y + (r - nl);
+  }
+  let kind = lotKind(r);
+  if (kind != 2u && kind != 3u && kind != 4u) { return; }
+  if (PROG[r] < 0.999) { return; }
+  var lo = vec2<f32>(1e9);
+  var hi = vec2<f32>(-1e9);
+  for (var k = 0u; k < 4u; k++) { lo = min(lo, corner(r, k)); hi = max(hi, corner(r, k)); }
+  let mid = 0.25 * (corner(r, 0u) + corner(r, 1u) + corner(r, 2u) + corner(r, 3u));
+  let rad = distance(mid, corner(r, 0u));
+  let y0 = max(i32(floor(lo.y / ROW_H)) - 1, 0);
+  let y1 = min(i32(ceil(hi.y / ROW_H)) + 1, Hh() - 1);
+  let x0 = max(i32(floor(lo.x)) - 1, 0);
+  let x1 = min(i32(ceil(hi.x)) + 1, W() - 1);
+  if ((x1 - x0) * (y1 - y0) > 4096) { return; }
+  for (var y = y0; y <= y1; y++) {
+    for (var x = x0; x <= x1; x++) {
+      let c = vec2<i32>(x, y);
+      let p = cpos(c);
+      var inside = true;
+      if (kind == 4u) { inside = distance(p, mid) <= rad + 0.5; }
+      else {
+        for (var k = 0u; k < 4u; k++) {
+          let a = corner(r, k);
+          let e = corner(r, k + 1u) - a;
+          if (e.x * (p.y - a.y) - e.y * (p.x - a.x) < -0.5 * length(e)) { inside = false; }
+        }
+      }
+      if (inside && walkClass(ix(c)) == 0u) { atomicOr(&WALK[ix(c)], W_PAD); }
+    }
+  }
 }
 
 /** B3 (a thread a lot): the stores' and the granary's buildings — nearest the centre in their district (others only
@@ -371,7 +449,7 @@ fn quarryPick(@builtin(global_invocation_id) g: vec3<u32>) {
       let q = cat(p);
       if (!inBox(q)) { return; }
       let k = ix(q);
-      if (ROADS[k] != 0u || WET[k] != 0u) { return; }
+      if (ROADS[k] != 0u || WET[k] != 0u || (atomicLoad(&WALK[k]) & W_LOTGROUND) != 0u) { return; }
       let h = HT[k];
       lo = min(lo, h);
       hi = max(hi, h);
@@ -412,40 +490,57 @@ fn siteFix() {
   setLt(L_HUBCOL + H_CAMP, lt(L_F + F_YARD));
 }
 
-/** B6 (a thread a column): the nearest road column to each work site that needs a track (quarry rim, camp yard) */
+/** B6 (a thread a lot): every lot's ground marked (W_LOTGROUND: the works keep off it, so no district grows over
+ *  them), a standing building's footprint blocked (W_BLOCK: open ground's passages go round it) */
 @compute @workgroup_size(64)
-fn siteNearest(@builtin(global_invocation_id) g: vec3<u32>) {
-  let i = g.x;
-  if (i >= N()) { return; }
-  let w = walkClass(i);
-  if (w != W_ROAD) { return; }
-  let p = cpos(cxy(i));
-  for (var s = 0u; s < 2u; s++) {
-    let hc = lt(L_HUBCOL + H_QUARRY + s);
-    if (hc == 0u) { continue; }
-    let d = u32(min(distance(p, cpos(cxy(hc - 1u))), 8191.0));
-    // (L_PICK + 6, 7: the quarry's and the camp's nearest road — their picks aren't otherwise used)
-    atomicMin(&LT[L_PICK + H_QUARRY + s], (d << 18u) | (i & 0x3ffffu));
+fn lotMask(@builtin(global_invocation_id) g: vec3<u32>) {
+  let r = g.x;
+  if (r >= lotCount() || lotKind(r) == 0u) { return; }
+  let block = lotKind(r) == REC_BUILDING && built(r);
+  var lo = vec2<f32>(1e9);
+  var hi = vec2<f32>(-1e9);
+  for (var k = 0u; k < 4u; k++) { lo = min(lo, corner(r, k)); hi = max(hi, corner(r, k)); }
+  let y0 = max(i32(floor(lo.y / ROW_H)) - 1, 0);
+  let y1 = min(i32(ceil(hi.y / ROW_H)) + 1, Hh() - 1);
+  let x0 = max(i32(floor(lo.x)) - 1, 0);
+  let x1 = min(i32(ceil(hi.x)) + 1, W() - 1);
+  if ((x1 - x0) * (y1 - y0) > 4096) { return; }
+  for (var y = y0; y <= y1; y++) {
+    for (var x = x0; x <= x1; x++) {
+      let p = cpos(vec2<i32>(x, y));
+      var inP = true;
+      var inF = true;
+      for (var k = 0u; k < 4u; k++) {
+        let a = corner(r, k);
+        let e = corner(r, k + 1u) - a;
+        if (e.x * (p.y - a.y) - e.y * (p.x - a.x) < 0.0) { inP = false; }
+        let fa = fcorner(r, k);
+        let fe = fcorner(r, k + 1u) - fa;
+        if (fe.x * (p.y - fa.y) - fe.y * (p.x - fa.x) < 0.0) { inF = false; }
+      }
+      let i = ix(vec2<i32>(x, y));
+      if (inP) { atomicOr(&WALK[i], W_LOTGROUND); }
+      if (inF && block) { atomicOr(&WALK[i], W_BLOCK); }
+    }
   }
 }
 
-/** B7 (a thread a site): the track from the site to its nearest road, and the site's pad */
-@compute @workgroup_size(2)
-fn siteTrack(@builtin(global_invocation_id) g: vec3<u32>) {
-  let s = g.x;
-  if (s >= 2u) { return; }
-  let hc = lt(L_HUBCOL + H_QUARRY + s);
-  let p = lt(L_PICK + H_QUARRY + s);
-  if (hc == 0u || p == NONE) { return; }
-  let a = cpos(cxy(hc - 1u));
-  let b = cpos(cxy(p & 0x3ffffu));
-  rasterWalk(a, b, 0.5, W_TRACK);
-  // (the pad: a few columns round the site's own column)
-  for (var k = 0u; k < 6u; k++) {
-    let c = nbr(cxy(hc - 1u), k);
-    if (inBox(c) && walkClass(ix(c)) == 0u) { atomicOr(&WALK[ix(c)], W_PAD); }
+/** B7 (a thread a column): the works' own ground as walkable pads: the quarry's rim yard (where its ramp starts and
+ *  carts load), the camp's yard, and the clearing (open woods within its radius, dry, off any lot), over which the
+ *  woodcutters' routes to their trees are traced. The connectivity check joins each to the roads by a passage */
+@compute @workgroup_size(64)
+fn sitePads(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= N() || walkClass(i) != 0u || WET[i] != 0u) { return; }
+  let p = cpos(cxy(i));
+  for (var s = 0u; s < 2u; s++) {
+    let hc = lt(L_HUBCOL + H_QUARRY + s);
+    if (hc != 0u && distance(p, cpos(cxy(hc - 1u))) <= 2.6) { atomicOr(&WALK[i], W_PAD); return; }
   }
-  if (walkClass(hc - 1u) == 0u) { atomicOr(&WALK[hc - 1u], W_PAD); }
+  let cc = lt(L_F + F_CAMP);
+  if (cc != 0u && (u.m.z & F_FOREST) != 0u && distance(p, cpos(cxy(cc - 1u))) <= u.f.x && (atomicLoad(&WALK[i]) & (W_LOTGROUND | W_BLOCK)) == 0u) {
+    atomicOr(&WALK[i], W_PAD);
+  }
 }
 
 /** B8 (a thread a lot): the district hubs' seeds — every building's door in its district */
@@ -545,6 +640,7 @@ fn stepCost(w: u32) -> u32 {
 fn relax(@builtin(global_invocation_id) g: vec3<u32>) {
   let i = g.x;
   if (i >= N()) { return; }
+  if (lt(L_GPH) == 3u) { relaxOpen(i); return; }
   let cost = stepCost(walkClass(i));
   if (cost == NONE) { return; }
   let c = cxy(i);
@@ -570,7 +666,148 @@ fn relaxMark() {
 /** after it: nothing moved — settled */
 @compute @workgroup_size(1)
 fn relaxCheck() {
-  if (lt(L_RELAXING) == 1u && lt(L_PHASE) == 1u && lt(L_CHANGED) == 0u) { setLt(L_PHASE, 2u); }
+  if (lt(L_RELAXING) == 1u && lt(L_CHANGED) == 0u) {
+    if (lt(L_PHASE) == 1u) { setLt(L_PHASE, 2u); } else if (lt(L_PHASE) == 3u) { setLt(L_PHASE, 5u); }
+  }
+}
+
+// ---- the connectivity check (DESIGN §13: reach is an invariant; phases 2, 3, 5) ----
+// After the hubs settle, every walkable column the stores' field didn't reach is cut off. Each cut-off component
+// (labelled by its least column) gets one passage: its cheapest way over open ground (dry, no building; dearer up a
+// slope) to the network, laid as a track (W_PASS, kept across rebuilds); then the graph is made again. At most
+// MAX_ROUNDS rounds; what's still cut off is counted (C_CUT_LEFT).
+@compute @workgroup_size(1)
+fn checkClear() {
+  if (lt(L_GPH) != 2u) { return; }
+  setLt(L_C + C_ORPHANS, 0u);
+  setLt(L_C + C_DOORS_CUT, 0u);
+}
+/** (one thread, phases 2 and 5, after the counts) the round's end: the next phase */
+@compute @workgroup_size(1)
+fn checkStep() {
+  let ph = lt(L_GPH);
+  if (ph == 5u) {
+    atomicAdd(&LT[L_C + C_ROUNDS], 1u);
+    setLt(L_PHASE, 0u);
+    return;
+  }
+  if (ph != 2u) { return; }
+  let left = lt(L_C + C_ORPHANS);
+  if (left == 0u || lt(L_C + C_ROUNDS) >= MAX_ROUNDS) {
+    setLt(L_C + C_CUT_LEFT, left);
+    setLt(L_PHASE, 4u);
+  } else {
+    setLt(L_PHASE, 3u);
+    setLt(L_CHANGED, 1u);
+  }
+}
+/** (a thread a column) phase 2: cut off or joined (the labels, the open ground's seeds); phase 5: each cut-off column
+ *  beside reached open ground offers its way, the cheapest of its label kept */
+@compute @workgroup_size(64)
+fn checkCols(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= N()) { return; }
+  let ph = lt(L_GPH);
+  let walkable = walkClass(i) != 0u;
+  if (ph == 2u) {
+    atomicStore(&PASS[i * 2u], NONE);
+    atomicStore(&PASS[i * 2u + 1u], NONE);
+    let cut = walkable && FIELD[H_STORES * N() + i] == NONE;
+    if (cut) { atomicAdd(&LT[L_C + C_ORPHANS], 1u); }
+    FIELD[P_LAB * N() + i] = select(NONE, i, cut);
+    FIELD[P_OPEN * N() + i] = select(NONE, 0u, walkable && !cut);
+    return;
+  }
+  if (ph != 5u) { return; }
+  let lab = FIELD[P_LAB * N() + i];
+  if (lab == NONE) { return; }
+  let c = cxy(i);
+  var best = NONE;
+  for (var k = 0u; k < 6u; k++) {
+    let q = nbr(c, k);
+    if (!inBox(q)) { continue; }
+    let v = FIELD[P_OPEN * N() + ix(q)];
+    if (v != NONE && walkClass(ix(q)) == 0u) { best = min(best, v); }
+  }
+  if (best != NONE) { atomicMin(&PASS[lab * 2u], best); }
+}
+/** (phase 5) the least open column at its label's cheapest cost: where the passage leaves the component */
+@compute @workgroup_size(64)
+fn checkPick(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= N() || lt(L_GPH) != 5u) { return; }
+  let lab = FIELD[P_LAB * N() + i];
+  if (lab == NONE) { return; }
+  let c = cxy(i);
+  let want = atomicLoad(&PASS[lab * 2u]);
+  if (want == NONE) { return; }
+  for (var k = 0u; k < 6u; k++) {
+    let q = nbr(c, k);
+    if (!inBox(q)) { continue; }
+    if (walkClass(ix(q)) == 0u && FIELD[P_OPEN * N() + ix(q)] == want) { atomicMin(&PASS[lab * 2u + 1u], ix(q)); }
+  }
+}
+/** (phase 5) a component's root lays its passage, down the open ground's field to the network */
+@compute @workgroup_size(64)
+fn checkLay(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= N() || lt(L_GPH) != 5u || FIELD[P_LAB * N() + i] != i) { return; }
+  var c = atomicLoad(&PASS[i * 2u + 1u]);
+  if (c == NONE) { return; }
+  for (var step = 0u; step < 4096u; step++) {
+    let v = FIELD[P_OPEN * N() + c];
+    if (v == 0u || v == NONE) { break; }
+    atomicOr(&WALK[c], W_PASS);
+    var best = v;
+    var bi = c;
+    let cc = cxy(c);
+    for (var k = 0u; k < 6u; k++) {
+      let q = nbr(cc, k);
+      if (!inBox(q)) { continue; }
+      let nv = FIELD[P_OPEN * N() + ix(q)];
+      if (nv < best) { best = nv; bi = ix(q); }
+    }
+    if (bi == c) { break; }
+    c = bi;
+  }
+  atomicAdd(&LT[L_C + C_PASSAGES], 1u);
+}
+/** (a thread a lot, phase 2) a built building whose door the stores don't reach */
+@compute @workgroup_size(64)
+fn checkDoors(@builtin(global_invocation_id) g: vec3<u32>) {
+  let r = g.x;
+  if (r >= lotCount() || lt(L_GPH) != 2u || !built(r)) { return; }
+  let dc = doorCol(r);
+  if (dc == NONE) { return; }
+  if (FIELD[H_STORES * N() + dc] == NONE) { atomicAdd(&LT[L_C + C_DOORS_CUT], 1u); }
+}
+/** (relax, phase 3) a sweep of the check: the cut-off labels spread (the least wins), the open ground's distance relaxed
+ *  (dry, no building; a step dearer by its climb, so a passage follows the ground) */
+fn relaxOpen(i: u32) {
+  let c = cxy(i);
+  let lab = FIELD[P_LAB * N() + i];
+  if (lab != NONE) {
+    var m = lab;
+    for (var k = 0u; k < 6u; k++) {
+      let q = nbr(c, k);
+      if (!inBox(q)) { continue; }
+      m = min(m, FIELD[P_LAB * N() + ix(q)]);
+    }
+    if (m < lab) { FIELD[P_LAB * N() + i] = m; atomicStore(&LT[L_CHANGED], 1u); }
+    return;
+  }
+  if (walkClass(i) != 0u || (atomicLoad(&WALK[i]) & W_BLOCK) != 0u || WET[i] != 0u) { return; }
+  var best = FIELD[P_OPEN * N() + i];
+  let h = HT[i];
+  for (var k = 0u; k < 6u; k++) {
+    let q = nbr(c, k);
+    if (!inBox(q)) { continue; }
+    let v = FIELD[P_OPEN * N() + ix(q)];
+    if (v == NONE) { continue; }
+    let climb = u32(min(abs(HT[ix(q)] - h) * 96.0, 4096.0));
+    if (v + 16u + climb < best) { best = v + 16u + climb; }
+  }
+  if (best < FIELD[P_OPEN * N() + i]) { FIELD[P_OPEN * N() + i] = best; atomicStore(&LT[L_CHANGED], 1u); }
 }
 
 // ---- cached routes ----
@@ -922,6 +1159,7 @@ const S_FELL: u32 = 12u;  // the fell asked; waiting for its answer
 const S_YARD: u32 = 13u;  // walking back to the yard (open)
 const S_DROP: u32 = 14u;  // at a drop
 const S_IDLE: u32 = 15u;
+const S_TREEQ: u32 = 16u; // a tree claimed, its route asked
 
 /** (a thread a rider, every frame) the rider's job, one step */
 @compute @workgroup_size(64)
@@ -1000,7 +1238,12 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
         r.timer -= dt;
         // (the quarrymen from home: home → the rim; the carts from the stores: the rim's route to the stores, ridden back)
         if (r.timer <= 0.0) {
-          if (hauler) { if (startRoute(&r, rim, H_STORES, LEG_BACK)) { r.st = S_GO; } }
+          if (hauler) {
+            // (the carts the face's pile wants: one a two loads there, at least one, at most the stone carts)
+            let want = clamp(lt(L_C + C_FACE) / max(u32(u.q2.z * 2000.0), 1u) + 1u, 1u, u.j0.w - u.j0.z);
+            if (i - u.j0.z >= want) { r.timer = 2.0; }
+            else if (startRoute(&r, rim, H_STORES, LEG_BACK)) { r.st = S_GO; }
+          }
           else if (startRoute(&r, homeCol, H_QUARRY, LEG_FWD)) { r.st = S_GO; }
         }
       } else if (r.st == S_GO) {
@@ -1046,7 +1289,12 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
         r.timer -= dt;
         if (r.timer <= 0.0) {
           if (cutter) { if (startRoute(&r, homeCol, H_CAMP, LEG_FWD)) { r.st = S_GO; } }
-          else if (startRoute(&r, yard, H_STORES, LEG_BACK)) { r.st = S_GO; }
+          else {
+            // (the log carts the camp's pile wants: one a two loads there, at least one, at most the log carts)
+            let want = clamp(lt(L_C + C_LOG_CAMP) / 8u + 1u, 1u, u.j1.y - u.j1.x);
+            if (i - u.j1.x >= want) { r.timer = 2.0; }
+            else if (startRoute(&r, yard, H_STORES, LEG_BACK)) { r.st = S_GO; }
+          }
         }
       } else if (r.st == S_GO || r.st == S_DROP) {
         if (cutter) {
@@ -1060,12 +1308,14 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
           }
           if (got != 0u) {
             r.aux = got;
-            startOpen(&r, cpos(cxy(got - 1u)) + vec2<f32>(0.0, -0.7));
-            r.st = S_TREE;
+            r.st = S_TREEQ;
           } else { r.timer -= dt; bump(C_IDLE, 1u); if (r.timer < -20.0 && startRoute(&r, homeCol, H_CAMP, LEG_BACK)) { r.st = S_BACK; } }
         } else {
           r.st = S_LOAD;
         }
+      } else if (r.st == S_TREEQ) {
+        // (the tree's route: traced from its column down the camp's field over the clearing, ridden from the yard)
+        if (startRoute(&r, r.aux - 1u, H_CAMP, LEG_BACK)) { r.st = S_TREE; }
       } else if (r.st == S_TREE) {
         r.st = S_WORK; r.timer = u.f.y * (0.8 + 0.4 * rnd(i, 30u));
       } else if (r.st == S_WORK) {
@@ -1076,7 +1326,7 @@ fn riders(@builtin(global_invocation_id) g: vec3<u32>) {
           if (q < FELL_ROOM) { setLt(L_FELL + 1u + q, i + 1u); r.st = S_FELL; r.load = -1.0; }
         }
       } else if (r.st == S_FELL) {
-        if (r.load >= 0.0) { startOpen(&r, cpos(cxy(yard))); r.st = S_YARD; }
+        if (r.load >= 0.0 && startRid(&r, r.route, LEG_FWD)) { r.st = S_YARD; }
       } else if (r.st == S_YARD) {
         bump(C_LOG_CAMP, u32(r.load)); r.load = 0.0; r.aux = 0u; r.st = S_DROP; r.timer = 0.0;
       } else if (r.st == S_LOAD) {
@@ -1218,4 +1468,24 @@ fn figures(@builtin(global_invocation_id) g: vec3<u32>) {
       vox(base + vec3<f32>(dirc * sin(lean) * l, cos(lean) * l), M_LOG, 8u, h);
     }
   }
+}
+
+/** (?livingdebug=1, a thread a column) the graph over the town: a small block on each walkable column — green reached
+ *  from the stores, red cut off, crystal a door, sand a passage the check laid, white a deck */
+@compute @workgroup_size(64)
+fn overlay(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= N() || (u.m.z & F_DEBUG) == 0u) { return; }
+  let w = atomicLoad(&WALK[i]);
+  let cls = w & 0xfu;
+  if (cls == 0u) { return; }
+  let c = cxy(i);
+  let wp = vec3<f32>(cpos(c) + vec2<f32>(f32(u.pl.x), f32(u.pl.y) * ROW_H), pointZ(i) + u.pz.x + 0.5);
+  if (wp.x < 1.0 || wp.y < 1.0 || wp.x > f32(u.pl.z) - 1.0 || wp.y > f32(u.pl.w) * ROW_H - 1.0) { return; }
+  var m = 14u;
+  if (FIELD[H_STORES * N() + i] == NONE) { m = 7u; }
+  else if (cls == W_DOOR) { m = 28u; }
+  else if ((w & W_PASS) != 0u) { m = 3u; }
+  else if (cls == W_DECK) { m = 5u; }
+  vox(wp, m, 10u, 0.0);
 }

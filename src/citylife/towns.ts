@@ -32,6 +32,8 @@ interface Live {
 
 export class LivingTowns {
   readonly live = new Map<string, Live>();
+  /** (?livingdebug=1) each town's graph drawn over it */
+  debugGraph = false;
   panel?: TunePanel;
   private dt = 0;
   private hook = (enc: GPUCommandEncoder) => this.encode(enc);
@@ -65,6 +67,7 @@ export class LivingTowns {
       });
       const works = new Works(this.io.device, life, this.io.world);
       life.stages.push(works);
+      life.debugGraph = this.debugGraph;
       this.io.addVoxels(life.vox, life.vargs);
       this.io.addVoxels(works.vox, works.vargs);
       this.live.set(id, { town: t, life, works, meshRuns: t.meshRuns });
@@ -118,9 +121,10 @@ export class LivingTowns {
     const h = l.life.head;
     const c = (k: keyof typeof C) => h[L_C + C[k]];
     const m3 = (v: number) => (v / 1000).toFixed(1);
-    const phase = ['building the graph', 'relaxing', 'settled'][h[0]] ?? '?';
+    const phase = ['building the graph', 'relaxing', 'checking reach', 'laying passages', 'connected', 'laying passages'][h[0]] ?? '?';
     return [
       `${l.town.site.name}: ${l.life.riders} people, routes ${h[4]} (${phase}, ${h[7]} relax frames), points ${h[3]}, misses ${c('miss')}`,
+      `reach: ${c('passages')} passages in ${c('rounds')} rounds · cut off: ${c('cutLeft')} columns, ${c('doorsCut')} doors`,
       `riding ${c('riding')} · working ${c('working')} · arrivals ${c('arrivals')}`,
       `quarry: bench ${h[L_Q + 2]} · dug ${m3(c('dug'))} m³ · at the face ${m3(c('face'))} · in carts ${m3(c('cartStone'))} · stores' inbox ${m3(c('inbox'))} · piled ${m3(c('deposited'))}`,
       `clearing: ${h[L_F + 1] ? 'camp' : 'no camp yet'} · trees listed ${c('trees')} · felled ${c('felled')} · logs at the camp ${c('logCamp')}, carts ${c('logCart')}, stores ${c('logStores')} · regrown ${c('regrown')}`,

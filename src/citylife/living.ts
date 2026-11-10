@@ -20,6 +20,7 @@ export const C = {
   dug: 0, face: 1, cartStone: 2, inbox: 3, deposited: 4, felled: 5, logCamp: 6, logCart: 7, logStores: 8, produce: 9,
   arrivals: 10, miss: 11, traced: 12, poolFull: 13, idle: 14, buildWork: 15, digBudget: 16, riding: 17, trees: 18,
   treeCur: 19, sites: 20, working: 21, logsCut: 22, regrown: 23,
+  orphans: 24, passages: 25, rounds: 26, doorsCut: 27, cutLeft: 28,
 } as const;
 /** the points pool (vec4 a point) and the riders' room */
 const PTS_ROOM = 262_144;
@@ -62,23 +63,31 @@ export interface LivingPlace {
 }
 
 type K =
-  | 'gate' | 'walkInit' | 'doors' | 'hubPick' | 'quarryPick' | 'siteFix' | 'siteNearest' | 'siteTrack' | 'hubSeed'
+  | 'gate' | 'walkInit' | 'doors' | 'pads' | 'lotMask' | 'hubPick' | 'quarryPick' | 'siteFix' | 'sitePads' | 'hubSeed'
+  | 'checkClear' | 'checkCols' | 'checkPick' | 'checkLay' | 'checkDoors' | 'checkStep'
   | 'hubSeed1' | 'hashScrub' | 'relax' | 'relaxMark' | 'relaxCheck' | 'trace' | 'traceDone' | 'rampRoute' | 'riders'
-  | 'sites' | 'sitesClear' | 'figuresClear' | 'figures';
+  | 'sites' | 'sitesClear' | 'figuresClear' | 'figures' | 'overlay';
 /** each kernel's bindings (at most 8 storage buffers) */
 const SPECS: Record<K, BindSpec> = {
   gate: { 0: 'uniform', 10: 'rw', 14: 'rw' },
   walkInit: { 0: 'uniform', 1: 'read', 8: 'rw', 9: 'rw' },
-  doors: { 0: 'uniform', 3: 'read', 4: 'read', 8: 'rw' },
+  doors: { 0: 'uniform', 3: 'read', 4: 'read', 7: 'read', 8: 'rw' },
+  pads: { 0: 'uniform', 3: 'read', 4: 'read', 7: 'read', 8: 'rw' },
   hubPick: { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 7: 'read', 10: 'rw' },
-  quarryPick: { 0: 'uniform', 1: 'read', 2: 'read', 10: 'rw', 15: 'read' },
+  quarryPick: { 0: 'uniform', 1: 'read', 2: 'read', 8: 'rw', 10: 'rw', 15: 'read' },
   siteFix: { 0: 'uniform', 3: 'read', 4: 'read', 10: 'rw' },
-  siteNearest: { 0: 'uniform', 8: 'rw', 10: 'rw' },
-  siteTrack: { 0: 'uniform', 8: 'rw', 10: 'rw' },
+  lotMask: { 0: 'uniform', 3: 'read', 4: 'read', 7: 'read', 8: 'rw' },
+  sitePads: { 0: 'uniform', 8: 'rw', 10: 'rw', 15: 'read' },
+  checkClear: { 0: 'uniform', 10: 'rw' },
+  checkStep: { 0: 'uniform', 10: 'rw' },
+  checkCols: { 0: 'uniform', 8: 'rw', 9: 'rw', 10: 'rw', 17: 'rw' },
+  checkPick: { 0: 'uniform', 8: 'rw', 9: 'rw', 10: 'rw', 17: 'rw' },
+  checkLay: { 0: 'uniform', 8: 'rw', 9: 'rw', 10: 'rw', 17: 'rw' },
+  checkDoors: { 0: 'uniform', 3: 'read', 4: 'read', 7: 'read', 9: 'rw', 10: 'rw' },
   hubSeed: { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 7: 'read', 9: 'rw', 10: 'rw' },
   hubSeed1: { 0: 'uniform', 6: 'read', 8: 'rw', 9: 'rw', 10: 'rw' },
   hashScrub: { 0: 'uniform', 10: 'rw' },
-  relax: { 0: 'uniform', 8: 'rw', 9: 'rw', 10: 'rw' },
+  relax: { 0: 'uniform', 2: 'read', 8: 'rw', 9: 'rw', 10: 'rw', 15: 'read' },
   relaxMark: { 0: 'uniform', 10: 'rw' },
   relaxCheck: { 0: 'uniform', 10: 'rw' },
   trace: { 0: 'uniform', 1: 'read', 2: 'read', 9: 'rw', 10: 'rw', 11: 'rw' },
@@ -89,6 +98,7 @@ const SPECS: Record<K, BindSpec> = {
   sitesClear: { 0: 'uniform', 10: 'rw' },
   figuresClear: { 0: 'uniform', 16: 'rw' },
   figures: { 0: 'uniform', 12: 'rw', 13: 'rw', 16: 'rw' },
+  overlay: { 0: 'uniform', 1: 'read', 2: 'read', 8: 'rw', 9: 'rw', 13: 'rw', 16: 'rw' },
 };
 
 /** the GPU's ms of each part of the frame (timestamps; null without them) */
@@ -109,6 +119,7 @@ export class LivingTown {
   readonly rid: GPUBuffer;
   readonly uni: GPUBuffer;
   readonly field: GPUBuffer;
+  private pass: GPUBuffer;
   private ind: GPUBuffer;
   private read: GPUBuffer;
   private reading = false;
@@ -119,6 +130,8 @@ export class LivingTown {
   private time = 0;
   private dealt = '';
   readonly stages: LivingStage[] = [];
+  /** (?livingdebug=1) the graph drawn over the town: reached, cut off, doors, passages, decks */
+  debugGraph = false;
   /** (tests only) a rider forced overridden (its index + 1; 0 none): routes.wgsl's `overridden` stub */
   debugOverride = 0;
   /** the last counters read (the panel's) */
@@ -138,18 +151,21 @@ export class LivingTown {
     const N = input.w * input.h;
     this.uni = buf('params', 176, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.walk = buf('walk', N * 4);
-    this.field = buf('fields', N * 8 * 4);
+    // (the 8 hubs' fields, then the open ground's distance and the cut-off labels: routes.wgsl PLANES)
+    this.field = buf('fields', N * 10 * 4);
+    this.pass = buf('passages', N * 8);
     this.lt = buf('state', LT_WORDS * 4);
     this.pts = buf('points', PTS_ROOM * 16);
     this.rid = buf('riders', MAX_RIDERS * 64);
-    this.vox = buf('voxels', MAX_RIDERS * VOX_PER * 32);
+    // (room for the figures and, with ?livingdebug=1, a block a walkable column)
+    this.vox = buf('voxels', (MAX_RIDERS * VOX_PER + input.w * input.h) * 32);
     this.vargs = buf('voxel args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
-    this.ind = buf('indirect', 18 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
+    this.ind = buf('indirect', 27 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.read = buf('read', HEAD_WORDS * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.vargs, 0, new Uint32Array([36, 0, 0, 0]));
     const R: Record<number, GPUBuffer> = {
       1: input.roads, 2: input.heights, 3: input.records, 4: input.counts, 5: input.pop, 6: input.art, 7: input.progress,
-      8: this.walk, 9: this.field, 10: this.lt, 11: this.pts, 12: this.rid, 13: this.vox, 14: this.ind, 15: input.wet, 16: this.vargs,
+      8: this.walk, 9: this.field, 17: this.pass, 10: this.lt, 11: this.pts, 12: this.rid, 13: this.vox, 14: this.ind, 15: input.wet, 16: this.vargs,
     };
     R[0] = this.uni;
     this.k = {} as Record<K, ComputeKernel>;
@@ -178,7 +194,7 @@ export class LivingTown {
     const ends: number[] = [];
     let acc = 0;
     for (const n of [p.commuters, p.farmers, p.quarrymen, p.stoneCarts, p.woodcutters, p.logCarts, p.builders]) ends.push((acc = Math.min(MAX_RIDERS, acc + n)));
-    const flags = 1 | (v.quarry.on ? 2 : 0) | (v.forest.on ? 4 : 0) | (v.forest.replant ? 8 : 0);
+    const flags = 1 | (v.quarry.on ? 2 : 0) | (v.forest.on ? 4 : 0) | (v.forest.replant ? 8 : 0) | (this.debugGraph ? 16 : 0);
     U.set([this.input.w, this.input.h, this.riders, this.frameNo], 0);
     U.set([this.input.lotRoom, this.input.lotRoom, flags, v.graph.sweeps], 4);
     U.set([ends[0], ends[1], ends[2], ends[3]], 8);
@@ -228,11 +244,12 @@ export class LivingTown {
       run(cp, 'gate', 1);
       run(cp, 'walkInit', ind(0));
       run(cp, 'doors', ind(3));
+      run(cp, 'pads', ind(3));
+      run(cp, 'lotMask', ind(3));
       run(cp, 'hubPick', ind(3));
       run(cp, 'quarryPick', ind(0));
       run(cp, 'siteFix', ind(6));
-      run(cp, 'siteNearest', ind(0));
-      run(cp, 'siteTrack', ind(6));
+      run(cp, 'sitePads', ind(0));
       run(cp, 'hubSeed', ind(3));
       run(cp, 'hubSeed1', ind(6));
       run(cp, 'hashScrub', ind(15));
@@ -243,6 +260,15 @@ export class LivingTown {
       run(cp, 'relaxMark', 1);
       run(cp, 'relax', ind(9));
       run(cp, 'relaxCheck', 1);
+    });
+    // (the connectivity check: cut-off components found after the hubs settle, a passage laid for each — DESIGN §13)
+    pass('check', (cp) => {
+      run(cp, 'checkClear', ind(24));
+      run(cp, 'checkCols', ind(18));
+      run(cp, 'checkDoors', ind(21));
+      run(cp, 'checkPick', ind(18));
+      run(cp, 'checkLay', ind(18));
+      run(cp, 'checkStep', ind(24));
     });
     pass('trace', (cp) => {
       run(cp, 'trace', ind(12));
@@ -260,6 +286,7 @@ export class LivingTown {
     pass('figures', (cp) => {
       run(cp, 'figuresClear', 1);
       run(cp, 'figures', Math.ceil(this.riders / 64) || 1);
+      if (this.debugGraph) run(cp, 'overlay', Math.ceil((this.input.w * this.input.h) / 64));
     });
     this.frameNo++;
   }
