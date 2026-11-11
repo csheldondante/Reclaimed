@@ -770,14 +770,22 @@ fn archSurface(in: VO) -> Surf {
       let ti = h21(vec2<f32>(floor(tu), row + f32(lot) * 0.01));
       let gap = 1.0 - smoothstep(0.035 - px / tw, 0.035 + px / tw, min(fract(tu), 1.0 - fract(tu)) * 1.0);
       var k = (0.82 + 0.3 * ti) * mix(0.78, 1.0, smoothstep(1.0, 0.25, v));
-      // (a shanty's roofs are patchwork: each part tin or planks)
+      // (a shanty's roofs are patchwork: each part planks or a tarp of cloth — the user: tin looked wrong for fantasy)
       var mm = m;
-      if (m == 3u && (hash(in.info.w >> 24u) & 1u) == 1u) { mm = 4u; }
+      if (m == 3u && hash((in.info.w >> 24u) * 7u + lot) % 3u != 0u) { mm = 4u; }
       if (mm == 2u) { k = (0.8 + 0.3 * avnoise(vec2<f32>(u * 8.0, row * 3.0 + v))) * mix(0.8, 1.0, smoothstep(1.0, 0.3, v)); }
       else if (mm == 3u) {
-        // corrugated tin: ridges along the slope, rust in blotches
-        k = 0.85 + 0.2 * sin(u * 28.0);
-        col = mix(col, vec3<f32>(0.6, 0.36, 0.22), smoothstep(0.55, 0.8, avnoise(vec2<f32>(u * 1.3, row * 0.7 + f32(lot)))) * 0.8);
+        // a tarp: faded canvas of one of a few dyes, broad stripes or none, sagging between the rafters, patched
+        let pk = hash((in.info.w >> 24u) * 977u + lot * 13u);
+        var pal = array<vec3<f32>, 5>(vec3<f32>(0.62, 0.4, 0.33), vec3<f32>(0.45, 0.5, 0.55), vec3<f32>(0.7, 0.62, 0.44),
+                                      vec3<f32>(0.5, 0.55, 0.42), vec3<f32>(0.76, 0.72, 0.62));
+        col = pal[pk % 5u];
+        let stripe = step(0.5, fract(u / 0.7)) * select(0.0, 1.0, (pk & 96u) == 96u);
+        col = mix(col, vec3<f32>(0.82, 0.78, 0.68), stripe * 0.6);
+        let sag = abs(fract(u / 1.1) - 0.5) * 2.0;
+        k = 0.8 + 0.2 * sag + 0.06 * avnoise(vec2<f32>(u * 2.0, row + v));
+        let patchT = box1(fract(u * 0.29 + f32(pk & 15u) * 0.1), 0.0, 0.3, px) * box1(fract(row * 0.37 + v * 0.3), 0.2, 0.6, px);
+        col = mix(col, vec3<f32>(0.62, 0.5, 0.36), patchT * 0.7);
       } else if (mm == 4u) {
         // planks down the slope
         k = 0.75 + 0.35 * h21(vec2<f32>(floor(u / 0.3), f32(lot)));
@@ -792,7 +800,7 @@ fn archSurface(in: VO) -> Surf {
   } else if ((surf == S_WALL || surf == S_STONE || surf == S_TINT) && isTop && (flags & F_UNDER) != 0u) {
     // a wall's top under its roof: dark, so the seams between the courses at a hip never show it
     col = vec3<f32>(0.16, 0.13, 0.1);
-  } else if ((surf == S_WALL || surf == S_STONE) && isTop && (flags & F_NOWIN) == 0u) {
+  } else if ((surf == S_WALL || surf == S_STONE || surf == S_TINT) && isTop && (flags & F_NOWIN) == 0u) {
     // a flat roof: flagstones
     let st = stones(in.uv.x, in.uv.y, 1.1, 0.9, px, 9.0, detail);
     col = mix(stoneC.rgb * 0.7 * st.x, vec3<f32>(0.36, 0.4, 0.3), st.y);

@@ -9,7 +9,7 @@ export const STYLE_VEC4S = 10;
 /** wall materials (draw.wgsl archSurface) */
 export const WALL = { plaster: 0, brick: 1, ashlar: 2, timber: 3 } as const;
 /** roof coverings */
-export const ROOF = { tile: 0, slate: 1, thatch: 2 } as const;
+export const ROOF = { tile: 0, slate: 1, thatch: 2, patchwork: 3 } as const;
 /** what a style builds on a building lot (arch.wgsl gen); plazas are markets and parks gardens whatever the style */
 export const ARCHETYPE = { house: 0, keep: 1, shanty: 2, docks: 3, industrial: 4, grid: 5 } as const;
 
@@ -98,9 +98,9 @@ export const STYLES: Style[] = [
     raised: 0.0,
   },
   {
-    // (port slums: crooked plank huts, tin and plank lean-tos, cloth awnings)
+    // (port slums: crooked plank huts, plank and cloth lean-tos, cloth awnings)
     name: 'shanty',
-    wall: [0.62, 0.5, 0.36], wallMat: 4, trim: [0.4, 0.3, 0.2], roof: [0.58, 0.55, 0.5], roofMat: 3,
+    wall: [0.62, 0.5, 0.36], wallMat: 4, trim: [0.4, 0.3, 0.2], roof: [0.58, 0.55, 0.5], roofMat: ROOF.patchwork,
     stone: [0.6, 0.56, 0.5], pitch: 0.4, overhang: 0.3, jetty: 0, chimneyOdds: 0.2, hipOdds: 0, spire: 2.0,
     archetype: ARCHETYPE.shanty, gablesToStreet: false, towerOdds: 0, shutters: false, bay: 1.8, winWidth: 0.6, winTop: 1.9,
     winBottom: 1.0, roundOdds: 0, setback: 0.5, lotWallOdds: 0, porchOdds: 0, stairOdds: 0, wingTurnOdds: 0,
@@ -108,7 +108,7 @@ export const STYLES: Style[] = [
   },
   {
     name: 'docks',
-    wall: [0.6, 0.48, 0.34], wallMat: 4, trim: [0.4, 0.3, 0.2], roof: [0.48, 0.44, 0.5], roofMat: 3,
+    wall: [0.6, 0.48, 0.34], wallMat: 4, trim: [0.4, 0.3, 0.2], roof: [0.48, 0.44, 0.5], roofMat: ROOF.patchwork,
     stone: [0.62, 0.6, 0.56], pitch: 0.4, overhang: 0.3, jetty: 0, chimneyOdds: 0, hipOdds: 0, spire: 2.0,
     archetype: ARCHETYPE.docks, gablesToStreet: false, towerOdds: 0, shutters: false, bay: 1.8, winWidth: 0.6, winTop: 1.9,
     winBottom: 1.0, roundOdds: 0, setback: 0, lotWallOdds: 0, porchOdds: 0, stairOdds: 0, wingTurnOdds: 0, dressOdds: 0,
@@ -132,9 +132,9 @@ export const STYLES: Style[] = [
     raised: 0, door: [0.9, 2.0],
   },
   {
-    // (the irregular grid as a shanty: plank columns on stilts, crooked, tin and plank lean-tos)
+    // (the irregular grid as a shanty: plank columns on stilts, crooked, plank and cloth lean-tos)
     name: 'stilts',
-    wall: [0.62, 0.5, 0.36], wallMat: 4, trim: [0.4, 0.3, 0.2], roof: [0.58, 0.55, 0.5], roofMat: 3,
+    wall: [0.62, 0.5, 0.36], wallMat: 4, trim: [0.4, 0.3, 0.2], roof: [0.58, 0.55, 0.5], roofMat: ROOF.patchwork,
     stone: [0.6, 0.56, 0.5], pitch: 0.4, overhang: 0.25, jetty: 0, chimneyOdds: 0, hipOdds: 0, spire: 2.0,
     archetype: ARCHETYPE.grid, gablesToStreet: false, towerOdds: 0, shutters: false, bay: 1.6, winWidth: 0.6, winTop: 1.9,
     winBottom: 1.0, roundOdds: 0, setback: 0, lotWallOdds: 0, porchOdds: 0, stairOdds: 0, wingTurnOdds: 0, dressOdds: 0,

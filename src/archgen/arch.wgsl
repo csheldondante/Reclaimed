@@ -618,7 +618,7 @@ fn crates(p: vec2<f32>, w: f32, n: u32, turnA: f32) {
   for (var k = 0u; k < n; k++) { body(S_CRATE, F_NOWIN, q, gGround + f32(k) * w, gGround + f32(k + 1u) * w - 0.02); }
 }
 
-/** a hut of planks: walls, a lean-to roof of tin or planks (patchwork: the part's own), sometimes a second storey
+/** a hut of planks: walls, a lean-to roof of planks or a cloth tarp (patchwork: the part's own), sometimes a second storey
  *  stacked crooked on it, an awning of cloth on two posts at its door. In the lot's frame, turned by `rot`. */
 fn hut(x0: f32, x1: f32, y0: f32, y1: f32, rot: f32, seed: u32) {
   let g = gGround;
@@ -648,7 +648,18 @@ fn hut(x0: f32, x1: f32, y0: f32, y1: f32, rot: f32, seed: u32) {
     body(S_WOOD, F_NOWIN, rect(ax0, ax0 + 0.14, y0 - 1.45, y0 - 1.31), g, g + 2.0);
     body(S_WOOD, F_NOWIN, rect(ax1 - 0.14, ax1, y0 - 1.45, y0 - 1.31), g, g + 2.0);
   }
+  // a cloth lean-to against its side wall, where there's room (the user: "tents at angles or against walls")
+  gRot = rot;
+  if (rnd(seed, 6u) < 0.5 && x1 + 1.9 < gW) { leanTent(x1, x1 + mix(1.4, 1.9, rnd(seed, 7u)), y0 + 0.3, y1 - 0.3, 1u, seed); }
+  else if (rnd(seed, 6u) > 0.75 && x0 - 1.9 > 0.0) { leanTent(x0 - mix(1.4, 1.9, rnd(seed, 7u)), x0, y0 + 0.3, y1 - 0.3, 3u, seed); }
   gRot = 0.0;
+}
+
+/** a lean-to of cloth from the ground up to a wall: its high side `turn` (lean-to turns: 0 the rect's back, 1 its
+ *  x0 side, 2 its front, 3 its x1 side) */
+fn leanTent(x0: f32, x1: f32, y0: f32, y1: f32, turn: u32, seed: u32) {
+  let g = gGround;
+  put(K_ROOF, S_CLOTH, F_SHED, rect(x0, x1, y0, y1), g + 0.55, vec4<f32>(g + mix(2.0, 2.5, rnd(seed, 31u)), 0.0, f32(turn), 0.05));
 }
 
 /** a shanty lot: a few huts, crooked, crowded, crates and barrels between them */
@@ -775,7 +786,11 @@ fn tent(cx: f32, cy: f32, seed: u32) {
   if (rnd(seed, 1u) < 0.5) {
     let w = mix(2.4, 3.2, rnd(seed, 2u));
     let d = mix(3.0, 4.2, rnd(seed, 3u));
+    // (turned to its own angle: tents are pitched where they fit, not on the street's square)
+    gPiv = vec2<f32>(cx, cy);
+    gRot = (rnd(seed, 4u) - 0.5) * 1.7;
     put(K_ROOF, S_CLOTH, 0u, rect(cx - w * 0.5, cx + w * 0.5, cy - d * 0.5, cy + d * 0.5), g + 0.15, vec4<f32>(g + 2.4, 0.0, 1.0, 0.05));
+    gRot = 0.0;
   } else {
     let r = mix(1.4, 2.0, rnd(seed, 2u));
     cyl(lp(cx, cy), r, g, g + 1.1, S_CLOTH, F_NOWIN);
@@ -783,14 +798,58 @@ fn tent(cx: f32, cy: f32, seed: u32) {
   }
 }
 
-/** a market on a plaza: stalls in rows facing aisles, tents among them, a fountain in the middle */
+/** is the frame's point p nearest a street edge of the footprint (else a lot line, a neighbour's wall beyond it) */
+fn sideStreet(p: vec2<f32>) -> bool {
+  var best = 1e9;
+  var k0 = 0u;
+  for (var k = 0u; k < 4u; k++) {
+    let a = gFp[k];
+    let e = gFp[(k + 1u) % 4u] - a;
+    let t = clamp(dot(p - a, e) / max(dot(e, e), 1e-4), 0.0, 1.0);
+    let d = length(p - a - e * t);
+    if (d < best) { best = d; k0 = k; }
+  }
+  return gStreet[k0];
+}
+
+/** a row of cloth lean-tos along a side of the frame, their high sides on it (against the neighbour's wall) */
+fn tentRow(along: bool, at: f32, s0: f32, s1: f32, dep: f32, turn: u32, seed: u32) {
+  var x = s0;
+  var k = 0u;
+  loop {
+    let s = hash(seed + k * 41u);
+    let w = mix(2.0, 3.0, rnd(s, 1u));
+    if (x + w > s1 || k >= 5u) { break; }
+    if (rnd(s, 2u) < 0.8) {
+      let d = dep * mix(0.8, 1.0, rnd(s, 3u));
+      if (along) { leanTent(x, x + w, at - d, at, turn, s); }
+      else if (turn == 1u) { leanTent(at, at + d, x, x + w, turn, s); }
+      else { leanTent(at - d, at, x, x + w, turn, s); }
+    }
+    x += w + 0.25;
+    k++;
+  }
+}
+
+/** a market on a plaza: stalls in rows facing aisles, tents pitched among them at their own angles, lean-tos against
+ *  the walls of the lots beside it, a fountain in the middle */
 fn market(seed: u32) {
   let W = gW;
   let D = gD;
+  // the sides that are lot lines (not streets): a row of lean-tos against each
+  var x0 = 0.5;
+  var x1 = W - 0.5;
+  var y1 = D - 0.5;
+  let dep = 2.0;
+  if (D > 7.0 && !sideStreet(lp(W * 0.5, D))) { tentRow(true, D - 0.1, 0.3, W - 0.3, dep, 0u, seed + 1u); y1 = D - dep - 0.6; }
+  if (W > 8.0 && !sideStreet(lp(0.0, D * 0.5))) { tentRow(false, 0.1, 1.0, y1, dep, 1u, seed + 2u); x0 = dep + 0.6; }
+  if (W > 8.0 && !sideStreet(lp(W, D * 0.5))) { tentRow(false, W - 0.1, 1.0, y1, dep, 3u, seed + 3u); x1 = W - dep - 0.6; }
   let sw = 2.6;
   let sd = 1.9;
-  let nx = min(u32((W - 1.0) / (sw + 1.0)), 4u);
-  let ny = min(u32((D - 1.0) / (sd + 2.4)), 3u);
+  let aw = x1 - x0;
+  let ad = y1 - 0.5;
+  let nx = min(u32(aw / (sw + 1.0)), 4u);
+  let ny = min(u32(ad / (sd + 2.4)), 3u);
   if (nx == 0u || ny == 0u) {
     if (W > 3.0 && D > 3.0) { fountain(lp(W * 0.5, D * 0.5), min(1.3, min(W, D) * 0.3)); }
     return;
@@ -800,10 +859,10 @@ fn market(seed: u32) {
   for (var j = 0u; j < ny; j++) {
     for (var i = 0u; i < nx; i++) {
       let s = hash(seed + i * 7u + j * 131u);
-      let x = 0.5 + (f32(i) + 0.5) * (W - 1.0) / f32(nx) - sw * 0.5;
-      let y = 0.5 + (f32(j) + 0.5) * (D - 1.0) / f32(ny) - sd * 0.5;
+      let x = x0 + (f32(i) + 0.5) * aw / f32(nx) - sw * 0.5;
+      let y = 0.5 + (f32(j) + 0.5) * ad / f32(ny) - sd * 0.5;
       if (i == midx && j == midy && nx * ny > 2u) { fountain(lp(x + sw * 0.5, y + sd * 0.5), 1.2); continue; }
-      if (rnd(s, 5u) < 0.25) { tent(x + sw * 0.5, y + sd * 0.5, s); } else { stall(x, y, sw, sd, s); }
+      if (rnd(s, 5u) < 0.3) { tent(x + sw * 0.5 + (rnd(s, 6u) - 0.5) * 0.8, y + sd * 0.5, s); } else { stall(x, y, sw, sd, s); }
     }
   }
 }
@@ -881,14 +940,12 @@ fn plantings(seed: u32, sb: f32, dx: f32) {
 
 const GRID_S: f32 = 5.4;
 const SQ3: f32 = 1.7320508;
-/** the cells a lot keeps at most (two parts each: a column and its roof) */
-const GRID_CELLS: u32 = 44u;
 
 var<private> gPar: array<vec2<f32>, 4>;
 var<private> gFp: array<vec2<f32>, 4>;
 var<private> gFpG: array<vec2<f32>, 4>;
 var<private> gStreet: array<bool, 4>;
-var<private> gCells: u32;
+var<private> gFront: bool;
 
 fn latP(a: i32, b: i32) -> vec2<f32> { return vec2<f32>(f32(a) + 0.5 * f32(b), f32(b) * SQ3 * 0.5) * GRID_S; }
 /** a triangle's id: its lattice cell and up (0) or down (1) */
@@ -958,71 +1015,92 @@ fn toStreet(p0: vec2<f32>) -> vec2<f32> {
   return p;
 }
 
-/** one cell of the grid: a column and its roof, or (a shanty's yard) nothing */
-fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
-  if (gCells >= GRID_CELLS) { return; }
+/** the footprint's street edges: inset from the parcel by more than a lot line's 0.35 */
+fn streetEdges() {
+  for (var k = 0u; k < 4u; k++) {
+    let a = gPar[k];
+    let e = normalize(gPar[(k + 1u) % 4u] - a);
+    let m = (gFp[k] + gFp[(k + 1u) % 4u]) * 0.5;
+    gStreet[k] = abs(dot(m - a, vec2<f32>(e.y, -e.x))) > 0.6;
+  }
+}
+
+/** is p on a street edge of the footprint */
+fn onStreet(p: vec2<f32>) -> bool {
+  for (var e = 0u; e < 4u; e++) {
+    if (!gStreet[e]) { continue; }
+    let a = gFp[e];
+    let ed = normalize(gFp[(e + 1u) % 4u] - a);
+    if (abs(dot(p - a, vec2<f32>(ed.y, -ed.x))) < 0.05) { return true; }
+  }
+  return false;
+}
+
+/** q's corners pulled onto the streets; gFront if one stands on a street, and then q turned so its side 0 is the
+ *  longest side lying on the street line (its door's side) */
+fn faceStreet(q0: array<vec2<f32>, 4>) -> array<vec2<f32>, 4> {
   var q = q0;
   for (var k = 0u; k < 4u; k++) { q[k] = toStreet(q[k]); }
+  gFront = false;
+  var best = 4u;
+  var bl = 0.0;
+  for (var k = 0u; k < 4u; k++) {
+    if (!onStreet(q[k])) { continue; }
+    gFront = true;
+    let n = (k + 1u) % 4u;
+    let l = length(q[n] - q[k]);
+    if (onStreet(q[n]) && l > bl) { bl = l; best = k; }
+  }
+  if (best == 4u) { return q; }
+  var r = q;
+  for (var k = 0u; k < 4u; k++) { r[k] = q[(k + best) % 4u]; }
+  return r;
+}
+
+fn quadArea(q: array<vec2<f32>, 4>) -> f32 {
+  return 0.5 * abs((q[2].x - q[0].x) * (q[3].y - q[1].y) - (q[3].x - q[1].x) * (q[2].y - q[0].y));
+}
+/** a hash of where a point is (the same in every lot that computes it) */
+fn posHash(c: vec2<f32>) -> u32 {
+  return hash((u32(round(c.x * 4.0) + 100000.0) * 2246822519u) ^ (u32(round(c.y * 4.0) + 100000.0) * 3266489917u));
+}
+
+/** one cell of the grid: a column and its roof, a column with a patio on top, or (a shanty's yard) a cloth lean-to or
+ *  a shrub */
+fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
+  // (room for the most a cell makes: a column, a parapet, a shrub, four stilts and a roof)
+  if (gN + 7u > PPL) { return; }
+  var q = faceStreet(q0);
+  let front = gFront;
   // (pulled flat onto a street: too thin to stand)
-  let area = 0.5 * abs((q[2].x - q[0].x) * (q[3].y - q[1].y) - (q[3].x - q[1].x) * (q[2].y - q[0].y));
-  if (area < 1.2) { return; }
-  gCells++;
+  if (quadArea(q) < 1.2) { return; }
   let c = (q[0] + q[1] + q[2] + q[3]) * 0.25;
-  let ch = hash((u32(round(c.x * 4.0) + 100000.0) * 2246822519u) ^ (u32(round(c.y * 4.0) + 100000.0) * 3266489917u));
+  let ch = posHash(c);
   let g = gGround;
   let LH = STOREY;
-  // does it front a street (a corner on a street edge)?
-  var front = false;
-  for (var k = 0u; k < 4u; k++) {
-    for (var e = 0u; e < 4u; e++) {
-      if (!gStreet[e]) { continue; }
-      let a = gFp[e];
-      let ed = normalize(gFp[(e + 1u) % 4u] - a);
-      if (abs(dot(q[k] - a, vec2<f32>(ed.y, -ed.x))) < 0.05) { front = true; }
-    }
-  }
   let H0 = select(f32(max(REC[gLot * RECW + 19u], 1u)), 1.4, shanty);
   // (the street's columns lead; behind them a storey lower, so the fronts read and the roofs step down)
   var h = i32(round(H0 + (rnd(ch, 1u) - 0.5) * 1.4 - select(1.0, 0.0, front)));
   let tower = !shanty && rnd(ch, 2u) > 0.965;
   if (tower) { h += 2; }
   h = clamp(h, 1, select(6, 2, shanty));
-  if (shanty && !front && rnd(ch, 3u) < 0.12) {
-    bushAt(c, g - 0.1, 0.6, 0.9, rnd(ch, 4u) < 0.5);
+  if (shanty && !front && rnd(ch, 3u) < 0.16) {
+    // a yard: a cloth lean-to against the next column (its high side away from the street), or a shrub
+    if (rnd(ch, 4u) < 0.65) {
+      put(K_ROOF, S_CLOTH, F_SHED, grow(q, -0.15), g + 0.6, vec4<f32>(g + mix(2.0, 2.5, rnd(ch, 13u)), 0.0, f32(hash(ch) % 4u), 0.05));
+    } else {
+      bushAt(c, g - 0.1, 0.6, 0.9, rnd(ch, 14u) < 0.5);
+    }
     return;
   }
   var z0 = g;
   let z1 = g + f32(h) * LH;
   var ff = select(0u, F_FRONT0, front);
-  // (its door on the edge that's on the street: the column's side 0 turned to it)
-  if (front) {
-    var best = 0u;
-    var bd = 1e9;
-    for (var k = 0u; k < 4u; k++) {
-      let m = toStreet((q[k] + q[(k + 1u) % 4u]) * 0.5);
-      let dm = length((q[k] + q[(k + 1u) % 4u]) * 0.5 - m);
-      // (an edge already on the street line: unmoved; the most unmoved wins, ties to the longest)
-      let score = dm - 0.01 * length(q[(k + 1u) % 4u] - q[k]);
-      var onLine = false;
-      for (var e = 0u; e < 4u; e++) {
-        if (!gStreet[e]) { continue; }
-        let a = gFp[e];
-        let ed = normalize(gFp[(e + 1u) % 4u] - a);
-        let n = vec2<f32>(ed.y, -ed.x);
-        if (abs(dot(q[k] - a, n)) < 0.05 && abs(dot(q[(k + 1u) % 4u] - a, n)) < 0.05) { onLine = true; }
-      }
-      if (onLine && score < bd) { bd = score; best = k; }
-    }
-    var r = q;
-    for (var k = 0u; k < 4u; k++) { r[k] = q[(k + best) % 4u]; }
-    q = r;
-  }
   let lifted = (shanty && rnd(ch, 5u) < 0.4) || (!shanty && front && h >= 3 && rnd(ch, 6u) < 0.18);
   if (lifted) {
     let lz = select(LH, 1.3, shanty);
     let ps = select(0.42, 0.18, shanty);
     let inq = grow(q, -ps * 0.5);
-    // (posts at the outer corners only on a street column: an arcade; all four on stilts)
     for (var k = 0u; k < 4u; k++) { post(inq[k], ps, z0 - 0.3, z0 + lz, select(S_STONE, S_WOOD, shanty)); }
     z0 = z0 + lz;
     ff = 0u;
@@ -1032,12 +1110,17 @@ fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
     roof(q, z1 + 0.12, hash(ch) % 4u, 0.4, 0.0, 0.25, F_SHED);
     return;
   }
+  // a patio (the user: "little open patios up top"): some columns behind the street flat-topped, flagstones behind a
+  // low white parapet, a potted shrub
+  if (!tower && rnd(ch, 15u) < select(0.28, 0.08, front)) {
+    body(S_TINT, ff, q, z0, z1);
+    put(K_CREN, S_FRAME, 0u, q, z1, vec4<f32>(0.5, 0.0, 1.0, 0.14));
+    if (rnd(ch, 16u) < 0.75) { bushAt(mix(c, q[2], 0.5), z1, 0.38, 0.65, rnd(ch, 17u) < 0.6); }
+    return;
+  }
   body(S_TINT, ff | F_UNDER, q, z0, z1);
-  // its own gable: across its shorter span (on the street, its gable to the street mostly); a tower's a pyramid
-  let l0 = length(q[1] - q[0]) + length(q[2] - q[3]);
-  let l1 = length(q[2] - q[1]) + length(q[3] - q[0]);
-  // (a street column: its gable to the street — side 0 is on it; behind: the ridge along the lot's street, so the
-  // roofs fall into rows instead of a heap)
+  // its own gable: a street column's to the street (side 0 is on it); behind, the ridge along the lot's street, so the
+  // roofs fall into rows instead of a heap; a tower's a pyramid
   var turn = 1u;
   if (!front) {
     let a0 = abs(dot(normalize(q[1] - q[0]), LX));
@@ -1046,7 +1129,31 @@ fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
   }
   if (front && rnd(ch, 11u) < 0.2) { turn = 0u; }
   let rise = roof(q, z1 + 0.05, turn, select(1.05, 1.6, tower), select(0.0, 0.5, tower), 0.16, 0u);
-  if (!tower && rnd(ch, 12u) < 0.07) { chimney((q[0] + q[1] + q[2] + q[3]) * 0.25 + (q[1] - q[0]) * 0.15, z1 + rise * 0.3, z1 + rise + 0.8); }
+  if (!tower && rnd(ch, 12u) < 0.07) { chimney(c + (q[1] - q[0]) * 0.15, z1 + rise * 0.3, z1 + rise + 0.8); }
+}
+
+/** a whole piece of the grid joined into one house (the user: rooflines "need to either join into larger sections"):
+ *  the merged pair of triangles its cells came from, one column of one colour, one roof over it all — a gable along
+ *  its length, or a hip — a chimney or two */
+fn gridPiece(q0: array<vec2<f32>, 4>, ch: u32) {
+  if (gN + 4u > PPL) { return; }
+  let q = faceStreet(q0);
+  let front = gFront;
+  let g = gGround;
+  let H0 = f32(max(REC[gLot * RECW + 19u], 1u));
+  let h = clamp(i32(round(H0 + (rnd(ch, 1u) - 0.3) * 1.4 - select(0.8, 0.0, front))), 1, 6);
+  let z1 = g + f32(h) * STOREY;
+  body(S_TINT, select(0u, F_FRONT0, front) | F_UNDER, q, g, z1);
+  let l0 = length(q[1] - q[0]) + length(q[2] - q[3]);
+  let l1 = length(q[2] - q[1]) + length(q[3] - q[0]);
+  // (the ridge along its length; on the street, now and then turned to show the street a broad gable)
+  var turn = select(1u, 0u, l0 >= l1);
+  if (front && rnd(ch, 5u) < 0.3) { turn = 1u - turn; }
+  let hip = rnd(ch, 2u) < 0.4;
+  let rise = roof(q, z1 + 0.05, turn, 0.95, select(0.0, 0.32, hip), 0.24, 0u);
+  let c = (q[0] + q[1] + q[2] + q[3]) * 0.25;
+  if (rnd(ch, 3u) < 0.45) { chimney(mix(c, q[1], 0.45), z1 + rise * 0.3, z1 + rise + 0.9); }
+  if (rnd(ch, 4u) < 0.25) { chimney(mix(c, q[3], 0.45), z1 + rise * 0.3, z1 + rise + 0.7); }
 }
 
 /** a small square post at p (a pillar, a stilt) */
@@ -1058,14 +1165,6 @@ fn post(p: vec2<f32>, w: f32, z0: f32, z1: f32, surf: u32) {
 
 fn grid(seed: u32) {
   let shanty = u32(sty(gS, 0u).w + 0.5) == 4u;
-  gCells = 0u;
-  // the footprint's street edges: inset from the parcel by more than a lot line's 0.35
-  for (var k = 0u; k < 4u; k++) {
-    let a = gPar[k];
-    let e = normalize(gPar[(k + 1u) % 4u] - a);
-    let m = (gFp[k] + gFp[(k + 1u) % 4u]) * 0.5;
-    gStreet[k] = abs(dot(m - a, vec2<f32>(e.y, -e.x))) > 0.6;
-  }
   gFpG = grow(gFp, 0.6);
   // the lattice under the parcel: its bounding box in lattice coordinates (b from y, a from x less half of b)
   var lo = vec2<f32>(1e9);
@@ -1082,7 +1181,6 @@ fn grid(seed: u32) {
         // by the lower id), else this triangle alone
         let pk = triPick(a, b, t);
         let n = triN(a, b, t, pk);
-        // (merged when the neighbour's pick points back across the same edge)
         let nk = triPick(n.x, n.y, u32(n.z));
         let nn = triN(n.x, n.y, u32(n.z), nk);
         let merged = nn.x == a && nn.y == b && u32(nn.z) == t;
@@ -1095,22 +1193,37 @@ fn grid(seed: u32) {
           let B = triV(a, b, t, (pk + 1u) % 3u);
           let C = triV(a, b, t, (pk + 2u) % 3u);
           let D = triV(n.x, n.y, u32(n.z), (nk + 2u) % 3u);
-          V = array<vec2<f32>, 4>(A, D, B, C);
+          V = array<vec2<f32>, 4>(nudge(A), nudge(D), nudge(B), nudge(C));
           nv = 4u;
         } else {
-          V = array<vec2<f32>, 4>(triV(a, b, t, 0u), triV(a, b, t, 1u), triV(a, b, t, 2u), vec2<f32>(0.0));
+          V = array<vec2<f32>, 4>(nudge(triV(a, b, t, 0u)), nudge(triV(a, b, t, 1u)), nudge(triV(a, b, t, 2u)), vec2<f32>(0.0));
         }
-        // split: each corner a quad with its two edges' middles and the centre
+        // split: each corner a quad with its two edges' middles and the centre (the middles on the straight edges
+        // between nudged corners, so a piece's cells together are exactly the piece)
         var cen = vec2<f32>(0.0);
         for (var k = 0u; k < nv; k++) { cen += V[k]; }
         cen = nudge(cen / f32(nv));
+        var kept = array<bool, 4>(false, false, false, false);
+        var allIn = true;
+        var anyIn = false;
         for (var k = 0u; k < nv; k++) {
           let vk = V[k];
-          let vn = V[(k + 1u) % nv];
-          let vp = V[(k + nv - 1u) % nv];
-          let q = array<vec2<f32>, 4>(nudge(vk), nudge((vk + vn) * 0.5), cen, nudge((vp + vk) * 0.5));
-          let qc = (q[0] + q[1] + q[2] + q[3]) * 0.25;
-          if (inQuad(gPar, qc) && inQuad(gFpG, qc)) { gridCell(q, seed, shanty); }
+          let qc = (vk + (vk + V[(k + 1u) % nv]) * 0.5 + cen + (V[(k + nv - 1u) % nv] + vk) * 0.5) * 0.25;
+          kept[k] = inQuad(gPar, qc) && inQuad(gFpG, qc);
+          allIn = allIn && kept[k];
+          anyIn = anyIn || kept[k];
+        }
+        if (!anyIn) { continue; }
+        // a whole quad piece in this lot: now and then one house (not the shanties: theirs stay huts)
+        let ph = posHash(cen);
+        if (merged && allIn && !shanty && rnd(ph, 21u) < 0.5) {
+          gridPiece(V, ph);
+          continue;
+        }
+        for (var k = 0u; k < nv; k++) {
+          if (!kept[k]) { continue; }
+          let vk = V[k];
+          gridCell(array<vec2<f32>, 4>(vk, (vk + V[(k + 1u) % nv]) * 0.5, cen, (V[(k + nv - 1u) % nv] + vk) * 0.5), seed, shanty);
         }
       }
     }
@@ -1193,6 +1306,7 @@ fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
   }
   gPar = parcel;
   gFp = q;
+  streetEdges();
   let archetype = u32(sty(s, 5u).z + 0.5);
   if (kind == 3u) { market(seed); }
   else if (kind == 2u) { garden(seed); }

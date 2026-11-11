@@ -23127,3 +23127,20 @@ cases over the fake's field limit), season, transfers, typecheck.
   the street line).
 - Order in the roofs: a street column's gable to the street, the ones behind a storey lower with their ridges along the
   lot's street; chimneys rare. Up to 44 cells a lot (two parts each).
+
+## archgen: tarps, tents, joined roofs and patios (2026-11-11; the user: "corrugated metal looks weird for fantasy
+## shanties. Cloth or wood would look better. The tents should be at angles or against walls. The rooflines look too
+## uniform. They need to either join into larger sections or have little open patios up top.")
+
+- Roof material 3 (ROOF.patchwork: shanty, docks, stilts) is planks (two parts in three) or a faded cloth tarp (muted
+  dyes, a stripe now and then, sagging between rafters, a patch); the corrugated tin is gone.
+- Tents: ridge tents pitched at their own angle (±50°); a market lays a row of cloth lean-tos against each side that is
+  a lot line (not a street: the side nearest a footprint edge that isn't inset like a street), its stalls in what's
+  left; huts get a cloth lean-to against a side wall where there's room; a grid shanty's yards are mostly cloth
+  lean-tos against the next column. streetEdges() now runs for every lot (the market needs it as the grid does).
+- Grid roofs: a cell's edge middles now lie on the straight edge between its nudged corners, so a piece's cells
+  together are exactly the piece; a quad piece wholly in one lot is, half the time, one house — one column of one
+  colour, one roof (a gable along its length or a hip), chimneys (two parts for four cells' eight). Of the rest, about
+  a quarter of the cells behind the street (and a few on it) are patios: flat flagstone tops behind a low white
+  parapet (a crenel part with no merlons), a potted shrub. The per-lot cap is now the part slots (a cell stops when
+  fewer than its worst case are left), not 44 cells.
