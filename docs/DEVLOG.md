@@ -23057,3 +23057,77 @@ run: the change adds one 20-workgroup dispatch a frame and removes the relax ove
 **Limits.** Growth is symmetric, so a deep detour holds most of the window. The box doesn't shrink as the walkers close
 in. A longer way inside the box is taken without growth when a shorter one leaves it. The threat field per side is
 left over the scope (nothing on the GPU reads it).
+
+## 2026-11-11 — roads grow in with their lots (CG25, `trackA-roadgrow`)
+
+The user: "the roads where there are no houses look too dense. I wonder if we could hide them until there are houses
+that border them or districts they connect" and "I wonder if we could use a shader to fill in the road ahead of the
+direct work". Why the old default (`minorAhead` 0, "with their buildings") still showed dense empty streets: a minor
+street was tagged with the earlier of its two districts and shown from that district's *start*, so a claimed or
+time-lapsed district showed every street at once, though its lots rise over 3 s (and in the season loop only a card's
+share of them rises at all); main roads came even earlier (the earliest district within a supercell's margin).
+
+**Design** (streets.wgsl "CG25", render/bodies.wgsl vsSkin/fsBody):
+- **Started** = the town clock time a lot's progress first passes 0, `LSTART` (a float a record), worked out in
+  `tlProgress` next to its progress: its district's start + its own delay; for a staged (season loop) lot the time its
+  slot's eased stage S crosses its share's threshold (the smoothstep inverted: k = ½ − sin(asin(1 − 2y)/3)); BUILT_AT
+  for a lot there from the outset; NOT_YET while nothing is set.
+- **A street finds its fronting lots in parallel by scatter, then gather.** `frontStamp` (a thread a record) stamps its
+  start along its parcel's four edges (±3 cells across) into a front field — an ordered-f32 `atomicMin` per column, in
+  the road raster's tail (`ROADS` is now 2·N words; the contract's raster is the first N). A parcel's edges lie on its
+  streets' centre lines, so a road piece reads `frontAt` (one load) where it lies. ±0.7 left gap-fill lots (which stand
+  clear of their street) without their road: 8 more begun lots of 209 with no live road at their frontage than before;
+  ±3 matches before exactly (below).
+- **Minor streets** (vroad's non-arterials, the listed gap/big-block roads): from the earliest start at seven points
+  along the whole street. **Main roads** (major lines, arterial cross streets; `skelReach` 3, the new default): once
+  lots front them, or they link two districts begun (both sides begun — the core's are from the start — or, across an
+  empty district, two begun districts round it within `skelMargin`). Reaches 0–2 (the old 'with their districts',
+  'begun + a margin', 'everywhere') still work; `minorAhead` 1 still shows minor streets with the main roads.
+  Deviation from the brief: a main road next to one district begun with nothing begun past it does show once its own
+  lots front it — the houses need their street (the user's "houses that border them").
+- **The fill-in.** Each road vertex carries the clock time the growth reaches it: a minor street grows from the end
+  whose own road shows first (a tie: the end nearer the centre) to the far end over `ROAD_LEAD_K` × a build (0.4 × 4 s),
+  all there as its first lot starts rising; a main-road piece grows outward from the centre across a supercell over the
+  same lead. vsSkin interpolates the time (VOut.tint); fsBody discards ahead of the town's clock (`MESH_XF.w`, written
+  by FieldTown each frame) and lays the first 1.2 s as dirt. No remeshing per frame; the mesh run (every 2 s while
+  building, and now on the next frame after a claim, a stage or a time-lapse) computes the times. `tlRise` sinks a
+  piece till its growth begins, so it casts no shadow; claims (`markRoad`, `roadLive`) from its reveal's start.
+- **Vertex layout, word 7** (agreed with archgen): bits 0–7 the surface (1 colour; archgen 3 dirt, 4 cobbles, 5 grass),
+  bits 8–31 the reveal code (0 ungated; c: (c − 1)/16 s). vsSkin hands fsBody only the low byte (`info.y`); the
+  inhabitants check is masked too. The VTAG road tag's high bits carry the piece's earliest code (was its district).
+- **Farm tracks** keep the old rule (the earliest district beside the road or within the margin a farm one).
+
+**Measured** (Muru, lab page `&living=0&opps=0`, 412×915, 60°, a 30 s time-lapse; scratchpad cg25/probe4.mjs):
+
+| | before | after |
+|---|---|---|
+| live road columns at the start (the core built) | 8155 | 4331 (−47%) |
+| … at 21 s / at the end | 9464 / 12020 | 5257 / 11526 |
+| begun building lots with no live road within 2 of their frontage's middle, 7 / 21 / 46 s | 8 / 14 / 24 | 8 / 14 / 24 |
+| town made, GPU ms (all stages) | 7.6–8.0 | 7.5–7.9 |
+| lab-stepped wall ms a frame, settled / during the time-lapse (desktop proxy, noisy) | 13.7 / 8.3 | 13.9–15.4 / 8.4–8.8 |
+| generator memory | 31.6 MB | 32.1 MB (+LSTART, +the front field) |
+
+The 24 lots without a road are the same before and after (gap-fill and shore lots whose street isn't the frontage's).
+Shots: scratchpad cg25/cg25_before_after_{start,half,end}.png, roadgrow.gif, roadgrow-close.gif. No phone bench run.
+
+**Limits.** A road's time is fixed at the last mesh run: a claim or a stage set between runs is seen on the next frame.
+A main road's outward growth is a radial proxy (from the centre across a supercell), not along the line from the road
+it joins. A main road beside a single district begun with nothing past it shows once its own lots front it. The
+front stamp's ±3 cells can show a street a lot's side or back edge lies within 3 of. The dirt phase is a flat colour
+(archgen's dirt texture could take it).
+
+## 2026-11-11 — a park's ground kept grass (CG26, `trackA-roadgrow`)
+
+archgen (b7343aea, not merged here) stops drawing the flat park and plaza plates in its mode 1 and plants gardens on
+the land itself; under a park the land then showed its own cover, which round Muru's core is sparse — soil (the
+plants' field there reads ~0.7, between bare and moss). The town's claim never touched a park's columns (claimLots
+returned early), so nothing kept them green. Now a begun park's footprint columns are marked in the claim grid's
+owner plane with no span — `PARK_COL | its record` (0x20000000, beside the farms' FIELD_COL) — and the bare pass
+(citygen/bare.wgsl) raises their plants to grass (ecology's stage 2) where they're under it; a shrub or a tree already
+there stays, and ecology grows on from grass. A park not begun keeps its wild plants. Plazas stay paved (unchanged).
+Checked with the park plate hidden as archgen's mode 1 does (a local edit for the shot only, not committed): Muru's
+core parks read soil before, grass after (scratchpad cg25/park/cg26_before_after.png, at zoom 6, 60°). On this branch
+the plate still draws over the grass.
+**Limits.** The footprint (the park's own quad) is grassed, not the parcel's margin to the street; a park lot's grass
+follows its claim run (the 2 s cadence while building).

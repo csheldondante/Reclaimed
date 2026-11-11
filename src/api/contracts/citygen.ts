@@ -145,7 +145,8 @@ export interface CityDistricts {
  * (living town, docs/design/LIVING_TOWN.md) What a town's routes are made from — read only, in the grid's frame, a
  * word (or f32) a grid column (w × h, row-major) unless said:
  *   roads   the road raster: 0 none, 1 a road, 0x80000000 | z × 256 a bridge deck at world z (citygen streets.wgsl
- *           markRoad — every road the town draws: contours, cross, gap, grown streets, arterials, decks)
+ *           markRoad — every road the town draws once its growth has begun: contours, cross, gap, grown streets,
+ *           arterials, decks). Its first w × h words; the buffer's tail is the generator's own (CG25's front field)
  *   heights the ground's world z (f32)
  *   wet     1.0 where water is (f32)
  *   pop     the population field, 4 f32 a column: density, wealth, purpose (streets.wgsl P_*), the arterials' distance

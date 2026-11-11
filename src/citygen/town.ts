@@ -315,9 +315,12 @@ export class FieldTown {
     const { cols, rows } = this.io.wrap;
     const x = near(this.box.x0 - ox, cols);
     const y = near(this.box.y0 - oy, rows) * ROW_H;
-    // (the mesh's heights are world z: the window's z is less its oz)
-    this.io.device.queue.writeBuffer(this.xform, 0, new Float32Array([x, y, -this.io.oz(), 0]));
+    // (the mesh's heights are world z: the window's z is less its oz; w the town's clock — CG25)
+    this.io.device.queue.writeBuffer(this.xform, 0, new Float32Array([x, y, -this.io.oz(), this.clock]));
   }
+  /** (CG25) the town's clock as its mesh's draw last had it (the place's w): the roads grow in against it in the draw
+   *  (render/bodies.wgsl fsBody clips each road fragment ahead of it) */
+  private clock = 0;
 
   /** the town's lots for what builds on it (api/contracts/citygen.ts) */
   get lots(): CityLots {
@@ -336,6 +339,10 @@ export class FieldTown {
    */
   frame(now: number): void {
     if (this.gone || !this.grid) return;
+    if (now !== this.clock) {
+      this.clock = now;
+      this.io.device.queue.writeBuffer(this.xform, 12, new Float32Array([now]));
+    }
     const busy = now < this.animUntil;
     if (busy) this.gen.animate(now);
     const due = busy ? now - this.lastClaim > 2 : this.lastClaim < this.animUntil && this.animUntil > -Infinity;
@@ -364,6 +371,8 @@ export class FieldTown {
   timelapse(now: number, span: number): void {
     if (this.gone || !this.grid) return;
     this.gen.timelapse(now, span, now);
+    // (CG25: the mesh run — the roads' reveal times from the lots' new starts — on the next frame, not up to 2 s on)
+    this.lastClaim = -Infinity;
     this.animUntil = Math.max(this.animUntil, now + span + BUILD_S * 1.75 + 0.5);
   }
 
@@ -372,7 +381,10 @@ export class FieldTown {
   async claimDistrict(purpose: number, now: number): Promise<DistrictClaim> {
     if (this.gone) return { id: -1, at: [0, 0], left: 0 };
     const c = await this.gen.claimDistrict(purpose, now);
-    if (c.id >= 0) this.animUntil = Math.max(this.animUntil, now + DISTRICT_SPAN + 0.5);
+    if (c.id >= 0) {
+      this.animUntil = Math.max(this.animUntil, now + DISTRICT_SPAN + 0.5);
+      this.lastClaim = -Infinity;
+    }
     return c;
   }
 
@@ -420,6 +432,7 @@ export class FieldTown {
   stageDistrict(id: number, stage: DistrictStage, when: number, now: number): void {
     if (this.gone) return;
     this.gen.stageDistrict(id, stage, when);
+    this.lastClaim = -Infinity;
     this.animUntil = Math.max(this.animUntil, Math.max(now, when + DISTRICT_SPAN) + 0.5);
     this.gen.animate(now);
   }

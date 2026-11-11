@@ -164,9 +164,17 @@ appears but we can ignore it where there is no population or low enough not to n
 - **The mesh is made full height,** each vertex tagged (VTAG: its kind and record or district, its z as made).
   `tlRise` moves the tagged vertices each frame:
   - a building's tops to base + height × progress (its bases and outline sunk out of sight until it begins);
-  - a road or a park, a plaza hidden until its district begins.
+  - a park or a plaza hidden until it begins; a road sunk until its growth begins (CG25, below).
   - This is a compute pass, not the vertex shader: the draw stage already binds its 8 storage buffers, and the
     progress buffer (33k floats) is past a uniform's size.
+- **Roads grow in with their lots (CG25):** each lot's start (the clock time its progress first passes 0, `LSTART`)
+  is stamped along its parcel's edges (±3 cells) into a front field (an ordered-f32 min a column, the road raster's
+  tail). A minor street shows from the earliest start along it; a main road (`skelReach` 3, the default) once lots
+  front it or it links two districts begun (both sides begun, or two begun round an empty district it crosses, within
+  `skelMargin`). Each grows in over 0.4 of a build, done as its first lot starts rising — a minor street from the end
+  whose road shows first, a main road outward from the centre — with its first 1.2 s laid as dirt. Each road vertex
+  carries the time the growth reaches it (word 7 bits 8–31; bits 0–7 the surface); the draw clips against the town's
+  clock in the mesh's place (`MESH_XF.w`): no remeshing a frame. Claims mark a road once its growth begins.
 - **The claims follow:** while districts build, every 2 s of the town's clock and once at the end, the town runs its
   mesh stage again (the claim grid from the progress) and `StaticClaims.reclaim` claims it over the window.
 - **The CPU passes only the clock and which start:** the town's clock (s, `FieldTowns.townTime` × `speed`), a

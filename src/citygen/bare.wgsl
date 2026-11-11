@@ -5,7 +5,8 @@
 // the rectangle claimed. Appended to common.wgsl.
 // (farms) And a field's columns (no span; their owner word FIELD_COL | the field's record — streets.wgsl claimField)
 // set to its crop (common.wgsl cropVeg): its stage from the field's construction progress (0 tilled … 3 ripe), its
-// rows along the field's first edge. A field not begun keeps its wild plants. DESIGN §15: "Farms produce, and the
+// rows along the field's first edge. A field not begun keeps its wild plants. (CG26) A park's columns (PARK_COL | its
+// record) raised to grass at least: a lawn on the land itself, the mesh's plate or not. DESIGN §15: "Farms produce, and the
 // field's crop stage shows it."
 struct BareU {
   /** the grid's first column in the window (gx, gy), its columns and rows */
@@ -23,6 +24,10 @@ struct BareU {
 
 const BARE_ONLY_BIT: u32 = 0x80000000u;
 const FIELD_COL_BIT: u32 = 0x40000000u;
+/** (CG26) a park's column (streets.wgsl PARK_COL): its plants raised to grass at least */
+const PARK_COL_BIT: u32 = 0x20000000u;
+/** ecology.wgsl's succession stage for grass */
+const PARK_GRASS: f32 = 2.0;
 const REC_WORDS: u32 = 24u;
 
 @compute @workgroup_size(8, 8)
@@ -48,6 +53,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let v = cropVeg(3.0 * p, dir);
     veg[i] = v;
     vegNext[i] = v;
+    return;
+  }
+  // (CG26: a park's column — grass at least; what grows past grass, a shrub or a tree, stays)
+  if (!span && (ow & (BARE_ONLY_BIT | FIELD_COL_BIT | PARK_COL_BIT)) == PARK_COL_BIT) {
+    if (!isCrop(veg[i]) && veg[i] < PARK_GRASS) {
+      veg[i] = PARK_GRASS;
+      vegNext[i] = PARK_GRASS;
+    }
     return;
   }
   // (a span — a building, a road's paving — or a parcel kept bare: its owner word's top bit, streets.wgsl BARE_ONLY)

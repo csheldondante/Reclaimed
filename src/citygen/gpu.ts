@@ -211,7 +211,7 @@ const KERNELS = [
   'vseed', 'vthin', 'vrast', 'vjfa', 'vseg', 'vblock', 'lots', 'roadMajor', 'roadMinor', 'vroad', 'lotRec', 'lotMesh', 'marks', 'meshCap',
   'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'gplace', 'sctab', 'bgrow', 'ctint',
   'artSpan', 'artRast', 'artEnd', 'artMesh', 'popField', 'townBridge', 'claimRoads', 'claimLots', 'lotReach',
-  'clkInit', 'clkTimelapse', 'clkClaim', 'tlProgress', 'tlRise', 'stgRank', 'wallBins', 'wallShape', 'wallMesh', 'wallClaim',
+  'clkInit', 'clkTimelapse', 'clkClaim', 'tlProgress', 'tlRise', 'stgRank', 'frontStamp', 'wallBins', 'wallShape', 'wallMesh', 'wallClaim',
 ] as const;
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
@@ -367,7 +367,11 @@ export class CityGen {
     this.progress = buf('lot progress', (LOT_ROOM + LM_ROOM) * 4);
     this.lotCounts = buf('lot counts', 16);
     // (M4b: the roads' columns as drawn, the claim grid, the records cut off)
-    this.B.ROADS = buf('road columns', N * 4);
+    // (CG25: then the front field — each column's earliest start of the lots whose parcels touch it, an ordered f32:
+    // streets.wgsl frontStamp, frontAt; the contract's raster is the first N words)
+    this.B.ROADS = buf('road columns', 2 * N * 4);
+    // (CG25: each record's start — the clock time its progress first passes 0: tlProgress)
+    this.B.LSTART = buf('lot starts', (LOT_ROOM + LM_ROOM) * 4);
     this.claimCols = N;
     // (the claim grid written where its owner says — a slot of the static claims' arena — or its own)
     this.claimGrid = world.claimInto ? { ...world.claimInto, size: N * 8 * 4 } : buf('claim grid', N * 8 * 4);
@@ -510,7 +514,7 @@ export class CityGen {
     this.tl.now = now;
     this.encodeOnly('citygen animate', () => {
       const B = this.B;
-      this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 3: B.KEY, 4: B.SCT, 5: this.progress, 6: B.CNT }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
+      this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 3: B.KEY, 4: B.SCT, 5: this.progress, 6: B.CNT, 7: B.LSTART }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
       this.k('tlRise', {}, { 1: this.lotRecords, 2: this.progress, 3: B.VTAG, 4: B.SCT, 6: B.WALL, 7: this.verts }, Math.ceil(this.vertRoom / 64), 1, true);
     });
   }
@@ -945,19 +949,23 @@ export class CityGen {
     const rj = this.reachJob;
     if (rj) this.k('lotReach', { count: LOT_ROOM, k: rj.winW, mode: rj.winH, box: [rj.gx >>> 0, rj.gy >>> 0] }, { 1: this.lotRecords, 2: B.CNT, 3: rj.marks, 5: this.reachCut }, Math.ceil(LOT_ROOM / 64));
     this.fill(B.ROADS, w * h, 0);
-    this.k2('roadMajor', {}, { 5: B.VTAG, 1: B.LM, 2: B.SCT, 3: HH, 4: B.FD, 6: B.ROADS, 7: this.verts }, true);
-    // (one thread a street's piece: eight a vector street, TP a trace)
-    if (vector) this.k('vroad', {}, { 5: B.VTAG, 1: B.SD, 2: B.AL1, 3: HH, 4: B.SCT, 6: B.ROADS, 7: this.verts }, Math.ceil((this.nS() * 8) / 64), 1, true);
-    else this.k('roadMinor', {}, { 5: B.VTAG, 1: B.TR, 2: B.AL0, 3: HH, 6: B.ROADS, 7: this.verts }, this.seeds[0] * this.seeds[1], 1, true);
-    this.k('groad', {}, { 5: B.VTAG, 1: B.CNT, 2: B.SCT, 3: HH, 4: B.FD, 6: B.ROADS, 7: this.verts }, (ROAD_ROOM * 8) / 64, 1, true);
-    if (this.cityOn() && p.tint === 1) this.k2('ctint', {}, { 5: B.VTAG, 2: B.SCT, 3: HH, 4: B.FD, 7: this.verts }, true);
     // (M4a: the lots' records — the contract — then the mesh from them; a landmark site's record too, its mesh lmMesh's)
     this.k('lotRec', { count: LOT_ROOM }, { 1: B.LOTS, 2: B.SCT, 3: HH, 4: B.FD, 5: B.LM, 6: B.CNT, 7: this.lotRecords }, Math.ceil(LOT_ROOM / 64));
     this.k('lotRec', { mode: 1 }, { 1: B.LOTS, 2: B.SCT, 3: HH, 4: B.FD, 5: B.LM, 6: B.CNT, 7: this.lotRecords }, 1);
     // (time-lapse: each record's progress now, before the mesh and the claims read it)
     // (season loop: each lot's rank in its district's growth order, before its progress)
     if (this.cityOn()) this.k('stgRank', {}, { 1: this.lotRecords, 4: B.SCT, 5: B.KEY, 6: B.CNT }, Math.ceil(LOT_ROOM / 64));
-    this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 3: B.KEY, 4: B.SCT, 5: this.progress, 6: B.CNT }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
+    this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 3: B.KEY, 4: B.SCT, 5: this.progress, 6: B.CNT, 7: B.LSTART }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
+    // (CG25: each lot's start stamped round its parcel — the front field the roads read, before the roads: they show with
+    // the lots that front them; 0xffffffff none)
+    this.fill(B.ROADS, w * h, 0xffffffff, w * h);
+    this.k('frontStamp', {}, { 1: this.lotRecords, 2: B.LSTART, 3: B.CNT, 6: B.ROADS }, Math.ceil(LOT_ROOM / 64));
+    this.k2('roadMajor', {}, { 5: B.VTAG, 1: B.LM, 2: B.SCT, 3: HH, 4: B.FD, 6: B.ROADS, 7: this.verts }, true);
+    // (one thread a street's piece: eight a vector street, TP a trace)
+    if (vector) this.k('vroad', {}, { 5: B.VTAG, 1: B.SD, 2: B.AL1, 3: HH, 4: B.SCT, 6: B.ROADS, 7: this.verts }, Math.ceil((this.nS() * 8) / 64), 1, true);
+    else this.k('roadMinor', {}, { 5: B.VTAG, 1: B.TR, 2: B.AL0, 3: HH, 6: B.ROADS, 7: this.verts }, this.seeds[0] * this.seeds[1], 1, true);
+    this.k('groad', {}, { 5: B.VTAG, 1: B.CNT, 2: B.SCT, 3: HH, 4: B.FD, 6: B.ROADS, 7: this.verts }, (ROAD_ROOM * 8) / 64, 1, true);
+    if (this.cityOn() && p.tint === 1) this.k2('ctint', {}, { 5: B.VTAG, 2: B.SCT, 3: HH, 4: B.FD, 7: this.verts }, true);
     this.k('lotMesh', { count: LOT_ROOM }, { 5: B.VTAG, 1: this.lotRecords, 2: this.progress, 3: HH, 4: this.reachCut, 6: B.CNT, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
     this.k('artMesh', {}, { 5: B.VTAG, 1: B.ART, 3: HH, 6: B.ROADS, 7: this.verts }, (NART * NAP) / 64, 1, true);
     // (season life: the town wall, once begun — at full height; tlRise sets its pieces' rise)
