@@ -311,6 +311,7 @@ export function attachStream(scene: LevelScene): void {
         whenPipelinesReady(() => {
           // (archgen, ?arch=1: the building generator draws the towns' buildings — docs/design/ARCHGEN.md)
           const buildings = ARCH ? new TownBuildings({ device: host.gpu.device, addArch: (a, g, x) => core.renderer.addArch(a, g, x), removeArch: (g) => core.renderer.removeArch(g), frameCompute: core.renderer.frameCompute }) : undefined;
+          (globalThis as { archTowns?: TownBuildings }).archTowns = buildings;
           const towns = new FieldTowns(
             {
               device: host.gpu.device,

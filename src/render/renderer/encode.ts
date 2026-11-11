@@ -221,7 +221,7 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
   for (const v of SKIP.has('arch') ? [] : rd.archSources) {
     pass.setBindGroup(0, v.group);
     ARCH_DRAWS.forEach(([k], i) => {
-      if (k === KIND.win && !rd.archWindows) return;
+      if ((k === KIND.win && !rd.archWindows) || rd.archSkip.has(k)) return;
       pass.setPipeline(rd.archPipes![i]);
       pass.drawIndirect(v.args, k * 16);
     });

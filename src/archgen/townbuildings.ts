@@ -4,7 +4,7 @@
 // construction progress copied in each frame (a few KB, GPU to GPU) for the rise. Nothing is read back.
 
 import type { CityLots, TownBuildingsSink } from '../api/contracts/citygen';
-import { ArchGen } from './archgen';
+import { ArchGen, KIND } from './archgen';
 
 export interface TownBuildingsIO {
   device: GPUDevice;
@@ -66,6 +66,35 @@ export class TownBuildings implements TownBuildingsSink {
     t.gen.compact(e);
     this.io.device.queue.submit([e.finish()]);
     this.stats.runs++;
+  }
+
+  /** (the phone bench) every town's lots made again now */
+  remakeAll(): void {
+    for (const id of this.towns.keys()) this.make(id);
+  }
+
+  /** (the phone bench, never in play: a readback) each kind's instances over the live towns */
+  async counts(): Promise<Record<string, number>> {
+    const out: Record<string, number> = {};
+    const names = Object.entries(KIND);
+    for (const t of this.towns.values()) {
+      const rb = this.io.device.createBuffer({ size: t.gen.args.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const e = this.io.device.createCommandEncoder();
+      e.copyBufferToBuffer(t.gen.args, 0, rb, 0, t.gen.args.size);
+      this.io.device.queue.submit([e.finish()]);
+      await rb.mapAsync(GPUMapMode.READ);
+      const a = new Uint32Array(rb.getMappedRange().slice(0));
+      rb.destroy();
+      for (const [n, k] of names) {
+        out[n] = (out[n] ?? 0) + a[k * 4 + 1];
+        out.vertices = (out.vertices ?? 0) + a[k * 4] * a[k * 4 + 1];
+      }
+    }
+    return out;
+  }
+
+  get live(): number {
+    return this.towns.size;
   }
 
   dispose(): void {

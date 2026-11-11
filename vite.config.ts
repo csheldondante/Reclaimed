@@ -58,7 +58,7 @@ function hitchSink(): Plugin {
           // (round 120: ?kind=physbench, the physics phone bench — src/perf/physbench.ts)
           // (trackA-liquids: ?kind=flowbench, the flow model's phone bench — src/perf/flowbench.ts)
           // (citygen: ?kind=citygenbench, the town layout's phone bench — src/perf/citygenbench.ts)
-          const kind = k === 'bench' || k === 'bug' || k === 'physbench' || k === 'citygenbench' || k === 'livingbench' || k === 'flowbench' || k === 'fieldbench' ? k : 'hitch';
+          const kind = k === 'bench' || k === 'bug' || k === 'physbench' || k === 'citygenbench' || k === 'archbench' || k === 'livingbench' || k === 'flowbench' || k === 'fieldbench' ? k : 'hitch';
           const name = `${kind}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
           fs.writeFileSync(path.join(dir, name), body);
           res.end(`perf-reports/${name}`);

@@ -132,6 +132,9 @@ export class Renderer {
   archPipes?: GPURenderPipeline[];
   /** (archgen) the built windows drawn (a detail layer: the PC's; the phone keeps the painted ones under them) */
   archWindows = true;
+  /** (archgen, the phone bench) part kinds left out of the draws, and the shadow pass's buildings on or off */
+  readonly archSkip = new Set<number>();
+  archShadow = true;
   archShadowPipes?: GPURenderPipeline[];
   /** the structure grids' exposed voxels, as rotated cubes (structprep.wgsl → the body pipeline) */
   structPrep: ComputeKernel;

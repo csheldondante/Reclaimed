@@ -216,12 +216,12 @@ export function encodeShadow(rd: Renderer, enc: GPUCommandEncoder, due: 'all' | 
     pass.drawIndirect(v.indirect, 0);
   }
   // (archgen) the building generator's parts cast their shadows
-  for (const v of rd.archSources) {
+  for (const v of rd.archShadow ? rd.archSources : []) {
     if (!v.shadow) continue;
     pass.setBindGroup(0, v.shadow);
     ARCH_DRAWS.forEach(([k], i) => {
       // (the built windows cast no shadow worth their vertices)
-      if (k === KIND.win) return;
+      if (k === KIND.win || rd.archSkip.has(k)) return;
       pass.setPipeline(rd.archShadowPipes![i]);
       pass.drawIndirect(v.args, k * 16);
     });

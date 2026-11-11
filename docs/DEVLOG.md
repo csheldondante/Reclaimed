@@ -23103,3 +23103,13 @@ cases over the fake's field limit), season, transfers, typecheck.
   stilts, tin and plank lean-tos, at most two storeys.
 - Simplification, stated: every inner vertex has four cells (Townscaper's merged triangles give threes and fives); a
   per-block pass if the difference shows. The CPU tile builder (structures/tiles) stays for cliff cities.
+
+## The building generator's phone bench (AG7, 2026-11-11)
+
+- `?skipmenu=1&level=atlas&town=1&fresh=1&citygen=fields&arch=1&archbench=1` (perf/archbench.ts): toggle diffs at the
+  start town at play zoom — the buildings drawn against not, each part kind left out in turn (its share), the shadow
+  pass, the built windows flipped, every town made again every frame, a streamed pan; the instance counts (a bench-only
+  read). Renderer.archSkip / archShadow, TownBuildings.remakeAll / counts are the bench's switches.
+- Desktop headless (a proxy only): 1.13 M vertices at Muru's start (105 built lots: 1621 bodies, 1605 built windows,
+  356 roofs, 375 round bodies, 93 cones, 368 shrubs, 6 wheels); every diff 0 — the frame is held at 9.9 ms, the GPU not
+  the limit. The pan had one 1 s spike as a town was made (the town's own generation; to look at on the phone).
