@@ -3470,12 +3470,14 @@ fn tlRise(@builtin(global_invocation_id) g: vec3<u32>) {
     // (season life: a wall piece or a tower — id: its segment, 128 a tower, 256 a foot — risen by its segment's rise;
     // w6 the WALL words)
     let seg = id & 127u;
-    var h = select(WALL_H, TOWER_H, (id & 128u) != 0u);
-    // (a stair's step k: 512 set, k at bit 10)
-    if ((id & 512u) != 0u) { h = WALL_H * f32(((id >> 10u) & 15u) + 1u) / f32(STAIR_STEPS + 1u); }
+    // (a bastion — a tower inside a run, its top the walk's deck — rises as the wall does)
+    let h = select(WALL_H, TOWER_H, (id & 128u) != 0u && (id & ID_BASTION) == 0u);
     let rw = wallRise(seg, atomicLoad(&w6[2]), bitcast<f32>(atomicLoad(&w6[4])), bitcast<f32>(atomicLoad(&w6[5])), bitcast<f32>(atomicLoad(&w6[6])));
-    if (rw <= 0.0 || atomicLoad(&w6[0]) != 1u) { z = z0 - 1000.0; }
-    else if ((id & 256u) == 0u) { z = z0 - h + h * rw; }
+    // (U2-WALLSTAIR: a stair's step — ID_STAIR, its tops heights, not heights over the ground — shown once its piece has
+    // risen, as wallClaim claims it)
+    let stair = (id & ID_STAIR) != 0u;
+    if (rw <= 0.0 || atomicLoad(&w6[0]) != 1u || (stair && rw < 1.0)) { z = z0 - 1000.0; }
+    else if ((id & 256u) == 0u && !stair) { z = z0 - h + h * rw; }
   }
   w7[v * 8u + 2u] = bitcast<u32>(z);
 }
@@ -3703,30 +3705,126 @@ fn wbWet(b: u32) -> bool {
   for (var k = 0u; k <= 4u; k++) { if (blockedAt(mix(p, q, f32(k) / 4.0))) { return true; } }
   return false;
 }
-/** a quad from p (its foot at zp, top zp + h) to q (zq, zq + h), outward right of p → q; its foot's vertices tagged `tb` */
-fn wquad(at: u32, p: vec2<f32>, q: vec2<f32>, zp: f32, zq: f32, h: f32, col: u32, tb: u32) {
-  tri(at, vec3<f32>(p, zp), vec3<f32>(q, zq), vec3<f32>(q, zq + h), col);
-  tri(at + 3u, vec3<f32>(p, zp), vec3<f32>(q, zq + h), vec3<f32>(p, zp + h), col);
+/** a quad from p (its foot at zp, top tp) to q (zq, tq), outward right of p → q; its foot's vertices tagged `tb` */
+fn wquad(at: u32, p: vec2<f32>, q: vec2<f32>, zp: f32, zq: f32, tp: f32, tq: f32, col: u32, tb: u32) {
+  tri(at, vec3<f32>(p, zp), vec3<f32>(q, zq), vec3<f32>(q, tq), col);
+  tri(at + 3u, vec3<f32>(p, zp), vec3<f32>(q, tq), vec3<f32>(p, tp), col);
   w5[at * 2u] = tb;
   w5[(at + 1u) * 2u] = tb;
   w5[(at + 3u) * 2u] = tb;
 }
-/** a box from a to b, half width hw, h high: its top and two long sides; `caps` its ends too (18 or 30 vertices) */
-fn wbox(at: u32, a: vec2<f32>, b: vec2<f32>, hw: f32, h: f32, col: u32, tt: u32, tb: u32, caps: bool) {
+/** a box from a to b, half width hw, its foot at za / zb and its top at ta / tb (world z, linear between the ends): its
+ *  top and two long sides; `caps` its ends too (18 or 30 vertices) */
+fn wboxZ(at: u32, a: vec2<f32>, b: vec2<f32>, hw: f32, za: f32, zb: f32, ta: f32, tb: f32, col: u32, tt: u32, tf: u32, caps: bool) {
   let d = normalize(b - a);
   let n = vec2<f32>(d.y, -d.x) * hw;
-  let za = hAt(a) - 0.4;
-  let zb = hAt(b) - 0.4;
   curTag = tt;
-  tri(at, vec3<f32>(a + n, za + h), vec3<f32>(b + n, zb + h), vec3<f32>(b - n, zb + h), col);
-  tri(at + 3u, vec3<f32>(a + n, za + h), vec3<f32>(b - n, zb + h), vec3<f32>(a - n, za + h), col);
-  wquad(at + 6u, a + n, b + n, za, zb, h, col, tb);
-  wquad(at + 12u, b - n, a - n, zb, za, h, col, tb);
+  tri(at, vec3<f32>(a + n, ta), vec3<f32>(b + n, tb), vec3<f32>(b - n, tb), col);
+  tri(at + 3u, vec3<f32>(a + n, ta), vec3<f32>(b - n, tb), vec3<f32>(a - n, ta), col);
+  wquad(at + 6u, a + n, b + n, za, zb, ta, tb, col, tf);
+  wquad(at + 12u, b - n, a - n, zb, za, tb, ta, col, tf);
   if (caps) {
-    wquad(at + 18u, a - n, a + n, za, za, h, col, tb);
-    wquad(at + 24u, b + n, b - n, zb, zb, h, col, tb);
+    wquad(at + 18u, a - n, a + n, za, za, ta, ta, col, tf);
+    wquad(at + 24u, b + n, b - n, zb, zb, tb, tb, col, tf);
   }
 }
+/** a box from a to b, half width hw, h high over the ground at its ends (sunk 0.4) */
+fn wbox(at: u32, a: vec2<f32>, b: vec2<f32>, hw: f32, h: f32, col: u32, tt: u32, tb: u32, caps: bool) {
+  let za = hAt(a) - 0.4;
+  let zb = hAt(b) - 0.4;
+  wboxZ(at, a, b, hw, za, zb, za + h, zb + h, col, tt, tb, caps);
+}
+// ---- (U2-WALLSTAIR) the wall-walk's heights: one rule for the mesh, the claim and the living town's walk points ----
+// The walk's deck runs straight between the ring's corners at WALL_H over each corner's ground (WB_Z, less the 0.4 the
+// wall is sunk): the drawn wall's top, and now its claimed columns' too (they followed each column's own ground). A
+// stair climbs from the ground at its foot to the deck where it meets the walk (STAIR_REACH along the run from the
+// gap's corner) in STAIR_STEPS + 1 equal rises: its steps' tops are heights, not heights over their own ground, so on a
+// slope it still lands on the walk. A tower at a corner inside a run (every sixth) is a bastion: its top is the deck,
+// so the walk crosses it; only the towers beside a gap (gates, water) stand TOWER_H. routes.wgsl (wwStair, wlRunDeck)
+// repeats these: keep them in step.
+/** a corner's ground (world z: hAt at the corner, wallShape's) */
+fn wbZ(b: u32) -> f32 { return r1(WB_Z + (b % NB)); }
+/** where a stair's first step starts along the run from the gap's corner; the reach to its top step's far end */
+const STAIR_START: f32 = 2.6;
+const STAIR_REACH: f32 = 9.2;
+/** a stair's foot: beside its first step on the town's side (the gap's tower stands where the stair's line meets the
+ *  corner), this far out from the wall's line */
+const STAIR_FOOT_OUT: f32 = 3.15;
+/** a tower at a corner inside a run of wall (the walk crosses it at the deck's height) */
+fn wbBastion(b: u32) -> bool { return wbTower(b) && !wbGap(b) && !wbGap(b + NB - 1u); }
+/** the deck's height s metres along the run from the gap's corner of piece b (e: stairStep's end), clamped at the run's
+ *  far end */
+fn runDeck(b: u32, e: u32, s: f32) -> f32 {
+  var c = select(b + 1u, b, e == 1u) % NB;
+  var acc = 0.0;
+  for (var j = 0u; j < NB; j++) {
+    let piece = select(c + NB - 1u, c, e == 1u) % NB;
+    let nc = select(c + NB - 1u, c + 1u, e == 1u) % NB;
+    if (wbGap(piece)) { break; }
+    let l = distance(wbV(c), wbV(nc));
+    if (acc + l >= s) { return mix(wbZ(c), wbZ(nc), clamp((s - acc) / max(l, 1e-4), 0.0, 1.0)) - 0.4 + WALL_H; }
+    acc += l;
+    c = nc;
+  }
+  return wbZ(c) - 0.4 + WALL_H;
+}
+/** the wall's foot line s metres along the ring from corner b (s > 0 into piece b, s < 0 back into piece b − 1) */
+fn ringFoot(b: u32, s: f32) -> f32 {
+  let o = select(b + NB - 1u, b + 1u, s >= 0.0);
+  let l = max(distance(wbV(b), wbV(o)), 1e-3);
+  return mix(wbZ(b), wbZ(o), clamp(abs(s) / l, 0.0, 1.0)) - 0.4;
+}
+/** the point s metres along the run from the gap's corner of piece b (e: stairStep's end), on the ring's corners — not
+ *  a straight line off the first piece: Muru's ring zigzags (a 10 m piece, then back), and a stair or the walk's first
+ *  point straight on from the corner stood off the wall — and the run's way there (x, y, then the direction); past the
+ *  run's far end straight on */
+fn runPos(b: u32, e: u32, s: f32) -> vec4<f32> {
+  var c = select(b + 1u, b, e == 1u) % NB;
+  var acc = 0.0;
+  var last = vec4<f32>(wbV(c), 1.0, 0.0);
+  for (var j = 0u; j < NB; j++) {
+    let piece = select(c + NB - 1u, c, e == 1u) % NB;
+    let nc = select(c + NB - 1u, c + 1u, e == 1u) % NB;
+    if (wbGap(piece)) { break; }
+    let l = max(distance(wbV(c), wbV(nc)), 1e-4);
+    let d = (wbV(nc) - wbV(c)) / l;
+    if (acc + l >= s) { return vec4<f32>(wbV(c) + d * (s - acc), d); }
+    acc += l;
+    c = nc;
+    last = vec4<f32>(wbV(c), d);
+  }
+  return vec4<f32>(last.xy + last.zw * (s - acc), last.zw);
+}
+/** the run's side toward the town at a point of it (x, y, direction: runPos) */
+fn townSide(r: vec4<f32>) -> vec2<f32> {
+  let n = vec2<f32>(-r.w, r.z);
+  return select(-n, n, dot(n, u.d.xy - r.xy) >= 0.0);
+}
+/** a stair at end e of piece b: its foot (x, y; z the ground there — the column's height, as the living town reads it):
+ *  beside its first step on the town's side */
+fn stairFoot(b: u32, e: u32) -> vec3<f32> {
+  let r = runPos(b, e, STAIR_START + 0.5 * STAIR_RUN);
+  let f = r.xy + townSide(r) * STAIR_FOOT_OUT;
+  return vec3<f32>(f, r3(ixp(f)));
+}
+/** step k's top (world z): equal rises from the foot's ground to the deck at the stair's reach */
+fn stairTop(b: u32, e: u32, k: u32) -> f32 {
+  let z0 = stairFoot(b, e).z;
+  return z0 + (runDeck(b, e, STAIR_REACH) - z0) * f32(k + 1u) / f32(STAIR_STEPS + 1u);
+}
+/** a tower's square's way at corner b: the ring's there (the next corner less the one before); beside a gap, its wall
+ *  piece's — the stair starts STAIR_START along that piece from the corner, and a square turned to a long or slanted
+ *  gate's line stood over its first steps (Bumku) */
+fn towerDir(b: u32) -> vec2<f32> {
+  var d = wbV(b + 1u) - wbV(b + NB - 1u);
+  if (wbGap(b + NB - 1u) && !wbGap(b)) { d = wbV(b + 1u) - wbV(b); }
+  if (wbGap(b) && !wbGap(b + NB - 1u)) { d = wbV(b) - wbV(b + NB - 1u); }
+  if (length(d) < 1e-3) { return vec2<f32>(1.0, 0.0); }
+  return normalize(d);
+}
+/** wall vertex ids (TG_WALL, after the segment): 128 a tower, 256 a foot, 512 a stair's step (k at bit 10), a bastion */
+const ID_STAIR: u32 = 512u;
+const ID_BASTION: u32 = 16384u;
 /** one thread a ring segment (made): its wall piece (not at a gate) and its corner's tower, at full height — TG_WALL
  *  (tlRise: its rise) (b1 WALL, r3 the heights, b4 the distance field; w5 VTAG, w7 the mesh; args) */
 @compute @workgroup_size(128)
@@ -3740,54 +3838,79 @@ fn wallMesh(@builtin(local_invocation_index) li: u32) {
     wbox(at, p, q, WALL_HW, WALL_H, C_WALLSTONE, TG_WALL | ((li + 1u) << 8u), TG_WALL | (((li | 256u) + 1u) << 8u), false);
   }
   // (SL19: a stair up to the wall-walk at each end of each run of wall — beside a gate, or where water or a cliff
-  // breaks it — on the town's side, rising away from the gap: every post's walk reached from the town)
+  // breaks it — on the town's side, rising away from the gap: every post's walk reached from the town. U2-WALLSTAIR:
+  // its steps' tops are heights (stairTop), each box's foot at the ground or under its top, whichever is lower; shown
+  // once its piece has risen — tlRise)
   for (var e = 0u; e < 2u; e++) {
     if (!wbStair(li, e)) { continue; }
     let at = room(30u * STAIR_STEPS);
     if (at == NONE) { return; }
     for (var k = 0u; k < STAIR_STEPS; k++) {
       let sq = stairStep(li, k, e);
-      let h = WALL_H * f32(k + 1u) / f32(STAIR_STEPS + 1u);
-      let id = li | 128u | 512u | (k << 10u);
-      wbox(at + 30u * k, sq[0], sq[1], STAIR_HW, h, C_WALLSTONE, TG_WALL | ((id + 1u) << 8u), TG_WALL | (((id | 256u) + 1u) << 8u), true);
+      let t = stairTop(li, e, k);
+      let id = li | 128u | ID_STAIR | (k << 10u);
+      wboxZ(at + 30u * k, sq[0], sq[1], STAIR_HW, min(hAt(sq[0]) - 0.4, t - 0.3), min(hAt(sq[1]) - 0.4, t - 0.3), t, t, C_WALLSTONE,
+        TG_WALL | ((id + 1u) << 8u), TG_WALL | (((id | 256u) + 1u) << 8u), true);
     }
   }
   if (wbTower(li)) {
     let at = room(30u);
     if (at == NONE) { return; }
-    // (the tower square on the ring's direction there)
-    var d = q - wbV(li + NB - 1u);
-    if (length(d) < 1e-3) { d = vec2<f32>(1.0, 0.0); }
-    let e = normalize(d) * TOWER_HW;
-    let id = li | 128u;
-    wbox(at, p - e, p + e, TOWER_HW, TOWER_H, C_TOWER, TG_WALL | ((id + 1u) << 8u), TG_WALL | (((id | 256u) + 1u) << 8u), true);
-  }
-}
-/** one thread a ring segment: its wall piece's and its tower's columns claimed at their risen height (spans), the road
- *  raster marked WALL_MARK under them (b1 WALL, r3 the heights, b4 the distance field; w5 ROADS, w7 the claim grid) */
-@compute @workgroup_size(128)
-fn wallClaim(@builtin(local_invocation_index) li: u32) {
-  if (li >= NB || b1[0] != 1u) { return; }
-  let r = wallRise(li, b1[2], r1(4u), r1(5u), r1(6u));
-  if (r <= 0.02) { return; }
-  let p = wbV(li);
-  let q = wbV(li + 1u);
-  // (a piece is open over an arterial only beside a gate: elsewhere a road the ring runs over or along is walled — an
-  // ungated hole let walkers round the wall: trackA-unitcontracts, the side map at Muru's river road)
-  let byGate = wbGate(li + NB - 1u) || wbGate(li + 1u);
-  if (!wbGate(li) && !wbWet(li)) { wallCols(p, q, WALL_HW, WALL_H * r, byGate); }
-  for (var e = 0u; e < 2u; e++) {
-    if (!wbStair(li, e)) { continue; }
-    for (var k = 0u; k < STAIR_STEPS; k++) {
-      let sq = stairStep(li, k, e);
-      wallCols(sq[0], sq[1], STAIR_HW, WALL_H * r * f32(k + 1u) / f32(STAIR_STEPS + 1u), true);
+    // (the tower square on the ring's direction there — beside a gap, its wall piece's: towerDir)
+    let e = towerDir(li) * TOWER_HW;
+    if (wbBastion(li)) {
+      // (U2-WALLSTAIR: inside a run, a bastion — the walk crosses it: its top the deck, its foot the wall's)
+      let id = li | 128u | ID_BASTION;
+      let fa = ringFoot(li, -TOWER_HW);
+      let fb = ringFoot(li, TOWER_HW);
+      wboxZ(at, p - e, p + e, TOWER_HW, fa, fb, fa + WALL_H, fb + WALL_H, C_TOWER, TG_WALL | ((id + 1u) << 8u), TG_WALL | (((id | 256u) + 1u) << 8u), true);
+    } else {
+      let id = li | 128u;
+      wbox(at, p - e, p + e, TOWER_HW, TOWER_H, C_TOWER, TG_WALL | ((id + 1u) << 8u), TG_WALL | (((id | 256u) + 1u) << 8u), true);
     }
   }
-  if (wbTower(li)) {
-    var d = q - wbV(li + NB - 1u);
-    if (length(d) < 1e-3) { d = vec2<f32>(1.0, 0.0); }
-    let e = normalize(d) * TOWER_HW;
-    wallCols(p - e, p + e, TOWER_HW, TOWER_H * r, byGate || wbGate(li));
+}
+/** one workgroup, a thread a ring segment: its wall piece's, then the towers', then the stairs' columns claimed at their
+ *  risen height (spans: the mesh's tops — wallCols), the road raster marked WALL_MARK under them. In that order, a
+ *  barrier between (a stair cuts into its wall's inner edge and a tower's corner, never the other way, whichever thread
+ *  runs first) (b1 WALL, r3 the heights, b4 the distance field; w5 ROADS, w7 the claim grid) */
+@compute @workgroup_size(128)
+fn wallClaim(@builtin(local_invocation_index) li: u32) {
+  let made = b1[0] == 1u;
+  let s = min(li, NB - 1u);
+  let on = made && li < NB;
+  let r = select(0.0, wallRise(s, b1[2], r1(4u), r1(5u), r1(6u)), on);
+  let p = wbV(s);
+  let q = wbV(s + 1u);
+  // (a piece is open over an arterial only beside a gate: elsewhere a road the ring runs over or along is walled — an
+  // ungated hole let walkers round the wall: trackA-unitcontracts, the side map at Muru's river road)
+  let byGate = wbGate(s + NB - 1u) || wbGate(s + 1u);
+  // (the piece: its top the deck — straight between the corners, as drawn — at its rise)
+  if (r > 0.02 && !wbGate(s) && !wbWet(s)) {
+    wallCols(p, q, WALL_HW, wbZ(s) - 0.4 + WALL_H * r, wbZ(s + 1u) - 0.4 + WALL_H * r, byGate);
+  }
+  storageBarrier();
+  workgroupBarrier();
+  if (r > 0.02 && wbTower(s)) {
+    let e = towerDir(s) * TOWER_HW;
+    if (wbBastion(s)) {
+      wallCols(p - e, p + e, TOWER_HW, ringFoot(s, -TOWER_HW) + WALL_H * r, ringFoot(s, TOWER_HW) + WALL_H * r, byGate);
+    } else {
+      wallCols(p - e, p + e, TOWER_HW, hAt(p - e) - 0.4 + TOWER_H * r, hAt(p + e) - 0.4 + TOWER_H * r, byGate || wbGate(s));
+    }
+  }
+  storageBarrier();
+  workgroupBarrier();
+  // (the stairs once their piece has risen: each step's top a height)
+  if (r >= 1.0) {
+    for (var e = 0u; e < 2u; e++) {
+      if (!wbStair(s, e)) { continue; }
+      for (var k = 0u; k < STAIR_STEPS; k++) {
+        let sq = stairStep(s, k, e);
+        let t = stairTop(s, e, k);
+        wallCols(sq[0], sq[1], STAIR_HW, t, t, true);
+      }
+    }
   }
 }
 /** a gap in the ring: a gate, or water or a cliff (no piece) */
@@ -3796,37 +3919,37 @@ fn wbGap(b: u32) -> bool { return wbGate(b) || wbWet(b); }
  *  gap): its steps along the piece from that corner, on the town's side */
 fn wbStair(b: u32, e: u32) -> bool { return !wbGap(b) && select(wbGap(b + 1u), wbGap(b + NB - 1u), e == 1u); }
 fn stairStep(b: u32, k: u32, e: u32) -> array<vec2<f32>, 2> {
-  let p = wbV(b);
-  let q = wbV(b + 1u);
-  // (from the gap's corner, along the piece away from it)
-  let c = select(q, p, e == 1u);
-  let o = select(p, q, e == 1u);
-  let d = normalize(o - c);
-  // (the town's side: toward the centre)
-  var n = vec2<f32>(-d.y, d.x);
-  if (dot(n, u.d.xy - c) < 0.0) { n = -n; }
-  let a = c + d * (TOWER_HW + 0.6 + f32(k) * STAIR_RUN) + n * (WALL_HW + STAIR_HW);
-  return array<vec2<f32>, 2>(a, a + d * STAIR_RUN);
+  // (from the gap's corner, along the run away from it, beside the wall on the town's side)
+  let ra = runPos(b, e, STAIR_START + f32(k) * STAIR_RUN);
+  let rb = runPos(b, e, STAIR_START + f32(k + 1u) * STAIR_RUN);
+  return array<vec2<f32>, 2>(ra.xy + townSide(ra) * (WALL_HW + STAIR_HW), rb.xy + townSide(rb) * (WALL_HW + STAIR_HW));
 }
-fn wallCols(a: vec2<f32>, b: vec2<f32>, hw: f32, h: f32, openArt: bool) {
+/** a box's columns from a to b, half width hw (a column's centre within 0.35 of it), claimed from the ground (sunk 0.4)
+ *  up to its top — ta at a, tb at b, linear between (the mesh's); never under the ground */
+fn wallCols(a: vec2<f32>, b: vec2<f32>, hw: f32, ta: f32, tb: f32, openArt: bool) {
   let N = u32(W() * H());
   let lo = min(a, b) - vec2<f32>(hw + 1.0);
   let hi = max(a, b) + vec2<f32>(hw + 1.0);
-  let ab = b - a;
+  let L = distance(a, b);
+  let d = select(vec2<f32>(1.0, 0.0), (b - a) / max(L, 1e-4), L > 1e-4);
+  let nrm = vec2<f32>(-d.y, d.x);
   for (var y = max(i32(floor(lo.y / ROW_H)), 0); y <= min(i32(ceil(hi.y / ROW_H)), H() - 1); y++) {
     for (var x = max(i32(floor(lo.x)), 0); x <= min(i32(ceil(hi.x)), W() - 1); x++) {
       let c = cpos(x, y);
-      let t = clamp(dot(c - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
-      if (distance(c, a + ab * t) > hw + 0.35) { continue; }
+      // (a box, as drawn: a capsule's round ends reached a tower's claim 2.35 m along past its corner, over a stair's
+      // first step)
+      let s = dot(c - a, d);
+      if (s < -0.35 || s > L + 0.35 || abs(dot(c - a, nrm)) > hw + 0.35) { continue; }
       let i = ix(x, y);
       // (an arterial's columns never walled: its gate stays open whatever stands at the gate's corners — b2 the
       // arterials' distance)
       if (openArt && r2(i) < u.t.x * 0.5 + 1.0) { continue; }
       let base = hAt(c) - 0.4;
+      let top = mix(ta, tb, clamp(s / max(L, 1e-4), 0.0, 1.0));
       let so = N * 4u + i * 4u;
       w7[i * 4u + 3u] = 1u;
       set7(so, base);
-      set7(so + 1u, base + h);
+      set7(so + 1u, max(top, base));
       w7[so + 2u] = M_RUBBLE;
       w7[so + 3u] = 0u;
       w5[i] = WALL_MARK;

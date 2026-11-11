@@ -23,7 +23,9 @@
 // The wall's table (written on the GPU when the town wall's ring is made, a piece of it finishes rising, the graph
 // settles or the pool's halves move on — nothing asked by the CPU):
 //   - the wall-walk routes, one a run of wall between two gaps (a gate, or water): from the foot of the stair at the
-//     run's start, up it, along the wall's top, down the stair at its end to its foot. Listed round the ring from the
+//     run's start, up it, along the wall's top, down the stair at its end to its foot. Every point sits on the surface
+//     citygen claims there (each step's top, the deck — straight between the ring's corners at the wall's height),
+//     the deck's points at most 2 m and 0.8 m in z apart: a rider carried along it (z interpolated) stays on them. Listed round the ring from the
 //     first gate; an entry's id is ROUTE_NONE until its whole run has risen.
 //   - the gates' march routes, indexed by the arterial (the order of the atlas roads the town was given): from the gate
 //     out along that arterial to the town's box edge. Slots past the arterials' room are the filler gates (added only

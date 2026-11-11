@@ -2106,33 +2106,64 @@ fn wlCorner(b: u32) -> vec2<f32> { let o = L_WALL + WL_V + 2u * (b % WNB); retur
 /** the wall's top at corner b (world z: wbox's foot, its ground less 0.4, plus the wall's height) */
 fn wlTop(b: u32) -> f32 { return ltf(L_WALL + WL_Z + b % WNB) - 0.4 + W_WALL_H; }
 fn groundAt(p: vec2<f32>) -> f32 { return HT[ix(clamp(cat(p), vec2<i32>(0), vec2<i32>(W() - 1, Hh() - 1)))]; }
-/** a stair at end e of piece b (streets.wgsl stairStep): its corner, its way up (along the piece, away from the gap)
- *  and its side (toward the town) */
-struct Stair { c: vec2<f32>, d: vec2<f32>, n: vec2<f32> }
-fn stairOf(b: u32, e: u32) -> Stair {
-  let p = wlCorner(b);
-  let q = wlCorner(b + 1u);
-  let c = select(q, p, e == 1u);
-  let o = select(p, q, e == 1u);
-  let d = normalize(o - c);
-  var n = vec2<f32>(-d.y, d.x);
-  if (dot(n, u.t.zw - c) < 0.0) { n = -n; }
-  return Stair(c, d, n);
-}
-/** the run's wall top s metres along it from piece a's first corner (corners a … a + L) */
-fn runAt(a: u32, L: u32, s: f32) -> vec3<f32> {
+/** a stair at end e of piece b (streets.wgsl stairStep): its piece and end, and (U2-WALLSTAIR) the deck's height where
+ *  it meets the walk */
+struct Stair { b: u32, e: u32, deck: f32 }
+/** streets.wgsl STAIR_START, STAIR_REACH, STAIR_FOOT_OUT */
+const W_STAIR_START: f32 = 2.6;
+const W_STAIR_REACH: f32 = 9.2;
+const W_STAIR_FOOT_OUT: f32 = 3.15;
+/** the wall-walk's points at most this far apart along the deck (m) */
+const W_WALK_GAP: f32 = 2.0;
+/** … and at most this far apart in z (under the agents' STEP, 1.1), however steep the deck; at most this many */
+const W_WALK_RISE: f32 = 0.8;
+const W_WALK_ROOM: u32 = 400u;
+fn stairOf(b: u32, e: u32) -> Stair { return Stair(b, e, wlRunDeck(b, e, W_STAIR_REACH)); }
+/** the point s metres along the run from the gap's corner of piece b (e), on the ring's corners, and the run's way
+ *  there; past the run's far end straight on (streets.wgsl runPos) */
+fn wlRunPos(b: u32, e: u32, s: f32) -> vec4<f32> {
+  var c = select(b + 1u, b, e == 1u) % WNB;
   var acc = 0.0;
-  for (var j = 0u; j < L; j++) {
-    let p = wlCorner(a + j);
-    let q = wlCorner(a + j + 1u);
-    let l = distance(p, q);
-    if (acc + l >= s || j + 1u == L) {
-      let t = clamp((s - acc) / max(l, 1e-4), 0.0, 1.0);
-      return vec3<f32>(mix(p, q, t), mix(wlTop(a + j), wlTop(a + j + 1u), t));
-    }
+  var last = vec4<f32>(wlCorner(c), 1.0, 0.0);
+  for (var j = 0u; j < WNB; j++) {
+    let piece = select(c + WNB - 1u, c, e == 1u) % WNB;
+    let nc = select(c + WNB - 1u, c + 1u, e == 1u) % WNB;
+    if (wlKind(piece) != 0u) { break; }
+    let l = max(distance(wlCorner(c), wlCorner(nc)), 1e-4);
+    let d = (wlCorner(nc) - wlCorner(c)) / l;
+    if (acc + l >= s) { return vec4<f32>(wlCorner(c) + d * (s - acc), d); }
     acc += l;
+    c = nc;
+    last = vec4<f32>(wlCorner(c), d);
   }
-  return vec3<f32>(wlCorner(a), wlTop(a));
+  return vec4<f32>(last.xy + last.zw * (s - acc), last.zw);
+}
+/** the run's side toward the town at a point of it (streets.wgsl townSide) */
+fn wlTownSide(r: vec4<f32>) -> vec2<f32> {
+  let n = vec2<f32>(-r.w, r.z);
+  return select(-n, n, dot(n, u.t.zw - r.xy) >= 0.0);
+}
+/** a stair's foot: beside its first step on the town's side (streets.wgsl stairFoot) */
+fn stairFootAt(st: Stair) -> vec2<f32> {
+  let r = wlRunPos(st.b, st.e, W_STAIR_START + 0.5 * W_STAIR_RUN);
+  return r.xy + wlTownSide(r) * W_STAIR_FOOT_OUT;
+}
+/** (U2-WALLSTAIR) the deck's height s metres along the run from the gap's corner of piece b (e: stairOf's end), clamped
+ *  at the run's far end: streets.wgsl runDeck — the claimed deck, straight between the corners at WALL_H over their
+ *  ground */
+fn wlRunDeck(b: u32, e: u32, s: f32) -> f32 {
+  var c = select(b + 1u, b, e == 1u) % WNB;
+  var acc = 0.0;
+  for (var j = 0u; j < WNB; j++) {
+    let piece = select(c + WNB - 1u, c, e == 1u) % WNB;
+    let nc = select(c + WNB - 1u, c + 1u, e == 1u) % WNB;
+    if (wlKind(piece) != 0u) { break; }
+    let l = distance(wlCorner(c), wlCorner(nc));
+    if (acc + l >= s) { return mix(wlTop(c), wlTop(nc), clamp((s - acc) / max(l, 1e-4), 0.0, 1.0)); }
+    acc += l;
+    c = nc;
+  }
+  return wlTop(c);
 }
 struct WalkW { at: u32, n: u32, room: u32, prev: vec3<f32>, len: f32 }
 fn wwPut(s: ptr<function, WalkW>, p: vec3<f32>, width: f32) {
@@ -2142,48 +2173,61 @@ fn wwPut(s: ptr<function, WalkW>, p: vec3<f32>, width: f32) {
   (*s).prev = p;
   (*s).n += 1u;
 }
-/** a stair's points: its foot on the ground, then each step's top (up: from the foot; down: to it) */
+/** a stair's points: its foot on the ground, then each step's middle at its top (up: from the foot; down: to it).
+ *  U2-WALLSTAIR: the steps as citygen claims them (streets.wgsl stairStep, stairTop) — along the run, equal rises from
+ *  the foot's ground to the deck */
 fn wwStair(s: ptr<function, WalkW>, st: Stair, up: bool) {
-  let side = st.n * (W_WALL_HW + W_STAIR_HW);
-  let foot = st.c + st.d * (W_TOWER_HW + 0.6 - 0.8) + side;
-  if (up) { wwPut(s, vec3<f32>(foot, groundAt(foot)), 2.0 * W_STAIR_HW); }
+  let foot = stairFootAt(st);
+  let z0 = groundAt(foot);
+  if (up) { wwPut(s, vec3<f32>(foot, z0), 2.0 * W_STAIR_HW); }
   for (var j = 0u; j < W_STAIR_STEPS; j++) {
     let k = select(W_STAIR_STEPS - 1u - j, j, up);
-    let a = st.c + st.d * (W_TOWER_HW + 0.6 + f32(k) * W_STAIR_RUN) + side;
-    let z = groundAt(a) - 0.4 + W_WALL_H * f32(k + 1u) / f32(W_STAIR_STEPS + 1u);
-    wwPut(s, vec3<f32>(a + st.d * (0.5 * W_STAIR_RUN), z), 2.0 * W_STAIR_HW);
+    let ra = wlRunPos(st.b, st.e, W_STAIR_START + f32(k) * W_STAIR_RUN);
+    let rb = wlRunPos(st.b, st.e, W_STAIR_START + f32(k + 1u) * W_STAIR_RUN);
+    let m = 0.5 * (ra.xy + wlTownSide(ra) * (W_WALL_HW + W_STAIR_HW) + rb.xy + wlTownSide(rb) * (W_WALL_HW + W_STAIR_HW));
+    let z = z0 + (st.deck - z0) * f32(k + 1u) / f32(W_STAIR_STEPS + 1u);
+    wwPut(s, vec3<f32>(m, z), 2.0 * W_STAIR_HW);
   }
-  if (!up) { wwPut(s, vec3<f32>(foot, groundAt(foot)), 2.0 * W_STAIR_HW); }
+  if (!up) { wwPut(s, vec3<f32>(foot, z0), 2.0 * W_STAIR_HW); }
 }
-/** run r's wall-walk route: up the stair at its start (piece a's near end), along the wall's top (its corners), down
- *  the stair at its end (piece b's far end). Its id with its generation, or NONE (the pool's half full) */
+/** run r's wall-walk route: up the stair at its start (piece a's near end), along the wall's top, down the stair at its
+ *  end (piece b's far end). U2-WALLSTAIR: the walk's points on the ring's line at the claimed deck's height
+ *  (wlRunDeck), at most W_WALK_GAP apart (W_WALK_RISE in z), so a rider carried along it (z interpolated) stays on the
+ *  deck. Its id with its generation, or NONE (the pool's half full) */
 fn wallWalkTrace(r: u32) -> u32 {
   let w = lt(L_WALL + WL_RUN + r);
   let a = w & 0xffu;
   let b = (w >> 8u) & 0xffu;
   let L = (b + WNB - a) % WNB + 1u;
   var total = 0.0;
-  for (var j = 0u; j < L; j++) { total += distance(wlCorner(a + j), wlCorner(a + j + 1u)); }
-  let np = L + 2u * W_STAIR_STEPS + 4u;
+  var slope = 0.0;
+  for (var j = 0u; j < L; j++) {
+    let l = distance(wlCorner(a + j), wlCorner(a + j + 1u));
+    total += l;
+    slope = max(slope, abs(wlTop(a + j + 1u) - wlTop(a + j)) / max(l, 1e-3));
+  }
+  // (a run shorter than its two stairs — citygen's are a fixed 9.2 m along the run from the gap's corner, so they'd
+  // overlap — gets its first stair only: up it and onto the walk, a dead end)
+  let reach = W_STAIR_REACH;
+  let isLong = total >= 2.0 * reach;
+  // (closer where the deck is steep: consecutive points within W_WALK_RISE in z)
+  let gap = min(W_WALK_GAP, W_WALK_RISE / max(slope, 1e-3));
+  let gaps = select(0u, min(u32(ceil((total - 2.0 * reach) / gap)), W_WALK_ROOM), isLong);
+  let np = 2u * W_STAIR_STEPS + 4u + gaps + 1u;
   let al = alloc(np);
   if (al.x == NONE) { return NONE; }
   var s = WalkW(al.x, 0u, np, vec3<f32>(0.0), 0.0);
-  // (where a stair meets the walk: beside its top step's far end, on the wall's line from its corner. A run shorter
-  // than its two stairs — citygen's stairs are a fixed 9.2 m from the gap's corner, so they'd overlap — gets its first
-  // stair only: up it and onto the walk, a dead end)
-  let reach = W_TOWER_HW + 0.6 + f32(W_STAIR_STEPS) * W_STAIR_RUN;
   let sa = stairOf(a, 1u);
-  let sb = stairOf(b, 0u);
   wwStair(&s, sa, true);
-  wwPut(&s, vec3<f32>(sa.c + sa.d * reach, runAt(a, L, min(reach, total)).z), 2.0 * W_WALL_HW);
-  if (total >= 2.0 * reach) {
-    var acc = 0.0;
-    for (var j = 0u; j + 1u < L; j++) {
-      acc += distance(wlCorner(a + j), wlCorner(a + j + 1u));
-      if (acc > reach && acc < total - reach) { wwPut(&s, vec3<f32>(wlCorner(a + j + 1u), wlTop(a + j + 1u)), 2.0 * W_WALL_HW); }
+  wwPut(&s, vec3<f32>(wlRunPos(a, 1u, reach).xy, sa.deck), 2.0 * W_WALL_HW);
+  if (isLong) {
+    // (along the deck from the first stair's top to the second's, a point at most W_WALK_GAP apart)
+    let span = total - 2.0 * reach;
+    for (var j = 1u; j <= gaps; j++) {
+      let at = reach + span * f32(j) / f32(gaps);
+      wwPut(&s, vec3<f32>(wlRunPos(a, 1u, at).xy, wlRunDeck(a, 1u, at)), 2.0 * W_WALL_HW);
     }
-    wwPut(&s, vec3<f32>(sb.c + sb.d * reach, runAt(a, L, total - reach).z), 2.0 * W_WALL_HW);
-    wwStair(&s, sb, false);
+    wwStair(&s, stairOf(b, 0u), false);
   }
   setHead(al.y, al.x, s.n, s.len, genOf(al.y));
   return al.y | (genOf(al.y) << 16u);
@@ -2248,7 +2292,8 @@ fn wallWork(@builtin(local_invocation_index) li: u32) {
       let nb = select(li + 1u, li + WNB - 1u, e == 1u);
       if (!up || wlKind(nb) == 0u) { continue; }
       let st = stairOf(li, e);
-      if (footReached(st.c + st.d * (W_TOWER_HW + 0.6 - 0.8) + st.n * (W_WALL_HW + W_STAIR_HW + 0.8))) { foot = 1u; }
+      let fr = wlRunPos(li, e, W_STAIR_START + 0.5 * W_STAIR_RUN);
+      if (footReached(stairFootAt(st) + wlTownSide(fr) * 0.8)) { foot = 1u; }
     }
     wpFoot[li] = foot;
   }
