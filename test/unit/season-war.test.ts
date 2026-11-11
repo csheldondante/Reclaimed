@@ -4,9 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { START_INCOME, START_POOLS } from '../../src/season/catalog';
 import { grant, lose, newLedger, pools, total } from '../../src/season/ledger';
 import { decodeNamed, TownForces } from '../../src/season/forces';
-import { raidPlaces, SeasonWar, settle, SQUAD, waveIn, waveSize } from '../../src/season/war';
+import { MAX_SQUADS, raidPlaces, SeasonWar, settle, SQUAD, waveIn, waveSize } from '../../src/season/war';
 import { fightLine, NO_SOLDIERS, SOLDIERS_NO_PLACE, soldiersLine, WAVE_NO_ROAD, waveNowLine, waveSoonLine } from '../../src/season/words';
-import { NAMED_PLACES, PLACE, PLACE_STATUS } from '../../src/api/contracts/townplaces';
+import { NAMED_PLACES, PLACE, PLACE_STATUS, type PlaceRef } from '../../src/api/contracts/townplaces';
 import type { UnitId, UnitJob, Units, UnitView, V2 } from '../../src/api/contracts/units';
 import { lint } from '../support/writing';
 
@@ -155,7 +155,7 @@ describe('TownForces (the adapter, interim read)', () => {
     expect(units.orders.at(-1)!.job).toEqual({ kind: 'go', to: [17, 27] });
     // (no gate standing: from its own spawn point to the stores)
     const none = forces(table({ [PLACE.spawn0 + 1]: [PLACE_STATUS.ok, 1, 0], [PLACE.stores]: [PLACE_STATUS.ok, 4, 4] }));
-    const p = raidPlaces(0, 1);
+    const p = raidPlaces(0, 1, true);
     const g2 = none.f.spawnAt('raider', 'f-raiders', p.from, 1);
     none.f.orderGroup(g2, { kind: 'attack', at: p.to });
     await none.tick();
@@ -192,6 +192,35 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
     expect(s.line).toBe(fightLine({ raiders: 4, left: 1, fallen: 2, might: 1, materials: 1, unrest: 1 }));
     expect(total(s.ledger, 'might')).toBe(total(l, 'might') - 1);
     expect(units.views.has(raiders[0].id)).toBe(false);
+  });
+
+  it('searches the gates and arterials a window of three at a time (chains of 3: the next window on orderFailed)', async () => {
+    const t = table({ [PLACE.muster]: [PLACE_STATUS.ok, 1, 1], [PLACE.gate0 + 7]: [PLACE_STATUS.ok, 8, 8], [PLACE.spawn0 + 7]: [PLACE_STATUS.ok, 40, 40] });
+    const { f, units, tick } = forces(t);
+    const l = { ...grant(start(), { might: 1 }), season: 4, built: ['walls'] };
+    const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 4, ledger: () => l });
+    war.season(l);
+    await tick(8);
+    const guards = [...units.views.values()].filter((v) => v.kind === 'guard');
+    expect(guards.length).toBe(SQUAD * 2);
+    // (every squad's last order: gate 7, found in its third or fourth window)
+    for (const v of guards) expect(units.orders.filter((o) => o.who.includes(v.id)).at(-1)!.job).toEqual({ kind: 'guard', at: [18, 28], radius: 5 });
+    const raiders = [...units.views.values()].filter((v) => v.kind === 'raider');
+    expect(raiders.length).toBe(waveSize(0));
+    // (at spawn point 7 — window [10, 20] + (40, 40) — the first on its 1.2-cell ring)
+    expect(raiders[0].at!.slice(0, 2)).toEqual([51.2, 60]);
+    expect(war.lines[0]).toBe(soldiersLine(SQUAD * 2, 'gates'));
+  });
+
+  it('caps the squads at MAX_SQUADS, and a chain past three choices throws', async () => {
+    const { f, units, tick } = forces(table({ [PLACE.muster]: [PLACE_STATUS.ok, 1, 1] }));
+    const l = grant(start(), { might: 10 });
+    const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 0, ledger: () => l });
+    war.season(l);
+    await tick();
+    expect(units.views.size).toBe(SQUAD * MAX_SQUADS);
+    const deep: PlaceRef = { town: 0, place: 0, else: { town: 0, place: 1, else: { town: 0, place: 2, else: { town: 0, place: 3 } } } };
+    expect(() => f.spawnAt('soldier', 'f-town', deep, 1)).toThrow(/at most 3/);
   });
 
   it('with no yard and no barracks, says so', async () => {

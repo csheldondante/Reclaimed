@@ -77,20 +77,21 @@ export default async function (lab, args) {
   for (let k = 0; k < wide + close; k++) {
     // (the gate, and a little of the road out toward the raid)
     if (k === wide && g0) {
-      const sp = n[`spawn${gates[0][0].slice(4)}`] ?? spawn;
+      // (the places read again: the window may have slid)
+      const m = await named();
+      const gate = m[gates[0][0]];
+      const sp = m[`spawn${gates[0][0].slice(4)}`];
+      const g0 = gate;
       const d = Math.hypot(sp.at[0] - g0.at[0], sp.at[1] - g0.at[1]) || 1;
       lab.look(g0.at[0] + ((sp.at[0] - g0.at[0]) / d) * 6, g0.at[1] + ((sp.at[1] - g0.at[1]) / d) * 6, zoom, 0.5);
     }
     await lab.run(args.step ?? 1, 2);
     await lab.shot(k < wide ? `forces-wide-${String(k).padStart(3, '0')}` : `forces-close-${String(k - wide).padStart(3, '0')}`);
     if (k % 5 === 4) note(`raid frame ${k}`);
+    // (the squads at the gate: their walk from the yard takes about as long as the raid's — they're there by the close
+    // frames' end; a still made in a run of its own hits UC-6's water blow-up as often as not)
+    if (k === wide + close - 1) await lab.shot('forces-2-gate');
     if (k === wide + Math.floor(close / 2)) await lab.shot('forces-3-fight');
-  }
-  // the squads at the gates
-  const g = gates[0]?.[1];
-  if (g) {
-    lab.look(g.at[0], g.at[1], zoom, 0.5);
-    await lab.shot('forces-2-gate');
   }
   const before = { might: S.ledger.holdings.agents.filter((x) => x.kind === 'army').length, materials: S.ledger.holdings.goods.materials, unrest: S.ledger.holdings.goods.unrest };
   await season();

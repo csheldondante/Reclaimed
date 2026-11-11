@@ -22314,3 +22314,21 @@ run in six hit UC-6 (Muru's water blows up: the river rose over the east side an
 **Seen in the shots:** the fight at the gate reads at zoom 18 (red torch-bearers on the road, grey soldiers between the
 gate towers, the blows' slashes). At the town's opening zoom the figures are a few pixels (SF-4), and the muster yard
 at Muru is a courtyard whose houses hide most of the soldiers at 60° (SF-3).
+
+### Forces, round 2: chains of three, six squads, the boot-hang report (trackA-forces)
+
+- **Chains of at most 3** (Track B's rule for `else`, accepted with `also` and resolved on the GPU): my chains were 10
+  deep (every gate slot) and 8 (every arterial). Now a window of three a call and the next window on `orderFailed` —
+  the event Track B's GPU orders send — so the longer search is the season's, a handful of events at a season's start.
+  The adapter throws on a deeper chain at call time, as Track B's will.
+- **Six squads at most** (Track B's 8 order groups: a raid, 6 squads, a spare). PlaceRef's district form's `purpose`
+  is `kind` now (the lot kind lotAt takes), matching Track B's rename.
+- **The boot hang with `?wave=1`** (the coordinator: "the GPU never finished", 2 of 2 runs, right after Muru is made):
+  not reproduced here in 7 runs on the same link — shot.mjs on the build at 412 × 915 and 960 × 540, waits of 20, 30
+  and 60 s, two pages at once on the GPU, and the Vite dev server — nor with wave=2 or no wave. What the raid adds at
+  boot: one 800 B copy and map (TownForces.read) and 4 units (spawn, order). No kernel of this branch runs per frame;
+  the 500 ms retry is a CPU timer that returns while the place table isn't live (it encodes nothing). Read but not
+  edited (Track B's): notice.wgsl's bucket lists are rebuilt each frame (clear, then one exchange a unit: no cycle) and
+  its rings are bounded by the unit's sight; the agents only read the water. Seen in every run at 60 s, wave or not:
+  UC-6 — Muru's water blows up over the town in the real game too, not only on the lab page. Track B's units-draw
+  worker also hit "GPU never finished" twice on desktop, unreproduced. Handed back with what was tried; no guard added.

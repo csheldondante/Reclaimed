@@ -62,16 +62,28 @@ export const PLACE_STATUS = {
 export type PlaceStatusName = keyof typeof PLACE_STATUS;
 
 /**
- * (trackA-forces; the calls agreed with Track B for U2 round 5) Where a group is spawned or ordered to: a town's slot and
- * a named place, or a district's lot by purpose and rank — indices only, resolved on the GPU where the order runs.
- * `else`: the next place to try when this one isn't valid (PLACE_OK) — an authored preference ("a gate, else the keep"),
- * resolved in order where the order runs; an order whose last choice isn't valid fails (`orderFailed`, the status's
- * name). `also`: a second named place of the same town that must be valid too for this choice to be taken (a raid's
- * spawn point only where its arterial's gate stands, and that gate only where its spawn point is). (`else` and `also`
- * are Track A's additions to the agreed shape: for Track B's spawnAt / orderGroup to take, or the season
- * side issues the chain itself.)
+ * (trackA-forces; the calls agreed with Track B for U2 round 5/6) Where a group is spawned or ordered to: a town's slot
+ * and a named place, or a district's lot by its lot kind (townplace.wgsl lotAt's: 1 a building … 5 a field — not the
+ * district's purpose) and rank — indices only, resolved on the GPU where the order runs.
+ * - `else`: the next place to try when this one isn't valid (PLACE_OK) — an authored preference ("a gate, else the
+ *   keep"). A chain holds at most PLACE_CHAIN choices (deeper throws on the CPU at call time). The choice taken is
+ *   sticky until it turns invalid; `orderFailed` fires only when the whole chain fails (why: the last choice's status).
+ * - `also`: one partner named place of the same town that must be valid too for this choice to be taken (a raid's
+ *   spawn point only where its arterial's gate stands, and that gate only where its spawn point is).
+ * Both accepted by Track B (2026-11-10) and resolved on the GPU in its place orders.
  */
-export type PlaceRef = ({ town: number; place: number; also?: number } | { town: number; district: number; purpose: number; rank: number }) & { else?: PlaceRef };
+export type PlaceRef = ({ town: number; place: number; also?: number } | { town: number; district: number; kind: number; rank: number }) & { else?: PlaceRef };
+
+/** the most choices a PlaceRef chain holds (the ref and its `else`s) */
+export const PLACE_CHAIN = 3;
+
+/** a chain's length (throws past PLACE_CHAIN: Track B's rule, checked at call time) */
+export function chainLength(r: PlaceRef): number {
+  let n = 0;
+  for (let x: PlaceRef | undefined = r; x; x = x.else) n++;
+  if (n > PLACE_CHAIN) throw new Error(`a place chain of ${n} choices (at most ${PLACE_CHAIN})`);
+  return n;
+}
 
 /** a group of units spawned together (spawnAt's) */
 export type GroupId = number;

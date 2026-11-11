@@ -134,9 +134,13 @@ Code: `season/forces.ts` (TownForces, the adapter), `season/war.ts` (the rules),
 for U2 round 5: `spawnAt(kind, faction, at: PlaceRef, n) → GroupId`, `orderGroup(g, { kind: 'guard' | 'go' |
 'attack', at: PlaceRef })`, events `arrived(g)` (once an order), `orderFailed(g, why)` (why: a place status's name),
 `died(g, unit, by)`, `hurt`. `PlaceRef` and `GroupId` are in the townplaces contract: `{ town, place }` or `{ town,
-district, purpose, rank }`, plus Track A's two additions — `else` (the next place to try: "a gate, else the keep") and
-`also` (valid only when a partner place is: a raid's spawn point only where its arterial's gate stands). Track B's
-place-based calls replace the adapter's insides only (SF-1).
+district, kind, rank }` (`kind` the lot kind lotAt takes: 1 a building … 5 a field), plus two additions Track B accepted
+and resolves on the GPU — `else` (the next place to try: "a gate, else the keep"; **a chain holds at most 3 choices**,
+deeper throws at call time — `PLACE_CHAIN`, `chainLength`; the choice taken is sticky until it turns invalid;
+`orderFailed` only when the whole chain fails) and `also` (one partner place that must be valid too: a raid's spawn
+point only where its arterial's gate stands). Track B's place-based calls (trackB-u2r6: spawnAt / orderGroup /
+members / arrived / orderFailed, wired by `units.usePlaces(tc.places, tc.townArea)`) replace the adapter's insides only
+(SF-1), once u2r6 is in fortress; u2r6 also moves melee to the GPU (DA-B32).
 - **Interim (to delete):** the places as points from one async read of the town's slot of the place table — 800 B (the
   header and the 23 named entries), made only when a spawn or order follows an event (a season's stages landed, a raid,
   a slide), two frames after it so the GPU's place solve has run; never per frame (`transfers.ts` TownForces.read).
@@ -151,14 +155,20 @@ place-based calls replace the adapter's insides only (SF-1).
   Might"; Might tied up in a card is busy, so its squad isn't standing), raised at the barracks, else the muster yard.
   Neither there (no walls card begun, no keep): the sheet says so ("Your soldiers have nowhere to gather …"). Squads are
   matched to the free Might when each season begins (its stages landed): the weakest sent home, new ones raised.
+  **At most 6 squads** (`MAX_SQUADS`: Track B has 8 order groups — a raid, 6 squads, a spare); Might past 6 raises no
+  more soldiers.
 - **Guards:** once the walls are built, squad j guards the first standing gate from slot j on (the squads spread over
-  the gates there are); before, they wait where they were raised.
+  the gates there are); before, they wait where they were raised. With chains of 3, the search goes a window at a time:
+  gates j, j+1, j+2; on `orderFailed` the next three; past all ten slots, where it was raised. The sheet counts soldiers
+  at the gates and in the yard apart.
 - **Raids — a fixed schedule** (the simplest fit: the dealer has no threat cards yet; a Threat card is SF-5): from
   season 4 (`FIRST_WAVE`: a walls card started in season 1 is up by then) every 3 seasons, 4, 6, 8 … raiders, warned a
   season ahead on the sheet. `?wave=N` the first raid's season (1: right away; 0: none) — the test flag.
 - **Where from and to:** raid k along the first arterial from k on whose spawn point (outside the wall) and gate both
   stand — from that spawn point, attacking that gate (closed gates count as wall in the side map, so the fight is at the
-  gate); with no such arterial, from arterial k's spawn point (else the first) to the keep, else the stores.
+  gate). A window of three arterials a call (spawn and gate chains paired by `also`); on the spawn's `orderFailed` the
+  group is let go and the next window tried; past all eight, from arterial k's spawn point (else the first) to the keep,
+  else the stores.
 - **Outcome, at Next season** (before the ledger moves on): Might −1 for each 3 soldiers fallen (rounded up: free ones
   lost first, then ones tied up in a card); raiders still alive got in — Unrest +1 and a Material each (what's there),
   and they leave. The summary line says it ("You beat the raiders. 1 soldier died. You lost 1 Might.").

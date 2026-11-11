@@ -12,7 +12,7 @@
 // none walking — no position read), orderFailed from the read's statuses.
 import type { FactionId } from '../api/contracts/world';
 import type { UnitId, Units, UnitView, V2 } from '../api/contracts/units';
-import { NAMED_PLACES, PLACE_STATUS, type GroupId, type PlaceRef, type PlaceStatusName } from '../api/contracts/townplaces';
+import { chainLength, NAMED_PLACES, PLACE_STATUS, type GroupId, type PlaceRef, type PlaceStatusName } from '../api/contracts/townplaces';
 import { TOWN_WORDS } from '../towncontracts/contracts';
 
 /** what the adapter reads the places from: the town contracts' table (TownContractsApi) and its device */
@@ -121,6 +121,7 @@ export class TownForces {
 
   /** n units of a kind at a place: the group's id now, its units once the place is found (or orderFailed) */
   spawnAt(kind: ForceKind, faction: FactionId, at: PlaceRef, n: number): GroupId {
+    chainLength(at);
     const g: Group = { id: this.next++, kind, faction, units: [], dead: 0, order: null, walked: new Set(), arrived: false, failed: null, token: 0 };
     this.groups.set(g.id, g);
     const token = ++g.token;
@@ -147,6 +148,7 @@ export class TownForces {
   orderGroup(id: GroupId, order: ForceOrder): void {
     const g = this.groups.get(id);
     if (!g) throw new Error(`forces: no group ${id}`);
+    chainLength(order.at);
     g.order = order;
     g.arrived = false;
     g.walked.clear();
@@ -231,7 +233,7 @@ export class TownForces {
   /** a place chain's first valid place (window x, y), or the last one's status */
   private async resolve(ref: PlaceRef): Promise<{ at: V2 | null; why: PlaceStatusName }> {
     for (let r: PlaceRef | undefined = ref; r; r = r.else) {
-      if (!('place' in r)) throw new Error('forces: a district place (district, purpose, rank) waits for Track B’s spawnAt / orderGroup — the interim read holds the named places only');
+      if (!('place' in r)) throw new Error('forces: a district place (district, kind, rank) waits for Track B’s spawnAt / orderGroup — the interim read holds the named places only');
       if (r.town < 0) {
         if (!r.else) return { at: null, why: 'noTown' };
         continue;
