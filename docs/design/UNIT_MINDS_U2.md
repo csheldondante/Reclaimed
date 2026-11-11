@@ -464,6 +464,52 @@ units.orderFailed?: ((g: GroupId, why: OrderFailure) => void)[]       // once an
 | Indirection cost | Relax: one table read per neighbour page per workgroup (9 per page), not per cell. Steer (`downField`): one table read for the unit's chunk, and one per neighbour across a chunk border (on average under one a step). Expected to be noise next to the 6 neighbour distance reads. To be measured by a toggle diff in the battle scene. |
 | Pool full | A failed pop sets `pageFails` and emits EV_ORDER_FAILED(POOL_FULL) once a frame. The CPU shows it as the **fatal overlay**. The field still works where it has pages. |
 
+**Round 7, step 1 — measured (trackB-u2r9).** Relax over pages with block relaxation, built standalone beside the
+planes (`shaders/pages.wgsl`, `agents/pages.ts`) over the agents' own surfaces. Test: `test/gpu/pages.test.ts`.
+- **Layout.** A page is a field over a chunk: 16 × 16 columns × NAV_K = 1024 distances, 4 KB. The page table is a row a
+  field of a word a chunk slot (page + 1); a slide keeps its slots, since the slots are the ring's.
+- **Growth.**
+  - The dirty bits are a bit a (field, chunk), twice, with the parity flipped on the GPU so many sweeps go in one submit.
+  - Requests are a bit a (field, chunk). pgAlloc claims a page from the free stack, else off the pool's end, and counts
+    a refusal when the pool is full.
+  - The front is a (field, chunk) whose own or a neighbour's mark is set, with a page on the marked side. Its relax
+    workgroups are counted for an indirect dispatch (args in their own buffer).
+  - pgRelax is relaxBlock's tile and halo, read through the neighbours' pages (no page: FAR). A pageless chunk that came
+    out finite asks for a page, so a field grows a chunk a sweep at its edge.
+- **Freeing.** pgRelease puts a field's pages on the free stack (a field started over, or its id recycled).
+- **Reach.** A field's reach (cost) caps its values, so it asks for no page past it: the memory follows the ground it
+  covers.
+- **Measured** (open / wall / S-bend, 128², a seed moved 86–112 cells after settling, released and refilled):
+  - the field equals the CPU BFS everywhere: worst 0, none under;
+  - the 40 cells round the new seed are right within **5 frames** of 2 sweeps (the planes' gate is ≤ 10);
+  - the whole window is right within 9–13 frames;
+  - three fields reaching 20 cells hold 30 pages (120 KB), against 192 for three whole-window planes (768 KB). A field
+    let go and seeded elsewhere reuses the freed pages (28 held, none refused).
+- **Not yet in it:** roads (ROAD_COST), confined fields (fieldPlace), the seed-id plane (a moved seed is released and
+  refilled instead, as the planes' restart), the scope box (the whole window is relaxed), and the CPU's seeds as a list
+  (the test hands them over). Each is a rule relaxBlock already has, carried over as the planes move onto pages.
+
+**Round 7, the rest — the plan, step by step, each against the planes behind a toggle until it matches:**
+1. **The seam reads pages.** `fieldDist` / `fieldGrad` go through the table (pgDist).
+   - unitStep's `here` and `downField`, the hunt and the JFA read through it too.
+   - `dist` becomes the pool, and the table rides in the same buffer, so unitStep keeps its 8 bindings.
+2. **Field ids, not a count.**
+   - The CPU hands out field ids from a recycled list: rows of the table, as many as memory gives.
+   - NFIELDS, ROAD_FIELD's fixed slot, `groupField`'s 24 groups, the order groups' 8 and OrderFields' 7 all go. A
+     group's field is its own id in the row, and the row's group bits widen.
+   - `orderFailed('pool-full')` only when pages run out, together with the visible error.
+3. **Seeds as lists.** The GPU's seeds (hunt, orders) and the CPU's (AP.seeds) become one seed list per field, marked
+   per page. seedMask's bit per field goes.
+4. **Per-side fields (§9e).**
+   - The hunt and foes fields become `hunt[s]` and `threat[s]`, through a side → field table.
+   - A side relation matrix (≤ 16 × 16, written once as an order) replaces notice's faction test.
+   - AgentUnits' GOALS / F.* fixed fields go: a job's goal is an order field like any other.
+5. **The front and relax over pages for every field.**
+   - The planes' relax, links marks, clearFields and markChunks retire.
+   - The scope stays as the box the front walks.
+6. **Bench.** `?fieldbench=1` gains a pages phase (absolute cost, and against the planes while both exist) and three
+   armies with per-side fields.
+
 ### 9c. Manning walls: a formation along the wall-walk
 
 `man {town, side?}`:

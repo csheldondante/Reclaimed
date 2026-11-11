@@ -22612,3 +22612,26 @@ lab's columns deeper than 0.9 by tick 6 400, depths to 35 000; soldiers drown in
     - a spawn's failure frees the group, and every later order to it fails the same;
     - test (formations.test.ts): "spawnAt at a missing place, then orderGroup guard → 0 units, the failure sticking; a
       spawn past the groups → pool-full".
+
+## 2026-11-11 — U2 round 7, step 1: relax over pages, the riskiest part first (trackB-u2r9)
+
+- **What was built.** The paged field atlas's core, standalone beside the planes: `shaders/pages.wgsl` and
+  `agents/pages.ts` (FieldPages), over the agents' surfaces (Agents.pageHost).
+  - A page is a field over a chunk (4 KB).
+  - Each field has a row of the page table (chunk slot → page).
+  - The GPU claims pages as a field grows into a chunk (the free stack, else the pool's end; a refusal is counted when
+    the pool is full), and frees them on release.
+  - Dirty and request bits are per (field, chunk); the front and relax run over pages with block relaxation (relaxBlock's
+    tile and halo through the neighbours' pages).
+  - There is no fixed field count: the table's rows and the pool's pages are set from memory.
+- **Why first:** the coordinator's order — the reaction gate, the BFS and memory decide whether pages can carry the
+  fields before anything moves onto them.
+- **Measured** (test/gpu/pages.test.ts, 128², a seed moved 86–112 cells: released and refilled):
+  - **correct:** the field equals the CPU BFS on open ground, round a wall's gap and through an S-bend (worst 0, none
+    under);
+  - **reaction:** 40 cells round the new seed right in 5 frames of 2 sweeps (the gate is ≤ 10); the whole window in 9–13;
+  - **memory:** three fields reaching 20 cells hold 30 pages (120 KB), against 192 for three whole-window planes
+    (768 KB). After one field is released and seeded elsewhere it reuses the freed pages (28 held, none refused).
+- **Not yet carried over:** roads, confined fields, the seed-id plane (a moved seed is released and refilled, as the
+  planes restart), the scope box, and the seed lists. The rest of the round is the plan in UNIT_MINDS_U2 §9b (steps
+  1–6). Nothing in play uses pages yet.
