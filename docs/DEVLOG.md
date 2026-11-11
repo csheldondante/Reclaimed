@@ -22472,3 +22472,65 @@ it each frame over townplace.wgsl (binding 57):
     is under water there too. The water isn't fixed here.
 - Tests: season-war rewritten over a fake Units with place orders (chains, `also`, a spawn's failure removing its units,
   pool-full by fields and by groups), season and the transfers gate pass.
+## 2026-11-11 — U2 round 6: drill, man, march and formations on the GPU (trackB-u2r8)
+
+- **The orders** (UNIT_MINDS_U2 §9c/§9d; signatures in api/contracts/units.ts `SquadOrder` and the CROSS_TRACK_CONTRACT
+  log):
+  - `drill {at, formation}`;
+  - `man {town, side?}`;
+  - `march {town, gate, leave?}`;
+  - go / guard / attack with a `formation`.
+- **How they run.** Every one is resolved on the GPU from indices.
+  - Two kernels run before every step:
+    - formAnchor, a thread a group, moves the route, the loop or the field anchor;
+    - formSlots, a thread a rank, gives each rank its target and how to reach it.
+  - They read the town's routes (routeread at binding 56: `Agents.useRoutes(LivingTowns.routeRead(site).buffer)`, one
+    town at a time), the obstacle JFA's clearance, and the fields.
+  - The step reads its rank's entry (`mail`): steer to a target, or follow a field.
+- **Widths.**
+  - On a route: routeWidth.
+  - Off it: the clearance, stepping out left and right to the first column under 0.7.
+  - Each row's columns come from its own width.
+- **Pace.** The anchor waits while any rank lags past 3 cells.
+- **A march that leaves:** units drop out within 2 cells of the window's edge (EV_LEFT 22, no death; the CPU frees the
+  slot), and `left(g)` is told once.
+- **Tests.** test/gpu/formations.test.ts, against stand-in place and route tables in their contracts' layouts:
+  - a march along a route 1.1 m wide for 10 cells: max 0.40 off the line there, 3 abreast after, arrived once;
+  - an off-road line through a 4-row gap: 9 abreast down to 1, all 9 through, arrived once.
+  - unitminds-u2's two §9d skeletons are retired in favour of these.
+- **The lab** (scripts/lab/townwalls.mjs, gputown). Fortress still floods Muru: on u2r8 alone every soldier drowned,
+  with the live water at Infinity, so the gate fails "flooded" (UC-6). The vertical streaks in its shots are that flood's
+  water, not the window streaming: the earlier townorders streak was on a flooded run too.
+  - Merged in a throwaway branch with trackA-uc6:
+    - march out of gate 2: arrived once in 116 s, 12/12;
+    - march leaving: `left` told once, none left in the window;
+    - **man: not passing.** All 12 soldiers stand at the top of their run's stair, 3.7 m up, but the walk isn't reachable.
+  - Why man fails:
+    - Their run field's surface there is z 104.8–104.9. routeread's walk points just past the stair are at 106.2–107.8,
+      where the nav has no surface.
+    - The wall's top is at 109.0, and it reads FAR from the run's foot.
+    - The shot shows the stair ending well below the wall's top.
+  - This is a geometry mismatch between the wall's stair and its walk, Track A's. Asked in the log; BACKLOG U2-WALLSTAIR.
+- **Post placement** now uses the walk between the stairs (by the route's width, stairs ≤ 1.4 m), not only its highest
+  stretch.
+- **The field seam (for round 7's paged atlas).** Round 6's orders reach fields only through two seams:
+  - `src/shaders/fieldseam.wgsl`: fieldDist, fieldGrad, fieldSeed, fieldUnseed;
+  - `src/agents/fieldseam.ts`: OrderFields.fieldFor(holder, key, want) / release / of — the 7 order fields, shared by key.
+  - orders.wgsl and AgentUnits' order code don't touch `dist`, `seedMask` or `dirtyCur` otherwise.
+  - Fields are used only where nothing else can do: a march's gathering at its route's start, a man order's run feet, a
+    drill's yard, a field march's anchor. The rest is routes (routeread), anchor-relative slots and the clearance plane.
+  - No new field table or cap: man takes up to 3 of the 7 fields, runs sharing them modulo.
+- **Track A's three asks.**
+  - **`spawnAt` never throws for groups.** Past the 8 order groups it returns a group id, makes no unit, and tells
+    `orderFailed(g, 'pool-full')`; the failure sticks.
+  - **`spawnAt(…, opts)`** with `{sight, speed, health, damage}`:
+    - sight and health are per unit;
+    - damage is per unit only for a blow at an actor; units' blows at units are their kind's on the GPU;
+    - speed picks the kind's pace class. The soldier is now a kind of its own (slot 1, pace 3.2), and the raider's pace
+      is 3.4, Track A's values.
+  - **A failed spawn left units.** An order sent right after `spawnAt` rewrote the group's record before the step that
+    places the spawn ran, so the spawn resolved the order's place, not its own. Fixed:
+    - orders now wait while the spawn is unresolved (`held`) and go out on its EV_SPAWNED (23, from orderApply);
+    - a spawn's failure frees the group, and every later order to it fails the same;
+    - test (formations.test.ts): "spawnAt at a missing place, then orderGroup guard → 0 units, the failure sticking; a
+      spawn past the groups → pool-full".

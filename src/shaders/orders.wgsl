@@ -35,6 +35,8 @@ const SPAWN_FAILED: u32 = 0x100u;
 const GROUP_BASE: u32 = 16u;
 const EV_GROUP_ARRIVED: u32 = 20u;
 const EV_ORDER_FAILED: u32 = 21u;
+/** (round 6) a spawn made: its place resolved, its units placed (once a spawn, by its first) */
+const EV_SPAWNED: u32 = 23u;
 const OK_NONE: u32 = 0u;
 const OK_STAND: u32 = 1u;
 const OK_GO: u32 = 2u;
@@ -152,6 +154,8 @@ fn orderApply(@builtin(global_invocation_id) id: vec3<u32>) {
         }
       }
       a = vec4<f32>(at + vec3<f32>(0.0, 0.0, 0.05), a.w);
+      // (round 6: told once, by its first — the spawn stands: the CPU sends the orders it held back till now)
+      if ((rk & ~SPAWN_BIT) == 0u) { emit(EV_SPAWNED, g, 0u, f32(grpWord(g, 7u)), at); }
     }
   }
   units[slot * UNIT_V] = vec4<f32>(a.xyz, bitcast<f32>(info));
@@ -166,8 +170,7 @@ fn grpUnseed(o: u32) {
   let prev = atomicLoad(&mail[o + 16u]);
   let pf = atomicLoad(&mail[o + 17u]);
   if (prev != 0u && pf < NFIELDS) {
-    atomicAnd(&seedMask[prev - 1u], ~(1u << pf));
-    atomicOr(&dirtyCur[(prev - 1u) / NAV_K / (COLS_PAGE * COLS_PAGE)], 1u << pf);
+    fieldUnseed(pf, prev - 1u);
   }
   atomicStore(&mail[o + 16u], 0u);
 }
@@ -212,17 +215,18 @@ fn orderResolve(@builtin(global_invocation_id) id: vec3<u32>) {
   let k = surfaceNear(i, at.z);
   if (k >= NAV_K || !inScope(c)) { grpUnseed(o); return; }
   let s = i * NAV_K + k;
+  var mark = false;
   if (atomicLoad(&mail[o + 16u]) != s + 1u || atomicLoad(&mail[o + 17u]) != f) {
     grpUnseed(o);
-    atomicOr(&dirtyCur[chunkOfCol(u32(c.x), u32(c.y))], 1u << f);
+    mark = true;
     atomicStore(&mail[o + 16u], s + 1u);
     atomicStore(&mail[o + 17u], f);
   }
   // (the CPU's ask after a window slide: the seed's chunk marked again — the fields started over where the slide brought
   // columns in, and a seed that didn't move marks nothing)
-  if (atomicExchange(&mail[o + 19u], 0u) != 0u) { atomicOr(&dirtyCur[chunkOfCol(u32(c.x), u32(c.y))], 1u << f); }
+  if (atomicExchange(&mail[o + 19u], 0u) != 0u) { mark = true; }
   // (set every frame — idempotent: another group's seed let go on this surface the same frame can't clear it for good)
-  atomicOr(&seedMask[s], 1u << f);
+  fieldSeed(f, s, mark);
 }
 
 @compute @workgroup_size(64)
@@ -322,13 +326,9 @@ fn manSeed(g: u32) {
       if (k < NAV_K && inScope(c)) { s = colIdxI(c) * NAV_K + k + 1u; }
     }
     if (prev != 0u && prev != s && f < NFIELDS) {
-      atomicAnd(&seedMask[prev - 1u], ~(1u << f));
-      atomicOr(&dirtyCur[(prev - 1u) / NAV_K / (COLS_PAGE * COLS_PAGE)], 1u << f);
+      fieldUnseed(f, prev - 1u);
     }
-    if (s != 0u) {
-      if (prev != s || remark) { atomicOr(&dirtyCur[(s - 1u) / NAV_K / (COLS_PAGE * COLS_PAGE)], 1u << f); }
-      atomicOr(&seedMask[s - 1u], 1u << f);
-    }
+    if (s != 0u) { fieldSeed(f, s - 1u, prev != s || remark); }
     atomicStore(&mail[o + 7u], s);
   }
 }
@@ -340,8 +340,7 @@ fn manUnseed(g: u32) {
     let prev = atomicLoad(&mail[o + 7u]);
     let f = (fw >> (8u * (i % nf))) & 0xffu;
     if (prev != 0u && f < NFIELDS) {
-      atomicAnd(&seedMask[prev - 1u], ~(1u << f));
-      atomicOr(&dirtyCur[(prev - 1u) / NAV_K / (COLS_PAGE * COLS_PAGE)], 1u << f);
+      fieldUnseed(f, prev - 1u);
     }
     atomicStore(&mail[o + 7u], 0u);
   }
@@ -570,10 +569,10 @@ fn formAnchor(@builtin(global_invocation_id) id: vec3<u32>) {
       let i = colIdxI(c);
       let k = surfaceNear(i, p.z);
       if (f < NFIELDS && k < NAV_K) {
-        let here = dist[f * ns() + i * NAV_K + k];
+        let here = fieldDist(f, i * NAV_K + k);
         if (here <= 0.8) { st = FS_END; }
         else if (here < FAR) {
-          let d = downField(f, i * NAV_K + k, c, p.xy, here);
+          let d = fieldGrad(f, i * NAV_K + k, c, p.xy);
           p = vec3<f32>(p.xy + d * step, p.z);
           let c2 = clampCell(cellAt(p.xy));
           let k2 = surfaceNear(colIdxI(c2), p.z);

@@ -184,6 +184,18 @@ export type SquadOrder =
   | { kind: 'man'; town: number; side?: number }
   | { kind: 'march'; town: number; gate: number; leave?: boolean };
 
+/**
+ * (U2 round 6, Track A's ask) What a spawn by place carries per unit: its sight (cells), its health (the contract's), its
+ * damage (a blow at an actor: the hero — a unit's blows at units are its kind's, on the GPU). `speed` picks the kind's
+ * pace class only (under 2.2: the slow kind): a pace is the kind's on the GPU (soldier 3.2, raider 3.4).
+ */
+export interface SpawnAtOpts {
+  sight?: number;
+  speed?: number;
+  health?: number;
+  damage?: number;
+}
+
 /** The units system as a game uses it. */
 export interface Units {
   spawn(kind: string, at: V2, faction: FactionId | null, opts?: SpawnOpts): UnitId;
@@ -239,7 +251,7 @@ export interface Units {
    * place: at its approach point, spread round it, placed on the GPU. They stand there until ordered. The place not
    * valid: none is made, and `orderFailed(g, why)` is told.
    */
-  spawnAt?(kind: string, faction: FactionId | null, at: PlaceRef, n: number): GroupId;
+  spawnAt?(kind: string, faction: FactionId | null, at: PlaceRef, n: number, opts?: SpawnAtOpts): GroupId;
   /** (U2 round 5) a group's order (it replaces the last): `arrived(g)` once when every living member stands there */
   orderGroup?(g: GroupId, o: SquadOrder): void;
   /** (U2 round 5) a group's living members */
