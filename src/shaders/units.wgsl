@@ -375,7 +375,31 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   var alight = ((info >> 15u) & 1u) != 0u;
   let height = kind.a.x;
   let mass = max(kind.a.y, 0.1);
-  let fld = AP.groupField[grp / 4u][grp % 4u];
+  var fld = AP.groupField[grp / 4u][grp % 4u];
+  // (U2 round 6, §9c/§9d) in an order group with a formation: its rank's entry (orders.wgsl formSlots, before the step)
+  // — steer straight to a target (its slot, its post, a waypoint on its route), or follow a field of the group's (a
+  // man order's run), or the group's own as ever
+  let ogw = atomicLoad(&mail[MAIL_AIM + u * AIM_W + 11u]);
+  var rankMode = 0u;
+  var rankAt = vec3<f32>(0.0);
+  var rankLeave = false;
+  if ((ogw & 0xffu) != 0u && (ogw & 0xffu) <= ORDER_GROUPS && (ogw >> 8u) < RANKS) {
+    let ro = rankO((ogw & 0xffu) - 1u, ogw >> 8u);
+    let m = atomicLoad(&mail[ro + 3u]);
+    rankMode = m & 0xffu;
+    rankLeave = (m & RANK_LEAVE) != 0u;
+    if (rankMode == RANK_FIELD) { fld = (m >> 8u) & 0xffu; }
+    rankAt = mailV3(ro);
+  }
+  // (a march that leaves: past the window's edge it drops out — no death; the CPU frees the slot on EV_LEFT)
+  if (rankLeave) {
+    let ec = cellAt(a.xy);
+    if (ec.x < 2 || ec.y < 2 || ec.x >= i32(G.mapW) - 2 || ec.y >= i32(G.mapH) - 2) {
+      emit(EV_LEFT, uid, (ogw & 0xffu) - 1u, 0.0, a.xyz);
+      units[u * UNIT_V] = vec4<f32>(a.xyz, bitcast<f32>(info & ~(1u << 8u)));
+      return;
+    }
+  }
   let N = ns();
   // (round 128o, DA-B22: the step's own dt — a tick's, or at fast-forward the ticks since the last step: agents.ts)
   let dt = AP.step.x;
@@ -778,6 +802,10 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
         // (melee in sight: straight at it, the field not waited for)
         want = (aimAt.xy - pos.xy) / aimD;
         atomicAdd(&mail[6], 1u);
+      } else if (rankMode == RANK_STEER) {
+        // (U2 round 6: its formation slot, post or waypoint — straight at it, slowing in its last cell)
+        let d = length(rankAt.xy - pos.xy);
+        want = select(vec2<f32>(0.0), (rankAt.xy - pos.xy) / max(d, 1e-3) * min(d / 0.8, 1.0), d > 0.15);
       } else if (worker && steer != 0.0) {
         // (round 128i, V128-14: riding the roads — shaders/roadride.wgsl steers it: a heading, or stand at its goal)
         want = select(vec2<f32>(cos(steer - STEER_BIAS), sin(steer - STEER_BIAS)), vec2<f32>(0.0), steer < 0.0);
@@ -800,7 +828,9 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
         crowd -= DIRV[d] * f32(atomicLoad(&occ[occAt(rd + colIdxI(q))]));
       }
       let jit = vec2<f32>(rand3(u, G.tick, 1u), rand3(u, G.tick, 2u)) - 0.5;
-      want += crowd * 0.25 + jit * 0.2 * max(mine - 1.0, 0.0);
+      // (in formation the slots keep them apart: the crowd's push a third as strong, or ranks fray)
+      let crowdK = select(0.25, 0.08, rankMode == RANK_STEER);
+      want += crowd * crowdK + jit * 0.2 * max(mine - 1.0, 0.0);
     }
     // wading: slower the deeper
     speed *= 1.0 - 0.6 * clamp(depth / max(height, 0.1), 0.0, 1.0);
@@ -1440,6 +1470,35 @@ const MAIL_ACC: u32 = MAIL_AIM + MAX_SLOTS * AIM_W;
 const MAIL_ARR: u32 = MAIL_ACC + MAX_SLOTS * 2u;
 const MAIL_ARROWS: u32 = 2048u;
 const ARROW_W: u32 = 12u;
+// (U2 round 5/6) the order groups' records, the join queue and the rank table (orders.wgsl writes them; the step reads a
+// unit's rank entry). Layout: agents.ts mirrors it
+const ORDER_GROUPS: u32 = 8u;
+const ALTS: u32 = 3u;
+const REF_W: u32 = 6u;
+const REF_AT: u32 = 20u;
+/** (round 6) a group's formation words from here, its trail ring and its wall runs (orders.wgsl) */
+const FORM_AT: u32 = REF_AT + ALTS * 2u * REF_W;
+const TRAIL_N: u32 = 32u;
+const TRAIL_AT: u32 = FORM_AT + 16u;
+const RUNS: u32 = 8u;
+const RUN_W: u32 = 8u;
+const RUNS_AT: u32 = TRAIL_AT + TRAIL_N * 4u;
+const GROUP_W: u32 = RUNS_AT + RUNS * RUN_W + 8u;
+const MAIL_GRP: u32 = MAIL_ARR + MAIL_ARROWS * ARROW_W;
+const MAIL_Q: u32 = MAIL_GRP + ORDER_GROUPS * GROUP_W;
+const ORDER_Q: u32 = 1024u;
+/** the rank table: RANKS a group, RANK_W words each — 0-2 its target, 3 its mode (RANK_*) | field << 8 | RANK_LEAVE,
+ *  4 its unit's slot + 1 (groupCount, last frame), 5 its distance to its target then (f32), 6 its row, 7 spare */
+const RANKS: u32 = 64u;
+const RANK_W: u32 = 8u;
+const MAIL_RANKS: u32 = MAIL_Q + 1u + ORDER_Q * 3u;
+const RANK_NONE: u32 = 0u;
+const RANK_STEER: u32 = 1u;
+const RANK_FIELD: u32 = 2u;
+const RANK_LEAVE: u32 = 0x10000u;
+/** a unit left the window on a march that leaves (U2 round 6): its slot free, no death */
+const EV_LEFT: u32 = 22u;
+fn rankO(g: u32, r: u32) -> u32 { return MAIL_RANKS + (g * RANKS + r) * RANK_W; }
 const AIM_SEEN: u32 = 1u;
 const AIM_EVER: u32 = 2u;
 const AIM_SHOT: u32 = 4u;

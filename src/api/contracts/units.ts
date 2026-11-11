@@ -162,7 +162,27 @@ export interface PlaceOrder {
  * card built, no lot there), 'rising' still being built, 'water' a gate over water, 'no-town' no live town in that slot;
  * or 'pool-full': no field free for another place at once (the order isn't sent).
  */
-export type OrderFailure = 'none' | 'rising' | 'water' | 'no-town' | 'pool-full';
+export type OrderFailure = 'none' | 'rising' | 'water' | 'no-town' | 'pool-full' | 'failed' | 'busy';
+/** (U2 round 6) a formation: a column (at most 3 abreast) or a line (at most 10), narrowing where the way does */
+export type Formation = 'column' | 'line';
+/**
+ * (U2 round 6, UNIT_MINDS_U2 §9c/§9d) A group's order. Every one resolved on the GPU from indices:
+ * - go / guard / attack at a place (round 5), optionally in formation (its anchor walks the group's field; the width
+ *   from the clearance left and right of it);
+ * - `drill`: an anchor loops round the yard (a place), the soldiers holding their slots round it;
+ * - `man`: the town's wall-walks manned, a post each at spacing along each run's top (routeread's wall table; `side`:
+ *   one run, its index in the table), single file up the stairs;
+ * - `march`: along gate slot `gate`'s route out of the town (gateRoute), the column narrowing to the route's width;
+ *   an invalid gate fails with its status; `leave`: past the window's edge the units drop out and `left(g)` is told
+ *   once. Back is a second order.
+ * `orderFailed` reasons beyond a place's: 'failed' (the gate's route couldn't be traced), 'busy' (another town's routes
+ * are in use: one town's man and march at a time).
+ */
+export type SquadOrder =
+  | (PlaceOrder & { formation?: Formation })
+  | { kind: 'drill'; at: PlaceRef; formation: Formation }
+  | { kind: 'man'; town: number; side?: number }
+  | { kind: 'march'; town: number; gate: number; leave?: boolean };
 
 /** The units system as a game uses it. */
 export interface Units {
@@ -221,11 +241,13 @@ export interface Units {
    */
   spawnAt?(kind: string, faction: FactionId | null, at: PlaceRef, n: number): GroupId;
   /** (U2 round 5) a group's order (it replaces the last): `arrived(g)` once when every living member stands there */
-  orderGroup?(g: GroupId, o: PlaceOrder): void;
+  orderGroup?(g: GroupId, o: SquadOrder): void;
   /** (U2 round 5) a group's living members */
   members?(g: GroupId): UnitId[];
   /** (U2 round 5) every living member of the group stands at its order's place: once an order */
   readonly arrived?: ((g: GroupId) => void)[];
   /** (U2 round 5) the group's order (or its spawn) failed: the place isn't valid, or no field was free */
   readonly orderFailed?: ((g: GroupId, why: OrderFailure) => void)[];
+  /** (U2 round 6) a march that leaves: its last living member left the window */
+  readonly left?: ((g: GroupId) => void)[];
 }

@@ -17,6 +17,7 @@ import materialsWgsl from '../shaders/materials.wgsl?raw';
 import unitsWgsl from '../shaders/units.wgsl?raw';
 import townplaceWgsl from '../shaders/townplace.wgsl?raw';
 import ordersWgsl from '../shaders/orders.wgsl?raw';
+import routereadWgsl from '../shaders/routeread.wgsl?raw';
 import type { SimSystem } from '../sim/system';
 import { TICK_DT } from '../sim/flow';
 import { stepPlan } from './stepplan';
@@ -142,12 +143,22 @@ export const ORDER_GROUP_BASE = 16;
 export const ORDER_ALTS = 3;
 const REF_W = 6;
 const REF_AT = 20;
-const GROUP_W = REF_AT + ORDER_ALTS * 2 * REF_W;
+/** (round 6) units.wgsl FORM_AT, TRAIL_AT, RUNS_AT, GROUP_W, the rank table */
+const FORM_AT = REF_AT + ORDER_ALTS * 2 * REF_W;
+const TRAIL_AT = FORM_AT + 16;
+const RUNS_AT = TRAIL_AT + 32 * 4;
+const GROUP_W = RUNS_AT + 8 * 8 + 8;
+/** ranks a group (units.wgsl RANKS): the most a formation places */
+export const ORDER_RANKS = 64;
+const RANK_W = 8;
 const ORDER_Q = 1024;
 const SPAWN_BIT = 0x80000000;
 const MAIL_GRP = 16 + 8192 * 12 + 8192 * 2 + MAIL_ARROWS * 12;
 const MAIL_Q = MAIL_GRP + ORDER_GROUPS * GROUP_W;
-const MAIL_WORDS = MAIL_Q + 1 + ORDER_Q * 3;
+const MAIL_RANKS = MAIL_Q + 1 + ORDER_Q * 3;
+const MAIL_WORDS = MAIL_RANKS + ORDER_GROUPS * ORDER_RANKS * RANK_W;
+/** (round 6, tests and the lab: readRaw('mail')) where the order groups' records and the rank table lie (words) */
+export const MAIL_LAYOUT = { groups: MAIL_GRP, groupW: GROUP_W, formAt: FORM_AT, ranks: MAIL_RANKS, rankW: RANK_W, ranksPerGroup: ORDER_RANKS } as const;
 /** mail's aim words a slot (units.wgsl AIM_W): word 11 its order group + 1 */
 const AIM_W = 12;
 /** (U2 round 5) a town place by indices (orders.wgsl's ref): a named place (townplace PLACE_*) or a lot (district, lot
@@ -158,13 +169,23 @@ export interface OrderPlace {
 }
 /** (U2 round 5) an order group's record as the CPU writes it (orders.wgsl group words): indices only */
 export interface OrderRecord {
-  /** 0 none (let go), 1 stand (no walk: a spawn not yet ordered), 2 go, 3 guard, 4 attack */
+  /** 0 none (let go), 1 stand (no walk: a spawn not yet ordered), 2 go, 3 guard, 4 attack, (round 6) 5 drill, 6 man,
+   *  7 march */
   kind: number;
   /** (U2 round 5b) the places in order of preference (1..ORDER_ALTS: PlaceRef's `else` chain), each with an optional
-   *  partner that must be valid with it (`also`) */
+   *  partner that must be valid with it (`also`); none for man and march (their routes are the town's) */
   alts: { at: OrderPlace; also?: OrderPlace }[];
   /** the field it walks (none: −1) */
   field: number;
+  /** (round 6) a formation: 0 none, 1 column, 2 line; its spacing (cells) */
+  formation?: number;
+  spacing?: number;
+  /** (round 6) march: the gate slot; man: the wall run (undefined: every run) */
+  gate?: number;
+  /** (round 6) march: past the window's edge the units drop out (EV_LEFT) */
+  leave?: boolean;
+  /** (round 6) man: a field per wall run (run i the (i mod n)-th) — `field` is ignored */
+  runFields?: number[];
 }
 /** units.wgsl BY_UNIT: a hurt's or a death's `hit` / `by` with this bit is a unit's id (its arrow) */
 export const BY_UNIT = 0x40000000;
@@ -354,6 +375,8 @@ export type AgentEvent =
   | { type: 'groupArrived'; group: number; serial: number; n: number; x: number; y: number; z: number; id?: undefined }
   /** (U2 round 5) order group `group`'s place isn't valid (`status`: townplace PLACE_*): once an order (`serial`) */
   | { type: 'orderFailed'; group: number; status: number; spawn: boolean; serial: number; x: number; y: number; z: number; id?: undefined }
+  /** (U2 round 6) it left the window on order group `group`'s march (leave): its slot is free, no death */
+  | { type: 'left'; id: number; group: number; x: number; y: number; z: number }
   | { type: 'alight'; id: number; by: number | 'fire'; x: number; y: number; z: number }
   /** a thrown (or dropped) item came down: `amount` of it is ground there now (0: the column had no room) */
   | { type: 'landed'; item: number; material: MaterialName; amount: number; x: number; y: number; z: number };
@@ -559,7 +582,13 @@ export class Agents implements SimSystem {
   /** the joins waiting for the next step: slot, group, rank | SPAWN_BIT */
   private orderQ: number[] = [];
   /** the fields the order groups seed on the GPU (each counts as seeded) */
-  private orderFieldOf = new Int32Array(ORDER_GROUPS).fill(-1);
+  private orderFieldOf: number[][] = Array.from({ length: ORDER_GROUPS }, () => []);
+  /** (round 6) the formation kernels (orders.wgsl formAnchor / formSlots: routes, clearance, fields) and the routes
+   *  bound (a town's: useRoutes; a cleared stand-in before) */
+  private fk: { anchor: ComputeKernel; slots: ComputeKernel; g: GPUBindGroup | null } | null = null;
+  private routesBuf: GPUBuffer | null = null;
+  private routesNone: GPUBuffer | null = null;
+  private formGroups = 0;
   private orderSerial = new Uint32Array(ORDER_GROUPS);
   /** which of `dirty` is the current sweep's at the next tick's start */
   private par = 0;
@@ -826,7 +855,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       return [commonWgsl, layersWgsl, materialsWgsl, waterclassWgsl, agentsSrc, surfaceDepth + unitsSrc];
     };
     const parts = partsFor(BLOCK_RELAX, RELAX_K);
-    this.orderParts = [...parts, townplaceWgsl, ordersWgsl];
+    this.orderParts = [...parts, townplaceWgsl, routereadWgsl, ordersWgsl];
     const mk = (e: string, sp: BindSpec) => makeCompute(device, `agents-${e}`, parts, sp, e);
     // four layouts, each within 8 storage buffers: the peel (it reads the
     // layers and the places), the fields, the units' tick, their draw
@@ -1155,7 +1184,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     if (this.ok) for (let g = 0; g < ORDER_GROUPS; g++) this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + 19) * 4, new Uint32Array([1]));
     // (and the order fields start over — as a CPU seed moved by a slide does (seed: gone → restart), refilling from
     // their seeds)
-    for (const f of this.orderFieldOf) if (f >= 0) {
+    for (const f of this.orderFieldOf.flat()) {
       this.markFields |= 1 << f;
       this.restart |= 1 << f;
     }
@@ -1358,6 +1387,40 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       makeBindGroup(this.device, `agents-orders ${p}`, k.apply.layout, { 0: this.world.globals, 2: this.world.materials, 5: this.nav, 7: this.units, 10: this.params, 13: this.events, 16: this.mail, 34: d, 38: this.abBuf, 52: this.seedMask, 57: places }),
     );
     this.ok = { ...k, g };
+    // (round 6: the formation kernels — routes (56), the clearance (55), the fields (6); no places, no seeds)
+    const fsp: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 10: 'uniform', 13: 'rw', 16: 'rw', 55: 'rw', 56: 'read' };
+    const fm = (e: string) => makeCompute(this.device, `agents-${e}`, this.orderParts, fsp, e);
+    this.fk = { anchor: fm('formAnchor'), slots: fm('formSlots'), g: null };
+    this.routesNone = this.world.buf('agentRoutesNone', 64 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+    this.useRoutes(null);
+  }
+
+  /**
+   * (round 6) The town whose routes man and march orders read (routeread.wgsl at 56: LivingTowns.routeRead(id).buffer),
+   * or none (a cleared table: no wall, no gates — their orders fail). One town's at a time.
+   */
+  useRoutes(buf: GPUBuffer | null): void {
+    if (!this.fk) throw new Error('agents.useRoutes: no place table (usePlaces)');
+    const b = buf ?? this.routesNone!;
+    if (this.fk.g && b === this.routesBuf) return;
+    this.routesBuf = b;
+    this.fk.g = makeBindGroup(this.device, 'agents-form', this.fk.anchor.layout, { 0: this.world.globals, 2: this.world.materials, 5: this.nav, 6: this.dist, 7: this.units, 10: this.params, 13: this.events, 16: this.mail, 55: this.jfaBuf, 56: b });
+  }
+
+  /** (round 6) the routes bound now (useRoutes), or null for none */
+  get routesBound(): GPUBuffer | null {
+    return this.routesBuf === this.routesNone ? null : this.routesBuf;
+  }
+
+  /** (before each step) the formations' anchors and their ranks' targets */
+  private encodeFormations(pass: GPUComputePassEncoder): void {
+    if (!this.fk?.g || !this.formGroups || this.count === 0) return;
+    pass.setBindGroup(0, this.fk.g);
+    pass.setPipeline(this.fk.anchor.pipeline);
+    pass.dispatchWorkgroups(1);
+    pass.setPipeline(this.fk.slots.pipeline);
+    pass.dispatchWorkgroups((ORDER_GROUPS * ORDER_RANKS) / 64);
+    this.prof.dispatches += 2;
   }
 
   /** whether the place table is in (usePlaces) */
@@ -1375,7 +1438,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     if (g < 0 || g >= ORDER_GROUPS) throw new Error(`agents.order: group ${g} out of 0..${ORDER_GROUPS - 1}`);
     if (r.field >= NFIELDS) throw new Error(`agents.order: no field ${r.field}`);
     const serial = (this.orderSerial[g] = (this.orderSerial[g] + 1) & 0xffff);
-    if (r.alts.length < 1 || r.alts.length > ORDER_ALTS) throw new Error(`agents.order: 1..${ORDER_ALTS} places (else), not ${r.alts.length}`);
+    const routed = r.kind === 6 || r.kind === 7;
+    if ((r.alts.length < 1 && !routed) || r.alts.length > ORDER_ALTS) throw new Error(`agents.order: 1..${ORDER_ALTS} places (else), not ${r.alts.length}`);
     const ref = (q: OrderPlace | undefined): number[] => {
       if (!q) return [0, 0, 0, 0, 0, 0];
       const named = 'name' in q.place;
@@ -1384,17 +1448,27 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     };
     const w = new Uint32Array(GROUP_W);
     // (words 0-7: the GPU's own 8-19 left as they are — a write of 0-7, then of the refs)
-    w.set([r.kind, r.alts.length, 0, 0, 0, 0, r.field < 0 ? NFIELDS : r.field, serial], 0);
+    const fields = r.kind === 6 ? (r.runFields ?? []) : r.field >= 0 ? [r.field] : [];
+    if (fields.length > 4 || fields.some((f) => f < 0 || f >= NFIELDS)) throw new Error('agents.order: 1..4 run fields, each a field');
+    const f32 = new Float32Array(w.buffer);
+    w.set([r.kind, r.alts.length, 0, r.formation ?? 0, 0, 0, r.field < 0 ? NFIELDS : r.field, serial], 0);
+    f32[4] = r.spacing ?? 1.2;
     r.alts.forEach((a, i) => w.set([...ref(a.at), ...ref(a.also)], REF_AT + i * 2 * REF_W));
+    // (round 6: the formation's words — the gate or the run, leave; the GPU's anchor and trail start over: route none)
+    w.set([r.gate ?? 0xffffffff, r.leave ? 1 : 0, 0xffffffff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, fields.reduce((a, f, i) => a | (f << (8 * i)), 0) >>> 0, fields.length], FORM_AT);
     this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W) * 4, w, 0, 8);
-    this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + REF_AT) * 4, w, REF_AT, GROUP_W - REF_AT);
-    this.orderFieldOf[g] = r.kind >= 2 ? r.field : -1;
-    this.follow(ORDER_GROUP_BASE + g, r.kind >= 2 ? r.field : -1);
+    // (its status none until resolved again: the formations wait for it)
+    this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + 11) * 4, new Uint32Array([1]));
+    this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + REF_AT) * 4, w, REF_AT, FORM_AT + 16 - REF_AT);
+    this.orderFieldOf[g] = r.kind >= 2 ? fields : [];
+    this.follow(ORDER_GROUP_BASE + g, r.kind >= 2 && r.kind !== 6 ? r.field : -1);
+    const formed = r.kind === 5 || r.kind === 6 || r.kind === 7 || ((r.kind >= 2 && r.kind <= 4) && (r.formation ?? 0) > 0);
+    this.formGroups = formed ? this.formGroups | (1 << g) : this.formGroups & ~(1 << g);
     // (a new place: the field starts over and refills from it — a seed moved far counts up otherwise, FC4)
-    if (r.field >= 0) {
-      this.restart |= 1 << r.field;
-      this.markFields |= 1 << r.field;
-      this.fieldsUsed = Math.max(this.fieldsUsed, r.field + 1);
+    for (const f of fields) {
+      this.restart |= 1 << f;
+      this.markFields |= 1 << f;
+      this.fieldsUsed = Math.max(this.fieldsUsed, f + 1);
     }
     return serial;
   }
@@ -1412,14 +1486,16 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     return ids;
   }
 
-  /** units joining order group `g` where they stand (at the next step) */
+  /** units joining order group `g` where they stand (at the next step), ranked in the order given (ORDER_RANKS place
+   *  in a formation; the rest follow the group's field) */
   joinOrder(ids: readonly number[], g: number): void {
     if (g < 0 || g >= ORDER_GROUPS) throw new Error(`agents.joinOrder: group ${g} out of 0..${ORDER_GROUPS - 1}`);
     if (this.orderQ.length / 3 + ids.length > ORDER_Q) throw new Error(`agents.joinOrder: more than ${ORDER_Q} joins a step`);
-    for (const id of ids) {
+    // (round 6: each its rank — its place in `ids`: a formation's slot k)
+    ids.forEach((id, k) => {
       const slot = this.slotOf(id);
-      if (slot >= 0) this.orderQ.push(slot, g, 0);
-    }
+      if (slot >= 0) this.orderQ.push(slot, g, k);
+    });
   }
 
   /** (before the step) the queued joins applied: spawned ones placed at their group's place */
@@ -2066,6 +2142,11 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
           events.push({ type: 'side', id, side: eu[o + 2], ...p });
         } else if (kind === 20) {
           events.push({ type: 'groupArrived', group: id, serial: eu[o + 2], n: Math.round(ef[o + 3]), ...p });
+        } else if (kind === 22) {
+          // (round 6: it left the window on a march that leaves — its slot free, no death)
+          events.push({ type: 'left', id, group: eu[o + 2], ...p });
+          this.free.push(id % MAX_UNITS);
+          this.holds.delete(id % MAX_UNITS);
         } else if (kind === 21) {
           events.push({ type: 'orderFailed', group: id, status: eu[o + 2] & 0xff, spawn: (eu[o + 2] & 0x100) !== 0, serial: Math.round(ef[o + 3]), ...p });
         } else if (kind === 8) {
@@ -2132,7 +2213,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     if (this.huntField !== null && this.huntOn) seeded |= 1 << this.huntField;
     // (U2 round 5: the foes' field and the order groups' — their seeds the GPU's too)
     if (this.foeField !== null && this.huntOn) seeded |= 1 << this.foeField;
-    for (const f of this.orderFieldOf) if (f >= 0) seeded |= 1 << f;
+    for (const fs of this.orderFieldOf) for (const f of fs) seeded |= 1 << f;
     // (round 128i, V128-14: the road field is seeded on the road columns while a group rides)
     if (this.roadRide.riding) {
       seeded |= 1 << ROAD_FIELD;
@@ -2286,8 +2367,10 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
    *  units' step, the traits, the ride, the draw apart — and returns it; the pass the units ended in comes back) */
   private encodeUnits(pass: GPUComputePassEncoder, stage: (name: string) => GPUComputePassEncoder = () => pass): GPUComputePassEncoder {
     pass = stage('agents-step');
-    // (U2 round 5: units joining order groups — spawned ones placed at their place — before they step)
+    // (U2 round 5: units joining order groups — spawned ones placed at their place — before they step; round 6: the
+    // formations' anchors and their ranks' targets)
     this.encodeOrderJoins(pass);
+    this.encodeFormations(pass);
     // (the field bench: the step at half rate — every other tick's skipped, its time lost: the units move at half speed)
     this.benchStepParity ^= 1;
     if (!(this.benchStepHalf && this.benchStepParity)) {

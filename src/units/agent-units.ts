@@ -23,7 +23,7 @@
 //    again (a 'raised' event: the same GPU id) in the raiser's group. It's alive again here, keeps its role, and is
 //    `bound`: the raiser's, not this layer's to order — it neither takes jobs nor hunts until the game orders it.
 // Window coordinates (x cells, y world units, z the ground) as the world API's.
-import type { Actor, AreaHit, OrderFailure, PlaceOrder, PlaceRef, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
+import type { Actor, AreaHit, OrderFailure, PlaceRef, SquadOrder, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
 import type { GroupId } from '../api/contracts/inhabitants';
 import { ORDER_ALTS, ORDER_GROUPS, ORDER_GROUP_BASE, type Agents, type OrderPlace, type AgentEvent, type AgentState, type HuntCandidate, type OrderRecord, type Target } from '../agents/agents';
@@ -102,15 +102,24 @@ const MELEE = { reach: 1.35, damage: HPK, swingPeriod: 1.0 } as const;
  *  shared by groups ordered to one place */
 const ORDER_FIELDS = [0, 1, 2, 3, 4, 5, 6] as const;
 /** orders.wgsl group kinds */
-const OK = { none: 0, stand: 1, go: 2, guard: 3, attack: 4 } as const;
-/** townplace.wgsl statuses as the contract's reasons */
-const WHY: Record<number, OrderFailure> = { 1: 'none', 2: 'rising', 3: 'water', 4: 'no-town' };
+const OK = { none: 0, stand: 1, go: 2, guard: 3, attack: 4, drill: 5, man: 6, march: 7 } as const;
+/** townplace.wgsl statuses as the contract's reasons; (round 6) a gate's (orders.wgsl FAIL_GATE | routeread GATE_*) */
+const WHY: Record<number, OrderFailure> = { 1: 'none', 2: 'rising', 3: 'water', 4: 'no-town', 0x11: 'none', 0x12: 'rising', 0x13: 'water', 0x14: 'failed' };
+/** (round 6) formations' spacing (cells), a man's post spacing, a man order's most run fields */
+const FORM_SPACING = 1.2;
+const POST_SPACING = 3;
+const MAN_FIELDS = 3;
 
 /** (U2 round 5) an order group: its slot on the GPU (orders.wgsl), its members, its order, the field it holds */
 interface OrderGroup {
   id: GroupId;
   members: Set<UnitId>;
-  order: PlaceOrder | null;
+  order: SquadOrder | null;
+  /** (round 6) the fields it holds beyond `field` (a man order's runs) */
+  extra: number[];
+  /** (round 6) a march that leaves: members gone out of the window, and left(g) told */
+  gone: number;
+  leftTold: boolean;
   /** the spawn's place (the record's while it stands) */
   at: PlaceRef;
   /** the field held (ORDER_FIELDS), and its key (the place's) */
@@ -198,6 +207,11 @@ export class AgentUnits implements Units {
   /** (U2 round 5) a group's living members all at its order's place; a group's order failed */
   readonly arrived: ((g: GroupId) => void)[] = [];
   readonly orderFailed: ((g: GroupId, why: OrderFailure) => void)[] = [];
+  readonly left: ((g: GroupId) => void)[] = [];
+  /** (round 6) a town slot's routes (LivingTowns.routeRead(site).buffer), for man and march */
+  private routesFor: ((town: number) => GPUBuffer | null) | null = null;
+  /** the town whose routes are bound, while a man or march holds them */
+  private routesTown: number | null = null;
   private groups: (OrderGroup | null)[] = Array.from({ length: ORDER_GROUPS }, () => null);
   private nextGroup = 1;
   /** failures found on the CPU (no field free), told at the next sync with the GPU's */
@@ -321,9 +335,10 @@ export class AgentUnits implements Units {
    * The town contracts' place table (TownContractsApi.places) and, for each town slot, a few points round it in the
    * window (the agents' scope kept there while a group is ordered in it — the fields reach no farther than the scope).
    */
-  usePlaces(places: GPUBuffer, townArea: ((town: number) => readonly (readonly [number, number])[] | null) | null = null): void {
+  usePlaces(places: GPUBuffer, townArea: ((town: number) => readonly (readonly [number, number])[] | null) | null = null, routesFor: ((town: number) => GPUBuffer | null) | null = null): void {
     this.agents.usePlaces(places);
     this.townArea = townArea;
+    this.routesFor = routesFor;
   }
 
   spawnAt(kind: string, faction: FactionId | null, at: PlaceRef, n: number): GroupId {
@@ -331,7 +346,7 @@ export class AgentUnits implements Units {
     const chain = placeChain(at);
     const slot = this.groups.findIndex((g) => g === null);
     if (slot < 0) throw new Error(`units.spawnAt: ${ORDER_GROUPS} order groups at once, all taken`);
-    const g: OrderGroup = { id: this.nextGroup++, members: new Set(), order: null, at, field: -1, key: null, serial: 0, spawnSerial: 0 };
+    const g: OrderGroup = { id: this.nextGroup++, members: new Set(), order: null, extra: [], gone: 0, leftTold: false, at, field: -1, key: null, serial: 0, spawnSerial: 0 };
     this.groups[slot] = g;
     // (it stands at its place until ordered: the GPU resolves the place for the spawn, and tells a failure)
     g.spawnSerial = g.serial = this.agents.order(slot, { kind: OK.stand, alts: chain, field: -1 });
@@ -366,26 +381,57 @@ export class AgentUnits implements Units {
     return g.id;
   }
 
-  orderGroup(id: GroupId, o: PlaceOrder): void {
+  orderGroup(id: GroupId, o: SquadOrder): void {
     const slot = this.groups.findIndex((g) => g?.id === id);
     if (slot < 0) return;
     const g = this.groups[slot]!;
-    const key = placeKey(o.at);
-    // (a field a place: shared with any group ordered to the same one; none free — the order isn't sent)
+    const routed = o.kind === 'man' || o.kind === 'march';
+    // (round 6: man and march read their town's routes — one town's bound at a time)
+    if (routed) {
+      const buf = this.routesFor?.(o.town) ?? null;
+      if (!buf) {
+        this.failsNow.push([id, 'no-town']);
+        return;
+      }
+      const busy = this.routesTown !== null && this.routesTown !== o.town && this.groups.some((x, i) => i !== slot && x?.order && (x.order.kind === 'man' || x.order.kind === 'march'));
+      if (busy) {
+        this.failsNow.push([id, 'busy']);
+        return;
+      }
+      this.agents.useRoutes(buf);
+      this.routesTown = o.town;
+    }
+    const key = routed ? (o.kind === 'man' ? `man:${o.town}:${o.side ?? '*'}` : `march:${o.town}:${o.gate}`) : placeKey(o.at);
+    const want = o.kind === 'man' ? MAN_FIELDS : 1;
+    // (a field a place — shared with any group ordered to the same one; a man order a field a wall run, as many as
+    // are free up to MAN_FIELDS; none free — the order isn't sent)
     if (g.key !== key) {
-      const held = new Map(this.groups.flatMap((x, i) => (x && i !== slot && x.key ? [[x.key, x.field] as const] : [])));
-      let f = held.get(key) ?? -1;
-      if (f < 0) f = ORDER_FIELDS.find((c) => ![...held.values()].includes(c)) ?? -1;
-      if (f < 0) {
+      const others = this.groups.flatMap((x, i) => (x && i !== slot && x.key ? [{ key: x.key, fields: [x.field, ...x.extra] }] : []));
+      const taken = new Set(others.flatMap((x) => x.fields));
+      const shared = others.find((x) => x.key === key)?.fields;
+      const fields = shared ?? ORDER_FIELDS.filter((c) => !taken.has(c)).slice(0, want);
+      if (!fields.length) {
         this.failsNow.push([id, 'pool-full']);
         return;
       }
-      g.field = f;
+      g.field = fields[0];
+      g.extra = fields.slice(1);
       g.key = key;
     }
     g.order = o;
-    g.serial = this.agents.order(slot, { kind: OK[o.kind], alts: placeChain(o.at), field: g.field });
-    this.keepTown(slot, o.at.town);
+    g.gone = 0;
+    g.leftTold = false;
+    const formation = o.kind === 'man' ? 0 : 'formation' in o && o.formation ? (o.formation === 'line' ? 2 : 1) : o.kind === 'march' ? 1 : 0;
+    const rec: OrderRecord = { kind: OK[o.kind], alts: routed ? [] : placeChain(o.at), field: g.field, formation, spacing: o.kind === 'man' ? POST_SPACING : FORM_SPACING };
+    if (o.kind === 'man') {
+      rec.gate = o.side;
+      rec.runFields = [g.field, ...g.extra];
+    } else if (o.kind === 'march') {
+      rec.gate = o.gate;
+      rec.leave = !!o.leave;
+    }
+    g.serial = this.agents.order(slot, rec);
+    this.keepTown(slot, o.kind === 'man' || o.kind === 'march' ? o.town : o.at.town);
     // (an attack order turns the group hostile, a guard order makes it look: their combat words, at the next think)
   }
 
@@ -410,6 +456,8 @@ export class AgentUnits implements Units {
     this.groups[slot] = null;
     this.agents.order(slot, { kind: OK.none, alts: [{ at: { town: 0, place: { name: 0 } } }], field: -1 });
     this.agents.keepInScope(`order${slot}`, []);
+    // (round 6: the routes let go with the last man or march)
+    if (!this.groups.some((x) => x?.order && (x.order.kind === 'man' || x.order.kind === 'march'))) this.routesTown = null;
   }
 
   /** a unit given a job of its own leaves its order group */
@@ -930,6 +978,23 @@ export class AgentUnits implements Units {
         const actor = this.actors.find((x) => x.id === t);
         // (where it swung from: the swing's event)
         if (actor && actor.alive()) actor.hurt(a.damage, { ...this.view(a), at: [e.x, e.y, e.z] });
+      } else if (e.type === 'left') {
+        // (round 6: out of the window on a march that leaves — no death; the group's left(g) once its last is gone)
+        const id = this.byGpu.get(e.id);
+        const u = id !== undefined ? this.recs.get(id) : undefined;
+        this.byGpu.delete(e.id);
+        if (!u) continue;
+        u.v.alive = false;
+        u.v.state = 'dead';
+        u.v.at = [e.x, e.y, e.z];
+        const g = u.order !== undefined ? this.groups[u.order] : null;
+        if (g) {
+          g.gone++;
+          if (!g.leftTold && ![...g.members].some((m) => this.recs.get(m)?.v.alive)) {
+            g.leftTold = true;
+            for (const f of this.left) f(g.id);
+          }
+        }
       } else if (e.type === 'groupArrived') {
         const g = this.groups[e.group];
         if (g && g.order && e.serial === g.serial) for (const f of this.arrived) f(g.id);

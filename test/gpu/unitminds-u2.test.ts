@@ -354,35 +354,7 @@ test.fails('§9f ranged: an archer with line of sight hits, without it holds fir
   expect(by[0]).toBe(archer);
 });
 
-// ---- §9d (later rounds): formations ------------------------------------------------------------------------------------
-/** the §9d surface: a march in formation */
-interface FormationUnits extends U2Units {
-  formation(ids: UnitId[], o: { at: V2; facing: V2; rows: number; spacing: number }): void;
-}
-function formed(units: AgentUnits): FormationUnits {
-  const u = u2(units) as Partial<FormationUnits> & U2Units;
-  if (!u.formation) throw new Error('§9d: formations not on the contract yet');
-  return u as FormationUnits;
-}
-
-test.fails('§9d: a column narrows to single file through a 1.1 m stair and re-forms after', async () => {
-  const { units, run } = await world();
-  const F = formed(units);
-  // (setup when built: on the gputown recipe, 12 soldiers march by a route whose routeWidth falls to 1.1 m on a stair →
-  // every row there has one soldier (cols 1); past the stair, back to its rows; nobody leaves the route's width)
-  const ids = Array.from({ length: 12 }, (_, i) => units.spawn('soldier', [MID[0] + (i % 4), MID[1] + Math.floor(i / 4)], 'f-town', { role: 'guard' }));
-  F.formation(ids, { at: [MID[0] + 30, MID[1]], facing: [1, 0], rows: 3, spacing: 1.2 });
-  await run(TPS);
-  expect(ids.length).toBe(12);
-});
-
-test.fails('§9d: an off-road formation squeezes through a gap between two walls (the clearance on each side)', async () => {
-  const { units, run } = await world();
-  const F = formed(units);
-  // (setup when built: two walls with a 3-cell gap across a field march → the rows narrow to what left + right
-  // clearance allow, off-centre where one side is tighter, the column lengthens, all pass, and it re-forms beyond)
-  const ids = Array.from({ length: 9 }, (_, i) => units.spawn('soldier', [MID[0] - 10 + (i % 3), MID[1] + Math.floor(i / 3)], 'f-town', { role: 'guard' }));
-  F.formation(ids, { at: [MID[0] + 20, MID[1]], facing: [1, 0], rows: 3, spacing: 1.2 });
-  await run(TPS);
-  expect(ids.length).toBe(9);
-});
+// ---- §9d: formations — built (U2 round 6), their tests in test/gpu/formations.test.ts ("a column narrows to single file
+// where its route is 1.1 m wide and re-forms after; march g along r gives arrived(g) once", "an off-road formation
+// squeezes through a gap between two walls"), against the real orders (orderGroup march / go in formation), not this
+// file's proposed `formation(ids, …)` surface, which the contract didn't take
