@@ -17,6 +17,8 @@
 //   each frame: units.update(dt)
 
 import type { FactionId } from './world';
+/** (U2 round 5) a group of units made or ordered together (spawnAt): a number, as inhabitants' groups */
+import type { GroupId } from './inhabitants';
 
 export type UnitId = number;
 export type V2 = [number, number];
@@ -134,6 +136,30 @@ export interface AreaHit {
   fire?: boolean;
 }
 
+/**
+ * (U2 round 5, UNIT_MINDS_U2.md §9a) A place in a GPU town, by indices only — resolved on the GPU each frame through the
+ * town contracts' place table (api/contracts/townplaces.ts; shaders/townplace.wgsl), never read back:
+ * - `{ town, place }`: a named place (townplaces `PLACE.barracks`, `PLACE.muster`, `PLACE.gate0 + k` …)
+ * - `{ town, district, purpose, rank }`: the `rank`-th lot of a kind (`purpose`: townplace LOT_KIND — 1 a building, 2 a
+ *   park, 3 a plaza, 4 a landmark, 5 a field) in district `district`, in the order the district fills in
+ * `town` is the town's slot (TownContractsApi.townIndex).
+ */
+export type PlaceRef = { town: number; place: number } | { town: number; district: number; purpose: number; rank: number };
+/**
+ * (U2 round 5) A group's order at a place: `go` walk there and stand; `guard` walk there and hold it (take on hostiles
+ * in sight, back to it after); `attack` walk there hostile to anything on the way and there.
+ */
+export interface PlaceOrder {
+  kind: 'guard' | 'go' | 'attack';
+  at: PlaceRef;
+}
+/**
+ * (U2 round 5) Why a group's order failed, from the place's status (townplaces PLACE_STATUS): 'none' no such place (no
+ * card built, no lot there), 'rising' still being built, 'water' a gate over water, 'no-town' no live town in that slot;
+ * or 'pool-full': no field free for another place at once (the order isn't sent).
+ */
+export type OrderFailure = 'none' | 'rising' | 'water' | 'no-town' | 'pool-full';
+
 /** The units system as a game uses it. */
 export interface Units {
   spawn(kind: string, at: V2, faction: FactionId | null, opts?: SpawnOpts): UnitId;
@@ -184,4 +210,18 @@ export interface Units {
   readonly hurt: ((u: UnitView, damage: number, by: UnitId | string | null) => void)[];
   /** a hostile unit noticed a target (a unit's id or an actor's) */
   readonly noticed: ((u: UnitView, target: UnitId | string) => void)[];
+  /**
+   * (U2 round 5 — optional; AgentUnits implements it once the town contracts are in) `n` units of `kind` made at a town
+   * place: at its approach point, spread round it, placed on the GPU. They stand there until ordered. The place not
+   * valid: none is made, and `orderFailed(g, why)` is told.
+   */
+  spawnAt?(kind: string, faction: FactionId | null, at: PlaceRef, n: number): GroupId;
+  /** (U2 round 5) a group's order (it replaces the last): `arrived(g)` once when every living member stands there */
+  orderGroup?(g: GroupId, o: PlaceOrder): void;
+  /** (U2 round 5) a group's living members */
+  members?(g: GroupId): UnitId[];
+  /** (U2 round 5) every living member of the group stands at its order's place: once an order */
+  readonly arrived?: ((g: GroupId) => void)[];
+  /** (U2 round 5) the group's order (or its spawn) failed: the place isn't valid, or no field was free */
+  readonly orderFailed?: ((g: GroupId, why: OrderFailure) => void)[];
 }

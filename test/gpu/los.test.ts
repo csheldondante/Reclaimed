@@ -176,3 +176,39 @@ test('melee with a clear line turns toward its target without waiting on the fie
   expect(out.off.direct).toBe(0);
   expect(g.takeErrors()).toEqual([]);
 });
+
+// ---- (U2 round 5, DA-B32) melee on the GPU: a blow lands in the target's accumulator, the target's step applies it
+// naming the striker; a unit that can fight turns on who struck it; no swing event for a unit target (the CPU applies
+// none) ------------------------------------------------------------------------------------------------------------------
+
+test('a melee blow on a unit lands on the GPU naming the striker, with no swing event; a guard struck strikes back', async () => {
+  const { agents, frame, arm } = await world(false);
+  const at = (c: [number, number]) => cellPos(c[0], c[1]);
+  // (kind 6: a guard — a reach and a blow, no notice: it never looks, but struck it fights back)
+  agents.defineKind(6, { name: 'guard', height: 1.4, mass: 1, hp: 10, speed: 0, reach: 1.2, damage: 2, swingPeriod: 1, notice: 0 });
+  const [t] = agents.spawn(1, ...at([40, 40]), { kind: 6, group: 1, spread: 0 });
+  const [h] = agents.spawn(1, ...at([42, 40]), { kind: 4, group: 2, spread: 0 });
+  frame(10);
+  arm(t, [h]);
+  agents.notice.set(slotOf(t), { faction: 0, hostile: false, sight: 0 });
+  const hurtT: number[] = [];
+  const hurtH: number[] = [];
+  let swings = 0;
+  let noticed = -1;
+  for (let f = 1; f <= 240 && hurtH.length === 0; f++) {
+    frame(1);
+    for (const e of (await agents.sync()).events) {
+      if (e.type === 'swing') swings++;
+      if (e.type === 'hurt' && e.id === t && typeof e.hit === 'number') hurtT.push(e.hit);
+      if (e.type === 'hurt' && e.id === h && typeof e.hit === 'number') hurtH.push(e.hit);
+      if (e.type === 'noticed' && e.id === t && noticed < 0) noticed = e.target;
+    }
+  }
+  log(`melee gpu: guard hurt by ${hurtT.map((x) => x - BY_UNIT)}, hunter hurt by ${hurtH.map((x) => x - BY_UNIT)}, swings ${swings}, noticed ${noticed}`);
+  expect(hurtT[0]).toBe(BY_UNIT | h);
+  // (struck, it took its striker as its target — told as notice tells it — and its blow landed back)
+  expect(noticed).toBe(h + 1);
+  expect(hurtH[0]).toBe(BY_UNIT | t);
+  expect(swings).toBe(0);
+  expect(g.takeErrors()).toEqual([]);
+});

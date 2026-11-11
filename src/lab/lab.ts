@@ -413,6 +413,10 @@ export class TownLab {
       places: (id: string) => this.places(id),
       markContracts: (id: string, o?: { step?: number; clear?: boolean; labels?: boolean }) => this.markContracts(id, o),
       camera: () => this.scene.core.camera,
+      /** (U2 round 5) the Units contract on the agents (spawnAt, orderGroup, arrived, orderFailed) */
+      get units() {
+        return lab.scene.units ?? null;
+      },
       /** the profiler's smoothed GPU ms of a pass (with ?perf=1: the town contracts' is 'towncontracts'); null untimed */
       gpuMs: (pass: string) => this.scene.host.profiler?.passMs.get(pass) ?? null,
       /** (the page can't be put back: scripts/lab.mjs loads it again for each scenario) */

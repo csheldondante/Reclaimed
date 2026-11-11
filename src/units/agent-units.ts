@@ -12,20 +12,25 @@
 //    (agents.setTargets: the nearest TARGETS to the hunters), and the GPU swings at what's in reach — its
 //    blows come back as swing events, turned here into damage on whoever was hit (an actor's `hurt`, a
 //    unit's agents.hit). A unit that isn't hostile but is ordered to attack, or a guard with a hostile in
-//    sight, closes in on the foes' field and strikes (CPU: in reach, every STRIKE s, a hit with a knock).
+//    sight, closes in on the foes' field and strikes. (U2 round 5, DA-B32: every blow between units is the GPU's —
+//    the striker's step adds it to its target's accumulator, the target's step applies it naming the striker, and a
+//    unit struck with no target turns on who struck it; the foes' field is seeded on the GPU from the defenders'
+//    targets. Only a blow at an actor — the hero, the CPU's — comes back as a swing event.)
+//  - (U2 round 5) Place orders: spawnAt / orderGroup name a town place by indices; the GPU resolves it (orders.wgsl)
+//    and tells arrived / orderFailed per group.
 //  - Health is the contract's (default 3); the GPU's hp is HPK times it. Deaths come back as death events.
 //  - (LW1) Raised: with the trait system on the agents a fallen unit lies as a corpse, and a raise effect can stand it up
 //    again (a 'raised' event: the same GPU id) in the raiser's group. It's alive again here, keeps its role, and is
 //    `bound`: the raiser's, not this layer's to order — it neither takes jobs nor hunts until the game orders it.
 // Window coordinates (x cells, y world units, z the ground) as the world API's.
-import type { Actor, AreaHit, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
+import type { Actor, AreaHit, OrderFailure, PlaceOrder, PlaceRef, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
-import type { Agents, AgentEvent, AgentState, HuntCandidate, Target } from '../agents/agents';
+import type { GroupId } from '../api/contracts/inhabitants';
+import { ORDER_GROUPS, ORDER_GROUP_BASE, type Agents, type AgentEvent, type AgentState, type HuntCandidate, type OrderRecord, type Target } from '../agents/agents';
 import type { PickAsk } from '../agents/pick';
 import { MAT } from '../world/materials';
 import { timed } from '../gpu/cpustat';
 import { ACTOR, NO_FACTION, type CombatSpec } from '../agents/notice';
-import { cellPos } from '../world/lattice';
 import { urlFlags } from '../flags';
 
 /** GPU hit points per contract health point */
@@ -89,8 +94,34 @@ const BY_UNIT = 0x40000000;
  *  hostile's target (Agents.gpuHunt) — the actors' targets still seeded here; off: the TARGETS nearest, as before */
 const HUNT_GPU = typeof location !== 'undefined' && urlFlags().get('huntgpu') === '1';
 const REACH = 1.5;
-const STRIKE = 1.0;
 const LEASH = 28;
+/** (U2 round 5, DA-B32) a peaceful fighter's blow on the GPU (its kind's): reach (cells), damage (GPU hp: a contract
+ *  health point), the swing's period (s) — the CPU's strike's were REACH, the unit's damage, STRIKE 1 s */
+const MELEE = { reach: 1.35, damage: HPK, swingPeriod: 1.0 } as const;
+/** (U2 round 5) the fields the order groups take (the old rounds' 0-6: the GPU towns run no rounds on the agents) —
+ *  shared by groups ordered to one place */
+const ORDER_FIELDS = [0, 1, 2, 3, 4, 5, 6] as const;
+/** orders.wgsl group kinds */
+const OK = { none: 0, stand: 1, go: 2, guard: 3, attack: 4 } as const;
+/** townplace.wgsl statuses as the contract's reasons */
+const WHY: Record<number, OrderFailure> = { 1: 'none', 2: 'rising', 3: 'water', 4: 'no-town' };
+
+/** (U2 round 5) an order group: its slot on the GPU (orders.wgsl), its members, its order, the field it holds */
+interface OrderGroup {
+  id: GroupId;
+  members: Set<UnitId>;
+  order: PlaceOrder | null;
+  /** the spawn's place (the record's while it stands) */
+  at: PlaceRef;
+  /** the field held (ORDER_FIELDS), and its key (the place's) */
+  field: number;
+  key: string | null;
+  /** the GPU order's serial now, and the spawn's (a failure of the spawn: none made) */
+  serial: number;
+  spawnSerial: number;
+}
+const placeKey = (p: PlaceRef): string => ('place' in p ? `${p.town}:${p.place}` : `${p.town}:${p.district}:${p.purpose}:${p.rank}`);
+const placeRecord = (p: PlaceRef): OrderRecord['place'] => ('place' in p ? { name: p.place } : { district: p.district, lotKind: p.purpose, rank: p.rank });
 /** (round 128p) the rules' height limit: two farther apart in height don't fight (one up on the wall-walk) */
 const HEIGHT_LIMIT = 1.6;
 /** the agents' unit slots (agents.ts MAX_UNITS): a GPU id's slot */
@@ -140,6 +171,8 @@ export interface UnitRec {
   seenState?: AgentState['state'];
   /** (LW1) raised into this group: the raiser's (no jobs, no hunt here until it's ordered) */
   bound?: number;
+  /** (U2 round 5) its order group's slot (spawnAt): its walk is the group's order, not a job here */
+  order?: number;
 }
 
 const COLOURS = ['#7c8a96', '#b0583a', '#5d8a4a', '#b89a4a', '#6a5a9a', '#4a8a8a'];
@@ -148,6 +181,15 @@ export class AgentUnits implements Units {
   readonly died: ((u: UnitView, by: UnitId | string | null) => void)[] = [];
   readonly hurt: ((u: UnitView, damage: number, by: UnitId | string | null) => void)[] = [];
   readonly noticed: ((u: UnitView, target: UnitId | string) => void)[] = [];
+  /** (U2 round 5) a group's living members all at its order's place; a group's order failed */
+  readonly arrived: ((g: GroupId) => void)[] = [];
+  readonly orderFailed: ((g: GroupId, why: OrderFailure) => void)[] = [];
+  private groups: (OrderGroup | null)[] = Array.from({ length: ORDER_GROUPS }, () => null);
+  private nextGroup = 1;
+  /** failures found on the CPU (no field free), told at the next sync with the GPU's */
+  private failsNow: [GroupId, OrderFailure][] = [];
+  /** (U2 round 5) a town's box in the window (its scope kept round an order there): the town contracts' */
+  private townArea: ((town: number) => readonly (readonly [number, number])[] | null) | null = null;
   /** (LW1) a fallen unit raised (the trait system's raise): alive again, bound to `group` */
   readonly raised: ((u: UnitView, group: number) => void)[] = [];
   readonly recs = new Map<UnitId, UnitRec>();
@@ -175,23 +217,19 @@ export class AgentUnits implements Units {
    * (round 128p, DA-B22 (c)(3): the rule as data, not a callback — the GPU chooses who fights whom, agents/notice.ts)
    * The game's rules over who may take on whom: on — the posted (an archer on the wall) take no one on; where a raider
    * is involved neither side may be one in at home or a cart, nor stand more than HEIGHT_LIMIT above the other, nor on
-   * the other side of the wall (`sideAt`: a column's side, the same number on the same side) unless it's `open`.
-   * Null: off — any hostile and any peaceful one of another faction.
+   * the other side of the wall unless it's `open` (the side map: the GPU's, Track A's town contracts — U2 round 5, no
+   * CPU side path). Null: off — any hostile and any peaceful one of another faction.
    */
-  fightRules(r: { open: boolean; sideAt: (x: number, y: number) => number } | null): void {
-    this.rules = r;
+  fightRules(r: { open: boolean } | null): void {
     this.agents.notice.setRules({ on: r !== null, open: r?.open ?? false, heightLimit: HEIGHT_LIMIT, leash: LEASH });
-    this.uploadSides();
   }
   /** (round 128p) who neither fights nor is fought while the rules are on (in at home), and who holds its post */
   fightFlags(noFight: Iterable<UnitId>, posted: Iterable<UnitId>): void {
     this.noFight = new Set(noFight);
     this.posted = new Set(posted);
   }
-  private rules: { open: boolean; sideAt: (x: number, y: number) => number } | null = null;
   private noFight = new Set<UnitId>();
   private posted = new Set<UnitId>();
-  private sideMap: Uint32Array | null = null;
   private factionNo = new Map<FactionId, number>();
   /** each unit's combat word as last written (by GPU id): written again only when it changes */
   private combatKey = new Map<number, string>();
@@ -208,13 +246,17 @@ export class AgentUnits implements Units {
   ) {
     this.huntGpu = o.huntGpu ?? HUNT_GPU;
     if (this.huntGpu) agents.gpuHunt(F.targets);
-    agents.defineKind(K.guard, { name: 'guard', height: 1.45, mass: 1.2, hp: 10, speed: 2.7, colours: { torso: MAT.Steel, head: MAT.Steel } });
-    agents.defineKind(K.character, { name: 'character', height: 1.4, mass: 1, hp: 10, speed: 2.5, colours: { torso: MAT.Brick, legs: MAT.Wood } });
-    agents.defineKind(K.raider, { name: 'raider', height: 1.6, mass: 1, hp: 10, speed: 3.1, reach: 1.35, damage: 1, swingPeriod: 1.1, notice: 160, colours: { torso: MAT.Tile, legs: MAT.Basalt, head: MAT.Obsidian }, model: { voxels: raiderModel(), voxel: 0.25 } });
-    agents.defineKind(K.shambler, { name: 'shambler', height: 1.4, mass: 1, hp: 10, speed: 1.5, reach: 1.1, damage: 1, swingPeriod: 1.6, notice: 50, colours: { torso: MAT.Bone, legs: MAT.Ash, head: MAT.Bone } });
+    // (U2 round 5, DA-B32: the defenders' foes seeded on the GPU — the peaceful fighters' targets)
+    agents.gpuFoes(F.foes);
+    // (DA-B32: every kind that may fight back has a blow of its own on the GPU — MELEE; the hostile kinds' damage in GPU
+    // hp, a contract health point a blow, as the CPU's swing turned into a hit was)
+    agents.defineKind(K.guard, { name: 'guard', height: 1.45, mass: 1.2, hp: 10, speed: 2.7, ...MELEE, colours: { torso: MAT.Steel, head: MAT.Steel } });
+    agents.defineKind(K.character, { name: 'character', height: 1.4, mass: 1, hp: 10, speed: 2.5, ...MELEE, colours: { torso: MAT.Brick, legs: MAT.Wood } });
+    agents.defineKind(K.raider, { name: 'raider', height: 1.6, mass: 1, hp: 10, speed: 3.1, reach: 1.35, damage: HPK, swingPeriod: 1.1, notice: 160, colours: { torso: MAT.Tile, legs: MAT.Basalt, head: MAT.Obsidian }, model: { voxels: raiderModel(), voxel: 0.25 } });
+    agents.defineKind(K.shambler, { name: 'shambler', height: 1.4, mass: 1, hp: 10, speed: 1.5, reach: 1.1, damage: HPK, swingPeriod: 1.6, notice: 50, colours: { torso: MAT.Bone, legs: MAT.Ash, head: MAT.Bone } });
     // (round 88: people a third of a storey tall, in a yellow tunic — at the phone's half resolution a 1-cell figure
     // in canvas was lost against plaster and grass)
-    agents.defineKind(K.worker, { name: 'worker', height: 1.4, mass: 1, hp: 10, speed: 2.4, colours: { torso: MAT.Flower, legs: MAT.Wood, head: MAT.Sand } });
+    agents.defineKind(K.worker, { name: 'worker', height: 1.4, mass: 1, hp: 10, speed: 2.4, ...MELEE, colours: { torso: MAT.Flower, legs: MAT.Wood, head: MAT.Sand } });
     // (round 128l, m4) the fortress's carts: slower than a walker, heavier, a load of CART_LOAD
     agents.defineKind(K.cart, { name: 'cart', height: 1.2, mass: 4, hp: 20, speed: 1.7, model: { voxels: cartModel(), voxel: 0.25 } });
     agents.follow(G.stand, -1);
@@ -257,6 +299,109 @@ export class AgentUnits implements Units {
     this.recs.set(id, u);
     this.assign(u);
     return id;
+  }
+
+  // ---- (U2 round 5) place orders: a town place by indices, resolved on the GPU (orders.wgsl) ----------------------
+
+  /**
+   * The town contracts' place table (TownContractsApi.places) and, for each town slot, a few points round it in the
+   * window (the agents' scope kept there while a group is ordered in it — the fields reach no farther than the scope).
+   */
+  usePlaces(places: GPUBuffer, townArea: ((town: number) => readonly (readonly [number, number])[] | null) | null = null): void {
+    this.agents.usePlaces(places);
+    this.townArea = townArea;
+  }
+
+  spawnAt(kind: string, faction: FactionId | null, at: PlaceRef, n: number): GroupId {
+    if (!this.agents.placesIn) throw new Error('units.spawnAt: no town place table yet (usePlaces)');
+    const slot = this.groups.findIndex((g) => g === null);
+    if (slot < 0) throw new Error(`units.spawnAt: ${ORDER_GROUPS} order groups at once, all taken`);
+    const g: OrderGroup = { id: this.nextGroup++, members: new Set(), order: null, at, field: -1, key: null, serial: 0, spawnSerial: 0 };
+    this.groups[slot] = g;
+    // (it stands at its place until ordered: the GPU resolves the place for the spawn, and tells a failure)
+    g.spawnSerial = g.serial = this.agents.order(slot, { kind: OK.stand, town: at.town, place: placeRecord(at), field: -1 });
+    this.keepTown(slot, at.town);
+    const hostile = kind === 'raider' || kind === 'shambler' || kind.includes('dead');
+    const recs: UnitRec[] = [];
+    for (let i = 0; i < n; i++) {
+      const v: UnitView = {
+        id: this.next++,
+        kind,
+        role: kind,
+        faction,
+        at: null,
+        heading: Math.PI / 2,
+        health: 3,
+        maxHealth: 3,
+        hostile,
+        alive: true,
+        job: { kind: 'idle' },
+        state: 'idle',
+        colour: this.colourOf(faction),
+      };
+      recs.push({ v, gpu: -1, sight: 10, damage: 1, group: ORDER_GROUP_BASE + slot, target: null, cool: 0, goal: null, order: slot });
+    }
+    const gpu = this.agents.spawnAt(n, slot, { kind: this.kindOf(recs[0] ?? ({ v: { hostile, role: kind } } as UnitRec), kind === 'shambler'), hp: 3 * HPK });
+    recs.forEach((u, i) => {
+      u.gpu = gpu[i];
+      this.byGpu.set(u.gpu, u.v.id);
+      this.recs.set(u.v.id, u);
+      g.members.add(u.v.id);
+    });
+    return g.id;
+  }
+
+  orderGroup(id: GroupId, o: PlaceOrder): void {
+    const slot = this.groups.findIndex((g) => g?.id === id);
+    if (slot < 0) return;
+    const g = this.groups[slot]!;
+    const key = placeKey(o.at);
+    // (a field a place: shared with any group ordered to the same one; none free — the order isn't sent)
+    if (g.key !== key) {
+      const held = new Map(this.groups.flatMap((x, i) => (x && i !== slot && x.key ? [[x.key, x.field] as const] : [])));
+      let f = held.get(key) ?? -1;
+      if (f < 0) f = ORDER_FIELDS.find((c) => ![...held.values()].includes(c)) ?? -1;
+      if (f < 0) {
+        this.failsNow.push([id, 'pool-full']);
+        return;
+      }
+      g.field = f;
+      g.key = key;
+    }
+    g.order = o;
+    g.serial = this.agents.order(slot, { kind: OK[o.kind], town: o.at.town, place: placeRecord(o.at), field: g.field });
+    this.keepTown(slot, o.at.town);
+    // (an attack order turns the group hostile, a guard order makes it look: their combat words, at the next think)
+  }
+
+  members(id: GroupId): UnitId[] {
+    const g = this.groups.find((x) => x?.id === id);
+    return g ? [...g.members].filter((m) => this.recs.get(m)?.v.alive) : [];
+  }
+
+  /** the agents' scope kept round the town an order group is at (its fields reach no farther than the scope) */
+  private keepTown(slot: number, town: number): void {
+    const pts = this.townArea?.(town);
+    this.agents.keepInScope(`order${slot}`, pts ?? []);
+  }
+
+  private freeGroup(slot: number): void {
+    const g = this.groups[slot];
+    if (!g) return;
+    for (const id of g.members) {
+      const u = this.recs.get(id);
+      if (u) u.order = undefined;
+    }
+    this.groups[slot] = null;
+    this.agents.order(slot, { kind: OK.none, town: 0, place: { name: 0 }, field: -1 });
+    this.agents.keepInScope(`order${slot}`, []);
+  }
+
+  /** a unit given a job of its own leaves its order group */
+  private leaveGroup(u: UnitRec): void {
+    if (u.order === undefined) return;
+    this.groups[u.order]?.members.delete(u.v.id);
+    u.order = undefined;
   }
 
   get(id: UnitId): UnitView | null {
@@ -327,8 +472,9 @@ export class AgentUnits implements Units {
       const u = this.recs.get(id);
       if (!u || !u.v.alive) continue;
       if (u.v.job.kind === 'work' && job.kind !== 'work') this.routine?.drop(u);
-      // (an order takes a raised unit back from its raiser)
+      // (an order takes a raised unit back from its raiser, and one from its order group)
       u.bound = undefined;
+      this.leaveGroup(u);
       u.v.job = job;
       u.target = job.kind === 'attack' ? job.target : null;
       u.arrived = undefined;
@@ -424,27 +570,6 @@ export class AgentUnits implements Units {
     return g === null ? null : ids[gpu.indexOf(g)];
   }
 
-  /** (round 128p) the side map the rules hold, on the GPU: every window column's side (uploaded when it changes) */
-  private uploadSides(): void {
-    const r = this.rules;
-    if (!r) {
-      this.sideMap = null;
-      this.agents.notice.setSides(null);
-      return;
-    }
-    const { w, h } = this.agents.dims;
-    const map = new Uint32Array(w * h);
-    for (let y = 0; y < h; y++)
-      for (let x = 0; x < w; x++) {
-        const [px, py] = cellPos(x, y);
-        map[y * w + x] = r.sideAt(px, py);
-      }
-    const old = this.sideMap;
-    if (old && old.length === map.length && old.every((v, i) => v === map[i])) return;
-    this.sideMap = map;
-    this.agents.notice.setSides(map);
-  }
-
   /** (round 128p) a unit's part in the fighting, as the GPU's rules read it (agents/notice.ts) */
   private combatOf(u: UnitRec): CombatSpec {
     let faction = NO_FACTION;
@@ -458,17 +583,20 @@ export class AgentUnits implements Units {
       faction = n;
     }
     const j = u.v.job;
-    const looks = u.v.hostile || u.v.role === 'guard';
+    // (U2 round 5: a group ordered to attack is hostile to anything on the way and there)
+    const og = u.order !== undefined ? this.groups[u.order] : null;
+    const hostile = u.v.hostile || og?.order?.kind === 'attack';
+    const looks = hostile || u.v.role === 'guard' || u.v.role === 'soldier' || og?.order?.kind === 'guard';
     return {
       faction,
-      hostile: u.v.hostile,
-      guard: u.v.role === 'guard',
+      hostile,
+      guard: u.v.role === 'guard' || u.v.role === 'soldier' || og?.order?.kind === 'guard',
       noFight: this.noFight.has(u.v.id) || u.v.role === 'cart',
       posted: this.posted.has(u.v.id),
       raider: u.v.role === 'raider',
       bound: u.bound !== undefined || !u.v.alive,
       sight: looks ? u.sight : 0,
-      home: !u.v.hostile && j.kind === 'guard' ? j.at : null,
+      home: !hostile && j.kind === 'guard' && u.order === undefined ? j.at : null,
     };
   }
 
@@ -517,8 +645,6 @@ export class AgentUnits implements Units {
     }
     for (const g of this.goals) if (g) g.at = m(g.at);
     this.reseedGoals();
-    // (round 128p: the side map is the window's columns: made again where the window now lies)
-    this.uploadSides();
     this.combatKey.clear();
   }
 
@@ -605,7 +731,7 @@ export class AgentUnits implements Units {
 
   private kindOf(u: UnitRec, slow: boolean): number {
     if (u.v.hostile) return slow || u.v.role.includes('dead') ? K.shambler : K.raider;
-    if (u.v.role === 'guard') return K.guard;
+    if (u.v.role === 'guard' || u.v.role === 'soldier') return K.guard;
     if (u.v.role === 'cart') return K.cart;
     if (u.v.name || u.v.character) return K.character;
     return K.worker;
@@ -781,15 +907,26 @@ export class AgentUnits implements Units {
     this.stats.units = n;
     for (const e of events) {
       if (e.type === 'swing') {
+        // (U2 round 5, DA-B32: a blow at a unit lands on the GPU — its accumulator; only an actor's is the CPU's)
         const att = this.byGpu.get(e.id);
         const a = att !== undefined ? this.recs.get(att) : undefined;
         const t = this.targetsNow[e.target] ?? this.targetsPrev[e.target];
-        if (!a || t === undefined) continue;
-        if (typeof t === 'string') {
-          const actor = this.actors.find((x) => x.id === t);
-          // (where it swung from: the swing's event)
-          if (actor && actor.alive()) actor.hurt(a.damage, { ...this.view(a), at: [e.x, e.y, e.z] });
-        } else this.hit(t, a.damage, a.v.id);
+        if (!a || typeof t !== 'string') continue;
+        const actor = this.actors.find((x) => x.id === t);
+        // (where it swung from: the swing's event)
+        if (actor && actor.alive()) actor.hurt(a.damage, { ...this.view(a), at: [e.x, e.y, e.z] });
+      } else if (e.type === 'groupArrived') {
+        const g = this.groups[e.group];
+        if (g && g.order && e.serial === g.serial) for (const f of this.arrived) f(g.id);
+      } else if (e.type === 'orderFailed') {
+        const g = this.groups[e.group];
+        if (!g) continue;
+        if (e.serial === g.spawnSerial) {
+          // (its spawn's place wasn't valid: none made — their slots freed, their records gone)
+          for (const id of g.members) this.remove(id);
+          g.members.clear();
+        } else if (e.serial !== g.serial) continue;
+        for (const f of this.orderFailed) f(g.id, WHY[e.status] ?? 'none');
       } else if (e.type === 'hurt') {
         const id = this.byGpu.get(e.id);
         const u = id !== undefined ? this.recs.get(id) : undefined;
@@ -798,12 +935,7 @@ export class AgentUnits implements Units {
         // (round 128p: its health followed by its hurts — an unobserved unit's record isn't read)
         u.v.health = Math.max(0, u.v.health - e.damage / HPK);
         for (const f of this.hurt) f(this.view(u), e.damage / HPK, by);
-        // (struck by someone: a guard or a worker on guard turns on it — given it on the GPU, round 128p)
-        if (by !== null && !u.v.hostile && u.target === null && typeof by === 'number' && this.recs.get(by)?.v.hostile) {
-          u.target = by;
-          const code = this.codeOf(by);
-          if (code !== null) this.agents.notice.aim(u.gpu % MAX_SLOT, code);
-        }
+        // (struck by a unit, it turns on it on the GPU — DA-B32, units.wgsl; its noticed event tells us)
       } else if (e.type === 'death') {
         const id = this.byGpu.get(e.id);
         const u = id !== undefined ? this.recs.get(id) : undefined;
@@ -883,17 +1015,22 @@ export class AgentUnits implements Units {
     this.actorsSent = this.actors.slice(0, 8);
     this.agents.notice.setActors(this.actorsSent.map((a) => ({ at: a.alive() ? a.position() : null, faction: a.faction !== null ? (this.factionNo.get(a.faction) ?? NO_FACTION) : NO_FACTION })));
     const hostiles = live.filter((u) => u.v.hostile);
-    const d2 = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1]);
     // (round 128p, DA-B22 (c)(4): what this layer still does on the CPU reads the few it does it to — a defender's
     // strike (it and its target, till strikes are the GPU's: BACKLOG DA-B32), fleeing, following and attacking by
     // order (it and whom): observed, read from the next sync)
     this.auto.clear();
     for (const u of live) {
       const j = u.v.job;
-      const t = !u.v.hostile && u.target !== null ? u.target : j.kind === 'follow' || j.kind === 'attack' ? j.target : null;
+      // (U2 round 5, DA-B32: a defender and its target aren't read for its strikes — they're the GPU's)
+      const t = j.kind === 'follow' || j.kind === 'attack' ? j.target : null;
       if (t !== null || j.kind === 'flee') this.auto.add(u.v.id);
       if (typeof t === 'number') this.auto.add(t);
     }
+    // (U2 round 5: order groups — a group whose members are all gone lets its slot, field and seed go)
+    this.groups.forEach((g, i) => {
+      if (g && ![...g.members].some((id) => this.recs.get(id)?.v.alive)) this.freeGroup(i);
+    });
+    for (const [g, why] of this.failsNow.splice(0)) for (const f of this.orderFailed) f(g, why);
     // hostiles: hunt what the GPU gave them; else their work, wandering
     let hunting = 0;
     for (const h of hostiles) {
@@ -901,6 +1038,8 @@ export class AgentUnits implements Units {
         if (!this.alive(h.v.job.target)) h.v.job = { kind: 'idle' };
       }
       if (h.target !== null && !this.alive(h.target)) h.target = null;
+      // (U2 round 5: an ordered one walks its order, chasing what it sees on the GPU)
+      if (h.order !== undefined) continue;
       if (h.target !== null) {
         this.releaseGoal(h);
         this.regroup(h, G.hunt);
@@ -942,11 +1081,10 @@ export class AgentUnits implements Units {
       this.agents.setTargets(targets, hunters.length ? F.targets : -1);
       if (!hunters.length) this.agents.seed(F.targets, []);
     }
-    // defenders: guards with a hostile in sight, units ordered to attack, anyone struck — their targets the GPU's: close
-    // in and strike
-    const foes: V2[] = [];
+    // defenders: guards with a hostile in sight, units ordered to attack, anyone struck — their targets the GPU's: they
+    // close in on the foes' field (seeded on the GPU from their targets) and strike on the GPU (DA-B32)
     for (const u of live) {
-      if (u.v.hostile) continue;
+      if (u.v.hostile || u.order !== undefined) continue;
       const j = u.v.job;
       // (an order to attack: given on the GPU until it holds, and kept there while the rules allow)
       if (j.kind === 'attack') {
@@ -971,39 +1109,14 @@ export class AgentUnits implements Units {
         this.assign(u);
         continue;
       }
-      // (it and its target observed — read from the sync after it took the target)
-      const p = this.posOf(u.target);
-      const me = u.v.at;
-      u.cool -= dt;
-      if (!p || !me) continue;
-      const d = d2(p, me);
-      if (d < REACH) {
-        this.regroup(u, G.strike);
-        u.v.state = 'swing';
-        if (u.cool <= 0) {
-          u.cool = STRIKE;
-          const dx = p[0] - me[0];
-          const dy = p[1] - me[1];
-          if (typeof u.target === 'number') {
-            const t = this.recs.get(u.target)!;
-            const hid = this.agents.hit({ x: p[0], y: p[1], z: p[2] + 0.5, radius: 0.5, damage: u.damage * HPK, push: 4, dir: [dx, dy], groups: [t.group] });
-            this.hitBy.set(hid, u.v.id);
-          } else {
-            const a = this.actors.find((x) => x.id === u.target);
-            a?.hurt(u.damage, { ...this.view(u), at: me });
-          }
-        }
-      } else {
-        foes.push([p[0], p[1]]);
+      if (u.group !== G.foes) {
         this.releaseGoal(u);
         this.regroup(u, G.foes);
-        u.v.state = 'chase';
       }
     }
-    this.agents.seed(F.foes, foes.slice(0, 6).map(([x, y]) => ({ x, y })));
     // workers and the rest: their jobs
     for (const u of live) {
-      if (u.v.hostile || u.target !== null) continue;
+      if (u.v.hostile || u.target !== null || u.order !== undefined) continue;
       if (u.v.job.kind === 'work' && this.routine?.takes(u)) this.routine.step(u, dt);
       else this.assign(u);
     }
