@@ -2275,5 +2275,9 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   sits at the record's top: move it to the generated roof later; districtStyle: `setDistrictStyle(district, word)` on
   CityGen/FieldTown, saved in TownLog beside `purposes`, a WGSL accessor snippet like townplace.wgsl; confirm "no
   pacing" with the phone toggle bench (towns stream back to back) before relying on it (AG7).
-- AG13 Roofs, towers, eaves and jetties go past footprint × record height (told Track A): claims under-cover them
-  until the height rule moves into the style table and is written back before citygen's claim pass.
+- AG13 Roofs, towers, eaves and jetties go past footprint × record height (told Track A). **A gate on making archgen
+  the default** (Track A, DESIGN §3/§9/§10: the world sees buildings only through their claims). Track A leans to (a):
+  the generator's GPU pass writes each record's envelope before citygen's claim pass — eave height, a roof/tower top
+  (a new record word), the overhang as an outset — and citygen's claim reads it; (b) the generator takes building
+  lots' claims over per record. Thin features under ~0.5 (spires, chimneys, overhangs) may stay unclaimed. Propose
+  it in ARCHGEN.md with the height rule once the user has judged the look.
