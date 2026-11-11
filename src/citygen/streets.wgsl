@@ -3250,6 +3250,31 @@ const PAVE_T: f32 = 0.25;
 const BARE_ONLY: u32 = 0x80000000u;
 /** (farms) a field's column, no span: its owner word FIELD_COL | its record — bare.wgsl writes its crop */
 const FIELD_COL: u32 = 0x40000000u;
+/** (CG26) a park's column, no span: its owner word PARK_COL | its record — bare.wgsl keeps it grass (raises its plants
+ *  to grass at least), so a park reads as a lawn on the land itself, with or without the mesh's flat plate (archgen's
+ *  mode 1 draws none) */
+const PARK_COL: u32 = 0x20000000u;
+/** (CG26) one park record's footprint columns marked PARK_COL where nothing else spans them (claimLots) */
+fn claimPark(r: u32, o: u32) {
+  var q: array<vec2<f32>, 4>;
+  var lo = vec2<f32>(1e9);
+  var hi = vec2<f32>(-1e9);
+  for (var k = 0u; k < 4u; k++) {
+    q[k] = vec2<f32>(r1(o + 8u + k * 2u), r1(o + 9u + k * 2u));
+    lo = min(lo, q[k]);
+    hi = max(hi, q[k]);
+  }
+  let N = u32(W() * H());
+  for (var y = max(i32(floor(lo.y / ROW_H)) - 1, 0); y <= min(i32(ceil(hi.y / ROW_H)) + 1, H() - 1); y++) {
+    for (var x = max(i32(floor(lo.x)) - 1, 0); x <= min(i32(ceil(hi.x)) + 1, W() - 1); x++) {
+      let p = cpos(x, y);
+      var inside = true;
+      for (var k = 0u; k < 4u; k++) { if (cross2(q[(k + 1u) % 4u] - q[k], p - q[k]) < 0.0) { inside = false; } }
+      let c = ix(x, y);
+      if (inside && w7[c * 4u + 3u] == 0u) { w7[N * 4u + c * 4u + 3u] = PARK_COL | r; }
+    }
+  }
+}
 /** (farms) a field block this big has a track across it at its first split */
 const FARM_TRACK_AREA: f32 = 9000.0;
 /** (farms) a field's columns marked in the claim grid's owner plane (where nothing else spans them) */
@@ -3348,6 +3373,11 @@ fn claimLots(@builtin(global_invocation_id) g: vec3<u32>) {
   let built = (kind == REC_BUILDING || kind == REC_LANDMARK) && h >= 0.05;
   if (kind == REC_FIELD) {
     claimField(r, o);
+    return;
+  }
+  // (CG26: a park begun — its ground kept grass)
+  if (kind == REC_PARK) {
+    if (r2(r) > 0.0) { claimPark(r, o); }
     return;
   }
   if (!built && kind != REC_PLAZA) { return; }

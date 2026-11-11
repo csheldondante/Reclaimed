@@ -23116,3 +23116,18 @@ A main road's outward growth is a radial proxy (from the centre across a superce
 it joins. A main road beside a single district begun with nothing past it shows once its own lots front it. The
 front stamp's ±3 cells can show a street a lot's side or back edge lies within 3 of. The dirt phase is a flat colour
 (archgen's dirt texture could take it).
+
+## 2026-11-11 — a park's ground kept grass (CG26, `trackA-roadgrow`)
+
+archgen (b7343aea, not merged here) stops drawing the flat park and plaza plates in its mode 1 and plants gardens on
+the land itself; under a park the land then showed its own cover, which round Muru's core is sparse — soil (the
+plants' field there reads ~0.7, between bare and moss). The town's claim never touched a park's columns (claimLots
+returned early), so nothing kept them green. Now a begun park's footprint columns are marked in the claim grid's
+owner plane with no span — `PARK_COL | its record` (0x20000000, beside the farms' FIELD_COL) — and the bare pass
+(citygen/bare.wgsl) raises their plants to grass (ecology's stage 2) where they're under it; a shrub or a tree already
+there stays, and ecology grows on from grass. A park not begun keeps its wild plants. Plazas stay paved (unchanged).
+Checked with the park plate hidden as archgen's mode 1 does (a local edit for the shot only, not committed): Muru's
+core parks read soil before, grass after (scratchpad cg25/park/cg26_before_after.png, at zoom 6, 60°). On this branch
+the plate still draws over the grass.
+**Limits.** The footprint (the park's own quad) is grassed, not the parcel's margin to the street; a park lot's grass
+follows its claim run (the 2 s cadence while building).
