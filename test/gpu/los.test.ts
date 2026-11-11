@@ -93,6 +93,9 @@ test('an archer behind a wall holds fire, walks round it, then fires', async () 
   const { t, h } = pair(3, [38, 66], [56, 66]);
   frame(10);
   arm(t, [h]);
+  // (U2 §9f, seen-only on by default: a target never seen is hunted only when the unit is told of it — an order; this
+  // archer is ordered at its target, so it walks round the wall to it. Noticed alone it would stand: the next test)
+  agents.tell(slotOf(h), t + 1);
   await agents.benchCounters();
   let heldFor = 0;
   let firstShot = -1;
@@ -106,6 +109,27 @@ test('an archer behind a wall holds fire, walks round it, then fires', async () 
   log(`archer walled: held ${heldFor} frames, first shot ${firstShot} at ${r.at.map((v) => v.toFixed(1))}`);
   expect(heldFor).toBeGreaterThan(30);
   expect(firstShot).toBeGreaterThan(0);
+  expect(g.takeErrors()).toEqual([]);
+});
+
+test('seen-only: an archer behind a wall that only noticed its target (never saw it, not told) does not hunt it', async () => {
+  const { agents, frame, pair, arm, row } = await world(true);
+  const { t, h } = pair(3, [38, 66], [56, 66]);
+  frame(10);
+  arm(t, [h]);
+  const r0 = await row(h);
+  await agents.benchCounters();
+  let shots = 0;
+  for (let f = 1; f <= 300; f++) {
+    frame(1);
+    if (f % 30 === 0) shots = (await agents.benchCounters()).shots;
+  }
+  const r1 = await row(h);
+  const moved = Math.hypot(r1.at[0] - r0.at[0], r1.at[1] - r0.at[1]);
+  log(`archer noticed-only: shots ${shots}, moved ${moved.toFixed(1)}`);
+  // (no seed for the hunt field: it wanders, slowly — never round the wall to its target)
+  expect(shots).toBe(0);
+  expect(moved).toBeLessThan(8);
   expect(g.takeErrors()).toEqual([]);
 });
 
