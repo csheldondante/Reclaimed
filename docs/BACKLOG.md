@@ -2271,3 +2271,9 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   central tower, DESIGN §18); citygen still draws them meanwhile (Track A asked for them to be covered).
 - AG11 Brighter albedo under the game's lighting (it reads darker and more muted than the lab), and more than one
   style in a town's core (Muru's core hashed to one style).
+- AG12 (Track A review of 14ff29a1, approved pending the user's sign-off on the look) — the reach cut-off outline
+  sits at the record's top: move it to the generated roof later; districtStyle: `setDistrictStyle(district, word)` on
+  CityGen/FieldTown, saved in TownLog beside `purposes`, a WGSL accessor snippet like townplace.wgsl; confirm "no
+  pacing" with the phone toggle bench (towns stream back to back) before relying on it (AG7).
+- AG13 Roofs, towers, eaves and jetties go past footprint × record height (told Track A): claims under-cover them
+  until the height rule moves into the style table and is written back before citygen's claim pass.
