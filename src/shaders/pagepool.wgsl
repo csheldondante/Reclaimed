@@ -21,6 +21,8 @@
 //   orec   PP_OW words an owner, the CPU's (the fields' place, arrival radii, reach, flags)
 //   rbits  (U2-FIELDCAP) a bit an owner: a page it asked for was refused (the pool full) — its consumers tell it (an
 //     order fails 'pool-full'); cleared when the owner lets go of its pages
+//   og     (U2-FIELDREACH) PP_OGW words an owner, its consumers' (atomic: the fields' want box, fieldseam.wgsl), zeroed
+//     when the owner lets go of its pages
 
 //#read ---------------------------------------------------------------------------------------------------------------
 const PP_HDR: u32 = 16u;
@@ -37,6 +39,7 @@ const PP_FREE: u32 = PP_FRONT + PP_FRONT_CAP;
 const PP_PCTL: u32 = PP_FREE + PP_PAGES;
 const PP_OREC: u32 = PP_PCTL + PP_PAGES * PP_PC;
 const PP_RBITS: u32 = PP_OREC + PP_OWNERS * PP_OW;
+const PP_OG: u32 = PP_RBITS + (PP_OWNERS + 31u) / 32u;
 const PP_NONE: u32 = 0u;
 
 /** owner o's page over chunk slot `slot`, + 1 (PP_NONE: none) */
@@ -51,6 +54,8 @@ fn ppPctlAt(pg1: u32, w: u32) -> u32 { return PP_PCTL + (pg1 - 1u) * PP_PC + w; 
 /** owner o's record word w (w < PP_OW) */
 fn ppOwner(o: u32, w: u32) -> u32 { return ppCtl(PP_OREC + o * PP_OW + w); }
 fn ppOwners() -> u32 { return ppCtl(6u); }
+/** (U2-FIELDREACH) owner o's GPU word w's index in pp.ctl (w < PP_OGW) */
+fn ppOgAt(o: u32, w: u32) -> u32 { return PP_OG + o * PP_OGW + w; }
 /** (U2-FIELDCAP) owner o was refused a page since it last let go of its pages: it can't grow where it needs to */
 fn ppRefused(o: u32) -> bool { return o < PP_OWNERS && ((ppCtl(PP_RBITS + o / 32u) >> (o % 32u)) & 1u) != 0u; }
 /** the dirty parity marks made outside a sweep go to (and the front reads) */
@@ -247,4 +252,5 @@ fn ppRelease(@builtin(global_invocation_id) id: vec3<u32>) {
   ppClearBit(PP_DIRTY + PP_TBITS, b);
   ppDrop(o, id.x, PP_NONE);
   if (id.x == 0u) { ppClearBit(PP_RBITS, o); }
+  if (id.x < PP_OGW) { atomicStore(&pp.ctl[ppOgAt(o, id.x)], 0u); }
 }

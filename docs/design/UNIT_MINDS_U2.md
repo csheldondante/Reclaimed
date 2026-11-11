@@ -516,6 +516,33 @@ planes (`shaders/pages.wgsl`, `agents/pages.ts`) over the agents' own surfaces. 
   from the combat words) and `notice.relations` (a 256 × 256 bit matrix in notice's uniform, written on change). Not
   built: a flee field per side (U2-SIDEFLEE), AgentUnits on sides (U2-AUSIDES).
 
+**U2-FIELDREACH — a field takes pages only where its walkers need it (built, trackB-fieldreach).** A destination
+field grew over everything it reached (its cap the scope's size): 400 pages a field at 320 × 320, ~6 whole-window
+fields in the 20 MB pool. Now a *walkers' field* (`FO_WALKERS` in its record: every order's field, and a side's hunt)
+asks for pages only inside its **want box**:
+- **Data flow.** The box lives in the pool's per-owner GPU words (`PagePool` `ownerGpu`, pagepool.wgsl `PP_OG`, zeroed
+  when the owner lets go): world chunks (the window's origin added, so a slide moves nothing). Each frame its seeds
+  (`seedPut`) and its walkers (orders.wgsl `groupCount`: every member, a man's rank on its run field; units.wgsl
+  `huntSet`: the side's fighters) atomicMax a bounding box; `fieldBounds` (a thread a field, after the seeds, before the
+  sweeps) adds it, grown by `FW_MARGIN` (1 chunk) + the field's growth, to the box. The box only grows while the field
+  lives. `fieldRelax` asks for a page past the box never: it sets `FWF_EDGE` instead.
+- **Detours (the riskiest case).** The shortest way may leave the box (a U round a wall). A field whose relax came out
+  finite past its box's edge (`FWF_EDGE`), that moved nothing for a frame (no `FWF_ACTIVE`), while a walker read FAR
+  (`FWF_FAR`, groupCount / huntSet) grows a chunk a side and its growth by one; its pages on the old box's edge are
+  marked, so the front goes on. A walker its field can reach is reached, never left FAR by the box; one the field
+  can't reach at all grows the box to the scope (today's cost, no worse).
+- **Readbacks:** none. **Cost:** one thread a field a frame (early out unless a walkers' field); four atomicMax a walker.
+- **Rejected:** (b) a reach cap once every member is reached: a field grows as a disc round its seed until the farthest
+  member is in it (π r² for a member r away), against the box's r × (a chunk or two); and it needs the members reached
+  first, so the peak is the same. A corridor (members-to-seed band) would be tighter than the box but needs the same
+  detour growth and a test per chunk against a polygon; the box measured small enough (below).
+- **Limits.** Growth is symmetric (all four sides), so a deep detour can hold most of the window (the deep cup: 236 of
+  256 pages). The box doesn't shrink as the walkers close in (pages behind them stay until the order ends). A way
+  inside the box that is longer than one leaving it is taken without growth (the box isn't stuck: no walker reads FAR).
+  The threat field per side is left unbounded (nothing on the GPU reads it yet).
+- **Measured** (fieldreach.test.ts): 40 groups to 40 destinations 80 cells apart on 320 × 320: 24 pages a field
+  (960 held, 0 refused, 40/40 arrived) against 1944 refused and 8 'pool-full' before. DEVLOG 2026-11-11 U2-FIELDREACH.
+
 **Round 7, the rest — the plan, step by step, each against the planes behind a toggle until it matches:**
 1. **The seam reads pages.** `fieldDist` / `fieldGrad` go through the table (pgDist).
    - unitStep's `here` and `downField`, the hunt and the JFA read through it too.
