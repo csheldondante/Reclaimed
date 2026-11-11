@@ -194,17 +194,19 @@ fn emit(kind: u32, id: u32, other: u32, amount: f32, p: vec3<f32>) {
 
 // ---- (round 104, simscale — agents.ts scope) -------------------------------------------------------------------
 // The fields, the surfaces and the occupancy are kept only over the columns round the units and their seeds. A column
-// come into that scope starts over: every field unreachable, nobody there (what it held from before is stale).
+// come into that scope starts over: every field's page there let go (U2 round 7: the pool's), its chunk marked for the
+// fields round it, nobody there (what it held from before is stale).
 @compute @workgroup_size(8, 8)
 fn scopeIn(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let i = colIdx(id.x, id.y);
-  let N = ns();
   let cols = G.mapW * G.mapH;
-  for (var f = 0u; f < NFIELDS; f++) {
-    for (var k = 0u; k < NAV_K; k++) { dist[f * N + i * NAV_K + k] = FAR; }
+  // (a chunk's pages, once: its first column's thread)
+  if ((id.x % COLS_PAGE) == 0u && (id.y % COLS_PAGE) == 0u) {
+    let slot = chunkOfCol(id.x, id.y);
+    ppDropSlot(slot);
+    ppMarkSlot(slot);
   }
-  atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], ALL_FIELDS);
   // (?jfa=1: the obstacles JFA made again — a chunk came in)
   atomicStore(&jfa[2], 1u);
   for (var h = 0u; h < 2u; h++) { occClearAt(h * cols + i); }
@@ -247,7 +249,6 @@ fn occClear(@builtin(global_invocation_id) id: vec3<u32>) {
 
 /** The way down field `fld` from surface s of cell c, at pos (0 at a seed, or none). */
 fn downField(fld: u32, s: u32, c: vec2<i32>, pos: vec2<f32>, here: f32) -> vec2<f32> {
-  let N = ns();
   var g = vec2<f32>(0.0);
   var bestD = here;
   var bestDir = vec2<f32>(0.0);
@@ -257,7 +258,7 @@ fn downField(fld: u32, s: u32, c: vec2<i32>, pos: vec2<f32>, here: f32) -> vec2<
     let t = colIdxI(nbr(c, d)) * NAV_K + l - 1u;
     // (round 128d, FT-20: not into deep water from out of it — agents.wgsl DEEP; the relax reads it the same way)
     if (navWater(t) > DEEP && navWater(s) <= DEEP) { continue; }
-    let dn = dist[fld * N + t];
+    let dn = fieldDist(fld, t);
     if (dn >= FAR) { continue; }
     let toward = normalize(cellPos(nbr(c, d)) - pos);
     g += toward * max(here - dn, 0.0);
@@ -388,7 +389,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     let m = atomicLoad(&mail[ro + 3u]);
     rankMode = m & 0xffu;
     rankLeave = (m & RANK_LEAVE) != 0u;
-    if (rankMode == RANK_FIELD) { fld = (m >> 8u) & 0xffu; }
+    if (rankMode == RANK_FIELD) { fld = m >> 8u; }
     rankAt = mailV3(ro);
   }
   // (a march that leaves: past the window's edge it drops out — no death; the CPU frees the slot on EV_LEFT)
@@ -685,7 +686,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     var speed = kind.a.w;
     if (k < NAV_K) {
       let s = i * NAV_K + k;
-      let here = select(FAR, dist[fld * N + s], fld < AP.n.z);
+      let here = fieldDist(fld, s);
       // (round 128o, DA-A6) a rider standing at its ride's goal (the ride's steer STAND, set for this group: not one it
       // was moved to this tick): arrived on its group's ride, told once — `other` RIDE_ARRIVED + its group
       let atRide = kind.b.w <= 0.0 && steer < 0.0 && steer > RIDE_TRIP + 0.5 && grp == (info & 0xffu);
@@ -695,7 +696,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
           latch = key;
           emit(EV_ARRIVED, uid, RIDE_ARRIVED + grp, 0.0, pos);
         }
-      } else if (fld < NFIELDS) {
+      } else if (fieldOk(fld)) {
         // (round 128o, DA-B2a) arrived: within its field's radius, told once (the latch, word f.x)
         let ar = arriveR(fld);
         if (latch != 0u && latch != fld + 1u) { latch = 0u; }
@@ -840,7 +841,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     // never step where there's no link, nor off the place its field is
     // confined to: it stops there instead. (Round 128o, DA-B22: in sub-moves of at most half a cell, each into the
     // column next to the last by a link — the step's dt may span several ticks)
-    let fp = select(0u, AP.fieldPlace[min(fld, NFIELDS - 1u) / 4u][min(fld, NFIELDS - 1u) % 4u], fld < AP.n.z);
+    let fp = fieldPlace(fld);
     let mv = v2 * dt;
     let m = subMoves(length(mv));
     var p2 = pos.xy;
@@ -1050,49 +1051,13 @@ fn itemDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   putVoxel(k, a.xyz, u32(a.w) | (min(u32(b.x * 16.0 + 0.5), 63u) << 24u), q);
 }
 
-// ---- (U2, docs/design/UNIT_MINDS_U2.md §5: the riskiest part first) the hunt field seeded on the GPU -----------------
-// Each hostile fighter's target (unit word f.y, notice.wgsl) is a seed of the hunt field, scattered into seedMask — not
-// ranked and uploaded by the CPU (agent-units.ts think: TARGETS, setTargets). Once a frame, before the relaxation:
-//   huntReset   this frame's list emptied
-//   huntUnmark  last frame's seeds: bit f moved to bit 16 + f (there last frame)
-//   huntSet     every hostile with a unit target: its target's surface's bit f set; a surface new to it (not there last
-//               frame) listed and its chunk marked for field f
-//   huntGone    last frame's seeds not seeded again: their chunks marked for field f (the field rises there); bit 16 + f
-//               cleared
-//   huntFlip    this frame's list becomes last frame's
-// Actors' targets stay the CPU's seeds (their positions are the CPU's).
-// [0] [1] the two lists' counts, [2] which is last frame's, [3] the fields: the hunt's (low 16 bits; NFIELDS none) and
-// (U2 round 5, DA-B32) the foes' (high 16): the peaceful fighters' targets — a guard's, a soldier's — so the defenders
-// close in on a field of their own, not on the hunters' seeds (their own side). Then the lists: a surface, its top bit
-// set for the foes' field
-@group(0) @binding(53) var<storage, read_write> huntList: array<atomic<u32>>;
-const HUNT_LIST: u32 = 8192u;
-const HUNT_HEAD: u32 = 4u;
-fn huntAt(l: u32, k: u32) -> u32 { return HUNT_HEAD + l * HUNT_LIST + k; }
-fn huntField() -> u32 { return atomicLoad(&huntList[3]) & 0xffffu; }
-fn foeField() -> u32 { return atomicLoad(&huntList[3]) >> 16u; }
-const HUNT_FOE: u32 = 0x80000000u;
-/** a list entry's field and surface */
-fn huntEntry(e: u32) -> vec2<u32> { return vec2<u32>(select(huntField(), foeField(), (e & HUNT_FOE) != 0u), e & ~HUNT_FOE); }
-// (FC11's reaction test: the frame's new seeds and gone ones, counted in frontDbg)
-
-@compute @workgroup_size(1)
-fn huntReset() {
-  atomicStore(&huntList[1u - atomicLoad(&huntList[2])], 0u);
-}
-
-@compute @workgroup_size(64)
-fn huntUnmark(@builtin(global_invocation_id) id: vec3<u32>) {
-  let prev = atomicLoad(&huntList[2]);
-  if (id.x >= min(atomicLoad(&huntList[prev]), HUNT_LIST)) { return; }
-  let fe = huntEntry(atomicLoad(&huntList[huntAt(prev, id.x)]));
-  let f = fe.x;
-  let s = fe.y;
-  if (f >= NFIELDS) { return; }
-  atomicAnd(&seedMask[s], ~(1u << f));
-  atomicOr(&seedMask[s], 1u << (16u + f));
-}
-
+// ---- (U2, docs/design/UNIT_MINDS_U2.md §5) the hunt fields seeded on the GPU ---------------------------------------
+// Each hostile fighter's target (unit word f.y, notice.wgsl) is a seed of the hunt field, and each peaceful fighter's
+// (a guard's, a soldier's: DA-B32) of the foes' field — put once a frame before the relaxation (fieldseam.wgsl
+// seedPut: the frame's seed list; a seed new marks its page, one gone is seedGone's). Actors' targets stay the CPU's
+// seeds (their positions are the CPU's). The two field ids: seedList words SEED_HUNT, SEED_FOES (FIELD_NONE none).
+const SEED_HUNT: u32 = 4u;
+const SEED_FOES: u32 = 5u;
 @compute @workgroup_size(64)
 fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   let u = id.x;
@@ -1104,8 +1069,8 @@ fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   let kd = AP.kinds[(info >> 9u) & 7u];
   let hostileKind = kd.b.w > 0.0;
   if (!hostileKind && kd.b.x <= 0.0 && bitcast<f32>(kd.c.w) <= 0.0) { return; }
-  let f = select(foeField(), huntField(), hostileKind);
-  if (f >= NFIELDS) { return; }
+  let f = atomicLoad(&seedList[select(SEED_FOES, SEED_HUNT, hostileKind)]);
+  if (!fieldOk(f)) { return; }
   let code = bitcast<u32>(units[u * UNIT_V + 5u].y);
   if (code == 0u || (code & 0x80000000u) != 0u) { return; }
   let t = (code - 1u) % MAX_SLOTS;
@@ -1131,41 +1096,11 @@ fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   let k = surfaceNear(i, seedAt.z);
   if (k >= NAV_K) { return; }
   let s = i * NAV_K + k;
-  let old = atomicOr(&seedMask[s], 1u << f);
-  if (((old >> f) & 1u) != 0u) { return; }
-  let cur = 1u - atomicLoad(&huntList[2]);
-  let n = atomicAdd(&huntList[cur], 1u);
-  if (n < HUNT_LIST) { atomicStore(&huntList[huntAt(cur, n)], s | select(0u, HUNT_FOE, !hostileKind)); }
-  // (new here: the field falls round it; or the window slid)
-  if (((old >> (16u + f)) & 1u) == 0u || (AP.u2.z & HUNT_REMARK) != 0u) {
-    atomicOr(&dirtyCur[chunkOfCol(u32(c.x), u32(c.y))], 1u << f);
-    // (?jfa=1: the targets JFA runs again this frame — the hunt's)
+  // (new here: the field falls round it — ?jfa=1: the targets JFA runs again this frame, the hunt's)
+  if (seedPut(f, s) == SEED_NEW) {
     if (hostileKind) { atomicStore(&jfa[0], 1u); }
     if (AP.u2.w != 0u) { atomicAdd(&frontDbg[32], 1u); }
   }
-}
-
-@compute @workgroup_size(64)
-fn huntGone(@builtin(global_invocation_id) id: vec3<u32>) {
-  let prev = atomicLoad(&huntList[2]);
-  if (id.x >= min(atomicLoad(&huntList[prev]), HUNT_LIST)) { return; }
-  let fe = huntEntry(atomicLoad(&huntList[huntAt(prev, id.x)]));
-  let f = fe.x;
-  let s = fe.y;
-  if (f >= NFIELDS) { return; }
-  let m = atomicAnd(&seedMask[s], ~(1u << (16u + f)));
-  // (gone: the field rises round it — FC4's count-up; U2 §5 measures it)
-  if (((m >> f) & 1u) == 0u && ((m >> (16u + f)) & 1u) != 0u) {
-    // (a column's chunk: its page's slot — common.wgsl colIdx)
-    atomicOr(&dirtyCur[(s / NAV_K) / (COLS_PAGE * COLS_PAGE)], 1u << f);
-    if (f == huntField()) { atomicStore(&jfa[0], 1u); }
-    if (AP.u2.w != 0u) { atomicAdd(&frontDbg[33], 1u); }
-  }
-}
-
-@compute @workgroup_size(1)
-fn huntFlip() {
-  atomicStore(&huntList[2], 1u - atomicLoad(&huntList[2]));
 }
 
 // ---- (FC12 variant, ?jfa=1: the user's "an obstacle JFA, then a targets JFA, then a line check on the obstacle
@@ -1270,11 +1205,11 @@ fn jfaObsEnd() { atomicStore(&jfa[2], 0u); }
 @compute @workgroup_size(8, 8)
 fn jfaInit(@builtin(global_invocation_id) id: vec3<u32>) {
   let f = AP.u2.x;
-  if (atomicLoad(&jfa[0]) == 0u || f >= NFIELDS || id.x >= G.mapW || id.y >= G.mapH) { return; }
+  if (atomicLoad(&jfa[0]) == 0u || !fieldOk(f) || id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   let s = colIdxI(p) * NAV_K;
   // (a seed on the top surface only: see the header)
-  let seeded = inScope(p) && ((atomicLoad(&seedMask[s]) >> f) & 1u) != 0u;
+  let seeded = inScope(p) && fieldIsSeed(f, s);
   atomicStore(&jfa[jfaPlane(0u) + winIdx(p)], select(0u, (winIdx(p) << 2u) + 1u, seeded));
   // (?jfa=2's planes: a seed resolved at 0, its own root; the rest not yet)
   atomicStore(&jfa[jfaPlane(5u) + winIdx(p)], bitcast<u32>(select(FAR, 0.0, seeded)));
@@ -1289,7 +1224,7 @@ fn jfaInit(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 @compute @workgroup_size(8, 8)
 fn jfaPass(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (atomicLoad(&jfa[0]) == 0u || AP.u2.x >= NFIELDS || id.x >= G.mapW || id.y >= G.mapH) { return; }
+  if (atomicLoad(&jfa[0]) == 0u || !fieldOk(AP.u2.x) || id.x >= G.mapW || id.y >= G.mapH) { return; }
   let k = atomicLoad(&jfa[1]);
   let n = atomicLoad(&jfa[4]);
   let a = select(1u, 0u, k % 2u == 0u);
@@ -1336,7 +1271,7 @@ fn losClear(a: vec2<f32>, b: vec2<f32>) -> bool {
 @compute @workgroup_size(8, 8)
 fn jfaApply(@builtin(global_invocation_id) id: vec3<u32>) {
   let f = AP.u2.x;
-  if (atomicLoad(&jfa[0]) == 0u || f >= NFIELDS || id.x >= G.mapW || id.y >= G.mapH) { return; }
+  if (atomicLoad(&jfa[0]) == 0u || !fieldOk(f) || id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   if (!inScope(p)) { return; }
   let c = atomicLoad(&jfa[jfaPlane(select(1u, 0u, atomicLoad(&jfa[4]) % 2u == 0u)) + winIdx(p)]);
@@ -1352,20 +1287,23 @@ fn jfaApply(@builtin(global_invocation_id) id: vec3<u32>) {
  *  and the field's value and seed-id written where it has none live or a higher one */
 fn jfaResolve(p: vec2<i32>, s: u32, v: f32, root: u32) {
   let f = AP.u2.x;
-  let N = ns();
   let w = winIdx(p);
   atomicStore(&jfa[jfaPlane(5u) + w], bitcast<u32>(v));
   atomicStore(&jfa[jfaPlane(6u) + w], root);
   atomicAdd(&jfa[5], 1u);
   if (AP.u2.w != 0u) { atomicAdd(&frontDbg[36u + min(atomicLoad(&jfa[7]), 7u)], 1u); }
   let seedS = colIdxI(jfaXY(root)) * NAV_K;
-  let od = dist[f * N + s];
-  let os = atomicLoad(&seedMask[N + s]);
-  let live = os != 0u && ((((atomicLoad(&seedMask[os - 1u]) >> f) & 1u) != 0u) || dist[f * N + os - 1u] == 0.0);
+  // (through the field's page: none there — the relax asks for it as the field reaches it)
+  let pg = fieldPage(f, s);
+  if (pg == PP_NONE) { return; }
+  let pw = s % FP_W;
+  let od = ppF32(pg, pw);
+  let os = ppWord(pg, FP_W + pw);
+  let live = os != 0u && fieldDist(f, os - 1u) == 0.0;
   if (live && od <= v) { return; }
-  dist[f * N + s] = v;
-  atomicStore(&seedMask[N + s], seedS + 1u);
-  atomicOr(&dirtyCur[chunkOfCol(u32(p.x), u32(p.y))], 1u << f);
+  ppSetF32(pg, pw, v);
+  ppSetWord(pg, FP_W + pw, seedS + 1u);
+  ppMark(f, s / FP_W);
 }
 @compute @workgroup_size(1)
 fn jfaEnd() {
@@ -1390,7 +1328,7 @@ fn jfaRBegin() {
   atomicStore(&jfa[1], 0u);
   atomicAdd(&jfa[7], 1u);
 }
-fn jfaRound() -> bool { return atomicLoad(&jfa[0]) != 0u && atomicLoad(&jfa[6]) == 0u && AP.u2.x < NFIELDS; }
+fn jfaRound() -> bool { return atomicLoad(&jfa[0]) != 0u && atomicLoad(&jfa[6]) == 0u && fieldOk(AP.u2.x); }
 fn jfaVal(w: u32) -> f32 { return bitcast<f32>(atomicLoad(&jfa[jfaPlane(5u) + w])); }
 
 @compute @workgroup_size(8, 8)
@@ -1513,9 +1451,6 @@ const BY_UNIT: u32 = 0x40000000u;
 /** AP.u2.z: line of sight on (melee steers straight at a target in sight; ranged kinds shoot), seen-only targets */
 const LOS_ON: u32 = 1u;
 const SEEN_ONLY: u32 = 2u;
-/** (U2 round 5b) AP.u2.z: the window slid — every hunt seed marks its chunk again this frame (the slide started the
- *  fields over where columns came in; a seed that stayed put marked nothing) */
-const HUNT_REMARK: u32 = 4u;
 /** cells a second an arrow flies (its flight time: the distance over this) */
 const ARROW_SPEED: f32 = 24.0;
 /** seconds out of sight after which a seen-only target's last-seen place stops being chased */

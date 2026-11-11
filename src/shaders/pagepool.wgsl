@@ -8,7 +8,8 @@
 //
 // ctl words (PagePool.layout mirrors them):
 //   header PP_HDR: 0 pages handed out (the pool's end), 1 claims refused (the pool full), 2 the front's count,
-//     3 the dirty parity, 4 the free stack's count, 5 the front's stamp (one a sweep)
+//     3 the dirty parity, 4 the free stack's count, 5 the front's stamp (one a sweep), 6 owners in use (the CPU's
+//     high-water of the ids it handed out)
 //   gen    a word a page: bumped when the page is let go (a page id read before a release is told from one after)
 //   table  owners x slots: page + 1 (0: none)
 //   dirty  two parities of a bit an (owner, slot), then two of a bit a slot ("every owner here": a cell changed)
@@ -16,6 +17,8 @@
 //   stamp  owners x slots: the sweep that last listed it in the front (dedupe without a clear)
 //   front  owners x slots entries: owner << 16 | slot
 //   free   the free stack (pages let go)
+//   pctl   PP_PC words a page the owner's kernels use atomically (the fields' seed bits), zeroed when handed out
+//   orec   PP_OW words an owner, the CPU's (the fields' place, arrival radii, reach, flags)
 
 //#read ---------------------------------------------------------------------------------------------------------------
 const PP_HDR: u32 = 16u;
@@ -29,6 +32,8 @@ const PP_REQ: u32 = PP_SDIRTY + 2u * PP_SBITS;
 const PP_STAMP: u32 = PP_REQ + PP_TBITS;
 const PP_FRONT: u32 = PP_STAMP + PP_OWNERS * PP_SLOTS;
 const PP_FREE: u32 = PP_FRONT + PP_OWNERS * PP_SLOTS;
+const PP_PCTL: u32 = PP_FREE + PP_PAGES;
+const PP_OREC: u32 = PP_PCTL + PP_PAGES * PP_PC;
 const PP_NONE: u32 = 0u;
 
 /** owner o's page over chunk slot `slot`, + 1 (PP_NONE: none) */
@@ -38,6 +43,11 @@ fn ppGen(pg: u32) -> u32 { return ppCtl(PP_GEN + pg); }
 /** word w of page pg1 (page + 1, as the table holds it) */
 fn ppWord(pg1: u32, w: u32) -> u32 { return pp.data[(pg1 - 1u) * PP_PW + w]; }
 fn ppF32(pg1: u32, w: u32) -> f32 { return bitcast<f32>(ppWord(pg1, w)); }
+/** page pg1's (page + 1) control word w (w < PP_PC) */
+fn ppPctlAt(pg1: u32, w: u32) -> u32 { return PP_PCTL + (pg1 - 1u) * PP_PC + w; }
+/** owner o's record word w (w < PP_OW) */
+fn ppOwner(o: u32, w: u32) -> u32 { return ppCtl(PP_OREC + o * PP_OW + w); }
+fn ppOwners() -> u32 { return ppCtl(6u); }
 /** the dirty parity marks made outside a sweep go to (and the front reads) */
 fn ppPar() -> u32 { return ppCtl(3u) & 1u; }
 /** the front's i-th entry: (owner, slot) */
@@ -58,12 +68,37 @@ fn ppMarkNext(o: u32, slot: u32) { ppBit(PP_DIRTY + (1u - ppPar()) * PP_TBITS, o
 fn ppMarkSlot(slot: u32) { ppBit(PP_SDIRTY + ppPar() * PP_SBITS, slot); }
 /** a page asked for (owner o, slot): handed out by the next ppAlloc */
 fn ppRequest(o: u32, slot: u32) { ppBit(PP_REQ, o * PP_SLOTS + slot); }
+fn ppClearBit(base: u32, b: u32) { atomicAnd(&pp.ctl[base + b / 32u], ~(1u << (b % 32u))); }
+/** page pg let go: its generation moved on, onto the free stack */
+fn ppFree(pg: u32) {
+  atomicAdd(&pp.ctl[PP_GEN + pg], 1u);
+  let k = atomicAdd(&pp.ctl[4], 1u);
+  atomicStore(&pp.ctl[PP_FREE + k], pg);
+}
+/** (owner o, slot)'s page let go, if it has one (and if it is still `pg1`, when that isn't PP_NONE) */
+fn ppDrop(o: u32, slot: u32, pg1: u32) {
+  let b = o * PP_SLOTS + slot;
+  var pg = PP_NONE;
+  if (pg1 == PP_NONE) {
+    pg = atomicExchange(&pp.ctl[PP_TABLE + b], PP_NONE);
+  } else if (atomicCompareExchangeWeak(&pp.ctl[PP_TABLE + b], pg1, PP_NONE).exchanged) {
+    pg = pg1;
+  }
+  if (pg != PP_NONE) { ppFree(pg - 1u); }
+}
+/** slot's chunk changed (it came into the owners' ground): every owner's page there let go, its asks cleared */
+fn ppDropSlot(slot: u32) {
+  for (var o = 0u; o < ppOwners(); o++) {
+    ppClearBit(PP_REQ, o * PP_SLOTS + slot);
+    ppDrop(o, slot, PP_NONE);
+  }
+}
 
 //#kernels ------------------------------------------------------------------------------------------------------------
 // The pool's own passes (gpu/pagepool.ts encodes them): its params, the relax's indirect args (their own buffer: an
 // indirect buffer can't be written in the dispatch that reads it), and the releases asked for (ops).
 struct PoolParams {
-  /** x owners in use (rows: the CPU's high-water), y spare, z spread (1: a mark lists the 8 neighbours
+  /** x spare (owners in use: ctl[6]), y spare, z spread (1: a mark lists the 8 neighbours
    *  too), w the page's split (words below it filled with fill.x, the rest fill.y) */
   n: vec4<u32>,
   /** the front's box in window chunks: x0, y0, x1, y1 (exclusive; whole window when x1 is 0) */
@@ -73,7 +108,7 @@ struct PoolParams {
 };
 @group(0) @binding(90) var<uniform> PPP: PoolParams;
 @group(0) @binding(91) var<storage, read_write> ppArgs: array<atomic<u32>, 4>;
-/** releases: [0] their count, then each: bit 31 a slot (every owner's page there), else an owner (every page it holds) */
+/** releases: [0] their count, then the owners */
 @group(0) @binding(92) var<storage, read> ppOps: array<u32>;
 
 fn ppPagesY() -> u32 { return PP_SLOTS / pagesX(); }
@@ -82,14 +117,6 @@ fn ppInBox(c: vec2<i32>) -> bool {
   if (PPP.box.z == 0u) { return true; }
   return u32(c.x) >= PPP.box.x && u32(c.y) >= PPP.box.y && u32(c.x) < PPP.box.z && u32(c.y) < PPP.box.w;
 }
-/** page pg let go: its generation moved on, onto the free stack */
-fn ppFree(pg: u32) {
-  atomicAdd(&pp.ctl[PP_GEN + pg], 1u);
-  let k = atomicAdd(&pp.ctl[4], 1u);
-  atomicStore(&pp.ctl[PP_FREE + k], pg);
-}
-fn ppClearBit(base: u32, b: u32) { atomicAnd(&pp.ctl[base + b / 32u], ~(1u << (b % 32u))); }
-
 /** a thread a word of requests: each asked-for (owner, slot) without a page gets one — the free stack's top, else the
  *  pool's end; none left: refused (counted; the owner doesn't grow there). The page filled, the entry marked */
 @compute @workgroup_size(64)
@@ -102,7 +129,7 @@ fn ppAlloc(@builtin(global_invocation_id) id: vec3<u32>) {
     let b = id.x * 32u + bit;
     let o = b / PP_SLOTS;
     let slot = b % PP_SLOTS;
-    if (o >= PPP.n.x || ppPage(o, slot) != PP_NONE) { continue; }
+    if (o >= ppOwners() || ppPage(o, slot) != PP_NONE) { continue; }
     var pg = 0xffffffffu;
     let fk = atomicSub(&pp.ctl[4], 1u);
     if (fk > 0u && fk <= PP_PAGES) { pg = atomicLoad(&pp.ctl[PP_FREE + fk - 1u]); } else { atomicAdd(&pp.ctl[4], 1u); }
@@ -115,6 +142,7 @@ fn ppAlloc(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
     for (var w = 0u; w < PP_PW; w++) { pp.data[pg * PP_PW + w] = select(PPP.fill.y, PPP.fill.x, w < PPP.n.w); }
+    for (var w = 0u; w < PP_PC; w++) { atomicStore(&pp.ctl[PP_PCTL + pg * PP_PC + w], 0u); }
     atomicStore(&pp.ctl[PP_TABLE + o * PP_SLOTS + slot], pg + 1u);
     ppMark(o, slot);
   }
@@ -170,7 +198,7 @@ fn ppFront(@builtin(global_invocation_id) id: vec3<u32>) {
       let b = id.x * 32u + firstTrailingBit(m);
       m &= m - 1u;
       let o = b / PP_SLOTS;
-      if (o < PPP.n.x) { ppList(o, b % PP_SLOTS); }
+      if (o < ppOwners()) { ppList(o, b % PP_SLOTS); }
     }
     return;
   }
@@ -181,7 +209,7 @@ fn ppFront(@builtin(global_invocation_id) id: vec3<u32>) {
     let slot = w * 32u + firstTrailingBit(m);
     m &= m - 1u;
     if (slot >= PP_SLOTS) { continue; }
-    for (var o = 0u; o < PPP.n.x; o++) {
+    for (var o = 0u; o < ppOwners(); o++) {
       if (ppHasNear(o, slot)) { ppList(o, slot); }
     }
   }
@@ -191,28 +219,16 @@ fn ppFront(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(1)
 fn ppFlip() { atomicXor(&pp.ctl[3], 1u); }
 
-/** releases (ops): workgroup row y the op, a thread a slot (an owner's) or an owner (a slot's) — pages let go, the
- *  entries' marks and asks cleared (an owner id freed starts empty; a slot come in starts empty for everyone) */
+/** releases (ops): workgroup row y an owner, a thread a slot — its pages let go, its marks and asks cleared (an owner
+ *  id freed starts empty) */
 @compute @workgroup_size(64)
 fn ppRelease(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.y >= ppOps[0]) { return; }
-  let op = ppOps[1u + id.y];
-  var o = 0u;
-  var slot = 0u;
-  if ((op >> 31u) != 0u) {
-    if (id.x >= PPP.n.x) { return; }
-    o = id.x;
-    slot = op & 0x7fffffffu;
-  } else {
-    if (id.x >= PP_SLOTS) { return; }
-    o = op;
-    slot = id.x;
-  }
-  if (o >= PP_OWNERS || slot >= PP_SLOTS) { return; }
-  let b = o * PP_SLOTS + slot;
+  if (id.y >= ppOps[0] || id.x >= PP_SLOTS) { return; }
+  let o = ppOps[1u + id.y];
+  if (o >= PP_OWNERS) { return; }
+  let b = o * PP_SLOTS + id.x;
   ppClearBit(PP_REQ, b);
   ppClearBit(PP_DIRTY, b);
   ppClearBit(PP_DIRTY + PP_TBITS, b);
-  let pg = atomicExchange(&pp.ctl[PP_TABLE + b], PP_NONE);
-  if (pg != PP_NONE) { ppFree(pg - 1u); }
+  ppDrop(o, id.x, PP_NONE);
 }

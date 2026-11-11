@@ -293,7 +293,6 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
   // (the front's asks and the arrows counted without ?agentprof=1; the archers' kind)
   agents.benchProbe = true;
   agents.defineKind(ARCHER_KIND, { name: 'archer', height: 1.5, mass: 1, hp: 10, speed: 2.8, reach: 0, damage: 1, swingPeriod: 1.2, notice: 160, range: 18 });
-  for (const v of ['front', 'block8', 'block16'] as const) agents.benchRelax(v);
   await sleep(3000);
   const P = R.core.host.profiler;
   P.active = true;
@@ -395,12 +394,10 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
     await sleep(500);
     return p;
   };
-  const relaxed = (v: 'front' | 'block8' | 'block16') => (on: boolean) => {
-    agents.benchRelax(v);
+  const relaxed = (on: boolean) => {
     agents.benchFrozen = !on;
   };
   const restDefault = () => {
-    agents.benchRelax('block16');
     agents.benchFrozen = false;
     agents.benchNoDraw = false;
     agents.benchNoNotice = false;
@@ -504,15 +501,11 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
       const list: Phase[] = [];
       await warm(n);
       if (g === 'open') {
-        list.push(await phase(n, 'block16', 'relaxBlock K 16', 'fields frozen', relaxed('block16'), restDefault));
+        list.push(await phase(n, 'pages', 'the fields on pages (relax K 16)', 'fields frozen', relaxed, restDefault));
         // (500 v 500 only if 100 v 100 held 30 fps with the default on)
         if (n === 500 && phases['open:100']?.[0] && phases['open:100'][0].sides.on.p50 > 33.4) {
-          errors.push(`500 v 500 skipped: 100 v 100 ran at ${phases['open:100'][0].sides.on.p50} ms (p50) with block16`);
+          errors.push(`500 v 500 skipped: 100 v 100 ran at ${phases['open:100'][0].sides.on.p50} ms (p50) with the fields on`);
           break;
-        }
-        if (params.get('benchrelax') === '1') {
-          list.push(await phase(n, 'block8', 'relaxBlock K 8', 'fields frozen', relaxed('block8'), restDefault));
-          list.push(await phase(n, 'front', "relax's front kernel (old)", 'fields frozen', relaxed('front'), restDefault));
         }
         list.push(
           await phase(

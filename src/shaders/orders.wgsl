@@ -8,11 +8,11 @@
 //                 GROUP_BASE + g; spawned, it's placed at the place's approach, round it in a spiral by its rank. No
 //                 place there: it's not made (its alive bit cleared; the CPU frees the slot on orderFailed)
 //   orderResolve  each live group: the place's status and point; invalid → orderFailed(g, status) once an order; valid
-//                 → its field seeded there (seedMask, as the hunt's), its chunk marked; a seed it left, cleared
+//                 → its field seeded there (fieldseam.wgsl seedPut, every frame: one not put again is gone)
 //   groupCount    each member alive, and within the arrival radius of the place
 //   groupEmit     a group whose living members have all arrived → arrived(g) once an order
 // group words (GROUP_W): CPU's 0 kind (0 none, 1 stand, 2 go, 3 guard, 4 attack), 1 the alternatives (1..ALTS), 2 the
-// settled one + 1 (the CPU writes 0 with an order; the GPU's after), 6 field (NFIELDS none), 7 serial; GPU's 8-10 the
+// settled one + 1 (the CPU writes 0 with an order; the GPU's after), 6 field (FIELD_NONE none), 7 serial; GPU's 8-10 the
 // place, 11 its status, 12 alive this frame, 13 arrived this frame, 14 the serial arrived was told for (+1), 15 the
 // serial a failure was told for (+1), 16 the seeded surface (+1), 17 its field, 18 last frame's alive, 19 the CPU's ask
 // to mark the seed again (a slide); from REF_AT the CPU's refs: ALTS alternatives (PlaceRef's `else` chain) of a ref and
@@ -165,15 +165,8 @@ fn orderApply(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(1)
 fn orderDone() { atomicStore(&mail[MAIL_Q], 0u); }
 
-/** a seed this group left: its bit cleared, its chunk marked for the field (it rises there) */
-fn grpUnseed(o: u32) {
-  let prev = atomicLoad(&mail[o + 16u]);
-  let pf = atomicLoad(&mail[o + 17u]);
-  if (prev != 0u && pf < NFIELDS) {
-    fieldUnseed(pf, prev - 1u);
-  }
-  atomicStore(&mail[o + 16u], 0u);
-}
+/** this group seeds nothing this frame (a seed not put again is gone: fieldseam.wgsl seedGone) */
+fn grpUnseed(o: u32) { atomicStore(&mail[o + 16u], 0u); }
 
 @compute @workgroup_size(8)
 fn orderResolve(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -209,24 +202,16 @@ fn orderResolve(@builtin(global_invocation_id) id: vec3<u32>) {
     at = grpPoint(g, r, false);
     mailSetV3(o + 8u, at);
   }
-  if (f >= NFIELDS || kind == OK_STAND) { grpUnseed(o); return; }
+  if (!fieldOk(f) || kind == OK_STAND) { grpUnseed(o); return; }
   let c = clampCell(cellAt(at.xy));
   let i = colIdxI(c);
   let k = surfaceNear(i, at.z);
   if (k >= NAV_K || !inScope(c)) { grpUnseed(o); return; }
   let s = i * NAV_K + k;
-  var mark = false;
-  if (atomicLoad(&mail[o + 16u]) != s + 1u || atomicLoad(&mail[o + 17u]) != f) {
-    grpUnseed(o);
-    mark = true;
-    atomicStore(&mail[o + 16u], s + 1u);
-    atomicStore(&mail[o + 17u], f);
-  }
-  // (the CPU's ask after a window slide: the seed's chunk marked again — the fields started over where the slide brought
-  // columns in, and a seed that didn't move marks nothing)
-  if (atomicExchange(&mail[o + 19u], 0u) != 0u) { mark = true; }
-  // (set every frame — idempotent: another group's seed let go on this surface the same frame can't clear it for good)
-  fieldSeed(f, s, mark);
+  // (put every frame: a seed new marks its page, one let go is gone the next — fieldseam.wgsl)
+  atomicStore(&mail[o + 16u], s + 1u);
+  atomicStore(&mail[o + 17u], f);
+  seedPut(f, s);
 }
 
 @compute @workgroup_size(64)
@@ -313,37 +298,22 @@ fn runO(g: u32, i: u32) -> u32 { return grpO(g) + RUNS_AT + i * RUN_W; }
 fn manSeed(g: u32) {
   let nf = max(grpWord(g, FORM_AT + 15u), 1u);
   let fw = grpWord(g, FORM_AT + 14u);
-  let remark = atomicExchange(&mail[grpO(g) + 19u], 0u) != 0u;
   for (var i = 0u; i < RUNS; i++) {
     let o = runO(g, i);
     let f = (fw >> (8u * (i % nf))) & 0xffu;
-    let prev = atomicLoad(&mail[o + 7u]);
     var s = 0u;
-    if (atomicLoad(&mail[o]) != ROUTE_NONE_W && f < NFIELDS) {
+    if (atomicLoad(&mail[o]) != ROUTE_NONE_W && fieldOk(f)) {
       let p = mailV3(o + 4u);
       let c = clampCell(cellAt(p.xy));
       let k = surfaceNear(colIdxI(c), p.z);
       if (k < NAV_K && inScope(c)) { s = colIdxI(c) * NAV_K + k + 1u; }
     }
-    if (prev != 0u && prev != s && f < NFIELDS) {
-      fieldUnseed(f, prev - 1u);
-    }
-    if (s != 0u) { fieldSeed(f, s - 1u, prev != s || remark); }
+    if (s != 0u) { seedPut(f, s - 1u); }
     atomicStore(&mail[o + 7u], s);
   }
 }
 fn manUnseed(g: u32) {
-  let nf = max(grpWord(g, FORM_AT + 15u), 1u);
-  let fw = grpWord(g, FORM_AT + 14u);
-  for (var i = 0u; i < RUNS; i++) {
-    let o = runO(g, i);
-    let prev = atomicLoad(&mail[o + 7u]);
-    let f = (fw >> (8u * (i % nf))) & 0xffu;
-    if (prev != 0u && f < NFIELDS) {
-      fieldUnseed(f, prev - 1u);
-    }
-    atomicStore(&mail[o + 7u], 0u);
-  }
+  for (var i = 0u; i < RUNS; i++) { atomicStore(&mail[runO(g, i) + 7u], 0u); }
 }
 /** routeread's ROUTE_NONE, as a run's empty word (set B doesn't read routeread) */
 const ROUTE_NONE_W: u32 = 0xffffffffu;
@@ -568,7 +538,7 @@ fn formAnchor(@builtin(global_invocation_id) id: vec3<u32>) {
       let c = clampCell(cellAt(p.xy));
       let i = colIdxI(c);
       let k = surfaceNear(i, p.z);
-      if (f < NFIELDS && k < NAV_K) {
+      if (fieldOk(f) && k < NAV_K) {
         let here = fieldDist(f, i * NAV_K + k);
         if (here <= 0.8) { st = FS_END; }
         else if (here < FAR) {

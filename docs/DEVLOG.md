@@ -22635,3 +22635,41 @@ lab's columns deeper than 0.9 by tick 6 400, depths to 35 000; soldiers drown in
 - **Not yet carried over:** roads, confined fields, the seed-id plane (a moved seed is released and refilled, as the
   planes restart), the scope box, and the seed lists. The rest of the round is the plan in UNIT_MINDS_U2 §9b (steps
   1–6). Nothing in play uses pages yet.
+
+## 2026-11-11 — U2 round 7, step 2.1: every field on pages (trackB-u2r9-pool)
+
+- **What changed.** The agents' `dist` planes (13 whole-window fields, 16-bit dirty words, FRONT_CAP 32) are gone; every
+  field lives in one GPU page pool (`gpu/pagepool.ts`, `shaders/pagepool.wgsl`) bound at 6, the binding `dist` had, so
+  no kernel gained a binding (unitStep stays at 8 storage buffers; the relax went from 8 to 4).
+  - A page is a field over a chunk: 1024 distances + 1024 seed-ids (8 KB), plus 64 atomic words (this frame's and last
+    frame's seed bits). Pages: 6 a window chunk (`?fieldpages=N`), rows (field ids): 256.
+  - The pool's control words (table, generations, dirty and request bits, the front, the free stack, the field records)
+    sit in the same buffer as the pages: `struct PagePool { ctl: array<atomic<u32>, N>, data: array<u32> }`.
+  - Slots are the terrain ring's (`pageIdx` / `slotChunk`): a slide moves nothing; a chunk new to the scope drops every
+    field's page there (`ppDropSlot` in scopeIn) and is relaxed into from round it.
+  - `fieldseam.wgsl` is the one way to a field: `fieldDist`, `fieldGrad`, the seeds (`seedPut`, every frame, into a list;
+    `seedUnmark` / `seedLand` / `seedGone` / `seedFlip`), `fieldRelax` (a workgroup a front entry, the tile and halo
+    through the 3 × 3 pages round it), `markChunks`.
+  - A page whose values all went FAR with no seeds is let go (and marked, so what's round it is relaxed next): memory
+    follows reach.
+  - Retired: `relax` (the whole-window and front kernels), `relaxBlock`, `frontBuild` / `frontClear` / `clearFields`,
+    `seedMask`, the dirty words, `huntList`'s 16-bit field ids, `?blockrelax` / `?frontcap` / `?fieldfront` /
+    `?seedcell`, the bench's relax variants, the field restart on a slide and on a new seed (seed-ids do it).
+  - Field ids: `Agents.newField()` / `freeField(f)` (any id below 256 a caller already uses stays valid); the road field
+    is `agents.roadField`, made on first use.
+- **Bugs found on the way (each with its test):**
+  - a seed in a chunk with no page asked for one, and the first relax dropped the fresh page (all FAR, no seed bit yet):
+    seeds stay listed and `seedLand` sets their bits after the pages are handed out, before the sweeps
+    (fieldpages.test.ts open/wall/sbend);
+  - a dropped page didn't mark its chunk, so the field didn't empty past one ring of pages (huntseed.test.ts's last
+    wave).
+- **Measured** (desktop, D3D11 via Dawn):
+  - fieldpages.test.ts (8 sweeps): BFS-exact (worst 0, none under) on open / wall / S-bend; 40 cells round a seed moved
+    86–112 cells right in **3 frames**, the whole map in 8 / 9 / 12; three fields reaching 20 hold 33 pages (264 KB)
+    against 192 chunks of whole-window planes; a field let go and one seeded there reuse its pages (the pool's end
+    stays at 33) and the old page's generation moves on.
+  - huntreact.test.ts (2 sweeps, the phone tier): 40-cell reaction **8 frames** at every gap (the steering floor; gate
+    ≤ 10); BFS match after a retarget 9 / 10 / 13 frames (open / wall / S-bend; the planes' block relax 7 / 7 / 11 —
+    a field grows a chunk a sweep into chunks it has no page in).
+  - huntseed.test.ts: the CPU-seeded field matches the BFS after each wave in 5–6 frames (the planes: 5–34, their
+    count-up), the GPU-seeded one in 5–9, both empty in 3.
