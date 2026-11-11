@@ -109,6 +109,8 @@ export default async function (lab, args) {
     out.man.posts = mail[o + L.formAt + 11];
     out.man.runs = Array.from({ length: 8 }, (_, i) => o + L.formAt + 16 + 128 + i * 8).filter((r) => mail[r] !== 0xffffffff).map((r) => `${mail[r] & 0xffff} s ${f[r + 1].toFixed(1)}-${f[r + 2].toFixed(1)} before ${mail[r + 3]}`);
     out.man.ranks = Array.from({ length: n }, (_, k) => { const r = L.ranks + k * L.rankW; return `${mail[r + 3] & 0xff}:${f[r + 5].toFixed(1)}`; }).join(' ');
+    // (round 6b: the posts reached — ranks within 1.5 cells of their post)
+    out.man.reached = Array.from({ length: n }, (_, k) => f[L.ranks + k * L.rankW + 5]).filter((d) => d < 1.5).length;
     // (is the walk reachable? the run fields at the posts — each rank's target — and at the soldiers)
     // (U2 round 7: the man order's run fields a word each, after the runs — agents.ts RUNF_AT)
     const fw = mail[o + L.formAt + 16 + 128 + 64];
@@ -145,6 +147,18 @@ export default async function (lab, args) {
     const tl = await until(gl, left, 200);
     await lab.run(4, 16, { renderEvery: 8 });
     out.leave = { after: tl, told: left.filter((x) => x === gl).length, still: units.members(gl).length, failed: failed.filter(([x]) => x === gl).map(([, w]) => w) };
+    // (round 6b, U2-LEAVE: where those still in the window stand, the window's size, the anchor and their ranks)
+    if (out.leave.still) {
+      const L = units.agents.mailLayout;
+      const mail = new Uint32Array(await units.agents.readRaw('mail'));
+      const f = new Float32Array(mail.buffer);
+      const slot = Array.from({ length: L.orderGroups }, (_, s) => s).find((s) => mail[L.groups + s * L.groupW] === 7 && mail[L.groups + s * L.groupW + L.formAt + 1] === 1);
+      const F = L.groups + (slot ?? 0) * L.groupW + L.formAt;
+      out.leave.window = [R.core.dims.w, R.core.dims.h];
+      out.leave.anchor = { slot, st: mail[F + 8], s: +f[F + 4].toFixed(1), len: +f[F + 3].toFixed(1), at: [f[F + 5], f[F + 6]].map((v) => +v.toFixed(1)), lag: +f[F + 10].toFixed(2) };
+      out.leave.ranks = Array.from({ length: 6 }, (_, k) => { const r = L.ranks + ((slot ?? 0) * L.ranksPerGroup + k) * L.rankW; return `${mail[r + 3].toString(16)}:${f[r].toFixed(1)},${f[r + 1].toFixed(1)} d${f[r + 5].toFixed(1)}`; });
+      out.leave.at = (await look(units.members(gl))).map((p) => p.map((v) => +v.toFixed(1)));
+    }
   }
   out.water = +water.maxLive.toFixed(2);
   out.deaths = deaths;

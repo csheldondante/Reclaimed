@@ -140,12 +140,12 @@ const REF_AT = 20;
 const FORM_AT = REF_AT + ORDER_ALTS * 2 * REF_W;
 const TRAIL_AT = FORM_AT + 16;
 const RUNS_AT = TRAIL_AT + 32 * 4;
-const GROUP_W = RUNS_AT + 8 * 8 + 8;
+const GROUP_W = RUNS_AT + 8 * 8 + 8 + 8;
 /** (U2 round 7) the man order's run fields, a word each (units.wgsl RUNF_AT: the record's last 8 words) */
 const RUNF_AT = RUNS_AT + 8 * 8;
 /** ranks a group (units.wgsl RANKS): the most a formation places */
 export const ORDER_RANKS = 64;
-const RANK_W = 8;
+const RANK_W = 9;
 /** the joins a step at most: one a unit slot (units.wgsl ORDER_Q) */
 const ORDER_Q = MAX_UNITS;
 const SPAWN_BIT = 0x80000000;
@@ -1389,10 +1389,12 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
    * kernels made over it. Before it, spawnAt and order throw.
    */
   usePlaces(places: GPUBuffer): void {
-    const sp: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 10: 'uniform', 13: 'rw', 16: 'rw', 38: 'uniform', 53: 'rw', 57: 'read' };
+    // (round 6b: the live water (4) — a spawn is placed only on dry ground; the nav's copy of it is brought up to date
+    // only where the agents' scope has been, so it can read none at a spawn point no one has been near)
+    const sp: BindSpec = { 0: 'uniform', 2: 'uniform', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 10: 'uniform', 13: 'rw', 16: 'rw', 38: 'uniform', 53: 'rw', 57: 'read' };
     const mk = (e: string) => makeCompute(this.device, `agents-${e}`, this.orderParts, sp, e);
     const k = { apply: mk('orderApply'), done: mk('orderDone'), resolve: mk('orderResolve'), count: mk('groupCount'), emit: mk('groupEmit') };
-    const g = makeBindGroup(this.device, 'agents-orders', k.apply.layout, { 0: this.world.globals, 2: this.world.materials, 5: this.nav, 6: this.fields.buffer, 7: this.units, 10: this.params, 13: this.events, 16: this.mail, 38: this.abBuf, 53: this.seedList, 57: places });
+    const g = makeBindGroup(this.device, 'agents-orders', k.apply.layout, { 0: this.world.globals, 2: this.world.materials, 4: this.world.water, 5: this.nav, 6: this.fields.buffer, 7: this.units, 10: this.params, 13: this.events, 16: this.mail, 38: this.abBuf, 53: this.seedList, 57: places });
     this.ok = { ...k, g };
     // (round 6: the formation kernels — routes (56), the clearance (55), the fields (6); no places, no seeds)
     const fsp: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 10: 'uniform', 13: 'rw', 16: 'rw', 55: 'rw', 56: 'read' };
@@ -1461,7 +1463,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     const w = new Uint32Array(GROUP_W);
     // (words 0-7: the GPU's own 8-19 left as they are — a write of 0-7, then of the refs)
     const fields = r.kind === 6 ? (r.runFields ?? []) : r.field >= 0 ? [r.field] : [];
-    if (fields.length > 4) throw new Error('agents.order: 1..4 run fields');
+    if (fields.length > 8) throw new Error('agents.order: 1..8 run fields (one a wall run)');
     for (const f of fields) this.useField(f);
     const f32 = new Float32Array(w.buffer);
     w.set([r.kind, r.alts.length, 0, r.formation ?? 0, 0, 0, r.field < 0 ? FIELD_NONE : r.field, serial], 0);
@@ -1475,7 +1477,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     // (its status none until resolved again: the formations wait for it)
     this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + 11) * 4, new Uint32Array([1]));
     this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + REF_AT) * 4, w, REF_AT, FORM_AT + 16 - REF_AT);
-    this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + RUNF_AT) * 4, w, RUNF_AT, 4);
+    this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + RUNF_AT) * 4, w, RUNF_AT, 8);
     this.orderFieldOf[g] = r.kind >= 2 ? fields : [];
     const formed = r.kind === 5 || r.kind === 6 || r.kind === 7 || ((r.kind >= 2 && r.kind <= 4) && (r.formation ?? 0) > 0);
     this.formGroups = formed ? this.formGroups | (1 << g) : this.formGroups & ~(1 << g);

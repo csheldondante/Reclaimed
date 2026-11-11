@@ -594,6 +594,42 @@ planes (`shaders/pages.wgsl`, `agents/pages.ts`) over the agents' own surfaces. 
   abreast), arrived once; an off-road line squeezes through a 4-row gap (9 abreast down to 1) and arrives once. The lab:
   scripts/lab/townwalls.mjs (man Muru's walls, march out of a standing gate, and leave).
 
+**Round 6b (`trackB-drillfix`, BACKLOG SF-11): an elastic chain of rows, ordered by where the soldiers stand.** The user:
+"more like a chain than a fixed grid where the number of units per row can fall back and adjust when the opening is too
+narrow"; "treat the shape as elastic with a threshold to collapse columns into more rows".
+- **The drill froze at Muru** because a rank's only way to a slot it couldn't see was the group's field, which ends at
+  the yard's point: Muru's yard is a terrace ~1.2 m above that point, every slot sat at the point's height (so the sight
+  line ran into the terrace edge), and the anchor waited forever on lag ≥ 3 (measured: lag 7.0-7.6 for 120 s, five
+  ranks 4-7 cells off, mode FIELD, standing on the point).
+- **The loop** is the biggest radius (7.5 down to 0.5, steps of 0.5) whose 16 points are each a straight linked walk
+  from the yard's point and in sight of it, and each a walk to the next (`loopFits`); none: −1, the squad stands formed
+  at the point (marking time). No ground at the point: `orderFailed(g, 'no-room')`. Slots sit on the ground there.
+- **Rows** (`rowCols`, one thread a row, its own point on the path): a row keeps its count while it fits squeezed to
+  SQUEEZE_MIN (0.6) of the spacing (the shape deforms: spacing compresses); past that it takes as many as fit at full
+  spacing (it drops its outer soldiers into the rows behind); it widens only when the wider row fits at EXPAND_AT (1.15)
+  of the spacing — the hysteresis band (memory: rank r's word 7, rolled by formAnchor). Open ground (no obstacle within
+  sideRoom's 6 cells either side) is OPEN_W wide: the clean grid.
+- **Slots** (`relaxSlot`): the ideal place when a straight linked walk from its row's point reaches it; else the nearest
+  cell within RELAX_R (2.5) that one reaches, a clear one (clearance ≥ BODY_R 0.35) first; none: the row's point.
+- **Order** (word 6 bits 8-15): ranks take slots by an order index, row by row, left to right. The index is set by where
+  they stand — front to back along the path (`pathKey`: the nearest path point's s plus the projection), then across —
+  when the formation starts, when its numbers or a row's count change, or when the anchor is first held back. Man: by
+  how far along its run's route each stands, every frame (single file up there): the furthest along takes the furthest
+  post filled. One workgroup a group (shared rows and keys, barriers).
+- **Steering**: straight at its slot when a linked walk, in sight, within 8 cells and 1.5 m (`straightTo`); else
+  straight at its row's point (re-slotted); else ride the route (march) or follow the field. Lag skips a rank its field
+  can take no nearer (FIELD_END 1 cell) and a rank standing still (under STUCK_V 0.15 cells/s) more than FORM_LAG off
+  its slot while the column moves: one awkward slot never freezes the group. Alignment: a steering rank adds ALIGN_W
+  (0.5) of the formation's velocity (formAnchor's, EXTRA words).
+- **Loose** (`formation: 'loose'`, raiders' default with no formation): no anchor or slots; the group's field plus
+  cohesion toward the group's middle past LOOSE_R (2.5 cells), up to COHESION_W (0.6); separation is the crowd push.
+- **Discipline** (`discipline` 0..1 on formation orders; the formation word's second byte): each slot wanders by a smooth
+  hash-and-time offset up to JITTER_AMP (0.6 cells) × (1 − discipline), at most half the row's spacing across and the
+  rows' along, kept on free ground by relaxSlot; arrival tolerance + the amplitude.
+- **Spawns** never stand in live water past DEEP: the spiral point when dry, else the k-th nearest dry cell within
+  SPAWN_R (6) of the approach; none: `orderFailed(g, 'water')` (orderApply reads the world's water, binding 4: the
+  nav's copy lags where no unit has been).
+
 ### 9e. Sides: a hunt field and a threat field per army (replaces "one threat field in v1")
 
 | Part | Design |

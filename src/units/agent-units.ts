@@ -102,15 +102,18 @@ const MELEE = { reach: 1.35, damage: HPK, swingPeriod: 1.0 } as const;
 /** orders.wgsl group kinds */
 const OK = { none: 0, stand: 1, go: 2, guard: 3, attack: 4, drill: 5, man: 6, march: 7 } as const;
 /** townplace.wgsl statuses as the contract's reasons; (round 6) a gate's (orders.wgsl FAIL_GATE | routeread GATE_*) */
-const WHY: Record<number, OrderFailure> = { 1: 'none', 2: 'rising', 3: 'water', 4: 'no-town', 0x11: 'none', 0x12: 'rising', 0x13: 'water', 0x14: 'failed' };
+const WHY: Record<number, OrderFailure> = { 1: 'none', 2: 'rising', 3: 'water', 4: 'no-town', 0x11: 'none', 0x12: 'rising', 0x13: 'water', 0x14: 'failed', 0x20: 'no-room' };
 /** (round 6) formations' spacing (cells), a man's post spacing, a man order's most run fields */
 const FORM_SPACING = 1.2;
 const POST_SPACING = 3;
-const MAN_FIELDS = 3;
+/** (round 6b) a man order's run fields: one a wall run (orders.wgsl RUNS), as many as are free */
+const MAN_FIELDS = 8;
 
 /** (U2 round 5) an order group: its slot on the GPU (orders.wgsl), its members, its order, the field it holds */
 interface OrderGroup {
   id: GroupId;
+  /** its units' kind (spawnAt's): raiders go loose unless told a formation (round 6b) */
+  kind: string;
   members: Set<UnitId>;
   order: SquadOrder | null;
   /** (round 6, Track A's ask) its spawn not yet resolved on the GPU (no `spawned` or failure read): orders wait in
@@ -359,7 +362,7 @@ export class AgentUnits implements Units {
       return gid;
     }
     const health = opts.health ?? 3;
-    const g: OrderGroup = { id: this.nextGroup++, members: new Set(), order: null, spawning: true, held: null, gone: 0, leftTold: false, at, serial: 0, spawnSerial: 0 };
+    const g: OrderGroup = { id: this.nextGroup++, kind, members: new Set(), order: null, spawning: true, held: null, gone: 0, leftTold: false, at, serial: 0, spawnSerial: 0 };
     this.groups[slot] = g;
     // (it stands at its place until ordered: the GPU resolves the place for the spawn, and tells a failure)
     g.spawnSerial = g.serial = this.agents.order(slot, { kind: OK.stand, alts: chain, field: -1 });
@@ -439,7 +442,12 @@ export class AgentUnits implements Units {
     g.order = o;
     g.gone = 0;
     g.leftTold = false;
-    const formation = o.kind === 'man' ? 0 : 'formation' in o && o.formation ? (o.formation === 'line' ? 2 : 1) : o.kind === 'march' ? 1 : 0;
+    // (round 6b: orders.wgsl group word 3 — the formation in its low byte (1 column, 2 line, 3 loose; raiders loose
+    // unless told), how ragged it is (1 − discipline, 0-255) in the next)
+    const told = 'formation' in o && o.formation ? o.formation : undefined;
+    const shape = o.kind === 'man' ? 0 : told ? { column: 1, line: 2, loose: 3 }[told] : o.kind === 'march' ? 1 : g.kind === 'raider' && o.kind !== 'drill' ? 3 : 0;
+    const discipline = 'discipline' in o && o.discipline !== undefined ? Math.min(Math.max(o.discipline, 0), 1) : 1;
+    const formation = shape === 0 ? 0 : shape | (Math.round((1 - discipline) * 255) << 8);
     const rec: OrderRecord = { kind: OK[o.kind], alts: routed ? [] : placeChain(o.at), field: fields[0], formation, spacing: o.kind === 'man' ? POST_SPACING : FORM_SPACING };
     if (o.kind === 'man') {
       rec.gate = o.side;

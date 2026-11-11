@@ -22902,3 +22902,57 @@ sweeps run, from the pool's header); pages held of 2,400 at the phase's end; ref
 - That first run's three-armies phase counted every unit as engaged; it now counts the units with a target (as the
   other phases do) — the run had no deaths in it (kind 1 at sight 40, the armies 31 cells apart), so it measures the
   fields of three hunting armies, not a fight.
+
+## 2026-11-11 — formations as an elastic chain; the drill at Muru; march-leave; spawns on dry ground (`trackB-drillfix`)
+
+**Why.** SF-11: the drill at Muru's muster yard stood still. Measured (gputown, 6 soldiers from the barracks): the
+anchor never moved — lag 7.0-7.6 for 120 sim s, five ranks 4-7 cells off their slots in FIELD mode, standing on the
+yard's point. A temporary probe in formSlots showed each rank within 8 cells and 1.5 m of its slot but its sight line
+blocked 1-2 cells out by ground 1.19-1.25 m above its feet: the yard is a terrace above the place's point, every slot
+carried the point's height, and a rank with no sight of its slot had only the group's field, which ends at the point.
+The loop's radius was the 3-cell minimum (clearance 0 at the point). Then the user's direction, in steps: slots that
+conform to the space ("a squishy elastic shape where we can split rows"), deform before reshaping with a threshold and
+hysteresis, "more like a chain than a fixed grid", reassignment by position, alignment, a loose mode, discipline
+(jitter); plus U2-LEAVE, spawns placed in water (Track A: 2 of 4 raiders drowned at spawn point 0), and townorders'
+"spawn also gate" precondition (UC-13).
+
+**What.** (UNIT_MINDS_U2 §9d "Round 6b" has the design.)
+- Drill: the loop is the biggest radius whose 16 points are straight linked walks from the yard's point and in its
+  sight, and walks to each other (`loopFits`, 7.5 down to 0.5); none: the squad marks time at the point; no ground:
+  `orderFailed(g, 'no-room')`. Slots sit on the ground.
+- Rows measured each at its own path point (`rowCols`, a thread a row): squeezed to SQUEEZE_MIN 0.6 of the spacing
+  before dropping outer soldiers into the rows behind; wider only at EXPAND_AT 1.15 (hysteresis; memory rank word 8).
+  Open ground (sideRoom finds nothing in 6 cells either side) is OPEN_W: the grid.
+- Slots (`relaxSlot`): the ideal place when a straight linked walk from the row's point reaches it, else the nearest
+  reachable cell within 2.5 (clear ones first), else the row's point.
+- Order: ranks take slots by an order index set from where they stand (front to back, then across) when the formation
+  starts, its numbers or a row's count change, or the anchor is first held back; man by order along the run, every
+  frame. One workgroup a group.
+- Steering: straight when a linked walk in sight (`straightTo`), else to the row's point, else ride the route (a
+  leaving march: on along the route's extension — U2-LEAVE), else the field. Lag skips a rank its field takes no nearer
+  and one standing still (< 0.15 cells/s) more than FORM_LAG off while the column moves. Alignment ALIGN_W 0.5.
+- `formation: 'loose'` (raiders' default): field + cohesion (COHESION_W 0.6 past LOOSE_R 2.5) + the crowd push.
+  `discipline` 0..1: slots wander smoothly up to JITTER_AMP 0.6 cells × (1 − discipline).
+- The anchor's first frame no longer reads the previous order's lag (it went straight to MOVE).
+- Field-march rows past the trail's oldest point stand behind it (they stood on it at the start).
+- Spawns: on dry ground — the spiral point when dry, else the k-th nearest dry cell within 6 of the approach; none:
+  'water'. orderApply reads the world's water (binding 4): the nav's copy lags where no unit has been.
+- Man run fields: one a run (8, was 3/4). Group record + 8 words (velocity, order counters, the members' middle); rank
+  record 9 words.
+
+**Numbers.**
+- Muru drill (scripts/lab/towndrill.mjs, `&labkeep=1`): before, 0 laps, lag 7+, soldiers ≤ 4 cells in 30 s (the
+  loop never started); after, formed 44 s after the order (the walk from the barracks), radius 2.5, 2.27 laps in 30 s,
+  each soldier 38-47 cells, arrived once. The patrol: out 78.9 s, back to its gate (guard, line) 77.2 s, arrived both.
+  Before round 7's pages the back leg's field read ∞ everywhere (a direct guard from the barracks arrived in 17 s):
+  fixed by round 7, not here.
+- townwalls (skipMan): march-leave told left once at 132 s, 0 still in the window (fortress: 0 told, 6 still after 200
+  s). Man posts reached 9/12 (fortress 10/12): no gain from the run ordering.
+- formations.test.ts (12): the hedged yard (inner radius 4): radius 3, 1.68 laps in 30 s, nobody in the hedge; open
+  ground: rows 3,3, slot gaps 1.200 ± 0.000; discipline 0: gaps 1.24 ± 0.42; 9 abreast into room for 7: the front row
+  stays 9 (spread 7.6 vs 9.6); a 15-line through a 1.1 m gate: rows 10,5 → 5,5,5 → 1,1,1,5,5,2 → 5,5,5 → 10,5, nobody
+  in a wall, arrived once, 9 crossing pairs over 15 row changes; a sawtooth corridor on the threshold: the front row 5
+  throughout (no flicker); loose raiders through a gap: spread ≤ 3.6 cells; spawn at a shore: 12 placed dry, 0 drowned
+  (before: 7 placed in 2 m water, drowned); a spawn in a lake: 'water', none made.
+- Not measured: the phone or desktop frame-time toggle diff (formSlots now walks a straight line per rank per frame —
+  ≤ 16 cells — and sorts on order changes).

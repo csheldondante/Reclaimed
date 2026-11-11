@@ -160,11 +160,20 @@ export interface PlaceOrder {
 /**
  * (U2 round 5) Why a group's order failed, from the place's status (townplaces PLACE_STATUS): 'none' no such place (no
  * card built, no lot there), 'rising' still being built, 'water' a gate over water, 'no-town' no live town in that slot;
- * or 'pool-full': no field free for another place at once (the order isn't sent).
+ * or 'pool-full': no field free for another place at once (the order isn't sent); (round 6b) 'no-room': a drill's
+ * yard has no ground for even one file.
  */
-export type OrderFailure = 'none' | 'rising' | 'water' | 'no-town' | 'pool-full' | 'failed' | 'busy';
-/** (U2 round 6) a formation: a column (at most 3 abreast) or a line (at most 10), narrowing where the way does */
-export type Formation = 'column' | 'line';
+export type OrderFailure = 'none' | 'rising' | 'water' | 'no-town' | 'pool-full' | 'failed' | 'busy' | 'no-room';
+/** (U2 round 6) a formation: a column (at most 3 abreast) or a line (at most 10), narrowing where the way does — (round
+ *  6b) a chain of rows, each squeezing where the way narrows and dropping its outer soldiers into the rows behind past
+ *  a threshold; or (round 6b) 'loose': no ranks, a crowd kept together (boids on the group's field — raiders' default) */
+export type Formation = 'column' | 'line' | 'loose';
+/** (round 6b) how drilled a formation looks: 1 (the default) every soldier on its slot; lower, each slot wanders
+ *  smoothly round its place (up to orders.wgsl JITTER_AMP at 0), never off free ground. Looks only: the order logic is
+ *  the same, the arrival a little more tolerant */
+export interface Drill {
+  discipline?: number;
+}
 /**
  * (U2 round 6, UNIT_MINDS_U2 §9c/§9d) A group's order. Every one resolved on the GPU from indices:
  * - go / guard / attack at a place (round 5), optionally in formation (its anchor walks the group's field; the width
@@ -179,10 +188,10 @@ export type Formation = 'column' | 'line';
  * are in use: one town's man and march at a time).
  */
 export type SquadOrder =
-  | (PlaceOrder & { formation?: Formation })
-  | { kind: 'drill'; at: PlaceRef; formation: Formation }
+  | (PlaceOrder & { formation?: Formation } & Drill)
+  | ({ kind: 'drill'; at: PlaceRef; formation: Formation } & Drill)
   | { kind: 'man'; town: number; side?: number }
-  | { kind: 'march'; town: number; gate: number; leave?: boolean };
+  | ({ kind: 'march'; town: number; gate: number; leave?: boolean } & Drill);
 
 /**
  * (U2 round 6, Track A's ask) What a spawn by place carries per unit: its sight (cells), its health (the contract's), its

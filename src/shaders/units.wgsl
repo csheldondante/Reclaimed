@@ -383,6 +383,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   let ogw = atomicLoad(&mail[MAIL_AIM + u * AIM_W + 11u]);
   var rankMode = 0u;
   var rankAt = vec3<f32>(0.0);
+  var rankVel = vec2<f32>(0.0);
   var rankLeave = false;
   // (U2 round 7: a member walks its order's field — the order record's word 6, FIELD_NONE when it stands; man walks
   // its rank's run fields)
@@ -396,8 +397,12 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     let m = atomicLoad(&mail[ro + 3u]);
     rankMode = m & 0xffu;
     rankLeave = (m & RANK_LEAVE) != 0u;
-    if (rankMode == RANK_FIELD) { fld = atomicLoad(&mail[ro + 7u]); }
+    if (rankMode == RANK_FIELD || rankMode == RANK_LOOSE) { fld = atomicLoad(&mail[ro + 7u]); }
     rankAt = mailV3(ro);
+    // (round 6b: the formation's velocity (alignment, a steering rank) or the loose group's middle (cohesion))
+    let ex = MAIL_GRP + (og - 1u) * GROUP_W + EXTRA_AT;
+    rankVel = vec2<f32>(mailF(ex + EX_VEL), mailF(ex + EX_VEL + 1u));
+    if (rankMode == RANK_LOOSE) { rankAt = vec3<f32>(mailF(ex + EX_MID), mailF(ex + EX_MID + 1u), select(0.0, 1.0, mailF(ex + EX_MID) > 0.0)); }
   }
   // (a march that leaves: past the window's edge it drops out — no death; the CPU frees the slot on EV_LEFT)
   if (rankLeave) {
@@ -814,6 +819,8 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
         // (U2 round 6: its formation slot, post or waypoint — straight at it, slowing in its last cell)
         let d = length(rankAt.xy - pos.xy);
         want = select(vec2<f32>(0.0), (rankAt.xy - pos.xy) / max(d, 1e-3) * min(d / 0.8, 1.0), d > 0.15);
+        // (round 6b, alignment: a share of the formation's own velocity, so a column turns and walks as a body)
+        want += rankVel * (ALIGN_W / max(speed, 0.1));
       } else if (worker && steer != 0.0) {
         // (round 128i, V128-14: riding the roads — shaders/roadride.wgsl steers it: a heading, or stand at its goal)
         want = select(vec2<f32>(cos(steer - STEER_BIAS), sin(steer - STEER_BIAS)), vec2<f32>(0.0), steer < 0.0);
@@ -839,6 +846,13 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       // (in formation the slots keep them apart: the crowd's push a third as strong, or ranks fray)
       let crowdK = select(0.25, 0.08, rankMode == RANK_STEER);
       want += crowd * crowdK + jit * 0.2 * max(mine - 1.0, 0.0);
+      // (round 6b, a loose group: cohesion — toward the group's middle (last frame's, rankAt) once past LOOSE_R of
+      // it, growing to COHESION_W; separation is the crowd's push above; alignment is the field it follows)
+      if (rankMode == RANK_LOOSE && rankAt.z > 0.0) {
+        let off = rankAt.xy - pos.xy;
+        let dm = length(off);
+        want += off / max(dm, 1e-3) * COHESION_W * clamp((dm - LOOSE_R) / LOOSE_R, 0.0, 1.0);
+      }
     }
     // wading: slower the deeper
     speed *= 1.0 - 0.6 * clamp(depth / max(height, 0.1), 0.0, 1.0);
@@ -1448,22 +1462,39 @@ const TRAIL_AT: u32 = FORM_AT + 16u;
 const RUNS: u32 = 8u;
 const RUN_W: u32 = 8u;
 const RUNS_AT: u32 = TRAIL_AT + TRAIL_N * 4u;
-const GROUP_W: u32 = RUNS_AT + RUNS * RUN_W + 8u;
-/** (U2 round 7) the man order's run fields, a word each (up to 4; FORM_AT + 15 their count) */
+const GROUP_W: u32 = RUNS_AT + RUNS * RUN_W + 8u + 8u;
+/** (U2 round 7) the man order's run fields, a word each (round 6b: up to 8, one a run; FORM_AT + 15 their count) */
 const RUNF_AT: u32 = RUNS_AT + RUNS * RUN_W;
 const MAIL_GRP: u32 = MAIL_ARR + MAIL_ARROWS * ARROW_W;
 const MAIL_Q: u32 = MAIL_GRP + ORDER_GROUPS * GROUP_W;
 /** the joins a step at most: one a unit slot (agents.ts ORDER_Q) */
 const ORDER_Q: u32 = MAX_SLOTS;
 /** the rank table: RANKS a group, RANK_W words each — 0-2 its target, 3 its mode (RANK_*) | RANK_LEAVE, 4 its unit's
- *  slot + 1 (groupCount, last frame), 5 its distance to its target then (f32), 6 its row, 7 its field (RANK_FIELD) */
+ *  slot + 1 (groupCount, last frame), 5 its distance to its target then (f32), 6 its row | (round 6b) its order index
+ *  << 8 | its row's count << 16, 7 its field (RANK_FIELD, RANK_LOOSE), 8 (round 6b) row r's count, kept for rowCols */
 const RANKS: u32 = 64u;
-const RANK_W: u32 = 8u;
+const RANK_W: u32 = 9u;
 const MAIL_RANKS: u32 = MAIL_Q + 1u + ORDER_Q * 3u;
 const RANK_NONE: u32 = 0u;
 const RANK_STEER: u32 = 1u;
 const RANK_FIELD: u32 = 2u;
 const RANK_LEAVE: u32 = 0x10000u;
+/** (round 6b) a loose group's rank: follows its field, kept together by cohesion (boids; formation 'loose') */
+const RANK_LOOSE: u32 = 3u;
+/** (round 6b) a group's spare words (orders.wgsl): EX_VEL the formation anchor's velocity (2 f32), EX_N its ranks
+ *  last counted + 1, EX_ASK the anchor's ask for a new order, EX_SUM the members' x, y sums (i32, 1/16 cell; groupCount),
+ *  EX_MID their middle last frame (x, y; groupEmit; 0 none yet) */
+const EXTRA_AT: u32 = RUNF_AT + 8u;
+const EX_VEL: u32 = 0u;
+const EX_N: u32 = 2u;
+const EX_ASK: u32 = 3u;
+const EX_SUM: u32 = 4u;
+const EX_MID: u32 = 6u;
+/** (round 6b) steering weights: alignment (a steering rank, × the formation's speed over its own), cohesion (a loose
+ *  group, toward its middle past LOOSE_R cells) */
+const ALIGN_W: f32 = 0.5;
+const COHESION_W: f32 = 0.6;
+const LOOSE_R: f32 = 2.5;
 /** a unit left the window on a march that leaves (U2 round 6): its slot free, no death */
 const EV_LEFT: u32 = 22u;
 fn rankO(g: u32, r: u32) -> u32 { return MAIL_RANKS + (g * RANKS + r) * RANK_W; }

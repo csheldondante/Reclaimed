@@ -203,8 +203,10 @@ export default async function (lab, args) {
   if (noGate && !out.failed.includes('order:none')) fail(`an order to ${noGate[0]} (no gate): no orderFailed none`);
   if (!badGate) fail('no invalid gate on Muru to test gate-else-keep with');
   if (out.gateElseKeep.atKeep !== '3/3') fail(`gate else keep: ${out.gateElseKeep.atKeep} at the keep`);
-  if (!sk) fail('no spawn point valid with its gate invalid on Muru');
-  if (out.spawnAlsoGate.atBarracks !== '3/3') fail(`spawn also gate else barracks: ${out.spawnAlsoGate.atBarracks} at the barracks`);
+  // (round 6b: since UC-13 Muru's wet spawn points read WATER, so a spawn point standing with its gate invalid may not
+  // exist — then the case is test/gpu/formations.test.ts's ("spawn k also gate k else barracks", a hand-made table))
+  if (!sk) out.spawnAlsoGate = `skipped: no spawn point valid with its gate invalid (${out.spawnStatuses} / ${out.gateStatuses}) — formations.test.ts covers it`;
+  else if (out.spawnAlsoGate.atBarracks !== '3/3') fail(`spawn also gate else barracks: ${out.spawnAlsoGate.atBarracks} at the barracks`);
   if (out.chainFailed.join() !== 'no-town') fail(`a failing chain told ${out.chainFailed.join()}`);
   if (!out.deepThrows) fail('a 4-deep else chain did not throw');
   return out;
