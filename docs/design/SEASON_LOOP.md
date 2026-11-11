@@ -100,7 +100,13 @@ stone carts (woodcutters and log carts). They were pools-only stubs.
 - **The ring** is made when the card starts: the built lots' furthest reach in each of 72 directions round the centre
   (an atomic max), smoothed, plus a margin — the town's limit as it stands.
 - **Gates** where an arterial crosses the ring (DESIGN §13: at least two; the two longest gaps get one if fewer).
-- **Towers** at every sixth corner and both sides of each gate.
+- **Towers** at every sixth corner and both sides of each gate. A tower inside a run of wall (both its pieces wall) is
+  a bastion: its top is the walk's deck, so the wall-walk crosses it; only the towers beside a gap (a gate, water)
+  stand full height, squared to their wall piece (U2-WALLSTAIR).
+- **Stairs and the walk** (U2-WALLSTAIR): the walk's deck runs straight between the ring's corners at the wall's height
+  over each corner's ground — drawn and claimed alike. A stair at each run's ends climbs along the run (on the ring's
+  corners) from the ground at its foot, beside its first step on the town's side, to the deck where it meets the walk,
+  in equal rises (≤ the agents' STEP for a climb up to 7.7 m). The wall-walk route's points sit on those surfaces.
 - **Rising in stages:** each wall piece rises as the card's stage passes it (going round from the first gate), so
   each season shows more of the ring up; whole when the card finishes.
 - **Claimed** in the world like a building (the town's claim grid), and the road raster cut where the wall stands

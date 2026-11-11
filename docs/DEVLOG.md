@@ -22612,3 +22612,41 @@ lab's columns deeper than 0.9 by tick 6 400, depths to 35 000; soldiers drown in
     - a spawn's failure frees the group, and every later order to it fails the same;
     - test (formations.test.ts): "spawnAt at a missing place, then orderGroup guard → 0 units, the failure sticking; a
       spawn past the groups → pool-full".
+
+## 2026-11-11 — U2-WALLSTAIR: the wall's stairs meet its walk; the walk's route sits on what citygen claims (trackA-wallstair)
+
+Track B (U2 round 6) found Muru's `man` order stuck: the soldiers stood on their run's stair 3.7 m up, its top at
+z 104.8–104.9, while routeread's walk points went on at 106.2–107.8 and the wall top read 109.0. The user has since
+moved units on routes to Track B's route mode (carried along the baked points, z included; surfaces only on an override),
+so the deliverable became: bake each run's route from the geometry citygen builds and claims, and keep that geometry
+under it.
+- **Measured before** (`scripts/lab/wallroute.mjs`'s probe, the agents' own nav surfaces and a field seeded at each
+  run's foot): 40 of 49 deck points unreachable, three causes —
+  - **heights over each column's ground**: every step's top was WALL_H·(k+1)/7 over its own column, every wall column
+    WALL_H over its own, while the drawn wall and the walk points ran straight between the ring's corners. On Muru's
+    slopes the stair (set in 1.55 m, toward the lower town) ended 2–3 m under the deck;
+  - **towers across the walk**: every sixth corner's 8 m tower stood on the walk (FAR past each);
+  - **the gate tower's claim**: a capsule round its 4 m square reached 2.35 m past its side, over the stair's foot and
+    first steps (the foot read no surface on two runs).
+- **One rule** (streets.wgsl `runDeck`, `runPos`, `stairFoot`, `stairTop`; routes.wgsl `wlRunDeck`, `wlRunPos`,
+  `stairFootAt` repeat it):
+  - the deck runs straight between the corners at WALL_H over each corner's ground (WB_Z), the wall's claimed columns
+    too (`wallCols` takes a top at each end);
+  - a stair climbs along the run on the ring's corners (Muru's ring zigzags at its gates: a straight stair from the
+    corner stood off the wall) from the ground at its foot — beside its first step on the town's side, clear of the
+    gap's tower — to the deck at 9.2 m, in 7 equal rises; drawn and claimed once its piece has risen;
+  - a tower inside a run is a bastion, its top the deck (`ID_BASTION`); towers beside a gap stay 8 m, squared to their
+    wall piece (`towerDir`);
+  - claims are boxes as drawn, in order walls → towers → stairs (one workgroup, a barrier between: the last writer
+    was any thread's);
+  - the walk's route points: the stairs' steps at their claimed tops, then the deck at most 2 m and 0.8 m in z apart
+    (riders interpolate between points).
+- **After, Muru (gputown)**: 229 of 233 route points within STEP of a claimed surface, 0 consecutive jumps over STEP
+  (max 0.86), 188 of 191 deck points reached from their run's foot. The 4 off are run 36–44's, at a sharp kink of the
+  ring (U2-WALLKINK). A mirror of the rule against the nav at Bumku: 196 of 204 on (8 off: a stair beside gate 58
+  cut by its arterial — U2-STAIRART); Vagug: all on within the agents' window. On other towns the living town's table
+  stays empty in this recipe (U2-OTHERWALL, before this change too).
+- Tests: test/gpu/living.test.ts (4/4: the wall table's routes from ground to the deck and back, gaps < 3.5 m),
+  test/unit/wallshape.test.ts, typecheck. Shots (play zoom, 60°): the stair meeting the walk, a bastion on the walk.
+  Muru still floods on fortress (UC-6): the bastion at corner 18 is under water in the shot; nothing here touches water.
+- Track B's `man` order not run: it fails until their route-mode riding lands (after paging).
