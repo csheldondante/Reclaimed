@@ -508,6 +508,9 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
     panel.say(`field bench — three armies of ${per}: per-side fields on vs frozen…`);
     const sidesT = await toggled(P, agents, windowS, relaxed);
     const ps = await agents.fields.stats();
+    // (with a target at the phase's end: one read of the rows, the bench's own)
+    const rows = new Uint32Array(await agents.readRaw('units'));
+    const targeted = ids.filter((id) => rows[(id % 8192) * 24 + 21] !== 0).length;
     restDefault();
     agents.remove(ids);
     agents.notice.relations(null);
@@ -530,9 +533,9 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
       causes: {},
       ground,
       sightShare: null,
-      targeted: 0,
-      engaged: ids.length,
-      valid: true,
+      targeted,
+      engaged: targeted,
+      valid: targeted >= MIN_FIGHT * ids.length,
       chain: { noticed: 0, windup: 0, swing: 0, hurt: 0, moved: 0 },
       pages: { used: ps.used, of: ps.pages, refused: ps.refused },
       gpu: { on: sidesT.on.gpuMs, off: sidesT.off.gpuMs, diff: d(sidesT.on.gpuMs, sidesT.off.gpuMs) },
