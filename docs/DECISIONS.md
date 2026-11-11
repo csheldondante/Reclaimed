@@ -3711,3 +3711,23 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   → soldiers are raised only once the keep card is started or built (its barracks) or the walls are built (the
   muster yard); no market square fallback. With none, no squads; raids still come and simply reach their target.
   The player's fortress joins the list when it exists as a place.
+
+## 2026-11-11 — the building generator (archgen; docs/design/ARCHGEN.md)
+
+- Two deliverables: a near-instant GPU building generator from the lot footprint and type, for streaming (cached on
+  the GPU is fine), and later a tiny Tiny Glade-style editor whose brushes come from procedurally generated styles.
+  Very different styles (radial node graphs, tiles, organic mounds) may use different representations behind the
+  scenes, each with its own grammar (volumetric / tile / extruded curves).
+- "Since our goal is streaming let's see what we can do quickly and cheaply and what gives the most bang for our buck.
+  My guess is just a good extrusion shape, textures and architectural ornamentation will get us most of the way there
+  and can be done very quickly for a whole batch of lots in parallel."
+- Windows painted for now; "we can add a LOD for cutaways later (in general I want to be as lazy as possible in terms
+  of our compute)".
+- A style profile per district; the districts' opportunity cards drive it. Starting styles: homes, port warehouses,
+  keep and walls.
+- The interface with citygen is agreed with Track A, then implemented here; the user switches the town to these meshes
+  once they look good.
+- "Build whatever is fastest to iterate first and get the visuals and speed where you want it then wire it in through
+  the API you establish."
+- Look: Tiny Glade ("Townscaper is also nice if a bit simple"). The phone is lo-fi and won't show fine detail; the PC
+  will.

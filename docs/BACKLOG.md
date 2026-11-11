@@ -2254,3 +2254,16 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
 | TM8 | Town lighting moods | S | open (night lights SW-G6) |
 | TM9 | Weather: storms and fog tied to opportunities | M | open |
 | TM10 | Unit graphics push: merchant carts, market stalls, zombies and people read as distinct | M | open (Track B art) |
+
+## AG — the building generator (archgen, 2026-11-11; docs/design/ARCHGEN.md)
+
+- AG1 The lab: archlab.html over captured Muru lots; parts expanded in the vertex shader; orbit camera at play pitch.
+- AG2 Massing: body, setbacks, wings, roofs (flat/shed/gable/hip/pyramid), overhangs, corner towers.
+- AG3 Procedural materials and painted windows/doors in the fragment shader; detail fades on the phone.
+- AG4 Style profiles (homes, port warehouses, keep and walls) as data; districtStyle word (Track A's buffer).
+- AG5 Ornament parts: plinths, cornices, parapets/crenels, chimneys, spires.
+- AG6 Wire-in: TownBuildingsSink lifecycle, drawBuildings flag, generation sliced over frames, game lighting/shadows.
+- AG7 Phone toggle bench case (town generation + draw on/off).
+- AG8 Construction-shader inputs agreed (lot index, local height, floor, roof flag, eave height).
+- AG9 Later: cutaway LOD (thick walls, slabs), the gesture editor, route anchors on walkable parts, height rule moved
+  into the style table (Track A's offer), other families (node graph, SDF, irregular grid).

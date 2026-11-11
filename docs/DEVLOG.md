@@ -23024,3 +23024,20 @@ stores, else the market; there is only one raid group at a time, so "another rai
 "Too many groups …" line stays on the sheet. Once a season each, so a refused fallback never loops. Also 'no-room'
 is now compared as units.ts's typed `OrderFailure` member (the string constant is gone). Tests: season-war (two new
 cases over the fake's field limit), season, transfers, typecheck.
+
+## The building generator's lab (archgen, 2026-11-11; docs/design/ARCHGEN.md, BACKLOG AG1–AG3)
+
+- Why parts expanded in the vertex shader: one thread a lot writes ≤ 24 parts of 64 B (bodies and roofs: a semantic
+  plan), a compact pass appends the live ones to a draw list a kind with the instance counts written on the GPU, and
+  each kind is one instanced indirect draw whose vertex shader builds the shape from vertex_index. Nothing is stored
+  but the parts (Muru: 493 lots → 757 KB of part slots), nothing read back, any lot remade alone.
+- Measured (desktop GPU, timestamp-query, median of 30): Muru's 493 lots made in 0.062 ms, compacted in 0.0095 ms.
+  The town's own extruded mesh stage is 13.9 ms on the same machine (street lab panel). Phone numbers come with the
+  toggle bench (AG7).
+- Look: Tiny Glade (the user). Walls first: the roof's rise capped by the walls' height. Materials and windows are
+  painted in the fragment shader from the lot's style (plaster, half-timber with a jetty, brick, ashlar; clay tile,
+  slate, thatch); bays fitted to each wall's length, a door on the frontage, shutters on the homes; the pattern detail
+  fades on the phone (detail 0).
+- The lab (archlab.html) loads Muru's real lot records (data/lab/lots-muru.json: captured once from the street lab with
+  a headless eval of CityGen.lotRecords) and boots in about a second; the game's lighting and shadows come with the
+  wire-in (AG6).
