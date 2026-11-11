@@ -22706,3 +22706,30 @@ BACKLOG SL12, SF-2, SF-8; SEASON_LOOP.md "Soldiers and waves".
   - season-war (23: drill / line / patrol / man / no-wall raid / failed squad raised again / spawn opts / pool-full
     from Track B), season, transfers: 42 pass;
   - labs townforces and townraid pass.
+
+## 2026-11-11 — soldiers wait for a military structure; no room for ranks (`trackA-sf13`)
+
+**Why.** SF-13 was a judgement call: Forces 3 let a town with no keep and no walls gather its soldiers in the market
+square, so a season-1 raid met soldiers. The user: "I think they should wait for a keep or barracks or walls or your
+fortress. Some military structure." Separately, Track B is adding an `orderFailed` reason `'no-room'` (a formation
+where not even one file fits), and the season had no rule for it.
+
+**What.**
+- `military(l)` (season/war.ts): the keep card started or built, or the walls built. Without it `season()` keeps no
+  squads (want 0) and the sheet shows SOLDIERS_NO_PLACE ("Your soldiers have nowhere to gather …") when there is Might
+  to raise. The raise chain is barracks → muster yard, the drill chain muster yard → barracks: the market is gone from
+  both.
+- Raids are unchanged: with no walls they attack the keep, else the stores, else the market. With no soldiers the
+  raiders reach it unopposed and `settle` applies at Next season: Materials carried off (one a raider left), Unrest +1.
+- `'no-room'`: a squad's order in formation that fails so is sent again as a plain `guard` at the same place (no
+  formation); the sheet adds RANKS_NO_ROOM. Compared as a string (`NO_FILE_ROOM`) so it builds before units.ts's union
+  has the reason.
+- No fortress place exists in townplaces yet; noted in SEASON_LOOP.md.
+
+**Checks.** typecheck; season-war, season, transfers and writing-sources unit tests (49 pass), with new cases: no
+squads without a military structure (a market standing), the keep built but nothing standing yet, a season-1 raid with
+no soldiers settling into Materials and Unrest, and a no-room drill falling back to a guard. In game: the town lab
+(`scripts/lab/townraid.mjs`, Muru, `&wave=1&fresh=1`, 412x915, 20 frames): season 1, no squads spawned, the sheet reads
+"Your soldiers have nowhere to gather. Build walls for a muster yard. Or raise a keep for a barracks." and "Raiders
+attack! 2 of 4 are on their way." (two died in the water by the spawn point, as in Forces 3). The settle at Next season
+was not run in game (unit-tested only).

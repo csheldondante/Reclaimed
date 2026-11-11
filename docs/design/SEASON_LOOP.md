@@ -168,14 +168,23 @@ turns it into the Units contract's ref (`unitsRef`).
 
 **The rules (`season/war.ts`):**
 - **Might becomes soldiers:** a squad of 3 (`SQUAD`) a **free** point of Might (SEASON_LOOP's own "a squad a point of
-  Might"; Might tied up in a card is busy, so its squad isn't standing), raised at the barracks, else the muster yard,
-  else the market (trackA-forces3: a town with no walls and no keep gathers its soldiers in the market square — SF-13,
-  the user's call). None of them there: the sheet says so ("Your soldiers have nowhere to gather …"). Squads are
+  Might"; Might tied up in a card is busy, so its squad isn't standing), raised at the barracks, else the muster yard.
+  **Soldiers wait for a military structure** (SF-13, the user: "I think they should wait for a keep or barracks or
+  walls or your fortress. Some military structure."): the keep card started or built (its district raises the
+  barracks) or the walls built (the ring's muster yard) — `military(l)` in war.ts. With none there are no squads at
+  all, and no market fallback; the sheet says "Your soldiers have nowhere to gather …", as it does when the keep or
+  walls exist but neither place stands yet. **The player's fortress** is not a place yet: townplaces has no fortress
+  (only muster, stores, barracks, market, keep, gates, spawn points); when one exists it joins `military` and the
+  raise chain. Squads are
   matched to the free Might when each season begins (its stages landed): the weakest sent home, new ones raised.
   **At most 6 squads** (`MAX_SQUADS`: Track B has 8 order groups — a raid, 6 squads, a spare); Might past 6 raises no
   more soldiers. Track B's round 7 removes the caps: MAX_SQUADS goes then (SF-10).
-- **Drill:** squads not at the gates `drill` in a column round the muster yard, else the barracks, else the market
+- **Drill:** squads not at the gates `drill` in a column round the muster yard, else the barracks
   ("6 soldiers are drilling.").
+- **No room for ranks** (Track B's coming `orderFailed` reason `'no-room'`: a formation where even one file doesn't
+  fit): the squad gets the same order's place as a plain `guard` with no formation, and the sheet says "Some soldiers
+  have no room to form ranks. They stand guard where they are." A man or march failing so follows its other rules.
+  war.ts compares the reason as a string, so it builds before units.ts's union has it.
 - **Guards:** once the walls are built, squad j guards the first standing gate from slot j on in a `line` (the squads
   spread over the gates there are); before, they drill. With chains of 3, the search goes a window at a time:
   gates j, j+1, j+2; on `orderFailed` the next three; past all ten slots, where it was raised. The sheet counts soldiers
@@ -194,7 +203,9 @@ turns it into the Units contract's ref (`unitsRef`).
 - **Where from and to, no walls** (trackA-forces3; before, a season-1 raid "found no road": its spawn's `also` needs a
   gate): with no ring, raid k from the first standing spawn point of arterials k, k+1, k+2 (no `also`), the next window
   on the spawn's `orderFailed`, all eight tried once — attacking the keep, else the stores, else the market. The squads
-  stand in a line there while it's on ("3 soldiers wait for the raiders in the town centre.").
+  (a keep begun, no walls) stand in a line there while it's on ("3 soldiers wait for the raiders in the town
+  centre."). With no military structure there are none: the raiders simply reach their target, and at Next season
+  the outcome applies — they carry off Materials and Unrest goes up.
 - **Where from and to, with walls:** raid k along the first arterial from k on whose spawn point (outside the wall) and gate both
   stand — from that spawn point, attacking that gate (closed gates count as wall in the side map, so the fight is at the
   gate). A window of three arterials a call (spawn and gate chains paired by `also`); on the spawn's `orderFailed` the

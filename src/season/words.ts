@@ -101,6 +101,7 @@ export function summaryLine(r: SeasonResult, name: (id: string) => SeasonCard): 
 const count = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
 
 export const SOLDIERS_NO_PLACE = 'Your soldiers have nowhere to gather. Build walls for a muster yard. Or raise a keep for a barracks.';
+export const RANKS_NO_ROOM = 'Some soldiers have no room to form ranks. They stand guard where they are.';
 export const NO_SOLDIERS = 'You have no soldiers free. Each Might gives you 3.';
 
 /** where the soldiers are: "6 soldiers guard the gates." */

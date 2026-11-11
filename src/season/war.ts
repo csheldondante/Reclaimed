@@ -1,18 +1,19 @@
 // (trackA-forces; docs/design/SEASON_LOOP.md "Soldiers and waves") The season's soldiers and raiders. Might becomes
-// soldiers — a squad of SQUAD a free point of Might — raised at the barracks, else the muster yard, else the market,
-// and drilling there
-// in a column; once the walls are built each squad guards a gate in a line (or, with ?man=1, mans the wall-walk), and
+// soldiers — a squad of SQUAD a free point of Might — only once the town has a military structure (SF-13: the keep
+// card's district with its barracks, or the walls with their muster yard), raised at the barracks, else the muster
+// yard, and drilling there in a column; once the walls are built each squad guards a gate in a line (or, with ?man=1, mans the wall-walk), and
 // one squad marches out through a standing gate and back each season (the patrol). Raiders come on a fixed schedule
 // (FIRST_WAVE, then every WAVE_EVERY seasons), warned a season ahead: with a ring of walls from a spawn point outside it
 // toward its gate; without one from a spawn point on an arterial to the keep, else the stores, else the market — the
-// squads then stand in a line there. At the next Next season the fight is settled into the pools: Might lost for
+// squads (if any) then stand in a line there; with none the raiders simply reach it. At the next Next season the fight is settled into the pools: Might lost for
 // soldiers fallen, and raiders still alive got in — Unrest +1 and the Materials they carry off. Every Units call goes
 // through TownForces (season/forces.ts); this file holds the rules and the bookkeeping only (no GPU, no DOM).
 import { GATE_SLOTS, PLACE, PLACE_CHAIN, type GroupId, type PlaceRef } from '../api/contracts/townplaces';
 import type { OrderFailure } from '../api/contracts/units';
+import type { ForceOrder } from './forces';
 import type { TownForces } from './forces';
 import { lose, pools, type SeasonLedger } from './ledger';
-import { fightLine, FORCES_FULL, NO_SOLDIERS, SOLDIERS_NO_PLACE, soldiersLine, WAVE_NO_ROAD, waveNowLine, waveSoonLine } from './words';
+import { fightLine, FORCES_FULL, RANKS_NO_ROOM, NO_SOLDIERS, SOLDIERS_NO_PLACE, soldiersLine, WAVE_NO_ROAD, waveNowLine, waveSoonLine } from './words';
 
 /** soldiers a free point of Might (SEASON_LOOP.md: "a squad a point of Might") */
 export const SQUAD = 3;
@@ -29,6 +30,16 @@ const RAIDER_FACTION = 'f-raiders';
 /** a march's failures that say the gate can't be marched (try the next); the others (busy, no-town, pool-full) say no
  *  march can go now */
 const GATE_REASONS: readonly OrderFailure[] = ['none', 'rising', 'water', 'failed'];
+/** a failure Track B is adding (BACKLOG SF-14): a formation where even one file doesn't fit — the squad guards the same
+ *  place with no formation. Compared as a string so this builds whether units.ts's union has it yet or not */
+const NO_FILE_ROOM: string = 'no-room';
+
+/** the town has a military structure for soldiers to gather at (SF-13, the user: "they should wait for a keep or
+ *  barracks or walls or your fortress"): the keep card started or built (its district raises the barracks), or the walls
+ *  built (the ring's muster yard). No fortress place exists yet (SEASON_LOOP.md "Soldiers and waves") */
+export function military(l: SeasonLedger): boolean {
+  return l.built.includes('keep') || l.built.includes('walls') || l.projects.some((p) => p.card.id === 'keep');
+}
 
 /** the k-th raid's size: 4, 6, 8 … */
 export const waveSize = (k: number): number => 4 + 2 * k;
@@ -128,6 +139,8 @@ export class SeasonWar {
   /** an order or a spawn found no group or field free (Track B's order groups, fields): shown, never dropped */
   private full = false;
   private soon = false;
+  /** a squad's formation found no room (no-room): it guards the same place in no formation — told on the sheet */
+  private cramped = false;
   /** told when its line changes */
   readonly onChange: (() => void)[] = [];
 
@@ -140,6 +153,7 @@ export class SeasonWar {
     if (f) {
       const alive = (...kinds: Post['kind'][]) => this.squads.filter((g) => kinds.includes(this.posts.get(g)?.kind ?? 'yard')).reduce((s, g) => s + (f.report(g)?.alive ?? 0), 0);
       if (this.full) out.push(FORCES_FULL);
+      if (this.cramped) out.push(RANKS_NO_ROOM);
       const standing = alive('gate', 'man', 'patrol', 'heart', 'yard');
       if (this.noPlace && !standing) out.push(SOLDIERS_NO_PLACE);
       else if (!standing) out.push(NO_SOLDIERS);
@@ -195,6 +209,7 @@ export class SeasonWar {
     f.orderFailed.push((g, why, ref) => {
       console.warn(`[forces] group ${g}: no place in ${JSON.stringify(ref)} (${why})`);
       const r = f.report(g);
+      if (this.squads.includes(g) && (why as string) === NO_FILE_ROOM && r?.size && this.loose(f, g, ref)) return this.changed();
       if (this.squads.includes(g)) this.squadFailed(f, g, why, !!r?.size);
       if (this.wave?.g === g) {
         const w = this.wave;
@@ -207,6 +222,15 @@ export class SeasonWar {
       }
       this.changed();
     });
+  }
+
+  /** (no-room) the squad's order again at the same place with no formation: a plain guard there. False: the order had
+   *  no place or no formation (a man or march: its other failures' rules) */
+  private loose(f: TownForces, g: GroupId, o: PlaceRef | ForceOrder): boolean {
+    if (!('at' in o) || !('formation' in o) || !o.formation) return false;
+    this.cramped = true;
+    f.orderGroup(g, { kind: 'guard', at: o.at });
+    return true;
   }
 
   /** a squad's spawn or order failed: its next post, or the sheet told */
@@ -271,10 +295,14 @@ export class SeasonWar {
     this.hook(f);
     this.noPlace = false;
     this.full = false;
+    this.cramped = false;
     // (the squads to the free Might: the weakest sent home first, new ones raised at the barracks, else the yard. A squad
     // with none left — all fallen, or its spawn failed (Track B's failure sticks: its orders would fail the same) — is let
     // go and raised again)
-    const want = Math.min(MAX_SQUADS, pools(l).might);
+    // (no keep, barracks or walls: no squads at all — the sheet says there is nowhere to gather; SF-13)
+    const armed = military(l);
+    const want = armed ? Math.min(MAX_SQUADS, pools(l).might) : 0;
+    if (!armed && pools(l).might > 0) this.noPlace = true;
     this.squads = this.squads.filter((g) => {
       if ((f.report(g)?.alive ?? 0) > 0) return true;
       f.disband(g);
@@ -315,16 +343,15 @@ export class SeasonWar {
     this.changed();
   }
 
-  /** the barracks, else the muster yard, else the market (a town with no walls and no keep: its soldiers gather in the
-   *  market square — trackA-forces3) */
+  /** the barracks, else the muster yard (no market: soldiers wait for a military structure — SF-13) */
   private raise(): PlaceRef {
-    return at(this.town, PLACE.barracks, at(this.town, PLACE.muster, at(this.town, PLACE.market)));
+    return at(this.town, PLACE.barracks, at(this.town, PLACE.muster));
   }
 
-  /** a squad drilling in a column round the muster yard, else the barracks, else the market */
+  /** a squad drilling in a column round the muster yard, else the barracks */
   private drill(f: TownForces, g: GroupId): void {
     this.posts.set(g, { kind: 'yard' });
-    f.orderGroup(g, { kind: 'drill', at: at(this.town, PLACE.muster, at(this.town, PLACE.barracks, at(this.town, PLACE.market))), formation: 'column' });
+    f.orderGroup(g, { kind: 'drill', at: at(this.town, PLACE.muster, at(this.town, PLACE.barracks)), formation: 'column' });
   }
 
   /** a squad in a line at the town's heart (a raid and no walls) */

@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { START_INCOME, START_POOLS } from '../../src/season/catalog';
 import { grant, lose, newLedger, pools, total } from '../../src/season/ledger';
 import { TownForces, unitsRef } from '../../src/season/forces';
-import { MAX_SQUADS, raidPlaces, SeasonWar, settle, SQUAD, townHeart, waveIn, waveSize } from '../../src/season/war';
-import { fightLine, FORCES_FULL, NO_SOLDIERS, SOLDIERS_NO_PLACE, soldiersLine, WAVE_NO_ROAD, waveNowLine, waveSoonLine } from '../../src/season/words';
+import { military, MAX_SQUADS, raidPlaces, SeasonWar, settle, SQUAD, townHeart, waveIn, waveSize } from '../../src/season/war';
+import { fightLine, FORCES_FULL, NO_SOLDIERS, RANKS_NO_ROOM, SOLDIERS_NO_PLACE, soldiersLine, WAVE_NO_ROAD, waveNowLine, waveSoonLine } from '../../src/season/words';
 import { PLACE, type PlaceRef } from '../../src/api/contracts/townplaces';
 import type { OrderFailure, PlaceRef as UPlaceRef, SpawnAtOpts, SquadOrder, UnitId, Units, UnitView } from '../../src/api/contracts/units';
 import { lint } from '../support/writing';
@@ -34,6 +34,8 @@ class FakeUnits {
   orders: [number, SquadOrder][] = [];
   failed = new Map<number, OrderFailure>();
   man: Status = 'failed';
+  /** (Track B's coming 'no-room') an order in formation fails: not even one file fits */
+  noRoom = false;
   private queue: [number, OrderFailure, boolean][] = [];
   private n = 1;
   private ng = 100;
@@ -91,6 +93,7 @@ class FakeUnits {
       this.queue.push([g, 'pool-full', false]);
       return;
     }
+    if (this.noRoom && 'formation' in o && o.formation) return void this.queue.push([g, 'no-room' as OrderFailure, false]);
     gr.order = o;
     const { at: p, why } = this.resolve(o.at);
     if (p === null) this.queue.push([g, why, false]);
@@ -283,7 +286,7 @@ describe('TownForces (the adapter on Track B place orders)', () => {
 describe('SeasonWar (squads and raids through the adapter)', () => {
   it('raises a squad a free Might at the yard, posts them at the gates after the walls, raids on schedule and settles', async () => {
     const { f, units, tick } = forces({ [PLACE.muster]: 'ok', [PLACE.gate0]: 'ok', [PLACE.gate0 + 1]: 'ok', [PLACE.spawn0]: 'ok', [PLACE.keep]: 'ok' });
-    let l = grant(start(), { might: 1 });
+    let l = { ...grant(start(), { might: 1 }), built: ['keep'] };
     const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 2, ledger: () => l });
     war.season(l);
     await tick();
@@ -291,7 +294,7 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
     expect(war.lines[0]).toBe(soldiersLine(SQUAD * 2, 'yard'));
     expect(war.lines).toContain(waveSoonLine(waveSize(0)));
     // (season 2: the walls built, a raid)
-    l = { ...l, season: 2, built: ['walls'] };
+    l = { ...l, season: 2, built: ['keep', 'walls'] };
     war.season(l);
     await tick();
     expect(war.lines[0]).toBe(soldiersLine(SQUAD * 2, 'gates'));
@@ -330,7 +333,7 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
 
   it('caps the squads at MAX_SQUADS, and a chain past three choices throws', async () => {
     const { f, units, tick } = forces({ [PLACE.muster]: 'ok' });
-    const l = grant(start(), { might: 10 });
+    const l = { ...grant(start(), { might: 10 }), built: ['keep'] };
     const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 0, ledger: () => l });
     war.season(l);
     await tick();
@@ -339,9 +342,24 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
     expect(() => f.spawnAt('soldier', 'f-town', deep, 1)).toThrow(/at most 3/);
   });
 
-  it('with no yard and no barracks, says so', async () => {
-    const { f, tick } = forces({});
+  it('with no keep, barracks or walls, no squads at all: the sheet says so (SF-13; a market is no place to gather)', async () => {
+    const { f, units, tick } = forces({ [PLACE.market]: 'ok', [PLACE.muster]: 'ok' });
     const l = start();
+    expect(military(l)).toBe(false);
+    const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 0, ledger: () => l });
+    war.season(l);
+    await tick();
+    expect(units.spawns).toEqual([]);
+    expect(war.lines).toEqual([SOLDIERS_NO_PLACE]);
+    // (the keep card built, or the walls built: a military structure; a market or houses are not)
+    expect(military({ ...l, built: ['keep'] })).toBe(true);
+    expect(military({ ...l, built: ['walls'] })).toBe(true);
+    expect(military({ ...l, built: ['market', 'houses'] })).toBe(false);
+  });
+
+  it('with the keep built but no barracks or yard standing yet, says so', async () => {
+    const { f, tick } = forces({ [PLACE.market]: 'ok' });
+    const l = { ...start(), built: ['keep'] };
     const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 0, ledger: () => l });
     war.season(l);
     await tick();
@@ -350,7 +368,7 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
 
   it('a squad whose spawn failed is raised again the next season (its failure sticks: its orders would fail the same)', async () => {
     const { f, units, tick } = forces({});
-    const l = start();
+    const l = { ...start(), built: ['keep'] };
     const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 0, ledger: () => l });
     war.season(l);
     await tick();
@@ -372,20 +390,22 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
 
   it('soldiers drill in a column at the muster yard; at the gates they guard in a line', async () => {
     const { f, units, tick } = forces({ [PLACE.muster]: 'ok', [PLACE.gate0]: 'ok', [PLACE.gate0 + 1]: 'ok', [PLACE.spawn0]: 'ok' });
-    let l = grant(start(), { might: 1 });
+    let l = { ...grant(start(), { might: 1 }), built: ['keep'] };
     const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 2, ledger: () => l });
     war.season(l);
     await tick();
-    for (const { g } of units.spawns) expect(units.orderOf(g)).toEqual({ kind: 'drill', at: { town: 0, place: PLACE.muster, else: { town: 0, place: PLACE.barracks, else: { town: 0, place: PLACE.market } } }, formation: 'column' });
-    l = { ...l, season: 2, built: ['walls'] };
+    expect(units.spawns.length).toBe(2);
+    for (const { g } of units.spawns) expect(units.orderOf(g)).toEqual({ kind: 'drill', at: { town: 0, place: PLACE.muster, else: { town: 0, place: PLACE.barracks } }, formation: 'column' });
+    for (const { at } of units.spawns) expect(at).toEqual({ town: 0, place: PLACE.barracks, else: { town: 0, place: PLACE.muster } });
+    l = { ...l, season: 2, built: ['keep', 'walls'] };
     war.season(l);
     await tick();
     for (const { g } of units.spawns.filter((x) => x.kind === 'guard')) expect(units.orderOf(g)).toMatchObject({ kind: 'guard', formation: 'line' });
   });
 
-  it('with no walls a raid comes from a spawn point (no gate partner) at the keep, else the stores, else the market; the squads (raised in the market: no yard, no barracks) wait there', async () => {
-    const { f, units, tick } = forces({ [PLACE.market]: 'ok', [PLACE.spawn0 + 1]: 'ok', [PLACE.stores]: 'ok' });
-    const l = grant(start(), { might: 1 });
+  it('with no walls a raid comes from a spawn point (no gate partner) at the keep, else the stores, else the market; the squads (raised at the barracks: the keep card begun) wait there', async () => {
+    const { f, units, tick } = forces({ [PLACE.barracks]: 'ok', [PLACE.spawn0 + 1]: 'ok', [PLACE.stores]: 'ok' });
+    const l = { ...grant(start(), { might: 1 }), built: ['keep'] };
     const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 1, ledger: () => l });
     war.season(l);
     await tick();
@@ -399,6 +419,42 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
     for (const { g } of units.spawns.filter((x) => x.kind === 'guard')) expect(units.orderOf(g)).toEqual({ kind: 'guard', at: townHeart(0), formation: 'line' });
     expect(war.lines).toContain(soldiersLine(SQUAD * 2, 'heart'));
     expect(war.lines).not.toContain(WAVE_NO_ROAD);
+  });
+
+  it('with no military structure a season-1 raid meets no soldiers: it reaches the stores, takes Materials and stirs Unrest', async () => {
+    const { f, units, tick } = forces({ [PLACE.market]: 'ok', [PLACE.spawn0]: 'ok', [PLACE.stores]: 'ok' });
+    const l = grant(start(), { might: 1 });
+    const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 1, ledger: () => l });
+    war.season(l);
+    await tick();
+    expect(units.spawns.filter((x) => x.kind === 'guard')).toEqual([]);
+    const rs = units.spawns.filter((x) => x.kind === 'raider');
+    expect(rs.length).toBe(1);
+    expect(units.orderOf(rs[0].g)).toEqual({ kind: 'attack', at: townHeart(0) });
+    expect(units.placeOf(units.members(rs[0].g)[0])).toBe(PLACE.stores);
+    expect(war.lines).toContain(SOLDIERS_NO_PLACE);
+    units.arrive(rs[0].g);
+    const s = war.resolve(l)!;
+    const n = waveSize(0);
+    const took = Math.min(n, pools(l).materials);
+    expect(took).toBeGreaterThan(0);
+    expect(s.line).toBe(fightLine({ raiders: n, left: n, fallen: 0, might: 0, materials: took, unrest: 1 }));
+    expect(pools(s.ledger).materials).toBe(pools(l).materials - took);
+    expect(pools(s.ledger).unrest).toBe(pools(l).unrest + 1);
+  });
+
+  it("a formation with no room (Track B's 'no-room'): the squad guards the same place in no formation, and the sheet says so", async () => {
+    const { f, units, tick } = forces({ [PLACE.muster]: 'ok' });
+    units.noRoom = true;
+    const l = { ...grant(start(), { might: 1 }), built: ['keep'] };
+    const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 0, ledger: () => l });
+    war.season(l);
+    await tick(4);
+    const squads = units.spawns.filter((x) => x.kind === 'guard').map((x) => x.g);
+    expect(squads.length).toBe(2);
+    for (const g of squads) expect(units.orderOf(g)).toEqual({ kind: 'guard', at: { town: 0, place: PLACE.muster, else: { town: 0, place: PLACE.barracks } } });
+    expect(war.lines).toContain(RANKS_NO_ROOM);
+    expect(war.lines).toContain(soldiersLine(SQUAD * 2, 'yard'));
   });
 
   it('with no walls and no spawn point standing, the raid finds no road (every arterial tried once)', async () => {
@@ -449,7 +505,7 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
   });
 
   it('every line the player reads passes the writing lint', () => {
-    const lines = [SOLDIERS_NO_PLACE, NO_SOLDIERS, WAVE_NO_ROAD, FORCES_FULL, soldiersLine(1, 'yard'), soldiersLine(6, 'gates'), soldiersLine(3, 'barracks'), soldiersLine(3, 'walls'), soldiersLine(3, 'patrol'), soldiersLine(6, 'heart'), waveSoonLine(4), waveNowLine(6, 4, 'coming'), waveNowLine(6, 2, 'there'), waveNowLine(6, 3, 'fighting'), waveNowLine(6, 0, 'fighting'), fightLine({ raiders: 6, left: 2, fallen: 4, might: 2, materials: 2, unrest: 1 }), fightLine({ raiders: 6, left: 0, fallen: 0, might: 0, materials: 0, unrest: 0 })];
+    const lines = [SOLDIERS_NO_PLACE, NO_SOLDIERS, RANKS_NO_ROOM, WAVE_NO_ROAD, FORCES_FULL, soldiersLine(1, 'yard'), soldiersLine(6, 'gates'), soldiersLine(3, 'barracks'), soldiersLine(3, 'walls'), soldiersLine(3, 'patrol'), soldiersLine(6, 'heart'), waveSoonLine(4), waveNowLine(6, 4, 'coming'), waveNowLine(6, 2, 'there'), waveNowLine(6, 3, 'fighting'), waveNowLine(6, 0, 'fighting'), fightLine({ raiders: 6, left: 2, fallen: 4, might: 2, materials: 2, unrest: 1 }), fightLine({ raiders: 6, left: 0, fallen: 0, might: 0, materials: 0, unrest: 0 })];
     expect(lines.flatMap((t) => lint(t).map((p) => `${p} — ${t}`))).toEqual([]);
   });
 });

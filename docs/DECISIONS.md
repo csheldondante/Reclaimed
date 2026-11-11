@@ -3704,3 +3704,10 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   deterministic restore; GPU state read back only at save points.
 - (via the coordinator) Track B accepted the four soldier calls for U2 (SEASON_LOOP.md), on two conditions: a walkable
   wall-walk, and route ids for marches.
+
+## 2026-11-11 — soldiers wait for a military structure (SF-13, trackA-sf13)
+
+- The user: "I think they should wait for a keep or barracks or walls or your fortress. Some military structure."
+  → soldiers are raised only once the keep card is started or built (its barracks) or the walls are built (the
+  muster yard); no market square fallback. With none, no squads; raids still come and simply reach their target.
+  The player's fortress joins the list when it exists as a place.
