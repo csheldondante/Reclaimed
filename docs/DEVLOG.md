@@ -22941,7 +22941,7 @@ hysteresis, "more like a chain than a fixed grid", reassignment by position, ali
   record 9 words.
 
 **Numbers.**
-- Muru drill (scripts/lab/towndrill.mjs, `&labkeep=1`): before, 0 laps, lag 7+, soldiers ≤ 4 cells in 30 s (the
+- Muru drill (scripts/lab/towndrill.mjs, `&labkeep=1`): before, 0 laps, lag 7.0-7.6 for 120 s (the
   loop never started); after, formed 44 s after the order (the walk from the barracks), radius 2.5, 2.27 laps in 30 s,
   each soldier 38-47 cells, arrived once. The patrol: out 78.9 s, back to its gate (guard, line) 77.2 s, arrived both.
   Before round 7's pages the back leg's field read ∞ everywhere (a direct guard from the barracks arrived in 17 s):
