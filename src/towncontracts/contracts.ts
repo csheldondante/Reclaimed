@@ -183,6 +183,12 @@ export class TownContracts implements TownContractsApi {
     return this.slots.findIndex((s) => s?.town.site.id === id);
   }
 
+  /** (Track B, U2 round 6) a live town slot's site id (the CPU's plan: what LivingTowns and the routes are keyed by), or
+   *  null for an empty slot */
+  townSite(i: number): string | null {
+    return this.slots[i]?.town.site.id ?? null;
+  }
+
   /** (Track B, U2 round 5) a live town slot's grid corners in the window (x cells, y world units) — the CPU's own plan
    *  (its grid's place and size), for the agents' scope round an order there; null for an empty slot */
   townArea(i: number): [number, number][] | null {

@@ -474,6 +474,14 @@ units.orderFailed?: ((g: GroupId, why: OrderFailure) => void)[]       // once an
 - Arrival is the group's: one EV_ARRIVED when its last slot is filled.
 - Unreachable posts are Track A's GPU label (the red marker).
 
+**Built (U2 round 6):** `units.orderGroup(g, {kind: 'man', town, side?})`.
+- The posts sit at 3 m spacing along each run's top, where its route is within 0.6 of its highest point. Ranks are given
+  posts in ring order, run by run (`side`: a run's index in routeread's wall table).
+- A soldier off its run's route follows its run's field, seeded at the run's foot. Up to 3 order fields a man order,
+  runs sharing them modulo.
+- On the route (within 3 cells), it rides it by waypoints 2 m on toward its post, so the 1.1 m stairs go single file.
+- Arrival: every rank within 1.5 cells of its post, once an order.
+
 ### 9d. Formations on every march (road route or flow field)
 
 | Part | Design |
@@ -486,6 +494,32 @@ units.orderFailed?: ((g: GroupId, why: OrderFailure) => void)[]       // once an
 | Units | Each soldier's step reads the anchor and trail, written by an anchor kernel before the step, so there is no race. It steers straight to its slot when within a few cells and `sightClear`; otherwise it follows the group's route or field. |
 | Cost | One anchor kernel per group per tick. The clearance plane is shared with the line of sight (§9f), and is static: it is made again only when columns change. |
 | Test skeletons | "a column narrows to single file through a 1.1 m stair and re-forms after"; "an off-road formation squeezes through a gap between two walls" (`unitminds-u2.test.ts`). |
+
+**Built (U2 round 6), as designed above, with these choices:**
+- `orderGroup(g, {kind: 'march', town, gate: k, leave?})`:
+  - The group gathers at the route's start on its field. The anchor starts far enough along that its rear rows stand
+    on the route.
+  - It moves at FORM_SPEED 2 cells/s while no rank lags past 3 cells (last frame's).
+  - An invalid gate tells `orderFailed` with gateStatus's reason ('none' | 'rising' | 'water' | 'failed').
+  - `leave`: past the route's end straight on; a unit within 2 cells of the window's edge drops out (EV_LEFT 22, no
+    death), and `left(g)` is told once when the last is gone.
+- `orderGroup(g, {kind: 'drill', at, formation: 'column' | 'line'})`: a loop round the yard. Its radius is the yard's
+  clearance × 0.6 (3-8 cells); the anchor goes round at 0.6 of the pace; arrival comes once, when it's formed.
+- go / guard / attack `at` a place with `formation`: a field march. The anchor steps down the group's field and leaves
+  a trail (32 points 0.8 cells apart); the rows stand on the trail behind it.
+- Widths:
+  - on a route, routeWidth;
+  - elsewhere, the clearance stepping out left and right of the path, to the first column under 0.7 (≤ 6 cells
+    each), with the offset = (left − right) / 2;
+  - cols = clamp(floor((width − 0.6) / spacing), 1, 3 for a column / 10 for a line).
+- Rows: each row's columns come from its own width, so the column narrows and lengthens where the way does.
+- A rank steers straight at its slot when within 8 cells, in sight and within 1.5 in height. Otherwise it rides its
+  route (a march), or follows the group's field. In formation the crowd's push is a third as strong.
+- Kernels: formAnchor (a thread a group) and formSlots (a thread a rank, 64 ranks a group), before every step, over
+  routeread (56), the clearance (55) and the fields (6). The step reads its rank's entry (mail: target, mode, field).
+- Tests: test/gpu/formations.test.ts — a march along a route 1.1 m wide over 10 cells goes single file and re-forms (3
+  abreast), arrived once; an off-road line squeezes through a 4-row gap (9 abreast down to 1) and arrives once. The lab:
+  scripts/lab/townwalls.mjs (man Muru's walls, march out of a standing gate, and leave).
 
 ### 9e. Sides: a hunt field and a threat field per army (replaces "one threat field in v1")
 
