@@ -112,6 +112,12 @@ export class LiquidSystem implements SimSystem {
   private uniData = new ArrayBuffer(16 + 16 * MAX_SPRINGS + 16 * 512 + 16);
   /** the ticks the next prep's spray stands for (LiquidU.extra.x) */
   private prepTicks = 1;
+  /**
+   * (UC-6) The held rivers' inflow at the window's edge × the atlas's steady discharge (LiquidU.extra.y; liquid.wgsl
+   * edgeInflow). 1 is the steady state: the window's water can only settle. The hook the atlas or the weather sets to
+   * flood the valley (an overworld storm; BACKLOG UC-9). Set it through FlowKit.setInflowScale, which wakes the window.
+   */
+  inflowScale = 1;
   /** frozen chunks' flux rescaled next step (chunk -> factor; steady.ts: their supply changed) */
   readonly rescale = new Map<number, number>();
   private k: Record<string, ComputeKernel> = {};
@@ -367,7 +373,9 @@ export class LiquidSystem implements SimSystem {
     u[3] = LQ_ALL ? 1 : 0;
     const fv = new Float32Array(this.uniData, 16);
     this.springs.forEach((s, i) => fv.set([s.x, s.y, s.z, s.rate], i * 4));
-    new Float32Array(this.uniData, 16 + 16 * MAX_SPRINGS + 16 * 512, 4)[0] = this.prepTicks;
+    const ex = new Float32Array(this.uniData, 16 + 16 * MAX_SPRINGS + 16 * 512, 4);
+    ex[0] = this.prepTicks;
+    ex[1] = this.inflowScale;
     const sc = new Float32Array(this.uniData, 16 + 16 * MAX_SPRINGS, 4 * 512);
     sc.fill(1);
     if (sub === 0) for (const [k, r] of this.rescale) if (k < sc.length) sc[k] = r;

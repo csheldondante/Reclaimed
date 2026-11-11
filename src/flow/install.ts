@@ -12,6 +12,11 @@ export interface FlowKit {
   water: LiquidSystem;
   lava: LiquidSystem;
   steady: Steady;
+  /**
+   * (UC-6) The held rivers' inflow at the window's edge × the atlas's steady discharge (1: the steady state). A change
+   * wakes the window; the steady state decides what sleeps again. Not wired to the weather yet (BACKLOG UC-9).
+   */
+  setInflowScale(x: number): void;
 }
 
 export function installFlow(core: WorldCore, sleep: Sleep): FlowKit {
@@ -44,5 +49,11 @@ export function installFlow(core: WorldCore, sleep: Sleep): FlowKit {
   renderer.addPrisms(lava.instO, lava.indirectO);
   // (an event's chunks awake a moment; the steady state keeps them so while they flow unsteadily)
   sleep.eventSecs = 1.5;
-  return { water, lava, steady };
+  const setInflowScale = (x: number): void => {
+    if (!(x >= 0)) throw new Error(`setInflowScale: ${x}`);
+    if (x === water.inflowScale) return;
+    water.inflowScale = x;
+    sleep.wakeAll(sleep.eventSecs, performance.now() / 1000);
+  };
+  return { water, lava, steady, setInflowScale };
 }

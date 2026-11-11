@@ -77,7 +77,8 @@ struct LiquidU {
   springs: array<vec4<f32>, 8>,
   // per chunk, this step only: a frozen chunk's flux rescaled by its supply (src/flow/steady.ts; 1 none, 0 dried up)
   scale: array<vec4<f32>, 512>,
-  // x the ticks prep's spray stands for (1; PREP_IDLE while idle: src/flow/liquid.ts encode)
+  // x the ticks prep's spray stands for (1; PREP_IDLE while idle: src/flow/liquid.ts encode); y (UC-6) the held
+  // rivers' inflow at the window's edge × the atlas's steady discharge (1: the steady state; LiquidSystem.inflowScale)
   extra: vec4<f32>,
 };
 @group(0) @binding(33) var<uniform> LQ: LiquidU;
@@ -325,11 +326,27 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
       if (!inMap(q)) {
         code = C_DRAIN;
         Hn = max(fz, G.ocean.x);
-        // (UC-6: a held river's column on the window's edge — past it the river runs on at the table's level, so its
-        // water doesn't pour off the window upstream as off a cliff: only what stands over that level leaves)
-        if (LQ_WATER && s == 0u) {
-          let rh = riverHere(id.xy);
-          if (rh.on && rh.depth > 0.0) { Hn = max(Hn, g.nat + rh.depth); }
+        // (UC-6, the user: "treat inflow and outflow as steady state unless the atlas indicates that there should be a
+        // change") Past the window's edge on a held-river level (?rivers=table) is the atlas's steady state, not a
+        // cliff. Across a face a held river flows out by, it leaves by its table's level: one way — what stands over
+        // that level leaves, nothing comes back. The sea: what stands over its level leaves (G.ocean.x, one level for
+        // the world; per basin is BACKLOG UC-10). Everywhere else a wall — the faces a river comes in by too: its
+        // inflow is a fixed rate (gather: edgeInflow), not a level. The edge was a free fall everywhere: the lakes the
+        // window cut drained out of it (Muru's bend, 0.5 deep at 97.9, dry in 40 s). Elsewhere (an authored map with
+        // no table: the flow lab's trenches) the map's edge stays a fall. (Runs under rock: a wall.)
+        if (RIVER_TABLE && LQ_WATER) {
+          var leaves = G.ocean.x > fz;
+          if (s == 0u) {
+            let rh = riverHere(id.xy);
+            if (rh.on && rh.depth > 0.0 && dot(rh.vel, DIRV[k]) > 0.0) {
+              leaves = true;
+              Hn = max(Hn, g.nat + rh.depth);
+            }
+          }
+          if (!leaves) {
+            code = C_WALL;
+            Hn = H;
+          }
         }
       } else {
         let gq = gapsAt(q);
@@ -547,6 +564,40 @@ fn outSum(p: vec2<i32>, i: u32, s: u32) -> f32 {
   return f[0] + f[1] + f[2] + f[3] + f[4] + f[5];
 }
 
+/**
+ * (UC-6, the user: "treat inflow and outflow as steady state unless the atlas indicates that there should be a change in
+ * inflow or outflow") A held river's inflow at the window's edge, depth a 60 Hz step: the atlas's steady discharge a
+ * unit of width (riverheld.wgsl riverDischarge) across column p's faces past the window that it comes in by, × the
+ * face's length (EDGE), over the column's area (ROW_H) — times LQ.extra.y (1: the steady state; an overworld storm's
+ * hook, BACKLOG UC-9). At the rivers' wetness (riverWetAt: a watershed's storm water raises it already). A fixed rate,
+ * not a level: the simulated water doesn't enter it, so the window's water can only settle. 0 off the edge, off a held
+ * river, on a face it flows out by (flux: one way, by its level).
+ */
+fn edgeInflow(p: vec2<i32>) -> f32 {
+  if (!RIVER_TABLE || !LQ_WATER || !windowEdge(vec2<u32>(p))) { return 0.0; }
+  let rh = riverHere(vec2<u32>(p));
+  if (!rh.on || rh.depth <= 0.0 || dot(rh.vel, rh.vel) <= 0.0) { return 0.0; }
+  // (the table's level falling downstream: to the neighbour inside the window the flow points at most, a river's too)
+  let dir = normalize(rh.vel);
+  var best = -2.0;
+  var slope = 0.0;
+  for (var k = 0u; k < NDIR; k++) {
+    let q = nbr(p, k);
+    if (!inMap(q)) { continue; }
+    let rq = riverHere(vec2<u32>(q));
+    let c = dot(dir, DIRV[k]);
+    if (!rq.on || rq.depth <= 0.0 || c <= best) { continue; }
+    best = c;
+    slope = (gapsAt(p).nat + rh.depth) - (gapsAt(q).nat + rq.depth);
+  }
+  let qv = riverDischarge(vec2<u32>(p), slope);
+  var s = 0.0;
+  for (var k = 0u; k < NDIR; k++) {
+    if (!inMap(nbr(p, k))) { s += max(0.0, -dot(qv, DIRV[k])); }
+  }
+  return s * EDGE / ROW_H * LQ.extra.y;
+}
+
 // (net: the column's net flow, a vector: the river's discharge through it, nothing for water sloshing in a pool)
 struct Gather { dep: array<f32, 6>, hv: array<f32, 6>, inflow: f32, outflow: f32, old: array<f32, 6>, net: vec2<f32> };
 
@@ -608,6 +659,15 @@ fn gather(p: vec2<i32>, g: Gaps, r: Runs) -> Gather {
     o.hv[u32(m)] += v * LQ_HOT;
     o.inflow += v;
   }
+  // (UC-6) a held river coming in across the window's edge: the atlas's steady discharge, in the gap on the column's
+  // own ground (Gaps.nat, as the held river's)
+  let ein = edgeInflow(p);
+  if (ein > 0.0) {
+    let m = gapForRun(g, g.nat);
+    o.dep[m] += ein;
+    o.hv[m] += ein * LQ_HOT;
+    o.inflow += ein;
+  }
   return o;
 }
 
@@ -655,13 +715,14 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   let j2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
   wet = wet || (okNow(p, u32(j2.w)) && u32(j2.x) == 6u);
   for (var s = 0u; s < LQ.step.y; s++) { wet = wet || all(cellAt(LQ.springs[s].xy) == p); }
-  // (trackA-liquids, ?rivers=table: a river's column nothing has woken — at the window's edge, or asleep on its slow
-  // turn or as it comes in — held at the atlas's table: riverheld.wgsl, as the pipes hold it)
+  // (trackA-liquids, ?rivers=table: a river's column nothing has woken — asleep on its slow turn or as it comes in —
+  // eased to the atlas's table: riverheld.wgsl, as the pipes hold it. UC-6: not on the window's edge — the river comes
+  // in there at the atlas's steady discharge (gather: edgeInflow) and leaves by its level (flux), not held to a depth)
   var rh: RiverHere;
   rh.on = false;
   if (LQ_WATER) { rh = riverHere(id.xy); }
-  let held = LQ_WATER && riverHeld(id.xy, rh);
-  wet = wet || (held && rh.depth > 0.0);
+  let held = LQ_WATER && riverHeld(id.xy, rh) && !windowEdge(id.xy);
+  wet = wet || (held && rh.depth > 0.0) || edgeInflow(p) > 0.0;
   let r0 = runsIn[i * NSLOT];
   let prevBed = select(bed, r0.x, okPrev(p, u32(r0.w) >> 3u));
   if (abs(bed - prevBed) > 1e-4) { atomicAdd(&act[ch * 4u], u32(min(abs(bed - prevBed) * 1e6, 1e8))); }
@@ -673,12 +734,9 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   var o = gather(p, g, r);
   let top = g.n - 1u;
   // (held: in the gap on the column's own ground — under a deck, the river's; Gaps.nat)
-  // (UC-6: on the window's edge the river is the atlas's beyond it — held at the table's depth, the boundary the
-  // simulated river between the edges is fed from and drains into; at 2 % a step it couldn't feed the river's discharge
-  // and the awake river ran dry. Asleep, on its slow turn, it eases to the table at flowRiverRelax)
   if (held) {
     let m = gapForRun(g, g.nat);
-    o.dep[m] = mix(o.dep[m], rh.depth, select(G.tune.flowRiverRelax, 1.0, windowEdge(id.xy)));
+    o.dep[m] = mix(o.dep[m], rh.depth, G.tune.flowRiverRelax);
   }
   // the enclosed runs: wet gaps under the top, lowest first; past three, the deepest kept (the rest counted)
   var n = 0u;

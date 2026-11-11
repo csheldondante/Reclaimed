@@ -3,6 +3,22 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-11 — UC-6 (Track A, `trackA-uc6`): frozen chunks wake; the window's edge is a steady flux
+
+- Approved: a perturbed frozen chunk is **woken** to find its new steady state; its flux is no longer rescaled by its
+  edge's in / out. This replaces the round-84 "keep the flow proportional" rescale (quoted under round 84 below): the
+  zeroing of a dried-up frozen chunk stays; the proportional part is gone (it fed back through awake neighbours and
+  blew Muru's water up).
+- The window's edge, verbatim: "treat inflow and outflow as steady state unless the atlas indicates that there should be
+  a change in inflow or outflow. Then we can still make storms on the overworld cause floods but under default
+  conditions nothing can grow."
+  → a river coming in: the atlas's steady discharge as a fixed rate (not a level); a river going out: one way, by its
+  level, nothing back; the sea: held at its level (can't stand over it); everywhere else a wall. One inflow multiplier
+  on the GPU (default 1) is the hook for an overworld storm (not wired yet: BACKLOG UC-9).
+- Asked: is the edge's "sea level" fixed or the level of the basin the river ends in? The intent: where the edge meets
+  standing water, hold it at that body's own atlas level, per basin, never an invented one. The window's GPU has only
+  the one global level today (Globals ocean.x) → kept; per basin is BACKLOG UC-10 (with LQ3 / DA-P5's sea per basin).
+
 ## 2026-11-10 — the switchover (Track A): the GPU towns are the towns
 
 Verbatim:
@@ -1948,7 +1964,8 @@ The design doc "Reclaimed engine architecture: fixing the foundations"
   animation only. The goal here is to have the generator make things start in steady state and the
   simulation can then take over until it finds another near steady state then freeze things."
 - "Do we use the flux to just adjust steady state for a region? Like we could keep the flow proportional and
-  then zero out when they get too low."
+  then zero out when they get too low." (The proportional part replaced 2026-11-11, UC-6: a perturbed frozen chunk
+  wakes; the zeroing stays. See the top.)
 ## 2026-10-26 — round 86 (session 5, `places`) — the phone test: rivers, falls, collapse
 
 - **Performance:** "performance is now very very good! Totally fixed on mobile" (the hybrid by default on the phone tier).

@@ -59,6 +59,25 @@ fn riverHere(q: vec2<u32>) -> RiverHere {
   return r;
 }
 
+/**
+ * (UC-6) The atlas's steady discharge a unit of width at column q (cells² a 60 Hz step, downstream; 0: no river), its
+ * level falling `slope` (world z a world unit) downstream. The table's speed is the atlas's drawing speed, not the
+ * water's: world/rivertable.ts riverSpeed, 0.5 √(Q / A) × (1 + min(6 slope, 1.5)) for the node's discharge Q over its
+ * wetted section A — the square root taken so a brook still moves, quicker where the level falls. Inverted: the water's
+ * own mean speed Q / A = (2 × speed / (1 + min(6 slope, 1.5)))², times the column's depth (at the reference wetness);
+ * the rating's discharge at wetness `wet` is Q × wet (sim/world-gpu.ts riverFlow). (riverSpeed's clamps, 0.06..0.45 and
+ * 0.8, aren't inverted: a brook at the floor reads high, a torrent at the cap low.) The table's speed × depth came in
+ * ~2.5× this at Muru, and its water rose without end.
+ */
+fn riverDischarge(q: vec2<u32>, slope: f32) -> vec2<f32> {
+  if (!RIVER_TABLE) { return vec2<f32>(0.0); }
+  let t = textureLoad(riverFlowTex, texCol(vec2<i32>(q)), 0);
+  let s = length(t.xy);
+  if (t.z <= 0.0 || s <= 0.0) { return vec2<f32>(0.0); }
+  let u = 2.0 * s / (1.0 + min(6.0 * max(slope, 0.0), 1.5));
+  return t.xy / s * (u * u) * t.z * riverWetAt(vec2<f32>(q) + 0.5);
+}
+
 /** Is column q a river's held at its steady state: asleep, or at the window's edge (where it comes in from past the
  *  window and goes on out of it — the world beyond is the atlas's, unsimulated)? */
 fn riverHeld(q: vec2<u32>, r: RiverHere) -> bool {
