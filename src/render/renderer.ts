@@ -707,7 +707,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
           primitive: { topology: 'triangle-list', cullMode: 'none' },
           depthStencil: depthStencil(true),
         }, (p) => (this.archPipes![i] = p));
-        renderPipe(device, { label: `shadow arch ${vs}`, layout: pl, vertex: { module: archModule, entryPoint: vs }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth }, (p) => (this.archShadowPipes![i] = p));
+        renderPipe(device, { label: `shadow arch ${vs}`, layout: archPl, vertex: { module: archModule, entryPoint: vs }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth }, (p) => (this.archShadowPipes![i] = p));
       });
     }
 

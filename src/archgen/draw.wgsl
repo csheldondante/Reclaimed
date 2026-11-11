@@ -644,6 +644,41 @@ fn vsArchWheel(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32)
   return o;
 }
 
+/** a plant mesh's vertex vi: the part's corner 0 its place, corner 1 its turn × its scale, corner 2's x its mesh */
+fn plantVert(kind: u32, vi: u32, ii: u32) -> VO {
+  var o: VO;
+  let b = partOf(kind, ii) * PW;
+  let p = corner(b, 0u);
+  let cs = corner(b, 1u);
+  let mi = u32(pf(b, 6u) + 0.5);
+  let z0 = pf(b, 10u);
+  o.info = pinfo(b, S_PLANT, F_NOWIN);
+  o.zs = vec2<f32>(z0, z0);
+  let h0 = pmt(0u);
+  let n = select(0u, u32(h0.y + 0.5), h0.x == 1.0);
+  var live = ii < AW(3u) && mi < n;
+  let mh = pmt(1u + min(mi, max(n, 1u) - 1u));
+  let first = u32(mh.x + 0.5);
+  let cnt = u32(mh.y + 0.5);
+  live = live && vi < cnt;
+  let t = 1u + n + (first + min(vi, max(cnt, 1u) - 1u)) * 2u;
+  let ta = pmt(t);
+  let tb = pmt(t + 1u);
+  let lp = ta.xyz;
+  let ln = vec3<f32>(ta.w, tb.x, tb.y);
+  let s = length(cs);
+  let r = cs / max(s, 1e-4);
+  let wp = vec3<f32>(p + vec2<f32>(lp.x * cs.x - lp.y * cs.y, lp.x * cs.y + lp.y * cs.x), z0 + lp.z * s);
+  o.nrm = vec3<f32>(ln.x * r.x - ln.y * r.y, ln.x * r.y + ln.y * r.x, ln.z);
+  o.uv = vec4<f32>(tb.z, tb.w, 0.0, 0.0);
+  finish(&o, wp, live);
+  return o;
+}
+@vertex
+fn vsArchPlantS(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO { return plantVert(K_PLANT_S, vi, ii); }
+@vertex
+fn vsArchPlantM(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO { return plantVert(K_PLANT_M, vi, ii); }
+
 @vertex
 fn vsArchBush(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
   var o: VO;
@@ -773,6 +808,11 @@ fn styleV(s: u32, i: u32) -> vec4<f32> { return bitcast<vec4<f32>>(instances[(AW
 @group(1) @binding(1) var archTexN: texture_2d_array<f32>;
 @group(1) @binding(2) var archSamp: sampler;
 @group(1) @binding(3) var<uniform> archTexU: vec4<f32>;
+/** (Synty, local only — scripts/synty.mjs) the plant meshes as texels 2048 wide (textures.ts): 0 (1, n); 1 + i mesh i's
+ *  (first, count); then two a vertex (x, y, z, nx), (ny, nz, u, v); and their colour atlas */
+@group(1) @binding(4) var PMT: texture_2d<f32>;
+fn pmt(i: u32) -> vec4<f32> { return textureLoad(PMT, vec2<u32>(i % 2048u, i / 2048u), 0); }
+@group(1) @binding(5) var archPal: texture_2d<f32>;
 const TX_BRICK: i32 = 0;
 const TX_RUBBLE: i32 = 1;
 const TX_ASHLAR: i32 = 2;
@@ -935,6 +975,8 @@ fn archSurface(in: VO) -> Surf {
   let tn0 = textureSampleGrad(archTexN, archSamp, tp.tc, tl, tdx, tdy);
   var nOut = normalize(in.nrm);
   var rough = 0.85;
+  // (a Synty plant's colour: its atlas, unfiltered by mips — big flat swatches)
+  let palC = textureSampleLevel(archPal, archSamp, in.uv.xy, 0.0);
   if (texOn) {
     // the normal map in a frame from the screen derivatives (no stored tangents); GL maps: green up the image
     let N = nOut;
@@ -1231,6 +1273,10 @@ fn archSurface(in: VO) -> Surf {
       // soot near the top
       col *= mix(1.0, 0.45, smoothstep(in.uv.w - 3.0, in.uv.w, v));
     } else { col = vec3<f32>(0.08); }
+  } else if (surf == S_PLANT) {
+    // (its atlas is muted for Unity's grading: a little more saturated and lighter under this light)
+    let pl = dot(palC.rgb, vec3<f32>(0.3, 0.55, 0.15));
+    col = clamp(mix(vec3<f32>(pl), palC.rgb, 1.55) * 1.15, vec3<f32>(0.0), vec3<f32>(1.0));
   } else if (surf == S_GROUND) {
     // the lab's parcels by kind: building plot, park, plaza, landmark, field
     let k = (in.info.w >> 8u) & 0xffu;

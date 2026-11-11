@@ -1,0 +1,24 @@
+{
+  "note": "The plant meshes the generator places when the local Synty conversion is present (scripts/synty.mjs -> local/synty, gitignored: never commit the meshes). cat 0 tree, 1 bush, 2 flowers; cls 0 small (<= 1008 vertices), 1 medium (<= 1896); h its height in metres.",
+  "plants": [
+    { "name": "SM_Tree_01", "cat": 0, "cls": 0, "h": 6.2 },
+    { "name": "SM_Tree_02", "cat": 0, "cls": 0, "h": 6.2 },
+    { "name": "SM_Tree_03", "cat": 0, "cls": 0, "h": 6.2 },
+    { "name": "SM_Tree_PolyPine_02", "cat": 0, "cls": 0, "h": 4.4 },
+    { "name": "SM_Tree_PolyPine_03", "cat": 0, "cls": 0, "h": 3.1 },
+    { "name": "SM_Tree_Round_01", "cat": 0, "cls": 1, "h": 3.6 },
+    { "name": "SM_Tree_Round_02", "cat": 0, "cls": 1, "h": 4.6 },
+    { "name": "SM_Tree_Round_03", "cat": 0, "cls": 1, "h": 3.5 },
+    { "name": "SM_Tree_Round_04", "cat": 0, "cls": 1, "h": 3.7 },
+    { "name": "SM_Plant_Bush_01", "cat": 1, "cls": 0, "h": 2.0 },
+    { "name": "SM_Plant_Bush_02", "cat": 1, "cls": 0, "h": 1.7 },
+    { "name": "SM_Plant_Bush_03", "cat": 1, "cls": 0, "h": 1.9 },
+    { "name": "SM_Plant_Hedge_Bush_01", "cat": 1, "cls": 0, "h": 2.1 },
+    { "name": "SM_Plant_Hedge_Bush_02", "cat": 1, "cls": 0, "h": 1.8 },
+    { "name": "SM_Plant_02", "cat": 2, "cls": 0, "h": 0.9 },
+    { "name": "SM_Plant_03", "cat": 2, "cls": 0, "h": 0.8 },
+    { "name": "SM_Plant_07", "cat": 2, "cls": 1, "h": 0.8 },
+    { "name": "SM_Plant_Flowers_01", "cat": 2, "cls": 0, "h": 1.3 },
+    { "name": "SM_Plant_FlowerPatch_01", "cat": 2, "cls": 0, "h": 0.7 }
+  ]
+}

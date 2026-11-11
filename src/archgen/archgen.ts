@@ -20,12 +20,17 @@ import labWgsl from './archlab.wgsl?raw';
 import gameWgsl from './archgame.wgsl?raw';
 import { STYLES, STYLE_VEC4S, styleWords, type Style } from './styles';
 import { archTextures } from './textures';
+import plantsJson from './plants.json';
+
+/** the plant catalog for the generator (arch.wgsl plant()) */
+const PL = plantsJson.plants;
+const PLANT_WGSL = `const PLANT_N: u32 = ${PL.length}u;\nconst PLANT_CAT = array<u32, ${PL.length}>(${PL.map((p) => `${p.cat}u`).join(', ')});\nconst PLANT_H = array<f32, ${PL.length}>(${PL.map((p) => p.h.toFixed(2)).join(', ')});\nconst PLANT_CLS = array<u32, ${PL.length}>(${PL.map((p) => `${p.cls}u`).join(', ')});\n`;
 
 /** mirrors arch.wgsl */
 export const PART_WORDS = 16;
 export const PARTS_PER_LOT = 96;
-export const KIND = { body: 1, roof: 2, cren: 3, win: 4, cyl: 5, cone: 6, stair: 7, wheel: 8, bush: 9 } as const;
-export const NK = 10;
+export const KIND = { body: 1, roof: 2, cren: 3, win: 4, cyl: 5, cone: 6, stair: 7, wheel: 8, bush: 9, plantS: 10, plantM: 11 } as const;
+export const NK = 12;
 /** vertices a kind's instance (draw.wgsl: the kinds' vertex stages; COURSES 12, ROUND_N 16, CONE_ROWS 10) */
 const VERTS: Record<number, number> = {
   [KIND.body]: 30,
@@ -37,6 +42,9 @@ const VERTS: Record<number, number> = {
   [KIND.stair]: 16 * 30,
   [KIND.wheel]: (3 * 12 + 3) * 36,
   [KIND.bush]: 8 * 12,
+  // (plants.json's classes: a mesh drawn with its class's count, the rest of its vertices gone)
+  [KIND.plantS]: 1008,
+  [KIND.plantM]: 1896,
 };
 /** each kind and its vertex stage (draw.wgsl) */
 export const ARCH_DRAWS = [
@@ -49,6 +57,8 @@ export const ARCH_DRAWS = [
   [KIND.stair, 'vsArchStair'],
   [KIND.wheel, 'vsArchWheel'],
   [KIND.bush, 'vsArchBush'],
+  [KIND.plantS, 'vsArchPlantS'],
+  [KIND.plantM, 'vsArchPlantM'],
 ] as const;
 const STYLE_ROOM = 64;
 
@@ -56,7 +66,7 @@ const GEN_MARK = '// ---- generation';
 const COMPACT_MARK = '// ---- compaction';
 const FS_MARK = '// ---- fragment';
 /** arch.wgsl's constants and helpers: every module's head */
-export const ARCH_CONSTS = archWgsl.slice(0, archWgsl.indexOf(GEN_MARK));
+export const ARCH_CONSTS = archWgsl.slice(0, archWgsl.indexOf(GEN_MARK)) + PLANT_WGSL;
 const GEN = ARCH_CONSTS + archWgsl.slice(archWgsl.indexOf(GEN_MARK), archWgsl.indexOf(COMPACT_MARK));
 const COMPACT = ARCH_CONSTS + archWgsl.slice(archWgsl.indexOf(COMPACT_MARK));
 /** the vertex stages and archSurface: a host's bindings and functions before, its fragment stage after */
@@ -160,6 +170,8 @@ export class ArchGen {
 
   /** (re)make lots [first, first + count): their parts written into their slots. Then compact() before drawing. */
   generate(enc: GPUCommandEncoder, first: number, count: number, ts?: GPUComputePassTimestampWrites): void {
+    // (the header's word 7: the plant meshes there are — arch.wgsl plant(); 0 until the local Synty conversion loads)
+    this.device.queue.writeBuffer(this.arch, 28, new Uint32Array([archTextures(this.device).plantCount]));
     const u = new ArrayBuffer(32);
     const w = new Uint32Array(u);
     const f = new Float32Array(u);

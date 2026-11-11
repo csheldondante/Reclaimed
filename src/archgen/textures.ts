@@ -41,17 +41,84 @@ export class ArchTextures {
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: '2d-array' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        // (Synty plants, local only: the meshes for the vertex stage, their colour atlas)
+        // (a texture, not a storage buffer: the game's draw stage already holds the 8 storage buffers it may)
+        { binding: 4, visibility: GPUShaderStage.VERTEX, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: {} },
       ],
     });
     this.sampler = d.createSampler({ addressModeU: 'repeat', addressModeV: 'repeat', magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear', maxAnisotropy: 8 });
     this.u = d.createBuffer({ label: 'arch textures on', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const dummy = d.createTexture({ size: [1, 1, 1], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING });
     this.made.push(dummy);
+    this.texC = dummy;
+    this.texN = dummy;
+    this.pal = dummy;
+    this.plants = d.createTexture({ label: 'arch plants (none)', size: [1, 1], format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING });
     this.group = this.bind(dummy, dummy);
     this.ready = on ? this.load(size) : Promise.resolve();
+    this.loadPlants();
+  }
+
+  private texC: GPUTexture;
+  private texN: GPUTexture;
+  private pal: GPUTexture;
+  private plants: GPUTexture;
+  /** how many plant meshes are loaded (0: none — the generator draws its own) */
+  plantCount = 0;
+  private plantWaiters: (() => void)[] = [];
+  /** cb once the plants are in (towns and the lab make their lots again then) */
+  whenPlants(cb: () => void): void {
+    this.plantWaiters.push(cb);
+  }
+
+  /** (Synty, the user's own: local/synty from scripts/synty.mjs, gitignored; absent in a public build) */
+  private async loadPlants(): Promise<void> {
+    const d = this.device;
+    const base = (import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/';
+    try {
+      const r = await fetch(`${base}local/synty/plants.bin`);
+      if (!r.ok) return;
+      const ab = await r.arrayBuffer();
+      const head = new Uint32Array(ab, 0, 4);
+      // (a dev server answers a missing file with its page: the magic tells)
+      if (head[0] !== 0x544e4c50) return;
+      const pr = await fetch(`${base}local/synty/palette.png`);
+      if (!pr.ok) return;
+      const bmp = await createImageBitmap(await pr.blob(), { colorSpaceConversion: 'none' });
+      const pal = d.createTexture({ label: 'arch plant palette', size: [bmp.width, bmp.height], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+      d.queue.copyExternalImageToTexture({ source: bmp }, { texture: pal }, [bmp.width, bmp.height]);
+      bmp.close();
+      // texels (vec4 each, PW_TEX wide): 0 (1, n, 0, 0); 1 + i mesh i's (first, count, 0, 0); then two a vertex —
+      // (x, y, z, nx), (ny, nz, u, v) — all as floats (counts exact to 2^24; no raw bits a GPU might flush)
+      const n = head[1];
+      const mh = new Uint32Array(ab, 16, n * 4);
+      const vf = new Float32Array(ab, 16 + n * 16);
+      const nv = vf.length / 8;
+      const texels = 1 + n + nv * 2;
+      const W = 2048;
+      const H = Math.ceil(texels / W);
+      const data = new Float32Array(W * H * 4);
+      data.set([1, n, 0, 0], 0);
+      for (let i = 0; i < n; i++) data.set([mh[i * 4], mh[i * 4 + 1], 0, 0], (1 + i) * 4);
+      data.set(vf, (1 + n) * 4);
+      const tex = d.createTexture({ label: 'arch plants', size: [W, H], format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+      d.queue.writeTexture({ texture: tex }, data, { bytesPerRow: W * 16 }, [W, H]);
+      this.plants.destroy();
+      this.plants = tex;
+      this.pal = pal;
+      this.made.push(pal);
+      this.group = this.bind(this.texC, this.texN);
+      this.plantCount = head[1];
+      for (const cb of this.plantWaiters) cb();
+    } catch {
+      // (no local conversion: the generator's own plants)
+    }
   }
 
   private bind(c: GPUTexture, n: GPUTexture): GPUBindGroup {
+    this.texC = c;
+    this.texN = n;
     return this.device.createBindGroup({
       layout: this.layout,
       entries: [
@@ -59,6 +126,8 @@ export class ArchTextures {
         { binding: 1, resource: n.createView({ dimension: '2d-array' }) },
         { binding: 2, resource: this.sampler },
         { binding: 3, resource: { buffer: this.u } },
+        { binding: 4, resource: this.plants.createView() },
+        { binding: 5, resource: this.pal.createView() },
       ],
     });
   }
@@ -122,6 +191,7 @@ export class ArchTextures {
   destroy(): void {
     for (const t of this.made) t.destroy();
     this.u.destroy();
+    this.plants.destroy();
   }
 }
 

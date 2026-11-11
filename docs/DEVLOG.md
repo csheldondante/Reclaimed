@@ -23234,3 +23234,19 @@ cases over the fake's field limit), season, transfers, typecheck.
   flowering beds, a fountain or a great tree in the middle.
 - The land under a park in town is bare soil (the town's claimed ground), not grass: grass there wants the terrain's
   own cover or a tuft layer, not a plate.
+
+## archgen: Synty plants, local only (2026-11-11; the user: "You can use Synty trees as long as we don't commit to a
+## public repo and they look much better")
+
+- scripts/fbx.mjs: a small binary-FBX reader (node tree, meshes with normals/uvs/materials, model transforms; zlib for
+  packed arrays) — no converter was installed. scripts/synty.mjs unpacks the user's own POLYGON Nature Pack from their
+  Unity folder and writes local/synty (gitignored: never committed, absent from any public build): plants.bin (19
+  meshes of plants.json — trees, bushes, flowers that use only the pack's colour atlas, ~17.6k vertices, 552 KB) and
+  palette.png.
+- Two part kinds, K_PLANT_S (≤ 1008 vertices) and K_PLANT_M (≤ 1896): a mesh drawn with its class's count, its
+  extra vertices gone. The meshes live in an rgba32float texture (group 1 binding 4 — a storage buffer would have made
+  the game's draw stage 9, over its limit of 8), as floats (counts exact; no raw bits a GPU could flush); the atlas at
+  binding 5, its muted colours a little more saturated under this light.
+- The generator's tree() and bushAt() place a plant mesh of their category when the header's word 7 says plants are
+  loaded (archgen.ts writes it at each generate), else their own shapes; the lab and the towns make their lots again
+  when the plants arrive (ArchTextures.whenPlants).

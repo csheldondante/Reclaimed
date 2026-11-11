@@ -9,6 +9,7 @@
 import lotsMuru from '../../data/lab/lots-muru.json';
 import { ArchGen, PARTS_PER_LOT } from './archgen';
 import { STYLES } from './styles';
+import { archTextures } from './textures';
 
 const q = new URLSearchParams(location.search);
 const num = (k: string, d: number) => (q.has(k) ? Number(q.get(k)) : d);
@@ -75,6 +76,8 @@ async function main() {
     device.queue.submit([e.finish()]);
   };
   remake();
+  // (the Synty plants, when the local conversion loads: the lots made again with them)
+  archTextures(device).whenPlants(remake);
 
   // the camera: orthographic, yaw about z, pitch above the ground plane
   const cam = { yaw: num('yaw', hero ? -62 : 35), pitch: num('pitch', 60), zoom: num('zoom', hero ? 34 : 90), x: cx, y: cy + (hero ? 4 : 0), z: zmin + 4 };

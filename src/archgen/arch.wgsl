@@ -38,7 +38,10 @@ const K_STAIR: u32 = 7u;
 const K_WHEEL: u32 = 8u;
 /** a shrub: corner 0 its centre, z0 its foot, 11 its radius, 12 its height (F_BLOOM: flowering) */
 const K_BUSH: u32 = 9u;
-const NK: u32 = 10u;
+/** (Synty, local only) a plant mesh: small (<= 1008 vertices) and medium (<= 1896) — plants.json */
+const K_PLANT_S: u32 = 10u;
+const K_PLANT_M: u32 = 11u;
+const NK: u32 = 12u;
 const CREN_M: u32 = 8u;
 /** segments round a K_CYL / K_CONE; a roof's courses */
 const ROUND_N: u32 = 16u;
@@ -68,6 +71,7 @@ const S_LEAF: u32 = 19u;
 const S_BRICK: u32 = 20u;
 /** a wall in a colour of its own (the grid family's columns: Townscaper's palette, a part's hash) */
 const S_TINT: u32 = 21u;
+const S_PLANT: u32 = 22u;
 /** part flags (word 0, bits 16–23) */
 const F_FRONT0: u32 = 1u; // the body's side 0 faces the street (its door)
 const F_NOWIN: u32 = 2u;  // no painted windows (plinth, chimney, trim; and bodies whose windows are geometry)
@@ -498,11 +502,37 @@ fn wallRun(a: vec2<f32>, b: vec2<f32>, g0: f32, g1: f32, h: f32, th: f32) {
   }
 }
 
-/** a tree at p, h tall: a trunk, a crown */
+/** (the user: "You can use Synty trees as long as we don't commit to a public repo and they look much better") a plant
+ *  mesh of category `cat` (0 tree, 1 bush, 2 flowers: plants.json) at p on z, about h tall, turned its own way — when
+ *  the local conversion is present (the header's word 7: how many); false without, and the caller draws its own */
+fn plant(cat: u32, p: vec2<f32>, z: f32, h: f32, seed: u32) -> bool {
+  if (ARCH[7] == 0u) { return false; }
+  var cats = PLANT_CAT;
+  var hs = PLANT_H;
+  var cls = PLANT_CLS;
+  var n = 0u;
+  for (var i = 0u; i < PLANT_N; i++) { if (cats[i] == cat) { n++; } }
+  if (n == 0u) { return false; }
+  var pick = hash(seed + 31u) % n;
+  var mi = 0u;
+  for (var i = 0u; i < PLANT_N; i++) {
+    if (cats[i] != cat) { continue; }
+    if (pick == 0u) { mi = i; break; }
+    pick--;
+  }
+  let s = clamp(h / hs[mi], 0.55, 1.8);
+  let a = rnd(seed, 77u) * 6.28318;
+  let k = select(K_PLANT_S, K_PLANT_M, cls[mi] == 1u);
+  put(k, S_PLANT, F_NOWIN, array<vec2<f32>, 4>(p, vec2<f32>(cos(a), sin(a)) * s, vec2<f32>(f32(mi), 0.0), vec2<f32>(0.0)), z, vec4<f32>(0.0));
+  return true;
+}
+
+/** a tree at p, h tall: a Synty tree, or a trunk and a crown */
 fn tree(p: vec2<f32>, h: f32, seed: u32) {
   let g = gGround;
+  if (plant(0u, p, g - 0.05, h, seed)) { return; }
   cyl(p, 0.17, g - 0.1, g + h * 0.5, S_WOOD, F_NOWIN);
-  bushAt(p, g + h * 0.38, mix(1.0, 1.4, rnd(seed, 1u)), h * 0.66, rnd(seed, 2u) < 0.25);
+  bushBlob(p, g + h * 0.38, mix(1.0, 1.4, rnd(seed, 1u)), h * 0.66, rnd(seed, 2u) < 0.25);
 }
 
 /** a well: a stone ring with water in it, two posts and a little roof */
@@ -741,6 +771,13 @@ fn keep(eave: f32, seed: u32) {
 
 /** a shrub (K_BUSH) at p: radius, height; flowering or not */
 fn bushAt(p: vec2<f32>, z: f32, r: f32, h: f32, flowers: bool) {
+  // (a Synty bush, or flowers when it's a small flowering one)
+  let ps = hash((u32(round(p.x * 8.0) + 100000.0) * 73856093u) ^ (u32(round(p.y * 8.0) + 100000.0) * 19349663u));
+  if (plant(select(1u, 2u, flowers && h < 1.0), p, z, h * 1.25, ps)) { return; }
+  bushBlob(p, z, r, h, flowers);
+}
+/** the generator's own shrub: a lumpy ball of leaves */
+fn bushBlob(p: vec2<f32>, z: f32, r: f32, h: f32, flowers: bool) {
   let q = array<vec2<f32>, 4>(p, vec2<f32>(0.0), vec2<f32>(0.0), vec2<f32>(0.0));
   put(K_BUSH, S_LEAF, select(0u, F_BLOOM, flowers), q, z, vec4<f32>(r, h, 0.0, 0.0));
 }

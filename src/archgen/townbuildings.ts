@@ -5,6 +5,7 @@
 
 import type { CityLots, TownBuildingsSink } from '../api/contracts/citygen';
 import { ArchGen, KIND } from './archgen';
+import { archTextures } from './textures';
 
 export interface TownBuildingsIO {
   device: GPUDevice;
@@ -26,6 +27,8 @@ export class TownBuildings implements TownBuildingsSink {
 
   constructor(private io: TownBuildingsIO) {
     io.frameCompute.push(this.hook);
+    // (the Synty plants, when the local conversion loads: every town's lots made again with them)
+    archTextures(io.device).whenPlants(() => this.remakeAll());
   }
 
   townMade(id: string, lots: CityLots, count: number): void {
