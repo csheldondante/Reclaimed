@@ -22,6 +22,7 @@ import { drawGrid, gridLive } from '../renderer/grid';
 import { CAM_BYTES, SHADOW_FORMAT, PICK_FORMAT, DEPTH_FORMAT, MESH_FRONT, HYBRID, TILES, GRID_N, type ShadowViews } from '../renderer/defs';
 import { Renderer } from '../renderer';
 import { urlFlags } from '../../flags';
+import { archTextures } from '../../archgen/textures';
 
 /** the constructor's `if (this.fieldMesh.on) { … }` block, verbatim (`this` is rd) */
 export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tufts: string; VF: number; drawLayout: GPUBindGroupLayout; riverFoam: string; drawModule: GPUShaderModule; pl: GPUPipelineLayout; depthStencil: (write: boolean) => GPUDepthStencilState; groupFor: (inst: GPUBuffer | GPUBufferBinding, cam?: GPUBuffer, shadow?: ShadowViews) => GPUBindGroup; miVertex: (module: GPUShaderModule) => GPUVertexState; miModule: GPUShaderModule | undefined }): void {
@@ -44,9 +45,12 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
   const look = { full: 0, lookup: 1, flat: 2 }[urlFlags().get('look') ?? 'full'];
   if (look === undefined) throw new Error('?look= must be full, lookup or flat');
   const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${urlFlags().get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl]);
+  // (ground branch: the passes that shade the terrain — meshSurf — have the material textures as group 1)
+  const archL = archTextures(device).layout;
+  const meshPlT = device.createPipelineLayout({ bindGroupLayouts: [meshLayout, archL] });
   renderPipe(device, {
     label: 'mesh',
-    layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }),
+    layout: meshPlT,
     vertex: { module: meshModule, entryPoint: 'vsMesh' },
     fragment: { module: meshModule, entryPoint: 'fsMesh', targets: [{ format }, { format: PICK_FORMAT }] },
     primitive: { topology: 'triangle-list', cullMode: 'none' },
@@ -78,7 +82,7 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
       g('fsMeshGCut'),
       device.createRenderPipelineAsync({
         label: 'mesh-resolve',
-        layout: device.createPipelineLayout({ bindGroupLayouts: [resolveLayout] }),
+        layout: device.createPipelineLayout({ bindGroupLayouts: [resolveLayout, archL] }),
         vertex: { module: meshModule, entryPoint: 'vsFull' },
         fragment: { module: meshModule, entryPoint: 'fsMeshResolve', targets: [{ format }, { format: PICK_FORMAT }] },
         primitive: { topology: 'triangle-list' },
@@ -92,7 +96,7 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
       const gr = (label: string, vertex: string, fragment: string | null, targets: GPUColorTargetState[], depth: GPUDepthStencilState) =>
         device.createRenderPipelineAsync({
           label,
-          layout: meshPl,
+          layout: fragment === 'fsMesh' ? meshPlT : meshPl,
           vertex: { module: meshModule, entryPoint: vertex },
           fragment: fragment ? { module: meshModule, entryPoint: fragment, targets } : undefined,
           primitive: { topology: 'triangle-list', cullMode: 'none' },
@@ -142,7 +146,7 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
       zCut: z('fsMeshZCut'),
       look: device.createRenderPipeline({
         label: 'mesh-look',
-        layout: meshPl,
+        layout: meshPlT,
         vertex: { module: meshModule, entryPoint: 'vsMesh' },
         fragment: { module: meshModule, entryPoint: 'fsMesh', targets: [{ format }, { format: PICK_FORMAT }] },
         primitive: { topology: 'triangle-list', cullMode: 'none' },

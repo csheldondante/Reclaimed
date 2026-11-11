@@ -2297,6 +2297,15 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   (SSAO/GTAO on PC, per-part on the phone), tone mapping and exposure; today light.wgsl is Lambert + hemisphere + a
   fake fill with no specular or tone mapping, and the lab lights with its own model. Shared by every system: who owns
   it (here or the art_improvements session) is the user's call.
+  (archgen-ground, 2026-11-11: started — light.wgsl lightSurf: GGX sun highlight by roughness, Fresnel sky, AO on the
+  ambient; the terrain and the buildings use it, ?light=old the old. Still open: tone mapping and exposure (a global
+  post pass), SSAO, the lab's own lighting, the prisms/boxes/tiles' fsTile still on lighting().)
+- AG21 (archgen-ground) Ground textures, next steps: a height channel per set (today the colour's brightness stands in
+  for it in the grass blend); hex-tile stochastic sampling to hide the repeat when zoomed out; the town mesh's dirt,
+  cobble and grass (bodies.wgsl groundLook, Track A's growing-road dirt REV_DIRT_S) from the same sets; KTX2/BC
+  compression (20 sets × 2 arrays at 1k is ~220 MB of RGBA8 with mips); the tiles' bake keeps no roughness (fsTile
+  lights a frozen tile without a highlight); a stylized look (the user: "Dota 2 does have very pretty land and grass
+  and plants") — painted sets or a stronger palette pull on the photo sets.
 - AG19 ("working with better ground and building textures") Texture sets (albedo/normal/roughness/AO) for walls, roofs,
   ground: ~12–16 CC0 sets (Poly Haven / ambientCG) in one texture array, KTX2-compressed, 512 phone / 1k PC; the
   generator keeps per-part tint, wear and pick. Waits on the user: may CC0 textures go in the public repo?

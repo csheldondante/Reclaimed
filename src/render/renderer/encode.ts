@@ -124,6 +124,8 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
       : { view: rd.depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: BGCHECK ? 'store' : 'discard' },
     timestampWrites: rd.profiler.timestamps('draw'),
   });
+  // (ground branch: the material textures, group 1 — the terrain's look and the buildings')
+  pass.setBindGroup(1, archTextures(rd.device).group);
   if (tcMode) {
     pass.setPipeline(rd.tcPipes!.comp);
     pass.setBindGroup(0, rd.tc!.comp);

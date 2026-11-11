@@ -22,7 +22,9 @@ fn fsArch(in: VO) -> FOut {
   let inside = dot(n, toEye(in.wpos)) < 0.0;
   if (inside) { n = -n; }
   if (cutAway(in.wpos, in.pos.xy)) { discard; }
-  var col = toLinear(sf.col) * lighting(in.wpos, n) * sf.ao;
+  // (ground branch: the shared lighting — the sun's highlight as rough as the surface, glass glossy)
+  let ng = select(normalize(in.nrm), -normalize(in.nrm), inside);
+  var col = lightSurf(toLinear(sf.col), in.wpos, ng, n, mix(sf.rough, 0.08, sf.glass), sf.ao);
   if (inside) { col *= 0.25; }
   col = haze(col, in.wpos);
   var o: FOut;

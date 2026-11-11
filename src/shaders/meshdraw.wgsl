@@ -305,7 +305,7 @@ fn meshShade(in: MOut) -> FOut {
     f.pick = vec2<u32>(s.ci + 1u, pickInfo(s.mat, in.wpos.z, 0u));
     return f;
   }
-  var col = s.alb * lighting(in.wpos, s.lnrm);
+  var col = lightSurf(s.alb, in.wpos, s.nrm, s.lnrm, s.rough, 1.0);
   // (round 83: quartz cut as a gem — the hoverbike's playtest: the giant crystals didn't look faceted)
   if (s.gem) { col = gemLook(in.wpos, s.nrm); }
   col += filmSheen(in.wpos, s.nrm, s.filmN, s.film);
@@ -333,7 +333,27 @@ fn filmSheen(wpos: vec3<f32>, nrm: vec3<f32>, filmN: vec3<f32>, film: f32) -> ve
  * waves' tilt, whether it's cut as a gem, the column (the pick's). meshShade lights it; the tile cache bakes it
  * (fsTileBake) and lights it every frame.
  */
-struct Surf { alb: vec3<f32>, lnrm: vec3<f32>, nrm: vec3<f32>, filmN: vec3<f32>, film: f32, mat: u32, ci: u32, gem: bool };
+struct Surf { alb: vec3<f32>, lnrm: vec3<f32>, nrm: vec3<f32>, filmN: vec3<f32>, film: f32, mat: u32, ci: u32, gem: bool, rough: f32 };
+
+/**
+ * (ground branch; the user: "texture the ground", "a sand and dirt material too") The set a ground material wears
+ * (texbank.wgsl TX_*; −1 none: its procedural look) and how big one repeat of it is (units: cells). The rocks share
+ * one rock set, each its own colour through the tint; loose ground its own.
+ */
+fn groundSet(m: u32) -> vec2<f32> {
+  switch (m) {
+    case 1u, 23u, 30u, 35u, 37u, 38u, 39u: { return vec2<f32>(f32(TX_ROCK), 3.0); }
+    case 2u, 22u: { return vec2<f32>(f32(TX_DIRT), 2.5); }
+    case 3u, 17u, 19u: { return vec2<f32>(f32(TX_SAND), 3.0); }
+    case 4u: { return vec2<f32>(f32(TX_GRAVEL), 2.0); }
+    case 25u: { return vec2<f32>(f32(TX_SNOW), 3.0); }
+    default: { return vec2<f32>(-1.0, 0.0); }
+  }
+}
+/** whether the terrain wears its textures now (?groundtex=0 not; until they're loaded not) */
+fn groundTexOn() -> bool { return GROUND_TEX && archTexU.x > 0.5; }
+/** a texture's brightness against its set's mean: its height, roughly (bright stones stand up, dark gaps sink) */
+fn texHeight(c: vec3<f32>, layer: i32) -> f32 { return dot(c / txMean(layer), vec3<f32>(0.3, 0.55, 0.15)); }
 
 fn meshSurf(in: MOut) -> Surf {
   let nrm = normalize(in.nrm);
@@ -363,7 +383,7 @@ fn meshSurf(in: MOut) -> Surf {
   let isTop = up && in.wpos.z > lk.top - 0.8;
   var alb = groundAlbedo(mat);
   // (?look=lookup: the interval's material and the lighting, none of the detail — meshShade)
-  if (MESH_LOOK == 1u) { return Surf(alb * in.tint, nrm, nrm, nrm, 0.0, mat, ci, false); }
+  if (MESH_LOOK == 1u) { return Surf(alb * in.tint, nrm, nrm, nrm, 0.0, mat, ci, false, 0.9); }
   // a thin top layer shows the one beneath through it (a trace of blown dust
   // doesn't flip the ground's colour — round 17)
   if (isTop && lk.below != 0u) { alb = mix(groundAlbedo(lk.below), alb, smoothstep(0.02, 0.2, lk.thick)); }
@@ -374,7 +394,19 @@ fn meshSurf(in: MOut) -> Surf {
   let n2 = randv(sub + vec3<i32>(71, 13, 5));
   // (round 79: on a steep face less of it — the beds read as sheets, not a mosaic of cells)
   let steep = 1.0 - smoothstep(0.3, 0.7, abs(nrm.z));
-  if (!noDetail(ND_SPECKS)) { alb *= 1.0 + mix(1.0, 0.35, steep) * (0.12 * randv(vc) + 0.08 * n1 - 0.1); }
+  // (ground branch) the material's texture: its colour's variation on the material's own (strata, tint, stains and
+  // all go on over it), its normal the light's, its roughness the highlight's — in place of the specks and chips
+  let gs = groundSet(mat);
+  let texd = groundTexOn() && gs.x >= 0.0 && !noDetail(ND_SPECKS);
+  var gtx = GLook(vec3<f32>(1.0), nrm, 0.9);
+  var gh = 1.0;
+  if (texd) {
+    let layer = i32(gs.x);
+    gtx = groundTex(layer, in.wpos, nrm, gs.y);
+    gh = texHeight(gtx.col, layer);
+    // (the textures are sRGB-coded: their variation taken in linear light; a fifth of the set's own hue kept)
+    alb = mix(alb * toLinear(gtx.col) / toLinear(txMean(layer)), toLinear(gtx.col), 0.2);
+  } else if (!noDetail(ND_SPECKS)) { alb *= 1.0 + mix(1.0, 0.35, steep) * (0.12 * randv(vc) + 0.08 * n1 - 0.1); }
   alb *= in.tint;
   if (mat >= 1u && mat <= 4u && !noDetail(ND_STRATA)) {
     // (round 79: strata — render.wgsl)
@@ -382,7 +414,7 @@ fn meshSurf(in: MOut) -> Surf {
     if (mat == 1u) { alb *= mix(vec3<f32>(0.8, 0.83, 0.9), vec3<f32>(1.16, 1.03, 0.88), band); }
     if (mat == 2u) { alb *= mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), band); }
     let pb = randv(sub + vec3<i32>(5, 77, 13));
-    if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
+    if (!texd) { if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; } }
   }
   if ((mat == 23u || mat == 30u) && !noDetail(ND_STRATA)) { alb *= strataTint(mat, srcStrata(in.wpos)); }
   if (mat == MAT_LEAFLIT) {
@@ -434,14 +466,37 @@ fn meshSurf(in: MOut) -> Surf {
   // plant cover on tops, a few tufts of it up the slopes
   // (plants on a face only near its top: a cut face isn't green all the way down — round 79)
   let v = select(cf.y, 0.0, (!isTop && in.wpos.z < lk.top - 2.5) || noDetail(ND_PLANTS));
+  var rough = gtx.rough;
+  var lnTex = gtx.n;
+  // (ground branch) the plant cover as the grass set (low cover the mossy ground's), where it stands higher than
+  // the ground under it — a height blend: grass fills between the stones first, sand shows through thin turf —
+  // rather than a pixel's dither
+  var grassK = -1.0;
+  var gg = GLook(vec3<f32>(1.0), nrm, 0.9);
+  var gLayer = TX_GRASS;
+  if (v > 0.0 && groundTexOn() && !noDetail(ND_SPECKS)) {
+    let cover = select(smoothstep(0.8, 3.0, v) * 0.55, smoothstep(0.0, 1.2, v), isTop);
+    gLayer = select(TX_GRASS, TX_MOSS, v < 1.2 || !isTop);
+    gg = groundTex(gLayer, in.wpos, nrm, 2.0);
+    let hgr = texHeight(gg.col, gLayer);
+    grassK = clamp(((cover - 0.5) * 2.0 + (hgr - gh) * 0.8) * 1.6 + 0.5, 0.0, 1.0);
+  }
   if (v > 0.0) {
     let cover = select(smoothstep(0.8, 3.0, v) * 0.55 * (0.5 + 0.5 * n2), smoothstep(0.0, 1.2, v), isTop);
-    if (n1 < cover) {
+    if ((grassK < 0.0 && n1 < cover) || grassK > 0.0) {
       var g = mix(vec3<f32>(0.33, 0.40, 0.17), vec3<f32>(0.36, 0.54, 0.19), smoothstep(1.0, 2.0, v));
       g = mix(g, vec3<f32>(0.17, 0.33, 0.12), smoothstep(3.0, 4.5, v));
       // (it turns with the season, as fsBox)
       g = mix(g, seasonGrass(g, fbm2(wo(in.wpos.xy) * 0.08)), 1.0 - 0.5 * smoothstep(3.0, 4.5, v));
-      alb = wither(toLinear(g * (0.82 + 0.3 * n2)), cf.w, n2);
+      if (grassK >= 0.0) {
+        // (the set's own variation on the cover's green; its normal and roughness where it shows)
+        let ga = wither(toLinear(g) * toLinear(gg.col) / toLinear(txMean(gLayer)), cf.w, n2) * in.tint;
+        alb = mix(alb, ga, grassK);
+        lnTex = normalize(mix(lnTex, gg.n, grassK));
+        rough = mix(rough, gg.rough, grassK);
+      } else {
+        alb = wither(toLinear(g * (0.82 + 0.3 * n2)), cf.w, n2);
+      }
       // (round 117, flora) the woodland floor in fallen leaves — "lead covered forest floor": under the woods
       // (succession past 3.7) the cover is leaf litter in drifts, green between them; last year's leaves brown, this
       // fall's bright. A look only (the material stays): the baked climate's MAT_LEAFLIT is the real thing, rarely laid
@@ -518,7 +573,9 @@ fn meshSurf(in: MOut) -> Surf {
   }
   // the detail layer (only where a chip is a few pixels across)
   var lnrm = nrm;
-  if (CAM.viewport.z > 4.0 && sw < 0.5) {
+  if ((texd || grassK > 0.0) && sw < 0.5) {
+    lnrm = lnTex;
+  } else if (CAM.viewport.z > 4.0 && sw < 0.5) {
     // (round 79: the bedded rocks too — sandstone, basalt, obsidian were chips like rubble, blotching a cliff's face)
     if (mat == MAT_STONE || bedded(mat)) {
       let rf = rockFacet(in.wpos, nrm, 1.0);
@@ -537,7 +594,10 @@ fn meshSurf(in: MOut) -> Surf {
   }
   // (water smooths the rough ground it covers)
   lnrm = normalize(mix(lnrm, nrm, film * 0.8));
-  return Surf(alb, lnrm, nrm, filmN, film, mat, ci, mat == MAT_QUARTZ && sw < 0.5);
+  // (wet ground is glossier)
+  rough = mix(rough, 0.25, max(film, 0.6 * smoothstep(0.3, 0.9, cf.z) * MATS[mat].eco.w));
+  if (sw >= 0.5) { rough = 0.85; }
+  return Surf(alb, lnrm, nrm, filmN, film, mat, ci, mat == MAT_QUARTZ && sw < 0.5, rough);
 }
 
 

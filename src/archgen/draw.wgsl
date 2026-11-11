@@ -803,39 +803,13 @@ fn stones(u: f32, v: f32, bw: f32, rh: f32, px: f32, seed: f32, detail: f32) -> 
 fn styleV(s: u32, i: u32) -> vec4<f32> { return bitcast<vec4<f32>>(instances[(AW(0u) >> 2u) + s * SV + i]); }
 
 
-// ---- (AG19) material textures: bind group 1 (textures.ts — 15 CC0 sets in two arrays; archTexU.x 1 once loaded) ----
-@group(1) @binding(0) var archTexC: texture_2d_array<f32>;
-@group(1) @binding(1) var archTexN: texture_2d_array<f32>;
-@group(1) @binding(2) var archSamp: sampler;
-@group(1) @binding(3) var<uniform> archTexU: vec4<f32>;
+// ---- (AG19) material textures: bind group 1 — the colour and normal arrays, sampler, uniform, TX_* and txMean are
+// texbank.wgsl's (shared with the terrain: the renderer's module has it, the lab's puts it in front) ----
 /** (Synty, local only — scripts/synty.mjs) the plant meshes as texels 2048 wide (textures.ts): 0 (1, n); 1 + i mesh i's
  *  (first, count); then two a vertex (x, y, z, nx), (ny, nz, u, v); and their colour atlas */
 @group(1) @binding(4) var PMT: texture_2d<f32>;
 fn pmt(i: u32) -> vec4<f32> { return textureLoad(PMT, vec2<u32>(i % 2048u, i / 2048u), 0); }
 @group(1) @binding(5) var archPal: texture_2d<f32>;
-const TX_BRICK: i32 = 0;
-const TX_RUBBLE: i32 = 1;
-const TX_ASHLAR: i32 = 2;
-const TX_PLASTER: i32 = 3;
-const TX_SIDING: i32 = 4;
-const TX_WOOD: i32 = 5;
-const TX_DECK: i32 = 6;
-const TX_TILE: i32 = 7;
-const TX_SLATE: i32 = 8;
-const TX_THATCH: i32 = 9;
-const TX_FLAG: i32 = 10;
-const TX_COBBLE: i32 = 11;
-const TX_DIRT: i32 = 12;
-const TX_GRASS: i32 = 13;
-const TX_CANVAS: i32 = 14;
-/** each set's mean colour (scripts/packtex.py): a tint moves it onto the style's colour */
-fn txMean(l: i32) -> vec3<f32> {
-  var m = array<vec3<f32>, 15>(vec3<f32>(0.58, 0.416, 0.325), vec3<f32>(0.494, 0.459, 0.384), vec3<f32>(0.647, 0.612, 0.478),
-    vec3<f32>(0.843, 0.827, 0.816), vec3<f32>(0.294, 0.239, 0.192), vec3<f32>(0.482, 0.388, 0.306), vec3<f32>(0.353, 0.29, 0.22),
-    vec3<f32>(0.392, 0.231, 0.153), vec3<f32>(0.275, 0.282, 0.267), vec3<f32>(0.329, 0.294, 0.251), vec3<f32>(0.478, 0.443, 0.349),
-    vec3<f32>(0.533, 0.529, 0.498), vec3<f32>(0.294, 0.216, 0.176), vec3<f32>(0.333, 0.376, 0.169), vec3<f32>(0.451, 0.435, 0.369));
-  return m[clamp(l, 0, 14)];
-}
 
 /** which set a fragment wears and where in it: layer (−1 none), texture coordinates (one repeat = 1), the colour to
  *  tint toward (most surfaces: the style's; the branches pass their own for walls, roofs, cloth), how much of the set's

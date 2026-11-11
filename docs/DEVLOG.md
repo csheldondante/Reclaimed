@@ -23250,3 +23250,27 @@ cases over the fake's field limit), season, transfers, typecheck.
 - The generator's tree() and bushAt() place a plant mesh of their category when the header's word 7 says plants are
   loaded (archgen.ts writes it at each generate), else their own shapes; the lab and the towns make their lots again
   when the plants arrive (ArchTextures.whenPlants).
+
+## archgen-ground: textured terrain and a lighting model (2026-11-11; the user: "Could we not texture the ground?",
+## "I would like to see that and see what it is like … We would need a sand and dirt material too")
+
+A sub-branch of archgen (archgen-ground), to keep or drop on the look.
+- Five more CC0 sets (ambientCG: Ground054 sand, Rock030 rock, Gravel022 gravel, Snow006 snow, Ground037 mossy ground)
+  join the fifteen in the one texture array (scripts/packtex.py now takes its source and output as arguments). The
+  bindings, TX_* and the sets' means moved to src/archgen/texbank.wgsl, part of the renderer's draw shader
+  (shaders/render.ts) and put in front of the lab's.
+- The terrain mesh's look (meshdraw.wgsl meshSurf) wears a set per material (groundSet: the rocks one rock set each
+  tinted its own, soil/silt dirt, sand/ash/drift sand, rubble gravel, snow snow): the set's variation on the
+  material's own colour (a fifth of its hue kept), its normal in place of the Voronoi facets and the chips, its
+  roughness for the highlight. Projected from above where the ground is flat and biplanar on slopes (light.wgsl
+  groundTex); gradients from the camera's projection (pixStep), so the forward pass, the deferred resolve and the
+  tiles' bake (full-screen passes, no derivatives) filter it the same, anisotropic and mip-correct.
+- The plant cover is the grass set (thin cover the mossy one), blended into the ground by height — grass fills the
+  low places of the ground's texture first — not the per-pixel dither: no speckle at a distance.
+- light.wgsl: lighting() split into lightAt (ambient, own, sun) and lightSurf: the same diffuse plus a GGX sun
+  highlight as rough as the surface, Schlick's Fresnel and the sky in it at a grazing angle. The terrain and the
+  buildings (archgame.wgsl; glass glossy) light with it.
+- Toggles for the phone bench: ?groundtex=0 (the procedural look), ?light=old (no highlight).
+- Seen on the desktop proxy (town at zoom 10 and 32, the rock playground at 14): at play zoom the change is small —
+  a repeat of 2–3 cells is a few pixels, its detail averages away; zoomed in the ground reads as soil, sand and turf
+  instead of a dither. Not measured on the phone.

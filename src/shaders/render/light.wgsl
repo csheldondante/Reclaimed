@@ -120,10 +120,13 @@ fn underCover(wpos: vec3<f32>, nrm: vec3<f32>) -> f32 {
   return n / 9.0;
 }
 
-/** Direct + ambient light with heightfield shadow and storm cloud shade. */
-fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
+/** (ground branch) the light falling on a point, in parts: what lights it from all round (the sky, the bounce: the
+ *  ambient occlusion's to darken), what comes on its own (lightning, fire), and the sun's colour as it arrives here
+ *  (shadow, cloud, cover) — its angle not yet in (lightSurf, lighting) */
+struct Light { amb: vec3<f32>, own: vec3<f32>, sun: vec3<f32> };
+
+fn lightAt(wpos: vec3<f32>, nrm: vec3<f32>) -> Light {
   let sun = sunDir();
-  let ndl = max(dot(nrm, sun), 0.0);
   let sc = clampCell(cellAt(wpos.xy + nrm.xy * 0.5));
   // (with the field mesh, from the shadow map; without, the heightfield march)
   var lit: f32;
@@ -155,7 +158,123 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   // roofs, the heightfield march not all)
   let cov = underCover(wpos, nrm);
   let shade = mix(1.0, 0.1, cov);
-  return (ambient + fill) * shade + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.9) * mix(1.0, 0.2, cov);
+  return Light((ambient + fill) * shade, flash + firelight, sunCol * lit * (1.0 - cloud * 0.9) * mix(1.0, 0.2, cov));
+}
+
+/** Direct + ambient light with heightfield shadow and storm cloud shade (what an albedo is multiplied by). */
+fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
+  let l = lightAt(wpos, nrm);
+  return l.amb + l.own + l.sun * max(dot(nrm, sunDir()), 0.0);
+}
+
+/**
+ * (ground branch, AG18; the user: "we should be using a stronger lighting model") A surface's colour lit: the light
+ * of lightAt on its albedo (the ambient occlusion on what comes from all round), and the sun's glint off it — a
+ * microfacet highlight (GGX, Schlick's Fresnel, a dielectric's 4%) as rough as the surface is (its texture's) — and
+ * the sky in it at a grazing angle. nGeo: the surface's own normal (the shadow's test), n: the detail's (the light's).
+ * With ?light=old, the old: the albedo times lighting(), no highlight.
+ */
+fn lightSurf(alb: vec3<f32>, wpos: vec3<f32>, nGeo: vec3<f32>, n: vec3<f32>, rough: f32, ao: f32) -> vec3<f32> {
+  if (!LIGHT_NEW) { return alb * lighting(wpos, n) * ao; }
+  let l = lightAt(wpos, nGeo);
+  let sd = sunDir();
+  let v = toEye(wpos);
+  let nl = max(dot(n, sd), 0.0);
+  var col = alb * (l.amb * ao + l.own + l.sun * nl);
+  // the sun's highlight
+  let h = normalize(v + sd);
+  let a = max(rough * rough, 0.03);
+  let a2 = a * a;
+  let nh = max(dot(n, h), 0.0);
+  let nv = max(dot(n, v), 1e-3);
+  let dd = nh * nh * (a2 - 1.0) + 1.0;
+  let D = a2 / (3.14159265 * dd * dd);
+  let k = a * 0.5;
+  let vis = 0.25 / ((nl * (1.0 - k) + k) * (nv * (1.0 - k) + k));
+  let F = 0.04 + 0.96 * pow(1.0 - max(dot(v, h), 0.0), 5.0);
+  col += l.sun * (D * vis * F * nl * 3.14159265);
+  // the sky in it, toward the grazing (rough surfaces: little)
+  let Fs = 0.04 + 0.96 * pow(1.0 - nv, 5.0);
+  col += G.sky.rgb * Fs * (1.0 - rough) * (1.0 - rough) * 0.6 * ao * (0.5 + 0.5 * n.z);
+  return col;
+}
+
+/**
+ * (ground branch) One screen pixel's step across a surface at p (normal n), in world units: where the pixel to the
+ * right and the pixel below land on its plane — from the camera's own projection, so it holds in a full-screen pass
+ * (the deferred resolve, a tile's bake: no derivatives there) as in a forward one. A texture's gradients from it
+ * (textureSampleGrad: its mip and its anisotropy right).
+ */
+struct PixStep { dx: vec3<f32>, dy: vec3<f32> };
+fn pixStep(p: vec3<f32>, n: vec3<f32>) -> PixStep {
+  // the plane's two directions
+  let flat = abs(n.z) >= 0.7;
+  let a0 = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), flat);
+  let t1 = normalize(a0 - n * dot(n, a0));
+  let t2 = cross(n, t1);
+  let c = CAM.viewProj * vec4<f32>(p, 1.0);
+  let A = CAM.viewProj * vec4<f32>(t1, 0.0);
+  let B = CAM.viewProj * vec4<f32>(t2, 0.0);
+  let half = CAM.viewport.xy * vec2<f32>(0.5, -0.5);
+  // pixels moved per unit along each
+  let ja = (A.xy * c.w - c.xy * A.w) / (c.w * c.w) * half;
+  let jb = (B.xy * c.w - c.xy * B.w) / (c.w * c.w) * half;
+  var det = ja.x * jb.y - jb.x * ja.y;
+  if (abs(det) < 1e-6) { det = select(-1e-6, 1e-6, det >= 0.0); }
+  // the inverse: units along t1, t2 per pixel in x and in y
+  let ix = vec2<f32>(jb.y, -ja.y) / det;
+  let iy = vec2<f32>(-jb.x, ja.x) / det;
+  return PixStep(t1 * ix.x + t2 * ix.y, t1 * iy.x + t2 * iy.y);
+}
+
+/** a texture sample: colour, the normal's tilt (tangent xy, −1..1), roughness */
+struct GTex { col: vec3<f32>, tn: vec2<f32>, rough: f32 };
+fn gtexAt(layer: i32, uv: vec2<f32>, gx: vec2<f32>, gy: vec2<f32>) -> GTex {
+  let c = textureSampleGrad(archTexC, archSamp, uv, layer, gx, gy);
+  let nr = textureSampleGrad(archTexN, archSamp, uv, layer, gx, gy);
+  return GTex(c.rgb, nr.xy * 2.0 - 1.0, nr.z);
+}
+
+/** (ground branch) a set's look on the ground at p (normal n), one repeat `size` units: projected from above where it
+ *  lies flat; on a slope from above and from the side it faces most (two projections, blended — biplanar); colour,
+ *  the normal it gives, roughness. World-anchored (wo): it doesn't slide with the window */
+struct GLook { col: vec3<f32>, n: vec3<f32>, rough: f32 };
+fn groundTex(layer: i32, p: vec3<f32>, n: vec3<f32>, size: f32) -> GLook {
+  let ps = pixStep(p, n);
+  let q = vec3<f32>(wo(p.xy), p.z) / size;
+  let dx = ps.dx / size;
+  let dy = ps.dy / size;
+  let w = pow(abs(n), vec3<f32>(4.0));
+  let wz = w.z / (w.x + w.y + w.z);
+  var col = vec3<f32>(0.0);
+  var rough = 0.0;
+  var nn = vec3<f32>(0.0);
+  var tw = 0.0;
+  if (wz > 0.02) {
+    let t = gtexAt(layer, q.xy, dx.xy, dy.xy);
+    let k = select(wz, 1.0, wz > 0.98);
+    col += t.col * k;
+    rough += t.rough * k;
+    nn += vec3<f32>(t.tn * sign(n.z) + n.xy, n.z) * k;
+    tw += k;
+  }
+  if (wz <= 0.98) {
+    let side = 1.0 - select(wz, 0.0, wz <= 0.02);
+    // (the side it faces most: x or y)
+    if (w.x > w.y) {
+      let t = gtexAt(layer, q.yz, dx.yz, dy.yz);
+      col += t.col * side;
+      rough += t.rough * side;
+      nn += vec3<f32>(n.x, t.tn.x * sign(n.x) + n.y, t.tn.y + n.z) * side;
+    } else {
+      let t = gtexAt(layer, q.xz, dx.xz, dy.xz);
+      col += t.col * side;
+      rough += t.rough * side;
+      nn += vec3<f32>(t.tn.x * sign(n.y) + n.x, n.y, t.tn.y + n.z) * side;
+    }
+    tw += side;
+  }
+  return GLook(col / tw, normalize(nn / tw), rough / tw);
 }
 
 // the player's reach on a story level (game/reach.ts): 1 inside, 0.5 at

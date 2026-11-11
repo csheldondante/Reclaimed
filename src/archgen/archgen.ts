@@ -16,6 +16,7 @@
 
 import archWgsl from './arch.wgsl?raw';
 import drawWgsl from './draw.wgsl?raw';
+import texbankWgsl from './texbank.wgsl?raw';
 import labWgsl from './archlab.wgsl?raw';
 import gameWgsl from './archgame.wgsl?raw';
 import { STYLES, STYLE_VEC4S, styleWords, type Style } from './styles';
@@ -71,7 +72,7 @@ const GEN = ARCH_CONSTS + archWgsl.slice(archWgsl.indexOf(GEN_MARK), archWgsl.in
 const COMPACT = ARCH_CONSTS + archWgsl.slice(archWgsl.indexOf(COMPACT_MARK));
 /** the vertex stages and archSurface: a host's bindings and functions before, its fragment stage after */
 export const ARCH_DRAW = drawWgsl;
-const LAB = ARCH_CONSTS + labWgsl.slice(0, labWgsl.indexOf(FS_MARK)) + drawWgsl + labWgsl.slice(labWgsl.indexOf(FS_MARK));
+const LAB = texbankWgsl + ARCH_CONSTS + labWgsl.slice(0, labWgsl.indexOf(FS_MARK)) + drawWgsl + labWgsl.slice(labWgsl.indexOf(FS_MARK));
 /** the game's part of the renderer's draw module (after renderWgsl): vertex stages ARCH_DRAWS, fragment fsArch.
  *  detail: 0 the phone's flat colours … 1 the PC's patterns */
 export const archGameWgsl = (detail: number): string =>

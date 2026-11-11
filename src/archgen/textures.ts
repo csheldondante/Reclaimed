@@ -8,7 +8,7 @@
 const files = import.meta.glob('./tex/*.jpg', { query: '?url', import: 'default', eager: true }) as Record<string, string>;
 
 /** the layers, in order (draw.wgsl TX_*) */
-export const ARCH_TEX_KEYS = ['brick', 'rubble', 'ashlar', 'plaster', 'siding', 'wood', 'deck', 'tile', 'slate', 'thatch', 'flag', 'cobble', 'dirt', 'grass', 'canvas'] as const;
+export const ARCH_TEX_KEYS = ['brick', 'rubble', 'ashlar', 'plaster', 'siding', 'wood', 'deck', 'tile', 'slate', 'thatch', 'flag', 'cobble', 'dirt', 'grass', 'canvas', 'sand', 'rock', 'gravel', 'snow', 'moss'] as const;
 
 const MIP_WGSL = /* wgsl */ `
 @group(0) @binding(0) var src: texture_2d<f32>;

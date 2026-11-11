@@ -29,6 +29,7 @@ import { coverage, type Coverage } from './coverage';
 import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import { TileCalibration, floorSearch } from './tilecalib';
 import { urlFlags } from '../flags';
+import { archTextures } from '../archgen/textures';
 
 /** (round 105) what makes the render-only land: tileland.ts (the playable path, ?tilegpu=0) or tilelandgpu.ts */
 export interface LandMaker {
@@ -305,7 +306,8 @@ export class TileCache {
   private async makePipes(): Promise<void> {
     const h = this.host;
     const dev = h.device;
-    const rl = dev.createPipelineLayout({ bindGroupLayouts: [h.resolveLayout] });
+    // (ground branch: the bake's look — meshSurf — has the material textures as group 1)
+    const rl = dev.createPipelineLayout({ bindGroupLayouts: [h.resolveLayout, archTextures(dev).layout] });
     const bakeT: GPUColorTargetState[] = [{ format: 'rgba8unorm' }, { format: 'rg32uint' }, { format: 'rgba8unorm' }];
     const [bake, over, draw] = await Promise.all([
       dev.createRenderPipelineAsync({ label: 'tiles-bake', layout: rl, vertex: { module: h.module, entryPoint: 'vsFull' }, fragment: { module: h.module, entryPoint: 'fsTileBake', targets: bakeT }, primitive: { topology: 'triangle-list' } }),
@@ -869,6 +871,7 @@ export class TileCache {
     });
     r.setViewport(sx, sy, vw, vh, 0, 1);
     r.setScissorRect(sx, sy, vw, vh);
+    r.setBindGroup(1, archTextures(h.device).group);
     resolve.forEach((grp, i) => {
       r.setPipeline(i === 0 ? this.pipes!.bake : this.pipes!.over);
       r.setBindGroup(0, grp);
