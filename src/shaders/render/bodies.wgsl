@@ -162,9 +162,11 @@ fn fsBody(in: VOut) -> FOut {
   // (round 117, inhabitants.wgsl meshIt: a creature's vertex carries its own colour — vsSkin's info.y 1)
   if (in.info.y == 1u) { alb = toLinear(vec3<f32>(f32((word >> 16u) & 255u), f32((word >> 8u) & 255u), f32(word & 255u)) / 255.0) * (0.94 + 0.12 * r); }
   // (archgen: a town mesh's ground — dirt, cobbles, grass — textured where it lies)
-  if (in.info.y >= 3u && in.info.y <= 5u) {
+  // (the flag word's low byte is the surface; citygen packs its own data above it — Track A, roadgrow)
+  let gsurf = in.info.y & 0xffu;
+  if (gsurf >= 3u && gsurf <= 5u) {
     let base = vec3<f32>(f32((word >> 16u) & 255u), f32((word >> 8u) & 255u), f32(word & 255u)) / 255.0;
-    alb = toLinear(groundLook(base, in.info.y, in.wpos.xy - MESH_XF.xy, gpx));
+    alb = toLinear(groundLook(base, gsurf, in.wpos.xy - MESH_XF.xy, gpx));
   }
   let nrm = normalize(in.nrm);
   // a structure grid's voxel (structprep.wgsl): the growth it owns on its
