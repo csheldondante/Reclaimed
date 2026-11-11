@@ -23250,3 +23250,12 @@ cases over the fake's field limit), season, transfers, typecheck.
 - The generator's tree() and bushAt() place a plant mesh of their category when the header's word 7 says plants are
   loaded (archgen.ts writes it at each generate), else their own shapes; the lab and the towns make their lots again
   when the plants arrive (ArchTextures.whenPlants).
+## archgen: the generator in four passes (2026-11-11; the phone: "CreateComputePipelines failed with
+## VK_ERROR_INITIALIZATION_FAILED - While initializing [ComputePipeline "arch gen"]")
+
+- The one gen entry point had grown (grid family, manors, gardens, tents, plants) past what the phone's Vulkan driver
+  would compile: a driver inlines every call an entry point makes, so all the families were one huge shader. Now four
+  entry points (arch.wgsl genHouses, genKeeps — keeps, docks, industry —, genShanties — shanties, markets, gardens —,
+  genGrid), one pipeline each with an explicit shared layout, dispatched one after another in the same pass: each
+  reads every lot's head (genHead: its frame, nothing written) and makes only its own family's lots; houses also clear
+  the lots nothing is built on. The desktop town is unchanged. Each lot's head is read four times (cheap: a record).
