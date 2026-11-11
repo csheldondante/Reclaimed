@@ -110,8 +110,9 @@ export default async function (lab, args) {
     out.man.runs = Array.from({ length: 8 }, (_, i) => o + L.formAt + 16 + 128 + i * 8).filter((r) => mail[r] !== 0xffffffff).map((r) => `${mail[r] & 0xffff} s ${f[r + 1].toFixed(1)}-${f[r + 2].toFixed(1)} before ${mail[r + 3]}`);
     out.man.ranks = Array.from({ length: n }, (_, k) => { const r = L.ranks + k * L.rankW; return `${mail[r + 3] & 0xff}:${f[r + 5].toFixed(1)}`; }).join(' ');
     // (is the walk reachable? the run fields at the posts — each rank's target — and at the soldiers)
-    const fw = mail[o + L.formAt + 14];
-    const rd = units.agents.reader(fw & 0xff).start(100);
+    // (U2 round 7: the man order's run fields a word each, after the runs — agents.ts RUNF_AT)
+    const fw = mail[o + L.formAt + 16 + 128 + 64];
+    const rd = units.agents.reader(fw).start(100);
     await lab.run(0.3, 1, { renderEvery: 8 });
     await new Promise((res) => setTimeout(res, 500));
     out.man.atPosts = Array.from({ length: 4 }, (_, k) => { const r = L.ranks + k * L.rankW; const sm = rd.sample(f[r], f[r + 1], f[r + 2] + 0.5); return sm ? `${f[r].toFixed(0)},${f[r + 1].toFixed(0)},${f[r + 2].toFixed(1)} d ${sm.dist.toFixed(1)} z ${sm.z.toFixed(1)}` : 'null'; });
