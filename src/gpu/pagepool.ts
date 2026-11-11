@@ -53,7 +53,7 @@ export class PagePool {
   /** the relax's indirect args (x: the front's entries, a workgroup each) */
   readonly args: GPUBuffer;
   readonly ctlWords: number;
-  readonly layout: { gen: number; table: number; dirty: number; sdirty: number; req: number; stamp: number; front: number; free: number; pctl: number; orec: number; tbits: number; sbits: number };
+  readonly layout: { gen: number; table: number; dirty: number; sdirty: number; req: number; stamp: number; front: number; free: number; pctl: number; orec: number; rbits: number; tbits: number; sbits: number };
   private params: GPUBuffer;
   private ops: GPUBuffer;
   private k: Record<'alloc' | 'reset' | 'front' | 'flip' | 'release', ComputeKernel>;
@@ -84,8 +84,10 @@ export class PagePool {
     const free = front + this.frontCap;
     const pctl = free + o.pages;
     const orec = pctl + o.pages * o.pageCtl;
-    this.layout = { gen, table, dirty, sdirty, req, stamp, front, free, pctl, orec, tbits, sbits };
-    this.ctlWords = orec + o.owners * o.ownerWords;
+    // (U2-FIELDCAP: a bit an owner refused a page, pagepool.wgsl PP_RBITS)
+    const rbits = orec + o.owners * o.ownerWords;
+    this.layout = { gen, table, dirty, sdirty, req, stamp, front, free, pctl, orec, rbits, tbits, sbits };
+    this.ctlWords = rbits + Math.ceil(o.owners / 32);
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     this.buffer = device.createBuffer({ label: o.label, size: (this.ctlWords + o.pages * o.pageWords) * 4, usage: S });
     this.args = device.createBuffer({ label: `${o.label} args`, size: 16, usage: S | GPUBufferUsage.INDIRECT });

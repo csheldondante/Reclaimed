@@ -103,9 +103,11 @@ const FIELD_ROWS_FLAG = Number((typeof location !== 'undefined' && urlFlags().ge
 export const FIELD_OWN = 16;
 /** (U2 round 7) a field page: 16 x 16 columns x NAV_K distances, then as many seed-ids (fieldseam.wgsl FP_W) */
 const FIELD_PAGE_W = 256 * 4;
-/** the pool's pages: ?fieldpages=N, else this many a window chunk (a field reaching the whole window holds a page a
- *  chunk; the pool holds as much as FIELD_PAGES_PER_CHUNK such fields — the old planes held 13) */
-const FIELD_PAGES_PER_CHUNK = 6;
+/** the pool's pages: ?fieldpages=N, else as many as FIELD_POOL_BYTES holds. (U2-FIELDCAP) Sized from memory as a
+ *  whole, not per window chunk: the fields overlap where the armies are, so a small window held too few for many
+ *  destinations at once (6 a chunk: 216 pages at 96 x 96, refused at 20 fields). The budget is round 7's at 320 x 320
+ *  (2400 pages, 6 a chunk) — what a phone carries today; a field reaching the whole 320 window holds 400 */
+const FIELD_POOL_BYTES = 20 * 1024 * 1024;
 const FIELD_PAGES = Number((typeof location !== 'undefined' && urlFlags().get('fieldpages')) || 0);
 /** a field with none (fieldseam.wgsl FIELD_NONE) */
 const FIELD_NONE = 0xffffffff;
@@ -489,6 +491,22 @@ export class Agents implements SimSystem {
   readonly fields: PagePool;
   /** the field kernels: the frame's seeds (fieldseam.wgsl seedReset .. seedFlip, cpuSeeds), the relax over pages */
   private fk2: { reset: ComputeKernel; unmark: ComputeKernel; land: ComputeKernel; gone: ComputeKernel; flip: ComputeKernel; cpu: ComputeKernel; relax: ComputeKernel; seedG: GPUBindGroup; relaxG: GPUBindGroup };
+  /**
+   * (U2-FIELDCAP) The fields' page pool refused a page: an error shown (once), and orders after it fail 'pool-full'.
+   * Told by the scope's read of the pool's count, or by an order the GPU failed for it (orders.wgsl FAIL_POOL) —
+   * whichever comes first: the count is read only with the scope's box, now and then.
+   */
+  fieldPoolFull(refused = 1): void {
+    const first = this.fieldPagesRefused === 0;
+    this.fieldPagesRefused = Math.max(this.fieldPagesRefused, refused);
+    if (!first) return;
+    const msg = `agents: the fields' page pool is full (${this.fields.o.pages} pages) — fields stop growing, orders fail 'pool-full'; raise ?fieldpages`;
+    if (typeof document !== 'undefined') showFatal(msg);
+    else console.error(msg);
+  }
+
+  /** (U2-FIELDCAP) seeds the seed list had no room for (fieldseam.wgsl seedList[3], read with the scope's box) */
+  seedsDropped = 0;
   /** (U2 round 7) field pages the pool refused so far (read with the scope's box): > 0, the pool is full */
   fieldPagesRefused = 0;
   /** the fields' rows (sized from memory) */
@@ -770,6 +788,8 @@ export class Agents implements SimSystem {
     private world: WorldGpu,
     private prof: Profiler,
     sweeps = 8,
+    /** (tests) the field pool's pages, in place of FIELD_POOL_BYTES' (as ?fieldpages) */
+    opts: { fieldPages?: number } = {},
   ) {
     this.sweeps = sweeps;
     const cols = world.w * world.h;
@@ -779,15 +799,18 @@ export class Agents implements SimSystem {
     // (round 128i: two planes — the road shapes' bits, then the riding network's: agents/ride.ts)
     this.roads = world.buf('agentRoads', Math.ceil(cols / 32) * 8, S);
     this.roadStamp = new RoadStamp(device, this.roads, world.w, world.h);
-    // (U2 round 7) the fields: a page a field over a chunk, from one pool sized from memory (FIELD_PAGES_PER_CHUNK
-    // whole-window fields' worth), found through the field's row of the table; the GPU hands pages out as a field grows
+    // (U2 round 7) the fields: a page a field over a chunk, from one pool sized from memory (FIELD_POOL_BYTES), found
+    // through the field's row of the table; the GPU hands pages out as a field grows
     const slots = (world.w / 16) * (world.h / 16);
+    // (a page's payload, its control words, its generation, its free-stack word and its 9 front entries)
+    const pageBytes = (2 * FIELD_PAGE_W + 2 * (FIELD_PAGE_W / 32) + 2 + 9) * 4;
+    const pages = opts.fieldPages || FIELD_PAGES || Math.floor(FIELD_POOL_BYTES / pageBytes);
     this.fieldRows = Math.min(1 << 15, Math.max(FIELD_OWN + 16, FIELD_ROWS_FLAG || Math.floor(FIELD_TABLE_BYTES / (slots * 8.4))));
     this.fields = new PagePool(device, world.globals, {
       label: 'agentFields',
       owners: this.fieldRows,
-      front: 9 * (FIELD_PAGES || slots * FIELD_PAGES_PER_CHUNK),
-      pages: FIELD_PAGES || slots * FIELD_PAGES_PER_CHUNK,
+      front: 9 * pages,
+      pages,
       pageWords: 2 * FIELD_PAGE_W,
       pageCtl: 2 * (FIELD_PAGE_W / 32),
       ownerWords: FIELD_REC_W,
@@ -2586,6 +2609,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       enc.copyBufferToBuffer(this.uboxBuf, 0, this.readBuf, 0, 16);
       // (U2 round 7: the field pages refused, with it — the pool full is an error shown, and orders fail 'pool-full')
       enc.copyBufferToBuffer(this.fields.buffer, PP_HEADER.refused * 4, this.readBuf, 16, 4);
+      // (U2-FIELDCAP: the seed list's puts it had no room for — SEED_LIST is sized to every seeder: one is a sizing bug)
+      enc.copyBufferToBuffer(this.seedList, 12, this.readBuf, 20, 4);
       this.reading = true;
       this.readIssued = { serial: sc.serial };
       sc.serial++;
@@ -2640,11 +2665,13 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       this.reading = false;
       const box: [number, number, number, number] | null = u[0] <= u[2] && u[1] <= u[3] ? [u[0], u[1], u[2], u[3]] : null;
       sc.read(r.serial, box);
-      if (u[4] > this.fieldPagesRefused) {
-        this.fieldPagesRefused = u[4];
-        const msg = `agents: the fields' page pool is full (${this.fields.o.pages} pages, ${u[4]} refused) — fields stop growing; raise ?fieldpages`;
-        if (typeof document !== 'undefined') showFatal(msg);
-        else console.error(msg);
+      if (u[4] > this.fieldPagesRefused) this.fieldPoolFull(u[4]);
+      if (u[5] > this.seedsDropped) {
+        const first = this.seedsDropped === 0;
+        this.seedsDropped = u[5];
+        const msg = `agents: the fields' seed list overflowed (${u[5]} puts past ${SEED_LIST}) — fields lose seeds; SEED_LIST is sized to every seeder, so this is a sizing bug`;
+        if (first && typeof document !== 'undefined') showFatal(msg);
+        else if (first) console.error(msg);
       }
     }, (e) => {
       this.reading = false;

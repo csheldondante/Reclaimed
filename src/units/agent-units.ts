@@ -102,7 +102,7 @@ const MELEE = { reach: 1.35, damage: HPK, swingPeriod: 1.0 } as const;
 /** orders.wgsl group kinds */
 const OK = { none: 0, stand: 1, go: 2, guard: 3, attack: 4, drill: 5, man: 6, march: 7 } as const;
 /** townplace.wgsl statuses as the contract's reasons; (round 6) a gate's (orders.wgsl FAIL_GATE | routeread GATE_*) */
-const WHY: Record<number, OrderFailure> = { 1: 'none', 2: 'rising', 3: 'water', 4: 'no-town', 0x11: 'none', 0x12: 'rising', 0x13: 'water', 0x14: 'failed', 0x20: 'no-room' };
+const WHY: Record<number, OrderFailure> = { 1: 'none', 2: 'rising', 3: 'water', 4: 'no-town', 0x11: 'none', 0x12: 'rising', 0x13: 'water', 0x14: 'failed', 0x20: 'no-room', 0x30: 'pool-full' };
 /** (round 6) formations' spacing (cells), a man's post spacing, a man order's most run fields */
 const FORM_SPACING = 1.2;
 const POST_SPACING = 3;
@@ -1051,6 +1051,9 @@ export class AgentUnits implements Units {
           for (const f of this.orderFailed) f(g.id, why);
           continue;
         } else if (e.serial !== g.serial || g.serial === g.spawnSerial) continue;
+        // (U2-FIELDCAP: the GPU's word that this order's field was refused a page — the pool full, shown as Agents'
+        // error, whether or not its scope read has seen the count yet)
+        if (WHY[e.status] === 'pool-full') this.agents.fieldPoolFull();
         for (const f of this.orderFailed) f(g.id, WHY[e.status] ?? 'none');
       } else if (e.type === 'hurt') {
         const id = this.byGpu.get(e.id);

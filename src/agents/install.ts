@@ -4,9 +4,9 @@ import type { WorldCore } from '../scenes/world-core';
 import { Agents } from './agents';
 
 /** Add the agents layer to `core`: its system after the particles, its units drawn as voxels. */
-export function installAgents(core: WorldCore): Agents {
+export function installAgents(core: WorldCore, opts: { fieldPages?: number } = {}): Agents {
   const { host, sim, renderer } = core;
-  const agents = new Agents(host.gpu.device, core.world, host.profiler, host.quality.agentSweeps ?? 8);
+  const agents = new Agents(host.gpu.device, core.world, host.profiler, host.quality.agentSweeps ?? 8, opts);
   sim.systems.splice(sim.systems.indexOf(sim.particles) + 1, 0, agents);
   // (round 128o, DA-B22: fast-forward — the units step in strides of the frame's ticks, the rest once a frame)
   agents.frame = () => ({ n: sim.frameTicks, i: sim.tickOfFrame });

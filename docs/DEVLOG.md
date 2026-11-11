@@ -22968,3 +22968,33 @@ their place resolved, an anchor, or an arrival told.
 are dispatched over every order group (ceil(groups / 8)). New test: 40 groups (10 places in pairs 18 cells apart, 4
 squads of 2 at each) in a column at once — 40/40 arrived and anchored (fortress: 8/40). Found on the way (U2-FIELDCAP,
 not chased): with 20 destination fields at once, some plain `go` groups never had their field reach them.
+
+## 2026-11-11 — the field pool's refusals shown, the pool sized from memory (U2-FIELDCAP, `trackB-fieldcap`)
+
+**Why.** With Track A's squad cap gone, 40 groups ordered to 20 destinations at once left 17 of 40 reading FAR with
+nothing told (formations.test.ts found it, U2-FIELDCAP). The rules forbid a silent failure.
+
+**Measured** (fieldcap.test.ts, 96 x 96, every 2 s: pages held a field, the pool's used / refused / front): the pool
+was full within 2 s — 216 of 216 pages (6 a chunk × 36 chunks), 301 refused, the front empty after; each field held 5-14
+pages and stayed so. A destination field grows over everything it reaches (the cap is the scope's size): 20 fields
+want 720 pages. Nothing told the groups: the refused count rides only with the scope's box read, and a refusal failed
+only orders sent after it. Not the cause: the seed list (now read: 0 dropped), the all-FAR page drop (the pages held
+were steady), newField's recycling (no field freed in the run).
+
+**What.**
+- pagepool.wgsl: a bit an owner (PP_RBITS), set when a page it asked for is refused, cleared when it lets go.
+- orders.wgsl: groupCount counts a member its field doesn't reach while that field is refused (word 19; man: its
+  rank's run field); groupEmit fails the order 'pool-full' once (FAIL_POOL 0x30). A field refused a page far off that
+  still reaches every member fails nothing.
+- agent-units: that failure calls Agents.fieldPoolFull — the fatal error (once), and orders after it fail
+  'pool-full' — so it shows whether or not the scope's read has come.
+- agents.ts: the pool is sized from memory as a whole, FIELD_POOL_BYTES 20 MB (2469 pages; the game had 2400 at 320
+  x 320, so a phone carries the same), not 6 a window chunk; the seed list's overflow count rides with the scope read
+  and is shown. `installAgents(core, { fieldPages })` for tests.
+
+**Numbers.** 40 groups to 20 destinations: 40/40 arrived (720 pages held); to 40 destinations (40 fields): 40/40
+(1440 pages), 0 seeds dropped; a 60-page pool: 36 told 'pool-full', 4 arrived, 0 silent, the error shown. Before: 23
+arrived, 17 silent, 0 told.
+
+**Limit.** A field still covers the whole scope: at 320 x 320 that's 400 pages, ~6 whole-window fields in 20 MB — many
+squads to many places in game will fail 'pool-full', visibly (U2-FIELDREACH).

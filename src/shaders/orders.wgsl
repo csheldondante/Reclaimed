@@ -147,6 +147,16 @@ fn spawnGround(c: vec2<i32>, ap: vec3<f32>) -> vec2<f32> {
   if (abs(z - ap.z) >= 1.2 || (sk == 0u && water[i] > DEEP)) { return vec2<f32>(0.0); }
   return vec2<f32>(z, 1.0);
 }
+/** (U2-FIELDCAP) an orderFailed's reason: the field page pool refused this order's field a page (agent-units 'pool-full') */
+const FAIL_POOL: u32 = 0x30u;
+/** the order's 'pool-full', once an order (the failure word 15, as failOnce) */
+fn poolFailOnce(g: u32) {
+  let serial = grpWord(g, 7u);
+  if (grpWord(g, 15u) != serial + 1u) {
+    atomicStore(&mail[grpO(g) + 15u], serial + 1u);
+    emit(EV_ORDER_FAILED, g, FAIL_POOL, f32(serial), vec3<f32>(0.0));
+  }
+}
 /** how near the place a member counts as there: a crowd stands round it, wider the more of them */
 fn grpArrive(n: u32) -> f32 { return 2.5 + 0.7 * sqrt(f32(n)); }
 
@@ -308,6 +318,16 @@ fn groupCount(@builtin(global_invocation_id) id: vec3<u32>) {
   // the field's FAR: right after an order the field is refilling from the place and reads FAR almost everywhere, so a
   // member there looked cut off — the lab's run told arrived with none at the keep)
   atomicAdd(&mail[grpO(g) + 12u], 1u);
+  // (U2-FIELDCAP: a member its field doesn't reach while the pool has refused that field a page — the field can't grow
+  // to it: counted (word 19), and groupEmit fails the order 'pool-full' rather than leave it reading FAR in silence. A
+  // field refused a page far off that still reaches every member fails nothing)
+  var mf = grpWord(g, 6u);
+  if (formMode(g) == 3u && ogRank(gw) < RANKS) { mf = atomicLoad(&mail[rankO(g, ogRank(gw)) + 7u]); }
+  if (fieldOk(mf) && ppRefused(mf)) {
+    let ci = colIdxI(clampCell(cellAt(a.xy)));
+    let ks = surfaceNear(ci, a.z);
+    if (ks < NAV_K && fieldDist(mf, ci * NAV_K + ks) >= FAR) { atomicAdd(&mail[grpO(g) + 19u], 1u); }
+  }
   // (round 6b: the members' middle, a loose group's cohesion: sums at 1/16 cell)
   atomicAdd(&mail[grpO(g) + EXTRA_AT + EX_SUM], bitcast<u32>(i32(round(a.x * 16.0))));
   atomicAdd(&mail[grpO(g) + EXTRA_AT + EX_SUM + 1u], bitcast<u32>(i32(round(a.y * 16.0))));
@@ -324,6 +344,8 @@ fn groupEmit(@builtin(global_invocation_id) id: vec3<u32>) {
   let o = grpO(g);
   let alive = atomicExchange(&mail[o + 12u], 0u);
   let there = atomicExchange(&mail[o + 13u], 0u);
+  // (U2-FIELDCAP: members its field can't reach for want of pages — groupCount's)
+  if (atomicExchange(&mail[o + 19u], 0u) != 0u && grpWord(g, 0u) > OK_STAND) { poolFailOnce(g); }
   let sx = f32(bitcast<i32>(atomicExchange(&mail[o + EXTRA_AT + EX_SUM], 0u))) / 16.0;
   let sy = f32(bitcast<i32>(atomicExchange(&mail[o + EXTRA_AT + EX_SUM + 1u], 0u))) / 16.0;
   mailSetF(o + EXTRA_AT + EX_MID, select(0.0, sx / f32(max(alive, 1u)), alive > 0u));
