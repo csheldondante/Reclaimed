@@ -22882,3 +22882,23 @@ fixture's world widened to 128 × 96 so it holds the spawn points' roads (its gr
   march is checked. **March-leave fails: left told 0 times, 6 of 12 still in the window — the same on fortress
   3cd4576d before this round** (run there: identical numbers), so not from the pages; it is round 6's leave and needs
   its own look (BACKLOG U2-LEAVE).
+
+## 2026-11-11 — U2 round 7: the field bench on desktop (trackB-u2r9-pool)
+
+`?fieldbench=1&benchground=open&benchsecs=2`, 412×915, q=low, headless Chrome on the desktop GPU (D3D11), build 13ac8bf4
+(the phone bench is the orchestrator's). GPU span mean, off → on (on less off); the front a sweep (entries listed over
+sweeps run, from the pool's header); pages held of 2,400 at the phase's end; refused 0 in every phase.
+
+| Phase | 100 v 100 | 500 v 500 |
+|---|---|---|
+| fields on pages vs frozen | 7.46 → 7.96 (+0.49); front 70 a sweep; 286 pages | 6.26 → 6.85 (+0.59); front 75; 278 pages |
+| three armies, per-side hunt + threat fields vs frozen | 6.74 → 7.26 (+0.52); front 194; 833 pages | 6.94 → 7.88 (+0.94); front 188; 857 pages |
+| hunt seeded on the GPU vs off | +0.08 | +0.05 |
+| line of sight | +3.17 (one noisy window) | +0.64 |
+
+- Frame p50 sat at 10 ms on both sides of every phase (the headless display's pace): the GPU span is the number.
+- Three armies: 6 fields (a hunt and a threat each), ~3× the pages of the two-army fight and ~2.6× its front, for
+  +0.5–0.9 ms. Pages follow the armies' ground: 833–857 of 2,400 (the pool holds 6 whole-window fields' worth).
+- That first run's three-armies phase counted every unit as engaged; it now counts the units with a target (as the
+  other phases do) — the run had no deaths in it (kind 1 at sight 40, the armies 31 cells apart), so it measures the
+  fields of three hunting armies, not a fight.
