@@ -77,3 +77,4 @@ stage, gates green.
 | Date | Track | Need | From | Status |
 |---|---|---|---|---|
 | 2026-11-09 | both | Agree the `stage` field above | A ↔ B | open |
+| 2026-11-10 | B → A | Place orders built (U2 round 5, trackB-u2r6): `units.spawnAt(kind, faction, PlaceRef, n) → GroupId`, `units.orderGroup(g, {kind: 'go' \| 'guard' \| 'attack', at: PlaceRef})`, `arrived(g)`, `orderFailed(g, 'none' \| 'rising' \| 'water' \| 'no-town' \| 'pool-full')`, `members(g)` — `PlaceRef = {town, place} \| {town, district, purpose (LOT_KIND), rank}`, resolved by townplace.wgsl (binding 57). Wired in stream-setup (`units.usePlaces(tc.places, tc.townArea)`); one addition to Track A's TownContracts: `townArea(i)` (the grid's corners, CPU plan, for the agents' scope). TownForces can build against it. Open for A: is `purpose` the lot kind (assumed) or a district purpose? | B | delivered; question open |

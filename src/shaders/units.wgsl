@@ -446,6 +446,15 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     flash = 0.15;
     emit(EV_HURT, uid, BY_UNIT | (shot - 1u), dmg, pos);
     if (hp <= 0.0 && !dead) { dead = true; killedBy = BY_UNIT | (shot - 1u); }
+    // (U2 DA-B32: struck with no target of its own, a unit that can fight turns on who struck it — its own row's word,
+    // told as notice tells it; was the CPU's notice.aim)
+    let fights = AP.kinds[(info >> 9u) & 7u].b.x > 0.0 || bitcast<f32>(AP.kinds[(info >> 9u) & 7u].c.w) > 0.0;
+    var r5 = units[u * UNIT_V + 5u];
+    if (fights && bitcast<u32>(r5.y) == 0u && shot != 0u) {
+      r5.y = bitcast<f32>(shot);
+      units[u * UNIT_V + 5u] = r5;
+      emit(EV_NOTICED_U, uid, shot, 0.0, pos);
+    }
   }
 
   // held by the game, or launched: holds and launches name its slot
@@ -693,13 +702,25 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       let aimO = MAIL_AIM + u * AIM_W;
       let aimCode = atomicLoad(&mail[aimO + 3u]);
       let aimFlags = atomicLoad(&mail[aimO + 7u]);
-      let aimOk = !worker && aimCode != 0u && aimCode == bitcast<u32>(units[u * UNIT_V + 5u].y);
+      // (U2 DA-B32: whoever can fight — a reach or a range — and has a unit target fights on the GPU, hostile or not:
+      // the defenders' CPU strikes are gone)
+      let canFight = kind.b.x > 0.0 || bitcast<f32>(kind.c.w) > 0.0;
+      let aimOk = canFight && aimCode != 0u && aimCode == bitcast<u32>(units[u * UNIT_V + 5u].y);
       let aimSeen = aimOk && (aimFlags & AIM_SEEN) != 0u;
       let aimAt = mailV3(aimO);
       let range = bitcast<f32>(kind.c.w);
       let ranged = range > 0.0;
       let aimD = length(aimAt.xy - pos.xy);
-      if (!worker) {
+      // (U2 round 5: in an ordered group — mail's aim word 11, orders.wgsl — it walks its order's field, never wanders)
+      let ordered = atomicLoad(&mail[aimO + 11u]) != 0u;
+      // (a unit target: reach and sight to it — the aim's place, as the last frame left it — not the CPU's 8 targets)
+      if (aimOk && !ranged) {
+        let hd = max(aimD - 0.4, 0.0);
+        let vd = max(max(aimAt.z - (pos.z + height + 0.3), pos.z - (aimAt.z + 1.6)), 0.0);
+        reachD = sqrt(hd * hd + vd * vd);
+        seen = reachD < kind.b.x * 1.3 && sightClear(pos + vec3<f32>(0.0, 0.0, height * 0.6), aimAt + vec3<f32>(0.0, 0.0, 0.8));
+      }
+      if (!worker || aimOk) {
         // (in sight: closing in at once, the field not waited for)
         if (state == ST_WANDER && aimSeen) { state = ST_CHASE; stT = 0.0; }
         if (state == ST_WANDER && here < kind.b.w) { state = ST_CHASE; stT = 0.0; }
@@ -707,18 +728,26 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
         if (state == ST_CHASE && reachD < kind.b.x && seen && cool <= 0.0) {
           state = ST_SWING;
           stT = 0.0;
-          emit(EV_WINDUP, uid, u32(tgt), SWING_HIT, pos);
+          emit(EV_WINDUP, uid, select(u32(tgt), aimCode, aimOk), SWING_HIT, pos);
         }
       }
       if (state == ST_SWING) {
         speed = 0.0;
-        if (tgt >= 0) { heading = atan2(AP.targets[tgt].y - pos.y, AP.targets[tgt].x - pos.x); }
-        // (the blow lands once, partway into the swing, if it's still in reach)
+        if (aimOk) { heading = atan2(aimAt.y - pos.y, aimAt.x - pos.x); } else if (tgt >= 0) { heading = atan2(AP.targets[tgt].y - pos.y, AP.targets[tgt].x - pos.x); }
+        // (the blow lands once, partway into the swing, if it's still in reach. U2 DA-B32: on a unit it lands in its
+        // accumulator — the target's own thread applies it, naming the striker, as an arrow; on an actor (the hero:
+        // the CPU's) it's told as a swing)
         if (stT >= SWING_HIT && stT - dt < SWING_HIT && reachD < kind.b.x * 1.3 && seen) {
-          emit(EV_SWING, uid, u32(tgt), kind.b.y, pos);
+          if (aimOk) {
+            let t = (aimCode - 1u) % MAX_SLOTS;
+            atomicAdd(&mail[MAIL_ACC + t * 2u], u32(max(kind.b.y, 0.0) * 256.0));
+            atomicMax(&mail[MAIL_ACC + t * 2u + 1u], uid + 1u);
+          } else {
+            emit(EV_SWING, uid, u32(tgt), kind.b.y, pos);
+          }
         }
         if (stT > SWING_END) { state = ST_CHASE; stT = 0.0; cool = kind.b.z; }
-      } else if (state == ST_WANDER && !worker) {
+      } else if (state == ST_WANDER && !worker && !ordered) {
         // (a new heading now and then; slower than closing in)
         if (rand3(u, G.tick, 7u) < dt * 0.4) { wanderH = rand3(u, G.tick, 8u) * 6.2832; }
         want = vec2<f32>(cos(wanderH), sin(wanderH)) * 0.4;
@@ -999,12 +1028,19 @@ fn itemDraw(@builtin(global_invocation_id) id: vec3<u32>) {
 //               cleared
 //   huntFlip    this frame's list becomes last frame's
 // Actors' targets stay the CPU's seeds (their positions are the CPU's).
-// [0] [1] the two lists' counts, [2] which is last frame's, [3] the field (NFIELDS: none); then the lists
+// [0] [1] the two lists' counts, [2] which is last frame's, [3] the fields: the hunt's (low 16 bits; NFIELDS none) and
+// (U2 round 5, DA-B32) the foes' (high 16): the peaceful fighters' targets — a guard's, a soldier's — so the defenders
+// close in on a field of their own, not on the hunters' seeds (their own side). Then the lists: a surface, its top bit
+// set for the foes' field
 @group(0) @binding(53) var<storage, read_write> huntList: array<atomic<u32>>;
 const HUNT_LIST: u32 = 8192u;
 const HUNT_HEAD: u32 = 4u;
 fn huntAt(l: u32, k: u32) -> u32 { return HUNT_HEAD + l * HUNT_LIST + k; }
-fn huntField() -> u32 { return atomicLoad(&huntList[3]); }
+fn huntField() -> u32 { return atomicLoad(&huntList[3]) & 0xffffu; }
+fn foeField() -> u32 { return atomicLoad(&huntList[3]) >> 16u; }
+const HUNT_FOE: u32 = 0x80000000u;
+/** a list entry's field and surface */
+fn huntEntry(e: u32) -> vec2<u32> { return vec2<u32>(select(huntField(), foeField(), (e & HUNT_FOE) != 0u), e & ~HUNT_FOE); }
 // (FC11's reaction test: the frame's new seeds and gone ones, counted in frontDbg)
 
 @compute @workgroup_size(1)
@@ -1014,10 +1050,12 @@ fn huntReset() {
 
 @compute @workgroup_size(64)
 fn huntUnmark(@builtin(global_invocation_id) id: vec3<u32>) {
-  let f = huntField();
   let prev = atomicLoad(&huntList[2]);
-  if (f >= NFIELDS || id.x >= min(atomicLoad(&huntList[prev]), HUNT_LIST)) { return; }
-  let s = atomicLoad(&huntList[huntAt(prev, id.x)]);
+  if (id.x >= min(atomicLoad(&huntList[prev]), HUNT_LIST)) { return; }
+  let fe = huntEntry(atomicLoad(&huntList[huntAt(prev, id.x)]));
+  let f = fe.x;
+  let s = fe.y;
+  if (f >= NFIELDS) { return; }
   atomicAnd(&seedMask[s], ~(1u << f));
   atomicOr(&seedMask[s], 1u << (16u + f));
 }
@@ -1025,12 +1063,16 @@ fn huntUnmark(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   let u = id.x;
-  let f = huntField();
-  if (u >= AP.n.x || f >= NFIELDS) { return; }
+  if (u >= AP.n.x) { return; }
   let info = unitInfo(units[u * UNIT_V]);
   if (((info >> 8u) & 1u) == 0u) { return; }
-  // (a hostile kind: one that notices — kind.b.w, as unitStep's `worker`)
-  if (AP.kinds[(info >> 9u) & 7u].b.w <= 0.0) { return; }
+  // (a hostile kind — one that notices, kind.b.w, as unitStep's `worker` — seeds the hunt's field; (U2 round 5) a
+  // peaceful one that can fight — a reach or a range — the foes')
+  let kd = AP.kinds[(info >> 9u) & 7u];
+  let hostileKind = kd.b.w > 0.0;
+  if (!hostileKind && kd.b.x <= 0.0 && bitcast<f32>(kd.c.w) <= 0.0) { return; }
+  let f = select(foeField(), huntField(), hostileKind);
+  if (f >= NFIELDS) { return; }
   let code = bitcast<u32>(units[u * UNIT_V + 5u].y);
   if (code == 0u || (code & 0x80000000u) != 0u) { return; }
   let t = (code - 1u) % MAX_SLOTS;
@@ -1058,28 +1100,30 @@ fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   if (((old >> f) & 1u) != 0u) { return; }
   let cur = 1u - atomicLoad(&huntList[2]);
   let n = atomicAdd(&huntList[cur], 1u);
-  if (n < HUNT_LIST) { atomicStore(&huntList[huntAt(cur, n)], s); }
+  if (n < HUNT_LIST) { atomicStore(&huntList[huntAt(cur, n)], s | select(0u, HUNT_FOE, !hostileKind)); }
   // (new here: the field falls round it)
   if (((old >> (16u + f)) & 1u) == 0u) {
     atomicOr(&dirtyCur[chunkOfCol(u32(c.x), u32(c.y))], 1u << f);
-    // (?jfa=1: the targets JFA runs again this frame)
-    atomicStore(&jfa[0], 1u);
+    // (?jfa=1: the targets JFA runs again this frame — the hunt's)
+    if (hostileKind) { atomicStore(&jfa[0], 1u); }
     if (AP.u2.w != 0u) { atomicAdd(&frontDbg[32], 1u); }
   }
 }
 
 @compute @workgroup_size(64)
 fn huntGone(@builtin(global_invocation_id) id: vec3<u32>) {
-  let f = huntField();
   let prev = atomicLoad(&huntList[2]);
-  if (f >= NFIELDS || id.x >= min(atomicLoad(&huntList[prev]), HUNT_LIST)) { return; }
-  let s = atomicLoad(&huntList[huntAt(prev, id.x)]);
+  if (id.x >= min(atomicLoad(&huntList[prev]), HUNT_LIST)) { return; }
+  let fe = huntEntry(atomicLoad(&huntList[huntAt(prev, id.x)]));
+  let f = fe.x;
+  let s = fe.y;
+  if (f >= NFIELDS) { return; }
   let m = atomicAnd(&seedMask[s], ~(1u << (16u + f)));
   // (gone: the field rises round it — FC4's count-up; U2 §5 measures it)
   if (((m >> f) & 1u) == 0u && ((m >> (16u + f)) & 1u) != 0u) {
     // (a column's chunk: its page's slot — common.wgsl colIdx)
     atomicOr(&dirtyCur[(s / NAV_K) / (COLS_PAGE * COLS_PAGE)], 1u << f);
-    atomicStore(&jfa[0], 1u);
+    if (f == huntField()) { atomicStore(&jfa[0], 1u); }
     if (AP.u2.w != 0u) { atomicAdd(&frontDbg[33], 1u); }
   }
 }
@@ -1395,6 +1439,8 @@ const AIM_SEEN: u32 = 1u;
 const AIM_EVER: u32 = 2u;
 const AIM_SHOT: u32 = 4u;
 const AIM_INRANGE: u32 = 8u;
+/** notice.wgsl EV_NOTICED: a unit took a target (the step's own: struck, it turns on who struck it) */
+const EV_NOTICED_U: u32 = 9u;
 /** a hurt's or death's `other`: a unit's id (its arrow) — agents.ts BY_UNIT */
 const BY_UNIT: u32 = 0x40000000u;
 /** AP.u2.z: line of sight on (melee steers straight at a target in sight; ranged kinds shoot), seen-only targets */

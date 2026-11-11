@@ -86,8 +86,10 @@ export class UnitNotice {
   private actorList: { at: readonly [number, number, number] | null; faction: number }[] = [];
   private sets: [number, number][] = [];
   private data = new ArrayBuffer(PARAMS_WORDS * 4);
-  /** a side map is in place (none: every column the same side) */
-  hasSides = false;
+  /** a side map is in place (none: every column the same side). (U2 round 5: on from the start — the side map is the
+   *  GPU's, Track A's town contracts write it; a cleared buffer is every column open, side 0. setSides(null): off, for
+   *  the benches and tests) */
+  hasSides = true;
 
   constructor(
     private device: GPUDevice,

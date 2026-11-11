@@ -384,6 +384,8 @@ export function attachStream(scene: LevelScene): void {
               },
             );
             scene.townContracts = tc;
+            // (U2 round 5: the units' place orders resolved over the place table — spawnAt, orderGroup)
+            units.usePlaces(tc.places, (i) => tc.townArea(i));
             core.renderer.frameCompute.push((enc) => {
               tc.setTowns([...towns.live.values()].filter((t) => t.times), towns.townTime);
               tc.encode(enc, host.profiler?.timestamps('towncontracts'));
