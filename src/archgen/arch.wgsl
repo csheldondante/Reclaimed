@@ -1019,23 +1019,50 @@ fn market(seed: u32) {
   }
 }
 
-/** a garden on a park: shrubs in clumps along its edges, a fountain or a few flowering bushes in the middle */
+/** a garden on a park, on the land itself (no plate: the user, "just make grass and plants"): shrubs in clumps round
+ *  its edge, trees through it, low flowering beds, a fountain or a great tree in the middle */
 fn garden(seed: u32) {
   let W = gW;
   let D = gD;
-  let n = clamp(u32((W + D) / 2.5), 2u, 14u);
+  // shrubs round the edge, in clumps of two or three
+  let n = clamp(u32((W + D) / 4.0), 2u, 9u);
   for (var k = 0u; k < n; k++) {
     let s = hash(seed + k * 17u);
-    let t = rnd(s, 1u);
-    // round the edge
-    let per = t * 2.0 * (W + D);
-    var p = vec2<f32>(per, 0.6);
-    if (per > W) { p = vec2<f32>(W - 0.6, per - W); }
-    if (per > W + D) { p = vec2<f32>(W - (per - W - D), D - 0.6); }
-    if (per > 2.0 * W + D) { p = vec2<f32>(0.6, D - (per - 2.0 * W - D)); }
-    bush(lp(clamp(p.x, 0.6, W - 0.6), clamp(p.y, 0.6, D - 0.6)), mix(0.5, 1.0, rnd(s, 2u)), mix(0.7, 1.5, rnd(s, 3u)), rnd(s, 4u) < 0.4);
+    let per = rnd(s, 1u) * 2.0 * (W + D);
+    var p = vec2<f32>(per, 0.7);
+    if (per > W) { p = vec2<f32>(W - 0.7, per - W); }
+    if (per > W + D) { p = vec2<f32>(W - (per - W - D), D - 0.7); }
+    if (per > 2.0 * W + D) { p = vec2<f32>(0.7, D - (per - 2.0 * W - D)); }
+    let m = 1u + hash(s) % 3u;
+    for (var j = 0u; j < m; j++) {
+      let q = p + (vec2<f32>(rnd(s, 10u + j), rnd(s, 20u + j)) - 0.5) * 1.6;
+      bush(lp(clamp(q.x, 0.6, W - 0.6), clamp(q.y, 0.6, D - 0.6)), mix(0.45, 0.9, rnd(s, 30u + j)), mix(0.6, 1.3, rnd(s, 40u + j)), rnd(s, 4u) < 0.35);
+    }
   }
-  if (W > 6.0 && D > 6.0) { fountain(lp(W * 0.5, D * 0.5), min(1.6, min(W, D) * 0.2)); }
+  let big = W > 6.0 && D > 6.0;
+  let mid = lp(W * 0.5, D * 0.5);
+  let centreTree = rnd(seed, 50u) < 0.45;
+  if (big) {
+    if (centreTree) { tree(mid, mix(5.5, 7.5, rnd(seed, 51u)), hash(seed + 51u)); }
+    else { fountain(mid, min(1.6, min(W, D) * 0.2)); }
+  }
+  // trees through it (clear of the middle)
+  let nt = clamp(u32(W * D / 45.0), 1u, 6u);
+  for (var k = 0u; k < nt; k++) {
+    let s = hash(seed + 200u + k * 13u);
+    var x = mix(1.5, W - 1.5, rnd(s, 1u));
+    var y = mix(1.5, D - 1.5, rnd(s, 2u));
+    if (big && abs(x - W * 0.5) < 2.4 && abs(y - D * 0.5) < 2.4) { x = select(W * 0.5 + 2.6, W * 0.5 - 2.6, x < W * 0.5); }
+    tree(lp(clamp(x, 1.2, W - 1.2), clamp(y, 1.2, D - 1.2)), mix(3.5, 6.0, rnd(s, 3u)), s);
+  }
+  // flowering beds: low wide clumps in a row or two
+  let nb = clamp(u32(W / 3.5), 1u, 4u);
+  for (var k = 0u; k < nb; k++) {
+    let s = hash(seed + 400u + k * 7u);
+    let x = (f32(k) + 0.5) * W / f32(nb) + (rnd(s, 1u) - 0.5);
+    let y = select(D * 0.25, D * 0.75, (k & 1u) == 1u) + (rnd(s, 2u) - 0.5);
+    bushAt(lp(clamp(x, 0.8, W - 0.8), clamp(y, 0.8, D - 0.8)), gGround - 0.15, mix(0.6, 0.9, rnd(s, 3u)), 0.45, true);
+  }
 }
 
 /** a courtyard block: four ranges round a court, a gateway on the street, a fountain and shrubs inside */

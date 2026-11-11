@@ -23224,3 +23224,13 @@ cases over the fake's field limit), season, transfers, typecheck.
   and ivy still draw over the textured walls.
 - Fixes found on the way: a triangle terrace (a corner repeated) turned to the street could put the repeat on side 0 —
   the top's frame and normal were NaN (black): the top's normal from its diagonals, its frame from side 1 then.
+
+## No park or plaza plates under the generator (2026-11-11; the user: "Let's just make grass and plants and get rid of
+## the park and lot ground plates")
+
+- citygen's lotMesh, in mode 1 (the building generator on), no longer lays the flat plates over parks and plazas (they
+  were lifted 12–15 cm and cut into whatever stood on uneven ground); landmarks keep theirs, roads and junction paving
+  are unchanged. Gardens are planted on the land itself: shrubs in clumps round the edge, 1–6 trees through it, low
+  flowering beds, a fountain or a great tree in the middle.
+- The land under a park in town is bare soil (the town's claimed ground), not grass: grass there wants the terrain's
+  own cover or a tuft layer, not a plate.

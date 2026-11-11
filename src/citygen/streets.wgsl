@@ -1018,6 +1018,9 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     fieldMesh(i, o, q);
     return;
   }
+  // (archgen, mode 1: parks and plazas are the building generator's — gardens and markets on the land itself; the user:
+  // "get rid of the park and lot ground plates")
+  if (u.n.w == 1u && (kind == REC_PARK || kind == REC_PLAZA)) { return; }
   if (kind != REC_BUILDING) {
     let at = room(6u);
     if (at == NONE) { return; }
