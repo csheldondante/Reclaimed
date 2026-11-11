@@ -21,6 +21,9 @@ export interface FieldSample {
   /** the surface's room and region (0: no place) */
   room: number;
   region: number;
+  /** (U2 round 5c) the water on that surface as the peel last saw it (nav word w: agents.wgsl surfaceDepth) — what the
+   *  fields and the step's drowning read */
+  water: number;
 }
 
 /**
@@ -90,11 +93,11 @@ export class FieldReader {
   sample(x: number, y: number, z = 1e4): FieldSample | null {
     if (!this.readAt) return null;
     const [cx, cy] = cellAt(x, y);
-    const none: FieldSample = { dist: Infinity, dir: [0, 0], z: 0, room: 0, region: 0 };
+    const none: FieldSample = { dist: Infinity, dir: [0, 0], z: 0, room: 0, region: 0, water: 0 };
     if (cx < 0 || cy < 0 || cx >= this.w || cy >= this.h) return none;
     const s = this.surfaceAt(this.ring.idx(cx, cy), z + 0.5);
     if (s < 0) return none;
-    const at = { z: this.zOf(s), room: this.nav[s * 4 + 2] & 0xffff, region: this.nav[s * 4 + 2] >>> 16 };
+    const at = { z: this.zOf(s), room: this.nav[s * 4 + 2] & 0xffff, region: this.nav[s * 4 + 2] >>> 16, water: this.navF[s * 4 + 3] };
     const here = this.dist[s];
     if (here >= FAR) return { ...none, ...at };
     // the neighbours' drops, each toward its centre; the best step when that points nowhere useful

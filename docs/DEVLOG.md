@@ -22422,3 +22422,24 @@ it each frame over townplace.wgsl (binding 57):
     the unit's height (1.45) for 3 s. So the water rises round waders, or a crossing is deeper than its class says.
   - It's the walkers' water rules, not the orders'. Earlier I blamed this on window slides, which was wrong: the
     deaths happen with no slide too.
+
+## 2026-11-10 — U2 round 5c: the drowned soldiers were UC-6's flood; the close-up streaks were the window still streaming (trackB-u2r6)
+
+- **U2-DROWN is UC-6.**
+  - townorders.mjs now logs the water at each soldier every 2 s on the muster walk. It reads two depths: the live
+    water (the world's water buffer, read by the test) and the depth the peel gave the soldier's surface, which is what
+    the fields and the step's drowning read (FieldSample.water, new).
+  - On u2r6 alone, Muru floods: the live water at the soldiers reached 10.85, at the keep itself, with the peel seeing
+    11.31.
+  - Merged in a throwaway branch with trackA-uc6 (ba33c14d, Track A's fix for the river's blow-up), the muster gate
+    passed 3 runs of 3:
+    - 12/12 arrived in 58 s each run, and none drowned;
+    - the soldiers' way was dry the whole walk (live and peel max 0).
+  - The walkers' water rules are unchanged.
+  - The muster gate now has a water precondition: it fails "flooded" when the live water on the soldiers' way passes
+    DEEP (0.9), before the arrival check.
+- **The close-up streaks:** the shot was taken while the window was still streaming after the camera's jump.
+  - Each shot now waits until the streamer isn't busy and the land covers ≥ 0.98 of the screen (window plus baked
+    tiles) for 5 frames running, 10 s at most. Every shot reached it (cover 1, zoom 40).
+  - The spawn and walk close-ups show the soldiers clearly.
+  - At the muster yard most of the squad is hidden behind the buildings round it at 60°: one figure shows.

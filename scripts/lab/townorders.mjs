@@ -11,8 +11,8 @@
 //      4-deep chain throws
 // The gates run with the camera still (a look slides the window; the places are read again after one anyway). The
 // shots come after, at play zoom, 60°: a second squad at the barracks and on its way out, the first at the muster yard.
-// Known flake, not the orders': on the walk to the muster yard soldiers sometimes drown crossing Muru's river (deaths
-// by water, with the camera still; BACKLOG U2-DROWN) — the muster gate then fails with deaths listed in the result.
+// The walk to the muster yard depends on Muru's water holding (UC-6, fixed on trackA-uc6): flooded, the soldiers drown,
+// and the gate fails loudly with "flooded" (the live water along their way past DEEP) before the muster's own check.
 //   node scripts/lab.mjs run scripts/lab/townorders.mjs --flags "&labkeep=1" [--args '{"n":12}']
 export const recipe = 'gputown';
 export default async function (lab, args) {
@@ -55,14 +55,40 @@ export default async function (lab, args) {
   out.spawnSpread = +Math.max(...atB.map((u) => Math.hypot(u.at[0] - N.barracks.approach[0], u.at[1] - N.barracks.approach[1]))).toFixed(2);
 
   // 2. go to the keep, then the muster yard: arrived once each
-  const walk = async (place, limit) => {
+  // (the water along the walk, every 2 s at each soldier: the live water's depth there (the world's water buffer) and
+  // the depth the peel gave its surface (what the fields and the step's drowning read) — the test's reads)
+  const ROW_H = Math.sqrt(3) / 2;
+  const core = window.reclaimed.core;
+  const cellOf = (p) => { const y = Math.round(p[1] / ROW_H - 0.5); return [Math.round(p[0] - 0.5 - 0.5 * (y & 1)), y]; };
+  const waterLog = async (ids, rd, into) => {
+    const r = units.observe(ids);
+    await lab.run(0.1, 1, { renderEvery: 8 });
+    const live = await core.readBuffer('water');
+    const { w } = core.dims;
+    for (const i of ids) {
+      const p = units.get(i)?.at;
+      const u = units.get(i);
+      if (!p || !u?.alive) continue;
+      const [cx, cy] = cellOf(p);
+      const sm = rd?.sample(p[0], p[1], p[2] + 0.5);
+      const liveD = live[cy * w + cx] ?? 0;
+      into.maxLive = Math.max(into.maxLive ?? 0, liveD);
+      into.maxPeel = Math.max(into.maxPeel ?? 0, sm?.water ?? 0);
+      if (liveD > 0.6 || (sm?.water ?? 0) > 0.6) into.wet.push(`${u.id}@${p.map((v) => v.toFixed(0))} live ${liveD.toFixed(2)} peel ${(sm?.water ?? 0).toFixed(2)} z ${(sm?.z ?? 0).toFixed(1)}`);
+    }
+    r();
+  };
+  const walk = async (place, limit, log) => {
     arrived.length = 0;
     units.orderGroup(g, { kind: 'go', at: { town, place } });
+    const rd = log ? units.agents.reader(0).start(250) : null;
     let t = 0;
     while (!arrived.includes(g) && t < limit) {
       await lab.run(2, 16, { renderEvery: 8 });
       t += 2;
+      if (log) await waterLog(units.members(g), rd, log);
     }
+    rd?.stop();
     const after = t;
     // (and a while longer: told once, not again)
     await lab.run(6, 16, { renderEvery: 8 });
@@ -72,9 +98,12 @@ export default async function (lab, args) {
   await fresh();
   out.keep = { ...k, at: (await near(N.keep.at, 3 + 0.7 * Math.sqrt(n))).length };
   out.walk = +Math.hypot(N.keep.at[0] - N.muster.at[0], N.keep.at[1] - N.muster.at[1]).toFixed(1);
-  const m = await walk(PLACE.muster, 120);
+  const water = { wet: [] };
+  const m = await walk(PLACE.muster, 120, water);
   await fresh();
   out.muster = { ...m, at: (await near(N.muster.at, 3 + 0.7 * Math.sqrt(n))).length };
+  out.water = { maxLive: +(water.maxLive ?? 0).toFixed(2), maxPeel: +(water.maxPeel ?? 0).toFixed(2), wet: water.wet.slice(0, 12) };
+  out.musterDeaths = deaths.slice();
 
   // 3. invalid places: a town slot past the table's room (never live: no race with a town streaming in), a gate with none
   failed.length = 0;
@@ -136,10 +165,22 @@ export default async function (lab, args) {
     const cx = ps.reduce((a, p) => a + p[0], 0) / ps.length;
     const cy = ps.reduce((a, p) => a + p[1], 0) / ps.length;
     lab.look(cx, cy, close, 0.5);
-    await lab.run(0.3, 1, { renderEvery: 1 });
+    // (settled first: no slide under way (the streamer's busy) and the screen covered by land — the window's or baked
+    // tiles — 5 frames running, 10 s at most; what it reached is in the result)
+    const R = window.reclaimed;
+    let ok = 0;
+    let cover = null;
+    let busy = null;
+    for (let f = 0; f < 200 && ok < 5; f++) {
+      await lab.run(0.05, 1, { renderEvery: 1 });
+      busy = !!R.scene?.stream?.busy;
+      const c = R.renderer?.tiles?.coverage(R.camera) ?? null;
+      cover = c ? +(c.window + c.tiles).toFixed(3) : null;
+      ok = !busy && (cover === null || cover >= 0.98) ? ok + 1 : 0;
+    }
     await new Promise((res) => setTimeout(res, 300));
     await lab.shot(name);
-    return `${name}: ${ps.length} round ${cx.toFixed(0)},${cy.toFixed(0)}`;
+    return `${name}: ${ps.length} round ${cx.toFixed(0)},${cy.toFixed(0)}; settled ${ok >= 5}, busy ${busy}, cover ${cover}, zoom ${R.camera.zoom.toFixed(1)}`;
   };
   const s2 = units.spawnAt('soldier', 'f-muru-guard', { town, place: PLACE.barracks }, n);
   await lab.run(0.6, 4, { renderEvery: 4 });
@@ -152,6 +193,11 @@ export default async function (lab, args) {
   const fail = (msg) => { throw new Error(`${msg} — ${JSON.stringify(out)}`); };
   if (out.spawned !== n || out.atBarracks !== n) fail(`spawnAt barracks: ${out.atBarracks} of ${n} at its approach`);
   if (out.keep.told !== 1 || out.keep.at < n) fail(`the keep: arrived told ${out.keep.told} times, ${out.keep.at} of ${n} there`);
+  // (the walk's precondition: no live water on the soldiers' way deeper than DEEP (0.9) — deeper than a walker is ever led
+  // into, the class the peel gave the path when the field was made. Fortress's UC-6 blow-up floods Muru (its river
+  // spreads over the town, columns very deep) and drowns any squad: that's the water's, not the orders' — fixed on
+  // trackA-uc6, where this walk crossed dry 3 runs of 3)
+  if (out.water.maxLive > 0.9) fail(`flooded: the live water on the soldiers' way reached ${out.water.maxLive} (the peel saw ${out.water.maxPeel}; DEEP 0.9) — UC-6, trackA-uc6's fix`);
   if (out.muster.told !== 1 || out.muster.at < n) fail(`the muster: arrived told ${out.muster.told} times, ${out.muster.at} of ${n} there`);
   if (!out.failed.includes('spawn:no-town') || out.badMade !== 0) fail('a spawn in no town: no orderFailed no-town, or units made');
   if (noGate && !out.failed.includes('order:none')) fail(`an order to ${noGate[0]} (no gate): no orderFailed none`);
