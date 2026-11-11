@@ -546,9 +546,9 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
   };
   const losPhases = async (n: number, list: Phase[]) => {
     const archers = Math.min(n, Number(params.get('ranged') ?? Math.round(n / 5)));
-    list.push(await phase(n, 'los', 'line of sight', 'block16 alone', los, restDefault));
+    list.push(await phase(n, 'los', 'line of sight', 'the fields alone', los, restDefault));
     list.push(await phase(n, 'seenonly', 'line of sight + seen-only', 'line of sight', seen, restDefault));
-    list.push(await phase(n, 'los+archers', `line of sight, ${archers} archers`, `block16 alone, ${archers} archers`, los, restDefault, archers));
+    list.push(await phase(n, 'los+archers', `line of sight, ${archers} archers`, `the fields alone, ${archers} archers`, los, restDefault, archers));
     list.push(await phase(n, 'seenonly+archers', `line of sight + seen-only, ${archers} archers`, `line of sight, ${archers} archers`, seen, restDefault, archers));
   };
   let instances: number | null = null;
