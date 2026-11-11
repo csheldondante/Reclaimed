@@ -43,7 +43,8 @@ fn vsBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   o.wpos = wp;
   o.nrm = quatRotate(q, n);
   o.info = vec2<u32>(a.w, 0u);
-  o.tint = 0.0;
+  // (no reveal time: fsBody's CG25 clip and dirt pass it by)
+  o.tint = REV_NONE;
   o.zr = vec2<f32>(wp.z - 0.5 * s, wp.z + 0.5 * s);
   o.bmin = c;
   o.bsize = vec3<f32>(s);
@@ -57,6 +58,15 @@ fn vsBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
 // triangle's normal. Lit and shaded like a body's voxel (fsBody), flat per
 // triangle: lo-fi on purpose. (citygen M4a) Placed by its source's MESH_XF: a town's grid moved with the window.
 @group(0) @binding(28) var<uniform> MESH_XF: vec4<f32>;
+// (citygen CG25, roads grow in with their lots) A vertex's second word's w: bits 0–7 its surface (1 a colour word; the
+// town mesh's ground kinds — archgen 3 dirt, 4 cobbles, 5 grass), bits 8–31 a reveal code — 0 none, c the clock time
+// (c − 1) / REV_RES s at which the growth reaches it (citygen/streets.wgsl ribbon, revCode: REV_RES mirrored). The
+// time is interpolated along the triangle in VOut.tint; fsBody clips ahead of the mesh's clock, MESH_XF.w (a town's:
+// its clock, citygen/town.ts), and lays the first REV_DIRT_S of it as dirt.
+const REV_RES: f32 = 16.0;
+const REV_NONE: f32 = -3e30;
+const REV_DIRT_S: f32 = 1.2;
+const REV_DIRT: vec3<f32> = vec3<f32>(0.47, 0.38, 0.27);
 @vertex
 fn vsSkin(@builtin(vertex_index) vi: u32) -> VOut {
   var o: VOut;
@@ -67,8 +77,9 @@ fn vsSkin(@builtin(vertex_index) vi: u32) -> VOut {
   o.wpos = wp;
   o.nrm = bitcast<vec3<f32>>(nb.xyz);
   // (round 117, inhabitants: nb.w 1 — the word is a colour 0xrrggbb, not a material; fsBody reads info.y)
-  o.info = vec2<u32>(a.w, nb.w);
-  o.tint = 0.0;
+  o.info = vec2<u32>(a.w, nb.w & 0xffu);
+  let rc = nb.w >> 8u;
+  o.tint = select(REV_NONE, f32(rc - 1u) / REV_RES, rc != 0u);
   o.zr = vec2<f32>(wp.z - 0.5, wp.z + 0.5);
   o.bmin = wp;
   o.bsize = vec3<f32>(1.0);
@@ -101,13 +112,17 @@ fn drapeTop(p: vec3<f32>) -> f32 {
 fn fsBody(in: VOut) -> FOut {
   let word = in.info.x;
   let mat = word & 0xffu;
+  // (CG25: a town road growing in — nothing ahead of the growth: its time here, vsSkin's tint, past the town's clock)
+  let revAge = MESH_XF.w - in.tint;
+  if (revAge < 0.0) { discard; }
   // a little per-voxel variation so a tumbling slab doesn't read as one block
   // (a physics voxel, bit 30, carries its own speckle: it bends and moves)
   let physV = ((word >> 30u) & 1u) != 0u;
   let r = select(randv(vec3<i32>(floor(in.bmin * 3.0))), f32((word >> 8u) & 0xffu) / 255.0, physV);
   var alb = toLinear(MATS[mat].albedo.rgb) * (0.88 + 0.24 * r);
   // (round 117, inhabitants.wgsl meshIt: a creature's vertex carries its own colour — vsSkin's info.y 1)
-  if (in.info.y == 1u) { alb = toLinear(vec3<f32>(f32((word >> 16u) & 255u), f32((word >> 8u) & 255u), f32(word & 255u)) / 255.0) * (0.94 + 0.12 * r); }
+  // (CG25: vsSkin passes only the surface byte; masked here too, so a reader never compares the whole word)
+  if ((in.info.y & 0xffu) == 1u) { alb = toLinear(vec3<f32>(f32((word >> 16u) & 255u), f32((word >> 8u) & 255u), f32(word & 255u)) / 255.0) * (0.94 + 0.12 * r); }
   let nrm = normalize(in.nrm);
   // a structure grid's voxel (structprep.wgsl): the growth it owns on its
   // faces, and the nature grid's sand drawn over it where it's buried
@@ -131,6 +146,8 @@ fn fsBody(in: VOut) -> FOut {
     // snow or dust on its up faces (round 52)
     alb = coverLook(alb, nrm, in.wpos, in.zr.y, f32((word >> 16u) & 31u) / 31.0, ((word >> 21u) & 1u) != 0u, sub);
   }
+  // (CG25: laid as dirt first, the road's own surface coming through after REV_DIRT_S)
+  if (in.tint > -1e29) { alb = mix(toLinear(REV_DIRT), alb, smoothstep(0.4 * REV_DIRT_S, REV_DIRT_S, revAge)); }
   var col = alb * lighting(in.wpos, nrm);
   if (physV) {
     // heat (bits 16..23, a share of its melting point): dull red, orange, then white

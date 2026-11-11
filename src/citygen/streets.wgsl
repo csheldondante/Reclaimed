@@ -639,8 +639,19 @@ const TG_ROAD: u32 = 3u;
 const TG_LOT: u32 = 4u;
 const OUTLINE_BIT: u32 = 8u;
 var<private> curTag: u32 = 0u;
-/** (time-lapse) whether the road piece being drawn marks its columns for the claims (its district started) */
+/** (time-lapse) whether the road piece being drawn marks its columns for the claims (its reveal begun — CG25) */
 var<private> roadLive: bool = true;
+/**
+ * (CG25, roads grow in with their lots) The road piece being drawn: the town's clock time its end a, and its end b,
+ * are reached as the road grows in (REV_UNGATED: always shown, untagged). ribbon writes them into its vertices' word 7
+ * over the surface byte — the vertex layout, mirrored in render/bodies.wgsl vsSkin:
+ *   word 7, bits 0–7   the surface (1 a flat colour; archgen's 3 dirt, 4 cobbles, 5 grass) — vert writes it
+ *   word 7, bits 8–31  the reveal code: 0 ungated; c > 0 the point is reached at (c − 1) / REV_RES s of the town's clock
+ * vsSkin interpolates the time along the triangle (VOut.tint) and fsBody discards a fragment ahead of the clock (the
+ * town's clock in its place's w: MESH_XF.w), laying it as dirt for its first REV_DIRT_S there.
+ */
+var<private> revA: f32 = REV_UNGATED;
+var<private> revB: f32 = REV_UNGATED;
 fn vert(at: u32, p: vec3<f32>, col: u32, n: vec3<f32>) {
   let o = at * 8u;
   w5[at * 2u] = curTag;
@@ -706,6 +717,16 @@ fn ribbon(at: u32, a: vec2<f32>, b: vec2<f32>, hw0: f32, col0: u32) {
   let p3 = vec3<f32>(a + s, hAt(a + s) + lift);
   tri(at, p0, p1, p2, col);
   tri(at + 3u, p0, p2, p3, col);
+  // (CG25: each vertex's reveal time over the surface byte — the vertices at a, b, b, a, b, a)
+  let ca = revCode(revA);
+  let cb = revCode(revB);
+  if (ca != 0u || cb != 0u) {
+    let c6 = array<u32, 6>(ca, cb, cb, ca, cb, ca);
+    for (var j = 0u; j < 6u; j++) {
+      let o = (at + j) * 8u + 7u;
+      w7[o] = (w7[o] & 0xffu) | (c6[j] << 8u);
+    }
+  }
 }
 const C_MAJOR_W: u32 = 0xfbf7eeu;
 const C_MINOR_W: u32 = 0xeee8dau;
@@ -764,11 +785,8 @@ fn roadMajor(@builtin(global_invocation_id) g: vec3<u32>) {
     }
     let at = room(6u);
     if (at == NONE) { return; }
-    // (time-lapse: shown when the first district beside it starts)
-    if (u.h2.z > 0.5) {
-      let side = normalize(gr) * 0.35 * u.a.x;
-      skelB2(p, cityB2(p + side), cityB2(p - side));
-    }
+    // (time-lapse, CG25: shown once lots front it or it links two districts begun — mainRev — grown in ahead of them)
+    if (u.h2.z > 0.5) { revMain(a, b, normalize(gr) * 0.35 * u.a.x, false); }
     ribbon(at, a, b, u.b.x * 0.5, select(cMajor(), cSteep(), steep(a, b)));
   }
 }
@@ -1478,11 +1496,10 @@ fn vroad(@builtin(global_invocation_id) g: vec3<u32>) {
   if (at == NONE) { return; }
   let d = normalize(b - a) * 0.3;
   if (u.h2.z > 0.5) {
-    let mid = 0.5 * (a + b);
     let side = normalize(vec2<f32>(a.y - b.y, b.x - a.x)) * 0.5 * u.a.w;
-    // (an arterial is the skeleton's: shown with the main roads; a minor street with its district, or ahead with u.sk.z)
-    if (hsh(id * 31u + 5u) < 0.33 || u.sk.z > 0.5) { skelB4(mid, cityB4(mid + side), cityB4(mid - side)); }
-    else { roadOf(cityB4(mid + side), cityB4(mid - side)); }
+    // (an arterial is the skeleton's: shown with the main roads; a minor street with its lots (CG25), or ahead with u.sk.z)
+    if (hsh(id * 31u + 5u) < 0.33 || u.sk.z > 0.5) { revMain(a, b, side, true); }
+    else { revStreet(s, e, a, b, true); }
   }
   ribbon(at, a - d, b + d, u.b.y * 0.5, select(cMinor(), cSteep(), steep(a, b)));
 }
@@ -2200,7 +2217,11 @@ fn groad(@builtin(global_invocation_id) g: vec3<u32>) {
   if (blockedAt(0.5 * (a + b)) || !inTown(0.5 * (a + b)) || !shownCity(cityB2(0.5 * (a + b)))) { return; }
   let at = room(6u);
   if (at == NONE) { return; }
-  if (u.h2.z > 0.5) { let c = cityB2(0.5 * (a + b)); roadOf(c, c); }
+  if (u.h2.z > 0.5) {
+    // (CG25: with its lots, grown in from its end on a road shown first; ahead with u.sk.z, as a main road)
+    if (u.sk.z > 0.5) { revMain(a, b, vec2<f32>(s.y - e.y, e.x - s.x) * (0.5 * u.a.w / max(distance(s, e), 1e-3)), false); }
+    else { revStreet(s, e, a, b, false); }
+  }
   ribbon(at, a, b, u.b.y * 0.5, cMinor());
 }
 
@@ -2525,47 +2546,178 @@ fn sctab(@builtin(local_invocation_index) li: u32) {
   }
 }
 struct City { state: u32, t: f32, id: u32, dens: f32, purpose: u32, start: f32 }
+
+// ==== CG25: roads grow in with their lots ========================================================================
+// (the user, 2026-11-11: "the roads where there are no houses look too dense … hide them until there are houses that
+// border them or districts they connect"; "use a shader to fill in the road ahead of the direct work") Each lot's start
+// — the town's clock time its progress first passes 0 (LSTART, tlProgress) — is stamped along its parcel's edges into
+// the front field (FRONT: the road raster's tail, a word a column, an ordered f32 under atomicMin — frontStamp). A
+// parcel's edges lie on its streets' centre lines, so a street reads its fronting lots' earliest start along itself.
+// A minor street shows from that start; a main road (a major line, an arterial cross street) from then too, or once it
+// links two districts begun (u.sk.x 3, the default). Each grows in over ROAD_LEAD_K of a build, done as its first lot
+// starts rising: its vertices carry the clock time the growth reaches them (ribbon; render/bodies.wgsl clips by it).
+/** a road grows in over this × a lot's build time (u.tl.y), done as the lot that shows it starts rising */
+const ROAD_LEAD_K: f32 = 0.4;
+/** the reveal code's steps a second of the town's clock (render/bodies.wgsl vsSkin REV_RES mirrors it) */
+const REV_RES: f32 = 16.0;
+/** an ungated road: always shown, untagged (code 0) — and a road there from the start (BUILT_AT) */
+const REV_UNGATED: f32 = -3e30;
+const FRONT_NONE: u32 = 0xffffffffu;
+/** the clock time t as the vertex's reveal code (bits 8–31 of word 7): 0 ungated, else 1 + t × REV_RES, the most never */
+fn revCode(t: f32) -> u32 {
+  if (t < -1e29) { return 0u; }
+  return u32(clamp(floor(t * REV_RES) + 1.0, 1.0, 16777215.0));
+}
+fn revTime(c: u32) -> f32 { return f32(c - 1u) / REV_RES; }
+/** an f32 as a u32 that orders as it does (atomicMin on it is the f32 min) */
+fn ordF(t: f32) -> u32 { let b = bitcast<u32>(t); return select(b | 0x80000000u, ~b, (b & 0x80000000u) != 0u); }
+fn unordF(k: u32) -> f32 { return bitcast<f32>(select(~k, k & 0x7fffffffu, (k & 0x80000000u) != 0u)); }
+/** the earliest start of the lots whose parcels touch p (NOT_YET none): the front field, w6's tail past the raster */
+fn frontAt(p: vec2<f32>) -> f32 {
+  if (!inb(p)) { return NOT_YET; }
+  let k = atomicLoad(&w6[u32(W() * H()) + ixp(p)]);
+  return select(unordF(k), NOT_YET, k == FRONT_NONE);
+}
+/** the supercells' table at b4 (t4) or b2 */
+fn cityT(p: vec2<f32>, t4: bool) -> City { if (t4) { return cityB4(p); } return cityB2(p); }
+fn scSeedT(id: u32, t4: bool) -> vec2<f32> {
+  let o = SC_HEAD + id * SCW;
+  if (t4) { return vec2<f32>(r4(o), r4(o + 1u)); }
+  return vec2<f32>(r2(o), r2(o + 1u));
+}
+fn scSizeT(t4: bool) -> f32 { if (t4) { return r4(2u); } return r2(2u); }
+/** a district's start, for a main road beside it to link: its start; an empty one's (no lots, only its main roads) the
+ *  second earliest start of the districts round p at the margin (u.sk.y) — the road across it links two; outside never */
+fn linkStart(c: City, p: vec2<f32>, t4: bool) -> f32 {
+  if (c.state == 2u) { return c.start; }
+  if (c.state != 1u) { return NOT_YET; }
+  let m = max(u.sk.y, 1.0);
+  var e1 = NOT_YET;
+  var e2 = NOT_YET;
+  var i1 = NONE;
+  for (var k = 0u; k < 8u; k++) {
+    let an = f32(k) * 0.7853982;
+    let o = cityT(p + vec2<f32>(cos(an), sin(an)) * m, t4);
+    if (o.state != 2u || o.id == i1) { continue; }
+    if (o.start < e1) { e2 = e1; e1 = o.start; i1 = o.id; } else if (o.start < e2) { e2 = o.start; }
+  }
+  return e2;
+}
 /**
- * (the street skeleton: the user, "having only main roads near districts in progress works") A main road — a major
- * line, an arterial cross street — shows and is a route from the time the earliest district near it starts: the two
- * beside it and, by the skeleton's reach (u.sk.x: 0 core only, 1 begun + a margin, 2 everywhere), those within the margin
- * (u.sk.y m, eight points round it). Everywhere: untagged, always shown and live. So the main roads join districts
- * begun to each other before their minor streets and buildings come. (b2 or b4 the supercells' table: one each)
+ * (the street skeleton) When a main road at p (its sides p ± side) shows, by the skeleton's reach u.sk.x:
+ *   0 its earliest district's start (the old 'with their districts'); 1 that or any within the margin u.sk.y round it
+ *   (the old 'begun + a margin'); 2 everywhere (ungated); 3 (CG25, the default) once lots front it, or it links two
+ *   districts begun — the two beside it both begun (the core's are, from the start), or the districts round an empty
+ *   one it crosses. A main road beside one district begun with nothing begun past it waits for its own lots.
  */
-fn skelB2(p: vec2<f32>, c1: City, c2: City) {
-  if (u.sk.x > 1.5) { curTag = 0u; roadLive = true; return; }
-  var c = c2;
-  if (c1.start <= c2.start) { c = c1; }
+fn mainRev(p: vec2<f32>, side: vec2<f32>, t4: bool) -> f32 {
+  let r = u.sk.x;
+  if (r > 1.5 && r < 2.5) { return REV_UNGATED; }
+  let c1 = cityT(p + side, t4);
+  let c2 = cityT(p - side, t4);
+  if (r < 1.5) {
+    var s = min(c1.start, c2.start);
+    if (r > 0.5 && u.sk.y > 0.0) {
+      for (var k = 0u; k < 8u; k++) {
+        let an = f32(k) * 0.7853982;
+        s = min(s, cityT(p + vec2<f32>(cos(an), sin(an)) * u.sk.y, t4).start);
+      }
+    }
+    return s;
+  }
+  var t = frontAt(p);
+  if (c1.id != c2.id || c1.state == 1u) { t = min(t, max(linkStart(c1, p, t4), linkStart(c2, p, t4))); }
+  return t;
+}
+/** the piece's reveal at its ends (ribbon writes them), its time-lapse tag (tlRise sinks it till it begins: the
+ *  shadows) and whether it's marked for the claims (its reveal begun) */
+fn revSet(ta: f32, tb: f32) {
+  revA = ta;
+  revB = tb;
+  let c = revCode(min(ta, tb));
+  curTag = select(0u, TG_ROAD | (c << 8u), c != 0u);
+  roadLive = min(ta, tb) <= u.tl.x;
+}
+/** a main road's piece a → b (sides ± side): shown from mainRev, grown in outward from the town's centre across a
+ *  supercell over the lead — its outer end reached last, at that time */
+fn revMain(a: vec2<f32>, b: vec2<f32>, side: vec2<f32>, t4: bool) {
+  let m = 0.5 * (a + b);
+  let t = mainRev(m, side, t4);
+  let c1 = cityT(m + side, t4);
+  let c2 = cityT(m - side, t4);
+  // (farms: a dirt track, not a street, when the earliest district beside it or within the margin is a farm district —
+  // the skeleton's rule from before CG25, kept as it was: only when the road shows changed here)
+  var ce = c2;
+  if (c1.start <= c2.start) { ce = c1; }
   if (u.sk.x > 0.5 && u.sk.y > 0.0) {
     for (var k = 0u; k < 8u; k++) {
-      let a = f32(k) * 0.7853982;
-      let o = cityB2(p + vec2<f32>(cos(a), sin(a)) * u.sk.y);
-      if (o.start < c.start) { c = o; }
+      let an = f32(k) * 0.7853982;
+      let o = cityT(m + vec2<f32>(cos(an), sin(an)) * u.sk.y, t4);
+      if (o.start < ce.start) { ce = o; }
     }
   }
-  roadOf(c, c);
+  // (everywhere — reach 2 — never a track, as before)
+  roadTrack = ce.purpose == P_FARMS && !(u.sk.x > 1.5 && u.sk.x < 2.5);
+  if (t < -1e29) { revSet(REV_UNGATED, REV_UNGATED); return; }
+  let S = max(scSizeT(t4), 1.0);
+  let r0 = min(distance(scSeedT(c1.id, t4), u.d.xy), distance(scSeedT(c2.id, t4), u.d.xy)) - 0.5 * S;
+  let lead = ROAD_LEAD_K * u.tl.y;
+  let ga = clamp((distance(a, u.d.xy) - r0) / S, 0.0, 1.0);
+  let gb = clamp((distance(b, u.d.xy) - r0) / S, 0.0, 1.0);
+  revSet(t - lead * (1.0 - ga), t - lead * (1.0 - gb));
 }
-fn skelB4(p: vec2<f32>, c1: City, c2: City) {
-  if (u.sk.x > 1.5) { curTag = 0u; roadLive = true; return; }
-  var c = c2;
-  if (c1.start <= c2.start) { c = c1; }
-  if (u.sk.x > 0.5 && u.sk.y > 0.0) {
-    for (var k = 0u; k < 8u; k++) {
-      let a = f32(k) * 0.7853982;
-      let o = cityB4(p + vec2<f32>(cos(a), sin(a)) * u.sk.y);
-      if (o.start < c.start) { c = o; }
+/** a minor street s → e (its piece a → b being drawn): shown from its fronting lots' earliest start (the front field at
+ *  seven points along it), grown in over the lead from the end whose own road shows first (a tie: the one nearer the
+ *  centre) toward the far end — all of it there as that lot starts rising */
+fn revStreet(s: vec2<f32>, e: vec2<f32>, a: vec2<f32>, b: vec2<f32>, t4: bool) {
+  let L = max(distance(s, e), 1e-3);
+  let d = (e - s) / L;
+  var t = NOT_YET;
+  for (var j = 1u; j < 8u; j++) { t = min(t, frontAt(mix(s, e, f32(j) / 8.0))); }
+  let n = vec2<f32>(-d.y, d.x) * 0.5 * u.a.w;
+  let mid = 0.5 * (a + b);
+  roadTrack = cityT(mid + n, t4).purpose == P_FARMS && cityT(mid - n, t4).purpose == P_FARMS;
+  if (t < -1e29) { revSet(REV_UNGATED, REV_UNGATED); return; }
+  let off = d * 0.5 * u.a.w;
+  let ts = mainRev(s, off, t4);
+  let te = mainRev(e, off, t4);
+  let fromS = ts < te || (ts == te && distance(s, u.d.xy) <= distance(e, u.d.xy));
+  let lead = ROAD_LEAD_K * u.tl.y;
+  let sa = clamp(dot(a - s, d) / L, 0.0, 1.0);
+  let sb = clamp(dot(b - s, d) / L, 0.0, 1.0);
+  revSet(t - lead * (1.0 - select(1.0 - sa, sa, fromS)), t - lead * (1.0 - select(1.0 - sb, sb, fromS)));
+}
+/** a parcel's edge is stamped this many half cells either side: a gap block's lots (streets.wgsl gleaf) stand clear of
+ *  their street, so their edges lie a few cells off its centre line (Muru, all 209 lots begun: ±0.7 left 8 more begun lots
+ *  with no live road at their frontage than before CG25, ±2 left 2, ±3 none) */
+const FRONT_STEPS: i32 = 6;
+/** one thread a lot record: its start (r2 LSTART) stamped along its parcel's edges into the front field — the columns
+ *  within 3 of each edge (b1 the records, b3 the counts — CNT; w6 the road raster, FRONT its tail) */
+@compute @workgroup_size(64)
+fn frontStamp(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= min(b3[0], REC_LM)) { return; }
+  let o = i * RECW;
+  if (b1[o + 17u] == REC_NONE) { return; }
+  let t = r2(i);
+  if (t >= 1e29) { return; }
+  let key = ordF(t);
+  let base = u32(W() * H());
+  for (var k = 0u; k < 4u; k++) {
+    let a = vec2<f32>(r1(o + k * 2u), r1(o + k * 2u + 1u));
+    let b = vec2<f32>(r1(o + ((k + 1u) % 4u) * 2u), r1(o + ((k + 1u) % 4u) * 2u + 1u));
+    let L = distance(a, b);
+    if (L < 1e-3) { continue; }
+    let nv = vec2<f32>(a.y - b.y, b.x - a.x) / L;
+    let ns = u32(ceil(L / 0.5));
+    for (var j = 0u; j <= ns; j++) {
+      let p = mix(a, b, f32(j) / f32(ns));
+      for (var q = -FRONT_STEPS; q <= FRONT_STEPS; q++) {
+        let pq = p + nv * (0.5 * f32(q));
+        if (inb(pq)) { atomicMin(&w6[base + ixp(pq)], key); }
+      }
     }
   }
-  roadOf(c, c);
-}
-/** (time-lapse) a road between two districts: tagged with the one that starts first; marked for the claims once it has */
-fn roadOf(c1: City, c2: City) {
-  var c = c2;
-  if (c1.start <= c2.start) { c = c1; }
-  curTag = TG_ROAD | ((c.id + 1u) << 8u);
-  roadLive = c.start <= u.tl.x;
-  // (farms: between two farm districts — or on through one — a dirt track, not a street)
-  roadTrack = c1.purpose == P_FARMS && c2.purpose == P_FARMS;
 }
 /** a point's supercell — its state, its growth key, its id (the table at b4) */
 fn cityB4(p: vec2<f32>) -> City {
@@ -3354,14 +3506,15 @@ const STAGGER: f32 = 0.5;
 /** one thread a record: its progress now (b1 the records, r2 the district stages — STG: on, from, to, when a
  *  district; b4 SCT, w6 the counts; w5 PROG). A staged district (the season loop's) is built as far as its stage:
  *  its build time eased from `from` × the span to `to` × the span over a span of the clock from `when`; the rest run
- *  on their start alone. */
+ *  on their start alone. (CG25) Its start too — the clock time its progress first passes 0, BUILT_AT a lot there from
+ *  the outset, NOT_YET none set — to w7 (LSTART: frontStamp stamps it round the parcel for its streets). */
 @compute @workgroup_size(64)
 fn tlProgress(@builtin(global_invocation_id) g: vec3<u32>) {
   let i = g.x;
   if (i >= REC_LM + LM_ROOM) { return; }
   if (i < REC_LM && i >= min(atomicLoad(&w6[0]), REC_LM)) { return; }
   let o = i * RECW;
-  if (b1[o + 17u] == REC_NONE) { set5(i, 0.0); return; }
+  if (b1[o + 17u] == REC_NONE) { set5(i, 0.0); set7(i, NOT_YET); return; }
   var start = BUILT_AT;
   let did = b1[o + 18u] & 0xffffffu;
   if (u.h2.z > 0.5) { start = r4(SC_HEAD + did * SCW + 8u); }
@@ -3388,12 +3541,27 @@ fn tlProgress(@builtin(global_invocation_id) g: vec3<u32>) {
       let f = (S - a) / max(b - a, 1e-4);
       let w = clamp((key - a) / max(b - a, 1e-4), 0.0, 1.0);
       set5(i, clamp(f * (1.0 + STAGGER) - STAGGER * w, 0.0, 1.0));
+      // (CG25: its start — when S passes the stage it begins at, the ease inverted: k = ½ − sin(asin(1 − 2y) / 3))
+      let sx = a + (b - a) * STAGGER * w / (1.0 + STAGGER);
+      let s0 = r2(q + 2u);
+      let s1 = r2(q + 3u);
+      let when = r2(q + 4u);
+      var st = NOT_YET;
+      if (s0 >= sx) { st = when - span; }
+      else if (s1 > sx) {
+        let y = clamp((sx - s0) / (s1 - s0), 0.0, 1.0);
+        st = when + span * (0.5 - sin(asin(1.0 - 2.0 * y) / 3.0));
+      }
+      set7(i, st);
       return;
     }
     set5(i, select(0.0, 1.0, key < r2(sg + 1u)));
+    set7(i, select(NOT_YET, BUILT_AT, key < r2(sg + 1u)));
     return;
   }
   set5(i, clamp((u.tl.x - start - delay) / max(u.tl.y, 1e-3), 0.0, 1.0));
+  // (CG25: its start — the clock time its progress first passes 0; NOT_YET while its district's isn't set)
+  set7(i, select(start + delay, NOT_YET, start >= 1e29));
 }
 /** (season loop) each record's key in its district's growth order: its rank by distance from the district's centre
  *  (ties by index) over the district's records, (rank + ½) / n — so a card's share [a, b] of the district is that
@@ -3463,7 +3631,9 @@ fn tlRise(@builtin(global_invocation_id) g: vec3<u32>) {
     if (r2(id) <= 0.0) { z = z0 - 1000.0; }
     w7[v * 8u + 3u] = riseColour(v, id, false);
   } else if (kind == TG_ROAD) {
-    if (u.h2.z > 0.5 && r4(SC_HEAD + id * SCW + 8u) > u.tl.x) { z = z0 - 1000.0; }
+    // (CG25: the tag's high bits its piece's reveal code — sunk till its growth begins, so it casts no shadow; the
+    // fragments ahead of the growth are clipped by the draw — render/bodies.wgsl fsBody)
+    if (revTime(tag >> 8u) > u.tl.x) { z = z0 - 1000.0; }
   } else if (kind == TG_LOT) {
     if (r2(id) <= 0.0) { z = z0 - 1000.0; }
   } else if (kind == TG_WALL) {
