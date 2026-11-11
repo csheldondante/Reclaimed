@@ -22,13 +22,29 @@ import { STYLES, STYLE_VEC4S, styleWords, type Style } from './styles';
 
 /** mirrors arch.wgsl */
 export const PART_WORDS = 16;
-export const PARTS_PER_LOT = 24;
-export const KIND = { body: 1, roof: 2, cren: 3 } as const;
-export const NK = 4;
-/** vertices a kind's instance (draw.wgsl vsArchBody, vsArchRoof, vsArchCren: 4 edges × (a wall + 8 merlons) × a box) */
-const VERTS: Record<number, number> = { [KIND.body]: 30, [KIND.roof]: 24, [KIND.cren]: 4 * 9 * 30 };
+export const PARTS_PER_LOT = 96;
+export const KIND = { body: 1, roof: 2, cren: 3, win: 4, cyl: 5, cone: 6, stair: 7 } as const;
+export const NK = 8;
+/** vertices a kind's instance (draw.wgsl: the kinds' vertex stages; COURSES 12, ROUND_N 16, CONE_ROWS 10) */
+const VERTS: Record<number, number> = {
+  [KIND.body]: 30,
+  [KIND.roof]: 4 * 12 * 12 + 6,
+  [KIND.cren]: 4 * 9 * 30,
+  [KIND.win]: 11 * 30,
+  [KIND.cyl]: 16 * 6 + 16 * 3,
+  [KIND.cone]: 16 * 10 * 12 + 16 * 3,
+  [KIND.stair]: 16 * 30,
+};
 /** each kind and its vertex stage (draw.wgsl) */
-export const ARCH_DRAWS = [[KIND.body, 'vsArchBody'], [KIND.roof, 'vsArchRoof'], [KIND.cren, 'vsArchCren']] as const;
+export const ARCH_DRAWS = [
+  [KIND.body, 'vsArchBody'],
+  [KIND.roof, 'vsArchRoof'],
+  [KIND.cren, 'vsArchCren'],
+  [KIND.win, 'vsArchWin'],
+  [KIND.cyl, 'vsArchCyl'],
+  [KIND.cone, 'vsArchCone'],
+  [KIND.stair, 'vsArchStair'],
+] as const;
 const STYLE_ROOM = 64;
 
 const GEN_MARK = '// ---- generation';

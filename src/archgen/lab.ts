@@ -37,7 +37,8 @@ async function main() {
   const samples = num('msaa', 1) ? 4 : 1;
 
   // the lots, as citygen lays them out: records then counts [lots, landmarks, words, lot room]
-  const lots = new Uint32Array((lotsMuru as { lots: number[] }).lots);
+  const hero = q.has('hero');
+  const lots = hero ? heroStreet(Number(q.get('hero')) || 1) : new Uint32Array((lotsMuru as { lots: number[] }).lots);
   const n = lots.length / 24;
   const rec = device.createBuffer({ label: 'lab lot records', size: lots.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(rec, 0, lots);
@@ -75,7 +76,7 @@ async function main() {
   remake();
 
   // the camera: orthographic, yaw about z, pitch above the ground plane
-  const cam = { yaw: num('yaw', 35), pitch: num('pitch', 60), zoom: num('zoom', 90), x: cx, y: cy, z: zmin + 4 };
+  const cam = { yaw: num('yaw', hero ? -62 : 35), pitch: num('pitch', 60), zoom: num('zoom', hero ? 34 : 90), x: cx, y: cy + (hero ? 4 : 0), z: zmin + 4 };
   if (q.has('at')) {
     const [ax, ay] = q.get('at')!.split(',').map(Number);
     cam.x = ax;
@@ -125,7 +126,8 @@ async function main() {
   const frame = () => {
     resize();
     const { m, fw, upp } = viewProj(canvas.width, canvas.height);
-    const sy = ((cam.yaw + 120) * Math.PI) / 180;
+    // (the sun from the camera's side, off to its left: the street faces lit, the sides in soft shade)
+    const sy = ((cam.yaw - 55) * Math.PI) / 180;
     const sun = norm([Math.cos(sy) * 0.55, Math.sin(sy) * 0.55, 0.75]);
     gen.setView(m, [...sun, 1.15 * (1 - look.night * 0.85)], [...fw, upp], (performance.now() - t0) / 1000, look.night, look.detail);
     const e = device.createCommandEncoder();
@@ -242,6 +244,50 @@ async function main() {
     bench,
     centre: [cx, cy],
   };
+}
+
+/** (?hero=seed) a short street of irregular lots, like citygen's, to judge a few houses close up: lot records with
+ *  their frontage (edge 0) on the street at y 0, their backs ragged */
+function heroStreet(seed: number): Uint32Array {
+  const widths = [13, 9.5, 11, 16, 10];
+  const depths = [16, 14, 17, 18, 15];
+  const storeys = [2, 2, 3, 2, 1];
+  const n = widths.length;
+  const u = new Uint32Array(n * 24);
+  const f = new Float32Array(u.buffer);
+  let x = 0;
+  const rnd = (k: number) => {
+    const s = Math.sin(seed * 12.9898 + k * 78.233) * 43758.5453;
+    return s - Math.floor(s);
+  };
+  for (let i = 0; i < n; i++) {
+    const w = widths[i];
+    const d = depths[i];
+    // (the street's edge a little off straight, the back ragged: an irregular lot)
+    const q = [
+      [x, (rnd(i * 4) - 0.5) * 0.8],
+      [x + w, (rnd(i * 4 + 1) - 0.5) * 0.8],
+      [x + w + (rnd(i * 4 + 2) - 0.5) * 3, d + (rnd(i * 4 + 3) - 0.5) * 3],
+      [x + (rnd(i * 4 + 5) - 0.5) * 3, d - (rnd(i * 4 + 6) - 0.5) * 3],
+    ];
+    const o = i * 24;
+    q.forEach(([px, py], k) => {
+      f[o + k * 2] = px;
+      f[o + k * 2 + 1] = py - (k < 2 ? 1.5 : 0);
+      f[o + 8 + k * 2] = px;
+      f[o + 9 + k * 2] = py;
+    });
+    u[o + 16] = 0;
+    u[o + 17] = 1;
+    u[o + 18] = i * 3 + seed;
+    u[o + 19] = storeys[i];
+    f[o + 20] = storeys[i] * 3 + 0.95;
+    f[o + 21] = -0.5;
+    f[o + 22] = 0;
+    u[o + 23] = (seed * 7919 + i * 104729) >>> 0;
+    x += w + 0.4;
+  }
+  return u;
 }
 
 function cross(a: number[], b: number[]) {
