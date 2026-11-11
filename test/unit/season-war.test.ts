@@ -333,11 +333,11 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
 
   it('raises a squad a free point of Might with no cap (SF-10), and a chain past three choices throws', async () => {
     const { f, units, tick } = forces({ [PLACE.muster]: 'ok' });
-    const l = { ...grant(start(), { might: 7 }), built: ['keep'] };
+    const l = { ...grant(start(), { might: 6 }), built: ['keep'] };
     const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 0, ledger: () => l });
     war.season(l);
     await tick();
-    expect(units.views.size).toBe(SQUAD * 7); // past the old cap of 6 (the fake keeps 8 groups for the pool-full case)
+    expect(units.views.size).toBe(SQUAD * 7); // past the old cap of 6 (start() has 1 Might; the fake keeps 8 groups for the pool-full case)
     const deep: PlaceRef = { town: 0, place: 0, else: { town: 0, place: 1, else: { town: 0, place: 2, else: { town: 0, place: 3 } } } };
     expect(() => f.spawnAt('soldier', 'f-town', deep, 1)).toThrow(/at most 3/);
   });
