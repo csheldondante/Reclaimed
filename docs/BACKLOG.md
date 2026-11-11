@@ -2164,7 +2164,7 @@ The user: "I would like to see agents (many of them) traveling between locations
 | LT-F2 | One crowd: the living town's riders as rows of the Agents' unit buffer (a rider while on a route; knocked off → stepped unit → rejoins); RoadRide's next-hop tables deleted with the old towns (M4e) | L | open (the user decides) |
 | SL10 | (done, after the fortress merge) the flags gate (streetlab/control.ts read the URL directly) and the town fixture (stale: the citygen code in the generator's sources moved its hash; recaptured) failed on bb5b2e01 | S | done |
 | SL11 | Season life: a new season's counts re-deal every living-town rider (citylife clears its rows on a new deal): people jump home at Next season. Deal only the added riders | S | open |
-| SL12 | Soldiers (amassing at a drill yard, manning the walls, a patrol marching out) wait for Track B's U2; the Units calls they need are in SEASON_LOOP.md | M | open (after U2) |
+| SL12 | Soldiers (amassing at a drill yard, manning the walls, a patrol marching out) wait for Track B's U2; the Units calls they need are in SEASON_LOOP.md | M | season side done (trackA-forces): TownForces (season/forces.ts) over the agreed spawnAt / orderGroup / arrived / orderFailed shape, Might as squads at the barracks else the muster yard, at the gates after the walls, raids from season 4, settled at Next season (season/war.ts). Waits on Track B: SF-1 (place-based calls), SF-2 (formations), DA-B32 (strikes) |
 | SL13 | Season life: the wall ring is fixed when the walls card starts (the town as built then); districts begun later outside it aren't walled. A second walls card to widen it; posts on the wall's walk for soldiers after U2 | M | open |
 | SL14 | Season life: ships are voxel figures, not the `structures/dressmodules.ts` ship and quay modules as instanced pieces; they float at the bed's height + 1.2 (the water's surface isn't in citygen's inputs); a ship that climbs the sea field into a bay with no way further vanishes there | M | open |
 | SL15 | Season life: wagons come in through the gate nearest their shop (the GATES field), not along the atlas road from the map's edge; there's no gate-to-edge leg | S | open |
@@ -2174,6 +2174,13 @@ The user: "I would like to see agents (many of them) traveling between locations
 | SL19 | Wall-walk: the posts' paths (stairs → walk) aren't checked on the GPU here; a post with no path failing visibly is the Units side's (U2). The stairs aren't in the living town's graph (its riders don't climb walls) | S | done (SL18/19 commit: stairs at each run's ends, postCheck — Muru 0 of 52 unreachable); open: the foot's open-ground reach is rays, not a field |
 | LT-R1 | The route-read contract for Track B's march (U2): one storage binding, routeread.wgsl, ids with generations | S | done (trackA-routeread) |
 | SL20 | Shared route pool with per-town ranges, if two towns' routes ever need one unit step (a siege between neighbouring towns in one window). Today a march switches buffers at the window edge (Track B, 2026-11-10) | M | open |
+| SF-1 | TownForces' insides to Track B's place-based `spawnAt(kind, faction, PlaceRef, n)` / `orderGroup(g, {guard|go|attack, at})` with `arrived(g)` / `orderFailed(g, why)` events (U2 round 5): delete the interim 800 B read of the place table (transfers.ts TownForces.read), the CPU's place chain and the arrival emulation from the units' states. Track B to take PlaceRef's `else` (a preference chain) and `also` (valid only with a partner place: a raid's spawn point with its gate), or the season issues the chain on orderFailed | M | open (Track B) |
+| SF-2 | Squads drill, man the wall-walk and march out (Track B's orderGroup `drill` / `man` / `march`; SL17 the wall-walk and route ids): today a squad `guard`s a point (radius 5) — at the yard or a gate | M | open (Track B) |
+| SF-3 | The muster yard at Muru is a small courtyard among two- and three-storey houses: at 60° pitch the houses in front hide most of the soldiers standing there (shot forces-1-yard). A bigger open lot for the yard (the walls card's designation, places.wgsl) or units drawn through occluders | S | open (A) |
+| SF-4 | Soldiers read as small grey figures until zoom ~18 (the town's opening zoom shows the whole town, figures a few pixels): a kit and team colour (M4-4) for the art push | S | open (B art) |
+| SF-5 | Raids are a fixed schedule (FIRST_WAVE 4, every 3, sizes 4, 6, 8 …), not a Threat card the dealer deals with a warning and choices (pay, hide, fight); outcomes are small (Might a squad's worth fallen, Unrest +1 and a Material each raider left) — balance unchecked | M | open (design) |
+| SF-6 | Arrival is emulated from the units' states (each member seen walking, then none): a squad waiting for one of AgentUnits' 3 shared goal fields stands idle and holds its group's arrival back; a raider that starts hunting before its gate counts as there. Gone with SF-1 | S | open (with SF-1) |
+| SF-7 | The lab's raid run hit UC-6 once in six runs (Muru's river rose over the east side ~10 sim s into season 4's raid; all 12 soldiers at gate 2 drowned, `by` null) — the raid's outcome depends on it until UC-6 is fixed | S | open (with UC-6) |
 
 ### Routes 2 (2026-11-10, `trackA-routes2`): what Track B's U2 orders read, with no CPU readback
 
@@ -2190,3 +2197,25 @@ The user: "The CPU paths are supposed to be GPU resident … we should not need 
 | RT2-7 | citygen's stairs are a fixed 9.2 m from a gap's corner: a run of wall shorter than two of them gets overlapping stairs that overhang the gap. Its wall-walk route takes the first stair only (a dead end on the top). Shorten the stairs to fit (fewer, steeper steps) in streets.wgsl | S | open |
 | RT2-8 | The wall-walk passes through the corner towers (8 m, at every sixth corner and beside the gates): no doorway in them yet | S | open |
 | RT2-9 | The wake word: player edits through edit.wgsl (worldops' take) don't set it — only the works' dig does (edit.wgsl doesn't bind the living town's state). A world-visible edit epoch both could bump | S | open |
+
+## TM — town moods (the user, 2026-11-10; not built — the season's opportunity effects to come)
+
+The user, verbatim: "military checkpoints in the city to make it look more authoritarian in response to civil
+opportunities or initiate a curfew, or a parade, or to have the dead being collected in the street because of plague,
+or to have the characters become undead and work endlessly and have homes go into disrepair. That plus lighting and
+weather effects; storms, fog and then the unit graphics push so merchant carts and markets and zombies and people look
+more different … Prosperous, ruined, destroyed etc. different banners and lighting all will make this truly
+expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
+
+| ID | What | Size | Status |
+| --- | --- | --- | --- |
+| TM1 | Checkpoints: guard groups at arterial junctions and gates through PLACE refs (TownForces) | S | open (after Track B spawnAt / orderGroup: SF-1) |
+| TM2 | Curfew: the living town's riders go home and the streets empty | M | open (Track A citylife job states, GPU) |
+| TM3 | Parade: a march along an arterial route | M | open (after Track B's march order: SF-2) |
+| TM4 | Plague dead-collection: carts and collectors on the routes, bodies in the street | M | open (needs Track B death / corpse units) |
+| TM5 | Undead labour: townsfolk become undead and haul endlessly, no rest state | M | open (living town + Track B unit kinds) |
+| TM6 | Disrepair: a per-lot condition word (prosperous / worn / ruined / destroyed) the building generator and construction shader read | M | open (citygen contract field; building-generator session) |
+| TM7 | Banners per district mood | S | open |
+| TM8 | Town lighting moods | S | open (night lights SW-G6) |
+| TM9 | Weather: storms and fog tied to opportunities | M | open |
+| TM10 | Unit graphics push: merchant carts, market stalls, zombies and people read as distinct | M | open (Track B art) |

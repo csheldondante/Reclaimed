@@ -2263,6 +2263,12 @@ Coded against src/api/contracts (dialog.ts, run.ts, story.ts, world.ts); each pi
 `?skipmenu=1&level=atlas&run=bell`: the GM's story played as a hero on the atlas level. Each piece is coded
 against a contract and knows only its inputs:
 
+- (trackA-forces) The season loop reaches units only through **`TownForces`** (`src/season/forces.ts`): `spawnAt(kind,
+  faction, PlaceRef, n) → GroupId`, `orderGroup(g, { guard | go | attack, at: PlaceRef })`, events `arrived`,
+  `orderFailed(g, why)`, `died`, `hurt` — the shape agreed with Track B for U2 round 5 (`PlaceRef`, `GroupId` in
+  `api/contracts/townplaces.ts`, with Track A's `else` / `also`). Interim inside: one 800 B read of the town's place-table
+  slot after an event, then `Units.spawn` / `order`; Track B's place-based calls replace it (BACKLOG SF-1). The rules
+  (squads from Might, raids, the outcome into the pools) are `season/war.ts`, pure bookkeeping over the adapter.
 - `src/api/contracts/units.ts` — `Units`: spawn(kind, at, faction, { name, character, settlement, role,
   hostile, health, sight, speed, damage, colour, job }), get, query(near, r, filter), byCharacter, order(job),
   setHostile, hit(id, damage, by), remove, watch(actor), shift, update; events died / hurt / noticed. (Round 128p,

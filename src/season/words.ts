@@ -114,9 +114,10 @@ export function waveSoonLine(n: number): string {
   return `Raiders are coming next season. Scouts count ${n}.`;
 }
 
-export function waveNowLine(n: number, left: number, atGate: boolean): string {
+export function waveNowLine(n: number, left: number, stage: 'coming' | 'there' | 'fighting'): string {
   if (left === 0) return `All ${n} raiders are dead.`;
-  return atGate ? `Raiders reached the town! ${left} of ${n} still fight.` : `Raiders attack! ${left} of ${n} are on their way.`;
+  if (stage === 'fighting') return `Raiders are fighting your soldiers! ${left} of ${n} are left.`;
+  return stage === 'there' ? `Raiders reached the town! ${left} of ${n} are left.` : `Raiders attack! ${left} of ${n} are on their way.`;
 }
 
 export const WAVE_NO_ROAD = 'Raiders were seen, but they found no road into town.';

@@ -204,7 +204,7 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
   });
 
   it('every line the player reads passes the writing lint', () => {
-    const lines = [SOLDIERS_NO_PLACE, NO_SOLDIERS, WAVE_NO_ROAD, soldiersLine(1, 'yard'), soldiersLine(6, 'gates'), soldiersLine(3, 'barracks'), waveSoonLine(4), waveNowLine(6, 4, false), waveNowLine(6, 2, true), waveNowLine(6, 0, true), fightLine({ raiders: 6, left: 2, fallen: 4, might: 2, materials: 2, unrest: 1 }), fightLine({ raiders: 6, left: 0, fallen: 0, might: 0, materials: 0, unrest: 0 })];
+    const lines = [SOLDIERS_NO_PLACE, NO_SOLDIERS, WAVE_NO_ROAD, soldiersLine(1, 'yard'), soldiersLine(6, 'gates'), soldiersLine(3, 'barracks'), waveSoonLine(4), waveNowLine(6, 4, 'coming'), waveNowLine(6, 2, 'there'), waveNowLine(6, 3, 'fighting'), waveNowLine(6, 0, 'fighting'), fightLine({ raiders: 6, left: 2, fallen: 4, might: 2, materials: 2, unrest: 1 }), fightLine({ raiders: 6, left: 0, fallen: 0, might: 0, materials: 0, unrest: 0 })];
     expect(lines.flatMap((t) => lint(t).map((p) => `${p} — ${t}`))).toEqual([]);
   });
 });

@@ -113,7 +113,7 @@ stone carts (woodcutters and log carts). They were pools-only stubs.
   on the GPU; a ship comes in from where that field is largest at the window's edge, follows it down to the quay,
   moors, and leaves the way it came. Drawn as voxel hulls with a mast and sail.
 
-**Soldiers wait for U2** (the user: soldiers wait until the agents are on the GPU; Track B: soldiers are unit rows
+**Soldiers wait for U2** (since trackA-forces the season side runs through an adapter: "Soldiers and waves" below) (the user: soldiers wait until the agents are on the GPU; Track B: soldiers are unit rows
 from the start, ordered through the Units contract). The calls the season loop needs after U2 (`api/contracts/units.ts`):
 - `units.spawnGroup(kind: 'soldier', n: number, at: V2, faction, opts) → GroupId` — a squad a point of Might.
 - `units.orderGroup(g, { kind: 'drill', yard: V2, radius: number, formation: 'column' | 'line' })` — march in
@@ -124,6 +124,62 @@ from the start, ordered through the Units contract). The calls the season loop n
   then the atlas road) to a place; `leave`: off the window, resolved by clock (DESIGN §12), with an `arrived` / `left`
   event; and back the same way when the card finishes.
 - Events: `arrived(g)`, `left(g)` (off the window). Until then, the walls get no soldiers and the patrol card waits.
+
+## Soldiers and waves (trackA-forces; BACKLOG SL12, SF-1…SF-7)
+
+The user approved it on 2026-11-10 ("do what you can now"); it lifts "No raids in this test" above for one simple rule.
+Code: `season/forces.ts` (TownForces, the adapter), `season/war.ts` (the rules), lines in `season/words.ts`.
+
+**One adapter.** Every Units call the season makes is in `TownForces`, whose interface is the calls agreed with Track B
+for U2 round 5: `spawnAt(kind, faction, at: PlaceRef, n) → GroupId`, `orderGroup(g, { kind: 'guard' | 'go' |
+'attack', at: PlaceRef })`, events `arrived(g)` (once an order), `orderFailed(g, why)` (why: a place status's name),
+`died(g, unit, by)`, `hurt`. `PlaceRef` and `GroupId` are in the townplaces contract: `{ town, place }` or `{ town,
+district, purpose, rank }`, plus Track A's two additions — `else` (the next place to try: "a gate, else the keep") and
+`also` (valid only when a partner place is: a raid's spawn point only where its arterial's gate stands). Track B's
+place-based calls replace the adapter's insides only (SF-1).
+- **Interim (to delete):** the places as points from one async read of the town's slot of the place table — 800 B (the
+  header and the 23 named entries), made only when a spawn or order follows an event (a season's stages landed, a raid,
+  a slide), two frames after it so the GPU's place solve has run; never per frame (`transfers.ts` TownForces.read).
+  Then the existing jobs: `guard` (radius 5), `go`; `attack` on a place is hostile and going there. `arrived` is told
+  from the units' own states (each member seen walking, then none walking: no position read); `orderFailed` from the
+  read's statuses. A district `PlaceRef` throws here (the read holds the named places only).
+- **Not a fallback:** an invalid place is never replaced by a position the CPU makes up; the chain is authored and an
+  order with no valid choice fails and is shown.
+
+**The rules (`season/war.ts`):**
+- **Might becomes soldiers:** a squad of 3 (`SQUAD`) a **free** point of Might (SEASON_LOOP's own "a squad a point of
+  Might"; Might tied up in a card is busy, so its squad isn't standing), raised at the barracks, else the muster yard.
+  Neither there (no walls card begun, no keep): the sheet says so ("Your soldiers have nowhere to gather …"). Squads are
+  matched to the free Might when each season begins (its stages landed): the weakest sent home, new ones raised.
+- **Guards:** once the walls are built, squad j guards the first standing gate from slot j on (the squads spread over
+  the gates there are); before, they wait where they were raised.
+- **Raids — a fixed schedule** (the simplest fit: the dealer has no threat cards yet; a Threat card is SF-5): from
+  season 4 (`FIRST_WAVE`: a walls card started in season 1 is up by then) every 3 seasons, 4, 6, 8 … raiders, warned a
+  season ahead on the sheet. `?wave=N` the first raid's season (1: right away; 0: none) — the test flag.
+- **Where from and to:** raid k along the first arterial from k on whose spawn point (outside the wall) and gate both
+  stand — from that spawn point, attacking that gate (closed gates count as wall in the side map, so the fight is at the
+  gate); with no such arterial, from arterial k's spawn point (else the first) to the keep, else the stores.
+- **Outcome, at Next season** (before the ledger moves on): Might −1 for each 3 soldiers fallen (rounded up: free ones
+  lost first, then ones tied up in a card); raiders still alive got in — Unrest +1 and a Material each (what's there),
+  and they leave. The summary line says it ("You beat the raiders. 1 soldier died. You lost 1 Might.").
+- **On screen** (folded sheet too): "6 soldiers wait in the muster yard." / "12 soldiers guard the gates." / "Raiders are
+  coming next season. Scouts count 4." / "Raiders attack! 4 of 4 are on their way." → "Raiders are fighting your
+  soldiers! 3 of 4 are left." (a blow on either side) / "All 4 raiders are dead."
+
+**Known limits (Track B's):** melee strikes are the CPU's (DA-B32); squads stand, they don't drill, man the wall-walk or
+march (orderGroup's formations, SF-2).
+
+**The check** (`scripts/lab/townforces.mjs`, Muru, 412 × 915, 60°): season 2, six soldiers at the yard; season 4, the
+walls built, 12 soldiers at gate 2 (Muru's only standing gate: gate 0 is over water), four raiders from spawn point 2
+along its road to the gate, the fight there, settled at Next season.
+
+## Town moods (the user, 2026-11-10 — not built; BACKLOG TM1–TM10)
+
+What the season's opportunities should do to the town's look and life, the user's words in BACKLOG "TM — town moods":
+checkpoints (guard groups at junctions and gates, through TownForces' PlaceRefs), a curfew (the living town's riders
+home), a parade (Track B's march), plague dead-collection, undead labour, disrepair (a per-lot condition word the
+building generator and construction shader read), banners and lighting by mood, storms and fog, and the unit graphics
+push. Each row names what it waits on.
 
 ## Saving (DESIGN §23)
 

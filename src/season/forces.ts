@@ -84,6 +84,8 @@ export class TownForces {
   readonly orderFailed: ((g: GroupId, why: PlaceStatusName, at: PlaceRef) => void)[] = [];
   /** a member died: `by` as the Units contract's died */
   readonly died: ((g: GroupId, u: UnitView, by: UnitId | string | null) => void)[] = [];
+  /** a group's units stand (its place found): adapter-side — Track B's spawnAt has them at once */
+  readonly spawned: ((g: GroupId) => void)[] = [];
   /** a member was hurt */
   readonly hurt: ((g: GroupId, u: UnitView, damage: number, by: UnitId | string | null) => void)[] = [];
 
@@ -136,6 +138,7 @@ export class TownForces {
       }
       // (an order given before the units stood: given now)
       if (g.order) this.apply(g, g.order);
+      for (const f of this.spawned) f(g.id);
     });
     return g.id;
   }

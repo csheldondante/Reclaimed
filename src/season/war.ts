@@ -78,7 +78,7 @@ export interface WarHost {
 export class SeasonWar {
   /** the soldiers: a group a free point of Might */
   private squads: GroupId[] = [];
-  private wave: { g: GroupId; n: number; atGate: boolean; failed: boolean } | null = null;
+  private wave: { g: GroupId; n: number; stage: 'coming' | 'there' | 'fighting'; failed: boolean } | null = null;
   private fallen = 0;
   private hooked: TownForces | null = null;
   private where: 'yard' | 'barracks' | 'gates' = 'yard';
@@ -101,7 +101,7 @@ export class SeasonWar {
       if (this.wave) {
         const r = f.report(this.wave.g);
         if (this.wave.failed) out.push(WAVE_NO_ROAD);
-        else if (r && r.size) out.push(waveNowLine(this.wave.n, r.alive, this.wave.atGate));
+        else if (r && r.size) out.push(waveNowLine(this.wave.n, r.alive, this.wave.stage));
       }
     }
     if (this.soon) out.push(waveSoonLine(waveSize(this.nextIndex)));
@@ -123,9 +123,17 @@ export class SeasonWar {
       this.changed();
     });
     f.arrived.push((g) => {
-      if (this.wave?.g === g) this.wave.atGate = true;
+      if (this.wave?.g === g && this.wave.stage === 'coming') this.wave.stage = 'there';
       this.changed();
     });
+    // (a blow on either side while a raid is on: the fight has begun)
+    f.hurt.push((g) => {
+      if (!this.wave || this.wave.stage === 'fighting' || (g !== this.wave.g && !this.squads.includes(g))) return;
+      this.wave.stage = 'fighting';
+      this.changed();
+    });
+    // (a group's units standing: the counts shown)
+    f.spawned.push(() => this.changed());
     f.orderFailed.push((g, why, ref) => {
       console.warn(`[forces] group ${g}: its place ${JSON.stringify(ref)} isn't there (${why})`);
       if (this.squads.includes(g)) this.noPlace = true;
@@ -190,7 +198,7 @@ export class SeasonWar {
       const { from, to } = raidPlaces(town, a);
       const g = f.spawnAt('raider', RAIDER_FACTION, from, n);
       f.orderGroup(g, { kind: 'attack', at: to });
-      this.wave = { g, n, atGate: false, failed: false };
+      this.wave = { g, n, stage: 'coming', failed: false };
       console.log(`[forces] season ${l.season}: raid ${k} of ${n} from spawn point ${a}`);
     }
     const next = waveIn(l.season + 1, this.host.firstWave);

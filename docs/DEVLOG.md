@@ -22283,3 +22283,34 @@ Why: the Pixel run on 918fd61c was valid everywhere.
   archer's previous target, since the measure restarts per target; the test's first target fires at frame 2.
 - Shots: we looked at the 500 v 500 archers phase on open ground (archers at the back, white-headed) and the town
   ground (raiders in the streets, guards in a garden).
+
+## 2026-11-10 — Soldiers and raids in the season loop, behind one adapter (trackA-forces)
+
+**Why.** The user approved soldiers and waves in the GPU towns today ("do what you can now"). Track B agreed the calls
+its U2 round 5 builds — spawnAt / orderGroup by (town, place), arrived and orderFailed events — so the season side is
+written against exactly that shape now, and the swap later changes one file's insides (`season/forces.ts`).
+- **Why an adapter with a read in it.** Until Track B resolves places on the GPU, the season needs them as points for
+  today's guard / go jobs. One async read of the town's place-table slot (800 B: header + 23 named entries) after an
+  event — a season's stages landed, a raid, a slide — and only when a spawn or order follows; never per frame. Listed
+  in transfers.ts as interim, with its replacement (SF-1). Arrival is emulated from the units' own states (seen walking,
+  then none walking), so the season already consumes `arrived` / `orderFailed` the way it will.
+- **Why `else` and `also` on PlaceRef.** "A gate, else the keep" is an authored preference, not a CPU guess — a chain
+  the GPU can resolve where the order runs. `also` came from the first runs at Muru: gate 0 is over water (status
+  water), gate 2 is its only standing gate, and a raid from spawn point 0 walked round the outside and drowned in the
+  river (deaths `by` null). A raid now comes along an arterial whose spawn point and gate both stand; the two chains
+  pick the same arterial because each choice holds only with its partner valid. Squads likewise take the first standing
+  gate from slot j on — before that, three of four squads stood in the yard while the line said "guard the gates".
+- **Why a fixed raid schedule.** The dealer has no threat cards; a schedule (season 4, then every 3; 4, 6, 8 raiders,
+  warned a season ahead) is the smallest rule that gives the walls and Might a reason. `?wave=N` jumps to it.
+- **Outcome small and visible:** at Next season, Might −1 a squad's worth fallen, raiders left: Unrest +1 and a
+  Material each; the summary line says it. Lines in season/words.ts pass the writing lint.
+
+**Measured (lab, `scripts/lab/townforces.mjs`, Muru, 412 × 915, 60°, six runs):** season 2: 6 soldiers at the muster
+yard (positions observed within 2.5 cells of it); season 4: 12 at gate 2; four raiders from spawn point 2 reach the gate
+in ~25–40 sim s at speed 2 and are killed there — runs 5 and 6: 0–1 soldier lost, outcome "You beat the raiders". One
+run in six hit UC-6 (Muru's water blows up: the river rose over the east side and drowned all 12 soldiers). Reads: one
+800 B read per season event (6 in the scenario). Unit tests: test/unit/season-war.test.ts (11).
+
+**Seen in the shots:** the fight at the gate reads at zoom 18 (red torch-bearers on the road, grey soldiers between the
+gate towers, the blows' slashes). At the town's opening zoom the figures are a few pixels (SF-4), and the muster yard
+at Muru is a courtyard whose houses hide most of the soldiers at 60° (SF-3).

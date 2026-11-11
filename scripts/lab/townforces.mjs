@@ -4,7 +4,7 @@
 // walls built in season 4 — squads at the gates and the first raid (FIRST_WAVE) from a spawn point outside the wall,
 // shot as frames for a GIF from its start; Next season settles it into the pools. The card sheet folded for the shots
 // (the player's ▾). Fails when no soldier stands, no raid comes, or nothing settles.
-//   RECLAIMED_PORT=5680 node scripts/lab.mjs run scripts/lab/townforces.mjs [--args '{"frames":40,"zoomx":1}']
+//   RECLAIMED_PORT=5680 node scripts/lab.mjs run scripts/lab/townforces.mjs [--args '{"zoom":18,"wide":16,"close":34}']
 export default async function (lab, args) {
   const S = lab.season;
   const war = window.war;
@@ -12,7 +12,7 @@ export default async function (lab, args) {
   const id = lab.town;
   const units = window.reclaimed.units;
   // (the zoom a player pinches in to watch soldiers: the town's opening zoom shows the whole town, figures a few pixels)
-  const zoom = args.zoom ?? 10;
+  const zoom = args.zoom ?? 18;
   const named = async () => (await lab.places(id)).named;
   const kinds = () => {
     const out = { guard: 0, raider: 0, guardDead: 0, raiderDead: 0 };
@@ -70,12 +70,21 @@ export default async function (lab, args) {
   const mid = [(spawn.at[0] + target.at[0]) / 2, (spawn.at[1] + target.at[1]) / 2];
   const span = Math.hypot(spawn.at[0] - target.at[0], spawn.at[1] - target.at[1]);
   lab.look(mid[0], mid[1], Math.max(zoom * 0.5, Math.min(zoom, 330 / span)), 0.5);
-  const fr = args.frames ?? 50;
-  for (let k = 0; k < fr; k++) {
+  // (two GIFs: the raid's approach framed wide, then the fight close at its gate)
+  const wide = args.wide ?? 16;
+  const close = args.close ?? 34;
+  const g0 = [...gates.map(([, v]) => v)][0];
+  for (let k = 0; k < wide + close; k++) {
+    // (the gate, and a little of the road out toward the raid)
+    if (k === wide && g0) {
+      const sp = n[`spawn${gates[0][0].slice(4)}`] ?? spawn;
+      const d = Math.hypot(sp.at[0] - g0.at[0], sp.at[1] - g0.at[1]) || 1;
+      lab.look(g0.at[0] + ((sp.at[0] - g0.at[0]) / d) * 6, g0.at[1] + ((sp.at[1] - g0.at[1]) / d) * 6, zoom, 0.5);
+    }
     await lab.run(args.step ?? 1, 2);
-    await lab.shot(`forces-gif-${String(k).padStart(3, '0')}`);
+    await lab.shot(k < wide ? `forces-wide-${String(k).padStart(3, '0')}` : `forces-close-${String(k - wide).padStart(3, '0')}`);
     if (k % 5 === 4) note(`raid frame ${k}`);
-    if (k === Math.floor(fr / 2)) await lab.shot('forces-3-fight');
+    if (k === wide + Math.floor(close / 2)) await lab.shot('forces-3-fight');
   }
   // the squads at the gates
   const g = gates[0]?.[1];
