@@ -12,6 +12,7 @@ import { encodeGBuffer, encodeShadow, writeLight } from './gbuffer-shadow';
 import { drawGrid, gridCull, gridLive } from './grid';
 import { VERTS_PER_PRISM, VERTS_PER_BOX, VERTS_PER_TOP, INST_GROW, RenderOptions, SKIP, SHADOW_STILL_BIT, cutOn } from './defs';
 import { Renderer } from '../renderer';
+import { ARCH_DRAWS } from '../../archgen/archgen';
 
 /** Renderer.encode (the class keeps the method, documented there) */
 export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
@@ -215,6 +216,15 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
     pass.setBindGroup(0, v.group);
     pass.drawIndirect(v.indirect, 0);
     rd.profiler.draws++;
+  }
+  // (archgen) the building generator's parts: a draw a part kind
+  for (const v of SKIP.has('arch') ? [] : rd.archSources) {
+    pass.setBindGroup(0, v.group);
+    ARCH_DRAWS.forEach(([k], i) => {
+      pass.setPipeline(rd.archPipes![i]);
+      pass.drawIndirect(v.args, k * 16);
+    });
+    rd.profiler.draws += ARCH_DRAWS.length;
   }
   // (watersurf) the water's surface, then the blended prisms (oil, ice and crystal; without the field mesh the water)
   const flat = SKIP.has('waterflat');

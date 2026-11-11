@@ -6,7 +6,7 @@
 // The box must be in the window when the town is made (the level opens the window round it: citygen/town.ts
 // fieldTownBox, level.ts); after that the window may go where it likes. docs/design/CITYGEN.md.
 import type { Settlement } from '../api/contracts/settlement';
-import type { CityLots, CityRoutes, DistrictStage } from '../api/contracts/citygen';
+import type { CityLots, CityRoutes, DistrictStage, TownBuildingsSink } from '../api/contracts/citygen';
 import type { TownLog } from './townlog';
 import { ROW_H } from '../world/lattice';
 import { BUILD_S, CityGen, DISTRICT_SPAN, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes, type DistrictClaim } from './gpu';
@@ -142,6 +142,8 @@ export interface FieldTownIO {
   rawGround(x0: number, y0: number, w: number, h: number, out: GPUBuffer): Promise<void>;
   sea: number;
   addMesh(verts: GPUBuffer, args: GPUBuffer, xform: GPUBuffer): void;
+  /** (archgen) who builds on the lots: told when the town is made, its records rewritten, and let go */
+  buildings?: TownBuildingsSink;
   removeMesh(args: GPUBuffer): void;
   /** the window: its first world column and row, its z offset; its size (columns, rows); the world's (it wraps) */
   origin(): readonly [number, number];
@@ -194,6 +196,8 @@ export class FieldTown {
     this.raw = L.raw;
     this.gen = L.gen;
     this.params = L.params;
+    // (archgen: the building generator draws the buildings when there is one)
+    if (io.buildings) this.params.buildings = 1;
     this.xform = io.device.createBuffer({ label: `citygen ${site.id} place`, size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.place();
     io.addMesh(this.gen.verts, this.gen.args, this.xform);
@@ -211,6 +215,7 @@ export class FieldTown {
       .then((t) => {
         this.times = t;
         this.claim();
+        if (!this.gone) io.buildings?.townMade(site.id, this.lots, t.lots);
         return t;
       });
   }
@@ -344,7 +349,8 @@ export class FieldTown {
       this.reclaiming = true;
       this.gen.animate(now);
       void this.gen.run(this.params, 'mesh').then(
-        () => {
+        (t) => {
+          if (!this.gone) this.io.buildings?.lotsChanged(this.site.id, t.lots);
           this.reclaiming = false;
           this.meshRuns++;
           if (!this.gone && this.grid) {
@@ -429,7 +435,8 @@ export class FieldTown {
   setSkeleton(s: { skelReach?: number; skelMargin?: number; minorAhead?: number }): void {
     if (this.gone || !this.times) return;
     Object.assign(this.params, s);
-    void this.gen.run(this.params, 'mesh').then(() => {
+    void this.gen.run(this.params, 'mesh').then((t) => {
+      if (!this.gone) this.io.buildings?.lotsChanged(this.site.id, t.lots);
       this.meshRuns++;
       if (!this.gone && this.grid) this.io.statics()?.reclaim(this.grid);
     });
@@ -451,6 +458,7 @@ export class FieldTown {
   }
 
   dispose(): void {
+    if (this.times) this.io.buildings?.townDropped(this.site.id);
     this.gone = true;
     this.io.statics()?.freeSlot(this.slot);
     this.bareU.destroy();

@@ -23041,3 +23041,21 @@ cases over the fake's field limit), season, transfers, typecheck.
 - The lab (archlab.html) loads Muru's real lot records (data/lab/lots-muru.json: captured once from the street lab with
   a headless eval of CityGen.lotRecords) and boots in about a second; the game's lighting and shadows come with the
   wire-in (AG6).
+
+## The building generator in the game (archgen, `?arch=1`; BACKLOG AG6)
+
+- The interface agreed with Track A, built: `TownBuildingsSink` (api/contracts/citygen.ts) — townMade / lotsChanged /
+  townDropped from FieldTown (CPU signals; the run's lot count, already known from its timestamps' read, sizes the
+  generator); citygen's `buildings` parameter (lotMesh mode 1: the town stops drawing building lots; parks, plazas,
+  fields, the wall and landmarks stay the town's). Claims unchanged.
+- One arch buffer a town (header, styles, draw lists, parts, progress, the lots' grounds) so the renderer's draw layout
+  takes it as a mesh source's `instances`: Renderer.addArch draws three part kinds in the main pass and the sun's
+  shadow pass, lit, hazed, cut away and picked as the instanced meshes are (archgen/archgame.wgsl appended to
+  renderWgsl). Pipelines only with `?arch=1` (no boot cost otherwise) until the user switches the default.
+- Construction: citygen's progress copied into the arch buffer each frame (copyBufferToBuffer, 4 bytes a lot: Muru
+  ~1.4 KB) and the vertex stages raise each lot from its ground by it — the town's old rise, until the construction
+  shader replaces it (CONSTRUCTION_SHADER.md: the vertex inputs are there — lot, local height, floor by STOREY, roof
+  flag).
+- The phone's detail: `(pointer: coarse)` → pattern detail 0.35 (the game renders the phone at a quarter of its pixels:
+  412×915 → 206×457), `?archdetail=` to try.
+- Checked headless: Muru made (344 lots, 105 built), the parts drawn with the game's shadows; no GPU errors.

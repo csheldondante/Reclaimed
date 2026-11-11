@@ -46,6 +46,10 @@ import { drawGrid, windowDrawn, windowMoved } from './renderer/grid';
 import { enableBand, enableRockMesh } from './renderer/features';
 import { CAM_BYTES, SHADOW_SIZE, SHADOW_FORMAT, VEG_INSTANCES, INST_GROW, INST_START, INST_GROW_AT, PICK_FORMAT, PickHit, DEPTH_FORMAT, RenderOptions, DETAIL_BITS, SKIP, type ShadowViews } from './renderer/defs';
 import { urlFlags } from '../flags';
+import { ARCH_DRAWS, archGameWgsl } from '../archgen/archgen';
+
+/** (archgen) the building generator's draws made (?arch=1) */
+export const ARCH = urlFlags().get('arch') === '1';
 export { SKIP } from './renderer/defs';
 export type { PickHit, RenderOptions } from './renderer/defs';
 import { buildMeshDraws } from './renderer/mesh-draws';
@@ -123,6 +127,10 @@ export class Renderer {
   skinPipe!: GPURenderPipeline;
   shadowSkinPipe?: GPURenderPipeline;
   meshSources: { indirect: GPUBuffer; group: GPUBindGroup; shadow?: GPUBindGroup }[] = [];
+  /** (archgen, ?arch=1) the building generator's sources (src/archgen: one arch buffer, a draw a part kind) and pipelines */
+  archSources: { args: GPUBuffer; group: GPUBindGroup; shadow?: GPUBindGroup }[] = [];
+  archPipes?: GPURenderPipeline[];
+  archShadowPipes?: GPURenderPipeline[];
   /** the structure grids' exposed voxels, as rotated cubes (structprep.wgsl → the body pipeline) */
   structPrep: ComputeKernel;
   structPrepGroup: GPUBindGroup;
@@ -671,6 +679,29 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       this.miGroup = groupFor(this.meshInst.instances);
     }
 
+    // (archgen, ?arch=1) the building generator's parts: render.wgsl's bindings and look, their own vertex stages
+    // (archgen/archgame.wgsl); the phone's detail flat (its pixels can't show the patterns), ?archdetail= to try
+    if (ARCH) {
+      const coarse = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+      const detail = Number(urlFlags().get('archdetail') ?? (coarse ? 0.35 : 1));
+      const archModule = makeModule(device, 'arch', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, archGameWgsl(detail)]);
+      const shadowDepth: GPUDepthStencilState = { format: SHADOW_FORMAT, depthWriteEnabled: true, depthCompare: 'less', depthBias: 2, depthBiasSlopeScale: 2 };
+      this.archPipes = [];
+      this.archShadowPipes = [];
+      ARCH_DRAWS.forEach(([, vs], i) => {
+        renderPipe(device, {
+          label: `arch ${vs}`,
+          layout: pl,
+          vertex: { module: archModule, entryPoint: vs },
+          fragment: { module: archModule, entryPoint: 'fsArch', targets: [{ format }, { format: PICK_FORMAT }] },
+          // (cull off: the construction shader's clipped walls show their inside — fsArch draws it dark)
+          primitive: { topology: 'triangle-list', cullMode: 'none' },
+          depthStencil: depthStencil(true),
+        }, (p) => (this.archPipes![i] = p));
+        renderPipe(device, { label: `shadow arch ${vs}`, layout: pl, vertex: { module: archModule, entryPoint: vs }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth }, (p) => (this.archShadowPipes![i] = p));
+      });
+    }
+
     if (this.fieldMesh.on) {
       buildMeshDraws(this, { format, tufts, VF, drawLayout, riverFoam, drawModule, pl, depthStencil, groupFor, miVertex, miModule });
     }
@@ -750,6 +781,20 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
 
   /** (round 120) compute run at the start of each frame's encode, before anything's drawn (bodies' meshes skinned) */
   readonly frameCompute: ((enc: GPUCommandEncoder) => void)[] = [];
+
+  /** (archgen, ?arch=1) draw the building generator's parts (ArchGen.arch, its args), placed by `xform` as addMesh's */
+  addArch(arch: GPUBuffer, args: GPUBuffer, xform: GPUBuffer): void {
+    if (!ARCH) throw new Error('addArch without ?arch=1: the pipelines are not made');
+    this.archSources.push({
+      args,
+      group: this.groupFor(arch, undefined, undefined, xform),
+      shadow: this.shadowGroups ? this.groupFor(arch, this.lightCamBuf, this.noShadowViews!, xform) : undefined,
+    });
+  }
+
+  removeArch(args: GPUBuffer): void {
+    this.archSources = this.archSources.filter((s) => s.args !== args);
+  }
 
   /** `xform` (citygen M4a): where the mesh is — a uniform vec4, xyz added to every vertex (a town's grid placed in the
    *  window: its owner writes 16 bytes when the window slides, the mesh stays as it is on the GPU); none: as written */

@@ -2267,3 +2267,7 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
 - AG8 Construction-shader inputs agreed (lot index, local height, floor, roof flag, eave height).
 - AG9 Later: cutaway LOD (thick walls, slabs), the gesture editor, route anchors on walkable parts, height rule moved
   into the style table (Track A's offer), other families (node graph, SDF, irregular grid).
+- AG10 Landmark sites (round plots, records from counts[3]): the generator to make them (a ring building with a
+  central tower, DESIGN §18); citygen still draws them meanwhile (Track A asked for them to be covered).
+- AG11 Brighter albedo under the game's lighting (it reads darker and more muted than the lab), and more than one
+  style in a town's core (Muru's core hashed to one style).

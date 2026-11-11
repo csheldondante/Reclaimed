@@ -1019,6 +1019,7 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     return;
   }
   // (time-lapse: made full height — tlRise sets the tops' z by the lot's progress each frame)
+  // (archgen: mode 1 — the building generator draws the building; its reach outline below is still the town's)
   let h = r1(o + 20u);
   if (h < 0.05) { return; }
   let base = r1(o + 21u);
@@ -1041,6 +1042,7 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
       }
     }
   }
+  if (u.n.w == 1u) { return; }
   let at = room(30u);
   if (at == NONE) { return; }
   let roof = roofColour(u32(hsh(hs * 7u + 3u) * 5.999));

@@ -1,5 +1,5 @@
 // (archgen) Drawing the parts: a kind's instanced draw, its vertex shader building the shape from vertex_index
-// (vsBody: 30 vertices, four sides and the top; vsRoof: 24, two slopes, two ends, the eaves' underside); the fragment
+// (vsArchBody: 30 vertices, four sides and the top; vsArchRoof: 24, two slopes, two ends, the eaves' underside); the fragment
 // shader paints the surface from the lot's style: plaster, half-timber, brick, ashlar; tiles, slate, thatch; painted
 // windows fitted to each wall's bays and a door on the street side. Prepended: arch.wgsl's constants (not its
 // bindings — draw.wgsl is compiled with the constants block only: archgen.ts CONSTS).
@@ -29,14 +29,23 @@ fn partOf(kind: u32, ii: u32) -> u32 {
   return AW(AW(1u) + kind * AW(3u) + ii);
 }
 
-fn finish(o: ptr<function, VO>, wp: vec3<f32>) {
+/** the lot's construction progress (0–1; the header's word 4: citygen's, copied each frame) */
+fn progress(lot: u32) -> f32 { return bitcast<f32>(AW(AW(4u) + min(lot, AW(5u) - 1u))); }
+
+fn finish(o: ptr<function, VO>, wp0: vec3<f32>) {
+  // (until the construction shader: a lot rises from its ground with its progress — the town's old look; unbegun, gone)
+  let pr = clamp(progress((*o).info.x), 0.0, 1.0);
+  var wp = wp0;
+  let g = bitcast<f32>(AW(AW(6u) + min((*o).info.x, AW(5u) - 1u)));
+  wp.z = g + (wp0.z - g) * pr;
+  if (pr <= 0.001) { wp = vec3<f32>(0.0, 0.0, -1e6); }
   let w = wp + archPlace();
   (*o).wpos = w;
   (*o).pos = archClip(w);
 }
 
 @vertex
-fn vsBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
+fn vsArchBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
   var o: VO;
   let pi = partOf(K_BODY, ii);
   let b = pi * PW;
@@ -83,7 +92,7 @@ fn vsBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
 }
 
 @vertex
-fn vsRoof(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
+fn vsArchRoof(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
   var o: VO;
   let pi = partOf(K_ROOF, ii);
   let b = pi * PW;
@@ -200,7 +209,7 @@ fn boxVert(c: array<vec2<f32>, 4>, z0: f32, z1: f32, j: u32, o: ptr<function, VO
 }
 
 @vertex
-fn vsCren(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
+fn vsArchCren(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
   var o: VO;
   let pi = partOf(K_CREN, ii);
   let b = pi * PW;
@@ -249,7 +258,7 @@ fn vsCren(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
 // ---- surfaces ------------------------------------------------------------------------------------------------------
 
 fn h21(p: vec2<f32>) -> f32 { return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453); }
-fn vnoise(p: vec2<f32>) -> f32 {
+fn avnoise(p: vec2<f32>) -> f32 {
   let i = floor(p);
   let f = fract(p);
   let u = f * f * (3.0 - 2.0 * f);
@@ -303,7 +312,7 @@ fn archSurface(in: VO) -> Surf {
     let m = u32(wallC.w + 0.5);
     col = wallC.rgb * tint;
     // plaster's mottling
-    col *= 0.94 + 0.08 * vnoise(vec2<f32>(u, v) * 1.7) * detail + 0.03 * vnoise(vec2<f32>(u, v) * 0.4);
+    col *= 0.94 + 0.08 * avnoise(vec2<f32>(u, v) * 1.7) * detail + 0.03 * avnoise(vec2<f32>(u, v) * 0.4);
     if (m == 1u) {
       // brick: courses, mortar a shade lighter
       let g = bond(u, v, 0.5, 0.2, 0.018, px);
@@ -391,7 +400,7 @@ fn archSurface(in: VO) -> Surf {
       col *= mix(1.0, (0.88 + 0.2 * h21(floor(vec2<f32>(u / 0.36, v / 0.22)))) * mix(0.7, 1.0, g), detail);
     } else {
       // thatch: streaks down the slope
-      col *= 0.82 + 0.3 * vnoise(vec2<f32>(u * 9.0, v * 0.8)) * detail;
+      col *= 0.82 + 0.3 * avnoise(vec2<f32>(u * 9.0, v * 0.8)) * detail;
     }
     // the roof's edge: a light rim reads as the covering's thickness (Tiny Glade's chunky roofs)
     let edge = min(v, min(u, in.uv.y - u));
@@ -425,7 +434,7 @@ fn archSurface(in: VO) -> Surf {
     if (k == 3u) { g = vec3<f32>(0.72, 0.68, 0.6); }
     if (k == 5u) { g = vec3<f32>(0.6, 0.55, 0.32); }
     if (k == 1u) { g = vec3<f32>(0.5, 0.62, 0.36); }
-    col = g * (0.95 + 0.1 * vnoise(in.wpos.xy * 0.7));
+    col = g * (0.95 + 0.1 * avnoise(in.wpos.xy * 0.7));
     if (!isTop) { col = vec3<f32>(0.45, 0.4, 0.34); }
   }
   var ao = 1.0;

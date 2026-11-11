@@ -5,15 +5,19 @@
 //
 // One buffer holds it all (`arch`), so a draw needs one storage binding (the game's renderer gives a mesh source one:
 // render.wgsl `instances`). Its layout, u32 words:
-//   0–3   the header: the styles' first word, the draw lists', the parts', the list room a kind
-//   4…    the styles (STYLE_ROOM × STYLE_VEC4S vec4 f32)
+//   0–7   the header: the styles' first word, the draw lists', the parts', the list room a kind, the progress's, the
+//         lot room, the lots' grounds', 0
+//   8…    the styles (STYLE_ROOM × STYLE_VEC4S vec4 f32)
 //   …     the draw lists (NK × room u32: a part's index)
 //   …     the parts (lots × PARTS_PER_LOT × PART_WORDS)
+//   …     each lot's construction progress (f32, 0–1: copied each frame from citygen's progress — copyProgress)
+//   …     each lot's ground z (f32: written by the generator; the rise's floor)
 // Drawn by a host: the lab's (archlab.wgsl, drawLab) or the game's (archgame.wgsl, through Renderer.addArch).
 
 import archWgsl from './arch.wgsl?raw';
 import drawWgsl from './draw.wgsl?raw';
 import labWgsl from './archlab.wgsl?raw';
+import gameWgsl from './archgame.wgsl?raw';
 import { STYLES, STYLE_VEC4S, styleWords, type Style } from './styles';
 
 /** mirrors arch.wgsl */
@@ -21,10 +25,10 @@ export const PART_WORDS = 16;
 export const PARTS_PER_LOT = 24;
 export const KIND = { body: 1, roof: 2, cren: 3 } as const;
 export const NK = 4;
-/** vertices a kind's instance (draw.wgsl vsBody, vsRoof, vsCren: 4 edges × (a wall + 8 merlons) × a box) */
+/** vertices a kind's instance (draw.wgsl vsArchBody, vsArchRoof, vsArchCren: 4 edges × (a wall + 8 merlons) × a box) */
 const VERTS: Record<number, number> = { [KIND.body]: 30, [KIND.roof]: 24, [KIND.cren]: 4 * 9 * 30 };
 /** each kind and its vertex stage (draw.wgsl) */
-export const ARCH_DRAWS = [[KIND.body, 'vsBody'], [KIND.roof, 'vsRoof'], [KIND.cren, 'vsCren']] as const;
+export const ARCH_DRAWS = [[KIND.body, 'vsArchBody'], [KIND.roof, 'vsArchRoof'], [KIND.cren, 'vsArchCren']] as const;
 const STYLE_ROOM = 64;
 
 const GEN_MARK = '// ---- generation';
@@ -37,6 +41,10 @@ const COMPACT = ARCH_CONSTS + archWgsl.slice(archWgsl.indexOf(COMPACT_MARK));
 /** the vertex stages and archSurface: a host's bindings and functions before, its fragment stage after */
 export const ARCH_DRAW = drawWgsl;
 const LAB = ARCH_CONSTS + labWgsl.slice(0, labWgsl.indexOf(FS_MARK)) + drawWgsl + labWgsl.slice(labWgsl.indexOf(FS_MARK));
+/** the game's part of the renderer's draw module (after renderWgsl): vertex stages ARCH_DRAWS, fragment fsArch.
+ *  detail: 0 the phone's flat colours … 1 the PC's patterns */
+export const archGameWgsl = (detail: number): string =>
+  `const ARCH_DETAIL: f32 = ${detail.toFixed(2)};\n` + ARCH_CONSTS + gameWgsl.slice(0, gameWgsl.indexOf(FS_MARK)) + drawWgsl + gameWgsl.slice(gameWgsl.indexOf(FS_MARK));
 
 export interface ArchGenOpts {
   /** the lot slots (citygen's lot room) */
@@ -54,7 +62,7 @@ export class ArchGen {
   /** the list's room a kind */
   readonly room: number;
   readonly bytes: number;
-  private base: { styles: number; list: number; parts: number };
+  private base: { styles: number; list: number; parts: number; progress: number };
   private genU: GPUBuffer;
   private compU: GPUBuffer;
   private genPipe: GPUComputePipeline;
@@ -76,14 +84,18 @@ export class ArchGen {
     const d = device;
     this.slots = o.lots * PARTS_PER_LOT;
     this.room = this.slots;
-    const styles = 4;
+    const styles = 8;
     const list = styles + STYLE_ROOM * STYLE_VEC4S * 4;
     const parts = list + Math.ceil((NK * this.room) / 4) * 4;
-    this.base = { styles, list, parts };
-    this.bytes = (parts + this.slots * PART_WORDS) * 4;
+    const progress = parts + this.slots * PART_WORDS;
+    this.base = { styles, list, parts, progress };
+    const ground = progress + o.lots;
+    this.bytes = (ground + o.lots) * 4;
     const S = GPUBufferUsage.STORAGE;
     this.arch = d.createBuffer({ label: 'arch', size: this.bytes, usage: S | GPUBufferUsage.COPY_DST });
-    d.queue.writeBuffer(this.arch, 0, new Uint32Array([styles, list, parts, this.room]));
+    d.queue.writeBuffer(this.arch, 0, new Uint32Array([styles, list, parts, this.room, progress, o.lots, ground, 0]));
+    // (built until a progress is copied in: the lab's)
+    d.queue.writeBuffer(this.arch, progress * 4, new Float32Array(o.lots).fill(1));
     this.setStyles(STYLES);
     this.args = d.createBuffer({ label: 'arch draw args', size: NK * 16, usage: S | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST });
     const a = new Uint32Array(NK * 4);
@@ -134,6 +146,7 @@ export class ArchGen {
     w[3] = this.o.ground ? 1 : 0;
     f[4] = this.o.ground?.zmin ?? 0;
     w[5] = this.nstyles;
+    w[6] = this.o.lots;
     // (one uniform: one generate a submit — a caller slicing a town's lots goes frame by frame)
     this.device.queue.writeBuffer(this.genU, 0, u);
     const p = enc.beginComputePass({ label: 'arch gen', timestampWrites: ts });
@@ -141,6 +154,11 @@ export class ArchGen {
     p.setBindGroup(0, this.genGroup);
     p.dispatchWorkgroups(Math.ceil(count / 64));
     p.end();
+  }
+
+  /** (each frame) citygen's per-lot progress (f32 a record, lots first) into the arch buffer, for the vertex stages */
+  copyProgress(enc: GPUCommandEncoder, progress: GPUBuffer): void {
+    enc.copyBufferToBuffer(progress, 0, this.arch, this.base.progress * 4, this.o.lots * 4);
   }
 
   compact(enc: GPUCommandEncoder, ts?: GPUComputePassTimestampWrites): void {

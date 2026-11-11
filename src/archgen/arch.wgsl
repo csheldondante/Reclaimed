@@ -54,7 +54,8 @@ struct GenU {
   zmin: f32,
   /** the styles in the table */
   nstyles: u32,
-  _p0: u32,
+  /** the lot slots (ARCH's room: lots past it are not made) */
+  lots: u32,
   _p1: u32,
 };
 
@@ -221,7 +222,7 @@ fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
   gLot = i;
   PB = ARCH[2];
   gN = 0u;
-  let lots = min(CNT[0], CNT[3]);
+  let lots = min(min(CNT[0], CNT[3]), GU.lots);
   if (i >= lots) { return; }
   let o = i * RECW;
   var q: array<vec2<f32>, 4>;
@@ -263,6 +264,7 @@ fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
   var fq: array<vec2<f32>, 4>;
   for (var k = 0u; k < 4u; k++) { fq[k] = q[(k + r) % 4u]; }
   let ground = zb + 0.5;
+  ARCH[ARCH[6] + i] = bitcast<u32>(ground);
   let eave = zb + height;
   let wide = (length(fq[1] - fq[0]) + length(fq[2] - fq[3])) * 0.5;
   let deep = (length(fq[3] - fq[0]) + length(fq[2] - fq[1])) * 0.5;

@@ -70,6 +70,20 @@ export interface CityLots {
   readonly place: GPUBuffer;
 }
 
+/**
+ * (archgen, agreed with Track A 2026-11-11; docs/design/ARCHGEN.md) Who builds on a town's lots hears of its life: CPU
+ * signals only (the CPU encodes every citygen run, so it knows when one ran); nothing is read back. `lots` is the run's
+ * lot count (StreetTimes.lots: the timestamps' read, already made) — for sizing; the GPU's counts stay the truth.
+ */
+export interface TownBuildingsSink {
+  /** the town is made: its records are in */
+  townMade(id: string, lots: CityLots, count: number): void;
+  /** a run rewrote its records (a mesh run or earlier) */
+  lotsChanged(id: string, count: number): void;
+  /** the town is let go: its buffers go with it */
+  townDropped(id: string): void;
+}
+
 // (M4b, planned — the shape the claims must keep) The town claims its buildings' columns as External intervals naming
 // the town's grid (DESIGN §3, §17), from these records on the GPU. A claim is per record (its index and seed in the
 // interval's owner word), so a later step — physics integration (structural integrity, collapse, rigid bodies:

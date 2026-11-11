@@ -5,6 +5,7 @@ import { CAMERA_BYTES, CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, type Camera } from '
 import { drawGrid, gridCull, gridLive } from './grid';
 import { SKIP, cutOn } from './defs';
 import { Renderer } from '../renderer';
+import { ARCH_DRAWS } from '../../archgen/archgen';
 
 /**
  * (perfopt, ?defer=1) The terrain mesh into the G-buffer (meshdraw.wgsl gPack) and the depth: what the
@@ -213,6 +214,15 @@ export function encodeShadow(rd: Renderer, enc: GPUCommandEncoder, due: 'all' | 
     if (!v.shadow) continue;
     pass.setBindGroup(0, v.shadow);
     pass.drawIndirect(v.indirect, 0);
+  }
+  // (archgen) the building generator's parts cast their shadows
+  for (const v of rd.archSources) {
+    if (!v.shadow) continue;
+    pass.setBindGroup(0, v.shadow);
+    ARCH_DRAWS.forEach(([k], i) => {
+      pass.setPipeline(rd.archShadowPipes![i]);
+      pass.drawIndirect(v.args, k * 16);
+    });
   }
   pass.end();
   rd.profiler.draws += 4;

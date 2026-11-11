@@ -37,6 +37,7 @@ export const CITY_PARAMS: Record<string, CitySpec> = {
   deckClear: { label: 'deck clearance', units: 'cells', min: 0, max: 8, step: 0.25, def: 1, help: 'a bridge deck’s height over each bank (it slopes between them): at most a walker’s step (1.1) so the deck is walkable', stage: 'field' },
   maxSpan: { label: 'longest bridge', units: 'cells', min: 8, max: 240, step: 2, def: 120, help: 'a crossing longer than this ends the approach road at the shore', stage: 'field' },
   roadTone: { label: 'road tone', units: '', min: 0, max: 2, step: 1, def: 1, choices: ['white (old)', 'dirt', 'stone'], help: 'dirt or stone, a little lighter than the ground (the game: dirt for small towns, stone for big)', stage: 'mesh' },
+  buildings: { label: 'buildings drawn by', units: '', min: 0, max: 1, step: 1, def: 0, choices: ['the town (extrusions)', 'the building generator'], help: 'archgen (docs/design/ARCHGEN.md): the generator draws the building lots; the town keeps parks, plazas, fields, the wall and landmarks', stage: 'mesh' },
   marks: { label: 'point markers', units: '', min: 0, max: 1, step: 1, def: 1, choices: ['hidden', 'shown'], help: 'the φ points as red markers (the game hides them)', stage: 'mesh' },
   majorSpacing: { label: 'contour spacing', units: 'cells', min: 12, max: 120, step: 1, def: 28, help: 'between the major lines (φ’s level sets)', stage: 'phi' },
   blend: { label: 'blend width', units: 'cells', min: 0, max: 40, step: 1, def: 12, help: 'the smooth min’s k: how softly a point’s rings join the contours', stage: 'phi' },
