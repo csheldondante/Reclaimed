@@ -138,6 +138,8 @@ interface Phase {
   /** the fight's chain over the phase, from the agents' events — where it breaks if it does: targets taken (noticed),
    *  swings begun (windup), blows (swing), hurts; and how far 32 of the units moved (mean, cells; observed) */
   chain: { noticed: number; windup: number; swing: number; hurt: number; moved: number };
+  /** (U2 round 7) the fields' page pool at the phase's end: pages held, of the pool's, and refused (all told) */
+  pages: { used: number; of: number; refused: number };
   /** the headline: the GPU span on and off (ms, mean) and on less off */
   gpu: { on: number | null; off: number | null; diff: number | null };
   /** the frame interval sat at a vsync cap (16.7 / 8.3 ms) on both sides: frame time can't tell them apart */
@@ -368,9 +370,11 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
       }
       sightShare = withT ? r3(seen / withT) : null;
     }
+    const ps = await agents.fields.stats();
     rest();
     const capped = (s: Side) => [16.667, 8.333].some((c) => Math.abs(s.p50 - c) < 0.35);
     const p: Phase = {
+      pages: { used: ps.used, of: ps.pages, refused: ps.refused },
       name,
       on,
       off,
@@ -478,6 +482,65 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
     for (const id of ids) units.remove(id);
     await sleep(500);
   };
+  const threeArmies = async (n: number): Promise<Phase> => {
+    const per = Math.round((2 * n) / 3);
+    const sides = [0, 1, 2].map((s) => {
+      const hunt = agents.newField()!;
+      const threat = agents.newField()!;
+      agents.sideFields(200 + s, { hunt, threat });
+      agents.follow(100 + s, hunt);
+      return { hunt, threat };
+    });
+    agents.notice.relations((a, b) => a >= 200 && a < 203 && b === 200 + ((a - 200 + 1) % 3));
+    const ids: number[] = [];
+    for (let s = 0; s < 3; s++) {
+      const a = (s * 2 * Math.PI) / 3;
+      const c: V2 = [centre[0] + Math.cos(a) * 18, centre[1] + Math.sin(a) * 18];
+      for (let k = 0; k < per; k++) {
+        const p: V2 = [c[0] + ((k % 20) - 10) * 0.9, c[1] + (Math.floor(k / 20) - 5) * 0.9];
+        const [x, y] = snap ? snap(p) : p;
+        const id = agents.spawn(1, x, y, { kind: 1, group: 100 + s, spread: 0 })[0];
+        agents.notice.set(id % 8192, { faction: 200 + s, hostile: true, sight: 40 });
+        ids.push(id);
+      }
+    }
+    await sleep(3000);
+    panel.say(`field bench — three armies of ${per}: per-side fields on vs frozen…`);
+    const sidesT = await toggled(P, agents, windowS, relaxed);
+    const ps = await agents.fields.stats();
+    restDefault();
+    agents.remove(ids);
+    agents.notice.relations(null);
+    for (let s = 0; s < 3; s++) {
+      agents.sideFields(200 + s, null);
+      agents.follow(100 + s, -1);
+      agents.freeField(sides[s].hunt);
+      agents.freeField(sides[s].threat);
+    }
+    await sleep(500);
+    const d = (a: number | null, b: number | null) => (a !== null && b !== null ? r3(a - b) : null);
+    return {
+      name: 'three-armies',
+      on: 'three armies, per-side fields',
+      off: 'fields frozen',
+      sides: sidesT,
+      diff: { p50: r3(sidesT.on.p50 - sidesT.off.p50), mean: r3(sidesT.on.mean - sidesT.off.mean), gpuMs: d(sidesT.on.gpuMs, sidesT.off.gpuMs) },
+      alive: { start: ids.length, end: ids.length },
+      deaths: 0,
+      causes: {},
+      ground,
+      sightShare: null,
+      targeted: 0,
+      engaged: ids.length,
+      valid: true,
+      chain: { noticed: 0, windup: 0, swing: 0, hurt: 0, moved: 0 },
+      pages: { used: ps.used, of: ps.pages, refused: ps.refused },
+      gpu: { on: sidesT.on.gpuMs, off: sidesT.off.gpuMs, diff: d(sidesT.on.gpuMs, sidesT.off.gpuMs) },
+      vsync: false,
+      windows: WINDOWS,
+      windowS,
+    };
+  };
   const losPhases = async (n: number, list: Phase[]) => {
     const archers = Math.min(n, Number(params.get('ranged') ?? Math.round(n / 5)));
     list.push(await phase(n, 'los', 'line of sight', 'block16 alone', los, restDefault));
@@ -550,6 +613,9 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
         }
       }
       await losPhases(n, list);
+      // (U2 round 7, §9e: three armies, each its own hunt and threat field, A on B, B on C, C on A — the fields on
+      // against frozen)
+      if (g === 'open') list.push(await threeArmies(n));
       phases[`${g}:${n}`] = list;
     }
   }
@@ -588,7 +654,7 @@ export async function fieldBench(params: URLSearchParams): Promise<void> {
   }
   // (the headline is the GPU span: the frame interval sits at the display's vsync on a phone; a phase with no fight says so)
   const line = (n: string, p: Phase) =>
-    `${p.valid ? '' : 'NO FIGHT — INVALID: '}${p.ground} ${n.split(':')[1]} v ${n.split(':')[1]} ${p.name}: GPU ${p.gpu.off ?? 'n/a'} → ${p.gpu.on ?? 'n/a'} ms (${p.gpu.diff !== null && p.gpu.diff >= 0 ? '+' : ''}${p.gpu.diff ?? 'n/a'}) ${p.off} → ${p.on}; frame p50/p95 ${p.sides.off.p50}/${p.sides.off.p95} → ${p.sides.on.p50}/${p.sides.on.p95}${p.vsync ? ' (at the vsync cap)' : ''}; asks/sweep ${p.sides.off.asksPerSweep ?? '–'} → ${p.sides.on.asksPerSweep ?? '–'}${p.sides.on.shots || p.sides.off.shots ? `; shots ${p.sides.off.shots} → ${p.sides.on.shots}, landed ${p.sides.off.landed} → ${p.sides.on.landed}, to act ${p.sides.off.toActFrames ?? '–'} → ${p.sides.on.toActFrames ?? '–'} ticks` : ''}${p.sightShare !== null ? `; in sight ${p.sightShare}` : ''}; alive ${p.alive.start} → ${p.alive.end}, ${p.deaths} died (${Object.entries(p.causes).map(([k, v]) => `${k} ${v}`).join(', ') || '—'}); engaged ${p.engaged} (with a target ${p.targeted}); chain: noticed ${p.chain.noticed}, windups ${p.chain.windup}, blows ${p.chain.swing}, hurts ${p.chain.hurt}, moved ${p.chain.moved} cells`;
+    `${p.valid ? '' : 'NO FIGHT — INVALID: '}${p.ground} ${n.split(':')[1]} v ${n.split(':')[1]} ${p.name}: GPU ${p.gpu.off ?? 'n/a'} → ${p.gpu.on ?? 'n/a'} ms (${p.gpu.diff !== null && p.gpu.diff >= 0 ? '+' : ''}${p.gpu.diff ?? 'n/a'}) ${p.off} → ${p.on}; frame p50/p95 ${p.sides.off.p50}/${p.sides.off.p95} → ${p.sides.on.p50}/${p.sides.on.p95}${p.vsync ? ' (at the vsync cap)' : ''}; front/sweep ${p.sides.off.asksPerSweep ?? '–'} → ${p.sides.on.asksPerSweep ?? '–'}; pages ${p.pages.used}/${p.pages.of}, refused ${p.pages.refused}${p.sides.on.shots || p.sides.off.shots ? `; shots ${p.sides.off.shots} → ${p.sides.on.shots}, landed ${p.sides.off.landed} → ${p.sides.on.landed}, to act ${p.sides.off.toActFrames ?? '–'} → ${p.sides.on.toActFrames ?? '–'} ticks` : ''}${p.sightShare !== null ? `; in sight ${p.sightShare}` : ''}; alive ${p.alive.start} → ${p.alive.end}, ${p.deaths} died (${Object.entries(p.causes).map(([k, v]) => `${k} ${v}`).join(', ') || '—'}); engaged ${p.engaged} (with a target ${p.targeted}); chain: noticed ${p.chain.noticed}, windups ${p.chain.windup}, blows ${p.chain.swing}, hurts ${p.chain.hurt}, moved ${p.chain.moved} cells`;
   panel.say(`field bench done — town ${townId}; armies at ${centre.map((v) => v.toFixed(1)).join(', ')} (ground ${found[2].toFixed(1)}), 24 apart.`);
   const df = drawFacts();
   const drawLine = `draw at 500 v 500: ${df.instances ?? 'n/a'} voxel instances for ${df.alive} units (${df.instancesPerUnit ?? 'n/a'} a unit; ${df.onScreen} on screen, no view cull); the draw ${df.drawGpuMs ?? 'n/a'} ms GPU, ${df.gpuMsPerVisibleUnit ?? 'n/a'} ms a unit on screen`;

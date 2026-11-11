@@ -60,7 +60,7 @@ fn fieldIsSeed(f: u32, s: u32) -> bool {
 // CPU to every seeder there can be — a refusal is a sizing bug, shown), then the lists: (field, surface) pairs
 @group(0) @binding(53) var<storage, read_write> seedList: array<atomic<u32>>;
 const SEED_LIST: u32 = 16384u; // SEED_LIST
-const SEED_HEAD: u32 = 8u;
+const SEED_HEAD: u32 = 16u + 2u * 256u;
 fn seedAt(l: u32, k: u32) -> u32 { return SEED_HEAD + (l * SEED_LIST + k) * 2u; }
 const SEED_NONE: u32 = 0u;
 const SEED_KEPT: u32 = 1u;

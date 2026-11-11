@@ -32,6 +32,9 @@ const NR_OPEN = 2;
 const NR_SIDES = 4;
 /** NoticeParams (notice.wgsl): n, dims, f, 8 actors, 2 faction vec4s, 32 set vec4s */
 const PARAMS_WORDS = 4 + 4 + 4 + MAX_ACTORS * 4 + 8 + (MAX_SETS / 2) * 4;
+/** (U2 round 7, §9e) the side relation matrix after them: 256 x 256 bits, written only when it changes */
+const REL_WORDS = (256 * 256) / 32;
+const NR_MATRIX = 8;
 
 /** One unit's part in the fighting (Agents.combat) */
 export interface CombatSpec {
@@ -108,7 +111,7 @@ export class UnitNotice {
     this.next = world.buf('agentBucketNext', maxUnits * 4, S);
     this.hunted = world.buf('agentHunted', maxUnits * 4, S);
     this.top = world.buf('agentHuntTop', 8 * 16, S | GPUBufferUsage.COPY_SRC);
-    this.params = world.buf('agentNotice', PARAMS_WORDS * 4, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.params = world.buf('agentNotice', (PARAMS_WORDS + REL_WORDS) * 4, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const spec: BindSpec = { 0: 'uniform', 7: 'rw', 13: 'rw', 41: 'read', 42: 'read', 43: 'rw', 44: 'rw', 45: 'uniform', 46: 'rw', 47: 'rw' };
     const mk = (e: string) => makeCompute(device, `agents-${e}`, [commonWgsl, noticeWgsl], spec, e);
     this.k = { bucketClear: mk('bucketClear'), bucketFill: mk('bucketFill'), huntClear: mk('huntClear'), notice: mk('notice'), huntWrite: mk('huntWrite'), huntTop: mk('huntTop') };
@@ -157,6 +160,26 @@ export class UnitNotice {
     else this.sets.push([slot, code]);
   }
 
+  private matrix = false;
+
+  /**
+   * (U2 round 7, §9e) Who's whose enemy, side by side (a side: a faction's number, 0..254): `hostile(a, b)` — side a
+   * takes on side b. Written once, as an order, and again when diplomacy changes; it replaces the hostile flag's rule
+   * (a hostile hunts the peaceful of another faction). null: back to that rule.
+   */
+  relations(hostile: ((a: number, b: number) => boolean) | null, sides = 255): void {
+    this.matrix = hostile !== null;
+    if (!hostile) return;
+    const m = new Uint32Array(REL_WORDS);
+    for (let a = 0; a < sides; a++)
+      for (let b = 0; b < sides; b++) {
+        if (!hostile(a, b)) continue;
+        const i = a * 256 + b;
+        m[i >> 5] |= 1 << (i & 31);
+      }
+    this.device.queue.writeBuffer(this.params, PARAMS_WORDS * 4, m);
+  }
+
   /** the stage: once a frame, after the units' last step (count: the unit slots in use) */
   encode(pass: GPUComputePassEncoder, count: number): void {
     if (!count) return;
@@ -164,7 +187,7 @@ export class UnitNotice {
     const f = new Float32Array(this.data);
     u.fill(0);
     const sets = this.sets.splice(0, MAX_SETS);
-    const flags = (this.rules.on ? NR_RULES : 0) | (this.rules.open || !this.hasSides ? NR_OPEN : 0) | (this.hasSides ? NR_SIDES : 0);
+    const flags = (this.rules.on ? NR_RULES : 0) | (this.rules.open || !this.hasSides ? NR_OPEN : 0) | (this.hasSides ? NR_SIDES : 0) | (this.matrix ? NR_MATRIX : 0);
     u.set([count, this.actorList.length, sets.length, flags], 0);
     u.set([this.bw, this.bh, this.eventCap, 0], 4);
     f.set([this.rules.heightLimit, this.rules.leash, 0, 0], 8);
