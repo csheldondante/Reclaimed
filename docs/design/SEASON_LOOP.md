@@ -177,8 +177,8 @@ turns it into the Units contract's ref (`unitsRef`).
   (only muster, stores, barracks, market, keep, gates, spawn points); when one exists it joins `military` and the
   raise chain. Squads are
   matched to the free Might when each season begins (its stages landed): the weakest sent home, new ones raised.
-  **At most 6 squads** (`MAX_SQUADS`: Track B has 8 order groups — a raid, 6 squads, a spare); Might past 6 raises no
-  more soldiers. Track B's round 7 removes the caps: MAX_SQUADS goes then (SF-10).
+  **No cap on squads:** a squad a free point of Might. Track B's round 7 sized the order groups and fields from memory
+  (a GPU page pool), so the earlier 6-squad cap is gone (SF-10); 'pool-full' only when memory really runs out.
 - **Drill:** squads not at the gates `drill` in a column round the muster yard, else the barracks
   ("6 soldiers are drilling.").
 - **No room for ranks** (Track B's coming `orderFailed` reason `'no-room'`: a formation where even one file doesn't

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { START_INCOME, START_POOLS } from '../../src/season/catalog';
 import { grant, lose, newLedger, pools, total } from '../../src/season/ledger';
 import { TownForces, unitsRef } from '../../src/season/forces';
-import { military, MAX_SQUADS, raidPlaces, SeasonWar, settle, SQUAD, townHeart, waveIn, waveSize } from '../../src/season/war';
+import { military, raidPlaces, SeasonWar, settle, SQUAD, townHeart, waveIn, waveSize } from '../../src/season/war';
 import { fightLine, FORCES_FULL, NO_SOLDIERS, RANKS_NO_ROOM, SOLDIERS_NO_PLACE, soldiersLine, WAVE_NO_ROAD, waveNowLine, waveSoonLine } from '../../src/season/words';
 import { PLACE, type PlaceRef } from '../../src/api/contracts/townplaces';
 import type { OrderFailure, PlaceRef as UPlaceRef, SpawnAtOpts, SquadOrder, UnitId, Units, UnitView } from '../../src/api/contracts/units';
@@ -331,13 +331,13 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
     expect(war.lines[0]).toBe(soldiersLine(SQUAD * 2, 'gates'));
   });
 
-  it('caps the squads at MAX_SQUADS, and a chain past three choices throws', async () => {
+  it('raises a squad a free point of Might with no cap (SF-10), and a chain past three choices throws', async () => {
     const { f, units, tick } = forces({ [PLACE.muster]: 'ok' });
-    const l = { ...grant(start(), { might: 10 }), built: ['keep'] };
+    const l = { ...grant(start(), { might: 7 }), built: ['keep'] };
     const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 0, ledger: () => l });
     war.season(l);
     await tick();
-    expect(units.views.size).toBe(SQUAD * MAX_SQUADS);
+    expect(units.views.size).toBe(SQUAD * 7); // past the old cap of 6 (the fake keeps 8 groups for the pool-full case)
     const deep: PlaceRef = { town: 0, place: 0, else: { town: 0, place: 1, else: { town: 0, place: 2, else: { town: 0, place: 3 } } } };
     expect(() => f.spawnAt('soldier', 'f-town', deep, 1)).toThrow(/at most 3/);
   });

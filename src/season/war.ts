@@ -17,9 +17,6 @@ import { fightLine, FORCES_FULL, RANKS_NO_ROOM, NO_SOLDIERS, SOLDIERS_NO_PLACE, 
 
 /** soldiers a free point of Might (SEASON_LOOP.md: "a squad a point of Might") */
 export const SQUAD = 3;
-/** squads at most (Track B's 8 order groups: a raid, 6 squads, a spare) — Might past 6 raises no more. Track B's round 7
- *  removes the group caps: delete this then (BACKLOG SF-10) */
-export const MAX_SQUADS = 6;
 /** the first raid's season (a walls card started in season 1 is up by season 4), and the seasons between raids */
 export const FIRST_WAVE = 4;
 export const WAVE_EVERY = 3;
@@ -126,7 +123,7 @@ type Post =
   | { kind: 'patrol'; gate: number; tried: number; home: number };
 
 export class SeasonWar {
-  /** the soldiers: a group a free point of Might (MAX_SQUADS at most) */
+  /** the soldiers: a group a free point of Might */
   private squads: GroupId[] = [];
   private posts = new Map<GroupId, Post>();
   private wave: { g: GroupId; n: number; stage: 'coming' | 'there' | 'fighting'; failed: boolean; a: number; tried: number } | null = null;
@@ -301,7 +298,7 @@ export class SeasonWar {
     // go and raised again)
     // (no keep, barracks or walls: no squads at all — the sheet says there is nowhere to gather; SF-13)
     const armed = military(l);
-    const want = armed ? Math.min(MAX_SQUADS, pools(l).might) : 0;
+    const want = armed ? pools(l).might : 0;
     if (!armed && pools(l).might > 0) this.noPlace = true;
     this.squads = this.squads.filter((g) => {
       if ((f.report(g)?.alive ?? 0) > 0) return true;
