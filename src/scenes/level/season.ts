@@ -111,6 +111,8 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoo
       forces: () => (scene.townContracts ? forces : null),
       town: () => (loop.town !== null && scene.townContracts ? scene.townContracts.townIndex(loop.town) : -1),
       firstWave: Number(p.get('wave') ?? FIRST_WAVE),
+      // (?man=1: squads man the wall-walk after the walls — off until the walls' baked routes and Track B's route riding)
+      man: p.get('man') === '1',
       ledger: () => loop.ledger,
     });
     (globalThis as { war?: SeasonWar }).war = loop.war;

@@ -125,7 +125,7 @@ from the start, ordered through the Units contract). The calls the season loop n
   event; and back the same way when the card finishes.
 - Events: `arrived(g)`, `left(g)` (off the window). Until then, the walls get no soldiers and the patrol card waits.
 
-## Soldiers and waves (trackA-forces; BACKLOG SL12, SF-1…SF-7)
+## Soldiers and waves (trackA-forces; BACKLOG SL12, SF-1…SF-13)
 
 The user approved it on 2026-11-10 ("do what you can now"); it lifts "No raids in this test" above for one simple rule.
 Code: `season/forces.ts` (TownForces, the adapter), `season/war.ts` (the rules), lines in `season/words.ts`.
@@ -147,31 +147,53 @@ turns it into the Units contract's ref (`unitsRef`).
   from `died`. A group's `size` is its living members plus its dead (0 when its spawn failed: none made).
 - **Melee is the GPU's** (DA-B32). Line of sight and seen-only targets are the default: units hunt an unseen target only
   when ordered, so a raid's `attack` order is what sends raiders at the town.
+- **Round 6 orders (trackA-forces3):** `orderGroup(g, { kind: 'drill', at, formation })`, `{ kind: 'man', town, side? }`,
+  `{ kind: 'march', town, gate, leave? }` (an invalid gate fails with its status; `leave` tells `left(g)` once), and an
+  optional `formation` ('column' | 'line') on go / guard / attack. TownForces' `ForceOrder` carries them (townplaces
+  PlaceRefs turned into the Units contract's at the call). Each kind's spawn opts are TownForces' `FORCE_OPTS`: soldiers
+  sight 22, pace 3.2, health 3; raiders sight 24, pace 3.4, health 3.
 - **Room:** Track B has 8 order groups and 7 order fields (a field a distinct place chain). A spawn with no group free
-  or an order with no field free is told as `orderFailed(g, 'pool-full')` and shown on the sheet ("Too many groups are
-  on the move at once …"); the group stays as it was, and the next season posts again. Never a silent drop.
+  or an order with no field free is told as `orderFailed(g, 'pool-full')` by Track B itself (no units made; the
+  failure sticks: the group's later orders fail the same) and shown on the sheet ("Too many groups are on the move at
+  once …"); the next season posts again. Never a silent drop. A squad whose spawn failed for any reason is let go at once
+  and raised again the next season.
 - **Not a fallback:** an invalid place is never replaced by a position the CPU makes up; the chain is authored and an
   order with no valid choice fails and is shown.
 
 **The rules (`season/war.ts`):**
 - **Might becomes soldiers:** a squad of 3 (`SQUAD`) a **free** point of Might (SEASON_LOOP's own "a squad a point of
-  Might"; Might tied up in a card is busy, so its squad isn't standing), raised at the barracks, else the muster yard.
-  Neither there (no walls card begun, no keep): the sheet says so ("Your soldiers have nowhere to gather …"). Squads are
+  Might"; Might tied up in a card is busy, so its squad isn't standing), raised at the barracks, else the muster yard,
+  else the market (trackA-forces3: a town with no walls and no keep gathers its soldiers in the market square — SF-13,
+  the user's call). None of them there: the sheet says so ("Your soldiers have nowhere to gather …"). Squads are
   matched to the free Might when each season begins (its stages landed): the weakest sent home, new ones raised.
   **At most 6 squads** (`MAX_SQUADS`: Track B has 8 order groups — a raid, 6 squads, a spare); Might past 6 raises no
-  more soldiers.
-- **Guards:** once the walls are built, squad j guards the first standing gate from slot j on (the squads spread over
-  the gates there are); before, they wait where they were raised. With chains of 3, the search goes a window at a time:
+  more soldiers. Track B's round 7 removes the caps: MAX_SQUADS goes then (SF-10).
+- **Drill:** squads not at the gates `drill` in a column round the muster yard, else the barracks, else the market
+  ("6 soldiers are drilling.").
+- **Guards:** once the walls are built, squad j guards the first standing gate from slot j on in a `line` (the squads
+  spread over the gates there are); before, they drill. With chains of 3, the search goes a window at a time:
   gates j, j+1, j+2; on `orderFailed` the next three; past all ten slots, where it was raised. The sheet counts soldiers
   at the gates and in the yard apart.
+- **Man (`?man=1`, off by default):** after the walls, squad j mans wall run j (`man { town, side: j }`); a man order
+  that fails guards the gates instead. Off until trackA-wallstair's baked wall routes and Track B's route riding land
+  (U2-WALLSTAIR, SF-12); with the flag off the gates stay guarded.
+- **The patrol — the rule:** in a season with the walls built and no raid (none due, none on), the last squad (the
+  weakest) marches out through the first standing gate from its own slot (`march`, leave false) along that gate's route
+  to the window's edge; on `arrived` (the route's end) it is sent back to guard its gate. One squad, once a season (each
+  season begun posts again). A gate that can't be marched (`none`, `rising`, `water`, `failed`) moves it to the next
+  slot; `busy`, `no-town` or `pool-full` send it back to its gate at once. The sheet: "3 soldiers march out on patrol."
 - **Raids — a fixed schedule** (the simplest fit: the dealer has no threat cards yet; a Threat card is SF-5): from
   season 4 (`FIRST_WAVE`: a walls card started in season 1 is up by then) every 3 seasons, 4, 6, 8 … raiders, warned a
   season ahead on the sheet. `?wave=N` the first raid's season (1: right away; 0: none) — the test flag.
-- **Where from and to:** raid k along the first arterial from k on whose spawn point (outside the wall) and gate both
+- **Where from and to, no walls** (trackA-forces3; before, a season-1 raid "found no road": its spawn's `also` needs a
+  gate): with no ring, raid k from the first standing spawn point of arterials k, k+1, k+2 (no `also`), the next window
+  on the spawn's `orderFailed`, all eight tried once — attacking the keep, else the stores, else the market. The squads
+  stand in a line there while it's on ("3 soldiers wait for the raiders in the town centre.").
+- **Where from and to, with walls:** raid k along the first arterial from k on whose spawn point (outside the wall) and gate both
   stand — from that spawn point, attacking that gate (closed gates count as wall in the side map, so the fight is at the
   gate). A window of three arterials a call (spawn and gate chains paired by `also`); on the spawn's `orderFailed` the
   group is let go and the next window tried; past all eight, from arterial k's spawn point (else the first) to the keep,
-  else the stores.
+  else the stores, else the market.
 - **Outcome, at Next season** (before the ledger moves on): Might −1 for each 3 soldiers fallen (rounded up: free ones
   lost first, then ones tied up in a card); raiders still alive got in — Unrest +1 and a Material each (what's there),
   and they leave. The summary line says it ("You beat the raiders. 1 soldier died. You lost 1 Might.").
@@ -179,13 +201,15 @@ turns it into the Units contract's ref (`unitsRef`).
   coming next season. Scouts count 4." / "Raiders attack! 4 of 4 are on their way." → "Raiders are fighting your
   soldiers! 3 of 4 are left." (a blow on either side) / "All 4 raiders are dead."
 
-**Known limits:** squads stand at a place (the GPU's guard), they don't drill, man the wall-walk or march
-(orderGroup's formations, SF-2: round 6). Soldiers and raiders take the agents' defaults (health 3; spawnAt takes no
-sight / speed options).
+**Known limits:** the drill stands still in Muru's small yard (SF-11, Track B); `man` is untested in game (SF-12); the
+patrol is once a season, not on a clock; 'no-town' (the town's slot gone with the window) leaves a squad's post as it
+is until the next season.
 
 **The check** (`scripts/lab/townforces.mjs`, Muru, 412 × 915, 60°): season 2, six soldiers at the yard; season 4, the
 walls built, 12 soldiers at gate 2 (Muru's only standing gate: gate 0 is over water), four raiders from spawn point 2
-along its road to the gate, the fight there, settled at Next season.
+along its road to the gate, the fight there, settled at Next season; season 5, the patrol out of gate 2 and back.
+`scripts/lab/townraid.mjs` (`--flags "&wave=1"`): season 1, no walls — the raid from spawn point 0 at the stores, the
+squad raised in the market meeting it.
 
 ## Town moods (the user, 2026-11-10 — not built; BACKLOG TM1–TM10)
 

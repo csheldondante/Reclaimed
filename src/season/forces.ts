@@ -7,15 +7,22 @@
 // table, keeps a frame count or watches the units' states. What stays on the CPU: the group's bookkeeping (its id, its
 // kind, the units it started with, the dead counted from `died`), and the PlaceRef turned into the Units contract's
 // shape (townplaces' `also` is a place number; the Units contract's a ref).
+//
+// (trackA-forces3, BACKLOG SF-2 / SF-8) On Track B's round 6 orders: drill (a formation round a yard), man (the
+// wall-walks), march (out along a gate's route; `leave` tells left(g)), and a formation on go / guard / attack. A spawn
+// with no order group free is Track B's own 'pool-full' event (no units made, its orders failing the same): this
+// adapter no longer counts the groups itself. Each kind's spawn opts (sight, pace, health) are set here.
 import type { FactionId } from '../api/contracts/world';
-import type { OrderFailure, PlaceRef as UnitsPlaceRef, UnitId, Units, UnitView } from '../api/contracts/units';
+import type { Formation, OrderFailure, PlaceRef as UnitsPlaceRef, SpawnAtOpts, SquadOrder, UnitId, Units, UnitView } from '../api/contracts/units';
 import { chainLength, type GroupId, type PlaceRef } from '../api/contracts/townplaces';
 
 export type ForceKind = 'soldier' | 'raider';
-export interface ForceOrder {
-  kind: 'guard' | 'go' | 'attack';
-  at: PlaceRef;
-}
+/** a group's order, with townplaces' PlaceRefs (turned into the Units contract's at the call) */
+export type ForceOrder =
+  | { kind: 'guard' | 'go' | 'attack'; at: PlaceRef; formation?: Formation }
+  | { kind: 'drill'; at: PlaceRef; formation: Formation }
+  | { kind: 'man'; town: number; side?: number }
+  | { kind: 'march'; town: number; gate: number; leave?: boolean };
 
 /** how a group is doing (the season's report) */
 export interface GroupReport {
@@ -31,15 +38,18 @@ export interface GroupReport {
 
 /** each kind's unit kind on the Units contract (the lab and the figures tell soldiers by 'guard') */
 const KIND: Record<ForceKind, string> = { soldier: 'guard', raider: 'raider' };
+/** each kind's spawn opts: sight in cells (a raider sees a little farther: it hunts), pace class, health. The pace
+ *  itself is the kind's on the GPU (soldier 3.2, raider 3.4); `speed` only picks the class */
+export const FORCE_OPTS: Record<ForceKind, SpawnAtOpts> = { soldier: { sight: 22, speed: 3.2, health: 3 }, raider: { sight: 24, speed: 3.4, health: 3 } };
 
 interface Group {
   id: GroupId;
   kind: ForceKind;
-  /** the Units contract's order group (null: none made — no group slot free) */
-  ug: GroupId | null;
+  /** the Units contract's order group (its spawn may have failed: then it has no members and its orders fail) */
+  ug: GroupId;
   dead: number;
-  /** the last place asked for (the spawn's, then each order's): orderFailed names it */
-  at: PlaceRef;
+  /** what was last asked (the spawn's place, then each order): orderFailed names it */
+  at: PlaceRef | ForceOrder;
   arrived: boolean;
   failed: OrderFailure | null;
 }
@@ -51,14 +61,22 @@ export function unitsRef(r: PlaceRef): UnitsPlaceRef {
   return orElse ? { ...base, else: unitsRef(orElse) } : base;
 }
 
-type PlaceUnits = Units & Required<Pick<Units, 'spawnAt' | 'orderGroup' | 'members' | 'arrived' | 'orderFailed'>>;
+/** a ForceOrder as the Units contract's */
+function squadOrder(o: ForceOrder): SquadOrder {
+  if (o.kind === 'man' || o.kind === 'march') return o;
+  return { ...o, at: unitsRef(o.at) } as SquadOrder;
+}
+
+type PlaceUnits = Units & Required<Pick<Units, 'spawnAt' | 'orderGroup' | 'members' | 'arrived' | 'orderFailed' | 'left'>>;
 
 export class TownForces {
   /** a group stands at its order's place: once an order */
   readonly arrived: ((g: GroupId) => void)[] = [];
   /** a spawn or an order whose whole place chain isn't valid (why: the last choice's status), or no group slot or
-   *  field free for it ('pool-full') */
-  readonly orderFailed: ((g: GroupId, why: OrderFailure, at: PlaceRef) => void)[] = [];
+   *  field free for it ('pool-full'); a march's gate not valid (its status), or its route not traced ('failed') */
+  readonly orderFailed: ((g: GroupId, why: OrderFailure, at: PlaceRef | ForceOrder) => void)[] = [];
+  /** a march that leaves: its last member left the window */
+  readonly left: ((g: GroupId) => void)[] = [];
   /** a member died: `by` as the Units contract's died */
   readonly died: ((g: GroupId, u: UnitView, by: UnitId | string | null) => void)[] = [];
   /** a member was hurt */
@@ -73,7 +91,7 @@ export class TownForces {
   private next = 1;
 
   constructor(units: Units) {
-    if (!units.spawnAt || !units.orderGroup || !units.members || !units.arrived || !units.orderFailed) throw new Error('forces: the units have no place orders (spawnAt / orderGroup / members / arrived / orderFailed)');
+    if (!units.spawnAt || !units.orderGroup || !units.members || !units.arrived || !units.orderFailed || !units.left) throw new Error('forces: the units have no place orders (spawnAt / orderGroup / members / arrived / orderFailed / left)');
     this.units = units as PlaceUnits;
     units.died.push((u, by) => {
       const g = this.groups.get(this.ofUnit.get(u.id) ?? -1);
@@ -95,36 +113,36 @@ export class TownForces {
       const g = this.groups.get(this.ofUg.get(ug) ?? -1);
       if (g) this.fail(g, why);
     });
+    this.units.left.push((ug) => {
+      const g = this.groups.get(this.ofUg.get(ug) ?? -1);
+      if (g) for (const f of this.left) f(g.id);
+    });
   }
 
   // ---- the agreed calls ----------------------------------------------------------------------------
 
-  /** n units of a kind at a place, standing there until ordered; orderFailed (none made) if no choice is valid */
+  /** n units of a kind at a place, standing there until ordered; orderFailed (none made) if no choice is valid, or
+   *  'pool-full' if Track B has no order group free (its later orders fail the same) */
   spawnAt(kind: ForceKind, faction: FactionId, at: PlaceRef, n: number): GroupId {
     chainLength(at);
-    const g: Group = { id: this.next++, kind, ug: null, dead: 0, at, arrived: false, failed: null };
+    const ug = this.units.spawnAt(KIND[kind], faction, unitsRef(at), n, FORCE_OPTS[kind]);
+    const g: Group = { id: this.next++, kind, ug, dead: 0, at, arrived: false, failed: null };
     this.groups.set(g.id, g);
-    if (!this.slotFree()) {
-      // (no order group free: told as the Units contract tells a full field pool — after the caller has the id)
-      queueMicrotask(() => this.groups.get(g.id) === g && this.fail(g, 'pool-full'));
-      return g.id;
-    }
-    g.ug = this.units.spawnAt(KIND[kind], faction, unitsRef(at), n);
-    this.ofUg.set(g.ug, g.id);
-    for (const u of this.units.members(g.ug)) this.ofUnit.set(u, g.id);
+    this.ofUg.set(ug, g.id);
+    for (const u of this.units.members(ug)) this.ofUnit.set(u, g.id);
     return g.id;
   }
 
-  /** the group's order: guard a place, go there, or attack it (hostile to whatever is on the way and there) */
+  /** the group's order: guard a place, go there, attack it (hostile to whatever is on the way and there), drill round
+   *  it, man the walls, or march out of a gate */
   orderGroup(id: GroupId, order: ForceOrder): void {
     const g = this.groups.get(id);
     if (!g) throw new Error(`forces: no group ${id}`);
-    chainLength(order.at);
-    if (g.ug === null) return;
-    g.at = order.at;
+    if ('at' in order) chainLength(order.at);
+    g.at = order;
     g.arrived = false;
     g.failed = null;
-    this.units.orderGroup(g.ug, { kind: order.kind, at: unitsRef(order.at) });
+    this.units.orderGroup(g.ug, squadOrder(order));
   }
 
   // ---- the season's other needs -----------------------------------------------------------------------
@@ -132,7 +150,7 @@ export class TownForces {
   report(id: GroupId): GroupReport | null {
     const g = this.groups.get(id);
     if (!g) return null;
-    const alive = g.ug === null ? 0 : this.units.members(g.ug).length;
+    const alive = this.units.members(g.ug).length;
     return { id, kind: g.kind, size: alive + g.dead, alive, dead: g.dead, arrived: g.arrived, failed: g.failed };
   }
 
@@ -140,23 +158,13 @@ export class TownForces {
   disband(id: GroupId): void {
     const g = this.groups.get(id);
     if (!g) return;
-    if (g.ug !== null) {
-      for (const u of this.units.members(g.ug)) this.units.remove(u);
-      this.ofUg.delete(g.ug);
-    }
+    for (const u of this.units.members(g.ug)) this.units.remove(u);
+    this.ofUg.delete(g.ug);
     for (const [u, of] of this.ofUnit) if (of === id) this.ofUnit.delete(u);
     this.groups.delete(id);
   }
 
   // ---- inside --------------------------------------------------------------------------------------
-
-  /** Track B's order groups (agents ORDER_GROUPS): the season's groups with members hold one each */
-  static readonly GROUP_ROOM = 8;
-  private slotFree(): boolean {
-    let held = 0;
-    for (const g of this.groups.values()) if (g.ug !== null && this.units.members(g.ug).length) held++;
-    return held < TownForces.GROUP_ROOM;
-  }
 
   private fail(g: Group, why: OrderFailure): void {
     g.failed = why;

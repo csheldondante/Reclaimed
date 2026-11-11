@@ -22612,3 +22612,59 @@ lab's columns deeper than 0.9 by tick 6 400, depths to 35 000; soldiers drown in
     - a spawn's failure frees the group, and every later order to it fails the same;
     - test (formations.test.ts): "spawnAt at a missing place, then orderGroup guard → 0 units, the failure sticking; a
       spawn past the groups → pool-full".
+
+## 2026-11-11 — Forces 3: the season on Track B's round 6 orders; raids with no walls (`trackA-forces3`)
+
+The season's soldiers now use Track B's formation orders (U2 round 6), and a raid comes even when the town has no walls.
+BACKLOG SL12, SF-2, SF-8; SEASON_LOOP.md "Soldiers and waves".
+- **Drill:** squads not at the gates `drill` in a column round the muster yard, else the barracks, else the market
+  (they used to `guard` a point).
+- **Guards:** after the walls, squads `guard` their gate window in a `line`.
+- **Patrol:** in a season with walls and no raid, the weakest squad marches out through the first standing gate from its
+  slot (`march`, leave false). On `arrived` (the route's end) it goes back to guard its gate. One squad, once a season.
+  A gate that can't be marched (`none`, `rising`, `water`, `failed`) moves it to the next slot; `busy`, `no-town` and
+  `pool-full` send it straight back to its gate.
+- **Man, behind `?man=1` (off):** squad j mans wall run j; a failed man order guards the gates instead. It can't pass on
+  Muru yet (U2-WALLSTAIR, trackA-wallstair), so it is untested in game.
+- **Raids with no walls:**
+  - **Before:** in season 1 (`&wave=1`), the raid's spawn chain paired each spawn point with its gate (`also`). There
+    are no gates before the walls, so every window failed and the sheet said "Raiders were seen, but they found no road
+    into town".
+  - **Now:** with no ring (the walls not built), a raid spawns at the first standing spawn point of its window, with no
+    `also`, and attacks the keep, else the stores, else the market (`townHeart`). The squads stand in a line there. With
+    a ring, `also` stays.
+  - **Lab** (`scripts/lab/townraid.mjs`, Muru, `&wave=1`):
+    - 4 raiders spawned at spawn point 0 and went for the stores;
+    - 3 soldiers (raised in the market: no yard and no keep yet) met them in the street;
+    - all 4 raiders died, 2 of the soldiers fell.
+    - Two raiders died in the first ~8 s near the spawn point in both runs, with no `hurt`: the water there (UC-6's
+      area). Not chased.
+- **Soldiers gather in the market** when there is neither a barracks nor a muster yard. Before, a town with no walls
+  and no keep had no soldiers at all ("nowhere to gather"), so the season-1 raid met nobody. This is a judgement call
+  for the user.
+- **Clean-up:**
+  - TownForces' GROUP_ROOM count is deleted: Track B's `spawnAt` tells 'pool-full' itself, makes no units, and the failure
+    sticks.
+  - Spawn opts are back: soldiers sight 22, pace 3.2, health 3; raiders 24, 3.4, 3 (`FORCE_OPTS`).
+  - **A failed squad is let go.** A squad whose spawn failed used to be kept, empty (the old `!r.size` keep, for the
+    emulated pool-full). With Track B's sticky failure, every order to it then failed, so season 2 said "nowhere to
+    gather" while soldiers stood. Now it is let go at once and raised again next season.
+  - 'no-town' (the town's slot not live: the window slid away) leaves a squad's post as it is.
+  - The sheet's lines are new: "N soldiers are drilling." / "… march out on patrol." / "… stand on the walls." / "… wait
+    for the raiders in the town centre.", with singular verbs ("1 soldier marches …").
+- **Lab** (`townforces.mjs`, Muru, 412×915, 60°):
+  - season 2: 6 soldiers drilling;
+  - season 4: 12 at the gates, 4 raiders from spawn point 2, all dead, 2 soldiers fallen;
+  - season 5: the patrol, 3 soldiers out of gate 2 along its road. `arrived` (the route's end) was told within the
+    run's 120 sim s, and the squad was sent back to its gate; its return `arrived` hadn't come by the run's end.
+- **Drill doesn't move at Muru (open, Track B, SF-11).**
+  - A probe (gputown recipe, 6 soldiers, `drill` at the muster yard, 24 sim s): every soldier stayed within 1 cell of
+    (125, 124), and the centroid never moved.
+  - The yard is the small courtyard of SF-3. Likely cause: the anchor waits in FS_FORM because ranks can't reach slots
+    round a loop of at least 3 cells there.
+  - The season issues the order correctly. The soldiers stand at the yard, where the houses hide them at 60°.
+- **Tests:**
+  - typecheck;
+  - season-war (23: drill / line / patrol / man / no-wall raid / failed squad raised again / spawn opts / pool-full
+    from Track B), season, transfers: 42 pass;
+  - labs townforces and townraid pass.

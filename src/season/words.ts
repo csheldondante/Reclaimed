@@ -104,10 +104,23 @@ export const SOLDIERS_NO_PLACE = 'Your soldiers have nowhere to gather. Build wa
 export const NO_SOLDIERS = 'You have no soldiers free. Each Might gives you 3.';
 
 /** where the soldiers are: "6 soldiers guard the gates." */
-export function soldiersLine(n: number, where: 'yard' | 'barracks' | 'gates'): string {
+export function soldiersLine(n: number, where: 'yard' | 'barracks' | 'gates' | 'walls' | 'patrol' | 'heart'): string {
   const who = count(n, 'soldier', 'soldiers');
-  if (where === 'gates') return `${who} guard the gates.`;
-  return where === 'yard' ? `${who} wait in the muster yard.` : `${who} wait at the barracks.`;
+  const verb = (one: string, many: string) => (n === 1 ? one : many);
+  switch (where) {
+    case 'gates':
+      return `${who} ${verb('guards', 'guard')} the gates.`;
+    case 'walls':
+      return `${who} ${verb('stands', 'stand')} on the walls.`;
+    case 'patrol':
+      return `${who} ${verb('marches', 'march')} out on patrol.`;
+    case 'heart':
+      return `${who} ${verb('waits', 'wait')} for the raiders in the town centre.`;
+    case 'yard':
+      return `${who} ${verb('is', 'are')} drilling.`;
+    default:
+      return `${who} ${verb('waits', 'wait')} at the barracks.`;
+  }
 }
 
 export function waveSoonLine(n: number): string {

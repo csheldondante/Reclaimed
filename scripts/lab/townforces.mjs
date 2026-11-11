@@ -2,7 +2,8 @@
 // town game's page, phone size (412x915), the game's own play zoom, 60°: Might granted and the walls card started (a
 // script's only shortcuts, SeasonLoop.grant / offer); soldiers in the muster yard once the ring is made (season 2); the
 // walls built in season 4 — squads at the gates and the first raid (FIRST_WAVE) from a spawn point outside the wall,
-// shot as frames for a GIF from its start; Next season settles it into the pools. The card sheet folded for the shots
+// shot as frames for a GIF from its start; Next season settles it into the pools; season 5 (no raid) the patrol marching
+// out through the gate and back (trackA-forces3), frames for a GIF. The card sheet folded for the shots
 // (the player's ▾). Fails when no soldier stands, no raid comes, or nothing settles.
 //   RECLAIMED_PORT=5680 node scripts/lab.mjs run scripts/lab/townforces.mjs [--args '{"zoom":18,"wide":16,"close":34}']
 export default async function (lab, args) {
@@ -54,6 +55,17 @@ export default async function (lab, args) {
   fold(true);
   lab.look(n.muster.at[0], n.muster.at[1], zoom, 0.5);
   await lab.shot('forces-1-yard');
+  // (trackA-forces3: the drill — the camera on the squads themselves, observed for the shots only: the yard's houses hide
+  // them from the yard's own centre, SF-3)
+  const drillers = war.debug().squads.flatMap((q) => units.members(war.hooked.groups.get(q.id).ug));
+  for (let k = 0; k < (args.drillFrames ?? 6); k++) {
+    const rel = units.observe(drillers);
+    await lab.run(1, 4);
+    const at = drillers.map((i) => units.get(i)?.at).filter(Boolean);
+    rel();
+    if (at.length) lab.look(at.reduce((s, p) => s + p[0], 0) / at.length, at.reduce((s, p) => s + p[1], 0) / at.length, zoom * 1.5, 0.5);
+    await lab.shot(`forces-drill-${String(k).padStart(3, '0')}`);
+  }
   if (!kinds().guard) throw new Error(`season 2: no soldiers (${JSON.stringify(war.lines)})`);
   await season();
   await season();
@@ -98,5 +110,30 @@ export default async function (lab, args) {
   note('season 5: settled');
   fold(false);
   await lab.shot('forces-4-settled');
-  return { gates: gates.map(([k]) => k), statuses: Object.fromEntries(Object.entries(n).map(([k, v]) => [k, v.status])), span, before, summary: S.summary, after: { might: S.ledger.holdings.agents.filter((x) => x.kind === 'army').length, materials: S.ledger.holdings.goods.materials, unrest: S.ledger.holdings.goods.unrest }, deaths, log };
+  // (trackA-forces3) season 5, the walls standing and no raid: the last squad marches out through a standing gate (its
+  // route to the window's edge) and back to its gate post — framed on the gate's outside, as frames for a GIF
+  const patrol = war.debug().squads.find((q) => q.post?.kind === 'patrol');
+  if (!patrol) throw new Error(`season 5: no patrol (${JSON.stringify(war.debug().squads)})`);
+  const ug = war.hooked.groups.get(patrol.id).ug;
+  const pn = await named();
+  const pg = pn[`gate${patrol.post.gate}`];
+  const ps = pn[`spawn${patrol.post.gate}`] ?? pn.spawn0;
+  const pd = Math.hypot(ps.at[0] - pg.at[0], ps.at[1] - pg.at[1]) || 1;
+  fold(true);
+  const marched = { out: false, back: false, frames: args.patrolFrames ?? 24 };
+  units.arrived.push((g) => g === ug && (marched.out ? (marched.back = true) : (marched.out = true)));
+  for (let k = 0; k < marched.frames; k++) {
+    // (the camera follows the column's middle along the route — observed for the shot only)
+    const ids = units.members(ug);
+    const rel = units.observe(ids);
+    await lab.run(args.patrolStep ?? 2, 4);
+    const at = ids.map((i) => units.get(i)?.at).filter(Boolean);
+    rel();
+    const c = at.length ? [at.reduce((s, p) => s + p[0], 0) / at.length, at.reduce((s, p) => s + p[1], 0) / at.length] : [pg.at[0] + ((ps.at[0] - pg.at[0]) / pd) * 8, pg.at[1] + ((ps.at[1] - pg.at[1]) / pd) * 8];
+    lab.look(c[0], c[1], zoom, 0.5);
+    await lab.shot(`forces-patrol-${String(k).padStart(3, '0')}`);
+  }
+  note('season 5: patrol');
+  return {
+    patrol: { gate: patrol.post.gate, ...marched, post: war.debug().squads.find((q) => q.id === patrol.id)?.post }, gates: gates.map(([k]) => k), statuses: Object.fromEntries(Object.entries(n).map(([k, v]) => [k, v.status])), span, before, summary: S.summary, after: { might: S.ledger.holdings.agents.filter((x) => x.kind === 'army').length, materials: S.ledger.holdings.goods.materials, unrest: S.ledger.holdings.goods.unrest }, deaths, log };
 }
