@@ -92,8 +92,25 @@ body of work" (2026-11-10). The city generator lays out lots and draws each as a
   into the busy city life behind. Cutaways reduce the cost.
 - **Large structures carry foot traffic.** Walkways, bridges, arcades, decks and roofs are walkable and join the town's
   route network, so the city-life simulation shows across them, not just around them.
-  - The agents can already walk any connected walkable layer (decks, bridges, caves).
-  - The town routes are in `src/citylife/routes.wgsl` and the route-read contract in `src/shaders/routeread.wgsl`.
+
+## Buildings bake their own paths (the user, 2026-11-11)
+"Buildings in general should precompute paths that units move along. No sense in pathing when we have relatively fixed
+geometry. We can remake at mutation/destruction as needed."
+- **Every building generates its paths with its geometry:** doors to stairs to floors, wall-walks, bridges, decks, roofs
+  and arcades. They are baked once from the shapes it builds and claims, not found by pathing.
+  - Each point sits on the claimed surface within the agents' step of 1.1, so nothing floats or clips.
+  - Each point carries a `routeWidth`, so formations narrow.
+  - The paths join the town's route graph at the building's doors and ends.
+- **Units ride baked paths.** Track B's ROUTE mode moves a unit along the path, its position interpolated with z included,
+  like the riders' `routeAt`. A unit drops to the surfaces and physics only on an override: a fight, fleeing, being
+  knocked off. The surfaces must still exist and match the path, so a unit knocked off has ground under it.
+- **Re-baked on change:** a building's paths are remade when it is mutated, damaged or destroyed. A path whose surface is
+  gone fails visibly (`orderFailed`) until the re-bake.
+- **The first case is the town wall:** each run's path goes from its stair foot up the stair and along the deck
+  (`trackA-wallstair`, routeread `wallWalkRoute`). Follow its format.
+- **Where the code is:** the town routes are in `src/citylife/routes.wgsl` and the route-read contract in
+  `src/shaders/routeread.wgsl` / `src/api/contracts/routes.ts`. Propose how building paths are stored and exposed (per
+  building record, stable ids with generations) in the design review.
 
 ## Where it runs: GPU vs CPU (the user, 2026-11-11)
 - **On the GPU:** anything that must stream in or happen with low latency. A town's buildings appearing as the camera
