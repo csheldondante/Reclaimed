@@ -64,6 +64,7 @@ async function main() {
   const depthFormat: GPUTextureFormat = 'depth24plus';
   const gen = new ArchGen(device, rec, cnt, { lots: n, ground: { zmin: zmin - 2 } });
   gen.labDraw(format, depthFormat, samples);
+  gen.windows = q.get('win') !== '0';
   const sname = q.get('style');
   gen.style = sname ? STYLES.findIndex((s) => s.name === sname) : -1;
 
@@ -242,6 +243,8 @@ async function main() {
     },
     look,
     bench,
+    gen,
+    device,
     centre: [cx, cy],
   };
 }

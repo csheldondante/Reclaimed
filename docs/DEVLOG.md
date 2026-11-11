@@ -23059,3 +23059,23 @@ cases over the fake's field limit), season, transfers, typecheck.
 - The phone's detail: `(pointer: coarse)` → pattern detail 0.35 (the game renders the phone at a quarter of its pixels:
   412×915 → 206×457), `?archdetail=` to try.
 - Checked headless: Muru made (344 lots, 105 built), the parts drawn with the game's shadows; no GPU errors.
+
+## archgen round 2: composed houses (2026-11-11)
+
+- Why: the user, on round 1: "These still mostly look like extruded warped rectangles with a texture slapped on them";
+  then Tiny Glade references, and: porches, uneven footprints, stairs, lot walls, round towers and roofs; "the lot is
+  irregular but the structure is generally parallel walls except for intentionally curved or rotated wings. Think
+  overlapping rotated and offset rectangles for the floor plan."
+- The grammar (arch.wgsl house/keep): a frame square to the street inscribed in the lot; a main block (gable or eaves
+  to the street), a wing a storey lower making an L (turned on purpose by the style's odds), a cross gable stepping out
+  of the facade, a lean-to behind, a round tower (cylinder + conical roof of courses) or a square one with a jettied
+  timber top, a porch or a front stair, dormers, a low lot wall with a gate on the door. Volumes smaller than the lot:
+  front gardens and yards.
+- Geometry where Tiny Glade has it: roofs as 12 chunky courses (a tread and a lip each), a sagging ridge, a concave
+  (flared) foot; built windows (frame, sill, leaded panes, mullion, transom, shutters, flower boxes) and doors (step,
+  canopy) standing proud of the wall; relief shading for stone (bevelled, dark mortar).
+- Cost, Muru in the lab (493 lots, desktop GPU, timestamps): make 0.29 ms + compact 0.11 ms a town. Drawn: 2.25 M
+  vertices with the built windows (4506 windows × 330 = 1.49 M of them), ~0.76 M without. So the built windows are a
+  detail layer: the PC's main pass only; never the shadow pass; the phone (`pointer: coarse`) keeps the painted ones,
+  which sit exactly under the built (one bay rule: baysOf, doorBayOf, winFits). `?archwin=0|1` to force; the lab
+  `?win=0` shows the phone's look.

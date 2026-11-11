@@ -130,6 +130,8 @@ export class Renderer {
   /** (archgen, ?arch=1) the building generator's sources (src/archgen: one arch buffer, a draw a part kind) and pipelines */
   archSources: { args: GPUBuffer; group: GPUBindGroup; shadow?: GPUBindGroup }[] = [];
   archPipes?: GPURenderPipeline[];
+  /** (archgen) the built windows drawn (a detail layer: the PC's; the phone keeps the painted ones under them) */
+  archWindows = true;
   archShadowPipes?: GPURenderPipeline[];
   /** the structure grids' exposed voxels, as rotated cubes (structprep.wgsl → the body pipeline) */
   structPrep: ComputeKernel;
@@ -684,6 +686,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     if (ARCH) {
       const coarse = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
       const detail = Number(urlFlags().get('archdetail') ?? (coarse ? 0.35 : 1));
+      this.archWindows = urlFlags().get('archwin') === '1' || (urlFlags().get('archwin') !== '0' && !coarse);
       const archModule = makeModule(device, 'arch', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, archGameWgsl(detail)]);
       const shadowDepth: GPUDepthStencilState = { format: SHADOW_FORMAT, depthWriteEnabled: true, depthCompare: 'less', depthBias: 2, depthBiasSlopeScale: 2 };
       this.archPipes = [];

@@ -2281,3 +2281,9 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   (a new record word), the overhang as an outset — and citygen's claim reads it; (b) the generator takes building
   lots' claims over per record. Thin features under ~0.5 (spires, chimneys, overhangs) may stay unclaimed. Propose
   it in ARCHGEN.md with the height rule once the user has judged the look.
+- AG14 Vertex budget on the phone: ~0.76 M vertices for Muru without the built windows (roofs 0.34 M, cones 0.2 M):
+  a phone bench (AG7) decides; then fewer courses on the phone or far away (a roof kind of 6 courses), cones of 10
+  segments, dead boxes culled by splitting the window kind (frame/pane vs shutters/boxes).
+- AG15 Round 2 gaps: hip seams (courses of a slope and its hip end don't meet: dark fill under them; hip and ridge
+  caps to come), timber framing painted not in relief, lot walls doubled along shared edges, the porch/stair door not
+  moved to the stair's head, no arcades/loggias or crow-stepped gables yet (the references).

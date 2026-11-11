@@ -90,6 +90,8 @@ export class ArchGen {
   nstyles = STYLES.length;
   /** a style for every lot, or -1 the district's */
   style = -1;
+  /** (lab) the built windows drawn (off: the phone's look, the painted ones) */
+  windows = true;
 
   constructor(
     private device: GPUDevice,
@@ -113,7 +115,7 @@ export class ArchGen {
     // (built until a progress is copied in: the lab's)
     d.queue.writeBuffer(this.arch, progress * 4, new Float32Array(o.lots).fill(1));
     this.setStyles(STYLES);
-    this.args = d.createBuffer({ label: 'arch draw args', size: NK * 16, usage: S | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST });
+    this.args = d.createBuffer({ label: 'arch draw args', size: NK * 16, usage: S | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     const a = new Uint32Array(NK * 4);
     for (const [k] of ARCH_DRAWS) a[k * 4] = VERTS[k];
     d.queue.writeBuffer(this.args, 0, a);
@@ -231,6 +233,7 @@ export class ArchGen {
     const lab = this.lab!;
     pass.setBindGroup(0, lab.group);
     ARCH_DRAWS.forEach(([k], i) => {
+      if (k === KIND.win && !this.windows) return;
       pass.setPipeline(lab.pipes[i]);
       pass.drawIndirect(this.args, k * 16);
     });

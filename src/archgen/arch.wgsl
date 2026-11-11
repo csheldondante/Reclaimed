@@ -62,6 +62,7 @@ const F_SHUT: u32 = 8u;   // K_WIN: shutters
 const F_BOX: u32 = 16u;   // K_WIN: a flower box
 const F_SHED: u32 = 32u;  // K_ROOF: a lean-to (one slope, its high side on edge 3 → 2 after the turn)
 const F_CANOPY: u32 = 64u; // K_WIN (a door): a canopy over it
+const F_UNDER: u32 = 128u; // a wall under a roof: its top dark (a seam between courses never shows it)
 /** a storey, world units (citygen: about 3) */
 const STOREY: f32 = 3.0;
 /** vec4s a style (styles.ts STYLE_VEC4S) */
@@ -250,12 +251,12 @@ fn block(x0: f32, x1: f32, y0: f32, y1: f32, eave: f32, turn: u32, seed: u32, fr
   let jetty = shape.z;
   if (jetty > 0.0 && eave - ground > STOREY * 1.6) {
     let j = ground + raised + STOREY;
-    wallBody(S_WALL, ff | F_NOWIN, q, ground + 0.45 + raised, j);
+    wallBody(S_WALL, ff | F_UNDER, q, ground + 0.45 + raised, j);
     top = grow(q, jetty);
     body(S_TRIM, F_NOWIN, grow(q, jetty + 0.06), j - 0.2, j + 0.05);
-    wallBody(S_WALL, F_NOWIN, top, j + 0.05, eave);
+    wallBody(S_WALL, F_UNDER, top, j + 0.05, eave);
   } else {
-    wallBody(S_WALL, ff | F_NOWIN, q, ground + 0.45 + raised, eave);
+    wallBody(S_WALL, ff | F_UNDER, q, ground + 0.45 + raised, eave);
   }
   body(S_TRIM, F_NOWIN, grow(top, 0.08), eave - 0.24, eave);
   let pitch = shape.x * mix(0.9, 1.25, rnd(seed, 1u));
@@ -288,7 +289,7 @@ fn dormers(x0: f32, x1: f32, y0: f32, y1: f32, eave: f32, rise: f32, seed: u32) 
   for (var k = 0u; k < n; k++) {
     let cx = x0 + len * (f32(k) + 0.5) / f32(n);
     let q = rect(cx - w * 0.5, cx + w * 0.5, fy, fy + d);
-    wallBody(S_WALL, F_FRONT0 | F_NOWIN, q, fz - 0.1, fz + h);
+    wallBody(S_WALL, F_FRONT0 | F_UNDER, q, fz - 0.1, fz + h);
     roof(q, fz + h, 1u, 1.1, 0.0, 0.18, 0u);
   }
 }
@@ -321,10 +322,10 @@ fn squareTower(x0: f32, x1: f32, y0: f32, y1: f32, top: f32, seed: u32) {
   let q = rect(x0, x1, y0, y1);
   body(S_PLINTH, F_NOWIN, grow(q, 0.12), ground - 0.6, ground + 0.6);
   let split = top - STOREY;
-  wallBody(S_STONE, F_NOWIN, q, ground + 0.6, split);
+  wallBody(S_STONE, F_UNDER, q, ground + 0.6, split);
   body(S_TRIM, F_NOWIN, grow(q, 0.36), split - 0.2, split + 0.05);
   let tq = grow(q, 0.3);
-  wallBody(S_WALL, F_NOWIN, tq, split + 0.05, top);
+  wallBody(S_WALL, F_UNDER, tq, split + 0.05, top);
   roof(tq, top + 0.05, 0u, sty(gS, 5u).y * 0.9, 0.5, 0.35, 0u);
 }
 
@@ -403,6 +404,14 @@ fn windows() {
       let nb = baysOf(L, win.x);
       let bw = L / f32(nb);
       let door = doorBayOf(gLot, nb);
+      // a dormer's front (a low wall): one window filling it
+      if (wallH < 2.0) {
+        if (f == 0u) {
+          let ww = min(L - 0.35, 0.75) * 0.5;
+          put(K_WIN, S_GLASS, 0u, array<vec2<f32>, 4>(a + d * (L * 0.5 - ww), a + d * (L * 0.5 + ww), vec2<f32>(0.0), vec2<f32>(0.0)), z0 + 0.25, vec4<f32>(wallH - 0.55, 0.08, 0.0, 0.0));
+        }
+        continue;
+      }
       for (var st = 0u; st < 4u; st++) {
         if (!winFits(st, win.z, wallH) && !(front && f == 0u && st == 0u)) { break; }
         for (var bi = 0u; bi < nb; bi++) {
@@ -484,7 +493,7 @@ fn house(eave: f32, seed: u32) {
     let ld = min(back - 1.2, 3.2);
     let q = rect(lx0, lx0 + lw, sb + md, sb + md + ld);
     body(S_PLINTH, F_NOWIN, grow(q, 0.08), ground - 0.6, ground + 0.35);
-    wallBody(S_WALL, F_NOWIN, q, ground + 0.35, ground + 2.6);
+    wallBody(S_WALL, F_UNDER, q, ground + 0.35, ground + 2.6);
     // (its high side against the main block: the quad turned by 2, so edge 3 → 2 is the main's back wall)
     roof(q, ground + 2.7, 2u, 0.5, 0.0, 0.25, F_SHED);
   }
@@ -531,7 +540,7 @@ fn keep(eave: f32, seed: u32) {
   let D = gD;
   let q = rect(0.6, W - 0.6, 0.6, D - 0.6);
   body(S_PLINTH, F_NOWIN, grow(q, 0.15), ground - 0.6, ground + 0.7);
-  wallBody(S_WALL, F_FRONT0 | F_NOWIN, q, ground + 0.7, eave);
+  wallBody(S_WALL, F_FRONT0 | F_UNDER, q, ground + 0.7, eave);
   body(S_TRIM, F_NOWIN, grow(q, 0.12), eave - 0.3, eave);
   // (its flat roof: a flagstone slab — the wall's own top is dark, as under a pitched roof)
   body(S_STONE, 0u, q, eave - 0.05, eave + 0.03);

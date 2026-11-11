@@ -12,7 +12,7 @@ import { encodeGBuffer, encodeShadow, writeLight } from './gbuffer-shadow';
 import { drawGrid, gridCull, gridLive } from './grid';
 import { VERTS_PER_PRISM, VERTS_PER_BOX, VERTS_PER_TOP, INST_GROW, RenderOptions, SKIP, SHADOW_STILL_BIT, cutOn } from './defs';
 import { Renderer } from '../renderer';
-import { ARCH_DRAWS } from '../../archgen/archgen';
+import { ARCH_DRAWS, KIND } from '../../archgen/archgen';
 
 /** Renderer.encode (the class keeps the method, documented there) */
 export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
@@ -221,6 +221,7 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
   for (const v of SKIP.has('arch') ? [] : rd.archSources) {
     pass.setBindGroup(0, v.group);
     ARCH_DRAWS.forEach(([k], i) => {
+      if (k === KIND.win && !rd.archWindows) return;
       pass.setPipeline(rd.archPipes![i]);
       pass.drawIndirect(v.args, k * 16);
     });

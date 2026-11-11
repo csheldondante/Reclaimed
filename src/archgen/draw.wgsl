@@ -578,18 +578,39 @@ fn archSurface(in: VO) -> Surf {
     let ww = win.y * 0.5;
     var hole = 0.0;
     var frame = 0.0;
+    var door = 0.0;
     if ((flags & F_NOWIN) == 0u && L > 1.2) {
+      let isDoor = (flags & F_FRONT0) != 0u && side == 0u && st == 0u && bi == doorBayOf(lot, nb) && !isGable;
       var ok = select(0.0, 1.0, winFits(st, win.z, in.uv.w));
       if (isGable) {
         // a gable's attic window: only in the middle where the triangle is wide enough
         let half = 0.5 * L * (1.0 - (hz + 1.4) / max(in.uv.w, 0.01));
         ok = select(0.0, 1.0, abs(u - 0.5 * L) + ww * 0.7 + 0.2 < half && in.uv.w > 2.4);
       }
-      let inWin = box1(fu, -ww, ww, px) * box1(fz, win.w, win.z, px);
-      let inFrame = box1(fu, -ww - 0.1, ww + 0.1, px) * box1(fz, win.w - 0.14, win.z + 0.08, px);
-      hole = inWin * ok;
-      frame = clamp(inFrame * ok - hole, 0.0, 1.0);
-      col = mix(col, trimC.rgb, frame);
+      if (isDoor) {
+        // the door (the built one stands over it on the PC): planks in a frame
+        let dw = 0.55;
+        door = box1(fu, -dw, dw, px) * box1(fz, 0.0, 2.1, px);
+        frame = clamp(box1(fu, -dw - 0.12, dw + 0.12, px) * box1(fz, 0.0, 2.24, px) - door, 0.0, 1.0);
+      } else {
+        let inWin = box1(fu, -ww, ww, px) * box1(fz, win.w, win.z, px);
+        let inFrame = box1(fu, -ww - 0.1, ww + 0.1, px) * box1(fz, win.w - 0.14, win.z + 0.08, px);
+        hole = inWin * ok;
+        frame = clamp(inFrame * ok - hole, 0.0, 1.0);
+        // shutters (the style's), a lot's own colour
+        if (styleV(s, 6u).z > 0.5 && !isGable) {
+          let sh = box1(abs(fu), ww + 0.12, ww + 0.12 + ww, px) * box1(fz, win.w, win.z, px) * ok;
+          let pick = u32(lr * 4.0);
+          var sc = vec3<f32>(0.36, 0.5, 0.42);
+          if (pick == 1u) { sc = vec3<f32>(0.33, 0.43, 0.58); }
+          if (pick == 2u) { sc = vec3<f32>(0.62, 0.3, 0.26); }
+          if (pick == 3u) { sc = vec3<f32>(0.5, 0.42, 0.3); }
+          col = mix(col, sc, sh);
+        }
+      }
+      // (a frame's lower edge — the sill — a shade darker, so it reads at a few pixels)
+      col = mix(col, trimC.rgb * select(1.0, 0.8, fz < win.w), frame);
+      col = mix(col, vec3<f32>(0.42, 0.26, 0.15), door);
     }
     // half-timbering: posts at the bays' edges, a rail a storey, braces (the style's material 3)
     if (m == 3u && !isGable) {
@@ -599,7 +620,7 @@ fn archSurface(in: VO) -> Surf {
       let brace = 1.0 - smoothstep(tw - px, tw + px, abs(abs(fu) - (fz / STOREY) * bw * 0.5) * 0.7);
       let beam = max(max(post, rail), brace * (1.0 - box1(abs(fu), 0.0, ww + 0.25, px)) * 0.9);
       // (a beam's edge lit above, shadowed below: it reads as standing out of the plaster)
-      col = mix(col, vec3<f32>(0.3, 0.2, 0.13), beam * (1.0 - max(hole, frame)));
+      col = mix(col, vec3<f32>(0.3, 0.2, 0.13), beam * (1.0 - max(max(hole, frame), door)));
     }
     col = mix(col, mix(vec3<f32>(0.14, 0.16, 0.2), vec3<f32>(1.0, 0.75, 0.38), archNight() * step(0.35, h21(vec2<f32>(f32(lot), f32(st))))), hole);
     glass = hole;
@@ -622,7 +643,7 @@ fn archSurface(in: VO) -> Surf {
       col = mix(col * mix(1.0, k, detail), vec3<f32>(0.42, 0.5, 0.3), moss * detail * 0.5);
       if (isLip) { col *= 0.58; }
     }
-  } else if ((surf == S_WALL || surf == S_STONE) && isTop && (flags & F_NOWIN) != 0u) {
+  } else if ((surf == S_WALL || surf == S_STONE) && isTop && (flags & F_UNDER) != 0u) {
     // a wall's top under its roof: dark, so the seams between the courses at a hip never show it
     col = vec3<f32>(0.16, 0.13, 0.1);
   } else if ((surf == S_WALL || surf == S_STONE) && isTop && (flags & F_NOWIN) == 0u) {
