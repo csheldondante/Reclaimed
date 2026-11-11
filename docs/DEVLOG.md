@@ -22673,3 +22673,24 @@ lab's columns deeper than 0.9 by tick 6 400, depths to 35 000; soldiers drown in
     a field grows a chunk a sweep into chunks it has no page in).
   - huntseed.test.ts: the CPU-seeded field matches the BFS after each wave in 5–6 frames (the planes: 5–34, their
     count-up), the GPU-seeded one in 5–9, both empty in 3.
+
+## 2026-11-11 — U2 round 7, step 2.2: no fixed field or group counts (trackB-u2r9-pool)
+
+- **The rule (the user, via the coordinator):** nothing designed round a fixed limit; tables are sized from memory and
+  fail 'pool-full' (with the visible error) only when that memory is used up. Sized from memory, not grown: growing the
+  rows would change a shader constant (the table's size) and rebuild every agents pipeline; the memory is small.
+- **Field rows:** ~8.4 B a row a window chunk, 4 MB of them (`?fieldrows=N`): 7,800 rows at a 128² window, ~500 at
+  512². Ids below 16 stay the callers' own (AgentUnits' F.*, the crews, the levels); `newField` hands out the rest.
+  The front's room is 9 entries a page (each entry a page or a chunk round a marked one), not rows × chunks; past it an
+  entry waits a sweep (only with the pool all but full).
+- **Order fields:** OrderFields draws on `newField` / `freeField` (the last holder of a key gives its fields back); the
+  fixed 7 (the old rounds' 0-6) are gone. A man order's run fields are a word each (the record's spare words), and a
+  rank's field its own word (word 7): field ids aren't packed into 8 bits anywhere.
+- **Order groups:** 1 MB of records and rank tables in `mail` (`?ordergroups=N`; 320 groups), not 8. Membership is the
+  aim word (group + 1 in 16 bits, the rank in 16); the agents group is the colour only (16 + g % 8), so order groups
+  aren't bound by the unit word's 8-bit group. A member walks its order's field (the record's word 6). formations.test
+  fills every group and checks the next spawn fails 'pool-full'.
+- **The join queue:** one entry a unit slot (MAX_UNITS), not 1024 — a bound, not a cap.
+- **Agents groups:** 256, the unit word's 8 bits (was 24).
+- **Pages refused:** the pool's refusals ride the scope's box read (4 bytes, every READ_EVERY ticks); the first shows
+  the fatal overlay and AgentUnits sends no more orders ('pool-full').

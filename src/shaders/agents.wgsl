@@ -39,8 +39,8 @@ struct AgentParams {
   // x, y, z (world), w the field it seeds
   seeds: array<vec4<f32>, 48>,
   // per group (24: agents.ts MAX_GROUPS): the field it follows, and the material it's drawn in
-  groupField: array<vec4<u32>, 6>,
-  groupMat: array<vec4<u32>, 6>,
+  groupField: array<vec4<u32>, 64>,
+  groupMat: array<vec4<u32>, 64>,
   // x hits this tick, y targets, z events capacity, w unused
   n2: vec4<u32>,
   // the kinds of unit (units.wgsl Kind)

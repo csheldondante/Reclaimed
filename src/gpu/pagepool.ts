@@ -24,6 +24,8 @@ export interface PagePoolOpts {
   slots: number;
   /** the binding consumers (and the pool's kernels) see it at */
   binding: number;
+  /** the front's entries at most (each a page, or a chunk round a marked page: 9 a page; default owners x slots) */
+  front?: number;
   /** WGSL the pool's kernels are built over: common.wgsl (Globals, pageIdx, slotChunk) */
   parts: string[];
   /** a handed-out page's payload: words below `split` fill[0], the rest fill[1] (u32 bits) */
@@ -57,6 +59,7 @@ export class PagePool {
   private box: [number, number, number, number] = [0, 0, 0, 0];
   private opsCap = 256;
   private owners = 0;
+  readonly frontCap: number;
 
   constructor(
     private device: GPUDevice,
@@ -74,7 +77,8 @@ export class PagePool {
     const req = sdirty + 2 * sbits;
     const stamp = req + tbits;
     const front = stamp + n;
-    const free = front + n;
+    this.frontCap = Math.min(n, o.front ?? n);
+    const free = front + this.frontCap;
     const pctl = free + o.pages;
     const orec = pctl + o.pages * o.pageCtl;
     this.layout = { gen, table, dirty, sdirty, req, stamp, front, free, pctl, orec, tbits, sbits };
@@ -103,7 +107,7 @@ export class PagePool {
   wgsl(kernels = false): string {
     const o = this.o;
     const [, read, write, kern] = poolWgsl.split(/^\/\/#(?:read|write|kernels).*$/m);
-    const consts = [`PP_OWNERS: u32 = ${o.owners}u`, `PP_SLOTS: u32 = ${o.slots}u`, `PP_PAGES: u32 = ${o.pages}u`, `PP_PW: u32 = ${o.pageWords}u`, `PP_PC: u32 = ${o.pageCtl}u`, `PP_OW: u32 = ${o.ownerWords}u`, `PP_CTL: u32 = ${this.ctlWords}u`]
+    const consts = [`PP_OWNERS: u32 = ${o.owners}u`, `PP_SLOTS: u32 = ${o.slots}u`, `PP_PAGES: u32 = ${o.pages}u`, `PP_PW: u32 = ${o.pageWords}u`, `PP_PC: u32 = ${o.pageCtl}u`, `PP_OW: u32 = ${o.ownerWords}u`, `PP_CTL: u32 = ${this.ctlWords}u`, `PP_FRONT_CAP: u32 = ${this.frontCap}u`]
       .map((c) => `const ${c};\n`)
       .join('');
     const decl = `struct PagePool { ctl: array<atomic<u32>, PP_CTL>, data: array<u32> };\n@group(0) @binding(${o.binding}) var<storage, read_write> pp: PagePool;\nfn ppCtl(i: u32) -> u32 { return atomicLoad(&pp.ctl[i]); }\n`;

@@ -384,19 +384,26 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   var rankMode = 0u;
   var rankAt = vec3<f32>(0.0);
   var rankLeave = false;
-  if ((ogw & 0xffu) != 0u && (ogw & 0xffu) <= ORDER_GROUPS && (ogw >> 8u) < RANKS) {
-    let ro = rankO((ogw & 0xffu) - 1u, ogw >> 8u);
+  // (U2 round 7: a member walks its order's field — the order record's word 6, FIELD_NONE when it stands; man walks
+  // its rank's run fields)
+  let og = ogGroup(ogw);
+  if (og != 0u && og <= ORDER_GROUPS) {
+    let gk = atomicLoad(&mail[MAIL_GRP + (og - 1u) * GROUP_W]);
+    fld = select(atomicLoad(&mail[MAIL_GRP + (og - 1u) * GROUP_W + 6u]), FIELD_NONE, gk < 2u || gk == 6u);
+  }
+  if (og != 0u && og <= ORDER_GROUPS && ogRank(ogw) < RANKS) {
+    let ro = rankO(og - 1u, ogRank(ogw));
     let m = atomicLoad(&mail[ro + 3u]);
     rankMode = m & 0xffu;
     rankLeave = (m & RANK_LEAVE) != 0u;
-    if (rankMode == RANK_FIELD) { fld = m >> 8u; }
+    if (rankMode == RANK_FIELD) { fld = atomicLoad(&mail[ro + 7u]); }
     rankAt = mailV3(ro);
   }
   // (a march that leaves: past the window's edge it drops out — no death; the CPU frees the slot on EV_LEFT)
   if (rankLeave) {
     let ec = cellAt(a.xy);
     if (ec.x < 2 || ec.y < 2 || ec.x >= i32(G.mapW) - 2 || ec.y >= i32(G.mapH) - 2) {
-      emit(EV_LEFT, uid, (ogw & 0xffu) - 1u, 0.0, a.xyz);
+      emit(EV_LEFT, uid, og - 1u, 0.0, a.xyz);
       units[u * UNIT_V] = vec4<f32>(a.xyz, bitcast<f32>(info & ~(1u << 8u)));
       return;
     }
@@ -1410,7 +1417,12 @@ const MAIL_ARROWS: u32 = 2048u;
 const ARROW_W: u32 = 12u;
 // (U2 round 5/6) the order groups' records, the join queue and the rank table (orders.wgsl writes them; the step reads a
 // unit's rank entry). Layout: agents.ts mirrors it
+/** (U2 round 7) the order groups: sized from memory (agents.ts orderGroups, substituted) */
 const ORDER_GROUPS: u32 = 8u;
+/** a unit's order word (mail aim word 11): its group + 1 (low 16 bits; 0 none) and its rank (high 16) */
+fn ogPack(g: u32, rank: u32) -> u32 { return (g + 1u) | (rank << 16u); }
+fn ogGroup(w: u32) -> u32 { return w & 0xffffu; }
+fn ogRank(w: u32) -> u32 { return w >> 16u; }
 const ALTS: u32 = 3u;
 const REF_W: u32 = 6u;
 const REF_AT: u32 = 20u;
@@ -1422,11 +1434,14 @@ const RUNS: u32 = 8u;
 const RUN_W: u32 = 8u;
 const RUNS_AT: u32 = TRAIL_AT + TRAIL_N * 4u;
 const GROUP_W: u32 = RUNS_AT + RUNS * RUN_W + 8u;
+/** (U2 round 7) the man order's run fields, a word each (up to 4; FORM_AT + 15 their count) */
+const RUNF_AT: u32 = RUNS_AT + RUNS * RUN_W;
 const MAIL_GRP: u32 = MAIL_ARR + MAIL_ARROWS * ARROW_W;
 const MAIL_Q: u32 = MAIL_GRP + ORDER_GROUPS * GROUP_W;
-const ORDER_Q: u32 = 1024u;
-/** the rank table: RANKS a group, RANK_W words each — 0-2 its target, 3 its mode (RANK_*) | field << 8 | RANK_LEAVE,
- *  4 its unit's slot + 1 (groupCount, last frame), 5 its distance to its target then (f32), 6 its row, 7 spare */
+/** the joins a step at most: one a unit slot (agents.ts ORDER_Q) */
+const ORDER_Q: u32 = MAX_SLOTS;
+/** the rank table: RANKS a group, RANK_W words each — 0-2 its target, 3 its mode (RANK_*) | RANK_LEAVE, 4 its unit's
+ *  slot + 1 (groupCount, last frame), 5 its distance to its target then (f32), 6 its row, 7 its field (RANK_FIELD) */
 const RANKS: u32 = 64u;
 const RANK_W: u32 = 8u;
 const MAIL_RANKS: u32 = MAIL_Q + 1u + ORDER_Q * 3u;

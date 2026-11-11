@@ -19,7 +19,8 @@ import townplaceWgsl from '../shaders/townplace.wgsl?raw';
 import ordersWgsl from '../shaders/orders.wgsl?raw';
 import routereadWgsl from '../shaders/routeread.wgsl?raw';
 import fieldseamWgsl from '../shaders/fieldseam.wgsl?raw';
-import { PagePool } from '../gpu/pagepool';
+import { PagePool, PP_HEADER } from '../gpu/pagepool';
+import { showFatal } from '../gpu/device';
 import type { SimSystem } from '../sim/system';
 import { TICK_DT } from '../sim/flow';
 import { stepPlan } from './stepplan';
@@ -92,9 +93,14 @@ const READ_EVERY = 8;
 export const NAV_K = 4;
 /** unit slots (units.wgsl MAX_SLOTS: an id is generation × MAX_UNITS + slot) */
 export const MAX_UNITS = 8192;
-/** (U2 round 7) the fields: rows of the page pool's table (field ids 0..FIELD_ROWS-1, Agents.newField). 256: the man
- *  order's run fields ride 8 bits each in a formation word (orders.wgsl FORM_AT + 14) */
-export const FIELD_ROWS = 256;
+/** (U2 round 7) the fields: rows of the page pool's table (field ids, Agents.newField), sized from memory like the pool:
+ *  the table, its stamps and bits cost ~8.4 B a row a window chunk — FIELD_TABLE_BYTES of them (?fieldrows=N). Rows
+ *  run out only when that memory does: newField returns null (orders fail 'pool-full', shown) */
+const FIELD_TABLE_BYTES = 4 << 20;
+const FIELD_ROWS_FLAG = Number((typeof location !== 'undefined' && urlFlags().get('fieldrows')) || 0);
+/** ids below this are callers' own (the fixed fields of AgentUnits, the crews, the levels: 0-15); newField hands out
+ *  the rest */
+export const FIELD_OWN = 16;
 /** (U2 round 7) a field page: 16 x 16 columns x NAV_K distances, then as many seed-ids (fieldseam.wgsl FP_W) */
 const FIELD_PAGE_W = 256 * 4;
 /** the pool's pages: ?fieldpages=N, else this many a window chunk (a field reaching the whole window holds a page a
@@ -115,9 +121,15 @@ const SEED_LIST = MAX_UNITS + 4096;
 const SEED_HEAD = 8;
 /** (FC12 stage 2) units.wgsl mail: the head, the aim (12 words a slot), the hits landing (2 a slot), the arrows (12 each) */
 const MAIL_ARROWS = 2048;
-/** (U2 round 5) orders.wgsl: the order groups (agents groups ORDER_GROUP_BASE + g), their records, the join queue */
-export const ORDER_GROUPS = 8;
+/** (U2 round 5; round 7) orders.wgsl: the order groups — their records and rank tables in `mail`, sized from memory
+ *  (ORDER_MAIL_BYTES, ?ordergroups=N): spawnAt and orderGroup fail 'pool-full' only past that. Their members are drawn
+ *  in agents groups ORDER_GROUP_BASE + g % ORDER_COLOURS (the colour only: membership is mail's aim word 11) */
+const ORDER_MAIL_BYTES = 1 << 20;
+const ORDER_GROUPS_FLAG = Number((typeof location !== 'undefined' && urlFlags().get('ordergroups')) || 0);
 export const ORDER_GROUP_BASE = 16;
+export const ORDER_COLOURS = 8;
+/** the agents group order group g's members are drawn in */
+export const orderColourGroup = (g: number): number => ORDER_GROUP_BASE + (g % ORDER_COLOURS);
 /** orders.wgsl ALTS, REF_W, REF_AT, GROUP_W */
 export const ORDER_ALTS = 3;
 const REF_W = 6;
@@ -127,17 +139,23 @@ const FORM_AT = REF_AT + ORDER_ALTS * 2 * REF_W;
 const TRAIL_AT = FORM_AT + 16;
 const RUNS_AT = TRAIL_AT + 32 * 4;
 const GROUP_W = RUNS_AT + 8 * 8 + 8;
+/** (U2 round 7) the man order's run fields, a word each (units.wgsl RUNF_AT: the record's last 8 words) */
+const RUNF_AT = RUNS_AT + 8 * 8;
 /** ranks a group (units.wgsl RANKS): the most a formation places */
 export const ORDER_RANKS = 64;
 const RANK_W = 8;
-const ORDER_Q = 1024;
+/** the joins a step at most: one a unit slot (units.wgsl ORDER_Q) */
+const ORDER_Q = MAX_UNITS;
 const SPAWN_BIT = 0x80000000;
 const MAIL_GRP = 16 + 8192 * 12 + 8192 * 2 + MAIL_ARROWS * 12;
-const MAIL_Q = MAIL_GRP + ORDER_GROUPS * GROUP_W;
-const MAIL_RANKS = MAIL_Q + 1 + ORDER_Q * 3;
-const MAIL_WORDS = MAIL_RANKS + ORDER_GROUPS * ORDER_RANKS * RANK_W;
+/** mail's layout past the arrows, for `groups` order groups */
+const mailLayoutFor = (groups: number) => {
+  const q = MAIL_GRP + groups * GROUP_W;
+  const ranks = q + 1 + ORDER_Q * 3;
+  return { q, ranks, words: ranks + groups * ORDER_RANKS * RANK_W };
+};
 /** (round 6, tests and the lab: readRaw('mail')) where the order groups' records and the rank table lie (words) */
-export const MAIL_LAYOUT = { groups: MAIL_GRP, groupW: GROUP_W, formAt: FORM_AT, ranks: MAIL_RANKS, rankW: RANK_W, ranksPerGroup: ORDER_RANKS } as const;
+
 /** mail's aim words a slot (units.wgsl AIM_W): word 11 its order group + 1 */
 const AIM_W = 12;
 /** (U2 round 5) a town place by indices (orders.wgsl's ref): a named place (townplace PLACE_*) or a lot (district, lot
@@ -176,9 +194,9 @@ const LOS_FLAG = !(typeof location !== 'undefined' && urlFlags().get('los') === 
 const SEEN_FLAG = !(typeof location !== 'undefined' && urlFlags().get('seenonly') === '0');
 const LOS_BUILT = true;/** (round 128o, DA-A6) units.wgsl RIDE_ARRIVED: an arrival event's `other` at or over it is a ride's (minus it: the group) */
 const RIDE_ARRIVED = 256;
-/** (round 128l, m4: 16 → 24, a table size — the fortress's smiths, recruits, soldiers and carts: their legs ride the
- *  road graph, no fields of their own; fortress/life.ts R4) */
-export const MAX_GROUPS = 24;
+/** (round 128l, m4; U2 round 7: 256 — a unit word's 8 bits, units.wgsl unitInfo) agents groups: what a unit follows
+ *  and is drawn in when it isn't in an order group */
+export const MAX_GROUPS = 256;
 export const MAX_KINDS = 8;
 const MAX_SEEDS = 48;
 const MAX_HITS = 32;
@@ -469,6 +487,10 @@ export class Agents implements SimSystem {
   readonly fields: PagePool;
   /** the field kernels: the frame's seeds (fieldseam.wgsl seedReset .. seedFlip, cpuSeeds), the relax over pages */
   private fk2: { reset: ComputeKernel; unmark: ComputeKernel; land: ComputeKernel; gone: ComputeKernel; flip: ComputeKernel; cpu: ComputeKernel; relax: ComputeKernel; seedG: GPUBindGroup; relaxG: GPUBindGroup };
+  /** (U2 round 7) field pages the pool refused so far (read with the scope's box): > 0, the pool is full */
+  fieldPagesRefused = 0;
+  /** the fields' rows (sized from memory) */
+  readonly fieldRows: number;
   /** the field ids in use (Agents.newField, or a caller's own id): the pool's rows below the high-water */
   private fieldIds = new Set<number>();
   /** per field id: its record (fieldseam.wgsl: place, arrival radii, reach, flags), written when it changes */
@@ -545,14 +567,17 @@ export class Agents implements SimSystem {
   /** the joins waiting for the next step: slot, group, rank | SPAWN_BIT */
   private orderQ: number[] = [];
   /** the fields the order groups seed on the GPU (each counts as seeded) */
-  private orderFieldOf: number[][] = Array.from({ length: ORDER_GROUPS }, () => []);
+  private orderFieldOf: number[][];
   /** (round 6) the formation kernels (orders.wgsl formAnchor / formSlots: routes, clearance, fields) and the routes
    *  bound (a town's: useRoutes; a cleared stand-in before) */
   private fk: { anchor: ComputeKernel; slots: ComputeKernel; g: GPUBindGroup | null } | null = null;
   private routesBuf: GPUBuffer | null = null;
   private routesNone: GPUBuffer | null = null;
   private formGroups = 0;
-  private orderSerial = new Uint32Array(ORDER_GROUPS);
+  private orderSerial: Uint32Array;
+  /** (U2 round 7) the order groups (sized from memory) and mail's layout for them */
+  readonly orderGroups: number;
+  private mailAt: ReturnType<typeof mailLayoutFor>;
   private uboxBuf: GPUBuffer;
   private readBuf: GPUBuffer;
   private reading = false;
@@ -745,9 +770,11 @@ export class Agents implements SimSystem {
     // (U2 round 7) the fields: a page a field over a chunk, from one pool sized from memory (FIELD_PAGES_PER_CHUNK
     // whole-window fields' worth), found through the field's row of the table; the GPU hands pages out as a field grows
     const slots = (world.w / 16) * (world.h / 16);
+    this.fieldRows = Math.min(1 << 15, Math.max(FIELD_OWN + 16, FIELD_ROWS_FLAG || Math.floor(FIELD_TABLE_BYTES / (slots * 8.4))));
     this.fields = new PagePool(device, world.globals, {
       label: 'agentFields',
-      owners: FIELD_ROWS,
+      owners: this.fieldRows,
+      front: 9 * (FIELD_PAGES || slots * FIELD_PAGES_PER_CHUNK),
       pages: FIELD_PAGES || slots * FIELD_PAGES_PER_CHUNK,
       pageWords: 2 * FIELD_PAGE_W,
       pageCtl: 2 * (FIELD_PAGE_W / 32),
@@ -763,7 +790,11 @@ export class Agents implements SimSystem {
     this.occ = world.buf('agentOcc', 2 * cols * 20, S);
     // (FC12 stage 2, units.wgsl mail: the aim kernel's sight of each fighter's target, the hits landing on each unit,
     // the arrows in flight)
-    this.mail = world.buf('agentMail', MAIL_WORDS * 4, S);
+    this.orderGroups = Math.max(8, ORDER_GROUPS_FLAG || Math.floor(ORDER_MAIL_BYTES / ((GROUP_W + ORDER_RANKS * RANK_W) * 4)));
+    this.mailAt = mailLayoutFor(this.orderGroups);
+    this.orderFieldOf = Array.from({ length: this.orderGroups }, () => []);
+    this.orderSerial = new Uint32Array(this.orderGroups);
+    this.mail = world.buf('agentMail', this.mailAt.words * 4, S);
     this.events = world.buf('agentEvents', (4 + EVENT_CAP * 8) * 4, S);
     this.inst = world.buf('agentInst', MAX_INST * 32, GPUBufferUsage.STORAGE);
     this.indirect = world.buf('agentIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
@@ -795,7 +826,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
 `;
     // (the measurement toggles' constants: ?frontcap, ?blockrelax, ?relaxk — and the field bench's variants, made at
     // its start: partsFor)
-    const unitsSrc = unitsWgsl.replace('const JFA_LOS: u32 = 0u;', `const JFA_LOS: u32 = ${JFA_LOS_BISECT ? 1 : 0}u;`).replace('const AIM_TICK_S: f32 = 1.0 / 60.0;', `const AIM_TICK_S: f32 = ${TICK_DT};`);
+    if (!unitsWgsl.includes('const ORDER_GROUPS: u32 = 8u;')) throw new Error('agents: ORDER_GROUPS not found in units.wgsl');
+    const unitsSrc = unitsWgsl.replace('const ORDER_GROUPS: u32 = 8u;', `const ORDER_GROUPS: u32 = ${this.orderGroups}u;`).replace('const JFA_LOS: u32 = 0u;', `const JFA_LOS: u32 = ${JFA_LOS_BISECT ? 1 : 0}u;`).replace('const AIM_TICK_S: f32 = 1.0 / 60.0;', `const AIM_TICK_S: f32 = ${TICK_DT};`);
     if (!unitsWgsl.includes('const AIM_TICK_S: f32 = 1.0 / 60.0;')) throw new Error('agents: AIM_TICK_S not found in units.wgsl');
     if (!unitsWgsl.includes('const JFA_LOS: u32 = 0u;')) throw new Error('agents: JFA_LOS not found in units.wgsl');
     if (!fieldseamWgsl.includes('const SEED_LIST: u32 = 16384u;')) throw new Error('agents: SEED_LIST not found in fieldseam.wgsl');
@@ -830,7 +862,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     this.abBuf = world.buf('agentScope', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.abBuf, 0, new Uint32Array([0, 0, world.w, world.h, 0, 0, 0, 0]));
     this.uboxBuf = world.buf('agentUnitBox', 16, S);
-    this.readBuf = world.buf('agentScopeRead', 16, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+    this.readBuf = world.buf('agentScopeRead', 32, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.scope = SCOPE && world.tiles ? new AgentScope(world.w / 16, world.h / 16) : null;
     const unitSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'uniform', 13: 'rw', 14: 'read', 15: 'tex', 16: 'rw', 19: 'tex', 25: 'read' };
     const drawSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 7: 'rw', 9: 'rw', 10: 'uniform', 16: 'rw', 22: 'rw', 23: 'read', 24: 'uniform', 26: 'read', 27: 'read' };
@@ -1151,11 +1183,12 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   }
 
   /**
-   * (U2 round 7) A field id: a row of the fields' page pool (FIELD_ROWS of them), the lowest free one. Null when every
-   * row is held (the order isn't sent: 'pool-full'). Its pages come as it grows; `freeField` lets them go.
+   * (U2 round 7) A field id: a row of the fields' page pool (sized from memory), the lowest free one past the callers'
+   * own (FIELD_OWN). Null only when every row is held — the memory is used up (the order isn't sent: 'pool-full'). Its
+   * pages come as it grows; `freeField` lets them go.
    */
   newField(): number | null {
-    for (let f = 0; f < FIELD_ROWS; f++) if (!this.fieldIds.has(f)) return this.useField(f);
+    for (let f = FIELD_OWN; f < this.fieldRows; f++) if (!this.fieldIds.has(f)) return this.useField(f);
     return null;
   }
 
@@ -1170,7 +1203,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
 
   /** field `f` in use (a caller's own id, or newField's): the pool's rows below the high-water are live */
   private useField(f: number): number {
-    if (!Number.isInteger(f) || f < 0 || f >= FIELD_ROWS) throw new Error(`agents: field ${f} out of 0..${FIELD_ROWS - 1}`);
+    if (!Number.isInteger(f) || f < 0 || f >= this.fieldRows) throw new Error(`agents: field ${f} out of 0..${this.fieldRows - 1}`);
     if (!this.fieldIds.has(f)) {
       this.fieldIds.add(f);
       this.fields.setOwners(Math.max(...this.fieldIds) + 1);
@@ -1358,8 +1391,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   }
 
   /** (round 6, tests and the lab) where the order groups and the rank table lie in `mail` (readRaw('mail')) */
-  get mailLayout(): typeof MAIL_LAYOUT {
-    return MAIL_LAYOUT;
+  get mailLayout(): { groups: number; groupW: number; formAt: number; ranks: number; rankW: number; ranksPerGroup: number; orderGroups: number } {
+    return { groups: MAIL_GRP, groupW: GROUP_W, formAt: FORM_AT, ranks: this.mailAt.ranks, rankW: RANK_W, ranksPerGroup: ORDER_RANKS, orderGroups: this.orderGroups };
   }
 
   /** (round 6) the routes bound now (useRoutes), or null for none */
@@ -1374,7 +1407,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     pass.setPipeline(this.fk.anchor.pipeline);
     pass.dispatchWorkgroups(1);
     pass.setPipeline(this.fk.slots.pipeline);
-    pass.dispatchWorkgroups((ORDER_GROUPS * ORDER_RANKS) / 64);
+    pass.dispatchWorkgroups((this.orderGroups * ORDER_RANKS) / 64);
     this.prof.dispatches += 2;
   }
 
@@ -1384,13 +1417,13 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   }
 
   /**
-   * Order group `g` (0..ORDER_GROUPS-1): where it goes, by indices only; the GPU resolves the place each frame, seeds
+   * Order group `g` (0..orderGroups-1): where it goes, by indices only; the GPU resolves the place each frame, seeds
    * the order's field there, and tells `groupArrived` (all its living members there) or `orderFailed` (the place isn't
    * valid: its status) once an order. Returns the order's serial (the events carry it).
    */
   order(g: number, r: OrderRecord): number {
     if (!this.ok) throw new Error('agents.order: no place table (usePlaces)');
-    if (g < 0 || g >= ORDER_GROUPS) throw new Error(`agents.order: group ${g} out of 0..${ORDER_GROUPS - 1}`);
+    if (g < 0 || g >= this.orderGroups) throw new Error(`agents.order: group ${g} out of 0..${this.orderGroups - 1}`);
     if (r.field >= 0) this.useField(r.field);
     const serial = (this.orderSerial[g] = (this.orderSerial[g] + 1) & 0xffff);
     const routed = r.kind === 6 || r.kind === 7;
@@ -1411,13 +1444,15 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     f32[4] = r.spacing ?? 1.2;
     r.alts.forEach((a, i) => w.set([...ref(a.at), ...ref(a.also)], REF_AT + i * 2 * REF_W));
     // (round 6: the formation's words — the gate or the run, leave; the GPU's anchor and trail start over: route none)
-    w.set([r.gate ?? 0xffffffff, r.leave ? 1 : 0, 0xffffffff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, fields.reduce((a, f, i) => a | (f << (8 * i)), 0) >>> 0, fields.length], FORM_AT);
+    w.set([r.gate ?? 0xffffffff, r.leave ? 1 : 0, 0xffffffff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, fields.length], FORM_AT);
+    // (the man order's run fields: a word each, orders.wgsl RUNF_AT)
+    w.set(fields, RUNF_AT);
     this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W) * 4, w, 0, 8);
     // (its status none until resolved again: the formations wait for it)
     this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + 11) * 4, new Uint32Array([1]));
     this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + REF_AT) * 4, w, REF_AT, FORM_AT + 16 - REF_AT);
+    this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + RUNF_AT) * 4, w, RUNF_AT, 4);
     this.orderFieldOf[g] = r.kind >= 2 ? fields : [];
-    this.follow(ORDER_GROUP_BASE + g, r.kind >= 2 && r.kind !== 6 ? r.field : -1);
     const formed = r.kind === 5 || r.kind === 6 || r.kind === 7 || ((r.kind >= 2 && r.kind <= 4) && (r.formation ?? 0) > 0);
     this.formGroups = formed ? this.formGroups | (1 << g) : this.formGroups & ~(1 << g);
     // (a new place: its seed is put there from the next frame; the old one's values empty by their seed-ids)
@@ -1430,9 +1465,9 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
    */
   spawnAt(n: number, g: number, opts: { kind?: number | string; hp?: number } = {}): number[] {
     if (!this.ok) throw new Error('agents.spawnAt: no place table (usePlaces)');
-    if (g < 0 || g >= ORDER_GROUPS) throw new Error(`agents.spawnAt: group ${g} out of 0..${ORDER_GROUPS - 1}`);
+    if (g < 0 || g >= this.orderGroups) throw new Error(`agents.spawnAt: group ${g} out of 0..${this.orderGroups - 1}`);
     if (this.orderQ.length / 3 + n > ORDER_Q) throw new Error(`agents.spawnAt: more than ${ORDER_Q} joins a step`);
-    const ids = this.spawn(n, 0, 0, { group: ORDER_GROUP_BASE + g, kind: opts.kind, hp: opts.hp, spread: 0, atPlace: true });
+    const ids = this.spawn(n, 0, 0, { group: orderColourGroup(g), kind: opts.kind, hp: opts.hp, spread: 0, atPlace: true });
     ids.forEach((id, k) => this.orderQ.push(id % MAX_UNITS, g, (k | SPAWN_BIT) >>> 0));
     return ids;
   }
@@ -1440,7 +1475,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   /** units joining order group `g` where they stand (at the next step), ranked in the order given (ORDER_RANKS place
    *  in a formation; the rest follow the group's field) */
   joinOrder(ids: readonly number[], g: number): void {
-    if (g < 0 || g >= ORDER_GROUPS) throw new Error(`agents.joinOrder: group ${g} out of 0..${ORDER_GROUPS - 1}`);
+    if (g < 0 || g >= this.orderGroups) throw new Error(`agents.joinOrder: group ${g} out of 0..${this.orderGroups - 1}`);
     if (this.orderQ.length / 3 + ids.length > ORDER_Q) throw new Error(`agents.joinOrder: more than ${ORDER_Q} joins a step`);
     // (round 6: each its rank — its place in `ids`: a formation's slot k)
     ids.forEach((id, k) => {
@@ -1453,7 +1488,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   private encodeOrderJoins(pass: GPUComputePassEncoder): void {
     if (!this.ok || !this.orderQ.length) return;
     const n = this.orderQ.length / 3;
-    this.device.queue.writeBuffer(this.mail, MAIL_Q * 4, new Uint32Array([n, ...this.orderQ]));
+    this.device.queue.writeBuffer(this.mail, this.mailAt.q * 4, new Uint32Array([n, ...this.orderQ]));
     this.orderQ = [];
     pass.setBindGroup(0, this.ok.g);
     pass.setPipeline(this.ok.apply.pipeline);
@@ -1639,9 +1674,9 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     if (slot < 0) return;
     if (g < 0 || g >= MAX_GROUPS) throw new Error(`agents.regroup: group ${g} out of 0..${MAX_GROUPS - 1}`);
     this.regroups.push(slot | (g << 16));
-    // (U2 round 5: its order group, mail's aim word 11 — an order group's + 1, else none: it no longer walks an order)
-    const og = g >= ORDER_GROUP_BASE && g < ORDER_GROUP_BASE + ORDER_GROUPS ? g - ORDER_GROUP_BASE + 1 : 0;
-    this.device.queue.writeBuffer(this.mail, (16 + slot * AIM_W + 11) * 4, new Uint32Array([og]));
+    // (U2 round 5: its order word, mail's aim word 11, cleared — moved to a group, it no longer walks an order; joinOrder
+    // puts a unit in one)
+    this.device.queue.writeBuffer(this.mail, (16 + slot * AIM_W + 11) * 4, new Uint32Array([0]));
   }
 
   /**
@@ -2518,6 +2553,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     }
     if (read) {
       enc.copyBufferToBuffer(this.uboxBuf, 0, this.readBuf, 0, 16);
+      // (U2 round 7: the field pages refused, with it — the pool full is an error shown, and orders fail 'pool-full')
+      enc.copyBufferToBuffer(this.fields.buffer, PP_HEADER.refused * 4, this.readBuf, 16, 4);
       this.reading = true;
       this.readIssued = { serial: sc.serial };
       sc.serial++;
@@ -2572,6 +2609,12 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       this.reading = false;
       const box: [number, number, number, number] | null = u[0] <= u[2] && u[1] <= u[3] ? [u[0], u[1], u[2], u[3]] : null;
       sc.read(r.serial, box);
+      if (u[4] > this.fieldPagesRefused) {
+        this.fieldPagesRefused = u[4];
+        const msg = `agents: the fields' page pool is full (${this.fields.o.pages} pages, ${u[4]} refused) — fields stop growing; raise ?fieldpages`;
+        if (typeof document !== 'undefined') showFatal(msg);
+        else console.error(msg);
+      }
     }, (e) => {
       this.reading = false;
       ignoreTeardown(e);

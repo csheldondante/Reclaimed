@@ -11,7 +11,6 @@ import { tinyMap } from '../support/tinymap';
 import { testGpu, type TestGpu } from './dawn';
 import { tinyWorld } from './world';
 import { installAgents } from '../../src/agents/install';
-import { MAIL_LAYOUT } from '../../src/agents/agents';
 import { cellPos } from '../../src/world/lattice';
 import { TOWN_ROOM, PLACE } from '../../src/api/contracts/townplaces';
 import { TOWN_WORDS } from '../../src/towncontracts/contracts';
@@ -104,9 +103,10 @@ async function where(units: AgentUnits, ids: number[]): Promise<[number, number]
 /** a group's rank table: each rank's row and its row's columns (formSlots' word 6) */
 async function ranks(units: AgentUnits, slot: number, n: number): Promise<{ row: number; cols: number }[]> {
   const mail = new Uint32Array(await units.agents.readRaw('mail'));
+  const L = units.agents.mailLayout;
   const out: { row: number; cols: number }[] = [];
   for (let k = 0; k < n; k++) {
-    const w = mail[MAIL_LAYOUT.ranks + (slot * MAIL_LAYOUT.ranksPerGroup + k) * MAIL_LAYOUT.rankW + 6];
+    const w = mail[L.ranks + (slot * L.ranksPerGroup + k) * L.rankW + 6];
     out.push({ row: w & 0xffff, cols: w >>> 16 });
   }
   return out;
@@ -210,8 +210,9 @@ test('spawnAt at a missing place, then orderGroup guard → 0 units, the failure
   await run(30);
   const standing = [...units.recs.values()].filter((u) => u.v.alive && u.v.role === 'soldier').length;
   const near = (await units.query([yard[0], yard[1]], 20)).length;
-  // (the eight groups held, a ninth: an id, no units, pool-full)
-  const held = Array.from({ length: 8 }, () => units.spawnAt!('soldier', 'f-town', { town: 0, place: PLACE.muster }, 1));
+  // (every order group held — as many as the memory given them, Agents.orderGroups — and one more: an id, no units,
+  // pool-full)
+  const held = Array.from({ length: units.agents.orderGroups }, () => units.spawnAt!('soldier', 'f-town', { town: 0, place: PLACE.muster }, 1));
   const ninth = units.spawnAt!('soldier', 'f-town', { town: 0, place: PLACE.muster }, 1);
   await run(10);
   log(`missing place: standing ${standing}, near the yard ${near}, failed ${JSON.stringify(failed)}, held ${held.length}`);
