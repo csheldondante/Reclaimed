@@ -402,7 +402,7 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
       // (seedMask's second plane: that seed's surface + 1). A neighbour whose seed is no longer one (its distance there
       // isn't 0) is passed over: a seed gone empties the values it made at once, then they refill from the seeds left —
       // no count-up (FRAMECOST FC4))
-      let bySource = f == AP.u2.x;
+      let bySource = f == AP.u2.x || f == (AP.u2.y >> 16u);
       var src = select(0u, s + 1u, d == 0.0);
       if (d > 0.0) {
         for (var dd = 0u; dd < NDIR; dd++) {
@@ -521,7 +521,7 @@ fn relaxBlock(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id
       if (((AP.n3.w >> f) & 1u) != 0u) { for (var k = 0u; k < nk; k++) { dist[f * N + i * NAV_K + k] = FAR; } }
       continue;
     }
-    let bySource = f == AP.u2.x;
+    let bySource = f == AP.u2.x || f == (AP.u2.y >> 16u);
     // the tile and its halo, loaded (a value whose seed is gone: FAR)
     for (var e = li; e < BCELLS; e += 256u) {
       let q = o + vec2<i32>(i32(e % BT), i32(e / BT)) - vec2<i32>(1);

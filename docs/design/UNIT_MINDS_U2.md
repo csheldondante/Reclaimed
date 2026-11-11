@@ -416,6 +416,35 @@ A's GPU-town recipe (asked).
 - The contract gains `readonly orderFailed?: ((ids: UnitId[], why: 'no-gate' | 'gate-rising' | 'gate-water' | 'gate-failed' | 'route-stale' | 'pool-full') => void)[]`.
 - Interface test: march to an arterial with no gate yet → `orderFailed(ids, 'no-gate')`, and no unit moves.
 
+**Final signatures (U2 round 5, built; `api/contracts/units.ts`, Track A's `TownForces` builds against them).** Orders
+name groups, not id lists: an event names the group it's about.
+```ts
+type PlaceRef = { town: number; place: number }                      // townplaces PLACE.x (PLACE.gate0 + k …)
+              | { town: number; district: number; purpose: number; rank: number };  // purpose: townplace LOT_KIND
+type GroupId = number;                                                // inhabitants' GroupId: a number
+interface PlaceOrder { kind: 'guard' | 'go' | 'attack'; at: PlaceRef }
+type OrderFailure = 'none' | 'rising' | 'water' | 'no-town' | 'pool-full';  // placeStatus's, and the CPU's field pool
+units.spawnAt?(kind, faction, at: PlaceRef, n): GroupId               // at the place's approach, spread round it
+units.orderGroup?(g, o: PlaceOrder): void                             // replaces the group's last order
+units.members?(g): UnitId[]
+units.arrived?: ((g: GroupId) => void)[]                              // every living member there: once an order
+units.orderFailed?: ((g: GroupId, why: OrderFailure) => void)[]       // once an order (or its spawn: none made)
+```
+- **Resolved on the GPU** (`shaders/orders.wgsl`, over townplace.wgsl at binding 57): a group's record (indices: kind,
+  town, a name or a lot, the field it walks, a serial) sits in `mail`; `orderResolve` reads the place's status and point
+  each frame and seeds the group's field there (seedMask); `orderApply` places spawned units at the approach in a
+  sunflower spiral (rank k at 0.9·√k cells); `groupCount`/`groupEmit` count living members within 2.5 + 0.7·√n cells of
+  the place and tell `arrived` once per order serial. An invalid place tells `orderFailed(g, status)` once per serial;
+  a spawn's failure makes no unit (its slots freed by the CPU on the event).
+- **Kinds:** `go` walks and stands; `guard` walks, stands and looks (a guard's combat word: takes on hostiles in
+  sight); `attack` walks hostile (its combat word) — anything of another faction on the way or there is fought, closing
+  in on what's in sight and back to the place's field otherwise.
+- **Fields:** a place takes one of 7 order fields (the old rounds' 0-6), shared by groups ordered to the same place;
+  none free → `orderFailed(g, 'pool-full')` from the CPU, and the order isn't sent. The paged atlas (§9b) replaces the
+  pool. **8 order groups** at once (agents groups 16-23).
+- The CPU never reads a place: its only CPU input beyond the indices is the town's box (its plan), to keep the agents'
+  scope round a town while a group is ordered there.
+
 ### 9b. The paged field atlas (replaces §2c's fixed pool of 8; the user: "yes move to pages for the fields")
 
 | Part | Design |

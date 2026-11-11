@@ -183,6 +183,21 @@ export class TownContracts implements TownContractsApi {
     return this.slots.findIndex((s) => s?.town.site.id === id);
   }
 
+  /** (Track B, U2 round 5) a live town slot's grid corners in the window (x cells, y world units) — the CPU's own plan
+   *  (its grid's place and size), for the agents' scope round an order there; null for an empty slot */
+  townArea(i: number): [number, number][] | null {
+    const s = this.slots[i];
+    if (!s) return null;
+    const p = s.town.gridPlace();
+    const { w, h } = s.town.box;
+    return [
+      [p.dx, p.dy * ROW_H],
+      [p.dx + w, p.dy * ROW_H],
+      [p.dx, (p.dy + h) * ROW_H],
+      [p.dx + w, (p.dy + h) * ROW_H],
+    ];
+  }
+
   /** the live towns now (a frame: new ones given a slot, let-go ones' slots emptied) and the towns' clock (s) */
   setTowns(towns: Iterable<ContractTown>, now: number): void {
     const live = new Set<ContractTown>(towns);

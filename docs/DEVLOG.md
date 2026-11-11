@@ -22332,3 +22332,57 @@ at Muru is a courtyard whose houses hide most of the soldiers at 60° (SF-3).
   its rings are bounded by the unit's sight; the agents only read the water. Seen in every run at 60 s, wave or not:
   UC-6 — Muru's water blows up over the town in the real game too, not only on the lab page. Track B's units-draw
   worker also hit "GPU never finished" twice on desktop, unreproduced. Handed back with what was tried; no guard added.
+## 2026-11-10 — U2 round 5: place orders on the GPU, melee strikes on the GPU (DA-B32), line of sight on by default (trackB-u2r6)
+
+**Place orders** (UNIT_MINDS_U2 §9a, final signatures there; `api/contracts/units.ts`). Track A's `TownForces` orders
+soldiers by town place, and the GPU-resident rule says the CPU may not read a place back. So an order is a group record of
+indices in `mail` (kind, town, a named place or a lot, the field it walks, a serial), and `shaders/orders.wgsl` resolves
+it each frame over townplace.wgsl (binding 57):
+- `units.spawnAt(kind, faction, PlaceRef, n) → GroupId`: the units are made with no position; `orderApply`, before their
+  first step, puts them at the place's approach in a sunflower spiral, its middle moved out from the door along the
+  approach, each spot only on a surface within 1.2 of the approach's height. An invalid place makes none (the CPU frees
+  the slots on the failure).
+- `units.orderGroup(g, {go | guard | attack, at})`: `orderResolve` seeds the group's field at the place's surface
+  (seedMask, as the hunt's), marks its chunk, and tells `orderFailed(g, status)` once per order when the place isn't
+  valid. `groupCount`/`groupEmit` tell `arrived(g)` once per order when every living member stands within
+  2.5 + 0.7·√n cells of it. guard = a guard's combat word (it looks); attack = a hostile combat word (it fights anything
+  of another faction on the way and there). Ordered units don't wander: they walk the order's field and close in on what
+  they see.
+- Fields: 7 (the old rounds' 0-6), one per place, shared by groups at the same place; none free → `orderFailed(g,
+  'pool-full')` from the CPU. 8 order groups (agents groups 16-23). Both limits go with the paged atlas (§9b).
+- **Two bugs the lab found.** (1) Arrival first skipped members whose field read FAR ("cut off"). Right after an order
+  the field is still refilling and reads FAR almost everywhere, so arrived came at once with nobody there; every living
+  member is now waited for. (2) After the camera slid the window, the soldiers stood still: the slide restarts the fields
+  where columns come in, and a GPU seed that didn't move marked nothing. A slide now restarts the order fields (as a CPU
+  seed moved by a slide does), asks each group to mark its seed again (group word 19), and moves the scope's kept points
+  with the land (they stayed put).
+- **The scenario** (`scripts/lab/townorders.mjs`, gputown with `labkeep=1`). Twelve soldiers spawned at Muru's barracks
+  land at its approach (all 12 within 2 + 1.8·√n). Ordered to the keep, arrived once in 4 s. Then across the town to the
+  muster yard (137 cells), arrived once. A spawn in an empty town slot gives `orderFailed(g, 'no-town')` with no unit
+  made, and an order to a gate slot with no gate gives `orderFailed(g, 'none')`. Places are read again after each camera
+  move: a look slides the window, and the first runs compared positions in two frames 64 columns apart.
+- **Not verified, and to rerun first:**
+  - That full pass ran before the slide fix and the close-up shots. The slide fix was checked alone: a group walking to
+    the muster yard, the window slid under it, still walking 15 s later.
+  - The last full run, with the slide fix, was stopped for low memory.
+  - los.test.ts's new melee test has not been run.
+  - The rerun commands are in the round's report.
+
+**DA-B32, melee on the GPU.**
+- A blow at a unit lands in its `mail` accumulator, as an arrow does. The target's own step applies it and names the
+  striker (`hurt`/`death` by BY_UNIT | id).
+- A unit that can fight and has no target turns on whoever struck it (its own row's target word, told as `noticed`).
+- Any kind with a reach or a range now fights a unit target on the GPU, hostile or not. Guards, characters and workers
+  got a blow (reach 1.35, a health point, 1 s, as the CPU's strike was); raiders' and shamblers' damage is now in GPU hp
+  (HPK).
+- Defenders close in on the foes' field, which huntSet seeds on the GPU from the peaceful fighters' targets: a second
+  field in the hunt list, an entry's top bit. It keeps each value's seed, as the hunt's does.
+- Deleted: the CPU's swing damage on units, the defenders' strike timers and their observed reads, and the CPU
+  retaliation aim. A swing event is now an actor's only.
+- Test: los.test.ts "a melee blow on a unit lands on the GPU naming the striker …" (written, not yet run).
+
+**Defaults.**
+- `?los` and `?seenonly` are on: `?los=0` and `?seenonly=0` turn them off for the benches. Their kernels are always
+  built, and aimTick runs every frame, because melee's aim reads it.
+- `notice.hasSides = true`: the side map is the GPU's (Track A's town contracts).
+- `AgentUnits.uploadSides`, `sideAt` and the CPU side map are deleted. `fightRules` takes `{open}` only.
