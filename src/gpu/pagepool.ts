@@ -12,6 +12,9 @@ export interface PagePoolOpts {
   label: string;
   /** owners: rows of the page table */
   owners: number;
+  /** an owner's GPU words (atomic: its consumers' kernels keep them, e.g. a field's want box), zeroed when it lets go
+   *  of its pages (default 0) */
+  ownerGpu?: number;
   /** the pool's pages */
   pages: number;
   /** a page's payload in u32 words (plain: written by one workgroup at a time) */
@@ -53,7 +56,7 @@ export class PagePool {
   /** the relax's indirect args (x: the front's entries, a workgroup each) */
   readonly args: GPUBuffer;
   readonly ctlWords: number;
-  readonly layout: { gen: number; table: number; dirty: number; sdirty: number; req: number; stamp: number; front: number; free: number; pctl: number; orec: number; rbits: number; tbits: number; sbits: number };
+  readonly layout: { gen: number; table: number; dirty: number; sdirty: number; req: number; stamp: number; front: number; free: number; pctl: number; orec: number; rbits: number; og: number; tbits: number; sbits: number };
   private params: GPUBuffer;
   private ops: GPUBuffer;
   private k: Record<'alloc' | 'reset' | 'front' | 'flip' | 'release', ComputeKernel>;
@@ -86,8 +89,10 @@ export class PagePool {
     const orec = pctl + o.pages * o.pageCtl;
     // (U2-FIELDCAP: a bit an owner refused a page, pagepool.wgsl PP_RBITS)
     const rbits = orec + o.owners * o.ownerWords;
-    this.layout = { gen, table, dirty, sdirty, req, stamp, front, free, pctl, orec, rbits, tbits, sbits };
-    this.ctlWords = rbits + Math.ceil(o.owners / 32);
+    // (U2-FIELDREACH: the owners' GPU words, pagepool.wgsl PP_OG)
+    const og = rbits + Math.ceil(o.owners / 32);
+    this.layout = { gen, table, dirty, sdirty, req, stamp, front, free, pctl, orec, rbits, og, tbits, sbits };
+    this.ctlWords = og + o.owners * (o.ownerGpu ?? 0);
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     this.buffer = device.createBuffer({ label: o.label, size: (this.ctlWords + o.pages * o.pageWords) * 4, usage: S });
     this.args = device.createBuffer({ label: `${o.label} args`, size: 16, usage: S | GPUBufferUsage.INDIRECT });
@@ -112,7 +117,7 @@ export class PagePool {
   wgsl(kernels = false): string {
     const o = this.o;
     const [, read, write, kern] = poolWgsl.split(/^\/\/#(?:read|write|kernels).*$/m);
-    const consts = [`PP_OWNERS: u32 = ${o.owners}u`, `PP_SLOTS: u32 = ${o.slots}u`, `PP_PAGES: u32 = ${o.pages}u`, `PP_PW: u32 = ${o.pageWords}u`, `PP_PC: u32 = ${o.pageCtl}u`, `PP_OW: u32 = ${o.ownerWords}u`, `PP_CTL: u32 = ${this.ctlWords}u`, `PP_FRONT_CAP: u32 = ${this.frontCap}u`]
+    const consts = [`PP_OWNERS: u32 = ${o.owners}u`, `PP_SLOTS: u32 = ${o.slots}u`, `PP_PAGES: u32 = ${o.pages}u`, `PP_PW: u32 = ${o.pageWords}u`, `PP_PC: u32 = ${o.pageCtl}u`, `PP_OW: u32 = ${o.ownerWords}u`, `PP_OGW: u32 = ${o.ownerGpu ?? 0}u`, `PP_CTL: u32 = ${this.ctlWords}u`, `PP_FRONT_CAP: u32 = ${this.frontCap}u`]
       .map((c) => `const ${c};\n`)
       .join('');
     const decl = `struct PagePool { ctl: array<atomic<u32>, PP_CTL>, data: array<u32> };\n@group(0) @binding(${o.binding}) var<storage, read_write> pp: PagePool;\nfn ppCtl(i: u32) -> u32 { return atomicLoad(&pp.ctl[i]); }\n`;

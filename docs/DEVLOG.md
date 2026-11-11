@@ -23024,3 +23024,36 @@ stores, else the market; there is only one raid group at a time, so "another rai
 "Too many groups …" line stays on the sheet. Once a season each, so a refused fallback never loops. Also 'no-room'
 is now compared as units.ts's typed `OrderFailure` member (the string constant is gone). Tests: season-war (two new
 cases over the fake's field limit), season, transfers, typecheck.
+## 2026-11-11 — a field takes pages only where its walkers need it (U2-FIELDREACH, `trackB-fieldreach`)
+
+**Why.** The user: "the fixed buffers are a limit you run into that complicates design". A destination field grew over
+everything it reached (its cap the scope's size): 400 pages a field at 320 x 320, so the 20 MB pool (2469 pages) held
+~6 whole-window fields and many squads to many places failed 'pool-full'.
+
+**What** (design: UNIT_MINDS_U2.md §9b, U2-FIELDREACH). A walkers' field (`FO_WALKERS`: every order's field, set by
+`Agents.order` and cleared when no order walks it; a side's hunt, by `sideFields`) asks for pages only inside a want
+box on the GPU: the world chunks round this frame's seeds (`seedPut`) and its walkers (`groupCount`'s members,
+`huntSet`'s fighters), 1 chunk + its growth round them, kept in the pool's new per-owner GPU words (`ownerGpu`,
+pagepool.wgsl `PP_OG`, zeroed on release). `fieldBounds` (a thread a field, once a frame before the sweeps) adds this
+frame's box; `fieldRelax` past the box sets `FWF_EDGE` instead of asking. A field stuck at its edge (EDGE, no relax moved
+anything last frame, a walker read FAR) grows a chunk a side and marks its pages on the old edge, so a U round a wall is
+followed, never left FAR. No readback; the box only grows while the field lives.
+
+**Measured** (fieldreach.test.ts, fieldcap.test.ts; desktop D3D11):
+
+| case | before | after |
+|---|---|---|
+| 40 groups to 40 places 80 cells apart, 320 x 320 (400 chunks) | pool full (2469 used), 1944 refused, 8 'pool-full', 32 arrived | 24 pages a field, 960 held, 0 refused, 40/40 arrived |
+| fieldcap 96 x 96: 20 fields / 40 fields | 720 / 1440 pages (36 a field, the whole window) | 272 / 544 pages |
+| a U round a wall (192 x 192, 144 chunks): 3 soldiers | (whole window) | grew once (~5 frames), 120 pages, arrived in 64 s |
+| a deep cup (256 x 256): the way 385 long, 9 chunks past the box | (whole window) | members reached in 33 frames, grew 5 times, 236 of 256 pages |
+
+At 24 pages a field the 20 MB pool holds ~100 concurrent order fields of that spread (2469 / 24); a field's pages scale
+with the box its place and members span, not the window. BFS exactness (fieldpages, huntseed), huntreact, formations,
+sides, unitminds-u2: pass. Lab (gputown): townorders ok; townwalls `skipMan` march arrived at 86 s and left at 132 s,
+as fortress (86 / 132); man reached 8 of 12 posts against fortress's 9 (U2-WALLSTAIR, not this). No perf toggle diff
+run: the change adds one 20-workgroup dispatch a frame and removes the relax over every page past the boxes.
+
+**Limits.** Growth is symmetric, so a deep detour holds most of the window. The box doesn't shrink as the walkers close
+in. A longer way inside the box is taken without growth when a shorter one leaves it. The threat field per side is
+left over the scope (nothing on the GPU reads it).

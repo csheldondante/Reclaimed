@@ -114,6 +114,10 @@ const FIELD_NONE = 0xffffffff;
 /** a field's record words (fieldseam.wgsl): place, arrival radius, leaving radius, reach, flags */
 const FIELD_REC_W = 8;
 const FO_ROAD = 1;
+/** (U2-FIELDREACH) an order's field: pages only round its seeds and walkers (fieldseam.wgsl FO_WALKERS) */
+const FO_WALKERS = 2;
+/** a field's GPU words (fieldseam.wgsl FW_WORDS: its want box) */
+const FIELD_GPU_W = 10;
 /** a field record's words */
 const FR_PLACE = 0;
 const FR_REACH = 3;
@@ -490,7 +494,7 @@ export class Agents implements SimSystem {
   /** (U2 round 7) the fields: a page pool (gpu/pagepool.ts; fieldseam.wgsl), bound at 6 in every fields kernel */
   readonly fields: PagePool;
   /** the field kernels: the frame's seeds (fieldseam.wgsl seedReset .. seedFlip, cpuSeeds), the relax over pages */
-  private fk2: { reset: ComputeKernel; unmark: ComputeKernel; land: ComputeKernel; gone: ComputeKernel; flip: ComputeKernel; cpu: ComputeKernel; relax: ComputeKernel; seedG: GPUBindGroup; relaxG: GPUBindGroup };
+  private fk2: { reset: ComputeKernel; bounds: ComputeKernel; unmark: ComputeKernel; land: ComputeKernel; gone: ComputeKernel; flip: ComputeKernel; cpu: ComputeKernel; relax: ComputeKernel; seedG: GPUBindGroup; relaxG: GPUBindGroup };
   /**
    * (U2-FIELDCAP) The fields' page pool refused a page: an error shown (once), and orders after it fail 'pool-full'.
    * Told by the scope's read of the pool's count, or by an order the GPU failed for it (orders.wgsl FAIL_POOL) —
@@ -814,6 +818,8 @@ export class Agents implements SimSystem {
       pageWords: 2 * FIELD_PAGE_W,
       pageCtl: 2 * (FIELD_PAGE_W / 32),
       ownerWords: FIELD_REC_W,
+      // (U2-FIELDREACH: a walkers' field's want box, fieldseam.wgsl FW_WORDS)
+      ownerGpu: FIELD_GPU_W,
       slots,
       binding: 6,
       parts: [commonWgsl],
@@ -930,7 +936,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       const sm = (e: string) => mk(e, seedSpec);
       const relaxSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 37: 'rw', 38: 'uniform', 40: 'read' };
       const relax = mk('fieldRelax', relaxSpec);
-      const k = { reset: sm('seedReset'), unmark: sm('seedUnmark'), land: sm('seedLand'), gone: sm('seedGone'), flip: sm('seedFlip'), cpu: sm('cpuSeeds') };
+      const k = { reset: sm('seedReset'), bounds: sm('fieldBounds'), unmark: sm('seedUnmark'), land: sm('seedLand'), gone: sm('seedGone'), flip: sm('seedFlip'), cpu: sm('cpuSeeds') };
       this.fk2 = {
         ...k,
         relax,
@@ -1258,6 +1264,16 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     this.fields.writeOwner(f, this.fieldRec.get(f) ?? new Uint32Array(FIELD_REC_W));
   }
 
+  /** (U2-FIELDREACH) field `f` takes pages only round its seeds and its walkers (an order's: fieldseam.wgsl
+   *  FO_WALKERS), until it's freed */
+  private walkersField(f: number, on = true): void {
+    if (!this.fieldIds.has(f)) return;
+    const r = this.recOf(f);
+    if (!!(r[FR_FLAGS] & FO_WALKERS) === on) return;
+    r[FR_FLAGS] = on ? r[FR_FLAGS] | FO_WALKERS : r[FR_FLAGS] & ~FO_WALKERS;
+    this.writeRec(f);
+  }
+
   /** (U2 round 7) how far field `f` reaches (its cost; 0: the scope's cap): it holds no pages past it */
   reach(f: number, cost: number): void {
     new Float32Array(this.recOf(f).buffer)[FR_REACH] = cost;
@@ -1396,6 +1412,11 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   sideFields(side: number, f: { hunt?: number; threat?: number } | null): void {
     if (!Number.isInteger(side) || side < 0 || side > 254) throw new Error(`agents.sideFields: side ${side} out of 0..254`);
     for (const id of [f?.hunt, f?.threat]) if (id !== undefined) this.useField(id);
+    // (U2-FIELDREACH: the hunt takes pages only round its targets and the side's fighters; the threat (seeded on the
+    // fighters, read by nobody on the GPU yet) is left to grow over the scope)
+    const was = this.sides.get(side)?.hunt;
+    if (was !== undefined && was !== f?.hunt) this.walkersField(was, false);
+    if (f?.hunt !== undefined) this.walkersField(f.hunt);
     this.sides.set(side, f ?? {});
     this.device.queue.writeBuffer(this.seedList, (SEED_SIDES + side * 2) * 4, new Uint32Array([f?.hunt ?? FIELD_NONE, f?.threat ?? FIELD_NONE]));
   }
@@ -1491,6 +1512,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     const fields = r.kind === 6 ? (r.runFields ?? []) : r.field >= 0 ? [r.field] : [];
     if (fields.length > 8) throw new Error('agents.order: 1..8 run fields (one a wall run)');
     for (const f of fields) this.useField(f);
+    // (U2-FIELDREACH: an order's fields take pages only round their seeds and the members walking them)
+    for (const f of r.kind >= 2 ? fields : []) this.walkersField(f);
     const f32 = new Float32Array(w.buffer);
     w.set([r.kind, r.alts.length, 0, r.formation ?? 0, 0, 0, r.field < 0 ? FIELD_NONE : r.field, serial], 0);
     f32[4] = r.spacing ?? 1.2;
@@ -1504,7 +1527,10 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + 11) * 4, new Uint32Array([1]));
     this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + REF_AT) * 4, w, REF_AT, FORM_AT + 16 - REF_AT);
     this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + RUNF_AT) * 4, w, RUNF_AT, 8);
+    const was = this.orderFieldOf[g];
     this.orderFieldOf[g] = r.kind >= 2 ? fields : [];
+    // (a field no order walks any more takes pages anywhere again: a caller's own id may go on as something else)
+    for (const f of was) if (!this.orderFieldOf.some((x) => x.includes(f))) this.walkersField(f, false);
     const formed = r.kind === 5 || r.kind === 6 || r.kind === 7 || ((r.kind >= 2 && r.kind <= 4) && (r.formation ?? 0) > 0);
     if (formed) this.formGroups.add(g);
     else this.formGroups.delete(g);
@@ -1627,6 +1653,10 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       pass.dispatchWorkgroups(Math.ceil(this.count / 64));
     }
     this.encodeOrderSeeds(pass);
+    // (U2-FIELDREACH: the walkers' fields' want boxes — this frame's seeds, last frame's walkers — before the sweeps)
+    pass.setBindGroup(0, k.seedG);
+    pass.setPipeline(k.bounds.pipeline);
+    pass.dispatchWorkgroups(Math.ceil(this.fieldRows / 64));
     // (the pages the new seeds asked for handed out, their bits set)
     this.fields.encodeAlloc(pass);
     pass.setBindGroup(0, k.seedG);
@@ -1636,7 +1666,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     pass.dispatchWorkgroups(Math.ceil(SEED_LIST / 64));
     pass.setPipeline(k.flip.pipeline);
     pass.dispatchWorkgroups(1);
-    this.prof.dispatches += 6;
+    this.prof.dispatches += 7;
   }
 
   /** (U2 round 7) `sweeps` sweeps over the fields' front: pages handed out, the front listed, relaxed, flipped */

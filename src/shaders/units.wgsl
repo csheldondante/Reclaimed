@@ -1107,6 +1107,15 @@ fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let f = select(atomicLoad(&seedList[select(SEED_FOES, SEED_HUNT, hostileKind)]), sideHunt, fieldOk(sideHunt));
   if (!fieldOk(f)) { return; }
+  // (U2-FIELDREACH: a side's hunt field takes pages only round its targets (its seeds) and its fighters (its walkers);
+  // a fighter it doesn't reach while it can't grow in its box grows the box — fieldseam.wgsl fieldBounds)
+  if (fieldWalkers(f)) {
+    let wme = units[u * UNIT_V].xyz;
+    let wc = clampCell(cellAt(wme.xy));
+    fieldWalkerAt(f, wc / i32(COLS_PAGE));
+    let wk = surfaceNear(colIdxI(wc), wme.z);
+    if (wk < NAV_K && fieldDist(f, colIdxI(wc) * NAV_K + wk) >= FAR) { fwFlag(f, FWF_FAR); }
+  }
   let code = bitcast<u32>(units[u * UNIT_V + 5u].y);
   if (code == 0u || (code & 0x80000000u) != 0u) { return; }
   let t = (code - 1u) % MAX_SLOTS;

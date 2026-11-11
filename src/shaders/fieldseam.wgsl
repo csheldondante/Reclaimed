@@ -6,7 +6,10 @@
 //   page payload: [0, FP_W) distances (f32), [FP_W, 2 FP_W) seed-ids (the seed's surface + 1; 0 none)
 //   page control words: [0, FP_SEEDS) a bit a surface — a seed this frame; [FP_SEEDS, 2 FP_SEEDS) — last frame
 //   field record (the CPU's, Agents.writeField): 0 the place it's confined to (0 anywhere; bit 31 a region, else a room),
-//     1 arrival radius, 2 leaving radius (f32; 0 off), 3 reach (f32 cost; 0 the scope's cap), 4 flags (FO_ROAD)
+//     1 arrival radius, 2 leaving radius (f32; 0 off), 3 reach (f32 cost; 0 the scope's cap), 4 flags (FO_ROAD,
+//     FO_WALKERS)
+//   field GPU words (the pool's PP_OG, U2-FIELDREACH; FW_*): a walkers' field's want box — the chunks it may take pages
+//     in (below)
 // Seeds are put every frame (seedPut: the hunt's targets, the CPU's points, the orders' places) into a list; a seed new
 // since last frame marks its page, one gone marks it too (seedUnmark / seedGone, as the hunt's two lists were).
 
@@ -15,6 +18,8 @@ const FP_W: u32 = 256u * NAV_K;
 /** a page's seed bits: words a frame */
 const FP_SEEDS: u32 = FP_W / 32u;
 const FO_ROAD: u32 = 1u;
+/** (U2-FIELDREACH) the field takes pages only round its seeds and its walkers (an order's field): its want box */
+const FO_WALKERS: u32 = 2u;
 /** a group or rank following no field */
 const FIELD_NONE: u32 = 0xffffffffu;
 
@@ -47,6 +52,91 @@ fn fieldPlace(f: u32) -> u32 { return fieldRec(f, 0u); }
 fn arriveR(f: u32) -> vec2<f32> { return vec2<f32>(bitcast<f32>(fieldRec(f, 1u)), bitcast<f32>(fieldRec(f, 2u))); }
 fn fieldReach(f: u32) -> f32 { return bitcast<f32>(fieldRec(f, 3u)); }
 fn fieldRoad(f: u32) -> bool { return (fieldRec(f, 4u) & FO_ROAD) != 0u; }
+fn fieldWalkers(f: u32) -> bool { return (fieldRec(f, 4u) & FO_WALKERS) != 0u; }
+
+// ---- (U2-FIELDREACH) a walkers' field's want box ---------------------------------------------------------------------
+// A walkers' field (FO_WALKERS: an order's) asks for pages only in its want box: the world chunks round its seeds and
+// its walkers (the members of the groups that follow it: orders.wgsl groupCount), grown by FW_MARGIN + its growth a
+// side; the box only grows while the field lives (its pages aren't let go as the walkers close in). The shortest way
+// may leave the box (a U round a wall): a field whose relax came out finite past the box's edge (FWF_EDGE), that moved
+// nothing for a frame (no FWF_ACTIVE) while a walker read FAR (FWF_FAR) grows a chunk a side (fieldBounds) — so a
+// walker its field can reach is reached, never left FAR by the box. World chunks (the window's origin added: a slide
+// moves nothing), biased by FW_BIAS so 0 is none:
+//   0-3 the box (x0, y0, x1, y1 inclusive, + FW_BIAS; 0: none yet), 4-7 this frame's seeds and walkers (FW_BIAS2 - x0,
+//   FW_BIAS2 - y0, x1, y1, + FW_BIAS: atomicMax each; 0 none), 8 the growth (chunks), 9 flags (FWF_*)
+const FW_WORDS: u32 = 10u;
+const FW_BIAS: i32 = 16384;
+const FW_BIAS2: u32 = 32768u;
+const FW_MARGIN: i32 = 1;
+const FWF_ACTIVE: u32 = 1u;
+const FWF_EDGE: u32 = 2u;
+const FWF_FAR: u32 = 4u;
+/** the window's origin in world chunks */
+fn fwOrigin() -> vec2<i32> { return vec2<i32>(floor(G.org.zw / f32(COLS_PAGE))); }
+/** window chunk c's world chunk, biased */
+fn fwChunk(c: vec2<i32>) -> vec2<u32> { return vec2<u32>(c + fwOrigin() + vec2<i32>(FW_BIAS)); }
+fn fwWord(f: u32, w: u32) -> u32 { return ppCtl(ppOgAt(f, w)); }
+fn fwFlag(f: u32, b: u32) { atomicOr(&pp.ctl[ppOgAt(f, 9u)], b); }
+/** window chunk c a seed's or a walker's of field f this frame (a walkers' field only) */
+fn fieldWalkerAt(f: u32, c: vec2<i32>) {
+  if (!fieldOk(f) || !fieldWalkers(f)) { return; }
+  let b = fwChunk(c);
+  atomicMax(&pp.ctl[ppOgAt(f, 4u)], FW_BIAS2 - b.x);
+  atomicMax(&pp.ctl[ppOgAt(f, 5u)], FW_BIAS2 - b.y);
+  atomicMax(&pp.ctl[ppOgAt(f, 6u)], b.x);
+  atomicMax(&pp.ctl[ppOgAt(f, 7u)], b.y);
+}
+/** may field f take a page over chunk slot `slot` (a walkers' field: in its want box) */
+fn fieldWants(f: u32, slot: u32) -> bool {
+  if (!fieldWalkers(f)) { return true; }
+  let x0 = fwWord(f, 0u);
+  if (x0 == 0u) { return false; }
+  let b = fwChunk(vec2<i32>(slotChunk(slot)));
+  return b.x >= x0 && b.y >= fwWord(f, 1u) && b.x <= fwWord(f, 2u) && b.y <= fwWord(f, 3u);
+}
+
+/** (once a frame, after the seeds are put and before the sweeps; a thread a field) each walkers' field's box: this
+ *  frame's seeds and walkers (last frame's walkers: groupCount runs after the step) round it by FW_MARGIN + its growth,
+ *  added to the box; a chunk more a side when the field is stuck at its edge (FWF_EDGE, no FWF_ACTIVE, FWF_FAR). A box
+ *  that grew has its field's pages along its old edge marked: the front goes on from there */
+@compute @workgroup_size(64)
+fn fieldBounds(@builtin(global_invocation_id) id: vec3<u32>) {
+  let f = id.x;
+  if (f >= ppOwners() || !fieldWalkers(f)) { return; }
+  let n = vec4<u32>(atomicExchange(&pp.ctl[ppOgAt(f, 4u)], 0u), atomicExchange(&pp.ctl[ppOgAt(f, 5u)], 0u),
+                    atomicExchange(&pp.ctl[ppOgAt(f, 6u)], 0u), atomicExchange(&pp.ctl[ppOgAt(f, 7u)], 0u));
+  let fl = atomicAnd(&pp.ctl[ppOgAt(f, 9u)], ~(FWF_ACTIVE | FWF_FAR));
+  var grow = fwWord(f, 8u);
+  let stuck = (fl & (FWF_EDGE | FWF_FAR)) == (FWF_EDGE | FWF_FAR) && (fl & FWF_ACTIVE) == 0u;
+  if (stuck) {
+    grow++;
+    atomicStore(&pp.ctl[ppOgAt(f, 8u)], grow);
+  }
+  let old = vec4<u32>(fwWord(f, 0u), fwWord(f, 1u), fwWord(f, 2u), fwWord(f, 3u));
+  var b = old;
+  let m = u32(FW_MARGIN) + grow;
+  if (n.z != 0u) {
+    let nb = vec4<u32>(FW_BIAS2 - n.x - m, FW_BIAS2 - n.y - m, n.z + m, n.w + m);
+    b = select(nb, vec4<u32>(min(b.xy, nb.xy), max(b.zw, nb.zw)), b.x != 0u);
+  }
+  if (stuck && b.x != 0u) { b = vec4<u32>(b.xy - vec2<u32>(1u), b.zw + vec2<u32>(1u)); }
+  if (all(b == old)) { return; }
+  for (var w = 0u; w < 4u; w++) { atomicStore(&pp.ctl[ppOgAt(f, w)], b[w]); }
+  atomicAnd(&pp.ctl[ppOgAt(f, 9u)], ~FWF_EDGE);
+  if (old.x == 0u) { return; }
+  // (the old box's edge chunks in the window: the field's pages there marked — what lay past them may be taken now)
+  let o = vec2<i32>(fwOrigin() + vec2<i32>(FW_BIAS));
+  let lo = vec2<i32>(old.xy) - o;
+  let hi = vec2<i32>(old.zw) - o;
+  for (var y = max(lo.y, 0); y <= min(hi.y, i32(pagesY()) - 1); y++) {
+    for (var x = max(lo.x, 0); x <= min(hi.x, i32(pagesX()) - 1); x++) {
+      if (x != lo.x && x != hi.x && y != lo.y && y != hi.y) { continue; }
+      let s = pageIdx(vec2<u32>(u32(x), u32(y)));
+      if (ppPage(f, s) != PP_NONE) { ppMark(f, s); }
+    }
+  }
+}
+
 /** is surface s a seed of field f this frame (its page's bit) */
 fn fieldIsSeed(f: u32, s: u32) -> bool {
   let pg = fieldPage(f, s);
@@ -91,6 +181,7 @@ fn seedBit(f: u32, s: u32, pg: u32) -> u32 {
 fn seedPut(f: u32, s: u32) -> u32 {
   if (!fieldOk(f)) { return SEED_NONE; }
   let slot = s / FP_W;
+  fieldWalkerAt(f, vec2<i32>(slotChunk(slot)));
   let pg = ppPage(f, slot);
   if (pg == PP_NONE) {
     ppRequest(f, slot);
@@ -332,7 +423,15 @@ fn fieldRelax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id
   if (li == 0u) {
     let out = atomicLoad(&rOut);
     if (pg == PP_NONE) {
-      if ((out & R_FINITE) != 0u) { ppRequest(f, slot); }
+      // (U2-FIELDREACH: a walkers' field only in its want box; past it, told — the box grows if a walker needs it)
+      if ((out & R_FINITE) != 0u) {
+        if (fieldWants(f, slot)) {
+          ppRequest(f, slot);
+          if (fieldWalkers(f)) { fwFlag(f, FWF_ACTIVE); }
+        } else {
+          fwFlag(f, FWF_EDGE);
+        }
+      }
     } else if ((out & (R_FINITE | R_SEED)) == 0u) {
       // (all FAR, no seeds: let go — a neighbour reading it reads FAR either way — and marked, so the chunks round it
       // are relaxed next: what they hold may have come through here)
@@ -340,6 +439,7 @@ fn fieldRelax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id
       ppMarkNext(f, slot);
     } else if ((out & R_MOVED) != 0u) {
       ppMarkNext(f, slot);
+      if (fieldWalkers(f)) { fwFlag(f, FWF_ACTIVE); }
     }
   }
 }

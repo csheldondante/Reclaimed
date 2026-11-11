@@ -323,6 +323,14 @@ fn groupCount(@builtin(global_invocation_id) id: vec3<u32>) {
   // field refused a page far off that still reaches every member fails nothing)
   var mf = grpWord(g, 6u);
   if (formMode(g) == 3u && ogRank(gw) < RANKS) { mf = atomicLoad(&mail[rankO(g, ogRank(gw)) + 7u]); }
+  // (U2-FIELDREACH: a member is its field's walker — the field's want box covers it; one reading FAR tells the field,
+  // which grows past its box's edge when it can't reach it inside: fieldseam.wgsl fieldBounds)
+  if (fieldOk(mf) && fieldWalkers(mf)) {
+    let mc = clampCell(cellAt(a.xy));
+    fieldWalkerAt(mf, mc / i32(COLS_PAGE));
+    let ks = surfaceNear(colIdxI(mc), a.z);
+    if (ks < NAV_K && fieldDist(mf, colIdxI(mc) * NAV_K + ks) >= FAR) { fwFlag(mf, FWF_FAR); }
+  }
   if (fieldOk(mf) && ppRefused(mf)) {
     let ci = colIdxI(clampCell(cellAt(a.xy)));
     let ks = surfaceNear(ci, a.z);
