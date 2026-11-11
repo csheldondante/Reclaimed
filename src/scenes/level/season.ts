@@ -101,12 +101,12 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoo
     },
   });
   // (trackA-forces: the soldiers and raiders — Might as squads, raids on a schedule; ?wave=N the first raid's season,
-  // 0 none. TownForces is the one adapter to the Units contract: Track B's place-based calls replace its insides)
+  // 0 none. TownForces is the one adapter to the Units contract, on Track B's GPU place orders: units.usePlaces is wired where
+  // the town contracts are made, stream-setup.ts)
   const units = scene.units;
   if (units) {
-    const forces = new TownForces(units, () => (scene.townContracts ? { device: host.gpu.device, places: scene.townContracts.places } : null));
+    const forces = new TownForces(units);
     scene.townForces = forces;
-    core.onShift.push(() => forces.placesMoved());
     loop.war = new SeasonWar({
       forces: () => (scene.townContracts ? forces : null),
       town: () => (loop.town !== null && scene.townContracts ? scene.townContracts.townIndex(loop.town) : -1),

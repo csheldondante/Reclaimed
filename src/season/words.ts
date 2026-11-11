@@ -120,6 +120,9 @@ export function waveNowLine(n: number, left: number, stage: 'coming' | 'there' |
   return stage === 'there' ? `Raiders reached the town! ${left} of ${n} are left.` : `Raiders attack! ${left} of ${n} are on their way.`;
 }
 
+/** (trackA-forces2) an order or a spawn found no room: Track B's order groups or fields all taken */
+export const FORCES_FULL = 'Too many groups are on the move at once. Some soldiers or raiders stay where they are.';
+
 export const WAVE_NO_ROAD = 'Raiders were seen, but they found no road into town.';
 
 /** after the fight, at the season's end */

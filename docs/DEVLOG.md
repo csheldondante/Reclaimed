@@ -22443,3 +22443,32 @@ it each frame over townplace.wgsl (binding 57):
     tiles) for 5 frames running, 10 s at most. Every shot reached it (cover 1, zoom 40).
   - The spawn and walk close-ups show the soldiers clearly.
   - At the muster yard most of the squad is hidden behind the buildings round it at 60°: one figure shows.
+
+## 2026-11-11 — Forces 2: TownForces on Track B's GPU place orders; the interim read deleted (trackA-forces2)
+
+- **Why.** Track B's place orders (U2 round 5: `spawnAt`, `orderGroup`, `members`, `arrived`, `orderFailed`) are in
+  fortress, wired once in stream-setup.ts (`units.usePlaces(tc.places, tc.townArea)`). The season's adapter no longer
+  needs places as points, so its CPU path is gone (BACKLOG SF-1, SF-6):
+  - the 800 B read of the town's place-table slot and its transfers.ts entry;
+  - the 2-frame settle and the frame count (`update()`, `placesMoved()`, and the frame.ts and onShift hooks);
+  - the arrival told from the units' states; `TOWN_WORDS` and the slot offsets.
+- **What's left on the CPU.** Bookkeeping only: our group ids → Track B's, a unit → group map filled at the spawn (members
+  are known at once), the dead counted from `died` (with `by`). A report's `size` is living members plus the dead, so a
+  failed spawn (none made) reports 0, as before. Townplaces' `also` (a place number) is turned into the Units
+  contract's ref at the boundary (`unitsRef`).
+- **pool-full.** Track B has 8 order groups and 7 fields. A full field pool comes back as `orderFailed(g,
+  'pool-full')`. Track B's spawnAt throws when every group is taken, so TownForces counts its groups with living
+  members (GROUP_ROOM 8) and tells a spawn past that as 'pool-full' too. Either way the sheet says "Too many groups are
+  on the move at once …" and the group keeps its last order. Never dropped.
+- **Text and outcomes unchanged.** The window-of-3 search over gates and arterials stays, driven by orderFailed.
+- **Measured** (`RECLAIMED_PORT=5680 node scripts/lab.mjs run scripts/lab/townforces.mjs`, Muru, 412 × 915, 60°):
+  - passes, 40.7 s scenario;
+  - season 2: 6 soldiers at the yard;
+  - season 4: 12 at gate 2 (Muru's one standing gate), 4 raiders from spawn point 2;
+  - 3 guards and 2 raiders killed in melee `by` each other, then 3 guards and 2 raiders `by` null as gate 2 flooded
+    (UC-6, SF-7);
+  - settled "You beat the raiders. 6 soldiers died. You lost 2 Might."
+  - A second, scratch run with the camera following the raiders shows the fight on the road. By ~5 sim s in, the gate
+    is under water there too. The water isn't fixed here.
+- Tests: season-war rewritten over a fake Units with place orders (chains, `also`, a spawn's failure removing its units,
+  pool-full by fields and by groups), season and the transfers gate pass.

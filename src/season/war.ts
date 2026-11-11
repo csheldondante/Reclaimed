@@ -8,7 +8,7 @@
 import { GATE_SLOTS, PLACE, PLACE_CHAIN, type GroupId, type PlaceRef } from '../api/contracts/townplaces';
 import type { TownForces } from './forces';
 import { lose, pools, type SeasonLedger } from './ledger';
-import { fightLine, NO_SOLDIERS, SOLDIERS_NO_PLACE, soldiersLine, WAVE_NO_ROAD, waveNowLine, waveSoonLine } from './words';
+import { fightLine, FORCES_FULL, NO_SOLDIERS, SOLDIERS_NO_PLACE, soldiersLine, WAVE_NO_ROAD, waveNowLine, waveSoonLine } from './words';
 
 /** soldiers a free point of Might (SEASON_LOOP.md: "a squad a point of Might") */
 export const SQUAD = 3;
@@ -89,6 +89,8 @@ export class SeasonWar {
   private fallen = 0;
   private hooked: TownForces | null = null;
   private noPlace = false;
+  /** an order or a spawn found no group or field free (Track B's 8 order groups, 7 fields): shown, never dropped */
+  private full = false;
   private soon = false;
   /** told when its line changes */
   readonly onChange: (() => void)[] = [];
@@ -101,6 +103,7 @@ export class SeasonWar {
     const out: string[] = [];
     if (f) {
       const alive = (gate: boolean) => this.squads.filter((g) => (this.posts.get(g) !== 'raised') === gate).reduce((s, g) => s + (f.report(g)?.alive ?? 0), 0);
+      if (this.full) out.push(FORCES_FULL);
       if (this.noPlace) out.push(SOLDIERS_NO_PLACE);
       else if (!this.squads.length) out.push(NO_SOLDIERS);
       else {
@@ -141,12 +144,16 @@ export class SeasonWar {
       this.wave.stage = 'fighting';
       this.changed();
     });
-    // (a group's units standing: the counts shown)
-    f.spawned.push(() => this.changed());
     // (a whole chain failed: the next window of gates or arterials, else where they were raised / the keep — the
     // season issues the longer search a window at a time: Track B's chains hold PLACE_CHAIN choices)
     f.orderFailed.push((g, why, ref) => {
       console.warn(`[forces] group ${g}: no place in ${JSON.stringify(ref)} (${why})`);
+      // (no group or field free: the group stays as it is — told on the sheet; the next season posts again)
+      if (why === 'pool-full') {
+        this.full = true;
+        this.changed();
+        return;
+      }
       const r = f.report(g);
       if (this.squads.includes(g)) {
         const post = this.posts.get(g);
@@ -194,8 +201,8 @@ export class SeasonWar {
       return;
     }
     this.hook(f);
-    f.placesMoved();
     this.noPlace = false;
+    this.full = false;
     // (the squads to the free Might: the weakest sent home first, new ones raised at the barracks, else the yard)
     const want = Math.min(MAX_SQUADS, pools(l).might);
     this.squads = this.squads.filter((g) => {

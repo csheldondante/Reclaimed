@@ -130,23 +130,26 @@ from the start, ordered through the Units contract). The calls the season loop n
 The user approved it on 2026-11-10 ("do what you can now"); it lifts "No raids in this test" above for one simple rule.
 Code: `season/forces.ts` (TownForces, the adapter), `season/war.ts` (the rules), lines in `season/words.ts`.
 
-**One adapter.** Every Units call the season makes is in `TownForces`, whose interface is the calls agreed with Track B
-for U2 round 5: `spawnAt(kind, faction, at: PlaceRef, n) → GroupId`, `orderGroup(g, { kind: 'guard' | 'go' |
-'attack', at: PlaceRef })`, events `arrived(g)` (once an order), `orderFailed(g, why)` (why: a place status's name),
-`died(g, unit, by)`, `hurt`. `PlaceRef` and `GroupId` are in the townplaces contract: `{ town, place }` or `{ town,
-district, kind, rank }` (`kind` the lot kind lotAt takes: 1 a building … 5 a field), plus two additions Track B accepted
-and resolves on the GPU — `else` (the next place to try: "a gate, else the keep"; **a chain holds at most 3 choices**,
-deeper throws at call time — `PLACE_CHAIN`, `chainLength`; the choice taken is sticky until it turns invalid;
-`orderFailed` only when the whole chain fails) and `also` (one partner place that must be valid too: a raid's spawn
-point only where its arterial's gate stands). Track B's place-based calls (trackB-u2r6: spawnAt / orderGroup /
-members / arrived / orderFailed, wired by `units.usePlaces(tc.places, tc.townArea)`) replace the adapter's insides only
-(SF-1), once u2r6 is in fortress; u2r6 also moves melee to the GPU (DA-B32).
-- **Interim (to delete):** the places as points from one async read of the town's slot of the place table — 800 B (the
-  header and the 23 named entries), made only when a spawn or order follows an event (a season's stages landed, a raid,
-  a slide), two frames after it so the GPU's place solve has run; never per frame (`transfers.ts` TownForces.read).
-  Then the existing jobs: `guard` (radius 5), `go`; `attack` on a place is hostile and going there. `arrived` is told
-  from the units' own states (each member seen walking, then none walking: no position read); `orderFailed` from the
-  read's statuses. A district `PlaceRef` throws here (the read holds the named places only).
+**One adapter.** Every Units call the season makes is in `TownForces`, and since trackA-forces2 (SF-1) it runs on
+Track B's GPU place orders: `units.spawnAt(kind, faction, at: PlaceRef, n) → GroupId`, `units.orderGroup(g, { kind:
+'guard' | 'go' | 'attack', at: PlaceRef })`, `units.members(g)`, events `arrived(g)` (once an order) and
+`orderFailed(g, why)` (why: `'none' | 'rising' | 'water' | 'no-town' | 'pool-full'`); `died` (with `by`) and `hurt`
+as before. Wired once where the town contracts are made (`units.usePlaces(tc.places, tc.townArea)`, stream-setup.ts).
+`PlaceRef` and `GroupId` are in the townplaces contract: `{ town, place }` or `{ town, district, kind, rank }` (`kind`
+the lot kind lotAt takes: 1 a building … 5 a field), plus `else` (the next place to try: "a gate, else the keep"; **a
+chain holds at most 3 choices**, deeper throws at call time — `PLACE_CHAIN`, `chainLength`; the choice taken is sticky
+until it turns invalid; `orderFailed` only when the whole chain fails) and `also` (one partner place that must be valid
+too: a raid's spawn point only where its arterial's gate stands). Townplaces' `also` is a place number; the adapter
+turns it into the Units contract's ref (`unitsRef`).
+- **Nothing read back.** The places are resolved on the GPU where the orders run; the adapter keeps no frame count,
+  makes no read of the place table and doesn't watch the units' states. What it keeps on the CPU is bookkeeping: its
+  group ids, each group's kind, a unit → group map filled at the spawn (members(g) is known at once), the dead counted
+  from `died`. A group's `size` is its living members plus its dead (0 when its spawn failed: none made).
+- **Melee is the GPU's** (DA-B32). Line of sight and seen-only targets are the default: units hunt an unseen target only
+  when ordered, so a raid's `attack` order is what sends raiders at the town.
+- **Room:** Track B has 8 order groups and 7 order fields (a field a distinct place chain). A spawn with no group free
+  or an order with no field free is told as `orderFailed(g, 'pool-full')` and shown on the sheet ("Too many groups are
+  on the move at once …"); the group stays as it was, and the next season posts again. Never a silent drop.
 - **Not a fallback:** an invalid place is never replaced by a position the CPU makes up; the chain is authored and an
   order with no valid choice fails and is shown.
 
@@ -176,8 +179,9 @@ members / arrived / orderFailed, wired by `units.usePlaces(tc.places, tc.townAre
   coming next season. Scouts count 4." / "Raiders attack! 4 of 4 are on their way." → "Raiders are fighting your
   soldiers! 3 of 4 are left." (a blow on either side) / "All 4 raiders are dead."
 
-**Known limits (Track B's):** melee strikes are the CPU's (DA-B32); squads stand, they don't drill, man the wall-walk or
-march (orderGroup's formations, SF-2).
+**Known limits:** squads stand at a place (the GPU's guard), they don't drill, man the wall-walk or march
+(orderGroup's formations, SF-2: round 6). Soldiers and raiders take the agents' defaults (health 3; spawnAt takes no
+sight / speed options).
 
 **The check** (`scripts/lab/townforces.mjs`, Muru, 412 × 915, 60°): season 2, six soldiers at the yard; season 4, the
 walls built, 12 soldiers at gate 2 (Muru's only standing gate: gate 0 is over water), four raiders from spawn point 2
