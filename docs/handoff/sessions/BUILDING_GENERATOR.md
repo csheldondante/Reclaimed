@@ -1,44 +1,162 @@
-# Handoff: procedural building and architecture style generator
+# Handoff: procedural architecture — building shape, style, editors and cutaways
 
-Read `README.md` (rules) and `ADDENDUM.md` in this folder first.
+You are the orchestrator for a fresh session. Read `README.md` (rules) and `ADDENDUM.md` in this folder first.
 
-## Goal (the user, 2026-11-10)
+## Goal (the user)
 "I want a separate session to work on our procedural building and architecture style generator. It's an independent
-body of work." The city generator gives plain extruded lots; this session turns lot records into buildings with style.
+body of work" (2026-11-10). The city generator lays out lots and draws each as a plain extrusion. This session makes the
+**buildings themselves**: the full architectural style and building shape, dramatic and pretty, customizable through
+**interactive editors**, with **cutaways** into towers and rooms. It's the priority after the town and season work.
 
-## Priority and why (the user, 2026-11-10, later) — start this next, as its own orchestrator session
-"I actually think we should start the building generator … it makes the most visual quality difference, it helps with
-the cutouts when we want to zoom in to a tower, it potentially avoids having to change to cloudfare build system (we can
-do local builds I can use on wifi for now if we do want to use any assets). It also makes the fortress building more fun
-by making it visually interesting and customizable by the player. We will want it to be dramatic with cool features and
-to look pretty." It runs in parallel with the liquids work and the soldiers (after Track B's GPU agent migration).
-So the generator must: look dramatic and pretty at play zoom (60° pitch) on the phone; support interior cutaways (a
-camera zooming into a tower and cutting away to a room — DESIGN §5); be customizable by the player later (painting comes
-back only for building customization); procedural first, any external assets only via local builds served on wifi
-(never in the public repo — see memory/reference_unity_assets), no Cloudflare dependency.
+## Read first (in this order)
+1. **`.claude/docs/design/DESIGN.md`**: the design authority, agreed system by system with the user. These sections bind
+   this work:
+   - §3 Grids and External intervals: a building is its own grid (tile system), turned about z, and claims its space as
+     External intervals. Exchange through open faces, buried ruins, and its own material tick later.
+   - §5 Rendering: static geometry uploaded once in its grid's frame and drawn instanced. LOD swaps only off screen.
+     Occlusion is handled by dither, slicing under a roof and orbiting. Later: zoom into a tower and cut away to a
+     room during an opportunity's dialog.
+   - §9 Structural integrity and §10 Physics: one baked voxel model per object serves deformation, fracture and
+     projection into the terrain.
+   - §17 Towns, one plan: one building system for generated and player buildings, and the generator never does what the
+     plan API can't express.
+   - §18 shape rules: a lone stack becomes a tower with a spire, 2×2 becomes a domed drum, enclosed cells become a
+     courtyard, and walls get towers at the bends. Also the fortress that "can grow huge and impressive with spires and
+     bridges and fountains and crystals and floating stones".
+   - §22 UX: inspect a structure, close-up cutaways.
+   - §23 Persistence: derived buildings are never saved; only the player's edits are saved, keyed by world position.
+   - §24 Performance: the Pixel 9a is the floor.
+2. `docs/DECISIONS.md`: the user's answers. Search it for look, camera, towns and fortress.
+3. `docs/design/CITYGEN.md` and `src/api/contracts/citygen.ts`: the input contract (below).
+4. `docs/design/SEASON_LOOP.md`, especially "Town moods", and `docs/design/LIVING_TOWN.md` (routes and riders).
+5. `docs/BACKLOG.md`:
+   - ST11 (trees and doodads in the gaps)
+   - ST12 (superstructures)
+   - TM1–TM10 (town moods, especially TM6 disrepair and TM7 banners)
+   - SW-G6 (night lights)
+   - CG items about lots
 
-## Inputs (the contract — read it, don't read citygen internals)
-`src/api/contracts/citygen.ts` and `docs/design/CITYGEN.md` (now on `fortress`): one 24-word GPU record per lot
-and landmark site (parcel, footprint polygon, frontage edge, kind: building / park / plaza / landmark, district and
-purpose id, storeys, height, base z, growth key, a stable seed), a count buffer, a per-lot progress buffer (0–1), and the
-town's placement transform. Claims are per lot record, so this session can take over a building's intervals.
+## Inputs: the citygen contract (on fortress)
+- **`src/api/contracts/citygen.ts`:** one 24-word GPU record per lot and landmark site. A record holds:
+  - parcel and footprint polygon;
+  - frontage edge;
+  - kind: building / park / plaza / landmark / field;
+  - district and purpose id;
+  - storeys, height and base z;
+  - growth key;
+  - a stable seed.
 
-## Requirements and ideas already agreed with the user
-- **Height vs plot size** was the user's main readability point: wide plots get low, broad buildings; only towers go
-  tall; streets must stay visible at 60° pitch. Huge structures spaced so they don't occlude each other or the streets.
-- **Superstructures for large or irregular plots** (BACKLOG ST12): a perimeter block with a courtyard following any
-  outline, corner towers at sharp turns; round landmark sites get a ring building + central tower; district styles
-  (warehouse, university, keep) as variants.
-- **Districts read visually:** port with docks, quays, anchored ships and a warehouse district; city centre with the
-  growing fortress megastructure; a university on a hill; walls. Purpose id per lot is the hook.
-- **Trees and doodads in the gaps** (BACKLOG ST11) — can be this session or a small separate one: a GPU scatter off roads
-  and lots with JFA clearance; reuse instanced trees (`render/meshinst.ts`) and prop modules
-  (`structures/dressmodules.ts`): orchards/gardens in empty districts, a well and stalls on plazas, quays/cranes/boats
-  on the shore, sparse trees along arterials; follows the growth slider.
-- Existing art to check before inventing: `structures/pieces.ts`, `modules.ts`, `dressmodules.ts`, the old WFC facades
-  (`structures/wfc.ts`, sequential CPU — not to be reused as-is). Track B owns art direction/assets — coordinate.
-- Everything generated on the GPU, per lot in parallel (hash + neighbour types), no sequential CPU picking.
-- Future city kinds to keep in mind: cliff/mesa faces with irregular 3D grids (`structures/tiles/*` kept for this),
-  Bulwark-style radial spires with bridges, waterfall, lake, treehouse, termite-mound cities.
-- Physics of buildings is a separate handoff (`BUILDING_PHYSICS.md`) but "may make sense to do as part of the improved
-  building generators" — design the output so it can feed the physics lattice.
+  Alongside the records are:
+  - a count buffer;
+  - a per-lot progress buffer (0–1), which drives construction and the time-lapse;
+  - the town's placement transform.
+
+  Claims are per record, so this session can take over a building's intervals from the town.
+- **The town's named places** (`src/shaders/townplace.wgsl`, `src/api/contracts/townplaces.ts`): muster yard, keep,
+  barracks, market and gates, plus `houseAt` / `lotAt` by rank.
+- **This is the starting point, not the whole input.** The full style needs more:
+  - a per-district style;
+  - a per-lot condition (prosperous / worn / ruined / destroyed, BACKLOG TM6), which opportunities change;
+  - the player's customizations;
+  - neighbour context: the street side, corner lots, what stands next door.
+
+  Propose the contract additions in your design; citygen (Track A) adds the fields.
+
+## What to build (to be designed with the user first)
+- **The style system:**
+  - an architectural style as data: a vocabulary of parts and rules (massing, roofs, openings, ornament, materials,
+    palette);
+  - per district and purpose: port warehouses and quays, the keep and the growing fortress megastructure, a university
+    on a hill, homes, markets, walls;
+  - per condition: prosperous, worn, ruined, destroyed.
+- **Building shape:**
+  - massing from the footprint;
+  - superstructures for large or irregular lots: a perimeter block with a courtyard following any outline, corner
+    towers at sharp turns, and on round landmark sites a ring building with a central tower;
+  - towers, spires and bridges between structures.
+- **Interactive editors:**
+  - a lab page to author and tune styles and see them on real Muru lots at play zoom;
+  - later, player customization of a building, the only painting left in the game (DESIGN §17, 2026-11-10).
+- **Cutaways:**
+  - towers and rooms opened for the camera (slice under a roof, cut away a wall);
+  - interiors as a zoom LOD, not separate scenes (DESIGN §5, §22).
+- **Construction look:** the construction shader is its own session (`CONSTRUCTION_SHADER.md`, FONDACO technique).
+  Agree the vertex inputs it needs: local height within the building, floor index, roof flag.
+
+## Visibility and scale: the rules (the user, 2026-11-11)
+- **Height follows footprint, not the reverse.** A wide plot can carry a taller building than a narrow one. A tall
+  building on a wide plot occludes less outside its own plot, not more.
+- **Narrow tall features are allowed:** spires, towers, chimneys and masts. They don't occlude much behind them.
+- **Large structures are allowed but must be spaced** so they don't stack up behind each other. They will occlude what is
+  behind them. That is an intentional trade: impressive scale and recognizable landmarks in exchange for less view
+  into the busy city life behind. Cutaways reduce the cost.
+- **Large structures carry foot traffic.** Walkways, bridges, arcades, decks and roofs are walkable and join the town's
+  route network, so the city-life simulation shows across them, not just around them.
+  - The agents can already walk any connected walkable layer (decks, bridges, caves).
+  - The town routes are in `src/citylife/routes.wgsl` and the route-read contract in `src/shaders/routeread.wgsl`.
+
+## Where it runs: GPU vs CPU (the user, 2026-11-11)
+- **On the GPU:** anything that must stream in or happen with low latency. A town's buildings appearing as the camera
+  pans to it, a lot rising when a card resolves, a condition changing. Per lot in parallel (hash + neighbour types),
+  with no sequential CPU picking. Streaming is bandwidth-sensitive, so nothing large travels there.
+- **The CPU is fine** for work that isn't low latency and doesn't happen during streaming:
+  - authoring and compiling styles in the editor;
+  - baking a style's part library or meshes at load;
+  - building a player's custom design;
+  - a one-off generation behind a loading moment.
+
+  Say in the design which side each piece runs on, and why.
+- No per-frame readback in play (DESIGN §24).
+
+## Rendering notes
+- **Instanced meshes are viable.** Track B's units draw bench (2026-11-11) found instanced meshes work on the phone, with
+  impostors likely for zoomed-out views. Reuse that path (coordinate with Track B, the art_improvements session) and
+  `render/meshinst.ts`.
+- **Art to check before inventing:**
+  - `structures/modules.ts`
+  - `structures/dressmodules.ts`
+  - `structures/tiles/*` (kept for cliff cities)
+  - `render/meshinst.ts`, `render/treemesh.ts`
+
+  The old `pieces.ts` and WFC facades are deleted. Track B owns art direction and assets, so coordinate.
+- **Assets:** built locally only. No Cloudflare or other hosting. The Unity Asset Store packs on this PC have unchecked
+  licences: never put them in the public repo, and ask the user before any use.
+- **Trees and doodads in the gaps (ST11):** can be this session or a small separate one. A GPU scatter off roads and lots
+  with JFA clearance:
+  - orchards and gardens in empty districts;
+  - a well and stalls on plazas;
+  - quays, cranes and boats on the shore;
+  - sparse trees along arterials.
+
+  It follows the growth.
+
+## Expressive town states (later, design for them now)
+Opportunities should visibly change the town (the user, 2026-11-10, BACKLOG TM1–TM10):
+- prosperous, ruined and destroyed buildings;
+- disrepair under undead labour;
+- banners per district mood;
+- lighting moods and night lights;
+- checkpoints, curfews, parades and plague carts (those are units, Track A/B).
+
+Make condition, banners and lighting inputs of the style from the start.
+
+## Physics and future city kinds (kept from the first handoff)
+- **Physics.** Building physics is a separate handoff (`BUILDING_PHYSICS.md`), but it "may make sense to do as part of the
+  improved building generators". Design the output so it can feed the physics lattice: one baked voxel model per object
+  (DESIGN §10), claims per record, support and collapse from column space (§9).
+- **Future city kinds to keep in mind:**
+  - cliff and mesa faces with irregular 3D grids (`structures/tiles/*` is kept for this);
+  - Bulwark-style radial spires with bridges;
+  - waterfall, lake, treehouse and termite-mound cities.
+
+## Process
+- **Design review with the user before any builder runs.** Present:
+  - the user's words quoted;
+  - the systems reused;
+  - the contract additions;
+  - the GPU/CPU split;
+  - cost targets;
+  - mock-ups or shots.
+- Small steps, judged in the game at play zoom (60°, phone 412×915). A style lab with real lots comes before the game.
+- Phone bench (toggle diffs) for any frame-path change.
+- Every report ends with "Hacks and limits".

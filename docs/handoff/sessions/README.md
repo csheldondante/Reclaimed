@@ -7,7 +7,7 @@ at its file, and tell it to read `ADDENDUM.md` first: that file collects anythin
 |---|---|---|
 | `CITYGEN_CONTINUE.md` | Finish the GPU city generator in the game: routes and riders, opportunities growing districts, delete the old generator | — |
 | `STREAMING_PHONE.md` | Panning keeps up on the phone: the light height layer (SF5), the city cache (DA-P2), sim asleep unless woken (SF6) | — |
-| `BUILDING_GENERATOR.md` | Procedural building and architecture style generator on the lot records (plus trees and doodads in the gaps) | citygen contract |
+| `BUILDING_GENERATOR.md` | Procedural architecture: building shape and style, editors, cutaways, visibility rules (rewritten 2026-11-11) | citygen contract (on fortress) |
 | `CONSTRUCTION_SHADER.md` | The construction time-lapse shader (FONDACO technique) driven by per-lot progress | citygen contract |
 | `GPU_AGENTS_FLORA.md` | Agents and plants fully on the GPU as designed: brains as GPU states, no per-frame unit sync, one crowd, no CPU flora mirror | Track B's GPU_UNIT_AI_PLAN |
 | `LIQUIDS_IN_INTERVALS.md` | One liquid model in the column gaps (the §7 flow model): water under bridge decks, lava, sand, magma | — |
