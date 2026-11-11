@@ -10,6 +10,8 @@ export const STYLE_VEC4S = 10;
 export const WALL = { plaster: 0, brick: 1, ashlar: 2, timber: 3 } as const;
 /** roof coverings */
 export const ROOF = { tile: 0, slate: 1, thatch: 2 } as const;
+/** what a style builds on a building lot (arch.wgsl gen); plazas are markets and parks gardens whatever the style */
+export const ARCHETYPE = { house: 0, keep: 1, shanty: 2, docks: 3, industrial: 4 } as const;
 
 type RGB = [number, number, number];
 
@@ -33,8 +35,8 @@ export interface Style {
   hipOdds: number;
   /** a tower's spire or cone: its height over its radius */
   spire: number;
-  /** a keep: walls and crenels round the lot, towers at the corners */
-  keep: boolean;
+  /** what's built on a lot (arch.wgsl's archetypes) */
+  archetype: number;
   /** gables turned to the street (the port's) */
   gablesToStreet: boolean;
   towerOdds: number;
@@ -58,6 +60,8 @@ export interface Style {
   dressOdds: number;
   /** the ground floor raised over a taller plinth (world units) */
   raised: number;
+  /** the street door's width and height (default 1.1 × 2.1; the industrial's big doors) */
+  door?: [number, number];
 }
 
 export const STYLES: Style[] = [
@@ -65,7 +69,7 @@ export const STYLES: Style[] = [
     name: 'homes',
     wall: [0.95, 0.9, 0.78], wallMat: WALL.plaster, trim: [0.97, 0.95, 0.9], roof: [0.5, 0.62, 0.52], roofMat: ROOF.tile,
     stone: [0.82, 0.72, 0.55], pitch: 1.05, overhang: 0.35, jetty: 0, chimneyOdds: 0.7, hipOdds: 0.15, spire: 2.3,
-    keep: false, gablesToStreet: false, towerOdds: 0.3, shutters: true, bay: 2.3, winWidth: 0.85, winTop: 2.25,
+    archetype: ARCHETYPE.house, gablesToStreet: false, towerOdds: 0.3, shutters: true, bay: 2.3, winWidth: 0.85, winTop: 2.25,
     winBottom: 1.0, roundOdds: 0.6, setback: 2.2, lotWallOdds: 0.7, porchOdds: 0.6, stairOdds: 0.15, wingTurnOdds: 0.15,
     dressOdds: 0.5, raised: 0.0,
   },
@@ -73,14 +77,14 @@ export const STYLES: Style[] = [
     name: 'timber',
     wall: [0.95, 0.88, 0.72], wallMat: WALL.timber, trim: [0.33, 0.22, 0.14], roof: [0.4, 0.55, 0.58], roofMat: ROOF.slate,
     stone: [0.8, 0.7, 0.52], pitch: 1.35, overhang: 0.3, jetty: 0.35, chimneyOdds: 0.6, hipOdds: 0.05, spire: 2.6,
-    keep: false, gablesToStreet: false, towerOdds: 0.35, shutters: false, bay: 1.9, winWidth: 0.8, winTop: 2.2,
+    archetype: ARCHETYPE.house, gablesToStreet: false, towerOdds: 0.35, shutters: false, bay: 1.9, winWidth: 0.8, winTop: 2.2,
     winBottom: 1.05, roundOdds: 0.5, setback: 1.2, lotWallOdds: 0.5, porchOdds: 0.3, stairOdds: 0.35, wingTurnOdds: 0.35,
     dressOdds: 0.6, raised: 0.0,
   },
   {
     name: 'port',
     wall: [0.7, 0.4, 0.3], wallMat: WALL.brick, trim: [0.88, 0.82, 0.72], roof: [0.5, 0.47, 0.58], roofMat: ROOF.slate,
-    stone: [0.76, 0.7, 0.6], pitch: 1.1, overhang: 0.2, jetty: 0, chimneyOdds: 0.4, hipOdds: 0.0, spire: 2.2, keep: false,
+    stone: [0.76, 0.7, 0.6], pitch: 1.1, overhang: 0.2, jetty: 0, chimneyOdds: 0.4, hipOdds: 0.0, spire: 2.2, archetype: ARCHETYPE.house,
     gablesToStreet: true, towerOdds: 0.05, shutters: false, bay: 2.5, winWidth: 1.0, winTop: 2.4, winBottom: 0.9,
     roundOdds: 0.3, setback: 0.0, lotWallOdds: 0.2, porchOdds: 0.0, stairOdds: 0.3, wingTurnOdds: 0.1, dressOdds: 0.3,
     raised: 0.4,
@@ -88,10 +92,35 @@ export const STYLES: Style[] = [
   {
     name: 'keep',
     wall: [0.84, 0.74, 0.56], wallMat: WALL.ashlar, trim: [0.88, 0.82, 0.68], roof: [0.42, 0.5, 0.6], roofMat: ROOF.slate,
-    stone: [0.8, 0.7, 0.52], pitch: 1.1, overhang: 0.1, jetty: 0, chimneyOdds: 0, hipOdds: 0.0, spire: 2.6, keep: true,
+    stone: [0.8, 0.7, 0.52], pitch: 1.1, overhang: 0.1, jetty: 0, chimneyOdds: 0, hipOdds: 0.0, spire: 2.6, archetype: ARCHETYPE.keep,
     gablesToStreet: false, towerOdds: 0.9, shutters: false, bay: 3.0, winWidth: 0.55, winTop: 2.4, winBottom: 1.2,
     roundOdds: 0.7, setback: 0.0, lotWallOdds: 0.0, porchOdds: 0.0, stairOdds: 0.0, wingTurnOdds: 0.0, dressOdds: 0.2,
     raised: 0.0,
+  },
+  {
+    // (port slums: crooked plank huts, tin and plank lean-tos, cloth awnings)
+    name: 'shanty',
+    wall: [0.62, 0.5, 0.36], wallMat: 4, trim: [0.4, 0.3, 0.2], roof: [0.58, 0.55, 0.5], roofMat: 3,
+    stone: [0.6, 0.56, 0.5], pitch: 0.4, overhang: 0.3, jetty: 0, chimneyOdds: 0.2, hipOdds: 0, spire: 2.0,
+    archetype: ARCHETYPE.shanty, gablesToStreet: false, towerOdds: 0, shutters: false, bay: 1.8, winWidth: 0.6, winTop: 1.9,
+    winBottom: 1.0, roundOdds: 0, setback: 0.5, lotWallOdds: 0, porchOdds: 0, stairOdds: 0, wingTurnOdds: 0,
+    dressOdds: 0.2, raised: 0,
+  },
+  {
+    name: 'docks',
+    wall: [0.6, 0.48, 0.34], wallMat: 4, trim: [0.4, 0.3, 0.2], roof: [0.48, 0.44, 0.5], roofMat: 3,
+    stone: [0.62, 0.6, 0.56], pitch: 0.4, overhang: 0.3, jetty: 0, chimneyOdds: 0, hipOdds: 0, spire: 2.0,
+    archetype: ARCHETYPE.docks, gablesToStreet: false, towerOdds: 0, shutters: false, bay: 1.8, winWidth: 0.6, winTop: 1.9,
+    winBottom: 1.0, roundOdds: 0, setback: 0, lotWallOdds: 0, porchOdds: 0, stairOdds: 0, wingTurnOdds: 0, dressOdds: 0,
+    raised: 0,
+  },
+  {
+    name: 'industrial',
+    wall: [0.64, 0.36, 0.27], wallMat: WALL.brick, trim: [0.8, 0.76, 0.68], roof: [0.42, 0.44, 0.48], roofMat: ROOF.slate,
+    stone: [0.7, 0.66, 0.58], pitch: 0.6, overhang: 0.15, jetty: 0, chimneyOdds: 0, hipOdds: 0, spire: 2.0,
+    archetype: ARCHETYPE.industrial, gablesToStreet: false, towerOdds: 0, shutters: false, bay: 2.4, winWidth: 1.3,
+    winTop: 2.7, winBottom: 0.8, roundOdds: 0, setback: 0, lotWallOdds: 0, porchOdds: 0, stairOdds: 0, wingTurnOdds: 0,
+    dressOdds: 0, raised: 0, door: [2.6, 3.3],
   },
 ];
 
@@ -105,8 +134,8 @@ export function styleWords(styles: Style[] = STYLES): Float32Array {
       [...s.roof, s.roofMat],
       [...s.stone, 0],
       [s.pitch, s.overhang, s.jetty, s.chimneyOdds],
-      [s.hipOdds, s.spire, s.keep ? 1 : 0, s.gablesToStreet ? 1 : 0],
-      [0, s.towerOdds, s.shutters ? 1 : 0, 0],
+      [s.hipOdds, s.spire, s.archetype, s.gablesToStreet ? 1 : 0],
+      [s.door?.[0] ?? 1.1, s.towerOdds, s.shutters ? 1 : 0, s.door?.[1] ?? 2.1],
       [s.bay, s.winWidth, s.winTop, s.winBottom],
       [s.roundOdds, s.setback, s.lotWallOdds, s.porchOdds],
       [s.stairOdds, s.wingTurnOdds, s.dressOdds, s.raised],

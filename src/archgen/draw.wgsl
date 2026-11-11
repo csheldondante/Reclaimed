@@ -42,7 +42,7 @@ fn corner(o: u32, k: u32) -> vec2<f32> { return vec2<f32>(pf(o, 2u + k * 2u), pf
 fn partOf(kind: u32, ii: u32) -> u32 { return AW(AW(1u) + kind * AW(3u) + ii); }
 fn pinfo(b: u32, surf: u32, bits: u32) -> vec4<u32> {
   let w0 = AW(AW(2u) + b);
-  return vec4<u32>(AW(AW(2u) + b + 1u), surf, ((w0 >> 16u) & 0xffu) | bits, AW(AW(2u) + b + 15u));
+  return vec4<u32>(AW(AW(2u) + b + 1u), surf, ((w0 >> 16u) & 0xffu) | bits, (AW(AW(2u) + b + 15u) & 0xffffffu) | (((b / PW) & 0xffu) << 24u));
 }
 fn pseed(b: u32) -> u32 { return hash(b * 2654435761u + 17u); }
 
@@ -235,7 +235,8 @@ fn vsArchRoof(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) 
   let j = vi % PER;
   var wp = GONE;
   var live = ii < AW(3u);
-  o.info = pinfo(b, S_ROOF, I_ROOF | (face << 8u));
+  let psurf = (w0 >> 8u) & 0xffu;
+  o.info = pinfo(b, psurf, I_ROOF | (face << 8u));
   o.zs = vec2<f32>(eave, ridgeZ);
   if (face < 2u) {
     if (face == 1u && shed) {
@@ -262,7 +263,8 @@ fn vsArchRoof(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) 
       o.nrm = normalize(n);
       let ed = p1 - p0;
       o.uv = vec4<f32>(dot(wp.xy - p0, normalize(ed)), length(ed), wp.z - eave, ridgeZ - eave);
-      o.info.y = S_WALL;
+      // (a roof's gable is wall; a tent's is its cloth)
+      o.info.y = select(psurf, S_WALL, psurf == S_ROOF);
       o.info.z = (face << 8u) | I_GABLE;
       o.zs = vec2<f32>(eave, eave);
     } else {
@@ -431,7 +433,7 @@ fn vsArchCone(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) 
   let apex = pf(b, 11u);
   let seed = pseed(b);
   let N = ROUND_N;
-  o.info = pinfo(b, S_ROOF, I_ROOF);
+  o.info = pinfo(b, (AW(AW(2u) + b) >> 8u) & 0xffu, I_ROOF);
   o.zs = vec2<f32>(eave, apex);
   var wp = GONE;
   var live = ii < AW(3u);
@@ -483,6 +485,120 @@ fn vsArchStair(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32)
   let q = array<vec2<f32>, 4>(mix(c[0], c[3], t0), mix(c[1], c[2], t0), mix(c[1], c[2], t1), mix(c[0], c[3], t1));
   let wp = boxVert(q, z0, z0 + (z1 - z0) * t1, j, &o);
   finish(&o, wp, ii < AW(3u) && i < n);
+  return o;
+}
+
+/** vertex j (0–35) of a box: centre c, half-extent vectors ax ay az (any orientation) */
+fn obox(c: vec3<f32>, ax: vec3<f32>, ay: vec3<f32>, az: vec3<f32>, j: u32, o: ptr<function, VO>) -> vec3<f32> {
+  let face = j / 6u;
+  let t = j % 6u;
+  var U = array<f32, 6>(-1.0, 1.0, 1.0, -1.0, 1.0, -1.0);
+  var V = array<f32, 6>(-1.0, -1.0, 1.0, -1.0, 1.0, 1.0);
+  let sgn = select(1.0, -1.0, (face & 1u) == 1u);
+  var n = ax;
+  var a = ay;
+  var b = az;
+  if (face >= 2u && face < 4u) { n = ay; a = az; b = ax; }
+  if (face >= 4u) { n = az; a = ax; b = ay; }
+  (*o).nrm = normalize(n * sgn);
+  (*o).uv = vec4<f32>(U[t] * length(a), length(a) * 2.0, V[t] * length(b) + length(b), length(b) * 2.0);
+  return c + n * sgn + a * U[t] + b * V[t];
+}
+
+@vertex
+fn vsArchWheel(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
+  var o: VO;
+  let b = partOf(K_WHEEL, ii) * PW;
+  let c2 = corner(b, 0u);
+  let pd = normalize(corner(b, 1u));
+  let axd = normalize(corner(b, 2u));
+  let zc = pf(b, 10u);
+  let R = pf(b, 11u);
+  let wdt = pf(b, 12u);
+  o.info = pinfo(b, S_WOOD, 0u);
+  o.zs = vec2<f32>(zc - R, zc - R);
+  let c = vec3<f32>(c2, zc);
+  let P = vec3<f32>(pd, 0.0);
+  let A = vec3<f32>(axd, 0.0);
+  let Z = vec3<f32>(0.0, 0.0, 1.0);
+  let N = 12u;
+  let bx = vi / 36u;
+  let j = vi % 36u;
+  // turning slowly with the clock
+  let spin = archTime() * 0.5;
+  var wp: vec3<f32>;
+  if (bx < 2u * N) {
+    // two rims of N chords, one each side of the wheel
+    let k = bx % N;
+    let side = select(-1.0, 1.0, bx >= N);
+    let a0 = 6.28318 * f32(k) / f32(N) + spin;
+    let a1 = 6.28318 * f32(k + 1u) / f32(N) + spin;
+    let m = (a0 + a1) * 0.5;
+    let rad = P * cos(m) + Z * sin(m);
+    let tan = -P * sin(m) + Z * cos(m);
+    let half = R * sin((a1 - a0) * 0.5);
+    wp = obox(c + rad * (R - 0.12) * cos((a1 - a0) * 0.5) + A * side * wdt * 0.5, tan * half, rad * 0.12, A * 0.07, j, &o);
+  } else if (bx < 3u * N) {
+    // paddles: radial boards across the wheel's width
+    let k = bx - 2u * N;
+    let m = 6.28318 * (f32(k) + 0.5) / f32(N) + spin;
+    let rad = P * cos(m) + Z * sin(m);
+    let tan = -P * sin(m) + Z * cos(m);
+    wp = obox(c + rad * (R - 0.35), rad * 0.45, tan * 0.05, A * wdt * 0.55, j, &o);
+  } else if (bx < 3u * N + 2u) {
+    // spokes: two beams crossing
+    let m = select(0.0, 1.5708, bx == 3u * N + 1u) + spin;
+    let rad = P * cos(m) + Z * sin(m);
+    let tan = -P * sin(m) + Z * cos(m);
+    wp = obox(c, rad * R * 0.95, tan * 0.08, A * wdt * 0.35, j, &o);
+  } else {
+    // the axle
+    wp = obox(c, P * 0.18, Z * 0.18, A * (wdt * 0.5 + 0.6), j, &o);
+  }
+  finish(&o, wp, ii < AW(3u));
+  return o;
+}
+
+@vertex
+fn vsArchBush(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
+  var o: VO;
+  let b = partOf(K_BUSH, ii) * PW;
+  let c = corner(b, 0u);
+  let z0 = pf(b, 10u);
+  let r = pf(b, 11u);
+  let h = pf(b, 12u);
+  let seed = pseed(b);
+  o.info = pinfo(b, S_LEAF, 0u);
+  o.zs = vec2<f32>(z0, z0);
+  // an octahedron's eight faces, each split in four: a lumpy ball, flat-shaded
+  let f = vi / 12u;
+  let tri = (vi % 12u) / 3u;
+  let k = vi % 3u;
+  let sx = select(1.0, -1.0, (f & 1u) != 0u);
+  let sy = select(1.0, -1.0, (f & 2u) != 0u);
+  let sz = select(1.0, -1.0, (f & 4u) != 0u);
+  let v0 = vec3<f32>(sx, 0.0, 0.0);
+  let v1 = vec3<f32>(0.0, sy, 0.0);
+  let v2 = vec3<f32>(0.0, 0.0, sz);
+  let m01 = normalize(v0 + v1);
+  let m12 = normalize(v1 + v2);
+  let m20 = normalize(v2 + v0);
+  var T = array<vec3<f32>, 12>(v0, m01, m20, m01, v1, m12, m20, m12, v2, m01, m12, m20);
+  var P3: array<vec3<f32>, 3>;
+  for (var q = 0u; q < 3u; q++) {
+    let d = T[tri * 3u + q];
+    // lumps: each direction pushed out or in by its own hash
+    let lump = 0.8 + 0.4 * rnd(seed, u32(dot(floor(d * 3.0 + 3.0), vec3<f32>(1.0, 7.0, 49.0))));
+    let dd = vec3<f32>(d.xy * r, (d.z * 0.5 + 0.5) * h) * lump;
+    P3[q] = vec3<f32>(c, z0 + 0.05) + dd;
+  }
+  var n = cross(P3[1] - P3[0], P3[2] - P3[0]);
+  let mid = (P3[0] + P3[1] + P3[2]) / 3.0 - vec3<f32>(c, z0 + h * 0.5);
+  if (dot(n, mid) < 0.0) { n = -n; }
+  o.nrm = normalize(n);
+  o.uv = vec4<f32>(P3[k].xy, P3[k].z - z0, h);
+  let wp = P3[k];
+  finish(&o, wp, ii < AW(3u));
   return o;
 }
 
@@ -561,6 +677,16 @@ fn archSurface(in: VO) -> Surf {
       // brick
       let st = stones(u, v, 0.48, 0.19, px, 2.0, detail);
       col = mix(col * st.x, trimC.rgb * 0.95, st.y);
+    } else if (m == 4u) {
+      // planks: upright boards, each its own weathering, a patch or two nailed over
+      let bw = 0.26;
+      let bi = floor(u / bw);
+      let seam = 1.0 - box1(fract(u / bw), 0.07, 0.93, px / bw);
+      let tone = 0.75 + 0.4 * h21(vec2<f32>(bi, f32(lot)));
+      col = wallC.rgb * mix(1.0, tone, detail);
+      let patchM = box1(fract(u * 0.37 + lr), 0.0, 0.25, px) * box1(fract(v * 0.41 + lr * 1.7), 0.3, 0.55, px);
+      col = mix(col, col * vec3<f32>(0.8, 0.85, 0.95), patchM * detail);
+      col = mix(col, col * 0.45, seam * detail);
     } else if (m == 2u) {
       // ashlar
       let st = stones(u, v, 0.95, 0.45, px, 5.0, detail);
@@ -588,10 +714,11 @@ fn archSurface(in: VO) -> Surf {
         ok = select(0.0, 1.0, abs(u - 0.5 * L) + ww * 0.7 + 0.2 < half && in.uv.w > 2.4);
       }
       if (isDoor) {
-        // the door (the built one stands over it on the PC): planks in a frame
-        let dw = 0.55;
-        door = box1(fu, -dw, dw, px) * box1(fz, 0.0, 2.1, px);
-        frame = clamp(box1(fu, -dw - 0.12, dw + 0.12, px) * box1(fz, 0.0, 2.24, px) - door, 0.0, 1.0);
+        // the door (the built one stands over it on the PC): planks in a frame, the style's size
+        let dw = styleV(s, 6u).x * 0.5;
+        let dh = styleV(s, 6u).w;
+        door = box1(fu, -dw, dw, px) * box1(fz, 0.0, dh, px);
+        frame = clamp(box1(fu, -dw - 0.12, dw + 0.12, px) * box1(fz, 0.0, dh + 0.14, px) - door, 0.0, 1.0);
       } else {
         let inWin = box1(fu, -ww, ww, px) * box1(fz, win.w, win.z, px);
         let inFrame = box1(fu, -ww - 0.1, ww + 0.1, px) * box1(fz, win.w - 0.14, win.z + 0.08, px);
@@ -636,7 +763,19 @@ fn archSurface(in: VO) -> Surf {
       let ti = h21(vec2<f32>(floor(tu), row + f32(lot) * 0.01));
       let gap = 1.0 - smoothstep(0.035 - px / tw, 0.035 + px / tw, min(fract(tu), 1.0 - fract(tu)) * 1.0);
       var k = (0.82 + 0.3 * ti) * mix(0.78, 1.0, smoothstep(1.0, 0.25, v));
-      if (m == 2u) { k = (0.8 + 0.3 * avnoise(vec2<f32>(u * 8.0, row * 3.0 + v))) * mix(0.8, 1.0, smoothstep(1.0, 0.3, v)); }
+      // (a shanty's roofs are patchwork: each part tin or planks)
+      var mm = m;
+      if (m == 3u && (hash(in.info.w >> 24u) & 1u) == 1u) { mm = 4u; }
+      if (mm == 2u) { k = (0.8 + 0.3 * avnoise(vec2<f32>(u * 8.0, row * 3.0 + v))) * mix(0.8, 1.0, smoothstep(1.0, 0.3, v)); }
+      else if (mm == 3u) {
+        // corrugated tin: ridges along the slope, rust in blotches
+        k = 0.85 + 0.2 * sin(u * 28.0);
+        col = mix(col, vec3<f32>(0.6, 0.36, 0.22), smoothstep(0.55, 0.8, avnoise(vec2<f32>(u * 1.3, row * 0.7 + f32(lot)))) * 0.8);
+      } else if (mm == 4u) {
+        // planks down the slope
+        k = 0.75 + 0.35 * h21(vec2<f32>(floor(u / 0.3), f32(lot)));
+        col = vec3<f32>(0.55, 0.42, 0.3);
+      }
       else { k = mix(k, k * 0.55, gap); }
       // (a few tiles mossed, more low on the roof)
       let moss = step(0.9, h21(vec2<f32>(floor(tu) * 1.7, row))) * 0.6;
@@ -699,6 +838,61 @@ fn archSurface(in: VO) -> Surf {
   } else if (surf == S_WOOD) {
     let plank = 0.85 + 0.15 * h21(vec2<f32>(floor(v * 6.0 + u * 0.3), f32(lot)));
     col = vec3<f32>(0.5, 0.35, 0.22) * mix(1.0, plank, detail);
+  } else if (surf == S_CLOTH) {
+    // canvas: broad stripes of the part's two colours, a little sag-shaded
+    let pk = hash((in.info.w >> 24u) * 977u + lot * 13u);
+    var c0 = vec3<f32>(0.92, 0.88, 0.78);
+    var pal = array<vec3<f32>, 6>(vec3<f32>(0.78, 0.3, 0.28), vec3<f32>(0.3, 0.5, 0.72), vec3<f32>(0.85, 0.65, 0.25),
+                                  vec3<f32>(0.4, 0.62, 0.42), vec3<f32>(0.6, 0.38, 0.62), vec3<f32>(0.85, 0.5, 0.35));
+    let c1 = pal[pk % 6u];
+    let stripe = step(0.5, fract(u / 0.55));
+    col = mix(c1, c0, stripe * select(1.0, 0.0, (pk & 64u) != 0u));
+    col *= 0.9 + 0.1 * avnoise(vec2<f32>(u * 2.0, v * 2.0));
+    if (isLip) { col *= 0.7; }
+  } else if (surf == S_CRATE) {
+    // a crate: planks, a darker frame round its faces
+    let edge = min(min(u, in.uv.y - u), min(v, in.uv.w - v));
+    col = vec3<f32>(0.62, 0.46, 0.28) * (0.85 + 0.15 * step(0.5, fract(v * 5.0)));
+    col = mix(vec3<f32>(0.38, 0.27, 0.16), col, smoothstep(0.06, 0.1, edge));
+    if (isTop) { col = vec3<f32>(0.6, 0.45, 0.28); }
+  } else if (surf == S_GOODS) {
+    // goods heaped on a counter: fruit, cloth, pots in blobs of colour
+    let cell = floor(in.wpos.xy * 5.0 + in.wpos.z * 3.0);
+    let hsh = h21(cell + f32(lot) * 0.37);
+    var gc = vec3<f32>(0.85, 0.35, 0.25);
+    if (hsh > 0.25) { gc = vec3<f32>(0.95, 0.75, 0.3); }
+    if (hsh > 0.5) { gc = vec3<f32>(0.45, 0.65, 0.3); }
+    if (hsh > 0.75) { gc = vec3<f32>(0.62, 0.4, 0.68); }
+    col = gc;
+  } else if (surf == S_WATER) {
+    col = vec3<f32>(0.32, 0.52, 0.6) + 0.06 * avnoise(in.wpos.xy * 2.0 + archTime() * 0.6);
+    glass = 0.6;
+  } else if (surf == S_PLANK) {
+    // a deck: boards along it, their ends staggered, weathered
+    let bw = 0.32;
+    let bi = floor(in.wpos.y / bw + in.wpos.x * 0.0);
+    let p2 = select(in.uv.xy, vec2<f32>(u, v), !isTop);
+    let board = floor(p2.y / bw);
+    let seam = 1.0 - box1(fract(p2.y / bw), 0.06, 0.94, px / bw);
+    let tone = 0.82 + 0.25 * h21(vec2<f32>(board, floor(p2.x / 2.4 + board * 0.37)));
+    col = vec3<f32>(0.6, 0.47, 0.32) * mix(1.0, tone, detail);
+    col = mix(col, col * 0.5, seam * detail);
+  } else if (surf == S_LEAF) {
+    // leaves: greens in clumps, lighter on top; a flowering shrub's blooms
+    let cell = floor(in.wpos * 4.0);
+    let hsh = h21(cell.xy + cell.z * 7.0);
+    col = mix(vec3<f32>(0.24, 0.42, 0.2), vec3<f32>(0.42, 0.62, 0.28), clamp(0.3 + 0.5 * in.nrm.z + 0.3 * (hsh - 0.5), 0.0, 1.0));
+    if ((flags & F_BLOOM) != 0u && hsh > 0.72) {
+      col = select(vec3<f32>(0.95, 0.55, 0.7), vec3<f32>(0.98, 0.92, 0.6), h21(vec2<f32>(f32(lot), 2.0)) > 0.5);
+    }
+  } else if (surf == S_BRICK) {
+    col = vec3<f32>(0.66, 0.36, 0.26) * (0.92 + 0.12 * lr);
+    if (!isTop) {
+      let st = stones(u, v, 0.48, 0.19, px, 2.0, detail);
+      col = mix(col * st.x, vec3<f32>(0.75, 0.7, 0.62), st.y);
+      // soot near the top
+      col *= mix(1.0, 0.45, smoothstep(in.uv.w - 3.0, in.uv.w, v));
+    } else { col = vec3<f32>(0.08); }
   } else if (surf == S_GROUND) {
     // the lab's parcels by kind: building plot, park, plaza, landmark, field
     let k = (in.info.w >> 8u) & 0xffu;
@@ -709,6 +903,16 @@ fn archSurface(in: VO) -> Surf {
     if (k == 1u) { g = vec3<f32>(0.52, 0.64, 0.36); }
     col = g * (0.95 + 0.1 * avnoise(in.wpos.xy * 0.7));
     if (!isTop) { col = vec3<f32>(0.45, 0.4, 0.34); }
+  }
+  // ivy: on some lots, up their walls from the ground in uneven tongues (not over glass)
+  if (!isTop && (surf == S_WALL || surf == S_STONE || surf == S_PLINTH || surf == S_LOTWALL || surf == S_BRICK) && h21(vec2<f32>(f32(lot), 5.5)) > 0.55) {
+    let g = bitcast<f32>(AW(AW(6u) + min(lot, AW(5u) - 1u)));
+    let hg = lz - g;
+    let reach = 0.6 + 4.0 * avnoise(vec2<f32>(u * 0.3 + f32(side) * 3.7 + f32(lot) * 1.31, 0.5)) * avnoise(vec2<f32>(u * 0.11 + f32(lot), 2.5));
+    let edge = reach + 0.5 * (avnoise(vec2<f32>(u * 3.0, hg * 3.0)) - 0.5);
+    let leaves = (1.0 - smoothstep(edge - 0.15, edge + 0.15, hg)) * (1.0 - glass);
+    let lc = mix(vec3<f32>(0.2, 0.36, 0.16), vec3<f32>(0.38, 0.55, 0.24), avnoise(vec2<f32>(u * 6.0, hg * 6.0)));
+    col = mix(col, lc, leaves * mix(0.85, 0.85 * step(0.35, avnoise(vec2<f32>(u * 9.0, hg * 9.0))) + 0.15, detail));
   }
   var ao = 1.0;
   if (!isTop && surf != S_GROUND && !isCourse) { ao = mix(0.6, 1.0, smoothstep(0.0, 1.6, lz - in.zs.y + 0.6)); }

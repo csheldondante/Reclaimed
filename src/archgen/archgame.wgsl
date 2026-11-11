@@ -8,6 +8,7 @@ fn archClip(w: vec3<f32>) -> vec4<f32> { return CAM.viewProj * vec4<f32>(w, 1.0)
 fn archPlace() -> vec3<f32> { return MESH_XF.xyz; }
 // (night lights in the windows: SW-G6, later)
 fn archNight() -> f32 { return 0.0; }
+fn archTime() -> f32 { return G.time; }
 fn archDetail() -> f32 { return ARCH_DETAIL; }
 
 // ---- fragment (appended after draw.wgsl) ----

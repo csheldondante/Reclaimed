@@ -3731,3 +3731,14 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   the API you establish."
 - Look: Tiny Glade ("Townscaper is also nice if a bit simple"). The phone is lo-fi and won't show fine detail; the PC
   will.
+
+## 2026-11-11 — building styles, round 3 (archgen)
+
+- "I would add other styles. Docks and shanties for ports. Industrial warehouses, smokestacks maybe a water wheel? Then I
+  think tents would be cool, open air market stalls, courtyards, plants on the structures."
+- "Also, while a wood shanty might be irregular a stone building probably is more parallel walls and whatnot." / "the
+  lot is irregular but the structure is generally parallel walls except for intentionally curved or rotated wings.
+  Think overlapping rotated and offset rectangles for the floor plan."
+- "Also, consider some styles could use the irregular grids that are already implemented. Townscaper does an unusually
+  well with larger structures and shanties" (with Townscaper references: stacked terraces, arches, stilts and bridges,
+  narrow coloured houses packed along curving rows, harbours of piers).

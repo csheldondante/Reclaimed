@@ -17,6 +17,7 @@ struct View {
 fn archClip(w: vec3<f32>) -> vec4<f32> { return V.viewProj * vec4<f32>(w, 1.0); }
 fn archPlace() -> vec3<f32> { return vec3<f32>(0.0); }
 fn archNight() -> f32 { return V.p.y; }
+fn archTime() -> f32 { return V.p.x; }
 fn archDetail() -> f32 { return V.p.z; }
 
 // ---- fragment (appended after draw.wgsl) ----

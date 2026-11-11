@@ -33,7 +33,12 @@ const K_CYL: u32 = 5u;
 const K_CONE: u32 = 6u;
 /** a flight of steps: corners 0 → 1 its foot's edge, 3 → 2 its head's; z0 → 11 */
 const K_STAIR: u32 = 7u;
-const NK: u32 = 8u;
+/** a water wheel: corner 0 its centre, 1 its plane's direction, 2 its axle's; z0 the axle's height, 11 its radius, 12
+ *  its width (turning with the clock) */
+const K_WHEEL: u32 = 8u;
+/** a shrub: corner 0 its centre, z0 its foot, 11 its radius, 12 its height (F_BLOOM: flowering) */
+const K_BUSH: u32 = 9u;
+const NK: u32 = 10u;
 const CREN_M: u32 = 8u;
 /** segments round a K_CYL / K_CONE; a roof's courses */
 const ROUND_N: u32 = 16u;
@@ -54,6 +59,13 @@ const S_FLOWER: u32 = 10u;
 const S_DOOR: u32 = 11u;
 const S_WOOD: u32 = 12u;
 const S_LOTWALL: u32 = 13u;
+const S_CLOTH: u32 = 14u;
+const S_CRATE: u32 = 15u;
+const S_GOODS: u32 = 16u;
+const S_WATER: u32 = 17u;
+const S_PLANK: u32 = 18u;
+const S_LEAF: u32 = 19u;
+const S_BRICK: u32 = 20u;
 /** part flags (word 0, bits 16–23) */
 const F_FRONT0: u32 = 1u; // the body's side 0 faces the street (its door)
 const F_NOWIN: u32 = 2u;  // no painted windows (plinth, chimney, trim; and bodies whose windows are geometry)
@@ -62,6 +74,7 @@ const F_SHUT: u32 = 8u;   // K_WIN: shutters
 const F_BOX: u32 = 16u;   // K_WIN: a flower box
 const F_SHED: u32 = 32u;  // K_ROOF: a lean-to (one slope, its high side on edge 3 → 2 after the turn)
 const F_CANOPY: u32 = 64u; // K_WIN (a door): a canopy over it
+const F_BLOOM: u32 = 4u; // K_BUSH: flowering
 const F_UNDER: u32 = 128u; // a wall under a roof: its top dark (a seam between courses never shows it)
 /** a storey, world units (citygen: about 3) */
 const STOREY: f32 = 3.0;
@@ -417,10 +430,10 @@ fn windows() {
         for (var bi = 0u; bi < nb; bi++) {
           let mid = (f32(bi) + 0.5) * bw;
           if (front && f == 0u && st == 0u && bi == door) {
-            let dw = 0.55;
+            let dw = sty(s, 6u).x * 0.5;
             let p0 = a + d * (mid - dw);
             let p1 = a + d * (mid + dw);
-            put(K_WIN, S_DOOR, F_DOOR | F_CANOPY, array<vec2<f32>, 4>(p0, p1, vec2<f32>(0.0), vec2<f32>(0.0)), z0, vec4<f32>(2.1, 0.12, 0.0, 0.0));
+            put(K_WIN, S_DOOR, F_DOOR | select(0u, F_CANOPY, dw < 1.0), array<vec2<f32>, 4>(p0, p1, vec2<f32>(0.0), vec2<f32>(0.0)), z0, vec4<f32>(sty(s, 6u).w, 0.12, 0.0, 0.0));
             continue;
           }
           if (!winFits(st, win.z, wallH)) { continue; }
@@ -446,6 +459,11 @@ fn house(eave: f32, seed: u32) {
   let W = gW;
   let D = gD;
   // the front garden (the setback), the main block's width and depth, its side
+  // a big lot: a courtyard block
+  if (W >= 13.0 && D >= 13.0 && rnd(seed, 60u) < 0.45) {
+    courtyard(eave, seed);
+    return;
+  }
   let sb = min(st8.y * mix(0.6, 1.4, rnd(seed, 30u)), D * 0.25);
   var mw = min(W, mix(5.5, 8.5, rnd(seed, 31u)));
   if (W - mw < 3.2) { mw = W; }
@@ -523,6 +541,7 @@ fn house(eave: f32, seed: u32) {
   } else if (sb > 1.3 && rnd(seed, 47u) < st8.w) {
     porch(dx, sb, min(sb - 0.25, 1.8), 2.6);
   }
+  plantings(seed, sb, dx);
   // the lot's low wall: round the yard, a gate on the street in front of the door
   if (rnd(seed, 49u) < st8.z) {
     let g = clamp(dx / W, 0.12, 0.88);
@@ -545,6 +564,11 @@ fn keep(eave: f32, seed: u32) {
   // (its flat roof: a flagstone slab — the wall's own top is dark, as under a pitched roof)
   body(S_STONE, 0u, q, eave - 0.05, eave + 0.03);
   put(K_CREN, S_STONE, 0u, grow(q, 0.1), eave, vec4<f32>(0.7, 0.75, 0.7, 0.45));
+  // a roof garden behind the parapet
+  for (var k = 0u; k < 3u; k++) {
+    let s2 = hash(seed + 200u + k);
+    bushAt(lp(mix(2.0, W - 2.0, rnd(s2, 1u)), mix(2.0, D - 2.0, rnd(s2, 2u))), eave, mix(0.6, 1.1, rnd(s2, 3u)), mix(0.8, 1.5, rnd(s2, 4u)), rnd(s2, 5u) < 0.5);
+  }
   let top = eave + STOREY * mix(1.0, 1.8, rnd(seed, 50u));
   let r = clamp(min(W, D) * 0.16, 1.5, 2.8);
   for (var k = 0u; k < 2u; k++) {
@@ -555,6 +579,288 @@ fn keep(eave: f32, seed: u32) {
       let x = select(0.6 - r, W - 0.6 - r, k == 1u);
       squareTower(x, x + 2.0 * r, -0.4, 2.0 * r - 0.4, top, hash(seed + k));
     }
+  }
+}
+
+// ---- round 3: more archetypes (the user: "Docks and shanties for ports. Industrial warehouses, smokestacks maybe a
+// water wheel? Then I think tents would be cool, open air market stalls, courtyards, plants on the structures") ----
+
+/** a shrub (K_BUSH) at p: radius, height; flowering or not */
+fn bushAt(p: vec2<f32>, z: f32, r: f32, h: f32, flowers: bool) {
+  let q = array<vec2<f32>, 4>(p, vec2<f32>(0.0), vec2<f32>(0.0), vec2<f32>(0.0));
+  put(K_BUSH, S_LEAF, select(0u, F_BLOOM, flowers), q, z, vec4<f32>(r, h, 0.0, 0.0));
+}
+fn bush(p: vec2<f32>, r: f32, h: f32, flowers: bool) { bushAt(p, gGround - 0.1, r, h, flowers); }
+
+/** a round body standing on the ground at p: radius, from z0 to z1 */
+fn cyl(p: vec2<f32>, r: f32, z0: f32, z1: f32, surf: u32, flags: u32) {
+  put(K_CYL, surf, flags, array<vec2<f32>, 4>(p, vec2<f32>(r, 0.0), vec2<f32>(0.0), vec2<f32>(0.0)), z0, vec4<f32>(z1));
+}
+
+/** a fountain at p: a stone basin of water, a column, a bowl */
+fn fountain(p: vec2<f32>, r: f32) {
+  let g = gGround;
+  cyl(p, r, g - 0.2, g + 0.5, S_STONE, F_NOWIN);
+  cyl(p, r - 0.18, g + 0.3, g + 0.42, S_WATER, F_NOWIN);
+  cyl(p, 0.22, g + 0.4, g + 1.5, S_STONE, F_NOWIN);
+  cyl(p, 0.55, g + 1.5, g + 1.65, S_STONE, F_NOWIN);
+}
+
+/** a crate (a stack of n) at p, side w, turned */
+fn crates(p: vec2<f32>, w: f32, n: u32, turnA: f32) {
+  let cs = cos(turnA);
+  let sn = sin(turnA);
+  let ex = (LX * cs + LY * sn) * w * 0.5;
+  let ey = (LY * cs - LX * sn) * w * 0.5;
+  let q = array<vec2<f32>, 4>(p - ex - ey, p + ex - ey, p + ex + ey, p - ex + ey);
+  for (var k = 0u; k < n; k++) { body(S_CRATE, F_NOWIN, q, gGround + f32(k) * w, gGround + f32(k + 1u) * w - 0.02); }
+}
+
+/** a hut of planks: walls, a lean-to roof of tin or planks (patchwork: the part's own), sometimes a second storey
+ *  stacked crooked on it, an awning of cloth on two posts at its door. In the lot's frame, turned by `rot`. */
+fn hut(x0: f32, x1: f32, y0: f32, y1: f32, rot: f32, seed: u32) {
+  let g = gGround;
+  gPiv = vec2<f32>((x0 + x1) * 0.5, (y0 + y1) * 0.5);
+  gRot = rot;
+  let q = rect(x0, x1, y0, y1);
+  let h = mix(2.3, 2.9, rnd(seed, 1u));
+  body(S_PLINTH, F_NOWIN, grow(q, 0.05), g - 0.4, g + 0.2);
+  wallBody(S_WALL, F_FRONT0 | F_UNDER, q, g + 0.2, g + h);
+  let turn = hash(seed) % 4u;
+  roof(q, g + h + 0.05, turn, mix(0.25, 0.5, rnd(seed, 2u)), 0.0, 0.3, F_SHED);
+  if (rnd(seed, 3u) < 0.35 && x1 - x0 > 3.2) {
+    // a room stacked on top, set back and turned a little more
+    let s2 = hash(seed + 5u);
+    gRot = rot + (rnd(s2, 1u) - 0.5) * 0.3;
+    let q2 = rect(x0 + 0.4, x1 - 0.6, y0 + 0.5, y1 - 0.3);
+    let h2 = h + mix(2.0, 2.4, rnd(s2, 2u));
+    wallBody(S_WALL, F_UNDER, q2, g + h, g + h2);
+    roof(q2, g + h2 + 0.05, (turn + 2u) % 4u, 0.35, 0.0, 0.3, F_SHED);
+  }
+  if (rnd(seed, 4u) < 0.6) {
+    // an awning out over the door: cloth on two posts
+    let ax0 = mix(x0, x1, 0.2);
+    let ax1 = mix(x0, x1, 0.8);
+    gRot = rot;
+    put(K_ROOF, S_CLOTH, F_SHED, rect(ax0, ax1, y0 - 1.5, y0), g + 1.95, vec4<f32>(g + 2.35, 0.0, 0.0, 0.05));
+    body(S_WOOD, F_NOWIN, rect(ax0, ax0 + 0.14, y0 - 1.45, y0 - 1.31), g, g + 2.0);
+    body(S_WOOD, F_NOWIN, rect(ax1 - 0.14, ax1, y0 - 1.45, y0 - 1.31), g, g + 2.0);
+  }
+  gRot = 0.0;
+}
+
+/** a shanty lot: a few huts, crooked, crowded, crates and barrels between them */
+fn shanty(seed: u32) {
+  let W = gW;
+  let D = gD;
+  let n = clamp(u32(W * D / 30.0), 1u, 4u);
+  for (var k = 0u; k < n; k++) {
+    let s = hash(seed + k * 31u);
+    let w = min(mix(2.8, 4.6, rnd(s, 10u)), W - 0.6);
+    let d = min(mix(2.6, 4.0, rnd(s, 11u)), D - 0.6);
+    // (packed in rows along the street, the back ones behind)
+    let cols = max(1u, u32(W / 4.5));
+    let cx = (f32(k % cols) + 0.5) * W / f32(cols) + (rnd(s, 12u) - 0.5) * 0.8;
+    let cy = select(1.6 + d * 0.5, D - d * 0.5 - 0.5, k >= cols) + (rnd(s, 13u) - 0.5) * 0.6;
+    let x0 = clamp(cx - w * 0.5, 0.2, W - w - 0.2);
+    let y0 = clamp(cy - d * 0.5, 1.5, D - d - 0.2);
+    hut(x0, x0 + w, y0, y0 + d, (rnd(s, 14u) - 0.5) * 0.45, s);
+  }
+  crates(lp(W * rnd(seed, 20u), 0.9), 0.7, 1u + hash(seed + 3u) % 2u, rnd(seed, 21u));
+  cyl(lp(W * rnd(seed, 22u), 0.6), 0.32, gGround, gGround + 0.85, S_WOOD, F_NOWIN);
+}
+
+/** a dock: a deck of planks over the lot on posts, a crane with a crate on its rope, crates stacked, barrels, bollards,
+ *  a small shed */
+fn dock(seed: u32) {
+  let g = gGround;
+  let W = gW;
+  let D = gD;
+  body(S_PLANK, F_NOWIN, rect(0.2, W - 0.2, 0.2, D - 0.2), g - 0.5, g + 0.25);
+  // posts round its edge
+  let np = u32(W / 2.5) + 1u;
+  for (var k = 0u; k < min(np, 6u); k++) {
+    let x = mix(0.25, W - 0.55, f32(k) / f32(max(np - 1u, 1u)));
+    body(S_WOOD, F_NOWIN, rect(x, x + 0.3, 0.05, 0.35), g - 1.8, g + 0.5);
+    cyl(lp(x + 0.15, 0.7), 0.16, g + 0.25, g + 0.7, S_STONE, F_NOWIN);
+  }
+  // the crane: a post, a jib out over the front, a rope and a crate
+  let cx = W * mix(0.25, 0.75, rnd(seed, 1u));
+  let ch = mix(5.5, 7.5, rnd(seed, 2u));
+  body(S_WOOD, F_NOWIN, rect(cx - 0.25, cx + 0.25, 1.4, 1.9), g + 0.25, g + ch);
+  body(S_WOOD, F_NOWIN, rect(cx - 0.12, cx + 0.12, -1.6, 2.1), g + ch - 0.35, g + ch);
+  body(S_WOOD, F_NOWIN, rect(cx - 0.05, cx + 0.05, -1.35, -1.25), g + 2.3, g + ch - 0.35);
+  let cq = rect(cx - 0.45, cx + 0.45, -1.75, -0.85);
+  body(S_CRATE, F_NOWIN, cq, g + 1.5, g + 2.3);
+  // crates and barrels
+  for (var k = 0u; k < 4u; k++) {
+    let s = hash(seed + k * 13u);
+    crates(lp(mix(1.0, W - 1.0, rnd(s, 1u)), mix(3.0, D - 1.0, rnd(s, 2u))), mix(0.7, 1.0, rnd(s, 3u)), 1u + hash(s) % 3u, rnd(s, 4u) * 0.6);
+    cyl(lp(mix(1.0, W - 1.0, rnd(s, 5u)), mix(2.6, D - 1.0, rnd(s, 6u))), 0.34, g + 0.25, g + 1.1, S_WOOD, F_NOWIN);
+  }
+  // a shed at the back
+  if (D > 7.0) { hut(W * 0.5 - 2.0, W * 0.5 + 2.0, D - 3.6, D - 0.4, 0.0, hash(seed + 99u)); }
+}
+
+/** a banded brick smokestack at p */
+fn smokestack(p: vec2<f32>, top: f32) {
+  let g = gGround;
+  cyl(p, 0.95, g - 0.4, g + 1.2, S_STONE, F_NOWIN);
+  cyl(p, 0.72, g + 1.2, top, S_BRICK, F_NOWIN);
+  cyl(p, 0.82, (g + top) * 0.5, (g + top) * 0.5 + 0.35, S_STONE, F_NOWIN);
+  cyl(p, 0.85, top - 0.5, top, S_STONE, F_NOWIN);
+}
+
+/** a water wheel on the side x = xs of a building (out towards dir), its centre at y, radius r */
+fn waterWheel(xs: f32, dir: f32, y: f32, r: f32) {
+  let c = lp(xs + dir * 0.75, y);
+  // corner 1: the wheel's plane (along y in the lot's frame); z0 its axle's height; radius, width along the axle
+  put(K_WHEEL, S_WOOD, 0u, array<vec2<f32>, 4>(c, LY, LX * dir, vec2<f32>(0.0)), gGround + r * 0.55, vec4<f32>(r, 0.9, 0.0, 0.0));
+  // its race: a stone trough under it
+  body(S_STONE, F_NOWIN, rect(min(xs, xs + dir * 1.4), max(xs, xs + dir * 1.4), y - r - 0.6, y + r + 0.6), gGround - 0.5, gGround - 0.1);
+}
+
+/** an industrial hall: brick, the lot's length, a sawtooth roof of lean-tos with glazed lights, big doors, a smokestack,
+ *  sometimes a water wheel on its end */
+fn industrial(eave: f32, seed: u32) {
+  let g = gGround;
+  let W = gW;
+  let D = gD;
+  let x0 = 0.5;
+  let x1 = W - 0.5;
+  let y0 = 0.6;
+  let y1 = D - 0.5;
+  let e = max(eave, g + 5.0);
+  let q = rect(x0, x1, y0, y1);
+  body(S_PLINTH, F_NOWIN, grow(q, 0.12), g - 0.6, g + 0.5);
+  wallBody(S_WALL, F_FRONT0 | F_UNDER, q, g + 0.5, e);
+  body(S_TRIM, F_NOWIN, grow(q, 0.1), e - 0.3, e);
+  // the sawtooth: lean-tos across the hall, each its glazed light facing the back (north light)
+  let n = clamp(u32((y1 - y0) / 4.0), 1u, 6u);
+  let step = (y1 - y0) / f32(n);
+  for (var k = 0u; k < n; k++) {
+    let a = y0 + f32(k) * step;
+    let sq = rect(x0, x1, a, a + step);
+    // (turn 2: the high side on the quad's edge 0 → 1 — the street side of the tooth; its glass faces the street)
+    put(K_ROOF, S_ROOF, F_SHED, sq, e + 0.05, vec4<f32>(e + 0.05 + step * 0.55, 0.0, 2.0, 0.15));
+    body(S_GLASS, F_NOWIN, rect(x0 + 0.1, x1 - 0.1, a - 0.04, a + 0.04), e, e + step * 0.55);
+  }
+  // (its big street door: the window pass's, the style's door size)
+  // the smokestack, at a back corner
+  smokestack(lp(select(x0 + 1.2, x1 - 1.2, rnd(seed, 1u) < 0.5), y1 - 1.2), e + mix(7.0, 11.0, rnd(seed, 2u)));
+  if (rnd(seed, 3u) < 0.5) { waterWheel(select(x0, x1, rnd(seed, 4u) < 0.5), select(-1.0, 1.0, rnd(seed, 4u) < 0.5), (y0 + y1) * 0.5, 2.3); }
+  // a yard of crates and barrels by the street
+  crates(lp(x0 + 0.8, y0 - 0.2), 0.8, 2u, 0.2);
+}
+
+/** a market stall: four posts, a striped canopy, a counter with goods; in the frame, at (x, y), facing the street */
+fn stall(x: f32, y: f32, w: f32, d: f32, seed: u32) {
+  let g = gGround;
+  let pw = 0.12;
+  body(S_WOOD, F_NOWIN, rect(x, x + pw, y, y + pw), g, g + 2.2);
+  body(S_WOOD, F_NOWIN, rect(x + w - pw, x + w, y, y + pw), g, g + 2.2);
+  body(S_WOOD, F_NOWIN, rect(x, x + pw, y + d - pw, y + d), g, g + 2.5);
+  body(S_WOOD, F_NOWIN, rect(x + w - pw, x + w, y + d - pw, y + d), g, g + 2.5);
+  // the canopy: a lean-to high at the back (turn 2)
+  put(K_ROOF, S_CLOTH, F_SHED, rect(x - 0.2, x + w + 0.2, y - 0.35, y + d), g + 2.15, vec4<f32>(g + 2.6, 0.0, 0.0, 0.05));
+  body(S_WOOD, F_NOWIN, rect(x + 0.15, x + w - 0.15, y + 0.1, y + 0.7), g, g + 0.95);
+  body(S_GOODS, F_NOWIN, rect(x + 0.25, x + w - 0.25, y + 0.15, y + 0.62), g + 0.95, g + 1.15 + 0.15 * rnd(seed, 1u));
+}
+
+/** a tent: a ridge of cloth to the ground (a gable roof with no walls), or a round one (a cone on a short wall) */
+fn tent(cx: f32, cy: f32, seed: u32) {
+  let g = gGround;
+  if (rnd(seed, 1u) < 0.5) {
+    let w = mix(2.4, 3.2, rnd(seed, 2u));
+    let d = mix(3.0, 4.2, rnd(seed, 3u));
+    put(K_ROOF, S_CLOTH, 0u, rect(cx - w * 0.5, cx + w * 0.5, cy - d * 0.5, cy + d * 0.5), g + 0.15, vec4<f32>(g + 2.4, 0.0, 1.0, 0.05));
+  } else {
+    let r = mix(1.4, 2.0, rnd(seed, 2u));
+    cyl(lp(cx, cy), r, g, g + 1.1, S_CLOTH, F_NOWIN);
+    put(K_CONE, S_CLOTH, 0u, array<vec2<f32>, 4>(lp(cx, cy), vec2<f32>(r + 0.2, 0.0), vec2<f32>(0.0), vec2<f32>(0.0)), g + 1.05, vec4<f32>(g + 1.05 + r * 1.1));
+  }
+}
+
+/** a market on a plaza: stalls in rows facing aisles, tents among them, a fountain in the middle */
+fn market(seed: u32) {
+  let W = gW;
+  let D = gD;
+  let sw = 2.6;
+  let sd = 1.9;
+  let nx = min(u32((W - 1.0) / (sw + 1.0)), 4u);
+  let ny = min(u32((D - 1.0) / (sd + 2.4)), 3u);
+  if (nx == 0u || ny == 0u) {
+    if (W > 3.0 && D > 3.0) { fountain(lp(W * 0.5, D * 0.5), min(1.3, min(W, D) * 0.3)); }
+    return;
+  }
+  let midx = nx / 2u;
+  let midy = ny / 2u;
+  for (var j = 0u; j < ny; j++) {
+    for (var i = 0u; i < nx; i++) {
+      let s = hash(seed + i * 7u + j * 131u);
+      let x = 0.5 + (f32(i) + 0.5) * (W - 1.0) / f32(nx) - sw * 0.5;
+      let y = 0.5 + (f32(j) + 0.5) * (D - 1.0) / f32(ny) - sd * 0.5;
+      if (i == midx && j == midy && nx * ny > 2u) { fountain(lp(x + sw * 0.5, y + sd * 0.5), 1.2); continue; }
+      if (rnd(s, 5u) < 0.25) { tent(x + sw * 0.5, y + sd * 0.5, s); } else { stall(x, y, sw, sd, s); }
+    }
+  }
+}
+
+/** a garden on a park: shrubs in clumps along its edges, a fountain or a few flowering bushes in the middle */
+fn garden(seed: u32) {
+  let W = gW;
+  let D = gD;
+  let n = clamp(u32((W + D) / 2.5), 2u, 14u);
+  for (var k = 0u; k < n; k++) {
+    let s = hash(seed + k * 17u);
+    let t = rnd(s, 1u);
+    // round the edge
+    let per = t * 2.0 * (W + D);
+    var p = vec2<f32>(per, 0.6);
+    if (per > W) { p = vec2<f32>(W - 0.6, per - W); }
+    if (per > W + D) { p = vec2<f32>(W - (per - W - D), D - 0.6); }
+    if (per > 2.0 * W + D) { p = vec2<f32>(0.6, D - (per - 2.0 * W - D)); }
+    bush(lp(clamp(p.x, 0.6, W - 0.6), clamp(p.y, 0.6, D - 0.6)), mix(0.5, 1.0, rnd(s, 2u)), mix(0.7, 1.5, rnd(s, 3u)), rnd(s, 4u) < 0.4);
+  }
+  if (W > 6.0 && D > 6.0) { fountain(lp(W * 0.5, D * 0.5), min(1.6, min(W, D) * 0.2)); }
+}
+
+/** a courtyard block: four ranges round a court, a gateway on the street, a fountain and shrubs inside */
+fn courtyard(eave: f32, seed: u32) {
+  let W = gW;
+  let D = gD;
+  let sb = min(1.2, D * 0.1);
+  let dep = clamp(min(W, D) * 0.28, 4.5, 7.0);
+  let s = gS;
+  // the street range, the back range, the two sides between them
+  let r0 = block(0.4, W - 0.4, sb, sb + dep, eave, 0u, hash(seed + 1u), true, true);
+  block(0.4, W - 0.4, D - 0.4 - dep, D - 0.4, eave, 0u, hash(seed + 2u), false, true);
+  let e2 = max(gGround + STOREY + 0.45, eave - STOREY);
+  block(0.4, 0.4 + dep, sb + dep, D - 0.4 - dep, e2, 1u, hash(seed + 3u), false, false);
+  block(W - 0.4 - dep, W - 0.4, sb + dep, D - 0.4 - dep, e2, 1u, hash(seed + 4u), false, false);
+  if (rnd(seed, 5u) < 0.6) { dormers(0.4, W - 0.4, sb, sb + dep, eave, r0, seed); }
+  // the court
+  let cx = W * 0.5;
+  let cy = (sb + dep + D - 0.4 - dep) * 0.5;
+  fountain(lp(cx, cy), 1.1);
+  for (var k = 0u; k < 4u; k++) {
+    let a = f32(k) * 1.5708 + 0.6;
+    bush(lp(cx + cos(a) * 2.6, cy + sin(a) * 2.2), 0.7, 1.1, k % 2u == 0u);
+  }
+  // a round tower at a front corner, sometimes
+  if (rnd(seed, 6u) < sty(s, 6u).y) { roundTower(lp(select(0.4, W - 0.4, rnd(seed, 7u) < 0.5), sb), 2.0, eave + STOREY * 1.5, seed); }
+}
+
+/** shrubs and planters round a house: by the door, along the lot wall, in the front garden */
+fn plantings(seed: u32, sb: f32, dx: f32) {
+  if (sb < 1.0) { return; }
+  let W = gW;
+  let n = 2u + hash(seed + 300u) % 3u;
+  for (var k = 0u; k < n; k++) {
+    let s = hash(seed + 301u + k);
+    var x = mix(0.8, W - 0.8, rnd(s, 1u));
+    if (abs(x - dx) < 1.6) { x = dx + select(-1.8, 1.8, x > dx); }
+    bush(lp(clamp(x, 0.7, W - 0.7), mix(0.7, max(sb - 0.6, 0.8), rnd(s, 2u))), mix(0.45, 0.8, rnd(s, 3u)), mix(0.6, 1.2, rnd(s, 4u)), rnd(s, 5u) < 0.5);
   }
 }
 
@@ -593,7 +899,9 @@ fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
     body(S_GROUND, F_NOWIN, parcel, GU.zmin, zb + 0.5);
     gTag = s | (storeys << 8u);
   }
-  if (kind != 1u || storeys == 0u || height <= 0.0) {
+  // (buildings; plazas become markets, parks gardens; fields and landmarks stay citygen's)
+  let building = kind == 1u && storeys > 0u && height > 0.0;
+  if (!building && kind != 2u && kind != 3u) {
     for (var j = gN; j < PPL; j++) { ARCH[PB + (i * PPL + j) * PW] = 0u; }
     return;
   }
@@ -630,7 +938,14 @@ fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
     gW = max(length(gQ[1] - gQ[0]) * 0.8, 3.0);
     gD = max(length(gQ[3] - gQ[0]) * 0.8, 3.0);
   }
-  if (sty(s, 5u).z > 0.5) { keep(eave, seed); } else { house(eave, seed); }
+  let archetype = u32(sty(s, 5u).z + 0.5);
+  if (kind == 3u) { market(seed); }
+  else if (kind == 2u) { garden(seed); }
+  else if (archetype == 1u) { keep(eave, seed); }
+  else if (archetype == 2u) { shanty(seed); }
+  else if (archetype == 3u) { dock(seed); }
+  else if (archetype == 4u) { industrial(eave, seed); }
+  else { house(eave, seed); }
   windows();
   for (var j = gN; j < PPL; j++) { ARCH[PB + (i * PPL + j) * PW] = 0u; }
 }

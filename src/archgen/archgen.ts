@@ -23,8 +23,8 @@ import { STYLES, STYLE_VEC4S, styleWords, type Style } from './styles';
 /** mirrors arch.wgsl */
 export const PART_WORDS = 16;
 export const PARTS_PER_LOT = 96;
-export const KIND = { body: 1, roof: 2, cren: 3, win: 4, cyl: 5, cone: 6, stair: 7 } as const;
-export const NK = 8;
+export const KIND = { body: 1, roof: 2, cren: 3, win: 4, cyl: 5, cone: 6, stair: 7, wheel: 8, bush: 9 } as const;
+export const NK = 10;
 /** vertices a kind's instance (draw.wgsl: the kinds' vertex stages; COURSES 12, ROUND_N 16, CONE_ROWS 10) */
 const VERTS: Record<number, number> = {
   [KIND.body]: 30,
@@ -34,6 +34,8 @@ const VERTS: Record<number, number> = {
   [KIND.cyl]: 16 * 6 + 16 * 3,
   [KIND.cone]: 16 * 10 * 12 + 16 * 3,
   [KIND.stair]: 16 * 30,
+  [KIND.wheel]: (3 * 12 + 3) * 36,
+  [KIND.bush]: 8 * 12,
 };
 /** each kind and its vertex stage (draw.wgsl) */
 export const ARCH_DRAWS = [
@@ -44,6 +46,8 @@ export const ARCH_DRAWS = [
   [KIND.cyl, 'vsArchCyl'],
   [KIND.cone, 'vsArchCone'],
   [KIND.stair, 'vsArchStair'],
+  [KIND.wheel, 'vsArchWheel'],
+  [KIND.bush, 'vsArchBush'],
 ] as const;
 const STYLE_ROOM = 64;
 

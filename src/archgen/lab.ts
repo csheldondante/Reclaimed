@@ -255,6 +255,8 @@ function heroStreet(seed: number): Uint32Array {
   const widths = [13, 9.5, 11, 16, 10];
   const depths = [16, 14, 17, 18, 15];
   const storeys = [2, 2, 3, 2, 1];
+  // (?kinds=1,3,1,2,1: a lot's kind — 1 a building, 2 a park, 3 a plaza)
+  const kinds = (new URLSearchParams(location.search).get('kinds') ?? '1').split(',').map(Number);
   const n = widths.length;
   const u = new Uint32Array(n * 24);
   const f = new Float32Array(u.buffer);
@@ -281,7 +283,7 @@ function heroStreet(seed: number): Uint32Array {
       f[o + 9 + k * 2] = py;
     });
     u[o + 16] = 0;
-    u[o + 17] = 1;
+    u[o + 17] = kinds[i % kinds.length];
     u[o + 18] = i * 3 + seed;
     u[o + 19] = storeys[i];
     f[o + 20] = storeys[i] * 3 + 0.95;

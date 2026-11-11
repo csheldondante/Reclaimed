@@ -23079,3 +23079,15 @@ cases over the fake's field limit), season, transfers, typecheck.
   detail layer: the PC's main pass only; never the shadow pass; the phone (`pointer: coarse`) keeps the painted ones,
   which sit exactly under the built (one bay rule: baysOf, doorBayOf, winFits). `?archwin=0|1` to force; the lab
   `?win=0` shows the phone's look.
+
+## archgen round 3: more styles (2026-11-11)
+
+- Styles are archetypes now (styles.ts ARCHETYPE): house, keep, shanty (crooked plank huts, stacked rooms, patchwork tin
+  and plank lean-tos, cloth awnings, crates and barrels), docks (a plank deck on posts, bollards, a crane with a crate on
+  its rope, crate stacks, a shed), industrial (a brick hall with a sawtooth roof of glazed lights, big doors, a banded
+  smokestack, a water wheel turning with the clock). Plazas become markets (stalls with striped canopies, counters of
+  goods, tents ridge or round, a fountain) and parks gardens (shrubs round the edge, a fountain); big house lots
+  courtyard blocks (four ranges, a court with a fountain and shrubs, a round tower). Plants: shrubs (K_BUSH, flowering
+  or not) in front gardens, courts and on the keep's roof; ivy up some lots' walls (painted).
+- New kinds: K_WHEEL (oriented boxes, 1404 vertices), K_BUSH (a lumpy subdivided octahedron, 96). Door size per style
+  (painted and built agree).
