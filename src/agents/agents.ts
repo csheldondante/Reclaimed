@@ -20,7 +20,7 @@ import ordersWgsl from '../shaders/orders.wgsl?raw';
 import routereadWgsl from '../shaders/routeread.wgsl?raw';
 import fieldseamWgsl from '../shaders/fieldseam.wgsl?raw';
 import { PagePool, PP_HEADER } from '../gpu/pagepool';
-import { showFatal } from '../gpu/device';
+import { showFatal, showWarning } from '../gpu/device';
 import type { SimSystem } from '../sim/system';
 import { TICK_DT } from '../sim/flow';
 import { stepPlan } from './stepplan';
@@ -500,9 +500,9 @@ export class Agents implements SimSystem {
     const first = this.fieldPagesRefused === 0;
     this.fieldPagesRefused = Math.max(this.fieldPagesRefused, refused);
     if (!first) return;
-    const msg = `agents: the fields' page pool is full (${this.fields.o.pages} pages) — fields stop growing, orders fail 'pool-full'; raise ?fieldpages`;
-    if (typeof document !== 'undefined') showFatal(msg);
-    else console.error(msg);
+    // (not fatal: legitimate play can ask for more fields than the pool holds until U2-FIELDREACH bounds each field's
+    // pages by its walkers; the orders that can't be served fail 'pool-full' through orderFailed, play goes on)
+    showWarning(`Units: the movement-field pool is full (${this.fields.o.pages} pages) — some orders fail 'pool-full' (U2-FIELDREACH)`);
   }
 
   /** (U2-FIELDCAP) seeds the seed list had no room for (fieldseam.wgsl seedList[3], read with the scope's box) */

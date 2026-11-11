@@ -73,6 +73,27 @@ export async function initGpu(canvas: HTMLCanvasElement): Promise<Gpu> {
   return { adapter, device, context, format, hasTimestamps, adapterInfo };
 }
 
+/**
+ * A visible, non-blocking warning: a capacity limit hit by legitimate play (e.g. the agents' field pool full),
+ * not a fault. Play continues; the caller still reports the failure through its own contract (orderFailed).
+ * One banner per distinct message, dismissed by a tap.
+ */
+const warned = new Set<string>();
+export function showWarning(message: string): void {
+  console.warn(message);
+  if (typeof document === 'undefined' || warned.has(message)) return;
+  warned.add(message);
+  const el = document.createElement('div');
+  el.className = 'warning-banner';
+  el.style.cssText =
+    'position:fixed;left:8px;right:8px;top:8px;z-index:9999;padding:8px 12px;border-radius:6px;' +
+    'background:#7a4a00;color:#fff;font:13px system-ui,sans-serif;box-shadow:0 2px 8px #0008;cursor:pointer';
+  el.textContent = message;
+  el.title = 'Tap to dismiss';
+  el.addEventListener('click', () => el.remove());
+  document.body.appendChild(el);
+}
+
 let fatalShown = false;
 export function showFatal(message: string): void {
   console.error(message);

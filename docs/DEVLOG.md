@@ -22998,3 +22998,13 @@ arrived, 17 silent, 0 told.
 
 **Limit.** A field still covers the whole scope: at 320 x 320 that's 400 pages, ~6 whole-window fields in 20 MB — many
 squads to many places in game will fail 'pool-full', visibly (U2-FIELDREACH).
+
+## The fields' pool full is a warning, not a stop (Track B, 2026-11-11)
+
+Track A's season can legitimately order more distinct destinations than the 20 MB field pool holds while every
+order field still covers the whole scope (about 6 at a 320² window): a walled town with up to 10 standing gates, each
+guarded, plus the drill, a patrol and a raid. A fatal overlay there would stop play for a capacity limit, not a fault.
+So `Agents.fieldPoolFull` now shows a dismissable banner (`showWarning`, gpu/device.ts) and the unservable orders
+still fail `'pool-full'` through `orderFailed` for the game to handle. The seed list overflowing stays fatal (it is
+sized to every seeder; an overflow is a sizing bug). U2-FIELDREACH, bounding each field's pages by its walkers, is
+the real fix and is in progress.
