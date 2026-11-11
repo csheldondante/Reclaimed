@@ -140,11 +140,15 @@ export interface AreaHit {
  * (U2 round 5, UNIT_MINDS_U2.md §9a) A place in a GPU town, by indices only — resolved on the GPU each frame through the
  * town contracts' place table (api/contracts/townplaces.ts; shaders/townplace.wgsl), never read back:
  * - `{ town, place }`: a named place (townplaces `PLACE.barracks`, `PLACE.muster`, `PLACE.gate0 + k` …)
- * - `{ town, district, purpose, rank }`: the `rank`-th lot of a kind (`purpose`: townplace LOT_KIND — 1 a building, 2 a
- *   park, 3 a plaza, 4 a landmark, 5 a field) in district `district`, in the order the district fills in
+ * - `{ town, district, kind, rank }`: the `rank`-th lot of a kind (townplace LOT_KIND — 1 a building, 2 a park, 3 a
+ *   plaza, 4 a landmark, 5 a field) in district `district`, in the order the district fills in
  * `town` is the town's slot (TownContractsApi.townIndex).
+ * (U2 round 5b, with Track A) `else`: a fallback, tried in order each time the order resolves (a settled choice holds
+ * while it stays valid); `also`: a partner that must be valid with it (spawn point k also gate k). At most 3 deep
+ * (the else chain); an `also` has neither. Deeper throws at the call. `orderFailed` only when the whole chain fails,
+ * with the last ref's reason.
  */
-export type PlaceRef = { town: number; place: number } | { town: number; district: number; purpose: number; rank: number };
+export type PlaceRef = ({ town: number; place: number } | { town: number; district: number; kind: number; rank: number }) & { else?: PlaceRef; also?: PlaceRef };
 /**
  * (U2 round 5) A group's order at a place: `go` walk there and stand; `guard` walk there and hold it (take on hostiles
  * in sight, back to it after); `attack` walk there hostile to anything on the way and there.

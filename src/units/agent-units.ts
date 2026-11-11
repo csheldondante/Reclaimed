@@ -26,7 +26,7 @@
 import type { Actor, AreaHit, OrderFailure, PlaceOrder, PlaceRef, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
 import type { GroupId } from '../api/contracts/inhabitants';
-import { ORDER_GROUPS, ORDER_GROUP_BASE, type Agents, type AgentEvent, type AgentState, type HuntCandidate, type OrderRecord, type Target } from '../agents/agents';
+import { ORDER_ALTS, ORDER_GROUPS, ORDER_GROUP_BASE, type Agents, type OrderPlace, type AgentEvent, type AgentState, type HuntCandidate, type OrderRecord, type Target } from '../agents/agents';
 import type { PickAsk } from '../agents/pick';
 import { MAT } from '../world/materials';
 import { timed } from '../gpu/cpustat';
@@ -120,8 +120,22 @@ interface OrderGroup {
   serial: number;
   spawnSerial: number;
 }
-const placeKey = (p: PlaceRef): string => ('place' in p ? `${p.town}:${p.place}` : `${p.town}:${p.district}:${p.purpose}:${p.rank}`);
-const placeRecord = (p: PlaceRef): OrderRecord['place'] => ('place' in p ? { name: p.place } : { district: p.district, lotKind: p.purpose, rank: p.rank });
+/** one ref by indices (orders.wgsl's): a named place or a lot */
+const placeOf = (p: PlaceRef): OrderPlace => ({ town: p.town, place: 'place' in p ? { name: p.place } : { district: p.district, lotKind: p.kind, rank: p.rank } });
+/**
+ * (U2 round 5b) A PlaceRef's chain as the GPU's alternatives: the ref, its `else`, its `else`'s `else` — each with its
+ * `also`. Deeper than ORDER_ALTS, or an `also` with an `else` or `also` of its own, throws here (the call's).
+ */
+function placeChain(p: PlaceRef): OrderRecord['alts'] {
+  const alts: OrderRecord['alts'] = [];
+  for (let q: PlaceRef | undefined = p; q; q = q.else) {
+    if (alts.length === ORDER_ALTS) throw new Error(`units: a place's else chain is ${ORDER_ALTS} deep at most`);
+    if (q.also && (q.also.else || q.also.also)) throw new Error("units: a place's also has no else or also of its own");
+    alts.push({ at: placeOf(q), also: q.also ? placeOf(q.also) : undefined });
+  }
+  return alts;
+}
+const placeKey = (p: PlaceRef): string => JSON.stringify(placeChain(p));
 /** (round 128p) the rules' height limit: two farther apart in height don't fight (one up on the wall-walk) */
 const HEIGHT_LIMIT = 1.6;
 /** the agents' unit slots (agents.ts MAX_UNITS): a GPU id's slot */
@@ -314,12 +328,13 @@ export class AgentUnits implements Units {
 
   spawnAt(kind: string, faction: FactionId | null, at: PlaceRef, n: number): GroupId {
     if (!this.agents.placesIn) throw new Error('units.spawnAt: no town place table yet (usePlaces)');
+    const chain = placeChain(at);
     const slot = this.groups.findIndex((g) => g === null);
     if (slot < 0) throw new Error(`units.spawnAt: ${ORDER_GROUPS} order groups at once, all taken`);
     const g: OrderGroup = { id: this.nextGroup++, members: new Set(), order: null, at, field: -1, key: null, serial: 0, spawnSerial: 0 };
     this.groups[slot] = g;
     // (it stands at its place until ordered: the GPU resolves the place for the spawn, and tells a failure)
-    g.spawnSerial = g.serial = this.agents.order(slot, { kind: OK.stand, town: at.town, place: placeRecord(at), field: -1 });
+    g.spawnSerial = g.serial = this.agents.order(slot, { kind: OK.stand, alts: chain, field: -1 });
     this.keepTown(slot, at.town);
     const hostile = kind === 'raider' || kind === 'shambler' || kind.includes('dead');
     const recs: UnitRec[] = [];
@@ -369,7 +384,7 @@ export class AgentUnits implements Units {
       g.key = key;
     }
     g.order = o;
-    g.serial = this.agents.order(slot, { kind: OK[o.kind], town: o.at.town, place: placeRecord(o.at), field: g.field });
+    g.serial = this.agents.order(slot, { kind: OK[o.kind], alts: placeChain(o.at), field: g.field });
     this.keepTown(slot, o.at.town);
     // (an attack order turns the group hostile, a guard order makes it look: their combat words, at the next think)
   }
@@ -393,7 +408,7 @@ export class AgentUnits implements Units {
       if (u) u.order = undefined;
     }
     this.groups[slot] = null;
-    this.agents.order(slot, { kind: OK.none, town: 0, place: { name: 0 }, field: -1 });
+    this.agents.order(slot, { kind: OK.none, alts: [{ at: { town: 0, place: { name: 0 } } }], field: -1 });
     this.agents.keepInScope(`order${slot}`, []);
   }
 
@@ -921,11 +936,13 @@ export class AgentUnits implements Units {
       } else if (e.type === 'orderFailed') {
         const g = this.groups[e.group];
         if (!g) continue;
-        if (e.serial === g.spawnSerial) {
-          // (its spawn's place wasn't valid: none made — their slots freed, their records gone)
+        if (e.spawn) {
+          // (its spawn's place wasn't valid: none made — their slots freed, their records gone. Only the spawn's own
+          // failure: the stand order's place failing later, after they were made, removes nobody)
+          if (e.serial !== g.spawnSerial) continue;
           for (const id of g.members) this.remove(id);
           g.members.clear();
-        } else if (e.serial !== g.serial) continue;
+        } else if (e.serial !== g.serial || g.serial === g.spawnSerial) continue;
         for (const f of this.orderFailed) f(g.id, WHY[e.status] ?? 'none');
       } else if (e.type === 'hurt') {
         const id = this.byGpu.get(e.id);
@@ -1096,7 +1113,8 @@ export class AgentUnits implements Units {
         }
         if (u.target !== j.target) {
           const code = this.codeOf(j.target);
-          if (code !== null) this.agents.notice.aim(u.gpu % MAX_SLOT, code);
+          // (an order: told of it — hunted where it is, seen or not: U2 §9f)
+          if (code !== null) this.agents.tell(u.gpu % MAX_SLOT, code);
         }
       }
       if (u.target === null) {

@@ -419,8 +419,9 @@ A's GPU-town recipe (asked).
 **Final signatures (U2 round 5, built; `api/contracts/units.ts`, Track A's `TownForces` builds against them).** Orders
 name groups, not id lists: an event names the group it's about.
 ```ts
-type PlaceRef = { town: number; place: number }                      // townplaces PLACE.x (PLACE.gate0 + k …)
-              | { town: number; district: number; purpose: number; rank: number };  // purpose: townplace LOT_KIND
+type PlaceRef = ({ town: number; place: number }                     // townplaces PLACE.x (PLACE.gate0 + k …)
+              | { town: number; district: number; kind: number; rank: number })     // kind: townplace LOT_KIND
+              & { else?: PlaceRef; also?: PlaceRef };                 // round 5b: ≤ 3 deep; also has neither
 type GroupId = number;                                                // inhabitants' GroupId: a number
 interface PlaceOrder { kind: 'guard' | 'go' | 'attack'; at: PlaceRef }
 type OrderFailure = 'none' | 'rising' | 'water' | 'no-town' | 'pool-full';  // placeStatus's, and the CPU's field pool
@@ -442,6 +443,11 @@ units.orderFailed?: ((g: GroupId, why: OrderFailure) => void)[]       // once an
 - **Fields:** a place takes one of 7 order fields (the old rounds' 0-6), shared by groups ordered to the same place;
   none free → `orderFailed(g, 'pool-full')` from the CPU, and the order isn't sent. The paged atlas (§9b) replaces the
   pool. **8 order groups** at once (agents groups 16-23).
+- **else / also (round 5b, with Track A).** The chain is encoded in the group's record: up to 3 alternatives, each a
+  ref and an optional partner (6 words a ref). Each resolve: the settled alternative holds while it and its partner
+  are valid; else the first valid one in order is settled; none → `orderFailed` once per order with the last
+  alternative's reason (its ref's status, or its partner's). Spawns use the same choice. Deeper chains, or an `also`
+  with its own `else`/`also`, throw at the call.
 - The CPU never reads a place: its only CPU input beyond the indices is the town's box (its plan), to keep the agents'
   scope round a town while a group is ordered there.
 
@@ -510,6 +516,16 @@ comes into the scope.
 | Effects | Fewer seed moves, so less front demand. Cover and ambushes start to matter: a raider behind a wall isn't chased by a guard who can't see it. |
 | Benchmark (huntbench, `?seenonly=0/1`) | The reaction gate; front asks a tick by field; how often units lose a target (EV_NOTICED 0 per minute); deaths. |
 | Test skeletons | "a target behind a wall is not taken"; "a target that steps behind cover is chased to its last-seen place, then dropped after T". |
+
+**Told, not only noticed (round 5b; on by default since round 5).**
+- Seen-only hunts the last-seen place of what notice gave a unit. A target never seen is hunted only when the unit is
+  **told** of it:
+  - an order (`Agents.tell(slot, code)`, which AgentUnits uses for attack orders);
+  - or the target struck it (the GPU's retaliation in the step).
+- Both set the aim's `AIM_TOLD` flag (mail aim word 7, bit 16). huntSet then seeds the target where it is, seen or not.
+  The flag goes when the target changes.
+- So an archer that only noticed a target behind a wall wanders and doesn't hunt it, and one ordered at it walks round
+  the wall (los.test.ts: both).
 
 **Ranged units**, on the same fight machine as melee (§3, DA-B32), built after melee strikes are on the GPU:
 

@@ -138,7 +138,11 @@ const MAIL_ARROWS = 2048;
 /** (U2 round 5) orders.wgsl: the order groups (agents groups ORDER_GROUP_BASE + g), their records, the join queue */
 export const ORDER_GROUPS = 8;
 export const ORDER_GROUP_BASE = 16;
-const GROUP_W = 20;
+/** orders.wgsl ALTS, REF_W, REF_AT, GROUP_W */
+export const ORDER_ALTS = 3;
+const REF_W = 6;
+const REF_AT = 20;
+const GROUP_W = REF_AT + ORDER_ALTS * 2 * REF_W;
 const ORDER_Q = 1024;
 const SPAWN_BIT = 0x80000000;
 const MAIL_GRP = 16 + 8192 * 12 + 8192 * 2 + MAIL_ARROWS * 12;
@@ -146,13 +150,19 @@ const MAIL_Q = MAIL_GRP + ORDER_GROUPS * GROUP_W;
 const MAIL_WORDS = MAIL_Q + 1 + ORDER_Q * 3;
 /** mail's aim words a slot (units.wgsl AIM_W): word 11 its order group + 1 */
 const AIM_W = 12;
-/** (U2 round 5) an order group's record as the CPU writes it (orders.wgsl group words 0-7): indices only */
+/** (U2 round 5) a town place by indices (orders.wgsl's ref): a named place (townplace PLACE_*) or a lot (district, lot
+ *  kind, rank) */
+export interface OrderPlace {
+  town: number;
+  place: { name: number } | { district: number; lotKind: number; rank: number };
+}
+/** (U2 round 5) an order group's record as the CPU writes it (orders.wgsl group words): indices only */
 export interface OrderRecord {
   /** 0 none (let go), 1 stand (no walk: a spawn not yet ordered), 2 go, 3 guard, 4 attack */
   kind: number;
-  town: number;
-  /** a named place (townplace PLACE_*) or a lot (district, lot kind, rank) */
-  place: { name: number } | { district: number; lotKind: number; rank: number };
+  /** (U2 round 5b) the places in order of preference (1..ORDER_ALTS: PlaceRef's `else` chain), each with an optional
+   *  partner that must be valid with it (`also`) */
+  alts: { at: OrderPlace; also?: OrderPlace }[];
   /** the field it walks (none: −1) */
   field: number;
 }
@@ -343,7 +353,7 @@ export type AgentEvent =
   /** (U2 round 5, orders.wgsl) every living member of order group `group` stands at its place: once an order (`serial`) */
   | { type: 'groupArrived'; group: number; serial: number; n: number; x: number; y: number; z: number; id?: undefined }
   /** (U2 round 5) order group `group`'s place isn't valid (`status`: townplace PLACE_*): once an order (`serial`) */
-  | { type: 'orderFailed'; group: number; status: number; serial: number; x: number; y: number; z: number; id?: undefined }
+  | { type: 'orderFailed'; group: number; status: number; spawn: boolean; serial: number; x: number; y: number; z: number; id?: undefined }
   | { type: 'alight'; id: number; by: number | 'fire'; x: number; y: number; z: number }
   /** a thrown (or dropped) item came down: `amount` of it is ground there now (0: the column had no room) */
   | { type: 'landed'; item: number; material: MaterialName; amount: number; x: number; y: number; z: number };
@@ -1150,6 +1160,25 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       this.restart |= 1 << f;
     }
     for (const [k, pts] of this.kept) this.kept.set(k, pts.map(([x, y]) => [x - dx, y - dy] as [number, number]));
+    // (U2 round 5b: the hunt's and the foes' fields alike — started over, every seed marking its chunk again)
+    for (const f of [this.huntField, this.foeField]) if (f !== null) {
+      this.markFields |= 1 << f;
+      this.restart |= 1 << f;
+      this.huntRemark = true;
+    }
+  }
+
+  /** (U2 round 5b) a slide asked the hunt's seeds to mark their chunks again: at the next frame's last tick */
+  private huntRemark = false;
+
+  /**
+   * (U2 round 5b, §9f) Unit slot `slot` told of a target by the game (an order: a target code, notice.ts): hunted where
+   * it is even when never seen — seen-only hunts only the last-seen place of what was noticed. Code 0 lets it go.
+   */
+  tell(slot: number, code: number): void {
+    this.notice.aim(slot, code);
+    this.device.queue.writeBuffer(this.mail, (16 + slot * AIM_W + 3) * 4, new Uint32Array([code >>> 0]));
+    this.device.queue.writeBuffer(this.mail, (16 + slot * AIM_W + 7) * 4, new Uint32Array([code ? 16 : 0]));
   }
 
   /** the per-column buffers a slide moves (name, buffer, bytes a column, planes) */
@@ -1346,10 +1375,19 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     if (g < 0 || g >= ORDER_GROUPS) throw new Error(`agents.order: group ${g} out of 0..${ORDER_GROUPS - 1}`);
     if (r.field >= NFIELDS) throw new Error(`agents.order: no field ${r.field}`);
     const serial = (this.orderSerial[g] = (this.orderSerial[g] + 1) & 0xffff);
-    const named = 'name' in r.place;
-    const p = r.place as { name: number } & { district: number; lotKind: number; rank: number };
-    const w = new Uint32Array([r.kind, r.town, named ? 0 : 1, named ? p.name : p.district, named ? 0 : p.lotKind, named ? 0 : p.rank, r.field < 0 ? NFIELDS : r.field, serial]);
-    this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W) * 4, w);
+    if (r.alts.length < 1 || r.alts.length > ORDER_ALTS) throw new Error(`agents.order: 1..${ORDER_ALTS} places (else), not ${r.alts.length}`);
+    const ref = (q: OrderPlace | undefined): number[] => {
+      if (!q) return [0, 0, 0, 0, 0, 0];
+      const named = 'name' in q.place;
+      const p = q.place as { name: number } & { district: number; lotKind: number; rank: number };
+      return [1, q.town, named ? 0 : 1, named ? p.name : p.district, named ? 0 : p.lotKind, named ? 0 : p.rank];
+    };
+    const w = new Uint32Array(GROUP_W);
+    // (words 0-7: the GPU's own 8-19 left as they are — a write of 0-7, then of the refs)
+    w.set([r.kind, r.alts.length, 0, 0, 0, 0, r.field < 0 ? NFIELDS : r.field, serial], 0);
+    r.alts.forEach((a, i) => w.set([...ref(a.at), ...ref(a.also)], REF_AT + i * 2 * REF_W));
+    this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W) * 4, w, 0, 8);
+    this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + REF_AT) * 4, w, REF_AT, GROUP_W - REF_AT);
     this.orderFieldOf[g] = r.kind >= 2 ? r.field : -1;
     this.follow(ORDER_GROUP_BASE + g, r.kind >= 2 ? r.field : -1);
     // (a new place: the field starts over and refills from it — a seed moved far counts up otherwise, FC4)
@@ -2029,7 +2067,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
         } else if (kind === 20) {
           events.push({ type: 'groupArrived', group: id, serial: eu[o + 2], n: Math.round(ef[o + 3]), ...p });
         } else if (kind === 21) {
-          events.push({ type: 'orderFailed', group: id, status: eu[o + 2], serial: Math.round(ef[o + 3]), ...p });
+          events.push({ type: 'orderFailed', group: id, status: eu[o + 2] & 0xff, spawn: (eu[o + 2] & 0x100) !== 0, serial: Math.round(ef[o + 3]), ...p });
         } else if (kind === 8) {
           const f = eu[o + 2];
           events.push(f >= RIDE_ARRIVED ? { type: 'arrived', id, ride: f - RIDE_ARRIVED, ...p } : { type: 'arrived', id, field: f, dist: ef[o + 3], ...p });
@@ -2174,7 +2212,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     const rekinds = this.rekinds.splice(0, MAX_REKINDS);
     f[P_STEP + 1] = rekinds.length;
     if ((this.los || this.seenOnly) && !this.aim) throw new Error('agents: line of sight wants ?los=1, ?seenonly=1 or ?fieldbench=1 at load (its kernels)');
-    u.set([this.huntOn ? (this.huntField ?? NFIELDS) : NFIELDS, (this.marksFor & 0xffff) | ((this.huntOn ? (this.foeField ?? NFIELDS) : NFIELDS) << 16), (this.los ? 1 : 0) | (this.seenOnly ? 2 : 0), PROF || this.benchProbe ? 1 : 0], P_U2);
+    u.set([this.huntOn ? (this.huntField ?? NFIELDS) : NFIELDS, (this.marksFor & 0xffff) | ((this.huntOn ? (this.foeField ?? NFIELDS) : NFIELDS) << 16), (this.los ? 1 : 0) | (this.seenOnly ? 2 : 0) | (this.huntRemark && this.frameWork ? 4 : 0), PROF || this.benchProbe ? 1 : 0], P_U2);
+    if (this.frameWork) this.huntRemark = false;
     rekinds.forEach(([slot, kind, hp], i) => {
       u.set([slot, kind, 0, hp === null ? 0 : 1], P_REKINDS + i * 4);
       if (hp !== null) f[P_REKINDS + i * 4 + 2] = hp;

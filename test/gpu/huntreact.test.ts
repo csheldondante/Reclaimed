@@ -144,6 +144,10 @@ async function mapCase(kind: MapKind) {
   const agents = installAgents(w.core);
   agents.notice.setRules({ on: false, open: false, heightLimit: 1.6, leash: 1000 });
   agents.gpuHunt(HUNT);
+  // (U2 round 5: seen-only is on by default — the hunt seeds only what a hunter saw. This test measures the field's
+  // answer to a seed change against a BFS, behind a wall the hunter can't see through: every noticed target seeds it,
+  // as before — seen-only off, made explicit. What seen-only seeds is los.test.ts's)
+  agents.seenOnly = false;
   agents.follow(1, -1);
   agents.follow(2, -1);
   if (process.env.SWEEPS) agents.sweeps = Number(process.env.SWEEPS);

@@ -1,7 +1,8 @@
 // ---- (U2 round 5) place-based orders, resolved on the GPU (UNIT_MINDS_U2.md §9a; contract api/contracts/units.ts) ----
 // Appended after units.wgsl and townplace.wgsl (binding 57: the town contracts' place table). A group (ORDER_GROUPS of
 // them: agents groups GROUP_BASE + g) is a record in `mail` the CPU writes when it orders it — indices only: the order's
-// kind, the town, a named place or a lot (district, lot kind, rank), the field it walks, a serial — and the GPU resolves
+// kind, its places (a chain of up to ALTS alternatives, each a named place or a lot — town, name or district, lot kind,
+// rank — with an optional partner that must be valid with it), the field it walks, a serial — and the GPU resolves
 // where that is through townplace.wgsl, each frame, before the relaxation:
 //   orderApply    (when the CPU queued some) a unit joins a group: its aim word 11 the group + 1, its agents group
 //                 GROUP_BASE + g; spawned, it's placed at the place's approach, round it in a spiral by its rank. No
@@ -10,17 +11,27 @@
 //                 → its field seeded there (seedMask, as the hunt's), its chunk marked; a seed it left, cleared
 //   groupCount    each member alive, and within the arrival radius of the place
 //   groupEmit     a group whose living members have all arrived → arrived(g) once an order
-// group words (GROUP_W): CPU's 0 kind (0 none, 1 stand, 2 go, 3 guard, 4 attack), 1 town, 2 ref (0 named, 1 lot),
-// 3 name / district, 4 lot kind, 5 rank, 6 field (NFIELDS none), 7 serial; GPU's 8-10 the place, 11 its status, 12
-// alive this frame, 13 arrived this frame, 14 the serial arrived was told for (+1), 15 the serial a failure was told for
-// (+1), 16 the seeded surface (+1), 17 its field, 18 last frame's alive, 19 the CPU's ask to mark the seed again (a slide)
+// group words (GROUP_W): CPU's 0 kind (0 none, 1 stand, 2 go, 3 guard, 4 attack), 1 the alternatives (1..ALTS), 2 the
+// settled one + 1 (the CPU writes 0 with an order; the GPU's after), 6 field (NFIELDS none), 7 serial; GPU's 8-10 the
+// place, 11 its status, 12 alive this frame, 13 arrived this frame, 14 the serial arrived was told for (+1), 15 the
+// serial a failure was told for (+1), 16 the seeded surface (+1), 17 its field, 18 last frame's alive, 19 the CPU's ask
+// to mark the seed again (a slide); from REF_AT the CPU's refs: ALTS alternatives (PlaceRef's `else` chain) of a ref and
+// its partner (`also`), REF_W words each: present, town, 0 named / 1 lot, name / district, lot kind, rank.
+// (U2 round 5b, Track A) Each resolve the settled alternative holds while it's valid (its ref and its partner); else the
+// first valid one in order is settled; none: the order fails with the last alternative's reason (its ref's status, or
+// its partner's when the ref is valid).
 // queue (MAIL_Q): [0] count, then 3 words an entry: slot, group, rank | SPAWN_BIT
 const ORDER_GROUPS: u32 = 8u;
-const GROUP_W: u32 = 20u;
+const ALTS: u32 = 3u;
+const REF_W: u32 = 6u;
+const REF_AT: u32 = 20u;
+const GROUP_W: u32 = REF_AT + ALTS * 2u * REF_W;
 const MAIL_GRP: u32 = MAIL_ARR + MAIL_ARROWS * ARROW_W;
 const MAIL_Q: u32 = MAIL_GRP + ORDER_GROUPS * GROUP_W;
 const ORDER_Q: u32 = 1024u;
 const SPAWN_BIT: u32 = 0x80000000u;
+/** an orderFailed's reason bit: the spawn's place wasn't valid — none made */
+const SPAWN_FAILED: u32 = 0x100u;
 const GROUP_BASE: u32 = 16u;
 const EV_GROUP_ARRIVED: u32 = 20u;
 const EV_ORDER_FAILED: u32 = 21u;
@@ -29,18 +40,43 @@ const OK_STAND: u32 = 1u;
 
 fn grpO(g: u32) -> u32 { return MAIL_GRP + g * GROUP_W; }
 fn grpWord(g: u32, w: u32) -> u32 { return atomicLoad(&mail[grpO(g) + w]); }
-/** the group's place: (status, 0 named / 1 lot, the name or the lot's handle) */
-fn grpResolve(g: u32) -> vec3<u32> {
-  let town = grpWord(g, 1u);
-  if (grpWord(g, 2u) == 0u) {
-    let name = grpWord(g, 3u);
-    return vec3<u32>(placeStatus(town, name), 0u, name);
+/** ref `o` (a mail word index): (status, 0 named / 1 lot, the name or the lot's handle, town); absent: OK */
+fn refResolve(o: u32) -> vec4<u32> {
+  if (atomicLoad(&mail[o]) == 0u) { return vec4<u32>(PLACE_OK, 2u, 0u, 0u); }
+  let town = atomicLoad(&mail[o + 1u]);
+  if (atomicLoad(&mail[o + 2u]) == 0u) {
+    let name = atomicLoad(&mail[o + 3u]);
+    return vec4<u32>(placeStatus(town, name), 0u, name, town);
   }
-  let h = lotAt(town, grpWord(g, 3u), grpWord(g, 4u), grpWord(g, 5u));
-  return vec3<u32>(lotStatus(town, h), 1u, h);
+  let h = lotAt(town, atomicLoad(&mail[o + 3u]), atomicLoad(&mail[o + 4u]), atomicLoad(&mail[o + 5u]));
+  return vec4<u32>(lotStatus(town, h), 1u, h, town);
 }
-fn grpPoint(g: u32, r: vec3<u32>, approach: bool) -> vec3<f32> {
-  let town = grpWord(g, 1u);
+fn altRef(g: u32, a: u32, partner: bool) -> u32 { return grpO(g) + REF_AT + a * 2u * REF_W + select(0u, REF_W, partner); }
+/** alternative a's status: its ref's, or its partner's when the ref is valid */
+fn altStatus(g: u32, a: u32) -> u32 {
+  let m = refResolve(altRef(g, a, false)).x;
+  if (m != PLACE_OK) { return m; }
+  return refResolve(altRef(g, a, true)).x;
+}
+/** the group's place now: its chosen alternative's ref resolved (status, kind, handle, town) — settled while valid */
+fn grpResolve(g: u32) -> vec4<u32> {
+  let o = grpO(g);
+  let n = clamp(grpWord(g, 1u), 1u, ALTS);
+  let st = grpWord(g, 2u);
+  if (st != 0u && st <= n && altStatus(g, st - 1u) == PLACE_OK) { return refResolve(altRef(g, st - 1u, false)); }
+  var why = PLACE_NONE;
+  for (var a = 0u; a < n; a++) {
+    why = altStatus(g, a);
+    if (why == PLACE_OK) {
+      atomicStore(&mail[o + 2u], a + 1u);
+      return refResolve(altRef(g, a, false));
+    }
+  }
+  atomicStore(&mail[o + 2u], 0u);
+  return vec4<u32>(why, 2u, 0u, 0u);
+}
+fn grpPoint(g: u32, r: vec4<u32>, approach: bool) -> vec3<f32> {
+  let town = r.w;
   if (r.y == 0u) { return select(place(town, r.z), placeApproach(town, r.z), approach); }
   return select(lotPlace(town, r.z), lotApproach(town, r.z), approach);
 }
@@ -64,6 +100,9 @@ fn orderApply(@builtin(global_invocation_id) id: vec3<u32>) {
     let r = grpResolve(g);
     if (r.x != PLACE_OK) {
       info &= ~(1u << 8u);
+      // (told once, by its first: SPAWN_FAILED in the reason — none of this spawn was made, the CPU frees the slots.
+      // A failure later, of the order it stands on, makes nobody go)
+      if ((rk & ~SPAWN_BIT) == 0u) { emit(EV_ORDER_FAILED, g, r.x | SPAWN_FAILED, f32(grpWord(g, 7u)), vec3<f32>(0.0)); }
     } else {
       // (round the approach in a sunflower spiral: rank k at radius 0.9·√k — a crowd that doesn't stand in itself)
       // (a spot is taken only on a walkable surface within a step of the approach's height — not a roof or a wall top
