@@ -2287,7 +2287,7 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
 - AG15 Round 2 gaps: hip seams (courses of a slope and its hip end don't meet: dark fill under them; hip and ridge
   caps to come), timber framing painted not in relief, lot walls doubled along shared edges, the porch/stair door not
   moved to the stair's head, no arcades/loggias or crow-stepped gables yet (the references).
-- AG16 (the user, round 3) An irregular-grid family (Townscaper) for shanties and larger structures: the existing
+- AG16 (built per lot on the GPU, see DEVLOG; per-block grids with 3- and 5-valent vertices, bridges and stacked terraces across lots still open) An irregular-grid family (Townscaper) for shanties and larger structures: the existing
   structures/tiles/* grids and modules.ts kit (warped modules on irregular quads) behind the same parts/output
   contract; stacked terraces, arches, stilts, bridges, narrow coloured houses along curving rows.
 - AG17 Lots don't know water: docks and water wheels can't check they're by water (a water bit or distance in the

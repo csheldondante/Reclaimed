@@ -23091,3 +23091,15 @@ cases over the fake's field limit), season, transfers, typecheck.
   or not) in front gardens, courts and on the keep's roof; ivy up some lots' walls (painted).
 - New kinds: K_WHEEL (oriented boxes, 1404 vertices), K_BUSH (a lumpy subdivided octahedron, 96). Door size per style
   (painted and built agree).
+
+## archgen: the irregular-grid family on the GPU (2026-11-11; the user: "port to gpu")
+
+- One thread a lot: a (≤6 × 6) quad grid over the lot's own outline (its warped quad, bilinear), inner vertices
+  jittered a third of a cell then relaxed three Laplacian passes — Townscaper's organic quads, in private arrays. Each
+  cell a column (K_BODY over the cell quad, S_TINT: a colour of its own from Townscaper's palette): the record's storeys
+  along the street falling away behind, yards open (a shrub sometimes), a tower cell two higher with a pyramid roof,
+  terraces behind on a stone platform, arcades on pillars along the street; a row's equal heights share a roof (a run of
+  ≤ 3, its eaves; a single cell its gable to the street). The shanty variant (style 'stilts'): planks, crooked tops,
+  stilts, tin and plank lean-tos, at most two storeys.
+- Simplification, stated: every inner vertex has four cells (Townscaper's merged triangles give threes and fives); a
+  per-block pass if the difference shows. The CPU tile builder (structures/tiles) stays for cliff cities.

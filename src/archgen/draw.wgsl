@@ -668,9 +668,16 @@ fn archSurface(in: VO) -> Surf {
   // the lot's own tint: neighbours differ a little (Tiny Glade's soft variety)
   let tint = 0.93 + 0.14 * lr;
   let stoneMortar = stoneC.rgb * 0.55;
-  if (surf == S_WALL && !isTop) {
+  if ((surf == S_WALL || surf == S_TINT) && !isTop) {
     let m = u32(wallC.w + 0.5);
     col = wallC.rgb * tint;
+    if (surf == S_TINT) {
+      // a column's own colour: Townscaper's palette, by its part
+      var pal = array<vec3<f32>, 8>(vec3<f32>(0.96, 0.84, 0.52), vec3<f32>(0.92, 0.55, 0.45), vec3<f32>(0.58, 0.76, 0.86),
+                                    vec3<f32>(0.62, 0.8, 0.6), vec3<f32>(0.96, 0.95, 0.9), vec3<f32>(0.88, 0.62, 0.74),
+                                    vec3<f32>(0.98, 0.7, 0.42), vec3<f32>(0.5, 0.62, 0.82));
+      col = pal[hash((in.info.w >> 24u) * 131u + lot * 7u) % 8u];
+    }
     // plaster's mottling, a little darker low down
     col *= 0.95 + 0.07 * avnoise(vec2<f32>(u, v) * 1.7) * detail + 0.03 * avnoise(vec2<f32>(u, v) * 0.4);
     if (m == 1u) {
@@ -782,7 +789,7 @@ fn archSurface(in: VO) -> Surf {
       col = mix(col * mix(1.0, k, detail), vec3<f32>(0.42, 0.5, 0.3), moss * detail * 0.5);
       if (isLip) { col *= 0.58; }
     }
-  } else if ((surf == S_WALL || surf == S_STONE) && isTop && (flags & F_UNDER) != 0u) {
+  } else if ((surf == S_WALL || surf == S_STONE || surf == S_TINT) && isTop && (flags & F_UNDER) != 0u) {
     // a wall's top under its roof: dark, so the seams between the courses at a hip never show it
     col = vec3<f32>(0.16, 0.13, 0.1);
   } else if ((surf == S_WALL || surf == S_STONE) && isTop && (flags & F_NOWIN) == 0u) {
@@ -905,7 +912,7 @@ fn archSurface(in: VO) -> Surf {
     if (!isTop) { col = vec3<f32>(0.45, 0.4, 0.34); }
   }
   // ivy: on some lots, up their walls from the ground in uneven tongues (not over glass)
-  if (!isTop && (surf == S_WALL || surf == S_STONE || surf == S_PLINTH || surf == S_LOTWALL || surf == S_BRICK) && h21(vec2<f32>(f32(lot), 5.5)) > 0.55) {
+  if (!isTop && (surf == S_WALL || surf == S_TINT || surf == S_STONE || surf == S_PLINTH || surf == S_LOTWALL || surf == S_BRICK) && h21(vec2<f32>(f32(lot), 5.5)) > 0.55) {
     let g = bitcast<f32>(AW(AW(6u) + min(lot, AW(5u) - 1u)));
     let hg = lz - g;
     let reach = 0.6 + 4.0 * avnoise(vec2<f32>(u * 0.3 + f32(side) * 3.7 + f32(lot) * 1.31, 0.5)) * avnoise(vec2<f32>(u * 0.11 + f32(lot), 2.5));

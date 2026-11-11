@@ -66,6 +66,8 @@ const S_WATER: u32 = 17u;
 const S_PLANK: u32 = 18u;
 const S_LEAF: u32 = 19u;
 const S_BRICK: u32 = 20u;
+/** a wall in a colour of its own (the grid family's columns: Townscaper's palette, a part's hash) */
+const S_TINT: u32 = 21u;
 /** part flags (word 0, bits 16–23) */
 const F_FRONT0: u32 = 1u; // the body's side 0 faces the street (its door)
 const F_NOWIN: u32 = 2u;  // no painted windows (plinth, chimney, trim; and bodies whose windows are geometry)
@@ -864,6 +866,158 @@ fn plantings(seed: u32, sb: f32, dx: f32) {
   }
 }
 
+// ---- the irregular-grid family (the user: "consider some styles could use the irregular grids … Townscaper does
+// unusually well with larger structures and shanties"; "port to gpu") ----
+// One thread a lot: an irregular quad grid over the lot's own outline (its warped quad, bilinear), its inner vertices
+// jittered then relaxed (Laplacian) — organic quads as Townscaper's, though every inner vertex has four cells (its
+// grid's merged triangles give it threes and fives: a per-block pass, later, if the difference shows). Each cell a
+// column of its own colour and height: tall along the street, falling away behind, yards left open; equal heights in a
+// row share a roof; terraces behind on a stone platform; arcades on pillars along the street; the shanty variant on
+// stilts, crooked, its roofs lean-tos of tin and planks.
+
+const GMAX: u32 = 7u;
+var<private> GV: array<vec2<f32>, 64>;
+var<private> GH: array<u32, 49>;
+var<private> GB: array<f32, 49>;
+var<private> gNX: u32;
+var<private> gNY: u32;
+
+fn gv(i: u32, j: u32) -> vec2<f32> { return GV[j * (gNX + 1u) + i]; }
+fn gcell(i: u32, j: u32) -> array<vec2<f32>, 4> { return array<vec2<f32>, 4>(gv(i, j), gv(i + 1u, j), gv(i + 1u, j + 1u), gv(i, j + 1u)); }
+
+/** a small square post at p (a pillar, a stilt) */
+fn post(p: vec2<f32>, w: f32, z0: f32, z1: f32, surf: u32) {
+  let ex = LX * w * 0.5;
+  let ey = LY * w * 0.5;
+  body(surf, F_NOWIN, array<vec2<f32>, 4>(p - ex - ey, p + ex - ey, p + ex + ey, p - ex + ey), z0, z1);
+}
+
+fn grid(seed: u32) {
+  let g = gGround;
+  let W = gW;
+  let D = gD;
+  let shanty = u32(sty(gS, 0u).w + 0.5) == 4u;
+  let LH = STOREY;
+  gNX = clamp(u32(round(W / 2.5)), 2u, GMAX - 1u);
+  gNY = clamp(u32(round(D / 2.7)), 2u, GMAX - 1u);
+  let nx = gNX;
+  let ny = gNY;
+  // the vertices: the lot's own quad (its frontage first), a little in from its edges, the front set back a step
+  for (var j = 0u; j <= ny; j++) {
+    for (var i = 0u; i <= nx; i++) {
+      let s = mix(0.03, 0.97, f32(i) / f32(nx));
+      let t = mix(0.1, 0.96, f32(j) / f32(ny));
+      var p = mix(mix(gQ[0], gQ[1], s), mix(gQ[3], gQ[2], s), t);
+      if (i > 0u && i < nx && j > 0u && j < ny) {
+        // inner vertices jittered (a third of a cell)
+        let cw = W / f32(nx);
+        p += vec2<f32>(rnd(seed, 300u + i * 17u + j * 131u) - 0.5, rnd(seed, 900u + i * 29u + j * 71u) - 0.5) * cw * 0.65;
+      }
+      GV[j * (nx + 1u) + i] = p;
+    }
+  }
+  // relaxed: inner vertices drawn toward their neighbours' mean, the jitter's sharp quads softened
+  for (var it = 0u; it < 3u; it++) {
+    for (var j = 1u; j < ny; j++) {
+      for (var i = 1u; i < nx; i++) {
+        let m = (gv(i - 1u, j) + gv(i + 1u, j) + gv(i, j - 1u) + gv(i, j + 1u)) * 0.25;
+        GV[j * (nx + 1u) + i] = mix(gv(i, j), m, 0.45);
+      }
+    }
+  }
+  // heights: the record's storeys along the street, falling away behind; a tower; yards (0)
+  // (a shanty stays low: a storey or two)
+  let H0 = select(f32(max(REC[gLot * RECW + 19u], 1u)), 1.4, shanty);
+  let tower = hash(seed + 7u) % (nx * ny);
+  let terrace = !shanty && ny >= 3u && rnd(seed, 2u) < 0.45;
+  for (var j = 0u; j < ny; j++) {
+    for (var i = 0u; i < nx; i++) {
+      let c = j * nx + i;
+      let t = f32(j) / f32(max(ny - 1u, 1u));
+      let n = rnd(seed, 500u + c * 7u) - 0.5;
+      var h = i32(round(H0 * (1.05 - 0.55 * t) + n * 1.8 + 0.3));
+      if (j > 0u && rnd(seed, 600u + c) < select(0.18, 0.35, shanty) + 0.25 * t) { h = 0; }
+      if (shanty) { h = min(h, 2); }
+      if (c == tower && j > 0u) { h = h + 2; }
+      GH[c] = u32(clamp(h, 0, 6));
+      // the base: the ground, or a terrace's top behind
+      GB[c] = select(g, g + LH, terrace && j * 2u >= ny);
+    }
+  }
+  // the terrace: a stone platform under its cells (each cell's own block, flagstones on top)
+  if (terrace) {
+    for (var j = (ny + 1u) / 2u; j < ny; j++) {
+      for (var i = 0u; i < nx; i++) { body(S_STONE, 0u, gcell(i, j), g - 0.4, g + LH); }
+    }
+  }
+  // the columns, then each row's roofs: a run of equal heights shares one
+  for (var j = 0u; j < ny; j++) {
+    for (var i = 0u; i < nx; i++) {
+      let c = j * nx + i;
+      let h = GH[c];
+      if (h == 0u) {
+        if (rnd(seed, 700u + c) < 0.5) {
+          let q = gcell(i, j);
+          bushAt((q[0] + q[1] + q[2] + q[3]) * 0.25, GB[c] - 0.1, 0.6, 0.9, rnd(seed, 710u + c) < 0.5);
+        }
+        continue;
+      }
+      let q = gcell(i, j);
+      var z0 = GB[c];
+      let z1 = z0 + f32(h) * LH;
+      let surf = select(S_TINT, S_WALL, shanty);
+      // stilts (the shanty's), or an arcade along the street: the column lifted onto posts at its corners
+      let lifted = (shanty && rnd(seed, 800u + c) < 0.4) || (!shanty && j == 0u && h >= 3u && rnd(seed, 820u + c) < 0.35);
+      var ff = select(0u, F_FRONT0, j == 0u);
+      if (lifted) {
+        let lz = select(LH, 1.3, shanty);
+        let ps = select(0.42, 0.18, shanty);
+        let inq = grow(q, -ps * 0.5);
+        for (var k = 0u; k < 4u; k++) { post(inq[k], ps, z0 - 0.3, z0 + lz, select(S_STONE, S_WOOD, shanty)); }
+        z0 = z0 + lz;
+        ff = 0u;
+      }
+      if (shanty) {
+        // crooked: each corner's top its own
+        put(K_BODY, surf, ff, q, z0, vec4<f32>(z1 + (rnd(seed, c * 4u) - 0.5) * 0.3, z1 + (rnd(seed, c * 4u + 1u) - 0.5) * 0.3, z1 + (rnd(seed, c * 4u + 2u) - 0.5) * 0.3, z1 + (rnd(seed, c * 4u + 3u) - 0.5) * 0.3));
+      } else {
+        body(S_PLINTH, F_NOWIN, grow(q, 0.05), z0 - 0.3, z0 + 0.3);
+        body(surf, ff | F_UNDER, q, z0 + 0.3, z1);
+      }
+    }
+    // the roofs of this row
+    var i = 0u;
+    loop {
+      if (i >= nx) { break; }
+      let c = j * nx + i;
+      let h = GH[c];
+      var k = i;
+      loop {
+        if (k + 1u >= nx || k - i >= 2u) { break; }
+        let c2 = j * nx + k + 1u;
+        if (GH[c2] != h || GB[c2] != GB[c]) { break; }
+        k++;
+      }
+      if (h > 0u) {
+        let top = GB[c] + f32(h) * LH;
+        let rq = array<vec2<f32>, 4>(gv(i, j), gv(k + 1u, j), gv(k + 1u, j + 1u), gv(i, j + 1u));
+        let rs = hash(seed + c * 37u);
+        if (shanty) {
+          roof(rq, top + 0.12, rs % 4u, 0.4, 0.0, 0.25, F_SHED);
+        } else {
+          // a single cell: its gable to the street (mostly); a run: its eaves; the tower: a pyramid
+          let single = k == i;
+          let turn = select(0u, select(0u, 1u, rnd(rs, 1u) < 0.7), single);
+          let isTower = c == tower && j > 0u;
+          let rise = roof(rq, top + 0.05, turn, select(1.05, 1.6, isTower), select(0.0, 0.5, isTower), 0.18, 0u);
+          if (rnd(rs, 2u) < 0.25 && !isTower) { chimney((rq[0] + rq[1] + rq[2] + rq[3]) * 0.25 + LX * 0.3, top + rise * 0.3, top + rise + 0.8); }
+        }
+      }
+      i = k + 1u;
+    }
+  }
+}
+
 @compute @workgroup_size(64)
 fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
   if (g.x >= GU.count) { return; }
@@ -945,6 +1099,7 @@ fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
   else if (archetype == 2u) { shanty(seed); }
   else if (archetype == 3u) { dock(seed); }
   else if (archetype == 4u) { industrial(eave, seed); }
+  else if (archetype == 5u) { grid(seed); }
   else { house(eave, seed); }
   windows();
   for (var j = gN; j < PPL; j++) { ARCH[PB + (i * PPL + j) * PW] = 0u; }

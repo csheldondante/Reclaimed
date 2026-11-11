@@ -11,7 +11,7 @@ export const WALL = { plaster: 0, brick: 1, ashlar: 2, timber: 3 } as const;
 /** roof coverings */
 export const ROOF = { tile: 0, slate: 1, thatch: 2 } as const;
 /** what a style builds on a building lot (arch.wgsl gen); plazas are markets and parks gardens whatever the style */
-export const ARCHETYPE = { house: 0, keep: 1, shanty: 2, docks: 3, industrial: 4 } as const;
+export const ARCHETYPE = { house: 0, keep: 1, shanty: 2, docks: 3, industrial: 4, grid: 5 } as const;
 
 type RGB = [number, number, number];
 
@@ -121,6 +121,24 @@ export const STYLES: Style[] = [
     archetype: ARCHETYPE.industrial, gablesToStreet: false, towerOdds: 0, shutters: false, bay: 2.4, winWidth: 1.3,
     winTop: 2.7, winBottom: 0.8, roundOdds: 0, setback: 0, lotWallOdds: 0, porchOdds: 0, stairOdds: 0, wingTurnOdds: 0,
     dressOdds: 0, raised: 0, door: [2.6, 3.3],
+  },
+  {
+    // (the irregular-grid family: Townscaper's harbour town — narrow coloured columns, terracotta, terraces, arcades)
+    name: 'harbour',
+    wall: [0.95, 0.9, 0.8], wallMat: WALL.plaster, trim: [0.97, 0.96, 0.93], roof: [0.82, 0.42, 0.26], roofMat: ROOF.tile,
+    stone: [0.8, 0.74, 0.62], pitch: 1.05, overhang: 0.18, jetty: 0, chimneyOdds: 0.3, hipOdds: 0, spire: 2.4,
+    archetype: ARCHETYPE.grid, gablesToStreet: true, towerOdds: 0, shutters: false, bay: 1.6, winWidth: 0.6, winTop: 2.2,
+    winBottom: 1.1, roundOdds: 0, setback: 0, lotWallOdds: 0, porchOdds: 0, stairOdds: 0, wingTurnOdds: 0, dressOdds: 0.3,
+    raised: 0, door: [0.9, 2.0],
+  },
+  {
+    // (the irregular grid as a shanty: plank columns on stilts, crooked, tin and plank lean-tos)
+    name: 'stilts',
+    wall: [0.62, 0.5, 0.36], wallMat: 4, trim: [0.4, 0.3, 0.2], roof: [0.58, 0.55, 0.5], roofMat: 3,
+    stone: [0.6, 0.56, 0.5], pitch: 0.4, overhang: 0.25, jetty: 0, chimneyOdds: 0, hipOdds: 0, spire: 2.0,
+    archetype: ARCHETYPE.grid, gablesToStreet: false, towerOdds: 0, shutters: false, bay: 1.6, winWidth: 0.6, winTop: 1.9,
+    winBottom: 1.0, roundOdds: 0, setback: 0, lotWallOdds: 0, porchOdds: 0, stairOdds: 0, wingTurnOdds: 0, dressOdds: 0,
+    raised: 0, door: [0.9, 1.9],
   },
 ];
 
