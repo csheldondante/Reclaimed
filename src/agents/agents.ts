@@ -1407,6 +1407,11 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     this.fk.g = makeBindGroup(this.device, 'agents-form', this.fk.anchor.layout, { 0: this.world.globals, 2: this.world.materials, 5: this.nav, 6: this.dist, 7: this.units, 10: this.params, 13: this.events, 16: this.mail, 55: this.jfaBuf, 56: b });
   }
 
+  /** (round 6, tests and the lab) where the order groups and the rank table lie in `mail` (readRaw('mail')) */
+  get mailLayout(): typeof MAIL_LAYOUT {
+    return MAIL_LAYOUT;
+  }
+
   /** (round 6) the routes bound now (useRoutes), or null for none */
   get routesBound(): GPUBuffer | null {
     return this.routesBuf === this.routesNone ? null : this.routesBuf;

@@ -66,7 +66,7 @@ export default async function (lab, args) {
     const cx = ps.reduce((a, p) => a + p[0], 0) / ps.length;
     const cy = ps.reduce((a, p) => a + p[1], 0) / ps.length;
     lab.camera().elevation = Math.PI / 3;
-    lab.look(cx, cy, args.close ?? 24, 0.5);
+    lab.look(cx, cy, args.close ?? 36, 0.5);
     let ok = 0;
     let cover = null;
     let busy = null;
@@ -99,6 +99,28 @@ export default async function (lab, args) {
     groundZ: +groundZ.toFixed(1),
     heights: onWall.map((p) => +(p[2] - groundZ).toFixed(1)),
   };
+  // (the test's read of the GPU's words for the man group (slot 0): its posts, and each rank's mode, its distance to
+  // its post)
+  {
+    const L = units.agents.mailLayout;
+    const mail = new Uint32Array(await units.agents.readRaw('mail'));
+    const f = new Float32Array(mail.buffer);
+    const o = L.groups;
+    out.man.posts = mail[o + L.formAt + 11];
+    out.man.runs = Array.from({ length: 8 }, (_, i) => o + L.formAt + 16 + 128 + i * 8).filter((r) => mail[r] !== 0xffffffff).map((r) => `${mail[r] & 0xffff} s ${f[r + 1].toFixed(1)}-${f[r + 2].toFixed(1)} before ${mail[r + 3]}`);
+    out.man.ranks = Array.from({ length: n }, (_, k) => { const r = L.ranks + k * L.rankW; return `${mail[r + 3] & 0xff}:${f[r + 5].toFixed(1)}`; }).join(' ');
+    // (is the walk reachable? the run fields at the posts — each rank's target — and at the soldiers)
+    const fw = mail[o + L.formAt + 14];
+    const rd = units.agents.reader(fw & 0xff).start(100);
+    await lab.run(0.3, 1, { renderEvery: 8 });
+    await new Promise((res) => setTimeout(res, 500));
+    out.man.atPosts = Array.from({ length: 4 }, (_, k) => { const r = L.ranks + k * L.rankW; const sm = rd.sample(f[r], f[r + 1], f[r + 2] + 0.5); return sm ? `${f[r].toFixed(0)},${f[r + 1].toFixed(0)},${f[r + 2].toFixed(1)} d ${sm.dist.toFixed(1)} z ${sm.z.toFixed(1)}` : 'null'; });
+    const rr = units.observe(units.members(gm));
+    await lab.run(0.1, 1, { renderEvery: 8 });
+    out.man.atSoldiers = units.members(gm).slice(0, 4).map((m) => { const p = units.get(m).at; const sm = rd.sample(p[0], p[1], p[2] + 0.5); return `${p.map((v) => v.toFixed(1))} d ${sm?.dist.toFixed(1)} z ${sm?.z.toFixed(1)}`; });
+    rr();
+    rd.stop();
+  }
   out.shots = [await shoot('townwalls_man', units.members(gm))];
 
   // 2. march out of a standing gate (status OK), not leaving
