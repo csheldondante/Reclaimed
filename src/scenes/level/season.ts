@@ -8,6 +8,8 @@ import { DISTRICT_SPAN } from '../../citygen/gpu';
 import { OPP_TUNE } from '../../opps/tune';
 import { SeasonLoop } from '../../season/loop';
 import { mountSeasonUi } from '../../season/ui';
+import { TownForces } from '../../season/forces';
+import { FIRST_WAVE, SeasonWar } from '../../season/war';
 import { LIVING_TUNING } from '../../citylife/params';
 import type { LevelScene } from '../level';
 import type { RegionStore } from '../../world/region-store';
@@ -98,6 +100,21 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoo
       LIVING_TUNING.set('forest.on', s.camp ? 1 : 0);
     },
   });
+  // (trackA-forces: the soldiers and raiders — Might as squads, raids on a schedule; ?wave=N the first raid's season,
+  // 0 none. TownForces is the one adapter to the Units contract: Track B's place-based calls replace its insides)
+  const units = scene.units;
+  if (units) {
+    const forces = new TownForces(units, () => (scene.townContracts ? { device: host.gpu.device, places: scene.townContracts.places } : null));
+    scene.townForces = forces;
+    core.onShift.push(() => forces.placesMoved());
+    loop.war = new SeasonWar({
+      forces: () => (scene.townContracts ? forces : null),
+      town: () => (loop.town !== null && scene.townContracts ? scene.townContracts.townIndex(loop.town) : -1),
+      firstWave: Number(p.get('wave') ?? FIRST_WAVE),
+      ledger: () => loop.ledger,
+    });
+    (globalThis as { war?: SeasonWar }).war = loop.war;
+  }
   // (the sandbox's tool panel hidden: the cards are the player's only tool here)
   scene.editor?.setVisible(false);
   scene.seasonUi = mountSeasonUi(host.ui, loop);

@@ -14,6 +14,7 @@ import { allocate, dealHand, hasLand, type Land, type Offer } from './deal';
 import { commit, DISTRICT_PARTS, grant, newLedger, nextSeason, short, uncommit, type SeasonLedger, type SeasonResult } from './ledger';
 import { summaryLine } from './words';
 import { townLife, type TownLife } from './life';
+import type { SeasonWar } from './war';
 
 export interface SeasonHost {
   districts: Pick<CityDistricts, 'claimDistrict' | 'districtsLeft' | 'stageDistrict' | 'inWindow' | 'wallStart' | 'wallStage'>;
@@ -86,6 +87,8 @@ export class SeasonLoop {
   private show: Showcase | null = null;
   private lastSteps: Step[] = [];
   private pending: Promise<unknown> | null = null;
+  /** (trackA-forces) the soldiers and raiders: settled at Next season, posted when a season's stages land */
+  war: SeasonWar | null = null;
 
   constructor(private host: SeasonHost) {}
 
@@ -109,6 +112,7 @@ export class SeasonLoop {
     if (saved) this.load(saved);
     this.deal();
     this.host.life?.(townLife(this.ledger));
+    this.war?.season(this.ledger);
     this.changed();
   }
 
@@ -228,6 +232,9 @@ export class SeasonLoop {
     this.settle();
     if (this.pending) throw new Error('season: one is resolving');
     const run = (async () => {
+      // (trackA-forces: the season's fight settled into the pools first — the fallen, what the raiders took)
+      const fight = this.war?.resolve(this.ledger) ?? null;
+      if (fight) this.ledger = fight.ledger;
       const r = nextSeason(this.ledger);
       for (const ch of r.changes) {
         const c = card(ch.card);
@@ -239,7 +246,7 @@ export class SeasonLoop {
       this.lastWalls = walls;
       this.ledger = r.ledger;
       this.last = r;
-      this.summary = summaryLine(r, card);
+      this.summary = summaryLine(r, card) + (fight?.line ? ` ${fight.line}` : '');
       const shown: Step[] = [];
       for (const ch of r.changes) {
         const sh = this.shares.get(ch.project);
@@ -270,7 +277,11 @@ export class SeasonLoop {
       this.host.life?.(townLife(this.ledger));
       // (saving: a season's end is the save point — the season's stages all set by now, the GPU's few words read after)
       void this.host.persist?.(this.snapshot());
-      void this.show.done.then(() => this.changed());
+      void this.show.done.then(() => {
+        // (trackA-forces: the season begun — its stages landed, the places moved: the squads and a raid due)
+        this.war?.season(this.ledger);
+        this.changed();
+      });
       return r;
     })();
     this.pending = run;

@@ -51,6 +51,8 @@ const CSS = `
 .season-sheet .s-building span{background:#3a3428;border-radius:8px;padding:3px 7px}
 .season-sheet .s-building span.new{background:#2f3b2d}
 .season-sheet .s-summary{font-size:12px;color:#d0d0d0}
+.season-sheet .s-forces{font-size:13px;color:#f2d8a0;display:flex;flex-direction:column;gap:2px}
+.season-sheet .s-forces:empty{display:none}
 .season-sheet .s-go{display:flex;gap:8px}
 .season-sheet .s-go button{flex:1;font:700 16px system-ui;padding:11px;border-radius:10px;border:0;background:#e8b84a;color:#221}
 .season-sheet .s-go button.skip{flex:0 0 90px;background:#555;color:#eee}
@@ -81,13 +83,15 @@ export function mountSeasonUi(ui: HTMLElement, loop: SeasonLoop): () => void {
   const hand = el('div', 's-hand');
   const building = el('div', 's-building');
   const summary = el('div', 's-summary');
+  // (trackA-forces: the soldiers and raiders — shown folded too)
+  const forces = el('div', 's-forces');
   const go = el('div', 's-go');
   const next = el('button', 'next', NEXT_SEASON);
   const skip = el('button', 'skip', SKIP);
   next.onclick = () => void loop.next();
   skip.onclick = () => loop.skip();
   go.append(next, skip);
-  sheet.append(head, hand, building, summary, go);
+  sheet.append(head, hand, building, summary, forces, go);
   ui.append(style, top, sheet);
 
   const render = () => {
@@ -133,10 +137,12 @@ export function mountSeasonUi(ui: HTMLElement, loop: SeasonLoop): () => void {
       building.appendChild(el('span', p.commitment.turn === l.season ? 'new' : undefined, `${p.card.title} · ${seasonsLeftLine(back - l.season)} · ${backLine(p.card.locks, back)}`));
     }
     summary.textContent = loop.summary ?? '';
+    forces.replaceChildren(...(loop.war?.lines ?? []).map((t) => el('div', undefined, t)));
     next.disabled = playing;
     skip.style.display = playing ? '' : 'none';
   };
   loop.onChange.push(render);
+  loop.war?.onChange.push(render);
   render();
   return () => {
     style.remove();

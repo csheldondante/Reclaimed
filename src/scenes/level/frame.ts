@@ -125,6 +125,8 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   if (scene.inhabitants) lifeFrame(scene, dt * scene.speed);
   if (scene.units && !scene.stream?.busy) {
     scene.units.update(dt * scene.speed);
+    // (trackA-forces: the adapter's frame count for its reads and its arrivals, told from the units' states)
+    scene.townForces?.update();
   }
 
   const simDt = dt * scene.speed;

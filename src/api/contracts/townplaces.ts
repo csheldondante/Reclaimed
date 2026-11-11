@@ -58,6 +58,24 @@ export const PLACE_STATUS = {
   noTown: 4,
 } as const;
 
+/** a status's name (orderFailed's `why`) */
+export type PlaceStatusName = keyof typeof PLACE_STATUS;
+
+/**
+ * (trackA-forces; the calls agreed with Track B for U2 round 5) Where a group is spawned or ordered to: a town's slot and
+ * a named place, or a district's lot by purpose and rank — indices only, resolved on the GPU where the order runs.
+ * `else`: the next place to try when this one isn't valid (PLACE_OK) — an authored preference ("a gate, else the keep"),
+ * resolved in order where the order runs; an order whose last choice isn't valid fails (`orderFailed`, the status's
+ * name). `also`: a second named place of the same town that must be valid too for this choice to be taken (a raid's
+ * spawn point only where its arterial's gate stands, and that gate only where its spawn point is). (`else` and `also`
+ * are Track A's additions to the agreed shape: for Track B's spawnAt / orderGroup to take, or the season
+ * side issues the chain itself.)
+ */
+export type PlaceRef = ({ town: number; place: number; also?: number } | { town: number; district: number; purpose: number; rank: number }) & { else?: PlaceRef };
+
+/** a group of units spawned together (spawnAt's) */
+export type GroupId = number;
+
 /** a town's side number in the side map (0 is open) */
 export const SIDE_OPEN = 0;
 export const SIDE_OF = (town: number): number => town + 1;

@@ -67,6 +67,7 @@ import type { StreetLabControl } from '../streetlab/control';
 import { fieldTownBox, hasGrid } from '../citygen/town';
 import type { FieldTowns } from '../citygen/towns';
 import type { LivingTowns } from '../citylife/towns';
+import type { TownForces } from '../season/forces';
 import type { TownContracts } from '../towncontracts/contracts';
 import { StaticClaims } from '../sim/static-claims';
 import { editTool } from './level/sandbox-tools';
@@ -287,6 +288,8 @@ export class LevelScene implements Scene {
   livingTowns?: LivingTowns;
   /** (Track B's unit contracts) the towns' side map and named places on the GPU (towncontracts/contracts.ts) */
   townContracts?: TownContracts;
+  /** (trackA-forces) the season's soldiers and raiders through the Units contract (season/forces.ts) */
+  townForces?: TownForces;
   /** sandbox: a smash drag in progress */
   smashing = false;
   /** (round 83) flying: a drag turns the view — where the pointer was */

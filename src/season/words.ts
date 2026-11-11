@@ -95,3 +95,38 @@ export function summaryLine(r: SeasonResult, name: (id: string) => SeasonCard): 
   if (!r.changes.length) out.push('Nothing was built.');
   return out.join(' ');
 }
+
+// ---- (trackA-forces) soldiers and raiders: the line under the season's summary -----------------------------------
+
+const count = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
+
+export const SOLDIERS_NO_PLACE = 'Your soldiers have nowhere to gather. Build walls for a muster yard. Or raise a keep for a barracks.';
+export const NO_SOLDIERS = 'You have no soldiers free. Each Might gives you 3.';
+
+/** where the soldiers are: "6 soldiers guard the gates." */
+export function soldiersLine(n: number, where: 'yard' | 'barracks' | 'gates'): string {
+  const who = count(n, 'soldier', 'soldiers');
+  if (where === 'gates') return `${who} guard the gates.`;
+  return where === 'yard' ? `${who} wait in the muster yard.` : `${who} wait at the barracks.`;
+}
+
+export function waveSoonLine(n: number): string {
+  return `Raiders are coming next season. Scouts count ${n}.`;
+}
+
+export function waveNowLine(n: number, left: number, atGate: boolean): string {
+  if (left === 0) return `All ${n} raiders are dead.`;
+  return atGate ? `Raiders reached the town! ${left} of ${n} still fight.` : `Raiders attack! ${left} of ${n} are on their way.`;
+}
+
+export const WAVE_NO_ROAD = 'Raiders were seen, but they found no road into town.';
+
+/** after the fight, at the season's end */
+export function fightLine(o: { raiders: number; left: number; fallen: number; might: number; materials: number; unrest: number }): string {
+  const out: string[] = [];
+  if (o.raiders) out.push(o.left ? `${count(o.left, 'raider', 'raiders')} got into town.` : 'You beat the raiders.');
+  if (o.materials) out.push(`They took ${o.materials} Materials.`);
+  if (o.unrest) out.push(`Unrest +${o.unrest}.`);
+  if (o.fallen) out.push(`${count(o.fallen, 'soldier', 'soldiers')} died. You lost ${o.might} Might.`);
+  return out.join(' ');
+}

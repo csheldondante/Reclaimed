@@ -168,6 +168,31 @@ export function grant(l: SeasonLedger, g: Partial<Pools>): SeasonLedger {
   return { ...l, holdings: h };
 }
 
+/**
+ * (trackA-forces) Losses: people gone (soldiers fallen: free ones first, then ones tied up in a card — that card's
+ * commitment simply gets fewer back) and goods taken (never under 0); Unrest changes as given.
+ */
+export function lose(l: SeasonLedger, g: Partial<Pools>): SeasonLedger {
+  const h = structuredClone(l.holdings);
+  for (const [k, v] of Object.entries(g) as [Pool, number][]) {
+    if (!v) continue;
+    if (k === 'unrest') {
+      h.goods.unrest = Math.max(0, (h.goods.unrest ?? 0) + v);
+      continue;
+    }
+    if (v < 0) throw new Error(`season: a loss of ${v} ${k}`);
+    if (POOL_ROLE[k] === 'people') {
+      const kind = PEOPLE_KIND[k]!;
+      const mine = h.agents.filter((a) => a.kind === kind);
+      const order = [...mine.filter((a) => !a.committed), ...mine.filter((a) => a.committed)];
+      const gone = new Set(order.slice(0, v));
+      h.agents = h.agents.filter((a) => !gone.has(a));
+    } else h.goods[k] = Math.max(0, (h.goods[k] ?? 0) - v);
+  }
+  strike(h);
+  return { ...l, holdings: h };
+}
+
 export function newLedger(start: Partial<Pools> = {}, income: Partial<Pools> = {}): SeasonLedger {
   const h = emptyHoldings();
   for (const k of POOLS) if (POOL_ROLE[k] !== 'people') h.goods[k] = 0;
