@@ -25,7 +25,7 @@ fn archDetail() -> f32 { return V.p.z; }
 fn fsLab(in: VO) -> @location(0) vec4<f32> {
   let sf = archSurface(in);
   // a warm sun with wrap, a cool sky; the surface's own occlusion; glass catching the sky
-  let n = normalize(in.nrm);
+  let n = bumpN(normalize(in.nrm), in.wpos, sf.h);
   let sunC = vec3<f32>(1.0, 0.93, 0.8) * V.sun.w;
   let diff = max(dot(n, normalize(V.sun.xyz)) * 0.85 + 0.15, 0.0);
   let sky = mix(vec3<f32>(0.42, 0.40, 0.38), vec3<f32>(0.55, 0.65, 0.8), n.z * 0.5 + 0.5);

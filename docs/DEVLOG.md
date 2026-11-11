@@ -23159,3 +23159,21 @@ cases over the fake's field limit), season, transfers, typecheck.
   crown), well.
 - In the game (Muru, play zoom) the patios and joined houses read; walled courts show where lots are big enough — most
   of Muru's house lots are under 10 × 12 m in their inscribed frame, so the forecourt manor is mostly on the bigger lots.
+
+## archgen: cloth sheets, bump, patio floors, smaller stone (2026-11-11; the user: "The cloth roofs … still have the
+## corrugated texture and don't look billowy or saggy"; "The rooftop patios also all have aligned flat stone texture
+## that doesn't read well. Do we have bump mapping?"; "The stones read as too big. I would make bricks half the size
+## and stone that or more")
+
+- Cloth (S_CLOTH parts, and a patchwork roof's tarps — the same per-part pick in the vertex and fragment stages) is no
+  longer built of tile courses (their lips read as corrugation): clothVert lays each face as one sheet, a 4 × 6 grid of
+  quads, bellied down the slope and dipping between its ends, its normals the surface's own (smooth), lifted by half
+  its sag to rest on its frame; no eave underside. The tarp's fake sawtooth shading is gone.
+- Bump mapping (there was none): the patterns write a relief height (gRelief: joints sunk, stones' edges rounded,
+  each a little proud or not; plank seams; roof-tile gaps), Surf carries it, and both hosts tilt the normal by its
+  screen derivatives (bumpN: the surface-gradient method, no tangents or textures). It fades out where a joint is
+  under a few pixels and with the detail level (off on the phone).
+- Flat tops' uv is in the body's own frame (along its side 0), so patios no longer all line up with the world; each
+  patio's floor is its own: flagstones of their own size, terracotta tiles, or a plank deck with staggered ends.
+- Stone scale: bricks halved (0.24 × 0.095), ashlar 0.42 × 0.2, rubble and coursed stone ~0.3 × 0.15, flagstones
+  0.5 × 0.36 (× a per-part scale), terracotta 0.24; the mortar joint and bevel now in proportion to the stone.

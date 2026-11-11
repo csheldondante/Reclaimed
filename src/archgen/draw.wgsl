@@ -128,7 +128,10 @@ fn vsArchBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) 
     let p0 = vec3<f32>(c[0], zt[0]);
     let n = cross(vec3<f32>(c[1], zt[1]) - p0, vec3<f32>(c[2], zt[2]) - p0);
     o.nrm = normalize(select(n, -n, n.z < 0.0));
-    o.uv = vec4<f32>(wp.xy, 0.0, 0.0);
+    // (in the body's own frame — along its side 0 — so flat tops lie each its own way, not all on the world's axes)
+    let ex = normalize(c[1] - c[0]);
+    let rel = wp.xy - c[0];
+    o.uv = vec4<f32>(dot(rel, ex), dot(rel, vec2<f32>(-ex.y, ex.x)), 0.0, 0.0);
     o.info.z = o.info.z | I_TOP;
   }
   finish(&o, wp, ii < AW(3u));
@@ -185,6 +188,40 @@ fn courseVert(B0: vec2<f32>, B1: vec2<f32>, T0: vec2<f32>, T1: vec2<f32>, zb: f3
   return p;
 }
 
+/** (the user: "the cloth roofs … don't look billowy or saggy") a face of cloth: one smooth sheet, no courses — a
+ *  grid of 4 × 6 quads (the face's 144 vertices) from the foot edge B0 → B1 (zb) to the head T0 → T1 (zt), bellied down
+ *  the slope and dipping between its ends, its normals the surface's own (smooth); lifted by half its sag so it rests on
+ *  its frame rather than through it */
+fn clothVert(B0: vec2<f32>, B1: vec2<f32>, T0: vec2<f32>, T1: vec2<f32>, zb: f32, zt: f32, j: u32, seed: u32, o: ptr<function, VO>) -> vec3<f32> {
+  var IX = array<u32, 6>(0u, 1u, 2u, 0u, 2u, 3u);
+  var DS = array<f32, 4>(0.0, 1.0, 1.0, 0.0);
+  var DT = array<f32, 4>(0.0, 0.0, 1.0, 1.0);
+  let qd = j / 6u;
+  let c = IX[j % 6u];
+  let s = (f32(qd % 4u) + DS[c]) / 4.0;
+  let t = (f32(qd / 4u) + DT[c]) / 6.0;
+  let len = length(B1 - B0);
+  let dip = clamp(0.07 * len, 0.1, 0.3) * (0.8 + 0.4 * rnd(seed, 91u));
+  let belly = 0.07 + 0.05 * abs(zt - zb);
+  let PI = 3.14159;
+  let ss = sin(PI * s);
+  let st = sin(PI * t);
+  let hang = 0.35 + 0.65 * st;
+  let lift = 0.5 * (dip + belly);
+  let xy = mix(mix(B0, B1, s), mix(T0, T1, s), t);
+  let z = zb + (zt - zb) * t - belly * st - dip * ss * hang + lift;
+  let dzs = -dip * PI * cos(PI * s) * hang;
+  let dzt = (zt - zb) - belly * PI * cos(PI * t) - dip * ss * 0.65 * PI * cos(PI * t);
+  let ds = vec3<f32>(mix(B1 - B0, T1 - T0, t), dzs);
+  let dt = vec3<f32>(mix(T0, T1, s) - mix(B0, B1, s), dzt);
+  var n = cross(ds, dt);
+  if (n.z < 0.0) { n = -n; }
+  (*o).nrm = normalize(n);
+  (*o).uv = vec4<f32>(s * len, len, fract(t * 6.0), floor(t * 6.0));
+  (*o).info.z = (*o).info.z | I_COURSE;
+  return vec3<f32>(xy, z);
+}
+
 @vertex
 fn vsArchRoof(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
   var o: VO;
@@ -238,6 +275,9 @@ fn vsArchRoof(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) 
   let psurf = (w0 >> 8u) & 0xffu;
   o.info = pinfo(b, psurf, I_ROOF | (face << 8u));
   o.zs = vec2<f32>(eave, ridgeZ);
+  // cloth: a tent's or an awning's, or a patchwork roof's tarp (the same pick as archSurface's)
+  let roofM = u32(styleV(o.info.w & 0xffu, 2u).w + 0.5);
+  let cloth = psurf == S_CLOTH || (psurf == S_ROOF && roofM == 3u && hash((o.info.w >> 24u) * 7u + o.info.x) % 3u == 0u);
   if (face < 2u) {
     if (face == 1u && shed) {
       live = false;
@@ -247,7 +287,8 @@ fn vsArchRoof(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) 
       var T0 = R0;
       var T1 = R1;
       if (face == 1u) { B0 = e[2]; B1 = e[3]; T0 = R1; T1 = R0; }
-      wp = courseVert(B0, B1, T0, T1, ez, rz, j / 12u, COURSES, j % 12u, sag, seed, &o);
+      if (cloth) { wp = clothVert(B0, B1, T0, T1, ez, rz, j, seed + face * 13u, &o); }
+      else { wp = courseVert(B0, B1, T0, T1, ez, rz, j / 12u, COURSES, j % 12u, sag, seed, &o); }
     }
   } else if (face < 4u) {
     if (gable || shed) {
@@ -274,8 +315,8 @@ fn vsArchRoof(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) 
       wp = courseVert(e[k], e[(k + 1u) % 4u], T, T, ez, rz, j / 12u, COURSES, j % 12u, 0.0, seed + 7u, &o);
     }
   } else {
-    // the underside of the eaves
-    if (j < 6u) {
+    // the underside of the eaves (not a cloth's: it's a sheet)
+    if (j < 6u && !cloth) {
       var IX = array<u32, 6>(0u, 2u, 1u, 0u, 3u, 2u);
       var u = e;
       if (shed) { u = array<vec2<f32>, 4>(e[0], e[1], c[1], c[0]); }
@@ -616,6 +657,26 @@ fn box1(x: f32, lo: f32, hi: f32, w: f32) -> f32 { return smoothstep(lo - w, lo 
 
 /** stones in courses (rh tall, about bw long, each row's joints its own): a stone's shade with a bevelled look — lit
  *  on its top, shadowed at its foot, dark mortar between — or 1 where detail is off */
+/** (bump) the surface's relief at this fragment in metres (0 its face, below it its joints): the patterns write it,
+ *  the hosts tilt the normal by its screen derivatives (bumpN) */
+var<private> gRelief: f32 = 0.0;
+/** relief fades out where a pattern's joint is under a few pixels (it would only shimmer), and on the phone */
+fn reliefFade(px: f32, size: f32) -> f32 { return (1.0 - smoothstep(size * 0.08, size * 0.25, px)) * archDetail(); }
+
+/** n tilted by the relief h (a height in metres over the surface at p): bump mapping by screen derivatives (no
+ *  tangents, no textures — Mikkelsen's surface gradient). Call in uniform control flow. */
+fn bumpN(n: vec3<f32>, p: vec3<f32>, h: f32) -> vec3<f32> {
+  let dpx = dpdx(p);
+  let dpy = dpdy(p);
+  let dhx = dpdx(h);
+  let dhy = dpdy(h);
+  let r1 = cross(dpy, n);
+  let r2 = cross(n, dpx);
+  let det = dot(dpx, r1);
+  let g = sign(det) * (dhx * r1 + dhy * r2);
+  return normalize(abs(det) * n - g);
+}
+
 fn stones(u: f32, v: f32, bw: f32, rh: f32, px: f32, seed: f32, detail: f32) -> vec2<f32> {
   let row = floor(v / rh);
   let off = h21(vec2<f32>(row, seed)) * bw;
@@ -628,17 +689,22 @@ fn stones(u: f32, v: f32, bw: f32, rh: f32, px: f32, seed: f32, detail: f32) -> 
   let fv = fract(v / rh);
   let id = h21(vec2<f32>(col, row) + seed * 3.1);
   let m = min(min(fu, 1.0 - fu) * bw, min(fv, 1.0 - fv) * rh);
-  let lw = 0.028;
+  // (the joint and the bevel in proportion to the stone: the user asked for bricks half the size, stone smaller still)
+  let sz = min(bw, rh);
+  let lw = min(0.028, 0.14 * sz);
   let mortar = 1.0 - smoothstep(lw - px, lw + px, m);
   // the bevel: the stone's top lit, its foot in shade, its edges rounded off
-  let bev = 1.0 + 0.16 * (fv - 0.45) - 0.18 * (1.0 - smoothstep(0.0, 0.07, m - lw));
+  let bev = 1.0 + 0.16 * (fv - 0.45) - 0.18 * (1.0 - smoothstep(0.0, 0.35 * sz, m - lw));
   let shade = mix(1.0, (0.84 + 0.3 * id) * bev, detail);
+  // its relief: the joint sunk, the stone's edge rounded into it, each stone a little proud of the next or not
+  let face = smoothstep(lw * 0.5, lw + 0.25 * sz, m);
+  gRelief = (face * (0.018 + 0.012 * id) - 0.012) * reliefFade(px, min(bw, rh));
   return vec2<f32>(shade, mortar * detail);
 }
 
 fn styleV(s: u32, i: u32) -> vec4<f32> { return bitcast<vec4<f32>>(instances[(AW(0u) >> 2u) + s * SV + i]); }
 
-struct Surf { col: vec3<f32>, glass: f32, ao: f32 };
+struct Surf { col: vec3<f32>, glass: f32, ao: f32, h: f32 };
 
 /** a surface's colour (sRGB), its glass, its occlusion. Takes derivatives: call it in uniform control flow, before any discard. */
 fn archSurface(in: VO) -> Surf {
@@ -682,7 +748,7 @@ fn archSurface(in: VO) -> Surf {
     col *= 0.95 + 0.07 * avnoise(vec2<f32>(u, v) * 1.7) * detail + 0.03 * avnoise(vec2<f32>(u, v) * 0.4);
     if (m == 1u) {
       // brick
-      let st = stones(u, v, 0.48, 0.19, px, 2.0, detail);
+      let st = stones(u, v, 0.24, 0.095, px, 2.0, detail);
       col = mix(col * st.x, trimC.rgb * 0.95, st.y);
     } else if (m == 4u) {
       // planks: upright boards, each its own weathering, a patch or two nailed over
@@ -694,9 +760,10 @@ fn archSurface(in: VO) -> Surf {
       let patchM = box1(fract(u * 0.37 + lr), 0.0, 0.25, px) * box1(fract(v * 0.41 + lr * 1.7), 0.3, 0.55, px);
       col = mix(col, col * vec3<f32>(0.8, 0.85, 0.95), patchM * detail);
       col = mix(col, col * 0.45, seam * detail);
+      gRelief = -seam * 0.012 * reliefFade(px, bw);
     } else if (m == 2u) {
       // ashlar
-      let st = stones(u, v, 0.95, 0.45, px, 5.0, detail);
+      let st = stones(u, v, 0.42, 0.2, px, 5.0, detail);
       col = mix(col * st.x, col * 0.55, st.y);
     }
     // painted windows: only where none are built (a round tower's bays, a gable's attic)
@@ -775,15 +842,15 @@ fn archSurface(in: VO) -> Surf {
       if (m == 3u && hash((in.info.w >> 24u) * 7u + lot) % 3u != 0u) { mm = 4u; }
       if (mm == 2u) { k = (0.8 + 0.3 * avnoise(vec2<f32>(u * 8.0, row * 3.0 + v))) * mix(0.8, 1.0, smoothstep(1.0, 0.3, v)); }
       else if (mm == 3u) {
-        // a tarp: faded canvas of one of a few dyes, broad stripes or none, sagging between the rafters, patched
+        // a tarp: faded canvas of one of a few dyes, broad stripes or none, patched
         let pk = hash((in.info.w >> 24u) * 977u + lot * 13u);
         var pal = array<vec3<f32>, 5>(vec3<f32>(0.62, 0.4, 0.33), vec3<f32>(0.45, 0.5, 0.55), vec3<f32>(0.7, 0.62, 0.44),
                                       vec3<f32>(0.5, 0.55, 0.42), vec3<f32>(0.76, 0.72, 0.62));
         col = pal[pk % 5u];
         let stripe = step(0.5, fract(u / 0.7)) * select(0.0, 1.0, (pk & 96u) == 96u);
         col = mix(col, vec3<f32>(0.82, 0.78, 0.68), stripe * 0.6);
-        let sag = abs(fract(u / 1.1) - 0.5) * 2.0;
-        k = 0.8 + 0.2 * sag + 0.06 * avnoise(vec2<f32>(u * 2.0, row + v));
+        // (its sag is in the sheet's shape now — clothVert — only a weave's faint mottling here)
+        k = 0.95 + 0.06 * avnoise(vec2<f32>(u * 2.0, row + v));
         let patchT = box1(fract(u * 0.29 + f32(pk & 15u) * 0.1), 0.0, 0.3, px) * box1(fract(row * 0.37 + v * 0.3), 0.2, 0.6, px);
         col = mix(col, vec3<f32>(0.62, 0.5, 0.36), patchT * 0.7);
       } else if (mm == 4u) {
@@ -791,7 +858,10 @@ fn archSurface(in: VO) -> Surf {
         k = 0.75 + 0.35 * h21(vec2<f32>(floor(u / 0.3), f32(lot)));
         col = vec3<f32>(0.55, 0.42, 0.3);
       }
-      else { k = mix(k, k * 0.55, gap); }
+      else {
+        k = mix(k, k * 0.55, gap);
+        gRelief = -gap * 0.015 * reliefFade(px, tw);
+      }
       // (a few tiles mossed, more low on the roof)
       let moss = step(0.9, h21(vec2<f32>(floor(tu) * 1.7, row))) * 0.6;
       col = mix(col * mix(1.0, k, detail), vec3<f32>(0.42, 0.5, 0.3), moss * detail * 0.5);
@@ -801,9 +871,26 @@ fn archSurface(in: VO) -> Surf {
     // a wall's top under its roof: dark, so the seams between the courses at a hip never show it
     col = vec3<f32>(0.16, 0.13, 0.1);
   } else if ((surf == S_WALL || surf == S_STONE || surf == S_TINT) && isTop && (flags & F_NOWIN) == 0u) {
-    // a flat roof: flagstones
-    let st = stones(in.uv.x, in.uv.y, 1.1, 0.9, px, 9.0, detail);
-    col = mix(stoneC.rgb * 0.7 * st.x, vec3<f32>(0.36, 0.4, 0.3), st.y);
+    // a flat roof: a floor of its own — flagstones (their own size), terracotta tiles, or a deck of planks
+    let fk = hash((in.info.w >> 24u) * 389u + lot * 17u);
+    let pick = fk % 3u;
+    if (pick == 0u || surf != S_TINT) {
+      let sc = 0.8 + 0.5 * f32((fk >> 4u) & 7u) / 7.0;
+      let st = stones(in.uv.x, in.uv.y, 0.5 * sc, 0.36 * sc, px, 9.0 + f32(fk & 15u), detail);
+      col = mix(stoneC.rgb * 0.75 * st.x, vec3<f32>(0.36, 0.4, 0.3), st.y);
+    } else if (pick == 1u) {
+      let st = stones(in.uv.x, in.uv.y, 0.24, 0.24, px, 4.0 + f32(fk & 15u), detail);
+      col = mix(vec3<f32>(0.74, 0.44, 0.32) * st.x, vec3<f32>(0.78, 0.72, 0.62), st.y);
+    } else {
+      let bw = 0.22;
+      let seam = 1.0 - box1(fract(in.uv.x / bw), 0.06, 0.94, px / bw);
+      let tone = 0.82 + 0.3 * h21(vec2<f32>(floor(in.uv.x / bw), f32(fk & 255u)));
+      // (the boards' ends staggered)
+      let endJ = 1.0 - box1(fract(in.uv.y / 2.4 + h21(vec2<f32>(floor(in.uv.x / bw), 3.0))), 0.01, 0.99, px / 2.4);
+      col = vec3<f32>(0.56, 0.4, 0.27) * mix(1.0, tone, detail);
+      col = mix(col, col * 0.45, max(seam, endJ) * detail);
+      gRelief = -max(seam, endJ) * 0.01 * reliefFade(px, bw);
+    }
   } else if (surf == S_TRIM) {
     col = trimC.rgb;
     // (a cornice's top is under the roof: dark, so a seam between the courses never shows it)
@@ -815,7 +902,7 @@ fn archSurface(in: VO) -> Surf {
     if (!isTop) {
       // rubble for the plinths and the lot walls, coursed stone for the towers and chimneys
       let big = surf == S_PLINTH || surf == S_LOTWALL;
-      let st = stones(u, v, select(0.7, 0.62, big), select(0.36, 0.3, big), px, select(1.0, 3.0, big), detail);
+      let st = stones(u, v, select(0.32, 0.3, big), select(0.16, 0.14, big), px, select(1.0, 3.0, big), detail);
       col = mix(col * st.x, stoneMortar, st.y);
     } else {
       col *= 0.9;
@@ -903,7 +990,7 @@ fn archSurface(in: VO) -> Surf {
   } else if (surf == S_BRICK) {
     col = vec3<f32>(0.66, 0.36, 0.26) * (0.92 + 0.12 * lr);
     if (!isTop) {
-      let st = stones(u, v, 0.48, 0.19, px, 2.0, detail);
+      let st = stones(u, v, 0.24, 0.095, px, 2.0, detail);
       col = mix(col * st.x, vec3<f32>(0.75, 0.7, 0.62), st.y);
       // soot near the top
       col *= mix(1.0, 0.45, smoothstep(in.uv.w - 3.0, in.uv.w, v));
@@ -932,5 +1019,5 @@ fn archSurface(in: VO) -> Surf {
   var ao = 1.0;
   if (!isTop && surf != S_GROUND && !isCourse) { ao = mix(0.6, 1.0, smoothstep(0.0, 1.6, lz - in.zs.y + 0.6)); }
   if (surf == S_TRIM && in.nrm.z < -0.5) { ao = 0.5; }
-  return Surf(col, glass, ao);
+  return Surf(col, glass, ao, gRelief);
 }
