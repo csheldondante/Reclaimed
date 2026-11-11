@@ -2292,3 +2292,11 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   contract; stacked terraces, arches, stilts, bridges, narrow coloured houses along curving rows.
 - AG17 Lots don't know water: docks and water wheels can't check they're by water (a water bit or distance in the
   record, or the generator sampling the town's water mask).
+- AG18 (the user, 2026-11-11: "good shading is well solved … we should be using a stronger lighting model") One
+  standard lighting model for the lab and the game: diffuse + specular with roughness per material, sky light, AO
+  (SSAO/GTAO on PC, per-part on the phone), tone mapping and exposure; today light.wgsl is Lambert + hemisphere + a
+  fake fill with no specular or tone mapping, and the lab lights with its own model. Shared by every system: who owns
+  it (here or the art_improvements session) is the user's call.
+- AG19 ("working with better ground and building textures") Texture sets (albedo/normal/roughness/AO) for walls, roofs,
+  ground: ~12–16 CC0 sets (Poly Haven / ambientCG) in one texture array, KTX2-compressed, 512 phone / 1k PC; the
+  generator keeps per-part tint, wear and pick. Waits on the user: may CC0 textures go in the public repo?

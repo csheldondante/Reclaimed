@@ -381,6 +381,17 @@ fn windows() {
   let s = gS;
   let win = sty(s, 7u);
   let shut = sty(s, 6u).z > 0.5;
+  // the lot's windows: a shape for its ground floor and one for above (often square-headed), its sills and heads, a
+  // balcony on its front now and then, small square lights in a top storey
+  let ls = hash(gLot * 977u + 5u);
+  let rs = rnd(ls, 1u);
+  var shape0 = 0u;
+  if (rs < 0.22) { shape0 = 1u; } else if (rs < 0.42) { shape0 = 2u; } else if (rs < 0.5) { shape0 = 3u; }
+  let shapeUp = select(0u, shape0, rnd(ls, 2u) < 0.45);
+  let dress = (hash(ls + 1u) % 3u) | ((hash(ls + 2u) % 4u) << 2u);
+  let balcony = rnd(ls, 3u) < 0.3;
+  let balAll = rnd(ls, 4u) < 0.35;
+  let attic = rnd(ls, 5u) < 0.4;
   for (var k = 0u; k < gNW; k++) {
     let o = (gLot * PPL + gWalls[k]) * PW;
     let w0 = ARCH[PB + o];
@@ -421,13 +432,28 @@ fn windows() {
             continue;
           }
           if (!winFits(st, win.z, wallH)) { continue; }
-          let ww = win.y * 0.5;
+          var ww = win.y * 0.5;
+          var zs = z0 + f32(st) * STOREY + win.w;
+          var H = win.z - win.w;
+          var shape = select(shapeUp, shape0, st == 0u);
+          var dr = dress;
+          // (the top storey that fits, above the first: small square lights under the eaves, sometimes)
+          let top = !winFits(st + 1u, win.z, wallH) && st >= 2u;
+          if (top && attic) { H = min(H, ww * 2.2); zs = z0 + f32(st) * STOREY + win.z - H; shape = 0u; }
+          // a balcony: a door-height window onto a slab with a rail, on the front above the ground floor
+          else if (balcony && front && f == 0u && st >= 1u && (balAll || bi == nb / 2u)) {
+            dr |= 16u;
+            zs = z0 + f32(st) * STOREY + 0.1;
+            H = win.z - 0.1;
+            ww = max(ww, 0.5);
+          }
+          if (shape == 1u) { H = max(H, ww * 2.0 + 0.3); }
           let p0 = a + d * (mid - ww);
           let p1 = a + d * (mid + ww);
           var fl = 0u;
-          if (shut) { fl |= F_SHUT; }
-          if (rnd(hash(gLot * 131u + f * 17u + st * 5u + bi), 1u) < sty(s, 9u).z) { fl |= F_BOX; }
-          put(K_WIN, S_GLASS, fl, array<vec2<f32>, 4>(p0, p1, vec2<f32>(0.0), vec2<f32>(0.0)), z0 + f32(st) * STOREY + win.w, vec4<f32>(win.z - win.w, 0.1, 0.0, 0.0));
+          if (shut && (dr & 16u) == 0u && shape != 1u && shape != 3u) { fl |= F_SHUT; }
+          if ((dr & 16u) == 0u && rnd(hash(gLot * 131u + f * 17u + st * 5u + bi), 1u) < sty(s, 9u).z) { fl |= F_BOX; }
+          put(K_WIN, S_GLASS, fl, array<vec2<f32>, 4>(p0, p1, vec2<f32>(0.0), vec2<f32>(0.0)), zs, vec4<f32>(H, 0.1, f32(shape), f32(dr)));
         }
       }
     }
@@ -1236,14 +1262,6 @@ fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
     roof(q, z1 + 0.12, hash(ch) % 4u, 0.4, 0.0, 0.25, F_SHED);
     return;
   }
-  // a patio (the user: "little open patios up top"): some columns behind the street flat-topped, flagstones behind a
-  // low white parapet, a potted shrub
-  if (!tower && rnd(ch, 15u) < select(0.28, 0.08, front)) {
-    body(S_TINT, ff, q, z0, z1);
-    put(K_CREN, S_FRAME, 0u, q, z1, vec4<f32>(0.5, 0.0, 1.0, 0.14));
-    if (rnd(ch, 16u) < 0.75) { bushAt(mix(c, q[2], 0.5), z1, 0.38, 0.65, rnd(ch, 17u) < 0.6); }
-    return;
-  }
   body(S_TINT, ff | F_UNDER, q, z0, z1);
   // its own gable: a street column's to the street (side 0 is on it); behind, the ridge along the lot's street, so the
   // roofs fall into rows instead of a heap; a tower's a pyramid
@@ -1280,6 +1298,34 @@ fn gridPiece(q0: array<vec2<f32>, 4>, ch: u32) {
   let c = (q[0] + q[1] + q[2] + q[3]) * 0.25;
   if (rnd(ch, 3u) < 0.45) { chimney(mix(c, q[1], 0.45), z1 + rise * 0.3, z1 + rise + 0.9); }
   if (rnd(ch, 4u) < 0.25) { chimney(mix(c, q[3], 0.45), z1 + rise * 0.3, z1 + rise + 0.7); }
+}
+
+/** a whole piece of the grid as one roof terrace (the user: "little open patios up top"; adjacent ones "not joined"
+ *  looked bad): one column a storey under its neighbours, one floor, one low parapet round it all, a stair hut at a
+ *  corner with a lean-to roof, potted shrubs. q a quad, or a triangle (its corner 3 on corner 2). */
+fn gridTerrace(q0: array<vec2<f32>, 4>, tri: bool, ch: u32) {
+  if (gN + 7u > PPL) { return; }
+  let q = faceStreet(q0);
+  let front = gFront;
+  let g = gGround;
+  let H0 = f32(max(REC[gLot * RECW + 19u], 1u));
+  let h = clamp(i32(round(H0 - 0.6 + (rnd(ch, 1u) - 0.5))), 1, 5);
+  let z1 = g + f32(h) * STOREY;
+  body(S_TINT, select(0u, F_FRONT0, front), q, g, z1);
+  put(K_CREN, S_FRAME, 0u, q, z1, vec4<f32>(0.5, 0.0, 1.0, 0.14));
+  // the stair hut in a corner (a triangle's corner 0 or 1: its two sides real)
+  let k = select(hash(ch) % 4u, hash(ch) % 2u, tri);
+  let c = q[k];
+  let e1 = normalize(q[(k + 1u) % 4u] - c);
+  let e2 = normalize(q[(k + 3u) % 4u] - c);
+  let hq = array<vec2<f32>, 4>(c + (e1 + e2) * 0.25, c + e1 * 1.75 + e2 * 0.25, c + (e1 + e2) * 1.75, c + e1 * 0.25 + e2 * 1.75);
+  if (rnd(ch, 2u) < 0.7 && quadArea(q) > 14.0) {
+    body(S_TINT, 0u, hq, z1, z1 + 2.3);
+    roof(hq, z1 + 2.35, 2u, 0.5, 0.0, 0.15, F_SHED);
+  }
+  let cen = (q[0] + q[1] + q[2] + q[3]) * 0.25;
+  bushAt(mix(cen, q[(k + 2u) % 4u], 0.55), z1, 0.42, 0.7, rnd(ch, 3u) < 0.6);
+  if (rnd(ch, 4u) < 0.5) { bushAt(mix(cen, q[(k + 1u) % 4u], 0.55), z1, 0.36, 0.6, rnd(ch, 5u) < 0.6); }
 }
 
 /** a small square post at p (a pillar, a stilt) */
@@ -1342,8 +1388,16 @@ fn grid(seed: u32) {
         if (!anyIn) { continue; }
         // a whole quad piece in this lot: now and then one house (not the shanties: theirs stay huts)
         let ph = posHash(cen);
-        if (merged && allIn && !shanty && rnd(ph, 21u) < 0.5) {
+        // (a terrace a whole piece, so neighbouring flats are one floor behind one parapet, not cells side by side)
+        let pr = rnd(ph, 21u);
+        if (merged && allIn && !shanty && pr < 0.45) {
           gridPiece(V, ph);
+          continue;
+        }
+        if (allIn && !shanty && ((merged && pr < 0.62) || (!merged && pr < 0.18))) {
+          var tq = V;
+          if (!merged) { tq[3] = V[2]; }
+          gridTerrace(tq, !merged, ph);
           continue;
         }
         for (var k = 0u; k < nv; k++) {

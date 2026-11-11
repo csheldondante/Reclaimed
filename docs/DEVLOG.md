@@ -23189,3 +23189,20 @@ cases over the fake's field limit), season, transfers, typecheck.
   pebbles and grass tufts; grass mottled with blades as speckle and a flower now and then. Each fades to its mottled
   colour where its detail is under a few pixels (tuned at play zoom: ~6 cm a pixel on the desktop shot).
 - Touches Track A's citygen (streets.wgsl: the flag only, colours and geometry unchanged) and the shared body shader.
+
+## archgen: irregular stone, terraces, window variety (2026-11-11; the user: "the stone pattern is a bit too regular
+## and the patio still looks bad especially where two are adjacent and not joined. I think the windows could use more
+## variety in shape and the sills could use more variety and color as well")
+
+- stones(): courses of their own heights (0.6–1.4 the mean) and stones of their own lengths (0.2–1.8), each course's
+  joints laid fresh, a wider spread of shades. (A stop-gap: the user's step back asked for real texture sets and a
+  stronger lighting model — BACKLOG AG18/AG19, awaiting their answer on assets and on who owns the lighting.)
+- Terraces replace the per-cell patios: a whole piece of the grid (a merged quad, or a lone triangle) flat behind one
+  parapet, one floor, a storey under its neighbours, a stair hut with a lean-to in a corner, potted shrubs — so two
+  flats side by side are one floor, not cells each walled in.
+- Windows: each lot picks a shape for its ground floor (square-headed, round-headed, segmental, pointed two-light) and
+  often a plainer one above; the head's spandrels drawn in the frame's colour (archSurface archedOut, the glass told
+  its shape in info.z bits 20–22); its dressing — sills of stone, wood or paint, heads plain, keystoned, hooded or a
+  heavy lintel — and frames in the style's trim or a paint of the lot's own (frameColour, also the parapets'); a
+  balcony on the front above the ground floor (a slab and a rail, a door-height window; its middle bay or all of
+  them); small square lights in a top storey. Shutters skip round and pointed heads and balconies.

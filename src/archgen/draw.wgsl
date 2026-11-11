@@ -393,6 +393,14 @@ fn vsArchWin(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -
   let j = vi % 30u;
   let door = (fl & F_DOOR) != 0u;
   let dep = 0.13;
+  // (the user: "the windows could use more variety in shape and the sills could use more variety and color") its
+  // shape (0 square-headed, 1 round-headed, 2 segmental, 3 pointed two-light) and its dressing: the sill (0 stone,
+  // 1 wood, 2 painted), the head (0 plain, 1 a keystone, 2 a hood, 3 a heavy lintel), a balcony (16)
+  let shape = u32(pf(b, 13u) + 0.5);
+  let wst = u32(pf(b, 14u) + 0.5);
+  let sillK = wst & 3u;
+  let headK = (wst >> 2u) & 3u;
+  let bal = (wst & 16u) != 0u;
   var live = ii < AW(3u);
   var surf = S_FRAME;
   // box: u0 u1 v0 v1 w0 w1 (the wall's frame: along, out, up from the sill)
@@ -401,25 +409,58 @@ fn vsArchWin(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -
   switch bk {
     case 0u: { bx = vec4<f32>(-f, 0.0, 0.0, dep); bz = vec2<f32>(0.0, H); }
     case 1u: { bx = vec4<f32>(W, W + f, 0.0, dep); bz = vec2<f32>(0.0, H); }
-    case 2u: { bx = vec4<f32>(-f - 0.05, W + f + 0.05, 0.0, dep + 0.04); bz = vec2<f32>(H, H + f + 0.05); }
+    case 2u: {
+      bx = vec4<f32>(-f - 0.05, W + f + 0.05, 0.0, dep + 0.04);
+      bz = vec2<f32>(H, H + f + 0.05);
+      if (!door && headK == 2u) { bx = vec4<f32>(-f - 0.2, W + f + 0.2, 0.0, dep + 0.18); bz = vec2<f32>(H + 0.02, H + f + 0.12); surf = S_STONE; }
+      if (!door && headK == 3u) { bx = vec4<f32>(-f - 0.14, W + f + 0.14, 0.0, dep + 0.09); bz = vec2<f32>(H, H + f + 0.26); surf = S_STONE; }
+    }
     case 3u: {
       if (door) { bx = vec4<f32>(-0.3, W + 0.3, 0.0, 0.55); bz = vec2<f32>(-0.28, 0.0); surf = S_STONE; }
+      else if (sillK == 0u) { bx = vec4<f32>(-f - 0.13, W + f + 0.13, 0.0, dep + 0.15); bz = vec2<f32>(-0.15, 0.02); surf = S_STONE; }
+      else if (sillK == 1u) { bx = vec4<f32>(-f - 0.05, W + f + 0.05, 0.0, dep + 0.09); bz = vec2<f32>(-0.07, 0.02); surf = S_WOOD; }
       else { bx = vec4<f32>(-f - 0.09, W + f + 0.09, 0.0, dep + 0.11); bz = vec2<f32>(-0.09, 0.02); }
     }
     case 4u: { bx = vec4<f32>(0.0, W, 0.0, 0.025); bz = vec2<f32>(0.0, H); surf = select(S_GLASS, S_DOOR, door); }
-    case 5u: { live = live && !door; bx = vec4<f32>(W * 0.5 - 0.03, W * 0.5 + 0.03, 0.0, 0.06); bz = vec2<f32>(0.0, H); }
-    case 6u: { live = live && !door; bx = vec4<f32>(0.0, W, 0.0, 0.06); bz = vec2<f32>(H * 0.62 - 0.03, H * 0.62 + 0.03); }
+    case 5u: {
+      live = live && !door;
+      let mw = select(0.03, 0.06, shape == 3u);
+      bx = vec4<f32>(W * 0.5 - mw, W * 0.5 + mw, 0.0, 0.06);
+      bz = vec2<f32>(0.0, H);
+    }
+    case 6u: {
+      live = live && !door;
+      if (headK == 1u) {
+        // a keystone over the head
+        bx = vec4<f32>(W * 0.5 - 0.11, W * 0.5 + 0.11, 0.0, dep + 0.08);
+        bz = vec2<f32>(H - 0.14, H + f + 0.16);
+        surf = S_STONE;
+      } else {
+        // the transom: at the arch's springing on a round- or point-headed one
+        var tz = H * 0.62;
+        if (shape == 1u) { tz = H - W * 0.5; }
+        if (shape == 3u) { tz = H - W * 0.87; }
+        bx = vec4<f32>(0.0, W, 0.0, 0.06);
+        bz = vec2<f32>(tz - 0.03, tz + 0.03);
+      }
+    }
     case 7u: { live = live && !door && (fl & F_SHUT) != 0u; bx = vec4<f32>(-f - W * 0.5 - 0.03, -f - 0.03, 0.0, 0.06); bz = vec2<f32>(0.0, H); surf = S_SHUTTER; }
     case 8u: { live = live && !door && (fl & F_SHUT) != 0u; bx = vec4<f32>(W + f + 0.03, W + f + W * 0.5 + 0.03, 0.0, 0.06); bz = vec2<f32>(0.0, H); surf = S_SHUTTER; }
     case 9u: {
       if (door) { live = live && (fl & F_CANOPY) != 0u; bx = vec4<f32>(-0.4, W + 0.4, 0.0, 0.75); bz = vec2<f32>(H + 0.3, H + 0.44); surf = S_WOOD; }
+      else if (bal) { bx = vec4<f32>(-0.45, W + 0.45, 0.0, 0.85); bz = vec2<f32>(-0.18, 0.0); surf = S_STONE; }
       else { live = live && (fl & F_BOX) != 0u; bx = vec4<f32>(-0.06, W + 0.06, 0.05, 0.4); bz = vec2<f32>(-0.42, -0.1); surf = S_WOOD; }
     }
-    default: { live = live && !door && (fl & F_BOX) != 0u; bx = vec4<f32>(0.0, W, 0.09, 0.36); bz = vec2<f32>(-0.12, 0.16); surf = S_FLOWER; }
+    default: {
+      if (bal && !door) { bx = vec4<f32>(-0.45, W + 0.45, 0.77, 0.85); bz = vec2<f32>(0.0, 0.95); surf = select(S_WOOD, S_FRAME, sillK == 2u); }
+      else { live = live && !door && (fl & F_BOX) != 0u; bx = vec4<f32>(0.0, W, 0.09, 0.36); bz = vec2<f32>(-0.12, 0.16); surf = S_FLOWER; }
+    }
   }
   o.info = pinfo(b, surf, 0u);
   o.zs = vec2<f32>(z0, z0);
   let wp = wallBox(a, d, bx.x, bx.y, bx.z, bx.w, z0 + bz.x, z0 + bz.y, j, &o);
+  // (the glass knows its window's shape: archSurface fills the head's spandrels with the frame)
+  if (bk == 4u && !door) { o.info.z = o.info.z | (shape << 20u); }
   finish(&o, wp, live);
   return o;
 }
@@ -677,25 +718,44 @@ fn bumpN(n: vec3<f32>, p: vec3<f32>, h: f32) -> vec3<f32> {
   return normalize(abs(det) * n - g);
 }
 
+/** joint k of a run of pieces of mean size w, each joint moved by its own hash (±0.4 w: sizes 0.2–1.8 w, never
+ *  crossing) */
+fn joint(k: f32, w: f32, key: f32) -> f32 { return (k + 0.8 * (h21(vec2<f32>(k, key)) - 0.5)) * w; }
+
+/** (the user: "the stone pattern is a bit too regular") courses of their own heights, stones of their own lengths, each
+ *  course's joints laid fresh: x the stone's shade (its bevel), y its mortar */
 fn stones(u: f32, v: f32, bw: f32, rh: f32, px: f32, seed: f32, detail: f32) -> vec2<f32> {
-  let row = floor(v / rh);
-  let off = h21(vec2<f32>(row, seed)) * bw;
-  let uu = (u + off) / bw;
-  // (each stone a little longer or shorter: the joint moved by its own hash)
-  let col0 = floor(uu);
-  let jit = (h21(vec2<f32>(col0, row + seed)) - 0.5) * 0.5;
-  let col = floor(uu - jit);
-  let fu = fract(uu - jit);
-  let fv = fract(v / rh);
-  let id = h21(vec2<f32>(col, row) + seed * 3.1);
-  let m = min(min(fu, 1.0 - fu) * bw, min(fv, 1.0 - fv) * rh);
+  // the course: its joints below and above (rows of 0.6–1.4 the mean)
+  var row = floor(v / rh);
+  var r0 = (row + 0.4 * (h21(vec2<f32>(row, seed + 0.5)) - 0.5)) * rh;
+  if (v < r0) { row -= 1.0; }
+  r0 = (row + 0.4 * (h21(vec2<f32>(row, seed + 0.5)) - 0.5)) * rh;
+  var r1 = (row + 1.0 + 0.4 * (h21(vec2<f32>(row + 1.0, seed + 0.5)) - 0.5)) * rh;
+  if (v >= r1) {
+    row += 1.0;
+    r0 = r1;
+    r1 = (row + 1.0 + 0.4 * (h21(vec2<f32>(row + 1.0, seed + 0.5)) - 0.5)) * rh;
+  }
+  let ch = r1 - r0;
+  // the stone along the course: its joints (each course offset)
+  let uu = u + h21(vec2<f32>(row, seed)) * bw * 3.0;
+  let key = row * 7.3 + seed;
+  var k = floor(uu / bw);
+  if (uu < joint(k, bw, key)) { k -= 1.0; }
+  if (uu >= joint(k + 1.0, bw, key)) { k += 1.0; }
+  let c0 = joint(k, bw, key);
+  let c1 = joint(k + 1.0, bw, key);
+  let fu = (uu - c0) / (c1 - c0);
+  let fv = (v - r0) / ch;
+  let id = h21(vec2<f32>(k, row) + seed * 3.1);
+  let m = min(min(uu - c0, c1 - uu), min(v - r0, r1 - v));
   // (the joint and the bevel in proportion to the stone: the user asked for bricks half the size, stone smaller still)
   let sz = min(bw, rh);
   let lw = min(0.028, 0.14 * sz);
   let mortar = 1.0 - smoothstep(lw - px, lw + px, m);
   // the bevel: the stone's top lit, its foot in shade, its edges rounded off
   let bev = 1.0 + 0.16 * (fv - 0.45) - 0.18 * (1.0 - smoothstep(0.0, 0.35 * sz, m - lw));
-  let shade = mix(1.0, (0.84 + 0.3 * id) * bev, detail);
+  let shade = mix(1.0, (0.82 + 0.34 * id) * bev, detail);
   // its relief: the joint sunk, the stone's edge rounded into it, each stone a little proud of the next or not
   let face = smoothstep(lw * 0.5, lw + 0.25 * sz, m);
   gRelief = (face * (0.018 + 0.012 * id) - 0.012) * reliefFade(px, min(bw, rh));
@@ -705,6 +765,32 @@ fn stones(u: f32, v: f32, bw: f32, rh: f32, px: f32, seed: f32, detail: f32) -> 
 fn styleV(s: u32, i: u32) -> vec4<f32> { return bitcast<vec4<f32>>(instances[(AW(0u) >> 2u) + s * SV + i]); }
 
 struct Surf { col: vec3<f32>, glass: f32, ao: f32, h: f32 };
+
+/** a lot's window frames: half the lots the style's trim, the rest a paint of their own */
+fn frameColour(lot: u32, trim: vec3<f32>) -> vec3<f32> {
+  let k = hash(lot * 2654435761u + 11u);
+  if ((k & 1u) == 0u) { return trim; }
+  var pal = array<vec3<f32>, 6>(vec3<f32>(0.3, 0.45, 0.36), vec3<f32>(0.28, 0.38, 0.55), vec3<f32>(0.55, 0.22, 0.2),
+                                vec3<f32>(0.45, 0.32, 0.22), vec3<f32>(0.88, 0.82, 0.62), vec3<f32>(0.42, 0.5, 0.56));
+  return pal[(k >> 1u) % 6u];
+}
+
+/** a window's glass outside its shaped head (info.z bits 20–22: 1 round, 2 segmental, 3 pointed) */
+fn archedOut(in: VO) -> bool {
+  let shape = (in.info.z >> 20u) & 7u;
+  if (shape == 0u) { return false; }
+  let W = in.uv.y;
+  let H = in.uv.w;
+  let p = vec2<f32>(in.uv.x, in.uv.z);
+  if (shape == 1u) { return p.y > H - W * 0.5 && length(p - vec2<f32>(W * 0.5, H - W * 0.5)) > W * 0.5; }
+  if (shape == 2u) {
+    let s = W * 0.18;
+    let R = (W * W * 0.25 + s * s) / (2.0 * s);
+    return p.y > H - s && length(p - vec2<f32>(W * 0.5, H - R)) > R;
+  }
+  let cy = H - W * 0.87;
+  return p.y > cy && (length(p - vec2<f32>(0.0, cy)) > W || length(p - vec2<f32>(W, cy)) > W);
+}
 
 /** a surface's colour (sRGB), its glass, its occlusion. Takes derivatives: call it in uniform control flow, before any discard. */
 fn archSurface(in: VO) -> Surf {
@@ -910,7 +996,7 @@ fn archSurface(in: VO) -> Surf {
     }
     if (surf == S_CHIMNEY && isTop) { col = vec3<f32>(0.12); }
   } else if (surf == S_FRAME) {
-    col = trimC.rgb * (0.95 + 0.1 * lr);
+    col = frameColour(lot, trimC.rgb) * (0.95 + 0.1 * lr);
   } else if (surf == S_SHUTTER) {
     // a lot's shutters one of a few colours, slatted
     let pick = u32(lr * 4.0);
@@ -919,6 +1005,9 @@ fn archSurface(in: VO) -> Surf {
     if (pick == 2u) { sc = vec3<f32>(0.62, 0.3, 0.26); }
     if (pick == 3u) { sc = vec3<f32>(0.5, 0.42, 0.3); }
     col = sc * mix(1.0, 0.85 + 0.15 * step(0.5, fract(v * 6.0)), detail);
+  } else if (surf == S_GLASS && archedOut(in)) {
+    // the head's spandrels over a round, segmental or pointed light: the frame's
+    col = frameColour(lot, trimC.rgb);
   } else if (surf == S_GLASS) {
     // small panes, leaded: dark, catching the sky toward their tops
     let pane = box1(fract(u * 4.0), 0.08, 0.92, px * 4.0) * box1(fract(v * 3.5), 0.08, 0.92, px * 3.5);
