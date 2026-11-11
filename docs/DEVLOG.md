@@ -23274,3 +23274,13 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
 - Seen on the desktop proxy (town at zoom 10 and 32, the rock playground at 14): at play zoom the change is small —
   a repeat of 2–3 cells is a few pixels, its detail averages away; zoomed in the ground reads as soil, sand and turf
   instead of a dither. Not measured on the phone.
+
+## archgen: the generator in four passes (2026-11-11; the phone: "CreateComputePipelines failed with
+## VK_ERROR_INITIALIZATION_FAILED - While initializing [ComputePipeline "arch gen"]")
+
+- The one gen entry point had grown (grid family, manors, gardens, tents, plants) past what the phone's Vulkan driver
+  would compile: a driver inlines every call an entry point makes, so all the families were one huge shader. Now four
+  entry points (arch.wgsl genHouses, genKeeps — keeps, docks, industry —, genShanties — shanties, markets, gardens —,
+  genGrid), one pipeline each with an explicit shared layout, dispatched one after another in the same pass: each
+  reads every lot's head (genHead: its frame, nothing written) and makes only its own family's lots; houses also clear
+  the lots nothing is built on. The desktop town is unchanged. Each lot's head is read four times (cheap: a record).

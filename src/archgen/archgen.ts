@@ -97,7 +97,8 @@ export class ArchGen {
   private base: { styles: number; list: number; parts: number; progress: number };
   private genU: GPUBuffer;
   private compU: GPUBuffer;
-  private genPipe: GPUComputePipeline;
+  /** the generator's passes, one a family of lots (arch.wgsl genHouses …: a pipeline each, small enough for a phone) */
+  private genPipes: GPUComputePipeline[];
   private resetPipe: GPUComputePipeline;
   private compactPipe: GPUComputePipeline;
   private genGroup: GPUBindGroup;
@@ -141,9 +142,18 @@ export class ArchGen {
 
     const gm = d.createShaderModule({ label: 'arch gen', code: GEN });
     const cm = d.createShaderModule({ label: 'arch compact', code: COMPACT });
-    this.genPipe = d.createComputePipeline({ label: 'arch gen', layout: 'auto', compute: { module: gm, entryPoint: 'gen' } });
+    const gl = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      ],
+    });
+    const gpl = d.createPipelineLayout({ bindGroupLayouts: [gl] });
+    this.genPipes = ['genHouses', 'genKeeps', 'genShanties', 'genGrid'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
     this.genGroup = d.createBindGroup({
-      layout: this.genPipe.getBindGroupLayout(0),
+      layout: gl,
       entries: [this.genU, records, counts, this.arch].map((buffer, binding) => ({ binding, resource: { buffer } })),
     });
     // (reset and compact share one explicit layout: 'auto' layouts differ per entry point)
@@ -186,9 +196,11 @@ export class ArchGen {
     // (one uniform: one generate a submit — a caller slicing a town's lots goes frame by frame)
     this.device.queue.writeBuffer(this.genU, 0, u);
     const p = enc.beginComputePass({ label: 'arch gen', timestampWrites: ts });
-    p.setPipeline(this.genPipe);
     p.setBindGroup(0, this.genGroup);
-    p.dispatchWorkgroups(Math.ceil(count / 64));
+    for (const pipe of this.genPipes) {
+      p.setPipeline(pipe);
+      p.dispatchWorkgroups(Math.ceil(count / 64));
+    }
     p.end();
   }
 

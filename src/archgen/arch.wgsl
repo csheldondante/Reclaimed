@@ -1474,16 +1474,37 @@ fn grid(seed: u32) {
   }
 }
 
-@compute @workgroup_size(64)
-fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
-  if (g.x >= GU.count) { return; }
-  let i = GU.first + g.x;
+// (2026-11-11, the phone: "CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED … [ComputePipeline
+// "arch gen"]") The generator in four passes, one a family of lots — each its own entry point, so each pipeline holds
+// only its family's code (a driver inlines a whole entry point's calls: all of them in one was more than the phone's
+// compiler would take). Every pass reads every lot (genHead) and makes only its own family's (genFam); the others it
+// leaves alone. Family 0 also clears the lots nothing is built on.
+var<private> gKind: u32;
+var<private> gSeed: u32;
+var<private> gEave: f32;
+var<private> gArchetype: u32;
+var<private> gBuild: bool;
+
+/** the lot's family: 0 houses (and the lots nothing's built on), 1 keeps, docks, industry, 2 shanties, markets,
+ *  gardens, 3 the irregular grid; 99 none (past the lots) */
+fn genFam() -> u32 {
+  if (!gBuild) { return 0u; }
+  if (gKind == 3u || gKind == 2u || gArchetype == 2u) { return 2u; }
+  if (gArchetype == 1u || gArchetype == 3u || gArchetype == 4u) { return 1u; }
+  if (gArchetype == 5u) { return 3u; }
+  return 0u;
+}
+
+/** the lot's frame and the generator's globals (nothing written) — its family, or 99 */
+fn genHead(gx: u32) -> u32 {
+  if (gx >= GU.count) { return 99u; }
+  let i = GU.first + gx;
   gLot = i;
   PB = ARCH[2];
   gN = 0u;
   gNW = 0u;
   let lots = min(min(CNT[0], CNT[3]), GU.lots);
-  if (i >= lots) { return; }
+  if (i >= lots) { return 99u; }
   let o = i * RECW;
   var q: array<vec2<f32>, 4>;
   var parcel: array<vec2<f32>, 4>;
@@ -1496,25 +1517,20 @@ fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
   let storeys = REC[o + 19u];
   let height = rf(o, 20u);
   let zb = rf(o, 21u);
-  let seed = hash(REC[o + 23u] + 17u);
+  gSeed = hash(REC[o + 23u] + 17u);
+  gKind = kind;
   let front = REC[o + 16u];
   // the style: the lab's override, else the district's (until citygen's districtStyle word: a hash of the district)
   var s = GU.style;
   if (s == 0xffffffffu) { s = hash(district * 31u + 7u) % GU.nstyles; }
   gS = s;
   gTag = s | (storeys << 8u);
-  // (lab) the parcel as ground, its kind's surface
-  if (GU.ground != 0u) {
-    gTag = s | (kind << 8u);
-    body(S_GROUND, F_NOWIN, parcel, GU.zmin, zb + 0.5);
-    gTag = s | (storeys << 8u);
-  }
+  gPar = parcel;
+  gFp = q;
+  gGround = zb + 0.5;
   // (buildings; plazas become markets, parks gardens; fields and landmarks stay citygen's)
-  let building = kind == 1u && storeys > 0u && height > 0.0;
-  if (!building && kind != 2u && kind != 3u) {
-    for (var j = gN; j < PPL; j++) { ARCH[PB + (i * PPL + j) * PW] = 0u; }
-    return;
-  }
+  gBuild = (kind == 1u && storeys > 0u && height > 0.0) || kind == 2u || kind == 3u;
+  if (!gBuild) { return 0u; }
   // turn the quad so its side 0 is the frontage (a door on it); none: the longest side
   var r = 0u;
   if (front < 4u) { r = front; } else {
@@ -1525,10 +1541,7 @@ fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
     }
   }
   for (var k = 0u; k < 4u; k++) { gQ[k] = q[(k + r) % 4u]; }
-  let ground = zb + 0.5;
-  gGround = ground;
-  ARCH[ARCH[6] + i] = bitcast<u32>(ground);
-  let eave = zb + height;
+  gEave = zb + height;
   // the lot's frame: square to the street (the stone styles: the rectangle inscribed in the lot) or its own quad
   LX = normalize(gQ[1] - gQ[0]);
   LY = vec2<f32>(-LX.y, LX.x);
@@ -1548,20 +1561,67 @@ fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
     gW = max(length(gQ[1] - gQ[0]) * 0.8, 3.0);
     gD = max(length(gQ[3] - gQ[0]) * 0.8, 3.0);
   }
-  gPar = parcel;
-  gFp = q;
+  gArchetype = u32(sty(s, 5u).z + 0.5);
+  return genFam();
+}
+
+/** the owning pass's start: the lot's ground height for the draws, (lab) its parcel as ground, its streets */
+fn genStart() {
+  ARCH[ARCH[6] + gLot] = bitcast<u32>(gGround);
+  if (GU.ground != 0u) {
+    let t = gTag;
+    gTag = gS | (gKind << 8u);
+    body(S_GROUND, F_NOWIN, gPar, GU.zmin, gGround);
+    gTag = t;
+  }
+}
+
+/** the owning pass's end: the windows, and the lot's part slots past its last cleared */
+fn genEnd() {
+  if (gBuild) { windows(); }
+  for (var j = gN; j < PPL; j++) { ARCH[PB + (gLot * PPL + j) * PW] = 0u; }
+}
+
+@compute @workgroup_size(64)
+fn genHouses(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (genHead(g.x) != 0u) { return; }
+  genStart();
+  if (gBuild) {
+    streetEdges();
+    house(gEave, gSeed);
+  }
+  genEnd();
+}
+
+@compute @workgroup_size(64)
+fn genKeeps(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (genHead(g.x) != 1u) { return; }
+  genStart();
   streetEdges();
-  let archetype = u32(sty(s, 5u).z + 0.5);
-  if (kind == 3u) { market(seed); }
-  else if (kind == 2u) { garden(seed); }
-  else if (archetype == 1u) { keep(eave, seed); }
-  else if (archetype == 2u) { shanty(seed); }
-  else if (archetype == 3u) { dock(seed); }
-  else if (archetype == 4u) { industrial(eave, seed); }
-  else if (archetype == 5u) { grid(seed); }
-  else { house(eave, seed); }
-  windows();
-  for (var j = gN; j < PPL; j++) { ARCH[PB + (i * PPL + j) * PW] = 0u; }
+  if (gArchetype == 1u) { keep(gEave, gSeed); }
+  else if (gArchetype == 3u) { dock(gSeed); }
+  else { industrial(gEave, gSeed); }
+  genEnd();
+}
+
+@compute @workgroup_size(64)
+fn genShanties(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (genHead(g.x) != 2u) { return; }
+  genStart();
+  streetEdges();
+  if (gKind == 3u) { market(gSeed); }
+  else if (gKind == 2u) { garden(gSeed); }
+  else { shanty(gSeed); }
+  genEnd();
+}
+
+@compute @workgroup_size(64)
+fn genGrid(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (genHead(g.x) != 3u) { return; }
+  genStart();
+  streetEdges();
+  grid(gSeed);
+  genEnd();
 }
 
 // ---- compaction: the live parts into a draw list a kind, the kinds' instance counts -------------------------------
