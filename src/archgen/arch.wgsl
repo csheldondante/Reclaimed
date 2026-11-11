@@ -12,7 +12,11 @@ const PPL: u32 = 24u;
 /** part kinds (0 an empty slot) */
 const K_BODY: u32 = 1u;
 const K_ROOF: u32 = 2u;
-const NK: u32 = 3u;
+/** a parapet with merlons round a quad (4 edges × (a wall + CREN_M merlons)); 11–14: its wall height, merlon height,
+ *  merlon width, thickness */
+const K_CREN: u32 = 3u;
+const NK: u32 = 4u;
+const CREN_M: u32 = 8u;
 /** surfaces (the part's word 0, bits 8–15) */
 const S_WALL: u32 = 0u;
 const S_PLINTH: u32 = 1u;
@@ -68,12 +72,15 @@ fn persp2(a: vec2<f32>) -> vec2<f32> { return vec2<f32>(a.y, -a.x); }
 @group(0) @binding(0) var<uniform> GU: GenU;
 @group(0) @binding(1) var<storage, read> REC: array<u32>;
 @group(0) @binding(2) var<storage, read> CNT: array<u32>;
-@group(0) @binding(3) var<storage, read_write> PARTS: array<u32>;
-@group(0) @binding(4) var<storage, read> STY: array<vec4<f32>>;
+// the arch buffer (archgen.ts layout): a header [styles, list, parts, room] in u32 words, the styles, the draw lists,
+// the parts
+@group(0) @binding(3) var<storage, read_write> ARCH: array<u32>;
 
 fn rf(o: u32, w: u32) -> f32 { return bitcast<f32>(REC[o + w]); }
 
 var<private> gLot: u32;
+/** the parts' first word in ARCH */
+var<private> PB: u32;
 var<private> gN: u32;
 var<private> gTag: u32;
 
@@ -82,18 +89,18 @@ fn put(kind: u32, surf: u32, flags: u32, q0: array<vec2<f32>, 4>, z0: f32, t: ve
   let o = (gLot * PPL + gN) * PW;
   gN++;
   var q = q0;
-  PARTS[o] = kind | (surf << 8u) | (flags << 16u);
-  PARTS[o + 1u] = gLot;
+  ARCH[PB + o] = kind | (surf << 8u) | (flags << 16u);
+  ARCH[PB + o + 1u] = gLot;
   for (var k = 0u; k < 4u; k++) {
-    PARTS[o + 2u + k * 2u] = bitcast<u32>(q[k].x);
-    PARTS[o + 3u + k * 2u] = bitcast<u32>(q[k].y);
+    ARCH[PB + o + 2u + k * 2u] = bitcast<u32>(q[k].x);
+    ARCH[PB + o + 3u + k * 2u] = bitcast<u32>(q[k].y);
   }
-  PARTS[o + 10u] = bitcast<u32>(z0);
-  PARTS[o + 11u] = bitcast<u32>(t.x);
-  PARTS[o + 12u] = bitcast<u32>(t.y);
-  PARTS[o + 13u] = bitcast<u32>(t.z);
-  PARTS[o + 14u] = bitcast<u32>(t.w);
-  PARTS[o + 15u] = gTag;
+  ARCH[PB + o + 10u] = bitcast<u32>(z0);
+  ARCH[PB + o + 11u] = bitcast<u32>(t.x);
+  ARCH[PB + o + 12u] = bitcast<u32>(t.y);
+  ARCH[PB + o + 13u] = bitcast<u32>(t.z);
+  ARCH[PB + o + 14u] = bitcast<u32>(t.w);
+  ARCH[PB + o + 15u] = gTag;
 }
 
 fn body(surf: u32, flags: u32, q: array<vec2<f32>, 4>, z0: f32, z1: f32) {
@@ -128,7 +135,10 @@ fn sub(q0: array<vec2<f32>, 4>, s0: f32, s1: f32, t0: f32, t1: f32) -> array<vec
   return array<vec2<f32>, 4>(mix(a0, b0, t0), mix(a1, b1, t0), mix(a1, b1, t1), mix(a0, b0, t1));
 }
 
-fn sty(s: u32, i: u32) -> vec4<f32> { return STY[s * SV + i]; }
+fn sty(s: u32, i: u32) -> vec4<f32> {
+  let o = ARCH[0] + (s * SV + i) * 4u;
+  return bitcast<vec4<f32>>(vec4<u32>(ARCH[o], ARCH[o + 1u], ARCH[o + 2u], ARCH[o + 3u]));
+}
 
 /** one house unit on quad q: plinth, body (a jetty above the ground floor), cornice, roof, a chimney */
 fn unit(q0: array<vec2<f32>, 4>, ground: f32, eave: f32, s: u32, seed: u32, front: bool, ridgeAlong: bool) {
@@ -166,8 +176,8 @@ fn unit(q0: array<vec2<f32>, 4>, ground: f32, eave: f32, s: u32, seed: u32, fron
   // (the roof never outweighs the walls: Tiny Glade's houses are walls first)
   let rise = min(pitch * span, min(max(1.4, (eave - ground) * 0.8), 4.2));
   if (shape2.z > 0.5) {
-    // a flat roof behind a parapet (the keep's)
-    body(S_STONE, F_NOWIN, grow(top, 0.05), eave, eave + 0.9);
+    // a flat roof behind a crenellated parapet (the keep's)
+    put(K_CREN, S_STONE, 0u, grow(top, 0.06), eave, vec4<f32>(0.7, 0.75, 0.7, 0.45));
   } else {
     // (the eave a little over the cornice, whose top would poke through the slope's plane just past the wall)
     put(K_ROOF, S_ROOF, 0u, top, eave + 0.1, vec4<f32>(eave + 0.1 + rise, inset, f32(axis), over));
@@ -195,6 +205,12 @@ fn tower(q0: array<vec2<f32>, 4>, k: u32, ground: f32, top: f32, s: u32, seed: u
   body(S_PLINTH, F_NOWIN, grow(tq, 0.1), ground - 0.6, ground + 0.5);
   body(S_STONE, 0u, tq, ground + 0.5, top);
   body(S_TRIM, F_NOWIN, grow(tq, 0.12), top - 0.3, top);
+  if (sty(s, 5u).z > 0.5 && rnd(seed, 15u) < 0.5) {
+    // a fighting top: merlons round the tower's roof, the spire set in
+    put(K_CREN, S_STONE, 0u, grow(tq, 0.12), top, vec4<f32>(0.5, 0.6, 0.5, 0.35));
+    put(K_ROOF, S_ROOF, 0u, grow(tq, -0.3), top + 0.4, vec4<f32>(top + 0.4 + w * sty(s, 5u).y * 0.8, 0.5, 0.0, 0.1));
+    return;
+  }
   put(K_ROOF, S_ROOF, 0u, grow(tq, 0.0), top, vec4<f32>(top + w * sty(s, 5u).y, 0.5, 0.0, 0.25));
 }
 
@@ -203,6 +219,7 @@ fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
   if (g.x >= GU.count) { return; }
   let i = GU.first + g.x;
   gLot = i;
+  PB = ARCH[2];
   gN = 0u;
   let lots = min(CNT[0], CNT[3]);
   if (i >= lots) { return; }
@@ -231,7 +248,7 @@ fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
     gTag = s | (storeys << 8u);
   }
   if (kind != 1u || storeys == 0u || height <= 0.0) {
-    for (var j = gN; j < PPL; j++) { PARTS[(i * PPL + j) * PW] = 0u; }
+    for (var j = gN; j < PPL; j++) { ARCH[PB + (i * PPL + j) * PW] = 0u; }
     return;
   }
   // turn the quad so its side 0 is the frontage (a door on it); none: the longest side
@@ -276,15 +293,14 @@ fn gen(@builtin(global_invocation_id) g: vec3<u32>) {
   if (rnd(seed, 12u) < sty(s, 6u).y && min(wide, deep) > 4.5) {
     tower(fq, select(0u, 1u, rnd(seed, 13u) < 0.5), ground, eave + STOREY * mix(0.6, 1.4, rnd(seed, 14u)), s, seed);
   }
-  for (var j = gN; j < PPL; j++) { PARTS[(i * PPL + j) * PW] = 0u; }
+  for (var j = gN; j < PPL; j++) { ARCH[PB + (i * PPL + j) * PW] = 0u; }
 }
 
 // ---- compaction: the live parts into a draw list a kind, the kinds' instance counts -------------------------------
 
-@group(0) @binding(0) var<uniform> CU: vec4<u32>; // x part slots, y the list room a kind
-@group(0) @binding(1) var<storage, read> CPARTS: array<u32>;
-@group(0) @binding(2) var<storage, read_write> LIST: array<u32>;
-@group(0) @binding(3) var<storage, read_write> ARGS: array<atomic<u32>>;
+@group(0) @binding(0) var<uniform> CU: vec4<u32>; // x part slots
+@group(0) @binding(1) var<storage, read_write> CA: array<u32>; // the arch buffer
+@group(0) @binding(2) var<storage, read_write> ARGS: array<atomic<u32>>;
 
 @compute @workgroup_size(1)
 fn reset() {
@@ -294,8 +310,9 @@ fn reset() {
 @compute @workgroup_size(64)
 fn compact(@builtin(global_invocation_id) g: vec3<u32>) {
   if (g.x >= CU.x) { return; }
-  let kind = CPARTS[g.x * PW] & 0xffu;
+  let kind = CA[CA[2] + g.x * PW] & 0xffu;
   if (kind == 0u || kind >= NK) { return; }
   let n = atomicAdd(&ARGS[kind * 4u + 1u], 1u);
-  if (n < CU.y) { LIST[kind * CU.y + n] = g.x; }
+  let room = CA[3];
+  if (n < room) { CA[CA[1] + kind * room + n] = g.x; }
 }

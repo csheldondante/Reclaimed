@@ -4,20 +4,11 @@
 // windows fitted to each wall's bays and a door on the street side. Prepended: arch.wgsl's constants (not its
 // bindings — draw.wgsl is compiled with the constants block only: archgen.ts CONSTS).
 
-struct View {
-  viewProj: mat4x4<f32>,
-  /** xyz towards the sun, w its strength */
-  sun: vec4<f32>,
-  /** xyz the view direction (towards the camera), w world units a pixel */
-  eye: vec4<f32>,
-  /** x time, y night (0–1), z detail (0 phone … 1 PC), w the list room a kind */
-  p: vec4<f32>,
-};
+// The host gives: `instances` (array<vec4<u32>>: the arch buffer — archgen.ts layout: a header [styles, list, parts,
+// room] in u32 words, then the styles, the draw lists, the parts), archClip(world) → clip, archPlace() (added to a
+// part's position: the town's frame in the window), archNight(), archDetail() (0 phone … 1 PC).
 
-@group(0) @binding(0) var<uniform> V: View;
-@group(0) @binding(1) var<storage, read> P: array<u32>;
-@group(0) @binding(2) var<storage, read> L: array<u32>;
-@group(0) @binding(3) var<storage, read> S: array<vec4<f32>>;
+fn AW(i: u32) -> u32 { return instances[i >> 2u][i & 3u]; }
 
 struct VO {
   @builtin(position) pos: vec4<f32>,
@@ -31,17 +22,17 @@ struct VO {
   @location(4) @interpolate(flat) zs: vec2<f32>,
 };
 
-fn pf(o: u32, w: u32) -> f32 { return bitcast<f32>(P[o + w]); }
+fn pf(o: u32, w: u32) -> f32 { return bitcast<f32>(AW(AW(2u) + o + w)); }
 fn corner(o: u32, k: u32) -> vec2<f32> { return vec2<f32>(pf(o, 2u + k * 2u), pf(o, 3u + k * 2u)); }
 
 fn partOf(kind: u32, ii: u32) -> u32 {
-  let room = u32(V.p.w);
-  return L[kind * room + ii];
+  return AW(AW(1u) + kind * AW(3u) + ii);
 }
 
 fn finish(o: ptr<function, VO>, wp: vec3<f32>) {
-  (*o).wpos = wp;
-  (*o).pos = V.viewProj * vec4<f32>(wp, 1.0);
+  let w = wp + archPlace();
+  (*o).wpos = w;
+  (*o).pos = archClip(w);
 }
 
 @vertex
@@ -49,7 +40,7 @@ fn vsBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   var o: VO;
   let pi = partOf(K_BODY, ii);
   let b = pi * PW;
-  let w0 = P[b];
+  let w0 = AW(AW(2u) + b);
   let z0 = pf(b, 10u);
   let face = vi / 6u;
   let t = vi % 6u;
@@ -57,7 +48,7 @@ fn vsBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   var zt: array<f32, 4>;
   for (var k = 0u; k < 4u; k++) { c[k] = corner(b, k); zt[k] = pf(b, 11u + k); }
   var wp: vec3<f32>;
-  o.info = vec4<u32>(P[b + 1u], (w0 >> 8u) & 0xffu, ((w0 >> 16u) & 0xffu) | (face << 8u), P[b + 15u]);
+  o.info = vec4<u32>(AW(AW(2u) + b + 1u), (w0 >> 8u) & 0xffu, ((w0 >> 16u) & 0xffu) | (face << 8u), AW(AW(2u) + b + 15u));
   o.zs = vec2<f32>(z0, z0);
   if (face < 4u) {
     let a = c[face];
@@ -86,7 +77,7 @@ fn vsBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
     o.uv = vec4<f32>(wp.xy, 0.0, 0.0);
     o.info.z = o.info.z | 0x1000u;
   }
-  if (ii >= u32(V.p.w)) { wp = vec3<f32>(0.0, 0.0, -1e6); }
+  if (ii >= AW(3u)) { wp = vec3<f32>(0.0, 0.0, -1e6); }
   finish(&o, wp);
   return o;
 }
@@ -96,7 +87,7 @@ fn vsRoof(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   var o: VO;
   let pi = partOf(K_ROOF, ii);
   let b = pi * PW;
-  let w0 = P[b];
+  let w0 = AW(AW(2u) + b);
   let eave = pf(b, 10u);
   let ridgeZ = pf(b, 11u);
   let inset = pf(b, 12u);
@@ -129,7 +120,7 @@ fn vsRoof(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   let face = vi / 6u;
   let t = vi % 6u;
   var wp: vec3<f32>;
-  o.info = vec4<u32>(P[b + 1u], S_ROOF, 0x2000u | (face << 8u), P[b + 15u]);
+  o.info = vec4<u32>(AW(AW(2u) + b + 1u), S_ROOF, 0x2000u | (face << 8u), AW(AW(2u) + b + 15u));
   o.zs = vec2<f32>(eave, ridgeZ);
   if (face < 2u) {
     // slope 0: e0 e1 R1 R0; slope 1: e2 e3 R0 R1
@@ -177,7 +168,80 @@ fn vsRoof(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
     o.info.y = S_TRIM;
     o.info.z = 0x2000u | (face << 8u) | 0x8000u;
   }
-  if (ii >= u32(V.p.w)) { wp = vec3<f32>(0.0, 0.0, -1e6); }
+  if (ii >= AW(3u)) { wp = vec3<f32>(0.0, 0.0, -1e6); }
+  finish(&o, wp);
+  return o;
+}
+
+/** box j's vertex (0–29: four sides, the top) of the prism over quad c (counter-clockwise) from z0 to z1 */
+fn boxVert(c: array<vec2<f32>, 4>, z0: f32, z1: f32, j: u32, o: ptr<function, VO>) -> vec3<f32> {
+  var cc = c;
+  let face = j / 6u;
+  let t = j % 6u;
+  var AL = array<u32, 6>(0u, 1u, 1u, 0u, 1u, 0u);
+  var UP = array<u32, 6>(0u, 0u, 1u, 0u, 1u, 1u);
+  var IX = array<u32, 6>(0u, 1u, 2u, 0u, 2u, 3u);
+  if (face < 4u) {
+    let a = cc[face];
+    let e = cc[(face + 1u) % 4u];
+    let p = select(a, e, AL[t] == 1u);
+    let wp = vec3<f32>(p, select(z0, z1, UP[t] == 1u));
+    let d = e - a;
+    (*o).nrm = normalize(vec3<f32>(d.y, -d.x, 0.0));
+    (*o).uv = vec4<f32>(f32(AL[t]) * length(d), length(d), wp.z - z0, z1 - z0);
+    (*o).info.z = ((*o).info.z & 0xffu) | (face << 8u);
+    return wp;
+  }
+  (*o).nrm = vec3<f32>(0.0, 0.0, 1.0);
+  (*o).info.z = ((*o).info.z & 0xffu) | (face << 8u) | 0x1000u;
+  let wp = vec3<f32>(cc[IX[t]], z1);
+  (*o).uv = vec4<f32>(wp.xy, 0.0, 0.0);
+  return wp;
+}
+
+@vertex
+fn vsCren(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
+  var o: VO;
+  let pi = partOf(K_CREN, ii);
+  let b = pi * PW;
+  let w0 = AW(AW(2u) + b);
+  let z0 = pf(b, 10u);
+  let wallH = pf(b, 11u);
+  let merH = pf(b, 12u);
+  let merW = pf(b, 13u);
+  let th = pf(b, 14u);
+  o.info = vec4<u32>(AW(AW(2u) + b + 1u), (w0 >> 8u) & 0xffu, F_NOWIN, AW(AW(2u) + b + 15u));
+  o.zs = vec2<f32>(z0, z0);
+  let box = vi / 30u;
+  let j = vi % 30u;
+  let edge = box / (CREN_M + 1u);
+  let k = box % (CREN_M + 1u);
+  let a = corner(b, edge);
+  let e = corner(b, (edge + 1u) % 4u);
+  let L = length(e - a);
+  let d = (e - a) / max(L, 1e-4);
+  let inw = vec2<f32>(-d.y, d.x);
+  var s0 = 0.0;
+  var s1 = L;
+  var za = z0;
+  var zb = z0 + wallH;
+  var live = true;
+  if (k > 0u) {
+    // merlons: every other gap of width merW, centred on the edge
+    let nm = min(u32(floor((L / merW + 1.0) * 0.5)), CREN_M);
+    let m = k - 1u;
+    live = m < nm && nm >= 2u;
+    let span = f32(2u * max(nm, 1u) - 1u) * merW;
+    s0 = (L - span) * 0.5 + f32(2u * m) * merW;
+    s1 = s0 + merW;
+    za = zb;
+    zb = zb + merH;
+  }
+  let p0 = a + d * s0;
+  let p1 = a + d * s1;
+  let q = array<vec2<f32>, 4>(p0, p1, p1 + inw * th, p0 + inw * th);
+  var wp = boxVert(q, za, zb, j, &o);
+  if (!live || ii >= AW(3u)) { wp = vec3<f32>(0.0, 0.0, -1e6); }
   finish(&o, wp);
   return o;
 }
@@ -205,10 +269,13 @@ fn bond(u: f32, v: f32, bw: f32, rh: f32, lw: f32, aa: f32) -> f32 {
 
 struct Mat { col: vec3<f32>, glass: f32 };
 
-fn styleV(s: u32, i: u32) -> vec4<f32> { return S[s * SV + i]; }
+fn styleV(s: u32, i: u32) -> vec4<f32> { return bitcast<vec4<f32>>(instances[(AW(0u) >> 2u) + s * SV + i]); }
 
-@fragment
-fn fsArch(in: VO) -> @location(0) vec4<f32> {
+struct Surf { col: vec3<f32>, glass: f32, ao: f32 };
+
+/** a surface's colour (sRGB), its glass, its occlusion. Takes derivatives: call it in uniform control flow, before any discard. */
+fn archSurface(in: VO) -> Surf {
+  let lz = in.wpos.z - archPlace().z;
   let surf = in.info.y;
   let flags = in.info.z & 0xffu;
   let side = (in.info.z >> 8u) & 0xfu;
@@ -218,9 +285,9 @@ fn fsArch(in: VO) -> @location(0) vec4<f32> {
   let lot = in.info.x;
   let lr = h21(vec2<f32>(f32(lot), 3.7));
   // derivatives first (WGSL: before any branch that isn't uniform)
-  let px = max(length(fwidth(in.uv.xz)), 1e-4);
+  let px = max(max(length(fwidth(in.uv.xz)), length(fwidth(in.uv.xy))), 1e-4);
   let pxw = length(fwidth(in.wpos));
-  let detail = V.p.z;
+  let detail = archDetail();
   let wallC = styleV(s, 0u);
   let trimC = styleV(s, 1u);
   let roofC = styleV(s, 2u);
@@ -253,7 +320,7 @@ fn fsArch(in: VO) -> @location(0) vec4<f32> {
     let bw = L / nb;
     let bi = floor(u / bw);
     let fu = u - (bi + 0.5) * bw; // from the bay's middle
-    let hz = in.wpos.z - in.zs.x; // above the part's base
+    let hz = lz - in.zs.x; // above the part's base
     let st = floor(hz / STOREY);
     let fz = hz - st * STOREY;
     let ww = win.y * 0.5;
@@ -305,7 +372,7 @@ fn fsArch(in: VO) -> @location(0) vec4<f32> {
       let beam = max(max(post, rail), brace * (1.0 - box1(abs(fu), 0.0, ww + 0.25, px)) * 0.9);
       col = mix(col, vec3<f32>(0.26, 0.17, 0.11), beam * (1.0 - max(hole, frame)));
     }
-    col = mix(col, mix(vec3<f32>(0.12, 0.14, 0.18), vec3<f32>(1.0, 0.75, 0.38), V.p.y * step(0.35, h21(vec2<f32>(f32(lot), st)))), hole);
+    col = mix(col, mix(vec3<f32>(0.12, 0.14, 0.18), vec3<f32>(1.0, 0.75, 0.38), archNight() * step(0.35, h21(vec2<f32>(f32(lot), st)))), hole);
     glass = hole;
   } else if (surf == S_ROOF || (isRoof && surf != S_WALL && surf != S_TRIM)) {
     let m = u32(roofC.w + 0.5);
@@ -330,6 +397,10 @@ fn fsArch(in: VO) -> @location(0) vec4<f32> {
     let edge = min(v, min(u, in.uv.y - u));
     col = mix(col * 1.25 + 0.04, col, smoothstep(0.05, 0.12, edge));
     // moss low on the slopes of the worn (later: the condition)
+  } else if ((surf == S_WALL || surf == S_STONE) && isTop && (flags & F_NOWIN) == 0u) {
+    // a flat roof: flagstones, a little moss in the joints
+    let g = bond(in.uv.x, in.uv.y, 1.2, 0.9, 0.04, px);
+    col = mix(vec3<f32>(0.36, 0.4, 0.3), stoneC.rgb * 0.6 * (0.92 + 0.14 * h21(floor(in.uv.xy / vec2<f32>(1.2, 0.9)))), mix(1.0, g, detail));
   } else if (surf == S_TRIM) {
     col = trimC.rgb;
     // the eaves' underside: the rafters' dark wood
@@ -357,19 +428,8 @@ fn fsArch(in: VO) -> @location(0) vec4<f32> {
     col = g * (0.95 + 0.1 * vnoise(in.wpos.xy * 0.7));
     if (!isTop) { col = vec3<f32>(0.45, 0.4, 0.34); }
   }
-  // light: a warm sun with wrap, a cool sky, bounce from the ground; a soft darkening at a wall's foot (ambient
-  // occlusion's look) and under the eaves
-  let n = normalize(in.nrm);
-  let sunC = vec3<f32>(1.0, 0.93, 0.8) * V.sun.w;
-  let ndl = dot(n, normalize(V.sun.xyz));
-  let diff = max(ndl * 0.85 + 0.15, 0.0);
-  let sky = mix(vec3<f32>(0.42, 0.40, 0.38), vec3<f32>(0.55, 0.65, 0.8), n.z * 0.5 + 0.5);
   var ao = 1.0;
-  if (!isTop && surf != S_GROUND) { ao = mix(0.62, 1.0, smoothstep(0.0, 1.6, in.wpos.z - in.zs.y + 0.6)); }
-  if (surf == S_TRIM && n.z < -0.5) { ao = 0.5; }
-  var lit = col * (sunC * diff + sky * 0.55) * ao;
-  // glass: a sky reflection
-  lit = mix(lit, lit + vec3<f32>(0.1, 0.13, 0.16) * (1.0 - V.p.y), glass * 0.6);
-  // a little aerial haze
-  return vec4<f32>(pow(lit, vec3<f32>(1.0 / 1.1)), 1.0);
+  if (!isTop && surf != S_GROUND) { ao = mix(0.62, 1.0, smoothstep(0.0, 1.6, lz - in.zs.y + 0.6)); }
+  if (surf == S_TRIM && in.nrm.z < -0.5) { ao = 0.5; }
+  return Surf(col, glass, ao);
 }

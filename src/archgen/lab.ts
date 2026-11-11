@@ -61,7 +61,8 @@ async function main() {
   cy /= nb;
 
   const depthFormat: GPUTextureFormat = 'depth24plus';
-  const gen = new ArchGen(device, rec, cnt, { lots: n, format, depthFormat, ground: { zmin: zmin - 2 }, samples });
+  const gen = new ArchGen(device, rec, cnt, { lots: n, ground: { zmin: zmin - 2 } });
+  gen.labDraw(format, depthFormat, samples);
   const sname = q.get('style');
   gen.style = sname ? STYLES.findIndex((s) => s.name === sname) : -1;
 
@@ -134,7 +135,7 @@ async function main() {
       colorAttachments: [{ view: msaa ? msaa.createView() : view, resolveTarget: msaa ? view : undefined, clearValue: sky, loadOp: 'clear', storeOp: msaa ? 'discard' : 'store' }],
       depthStencilAttachment: { view: depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
     });
-    gen.draw(pass);
+    gen.drawLab(pass);
     pass.end();
     device.queue.submit([e.finish()]);
     requestAnimationFrame(frame);
