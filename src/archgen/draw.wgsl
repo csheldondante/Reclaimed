@@ -49,6 +49,12 @@ fn pseed(b: u32) -> u32 { return hash(b * 2654435761u + 17u); }
 /** the lot's construction progress (0–1; the header's word 4: citygen's, copied each frame) */
 fn progress(lot: u32) -> f32 { return bitcast<f32>(AW(AW(4u) + min(lot, AW(5u) - 1u))); }
 
+/** every component finite (by the bits: a compiler may fold x != x away) */
+fn finite3(v: vec3<f32>) -> bool {
+  let e = bitcast<vec3<u32>>(v) & vec3<u32>(0x7f800000u);
+  return all(e != vec3<u32>(0x7f800000u));
+}
+
 fn finish(o: ptr<function, VO>, wp0: vec3<f32>, live: bool) {
   // (until the construction shader: a lot rises from its ground with its progress — the town's old look; unbegun, gone)
   let pr = clamp(progress((*o).info.x), 0.0, 1.0);
@@ -56,6 +62,12 @@ fn finish(o: ptr<function, VO>, wp0: vec3<f32>, live: bool) {
   let g = bitcast<f32>(AW(AW(6u) + min((*o).info.x, AW(5u) - 1u)));
   wp.z = g + (wp0.z - g) * pr;
   if (pr <= 0.001 || !live) { wp = GONE; }
+  // (2026-11-11, the phone: "building triangles seemed to stretch off the screen") a position that came out not finite
+  // — a degenerate part's normalize of nothing — is gone: D3D drops such a triangle, the phone's GPU drew it stretched
+  if (!finite3(wp)) {
+    wp = GONE;
+    if (ARCH_NANDBG) { (*o).uv = vec4<f32>(-1000.0); }
+  }
   let w = wp + archPlace();
   (*o).wpos = w;
   (*o).pos = archClip(w);

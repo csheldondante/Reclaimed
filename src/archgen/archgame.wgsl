@@ -27,6 +27,7 @@ fn fsArch(in: VO) -> FOut {
   var col = lightSurf(toLinear(sf.col), in.wpos, ng, n, mix(sf.rough, 0.08, sf.glass), sf.ao);
   if (inside) { col *= 0.25; }
   col = haze(col, in.wpos);
+  if (ARCH_NANDBG && in.uv.x < -100.0) { col = vec3<f32>(1.0, 0.0, 1.0); }
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
   o.pick = vec2<u32>(0u, pickInfo(MAT_STONE, in.wpos.z, 0u));

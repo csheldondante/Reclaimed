@@ -67,7 +67,9 @@ const GEN_MARK = '// ---- generation';
 const COMPACT_MARK = '// ---- compaction';
 const FS_MARK = '// ---- fragment';
 /** arch.wgsl's constants and helpers: every module's head */
-export const ARCH_CONSTS = archWgsl.slice(0, archWgsl.indexOf(GEN_MARK)) + PLANT_WGSL;
+/** (?archnan=1) a vertex whose position came out not finite drawn magenta (the phone drew such triangles stretched) */
+const NAN_DBG = typeof location !== 'undefined' && new URLSearchParams(location.search).get('archnan') === '1';
+export const ARCH_CONSTS = archWgsl.slice(0, archWgsl.indexOf(GEN_MARK)) + PLANT_WGSL + `const ARCH_NANDBG: bool = ${NAN_DBG};\n`;
 const GEN = ARCH_CONSTS + archWgsl.slice(archWgsl.indexOf(GEN_MARK), archWgsl.indexOf(COMPACT_MARK));
 const COMPACT = ARCH_CONSTS + archWgsl.slice(archWgsl.indexOf(COMPACT_MARK));
 /** the vertex stages and archSurface: a host's bindings and functions before, its fragment stage after */
