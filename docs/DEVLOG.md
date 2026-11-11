@@ -22332,3 +22332,43 @@ at Muru is a courtyard whose houses hide most of the soldiers at 60° (SF-3).
   its rings are bounded by the unit's sight; the agents only read the water. Seen in every run at 60 s, wave or not:
   UC-6 — Muru's water blows up over the town in the real game too, not only on the lab page. Track B's units-draw
   worker also hit "GPU never finished" twice on desktop, unreproduced. Handed back with what was tried; no guard added.
+
+## 2026-11-10 — UC-6: Muru's water blow-up — the frozen flux's rescale, and the river starved at its edge (`trackA-uc6`)
+
+The brief: Muru's river floods the town after ~60 s every run (a dark spike of water over the river; 91 % of the
+lab's columns deeper than 0.9 by tick 6 400, depths to 35 000; soldiers drown in raids, SF-7).
+- **Repro** (scratchpad uc6/waterlog.mjs on the gputown recipe, speed 32; kept as the gate scripts/lab/waterhold.mjs): the water's volume, max depth, deep share
+  every 10 s. Volume 21 200 at t 0 and 10 s, then 79 000 at 20 s, 151 000 at 30 s (a column 1 366 deep at t 21 s,
+  2 147 at 22 s: one column six times its six neighbours, growing ~1.6-1.9× a second), draining back, and again from
+  110 s. No water sources at Muru (waterSource: 0 columns).
+- **Which system** (uc6/persys.mjs: the water copied after each system's encode, a tick): all of the gain is the
+  liquid's (+68 000 … +218 000 a tick at the peak); no other system adds water.
+- **Where in the liquid** (uc6/balance.mjs: per column, d1 − (d0 − out + in) from the flux records): the awake columns
+  balance to ±2 a tick over the window; the gain is the frozen columns' — their carried flux flows into awake columns
+  and nothing is taken from them.
+- **Toggles.** `?rescalemax=1.01` (a perturbed frozen chunk woken, never rescaled): no blow-up in 120 s. But the volume
+  fell 21 800 → 5 700, and with `?sleep=0` (everything awake) 17 900 → 5 200: the awake river runs dry.
+- **Cause 1 — the rescale.** A frozen chunk whose edge's in and out differ had its flux scaled by in / out. Its
+  outflow is the one thing that pushes water into an awake chunk whatever that chunk's level; the "in" is what the
+  awake neighbours send back. Beside a basin or a pool (the town's claims, a bank), the neighbour returned what it was
+  sent, the pipes' overshoot (flux kept 0.985) and the readback's lag kept in / out over 1, and the frozen flux grew
+  up to 4× a window. Fix: no rescale — a frozen chunk whose supply changed is woken to find its steady state
+  (dried up, nothing coming in: still zeroed). `?rescalemax=` deleted.
+- **Cause 2 — the river's edge.** With the flow model the only liquid, an awake river is fed only at the window's
+  edge, by the held column's relax to the atlas's table at 2 % a step (`flowRiverRelax`) — and that column poured off
+  the window upstream as off a cliff (the drain's level was the column's floor). Fix: on the window's edge a held
+  river is held at the table's depth (the river beyond the window is the atlas's — a boundary, fed from and drained
+  into), and the flux pass sees the river's level past the edge, not a drop. The relax stays for a sleeping held river
+  on its slow turn. With `?sleep=0`: 19 500 → 14 400, flat from 40 s (deep columns 6 880 → 6 610).
+- The edge fix alone (rescale kept) made it worse — the fuller river fed the loop: 4 × 10^6 by 40 s, NaN by 110 s.
+- **After, both** (the gputown recipe, speed 64, 360 s): volume 21 875 (t 0) → 14 910 (30 s) → 14 453 (60 s) →
+  14 557 (120 s) → 14 635 (180 s) → 14 659 (240 s) → 14 662 (270 s … 360 s, tick 22 332); deepest 3.29; deep
+  columns 6 701 (6.5 %); awake chunks 72 → 3, nothing unsteady from 270 s. The first 30 s drain the land's initial
+  shallow water (wet columns 23 500 → 11 800) to the flow model's own steady state.
+- Test: test/unit/steady.test.ts (the judge: a perturbed frozen chunk woken, not rescaled, either way; a dried one
+  zeroed) — fails on the old judge (2 of 3).
+- **The real link** (`?skipmenu=1&level=atlas&town=1&fresh=1`, 412 × 915, 60°, shot.mjs): at ~143 s (tick 5 906, the
+  season loop running) volume 14 539, deepest 3.62, 6 380 columns over 0.9, 41 chunks awake; the river in its bed, the
+  town dry (scratchpad uc6/muru_after_135s.png). Before: the flood from ~60 s every run.
+- Not done here: the flow lab's check (its run was stopped by the machine's low memory before it read anything); the
+  raid run of SF-7 not repeated.

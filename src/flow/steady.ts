@@ -12,7 +12,7 @@
 // outflow): past the wake tolerance its chunk is flagged perturbed and woken, settles, and freezes again.
 //
 // Tuning: ?steadytol= (relative, default 0.1), ?steadyfloor= (cells^3 a tick a chunk, default 1e-3),
-// ?steadywin= (ticks, default 30), ?waketol= (cells^3 a tick a column, default 2e-3), ?rescalemax= (default 4).
+// ?steadywin= (ticks, default 30), ?waketol= (cells^3 a tick a column, default 2e-3).
 
 import { ignoreTeardown } from '../gpu/pipeline';
 import type { Sleep } from '../sim/sleep';
@@ -29,8 +29,6 @@ export const STEADY_TOL = num('steadytol', 0.1);
 export const STEADY_FLOOR = num('steadyfloor', 1e-3);
 export const STEADY_WIN = Math.max(2, Math.round(num('steadywin', 30)));
 export const WAKE_TOL = num('waketol', 2e-3);
-/** a frozen chunk's supply changing by more than this factor (either way) wakes it instead of rescaling it */
-export const RESCALE_MAX = Math.max(1.01, num('rescalemax', 4));
 
 export class Steady {
   /** per chunk, act x 4 u32 (net change, throughput, perturbed, overflow): the liquid passes add */
@@ -101,20 +99,20 @@ export class Steady {
       if (!this.sleep.isAwakeSlot(k, now) && !all) {
         if (!u[k * 4 + 2]) continue;
         // (a frozen chunk whose supply changed — asleep, x and y are its edge's inflow and outflow: the user,
-        // "keep the flow proportional and then zero out when they get too low". Its flux is rescaled by in / out,
-        // no simulation; under the floor, zeroed (dried up). Something new arriving where nothing flowed, or a
-        // change past RESCALE_MAX either way: woken to find its new steady state. Shape changes wake by events.)
+        // "keep the flow proportional and then zero out when they get too low". Under the floor, zeroed (dried up), no
+        // simulation; any other change woken to find its new steady state. Shape changes wake by events.)
+        // (UC-6: its flux is no longer rescaled by in / out. The inflow it was scaled by is what its awake neighbours
+        // send it, and they send more the more it sends them: a pool beside a frozen river, a town's basin, returned
+        // its outflow, in / out stayed over 1 with the pipes' overshoot and the readback's lag, and the frozen flux
+        // grew 1-4x a window — Muru's water to 35 000 deep. Nothing but the frozen flux pushes water into an awake
+        // chunk regardless of its level, so only a growing frozen flux could do it)
         out.perturbed++;
-        const r = thr > 1e-6 ? net / thr : Infinity;
         // (round 86: a stream arrived over it where none was - liquid.wgsl jets holds it aloft: woken)
         if (u[k * 4 + 2] & 2) {
           this.calm[k] = 0;
           this.sleep.wakeSlot(k, 1, now);
         } else if (net < STEADY_FLOOR && thr > 1e-6) {
           this.onRescale(k, 0);
-          out.rescaled++;
-        } else if (r > 1 / RESCALE_MAX && r < RESCALE_MAX) {
-          this.onRescale(k, r);
           out.rescaled++;
         } else {
           this.calm[k] = 0;

@@ -325,6 +325,12 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
       if (!inMap(q)) {
         code = C_DRAIN;
         Hn = max(fz, G.ocean.x);
+        // (UC-6: a held river's column on the window's edge — past it the river runs on at the table's level, so its
+        // water doesn't pour off the window upstream as off a cliff: only what stands over that level leaves)
+        if (LQ_WATER && s == 0u) {
+          let rh = riverHere(id.xy);
+          if (rh.on && rh.depth > 0.0) { Hn = max(Hn, g.nat + rh.depth); }
+        }
       } else {
         let gq = gapsAt(q);
         // the neighbour's gap open across the run's height: the highest floor under its level
@@ -667,9 +673,12 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   var o = gather(p, g, r);
   let top = g.n - 1u;
   // (held: in the gap on the column's own ground — under a deck, the river's; Gaps.nat)
+  // (UC-6: on the window's edge the river is the atlas's beyond it — held at the table's depth, the boundary the
+  // simulated river between the edges is fed from and drains into; at 2 % a step it couldn't feed the river's discharge
+  // and the awake river ran dry. Asleep, on its slow turn, it eases to the table at flowRiverRelax)
   if (held) {
     let m = gapForRun(g, g.nat);
-    o.dep[m] = mix(o.dep[m], rh.depth, G.tune.flowRiverRelax);
+    o.dep[m] = mix(o.dep[m], rh.depth, select(G.tune.flowRiverRelax, 1.0, windowEdge(id.xy)));
   }
   // the enclosed runs: wet gaps under the top, lowest first; past three, the deepest kept (the rest counted)
   var n = 0u;
