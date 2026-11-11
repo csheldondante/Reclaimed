@@ -22694,3 +22694,22 @@ lab's columns deeper than 0.9 by tick 6 400, depths to 35 000; soldiers drown in
 - **Agents groups:** 256, the unit word's 8 bits (was 24).
 - **Pages refused:** the pool's refusals ride the scope's box read (4 bytes, every READ_EVERY ticks); the first shows
   the fatal overlay and AgentUnits sends no more orders ('pool-full').
+
+## 2026-11-11 — U2 round 7, step 4: a hunt and a threat field per side; the side relation matrix (trackB-u2r9-pool)
+
+- **Sides (§9e).** `Agents.sideFields(side, { hunt, threat })`: a side is a faction's number (0..254, the combat word's
+  byte). The table rides the seed list's header (two words a side). huntSet reads the unit's side from notice's combat
+  words (binding 41: its eighth storage buffer). A fighter of a side with its own hunt field seeds that, not the shared
+  hunt / foes field; with a threat field, every fighter of the side seeds it where it stands. Fields are pages, so each
+  covers only the ground round its own army.
+- **The relation matrix.** `notice.relations((a, b) => …)`: a bit a pair of sides in notice's uniform (8 KB, written
+  only when it changes, not each frame). With it set, notice's mayFight and the actors' test read it in place of the
+  hostile flag's rule; `relations(null)` goes back to that rule (AgentUnits still uses it — its F.* fields are the
+  callers' own ids, below 16).
+- **Test:** sides.test.ts — three armies, A on B, B on C, C on A: every target is of the side it takes on; each side's
+  hunt field reads < 4 at its prey and more than 10 further at the third army; its threat field < 4 on itself.
+- **Bench (`?fieldbench=1`):** a three-armies phase on open ground (per-side fields on against frozen), and every
+  phase's card line carries the front a sweep (from the pool's header: entries listed over sweeps run) and the pages
+  held, of the pool's, and refused.
+- **Not built:** a flee field per side relaxed from the min of its enemies' threat fields (the step still flees up its
+  own field), and AgentUnits moved onto sides (its targets / foes / goal fields stay the shared ones).

@@ -118,7 +118,9 @@ const FR_REACH = 3;
 const FR_FLAGS = 4;
 /** (fieldseam.wgsl seedList) a frame's seeds at most: a hunt seed a unit, the CPU's, an order group's place and runs */
 const SEED_LIST = MAX_UNITS + 4096;
-const SEED_HEAD = 8;
+/** fieldseam.wgsl SEED_HEAD: the counts, the hunt's and the foes' fields, then per side its hunt and threat fields */
+const SEED_HEAD = 16 + 2 * 256;
+const SEED_SIDES = 16;
 /** (FC12 stage 2) units.wgsl mail: the head, the aim (12 words a slot), the hits landing (2 a slot), the arrows (12 each) */
 const MAIL_ARROWS = 2048;
 /** (U2 round 5; round 7) orders.wgsl: the order groups — their records and rank tables in `mail`, sized from memory
@@ -506,6 +508,8 @@ export class Agents implements SimSystem {
   private jfaPasses: number;
   private jk?: Record<'obsInit' | 'obsPass' | 'obsNext' | 'obsClear' | 'obsEnd' | 'init' | 'pass' | 'next' | 'apply' | 'end' | 'rBegin' | 'rInit' | 'rPass' | 'rApply', ComputeKernel> & { g: GPUBindGroup };
   private huntField: number | null = null;
+  private benchListed = 0;
+  private benchSweeps = 0;
   /** (the field bench) frontDbg counted without ?agentprof=1 (read by benchFront: the front's asks a sweep) */
   benchProbe = false;
   /** (the field bench) the per-unit GPU cost by toggles: the units not drawn; notice not dispatched; the step at half
@@ -544,7 +548,13 @@ export class Agents implements SimSystem {
     const u = new Uint32Array(tmp.getMappedRange().slice(0));
     tmp.destroy();
     const m = 64;
-    return { asks: u[45], sweeps: u[46], shots: u[m + 3], landed: u[m + 4], missed: u[m + 5], toActFrames: u[m + 1], toActN: u[m + 2], direct: u[m + 6] };
+    // (U2 round 7: the fields' front, from the pool's header — entries listed and sweeps run since the last call)
+    const h = await this.fields.stats();
+    const asks = h.listed - this.benchListed;
+    const sweeps = h.sweeps - this.benchSweeps;
+    this.benchListed = h.listed;
+    this.benchSweeps = h.sweeps;
+    return { asks, sweeps, shots: u[m + 3], landed: u[m + 4], missed: u[m + 5], toActFrames: u[m + 1], toActN: u[m + 2], direct: u[m + 6] };
   }
 
   /** (FC12 stage 2) line of sight (?los=1) and seen-only targets (?seenonly=1); the field bench toggles them */
@@ -857,7 +867,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     this.jfaPasses = passes;
     this.seedList = world.buf('agentSeedList', (SEED_HEAD + 4 * SEED_LIST) * 4, S);
     this.frontDbg = world.buf('agentFrontDbg', 64 * 4, S);
-    device.queue.writeBuffer(this.seedList, 0, new Uint32Array([0, 0, 0, 0, FIELD_NONE, FIELD_NONE]));
+    device.queue.writeBuffer(this.seedList, 0, new Uint32Array(SEED_HEAD).fill(FIELD_NONE).fill(0, 0, 4));
     // (round 104, simscale: agents/scope.ts)
     this.abBuf = world.buf('agentScope', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.abBuf, 0, new Uint32Array([0, 0, world.w, world.h, 0, 0, 0, 0]));
@@ -903,9 +913,9 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
         relaxG: makeBindGroup(device, 'agents-relax', relax.layout, { ...base, 5: this.nav, 6: this.fields.buffer, 10: this.params, 37: this.navCost, 38: this.abBuf, 40: this.roads }),
       };
       // (U2) the hunt's seeds on the GPU: once a frame before the relaxation
-      const huntSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 10: 'uniform', 16: 'rw', 38: 'uniform', 53: 'rw', 54: 'rw', 55: 'rw' };
+      const huntSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 10: 'uniform', 16: 'rw', 38: 'uniform', 41: 'read', 53: 'rw', 54: 'rw', 55: 'rw' };
       const set = mk('huntSet', huntSpec);
-      this.hk = { set, g: makeBindGroup(device, 'agents-hunt', set.layout, { ...base, 5: this.nav, 6: this.fields.buffer, 7: this.units, 10: this.params, 16: this.mail, 38: this.abBuf, 53: this.seedList, 54: this.frontDbg, 55: this.jfaBuf }) };
+      this.hk = { set, g: makeBindGroup(device, 'agents-hunt', set.layout, { ...base, 5: this.nav, 6: this.fields.buffer, 7: this.units, 10: this.params, 16: this.mail, 38: this.abBuf, 41: this.notice.combat, 53: this.seedList, 54: this.frontDbg, 55: this.jfaBuf }) };
       if (JFA || LOS_BUILT) {
         const jSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 37: 'rw', 38: 'uniform', 54: 'rw', 55: 'rw' };
         const jm = (e: string) => mk(e, jSpec);
@@ -1352,6 +1362,20 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     this.writeHuntFields();
   }
 
+  /**
+   * (U2 round 7, §9e) Side `side`'s own fields (a faction's number, 0..254): its fighters' targets seed `hunt` (its
+   * fighters close in down it — not the shared hunt or foes field), and its fighters seed `threat` where they stand (the
+   * ground near them, for others to flee). Being paged, each covers only the ground round its own army. null: none.
+   * Who's whose enemy is `notice.relations`.
+   */
+  sideFields(side: number, f: { hunt?: number; threat?: number } | null): void {
+    if (!Number.isInteger(side) || side < 0 || side > 254) throw new Error(`agents.sideFields: side ${side} out of 0..254`);
+    for (const id of [f?.hunt, f?.threat]) if (id !== undefined) this.useField(id);
+    this.sides.set(side, f ?? {});
+    this.device.queue.writeBuffer(this.seedList, (SEED_SIDES + side * 2) * 4, new Uint32Array([f?.hunt ?? FIELD_NONE, f?.threat ?? FIELD_NONE]));
+  }
+  private sides = new Map<number, { hunt?: number; threat?: number }>();
+
   private writeHuntFields(): void {
     // (the field bench's huntOn off: none — the seeds stop, the fields empty of them)
     const on = (f: number | null) => (this.huntOn && f !== null ? f : FIELD_NONE);
@@ -1567,7 +1591,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       pass.setPipeline(k.cpu.pipeline);
       pass.dispatchWorkgroups(Math.ceil(this.seeds.length / 64));
     }
-    if ((this.huntField !== null || this.foeField !== null) && this.count > 0 && this.huntOn) {
+    if ((this.huntField !== null || this.foeField !== null || this.sides.size > 0) && this.count > 0 && this.huntOn) {
       pass.setBindGroup(0, this.hk.g);
       pass.setPipeline(this.hk.set.pipeline);
       pass.dispatchWorkgroups(Math.ceil(this.count / 64));

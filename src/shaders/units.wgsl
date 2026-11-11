@@ -1065,6 +1065,12 @@ fn itemDraw(@builtin(global_invocation_id) id: vec3<u32>) {
 // seeds (their positions are the CPU's). The two field ids: seedList words SEED_HUNT, SEED_FOES (FIELD_NONE none).
 const SEED_HUNT: u32 = 4u;
 const SEED_FOES: u32 = 5u;
+/** (U2 round 7, §9e) per side (a faction's number): its hunt field and its threat field (FIELD_NONE none) — a unit of a
+ *  side with its own hunt field seeds that, not the shared hunt / foes; with a threat field, every fighter of the side
+ *  seeds it where it stands (for others to flee) */
+const SEED_SIDES: u32 = 16u;
+/** notice.wgsl's combat words (bits 0-7 the side) */
+@group(0) @binding(41) var<storage, read> unitCombat: array<vec4<u32>>;
 @compute @workgroup_size(64)
 fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   let u = id.x;
@@ -1076,7 +1082,16 @@ fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   let kd = AP.kinds[(info >> 9u) & 7u];
   let hostileKind = kd.b.w > 0.0;
   if (!hostileKind && kd.b.x <= 0.0 && bitcast<f32>(kd.c.w) <= 0.0) { return; }
-  let f = atomicLoad(&seedList[select(SEED_FOES, SEED_HUNT, hostileKind)]);
+  let side = unitCombat[u].x & 0xffu;
+  let sideHunt = atomicLoad(&seedList[SEED_SIDES + side * 2u]);
+  let sideThreat = atomicLoad(&seedList[SEED_SIDES + side * 2u + 1u]);
+  if (fieldOk(sideThreat)) {
+    let me = units[u * UNIT_V].xyz;
+    let mc = clampCell(cellAt(me.xy));
+    let mk = surfaceNear(colIdxI(mc), me.z);
+    if (inScope(mc) && mk < NAV_K) { seedPut(sideThreat, colIdxI(mc) * NAV_K + mk); }
+  }
+  let f = select(atomicLoad(&seedList[select(SEED_FOES, SEED_HUNT, hostileKind)]), sideHunt, fieldOk(sideHunt));
   if (!fieldOk(f)) { return; }
   let code = bitcast<u32>(units[u * UNIT_V + 5u].y);
   if (code == 0u || (code & 0x80000000u) != 0u) { return; }

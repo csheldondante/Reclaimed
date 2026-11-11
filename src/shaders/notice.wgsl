@@ -47,6 +47,9 @@ struct NoticeParams {
   actorFac: array<vec4<u32>, 2>,
   // targets set by the game this frame (an order, a unit struck turning on who struck it): slot, code — two a vec4
   sets: array<vec4<u32>, 32>,
+  // (U2 round 7, §9e) the side relation matrix: a bit (a, b) — side a takes on side b (NR_MATRIX on; the CPU writes it
+  // when the sides or their diplomacy change, agents/notice.ts relations)
+  rel: array<vec4<u32>, 512>,
 };
 @group(0) @binding(45) var<uniform> NP: NoticeParams;
 
@@ -78,6 +81,15 @@ const NR_RULES: u32 = 1u;
 const NR_OPEN: u32 = 2u;
 // a side map is in place: units' sides are told (EV_SIDE)
 const NR_SIDES: u32 = 4u;
+/** (U2 round 7) who's whose enemy is the relation matrix (NP.rel), not the hostile flag's rule */
+const NR_MATRIX: u32 = 8u;
+/** side a takes on side b (NP.rel's bit) — no side (NO_FACTION): never */
+fn relHostile(a: u32, b: u32) -> bool {
+  if (a == NO_FACTION || b == NO_FACTION) { return false; }
+  let i = a * 256u + b;
+  let w = i / 32u;
+  return ((NP.rel[w / 4u][w % 4u] >> (i % 32u)) & 1u) != 0u;
+}
 
 fn alive(u: u32) -> bool { return ((bitcast<u32>(units[u * UNIT_V].w) >> 8u) & 1u) != 0u; }
 fn idOf(u: u32) -> u32 { return (bitcast<u32>(units[u * UNIT_V].w) >> 16u) * MAX_SLOTS + u; }
@@ -99,8 +111,11 @@ fn mayFight(h: u32, hw: u32, x: u32) -> bool {
   if (x == h || !alive(x)) { return false; }
   let xw = combat[x].x;
   if ((xw & CW_BOUND) != 0u) { return false; }
-  // (who's whose enemy: a hostile hunts the peaceful of another faction; the peaceful take on hostiles)
-  if ((hw & CW_HOSTILE) != 0u) {
+  // (who's whose enemy: the side relation matrix when the game set one; else a hostile hunts the peaceful of another
+  // faction, and the peaceful take on hostiles)
+  if ((NP.n.w & NR_MATRIX) != 0u) {
+    if (!relHostile(faction(hw), faction(xw))) { return false; }
+  } else if ((hw & CW_HOSTILE) != 0u) {
     if ((xw & CW_HOSTILE) != 0u || faction(xw) == faction(hw)) { return false; }
   } else if ((xw & CW_HOSTILE) == 0u) {
     return false;
@@ -265,6 +280,7 @@ fn notice(@builtin(global_invocation_id) id: vec3<u32>) {
         let p = NP.actors[a];
         let f = actorFaction(a);
         if (p.w <= 0.0 || (f != NO_FACTION && f == faction(hw))) { continue; }
+        if ((NP.n.w & NR_MATRIX) != 0u && !relHostile(faction(hw), f)) { continue; }
         let d = length(p.xy - me.xy);
         if (d < best) {
           best = d;

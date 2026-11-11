@@ -9,7 +9,7 @@
 // ctl words (PagePool.layout mirrors them):
 //   header PP_HDR: 0 pages handed out (the pool's end), 1 claims refused (the pool full), 2 the front's count,
 //     3 the dirty parity, 4 the free stack's count, 5 the front's stamp (one a sweep), 6 owners in use (the CPU's
-//     high-water of the ids it handed out)
+//     high-water of the ids it handed out), 7 the front's entries listed, all told
 //   gen    a word a page: bumped when the page is let go (a page id read before a release is told from one after)
 //   table  owners x slots: page + 1 (0: none)
 //   dirty  two parities of a bit an (owner, slot), then two of a bit a slot ("every owner here": a cell changed)
@@ -179,6 +179,8 @@ fn ppList(o: u32, slot: u32) {
       }
       atomicStore(&pp.ctl[PP_FRONT + k], (o << 16u) | s);
       atomicAdd(&ppArgs[0], 1u);
+      // (the entries listed, all told: the bench's front a sweep, with the stamp's sweeps)
+      atomicAdd(&pp.ctl[7], 1u);
     }
   }
 }

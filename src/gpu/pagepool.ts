@@ -34,7 +34,7 @@ export interface PagePoolOpts {
 }
 
 /** the header's words (pagepool.wgsl) */
-export const PP_HEADER = { end: 0, refused: 1, front: 2, parity: 3, free: 4, stamp: 5, owners: 6 } as const;
+export const PP_HEADER = { end: 0, refused: 1, front: 2, parity: 3, free: 4, stamp: 5, owners: 6, listed: 7 } as const;
 
 export interface PagePoolStats {
   /** pages held (handed out less those let go) */
@@ -43,6 +43,9 @@ export interface PagePoolStats {
   /** the last sweep's front: entries listed */
   front: number;
   pages: number;
+  /** entries listed and sweeps run, all told */
+  listed: number;
+  sweeps: number;
 }
 
 export class PagePool {
@@ -194,7 +197,7 @@ export class PagePool {
   /** (the bench card, tests: 64 bytes on demand) the header */
   async stats(): Promise<PagePoolStats> {
     const h = new Uint32Array(await this.read(0, 64));
-    return { used: h[PP_HEADER.end] - h[PP_HEADER.free], refused: h[PP_HEADER.refused], front: h[PP_HEADER.front], pages: this.o.pages };
+    return { used: h[PP_HEADER.end] - h[PP_HEADER.free], refused: h[PP_HEADER.refused], front: h[PP_HEADER.front], pages: this.o.pages, listed: h[PP_HEADER.listed], sweeps: h[PP_HEADER.stamp] };
   }
 
   /** (tests) the whole buffer: the control words and the payload */
