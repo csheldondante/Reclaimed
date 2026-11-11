@@ -33,6 +33,8 @@ const SPAWN_BIT: u32 = 0x80000000u;
 /** an orderFailed's reason bit: the spawn's place wasn't valid — none made */
 const SPAWN_FAILED: u32 = 0x100u;
 const GROUP_BASE: u32 = 16u;
+/** (U2 round 7) the agents groups an order group's members are drawn in (their colour only: GROUP_BASE + g % this) */
+const ORDER_COLOURS: u32 = 8u;
 const EV_GROUP_ARRIVED: u32 = 20u;
 const EV_ORDER_FAILED: u32 = 21u;
 /** (round 6) a spawn made: its place resolved, its units placed (once a spawn, by its first) */
@@ -120,11 +122,12 @@ fn orderApply(@builtin(global_invocation_id) id: vec3<u32>) {
   let g = atomicLoad(&mail[q + 1u]);
   let rk = atomicLoad(&mail[q + 2u]);
   if (slot >= MAX_SLOTS || g >= ORDER_GROUPS) { return; }
-  // (round 6: its rank too — the formation's slot k: the order's id list on the CPU)
-  atomicStore(&mail[MAIL_AIM + slot * AIM_W + 11u], (g + 1u) | ((rk & ~SPAWN_BIT) << 8u));
+  // (round 6: its rank too — the formation's slot k: the order's id list on the CPU. U2 round 7: the group + 1 in the
+  // low 16 bits, the rank in the high — the membership; the agents group only its colour, GROUP_BASE + g % 8)
+  atomicStore(&mail[MAIL_AIM + slot * AIM_W + 11u], ogPack(g, rk & ~SPAWN_BIT));
   var a = units[slot * UNIT_V];
   var info = unitInfo(a);
-  info = (info & ~0xffu) | (GROUP_BASE + g);
+  info = (info & ~0xffu) | (GROUP_BASE + g % ORDER_COLOURS);
   if ((rk & SPAWN_BIT) != 0u) {
     let r = grpResolve(g);
     if (r.x != PLACE_OK) {
@@ -219,19 +222,19 @@ fn groupCount(@builtin(global_invocation_id) id: vec3<u32>) {
   let u = id.x;
   if (u >= AP.n.x) { return; }
   let gw = atomicLoad(&mail[MAIL_AIM + u * AIM_W + 11u]);
-  let gp = gw & 0xffu;
+  let gp = ogGroup(gw);
   if (gp == 0u || gp > ORDER_GROUPS) { return; }
   let a = units[u * UNIT_V];
   let info = unitInfo(a);
   let g = gp - 1u;
-  // (still in its group: moved to another by the CPU, it no longer counts)
-  if (((info >> 8u) & 1u) == 0u || (info & 0xffu) != GROUP_BASE + g) { return; }
+  // (alive; one moved to another group by the CPU has its word cleared — Agents.regroup)
+  if (((info >> 8u) & 1u) == 0u) { return; }
   // (every living member is waited for — one its field doesn't reach holds the group's arrival; not counted apart by
   // the field's FAR: right after an order the field is refilling from the place and reads FAR almost everywhere, so a
   // member there looked cut off — the lab's run told arrived with none at the keep)
   atomicAdd(&mail[grpO(g) + 12u], 1u);
   // (round 6: its rank's unit, for formSlots — by the slot, checked there against this word)
-  if ((gw >> 8u) < RANKS) { atomicStore(&mail[rankO(g, gw >> 8u) + 4u], u + 1u); }
+  if (ogRank(gw) < RANKS) { atomicStore(&mail[rankO(g, ogRank(gw)) + 4u], u + 1u); }
   let to = mailV3(grpO(g) + 8u);
   if (length(to.xy - a.xy) <= grpArrive(grpWord(g, 18u)) && abs(to.z - a.z) < 3.0) { atomicAdd(&mail[grpO(g) + 13u], 1u); }
 }
@@ -297,10 +300,9 @@ fn runO(g: u32, i: u32) -> u32 { return grpO(g) + RUNS_AT + i * RUN_W; }
 /** man: a run's foot seeded in its field (field slot i % count), a run let go unseeded (orderResolve: set B) */
 fn manSeed(g: u32) {
   let nf = max(grpWord(g, FORM_AT + 15u), 1u);
-  let fw = grpWord(g, FORM_AT + 14u);
   for (var i = 0u; i < RUNS; i++) {
     let o = runO(g, i);
-    let f = (fw >> (8u * (i % nf))) & 0xffu;
+    let f = grpWord(g, RUNF_AT + i % nf);
     var s = 0u;
     if (atomicLoad(&mail[o]) != ROUTE_NONE_W && fieldOk(f)) {
       let p = mailV3(o + 4u);
@@ -413,7 +415,7 @@ fn rankUnit(g: u32, k: u32) -> u32 {
   if (u >= AP.n.x) { return MAX_SLOTS; }
   let info = unitInfo(units[u * UNIT_V]);
   let gw = atomicLoad(&mail[MAIL_AIM + u * AIM_W + 11u]);
-  if (((info >> 8u) & 1u) == 0u || (gw & 0xffu) != g + 1u || (gw >> 8u) != k) { return MAX_SLOTS; }
+  if (((info >> 8u) & 1u) == 0u || ogGroup(gw) != g + 1u || ogRank(gw) != k) { return MAX_SLOTS; }
   return u;
 }
 
@@ -626,12 +628,11 @@ fn formSlots(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   mailSetV3(ro, goal);
-  var mode = RANK_FIELD | (grpWord(g, 6u) << 8u);
-  if (m == 3u) {
-    // (its run's field: the group's field slots, run by run)
-    let nf = max(grpWord(g, FORM_AT + 15u), 1u);
-    mode = RANK_FIELD | (((grpWord(g, FORM_AT + 14u) >> (8u * (run % nf))) & 0xffu) << 8u);
-  }
+  var mode = RANK_FIELD;
+  // (the field it follows off its slot: the group's, or (man) its run's — rank word 7)
+  var rf = grpWord(g, 6u);
+  if (m == 3u) { rf = grpWord(g, RUNF_AT + run % max(grpWord(g, FORM_AT + 15u), 1u)); }
+  atomicStore(&mail[ro + 7u], rf);
   if (u < MAX_SLOTS) {
     let up = units[u * UNIT_V].xyz;
     let d = length(goal.xy - up.xy);

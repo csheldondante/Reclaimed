@@ -31,7 +31,7 @@ const PP_SDIRTY: u32 = PP_DIRTY + 2u * PP_TBITS;
 const PP_REQ: u32 = PP_SDIRTY + 2u * PP_SBITS;
 const PP_STAMP: u32 = PP_REQ + PP_TBITS;
 const PP_FRONT: u32 = PP_STAMP + PP_OWNERS * PP_SLOTS;
-const PP_FREE: u32 = PP_FRONT + PP_OWNERS * PP_SLOTS;
+const PP_FREE: u32 = PP_FRONT + PP_FRONT_CAP;
 const PP_PCTL: u32 = PP_FREE + PP_PAGES;
 const PP_OREC: u32 = PP_PCTL + PP_PAGES * PP_PC;
 const PP_NONE: u32 = 0u;
@@ -170,6 +170,13 @@ fn ppList(o: u32, slot: u32) {
       let s = pageIdx(vec2<u32>(q));
       if (atomicExchange(&pp.ctl[PP_STAMP + o * PP_SLOTS + s], st) == st) { continue; }
       let k = atomicAdd(&pp.ctl[2], 1u);
+      // (past the front's room — it holds 9 a page, so only with the pool all but full: what's left waits a sweep)
+      if (k >= PP_FRONT_CAP) {
+        atomicSub(&pp.ctl[2], 1u);
+        atomicStore(&pp.ctl[PP_STAMP + o * PP_SLOTS + s], 0u);
+        ppMarkNext(o, s);
+        continue;
+      }
       atomicStore(&pp.ctl[PP_FRONT + k], (o << 16u) | s);
       atomicAdd(&ppArgs[0], 1u);
     }

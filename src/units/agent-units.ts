@@ -26,7 +26,7 @@
 import type { Actor, AreaHit, OrderFailure, PlaceRef, SpawnAtOpts, SquadOrder, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
 import type { GroupId } from '../api/contracts/inhabitants';
-import { ORDER_ALTS, ORDER_GROUPS, ORDER_GROUP_BASE, type Agents, type OrderPlace, type AgentEvent, type AgentState, type HuntCandidate, type OrderRecord, type Target } from '../agents/agents';
+import { ORDER_ALTS, orderColourGroup, type Agents, type OrderPlace, type AgentEvent, type AgentState, type HuntCandidate, type OrderRecord, type Target } from '../agents/agents';
 import type { PickAsk } from '../agents/pick';
 import { MAT } from '../world/materials';
 import { timed } from '../gpu/cpustat';
@@ -210,11 +210,11 @@ export class AgentUnits implements Units {
   private routesFor: ((town: number) => GPUBuffer | null) | null = null;
   /** the town whose routes are bound, while a man or march holds them */
   private routesTown: number | null = null;
-  private groups: (OrderGroup | null)[] = Array.from({ length: ORDER_GROUPS }, () => null);
+  private groups: (OrderGroup | null)[];
   /** (round 6) groups whose spawn failed, and why: their orders fail the same (the failure sticks) */
   private failedGroups = new Map<GroupId, OrderFailure>();
   /** (round 6) the order groups' fields: the one seam to them (round 7 pages them) */
-  private fields = new OrderFields();
+  private fields: OrderFields;
   private nextGroup = 1;
   /** failures found on the CPU (no field free), told at the next sync with the GPU's */
   private failsNow: [GroupId, OrderFailure][] = [];
@@ -275,6 +275,8 @@ export class AgentUnits implements Units {
     o: { huntGpu?: boolean } = {},
   ) {
     this.huntGpu = o.huntGpu ?? HUNT_GPU;
+    this.fields = new OrderFields(agents);
+    this.groups = Array.from({ length: agents.orderGroups }, () => null);
     if (this.huntGpu) agents.gpuHunt(F.targets);
     // (U2 round 5, DA-B32: the defenders' foes seeded on the GPU — the peaceful fighters' targets)
     agents.gpuFoes(F.foes);
@@ -380,7 +382,7 @@ export class AgentUnits implements Units {
         state: 'idle',
         colour: this.colourOf(faction),
       };
-      recs.push({ v, gpu: -1, sight: opts.sight ?? 10, damage: opts.damage ?? 1, group: ORDER_GROUP_BASE + slot, target: null, cool: 0, goal: null, order: slot });
+      recs.push({ v, gpu: -1, sight: opts.sight ?? 10, damage: opts.damage ?? 1, group: orderColourGroup(slot), target: null, cool: 0, goal: null, order: slot });
     }
     const slow = kind === 'shambler' || (opts.speed !== undefined && opts.speed < 2.2);
     const gpu = this.agents.spawnAt(n, slot, { kind: this.kindOf(recs[0] ?? ({ v: { hostile, role: kind } } as UnitRec), slow), hp: Math.max(health, 0.1) * HPK });
@@ -429,7 +431,8 @@ export class AgentUnits implements Units {
     // (its fields through the seam (agents/fieldseam.ts): a field a key — shared with any group ordered to the same one;
     // a man order a field a wall run, as many as are free up to MAN_FIELDS; none free — the order isn't sent)
     const fields = this.fields.fieldFor(slot, key, want);
-    if (!fields) {
+    // (or the field pages ran out: the pool refused a page — the visible error is Agents', this order isn't sent)
+    if (!fields || this.agents.fieldPagesRefused > 0) {
       this.failsNow.push([id, 'pool-full']);
       return;
     }
