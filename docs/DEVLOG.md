@@ -23113,3 +23113,17 @@ cases over the fake's field limit), season, transfers, typecheck.
 - Desktop headless (a proxy only): 1.13 M vertices at Muru's start (105 built lots: 1621 bodies, 1605 built windows,
   356 roofs, 375 round bodies, 93 cones, 368 shrubs, 6 wheels); every diff 0 — the frame is held at 9.9 ms, the GPU not
   the limit. The pan had one 1 s spike as a town was made (the town's own generation; to look at on the phone).
+
+## archgen: one grid for the whole town (2026-11-11; the user: "Can the irregular grid span lots so they are more
+## seamless?", "I want the irregular grid lots pretty full and continuous except at roads")
+
+- The per-lot grid replaced by one anchored in the town's frame: a triangle lattice (side 5.4) whose neighbours pair
+  into quads where both pick each other (a symmetric hash per shared edge), every piece split into quads Townscaper's
+  way (centre to edge middles: corners of 3 and 5 cells), every vertex nudged by a hash of its position — so any lot
+  computing a vertex gets the same one. Each lot's thread walks the lattice under its parcel and keeps the cells whose
+  centre is in its parcel (and its footprint grown to its lot lines): no cell twice, no gap between lots. Citygen insets
+  a lot's internal edges by only 0.35 and its street edges by half the street and the setback, so the blocks come out
+  continuous and broken only at the streets; a cell's corners past a street edge are pulled back onto it (facades on
+  the street line).
+- Order in the roofs: a street column's gable to the street, the ones behind a storey lower with their ridges along the
+  lot's street; chimneys rare. Up to 44 cells a lot (two parts each).
