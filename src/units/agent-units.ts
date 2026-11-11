@@ -23,13 +23,14 @@
 //    again (a 'raised' event: the same GPU id) in the raiser's group. It's alive again here, keeps its role, and is
 //    `bound`: the raiser's, not this layer's to order — it neither takes jobs nor hunts until the game orders it.
 // Window coordinates (x cells, y world units, z the ground) as the world API's.
-import type { Actor, AreaHit, OrderFailure, PlaceRef, SquadOrder, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
+import type { Actor, AreaHit, OrderFailure, PlaceRef, SpawnAtOpts, SquadOrder, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
 import type { GroupId } from '../api/contracts/inhabitants';
 import { ORDER_ALTS, ORDER_GROUPS, ORDER_GROUP_BASE, type Agents, type OrderPlace, type AgentEvent, type AgentState, type HuntCandidate, type OrderRecord, type Target } from '../agents/agents';
 import type { PickAsk } from '../agents/pick';
 import { MAT } from '../world/materials';
 import { timed } from '../gpu/cpustat';
+import { OrderFields } from '../agents/fieldseam';
 import { ACTOR, NO_FACTION, type CombatSpec } from '../agents/notice';
 import { urlFlags } from '../flags';
 
@@ -54,7 +55,7 @@ export const R4 = { toSmith: 16, toBarracks: 17, toPost: 18, cart0: 19 } as cons
  *  bound to their raiser until the game orders them (the play hero's: follow it) */
 export const RAISED_GROUP = G.stand;
 /** agents' kinds (0 worker, 1 raider, 2 ogre are the defaults the others use) */
-const K = { worker: 0, guard: 3, character: 4, raider: 5, shambler: 6, cart: 7 } as const;
+const K = { worker: 0, soldier: 1, guard: 3, character: 4, raider: 5, shambler: 6, cart: 7 } as const;
 
 /**
  * (round 128l, m4) A cart's look: a wooden bed on four dark wheels with a driver's seat at the front (voxels of 0.25 cells
@@ -98,9 +99,6 @@ const LEASH = 28;
 /** (U2 round 5, DA-B32) a peaceful fighter's blow on the GPU (its kind's): reach (cells), damage (GPU hp: a contract
  *  health point), the swing's period (s) — the CPU's strike's were REACH, the unit's damage, STRIKE 1 s */
 const MELEE = { reach: 1.35, damage: HPK, swingPeriod: 1.0 } as const;
-/** (U2 round 5) the fields the order groups take (the old rounds' 0-6: the GPU towns run no rounds on the agents) —
- *  shared by groups ordered to one place */
-const ORDER_FIELDS = [0, 1, 2, 3, 4, 5, 6] as const;
 /** orders.wgsl group kinds */
 const OK = { none: 0, stand: 1, go: 2, guard: 3, attack: 4, drill: 5, man: 6, march: 7 } as const;
 /** townplace.wgsl statuses as the contract's reasons; (round 6) a gate's (orders.wgsl FAIL_GATE | routeread GATE_*) */
@@ -115,16 +113,16 @@ interface OrderGroup {
   id: GroupId;
   members: Set<UnitId>;
   order: SquadOrder | null;
-  /** (round 6) the fields it holds beyond `field` (a man order's runs) */
-  extra: number[];
+  /** (round 6, Track A's ask) its spawn not yet resolved on the GPU (no `spawned` or failure read): orders wait in
+   *  `held`, sent once it stands — an order sent at once took the spawn's record, and a spawn at a missing place stood
+   *  at the order's */
+  spawning: boolean;
+  held: SquadOrder | null;
   /** (round 6) a march that leaves: members gone out of the window, and left(g) told */
   gone: number;
   leftTold: boolean;
   /** the spawn's place (the record's while it stands) */
   at: PlaceRef;
-  /** the field held (ORDER_FIELDS), and its key (the place's) */
-  field: number;
-  key: string | null;
   /** the GPU order's serial now, and the spawn's (a failure of the spawn: none made) */
   serial: number;
   spawnSerial: number;
@@ -213,6 +211,10 @@ export class AgentUnits implements Units {
   /** the town whose routes are bound, while a man or march holds them */
   private routesTown: number | null = null;
   private groups: (OrderGroup | null)[] = Array.from({ length: ORDER_GROUPS }, () => null);
+  /** (round 6) groups whose spawn failed, and why: their orders fail the same (the failure sticks) */
+  private failedGroups = new Map<GroupId, OrderFailure>();
+  /** (round 6) the order groups' fields: the one seam to them (round 7 pages them) */
+  private fields = new OrderFields();
   private nextGroup = 1;
   /** failures found on the CPU (no field free), told at the next sync with the GPU's */
   private failsNow: [GroupId, OrderFailure][] = [];
@@ -278,9 +280,11 @@ export class AgentUnits implements Units {
     agents.gpuFoes(F.foes);
     // (DA-B32: every kind that may fight back has a blow of its own on the GPU — MELEE; the hostile kinds' damage in GPU
     // hp, a contract health point a blow, as the CPU's swing turned into a hit was)
+    // (round 6, Track A's ask: a soldier's pace 3.2 — a kind of its own, the slot the agents' default raider had)
+    agents.defineKind(K.soldier, { name: 'soldier', height: 1.45, mass: 1.2, hp: 10, speed: 3.2, ...MELEE, colours: { torso: MAT.Steel, head: MAT.Steel } });
     agents.defineKind(K.guard, { name: 'guard', height: 1.45, mass: 1.2, hp: 10, speed: 2.7, ...MELEE, colours: { torso: MAT.Steel, head: MAT.Steel } });
     agents.defineKind(K.character, { name: 'character', height: 1.4, mass: 1, hp: 10, speed: 2.5, ...MELEE, colours: { torso: MAT.Brick, legs: MAT.Wood } });
-    agents.defineKind(K.raider, { name: 'raider', height: 1.6, mass: 1, hp: 10, speed: 3.1, reach: 1.35, damage: HPK, swingPeriod: 1.1, notice: 160, colours: { torso: MAT.Tile, legs: MAT.Basalt, head: MAT.Obsidian }, model: { voxels: raiderModel(), voxel: 0.25 } });
+    agents.defineKind(K.raider, { name: 'raider', height: 1.6, mass: 1, hp: 10, speed: 3.4, reach: 1.35, damage: HPK, swingPeriod: 1.1, notice: 160, colours: { torso: MAT.Tile, legs: MAT.Basalt, head: MAT.Obsidian }, model: { voxels: raiderModel(), voxel: 0.25 } });
     agents.defineKind(K.shambler, { name: 'shambler', height: 1.4, mass: 1, hp: 10, speed: 1.5, reach: 1.1, damage: HPK, swingPeriod: 1.6, notice: 50, colours: { torso: MAT.Bone, legs: MAT.Ash, head: MAT.Bone } });
     // (round 88: people a third of a storey tall, in a yellow tunic — at the phone's half resolution a 1-cell figure
     // in canvas was lost against plaster and grass)
@@ -341,12 +345,19 @@ export class AgentUnits implements Units {
     this.routesFor = routesFor;
   }
 
-  spawnAt(kind: string, faction: FactionId | null, at: PlaceRef, n: number): GroupId {
+  spawnAt(kind: string, faction: FactionId | null, at: PlaceRef, n: number, opts: SpawnAtOpts = {}): GroupId {
     if (!this.agents.placesIn) throw new Error('units.spawnAt: no town place table yet (usePlaces)');
     const chain = placeChain(at);
     const slot = this.groups.findIndex((g) => g === null);
-    if (slot < 0) throw new Error(`units.spawnAt: ${ORDER_GROUPS} order groups at once, all taken`);
-    const g: OrderGroup = { id: this.nextGroup++, members: new Set(), order: null, extra: [], gone: 0, leftTold: false, at, field: -1, key: null, serial: 0, spawnSerial: 0 };
+    if (slot < 0) {
+      // (Track A's ask: no throw — a group id, no units, and orderFailed(g, 'pool-full'), sticking)
+      const gid = this.nextGroup++;
+      this.failedGroups.set(gid, 'pool-full');
+      this.failsNow.push([gid, 'pool-full']);
+      return gid;
+    }
+    const health = opts.health ?? 3;
+    const g: OrderGroup = { id: this.nextGroup++, members: new Set(), order: null, spawning: true, held: null, gone: 0, leftTold: false, at, serial: 0, spawnSerial: 0 };
     this.groups[slot] = g;
     // (it stands at its place until ordered: the GPU resolves the place for the spawn, and tells a failure)
     g.spawnSerial = g.serial = this.agents.order(slot, { kind: OK.stand, alts: chain, field: -1 });
@@ -361,17 +372,18 @@ export class AgentUnits implements Units {
         faction,
         at: null,
         heading: Math.PI / 2,
-        health: 3,
-        maxHealth: 3,
+        health,
+        maxHealth: health,
         hostile,
         alive: true,
         job: { kind: 'idle' },
         state: 'idle',
         colour: this.colourOf(faction),
       };
-      recs.push({ v, gpu: -1, sight: 10, damage: 1, group: ORDER_GROUP_BASE + slot, target: null, cool: 0, goal: null, order: slot });
+      recs.push({ v, gpu: -1, sight: opts.sight ?? 10, damage: opts.damage ?? 1, group: ORDER_GROUP_BASE + slot, target: null, cool: 0, goal: null, order: slot });
     }
-    const gpu = this.agents.spawnAt(n, slot, { kind: this.kindOf(recs[0] ?? ({ v: { hostile, role: kind } } as UnitRec), kind === 'shambler'), hp: 3 * HPK });
+    const slow = kind === 'shambler' || (opts.speed !== undefined && opts.speed < 2.2);
+    const gpu = this.agents.spawnAt(n, slot, { kind: this.kindOf(recs[0] ?? ({ v: { hostile, role: kind } } as UnitRec), slow), hp: Math.max(health, 0.1) * HPK });
     recs.forEach((u, i) => {
       u.gpu = gpu[i];
       this.byGpu.set(u.gpu, u.v.id);
@@ -382,9 +394,20 @@ export class AgentUnits implements Units {
   }
 
   orderGroup(id: GroupId, o: SquadOrder): void {
+    // (a group whose spawn failed: its orders fail the same)
+    const dead = this.failedGroups.get(id);
+    if (dead) {
+      this.failsNow.push([id, dead]);
+      return;
+    }
     const slot = this.groups.findIndex((g) => g?.id === id);
     if (slot < 0) return;
     const g = this.groups[slot]!;
+    // (its spawn not resolved yet: the order waits for it — the latest one)
+    if (g.spawning) {
+      g.held = o;
+      return;
+    }
     const routed = o.kind === 'man' || o.kind === 'march';
     // (round 6: man and march read their town's routes — one town's bound at a time)
     if (routed) {
@@ -403,29 +426,21 @@ export class AgentUnits implements Units {
     }
     const key = routed ? (o.kind === 'man' ? `man:${o.town}:${o.side ?? '*'}` : `march:${o.town}:${o.gate}`) : placeKey(o.at);
     const want = o.kind === 'man' ? MAN_FIELDS : 1;
-    // (a field a place — shared with any group ordered to the same one; a man order a field a wall run, as many as
-    // are free up to MAN_FIELDS; none free — the order isn't sent)
-    if (g.key !== key) {
-      const others = this.groups.flatMap((x, i) => (x && i !== slot && x.key ? [{ key: x.key, fields: [x.field, ...x.extra] }] : []));
-      const taken = new Set(others.flatMap((x) => x.fields));
-      const shared = others.find((x) => x.key === key)?.fields;
-      const fields = shared ?? ORDER_FIELDS.filter((c) => !taken.has(c)).slice(0, want);
-      if (!fields.length) {
-        this.failsNow.push([id, 'pool-full']);
-        return;
-      }
-      g.field = fields[0];
-      g.extra = fields.slice(1);
-      g.key = key;
+    // (its fields through the seam (agents/fieldseam.ts): a field a key — shared with any group ordered to the same one;
+    // a man order a field a wall run, as many as are free up to MAN_FIELDS; none free — the order isn't sent)
+    const fields = this.fields.fieldFor(slot, key, want);
+    if (!fields) {
+      this.failsNow.push([id, 'pool-full']);
+      return;
     }
     g.order = o;
     g.gone = 0;
     g.leftTold = false;
     const formation = o.kind === 'man' ? 0 : 'formation' in o && o.formation ? (o.formation === 'line' ? 2 : 1) : o.kind === 'march' ? 1 : 0;
-    const rec: OrderRecord = { kind: OK[o.kind], alts: routed ? [] : placeChain(o.at), field: g.field, formation, spacing: o.kind === 'man' ? POST_SPACING : FORM_SPACING };
+    const rec: OrderRecord = { kind: OK[o.kind], alts: routed ? [] : placeChain(o.at), field: fields[0], formation, spacing: o.kind === 'man' ? POST_SPACING : FORM_SPACING };
     if (o.kind === 'man') {
       rec.gate = o.side;
-      rec.runFields = [g.field, ...g.extra];
+      rec.runFields = fields;
     } else if (o.kind === 'march') {
       rec.gate = o.gate;
       rec.leave = !!o.leave;
@@ -454,6 +469,7 @@ export class AgentUnits implements Units {
       if (u) u.order = undefined;
     }
     this.groups[slot] = null;
+    this.fields.release(slot);
     this.agents.order(slot, { kind: OK.none, alts: [{ at: { town: 0, place: { name: 0 } } }], field: -1 });
     this.agents.keepInScope(`order${slot}`, []);
     // (round 6: the routes let go with the last man or march)
@@ -794,7 +810,8 @@ export class AgentUnits implements Units {
 
   private kindOf(u: UnitRec, slow: boolean): number {
     if (u.v.hostile) return slow || u.v.role.includes('dead') ? K.shambler : K.raider;
-    if (u.v.role === 'guard' || u.v.role === 'soldier') return K.guard;
+    if (u.v.role === 'soldier') return K.soldier;
+    if (u.v.role === 'guard') return K.guard;
     if (u.v.role === 'cart') return K.cart;
     if (u.v.name || u.v.character) return K.character;
     return K.worker;
@@ -998,15 +1015,30 @@ export class AgentUnits implements Units {
       } else if (e.type === 'groupArrived') {
         const g = this.groups[e.group];
         if (g && g.order && e.serial === g.serial) for (const f of this.arrived) f(g.id);
+      } else if (e.type === 'spawned') {
+        // (round 6: the spawn stands — the order held back for it now sent)
+        const g = this.groups[e.group];
+        if (!g || !g.spawning || e.serial !== g.spawnSerial) continue;
+        g.spawning = false;
+        const held = g.held;
+        g.held = null;
+        if (held) this.orderGroup(g.id, held);
       } else if (e.type === 'orderFailed') {
         const g = this.groups[e.group];
         if (!g) continue;
         if (e.spawn) {
-          // (its spawn's place wasn't valid: none made — their slots freed, their records gone. Only the spawn's own
-          // failure: the stand order's place failing later, after they were made, removes nobody)
+          // (its spawn's place wasn't valid: none made — their slots freed, their records gone, the group let go and
+          // its failure sticking: an order held for it, or sent later, fails the same. Only the spawn's own failure: the
+          // stand order's place failing later, after they were made, removes nobody)
           if (e.serial !== g.spawnSerial) continue;
+          const why = WHY[e.status] ?? 'none';
           for (const id of g.members) this.remove(id);
           g.members.clear();
+          g.held = null;
+          this.failedGroups.set(g.id, why);
+          this.freeGroup(e.group);
+          for (const f of this.orderFailed) f(g.id, why);
+          continue;
         } else if (e.serial !== g.serial || g.serial === g.spawnSerial) continue;
         for (const f of this.orderFailed) f(g.id, WHY[e.status] ?? 'none');
       } else if (e.type === 'hurt') {

@@ -194,3 +194,32 @@ test('§9d: an off-road formation squeezes through a gap between two walls (the 
   expect(arrived.filter((x) => x === gid).length).toBe(1);
   expect(g.takeErrors()).toEqual([]);
 });
+
+test('spawnAt at a missing place, then orderGroup guard → 0 units, the failure sticking; a spawn past the groups → pool-full', async () => {
+  const { units, run } = await world();
+  const yard = cellPos(60, 40);
+  // (a muster yard, no barracks)
+  units.usePlaces(fakePlaces({ [PLACE.muster]: [yard[0], yard[1], 10] }));
+  const failed: [number, string][] = [];
+  units.orderFailed.push((gid, why) => failed.push([gid, why]));
+  const gid = units.spawnAt!('soldier', 'f-town', { town: 0, place: PLACE.barracks }, 3);
+  // (at once, before the spawn resolved: it waits for it, and fails with it)
+  units.orderGroup!(gid, { kind: 'guard', at: { town: 0, place: PLACE.muster } });
+  await run(30);
+  units.orderGroup!(gid, { kind: 'go', at: { town: 0, place: PLACE.muster } });
+  await run(30);
+  const standing = [...units.recs.values()].filter((u) => u.v.alive && u.v.role === 'soldier').length;
+  const near = (await units.query([yard[0], yard[1]], 20)).length;
+  // (the eight groups held, a ninth: an id, no units, pool-full)
+  const held = Array.from({ length: 8 }, () => units.spawnAt!('soldier', 'f-town', { town: 0, place: PLACE.muster }, 1));
+  const ninth = units.spawnAt!('soldier', 'f-town', { town: 0, place: PLACE.muster }, 1);
+  await run(10);
+  log(`missing place: standing ${standing}, near the yard ${near}, failed ${JSON.stringify(failed)}, held ${held.length}`);
+  expect(standing).toBe(0);
+  expect(near).toBe(0);
+  expect(units.members!(gid)).toEqual([]);
+  expect(failed.filter(([x]) => x === gid).map(([, w]) => w)).toEqual(['none', 'none']);
+  expect(failed.filter(([x]) => x === ninth).map(([, w]) => w)).toEqual(['pool-full']);
+  expect(units.members!(ninth)).toEqual([]);
+  expect(g.takeErrors()).toEqual([]);
+});

@@ -18,6 +18,7 @@ import unitsWgsl from '../shaders/units.wgsl?raw';
 import townplaceWgsl from '../shaders/townplace.wgsl?raw';
 import ordersWgsl from '../shaders/orders.wgsl?raw';
 import routereadWgsl from '../shaders/routeread.wgsl?raw';
+import fieldseamWgsl from '../shaders/fieldseam.wgsl?raw';
 import type { SimSystem } from '../sim/system';
 import { TICK_DT } from '../sim/flow';
 import { stepPlan } from './stepplan';
@@ -375,6 +376,8 @@ export type AgentEvent =
   | { type: 'groupArrived'; group: number; serial: number; n: number; x: number; y: number; z: number; id?: undefined }
   /** (U2 round 5) order group `group`'s place isn't valid (`status`: townplace PLACE_*): once an order (`serial`) */
   | { type: 'orderFailed'; group: number; status: number; spawn: boolean; serial: number; x: number; y: number; z: number; id?: undefined }
+  /** (U2 round 6) order group `group`'s spawn (its serial) made: its place resolved, its units placed */
+  | { type: 'spawned'; group: number; serial: number; x: number; y: number; z: number; id?: undefined }
   /** (U2 round 6) it left the window on order group `group`'s march (leave): its slot is free, no death */
   | { type: 'left'; id: number; group: number; x: number; y: number; z: number }
   | { type: 'alight'; id: number; by: number | 'fire'; x: number; y: number; z: number }
@@ -855,7 +858,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       return [commonWgsl, layersWgsl, materialsWgsl, waterclassWgsl, agentsSrc, surfaceDepth + unitsSrc];
     };
     const parts = partsFor(BLOCK_RELAX, RELAX_K);
-    this.orderParts = [...parts, townplaceWgsl, routereadWgsl, ordersWgsl];
+    // (round 6: the orders reach fields only through fieldseam.wgsl — round 7's paged atlas swaps it)
+    this.orderParts = [...parts, townplaceWgsl, routereadWgsl, fieldseamWgsl, ordersWgsl];
     const mk = (e: string, sp: BindSpec) => makeCompute(device, `agents-${e}`, parts, sp, e);
     // four layouts, each within 8 storage buffers: the peel (it reads the
     // layers and the places), the fields, the units' tick, their draw
@@ -2152,6 +2156,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
           events.push({ type: 'left', id, group: eu[o + 2], ...p });
           this.free.push(id % MAX_UNITS);
           this.holds.delete(id % MAX_UNITS);
+        } else if (kind === 23) {
+          events.push({ type: 'spawned', group: id, serial: Math.round(ef[o + 3]), ...p });
         } else if (kind === 21) {
           events.push({ type: 'orderFailed', group: id, status: eu[o + 2] & 0xff, spawn: (eu[o + 2] & 0x100) !== 0, serial: Math.round(ef[o + 3]), ...p });
         } else if (kind === 8) {
