@@ -27,9 +27,6 @@ const RAIDER_FACTION = 'f-raiders';
 /** a march's failures that say the gate can't be marched (try the next); the others (busy, no-town, pool-full) say no
  *  march can go now */
 const GATE_REASONS: readonly OrderFailure[] = ['none', 'rising', 'water', 'failed'];
-/** a failure Track B is adding (BACKLOG SF-14): a formation where even one file doesn't fit — the squad guards the same
- *  place with no formation. Compared as a string so this builds whether units.ts's union has it yet or not */
-const NO_FILE_ROOM: string = 'no-room';
 
 /** the town has a military structure for soldiers to gather at (SF-13, the user: "they should wait for a keep or
  *  barracks or walls or your fortress"): the keep card started or built (its district raises the barracks), or the walls
@@ -126,7 +123,12 @@ export class SeasonWar {
   /** the soldiers: a group a free point of Might */
   private squads: GroupId[] = [];
   private posts = new Map<GroupId, Post>();
-  private wave: { g: GroupId; n: number; stage: 'coming' | 'there' | 'fighting'; failed: boolean; a: number; tried: number } | null = null;
+  private wave: { g: GroupId; n: number; stage: 'coming' | 'there' | 'fighting'; failed: boolean; a: number; tried: number; fellBack?: boolean } | null = null;
+  /** squads sent to a shared place after a 'pool-full' this season (once each: no loop) */
+  private fellBack = new Set<GroupId>();
+  /** squads refused a field in this batch of events: placed once the batch is through, so none picks a place whose
+   *  own refusal is still on its way in the same batch */
+  private refused = new Set<GroupId>();
   private town = -1;
   /** the walls built this season: a ring with gates (raids come at a gate; squads guard them; the patrol) */
   private ring = false;
@@ -206,12 +208,19 @@ export class SeasonWar {
     f.orderFailed.push((g, why, ref) => {
       console.warn(`[forces] group ${g}: no place in ${JSON.stringify(ref)} (${why})`);
       const r = f.report(g);
-      if (this.squads.includes(g) && (why as string) === NO_FILE_ROOM && r?.size && this.loose(f, g, ref)) return this.changed();
+      if (this.squads.includes(g) && why === 'no-room' && r?.size && this.loose(f, g, ref)) return this.changed();
       if (this.squads.includes(g)) this.squadFailed(f, g, why, !!r?.size);
       if (this.wave?.g === g) {
         const w = this.wave;
-        if (why === 'pool-full') this.full = true;
-        else if (r?.size || w.tried >= SPAWNS || (!this.ring && w.tried + PLACE_CHAIN >= SPAWNS)) w.failed = true;
+        if (why === 'pool-full') {
+          // (no field free for its place: the keep, else the stores, else the market, once a season — a raid group is
+          // the only one at a time, so there is no other raid's place to share)
+          this.full = true;
+          if (r?.size && !w.fellBack) {
+            w.fellBack = true;
+            f.orderGroup(g, { kind: 'attack', at: townHeart(this.town) });
+          }
+        } else if (r?.size || w.tried >= SPAWNS || (!this.ring && w.tried + PLACE_CHAIN >= SPAWNS)) w.failed = true;
         else {
           f.disband(g);
           this.raid(f, w.n, w.a, w.tried + PLACE_CHAIN);
@@ -232,9 +241,14 @@ export class SeasonWar {
 
   /** a squad's spawn or order failed: its next post, or the sheet told */
   private squadFailed(f: TownForces, g: GroupId, why: OrderFailure, made: boolean): void {
-    // (no group or field free: the squad stays as it is — told on the sheet; the next season posts again)
+    // (no field free: told on the sheet, and the squad sent once a season to a place another squad already holds — a
+    // shared field — so it never stands where it spawned. No group free (its spawn failed: none made, its orders would
+    // fail the same): it stays as it is, and the next season raises it again)
     if (why === 'pool-full') {
       this.full = true;
+      if (!made || this.fellBack.has(g)) return;
+      if (!this.refused.size) queueMicrotask(() => this.shareRefused(f));
+      this.refused.add(g);
       return;
     }
     // (the town's slot not live — its window slid away: no other place of it would do; the next season posts again)
@@ -256,6 +270,39 @@ export class SeasonWar {
       else this.post(f, g, p.home, 0);
     } else if (p.kind === 'heart') this.drill(f, g);
     else this.noPlace = true;
+  }
+
+  /** the batch's refused squads, each to a shared place */
+  private shareRefused(f: TownForces): void {
+    const gs = [...this.refused];
+    for (const g of gs) if (this.squads.includes(g) && !this.fellBack.has(g)) this.share(f, g);
+    this.refused.clear();
+    this.changed();
+  }
+
+  /** (pool-full) the squad to guard a place another squad holds (a shared field): the gate (or, in a raid with no
+   *  walls, the town's heart) the most other squads guard, else the muster yard, else the barracks — the drilling
+   *  squads' place */
+  private share(f: TownForces, g: GroupId): void {
+    this.fellBack.add(g);
+    const held = new Map<string, { n: number; post: Post; at: PlaceRef }>();
+    for (const o of this.squads) {
+      const p = this.posts.get(o);
+      const r = f.report(o);
+      if (o === g || this.refused.has(o) || !p || !r?.alive || r.failed || (p.kind !== 'gate' && p.kind !== 'heart')) continue;
+      const ref = p.kind === 'gate' ? gateWindow(this.town, p.gate) : townHeart(this.town);
+      const key = JSON.stringify(ref);
+      const h = held.get(key) ?? { n: 0, post: p, at: ref };
+      h.n++;
+      held.set(key, h);
+    }
+    const best = [...held.values()].sort((a, b) => b.n - a.n)[0];
+    if (best) {
+      this.posts.set(g, best.post.kind === 'gate' ? { kind: 'gate', gate: best.post.gate, tried: GATE_SLOTS } : { kind: 'heart' });
+      return f.orderGroup(g, { kind: 'guard', at: best.at, formation: 'line' });
+    }
+    this.posts.set(g, { kind: 'yard' });
+    f.orderGroup(g, { kind: 'guard', at: at(this.town, PLACE.muster, at(this.town, PLACE.barracks)), formation: 'line' });
   }
 
   /**
@@ -293,6 +340,8 @@ export class SeasonWar {
     this.noPlace = false;
     this.full = false;
     this.cramped = false;
+    this.fellBack.clear();
+    this.refused.clear();
     // (the squads to the free Might: the weakest sent home first, new ones raised at the barracks, else the yard. A squad
     // with none left — all fallen, or its spawn failed (Track B's failure sticks: its orders would fail the same) — is let
     // go and raised again)

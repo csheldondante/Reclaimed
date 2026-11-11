@@ -388,6 +388,60 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
     expect(war.lines).toContain(FORCES_FULL);
   });
 
+  it('pool-full: a squad guards the gate the most other squads guard (a shared field), and a raid goes for the keep', async () => {
+    const { f, units, tick } = forces({ [PLACE.muster]: 'ok', [PLACE.gate0]: 'ok', [PLACE.gate0 + 1]: 'ok', [PLACE.gate0 + 2]: 'ok', [PLACE.spawn0]: 'ok', [PLACE.keep]: 'ok' }, 2);
+    // (another group holds the keep's field: with squad 0 at gate window 0, both fields are taken)
+    const other = f.spawnAt('soldier', 'f-town', { town: 0, place: PLACE.muster }, 1);
+    f.orderGroup(other, { kind: 'guard', at: townHeart(0) });
+    const l = { ...grant(start(), { might: 1 }), built: ['walls'] };
+    const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 1, ledger: () => l });
+    war.season(l);
+    await tick(4);
+    const [a, b] = units.spawns.filter((x) => x.kind === 'guard' && x.n === SQUAD).map((x) => x.g);
+    // (squad 1's own window found no field: it guards squad 0's gate window instead, in a line)
+    expect(units.orderOf(b)).toEqual(units.orderOf(a));
+    expect(units.orderOf(b)).toMatchObject({ kind: 'guard', formation: 'line' });
+    expect(units.placeOf(units.members(b)[0])).toBe(PLACE.gate0);
+    // (the raid's gate found no field: it attacks the keep, the town's heart, sharing the other group's field)
+    const r = units.spawns.find((x) => x.kind === 'raider')!.g;
+    expect(units.orderOf(r)).toEqual({ kind: 'attack', at: unitsRef(townHeart(0)) });
+    expect(units.placeOf(units.members(r)[0])).toBe(PLACE.keep);
+    expect(war.lines).toContain(FORCES_FULL);
+    expect(war.lines).toContain(soldiersLine(SQUAD * 2, 'gates'));
+  });
+
+  it('pool-full with no gate guarded: the muster yard, else the barracks; tried once a season, never a loop', async () => {
+    const yard = { town: 0, place: PLACE.muster, else: { town: 0, place: PLACE.barracks } };
+    const { f, units, tick } = forces({ [PLACE.muster]: 'ok', [PLACE.gate0]: 'ok', [PLACE.gate0 + 1]: 'ok', [PLACE.gate0 + 2]: 'ok', [PLACE.keep]: 'ok' }, 1);
+    // (the one field held at the yard: every gate order is refused)
+    const drill = f.spawnAt('soldier', 'f-town', { town: 0, place: PLACE.muster }, 1);
+    f.orderGroup(drill, { kind: 'drill', at: yard, formation: 'column' });
+    const l = { ...grant(start(), { might: 1 }), built: ['walls'] };
+    const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 1, ledger: () => l });
+    war.season(l);
+    await tick(4);
+    const squads = units.spawns.filter((x) => x.kind === 'guard' && x.n === SQUAD).map((x) => x.g);
+    for (const g of squads) expect(units.orderOf(g)).toEqual({ kind: 'guard', at: yard, formation: 'line' });
+    expect(war.lines).toContain(soldiersLine(SQUAD * 2, 'yard'));
+    // (the one field held at the keep instead: the squads' drill refused, the fallback too — once each, then they stay)
+    const held = forces({ [PLACE.muster]: 'ok', [PLACE.keep]: 'ok' }, 1);
+    const k = held.f.spawnAt('soldier', 'f-town', { town: 0, place: PLACE.muster }, 1);
+    held.f.orderGroup(k, { kind: 'guard', at: { town: 0, place: PLACE.keep } });
+    const l2 = { ...l, built: ['keep'] };
+    const w2 = new SeasonWar({ forces: () => held.f, town: () => 0, firstWave: 0, ledger: () => l2 });
+    w2.season(l2);
+    await held.tick(8);
+    const gs = held.units.spawns.filter((x) => x.kind === 'guard' && x.n === SQUAD).map((x) => x.g);
+    const count = (g: number) => held.units.orders.filter(([x]) => x === g).length;
+    expect(gs.length).toBe(2);
+    for (const g of gs) expect(count(g)).toBe(2);
+    expect(w2.lines).toContain(FORCES_FULL);
+    // (the next season tries once more)
+    w2.season({ ...l2, season: 2 });
+    await held.tick(8);
+    for (const g of gs) expect(count(g)).toBe(4);
+  });
+
   it('soldiers drill in a column at the muster yard; at the gates they guard in a line', async () => {
     const { f, units, tick } = forces({ [PLACE.muster]: 'ok', [PLACE.gate0]: 'ok', [PLACE.gate0 + 1]: 'ok', [PLACE.spawn0]: 'ok' });
     let l = { ...grant(start(), { might: 1 }), built: ['keep'] };

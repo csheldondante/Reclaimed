@@ -23008,3 +23008,19 @@ So `Agents.fieldPoolFull` now shows a dismissable banner (`showWarning`, gpu/dev
 still fail `'pool-full'` through `orderFailed` for the game to handle. The seed list overflowing stays fatal (it is
 sized to every seeder; an overflow is a sizing bug). U2-FIELDREACH, bounding each field's pages by its walkers, is
 the real fix and is in progress.
+
+## A squad refused a field shares one (SF-15, `trackA-poolfull`, 2026-11-11)
+
+Track B made 'pool-full' non-fatal: a banner, and the group's order fails `'pool-full'`. Until U2-FIELDREACH only
+about 6 distinct destination fields fit at once (a walled town's gates, the drill, a patrol and a raid can ask for
+more), and groups going to the same place share a field. war.ts used to leave a refused squad on its last order — a
+freshly raised one has none, so it stood where it spawned. Now a refused squad (its units made) is sent, once a
+season, to guard the place the most other squads already hold: their gate (or the town's heart in a raid with no
+walls), else the muster yard, else the barracks — the drilling squads' place. Any of those shares an existing field,
+so it costs the pool nothing. The squads refused in one batch of events are placed after the batch (a microtask):
+placed one by one, the first picked the second's gate, whose own refusal was still in the batch, and the two then
+swapped onto each other's dead places (caught by the new unit test). A refused raid attacks the keep, else the
+stores, else the market; there is only one raid group at a time, so "another raid's place" is never there yet. The
+"Too many groups …" line stays on the sheet. Once a season each, so a refused fallback never loops. Also 'no-room'
+is now compared as units.ts's typed `OrderFailure` member (the string constant is gone). Tests: season-war (two new
+cases over the fake's field limit), season, transfers, typecheck.

@@ -139,7 +139,7 @@ Code: `season/forces.ts` (TownForces, the adapter), `season/war.ts` (the rules),
 **One adapter.** Every Units call the season makes is in `TownForces`, and since trackA-forces2 (SF-1) it runs on
 Track B's GPU place orders: `units.spawnAt(kind, faction, at: PlaceRef, n) → GroupId`, `units.orderGroup(g, { kind:
 'guard' | 'go' | 'attack', at: PlaceRef })`, `units.members(g)`, events `arrived(g)` (once an order) and
-`orderFailed(g, why)` (why: `'none' | 'rising' | 'water' | 'no-town' | 'pool-full'`); `died` (with `by`) and `hurt`
+`orderFailed(g, why)` (why: `'none' | 'rising' | 'water' | 'no-town' | 'pool-full' | 'failed' | 'busy' | 'no-room'`); `died` (with `by`) and `hurt`
 as before. Wired once where the town contracts are made (`units.usePlaces(tc.places, tc.townArea)`, stream-setup.ts).
 `PlaceRef` and `GroupId` are in the townplaces contract: `{ town, place }` or `{ town, district, kind, rank }` (`kind`
 the lot kind lotAt takes: 1 a building … 5 a field), plus `else` (the next place to try: "a gate, else the keep"; **a
@@ -163,6 +163,14 @@ turns it into the Units contract's ref (`unitsRef`).
   failure sticks: the group's later orders fail the same) and shown on the sheet ("Too many groups are on the move at
   once …"); the next season posts again. Never a silent drop. A squad whose spawn failed for any reason is let go at once
   and raised again the next season.
+- **Pool full, an order's fallback (SF-15):** until Track B's U2-FIELDREACH only about 6 distinct destination fields fit
+  at once, and groups going to the same place share one. A squad whose order is refused `'pool-full'` (its units made)
+  is sent, once a season, to guard a place another squad already holds — the gate (or, in a raid with no walls, the
+  town's heart) the most other squads guard, else the muster yard, else the barracks — so a fresh squad never stands
+  where it spawned. The squads refused in one batch of events are placed after the batch, so none picks a place whose
+  own refusal is still coming. A raid refused so attacks the keep, else the stores, else the market (one raid group at
+  a time: no other raid's place to share), once a season. The sheet's "Too many groups …" line stays either way; a
+  fallback refused too leaves the group as it is until the next season.
 - **Not a fallback:** an invalid place is never replaced by a position the CPU makes up; the chain is authored and an
   order with no valid choice fails and is shown.
 
@@ -184,7 +192,7 @@ turns it into the Units contract's ref (`unitsRef`).
 - **No room for ranks** (Track B's coming `orderFailed` reason `'no-room'`: a formation where even one file doesn't
   fit): the squad gets the same order's place as a plain `guard` with no formation, and the sheet says "Some soldiers
   have no room to form ranks. They stand guard where they are." A man or march failing so follows its other rules.
-  war.ts compares the reason as a string, so it builds before units.ts's union has it.
+  'no-room' is a member of units.ts's `OrderFailure`.
 - **Guards:** once the walls are built, squad j guards the first standing gate from slot j on in a `line` (the squads
   spread over the gates there are); before, they drill. With chains of 3, the search goes a window at a time:
   gates j, j+1, j+2; on `orderFailed` the next three; past all ten slots, where it was raised. The sheet counts soldiers
