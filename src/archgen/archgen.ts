@@ -19,6 +19,7 @@ import drawWgsl from './draw.wgsl?raw';
 import labWgsl from './archlab.wgsl?raw';
 import gameWgsl from './archgame.wgsl?raw';
 import { STYLES, STYLE_VEC4S, styleWords, type Style } from './styles';
+import { archTextures } from './textures';
 
 /** mirrors arch.wgsl */
 export const PART_WORDS = 16;
@@ -205,7 +206,8 @@ export class ArchGen {
         { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
       ],
     });
-    const layout = d.createPipelineLayout({ bindGroupLayouts: [dl] });
+    // (group 1: the material textures, shared by the device's draws — textures.ts)
+    const layout = d.createPipelineLayout({ bindGroupLayouts: [dl, archTextures(d).layout] });
     const dm = d.createShaderModule({ label: 'arch lab draw', code: LAB });
     const pipes = ARCH_DRAWS.map(([, vs]) =>
       d.createRenderPipeline({
@@ -236,6 +238,7 @@ export class ArchGen {
   drawLab(pass: GPURenderPassEncoder): void {
     const lab = this.lab!;
     pass.setBindGroup(0, lab.group);
+    pass.setBindGroup(1, archTextures(this.device).group);
     ARCH_DRAWS.forEach(([k], i) => {
       if (k === KIND.win && !this.windows) return;
       pass.setPipeline(lab.pipes[i]);

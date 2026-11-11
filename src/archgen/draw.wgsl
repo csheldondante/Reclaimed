@@ -125,11 +125,14 @@ fn vsArchBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) 
   } else {
     var IX = array<u32, 6>(0u, 1u, 2u, 0u, 2u, 3u);
     wp = vec3<f32>(c[IX[t]], zt[IX[t]]);
-    let p0 = vec3<f32>(c[0], zt[0]);
-    let n = cross(vec3<f32>(c[1], zt[1]) - p0, vec3<f32>(c[2], zt[2]) - p0);
+    // (from the diagonals: a triangle — a corner repeated — still has one)
+    let n = cross(vec3<f32>(c[2], zt[2]) - vec3<f32>(c[0], zt[0]), vec3<f32>(c[3], zt[3]) - vec3<f32>(c[1], zt[1]));
     o.nrm = normalize(select(n, -n, n.z < 0.0));
     // (in the body's own frame — along its side 0 — so flat tops lie each its own way, not all on the world's axes)
-    let ex = normalize(c[1] - c[0]);
+    // (a triangle's repeated corner may be on side 0: then side 1's direction)
+    var e0 = c[1] - c[0];
+    if (dot(e0, e0) < 1e-6) { e0 = c[2] - c[1]; }
+    let ex = normalize(e0);
     let rel = wp.xy - c[0];
     o.uv = vec4<f32>(dot(rel, ex), dot(rel, vec2<f32>(-ex.y, ex.x)), 0.0, 0.0);
     o.info.z = o.info.z | I_TOP;
@@ -764,7 +767,119 @@ fn stones(u: f32, v: f32, bw: f32, rh: f32, px: f32, seed: f32, detail: f32) -> 
 
 fn styleV(s: u32, i: u32) -> vec4<f32> { return bitcast<vec4<f32>>(instances[(AW(0u) >> 2u) + s * SV + i]); }
 
-struct Surf { col: vec3<f32>, glass: f32, ao: f32, h: f32 };
+
+// ---- (AG19) material textures: bind group 1 (textures.ts — 15 CC0 sets in two arrays; archTexU.x 1 once loaded) ----
+@group(1) @binding(0) var archTexC: texture_2d_array<f32>;
+@group(1) @binding(1) var archTexN: texture_2d_array<f32>;
+@group(1) @binding(2) var archSamp: sampler;
+@group(1) @binding(3) var<uniform> archTexU: vec4<f32>;
+const TX_BRICK: i32 = 0;
+const TX_RUBBLE: i32 = 1;
+const TX_ASHLAR: i32 = 2;
+const TX_PLASTER: i32 = 3;
+const TX_SIDING: i32 = 4;
+const TX_WOOD: i32 = 5;
+const TX_DECK: i32 = 6;
+const TX_TILE: i32 = 7;
+const TX_SLATE: i32 = 8;
+const TX_THATCH: i32 = 9;
+const TX_FLAG: i32 = 10;
+const TX_COBBLE: i32 = 11;
+const TX_DIRT: i32 = 12;
+const TX_GRASS: i32 = 13;
+const TX_CANVAS: i32 = 14;
+/** each set's mean colour (scripts/packtex.py): a tint moves it onto the style's colour */
+fn txMean(l: i32) -> vec3<f32> {
+  var m = array<vec3<f32>, 15>(vec3<f32>(0.58, 0.416, 0.325), vec3<f32>(0.494, 0.459, 0.384), vec3<f32>(0.647, 0.612, 0.478),
+    vec3<f32>(0.843, 0.827, 0.816), vec3<f32>(0.294, 0.239, 0.192), vec3<f32>(0.482, 0.388, 0.306), vec3<f32>(0.353, 0.29, 0.22),
+    vec3<f32>(0.392, 0.231, 0.153), vec3<f32>(0.275, 0.282, 0.267), vec3<f32>(0.329, 0.294, 0.251), vec3<f32>(0.478, 0.443, 0.349),
+    vec3<f32>(0.533, 0.529, 0.498), vec3<f32>(0.294, 0.216, 0.176), vec3<f32>(0.333, 0.376, 0.169), vec3<f32>(0.451, 0.435, 0.369));
+  return m[clamp(l, 0, 14)];
+}
+
+/** which set a fragment wears and where in it: layer (−1 none), texture coordinates (one repeat = 1), the colour to
+ *  tint toward (most surfaces: the style's; the branches pass their own for walls, roofs, cloth), how much of the set's
+ *  own colour stays (0 none … 1 all), and whether archSurface applies it after its branches (`post`) */
+struct TexPick { layer: i32, tc: vec2<f32>, goal: vec3<f32>, keep: f32, post: bool };
+
+fn texPick(in: VO) -> TexPick {
+  var t: TexPick;
+  t.layer = -1;
+  t.tc = vec2<f32>(0.0);
+  t.goal = vec3<f32>(1.0);
+  t.keep = 0.0;
+  t.post = true;
+  let surf = in.info.y;
+  let flags = in.info.z & 0xffu;
+  let isTop = (in.info.z & I_TOP) != 0u;
+  let isCourse = (in.info.z & I_COURSE) != 0u;
+  let s = in.info.w & 0xffu;
+  let lot = in.info.x;
+  let part = in.info.w >> 24u;
+  // (a part's own place in the set, so neighbours don't line up)
+  let off = vec2<f32>(h21(vec2<f32>(f32(lot), f32(part) + 0.5)), h21(vec2<f32>(f32(part), f32(lot) + 5.5))) * 7.0;
+  let wallUV = vec2<f32>(in.uv.x, -(in.wpos.z - archPlace().z));
+  let wallC = styleV(s, 0u);
+  let roofC = styleV(s, 2u);
+  let stoneC = styleV(s, 3u);
+  if ((surf == S_WALL || surf == S_TINT) && !isTop) {
+    let m = u32(wallC.w + 0.5);
+    t.post = false;
+    if (m == 1u) { t.layer = TX_BRICK; t.tc = wallUV / 1.3; t.keep = 0.55; }
+    else if (m == 2u) { t.layer = TX_ASHLAR; t.tc = wallUV / 2.0; t.keep = 0.3; }
+    else if (m == 4u) { t.layer = TX_SIDING; t.tc = vec2<f32>(wallUV.y, wallUV.x) / 2.0; t.keep = 0.35; }
+    else { t.layer = TX_PLASTER; t.tc = wallUV / 2.5; }
+  } else if (surf == S_ROOF && isCourse) {
+    let m = u32(roofC.w + 0.5);
+    var mm = m;
+    if (m == 3u && hash((in.info.w >> 24u) * 7u + lot) % 3u != 0u) { mm = 4u; }
+    t.post = false;
+    // (one row of the set's tiles a course: the drawn tiles sit on the courses' lips)
+    let crow = (f32(u32(in.uv.w) % 8u) + 1.0 - in.uv.z) / 8.0;
+    if (mm == 0u) { t.layer = TX_TILE; t.tc = vec2<f32>(in.uv.x / 2.4, crow); t.keep = 0.12; }
+    else if (mm == 1u) { t.layer = TX_SLATE; t.tc = vec2<f32>(in.uv.x / 2.4, crow); t.keep = 0.2; }
+    else if (mm == 2u) { t.layer = TX_THATCH; t.tc = vec2<f32>(in.uv.x / 2.0, (in.uv.w + 1.0 - in.uv.z) * 0.18); t.keep = 0.4; }
+    else if (mm == 4u) { t.layer = TX_DECK; t.tc = vec2<f32>(in.uv.x, (in.uv.w + 1.0 - in.uv.z) * 0.4) / 1.4; t.keep = 0.7; }
+    else { t.layer = TX_CANVAS; t.tc = vec2<f32>(in.uv.x, in.uv.w * 0.3 + in.uv.z * 0.3) / 1.5; }
+  } else if ((surf == S_WALL || surf == S_STONE || surf == S_TINT) && isTop && (flags & F_UNDER) == 0u && (flags & F_NOWIN) == 0u) {
+    // a flat roof's floor (archSurface's pick: 0 flagstones, 1 terracotta — procedural — 2 a deck)
+    let fk = hash((in.info.w >> 24u) * 389u + lot * 17u);
+    let pick = select(fk % 3u, 0u, surf != S_TINT);
+    if (pick == 0u) { t.layer = TX_FLAG; t.tc = in.uv.xy / 2.2; t.goal = stoneC.rgb * 0.8; t.keep = 0.4; }
+    else if (pick == 2u) { t.layer = TX_DECK; t.tc = in.uv.xy / 1.4; t.keep = 1.0; }
+  } else if ((surf == S_PLINTH || surf == S_LOTWALL) && !isTop) {
+    t.layer = TX_RUBBLE; t.tc = wallUV / 1.8; t.goal = stoneC.rgb; t.keep = 0.45;
+  } else if (surf == S_STONE && !isTop) {
+    t.layer = TX_ASHLAR; t.tc = wallUV / 2.0; t.goal = stoneC.rgb; t.keep = 0.35;
+  } else if ((surf == S_CHIMNEY || surf == S_BRICK) && !isTop) {
+    t.layer = TX_BRICK; t.tc = wallUV / 1.3; t.goal = vec3<f32>(0.62, 0.36, 0.27); t.keep = 0.7;
+  } else if (surf == S_WOOD || surf == S_CRATE) {
+    t.layer = TX_WOOD; t.tc = select(wallUV, in.uv.xy, isTop) / 1.0; t.keep = 1.0;
+  } else if (surf == S_DOOR) {
+    t.layer = TX_DECK; t.tc = wallUV / 1.4; t.goal = vec3<f32>(0.42, 0.26, 0.15); t.keep = 0.4;
+  } else if (surf == S_PLANK) {
+    t.layer = TX_DECK; t.tc = select(wallUV, in.uv.xy, isTop) / 1.6; t.goal = vec3<f32>(0.6, 0.47, 0.32); t.keep = 0.6;
+  } else if (surf == S_CLOTH) {
+    t.layer = TX_CANVAS; t.tc = vec2<f32>(in.uv.x, in.uv.z + in.uv.w * 0.3) / 1.5; t.goal = vec3<f32>(-1.0);
+  } else if (surf == S_GROUND && isTop) {
+    let k = (in.info.w >> 8u) & 0xffu;
+    t.layer = TX_GRASS;
+    if (k == 3u) { t.layer = TX_COBBLE; }
+    if (k == 5u) { t.layer = TX_DIRT; }
+    if (k == 4u) { t.layer = TX_FLAG; }
+    t.tc = in.wpos.xy / 2.4;
+    t.keep = 1.0;
+  }
+  t.tc += off;
+  return t;
+}
+
+/** a set's colour moved onto `target` (by its mean), `keep` of its own colour left */
+fn archTexCol(rgb: vec3<f32>, t: TexPick, goal: vec3<f32>) -> vec3<f32> {
+  return rgb * mix(goal / max(txMean(t.layer), vec3<f32>(0.02)), vec3<f32>(1.0), t.keep);
+}
+
+struct Surf { col: vec3<f32>, glass: f32, ao: f32, h: f32, n: vec3<f32>, rough: f32 };
 
 /** a lot's window frames: half the lots the style's trim, the rest a paint of their own */
 fn frameColour(lot: u32, trim: vec3<f32>) -> vec3<f32> {
@@ -808,6 +923,31 @@ fn archSurface(in: VO) -> Surf {
   // derivatives first (WGSL: before any branch that isn't uniform)
   let px = max(max(length(fwidth(in.uv.xz)), length(fwidth(in.uv.xy))), 1e-4);
   let detail = archDetail();
+  // (AG19) the material's texture: picked, then sampled with its own gradients here (the branches below aren't uniform)
+  let tp = texPick(in);
+  let tdx = dpdx(tp.tc);
+  let tdy = dpdy(tp.tc);
+  let dpx = dpdx(in.wpos);
+  let dpy = dpdy(in.wpos);
+  let texOn = archTexU.x > 0.5 && tp.layer >= 0;
+  let tl = max(tp.layer, 0);
+  let tc0 = textureSampleGrad(archTexC, archSamp, tp.tc, tl, tdx, tdy);
+  let tn0 = textureSampleGrad(archTexN, archSamp, tp.tc, tl, tdx, tdy);
+  var nOut = normalize(in.nrm);
+  var rough = 0.85;
+  if (texOn) {
+    // the normal map in a frame from the screen derivatives (no stored tangents); GL maps: green up the image
+    let N = nOut;
+    var nm = vec2<f32>(tn0.x * 2.0 - 1.0, -(tn0.y * 2.0 - 1.0)) * mix(0.6, 1.0, detail);
+    let nz = sqrt(max(1.0 - dot(nm, nm), 0.0));
+    let p2 = cross(dpy, N);
+    let p1 = cross(N, dpx);
+    let Tg = p2 * tdx.x + p1 * tdy.x;
+    let Bg = p2 * tdx.y + p1 * tdy.y;
+    let im = inverseSqrt(max(max(dot(Tg, Tg), dot(Bg, Bg)), 1e-20));
+    nOut = normalize(Tg * im * nm.x + Bg * im * nm.y + N * nz);
+    rough = tn0.z;
+  }
   let wallC = styleV(s, 0u);
   let trimC = styleV(s, 1u);
   let roofC = styleV(s, 2u);
@@ -832,7 +972,9 @@ fn archSurface(in: VO) -> Surf {
     }
     // plaster's mottling, a little darker low down
     col *= 0.95 + 0.07 * avnoise(vec2<f32>(u, v) * 1.7) * detail + 0.03 * avnoise(vec2<f32>(u, v) * 0.4);
-    if (m == 1u) {
+    if (texOn) {
+      col = archTexCol(tc0.rgb, tp, col);
+    } else if (m == 1u) {
       // brick
       let st = stones(u, v, 0.24, 0.095, px, 2.0, detail);
       col = mix(col * st.x, trimC.rgb * 0.95, st.y);
@@ -947,6 +1089,11 @@ fn archSurface(in: VO) -> Surf {
       else {
         k = mix(k, k * 0.55, gap);
         gRelief = -gap * 0.015 * reliefFade(px, tw);
+      }
+      if (texOn) {
+        col = archTexCol(tc0.rgb, tp, col);
+        k = 1.0;
+        gRelief = 0.0;
       }
       // (a few tiles mossed, more low on the roof)
       let moss = step(0.9, h21(vec2<f32>(floor(tu) * 1.7, row))) * 0.6;
@@ -1095,6 +1242,11 @@ fn archSurface(in: VO) -> Surf {
     col = g * (0.95 + 0.1 * avnoise(in.wpos.xy * 0.7));
     if (!isTop) { col = vec3<f32>(0.45, 0.4, 0.34); }
   }
+  // (AG19) the other textured surfaces: the set tinted to the style's colour (cloth: to its own stripes)
+  if (texOn && tp.post) {
+    col = archTexCol(tc0.rgb, tp, select(tp.goal, col, tp.goal.x < 0.0));
+    gRelief = 0.0;
+  }
   // ivy: on some lots, up their walls from the ground in uneven tongues (not over glass)
   if (!isTop && (surf == S_WALL || surf == S_TINT || surf == S_STONE || surf == S_PLINTH || surf == S_LOTWALL || surf == S_BRICK) && h21(vec2<f32>(f32(lot), 5.5)) > 0.55) {
     let g = bitcast<f32>(AW(AW(6u) + min(lot, AW(5u) - 1u)));
@@ -1108,5 +1260,5 @@ fn archSurface(in: VO) -> Surf {
   var ao = 1.0;
   if (!isTop && surf != S_GROUND && !isCourse) { ao = mix(0.6, 1.0, smoothstep(0.0, 1.6, lz - in.zs.y + 0.6)); }
   if (surf == S_TRIM && in.nrm.z < -0.5) { ao = 0.5; }
-  return Surf(col, glass, ao, gRelief);
+  return Surf(col, glass, ao, gRelief, nOut, rough);
 }

@@ -6,6 +6,7 @@ import { READBACK } from '../fieldmesh';
 import { type Camera } from '../camera';
 import { MI_ARGS_WORD } from '../meshinst';
 import { record } from '../../gpu/cpustat'; // (round 100, hitchrec: timing)
+import { archTextures } from '../../archgen/textures';
 import { BGCHECK, BgCheck } from '../bgcheck';
 import { encodeTerrainCache, terrainCacheMode } from './terrain-cache';
 import { encodeGBuffer, encodeShadow, writeLight } from './gbuffer-shadow';
@@ -218,6 +219,7 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
     rd.profiler.draws++;
   }
   // (archgen) the building generator's parts: a draw a part kind
+  if (rd.archSources.length) pass.setBindGroup(1, archTextures(rd.device).group);
   for (const v of SKIP.has('arch') ? [] : rd.archSources) {
     pass.setBindGroup(0, v.group);
     ARCH_DRAWS.forEach(([k], i) => {

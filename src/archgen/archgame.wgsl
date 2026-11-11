@@ -17,7 +17,7 @@ fn fsArch(in: VO) -> FOut {
   // (derivatives first: the cut may discard)
   let sf = archSurface(in);
   // (the surface's relief: bump mapping, archSurface's h)
-  var n = bumpN(normalize(in.nrm), in.wpos, sf.h);
+  var n = bumpN(sf.n, in.wpos, sf.h);
   // (a clipped shell's inside, seen through the cut: drawn as its dark section)
   let inside = dot(n, toEye(in.wpos)) < 0.0;
   if (inside) { n = -n; }

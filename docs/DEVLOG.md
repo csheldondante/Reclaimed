@@ -23206,3 +23206,21 @@ cases over the fake's field limit), season, transfers, typecheck.
   heavy lintel — and frames in the style's trim or a paint of the lot's own (frameColour, also the parapets'); a
   balcony on the front above the ground floor (a slab and a rail, a door-height window; its middle bay or all of
   them); small square lights in a top storey. Shutters skip round and pointed heads and balconies.
+
+## archgen: material textures (AG19; 2026-11-11; the user: CC0 textures in the repo "Yes that's fine")
+
+- 15 CC0 sets from ambientCG (brick Bricks059, rubble Bricks075A, ashlar Bricks084, plaster Plaster001, siding
+  WoodSiding008, wood Wood049, deck WoodFloor041, clay tile RoofingTiles006, slate RoofingTiles001, thatch
+  ThatchedRoof001A, flagstones PavingStones054, cobbles PavingStones070, dirt Ground048, grass Grass004, canvas
+  Fabric028), packed by scripts/packtex.py into src/archgen/tex (<key>_c.jpg colour × its occlusion, <key>_n.jpg normal
+  xy + roughness; 1024, ~9 MB in all). textures.ts loads them into two texture arrays with mips (1024 PC, 512 phone;
+  ?archtexsize=), one anisotropic sampler, a uniform set once they're in; bind group 1 of the arch pipelines (lab and
+  game; the shadow pass needs none). ?archtex=0 loads nothing (the phone bench's toggle) and the procedural look stays.
+- draw.wgsl texPick: each surface's set, coordinates (walls along × height; flat tops in the body's frame; roofs one
+  row of tiles a course, so the drawn tiles sit on the courses' lips; a part's own offset) and the colour to tint to
+  (the set's mean moved onto the style's colour, some of its own kept — brick and tile little tinted). Sampled once
+  at the top of archSurface with explicit gradients (the branches aren't uniform); the normal map in a frame from screen
+  derivatives (no stored tangents), its roughness kept in Surf for the lighting pass (AG18). Windows, frames, timbering
+  and ivy still draw over the textured walls.
+- Fixes found on the way: a triangle terrace (a corner repeated) turned to the street could put the repeat on side 0 —
+  the top's frame and normal were NaN (black): the top's normal from its diagonals, its frame from side 1 then.

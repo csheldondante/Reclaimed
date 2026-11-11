@@ -47,6 +47,7 @@ import { enableBand, enableRockMesh } from './renderer/features';
 import { CAM_BYTES, SHADOW_SIZE, SHADOW_FORMAT, VEG_INSTANCES, INST_GROW, INST_START, INST_GROW_AT, PICK_FORMAT, PickHit, DEPTH_FORMAT, RenderOptions, DETAIL_BITS, SKIP, type ShadowViews } from './renderer/defs';
 import { urlFlags } from '../flags';
 import { ARCH_DRAWS, archGameWgsl } from '../archgen/archgen';
+import { archTextures } from '../archgen/textures';
 
 /** (archgen) the building generator's draws made (?arch=1) */
 export const ARCH = urlFlags().get('arch') === '1';
@@ -694,10 +695,12 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       const shadowDepth: GPUDepthStencilState = { format: SHADOW_FORMAT, depthWriteEnabled: true, depthCompare: 'less', depthBias: 2, depthBiasSlopeScale: 2 };
       this.archPipes = [];
       this.archShadowPipes = [];
+      // (AG19: group 1 the material textures — archgen/textures.ts; the shadow pass draws no colour and needs none)
+      const archPl = device.createPipelineLayout({ bindGroupLayouts: [drawLayout, archTextures(device).layout] });
       ARCH_DRAWS.forEach(([, vs], i) => {
         renderPipe(device, {
           label: `arch ${vs}`,
-          layout: pl,
+          layout: archPl,
           vertex: { module: archModule, entryPoint: vs },
           fragment: { module: archModule, entryPoint: 'fsArch', targets: [{ format }, { format: PICK_FORMAT }] },
           // (cull off: the construction shader's clipped walls show their inside — fsArch draws it dark)
