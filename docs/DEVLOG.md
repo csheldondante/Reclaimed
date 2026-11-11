@@ -23177,3 +23177,15 @@ cases over the fake's field limit), season, transfers, typecheck.
   patio's floor is its own: flagstones of their own size, terracotta tiles, or a plank deck with staggered ends.
 - Stone scale: bricks halved (0.24 × 0.095), ashlar 0.42 × 0.2, rubble and coursed stone ~0.3 × 0.15, flagstones
   0.5 × 0.36 (× a per-part scale), terracotta 0.24; the mortar joint and bevel now in proportion to the stone.
+
+## Ground textures for the town mesh (archgen, 2026-11-11; the user: "textures could help the ground. Cobblestone
+## streets or dirt and grass")
+
+- citygen's mesh vertices carried a flag word of 1 (a flat colour, render/bodies.wgsl vsSkin → fsBody). Now
+  streets.wgsl tags what a piece is (curSurf, the game only — the lab's white keeps 1): roads by the town's road tone
+  (dirt 3 for small towns, cobbles 4 for big — params roadTone), farm tracks dirt, plazas and junction paving the road's
+  surface, parks grass 5. fsBody textures those by where they lie in the town (the window's slide taken off: MESH_XF):
+  cobbles as cell-noise setts 0.24 m with their own shades, rounded, dark joints with moss in some; dirt mottled with
+  pebbles and grass tufts; grass mottled with blades as speckle and a flower now and then. Each fades to its mottled
+  colour where its detail is under a few pixels (tuned at play zoom: ~6 cm a pixel on the desktop shot).
+- Touches Track A's citygen (streets.wgsl: the flag only, colours and geometry unchanged) and the shared body shader.

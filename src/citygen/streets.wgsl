@@ -641,6 +641,16 @@ const OUTLINE_BIT: u32 = 8u;
 var<private> curTag: u32 = 0u;
 /** (time-lapse) whether the road piece being drawn marks its columns for the claims (its district started) */
 var<private> roadLive: bool = true;
+/** (archgen, the user: "Cobblestone streets or dirt and grass") what the mesh's piece is to the renderer's texturing
+ *  (render/bodies.wgsl vsSkin's word, fsBody): 1 a flat colour; in the game (u.rc.w set) 3 dirt, 4 cobbles, 5 grass */
+var<private> curSurf: u32 = 1u;
+const SURF_DIRT: u32 = 3u;
+const SURF_COBBLE: u32 = 4u;
+const SURF_GRASS: u32 = 5u;
+/** a surface for the pieces drawn next: the game's only (the lab's white stays a flat colour) */
+fn surfOf(k: u32) -> u32 { return select(1u, k, u.rc.w > 0.5); }
+/** the road tone's surface: dirt (tone 1) or cobbles (tone 2) */
+fn roadSurf() -> u32 { return surfOf(select(SURF_DIRT, SURF_COBBLE, u.rc.w > 1.5)); }
 fn vert(at: u32, p: vec3<f32>, col: u32, n: vec3<f32>) {
   let o = at * 8u;
   w5[at * 2u] = curTag;
@@ -652,7 +662,7 @@ fn vert(at: u32, p: vec3<f32>, col: u32, n: vec3<f32>) {
   w7[o + 4u] = bitcast<u32>(n.x);
   w7[o + 5u] = bitcast<u32>(n.y);
   w7[o + 6u] = bitcast<u32>(n.z);
-  w7[o + 7u] = 1u;
+  w7[o + 7u] = curSurf;
 }
 fn tri(at: u32, a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, col: u32) {
   var n = cross(b - a, c - a);
@@ -704,8 +714,10 @@ fn ribbon(at: u32, a: vec2<f32>, b: vec2<f32>, hw0: f32, col0: u32) {
   let p1 = vec3<f32>(b - s, hAt(b - s) + lift);
   let p2 = vec3<f32>(b + s, hAt(b + s) + lift);
   let p3 = vec3<f32>(a + s, hAt(a + s) + lift);
+  curSurf = select(roadSurf(), surfOf(SURF_DIRT), roadTrack);
   tri(at, p0, p1, p2, col);
   tri(at + 3u, p0, p2, p3, col);
+  curSurf = 1u;
 }
 const C_MAJOR_W: u32 = 0xfbf7eeu;
 const C_MINOR_W: u32 = 0xeee8dau;
@@ -1014,8 +1026,10 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     let col = select(C_PARK, cPave(), kind == REC_PLAZA);
     var z: array<vec3<f32>, 4>;
     for (var k = 0u; k < 4u; k++) { z[k] = vec3<f32>(q[k], hAt(q[k]) + lift); }
+    curSurf = select(surfOf(SURF_GRASS), roadSurf(), kind == REC_PLAZA);
     tri(at, z[0], z[1], z[2], col);
     tri(at + 3u, z[0], z[2], z[3], col);
+    curSurf = 1u;
     return;
   }
   // (time-lapse: made full height — tlRise sets the tops' z by the lot's progress each frame)
@@ -1954,7 +1968,9 @@ fn lmMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     let q1 = p + rp * vec2<f32>(cos(a1), sin(a1));
     let at = room(3u);
     if (at == NONE) { return; }
+    curSurf = roadSurf();
     tri(at, vec3<f32>(p, z + 0.16), vec3<f32>(q0, hAt(q0) + 0.16), vec3<f32>(q1, hAt(q1) + 0.16), cPave());
+    curSurf = 1u;
     return;
   }
   if (m >= 12u) { return; }

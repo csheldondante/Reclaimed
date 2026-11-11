@@ -97,8 +97,61 @@ fn drapeTop(p: vec3<f32>) -> f32 {
   return select(-1e9, s / max(wsum, 1e-4), wsum > 0.3);
 }
 
+/** (archgen) a cell noise at p (cells `size` m): the nearest point's distance, the gap to the second (a joint between
+ *  stones), the nearest cell's hash */
+fn cellStones(p: vec2<f32>, size: f32) -> vec3<f32> {
+  let g = p / size;
+  let i = floor(g);
+  var f1 = 9.0;
+  var f2 = 9.0;
+  var id = 0.0;
+  for (var y = -1; y <= 1; y++) {
+    for (var x = -1; x <= 1; x++) {
+      let c = vec2<i32>(i32(i.x) + x, i32(i.y) + y);
+      let o = vec2<f32>(randv(vec3<i32>(c, 71)), randv(vec3<i32>(c, 113))) * 0.7 + 0.15;
+      let d = length(vec2<f32>(f32(c.x), f32(c.y)) + o - g);
+      if (d < f1) { f2 = f1; f1 = d; id = randv(vec3<i32>(c, 29)); } else if (d < f2) { f2 = d; }
+    }
+  }
+  return vec3<f32>(f1 * size, (f2 - f1) * size, id);
+}
+
+/** (archgen, the user: "Cobblestone streets or dirt and grass") a town mesh's ground (vsSkin info.y 3 dirt, 4 cobbles,
+ *  5 grass): its colour textured by where it is in the world. px: metres a pixel (the pattern fades out under it) */
+fn groundLook(base: vec3<f32>, kind: u32, p: vec2<f32>, px: f32) -> vec3<f32> {
+  let mottle = vnoise(p * 0.35) * 0.6 + vnoise(p * 1.3) * 0.4;
+  if (kind == 4u) {
+    // cobbles: rounded setts, each its own shade, dark joints, a little moss in them
+    let c = cellStones(p, 0.24);
+    let fine = 1.0 - smoothstep(0.09, 0.22, px);
+    let joint = 1.0 - smoothstep(0.015, 0.015 + max(px * 0.6, 0.01), c.y * 0.5);
+    let dome = 1.0 - 0.25 * smoothstep(0.0, 0.14, c.x);
+    var col = base * (0.8 + 0.22 * mottle) * mix(1.0, (0.8 + 0.35 * c.z) * dome, fine);
+    let jc = mix(base * 0.45, vec3<f32>(0.2, 0.26, 0.14), step(0.6, vnoise(p * 2.1)));
+    return mix(col, mix(col, jc, joint), fine);
+  }
+  if (kind == 3u) {
+    // dirt: mottled, pebbles here and there, a little grass at its edge and in its middle
+    let c = cellStones(p, 0.12);
+    let fine = 1.0 - smoothstep(0.06, 0.15, px);
+    var col = base * (0.72 + 0.45 * mottle);
+    let pebble = step(0.82, c.z) * (1.0 - smoothstep(0.02, 0.04, c.x));
+    col = mix(col, base * 1.25 + 0.05, pebble * fine);
+    let tuft = smoothstep(0.62, 0.8, vnoise(p * 0.9 + 17.0));
+    return mix(col, vec3<f32>(0.32, 0.42, 0.2), tuft * 0.6);
+  }
+  // grass: mottled patches, blades as fine speckle, now and then a flower
+  let fine = 1.0 - smoothstep(0.06, 0.16, px);
+  let blade = randv(vec3<i32>(vec2<i32>(floor(p * 10.0)), 5));
+  var col = base * (0.66 + 0.55 * mottle) * mix(1.0, 0.85 + 0.3 * blade, fine);
+  let fl = step(0.985, randv(vec3<i32>(vec2<i32>(floor(p * 6.0)), 9))) * fine;
+  return mix(col, select(vec3<f32>(0.95, 0.9, 0.5), vec3<f32>(0.92, 0.6, 0.7), blade > 0.5), fl);
+}
+
 @fragment
 fn fsBody(in: VOut) -> FOut {
+  // (derivatives first: the town mesh's ground textures fade by them)
+  let gpx = max(length(fwidth(in.wpos.xy)), 1e-4);
   let word = in.info.x;
   let mat = word & 0xffu;
   // a little per-voxel variation so a tumbling slab doesn't read as one block
@@ -108,6 +161,11 @@ fn fsBody(in: VOut) -> FOut {
   var alb = toLinear(MATS[mat].albedo.rgb) * (0.88 + 0.24 * r);
   // (round 117, inhabitants.wgsl meshIt: a creature's vertex carries its own colour — vsSkin's info.y 1)
   if (in.info.y == 1u) { alb = toLinear(vec3<f32>(f32((word >> 16u) & 255u), f32((word >> 8u) & 255u), f32(word & 255u)) / 255.0) * (0.94 + 0.12 * r); }
+  // (archgen: a town mesh's ground — dirt, cobbles, grass — textured where it lies)
+  if (in.info.y >= 3u && in.info.y <= 5u) {
+    let base = vec3<f32>(f32((word >> 16u) & 255u), f32((word >> 8u) & 255u), f32(word & 255u)) / 255.0;
+    alb = toLinear(groundLook(base, in.info.y, in.wpos.xy - MESH_XF.xy, gpx));
+  }
   let nrm = normalize(in.nrm);
   // a structure grid's voxel (structprep.wgsl): the growth it owns on its
   // faces, and the nature grid's sand drawn over it where it's buried
