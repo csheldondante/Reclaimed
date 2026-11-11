@@ -61,6 +61,8 @@ const FORM_LAG: f32 = 3.0;
 const FORM_MARGIN: f32 = 0.6;
 const COL_MAX: u32 = 3u;
 const LINE_MAX: u32 = 10u;
+/** a wall-walk's stairs (routeread: 1.1 m) as against its walk (2 m) */
+const STAIR_W: f32 = 1.4;
 
 fn grpO(g: u32) -> u32 { return MAIL_GRP + g * GROUP_W; }
 fn grpWord(g: u32, w: u32) -> u32 { return atomicLoad(&mail[grpO(g) + w]); }
@@ -469,18 +471,31 @@ fn formAnchor(@builtin(global_invocation_id) id: vec3<u32>) {
         atomicStore(&mail[ro], ROUTE_NONE_W);
         continue;
       }
+      // (the walk: between its stairs — the route's stretch after the first stair (width at most STAIR_W: routeread's
+      // stairs are 1.1, the walk 2) and before the last; a run with no stair, the stretch within 0.6 of its highest)
       let h = routeHead(r);
+      var a0 = -1;
+      var a1 = -1;
       var zmax = -1e9;
-      for (var j = 0u; j < h.count; j++) { zmax = max(zmax, routePointLocal(r, j).z); }
+      for (var j = 0u; j < h.count; j++) {
+        zmax = max(zmax, routePointLocal(r, j).z);
+        if (routeWidth(r, j) <= STAIR_W) {
+          if (a0 < 0) { a0 = i32(j); }
+          a1 = i32(j);
+        }
+      }
       var s0 = -1.0;
       var s1 = 0.0;
       for (var j = 0u; j < h.count; j++) {
         let q = routePointLocal(r, j);
-        if (q.z >= zmax - 0.6) {
+        // (past the first stair's top and before the last's foot: on the walk, at the walk's width)
+        let onWalk = select(q.z >= zmax - 0.6, i32(j) > a0 && i32(j) < a1 && routeWidth(r, j) > STAIR_W, a0 >= 0 && a1 > a0);
+        if (onWalk) {
           if (s0 < 0.0) { s0 = q.w; }
           s1 = q.w;
         }
       }
+      if (s0 < 0.0) { atomicStore(&mail[ro], ROUTE_NONE_W); continue; }
       let n = u32(floor(max(s1 - s0, 0.0) / sp)) + 1u;
       atomicStore(&mail[ro], r);
       atomicStore(&mail[ro + 1u], bitcast<u32>(s0));
