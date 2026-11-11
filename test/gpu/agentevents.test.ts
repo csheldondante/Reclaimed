@@ -7,7 +7,7 @@ import { tinyMap } from '../support/tinymap';
 import { testGpu, type TestGpu } from './dawn';
 import { tinyWorld } from './world';
 import { installAgents } from '../../src/agents/install';
-import { Agents, ROAD_FIELD, type AgentEvent } from '../../src/agents/agents';
+import { Agents, type AgentEvent } from '../../src/agents/agents';
 import { graphOf } from '../../src/agents/roadgraph';
 import { packRoadShapes } from '../../src/agents/roads';
 import { installTraits } from '../../src/traits/install';
@@ -131,7 +131,7 @@ test("arrived on a ride: each rider told once, standing at its group's goal; not
   const G = 9;
   const ids = agents.spawn(4, 14, 27, { group: G, spread: 0.5 });
   expect(agents.ride(G, [[52, 27]])).toBe(true);
-  agents.follow(G, ROAD_FIELD);
+  agents.follow(G, agents.roadField);
   const got: (AgentEvent & { type: 'arrived' })[] = [];
   for (let k = 0; k < 80 && new Set(got.map((e) => e.id)).size < ids.length; k++) {
     tick(30);
@@ -151,7 +151,7 @@ test("arrived on a ride: each rider told once, standing at its group's goal; not
   // (moved to another riding group whose goal is elsewhere: no arrival for it until they stand at its goal)
   const H = 10;
   expect(agents.ride(H, [[12, 27]])).toBe(true);
-  agents.follow(H, ROAD_FIELD);
+  agents.follow(H, agents.roadField);
   for (const id of ids) agents.regroup(id, H);
   tick(2);
   expect((await agents.sync()).events.filter((e) => e.type === 'arrived')).toEqual([]);
@@ -175,7 +175,7 @@ test('arrived on a ride from where it stands: sent to a goal it is already at (o
   // (2.4 m off the road, at the goal: the field onto the roads would take it away first)
   const ids = agents.spawn(1, 12.3, 29.4, { group: G, spread: 0 });
   expect(agents.ride(G, [[12, 29]])).toBe(true);
-  agents.follow(G, ROAD_FIELD);
+  agents.follow(G, agents.roadField);
   const got: AgentEvent[] = [];
   for (let k = 0; k < 6 && !got.length; k++) {
     tick(10);

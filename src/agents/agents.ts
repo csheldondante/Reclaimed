@@ -19,6 +19,7 @@ import townplaceWgsl from '../shaders/townplace.wgsl?raw';
 import ordersWgsl from '../shaders/orders.wgsl?raw';
 import routereadWgsl from '../shaders/routeread.wgsl?raw';
 import fieldseamWgsl from '../shaders/fieldseam.wgsl?raw';
+import { PagePool } from '../gpu/pagepool';
 import type { SimSystem } from '../sim/system';
 import { TICK_DT } from '../sim/flow';
 import { stepPlan } from './stepplan';
@@ -35,7 +36,7 @@ import { RoadStamp } from './roads';
 import { RoadRide } from './ride';
 import type { RoadGraph } from './roadgraph';
 import { CHUNK_CLASS, CHUNK_COLUMNS, CHUNK_DEPTH, CUSTOM, ChangedTiles, TILES_BINDING, cullKernel } from '../sim/cull';
-import { ROW_H, cellAt } from '../world/lattice';
+import { ROW_H } from '../world/lattice';
 import { TUNE, worldG } from '../tune/params';
 import { urlFlags } from '../flags';
 
@@ -50,17 +51,8 @@ const MARK_LIST = CUSTOM + 12;
 /** (round 107, agentspike) ?agentprof=1: the agents' tick in one timed pass a stage (agents-in, -peel, -relax, -units),
  *  and a log a tick (window.__agentLog: the scope, what came in, the marks, the peel, each sweep's front) */
 const PROF = typeof location !== 'undefined' && urlFlags().get('agentprof') === '1';
-/** (U2, FC10) a front per field: a chunk relaxed only for the fields that changed round it; ?fieldfront=0 every field
- *  (the toggle diff's other side) */
-const FIELD_FRONT = typeof location === 'undefined' || urlFlags().get('fieldfront') !== '0';
-/** (FC11 (b)) ?frontcap=N: chunks a sweep relaxes at most (agents.wgsl FRONT_CAP; default 32) */
-const FRONT_CAP = Math.max(1, Number((typeof location !== 'undefined' && urlFlags().get('frontcap')) || 32));
-/** (FC11 (c)) ?seedcell=1: a CPU seed that stays in its cell isn't a change (off: any move is). The CPU's marks name
- *  only the fields whose seeds changed either way (FC12 round: the default) */
-const SEED_CELL = typeof location !== 'undefined' && urlFlags().get('seedcell') === '1';
-/** (FC12) the front relaxed a chunk at a time in workgroup memory, RELAX_K passes a sweep (agents.wgsl relaxBlock);
- *  ?blockrelax=0 relax's front kernel, ?relaxk=N the passes */
-const BLOCK_RELAX = typeof location === 'undefined' || urlFlags().get('blockrelax') !== '0';
+/** (FC12) the front relaxed a page at a time in workgroup memory, RELAX_K passes a sweep (fieldseam.wgsl fieldRelax);
+ *  ?relaxk=N the passes */
 const RELAX_K = Math.max(1, Math.round(Number((typeof location !== 'undefined' && urlFlags().get('relaxk')) || 16)));
 /** (FC12 variant) ?jfa=1: the hunt field started each frame its seeds change cell from an obstacle JFA, a targets JFA
  *  and a line check on the clearance (units.wgsl jfa*); ?jfalos=bisect the line check by halves (default: traced) */
@@ -79,18 +71,13 @@ export interface AgentTickLog {
   peel: number;
   units: number;
   fields: number;
-  /** each sweep's front (chunks relaxed) and the chunks that asked to be in it (past FRONT_CAP: carried), filled in when read back */
+  /** each sweep's front (pages relaxed: (field, chunk)s), filled in when read back */
   front: number[];
-  asked: number[];
-  /** (FC11) chunk asks over the tick's sweeps, by field: a change round it, or carried only; the hunt's seeds new and
-   *  gone; the fields whose CPU seeds changed, those started over (clearFields), those the CPU's marks were for */
-  fieldAsk?: number[];
-  fieldCarry?: number[];
+  /** the frame's seeds new and gone; the pool's pages in use and refused (filled in when read back) */
   seedsNew?: number;
   seedsGone?: number;
-  seedChanged?: number;
-  restarted?: number;
-  marksFor?: number;
+  pagesUsed?: number;
+  pagesRefused?: number;
   /** (?jfa=1/2) the targets JFA ran this tick, the obstacles JFA ran; columns resolved by each round; scope's ground */
   jfaRuns?: number;
   obsRuns?: number;
@@ -98,31 +85,6 @@ export interface AgentTickLog {
   ground?: number;
 }
 
-/**
- * (round 104, simscale) The relax kernel dispatched indirect over the front (agents.wgsl frontList): its 8 x 8 entry
- * renamed, a wrapper by its name finding its columns from the list, four workgroups a chunk (sim/cull.ts cullSource's
- * shape, the list in storage).
- */
-function frontSource(src: string, entry: string): string {
-  const re = new RegExp(`@compute\\s+@workgroup_size\\(8,\\s*8\\)\\s*fn ${entry}\\(@builtin\\(global_invocation_id\\) (\\w+): vec3<u32>\\)`);
-  const m = src.match(re);
-  if (!m) throw new Error(`agents: ${entry} isn't an 8 x 8 per-column pass`);
-  return (
-    src.replace(re, `fn ${entry}_column(${m[1]}: vec3<u32>)`) +
-    `
-@compute @workgroup_size(8, 8)
-fn ${entry}(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
-  let c = frontList[wg.x >> 2u];
-  // (U2, FC10: the fields this chunk is relaxed for; ?fieldfront=0 every field, as before)
-  ${FIELD_FRONT ? 'frontMask = frontList[FRONT_CAP + (wg.x >> 2u)];' : ''}
-  let s = wg.x & 3u;
-  let q = vec2<u32>((c % G.chunksX) * G.chunkSize + (s & 1u) * 8u + l.x, (c / G.chunksX) * G.chunkSize + (s >> 1u) * 8u + l.y);
-  if (q.x >= G.mapW || q.y >= G.mapH) { return; }
-  ${entry}_column(vec3<u32>(q, 0u));
-}
-`
-  );
-}
 /** ticks between reads of the units' box and of what moved */
 const READ_EVERY = 8;
 
@@ -130,11 +92,27 @@ const READ_EVERY = 8;
 export const NAV_K = 4;
 /** unit slots (units.wgsl MAX_SLOTS: an id is generation × MAX_UNITS + slot) */
 export const MAX_UNITS = 8192;
-export const NFIELDS = 13;
-/** (FC11) every field's bit (agents.wgsl ALL_FIELDS) */
-const ALL_FIELDS = 0xffff;
-/** (U2) units.wgsl HUNT_LIST: the GPU-seeded hunt's surfaces a frame, two lists */
-const HUNT_LIST = 8192;
+/** (U2 round 7) the fields: rows of the page pool's table (field ids 0..FIELD_ROWS-1, Agents.newField). 256: the man
+ *  order's run fields ride 8 bits each in a formation word (orders.wgsl FORM_AT + 14) */
+export const FIELD_ROWS = 256;
+/** (U2 round 7) a field page: 16 x 16 columns x NAV_K distances, then as many seed-ids (fieldseam.wgsl FP_W) */
+const FIELD_PAGE_W = 256 * 4;
+/** the pool's pages: ?fieldpages=N, else this many a window chunk (a field reaching the whole window holds a page a
+ *  chunk; the pool holds as much as FIELD_PAGES_PER_CHUNK such fields — the old planes held 13) */
+const FIELD_PAGES_PER_CHUNK = 6;
+const FIELD_PAGES = Number((typeof location !== 'undefined' && urlFlags().get('fieldpages')) || 0);
+/** a field with none (fieldseam.wgsl FIELD_NONE) */
+const FIELD_NONE = 0xffffffff;
+/** a field's record words (fieldseam.wgsl): place, arrival radius, leaving radius, reach, flags */
+const FIELD_REC_W = 8;
+const FO_ROAD = 1;
+/** a field record's words */
+const FR_PLACE = 0;
+const FR_REACH = 3;
+const FR_FLAGS = 4;
+/** (fieldseam.wgsl seedList) a frame's seeds at most: a hunt seed a unit, the CPU's, an order group's place and runs */
+const SEED_LIST = MAX_UNITS + 4096;
+const SEED_HEAD = 8;
 /** (FC12 stage 2) units.wgsl mail: the head, the aim (12 words a slot), the hits landing (2 a slot), the arrows (12 each) */
 const MAIL_ARROWS = 2048;
 /** (U2 round 5) orders.wgsl: the order groups (agents groups ORDER_GROUP_BASE + g), their records, the join queue */
@@ -198,18 +176,11 @@ const LOS_FLAG = !(typeof location !== 'undefined' && urlFlags().get('los') === 
 const SEEN_FLAG = !(typeof location !== 'undefined' && urlFlags().get('seenonly') === '0');
 const LOS_BUILT = true;/** (round 128o, DA-A6) units.wgsl RIDE_ARRIVED: an arrival event's `other` at or over it is a ride's (minus it: the group) */
 const RIDE_ARRIVED = 256;
-/**
- * (round 128i, V128-14) The shared field onto the roads (the last): seeded on the riding network's columns while a
- * group rides the roads (Agents.ride; agents/ride.ts) — the riding groups follow it until they're on the network.
- */
-export const ROAD_FIELD = NFIELDS - 1;
 /** (round 128l, m4: 16 → 24, a table size — the fortress's smiths, recruits, soldiers and carts: their legs ride the
  *  road graph, no fields of their own; fortress/life.ts R4) */
 export const MAX_GROUPS = 24;
 export const MAX_KINDS = 8;
 const MAX_SEEDS = 48;
-/** (round 107) cells a field's seed may move and the field be relaxed in place (seed()); further, it starts over */
-const RESEED_NEAR = 8;
 const MAX_HITS = 32;
 const MAX_TARGETS = 8;
 const MAX_HOLDS = 8;
@@ -231,8 +202,7 @@ const PEEL_EVERY = 8;
 const P_SEEDS = 4;
 const P_GFIELD = P_SEEDS + MAX_SEEDS * 4;
 const P_GMAT = P_GFIELD + MAX_GROUPS;
-const P_FPLACE = P_GMAT + MAX_GROUPS;
-const P_N2 = P_FPLACE + 16;
+const P_N2 = P_GMAT + MAX_GROUPS;
 const P_KINDS = P_N2 + 4;
 const P_HITS = P_KINDS + MAX_KINDS * 12;
 const P_TARGETS = P_HITS + MAX_HITS * 16;
@@ -243,10 +213,8 @@ const P_TARGET_H = P_LAUNCHES + MAX_LAUNCHES * 4;
 /** units moved to another group a tick (agents.wgsl regroups) */
 const MAX_REGROUPS = 64;
 const P_REGROUPS = P_TARGET_H + MAX_TARGETS;
-/** (round 128o, DA-B2a) per field its arrival radius and its leaving radius (units.wgsl arrived): 2 floats a field */
-const P_ARRIVE = P_REGROUPS + MAX_REGROUPS;
 /** (round 128o, DA-B22) the step's dt (agents.wgsl AgentParams.step) */
-const P_STEP = P_ARRIVE + Math.ceil((NFIELDS * 2) / 4) * 4;
+const P_STEP = P_REGROUPS + MAX_REGROUPS;
 /** (round 128p) units made another kind a step (agents.wgsl rekinds) */
 const MAX_REKINDS = 8;
 const P_REKINDS = P_STEP + 4;
@@ -472,7 +440,6 @@ export class Agents implements SimSystem {
   private roadStamp: RoadStamp;
   /** (round 128i, V128-14) the riding groups on an owner's road graph (agents/ride.ts) */
   private roadRide: RoadRide;
-  readonly dist: GPUBuffer;
   readonly units: GPUBuffer;
   readonly inst: GPUBuffer;
   readonly indirect: GPUBuffer;
@@ -483,7 +450,8 @@ export class Agents implements SimSystem {
   private models: GPUBuffer;
   private kindModelsBuf: GPUBuffer;
   private params: GPUBuffer;
-  private k: Record<'surfaces' | 'links' | 'relax' | 'occClear' | 'unitStep' | 'unitDraw' | 'itemDraw' | 'arrowDraw', ComputeKernel>;
+  private fieldGroup!: GPUBindGroup;
+  private k: Record<'surfaces' | 'links' | 'occClear' | 'unitStep' | 'unitDraw' | 'itemDraw' | 'arrowDraw', ComputeKernel>;
   /** what each unit carries (round 63): by slot, its material and edge; and items in flight */
   private carryBuf: GPUBuffer;
   private flyBuf: GPUBuffer;
@@ -497,28 +465,24 @@ export class Agents implements SimSystem {
   private terrain?: Terrain;
   private flyDrawn = false;
   private peelGroup: GPUBindGroup;
-  private fieldGroup: GPUBindGroup;
-  /** (round 104, simscale) the scope's box (agents.wgsl AB); the front's per-chunk marks (two: a sweep's and the
-   *  next's), its list and its dispatch (agents/scope.ts) */
+  /** (U2 round 7) the fields: a page pool (gpu/pagepool.ts; fieldseam.wgsl), bound at 6 in every fields kernel */
+  readonly fields: PagePool;
+  /** the field kernels: the frame's seeds (fieldseam.wgsl seedReset .. seedFlip, cpuSeeds), the relax over pages */
+  private fk2: { reset: ComputeKernel; unmark: ComputeKernel; land: ComputeKernel; gone: ComputeKernel; flip: ComputeKernel; cpu: ComputeKernel; relax: ComputeKernel; seedG: GPUBindGroup; relaxG: GPUBindGroup };
+  /** the field ids in use (Agents.newField, or a caller's own id): the pool's rows below the high-water */
+  private fieldIds = new Set<number>();
+  /** per field id: its record (fieldseam.wgsl: place, arrival radii, reach, flags), written when it changes */
+  private fieldRec = new Map<number, Uint32Array>();
+  /** (round 104, simscale) the scope's box (agents.wgsl AB) */
   private abBuf: GPUBuffer;
-  private dirty: [GPUBuffer, GPUBuffer];
-  private frontArgs: GPUBuffer;
-  private frontList: GPUBuffer;
-  /** (U2) agents.wgsl seedMask, units.wgsl huntList: the hunt field's seeds scattered on the GPU (gpuHunt) */
-  private seedMask: GPUBuffer;
-  private huntList: GPUBuffer;
-  /** (FC11, ?agentprof=1) agents.wgsl frontDbg: what asked, a field at a time; seeds new and gone */
+  /** (U2) fieldseam.wgsl seedList: the frame's seeds, two lists; the hunt's and the foes' field ids (gpuHunt, gpuFoes) */
+  private seedList: GPUBuffer;
+  /** (FC11, ?agentprof=1) agents.wgsl frontDbg: seeds new and gone */
   private frontDbg: GPUBuffer;
   /** (?jfa=1) units.wgsl jfa: the JFA planes and flags; its passes (log2 of the window) */
   private jfaBuf: GPUBuffer;
   private jfaPasses: number;
-  private jk?: Record<'obsInit' | 'obsPass' | 'obsNext' | 'obsClear' | 'obsEnd' | 'init' | 'pass' | 'next' | 'apply' | 'end' | 'rBegin' | 'rInit' | 'rPass' | 'rApply', ComputeKernel> & { g: GPUBindGroup[] };
-  /** (FC11 (c)) the fields whose CPU seeds changed since the last marks (ALL_FIELDS: something else marked) */
-  private markFields = 0;
-  private marksFor = 0;
-  private restartLog = 0;
-  /** (FC11) the fields whose CPU seeds changed this tick, and those started over (the log's) */
-  private seedChanged = 0;
+  private jk?: Record<'obsInit' | 'obsPass' | 'obsNext' | 'obsClear' | 'obsEnd' | 'init' | 'pass' | 'next' | 'apply' | 'end' | 'rBegin' | 'rInit' | 'rPass' | 'rApply', ComputeKernel> & { g: GPUBindGroup };
   private huntField: number | null = null;
   /** (the field bench) frontDbg counted without ?agentprof=1 (read by benchFront: the front's asks a sweep) */
   benchProbe = false;
@@ -572,15 +536,11 @@ export class Agents implements SimSystem {
   huntOn = true;
   /** (the field bench) relax not dispatched at all: the fields frozen as they stand — the fields' cost by difference */
   benchFrozen = false;
-  /** the front relax kernel's workgroups a chunk (agents.wgsl FRONT_WG: 4 relax's front kernel, 1 relaxBlock) */
-  private frontWG = BLOCK_RELAX ? 1 : 4;
-  private frontVariant?: (block: boolean, k: number) => { relax: ComputeKernel; build: ComputeKernel; wg: number; relaxG: GPUBindGroup[]; buildG: GPUBindGroup[] };
-  private frontVariants = new Map<string, ReturnType<NonNullable<Agents['frontVariant']>>>();
-  private hk: { reset: ComputeKernel; unmark: ComputeKernel; set: ComputeKernel; gone: ComputeKernel; flip: ComputeKernel; g: GPUBindGroup[] };
+  private hk: { set: ComputeKernel; g: GPUBindGroup };
   /** (U2 round 5, DA-B32) the field the peaceful fighters' targets seed on the GPU (huntSet: the defenders close in) */
   private foeField: number | null = null;
   /** (U2 round 5) the order kernels (orders.wgsl), made when the town contracts' place table is handed over */
-  private ok: { apply: ComputeKernel; done: ComputeKernel; resolve: ComputeKernel; count: ComputeKernel; emit: ComputeKernel; g: GPUBindGroup[] } | null = null;
+  private ok: { apply: ComputeKernel; done: ComputeKernel; resolve: ComputeKernel; count: ComputeKernel; emit: ComputeKernel; g: GPUBindGroup } | null = null;
   private orderParts: string[] = [];
   /** the joins waiting for the next step: slot, group, rank | SPAWN_BIT */
   private orderQ: number[] = [];
@@ -593,8 +553,6 @@ export class Agents implements SimSystem {
   private routesNone: GPUBuffer | null = null;
   private formGroups = 0;
   private orderSerial = new Uint32Array(ORDER_GROUPS);
-  /** which of `dirty` is the current sweep's at the next tick's start */
-  private par = 0;
   private uboxBuf: GPUBuffer;
   private readBuf: GPUBuffer;
   private reading = false;
@@ -604,38 +562,24 @@ export class Agents implements SimSystem {
   private sk?: {
     surfaces: ComputeKernel;
     links: ComputeKernel;
-    relax: ComputeKernel;
     occ: ComputeKernel;
     enter: ComputeKernel;
     box: ComputeKernel;
-    reset: ComputeKernel;
-    build: ComputeKernel;
-    clear: ComputeKernel;
     mark: ComputeKernel;
-    clearFields: ComputeKernel;
     /** (round 128o, DA-B26) the scope's chunks whose columns or water class changed (peeled) and those round them (linked) */
     lists: ChangedTiles;
     /** (DA-B26) the scope's chunks whose water's depth moved (their top surfaces' water brought up to date) */
     depths: ChangedTiles;
     water: ComputeKernel;
     waterG: GPUBindGroup;
-    clearFieldsG: GPUBindGroup;
     occG: GPUBindGroup;
     boxG: GPUBindGroup;
-    resetG: GPUBindGroup;
-    /** per parity (which of `dirty` is the current sweep's) */
-    peelG: GPUBindGroup[];
-    linksG: GPUBindGroup[];
-    relaxG: GPUBindGroup[];
-    enterG: GPUBindGroup[];
-    buildG: GPUBindGroup[];
-    clearG: GPUBindGroup[];
-    markG: GPUBindGroup[];
+    peelG: GPUBindGroup;
+    linksG: GPUBindGroup;
+    enterG: GPUBindGroup;
+    markG: GPUBindGroup;
   };
-  /** (simscale) the fields set unreachable this tick (they lost their seeds: writeParams) */
-  private clearNow = 0;
-  /** (round 107) the fields to start over at the next tick (a seed gone or moved far: seed()) */
-  private restart = 0;
+
   /** (round 107) the scope's box drew in at the last tick: every field starts over at the next */
   private shrunk = false;
   private lastBox: [number, number, number, number] | null = null;
@@ -645,15 +589,12 @@ export class Agents implements SimSystem {
   lastScopeChunks = 0;
   private unitGroup: GPUBindGroup;
   private drawGroup: GPUBindGroup;
-  private fieldPlace = new Uint32Array(NFIELDS);
   /** slots in use: the high-water mark; freed slots (deaths, removals) are reused first */
   private count = 0;
   private free: number[] = [];
   private gen = new Uint16Array(MAX_UNITS);
   private seeds: (Seed & { field: number })[] = [];
   private groupField = new Uint32Array(MAX_GROUPS).fill(0xffffffff);
-  private fieldsUsed = 0;
-  private wasSeeded = 0;
   /** per group: drawn at work (round 88: bent to a tool, a tool in hand) */
   private groupPose = new Uint32Array(MAX_GROUPS);
   private kinds: (KindSpec | undefined)[] = [];
@@ -705,8 +646,6 @@ export class Agents implements SimSystem {
   private navStale = true;
   /** events that didn't fit the buffer, all told (0 normally) */
   dropped = 0;
-  /** (round 128o, DA-B2a) per field: its arrival radius and its leaving radius (0: no arrivals) */
-  private arrive = new Float32Array(NFIELDS * 2);
 
   /**
    * (round 128o, DA-B2a) Tell when a unit following `field` comes within `radius` of its seeds (the field's distance at
@@ -714,10 +653,12 @@ export class Agents implements SimSystem {
    * The GPU decides (units.wgsl); the CPU needn't watch where its units are. radius 0: no arrivals for the field.
    */
   arrivals(field: number, radius: number, leave = radius): void {
-    if (field < 0 || field >= NFIELDS) throw new Error(`agents.arrivals: no field ${field} (0..${NFIELDS - 1})`);
     if (radius > 0 && leave < radius) throw new Error(`agents.arrivals: leave (${leave}) under the radius (${radius})`);
-    this.arrive[field * 2] = radius;
-    this.arrive[field * 2 + 1] = leave;
+    const r = this.recOf(field);
+    const f = new Float32Array(r.buffer);
+    f[1] = radius;
+    f[2] = leave;
+    this.writeRec(field);
   }
 
   /** (round 128o, DA-B2) the events read so far (the ring's: units.wgsl emit), and the syncs' staging kept for reuse */
@@ -801,7 +742,22 @@ export class Agents implements SimSystem {
     // (round 128i: two planes — the road shapes' bits, then the riding network's: agents/ride.ts)
     this.roads = world.buf('agentRoads', Math.ceil(cols / 32) * 8, S);
     this.roadStamp = new RoadStamp(device, this.roads, world.w, world.h);
-    this.dist = world.buf('agentDist', NFIELDS * cols * NAV_K * 4, S);
+    // (U2 round 7) the fields: a page a field over a chunk, from one pool sized from memory (FIELD_PAGES_PER_CHUNK
+    // whole-window fields' worth), found through the field's row of the table; the GPU hands pages out as a field grows
+    const slots = (world.w / 16) * (world.h / 16);
+    this.fields = new PagePool(device, world.globals, {
+      label: 'agentFields',
+      owners: FIELD_ROWS,
+      pages: FIELD_PAGES || slots * FIELD_PAGES_PER_CHUNK,
+      pageWords: 2 * FIELD_PAGE_W,
+      pageCtl: 2 * (FIELD_PAGE_W / 32),
+      ownerWords: FIELD_REC_W,
+      slots,
+      binding: 6,
+      parts: [commonWgsl],
+      fill: [new Uint32Array(new Float32Array([1e9]).buffer)[0], 0],
+      split: FIELD_PAGE_W,
+    });
     this.units = world.buf('agentUnits', MAX_UNITS * UNIT_BYTES, S);
     // (FC12 stage 2: a column's count and its shove's four words together, two halves — units.wgsl occAt/shoveAt)
     this.occ = world.buf('agentOcc', 2 * cols * 20, S);
@@ -822,8 +778,6 @@ export class Agents implements SimSystem {
     this.reads = new UnitReads(device, this.units, MAX_UNITS, this.notice.combat);
     this.flyBuf = world.buf('agentFly', MAX_FLY * 32, S);
     device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
-    // (nothing reached yet: every field starts unreachable)
-    device.queue.writeBuffer(this.dist, 0, new Float32Array(NFIELDS * cols * NAV_K).fill(1e9));
     device.queue.writeBuffer(this.kindModelsBuf, 0, this.kindModel);
     // (trackA-liquids, LQ4 — docs/ARCHITECTURE.md "The flow model") the water on a surface the peel makes: the liquid's
     // runs per gap (world.waterGaps, at the water's binding: the peel stays at 8 storage buffers)
@@ -844,45 +798,37 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     const unitsSrc = unitsWgsl.replace('const JFA_LOS: u32 = 0u;', `const JFA_LOS: u32 = ${JFA_LOS_BISECT ? 1 : 0}u;`).replace('const AIM_TICK_S: f32 = 1.0 / 60.0;', `const AIM_TICK_S: f32 = ${TICK_DT};`);
     if (!unitsWgsl.includes('const AIM_TICK_S: f32 = 1.0 / 60.0;')) throw new Error('agents: AIM_TICK_S not found in units.wgsl');
     if (!unitsWgsl.includes('const JFA_LOS: u32 = 0u;')) throw new Error('agents: JFA_LOS not found in units.wgsl');
-    const partsFor = (block: boolean, k: number): string[] => {
-      const consts: [string, string][] = [
-        ['const FRONT_CAP: u32 = 32u;', `const FRONT_CAP: u32 = ${FRONT_CAP}u;`],
-        ['const FRONT_WG: u32 = 4u;', `const FRONT_WG: u32 = ${block ? 1 : 4}u;`],
-        ['const RELAX_K: u32 = 16u;', `const RELAX_K: u32 = ${k}u;`],
-      ];
+    if (!fieldseamWgsl.includes('const SEED_LIST: u32 = 16384u;')) throw new Error('agents: SEED_LIST not found in fieldseam.wgsl');
+    const seamSrc = fieldseamWgsl.replace('const SEED_LIST: u32 = 16384u;', `const SEED_LIST: u32 = ${SEED_LIST}u;`);
+    const fieldParts = (k: number): string[] => {
+      const consts: [string, string][] = [['const RELAX_K: u32 = 16u;', `const RELAX_K: u32 = ${k}u;`]];
       let agentsSrc = agentsWgsl;
       for (const [a, b] of consts) {
         if (!agentsSrc.includes(a)) throw new Error(`agents: "${a}" not found in agents.wgsl`);
         agentsSrc = agentsSrc.replace(a, b);
       }
-      return [commonWgsl, layersWgsl, materialsWgsl, waterclassWgsl, agentsSrc, surfaceDepth + unitsSrc];
+      return [commonWgsl, layersWgsl, materialsWgsl, waterclassWgsl, agentsSrc, surfaceDepth + unitsSrc, this.fields.wgsl(), seamSrc];
     };
-    const parts = partsFor(BLOCK_RELAX, RELAX_K);
-    this.fieldParts = parts;
-    // (round 6: the orders reach fields only through fieldseam.wgsl — round 7's paged atlas swaps it)
-    this.orderParts = [...parts, townplaceWgsl, routereadWgsl, fieldseamWgsl, ordersWgsl];
+    const parts = fieldParts(RELAX_K);
+    // (round 6: the orders reach fields only through fieldseam.wgsl)
+    this.orderParts = [...parts, townplaceWgsl, routereadWgsl, ordersWgsl];
     const mk = (e: string, sp: BindSpec) => makeCompute(device, `agents-${e}`, parts, sp, e);
     // four layouts, each within 8 storage buffers: the peel (it reads the
-    // layers and the places), the fields, the units' tick, their draw
-    const peelSpec: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 11: 'read', 12: 'read', 34: 'rw', 37: 'rw' };
-    const fieldSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 34: 'rw', 35: 'rw', 37: 'rw', 38: 'uniform', 40: 'read', 52: 'rw', 55: 'rw' };
+    // layers and the places), the fields, the units' tick, their draw. (U2 round 7) The fields are one binding: the page
+    // pool at 6 (tables and pages)
+    const peelSpec: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 11: 'read', 12: 'read', 37: 'rw' };
+    const fieldSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 37: 'rw', 38: 'uniform', 40: 'read', 55: 'rw' };
     // (?jfa=1: the obstacles and targets JFA's planes; the obstacles made at the first frame — jfa[2])
     const passes = Math.ceil(Math.log2(Math.max(world.w, world.h, 2)));
     this.jfaBuf = world.buf('agentJfa', (8 + 7 * cols) * 4, S);
     device.queue.writeBuffer(this.jfaBuf, 0, new Uint32Array([0, 0, 1, 0, passes, 0, 0, 0]));
     this.jfaPasses = passes;
-    if (NFIELDS > 16) throw new Error("agents: the front marks a field a bit in a dirty word's low half (FC10): at most 16 fields");
-    this.seedMask = world.buf('agentSeedMask', 2 * cols * NAV_K * 4, S);
-    this.huntList = world.buf('agentHuntList', (4 + 2 * HUNT_LIST) * 4, S);
+    this.seedList = world.buf('agentSeedList', (SEED_HEAD + 4 * SEED_LIST) * 4, S);
     this.frontDbg = world.buf('agentFrontDbg', 64 * 4, S);
-    device.queue.writeBuffer(this.huntList, 0, new Uint32Array([0, 0, 0, NFIELDS | (NFIELDS << 16)]));
+    device.queue.writeBuffer(this.seedList, 0, new Uint32Array([0, 0, 0, 0, FIELD_NONE, FIELD_NONE]));
     // (round 104, simscale: agents/scope.ts)
     this.abBuf = world.buf('agentScope', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.abBuf, 0, new Uint32Array([0, 0, world.w, world.h, 0, 0, 0, 0]));
-    const nChunks = Math.max(1, (world.w / 16) * (world.h / 16));
-    this.dirty = [world.buf('agentDirtyA', nChunks * 4, S), world.buf('agentDirtyB', nChunks * 4, S)];
-    this.frontArgs = world.buf('agentFrontArgs', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
-    this.frontList = world.buf('agentFrontList', Math.max(nChunks, 2 * FRONT_CAP) * 4, S);
     this.uboxBuf = world.buf('agentUnitBox', 16, S);
     this.readBuf = world.buf('agentScopeRead', 16, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.scope = SCOPE && world.tiles ? new AgentScope(world.w / 16, world.h / 16) : null;
@@ -891,7 +837,6 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     this.k = {
       surfaces: mk('surfaces', peelSpec),
       links: mk('links', fieldSpec),
-      relax: mk('relax', fieldSpec),
       occClear: mk('occClear', unitSpec),
       unitStep: mk('unitStep', unitSpec),
       unitDraw: mk('unitDraw', drawSpec),
@@ -905,23 +850,35 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       3: world.layers,
       4: world.waterGaps,
       5: this.nav,
+      6: this.fields.buffer,
       11: world.places,
       12: world.placeTable,
-      34: this.dirty[0],
       37: this.navCost,
     });
-    this.fieldGroup = makeBindGroup(device, 'agents-fields', this.k.relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: this.dirty[0], 35: this.dirty[1], 37: this.navCost, 38: this.abBuf, 40: this.roads, 52: this.seedMask, 55: this.jfaBuf });
+    this.fieldGroup = makeBindGroup(device, 'agents-fields', this.k.links.layout, { ...base, 5: this.nav, 6: this.fields.buffer, 10: this.params, 37: this.navCost, 38: this.abBuf, 40: this.roads, 55: this.jfaBuf });
     {
-      // (U2) the hunt's seeds on the GPU: once a frame before the relaxation, marking the current sweep's dirty words
-      const huntSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 7: 'rw', 10: 'uniform', 16: 'rw', 34: 'rw', 38: 'uniform', 52: 'rw', 53: 'rw', 54: 'rw', 55: 'rw' };
-      const hm = (e: string) => mk(e, huntSpec);
-      const k = { reset: hm('huntReset'), unmark: hm('huntUnmark'), set: hm('huntSet'), gone: hm('huntGone'), flip: hm('huntFlip') };
-      this.hk = { ...k, g: this.dirty.map((d, p) => makeBindGroup(device, `agents-hunt ${p}`, k.set.layout, { ...base, 5: this.nav, 7: this.units, 10: this.params, 16: this.mail, 34: d, 38: this.abBuf, 52: this.seedMask, 53: this.huntList, 54: this.frontDbg, 55: this.jfaBuf })) };
+      // (U2 round 7) the frame's seeds (fieldseam.wgsl): last frame's moved aside, the CPU's, the hunt's and the orders'
+      // put, those gone marked; then the relax over the pool's front
+      const seedSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 38: 'uniform', 53: 'rw', 54: 'rw' };
+      const sm = (e: string) => mk(e, seedSpec);
+      const relaxSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 37: 'rw', 38: 'uniform', 40: 'read' };
+      const relax = mk('fieldRelax', relaxSpec);
+      const k = { reset: sm('seedReset'), unmark: sm('seedUnmark'), land: sm('seedLand'), gone: sm('seedGone'), flip: sm('seedFlip'), cpu: sm('cpuSeeds') };
+      this.fk2 = {
+        ...k,
+        relax,
+        seedG: makeBindGroup(device, 'agents-seeds', k.cpu.layout, { ...base, 5: this.nav, 6: this.fields.buffer, 10: this.params, 38: this.abBuf, 53: this.seedList, 54: this.frontDbg }),
+        relaxG: makeBindGroup(device, 'agents-relax', relax.layout, { ...base, 5: this.nav, 6: this.fields.buffer, 10: this.params, 37: this.navCost, 38: this.abBuf, 40: this.roads }),
+      };
+      // (U2) the hunt's seeds on the GPU: once a frame before the relaxation
+      const huntSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 10: 'uniform', 16: 'rw', 38: 'uniform', 53: 'rw', 54: 'rw', 55: 'rw' };
+      const set = mk('huntSet', huntSpec);
+      this.hk = { set, g: makeBindGroup(device, 'agents-hunt', set.layout, { ...base, 5: this.nav, 6: this.fields.buffer, 7: this.units, 10: this.params, 16: this.mail, 38: this.abBuf, 53: this.seedList, 54: this.frontDbg, 55: this.jfaBuf }) };
       if (JFA || LOS_BUILT) {
-        const jSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 34: 'rw', 37: 'rw', 38: 'uniform', 52: 'rw', 54: 'rw', 55: 'rw' };
+        const jSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 37: 'rw', 38: 'uniform', 54: 'rw', 55: 'rw' };
         const jm = (e: string) => mk(e, jSpec);
         const j = { obsInit: jm('jfaObsInit'), obsPass: jm('jfaObsPass'), obsNext: jm('jfaObsNext'), obsClear: jm('jfaObsClear'), obsEnd: jm('jfaObsEnd'), init: jm('jfaInit'), pass: jm('jfaPass'), next: jm('jfaNext'), apply: jm('jfaApply'), end: jm('jfaEnd'), rBegin: jm('jfaRBegin'), rInit: jm('jfaRInit'), rPass: jm('jfaRPass'), rApply: jm('jfaRApply') };
-        this.jk = { ...j, g: this.dirty.map((d, p) => makeBindGroup(device, `agents-jfa ${p}`, j.init.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: d, 37: this.navCost, 38: this.abBuf, 52: this.seedMask, 54: this.frontDbg, 55: this.jfaBuf })) };
+        this.jk = { ...j, g: makeBindGroup(device, 'agents-jfa', j.init.layout, { ...base, 5: this.nav, 6: this.fields.buffer, 10: this.params, 37: this.navCost, 38: this.abBuf, 54: this.frontDbg, 55: this.jfaBuf }) };
         // (FC12 stage 2: each fighter's target and its sight once a frame, after notice — aimTick)
         const aim = mk('aimTick', { 0: 'uniform', 2: 'uniform', 7: 'rw', 10: 'uniform', 16: 'rw', 55: 'rw' });
         this.aim = { k: aim, g: makeBindGroup(device, 'agents-aim', aim.layout, { ...base, 7: this.units, 10: this.params, 16: this.mail, 55: this.jfaBuf }) };
@@ -940,78 +897,41 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
         return { k: makeCompute(device, `agents-${e} scoped`, [c.code], c.spec, e), buf: c.buf };
       };
       const occSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 8: 'rw', 10: 'uniform' };
-      const enterSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 6: 'rw', 8: 'rw', 34: 'rw', 55: 'rw' };
+      const enterSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 6: 'rw', 8: 'rw', 55: 'rw' };
       // (round 128o, DA-B26: the peel and the links over the GPU's lists — what changed, and round it; bound below)
       const lists = new ChangedTiles(device, world, t, SCOPE_LIST, 'agents-peel', CHUNK_COLUMNS | CHUNK_CLASS);
       const depths = new ChangedTiles(device, world, t, SCOPE_LIST, 'agents-water', CHUNK_DEPTH, false);
       const water = ck('surfaceWater', { 0: 'uniform', 2: 'uniform', 4: 'read', 5: 'rw' }, SCOPE_LIST);
       const surfaces = ck('surfaces', peelSpec, SCOPE_LIST);
       const links = ck('links', fieldSpec, SCOPE_LIST);
-      const clearFields = ck('clearFields', { 0: 'uniform', 2: 'uniform', 6: 'rw', 10: 'uniform' }, SCOPE_LIST);
       const occ = ck('occClearCols', occSpec, SCOPE_LIST);
       const enter = ck('scopeIn', enterSpec, ENTER_LIST);
-      const mark = ck('markChunks', { 0: 'uniform', 2: 'uniform', 10: 'uniform', 34: 'rw' }, MARK_LIST);
-      // (the front's relax: the fields' bindings but the JFA's (8 storage buffers at most), and the front list)
-      const { 55: _jfa, ...relaxFields } = fieldSpec;
-      const relaxSpec: BindSpec = { ...relaxFields, 36: 'rw' };
-      // (the front's relax and its build, a variant at a time: relax's front kernel (FRONT_WG 4) or relaxBlock with K passes
-      // (FRONT_WG 1). One made here, as the flags say; the field bench makes the others at its start: benchRelax)
-      const buildSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 10: 'uniform', 33: 'rw', 34: 'rw', 35: 'rw', 36: 'rw', 38: 'uniform', 54: 'rw' };
-      const frontVariant = (block: boolean, k: number) => {
-        const vp = partsFor(block, k);
-        const r = block ? makeCompute(device, `agents-relax block k${k}`, vp, relaxSpec, 'relaxBlock') : makeCompute(device, 'agents-relax front', [frontSource(vp.join('\n'), 'relax')], relaxSpec, 'relax');
-        const b = makeCompute(device, `agents-frontBuild ${block ? 'block' : 'front'}`, vp, buildSpec, 'frontBuild');
-        const pr = <T,>(f: (cur: GPUBuffer, next: GPUBuffer, p: number) => T): T[] => [f(this.dirty[0], this.dirty[1], 0), f(this.dirty[1], this.dirty[0], 1)];
-        return {
-          relax: r,
-          build: b,
-          wg: block ? 1 : 4,
-          relaxG: pr((cur, next, p) => makeBindGroup(device, `agents-relax ${p}`, r.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 36: this.frontList, 37: this.navCost, 38: this.abBuf, 40: this.roads, 52: this.seedMask })),
-          buildG: pr((cur, next, p) => makeBindGroup(device, `agents-frontBuild ${p}`, b.layout, { ...base, 10: this.params, 33: this.frontArgs, 34: cur, 35: next, 36: this.frontList, 38: this.abBuf, 54: this.frontDbg })),
-        };
-      };
-      this.frontVariant = frontVariant;
-      const fv = frontVariant(BLOCK_RELAX, RELAX_K);
-      const relax = fv.relax;
+      const mark = ck('markChunks', { 0: 'uniform', 2: 'uniform', 6: 'rw', 10: 'uniform', 40: 'read' }, MARK_LIST);
       const box = makeCompute(device, 'agents-unitBox', parts, { 0: 'uniform', 2: 'uniform', 7: 'rw', 10: 'uniform', 28: 'rw' }, 'unitBox');
-      const reset = makeCompute(device, 'agents-frontReset', parts, { 0: 'uniform', 2: 'uniform', 10: 'uniform', 33: 'rw', 54: 'rw' }, 'frontReset');
-      const build = fv.build;
-      const clear = makeCompute(device, 'agents-frontClear', parts, { 0: 'uniform', 2: 'uniform', 34: 'rw', 38: 'uniform' }, 'frontClear');
       const L = t.list(SCOPE_LIST);
-      const par = <T,>(f: (cur: GPUBuffer, next: GPUBuffer, p: number) => T): T[] => [f(this.dirty[0], this.dirty[1], 0), f(this.dirty[1], this.dirty[0], 1)];
       this.sk = {
         surfaces: surfaces.k,
         links: links.k,
-        relax,
         occ: occ.k,
         enter: enter.k,
         box,
-        reset,
-        build,
-        clear,
         mark: mark.k,
-        clearFields: clearFields.k,
         lists,
         depths,
         water: water.k,
         waterG: makeBindGroup(device, 'agents-surfaceWater', water.k.layout, { ...base, 4: world.water, 5: this.nav, [TILES_BINDING]: depths.changed.uniform }),
-        clearFieldsG: makeBindGroup(device, 'agents-clearFields', clearFields.k.layout, { ...base, 6: this.dist, 10: this.params, [TILES_BINDING]: clearFields.buf }),
         occG: makeBindGroup(device, 'agents-occ scoped', occ.k.layout, { ...base, 8: this.occ, 10: this.params, [TILES_BINDING]: L }),
         boxG: makeBindGroup(device, 'agents-unitBox', box.layout, { ...base, 7: this.units, 10: this.params, 28: this.uboxBuf }),
-        resetG: makeBindGroup(device, 'agents-frontReset', reset.layout, { ...base, 10: this.params, 33: this.frontArgs, 54: this.frontDbg }),
-        peelG: par((cur, _n, p) => makeBindGroup(device, `agents-peel scoped ${p}`, surfaces.k.layout, { ...base, 1: world.chunks, 3: world.layers, 4: world.waterGaps, 5: this.nav, 11: world.places, 12: world.placeTable, 34: cur, 37: this.navCost, [TILES_BINDING]: lists.changed.uniform })),
-        linksG: par((cur, next, p) => makeBindGroup(device, `agents-links scoped ${p}`, links.k.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 37: this.navCost, 38: this.abBuf, 40: this.roads, 52: this.seedMask, 55: this.jfaBuf, [TILES_BINDING]: lists.around.uniform })),
-        relaxG: fv.relaxG,
-        enterG: par((cur, _n, p) => makeBindGroup(device, `agents-enter ${p}`, enter.k.layout, { ...base, 6: this.dist, 8: this.occ, 34: cur, 55: this.jfaBuf, [TILES_BINDING]: enter.buf })),
-        buildG: fv.buildG,
-        clearG: par((cur, _n, p) => makeBindGroup(device, `agents-frontClear ${p}`, clear.layout, { ...base, 34: cur, 38: this.abBuf })),
-        markG: par((cur, _n, p) => makeBindGroup(device, `agents-mark ${p}`, mark.k.layout, { ...base, 10: this.params, 34: cur, [TILES_BINDING]: mark.buf })),
+        peelG: makeBindGroup(device, 'agents-peel scoped', surfaces.k.layout, { ...base, 1: world.chunks, 3: world.layers, 4: world.waterGaps, 5: this.nav, 6: this.fields.buffer, 11: world.places, 12: world.placeTable, 37: this.navCost, [TILES_BINDING]: lists.changed.uniform }),
+        linksG: makeBindGroup(device, 'agents-links scoped', links.k.layout, { ...base, 5: this.nav, 6: this.fields.buffer, 10: this.params, 37: this.navCost, 38: this.abBuf, 40: this.roads, 55: this.jfaBuf, [TILES_BINDING]: lists.around.uniform }),
+        enterG: makeBindGroup(device, 'agents-enter', enter.k.layout, { ...base, 6: this.fields.buffer, 8: this.occ, 55: this.jfaBuf, [TILES_BINDING]: enter.buf }),
+        markG: makeBindGroup(device, 'agents-mark', mark.k.layout, { ...base, 6: this.fields.buffer, 10: this.params, 40: this.roads, [TILES_BINDING]: mark.buf }),
       };
     }
     this.unitGroup = makeBindGroup(device, 'agents-units', this.k.unitStep.layout, {
       ...base,
       5: this.nav,
-      6: this.dist,
+      6: this.fields.buffer,
       7: this.units,
       8: this.occ,
       10: this.params,
@@ -1183,27 +1103,11 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     const b = this.lastBox;
     const dr = Math.round(dy / ROW_H);
     if (b) this.lastBox = [b[0] - dx, b[1] - dr, b[2] - dx, b[3] - dr];
-    // (U2 round 5: each order group's seed marked again (orders.wgsl word 19): the slide started the fields over where
-    // they came in, and a seed that stayed put marked nothing — the lab's soldiers stood still after the camera slid the
-    // window. And the kept points (keepInScope) move with the land)
-    if (this.ok) for (let g = 0; g < ORDER_GROUPS; g++) this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + 19) * 4, new Uint32Array([1]));
-    // (and the order fields start over — as a CPU seed moved by a slide does (seed: gone → restart), refilling from
-    // their seeds)
-    for (const f of this.orderFieldOf.flat()) {
-      this.markFields |= 1 << f;
-      this.restart |= 1 << f;
-    }
+    // (U2 round 7: the fields stay — the ring keeps every chunk where it lies; the chunks come in are new to the scope,
+    // their pages let go there and the fields round them relaxed into them: units.wgsl scopeIn. The kept points
+    // (keepInScope) move with the land)
     for (const [k, pts] of this.kept) this.kept.set(k, pts.map(([x, y]) => [x - dx, y - dy] as [number, number]));
-    // (U2 round 5b: the hunt's and the foes' fields alike — started over, every seed marking its chunk again)
-    for (const f of [this.huntField, this.foeField]) if (f !== null) {
-      this.markFields |= 1 << f;
-      this.restart |= 1 << f;
-      this.huntRemark = true;
-    }
   }
-
-  /** (U2 round 5b) a slide asked the hunt's seeds to mark their chunks again: at the next frame's last tick */
-  private huntRemark = false;
 
   /**
    * (U2 round 5b, §9f) Unit slot `slot` told of a target by the game (an order: a target code, notice.ts): hunted where
@@ -1220,7 +1124,6 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     return [
       { name: 'agentNav', buf: this.nav, stride: NAV_K * NAV_BYTES, planes: 1 },
       { name: 'agentNavCost', buf: this.navCost, stride: NAV_K * 4, planes: 1 },
-      { name: 'agentDist', buf: this.dist, stride: NAV_K * 4, planes: NFIELDS },
       { name: 'agentOcc', buf: this.occ, stride: 20, planes: 2 },
     ];
   }
@@ -1247,11 +1150,56 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     }
   }
 
-  /** Group `g` follows field `f` (0..NFIELDS-1), or stands still (f < 0). */
+  /**
+   * (U2 round 7) A field id: a row of the fields' page pool (FIELD_ROWS of them), the lowest free one. Null when every
+   * row is held (the order isn't sent: 'pool-full'). Its pages come as it grows; `freeField` lets them go.
+   */
+  newField(): number | null {
+    for (let f = 0; f < FIELD_ROWS; f++) if (!this.fieldIds.has(f)) return this.useField(f);
+    return null;
+  }
+
+  /** (U2 round 7) field `f` let go: its pages back to the pool, its record cleared, its id free for newField */
+  freeField(f: number): void {
+    if (!this.fieldIds.delete(f)) return;
+    this.fields.release(f);
+    this.fieldRec.delete(f);
+    this.fields.writeOwner(f, new Uint32Array(FIELD_REC_W));
+    this.seeds = this.seeds.filter((s) => s.field !== f);
+  }
+
+  /** field `f` in use (a caller's own id, or newField's): the pool's rows below the high-water are live */
+  private useField(f: number): number {
+    if (!Number.isInteger(f) || f < 0 || f >= FIELD_ROWS) throw new Error(`agents: field ${f} out of 0..${FIELD_ROWS - 1}`);
+    if (!this.fieldIds.has(f)) {
+      this.fieldIds.add(f);
+      this.fields.setOwners(Math.max(...this.fieldIds) + 1);
+      this.writeRec(f);
+    }
+    return f;
+  }
+
+  private recOf(f: number): Uint32Array {
+    this.useField(f);
+    let r = this.fieldRec.get(f);
+    if (!r) this.fieldRec.set(f, (r = new Uint32Array(FIELD_REC_W)));
+    return r;
+  }
+
+  private writeRec(f: number): void {
+    this.fields.writeOwner(f, this.fieldRec.get(f) ?? new Uint32Array(FIELD_REC_W));
+  }
+
+  /** (U2 round 7) how far field `f` reaches (its cost; 0: the scope's cap): it holds no pages past it */
+  reach(f: number, cost: number): void {
+    new Float32Array(this.recOf(f).buffer)[FR_REACH] = cost;
+    this.writeRec(f);
+  }
+
+  /** Group `g` follows field `f`, or stands still (f < 0). */
   follow(g: number, f: number): void {
-    if (f >= NFIELDS) throw new Error(`agents: field ${f} out of 0..${NFIELDS - 1}`);
-    this.groupField[g] = f < 0 ? 0xffffffff : f;
-    this.fieldsUsed = Math.max(this.fieldsUsed, f + 1);
+    if (f >= 0) this.useField(f);
+    this.groupField[g] = f < 0 ? FIELD_NONE : f;
   }
 
   /** Group `g`'s units are drawn at work (round 88): bending to a tool in their hands, while they stand. */
@@ -1295,6 +1243,24 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     return ok;
   }
 
+  /**
+   * (round 128i, V128-14; U2 round 7: a field id of its own, made the first time it's asked for) The shared field onto
+   * the roads: every surface of the riding network's columns a seed while a group rides — the riding groups follow it
+   * until they're on the network.
+   */
+  get roadField(): number {
+    if (this.road === null) {
+      const f = this.newField();
+      if (f === null) throw new Error('agents.roadField: every field row is held');
+      this.road = f;
+      this.recOf(f)[FR_FLAGS] = FO_ROAD;
+      this.writeRec(f);
+    }
+    return this.road;
+  }
+  private road: number | null = null;
+  private wasRiding = false;
+
   /** (round 128i) the groups riding the roads now (a bit each), and the road graph's nodes */
   get rideInfo(): { riding: number; nodes: number } {
     return { riding: this.roadRide.riding, nodes: this.roadRide.nodes };
@@ -1305,33 +1271,14 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     return this.roadRide.hopsBuffer;
   }
 
-  /** Field `f`'s seeds (its distance is 0 there): a goal, a stockpile, a threat. */
+  /** Field `f`'s seeds (its distance is 0 there): a goal, a stockpile, a threat. Put every frame (fieldseam.wgsl
+   *  cpuSeeds): one moved or gone empties the values it made (their seed-ids) and the field refills from the rest. */
   seed(f: number, seeds: readonly Seed[]): void {
-    if (f < 0 || f >= NFIELDS) throw new Error(`agents: field ${f} out of 0..${NFIELDS - 1}`);
+    this.useField(f);
     const rest = this.seeds.filter((s) => s.field !== f);
     if (rest.length + seeds.length > MAX_SEEDS) throw new Error(`agents: more than ${MAX_SEEDS} seeds`);
-    // (round 104, simscale: seeds that moved disturb the field — relaxed until it settles again)
-    const was = this.seeds.filter((s) => s.field === f);
-    // (FC11 (c), ?seedcell=1: a seed that stays in its cell — the relaxation reads cells — is no change)
-    const at = (s: Seed) => cellAt(s.x, s.y).join(',');
-    const same =
-      was.length === seeds.length &&
-      was.every((s, i) => (SEED_CELL ? at(s) === at(seeds[i]) : Math.abs(s.x - seeds[i].x) < 1e-3 && Math.abs(s.y - seeds[i].y) < 1e-3) && (s.z ?? 1e4) === (seeds[i].z ?? 1e4));
-    if (!same) {
-      this.markFields |= 1 << f;
-      this.seedChanged |= 1 << f;
-    }
-    if (!same && this.scope) {
-      for (const s of [...was, ...seeds]) this.scope.mark(s.x, s.y / ROW_H);
-      // (round 107, agentspike: a seed gone, or moved more than RESEED_NEAR, leaves the values round where it was too
-      // low. Relaxed from their neighbours they count up a step a sweep — over the whole of its basin for hundreds of
-      // sweeps, the front never emptying (FRAMECOST FC4). So the field starts over instead (clearFields) and refills
-      // from its seeds outwards. A seed added, or nudged, only lowers values or moves them a little: relaxed in place)
-      const gone = was.some((o) => !seeds.some((n) => Math.hypot(n.x - o.x, (n.y - o.y) / ROW_H) <= RESEED_NEAR));
-      if (gone && seeds.length) this.restart |= 1 << f;
-    }
+    if (this.scope) for (const s of seeds) this.scope.mark(s.x, s.y / ROW_H);
     this.seeds = [...rest, ...seeds.map((s) => ({ ...s, field: f }))];
-    this.fieldsUsed = Math.max(this.fieldsUsed, f + 1);
   }
 
   /**
@@ -1352,11 +1299,10 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
    * Each value keeps the seed it came from: a seed gone empties its values at once (no count-up; U2 §5b).
    */
   gpuHunt(f: number): void {
-    if (f < 0 || f >= NFIELDS) throw new Error(`agents.gpuHunt: no field ${f} (0..${NFIELDS - 1})`);
+    this.useField(f);
     if (f === this.huntField) return;
-    if (this.huntField !== null) throw new Error('agents.gpuHunt: one hunt field, set once (its seeds would be left in the mask)');
+    if (this.huntField !== null) throw new Error('agents.gpuHunt: one hunt field, set once');
     this.huntField = f;
-    this.fieldsUsed = Math.max(this.fieldsUsed, f + 1);
     this.writeHuntFields();
   }
 
@@ -1365,17 +1311,18 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
    * a reach or a range, no notice) — the defenders close in on it, apart from the hunters' field. Set once.
    */
   gpuFoes(f: number): void {
-    if (f < 0 || f >= NFIELDS) throw new Error(`agents.gpuFoes: no field ${f} (0..${NFIELDS - 1})`);
+    this.useField(f);
     if (f === this.foeField) return;
     if (this.foeField !== null) throw new Error('agents.gpuFoes: one foes field, set once');
     if (f === this.huntField) throw new Error('agents.gpuFoes: not the hunt field');
     this.foeField = f;
-    this.fieldsUsed = Math.max(this.fieldsUsed, f + 1);
     this.writeHuntFields();
   }
 
   private writeHuntFields(): void {
-    this.device.queue.writeBuffer(this.huntList, 12, new Uint32Array([(this.huntField ?? NFIELDS) | ((this.foeField ?? NFIELDS) << 16)]));
+    // (the field bench's huntOn off: none — the seeds stop, the fields empty of them)
+    const on = (f: number | null) => (this.huntOn && f !== null ? f : FIELD_NONE);
+    this.device.queue.writeBuffer(this.seedList, 16, new Uint32Array([on(this.huntField), on(this.foeField)]));
   }
 
   // ---- (U2 round 5) place-based orders, resolved on the GPU (orders.wgsl) -------------------------------------------
@@ -1385,12 +1332,10 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
    * kernels made over it. Before it, spawnAt and order throw.
    */
   usePlaces(places: GPUBuffer): void {
-    const sp: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 7: 'rw', 10: 'uniform', 13: 'rw', 16: 'rw', 34: 'rw', 38: 'uniform', 52: 'rw', 57: 'read' };
+    const sp: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 10: 'uniform', 13: 'rw', 16: 'rw', 38: 'uniform', 53: 'rw', 57: 'read' };
     const mk = (e: string) => makeCompute(this.device, `agents-${e}`, this.orderParts, sp, e);
     const k = { apply: mk('orderApply'), done: mk('orderDone'), resolve: mk('orderResolve'), count: mk('groupCount'), emit: mk('groupEmit') };
-    const g = this.dirty.map((d, p) =>
-      makeBindGroup(this.device, `agents-orders ${p}`, k.apply.layout, { 0: this.world.globals, 2: this.world.materials, 5: this.nav, 7: this.units, 10: this.params, 13: this.events, 16: this.mail, 34: d, 38: this.abBuf, 52: this.seedMask, 57: places }),
-    );
+    const g = makeBindGroup(this.device, 'agents-orders', k.apply.layout, { 0: this.world.globals, 2: this.world.materials, 5: this.nav, 6: this.fields.buffer, 7: this.units, 10: this.params, 13: this.events, 16: this.mail, 38: this.abBuf, 53: this.seedList, 57: places });
     this.ok = { ...k, g };
     // (round 6: the formation kernels — routes (56), the clearance (55), the fields (6); no places, no seeds)
     const fsp: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 10: 'uniform', 13: 'rw', 16: 'rw', 55: 'rw', 56: 'read' };
@@ -1409,14 +1354,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     const b = buf ?? this.routesNone!;
     if (this.fk.g && b === this.routesBuf) return;
     this.routesBuf = b;
-    this.fk.g = makeBindGroup(this.device, 'agents-form', this.fk.anchor.layout, { 0: this.world.globals, 2: this.world.materials, 5: this.nav, 6: this.dist, 7: this.units, 10: this.params, 13: this.events, 16: this.mail, 55: this.jfaBuf, 56: b });
-  }
-
-  /** (U2 round 7, the paged field atlas: agents/pages.ts) the shader parts the fields' kernels are made of, and the
-   *  surfaces they relax over — what the pages build on while they stand beside the planes */
-  private fieldParts: string[] = [];
-  pageHost(): { parts: string[]; nav: GPUBuffer; navCost: GPUBuffer; world: WorldGpu } {
-    return { parts: this.fieldParts, nav: this.nav, navCost: this.navCost, world: this.world };
+    this.fk.g = makeBindGroup(this.device, 'agents-form', this.fk.anchor.layout, { 0: this.world.globals, 2: this.world.materials, 5: this.nav, 6: this.fields.buffer, 7: this.units, 10: this.params, 13: this.events, 16: this.mail, 55: this.jfaBuf, 56: b });
   }
 
   /** (round 6, tests and the lab) where the order groups and the rank table lie in `mail` (readRaw('mail')) */
@@ -1453,7 +1391,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   order(g: number, r: OrderRecord): number {
     if (!this.ok) throw new Error('agents.order: no place table (usePlaces)');
     if (g < 0 || g >= ORDER_GROUPS) throw new Error(`agents.order: group ${g} out of 0..${ORDER_GROUPS - 1}`);
-    if (r.field >= NFIELDS) throw new Error(`agents.order: no field ${r.field}`);
+    if (r.field >= 0) this.useField(r.field);
     const serial = (this.orderSerial[g] = (this.orderSerial[g] + 1) & 0xffff);
     const routed = r.kind === 6 || r.kind === 7;
     if ((r.alts.length < 1 && !routed) || r.alts.length > ORDER_ALTS) throw new Error(`agents.order: 1..${ORDER_ALTS} places (else), not ${r.alts.length}`);
@@ -1466,9 +1404,10 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     const w = new Uint32Array(GROUP_W);
     // (words 0-7: the GPU's own 8-19 left as they are — a write of 0-7, then of the refs)
     const fields = r.kind === 6 ? (r.runFields ?? []) : r.field >= 0 ? [r.field] : [];
-    if (fields.length > 4 || fields.some((f) => f < 0 || f >= NFIELDS)) throw new Error('agents.order: 1..4 run fields, each a field');
+    if (fields.length > 4) throw new Error('agents.order: 1..4 run fields');
+    for (const f of fields) this.useField(f);
     const f32 = new Float32Array(w.buffer);
-    w.set([r.kind, r.alts.length, 0, r.formation ?? 0, 0, 0, r.field < 0 ? NFIELDS : r.field, serial], 0);
+    w.set([r.kind, r.alts.length, 0, r.formation ?? 0, 0, 0, r.field < 0 ? FIELD_NONE : r.field, serial], 0);
     f32[4] = r.spacing ?? 1.2;
     r.alts.forEach((a, i) => w.set([...ref(a.at), ...ref(a.also)], REF_AT + i * 2 * REF_W));
     // (round 6: the formation's words — the gate or the run, leave; the GPU's anchor and trail start over: route none)
@@ -1481,12 +1420,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     this.follow(ORDER_GROUP_BASE + g, r.kind >= 2 && r.kind !== 6 ? r.field : -1);
     const formed = r.kind === 5 || r.kind === 6 || r.kind === 7 || ((r.kind >= 2 && r.kind <= 4) && (r.formation ?? 0) > 0);
     this.formGroups = formed ? this.formGroups | (1 << g) : this.formGroups & ~(1 << g);
-    // (a new place: the field starts over and refills from it — a seed moved far counts up otherwise, FC4)
-    for (const f of fields) {
-      this.restart |= 1 << f;
-      this.markFields |= 1 << f;
-      this.fieldsUsed = Math.max(this.fieldsUsed, f + 1);
-    }
+    // (a new place: its seed is put there from the next frame; the old one's values empty by their seed-ids)
     return serial;
   }
 
@@ -1521,7 +1455,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     const n = this.orderQ.length / 3;
     this.device.queue.writeBuffer(this.mail, MAIL_Q * 4, new Uint32Array([n, ...this.orderQ]));
     this.orderQ = [];
-    pass.setBindGroup(0, this.ok.g[0]);
+    pass.setBindGroup(0, this.ok.g);
     pass.setPipeline(this.ok.apply.pipeline);
     pass.dispatchWorkgroups(Math.ceil(n / 64));
     pass.setPipeline(this.ok.done.pipeline);
@@ -1530,9 +1464,9 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   }
 
   /** (before the relaxation, the frame's last tick) each group's place resolved, its field seeded there */
-  private encodeOrderSeeds(pass: GPUComputePassEncoder, p: number): void {
+  private encodeOrderSeeds(pass: GPUComputePassEncoder): void {
     if (!this.ok) return;
-    pass.setBindGroup(0, this.ok.g[p]);
+    pass.setBindGroup(0, this.ok.g);
     pass.setPipeline(this.ok.resolve.pipeline);
     pass.dispatchWorkgroups(1);
     this.prof.dispatches++;
@@ -1541,7 +1475,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   /** (after the frame's last step) each group's members counted, its arrival told */
   private encodeOrderArrivals(pass: GPUComputePassEncoder): void {
     if (!this.ok || this.count === 0) return;
-    pass.setBindGroup(0, this.ok.g[0]);
+    pass.setBindGroup(0, this.ok.g);
     pass.setPipeline(this.ok.count.pipeline);
     pass.dispatchWorkgroups(Math.ceil(this.count / 64));
     pass.setPipeline(this.ok.emit.pipeline);
@@ -1551,10 +1485,10 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
 
   /** (?jfa=1) the obstacles JFA (when the columns changed: the kernels return at once otherwise), then the targets JFA
    *  and the line check (when the hunt's seeds changed cell) — the flags are the GPU's, so both are dispatched each frame */
-  private encodeJfa(pass: GPUComputePassEncoder, p: number, targets: boolean): void {
+  private encodeJfa(pass: GPUComputePassEncoder, targets: boolean): void {
     const j = this.jk!;
     const [gx, gy] = this.world.groups;
-    pass.setBindGroup(0, j.g[p]);
+    pass.setBindGroup(0, j.g);
     const run = (init: ComputeKernel, step: ComputeKernel, next: ComputeKernel, fin: ComputeKernel, end: ComputeKernel | null) => {
       pass.setPipeline(init.pipeline);
       pass.dispatchWorkgroups(gx, gy);
@@ -1585,45 +1519,49 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     pass.dispatchWorkgroups(1);
   }
 
-  /**
-   * (the field bench, ?fieldbench=1) The front's relax as `variant`: relax's front kernel, or relaxBlock with K passes
-   * — each variant's pipelines made the first time it's asked for (the bench asks for all at its start), then switched
-   * to without a reload. Only with the scope (the front).
-   */
-  benchRelax(variant: 'front' | 'block8' | 'block16'): void {
-    if (!this.sk || !this.frontVariant) throw new Error('agents.benchRelax: no front (the scope is off)');
-    let v = this.frontVariants.get(variant);
-    if (!v) {
-      v = this.frontVariant(variant !== 'front', variant === 'block8' ? 8 : 16);
-      this.frontVariants.set(variant, v);
-    }
-    this.sk.relax = v.relax;
-    this.sk.build = v.build;
-    this.sk.relaxG = v.relaxG;
-    this.sk.buildG = v.buildG;
-    this.frontWG = v.wg;
-  }
-
-  /** (U2) the hunt's seeds: last frame's moved aside, this frame's scattered, those gone marked — before the relaxation */
-  private encodeHunt(pass: GPUComputePassEncoder, p: number): void {
-    if ((this.huntField === null && this.foeField === null) || this.count === 0) return;
-    const n = Math.ceil(Math.min(this.count, HUNT_LIST) / 64);
-    pass.setBindGroup(0, this.hk.g[p]);
-    pass.setPipeline(this.hk.reset.pipeline);
+  /** (U2 round 7) the frame's seeds (fieldseam.wgsl): last frame's moved aside; the CPU's, the hunt's and the orders'
+   *  put; those not put again marked gone — before the relaxation */
+  private encodeSeeds(pass: GPUComputePassEncoder): void {
+    const k = this.fk2;
+    pass.setBindGroup(0, k.seedG);
+    pass.setPipeline(k.reset.pipeline);
     pass.dispatchWorkgroups(1);
-    pass.setPipeline(this.hk.unmark.pipeline);
-    pass.dispatchWorkgroups(n);
-    // (huntOn off — the field bench's toggle: no new seeds; last frame's are let go, the field emptied of them)
-    if (this.huntOn) {
+    pass.setPipeline(k.unmark.pipeline);
+    pass.dispatchWorkgroups(Math.ceil(SEED_LIST / 64));
+    if (this.seeds.length) {
+      pass.setPipeline(k.cpu.pipeline);
+      pass.dispatchWorkgroups(Math.ceil(this.seeds.length / 64));
+    }
+    if ((this.huntField !== null || this.foeField !== null) && this.count > 0 && this.huntOn) {
+      pass.setBindGroup(0, this.hk.g);
       pass.setPipeline(this.hk.set.pipeline);
       pass.dispatchWorkgroups(Math.ceil(this.count / 64));
     }
-    pass.setPipeline(this.hk.gone.pipeline);
-    pass.dispatchWorkgroups(n);
-    pass.setPipeline(this.hk.flip.pipeline);
+    this.encodeOrderSeeds(pass);
+    // (the pages the new seeds asked for handed out, their bits set)
+    this.fields.encodeAlloc(pass);
+    pass.setBindGroup(0, k.seedG);
+    pass.setPipeline(k.land.pipeline);
+    pass.dispatchWorkgroups(Math.ceil(SEED_LIST / 64));
+    pass.setPipeline(k.gone.pipeline);
+    pass.dispatchWorkgroups(Math.ceil(SEED_LIST / 64));
+    pass.setPipeline(k.flip.pipeline);
     pass.dispatchWorkgroups(1);
-    this.prof.dispatches += 5;
+    this.prof.dispatches += 6;
   }
+
+  /** (U2 round 7) `sweeps` sweeps over the fields' front: pages handed out, the front listed, relaxed, flipped */
+  private encodeRelax(pass: GPUComputePassEncoder, sweeps: number): void {
+    for (let i = 0; i < sweeps; i++) {
+      this.fields.encodeFront(pass);
+      pass.setBindGroup(0, this.fk2.relaxG);
+      pass.setPipeline(this.fk2.relax.pipeline);
+      pass.dispatchWorkgroupsIndirect(this.fields.args, 0);
+      this.fields.encodeFlip(pass);
+      this.prof.dispatches += 5;
+    }
+  }
+
 
   /**
    * What hostile kinds go for (the player's units, up to 8), each frame:
@@ -1745,38 +1683,61 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
    * never steps off it, so a horde stays in its room. `null`: anywhere again.
    */
   confine(f: number, place: { id: number; kind: 'room' | 'region' } | null): void {
-    if (f < 0 || f >= NFIELDS) throw new Error(`agents: field ${f} out of 0..${NFIELDS - 1}`);
-    this.fieldPlace[f] = place ? (place.id | (place.kind === 'region' ? 0x80000000 : 0)) >>> 0 : 0;
-    if (this.scope) this.scope.markAll = true;
+    this.recOf(f)[FR_PLACE] = place ? (place.id | (place.kind === 'region' ? 0x80000000 : 0)) >>> 0 : 0;
+    this.writeRec(f);
+    // (the field starts over on its place: its pages let go, refilled from its seeds)
+    this.fields.release(f);
   }
 
   /** A CPU copy of field `f` to sample (fieldreader.ts; refresh it every few hundred ms). */
   reader(f: number): FieldReader {
-    if (f < 0 || f >= NFIELDS) throw new Error(`agents: field ${f} out of 0..${NFIELDS - 1}`);
+    this.useField(f);
     return new FieldReader(this, f, this.world.w, this.world.h, this.world.ring);
   }
 
-  /** The surfaces and one field's distances, read back together (FieldReader). */
+  /** The surfaces and one field's distances, read back together (FieldReader): the field's row of the page table, then
+   *  its pages, laid out as a whole-window plane (FAR where it has none) */
   async readField(f: number): Promise<{ nav: Uint32Array; dist: Float32Array }> {
     const N = this.world.w * this.world.h * NAV_K;
-    const tmp = this.device.createBuffer({ size: N * NAV_BYTES + N * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-    const enc = this.device.createCommandEncoder();
-    enc.copyBufferToBuffer(this.nav, 0, tmp, 0, N * NAV_BYTES);
-    enc.copyBufferToBuffer(this.dist, f * N * 4, tmp, N * NAV_BYTES, N * 4);
-    this.device.queue.submit([enc.finish()]);
-    let out = { nav: new Uint32Array(0), dist: new Float32Array(0) };
-    await tmp.mapAsync(GPUMapMode.READ).then(() => {
-      const b = tmp.getMappedRange();
-      out = { nav: new Uint32Array(b.slice(0, N * NAV_BYTES)), dist: new Float32Array(b.slice(N * NAV_BYTES)) };
-      tmp.unmap();
-    }, ignoreTeardown);
-    tmp.destroy();
-    return out;
+    const P = this.fields.o;
+    const slots = P.slots;
+    const read = async (copy: (enc: GPUCommandEncoder, dst: GPUBuffer) => void, size: number): Promise<ArrayBuffer | null> => {
+      const tmp = this.device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const enc = this.device.createCommandEncoder();
+      copy(enc, tmp);
+      this.device.queue.submit([enc.finish()]);
+      let out: ArrayBuffer | null = null;
+      await tmp.mapAsync(GPUMapMode.READ).then(() => {
+        out = tmp.getMappedRange().slice(0);
+        tmp.unmap();
+      }, ignoreTeardown);
+      tmp.destroy();
+      return out;
+    };
+    const tb = await read((enc, d) => {
+      enc.copyBufferToBuffer(this.nav, 0, d, 0, N * NAV_BYTES);
+      enc.copyBufferToBuffer(this.fields.buffer, (this.fields.layout.table + f * slots) * 4, d, N * NAV_BYTES, slots * 4);
+    }, N * NAV_BYTES + slots * 4);
+    if (!tb) return { nav: new Uint32Array(0), dist: new Float32Array(0) };
+    const nav = new Uint32Array(tb.slice(0, N * NAV_BYTES));
+    const table = new Uint32Array(tb.slice(N * NAV_BYTES));
+    const dist = new Float32Array(N).fill(1e9);
+    const held = [...table].map((pg, slot) => [pg, slot]).filter(([pg]) => pg > 0);
+    if (held.length) {
+      const pb = await read((enc, d) => {
+        held.forEach(([pg], i) => enc.copyBufferToBuffer(this.fields.buffer, (this.fields.ctlWords + (pg - 1) * P.pageWords) * 4, d, i * FIELD_PAGE_W * 4, FIELD_PAGE_W * 4));
+      }, held.length * FIELD_PAGE_W * 4);
+      if (pb) {
+        const pages = new Float32Array(pb);
+        held.forEach(([, slot], i) => dist.set(pages.subarray(i * FIELD_PAGE_W, (i + 1) * FIELD_PAGE_W), slot * FIELD_PAGE_W));
+      }
+    }
+    return { nav, dist };
   }
 
-  /** Send group `g` to world (x, y): its own field (field g % NFIELDS) seeded there. */
+  /** Send group `g` to world (x, y): its own field (field g) seeded there. */
   goTo(g: number, x: number, y: number, z?: number): void {
-    const f = g % NFIELDS;
+    const f = g;
     this.seed(f, [{ x, y, z }]);
     this.follow(g, f);
   }
@@ -2198,9 +2159,10 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   }
 
   /** A raw readback of one of its buffers (tests). */
-  async readRaw(which: 'nav' | 'dist' | 'units' | 'jfa' | 'mail'): Promise<ArrayBuffer> {
-    // (tests: 'jfa' — units.wgsl's JFA planes, ?jfa=1/2; 'mail' — the aim, the hits landing, the arrows)
-    const src = which === 'jfa' ? this.jfaBuf : which === 'mail' ? this.mail : this[which];
+  async readRaw(which: 'nav' | 'fields' | 'units' | 'jfa' | 'mail'): Promise<ArrayBuffer> {
+    // (tests: 'jfa' — units.wgsl's JFA planes, ?jfa=1/2; 'mail' — the aim, the hits landing, the arrows; 'fields' —
+    // the fields' page pool)
+    const src = which === 'jfa' ? this.jfaBuf : which === 'mail' ? this.mail : which === 'fields' ? this.fields.buffer : this[which];
     const tmp = this.device.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const enc = this.device.createCommandEncoder();
     enc.copyBufferToBuffer(src, 0, tmp, 0, src.size);
@@ -2217,56 +2179,30 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     const f = new Float32Array(b);
     u[0] = this.count;
     u[1] = this.seeds.length;
-    u[2] = this.fieldsUsed;
+    u[2] = 0;
     u[3] = this.ticks;
     this.seeds.forEach((s, i) => f.set([s.x, s.y, s.z ?? 1e4, s.field], P_SEEDS + i * 4));
     for (let g = 0; g < MAX_GROUPS; g++) {
-      // (a group following nothing reads past the fields in use: it stands)
-      u[P_GFIELD + g] = this.groupField[g] === 0xffffffff ? NFIELDS : this.groupField[g];
+      // (a group following nothing: FIELD_NONE — it stands)
+      u[P_GFIELD + g] = this.groupField[g];
       u[P_GMAT + g] = GROUP_MATS[g % GROUP_MATS.length] | (this.groupPose[g] << 8);
     }
-    u.set(this.fieldPlace, P_FPLACE);
-    let seeded = 0;
-    for (const s of this.seeds) seeded |= 1 << s.field;
-    // (U2: the GPU's hunt field always counts as seeded — its seeds are the GPU's to know)
-    if (this.huntField !== null && this.huntOn) seeded |= 1 << this.huntField;
-    // (U2 round 5: the foes' field and the order groups' — their seeds the GPU's too)
-    if (this.foeField !== null && this.huntOn) seeded |= 1 << this.foeField;
-    for (const fs of this.orderFieldOf) for (const f of fs) seeded |= 1 << f;
-    // (round 128i, V128-14: the road field is seeded on the road columns while a group rides)
-    if (this.roadRide.riding) {
-      seeded |= 1 << ROAD_FIELD;
-      this.fieldsUsed = NFIELDS;
+    // (round 128i, V128-14: the road field is seeded on the network's columns while a group rides: the nodes' chunks
+    // marked as riding starts — markChunks asks for their pages; the rest of the network as the field reaches it)
+    const riding = this.roadRide.riding !== 0;
+    if (this.frameWork && riding !== this.wasRiding) {
+      this.wasRiding = riding;
+      if (riding && this.scope) for (const [x, y] of this.roadRide.nodePoints()) this.scope.mark(x, y / ROW_H);
+      if (!riding && this.road !== null) this.fields.release(this.road);
     }
-    u.set([hits.length, this.targets.length, EVENT_CAP, seeded], P_N2);
-    // (round 88: a field left without seeds is set unreachable once, then skipped — not rewritten every sweep)
+    u.set([hits.length, this.targets.length, EVENT_CAP, 0], P_N2);
     // (round 107: the scope drew in at the last tick — a chunk let go — so what ran through what it let go of is gone
-    // from every field: they all start over from their seeds, as a field whose seed went does)
+    // from every field: they all start over from their seeds (U2 round 7: their pages let go))
     if (this.frameWork && this.shrunk && this.scope) {
       this.shrunk = false;
-      this.restart |= seeded;
-      for (const s of this.seeds) this.scope.mark(s.x, s.y / ROW_H);
-      this.markFields = ALL_FIELDS;
+      for (const f of this.fieldIds) this.fields.release(f);
+      if (riding) for (const [x, y] of this.roadRide.nodePoints()) this.scope.mark(x, y / ROW_H);
     }
-    // (round 107: and the fields whose seeds went or moved far start over — clearFields — and refill from their seeds)
-    // (round 128o, DA-B22: the fields start over where they're relaxed — on the frame's last tick; a step before it
-    // leaves what changed in the seeds for it)
-    const clear = this.frameWork ? (this.wasSeeded & ~seeded) | this.restart : 0;
-    if (this.frameWork) this.restart = 0;
-    // (round 128i: the road field's seeds are the network's columns, not points the scope marks — a road field set
-    // unreachable, or starting over, refills from them: round 128k, the network's nodes' chunks marked, not the whole
-    // scope relaxed again each time the scope drew in)
-    if (clear & seeded & (1 << ROAD_FIELD) && this.scope) {
-      for (const [x, y] of this.roadRide.nodePoints()) this.scope.mark(x, y / ROW_H);
-      this.markFields |= 1 << ROAD_FIELD;
-    }
-    if (this.frameWork) this.wasSeeded = seeded;
-    // (FC11 (c): the marks this tick are for these fields — every one for a confine, the roads, a scope drawn in)
-    if (this.scope?.markAll) this.markFields = ALL_FIELDS;
-    this.marksFor = this.markFields;
-    this.restartLog = clear;
-    if (this.frameWork) this.markFields = 0;
-    this.clearNow = clear;
     this.kinds.forEach((k, i) => {
       if (!k) return;
       const o = P_KINDS + i * 12;
@@ -2306,19 +2242,17 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     const holds = [...this.holds].slice(0, MAX_HOLDS);
     const launches = this.launches.splice(0, MAX_LAUNCHES);
     const regroups = this.regroups.splice(0, MAX_REGROUPS);
-    u.set([holds.length, launches.length, regroups.length, clear], P_N3);
+    u.set([holds.length, launches.length, regroups.length, 0], P_N3);
     u.set(regroups, P_REGROUPS);
     f[P_STEP] = this.stepNow.dt;
     const rekinds = this.rekinds.splice(0, MAX_REKINDS);
     f[P_STEP + 1] = rekinds.length;
     if ((this.los || this.seenOnly) && !this.aim) throw new Error('agents: line of sight wants ?los=1, ?seenonly=1 or ?fieldbench=1 at load (its kernels)');
-    u.set([this.huntOn ? (this.huntField ?? NFIELDS) : NFIELDS, (this.marksFor & 0xffff) | ((this.huntOn ? (this.foeField ?? NFIELDS) : NFIELDS) << 16), (this.los ? 1 : 0) | (this.seenOnly ? 2 : 0) | (this.huntRemark && this.frameWork ? 4 : 0), PROF || this.benchProbe ? 1 : 0], P_U2);
-    if (this.frameWork) this.huntRemark = false;
+    u.set([this.huntOn ? (this.huntField ?? FIELD_NONE) : FIELD_NONE, riding && this.road !== null ? this.road : FIELD_NONE, (this.los ? 1 : 0) | (this.seenOnly ? 2 : 0), PROF || this.benchProbe ? 1 : 0], P_U2);
     rekinds.forEach(([slot, kind, hp], i) => {
       u.set([slot, kind, 0, hp === null ? 0 : 1], P_REKINDS + i * 4);
       if (hp !== null) f[P_REKINDS + i * 4 + 2] = hp;
     });
-    f.set(this.arrive, P_ARRIVE);
     holds.forEach(([slot, p], i) => f.set([p[0], p[1], p[2], slot], P_HOLDS + i * 4));
     launches.forEach((l, i) => f.set(l, P_LAUNCHES + i * 4));
     this.device.queue.writeBuffer(this.params, 0, b);
@@ -2338,6 +2272,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     if (this.roadRide.encodeHops(enc, this.count) && this.scope) this.scope.markAll = true;
     // (the tick number rides in the params: the occupancy halves swap on it)
     this.writeParams(this.hits.splice(0, MAX_HITS));
+    this.writeHuntFields();
     const [gx, gy] = this.world.groups;
     // (round 88: no units, nothing in flight and no field seeded — nothing reads the surfaces or the fields, so
     // neither is made; the first tick that needs them peels at once)
@@ -2362,14 +2297,11 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       pass.dispatchWorkgroups(gx, gy);
       this.prof.dispatches += 2;
     }
-    if (this.frameWork && this.fieldsUsed > 0 && !this.benchFrozen) {
-      this.encodeHunt(pass, 0);
-      this.encodeOrderSeeds(pass, 0);
-      pass.setBindGroup(0, this.fieldGroup);
-      pass.setPipeline(this.k.relax.pipeline);
-      const sweeps = this.frameSweeps();
-      for (let i = 0; i < sweeps; i++) pass.dispatchWorkgroups(gx, gy);
-      this.prof.dispatches += sweeps;
+    if (this.frameWork && this.fieldIds.size > 0 && !this.benchFrozen) {
+      this.fields.setBox(null);
+      this.fields.encodeReleases(pass);
+      this.encodeSeeds(pass);
+      this.encodeRelax(pass, this.frameSweeps());
     }
     if (this.count > 0 || this.flights.length > 0) {
       pass.setBindGroup(0, this.unitGroup);
@@ -2509,45 +2441,39 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       pass.end();
       pass = enc.beginComputePass({ label: name, timestampWrites: this.prof.timestamps(name) });
     };
-    const log: AgentTickLog | null = PROF ? { frame: this.prof.frameNo, tick: this.ticks, scope: list.length, enter: enter.length, marks: marks.length, peel: 0, units: this.count - this.free.length, fields: this.fieldsUsed, front: [], asked: [], seedChanged: this.seedChanged, restarted: this.restartLog, marksFor: this.marksFor } : null;
-    if (this.frameWork) this.seedChanged = 0;
+    const log: AgentTickLog | null = PROF ? { frame: this.prof.frameNo, tick: this.ticks, scope: list.length, enter: enter.length, marks: marks.length, peel: 0, units: this.count - this.free.length, fields: this.fieldIds.size, front: [] } : null;
     const n = list.length ? t.groups(SCOPE_LIST) : 0;
-    let p = this.par;
+    // (U2 round 7: the fields' front walks the scope's chunks; owners let go since the last tick, theirs back)
+    this.fields.setBox(b[2] > b[0] ? [b[0] / 16, b[1] / 16, b[2] / 16, b[3] / 16] : null);
+    this.fields.encodeReleases(pass);
     if (enter.length) {
-      pass.setBindGroup(0, sk.enterG[p]);
+      pass.setBindGroup(0, sk.enterG);
       pass.setPipeline(sk.enter.pipeline);
       pass.dispatchWorkgroups(t.groups(ENTER_LIST));
       this.prof.dispatches++;
     }
     if (marks.length) {
-      pass.setBindGroup(0, sk.markG[p]);
+      pass.setBindGroup(0, sk.markG);
       pass.setPipeline(sk.mark.pipeline);
       pass.dispatchWorkgroups(t.groups(MARK_LIST));
       this.prof.dispatches++;
     }
-    if (n && (this.huntField !== null || this.foeField !== null)) {
+    if (n) {
       stage('agents-hunt');
-      this.encodeHunt(pass, p);
+      this.encodeSeeds(pass);
     }
-    if (n) this.encodeOrderSeeds(pass, p);
     // (the obstacles JFA — the clearance line of sight reads — and, ?jfa=1/2, the targets JFA)
     if (n && this.jk && ((JFA && this.huntField !== null) || this.los || this.seenOnly)) {
       stage('agents-jfa');
-      this.encodeJfa(pass, p, JFA && this.huntField !== null);
+      this.encodeJfa(pass, JFA && this.huntField !== null);
     }
     if (n) {
-      if (this.clearNow) {
-        pass.setBindGroup(0, sk.clearFieldsG);
-        pass.setPipeline(sk.clearFields.pipeline);
-        pass.dispatchWorkgroups(n);
-        this.prof.dispatches++;
-      }
       // (the GPU's lists: nothing changed, no workgroups)
       stage('agents-peel');
-      pass.setBindGroup(0, sk.peelG[p]);
+      pass.setBindGroup(0, sk.peelG);
       pass.setPipeline(sk.surfaces.pipeline);
       sk.lists.changed.dispatch(pass);
-      pass.setBindGroup(0, sk.linksG[p]);
+      pass.setBindGroup(0, sk.linksG);
       pass.setPipeline(sk.links.pipeline);
       sk.lists.around.dispatch(pass);
       // (where only the water's depth moved: the top surfaces' water — after the peel, which writes it too)
@@ -2555,36 +2481,19 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       pass.setPipeline(sk.water.pipeline);
       sk.depths.changed.dispatch(pass);
       this.prof.dispatches += 3;
-      if (this.fieldsUsed > 0 && !this.benchFrozen) {
-        const chunks = Math.ceil(list.length / 64);
+      if (this.fieldIds.size > 0 && !this.benchFrozen) {
         stage('agents-relax');
         const sweeps = this.frameSweeps();
         for (let i = 0; i < sweeps; i++) {
-          pass.setBindGroup(0, sk.resetG);
-          pass.setPipeline(sk.reset.pipeline);
-          pass.dispatchWorkgroups(1);
-          pass.setBindGroup(0, sk.buildG[p]);
-          pass.setPipeline(sk.build.pipeline);
-          pass.dispatchWorkgroups(chunks);
-          pass.setBindGroup(0, sk.clearG[p]);
-          pass.setPipeline(sk.clear.pipeline);
-          pass.dispatchWorkgroups(chunks);
-          pass.setBindGroup(0, sk.relaxG[p]);
-          pass.setPipeline(sk.relax.pipeline);
-          pass.dispatchWorkgroupsIndirect(this.frontArgs, 0);
-          this.prof.dispatches += 4;
+          this.encodeRelax(pass, 1);
           if (log && i < 8) {
             pass.end();
-            enc.copyBufferToBuffer(this.frontArgs, 0, this.probe(), i * 4, 4);
-            enc.copyBufferToBuffer(this.frontArgs, 12, this.probe(), 32 + i * 4, 4);
+            enc.copyBufferToBuffer(this.fields.args, 0, this.probe(), i * 4, 4);
             pass = enc.beginComputePass({ label: 'agents-relax', timestampWrites: this.prof.timestamps('agents-relax') });
           }
-          // (what this sweep marked is the next one's to relax round)
-          p ^= 1;
         }
       }
     }
-    this.par = p;
     if (this.count > 0 || this.flights.length > 0) {
       stage('agents-units');
       if (n) {
@@ -2605,7 +2514,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     if (log) {
       // (the peel's list's count: its args' workgroups, 4 a chunk)
       if (n) enc.copyBufferToBuffer(sk.lists.changed.args, 0, this.probe(), 64, 4);
-      this.probeLog(enc, log, this.fieldsUsed > 0 && n ? Math.min(this.sweeps, 8) : 0, n > 0);
+      this.probeLog(enc, log, this.fieldIds.size > 0 && n ? Math.min(this.frameSweeps(), 8) : 0, n > 0);
     }
     if (read) {
       enc.copyBufferToBuffer(this.uboxBuf, 0, this.readBuf, 0, 16);
@@ -2642,13 +2551,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       q.buf.mapAsync(GPUMapMode.READ).then(() => {
         const u = new Uint32Array(q.buf.getMappedRange().slice(0));
         q.buf.unmap();
-        for (let i = 0; i < q.n; i++) {
-          q.log.front.push(u[i] / this.frontWG);
-          q.log.asked.push(u[8 + i]);
-        }
+        for (let i = 0; i < q.n; i++) q.log.front.push(u[i]);
         if (q.peeled) q.log.peel = u[16] / 4;
-        q.log.fieldAsk = [...u.slice(20, 20 + 16)];
-        q.log.fieldCarry = [...u.slice(36, 36 + 16)];
         q.log.seedsNew = u[52];
         q.log.seedsGone = u[53];
         // (?jfa=1/2: the targets JFA ran, the obstacles JFA ran, the ground each round resolved, the ground in scope)

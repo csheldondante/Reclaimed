@@ -1,23 +1,359 @@
-// ---- fieldseam.wgsl: the orders' one way to a field (U2 round 6; the paged field atlas, §9b, swaps this for pages) ----
-// Appended after units.wgsl (and its agents.wgsl) in the order kernels (orders.wgsl). Everything drill, man, march and
-// the formations do with a field goes through these: its distance at a surface, its way down there, a seed set or let
-// go. Today a field is a plane of `dist` and a bit of `seedMask`, its chunks marked in `dirtyCur`; round 7 pages them.
-// (The kernels that call fieldSeed / fieldUnseed bind seedMask and dirtyCur; those that call fieldDist / fieldGrad bind
-// dist: each set of kernels uses only its own.)
+// ---- fieldseam.wgsl: the fields on pages (U2 round 7, UNIT_MINDS_U2.md §9b) — every field read, seed and relax -------
+// A field is an owner of the page pool (gpu/pagepool.ts, pagepool.wgsl, at binding 6): a page a field over a chunk,
+// handed out as the field grows into it, found through the field's row of the page table (no page: FAR). Field ids
+// are the CPU's (Agents.newField): as many as the pool's rows, no fixed count. Appended to every agents kernel (after
+// agents.wgsl, units.wgsl and the pool's WGSL); orders.wgsl, the units' step, the hunt and the JFA go through here.
+//   page payload: [0, FP_W) distances (f32), [FP_W, 2 FP_W) seed-ids (the seed's surface + 1; 0 none)
+//   page control words: [0, FP_SEEDS) a bit a surface — a seed this frame; [FP_SEEDS, 2 FP_SEEDS) — last frame
+//   field record (the CPU's, Agents.writeField): 0 the place it's confined to (0 anywhere; bit 31 a region, else a room),
+//     1 arrival radius, 2 leaving radius (f32; 0 off), 3 reach (f32 cost; 0 the scope's cap), 4 flags (FO_ROAD)
+// Seeds are put every frame (seedPut: the hunt's targets, the CPU's points, the orders' places) into a list; a seed new
+// since last frame marks its page, one gone marks it too (seedUnmark / seedGone, as the hunt's two lists were).
 
-/** field f's distance at surface s (FAR: no way) */
-fn fieldDist(f: u32, s: u32) -> f32 { return dist[f * ns() + s]; }
+/** a page's distances (16 x 16 columns x NAV_K surfaces) */
+const FP_W: u32 = 256u * NAV_K;
+/** a page's seed bits: words a frame */
+const FP_SEEDS: u32 = FP_W / 32u;
+const FO_ROAD: u32 = 1u;
+/** a group or rank following no field */
+const FIELD_NONE: u32 = 0xffffffffu;
+
+fn fieldOk(f: u32) -> bool { return f < ppOwners(); }
+/** field f's page over surface s's chunk (+ 1; PP_NONE none) */
+fn fieldPage(f: u32, s: u32) -> u32 {
+  if (!fieldOk(f)) { return PP_NONE; }
+  return ppPage(f, s / FP_W);
+}
+/** field f's distance at surface s (FAR: no way, or no page there) */
+fn fieldDist(f: u32, s: u32) -> f32 {
+  let pg = fieldPage(f, s);
+  if (pg == PP_NONE) { return FAR; }
+  return ppF32(pg, s % FP_W);
+}
+/** the seed field f's distance at s came from (its surface + 1; 0 none) */
+fn fieldSrc(f: u32, s: u32) -> u32 {
+  let pg = fieldPage(f, s);
+  if (pg == PP_NONE) { return 0u; }
+  return ppWord(pg, FP_W + s % FP_W);
+}
 /** field f's way down at surface s (column c, at pos): a unit vector, or 0 at a seed or with no way */
 fn fieldGrad(f: u32, s: u32, c: vec2<i32>, pos: vec2<f32>) -> vec2<f32> { return downField(f, s, c, pos, fieldDist(f, s)); }
-/** surface s's chunk (its column's page slot: common.wgsl colIdx) */
-fn fieldChunk(s: u32) -> u32 { return (s / NAV_K) / (COLS_PAGE * COLS_PAGE); }
-/** surface s a seed of field f; `mark`: its chunk marked for f (the field falls round it) */
-fn fieldSeed(f: u32, s: u32, mark: bool) {
-  atomicOr(&seedMask[s], 1u << f);
-  if (mark) { atomicOr(&dirtyCur[fieldChunk(s)], 1u << f); }
+/** surface s's chunk slot */
+fn fieldChunk(s: u32) -> u32 { return s / FP_W; }
+fn fieldRec(f: u32, w: u32) -> u32 { return select(0u, ppOwner(f, w), fieldOk(f)); }
+/** the place field f is confined to (0 anywhere) */
+fn fieldPlace(f: u32) -> u32 { return fieldRec(f, 0u); }
+/** field f's arrival and leaving radii (0: off) */
+fn arriveR(f: u32) -> vec2<f32> { return vec2<f32>(bitcast<f32>(fieldRec(f, 1u)), bitcast<f32>(fieldRec(f, 2u))); }
+fn fieldReach(f: u32) -> f32 { return bitcast<f32>(fieldRec(f, 3u)); }
+fn fieldRoad(f: u32) -> bool { return (fieldRec(f, 4u) & FO_ROAD) != 0u; }
+/** is surface s a seed of field f this frame (its page's bit) */
+fn fieldIsSeed(f: u32, s: u32) -> bool {
+  let pg = fieldPage(f, s);
+  if (pg == PP_NONE) { return false; }
+  let e = s % FP_W;
+  return ((ppCtl(ppPctlAt(pg, e / 32u)) >> (e % 32u)) & 1u) != 0u;
 }
-/** surface s no longer a seed of field f, its chunk marked (the field rises there) */
-fn fieldUnseed(f: u32, s: u32) {
-  atomicAnd(&seedMask[s], ~(1u << f));
-  atomicOr(&dirtyCur[fieldChunk(s)], 1u << f);
+
+// ---- the frame's seeds -----------------------------------------------------------------------------------------------
+// [0] [1] the two lists' counts, [2] which is last frame's, [3] puts the list had no room for, [4] [5] the hunt's and the foes' fields (units.wgsl huntSet; SEED_LIST: sized by the
+// CPU to every seeder there can be — a refusal is a sizing bug, shown), then the lists: (field, surface) pairs
+@group(0) @binding(53) var<storage, read_write> seedList: array<atomic<u32>>;
+const SEED_LIST: u32 = 16384u; // SEED_LIST
+const SEED_HEAD: u32 = 8u;
+fn seedAt(l: u32, k: u32) -> u32 { return SEED_HEAD + (l * SEED_LIST + k) * 2u; }
+const SEED_NONE: u32 = 0u;
+const SEED_KEPT: u32 = 1u;
+const SEED_NEW: u32 = 2u;
+
+fn seedList1(f: u32, s: u32) {
+  let cur = 1u - atomicLoad(&seedList[2]);
+  let n = atomicAdd(&seedList[cur], 1u);
+  if (n < SEED_LIST) {
+    atomicStore(&seedList[seedAt(cur, n)], f);
+    atomicStore(&seedList[seedAt(cur, n) + 1u], s);
+  } else {
+    atomicAdd(&seedList[3], 1u);
+  }
+}
+/** surface s's bit set in field f's page pg; new since last frame → the page marked (the field falls round it) */
+fn seedBit(f: u32, s: u32, pg: u32) -> u32 {
+  let e = s % FP_W;
+  let bit = 1u << (e % 32u);
+  let old = atomicOr(&pp.ctl[ppPctlAt(pg, e / 32u)], bit);
+  if ((old & bit) != 0u) { return SEED_KEPT; }
+  if ((ppCtl(ppPctlAt(pg, FP_SEEDS + e / 32u)) & bit) != 0u) { return SEED_KEPT + 4u; }
+  ppMark(f, s / FP_W);
+  return SEED_NEW + 4u;
+}
+/** surface s a seed of field f this frame: listed, its page's bit set — no page there yet: the page asked for, the bit
+ *  set once it's handed out (seedLand, before the sweeps) */
+fn seedPut(f: u32, s: u32) -> u32 {
+  if (!fieldOk(f)) { return SEED_NONE; }
+  let slot = s / FP_W;
+  let pg = ppPage(f, slot);
+  if (pg == PP_NONE) {
+    ppRequest(f, slot);
+    seedList1(f, s);
+    return SEED_NEW;
+  }
+  let r = seedBit(f, s, pg);
+  // (first put this frame: listed — the list is what next frame's unmark and gone walk)
+  if (r >= 4u) { seedList1(f, s); }
+  return r & 3u;
+}
+
+/** (after the pages asked for are handed out) this frame's seeds whose page came now: their bits set */
+@compute @workgroup_size(64)
+fn seedLand(@builtin(global_invocation_id) id: vec3<u32>) {
+  let cur = 1u - atomicLoad(&seedList[2]);
+  if (id.x >= min(atomicLoad(&seedList[cur]), SEED_LIST)) { return; }
+  let f = atomicLoad(&seedList[seedAt(cur, id.x)]);
+  let s = atomicLoad(&seedList[seedAt(cur, id.x) + 1u]);
+  let pg = fieldPage(f, s);
+  if (pg != PP_NONE) { seedBit(f, s, pg); }
+}
+
+@compute @workgroup_size(1)
+fn seedReset() { atomicStore(&seedList[1u - atomicLoad(&seedList[2])], 0u); }
+
+/** last frame's seeds: this frame's bit moved to last frame's */
+@compute @workgroup_size(64)
+fn seedUnmark(@builtin(global_invocation_id) id: vec3<u32>) {
+  let prev = atomicLoad(&seedList[2]);
+  if (id.x >= min(atomicLoad(&seedList[prev]), SEED_LIST)) { return; }
+  let f = atomicLoad(&seedList[seedAt(prev, id.x)]);
+  let s = atomicLoad(&seedList[seedAt(prev, id.x) + 1u]);
+  let pg = fieldPage(f, s);
+  if (pg == PP_NONE) { return; }
+  let e = s % FP_W;
+  let bit = 1u << (e % 32u);
+  atomicAnd(&pp.ctl[ppPctlAt(pg, e / 32u)], ~bit);
+  atomicOr(&pp.ctl[ppPctlAt(pg, FP_SEEDS + e / 32u)], bit);
+}
+
+/** last frame's seeds not put again: their pages marked (the field rises there); last frame's bit cleared */
+@compute @workgroup_size(64)
+fn seedGone(@builtin(global_invocation_id) id: vec3<u32>) {
+  let prev = atomicLoad(&seedList[2]);
+  if (id.x >= min(atomicLoad(&seedList[prev]), SEED_LIST)) { return; }
+  let f = atomicLoad(&seedList[seedAt(prev, id.x)]);
+  let s = atomicLoad(&seedList[seedAt(prev, id.x) + 1u]);
+  let pg = fieldPage(f, s);
+  if (pg == PP_NONE) { return; }
+  let e = s % FP_W;
+  let bit = 1u << (e % 32u);
+  let was = atomicAnd(&pp.ctl[ppPctlAt(pg, FP_SEEDS + e / 32u)], ~bit);
+  if ((was & bit) == 0u || (ppCtl(ppPctlAt(pg, e / 32u)) & bit) != 0u) { return; }
+  ppMark(f, s / FP_W);
+  if (AP.u2.w != 0u) { atomicAdd(&frontDbg[33], 1u); }
+}
+
+@compute @workgroup_size(1)
+fn seedFlip() { atomicStore(&seedList[2], 1u - atomicLoad(&seedList[2])); }
+
+/** the CPU's seeds (AP.seeds: a point and its field), put every frame */
+@compute @workgroup_size(64)
+fn cpuSeeds(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= AP.n.y) { return; }
+  let sd = AP.seeds[id.x];
+  let c = cellAt(sd.xy);
+  if (!inMap(c) || !inScope(c)) { return; }
+  let i = colIdxI(c);
+  let k = surfaceNear(i, sd.z);
+  if (k >= NAV_K) { return; }
+  seedPut(u32(sd.w), i * NAV_K + k);
+}
+
+// ---- relax over pages (FC12's block relaxation, a workgroup a front entry) -------------------------------------------
+// The front (the pool's: a (field, chunk) whose page changed, or one round it) is relaxed a workgroup an entry: the
+// chunk's tile and a one-column halo loaded through the 3 x 3 pages round it (no page: FAR), relaxed RELAX_K times in
+// workgroup memory, written back where it moved past DIST_EPS (its page marked for the next sweep). A value whose seed
+// is gone (its seed's distance no longer 0) loads as FAR: the values it made empty at once, then refill (no count-up).
+// A chunk with no page whose values came out finite asks for one (the field grows a chunk a sweep at its edge); a page
+// left all FAR with no seeds is let go (the field's memory follows the ground it reaches).
+var<workgroup> rD: array<f32, 1296>;
+var<workgroup> rS: array<u32, 1296>;
+var<workgroup> rPg: array<u32, 9>;
+var<workgroup> rEnt: vec2<u32>;
+var<workgroup> rLive: u32;
+var<workgroup> rOut: atomic<u32>;
+const R_FINITE: u32 = 1u;
+const R_SEED: u32 = 2u;
+const R_MOVED: u32 = 4u;
+const RT: u32 = 18u;
+const RCELLS: u32 = 324u;
+fn rAt(lx: u32, ly: u32, k: u32) -> u32 { return (ly * RT + lx) * NAV_K + k; }
+
+@compute @workgroup_size(16, 16)
+fn fieldRelax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  if (li == 0u) {
+    rEnt = ppFrontAt(wg.x);
+    atomicStore(&rOut, 0u);
+  }
+  workgroupBarrier();
+  let ent = rEnt;
+  let f = ent.x;
+  let slot = ent.y;
+  let cxy = slotChunk(slot);
+  if (li < 9u) {
+    let q = vec2<i32>(cxy) + vec2<i32>(i32(li % 3u) - 1, i32(li / 3u) - 1);
+    var pg = PP_NONE;
+    if (q.x >= 0 && q.y >= 0 && u32(q.x) < pagesX() && u32(q.y) < pagesY()) { pg = ppPage(f, pageIdx(vec2<u32>(q))); }
+    rPg[li] = pg;
+  }
+  workgroupBarrier();
+  if (li == 0u) {
+    var any = 0u;
+    for (var e = 0u; e < 9u; e++) { any |= rPg[e]; }
+    rLive = select(0u, 1u, any != 0u);
+  }
+  // (no page here nor round it: nothing finite can come — a seed asks for its own page)
+  if (workgroupUniformLoad(&rLive) == 0u) { return; }
+  let o = vec2<i32>(cxy * COLS_PAGE);
+  let p = o + vec2<i32>(lid.xy);
+  let i = colIdxI(p);
+  var cap = f32(min(G.mapW + G.mapH, (AB[0].z - AB[0].x) + (AB[0].w - AB[0].y))) * 6.0;
+  let reach = fieldReach(f);
+  if (reach > 0.0) { cap = min(cap, reach); }
+  // (this column's surfaces, their links into the tile and each step's cost: fixed through the sweep)
+  var nk = 0u;
+  var nT: array<u32, 24>;
+  var nC: array<f32, 24>;
+  for (var k = 0u; k < NAV_K; k++) {
+    let s = i * NAV_K + k;
+    if (navZ(s) < 0.0) { break; }
+    let z = costZ(s);
+    if (z < 0.0) { break; }
+    nk = k + 1u;
+    let deepHere = costDeep(s);
+    for (var dd = 0u; dd < NDIR; dd++) {
+      nT[k * NDIR + dd] = BNONE;
+      let l = navLink(s, dd);
+      if (l == 0u) { continue; }
+      let qn = nbr(p, dd);
+      if (!inScope(qn)) { continue; }
+      let t = colIdxI(qn) * NAV_K + l - 1u;
+      if (costDeep(t) && !deepHere) { continue; }
+      let lq = vec2<u32>(qn - o + vec2<i32>(1));
+      nT[k * NDIR + dd] = rAt(lq.x, lq.y, l - 1u);
+      let road = 1.0 - (1.0 - ROAD_COST) * 0.5 * (onRoad(p) + onRoad(qn));
+      nC[k * NDIR + dd] = stepCost(z, costZ(t), costWet(t)) * road;
+    }
+  }
+  // the tile and its halo, through the pages (a value whose seed is gone: FAR)
+  for (var e = li; e < RCELLS; e += 256u) {
+    let q = o + vec2<i32>(i32(e % RT), i32(e / RT)) - vec2<i32>(1);
+    let ok = inMap(q) && inScope(q);
+    var pg = PP_NONE;
+    var qi = 0u;
+    if (ok) {
+      let lc = vec2<i32>(select(select(1, 2, q.x >= o.x + 16), 0, q.x < o.x), select(select(1, 2, q.y >= o.y + 16), 0, q.y < o.y));
+      pg = rPg[u32(lc.y * 3 + lc.x)];
+      qi = colIdxI(q);
+    }
+    for (var k = 0u; k < NAV_K; k++) {
+      var v = FAR;
+      var sv = 0u;
+      if (pg != PP_NONE) {
+        let w = (qi * NAV_K + k) % FP_W;
+        v = ppF32(pg, w);
+        sv = ppWord(pg, FP_W + w);
+        if (v < FAR && (sv == 0u || fieldDist(f, sv - 1u) != 0.0)) {
+          v = FAR;
+          sv = 0u;
+        }
+      }
+      rD[e * NAV_K + k] = v;
+      rS[e * NAV_K + k] = sv;
+    }
+  }
+  workgroupBarrier();
+  // (this column's fixed values: its seeds — the page's bits, or the road field's network — and off a confined
+  // field's place)
+  let fp = fieldPlace(f);
+  let road = fieldRoad(f) && onNet(p);
+  let me = vec2<u32>(lid.xy) + vec2<u32>(1u);
+  var fixed: array<u32, 4>;
+  for (var k = 0u; k < nk; k++) {
+    let s = i * NAV_K + k;
+    fixed[k] = 0u;
+    if (fp != 0u && !onPlace(s, fp)) { fixed[k] = 2u; continue; }
+    if (road || fieldIsSeed(f, s)) {
+      fixed[k] = 1u;
+      atomicOr(&rOut, R_SEED);
+    }
+  }
+  for (var it = 0u; it < RELAX_K; it++) {
+    var nv: array<f32, 4>;
+    var nsrc: array<u32, 4>;
+    for (var k = 0u; k < nk; k++) {
+      if (fixed[k] == 1u) { nv[k] = 0.0; nsrc[k] = i * NAV_K + k + 1u; continue; }
+      if (fixed[k] == 2u) { nv[k] = FAR; nsrc[k] = 0u; continue; }
+      var d = FAR;
+      var sv = 0u;
+      for (var dd = 0u; dd < NDIR; dd++) {
+        let t = nT[k * NDIR + dd];
+        if (t == BNONE) { continue; }
+        let dn = rD[t];
+        if (dn >= FAR) { continue; }
+        let dt = dn + nC[k * NDIR + dd];
+        if (dt < d) {
+          d = dt;
+          sv = rS[t];
+        }
+      }
+      nv[k] = select(d, FAR, d > cap);
+      nsrc[k] = select(sv, 0u, nv[k] >= FAR);
+    }
+    workgroupBarrier();
+    for (var k = 0u; k < nk; k++) {
+      rD[rAt(me.x, me.y, k)] = nv[k];
+      rS[rAt(me.x, me.y, k)] = nsrc[k];
+    }
+    workgroupBarrier();
+  }
+  // written back where it moved (DIST_EPS) or its seed changed
+  let pg = rPg[4];
+  for (var k = 0u; k < nk; k++) {
+    let nd = rD[rAt(me.x, me.y, k)];
+    let ns2 = rS[rAt(me.x, me.y, k)];
+    if (nd < FAR) { atomicOr(&rOut, R_FINITE); }
+    if (pg == PP_NONE) { continue; }
+    let w = (i * NAV_K + k) % FP_W;
+    let od = ppF32(pg, w);
+    if (abs(nd - od) > DIST_EPS || (nd >= FAR) != (od >= FAR) || ppWord(pg, FP_W + w) != ns2) {
+      ppSetF32(pg, w, nd);
+      ppSetWord(pg, FP_W + w, ns2);
+      atomicOr(&rOut, R_MOVED);
+    }
+  }
+  workgroupBarrier();
+  if (li == 0u) {
+    let out = atomicLoad(&rOut);
+    if (pg == PP_NONE) {
+      if ((out & R_FINITE) != 0u) { ppRequest(f, slot); }
+    } else if ((out & (R_FINITE | R_SEED)) == 0u) {
+      // (all FAR, no seeds: let go — a neighbour reading it reads FAR either way — and marked, so the chunks round it
+      // are relaxed next: what they hold may have come through here)
+      ppDrop(f, slot, pg);
+      ppMarkNext(f, slot);
+    } else if ((out & R_MOVED) != 0u) {
+      ppMarkNext(f, slot);
+    }
+  }
+}
+
+/** (the CPU's marks: agents/scope.ts) a tile list's chunks relaxed again for every field there (the roads' costs moved,
+ *  the scope drawn in); the road field's network columns seeded (their pages asked for) */
+@compute @workgroup_size(8, 8)
+fn markChunks(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let slot = chunkOfCol(id.x, id.y);
+  if ((id.x % COLS_PAGE) == 0u && (id.y % COLS_PAGE) == 0u) { ppMarkSlot(slot); }
+  let rf = AP.u2.y;
+  if (fieldOk(rf) && onNet(vec2<i32>(id.xy))) {
+    if (ppPage(rf, slot) == PP_NONE) { ppRequest(rf, slot); }
+    ppMark(rf, slot);
+  }
 }

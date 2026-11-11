@@ -489,6 +489,22 @@ planes (`shaders/pages.wgsl`, `agents/pages.ts`) over the agents' own surfaces. 
   refilled instead, as the planes' restart), the scope box (the whole window is relaxed), and the CPU's seeds as a list
   (the test hands them over). Each is a rule relaxBlock already has, carried over as the planes move onto pages.
 
+**Round 7, step 2.1 — built (trackB-u2r9-pool): every field on pages.** The planes are gone. One pool
+(`gpu/pagepool.ts`, `shaders/pagepool.wgsl`) at binding 6 holds the tables and the pages in one buffer
+(`struct PagePool { ctl: array<atomic<u32>, N>, data: array<u32> }`), so no kernel gained a binding.
+- **Page:** 1024 distances + 1024 seed-ids (8 KB) and 64 atomic words: a bit a surface for this frame's seeds and last
+  frame's. Every field keeps seed-ids (not just the hunt's): a seed moved or gone empties its values, no restart.
+- **Seeds:** put every frame into a list (`seedPut`: the CPU's points, the hunt's targets, the orders' places), the bit
+  in the field's page; a chunk with no page asks for one and `seedLand` sets the bit after the hand-out. New since
+  last frame or gone: the page marked.
+- **Front:** the pool's (`ppFront`): a (field, chunk) marked, and the 8 round it, in the scope's box, deduplicated by a
+  sweep stamp, an indirect dispatch of `fieldRelax` (a workgroup an entry). No cap.
+- **Memory:** a page asked for where a relax came out finite; one left all FAR with no seeds let go (and marked).
+  A chunk new to the scope drops every field's page there (`ppDropSlot`).
+- **Field ids:** `Agents.newField()` / `freeField()`, 256 rows (the man order's run fields ride 8 bits). Records per
+  field (place, arrival radii, reach, flags) in the pool's control words.
+- Measured: DEVLOG 2026-11-11 "step 2.1".
+
 **Round 7, the rest — the plan, step by step, each against the planes behind a toggle until it matches:**
 1. **The seam reads pages.** `fieldDist` / `fieldGrad` go through the table (pgDist).
    - unitStep's `here` and `downField`, the hunt and the JFA read through it too.
