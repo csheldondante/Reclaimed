@@ -22956,3 +22956,15 @@ hysteresis, "more like a chain than a fixed grid", reassignment by position, ali
   (before: 7 placed in 2 m water, drowned); a spawn in a lake: 'water', none made.
 - Not measured: the phone or desktop frame-time toggle diff (formSlots now walks a straight line per rank per frame —
   ≤ 16 cells — and sorts on order changes).
+
+## 2026-11-11 — every order group gets its place, anchor and arrival (U2-FORMBITS, `trackB-drillfix`)
+
+**Why.** Track A removed its squad cap (fortress ed2dfd1f), so more than 32 order groups will be in play, and
+`formGroups` was a 32-bit mask. Looking at it: orderResolve, formAnchor and groupEmit (a thread a group, 8 a
+workgroup) were each dispatched as one workgroup since round 7 sized order groups from memory — groups 8+ never had
+their place resolved, an anchor, or an arrival told.
+
+**What.** `formGroups` is a Set of the order groups in formation (the CPU's own orders, no readback); the three kernels
+are dispatched over every order group (ceil(groups / 8)). New test: 40 groups (10 places in pairs 18 cells apart, 4
+squads of 2 at each) in a column at once — 40/40 arrived and anchored (fortress: 8/40). Found on the way (U2-FIELDCAP,
+not chased): with 20 destination fields at once, some plain `go` groups never had their field reach them.

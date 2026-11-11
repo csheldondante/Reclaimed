@@ -583,7 +583,9 @@ export class Agents implements SimSystem {
   private fk: { anchor: ComputeKernel; slots: ComputeKernel; g: GPUBindGroup | null } | null = null;
   private routesBuf: GPUBuffer | null = null;
   private routesNone: GPUBuffer | null = null;
-  private formGroups = 0;
+  /** (round 6b, U2-FORMBITS) the order groups in a formation (the CPU's own orders: no readback) — a set, not a 32-bit
+   *  mask: order groups are sized from memory */
+  private formGroups = new Set<number>();
   private orderSerial: Uint32Array;
   /** (U2 round 7) the order groups (sized from memory) and mail's layout for them */
   readonly orderGroups: number;
@@ -1428,10 +1430,11 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
 
   /** (before each step) the formations' anchors and their ranks' targets */
   private encodeFormations(pass: GPUComputePassEncoder): void {
-    if (!this.fk?.g || !this.formGroups || this.count === 0) return;
+    if (!this.fk?.g || this.formGroups.size === 0 || this.count === 0) return;
     pass.setBindGroup(0, this.fk.g);
     pass.setPipeline(this.fk.anchor.pipeline);
-    pass.dispatchWorkgroups(1);
+    // (formAnchor: a thread a group, 8 a workgroup — every order group's; one workgroup anchored groups 0-7 only)
+    pass.dispatchWorkgroups(Math.ceil(this.orderGroups / 8));
     pass.setPipeline(this.fk.slots.pipeline);
     pass.dispatchWorkgroups((this.orderGroups * ORDER_RANKS) / 64);
     this.prof.dispatches += 2;
@@ -1480,7 +1483,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W + RUNF_AT) * 4, w, RUNF_AT, 8);
     this.orderFieldOf[g] = r.kind >= 2 ? fields : [];
     const formed = r.kind === 5 || r.kind === 6 || r.kind === 7 || ((r.kind >= 2 && r.kind <= 4) && (r.formation ?? 0) > 0);
-    this.formGroups = formed ? this.formGroups | (1 << g) : this.formGroups & ~(1 << g);
+    if (formed) this.formGroups.add(g);
+    else this.formGroups.delete(g);
     // (a new place: its seed is put there from the next frame; the old one's values empty by their seed-ids)
     return serial;
   }
@@ -1529,7 +1533,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     if (!this.ok) return;
     pass.setBindGroup(0, this.ok.g);
     pass.setPipeline(this.ok.resolve.pipeline);
-    pass.dispatchWorkgroups(1);
+    // (a thread a group, 8 a workgroup: every order group — one workgroup resolved groups 0-7 only)
+    pass.dispatchWorkgroups(Math.ceil(this.orderGroups / 8));
     this.prof.dispatches++;
   }
 
@@ -1540,7 +1545,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     pass.setPipeline(this.ok.count.pipeline);
     pass.dispatchWorkgroups(Math.ceil(this.count / 64));
     pass.setPipeline(this.ok.emit.pipeline);
-    pass.dispatchWorkgroups(1);
+    pass.dispatchWorkgroups(Math.ceil(this.orderGroups / 8));
     this.prof.dispatches += 2;
   }
 

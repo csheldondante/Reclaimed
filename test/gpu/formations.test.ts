@@ -559,3 +559,41 @@ test('spawnAt spawn k also gate k else barracks: with gate k invalid the spawn f
   expect(atBarracks).toBe(3);
   expect(g.takeErrors()).toEqual([]);
 });
+
+test('U2-FORMBITS: 40 order groups in formation at once — every one forms and arrives (anchors, places and arrivals for groups past 8 and 31)', async () => {
+  const { units, run } = await world();
+  // (10 named places in pairs 18 cells apart (2 × 5); 4 squads spawned at each, each walking in a column to its pair's
+  // place. Ten destination fields: with 20, some never reached their anchors even with no formation — U2-FIELDCAP)
+  const at = (n: number) => cellPos(30 + (n % 2) * 18, 10 + Math.floor(n / 2) * 16);
+  const named: Record<number, [number, number, number]> = {};
+  for (let n = 0; n < 10; n++) {
+    const p = at(n);
+    named[n] = [p[0], p[1], 10];
+  }
+  units.usePlaces(fakePlaces(named));
+  const arrived = new Set<number>();
+  const failed: [number, string][] = [];
+  units.arrived.push((x) => arrived.add(x));
+  units.orderFailed.push((x, why) => failed.push([x, why]));
+  const gids: number[] = [];
+  for (let i = 0; i < 40; i++) {
+    const from = i % 10;
+    const gid = units.spawnAt!('soldier', 'f-town', { town: 0, place: from }, 2);
+    units.orderGroup!(gid, { kind: 'go', at: { town: 0, place: from ^ 1 }, formation: 'column' });
+    gids.push(gid);
+  }
+  const L = units.agents.mailLayout;
+  await run(TPS * 60, async () => gids.every((x) => arrived.has(x)));
+  // (each group's formation anchor moved off its start: formAnchor ran for it)
+  const mail = new Float32Array(await units.agents.readRaw('mail'));
+  const anchored = gids.filter((_, s) => mail[L.groups + s * L.groupW + L.formAt + 4] > 1).length;
+  const u32 = new Uint32Array(mail.buffer);
+  const miss = gids.map((x, s) => [x, s] as const).filter(([x]) => !arrived.has(x)).map(([, s]) => { const o = L.groups + s * L.groupW; return `${s}:k${u32[o]} st${u32[o + 11]} a${u32[o + L.formAt + 8]} s${mail[o + L.formAt + 4].toFixed(1)} lag${mail[o + L.formAt + 10].toFixed(1)} alive${u32[o + 18]}`; });
+  log(`40 groups missing: ${miss.join(' | ')}`);
+  log(`40 groups: order groups ${L.orderGroups}, arrived ${gids.filter((x) => arrived.has(x)).length}/40, anchored ${anchored}, failed ${JSON.stringify(failed)}`);
+  expect(L.orderGroups).toBeGreaterThan(32);
+  expect(failed).toEqual([]);
+  expect(gids.filter((x) => arrived.has(x)).length).toBe(40);
+  expect(anchored).toBe(40);
+  expect(g.takeErrors()).toEqual([]);
+});
