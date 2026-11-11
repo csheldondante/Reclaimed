@@ -858,6 +858,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       return [commonWgsl, layersWgsl, materialsWgsl, waterclassWgsl, agentsSrc, surfaceDepth + unitsSrc];
     };
     const parts = partsFor(BLOCK_RELAX, RELAX_K);
+    this.fieldParts = parts;
     // (round 6: the orders reach fields only through fieldseam.wgsl — round 7's paged atlas swaps it)
     this.orderParts = [...parts, townplaceWgsl, routereadWgsl, fieldseamWgsl, ordersWgsl];
     const mk = (e: string, sp: BindSpec) => makeCompute(device, `agents-${e}`, parts, sp, e);
@@ -1409,6 +1410,13 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     if (this.fk.g && b === this.routesBuf) return;
     this.routesBuf = b;
     this.fk.g = makeBindGroup(this.device, 'agents-form', this.fk.anchor.layout, { 0: this.world.globals, 2: this.world.materials, 5: this.nav, 6: this.dist, 7: this.units, 10: this.params, 13: this.events, 16: this.mail, 55: this.jfaBuf, 56: b });
+  }
+
+  /** (U2 round 7, the paged field atlas: agents/pages.ts) the shader parts the fields' kernels are made of, and the
+   *  surfaces they relax over — what the pages build on while they stand beside the planes */
+  private fieldParts: string[] = [];
+  pageHost(): { parts: string[]; nav: GPUBuffer; navCost: GPUBuffer; world: WorldGpu } {
+    return { parts: this.fieldParts, nav: this.nav, navCost: this.navCost, world: this.world };
   }
 
   /** (round 6, tests and the lab) where the order groups and the rank table lie in `mail` (readRaw('mail')) */
