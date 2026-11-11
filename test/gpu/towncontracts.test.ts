@@ -297,7 +297,9 @@ fn main() {
 
   /** a town of citygen-shaped records over a tiny world, its contracts made (not yet run) */
   async function townSetup(withKeep: boolean, ringMade = true, roles?: Record<number, number>, opts: { stage?: [number, number, number] } = {}) {
-    const w = await tinyWorld(g, tinyMap(64, 64), ['surface']);
+    // (UC-13: the window holds the spawn points and their roads — the east one at x 93, the north one at row 94 — and its
+    // ground is where the table's z says: the grid's 10 + dz 1.5)
+    const w = await tinyWorld(g, tinyMap(128, 96, 32, () => [{ z0: 0, z1: 11.5, mat: MAT.Stone }]), ['surface']);
     {
       const rec = new ArrayBuffer((REC_LM + 64) * RECW * 4);
       const ru = new Uint32Array(rec);
@@ -349,7 +351,7 @@ fn main() {
       const art = artWords(C[0], C[1], [[95, C[1]], [C[0], 94 * ROW_H]], 25);
       const place = { dx: 4, dy: 2, dz: 1.5 };
       const t = fakeTown('T', { w: W, h: H, centre: C, R: 40, wall: ring.words, art, records: rec, n, progress, pop, place });
-      const tc = new TownContracts(g.device, { globals: w.core.world.globals, chunks: w.core.world.chunks, layers: w.core.world.layers, water: w.core.world.water, w: 64, h: 64 }, w.core.world.buf('agentSides', 64 * 64 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST), { roles: () => roles });
+      const tc = new TownContracts(g.device, { globals: w.core.world.globals, chunks: w.core.world.chunks, layers: w.core.world.layers, water: w.core.world.water, w: 128, h: 96 }, w.core.world.buf('agentSides', 128 * 96 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST), { roles: () => roles });
       return { w, t, tc, place, ring, progress, n };
     }
   }
@@ -384,6 +386,7 @@ fn main() {
     // (spawn 0: the east road past the limit, 25 + 16 along)
     expect(named(PLACE.spawn0).valid).toBe(true);
     expect(named(PLACE.spawn0).at[0]).toBeCloseTo(48 + 41 + ox, 2);
+    expect(named(PLACE.spawn0 + 1).valid).toBe(true);
     expect(named(PLACE.spawn0 + 2).status).toBe(PLACE_STATUS.none);
     // (houses of district 3 by rank: growth keys 0.1, 0.2, 0.3, 0.5, 0.9 → seeds 301, 304, 302, 300, 303)
     expect(r[220]).toBe(5);
@@ -477,6 +480,74 @@ fn main() {
     } finally {
       q.writeBuffer = write0;
       tc.dispose();
+      s.w.destroy();
+    }
+  }, 120_000);
+
+  // (UC-13) a spawn point stands on dry, walkable ground in the window: Muru's spawn point 0 had its approach in the
+  // river, and raiders drowned on arrival. One arterial east from (20, row 30) to the window's edge, its limit 10 along:
+  // the nominal spawn point at x 46, its approach at x 38
+  async function spawnSetup(band: [number, number] | null) {
+    const W2 = 128;
+    const H2 = 64;
+    const map = tinyMap(W2, H2);
+    if (band) for (let y = 0; y < H2; y++) for (let x = band[0]; x <= band[1]; x++) map.water[y * W2 + x] = 2;
+    const w = await tinyWorld(g, map, ['surface']);
+    const cy = 30 * ROW_H + 0.5 * ROW_H;
+    const ring = ringWords(20, cy, 8, []);
+    ring.words[0] = 0;
+    const t = fakeTown('S', { w: W2, h: H2, centre: [20, cy], R: 20, wall: ring.words, art: artWords(20, cy, [[127, cy]], 10), heights: 10 });
+    const tc = new TownContracts(g.device, { globals: w.core.world.globals, chunks: w.core.world.chunks, layers: w.core.world.layers, water: w.core.world.water, w: W2, h: H2 }, w.core.world.buf('agentSides', W2 * H2 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST));
+    return { w, t, tc, cy };
+  }
+
+  it('a spawn point over water moves out along its road to dry ground, or reads WATER', async () => {
+    // (a river 5 columns wide under the nominal approach: the spawn point moves out until its approach and the crowd's
+    // ring round it (3 units) are past the far bank)
+    const a = await spawnSetup([36, 40]);
+    try {
+      expect(await frames(a.tc, a.t, 0, 2)).toBe(1);
+      const s0 = (await readTable(a.tc)).named(PLACE.spawn0);
+      expect(s0.valid).toBe(true);
+      expect(s0.at[0]).toBeGreaterThan(46);
+      expect(s0.approach[0]).toBeGreaterThan(40.5 + 3);
+      expect(s0.approach[0]).toBeLessThan(40.5 + 3 + 2);
+      expect(s0.at[0] - s0.approach[0]).toBeCloseTo(8, 3);
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      a.tc.dispose();
+      a.w.destroy();
+    }
+    // (water the whole bounded search along: WATER — a season's chain goes on to its next spawn point)
+    const b = await spawnSetup([36, 100]);
+    try {
+      expect(await frames(b.tc, b.t, 0, 2)).toBe(1);
+      const s0 = (await readTable(b.tc)).named(PLACE.spawn0);
+      expect(s0.status).toBe(PLACE_STATUS.water);
+      expect(s0.valid).toBe(false);
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      b.tc.dispose();
+      b.w.destroy();
+    }
+  }, 120_000);
+
+  it('the water rising under a spawn point wakes one solve (within WET_GAP frames), not one a frame', async () => {
+    const s = await spawnSetup(null);
+    try {
+      expect(await frames(s.tc, s.t, 0, 2)).toBe(1);
+      expect((await readTable(s.tc)).named(PLACE.spawn0).at[0]).toBeCloseTo(46, 3);
+      // (a flood: the river under the approach, written into the world's water — its ring-paged columns)
+      const ring = s.w.core.ring;
+      for (let y = 0; y < 64; y++) for (let x = 36; x <= 40; x++) g.device.queue.writeBuffer(s.w.core.world.water, ring.idx(x, y) * 4, new Float32Array([2]));
+      expect(await frames(s.tc, s.t, 0, 130), 'the flood: one solve').toBe(2);
+      const s0 = (await readTable(s.tc)).named(PLACE.spawn0);
+      expect(s0.valid).toBe(true);
+      expect(s0.approach[0]).toBeGreaterThan(40.5 + 3);
+      expect(await frames(s.tc, s.t, 0, 130), 'still: no solve').toBe(2);
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      s.tc.dispose();
       s.w.destroy();
     }
   }, 120_000);

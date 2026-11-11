@@ -22733,3 +22733,41 @@ no soldiers settling into Materials and Unrest, and a no-room drill falling back
 "Your soldiers have nowhere to gather. Build walls for a muster yard. Or raise a keep for a barracks." and "Raiders
 attack! 2 of 4 are on their way." (two died in the water by the spawn point, as in Forces 3). The settle at Next season
 was not run in game (unit-tested only).
+
+## 2026-11-11 — spawn points on dry ground (UC-13, `trackA-spawndry`)
+
+**Why.** At Muru, in a season-1 raid (`&wave=1`), 2 of 4 raiders from spawn point 0 died within ~8 s with no `hurt`
+event, after the UC-6 flood fix too. Confirmed in the lab: spawn point 0's approach (where orders.wgsl stands the raid)
+was in the river, 2.4 deep, and 21 of 24 samples within 3 units of it were past DEEP 0.9. Spawn point 1 is the same
+place (arterials 0 and 1 share the road out). The place table read only citygen's height grid, so nothing stopped it:
+the status only marked a gate on a bridge span as WATER.
+
+**What.** `plHead` takes each spawn point from the first of 33 candidates along its arterial (the nominal one, 16 past
+the limit, then a unit farther out each, short of the road's end) where the spawn point, its approach (8 back) and the
+crowd round the approach stand on dry, walkable ground in the window: the window holds the column, its top (read from
+its own slots, as the side map does) within STEP 1.1 of the table's z, its water no deeper than DEEP; the crowd is two
+rings of six round the approach (1.5 and 3 units), any of them within 1.2 of the approach's z must be dry (orders.wgsl
+takes such a spot). None → WATER, and the season's chain (war.ts raidPlaces) goes on to the next spawn point.
+- **The input.** `plHead` binds the chunk table, `layers` and `water` (its own layout: it reads no records — 7 storage
+  buffers; the other place kernels keep theirs). Chosen over a wake on the water class's chunk versions (the side map's
+  way): the solve needs the depth at these points anyway, and a hash of exactly their standing wakes it only when one
+  flips, not when the river moves elsewhere in a chunk.
+- **Change-driven (UC-8 kept).** `plWet` (a workgroup an arterial, a thread a candidate) hashes the candidates'
+  standing every frame into the slot's watch words; `plWake` starts a solve when it moved, at most every 120 frames
+  (the water flickers across DEEP every tick at a bank: the side map's WATER_GAP). Any solve marks it seen. PC's stride
+  8 → 12 words (the hash, the seen one, a frame count, the last wet wake).
+- **Cost.** The first `plWet` walked the arterial's points from storage per candidate (artAt, twice): the town
+  contracts' pass went 0.18 → 0.28 ms at rest. The arterial's points now go into workgroup memory first: 0.22–0.23 ms
+  vs 0.14–0.19 ms without the change (headless D3D11, gputown, `?perf=1`, two runs each, medians of 5 — the timer is
+  noisy at this size: roughly +0.05 ms). No phone bench run.
+
+**What it does at Muru.** In the lab's window, arterials 0 and 1 cross the river at the limit and leave the window just
+past it, so spawn points 0 and 1 read WATER; spawn point 2 is valid while the window holds its road (a slide re-solves).
+The raid came from spawn point 2 on grass by its road and walked in.
+
+**Checks.** typecheck; test/gpu/towncontracts.test.ts (7 pass): a river under the nominal approach moves the spawn
+point out until the approach and its crowd ring are past the far bank; water along the whole search reads WATER; a
+flood written into the world's water under the approach wakes exactly one solve within 130 frames and none after; the
+fixture's world widened to 128 × 96 so it holds the spawn points' roads (its ground at the table's z). Lab:
+`townraid.mjs --flags "&wave=1"` twice — 4 of 4 raiders alive every frame, 0 `hurt`, spawn 0/1 WATER, spawn 2 ok;
+`gputown.mjs` ok.

@@ -52,7 +52,7 @@ export const PLACE_STATUS = {
   none: 1,
   /** begun, not finished: a building still rising, a gate whose wall isn't up */
   rising: 2,
-  /** a gate over water */
+  /** a gate over water; a spawn point with no dry, walkable ground on its arterial in the window (UC-13) */
   water: 3,
   /** no live town in that slot */
   noTown: 4,

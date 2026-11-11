@@ -1,5 +1,5 @@
 // ---- places.wgsl: a town's named places resolved on the GPU from citygen's records (towncontracts/contracts.ts) ----
-// Appended to common.wgsl. One town a set of dispatches when its inputs change (a few thousand threads: the lots' room);
+// Appended to common.wgsl, layers.wgsl, materials.wgsl. One town a set of dispatches when its inputs change (a few thousand threads: the lots' room);
 // nothing is read back. Inputs are citygen's contract buffers (api/contracts/citygen.ts: CityLots, CityRoutes), a small
 // uniform the CPU writes only when its contents change (where the grid is, the claimed purposes: a slide, a claim, a new
 // town) and the towns' clock (CLK). Output: the town's slot of the place table, read by src/shaders/townplace.wgsl (keep
@@ -21,6 +21,9 @@
 //   plSeedB, plWriteB  stage B's seed and entry
 //   plHead    (one thread) the header, the gates (routeread's slot rule from the wall's words), the spawn points,
 //             every pick nobody won marked NONE, and the wake clock: the first clock a gate's status flips at
+//   plWet     (a workgroup an arterial, a thread a spawn candidate) each candidate's standing (dry, walkable ground
+//             in the window) hashed — the one input a solve reads from the world's columns; a moved hash wakes a
+//             solve, at most every WET_GAP frames (UC-13)
 
 @group(0) @binding(3) var<storage, read> REC: array<u32>;
 @group(0) @binding(4) var<storage, read> CNT: array<u32>;
@@ -55,14 +58,27 @@ struct Clock { t: vec4<f32> };
 @group(0) @binding(13) var<uniform> CLK: Clock;
 /** the solve's indirect dispatches: a town slot's 12 words — clear, the lot kernels, one workgroup */
 @group(0) @binding(14) var<storage, read_write> PARGS: array<u32>;
+/** (UC-13: plHead and plWet only) the world's columns and their water where a spawn point and its approach stand — the
+ *  chunk table is layers.wgsl's binding 1 */
+@group(0) @binding(15) var<storage, read> layers: array<vec4<u32>>;
+@group(0) @binding(16) var<storage, read> water: array<f32>;
 
 // ---- the watch's words (contracts.ts PC: keep in step) ----
-const PC_STRIDE: u32 = 8u;
+const PC_STRIDE: u32 = 12u;
 const PC_ACC: u32 = 0u;
 const PC_SEEN: u32 = 1u;
 const PC_VERSION: u32 = 2u;
 const PC_SOLVES: u32 = 3u;
 const PC_WHY: u32 = 4u;
+/** (UC-13) the spawn candidates' hash this frame (plWet), the one the last solve read, plWake's frame count, the frame a
+ *  moved hash last woke a solve */
+const PC_WET: u32 = 5u;
+const PC_WET_SEEN: u32 = 6u;
+const PC_FRAME: u32 = 7u;
+const PC_WET_LAST: u32 = 8u;
+/** frames at least between solves the spawn candidates' standing alone wakes: the water flickers across DEEP every tick
+ *  where a river laps a bank (as sidemap.wgsl WATER_GAP) */
+const WET_GAP: u32 = 120u;
 const PA_STRIDE: u32 = 12u;
 /** the clear kernel's workgroups (its 3072 threads) */
 const CLEAR_GROUPS: u32 = 48u;
@@ -128,6 +144,16 @@ const AW: u32 = AP + 2u * NAP;
 /** a spawn point: this far past the town's limit along its arterial (world units); an approach this far back */
 const SPAWN_OUT: f32 = 16.0;
 const APPROACH: f32 = 8.0;
+/** (UC-13) a spawn point's candidates: the nominal one and each unit farther out along the arterial, this many */
+const SPAWN_CANDS: u32 = 33u;
+/** the deepest water a unit stands in (waterclass.wgsl DEEP: the shortest unit drowns past it; contracts.ts WATER_BAR) */
+const DEEP: f32 = 0.9;
+/** walkable ground: the column's top this near the place's z (the agents' STEP, fortreach.wgsl R_STEP) */
+const STEP: f32 = 1.1;
+/** a spawn's crowd: orders.wgsl stands rank k 0.9·√k round the approach (its middle moved out along the approach) on
+ *  any surface within SPOT_STEP of the approach's z — every such surface within CROWD_R of the approach must be dry */
+const SPOT_STEP: f32 = 1.2;
+const CROWD_R: f32 = 3.0;
 
 fn base() -> u32 { return TP.dims.z * TP_TOWN_WORDS; }
 fn ptGet(i: u32) -> u32 { return atomicLoad(&PT[base() + i]); }
@@ -280,6 +306,61 @@ fn artDeck(k: u32, s: f32) -> f32 {
   }
   return -1e9;
 }
+
+// ---- the spawn points (UC-13): on dry, walkable ground in the window ----
+/** the window column under grid point p: its top (window z; -1e9 none, or the window doesn't hold it) and its water */
+fn colAt(p: vec2<f32>) -> vec2<f32> {
+  let c = cellAt(p + TP.place.xy);
+  if (!inMap(c)) { return vec2<f32>(-1e9, 0.0); }
+  let cs = colSlots(u32(c.x), u32(c.y));
+  var top = -1e9;
+  for (var k = 0u; k < cs.y; k++) {
+    let v = layers[cs.x + k];
+    if (ivEmpty(v)) { break; }
+    top = ivZ1(v);
+  }
+  return vec2<f32>(top, water[colIdxI(c)]);
+}
+/** a unit can stand at p (grid frame, z the table's): the window holds the column, its top is within STEP of z (the
+ *  ground citygen's grid says — not a pit, a ruin's top, a riverbed under a deck) and its water is no deeper than DEEP */
+fn standOk(p: vec3<f32>) -> bool {
+  let c = colAt(p.xy);
+  return c.x > -1e8 && abs(c.x - (p.z + TP.place.z)) <= STEP && c.y <= DEEP;
+}
+/** no spot the crowd can be stood on round the approach is deep water (two rings of six round it) */
+fn crowdOk(a: vec3<f32>) -> bool {
+  for (var j = 0u; j < 12u; j++) {
+    let ang = f32(j % 6u) * 1.0471976;
+    let r = select(0.5 * CROWD_R, CROWD_R, j >= 6u);
+    let c = colAt(a.xy + vec2<f32>(cos(ang), sin(ang)) * r);
+    if (c.x > -1e8 && abs(c.x - (a.z + TP.place.z)) < SPOT_STEP && c.y > DEEP) { return false; }
+  }
+  return true;
+}
+/** arterial k's spawn candidate i: i units past the nominal point (SPAWN_OUT past the limit), short of its end */
+fn spawnS(k: u32, i: u32) -> f32 {
+  let o = artBase(k);
+  let len = bitcast<f32>(ART[o + 1u]);
+  let lim = bitcast<f32>(ART[o + 3u]);
+  return max(min(lim + SPAWN_OUT + f32(i), len - 2.0), 0.0);
+}
+/** the spawn point s along arterial k (a bridge's deck where it's on one) */
+fn spawnPtXY(k: u32, s: f32, xy: vec2<f32>) -> vec3<f32> {
+  var p = at3(xy);
+  let deck = artDeck(k, s);
+  if (deck > -1e8) { p.z = deck; }
+  return p;
+}
+fn spawnPt(k: u32, s: f32) -> vec3<f32> { return spawnPtXY(k, s, artAt(k, s)); }
+fn spawnApp(k: u32, s: f32) -> vec3<f32> { return at3(artAt(k, max(s - APPROACH, 0.0))); }
+/** the spawn point (s along arterial k, at sp) and its approach (at ap) stand on dry, walkable ground, and so does the
+ *  crowd round the approach */
+fn candOk(k: u32, s: f32, sp: vec2<f32>, ap: vec2<f32>) -> bool {
+  let a = at3(ap);
+  return standOk(spawnPtXY(k, s, sp)) && standOk(a) && crowdOk(a);
+}
+fn spawnOk(k: u32, s: f32) -> bool { return candOk(k, s, artAt(k, s), artAt(k, max(s - APPROACH, 0.0))); }
+fn spawnLive(k: u32) -> bool { return k < artCount() && artPts(k) >= 2u; }
 
 // ---- picks: a key per lot (smaller better; NONE not a candidate), ties by seed ----
 fn pickKey(p: u32, r: u32) -> u32 {
@@ -508,19 +589,49 @@ fn plHead() {
     }
   }
   ptSet(TP_WAKE_AT, bitcast<u32>(wake));
-  // (the spawn points: each arterial's road past the town's limit — where a raid comes in)
+  // (the spawn points: each arterial's road past the town's limit — where a raid comes in. UC-13: the first candidate,
+  // from the nominal one (SPAWN_OUT past the limit) outward, whose spawn point, approach and crowd stand on dry,
+  // walkable ground in the window; none → WATER, so a season's chain goes on to its next spawn point)
   for (var k = 0u; k < NART; k++) {
     let at = TP_NAMED_AT + (PL_SPAWN0 + k) * TP_ENTRY;
-    if (k >= artCount() || artPts(k) < 2u) { putEntry(at, vec3<f32>(0.0), ST_NONE, vec3<f32>(0.0), 0u); continue; }
-    let o = artBase(k);
-    let len = bitcast<f32>(ART[o + 1u]);
-    let lim = bitcast<f32>(ART[o + 3u]);
-    let s = max(min(lim + SPAWN_OUT, len - 2.0), 0.0);
-    var p = at3(artAt(k, s));
-    let deck = artDeck(k, s);
-    if (deck > -1e8) { p.z = deck; }
-    putEntry(at, p, ST_OK, at3(artAt(k, max(s - APPROACH, 0.0))), k);
+    if (!spawnLive(k)) { putEntry(at, vec3<f32>(0.0), ST_NONE, vec3<f32>(0.0), 0u); continue; }
+    var s = spawnS(k, 0u);
+    var st = ST_WATER;
+    for (var i = 0u; i < SPAWN_CANDS; i++) {
+      if (spawnOk(k, spawnS(k, i))) {
+        s = spawnS(k, i);
+        st = ST_OK;
+        break;
+      }
+    }
+    putEntry(at, spawnPt(k, s), st, spawnApp(k, s), k);
   }
+}
+
+/** (UC-13) the spawn candidates' standing, hashed: what plHead reads of the world's columns. A workgroup an arterial, a
+ *  thread a candidate: the arterial's points loaded into workgroup memory first (artAt's walk along them from storage
+ *  was the dispatch's cost — a dependent load a point, twice a candidate: 0.1 ms a frame at Muru) */
+var<workgroup> wPts: array<vec2<f32>, NAP>;
+fn artAtW(n: u32, s: f32) -> vec2<f32> {
+  var acc = 0.0;
+  for (var j = 0u; j + 1u < n; j++) {
+    let d = distance(wPts[j], wPts[j + 1u]);
+    if (acc + d >= s) { return mix(wPts[j], wPts[j + 1u], clamp((s - acc) / max(d, 1e-4), 0.0, 1.0)); }
+    acc += d;
+  }
+  return wPts[n - 1u];
+}
+@compute @workgroup_size(64)
+fn plWet(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) i: u32) {
+  let k = wg.x;
+  let live = spawnLive(k);
+  let n = select(0u, artPts(k), live);
+  for (var j = i; j < n; j += 64u) { wPts[j] = artPt(k, j); }
+  workgroupBarrier();
+  if (!live || i >= SPAWN_CANDS) { return; }
+  let s = spawnS(k, i);
+  let ok = candOk(k, s, artAtW(n, s), artAtW(n, max(s - APPROACH, 0.0)));
+  atomicAdd(&PCTL[TP.dims.z * PC_STRIDE + PC_WET], pcg(((k * SPAWN_CANDS + i) * 2u + select(0u, 1u, ok)) ^ 0x6a09e667u));
 }
 
 // ---- the watch (UC-8): a solve only when what it reads changed ----
@@ -553,10 +664,19 @@ fn plWake() {
   if (acc != atomicLoad(&PCTL[o + PC_SEEN])) { atomicStore(&PCTL[o + PC_SEEN], acc); why |= 1u; }
   if (TP.misc.y != atomicLoad(&PCTL[o + PC_VERSION])) { atomicStore(&PCTL[o + PC_VERSION], TP.misc.y); why |= 2u; }
   if (CLK.t.x >= bitcast<f32>(ptGet(TP_WAKE_AT))) { why |= 4u; }
+  // (UC-13: the spawn candidates' standing moved — the water crossed DEEP, a column's top moved — at most every WET_GAP
+  // frames; any solve reads it, so it's seen then)
+  let wet = atomicExchange(&PCTL[o + PC_WET], 0u);
+  let frame = atomicAdd(&PCTL[o + PC_FRAME], 1u) + 1u;
+  if (wet != atomicLoad(&PCTL[o + PC_WET_SEEN]) && frame - atomicLoad(&PCTL[o + PC_WET_LAST]) >= WET_GAP) {
+    atomicStore(&PCTL[o + PC_WET_LAST], frame);
+    why |= 8u;
+  }
   let a = TP.dims.z * PA_STRIDE;
   if (why != 0u) {
     atomicAdd(&PCTL[o + PC_SOLVES], 1u);
     atomicStore(&PCTL[o + PC_WHY], why);
+    atomicStore(&PCTL[o + PC_WET_SEEN], wet);
   }
   let on = why != 0u;
   pargs(a, select(0u, CLEAR_GROUPS, on));

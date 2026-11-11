@@ -18,6 +18,7 @@ import { TOWN_ROOM, type SideGates, type TownContractsApi } from '../api/contrac
 import { ROW_H } from '../world/lattice';
 
 const SIDE_PARTS = [commonWgsl, layersWgsl, materialsWgsl, sidemapWgsl];
+const PLACE_PARTS = [commonWgsl, layersWgsl, materialsWgsl, placesWgsl];
 /** places.wgsl TP_TOWN_WORDS: a town slot's words in the table */
 export const TOWN_WORDS = 42240;
 /** citygen's lot room and landmark room (REC_LM, LM_ROOM) */
@@ -27,11 +28,13 @@ const LM_ROOM = 64;
 export const SC = { state: 12, solves: 21, lastRounds: 22, box: 32 } as const;
 const CTL_WORDS = 64;
 /** places.wgsl PC_*: a town slot's watch words (PCTL: the hashes' sum, the seen sum and version, solves, why) */
-export const PC = { stride: 8, solves: 3, why: 4 } as const;
+export const PC = { stride: 12, solves: 3, why: 4 } as const;
 /** places.wgsl PA_STRIDE: a town slot's indirect args (clear, the lot kernels, one workgroup) */
 const PA_WORDS = 12;
 /** places.wgsl ART_WORDS: the watch's threads cover at least the arterials' words (and the ring's) */
 const WATCH_MIN = 2212;
+/** places.wgsl plWet: a workgroup an arterial (NART), a thread a spawn candidate */
+const WET_GROUPS = 8;
 /** hook + jump rounds encoded a frame (0-workgroup dispatches once a solve has settled) */
 const ROUNDS_PER_FRAME = 8;
 /** the deepest water walked (the agents' DEEP: waterclass.wgsl — a walker is never led into it, and its class version
@@ -81,6 +84,10 @@ interface Slot {
   places: GPUBindGroup;
   /** the watch and wake kernels' group (places.wgsl plWatch, plWake) */
   watch: GPUBindGroup;
+  /** (UC-13) the head's group (plHead: the ring, arterials, heights, the table, the world's columns and water) and the
+   *  spawn candidates' watch (plWet) */
+  head: GPUBindGroup;
+  wet: GPUBindGroup;
 }
 
 const hashId = (s: string): number => {
@@ -90,7 +97,7 @@ const hashId = (s: string): number => {
 };
 
 type SideK = 'sideWatch' | 'sideWake' | 'sideClear' | 'sideRaster' | 'sidePrep' | 'sideAfterPrep' | 'sideHook' | 'sideJump' | 'sideRound' | 'sideFinal' | 'sideDone';
-type PlaceK = 'plClear' | 'plCount' | 'plScan' | 'plScatter' | 'plRank' | 'plSeedB' | 'plWriteB' | 'plHead' | 'plWatch' | 'plWake';
+type PlaceK = 'plClear' | 'plCount' | 'plScan' | 'plScatter' | 'plRank' | 'plSeedB' | 'plWriteB' | 'plHead' | 'plWatch' | 'plWake' | 'plWet';
 
 export class TownContracts implements TownContractsApi {
   readonly places: GPUBuffer;
@@ -153,8 +160,14 @@ export class TownContracts implements TownContractsApi {
     for (const e of ['sideWatch', 'sideRaster'] as SideK[]) this.ks[e] = makeCompute(device, `towncontracts-${e}`, SIDE_PARTS, watchSpec, e);
     for (const e of ['sideWake', 'sideAfterPrep', 'sideRound', 'sideDone'] as SideK[]) this.ks[e] = makeCompute(device, `towncontracts-${e}`, SIDE_PARTS, ctlSpec, e);
     for (const e of ['sideClear', 'sidePrep', 'sideHook', 'sideJump', 'sideFinal'] as SideK[]) this.ks[e] = makeCompute(device, `towncontracts-${e}`, SIDE_PARTS, solveSpec, e);
-    for (const e of ['plClear', 'plCount', 'plScan', 'plScatter', 'plRank', 'plSeedB', 'plWriteB', 'plHead'] as PlaceK[]) this.kp[e] = makeCompute(device, `towncontracts-${e}`, [commonWgsl, placesWgsl], placeSpec, e);
-    for (const e of ['plWatch', 'plWake'] as PlaceK[]) this.kp[e] = makeCompute(device, `towncontracts-${e}`, [commonWgsl, placesWgsl], watchPlSpec, e);
+    // (UC-13: the head — the gates, the spawn points — reads the world's columns and water where a spawn point stands, and
+    // plWet hashes the same reads for the watch; neither reads the records, so each has its own layout under the limit)
+    const headSpec: BindSpec = { 0: 'uniform', 1: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'rw', 11: 'uniform', 13: 'uniform', 15: 'read', 16: 'read' };
+    const wetSpec: BindSpec = { 0: 'uniform', 1: 'read', 8: 'read', 9: 'read', 11: 'uniform', 12: 'rw', 15: 'read', 16: 'read' };
+    for (const e of ['plClear', 'plCount', 'plScan', 'plScatter', 'plRank', 'plSeedB', 'plWriteB'] as PlaceK[]) this.kp[e] = makeCompute(device, `towncontracts-${e}`, PLACE_PARTS, placeSpec, e);
+    this.kp.plHead = makeCompute(device, 'towncontracts-plHead', PLACE_PARTS, headSpec, 'plHead');
+    this.kp.plWet = makeCompute(device, 'towncontracts-plWet', PLACE_PARTS, wetSpec, 'plWet');
+    for (const e of ['plWatch', 'plWake'] as PlaceK[]) this.kp[e] = makeCompute(device, `towncontracts-${e}`, PLACE_PARTS, watchPlSpec, e);
     this.pctl = device.createBuffer({ label: 'town places watch', size: TOWN_ROOM * PC.stride * 4, usage: S });
     this.pargs = device.createBuffer({ label: 'town places args', size: TOWN_ROOM * PA_WORDS * 4, usage: S | GPUBufferUsage.INDIRECT });
     this.clockU = device.createBuffer({ label: 'town places clock', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -251,7 +264,9 @@ export class TownContracts implements TownContractsApi {
     const R = town.routes;
     const places = makeBindGroup(d, `towncontracts places ${town.site.id}`, this.kp.plCount.layout, { 3: L.records, 4: L.counts, 5: L.progress, 6: R.pop, 7: R.wall, 8: R.art, 9: R.heights, 10: this.places, 11: placeU, 13: this.clockU });
     const watch = makeBindGroup(d, `towncontracts places watch ${town.site.id}`, this.kp.plWatch.layout, { 3: L.records, 4: L.counts, 5: L.progress, 7: R.wall, 8: R.art, 10: this.places, 11: placeU, 12: this.pctl, 13: this.clockU, 14: this.pargs });
-    return { town, index: i, sideKey: '', placeLast: null, generation: ++this.generations, sideU, placeU, side, places, watch };
+    const head = makeBindGroup(d, `towncontracts places head ${town.site.id}`, this.kp.plHead.layout, { 0: w.globals, 1: w.chunks, 7: R.wall, 8: R.art, 9: R.heights, 10: this.places, 11: placeU, 13: this.clockU, 15: w.layers, 16: w.water });
+    const wet = makeBindGroup(d, `towncontracts places wet ${town.site.id}`, this.kp.plWet.layout, { 0: w.globals, 1: w.chunks, 8: R.art, 9: R.heights, 11: placeU, 12: this.pctl, 15: w.layers, 16: w.water });
+    return { town, index: i, sideKey: '', placeLast: null, generation: ++this.generations, sideU, placeU, side, places, watch, head, wet };
   }
 
   private writeGlobal(): void {
@@ -341,6 +356,7 @@ export class TownContracts implements TownContractsApi {
     };
     for (const s of live) {
       run(this.kp.plWatch, s.watch, Math.max(this.lotGroups(s), Math.ceil(WATCH_MIN / 64)));
+      run(this.kp.plWet, s.wet, WET_GROUPS);
       run(this.kp.plWake, s.watch, 1);
       runP(this.kp.plClear, s.places, s, 0);
       runP(this.kp.plCount, s.places, s, 1);
@@ -349,7 +365,7 @@ export class TownContracts implements TownContractsApi {
       runP(this.kp.plRank, s.places, s, 1);
       runP(this.kp.plSeedB, s.places, s, 1);
       runP(this.kp.plWriteB, s.places, s, 1);
-      runP(this.kp.plHead, s.places, s, 2);
+      runP(this.kp.plHead, s.head, s, 2);
     }
     pass.end();
   }

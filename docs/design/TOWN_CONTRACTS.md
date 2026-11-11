@@ -59,7 +59,7 @@ final, done — 0-workgroup dispatches once settled. Muru: ~5 rounds.
 | function | what |
 |---|---|
 | `place(town, name)`, `placeApproach(town, name)` | the place in the window (x, y, z on the walkable ground: a building's door just out from its face, open land's middle, a gate on its arterial's road — a deck at its height —, a spawn point on the road past the limit) and the point to come to it from (a door's street, a gate's inside, a spawn's way in) |
-| `placeStatus`, `placeValid` | `PLACE_OK` (valid), `PLACE_NONE` (it doesn't exist: no card built, no ring, no lot), `PLACE_RISING` (begun, not finished; a gate whose wall isn't up), `PLACE_WATER` (a gate over water), `PLACE_NO_TOWN` |
+| `placeStatus`, `placeValid` | `PLACE_OK` (valid), `PLACE_NONE` (it doesn't exist: no card built, no ring, no lot), `PLACE_RISING` (begun, not finished; a gate whose wall isn't up), `PLACE_WATER` (a gate over water; a spawn point with no dry, walkable ground on its road in the window — UC-13), `PLACE_NO_TOWN` |
 | `placeAux` | a lot's seed, a gate's ring segment, a spawn's arterial |
 | `gatePlace(k)`, `spawnPlace(k)` | the names of gate slot k — routeread.wgsl `gateRoute(k)`'s indexing (the arterial's index, filler gates after, the same rule from the same words) — and of arterial k's spawn point |
 | `districtPurpose(town, d)` | a district's purpose (citygen P_*) |
@@ -76,7 +76,28 @@ final, done — 0-workgroup dispatches once settled. Muru: ~5 rounds.
 | keep | **the keep card:** the tallest begun building of a keep district |
 | barracks | **the keep card:** the keep district's biggest begun building other than the keep (no barracks card yet: BACKLOG UC-4) |
 | gate0 … gate9 | gate slots (arterials 0–7, filler gates 8–9) |
-| spawn0 … spawn7 | arterial k's road 16 units past the town's limit |
+| spawn0 … spawn7 | arterial k's road 16 units past the town's limit, its approach 8 back — **on dry, walkable ground** (UC-13, below) |
+
+**A spawn point stands on dry, walkable ground (UC-13).** Muru's spawn point 0 had its approach in the river (2.4 deep,
+21 of 24 samples round it past DEEP), and raiders placed round it drowned on arrival. `plHead` now takes the first of 33
+candidates along the arterial — the nominal one (16 past the limit), then a unit farther out each, short of the road's
+end — where the spawn point, its approach and the crowd round the approach all stand:
+- standing: the window holds the column; its top (from its own slots, as the side map reads it) is within STEP 1.1 of
+  the table's z (citygen's height, or the deck's); its water is no deeper than DEEP 0.9 (waterclass.wgsl);
+- the crowd: orders.wgsl stands rank k 0.9·√k round the approach on any surface within 1.2 of its z, so every such
+  surface on two rings of six (1.5 and 3 units) round it must be dry too.
+
+None of the 33 → `PLACE_WATER`, so a season's chain (war.ts raidPlaces) goes on to its next spawn point. The search
+runs outward only (never inside the nominal point, which would put the approach at or inside the limit, or inside the
+ring). A column the window doesn't hold doesn't count as ground: a unit can't stand there. At Muru, in the lab's window,
+arterials 0 and 1 cross the river at the limit and leave the window just past it, so spawn points 0 and 1 read WATER;
+spawn point 2's road is valid when the window holds it (it slides with the camera: a slide re-solves).
+
+**Input: the world's columns and water, read in the solve.** Chosen over waking on the water class's chunk versions
+(the side map's way): the solve needs the depth at a few hundred points anyway, and a hash of exactly those points'
+standing wakes it only when one of them flips — not when the river moves anywhere else in a chunk. `plHead` has its own
+layout (the ring, the arterials, the heights, the table, the chunk table, `layers`, `water`: 7 storage buffers) since it
+reads no records.
 
 A lot's purpose is its district's **claimed** purpose when a card claimed it (the CPU's input: `CityDistricts.
 claimDistrict(kind)` records the kind's purpose by district id in the town's edit log, `TownLog.purposes`, uploaded as a
@@ -100,8 +121,12 @@ eight kernels are indirect dispatches (`PCTL`, `PARGS`: 0 workgroups when nothin
   clock inside the wall stage's span, so it bisects there — and keeps it in the slot's private words; the clock passing
   it wakes the next solve. Chosen over making the status a pure function in the accessor: townplace.wgsl would have to
   bind the ring's words and the clock (binding 57 and the accessors stay as Track B reads them).
-- Not watched: the world's columns (the table reads none: its z is citygen's height grid) and citygen's height and
-  population grids (made with the lots — the 'field' run — which moves the records' hash too).
+- The spawn candidates (UC-13): `plWet` (a thread a candidate, 8 × 33) hashes each one's standing — the only thing a
+  solve reads of the world's columns — into the slot's words; `plWake` starts a solve when it moved, at most every
+  WET_GAP (120) frames: the water flickers across DEEP every tick where a river laps a bank (the side map's WATER_GAP
+  for the same reason). Any solve reads it, so a solve for another reason marks it seen.
+- Not watched: the world's columns other than the spawn candidates' (the table's z is citygen's height grid) and
+  citygen's height and population grids (made with the lots — the 'field' run — which moves the records' hash too).
 
 At rest at Muru (headless D3D11, the whole `towncontracts` pass): 0.47 ms before, 0.19 ms after; the pass without the
 places 0.125 ms — the place table's share 0.35 → 0.06 ms (the watch's hash dispatch). A wall rising wakes one solve a
