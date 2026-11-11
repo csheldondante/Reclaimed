@@ -1,8 +1,9 @@
 // (UC-6) Muru's water holds: the gputown recipe run at speed, the water's volume, deepest column and deep share read every
 // `step` sim seconds. It fails when the deepest open water passes `maxDepth` (the blow-up made columns thousands deep)
 // or the volume over the last third of the run moves more than `drift` of itself (not steady).
-//   node scripts/lab.mjs run scripts/lab/waterhold.mjs [--args '{"secs":360,"step":30,"speed":64}']
-// (360 s at speed 64 is ~22 000 ticks.)
+//   node scripts/lab.mjs run scripts/lab/waterhold.mjs [--args '{"secs":900,"step":60,"speed":64}']
+// (360 s at speed 64 is ~22 000 ticks. Since UC-6's walled window edge the window's hollows fill for ~420 s, ~25 000
+// ticks, before the volume is flat: run 900 s (0.07 % over its last third); 360 s reads 2.4 %, still filling.)
 export const recipe = 'gputown';
 export default async function (lab, args) {
   const core = window.reclaimed.core;

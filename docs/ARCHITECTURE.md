@@ -1465,6 +1465,11 @@ per-step source) are deleted — no flag selects them. Lava and oil keep their o
   `flowRiverRelax` a step; on the window's edge it is held at the table's depth (the river beyond the window is the
   atlas's: the boundary the simulated river is fed from and drains into), and past the edge the flux pass sees the
   river's level, not a drop (UC-6: at the relax alone, and pouring off the window upstream, the awake river ran dry).
+  **The window's edge** (liquid.wgsl flux, the face past the window, on a held-river level: RIVER_TABLE && LQ_WATER):
+  a held river's column sees the river run on at its table level (`Hn = max(Hn, nat + depth)`); else where the sea
+  stands over the run's floor (Globals ocean.x > floor) a drain to the sea's level; everywhere else a wall. An
+  authored map with no table (the flow lab) keeps the free fall past its edge. Interim (UC-6): per basin is BACKLOG
+  UC-10, a storm's inflow UC-9 / UC-11.
   The warmup doesn't run the water on a held-river level.
 - **Decks claimed** (citygen `DECKS_CLAIMED`, streets.wgsl claimRoads): a deck is a slab under its top claimed into the
   columns; the open run keeps the gap its floor was recorded in (`openGap`), so the river stays in the gap under the

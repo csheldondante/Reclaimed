@@ -22372,3 +22372,40 @@ lab's columns deeper than 0.9 by tick 6 400, depths to 35 000; soldiers drown in
   town dry (scratchpad uc6/muru_after_135s.png). Before: the flood from ~60 s every run.
 - Not done here: the flow lab's check (its run was stopped by the machine's low memory before it read anything); the
   raid run of SF-7 not repeated.
+
+## 2026-11-11 — UC-6, finished: the window's edge walled where no river or sea runs on (`trackA-uc6`)
+
+- **The cause left after ba33c14d.** Past the window's edge the flux pass saw a free fall everywhere (a drain at
+  max(floor, sea level)), except a held river's own column. So the window's hollows drained out of it: Muru's bend
+  lake (0.5 deep at 97.9) dry in ~40 s, and the river's banks and side pools with it.
+- **The rule** (liquid.wgsl flux, on a held-river level only: RIVER_TABLE && LQ_WATER): a held river's column sees the
+  river run on at its table level past the edge (`Hn = max(Hn, nat + depth)`, as ba33c14d); else where Globals ocean.x
+  stands over the run's floor, the sea (a drain to its level); everywhere else a wall (`C_WALL`, `Hn = H`). An authored
+  map with no table (the flow lab) keeps the free fall. Interim, by the user's call ("Merge what passed for now",
+  DECISIONS 2026-11-11).
+- **Measured** (Muru, the gputown recipe, speed 64; scripts/lab/waterhold.mjs and the river probe, scratchpad
+  uc6b/river.mjs):
+  - the river mask (6 545 columns with a table depth over 0.03) 96.4 % wet from t 60 s on; the water inside it 11 065
+    against the table's 10 634 (+4 %);
+  - the volume 21 656 (t 0) → 22 946 (120 s) → 23 592 (300 s) → 23 730 (420 s) → 23 771 (900 s, tick 54 775): the
+    hollows fill for ~420 s, then 0.07 % over the last third; deepest 3.62; awake chunks 89 → 3; nothing drains;
+  - the gate over 360 s fails now (2.4 % over its last third: still filling, 21.6 k → 23.5 k); waterhold.mjs's header
+    says to run 900 s.
+  - The real link (`?skipmenu=1&level=atlas&town=1&fresh=1&pitch=60`, 412 × 915, at ~150 s, tick 7 199): volume
+    18 722, deepest 3.65, 27 chunks awake; the river and the bend lake full, the town dry (scratchpad
+    uc6c/muru_150s.png).
+  - The flow lab (`level=flowlab`, the plug breached, the vent off): the pour and the trench stream run (scratchpad
+    uc6c/flowlab_pour.png, flowlab_frozen.png); 4-7 chunks stay awake along them, the rest asleep. Its code path is
+    ba33c14d's (no table: riverHere is off, the free fall kept).
+- **Deferred: the steady-flux edge.** Tried first, on the user's "treat inflow and outflow as steady state unless the
+  atlas indicates …": a held river's inflow at the edge as a fixed rate from the atlas's discharge (edgeInflow,
+  riverheld.wgsl riverDischarge inverting the table's drawing speed), one-way outflow by its level, one inflow
+  multiplier on the GPU (LiquidU.extra.y, FlowKit.setInflowScale). Not merged, two reasons:
+  - the atlas stores no discharge — the riverFlow texture's speed is a drawing speed (rivertable.ts riverSpeed, square
+    root and clamps), and inverted it came in ~2.5× the real flow at Muru: the water rose without end;
+  - the steady judge's tolerance (steady.ts STEADY_TOL, 10 % of a chunk's throughput) let a flood sleep: when the
+    multiplier changed, the rising chunks froze mid-flood and the window stopped.
+  The user then (2026-11-11) pointed at the earlier design: one float per river, depths a function of it with
+  shallow columns drying first — which exists in part (riverheld.wgsl riverHere, round 84). BACKLOG UC-9 (a storm
+  floods the loaded map, the priority), UC-10 (the edge per basin), UC-11 (the one float on the atlas; the patch
+  kept), UC-12 (the judge's tolerance).
