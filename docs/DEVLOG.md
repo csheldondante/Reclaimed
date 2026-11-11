@@ -22713,3 +22713,14 @@ lab's columns deeper than 0.9 by tick 6 400, depths to 35 000; soldiers drown in
   held, of the pool's, and refused.
 - **Not built:** a flee field per side relaxed from the min of its enemies' threat fields (the step still flees up its
   own field), and AgentUnits moved onto sides (its targets / foes / goal fields stay the shared ones).
+
+## 2026-11-11 — U2 round 7: the lab gates on gputown (trackB-u2r9-pool)
+
+- **townorders** (muster and walk): passed. 12 soldiers made at the barracks, walked to the keep and across the town to
+  the muster yard, arrived told once each; the failures ('none', 'no-town', the else chain, a 4-deep chain throwing) as
+  before; no deaths. Shots looked at: the squads at the barracks, on the way and at the muster yard.
+- **townwalls**: the march passed (arrived told once, 12 alive; the shot shows the column single file down the street).
+  Man still fails on Track A's stair (U2-WALLSTAIR, as expected); `--args '{"skipMan":true}'` skips its checks so the
+  march is checked. **March-leave fails: left told 0 times, 6 of 12 still in the window — the same on fortress
+  3cd4576d before this round** (run there: identical numbers), so not from the pages; it is round 6's leave and needs
+  its own look (BACKLOG U2-LEAVE).

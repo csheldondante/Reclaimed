@@ -505,6 +505,17 @@ planes (`shaders/pages.wgsl`, `agents/pages.ts`) over the agents' own surfaces. 
   field (place, arrival radii, reach, flags) in the pool's control words.
 - Measured: DEVLOG 2026-11-11 "step 2.1".
 
+**Round 7, steps 2.2 and 4 — built (trackB-u2r9-pool).** No fixed counts left but the memory given:
+- field rows: 4 MB of table (~8.4 B a row a window chunk; `?fieldrows`); ids below 16 the callers' own, `newField` the
+  rest, null only when the rows are used up ('pool-full');
+- order fields from `newField` / `freeField` (OrderFields); a man run's field and a rank's field a word each;
+- order groups: 1 MB of records and rank tables in `mail` (`?ordergroups`; 320), membership the aim word (16 | 16), the
+  agents group the colour only; the join queue one entry a unit slot; agents groups 256 (the unit word's byte);
+- pages refused: read with the scope's box, the fatal overlay, no more orders sent;
+- §9e: `Agents.sideFields(side, { hunt, threat })` (the side table in the seed list's header; huntSet reads the side
+  from the combat words) and `notice.relations` (a 256 × 256 bit matrix in notice's uniform, written on change). Not
+  built: a flee field per side (U2-SIDEFLEE), AgentUnits on sides (U2-AUSIDES).
+
 **Round 7, the rest — the plan, step by step, each against the planes behind a toggle until it matches:**
 1. **The seam reads pages.** `fieldDist` / `fieldGrad` go through the table (pgDist).
    - unitStep's `here` and `downField`, the hunt and the JFA read through it too.
