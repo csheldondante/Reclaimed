@@ -454,6 +454,9 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       r5.y = bitcast<f32>(shot);
       units[u * UNIT_V + 5u] = r5;
       emit(EV_NOTICED_U, uid, shot, 0.0, pos);
+      // (it knows who struck it: told, not only noticed — hunted where it is, seen or not)
+      atomicStore(&mail[MAIL_AIM + u * AIM_W + 3u], shot);
+      atomicStore(&mail[MAIL_AIM + u * AIM_W + 7u], AIM_TOLD);
     }
   }
 
@@ -1083,7 +1086,9 @@ fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   // (?seenonly=1: the seed is where the target was last seen — none if never, or out of sight past SEEN_GIVEUP; the
   // aim is last frame's, for this target)
   var seedAt = ta.xyz;
-  if ((AP.u2.z & SEEN_ONLY) != 0u) {
+  let ao0 = MAIL_AIM + u * AIM_W;
+  let told = atomicLoad(&mail[ao0 + 3u]) == code && (atomicLoad(&mail[ao0 + 7u]) & AIM_TOLD) != 0u;
+  if ((AP.u2.z & SEEN_ONLY) != 0u && !told) {
     let ao = MAIL_AIM + u * AIM_W;
     let fl = atomicLoad(&mail[ao + 7u]);
     let lostS = f32(AP.n.w - atomicLoad(&mail[ao + 8u])) * AIM_TICK_S;
@@ -1101,8 +1106,8 @@ fn huntSet(@builtin(global_invocation_id) id: vec3<u32>) {
   let cur = 1u - atomicLoad(&huntList[2]);
   let n = atomicAdd(&huntList[cur], 1u);
   if (n < HUNT_LIST) { atomicStore(&huntList[huntAt(cur, n)], s | select(0u, HUNT_FOE, !hostileKind)); }
-  // (new here: the field falls round it)
-  if (((old >> (16u + f)) & 1u) == 0u) {
+  // (new here: the field falls round it; or the window slid)
+  if (((old >> (16u + f)) & 1u) == 0u || (AP.u2.z & HUNT_REMARK) != 0u) {
     atomicOr(&dirtyCur[chunkOfCol(u32(c.x), u32(c.y))], 1u << f);
     // (?jfa=1: the targets JFA runs again this frame — the hunt's)
     if (hostileKind) { atomicStore(&jfa[0], 1u); }
@@ -1439,6 +1444,9 @@ const AIM_SEEN: u32 = 1u;
 const AIM_EVER: u32 = 2u;
 const AIM_SHOT: u32 = 4u;
 const AIM_INRANGE: u32 = 8u;
+/** (U2 round 5b, §9f) told of this target — an order (Agents.tell), or it struck this unit — not only noticed: hunted
+ *  where it is even when never seen (seen-only hunts only the last-seen place of what was noticed) */
+const AIM_TOLD: u32 = 16u;
 /** notice.wgsl EV_NOTICED: a unit took a target (the step's own: struck, it turns on who struck it) */
 const EV_NOTICED_U: u32 = 9u;
 /** a hurt's or death's `other`: a unit's id (its arrow) — agents.ts BY_UNIT */
@@ -1446,6 +1454,9 @@ const BY_UNIT: u32 = 0x40000000u;
 /** AP.u2.z: line of sight on (melee steers straight at a target in sight; ranged kinds shoot), seen-only targets */
 const LOS_ON: u32 = 1u;
 const SEEN_ONLY: u32 = 2u;
+/** (U2 round 5b) AP.u2.z: the window slid — every hunt seed marks its chunk again this frame (the slide started the
+ *  fields over where columns came in; a seed that stayed put marked nothing) */
+const HUNT_REMARK: u32 = 4u;
 /** cells a second an arrow flies (its flight time: the distance over this) */
 const ARROW_SPEED: f32 = 24.0;
 /** seconds out of sight after which a seen-only target's last-seen place stops being chased */

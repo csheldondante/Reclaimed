@@ -22338,3 +22338,39 @@ it each frame over townplace.wgsl (binding 57):
   built, and aimTick runs every frame, because melee's aim reads it.
 - `notice.hasSides = true`: the side map is the GPU's (Track A's town contracts).
 - `AgentUnits.uploadSides`, `sideAt` and the CPU side map are deleted. `fightRules` takes `{open}` only.
+
+## 2026-11-10 — U2 round 5b: told targets under seen-only, place chains (else / also), slides, the verification (trackB-u2r6)
+
+- **The walled archer that never fired** (los.test.ts, seen-only now the default).
+  - The archer only *noticed* a target behind a wall. Seen-only seeds the hunt at the last-seen place, and there was
+    none, so it stood there.
+  - §9f's rule: something never seen is hunted only when the unit is **told** of it — an order, or it struck the unit.
+  - That is now explicit. `Agents.tell(slot, code)` (AgentUnits' attack orders use it) and the GPU's retaliation both
+    set the aim's AIM_TOLD flag. huntSet then seeds the target where it is.
+  - The test now orders the archer at its target. It walks round the wall and fires.
+  - A new test: an archer that only noticed its target doesn't hunt it (no shot in 300 frames, under 8 cells moved).
+  - huntreact.test.ts's map test measures the field against a BFS through a wall, so it sets `seenOnly = false`
+    explicitly.
+- **Place chains** (with Track A).
+  - `PlaceRef.purpose` is renamed `kind` (the lot kind).
+  - `else` gives up to 3 alternatives, each with an optional `also` partner. They are encoded in the group's record:
+    56 words a group, 6 a ref.
+  - The settled alternative holds while it stays valid; otherwise the first valid one in order is settled.
+  - `orderFailed` comes only when all fail, with the last alternative's reason. Deeper chains throw at the call.
+  - The lab passes both of Track A's tests. Gate 0 is over water, so "gate 0 else keep" puts all 3 at the keep.
+    Spawn point 0 is valid but its gate isn't, so "spawn 0 also gate 0, else barracks" puts all 3 at the barracks.
+- **A spawn's failure is its own.** orderApply tells it once, flagged SPAWN_FAILED. Before, a failure of the stand
+  order that came later — a place's status flipping as the town grows — removed a squad that already stood there.
+- **Slides.** The hunt's and the foes' fields now behave like the order fields after a slide: they start over, and
+  every seed marks its chunk again (AP.u2.z HUNT_REMARK, one frame). This is by construction: I didn't reproduce a
+  hunt stall, but the order fields' stall had the same cause.
+- **The test town slot** for "no town" is 4, past the table's room. An empty slot raced with Vagug streaming into it,
+  which explained the flaky missing failures of earlier runs.
+- **Found, not fixed (BACKLOG U2-DROWN).** On the walk from Muru's keep to its muster yard (137 cells), soldiers
+  sometimes drown crossing the river: deaths by water in batches, with the camera still. At least 3 of this
+  session's lab runs lost the squad that way (death causes read from the agents' events); the runs where it crossed
+  arrived in 52–56 s.
+  - The relaxation and the step both refuse to go into deep water (> 0.9) from out of it, but drowning needs depth over
+    the unit's height (1.45) for 3 s. So the water rises round waders, or a crossing is deeper than its class says.
+  - It's the walkers' water rules, not the orders'. Earlier I blamed this on window slides, which was wrong: the
+    deaths happen with no slide too.
