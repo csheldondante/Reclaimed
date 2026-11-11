@@ -23144,3 +23144,18 @@ cases over the fake's field limit), season, transfers, typecheck.
   a quarter of the cells behind the street (and a few on it) are patios: flat flagstone tops behind a low white
   parapet (a crenel part with no merlons), a potted shrub. The per-lot cap is now the part slots (a cell stops when
   fewer than its worst case are left), not 44 cells.
+
+## archgen: manors round walled courts (2026-11-11; the user: "more variety in the manors. Walled in courtyards would
+## be great.")
+
+- A new house layout, manorCourt (lots ≥ 10 × 12 m, 45%): the main range across the back, its door on the court; no
+  wing, one or both down the sides, a storey lower mostly; a tall coped wall (2.3–3 m) on the street with a gateway on
+  the court's axis (posts, a lintel, a little gabled roof), walls down the sides the wings leave open; the court a
+  garden (paved or lawn; a fountain, a well or a tree in the middle; trees and shrubs in the corners); sometimes a round
+  tower at a back corner.
+- Classic houses (35% where the back garden is over 3.5 m) wall in the back garden tall and coped behind a low street
+  wall, with trees in it; other back gardens get trees half the time. lotWall is now wallRun's low case (one wall
+  routine: segments, gate posts; a tall one coped, its gate under a lintel and a roof). New pieces: tree (a trunk and a
+  crown), well.
+- In the game (Muru, play zoom) the patios and joined houses read; walled courts show where lots are big enough — most
+  of Muru's house lots are under 10 × 12 m in their inscribed frame, so the forecourt manor is mostly on the bigger lots.

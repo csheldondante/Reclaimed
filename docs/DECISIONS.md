@@ -3742,3 +3742,14 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
 - "Also, consider some styles could use the irregular grids that are already implemented. Townscaper does an unusually
   well with larger structures and shanties" (with Townscaper references: stacked terraces, arches, stilts and bridges,
   narrow coloured houses packed along curving rows, harbours of piers).
+
+## 2026-11-11 — building styles, round 4 (archgen)
+
+- "I think corrugated metal looks weird for fantasy shanties. Cloth or wood would look better." → no tin anywhere;
+  shanty, docks and stilts roofs are planks or cloth tarps.
+- "The tents should be at angles or against walls." → ridge tents pitched at their own angle; lean-tos of cloth
+  against hut walls and along a market's lot lines.
+- "The rooflines look too uniform. They need to either join into larger sections or have little open patios up top."
+  → grid pieces joined into one house under one roof; flat-topped patio cells behind parapets.
+- "Also I want more variety in the manors. Walled in courtyards would be great." → a manor round a walled forecourt
+  (gateway, wings, a garden court); classic houses sometimes wall in their back gardens.

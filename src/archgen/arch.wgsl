@@ -373,26 +373,8 @@ fn frontStair(x0: f32, dir: f32, y0: f32, y1: f32, z1: f32) {
   body(S_STONE, F_NOWIN, rect(xl, xl + 1.3, y0, y1), ground - 0.2, z1);
 }
 
-/** a low wall along a – b (the lot's edge), inward by in, with a gap [g0, g1] (share of the edge; g0 ≥ g1: none) */
-fn lotWall(a: vec2<f32>, b: vec2<f32>, g0: f32, g1: f32) {
-  let ground = gGround;
-  let d = b - a;
-  let inw = -persp2(normalize(d)) * 0.38;
-  let h = ground + 0.85;
-  if (g0 < g1) {
-    let p0 = mix(a, b, g0);
-    let p1 = mix(a, b, g1);
-    body(S_LOTWALL, F_NOWIN, array<vec2<f32>, 4>(a, p0, p0 + inw, a + inw), ground - 0.3, h);
-    body(S_LOTWALL, F_NOWIN, array<vec2<f32>, 4>(p1, b, b + inw, p1 + inw), ground - 0.3, h);
-    // gate posts
-    let pq0 = array<vec2<f32>, 4>(p0 - normalize(d) * 0.4, p0, p0 + inw, p0 + inw - normalize(d) * 0.4);
-    let pq1 = array<vec2<f32>, 4>(p1, p1 + normalize(d) * 0.4, p1 + normalize(d) * 0.4 + inw, p1 + inw);
-    body(S_LOTWALL, F_NOWIN, pq0, ground - 0.3, h + 0.45);
-    body(S_LOTWALL, F_NOWIN, pq1, ground - 0.3, h + 0.45);
-  } else {
-    body(S_LOTWALL, F_NOWIN, array<vec2<f32>, 4>(a, b, b + inw, a + inw), ground - 0.3, h);
-  }
-}
+/** a low wall along a – b (the lot's edge), with a gap [g0, g1] (share of the edge; g0 ≥ g1: none) */
+fn lotWall(a: vec2<f32>, b: vec2<f32>, g0: f32, g1: f32) { wallRun(a, b, g0, g1, 0.85, 0.38); }
 
 /** the windows and doors of the walls made, as geometry (the painted ones under them are switched off: F_NOWIN) */
 fn windows() {
@@ -453,6 +435,125 @@ fn windows() {
 }
 
 /** a house: the composed massing on the lot's frame [0, gW] × [0, gD] */
+/** a stretch of wall a – b (inward along iw), up to z1; a tall one capped with a stone coping */
+fn wallSeg(a: vec2<f32>, b: vec2<f32>, iw: vec2<f32>, z1: f32, tall: bool) {
+  let q = array<vec2<f32>, 4>(a, b, b + iw, a + iw);
+  body(S_LOTWALL, F_NOWIN, q, gGround - 0.3, z1);
+  if (tall) { body(S_STONE, F_NOWIN, grow(q, 0.07), z1, z1 + 0.16); }
+}
+
+/** a wall along a – b (the lot's edge, counter-clockwise: the lot on its left), th thick, h high, with a gate [g0, g1]
+ *  (shares of the edge; g0 ≥ g1: none). A tall one (a court's) is coped, its gate under a lintel and a little roof. */
+fn wallRun(a: vec2<f32>, b: vec2<f32>, g0: f32, g1: f32, h: f32, th: f32) {
+  let ground = gGround;
+  let dn = normalize(b - a);
+  let iw = -persp2(dn) * th;
+  let z1 = ground + h;
+  let tall = h > 1.5;
+  if (g0 >= g1) {
+    wallSeg(a, b, iw, z1, tall);
+    return;
+  }
+  let p0 = mix(a, b, g0);
+  let p1 = mix(a, b, g1);
+  wallSeg(a, p0, iw, z1, tall);
+  wallSeg(p1, b, iw, z1, tall);
+  let pw = select(0.4, 0.55, tall);
+  let ptop = z1 + select(0.45, 0.5, tall);
+  body(S_LOTWALL, F_NOWIN, array<vec2<f32>, 4>(p0 - dn * pw, p0, p0 + iw, p0 + iw - dn * pw), ground - 0.3, ptop);
+  body(S_LOTWALL, F_NOWIN, array<vec2<f32>, 4>(p1, p1 + dn * pw, p1 + dn * pw + iw, p1 + iw), ground - 0.3, ptop);
+  if (tall) {
+    // the lintel over the gateway, a little gabled roof along the wall over it
+    body(S_STONE, F_NOWIN, array<vec2<f32>, 4>(p0 - dn * 0.2, p1 + dn * 0.2, p1 + dn * 0.2 + iw, p0 - dn * 0.2 + iw), z1 - 0.35, ptop);
+    let n = normalize(iw);
+    let ext = pw + 0.25;
+    let rq = array<vec2<f32>, 4>(p0 - dn * ext - n * 0.4, p1 + dn * ext - n * 0.4, p1 + dn * ext + iw + n * 0.4, p0 - dn * ext + iw + n * 0.4);
+    roof(rq, ptop, 0u, 0.9, 0.0, 0.08, 0u);
+  }
+}
+
+/** a tree at p, h tall: a trunk, a crown */
+fn tree(p: vec2<f32>, h: f32, seed: u32) {
+  let g = gGround;
+  cyl(p, 0.17, g - 0.1, g + h * 0.5, S_WOOD, F_NOWIN);
+  bushAt(p, g + h * 0.38, mix(1.0, 1.4, rnd(seed, 1u)), h * 0.66, rnd(seed, 2u) < 0.25);
+}
+
+/** a well: a stone ring with water in it, two posts and a little roof */
+fn well(p: vec2<f32>) {
+  let g = gGround;
+  cyl(p, 0.75, g - 0.2, g + 0.75, S_STONE, F_NOWIN);
+  cyl(p, 0.55, g + 0.5, g + 0.62, S_WATER, F_NOWIN);
+  let a = LX * 0.08;
+  let b = LY * 0.08;
+  let l = p - LX * 0.65;
+  let r = p + LX * 0.65;
+  body(S_WOOD, F_NOWIN, array<vec2<f32>, 4>(l - a - b, l + a - b, l + a + b, l - a + b), g + 0.7, g + 2.0);
+  body(S_WOOD, F_NOWIN, array<vec2<f32>, 4>(r - a - b, r + a - b, r + a + b, r - a + b), g + 0.7, g + 2.0);
+  let rq = array<vec2<f32>, 4>(p - LX * 1.0 - LY * 0.7, p + LX * 1.0 - LY * 0.7, p + LX * 1.0 + LY * 0.7, p - LX * 1.0 + LY * 0.7);
+  roof(rq, g + 2.0, 0u, 0.9, 0.0, 0.05, 0u);
+}
+
+/** a court's garden in [x0, x1] × [y0, y1]: paved or lawn, a fountain, a well or a tree in the middle, trees or
+ *  shrubs in its corners */
+fn courtGarden(x0: f32, x1: f32, y0: f32, y1: f32, seed: u32) {
+  if (x1 - x0 < 2.0 || y1 - y0 < 2.0) { return; }
+  let g = gGround;
+  if (rnd(seed, 1u) < 0.55) { body(S_STONE, 0u, rect(x0, x1, y0, y1), g - 0.2, g + 0.04); }
+  let c = lp((x0 + x1) * 0.5, (y0 + y1) * 0.5);
+  let m = rnd(seed, 2u);
+  let small = min(x1 - x0, y1 - y0) < 4.5;
+  if (m < 0.4 && !small) { fountain(c, min(1.4, min(x1 - x0, y1 - y0) * 0.22)); }
+  else if (m < 0.7) { well(c); }
+  else { tree(c, mix(4.0, 5.5, rnd(seed, 3u)), hash(seed + 3u)); }
+  if (small) { return; }
+  for (var k = 0u; k < 4u; k++) {
+    let s = hash(seed + 10u + k);
+    if (rnd(s, 1u) < 0.35) { continue; }
+    let px = select(x0 + 0.9, x1 - 0.9, (k & 1u) == 1u);
+    let py = select(y0 + 0.9, y1 - 0.9, k >= 2u);
+    if (rnd(s, 2u) < 0.5) { tree(lp(px, py), mix(3.2, 4.8, rnd(s, 3u)), s); }
+    else { bush(lp(px, py), mix(0.6, 0.9, rnd(s, 4u)), mix(0.8, 1.3, rnd(s, 5u)), rnd(s, 6u) < 0.6); }
+  }
+}
+
+/** a manor round a walled forecourt (the user: "more variety in the manors. Walled in courtyards would be great"):
+ *  its main range across the back of the lot, its door on the court; no wing, one or two down the sides; a tall coped
+ *  wall on the street with a roofed gateway on the court's axis, walls down the sides the wings don't close; the court
+ *  a garden */
+fn manorCourt(eave: f32, seed: u32) {
+  let ground = gGround;
+  let W = gW;
+  let D = gD;
+  let e = 0.4;
+  let md = clamp(D * 0.38, 5.5, 8.5);
+  let my0 = D - e - md;
+  let rise = block(e, W - e, my0, D - e, eave, 0u, seed, true, true);
+  if (rnd(seed, 1u) < 0.5) { dormers(e, W - e, my0, D - e, eave, rise, seed); }
+  // the wings: none, one (its side by hash), or both
+  let nw = hash(seed + 5u) % 3u;
+  let leftW = nw == 2u || (nw == 1u && rnd(seed, 2u) < 0.5);
+  let rightW = nw == 2u || (nw == 1u && !leftW);
+  let ww = clamp(W * 0.25, 3.4, 4.6);
+  let we = max(ground + STOREY + 0.45, eave - STOREY * select(0.0, 1.0, rnd(seed, 3u) < 0.6));
+  let wy0 = e + mix(0.0, 2.2, rnd(seed, 4u));
+  if (leftW) { block(e, e + ww, wy0, my0 + 0.3, we, 1u, hash(seed + 11u), false, rnd(seed, 6u) < 0.5); }
+  if (rightW) { block(W - e - ww, W - e, wy0, my0 + 0.3, we, 1u, hash(seed + 12u), false, rnd(seed, 7u) < 0.5); }
+  let cx0 = select(e, e + ww, leftW);
+  let cx1 = select(W - e, W - e - ww, rightW);
+  // the walls: the street's with its gateway, the sides up to a wing or the main range
+  let h = mix(2.3, 3.0, rnd(seed, 8u));
+  let th = 0.5;
+  let gm = ((cx0 + cx1) * 0.5 - e) / (W - 2.0 * e);
+  let gh = 1.3 / (W - 2.0 * e);
+  wallRun(lp(e, e), lp(W - e, e), gm - gh, gm + gh, h, th);
+  wallRun(lp(W - e, e), lp(W - e, select(my0, wy0, rightW)), 1.0, 0.0, h, th);
+  wallRun(lp(e, select(my0, wy0, leftW)), lp(e, e), 1.0, 0.0, h, th);
+  courtGarden(cx0 + 0.5, cx1 - 0.5, e + th + 0.4, my0 - 0.4, hash(seed + 20u));
+  // a round tower at a back corner of the court, sometimes
+  if (rnd(seed, 9u) < sty(gS, 6u).y * 0.6) { roundTower(lp(select(cx0, cx1, rnd(seed, 10u) < 0.5), my0), 1.7, eave + STOREY * 1.3, seed); }
+}
+
 fn house(eave: f32, seed: u32) {
   let s = gS;
   let ground = gGround;
@@ -464,6 +565,11 @@ fn house(eave: f32, seed: u32) {
   // a big lot: a courtyard block
   if (W >= 13.0 && D >= 13.0 && rnd(seed, 60u) < 0.45) {
     courtyard(eave, seed);
+    return;
+  }
+  // a manor round a walled forecourt
+  if (W >= 10.0 && D >= 12.0 && rnd(seed, 62u) < 0.45) {
+    manorCourt(eave, seed);
     return;
   }
   let sb = min(st8.y * mix(0.6, 1.4, rnd(seed, 30u)), D * 0.25);
@@ -544,13 +650,33 @@ fn house(eave: f32, seed: u32) {
     porch(dx, sb, min(sb - 0.25, 1.8), 2.6);
   }
   plantings(seed, sb, dx);
-  // the lot's low wall: round the yard, a gate on the street in front of the door
-  if (rnd(seed, 49u) < st8.z) {
+  // the lot's wall: low round the yard, a gate on the street in front of the door; or the back garden walled in tall
+  // (coped, a garden's) behind a low street wall, trees in it
+  let backY = sb + md;
+  let walledBack = D - backY > 3.5 && rnd(seed, 61u) < 0.35;
+  if (walledBack || rnd(seed, 49u) < st8.z) {
     let g = clamp(dx / W, 0.12, 0.88);
+    let bh = mix(2.2, 2.7, rnd(seed, 63u));
     lotWall(lp(0.0, 0.0), lp(W, 0.0), g - 0.1, g + 0.1);
-    lotWall(lp(W, 0.0), lp(W, D), 1.0, 0.0);
-    lotWall(lp(W, D), lp(0.0, D), 1.0, 0.0);
-    lotWall(lp(0.0, D), lp(0.0, 0.0), 1.0, 0.0);
+    if (walledBack) {
+      lotWall(lp(W, 0.0), lp(W, backY), 1.0, 0.0);
+      wallRun(lp(W, backY), lp(W, D), 1.0, 0.0, bh, 0.45);
+      wallRun(lp(W, D), lp(0.0, D), 1.0, 0.0, bh, 0.45);
+      wallRun(lp(0.0, D), lp(0.0, backY), 1.0, 0.0, bh, 0.45);
+      lotWall(lp(0.0, backY), lp(0.0, 0.0), 1.0, 0.0);
+    } else {
+      lotWall(lp(W, 0.0), lp(W, D), 1.0, 0.0);
+      lotWall(lp(W, D), lp(0.0, D), 1.0, 0.0);
+      lotWall(lp(0.0, D), lp(0.0, 0.0), 1.0, 0.0);
+    }
+  }
+  // trees in the back garden
+  if (D - backY > 3.5 && (walledBack || rnd(seed, 64u) < 0.5)) {
+    let nt = 1u + hash(seed + 65u) % 3u;
+    for (var k = 0u; k < nt; k++) {
+      let s2 = hash(seed + 66u + k);
+      tree(lp(mix(1.2, W - 1.2, rnd(s2, 1u)), mix(backY + 1.4, D - 1.2, rnd(s2, 2u))), mix(3.5, 5.5, rnd(s2, 3u)), s2);
+    }
   }
 }
 
