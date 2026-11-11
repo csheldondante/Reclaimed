@@ -3,6 +3,44 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-11 — UC-6 (Track A, `trackA-uc6`): frozen chunks wake; the window's edge for now
+
+- Approved: a perturbed frozen chunk is **woken** to find its new steady state; its flux is no longer rescaled by its
+  edge's in / out. This replaces the round-84 "keep the flow proportional" rescale (quoted under round 84 below): the
+  zeroing of a dried-up frozen chunk stays; the proportional part is gone (it fed back through awake neighbours and
+  blew Muru's water up).
+- The window's edge, earlier the same day: "treat inflow and outflow as steady state unless the atlas indicates that
+  there should be a change in inflow or outflow. Then we can still make storms on the overworld cause floods but under
+  default conditions nothing can grow." A steady-flux edge (the atlas's discharge as a fixed inflow rate, one-way
+  outflow, one inflow multiplier on the GPU) was tried and not merged (DEVLOG 2026-11-11; the patch: BACKLOG UC-11).
+- Then, verbatim (2026-11-11): "Merge what passed for now. I don't like the CPU design much. Previously we discussed
+  this but the steady state can interpolate depths based on inflow so it's a single float to make a river bed dry up.
+  This was designed and supposedly built previously. I think we should store that data on the atlas (GPU or CPU is
+  fine if it's lightweight). Then a storm simply increases the number and we can scale up flow and propagate. This is
+  low priority though as mostly I care about the storm hitting the current loaded map and some way to make the flood
+  waters proceed that slightly."
+  → **interim edge** (on a held-river level): a river runs on at its table level past the edge; the sea where it stands
+  over the floor (the one global level, Globals ocean.x); a wall everywhere else. Authored maps with no table keep the
+  free fall. Next, by the user's priority: a storm floods the loaded map (BACKLOG UC-9); the edge held per basin
+  (UC-10); the atlas's one float per river (UC-11, low priority).
+- The one float, clarified, verbatim (2026-11-11): "I thought the nice part of this was partially that it is cheap. If
+  we compute a steady state at low water/no water and one at high water then we can just interpolate the depth between
+  the two without really simulating it. That's the direction I would go. Then real simulation is for when things in
+  the loaded map break or when water is added locally (A storm in the current map)."
+- And, verbatim: "I think it had a function of the inflow that was not just linear interpolation so that shallow bits
+  dry first from what I recall."
+  → **UC-11**: one float per river (or per basin / region) on the atlas; each column's depth a function of it, not a
+  linear blend between a low-water and a high-water steady state — shallow columns dry first as the flow drops (e.g.
+  each column stores the flow at which it wets, plus a stage curve above that); no simulation; an overworld storm only
+  changes the float. → **Real simulation** only where the loaded map breaks (a dam or wall breached, ground dug) or
+  water is added locally (a storm over the current map): UC-9, the priority. (The earlier version exists, round 84:
+  riverheld.wgsl riverHere shifts the whole cross-section's level by the line's depth × (wet^0.6 − 1), so shallow
+  columns reach the 0.03 dry bed first; its float is the wetness, with catchwet's per-region inflow factor. Cited in
+  UC-11.)
+- Asked earlier: is the edge's "sea level" fixed or the level of the basin the river ends in? The intent: where the edge
+  meets standing water, hold it at that body's own atlas level, per basin, never an invented one. The window's GPU has
+  only the one global level today → kept; per basin is UC-10 (with LQ3 / DA-P5's sea per basin).
+
 ## 2026-11-10 — the switchover (Track A): the GPU towns are the towns
 
 Verbatim:
@@ -1948,7 +1986,8 @@ The design doc "Reclaimed engine architecture: fixing the foundations"
   animation only. The goal here is to have the generator make things start in steady state and the
   simulation can then take over until it finds another near steady state then freeze things."
 - "Do we use the flux to just adjust steady state for a region? Like we could keep the flow proportional and
-  then zero out when they get too low."
+  then zero out when they get too low." (The proportional part replaced 2026-11-11, UC-6: a perturbed frozen chunk
+  wakes; the zeroing stays. See the top.)
 ## 2026-10-26 — round 86 (session 5, `places`) — the phone test: rivers, falls, collapse
 
 - **Performance:** "performance is now very very good! Totally fixed on mobile" (the hybrid by default on the phone tier).

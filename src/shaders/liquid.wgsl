@@ -325,6 +325,19 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
       if (!inMap(q)) {
         code = C_DRAIN;
         Hn = max(fz, G.ocean.x);
+        // (UC-6, interim) Past the window's edge on a held-river level (?rivers=table) is the atlas's world, not a
+        // cliff: a held river's column runs on at its table's level (only what stands over it leaves, so the river
+        // doesn't pour off the window upstream); else, where the sea stands over the run's floor (G.ocean.x > fz),
+        // what stands over the sea leaves; everywhere else a wall (the edge was a free fall: the lakes the window cut, Muru's
+        // bend, drained out of it). Authored maps with no table (the flow lab) keep the free fall. The sea's one global
+        // level; per basin is BACKLOG UC-10. A storm's inflow: UC-9 / UC-11.
+        if (RIVER_TABLE && LQ_WATER) {
+          var rh: RiverHere;
+          rh.on = false;
+          if (s == 0u) { rh = riverHere(id.xy); }
+          if (rh.on && rh.depth > 0.0) { Hn = max(Hn, g.nat + rh.depth); }
+          else if (G.ocean.x <= fz) { code = C_WALL; Hn = H; }
+        }
       } else {
         let gq = gapsAt(q);
         // the neighbour's gap open across the run's height: the highest floor under its level
@@ -667,9 +680,12 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   var o = gather(p, g, r);
   let top = g.n - 1u;
   // (held: in the gap on the column's own ground — under a deck, the river's; Gaps.nat)
+  // (UC-6: on the window's edge the river is the atlas's beyond it — held at the table's depth, the boundary the
+  // simulated river between the edges is fed from and drains into; at 2 % a step it couldn't feed the river's discharge
+  // and the awake river ran dry. Asleep, on its slow turn, it eases to the table at flowRiverRelax)
   if (held) {
     let m = gapForRun(g, g.nat);
-    o.dep[m] = mix(o.dep[m], rh.depth, G.tune.flowRiverRelax);
+    o.dep[m] = mix(o.dep[m], rh.depth, select(G.tune.flowRiverRelax, 1.0, windowEdge(id.xy)));
   }
   // the enclosed runs: wet gaps under the top, lowest first; past three, the deepest kept (the rest counted)
   var n = 0u;

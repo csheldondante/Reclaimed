@@ -1460,9 +1460,17 @@ an empty level stands on pillars and arches (`design`).
 liquid on every level: WorldCore makes it (flow/install.ts installFlow, after the surface) with the world's Sleep. The
 pipes (water_flux/water_depth, the WaterSystem, its settling passes and the GPU settling hold, ?rivers=hold, the
 per-step source) are deleted — no flag selects them. Lava and oil keep their own per-column systems for now (below).
-- **Rivers held** (`?rivers=table`): the depth pass relaxes a held river column (at the window's edge, or asleep when it
-  runs) to the atlas's table in the gap on the column's own ground (`Gaps.nat`: the highest solid that isn't an
-  External); the warmup doesn't run the water on a held-river level.
+- **Rivers held** (`?rivers=table`): the depth pass relaxes a held river column (asleep when it runs) to the atlas's
+  table in the gap on the column's own ground (`Gaps.nat`: the highest solid that isn't an External) at
+  `flowRiverRelax` a step; on the window's edge it is held at the table's depth (the river beyond the window is the
+  atlas's: the boundary the simulated river is fed from and drains into), and past the edge the flux pass sees the
+  river's level, not a drop (UC-6: at the relax alone, and pouring off the window upstream, the awake river ran dry).
+  **The window's edge** (liquid.wgsl flux, the face past the window, on a held-river level: RIVER_TABLE && LQ_WATER):
+  a held river's column sees the river run on at its table level (`Hn = max(Hn, nat + depth)`); else where the sea
+  stands over the run's floor (Globals ocean.x > floor) a drain to the sea's level; everywhere else a wall. An
+  authored map with no table (the flow lab) keeps the free fall past its edge. Interim (UC-6): per basin is BACKLOG
+  UC-10, a storm's inflow UC-9 / UC-11.
+  The warmup doesn't run the water on a held-river level.
 - **Decks claimed** (citygen `DECKS_CLAIMED`, streets.wgsl claimRoads): a deck is a slab under its top claimed into the
   columns; the open run keeps the gap its floor was recorded in (`openGap`), so the river stays in the gap under the
   deck as an enclosed run, the deck's top dry (BACKLOG CG15).
@@ -1553,13 +1561,16 @@ trackA-liquids the world's liquid everywhere — the flow lab, src/levels/flowla
   sediment's air texture keeps a pour's running grains); one that isn't is kept awake. Events wake for
   1.5 s (`Sleep.eventSecs`) and the steady state decides after. With every chunk asleep the liquid passes
   aren't dispatched at all (the step stands still), only `prep`.
-- **Frozen, rescaled** (the user: "keep the flow proportional and then zero out when they get too low"). A
+- **Frozen, woken** (the user: "keep the flow proportional and then zero out when they get too low"). A
   sleeping column beside an awake chunk checks its balance each tick: its chunk's edge inflow and outflow
-  are summed. Past `?waketol=` the chunk is flagged; read back, its flux (and its streams' volume, and the
-  water contract's flux) is rescaled by in / out for one step, no simulation (`LiquidU.scale`, the frozen
-  paths apply it); under the floor, zeroed (dried up); a change past `?rescalemax=` (4×) either way, or
-  something arriving where nothing flowed, wakes it to find its new steady state. Shape changes (edits,
-  powers) wake it by their events.
+  are summed. Past `?waketol=` the chunk is flagged; read back, with nothing coming in (under the floor) its
+  flux (and its streams' volume, and the water contract's flux) is zeroed — dried up, no simulation
+  (`LiquidU.scale`, the frozen paths apply it); any other change, or something arriving where nothing
+  flowed, wakes it to find its new steady state. Shape changes (edits, powers) wake it by their events.
+  (UC-6: the frozen flux is no longer rescaled by in / out. A frozen chunk's outflow is the only thing that
+  pushes water into an awake chunk whatever its level; the in it was scaled by is what those awake
+  neighbours send back, so a basin or pool beside a frozen river fed the rescale and the frozen flux grew
+  window on window — Muru's water to 35 000 deep.)
 - **One system or two.** Loose ground stays in the sediment system and liquids are this one, sharing the
   column/gap view of the layers (recommendation, round 84): granular ground is the layers themselves (strata,
   repose, wind, wash; it *is* the ground, and it changes the gaps), liquids are what lies in the gaps (no

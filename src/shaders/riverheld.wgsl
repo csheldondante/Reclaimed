@@ -63,6 +63,8 @@ fn riverHere(q: vec2<u32>) -> RiverHere {
  *  window and goes on out of it — the world beyond is the atlas's, unsimulated)? */
 fn riverHeld(q: vec2<u32>, r: RiverHere) -> bool {
   if (!r.on) { return false; }
-  let edge = q.x == 0u || q.y == 0u || q.x + 1u >= G.mapW || q.y + 1u >= G.mapH;
-  return edge || asleep(q);
+  return windowEdge(q) || asleep(q);
 }
+
+/** a column on the window's edge (a neighbour of it lies past the window) */
+fn windowEdge(q: vec2<u32>) -> bool { return q.x == 0u || q.y == 0u || q.x + 1u >= G.mapW || q.y + 1u >= G.mapH; }

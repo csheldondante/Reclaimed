@@ -178,7 +178,7 @@ export class LiquidSystem implements SimSystem {
     const parts = [commonWgsl, layersWgsl, materialsWgsl, prelude(kind, this.runW) + flowConst(kind.name) + liquidWgsl + riverHeld()];
     const base: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 21: 'tex', 33: 'uniform', 35: 'utex', [TILES_BINDING]: 'uniform' };
     const specs: Record<string, BindSpec> = {
-      flux: { 3: 'rw', 5: 'rw', 6: 'read', 8: 'rw', 9: 'rw', 10: 'read' },
+      flux: { 3: 'rw', 5: 'rw', 6: 'read', 8: 'rw', 9: 'rw', 10: 'read', 62: 'tex', 63: 'tex' },
       jets: { 3: 'rw', 5: 'rw', 6: 'read', 8: 'rw', 9: 'rw', 11: 'rw', 22: 'tex', 23: 'tex', 24: 'tex', 28: 'tex', 25: 'stex', 26: 'stex', 27: 'stex', 34: 'stex' },
       depth: { 3: 'rw', 4: 'read', 5: 'rw', 6: 'read', 7: 'rw', 8: 'rw', 11: 'rw', 17: 'tex', 22: 'tex', 23: 'tex', 24: 'tex', 28: 'tex', 62: 'tex', 63: 'tex' },
       publishWater: { 4: 'read', 5: 'rw', 7: 'rw', 8: 'rw', 14: 'rw', 16: 'read', 19: 'rw' },
