@@ -58,7 +58,7 @@ const unb64 = (s: string) => {
 };
 
 // the ground's layers (the Raygeas sets, in this order: look.wgsl NL, flatCol)
-const LAYERS = ['Grass_1', 'Grass_2', 'Mud_1', 'Mud_3', 'Rock_1', 'Tile_1', 'Sand_1', 'Snow_1'] as const;
+const LAYERS = ['Grass_1', 'Grass_2', 'Mud_1', 'Mud_3', 'Rock_1', 'Tile_1', 'Sand_1', 'Snow_1', 'Grass_3', 'Dark_grass_1', 'Roots_2', 'Mud_6'] as const;
 const L = { grass: 0, flowers: 1, dirt: 2, mudgrass: 3, rock: 4, cobble: 5, sand: 6, snow: 7 };
 
 interface Patch {

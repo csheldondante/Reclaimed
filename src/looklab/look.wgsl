@@ -19,7 +19,7 @@ struct U {
 @group(0) @binding(5) var shadowSamp: sampler_comparison;
 @group(0) @binding(8) var shadowNear: texture_depth_2d;
 
-const NL: u32 = 8u;
+const NL: u32 = 12u;
 // each layer's flat colour (the "painted" toggle off: the lo-fi look) — linear
 fn flatCol(i: u32) -> vec3<f32> {
   switch i {
@@ -30,7 +30,11 @@ fn flatCol(i: u32) -> vec3<f32> {
     case 4u: { return vec3<f32>(0.22, 0.21, 0.20); }
     case 5u: { return vec3<f32>(0.30, 0.27, 0.24); }
     case 6u: { return vec3<f32>(0.62, 0.48, 0.30); }
-    default: { return vec3<f32>(0.80, 0.85, 0.90); }
+    case 7u: { return vec3<f32>(0.80, 0.85, 0.90); }
+    case 8u: { return vec3<f32>(0.17, 0.31, 0.07); }
+    case 9u: { return vec3<f32>(0.10, 0.22, 0.08); }
+    case 10u: { return vec3<f32>(0.22, 0.18, 0.10); }
+    default: { return vec3<f32>(0.25, 0.19, 0.13); }
   }
 }
 
@@ -129,15 +133,29 @@ fn fsGround(in: GV) -> @location(0) vec4<f32> {
   let topW = smoothstep(0.55, 0.85, N.z);
   let gT = vec4<f32>(dpdx(uvT), dpdy(uvT));
   let gS = vec4<f32>(dpdx(side), dpdy(side));
-  var wts = array<f32, 8>(in.wa.x, in.wa.y, in.wa.z, in.wa.w, in.wb.x, in.wb.y, in.wb.z, in.wb.w);
+  // the cells' weights (8), the grass and the dirt broken up by noise a few metres across into their kinds (the
+  // user: "blend between different grass lengths and dirt with noise", as Dota's ground does): short and long grass,
+  // dark grass, worn patches (mud with grass, pebbly dirt), roots in the dirt
+  let gq = in.w.xy;
+  let tall = smoothstep(0.38, 0.62, fbm(gq / 7.0));
+  let dark = smoothstep(0.55, 0.72, fbm(gq / 21.0 + 3.1));
+  let worn = smoothstep(0.6, 0.76, fbm(gq / 12.0 + 7.7));
+  let g0 = in.wa.x;
+  let d0 = in.wa.z;
+  let roots = smoothstep(0.5, 0.7, fbm(gq / 9.0 + 1.3));
+  let pebs = smoothstep(0.45, 0.7, fbm(gq / 6.0 + 4.4));
+  var wts = array<f32, 12>(
+    g0 * (1.0 - tall) * (1.0 - dark) * (1.0 - worn), in.wa.y, d0 * (1.0 - roots) * (1.0 - pebs), in.wa.w + g0 * worn * 0.6,
+    in.wb.x, in.wb.y, in.wb.z, in.wb.w,
+    g0 * tall * (1.0 - dark) * (1.0 - worn), g0 * dark * (1.0 - worn), d0 * roots, g0 * worn * 0.4 + d0 * pebs * (1.0 - roots));
   var col = vec3<f32>(0.0);
   var nrm = vec3<f32>(0.0);
   var rough = 0.0;
   var ao = 0.0;
   if (u.misc.y > 0.5) {
     // height blend: each layer scored by its weight and its texture's height, the top ones kept
-    var score = array<f32, 8>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-    var hs = array<f32, 8>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    var score = array<f32, 12>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    var hs = array<f32, 12>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     var best = -1.0;
     for (var i = 0u; i < NL; i++) {
       if (wts[i] > 0.02) {
@@ -318,7 +336,8 @@ fn fsTree(in: TV) -> @location(0) vec4<f32> {
   let isLeaf = in.leaf > 0.01;
   if (isLeaf && t.a < 0.5) { discard; }
   // (the leaf textures' own darkness evened out: the pines' is near black, Synty's shader lifts it)
-  let gain = 1.0;
+  // (Synty's plain pine leaf texture is near black — its demo scenes show the snow and bright variants; lifted here)
+  let gain = select(1.0, 3.0, isLeaf && in.layer == 1);
   var alb = toLin(t.rgb) * in.tint * gain;
   // (Synty's colours as they are: the texture times its material's tint; each tree only a touch lighter or darker)
   alb *= mix(0.9, 1.1, in.hue);
