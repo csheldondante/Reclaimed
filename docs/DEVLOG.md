@@ -23322,3 +23322,12 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
 - Seen in archlab (harbour and stilts, top-down and at 50°): no triangular parapets or roofs left. The world-shared grid
   (AG23) is still to do.
 
+## archlab: Townscaper's light, first step (2026-11-12; the user: "Everything just looks so flat", a Townscaper shot:
+## "Lets target at least this quality in our toy test")
+
+- The lab's light had no cast shadows, a wrapped sun (no face ever dark), a strong even sky and the sun behind the
+  camera (nearly every wall in view lit). Now: a peach key with no wrap from the side (115° off the view, 37° up), the
+  shade a cool teal sky rather than grey, a warm bounce under overhangs, the lowest 4.5 m of a wall darker toward the
+  street. `?oldlight=1` the old light. Roof slopes now read lit / shaded; still flat where it matters most: no cast
+  shadows, no occlusion, no edge lines — next, then the geometry (rounded corners, set-back windows, balconies, arches).
+

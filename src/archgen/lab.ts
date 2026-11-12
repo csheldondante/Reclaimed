@@ -87,7 +87,7 @@ async function main() {
     cam.x = ax;
     cam.y = ay;
   }
-  const look = { detail: num('detail', 1), night: num('night', 0) };
+  const look = { detail: num('detail', 1), night: num('night', 0), oldLight: num('oldlight', 0) };
   const viewProj = (w: number, h: number) => {
     const yw = (cam.yaw * Math.PI) / 180;
     const pt = (cam.pitch * Math.PI) / 180;
@@ -132,9 +132,10 @@ async function main() {
     resize();
     const { m, fw, upp } = viewProj(canvas.width, canvas.height);
     // (the sun from the camera's side, off to its left: the street faces lit, the sides in soft shade)
-    const sy = ((cam.yaw - 55) * Math.PI) / 180;
-    const sun = norm([Math.cos(sy) * 0.55, Math.sin(sy) * 0.55, 0.75]);
-    gen.setView(m, [...sun, 1.15 * (1 - look.night * 0.85)], [...fw, upp], (performance.now() - t0) / 1000, look.night, look.detail);
+    // (the new light: Townscaper's side light, low — half the walls in view in the cool shade)
+    const sy = ((cam.yaw - (look.oldLight ? 55 : 115)) * Math.PI) / 180;
+    const sun = look.oldLight ? norm([Math.cos(sy) * 0.55, Math.sin(sy) * 0.55, 0.75]) : norm([Math.cos(sy) * 0.8, Math.sin(sy) * 0.8, 0.6]);
+    gen.setView(m, [...sun, 1.15 * (1 - look.night * 0.85)], [...fw, upp], (performance.now() - t0) / 1000, look.night, look.detail, look.oldLight);
     const e = device.createCommandEncoder();
     const view = ctx.getCurrentTexture().createView();
     const sky = look.night > 0.5 ? { r: 0.08, g: 0.1, b: 0.16, a: 1 } : { r: 0.8, g: 0.86, b: 0.9, a: 1 };

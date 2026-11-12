@@ -255,12 +255,12 @@ export class ArchGen {
   }
 
   /** the lab's view: viewProj (column-major), towards the sun + strength, towards the eye + units a pixel, time/night/detail */
-  setView(viewProj: Float32Array, sun: number[], eye: number[], time: number, night: number, detail: number): void {
+  setView(viewProj: Float32Array, sun: number[], eye: number[], time: number, night: number, detail: number, oldLight = 0): void {
     const f = new Float32Array(28);
     f.set(viewProj, 0);
     f.set(sun, 16);
     f.set(eye, 20);
-    f.set([time, night, detail, 0], 24);
+    f.set([time, night, detail, oldLight], 24);
     this.device.queue.writeBuffer(this.lab!.view, 0, f);
   }
 
