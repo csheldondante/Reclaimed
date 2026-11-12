@@ -23338,3 +23338,14 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
   width the view's diagonal + 20 m), redrawn each frame. archlab.wgsl samples it 3×3 for the key light; `?oldlight=1`
   draws no map. Buildings now shade each other, the streets and the ground (archlab, harbour, 50°).
 
+## archlab: screen-space occlusion (2026-11-12; AG26, the user: "Can we do sceenspace AO?")
+
+- src/archgen/ssao.wgsl: the lab's scene now draws into its own texture with its depth kept; fsAo reads the depth
+  (multisampled: sample 0), rebuilds each pixel's view-space point (the orthographic camera: a scale and an offset),
+  its normal from the nearer neighbour on each axis, and tests 16 points over the hemisphere (a spiral, denser near the
+  pixel, turned per pixel on a 4×4 pattern) against what's drawn there, a range check fading far occluders; fsComp blurs
+  it 4×4 and multiplies the scene. Radius 2.5 m, full strength (at 1.2 m it only lined the creases; at 2.5–3 the wall
+  feet, the gaps between columns and under the eaves go dark). `?ao=0..1`, `?aor=m`, `?aodbg=1` the occlusion alone.
+- It multiplies the whole lit colour, not only the ambient: a stylised choice (sunlit floors in a narrow gap darken
+  too). Not measured on the phone yet.
+

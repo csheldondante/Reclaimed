@@ -2337,7 +2337,7 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   it on the phone.
 - AG26 (the user, 2026-11-12, a Townscaper shot: "Lets target at least this quality in our toy test") Not flat:
   - Light: Townscaper's warm key / cool teal shade — done 7316a78e; the sun's cast shadows in archlab — done (this
-    commit); next screen-space occlusion (arches, eaves, the gaps between columns) and edge lines (creases dark, edges
+    commit); screen-space occlusion — done (archlab, ssao.wgsl); next edge lines (creases dark, edges
     caught by the light).
   - Smoothed normals between nearly parallel neighbouring grid cells ("Townscaper also looks like it renders with
     smoothed normals between nearly parallel irregular grid cells"): adjacent cells' walls that meet almost flat shade

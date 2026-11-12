@@ -3,7 +3,8 @@
 // play pitch. Fast to load (no world, no sims): for judging massing, materials and generation cost. Not the game's
 // lighting: in-game checks come with the wire-in (AG6).
 //   ?style=homes|timber|port|keep (default: by district)  ?yaw=deg  ?pitch=deg (60)  ?zoom=world units tall
-//   ?at=x,y  ?detail=0..1 (0 phone … 1 PC)  ?night=0..1  ?msaa=0
+//   ?at=x,y  ?detail=0..1 (0 phone … 1 PC)  ?night=0..1  ?msaa=0  ?ao=0..1 (screen-space occlusion's strength, 0 off)
+//   ?aor=m (its radius)  ?oldlight=1 (the light before AG26)
 // globalThis.archlab: { view(yaw, zoom, at), style(name), bench(runs) } for scripts.
 
 import { urlFlags } from '../flags';
@@ -11,6 +12,7 @@ import lotsMuru from '../../data/lab/lots-muru.json';
 import { ArchGen, PARTS_PER_LOT } from './archgen';
 import { STYLES } from './styles';
 import { archTextures } from './textures';
+import aoWgsl from './ssao.wgsl?raw';
 
 const q = urlFlags();
 const num = (k: string, d: number) => (q.has(k) ? Number(q.get(k)) : d);
@@ -87,7 +89,7 @@ async function main() {
     cam.x = ax;
     cam.y = ay;
   }
-  const look = { detail: num('detail', 1), night: num('night', 0), oldLight: num('oldlight', 0) };
+  const look = { detail: num('detail', 1), night: num('night', 0), oldLight: num('oldlight', 0), ao: num('ao', 1), aoR: num('aor', 2.5) };
   /** an orthographic view along fw (towards the eye) round t, hw × hh half extents */
   const ortho = (fw: number[], t: number[], hw: number, hh: number) => {
     const r = norm(cross([0, 0, 1], fw));
@@ -132,6 +134,16 @@ async function main() {
 
   let depth: GPUTexture | null = null;
   let msaa: GPUTexture | null = null;
+  // screen-space occlusion (ssao.wgsl): the scene drawn into its own texture, its depth kept; the occlusion into aoT;
+  // then the two composed onto the canvas
+  let sceneT: GPUTexture | null = null;
+  let aoT: GPUTexture | null = null;
+  let aoGroup: GPUBindGroup | null = null;
+  let compGroup: GPUBindGroup | null = null;
+  const aoMod = device.createShaderModule({ label: 'arch lab ssao', code: aoWgsl.replaceAll('DEPTH_T', samples > 1 ? 'texture_depth_multisampled_2d' : 'texture_depth_2d') });
+  const aoPipe = device.createRenderPipeline({ label: 'arch lab ssao', layout: 'auto', vertex: { module: aoMod, entryPoint: 'vsFull' }, fragment: { module: aoMod, entryPoint: 'fsAo', targets: [{ format: 'r8unorm' }] } });
+  const compPipe = device.createRenderPipeline({ label: 'arch lab compose', layout: 'auto', vertex: { module: aoMod, entryPoint: 'vsFull' }, fragment: { module: aoMod, entryPoint: 'fsComp', targets: [{ format }] } });
+  const aoU = device.createBuffer({ label: 'arch lab ssao params', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const resize = () => {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
@@ -141,7 +153,13 @@ async function main() {
     canvas.height = h;
     depth?.destroy();
     msaa?.destroy();
-    depth = device.createTexture({ size: [w, h], format: depthFormat, sampleCount: samples, usage: GPUTextureUsage.RENDER_ATTACHMENT });
+    depth = device.createTexture({ size: [w, h], format: depthFormat, sampleCount: samples, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+    sceneT?.destroy();
+    aoT?.destroy();
+    sceneT = device.createTexture({ size: [w, h], format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+    aoT = device.createTexture({ size: [w, h], format: 'r8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+    aoGroup = device.createBindGroup({ layout: aoPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: depth.createView() }, { binding: 1, resource: { buffer: aoU } }] });
+    compGroup = device.createBindGroup({ layout: compPipe.getBindGroupLayout(0), entries: [{ binding: 1, resource: { buffer: aoU } }, { binding: 2, resource: aoT.createView() }, { binding: 3, resource: sceneT.createView() }] });
     msaa = samples > 1 ? device.createTexture({ size: [w, h], format, sampleCount: samples, usage: GPUTextureUsage.RENDER_ATTACHMENT }) : null;
   };
 
@@ -159,14 +177,29 @@ async function main() {
     gen.setView(m, [...sun, 1.15 * (1 - look.night * 0.85)], [...fw, upp], (performance.now() - t0) / 1000, look.night, look.detail, look.oldLight, sunVP);
     const e = device.createCommandEncoder();
     if (sunVP) gen.drawLabShadow(e);
-    const view = ctx.getCurrentTexture().createView();
+    const view = sceneT!.createView();
     const sky = look.night > 0.5 ? { r: 0.08, g: 0.1, b: 0.16, a: 1 } : { r: 0.8, g: 0.86, b: 0.9, a: 1 };
     const pass = e.beginRenderPass({
       colorAttachments: [{ view: msaa ? msaa.createView() : view, resolveTarget: msaa ? view : undefined, clearValue: sky, loadOp: 'clear', storeOp: msaa ? 'discard' : 'store' }],
-      depthStencilAttachment: { view: depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
+      depthStencilAttachment: { view: depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
     });
     gen.drawLab(pass);
     pass.end();
+    // the occlusion, then the scene darkened by it onto the canvas
+    const hh = cam.zoom / 2;
+    device.queue.writeBuffer(aoU, 0, new Float32Array([(hh * canvas.width) / canvas.height, hh, canvas.width, canvas.height, look.aoR, look.ao, 2000, num('aodbg', 0)]));
+    const ap = e.beginRenderPass({ colorAttachments: [{ view: aoT!.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [1, 1, 1, 1] }] });
+    if (look.ao > 0) {
+      ap.setPipeline(aoPipe);
+      ap.setBindGroup(0, aoGroup!);
+      ap.draw(3);
+    }
+    ap.end();
+    const cp = e.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }] });
+    cp.setPipeline(compPipe);
+    cp.setBindGroup(0, compGroup!);
+    cp.draw(3);
+    cp.end();
     device.queue.submit([e.finish()]);
     requestAnimationFrame(frame);
   };
