@@ -73,7 +73,7 @@ function sourceHash(root = ROOT) {
 }
 
 /** what's at the worktree's top that no build reads (everything else is hashed and copied) */
-const NOT_BUILT = new Set(['node_modules', 'dist', 'docs', 'scripts', 'perf-reports', 'LICENSE', 'package-lock.json']);
+const NOT_BUILT = new Set(['node_modules', 'dist', 'docs', 'scripts', 'perf-reports', 'LICENSE', 'package-lock.json', 'local']); // (local/: the user's own licensed assets, fetched at run time, never built — and its links are junctions)
 /** the worktree's top-level entries a build is made of */
 export const buildInputs = (root = ROOT) => fs.readdirSync(root).filter((n) => !NOT_BUILT.has(n) && !n.startsWith('.') && !n.endsWith('.md'));
 
