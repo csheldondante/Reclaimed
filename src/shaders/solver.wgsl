@@ -55,7 +55,7 @@ struct SolverU { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4
 //  [3] x frame: the share of a deformable's goal that is its whole part's rigid fit (the rest its region's; 1: stiff
 //      between yields, as a girder), y dent strength (energy a cell³ of dent: a hit's kinetic energy over this × the
 //      contact's area is how deep it dents), zw 0
-@group(0) @binding(23) var<uniform> SM: array<vec4<f32>, 160>;
+@group(0) @binding(23) var<uniform> SM: array<vec4<f32>, 192>;
 
 // Per lane (slot b's lanes at b * NN ..; lane l holds node l and contact point l), LANE_V vec4 (solver.ts packs them;
 // one buffer: a stage binds at most 8 storage buffers):

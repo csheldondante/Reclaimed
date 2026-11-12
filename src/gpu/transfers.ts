@@ -235,6 +235,7 @@ export const TRANSFERS: TransferSite[] = [
   { file: 'gpu/profiler.ts', fn: 'Profiler.endFrame', what: 'timestamps, up to 1 KB', why: 'the perf overlay', rate: 'frame', play: 'debug', flag: '?perf=1 / ?hitch=1' },
 
   // ---- labs, benches, tests ----
+  { file: 'roadlab/grader.ts', fn: 'RoadGrader.run', n: 2, what: 'the lay’s stats, 32 B, and its two timestamps, 16 B', why: 'the road lab’s report: kernel GPU ms, intervals against K (RD1)', rate: 'edit', play: 'no' },
   { file: 'noiselab/lab.ts', fn: 'NoiseLabGpu.once', what: 'the lab window, w×h×16 B', why: 'the noise lab page', rate: 'edit', play: 'no' },
   { file: 'perf/bench/device.ts', fn: 'readOnce', what: 'up to 34 MB', why: 'the bench\'s readback rate', rate: 'demand', play: 'no' },
   { file: 'perf/bench/page.ts', fn: 'GpuTimer.read', what: 'timestamps', why: 'bench timing', rate: 'demand', play: 'no' },
@@ -301,6 +302,8 @@ export const TRANSFERS: TransferSite[] = [
   { kind: 'upload', file: 'inhabitants/system.ts', fn: 'InhabitantsGpu.encode', n: 2, size: 'small', what: 'the species table ~42 KB (when a species is added) and the orders + walk paths ~40 KB (when an order changes); both whole, only when dirty', why: 'species rigs and group orders for the GPU', rate: 'edit', play: 'flag', flag: '?life=' },
   { kind: 'copy', file: 'inhabitants/system.ts', fn: 'InhabitantsGpu.encode', n: 1, size: 'small', what: 'the group sums, 256×8×4 B = 8 KB, into the read buffer', why: 'the CPU\'s view of each group (centre, count)', rate: 'timed', every: '10 ticks', play: 'flag', flag: '?life=' },
   { kind: 'upload', file: 'inhabitants/system.ts', fn: 'InhabitantsGpu.writeParams', n: 1, size: 'small', what: 'the params block, 80 B', why: 'time, focus, LOD and a slide\'s shift', rate: 'frame', play: 'flag', flag: '?life=' },
+  { kind: 'upload', file: 'roadlab/grader.ts', fn: 'RoadGrader.upload', size: 'small', what: 'the road path records: 16 B a header, 32 a road, 16 a point (the ladder: ~1.5 KB)', why: 'the road lab’s roads, once (RD1)', rate: 'demand', play: 'no' },
+  { kind: 'upload', file: 'roadlab/control.ts', fn: 'RoadLabControl.constructor', size: 'large', what: 'the structures’ mesh, 1152 B a box (130 boxes: 150 KB)', why: 'the road lab’s placeholder ramps, stairs and towers, once (RD1)', rate: 'demand', play: 'no' },
   { kind: 'upload', file: 'noiselab/lab.ts', fn: 'NoiseLabGpu.once', n: 2, size: 'small', what: 'a uniform slot per pass (~112 B each) and the layer params (a few hundred B)', why: 'one noise lab generation (a slider change)', rate: 'demand', play: 'no' },
   { kind: 'upload', file: 'perf/bench/device.ts', fn: 'ioRates', n: 2, size: 'large', what: 'a 34 MB source fill; then 1, 8 and 34 MB writes, timed', why: 'the device bench\'s upload rates', rate: 'demand', play: 'no' },
   { kind: 'copy', file: 'perf/bench/device.ts', fn: 'ioRates', n: 1, size: 'large', what: '34 MB buffer to buffer, 4 a round', why: 'the device bench\'s copy rate', rate: 'demand', play: 'no' },

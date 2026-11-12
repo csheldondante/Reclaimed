@@ -2171,6 +2171,17 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | FM3 | Farms: (done, FM2 commit: the farmhouse claimed as a building's columns) the crops aren't instances (a ground look only: no stalks standing in the rows); fs-box and the far tiles' bake read the crop band as no plants (they don't draw the rows) | M | open |
 | FM4 | Farms: the crop stage follows the field's build (ripe once built) and stays ripe; harvest, fallow and the in-game seasons' cycle, and drought hurting crops (DESIGN §6), are later | M | open |
 
+## Roads (2026-11-12, `trackA-roadlab`; DESIGN.md §12, §1-§3)
+
+The user: "roads flatten and color terrain then have bridges ramps and stairs as optional external meshes and the road
+path independent of both a guaranteed fixed path defined in curves and width"; "experiment to determine the grade for
+ramps stairs and towers"; the flattening "modify the actual column heights"; road data as a new interval, no wider buffers.
+
+| id | item | size | status |
+|---|---|---|---|
+| RD1 | road lab: path record, cut and fill, road interval, grade ladder (the user, 2026-11-12) | M | done (trackA-roadlab, the road lab commit) |
+| RD2 | roads in town from path records (ribbons removed) | L | open |
+
 ## Living town (2026-11-10, `trackA-haul`; docs/design/LIVING_TOWN.md)
 
 The user: "I would like to see agents (many of them) traveling between locations, hauling and doing stuff. I would like a parameterized quarry that digs deep and forest clearing that leaves stumps." Takes over CG3 (M4c).

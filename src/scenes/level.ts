@@ -64,6 +64,7 @@ import { captureWorld, loadSnapshot, saveSnapshot } from '../sim/snapshot';
 import { loadWarm, saveWarm, warmKey } from '../sim/warm-cache';
 import { StreamPlanner } from './planner';
 import type { StreetLabControl } from '../streetlab/control';
+import type { RoadLabControl } from '../roadlab/control';
 import { fieldTownBox, hasGrid } from '../citygen/town';
 import type { FieldTowns } from '../citygen/towns';
 import type { LivingTowns } from '../citylife/towns';
@@ -280,6 +281,8 @@ export class LevelScene implements Scene {
   noiseLab?: NoiseLabControl;
   /** (street lab, m1) its panel, its GPU runs and the display (level.streetLab) */
   streetLab?: StreetLabControl;
+  /** (road lab, RD1) the grade ladder's roads, structures and labels (level.roadLab) */
+  roadLab?: RoadLabControl;
   /** (citygen M4b, ?citygen=fields) the towns made by the GPU field generator, streamed (citygen/towns.ts) */
   fieldTowns?: FieldTowns;
   /** (trackA-opps, ?opps=1) the season loop's card sheet, removed on dispose (scenes/level/season.ts) */
@@ -660,6 +663,7 @@ export class LevelScene implements Scene {
     this.stationsBar?.dispose();
     this.noiseLab?.dispose();
     this.streetLab?.dispose();
+    this.roadLab?.dispose();
     this.seasonUi?.();
     this.livingTowns?.dispose();
     this.townContracts?.dispose();

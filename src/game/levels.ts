@@ -15,6 +15,7 @@ import { generatePlayground, STATIONS, type Station } from '../levels/playground
 import { generateTraitlab, TRAITLAB_STATIONS } from '../levels/traitlab';
 import { generateNoiselab } from '../levels/noiselab';
 import { generateBestiary } from '../levels/bestiary';
+import { generateRoadlab } from '../levels/roadlab';
 import { loadFixtureLand } from '../lab/fixtures';
 import type { TownFixtureHeader } from '../lab/townfixture';
 import type { FlowKit } from '../flow/install';
@@ -67,6 +68,8 @@ export interface LevelDef {
   noiseLab?: boolean;
   /** (street lab, trackA-streetlab m1) streets drawn over a real site's land on the GPU (streetlab/control.ts) */
   streetLab?: boolean;
+  /** (road lab, RD1) the grade ladder: road path records laid into the columns on the GPU (roadlab/control.ts) */
+  roadLab?: boolean;
   /** the warmup's ticks before the level opens (default the game's) */
   warmupTicks?: number;
   /** (round 128m, townlab) land loaded rather than made, before the level is (the street lab's site fixture): null — generate */
@@ -230,6 +233,17 @@ export const LEVELS: LevelDef[] = [
     rivers: 'table',
     warmupTicks: 1,
     load: (params) => loadFixtureLand(streetSite(params.get('site'))),
+  },
+  {
+    // (road lab, RD1; the user 2026-11-12) the grade ladder: ?skipmenu=1&level=roadlab (&row=0..8, &zoom=, &pitch=, &roadnow=1)
+    id: 'roadlab',
+    name: 'The Road Lab',
+    blurb: 'Roads up a step at every grade: graded, ramps, stairs, switchbacks and towers.',
+    model: 'sign',
+    generate: (dims) => generateRoadlab(dims),
+    sandbox: true,
+    hidden: true,
+    roadLab: true,
   },
   {
     id: 'sandbox',
