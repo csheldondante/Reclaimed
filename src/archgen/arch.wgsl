@@ -1436,15 +1436,25 @@ fn grid(seed: u32) {
         }
         // split: each corner a quad with its two edges' middles and the centre (the middles on the straight edges
         // between nudged corners, so a piece's cells together are exactly the piece)
-        var cen = vec2<f32>(0.0);
-        for (var k = 0u; k < nv; k++) { cen += V[k]; }
+        // each corner's next and previous, built whole (2026-11-12, the phone: a corner's neighbour read as
+        // V[(k + nv - 1u) % nv] — an index modulo a count known only at run time — came back on the Mali with its y
+        // from the unused V[3], 0, so the cell's corner landed ~145 m away and the roofs drew as spikes; perf-reports
+        // archdump of the Pixel 9a. The desktop never did. No index arithmetic on a run-time count here.)
+        var Vn = array<vec2<f32>, 4>(V[1], V[2], V[3], V[0]);
+        var Vp = array<vec2<f32>, 4>(V[3], V[0], V[1], V[2]);
+        if (!merged) {
+          Vn = array<vec2<f32>, 4>(V[1], V[2], V[0], V[0]);
+          Vp = array<vec2<f32>, 4>(V[2], V[0], V[1], V[1]);
+        }
+        var cen = V[0] + V[1] + V[2];
+        if (merged) { cen += V[3]; }
         cen = nudge(cen / f32(nv));
         var kept = array<bool, 4>(false, false, false, false);
         var allIn = true;
         var anyIn = false;
         for (var k = 0u; k < nv; k++) {
           let vk = V[k];
-          let qc = (vk + (vk + V[(k + 1u) % nv]) * 0.5 + cen + (V[(k + nv - 1u) % nv] + vk) * 0.5) * 0.25;
+          let qc = (vk + (vk + Vn[k]) * 0.5 + cen + (Vp[k] + vk) * 0.5) * 0.25;
           kept[k] = inQuad(gPar, qc) && inQuad(gFpG, qc);
           allIn = allIn && kept[k];
           anyIn = anyIn || kept[k];
@@ -1467,7 +1477,7 @@ fn grid(seed: u32) {
         for (var k = 0u; k < nv; k++) {
           if (!kept[k]) { continue; }
           let vk = V[k];
-          gridCell(array<vec2<f32>, 4>(vk, (vk + V[(k + 1u) % nv]) * 0.5, cen, (V[(k + nv - 1u) % nv] + vk) * 0.5), seed, shanty);
+          gridCell(array<vec2<f32>, 4>(vk, (vk + Vn[k]) * 0.5, cen, (Vp[k] + vk) * 0.5), seed, shanty);
         }
       }
     }

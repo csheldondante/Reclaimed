@@ -2311,7 +2311,8 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   step only, or as macro variation several cells across.)
 - AG22 (2026-11-12, the phone) Roofs drawn as long spikes running up the screen to a few far points (a vertex very high:
   a finite height, not the NaN the a6745c06 guard catches). Desktop dump clean (?archdump=1, 0 odd parts); waiting on
-  the phone's dump to compare word for word.
+  the phone's dump to compare word for word. (Found: the grid's run-time-modulo corner index on the Mali; fixed
+  the same day — see DEVLOG; to confirm on the phone.)
 - AG23 (the user, 2026-11-12) One irregular grid shared by every lot, not one per lot: "Can't disjoint lots share the
   same irregular grid? ... then you could even build features like bridges over the city roads." Quads only ("The
   irregular tiles here also gave triangle tiles and do not follow the quad based design I expect"). Lanes inside a

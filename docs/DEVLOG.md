@@ -23301,3 +23301,10 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
 - Planned with the user (BACKLOG AG23–AG25, DECISIONS 2026-11-12): one world-fixed irregular grid of quads shared by
   every lot (lanes as cells, bridges over roads); the phone's static world from baked tiles lit live, fixed zoom steps,
   one shadow render; Synty trees as pre-rendered sprites (local only).
+- (later, same day) The phone's dump (Pixel 9a, Mali Valhall): 31 lots, all of them the irregular grid's styles
+  (harbour, stilts), with 199 bodies and roofs whose one corner sat ~145 m off: its x right, its y half the others'.
+  That corner is a cell's (V[prev] + vk) / 2 with V[prev] read as V[(k + nv - 1u) % nv], an index modulo a count known
+  only at run time (3 for a lone triangle, 4 for a merged pair); the Mali came back with the y of the unused V[3] (0).
+  Now each corner's next and previous are built whole (Vn, Vp) with no run-time index arithmetic. Desktop dump after the
+  change: still no odd part. The two desktop dumps' records differ between runs (the town grows while it loads), so a
+  word-for-word diff wants the same records — not needed here, the phone's own dump shows the fault.
