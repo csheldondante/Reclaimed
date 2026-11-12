@@ -88,6 +88,24 @@ async function main() {
     cam.y = ay;
   }
   const look = { detail: num('detail', 1), night: num('night', 0), oldLight: num('oldlight', 0) };
+  /** an orthographic view along fw (towards the eye) round t, hw × hh half extents */
+  const ortho = (fw: number[], t: number[], hw: number, hh: number) => {
+    const r = norm(cross([0, 0, 1], fw));
+    const u = cross(fw, r);
+    const D = 2000;
+    const m = new Float32Array(16);
+    const row = (i: number, v: number[], s: number, c: number) => {
+      m[i] = v[0] * s;
+      m[4 + i] = v[1] * s;
+      m[8 + i] = v[2] * s;
+      m[12 + i] = c;
+    };
+    row(0, r, 1 / hw, -dot(r, t) / hw);
+    row(1, u, 1 / hh, -dot(u, t) / hh);
+    row(2, fw, -1 / (2 * D), 0.5 + dot(fw, t) / (2 * D));
+    row(3, [0, 0, 0], 0, 1);
+    return m;
+  };
   const viewProj = (w: number, h: number) => {
     const yw = (cam.yaw * Math.PI) / 180;
     const pt = (cam.pitch * Math.PI) / 180;
@@ -135,8 +153,12 @@ async function main() {
     // (the new light: Townscaper's side light, low — half the walls in view in the cool shade)
     const sy = ((cam.yaw - (look.oldLight ? 55 : 115)) * Math.PI) / 180;
     const sun = look.oldLight ? norm([Math.cos(sy) * 0.55, Math.sin(sy) * 0.55, 0.75]) : norm([Math.cos(sy) * 0.8, Math.sin(sy) * 0.8, 0.6]);
-    gen.setView(m, [...sun, 1.15 * (1 - look.night * 0.85)], [...fw, upp], (performance.now() - t0) / 1000, look.night, look.detail, look.oldLight);
+    // the sun's shadow map round the view (its half width the view's diagonal and some), not with the old light
+    const half = cam.zoom * Math.max(1, canvas.width / canvas.height) * 0.9 + 20;
+    const sunVP = look.oldLight ? undefined : ortho(sun, [cam.x, cam.y, cam.z], half, half);
+    gen.setView(m, [...sun, 1.15 * (1 - look.night * 0.85)], [...fw, upp], (performance.now() - t0) / 1000, look.night, look.detail, look.oldLight, sunVP);
     const e = device.createCommandEncoder();
+    if (sunVP) gen.drawLabShadow(e);
     const view = ctx.getCurrentTexture().createView();
     const sky = look.night > 0.5 ? { r: 0.08, g: 0.1, b: 0.16, a: 1 } : { r: 0.8, g: 0.86, b: 0.9, a: 1 };
     const pass = e.beginRenderPass({

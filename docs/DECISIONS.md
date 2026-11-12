@@ -3761,3 +3761,11 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   normal and depth; lit live each frame; one baked shadow render.
 - Ground textures: "The texture is basically pointless then at this scale." → off on the phone at play zoom.
 - One shared irregular grid across lots, quads only, lanes as cells, bridges over roads (BACKLOG AG23).
+
+## 2026-11-12 — the Townscaper bar (archgen)
+
+- The toy test's target is at least Townscaper's quality (the user's reference shot): warm light, cool shade, cast
+  shadows, occlusion, edge lines, smoothed normals across near-parallel cells, more geometry (rounded corners, set-back
+  windows, balconies, arches), quoins, brick through plaster, plants on buildings.
+- The phone gets the new geometry and detail too; if the phone must give something up, it is the curved tile roofs.
+

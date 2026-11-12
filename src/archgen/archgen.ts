@@ -49,6 +49,9 @@ const VERTS: Record<number, number> = {
   [KIND.plantM]: 1896,
 };
 /** each kind and its vertex stage (draw.wgsl) */
+/** the lab's shadow map's side (texels) */
+export const SHADOW_RES = 4096;
+
 export const ARCH_DRAWS = [
   [KIND.body, 'vsArchBody'],
   [KIND.roof, 'vsArchRoof'],
@@ -107,7 +110,7 @@ export class ArchGen {
   private compactPipe: GPUComputePipeline;
   private genGroup: GPUBindGroup;
   private compactGroup: GPUBindGroup;
-  private lab?: { pipes: GPURenderPipeline[]; group: GPUBindGroup; view: GPUBuffer };
+  private lab?: { pipes: GPURenderPipeline[]; group: GPUBindGroup; view: GPUBuffer; shadowPipes: GPURenderPipeline[]; shadowGroup: GPUBindGroup; shadowView: GPUBuffer; shadowMap: GPUTexture };
   nstyles = STYLES.length;
   /** a style for every lot, or -1 the district's */
   style = -1;
@@ -228,11 +231,19 @@ export class ArchGen {
   /** the lab's pipelines for a colour target (MSAA samples) */
   labDraw(format: GPUTextureFormat, depthFormat: GPUTextureFormat, samples = 1): void {
     const d = this.device;
-    const view = d.createBuffer({ label: 'arch lab view', size: 112, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const view = d.createBuffer({ label: 'arch lab view', size: 176, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    // the sun's shadow map: the same draws from the sun (their view's viewProj the sun's), every lab draw casting
+    const shadowView = d.createBuffer({ label: 'arch lab sun view', size: 176, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const shadowMap = d.createTexture({ label: 'arch lab shadow map', size: [SHADOW_RES, SHADOW_RES], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+    // (the shadow pass binds a stand-in: a pass cannot sample the map it writes)
+    const noShadow = d.createTexture({ size: [1, 1], format: 'depth32float', usage: GPUTextureUsage.TEXTURE_BINDING });
+    const cmp = d.createSampler({ compare: 'less', magFilter: 'linear', minFilter: 'linear' });
     const dl = d.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
       ],
     });
     // (group 1: the material textures, shared by the device's draws — textures.ts)
@@ -250,18 +261,57 @@ export class ArchGen {
         multisample: { count: samples },
       }),
     );
-    const group = d.createBindGroup({ layout: dl, entries: [view, this.arch].map((buffer, binding) => ({ binding, resource: { buffer } })) });
-    this.lab = { pipes, group, view };
+    const shadowPipes = ARCH_DRAWS.map(([, vs]) =>
+      d.createRenderPipeline({
+        label: 'arch shadow ' + vs,
+        layout,
+        vertex: { module: dm, entryPoint: vs },
+        primitive: { topology: 'triangle-list', cullMode: 'none' },
+        depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'less', depthBias: 2, depthBiasSlopeScale: 2.5 },
+      }),
+    );
+    const groupOf = (v: GPUBuffer, map: GPUTexture) =>
+      d.createBindGroup({
+        layout: dl,
+        entries: [
+          { binding: 0, resource: { buffer: v } },
+          { binding: 1, resource: { buffer: this.arch } },
+          { binding: 2, resource: map.createView() },
+          { binding: 3, resource: cmp },
+        ],
+      });
+    this.lab = { pipes, group: groupOf(view, shadowMap), view, shadowPipes, shadowGroup: groupOf(shadowView, noShadow), shadowView, shadowMap };
   }
 
   /** the lab's view: viewProj (column-major), towards the sun + strength, towards the eye + units a pixel, time/night/detail */
-  setView(viewProj: Float32Array, sun: number[], eye: number[], time: number, night: number, detail: number, oldLight = 0): void {
-    const f = new Float32Array(28);
+  setView(viewProj: Float32Array, sun: number[], eye: number[], time: number, night: number, detail: number, oldLight = 0, sunVP?: Float32Array): void {
+    const f = new Float32Array(44);
     f.set(viewProj, 0);
     f.set(sun, 16);
     f.set(eye, 20);
     f.set([time, night, detail, oldLight], 24);
+    // (no sun's view: the map never drawn, every point lit — a zero matrix's clip w is 0, see shadowAt)
+    if (sunVP) f.set(sunVP, 28);
     this.device.queue.writeBuffer(this.lab!.view, 0, f);
+    if (sunVP) {
+      const g = f.slice();
+      g.set(sunVP, 0);
+      this.device.queue.writeBuffer(this.lab!.shadowView, 0, g);
+    }
+  }
+
+  /** the sun's shadow map, drawn from the sun's view (setView's sunVP) */
+  drawLabShadow(e: GPUCommandEncoder): void {
+    const lab = this.lab!;
+    const pass = e.beginRenderPass({ colorAttachments: [], depthStencilAttachment: { view: lab.shadowMap.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' } });
+    pass.setBindGroup(0, lab.shadowGroup);
+    pass.setBindGroup(1, archTextures(this.device).group);
+    ARCH_DRAWS.forEach(([k], i) => {
+      if (k === KIND.win) return;
+      pass.setPipeline(lab.shadowPipes[i]);
+      pass.drawIndirect(this.args, k * 16);
+    });
+    pass.end();
   }
 
   drawLab(pass: GPURenderPassEncoder): void {
@@ -276,6 +326,7 @@ export class ArchGen {
   }
 
   destroy(): void {
-    for (const b of [this.arch, this.args, this.genU, this.compU, this.lab?.view]) b?.destroy();
+    for (const b of [this.arch, this.args, this.genU, this.compU, this.lab?.view, this.lab?.shadowView]) b?.destroy();
+    this.lab?.shadowMap.destroy();
   }
 }

@@ -9,10 +9,29 @@ struct View {
   eye: vec4<f32>,
   /** x time, y night (0–1), z detail (0 phone … 1 PC) */
   p: vec4<f32>,
+  /** the sun's view (the shadow map's) */
+  sunVP: mat4x4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> V: View;
 @group(0) @binding(1) var<storage, read> instances: array<vec4<u32>>;
+@group(0) @binding(2) var shadowMap: texture_depth_2d;
+@group(0) @binding(3) var shadowCmp: sampler_comparison;
+
+/** the sun's light reaching w (1 lit, 0 in shadow): 3×3 filtered; outside the map, lit */
+fn shadowAt(w: vec3<f32>, n: vec3<f32>) -> f32 {
+  let c = V.sunVP * vec4<f32>(w + n * 0.04, 1.0);
+  let uv = vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5);
+  let px = 1.0 / f32(textureDimensions(shadowMap).x);
+  var s = 0.0;
+  for (var i = -1; i <= 1; i++) {
+    for (var j = -1; j <= 1; j++) {
+      s += textureSampleCompareLevel(shadowMap, shadowCmp, uv + vec2<f32>(f32(i), f32(j)) * px, c.z - 0.0004);
+    }
+  }
+  let inside = all(uv > vec2<f32>(0.001)) && all(uv < vec2<f32>(0.999)) && c.w > 0.5;
+  return select(1.0, s / 9.0, inside);
+}
 
 fn archClip(w: vec3<f32>) -> vec4<f32> { return V.viewProj * vec4<f32>(w, 1.0); }
 fn archPlace() -> vec3<f32> { return vec3<f32>(0.0); }
@@ -36,7 +55,7 @@ fn fsLab(in: VO) -> @location(0) vec4<f32> {
     // Townscaper's light (the user's reference, 2026-11-12): a peach key with no wrap, the shade a cool teal sky rather
     // than a darker grey (the hue's turn reads as volume), a little bounce warm from the ground; the street's foot dark
     let L = normalize(V.sun.xyz);
-    let ndl = max(dot(n, L), 0.0);
+    let ndl = max(dot(n, L), 0.0) * shadowAt(in.wpos, normalize(sf.n));
     let sunC = vec3<f32>(1.0, 0.78, 0.62) * V.sun.w * 1.25;
     let sky = mix(vec3<f32>(0.2, 0.3, 0.36), vec3<f32>(0.34, 0.48, 0.6), n.z * 0.5 + 0.5);
     let bounce = vec3<f32>(0.16, 0.11, 0.08) * max(-n.z, 0.0);

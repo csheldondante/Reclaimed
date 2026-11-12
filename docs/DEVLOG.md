@@ -23331,3 +23331,10 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
   street. `?oldlight=1` the old light. Roof slopes now read lit / shaded; still flat where it matters most: no cast
   shadows, no occlusion, no edge lines — next, then the geometry (rounded corners, set-back windows, balconies, arches).
 
+## archlab: cast shadows (2026-11-12; AG26)
+
+- A 4096² sun shadow map in the lab (archgen.ts drawLabShadow): every lab draw but windows drawn again from the sun
+  (the same vertex stages; their view's viewProj is the sun's), depth bias 2 / slope 2.5; the map round the view (half
+  width the view's diagonal + 20 m), redrawn each frame. archlab.wgsl samples it 3×3 for the key light; `?oldlight=1`
+  draws no map. Buildings now shade each other, the streets and the ground (archlab, harbour, 50°).
+

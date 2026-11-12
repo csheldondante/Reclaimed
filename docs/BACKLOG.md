@@ -2335,6 +2335,21 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   baked into the tiles or drawn live to sway. Rendered from Synty, so local only, like the packs. Also: house walls on
   the phone are "a single smeared low res window on a solid color" against detailed roofs — baking at PC detail answers
   it on the phone.
+- AG26 (the user, 2026-11-12, a Townscaper shot: "Lets target at least this quality in our toy test") Not flat:
+  - Light: Townscaper's warm key / cool teal shade — done 7316a78e; the sun's cast shadows in archlab — done (this
+    commit); next screen-space occlusion (arches, eaves, the gaps between columns) and edge lines (creases dark, edges
+    caught by the light).
+  - Smoothed normals between nearly parallel neighbouring grid cells ("Townscaper also looks like it renders with
+    smoothed normals between nearly parallel irregular grid cells"): adjacent cells' walls that meet almost flat shade
+    as one curved wall.
+  - Geometry ("there is more geometry. Rounded corners, set back windows, balconies and arches"): corners rounded or
+    bevelled, windows recessed with sills and lintels, balconies (slab, brackets, railing in the trim colour, pots),
+    arches through ground floors and arcades.
+  - Variety ("you never added the corner stone features to the architecture. Or any of the other variety like plants
+    or patches of brick showing through plaster"): quoins on plaster and brick corners, brick showing through where
+    plaster has fallen, plants on buildings (window boxes, climbers, pots; ivy exists on some lots only).
+  - The phone gets all of it ("No put that detail on phone please. I think it's less of an issue than the curved
+    rooftops"): the curved tile roofs are what the phone gives up if it must, not the new geometry.
 - AG19 ("working with better ground and building textures") Texture sets (albedo/normal/roughness/AO) for walls, roofs,
   ground: ~12–16 CC0 sets (Poly Haven / ambientCG) in one texture array, KTX2-compressed, 512 phone / 1k PC; the
   generator keeps per-part tint, wear and pick. Waits on the user: may CC0 textures go in the public repo?
