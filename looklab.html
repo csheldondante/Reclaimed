@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Reclaimed — look lab</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #1d2328; font: 13px system-ui, sans-serif; color: #f2eee6; overflow: hidden; }
+      #view { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+      #panel { position: fixed; left: 8px; top: 8px; max-width: min(290px, calc(100% - 16px)); background: rgba(30, 26, 22, 0.74); border-radius: 10px; padding: 6px 10px; }
+      #panel .row { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+      #panel label { width: 54px; opacity: 0.85; }
+      #panel input[type='range'] { flex: 1; min-width: 0; }
+      #panel .toggles { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+      #panel .toggles label { width: auto; }
+      #panel summary { cursor: pointer; opacity: 0.9; }
+      #stats { opacity: 0.85; font-size: 11px; margin-top: 4px; white-space: pre; }
+      .fatal { position: fixed; inset: 20% 10%; background: #400; color: #fff; padding: 16px; white-space: pre-wrap; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="panel">
+      <details open>
+        <summary>look lab</summary>
+        <div class="row"><label>zoom</label><input id="zoom" type="range" min="0" max="1" step="0.001" /></div>
+        <div class="row"><label>turn</label><input id="yaw" type="range" min="0" max="360" step="1" /></div>
+        <div class="row"><label>pitch</label><input id="pitch" type="range" min="30" max="89" step="1" /></div>
+        <div class="row"><label>sun</label><input id="sun" type="range" min="0" max="360" step="1" /></div>
+        <div class="toggles">
+          <label><input id="tex" type="checkbox" checked /> painted</label>
+          <label><input id="trees" type="checkbox" checked /> trees</label>
+          <label><input id="houses" type="checkbox" checked /> buildings</label>
+          <label><input id="grade" type="checkbox" checked /> grade</label>
+          <label><input id="shadow" type="checkbox" checked /> shadows</label>
+        </div>
+        <div id="stats"></div>
+      </details>
+    </div>
+    <script type="module" src="/src/looklab/main.ts"></script>
+  </body>
+</html>
