@@ -1286,10 +1286,21 @@ fn posHash(c: vec2<f32>) -> u32 {
 fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
   // (room for the most a cell makes: a column, a parapet, a shrub, four stilts and a roof)
   if (gN + 7u > PPL) { return; }
+  // (three corners past a street: pulled onto it they'd lie in a line and the cell would stand as a triangle — the
+  // street keeps that sliver)
+  var past = 0u;
+  for (var k = 0u; k < 4u; k++) { if (distance(toStreet(q0[k]), q0[k]) > 0.05) { past++; } }
+  if (past >= 3u) { return; }
   var q = faceStreet(q0);
   let front = gFront;
   // (pulled flat onto a street: too thin to stand)
   if (quadArea(q) < 1.2) { return; }
+  // (a corner pulled into line with its two neighbours: a triangle in all but name)
+  for (var k = 0u; k < 4u; k++) {
+    let ea = normalize(q[(k + 1u) % 4u] - q[k]);
+    let eb = normalize(q[(k + 3u) % 4u] - q[k]);
+    if (dot(ea, eb) < -0.94) { return; }
+  }
   let c = (q[0] + q[1] + q[2] + q[3]) * 0.25;
   let ch = posHash(c);
   let g = gGround;
@@ -1468,10 +1479,10 @@ fn grid(seed: u32) {
           gridPiece(V, ph);
           continue;
         }
-        if (allIn && !shanty && ((merged && pr < 0.62) || (!merged && pr < 0.18))) {
-          var tq = V;
-          if (!merged) { tq[3] = V[2]; }
-          gridTerrace(tq, !merged, ph);
+        // (quads only, 2026-11-12, the user: "triangle tiles ... look terrible": a lone triangle is never one terrace —
+        // its three quad cells stand on their own)
+        if (merged && allIn && !shanty && pr < 0.62) {
+          gridTerrace(V, false, ph);
           continue;
         }
         for (var k = 0u; k < nv; k++) {

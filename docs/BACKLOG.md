@@ -2313,6 +2313,9 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   a finite height, not the NaN the a6745c06 guard catches). Desktop dump clean (?archdump=1, 0 odd parts); waiting on
   the phone's dump to compare word for word. (Found: the grid's run-time-modulo corner index on the Mali; fixed
   the same day, 524c6b08 — see DEVLOG. Confirmed on the phone: its next dump, 667 lots, 0 stretched parts. Done.)
+- AG23a done (the user, 2026-11-12: "fix the triangles on the irregular grid first ... They look terrible"): no
+  triangle terraces (a lone triangle's three quad cells stand on their own); a cell with three corners past a street,
+  or pulled into a straight line, is dropped. The shared world grid below is still open.
 - AG23 (the user, 2026-11-12) One irregular grid shared by every lot, not one per lot: "Can't disjoint lots share the
   same irregular grid? ... then you could even build features like bridges over the city roads." Quads only ("The
   irregular tiles here also gave triangle tiles and do not follow the quad based design I expect"). Lanes inside a

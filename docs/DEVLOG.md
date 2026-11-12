@@ -23309,3 +23309,16 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
   change: still no odd part. The two desktop dumps' records differ between runs (the town grows while it loads), so a
   word-for-word diff wants the same records — not needed here, the phone's own dump shows the fault.
 - Confirmed on the phone: its dump after 524c6b08 (Pixel 9a, 667 lots, 5299 roofs) has no stretched part (was 199).
+
+## archgen: no triangles in the irregular grid (2026-11-12; the user: "Can you fix the triangles on the irregular grid
+## first? They look terrible")
+
+- The triangles were terraces: a lone triangle piece (one whose neighbours paired off elsewhere) was made one roof
+  terrace, a triangular parapet and floor (archlab, harbour, top-down: five in view). Terraces are now merged quad pieces
+  only; a lone triangle is always its three quad cells.
+- Street edges: a cell kept for its centre (in the footprint grown 0.6) could have three corners past the street; pulled
+  onto it they lie in a line and the cell stands as a triangle. Such cells are dropped (the street keeps the sliver), and
+  so is any cell with a corner pulled almost straight (its two sides within ~20° of a line).
+- Seen in archlab (harbour and stilts, top-down and at 50°): no triangular parapets or roofs left. The world-shared grid
+  (AG23) is still to do.
+
