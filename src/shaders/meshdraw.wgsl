@@ -177,6 +177,23 @@ fn fsMeshZCut(in: MOut) -> FOut {
  */
 var<private> TILE_BAKE: bool = false;
 
+/** (road lab, RD1) a road surface's look on a top at world p: cobble — setts 0.5 × 0.35 in staggered rows (the world's
+ *  axes: placeholder, not along the road), each its own shade, dark joints; dirt road — lighter and darker streaks */
+fn roadLook(m: u32, alb: vec3<f32>, p: vec3<f32>, n1: f32) -> vec3<f32> {
+  let q = wo(p.xy);
+  if (m == MAT_COBBLE) {
+    let row = floor(q.y / 0.35);
+    let u = q.x / 0.5 + 0.5 * (row % 2.0);
+    let f = vec2<f32>(fract(u), fract(q.y / 0.35));
+    let joint = min(min(f.x, 1.0 - f.x) * 0.5, min(f.y, 1.0 - f.y) * 0.35);
+    let sett = randv(vec3<i32>(i32(floor(u)), i32(row), 5303));
+    let c = alb * (0.8 + 0.35 * sett);
+    return mix(alb * 0.45, c, smoothstep(0.015, 0.035, joint));
+  }
+  let streak = fbm2(q * vec2<f32>(0.6, 3.0));
+  return alb * (0.86 + 0.24 * streak + 0.06 * n1);
+}
+
 /** A material's ground colour (blown dust: a greyer silt). */
 fn groundAlbedo(m: u32) -> vec3<f32> {
   if (m == MAT_DRIFT) { return toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
@@ -431,9 +448,13 @@ fn meshSurf(in: MOut) -> Surf {
     }
     alb = toLinear(c);
   }
+  // (road lab, RD1) a road's surface: cobble setts in staggered rows with dark joints, a dirt road's wheel ruts — and
+  // no plants on either (roadLook)
+  let road = isRoadMat(mat);
+  if (road && isTop) { alb = roadLook(mat, alb, in.wpos, n1); }
   // plant cover on tops, a few tufts of it up the slopes
   // (plants on a face only near its top: a cut face isn't green all the way down — round 79)
-  let v = select(cf.y, 0.0, (!isTop && in.wpos.z < lk.top - 2.5) || noDetail(ND_PLANTS));
+  let v = select(cf.y, 0.0, (!isTop && in.wpos.z < lk.top - 2.5) || noDetail(ND_PLANTS) || road);
   if (v > 0.0) {
     let cover = select(smoothstep(0.8, 3.0, v) * 0.55 * (0.5 + 0.5 * n2), smoothstep(0.0, 1.2, v), isTop);
     if (n1 < cover) {

@@ -3526,17 +3526,41 @@ static claims and eight api modules import it (DA-P9);
 `opps/level-opps.ts` (scene wiring) imports the tune panel and `runplan/viewer.ts` (a page) imports WorldCore (DA-L9).
 Folders not named above (`hero`, whose path finder `units` uses, among them) aren't ruled yet.
 
+## Road path records (road lab, RD1, branch `trackA-roadlab`; contract src/api/contracts/roadpath.ts)
+
+The user (2026-11-12): roads flatten and colour the terrain; bridges, ramps and stairs are optional external meshes;
+the road's path is independent of both, "a guaranteed fixed path defined in curves and width".
+
+- **The record is the authority.** One read-only storage buffer of road records (`array<vec4<u32>>`): a header, two
+  vec4 a road (its points' range, surface kind dirt/cobble, flags — `ROAD_GRADED` —, reveal start and end, shoulder,
+  maxDz), a vec4 a point (world x, y; the profile z; the half width). The layout is in roadpath.ts; the WGSL mirror,
+  shaders/roadpath.wgsl (`RoadRec`, `RoadPt`, `roadRec`, `roadPt`, `roadSeg`), declares no binding (the includer binds
+  `roads`). Archgen's grow-in decal reads it from a draw pass later.
+- **Cut and fill are real column edits** (shaders/roadgrade.wgsl `roadLay`, roadlab/grader.ts): a dispatch a road,
+  run once when it's laid, a thread a column of its box. On the road: everything above the profile cut, soil filled up
+  to it, the top 0.3 the road's surface interval. On the shoulder: banks back to the land (fill 1:1, cut 1.5:1). A
+  road without `ROAD_GRADED` moves the ground at most maxDz (the structure carries it beyond). Plants cleared under it
+  (veg, vegNext). `roadPave` turns this road's dirt surface to cobble. Writes only WorldGpu.layers (bumpColumn) and veg.
+- **The road's surface interval**: material DirtRoad 40 / Cobble 41 (solid, strength 1: not structural, so the
+  structure pass keeps its word whole), aux = record + 1, word 2 bits 16-31 its reveal start (f16), word 3 its reveal
+  end (f32). A pass that re-packs the slot with `ivPack` keeps the material and the record link and drops the times —
+  read them from the record. The mesh draw (meshsource.wgsl `meshLayers`) binds the world's layers buffer itself, so it
+  sees all four words; meshdraw.wgsl `roadLook` uses only the material (cobble setts, dirt streaks, no plants).
+- **K**: a road column holds 3 intervals at most in the lab (stone, soil, road): far under K 16. It needs a new
+  interval only where the road sits on something it doesn't join (the fill joins soil).
+
 ## Limits (round 128o, DA-G3; DESIGN.md §24 "Limits … are documented with what they cost us")
 
 The hard sizes the world is built on, what holds them, and what raising each costs. test/unit/materials-tables.test.ts
 holds the material tables to each other.
 
-**Material table: 40 of 40 ids used, no headroom.**
-- `MAX_MATERIALS = 40` (world/materials.ts); `MATERIALS` has 40 entries (ids 0-39, Air to External); `packMaterialTable`
-  throws past it. A 41st material needs the table widened (BACKLOG DA-E1, which the user wants, later).
+**Material table: 42 of 48 ids used.**
+- `MAX_MATERIALS = 48` (world/materials.ts; 40 until the road lab, RD1, added DirtRoad 40 and Cobble 41 and widened it
+  to 48 — not yet phone-benched, see below); `MATERIALS` has 42 entries (ids 0-41, Air to Cobble); `packMaterialTable`
+  throws past it. Past 48 the same edit again (BACKLOG DA-E1).
 - Tables that must grow together: `MATERIALS`/`MAT` and `MAX_MATERIALS` (world/materials.ts); materials.wgsl
-  `MATS: array<Material, 40>` (a uniform, 5 vec4 = 80 B a material, `MATERIAL_STRIDE_FLOATS` 20, 3.2 KB); phys.wgsl
-  `PM` and solver.wgsl `SM` (`array<vec4<f32>, 160>`, 4 vec4 a material, from physics.ts `packPhysMats` and
+  `MATS: array<Material, 48>` (a uniform, 5 vec4 = 80 B a material, `MATERIAL_STRIDE_FLOATS` 20, 3.8 KB); phys.wgsl
+  `PM` and solver.wgsl `SM` (`array<vec4<f32>, 192>`, 4 vec4 a material, from physics.ts `packPhysMats` and
   solver/materials.ts `packSolverMats`).
 - Lists of ids mirrored between TS and WGSL, which must change together: what the field mesh draws (meshregion.wgsl
   `fieldMat` = world/materials.ts `fieldMeshed`), what a broken solid becomes (materials.wgsl `rubbleOf` =
@@ -3549,7 +3573,8 @@ holds the material tables to each other.
   and was never measured, so DA-E1 starts with a phone-bench toggle diff of a wider table.
 
 **Material id width: 8 bits (256 ids) in every packed word that holds one.** Interval word 2 (`mat | aux << 8`, bits
-16-31 unused, word 3 spare and zeroed by every `ivPack`); the surface word (z 17 bits as 9.8 fixed point, mat 8 at bit
+16-31 unused except by a road's surface interval — its reveal start, f16 — and word 3 spare and zeroed by every
+`ivPack` except there: a road's reveal end; see "Road path records"); the surface word (z 17 bits as 9.8 fixed point, mat 8 at bit
 17, slot count 5 at 25, buried and gap flags); a pick's info word (mat 8, z 9, flags 15); structure voxels
 (grids.wgsl `voxMat`); render instances (renderprep.wgsl, mat | flags << 8); physics voxels (phys.wgsl `matOf`); the
 edit and brush params (material in the low byte, shake in 8-15). The test checks `MAX_MATERIALS` fits the interval,

@@ -136,6 +136,11 @@ export const MAT = {
    * terrain's draws skip it (its owner draws it). aux = the material it becomes if its owner lets go (0: stone).
    */
   External: 39,
+  /** (road lab, RD1) a road's surface interval while it's dirt: a thin solid at the top of a road column (shaders/roadgrade.wgsl);
+   *  aux = its road record + 1 (api/contracts/roadpath.ts), z bits 16..31 its reveal start (f16), w its reveal end (f32) */
+  DirtRoad: 40,
+  /** (road lab, RD1) the same interval paved: cobble setts (the road's reveal end) */
+  Cobble: 41,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -230,9 +235,16 @@ export const MATERIALS: MaterialDef[] = [
   // external (round 99, sim/external.ts): owned by another system, which draws it; to the sims, rock that never gives
   // by itself (its owner decides when it breaks); moss takes on it as on stone
   { ...NONE, name: 'external', albedo: [0.4, 0.39, 0.37], state: MatState.Solid, bear: 1, growthCap: 1.2, suitability: 0.3, porosity: 0.2, span: Infinity },
+  // (road lab, RD1) road surfaces: solid ground (strength 1: never structural, so the structure pass keeps the slot's
+  // word as it is), nothing grows on them; drawn by the field mesh. Colours chosen for value against grass (~0.45),
+  // soil (0.36) and stone (0.39): dirt road a pale dusty tan (0.55), cobble a cool mid grey (0.49, darker than the white of a placeholder's concrete) with dark joints
+  // (meshdraw.wgsl roadLook)
+  { ...NONE, name: 'dirt road', albedo: [0.68, 0.56, 0.4], state: MatState.Solid, bear: 1, porosity: 0.35, smooth: 2 },
+  { ...NONE, name: 'cobble', albedo: [0.5, 0.49, 0.47], state: MatState.Solid, bear: 1, porosity: 0.15, specular: 0.12, smooth: 2 },
 ];
 
-export const MAX_MATERIALS = 40;
+/** (road lab, RD1: 40 → 48 for the road surfaces; the uniform's MATS, phys.wgsl PM and solver.wgsl SM sized by it) */
+export const MAX_MATERIALS = 48;
 /** Floats per material in the GPU uniform: 5 x vec4<f32>. Must match materials.wgsl. */
 export const MATERIAL_STRIDE_FLOATS = 20;
 
@@ -242,7 +254,7 @@ export const MATERIAL_STRIDE_FLOATS = 20;
  * The other solids -- what's built: concrete, brick, metal, wood, plaster ... -- are drawn as prisms (renderprep.wgsl).
  */
 export function fieldMeshed(m: number): boolean {
-  return MATERIALS[m]?.state !== MatState.Solid || m === MAT.Stone || m === MAT.Trash || m === MAT.Basalt || m === MAT.Sandstone || (m >= MAT.Flesh && m <= MAT.Quartz) || m === MAT.Bedrock;
+  return MATERIALS[m]?.state !== MatState.Solid || m === MAT.Stone || m === MAT.Trash || m === MAT.Basalt || m === MAT.Sandstone || (m >= MAT.Flesh && m <= MAT.Quartz) || m === MAT.Bedrock || m === MAT.DirtRoad || m === MAT.Cobble;
 }
 
 /**

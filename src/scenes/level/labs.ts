@@ -15,6 +15,7 @@ import { JUDGE_ID } from '../../game/judge';
 import { solverVariant } from '../../solver/variant';
 import { NoiseLabControl } from '../../noiselab/control';
 import { StreetLabControl } from '../../streetlab/control';
+import { RoadLabControl } from '../../roadlab/control';
 import { stationMiddle, type Station, type StationKit } from '../../levels/playground';
 import { cpuLine } from '../../gpu/cpustat';
 import { CHUNK, SLOT_WORDS } from '../../world/layout';
@@ -180,6 +181,31 @@ export function mountStreetLab(scene: LevelScene): void {
     host.params,
   );
   (globalThis as { streetlab?: StreetLabControl }).streetlab = scene.streetLab;
+}
+
+/**
+ * (road lab, RD1) the grade ladder: its road records laid into the world's columns on the GPU (roadlab/grader.ts),
+ * its structures drawn as one mesh, its labels over the view; what a lay changed remeshed at once and woken
+ */
+export function mountRoadLab(scene: LevelScene): void {
+  const { core, host } = scene;
+  scene.roadLab = new RoadLabControl(
+    host.gpu.device,
+    host.ui,
+    core.world,
+    { w: core.dims.w, h: core.dims.h },
+    {
+      camera: core.camera,
+      addMesh: (v, a) => core.renderer.addMesh(v, a),
+      removeMesh: (a) => core.renderer.removeMesh(a),
+      changed: (x0, y0, x1, y1) => {
+        core.renderer.fieldMesh.urgent(x0, y0, x1, y1);
+        scene.sleep?.wake((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2 + 4, Sleep.EVENT_S, performance.now() / 1000);
+      },
+    },
+    host.params,
+  );
+  (globalThis as { roadlab?: RoadLabControl }).roadlab = scene.roadLab;
 }
 
 /** (round 108, AR8) what a station's buttons do: the world's own events and APIs */

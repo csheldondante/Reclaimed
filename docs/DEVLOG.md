@@ -23131,3 +23131,50 @@ core parks read soil before, grass after (scratchpad cg25/park/cg26_before_after
 the plate still draws over the grass.
 **Limits.** The footprint (the park's own quad) is grassed, not the parcel's margin to the street; a park lot's grass
 follows its claim run (the 2 s cadence while building).
+
+## 2026-11-12 — the road lab: path records, cut and fill, the road interval, the grade ladder (RD1, `trackA-roadlab`)
+
+The user: "I would make roads flatten and color terrain then have bridges ramps and stairs as optional external meshes
+and the road path independent of both a guaranteed fixed path defined in curves and width"; "Let's experiment to
+determine the grade for ramps stairs and towers"; the flattening and build-up "modify the actual column heights"; road
+data as a new interval in the column, no wider buffers. `?skipmenu=1&level=roadlab` (`&row=0..8`, `&zoom=`, `&pitch=`,
+`&roadnow=1`).
+
+- **The path record is the authority** (src/api/contracts/roadpath.ts, WGSL mirror shaders/roadpath.wgsl): one storage
+  buffer — a header, two vec4 a road (points' range, surface kind, ROAD_GRADED, reveal start/end, shoulder, maxDz), a
+  vec4 a point (x, y, profile z, half width). Plain and documented so archgen's grow-in decal can read it from a draw.
+- **Cut and fill on the GPU, once** (shaders/roadgrade.wgsl `roadLay`, roadlab/grader.ts): a dispatch a road, a thread a
+  column of its box, townstamp's read → rebuild → join → fit-to-K → write-if-changed + bumpColumn. On the road: cut
+  above the profile, soil filled to it, the top 0.3 the road's own interval. Shoulder: banks back to the land (fill 1:1
+  — soil's dry repose is 1.4 —, cut 1.5:1), the most of the fills and the least of the cuts over the road's segments,
+  never over another road's surface. Without ROAD_GRADED the ground moves at most maxDz (1): where the profile leaves
+  the ground, the structure carries the road. Plants cleared under what changed (veg, vegNext: citygen bare.wgsl's way;
+  without it the fresh banks drew green). `roadPave` turns the road's dirt to cobble. Laying again keeps the paving, so
+  a lay is idempotent (the bench re-lays).
+- **The road's surface interval**: new materials DirtRoad 40 and Cobble 41 (solid, strength 1 so the structure pass keeps
+  the word whole; nothing grows; field-meshed). Word 2 = material | (record + 1) << 8 | f16(reveal start) << 16, word 3 =
+  reveal end. The mesh draw's `meshLayers` is the world's layers buffer itself, so the draw sees all of it; `roadLook`
+  (meshdraw.wgsl) uses only the material: cobble setts with dark joints, dirt streaks, no plant cover. Value against
+  grass/soil/stone: dirt road 0.55, cobble 0.49; the ramp placeholders are wood (dark), stairs brick, towers plaster.
+- **The material table 40 → 48** (MAX_MATERIALS; MATS, PM, SM arrays): it was full. +640 B on the MATS uniform; not
+  phone-benched (ARCHITECTURE "Limits" asks DA-E1 to start with one).
+- **The ladder** (roadlab/ladder.ts, pure; test/unit/roadlab-ladder.test.ts): a plain at 10, a terrace at 16 between two
+  sheer rock steps (x 96, 160), ±0.5 relief. Rows: flat, 1:12, 1:8, 1:6, 1:4, 1:3, 1:2, 1:1, cliff; each row two lanes:
+  west graded (centred on the step) / east ramp (a wedge), west stairs (rise 0.5) / east switchback (three graded legs,
+  1:12 to 1:3) or stair tower (1:2, 1:1, cliff: a plaster block, brick flights round two faces). 31 roads, 130 boxes as
+  one static mesh; labels DOM, projected by the camera. The lab clock reveals road i at 1 + 0.25 i s (dirt), paves at
+  +3 s.
+
+**Measured** (desktop proxy, D3D11, 412×915, 60° pitch): a road's lay 0.04–0.26 ms GPU (timestamps; the first, four flat
+and graded roads in one encoder, 0.26), all 31 lays 1.87 ms in total; a pave 0.02–0.06 ms; re-laying all 31 in one
+encoder 0.55–1.13 ms (mean 0.86 over 10). 3731 road columns, 2226 structure-road columns left to the structures. Frame
+interval 9.7 ms, GPU frame 2.8 ms after the lays (nothing runs a frame: the mesh is static). **K**: a road column holds
+3 intervals at most (stone, soil, road; the fill joins the soil) against the chunks' K 16; no column folded. No stacked
+z pages needed (DESIGN §2: they aren't built; a road column would need one only past 16).
+Shots: scratchpad shots/overview.png, row0..row8.png, profile-east.png, profile-west.png (30°, landscape, extra).
+
+**Limits.** A road column's cut takes everything above the profile (an arch over a road would go). The reveal bits ride
+only as far as a slot is copied whole: a pass that re-packs with ivPack keeps the material and record link and drops
+the times (the record has them). The fold past K joins the column's two lowest intervals (townstamp's smarter fold not
+copied). Structures are placeholders: no External intervals, no collision, not in the columns. Stairs, ramps and towers
+sit on the plain side of the step only. The lab's reveal is two discrete events (archgen's decal is the live one).

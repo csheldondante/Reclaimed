@@ -7,7 +7,7 @@ struct Material {
   look: vec4<f32>,   // smooth (cells; 0 = hard steps), see-through (ice, crystal), softness to a blow (softnessOf, round 120 JB6), unused
   loose: vec4<f32>,  // wind lift (cells/s; ≥ 1e8 never), airborne share, water mobility, wash flow
 };
-@group(0) @binding(2) var<uniform> MATS: array<Material, 40>; // MAX_MATERIALS (materials.ts)
+@group(0) @binding(2) var<uniform> MATS: array<Material, 48>; // MAX_MATERIALS (materials.ts)
 
 const ST_EMPTY: u32 = 0u;
 const ST_SOLID: u32 = 1u;
@@ -34,6 +34,10 @@ const MAT_LOG: u32 = 29u;
 const MAT_QUARTZ: u32 = 36u;
 /** round 99: an interval an external system owns and draws (sim/external.ts): solid to the sims, skipped by the terrain's draws */
 const MAT_EXTERNAL: u32 = 39u;
+/** (road lab, RD1) a road's surface interval: dirt, then paved (shaders/roadgrade.wgsl, api/contracts/roadpath.ts) */
+const MAT_DIRTROAD: u32 = 40u;
+const MAT_COBBLE: u32 = 41u;
+fn isRoadMat(m: u32) -> bool { return m == MAT_DIRTROAD || m == MAT_COBBLE; }
 
 fn matState(m: u32) -> u32 { return u32(MATS[m].sim.x); }
 
