@@ -4,7 +4,7 @@
 // construction progress copied in each frame (a few KB, GPU to GPU) for the rise. Nothing is read back.
 
 import type { CityLots, TownBuildingsSink } from '../api/contracts/citygen';
-import { ArchGen, KIND } from './archgen';
+import { ArchGen, KIND, PARTS_PER_LOT } from './archgen';
 import { archTextures } from './textures';
 
 export interface TownBuildingsIO {
@@ -94,6 +94,13 @@ export class TownBuildings implements TownBuildingsSink {
       }
     }
     return out;
+  }
+
+  /** (?archdump=1, a debugging read, never in play) a town's generated parts and its lot records */
+  townBuffers(id: string): { arch: GPUBuffer; partsWord: number; slots: number; records: GPUBuffer; counts: GPUBuffer } | null {
+    const t = this.towns.get(id);
+    if (!t) return null;
+    return { arch: t.gen.arch, partsWord: t.gen.base.parts, slots: t.room * PARTS_PER_LOT, records: t.lots.records, counts: t.lots.counts };
   }
 
   get live(): number {

@@ -96,7 +96,8 @@ export class ArchGen {
   /** the list's room a kind */
   readonly room: number;
   readonly bytes: number;
-  private base: { styles: number; list: number; parts: number; progress: number };
+  /** (word offsets in `arch`; public for ?archdump's test-only read) */
+  readonly base: { styles: number; list: number; parts: number; progress: number };
   private genU: GPUBuffer;
   private compU: GPUBuffer;
   /** the generator's passes, one a family of lots (arch.wgsl genHouses …: a pipeline each, small enough for a phone) */
@@ -129,7 +130,7 @@ export class ArchGen {
     const ground = progress + o.lots;
     this.bytes = (ground + o.lots) * 4;
     const S = GPUBufferUsage.STORAGE;
-    this.arch = d.createBuffer({ label: 'arch', size: this.bytes, usage: S | GPUBufferUsage.COPY_DST });
+    this.arch = d.createBuffer({ label: 'arch', size: this.bytes, usage: S | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     d.queue.writeBuffer(this.arch, 0, new Uint32Array([styles, list, parts, this.room, progress, o.lots, ground, 0]));
     // (built until a progress is copied in: the lab's)
     d.queue.writeBuffer(this.arch, progress * 4, new Float32Array(o.lots).fill(1));

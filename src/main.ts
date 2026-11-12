@@ -195,6 +195,8 @@ async function main() {
   if (params.get('citygenbench') === '1') void import('./perf/citygenbench').then((m) => m.citygenBench(params));
   // (archgen: ?archbench=1 — the building generator's phone bench, on the atlas with ?arch=1: src/perf/archbench.ts)
   if (params.get('archbench') === '1') void import('./perf/archbench').then((m) => m.archBench(params));
+  // (archgen: ?archdump=1 — the start town's records and generated parts posted to the dev server, a debugging read)
+  if (params.get('archdump') === '1') void import('./perf/archdump').then((m) => m.archDump());
   // (living town, RT2-4: ?livingbench=1 — the settled graph's phone bench, its empty dispatches and its awake cost by
   // toggling: src/perf/livingbench.ts)
   if (params.get('livingbench') === '1') void import('./perf/livingbench').then((m) => m.livingBench(params));
