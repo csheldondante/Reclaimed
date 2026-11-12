@@ -23308,3 +23308,4 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
   Now each corner's next and previous are built whole (Vn, Vp) with no run-time index arithmetic. Desktop dump after the
   change: still no odd part. The two desktop dumps' records differ between runs (the town grows while it loads), so a
   word-for-word diff wants the same records — not needed here, the phone's own dump shows the fault.
+- Confirmed on the phone: its dump after 524c6b08 (Pixel 9a, 667 lots, 5299 roofs) has no stretched part (was 199).
