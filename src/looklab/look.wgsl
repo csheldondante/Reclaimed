@@ -315,18 +315,10 @@ fn fsTree(in: TV) -> @location(0) vec4<f32> {
   let isLeaf = in.leaf > 0.01;
   if (isLeaf && t.a < 0.5) { discard; }
   // (the leaf textures' own darkness evened out: the pines' is near black, Synty's shader lifts it)
-  let gain = select(1.0, select(select(1.0, 7.0, in.layer == 1), 1.4, in.layer == 0), isLeaf);
+  let gain = 1.0;
   var alb = toLin(t.rgb) * in.tint * gain;
-  if (isLeaf) {
-    // (the leaf texture as the cards' shape and a little detail; the crown's colour its own, flat — so the light's
-    // gradient across the crown is what reads, as in Synty's own shots)
-    let base = select(select(vec3<f32>(0.20, 0.34, 0.07), vec3<f32>(0.07, 0.17, 0.09), in.layer == 1), vec3<f32>(0.24, 0.32, 0.06), in.layer == 2);
-    let det = dot(toLin(t.rgb) * gain, vec3<f32>(0.3, 0.6, 0.1)) / max(dot(base, vec3<f32>(0.3, 0.6, 0.1)), 1e-3);
-    alb = base * mix(1.0, clamp(det, 0.5, 1.5), 0.3);
-  }
-  // each tree its own shade (greens to yellows; now and then an autumn one)
-  alb *= mix(vec3<f32>(0.85, 1.0, 0.8), vec3<f32>(1.15, 1.0, 0.7), in.hue);
-  if (in.hue > 0.9 && isLeaf) { alb = alb * vec3<f32>(2.2, 0.9, 0.35); }
+  // (Synty's colours as they are: the texture times its material's tint; each tree only a touch lighter or darker)
+  alb *= mix(0.9, 1.1, in.hue);
   let n = normalize(in.n);
   if (u.dbg.x == 1.0) { return vec4<f32>(n * 0.5 + 0.5, 1.0); }
   if (u.dbg.x == 2.0) { alb = vec3<f32>(0.18); }
@@ -340,8 +332,8 @@ fn fsTree(in: TV) -> @location(0) vec4<f32> {
     let occ = in.leaf * mix(0.65, 1.0, clamp(in.h, 0.0, 1.0));
     let sunC = vec3<f32>(1.0, 0.88, 0.72) * u.sun.w;
     let sky = mix(vec3<f32>(0.42, 0.4, 0.38), vec3<f32>(0.6, 0.62, 0.74), n.z * 0.5 + 0.5) * u.tile.w;
-    let ramp = mix(vec3<f32>(0.32, 0.45, 0.58), vec3<f32>(1.45, 1.25, 0.8), smoothstep(0.1, 0.8, key));
-    c = alb * ramp * (sunC * 0.45 + sky * 0.75) * occ * 1.5;
+    // (Synty's leaf textures are dark: its scenes light them with a strong sun; the crowns get that here)
+    c = alb * (sunC * key * 2.6 + sky * 1.1) * occ;
     let back = pow(max(dot(-n, u.sun.xyz), 0.0), 2.0) * sh;
     c += alb * vec3<f32>(1.0, 0.95, 0.55) * back * 0.4 * u.sun.w;
   } else {

@@ -123,7 +123,8 @@ for (const [name, look] of TREES) {
     if (v.leaf) {
       // Synty's own: the cards as modelled (bent, layered), their normals as authored, the vertex colour's blue the
       // baked occlusion (it rises towards the crown's foot: corr. −0.99 with height) — lower layers darker
-      leafAo = Math.max(0.25, 1 - v.col[2] * 0.9);
+      // (the user: "deeper leaves should be even darker": a curve, the deepest near black-green)
+      leafAo = Math.max(0.08, Math.pow(1 - Math.min(v.col[2], 0.95), 2.2));
     }
     verts.push(...v.p, ...n, ...v.uv, v.leaf ? look.leaf : look.trunk, leafAo, ...(v.leaf ? look.tint : [1, 1, 1]), ...v.cen, ...v.off);
   }

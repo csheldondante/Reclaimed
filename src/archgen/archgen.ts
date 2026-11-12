@@ -113,6 +113,8 @@ export class ArchGen {
   style = -1;
   /** (lab) the built windows drawn (off: the phone's look, the painted ones) */
   windows = true;
+  /** (labs) part kinds the lab's draw leaves out (the look lab: the plants, drawn its own way) */
+  labSkip = new Set<number>();
 
   constructor(
     private device: GPUDevice,
@@ -270,6 +272,7 @@ export class ArchGen {
     pass.setBindGroup(1, archTextures(this.device).group);
     ARCH_DRAWS.forEach(([k], i) => {
       if (k === KIND.win && !this.windows) return;
+      if (this.labSkip.has(k)) return;
       pass.setPipeline(lab.pipes[i]);
       pass.drawIndirect(this.args, k * 16);
     });

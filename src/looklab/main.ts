@@ -7,7 +7,7 @@
 // The lab's frame is the town's grid frame (world − origin), the frame of the lot records.
 
 import lookWgsl from './look.wgsl?raw';
-import { ArchGen } from '../archgen/archgen';
+import { ArchGen, KIND } from '../archgen/archgen';
 import { archTextures } from '../archgen/textures';
 import { ROW_H } from '../world/lattice';
 import { urlFlags } from '../flags';
@@ -355,27 +355,62 @@ async function main() {
     for (const [di, dj] of [[3, 0], [-3, 0], [0, 3], [0, -3]]) if (water[at(i + di, j + dj)] > 0.01) return true;
     return false;
   };
+  // each tree's crown radius (its leaves' farthest reach from the trunk, metres at scale 1)
+  const tf = new Float32Array(pb, (4 + nMesh * 4) * 4);
+  const crown = meshes.map((m) => {
+    let r = 0.5;
+    for (let v = m.first; v < m.first + m.count; v++) if (tf[v * 18 + 9] > 0) r = Math.max(r, Math.hypot(tf[v * 18], tf[v * 18 + 1]));
+    return r;
+  });
+  // Poisson-disc scatter: candidates in a random order, each kept only if no kept tree's crown overlaps its own by
+  // more than a little (a forest's canopies touch; trunks never crowd); sizes vary, a few big ones
+  const cand: number[] = [];
   for (let k = 0; k < N; k++) {
     if (isRoad[k] || lotMask[k] || water[k] > 0.01) continue;
     const m = top[k];
     if (m !== 2 && m !== 14) continue;
-    const v = veg[k];
+    if (1 - nrm[k * 3 + 2] > 0.3) continue;
     const i = k % W;
     const j = (k / W) | 0;
-    const r = hash(i, j);
-    const r2 = hash(i + 0.5, j + 7.3);
-    const slope = 1 - nrm[k * 3 + 2];
-    if (slope > 0.3) continue;
     const clump = Math.sin(i * 0.05 + Math.sin(j * 0.04) * 3) + Math.sin(j * 0.061 - i * 0.02);
-    let set: number[] | null = null;
-    if (v > 0.9 && r < 0.035 + Math.max(0, clump) * 0.06) set = pz[k] > P.sea + 40 ? PINES : nearWater(i, j) ? WILLOW : r2 < 0.3 ? PINES : BROAD;
-    else if (v > 0.5 && r < 0.006) set = SMALL;
-    if (!set) continue;
+    const want = veg[k] > 0.9 ? 0.35 + Math.max(0, clump) * 0.4 : veg[k] > 0.5 ? 0.04 : 0;
+    if (hash(i + 17.1, j + 3.3) < want) cand.push(k);
+  }
+  cand.sort((a2, b2) => hash(a2 % W + 0.7, a2 / W + 1.9) - hash(b2 % W + 0.7, b2 / W + 1.9));
+  const GC = 4;
+  const gw = Math.ceil(W / GC) + 1;
+  const grid = new Map<number, { x: number; y: number; r: number }[]>();
+  const OVERLAP = 0.8;
+  for (const k of cand) {
+    const i = k % W;
+    const j = (k / W) | 0;
+    const r2 = hash(i + 0.5, j + 7.3);
+    const set = veg[k] <= 0.9 ? SMALL : pz[k] > P.sea + 40 ? PINES : nearWater(i, j) ? WILLOW : r2 < 0.3 ? PINES : BROAD;
     const mesh = set[Math.floor(r2 * set.length)];
-    const jx = (hash(i + 3.1, j) - 0.5) * 0.8;
-    const jy = (hash(i, j + 5.7) - 0.5) * 0.8;
-    const sc = 1.25 + hash(i + 9.2, j) * 0.5;
-    perMesh[mesh].push(px[k] + jx, py[k] + jy, pz[k] - 0.1, r2 * Math.PI * 2, sc, hash(i, j + 2.2), meshes[mesh].h, 0);
+    const sz = hash(i + 9.2, j);
+    const sc = 0.75 + 1.1 * Math.pow(sz, 1.6);
+    const x = px[k] + (hash(i + 3.1, j) - 0.5) * 0.8;
+    const y = py[k] + (hash(i, j + 5.7) - 0.5) * 0.8;
+    const r = crown[mesh] * sc;
+    const gx = Math.floor((x - px[0]) / GC);
+    const gy = Math.floor((y - py[0]) / GC);
+    const reach = Math.ceil((r + 6) / GC);
+    let ok = true;
+    for (let dy = -reach; dy <= reach && ok; dy++) {
+      for (let dx = -reach; dx <= reach && ok; dx++) {
+        for (const t of grid.get((gy + dy) * gw + gx + dx) ?? []) {
+          if (Math.hypot(t.x - x, t.y - y) < (t.r + r) * OVERLAP) {
+            ok = false;
+            break;
+          }
+        }
+      }
+    }
+    if (!ok) continue;
+    const key = gy * gw + gx;
+    if (!grid.has(key)) grid.set(key, []);
+    grid.get(key)!.push({ x, y, r });
+    perMesh[mesh].push(x, y, pz[k] - 0.1, r2 * Math.PI * 2, sc, hash(i, j + 2.2), meshes[mesh].h, 0);
   }
   const instAll = perMesh.flat();
   const inst = device.createBuffer({ size: Math.max(32, instAll.length * 4), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
@@ -478,6 +513,8 @@ async function main() {
   const gen = new ArchGen(device, rec, cnt, { lots: nLots });
   gen.labDraw(sceneFormat, depthFormat, samples);
   gen.windows = true;
+  // (the lots' own plants left out: the lab's trees are Synty's leafy ones, scattered above)
+  for (const k of [KIND.bush, KIND.plantS, KIND.plantM]) gen.labSkip.add(k);
   const remake = () => {
     const e = device.createCommandEncoder();
     gen.generate(e, 0, nLots);
