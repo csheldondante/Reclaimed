@@ -23284,3 +23284,20 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
   genGrid), one pipeline each with an explicit shared layout, dispatched one after another in the same pass: each
   reads every lot's head (genHead: its frame, nothing written) and makes only its own family's lots; houses also clear
   the lots nothing is built on. The desktop town is unchanged. Each lot's head is read four times (cheap: a record).
+
+## 2026-11-12 — phone: roof spikes dump, ground textures off, the shared grid and baked tiles planned (archgen-ground)
+
+- The phone drew roofs as long spikes running up the screen to a few far points (the user's screenshots): a vertex
+  placed very high — a finite height, which the a6745c06 NaN guard can't catch. The desktop never does it. `?archdump=1`
+  (src/perf/archdump.ts) reads the start town's lot records and the generator's raw part slots once and posts them to
+  the dev server (perf-reports/archdump-*.json), so the phone's output can be compared word for word with the
+  desktop's. The desktop's (Intel, q=low): 344 lots, 599 roofs, no odd part (no ridge over 25 m, no corner off the
+  map, nothing non-finite). Waiting on the phone's.
+- Ground textures off in the phone's flag set (flags.ts LITE_SET groundtex=0): at play zoom a cell is ~4 px and a 2–3 m
+  repeat mips to its mean colour, which is the old colour by design — the cost with nothing to see (the user: "The
+  texture is basically pointless then at this scale"). The shared lighting stays: baked-tile lighting needs it.
+- archgen's flag reads go through urlFlags() (test/unit/flags.test.ts had four direct location.search reads, one of
+  them the ?archnan flag).
+- Planned with the user (BACKLOG AG23–AG25, DECISIONS 2026-11-12): one world-fixed irregular grid of quads shared by
+  every lot (lanes as cells, bridges over roads); the phone's static world from baked tiles lit live, fixed zoom steps,
+  one shadow render; Synty trees as pre-rendered sprites (local only).

@@ -14,6 +14,7 @@
 //   …     each lot's ground z (f32: written by the generator; the rise's floor)
 // Drawn by a host: the lab's (archlab.wgsl, drawLab) or the game's (archgame.wgsl, through Renderer.addArch).
 
+import { urlFlags } from '../flags';
 import archWgsl from './arch.wgsl?raw';
 import drawWgsl from './draw.wgsl?raw';
 import texbankWgsl from './texbank.wgsl?raw';
@@ -68,7 +69,7 @@ const COMPACT_MARK = '// ---- compaction';
 const FS_MARK = '// ---- fragment';
 /** arch.wgsl's constants and helpers: every module's head */
 /** (?archnan=1) a vertex whose position came out not finite drawn magenta (the phone drew such triangles stretched) */
-const NAN_DBG = typeof location !== 'undefined' && new URLSearchParams(location.search).get('archnan') === '1';
+const NAN_DBG = urlFlags().get('archnan') === '1';
 export const ARCH_CONSTS = archWgsl.slice(0, archWgsl.indexOf(GEN_MARK)) + PLANT_WGSL + `const ARCH_NANDBG: bool = ${NAN_DBG};\n`;
 const GEN = ARCH_CONSTS + archWgsl.slice(archWgsl.indexOf(GEN_MARK), archWgsl.indexOf(COMPACT_MARK));
 const COMPACT = ARCH_CONSTS + archWgsl.slice(archWgsl.indexOf(COMPACT_MARK));

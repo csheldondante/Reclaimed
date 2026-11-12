@@ -5,6 +5,8 @@
 // every town's draw and the lab's: bind group 1 of the arch pipelines (draw.wgsl ARCH_TEX). Until the images arrive
 // (or with ?archtex=0, which loads nothing — the phone bench's toggle) the shader draws its procedural look.
 
+import { urlFlags } from '../flags';
+
 const files = import.meta.glob('./tex/*.jpg', { query: '?url', import: 'default', eager: true }) as Record<string, string>;
 
 /** the layers, in order (draw.wgsl TX_*) */
@@ -200,7 +202,7 @@ const shared = new WeakMap<GPUDevice, ArchTextures>();
 export function archTextures(device: GPUDevice): ArchTextures {
   let t = shared.get(device);
   if (!t) {
-    const q = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
+    const q = urlFlags();
     const coarse = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
     const size = Number(q.get('archtexsize') ?? (coarse ? 512 : 1024));
     t = new ArchTextures(device, size, q.get('archtex') !== '0');

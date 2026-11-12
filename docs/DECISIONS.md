@@ -3753,3 +3753,11 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   → grid pieces joined into one house under one roof; flat-topped patio cells behind parapets.
 - "Also I want more variety in the manors. Walled in courtyards would be great." → a manor round a walled forecourt
   (gateway, wings, a garden court); classic houses sometimes wall in their back gardens.
+
+## 2026-11-12 — the phone's look and cost (archgen-ground)
+
+- Zoom on the phone: "Zoom fixed steps or disabled for phone is fine." → fixed steps, so baked tiles stay sharp.
+- Time of day: "lit from the bakes layers. A single shadow render could also be worthwhile." → tiles keep albedo,
+  normal and depth; lit live each frame; one baked shadow render.
+- Ground textures: "The texture is basically pointless then at this scale." → off on the phone at play zoom.
+- One shared irregular grid across lots, quads only, lanes as cells, bridges over roads (BACKLOG AG23).

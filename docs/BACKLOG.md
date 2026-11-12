@@ -2306,6 +2306,31 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   compression (20 sets × 2 arrays at 1k is ~220 MB of RGBA8 with mips); the tiles' bake keeps no roughness (fsTile
   lights a frozen tile without a highlight); a stylized look (the user: "Dota 2 does have very pretty land and grass
   and plants") — painted sets or a stronger palette pull on the photo sets.
+  (2026-11-12, the user on the phone: "The texture is basically pointless then at this scale" — at play zoom a cell
+  is ~4 px, the 2–3 m repeat mips to its mean. Ground textures off on the phone; maybe back for the closest fixed zoom
+  step only, or as macro variation several cells across.)
+- AG22 (2026-11-12, the phone) Roofs drawn as long spikes running up the screen to a few far points (a vertex very high:
+  a finite height, not the NaN the a6745c06 guard catches). Desktop dump clean (?archdump=1, 0 odd parts); waiting on
+  the phone's dump to compare word for word.
+- AG23 (the user, 2026-11-12) One irregular grid shared by every lot, not one per lot: "Can't disjoint lots share the
+  same irregular grid? ... then you could even build features like bridges over the city roads." Quads only ("The
+  irregular tiles here also gave triangle tiles and do not follow the quad based design I expect"). Lanes inside a
+  cluster are grid cells; buildings never over a road at ground level ("the building seem to overlap roads ... in a
+  most displeasing way"); a road cell may carry a bridge from the first storey up. Plan: a world-fixed triangle lattice,
+  each triangle split into 3 quads (all quads, no global pairing), corners jittered by a hash of their lattice point so
+  neighbours agree; lots claim the cells inside their parcel. Covers the grid rework (shared heights, per-corner roofs).
+- AG24 (the user, 2026-11-12) The phone draws the static world from baked tiles, Age of Empires 2 style: "if we don't
+  allow camera rotation can't we essentially render the whole ground and buildings in only one frame as a static lit
+  sprite or as tiles? ... it lets us bake the anti aliasing detail at super resolution into the map. Then we need only
+  redraw animated layers". Ground and buildings baked (2× then down) as albedo, normal, depth layers into the tile
+  cache (render/tilecache.ts already bakes terrain per region and turn), lit each frame from the layers, one baked
+  shadow render; re-bake on change; animated layers drawn live. Wind: a per-pixel sway channel the lighting pass
+  offsets its lookup by ("Bending sprites with a few control points in a grid to warp fragments"). Gate: the phone
+  bench (frame, pan, memory).
+- AG25 (the user, 2026-11-12) Synty trees on the phone as pre-rendered sprites (4–8 views, colour + normal + depth),
+  baked into the tiles or drawn live to sway. Rendered from Synty, so local only, like the packs. Also: house walls on
+  the phone are "a single smeared low res window on a solid color" against detailed roofs — baking at PC detail answers
+  it on the phone.
 - AG19 ("working with better ground and building textures") Texture sets (albedo/normal/roughness/AO) for walls, roofs,
   ground: ~12–16 CC0 sets (Poly Haven / ambientCG) in one texture array, KTX2-compressed, 512 phone / 1k PC; the
   generator keeps per-part tint, wear and pick. Waits on the user: may CC0 textures go in the public repo?

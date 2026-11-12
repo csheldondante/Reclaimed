@@ -6,12 +6,13 @@
 //   ?at=x,y  ?detail=0..1 (0 phone … 1 PC)  ?night=0..1  ?msaa=0
 // globalThis.archlab: { view(yaw, zoom, at), style(name), bench(runs) } for scripts.
 
+import { urlFlags } from '../flags';
 import lotsMuru from '../../data/lab/lots-muru.json';
 import { ArchGen, PARTS_PER_LOT } from './archgen';
 import { STYLES } from './styles';
 import { archTextures } from './textures';
 
-const q = new URLSearchParams(location.search);
+const q = urlFlags();
 const num = (k: string, d: number) => (q.has(k) ? Number(q.get(k)) : d);
 
 function fatal(msg: string): never {
@@ -259,7 +260,7 @@ function heroStreet(seed: number): Uint32Array {
   const depths = [16, 14, 17, 18, 15];
   const storeys = [2, 2, 3, 2, 1];
   // (?kinds=1,3,1,2,1: a lot's kind — 1 a building, 2 a park, 3 a plaza)
-  const kinds = (new URLSearchParams(location.search).get('kinds') ?? '1').split(',').map(Number);
+  const kinds = (urlFlags().get('kinds') ?? '1').split(',').map(Number);
   const n = widths.length;
   const u = new Uint32Array(n * 24);
   const f = new Float32Array(u.buffer);
