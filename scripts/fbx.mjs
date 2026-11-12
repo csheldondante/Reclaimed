@@ -162,6 +162,8 @@ export function fbxMeshes(file) {
     const PVI = child(g, 'PolygonVertexIndex').props[0];
     const nrm = layerGetter(child(g, 'LayerElementNormal'), 'Normals', 'NormalsIndex', 3);
     const uv = layerGetter(child(g, 'LayerElementUV'), 'UV', 'UVIndex', 2);
+    // (vertex colours where the model has them: Synty's leafy trees keep a baked occlusion in red)
+    const col = layerGetter(child(g, 'LayerElementColor'), 'Colors', 'ColorIndex', 4);
     const mat = layerGetter(child(g, 'LayerElementMaterial'), 'Materials', 'MaterialsIndex', 1);
     let poly = [];
     let pi = 0;
@@ -171,7 +173,7 @@ export function fbxMeshes(file) {
       if (last) v = ~v;
       poly.push({ k, v });
       if (last) {
-        const corner = (c) => ({ p: xf([V[c.v * 3], V[c.v * 3 + 1], V[c.v * 3 + 2]]), n: nrm ? xn(nrm(c.k, c.v, pi)) : [0, 0, 1], uv: uv ? uv(c.k, c.v, pi) : [0, 0] });
+        const corner = (c) => ({ p: xf([V[c.v * 3], V[c.v * 3 + 1], V[c.v * 3 + 2]]), n: nrm ? xn(nrm(c.k, c.v, pi)) : [0, 0, 1], uv: uv ? uv(c.k, c.v, pi) : [0, 0], col: col ? col(c.k, c.v, pi) : [1, 1, 1, 1] });
         const m = mat ? mIdx[mat(0, 0, pi)[0]] ?? 0 : mIdx[0] ?? 0;
         const cs = poly.map(corner);
         for (let j = 1; j + 1 < cs.length; j++) tris.push({ c: [cs[0], cs[j], cs[j + 1]], m });

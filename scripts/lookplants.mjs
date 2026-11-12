@@ -55,7 +55,7 @@ for (const [name, look] of TREES) {
   const vs = [];
   for (const t of m.tris) {
     const leaf = /lea/i.test(m.matNames[t.m]);
-    for (const c of t.c) vs.push({ p: [c.p[0] / 100, -c.p[2] / 100, c.p[1] / 100], n: [c.n[0], -c.n[2], c.n[1]], uv: [c.uv[0], 1 - c.uv[1]], leaf, cen: [0, 0, 0], off: [0, 0] });
+    for (const c of t.c) vs.push({ p: [c.p[0] / 100, -c.p[2] / 100, c.p[1] / 100], n: [c.n[0], -c.n[2], c.n[1]], uv: [c.uv[0], 1 - c.uv[1]], leaf, col: c.col, cen: [0, 0, 0], off: [0, 0] });
   }
   // the leaf cards: a triangle with the next one sharing two corners is one quad card; each vertex keeps its card's
   // centre and its place on the card (2D, in the card's plane), so the vertex stage can turn the card to the camera
@@ -87,9 +87,7 @@ for (const [name, look] of TREES) {
     }
     if (tris.length === 2) t += 3;
   }
-  // the crown's clumps: the leaves' positions clustered (k-means, a clump every ~1.6 m of crown); each leaf vertex's
-  // normal bent out from its clump's centre (blended with the next nearest, so clumps meet softly), and its depth
-  // into the clump kept as occlusion (inner leaves darker) — the leaf flag's place in the vertex: 0 trunk, 0.3–1 leaf
+  // (the crown's clumps: unused since the leaves keep Synty's own normals and occlusion; kept for the clump radius)
   const lv = vs.filter((v) => v.leaf);
   const lo = [Infinity, Infinity, Infinity];
   const hi = [-Infinity, -Infinity, -Infinity];
@@ -123,21 +121,9 @@ for (const [name, look] of TREES) {
     let n = v.n;
     let leafAo = 0;
     if (v.leaf) {
-      const order = C.map((c, k) => [d2(v.p, c), k]).sort((a, b) => a[0] - b[0]);
-      const [da, ka] = order[0];
-      const [db, kb] = order[1] ?? order[0];
-      const out = (k) => {
-        const d = v.p.map((x, a) => x - C[k][a]);
-        const l = Math.hypot(...d) || 1;
-        return d.map((x) => x / l);
-      };
-      const wa = 1 / (Math.sqrt(da) + 0.05);
-      const wb = ka === kb ? 0 : 1 / (Math.sqrt(db) + 0.05);
-      const b = out(ka).map((x, a) => (x * wa + out(kb)[a] * wb) / (wa + wb));
-      const mix = b.map((x, a) => x * 0.9 + n[a] * 0.1);
-      const ml = Math.hypot(...mix) || 1;
-      n = mix.map((x) => x / ml);
-      leafAo = 0.3 + 0.7 * Math.min(1, Math.sqrt(da) / Math.max(R[ka], 0.3));
+      // Synty's own: the cards as modelled (bent, layered), their normals as authored, the vertex colour's blue the
+      // baked occlusion (it rises towards the crown's foot: corr. −0.99 with height) — lower layers darker
+      leafAo = Math.max(0.25, 1 - v.col[2] * 0.9);
     }
     verts.push(...v.p, ...n, ...v.uv, v.leaf ? look.leaf : look.trunk, leafAo, ...(v.leaf ? look.tint : [1, 1, 1]), ...v.cen, ...v.off);
   }

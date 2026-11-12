@@ -274,14 +274,9 @@ fn vsTree(@location(0) p: vec3<f32>, @location(1) n: vec3<f32>, @location(2) uv:
           @location(5) inst: vec4<f32>, @location(6) ext: vec4<f32>, @location(7) cen: vec3<f32>, @location(8) off: vec2<f32>) -> TV {
   var o: TV;
   var w = treeWorld(p, inst, ext.x);
-  if (lt.y > 0.01) {
-    // a leaf card turned to face the camera round its own centre (the fluffy-foliage trick: a crown full from any
-    // angle), a little larger than modelled
-    let fw = u.eye.xyz;
-    let R = normalize(cross(vec3<f32>(0.0, 0.0, 1.0), fw));
-    let U = cross(fw, R);
-    w = treeWorld(cen, inst, ext.x) + (R * off.x + U * off.y) * ext.x * 1.25;
-  }
+  // (the leaf cards as modelled: Synty's bent, layered cards — not turned to the camera)
+  _ = cen;
+  _ = off;
   o.pos = u.viewProj * vec4<f32>(w, 1.0);
   o.w = w;
   let c = cos(inst.w);
