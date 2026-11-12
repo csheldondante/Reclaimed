@@ -2179,8 +2179,9 @@ ramps stairs and towers"; the flattening "modify the actual column heights"; roa
 
 | id | item | size | status |
 |---|---|---|---|
-| RD1 | road lab: path record, cut and fill, road interval, grade ladder (the user, 2026-11-12) | M | done (trackA-roadlab, the road lab commit) |
+| RD1 | road lab: path record, cut and fill, road interval, grade ladder (the user, 2026-11-12) | M | done (bd76117c) |
 | RD2 | roads in town from path records (ribbons removed) | L | open |
+| RD3 | stair and ramp art: in the road lab they don't read as stairs or ramps; graded roads look fine and the stair towers read (the user, 2026-11-12: "I consider that an art problem"). Grade bands from the lab: graded up to 1:6, ramps 1:6–1:3, stairs 1:2–1:1, a stair tower steeper or at a cliff; art direction belongs to Track B | M | open |
 
 ## Living town (2026-11-10, `trackA-haul`; docs/design/LIVING_TOWN.md)
 
