@@ -356,7 +356,10 @@ fn fsTree(in: TV) -> @location(0) vec4<f32> {
     let sunC = vec3<f32>(1.0, 0.88, 0.72) * u.sun.w;
     let sky = mix(vec3<f32>(0.42, 0.4, 0.38), vec3<f32>(0.6, 0.62, 0.74), n.z * 0.5 + 0.5) * u.tile.w;
     let ramp = mix(vec3<f32>(0.32, 0.45, 0.58), vec3<f32>(1.45, 1.25, 0.8), smoothstep(0.1, 0.8, key));
-    c = alb * ramp * (sunC * 0.45 + sky * 0.75) * in.leaf * 1.5;
+    // (the depth darkening as strong on screen as Synty's vertex value itself: the user's 'very pronounced' — it
+    // applies in display space, so in linear it's raised to 2.2)
+    let occ = pow(in.leaf, 2.2);
+    c = alb * ramp * (sunC * 0.45 + sky * 0.75) * occ * 1.5;
     let back = pow(max(dot(-n, u.sun.xyz), 0.0), 2.0) * sh;
     c += alb * vec3<f32>(1.0, 0.95, 0.55) * back * 0.4 * u.sun.w;
   } else {
