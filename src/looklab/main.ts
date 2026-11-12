@@ -433,8 +433,9 @@ async function main() {
   const split = lookWgsl.indexOf('// ---- the grade');
   const mod = device.createShaderModule({ label: 'look', code: lookWgsl.slice(0, split) });
   const postMod = device.createShaderModule({ label: 'look post', code: lookWgsl.slice(split) });
-  const ub = device.createBuffer({ size: 64 * 2 + 16 * 5, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const ub = device.createBuffer({ size: 64 * 3 + 16 * 5, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const SHADOW = 4096;
+  const shadowNear = device.createTexture({ size: [2048, 2048], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
   const shadowTex = device.createTexture({ size: [SHADOW, SHADOW], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
   const bgl = device.createBindGroupLayout({
     entries: [
@@ -445,6 +446,7 @@ async function main() {
       { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
       { binding: 5, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
       { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: '2d-array' } },
+      { binding: 8, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
     ],
   });
   const layout = device.createPipelineLayout({ bindGroupLayouts: [bgl] });
@@ -458,6 +460,7 @@ async function main() {
       { binding: 4, resource: shadowTex.createView() },
       { binding: 5, resource: device.createSampler({ compare: 'less', magFilter: 'linear', minFilter: 'linear' }) },
       { binding: 7, resource: treeTex.createView({ dimension: '2d-array' }) },
+      { binding: 8, resource: shadowNear.createView() },
     ],
   });
   const groundVB: GPUVertexBufferLayout = {
@@ -501,6 +504,9 @@ async function main() {
     ],
   });
   const shadowLayout = device.createPipelineLayout({ bindGroupLayouts: [shadowL] });
+  const ubNear = device.createBuffer({ size: 64 * 3 + 16 * 5, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const shadowSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear' });
+  const shadowGroupNear = device.createBindGroup({ layout: shadowL, entries: [{ binding: 0, resource: { buffer: ubNear } }, { binding: 3, resource: shadowSampler }, { binding: 7, resource: treeTex.createView({ dimension: '2d-array' }) }] });
   const shadowGroup = device.createBindGroup({ layout: shadowL, entries: [{ binding: 0, resource: { buffer: ub } }, { binding: 3, resource: device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear' }) }, { binding: 7, resource: treeTex.createView({ dimension: '2d-array' }) }] });
   const groundShadowPipe = device.createRenderPipeline({ label: 'ground shadow', layout: shadowLayout, vertex: { module: mod, entryPoint: 'vsGroundShadow', buffers: [groundPosVB] }, primitive: { cullMode: 'none' }, depthStencil: sds });
   const treeShadowPipe = device.createRenderPipeline({ label: 'tree shadow', layout: shadowLayout, vertex: { module: mod, entryPoint: 'vsTreeShadow', buffers: treeShadowVB }, fragment: { module: mod, entryPoint: 'fsTreeShadow', targets: [] }, primitive: { cullMode: 'none' }, depthStencil: sds });
@@ -530,7 +536,7 @@ async function main() {
   let czAt = pz[at(Math.round(box.x0 - x0 + box.w / 2), Math.round(box.y0 - y0 + box.h / 2))];
   if (!Number.isFinite(czAt)) czAt = zmin;
   const cam = { x: cx, y: cy, z: czAt, yaw: num('yaw', 225), pitch: num('pitch', 60), sun: num('sun', 150), ppc: num('zoom', 4) };
-  const look = { tex: q.get('tex') !== '0', trees: q.get('trees') !== '0', houses: q.get('houses') !== '0', grade: true, shadow: true, dbg: num('dbg', 0), exposure: num('exposure', 1.0), sunK: num('sunk', 1.3), amb: num('amb', 0.9) };
+  const look = { tex: q.get('tex') !== '0', trees: q.get('trees') !== '0', houses: q.get('houses') !== '0', grade: true, shadow: true, dbg: num('dbg', 0), exposure: num('exposure', 1.0), sunK: num('sunk', 1.6), amb: num('amb', 1.4), haze: num('haze', 0) };
   const ZMIN = 0.6;
   const ZMAX = 64;
   const zoomEl = $<HTMLInputElement>('zoom');
@@ -545,7 +551,7 @@ async function main() {
       if (k === 'sun') shadowDirty = true;
     };
   }
-  for (const k of ['exposure', 'sunK', 'amb'] as const) {
+  for (const k of ['exposure', 'sunK', 'amb', 'haze'] as const) {
     const el = $<HTMLInputElement>(k);
     el.value = String(look[k]);
     el.oninput = () => (look[k] = Number(el.value));
@@ -600,9 +606,12 @@ async function main() {
   }, { passive: false });
 
   let shadowDirty = true;
+  let nearDirty = true;
+  let lastNear = '';
   const sunDir = (): V3 => {
     const a = (cam.sun * Math.PI) / 180;
-    return norm([Math.cos(a) * 0.62, Math.sin(a) * 0.62, 0.62]);
+    const e = (46 * Math.PI) / 180;
+    return norm([Math.cos(a) * Math.cos(e), Math.sin(a) * Math.cos(e), Math.sin(e)]);
   };
   // the patch's frame (for the shadow map: the whole patch, once)
   const pcx = (px[0] + px[N - 1]) / 2;
@@ -620,6 +629,7 @@ async function main() {
   let msaa: GPUTexture | null = null;
   let scene: GPUTexture | null = null;
   let postGroup: GPUBindGroup | null = null;
+  let sceneLevels = 1;
   const resize = () => {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
@@ -632,8 +642,9 @@ async function main() {
     scene?.destroy();
     depth = device.createTexture({ size: [w, h], format: depthFormat, sampleCount: samples, usage: GPUTextureUsage.RENDER_ATTACHMENT });
     msaa = device.createTexture({ size: [w, h], format: sceneFormat, sampleCount: samples, usage: GPUTextureUsage.RENDER_ATTACHMENT });
-    scene = device.createTexture({ size: [w, h], format: sceneFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
-    postGroup = device.createBindGroup({ layout: postPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: scene.createView() }, { binding: 1, resource: { buffer: postU } }] });
+    sceneLevels = Math.min(8, Math.floor(Math.log2(Math.min(w, h))) + 1);
+    scene = device.createTexture({ size: [w, h], format: sceneFormat, mipLevelCount: sceneLevels, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+    postGroup = device.createBindGroup({ layout: postPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: scene.createView() }, { binding: 1, resource: { buffer: postU } }, { binding: 2, resource: device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear' }) }] });
   };
 
   const stats = $<HTMLDivElement>('stats');
@@ -655,24 +666,38 @@ async function main() {
     const hw = w / cam.ppc / 2;
     const vp = ortho(fw, [cam.x, cam.y, cam.z], hw, hh, 2000);
     const sun = sunDir();
+    const fa = ((cam.sun - 116) * Math.PI) / 180;
+    const fe = (49 * Math.PI) / 180;
+    const fill = norm([Math.cos(fa) * Math.cos(fe), Math.sin(fa) * Math.cos(fe), Math.sin(fe)]);
+    // the near shadow map: round the view's ground (its half diagonal and some), redrawn when the view moves
+    const nhalf = Math.min(half, Math.hypot(hw, hh / Math.sin(pt)) + 6);
+    const nvp = ortho(sun, [cam.x, cam.y, cam.z], nhalf, nhalf, 1500);
+    const nkey = [cam.x, cam.y, cam.ppc, cam.yaw, cam.pitch, cam.sun, look.trees].map((v) => (typeof v === 'number' ? v.toFixed(2) : String(v))).join();
+    if (nkey !== lastNear) {
+      lastNear = nkey;
+      nearDirty = true;
+    }
     const svp = ortho(sun, [pcx, pcy, pcz], half, half, 1500);
     const time = (now - t0) / 1000;
-    const u = new Float32Array(16 * 2 + 20);
+    const u = new Float32Array(16 * 3 + 20);
     u.set(vp, 0);
     u.set(svp, 16);
     u.set([...sun, look.sunK], 32);
     u.set([...fw, 1 / cam.ppc], 36);
     u.set([time, look.tex ? 1 : 0, look.shadow ? 1 : 0, look.grade ? 1 : 0], 40);
     u.set([5, 0.22, look.exposure, look.amb], 44);
-    u.set([look.dbg, 0, 0, 0], 48);
+    u.set([look.dbg, ...fill], 48);
+    u.set(nvp, 52);
     device.queue.writeBuffer(ub, 0, u);
-    device.queue.writeBuffer(postU, 0, new Float32Array([look.grade ? 1 : 0, time, w, h]));
+    const un = u.slice();
+    un.set(nvp, 16);
+    device.queue.writeBuffer(ubNear, 0, un);
+    device.queue.writeBuffer(postU, 0, new Float32Array([look.grade ? 1 : 0, look.haze, w, h]));
     gen.setView(vp, [...sun, 1.15], [...fw, 1 / cam.ppc], time, 0, 1);
     const e = device.createCommandEncoder();
-    if (shadowDirty) {
-      shadowDirty = false;
-      const sp = e.beginRenderPass({ colorAttachments: [], depthStencilAttachment: { view: shadowTex.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' } });
-      sp.setBindGroup(0, shadowGroup);
+    const shadowPass = (view: GPUTextureView, grp: GPUBindGroup) => {
+      const sp = e.beginRenderPass({ colorAttachments: [], depthStencilAttachment: { view, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' } });
+      sp.setBindGroup(0, grp);
       sp.setPipeline(groundShadowPipe);
       sp.setVertexBuffer(0, gvb);
       sp.setIndexBuffer(gib, 'uint32');
@@ -684,9 +709,17 @@ async function main() {
         meshes.forEach((m, k) => instRanges[k].count && sp.draw(m.count, instRanges[k].count, m.first, instRanges[k].first));
       }
       sp.end();
+    };
+    if (shadowDirty) {
+      shadowDirty = false;
+      shadowPass(shadowTex.createView(), shadowGroup);
+    }
+    if (nearDirty) {
+      nearDirty = false;
+      shadowPass(shadowNear.createView(), shadowGroupNear);
     }
     const p = e.beginRenderPass({
-      colorAttachments: [{ view: msaa!.createView(), resolveTarget: scene!.createView(), loadOp: 'clear', storeOp: 'discard', clearValue: { r: 0.12, g: 0.14, b: 0.15, a: 1 } }],
+      colorAttachments: [{ view: msaa!.createView(), resolveTarget: scene!.createView({ baseMipLevel: 0, mipLevelCount: 1 }), loadOp: 'clear', storeOp: 'discard', clearValue: { r: 0.12, g: 0.14, b: 0.15, a: 1 } }],
       depthStencilAttachment: { view: depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
     });
     p.setBindGroup(0, group);
@@ -707,6 +740,7 @@ async function main() {
     p.setIndexBuffer(gib, 'uint32');
     p.drawIndexed(ni);
     p.end();
+    mipsInto(device, e, scene!, sceneLevels, sceneFormat);
     const pp = e.beginRenderPass({ colorAttachments: [{ view: ctx.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }] });
     pp.setPipeline(postPipe);
     pp.setBindGroup(0, postGroup!);
@@ -727,6 +761,36 @@ async function main() {
       if (o.sun !== undefined) shadowDirty = true;
     },
   };
+}
+
+const mipPipes = new Map<string, GPURenderPipeline>();
+/** a 2D texture's mips, recorded into the frame's encoder (the bloom's blur) */
+function mipsInto(device: GPUDevice, e: GPUCommandEncoder, tex: GPUTexture, levels: number, format: GPUTextureFormat): void {
+  let pipe = mipPipes.get(format);
+  if (!pipe) {
+    const code = `
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var s: sampler;
+struct O { @builtin(position) p: vec4<f32>, @location(0) uv: vec2<f32> };
+@vertex fn vs(@builtin(vertex_index) i: u32) -> O {
+  let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+  var o: O; o.p = vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0); o.uv = vec2<f32>(p.x, 1.0 - p.y); return o;
+}
+@fragment fn fs(in: O) -> @location(0) vec4<f32> { return textureSampleLevel(src, s, in.uv, 0.0); }`;
+    const m = device.createShaderModule({ code });
+    pipe = device.createRenderPipeline({ layout: 'auto', vertex: { module: m, entryPoint: 'vs' }, fragment: { module: m, entryPoint: 'fs', targets: [{ format }] } });
+    mipPipes.set(format, pipe);
+  }
+  const smp = device.createSampler({ minFilter: 'linear', magFilter: 'linear' });
+  for (let lv = 1; lv < levels; lv++) {
+    const view = (level: number) => tex.createView({ baseMipLevel: level, mipLevelCount: 1 });
+    const g = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: view(lv - 1) }, { binding: 1, resource: smp }] });
+    const p = e.beginRenderPass({ colorAttachments: [{ view: view(lv), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }] });
+    p.setPipeline(pipe);
+    p.setBindGroup(0, g);
+    p.draw(3);
+    p.end();
+  }
 }
 
 /** each layer's mips, a box filter from the level above */

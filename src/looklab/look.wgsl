@@ -8,7 +8,8 @@ struct U {
   eye: vec4<f32>,      // towards the eye, world units a pixel
   misc: vec4<f32>,     // time, painted on, shadows on, grade on
   tile: vec4<f32>,     // texture repeat (m), macro strength, exposure, skylight
-  dbg: vec4<f32>,      // 1 normals, 2 light only (albedo grey)
+  dbg: vec4<f32>,      // x: 1 normals, 2 light only (albedo grey); yzw: towards the fill light
+  nearVP: mat4x4<f32>, // the near shadow map (round the view)
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var texC: texture_2d_array<f32>;
@@ -16,6 +17,7 @@ struct U {
 @group(0) @binding(3) var samp: sampler;
 @group(0) @binding(4) var shadowMap: texture_depth_2d;
 @group(0) @binding(5) var shadowSamp: sampler_comparison;
+@group(0) @binding(8) var shadowNear: texture_depth_2d;
 
 const NL: u32 = 8u;
 // each layer's flat colour (the "painted" toggle off: the lo-fi look) — linear
@@ -34,14 +36,9 @@ fn flatCol(i: u32) -> vec3<f32> {
 
 fn toLin(c: vec3<f32>) -> vec3<f32> { return pow(c, vec3<f32>(2.2)); }
 fn toSrgb(c: vec3<f32>) -> vec3<f32> { return pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2)); }
-/** the shaded colour out: exposure, a soft filmic curve (ACES fit), sRGB */
+/** the shaded colour out: exposure, clipped, sRGB (Synty's demo volume has no tonemapping: URP's default, none) */
 fn finish(c0: vec3<f32>) -> vec3<f32> {
-  // (a soft shoulder on the luminance only: the colours keep their saturation, as painted ones do)
-  let c = c0 * u.tile.z;
-  let l = max(dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)), 1e-4);
-  // (no curve below 0.8: the painted albedo shows as painted; a soft knee above it)
-  let lt = select(l, 0.8 + (1.0 - exp(-(l - 0.8) / 0.25)) * 0.25, l > 0.8);
-  return toSrgb(clamp(c * (lt / l), vec3<f32>(0.0), vec3<f32>(1.0)));
+  return toSrgb(clamp(c0 * u.tile.z, vec3<f32>(0.0), vec3<f32>(1.0)));
 }
 
 fn hash2(p: vec2<f32>) -> f32 {
@@ -57,35 +54,41 @@ fn vnoise(p: vec2<f32>) -> f32 {
 }
 fn fbm(p: vec2<f32>) -> f32 { return vnoise(p) * 0.55 + vnoise(p * 2.03 + 7.1) * 0.3 + vnoise(p * 4.1 + 3.7) * 0.15; }
 
-fn shadowAt(w: vec3<f32>, n: vec3<f32>) -> f32 {
-  if (u.misc.z < 0.5) { return 1.0; }
-  let c = u.sunVP * vec4<f32>(w + n * 0.15, 1.0);
+fn pcf(map: texture_depth_2d, vp: mat4x4<f32>, w: vec3<f32>, bias: f32) -> f32 {
+  let c = vp * vec4<f32>(w, 1.0);
   let uv = vec2<f32>(c.x * 0.5 + 0.5, 0.5 - c.y * 0.5);
-  if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) { return 1.0; }
-  let d = c.z - 0.0008;
-  let px = 1.0 / f32(textureDimensions(shadowMap).x);
+  if (any(uv < vec2<f32>(0.002)) || any(uv > vec2<f32>(0.998))) { return -1.0; }
+  let px = 1.0 / f32(textureDimensions(map).x);
   var s = 0.0;
   for (var i = -1; i <= 1; i++) {
     for (var j = -1; j <= 1; j++) {
-      s += textureSampleCompareLevel(shadowMap, shadowSamp, uv + vec2<f32>(f32(i), f32(j)) * px * 1.5, d);
+      s += textureSampleCompareLevel(map, shadowSamp, uv + vec2<f32>(f32(i), f32(j)) * px * 1.25, c.z - bias);
     }
   }
   return s / 9.0;
 }
 
-/** warm sun, cool sky, a ground bounce */
+fn shadowAt(w: vec3<f32>, n: vec3<f32>) -> f32 {
+  if (u.misc.z < 0.5) { return 1.0; }
+  let p = w + n * 0.06;
+  let near = pcf(shadowNear, u.nearVP, p, 0.0006);
+  if (near >= 0.0) { return near; }
+  let far = pcf(shadowMap, u.sunVP, w + n * 0.15, 0.0008);
+  return select(far, 1.0, far < 0.0);
+}
+
+/** Synty's demo lighting (Demo.unity): a warm sun (1, .761, .5) × 1.6 at 46°, a cool fill (.6, .69, .9) × 0.5 from the
+ *  other side without shadows, ambient from the procedural sky; URP's diffuse (no 1/π), smoothness 0.2 */
 fn light(alb: vec3<f32>, n: vec3<f32>, w: vec3<f32>, ao: f32, rough: f32) -> vec3<f32> {
   let L = u.sun.xyz;
   let sh = shadowAt(w, n);
-  // (wrapped a little: the terminator soft, as painted light is)
-  let nl = clamp((dot(n, L) + 0.15) / 1.15, 0.0, 1.0);
-  let sunC = vec3<f32>(1.0, 0.88, 0.72) * u.sun.w;
-  let up = n.z * 0.5 + 0.5;
-  let sky = mix(vec3<f32>(0.42, 0.36, 0.38), vec3<f32>(0.6, 0.62, 0.74), up) * u.tile.w;
+  let sunC = vec3<f32>(1.0, 0.761, 0.5) * u.sun.w;
+  let fillC = vec3<f32>(0.599, 0.689, 0.904) * 0.5;
+  let sky = mix(mix(vec3<f32>(0.24, 0.22, 0.2), vec3<f32>(0.46, 0.47, 0.47), smoothstep(-1.0, 0.0, n.z)), vec3<f32>(0.42, 0.52, 0.66), smoothstep(0.0, 1.0, n.z)) * u.tile.w;
   let V = u.eye.xyz;
   let H = normalize(L + V);
-  let spec = pow(max(dot(n, H), 0.0), mix(48.0, 8.0, rough)) * (1.0 - rough) * 0.12;
-  return alb * (sunC * nl * sh + sky * ao) + sunC * spec * sh * nl;
+  let spec = pow(max(dot(n, H), 0.0), mix(64.0, 12.0, rough)) * (1.0 - rough) * 0.08;
+  return alb * (sunC * max(dot(n, L), 0.0) * sh + fillC * max(dot(n, u.dbg.yzw), 0.0) + sky * ao) + sunC * spec * sh;
 }
 
 // ---- the ground ----
@@ -321,30 +324,24 @@ fn fsTree(in: TV) -> @location(0) vec4<f32> {
   alb *= mix(0.9, 1.1, in.hue);
   let n = normalize(in.n);
   if (u.dbg.x == 1.0) { return vec4<f32>(n * 0.5 + 0.5, 1.0); }
+  if (u.dbg.x == 3.0) { return vec4<f32>(t.rgb, 1.0); }
+  if (u.dbg.x == 4.0) { return vec4<f32>(f32(in.layer) / 4.0, in.leaf, 0.0, 1.0); }
   if (u.dbg.x == 2.0) { alb = vec3<f32>(0.18); }
   var c: vec3<f32>;
   if (isLeaf) {
-    // a clump lit as a volume: half-Lambert squared round its blob normal (lit side to shade side across the clump),
-    // the inner leaves darker, the crown's lower half in its own shade, light through the leaves from behind
-    let sh = shadowAt(in.w, n);
-    let hl = dot(n, u.sun.xyz) * 0.5 + 0.5;
-    let key = hl * hl * mix(0.45, 1.0, sh);
-    let occ = in.leaf * mix(0.65, 1.0, clamp(in.h, 0.0, 1.0));
-    let sunC = vec3<f32>(1.0, 0.88, 0.72) * u.sun.w;
-    let sky = mix(vec3<f32>(0.42, 0.4, 0.38), vec3<f32>(0.6, 0.62, 0.74), n.z * 0.5 + 0.5) * u.tile.w;
-    // (Synty's leaf textures are dark: its scenes light them with a strong sun; the crowns get that here)
-    c = alb * (sunC * key * 2.6 + sky * 1.1) * occ;
-    let back = pow(max(dot(-n, u.sun.xyz), 0.0), 2.0) * sh;
-    c += alb * vec3<f32>(1.0, 0.95, 0.55) * back * 0.4 * u.sun.w;
+    c = light(alb, n, in.w, 1.0, 0.8) * in.leaf;
   } else {
     c = light(alb, n, in.w, 0.85, 0.9);
   }
   return vec4<f32>(finish(c), 1.0);
 }
 
-// ---- the grade (a full-screen pass over the scene) ----
+// ---- the grade (a full-screen pass over the scene): Synty's demo volume ----
 @group(0) @binding(0) var sceneTex: texture_2d<f32>;
-@group(0) @binding(1) var<uniform> gu: vec4<f32>; // grade on, time, w, h
+@group(0) @binding(1) var<uniform> gu: vec4<f32>; // grade on, haze, w, h
+@group(0) @binding(2) var gs: sampler;
+
+fn lin(c: vec3<f32>) -> vec3<f32> { return pow(c, vec3<f32>(2.2)); }
 
 @vertex
 fn vsPost(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -354,11 +351,31 @@ fn vsPost(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
 
 @fragment
 fn fsPost(@builtin(position) fc: vec4<f32>) -> @location(0) vec4<f32> {
-  var c = textureLoad(sceneTex, vec2<i32>(fc.xy), 0).rgb;
+  let uv = fc.xy / gu.zw;
+  var c = lin(textureSampleLevel(sceneTex, gs, uv, 0.0).rgb);
   if (gu.x > 0.5) {
-    // warm, a touch more saturated, gentle S-curve, soft vignette (the painted look's grade)
-    let l = dot(c, vec3<f32>(0.299, 0.587, 0.114));
-    c = mix(vec3<f32>(l), c, 1.12);
+    // bloom: the blurred image's bright part (threshold 0.8 gamma ≈ 0.6 linear, intensity 2, wide scatter)
+    var bl = vec3<f32>(0.0);
+    var wt = 1.0;
+    for (var l = 2; l <= 6; l++) {
+      bl += max(lin(textureSampleLevel(sceneTex, gs, uv, f32(l)).rgb) - vec3<f32>(0.6), vec3<f32>(0.0)) * wt;
+      wt *= 0.8;
+    }
+    c += bl * 2.0 * 0.3;
+    // the haze (Demo.unity's linear fog, cream (.925, .876, .782)): a light lift over the whole view
+    c = mix(c, lin(vec3<f32>(0.925, 0.876, 0.782)), gu.y);
+    // contrast +10 in LogC (URP's order: contrast, lift/gamma/gain, saturation)
+    let lc = 0.244161 * log(5.555556 * c + 0.047996) / log(10.0) + 0.386036;
+    let lc2 = (lc - 0.4135884) * 1.1 + 0.4135884;
+    c = (pow(vec3<f32>(10.0), (lc2 - 0.386036) / 0.244161) - 0.047996) / 5.555556;
+    // (the lift faded out toward black: added flat, it turned the darkest greens brown)
+    c = c * vec3<f32>(0.973, 1.017, 0.908) + vec3<f32>(0.009, -0.002, -0.008) * smoothstep(0.0, 0.15, dot(c, vec3<f32>(0.333)));
+    c = pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.013, 1.004, 0.930));
+    let l = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+    c = vec3<f32>(l) + (c - vec3<f32>(l)) * 1.15;
+    // vignette (intensity .46, smoothness .2): the corners darker
+    let d = length((uv - 0.5) * vec2<f32>(gu.z / gu.w, 1.0)) * 1.2;
+    c *= mix(1.0, 1.0 - smoothstep(0.35, 1.25, d), 0.46);
   }
-  return vec4<f32>(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+  return vec4<f32>(pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2)), 1.0);
 }
