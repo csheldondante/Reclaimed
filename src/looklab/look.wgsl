@@ -337,7 +337,7 @@ fn fsTree(in: TV) -> @location(0) vec4<f32> {
   if (isLeaf && t.a < 0.5) { discard; }
   // (the leaf textures' own darkness evened out: the pines' is near black, Synty's shader lifts it)
   // (Synty's plain pine leaf texture is near black — its demo scenes show the snow and bright variants; lifted here)
-  let gain = select(1.0, 3.0, isLeaf && in.layer == 1);
+  let gain = select(1.0, select(select(1.0, 5.0, in.layer == 1), 1.4, in.layer == 0), isLeaf);
   var alb = toLin(t.rgb) * in.tint * gain;
   // (Synty's colours as they are: the texture times its material's tint; each tree only a touch lighter or darker)
   alb *= mix(0.9, 1.1, in.hue);
@@ -348,7 +348,17 @@ fn fsTree(in: TV) -> @location(0) vec4<f32> {
   if (u.dbg.x == 2.0) { alb = vec3<f32>(0.18); }
   var c: vec3<f32>;
   if (isLeaf) {
-    c = light(alb, n, in.w, 1.0, 0.8) * in.leaf;
+    // (the volumetric leaf light the user liked: half-Lambert squared across the crown, the lit side warm and the shade
+    // cool — a ramp over Synty's own leaf colours — the deeper layers darker, light through the leaves from behind)
+    let sh = shadowAt(in.w, n);
+    let hl = dot(n, u.sun.xyz) * 0.5 + 0.5;
+    let key = hl * hl * mix(0.45, 1.0, sh);
+    let sunC = vec3<f32>(1.0, 0.88, 0.72) * u.sun.w;
+    let sky = mix(vec3<f32>(0.42, 0.4, 0.38), vec3<f32>(0.6, 0.62, 0.74), n.z * 0.5 + 0.5) * u.tile.w;
+    let ramp = mix(vec3<f32>(0.32, 0.45, 0.58), vec3<f32>(1.45, 1.25, 0.8), smoothstep(0.1, 0.8, key));
+    c = alb * ramp * (sunC * 0.45 + sky * 0.75) * in.leaf * 1.5;
+    let back = pow(max(dot(-n, u.sun.xyz), 0.0), 2.0) * sh;
+    c += alb * vec3<f32>(1.0, 0.95, 0.55) * back * 0.4 * u.sun.w;
   } else {
     c = light(alb, n, in.w, 0.85, 0.9);
   }
