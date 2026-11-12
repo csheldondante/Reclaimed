@@ -9,7 +9,6 @@
 import lookWgsl from './look.wgsl?raw';
 import { ArchGen } from '../archgen/archgen';
 import { archTextures } from '../archgen/textures';
-import plantsJson from '../archgen/plants.json';
 import { ROW_H } from '../world/lattice';
 import { urlFlags } from '../flags';
 
@@ -325,25 +324,37 @@ async function main() {
   mips(device, texC, levels, 'rgba8unorm-srgb');
   mips(device, texN, levels, 'rgba8unorm');
 
-  // ---- the Synty plants (local/synty: scripts/synty.mjs)
-  const plantsBin = await fetch('/local/synty/plants.bin');
-  const palRes = await fetch('/local/synty/palette.png');
-  if (!plantsBin.ok || !palRes.ok) fatal('No local/synty (run node scripts/synty.mjs)');
-  const pb = await plantsBin.arrayBuffer();
+  // ---- the Synty Nature pack's leafy trees (local/look: scripts/lookplants.mjs)
+  const treesRes = await fetch('/local/look/trees.bin');
+  if (!treesRes.ok) fatal('No local/look/trees.bin (run node scripts/lookplants.mjs)');
+  const pb = await treesRes.arrayBuffer();
   const ph = new Uint32Array(pb);
   const nMesh = ph[1];
-  const meshes = Array.from({ length: nMesh }, (_, m) => ({ first: ph[4 + m * 4], count: ph[5 + m * 4] }));
+  const meshes = Array.from({ length: nMesh }, (_, m) => ({ first: ph[4 + m * 4], count: ph[5 + m * 4], h: new Float32Array(pb, (6 + m * 4) * 4, 1)[0] }));
   const tvb = device.createBuffer({ size: pb.byteLength - (4 + nMesh * 4) * 4, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(tvb, 0, pb, (4 + nMesh * 4) * 4);
-  const palBmp = await createImageBitmap(await palRes.blob(), { colorSpaceConversion: 'none' });
-  const palette = device.createTexture({ size: [palBmp.width, palBmp.height], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
-  device.queue.copyExternalImageToTexture({ source: palBmp }, { texture: palette }, [palBmp.width, palBmp.height]);
-  const plants = (plantsJson as { plants: { name: string; cat: number; h: number }[] }).plants;
-  // scatter: trees where the plants are thick, bushes and flowers at the edges; never on roads, lots, water, rock
+  const TT = 1024;
+  const tLevels = 11;
+  const treeTex = device.createTexture({ size: [TT, TT, 5], format: 'rgba8unorm-srgb', mipLevelCount: tLevels, usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT });
+  await Promise.all(
+    [0, 1, 2, 3, 4].map(async (i) => {
+      const r = await fetch(`/local/look/trees_${i}.png`);
+      const bmp = await createImageBitmap(await r.blob(), { resizeWidth: TT, resizeHeight: TT, resizeQuality: 'high', colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+      device.queue.copyExternalImageToTexture({ source: bmp }, { texture: treeTex, origin: [0, 0, i] }, [TT, TT]);
+      bmp.close();
+    }),
+  );
+  mips(device, treeTex, tLevels, 'rgba8unorm-srgb');
+  // which tree where (lookplants.mjs order): broadleaf (Generic, Birch) in the lowlands, pines up high, willows by water
+  const BROAD = [0, 1, 2, 3, 4];
+  const SMALL = [5, 8];
+  const PINES = [6, 7, 9];
+  const WILLOW = [10];
   const perMesh: number[][] = meshes.map(() => []);
-  const trees = plants.map((p, m) => ({ ...p, m })).filter((p) => p.cat === 0);
-  const bushes = plants.map((p, m) => ({ ...p, m })).filter((p) => p.cat === 1);
-  const flowers = plants.map((p, m) => ({ ...p, m })).filter((p) => p.cat === 2);
+  const nearWater = (i: number, j: number) => {
+    for (const [di, dj] of [[3, 0], [-3, 0], [0, 3], [0, -3]]) if (water[at(i + di, j + dj)] > 0.01) return true;
+    return false;
+  };
   for (let k = 0; k < N; k++) {
     if (isRoad[k] || lotMask[k] || water[k] > 0.01) continue;
     const m = top[k];
@@ -355,15 +366,16 @@ async function main() {
     const r2 = hash(i + 0.5, j + 7.3);
     const slope = 1 - nrm[k * 3 + 2];
     if (slope > 0.3) continue;
-    let pick: { m: number } | null = null;
     const clump = Math.sin(i * 0.05 + Math.sin(j * 0.04) * 3) + Math.sin(j * 0.061 - i * 0.02);
-    if (v > 0.9 && r < 0.05 + Math.max(0, clump) * 0.1) pick = trees[Math.floor(r2 * trees.length)];
-    else if (v > 0.5 && r < 0.012) pick = bushes[Math.floor(r2 * bushes.length)];
-    else if (v > 0.3 && r < 0.02) pick = flowers[Math.floor(r2 * flowers.length)];
-    if (!pick) continue;
+    let set: number[] | null = null;
+    if (v > 0.9 && r < 0.035 + Math.max(0, clump) * 0.06) set = pz[k] > P.sea + 40 ? PINES : nearWater(i, j) ? WILLOW : r2 < 0.3 ? PINES : BROAD;
+    else if (v > 0.5 && r < 0.006) set = SMALL;
+    if (!set) continue;
+    const mesh = set[Math.floor(r2 * set.length)];
     const jx = (hash(i + 3.1, j) - 0.5) * 0.8;
     const jy = (hash(i, j + 5.7) - 0.5) * 0.8;
-    perMesh[pick.m].push(px[k] + jx, py[k] + jy, pz[k] - 0.05, r2 * Math.PI * 2, 0.85 + hash(i + 9.2, j) * 0.4, hash(i, j + 2.2), 0, 0);
+    const sc = 1.25 + hash(i + 9.2, j) * 0.5;
+    perMesh[mesh].push(px[k] + jx, py[k] + jy, pz[k] - 0.1, r2 * Math.PI * 2, sc, hash(i, j + 2.2), meshes[mesh].h, 0);
   }
   const instAll = perMesh.flat();
   const inst = device.createBuffer({ size: Math.max(32, instAll.length * 4), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
@@ -374,7 +386,6 @@ async function main() {
     instRanges.push({ first: acc, count: l.length / 8 });
     acc += l.length / 8;
   }
-  const nTrees = acc;
 
   // ---- pipelines
   const canvas = $<HTMLCanvasElement>('view');
@@ -387,7 +398,7 @@ async function main() {
   const split = lookWgsl.indexOf('// ---- the grade');
   const mod = device.createShaderModule({ label: 'look', code: lookWgsl.slice(0, split) });
   const postMod = device.createShaderModule({ label: 'look post', code: lookWgsl.slice(split) });
-  const ub = device.createBuffer({ size: 64 * 2 + 16 * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const ub = device.createBuffer({ size: 64 * 2 + 16 * 5, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const SHADOW = 4096;
   const shadowTex = device.createTexture({ size: [SHADOW, SHADOW], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
   const bgl = device.createBindGroupLayout({
@@ -398,7 +409,7 @@ async function main() {
       { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
       { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
       { binding: 5, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
-      { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+      { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: '2d-array' } },
     ],
   });
   const layout = device.createPipelineLayout({ bindGroupLayouts: [bgl] });
@@ -411,7 +422,7 @@ async function main() {
       { binding: 3, resource: device.createSampler({ addressModeU: 'repeat', addressModeV: 'repeat', magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear', maxAnisotropy: 8 }) },
       { binding: 4, resource: shadowTex.createView() },
       { binding: 5, resource: device.createSampler({ compare: 'less', magFilter: 'linear', minFilter: 'linear' }) },
-      { binding: 6, resource: palette.createView() },
+      { binding: 7, resource: treeTex.createView({ dimension: '2d-array' }) },
     ],
   });
   const groundVB: GPUVertexBufferLayout = {
@@ -425,14 +436,21 @@ async function main() {
   };
   const groundPosVB: GPUVertexBufferLayout = { arrayStride: STRIDE * 4, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] };
   const waterVB: GPUVertexBufferLayout = { arrayStride: STRIDE * 4, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }, { shaderLocation: 3, offset: 32, format: 'float32' }, { shaderLocation: 4, offset: 36, format: 'float32' }] };
-  const treeVB: GPUVertexBufferLayout[] = [
-    { arrayStride: 32, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }, { shaderLocation: 1, offset: 12, format: 'float32x3' }, { shaderLocation: 2, offset: 24, format: 'float32x2' }] },
-    { arrayStride: 32, stepMode: 'instance', attributes: [{ shaderLocation: 3, offset: 0, format: 'float32x4' }, { shaderLocation: 4, offset: 16, format: 'float32x4' }] },
-  ];
-  const treeShadowVB: GPUVertexBufferLayout[] = [
-    { arrayStride: 32, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] },
-    { arrayStride: 32, stepMode: 'instance', attributes: [{ shaderLocation: 3, offset: 0, format: 'float32x4' }, { shaderLocation: 4, offset: 16, format: 'float32x4' }] },
-  ];
+  const treeVerts: GPUVertexBufferLayout = {
+    arrayStride: 72,
+    attributes: [
+      { shaderLocation: 0, offset: 0, format: 'float32x3' },
+      { shaderLocation: 1, offset: 12, format: 'float32x3' },
+      { shaderLocation: 2, offset: 24, format: 'float32x2' },
+      { shaderLocation: 3, offset: 32, format: 'float32x2' },
+      { shaderLocation: 4, offset: 40, format: 'float32x3' },
+      { shaderLocation: 7, offset: 52, format: 'float32x3' },
+      { shaderLocation: 8, offset: 64, format: 'float32x2' },
+    ],
+  };
+  const treeInst: GPUVertexBufferLayout = { arrayStride: 32, stepMode: 'instance', attributes: [{ shaderLocation: 5, offset: 0, format: 'float32x4' }, { shaderLocation: 6, offset: 16, format: 'float32x4' }] };
+  const treeVB: GPUVertexBufferLayout[] = [treeVerts, treeInst];
+  const treeShadowVB: GPUVertexBufferLayout[] = [{ arrayStride: 72, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }, { shaderLocation: 2, offset: 24, format: 'float32x2' }, { shaderLocation: 3, offset: 32, format: 'float32x2' }] }, treeInst];
   const ds = (write = true): GPUDepthStencilState => ({ format: depthFormat, depthWriteEnabled: write, depthCompare: 'less' });
   const ms = { count: samples };
   const groundPipe = device.createRenderPipeline({ label: 'ground', layout, vertex: { module: mod, entryPoint: 'vsGround', buffers: [groundVB] }, fragment: { module: mod, entryPoint: 'fsGround', targets: [{ format: sceneFormat }] }, primitive: { cullMode: 'none' }, depthStencil: ds(), multisample: ms });
@@ -440,11 +458,17 @@ async function main() {
   const blend: GPUBlendState = { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' } };
   const waterPipe = device.createRenderPipeline({ label: 'water', layout, vertex: { module: mod, entryPoint: 'vsWater', buffers: [waterVB] }, fragment: { module: mod, entryPoint: 'fsWater', targets: [{ format: sceneFormat, blend }] }, primitive: { cullMode: 'none' }, depthStencil: ds(false), multisample: ms });
   const sds: GPUDepthStencilState = { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'less' };
-  const shadowL = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } }] });
+  const shadowL = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+      { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: '2d-array' } },
+    ],
+  });
   const shadowLayout = device.createPipelineLayout({ bindGroupLayouts: [shadowL] });
-  const shadowGroup = device.createBindGroup({ layout: shadowL, entries: [{ binding: 0, resource: { buffer: ub } }] });
+  const shadowGroup = device.createBindGroup({ layout: shadowL, entries: [{ binding: 0, resource: { buffer: ub } }, { binding: 3, resource: device.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear' }) }, { binding: 7, resource: treeTex.createView({ dimension: '2d-array' }) }] });
   const groundShadowPipe = device.createRenderPipeline({ label: 'ground shadow', layout: shadowLayout, vertex: { module: mod, entryPoint: 'vsGroundShadow', buffers: [groundPosVB] }, primitive: { cullMode: 'none' }, depthStencil: sds });
-  const treeShadowPipe = device.createRenderPipeline({ label: 'tree shadow', layout: shadowLayout, vertex: { module: mod, entryPoint: 'vsTreeShadow', buffers: treeShadowVB }, primitive: { cullMode: 'none' }, depthStencil: sds });
+  const treeShadowPipe = device.createRenderPipeline({ label: 'tree shadow', layout: shadowLayout, vertex: { module: mod, entryPoint: 'vsTreeShadow', buffers: treeShadowVB }, fragment: { module: mod, entryPoint: 'fsTreeShadow', targets: [] }, primitive: { cullMode: 'none' }, depthStencil: sds });
   const postU = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const postPipe = device.createRenderPipeline({ label: 'post', layout: 'auto', vertex: { module: postMod, entryPoint: 'vsPost' }, fragment: { module: postMod, entryPoint: 'fsPost', targets: [{ format: canvasFormat }] } });
 
@@ -469,7 +493,7 @@ async function main() {
   let czAt = pz[at(Math.round(box.x0 - x0 + box.w / 2), Math.round(box.y0 - y0 + box.h / 2))];
   if (!Number.isFinite(czAt)) czAt = zmin;
   const cam = { x: cx, y: cy, z: czAt, yaw: num('yaw', 225), pitch: num('pitch', 60), sun: num('sun', 150), ppc: num('zoom', 4) };
-  const look = { tex: q.get('tex') !== '0', trees: q.get('trees') !== '0', houses: q.get('houses') !== '0', grade: true, shadow: true };
+  const look = { tex: q.get('tex') !== '0', trees: q.get('trees') !== '0', houses: q.get('houses') !== '0', grade: true, shadow: true, dbg: num('dbg', 0), exposure: num('exposure', 1.0), sunK: num('sunk', 1.3), amb: num('amb', 0.9) };
   const ZMIN = 0.6;
   const ZMAX = 64;
   const zoomEl = $<HTMLInputElement>('zoom');
@@ -483,6 +507,11 @@ async function main() {
       cam[k] = Number(el.value);
       if (k === 'sun') shadowDirty = true;
     };
+  }
+  for (const k of ['exposure', 'sunK', 'amb'] as const) {
+    const el = $<HTMLInputElement>(k);
+    el.value = String(look[k]);
+    el.oninput = () => (look[k] = Number(el.value));
   }
   for (const k of ['tex', 'trees', 'houses', 'grade', 'shadow'] as const) {
     const el = $<HTMLInputElement>(k);
@@ -591,13 +620,14 @@ async function main() {
     const sun = sunDir();
     const svp = ortho(sun, [pcx, pcy, pcz], half, half, 1500);
     const time = (now - t0) / 1000;
-    const u = new Float32Array(16 * 2 + 16);
+    const u = new Float32Array(16 * 2 + 20);
     u.set(vp, 0);
     u.set(svp, 16);
-    u.set([...sun, 2.6], 32);
+    u.set([...sun, look.sunK], 32);
     u.set([...fw, 1 / cam.ppc], 36);
     u.set([time, look.tex ? 1 : 0, look.shadow ? 1 : 0, look.grade ? 1 : 0], 40);
-    u.set([5, 0.22, 0, 0], 44);
+    u.set([5, 0.22, look.exposure, look.amb], 44);
+    u.set([look.dbg, 0, 0, 0], 48);
     device.queue.writeBuffer(ub, 0, u);
     device.queue.writeBuffer(postU, 0, new Float32Array([look.grade ? 1 : 0, time, w, h]));
     gen.setView(vp, [...sun, 1.15], [...fw, 1 / cam.ppc], time, 0, 1);
@@ -647,7 +677,7 @@ async function main() {
     pp.end();
     device.queue.submit([e.finish()]);
     const avg = dts.reduce((a, b) => a + b, 0) / dts.length;
-    stats.textContent = `${avg.toFixed(1)} ms · ${cam.ppc.toFixed(1)} px a cell · ${nTrees} plants · ${nLots} lots`;
+    stats.textContent = `${avg.toFixed(1)} ms · ${cam.ppc.toFixed(1)} px a cell · ${acc} trees · ${nLots} lots`;
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);

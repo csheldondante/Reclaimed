@@ -7,7 +7,8 @@ struct U {
   sun: vec4<f32>,      // towards the sun, strength
   eye: vec4<f32>,      // towards the eye, world units a pixel
   misc: vec4<f32>,     // time, painted on, shadows on, grade on
-  tile: vec4<f32>,     // texture repeat (m), macro strength, -, -
+  tile: vec4<f32>,     // texture repeat (m), macro strength, exposure, skylight
+  dbg: vec4<f32>,      // 1 normals, 2 light only (albedo grey)
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var texC: texture_2d_array<f32>;
@@ -15,7 +16,6 @@ struct U {
 @group(0) @binding(3) var samp: sampler;
 @group(0) @binding(4) var shadowMap: texture_depth_2d;
 @group(0) @binding(5) var shadowSamp: sampler_comparison;
-@group(0) @binding(6) var palette: texture_2d<f32>;
 
 const NL: u32 = 8u;
 // each layer's flat colour (the "painted" toggle off: the lo-fi look) — linear
@@ -34,6 +34,15 @@ fn flatCol(i: u32) -> vec3<f32> {
 
 fn toLin(c: vec3<f32>) -> vec3<f32> { return pow(c, vec3<f32>(2.2)); }
 fn toSrgb(c: vec3<f32>) -> vec3<f32> { return pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.2)); }
+/** the shaded colour out: exposure, a soft filmic curve (ACES fit), sRGB */
+fn finish(c0: vec3<f32>) -> vec3<f32> {
+  // (a soft shoulder on the luminance only: the colours keep their saturation, as painted ones do)
+  let c = c0 * u.tile.z;
+  let l = max(dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)), 1e-4);
+  // (no curve below 0.8: the painted albedo shows as painted; a soft knee above it)
+  let lt = select(l, 0.8 + (1.0 - exp(-(l - 0.8) / 0.25)) * 0.25, l > 0.8);
+  return toSrgb(clamp(c * (lt / l), vec3<f32>(0.0), vec3<f32>(1.0)));
+}
 
 fn hash2(p: vec2<f32>) -> f32 {
   let q = fract(p * vec2<f32>(0.1031, 0.1030));
@@ -68,12 +77,14 @@ fn shadowAt(w: vec3<f32>, n: vec3<f32>) -> f32 {
 fn light(alb: vec3<f32>, n: vec3<f32>, w: vec3<f32>, ao: f32, rough: f32) -> vec3<f32> {
   let L = u.sun.xyz;
   let sh = shadowAt(w, n);
-  let nl = max(dot(n, L), 0.0);
-  let sunC = vec3<f32>(1.0, 0.9, 0.74) * u.sun.w;
-  let sky = mix(vec3<f32>(0.32, 0.27, 0.22), vec3<f32>(0.42, 0.52, 0.66), n.z * 0.5 + 0.5) * 0.55;
+  // (wrapped a little: the terminator soft, as painted light is)
+  let nl = clamp((dot(n, L) + 0.15) / 1.15, 0.0, 1.0);
+  let sunC = vec3<f32>(1.0, 0.88, 0.72) * u.sun.w;
+  let up = n.z * 0.5 + 0.5;
+  let sky = mix(vec3<f32>(0.42, 0.36, 0.38), vec3<f32>(0.6, 0.62, 0.74), up) * u.tile.w;
   let V = u.eye.xyz;
   let H = normalize(L + V);
-  let spec = pow(max(dot(n, H), 0.0), mix(64.0, 6.0, rough)) * (1.0 - rough) * 0.25;
+  let spec = pow(max(dot(n, H), 0.0), mix(48.0, 8.0, rough)) * (1.0 - rough) * 0.12;
   return alb * (sunC * nl * sh + sky * ao) + sunC * spec * sh * nl;
 }
 
@@ -183,8 +194,10 @@ fn fsGround(in: GV) -> @location(0) vec4<f32> {
   // wet ground at the water's edge
   let wet = smoothstep(0.6, 0.0, in.water) * step(0.001, in.water) + smoothstep(0.15, 0.0, in.water) * 0.0;
   alb *= mix(1.0, 0.6, wet);
+  if (u.dbg.x == 1.0) { return vec4<f32>(nrm * 0.5 + 0.5, 1.0); }
+  if (u.dbg.x == 2.0) { alb = vec3<f32>(0.18); }
   let c = light(alb, nrm, in.w, ao, rough);
-  return vec4<f32>(toSrgb(c), 1.0);
+  return vec4<f32>(finish(c), 1.0);
 }
 
 // ---- water ----
@@ -227,16 +240,22 @@ fn fsWater(in: WV) -> @location(0) vec4<f32> {
   let foam = smoothstep(0.25, 0.0, in.depth) * step(-0.05, in.depth) * smoothstep(0.45, 0.7, fbm(p * 1.3 + t * 0.2));
   c = mix(c, vec3<f32>(0.85, 0.9, 0.88), foam * 0.7);
   let a = mix(0.35, 0.94, smoothstep(0.0, 1.8, in.depth));
-  return vec4<f32>(toSrgb(c), max(a, foam * 0.8));
+  return vec4<f32>(finish(c), max(a, foam * 0.8));
 }
 
-// ---- trees (Synty, instanced) ----
+// ---- trees (Synty Nature leafy trees, instanced) ----
+@group(0) @binding(7) var treeTex: texture_2d_array<f32>;
+
 struct TV {
   @builtin(position) pos: vec4<f32>,
   @location(0) w: vec3<f32>,
   @location(1) n: vec3<f32>,
   @location(2) uv: vec2<f32>,
-  @location(3) tint: f32,
+  @location(3) @interpolate(flat) layer: i32,
+  @location(4) leaf: f32,
+  @location(5) tint: vec3<f32>,
+  @location(6) hue: f32,
+  @location(7) h: f32,
 };
 
 fn treeWorld(p: vec3<f32>, inst: vec4<f32>, sc: f32) -> vec3<f32> {
@@ -244,40 +263,96 @@ fn treeWorld(p: vec3<f32>, inst: vec4<f32>, sc: f32) -> vec3<f32> {
   let s = sin(inst.w);
   var q = vec3<f32>(c * p.x - s * p.y, s * p.x + c * p.y, p.z) * sc;
   // a little wind: the crown sways, the trunk's foot stays
-  let k = max(p.z - 0.6, 0.0) * 0.012;
+  let k = max(p.z - 0.8, 0.0) * 0.02;
   q.x += sin(u.misc.x * 1.3 + inst.x * 0.37 + inst.y * 0.21) * k;
   q.y += cos(u.misc.x * 1.1 + inst.y * 0.33) * k * 0.6;
   return q + inst.xyz;
 }
 
 @vertex
-fn vsTree(@location(0) p: vec3<f32>, @location(1) n: vec3<f32>, @location(2) uv: vec2<f32>, @location(3) inst: vec4<f32>, @location(4) ext: vec4<f32>) -> TV {
+fn vsTree(@location(0) p: vec3<f32>, @location(1) n: vec3<f32>, @location(2) uv: vec2<f32>, @location(3) lt: vec2<f32>, @location(4) tint: vec3<f32>,
+          @location(5) inst: vec4<f32>, @location(6) ext: vec4<f32>, @location(7) cen: vec3<f32>, @location(8) off: vec2<f32>) -> TV {
   var o: TV;
-  let w = treeWorld(p, inst, ext.x);
+  var w = treeWorld(p, inst, ext.x);
+  if (lt.y > 0.01) {
+    // a leaf card turned to face the camera round its own centre (the fluffy-foliage trick: a crown full from any
+    // angle), a little larger than modelled
+    let fw = u.eye.xyz;
+    let R = normalize(cross(vec3<f32>(0.0, 0.0, 1.0), fw));
+    let U = cross(fw, R);
+    w = treeWorld(cen, inst, ext.x) + (R * off.x + U * off.y) * ext.x * 1.25;
+  }
   o.pos = u.viewProj * vec4<f32>(w, 1.0);
   o.w = w;
   let c = cos(inst.w);
   let s = sin(inst.w);
   o.n = vec3<f32>(c * n.x - s * n.y, s * n.x + c * n.y, n.z);
   o.uv = uv;
-  o.tint = ext.y;
+  o.layer = i32(lt.x + 0.5);
+  o.leaf = lt.y;
+  o.tint = tint;
+  o.hue = ext.y;
+  o.h = p.z / max(ext.z, 1.0);
   return o;
 }
 
 @vertex
-fn vsTreeShadow(@location(0) p: vec3<f32>, @location(3) inst: vec4<f32>, @location(4) ext: vec4<f32>) -> @builtin(position) vec4<f32> {
-  return u.sunVP * vec4<f32>(treeWorld(p, inst, ext.x), 1.0);
+fn vsTreeShadow(@location(0) p: vec3<f32>, @location(2) uv: vec2<f32>, @location(3) lt: vec2<f32>, @location(5) inst: vec4<f32>, @location(6) ext: vec4<f32>) -> TSV {
+  var o: TSV;
+  o.pos = u.sunVP * vec4<f32>(treeWorld(p, inst, ext.x), 1.0);
+  o.uv = uv;
+  o.layer = i32(lt.x + 0.5);
+  return o;
+}
+struct TSV {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+  @location(1) @interpolate(flat) layer: i32,
+};
+@fragment
+fn fsTreeShadow(in: TSV) {
+  if (textureSampleLevel(treeTex, samp, in.uv, in.layer, 1.0).a < 0.5) { discard; }
 }
 
 @fragment
 fn fsTree(in: TV) -> @location(0) vec4<f32> {
-  var alb = toLin(textureSampleLevel(palette, samp, in.uv, 0.0).rgb);
-  alb *= mix(vec3<f32>(0.9, 1.0, 0.85), vec3<f32>(1.1, 1.0, 0.85), in.tint);
+  let t = textureSample(treeTex, samp, in.uv, in.layer);
+  let isLeaf = in.leaf > 0.01;
+  if (isLeaf && t.a < 0.5) { discard; }
+  // (the leaf textures' own darkness evened out: the pines' is near black, Synty's shader lifts it)
+  let gain = select(1.0, select(select(1.0, 7.0, in.layer == 1), 1.4, in.layer == 0), isLeaf);
+  var alb = toLin(t.rgb) * in.tint * gain;
+  if (isLeaf) {
+    // (the leaf texture as the cards' shape and a little detail; the crown's colour its own, flat — so the light's
+    // gradient across the crown is what reads, as in Synty's own shots)
+    let base = select(select(vec3<f32>(0.20, 0.34, 0.07), vec3<f32>(0.07, 0.17, 0.09), in.layer == 1), vec3<f32>(0.24, 0.32, 0.06), in.layer == 2);
+    let det = dot(toLin(t.rgb) * gain, vec3<f32>(0.3, 0.6, 0.1)) / max(dot(base, vec3<f32>(0.3, 0.6, 0.1)), 1e-3);
+    alb = base * mix(1.0, clamp(det, 0.5, 1.5), 0.3);
+  }
+  // each tree its own shade (greens to yellows; now and then an autumn one)
+  alb *= mix(vec3<f32>(0.85, 1.0, 0.8), vec3<f32>(1.15, 1.0, 0.7), in.hue);
+  if (in.hue > 0.9 && isLeaf) { alb = alb * vec3<f32>(2.2, 0.9, 0.35); }
   let n = normalize(in.n);
-  // (a crown's soft occlusion: darker low, near the trunk)
-  let ao = 0.75;
-  let c = light(alb, n, in.w, ao, 0.85);
-  return vec4<f32>(toSrgb(c), 1.0);
+  if (u.dbg.x == 1.0) { return vec4<f32>(n * 0.5 + 0.5, 1.0); }
+  if (u.dbg.x == 2.0) { alb = vec3<f32>(0.18); }
+  var c: vec3<f32>;
+  if (isLeaf) {
+    // a clump lit as a volume: half-Lambert squared round its blob normal (lit side to shade side across the clump),
+    // the inner leaves darker, the crown's lower half in its own shade, light through the leaves from behind
+    let sh = shadowAt(in.w, n);
+    let hl = dot(n, u.sun.xyz) * 0.5 + 0.5;
+    let key = hl * hl * mix(0.45, 1.0, sh);
+    let occ = in.leaf * mix(0.65, 1.0, clamp(in.h, 0.0, 1.0));
+    let sunC = vec3<f32>(1.0, 0.88, 0.72) * u.sun.w;
+    let sky = mix(vec3<f32>(0.42, 0.4, 0.38), vec3<f32>(0.6, 0.62, 0.74), n.z * 0.5 + 0.5) * u.tile.w;
+    let ramp = mix(vec3<f32>(0.32, 0.45, 0.58), vec3<f32>(1.45, 1.25, 0.8), smoothstep(0.1, 0.8, key));
+    c = alb * ramp * (sunC * 0.45 + sky * 0.75) * occ * 1.5;
+    let back = pow(max(dot(-n, u.sun.xyz), 0.0), 2.0) * sh;
+    c += alb * vec3<f32>(1.0, 0.95, 0.55) * back * 0.4 * u.sun.w;
+  } else {
+    c = light(alb, n, in.w, 0.85, 0.9);
+  }
+  return vec4<f32>(finish(c), 1.0);
 }
 
 // ---- the grade (a full-screen pass over the scene) ----
@@ -296,11 +371,7 @@ fn fsPost(@builtin(position) fc: vec4<f32>) -> @location(0) vec4<f32> {
   if (gu.x > 0.5) {
     // warm, a touch more saturated, gentle S-curve, soft vignette (the painted look's grade)
     let l = dot(c, vec3<f32>(0.299, 0.587, 0.114));
-    c = mix(vec3<f32>(l), c, 1.15);
-    c = c * vec3<f32>(1.04, 1.0, 0.94);
-    c = mix(c, c * c * (3.0 - 2.0 * c), 0.35);
-    let uv = fc.xy / gu.zw - 0.5;
-    c *= 1.0 - dot(uv, uv) * 0.35;
+    c = mix(vec3<f32>(l), c, 1.12);
   }
   return vec4<f32>(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
 }
