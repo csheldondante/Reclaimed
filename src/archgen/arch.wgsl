@@ -1753,6 +1753,8 @@ fn grid(seed: u32) {
           own[k] = inQuad(gPar, qc);
           var past = false;
           for (var j = 0u; j < 4u; j++) { past = past || pastStreet(Q[k][j]); }
+          // (?gridview=1: a cell dropped for touching a road drawn as a low brick slab)
+          if (GU.gridView != 0u && own[k] && past) { body(S_BRICK, F_NOWIN, grow(Q[k], -0.15), gGround, gGround + 0.05); }
           own[k] = own[k] && !past;
           kept[k] = own[k] && inQuad(gFpG, qc);
           allIn = allIn && kept[k];
