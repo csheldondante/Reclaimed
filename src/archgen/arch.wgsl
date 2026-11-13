@@ -1599,10 +1599,11 @@ fn tgRegister() {
   var lo = vec2<f32>(1e9);
   var hi = vec2<f32>(-1e9);
   for (var k = 0u; k < 4u; k++) { lo = min(lo, gPar[k]); hi = max(hi, gPar[k]); }
-  let b0 = i32(floor(lo.y / (GRID_S * SQ3 * 0.5))) - 1;
-  let b1 = i32(ceil(hi.y / (GRID_S * SQ3 * 0.5))) + 1;
-  let a0 = i32(floor(lo.x / GRID_S - 0.5 * f32(b1))) - 1;
-  let a1 = i32(ceil(hi.x / GRID_S - 0.5 * f32(b0))) + 1;
+  // (grid() walks the lattice a cell out round the parcel, and a piece's corners reach a cell further: two out)
+  let b0 = i32(floor(lo.y / (GRID_S * SQ3 * 0.5))) - 2;
+  let b1 = i32(ceil(hi.y / (GRID_S * SQ3 * 0.5))) + 3;
+  let a0 = i32(floor(lo.x / GRID_S - 0.5 * f32(b1))) - 2;
+  let a1 = i32(ceil(hi.x / GRID_S - 0.5 * f32(b0))) + 3;
   let c0 = tgChunk(a0, b0);
   let c1 = tgChunk(a1, b1);
   for (var cy = c0.y; cy <= c1.y; cy++) {
@@ -1740,8 +1741,9 @@ fn grid(seed: u32) {
         let cen = tgPos(p.CK, cs.cen);
         let merged = p.merged;
         let nv = p.nv;
-        // a cell is this lot's if its centre is in the parcel; built on if it's in the footprint and no corner is past a
-        // street line, else paved (the cells a road crosses, the ground between blocks)
+        // a cell is this lot's if its centre is in the parcel; any corner past a street line: no cell at all (the user:
+        // "Any overlap with the road should erase the full cell so we don't get slivers"); built on if its centre is in
+        // the footprint, else paved (the ground between blocks)
         var own = array<bool, 4>(false, false, false, false);
         var kept = array<bool, 4>(false, false, false, false);
         var allIn = true;
@@ -1751,7 +1753,8 @@ fn grid(seed: u32) {
           own[k] = inQuad(gPar, qc);
           var past = false;
           for (var j = 0u; j < 4u; j++) { past = past || pastStreet(Q[k][j]); }
-          kept[k] = own[k] && inQuad(gFpG, qc) && !past;
+          own[k] = own[k] && !past;
+          kept[k] = own[k] && inQuad(gFpG, qc);
           allIn = allIn && kept[k];
           anyIn = anyIn || own[k];
         }

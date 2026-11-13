@@ -23381,3 +23381,14 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
 - The citygen roads themselves are unchanged (Track A's); the paving is the lot's own. Left: green slivers where no
   cell's centre falls in any parcel; at a lot's outer edge (the coast) paved cells reach a little past the parcel.
 
+## archgen: a cell touching a road is no cell (2026-11-12; the user: "Any overlap with the road should erase the full
+## cell so we don't get slivers")
+
+- An owned cell with any corner past a street line is now dropped entirely (not paved): the road shows to the cells'
+  edges. Paving stays for owned cells off the footprint that don't touch a road (between blocks), yards, slivers.
+- tgRegister asked for the chunks a lattice cell round the parcel; grid() walks a cell out and a piece's corners reach
+  one more, so a corner could lie in a chunk nobody asked for (left unrelaxed while its neighbours moved: a twisted
+  cell). Now two cells out.
+- The dark irregular shapes in the cell view were shadows: the lab draws each lot's ground as a block at its own
+  height, and the higher ones shade the lower (`&oldlight=1` draws no shadows; shot pv3).
+
