@@ -23368,3 +23368,16 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
 - Next: walls as curves along each built group's outline (the user's spline blending), then the pieces and terraces
   on the curved outline.
 
+## archgen: whole cells; the cells a road crosses paved (2026-11-12; the user: "make streets through irregular grids
+## instead pave whole cells?", then "just where existing roads intersect make those 0 blocks but have the ground between
+## blocks pave fully")
+
+- A grid lot owns the cells whose centre is in its parcel. One is built on if its centre is in the footprint (grown
+  0.6) and no corner is past a street line; every other owned cell is paved — flagstones flush with the lot's ground
+  (pave(): a stone body 0.04 over it) — so the roads' crossings and the ground between blocks are paved whole cells.
+  Shanty yards and cells too small to stand are paved too.
+- Cells are no longer cut to the street (faceStreet pulled corners onto the line: the slivers and near-triangles). A
+  cell's front is a side whose ends are within 1.6 m of a street line.
+- The citygen roads themselves are unchanged (Track A's); the paving is the lot's own. Left: green slivers where no
+  cell's centre falls in any parcel; at a lot's outer edge (the coast) paved cells reach a little past the parcel.
+

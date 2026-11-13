@@ -1262,25 +1262,52 @@ fn onStreet(p: vec2<f32>) -> bool {
   return false;
 }
 
-/** q's corners pulled onto the streets; gFront if one stands on a street, and then q turned so its side 0 is the
- *  longest side lying on the street line (its door's side) */
+/** is p past one of the footprint's street lines? */
+fn pastStreet(p: vec2<f32>) -> bool {
+  for (var k = 0u; k < 4u; k++) {
+    if (!gStreet[k]) { continue; }
+    let a = gFp[k];
+    let e = normalize(gFp[(k + 1u) % 4u] - a);
+    if (dot(p - a, vec2<f32>(e.y, -e.x)) > 0.05) { return true; }
+  }
+  return false;
+}
+/** is p within a street line's reach (1.6 m in from it)? */
+fn nearStreet(p: vec2<f32>) -> bool {
+  for (var k = 0u; k < 4u; k++) {
+    if (!gStreet[k]) { continue; }
+    let a = gFp[k];
+    let e = normalize(gFp[(k + 1u) % 4u] - a);
+    if (dot(p - a, vec2<f32>(e.y, -e.x)) > -1.6) { return true; }
+  }
+  return false;
+}
+
+/** a whole cell (never cut to the street: 2026-11-12, the user — the cells a road crosses are paved instead); gFront if
+ *  a corner is near a street, and then q turned so its side 0 is its longest side lying near the street (its door's) */
 fn faceStreet(q0: array<vec2<f32>, 4>) -> array<vec2<f32>, 4> {
-  var q = q0;
-  for (var k = 0u; k < 4u; k++) { q[k] = toStreet(q[k]); }
+  let q = q0;
   gFront = false;
   var best = 4u;
   var bl = 0.0;
   for (var k = 0u; k < 4u; k++) {
-    if (!onStreet(q[k])) { continue; }
+    if (!nearStreet(q[k])) { continue; }
     gFront = true;
     let n = (k + 1u) % 4u;
     let l = length(q[n] - q[k]);
-    if (onStreet(q[n]) && l > bl) { bl = l; best = k; }
+    if (nearStreet(q[n]) && l > bl) { bl = l; best = k; }
   }
   if (best == 4u) { return q; }
   var r = q;
   for (var k = 0u; k < 4u; k++) { r[k] = q[(k + best) % 4u]; }
   return r;
+}
+
+/** a paved cell: flagstones flush with the lot's ground (the user: the cells a road crosses "0 blocks", "the ground
+ *  between blocks pave fully") */
+fn pave(q: array<vec2<f32>, 4>) {
+  if (gN + 1u > PPL) { return; }
+  body(S_STONE, 0u, q, gGround - 0.5, gGround + 0.04);
 }
 
 fn quadArea(q: array<vec2<f32>, 4>) -> f32 {
@@ -1296,21 +1323,10 @@ fn posHash(c: vec2<f32>) -> u32 {
 fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
   // (room for the most a cell makes: a column, a parapet, a shrub, four stilts and a roof)
   if (gN + 7u > PPL) { return; }
-  // (three corners past a street: pulled onto it they'd lie in a line and the cell would stand as a triangle — the
-  // street keeps that sliver)
-  var past = 0u;
-  for (var k = 0u; k < 4u; k++) { if (distance(toStreet(q0[k]), q0[k]) > 0.05) { past++; } }
-  if (past >= 3u) { return; }
   var q = faceStreet(q0);
   let front = gFront;
-  // (pulled flat onto a street: too thin to stand)
-  if (quadArea(q) < 1.2) { return; }
-  // (a corner pulled into line with its two neighbours: a triangle in all but name)
-  for (var k = 0u; k < 4u; k++) {
-    let ea = normalize(q[(k + 1u) % 4u] - q[k]);
-    let eb = normalize(q[(k + 3u) % 4u] - q[k]);
-    if (dot(ea, eb) < -0.94) { return; }
-  }
+  // (too small to stand: paved)
+  if (quadArea(q) < 1.2) { pave(q); return; }
   let c = (q[0] + q[1] + q[2] + q[3]) * 0.25;
   let ch = posHash(c);
   let g = gGround;
@@ -1322,7 +1338,8 @@ fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
   if (tower) { h += 2; }
   h = clamp(h, 1, select(6, 2, shanty));
   if (shanty && !front && rnd(ch, 3u) < 0.16) {
-    // a yard: a cloth lean-to against the next column (its high side away from the street), or a shrub
+    // a yard (paved): a cloth lean-to against the next column (its high side away from the street), or a shrub
+    pave(q);
     if (rnd(ch, 4u) < 0.65) {
       put(K_ROOF, S_CLOTH, F_SHED, grow(q, -0.15), g + 0.6, vec4<f32>(g + mix(2.0, 2.5, rnd(ch, 13u)), 0.0, f32(hash(ch) % 4u), 0.05));
     } else {
@@ -1723,14 +1740,20 @@ fn grid(seed: u32) {
         let cen = tgPos(p.CK, cs.cen);
         let merged = p.merged;
         let nv = p.nv;
+        // a cell is this lot's if its centre is in the parcel; built on if it's in the footprint and no corner is past a
+        // street line, else paved (the cells a road crosses, the ground between blocks)
+        var own = array<bool, 4>(false, false, false, false);
         var kept = array<bool, 4>(false, false, false, false);
         var allIn = true;
         var anyIn = false;
         for (var k = 0u; k < nv; k++) {
           let qc = (Q[k][0] + Q[k][1] + Q[k][2] + Q[k][3]) * 0.25;
-          kept[k] = inQuad(gPar, qc) && inQuad(gFpG, qc);
+          own[k] = inQuad(gPar, qc);
+          var past = false;
+          for (var j = 0u; j < 4u; j++) { past = past || pastStreet(Q[k][j]); }
+          kept[k] = own[k] && inQuad(gFpG, qc) && !past;
           allIn = allIn && kept[k];
-          anyIn = anyIn || kept[k];
+          anyIn = anyIn || own[k];
         }
         if (!anyIn) { continue; }
         // a whole quad piece in this lot: now and then one house (not the shanties: theirs stay huts)
@@ -1740,6 +1763,7 @@ fn grid(seed: u32) {
         if (GU.gridView != 0u) {
           for (var k = 0u; k < nv; k++) {
             if (kept[k]) { body(S_TINT, F_NOWIN, grow(Q[k], -0.15), gGround, gGround + 0.3 + f32(k) * 0.05); }
+            else if (own[k]) { body(S_STONE, F_NOWIN, grow(Q[k], -0.15), gGround, gGround + 0.1); }
           }
           continue;
         }
@@ -1754,8 +1778,8 @@ fn grid(seed: u32) {
           continue;
         }
         for (var k = 0u; k < nv; k++) {
-          if (!kept[k]) { continue; }
-          gridCell(Q[k], seed, shanty);
+          if (kept[k]) { gridCell(Q[k], seed, shanty); }
+          else if (own[k]) { pave(Q[k]); }
         }
       }
     }

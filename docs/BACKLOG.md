@@ -2341,6 +2341,8 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
     caught by the light).
   - The grid relaxed (Townscaper's squaring) in seamless GPU chunks — done (this commit). Next: curved walls along
     each built group's outline ("spline blending along adjacent cells that merge into walls").
+  - Whole cells, the cells a road crosses and the ground between blocks paved ("make those 0 blocks but have the
+    ground between blocks pave fully") — done (this commit).
   - Smoothed normals between nearly parallel neighbouring grid cells ("Townscaper also looks like it renders with
     smoothed normals between nearly parallel irregular grid cells"): adjacent cells' walls that meet almost flat shade
     as one curved wall.
