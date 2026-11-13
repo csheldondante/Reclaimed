@@ -23411,3 +23411,13 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
 - The user's next (after the grid): a cell crossed by a lot it doesn't belong to left empty so the street shows, the
   streets paved under.
 
+## archgen: the grid's chunks cheap (2026-11-12; the user: "Are chunks fast and cheap to compute?")
+
+- archlab `archlab.gridBench(runs, R)` (gridlab): GPU time of the grid's pass for (2R+1)² chunks shown ((2R+3)²
+  relaxed), timestamps, median. Desktop (this PC), before: 81 shown, 20 steps 7.38 ms (0 steps 0.63 ms, 40 steps
+  14.4 ms; 9 shown 2.74 ms) — each step found every piece again (the merge rounds' hashing).
+- Now tgRelax finds its region's cells once and keeps them in the chunk's own scratch in TG (2 words a cell, room for
+  1176: the most a region's 392 triangles can make), storageBarrier before the steps read it. After: 81 shown, 20
+  steps 1.56 ms (19 µs a chunk); 40 steps 2.27 ms; 9 shown 0.60 ms. Same grid (gl6 = gl3).
+- TG grows by 9.4 KB a chunk slot (slots: the lot count's power of two — 1024 in the lab: 9.6 MB). Phone not measured.
+

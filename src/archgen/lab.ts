@@ -325,8 +325,28 @@ async function main() {
     stats.textContent = `${n} lots · GPU make ${res.genMs} ms + compact ${res.compactMs} ms a town (median of ${runs})`;
     return res;
   };
+  /** (gridlab) the grid's cost: GPU time of asking for, relaxing and writing out (2R+1)² chunks, the median of runs */
+  const gridBench = async (runs = 20, R = GL_R) => {
+    if (!qs || !gridLab) return null;
+    const side = 2 * R + 1;
+    const ms: number[] = [];
+    for (let r = 0; r < runs; r++) {
+      const e = device.createCommandEncoder();
+      gen.gridLab(e, 100 - R, 100 - R, side, side, { querySet: qs, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 });
+      e.resolveQuerySet(qs, 0, 2, qb, 0);
+      e.copyBufferToBuffer(qb, 0, qr, 0, 16);
+      device.queue.submit([e.finish()]);
+      await qr.mapAsync(GPUMapMode.READ);
+      const t = new BigInt64Array(qr.getMappedRange().slice(0));
+      qr.unmap();
+      ms.push(Number(t[1] - t[0]) / 1e6);
+    }
+    glChunk = '';
+    const med = ms.sort((x, y) => x - y)[ms.length >> 1];
+    return { chunks: side * side, relaxSteps: gen.relaxSteps, ms: +med.toFixed(4), msPerChunk: +(med / (side * side)).toFixed(5) };
+  };
   (document.getElementById('bench') as HTMLButtonElement).onclick = () => void bench();
-  void bench(5);
+  if (!gridLab) void bench(5);
 
   (globalThis as unknown as { archlab: unknown }).archlab = {
     view(yaw?: number, zoom?: number, at?: [number, number], pitch?: number) {
@@ -342,6 +362,7 @@ async function main() {
     },
     look,
     bench,
+    gridBench,
     gen,
     device,
     centre: [cx, cy],

@@ -174,7 +174,7 @@ export class ArchGen {
     let slots = 64;
     while (slots < o.lots) slots *= 2;
     this.tgSlots = slots;
-    this.tg = d.createBuffer({ label: 'arch grid chunks', size: (8 + slots + slots * 384 * 2) * 4, usage: S | GPUBufferUsage.COPY_DST });
+    this.tg = d.createBuffer({ label: 'arch grid chunks', size: (8 + slots + slots * 384 * 2 + slots * 1176 * 2) * 4, usage: S | GPUBufferUsage.COPY_DST });
     // (gridlab) the grid's cells out: room for o.gridChunks chunks (a chunk ~300 cells)
     this.gridCells = d.createBuffer({ label: 'arch grid cells', size: (4 + Math.max(1, (o.gridChunks ?? 0) * 320) * 8) * 4, usage: S | GPUBufferUsage.COPY_DST });
     this.tgPipes = ['tgRegisterLots', 'tgRelax', 'tgRegisterArea', 'tgEmit'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
@@ -247,7 +247,7 @@ export class ArchGen {
 
   /** (gridlab) the grid alone, lots aside: the chunks [x0, x0 + w) × [y0, y0 + h) relaxed (with a ring round them for
    *  their vertices' owners) and their cells written to gridCells */
-  gridLab(enc: GPUCommandEncoder, x0: number, y0: number, w: number, h: number): void {
+  gridLab(enc: GPUCommandEncoder, x0: number, y0: number, w: number, h: number, ts?: GPUComputePassTimestampWrites): void {
     const u = new Uint32Array(12);
     u[7] = this.tgSlots;
     u[8] = this.relaxSteps;
@@ -256,7 +256,7 @@ export class ArchGen {
     this.device.queue.writeBuffer(this.genU, 0, u);
     enc.clearBuffer(this.tg);
     enc.clearBuffer(this.gridCells, 0, 16);
-    const g = enc.beginComputePass({ label: 'arch grid lab' });
+    const g = enc.beginComputePass({ label: 'arch grid lab', timestampWrites: ts });
     g.setBindGroup(0, this.genGroup);
     g.setPipeline(this.tgPipes[2]);
     g.dispatchWorkgroups(Math.ceil(((w + 2) * (h + 2)) / 64));

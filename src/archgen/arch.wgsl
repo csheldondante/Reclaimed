@@ -1664,6 +1664,11 @@ var<workgroup> wPos: array<vec2<f32>, TG_RV>;
 /** a step's pulls on a vertex, packed (16 KB of workgroup memory is all a phone may give): x and y each 13 bits (a
  *  pull in 1/64 m, biased by 512 — ±8 m), the cells pulling 6 bits */
 var<workgroup> wAcc: array<atomic<u32>, TG_RV>;
+var<workgroup> wCells: atomic<u32>;
+/** a chunk's region's cells, found once (the merge rounds' hashing is most of a step's cost if done every step): kept
+ *  in the chunk's own scratch in TG, 2 words a cell (its four corners' region places, 16 bits each) */
+const TG_CELLS: u32 = 1176u;
+fn tgScratch(slot: u32) -> u32 { return 8u + GU.tgSlots + GU.tgSlots * TG_NV * 2u + slot * TG_CELLS * 2u; }
 
 /** a key's place in the region round chunk ch, or 0xffffffff outside it */
 fn tgRegion(key: u32, ch: vec2<i32>) -> u32 {
@@ -1681,7 +1686,10 @@ fn tgRegion(key: u32, ch: vec2<i32>) -> u32 {
 @compute @workgroup_size(64)
 fn tgRelax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
   let slot = wg.x;
-  if (li == 0u) { wKey = atomicLoad(&TG[8u + slot]); }
+  if (li == 0u) {
+    wKey = atomicLoad(&TG[8u + slot]);
+    atomicStore(&wCells, 0u);
+  }
   let key = workgroupUniformLoad(&wKey);
   if (key == 0u) { return; }
   let k0 = key - 1u;
@@ -1695,30 +1703,31 @@ fn tgRelax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
     if (!p.ok) { continue; }
     let cs = cellsOf(p);
     for (var k = 0u; k < p.nv; k++) {
+      var ix: array<u32, 4>;
+      var inside = true;
       for (var j = 0u; j < 4u; j++) {
-        let r = tgRegion(cs.K[k][j], ch);
-        if (r != 0xffffffffu) { wPos[r] = cs.Q[k][j]; }
+        ix[j] = tgRegion(cs.K[k][j], ch);
+        if (ix[j] != 0xffffffffu) { wPos[ix[j]] = cs.Q[k][j]; } else { inside = false; }
+      }
+      if (!inside) { continue; }
+      let n = atomicAdd(&wCells, 1u);
+      if (n < TG_CELLS) {
+        atomicStore(&TG[tgScratch(slot) + n * 2u], ix[0] | (ix[1] << 16u));
+        atomicStore(&TG[tgScratch(slot) + n * 2u + 1u], ix[2] | (ix[3] << 16u));
       }
     }
   }
+  storageBarrier();
   workgroupBarrier();
+  let nc = min(atomicLoad(&wCells), TG_CELLS);
   for (var it = 0u; it < GU.relax; it++) {
     for (var v = li; v < TG_RV; v += 64u) { atomicStore(&wAcc[v], 0u); }
     workgroupBarrier();
-    for (var tr = li; tr < NT; tr += 64u) {
-      let a = ch.x * TG_CH - TG_AP + i32((tr / 2u) % u32(TG_R - 1));
-      let b = ch.y * TG_CH - TG_AP + i32((tr / 2u) / u32(TG_R - 1));
-      let pc = pieceAt(a, b, tr & 1u);
-      if (!pc.ok) { continue; }
-      let cs = cellsOf(pc);
-      for (var k = 0u; k < pc.nv; k++) {
-        var ix: array<u32, 4>;
-        var inside = true;
-        for (var j = 0u; j < 4u; j++) {
-          ix[j] = tgRegion(cs.K[k][j], ch);
-          inside = inside && ix[j] != 0xffffffffu;
-        }
-        if (!inside) { continue; }
+    for (var c = li; c < nc; c += 64u) {
+      {
+        let w0 = atomicLoad(&TG[tgScratch(slot) + c * 2u]);
+        let w1 = atomicLoad(&TG[tgScratch(slot) + c * 2u + 1u]);
+        let ix = array<u32, 4>(w0 & 0xffffu, w0 >> 16u, w1 & 0xffffu, w1 >> 16u);
         let p = array<vec2<f32>, 4>(wPos[ix[0]], wPos[ix[1]], wPos[ix[2]], wPos[ix[3]]);
         let cc = (p[0] + p[1] + p[2] + p[3]) * 0.25;
         // (the corners' turn: counter-clockwise turns them back by -90° each, clockwise by +90°)
