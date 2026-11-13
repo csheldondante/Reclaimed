@@ -2353,6 +2353,9 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   - Districts much bigger relative to cells (the user: "a district should be much bigger relative to cells so that we
     get a large neighborhood of the irregular structures"); and for adjacent lots of the same type, the road between
     them replaced by one aligned to the grid (the user's idea) — citygen is Track A's: to agree with them.
+  - Grid districts grow over lot lines, their own lanes along the grid's edges — done (this commit).
+  - Wall detail (the user, 2026-11-12: "Windows and doors are not recessed", "there are not many overhangs or porches")
+    — with the geometry list below.
   - Smoothed normals between nearly parallel neighbouring grid cells ("Townscaper also looks like it renders with
     smoothed normals between nearly parallel irregular grid cells"): adjacent cells' walls that meet almost flat shade
     as one curved wall.

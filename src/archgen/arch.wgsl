@@ -1804,9 +1804,10 @@ fn grid(seed: u32) {
         let cen = tgPos(p.CK, cs.cen);
         let merged = p.merged;
         let nv = p.nv;
-        // a cell is this lot's to make if its centre is in the parcel; it stands if every corner is in a lot built on
-        // the grid (this one or another: the user — straddling lots is fine "if both use the same tiles"); a corner in a
-        // street or another kind of lot: no cell (the user: "Any overlap with the road should erase the full cell")
+        // a cell is made by the lot its centre is in; it stands if every corner is in a lot built on the grid (straddling
+        // lot lines and the streets between grid lots: the district is one — the user: districts "grow over the lot
+        // lines and form their own streets"), none is in a street the district keeps (one facing a lot not on the grid),
+        // and its lattice corner isn't on one of the district's lanes
         var own = array<bool, 4>(false, false, false, false);
         var kept = array<bool, 4>(false, false, false, false);
         var allIn = true;
@@ -1826,14 +1827,15 @@ fn grid(seed: u32) {
             var grid = true;
             for (var j = 0u; j < 4u; j++) {
               let l = lotAt(Q[k][j]);
-              grid = grid && l != 0xffffffffu && (l == gLot || lotIsGrid(l)) && !inStreetOf(l, Q[k][j]);
+              grid = grid && l != 0xffffffffu && (l == gLot || lotIsGrid(l)) && !outerStreet(l, Q[k][j]);
               if (l != 0xffffffffu) {
                 let gl = rf(l * RECW, 21u) + 0.5;
                 gHi[k] = max(gHi[k], gl);
                 gLo[k] = min(gLo[k], gl);
               }
             }
-            kept[k] = grid;
+            let an = tgAnchor(cs.K[k][0]);
+            kept[k] = grid && !lanePoint(an.x, an.y);
             // (?gridview=1: a cell left out drawn as a low brick slab)
             if (GU.gridView != 0u && !grid) { body(S_BRICK, F_NOWIN, grow(Q[k], -0.15), gGround, gGround + 0.05 + f32(GU.gridView == 4u)); }
           }
@@ -2091,6 +2093,46 @@ fn inStreetOf(i: u32, p: vec2<f32>) -> bool {
     if (dot(p - fa, vec2<f32>(ef.y, -ef.x)) > 0.05) { return true; }
   }
   return false;
+}
+
+/** if p is in a street of lot i that only a lot not on the grid (or nothing) faces across — a street the grid's own
+ *  district keeps; a street between two grid lots is the district's to build over (the user: districts of the same
+ *  irregular housing "grow over the lot lines and form their own streets") */
+fn outerStreet(i: u32, p: vec2<f32>) -> bool {
+  let o = i * RECW;
+  for (var k = 0u; k < 4u; k++) {
+    let k1 = (k + 1u) % 4u;
+    let pa = vec2<f32>(rf(o, k * 2u), rf(o, 1u + k * 2u));
+    let pb = vec2<f32>(rf(o, k1 * 2u), rf(o, 1u + k1 * 2u));
+    let fa = vec2<f32>(rf(o, 8u + k * 2u), rf(o, 9u + k * 2u));
+    let fb = vec2<f32>(rf(o, 8u + k1 * 2u), rf(o, 9u + k1 * 2u));
+    let e = normalize(pb - pa);
+    let out = vec2<f32>(e.y, -e.x);
+    if (abs(dot((fa + fb) * 0.5 - pa, out)) <= 0.6) { continue; }
+    let ef = normalize(fb - fa);
+    let outF = vec2<f32>(ef.y, -ef.x);
+    if (dot(p - fa, outF) <= 0.05) { continue; }
+    // (across the street: past this lot's parcel edge by a few metres)
+    let across = lotAt(p + out * (dot(pa - p, out) + 4.0));
+    if (across == 0xffffffffu || !lotIsGrid(across)) { return true; }
+  }
+  return false;
+}
+
+// the grid district's own lanes: a lattice point is on a lane if it lies on a lattice line of a family (b const, or a
+// const: the lattice's two edge directions) every TG_LANE rows, in segments TG_SEG long each on or off by a hash (dead
+// ends, T junctions); the cells round a lane point — each cell has one lattice corner — are left out, so a lane two
+// cells wide follows the grid's edges, winding as the relaxation bends them. Local: any chunk works it out alike.
+const TG_LANE: i32 = 6;
+const TG_SEG: i32 = 4;
+fn laneSeg(line: i32, along: i32, fam: u32) -> bool {
+  let seg = i32(floor(f32(along) / f32(TG_SEG)));
+  return f32(hash((u32(line + 4096) * 7919u) ^ (u32(seg + 4096) * 104729u) ^ (fam * 0x9e3779b9u)) & 0xffffu) / 65535.0 < 0.72;
+}
+fn lanePoint(a: i32, b: i32) -> bool {
+  let ob = (b % TG_LANE + TG_LANE) % TG_LANE;
+  let oa = (a % TG_LANE + TG_LANE) % TG_LANE;
+  return (ob == 0 && laneSeg(b, a, 0u)) || (oa == 3 && laneSeg(a, b, 1u));
 }
 
 /** a chunk's pieces' cells out (a workgroup a chunk of the area), each with how it sits on the lots: 0 its centre in no

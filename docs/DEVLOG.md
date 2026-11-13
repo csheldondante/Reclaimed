@@ -23440,3 +23440,17 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
   (blue); =3 every cell near any lot; =4 =1 lifted. lotAt loops every lot (a spatial index per chunk is next for the
   phone).
 
+## archgen: grid districts grow over lot lines and cut their own lanes (2026-11-12; the user: "districts with the same
+## type of irregular housing should grow over the lot lines and form their own streets by deleting cells along paths
+## that mostly follow the edge directions")
+
+- A grid district is one region: a cell stands if every corner is in a grid lot, the streets between grid lots
+  included; a street is kept only where it faces a lot not on the grid or nothing (outerStreet: a probe 4 m past the
+  parcel's edge across it). Houses aligned to lots keep their own rule elsewhere.
+- Its own lanes (lanePoint): a lattice point is on a lane if it lies on a lattice line of either edge family every 6
+  rows (b ≡ 0, a ≡ 3 mod 6), in segments 4 lattice cells long each on by a hash (72%): dead ends and T junctions. Every
+  cell has one lattice corner; the cells round a lane point are left out, so a lane is two cells wide (~5 m) along the
+  grid's own edges, winding with the relaxation. Local, so streaming chunks agree. Shots ln_cells, ln_50, ln_top.
+- Parameters by eye (6, 4, 72%). Lanes don't yet know the district's edge or the outer streets (a lane can end a cell
+  short of one); not paved.
+
