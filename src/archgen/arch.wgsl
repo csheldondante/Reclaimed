@@ -116,8 +116,9 @@ struct GenU {
   relax: u32,
   /** (?gridview=1) the grid's cells as thin slabs, a gap round each */
   gridView: u32,
-  _p1: u32,
-  _p2: u32,
+  /** (gridlab) the chunks shown: x0, y0 (+2048, 16 bits each); w, h */
+  areaXY: u32,
+  areaWH: u32,
 };
 
 fn hash(x: u32) -> u32 {
@@ -149,6 +150,8 @@ fn winFits(st: u32, top: f32, wallH: f32) -> bool { return f32(st) * STOREY + to
 // the grid's chunks (AG23/AG26; archgen.ts generate): the irregular grid relaxed a chunk at a time, only the chunks a
 // lot asks for — the chunk table's keys (tgSlots, from word 8), then each slot's vertices (TG_NV × 2 f32 bits)
 @group(0) @binding(4) var<storage, read_write> TG: array<atomic<u32>>;
+// (gridlab) the grid's cells out, lots aside: word 0 the count; from word 4, 8 f32 a cell (its corners)
+@group(0) @binding(5) var<storage, read_write> GC: array<atomic<u32>>;
 
 fn rf(o: u32, w: u32) -> f32 { return bitcast<f32>(REC[o + w]); }
 
@@ -1534,13 +1537,52 @@ struct Piece {
   EK: array<u32, 4>,
   CK: u32,
 };
+/** paired in the first round: this triangle and the one across its pick pick each other */
+fn paired1(a: i32, b: i32, t: u32) -> bool {
+  let n = triN(a, b, t, triPick(a, b, t));
+  let nn = triN(n.x, n.y, u32(n.z), triPick(n.x, n.y, u32(n.z)));
+  return nn.x == a && nn.y == b && u32(nn.z) == t;
+}
+/** the second round's pick (a triangle left alone by the first): its best edge to another left alone, or 3 none */
+fn triPick2(a: i32, b: i32, t: u32) -> u32 {
+  let me = triId(a, b, t);
+  var best = 3u;
+  var bh = 0u;
+  for (var k = 0u; k < 3u; k++) {
+    let n = triN(a, b, t, k);
+    if (paired1(n.x, n.y, u32(n.z))) { continue; }
+    let h = edgeH(me, triId(n.x, n.y, u32(n.z))) ^ 0x5bd1e995u;
+    if (h > bh) { bh = h; best = k; }
+  }
+  return best;
+}
+/** the edge (0–2) a triangle merges across, or 3 alone: the first round's mutual picks, then (fewer lone triangles,
+ *  so fewer corners where six cells meet) the second round's among those left alone — each rule local, so any chunk
+ *  works it out alike */
+fn triPartner(a: i32, b: i32, t: u32) -> u32 {
+  if (paired1(a, b, t)) { return triPick(a, b, t); }
+  let k = triPick2(a, b, t);
+  if (k == 3u) { return 3u; }
+  let n = triN(a, b, t, k);
+  let k2 = triPick2(n.x, n.y, u32(n.z));
+  if (k2 == 3u) { return 3u; }
+  let nn = triN(n.x, n.y, u32(n.z), k2);
+  if (nn.x == a && nn.y == b && u32(nn.z) == t) { return k; }
+  return 3u;
+}
+
 fn pieceAt(a: i32, b: i32, t: u32) -> Piece {
   var p: Piece;
-  let pk = triPick(a, b, t);
+  let pk0 = triPartner(a, b, t);
+  p.merged = pk0 != 3u;
+  let pk = select(0u, pk0, p.merged);
   let n = triN(a, b, t, pk);
-  let nk = triPick(n.x, n.y, u32(n.z));
-  let nn = triN(n.x, n.y, u32(n.z), nk);
-  p.merged = nn.x == a && nn.y == b && u32(nn.z) == t;
+  // (the other's edge back to this one)
+  var nk = 0u;
+  for (var k = 0u; k < 3u; k++) {
+    let m = triN(n.x, n.y, u32(n.z), k);
+    if (m.x == a && m.y == b && u32(m.z) == t) { nk = k; }
+  }
   p.ok = !(p.merged && triId(a, b, t) > triId(n.x, n.y, u32(n.z)));
   if (p.merged) {
     // A B C (this one, CCW) with the shared edge A → B; D the other's far corner: A D B C. The other's corners from
@@ -1715,6 +1757,15 @@ fn tgRelax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
 
 fn grid(seed: u32) {
   let shanty = u32(sty(gS, 0u).w + 0.5) == 4u;
+  // (?gridview=1: the parcel's edges as thin red strips)
+  if (GU.gridView != 0u) {
+    for (var k = 0u; k < 4u; k++) {
+      let a = gPar[k];
+      let b = gPar[(k + 1u) % 4u];
+      let n = normalize(vec2<f32>(b.y - a.y, a.x - b.x)) * 0.12;
+      body(S_FLOWER, F_NOWIN, array<vec2<f32>, 4>(a - n, b - n, b + n, a + n), gGround, gGround + 0.6);
+    }
+  }
   gFpG = grow(gFp, 0.6);
   // the lattice under the parcel: its bounding box in lattice coordinates (b from y, a from x less half of b)
   var lo = vec2<f32>(1e9);
@@ -1768,7 +1819,7 @@ fn grid(seed: u32) {
         if (GU.gridView != 0u) {
           for (var k = 0u; k < nv; k++) {
             if (kept[k]) { body(S_TINT, F_NOWIN, grow(Q[k], -0.15), gGround, gGround + 0.3 + f32(k) * 0.05); }
-            else if (own[k]) { body(S_STONE, F_NOWIN, grow(Q[k], -0.15), gGround, gGround + 0.1); }
+            else if (own[k]) { body(S_WATER, F_NOWIN, grow(Q[k], -0.15), gGround, gGround + 0.1); }
           }
           continue;
         }
@@ -1930,6 +1981,48 @@ fn genShanties(@builtin(global_invocation_id) g: vec3<u32>) {
   else if (gKind == 2u) { garden(gSeed); }
   else { shanty(gSeed); }
   genEnd();
+}
+
+// ---- (gridlab) the grid alone: the chunks round the camera, every piece drawn once by the chunk its first triangle
+// is in (a merged pair: the lower id's) ----
+fn tgArea() -> vec4<i32> {
+  return vec4<i32>(i32(GU.areaXY & 0xffffu) - 2048, i32(GU.areaXY >> 16u) - 2048, i32(GU.areaWH & 0xffffu), i32(GU.areaWH >> 16u));
+}
+
+/** the area's chunks asked for, and a ring round them (their vertices' owners) */
+@compute @workgroup_size(64)
+fn tgRegisterArea(@builtin(global_invocation_id) g: vec3<u32>) {
+  let ar = tgArea();
+  let W = ar.z + 2;
+  let i = i32(g.x);
+  if (i >= W * (ar.w + 2)) { return; }
+  _ = tgSlot(vec2<i32>(ar.x - 1 + i % W, ar.y - 1 + i / W), true);
+}
+
+/** a chunk's pieces' cells out (a workgroup a chunk of the area) */
+@compute @workgroup_size(64)
+fn tgEmit(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let ar = tgArea();
+  let i = i32(wg.x);
+  if (i >= ar.z * ar.w) { return; }
+  let ch = vec2<i32>(ar.x + i % ar.z, ar.y + i / ar.z);
+  let cap = (arrayLength(&GC) - 4u) / 8u;
+  for (var tr = li; tr < u32(TG_CH * TG_CH * 2); tr += 64u) {
+    let a = ch.x * TG_CH + i32((tr / 2u) % u32(TG_CH));
+    let b = ch.y * TG_CH + i32((tr / 2u) / u32(TG_CH));
+    let p = pieceAt(a, b, tr & 1u);
+    if (!p.ok) { continue; }
+    let cs = cellsOf(p);
+    for (var k = 0u; k < p.nv; k++) {
+      let n = atomicAdd(&GC[0], 1u);
+      if (n >= cap) { continue; }
+      for (var j = 0u; j < 4u; j++) {
+        let q = tgPos(cs.K[k][j], cs.Q[k][j]);
+        atomicStore(&GC[4u + n * 8u + j * 2u], bitcast<u32>(q.x));
+        atomicStore(&GC[4u + n * 8u + j * 2u + 1u], bitcast<u32>(q.y));
+      }
+    }
+  }
 }
 
 @compute @workgroup_size(64)

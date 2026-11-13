@@ -13,6 +13,7 @@ import { ArchGen, PARTS_PER_LOT } from './archgen';
 import { STYLES } from './styles';
 import { archTextures } from './textures';
 import aoWgsl from './ssao.wgsl?raw';
+import gridLabWgsl from './gridlab.wgsl?raw';
 
 const q = urlFlags();
 const num = (k: string, d: number) => (q.has(k) ? Number(q.get(k)) : d);
@@ -66,7 +67,10 @@ async function main() {
   cy /= nb;
 
   const depthFormat: GPUTextureFormat = 'depth24plus';
-  const gen = new ArchGen(device, rec, cnt, { lots: n, ground: { zmin: zmin - 2 } });
+  // (?gridlab=1: the irregular grid alone, lots aside — the chunks round the camera, cells coloured by shape)
+  const gridLab = q.get('gridlab') === '1';
+  const GL_R = 4;
+  const gen = new ArchGen(device, rec, cnt, { lots: n, ground: { zmin: zmin - 2 }, gridChunks: gridLab ? (GL_R * 2 + 1) ** 2 : 0 });
   gen.labDraw(format, depthFormat, samples);
   gen.windows = q.get('win') !== '0';
   const sname = q.get('style');
@@ -144,6 +148,21 @@ async function main() {
   const aoPipe = device.createRenderPipeline({ label: 'arch lab ssao', layout: 'auto', vertex: { module: aoMod, entryPoint: 'vsFull' }, fragment: { module: aoMod, entryPoint: 'fsAo', targets: [{ format: 'r8unorm' }] } });
   const compPipe = device.createRenderPipeline({ label: 'arch lab compose', layout: 'auto', vertex: { module: aoMod, entryPoint: 'vsFull' }, fragment: { module: aoMod, entryPoint: 'fsComp', targets: [{ format }] } });
   const aoU = device.createBuffer({ label: 'arch lab ssao params', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const glMod = device.createShaderModule({ label: 'grid lab cells', code: gridLabWgsl });
+  const glPipe = gridLab
+    ? device.createRenderPipeline({
+        label: 'grid lab cells',
+        layout: 'auto',
+        vertex: { module: glMod, entryPoint: 'vsCell' },
+        fragment: { module: glMod, entryPoint: 'fsCell', targets: [{ format }] },
+        primitive: { topology: 'triangle-list', cullMode: 'none' },
+        depthStencil: { format: depthFormat, depthWriteEnabled: true, depthCompare: 'less' },
+        multisample: { count: samples },
+      })
+    : null;
+  const glU = device.createBuffer({ label: 'grid lab view', size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const glGroup = glPipe ? device.createBindGroup({ layout: glPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: glU } }, { binding: 1, resource: { buffer: gen.gridCells } }] }) : null;
+  let glChunk = '';
   const resize = () => {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
@@ -176,14 +195,34 @@ async function main() {
     const sunVP = look.oldLight ? undefined : ortho(sun, [cam.x, cam.y, cam.z], half, half);
     gen.setView(m, [...sun, 1.15 * (1 - look.night * 0.85)], [...fw, upp], (performance.now() - t0) / 1000, look.night, look.detail, look.oldLight, sunVP);
     const e = device.createCommandEncoder();
-    if (sunVP) gen.drawLabShadow(e);
+    if (sunVP && !gridLab) gen.drawLabShadow(e);
+    if (gridLab) {
+      // the chunks round the camera's (the lattice: b from y, a from x less half of b; chunks of 8)
+      const b = cam.y / (5.4 * Math.sqrt(3) * 0.5);
+      const a = cam.x / 5.4 - 0.5 * b;
+      const cx = Math.floor(a / 8);
+      const cy = Math.floor(b / 8);
+      const key = cx + ',' + cy;
+      if (key !== glChunk) {
+        glChunk = key;
+        gen.gridLab(e, cx - GL_R, cy - GL_R, GL_R * 2 + 1, GL_R * 2 + 1);
+      }
+      const gu = new Float32Array(20);
+      gu.set(m, 0);
+      gu[16] = cam.z - 4;
+      device.queue.writeBuffer(glU, 0, gu);
+    }
     const view = sceneT!.createView();
     const sky = look.night > 0.5 ? { r: 0.08, g: 0.1, b: 0.16, a: 1 } : { r: 0.8, g: 0.86, b: 0.9, a: 1 };
     const pass = e.beginRenderPass({
       colorAttachments: [{ view: msaa ? msaa.createView() : view, resolveTarget: msaa ? view : undefined, clearValue: sky, loadOp: 'clear', storeOp: msaa ? 'discard' : 'store' }],
       depthStencilAttachment: { view: depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
     });
-    gen.drawLab(pass);
+    if (gridLab) {
+      pass.setPipeline(glPipe!);
+      pass.setBindGroup(0, glGroup!);
+      pass.draw(6, (GL_R * 2 + 1) ** 2 * 320);
+    } else gen.drawLab(pass);
     pass.end();
     // the occlusion, then the scene darkened by it onto the canvas
     const hh = cam.zoom / 2;

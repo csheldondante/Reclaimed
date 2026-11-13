@@ -89,6 +89,8 @@ export interface ArchGenOpts {
   lots: number;
   /** (lab) write each parcel as a ground body; its bottom z */
   ground?: { zmin: number };
+  /** (gridlab) the chunks gridLab may show at once */
+  gridChunks?: number;
 }
 
 export class ArchGen {
@@ -110,6 +112,8 @@ export class ArchGen {
   private compactPipe: GPUComputePipeline;
   private genGroup: GPUBindGroup;
   private tg: GPUBuffer;
+  /** (gridlab) the grid's cells, lots aside: word 0 the count, then 8 f32 a cell */
+  readonly gridCells: GPUBuffer;
   private tgSlots: number;
   private tgPipes: GPUComputePipeline[];
   /** the grid's relaxation steps a chunk (?relax=N; 0 the lattice as nudged) */
@@ -161,6 +165,7 @@ export class ArchGen {
         { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
         { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
         { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       ],
     });
     const gpl = d.createPipelineLayout({ bindGroupLayouts: [gl] });
@@ -170,11 +175,13 @@ export class ArchGen {
     while (slots < o.lots) slots *= 2;
     this.tgSlots = slots;
     this.tg = d.createBuffer({ label: 'arch grid chunks', size: (8 + slots + slots * 384 * 2) * 4, usage: S | GPUBufferUsage.COPY_DST });
-    this.tgPipes = ['tgRegisterLots', 'tgRelax'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
+    // (gridlab) the grid's cells out: room for o.gridChunks chunks (a chunk ~300 cells)
+    this.gridCells = d.createBuffer({ label: 'arch grid cells', size: (4 + Math.max(1, (o.gridChunks ?? 0) * 320) * 8) * 4, usage: S | GPUBufferUsage.COPY_DST });
+    this.tgPipes = ['tgRegisterLots', 'tgRelax', 'tgRegisterArea', 'tgEmit'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
     this.genPipes = ['genHouses', 'genKeeps', 'genShanties', 'genGrid'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
     this.genGroup = d.createBindGroup({
       layout: gl,
-      entries: [this.genU, records, counts, this.arch, this.tg].map((buffer, binding) => ({ binding, resource: { buffer } })),
+      entries: [this.genU, records, counts, this.arch, this.tg, this.gridCells].map((buffer, binding) => ({ binding, resource: { buffer } })),
     });
     // (reset and compact share one explicit layout: 'auto' layouts differ per entry point)
     const cl = d.createBindGroupLayout({
@@ -236,6 +243,28 @@ export class ArchGen {
       p.dispatchWorkgroups(Math.ceil(count / 64));
     }
     p.end();
+  }
+
+  /** (gridlab) the grid alone, lots aside: the chunks [x0, x0 + w) × [y0, y0 + h) relaxed (with a ring round them for
+   *  their vertices' owners) and their cells written to gridCells */
+  gridLab(enc: GPUCommandEncoder, x0: number, y0: number, w: number, h: number): void {
+    const u = new Uint32Array(12);
+    u[7] = this.tgSlots;
+    u[8] = this.relaxSteps;
+    u[10] = ((x0 + 2048) & 0xffff) | (((y0 + 2048) & 0xffff) << 16);
+    u[11] = w | (h << 16);
+    this.device.queue.writeBuffer(this.genU, 0, u);
+    enc.clearBuffer(this.tg);
+    enc.clearBuffer(this.gridCells, 0, 16);
+    const g = enc.beginComputePass({ label: 'arch grid lab' });
+    g.setBindGroup(0, this.genGroup);
+    g.setPipeline(this.tgPipes[2]);
+    g.dispatchWorkgroups(Math.ceil(((w + 2) * (h + 2)) / 64));
+    g.setPipeline(this.tgPipes[1]);
+    g.dispatchWorkgroups(this.tgSlots);
+    g.setPipeline(this.tgPipes[3]);
+    g.dispatchWorkgroups(w * h);
+    g.end();
   }
 
   /** (each frame) citygen's per-lot progress (f32 a record, lots first) into the arch buffer, for the vertex stages */

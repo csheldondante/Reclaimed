@@ -23392,3 +23392,22 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
 - The dark irregular shapes in the cell view were shadows: the lab draws each lot's ground as a block at its own
   height, and the higher ones shade the lower (`&oldlight=1` draws no shadows; shot pv3).
 
+## archgen: the grid alone — the grid lab; a second merge round (2026-11-12; the user: "Focus on one problem at a time.
+## A streamable infinite irregular grid with no holes and well shaped cells", "I would decouple the lot budget from
+## the irregular grid entirely")
+
+- The holes inside blocks in the cell view were not the grid: no lot owned them (gaps between parcels; a 4× part
+  budget changed nothing, and the paved cells, drawn blue, were none of them). So the grid is now judged alone:
+  `archlab.html?gridlab=1` asks for the 9 × 9 chunks round the camera (tgRegisterArea, a ring more for their
+  vertices' owners), relaxes them (tgRelax), and each chunk writes the pieces it owns (tgEmit: a piece by its first
+  triangle's chunk, a merged pair by the lower id's) as cells into their own buffer — no lots, no part budget. The lab
+  draws them flat, inset (gridlab.wgsl), coloured by the sharpest corner (green ≥ 75°, yellow 55°, red ≤ 35°; magenta
+  a folded cell). The chunks follow the camera.
+- Seen (gl1, gl2: 387 m and 70 m across): one continuous field, no holes, no folded cells, no seams between chunks.
+  The yellow is stars round corners where six cells meet (a lattice point with no merged pair round it: its cells'
+  corners average 60°; relaxing can't fix that). A second merge round now pairs the triangles the first left alone
+  (each picks its best edge to another left alone; a pair if they pick each other — local, so chunks agree): visibly
+  fewer stars (gl3). 40 steps instead of 20 changes little (gl4); 20 kept.
+- The user's next (after the grid): a cell crossed by a lot it doesn't belong to left empty so the street shows, the
+  streets paved under.
+

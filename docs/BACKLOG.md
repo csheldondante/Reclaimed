@@ -2343,6 +2343,10 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
     each built group's outline ("spline blending along adjacent cells that merge into walls").
   - Whole cells, the cells a road crosses and the ground between blocks paved ("make those 0 blocks but have the
     ground between blocks pave fully") — done (this commit).
+  - The grid alone first (the user: "A streamable infinite irregular grid with no holes and well shaped cells"; "decouple
+    the lot budget from the irregular grid entirely"): the grid lab (?gridlab=1) and a second merge round — done (this
+    commit). Then lots and roads on it (the user's first guess: a cell crossed by a lot it isn't part of left empty so
+    the street shows, the streets paved under), its parts out of the lots' budget.
   - Smoothed normals between nearly parallel neighbouring grid cells ("Townscaper also looks like it renders with
     smoothed normals between nearly parallel irregular grid cells"): adjacent cells' walls that meet almost flat shade
     as one curved wall.
