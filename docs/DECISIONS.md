@@ -3769,3 +3769,15 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   windows, balconies, arches), quoins, brick through plaster, plants on buildings.
 - The phone gets the new geometry and detail too; if the phone must give something up, it is the curved tile roofs.
 
+
+## 2026-11-13 — towns on uneven ground, and switchable styles
+
+- The user, verbatim: "I really want towns to be insensitive to height variation below a couple of stories and to use
+  stairs, switchback roads and plinths to make the terrain normalized for walking because I think it makes cities more
+  visually interesting." → under ~2 storeys of relief a town absorbs the ground with stairs, switchbacks and plinths
+  (shown, not levelled away).
+- "I also want to be able to convert between styles easily so we can go from an irregular grid organic city to a
+  planned city with grid layouts and I want hills to have winding roads that follow contours and use switchbacks and
+  spirals to connect levels." → a town's layout style is a switch (organic irregular grid ↔ planned grid); hill roads
+  follow contours, levels joined by switchbacks and spirals. Idea logged with it: height blended into the street
+  field (BACKLOG CG-H1).

@@ -2423,6 +2423,15 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
     tie with another — rare, not none. A pair with a taller neighbour on its long side still drains at that wall.
   - The roof's slope eases on wide groups so the ridge stays under RF_MAX (4.2 m) — by eye.
   - roofAt no longer goes flat: the parapet/terrace branch never fires (dead code to clear with gDA/gDB).
+- CG-H1 (idea, the user, 2026-11-13; Track A's citygen) Height blended into the street field so main streets follow
+  contours on hills: φ' = φ + w(slope)·(smoothed height above the nearest water's level), w rising only on real slopes;
+  hollows filled first (no rings in dips; knolls keep theirs); re-distanced so a field step is a fixed ground distance,
+  with a minimum line spacing; cross streets then run downhill (stairs in town, angled on very steep ground). Test in
+  the street lab with blend and slope-threshold sliders, a hill town and a flat river town before/after.
+- CG-H2 (the user, 2026-11-13) Towns insensitive to height variation under a couple of storeys: stairs, switchback
+  roads and plinths normalise the ground for walking ("it makes cities more visually interesting"); hills get winding
+  roads along contours, switchbacks and spirals between levels. Styles convertible: one town switchable between an
+  organic irregular-grid layout and a planned grid layout.
 - AG31 (the user, 2026-11-13: "The whole magic of townscraper is that it captures the mess of European towns that
   built up in an unplanned way") Organic housing, as experiments in three parts, each shown for review:
   1. Roof and placement rules on the irregular grid: a house's ridge along its street; beside neighbours of one height
