@@ -23421,3 +23421,22 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
   steps 1.56 ms (19 µs a chunk); 40 steps 2.27 ms; 9 shown 0.60 ms. Same grid (gl6 = gl3).
 - TG grows by 9.4 KB a chunk slot (slots: the lot count's power of two — 1024 in the lab: 9.6 MB). Phone not measured.
 
+## archgen: the grid over the lots — no gaps (2026-11-12; the user: "show me with the overlays so we can see if there
+## are still weird gaps", "I'm ok with straddling lots ... if both use the same tiles", "They should use the same
+## irregular grid if intersecting", "Please eliminate them")
+
+- The grid lab's overlay (lots coloured, parcels outlined: cells wholly in a lot, across a lot line, into a street)
+  showed the grid itself unbroken; the lots are small (2–4 cells), so most cells straddle a lot line.
+- The rule now (grid()): every point belongs to a lot — the one it's deepest in, or in the slivers citygen's
+  four-cornered lots leave between them the nearest within 3 m (lotAt). A cell is made by its centre's lot and stands
+  if every corner's lot is built on the grid and the corner isn't in that lot's street (past a footprint edge inset
+  more than a lot line: the parcels run to the streets' middles); else no cell — the street shows. No footprint
+  setbacks, no paving yet.
+- The green patches inside blocks were cells buried in a neighbour's ground: the lab draws each lot's ground as a block
+  at its own height, and a cell straddling a lot line stood on its own lot's (lifted ½ m in ?gridview=4 they all
+  showed). Now a cell stands on the highest ground under its corners and its walls reach down to the lowest (gFloor);
+  a joined house or terrace likewise over its piece.
+- ?gridview=1 cells / dropped cells (brick) / lots not on the grid (flowers); =2 the cells round each lot not its own
+  (blue); =3 every cell near any lot; =4 =1 lifted. lotAt loops every lot (a spatial index per chunk is next for the
+  phone).
+

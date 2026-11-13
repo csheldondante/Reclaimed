@@ -2347,6 +2347,12 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
     the lot budget from the irregular grid entirely"): the grid lab (?gridlab=1) and a second merge round — done (this
     commit). Then lots and roads on it (the user's first guess: a cell crossed by a lot it isn't part of left empty so
     the street shows, the streets paved under), its parts out of the lots' budget.
+  - Lots on the grid — done (this commit): a cell stands if all its corners are in grid lots and out of the streets;
+    straddling lots fine; slivers between lots go to the nearest lot; a cell on the highest ground, walls to the lowest.
+    Next: the streets paved under; parts out of the lots' budget (a per-chunk pool); lotAt by a per-chunk lot index.
+  - Districts much bigger relative to cells (the user: "a district should be much bigger relative to cells so that we
+    get a large neighborhood of the irregular structures"); and for adjacent lots of the same type, the road between
+    them replaced by one aligned to the grid (the user's idea) — citygen is Track A's: to agree with them.
   - Smoothed normals between nearly parallel neighbouring grid cells ("Townscaper also looks like it renders with
     smoothed normals between nearly parallel irregular grid cells"): adjacent cells' walls that meet almost flat shade
     as one curved wall.

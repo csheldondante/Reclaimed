@@ -149,10 +149,18 @@ async function main() {
   const compPipe = device.createRenderPipeline({ label: 'arch lab compose', layout: 'auto', vertex: { module: aoMod, entryPoint: 'vsFull' }, fragment: { module: aoMod, entryPoint: 'fsComp', targets: [{ format }] } });
   const aoU = device.createBuffer({ label: 'arch lab ssao params', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const glMod = device.createShaderModule({ label: 'grid lab cells', code: gridLabWgsl });
+  const glBgl = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+      { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+      { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+    ],
+  });
+  const glLayout = device.createPipelineLayout({ bindGroupLayouts: [glBgl] });
   const glPipe = gridLab
     ? device.createRenderPipeline({
         label: 'grid lab cells',
-        layout: 'auto',
+        layout: glLayout,
         vertex: { module: glMod, entryPoint: 'vsCell' },
         fragment: { module: glMod, entryPoint: 'fsCell', targets: [{ format }] },
         primitive: { topology: 'triangle-list', cullMode: 'none' },
@@ -161,7 +169,21 @@ async function main() {
       })
     : null;
   const glU = device.createBuffer({ label: 'grid lab view', size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  const glGroup = glPipe ? device.createBindGroup({ layout: glPipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: glU } }, { binding: 1, resource: { buffer: gen.gridCells } }] }) : null;
+  const glLots = q.get('lots') !== '0';
+  const glLotPipe = gridLab
+    ? device.createRenderPipeline({
+        label: 'grid lab lots',
+        layout: glLayout,
+        vertex: { module: glMod, entryPoint: 'vsLot' },
+        fragment: { module: glMod, entryPoint: 'fsCell', targets: [{ format }] },
+        primitive: { topology: 'triangle-list', cullMode: 'none' },
+        depthStencil: { format: depthFormat, depthWriteEnabled: true, depthCompare: 'less' },
+        multisample: { count: samples },
+      })
+    : null;
+  const glGroup = glPipe
+    ? device.createBindGroup({ layout: glBgl, entries: [{ binding: 0, resource: { buffer: glU } }, { binding: 1, resource: { buffer: gen.gridCells } }, { binding: 2, resource: { buffer: rec } }] })
+    : null;
   let glChunk = '';
   const resize = () => {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -210,6 +232,8 @@ async function main() {
       const gu = new Float32Array(20);
       gu.set(m, 0);
       gu[16] = cam.z - 4;
+      gu[17] = n;
+      gu[18] = glLots ? 1 : 0;
       device.queue.writeBuffer(glU, 0, gu);
     }
     const view = sceneT!.createView();
@@ -222,6 +246,10 @@ async function main() {
       pass.setPipeline(glPipe!);
       pass.setBindGroup(0, glGroup!);
       pass.draw(6, (GL_R * 2 + 1) ** 2 * 320);
+      if (glLots) {
+        pass.setPipeline(glLotPipe!);
+        pass.draw(6, n * 4);
+      }
     } else gen.drawLab(pass);
     pass.end();
     // the occlusion, then the scene darkened by it onto the canvas

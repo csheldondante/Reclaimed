@@ -112,7 +112,7 @@ export class ArchGen {
   private compactPipe: GPUComputePipeline;
   private genGroup: GPUBindGroup;
   private tg: GPUBuffer;
-  /** (gridlab) the grid's cells, lots aside: word 0 the count, then 8 f32 a cell */
+  /** (gridlab) the grid's cells: word 0 the count, then 10 words a cell (corners, its lot, how it sits on the lots) */
   readonly gridCells: GPUBuffer;
   private tgSlots: number;
   private tgPipes: GPUComputePipeline[];
@@ -176,7 +176,7 @@ export class ArchGen {
     this.tgSlots = slots;
     this.tg = d.createBuffer({ label: 'arch grid chunks', size: (8 + slots + slots * 384 * 2 + slots * 1176 * 2) * 4, usage: S | GPUBufferUsage.COPY_DST });
     // (gridlab) the grid's cells out: room for o.gridChunks chunks (a chunk ~300 cells)
-    this.gridCells = d.createBuffer({ label: 'arch grid cells', size: (4 + Math.max(1, (o.gridChunks ?? 0) * 320) * 8) * 4, usage: S | GPUBufferUsage.COPY_DST });
+    this.gridCells = d.createBuffer({ label: 'arch grid cells', size: (4 + Math.max(1, (o.gridChunks ?? 0) * 320) * 10) * 4, usage: S | GPUBufferUsage.COPY_DST });
     this.tgPipes = ['tgRegisterLots', 'tgRelax', 'tgRegisterArea', 'tgEmit'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
     this.genPipes = ['genHouses', 'genKeeps', 'genShanties', 'genGrid'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
     this.genGroup = d.createBindGroup({
@@ -222,7 +222,7 @@ export class ArchGen {
     w[6] = this.o.lots;
     w[7] = this.tgSlots;
     w[8] = this.relaxSteps;
-    w[9] = urlFlags().get('gridview') === '1' ? 1 : 0;
+    w[9] = Number(urlFlags().get('gridview') ?? 0);
     // (one uniform: one generate a submit — a caller slicing a town's lots goes frame by frame)
     this.device.queue.writeBuffer(this.genU, 0, u);
     // the grid's chunks, on a whole town's run: the ones the lots ask for, each relaxed by a workgroup
@@ -249,6 +249,7 @@ export class ArchGen {
    *  their vertices' owners) and their cells written to gridCells */
   gridLab(enc: GPUCommandEncoder, x0: number, y0: number, w: number, h: number, ts?: GPUComputePassTimestampWrites): void {
     const u = new Uint32Array(12);
+    u[6] = this.o.lots;
     u[7] = this.tgSlots;
     u[8] = this.relaxSteps;
     u[10] = ((x0 + 2048) & 0xffff) | (((y0 + 2048) & 0xffff) << 16);
