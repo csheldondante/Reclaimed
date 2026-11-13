@@ -1394,7 +1394,56 @@ const RF_MAX: f32 = 4.2;
 fn latHash(a: i32, b: i32, k: u32) -> f32 { return rnd(hash((u32(a + 4096) * 73856093u) ^ (u32(b + 4096) * 19349663u)), k); }
 /** a building's storeys: a district's blocky base (5 lattice cells a block) and its own step; a tower two more */
 fn towerAt(a: i32, b: i32) -> bool { return latHash(a, b, 3u) < 0.04; }
+// (2026-11-12, the user: "rarely go more than two side by side at the same height … roofs join runs aligned with
+// neighbors") A building is one lattice point's cells or a pair: each point picks the neighbour across its best edge
+// (a hash of the edge, the same from both ends); two that pick each other are a pair — one roof, its ridge along the
+// pair's axis, both at the taller one's storeys. A group with an equal neighbour group steps up one storey (the one with
+// the smaller hash), so groups of the same height rarely touch. All by position: a few rings of hashes, no lookup.
+const LOFF = array<vec2<i32>, 6>(vec2<i32>(1, 0), vec2<i32>(0, 1), vec2<i32>(-1, 1), vec2<i32>(-1, 0), vec2<i32>(0, -1), vec2<i32>(1, -1));
+fn pickOf(a: i32, b: i32) -> i32 {
+  if (towerAt(a, b) || voidAt(a, b)) { return -1; }
+  var best = -1;
+  var bv = -1.0;
+  for (var i = 0; i < 6; i++) {
+    let n = vec2<i32>(a, b) + LOFF[i];
+    if (towerAt(n.x, n.y) || voidAt(n.x, n.y)) { continue; }
+    let v = latHash(a + n.x, b + n.y, 20u + u32(i % 3));
+    if (v > bv) { bv = v; best = i; }
+  }
+  return best;
+}
+/** the direction (0–5) of (a, b)'s partner, or −1: alone */
+fn partnerOf(a: i32, b: i32) -> i32 {
+  let i = pickOf(a, b);
+  if (i < 0) { return -1; }
+  let n = vec2<i32>(a, b) + LOFF[i];
+  if (pickOf(n.x, n.y) != (i + 3) % 6) { return -1; }
+  return i;
+}
+/** a group's storeys (the taller member's) and its hash (its first member's, by position) */
+fn groupH(a: i32, b: i32, pi: i32) -> vec2<f32> {
+  var h = hBase(a, b);
+  var g = vec2<i32>(a, b);
+  if (pi >= 0) {
+    let n = g + LOFF[pi];
+    h = max(h, hBase(n.x, n.y));
+    if (n.y < g.y || (n.y == g.y && n.x < g.x)) { g = n; }
+  }
+  return vec2<f32>(f32(h), latHash(g.x, g.y, 24u));
+}
 fn hAt(a: i32, b: i32) -> i32 {
+  let pi = partnerOf(a, b);
+  let me = groupH(a, b, pi);
+  var bump = 0;
+  for (var i = 0; i < 6; i++) {
+    if (i == pi) { continue; }
+    let n = vec2<i32>(a, b) + LOFF[i];
+    let gn = groupH(n.x, n.y, partnerOf(n.x, n.y));
+    if (gn.x == me.x && gn.y > me.y) { bump = 1; }
+  }
+  return clamp(i32(me.x) + bump, 1, 8);
+}
+fn hBase(a: i32, b: i32) -> i32 {
   let ba = i32(floor(f32(a) / 5.0));
   let bb = i32(floor(f32(b) / 5.0));
   var h = 2 + i32(latHash(ba, bb, 1u) * 2.99) + i32(round((latHash(a, b, 2u) - 0.5) * 2.2));
@@ -1416,6 +1465,11 @@ struct Ros {
    *  previous edge's middle) */
   nc: u32,
   cells: array<array<vec2<f32>, 4>, 6>,
+  /** its roof (the user: "A roof is almost always a single ridge line with potential ridges at lower heights coming
+   *  off of it"): the ridge line through R0 along rd; w its half-width (the farthest corner from it, its pair's too) */
+  R0: vec2<f32>,
+  rd: vec2<f32>,
+  w: f32,
 };
 
 fn rosAdd(r: ptr<function, Ros>, a: vec2<f32>, b: vec2<f32>, kind: u32, open: bool) {
@@ -1445,7 +1499,21 @@ fn rosette(a: i32, b: i32) -> Ros {
   // its ridge: one of the lattice's three directions, by its block (so merged neighbours mostly share it)
   let rk = u32(latHash(i32(floor(f32(a) / 5.0)), i32(floor(f32(b) / 5.0)), 8u) * 2.999);
   var RD = array<vec2<f32>, 3>(vec2<f32>(1.0, 0.0), vec2<f32>(0.5, 0.866), vec2<f32>(-0.5, 0.866));
-  let ridge = RD[rk];
+  var ridge = RD[rk];
+  let pi = partnerOf(a, b);
+  let mate = select(vec2<i32>(-99999), vec2<i32>(a, b) + LOFF[max(pi, 0)], pi >= 0 && builtAt(a + LOFF[max(pi, 0)].x, b + LOFF[max(pi, 0)].y));
+  if (mate.x != -99999) {
+    ridge = normalize(latP(mate.x, mate.y) - latP(a, b));
+  } else {
+    // alone: its ridge runs at its tallest taller neighbour (a lower wing off that one's ridge, its gable to the wall)
+    var th = h;
+    for (var i = 0u; i < 6u; i++) {
+      if (!nopen[i] && nh[i] > th) { th = nh[i]; ridge = normalize(latP(a + OFF[i].x, b + OFF[i].y) - latP(a, b)); }
+    }
+  }
+  r.R0 = latP(a, b);
+  r.rd = ridge;
+  r.w = 0.5;
   let pk = tgKey(a, b, 0u);
   let tris = array<vec3<i32>, 6>(vec3<i32>(a, b, 0), vec3<i32>(a - 1, b, 1), vec3<i32>(a - 1, b, 0),
                                  vec3<i32>(a - 1, b - 1, 1), vec3<i32>(a, b - 1, 0), vec3<i32>(a, b - 1, 1));
@@ -1472,6 +1540,7 @@ fn rosette(a: i32, b: i32) -> Ros {
       var q: array<vec2<f32>, 4>;
       for (var j = 0u; j < 4u; j++) { q[j] = tgPos(cs.K[k][j], cs.Q[k][j]); }
       if (r.nc < 6u) { r.cells[r.nc] = q; r.nc++; }
+      for (var j = 0u; j < 4u; j++) { r.w = max(r.w, ridgeDist(r, q[j])); }
       // sides 1 and 2 face the buildings round the piece's next and previous corners (0 and 3: its own cells). An edge
       // to an open or lower neighbour is an eave (a drop) — or a gable end when it faces along the ridge; to an equal
       // one, the roof runs on (merged); to a taller one, the roof climbs to its wall
@@ -1482,7 +1551,8 @@ fn rosette(a: i32, b: i32) -> Ros {
         var oi = 0u;
         for (var i = 0u; i < 6u; i++) { if (na.x == a + OFF[i].x && na.y == b + OFF[i].y) { oi = i; } }
         let open = nopen[oi];
-        let lower = open || nh[oi] < h;
+        let isMate = na.x == mate.x && na.y == mate.y;
+        let lower = open || (nh[oi] <= h && !isMate);
         let gable = abs(dot(outN(q, sd), ridge)) > 0.8;
         rosAdd(&r, e0, e1, select(1u, 0u, lower && !gable), open);
       }
@@ -1496,28 +1566,32 @@ fn segDist(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
   let t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
   return distance(p, a + ab * t);
 }
-/** the roof's rise at x over the walls' top (−1: the building has no drop — flat) */
+fn ridgeDist(r: Ros, x: vec2<f32>) -> f32 { let v = x - r.R0; return abs(v.x * r.rd.y - v.y * r.rd.x); }
+/** the roof's rise at x over the walls' top: a gable — falling from its one ridge line both ways, to nothing at its
+ *  farthest corner (its slope eased when wide, so it never tops RF_MAX) */
 fn roofAt(r: Ros, x: vec2<f32>) -> f32 {
-  var d = 1e9;
-  for (var i = 0u; i < r.n; i++) { if (r.kind[i] == 0u) { d = min(d, segDist(x, r.A[i], r.B[i])); } }
-  for (var i = 0u; i < gDN; i++) { d = min(d, segDist(x, gDA[i], gDB[i])); }
-  if (d > 1e8) { return -1.0; }
-  return min(d * RF_SLOPE, RF_MAX);
+  let w = max(r.w, gMateW);
+  let s = min(RF_SLOPE, RF_MAX / w);
+  return max(w - ridgeDist(r, x), 0.0) * s;
 }
+/** the half-width of its pair's other member (both take the wider: one roof) */
+var<private> gMateW: f32;
 /** the eaves of the equal neighbours' buildings (the roof runs on over them: merged) — gridCell gathers them */
 var<private> gDN: u32;
 var<private> gDA: array<vec2<f32>, 48>;
 var<private> gDB: array<vec2<f32>, 48>;
 fn gatherMerged(a: i32, b: i32) {
   gDN = 0u;
-  let h = hAt(a, b);
-  if (towerAt(a, b)) { return; }
-  let OFF = array<vec2<i32>, 6>(vec2<i32>(1, 0), vec2<i32>(0, 1), vec2<i32>(-1, 1), vec2<i32>(-1, 0), vec2<i32>(0, -1), vec2<i32>(1, -1));
-  for (var i = 0u; i < 6u; i++) {
-    let na = a + OFF[i].x;
-    let nb = b + OFF[i].y;
-    if (hAt(na, nb) != h || towerAt(na, nb) || !builtAt(na, nb)) { continue; }
+  gMateW = 0.0;
+  // (only its pair's: a roof is one or two lattice points' cells)
+  let pi = partnerOf(a, b);
+  if (pi < 0) { return; }
+  let na = a + LOFF[pi].x;
+  let nb = b + LOFF[pi].y;
+  if (!builtAt(na, nb)) { return; }
+  {
     let rn = rosette(na, nb);
+    gMateW = rn.w;
     for (var j = 0u; j < rn.n; j++) {
       if (rn.kind[j] != 0u || gDN >= 48u) { continue; }
       gDA[gDN] = rn.A[j];

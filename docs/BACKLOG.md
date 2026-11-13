@@ -2406,6 +2406,23 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   the walls' feet, window boxes, climbers, fences, crates, barrels; (6) the roofline — steeper and varied pitches,
   dormers, many chimneys, smoke later. Each from the cell's own hash; a cell's lane side found from its open
   neighbours (also AG27's street fronts).
+- AG30 (the user, 2026-11-12: "the roofs also don't read as roofs. They were honestly better before the fix to merge
+  them … rarely go more than two side by side at the same height … roofs join runs aligned with neighbors"; "A roof is
+  almost always a single ridge line with potential ridges at lower heights coming off of it"; "notice how much volume
+  the arches add") Roofs — done (this commit): a building is one lattice point's cells or a mutual pair; one gable
+  roof, its single ridge through the lattice point(s) (a pair's along its axis; one alone runs at its tallest taller
+  neighbour — a lower wing off that ridge); equal neighbour groups step one up. Next: arcades (ground floors set back
+  behind arches carrying the storeys — the reference's volume); eave overhangs, ridge caps, sag (the polygonal straight
+  lines). Hacks to fix:
+  - Each cell's roof is its body's sloped top (a quad on four corner heights): where the ridge does not run along a
+    cell edge the quad folds off the ridge, and the tiles (laid by the face's normal) turn with each fold — patchy
+    facets. Fix: the roof its own mesh per group, two planes from the ridge, clipped to the footprint.
+  - Eaves are not level on irregular footprints (the roof falls to nothing at the farthest corner; nearer walls rise
+    to meet it) — reads as hand-built, but not chosen.
+  - Pairing is height-blind; a pair takes its taller member's storeys. The tie step is one pass: a stepped group can
+    tie with another — rare, not none. A pair with a taller neighbour on its long side still drains at that wall.
+  - The roof's slope eases on wide groups so the ridge stays under RF_MAX (4.2 m) — by eye.
+  - roofAt no longer goes flat: the parapet/terrace branch never fires (dead code to clear with gDA/gDB).
 - AG25 (the user, 2026-11-12) Synty trees on the phone as pre-rendered sprites (4–8 views, colour + normal + depth),
   baked into the tiles or drawn live to sway. Rendered from Synty, so local only, like the packs. Also: house walls on
   the phone are "a single smeared low res window on a solid color" against detailed roofs — baking at PC detail answers

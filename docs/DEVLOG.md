@@ -23521,3 +23521,14 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
   (gatherMerged); to a taller one it climbs to the wall. Slope 0.9, cap 4.2 m. Double jetties on 3+ storeys.
 - Shots g_low, g_mid2, g_close.
 
+
+## 2026-11-12 — grid roofs: pairs and one ridge (AG30)
+
+The merged roofs (a distance-to-eave field over every equal neighbour) made skeleton roofs with many ridges and
+plateaus; the user: they "don't read as roofs", "A roof is almost always a single ridge line with potential ridges at
+lower heights coming off of it". Now, all local by position: each lattice point picks the neighbour across its best
+edge hash; mutual picks are a pair (one building, the taller member's storeys). A group with an equal neighbour group
+steps one storey up (by group hash), so same-height groups rarely touch. Roof = a gable on one ridge line through the
+lattice point(s) — a pair's axis; one alone points its ridge at its tallest taller neighbour, so it meets that wall
+gable-on as a lower wing. Height falls from the ridge to nothing at the group's farthest corner. Shots r_close, r_mid:
+gables and cross wings read; patchy tile facets where cells fold off the ridge (BACKLOG AG30).
