@@ -2366,6 +2366,16 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   good." Also "the larger institution look townscraper gets with taller structures (... super tiles and some other
   tricks)": several cells joined into one tall building (a church, a hall, a tower). Tiny Glade stays the inspiration
   for freeform lots — maybe combined with the grid later.
+- AG29 (the user, 2026-11-12, a Tiny Glade shot: "For inspiration at improving the visual fidelity and variety of the
+  dense housing ... Note circular towers and the exposed beams in the plaster and the steps and balconies and
+  overhangs and plants etc.") The grid district's houses, in order: (1) mixed materials a building — a stone ground
+  floor, plaster or half-timber (exposed posts, rails, braces) above (the shader's half-timber exists, the grid never
+  uses it); (2) jettied upper storeys over the lanes on brackets, deep eaves; (3) round towers with tall cones at
+  corners and junctions, taller than their neighbours (cylinder and cone parts exist); (4) outside stairs to upper
+  doors, timber balconies and galleries on posts, stone arches carrying walkways; (5) plants and clutter — flowers at
+  the walls' feet, window boxes, climbers, fences, crates, barrels; (6) the roofline — steeper and varied pitches,
+  dormers, many chimneys, smoke later. Each from the cell's own hash; a cell's lane side found from its open
+  neighbours (also AG27's street fronts).
 - AG25 (the user, 2026-11-12) Synty trees on the phone as pre-rendered sprites (4–8 views, colour + normal + depth),
   baked into the tiles or drawn live to sway. Rendered from Synty, so local only, like the packs. Also: house walls on
   the phone are "a single smeared low res window on a solid color" against detailed roofs — baking at PC detail answers
