@@ -859,6 +859,15 @@ fn recessAt(fu: f32, fz: f32, hw: f32, zl: f32, zh: f32, N: vec3<f32>, w: vec3<f
   return r;
 }
 
+/** (the grid) a cell's wall material from its seed (the tag's bits 16–23): plaster most, exposed half-timber (the
+ *  user's Tiny Glade shot), brick now and then; bit 4 of the seed a stone ground floor */
+fn tintMat(w: u32) -> u32 {
+  let r = ((w >> 16u) & 0xffu) % 10u;
+  if (r >= 5u && r <= 7u) { return 3u; }
+  if (r == 8u) { return 1u; }
+  return 0u;
+}
+
 fn styleV(s: u32, i: u32) -> vec4<f32> { return bitcast<vec4<f32>>(instances[(AW(0u) >> 2u) + s * SV + i]); }
 
 
@@ -896,7 +905,8 @@ fn texPick(in: VO) -> TexPick {
   let roofC = styleV(s, 2u);
   let stoneC = styleV(s, 3u);
   if ((surf == S_WALL || surf == S_TINT) && !isTop) {
-    let m = u32(wallC.w + 0.5);
+    var m = u32(wallC.w + 0.5);
+    if (surf == S_TINT) { m = tintMat(in.info.w); }
     t.post = false;
     if (m == 1u) { t.layer = TX_BRICK; t.tc = wallUV / 1.3; t.keep = 0.55; }
     else if (m == 2u) { t.layer = TX_ASHLAR; t.tc = wallUV / 2.0; t.keep = 0.3; }
@@ -936,7 +946,9 @@ fn texPick(in: VO) -> TexPick {
     t.layer = TX_CANVAS; t.tc = vec2<f32>(in.uv.x, in.uv.z + in.uv.w * 0.3) / 1.5; t.goal = vec3<f32>(-1.0);
   } else if (surf == S_GROUND && isTop) {
     let k = (in.info.w >> 8u) & 0xffu;
-    t.layer = TX_GRASS;
+    // (a town's ground paved: cobbles between the buildings; parks grass)
+    t.layer = TX_COBBLE;
+    if (k == 2u) { t.layer = TX_GRASS; }
     if (k == 3u) { t.layer = TX_COBBLE; }
     if (k == 5u) { t.layer = TX_DIRT; }
     if (k == 4u) { t.layer = TX_FLAG; }
@@ -1037,7 +1049,8 @@ fn archSurface(in: VO) -> Surf {
   let tint = 0.93 + 0.14 * lr;
   let stoneMortar = stoneC.rgb * 0.55;
   if ((surf == S_WALL || surf == S_TINT) && !isTop) {
-    let m = u32(wallC.w + 0.5);
+    var m = u32(wallC.w + 0.5);
+    if (surf == S_TINT) { m = tintMat(in.info.w); }
     col = wallC.rgb * tint;
     if (surf == S_TINT) {
       // a column's own colour: Townscaper's palette, by its part
@@ -1069,6 +1082,12 @@ fn archSurface(in: VO) -> Surf {
       // ashlar
       let st = stones(u, v, 0.42, 0.2, px, 5.0, detail);
       col = mix(col * st.x, col * 0.55, st.y);
+    }
+    // (the grid) a stone ground floor under the plaster or timber, by the cell's seed
+    if (surf == S_TINT && (((in.info.w >> 20u) & 1u) == 1u) && lz - in.zs.y < 2.6) {
+      let sb = stones(u, lz - in.zs.y, 0.38, 0.22, px, 7.0, detail);
+      col = mix(stoneC.rgb * (0.85 + 0.2 * h21(vec2<f32>(f32(lot), 2.0))) * sb.x, stoneMortar, sb.y);
+      gRelief = 0.0;
     }
     // painted windows: only where none are built (a round tower's bays, a gable's attic)
     let L = in.uv.y;

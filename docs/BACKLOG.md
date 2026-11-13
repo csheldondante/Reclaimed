@@ -2360,6 +2360,16 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
     the sun's shadow in a recess is worked out from the opening alone (not the shadow map); built plain windows' glass
     and doors' leaves left out so the recess shows, so a built frame whose size differs from the painted opening (a
     balcony, an attic light) keeps its own flat glass; RECESS 0.24 m.
+  - AG29 first pass (open sides, jetties, steps, balconies, round towers, plants, timber/stone walls, cobbles) — its
+    hacks to fix: openAt probes one point 1.4 m out per side (a narrow lane or a corner can be missed); the odds (jetty
+    70%, steps 45%, balcony 60%, plants 55%, tower 20%, chimney 18%, materials 5/3/1 in 10, stone base half) and sizes
+    (jetty 0.8 m, steps 0.95 m wide, balcony 0.85–0.9 m) by eye; a jetty's upper body is one quad pushed out on its
+    open sides (its other sides unchanged: on a cell open on two adjacent sides the corner pushes diagonally); the
+    steps and balcony ignore the windows (a balcony may cover none, steps may cross one); a tower replaces the whole
+    cell (its corners left empty round it); the part budget doubled to 192 a lot (the grid's own pool instead); the
+    lab ground is cobbles under every building lot (the game's ground is Track A's); interior cells (most) get
+    nothing — dormers, deep eaves, steeper varied pitches, stone arches, window boxes and climbers on the grid still
+    to do.
 - AG28 (the user, 2026-11-12) After the organic districts look good: "With proper cobblestones between the buildings
   and foot traffic this would read to me as an organic section of town (unplanned)" — cobbles in the lanes and
   streets, people walking. Then "The planned sections and the structures on them need work after we get these looking

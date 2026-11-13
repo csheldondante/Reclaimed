@@ -17,7 +17,7 @@ const RECW: u32 = 24u;
 /** u32 words a part */
 const PW: u32 = 16u;
 /** parts a lot (its slot) */
-const PPL: u32 = 96u;
+const PPL: u32 = 192u;
 /** part kinds (0 an empty slot) */
 const K_BODY: u32 = 1u;
 const K_ROOF: u32 = 2u;
@@ -1324,17 +1324,86 @@ fn posHash(c: vec2<f32>) -> u32 {
   return hash((u32(round(c.x * 4.0) + 100000.0) * 2246822519u) ^ (u32(round(c.y * 4.0) + 100000.0) * 3266489917u));
 }
 
+/** (the grid) is p open — a lane, a street the district keeps, or off the district? (a lattice point's cells are
+ *  roughly the region nearer it than any other lattice point: the lane test of the nearest one) */
+fn openAt(p: vec2<f32>) -> bool {
+  let bf = p.y / (GRID_S * SQ3 * 0.5);
+  let af = p.x / GRID_S - 0.5 * bf;
+  var bd = 1e9;
+  var ba = 0;
+  var bb = 0;
+  for (var j = 0; j < 2; j++) {
+    for (var i = 0; i < 2; i++) {
+      let la = i32(floor(af)) + i;
+      let lb = i32(floor(bf)) + j;
+      let d = distance(latP(la, lb), p);
+      if (d < bd) { bd = d; ba = la; bb = lb; }
+    }
+  }
+  if (lanePoint(ba, bb)) { return true; }
+  let l = lotAt(p);
+  if (l == 0xffffffffu || !lotIsGrid(l)) { return true; }
+  return outerStreet(l, p);
+}
+
+/** a grid cell's sides open to a lane or street (after faceOpen's turn: side 0 the longest open one, its door's) */
+var<private> gOpen: array<bool, 4>;
+
+fn outN(q: array<vec2<f32>, 4>, k: u32) -> vec2<f32> {
+  let e = q[(k + 1u) % 4u] - q[k];
+  return normalize(vec2<f32>(e.y, -e.x));
+}
+
+/** a cell turned so its side 0 is its longest side open to a lane or street; gFront if any is (the user's lanes: the
+ *  doors face them) */
+fn faceOpen(q0: array<vec2<f32>, 4>) -> array<vec2<f32>, 4> {
+  var op: array<bool, 4>;
+  var best = 4u;
+  var bl = 0.0;
+  gFront = false;
+  for (var k = 0u; k < 4u; k++) {
+    let k1 = (k + 1u) % 4u;
+    op[k] = openAt((q0[k] + q0[k1]) * 0.5 + outN(q0, k) * 1.4);
+    if (op[k]) {
+      gFront = true;
+      let l = length(q0[k1] - q0[k]);
+      if (l > bl) { bl = l; best = k; }
+    }
+  }
+  if (best == 4u) { best = 0u; }
+  var q = q0;
+  for (var k = 0u; k < 4u; k++) {
+    q[k] = q0[(k + best) % 4u];
+    gOpen[k] = op[(k + best) % 4u];
+  }
+  return q;
+}
+
+/** q with its open sides pushed out by d (a jetty over the lane) */
+fn pushOpen(q: array<vec2<f32>, 4>, d: f32) -> array<vec2<f32>, 4> {
+  var r = q;
+  for (var k = 0u; k < 4u; k++) {
+    if (!gOpen[k]) { continue; }
+    let n = outN(q, k) * d;
+    r[k] += n;
+    r[(k + 1u) % 4u] += n;
+  }
+  return r;
+}
+
 /** one cell of the grid: a column and its roof, a column with a patio on top, or (a shanty's yard) a cloth lean-to or
  *  a shrub */
 fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
-  // (room for the most a cell makes: a column, a parapet, a shrub, four stilts and a roof)
-  if (gN + 7u > PPL) { return; }
-  var q = faceStreet(q0);
+  // (room for the most a cell makes: a tower's six, or a jettied column, its beam, brackets, roof, stair, balcony, plant)
+  if (gN + 16u > PPL) { return; }
+  var q = faceOpen(q0);
   let front = gFront;
   // (too small to stand: paved)
   if (quadArea(q) < 1.2) { pave(q); return; }
   let c = (q[0] + q[1] + q[2] + q[3]) * 0.25;
   let ch = posHash(c);
+  // (the cell's own seed in its parts' tag: the shader's material and stone base by it — grid() puts the lot's back)
+  gTag = (gTag & 0xff00ffffu) | ((ch & 0xffu) << 16u);
   let g = gGround;
   let LH = STOREY;
   let H0 = select(f32(max(REC[gLot * RECW + 19u], 1u)), 1.4, shanty);
@@ -1370,7 +1439,85 @@ fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
     roof(q, z1 + 0.12, hash(ch) % 4u, 0.4, 0.0, 0.25, F_SHED);
     return;
   }
-  body(S_TINT, ff | F_UNDER, q, z0, z1);
+  var nOpen = 0u;
+  for (var k = 0u; k < 4u; k++) { if (gOpen[k]) { nOpen++; } }
+  // (the user's Tiny Glade shot: round towers, overhangs, outside steps, balconies, plants)
+  // a round tower on a corner (two sides or more open), now and then: a stone shaft, a jettied top, a tall cone
+  if (!lifted && nOpen >= 2u && h >= 2 && rnd(ch, 31u) < 0.2) {
+    var r = 1e9;
+    for (var k = 0u; k < 4u; k++) {
+      let k1 = (k + 1u) % 4u;
+      r = min(r, abs(dot(c - q[k], outN(q, k))));
+    }
+    roundTower(c, max(r, 0.9) * 1.02, g + f32(h + 1) * LH, ch);
+    return;
+  }
+  // a jetty: the storeys above the first pushed out over the open sides on a timber beam, brackets under it
+  let jet = !lifted && nOpen > 0u && h >= 2 && rnd(ch, 32u) < 0.7;
+  var rq = q;
+  if (jet) {
+    let zj = g + LH;
+    body(S_TINT, ff | F_UNDER, q, z0, zj);
+    rq = pushOpen(q, 0.8);
+    body(S_WOOD, F_NOWIN, grow(rq, 0.03), zj - 0.14, zj + 0.06);
+    body(S_TINT, F_UNDER, rq, zj + 0.06, z1);
+    var nb = 0u;
+    for (var k = 0u; k < 4u; k++) {
+      if (!gOpen[k] || nb >= 2u) { continue; }
+      let k1 = (k + 1u) % 4u;
+      let n = outN(q, k);
+      post(mix(q[k], q[k1], 0.2) + n * 0.32, 0.14, zj - 0.8, zj - 0.12, S_WOOD);
+      post(mix(q[k], q[k1], 0.8) + n * 0.32, 0.14, zj - 0.8, zj - 0.12, S_WOOD);
+      nb++;
+    }
+  } else {
+    body(S_TINT, ff | F_UNDER, q, z0, z1);
+    // outside steps up a side to the first floor (a side open, not the door's)
+    if (h >= 2 && rnd(ch, 33u) < 0.45) {
+      for (var k = 1u; k < 4u; k++) {
+        let k1 = (k + 1u) % 4u;
+        let L = length(q[k1] - q[k]);
+        if (!gOpen[k] || L < 2.4) { continue; }
+        let t = (q[k1] - q[k]) / L;
+        let n = outN(q, k);
+        let run = L - 1.1;
+        let f0 = q[k] + t * 0.1;
+        let h0 = f0 + t * run;
+        put(K_STAIR, S_STONE, F_NOWIN, array<vec2<f32>, 4>(f0, f0 + n * 0.95, h0 + n * 0.95, h0), z0 - 0.1, vec4<f32>(g + LH - 0.05));
+        body(S_STONE, F_NOWIN, array<vec2<f32>, 4>(h0, h0 + n * 0.95, h0 + n * 0.95 + t * 1.0, h0 + t * 1.0), z0 - 0.1, g + LH - 0.05);
+        break;
+      }
+    } else if (h >= 2 && rnd(ch, 34u) < 0.6) {
+      // a timber balcony on an open side, a storey up or two: a slab on brackets, a rail round it
+      for (var k = 0u; k < 4u; k++) {
+        let k1 = (k + 1u) % 4u;
+        let L = length(q[k1] - q[k]);
+        if (!gOpen[k] || L < 1.8) { continue; }
+        let t = (q[k1] - q[k]) / L;
+        let n = outN(q, k);
+        let w = min(L * 0.7, 2.4);
+        let p0 = mix(q[k], q[k1], 0.5) - t * w * 0.5;
+        let zf = g + LH * select(1.0, 2.0, h >= 3 && rnd(ch, 35u) < 0.5);
+        let sl = array<vec2<f32>, 4>(p0, p0 + n * 0.85, p0 + n * 0.85 + t * w, p0 + t * w);
+        body(S_WOOD, F_NOWIN, sl, zf - 0.12, zf);
+        put(K_CREN, S_WOOD, 0u, sl, zf, vec4<f32>(0.95, 0.0, 1.0, 0.06));
+        post(p0 + t * 0.2 + n * 0.3, 0.12, zf - 0.7, zf - 0.12, S_WOOD);
+        post(p0 + t * (w - 0.2) + n * 0.3, 0.12, zf - 0.7, zf - 0.12, S_WOOD);
+        break;
+      }
+    }
+  }
+  // plants at the foot of an open wall (flowers, a shrub)
+  if (rnd(ch, 36u) < 0.55) {
+    for (var k = 0u; k < 4u; k++) {
+      if (!gOpen[k]) { continue; }
+      let k1 = (k + 1u) % 4u;
+      let n = outN(rq, k);
+      bushAt(mix(rq[k], rq[k1], mix(0.2, 0.8, rnd(ch, 37u))) + n * 0.35, gFloor - 0.05, 0.35, mix(0.45, 0.8, rnd(ch, 38u)), rnd(ch, 39u) < 0.6);
+      break;
+    }
+  }
+  let q2 = rq;
   // its own gable: a street column's to the street (side 0 is on it); behind, the ridge along the lot's street, so the
   // roofs fall into rows instead of a heap; a tower's a pyramid
   var turn = 1u;
@@ -1380,22 +1527,67 @@ fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
     turn = select(1u, 0u, a0 >= a1);
   }
   if (front && rnd(ch, 11u) < 0.2) { turn = 0u; }
-  let rise = roof(q, z1 + 0.05, turn, select(1.05, 1.6, tower), select(0.0, 0.5, tower), 0.16, 0u);
-  if (!tower && rnd(ch, 12u) < 0.07) { chimney(c + (q[1] - q[0]) * 0.15, z1 + rise * 0.3, z1 + rise + 0.8); }
+  let rise = roof(q2, z1 + 0.05, turn, select(1.05, 1.6, tower), select(0.0, 0.5, tower), 0.16, 0u);
+  if (!tower && rnd(ch, 12u) < 0.18) { chimney(c + (q[1] - q[0]) * 0.15, z1 + rise * 0.3, z1 + rise + 0.8); }
 }
 
 /** a whole piece of the grid joined into one house (the user: rooflines "need to either join into larger sections"):
  *  the merged pair of triangles its cells came from, one column of one colour, one roof over it all — a gable along
  *  its length, or a hip — a chimney or two */
 fn gridPiece(q0: array<vec2<f32>, 4>, ch: u32) {
-  if (gN + 4u > PPL) { return; }
-  let q = faceStreet(q0);
+  if (gN + 12u > PPL) { return; }
+  let q1 = faceOpen(q0);
   let front = gFront;
+  gTag = (gTag & 0xff00ffffu) | ((ch & 0xffu) << 16u);
   let g = gGround;
   let H0 = f32(max(REC[gLot * RECW + 19u], 1u));
   let h = clamp(i32(round(H0 + (rnd(ch, 1u) - 0.3) * 1.4 - select(0.8, 0.0, front))), 1, 6);
   let z1 = g + f32(h) * STOREY;
-  body(S_TINT, select(0u, F_FRONT0, front) | F_UNDER, q, min(g, gFloor), z1);
+  let ff = select(0u, F_FRONT0, front) | F_UNDER;
+  var nOpen = 0u;
+  for (var k = 0u; k < 4u; k++) { if (gOpen[k]) { nOpen++; } }
+  // (the user's Tiny Glade shot) a jetty over its open sides on a beam and brackets, or a balcony on one
+  var q = q1;
+  if (nOpen > 0u && h >= 2 && rnd(ch, 32u) < 0.55) {
+    let zj = g + STOREY;
+    body(S_TINT, ff, q1, min(g, gFloor), zj);
+    q = pushOpen(q1, 0.8);
+    body(S_WOOD, F_NOWIN, grow(q, 0.03), zj - 0.14, zj + 0.06);
+    body(S_TINT, F_UNDER, q, zj + 0.06, z1);
+    for (var k = 0u; k < 4u; k++) {
+      if (!gOpen[k]) { continue; }
+      let k1 = (k + 1u) % 4u;
+      let n = outN(q1, k);
+      post(mix(q1[k], q1[k1], 0.15) + n * 0.32, 0.14, zj - 0.8, zj - 0.12, S_WOOD);
+      post(mix(q1[k], q1[k1], 0.85) + n * 0.32, 0.14, zj - 0.8, zj - 0.12, S_WOOD);
+      break;
+    }
+  } else {
+    body(S_TINT, ff, q1, min(g, gFloor), z1);
+    if (nOpen > 0u && h >= 2 && rnd(ch, 34u) < 0.7) {
+      for (var k = 0u; k < 4u; k++) {
+        let k1 = (k + 1u) % 4u;
+        let L = length(q1[k1] - q1[k]);
+        if (!gOpen[k] || L < 1.8) { continue; }
+        let t = (q1[k1] - q1[k]) / L;
+        let n = outN(q1, k);
+        let w = min(L * 0.6, 3.0);
+        let p0 = mix(q1[k], q1[k1], 0.5) - t * w * 0.5;
+        let zf = g + STOREY * select(1.0, 2.0, h >= 3 && rnd(ch, 35u) < 0.5);
+        let sl = array<vec2<f32>, 4>(p0, p0 + n * 0.9, p0 + n * 0.9 + t * w, p0 + t * w);
+        body(S_WOOD, F_NOWIN, sl, zf - 0.12, zf);
+        put(K_CREN, S_WOOD, 0u, sl, zf, vec4<f32>(0.95, 0.0, 1.0, 0.06));
+        post(p0 + t * 0.2 + n * 0.3, 0.12, zf - 0.7, zf - 0.12, S_WOOD);
+        post(p0 + t * (w - 0.2) + n * 0.3, 0.12, zf - 0.7, zf - 0.12, S_WOOD);
+        break;
+      }
+    }
+  }
+  for (var k = 0u; k < 4u; k++) {
+    if (!gOpen[k] || rnd(ch, 36u + k) > 0.6) { continue; }
+    let k1 = (k + 1u) % 4u;
+    bushAt(mix(q1[k], q1[k1], mix(0.2, 0.8, rnd(ch, 40u + k))) + outN(q1, k) * 0.35, gFloor - 0.05, 0.35, mix(0.45, 0.8, rnd(ch, 44u + k)), rnd(ch, 48u + k) < 0.6);
+  }
   let l0 = length(q[1] - q[0]) + length(q[2] - q[3]);
   let l1 = length(q[2] - q[1]) + length(q[3] - q[0]);
   // (the ridge along its length; on the street, now and then turned to show the street a broad gable)
@@ -1877,7 +2069,9 @@ fn grid(seed: u32) {
           if (kept[k]) {
             gGround = gHi[k];
             gFloor = gLo[k];
+            let tag0 = gTag;
             gridCell(Q[k], seed, shanty);
+            gTag = tag0;
             gGround = g0;
           }
         }

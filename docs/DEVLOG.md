@@ -23465,3 +23465,21 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
 - Built windows (house lots): a plain window's glass and a door's leaf are left out so the recess shows inside the
   built frame; shaped, balcony and dormer windows keep their flat glass. Shots rc_close (harbour), rc_homes (homes).
 
+## archgen: the dense housing toward the Tiny Glade shot, first pass (2026-11-12; AG29; the user: "Go for it ... Don't
+## burn all my tokens", "the ground texture is worth swapping", "I care less about color than the items you identified")
+
+- A grid cell (and a joined house) now knows which sides are open — a lane, a street the district keeps, or off the
+  district (openAt: the nearest lattice point's lane test, else the lot rule, probed 1.4 m out from each side's
+  middle) — and turns to face the longest open side (faceOpen; replaces faceStreet for the grid: AG27's street fronts).
+- On open sides: jetties (the storeys above the first pushed out 0.8 m on a timber beam, brackets under, 70% of open
+  cells of 2+ storeys); else outside stone steps up a side to the first floor with a landing (45%) or a timber balcony
+  on brackets with a rail a storey or two up (60%); flowers or a shrub at an open wall's foot (55%). A corner cell (2+
+  open sides) is a round tower now and then (20%: roundTower — stone shaft, jettied top, tall cone). Chimneys 7% →
+  18%.
+- Walls by the cell's seed (the part tag's bits 16–23, set per cell): plaster half, exposed half-timber 3 in 10, brick 1
+  in 10 (the shader's existing patterns); a stone ground floor (2.6 m of coursed stone) on half.
+- The lab's ground: cobbles everywhere a building lot is (parks keep grass) — the texture bank's TX_COBBLE.
+- Part budget 96 → 192 a lot (the extra pieces); the grid's own pool is still AG27.
+- Seen (v4_low, v4_mid): towers, half-timber, stone bases, cobbled lanes; jetties and stairs only on the few cells on a
+  lane (most cells are interior).
+

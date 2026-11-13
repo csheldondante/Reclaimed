@@ -30,7 +30,7 @@ const PLANT_WGSL = `const PLANT_N: u32 = ${PL.length}u;\nconst PLANT_CAT = array
 
 /** mirrors arch.wgsl */
 export const PART_WORDS = 16;
-export const PARTS_PER_LOT = 96;
+export const PARTS_PER_LOT = 192;
 export const KIND = { body: 1, roof: 2, cren: 3, win: 4, cyl: 5, cone: 6, stair: 7, wheel: 8, bush: 9, plantS: 10, plantM: 11 } as const;
 export const NK = 12;
 /** vertices a kind's instance (draw.wgsl: the kinds' vertex stages; COURSES 12, ROUND_N 16, CONE_ROWS 10) */
