@@ -31,8 +31,8 @@ const PLANT_WGSL = `const PLANT_N: u32 = ${PL.length}u;\nconst PLANT_CAT = array
 /** mirrors arch.wgsl */
 export const PART_WORDS = 16;
 export const PARTS_PER_LOT = 192;
-export const KIND = { body: 1, roof: 2, cren: 3, win: 4, cyl: 5, cone: 6, stair: 7, wheel: 8, bush: 9, plantS: 10, plantM: 11 } as const;
-export const NK = 12;
+export const KIND = { body: 1, roof: 2, cren: 3, win: 4, cyl: 5, cone: 6, stair: 7, wheel: 8, bush: 9, plantS: 10, plantM: 11, facade: 12 } as const;
+export const NK = 13;
 /** vertices a kind's instance (draw.wgsl: the kinds' vertex stages; COURSES 12, ROUND_N 16, CONE_ROWS 10) */
 const VERTS: Record<number, number> = {
   [KIND.body]: 30,
@@ -47,6 +47,8 @@ const VERTS: Record<number, number> = {
   // (plants.json's classes: a mesh drawn with its class's count, the rest of its vertices gone)
   [KIND.plantS]: 1008,
   [KIND.plantM]: 1896,
+  // (draw.wgsl vsArchFacade: 12 openings × 11 quads, the gable's)
+  [KIND.facade]: 12 * 66 + 6,
 };
 /** each kind and its vertex stage (draw.wgsl) */
 /** the lab's shadow map's side (texels) */
@@ -64,6 +66,7 @@ export const ARCH_DRAWS = [
   [KIND.bush, 'vsArchBush'],
   [KIND.plantS, 'vsArchPlantS'],
   [KIND.plantM, 'vsArchPlantM'],
+  [KIND.facade, 'vsArchFacade'],
 ] as const;
 const STYLE_ROOM = 64;
 

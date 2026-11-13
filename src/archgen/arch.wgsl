@@ -41,7 +41,10 @@ const K_BUSH: u32 = 9u;
 /** (Synty, local only) a plant mesh: small (<= 1008 vertices) and medium (<= 1896) — plants.json */
 const K_PLANT_S: u32 = 10u;
 const K_PLANT_M: u32 = 11u;
-const NK: u32 = 12u;
+/** (the grid) a wall face built with its openings: corners 0 → 1 the face (outside on the right), z0 its foot, 11 / 12
+ *  its top at corner 0 / 1, 13 the storeys' origin, 14 1 with a door (draw.wgsl vsArchFacade) */
+const K_FACADE: u32 = 12u;
+const NK: u32 = 13u;
 const CREN_M: u32 = 8u;
 /** segments round a K_CYL / K_CONE; a roof's courses */
 const ROUND_N: u32 = 16u;
@@ -1327,25 +1330,9 @@ fn posHash(c: vec2<f32>) -> u32 {
 /** (the grid) is p open — a lane, a street the district keeps, or off the district? (a lattice point's cells are
  *  roughly the region nearer it than any other lattice point: the lane test of the nearest one) */
 fn openAt(p: vec2<f32>) -> bool {
-  let bf = p.y / (GRID_S * SQ3 * 0.5);
-  let af = p.x / GRID_S - 0.5 * bf;
-  var bd = 1e9;
-  var ba = 0;
-  var bb = 0;
-  for (var j = 0; j < 2; j++) {
-    for (var i = 0; i < 2; i++) {
-      let la = i32(floor(af)) + i;
-      let lb = i32(floor(bf)) + j;
-      let d = distance(latP(la, lb), p);
-      if (d < bd) { bd = d; ba = la; bb = lb; }
-    }
-  }
-  if (lanePoint(ba, bb)) { return true; }
-  let l = lotAt(p);
-  if (l == 0xffffffffu || !lotIsGrid(l)) { return true; }
-  return outerStreet(l, p);
+  let n = nearestLat(p);
+  return !builtAt(n.x, n.y);
 }
-
 /** a grid cell's sides open to a lane or street (after faceOpen's turn: side 0 the longest open one, its door's) */
 var<private> gOpen: array<bool, 4>;
 
@@ -1399,8 +1386,10 @@ fn pushOpen(q: array<vec2<f32>, 4>, d: f32) -> array<vec2<f32>, 4> {
 // (a valley between the two) — and not from edges against a taller one (the roof climbs to that wall: a lean-to);
 // none at all: flat (a terrace). Each cell takes its roof's corners from that surface, so a building's cells join.
 var<private> gAnchor: vec2<i32>;
-const RF_SLOPE: f32 = 0.62;
-const RF_MAX: f32 = 2.4;
+var<private> gRos: Ros;
+var<private> gFirst: bool;
+const RF_SLOPE: f32 = 0.9;
+const RF_MAX: f32 = 4.2;
 
 fn latHash(a: i32, b: i32, k: u32) -> f32 { return rnd(hash((u32(a + 4096) * 73856093u) ^ (u32(b + 4096) * 19349663u)), k); }
 /** a building's storeys: a district's blocky base (5 lattice cells a block) and its own step; a tower two more */
@@ -1423,6 +1412,10 @@ struct Ros {
   open: array<bool, 24>,
   /** the smallest centre key of its cells (the one cell that makes a whole-building piece: a tower) */
   minCK: u32,
+  /** its cells (each from its lattice point round: 0 the point, 1 the next edge's middle, 2 the piece's centre, 3 the
+   *  previous edge's middle) */
+  nc: u32,
+  cells: array<array<vec2<f32>, 4>, 6>,
 };
 
 fn rosAdd(r: ptr<function, Ros>, a: vec2<f32>, b: vec2<f32>, kind: u32, open: bool) {
@@ -1438,8 +1431,21 @@ fn rosAdd(r: ptr<function, Ros>, a: vec2<f32>, b: vec2<f32>, kind: u32, open: bo
 fn rosette(a: i32, b: i32) -> Ros {
   var r: Ros;
   r.n = 0u;
+  r.nc = 0u;
   r.minCK = 0xffffffffu;
   let h = hAt(a, b);
+  // its six neighbours (the buildings round the adjacent lattice points): their storeys, whether they stand
+  let OFF = array<vec2<i32>, 6>(vec2<i32>(1, 0), vec2<i32>(0, 1), vec2<i32>(-1, 1), vec2<i32>(-1, 0), vec2<i32>(0, -1), vec2<i32>(1, -1));
+  var nh: array<i32, 6>;
+  var nopen: array<bool, 6>;
+  for (var i = 0u; i < 6u; i++) {
+    nh[i] = hAt(a + OFF[i].x, b + OFF[i].y);
+    nopen[i] = !builtAt(a + OFF[i].x, b + OFF[i].y);
+  }
+  // its ridge: one of the lattice's three directions, by its block (so merged neighbours mostly share it)
+  let rk = u32(latHash(i32(floor(f32(a) / 5.0)), i32(floor(f32(b) / 5.0)), 8u) * 2.999);
+  var RD = array<vec2<f32>, 3>(vec2<f32>(1.0, 0.0), vec2<f32>(0.5, 0.866), vec2<f32>(-0.5, 0.866));
+  let ridge = RD[rk];
   let pk = tgKey(a, b, 0u);
   let tris = array<vec3<i32>, 6>(vec3<i32>(a, b, 0), vec3<i32>(a - 1, b, 1), vec3<i32>(a - 1, b, 0),
                                  vec3<i32>(a - 1, b - 1, 1), vec3<i32>(a, b - 1, 0), vec3<i32>(a, b - 1, 1));
@@ -1465,18 +1471,20 @@ fn rosette(a: i32, b: i32) -> Ros {
       if (k >= p.nv || cs.K[k][0] != pk) { continue; }
       var q: array<vec2<f32>, 4>;
       for (var j = 0u; j < 4u; j++) { q[j] = tgPos(cs.K[k][j], cs.Q[k][j]); }
-      // sides 1 and 2: the buildings round the piece's next and previous corners; 0 and 3: this building's own cells
-      for (var sd = 0u; sd < 4u; sd++) {
+      if (r.nc < 6u) { r.cells[r.nc] = q; r.nc++; }
+      // sides 1 and 2 face the buildings round the piece's next and previous corners (0 and 3: its own cells). An edge
+      // to an open or lower neighbour is an eave (a drop) — or a gable end when it faces along the ridge; to an equal
+      // one, the roof runs on (merged); to a taller one, the roof climbs to its wall
+      for (var sd = 1u; sd < 3u; sd++) {
         let e0 = q[sd];
-        let e1 = q[(sd + 1u) % 4u];
-        let open = openAt((e0 + e1) * 0.5 + outN(q, sd) * 1.4);
-        if (sd == 1u || sd == 2u) {
-          let na = tgAnchor(p.VK[select(pv[k], nx[k], sd == 1u)]);
-          let drop = open || hAt(na.x, na.y) <= h;
-          rosAdd(&r, e0, e1, select(1u, 0u, drop), open);
-        } else if (open) {
-          rosAdd(&r, e0, e1, 0u, true);
-        }
+        let e1 = q[sd + 1u];
+        let na = tgAnchor(p.VK[select(pv[k], nx[k], sd == 1u)]);
+        var oi = 0u;
+        for (var i = 0u; i < 6u; i++) { if (na.x == a + OFF[i].x && na.y == b + OFF[i].y) { oi = i; } }
+        let open = nopen[oi];
+        let lower = open || nh[oi] < h;
+        let gable = abs(dot(outN(q, sd), ridge)) > 0.8;
+        rosAdd(&r, e0, e1, select(1u, 0u, lower && !gable), open);
       }
     }
   }
@@ -1492,10 +1500,32 @@ fn segDist(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
 fn roofAt(r: Ros, x: vec2<f32>) -> f32 {
   var d = 1e9;
   for (var i = 0u; i < r.n; i++) { if (r.kind[i] == 0u) { d = min(d, segDist(x, r.A[i], r.B[i])); } }
+  for (var i = 0u; i < gDN; i++) { d = min(d, segDist(x, gDA[i], gDB[i])); }
   if (d > 1e8) { return -1.0; }
   return min(d * RF_SLOPE, RF_MAX);
 }
-/** a jetty's push at a corner: out along each open edge it ends (the same for every cell sharing the corner) */
+/** the eaves of the equal neighbours' buildings (the roof runs on over them: merged) — gridCell gathers them */
+var<private> gDN: u32;
+var<private> gDA: array<vec2<f32>, 48>;
+var<private> gDB: array<vec2<f32>, 48>;
+fn gatherMerged(a: i32, b: i32) {
+  gDN = 0u;
+  let h = hAt(a, b);
+  if (towerAt(a, b)) { return; }
+  let OFF = array<vec2<i32>, 6>(vec2<i32>(1, 0), vec2<i32>(0, 1), vec2<i32>(-1, 1), vec2<i32>(-1, 0), vec2<i32>(0, -1), vec2<i32>(1, -1));
+  for (var i = 0u; i < 6u; i++) {
+    let na = a + OFF[i].x;
+    let nb = b + OFF[i].y;
+    if (hAt(na, nb) != h || towerAt(na, nb) || !builtAt(na, nb)) { continue; }
+    let rn = rosette(na, nb);
+    for (var j = 0u; j < rn.n; j++) {
+      if (rn.kind[j] != 0u || gDN >= 48u) { continue; }
+      gDA[gDN] = rn.A[j];
+      gDB[gDN] = rn.B[j];
+      gDN++;
+    }
+  }
+}/** a jetty's push at a corner: out along each open edge it ends (the same for every cell sharing the corner) */
 fn jettyPush(r: Ros, x: vec2<f32>, d: f32) -> vec2<f32> {
   var v = vec2<f32>(0.0);
   for (var i = 0u; i < r.n; i++) {
@@ -1508,11 +1538,27 @@ fn jettyPush(r: Ros, x: vec2<f32>, d: f32) -> vec2<f32> {
   return v;
 }
 
+/** a body over q from z0 to tops (a corner each) whose open sides are built as facades (their openings real: recessed
+ *  windows, a door) — the body hides those sides (word 0's bits 24–27) */
+fn bodyF(q: array<vec2<f32>, 4>, z0: f32, tops: vec4<f32>, flags: u32, zg: f32, door: bool) {
+  let slot = put(K_BODY, S_TINT, flags, q, z0, tops);
+  if (slot == 0xffffffffu) { return; }
+  var mask = 0u;
+  for (var k = 0u; k < 4u; k++) {
+    if (!gOpen[k] || length(q[(k + 1u) % 4u] - q[k]) < 1.0) { continue; }
+    let f = put(K_FACADE, S_TINT, F_NOWIN, array<vec2<f32>, 4>(q[k], q[(k + 1u) % 4u], vec2<f32>(0.0), vec2<f32>(0.0)), z0,
+                vec4<f32>(tops[k], tops[(k + 1u) % 4u], zg, select(0.0, 1.0, door && k == 0u)));
+    if (f != 0xffffffffu) { mask |= 1u << k; }
+  }
+  let o = PB + (gLot * PPL + slot) * PW;
+  ARCH[o] = ARCH[o] | (mask << 24u);
+}
+
 /** one cell of the grid: a column and its roof, a column with a patio on top, or (a shanty's yard) a cloth lean-to or
  *  a shrub */
 fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
   // (room for the most a cell makes: two bodies, a beam, four brackets, steps and a landing, a balcony, a plant)
-  if (gN + 16u > PPL) { return; }
+  if (gN + 28u > PPL) { return; }
   var q = faceOpen(q0);
   let front = gFront;
   if (quadArea(q) < 1.2) { return; }
@@ -1530,20 +1576,18 @@ fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
     return;
   }
   let an = gAnchor;
-  let ros = rosette(an.x, an.y);
+  let ros = gRos;
   let h = hAt(an.x, an.y);
   let z0 = min(g, gFloor);
   let z1 = g + f32(h) * LH;
   let P = latP(an.x, an.y);
   // a tower: the whole building one round tower with a tall cone (made once, by its first cell)
   if (towerAt(an.x, an.y)) {
-    if (posHash(tgPos(ros.minCK, P)) == posHash(tgPos(ros.minCK, P)) && ros.minCK == ros.minCK) {
+    // (made once, by the building's first cell: grid() calls it with gFirst)
+    if (gFirst) {
       var rr = 1e9;
       for (var i = 0u; i < ros.n; i++) { rr = min(rr, segDist(P, ros.A[i], ros.B[i])); }
-      // (only the cell whose piece has the smallest centre key makes it)
-      var mine = false;
-      for (var j = 0u; j < 4u; j++) { mine = mine || distance(q[j], tgPos(ros.minCK, vec2<f32>(1e9))) < 0.01; }
-      if (mine) { roundTower(P, max(rr * 0.95, 1.2), z1, ch); }
+      roundTower(P, max(rr * 0.95, 1.2), z1, ch);
     }
     return;
   }
@@ -1556,11 +1600,22 @@ fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
   let flat = roofAt(ros, P) < 0.0;
   if (jet) {
     let zj = g + LH;
-    body(S_TINT, select(0u, F_FRONT0, front) | F_UNDER, q, z0, zj);
-    for (var k = 0u; k < 4u; k++) { rq[k] = q[k] + jettyPush(ros, q[k], 0.8); }
+    bodyF(q, z0, vec4<f32>(zj), select(0u, F_FRONT0, front) | F_UNDER, g, front);
+    for (var k = 0u; k < 4u; k++) { rq[k] = q[k] + jettyPush(ros, q[k], 0.7); }
     body(S_WOOD, F_NOWIN, grow(rq, 0.03), zj - 0.14, zj + 0.06);
     for (var k = 0u; k < 4u; k++) { tops[k] = z1 + max(roofAt(ros, q[k]), 0.0); }
-    put(K_BODY, S_TINT, 0u, rq, zj + 0.06, tops);
+    // a second jetty a storey up on the taller ones: each storey out over the one below
+    if (h >= 3 && latHash(an.x, an.y, 9u) < 0.5) {
+      let zj2 = g + 2.0 * LH;
+      bodyF(rq, zj + 0.06, vec4<f32>(zj2), F_UNDER, g, false);
+      var rq2 = rq;
+      for (var k = 0u; k < 4u; k++) { rq2[k] = q[k] + jettyPush(ros, q[k], 1.2); }
+      body(S_WOOD, F_NOWIN, grow(rq2, 0.03), zj2 - 0.14, zj2 + 0.06);
+      bodyF(rq2, zj2 + 0.06, tops, 0u, g, false);
+      rq = rq2;
+    } else {
+      bodyF(rq, zj + 0.06, tops, 0u, g, false);
+    }
     var nb = 0u;
     for (var k = 0u; k < 4u; k++) {
       if (!gOpen[k] || nb >= 2u) { continue; }
@@ -1572,7 +1627,7 @@ fn gridCell(q0: array<vec2<f32>, 4>, seed: u32, shanty: bool) {
     }
   } else {
     for (var k = 0u; k < 4u; k++) { tops[k] = z1 + max(roofAt(ros, q[k]), 0.0); }
-    put(K_BODY, S_TINT, select(0u, F_FRONT0, front), q, z0, tops);
+    bodyF(q, z0, tops, select(0u, F_FRONT0, front), g, front);
     // outside steps up an open side to the first floor
     if (h >= 2 && rnd(ch, 33u) < 0.45) {
       for (var k = 1u; k < 4u; k++) {
@@ -1965,9 +2020,9 @@ var<workgroup> wCells: atomic<u32>;
 /** a chunk's region's cells, found once (the merge rounds' hashing is most of a step's cost if done every step): kept
  *  in the chunk's own scratch in TG, 2 words a cell (its four corners' region places, 16 bits each) */
 const TG_CELLS: u32 = 1176u;
-/** a chunk's lots (tgIndexLots): a count, then up to TG_LOTS lot ids — every lot whose parcel, grown 3 m, reaches it */
-const TG_LOTS: u32 = 63u;
-fn tgLotBase(slot: u32) -> u32 { return 8u + GU.tgSlots + GU.tgSlots * TG_NV * 2u + GU.tgSlots * TG_CELLS * 2u + slot * (TG_LOTS + 1u); }
+/** a chunk's lattice points' owners (tgOwners): a word a point (8 × 8), the lot it lies deepest in (or within 3 m of),
+ *  stored inverted for atomicMax (0 none) */
+fn tgLotBase(slot: u32) -> u32 { return 8u + GU.tgSlots + GU.tgSlots * TG_NV * 2u + GU.tgSlots * TG_CELLS * 2u + slot * 64u; }
 
 fn tgScratch(slot: u32) -> u32 { return 8u + GU.tgSlots + GU.tgSlots * TG_NV * 2u + slot * TG_CELLS * 2u; }
 
@@ -2067,112 +2122,45 @@ fn tgRelax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
 
 fn grid(seed: u32) {
   let shanty = u32(sty(gS, 0u).w + 0.5) == 4u;
-  // (?gridview=1: the parcel's edges as thin red strips)
-  if (GU.gridView != 0u) {
-    for (var k = 0u; k < 4u; k++) {
-      let a = gPar[k];
-      let b = gPar[(k + 1u) % 4u];
-      let n = normalize(vec2<f32>(b.y - a.y, a.x - b.x)) * 0.12;
-      body(S_FLOWER, F_NOWIN, array<vec2<f32>, 4>(a - n, b - n, b + n, a + n), gGround, gGround + 0.6);
-    }
-  }
-  gFpG = grow(gFp, 0.6);
-  // the lattice under the parcel: its bounding box in lattice coordinates (b from y, a from x less half of b)
+  // the buildings this lot makes: one round each lattice point it owns (tgOwners) that stands (builtAt) — all local
   var lo = vec2<f32>(1e9);
   var hi = vec2<f32>(-1e9);
-  for (var k = 0u; k < 4u; k++) { lo = min(lo, gPar[k]); hi = max(hi, gPar[k]); }
-  let b0 = i32(floor(lo.y / (GRID_S * SQ3 * 0.5))) - 2;
-  let b1 = i32(ceil(hi.y / (GRID_S * SQ3 * 0.5))) + 2;
+  for (var k = 0u; k < 4u; k++) { lo = min(lo, gPar[k] - 3.0); hi = max(hi, gPar[k] + 3.0); }
+  let b0 = i32(floor(lo.y / (GRID_S * SQ3 * 0.5))) - 1;
+  let b1 = i32(ceil(hi.y / (GRID_S * SQ3 * 0.5))) + 1;
+  let g0 = gGround;
+  let OFF = array<vec2<i32>, 6>(vec2<i32>(1, 0), vec2<i32>(0, 1), vec2<i32>(-1, 1), vec2<i32>(-1, 0), vec2<i32>(0, -1), vec2<i32>(1, -1));
   for (var b = b0; b <= b1; b++) {
-    let a0 = i32(floor(lo.x / GRID_S - 0.5 * f32(b))) - 2;
-    let a1 = i32(ceil(hi.x / GRID_S - 0.5 * f32(b))) + 2;
+    let a0 = i32(floor(lo.x / GRID_S - 0.5 * f32(b))) - 1;
+    let a1 = i32(ceil(hi.x / GRID_S - 0.5 * f32(b))) + 1;
     for (var a = a0; a <= a1; a++) {
-      for (var t = 0u; t < 2u; t++) {
-        // a piece: this triangle merged with the one across its pick if that one picks it back (the pair made once,
-        // by the lower id), else this triangle alone; its cells where the relaxed town grid has them
-        let p = pieceAt(a, b, t);
-        if (!p.ok) { continue; }
-        let cs = cellsOf(p);
-        var Q: array<array<vec2<f32>, 4>, 4>;
-        var V = p.V;
-        for (var k = 0u; k < 4u; k++) {
-          for (var j = 0u; j < 4u; j++) { Q[k][j] = tgPos(cs.K[k][j], cs.Q[k][j]); }
-          V[k] = Q[k][0];
-        }
-        let cen = tgPos(p.CK, cs.cen);
-        let merged = p.merged;
-        let nv = p.nv;
-        // a cell is made by the lot its centre is in; it stands if every corner is in a lot built on the grid (straddling
-        // lot lines and the streets between grid lots: the district is one — the user: districts "grow over the lot
-        // lines and form their own streets"), none is in a street the district keeps (one facing a lot not on the grid),
-        // and its lattice corner isn't on one of the district's lanes
-        var own = array<bool, 4>(false, false, false, false);
-        var kept = array<bool, 4>(false, false, false, false);
-        var allIn = true;
-        var anyIn = false;
-        // (the grounds under each cell's corners: lots meeting may stand at their own heights — the cell built from the
-        // highest, its walls down to the lowest, so it neither floats nor is buried in a neighbour's ground)
-        var gHi = array<f32, 4>(gGround, gGround, gGround, gGround);
-        var gLo = array<f32, 4>(gGround, gGround, gGround, gGround);
-        for (var k = 0u; k < nv; k++) {
-          let qc = (Q[k][0] + Q[k][1] + Q[k][2] + Q[k][3]) * 0.25;
-          own[k] = lotAt(qc) == gLot;
-          // (?gridview=3: every cell near any lot drawn, whoever owns it — the grid's own holes show)
-          if (GU.gridView == 3u && inQuad(grow(gPar, 3.0), qc)) { body(S_TINT, F_NOWIN, grow(Q[k], -0.15), gGround, gGround + 0.3); }
-          // (?gridview=2: a cell near the parcel, its centre outside it, drawn thin in blue — no lot claiming it shows)
-          if (GU.gridView == 2u && !own[k] && inQuad(grow(gPar, 2.5), qc)) { body(S_WATER, F_NOWIN, grow(Q[k], -0.3), gGround, gGround + 0.02); }
-          if (own[k]) {
-            var grid = true;
-            for (var j = 0u; j < 4u; j++) {
-              let l = lotAt(Q[k][j]);
-              grid = grid && l != 0xffffffffu && (l == gLot || lotIsGrid(l)) && !outerStreet(l, Q[k][j]);
-              if (l != 0xffffffffu) {
-                let gl = rf(l * RECW, 21u) + 0.5;
-                gHi[k] = max(gHi[k], gl);
-                gLo[k] = min(gLo[k], gl);
-              }
-            }
-            let an = tgAnchor(cs.K[k][0]);
-            kept[k] = grid && !lanePoint(an.x, an.y);
-            // (?gridview=1: a cell left out drawn as a low brick slab)
-            if (GU.gridView != 0u && !grid) { body(S_BRICK, F_NOWIN, grow(Q[k], -0.15), gGround, gGround + 0.05 + f32(GU.gridView == 4u)); }
-          }
-          allIn = allIn && kept[k];
-          anyIn = anyIn || own[k];
-        }
-        if (!anyIn) { continue; }
-        // a whole quad piece in this lot: now and then one house (not the shanties: theirs stay huts)
-        let ph = posHash(cen);
-        // (a terrace a whole piece, so neighbouring flats are one floor behind one parapet, not cells side by side)
-        let pr = rnd(ph, 21u);
-        let g0 = gGround;
-        var pHi = gGround;
-        var pLo = gGround;
-        for (var k = 0u; k < nv; k++) { pHi = max(pHi, gHi[k]); pLo = min(pLo, gLo[k]); }
-        if (GU.gridView != 0u) {
-          for (var k = 0u; k < nv; k++) {
-            if (kept[k]) { body(S_TINT, F_NOWIN, grow(Q[k], -0.15), gGround, gGround + 0.3 + f32(k) * 0.05 + f32(GU.gridView == 4u)); }
-          }
-          continue;
-        }
-        // (a building is the cells round a lattice point now — gridCell; the joined houses and terraces retired)
-        _ = pr;
-        for (var k = 0u; k < nv; k++) {
-          if (kept[k]) {
-            gGround = gHi[k];
-            gFloor = gLo[k];
-            let tag0 = gTag;
-            gAnchor = tgAnchor(cs.K[k][0]).xy;
-            gridCell(Q[k], seed, shanty);
-            gTag = tag0;
-            gGround = g0;
-          }
-        }
+      if (ownerAt(a, b) != gLot || !builtAt(a, b)) { continue; }
+      // (its ground: the highest of its own and its neighbours' owners', its walls to the lowest — no burying)
+      var gHi = g0;
+      var gLo = g0;
+      for (var i = 0u; i < 6u; i++) {
+        let o = ownerAt(a + OFF[i].x, b + OFF[i].y);
+        if (o == 0xffffffffu) { continue; }
+        let gl = rf(o * RECW, 21u) + 0.5;
+        gHi = max(gHi, gl);
+        gLo = min(gLo, gl);
+      }
+      gRos = rosette(a, b);
+      gatherMerged(a, b);
+      gAnchor = vec2<i32>(a, b);
+      for (var k = 0u; k < gRos.nc; k++) {
+        gFirst = k == 0u;
+        if (GU.gridView != 0u) { body(S_TINT, F_NOWIN, grow(gRos.cells[k], -0.15), g0, g0 + 0.3); continue; }
+        gGround = gHi;
+        gFloor = gLo;
+        let tag0 = gTag;
+        gridCell(gRos.cells[k], seed, shanty);
+        gTag = tag0;
+        gGround = g0;
       }
     }
   }
 }
-
 // (2026-11-11, the phone: "CreateComputePipelines failed with VK_ERROR_INITIALIZATION_FAILED … [ComputePipeline
 // "arch gen"]") The generator in four passes, one a family of lots — each its own entry point, so each pipeline holds
 // only its family's code (a driver inlines a whole entry point's calls: all of them in one was more than the phone's
@@ -2336,31 +2324,47 @@ fn tgRegisterArea(@builtin(global_invocation_id) g: vec3<u32>) {
  *  between them) the nearest within 3 m — so lots meeting share the grid with no gap (the user: "They should use the
  *  same irregular grid if intersecting"); 0xffffffff past every lot */
 fn lotAt(p: vec2<f32>) -> u32 {
-  // (the lots near p: its chunk's list — tgIndexLots — not every lot of the town)
+  // (the owner of the nearest lattice point: no search — the user, "invent local only rules")
+  let n = nearestLat(p);
+  return ownerAt(n.x, n.y);
+}
+/** the nearest lattice point to p */
+fn nearestLat(p: vec2<f32>) -> vec2<i32> {
   let bf = p.y / (GRID_S * SQ3 * 0.5);
-  let ch = tgChunk(i32(floor(p.x / GRID_S - 0.5 * bf)), i32(floor(bf)));
+  let af = p.x / GRID_S - 0.5 * bf;
+  var bd = 1e9;
+  var r = vec2<i32>(0);
+  for (var j = 0; j < 2; j++) {
+    for (var i = 0; i < 2; i++) {
+      let la = i32(floor(af)) + i;
+      let lb = i32(floor(bf)) + j;
+      let d = distance(latP(la, lb), p);
+      if (d < bd) { bd = d; r = vec2<i32>(la, lb); }
+    }
+  }
+  return r;
+}
+/** a lattice point's owner lot (tgOwners), or 0xffffffff */
+fn ownerAt(a: i32, b: i32) -> u32 {
+  let ch = tgChunk(a, b);
   let slot = tgSlot(ch, false);
   if (slot == 0xffffffffu) { return 0xffffffffu; }
-  let lb = tgLotBase(slot);
-  let nl = min(atomicLoad(&TG[lb]), TG_LOTS);
-  var best = 0xffffffffu;
-  var bd = 3.0;
-  for (var li = 0u; li < nl; li++) {
-    let i = atomicLoad(&TG[lb + 1u + li]);
-    let o = i * RECW;
-    // (its signed distance: the farthest p is past any of its edges; ≤ 0 inside)
-    var d = -1e9;
-    for (var k = 0u; k < 4u; k++) {
-      let k1 = (k + 1u) % 4u;
-      let a = vec2<f32>(rf(o, k * 2u), rf(o, 1u + k * 2u));
-      let e = normalize(vec2<f32>(rf(o, k1 * 2u), rf(o, 1u + k1 * 2u)) - a);
-      d = max(d, dot(p - a, vec2<f32>(e.y, -e.x)));
-    }
-    if (d < bd) { bd = d; best = i; }
-  }
-  return best;
+  let w = atomicLoad(&TG[tgLotBase(slot) + u32((b - ch.y * TG_CH) * TG_CH + (a - ch.x * TG_CH))]);
+  if (w == 0u) { return 0xffffffffu; }
+  return (~w) & 0xfffu;
 }
-
+fn gridAt(a: i32, b: i32) -> bool {
+  let o = ownerAt(a, b);
+  return o != 0xffffffffu && lotIsGrid(o);
+}
+/** a building stands round lattice point (a, b): its owner on the grid, not a lane or courtyard, and not in a street
+ *  unless the street runs between grid lots (all six neighbours on the grid: the district grows over it) */
+fn builtAt(a: i32, b: i32) -> bool {
+  let o = ownerAt(a, b);
+  if (o == 0xffffffffu || !lotIsGrid(o) || voidAt(a, b)) { return false; }
+  if (!inStreetOf(o, latP(a, b))) { return true; }
+  return gridAt(a + 1, b) && gridAt(a, b + 1) && gridAt(a - 1, b + 1) && gridAt(a - 1, b) && gridAt(a, b - 1) && gridAt(a + 1, b - 1);
+}
 /** is lot i built on the irregular grid (genFam's family 3: a building lot whose style's archetype is the grid)? */
 fn lotIsGrid(i: u32) -> bool {
   let o = i * RECW;
@@ -2389,29 +2393,6 @@ fn inStreetOf(i: u32, p: vec2<f32>) -> bool {
   return false;
 }
 
-/** if p is in a street of lot i that only a lot not on the grid (or nothing) faces across — a street the grid's own
- *  district keeps; a street between two grid lots is the district's to build over (the user: districts of the same
- *  irregular housing "grow over the lot lines and form their own streets") */
-fn outerStreet(i: u32, p: vec2<f32>) -> bool {
-  let o = i * RECW;
-  for (var k = 0u; k < 4u; k++) {
-    let k1 = (k + 1u) % 4u;
-    let pa = vec2<f32>(rf(o, k * 2u), rf(o, 1u + k * 2u));
-    let pb = vec2<f32>(rf(o, k1 * 2u), rf(o, 1u + k1 * 2u));
-    let fa = vec2<f32>(rf(o, 8u + k * 2u), rf(o, 9u + k * 2u));
-    let fb = vec2<f32>(rf(o, 8u + k1 * 2u), rf(o, 9u + k1 * 2u));
-    let e = normalize(pb - pa);
-    let out = vec2<f32>(e.y, -e.x);
-    if (abs(dot((fa + fb) * 0.5 - pa, out)) <= 0.6) { continue; }
-    let ef = normalize(fb - fa);
-    let outF = vec2<f32>(ef.y, -ef.x);
-    if (dot(p - fa, outF) <= 0.05) { continue; }
-    // (across the street: past this lot's parcel edge by a few metres)
-    let across = lotAt(p + out * (dot(pa - p, out) + 4.0));
-    if (across == 0xffffffffu || !lotIsGrid(across)) { return true; }
-  }
-  return false;
-}
 
 // the grid district's own lanes: a lattice point is on a lane if it lies on a lattice line of a family (b const, or a
 // const: the lattice's two edge directions) every TG_LANE rows, in segments TG_SEG long each on or off by a hash (dead
@@ -2423,6 +2404,9 @@ fn laneSeg(line: i32, along: i32, fam: u32) -> bool {
   let seg = i32(floor(f32(along) / f32(TG_SEG)));
   return f32(hash((u32(line + 4096) * 7919u) ^ (u32(seg + 4096) * 104729u) ^ (fam * 0x9e3779b9u)) & 0xffffu) / 65535.0 < 0.72;
 }
+/** a lattice point left open: a lane's, or a courtyard (the user: break big blocks up "with stairs and courtyards and
+ *  alleys") — a point now and then whose neighbours are built */
+fn voidAt(a: i32, b: i32) -> bool { return lanePoint(a, b) || (latHash(a, b, 6u) < 0.13 && !towerAt(a, b)); }
 fn lanePoint(a: i32, b: i32) -> bool {
   let ob = (b % TG_LANE + TG_LANE) % TG_LANE;
   let oa = (a % TG_LANE + TG_LANE) % TG_LANE;
@@ -2468,7 +2452,8 @@ fn tgEmit(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
   }
 }
 
-/** every lot listed in the chunks its parcel (grown 3 m: lotAt's reach) touches */
+/** each lot stamps the lattice points under its parcel (grown 3 m): a point keeps the lot it lies deepest in (one
+ *  atomicMax of its inverted key — the depth, then the lot). The one scatter; every later question reads a point. */
 @compute @workgroup_size(64)
 fn tgIndexLots(@builtin(global_invocation_id) g: vec3<u32>) {
   if (genHead(g.x) == 99u) { return; }
@@ -2477,17 +2462,22 @@ fn tgIndexLots(@builtin(global_invocation_id) g: vec3<u32>) {
   for (var k = 0u; k < 4u; k++) { lo = min(lo, gPar[k] - 3.0); hi = max(hi, gPar[k] + 3.0); }
   let b0 = i32(floor(lo.y / (GRID_S * SQ3 * 0.5))) - 1;
   let b1 = i32(ceil(hi.y / (GRID_S * SQ3 * 0.5))) + 1;
-  let a0 = i32(floor(lo.x / GRID_S - 0.5 * f32(b1))) - 1;
-  let a1 = i32(ceil(hi.x / GRID_S - 0.5 * f32(b0))) + 1;
-  let c0 = tgChunk(a0, b0);
-  let c1 = tgChunk(a1, b1);
-  for (var cy = c0.y; cy <= c1.y; cy++) {
-    for (var cx = c0.x; cx <= c1.x; cx++) {
-      let slot = tgSlot(vec2<i32>(cx, cy), true);
+  for (var b = b0; b <= b1; b++) {
+    let a0 = i32(floor(lo.x / GRID_S - 0.5 * f32(b))) - 1;
+    let a1 = i32(ceil(hi.x / GRID_S - 0.5 * f32(b))) + 1;
+    for (var a = a0; a <= a1; a++) {
+      let p = latP(a, b);
+      var d = -1e9;
+      for (var k = 0u; k < 4u; k++) {
+        let e = normalize(gPar[(k + 1u) % 4u] - gPar[k]);
+        d = max(d, dot(p - gPar[k], vec2<f32>(e.y, -e.x)));
+      }
+      if (d >= 3.0) { continue; }
+      let ch = tgChunk(a, b);
+      let slot = tgSlot(ch, true);
       if (slot == 0xffffffffu) { continue; }
-      let lb = tgLotBase(slot);
-      let n = atomicAdd(&TG[lb], 1u);
-      if (n < TG_LOTS) { atomicStore(&TG[lb + 1u + n], gLot); }
+      let key = (u32(clamp(d + 60.0, 0.0, 63.0) * 256.0) << 12u) | (gLot & 0xfffu);
+      atomicMax(&TG[tgLotBase(slot) + u32((b - ch.y * TG_CH) * TG_CH + (a - ch.x * TG_CH))], ~key);
     }
   }
 }

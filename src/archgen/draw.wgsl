@@ -121,6 +121,8 @@ fn vsArchBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) 
   var wp: vec3<f32>;
   o.info = pinfo(b, (w0 >> 8u) & 0xffu, face << 8u);
   o.zs = vec2<f32>(z0, z0);
+  // (a side built as a facade: hidden here — word 0's bits 24–27)
+  let hidden = face < 4u && ((w0 >> (24u + face)) & 1u) != 0u;
   if (face < 4u) {
     let a = c[face];
     let e = c[(face + 1u) % 4u];
@@ -149,7 +151,123 @@ fn vsArchBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) 
     o.uv = vec4<f32>(dot(rel, ex), dot(rel, vec2<f32>(-ex.y, ex.x)), 0.0, 0.0);
     o.info.z = o.info.z | I_TOP;
   }
-  finish(&o, wp, ii < AW(3u));
+  finish(&o, wp, ii < AW(3u) && !hidden);
+  return o;
+}
+
+/** (the grid; the user: "The features need real geometry on the walls") a wall face built with its openings: bays
+ *  across (≤ 3), storeys up (≤ 4, from the storeys' origin); each bay of a storey a window (the ground floor's middle
+ *  bay a door when asked) cut through: the wall round it (piers, the strips under and over), its reveals (jambs, the
+ *  head's soffit, the sill — the wall's own, RECESS_G deep) and the glass or the door's leaf at the back; a sill stone
+ *  proud of the face. Above the last full storey, the wall up to its sloped top (a gable). Vertices: 12 openings × 66
+ *  (11 quads) + 6. */
+const RECESS_G: f32 = 0.28;
+@vertex
+fn vsArchFacade(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO {
+  var o: VO;
+  let b = partOf(K_FACADE, ii) * PW;
+  let w0 = AW(AW(2u) + b);
+  let A = corner(b, 0u);
+  let B = corner(b, 1u);
+  let z0 = pf(b, 10u);
+  let tA = pf(b, 11u);
+  let tB = pf(b, 12u);
+  let zg = pf(b, 13u);
+  let hasDoor = pf(b, 14u) > 0.5;
+  let L = length(B - A);
+  let d = (B - A) / max(L, 1e-4);
+  let nw = vec2<f32>(d.y, -d.x);
+  let s = AW(AW(2u) + b + 15u) & 0xffu;
+  let win = styleV(s, 7u);
+  let dr = styleV(s, 6u);
+  let nb = clamp(baysOf(L, win.x), 1u, 3u);
+  let bw = L / f32(nb);
+  let ns = min(u32(max(floor((min(tA, tB) - zg) / STOREY + 0.02), 0.0)), 4u);
+  let j0 = u32(max(floor((z0 - zg) / STOREY + 0.05), 0.0));
+  let wallTop = max(tA, tB);
+  var surf = (w0 >> 8u) & 0xffu;
+  var live = ii < AW(3u);
+  // the quad: corners in (u along, w out, z) and its normal
+  var c0 = vec3<f32>(0.0);
+  var c1 = vec3<f32>(0.0);
+  var c2 = vec3<f32>(0.0);
+  var c3 = vec3<f32>(0.0);
+  var n = vec3<f32>(nw, 0.0);
+  if (vi >= 12u * 66u) {
+    // the wall above the storeys, up to its top (sloped: a gable's)
+    let zt = max(zg + f32(ns) * STOREY, z0);
+    c0 = vec3<f32>(0.0, 0.0, zt);
+    c1 = vec3<f32>(L, 0.0, zt);
+    c2 = vec3<f32>(L, 0.0, max(tB, zt));
+    c3 = vec3<f32>(0.0, 0.0, max(tA, zt));
+  } else {
+    let cell = vi / 66u;
+    let qd = (vi % 66u) / 6u;
+    let bi = cell % 3u;
+    let st = cell / 3u;
+    live = live && bi < nb && st < ns && st >= j0;
+    let u0 = f32(bi) * bw;
+    let u1 = u0 + bw;
+    let zs = zg + f32(st) * STOREY;
+    let zb = select(zs, z0, st == j0);
+    let ze = zs + STOREY;
+    let door = hasDoor && st == 0u && bi == nb / 2u;
+    var hw = min(win.y * 0.5, bw * 0.5 - 0.22);
+    var zl = zs + win.w;
+    var zh = zs + win.z;
+    if (door) { hw = min(dr.x * 0.5, bw * 0.5 - 0.2); zl = zs; zh = zs + min(dr.w, STOREY - 0.3); }
+    let um = (u0 + u1) * 0.5;
+    let ul = um - hw;
+    let ur = um + hw;
+    let hasOpen = hw > 0.2 && zh <= ze - 0.12 && zl >= zb - 0.01;
+    let R = RECESS_G;
+    if (!hasOpen) {
+      live = live && qd == 0u;
+      c0 = vec3<f32>(u0, 0.0, zb); c1 = vec3<f32>(u1, 0.0, zb); c2 = vec3<f32>(u1, 0.0, ze); c3 = vec3<f32>(u0, 0.0, ze);
+    } else {
+      switch qd {
+        case 0u: { c0 = vec3<f32>(u0, 0.0, zb); c1 = vec3<f32>(ul, 0.0, zb); c2 = vec3<f32>(ul, 0.0, ze); c3 = vec3<f32>(u0, 0.0, ze); }
+        case 1u: { c0 = vec3<f32>(ur, 0.0, zb); c1 = vec3<f32>(u1, 0.0, zb); c2 = vec3<f32>(u1, 0.0, ze); c3 = vec3<f32>(ur, 0.0, ze); }
+        case 2u: { live = live && zl > zb + 0.01; c0 = vec3<f32>(ul, 0.0, zb); c1 = vec3<f32>(ur, 0.0, zb); c2 = vec3<f32>(ur, 0.0, zl); c3 = vec3<f32>(ul, 0.0, zl); }
+        case 3u: { c0 = vec3<f32>(ul, 0.0, zh); c1 = vec3<f32>(ur, 0.0, zh); c2 = vec3<f32>(ur, 0.0, ze); c3 = vec3<f32>(ul, 0.0, ze); }
+        case 4u: {
+          // the glass, or the door's leaf
+          c0 = vec3<f32>(ul, -R, zl); c1 = vec3<f32>(ur, -R, zl); c2 = vec3<f32>(ur, -R, zh); c3 = vec3<f32>(ul, -R, zh);
+          surf = select(S_GLASS, S_DOOR, door);
+        }
+        case 5u: { c0 = vec3<f32>(ul, 0.0, zl); c1 = vec3<f32>(ul, -R, zl); c2 = vec3<f32>(ul, -R, zh); c3 = vec3<f32>(ul, 0.0, zh); n = vec3<f32>(d, 0.0); }
+        case 6u: { c0 = vec3<f32>(ur, -R, zl); c1 = vec3<f32>(ur, 0.0, zl); c2 = vec3<f32>(ur, 0.0, zh); c3 = vec3<f32>(ur, -R, zh); n = vec3<f32>(-d, 0.0); }
+        case 7u: { c0 = vec3<f32>(ul, 0.0, zh); c1 = vec3<f32>(ur, 0.0, zh); c2 = vec3<f32>(ur, -R, zh); c3 = vec3<f32>(ul, -R, zh); n = vec3<f32>(0.0, 0.0, -1.0); }
+        case 8u: { c0 = vec3<f32>(ul, -R, zl); c1 = vec3<f32>(ur, -R, zl); c2 = vec3<f32>(ur, 0.0, zl); c3 = vec3<f32>(ul, 0.0, zl); n = vec3<f32>(0.0, 0.0, 1.0); }
+        case 9u: {
+          // the sill stone's top, proud of the face (a door: a step)
+          let ex = select(0.08, 0.2, door);
+          let out = select(0.1, 0.35, door);
+          c0 = vec3<f32>(ul - ex, 0.0, zl); c1 = vec3<f32>(ur + ex, 0.0, zl); c2 = vec3<f32>(ur + ex, out, zl); c3 = vec3<f32>(ul - ex, out, zl);
+          n = vec3<f32>(0.0, 0.0, 1.0);
+          surf = S_STONE;
+        }
+        default: {
+          // its front face
+          let ex = select(0.08, 0.2, door);
+          let out = select(0.1, 0.35, door);
+          let th = select(0.07, 0.14, door);
+          c0 = vec3<f32>(ul - ex, out, zl - th); c1 = vec3<f32>(ur + ex, out, zl - th); c2 = vec3<f32>(ur + ex, out, zl); c3 = vec3<f32>(ul - ex, out, zl);
+          surf = S_STONE;
+        }
+      }
+    }
+  }
+  var IX = array<u32, 6>(0u, 1u, 2u, 0u, 2u, 3u);
+  var C = array<vec3<f32>, 4>(c0, c1, c2, c3);
+  let k = IX[vi % 6u];
+  let lc = C[k];
+  let wp = vec3<f32>(A + d * lc.x + nw * lc.y, lc.z);
+  o.info = pinfo(b, surf, 0u);
+  o.zs = vec2<f32>(z0, z0);
+  o.nrm = n;
+  o.uv = vec4<f32>(lc.x, L, lc.z - z0, wallTop - z0);
+  finish(&o, wp, live);
   return o;
 }
 

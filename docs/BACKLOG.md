@@ -2381,6 +2381,15 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
     "overhangs to stick out ... out from the rest of the wall. That breaks up the roof lines and wall lines"): walls
     built by bay with real recesses (replaces the shader recess), projecting bays and jettied storeys that step out
     from the wall below, gables and dormers breaking the roofline.
+  - Real facades, local rules, merged gabled roofs, courtyards — done. Hacks to fix: facades only on open sides
+    (closed sides keep the painted windows and the shader recess); ≤ 3 bays × 4 storeys a facade (more wall above);
+    every facade draws 798 vertices however small (unused ones degenerate — phone cost unmeasured); facade windows
+    from the style's sizes clipped to the bay (narrow bays lose theirs); the merged roof uses its equal neighbours'
+    eaves only (not theirs' neighbours': a step can show where two merged buildings see different eaves); the ridge
+    direction by 5-cell block (merged buildings across a block line disagree); lot ownership by deepest point (the
+    3 m reach past a parcel, 12 bits of lot id: > 4096 lots alias); a building's ground from its neighbours' owners;
+    courtyard odds 13%, roof slope 0.9 and cap 4.2 m by eye; no eaves overhang, no dormers yet; towers still big
+    (radius to the nearest edge).
 - AG28 (the user, 2026-11-12) After the organic districts look good: "With proper cobblestones between the buildings
   and foot traffic this would read to me as an organic section of town (unplanned)" — cobbles in the lanes and
   streets, people walking. Then "The planned sections and the structures on them need work after we get these looking

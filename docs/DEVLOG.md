@@ -23499,3 +23499,25 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
 - First run hung the GPU (DXGI_ERROR_DEVICE_HUNG): ~30 lot lookups a cell each looped every lot. Now tgIndexLots lists
   each chunk's lots (parcels grown 3 m, 63 a chunk) and lotAt reads its point's chunk only. Shots rf_low, rf_mid.
 
+## archgen: real wall geometry; local-only grid rules; merged, gabled roofs; courtyards (2026-11-12; the user: "Please do
+## the geometry change I've been asking for for ages", "You can merge adjacent same height cells but it looks bad if many
+## cells thick ... break that up with stairs and courtyards and alleys", "invent local only rules so that GPU passes
+## don't have to do any global lookup")
+
+- Facades (K_FACADE, draw.wgsl vsArchFacade): a grid building's open sides are built — bays (≤ 3) × storeys (≤ 4),
+  each opening cut through with real reveals (jambs, head, sill 0.28 m deep), the glass or the door's leaf at the
+  back, a sill stone proud of the face (a door: a step), and the wall above the storeys up to its sloped top (gables).
+  The body hides those sides (word 0 bits 24–27). 798 vertices a facade. Shadows and SSAO see the recesses.
+- Local rules only: one scatter pass (tgIndexLots) stamps each lattice point with the lot it lies deepest in (or within
+  3 m of): an atomicMax a point. Everything after reads a point and its six neighbours: builtAt (owner on the grid, not
+  a lane or courtyard, not in a street unless all six neighbours are grid — a street between grid lots is built over),
+  openAt (the nearest point's builtAt), the ground (owners' grounds round the point). grid() makes the buildings round
+  the lattice points its lot owns. The per-chunk lot list and every lot search are gone.
+- Courtyards: a lattice point left open now and then (13%, voidAt) beside the lanes: blocks broken up, and their open
+  sides get facades, steps, balconies.
+- Roofs: an edge to an open or lower neighbour is an eave unless it faces along the building's ridge (one of the
+  lattice's three directions by 5-cell block: then a gable end, its wall to the roof); to an equal neighbour the roof
+  runs on — merged: a building's roof surface counts the eaves of its equal neighbours' buildings too
+  (gatherMerged); to a taller one it climbs to the wall. Slope 0.9, cap 4.2 m. Double jetties on 3+ storeys.
+- Shots g_low, g_mid2, g_close.
+
