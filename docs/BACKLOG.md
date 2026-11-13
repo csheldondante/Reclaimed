@@ -2339,6 +2339,8 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   - Light: Townscaper's warm key / cool teal shade — done 7316a78e; the sun's cast shadows in archlab — done (this
     commit); screen-space occlusion — done (archlab, ssao.wgsl); next edge lines (creases dark, edges
     caught by the light).
+  - The grid relaxed (Townscaper's squaring) in seamless GPU chunks — done (this commit). Next: curved walls along
+    each built group's outline ("spline blending along adjacent cells that merge into walls").
   - Smoothed normals between nearly parallel neighbouring grid cells ("Townscaper also looks like it renders with
     smoothed normals between nearly parallel irregular grid cells"): adjacent cells' walls that meet almost flat shade
     as one curved wall.

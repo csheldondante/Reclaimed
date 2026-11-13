@@ -23349,3 +23349,22 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
 - It multiplies the whole lit colour, not only the ambient: a stylised choice (sunlit floors in a narrow gap darken
   too). Not measured on the phone yet.
 
+## archgen: the grid relaxed in chunks on the GPU, seamless (2026-11-12; AG23/AG26, the user: "The angles look too sharp
+## ... spline blending along adjacent cells", "stream and relax on the GPU", "generate points further out then only
+## show the ones up to the relax limit in from the border")
+
+- The grid was never relaxed: paired triangles give 60°/120° rhombi and kites. Now the lattice is cut into chunks of
+  8 × 8 lattice cells (~43 m); a lot asks for the chunks under its parcel (tgRegisterLots: a small hash table of chunk
+  keys, sized by the lot count) and each asked-for chunk is relaxed by one workgroup (tgRelax): its pieces' cells with
+  an apron of 3 lattice cells round it, every step each cell pulling its corners toward the square that fits it
+  (Townscaper's squaring: corners turned back by their quarter turns and averaged), every vertex moving 0.6 of its
+  cells' mean pull; nothing held still. A chunk keeps only the vertices it owns (their lattice anchor in it), so every
+  vertex has one owner and neighbouring chunks never disagree — no cracks, no pinned border; a vertex near a chunk's
+  edge is at most a little less relaxed than with an endless grid, and that changes smoothly.
+- Fits the phone's 16 KB of workgroup memory: 1350 region vertices (8 bytes each) and one packed u32 of pulls each (x,
+  y 13 bits in 1/64 m biased by 512, the count 6 bits); the cells are found again each step instead of kept.
+- grid() reads every cell corner from its owner chunk (tgPos; the nudged start where no chunk was asked for). 20 steps
+  by default (`?relax=N`, 0 the old lattice); `?gridview=1` draws the cells as thin slabs with gaps (the shots).
+- Next: walls as curves along each built group's outline (the user's spline blending), then the pieces and terraces
+  on the curved outline.
+

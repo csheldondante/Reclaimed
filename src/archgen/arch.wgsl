@@ -110,7 +110,14 @@ struct GenU {
   nstyles: u32,
   /** the lot slots (ARCH's room: lots past it are not made) */
   lots: u32,
+  /** the grid's chunk table's slots (a power of two; the town grid below) */
+  tgSlots: u32,
+  /** the grid's relaxation steps a chunk (0: the lattice as nudged) */
+  relax: u32,
+  /** (?gridview=1) the grid's cells as thin slabs, a gap round each */
+  gridView: u32,
   _p1: u32,
+  _p2: u32,
 };
 
 fn hash(x: u32) -> u32 {
@@ -139,6 +146,9 @@ fn winFits(st: u32, top: f32, wallH: f32) -> bool { return f32(st) * STOREY + to
 @group(0) @binding(2) var<storage, read> CNT: array<u32>;
 // the arch buffer (archgen.ts layout): a header, the styles, the draw lists, the parts, the progress, the grounds
 @group(0) @binding(3) var<storage, read_write> ARCH: array<u32>;
+// the grid's chunks (AG23/AG26; archgen.ts generate): the irregular grid relaxed a chunk at a time, only the chunks a
+// lot asks for — the chunk table's keys (tgSlots, from word 8), then each slot's vertices (TG_NV × 2 f32 bits)
+@group(0) @binding(4) var<storage, read_write> TG: array<atomic<u32>>;
 
 fn rf(o: u32, w: u32) -> f32 { return bitcast<f32>(REC[o + w]); }
 
@@ -1410,6 +1420,281 @@ fn post(p: vec2<f32>, w: f32, z0: f32, z1: f32, surf: u32) {
   body(surf, F_NOWIN, array<vec2<f32>, 4>(p - ex - ey, p + ex - ey, p + ex + ey, p - ex + ey), z0, z1);
 }
 
+// ---- the grid in chunks: relaxed on the GPU a chunk at a time, seamless ----
+// The lattice in chunks of TG_CH × TG_CH lattice cells (~43 m), each relaxed by itself whenever a lot first asks for
+// it (the user: "stream and relax on the GPU", "generate points further out then only show the ones up to the relax
+// limit in from the border"). A relaxation step moves a vertex by its cells' corners only, so after N steps a vertex
+// depends only on the grid a few cells round it: a chunk relaxes itself with an apron of TG_AP lattice cells round it,
+// nothing held still, and keeps only the vertices it owns (those whose lattice anchor is in it). Every vertex has one
+// owner, so neighbouring chunks never disagree; near a chunk's edge a vertex is at most a little less relaxed than
+// with an endless grid, changing smoothly — no seam.
+// A vertex's key: a lattice point (kind 0), the middle of a lattice point's edge (1 along a, 2 along b, 3 the diagonal
+// from (a+1, b) to (a, b+1)), or a lone triangle's centre (4 up, 5 down); a merged pair's centre is its shared edge's
+// middle. +1, so 0 is no key. Its anchor: the lattice point (a, b) in it.
+const TG_CH: i32 = 8;
+const TG_AP: i32 = 3;
+/** the relaxed region's side in lattice anchors: the chunk, its apron both sides, one more for the far corners */
+const TG_R: i32 = 15;
+/** the region's vertices (6 kinds an anchor) */
+const TG_RV: u32 = 1350u;
+/** a chunk's own vertices (6 an anchor) */
+const TG_NV: u32 = 384u;
+fn tgKey(a: i32, b: i32, kind: u32) -> u32 {
+  return (((u32(a + 2048) & 0xfffu) << 15u) | ((u32(b + 2048) & 0xfffu) << 3u) | kind) + 1u;
+}
+fn tgAnchor(key: u32) -> vec3<i32> {
+  let k = key - 1u;
+  return vec3<i32>(i32((k >> 15u) & 0xfffu) - 2048, i32((k >> 3u) & 0xfffu) - 2048, i32(k & 7u));
+}
+fn tgChunk(a: i32, b: i32) -> vec2<i32> {
+  return vec2<i32>(i32(floor(f32(a) / f32(TG_CH))), i32(floor(f32(b) / f32(TG_CH))));
+}
+fn tgChunkKey(ch: vec2<i32>) -> u32 { return (((u32(ch.x + 2048) & 0xfffu) << 12u) | (u32(ch.y + 2048) & 0xfffu)) + 1u; }
+fn tgPosBase(slot: u32) -> u32 { return 8u + GU.tgSlots + slot * TG_NV * 2u; }
+
+/** a chunk's slot (put in the table if asked: the chunk then relaxed by tgRelax), or 0xffffffff */
+fn tgSlot(ch: vec2<i32>, insert: bool) -> u32 {
+  let key = tgChunkKey(ch);
+  let m = GU.tgSlots - 1u;
+  var i = hash(key) & m;
+  for (var n = 0u; n < 64u; n++) {
+    let k = atomicLoad(&TG[8u + i]);
+    if (k == key) { return i; }
+    if (k == 0u) {
+      if (!insert) { return 0xffffffffu; }
+      let r = atomicCompareExchangeWeak(&TG[8u + i], 0u, key);
+      if (r.exchanged || r.old_value == key) { return i; }
+      // (lost to another chunk: on; a weak exchange's spurious failure: this slot again)
+      if (r.old_value != 0u) { i = (i + 1u) & m; }
+      continue;
+    }
+    i = (i + 1u) & m;
+  }
+  return 0xffffffffu;
+}
+/** a vertex where its owning chunk has it (start: where it was before relaxing, for a chunk nobody asked for) */
+fn tgPos(key: u32, start: vec2<f32>) -> vec2<f32> {
+  if (GU.relax == 0u) { return start; }
+  let an = tgAnchor(key);
+  let ch = tgChunk(an.x, an.y);
+  let slot = tgSlot(ch, false);
+  if (slot == 0xffffffffu) { return start; }
+  let o = tgPosBase(slot) + (u32((an.y - ch.y * TG_CH) * TG_CH + (an.x - ch.x * TG_CH)) * 6u + u32(an.z)) * 2u;
+  return vec2<f32>(bitcast<f32>(atomicLoad(&TG[o])), bitcast<f32>(atomicLoad(&TG[o + 1u])));
+}
+
+/** the key of a triangle's corner k */
+fn tgCornerKey(a: i32, b: i32, t: u32, k: u32) -> u32 {
+  if (t == 0u) {
+    if (k == 0u) { return tgKey(a, b, 0u); }
+    if (k == 1u) { return tgKey(a + 1, b, 0u); }
+    return tgKey(a, b + 1, 0u);
+  }
+  if (k == 0u) { return tgKey(a + 1, b, 0u); }
+  if (k == 1u) { return tgKey(a + 1, b + 1, 0u); }
+  return tgKey(a, b + 1, 0u);
+}
+/** the key of the middle of a triangle's edge k (corner k to k + 1) */
+fn tgEdgeKey(a: i32, b: i32, t: u32, k: u32) -> u32 {
+  if (t == 0u) {
+    if (k == 0u) { return tgKey(a, b, 1u); }
+    if (k == 1u) { return tgKey(a, b, 3u); }
+    return tgKey(a, b, 2u);
+  }
+  if (k == 0u) { return tgKey(a + 1, b, 2u); }
+  if (k == 1u) { return tgKey(a, b + 1, 1u); }
+  return tgKey(a, b, 3u);
+}
+
+/** a piece of the grid: a lone triangle or a merged pair; its corners (positions where they start, keys), the keys of
+ *  its edges' middles (edge k after corner k), its centre's key; nv 3 or 4; ok false for the pair's second triangle */
+struct Piece {
+  ok: bool,
+  merged: bool,
+  nv: u32,
+  V: array<vec2<f32>, 4>,
+  VK: array<u32, 4>,
+  EK: array<u32, 4>,
+  CK: u32,
+};
+fn pieceAt(a: i32, b: i32, t: u32) -> Piece {
+  var p: Piece;
+  let pk = triPick(a, b, t);
+  let n = triN(a, b, t, pk);
+  let nk = triPick(n.x, n.y, u32(n.z));
+  let nn = triN(n.x, n.y, u32(n.z), nk);
+  p.merged = nn.x == a && nn.y == b && u32(nn.z) == t;
+  p.ok = !(p.merged && triId(a, b, t) > triId(n.x, n.y, u32(n.z)));
+  if (p.merged) {
+    // A B C (this one, CCW) with the shared edge A → B; D the other's far corner: A D B C. The other's corners from
+    // its pick: B, A, D — its edges A → D (nk + 1) and D → B (nk + 2)
+    let p1 = (pk + 1u) % 3u;
+    let p2 = (pk + 2u) % 3u;
+    let n1 = (nk + 1u) % 3u;
+    let n2 = (nk + 2u) % 3u;
+    p.V = array<vec2<f32>, 4>(nudge(triV(a, b, t, pk)), nudge(triV(n.x, n.y, u32(n.z), n2)), nudge(triV(a, b, t, p1)), nudge(triV(a, b, t, p2)));
+    p.VK = array<u32, 4>(tgCornerKey(a, b, t, pk), tgCornerKey(n.x, n.y, u32(n.z), n2), tgCornerKey(a, b, t, p1), tgCornerKey(a, b, t, p2));
+    p.EK = array<u32, 4>(tgEdgeKey(n.x, n.y, u32(n.z), n1), tgEdgeKey(n.x, n.y, u32(n.z), n2), tgEdgeKey(a, b, t, p1), tgEdgeKey(a, b, t, p2));
+    p.CK = tgEdgeKey(a, b, t, pk);
+    p.nv = 4u;
+  } else {
+    p.V = array<vec2<f32>, 4>(nudge(triV(a, b, t, 0u)), nudge(triV(a, b, t, 1u)), nudge(triV(a, b, t, 2u)), vec2<f32>(0.0));
+    p.VK = array<u32, 4>(tgCornerKey(a, b, t, 0u), tgCornerKey(a, b, t, 1u), tgCornerKey(a, b, t, 2u), 0u);
+    p.EK = array<u32, 4>(tgEdgeKey(a, b, t, 0u), tgEdgeKey(a, b, t, 1u), tgEdgeKey(a, b, t, 2u), 0u);
+    p.CK = tgKey(a, b, 4u + t);
+    p.nv = 3u;
+  }
+  return p;
+}
+
+/** a piece's cells where they start (each corner a quad with its two edges' middles and the centre — the middles on
+ *  the straight edges between nudged corners, so a piece's cells together are exactly the piece) and their keys.
+ *  Neighbours built whole, no index modulo a run-time count (the Mali: 2026-11-12, the roof spikes). */
+struct Cells {
+  Q: array<array<vec2<f32>, 4>, 4>,
+  K: array<array<u32, 4>, 4>,
+  cen: vec2<f32>,
+};
+fn cellsOf(p: Piece) -> Cells {
+  var o: Cells;
+  let V = p.V;
+  var Vn = array<vec2<f32>, 4>(V[1], V[2], V[3], V[0]);
+  var Vp = array<vec2<f32>, 4>(V[3], V[0], V[1], V[2]);
+  var Ep = array<u32, 4>(p.EK[3], p.EK[0], p.EK[1], p.EK[2]);
+  if (!p.merged) {
+    Vn = array<vec2<f32>, 4>(V[1], V[2], V[0], V[0]);
+    Vp = array<vec2<f32>, 4>(V[2], V[0], V[1], V[1]);
+    Ep = array<u32, 4>(p.EK[2], p.EK[0], p.EK[1], p.EK[1]);
+  }
+  var cen = V[0] + V[1] + V[2];
+  if (p.merged) { cen += V[3]; }
+  cen = nudge(cen / f32(p.nv));
+  o.cen = cen;
+  for (var k = 0u; k < 4u; k++) {
+    o.Q[k] = array<vec2<f32>, 4>(V[k], (V[k] + Vn[k]) * 0.5, cen, (Vp[k] + V[k]) * 0.5);
+    o.K[k] = array<u32, 4>(p.VK[k], p.EK[k], p.CK, Ep[k]);
+  }
+  return o;
+}
+
+/** (per lot of the grid's family) the chunks under its parcel asked for */
+fn tgRegister() {
+  var lo = vec2<f32>(1e9);
+  var hi = vec2<f32>(-1e9);
+  for (var k = 0u; k < 4u; k++) { lo = min(lo, gPar[k]); hi = max(hi, gPar[k]); }
+  let b0 = i32(floor(lo.y / (GRID_S * SQ3 * 0.5))) - 1;
+  let b1 = i32(ceil(hi.y / (GRID_S * SQ3 * 0.5))) + 1;
+  let a0 = i32(floor(lo.x / GRID_S - 0.5 * f32(b1))) - 1;
+  let a1 = i32(ceil(hi.x / GRID_S - 0.5 * f32(b0))) + 1;
+  let c0 = tgChunk(a0, b0);
+  let c1 = tgChunk(a1, b1);
+  for (var cy = c0.y; cy <= c1.y; cy++) {
+    for (var cx = c0.x; cx <= c1.x; cx++) { _ = tgSlot(vec2<i32>(cx, cy), true); }
+  }
+}
+
+fn rot90(v: vec2<f32>, k: u32) -> vec2<f32> {
+  var r = v;
+  for (var i = 0u; i < 4u; i++) { if (i < k) { r = vec2<f32>(-r.y, r.x); } }
+  return r;
+}
+
+var<workgroup> wKey: u32;
+var<workgroup> wPos: array<vec2<f32>, TG_RV>;
+/** a step's pulls on a vertex, packed (16 KB of workgroup memory is all a phone may give): x and y each 13 bits (a
+ *  pull in 1/64 m, biased by 512 — ±8 m), the cells pulling 6 bits */
+var<workgroup> wAcc: array<atomic<u32>, TG_RV>;
+
+/** a key's place in the region round chunk ch, or 0xffffffff outside it */
+fn tgRegion(key: u32, ch: vec2<i32>) -> u32 {
+  let an = tgAnchor(key);
+  let i = an.x - (ch.x * TG_CH - TG_AP);
+  let j = an.y - (ch.y * TG_CH - TG_AP);
+  if (i < 0 || j < 0 || i >= TG_R || j >= TG_R) { return 0xffffffffu; }
+  return u32(j * TG_R + i) * 6u + u32(an.z);
+}
+
+/** one chunk relaxed (a workgroup a slot of the chunk table), with its apron: its pieces' cells where they start, then
+ *  each step every cell pulls its corners toward the square that fits it (each corner turned back by its quarter
+ *  turns, averaged: Townscaper's squaring) and every vertex moves part way to its cells' mean pull; the chunk's own
+ *  vertices kept. The cells are found again each step (no room to keep them). */
+@compute @workgroup_size(64)
+fn tgRelax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let slot = wg.x;
+  if (li == 0u) { wKey = atomicLoad(&TG[8u + slot]); }
+  let key = workgroupUniformLoad(&wKey);
+  if (key == 0u) { return; }
+  let k0 = key - 1u;
+  let ch = vec2<i32>(i32((k0 >> 12u) & 0xfffu) - 2048, i32(k0 & 0xfffu) - 2048);
+  let NT = u32((TG_R - 1) * (TG_R - 1) * 2);
+  // where the region's vertices start (a piece with a corner past the region: left out)
+  for (var tr = li; tr < NT; tr += 64u) {
+    let a = ch.x * TG_CH - TG_AP + i32((tr / 2u) % u32(TG_R - 1));
+    let b = ch.y * TG_CH - TG_AP + i32((tr / 2u) / u32(TG_R - 1));
+    let p = pieceAt(a, b, tr & 1u);
+    if (!p.ok) { continue; }
+    let cs = cellsOf(p);
+    for (var k = 0u; k < p.nv; k++) {
+      for (var j = 0u; j < 4u; j++) {
+        let r = tgRegion(cs.K[k][j], ch);
+        if (r != 0xffffffffu) { wPos[r] = cs.Q[k][j]; }
+      }
+    }
+  }
+  workgroupBarrier();
+  for (var it = 0u; it < GU.relax; it++) {
+    for (var v = li; v < TG_RV; v += 64u) { atomicStore(&wAcc[v], 0u); }
+    workgroupBarrier();
+    for (var tr = li; tr < NT; tr += 64u) {
+      let a = ch.x * TG_CH - TG_AP + i32((tr / 2u) % u32(TG_R - 1));
+      let b = ch.y * TG_CH - TG_AP + i32((tr / 2u) / u32(TG_R - 1));
+      let pc = pieceAt(a, b, tr & 1u);
+      if (!pc.ok) { continue; }
+      let cs = cellsOf(pc);
+      for (var k = 0u; k < pc.nv; k++) {
+        var ix: array<u32, 4>;
+        var inside = true;
+        for (var j = 0u; j < 4u; j++) {
+          ix[j] = tgRegion(cs.K[k][j], ch);
+          inside = inside && ix[j] != 0xffffffffu;
+        }
+        if (!inside) { continue; }
+        let p = array<vec2<f32>, 4>(wPos[ix[0]], wPos[ix[1]], wPos[ix[2]], wPos[ix[3]]);
+        let cc = (p[0] + p[1] + p[2] + p[3]) * 0.25;
+        // (the corners' turn: counter-clockwise turns them back by -90° each, clockwise by +90°)
+        let area = (p[2].x - p[0].x) * (p[3].y - p[1].y) - (p[3].x - p[1].x) * (p[2].y - p[0].y);
+        var sq = vec2<f32>(0.0);
+        for (var j = 0u; j < 4u; j++) { sq += rot90(p[j] - cc, select(j, (4u - j) % 4u, area > 0.0)); }
+        sq *= 0.25;
+        for (var j = 0u; j < 4u; j++) {
+          let f = cc + rot90(sq, select((4u - j) % 4u, j, area > 0.0)) - p[j];
+          let q = vec2<u32>(clamp(round(f * 64.0) + 512.0, vec2<f32>(0.0), vec2<f32>(1023.0)));
+          atomicAdd(&wAcc[ix[j]], q.x | (q.y << 13u) | (1u << 26u));
+        }
+      }
+    }
+    workgroupBarrier();
+    for (var v = li; v < TG_RV; v += 64u) {
+      let w = atomicLoad(&wAcc[v]);
+      let n = w >> 26u;
+      if (n == 0u) { continue; }
+      let f = vec2<f32>(f32(i32(w & 0x1fffu) - i32(n * 512u)), f32(i32((w >> 13u) & 0x1fffu) - i32(n * 512u))) / (64.0 * f32(n));
+      wPos[v] += f * 0.6;
+    }
+    workgroupBarrier();
+  }
+  // the chunk's own vertices out
+  for (var v = li; v < TG_NV; v += 64u) {
+    let an = v / 6u;
+    let i = i32(an % u32(TG_CH)) + TG_AP;
+    let j = i32(an / u32(TG_CH)) + TG_AP;
+    let r = u32(j * TG_R + i) * 6u + v % 6u;
+    let o = tgPosBase(slot) + v * 2u;
+    atomicStore(&TG[o], bitcast<u32>(wPos[r].x));
+    atomicStore(&TG[o + 1u], bitcast<u32>(wPos[r].y));
+  }
+}
+
 fn grid(seed: u32) {
   let shanty = u32(sty(gS, 0u).w + 0.5) == 4u;
   gFpG = grow(gFp, 0.6);
@@ -1425,47 +1710,24 @@ fn grid(seed: u32) {
     for (var a = a0; a <= a1; a++) {
       for (var t = 0u; t < 2u; t++) {
         // a piece: this triangle merged with the one across its pick if that one picks it back (the pair made once,
-        // by the lower id), else this triangle alone
-        let pk = triPick(a, b, t);
-        let n = triN(a, b, t, pk);
-        let nk = triPick(n.x, n.y, u32(n.z));
-        let nn = triN(n.x, n.y, u32(n.z), nk);
-        let merged = nn.x == a && nn.y == b && u32(nn.z) == t;
-        if (merged && triId(a, b, t) > triId(n.x, n.y, u32(n.z))) { continue; }
-        var V: array<vec2<f32>, 4>;
-        var nv = 3u;
-        if (merged) {
-          // A B C (this one, CCW) with the shared edge A → B; D the other's far corner: A D B C
-          let A = triV(a, b, t, pk);
-          let B = triV(a, b, t, (pk + 1u) % 3u);
-          let C = triV(a, b, t, (pk + 2u) % 3u);
-          let D = triV(n.x, n.y, u32(n.z), (nk + 2u) % 3u);
-          V = array<vec2<f32>, 4>(nudge(A), nudge(D), nudge(B), nudge(C));
-          nv = 4u;
-        } else {
-          V = array<vec2<f32>, 4>(nudge(triV(a, b, t, 0u)), nudge(triV(a, b, t, 1u)), nudge(triV(a, b, t, 2u)), vec2<f32>(0.0));
+        // by the lower id), else this triangle alone; its cells where the relaxed town grid has them
+        let p = pieceAt(a, b, t);
+        if (!p.ok) { continue; }
+        let cs = cellsOf(p);
+        var Q: array<array<vec2<f32>, 4>, 4>;
+        var V = p.V;
+        for (var k = 0u; k < 4u; k++) {
+          for (var j = 0u; j < 4u; j++) { Q[k][j] = tgPos(cs.K[k][j], cs.Q[k][j]); }
+          V[k] = Q[k][0];
         }
-        // split: each corner a quad with its two edges' middles and the centre (the middles on the straight edges
-        // between nudged corners, so a piece's cells together are exactly the piece)
-        // each corner's next and previous, built whole (2026-11-12, the phone: a corner's neighbour read as
-        // V[(k + nv - 1u) % nv] — an index modulo a count known only at run time — came back on the Mali with its y
-        // from the unused V[3], 0, so the cell's corner landed ~145 m away and the roofs drew as spikes; perf-reports
-        // archdump of the Pixel 9a. The desktop never did. No index arithmetic on a run-time count here.)
-        var Vn = array<vec2<f32>, 4>(V[1], V[2], V[3], V[0]);
-        var Vp = array<vec2<f32>, 4>(V[3], V[0], V[1], V[2]);
-        if (!merged) {
-          Vn = array<vec2<f32>, 4>(V[1], V[2], V[0], V[0]);
-          Vp = array<vec2<f32>, 4>(V[2], V[0], V[1], V[1]);
-        }
-        var cen = V[0] + V[1] + V[2];
-        if (merged) { cen += V[3]; }
-        cen = nudge(cen / f32(nv));
+        let cen = tgPos(p.CK, cs.cen);
+        let merged = p.merged;
+        let nv = p.nv;
         var kept = array<bool, 4>(false, false, false, false);
         var allIn = true;
         var anyIn = false;
         for (var k = 0u; k < nv; k++) {
-          let vk = V[k];
-          let qc = (vk + (vk + Vn[k]) * 0.5 + cen + (Vp[k] + vk) * 0.5) * 0.25;
+          let qc = (Q[k][0] + Q[k][1] + Q[k][2] + Q[k][3]) * 0.25;
           kept[k] = inQuad(gPar, qc) && inQuad(gFpG, qc);
           allIn = allIn && kept[k];
           anyIn = anyIn || kept[k];
@@ -1475,6 +1737,12 @@ fn grid(seed: u32) {
         let ph = posHash(cen);
         // (a terrace a whole piece, so neighbouring flats are one floor behind one parapet, not cells side by side)
         let pr = rnd(ph, 21u);
+        if (GU.gridView != 0u) {
+          for (var k = 0u; k < nv; k++) {
+            if (kept[k]) { body(S_TINT, F_NOWIN, grow(Q[k], -0.15), gGround, gGround + 0.3 + f32(k) * 0.05); }
+          }
+          continue;
+        }
         if (merged && allIn && !shanty && pr < 0.45) {
           gridPiece(V, ph);
           continue;
@@ -1487,8 +1755,7 @@ fn grid(seed: u32) {
         }
         for (var k = 0u; k < nv; k++) {
           if (!kept[k]) { continue; }
-          let vk = V[k];
-          gridCell(array<vec2<f32>, 4>(vk, (vk + Vn[k]) * 0.5, cen, (Vp[k] + vk) * 0.5), seed, shanty);
+          gridCell(Q[k], seed, shanty);
         }
       }
     }
@@ -1634,6 +1901,12 @@ fn genShanties(@builtin(global_invocation_id) g: vec3<u32>) {
   else if (gKind == 2u) { garden(gSeed); }
   else { shanty(gSeed); }
   genEnd();
+}
+
+@compute @workgroup_size(64)
+fn tgRegisterLots(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (genHead(g.x) != 3u) { return; }
+  tgRegister();
 }
 
 @compute @workgroup_size(64)

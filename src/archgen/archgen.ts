@@ -109,6 +109,11 @@ export class ArchGen {
   private resetPipe: GPUComputePipeline;
   private compactPipe: GPUComputePipeline;
   private genGroup: GPUBindGroup;
+  private tg: GPUBuffer;
+  private tgSlots: number;
+  private tgPipes: GPUComputePipeline[];
+  /** the grid's relaxation steps a chunk (?relax=N; 0 the lattice as nudged) */
+  relaxSteps = Number(urlFlags().get('relax') ?? 20);
   private compactGroup: GPUBindGroup;
   private lab?: { pipes: GPURenderPipeline[]; group: GPUBindGroup; view: GPUBuffer; shadowPipes: GPURenderPipeline[]; shadowGroup: GPUBindGroup; shadowView: GPUBuffer; shadowMap: GPUTexture };
   nstyles = STYLES.length;
@@ -143,7 +148,7 @@ export class ArchGen {
     const a = new Uint32Array(NK * 4);
     for (const [k] of ARCH_DRAWS) a[k * 4] = VERTS[k];
     d.queue.writeBuffer(this.args, 0, a);
-    this.genU = d.createBuffer({ label: 'arch gen', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.genU = d.createBuffer({ label: 'arch gen', size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.compU = d.createBuffer({ label: 'arch compact', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     d.queue.writeBuffer(this.compU, 0, new Uint32Array([this.slots, 0, 0, 0]));
 
@@ -155,13 +160,21 @@ export class ArchGen {
         { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
         { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
       ],
     });
     const gpl = d.createPipelineLayout({ bindGroupLayouts: [gl] });
+    // the grid's chunks (arch.wgsl tgRegister, tgRelax): a table sized by the lots (a lot asks for 1–4 chunks of ~43 m,
+    // neighbours share them), so no cap tied to the town's area; 384 vertices a chunk
+    let slots = 64;
+    while (slots < o.lots) slots *= 2;
+    this.tgSlots = slots;
+    this.tg = d.createBuffer({ label: 'arch grid chunks', size: (8 + slots + slots * 384 * 2) * 4, usage: S | GPUBufferUsage.COPY_DST });
+    this.tgPipes = ['tgRegisterLots', 'tgRelax'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
     this.genPipes = ['genHouses', 'genKeeps', 'genShanties', 'genGrid'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
     this.genGroup = d.createBindGroup({
       layout: gl,
-      entries: [this.genU, records, counts, this.arch].map((buffer, binding) => ({ binding, resource: { buffer } })),
+      entries: [this.genU, records, counts, this.arch, this.tg].map((buffer, binding) => ({ binding, resource: { buffer } })),
     });
     // (reset and compact share one explicit layout: 'auto' layouts differ per entry point)
     const cl = d.createBindGroupLayout({
@@ -190,7 +203,7 @@ export class ArchGen {
   generate(enc: GPUCommandEncoder, first: number, count: number, ts?: GPUComputePassTimestampWrites): void {
     // (the header's word 7: the plant meshes there are — arch.wgsl plant(); 0 until the local Synty conversion loads)
     this.device.queue.writeBuffer(this.arch, 28, new Uint32Array([archTextures(this.device).plantCount]));
-    const u = new ArrayBuffer(32);
+    const u = new ArrayBuffer(48);
     const w = new Uint32Array(u);
     const f = new Float32Array(u);
     w[0] = first;
@@ -200,8 +213,22 @@ export class ArchGen {
     f[4] = this.o.ground?.zmin ?? 0;
     w[5] = this.nstyles;
     w[6] = this.o.lots;
+    w[7] = this.tgSlots;
+    w[8] = this.relaxSteps;
+    w[9] = urlFlags().get('gridview') === '1' ? 1 : 0;
     // (one uniform: one generate a submit — a caller slicing a town's lots goes frame by frame)
     this.device.queue.writeBuffer(this.genU, 0, u);
+    // the grid's chunks, on a whole town's run: the ones the lots ask for, each relaxed by a workgroup
+    if (first === 0) {
+      enc.clearBuffer(this.tg);
+      const g = enc.beginComputePass({ label: 'arch grid chunks' });
+      g.setBindGroup(0, this.genGroup);
+      g.setPipeline(this.tgPipes[0]);
+      g.dispatchWorkgroups(Math.ceil(count / 64));
+      g.setPipeline(this.tgPipes[1]);
+      g.dispatchWorkgroups(this.tgSlots);
+      g.end();
+    }
     const p = enc.beginComputePass({ label: 'arch gen', timestampWrites: ts });
     p.setBindGroup(0, this.genGroup);
     for (const pipe of this.genPipes) {
@@ -326,7 +353,7 @@ export class ArchGen {
   }
 
   destroy(): void {
-    for (const b of [this.arch, this.args, this.genU, this.compU, this.lab?.view, this.lab?.shadowView]) b?.destroy();
+    for (const b of [this.arch, this.args, this.genU, this.compU, this.tg, this.lab?.view, this.lab?.shadowView]) b?.destroy();
     this.lab?.shadowMap.destroy();
   }
 }
