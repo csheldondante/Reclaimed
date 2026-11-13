@@ -174,10 +174,10 @@ export class ArchGen {
     let slots = 64;
     while (slots < o.lots) slots *= 2;
     this.tgSlots = slots;
-    this.tg = d.createBuffer({ label: 'arch grid chunks', size: (8 + slots + slots * 384 * 2 + slots * 1176 * 2) * 4, usage: S | GPUBufferUsage.COPY_DST });
+    this.tg = d.createBuffer({ label: 'arch grid chunks', size: (8 + slots + slots * 384 * 2 + slots * 1176 * 2 + slots * 64) * 4, usage: S | GPUBufferUsage.COPY_DST });
     // (gridlab) the grid's cells out: room for o.gridChunks chunks (a chunk ~300 cells)
     this.gridCells = d.createBuffer({ label: 'arch grid cells', size: (4 + Math.max(1, (o.gridChunks ?? 0) * 320) * 10) * 4, usage: S | GPUBufferUsage.COPY_DST });
-    this.tgPipes = ['tgRegisterLots', 'tgRelax', 'tgRegisterArea', 'tgEmit'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
+    this.tgPipes = ['tgRegisterLots', 'tgRelax', 'tgRegisterArea', 'tgEmit', 'tgIndexLots'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
     this.genPipes = ['genHouses', 'genKeeps', 'genShanties', 'genGrid'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
     this.genGroup = d.createBindGroup({
       layout: gl,
@@ -230,6 +230,8 @@ export class ArchGen {
       enc.clearBuffer(this.tg);
       const g = enc.beginComputePass({ label: 'arch grid chunks' });
       g.setBindGroup(0, this.genGroup);
+      g.setPipeline(this.tgPipes[4]);
+      g.dispatchWorkgroups(Math.ceil(count / 64));
       g.setPipeline(this.tgPipes[0]);
       g.dispatchWorkgroups(Math.ceil(count / 64));
       g.setPipeline(this.tgPipes[1]);
@@ -249,6 +251,7 @@ export class ArchGen {
    *  their vertices' owners) and their cells written to gridCells */
   gridLab(enc: GPUCommandEncoder, x0: number, y0: number, w: number, h: number, ts?: GPUComputePassTimestampWrites): void {
     const u = new Uint32Array(12);
+    u[1] = this.o.lots;
     u[6] = this.o.lots;
     u[7] = this.tgSlots;
     u[8] = this.relaxSteps;
@@ -261,6 +264,8 @@ export class ArchGen {
     g.setBindGroup(0, this.genGroup);
     g.setPipeline(this.tgPipes[2]);
     g.dispatchWorkgroups(Math.ceil(((w + 2) * (h + 2)) / 64));
+    g.setPipeline(this.tgPipes[4]);
+    g.dispatchWorkgroups(Math.ceil(this.o.lots / 64));
     g.setPipeline(this.tgPipes[1]);
     g.dispatchWorkgroups(this.tgSlots);
     g.setPipeline(this.tgPipes[3]);

@@ -23483,3 +23483,19 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
 - Seen (v4_low, v4_mid): towers, half-timber, stone bases, cobbled lanes; jetties and stairs only on the few cells on a
   lane (most cells are interior).
 
+## archgen: grid roofs drain to drops; buildings are the cells round a lattice point; a lot index per chunk
+## (2026-11-12; the user: "A roof has to angle towards a drop and not a vertical wall or adjacent same height roof",
+## "Just check neighbors and keep it all local")
+
+- A building is the 3–6 cells round one lattice point (every cell has one lattice corner); its storeys by its place
+  alone (hAt: a blocky district base 5 lattice cells a block, its own step, +2 a tower), so a neighbour — the building
+  round an adjacent lattice point — is known without asking anyone. rosette(): its edges from the pieces round the
+  point; an edge is a drop if open (lane, street, off the district), or the neighbour across it is lower or equal (a
+  valley); against a taller neighbour it isn't. The roof surface: 0.62 × the distance to the nearest drop edge, capped
+  2.4 m; no drop: flat with a parapet on the open sides. Each cell's wall body takes its four tops from that surface
+  (K_BODY's per-corner tops), so a building's cells join; jetties push each corner out along the open edges it ends
+  (the same for every cell sharing it). Towers: a whole building a round tower (4%). The joined houses (gridPiece) and
+  terraces retired. The roof top is drawn as tiles in courses along its contours (draw.wgsl, S_TINT tops that slope).
+- First run hung the GPU (DXGI_ERROR_DEVICE_HUNG): ~30 lot lookups a cell each looped every lot. Now tgIndexLots lists
+  each chunk's lots (parcels grown 3 m, 63 a chunk) and lotAt reads its point's chunk only. Shots rf_low, rf_mid.
+

@@ -924,6 +924,14 @@ fn texPick(in: VO) -> TexPick {
     else if (mm == 2u) { t.layer = TX_THATCH; t.tc = vec2<f32>(in.uv.x / 2.0, (in.uv.w + 1.0 - in.uv.z) * 0.18); t.keep = 0.4; }
     else if (mm == 4u) { t.layer = TX_DECK; t.tc = vec2<f32>(in.uv.x, (in.uv.w + 1.0 - in.uv.z) * 0.4) / 1.4; t.keep = 0.7; }
     else { t.layer = TX_CANVAS; t.tc = vec2<f32>(in.uv.x, in.uv.w * 0.3 + in.uv.z * 0.3) / 1.5; }
+  } else if (surf == S_TINT && isTop && in.nrm.z < 0.97) {
+    // (the grid) a building's roof surface: tiles in courses along its contours
+    let dir = normalize(in.nrm.xy + vec2<f32>(1e-5));
+    let m = u32(roofC.w + 0.5);
+    t.layer = select(TX_TILE, TX_SLATE, m == 1u);
+    t.tc = vec2<f32>(dot(in.wpos.xy, vec2<f32>(-dir.y, dir.x)), dot(in.wpos.xy, dir) / max(in.nrm.z, 0.3)) / 2.4;
+    t.goal = roofC.rgb;
+    t.keep = 0.15;
   } else if ((surf == S_WALL || surf == S_STONE || surf == S_TINT) && isTop && (flags & F_UNDER) == 0u && (flags & F_NOWIN) == 0u) {
     // a flat roof's floor (archSurface's pick: 0 flagstones, 1 terracotta — procedural — 2 a deck)
     let fk = hash((in.info.w >> 24u) * 389u + lot * 17u);
@@ -1212,6 +1220,17 @@ fn archSurface(in: VO) -> Surf {
       col = mix(col * mix(1.0, k, detail), vec3<f32>(0.42, 0.5, 0.3), moss * detail * 0.5);
       if (isLip) { col *= 0.58; }
     }
+  } else if (surf == S_TINT && isTop && in.nrm.z < 0.97) {
+    // (the grid) a building's roof surface: tiles in staggered courses along its contours, a shade each
+    let dir = normalize(in.nrm.xy + vec2<f32>(1e-5));
+    let along = dot(in.wpos.xy, vec2<f32>(-dir.y, dir.x));
+    let down = dot(in.wpos.xy, dir) / max(in.nrm.z, 0.3);
+    let row = floor(down / 0.3);
+    let tu = along / 0.44 + row * 0.5;
+    let ti = h21(vec2<f32>(floor(tu), row));
+    let gap = 1.0 - smoothstep(0.03, 0.06, min(fract(tu), 1.0 - fract(tu)));
+    let lip = smoothstep(0.75, 1.0, fract(down / 0.3));
+    col = roofC.rgb * (0.82 + 0.3 * ti) * mix(1.0, 0.6, max(gap, lip * 0.6) * detail);
   } else if ((surf == S_WALL || surf == S_STONE || surf == S_TINT) && isTop && (flags & F_UNDER) != 0u) {
     // a wall's top under its roof: dark, so the seams between the courses at a hip never show it
     col = vec3<f32>(0.16, 0.13, 0.1);

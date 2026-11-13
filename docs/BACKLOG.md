@@ -2370,6 +2370,17 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
     lab ground is cobbles under every building lot (the game's ground is Track A's); interior cells (most) get
     nothing — dormers, deep eaves, steeper varied pitches, stone arches, window boxes and climbers on the grid still
     to do.
+  - Roofs drain to drops (buildings round lattice points, one roof surface each) — done. Hacks to fix: roof surface
+    linear across each cell from its corners (the true distance field bends inside; creases can sit off the hips);
+    no eaves overhang (the roof stops flush at the walls) and no gable-end trim; slope 0.62 and cap 2.4 m by eye; hAt
+    is position-only (ignores the lots' storeys, the street fronts no longer taller); an edge's openness probed at one
+    point 1.4 m out; a building's cells left out by the lot rules aren't known to its siblings unless that probe finds
+    them open; the chunk lot list caps at 63 (more dropped silently); the shanties' lean-tos still turn at random
+    (not to a drop); a tower's radius from the nearest edge (corners of its cells left bare round it).
+  - Real wall geometry (the user: "The features need real geometry on the walls ... stairs and recesses and gables";
+    "overhangs to stick out ... out from the rest of the wall. That breaks up the roof lines and wall lines"): walls
+    built by bay with real recesses (replaces the shader recess), projecting bays and jettied storeys that step out
+    from the wall below, gables and dormers breaking the roofline.
 - AG28 (the user, 2026-11-12) After the organic districts look good: "With proper cobblestones between the buildings
   and foot traffic this would read to me as an organic section of town (unplanned)" — cobbles in the lanes and
   streets, people walking. Then "The planned sections and the structures on them need work after we get these looking
