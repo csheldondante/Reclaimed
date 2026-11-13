@@ -2434,6 +2434,22 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
      perpendicular wings pitched off it, towers above it.
   3. Combined, after the grounds: seamless ground between and round neighbouring houses — stairs, shared plinths,
      varying terrain heights, roads ("a big part of what makes it cohesive").
+  Step 1 tried (this commit, the grid's default view): ridges along the street axis, runs 1–5 (level or stepping),
+  corners taller, back-to-back ties stepped; roofs extruded triangles, half a house each to the run neighbours'
+  midpoints, lean-tos against a taller side. Not good: the houses are cell rosettes (lumpy hexagons), so rectangular
+  roofs don't fit them — to retry with rectangular houses (step 2). Hacks to fix:
+  - The rules recompute neighbours' derived values (builtAt → ridge → height) — ~300 neighbour reads a house. The
+    user: "Shouldn't it be like 5 neighbors we check not 300?" Fix: passes that store each lattice point's facts
+    (built, ridge axis, height) in a buffer; every rule then reads 6 stored neighbours.
+  - Roofs are separate parts now: lots overrun their 192-part budget — floating or missing roofs (a cap: page it).
+  - Roof width 2.35, overhang 0.3, pitch 1.05 by eye; ridge ties go to the block's axis; the back-to-back step is one
+    pass; no shared ridge for equal back-to-back; pair code (gatherMerged, gMate*) and the flat/parapet branch dead.
+  Step 2 started (this commit, ?gridview=2: one house a lot, in the lot's frame): a main block along the street (the
+  tallest ridge), a wing half sunk into its back at one end (lower, ridge across), a jetty, a ground-floor bay under a
+  lean-to, a round tower at a front corner, a chimney; every rectangle walls with real openings. Hacks to fix: every
+  rectangle builds facades on all four sides, inside the others too (hidden, wasted); the wing's gable end inside the
+  main block relies on the wing's ridge being lower; sizes and odds by eye; one house per lot, not packed plots;
+  storey ops beyond the jetty (setbacks, terraces, added rectangles) not yet.
 - AG25 (the user, 2026-11-12) Synty trees on the phone as pre-rendered sprites (4–8 views, colour + normal + depth),
   baked into the tiles or drawn live to sway. Rendered from Synty, so local only, like the packs. Also: house walls on
   the phone are "a single smeared low res window on a solid color" against detailed roofs — baking at PC detail answers

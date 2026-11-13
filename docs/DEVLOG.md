@@ -23532,3 +23532,11 @@ steps one storey up (by group hash), so same-height groups rarely touch. Roof = 
 lattice point(s) — a pair's axis; one alone points its ridge at its tallest taller neighbour, so it meets that wall
 gable-on as a lower wing. Height falls from the ridge to nothing at the group's farthest corner. Shots r_close, r_mid:
 gables and cross wings read; patchy tile facets where cells fold off the ridge (BACKLOG AG30).
+
+## 2026-11-13 — AG31 steps 1 and 2 (experiments)
+
+Step 1 (the user's growth rules on the grid): ridges along the street axis, runs of 1–5 level or stepping, corners
+taller, back-to-back ties stepped, extruded-triangle roofs per half house. Shots s1_mid2/s1_close: roofs don't fit the
+cell rosettes, floating roofs from the part budget; ~300 neighbour reads a house from recomputing. Kept as the grid's
+default for now; the fix list is in BACKLOG AG31. Step 2 (?gridview=2): rectHouse — main block + wing + jetty + bay +
+round tower + chimney from a few rectangles in the lot's frame. Shot h1: reads as houses (gables, jetties, towers).
