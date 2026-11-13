@@ -2423,6 +2423,17 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
     tie with another — rare, not none. A pair with a taller neighbour on its long side still drains at that wall.
   - The roof's slope eases on wide groups so the ridge stays under RF_MAX (4.2 m) — by eye.
   - roofAt no longer goes flat: the parapet/terrace branch never fires (dead code to clear with gDA/gDB).
+- AG31 (the user, 2026-11-13: "The whole magic of townscraper is that it captures the mess of European towns that
+  built up in an unplanned way") Organic housing, as experiments in three parts, each shown for review:
+  1. Roof and placement rules on the irregular grid: a house's ridge along its street; beside neighbours of one height
+     line up and share the ridge (exact runs 1–3 tiles, step up/down runs to ~5, lengths 1–5); behind neighbours
+     mostly split level — the lower pitched away from the taller wall or a roof terrace; the same height (rare) one
+     shared ridge; corners turn the ridge or stand taller. Roofs extruded triangles.
+  2. Houses alone, Tiny Glade quality, one structure at a time for review: a few rectangles combined (how much they
+     interpenetrate ruled), extruded up, each storey able to shrink, grow or add a rectangle; one taller main ridge,
+     perpendicular wings pitched off it, towers above it.
+  3. Combined, after the grounds: seamless ground between and round neighbouring houses — stairs, shared plinths,
+     varying terrain heights, roads ("a big part of what makes it cohesive").
 - AG25 (the user, 2026-11-12) Synty trees on the phone as pre-rendered sprites (4–8 views, colour + normal + depth),
   baked into the tiles or drawn live to sway. Rendered from Synty, so local only, like the packs. Also: house walls on
   the phone are "a single smeared low res window on a solid color" against detailed roofs — baking at PC detail answers
