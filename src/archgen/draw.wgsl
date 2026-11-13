@@ -436,9 +436,16 @@ fn vsArchWin(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -
       else if (sillK == 1u) { bx = vec4<f32>(-f - 0.05, W + f + 0.05, 0.0, dep + 0.09); bz = vec2<f32>(-0.07, 0.02); surf = S_WOOD; }
       else { bx = vec4<f32>(-f - 0.09, W + f + 0.09, 0.0, dep + 0.11); bz = vec2<f32>(-0.09, 0.02); }
     }
-    case 4u: { bx = vec4<f32>(0.0, W, 0.0, 0.025); bz = vec2<f32>(0.0, H); surf = select(S_GLASS, S_DOOR, door); }
+    case 4u: {
+      bx = vec4<f32>(0.0, W, 0.0, 0.025);
+      bz = vec2<f32>(0.0, H);
+      surf = select(S_GLASS, S_DOOR, door);
+      // (a plain window's glass and a door's leaf: the wall's painted recess is drawn there, these left out)
+      live = live && !((shape == 0u && !bal) || door);
+    }
     case 5u: {
       live = live && !door;
+      live = live && !(shape == 0u && !bal);
       let mw = select(0.03, 0.06, shape == 3u);
       bx = vec4<f32>(W * 0.5 - mw, W * 0.5 + mw, 0.0, 0.06);
       bz = vec2<f32>(0.0, H);
@@ -812,6 +819,46 @@ fn stones(u: f32, v: f32, bw: f32, rh: f32, px: f32, seed: f32, detail: f32) -> 
   return vec2<f32>(shade, mortar * detail);
 }
 
+var<private> gRecessAo: f32;
+
+/** (the user: "Windows and doors are not recessed") an opening's recess, drawn without geometry: the view ray goes on
+ *  into a box RECESS deep behind the wall's face (fu across the opening from its middle, fz up the wall; the opening
+ *  [-hw, hw] × [zl, zh]) and meets its back (the glass, the door's leaf: k 0) or one of its sides (the reveal: k 1 a
+ *  jamb, 2 the head's soffit, 3 the sill); n the surface met, ao its light — dimmer deeper in, and in the wall's
+ *  shadow if the ray back toward the sun leaves through the wall rather than the opening. Works the same on the phone. */
+const RECESS: f32 = 0.24;
+struct Recess { k: u32, n: vec3<f32>, ao: f32 };
+fn recessAt(fu: f32, fz: f32, hw: f32, zl: f32, zh: f32, N: vec3<f32>, w: vec3<f32>) -> Recess {
+  var r: Recess;
+  let T = vec3<f32>(-N.y, N.x, 0.0);
+  let ray = -archToEye(w);
+  let ru = dot(ray, T);
+  let rz = ray.z;
+  let rn = min(dot(ray, N), -0.02);
+  var t = RECESS / -rn;
+  r.k = 0u;
+  r.n = N;
+  if (ru > 1e-4) { let ts = (hw - fu) / ru; if (ts < t) { t = ts; r.k = 1u; r.n = -T; } }
+  if (ru < -1e-4) { let ts = (-hw - fu) / ru; if (ts < t) { t = ts; r.k = 1u; r.n = T; } }
+  if (rz > 1e-4) { let ts = (zh - fz) / rz; if (ts < t) { t = ts; r.k = 2u; r.n = vec3<f32>(0.0, 0.0, -1.0); } }
+  if (rz < -1e-4) { let ts = (zl - fz) / rz; if (ts < t) { t = ts; r.k = 3u; r.n = vec3<f32>(0.0, 0.0, 1.0); } }
+  let hu = fu + ru * t;
+  let hz = fz + rz * t;
+  let hd = -rn * t;
+  // the sun from there: out through the opening, or into the wall
+  let S = archSunDir();
+  let sn = dot(S, N);
+  var lit = 0.0;
+  if (sn > 0.02) {
+    let ts = hd / sn;
+    let eu = hu + dot(S, T) * ts;
+    let ez = hz + S.z * ts;
+    lit = select(0.0, 1.0, abs(eu) <= hw && ez >= zl && ez <= zh);
+  }
+  r.ao = mix(0.45, 1.0, lit) * mix(1.0, 0.72, clamp(hd / RECESS, 0.0, 1.0));
+  return r;
+}
+
 fn styleV(s: u32, i: u32) -> vec4<f32> { return bitcast<vec4<f32>>(instances[(AW(0u) >> 2u) + s * SV + i]); }
 
 
@@ -935,6 +982,7 @@ fn archedOut(in: VO) -> bool {
 
 /** a surface's colour (sRGB), its glass, its occlusion. Takes derivatives: call it in uniform control flow, before any discard. */
 fn archSurface(in: VO) -> Surf {
+  gRecessAo = 1.0;
   let lz = in.wpos.z - archPlace().z;
   let surf = in.info.y;
   let flags = in.info.z & 0xffu;
@@ -1067,6 +1115,23 @@ fn archSurface(in: VO) -> Surf {
       }
       // (a frame's lower edge — the sill — a shade darker, so it reads at a few pixels)
       col = mix(col, trimC.rgb * select(1.0, 0.8, fz < win.w), frame);
+      // the opening's recess: its back the glass (or the door's leaf), its sides the wall's own colour, lit as they face
+      let wallCol = col;
+      if (hole > 0.5 || door > 0.5) {
+        var hw = ww;
+        var zl = win.w;
+        var zh = win.z;
+        if (door > 0.5) { hw = styleV(s, 6u).x * 0.5; zl = 0.0; zh = styleV(s, 6u).w; }
+        let rc = recessAt(fu, fz, hw, zl, zh, normalize(in.nrm), in.wpos);
+        nOut = rc.n;
+        gRecessAo = rc.ao;
+        gRelief = 0.0;
+        if (rc.k != 0u) {
+          col = wallCol * select(0.92, 1.0, rc.k == 3u);
+          hole = 0.0;
+          door = 0.0;
+        }
+      }
       col = mix(col, vec3<f32>(0.42, 0.26, 0.15), door);
     }
     // half-timbering: posts at the bays' edges, a rail a storey, braces (the style's material 3)
@@ -1291,6 +1356,7 @@ fn archSurface(in: VO) -> Surf {
   }
   var ao = 1.0;
   if (!isTop && surf != S_GROUND && !isCourse) { ao = mix(0.6, 1.0, smoothstep(0.0, 1.6, lz - in.zs.y + 0.6)); }
+  ao *= gRecessAo;
   if (surf == S_TRIM && in.nrm.z < -0.5) { ao = 0.5; }
   return Surf(col, glass, ao, gRelief, nOut, rough);
 }

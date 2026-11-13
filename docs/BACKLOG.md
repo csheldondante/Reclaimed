@@ -2331,6 +2331,41 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   shadow render; re-bake on change; animated layers drawn live. Wind: a per-pixel sway channel the lighting pass
   offsets its lookup by ("Bending sprites with a few control points in a grid to warp fragments"). Gate: the phone
   bench (frame, pan, memory).
+- AG27 (the user, 2026-11-12: "please log hacks to the backlog as things to fix. We can always defer them") The
+  hacks and limits of the archgen grid / look work, each to fix:
+  - Grid lots: lotAt() loops every lot of the town, five times a cell (and in tgEmit) — a per-chunk lot index; the 3 m
+    reach for the slivers between lots (lets cells reach a little past the coast); outerStreet's 4 m probe across a
+    street (a wide street or odd parcel can fool it); street fronts (doors, gables) still by nearness (1.6 m) to the
+    lot's own street line, not to the open cells; the lots' 96-part budget still holds grid cells (a per-chunk pool);
+    streets and lanes not paved (lab: bare lot ground); the ?gridview debug modes and the red marking of lots off the
+    grid left in the code.
+  - Lanes: every 6 rows, segments of 4, 72% on — by eye; they don't know the district's edge or its outer streets (a
+    lane can end a cell short of a street, or run out onto the coast); two lattice directions only (long stretches can
+    read straight).
+  - Relaxation: 0.6 of the pull a step, 20 steps — by eye; pulls rounded to 1/64 m (the phone's 16 KB of workgroup
+    memory); the apron (3 lattice cells) is shorter than 20 steps reach (a vertex at a chunk's edge a little less
+    relaxed); chunks all remade when the camera enters a new one (no cache: only the new row is needed); the chunk
+    table and its 9.4 KB-a-chunk scratch sized by the lot count (should be by the chunks round the camera); a joined
+    house or terrace uses only its piece's four corners (its walls can sit off the cells' relaxed edges); the grid lab's
+    320 cells a chunk (overflow dropped silently); phone timings not measured.
+  - Heights: a cell stands on the highest ground under its corners, walls to the lowest (on a slope a cell's walls run
+    down to the lowest neighbour's ground).
+  - Light (archlab): the sun's direction fixed to the camera (115° round, 37° up); colours of the key, shade, bounce by
+    eye; the street foot's darkening a fixed 4.5 m; the shadow map round the view redrawn every frame; windows cast no
+    shadow, plants cast solid ones; depth bias by eye (speckle on the roof tiles).
+  - SSAO: darkens the whole lit colour, not only the ambient; MSAA's depth read at sample 0 (halos at edges); a box
+    blur blind to depth; radius 2.5 m, strength 1 by eye, in world units (its look changes with zoom); not on the
+    phone, not measured there; the lab only (not the look lab, not the game).
+  - Recessed openings (draw.wgsl recessAt): drawn by the wall's shader, not geometry — the silhouette doesn't change,
+    the sun's shadow in a recess is worked out from the opening alone (not the shadow map); built plain windows' glass
+    and doors' leaves left out so the recess shows, so a built frame whose size differs from the painted opening (a
+    balcony, an attic light) keeps its own flat glass; RECESS 0.24 m.
+- AG28 (the user, 2026-11-12) After the organic districts look good: "With proper cobblestones between the buildings
+  and foot traffic this would read to me as an organic section of town (unplanned)" — cobbles in the lanes and
+  streets, people walking. Then "The planned sections and the structures on them need work after we get these looking
+  good." Also "the larger institution look townscraper gets with taller structures (... super tiles and some other
+  tricks)": several cells joined into one tall building (a church, a hall, a tower). Tiny Glade stays the inspiration
+  for freeform lots — maybe combined with the grid later.
 - AG25 (the user, 2026-11-12) Synty trees on the phone as pre-rendered sprites (4–8 views, colour + normal + depth),
   baked into the tiles or drawn live to sway. Rendered from Synty, so local only, like the packs. Also: house walls on
   the phone are "a single smeared low res window on a solid color" against detailed roofs — baking at PC detail answers

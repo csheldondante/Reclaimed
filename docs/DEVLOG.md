@@ -23454,3 +23454,14 @@ A sub-branch of archgen (archgen-ground), to keep or drop on the look.
 - Parameters by eye (6, 4, 72%). Lanes don't yet know the district's edge or the outer streets (a lane can end a cell
   short of one); not paved.
 
+## archgen: recessed windows and doors, on the phone too (2026-11-12; the user: "Windows and doors are not recessed")
+
+- The grid's houses had only painted windows (gridCell's bodies aren't wallBody: no built windows), and a built window
+  per opening would spend the lots' part budget the user wants gone. So the recess is drawn by the wall's shader
+  (draw.wgsl recessAt): inside a painted window's or door's opening the view ray carries on into a box 0.24 m deep and
+  meets its back (the glass, the door's leaf) or a side (jamb, head's soffit, sill: the wall's own colour, lit by its
+  own normal); the ray from there back toward the sun tells if the wall shades it (out through the opening or not), and
+  deeper is dimmer. No geometry, no parts, same on the phone. Hosts give archToEye and archSunDir.
+- Built windows (house lots): a plain window's glass and a door's leaf are left out so the recess shows inside the
+  built frame; shaped, balcony and dormer windows keep their flat glass. Shots rc_close (harbour), rc_homes (homes).
+

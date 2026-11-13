@@ -10,6 +10,8 @@ fn archPlace() -> vec3<f32> { return MESH_XF.xyz; }
 fn archNight() -> f32 { return 0.0; }
 fn archTime() -> f32 { return G.time; }
 fn archDetail() -> f32 { return ARCH_DETAIL; }
+fn archToEye(w: vec3<f32>) -> vec3<f32> { return toEye(w); }
+fn archSunDir() -> vec3<f32> { return normalize(vec3<f32>(G.sunX, G.sunY, G.sunZ)); }
 
 // ---- fragment (appended after draw.wgsl) ----
 @fragment
