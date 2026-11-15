@@ -23707,3 +23707,36 @@ asked about.
 
 **Tests.** `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots`;
 `engine-pairs.test.ts` 8, `engine-pile.test.ts` 5 (and a bench behind `PAIRS_BENCH=1`).
+
+## 2026-11-15 — deforming voxels meet rigid rows (PJ5, `physics10-mech`)
+
+**Why.** The owner: "terrain breaking needs rigidbodies to be complete. Pieces can hit and break other pieces." Until
+now a body that had become lattice particles passed through every rigid row, so a hard hit between bodies had to stay
+rigid.
+
+**What.** A deforming body's row is in the awake list again, with the centre and radius of its voxels' bounds (`stats`
+sums them, `slots` writes them) and the zero quaternion for a rotation: the coarse pass pairs it by its sphere, the
+fine pass gives it no samples. `meetLink` (a thread a pair, once a tick, after the rigid substeps) writes a candidate
+record for each pair of one deforming body and one rigid row and links it into the body's list; `meet` (a thread a
+voxel, each lattice substep, after `collide`) reads each candidate's distance field in the row's frame — depth and
+normal in one read — and applies the lattice's rule: never pushed out, stopped from closing by its share, crumbling
+past the material's overlap or its crumble speed. The reaction goes into the row's work words as fixed-point atomics
+and is taken at the next tick's start. No voxel is hashed against a rigid row; nothing is read back.
+
+**Found by the tests, and what was done.**
+- The reaction lands a tick late (the lattice steps after the rigid substeps), so a block resting on voxels sank a
+  tick of gravity every tick (0.4 cells/s) and voxels never push out. What the voxels gave a row is now offered again
+  before it moves (the hold: along the mean normal of the voxels touching it, up to what it took last tick plus what
+  their reaction added). A block then rests 0.06 cells into standing voxels and stays.
+- A row's velocity does not change while the lattice steps, so each contact takes the row's inverse mass times its
+  contacts (last tick's count, or this tick's so far): the sum cannot throw it back; and it takes no more than brings
+  it to the fastest closing.
+- `partRow` had no binding left to read a model's radius: a slot's record keeps the row's radius from `expand`.
+
+**Measured** (desktop proxy, Dawn in Node). Five dispatches a tick more while the host knows of a row awake or a body
+deforming (`meetLink`, and `meet` a lattice substep), none with everything asleep (145 against 150 counted). A stone
+block of 64 voxels at 10 cells/s into a sleeping steel block: the steel never has more momentum than the stone has
+lost, the kinetic energy never passes what came in, the stone's front is at most 0.06 cells past the steel's face.
+Dropped on it: no voxel centre lower than 0.486 over the steel's top.
+
+**Tests.** `npx vitest run --project gpu engine-meet` (5).

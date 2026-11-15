@@ -620,7 +620,8 @@ fn partRow(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
       pose[4u * row + 2u] = vec4<f32>(c.xyz, im);
       pose[4u * row + 3u] = q;
       vel[2u * row] = vec4<f32>(0.0);
-      vel[2u * row + 1u] = vec4<f32>(0.0, 0.0, 0.0, vel[2u * row + 1u].w);
+      // (its bound radius is its model's again: while it deformed the word held its voxels' bound)
+      vel[2u * row + 1u] = vec4<f32>(0.0, 0.0, 0.0, slotF(L.slot, 23u));
       let fl = rowFlags(row);
       info[4u * row].w = bitcast<f32>((fl & ~(ROW_DEFORM | ROW_LISTED_ASLEEP | ROW_EXPAND | ROW_DENIED)) | ROW_ASLEEP | ROW_NEWSLEEP);
       // (the slot lets go of its pages, not of the row)

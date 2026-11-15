@@ -265,7 +265,8 @@ fn collide(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
           if (!near && closing > crumbleV && (toughI < toughJ || (toughI == toughJ && i > ju))) { fastest = max(fastest, closing); }
           if (!near && over > G.tune.voxelsCrumbleOverlap && (toughI < toughJ || (toughI == toughJ && i > ju))) { dying = true; }
           // stop them closing further (each its share); never part them
-          let wj = max(xj.w, 0.0);
+          // (a voxel of a body that is not being stepped — still, settling — does not give way: the whole stop is this one's)
+          let wj = select(0.0, max(xj.w, 0.0), Lj.ok && Lj.state == S_LIVE);
           let shut = -dot((x - p0) - (xj.xyz - px[2u * ju + 1u].xyz), n);
           if (shut > 0.0) { x += n * shut * x0.w / max(x0.w + wj, 1e-6); }
           nsum += n;
@@ -459,5 +460,18 @@ fn stats(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   if (!L.ok || !alive(i)) { return; }
   let s = EU.h.w + SUMS_W * L.slot;
   atomicAdd(&pool[s], 1u);
-  atomicAdd(&pool[s + 1u], u32(min(length(ps[3u * i].xyz), 4000.0) * 256.0));
+  let sp = u32(min(length(ps[3u * i].xyz), 4000.0) * 256.0);
+  atomicAdd(&pool[s + 1u], sp);
+  // (hook for body against body, engine_deform.wgsl `slots`: the body's bounds about where it expanded and its fastest
+  // voxel, so its row can stand in the coarse pass's tables)
+  atomicMax(&pool[s + 6u], sp);
+  let rel = clamp(px[2u * i].xyz - slotV3(L.slot, 8u), vec3<f32>(-1000.0), vec3<f32>(1000.0));
+  let qh = vec3<u32>((vec3<f32>(1024.0) + rel) * 64.0);
+  let ql = vec3<u32>((vec3<f32>(1024.0) - rel) * 64.0);
+  atomicMax(&pool[s + 8u], qh.x);
+  atomicMax(&pool[s + 9u], qh.y);
+  atomicMax(&pool[s + 10u], qh.z);
+  atomicMax(&pool[s + 11u], ql.x);
+  atomicMax(&pool[s + 12u], ql.y);
+  atomicMax(&pool[s + 13u], ql.z);
 }

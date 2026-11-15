@@ -240,8 +240,11 @@ test('B: a soft landing never expands; a hard one does, and the particles carry 
   expect(r.v[2]).toBeLessThan(-15);
   const p = await R.particles(hard.row);
   expect(p.cells).toBe(27);
+  // (about the voxels' own centre: a deforming body's row keeps the middle of its voxels' bounds, to a sixty-fourth of
+  // a cell, for the coarse pass — not its centre of mass)
+  const com = [0, 1, 2].map((a) => Array.from({ length: 27 }, (_, k) => p.x[k * 4 + a]).reduce((u, v) => u + v, 0) / 27);
   for (let k = 0; k < 27; k++) {
-    const rel = [p.x[k * 4] - r.pos[0], p.x[k * 4 + 1] - r.pos[1], p.x[k * 4 + 2] - r.pos[2]];
+    const rel = [p.x[k * 4] - com[0], p.x[k * 4 + 1] - com[1], p.x[k * 4 + 2] - com[2]];
     const want = [r.v[0] + r.spin[1] * rel[2] - r.spin[2] * rel[1], r.v[1] + r.spin[2] * rel[0] - r.spin[0] * rel[2], r.v[2] + r.spin[0] * rel[1] - r.spin[1] * rel[0]];
     for (let a = 0; a < 3; a++) expect(p.v[k * 4 + a]).toBeCloseTo(want[a], 3);
   }

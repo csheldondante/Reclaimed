@@ -53,7 +53,7 @@ fn fine(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
   if (wg.x >= list[3]) { return; }
   let r = list[LIST_AT + wg.x];
   let m = bitcast<vec4<u32>>(info[4u * r + 2u]);
-  if ((rowFlags(r) & ROW_EXPAND) != 0u) { return; }
+  if ((rowFlags(r) & (ROW_EXPAND | ROW_DEFORM)) != 0u) { return; }
   let x = pose[4u * r + 2u].xyz;
   let q = pose[4u * r + 3u];
   let nearGap = EU.f.x;
@@ -184,7 +184,7 @@ fn solve(@builtin(global_invocation_id) id: vec3<u32>) {
   let s0 = sAt(m.x);
   let fl0 = bitcast<u32>(I0.w);
   // (it deforms this tick: `expand` takes it as it came in — engine_deform.wgsl)
-  if ((fl0 & ROW_EXPAND) != 0u) { return; }
+  if ((fl0 & (ROW_EXPAND | ROW_DEFORM)) != 0u) { return; }
   if ((EU.e.w & 2u) != 0u) {
     pose[4u * r] = P;
     pose[4u * r + 1u] = q;

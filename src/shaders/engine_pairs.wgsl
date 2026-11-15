@@ -158,6 +158,17 @@ fn slopOf(r: u32) -> f32 {
   return EU.b.x + min(EU.b.w, EU.b.y * pow(cells, EU.b.z));
 }
 
+/** the hold (engine.wgsl RW_MT) on a row's velocity after gravity: its approach along the kept way is stopped, by no
+ *  more than is left of the tick's cap (speeds: the cap is kept over the row's mass) */
+fn heldBy(b: u32, v: vec4<f32>, cap: f32) -> vec4<f32> {
+  let hold = fListF(b + RW_MH);
+  let used = bitcast<f32>(atomicLoad(&listA[b + RW_MUSED]));
+  let j = min(cap - used, max(-dot(v.xyz, hold), 0.0));
+  if (j <= 0.0) { return v; }
+  atomicStore(&listA[b + RW_MUSED], bitcast<u32>(used + j));
+  return vec4<f32>(v.xyz + hold * j, v.w);
+}
+
 // A thread a row awake: the tick's start pose (the frame is drawn between it and now), gravity and the air.
 @compute @workgroup_size(64)
 fn integrate(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -168,19 +179,64 @@ fn integrate(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var k = 0u; k < 6u; k++) { atomicStore(&listA[b + k], 0u); }
   for (var k = RW_FLAGS; k < RW_V; k++) { atomicStore(&listA[b + k], 0u); }
   let fl = rowFlags(r);
-  // (it deforms this tick: `expand` takes it as it came in — engine_deform.wgsl)
-  if ((fl & ROW_EXPAND) != 0u) { return; }
+  // what the deforming voxels touching it gave it last tick (engine_meet.wgsl), taken at the tick's start: never more
+  // than brings it to the fastest of them (the sum of many voxels' shares cannot throw it back), and weighed for
+  // deformation as a pair's hit is — half the closing by the speed it was given
+  var mdv = vec3<f32>(0.0);
+  var mdw = vec3<f32>(0.0);
+  var mhit = 0.0;
+  var mdeep = false;
+  if ((EU.e.w & 2u) != 0u) {
+    let mn = atomicExchange(&listA[b + RW_MN], 0u);
+    atomicStore(&listA[b + RW_MNP], mn);
+    // the hold for this tick (engine.wgsl RW_MT): along the mean normal of the voxels that touched it, up to what the
+    // hold took last tick and what their reaction adds along it
+    let mt = atomicExchange(&listA[b + RW_MT], 0u);
+    let ns = fpTake(b + RW_MNS, 1024.0);
+    let usedLast = bitcast<f32>(atomicExchange(&listA[b + RW_MUSED], 0u));
+    var cap = 0.0;
+    var hold = vec3<f32>(0.0);
+    if (mt > 0u && dot(ns, ns) > 1e-6) {
+      // (the normals run from the row out to the voxels: it is held the other way)
+      hold = -normalize(ns);
+      let got = fpLoad(b + RW_MDV, FPM);
+      cap = usedLast + max(dot(got, hold), 0.0);
+    }
+    atomicStore(&listA[b + RW_MCAP], bitcast<u32>(cap));
+    atomicStore(&listA[b + RW_MH], bitcast<u32>(hold.x));
+    atomicStore(&listA[b + RW_MH + 1u], bitcast<u32>(hold.y));
+    atomicStore(&listA[b + RW_MH + 2u], bitcast<u32>(hold.z));
+    mdv = fpTake(b + RW_MDV, FPM);
+    mdw = fpTake(b + RW_MDW, FPM);
+    let mc = bitcast<f32>(atomicExchange(&listA[b + RW_MC], 0u));
+    mdeep = atomicExchange(&listA[b + RW_MX], 0u) != 0u;
+    atomicStore(&listA[b + RW_MP], 0u);
+    let ml = length(mdv);
+    if (ml > mc) {
+      mdv *= mc / max(ml, 1e-9);
+      mdw *= mc / max(ml, 1e-9);
+    }
+    mhit = 0.5 * min(ml, mc) * mc;
+  }
+  // (it deforms this tick: `expand` takes it as it came in — engine_deform.wgsl; deforming: its voxels carry it)
+  if ((fl & (ROW_EXPAND | ROW_DEFORM)) != 0u) { return; }
   let P = pose[4u * r + 2u];
   if ((EU.e.w & 2u) != 0u) {
     pose[4u * r] = P;
     pose[4u * r + 1u] = pose[4u * r + 3u];
+    let thr = canDeform(r);
+    if (thr > 0.0 && (mhit > thr || mdeep)) { atomicOr(&listA[b + RW_FLAGS], RF_EXPAND); }
   }
   let dt = EU.a.x;
   var v = vel[2u * r];
   var w = vel[2u * r + 1u];
+  v = vec4<f32>(v.xyz + mdv, v.w);
+  w = vec4<f32>(w.xyz + mdw, w.w);
   v.z -= worldG() * dt;
   v = vec4<f32>(v.xyz * max(0.0, 1.0 - EU.d.x * dt), v.w);
   w = vec4<f32>(w.xyz * max(0.0, 1.0 - EU.d.y * dt), w.w);
+  let capNow = bitcast<f32>(atomicLoad(&listA[b + RW_MCAP]));
+  if (capNow > 0.0) { v = heldBy(b, v, capNow); }
   vel[2u * r] = v;
   vel[2u * r + 1u] = w;
   atomicStore(&listA[b + RW_V], bitcast<u32>(v.x));
@@ -266,7 +322,7 @@ fn tfine(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   let on = wg.x < atomicLoad(&listA[3]);
   var r = 0u;
   if (on) { r = atomicLoad(&listA[LIST_AT + wg.x]); }
-  let frozen = !on || (rowFlags(r) & ROW_EXPAND) != 0u;
+  let frozen = !on || (rowFlags(r) & (ROW_EXPAND | ROW_DEFORM)) != 0u;
   let m = bitcast<vec4<u32>>(info[4u * r + 2u]);
   let x = pose[4u * r + 2u].xyz;
   let invM = pose[4u * r + 2u].w;
@@ -720,7 +776,7 @@ fn takeMine(r: u32) -> Mine {
   let b = rwAt(r);
   let dv = fpTake(b + RW_DV, FPV);
   let dw = fpTake(b + RW_DW, FPV);
-  if ((fl & ROW_EXPAND) != 0u) { return o; }
+  if ((fl & (ROW_EXPAND | ROW_DEFORM)) != 0u) { return o; }
   let rf = atomicLoad(&listA[b + RW_FLAGS]);
   if ((rf & RF_EXPAND) != 0u) {
     // (its hit passed its material's bar: not solved — `expand` hands it to its particles as it came in)

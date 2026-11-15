@@ -26,8 +26,8 @@
 //   rest place, its material word].
 const PAGE: u32 = 512u;
 const POOL_HDR: u32 = 64u;
-const SLOT_W: u32 = 24u;
-const SUMS_W: u32 = 8u;
+const SLOT_W: u32 = 28u;
+const SUMS_W: u32 = 16u;
 const DARGS_AT: u32 = 16u;
 const MODEL_HDR: u32 = 4u;
 const MESH_V: u32 = 3u;
@@ -77,7 +77,8 @@ const S_STILL: u32 = 7u;
 const DL_AT: u32 = 16u;
 // a slot's record: [0] state, [1] row (NONE: none to free), [2] model (heap index), [3..5] its lattice box, [6] pages,
 // [7] how long it has been still (f32), [8..10] the row's centre when it expanded, [11..14] its rotation, [15..17] its
-// velocity, [18..20] its spin, [21] voxels alive at the last count, [22] its material | loose << 8
+// velocity, [18..20] its spin, [21] voxels alive at the last count, [22] its material | loose << 8, [23] the row's
+// bound radius when it expanded (f32: a body that settles whole gets it back), [24] parts of it made rows so far
 const PV_DEAD: f32 = -1.0;
 const PV_CRUMBLE: f32 = -2.0;
 
@@ -98,6 +99,9 @@ const PV_CRUMBLE: f32 = -2.0;
 @group(0) @binding(26) var<storage, read_write> pb: array<u32>;
 @group(0) @binding(27) var<storage, read> rlist: array<u32>;
 @group(0) @binding(37) var<storage, read_write> kargs: array<atomic<u32>>;
+// the rigid rows a deforming body's voxels may meet this tick (engine_meetlink.wgsl writes it, engine_meet.wgsl walks
+// it): a head a slot, then a record a pair
+@group(0) @binding(51) var<storage, read_write> cand: array<u32>;
 // the lattice's material table (physics.ts PHYS_MATS, 4 vec4 a material)
 @group(0) @binding(35) var<uniform> PM: array<vec4<f32>, 192>;
 // The voxel hash (u32, atomic), sized by the particles' room (V = pages x PAGE): [0] chains cut short by the guard since
@@ -286,6 +290,8 @@ fn expand(@builtin(global_invocation_id) id: vec3<u32>) {
   dmeta[s + 20u] = bitcast<u32>(w.z);
   dmeta[s + 21u] = dm.w;
   dmeta[s + 22u] = bitcast<u32>(heap[mh + 1u].z);
+  dmeta[s + 23u] = bitcast<u32>(vel[2u * r + 1u].w);
+  dmeta[s + 24u] = 0u;
   // (the drawn pose stops here: the frame's draw is by the particles from now)
   pose[4u * r] = pose[4u * r + 2u];
   pose[4u * r + 1u] = q;
@@ -363,7 +369,12 @@ fn release(@builtin(global_invocation_id) id: vec3<u32>) {
 
 // ---- slots: a thread a slot, at the tick's end; each slot's state moves on here and nowhere else ---------------------
 // The sums the particles left this tick (engine_lattice.wgsl `stats`): [0] voxels alive, [1] the sum of their speeds
-// x 256, [2] labels changed (settling), [3] voxels waiting to go to the ground, [4] a part found no room.
+// x 256, [2] labels changed (settling), [3] voxels waiting to go to the ground, [4] a part found no room, [6] the
+// fastest voxel's speed x 256, [8..10] and [11..13] the voxels' bounds about where the body expanded (the most of
+// (1024 + x) x 64 and of (1024 - x) x 64 an axis; 0: none counted).
+// A deforming body's row is kept in the coarse pass's tables by these: its centre the middle of its voxels' bounds,
+// its radius theirs and what they can cover in a tick, its rotation the zero quaternion (engine.wgsl ROW_DEFORM); the
+// mean speed of its voxels is in its still timer's word (engine_meetlink.wgsl weighs it for a sleeper beside it).
 @compute @workgroup_size(64)
 fn slots(@builtin(global_invocation_id) id: vec3<u32>) {
   let sl = id.x;
@@ -377,7 +388,28 @@ fn slots(@builtin(global_invocation_id) id: vec3<u32>) {
   let changed = atomicExchange(&pool[sum + 2u], 0u);
   let waiting = atomicExchange(&pool[sum + 3u], 0u);
   let failed = atomicExchange(&pool[sum + 4u], 0u);
+  let fast = f32(atomicExchange(&pool[sum + 6u], 0u)) / 256.0;
+  var bhi = vec3<f32>(0.0);
+  var blo = vec3<f32>(0.0);
+  var bound = true;
+  for (var k = 0u; k < 3u; k++) {
+    let hiw = atomicExchange(&pool[sum + 8u + k], 0u);
+    let low = atomicExchange(&pool[sum + 11u + k], 0u);
+    if (hiw == 0u || low == 0u) { bound = false; }
+    bhi[k] = f32(hiw) / 64.0 - 1024.0;
+    blo[k] = 1024.0 - f32(low) / 64.0;
+  }
   let row = dmeta[s + 1u];
+  // (this tick's candidate rows are done with)
+  cand[sl] = 0u;
+  if (st != S_RELEASE && row != NONE && bound && (rowFlags(row) & (ROW_ALIVE | ROW_DEFORM)) == (ROW_ALIVE | ROW_DEFORM)) {
+    let tick = EU.k.w * f32(EU.l.z);
+    pose[4u * row + 2u] = vec4<f32>(slotV3(sl, 8u) + 0.5 * (blo + bhi), pose[4u * row + 2u].w);
+    pose[4u * row + 3u] = vec4<f32>(0.0);
+    vel[2u * row] = vec4<f32>(vel[2u * row].xyz, speed / max(f32(n), 1.0));
+    // (half a cell a voxel, and a cell for what a row coming at it covers before the lattice's substeps see it)
+    vel[2u * row + 1u] = vec4<f32>(vel[2u * row + 1u].xyz, 0.5 * length(bhi - blo) + 1.5 + fast * tick);
+  }
   // the host lets it go (a lab's reset, a test)
   var drop = false;
   for (var c = 0u; c < EU.e.y; c++) {

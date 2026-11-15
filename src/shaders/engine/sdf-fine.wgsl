@@ -353,6 +353,11 @@ fn expand(@builtin(global_invocation_id) gid: vec3<u32>) {
   work[o + 13u] = pr.y;
   let ps = poseOf(s);
   let pf = poseOf(f);
+  // (a row whose rotation is the zero quaternion has no rigid shape — the engine's deforming bodies: no sample of
+  // either is tested; its voxels meet the other row's field themselves, engine_meet.wgsl)
+  if (dot(ps.quat, ps.quat) < 0.5 || dot(pf.quat, pf.quat) < 0.5) {
+    return;
+  }
   let dp = ps.pos - pf.pos;
   let ms = models[bodyModel[s]];
   let mf = models[bodyModel[f]];

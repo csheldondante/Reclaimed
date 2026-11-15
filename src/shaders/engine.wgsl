@@ -29,7 +29,7 @@
 //   RW_V, RW_W     its velocity and spin after gravity (f32 bits), for the terrain pass's weighing of a hit
 //   RW_ENERGY      a sleeper's hardest hit while stamped (f32 bits): `compact` weighs it for deformation as it wakes
 //   RW_WAKE        the tick a pair asked this sleeper to wake (`compact` wakes it the tick after)
-const RWW: u32 = 20u;
+const RWW: u32 = 40u;
 const RW_DV: u32 = 0u;
 const RW_DW: u32 = 3u;
 const RW_N: u32 = 6u;
@@ -40,6 +40,31 @@ const RW_V: u32 = 12u;
 const RW_W: u32 = 15u;
 const RW_ENERGY: u32 = 18u;
 const RW_WAKE: u32 = 19u;
+// what the deforming voxels touching this row gave it since it last took them (engine_meet.wgsl): velocity and spin
+// changes (i32, 1/FPM) — an awake row's taken by `integrate` at the next tick's start, a sleeper's stamped to wake by
+// `compact` — the contacts counted (a contact a voxel a lattice substep), last tick's count (the mass a contact may
+// take), the fastest closing among them (f32 bits), a sleeper's: what the voxels it stopped would have given it
+// (mass x closing, 1/256), and whether a voxel tougher than the row lies deep in it
+const RW_MDV: u32 = 20u;
+const RW_MDW: u32 = 23u;
+const RW_MN: u32 = 26u;
+const RW_MNP: u32 = 27u;
+const RW_MC: u32 = 28u;
+const RW_MP: u32 = 29u;
+const RW_MX: u32 = 30u;
+// The support a row has from the voxels under it. The reaction above comes a tick late (the lattice steps after the
+// rigid substeps), so a row resting on voxels would sink by a tick of gravity every tick, and voxels are never pushed
+// out. So what the voxels gave it is offered again before it moves: RW_MT the voxels touching it this tick and
+// RW_MNS the sum of their normals (i32, 1/1024) give the way it is held; RW_MCAP (f32 bits) is the most the hold may
+// take this tick — what the hold took last tick and what the voxels' reaction added along that way — and RW_MUSED
+// what it has taken so far. It only ever stops an approach, by no more than the voxels have shown they bear.
+const RW_MT: u32 = 31u;
+const RW_MNS: u32 = 32u;
+const RW_MCAP: u32 = 35u;
+const RW_MUSED: u32 = 36u;
+// (the way it is held this tick, three f32s, kept by the tick's first substep for the later ones)
+const RW_MH: u32 = 37u;
+const FPM: f32 = 1048576.0;
 const RF_TOUCH: u32 = 1u;
 const RF_HOLD: u32 = 2u;
 const RF_EXPAND: u32 = 4u;
@@ -56,7 +81,11 @@ const ROW_ALIVE: u32 = 1u;
 const ROW_ASLEEP: u32 = 2u;
 // (build step 2) its impact passed its material's threshold this tick: `expand` gives it particles (engine_deform.wgsl)
 const ROW_EXPAND: u32 = 4u;
-// its particles carry it (the lattice deforms it): no rigid kernel visits it till it settles
+// its particles carry it (the lattice deforms it): no rigid kernel moves it till it settles. It is in the awake list
+// all the same, so the coarse pass pairs it with the rows near it: its centre and bound radius are its voxels' (kept
+// by `slots`, engine_deform.wgsl) and its rotation is the zero quaternion, which tells the pair passes it has no rigid
+// shape (the coarse pass tests its sphere only, the fine pass gives it no samples: its voxels meet the rows of its
+// pairs themselves, engine_meet.wgsl)
 const ROW_DEFORM: u32 = 8u;
 // no room for its particles this tick: it stays rigid (cleared at the end of the next tick)
 const ROW_DENIED: u32 = 16u;
