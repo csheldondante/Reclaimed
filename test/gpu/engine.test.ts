@@ -4,6 +4,7 @@
 // Numbers for the DEVLOG: ENGINE_LOG=1 npx vitest run --project gpu engine --reporter=verbose
 import { afterAll, afterEach, beforeAll, expect, test } from 'vitest';
 import { Engine, EVENT_ROOM, type EngineBody, type EngineCell } from '../../src/engine/engine';
+import { kickOnEvents } from '../../src/engine/install';
 import { OP } from '../../src/sim/edit-ops';
 import { EventKind } from '../../src/sim/globals';
 import { TUNE } from '../../src/tune/params';
@@ -41,6 +42,7 @@ async function rig(col: (x: number, y: number) => Interval[], W = 32, H = 32, mo
   const e = new Engine(g.device, w.core.world, w.core.host.profiler);
   const sys = w.core.sim.systems;
   sys.splice(sys.findIndex((s) => s.name === 'surface') + 1, 0, e);
+  kickOnEvents(w.core.sim, e);
   const on = (s: { name: string }) => s.name === 'surface' || s.name === 'engine' || more.includes(s.name);
   const R: Rig = {
     w,

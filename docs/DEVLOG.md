@@ -24016,3 +24016,123 @@ level's glue (`scenes/level/housefall.ts`, one lot a tick), a "Drop a huge block
 `scripts/lab/townhouse.mjs`. The gate could not open the lab twice running (another worktree's GPU tests held the
 GPU: "the GPU never finished"; the commit before this one failed the same way at the same time). Parked here for
 the phone's frame time (the next entry); PA11 stays open till the gate has run and the stills are looked at.
+## 2026-11-15 — terrain contacts the cheap way: a row above the ground costs no terrain threads (PP4, `physics10-join`)
+
+**Why.** The owner: "Why is the ground check slow? Isn't it essentially just index into a height grid and then done if
+you are above it?" It was not: every awake row spent a workgroup of 64 threads on its samples each substep, each
+sample walking seven columns' intervals, wherever the row was. 1,000 rows in free flight cost 1.6 to 2.0 ms of terrain
+work on the desktop and 10,000 cost tens of ms.
+
+**What.** `engine_ground.wgsl`: `gtop`, a record a chunk of columns (the highest top in each 4 x 4 block and in the
+chunk), made on the GPU by `tground` (a thread a chunk, one direct dispatch a tick) from the columns' intervals, only
+where the chunk's column version changed. `integrate` tests each awake row once a substep: bound radius plus this
+substep's travel plus the contact reach plus half a cell, against the highest top under that footprint (16 records
+read at most). Above it: the row is flagged `RF_AIR`, gets no terrain threads, and its terrain rows are not read. The
+rest join the substep's terrain list and `tfine` runs a workgroup a listed row. A sample now reads the column's height
+first and walks the intervals only when it is under the top of a column with air under its top (the surface pass
+already kept that flag); `heightfield first` is on by default.
+
+**How fresh after an edit.** Versions are per tick and several kernels may write the columns in a tick, some after the
+engine. `tground` makes a chunk's record again whenever its version is this tick's or the last's, so the record is the
+columns as they were when the engine ran this tick, before any row is tested. It is never older than that, so a stale
+record cannot let a row skip.
+
+**Departures.** The ground tops are made from the columns, not from `WorldGpu.surface` (a chunk asleep may skip the
+surface pass). Two levels (blocks and chunks), not a full pyramid: a footprint wider than 4 x 4 chunks is always
+tested. A substep its own list and uniform (eight at most).
+
+**Measured** (desktop proxy, Dawn in Node, Intel Xe; GPU timestamps, the least of five ticks; the machine was shared
+with another agent's GPU tests, so two runs each): rows in free flight, none colliding, every row given terrain
+threads as before against the row test: 1,000 rows 1.44 and 4.39 ms to 0.52 and 0.66; 10,000 rows 32.4 and 7.9 to 5.1
+and 1.2; 50,000 rows 53.9 and 100.5 to 7.9 and 10.8. Terrain threads: zero in all three. `integrate` itself, the test
+included, is 0.13 ms at 10,000 rows and 0.7 to 1.05 at 50,000. What is left at 50,000 is `rowSolve` (4.1: twelve
+dispatches a tick over rows with nothing to solve), the coarse and fine passes (4.0) and `rowFinish` (1.3).
+
+**Tests.** `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots`: 13 files,
+123 passed. `engine-ground.test.ts`: 49 rows in free flight and one off the map are on no terrain list, are first seen on
+it before they touch (centre 11.07 over ground at 10, half height 1), land at 11.00 and sleep; cave floor 6.000 under a roof, roof and open
+ground 13.000; a block at 9 cells/s stops with its centre 0.8 short of a cliff face; dug under while two ticks from
+landing it falls on to the pit floor (3.00), stone built under it it stops on the new top (12.92). Bench:
+`GROUND_BENCH=1 npx vitest run --project gpu engine-ground -t bench --reporter=verbose`.
+
+## 2026-11-15 — asleep costs nothing: the quiet tick; the phone bench v2 (PP5, `physics10-join`)
+
+**Why.** 200 sleeping blocks cost 0.4 ms a tick by timestamps and the bench says the whole asleep tick is 2.56 (the first run) to 6.4 (the v2 run, a noisier machine) ms
+by the frame's GPU-done time on the desktop: with nothing awake the tick was still 146 dispatches, 136 of them
+indirect and each checked on the GPU before it runs. Nothing in that tick can do anything.
+
+**What.** The CPU already has what it needs: the event-chained read, and its own asks (every one calls `kick`). When
+the last read to land showed nothing awake, deforming, settling or growing and nothing was asked since, `encode`
+returns before it makes anything: no pass, no dispatch, no clear, no upload, no read. The frame's skin pass runs once
+more after the last whole tick (the draw list is placed whole) and is then left out too. The host's world events now
+reach the engine (`kickOnEvents`), which they did not (PJ2).
+
+**The gap, and the departure.** A sleeper whose ground a simulation changes on the GPU with no host event was noticed
+by `compact` every tick; a quiet engine does not run it. So every 60 quiet ticks `compact` alone runs (one direct
+dispatch) and the tick after it one read: a read a second while everything sleeps, against DESIGN §24's "only after
+edits or events". `Engine.watchEvery = 0` turns it off. For the owner to rule on (PP5a).
+
+**Measured, desktop proxy** (headless Chrome, Intel Xe, `enginebench.html` v2, the ladder; median GPU-done time less
+an empty frame's): the tick with 1,000 asleep and nothing awake, the gate off 2.56 (the first run) to 6.4 (the v2 run, a noisier machine) ms; quiet -0.9 (no different from the rows that encode nothing, -1.1 to -2.1 in the same run: its empty frames read about 1.5 ms slow) ms (0
+dispatches; before: 9 direct and 136 indirect, 6 clears, 8 uploads of 1,520 B). One awake among 1,000 asleep:
+3.1 to 3.4 ms, the tick as it stands (10 direct, 136 indirect, 7 clears). The awake tick's dispatches are not cut: PP6.
+
+**The phone bench, v2.** The ladder shows the asleep tick both ways; medians in place of means (a stalled frame moved
+a mean by milliseconds); the clears include the terrain lists' 128 B. Headless run 202 s, report written.
+
+**Tests.** `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots`: 13 files, 125 passed, 9 skipped.
+`engine-ground.test.ts`: 100 ticks asleep make nothing and issue no read (345 quiet ticks of the test's 632); an
+impulse brings the whole tick back; a dig under the sleeper drops it from 11.00 to 3.00; with no event told to the
+engine and a watch tick every 20, `compact` runs 4 or 5 times in 100 ticks, one read each, and the dug-out sleeper
+falls. `npm run typecheck`. Unit project: 630 passed, 1 failed (the roadlab writing lint, as on the base).
+
+## 2026-11-15 — stage 4 only while something deforms; the idle watch read off by default (PP8, PP5a, `physics10-join`)
+
+**Why.** The ladder put the floor on indirect dispatches, and 81 of the awake tick's 146 dispatches belong to a stage
+4 that nearly always has nothing to deform. And the watch tick's read (one a second while everything sleeps) is a
+timed read, which DESIGN §24 does not allow.
+
+**Stage 4.** Encoded only while the CPU has reason: the last read showed a body deforming or settling, a row waiting
+to deform, an expansion or a part since the read before; the host asked; 30 ticks after any of those; or the last
+read is over 12 ticks old. `compact` counts the rows that wait (flagged `ROW_EXPAND`) into the pool header's word 40.
+A flagged row is already frozen by the rigid kernels until `expand` runs, so a late gate delays a deformation and
+cannot lose one: 3 ticks late in the test, about 8 at worst with a frame a tick. The body hangs for that long at a
+first impact: to look at in the lab.
+
+**Measured** (desktop proxy, Dawn in Node, Intel Xe; a pass a kernel, the least of seven ticks; mixed blocks piling in
+a pit, held at tick 150): 200 blocks (102 awake, 85 pairs) 10 direct + 136 indirect to 9 + 56; 2.62 to 2.23 ms by GPU
+timestamps, 8.81 to 5.90 ms wall a tick. 1,000 blocks (1,000 awake, 1,405 pairs) the same counts; 3.21 to 3.15 ms by
+timestamps, 9.76 to 6.88 ms wall. The timestamps do not see what the gate saves (the check before each indirect
+dispatch is outside the kernels' passes); the wall time does, and the phone bench's whole-tick rows will.
+
+**The watch read.** Looked for a way the CPU learns that a simulation changed a chunk's columns without a read: there
+is none (the versions are bumped and consumed on the GPU). So `Engine.watchEvery` is 0 by default and the gap is
+logged for the owner: a sleeper undermined by a simulation alone, with no host event, wakes at the next host event.
+
+**Tests.** `engine-ground.test.ts`: one block awake at rest is 9 + 56 dispatches gated and 10 + 136 with the gate off;
+a block thrown down at 25 cells/s is flagged at tick 7, keeps its pose while it waits, and is expanded at tick 10;
+the watch tick is off by default. Bench page v3. Suites: see the commit.
+
+
+## 2026-11-15 — the phone: the join's quiet engine merged in (PA15, `physics10-atlas`)
+
+**Why.** The owner on the demo link, Pixel 9a: "It does not run well at all on my phone. It's very very slow.
+Unplayable really". This branch's engine encoded its whole tick every tick with nothing awake (about 146 dispatches,
+most indirect; an indirect dispatch costs about 0.1 ms on that phone whether it does work or not).
+**What.** Merged `physics10-join` f115d6b9: PP4 (terrain tops), PP5 (a quiet tick encodes nothing), PP8 (stage 4
+only while something deforms). Conflicts: `engine.ts` (both kept: the look's grain and `latticeMats`, PA10's hit
+ring in the join's `issueRead`), `engine.wgsl` (both sides used `EU.l.w`: the join's substep index stays there, the
+look's shock reach moved to a new word `EU.o.x`, the uniform 224 to 240 B), `transfers.ts` (the join's sites), two
+docs (both kept). `Engine.shift`, `add`, `wakeNear` and so the demo's buttons and the house swap all `kick()`.
+**Measured in the town** (`scripts/lab/townquiet.mjs`, Muru, desktop, `Engine.counts`): no rows: 0 passes, 0
+dispatches. The demo's twelve blocks falling: 1 pass, 9 direct + 56 indirect dispatches a tick. All asleep (4 s
+after the drop): 0 dispatches, 180 of 180 ticks quiet. A second drop after the quiet spell: 24 rows, 65 dispatches
+again, quiet again 8 s later. Still open for the phone: 56 indirect dispatches a tick while anything is awake.
+**The demo's other costs.** Its buttons read the surface back once a press, never a frame (PA6). The house glue
+reads nothing a frame (two reads of 36 B and 100 B after a hit). The URL needs no `q=low`: `main.ts` takes the low
+tier when `q` is absent, and `flags.ts` adds the phone's set on the low tier by itself (`tufts=0 shadowcache=4
+prepevery=2 bandh=2 shadowsize=512 hybrid=1 settle=0 sleepmore=1`).
+**Tests.** `npm run typecheck` clean. `npx vitest run --project gpu engine sdf`: 135 passed, 5 failed — the three
+`engine-energy` "a break gains no energy" (PM1, known); `engine-settle` "D: ... its pages return" (passed when run
+again alone); `engine-d0` D0.1 timed out at 60 s (passed alone in 84 s with a longer limit). Another worktree's GPU
+tests were running on the same GPU throughout: whether the merge slowed D0.1 is not known (PA16).

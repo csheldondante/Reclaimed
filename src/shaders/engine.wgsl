@@ -43,6 +43,8 @@ const RW_WAKE: u32 = 19u;
 const RF_TOUCH: u32 = 1u;
 const RF_HOLD: u32 = 2u;
 const RF_EXPAND: u32 = 4u;
+// (this substep) the row is clear of the ground: it has no terrain rows and none is read (engine_ground.wgsl)
+const RF_AIR: u32 = 8u;
 const FPV: f32 = 4096.0;
 const FPP: f32 = 65536.0;
 // the list's header word that is the sleep epoch (the coarse pass reads it: it goes up whenever a row falls asleep,
@@ -67,6 +69,9 @@ const ROW_LISTED_ASLEEP: u32 = 32u;
 const ROW_NEWSLEEP: u32 = 64u;
 // the pool's header word that asks for the draw list again (engine_deform.wgsl has the rest of the header)
 const P_DL_DIRTY: u32 = 20u;
+// the pool's header word `compact` adds to for every row it finds waiting to deform (ROW_EXPAND), each tick it waits:
+// it only ever goes up. The host reads it with the header and encodes stage 4 when it has moved (engine.ts s4Open)
+const P_EXPAND_WAIT: u32 = 40u;
 const NONE: u32 = 0xffffffffu;
 const NO_CONTACT: f32 = -1e8;
 // the list buffer (u32): [0] workgroups of 64 awake rows, [1] 1, [2] 1 (an indirect dispatch's arguments), [3] rows
@@ -109,15 +114,18 @@ struct EngU {
   j: vec4<u32>,
   // x still speed (cells/s), y still time (s), z crumb size (voxels), w the lattice's substep (s)
   k: vec4<f32>,
-  // x the lattice's solver iterations, y break face smoothing (f32 bits), z the lattice's substeps a tick, w the share
-  // of a hit's shock that passes a bond (f32 bits)
+  // x the lattice's solver iterations, y break face smoothing (f32 bits), z the lattice's substeps a tick, w which
+  // substep of the tick this is (the rigid rows': `integrate` and `tfine` keep a terrain list a substep)
   l: vec4<u32>,
   // (body against body, engine_pairs.wgsl) x a sleeper wakes when a hit's energy over its mass passes this, y the
-  // share of a pair's kept impulse it starts the next tick with, z what a rim row's depth is given back (cells), w spare
+  // share of a pair's kept impulse it starts the next tick with, z what a rim row's depth is given back (cells), w the
+  // margin of the row's test against the ground tops (cells; engine_ground.wgsl)
   m: vec4<f32>,
   // x the pair solver's iterations a substep, y the pairs' room, z the pair slots' room, w the old slots' room (a
   // growth's remap)
   n: vec4<u32>,
+  // (the merge of the look and the join: l.w is the substep's) x the share of a hit's shock that passes a bond, yzw spare
+  o: vec4<f32>,
 };
 // Numbers a material (engine.ts `thresholds`): [0..11] an impact's energy over the body's mass past which it deforms
 // (0: never); [12..23] the share of the speed into a contact a rigid row is given back (bounceAt: for the rigid solve,
@@ -142,6 +150,11 @@ struct EngCmd { a: vec4<f32>, b: vec4<u32> };
 fn rwAt(r: u32) -> u32 { return LIST_AT + EU.e.x + r * RWW; }
 // (the word after the last row's work words: the ticks in which a row was awake, counted on the GPU — engine_pairs.wgsl gTick)
 fn tickAt() -> u32 { return LIST_AT + EU.e.x * (1u + RWW); }
+// (after it: the rows that may touch the ground, a list a substep — written by `integrate`, read by `tfine`; its
+// dispatch arguments are words 4 s of a buffer of their own, engine_pairs.wgsl targs: a kernel cannot be dispatched
+// from a buffer it writes)
+fn tlAt(s: u32) -> u32 { return tickAt() + 4u + s * EU.e.x; }
+const TARGS_AT: u32 = 0u;
 fn rowFlags(r: u32) -> u32 { return bitcast<u32>(info[4u * r].w); }
 fn eqrot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   let t = 2.0 * cross(q.xyz, v);

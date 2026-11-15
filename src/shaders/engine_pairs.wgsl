@@ -51,6 +51,8 @@ struct PContact { a: u32, b: u32, energy: f32, mats: u32, point: vec3<f32>, dept
 @group(0) @binding(47) var<storage, read> missingIn: array<u32>;
 @group(0) @binding(48) var<storage, read> pimpOld: array<vec4<f32>>;
 @group(0) @binding(49) var<storage, read> slotRemap: array<u32>;
+// the terrain lists' dispatch arguments, four words a substep (count, 1, 1, spare); cleared by the host each tick
+@group(0) @binding(52) var<storage, read_write> targs: array<atomic<u32>>;
 
 const TSLOTS: u32 = 13u;
 const TEVENTS: u32 = 3u;
@@ -83,10 +85,12 @@ fn groundWalk(c: vec2<i32>, z: f32) -> Ground {
 fn groundAtE(c: vec2<i32>, z: f32) -> Ground {
   if (!inMap(c)) { return Ground(-1e9, false, 0.0, 0u); }
   if ((EU.e.w & 1u) != 0u) {
+    // (the height first: the surface pass's word and the loose run's depth give the column's top. The intervals are
+    // walked only for a point under the top of a column that has air under its top — a cave, an overhang)
     let s = surfaceIn[colIdxI(c)];
-    if (!sfGap(s)) {
-      let d = textureLoad(driftIn, texCol(c), 0);
-      let top = sfZ(s) + d.x;
+    let d = textureLoad(driftIn, texCol(c), 0);
+    let top = sfZ(s) + d.x;
+    if (!sfGap(s) || z >= top) {
       if (d.x > 0.0) { return Ground(top, z < top, 1.0, u32(d.z)); }
       return Ground(top, z < top, 0.0, sfMat(s));
     }
@@ -174,7 +178,11 @@ fn slopOf(r: u32) -> f32 {
 // A thread a row awake: the tick's start pose (the frame is drawn between it and now), gravity and the air.
 @compute @workgroup_size(64)
 fn integrate(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x == 0u && (EU.e.w & 2u) != 0u) { atomicAdd(&listA[tickAt()], 1u); }
+  if (id.x == 0u) {
+    if ((EU.e.w & 2u) != 0u) { atomicAdd(&listA[tickAt()], 1u); }
+    atomicStore(&targs[TARGS_AT + 4u * EU.l.w + 1u], 1u);
+    atomicStore(&targs[TARGS_AT + 4u * EU.l.w + 2u], 1u);
+  }
   if (id.x >= atomicLoad(&listA[3])) { return; }
   let r = atomicLoad(&listA[LIST_AT + id.x]);
   let b = rwAt(r);
@@ -202,6 +210,18 @@ fn integrate(@builtin(global_invocation_id) id: vec3<u32>) {
   atomicStore(&listA[b + RW_W], bitcast<u32>(w.x));
   atomicStore(&listA[b + RW_W + 1u], bitcast<u32>(w.y));
   atomicStore(&listA[b + RW_W + 2u], bitcast<u32>(w.z));
+  // One test a row before any sample gets a thread (engine_ground.wgsl): its bound's lowest point against the highest
+  // ground under its footprint, both widened by what it can travel this substep and a margin (the contact reach, and
+  // half a cell for a speed a hit gives it within the substep: it is tested again the next). Above it: no terrain
+  // rows this substep, and none read. Else it joins the substep's terrain list, a workgroup of `tfine` each.
+  let reach = w.w + length(v.xyz) * dt + EU.f.x + EU.m.w;
+  if (P.z - reach > groundTopUnder(P.xy, reach)) {
+    atomicOr(&listA[b + RW_FLAGS], RF_AIR);
+    return;
+  }
+  let ta = TARGS_AT + 4u * EU.l.w;
+  let k = atomicAdd(&targs[ta], 1u);
+  atomicStore(&listA[tlAt(EU.l.w) + k], r);
 }
 
 // ---- terrain contacts, reduced ---------------------------------------------------------------------------------------
@@ -270,15 +290,16 @@ fn bid(slot: u32, score: f32, s: u32) {
   atomicMax(&wBid[slot], (u32(clamp(score, 0.0, 1.0) * 4094.0 + 1.0) << 20u) | (s & 0xfffffu));
 }
 
-// A workgroup a row awake. Its 64 threads share its samples out; each sample's contacts bid for the row's contact
+// A workgroup a row of the substep's terrain list (the rows `integrate` could not show clear of the ground). Its 64 threads share its samples out; each sample's contacts bid for the row's contact
 // rows: the deepest on the ground and the farthest out along eight directions (they carry a resting or toppling
 // body's torque), and the deepest against a wall in each of four quarters. After the barrier a thread a slot writes
 // the winner. Past the erode depth in solid ground a sample is lost here (TEVENTS a substep; more wait a substep).
 @compute @workgroup_size(64)
 fn tfine(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  // (dispatched a workgroup a listed row exactly; the terrain list is never longer than the awake list)
   let on = wg.x < atomicLoad(&listA[3]);
   var r = 0u;
-  if (on) { r = atomicLoad(&listA[LIST_AT + wg.x]); }
+  if (on) { r = atomicLoad(&listA[tlAt(EU.l.w) + wg.x]); }
   let frozen = !on || (rowFlags(r) & ROW_EXPAND) != 0u;
   let m = bitcast<vec4<u32>>(info[4u * r + 2u]);
   let x = pose[4u * r + 2u].xyz;
@@ -760,7 +781,9 @@ fn rowSolve(@builtin(global_invocation_id) id: vec3<u32>) {
   if (!me.go) { return; }
   let P = pose[4u * r + 2u];
   var s = TS(me.v, me.w, false, 0.0, P.xyz, 0u);
-  s = terrainPass(r, P.xyz, pose[4u * r + 3u], P.w, info[4u * r].xyz, info[4u * r + 1u].xyz, s);
+  // (clear of the ground this substep: it has no terrain rows — what its row of `trow` holds is an older substep's)
+  let air = (atomicLoad(&listA[rwAt(r) + RW_FLAGS]) & RF_AIR) != 0u;
+  if (!air) { s = terrainPass(r, P.xyz, pose[4u * r + 3u], P.w, info[4u * r].xyz, info[4u * r + 1u].xyz, s); }
   vel[2u * r] = vec4<f32>(s.v, vel[2u * r].w);
   vel[2u * r + 1u] = vec4<f32>(s.w, vel[2u * r + 1u].w);
   // (a hit's energy is weighed at a row's first visit: kept for the finish's event)
@@ -854,11 +877,18 @@ fn rowFinish(@builtin(global_invocation_id) id: vec3<u32>) {
   var I1 = info[4u * r + 1u];
   let cellMass = info[4u * r + 2u].w;
   let tb = r * TRW;
-  let TH = bitcast<vec4<u32>>(trow[tb]);
-  var s = TS(me.v, me.w, false, trow[tb + 1u].y, x, u32(trow[tb + 1u].z));
+  // (clear of the ground this substep — `integrate`: no terrain rows, and what `trow` holds for it is not read)
+  let air = (rf0 & RF_AIR) != 0u;
+  var TH = vec4<u32>(0u);
+  var s = TS(me.v, me.w, false, 0.0, x, 0u);
+  if (!air) {
+    TH = bitcast<vec4<u32>>(trow[tb]);
+    s.hitE = trow[tb + 1u].y;
+    s.hitMat = u32(trow[tb + 1u].z);
+  }
   // (in pairs its terrain rows were visited every iteration; alone, every pass is here)
   let paired = (atomicLoad(&listA[rb + RW_N]) & 0xffff0000u) == ((gTick() & 0xffffu) << 16u);
-  let passes = select(EU.e.z, 1u, paired);
+  let passes = select(select(EU.e.z, 1u, paired), 0u, air);
   for (var it = 0u; it < passes; it++) { s = terrainPass(r, x, q, invM, I0.xyz, I1.xyz, s); }
   var v = s.v;
   var w = s.w;
@@ -875,7 +905,7 @@ fn rowFinish(@builtin(global_invocation_id) id: vec3<u32>) {
   let slop = slopOf(r);
   var over = 0.0;
   var overN = vec3<f32>(0.0, 0.0, 1.0);
-  for (var k = 0u; k < TSLOTS; k++) {
+  for (var k = 0u; k < select(TSLOTS, 0u, air); k++) {
     let c = trow[tb + 2u + 3u * k];
     if (trow[tb + 2u + 3u * k + 2u].w > 0.5 && c.w - slop > over) {
       over = c.w - slop;

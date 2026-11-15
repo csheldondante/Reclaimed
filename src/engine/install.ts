@@ -16,6 +16,17 @@ export interface EngineKit {
   clear(): void;
 }
 
+/**
+ * The host's edits reach the engine: a tick that sends the world an event (an edit, a blow) tells the engine something
+ * may have changed under its rows (`Engine.kick`), so a quiet engine looks again. Whoever puts an engine in a sim
+ * calls this (installEngine does; the tests' rigs and the bench do).
+ */
+export function kickOnEvents(sim: WorldCore['sim'], engine: Engine): void {
+  sim.eventTaps.push((sent) => {
+    if (sent.length) engine.kick();
+  });
+}
+
 export function installEngine(core: WorldCore): EngineKit {
   const device = core.host.gpu.device;
   const engine = new Engine(device, core.world, core.host.profiler);
@@ -23,6 +34,7 @@ export function installEngine(core: WorldCore): EngineKit {
   const at = sys.findIndex((s) => s.name === 'surface');
   if (at < 0) throw new Error('installEngine: the sim has no surface system');
   sys.splice(at + 1, 0, engine);
+  kickOnEvents(core.sim, engine);
   // (build step 2: one mesh a body in every state, listed and placed on the GPU — engine_draw.wgsl; the draw list and
   // its triangles are made again when they grow)
   let drawn = { out: engine.drawOut, args: engine.drawArgs };

@@ -1,6 +1,7 @@
 // The engine's test rig (test/gpu/engine-break.test.ts, engine-d0.test.ts, engine-settle.test.ts): a tiny world with
 // the surface pass and the engine stepping, and the engine's buffers read back (tests only: nothing in play reads them).
 import { DL_AT, Engine, PAGE, SLOT_W, type EngineCell } from '../../src/engine/engine';
+import { kickOnEvents } from '../../src/engine/install';
 import { Profiler } from '../../src/gpu/profiler';
 import type { Interval } from '../../src/world/layout';
 import { MAT } from '../../src/world/materials';
@@ -38,6 +39,11 @@ export async function breakRig(g: TestGpu, col: (x: number, y: number) => Interv
   const e = new Engine(g.device, w.core.world, prof, opts);
   const sys = w.core.sim.systems;
   sys.splice(sys.findIndex((s) => s.name === 'surface') + 1, 0, e);
+  kickOnEvents(w.core.sim, e);
+  // (stage 4's gate off in this rig: with it a body expands when a read has landed, a few ticks after its impact and
+  // not the same number every run, and the lattice's randomness is seeded by the tick — these tests' bounds were set
+  // on one seed. BACKLOG PP9. The gate has its own test: engine-ground.test.ts)
+  e.stage4Gate = false;
   const on = (s: { name: string }) => s.name === 'surface' || s.name === 'engine';
   const R: BreakRig = {
     w,
