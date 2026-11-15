@@ -94,7 +94,8 @@ struct EngU {
   f: vec4<f32>,
   // x the rows' room (every row slot is read by `compact`), y commands, z solver passes, w bits: 1 the heightfield
   // fast path, 2 the tick's first substep, 4 deformation on (build step 2), 8 still bodies settle into rows (letter D),
-  // 16 a hard hit between bodies, or a deep overlap, hands a body to stage 4 (engine_pairs.wgsl)
+  // 16 a hard hit between bodies, or a deep overlap, hands a body to stage 4 (engine_pairs.wgsl), 256 a bench's held
+  // scene (rowFinish moves nothing and nothing falls asleep: Engine.hold)
   e: vec4<u32>,
   // (build step 2, engine_deform.wgsl) x the pages' room, y the slots' room, z pages a slot's table holds, w the tick
   g: vec4<u32>,

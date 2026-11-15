@@ -108,7 +108,7 @@ export class SdfCollide {
    * The engine's form of `encode`, in two halves so its whole tick is one compute pass: `prepare` before the pass
    * begins (a growth a read asked for, the uniforms, the coarse pass's two GPU clears), then `encodeInto` inside it.
    */
-  prepare(enc: GPUCommandEncoder, rows: number, tick: number): void {
+  prepare(enc: GPUCommandEncoder, rows: number, tick: number, clears = true): { clears: number; uploads: number; uploadBytes: number } {
     const want: Rooms = { ...this.want };
     this.want = null;
     if (this.spread) {
@@ -121,12 +121,30 @@ export class SdfCollide {
     if (Object.keys(want).length) this.grow(want);
     this.coarse.setParams(rows);
     this.fine.setParams(this.coarse.pairRoom, tick);
-    this.coarse.clears(enc);
+    // (`clears` false: a bench leaving the coarse pass out of a held scene — its tables stay as they were)
+    if (clears) this.coarse.clears(enc);
+    return { clears: clears ? (rows ? 2 : 1) : 0, uploads: 3, uploadBytes: 144 };
   }
 
-  encodeInto(pass: GPUComputePassEncoder, inputs: CoarseInputs): void {
-    this.coarse.encodeInto(pass, inputs);
-    this.fine.encodeInto(pass, { ...this.coarse.finePairs, pose: inputs.pose, vel: inputs.vel, info: inputs.info, model: inputs.model });
+  /** `on`: (benches) a pass left out of a held scene; what it wrote the tick before stays. Returns the dispatches encoded */
+  encodeInto(pass: GPUComputePassEncoder, inputs: CoarseInputs, on: { coarse: boolean; fine: boolean } = { coarse: true, fine: true }): { direct: number; indirect: number } {
+    const n = { direct: 0, indirect: 0 };
+    // (the pass's own calls counted as they are made)
+    const counted = {
+      setPipeline: (p: GPUComputePipeline) => pass.setPipeline(p),
+      setBindGroup: (i: number, g: GPUBindGroup) => pass.setBindGroup(i, g),
+      dispatchWorkgroups: (x: number) => {
+        n.direct++;
+        pass.dispatchWorkgroups(x);
+      },
+      dispatchWorkgroupsIndirect: (b: GPUBuffer, o: number) => {
+        n.indirect++;
+        pass.dispatchWorkgroupsIndirect(b, o);
+      },
+    } as unknown as GPUComputePassEncoder;
+    if (on.coarse) this.coarse.encodeInto(counted, inputs);
+    if (on.fine) this.fine.encodeInto(counted, { ...this.coarse.finePairs, pose: inputs.pose, vel: inputs.vel, info: inputs.info, model: inputs.model });
+    return n;
   }
 
   /** a growth is waiting for the next `prepare` */

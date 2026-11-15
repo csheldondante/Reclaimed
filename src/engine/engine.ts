@@ -110,6 +110,19 @@ const ROW_ALIVE = 1;
 /** label passes a tick while a body settles (engine_settle.wgsl labelStep: a label crosses a part in a few) */
 const LABEL_PASSES = 8;
 
+/** the tick's stages a bench can leave out (Engine.skip): the six of the note, and what else a tick encodes */
+export type EngineStage = 'compact' | 'integrate' | 'coarse' | 'fine' | 'terrain' | 'solve' | 'sleep' | 'stage4' | 'draw';
+/** what a tick was made of (Engine.counts; docs/design/PHYSICS_ENGINE.md "Counts a tick") */
+export interface TickCounts {
+  passes: number;
+  direct: number;
+  indirect: number;
+  clears: number;
+  copies: number;
+  uploads: number;
+  uploadBytes: number;
+}
+
 /** A body's mass, centre and inverse inertia from its cells, and its surface cells (pure: test/unit/engine-bake.test.ts). */
 export function bakeBody(cells: readonly EngineCell[]): {
   com: V3;
@@ -383,6 +396,14 @@ export class Engine implements SimSystem {
   growPairs = true;
   private statBuf: GPUBuffer;
   private statBusy = false;
+  /** (benches: src/perf/enginebench.ts) stages left out of the tick. Only for a held scene (`hold`): what a stage left
+   *  out would have written stays as the tick before left it, so the stages after it do the same work */
+  skip: Partial<Record<EngineStage, boolean>> = {};
+  /** (benches) the scene is held: every stage does its work, but `rowFinish` leaves each row where it was, at rest and
+   *  awake — every tick is the tick after the one the hold began at (engine_pairs.wgsl rowFinish, EU.e.w bit 256) */
+  hold = false;
+  /** what the last tick encoded was made of (the skin pass apart) */
+  counts: TickCounts = { passes: 0, direct: 0, indirect: 0, clears: 0, copies: 0, uploads: 0, uploadBytes: 0 };
 
   constructor(
     private device: GPUDevice,
@@ -851,7 +872,7 @@ export class Engine implements SimSystem {
     const fast = this.fastPath ?? T.fastPath >= 0.5;
     const d = this.d;
     const L = Engine.layout(d);
-    u.set([d.rows, cmds, Math.max(1, Math.round(T.passes)), (fast ? 1 : 0) | (first ? 2 : 0) | (T.deform >= 0.5 ? 4 : 0) | (this.settles ? 8 : 0) | (T.pairExpand >= 0.5 ? 16 : 0)], 20);
+    u.set([d.rows, cmds, Math.max(1, Math.round(T.passes)), (fast ? 1 : 0) | (first ? 2 : 0) | (T.deform >= 0.5 ? 4 : 0) | (this.settles ? 8 : 0) | (T.pairExpand >= 0.5 ? 16 : 0) | (this.hold ? 256 : 0)], 20);
     u.set([d.pages, d.slots, d.table, this.ticks], 24);
     u.set([L.pageStack, L.slotStack, L.rowStack, L.sums], 28);
     u.set([L.pageInfo, L.slotRec, L.tables, this.dlRoom], 32);
@@ -974,11 +995,16 @@ export class Engine implements SimSystem {
     }
     this.watch();
     const pairs = TUNE.engine.pairs >= 0.5;
+    const skip = this.skip;
+    const n: TickCounts = (this.counts = { passes: 1, direct: 0, indirect: 0, clears: 0, copies: 0, uploads: 0, uploadBytes: 0 });
     let moved = false;
     if (pairs) {
       // (before the pass begins: a growth the read asked for, the pair passes' uniforms and two GPU clears)
       this.collide.coarse.margin = this.collide.fine.margin = TUNE.engine.nearGap;
-      this.collide.prepare(enc, this.d.rows, this.ticks);
+      const pc = this.collide.prepare(enc, this.d.rows, this.ticks, !skip.coarse);
+      n.clears += pc.clears;
+      n.uploads += pc.uploads;
+      n.uploadBytes += pc.uploadBytes;
       moved = this.pairRooms();
       if (!moved && this.pimpOld) {
         this.olds.push(this.pimpOld);
@@ -989,6 +1015,11 @@ export class Engine implements SimSystem {
     }
     const g = this.groups();
     const q = this.device.queue;
+    const up = (buf: GPUBuffer, data: ArrayBuffer | Float32Array) => {
+      q.writeBuffer(buf, 0, data as ArrayBuffer);
+      n.uploads++;
+      n.uploadBytes += data.byteLength;
+    };
     const take = this.cmds.splice(0, CMDS);
     const C = new ArrayBuffer(CMDS * 32);
     const cf = new Float32Array(C);
@@ -1000,30 +1031,47 @@ export class Engine implements SimSystem {
     });
     const ring = this.ring;
     this.ring = (ring + 1) % CMD_RING;
-    q.writeBuffer(this.cu[ring].ec, 0, C);
-    q.writeBuffer(this.cu[ring].eu, 0, this.uniform(false, take.length));
-    q.writeBuffer(this.eu[0], 0, this.uniform(true, 0));
-    q.writeBuffer(this.eu[1], 0, this.uniform(false, 0));
-    q.writeBuffer(this.et, 0, this.thresholds());
-    // (the list's header but its last word, the sleep epoch)
-    enc.clearBuffer(this.list, 0, (LIST_AT - 1) * 4);
-    enc.clearBuffer(this.rargs);
-    enc.clearBuffer(this.events, 0, EV_AT * 4);
-    enc.clearBuffer(this.dargs, 0, 32);
+    up(this.cu[ring].ec, C);
+    up(this.cu[ring].eu, this.uniform(false, take.length));
+    up(this.eu[0], this.uniform(true, 0));
+    up(this.eu[1], this.uniform(false, 0));
+    up(this.et, this.thresholds());
+    const clear = (buf: GPUBuffer, offset?: number, size?: number) => {
+      enc.clearBuffer(buf, offset, size);
+      n.clears++;
+    };
+    if (!skip.compact) {
+      // (the list's header but its last word, the sleep epoch)
+      clear(this.list, 0, (LIST_AT - 1) * 4);
+      clear(this.rargs);
+    }
+    clear(this.events, 0, EV_AT * 4);
+    clear(this.dargs, 0, 32);
     // (`timeKernels`: a pass a kernel, each with its own timestamps — what a tick is made of; else one pass)
     const cur = { pass: enc.beginComputePass({ label: 'engine', timestampWrites: this.prof.timestamps('engine') }) };
     const run = (name: string, group = name) => {
       if (this.timeKernels) {
         cur.pass.end();
         cur.pass = enc.beginComputePass({ label: `engine ${name}`, timestampWrites: this.prof.timestamps(`engine:${name}`) });
+        n.passes++;
       }
       const pass = cur.pass;
       pass.setPipeline(this.k[name].k.pipeline);
       pass.setBindGroup(0, g[group]);
       this.prof.dispatches++;
     };
-    run('compact', `compact${ring}`);
-    cur.pass.dispatchWorkgroups(Math.ceil(this.d.rows / 64));
+    const direct = (groups: number) => {
+      cur.pass.dispatchWorkgroups(groups);
+      n.direct++;
+    };
+    const indirect = (buf: GPUBuffer, offset: number) => {
+      cur.pass.dispatchWorkgroupsIndirect(buf, offset);
+      n.indirect++;
+    };
+    if (!skip.compact) {
+      run('compact', `compact${ring}`);
+      direct(Math.ceil(this.d.rows / 64));
+    }
     const sub = Math.max(1, Math.round(TUNE.engine.substeps));
     if (pairs) {
       // bodies meet bodies (engine_pairs.wgsl): integrate, the tick's pairs (coarse, fine: once, at the first
@@ -1032,75 +1080,84 @@ export class Engine implements SimSystem {
       const pd = this.collide.fine.pairDispatch;
       const rowsOf = (name: string, group = name) => {
         run(name, group);
-        cur.pass.dispatchWorkgroupsIndirect(this.rargs, 0);
+        indirect(this.rargs, 0);
       };
       const pairsOf = (name: string, group = name) => {
         run(name, group);
-        cur.pass.dispatchWorkgroupsIndirect(pd.buffer, pd.offset);
+        indirect(pd.buffer, pd.offset);
       };
       const iters = Math.max(1, Math.round(TUNE.engine.pairIters));
       for (let s = 0; s < sub; s++) {
-        rowsOf('integrate', s === 0 ? 'integrate0' : 'integrate');
+        if (!skip.integrate) rowsOf('integrate', s === 0 ? 'integrate0' : 'integrate');
         if (s === 0) {
           if (this.timeKernels) {
             cur.pass.end();
             cur.pass = enc.beginComputePass({ label: 'engine collide', timestampWrites: this.prof.timestamps('engine:collide') });
+            n.passes++;
           }
-          this.collide.encodeInto(cur.pass, { list: this.list, pose: this.pose, vel: this.vel, info: this.info, model: this.sdfModel, sleepEpoch: this.list });
-          this.prof.dispatches += 23;
+          const cc = this.collide.encodeInto(cur.pass, { list: this.list, pose: this.pose, vel: this.vel, info: this.info, model: this.sdfModel, sleepEpoch: this.list }, { coarse: !skip.coarse, fine: !skip.fine });
+          n.direct += cc.direct;
+          n.indirect += cc.indirect;
+          this.prof.dispatches += cc.direct + cc.indirect;
           if (moved) {
             run('pimpMove');
-            cur.pass.dispatchWorkgroups(Math.ceil(this.oldSlots / 64));
+            direct(Math.ceil(this.oldSlots / 64));
           }
-          pairsOf('pairPrep');
+          if (!skip.solve) pairsOf('pairPrep');
         }
-        run('tfine');
-        cur.pass.dispatchWorkgroupsIndirect(this.rargs, 16);
-        pairsOf('pairPre', s === 0 ? 'pairPre0' : 'pairPre');
-        for (let i = 0; i < iters; i++) {
-          pairsOf('pairSolve');
-          rowsOf('rowSolve');
+        if (!skip.terrain) {
+          run('tfine');
+          indirect(this.rargs, 16);
         }
-        pairsOf('pairPush');
-        rowsOf('rowFinish');
+        if (!skip.solve) {
+          pairsOf('pairPre', s === 0 ? 'pairPre0' : 'pairPre');
+          for (let i = 0; i < iters; i++) {
+            pairsOf('pairSolve');
+            rowsOf('rowSolve');
+          }
+          pairsOf('pairPush');
+        }
+        if (!skip.sleep) rowsOf('rowFinish');
       }
     } else {
       // (step 1's route, kept: each row over its own terrain contacts; bodies pass through each other)
       for (let s = 0; s < sub; s++) {
         run('fine');
-        cur.pass.dispatchWorkgroupsIndirect(this.list, 16);
+        indirect(this.list, 16);
         run('solve', s === 0 ? 'solve0' : 'solve');
-        cur.pass.dispatchWorkgroupsIndirect(this.list, 0);
+        indirect(this.list, 0);
       }
     }
-    if (TUNE.engine.deform >= 0.5) {
+    if (TUNE.engine.deform >= 0.5 && !skip.stage4) {
       // build step 2: rows into particles (the rows awake), the live pages listed and the new ones filled — the
       // per-page and per-slot kernels dispatched from the GPU's own count: nothing deforming, no workgroups
       run('expand');
-      cur.pass.dispatchWorkgroupsIndirect(this.list, 0);
+      indirect(this.list, 0);
       run('arm');
-      cur.pass.dispatchWorkgroups(1);
+      direct(1);
       run('pagelist');
-      cur.pass.dispatchWorkgroupsIndirect(this.kargs, 0);
+      indirect(this.kargs, 0);
       run('fill');
-      cur.pass.dispatchWorkgroupsIndirect(this.dargs, 0);
-      this.deform(cur, run);
+      indirect(this.dargs, 0);
+      this.deform(run, indirect);
       run('release');
-      cur.pass.dispatchWorkgroupsIndirect(this.kargs, 0);
+      indirect(this.kargs, 0);
       run('slots', `slots${ring}`);
-      cur.pass.dispatchWorkgroupsIndirect(this.kargs, 16);
+      indirect(this.kargs, 16);
     }
-    run('fold');
-    cur.pass.dispatchWorkgroupsIndirect(this.events, 0);
-    // the draw list, made again by the GPU only when a row came or went
-    run('drawArm');
-    cur.pass.dispatchWorkgroups(1);
-    run('drawlist');
-    cur.pass.dispatchWorkgroupsIndirect(this.kargs, 32);
-    run('drawlistAsleep');
-    cur.pass.dispatchWorkgroupsIndirect(this.kargs, 32);
-    run('drawEnd');
-    cur.pass.dispatchWorkgroups(1);
+    if (!skip.draw) {
+      run('fold');
+      indirect(this.events, 0);
+      // the draw list, made again by the GPU only when a row came or went
+      run('drawArm');
+      direct(1);
+      run('drawlist');
+      indirect(this.kargs, 32);
+      run('drawlistAsleep');
+      indirect(this.kargs, 32);
+      run('drawEnd');
+      direct(1);
+    }
     cur.pass.end();
   }
 
@@ -1125,11 +1182,11 @@ export class Engine implements SimSystem {
   }
 
   /** the lattice's substeps over the live pages, then the settling bodies' labels and parts (later letters of step 2) */
-  private deform(cur: { pass: GPUComputePassEncoder }, run: (name: string, group?: string) => void): void {
+  private deform(run: (name: string, group?: string) => void, indirect: (buf: GPUBuffer, offset: number) => void): void {
     const T = TUNE.engine;
     const each = (name: string) => {
       run(name);
-      cur.pass.dispatchWorkgroupsIndirect(this.dargs, 0);
+      indirect(this.dargs, 0);
     };
     const sub = this.holdLattice ? 0 : Math.max(1, Math.round(T.latticeSubsteps));
     const iters = Math.max(1, Math.round(T.latticeIters));
@@ -1151,11 +1208,11 @@ export class Engine implements SimSystem {
     // mesh kernels over the draw list (dl[12], zero otherwise)
     const settle = (name: string) => {
       run(name);
-      cur.pass.dispatchWorkgroupsIndirect(this.dargs, 16);
+      indirect(this.dargs, 16);
     };
     const tris = (name: string) => {
       run(name);
-      cur.pass.dispatchWorkgroupsIndirect(this.dl, 48);
+      indirect(this.dl, 48);
     };
     settle('labelInit');
     for (let i = 0; i < LABEL_PASSES; i++) settle('labelStep');

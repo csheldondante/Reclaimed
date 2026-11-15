@@ -897,6 +897,15 @@ fn rowFinish(@builtin(global_invocation_id) id: vec3<u32>) {
   // sleep, decided here: still for the rest time while touching the ground or a body
   if (touching && length(v) < EU.c.y && length(w) < EU.c.z) { still += dt; } else { still = 0.0; }
   var slept = false;
+  // (a bench's held scene, EU.e.w bit 256 — Engine.hold: the row stays where it was, at rest and awake, so every tick
+  // does this tick's work again)
+  if ((EU.e.w & 256u) != 0u) {
+    x = P.xyz;
+    q = pose[4u * r + 3u];
+    v = vec3<f32>(0.0);
+    w = vec3<f32>(0.0);
+    still = 0.0;
+  }
   if (still > EU.c.w && fl != 0u) {
     fl = fl | ROW_ASLEEP;
     v = vec3<f32>(0.0);

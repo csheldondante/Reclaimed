@@ -23707,3 +23707,31 @@ asked about.
 
 **Tests.** `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots`;
 `engine-pairs.test.ts` 8, `engine-pile.test.ts` 5 (and a bench behind `PAIRS_BENCH=1`).
+
+## 2026-11-15 — the joined engine's phone bench, first version (PP1, `physics10-join`)
+
+**Why.** The owner's phone says the collision path has a floor of about 1.8 ms that does not depend on the work, and
+asks what makes it. Timestamps cannot say on a tiler, so the page measures by difference: frames that encode a thing
+against frames that encode nothing, by the time from the submit to the GPU done with it.
+
+**What.** `enginebench.html` (`src/perf/enginebench.ts`): a 128 x 128 flat world with a pit, the surface pass and the
+engine, nothing else stepped. Three sections: the floor ladder, the stage split, the solver. The engine gained three
+things for it, none used in play: `Engine.counts` (what the last tick was made of, counted as it is encoded),
+`Engine.skip` (a stage left out) and `Engine.hold` (a scene held still: every stage works, `rowFinish` moves nothing,
+nothing falls asleep), so a stage can be left out without the scene changing under it and the stages after it are not
+starved (what the stage would have written stays as the tick before left it).
+
+**Measured, desktop proxy** (headless Chrome, Intel Xe, 412 x 915; the phone decides): a tick as it stood is 1 pass,
+9 direct and 136 indirect dispatches, 6 clears, 8 uploads of 1,520 B. 145 dispatches of a one-workgroup shader cost
+nothing measurable direct (-0.2 to 0.07 ms whether in one pass or a pass each, whether the pipeline is set each or
+once); **indirect, the same 145 cost 1.6 to 1.75 ms, with one workgroup or with none.** The clears and the uploads
+cost nothing measurable. The real tick with nothing awake among 1,000 asleep: 2.56 ms; with one awake 3.14. So on
+this desktop the floor is the indirect dispatches: WebGPU's implementation checks each one's arguments on the GPU
+before it runs (a hidden dispatch and two changes of pipeline for each). Stage 4's 75 idle dispatches alone are 2.0
+to 2.3 ms of a 4.6 to 6.5 ms tick; terrain contacts are 1.7 to 2.0 ms at 1,000 rows and 50 ms at 10,000 in free
+flight. Four ticks a frame cost more than four times one here (the frame then passes the display's refresh): no sign
+of a slow clock under light load on the desktop. Run time 192 s.
+
+**Tests.** `node scripts/enginebench.mjs --url https://localhost:5453` (exits non-zero on a page error or no report);
+`npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots` 119 passed.
+
