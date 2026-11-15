@@ -14,7 +14,7 @@
 // - Threads follow the overlap: a model's samples are sorted into bricks of 4 × 4 × 4 voxels at the bake, and only the
 //   bricks whose box reaches the other body's box (grown by the margin) get threads, a workgroup 16 samples.
 // - A model with more samples than `cap` has every stride-th sample tested a tick (stride = ceil(count / cap)), the
-//   offset turning with the tick: every sample is tested once in `stride` ticks.
+//   offset turning with the tick: every sample is tested once in `stride` ticks. Only the tick's samples get threads.
 // - Four contact rows a pair at most: the deepest sample, and the farthest out along three directions 120° apart
 //   across the line of centres. Three spread points carry a resting or toppling body's torque; the deepest is the
 //   corner or edge that hit. A row's normal is the mean of the pair's sample normals that point its way (the same
@@ -38,18 +38,19 @@ export interface FineOptions {
   margin?: number;
   /** groups of up to 16 samples (a brick of samples is one to four groups) a pass tests at most, all pairs together (default 64 a half pair, 4,096 at least); a group past it is counted as dropped */
   maxBricks?: number;
-  /** the normal read again at the contact's point on the field's surface (a measured variant, off by default) */
-  normalAtSurface?: boolean;
 }
 
-/** the engine's buffers the pass reads (contract.ts for each row) */
+/** the engine's buffers the pass reads (contract.ts "the engine's rows") */
 export interface FineInputs {
-  pairs: GPUBuffer;
+  /** (a, b) a pair; a GPUBufferBinding when the pairs sit past a header (the coarse pass's buffer) */
+  pairs: GPUBuffer | GPUBufferBinding;
   /** word 0: how many pairs */
-  pairCount: GPUBuffer;
+  pairCount: GPUBuffer | GPUBufferBinding;
   pose: GPUBuffer;
   vel: GPUBuffer;
   info: GPUBuffer;
+  /** a u32 a body row: its model row in the store */
+  model: GPUBuffer;
 }
 
 export const FINE_DEFAULT_CAP = 2048;
@@ -66,7 +67,6 @@ export class SdfFine {
   readonly maxBricks: number;
   cap: number;
   margin: number;
-  normalAtSurface: boolean;
 
   private params: GPUBuffer;
   private work: GPUBuffer;
@@ -86,15 +86,14 @@ export class SdfFine {
     this.maxPairs = opts.maxPairs;
     this.cap = opts.cap ?? FINE_DEFAULT_CAP;
     this.margin = opts.margin ?? FINE_DEFAULT_MARGIN;
-    this.normalAtSurface = opts.normalAtSurface ?? false;
     // (20 bits of half pair in a brick's word)
     if (this.maxPairs * 2 > 1 << 20) throw new Error(`SdfFine: ${this.maxPairs} pairs (at most ${1 << 19})`);
     this.maxBricks = opts.maxBricks ?? Math.max(4096, this.maxPairs * 2 * 64);
     const parts = [sdfFormatWgsl(models.format), modelWgsl, fineWgsl];
-    this.kExpand = makeCompute(device, 'sdf expand', parts, { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 8: 'rw' }, 'expand');
+    this.kExpand = makeCompute(device, 'sdf expand', parts, { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 6: 'read', 8: 'rw', 13: 'read' }, 'expand');
     this.kCull = makeCompute(device, 'sdf cull', parts, { 0: 'uniform', 7: 'rw', 8: 'rw', 9: 'read' }, 'cull');
     this.kArgs = makeCompute(device, 'sdf fine args', parts, { 0: 'uniform', 2: 'read', 7: 'rw', 11: 'rw' }, 'fineArgs');
-    this.kFine = makeCompute(device, 'sdf fine', parts, { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 7: 'rw', 8: 'rw', 9: 'read', 12: 'rw' }, 'fine');
+    this.kFine = makeCompute(device, 'sdf fine', parts, { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 8: 'rw', 9: 'read', 12: 'rw', 14: 'read' }, 'fine');
     this.kReduce = makeCompute(device, 'sdf reduce', parts, { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 7: 'rw', 8: 'rw', 9: 'read', 10: 'rw', 12: 'rw' }, 'reduce');
     const S = GPUBufferUsage.STORAGE;
     this.params = device.createBuffer({ label: 'sdf fine params', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -112,17 +111,17 @@ export class SdfFine {
 
   private bind(inputs: FineInputs): NonNullable<SdfFine['bound']> {
     const b = this.bound;
-    if (b && b.version === this.models.version && b.inputs.pairs === inputs.pairs && b.inputs.pairCount === inputs.pairCount && b.inputs.pose === inputs.pose && b.inputs.vel === inputs.vel && b.inputs.info === inputs.info) return b;
+    if (b && b.version === this.models.version && b.inputs.pairs === inputs.pairs && b.inputs.pairCount === inputs.pairCount && b.inputs.pose === inputs.pose && b.inputs.vel === inputs.vel && b.inputs.info === inputs.info && b.inputs.model === inputs.model) return b;
     const dev = this.device;
     const m = this.models;
     const rows = { 3: inputs.pose, 4: inputs.vel, 5: inputs.info };
     return (this.bound = {
       inputs: { ...inputs },
       version: m.version,
-      expand: makeBindGroup(dev, 'sdf expand', this.kExpand.layout, { 0: this.params, 1: inputs.pairs, 2: inputs.pairCount, ...rows, 6: m.models, 8: this.work }),
+      expand: makeBindGroup(dev, 'sdf expand', this.kExpand.layout, { 0: this.params, 1: inputs.pairs, 2: inputs.pairCount, 3: inputs.pose, 4: inputs.vel, 6: m.models, 8: this.work, 13: inputs.model }),
       cull: makeBindGroup(dev, 'sdf cull', this.kCull.layout, { 0: this.params, 7: this.counts, 8: this.work, 9: m.data }),
       args: makeBindGroup(dev, 'sdf fine args', this.kArgs.layout, { 0: this.params, 2: inputs.pairCount, 7: this.counts, 11: this.args }),
-      fine: makeBindGroup(dev, 'sdf fine', this.kFine.layout, { 0: this.params, ...rows, 7: this.counts, 8: this.work, 9: m.data, 12: this.hits }),
+      fine: makeBindGroup(dev, 'sdf fine', this.kFine.layout, { 0: this.params, ...rows, 8: this.work, 9: m.data, 12: this.hits, 14: this.args }),
       reduce: makeBindGroup(dev, 'sdf reduce', this.kReduce.layout, { 0: this.params, ...rows, 7: this.counts, 8: this.work, 9: m.data, 10: this.contacts, 12: this.hits }),
     });
   }
@@ -135,7 +134,7 @@ export class SdfFine {
   setParams(pairUpper: number, tick: number): void {
     const p = new ArrayBuffer(32);
     new Float32Array(p)[0] = this.margin;
-    new Uint32Array(p).set([Math.max(1, this.cap), tick >>> 0, this.normalAtSurface ? 1 : 0, this.maxBricks, this.maxPairs, Math.min(pairUpper, this.maxPairs), 0], 1);
+    new Uint32Array(p).set([Math.max(1, this.cap), tick >>> 0, 0, this.maxBricks, this.maxPairs, Math.min(pairUpper, this.maxPairs), 0], 1);
     this.device.queue.writeBuffer(this.params, 0, p);
   }
 

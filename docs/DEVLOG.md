@@ -23296,3 +23296,29 @@ across passes and across fresh bakes.
 
 **Not done.** No phone run. The input rows are still the note's, not `physics10`'s (the join list is in the note).
 `normalAtSurface` is a measured variant left in the code, off.
+
+## 2026-11-15 — the coarse pass built alone: exact, over budget; the fine pass's atomic load (PF14, PF16–PF21, `physics10-fine`)
+
+**What.** `src/engine/sdf/coarse.ts` and `sdf-coarse.wgsl`: a hash over body bounds with five levels (a body in one
+cell at the level that holds its diameter), an awake hash rebuilt every tick, a sleeper hash rebuilt only when the
+engine's sleep epoch changes, a pairs pass that writes each pair once with no sort, a sphere test then a 15-axis box
+test, pairs in the fine pass's layout. The fine pass reads the engine's rows as `physics10` has them, plus a model row
+a body. docs/design/PHYSICS_ENGINE.md "Round 3" has the scheme, the table and the stop.
+
+**Why stopped.** Main's line: about 0.3 ms at 4,096 rows with 10% awake. Measured 0.72 ms (loose field) and 4.2 ms
+(pile), desktop proxy (Intel Xe integrated, timestamps, median of 12, `SDF_BENCH=1 npx vitest run --project gpu
+sdf-coarse-bench`, `data/perf/sdf/coarse-bench.json`). The pair set is exact in every test. The cost is the longest
+single thread: a big awake body walking every smaller sleeper in its level's cells. Fewer awake rows cost more.
+
+**Measured choices.** Levels: 1 level 3.8 ms, 2 levels 1.6, 3 levels 1.4, 5 levels 1.6 to 1.8 (pile, 4,096 rows, all
+awake). Plain reads of the table in the pairs kernel and visiting only reachable cells: loose 4,096 / 446 awake went
+2.0 → 0.72 ms, pile 5.3 → 4.2.
+
+**The fine pass.** A per-thread atomic load of the group count was most of its cost: read from the indirect arguments
+instead, touching 16³ × 1,024 0.46 → 0.20 ms, × 4,096 1.97 → 0.59; deep 32³ × 256 2.16 → 0.92 (PF14). Reading a bid
+before the atomic write measured twice as slow (an atomic load is an interlocked operation on D3D): not done.
+
+**Tests** (Node, Dawn): `sdf-coarse` 7, `sdf-fine` 36 (12 a format), `sdf-bake` 15.
+
+**Not done.** The end-to-end scenes in `sdfbench.html`; the fine pass's dispatches sized by the pair count (PF19); a
+coarse pass inside the budget.

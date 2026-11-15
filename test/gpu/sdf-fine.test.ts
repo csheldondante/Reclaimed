@@ -374,7 +374,7 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('fine collision, %s', (
     const bodies = [bodyOf(box, 0, [0, 0, 0]), bodyOf(box, 0, [2.13, 1.21, 7.7]), bodyOf(box, 0, [40, 0, 0]), bodyOf(box, 0, [42.13, 1.21, 7.7])];
     // (the third pair is past the count: rows that must not be tested)
     const scene = makeScene(g, format, [box], bodies, [0, 1, 2, 3, 0, 1], { maxPairs: 4 });
-    g.device.queue.writeBuffer(scene.inputs.pairCount, 0, new Uint32Array([2]));
+    g.device.queue.writeBuffer(scene.inputs.pairCount as GPUBuffer, 0, new Uint32Array([2]));
     let r = await scene.run();
     expect(r.pairs.map((x) => x.samples > 60)).toEqual([true, true, false]);
     expect(r.pairs[2].rows.length).toBe(0);
@@ -424,26 +424,6 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('fine collision, %s', (
     scene.fine.cap = 1 << 16;
     expect((await scene.run(0)).sampleContacts).toBe(all.sampleContacts);
     scene.destroy();
-  });
-
-  test('variant, measured only: the normal read again at the contact’s point on the field’s surface', async () => {
-    const box = boxShape(8, 8, 8);
-    const ball = ballShape(12);
-    const dir: V3 = [1 / 3, 2 / 3, 2 / 3];
-    const scenes: [string, SdfModelSpec, BodyRow[], number[]][] = [
-      ['ball on ball', ball, [bodyOf(ball, 0, [0, 0, 0], axisAngle([1, 2, 3], 0.7)), bodyOf(ball, 0, [dir[0] * 11, dir[1] * 11, dir[2] * 11], axisAngle([3, 1, -2], 1.9))], dir.map((v) => -v)],
-      ['box face', box, [bodyOf(box, 0, [0, 0, 0]), bodyOf(box, 0, [2.13, 1.21, 7.7])], [0, 0, -1]],
-      ['box edge', box, [bodyOf(box, 0, [0, 0, 0]), bodyOf(box, 0, [0.3, 0.37, 4 + 4 * Math.SQRT2 - 0.4], axisAngle([0, 1, 0], Math.PI / 4))], [0, 0, -1]],
-      ['box corner', box, [bodyOf(box, 0, [0, 0, 0]), bodyOf(box, 0, [0.3, 0.2, 4 + 4 * Math.sqrt(3) - 0.5], axisAngle([1, -1, 0], Math.acos(1 / Math.sqrt(3))))], [0, 0, -1]],
-    ];
-    for (const [name, spec, bodies, truth] of scenes) {
-      const scene = makeScene(g, format, [spec], bodies, [0, 1], { normalAtSurface: true });
-      const r = await scene.run();
-      const e = r.rows.map((c) => angleDeg(c.normal, truth));
-      log(`NORMALS ${format} | ${name}, normal at the surface point | rows ${e.length}: mean ${mean(e).toFixed(1)}° max ${Math.max(...e).toFixed(1)}°`);
-      expect(r.rows.length).toBeGreaterThan(0);
-      scene.destroy();
-    }
   });
 
   test('the same scene twice gives the same rows, bit for bit, in the same places', async () => {

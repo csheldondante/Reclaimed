@@ -244,6 +244,74 @@ one thread a row over its own samples. What must change, and where:
 Items 1, 2 and 8 are small and mine to do at the merge; 3 to 7 are engine work that the note's stages 2 and 5
 already call for.
 
+### Round 3: the coarse pass (stage 2), built alone; exact, and over its budget (2026-11-15)
+
+**Stopped for main's attention: the coarse pass gives the exact pair set, but costs 0.7 ms at 4,096 rows with 10%
+awake in a loose field and 4.2 ms in a pile, against the 0.3 ms line.**
+
+**What is built** (`src/engine/sdf/coarse.ts`, `sdf-coarse.wgsl`; the owner: "Just make bounding boxes … I do like
+spatial hashes but not for fully voxelated things"). A hash over body bounds, never voxels. Each body is in exactly one
+cell: the cell of its centre at the level whose cells hold its bound diameter (five levels, each half the one above;
+the top holds the biggest body). So a big body's bucket never fills with the small ones round it, and a query is at
+most 27 cells a level. The awake hash is rebuilt every tick by the awake rows. The sleeper hash is rebuilt only in a
+tick whose sleep epoch differs (its dispatches have zero workgroups otherwise): a sleeper at its own level, and once
+more at every coarser level under a second key, so an awake body finds the sleepers smaller than itself in its own
+level's cells. The pairs pass is a thread an awake row and a level. A pair is written once with no sort: an awake pair
+by the row at the finer level (same level: the lower row), an awake row and a sleeper by the awake row, and an entry
+counts only when the body's own cell is the cell asked for. A candidate is a pair only if the bound spheres and then
+the models' oriented boxes (15 axes) overlap. Pairs go to one buffer with a 256 B header (the count) in the layout the
+fine pass reads; it has room for 8 pairs a row and is made again bigger with the rows, as the engine's row buffers
+are; pairs past the room are counted and the fine pass reports them.
+
+The fine pass now reads the engine's rows as `physics10` has them (pose at 4 vec4 a row, info at 3 with the inertia's
+off-diagonal, an inverse mass below zero as immovable) plus one buffer the engine lacks: a model row a body.
+
+**Tested** (7 coarse tests on Dawn): random scenes of mixed sizes (a 2³ crumb to a 32 × 32 × 8 slab; piles and loose
+fields; all awake and part asleep) give exactly the brute-force pair set, each pair once; the same set with 1, 2 or 5
+levels; all asleep: no pair and no workgroup but the gate's; a sleeper found by an awake body bigger or smaller, and
+the sleeper hash following the epoch; 10,000 rows with 200 awake; pairs past the room and bodies too big for the top
+level counted; the pairs fed to the fine pass.
+
+**Measured** (desktop proxy, Intel Xe integrated, timestamps, median of 12; mixed sizes; fine pass sized by the pair
+buffer's room, see below):
+
+| scene | rows | awake | coarse ms | pairs |
+|---|---|---|---|---|
+| loose | 1,024 | 103 | 0.66 | 28 |
+| loose | 1,024 | 1,024 | 0.33 | 133 |
+| loose | 4,096 | 446 | **0.72** | 131 |
+| loose | 4,096 | 4,096 | 0.46 | 609 |
+| loose | 16,384 | 1,740 | 1.25 | 476 |
+| loose | 16,384 | 16,384 | 1.18 | 2,409 |
+| pile | 1,024 | 103 | 2.8 | 229 |
+| pile | 4,096 | 446 | **4.2** | 1,016 |
+| pile | 4,096 | 4,096 | 1.6 | 5,701 |
+| pile | 16,384 | 1,740 | 5.8 | 4,549 |
+| pile | 16,384 | 16,384 | 3.7 | 23,152 |
+
+One level against several (pile, 4,096 rows, all awake): 1 level 3.8 ms, 2 levels 1.6, 3 levels 1.4, 5 levels 1.6 to
+1.8. So levels are needed (a crumb beside a slab), and three would do for this mix.
+
+**Why it is slow, as far as I got.** Fewer awake rows cost more, not less: the time is the longest single thread, not
+the sum. A big awake body walks the list of every smaller sleeper in its level's cells (46 cells wide at the top): a
+few hundred steps in one thread, and a thread's loop is serial (the same effect as the fine pass's brick loop, where
+729 steps cost 0.6 ms). Two things already done: the pairs kernel reads the table as plain words (an atomic load is an
+interlocked operation on D3D), and it visits only the cells a body of that level could reach from (8 of the 27, as a
+rule). What I would try next, none measured: sleepers kept in contiguous runs a cell (a counting sort when the epoch
+changes) so the pairs pass can be a thread a (row, run of 16) like the fine pass; or bigger sleepers' side doing the
+work for big awake bodies (a thread a sleeper near one). Both are design changes for main and the owner.
+
+**Found on the way, fixed.** The fine kernel read its group count with an atomic load in every thread. Read from the
+indirect arguments instead: touching 16³ × 1,024 went 0.46 → 0.20 ms, × 4,096 1.97 → 0.59 ms; deep 16³ × 256 0.46 →
+0.26, × 1,024 1.70 → 0.79, × 4,096 6.6 → 2.9; deep 32³ × 256 2.16 → 0.92 ms (PF14: now under round 1's 1.11). The cap
+is applied before a thread exists (only the tick's samples get threads). Reading a bid before writing it was twice as
+slow and is not done. The `normalAtSurface` variant is deleted.
+
+**Found on the way, not fixed.** The fine pass's expand, cull and reduce dispatches cover the pair buffer's room, not
+the pair count: with room for 65,536 pairs and 131 pairs, the fine pass costs 2.2 ms (PF19). They need indirect
+arguments from the count. The end-to-end numbers above are therefore not worth quoting, and the end-to-end scenes
+are not in `sdfbench.html` yet (PF20).
+
 **Considered, not chosen** (both from the same baked voxel model):
 
 - **Tree ↔ tree** (an octree over the voxels, about 5 KB a 16³ model): one thread a pair with a stack of node pairs.

@@ -92,6 +92,7 @@ export function makeScene(g: TestGpu, format: SdfFormat, specs: SdfModelSpec[], 
     pose: storage(g, 'test pose', packed.pose),
     vel: storage(g, 'test vel', packed.vel),
     info: storage(g, 'test info', packed.info),
+    model: storage(g, 'test model', packed.model),
   };
   const scene: Scene = {
     store,
@@ -104,9 +105,10 @@ export function makeScene(g: TestGpu, format: SdfFormat, specs: SdfModelSpec[], 
     setBodies(next) {
       scene.bodies = next;
       const p = packBodies(next);
-      g.device.queue.writeBuffer(inputs.pose, 0, p.pose);
+      g.device.queue.writeBuffer(inputs.pose as GPUBuffer, 0, p.pose);
       g.device.queue.writeBuffer(inputs.vel, 0, p.vel);
       g.device.queue.writeBuffer(inputs.info, 0, p.info);
+      g.device.queue.writeBuffer(inputs.model, 0, p.model);
     },
     async run(tick = 0) {
       const n = Math.min(pairs.length / 2, fine.maxPairs);

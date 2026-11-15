@@ -245,7 +245,9 @@ export function mirrorContacts(models: RefModel[], bodies: BodyRow[], pairs: Arr
         const ub = unrot(bb.quat, cross(rb, nw));
         const ia = ba.invInertia ?? [0, 0, 0];
         const ib = bb.invInertia ?? [0, 0, 0];
-        const w = ba.invMass + bb.invMass + ua[0] * ua[0] * ia[0] + ua[1] * ua[1] * ia[1] + ua[2] * ua[2] * ia[2] + ub[0] * ub[0] * ib[0] + ub[1] * ub[1] * ib[1] + ub[2] * ub[2] * ib[2];
+        const oa = ba.invInertiaOff ?? [0, 0, 0];
+        const ob = bb.invInertiaOff ?? [0, 0, 0];
+        const w = Math.max(ba.invMass, 0) + Math.max(bb.invMass, 0) + ua[0] * ua[0] * ia[0] + ua[1] * ua[1] * ia[1] + ua[2] * ua[2] * ia[2] + ub[0] * ub[0] * ib[0] + ub[1] * ub[1] * ib[1] + ub[2] * ub[2] * ib[2] + 2 * (oa[0] * ua[0] * ua[1] + oa[1] * ua[0] * ua[2] + oa[2] * ua[1] * ua[2]) + 2 * (ob[0] * ub[0] * ub[1] + ob[1] * ub[0] * ub[2] + ob[2] * ub[1] * ub[2]);
         const ap = Math.max(closing, 0);
         out.push({ a, b, energy: w > 0 ? (0.5 * ap * ap) / w : 0, matA: ba.material ?? 0, matB: bb.material ?? 0, point, depth: -gap * mf.voxel, normal: nw, closing, way, sample: word, gapVox: gap, q, ball, vrel: sub(va, vb) });
       }

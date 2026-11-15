@@ -22,7 +22,8 @@
 // in the data].
 //   0-11  three rows of the 3 x 4 transform: sampler padded-voxel point -> field coordinate (voxel centres at integers)
 //   12 a   13 b   14 the sampler's first sample (a word index in the data)   15 its sample count
-//   16 the sample stride (1: every sample every tick) | way << 31; 0: the half pair is not tested
+//   16 the sample stride (1: every sample every tick; s: this tick, the samples at places = tick mod s in the model's
+//      list) | way << 31; 0: the half pair is not tested
 //   17 fieldBase   18 dims   19 f32 sampler voxels in field voxels   20 f32 margin in field voxels
 //   21-23 f32 the field model's centre of mass   24 f32 the field model's cells a voxel
 //   25 the sampler's brick table (a word index in the data)   26 the sampler's dims
@@ -45,14 +46,13 @@ struct FineParams {
   margin: f32,
   cap: u32,
   tick: u32,
-  // bit 0: the normal read again at the contact's point on the field's surface
-  flags: u32,
+  pad0: u32,
   maxChunks: u32,
   maxPairs: u32,
   pairUpper: u32,
   pad: u32,
 }
-// (contract.ts: bodyPose, bodyVel, bodyInfo, 32 B each)
+// (contract.ts "the engine's rows": the layout of physics10's engine.wgsl)
 struct BodyPose {
   pos: vec3<f32>,
   invMass: f32,
@@ -60,17 +60,8 @@ struct BodyPose {
 }
 struct BodyVel {
   lin: vec3<f32>,
-  rest: f32,
   ang: vec3<f32>,
   radius: f32,
-}
-struct BodyInfo {
-  invInertia: vec3<f32>,
-  material: u32,
-  flags: u32,
-  priority: u32,
-  model: u32,
-  grid: u32,
 }
 // (contract.ts "A contact row", 48 B)
 struct Contact {
@@ -87,9 +78,9 @@ struct Contact {
 @group(0) @binding(0) var<uniform> P: FineParams;
 @group(0) @binding(1) var<storage, read> pairs: array<vec2<u32>>;
 @group(0) @binding(2) var<storage, read> pairCount: array<u32>;
-@group(0) @binding(3) var<storage, read> pose: array<BodyPose>;
-@group(0) @binding(4) var<storage, read> vel: array<BodyVel>;
-@group(0) @binding(5) var<storage, read> info: array<BodyInfo>;
+@group(0) @binding(3) var<storage, read> pose: array<vec4<f32>>;
+@group(0) @binding(4) var<storage, read> vel: array<vec4<f32>>;
+@group(0) @binding(5) var<storage, read> info: array<vec4<f32>>;
 @group(0) @binding(6) var<storage, read> models: array<SdfModel>;
 // (contract.ts COUNT_*)
 @group(0) @binding(7) var<storage, read_write> counts: array<atomic<u32>, 8>;
@@ -98,6 +89,32 @@ struct Contact {
 @group(0) @binding(10) var<storage, read_write> contacts: array<Contact>;
 @group(0) @binding(11) var<storage, read_write> args: array<u32>;
 @group(0) @binding(12) var<storage, read_write> hits: array<atomic<u32>>;
+// (the args again, read only, for the fine kernel: word 3 is the group count)
+@group(0) @binding(14) var<storage, read> argsR: array<u32>;
+// (the model row of each body row)
+@group(0) @binding(13) var<storage, read> bodyModel: array<u32>;
+
+fn poseOf(r: u32) -> BodyPose {
+  let c = pose[4u * r + 2u];
+  // (an inverse mass below zero is a row that cannot be moved)
+  return BodyPose(c.xyz, max(c.w, 0.0), pose[4u * r + 3u]);
+}
+
+fn velOf(r: u32) -> BodyVel {
+  let a = vel[2u * r + 1u];
+  return BodyVel(vel[2u * r].xyz, a.xyz, a.w);
+}
+
+/** u . (inverse inertia of row r) u, u in the body's frame: the diagonal and the off-diagonal (xy, xz, yz) */
+fn invInertiaOn(r: u32, u: vec3<f32>) -> f32 {
+  let d = info[3u * r].xyz;
+  let o = info[3u * r + 1u].xyz;
+  return dot(u * d, u) + 2.0 * (o.x * u.x * u.y + o.y * u.x * u.z + o.z * u.y * u.z);
+}
+
+fn materialOf(r: u32) -> u32 {
+  return bitcast<u32>(info[3u * r + 2u].z);
+}
 
 fn quatMat(q: vec4<f32>) -> mat3x3<f32> {
   let x = q.x; let y = q.y; let z = q.z; let w = q.w;
@@ -136,15 +153,15 @@ fn expand(@builtin(global_invocation_id) gid: vec3<u32>) {
   let o = h * HP_WORDS;
   work[o + 12u] = pr.x;
   work[o + 13u] = pr.y;
-  let ps = pose[s];
-  let pf = pose[f];
-  let reach = vel[s].radius + vel[f].radius + P.margin;
+  let ps = poseOf(s);
+  let pf = poseOf(f);
+  let reach = velOf(s).radius + velOf(f).radius + P.margin;
   let dp = ps.pos - pf.pos;
   if (dot(dp, dp) > reach * reach) {
     return;
   }
-  let ms = models[info[s].model];
-  let mf = models[info[f].model];
+  let ms = models[bodyModel[s]];
+  let mf = models[bodyModel[f]];
   let count = ms.sampleCount;
   if (count == 0u) {
     return;
@@ -205,6 +222,8 @@ fn cull(@builtin(global_invocation_id) gid: vec3<u32>) {
   let margin = bitcast<f32>(work[o + 20u]);
   let scale = bitcast<f32>(work[o + 19u]);
   let list = P.maxPairs * 2u * HP_WORDS;
+  let stride = work[o + 16u] & 0x7fffffffu;
+  let phase = P.tick % stride;
   for (var bx = 0u; bx < bd.x; bx++) {
     let b = bx + bd.x * (gid.y + bd.y * gid.z);
     let lo = vec3<u32>(bx, gid.y, gid.z) * 4u;
@@ -220,15 +239,21 @@ fn cull(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (n == 0u) {
       continue;
     }
+    // (a model past the cap: only this tick's samples get threads, every stride-th by its place in the model's list)
+    let lead = (stride + phase - begin % stride) % stride;
+    if (lead >= n) {
+      continue;
+    }
+    let m = (n - lead + stride - 1u) / stride;
     // (a workgroup of the fine pass takes GROUP samples: a brick is one to four of them)
-    for (var s = 0u; s < n; s += GROUP) {
+    for (var s = 0u; s < m; s += GROUP) {
       let k = atomicAdd(&counts[2], 1u);
       if (k >= P.maxChunks) {
         atomicAdd(&counts[3], 1u);
         continue;
       }
-      work[list + 2u * k] = h | (min(GROUP, n - s) << 20u);
-      work[list + 2u * k + 1u] = first + begin + s;
+      work[list + 2u * k] = h | (min(GROUP, m - s) << 20u);
+      work[list + 2u * k + 1u] = first + begin + lead + s * stride;
     }
   }
 }
@@ -239,6 +264,7 @@ fn fineArgs() {
   args[0] = min(n, ARGS_ROW);
   args[1] = (n + ARGS_ROW - 1u) / ARGS_ROW;
   args[2] = 1u;
+  args[3] = n;
   // (pairs the coarse stage wrote past this pass's room: not tested, counted)
   atomicStore(&counts[1], pairCount[0] - min(pairCount[0], P.maxPairs));
 }
@@ -335,14 +361,7 @@ fn hitOf(h: u32, at: u32) -> Hit {
     return out;
   }
   let com = vec3<f32>(bitcast<f32>(work[o + 21u]), bitcast<f32>(work[o + 22u]), bitcast<f32>(work[o + 23u]));
-  var g = fs.xyz;
-  if ((P.flags & 1u) != 0u) {
-    // (the normal at the contact's point on the field's surface, not at the sample)
-    let gl0 = length(g);
-    if (gl0 > 1e-4) {
-      g = fieldSample(base, dims, clamp(qc - g / gl0 * d, vec3<f32>(0.0), hi)).xyz;
-    }
-  }
+  let g = fs.xyz;
   let gl = length(g);
   var n: vec3<f32>;
   if (gl > 1e-4) {
@@ -367,19 +386,19 @@ fn hitOf(h: u32, at: u32) -> Hit {
   let way = tw >> 31u;
   let a = work[o + 12u];
   let b = work[o + 13u];
-  let pf = pose[select(b, a, way == 1u)];
+  let pf = poseOf(select(b, a, way == 1u));
   let voxel = bitcast<f32>(work[o + 24u]);
   // midway between the sampler's surface (q - n * ball) and the field's (q - n * d)
   let mid = q - n * (0.5 * (d + ball));
   let point = pf.pos + rot(pf.quat, (mid + vec3<f32>(0.5) - com) * voxel);
   // (from b towards a: the field's outward normal when a gives the samples)
   let nw = rot(pf.quat, n) * select(1.0, -1.0, way == 1u);
-  let pa = pose[a];
-  let pb = pose[b];
+  let pa = poseOf(a);
+  let pb = poseOf(b);
   let ra = point - pa.pos;
   let rb = point - pb.pos;
-  let va = vel[a];
-  let vb = vel[b];
+  let va = velOf(a);
+  let vb = velOf(b);
   let ua = unrot(pa.quat, cross(ra, nw));
   let ub = unrot(pb.quat, cross(rb, nw));
   out.ok = true;
@@ -389,7 +408,7 @@ fn hitOf(h: u32, at: u32) -> Hit {
   out.normal = nw;
   out.depth = -gap * voxel;
   out.vrel = (va.lin + cross(va.ang, ra)) - (vb.lin + cross(vb.ang, rb));
-  out.w = pa.invMass + pb.invMass + dot(ua * info[a].invInertia, ua) + dot(ub * info[b].invInertia, ub);
+  out.w = pa.invMass + pb.invMass + invInertiaOn(a, ua) + invInertiaOn(b, ub);
   return out;
 }
 
@@ -419,10 +438,19 @@ fn bid(score: f32, id: u32) -> u32 {
   return ((1u + u32(clamp(score, 0.0, 1.0) * 32766.0)) << 17u) | id;
 }
 
+/** a bid for a word that keeps the largest (no read first: on D3D an atomic load is itself an interlocked
+ *  operation, and reading before writing measured twice as slow) */
+fn bidFor(i: u32, v: u32) {
+  if (v != 0u) {
+    atomicMax(&hits[i], v);
+  }
+}
+
 @compute @workgroup_size(16)
 fn fine(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
   let ci = wg.y * ARGS_ROW + wg.x;
-  if (ci >= min(atomicLoad(&counts[2]), P.maxChunks)) {
+  // (the group count from the args, a plain read: an atomic load a thread is an interlocked operation on D3D)
+  if (ci >= argsR[3]) {
     return;
   }
   let list = P.maxPairs * 2u * HP_WORDS;
@@ -432,24 +460,19 @@ fn fine(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
   }
   let h = cw & 0xfffffu;
   let o = h * HP_WORDS;
-  let at = work[list + 2u * ci + 1u] + li;
   let tw = work[o + 16u];
+  let at = work[list + 2u * ci + 1u] + li * (tw & 0x7fffffffu);
   let gi = at - work[o + 14u];
-  let stride = tw & 0x7fffffffu;
-  if (stride > 1u && gi % stride != P.tick % stride) {
-    return;
-  }
   let c = hitOf(h, at);
   if (!c.ok) {
     return;
   }
   let pi = h >> 1u;
   let r = pi * PH_WORDS;
-  atomicAdd(&hits[r + 4u], 1u);
   let approach = max(-dot(c.vrel, c.normal), 0.0);
-  atomicMax(&hits[r + 5u], bitcast<u32>(select(0.0, 0.5 * approach * approach / c.w, c.w > 0.0)));
-  let pa = pose[c.a];
-  let pb = pose[c.b];
+  bidFor(r + 5u, bitcast<u32>(select(0.0, 0.5 * approach * approach / c.w, c.w > 0.0)));
+  let pa = poseOf(c.a);
+  let pb = poseOf(c.b);
   let fr = pairFrame(pa.pos, pb.pos);
   let bin = r + 8u + binOf(c.normal * fr) * 4u;
   let fx = vec3<i32>(round(c.normal * 1024.0));
@@ -458,15 +481,15 @@ fn fine(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
   atomicAdd(&hits[bin + 2u], bitcast<u32>(fx.z));
   atomicAdd(&hits[bin + 3u], 1u);
   // the bids: the deepest; the farthest out along three directions 120 degrees apart, across the line of centres
-  let reach = vel[c.a].radius + vel[c.b].radius + P.margin;
+  let reach = velOf(c.a).radius + velOf(c.b).radius + P.margin;
   let id = ((tw >> 31u) << 16u) | (gi & 0xffffu);
   let t1 = fr[1];
   let t2 = fr[2];
   let rel = (c.point - 0.5 * (pa.pos + pb.pos)) / reach;
-  atomicMax(&hits[r], bid((c.depth + P.margin) / (reach + P.margin), id));
-  atomicMax(&hits[r + 1u], bid(0.5 + 0.5 * dot(rel, t1), id));
-  atomicMax(&hits[r + 2u], bid(0.5 + 0.5 * dot(rel, -0.5 * t1 + 0.8660254 * t2), id));
-  atomicMax(&hits[r + 3u], bid(0.5 + 0.5 * dot(rel, -0.5 * t1 - 0.8660254 * t2), id));
+  bidFor(r, bid((c.depth + P.margin) / (reach + P.margin), id));
+  bidFor(r + 1u, bid(0.5 + 0.5 * dot(rel, t1), id));
+  bidFor(r + 2u, bid(0.5 + 0.5 * dot(rel, -0.5 * t1 + 0.8660254 * t2), id));
+  bidFor(r + 3u, bid(0.5 + 0.5 * dot(rel, -0.5 * t1 - 0.8660254 * t2), id));
 }
 
 @compute @workgroup_size(64)
@@ -477,7 +500,12 @@ fn reduce(@builtin(global_invocation_id) gid: vec3<u32>) {
     return;
   }
   let r = pi * PH_WORDS;
-  let found = atomicLoad(&hits[r + 4u]);
+  // (the pair's sample contacts: the six bins' counts)
+  var found = 0u;
+  for (var k = 0u; k < 6u; k++) {
+    found += atomicLoad(&hits[r + 11u + k * 4u]);
+  }
+  atomicStore(&hits[r + 4u], found);
   if (found == 0u) {
     return;
   }
@@ -503,7 +531,7 @@ fn reduce(@builtin(global_invocation_id) gid: vec3<u32>) {
       continue;
     }
     // the normal: the mean of the pair's sample normals that point the same way as this one
-    let bin = r + 8u + binOf(c.normal * pairFrame(pose[c.a].pos, pose[c.b].pos)) * 4u;
+    let bin = r + 8u + binOf(c.normal * pairFrame(poseOf(c.a).pos, poseOf(c.b).pos)) * 4u;
     let sum = vec3<f32>(vec3<i32>(bitcast<i32>(atomicLoad(&hits[bin])), bitcast<i32>(atomicLoad(&hits[bin + 1u])), bitcast<i32>(atomicLoad(&hits[bin + 2u]))));
     let sl = length(sum);
     let n = select(c.normal, sum / sl, sl > 1.0);
@@ -511,7 +539,7 @@ fn reduce(@builtin(global_invocation_id) gid: vec3<u32>) {
     row.a = c.a;
     row.b = c.b;
     row.energy = energy;
-    row.mats = (info[c.a].material & 0xffffu) | (info[c.b].material << 16u);
+    row.mats = (materialOf(c.a) & 0xffffu) | (materialOf(c.b) << 16u);
     row.point = c.point;
     row.depth = c.depth;
     row.normal = n;

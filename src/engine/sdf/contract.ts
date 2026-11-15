@@ -26,15 +26,22 @@ export type SdfFormat = 'f32' | 'snorm8' | 'grad8';
 /** the snorm8 field's steps a voxel */
 export const SDF_SNORM_SCALE = 16;
 
-// ---- inputs (the note's stage 1 and 2 rows; owned by the engine's integration and coarse stages) ----
+// ---- inputs: the engine's rows (the layout of physics10's src/shaders/engine.wgsl, read at c6f1bab7) ----
+//   pose[4r]     last tick's centre (not read here)        pose[4r+1]  last tick's rotation (not read here)
+//   pose[4r+2]   xyz centre of mass, w inverse mass (below zero: a row that cannot be moved)
+//   pose[4r+3]   rotation (quat xyzw, body frame -> world)
+//   vel[2r]      xyz velocity, w rest timer                 vel[2r+1]   xyz spin (world), w bound radius (cells)
+//   info[3r]     xyz inverse inertia's diagonal (body frame), w flags (u32 bits: ROW_ALIVE, ROW_ASLEEP)
+//   info[3r+1]   xyz its off-diagonal (xy, xz, yz), w mass
+//   info[3r+2]   u32 bits: first sample, samples, material, cells (only the material is read here)
+// and one buffer the engine does not have yet: `model`, a u32 a row, its model row in the store.
 
-/** bodyPose, 32 B: pos xyz (cells), inverse mass; quat xyzw */
-export const BODY_POSE_BYTES = 32;
-/** bodyVel, 32 B: linear xyz, rest timer; angular xyz (world), bound radius (cells, about pos) */
-export const BODY_VEL_BYTES = 32;
-/** bodyInfo, 32 B: inverse inertia xyz (body frame diagonal), material u32; flags u32, priority u32, model row u32, grid id u32 */
-export const BODY_INFO_BYTES = 32;
-/** pairs, 8 B: body rows a, b (u32 each). The count is word 0 of a separate buffer. */
+export const POSE_FLOATS = 16;
+export const VEL_FLOATS = 8;
+export const INFO_FLOATS = 12;
+export const ROW_ALIVE = 1;
+export const ROW_ASLEEP = 2;
+/** pairs, 8 B: body rows a, b (u32 each). The count is word 0 of a buffer (the coarse pass keeps both in one: a 16 B header, then the pairs) */
 export const PAIR_BYTES = 8;
 
 export interface BodyRow {
@@ -46,25 +53,31 @@ export interface BodyRow {
   /** bound radius about pos, cells */
   radius: number;
   invInertia?: [number, number, number];
+  /** the inverse inertia's off-diagonal (xy, xz, yz) */
+  invInertiaOff?: [number, number, number];
   material?: number;
   model: number;
+  asleep?: boolean;
+  /** a freed row (not alive) */
+  dead?: boolean;
 }
 
-/** the three body buffers' bytes for `rows` (tests, benches; the engine's integration stage writes its own) */
-export function packBodies(rows: BodyRow[]): { pose: Float32Array; vel: Float32Array; info: ArrayBuffer } {
-  const pose = new Float32Array(rows.length * 8);
-  const vel = new Float32Array(rows.length * 8);
-  const info = new ArrayBuffer(rows.length * BODY_INFO_BYTES);
-  const f = new Float32Array(info);
-  const u = new Uint32Array(info);
+/** the engine's row buffers' bytes for `rows` (tests, benches; the engine's integration stage writes its own) */
+export function packBodies(rows: BodyRow[]): { pose: Float32Array; vel: Float32Array; info: Float32Array; model: Uint32Array } {
+  const pose = new Float32Array(rows.length * POSE_FLOATS);
+  const vel = new Float32Array(rows.length * VEL_FLOATS);
+  const info = new Float32Array(rows.length * INFO_FLOATS);
+  const iu = new Uint32Array(info.buffer);
+  const model = new Uint32Array(rows.length);
   rows.forEach((r, i) => {
-    pose.set([...r.pos, r.invMass, ...r.quat], i * 8);
-    vel.set([...(r.lin ?? [0, 0, 0]), 0, ...(r.ang ?? [0, 0, 0]), r.radius], i * 8);
-    f.set(r.invInertia ?? [0, 0, 0], i * 8);
-    u[i * 8 + 3] = r.material ?? 0;
-    u[i * 8 + 6] = r.model;
+    pose.set([...r.pos, 0, ...r.quat, ...r.pos, r.invMass, ...r.quat], i * POSE_FLOATS);
+    vel.set([...(r.lin ?? [0, 0, 0]), 0, ...(r.ang ?? [0, 0, 0]), r.radius], i * VEL_FLOATS);
+    info.set([...(r.invInertia ?? [0, 0, 0]), 0, ...(r.invInertiaOff ?? [0, 0, 0]), r.invMass > 0 ? 1 / r.invMass : 0], i * INFO_FLOATS);
+    iu[i * INFO_FLOATS + 3] = (r.dead ? 0 : ROW_ALIVE) | (r.asleep ? ROW_ASLEEP : 0);
+    iu[i * INFO_FLOATS + 10] = r.material ?? 0;
+    model[i] = r.model;
   });
-  return { pose, vel, info };
+  return { pose, vel, info, model };
 }
 
 // ---- the model store ----

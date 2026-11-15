@@ -152,3 +152,42 @@ export function benchScene(pairs: number, n: number, modelIds: number[], seed = 
   }
   return { bodies, pairs: list };
 }
+
+/** the coarse pass's models, small to big: a crumb of 2³, boxes of 4³, 8³ and 16³, a slab of 32 × 32 × 8 */
+export const coarseShapes = (): SdfModelSpec[] => [boxShape(2, 2, 2), boxShape(4, 4, 4), boxShape(8, 8, 8), boxShape(16, 16, 16), boxShape(32, 32, 8)];
+/** the biggest of them's bound diameter, cells */
+export const COARSE_MAX_DIAMETER = Math.hypot(32, 32, 8);
+
+/**
+ * The coarse pass's scene: `rows` bodies of mixed sizes (half crumbs, a quarter 4³, 15% 8³, 8% 16³, 2% slabs) at
+ * random poses, a fraction of them awake. `loose`: a field a twentieth full, where few touch. `pile`: half full of
+ * matter, so most touch several (random poses overlap more than a settled pile's would).
+ * `modelIds` are the store's rows for coarseShapes(). Returns the rows and the awake rows' indices.
+ */
+export function coarseScene(rows: number, awake: number, kind: 'loose' | 'pile', modelIds: number[], seed = 1): { bodies: BodyRow[]; awake: number[] } {
+  const R = rng(seed);
+  const specs = coarseShapes();
+  const props = specs.map((s) => massProps(s));
+  // (a row's matter is 588 cells³ on average: the pile half full of it, the field a twentieth)
+  const side = Math.cbrt(rows) * (kind === 'pile' ? 10.6 : 22.7);
+  const bodies: BodyRow[] = [];
+  const list: number[] = [];
+  for (let i = 0; i < rows; i++) {
+    const u = R();
+    const s = u < 0.5 ? 0 : u < 0.75 ? 1 : u < 0.9 ? 2 : u < 0.98 ? 3 : 4;
+    const ax: V3 = [R() * 2 - 1, R() * 2 - 1, R() + 0.01];
+    const up = R() < awake;
+    if (up) list.push(i);
+    const mp = props[s];
+    bodies.push({ pos: [R() * side, R() * side, R() * side], quat: axisAngle(ax, R() * Math.PI * 2), invMass: 1 / mp.mass, radius: mp.radius, invInertia: mp.inertia.map((v) => 1 / v) as V3, model: modelIds[s], asleep: !up, material: 1 + s });
+  }
+  return { bodies, awake: list };
+}
+
+/** the engine's awake list for `awake` rows (engine.wgsl: indirect arguments, the count, the rows from word 8) */
+export function awakeList(awake: number[], room = awake.length): Uint32Array {
+  const out = new Uint32Array(8 + Math.max(room, 1));
+  out.set([Math.ceil(awake.length / 64), 1, 1, awake.length, awake.length, 1, 1, 0]);
+  out.set(awake, 8);
+  return out;
+}
