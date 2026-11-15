@@ -50,6 +50,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let q = normalize(mix(q0, q1, al));
     wp = mix(rows[j * 4u].xyz, rows[j * 4u + 2u].xyz, al) + qrot(q, a.xyz - ents[e * ENT_V + 1u].xyz);
     wn = qrot(q, b.xyz);
+    // (a row freed — eroded to nothing: its inverse mass is negative — draws nothing: every vertex at one point)
+    if (rows[j * 4u + 2u].w < 0.0) { wp = rows[j * 4u + 2u].xyz; }
   } else if (e0.x > 1.5) {
     // (the CPU's matrix: the spawn frame to the world)
     let r0 = ents[e * ENT_V + 2u];

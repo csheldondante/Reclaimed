@@ -176,6 +176,49 @@ further pieces. §9: "The marked region … becomes voxel bodies that deform and
   claims no External; an impact stops dead instead of being softened by stage 4; a sleeper wakes only by an impulse or
   `wakeNear`, not when the ground under it goes.
 
+## Step 2, the round trip: the mechanism (not built; for review before code)
+
+Read from the code on 2026-11-15. Two fixes the review asked for are built and tested (below); `expand` and `settle`
+are not. Everything here is a proposal for how §10.4's "A body returns to rigid once settled" is done with no readback.
+
+- **One particle set a body, made when the row is added.** `Engine.add` also makes the body's lattice twin
+  (`physics.ts:392 spawnLattice`, its mesh bound by `integrity/lattice.ts:72`): rest positions, bonds, material. The
+  twin is *held*: a new bit of the particle's info word (`phys.wgsl:23`, bit 29) that `sleeping()` (`phys.wgsl:102`)
+  also tests, so no lattice kernel solves it. That is one added line in `phys.wgsl`; the old route never sets the bit.
+- **The row is drawn by the lattice's own mesh from the start.** A `follow` kernel (a workgroup an awake row) moves
+  the row's held particles by the row's change of pose this tick, and the lattice's `skin` draws them. So the mesh
+  before, during and after deformation is the same mesh on the same particles: no swap, and no pop to hide behind
+  dust. Step 1's hex-prism mesh (`render/bodymesh.ts` kind `row`) stays only for rows with no twin.
+- **`expand`** is decided in `solve`'s first pass, where step 1 already has the impact's energy. Past the material's
+  threshold (energy over mass, a panel slider a material) the row is *not* solved: it keeps the velocity it came in
+  with, its particles get that velocity and spin, their held bit is cleared, and the row is marked deforming (no
+  kernel visits it). The lattice then takes the hit itself, so the break is the lattice's, as the owner liked it.
+- **`settle`**: `stats` (`phys.wgsl:1025`) already sums a body's speed. A thread a body keeps a still timer on the
+  GPU; past rest speed for rest time it labels the body's particles by their bonds (label propagation with pointer
+  jumping, dispatched only while a settle is pending), then a thread per part's root sums mass, centre and inertia
+  over the part, takes a row and a sample range from atomic counters, writes the samples (surface particles about
+  the centre, the row's rotation the identity: the model is re-expressed where it lies, so nothing is re-splatted
+  onto a grid and a bent beam keeps its bend to the particle), and sets the held bit. Parts under the crumb size are
+  marked crumbling and leave through `deaths` to the deposit. Mass in = rows out + deposit.
+- **The lattice's sleep and reads on this route:** settling is its sleep. `Physics` takes a flag that skips
+  `updateSleep` and the `bstat` and `touches` copies (`physics.ts:647-668`, `:761`, `:893-904`); the lattice's
+  substeps are dispatched indirectly from a GPU count of deforming bodies, so they cost nothing when none deform.
+
+**Departures this mechanism adds, to rule on before it is built:**
+1. Every rigid body's particles exist from the moment it is added (132 B a voxel), not only while it deforms. It
+   removes the hand-over pop and any GPU allocation at `expand`. The note's paged pool (step 6) changes where they
+   live, not this.
+2. Until step 6: the lattice's 255 bodies and 131,072 voxels cap the engine's bodies too, and rows made on the GPU
+   need their own index range (the CPU cannot know the count without a read): a fixed split of the row and sample
+   buffers. Both are caps of the kind the owner wants gone; step 6 removes them.
+3. A settled part's model is its particles where they lie, not a grid. Body ↔ body's occupancy pyramid or distance
+   field (PE3) then needs a splat of those particles: that is where "loses shape below one voxel" would come in, for
+   collision only, never for the look.
+
+**Built now** (`test/gpu/engine.test.ts`, 13 pass): a sleeper wakes when its support goes (`compact` compares the
+surface pass's word of the column under its centre with the one it fell asleep on: one read a row asleep); a row
+eroded to nothing is freed where it is (flags 0, inverse mass negative, its mesh draws nothing).
+
 ## Departures from DESIGN.md, and additions
 
 1. Sleepers are met through their own model, not their projection (§10 is silent). Cost: a second, event-built hash.
@@ -212,12 +255,13 @@ further pieces. §9: "The marked region … becomes voxel bodies that deform and
 - Positions are f32 in window space; the shift on a slide stays.
 - Step 1: a sample is a sphere of half a cell at a surface cell's centre. A row's solve is one thread looping all its
   samples, so a 2,000-sample block is slow. Interior cells are not samples: once a face erodes, the layer behind it is
-  held only by its edges. A row's inertia follows its mass, not its changed shape. A row eroded to nothing is moved
-  far below the map to hide its mesh (the CPU can't know). A station reset lets every row go. Sample and row ranges
+  held only by its edges. A row's inertia follows its mass, not its changed shape. A station reset lets every row go. Sample and row ranges
   are never reused until a reset. Over 65,535 awake rows won't dispatch. Events past 1,024 a tick are counted, not kept.
 - With `?sleepmore=1` the surface pass skips sleeping chunks; the fast path then trusts a chunk's last surface word
   (not checked). The default interval walk has no such lag.
 - The writing lint fails on `src/roadlab/control.ts` at this tip, before any change here.
+- A sleeper watches only the column under its centre: a long beam whose end loses its ground stays asleep. Any change
+  of that column's word wakes it (a new interval, sand buried under something), and it sleeps again 0.6 s later.
 
 ## Open questions for the owner
 

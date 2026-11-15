@@ -5,9 +5,10 @@
 // rules, sleep decided here. Nothing is read back. Host: src/engine/engine.ts (the layouts are mirrored there).
 //
 // A row r:
-//   pose[4r]     xyz its centre of mass when the tick began (drawn between this and now)
+//   pose[4r]     xyz its centre of mass when the tick began (drawn between this and now); asleep, w is the surface
+//                pass's word (u32 bits) of the column under it when it fell asleep: its ground, watched by `compact`
 //   pose[4r+1]   its rotation then (body frame -> world; the body frame is the world's at spawn)
-//   pose[4r+2]   xyz its centre of mass, w its inverse mass
+//   pose[4r+2]   xyz its centre of mass, w its inverse mass (< 0: the row is freed)
 //   pose[4r+3]   its rotation
 //   vel[2r]      xyz velocity (cells/s), w how long it has been still (s)
 //   vel[2r+1]    xyz spin (rad/s, world), w its bound radius

@@ -23266,3 +23266,21 @@ buttons leave a few lumps of rubble, since it crumbles stone on impact. I looked
 **Not done.** Bodies do not meet each other. The judge's pieces still go to the lattice. No External at rest. No phone
 run. The writing lint fails on src/roadlab/control.ts at this tip (PE17), before this work.
 
+## 2026-11-15 — the engine: a sleeper's ground, a freed row; the round trip written for review (PE2, `physics10`)
+
+**Built.** DESIGN §10: "sleepers stay put unless an impulse wakes them or their support goes." A row falling asleep
+keeps the surface pass's word of the column under its centre (in the spare word of its start pose), and `compact`,
+which already reads every row once a tick, compares it with the column's word now: changed, the row wakes. One more
+read a row asleep, nothing on the CPU, and it sees any change of the column whoever made it (a dig, a cut, erosion).
+Test: a pit dug under a sleeping block; it falls 8 cells and sleeps again. And a row eroded to nothing is freed where
+it lies: flags 0, inverse mass negative, and the mesh kernel draws a freed row's triangles at one point. It was
+moved far below the map before, which only hid it. test/gpu/engine.test.ts: 13 pass.
+
+**Not built: `expand` and `settle`.** I read the lattice's host and kernel for it and wrote the mechanism into
+docs/design/PHYSICS_ENGINE.md ("Step 2, the round trip") instead of starting it. Why stop there: it reaches into
+phys.wgsl's `sleeping()`, Physics's sleep and readbacks and its dispatch, and Integrity's mesh binding, while the
+owner's dev server hot-reloads this worktree; and the mechanism carries three departures from the note (particles
+made when a body is added, fixed index ranges for rows made on the GPU until paging, a settled model that is particles
+and not a grid) that should be ruled on before code. The one finding worth having now: drawing a rigid row by the
+lattice's own mesh from the start means the mesh never swaps, so there is no pop at the hand-over to hide.
+

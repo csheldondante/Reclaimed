@@ -183,9 +183,9 @@ export class Engine implements SimSystem {
     const parts = [commonWgsl, layersWgsl, materialsWgsl, engineWgsl];
     const base: BindSpec = { 0: 'uniform', 2: 'uniform', 3: 'uniform', 16: 'uniform' };
     this.k = {
-      compact: makeCompute(device, 'engine-compact', [...parts, compactWgsl], { ...base, 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw' }, 'compact'),
+      compact: makeCompute(device, 'engine-compact', [...parts, compactWgsl], { ...base, 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 12: 'read' }, 'compact'),
       fine: makeCompute(device, 'engine-fine', [...parts, stepWgsl], { ...base, 1: 'read', 4: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'read', 11: 'read', 12: 'read', 13: 'tex' }, 'fine'),
-      solve: makeCompute(device, 'engine-solve', [...parts, stepWgsl], { ...base, 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'read', 15: 'rw' }, 'solve'),
+      solve: makeCompute(device, 'engine-solve', [...parts, stepWgsl], { ...base, 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'read', 12: 'read', 15: 'rw' }, 'solve'),
       fold: makeCompute(device, 'engine-fold', [...parts, foldWgsl], { ...base, 14: 'rw', 15: 'read' }, 'fold'),
     };
     const U = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
@@ -240,9 +240,9 @@ export class Engine implements SimSystem {
     const common = { 0: w.globals, 2: w.materials };
     const rowsB = { 4: this.pose, 5: this.vel, 6: this.info };
     this.g = {
-      compact: this.cu.map((c) => makeBindGroup(d, 'engine-compact', this.k.compact.layout, { ...common, 3: c.eu, 16: c.ec, ...rowsB, 10: this.list })),
+      compact: this.cu.map((c) => makeBindGroup(d, 'engine-compact', this.k.compact.layout, { ...common, 3: c.eu, 16: c.ec, ...rowsB, 10: this.list, 12: w.surface })),
       fine: makeBindGroup(d, 'engine-fine', this.k.fine.layout, { ...common, 1: w.chunks, 3: this.eu[1], 16: this.cu[0].ec, 4: this.pose, 6: this.info, 7: this.samples, 8: this.contacts, 10: this.list, 11: w.layers, 12: w.surface, 13: w.driftView }),
-      solve: this.eu.map((eu) => makeBindGroup(d, 'engine-solve', this.k.solve.layout, { ...common, 3: eu, 16: this.cu[0].ec, ...rowsB, 7: this.samples, 8: this.contacts, 10: this.list, 15: this.events })),
+      solve: this.eu.map((eu) => makeBindGroup(d, 'engine-solve', this.k.solve.layout, { ...common, 3: eu, 16: this.cu[0].ec, ...rowsB, 7: this.samples, 8: this.contacts, 10: this.list, 12: w.surface, 15: this.events })),
       fold: makeBindGroup(d, 'engine-fold', this.k.fold.layout, { ...common, 3: this.eu[1], 16: this.cu[0].ec, 14: w.deposit, 15: this.events }),
     };
     return this.g;

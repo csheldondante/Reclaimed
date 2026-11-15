@@ -4,6 +4,8 @@
 // Numbers for the DEVLOG: ENGINE_LOG=1 npx vitest run --project gpu engine --reporter=verbose
 import { afterAll, afterEach, beforeAll, expect, test } from 'vitest';
 import { Engine, EVENT_ROOM, type EngineBody, type EngineCell } from '../../src/engine/engine';
+import { OP } from '../../src/sim/edit-ops';
+import { EventKind } from '../../src/sim/globals';
 import { TUNE } from '../../src/tune/params';
 import type { Interval } from '../../src/world/layout';
 import { cellPos } from '../../src/world/lattice';
@@ -32,12 +34,12 @@ interface Rig {
   events(): Promise<{ kind: number; row: number; col: number; mat: number; p: number[]; val: number }[]>;
 }
 
-async function rig(col: (x: number, y: number) => Interval[], W = 32, H = 32): Promise<Rig> {
+async function rig(col: (x: number, y: number) => Interval[], W = 32, H = 32, more: string[] = []): Promise<Rig> {
   const w = await tinyWorld(g, tinyMap(W, H, 64, col), ['surface']);
   const e = new Engine(g.device, w.core.world, w.core.host.profiler);
   const sys = w.core.sim.systems;
   sys.splice(sys.findIndex((s) => s.name === 'surface') + 1, 0, e);
-  const on = (s: { name: string }) => s.name === 'surface' || s.name === 'engine';
+  const on = (s: { name: string }) => s.name === 'surface' || s.name === 'engine' || more.includes(s.name);
   const R: Rig = {
     w,
     e,
@@ -198,6 +200,42 @@ test('rule: sleepers stay — a row asleep keeps every byte while another moves;
   const woke = await R.row(a);
   expect(woke.flags & 2).toBe(0);
   expect(woke.pos[2]).toBeGreaterThan(before.pos[2] + 0.1);
+  ok();
+  R.w.destroy();
+});
+
+test('rule: sleepers stay unless their support goes — the ground dug from under a sleeper wakes it, and it falls', async () => {
+  const R = await rig(flat, 32, 32, ['edit']);
+  const b = R.e.add({ cells: box(14, 14, 10, 2, 2, 2) })!;
+  await R.step(120);
+  const before = await R.row(b);
+  expect(before.flags & 2).toBe(2);
+  // (nothing changed under it: still asleep, the same bytes)
+  await R.step(30);
+  expect([...(await R.row(b)).bytes]).toEqual([...before.bytes]);
+  // (a pit dug under it, four cells deep)
+  for (let k = 0; k < 8; k++) R.w.core.globals.events.push({ kind: EventKind.Edit, x: before.pos[0], y: before.pos[1], z: OP.DIG * 32 + 512, radius: 3.5, strength: 1 });
+  await R.step(8);
+  await R.step(150);
+  const after = await R.row(b);
+  if (LOG) console.log(`dug out: it went from ${before.pos[2].toFixed(2)} to ${after.pos[2].toFixed(2)}, flags ${after.flags}`);
+  expect(after.pos[2]).toBeLessThan(before.pos[2] - 0.4);
+  ok();
+  R.w.destroy();
+});
+
+test('a row eroded to nothing is freed: not alive, never dispatched again, its inverse mass marks its mesh', async () => {
+  const R = await rig(flat);
+  // (a single layer wholly inside the stone)
+  const b = R.e.add({ cells: box(14, 14, 8, 2, 2, 1) })!;
+  await R.step(6);
+  const r = await R.row(b);
+  expect(r.flags).toBe(0);
+  expect(r.mass).toBe(0);
+  expect(new Float32Array(r.bytes.buffer, 0, 16)[11]).toBeLessThan(0);
+  // (it stays where it was: not parked anywhere)
+  expect(r.pos[2]).toBeGreaterThan(8);
+  expect(await R.awake()).toEqual({ groups: 0, rows: 0 });
   ok();
   R.w.destroy();
 });

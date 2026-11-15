@@ -2,6 +2,7 @@
 // The host's commands are taken here too (a velocity change, a wake, the window's slide), so nothing else has to
 // visit a row asleep.
 @group(0) @binding(10) var<storage, read_write> list: array<atomic<u32>>;
+@group(0) @binding(12) var<storage, read> surfaceIn: array<u32>;
 
 @compute @workgroup_size(64)
 fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -31,6 +32,12 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
     } else if (k == 4u) {
       shiftBy += EC[c].a.xyz;
     }
+  }
+  // (a sleeper whose ground changed — dug, cut, washed out, built on: the surface pass's word of the column under its
+  // centre isn't the one it fell asleep on. One read a row asleep; the word is fresh this tick.)
+  if ((fl & ROW_ASLEEP) != 0u) {
+    let c = cellAt(x.xy);
+    if (inMap(c) && surfaceIn[colIdxI(c)] != bitcast<u32>(pose[4u * r].w)) { wake = true; }
   }
   if (any(shiftBy != vec3<f32>(0.0))) {
     pose[4u * r] = vec4<f32>(pose[4u * r].xyz + shiftBy, pose[4u * r].w);

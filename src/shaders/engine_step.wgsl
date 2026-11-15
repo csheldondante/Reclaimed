@@ -297,7 +297,8 @@ fn solve(@builtin(global_invocation_id) id: vec3<u32>) {
       // (all of it gone to the ground: the row ends)
       fl = 0u;
       mass = 0.0;
-      x.z = -1e6;
+      // (freed: no kernel visits it again, and its mesh draws nothing — bodymesh.wgsl reads the inverse mass)
+      invM = -1.0;
     } else {
       // (its inertia by its mass: the shape's change isn't followed — docs/design/PHYSICS_ENGINE.md, limits)
       let k = mass0 / mass;
@@ -308,14 +309,25 @@ fn solve(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   // sleep, decided here
   if (touching && length(v) < EU.c.y && length(w) < EU.c.z) { still += dt; } else { still = 0.0; }
+  var slept = false;
   if (still > EU.c.w && fl != 0u) {
     fl = fl | ROW_ASLEEP;
     v = vec3<f32>(0.0);
     w = vec3<f32>(0.0);
+    slept = true;
   }
   if (hitE > EU.d.w) { pushEvent(EV_IMPACT, r, 0u, hitMat, hitP, hitE); }
   pose[4u * r + 2u] = vec4<f32>(x, invM);
   pose[4u * r + 3u] = q;
+  if (slept) {
+    // (what it sleeps on: the surface pass's word of the column under its centre, kept with the row — `compact`
+    // wakes it when that word changes: DESIGN §10 "sleepers stay put unless … their support goes")
+    let c = cellAt(x.xy);
+    var word = 0u;
+    if (inMap(c)) { word = surfaceIn[colIdxI(c)]; }
+    pose[4u * r] = vec4<f32>(x, bitcast<f32>(word));
+    pose[4u * r + 1u] = q;
+  }
   vel[2u * r] = vec4<f32>(v, still);
   vel[2u * r + 1u] = vec4<f32>(w, bound);
   info[3u * r] = vec4<f32>(I0.xyz, bitcast<f32>(fl));
