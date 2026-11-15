@@ -2,7 +2,7 @@
 // fine pass, each pair's record and contact rows read back, and every sample contact of the same pairs from the CPU
 // mirror (test/support/sdf-reference.ts).
 import { expect } from 'vitest';
-import { CONTACT_BYTES, CONTACTS_PER_PAIR, COUNT_BRICKS, COUNT_BRICKS_DROPPED, COUNT_CONTACTS, COUNT_PAIRS_DROPPED, COUNT_SAMPLE_CONTACTS, COUNTS_BYTES, PAIR_HIT_BYTES, PAIR_HIT_ENERGY, PAIR_HIT_ROWS, PAIR_HIT_SAMPLES, packBodies, unpackContacts, SDF_SNORM_SCALE, type BodyRow, type Contact, type SdfFormat } from '../../src/engine/sdf/contract';
+import { CONTACT_BYTES, CONTACTS_PER_PAIR, COUNT_BRICKS, COUNT_BRICKS_DROPPED, COUNT_CONTACTS, COUNT_PAIRS_DROPPED, COUNT_SAMPLE_CONTACTS, COUNTS_BYTES, PAIR_HIT_BYTES, PAIR_HIT_ENERGY, PAIR_HIT_ROWS, PAIR_HIT_SAMPLES, PAIR_HIT_SLOT, NO_SLOT, SLOT_KEY_AGE, SLOT_KEY_BYTES, packBodies, unpackContacts, SDF_SNORM_SCALE, type BodyRow, type Contact, type SdfFormat } from '../../src/engine/sdf/contract';
 import { SdfFine, type FineInputs, type FineOptions } from '../../src/engine/sdf/fine';
 import { SdfModels, type SdfModelSpec } from '../../src/engine/sdf/models';
 import { angleDeg, exactAt, mirrorContacts, refModel, unrot, type RefContact, type RefModel } from '../support/sdf-reference';
@@ -48,6 +48,12 @@ export interface PairResult {
   samples: number;
   energy: number;
   rows: Contact[];
+  /** the pair's slot (its rows are the contact rows slot * 4 on), the slot's age in passes, and all four of the slot's rows as they are */
+  slot: number;
+  age: number;
+  slotRows: Contact[];
+  /** the slot's key: the pair's lower and higher body rows */
+  key: [number, number];
 }
 
 export interface RunResult {
@@ -124,9 +130,16 @@ export function makeScene(g: TestGpu, format: SdfFormat, specs: SdfModelSpec[], 
       const hits = await g.read(fine.hits, n * PAIR_HIT_BYTES);
       const hu = new Uint32Array(hits);
       const hf = new Float32Array(hits);
-      const all = unpackContacts(await g.read(fine.contacts, n * CONTACTS_PER_PAIR * CONTACT_BYTES), n * CONTACTS_PER_PAIR);
+      // (a pair's rows are at its slot)
+      const all = unpackContacts(await g.read(fine.contacts, fine.slots * CONTACTS_PER_PAIR * CONTACT_BYTES), fine.slots * CONTACTS_PER_PAIR);
+      const keys = new Uint32Array(await g.read(fine.slotKeys, fine.slots * SLOT_KEY_BYTES));
       const out: PairResult[] = [];
-      for (let p = 0; p < n; p++) out.push({ samples: hu[p * 32 + PAIR_HIT_SAMPLES], energy: hf[p * 32 + PAIR_HIT_ENERGY], rows: all.slice(p * CONTACTS_PER_PAIR, p * CONTACTS_PER_PAIR + hu[p * 32 + PAIR_HIT_ROWS]) });
+      for (let p = 0; p < n; p++) {
+        const slot = hu[p * 32 + PAIR_HIT_SLOT];
+        const at = slot === NO_SLOT ? 0 : slot * CONTACTS_PER_PAIR;
+        const rows = slot === NO_SLOT ? 0 : hu[p * 32 + PAIR_HIT_ROWS];
+        out.push({ samples: hu[p * 32 + PAIR_HIT_SAMPLES], energy: hf[p * 32 + PAIR_HIT_ENERGY], rows: all.slice(at, at + rows), slot, age: slot === NO_SLOT ? -1 : keys[slot * 4 + SLOT_KEY_AGE], slotRows: slot === NO_SLOT ? [] : all.slice(at, at + CONTACTS_PER_PAIR), key: slot === NO_SLOT ? [-1, -1] : [keys[slot * 4], keys[slot * 4 + 1]] });
+      }
       const missing = [...new Uint32Array(await g.read(inputs.missing, scene.bodies.length * 4))];
       expect(g.takeErrors()).toEqual([]);
       return {

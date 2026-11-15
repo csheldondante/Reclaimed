@@ -112,12 +112,14 @@ export const SDF_MODEL_BYTES = 32;
  *   f32 depth         cells; positive overlap, negative a gap inside the margin
  *   vec3f normal      world, unit, from b towards a (move a along it to separate)
  *   f32 closing       speed along the normal at the point, positive when approaching
- * Rows are in fixed places: pair p's are rows p * CONTACTS_PER_PAIR on, as many as its record says (at most
+ * Rows are in fixed places: a pair's are rows slot * CONTACTS_PER_PAIR on (its slot is in its record, PAIR_HIT_SLOT,
+ * and stays the same for as long as the pair is in the pair list every pass), as many as its record says (at most
  * CONTACTS_PER_PAIR): the deepest sample, and the farthest out along three directions 120° apart across the line of
  * centres (a sample that wins several places is written once). Every row of a pair carries the pair's largest sample
  * energy. A row's normal is the mean of the pair's sample normals that point its way: the same dominant axis and sign in
  * the pair's own axes (the line of centres and two across it).
- * No row is ever dropped: the buffer has room for every pair the pass takes.
+ * A pair that finds no slot (the table full along its probe sequence: it grows) has no rows that pass and both its
+ * body rows are flagged MISS_SLOTS.
  */
 export const CONTACT_BYTES = 48;
 export const CONTACTS_PER_PAIR = 4;
@@ -133,6 +135,19 @@ export const PAIR_HIT_BYTES = 128;
 export const PAIR_HIT_SAMPLES = 4;
 export const PAIR_HIT_ENERGY = 5;
 export const PAIR_HIT_ROWS = 6;
+/** the pair's slot (its contact rows are rows slot * CONTACTS_PER_PAIR on), or NO_SLOT */
+export const PAIR_HIT_SLOT = 7;
+export const NO_SLOT = 0xffffffff;
+
+/**
+ * A slot's key record, 16 B (u32 each; fine.ts `slotKeys`, entry s beside contact rows s * CONTACTS_PER_PAIR on):
+ * the pair's lower body row, its higher, the slot's age (passes the pair has kept it: 0 in the pass that claimed it,
+ * when the rows not written are zero and the solver starts its impulses from nothing), the pair's index in this
+ * pass's pair list. Valid for the slots this pass's pair records name; the rest are free or stale.
+ */
+export const SLOT_KEY_BYTES = 16;
+export const SLOT_KEY_AGE = 2;
+export const SLOT_KEY_PAIR = 3;
 
 /**
  * The counts buffer, 64 B (u32 each). Of this pass (zeroed when it starts): contact rows written; pairs the coarse
@@ -146,7 +161,16 @@ export const COUNT_PAIRS_DROPPED = 1;
 export const COUNT_BRICKS = 2;
 export const COUNT_BRICKS_DROPPED = 3;
 export const COUNT_SAMPLE_CONTACTS = 4;
+/** this pass: pairs that claimed a new slot; pairs that found none (flagged MISS_SLOTS) */
+export const COUNT_SLOT_CLAIMS = 7;
+export const COUNT_SLOT_FAILS = 8;
+/** kept: the slot table's epoch (one a pass) */
+export const COUNT_SLOT_EPOCH = 9;
 export const COUNT_HW_BRICKS = 11;
+/** kept, since the CPU last cleared them: the most slot entries that may be live in a pass; pairs that found no slot; entries a growth could not place */
+export const COUNT_HW_SLOTS = 13;
+export const COUNT_SLOT_FAILS_SINCE = 14;
+export const COUNT_REHASH_FAILS = 15;
 export const COUNTS_BYTES = 64;
 
 /**
@@ -161,6 +185,8 @@ export const MISS_ITEMS = 1;
 export const MISS_PAIRS = 2;
 /** the fine pass's sample groups: a pair of this row was tested with some of its samples left out */
 export const MISS_GROUPS = 4;
+/** the pair slots: a pair of this row found no slot for its contact rows, and has none this tick */
+export const MISS_SLOTS = 8;
 
 /** the most samples a model may keep: a sample's index is 16 bits in the reduction's bids */
 export const SDF_MAX_SAMPLES = 65536;

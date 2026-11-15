@@ -11,15 +11,12 @@
 // SDF_BENCH=1 also measures the read and a growth (printed, and in data/perf/sdf/rooms-bench.json).
 import fs from 'node:fs';
 import { afterAll, beforeAll, expect, test } from 'vitest';
-import { MISS_GROUPS, MISS_ITEMS, MISS_PAIRS, PAIR_HIT_BYTES, PAIR_HIT_ROWS, PAIR_HIT_SAMPLES, packBodies, type BodyRow } from '../../src/engine/sdf/contract';
-import { PAIR_ASKED, PAIR_HEADER_WORDS, PAIR_ITEMS_ASKED, PAIR_ITEMS_DROPPED, type CoarseInputs } from '../../src/engine/sdf/coarse';
-import { SdfCollide, type CollideOptions } from '../../src/engine/sdf/collide';
-import { COUNT_BRICKS, COUNT_BRICKS_DROPPED, COUNTS_BYTES } from '../../src/engine/sdf/contract';
+import { MISS_GROUPS, MISS_ITEMS, MISS_PAIRS, type BodyRow } from '../../src/engine/sdf/contract';
+import type { CollideOptions } from '../../src/engine/sdf/collide';
 import { SdfModels } from '../../src/engine/sdf/models';
-import { awakeList, COARSE_MAX_DIAMETER, coarseScene, coarseShapes } from '../../src/engine/sdf/shapes';
-import { brutePairs } from '../support/sdf-coarse-ref';
+import { coarseScene, coarseShapes } from '../../src/engine/sdf/shapes';
 import { testGpu, type TestGpu } from './dawn';
-import { storage } from './sdf-harness';
+import { expectSafe, rig as rigOf, rowsOf, type Tick } from './sdf-collide-rig';
 
 let g: TestGpu;
 let store: SdfModels;
@@ -35,113 +32,8 @@ afterAll(() => {
   g?.destroy();
 });
 
-const MARGIN = 0.25;
 const specs = coarseShapes();
-
-interface Tick {
-  /** the pairs written, 'lo,hi', in the list's order, and each one's record: sample contacts and rows */
-  pairs: string[];
-  samples: Map<string, number>;
-  rowsOf: Map<string, number>;
-  /** the rows' `missing` words */
-  missing: Uint32Array;
-  asked: { pairs: number; items: number; itemsDropped: number; groups: number; groupsDropped: number };
-}
-
-interface Rig {
-  c: SdfCollide;
-  bodies: BodyRow[];
-  inputs: CoarseInputs;
-  /** the rows uploaded again (as many or more), `epoch` as the engine would bump it */
-  set(bodies: BodyRow[], epoch: number): void;
-  /** one tick: encode, submit, poll; then what it wrote. `wait`: let the read land first (a test's ticks; the engine never waits) */
-  tick(wait?: boolean): Promise<Tick>;
-  brute(): { sure: string[]; maybe: Set<string> };
-  destroy(): void;
-}
-
-function rig(bodies: BodyRow[], opts: Partial<CollideOptions> = {}, rowRoom = bodies.length, bufRows = bodies.length): Rig {
-  const dev = g.device;
-  const mk = (b: BodyRow[], room: number) => {
-    const p = packBodies(b);
-    const grown = <T extends Float32Array | Uint32Array>(a: T, per: number): T => {
-      const out = new (a.constructor as new (n: number) => T)(room * per);
-      out.set(a);
-      return out;
-    };
-    return { pose: grown(p.pose, 16), vel: grown(p.vel, 8), info: grown(p.info, 12), model: grown(p.model, 1), list: awakeList(b.map((_, i) => i).filter((i) => !b[i].asleep && !b[i].dead), room) };
-  };
-  // (the engine's own buffers: room for the rows a test ends with)
-  const room = Math.max(bufRows, bodies.length);
-  const first = mk(bodies, room);
-  const list = dev.createBuffer({ label: 'test awake list', size: first.list.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST });
-  dev.queue.writeBuffer(list, 0, first.list);
-  const inputs: CoarseInputs = { list, pose: storage(g, 'pose', first.pose), vel: storage(g, 'vel', first.vel), info: storage(g, 'info', first.info), model: storage(g, 'model', first.model), sleepEpoch: storage(g, 'epoch', new Uint32Array([1, 0, 0, 0])) };
-  // (no sample cap: every sample every tick, so a pair's record is the same from tick to tick)
-  const c = new SdfCollide(dev, store, { rows: rowRoom, cellTop: COARSE_MAX_DIAMETER + MARGIN, margin: MARGIN, readEvery: 1, cap: 1 << 16, ...opts });
-  let n = 0;
-  const me: Rig = {
-    c,
-    bodies,
-    inputs,
-    set(next, epoch) {
-      me.bodies = next;
-      const q = mk(next, room);
-      dev.queue.writeBuffer(inputs.pose, 0, q.pose);
-      dev.queue.writeBuffer(inputs.vel, 0, q.vel);
-      dev.queue.writeBuffer(inputs.info, 0, q.info);
-      dev.queue.writeBuffer(inputs.model, 0, q.model);
-      dev.queue.writeBuffer(list, 0, q.list);
-      dev.queue.writeBuffer(inputs.sleepEpoch, 0, new Uint32Array([epoch]));
-    },
-    async tick(wait = true) {
-      const enc = dev.createCommandEncoder();
-      c.encode(enc, inputs, me.bodies.length, n++);
-      dev.queue.submit([enc.finish()]);
-      // (read before the poll: its read clears the high-water words, and a growth replaces the buffers)
-      const head = new Uint32Array(await g.read(c.coarse.pairBuf, PAIR_HEADER_WORDS * 4));
-      const k = Math.min(head[PAIR_ASKED], c.coarse.pairRoom);
-      const raw = k ? new Uint32Array(await g.read(c.coarse.pairBuf, k * 8, PAIR_HEADER_WORDS * 4)) : new Uint32Array(0);
-      const hits = k ? new Uint32Array(await g.read(c.fine.hits, k * PAIR_HIT_BYTES)) : new Uint32Array(0);
-      const counts = new Uint32Array(await g.read(c.fine.counts, COUNTS_BYTES));
-      const missing = new Uint32Array(await g.read(c.missing, me.bodies.length * 4));
-      c.poll();
-      if (wait) await c.settled();
-      expect(g.takeErrors()).toEqual([]);
-      const out: Tick = { pairs: [], samples: new Map(), rowsOf: new Map(), missing, asked: { pairs: head[PAIR_ASKED], items: head[PAIR_ITEMS_ASKED], itemsDropped: head[PAIR_ITEMS_DROPPED], groups: counts[COUNT_BRICKS], groupsDropped: counts[COUNT_BRICKS_DROPPED] } };
-      for (let i = 0; i < k; i++) {
-        const key = `${Math.min(raw[2 * i], raw[2 * i + 1])},${Math.max(raw[2 * i], raw[2 * i + 1])}`;
-        out.pairs.push(key);
-        out.samples.set(key, hits[i * 32 + PAIR_HIT_SAMPLES]);
-        out.rowsOf.set(key, hits[i * 32 + PAIR_HIT_ROWS]);
-      }
-      return out;
-    },
-    brute() {
-      const ref = brutePairs(me.bodies, specs, (b) => ids.indexOf(b.model), MARGIN);
-      return { sure: ref.filter((x) => x.slack > 1e-3).map((x) => `${x.a},${x.b}`), maybe: new Set(ref.filter((x) => Math.abs(x.slack) <= 1e-3).map((x) => `${x.a},${x.b}`)) };
-    },
-    destroy() {
-      c.destroy();
-      for (const b of Object.values(inputs)) (b as GPUBuffer).destroy();
-    },
-  };
-  return me;
-}
-
-const rowsOf = (key: string) => key.split(',').map(Number);
-
-/** a tick against brute force: no pair twice, none that brute force lacks; and every row of a pair the tick lacks is flagged. Returns the pairs it lacks */
-function expectSafe(t: Tick, ref: { sure: string[]; maybe: Set<string> }): string[] {
-  expect(new Set(t.pairs).size).toBe(t.pairs.length);
-  const got = new Set(t.pairs);
-  const want = new Set(ref.sure);
-  expect(t.pairs.filter((x) => !want.has(x) && !ref.maybe.has(x)), 'GPU pairs brute force lacks').toEqual([]);
-  const lacks = ref.sure.filter((x) => !got.has(x));
-  const bare = lacks.filter((x) => rowsOf(x).some((r) => t.missing[r] === 0));
-  expect(bare, 'pairs not written whose rows are not both flagged').toEqual([]);
-  return lacks;
-}
+const rig = (bodies: BodyRow[], opts: Partial<CollideOptions> = {}, rowRoom = bodies.length, bufRows = bodies.length) => rigOf({ g, store, ids, specs }, bodies, opts, rowRoom, bufRows);
 
 test('room for an eighth of what the scene asks: while the rooms grow every row with a missing pair or contact is flagged; then the pair set is brute force’s, the records the roomy pass’s, and no row is flagged', async () => {
   const scene = coarseScene(1500, 0.7, 'pile', ids, 31);
@@ -155,15 +47,18 @@ test('room for an eighth of what the scene asks: while the rooms grow every row 
   roomy.destroy();
 
   const eighth = (n: number) => Math.ceil(n / 8);
-  const r = rig(scene.bodies, { pairRoom: eighth(full.asked.pairs), itemRoom: eighth(full.asked.items), groupRoom: eighth(full.asked.groups) });
+  // (the pair slots: a table an eighth of the pairs, where it should be twice them)
+  const r = rig(scene.bodies, { pairRoom: eighth(full.asked.pairs), itemRoom: eighth(full.asked.items), groupRoom: eighth(full.asked.groups), slotRoom: 256 });
+  let slotless = 0;
   let ticks = 0;
   let last: Tick | null = null;
   let flaggedTicks = 0;
   for (; ticks < 16; ticks++) {
     const t = await r.tick();
     const lacks = expectSafe(t, ref);
-    // a pair written whose contacts are not the roomy pass's (sample groups ran out): both its rows are flagged
-    const thin = t.pairs.filter((x) => t.samples.get(x) !== full.samples.get(x));
+    // a pair written whose contacts are not the roomy pass's (sample groups ran out, or it found no slot for its rows): both its rows are flagged
+    const thin = t.pairs.filter((x) => t.samples.get(x) !== full.samples.get(x) || t.rowsOf.get(x) !== full.rowsOf.get(x));
+    slotless += t.asked.slotFails;
     expect(thin.filter((x) => rowsOf(x).some((row) => t.missing[row] === 0)), 'pairs with contacts left out whose rows are not both flagged').toEqual([]);
     if (ticks === 0) {
       // (every room ran out at once)
@@ -178,7 +73,11 @@ test('room for an eighth of what the scene asks: while the rooms grow every row 
     }
   }
   expect(last, `the rooms had not grown after ${ticks} ticks: ${JSON.stringify(r.c.rooms)}`).not.toBeNull();
-  expect(new Set(r.c.growths.map((x) => x.room))).toEqual(new Set(['pairs', 'items', 'groups']));
+  // (a clean tick can come while a room is still over half full: the reads after it finish the growth, with nothing flagged)
+  for (let k = 0; k < 3; k++) expect((await r.tick()).missing.some((m) => m !== 0)).toBe(false);
+  expect(new Set(r.c.growths.map((x) => x.room))).toEqual(new Set(['pairs', 'items', 'groups', 'slots']));
+  expect(slotless).toBeGreaterThan(100);
+  expect(r.c.rooms.slots).toBeGreaterThan(full.asked.pairs * 2);
   // (grown until what is asked is under half of each)
   expect(r.c.rooms.pairs).toBeGreaterThan(full.asked.pairs * 2);
   expect(r.c.rooms.items).toBeGreaterThan(full.asked.items * 2);
@@ -296,9 +195,14 @@ test('a growth makes no pipeline, and the read is one in `readEvery` ticks, neve
     expect(clean).toBeGreaterThan(2);
     expect(clean).toBeLessThan(14);
     expect(made.pipes).toBe(0);
-    // 14 ticks: a read every fourth and one more right after a growth; far from one a tick
-    expect(r.c.reads).toBeGreaterThanOrEqual(3);
-    expect(r.c.reads).toBeLessThanOrEqual(7);
+    // once the rooms have grown (a read follows each growth at once): a read every fourth tick
+    const grown = r.c.growths.length;
+    const reads = r.c.reads;
+    for (let k = 0; k < 40; k++) await r.tick(false);
+    await r.c.settled();
+    expect(r.c.growths.length).toBe(grown);
+    expect(r.c.reads - reads).toBeGreaterThanOrEqual(9);
+    expect(r.c.reads - reads).toBeLessThanOrEqual(11);
   } finally {
     dev.createComputePipeline = orig;
   }

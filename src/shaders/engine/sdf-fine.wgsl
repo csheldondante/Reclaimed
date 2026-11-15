@@ -3,6 +3,7 @@
 //
 // Every candidate pair is tested both ways (a's surface samples in b's field, then b's in a's): a corner of one body
 // in a flat face of the other is only seen by the corner's own sample.
+//   slots   a thread a pair: the pair's record cleared, and its slot in the persistent table found or claimed (below)
 //   expand  a thread a half pair: bound spheres rejected; the transform from the sampler's voxels to the field's,
 //           composed once
 //   cull    a thread a half pair and a row of the sampler's bricks along x (short loops: a thread's loop is serial,
@@ -15,8 +16,26 @@
 //           field read (8 words, trilinear), and if inside the margin the pair's record takes it in: its count, its
 //           largest energy, its normal summed with the others that point the same way, and its bid for each of the
 //           pair's four contact slots
-//   reduce  a thread a pair: the four slots' winners (the deepest, and the farthest out along three directions 120
-//           degrees apart across the line of centres) computed again and written as the pair's contact rows
+//   reduce  a thread a pair: the four places' winners (the deepest, and the farthest out along three directions 120
+//           degrees apart across the line of centres) computed again and written as the pair's contact rows, at
+//           slot * 4
+//
+// Stable pair slots (docs/design/PHYSICS_ENGINE.md "Round 6"). A pair's contact rows stay in one place for as long as
+// the pair is in the pair list every pass, so the solver can keep impulses there. The table is open addressing over
+// P.slots entries (a power of two), keyed by the pair's rows (lower, higher). An entry is a stamp (slotStamp, atomic:
+// the epoch of the last pass that touched it; 0 never used) and a key record (slotKey: lower row, higher row, age in
+// passes, the pair's index this pass); its contact rows are rows slot * 4 on. The epoch (counts[9]) goes up by one a
+// pass. An entry is live in pass e when its stamp is e - 1 or e; anything older is free: a pair absent for one pass
+// has lost its slot, with no sweep.
+//   one probe sequence a pair a pass, double hashing: entry (h + i * step) & (P.slots - 1), step odd, i < PROBES.
+//   The pair's thread walks it until it meets its own key in an entry stamped e - 1 (found: stamped e, age + 1) or a
+//   never-used entry (the key is not further on: every key took the first free entry of its sequence). Not found: it
+//   claims the first free entry it passed (compare-exchange of the stamp to e), writes the key with age 0 and zeroes
+//   the four rows. Each pair is in the list once, so no two threads look for the same key, and a key record is only
+//   ever written by the thread that owns its entry this pass.
+//   No free entry in PROBES: the pair has no slot this pass (record word 7 = NO_SLOT, no rows), both its rows are
+//   flagged MISS_SLOTS, and the table grows. The table also grows at half full (collide.ts), by `rehash`: every entry
+//   live at the last pass is put in the bigger table with its key, age and rows, and slotRemap[old] says where.
 //
 // The work buffer: HP_WORDS a half pair (index pair * 2 + way), then the brick list from P.maxPairs * 2 * HP_WORDS
 // on, two words a group of up to 16 samples of one brick: [half pair | samples << 27] [the first sample, a word index
@@ -36,7 +55,7 @@
 //
 // The pair record (contract.ts PAIR_HIT_*), PH_WORDS a pair, atomics:
 //   0-3   the slots' best bids: score (15 bits) << 17 | way << 16 | sample
-//   4     sample contacts this pass   5 the largest energy (f32 bits)   6 contact rows written   7 spare
+//   4     sample contacts this pass   5 the largest energy (f32 bits)   6 contact rows written   7 the pair's slot
 //   8-31  six bins by the normal's dominant axis in the pair's own axes (the line of centres and two across it, each
 //         way): the world normal's sum x, y, z (fixed point, 1/1024), count
 
@@ -47,18 +66,27 @@ const ARGS_ROW: u32 = 256u;
 const GROUP: u32 = 16u;
 const NO_BID: u32 = 0u;
 const MISS_GROUPS: u32 = 4u;
+const MISS_SLOTS: u32 = 8u;
+const NO_SLOT: u32 = 0xffffffffu;
+const PROBES: u32 = 32u;
 
-// (fine.ts FineParams, 32 B)
+// (fine.ts FineParams, 48 B)
 struct FineParams {
   margin: f32,
   cap: u32,
   tick: u32,
-  pad0: u32,
+  // the slot table a growth is leaving (rehash): its entries
+  oldSlots: u32,
   maxChunks: u32,
   maxPairs: u32,
   pairUpper: u32,
   // the store's longest model side, in bricks: cull's rows a half pair
   cullSide: u32,
+  // the slot table's entries, a power of two
+  slots: u32,
+  pad1: u32,
+  pad2: u32,
+  pad3: u32,
 }
 // (contract.ts "the engine's rows": the layout of physics10's engine.wgsl)
 struct BodyPose {
@@ -103,6 +131,13 @@ struct Contact {
 @group(0) @binding(14) var<storage, read> argsR: array<u32>;
 // (the model row of each body row)
 @group(0) @binding(13) var<storage, read> bodyModel: array<u32>;
+// (the slot table: stamps, key records; and at a growth the table being left and where each of its entries went)
+@group(0) @binding(16) var<storage, read_write> slotStamp: array<atomic<u32>>;
+@group(0) @binding(17) var<storage, read_write> slotKey: array<vec4<u32>>;
+@group(0) @binding(19) var<storage, read> oldStamp: array<u32>;
+@group(0) @binding(20) var<storage, read> oldKey: array<vec4<u32>>;
+@group(0) @binding(21) var<storage, read> oldContacts: array<Contact>;
+@group(0) @binding(22) var<storage, read_write> slotRemap: array<u32>;
 
 fn poseOf(r: u32) -> BodyPose {
   let c = pose[4u * r + 2u];
@@ -151,6 +186,8 @@ fn pairArgs() {
   for (var k = 0u; k < 9u; k++) {
     atomicStore(&counts[k], 0u);
   }
+  // (the slot table's epoch: one a pass)
+  atomicAdd(&counts[9], 1u);
   let n = min(pairCount[0], min(P.pairUpper, P.maxPairs));
   let halves = (2u * n + 63u) / 64u;
   args[4] = halves;
@@ -162,6 +199,131 @@ fn pairArgs() {
   args[12] = (n + 63u) / 64u;
   args[13] = 1u;
   args[14] = 1u;
+}
+
+/** where a pair's probe sequence starts (x) and its step (y, odd) */
+fn slotHash(lo: u32, hi: u32) -> vec2<u32> {
+  var x = (lo * 0x9e3779b1u) ^ ((hi + 0x7f4a7c15u) * 0x85ebca6bu);
+  x ^= x >> 15u;
+  x *= 0x2c1b3c6du;
+  x ^= x >> 12u;
+  var y = (x * 0x297a2d39u) ^ (hi * 0xc2b2ae35u);
+  y ^= y >> 13u;
+  return vec2<u32>(x, y | 1u);
+}
+
+/** entry s's stamp from `seen` to `to` if nobody was first; false: another thread has it (a compare-exchange that fails for no reason is tried again) */
+fn claimSlot(s: u32, seen: u32, to: u32) -> bool {
+  var cur = seen;
+  for (var t = 0u; t < 8u; t++) {
+    let r = atomicCompareExchangeWeak(&slotStamp[s], cur, to);
+    if (r.exchanged) {
+      return true;
+    }
+    if (r.old_value != cur) {
+      return false;
+    }
+  }
+  return false;
+}
+
+@compute @workgroup_size(64)
+fn slots(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let pi = gid.x;
+  if (pi >= min(P.pairUpper, P.maxPairs)) {
+    return;
+  }
+  // (the pair's record, cleared here: only the records the pass's dispatches cover are touched)
+  let r = pi * PH_WORDS;
+  for (var k = 0u; k < PH_WORDS; k++) {
+    atomicStore(&hits[r + k], 0u);
+  }
+  atomicStore(&hits[r + 7u], NO_SLOT);
+  if (pi >= pairCount[0]) {
+    return;
+  }
+  let pr = pairs[pi];
+  let lo = min(pr.x, pr.y);
+  let hi = max(pr.x, pr.y);
+  let e = atomicLoad(&counts[9]);
+  let mask = P.slots - 1u;
+  let hs = slotHash(lo, hi);
+  var slot = NO_SLOT;
+  var free = PROBES;
+  for (var i = 0u; i < PROBES; i++) {
+    let s = (hs.x + i * hs.y) & mask;
+    let st = atomicLoad(&slotStamp[s]);
+    if (st == e - 1u) {
+      let key = slotKey[s];
+      if (key.x == lo && key.y == hi) {
+        slot = s;
+        break;
+      }
+    } else if (st != e) {
+      free = min(free, i);
+      if (st == 0u) {
+        break;
+      }
+    }
+  }
+  if (slot != NO_SLOT) {
+    atomicStore(&slotStamp[slot], e);
+    slotKey[slot] = vec4<u32>(lo, hi, slotKey[slot].z + 1u, pi);
+  } else {
+    for (var i = free; i < PROBES; i++) {
+      let s = (hs.x + i * hs.y) & mask;
+      let st = atomicLoad(&slotStamp[s]);
+      if (st != e && st != e - 1u && claimSlot(s, st, e)) {
+        slot = s;
+        break;
+      }
+    }
+    if (slot == NO_SLOT) {
+      // (no free entry in the sequence: no rows for the pair this pass, and both its rows say so)
+      atomicAdd(&counts[8], 1u);
+      atomicOr(&missing[pr.x], MISS_SLOTS);
+      atomicOr(&missing[pr.y], MISS_SLOTS);
+      return;
+    }
+    atomicAdd(&counts[7], 1u);
+    slotKey[slot] = vec4<u32>(lo, hi, 0u, pi);
+    for (var k = 0u; k < SLOTS; k++) {
+      contacts[slot * SLOTS + k] = Contact();
+    }
+  }
+  atomicStore(&hits[r + 7u], slot);
+}
+
+// A growth (fine.ts grow): every entry of the table being left that was live at the last pass goes into the new
+// table with its key, age and rows; slotRemap[old entry] = its new entry, or NO_SLOT. Runs before pairArgs, so
+// counts[9] is still the last pass's epoch.
+@compute @workgroup_size(64)
+fn rehash(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= P.oldSlots) {
+    return;
+  }
+  slotRemap[i] = NO_SLOT;
+  let e = atomicLoad(&counts[9]);
+  if (oldStamp[i] != e) {
+    return;
+  }
+  let key = oldKey[i];
+  let mask = P.slots - 1u;
+  let hs = slotHash(key.x, key.y);
+  for (var j = 0u; j < PROBES; j++) {
+    let s = (hs.x + j * hs.y) & mask;
+    if (claimSlot(s, 0u, e)) {
+      slotKey[s] = key;
+      for (var k = 0u; k < SLOTS; k++) {
+        contacts[s * SLOTS + k] = oldContacts[i * SLOTS + k];
+      }
+      slotRemap[i] = s;
+      return;
+    }
+  }
+  // (no room in its sequence in a table at most a quarter full: the pair starts again in a new slot)
+  atomicAdd(&counts[15], 1u);
 }
 
 @compute @workgroup_size(64)
@@ -177,12 +339,6 @@ fn expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     return;
   }
   let way = h & 1u;
-  if (way == 0u) {
-    // (the pair's record, cleared here: only the pairs that exist are touched)
-    for (var k = 0u; k < PH_WORDS; k++) {
-      atomicStore(&hits[pi * PH_WORDS + k], 0u);
-    }
-  }
   let pr = pairs[pi];
   // (s: the body whose samples are tested; f: the body whose field they are tested in)
   let s = select(pr.x, pr.y, way == 1u);
@@ -302,6 +458,13 @@ fn cull(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn fineArgs() {
   // (the most groups asked for in a pass since the CPU last read)
   atomicMax(&counts[11], atomicLoad(&counts[2]));
+  // the slot table: the entries that may be live (last pass's pairs and this pass's new ones), the most since the
+  // last read; the pairs that found no slot since then; and this pass's pairs with a slot, for the next
+  let pairsNow = min(pairCount[0], min(P.pairUpper, P.maxPairs));
+  let failed = atomicLoad(&counts[8]);
+  atomicMax(&counts[13], atomicLoad(&counts[10]) + atomicLoad(&counts[7]));
+  atomicAdd(&counts[14], failed);
+  atomicStore(&counts[10], pairsNow - failed);
   let n = min(atomicLoad(&counts[2]), P.maxChunks);
   args[0] = min(n, ARGS_ROW);
   args[1] = (n + ARGS_ROW - 1u) / ARGS_ROW;
@@ -548,7 +711,9 @@ fn reduce(@builtin(global_invocation_id) gid: vec3<u32>) {
     found += atomicLoad(&hits[r + 11u + k * 4u]);
   }
   atomicStore(&hits[r + 4u], found);
-  if (found == 0u) {
+  // (a pair with no slot has nowhere to put rows: its rows are flagged, slots)
+  let slot = atomicLoad(&hits[r + 7u]);
+  if (found == 0u || slot == NO_SLOT) {
     return;
   }
   let energy = bitcast<f32>(atomicLoad(&hits[r + 5u]));
@@ -586,7 +751,7 @@ fn reduce(@builtin(global_invocation_id) gid: vec3<u32>) {
     row.depth = c.depth;
     row.normal = n;
     row.closing = -dot(c.vrel, n);
-    contacts[pi * SLOTS + kept] = row;
+    contacts[slot * SLOTS + kept] = row;
     ids[kept] = id;
     kept++;
   }

@@ -11,7 +11,7 @@
 // bit in `missing` (contract.ts MISS_*), which the solver reads to hold them still.
 // Transfers: the two passes' uniforms; the 128 B read above.
 
-import { COUNT_BRICKS, COUNT_HW_BRICKS, COUNTS_BYTES } from './contract';
+import { COUNT_BRICKS, COUNT_HW_BRICKS, COUNT_HW_SLOTS, COUNT_SLOT_FAILS_SINCE, COUNTS_BYTES } from './contract';
 import { PAIR_ASKED, PAIR_HW_ITEMS, PAIR_HW_PAIRS, PAIR_ITEMS_ASKED, SdfCoarse, type CoarseInputs, type CoarseOptions } from './coarse';
 import { SdfFine } from './fine';
 import type { SdfModels } from './models';
@@ -22,6 +22,8 @@ export interface CollideOptions extends CoarseOptions {
   cap?: number;
   /** the sample groups' room given outright (default fine.ts's; it grows) */
   groupRoom?: number;
+  /** the pair slots' table given outright, a power of two (default fine.ts's; it grows) */
+  slotRoom?: number;
   /** ticks between reads of what was asked of the rooms (default 8; 0: never, the rooms stay as made) */
   readEvery?: number;
 }
@@ -62,7 +64,7 @@ export class SdfCollide {
     opts: CollideOptions,
   ) {
     this.coarse = new SdfCoarse(device, models, opts);
-    this.fine = new SdfFine(device, models, { maxPairs: this.coarse.pairRoom, cap: opts.cap, margin: opts.margin, maxBricks: opts.groupRoom });
+    this.fine = new SdfFine(device, models, { maxPairs: this.coarse.pairRoom, cap: opts.cap, margin: opts.margin, maxBricks: opts.groupRoom, slots: opts.slotRoom });
     this.readEvery = opts.readEvery ?? 8;
     this.next = this.readEvery;
     this.rd = device.createBuffer({ label: 'sdf rooms read', size: HEAD_BYTES + COUNTS_BYTES, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -75,7 +77,7 @@ export class SdfCollide {
 
   /** the rooms as they are */
   get rooms(): Rooms {
-    return { rows: this.coarse.rows, pairs: this.coarse.pairRoom, items: this.coarse.itemRoom, groups: this.fine.maxBricks };
+    return { rows: this.coarse.rows, pairs: this.coarse.pairRoom, items: this.coarse.itemRoom, groups: this.fine.maxBricks, slots: this.fine.slots };
   }
 
   /** bytes both passes hold on the GPU */
@@ -103,7 +105,7 @@ export class SdfCollide {
     const before = this.rooms;
     const t0 = performance.now();
     this.coarse.grow({ rows: want.rows, pairRoom: want.pairs, itemRoom: want.items });
-    this.fine.grow({ maxPairs: this.coarse.pairRoom, maxBricks: want.groups });
+    this.fine.grow({ maxPairs: this.coarse.pairRoom, maxBricks: want.groups, slots: want.slots });
     const ms = performance.now() - t0;
     const after = this.rooms;
     for (const room of Object.keys(after)) if (after[room] !== before[room]) this.growths.push({ tick: this.polls, room, from: before[room], to: after[room], ms });
@@ -138,8 +140,10 @@ export class SdfCollide {
         this.reads++;
         this.lastReadMs = performance.now() - t0;
         const c = w.subarray(HEAD_BYTES / 4);
-        const asked: Rooms = { pairs: Math.max(w[PAIR_ASKED], w[PAIR_HW_PAIRS]), items: Math.max(w[PAIR_ITEMS_ASKED], w[PAIR_HW_ITEMS]), groups: Math.max(c[COUNT_BRICKS], c[COUNT_HW_BRICKS]) };
-        const plan = planRooms({ pairs: room.pairs, items: room.items, groups: room.groups }, asked);
+        // (a pair that found no slot although the table was under half full: the table doubles all the same)
+        const slots = c[COUNT_SLOT_FAILS_SINCE] ? Math.max(c[COUNT_HW_SLOTS], room.slots / 2) : c[COUNT_HW_SLOTS];
+        const asked: Rooms = { pairs: Math.max(w[PAIR_ASKED], w[PAIR_HW_PAIRS]), items: Math.max(w[PAIR_ITEMS_ASKED], w[PAIR_HW_ITEMS]), groups: Math.max(c[COUNT_BRICKS], c[COUNT_HW_BRICKS]), slots };
+        const plan = planRooms({ pairs: room.pairs, items: room.items, groups: room.groups, slots: room.slots }, asked);
         if (Object.keys(plan).length) {
           this.want = { ...this.want, ...plan };
           // (a room that ran out hid some of what the next would be asked: look again as soon as it has grown)

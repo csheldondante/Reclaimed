@@ -87,7 +87,7 @@ const S24 = '§24 reads are small and only after edits';
 
 export const TRANSFERS: TransferSite[] = [
   // (physics10-fine, docs/design/PHYSICS_ENGINE.md "Fine collision": the model store and the fine pass; not wired into play yet — `play` says what each will be once the engine steps it)
-  { kind: 'upload', file: 'engine/sdf/fine.ts', fn: 'SdfFine.setParams', size: 'small', what: 'the fine pass’s uniform, 32 B', why: 'the margin, the sample cap, the tick and the buffers’ room, once a pass', rate: 'frame', play: 'no' },
+  { kind: 'upload', file: 'engine/sdf/fine.ts', fn: 'SdfFine.setParams', size: 'small', what: 'the fine pass’s uniform, 48 B', why: 'the margin, the sample cap, the tick and the buffers’ rooms, once a pass', rate: 'frame', play: 'no' },
   { kind: 'upload', file: 'engine/sdf/coarse.ts', fn: 'SdfCoarse.setParams', size: 'small', what: 'the coarse pass’s two uniforms, 48 B each', why: 'the rows in use, the levels, the top cell and the margin, once a pass', rate: 'frame', play: 'no' },
   { kind: 'upload', file: 'engine/sdf/models.ts', fn: 'SdfModels.flush', n: 2, size: 'small', what: 'a model’s 32 B row and its occupancy bits (padded voxels / 8: 729 B for 16³, 4.9 KB for 32³), a call each a model baked', why: 'a model added, or its voxels changed on the CPU; a model whose bits a GPU pass wrote uploads only the row', rate: 'demand', play: 'no' },
   { kind: 'copy', file: 'engine/sdf/models.ts', fn: 'SdfModels.room', size: 'large', what: 'a store buffer’s bytes in use (fields and samples: from 256 KB, doubling), GPU to GPU', why: 'the store ran out of room and doubled: the models already baked are kept', rate: 'demand', play: 'no' },

@@ -23392,3 +23392,23 @@ mid-run; no pipeline made), `sdf-coarse` 8, `sdf-fine` 36, `sdf-bake` 15; unit `
 
 **Left.** The solver's side of `missing` (the engine's). The read is a timed read in play at the join (PF26, the
 owner's call). Hacks: PF27.
+
+## 2026-11-15 — stable pair slots (PF25, `physics10-fine`)
+
+**Why.** Pairs are appended in thread order, so a pair's contact rows moved from tick to tick. The solver will keep
+impulses a pair between ticks and needs them to stay put.
+
+**What.** A persistent open-addressing table in the fine pass, keyed by the pair's rows (lower, higher): double
+hashing, one walk of 32 at most a pair a pass, in a new kernel (`slots`) before `expand`. Contact rows are at
+`slot * 4`, with a 16 B key record beside them (pair, age, pair index); the pair's record names its slot. Entries are
+stamped with a pass epoch, so a pair absent for one pass has lost its slot with no sweep, and comes back to a zeroed
+slot with age 0. The table grows at half full, or when a pair finds no slot (that pair is flagged `MISS_SLOTS`), by
+a GPU rehash that keeps keys, ages and rows. `reduce` writes into the slot.
+
+**Measured** (desktop proxy, timestamps). `pairArgs` + `slots` alone: one clock tick (0.07 ms) at 4,549 and 5,701
+pairs, 0.20 to 0.26 ms at 23,152 pairs found and 0.33 ms when every pair claims. The whole path on the bench moved by
+less than its runs differ.
+
+**Tests** (Node, Dawn): `sdf-slots` 6 new; `sdf-fine` 36 and `sdf-rooms` 6 now read their rows through the slots.
+
+**Left.** PF28: a row's index inside a slot follows the reduction's order; the solver's own move at a growth.

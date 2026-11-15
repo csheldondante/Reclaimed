@@ -446,6 +446,7 @@ happens when it runs out:
 | pairs (8 a row) | stage B flags both rows of the pair it could not write (`MISS_PAIRS`) | by the read |
 | sample groups (64 a half pair) | `cull` flags both rows of the pair whose group found no room (`MISS_GROUPS`) | by the read |
 | a pair's contact rows | four a pair by design (the reduction); not a room | |
+| pair slots (a table twice the pairs) | `slots` flags both rows of the pair that found no free entry (`MISS_SLOTS`) | by the read |
 | the model store | sized on the CPU before each bake; doubles there (one GPU to GPU copy) | at the bake |
 
 **Safe.** `missing` is a u32 a body row on the GPU (`SdfCollide.missing`; bits in `contract.ts` `MISS_*`), cleared by
@@ -479,6 +480,41 @@ read and 2.04 ms with one every 8 ticks (inside the noise); its answer lands 2 m
 making buffers, and the tick that does it encodes in 0.7 to 1.2 ms against 0.47 (the bind groups); its wall time 1.7
 to 3.3 ms against 2.6: no tick stalls. From an eighth, the rooms took three growth ticks in a row (a room that ran
 out hides what the next would be asked).
+
+**Stable pair slots (PF25).** The solver will keep impulses a pair from tick to tick, so a pair's contact rows must
+stay in one place while the pair lasts. They now do: rows at `slot * 4`, the slot in the pair's record (word 7).
+
+- *The table.* Open addressing over a power of two of entries, keyed by the pair's rows (lower, higher: which body
+  the coarse pass names first can change when one falls asleep). An entry is a stamp (the epoch of the last pass that
+  touched it) and a key record of 16 B beside the rows: lower row, higher row, age in passes, the pair's index in this
+  pass's list.
+- *Probing.* Double hashing: entry `(h + i * step) & (entries - 1)`, `step` odd, `i` under 32. One walk a pair a pass,
+  by the pair's own thread in a small kernel (`slots`) before `expand`. It stops at its own key in an entry stamped
+  last pass (found: stamped now, age + 1) or at an entry never used (not in the table: every key took the first free
+  entry of its walk). Not found: it claims the first free entry it passed by compare-exchange, writes the key with
+  age 0 and zeroes the four rows. Each pair is in the list once (tested since round 3), so no two threads seek one key.
+- *Release.* No sweep. The epoch goes up one a pass; an entry is live when its stamp is this pass's or the last's, and
+  anything older is free. A pair absent for one pass has lost its slot.
+- *Growth.* At half full (entries that may be live: last pass's pairs and this pass's new ones, the most since the
+  last read), or at once when a pair finds no free entry in its 32 (that pair has no rows that pass and both its rows
+  are flagged `MISS_SLOTS`). The next `encode` runs `rehash` first: a thread an old entry, every entry live at the last
+  pass put in the new table with its key, age and rows, and `slotRemap[old]` its new place (`slotGeneration` goes up:
+  the solver moves its own impulses by the same map).
+- *Departure.* The pair's record (128 B: sample count, energy, rows written) stays by the pair's index in this
+  tick's list, not by slot: it is rebuilt every tick and the dispatches walk the list. Only the rows and the key
+  record are by slot.
+
+Tested (`test/gpu/sdf-slots.test.ts`, 6): a stack of six boxes keeps each pair's slot, and bit-identical rows, for 100
+passes with the list shuffled and either body named first; a pair absent for one pass comes back with age 0 and
+zeroed rows while the pair beside it keeps slot and age; 720 claims of 168 pairs through a table of 64; a growth
+keeps key, age and rows (checked in a pass with no pair, so the copy is the rehash's own); a table of 4 under 12
+pairs: 4 whole, 8 flagged with no rows; a pile of 1,100 rows through both passes: every pair a slot of its own with
+its key beside it, the table grown at half full with no pair failing and every age going on through it.
+
+Measured (`SDF_PROBE=1 npx vitest run --project gpu sdf-probe -t "pair slots"`; desktop proxy, timestamps round
+`pairArgs` + `slots` alone, median of 12): one clock tick (0.07 ms) for 4,549 and 5,701 pairs whether every pair finds
+its slot or claims a new one; 0.20 to 0.26 ms for 23,152 pairs found, 0.33 ms claiming. On the bench table the whole
+path moved by less than the runs differ (pile, 4,096 rows all awake: 1.57 to 1.97 ms before, 1.77 to 1.97 after).
 
 ### Hand-over: joining body ↔ body into the engine
 
