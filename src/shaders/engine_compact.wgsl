@@ -66,7 +66,9 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
     // (a pair asked it to wake last tick — engine_pairs.wgsl pairPre: a hit over the threshold, or what it leans on
     // moved. It wakes with what the pair solver gave it meanwhile, and deforms if the hit passed its material's bar.)
     let b = rwAt(r);
-    if (EU.g.w > 1u && atomicLoad(&list[b + RW_WAKE]) == EU.g.w - 1u) {
+    // (the GPU's own tick count, which `integrate` puts up after this kernel: still the stamping tick's)
+    let gt = atomicLoad(&list[tickAt()]);
+    if (gt > 0u && atomicLoad(&list[b + RW_WAKE]) == gt) {
       wake = true;
       dv += vec3<f32>(f32(bitcast<i32>(atomicExchange(&list[b + RW_DV], 0u))), f32(bitcast<i32>(atomicExchange(&list[b + RW_DV + 1u], 0u))), f32(bitcast<i32>(atomicExchange(&list[b + RW_DV + 2u], 0u)))) / FPV;
       dw += vec3<f32>(f32(bitcast<i32>(atomicExchange(&list[b + RW_DW], 0u))), f32(bitcast<i32>(atomicExchange(&list[b + RW_DW + 1u], 0u))), f32(bitcast<i32>(atomicExchange(&list[b + RW_DW + 2u], 0u)))) / FPV;

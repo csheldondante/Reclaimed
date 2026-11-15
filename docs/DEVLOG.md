@@ -23669,6 +23669,41 @@ and reads frames, not the pass).
 ## 2026-11-15 — the join: bodies meet bodies inside the engine's tick (PJ1–PJ9, `physics10-join`)
 
 **Why.** The engine (rows on terrain, expand, settle) and the body ↔ body module (distance-field models, coarse and
-fine passes, rooms, pair slots) were built apart. This joins them: docs/design/PHYSICS_ENGINE.md "The join" has the
-tick, the solver, the measurements, the departures and the hacks; BACKLOG PJ1–PJ9 the rows. (Written in full in the
-commit that closes the round; this entry marks the tested boundary "pairs reach the solver".)
+fine passes, rooms, pair slots) were built apart; rigid bodies passed through each other. docs/design/PHYSICS_ENGINE.md
+"The join" has the tick, the solver, the tables, the departures and what the stills show; BACKLOG PJ1–PJ9 the rows.
+
+**What.** A distance-field model a body, keyed by content and baked once in a batch before the tick that needs it
+(the owner: "make the distance fields and voxels for each mesh"). The sleep epoch in the awake list's header. The
+tick: compact, integrate, coarse, fine, terrain rows, the pair solver, the move and sleep, in one compute pass.
+Terrain contacts reduced inside a workgroup to 13 rows a body, so no thread walks a body's samples (step 1's solve
+was 5.7 ms for 8 rows). The pair solver: Jacobi between pairs, a body's mass split by its pairs, fixed-point atomic
+sums (deterministic: a pile of 48 run twice, every pose word the same), impulses kept by pair slot. A sleeper keeps
+its pose bit for bit under a touch and wakes the tick after a hit over the threshold with what the solver gave it. A
+row a room could not serve is held. One event-chained read in place of the two timed ones (DESIGN §24).
+
+**Found by tests and the lab, and what was done.**
+- At one cube a cell, blocks two cells wide stacked square fell through each other (the fine pass's samples were all
+  corners, each on an edge of the other block). Collision models are now cubes of half a cell: eight times the field.
+- With real face contacts, stacks sank and crept: the fine pass's three outer rows are rim samples with a rounded
+  field (a gap of 0.15 to 0.25 cells, normals leaning 45°), so one row carried a block. A pair is now one plane with a
+  rim allowance (hack, PJ7); and a body's mass is split by its pairs, not its rows (a row count made each iteration
+  give a block a fifth of what it needed).
+- A held row kept gaining gravity and slammed down when released: it gets the substep's gravity back.
+- The stamps (a row's pair count, a sleeper's wake) read the tick from a uniform, which ticks encoded before one
+  submit would share: the tick is now counted on the GPU.
+
+**Measured** (desktop proxy, Dawn in Node, Intel Xe; engine GPU ms a tick by timestamps): 200 mixed blocks falling
+1.31, piling 2.36, asleep 0.39 to 0.46; 1,000 falling 2.56 (terrain rows 1.57 of it: rows in the air still spend
+their threads), piling 4.13 to 4.19 with up to 2,524 pairs, 1.25 to 1.31 with two awake. 200 blocks poured into a
+pit: every pair brute force has at three checked ticks (342, 476 pairs), none through the floor, all asleep after
+8.0 s. One tick of 284 to 500 ms wall in each bench run at no growth: not explained. The physics bench, engine route,
+desktop: p50 9.8 to 9.9, p95 10.9 to 11.3 ms, physics toggle +1.55 to +2.45 ms GPU (+5.46 on one stage), against the
+lattice's +0.3 to +0.8 on this desktop and the owner's phone baseline for the lattice of 1.9 to 3.1 ms.
+
+**Not built** (BACKLOG PJ3, PJ5, PJ6): deforming voxels against rigid rows, so a hard hit between bodies stays rigid
+by default; a field for a part made at settle, so such parts pass through bodies; the phone bench page with the
+floor ladder, the stage split at 1,000 to 50,000 rows and the row-level early-out for terrain contacts the owner
+asked about.
+
+**Tests.** `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots`;
+`engine-pairs.test.ts` 8, `engine-pile.test.ts` 5 (and a bench behind `PAIRS_BENCH=1`).

@@ -580,6 +580,8 @@ The phone run is the owner's (PF20).
 
 ### Hand-over: joining body ↔ body into the engine
 
+(Joined on `physics10-join`: see "The join" at the end of this note for what was built, what changed against this hand-over and what is left.)
+
 Everything here is on `physics10-fine` (not merged anywhere). Code: `src/engine/sdf/` (`contract.ts` layouts,
 `models.ts` the model store, `coarse.ts`, `fine.ts`, `collide.ts` both passes with one set of rooms, `rooms.ts` the
 growth rule, `shapes.ts` test scenes), kernels `src/shaders/engine/sdf-*.wgsl`. Each kernel file's header states its
@@ -1157,3 +1159,186 @@ gated by `Engine.settles`, false today, which parks a still body in S_STILL). To
    skinned place minus the centre, its weights only the part's voxels. Then the break surface, by the owner's method.
 4. Tests listed in the brief for D; the equality test pattern is `R.drawn()` before and after.
 5. Then `Engine.settles = true`, wake a settled row as any row, and the lab station (E).
+
+## The join: bodies meet bodies in the engine (branch `physics10-join`, 2026-11-15)
+
+`physics10-break` (96c9c104) with `physics10-fine` (88899b14) merged in. Files: `src/engine/engine.ts`,
+`src/engine/sdf/hexmodel.ts` (new), `collide.ts`, `coarse.ts`, `fine.ts`; `src/shaders/engine_pairs.wgsl` (new),
+`engine.wgsl`, `engine_compact.wgsl`, `engine/sdf-coarse.wgsl`, `sdf-fine.wgsl`; tests `test/gpu/engine-pairs.test.ts`
+(8), `engine-pile.test.ts` (5 and a bench); the playground's `pile` station, `scripts/pilelab.mjs`. Step 1's kernels
+(`engine_step.wgsl`) are kept: the panel's `bodies meet bodies` at 0 runs them as before.
+
+### What is joined, and what is not
+
+Joined: rigid rows meet rigid rows, awake or asleep, with the agreed rules. **Not joined** (each a BACKLOG row, each
+with a safe stand-in, none half-wired): a deforming body's voxels against rigid rows (PJ5: they pass through, so a
+hard hit between bodies stays rigid unless the panel's `bodies break bodies` is on); a field for a part made at
+settle (PJ6: such a row is in no pair, it meets the ground only); the phone bench page, the floor ladder, the stage
+split at 1,000 to 50,000 rows and the row-level early-out for terrain contacts (PJ3: asked for by the owner and the
+coordinator while this was being built).
+
+### Row layouts reconciled
+
+- `info` is four vec4 a row on the engine's side (the hand-over read three): the two kernel files and `packBodies`
+  now use four. The material word is read whole (material | loose << 8).
+- `model`: a u32 a row, the engine's `sdfModel` buffer. A row with no model in the store holds 0xffffffff and the
+  coarse pass leaves it out of every pair.
+- The sleep epoch is word 7 of the awake list's header (`CoarseOptions.epochWord`), put up by `compact` (a wake, a
+  row made asleep, a sleeper moved by the window's slide) and by `rowFinish` (a row falls asleep). The list's header
+  is cleared each tick but for that word. `Engine.clear()` and a growth of the rows tell the coarse pass to build its
+  sleeper table again.
+- The awake list's buffer also holds 20 work words a row (`engine.wgsl` RW_*): what the pair solver adds into a row.
+  A kernel that writes them cannot be dispatched from the same buffer, so `compact` writes the list's dispatch
+  arguments a second time into a 32 B buffer of their own.
+
+### One model a mesh, baked ahead (the owner, 2026-11-15)
+
+"You going potentially make the distance fields and voxels for each mesh (instanced ones anyway)". A model is keyed by
+its content (`modelKey`: its cells about their box's corner, their materials, the parity of the box's first row);
+bodies with the same key share one heap model, mesh, distance field and sample list (tested: 100 instances, one
+bake). Models added before a tick are baked in one batch at that tick's start, so a level's bodies bake once before
+its first tick. **Next, not built (PJ9):** bake at build time or cache the baked bytes by content hash (the repo's
+warm cache) so a level load bakes nothing. A model first dropped in play (a lab button) still bakes in that tick: on
+the phone that is 7.6 ms for one 16-cube model, so play must not introduce new shapes that way.
+
+**The collision shape is the hex-prism cells resampled to cubes of half a cell** (`hexmodel.ts`; PJ4). At one cube a
+cell, blocks two cells wide stacked square fell through each other: the fine pass's samples are points on a voxel's
+open face, edge or corner, a two-voxel block is corners only, and every sample of one lay on an edge of the other.
+Cost: eight times the field and the bake. Sides are off by up to a quarter cell in x and y; tops and bottoms are exact.
+
+### A tick, in order
+
+`compact` → per substep: `integrate` → (first substep: coarse, fine, `pairPrep`) → `tfine` → `pairPre` →
+iterations of (`pairSolve`, `rowSolve`) → `pairPush` → `rowFinish` (the move, sleep) → stage 4's kernels → `fold` →
+the draw list. One compute pass. Pairs are found once a tick; a contact row's point is kept in each body's own frame,
+so its depth follows the bodies through the second substep.
+
+**Counts a tick** (defaults: 2 substeps, 6 pair iterations, deformation on): 1 compute pass (and the frame's skin
+pass); 146 dispatches, 9 of them direct (`compact`, five one-thread argument kernels of the pair passes, `arm`,
+`drawArm`, `drawEnd`) and 137 indirect, of which 75 are stage 4's lattice and settle kernels (zero workgroups unless
+a body deforms), 18 the pair passes', 35 the solver's; 6 GPU clears before the pass (the list's header 28 B, its
+arguments 32 B, the events' header 16 B, the deform arguments 32 B, the coarse pass's awake counters 8 B a bucket of
+room, the rows' `missing` words 4 B a row of room); no copy; 1,520 B uploaded (commands 512 B, three uniforms of
+224 B, thresholds 192 B, the pair passes' three uniforms 144 B) — no pose is uploaded; a bind group set a dispatch.
+With nothing awake every indirect dispatch has zero workgroups (tested: the list's and the pairs' arguments read 0).
+The two clears sized by room and the 75 idle dispatches are what I would cut first for the phone's floor (PJ3); I
+have not measured the floor on the phone and do not guess at it here.
+
+### The solver, as built: Jacobi with accumulate-and-apply, mass split by pair
+
+- **Terrain contacts are reduced, not walked.** `tfine` is a workgroup a row: its 64 threads share its samples, each
+  contact bids (an atomic max in workgroup memory) for one of 13 rows — the deepest on the ground, the farthest out
+  along eight directions, the deepest against a wall in each of four quarters — and after the barrier a thread a row
+  writes the winner. Erosion and the hardest stop are found in the same threads. The one-thread-a-row solve (5.7 ms
+  for 8 rows of 1,352 samples) is gone: a row's own thread goes over 13 rows.
+- **Pairs.** `pairSolve` is a thread a pair: it reads both bodies' velocities as the last iteration left them, solves
+  its own rows in turn on its own copy, and adds each body's change into the body's work words as fixed-point
+  integers with atomic adds. `rowSolve` is a thread a row: it takes the sum, then goes once over its terrain rows. A
+  body in n pairs gives each a 1/n share of its mass, so the sum cannot overshoot. Integer sums are the same in any
+  order: the run is deterministic (a pile of 48 run twice: every pose word identical).
+- **Why Jacobi and not colours:** it needs no graph colouring pass and no per-colour dispatches, and its cost is two
+  dispatches an iteration whatever the pile. Its price is convergence: a stack of five closes by 0.07 to 0.16 cells
+  an interface at 6 iterations and 0.04 at 12. A coloured solve is not built; the comparison is open (PJ3).
+- **Kept impulses.** A pair's row impulses are kept by pair slot (`pimp`) and start the next tick at `kept impulse`
+  (0.85); a slot of age 0 starts from nothing. When the slots' table grows, `pimpMove` moves them by the fine pass's
+  `slotRemap`.
+- **One plane a pair (hack, PJ7).** The fine pass's three outer rows are rim samples: the field is rounded there and
+  reads a gap of 0.15 to 0.25 cells and a normal leaning 45° where two faces touch. Left as they come, one row carried
+  a resting block and stacks sank and crept apart. Every row of a pair now takes the first row's normal and the outer
+  rows get `rim allowance` (0.2 cells) added to their depth, never past the deepest.
+
+### The rules, each a test, for pairs
+
+| rule | how | test |
+|---|---|---|
+| separation adds no speed | an impulse only stops an approach; overlap past the slop is a change of position at pushV at most | two blocks head-on at 4 cells/s each: both stop, centres never nearer than 4.2 (they are 4 wide), the largest gain of kinetic energy in a tick 0.05% of what they came in with |
+| overlap in the mass-scaled slop is not corrected | the smaller body's slop | the stacks: an interface rests 0.07 to 0.16 cells closed |
+| erode, don't push | **departure:** between bodies the softer (lower break threshold; the same: the lighter) is flagged for `expand` and stage 4 conserves its mass — chosen over eroding its model because a model is shared by its instances and eroding one would need a copy and a bake in a play tick. Off by default until voxels meet rigid rows (PJ5): today the default is push only | with `pairExpand` on: a stone block at 30 cells/s into another: both expand, 2 rows and 24 voxels on the ground afterwards, mass 280.8 + 64.8 of 345.6 |
+| sleepers stay | a sleeper is immovable to the solver until a hit's energy over its mass passes `wake threshold`; then it is stamped, the solver adds its impulses into its work words, and `compact` wakes it the next tick with them (momentum kept; one tick late) | a block creeping at 0.15 cells/s against a sleeper: its 64 pose bytes unchanged after 120 ticks; a block at 8 cells/s: awake and moved 0.68 cells |
+| deflect and topple | speed out at most restitution × speed in; friction a row | a block slides 12 cells down and off a sleeping steel slab tilted 20°; a heavy block moves a light one 1.6 cells, the light one moves the heavy 0.007 |
+| `missing` | a row a room could not serve this tick keeps its pose bit for bit, is immovable to its pairs, and gets the substep's gravity back so it goes on as it was | room for 2 pairs under a column of 6: flagged rows' poses unchanged each tick while a free block falls; with growth on, the rooms grow and the column rests |
+
+### The read (DESIGN §24)
+
+One read of 416 B (the pool's header, the awake count, what was asked of the pair rooms) replaces the two timed ones.
+It starts at a host event (`add`, `impulse`, `wake`, `wakeNear`, `shift`, `expand`, `release`, `clear`, and
+`Engine.kick()` for an edit), twice (the first shows the tick before the event), and is issued again four ticks on
+only while the last one showed rows awake, bodies deforming or settling, or a growth to come. With everything asleep
+none is issued (tested over 120 ticks). **Trade-off:** a wake that happens on the GPU alone (a sleeper's ground
+changed by a sim) is not seen by the CPU until the next event it knows of; the tick itself needs no read, and a room
+that runs out meanwhile holds its rows (`missing`) instead of dropping a collision. Terrain edits do not call `kick()`
+yet (PJ2).
+
+**The growth stall** (one tick 8.4 ms against 2.9): the pair rooms now grow one a tick (`spread`), not all at once.
+Not re-measured in isolation: see "worst tick" below.
+
+### Measured (desktop proxy: Dawn in Node, Intel Xe, D3D12; GPU timestamps a kernel, a clock of 0.066 ms steps)
+
+`PAIRS_BENCH=1 npx vitest run --project gpu engine-pile -t bench --reporter=verbose`. Mixed blocks of 8 to 27 cells
+poured into a pit; engine GPU ms a tick (every engine kernel, the pair passes included):
+
+| blocks | falling, no pair | piling | settling | all but a few asleep |
+|---|---|---|---|---|
+| 200 | 1.31 (terrain rows 0.46) | 2.36 (102 awake, 85 pairs) | 1.44 (1 awake) | 0.39 to 0.46 |
+| 1,000 | 2.56 (terrain rows 1.57) | 4.13 to 4.19 (1,000 and 826 awake, 1,435 and 2,524 pairs) | 2.69 (195 awake, 887 pairs) | 1.25 to 1.31 (2 awake) |
+
+- **Falling with no pair, the cost is the terrain rows' threads** (1.57 of 2.56 ms at 1,000): a row in the air still
+  spends its 64 threads on its samples. That is the row-level early-out the owner asked about (PJ3), not built.
+- With nothing awake the engine reads 0.39 to 0.46 ms, which is six or seven kernels showing one clock step each: the
+  clock's floor, not a cost I can split further here.
+- **Worst tick: one tick of 500 ms (200 blocks) and of 284 ms (1,000) wall in each run, at ticks with no growth. Not
+  explained** (a stall in Node, the driver or a read's mapping; not seen in the browser captures). The rest of the
+  ticks: 2.8 to 16.6 ms wall, which includes the test world's surface pass and the wait for the submit.
+- 2 of the 1,000 blocks were still awake after 40 s, in no pair. Not explained.
+- The repo's physics bench, engine route, desktop proxy (headless Chrome, D3D11, 412 × 915):
+  `node scripts/physbench.mjs --url http://localhost:5391 --pairs engine:runs`, six stages: p50 9.8 to 9.9, p95 10.9
+  to 11.3, p99 11.4 to 13.6 ms (the headless cap is 9.9); physics toggle +1.55 to +2.45 ms GPU, +5.46 on "drop the
+  line-up"; frame difference within ±0.05 ms. Beside it, **the owner's phone baseline for the lattice (Pixel 9a):
+  p50 16.6, p95 18 to 20 ms, physics toggle 1.9 to 3.1 ms GPU.** The desktop number is a proxy only, and against this
+  same desktop's lattice run (+0.3 to +0.8 ms GPU) the engine route is two to three times dearer here. Report:
+  `data/perf/sdf/physbench-engine-join-desktop.json`.
+- **The phone's collision numbers** (the owner's run of `sdfbench.html` v4, Pixel 9a): the whole pair path 1.8 ms at
+  28 pairs and 11.3 ms at 5,701; the fine pass alone 0.7 ms at 64 pairs. The floor is the problem, and this note's
+  counts above say where I would look; the ladder that would separate the causes on the phone is not built (PJ3).
+  When thousands are awake at once the engine does not degrade yet: it runs every pair (PJ3).
+
+### The lab
+
+`?solver=engine`, station `pile` (the seventh), on the river station's low ground with a level pad and a pit:
+`/?skipmenu=1&level=playground&tutorial=0&q=low&fresh=1&solver=engine`. Buttons: drop a stack, pour rubble into the
+pit, boulder into a stack, steel beam across two blocks, throw a block at a tower. The solver's numbers are on the
+tuning panel's engine group (pair iterations, kept impulse, wake threshold, rim allowance, the two switches).
+
+**What the stills show** (`node scripts/pilelab.mjs`; looked at; phone framing):
+- *Stack:* five blocks in a straight column, stone and concrete in turn, standing at the end. No lean I can see at
+  this zoom.
+- *Pit:* forty-eight blocks heaped in the pit, at mixed angles, the heap higher than the rim. At this zoom I cannot
+  tell whether any two are inside each other. The read-out says 13 bodies expanded on landing and made 11 parts:
+  those parts pass through the other bodies (PJ6).
+- *Boulder:* the brick stack is knocked apart, four bricks lying separately on the ground, the boulder at rest
+  beyond them.
+- *Beam:* the steel beam lies level across the two stone blocks.
+- *Tower:* after the throw the blocks are scattered, some in the pit. No still shows the tower standing before the
+  thrown block arrives, so the station's tower itself is unjudged (six such blocks stand and sleep in a Node run).
+- **What looks wrong:** nothing explodes or jitters in the stills; what I could not judge from them is small overlap
+  (interfaces close by up to 0.16 cells), the tower before the hit, and motion between frames. The GIFs are the place
+  to look for jitter.
+
+### Departures in the join
+
+1. Erode between bodies is "flag the softer for `expand`", and it is off by default (PJ5).
+2. A hard hit between bodies does not expand a body by default, for the same reason.
+3. A sleeper hit over the threshold wakes the tick after, not in the tick of the hit.
+4. Terrain contacts are 13 reduced rows a body, not every sample (step 1 solved every sample in one thread).
+5. Collision models are cubes of half a cell over hex-prism cells (PJ4).
+6. One plane a pair with a rim allowance (PJ7).
+7. Pairs are found once a tick, not once a substep.
+8. Settled parts are in no pair (PJ6).
+
+### Hand-over: where this stopped
+
+Built and tested to the boundary "pairs reach the solver". Next, in the order I would take them: PJ6 and PJ5 (a
+settled part's field with a stand-in, then voxels against rigid rows, then `pairExpand` on by default); PJ3 (the
+phone page with the floor ladder, the stage split, the early-out for terrain contacts); PJ7 in the fine pass;
+PJ8's findings. Run first: `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms
+sdf-slots`, `npm run typecheck`, `npx vitest run --project unit` (one failure on the base: the writing lint, PE17).

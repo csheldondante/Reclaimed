@@ -581,7 +581,7 @@ export class Engine implements SimSystem {
       this.info = again(this.info, 'engine info', n.rows * INFO_B, o.rows * INFO_B);
       // (the list, then the rows' work words — engine.wgsl rwAt. Made again empty: a wake asked for in the tick before
       // a growth is lost, and the sleep epoch starts again, so the coarse pass is told to build its sleeper table)
-      this.list = again(this.list, 'engine awake list', (LIST_AT + n.rows * (1 + RWW)) * 4, 0, S | GPUBufferUsage.INDIRECT);
+      this.list = again(this.list, 'engine awake list', (LIST_AT + n.rows * (1 + RWW) + 4) * 4, 0, S | GPUBufferUsage.INDIRECT);
       this.sdfModel = again(this.sdfModel, 'engine row models', n.rows * 4, o.rows * 4);
       // (a row with no model in the store — every row the GPU makes at settle, till its field is baked: BACKLOG PJ6 —
       // is in no pair: the coarse pass reads this word)

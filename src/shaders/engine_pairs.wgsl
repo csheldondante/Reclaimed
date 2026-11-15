@@ -131,10 +131,14 @@ fn fListF(i: u32) -> vec3<f32> {
   return vec3<f32>(bitcast<f32>(atomicLoad(&listA[i])), bitcast<f32>(atomicLoad(&listA[i + 1u])), bitcast<f32>(atomicLoad(&listA[i + 2u])));
 }
 
+/** the tick, counted on the GPU (`integrate` at the first substep): the stamps below must not depend on a uniform,
+ *  which several ticks encoded before one submit would share */
+fn gTick() -> u32 { return atomicLoad(&listA[tickAt()]); }
+
 /** a row's pair contact rows this tick, stamped with the tick (no clear: a sleeper's words are visited by nothing) */
 fn nAdd(r: u32, k: u32) {
   let i = rwAt(r) + RW_N;
-  let stamp = (EU.g.w & 0xffffu) << 16u;
+  let stamp = (gTick() & 0xffffu) << 16u;
   var old = atomicLoad(&listA[i]);
   for (var t = 0u; t < 64u; t++) {
     let base = select(stamp, old, (old & 0xffff0000u) == stamp);
@@ -145,7 +149,7 @@ fn nAdd(r: u32, k: u32) {
 }
 fn nOf(r: u32) -> f32 {
   let o = atomicLoad(&listA[rwAt(r) + RW_N]);
-  if ((o & 0xffff0000u) != ((EU.g.w & 0xffffu) << 16u)) { return 1.0; }
+  if ((o & 0xffff0000u) != ((gTick() & 0xffffu) << 16u)) { return 1.0; }
   return max(1.0, f32(o & 0xffffu));
 }
 
@@ -157,6 +161,7 @@ fn slopOf(r: u32) -> f32 {
 // A thread a row awake: the tick's start pose (the frame is drawn between it and now), gravity and the air.
 @compute @workgroup_size(64)
 fn integrate(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x == 0u && (EU.e.w & 2u) != 0u) { atomicAdd(&listA[tickAt()], 1u); }
   if (id.x >= atomicLoad(&listA[3])) { return; }
   let r = atomicLoad(&listA[LIST_AT + id.x]);
   let b = rwAt(r);
@@ -498,7 +503,7 @@ fn bodyOf(r: u32) -> Bd {
   }
   let b = rwAt(r);
   if ((fl & ROW_ASLEEP) != 0u) {
-    if (atomicLoad(&listA[b + RW_WAKE]) != EU.g.w) { return o; }
+    if (atomicLoad(&listA[b + RW_WAKE]) != gTick()) { return o; }
     o.mode = 2u;
     o.v = fpLoad(b + RW_DV, FPV);
     o.w = fpLoad(b + RW_DW, FPV);
@@ -601,7 +606,7 @@ fn pairPre(@builtin(global_invocation_id) id: vec3<u32>) {
       let reduced = 1.0 / max(invM[0] + invM[1], 1e-9);
       let e = max(energy, 0.5 * reduced * rel2);
       if (e * invM[k] > EU.m.x) {
-        atomicStore(&listA[rb + RW_WAKE], EU.g.w);
+        atomicStore(&listA[rb + RW_WAKE], gTick());
         if (hard) { atomicMax(&listA[rb + RW_ENERGY], bitcast<u32>(energy)); }
       }
     } else if (hard) {
@@ -801,7 +806,7 @@ fn pairPush(@builtin(global_invocation_id) id: vec3<u32>) {
     else if (tb > 0.0) { loser = H.y; }
     if (loser != NONE) {
       let fl = rowFlags(loser);
-      if ((fl & ROW_ASLEEP) != 0u) { atomicStore(&listA[rwAt(loser) + RW_WAKE], EU.g.w); }
+      if ((fl & ROW_ASLEEP) != 0u) { atomicStore(&listA[rwAt(loser) + RW_WAKE], gTick()); }
       else { atomicOr(&listA[rwAt(loser) + RW_FLAGS], RF_EXPAND); }
     }
   }
@@ -839,7 +844,7 @@ fn rowFinish(@builtin(global_invocation_id) id: vec3<u32>) {
   let TH = bitcast<vec4<u32>>(trow[tb]);
   var s = TS(me.v, me.w, false, trow[tb + 1u].y, x, u32(trow[tb + 1u].z));
   // (in pairs its terrain rows were visited every iteration; alone, every pass is here)
-  let paired = (atomicLoad(&listA[rb + RW_N]) & 0xffff0000u) == ((EU.g.w & 0xffffu) << 16u);
+  let paired = (atomicLoad(&listA[rb + RW_N]) & 0xffff0000u) == ((gTick() & 0xffffu) << 16u);
   let passes = select(EU.e.z, 1u, paired);
   for (var it = 0u; it < passes; it++) { s = terrainPass(r, x, q, invM, I0.xyz, I1.xyz, s); }
   var v = s.v;

@@ -163,6 +163,39 @@ test('two hundred mixed blocks poured into a pit: every pair found, none through
   if (asleep) log(`asleep: engine GPU ${asleep.get('total')!.toFixed(3)} ms a tick (${[...asleep].filter(([k, v]) => v > 0.01 && k !== 'total' && k !== 'wall').map(([k, v]) => `${k} ${v.toFixed(2)}`).join(', ')})`);
 }, 240_000);
 
+// PAIRS_BENCH=1: what a tick costs with `n` blocks falling, piled and asleep (the GPU's own timestamps a kernel; the
+// wall time of the worst tick). Desktop proxy; the phone decides (BACKLOG PJ3).
+test.skipIf(!process.env.PAIRS_BENCH).each([200, 1000])('bench: %i blocks into a pit, a tick by kernel', async (n) => {
+  T.deform = 0;
+  const R = await breakRig(g, pit(4, 4, 92, 92), 96, 96);
+  const bodies = pour(R, n, 6, 6, 12);
+  const split = (m: Map<string, number> | null) => (m ? `${m.get('total')!.toFixed(2)} ms GPU, ${m.get('wall')!.toFixed(1)} ms wall (${[...m].filter(([k, v]) => v >= 0.06 && k !== 'total' && k !== 'wall').sort((a, c) => c[1] - a[1]).map(([k, v]) => `${k} ${v.toFixed(2)}`).join(', ')})` : 'no timestamps');
+  let worst = 0;
+  let worstAt = 0;
+  const rows: string[] = [];
+  let slept = -1;
+  for (let t = 0; t < 40 * 60 && slept < 0; t++) {
+    const t0 = performance.now();
+    await R.step(1);
+    const ms = performance.now() - t0;
+    if (t > 2 && ms > worst) {
+      worst = ms;
+      worstAt = t;
+    }
+    if (t === 30 || t === 150 || t === 300 || t % 600 === 599) {
+      const s = await snap(R);
+      const awake = bodies.filter((b) => !(s.flags[b.row] & ASLEEP)).length;
+      const head = new Uint32Array(await g.read(R.e.collide.coarse.pairBuf, 16));
+      rows.push(`tick ${t}: ${awake} awake, ${head[0]} pairs: ${split(await R.gpuTick())}`);
+      if (!awake) slept = t;
+    }
+  }
+  if (slept < 0) rows.push('(not all asleep in 40 s)');
+  const m = await R.gpuTick();
+  console.log(`${n} blocks:\n${rows.join('\n')}\nasleep: ${split(m)}\nworst tick ${worst.toFixed(1)} ms wall at tick ${worstAt}; growths ${JSON.stringify(R.e.collide.growths.map((x) => `${x.room} ${x.from}->${x.to}`))}; reads ${R.e.reads}; bakes ${JSON.stringify(R.e.bakes)}`);
+  ok();
+}, 600_000);
+
 test('the same pile twice comes to rest in the same poses', async () => {
   T.deform = 0;
   const run = async () => {

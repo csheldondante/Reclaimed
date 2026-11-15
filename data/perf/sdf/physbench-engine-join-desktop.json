@@ -1,0 +1,580 @@
+{
+ "kind": "reclaimed-physbench",
+ "version": 2,
+ "startedAt": "2026-11-15T21:18:47.993Z",
+ "finishedAt": "2026-11-15T21:22:09.087Z",
+ "url": "http://localhost:5391/?skipmenu=1&level=playground&tutorial=0&q=low&physbench=1&pairs=engine%3Aruns&tufts=0&shadowcache=4&prepevery=2&bandh=2&shadowsize=512&hybrid=1&settle=0&sleepmore=1&solver=engine&judge=runs&physbenchstep=0",
+ "device": {
+  "adapter": {
+   "vendor": "intel",
+   "architecture": "xe-lpg",
+   "device": "",
+   "description": ""
+  },
+  "features": [
+   "bgra8unorm-storage",
+   "chromium-experimental-multi-draw-indirect",
+   "chromium-experimental-sampling-resource-table",
+   "chromium-experimental-timestamp-query-inside-passes",
+   "clip-distances",
+   "core-features-and-limits",
+   "depth-clip-control",
+   "depth32float-stencil8",
+   "dual-source-blending",
+   "float32-blendable",
+   "float32-filterable",
+   "indirect-first-instance",
+   "primitive-index",
+   "rg11b10ufloat-renderable",
+   "shader-f16",
+   "subgroup-size-control",
+   "subgroups",
+   "texture-component-swizzle",
+   "texture-compression-bc",
+   "texture-compression-bc-sliced-3d",
+   "texture-compression-unaligned",
+   "texture-formats-tier1",
+   "texture-formats-tier2",
+   "timestamp-query"
+  ],
+  "timestampQuery": true,
+  "adapterLimits": {
+   "maxStorageBufferBindingSize": 2147483644,
+   "maxBufferSize": 2147483648,
+   "maxStorageBuffersPerShaderStage": 16,
+   "maxComputeWorkgroupStorageSize": 32768,
+   "maxComputeInvocationsPerWorkgroup": 1024,
+   "maxComputeWorkgroupsPerDimension": 65535,
+   "maxTextureDimension2D": 16384,
+   "maxUniformBufferBindingSize": 65536,
+   "maxBindGroups": 4
+  },
+  "deviceLimits": {
+   "maxStorageBufferBindingSize": 2147483644,
+   "maxBufferSize": 2147483648,
+   "maxStorageBuffersPerShaderStage": 8,
+   "maxComputeWorkgroupStorageSize": 16384,
+   "maxComputeInvocationsPerWorkgroup": 256,
+   "maxComputeWorkgroupsPerDimension": 65535,
+   "maxTextureDimension2D": 16384,
+   "maxUniformBufferBindingSize": 65536,
+   "maxBindGroups": 4
+  },
+  "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36",
+  "clientHints": {
+   "architecture": "x86",
+   "brands": [
+    {
+     "brand": "Not-A.Brand",
+     "version": "99"
+    },
+    {
+     "brand": "Google Chrome",
+     "version": "157"
+    },
+    {
+     "brand": "Chromium",
+     "version": "157"
+    }
+   ],
+   "fullVersionList": [
+    {
+     "brand": "Not-A.Brand",
+     "version": "99.0.0.0"
+    },
+    {
+     "brand": "Google Chrome",
+     "version": "157.0.8103.38"
+    },
+    {
+     "brand": "Chromium",
+     "version": "157.0.8103.38"
+    }
+   ],
+   "mobile": false,
+   "model": "",
+   "platform": "Windows",
+   "platformVersion": "19.0.0"
+  },
+  "hardwareConcurrency": 16,
+  "deviceMemoryGB": 32,
+  "performanceMemory": {
+   "usedMB": 118.5,
+   "totalMB": 187,
+   "limitMB": 4192
+  },
+  "localStorage": {
+   "keys": 0,
+   "chars": 0,
+   "top": []
+  },
+  "storageEstimate": {
+   "usageMB": 0,
+   "quotaMB": 10240
+  },
+  "devicePixelRatio": 2.5999999046325684,
+  "screen": {
+   "w": 800,
+   "h": 600
+  },
+  "css": {
+   "w": 412,
+   "h": 915
+  },
+  "quality": {
+   "tier": "low",
+   "renderScale": 0.5,
+   "maxDpr": 1,
+   "rain": 1500,
+   "maxTicksPerFrame": 2,
+   "particles": 16384,
+   "agentSweeps": 2,
+   "shadowSize": 512,
+   "meshSlots": 1
+  }
+ },
+ "wakeLock": [
+  {
+   "pair": "engine:runs",
+   "held": true
+  }
+ ],
+ "wakeLog": [],
+ "stages": [
+  "drop the rigid blocks",
+  "drop the line-up",
+  "topple the rock towers",
+  "undercut the mesa",
+  "topple the house towers",
+  "swing the tanker into the bridge"
+ ],
+ "summary": [
+  {
+   "pair": "engine:runs",
+   "p95": 11.3,
+   "p99": 13.6,
+   "physicsFrame": -0.01,
+   "physicsGpu": 2.45,
+   "judgeFrame": 0,
+   "judgeGpu": 0.17,
+   "physicsCpu": 0,
+   "judgeMs": 0.45,
+   "judgeWorst": 4.6,
+   "judgePasses": 45,
+   "slow": 2,
+   "slowRuns": 2,
+   "longestRun": 1
+  }
+ ],
+ "note": "Physics and judge costs are measured by toggling each off and on (the frame with it, less without it). Per-pass GPU timestamps are kept in the JSON only (gpuPhysicsPasses): unreliable on tiler GPUs (phones), where passes overlap.",
+ "rows": [
+  {
+   "pair": "engine:runs",
+   "stage": "drop the rigid blocks",
+   "frames": 806,
+   "fps": 100.7,
+   "p50": 9.9,
+   "p95": 11.2,
+   "p99": 12.8,
+   "worst": 22.6,
+   "gpu": 8,
+   "gpuPhysicsPasses": 0,
+   "physicsToggle": {
+    "frameMs": 0.01,
+    "gpuMs": 2.4,
+    "on": {
+     "frameMs": 9.94,
+     "gpuMs": 8.14
+    },
+    "off": {
+     "frameMs": 9.93,
+     "gpuMs": 5.74
+    },
+    "windows": 3
+   },
+   "judgeToggle": {
+    "frameMs": 0,
+    "gpuMs": 0.16,
+    "on": {
+     "frameMs": 9.94,
+     "gpuMs": 7.17
+    },
+    "off": {
+     "frameMs": 9.93,
+     "gpuMs": 7.01
+    },
+    "windows": 3
+   },
+   "cpuPhysics": 0,
+   "cpuTop": {
+    "sim": 0.3,
+    "render": 0.15,
+    "mesh": 0.02,
+    "judge": 0.01,
+    "rockbodies": 0
+   },
+   "judge": {
+    "passes": 1,
+    "ms": 0,
+    "worst": 0,
+    "gpuMs": null,
+    "readKB": null
+   },
+   "read": {
+    "reads": 1,
+    "ms": 1159.4,
+    "worst": 1159.4,
+    "kb": 16384
+   },
+   "awake": 0,
+   "voxels": {
+    "dispatched": 0,
+    "bodies": 0,
+    "awake": 0
+   },
+   "slow": 0,
+   "clusters": 0,
+   "longestRun": 0
+  },
+  {
+   "pair": "engine:runs",
+   "stage": "drop the line-up",
+   "frames": 798,
+   "fps": 99.6,
+   "p50": 9.9,
+   "p95": 11.3,
+   "p99": 12.6,
+   "worst": 81.4,
+   "gpu": 10.24,
+   "gpuPhysicsPasses": 2.11,
+   "physicsToggle": {
+    "frameMs": -0.01,
+    "gpuMs": 5.46,
+    "on": {
+     "frameMs": 9.93,
+     "gpuMs": 11.68
+    },
+    "off": {
+     "frameMs": 9.95,
+     "gpuMs": 6.22
+    },
+    "windows": 3
+   },
+   "judgeToggle": {
+    "frameMs": 0,
+    "gpuMs": 1.27,
+    "on": {
+     "frameMs": 9.91,
+     "gpuMs": 9.68
+    },
+    "off": {
+     "frameMs": 9.91,
+     "gpuMs": 8.41
+    },
+    "windows": 3
+   },
+   "cpuPhysics": 0,
+   "cpuTop": {
+    "sim": 0.28,
+    "render": 0.13,
+    "judge.pass": 0.1,
+    "judge": 0.02,
+    "mesh": 0.01
+   },
+   "judge": {
+    "passes": 8,
+    "ms": 1,
+    "worst": 4.6,
+    "gpuMs": null,
+    "readKB": null
+   },
+   "read": {
+    "reads": 10,
+    "ms": 155.06,
+    "worst": 1159.4,
+    "kb": 3219.2
+   },
+   "awake": 9,
+   "voxels": {
+    "dispatched": 10423,
+    "bodies": 999,
+    "awake": 999
+   },
+   "slow": 2,
+   "clusters": 2,
+   "longestRun": 1
+  },
+  {
+   "pair": "engine:runs",
+   "stage": "topple the rock towers",
+   "frames": 958,
+   "fps": 100.8,
+   "p50": 9.9,
+   "p95": 11.1,
+   "p99": 11.5,
+   "worst": 22.4,
+   "gpu": 8.4,
+   "gpuPhysicsPasses": 0.97,
+   "physicsToggle": {
+    "frameMs": -0.05,
+    "gpuMs": 1.65,
+    "on": {
+     "frameMs": 9.94,
+     "gpuMs": 7.62
+    },
+    "off": {
+     "frameMs": 10,
+     "gpuMs": 5.97
+    },
+    "windows": 3
+   },
+   "judgeToggle": {
+    "frameMs": 0,
+    "gpuMs": -0.46,
+    "on": {
+     "frameMs": 9.92,
+     "gpuMs": 6.85
+    },
+    "off": {
+     "frameMs": 9.92,
+     "gpuMs": 7.31
+    },
+    "windows": 3
+   },
+   "cpuPhysics": 0,
+   "cpuTop": {
+    "sim": 0.3,
+    "render": 0.14,
+    "judge": 0.02,
+    "mesh": 0.01,
+    "judge.pass": 0.01
+   },
+   "judge": {
+    "passes": 9,
+    "ms": 0.68,
+    "worst": 1.9,
+    "gpuMs": null,
+    "readKB": null
+   },
+   "read": {
+    "reads": 9,
+    "ms": 39.46,
+    "worst": 65.8,
+    "kb": 1813.3
+   },
+   "awake": 12,
+   "voxels": {
+    "dispatched": 11228,
+    "bodies": 1371,
+    "awake": 1371
+   },
+   "slow": 0,
+   "clusters": 0,
+   "longestRun": 0
+  },
+  {
+   "pair": "engine:runs",
+   "stage": "undercut the mesa",
+   "frames": 610,
+   "fps": 101.7,
+   "p50": 9.8,
+   "p95": 10.9,
+   "p99": 11.4,
+   "worst": 11.8,
+   "gpu": 8.43,
+   "gpuPhysicsPasses": 0.9,
+   "physicsToggle": {
+    "frameMs": -0.04,
+    "gpuMs": 1.55,
+    "on": {
+     "frameMs": 9.87,
+     "gpuMs": 7.77
+    },
+    "off": {
+     "frameMs": 9.9,
+     "gpuMs": 6.22
+    },
+    "windows": 3
+   },
+   "judgeToggle": {
+    "frameMs": -0.02,
+    "gpuMs": -0.01,
+    "on": {
+     "frameMs": 9.85,
+     "gpuMs": 8.62
+    },
+    "off": {
+     "frameMs": 9.86,
+     "gpuMs": 8.63
+    },
+    "windows": 3
+   },
+   "cpuPhysics": 0,
+   "cpuTop": {
+    "sim": 0.27,
+    "render": 0.14,
+    "judge.pass": 0.02,
+    "judge": 0.02,
+    "mesh": 0.01
+   },
+   "judge": {
+    "passes": 7,
+    "ms": 0.3,
+    "worst": 0.7,
+    "gpuMs": null,
+    "readKB": null
+   },
+   "read": {
+    "reads": 7,
+    "ms": 27.64,
+    "worst": 35.2,
+    "kb": 1563.4
+   },
+   "awake": 13,
+   "voxels": {
+    "dispatched": 11768,
+    "bodies": 1689,
+    "awake": 1689
+   },
+   "slow": 0,
+   "clusters": 0,
+   "longestRun": 0
+  },
+  {
+   "pair": "engine:runs",
+   "stage": "topple the house towers",
+   "frames": 606,
+   "fps": 100.9,
+   "p50": 9.8,
+   "p95": 11.2,
+   "p99": 13.6,
+   "worst": 25.7,
+   "gpu": 6.48,
+   "gpuPhysicsPasses": 1.68,
+   "physicsToggle": {
+    "frameMs": -0.02,
+    "gpuMs": 2.05,
+    "on": {
+     "frameMs": 9.91,
+     "gpuMs": 6.19
+    },
+    "off": {
+     "frameMs": 9.93,
+     "gpuMs": 4.13
+    },
+    "windows": 3
+   },
+   "judgeToggle": {
+    "frameMs": 0.01,
+    "gpuMs": 0.22,
+    "on": {
+     "frameMs": 9.95,
+     "gpuMs": 5.14
+    },
+    "off": {
+     "frameMs": 9.93,
+     "gpuMs": 4.92
+    },
+    "windows": 3
+   },
+   "cpuPhysics": 0,
+   "cpuTop": {
+    "sim": 0.28,
+    "render": 0.12,
+    "judge.pass": 0.04,
+    "judge": 0.02,
+    "mesh": 0.01
+   },
+   "judge": {
+    "passes": 9,
+    "ms": 0.21,
+    "worst": 0.7,
+    "gpuMs": null,
+    "readKB": null
+   },
+   "read": {
+    "reads": 10,
+    "ms": 34.2,
+    "worst": 50.9,
+    "kb": 1638.4
+   },
+   "awake": 16,
+   "voxels": {
+    "dispatched": 12640,
+    "bodies": 2135,
+    "awake": 2135
+   },
+   "slow": 0,
+   "clusters": 0,
+   "longestRun": 0
+  },
+  {
+   "pair": "engine:runs",
+   "stage": "swing the tanker into the bridge",
+   "frames": 979,
+   "fps": 100.8,
+   "p50": 9.9,
+   "p95": 11,
+   "p99": 11.4,
+   "worst": 14.4,
+   "gpu": 8.18,
+   "gpuPhysicsPasses": 0.85,
+   "physicsToggle": {
+    "frameMs": 0.02,
+    "gpuMs": 1.6,
+    "on": {
+     "frameMs": 9.93,
+     "gpuMs": 8.28
+    },
+    "off": {
+     "frameMs": 9.92,
+     "gpuMs": 6.69
+    },
+    "windows": 3
+   },
+   "judgeToggle": {
+    "frameMs": 0.03,
+    "gpuMs": -0.17,
+    "on": {
+     "frameMs": 9.95,
+     "gpuMs": 9.27
+    },
+    "off": {
+     "frameMs": 9.92,
+     "gpuMs": 9.45
+    },
+    "windows": 3
+   },
+   "cpuPhysics": 0,
+   "cpuTop": {
+    "sim": 0.3,
+    "render": 0.18,
+    "judge": 0.02,
+    "mesh": 0.02,
+    "judge.pass": 0.01
+   },
+   "judge": {
+    "passes": 11,
+    "ms": 0.18,
+    "worst": 0.3,
+    "gpuMs": null,
+    "readKB": null
+   },
+   "read": {
+    "reads": 12,
+    "ms": 16.5,
+    "worst": 39.3,
+    "kb": 1130.7
+   },
+   "awake": 16,
+   "voxels": {
+    "dispatched": 12640,
+    "bodies": 2135,
+    "awake": 2135
+   },
+   "slow": 0,
+   "clusters": 0,
+   "longestRun": 0
+  }
+ ]
+}

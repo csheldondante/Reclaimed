@@ -133,6 +133,8 @@ struct EngCmd { a: vec4<f32>, b: vec4<u32> };
 @group(0) @binding(8) var<storage, read_write> contacts: array<vec4<f32>>;
 
 fn rwAt(r: u32) -> u32 { return LIST_AT + EU.e.x + r * RWW; }
+// (the word after the last row's work words: the ticks in which a row was awake, counted on the GPU — engine_pairs.wgsl gTick)
+fn tickAt() -> u32 { return LIST_AT + EU.e.x * (1u + RWW); }
 fn rowFlags(r: u32) -> u32 { return bitcast<u32>(info[4u * r].w); }
 fn eqrot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   let t = 2.0 * cross(q.xyz, v);
