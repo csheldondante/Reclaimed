@@ -724,6 +724,16 @@ fn takeMine(r: u32) -> Mine {
   let rf = atomicLoad(&listA[b + RW_FLAGS]);
   if ((rf & RF_EXPAND) != 0u) {
     // (its hit passed its material's bar: not solved — `expand` hands it to its particles as it came in)
+    // (PM1: "as it came in" — this substep's `integrate` gave it gravity and the air already, and its particles take
+    // the whole tick's themselves: taken back, or the tick it expands counts a substep of gravity twice)
+    let dt = EU.a.x;
+    var v0 = vel[2u * r];
+    var w0 = vel[2u * r + 1u];
+    v0 = vec4<f32>(v0.xyz / max(1e-3, 1.0 - EU.d.x * dt), v0.w);
+    w0 = vec4<f32>(w0.xyz / max(1e-3, 1.0 - EU.d.y * dt), w0.w);
+    v0.z += worldG() * dt;
+    vel[2u * r] = v0;
+    vel[2u * r + 1u] = w0;
     info[4u * r].w = bitcast<f32>(fl | ROW_EXPAND);
     return o;
   }

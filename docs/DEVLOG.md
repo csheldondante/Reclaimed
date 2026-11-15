@@ -23971,3 +23971,14 @@ look's `latticeMats`) and `playground.ts` (the break station on its own land, th
 **Tests.** `npm run typecheck` clean; `npx vitest run --project gpu engine sdf` 127 passed, 3 failed
 (`engine-energy`: PM1, not reconciled); unit 632 passed, 3 failed (the same 3 as the base). PE42's fix tried, no
 effect, not applied.
+
+## 2026-11-15 — the merge's energy rise fixed; the brick wall pinned (PM1, PM2, `physics10-all`)
+
+**Why.** After the merge `engine-energy` failed (energy up 0.48 to 0.55 % of what came in, at the tick a row
+expands), and the brick wall looked unbroken in a far still. **What.** The rise was a substep of gravity counted
+twice: the join's `integrate` runs before `tfine` marks a row to expand, so the row was handed over with the
+substep's gravity and air already in its speed, and its particles then took the whole tick's. `takeMine` takes the
+substep back at the hand-over ("as it came in", as step 1's `solve` did by returning before gravity). Measured after:
+0.056, 0.010, 0.000 % (bound 0.3 %, unchanged). The brick wall was not broken by the merge: `engine-station.test.ts`
+drops the station's wall and blocks through the merged tick (17 rows; 1, 9, 10 rows) and the close still shows runs
+of whole bricks. Noted: the release hitch read 66 ms for 318 cells on the merge (PM3).
