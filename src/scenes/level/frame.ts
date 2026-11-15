@@ -271,7 +271,10 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   // (round 120) the held body pulled to where the finger is, at the height it was lifted to
   if (scene.dragHold && scene.integrity) {
     const [tx, ty] = camera.groundAt(scene.dragHold.at[0], scene.dragHold.at[1], () => scene.dragHold!.h);
-    if (!scene.integrity.pull(scene.dragHold.g, [tx, ty, scene.dragHold.h], Math.min(dt, 1 / 20))) scene.dragHold = undefined;
+    if (!scene.integrity.pull(scene.dragHold.g, [tx, ty, scene.dragHold.h], Math.min(dt, 1 / 20))) {
+      scene.integrity.letGo(scene.dragHold.g);
+      scene.dragHold = undefined;
+    }
   }
   // (round 87: the beam bores through rock with no edit event — what it undercuts is judged while it's held)
   const lb = scene.lava?.beam;

@@ -80,7 +80,7 @@ const INFO_B = 64;
 const ET_F = 480;
 const GR_AT = 96;
 /** engine.wgsl EngU */
-const EU_B = 224;
+const EU_B = 256;
 /** engine.wgsl RWW: a row's work words in the awake list's buffer; engine_pairs.wgsl TRW, PRW (vec4s) */
 const RWW = 20;
 const TRW = 48;
@@ -101,7 +101,7 @@ export const MESH_V = 3;
 export const DL_AT = 16;
 export const OCC_AT = 4;
 /** the pool's header (engine_deform.wgsl P_*) */
-export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21, hashOver: 22 } as const;
+export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21, hashOver: 22, grab: 23 } as const;
 /** engine.wgsl LIST_AT, EV_AT, EV_WORDS */
 const LIST_AT = 8;
 const EV_AT = 4;
@@ -385,6 +385,8 @@ export class Engine implements SimSystem {
   private k: Record<string, { k: ComputeKernel; spec: BindSpec }> = {};
   private g: Record<string, GPUBindGroup> | null = null;
   private cmds: { kind: number; row: number; a: [number, number, number, number] }[] = [];
+  /** where the grabbed row is pulled to (grabTarget); null: nothing is held */
+  private grabT: V3 | null = null;
   private ring = 0;
   private ticks = 0;
   readonly bodies = new Set<EngineBody>();
@@ -849,6 +851,31 @@ export class Engine implements SimSystem {
     this.kick();
   }
 
+  /**
+   * The host's grab (the telekinesis tool): at the next tick the row — awake or asleep — whose centre is nearest `p`
+   * within `r` plus its bound radius is taken (engine_compact.wgsl, the pool's P_GRAB), and from the tick after it is
+   * awake and pulled to the target `grabTarget` gives (engine.wgsl grabPull: a damped spring on its centre, its weight
+   * held up; stiffness, damping and cap on the panel). The host is never told which row, or whether any: with none in
+   * reach the spring has nothing to act on. One grab at a time: a new one lets the last go.
+   */
+  grab(p: V3, r: number): void {
+    this.grabRelease();
+    this.cmds.push({ kind: 7, row: 0, a: [p[0], p[1], p[2], r] });
+  }
+
+  /** where the grabbed row is pulled to, from the next tick till it is let go */
+  grabTarget(t: V3): void {
+    this.grabT = [t[0], t[1], t[2]];
+  }
+
+  /** the grab let go: the spring is gone, the row keeps the velocity it had (a throw) */
+  grabRelease(): void {
+    this.grabT = null;
+    this.cmds = this.cmds.filter((c) => c.kind !== 7);
+    this.device.queue.writeBuffer(this.pool, POOL.grab * 4, new Uint32Array([0]));
+    this.kick();
+  }
+
   /** every row, model and particle let go (a level reset) */
   clear(): void {
     this.rows = 0;
@@ -862,6 +889,7 @@ export class Engine implements SimSystem {
     this.collide.coarse.invalidateSleepers();
     this.kick();
     this.cmds.length = 0;
+    this.grabT = null;
     this.seen.fill(0);
     const enc = this.device.createCommandEncoder({ label: 'engine clear' });
     for (const b of [this.info, this.pool, this.dmeta, this.dargs, this.kargs, this.list]) enc.clearBuffer(b);
@@ -896,6 +924,8 @@ export class Engine implements SimSystem {
     f[47] = T.shockReach;
     f.set([T.wakeEnergy, T.warmStart, T.rimDepth, 0], 48);
     u.set([Math.max(1, Math.round(T.pairIters)), this.pairRoom, this.slotRoom, this.oldSlots], 52);
+    if (this.grabT) f.set([this.grabT[0], this.grabT[1], this.grabT[2], 1], 56);
+    f.set([T.grabK, T.grabDamp, T.grabCap, 0], 60);
     return U;
   }
 
@@ -925,7 +955,7 @@ export class Engine implements SimSystem {
   }
 
   private watch(): void {
-    if (!this.statBusy && (this.owed > 0 || (this.active && this.ticks >= this.nextRead))) {
+    if (!this.statBusy && (this.owed > 0 || ((this.active || this.grabT) && this.ticks >= this.nextRead))) {
       this.statBusy = true;
       this.active = false;
       if (this.owed > 0) this.owed--;

@@ -23982,3 +23982,42 @@ substep back at the hand-over ("as it came in", as step 1's `solve` did by retur
 0.056, 0.010, 0.000 % (bound 0.3 %, unchanged). The brick wall was not broken by the merge: `engine-station.test.ts`
 drops the station's wall and blocks through the merged tick (17 rows; 1, 9, 10 rows) and the close still shows runs
 of whole bricks. Noted: the release hitch read 66 ms for 318 cells on the merge (PM3).
+
+## 2026-11-15 — telekinesis: a double tap starts it, and it grabs the engine's rows (TK1, `physics10-all`)
+
+**Why.** The owner: "the telekinesis needs a double tap to start because drag moves the screen." And under
+`?solver=engine` the tool grabbed nothing: bodies there are rows on the GPU, the CPU does not know where they are
+(DESIGN §10, no readback of bodies), so `Integrity.grabAt` found none.
+
+**What.** (1) `Controls` marks a press that comes within 350 ms and 40 px of a tap's lift (`secondPress`, a pure
+function) and passes it to `dragStart`; the input wiring lets the tool grab only on such a press, any other drag pans.
+With the tool picked a tap does nothing else. (2) Three host calls on the engine: `grab(point, radius)` is a command
+(kind 7) taken by `compact`, where every row in reach, awake or asleep, bids its nearness into a pool header word
+with an atomic max (`P_GRAB`: nearness << 20 | row); from the next tick `compact` wakes that row and marks it
+(`ROW_GRAB`) while the host holds a target; `grabTarget` is two words of the tick's uniform; `grabRelease` clears the
+word. The spring is `grabPull` in `engine.wgsl`, called by `integrate` (bodies meet bodies) and `solve` (the
+terrain-only route) before gravity: `Integrity.pull`'s spring as an acceleration (stiffness 40, damping 0.6 of
+critical, capped at 300 cells/s², the three on the panel), the weight held up; a held row does not fall asleep.
+Nothing is read back: the host never learns which row, or whether any. `Integrity.grabAt` returns a
+`{ kind: 'engine' }` grab when no CPU body is near and the engine is installed, `pull` forwards the target, a new
+`letGo` drops the spring (the tool calls it at the lift).
+
+**Measured** (`GRAB_LOG=1`, a 3 x 3 x 3 stone block asleep on a floor, pulled 6 cells sideways and 2 up): 6.32 cells
+on after 0.5 s, fastest 20.0 cells/s, overshoot 0.51 cells (bound 1; the spring alone gives 0.57), 0.016 cells off and
+at rest after 4 s, the same on both routes. Let go at 18.5 cells/s sideways it has 18.4 a tick later and gravity's
+0.16 off its rise. Held at the place it lies: speed and drift exactly 0 over 2 s (the first try applied the spring
+after the air's drag and drifted 0.017 cells; before gravity the weight cancels exactly). A grab 14 cells from the
+nearest block: both sleepers' poses bit for bit, none awake, the slot 0.
+
+**Capture** (`node scripts/tklab.mjs`, the pile station, headless Chrome, real mouse input; `tk-engine.gif` and
+stills): a single drag on the stack held nothing; a tap, a press 120 ms later and a drag held an engine grab — the
+stack's bottom block (row 0) came out from under the other four, which fell, hung at the lifted height following the
+pointer, and let go while moving landed 2.6 cells on. A first run aimed at the stack's middle took nothing: the pick
+point is the ground under the finger, which there was 12 cells behind the stack (TK8).
+
+**Tests.** `npx vitest run --project gpu engine-grab` 5 passed; `npx vitest run --project gpu engine` 64 passed, 1 expected fail, 5 skipped (12 files); `npm run typecheck` clean; `npx vitest run --project unit` 634 passed, 3 failed, the same 3 as the base (the writing lint; two of the transfer gate: `Engine.up` and the engine bench, not this change's — the grab's uploads are 4 bytes and two words of the tick's uniform).
+
+**Hacks and limits** (BACKLOG TK2 to TK8): the pick is by the ground under the finger, so a tall body is picked at its foot; the spring acts at the centre of mass, not the touched point; no sign to
+the player when nothing was in reach (and the screen does not pan then, under the engine route); the lift height is
+from the ground under the finger, not the row's own height; one grab at a time, nearest centre wins, deforming bodies
+are not grabbed; a tap with the tool picked does nothing; the double tap's timing is untried on a phone.

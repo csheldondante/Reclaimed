@@ -31,6 +31,7 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
   var dv = vec3<f32>(0.0);
   var dw = vec3<f32>(0.0);
   var shiftBy = vec3<f32>(0.0);
+  var picking = false;
   let x = pose[4u * r + 2u].xyz;
   for (var c = 0u; c < EU.e.y; c++) {
     let k = EC[c].b.x;
@@ -47,8 +48,22 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
       wake = true;
       fl = fl | ROW_EXPAND;
       info[4u * r].w = bitcast<f32>(fl);
+    } else if (k == 7u) {
+      // (the host's grab: every row in reach bids its nearness, the nearest is left in the slot when the kernel ends)
+      picking = true;
+      let d = distance(x, EC[c].a.xyz);
+      if (d < EC[c].a.w + vel[2u * r + 1u].w) { atomicMax(&poolC[P_GRAB], ((4095u - min(u32(d * 64.0), 4094u)) << 20u) | (r & 0xfffffu)); }
     }
   }
+  // (the row the grab holds, from the tick after the pick — while rows bid the slot is not settled: it is awake and
+  // marked for `integrate`'s spring while the host holds a target; let go, or another picked, the mark goes)
+  let gk = atomicLoad(&poolC[P_GRAB]);
+  let mine = !picking && EU.o.w > 0.5 && gk != 0u && (gk & 0xfffffu) == r;
+  if (mine != ((fl & ROW_GRAB) != 0u)) {
+    fl = fl ^ ROW_GRAB;
+    info[4u * r].w = bitcast<f32>(fl);
+  }
+  if (mine) { wake = true; }
   // (a sleeper whose ground changed — dug, cut, washed out, built on: the surface pass's word of the column under its
   // centre isn't the one it fell asleep on. One read a row asleep; the word is fresh this tick.)
   if ((fl & ROW_ASLEEP) != 0u) {

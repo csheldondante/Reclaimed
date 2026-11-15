@@ -675,7 +675,9 @@ export class Integrity {
   /**
    * (round 120, the user: "Consider a telekinetic drag tool to test swinging tankers and rocks into things") The body
    * nearest world (x, y, z) within `r` of it (and its own size) — a rigid rock, a node-solver body (metal, wood), a
-   * voxel-lattice body — to be pulled (pull). Null: none near.
+   * voxel-lattice body — to be pulled (pull). Null: none near. Under `?solver=engine` the bodies are the engine's rows,
+   * which the CPU does not know the places of: the engine is asked to grab the row nearest the point (Engine.grab, picked
+   * on the GPU at its next tick), and a grab is always returned — with no row in reach its pull moves nothing.
    */
   grabAt(x: number, y: number, z: number, r: number): Grab | null {
     let best: Grab | null = null;
@@ -695,11 +697,17 @@ export class Integrity {
         const st = this.physics.state(body);
         if (st && st.alive > 0) consider({ kind: 'phys', body }, st.pos, 0.5 * Math.hypot(...body.dims) * body.size);
       }
+    if (!best && this.engine) {
+      this.engine.engine.grab([x, y, z], r);
+      return { kind: 'engine', at: [x, y, z] };
+    }
     return best;
   }
 
   /** where a grabbed body is and how it moves (null: it's gone) */
   grabState(g: Grab): { pos: V3; vel: V3 } | null {
+    // (the engine's: where the grab was asked — the row's own place is the GPU's alone)
+    if (g.kind === 'engine') return this.engine ? { pos: g.at, vel: [0, 0, 0] } : null;
     if (g.kind === 'rigid') return this.rigid?.list.includes(g.b) ? { pos: g.b.pos, vel: g.b.v } : null;
     if (g.kind === 'solver') {
       const r = this.solver?.bodies.has(g.body) ? this.solver.read(g.body) : undefined;
@@ -717,6 +725,11 @@ export class Integrity {
   pull(g: Grab, target: V3, dt: number, k = 40): boolean {
     const s = this.grabState(g);
     if (!s) return false;
+    // (the engine's rows: the same spring, stepped on the GPU — engine.wgsl grabPull; its numbers are the panel's)
+    if (g.kind === 'engine') {
+      this.engine!.engine.grabTarget(target);
+      return true;
+    }
     const c = 2 * Math.sqrt(k) * 0.6;
     const dv: V3 = [0, 1, 2].map((a) => (k * (target[a] - s.pos[a]) - c * s.vel[a]) * dt) as V3;
     dv[2] += worldG() * dt;
@@ -733,6 +746,11 @@ export class Integrity {
       this.solver!.impulse(g.body, dv);
     } else this.physics!.impulse(g.body, dv);
     return true;
+  }
+
+  /** a grabbed body let go: it flies on with the speed it had (the engine's spring is dropped; the others' is the caller's not pulling) */
+  letGo(g: Grab): void {
+    if (g.kind === 'engine') this.engine?.engine.grabRelease();
   }
 
   /**
