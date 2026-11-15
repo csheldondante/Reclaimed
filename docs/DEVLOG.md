@@ -23388,3 +23388,27 @@ model back; a settled part woken by an impulse and broken again by a hard hit; r
 workgroup; occupancy). `engine-break` 8, `engine-d0` 3, `engine` 13 pass. Unit: the roadlab writing lint only (PE17).
 
 **Not verified.** Nothing on the phone. The look of the break faces (stills come with letter E). Grain is not built.
+
+## 2026-11-15 — Physics engine, build step 2, letter E: the break station; a body no longer slides for ever (PE33, PE34)
+
+**Why.** The round trip had only been seen by tests on a tiny world. The lab is where the owner judges it, against
+the lattice route's look on the same buttons.
+
+**What.** The playground's `break` station (stone from three heights, a slab and a steel beam across a post, a brick
+section) and `scripts/breaklab.mjs`. The engine's shape matching now takes every place about the voxel's own.
+
+**Found on the way.** In the level the dropped blocks never settled: read in the page, each deforming body moved as
+one at 0.47 cells/s, for ever; with the voxel hash off, at 4 to 11 cells/s. The lattice's `region` summed a
+mass-weighted centre from world coordinates (x about 233: a float's step is 1.5e-5 of a cell), `gather` made goals
+from it, and the rounding, the same every substep, became a steady push. With the centre kept about the voxel's own
+place the same bodies settle where they fall, hash on or off. I first changed the still rule to the body's mean
+velocity; that was a patch over the wrong cause and is taken out again. `phys.wgsl` has the same sums (PE33).
+
+**Measured.** In the page (412 x 915, `q=low`, the break station, 14 s after the drop): before the fix 2 of 2
+deforming blocks still deforming, 0 parts; after, both settled (31 and 35 voxels) at their drop places.
+
+**Tests.** `engine`, `engine-break`, `engine-d0`, `engine-settle`: 33 pass. Unit: the roadlab writing lint only.
+`scripts/breaklab.mjs` under both solvers: no page error.
+
+**Not verified.** Nothing on the phone. No test stands at world-scale coordinates yet (the fix is checked in the
+page only): a gpu test of a body at x = 4,000 would pin it.

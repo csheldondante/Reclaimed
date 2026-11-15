@@ -92,7 +92,7 @@ const PV_CRUMBLE: f32 = -2.0;
 // ps[3i] velocity; ps[3i+1] xyz its rest place (the model's frame; follows a plastic bend), w its material (u32);
 // ps[3i+2] its region's rotation
 @group(0) @binding(24) var<storage, read_write> ps: array<vec4<f32>>;
-// pw[3i] its region's centre now, w mass; pw[3i+1] its rest centre; pw[3i+2] this substep's contacts (settling: its label)
+// pw[3i] its region's centre now about its own place, w mass; pw[3i+1] its rest centre; pw[3i+2] this substep's contacts (settling: its label)
 @group(0) @binding(25) var<storage, read_write> pw: array<vec4<f32>>;
 // its bonds: bit k set while bonded to lattice neighbour k (n26)
 @group(0) @binding(26) var<storage, read_write> pb: array<u32>;
@@ -342,7 +342,7 @@ fn fill(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
   ps[3u * i] = vec4<f32>(slotV3(L.slot, 15u) + cross(slotV3(L.slot, 18u), rl), 0.0);
   ps[3u * i + 1u] = vec4<f32>(rest, bitcast<f32>(mat));
   ps[3u * i + 2u] = q;
-  pw[3u * i] = vec4<f32>(p, 0.0);
+  pw[3u * i] = vec4<f32>(0.0);
   pw[3u * i + 1u] = vec4<f32>(rest, 0.0);
   pw[3u * i + 2u] = vec4<f32>(0.0);
   pb[i] = mw >> 6u;

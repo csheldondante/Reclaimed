@@ -869,7 +869,7 @@ export class Engine implements SimSystem {
         each('region');
         each('gather');
       }
-      each('vhash');
+      if (this.voxelHash) each('vhash');
       each('collide');
       each('finalize');
       each('relax');
@@ -926,6 +926,8 @@ export class Engine implements SimSystem {
   settles = true;
   /** (tests, the perf overlay) a compute pass a kernel, timed apart as `engine:<kernel>`; off: one pass, `engine` */
   timeKernels = false;
+  /** (tests) off: deforming voxels are not put in the voxel hash, so they meet the ground only */
+  voxelHash = true;
   /** (tests) the lattice's substeps skipped: deforming bodies stand as they are */
   holdLattice = false;
 

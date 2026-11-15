@@ -59,7 +59,8 @@ struct EngU {
   c: vec4<f32>,
   // x air drag (1/s), y spin damping (1/s), z step up (a ledge this high isn't a wall), w an impact's least energy for an event
   d: vec4<f32>,
-  // x how near a gap is still a contact (cells), y the event buffer's room (as f32), z ground damping (1/s)
+  // x how near a gap is still a contact (cells), y the event buffer's room (as f32), z ground damping (1/s), w break
+  // face roughness (cells)
   f: vec4<f32>,
   // x the rows' room (every row slot is read by `compact`), y commands, z solver passes, w bits: 1 the heightfield
   // fast path, 2 the tick's first substep, 4 deformation on (build step 2), 8 still bodies settle into rows (letter D)
@@ -74,7 +75,7 @@ struct EngU {
   j: vec4<u32>,
   // x still speed (cells/s), y still time (s), z crumb size (voxels), w the lattice's substep (s)
   k: vec4<f32>,
-  // x the lattice's solver iterations, y spare, z the lattice's substeps a tick, w spare
+  // x the lattice's solver iterations, y break face smoothing (f32 bits), z the lattice's substeps a tick, w spare
   l: vec4<u32>,
 };
 // an impact's energy over the body's mass past which it deforms, a material (0: never)

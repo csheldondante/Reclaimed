@@ -108,6 +108,9 @@ const METAL = {
   tanker: { x0: 238, x1: 250, y0: 226, y1: 231, z0: G + 8, h: 5 },
   grounds: { y0: 221, y1: 240, sand: [206, 219], dirt: [219, 228], stone: [228, 237] } as Grounds,
 };
+/** (the physics engine's break station, build step 2 letter E) a stone pad beside the tanker with a post across it,
+ *  for a beam or a slab to be dropped over; the three heights a block is dropped from on the metal station's stone pad */
+const BREAK = { pad: { x0: 240, x1: 255, y0: 233, y1: 240 }, post: { x0: 246, x1: 248, y0: 233, y1: 240, h: 5 }, heights: [8, 24, 48] as [number, number, number] };
 const cellsBox = (x0: number, y0: number, z0: number, w: number, d: number, h: number, mat: number) => {
   const out: { x: number; y: number; z: number; mat: number }[] = [];
   for (let z = z0; z < z0 + h; z++) for (let y = y0; y < y0 + d; y++) for (let x = x0; x < x0 + w; x++) out.push({ x, y, z, mat });
@@ -432,6 +435,37 @@ export const STATIONS: Station[] = [
       },
     ],
   },
+  {
+    // (the physics engine, build step 2 — docs/design/PHYSICS_ENGINE.md: a rigid body in a hard collision becomes
+    // voxel-lattice particles, deforms or breaks, and its parts settle back into rigid bodies with their breaks closed.
+    // On the metal station's land: its stone pad, and a pad with a post beside the tanker. The drops go by the picked
+    // variant (k.drop): the engine under ?solver=engine, the lattice's voxels by default — the same buttons)
+    id: 'break',
+    name: 'break',
+    rect: [208, 192, 256, 240],
+    look: [240, 201, G + 2, 12],
+    hint: 'breaking: a stone block from three heights, a slab and a steel beam across a post, a brick section on its side. Bodies do not meet each other yet',
+    actions: [
+      {
+        // (from 8 it stays whole, from 24 it cracks and sheds, from 48 more of it goes)
+        label: 'stone from three heights',
+        run: (k) => BREAK.heights.forEach((h, i) => k.drop(cellsBox(231, 222 + 5 * i, G + h, 4, 4, 3, MAT.Stone))),
+      },
+      {
+        // (twelve long over the post: it snaps in two)
+        label: 'stone slab across the post',
+        run: (k) => k.drop(cellsBox(241, 235, G + 30, 12, 4, 3, MAT.Stone)),
+      },
+      {
+        label: 'steel beam across the post',
+        run: (k) => k.drop(cellsBox(240, 236, G + 24, 14, 2, 1, MAT.Steel)),
+      },
+      {
+        label: 'brick section on its side',
+        run: (k) => k.drop(cellsBox(229, 236, G + 22, 8, 3, 3, MAT.Brick)),
+      },
+    ],
+  },
 ];
 
 export function generatePlayground(dims: WorldDims): MapData {
@@ -645,6 +679,11 @@ export function generatePlayground(dims: WorldDims): MapData {
         }
       }
     for (const x of [t.x0 + 1, t.x1 - 2]) for (const y of [t.y0 + 1, t.y1 - 2]) put(x, y, G, t.z0, MAT.Concrete);
+    // (the break station's: a stone pad with a post across it)
+    const bp = BREAK.pad;
+    block(bp.x0, bp.y0, G - 2, bp.x1 - bp.x0, bp.y1 - bp.y0, 2, MAT.Stone);
+    const po = BREAK.post;
+    block(po.x0, po.y0, G, po.x1 - po.x0, po.y1 - po.y0, po.h, MAT.Stone);
   }
 
   // (round 110) the rivers: carved, filled and held as the atlas's (world/rivertable.ts → WorldGpu riverFlow)

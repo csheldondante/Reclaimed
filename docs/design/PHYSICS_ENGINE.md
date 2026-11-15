@@ -505,12 +505,42 @@ Files: `src/shaders/engine_settle.wgsl` (new), `engine_draw.wgsl`, `engine_defor
    the part under it.
 5. Break faces are surface nets on the hex-prism lattice, the lattice the bodies have, not on a cubic grid.
 
-## Hand-over: letter E, then the grain
+## Step 2, letter E as built: the lab's break station
 
-Letter E (the lab's break station and the captures) is described in "Step 2, letter E" below if it was built in
-this session; otherwise it is the next thing. After it: the grain function behind the break field (PE22), live labels
-and break faces while a body deforms (PE31), the expand rule over the whole approach (PE30), the root threads' loops
-(PE32).
+- **Station `break`** on the playground (`src/levels/playground.ts`), on the metal station's land: a stone block
+  from three heights (8, 24, 48 cells) on its stone pad, a stone slab and a steel beam across a post on a new pad
+  beside the tanker, a brick section dropped on its long side. The buttons go through `k.drop`, so `?solver=lattice`
+  and `?solver=engine` press the same things. Its hint says bodies do not meet each other yet.
+- **Panel:** the tuning panel's engine group has the break thresholds a material, the still speed and time, the crumb
+  size and the break faces' two numbers (smoothing, roughness). Grain numbers come with the grain (PE22).
+- **Capture:** `node scripts/breaklab.mjs --solver lattice|engine --out <path> [--press "a|b"] [--look x,y,z --zoom n]`
+  (412 x 915; a GIF, stills, and under the engine the pool's header at the end).
+- **Found by the captures, fixed:** deforming bodies slid across the ground for ever in the level (PE33: the shape
+  matching's sums at world coordinates). The Node tests stand at x = 12 to 20 and did not show it.
+
+**What the stills show** (looked at; the engine route unless said):
+- **The station, both routes.** Lattice: the stone comes down as smooth rock-mesh lumps in dust, the brick section
+  as one red block, each near where it was dropped. Engine: every body settled (5 parts, none left deforming), where
+  it fell; each is drawn as hex prisms of its cells with flat-shaded sides, so stone reads blockier than on the
+  lattice route. The view is crowded by the tanker and its posts.
+- **The slab over the post, close.** Snapped in two; the halves lean on the post as tilted wedges. No hole: the
+  ends are closed by pale faces. The tilted prisms give the sides a sawtooth outline. The break face itself is
+  nearly flat and reads as a tiled end, not as broken stone.
+- **The stone blocks, close.** Two blocks sunk a layer into their own rubble, one with a round pit in its top. No
+  open hole into either. Where voxels crumbled the cap is, in effect, the faces of the cells left standing: in a
+  body three or four cells thick almost every corner of a break face also touches the outer surface and is held at
+  the cell's corner, so smoothing and roughness move very little. It does not yet look like broken rock.
+- **The brick section, close.** Two low clumps of hex-outlined cells in brick red. Closed, but nothing about it
+  says brick: no courses, no whole bricks. That is the grain, not built.
+- **What looks wrong:** the hex-prism look of every body; break faces that are cell faces in thin bodies; the
+  sawtooth of tilted prisms; no shatter into many pieces from any height; the crowded station.
+
+## Hand-over: what is next
+
+The round trip is built end to end (expand, lattice, settle, break faces, lab). Open, in the order I would take
+them: the grain function behind the break field (PE22); labels every tick so a face is drawn by its part while it
+deforms and break faces appear with the crack (PE31); the expand rule over the whole approach (PE30); a station of
+its own and the rock mesh's surface for stone (PE34); the root threads' loops (PE32); phys.wgsl's sums (PE33).
 
 ## Hand-over as it was written for letter D (kept for the record)
 

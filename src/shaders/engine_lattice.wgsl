@@ -58,11 +58,15 @@ fn region(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
   if (!L.ok) { return; }
   let l = cellOf(L.k, L.dims);
   let bonds = pb[i];
+  // Every place is taken about the voxel's own (a neighbour's less its own is a small number, exact in a float): a
+  // centre summed from the world's coordinates is rounded to their grid — 1.5e-5 of a cell at x = 233 — the same way
+  // every substep, and the goals made from it pushed a body lying still across the ground at a steady 4 to 11
+  // cells/s in the level (0.5 with the voxel hash's contacts damping it). Found in letter E's lab captures.
   let xi = px[2u * i];
   let ri = ps[3u * i + 1u].xyz;
   let m0 = 1.0 / max(xi.w, 1e-3);
   var M = m0;
-  var c = xi.xyz * m0;
+  var c = vec3<f32>(0.0);
   var c0 = ri * m0;
   var nb: array<i32, 26>;
   for (var k = 0u; k < 26u; k++) {
@@ -74,20 +78,20 @@ fn region(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
     let xj = px[2u * u32(j)];
     let m = 1.0 / max(xj.w, 1e-3);
     M += m;
-    c += xj.xyz * m;
+    c += (xj.xyz - xi.xyz) * m;
     c0 += ps[3u * u32(j) + 1u].xyz * m;
   }
   c /= M;
   c0 /= M;
-  // A = sum m (x - c)(r - c0)^T, as its three columns
-  var a0 = (xi.xyz - c) * (ri.x - c0.x) * m0;
-  var a1 = (xi.xyz - c) * (ri.y - c0.y) * m0;
-  var a2 = (xi.xyz - c) * (ri.z - c0.z) * m0;
+  // A = sum m (x - c)(r - c0)^T, as its three columns (x about the voxel's own place: its own is zero)
+  var a0 = -c * (ri.x - c0.x) * m0;
+  var a1 = -c * (ri.y - c0.y) * m0;
+  var a2 = -c * (ri.z - c0.z) * m0;
   for (var k = 0u; k < 26u; k++) {
     if (nb[k] < 0) { continue; }
     let j = u32(nb[k]);
     let xj = px[2u * j];
-    let d = (xj.xyz - c) / max(xj.w, 1e-3);
+    let d = (xj.xyz - xi.xyz - c) / max(xj.w, 1e-3);
     let r = ps[3u * j + 1u].xyz - c0;
     a0 += d * r.x;
     a1 += d * r.y;
@@ -121,6 +125,7 @@ fn gather(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
   let l = cellOf(L.k, L.dims);
   let bonds = pb[i];
   let r = ps[3u * i + 1u].xyz;
+  // (each goal about the voxel's own place: its region's centre is kept about its region's voxel — `region`)
   var sum = pw[3u * i].xyz + eqrot(ps[3u * i + 2u], r - pw[3u * i + 1u].xyz);
   var n = 1.0;
   for (var k = 0u; k < 26u; k++) {
@@ -128,11 +133,11 @@ fn gather(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
     let j = latIdx(L.slot, l + n26(k), L.dims);
     if (j < 0 || !alive(u32(j))) { continue; }
     let ju = u32(j);
-    sum += pw[3u * ju].xyz + eqrot(ps[3u * ju + 2u], r - pw[3u * ju + 1u].xyz);
+    sum += (px[2u * ju].xyz - x.xyz) + pw[3u * ju].xyz + eqrot(ps[3u * ju + 2u], r - pw[3u * ju + 1u].xyz);
     n += 1.0;
   }
   if (n < 1.5) { return; }
-  px[2u * i] = vec4<f32>(x.xyz + (sum / n - x.xyz) * pmA(matOf(i)).y, x.w);
+  px[2u * i] = vec4<f32>(x.xyz + sum / n * pmA(matOf(i)).y, x.w);
 }
 
 // ---- 4. contacts: the voxel hash, the ground under it, the columns beside it, other voxels --------------------------------
@@ -367,7 +372,7 @@ fn relax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   // past its yield, the rest shape follows the bend (metal stays bent)
   let yieldD = pmA(m).z;
   let r = ps[3u * i + 1u];
-  let d = eqrot(eqinv(ps[3u * i + 2u]), x.xyz - pw[3u * i].xyz) - (r.xyz - pw[3u * i + 1u].xyz);
+  let d = eqrot(eqinv(ps[3u * i + 2u]), -pw[3u * i].xyz) - (r.xyz - pw[3u * i + 1u].xyz);
   let dl = length(d);
   if (dl > yieldD && pmA(m).w > 0.0) { ps[3u * i + 1u] = vec4<f32>(r.xyz + d * (1.0 - yieldD / dl) * min(1.0, pmA(m).w), r.w); }
   // cracks: a bond whose either end hit something faster than the material's crack speed may snap (both ends draw the

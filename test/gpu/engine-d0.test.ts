@@ -219,3 +219,41 @@ test('D0.2: two deforming blocks meet: one dropped on another comes to rest on i
   ok();
   R.w.destroy();
 });
+
+// ---- found in letter E's lab captures (BACKLOG PE33): far from the origin a body lying still was pushed across the ground --
+test('a cracked block far from the origin stays where it fell (the shape matching takes every place about the voxel\'s own)', async () => {
+  // (x about 236, y about 199: where the playground's break station stands; a float's step there is 1.5e-5 of a cell)
+  const R = await breakRig(g, flat, 256, 256);
+  T.stillT = 1e9;
+  // (and with no voxel contacts to damp it: the drift was 4 to 11 cells/s so, 0.5 with them)
+  R.e.voxelHash = false;
+  const cells = box(234, 228, 34, 4, 4, 3);
+  const b = R.e.add({ cells, mesh: modelMesh(cells) })!;
+  let hit = -1;
+  for (let t = 0; t < 300 && hit < 0; t++) {
+    await R.step(1);
+    if ((await R.row(b.row)).flags & 8) hit = t;
+  }
+  expect(hit).toBeGreaterThan(0);
+  const centre = async () => {
+    const p = await R.particles(b.row);
+    const c = [0, 0, 0];
+    let n = 0;
+    for (let k = 0; k < p.cells; k++) {
+      if (p.x[k * 4 + 3] < 0) continue;
+      n++;
+      for (let a = 0; a < 3; a++) c[a] += p.x[k * 4 + a];
+    }
+    return c.map((v) => v / n);
+  };
+  await R.step(60);
+  const c0 = await centre();
+  await R.step(240);
+  const c1 = await centre();
+  const moved = Math.hypot(c1[0] - c0[0], c1[1] - c0[1]);
+  if (process.env.BREAK_LOG) console.log(`far from the origin (${c0.map((v) => v.toFixed(1))}): in 4 s lying on the ground its voxels' centre moved ${moved.toFixed(4)} cells sideways`);
+  // (measured 0.30 cells in the 4 s — a broken pile spreading, 0.08 cells/s — against tens of cells before the fix)
+  expect(moved).toBeLessThan(1);
+  ok();
+  R.w.destroy();
+});
