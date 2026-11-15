@@ -106,7 +106,7 @@ test.skipIf(!process.env.SDF_BENCH)(
             };
             const fine = new SdfFine(g.device, store, {
               maxPairs: pairs,
-              maxContacts: 1 << 19,
+              maxBricks: pairs * 2 * 512,
             });
             const pass = (tw?: GPUComputePassTimestampWrites) => {
               const enc = g.device.createCommandEncoder();
@@ -130,15 +130,15 @@ test.skipIf(!process.env.SDF_BENCH)(
               gpuMs: hasTs ? +median(ts).toFixed(3) : null,
               gpuMsMin: hasTs ? +Math.min(...ts).toFixed(3) : null,
               wallMs: +wall.toFixed(3),
-              threads: c[2] * 64,
-              contacts: c[0],
-              dropped: c[1],
+              threads: c[2] * 16,
+              sampleContacts: c[4], rows: c[0], rowsAPair: +(c[0] / pairs).toFixed(2),
+              dropped: c[3],
               chunksDropped: c[3],
               passBytes: fine.bytes,
             };
             rows.push(row);
             expect(g.takeErrors()).toEqual([]);
-            expect(c[0]).toBeGreaterThan(kind === 'deep' ? pairs : pairs / 2);
+            expect(c[4]).toBeGreaterThan(kind === 'deep' ? pairs : pairs / 2);
             fine.destroy();
             for (const b of Object.values(inputs)) b.destroy();
           }
@@ -146,9 +146,9 @@ test.skipIf(!process.env.SDF_BENCH)(
       }
     }
     const pad = (v: unknown, w: number) => String(v).padStart(w);
-    const lines = ['format  side  scene  pairs   GPU ms (median/min)   wall ms   threads    contacts  dropped'];
+    const lines = ['format  side  scene  pairs   GPU ms (median/min)   wall ms   threads    sample contacts  rows a pair  bricks dropped'];
     for (const r of rows)
-      lines.push(`${String(r.format).padEnd(6)} ${pad(r.side, 5)}  ${String(r.kind).padEnd(5)} ${pad(r.pairs, 6)}   ${pad(r.gpuMs, 8)} / ${pad(r.gpuMsMin, 7)}  ${pad(r.wallMs, 8)} ${pad(r.threads, 9)} ${pad(r.contacts, 10)} ${pad(r.dropped, 8)}`);
+      lines.push(`${String(r.format).padEnd(6)} ${pad(r.side, 5)}  ${String(r.kind).padEnd(5)} ${pad(r.pairs, 6)}   ${pad(r.gpuMs, 8)} / ${pad(r.gpuMsMin, 7)}  ${pad(r.wallMs, 8)} ${pad(r.threads, 9)} ${pad(r.sampleContacts, 10)} ${pad(r.rowsAPair, 6)} ${pad(r.dropped, 8)}`);
     lines.push('', 'format  side  bake 1 (wall ms)  bake 64 (wall ms)  dispatches  bytes a box model (field + samples + occupancy + row)');
     for (const b of bake) {
       const by = b.boxBytes as {

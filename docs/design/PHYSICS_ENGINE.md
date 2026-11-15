@@ -75,7 +75,8 @@ bounding boxes or build trees and do tree tree collisions for intersecting RBs u
 option? I do like spatial hashes but not for fully voxelated things". So: bounds in a hash give the pairs; the fine
 pass never hashes voxels.
 
-**Built on `physics10-fine`, not wired into the game.** `src/engine/sdf/` (`contract.ts` the layouts, `models.ts` the
+**Built on `physics10-fine`, not wired into the game.** (What follows is round 1; round 2 below changed the pass
+and the rows.) `src/engine/sdf/` (`contract.ts` the layouts, `models.ts` the
 store and bake, `fine.ts` the pass), `src/shaders/engine/sdf-*.wgsl`, tests `test/gpu/sdf-bake.test.ts` and
 `sdf-fine.test.ts`, the desktop bench `sdf-fine-bench.test.ts`, the phone bench `sdfbench.html`.
 
@@ -141,7 +142,7 @@ Every row is in `data/perf/sdf/fine-bench.json`. Bake, wall time: one 16³ model
 them 9 ms; 64 of 32³ 60 to 72 ms. Bytes a 16³ box: 29,504 (`f32`, `grad8`) or 12,008 (`snorm8`); a 32³ box 185 KB or
 67 KB. The pass's own buffers at 256 pairs: 115 KB of work, plus 48 B a contact row.
 
-**The finding to weigh before building on it.** 256 pairs of 16³ cost 0.6 to 0.7 ms here by timestamps, and 0.8 to
+**Round 1's finding (answered in round 2 below).** 256 pairs of 16³ cost 0.6 to 0.7 ms here by timestamps, and 0.8 to
 1.3 ms in headless Chrome by the bench page's toggle: at the 1 ms line set for this pass. The cost follows the
 threads (about 1.1 ns each) and hardly the contacts: a touching pair spends over 99% of its threads on samples
 nowhere near the other body. The fix is to cull before threads are made: samples sorted into bricks at the bake, and
@@ -151,6 +152,97 @@ touching pairs; not measured.
 **For the phone:** `sdfbench.html` (dev server: `http://<this PC>:5173/sdfbench.html`), about 5 minutes for every
 format, size and pair count; `?formats=grad8&sides=16&pairs=256,1024` for a short run. It toggles the pass on and off
 in windows and offers the report to download. The numbers to read are each row's `toggleDoneMs` and `toggleFrameMs`.
+
+### Round 2: cost, contact count, normals, the join (2026-11-15)
+
+Main's rulings: `grad8` is the packing; both bodies give samples; the margin and the cap are tuning parameters
+(`SdfFine.margin`, `SdfFine.cap`, settable between passes), not constants.
+
+**Threads follow the overlap (PF2).** The bake now sorts a model's samples into bricks of 4 × 4 × 4 voxels, in a fixed
+order, with a table of offsets (three dispatches: count, offsets, write; no atomics). The pass is `expand` (the
+transform a half pair), `cull` (a thread a half pair and a row of bricks: the bricks whose box, turned into the other
+body's frame, reaches its box grown by the margin), `args`, `fine` (a workgroup 16 samples of a surviving brick) and
+`reduce`. Same bench, same scenes, `grad8`, desktop proxy (Intel Xe integrated, timestamps, median of 16):
+
+| scene | model | pairs | before ms | after ms | threads before | threads after |
+|---|---|---|---|---|---|---|
+| touch | 16³ | 256 | 0.66 | 0.20 | 553 k | 96 k |
+| touch | 16³ | 1,024 | 2.36 | **0.46** | 2.2 M | 369 k |
+| touch | 16³ | 4,096 | 10.6 | 1.97 | 8.9 M | 1.47 M |
+| touch | 32³ | 256 | 2.16 | 0.33 | 1.0 M | 132 k |
+| deep | 16³ | 256 | 0.72 | 0.46 | 553 k | 400 k |
+| deep | 16³ | 1,024 | 2.75 | 1.70 | 2.2 M | 1.6 M |
+| deep | 16³ | 4,096 | 11.9 | 6.6 | 8.9 M | 6.4 M |
+| deep | 32³ | 256 | 1.11 | 2.16 | 1.0 M | 1.04 M |
+
+The after column includes the reduction. Small pair counts are not slower: 64 touching pairs of 16³ went from 0.20 to
+0.07 ms. One row is worse: deep pairs of 32³, because the cap used to bound the threads and now only skips samples
+after their thread exists (every third sample is tested a tick; all surviving samples get a thread), and every sample
+contact now does ten atomic writes for the reduction. Two forms that were slower, measured on the way: a workgroup of
+64 a brick (bricks hold 14 samples on average: 1.6 M threads at 16³ × 1,024, 1.97 ms), and one thread a half pair
+looping over all its bricks (a thread's loop is serial: 0.72 ms for 64 pairs of 32³ against 0.13 ms with a thread a
+row of bricks). Every row: `data/perf/sdf/fine-bench.json`; round 1's: `fine-bench-r1.json`.
+
+**Four contact rows a pair at most (PF4).** `fine` no longer appends rows. Every sample contact goes into its pair's
+record (`hits`, 128 B a pair): a count, the largest energy, its normal summed with the others that point the same way,
+and a bid for each of four places: the deepest, and the farthest out along three directions 120° apart across the
+line of centres. `reduce` (a thread a pair) computes the winners again and writes them at fixed places, rows
+`pair * 4` on. Why four: three spread points carry a resting or toppling body's torque, the deepest is the corner or
+edge that hit. In the bench: 0.74 rows a pair for touching 16³ pairs (many touch at one or two samples, or only
+within the margin), 4 for deep ones (408,516 sample contacts became 4,096 rows at 1,024 pairs). The pair's record
+keeps the full sample count and the largest energy for the event stage and the lattice hand-over. Nothing is dropped
+unsaid: rows have fixed room; pairs past the pass's room and sample groups past the list's room are counted in
+`counts`.
+
+**Normals near edges (PF3).** A row's normal is the mean of the pair's sample normals that point the same way (the
+same dominant axis in the pair's own axes). Against each scene's true normal, `grad8`:
+
+| scene | every sample, mean / worst | the rows, mean / worst | rows, normal read at the surface point |
+|---|---|---|---|
+| ball on ball | 22° / 43° | 1.6° / 1.6° | 1.6° / 1.6° |
+| box, face on face over a corner | 16° / 54° | 9.5° / 9.5° | 9.4° / 9.4° |
+| box, an edge in a face | 11° / 46° | 19° / 46° | 19° / 46° |
+| box, a corner in a face | 8° / 16° | 8° / 8° | 7.6° / 7.6° |
+
+The mean fixes the ball and takes the face's worst from 54° to 9.5°. It does not fix: the 9.5° bias where one box
+sits over another's corner (the rims on two sides lean the same way); the edge scene's third row, which is a sample of
+the lower box inside the upper box's 45° flank and keeps that flank's normal; the corner scene's second sample.
+Reading the gradient again at the contact's point on the surface changed nothing (the field is as rounded there), so
+that variant is measured and left off. Still poor near edges; not chased further.
+
+**Deterministic (PF6).** The sample order is fixed by the bake (brick by brick, voxel by voxel), bids tie-break on
+the sample's index, and rows have fixed places: the same scene gives the same rows bit for bit, across passes and
+across freshly baked stores (tested). `rebakeFromGpu` takes room for every voxel of the model by default (a bound
+that always holds, 4 B a voxel), or the caller's tighter bound; samples past a bound that is too small are counted.
+
+**The join with `physics10`** (read at c6f1bab7: `src/shaders/engine.wgsl`, `engine_step.wgsl`, `src/engine/engine.ts`;
+nothing merged). Its rows: `pose` 4 vec4 a row (last tick's centre and rotation, then centre + inverse mass, rotation),
+`vel` 2 vec4, `info` 3 vec4 (inverse inertia diagonal + flags; off-diagonal + mass; first sample, samples, material,
+cells), a sample list a body (`samples`: body-frame point + radius), two contact slots a sample, and a solve that is
+one thread a row over its own samples. What must change, and where:
+
+1. **Fine pass (mine): read its `pose` at 4 a row** (centre and inverse mass at `4r + 2`, rotation at `4r + 3`), and
+   treat an inverse mass below zero (a freed row) as zero. A few lines in `sdf-fine.wgsl`.
+2. **Fine pass (mine): read its `info` at 3 a row**: the inverse inertia diagonal from `3r`, the off-diagonal from
+   `3r + 1` (my effective mass uses the diagonal only today), the material from `3r + 2`. `vel` already matches word
+   for word.
+3. **Engine (theirs): a model row a body.** `info[3r + 2]` is full. Short term: a fourth vec4 a row holding the model
+   row. Better, later: the store's sample list replaces its `samples` buffer (its terrain pass reads the model's
+   samples by the sample rule in `contract.ts`), so one list serves terrain and bodies, instances share it, and
+   erosion becomes a copy of the model and `rebakeFromGpu`.
+4. **Engine (theirs): spawn bakes through the store** in the body's spawn frame, with the store's centre of mass the
+   row's centre (the store computes the same centroid from the voxels).
+5. **Engine (theirs): the coarse stage** (stage 2), writing `pairs` (a, b) and the count in word 0 of a buffer, with
+   no freed row in a pair.
+6. **Engine (theirs): the solve meets pair rows.** Its solve walks a row's own samples; pair contacts are 4 rows at
+   `pair * 4` with the pair's record saying how many. Either the coarse stage also writes each row's pair indices, or
+   the solve gains a pass over pairs that accumulates into `bodyDelta` (the note's stage 5).
+7. **Engine (theirs): events** from the pair's record (largest energy, the deepest row's point) into its event buffer.
+8. **Both: tuning.** `margin` should be its `EU.f.x` ("how near a gap is still a contact"); `cap` a new entry in
+   `tune/params.ts`.
+
+Items 1, 2 and 8 are small and mine to do at the merge; 3 to 7 are engine work that the note's stages 2 and 5
+already call for.
 
 **Considered, not chosen** (both from the same baked voxel model):
 
@@ -203,10 +295,12 @@ Each step: a Node gpu test, a lab station, a before/after GIF against today's de
 ## Hacks and limits
 
 - Contacts are one per surface sample. A half pair tests at most 2,048 samples a pass (a number of mine, to be set on
-  the phone); a deep overlap gives hundreds of contacts a pair and nothing reduces them yet (PF4).
+  the phone); a pair reaches the solver as four rows at most.
 - The distance field rounds edges: within a voxel of an edge (two for `grad8`) a contact's normal leans towards the
-  next face, up to 54° at single samples. A box over another's corner gets a mean normal 9° off the face (PF3).
-- The fine pass costs about 1.1 ns a thread whether or not the sample is near the other body (PF2).
+  next face, up to 54° at single samples. A pair's rows take the mean, which leaves 9.5° where a box sits over
+  another's corner and 46° on one row of an edge in a face (PF3).
+- Deep overlaps of big models are the fine pass's worst case: 256 pairs of 32³ a third inside each other cost
+  2.2 ms on the desktop (PF14).
 - Jacobi accumulation with fixed-point atomics: stacks settle slower than a coloured solve. §10 leaves the choice to
   measurement.
 - Re-splatting a bent body loses shape below one voxel.

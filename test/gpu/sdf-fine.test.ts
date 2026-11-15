@@ -1,6 +1,8 @@
 // Fine collision between two bodies (src/engine/sdf/fine.ts, sdf-fine.wgsl) on the real device, three ways a scene:
-//   1. the GPU's contacts are the CPU mirror's (test/support/sdf-reference.ts: the same samples and field lookup in
-//      doubles, over the brute-force distance field): point 0.01 cells, depth 0.005 cells, normal 1°;
+//   1. against the CPU mirror (test/support/sdf-reference.ts: every sample contact, the same samples and field lookup
+//      in doubles, over the brute-force distance field): each pair's record counts the mirror's sample contacts and
+//      carries their largest energy; its rows (four at most) are each one of the mirror's samples (point 0.01 cells,
+//      depth 0.005 cells), the deepest among them, with the mean normal of the samples that point the same way;
 //   2. the scene's own geometry: the depth and normal a ball on a ball, a box on a face, an edge, a corner, a box on a
 //      tilted box, an L in a notch must give (tolerances at each);
 //   3. every contact against the exact voxel geometry (brute-force distance and normal at the sample's point), in
@@ -16,7 +18,7 @@ import type { SdfModelSpec } from '../../src/engine/sdf/models';
 import { axisAngle, ballShape, bodyOf, boxShape, lShape, massProps, notchShape, shape } from '../../src/engine/sdf/shapes';
 import { angleDeg, refModel, rot } from '../support/sdf-reference';
 import { testGpu, type TestGpu } from './dawn';
-import { expectMirror, judge, makeScene, type Judged, type Scene } from './sdf-harness';
+import { expectReduced, judge, makeScene, type Judged, type RunResult, type Scene } from './sdf-harness';
 
 type V3 = [number, number, number];
 type Q = [number, number, number, number];
@@ -35,6 +37,9 @@ const SMOOTH_DEPTH = 0.04;
 const SMOOTH_NORMAL = 1;
 /** anywhere: depth, voxels of the field's model */
 const ANY_DEPTH = 0.45;
+/** grad8 (the format chosen): a pair's rows (the mean normal of the samples that point the same way) against the scene's
+ *  true normal, degrees at worst. Measured: 1.6, 9.5, 45.9 (one row on the edge's 45° flank), 8.0 */
+const ROW_NORMAL = { ball: 5, face: 12, edge: 50, corner: 10 };
 
 /** a body of `spec` whose model origin (its voxel grid's corner) is at `origin`, turned by `quat` about that corner */
 function placed(spec: SdfModelSpec, model: number, origin: V3, quat: Q = [0, 0, 0, 1], more: Partial<BodyRow> = {}): BodyRow {
@@ -48,27 +53,41 @@ const log = (s: string) => {
 };
 const mean = (a: number[]) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
 
-/** a scene run once: the mirror's contacts, and each against the exact geometry within the stated tolerances */
-async function check(name: string, scene: Scene): Promise<Judged[]> {
+type Checked = Judged[] & { rows: Judged[]; run: RunResult };
+
+/**
+ * A scene run once. The pass against the mirror (expectReduced); then every sample contact (the mirror's) against the
+ * exact geometry within the stated tolerances. Returns the sample contacts, with the pair's rows as `rows`.
+ */
+async function check(name: string, scene: Scene): Promise<Checked> {
   const r = await scene.run();
-  expect(r.dropped).toBe(0);
-  expect(r.chunksDropped).toBe(0);
+  expect(r.bricksDropped).toBe(0);
+  expect(r.pairsDropped).toBe(0);
+  const rows = judge(scene, expectReduced(scene, r), REACH[scene.store.format]);
   const m = judge(
     scene,
-    expectMirror(r.contacts, r.mirror, (c) => scene.fine.margin / scene.refs[scene.bodies[c.way ? c.a : c.b].model].voxel),
+    r.mirror.map((c) => ({ gpu: c, ref: c })),
     REACH[scene.store.format],
   );
   const smooth = m.filter((c) => c.smooth);
   const edge = m.filter((c) => !c.smooth);
   log(
-    `${scene.store.format} ${name}: ${m.length} contacts (${m.filter((c) => c.ref.way === 0).length} from a's samples, ${m.filter((c) => c.ref.way === 1).length} from b's), ${r.chunks} chunks | smooth ${smooth.length}: depth max ${Math.max(0, ...smooth.map((c) => c.depthErr)).toFixed(3)} voxels, normal max ${Math.max(0, ...smooth.map((c) => c.normalErr)).toFixed(2)}° | near an edge ${edge.length}: depth max ${Math.max(0, ...edge.map((c) => c.depthErr)).toFixed(3)} mean ${mean(edge.map((c) => c.depthErr)).toFixed(3)} voxels, normal mean ${mean(edge.map((c) => c.normalErr)).toFixed(1)}° max ${Math.max(0, ...edge.map((c) => c.normalErr)).toFixed(1)}°`,
+    `${scene.store.format} ${name}: ${m.length} sample contacts (${m.filter((c) => c.ref.way === 0).length} from a's samples, ${m.filter((c) => c.ref.way === 1).length} from b's) in ${r.bricks} bricks, ${rows.length} rows | smooth ${smooth.length}: depth max ${Math.max(0, ...smooth.map((c) => c.depthErr)).toFixed(3)} voxels, normal max ${Math.max(0, ...smooth.map((c) => c.normalErr)).toFixed(2)}° | near an edge ${edge.length}: depth max ${Math.max(0, ...edge.map((c) => c.depthErr)).toFixed(3)} mean ${mean(edge.map((c) => c.depthErr)).toFixed(3)} voxels, normal mean ${mean(edge.map((c) => c.normalErr)).toFixed(1)}° max ${Math.max(0, ...edge.map((c) => c.normalErr)).toFixed(1)}°`,
   );
   for (const c of smooth) {
     expect(c.depthErr, `${name}: depth on smooth ground, voxels`).toBeLessThan(SMOOTH_DEPTH);
     expect(c.normalErr, `${name}: normal on smooth ground, degrees`).toBeLessThan(SMOOTH_NORMAL);
   }
   for (const c of edge) expect(c.depthErr, `${name}: depth near an edge, voxels`).toBeLessThan(ANY_DEPTH);
-  return m;
+  return Object.assign(m, { rows, run: r });
+}
+
+/** the normal error table's line (SDF_LOG=1): every sample's normal and the rows' against the true direction, degrees */
+function normalTable(format: string, name: string, m: Checked, truth: (c: Judged) => number[]): { rowMean: number; rowMax: number } {
+  const all = m.map((c) => angleDeg(c.gpu.normal, truth(c)));
+  const rows = m.rows.map((c) => angleDeg(c.gpu.normal, truth(c)));
+  log(`NORMALS ${format} | ${name} | samples ${m.length}: mean ${mean(all).toFixed(1)}° max ${Math.max(...all).toFixed(1)}° | rows ${rows.length}: mean ${mean(rows).toFixed(1)}° max ${Math.max(...rows).toFixed(1)}°`);
+  return { rowMean: mean(rows), rowMax: Math.max(...rows) };
 }
 
 const deepest = <T extends { gpu: { depth: number } }>(m: T[]): T => m.reduce((a, b) => (b.gpu.depth > a.gpu.depth ? b : a));
@@ -101,7 +120,11 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('fine collision, %s', (
     expect(Math.max(...radial)).toBeLessThan(format === 'grad8' ? 20 : 40);
     // from b towards a, summed over the contacts: along the line of centres
     expect(angleDeg(norm(sum(m.map((c) => c.gpu.normal))), back)).toBeLessThan(5);
-    expect([d.gpu.matA, d.gpu.matB]).toEqual([3, 5]);
+    // the rows: the mean normal, along the line of centres
+    const t = normalTable(format, 'ball on ball', m, () => back);
+    if (format === 'grad8') expect(t.rowMax).toBeLessThan(ROW_NORMAL.ball);
+    expect(m.rows.length).toBeLessThanOrEqual(4);
+    expect([m.rows[0].gpu.matA, m.rows[0].gpu.matB]).toEqual([3, 5]);
     // head on, the contact nearest the line of centres has almost no lever arm: effective mass m / 2, energy ½ (m / 2) 2² = m
     const mass = massProps(ball).mass;
     const axis = m.reduce((p, c) => (angleDeg(c.gpu.normal, back) < angleDeg(p.gpu.normal, back) ? c : p));
@@ -109,6 +132,8 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('fine collision, %s', (
     expect(axis.gpu.closing).toBeLessThanOrEqual(2.001);
     expect(axis.gpu.energy / mass).toBeGreaterThan(0.8);
     expect(axis.gpu.energy / mass).toBeLessThan(1.05);
+    // every row carries the pair's largest sample energy
+    for (const c of m.rows) expect(c.gpu.energy).toBeGreaterThanOrEqual(axis.gpu.energy - 1e-3);
     scene.destroy();
   });
 
@@ -130,6 +155,15 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('fine collision, %s', (
     // the mean normal is 9° off the face normal (BACKLOG PF3). Bounded here so a change that worsens it shows.
     log(`${format} box face: the pair's mean normal ${angleDeg(norm(sum(m.map((c) => c.gpu.normal))), [0, 0, -1]).toFixed(1)}° off the face normal`);
     expect(angleDeg(norm(sum(m.map((c) => c.gpu.normal))), [0, 0, -1])).toBeLessThan(12);
+    const t = normalTable(format, 'box face', m, () => [0, 0, -1]);
+    if (format === 'grad8') expect(t.rowMax).toBeLessThan(ROW_NORMAL.face);
+    // three or four rows, spread: the patch they span is most of the overlap (6 by 7 cells)
+    expect(m.rows.length).toBeGreaterThanOrEqual(3);
+    const xs = m.rows.map((c) => c.gpu.point[0]);
+    const ys = m.rows.map((c) => c.gpu.point[1]);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(4);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(4);
+    for (const c of m.rows) expect(Math.abs(c.gpu.depth - 0.3)).toBeLessThan(ANY_DEPTH);
     scene.destroy();
   });
 
@@ -148,6 +182,12 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('fine collision, %s', (
     expect(edge.filter((x) => x.smooth).length).toBeGreaterThanOrEqual(format === 'grad8' ? 3 : 5);
     // nothing pushes a up into b
     for (const c of m) expect(c.gpu.normal[2]).toBeLessThan(-0.5);
+    const t = normalTable(format, 'box edge', m, () => [0, 0, -1]);
+    if (format === 'grad8') expect(t.rowMax).toBeLessThan(ROW_NORMAL.edge);
+    // the rows reach along the edge (y): at least 5 of its 8 cells
+    const ys = m.rows.map((c) => c.gpu.point[1]);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(5);
+    expect(Math.max(...m.rows.map((c) => c.gpu.depth))).toBeGreaterThan(0.35);
     scene.destroy();
   });
 
@@ -166,6 +206,9 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('fine collision, %s', (
     const fromA = m.filter((c) => c.ref.way === 0);
     log(`${format} box corner: a's own samples give ${fromA.length} contacts, the deepest ${fromA.length ? Math.max(...fromA.map((c) => c.gpu.depth)).toFixed(3) : 'none'} (the corner is 0.5 deep)`);
     expect(fromA.every((c) => c.gpu.depth < 0.35)).toBe(true);
+    const t = normalTable(format, 'box corner', m, () => [0, 0, -1]);
+    if (format === 'grad8') expect(t.rowMax).toBeLessThan(ROW_NORMAL.corner);
+    expect(Math.abs(deepest(m.rows).gpu.depth - 0.5)).toBeLessThan(0.05);
     scene.destroy();
   });
 
@@ -222,33 +265,38 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('fine collision, %s', (
     // bound spheres overlap, the faces are 0.3 apart (margin 0.25)
     const scene = makeScene(g, format, [box, ball], [bodyOf(box, 0, [0, 0, 0]), bodyOf(box, 0, [2, 1, 8.3])], [0, 1]);
     let r = await scene.run();
-    expect(r.chunks).toBeGreaterThan(0);
+    expect(r.bricks).toBeGreaterThan(0);
     expect(r.mirror.length).toBe(0);
-    expect(r.asked).toBe(0);
+    expect([r.sampleContacts, r.rowsWritten, r.rows.length]).toEqual([0, 0, 0]);
     // a box turned 45° about z, its edge 0.5 from the other's face: bound spheres deep in each other
     scene.setBodies([bodyOf(box, 0, [0, 0, 0], axisAngle([0, 0, 1], Math.PI / 4)), bodyOf(box, 0, [4 * Math.SQRT2 + 0.5 + 4, 0.4, 0.7])]);
     r = await scene.run();
-    expect(r.chunks).toBeGreaterThan(0);
+    expect(r.bricks).toBeGreaterThan(0);
     expect(r.mirror.length).toBe(0);
-    expect(r.asked).toBe(0);
-    // far apart: the bound spheres miss, not one sample is tested
+    expect([r.sampleContacts, r.rowsWritten]).toEqual([0, 0]);
+    // far apart: the bound spheres miss, not one brick is tested
     scene.setBodies([bodyOf(box, 0, [0, 0, 0]), bodyOf(box, 0, [2, 1, 30])]);
     r = await scene.run();
-    expect([r.chunks, r.asked]).toEqual([0, 0]);
+    expect([r.bricks, r.sampleContacts, r.rowsWritten]).toEqual([0, 0, 0]);
+    // bound spheres overlap but the boxes' own bounds are 5.5 cells apart: no brick reaches, no thread is spent on samples
+    scene.setBodies([bodyOf(box, 0, [0, 0, 0]), bodyOf(box, 0, [0, 0, 13.5])]);
+    r = await scene.run();
+    expect([r.bricks, r.sampleContacts]).toEqual([0, 0]);
     // balls 0.5 apart at their nearest voxels (centres along y: both have flat voxel caps there)
     scene.setBodies([bodyOf(ball, 1, [0, 0, 0]), bodyOf(ball, 1, [0, 12.5, 0])]);
     r = await scene.run();
-    expect(r.chunks).toBeGreaterThan(0);
-    expect(r.asked).toBe(0);
+    expect(r.bricks).toBeGreaterThan(0);
+    expect(r.sampleContacts).toBe(0);
     // boxes 0.2 apart: inside the margin
     scene.setBodies([bodyOf(box, 0, [0, 0, 0]), bodyOf(box, 0, [2.13, 1.21, 8.2])]);
-    r = await scene.run();
-    expect(r.asked).toBeGreaterThan(30);
-    for (const c of r.contacts) {
-      expect(c.depth).toBeLessThan(0);
-      expect(c.depth).toBeGreaterThanOrEqual(-0.25 - 1e-3);
+    const m = await check('a gap inside the margin', scene);
+    expect(m.length).toBeGreaterThan(30);
+    for (const c of m) {
+      expect(c.gpu.depth).toBeLessThan(0);
+      expect(c.gpu.depth).toBeGreaterThanOrEqual(-0.25 - 1e-3);
     }
-    expect(r.contacts.filter((c) => Math.abs(c.depth + 0.2) < 0.02 && angleDeg(c.normal, [0, 0, -1]) < 1).length).toBeGreaterThan(format === 'grad8' ? 15 : 30);
+    expect(m.rows.length).toBeGreaterThanOrEqual(3);
+    for (const c of m.rows) expect(c.gpu.depth).toBeLessThan(0);
     scene.destroy();
   });
 
@@ -308,7 +356,7 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('fine collision, %s', (
     scene.refs[scene.ids[0]] = refModel(eaten, format);
     const r = await scene.run();
     expect(r.mirror.length).toBe(0);
-    expect(r.asked).toBe(0);
+    expect(r.sampleContacts).toBe(0);
     // the small box let down two cells: on the new top
     scene.setBodies([bodyOf(small, 1, [0.13, 0.17, 2 + 2 - 0.3]), bodies[1]]);
     m = await check('after the bite', scene);
@@ -321,47 +369,97 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('fine collision, %s', (
     scene.destroy();
   });
 
-  test('contacts past the buffer’s room are counted as dropped; a pair list longer than the count is not read', async () => {
+  test('nothing is dropped unsaid: pairs past the pass’s room and bricks past its list are counted; a pair list longer than its count is not read', async () => {
     const box = boxShape(8, 8, 8);
-    // (the second pair is past the count: rows that must not be tested)
-    const scene = makeScene(g, format, [box], [bodyOf(box, 0, [0, 0, 0]), bodyOf(box, 0, [2.13, 1.21, 7.7])], [0, 1, 0, 1], { maxContacts: 16, maxPairs: 4 });
-    g.device.queue.writeBuffer(scene.inputs.pairCount, 0, new Uint32Array([1]));
-    const r = await scene.run();
-    const want = r.mirror.length / 2;
-    expect(want).toBeGreaterThan(60);
-    expect(Math.abs(r.asked - want)).toBeLessThanOrEqual(1);
-    expect(r.dropped).toBe(r.asked - 16);
-    expect(r.contacts.length).toBe(16);
+    const bodies = [bodyOf(box, 0, [0, 0, 0]), bodyOf(box, 0, [2.13, 1.21, 7.7]), bodyOf(box, 0, [40, 0, 0]), bodyOf(box, 0, [42.13, 1.21, 7.7])];
+    // (the third pair is past the count: rows that must not be tested)
+    const scene = makeScene(g, format, [box], bodies, [0, 1, 2, 3, 0, 1], { maxPairs: 4 });
+    g.device.queue.writeBuffer(scene.inputs.pairCount, 0, new Uint32Array([2]));
+    let r = await scene.run();
+    expect(r.pairs.map((x) => x.samples > 60)).toEqual([true, true, false]);
+    expect(r.pairs[2].rows.length).toBe(0);
+    expect([r.pairsDropped, r.bricksDropped]).toEqual([0, 0]);
+    expect(r.sampleContacts).toBe(r.pairs[0].samples + r.pairs[1].samples);
+    const bricks = r.bricks;
     scene.destroy();
+    // room for one pair of the two: the second is counted, not tested
+    const one = makeScene(g, format, [box], bodies, [0, 1, 2, 3], { maxPairs: 1 });
+    r = await one.run();
+    expect(r.pairsDropped).toBe(1);
+    expect(r.pairs.length).toBe(1);
+    expect(r.pairs[0].samples).toBeGreaterThan(60);
+    one.destroy();
+    // room for 5 bricks: the rest are counted
+    const few = makeScene(g, format, [box], bodies, [0, 1, 2, 3], { maxBricks: 5 });
+    r = await few.run();
+    expect(r.bricks).toBe(bricks);
+    expect(r.bricksDropped).toBe(bricks - 5);
+    few.destroy();
   });
 
-  test('the sample cap: a big body tests at most `cap` samples a pass, and over the ticks every sample has its turn', async () => {
+  test('the sample cap: a big body tests every stride-th sample a pass, and over the stride’s ticks every sample has its turn once', async () => {
     const ball = ballShape(16);
     const a = bodyOf(ball, 0, [0, 0, 0]);
     const b = bodyOf(ball, 0, [0.2, 0.3, 14.6]);
-    const key = (c: { point: number[] }) => c.point.map((v) => v.toFixed(2)).join();
     const full = makeScene(g, format, [ball], [a, b], [0, 1]);
     const all = await full.run();
     const count = full.refs[0].samples.length;
     full.destroy();
     const cap = 128;
     const scene = makeScene(g, format, [ball], [a, b], [0, 1], { cap });
-    const seen = new Set<string>();
     const stride = Math.ceil(count / cap);
+    let total = 0;
     let most = 0;
     for (let tick = 0; tick < stride; tick++) {
       const r = await scene.run(tick);
-      // two half pairs of `cap` samples in chunks of 64
-      expect(r.chunks).toBe(2 * Math.ceil(cap / 64));
-      most = Math.max(most, r.asked);
-      for (const c of r.contacts) seen.add(key(c));
+      most = Math.max(most, r.sampleContacts);
+      total += r.sampleContacts;
+      expect(r.rows.length).toBeLessThanOrEqual(4);
     }
-    log(`${format} cap ${cap} of ${count} samples: at most ${most} contacts a pass, ${seen.size} different contacts over ${stride} ticks; uncapped ${all.asked}`);
-    expect(most).toBeLessThan(all.asked);
+    log(`${format} cap ${cap} of ${count} samples (stride ${stride}): at most ${most} sample contacts a pass, ${total} over ${stride} ticks; uncapped ${all.sampleContacts}`);
+    expect(most).toBeLessThan(all.sampleContacts);
     expect(most).toBeGreaterThan(0);
-    // every sample tested once in ceil(count / cap) ticks: the same contacts as the uncapped pass
-    expect([...seen].sort()).toEqual([...new Set(all.contacts.map(key))].sort());
+    expect(total).toBe(all.sampleContacts);
+    // the cap is a parameter: lifted between passes, the next pass tests every sample
+    scene.fine.cap = 1 << 16;
+    expect((await scene.run(0)).sampleContacts).toBe(all.sampleContacts);
     scene.destroy();
+  });
+
+  test('variant, measured only: the normal read again at the contact’s point on the field’s surface', async () => {
+    const box = boxShape(8, 8, 8);
+    const ball = ballShape(12);
+    const dir: V3 = [1 / 3, 2 / 3, 2 / 3];
+    const scenes: [string, SdfModelSpec, BodyRow[], number[]][] = [
+      ['ball on ball', ball, [bodyOf(ball, 0, [0, 0, 0], axisAngle([1, 2, 3], 0.7)), bodyOf(ball, 0, [dir[0] * 11, dir[1] * 11, dir[2] * 11], axisAngle([3, 1, -2], 1.9))], dir.map((v) => -v)],
+      ['box face', box, [bodyOf(box, 0, [0, 0, 0]), bodyOf(box, 0, [2.13, 1.21, 7.7])], [0, 0, -1]],
+      ['box edge', box, [bodyOf(box, 0, [0, 0, 0]), bodyOf(box, 0, [0.3, 0.37, 4 + 4 * Math.SQRT2 - 0.4], axisAngle([0, 1, 0], Math.PI / 4))], [0, 0, -1]],
+      ['box corner', box, [bodyOf(box, 0, [0, 0, 0]), bodyOf(box, 0, [0.3, 0.2, 4 + 4 * Math.sqrt(3) - 0.5], axisAngle([1, -1, 0], Math.acos(1 / Math.sqrt(3))))], [0, 0, -1]],
+    ];
+    for (const [name, spec, bodies, truth] of scenes) {
+      const scene = makeScene(g, format, [spec], bodies, [0, 1], { normalAtSurface: true });
+      const r = await scene.run();
+      const e = r.rows.map((c) => angleDeg(c.normal, truth));
+      log(`NORMALS ${format} | ${name}, normal at the surface point | rows ${e.length}: mean ${mean(e).toFixed(1)}° max ${Math.max(...e).toFixed(1)}°`);
+      expect(r.rows.length).toBeGreaterThan(0);
+      scene.destroy();
+    }
+  });
+
+  test('the same scene twice gives the same rows, bit for bit, in the same places', async () => {
+    const ball = ballShape(12);
+    const l = lShape(8);
+    const bodies = [bodyOf(ball, 0, [0, 0, 0], axisAngle([1, 2, 3], 0.7)), bodyOf(l, 1, [3, 4, 7.5], axisAngle([3, 1, -2], 1.9)), bodyOf(ball, 0, [30, 0, 0]), bodyOf(ball, 0, [30.3, 0.2, 11.2])];
+    const key = (r: RunResult) => JSON.stringify(r.pairs.map((x) => [x.samples, x.energy, x.rows]));
+    const one = makeScene(g, format, [ball, l], bodies, [0, 1, 2, 3]);
+    const first = await one.run();
+    expect(first.rows.length).toBeGreaterThan(3);
+    expect(key(await one.run())).toBe(key(first));
+    one.destroy();
+    // a second store, baked afresh: the samples are in the same order, so the same samples win
+    const two = makeScene(g, format, [ball, l], bodies, [0, 1, 2, 3]);
+    expect(key(await two.run())).toBe(key(first));
+    two.destroy();
   });
 });
 

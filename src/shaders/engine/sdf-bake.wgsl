@@ -4,26 +4,36 @@
 // A batch is a list of jobs. A thread is one padded voxel of one job: thread t belongs to the last job whose tBase is
 // at most t (a binary search of at most log2(jobs) steps). The scratch holds, per thread, the nearest occupied voxel
 // and the nearest empty voxel found so far (x | y << 8 | z << 16, or SDF_NONE).
-//   seed      every voxel is its own nearest of its kind; an occupied voxel with an open face is appended to the
-//             model's samples (an atomic counter a model, kept to the job's room)
+//   seed      every voxel is its own nearest of its kind
 //   jfa       a jump flood pass at P.step: the 26 neighbours at that stride offer their nearest of each kind
 //   finalize  empty voxel: + distance to the nearest occupied voxel's box; occupied: - distance to the nearest empty
 //             voxel's box. So the zero is on the voxel faces and corners are exact. grad8 also keeps the unit
 //             gradient, by central differences of those distances (one-sided at the grid's edge).
-//   commit    the model row's sample count, from the counter
+// The surface samples, sorted into bricks of 4 x 4 x 4 voxels (the fine pass culls by brick), in a fixed order: brick
+// by brick (x fastest), and inside a brick voxel by voxel (x fastest). A thread a brick:
+//   brickCount    the brick's surface voxels counted into the model's brick table
+//   brickOffsets  a thread a model: the table turned into running offsets (entry b: samples before brick b; the last
+//                 entry: all of them), the model row's sample count and the bake's counter
+//   brickWrite    the brick's samples written at its offset, those past the job's room left out
+// The table is at the model's sampleBase (bricks + 1 words), the samples right after it.
 // Distance is from the voxel's centre to the other voxel's box (the cube of side 1 round its centre), in voxels.
 
 struct BakeParams {
   jobs: u32,
   threads: u32,
   step: u32,
-  pad: u32,
+  bricks: u32,
 }
 struct Job {
   model: u32,
   tBase: u32,
   occBase: u32,
   sampleCap: u32,
+  // (the first brick thread of this job)
+  bBase: u32,
+  pad0: u32,
+  pad1: u32,
+  pad2: u32,
 }
 
 @group(0) @binding(0) var<uniform> P: BakeParams;
@@ -33,7 +43,7 @@ struct Job {
 @group(0) @binding(4) var<storage, read> src: array<vec2<u32>>;
 @group(0) @binding(5) var<storage, read_write> dst: array<vec2<u32>>;
 @group(0) @binding(6) var<storage, read_write> data: array<u32>;
-@group(0) @binding(7) var<storage, read_write> bakeCount: array<atomic<u32>>;
+@group(0) @binding(7) var<storage, read_write> bakeCount: array<u32>;
 
 fn jobOf(t: u32) -> u32 {
   var lo = 0u;
@@ -103,19 +113,6 @@ fn seed(@builtin(global_invocation_id) gid: vec3<u32>) {
     return;
   }
   dst[t] = vec2<u32>(me, SDF_NONE);
-  var open = 0u;
-  if (!occAt(job.occBase, p + vec3<i32>(1, 0, 0), d)) { open |= 1u; }
-  if (!occAt(job.occBase, p - vec3<i32>(1, 0, 0), d)) { open |= 2u; }
-  if (!occAt(job.occBase, p + vec3<i32>(0, 1, 0), d)) { open |= 4u; }
-  if (!occAt(job.occBase, p - vec3<i32>(0, 1, 0), d)) { open |= 8u; }
-  if (!occAt(job.occBase, p + vec3<i32>(0, 0, 1), d)) { open |= 16u; }
-  if (!occAt(job.occBase, p - vec3<i32>(0, 0, 1), d)) { open |= 32u; }
-  if (open != 0u) {
-    let k = atomicAdd(&bakeCount[job.model], 1u);
-    if (k < job.sampleCap) {
-      data[m.sampleBase + k] = me | (open << 24u);
-    }
-  }
 }
 
 @compute @workgroup_size(64)
@@ -237,11 +234,101 @@ fn finalize(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
 }
 
+/** the open faces of the voxel at p (bits +x -x +y -y +z -z), 0 for an empty voxel or one with no open face */
+fn openOf(base: u32, p: vec3<i32>, d: vec3<u32>) -> u32 {
+  if (!occAt(base, p, d)) {
+    return 0u;
+  }
+  var open = 0u;
+  if (!occAt(base, p + vec3<i32>(1, 0, 0), d)) { open |= 1u; }
+  if (!occAt(base, p - vec3<i32>(1, 0, 0), d)) { open |= 2u; }
+  if (!occAt(base, p + vec3<i32>(0, 1, 0), d)) { open |= 4u; }
+  if (!occAt(base, p - vec3<i32>(0, 1, 0), d)) { open |= 8u; }
+  if (!occAt(base, p + vec3<i32>(0, 0, 1), d)) { open |= 16u; }
+  if (!occAt(base, p - vec3<i32>(0, 0, 1), d)) { open |= 32u; }
+  return open;
+}
+
+fn jobOfBrick(t: u32) -> u32 {
+  var lo = 0u;
+  var hi = P.jobs;
+  while (hi - lo > 1u) {
+    let mid = (lo + hi) / 2u;
+    if (jobs[mid].bBase <= t) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
 @compute @workgroup_size(64)
-fn commit(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn brickCount(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= P.bricks) {
+    return;
+  }
+  let job = jobs[jobOfBrick(gid.x)];
+  let m = models[job.model];
+  let d = sdfDims(m.dims);
+  let bd = sdfBricks(d);
+  let b = gid.x - job.bBase;
+  if (b >= bd.x * bd.y * bd.z) {
+    return;
+  }
+  let o = unlin(b, bd) * 4;
+  var n = 0u;
+  for (var k = 0u; k < 64u; k++) {
+    if (openOf(job.occBase, o + vec3<i32>(i32(k & 3u), i32((k >> 2u) & 3u), i32(k >> 4u)), d) != 0u) {
+      n++;
+    }
+  }
+  data[m.sampleBase + b] = n;
+}
+
+@compute @workgroup_size(64)
+fn brickOffsets(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= P.jobs) {
     return;
   }
   let job = jobs[gid.x];
-  models[job.model].sampleCount = min(atomicLoad(&bakeCount[job.model]), job.sampleCap);
+  let m = models[job.model];
+  let bd = sdfBricks(sdfDims(m.dims));
+  let nb = bd.x * bd.y * bd.z;
+  var acc = 0u;
+  for (var b = 0u; b < nb; b++) {
+    let n = data[m.sampleBase + b];
+    data[m.sampleBase + b] = min(acc, job.sampleCap);
+    acc += n;
+  }
+  data[m.sampleBase + nb] = min(acc, job.sampleCap);
+  bakeCount[job.model] = acc;
+  models[job.model].sampleCount = min(acc, job.sampleCap);
+}
+
+@compute @workgroup_size(64)
+fn brickWrite(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= P.bricks) {
+    return;
+  }
+  let job = jobs[jobOfBrick(gid.x)];
+  let m = models[job.model];
+  let d = sdfDims(m.dims);
+  let bd = sdfBricks(d);
+  let nb = bd.x * bd.y * bd.z;
+  let b = gid.x - job.bBase;
+  if (b >= nb) {
+    return;
+  }
+  let o = unlin(b, bd) * 4;
+  var at = data[m.sampleBase + b];
+  let end = data[m.sampleBase + b + 1u];
+  for (var k = 0u; k < 64u; k++) {
+    let p = o + vec3<i32>(i32(k & 3u), i32((k >> 2u) & 3u), i32(k >> 4u));
+    let open = openOf(job.occBase, p, d);
+    if (open != 0u && at < end) {
+      data[m.sampleBase + nb + 1u + at] = packXyz(p) | (open << 24u);
+      at++;
+    }
+  }
 }

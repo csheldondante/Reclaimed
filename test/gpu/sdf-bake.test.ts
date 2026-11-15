@@ -78,7 +78,9 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('the bake, %s', (format
       }
       expect(s.count).toBe(ref.samples.length);
       expect(s.found).toBe(ref.samples.length);
-      expect(s.words).toEqual([...ref.samples].sort((a, b) => a - b));
+      // the samples in the bake's fixed order (brick by brick), and the brick table
+      expect(s.words).toEqual(ref.samples);
+      expect(s.bricks).toEqual(ref.bricks);
     }
     if (process.env.SDF_LOG) console.log(rows.join('\n'));
     expect(g.takeErrors()).toEqual([]);
@@ -89,8 +91,8 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('the bake, %s', (format
     const store = new SdfModels(g.device, format);
     for (let k = 0; k < 64; k++) store.add(k % 2 ? ballShape(16) : boxShape(16, 16, 16));
     store.flush();
-    // 64 × 18³ = 373,248 padded voxels: two batches of the default 2^18 threads; each seed + 6 flood (side 18: 16, 8, 4, 2, 1, 1) + finalize + commit
-    expect(store.dispatches).toBe(2 * 9);
+    // 64 × 18³ = 373,248 padded voxels: two batches of the default 2^18 threads; each seed + 6 flood (side 18: 16, 8, 4, 2, 1, 1) + finalize + 3 for the samples' bricks
+    expect(store.dispatches).toBe(2 * 11);
     const ref = refModel(ballShape(16), format);
     const got = await readField(g, store, 63);
     let worst = 0;
@@ -116,7 +118,7 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('the bake, %s', (format
     for (let i = 0; i < got.length; i++) worst = Math.max(worst, Math.abs(got[i] - ref.field[i]));
     expect(worst).toBeLessThan(1e-4);
     const s = await readSamples(g, store, id);
-    expect(s.words).toEqual([...ref.samples].sort((a, b) => a - b));
+    expect(s.words).toEqual(ref.samples);
     expect(store.info(id).fieldBase).toBe(before.fieldBase);
     // the neighbour model is untouched
     const ball = refModel(ballShape(8), format);
@@ -144,22 +146,23 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('the bake, %s', (format
     const bits = padOccupancy(comb).bits;
     g.device.queue.writeBuffer(store.occ, store.info(id).occBase * 4, bits);
     const ref = refModel(comb, format);
-    // the small cube had 8 surface voxels, the comb has more: the old room is too small
-    expect(ref.samples.length).toBeGreaterThan(store.info(id).sampleCap);
-    const cap = store.info(id).sampleCap;
+    // by default the room is the bound that always holds: every voxel of the model
     store.rebakeFromGpu(id);
+    expect(store.info(id).sampleCap).toBe(6 * 6 * 6);
     store.flush();
     let s = await readSamples(g, store, id);
-    expect(s.count).toBe(cap);
-    expect(s.found).toBe(ref.samples.length);
+    expect(s.count).toBe(ref.samples.length);
+    expect(s.words).toEqual(ref.samples);
     const got = await readField(g, store, id);
     expect(Math.max(...got.map((v, i) => Math.abs(v - ref.field[i])))).toBeLessThan(1e-4);
-    // with the room asked for, every sample is kept
-    store.rebakeFromGpu(id, { sampleCap: 6 * 6 * 6 });
+    // a caller's bound that is too small: the samples that fit are kept (the first in the order), the rest counted
+    store.rebakeFromGpu(id, { sampleCap: 20 });
     store.flush();
     s = await readSamples(g, store, id);
-    expect(s.count).toBe(ref.samples.length);
-    expect(s.words).toEqual([...ref.samples].sort((a, b) => a - b));
+    expect(s.count).toBe(20);
+    expect(s.found).toBe(ref.samples.length);
+    expect(s.words).toEqual(ref.samples.slice(0, 20));
+    expect(s.bricks[s.bricks.length - 1]).toBe(20);
     expect(g.takeErrors()).toEqual([]);
     store.destroy();
   });

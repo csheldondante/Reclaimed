@@ -30,3 +30,8 @@ fn sdfXyz(w: u32) -> vec3<i32> {
 fn sdfToByte(d: f32) -> u32 {
   return u32(i32(clamp(round(d * SDF_SNORM_SCALE), -127.0, 127.0))) & 0xffu;
 }
+
+/** bricks of 4 x 4 x 4 voxels a side, for padded sides d */
+fn sdfBricks(d: vec3<u32>) -> vec3<u32> {
+  return (d + vec3<u32>(3u)) / 4u;
+}

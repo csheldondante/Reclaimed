@@ -1,7 +1,8 @@
 // The fine pass's test rig (test/gpu/sdf-*.test.ts): a model store, body rows and a pair list on the real device, one
-// fine pass, its contacts read back, and the same contacts from the CPU mirror (test/support/sdf-reference.ts).
+// fine pass, each pair's record and contact rows read back, and every sample contact of the same pairs from the CPU
+// mirror (test/support/sdf-reference.ts).
 import { expect } from 'vitest';
-import { CONTACT_BYTES, COUNTS_BYTES, packBodies, unpackContacts, SDF_SNORM_SCALE, type BodyRow, type Contact, type SdfFormat } from '../../src/engine/sdf/contract';
+import { CONTACT_BYTES, CONTACTS_PER_PAIR, COUNT_BRICKS, COUNT_BRICKS_DROPPED, COUNT_CONTACTS, COUNT_PAIRS_DROPPED, COUNT_SAMPLE_CONTACTS, COUNTS_BYTES, PAIR_HIT_BYTES, PAIR_HIT_ENERGY, PAIR_HIT_ROWS, PAIR_HIT_SAMPLES, packBodies, unpackContacts, SDF_SNORM_SCALE, type BodyRow, type Contact, type SdfFormat } from '../../src/engine/sdf/contract';
 import { SdfFine, type FineInputs, type FineOptions } from '../../src/engine/sdf/fine';
 import { SdfModels, type SdfModelSpec } from '../../src/engine/sdf/models';
 import { angleDeg, exactAt, mirrorContacts, refModel, unrot, type RefContact, type RefModel } from '../support/sdf-reference';
@@ -33,13 +34,34 @@ export async function readGrad(g: TestGpu, store: SdfModels, id: number): Promis
   return Float32Array.from({ length: m.fieldWords * 3 }, (_, i) => Math.max(b[Math.floor(i / 3) * 4 + 1 + (i % 3)] / 127, -1));
 }
 
-/** a model's row sample count, the bake's counter, and its sample words (sorted) */
-export async function readSamples(g: TestGpu, store: SdfModels, id: number): Promise<{ count: number; found: number; words: number[] }> {
+/** a model's row sample count, the bake's counter, its brick table and its sample words, in the store's order */
+export async function readSamples(g: TestGpu, store: SdfModels, id: number): Promise<{ count: number; found: number; bricks: number[]; words: number[] }> {
   const m = store.info(id);
   const count = new Uint32Array(await g.read(store.models, 32, id * 32))[3];
   const found = new Uint32Array(await g.read(store.bakeCount, 4, id * 4))[0];
-  const words = [...new Uint32Array(await g.read(store.data, Math.max(count, 1) * 4, m.sampleBase * 4))].slice(0, count).sort((a, b) => a - b);
-  return { count, found, words };
+  const all = new Uint32Array(await g.read(store.data, (m.bricks + 1 + Math.max(count, 1)) * 4, m.sampleBase * 4));
+  return { count, found, bricks: [...all.slice(0, m.bricks + 1)], words: [...all.slice(m.bricks + 1, m.bricks + 1 + count)] };
+}
+
+export interface PairResult {
+  /** the pair's record: samples that touched, the largest energy, and its contact rows */
+  samples: number;
+  energy: number;
+  rows: Contact[];
+}
+
+export interface RunResult {
+  /** contract.ts COUNT_* */
+  rowsWritten: number;
+  pairsDropped: number;
+  bricks: number;
+  bricksDropped: number;
+  sampleContacts: number;
+  pairs: PairResult[];
+  /** every pair's rows together */
+  rows: Contact[];
+  /** every sample contact, from the CPU mirror */
+  mirror: RefContact[];
 }
 
 export interface Scene {
@@ -52,8 +74,7 @@ export interface Scene {
   inputs: FineInputs;
   /** the body rows uploaded again (after a test moves one) */
   setBodies(bodies: BodyRow[]): void;
-  /** one pass: the counts, the contact rows kept, and the mirror's */
-  run(tick?: number): Promise<{ asked: number; dropped: number; chunks: number; chunksDropped: number; contacts: Contact[]; mirror: RefContact[] }>;
+  run(tick?: number): Promise<RunResult>;
   destroy(): void;
 }
 
@@ -63,7 +84,7 @@ export function makeScene(g: TestGpu, format: SdfFormat, specs: SdfModelSpec[], 
   store.flush();
   const refs: RefModel[] = [];
   specs.forEach((s, k) => (refs[ids[k]] = refModel(s, format)));
-  const fine = new SdfFine(g.device, store, { maxPairs: Math.max(pairs.length / 2, 1), maxContacts: 8192, cap: 1 << 16, ...opts });
+  const fine = new SdfFine(g.device, store, { maxPairs: Math.max(pairs.length / 2, 1), cap: 1 << 16, ...opts });
   const packed = packBodies(bodies);
   const inputs: FineInputs = {
     pairs: storage(g, 'test pairs', new Uint32Array(pairs)),
@@ -88,15 +109,29 @@ export function makeScene(g: TestGpu, format: SdfFormat, specs: SdfModelSpec[], 
       g.device.queue.writeBuffer(inputs.info, 0, p.info);
     },
     async run(tick = 0) {
+      const n = Math.min(pairs.length / 2, fine.maxPairs);
       fine.setParams(pairs.length / 2, tick);
       const enc = g.device.createCommandEncoder();
       fine.encode(enc, inputs, pairs.length / 2);
       g.device.queue.submit([enc.finish()]);
       const c = new Uint32Array(await g.read(fine.counts, COUNTS_BYTES));
-      const kept = Math.min(c[0], fine.maxContacts);
-      const contacts = kept ? unpackContacts(await g.read(fine.contacts, kept * CONTACT_BYTES), kept) : [];
+      const hits = await g.read(fine.hits, n * PAIR_HIT_BYTES);
+      const hu = new Uint32Array(hits);
+      const hf = new Float32Array(hits);
+      const all = unpackContacts(await g.read(fine.contacts, n * CONTACTS_PER_PAIR * CONTACT_BYTES), n * CONTACTS_PER_PAIR);
+      const out: PairResult[] = [];
+      for (let p = 0; p < n; p++) out.push({ samples: hu[p * 32 + PAIR_HIT_SAMPLES], energy: hf[p * 32 + PAIR_HIT_ENERGY], rows: all.slice(p * CONTACTS_PER_PAIR, p * CONTACTS_PER_PAIR + hu[p * 32 + PAIR_HIT_ROWS]) });
       expect(g.takeErrors()).toEqual([]);
-      return { asked: c[0], dropped: c[1], chunks: c[2], chunksDropped: c[3], contacts, mirror: mirrorContacts(scene.refs, scene.bodies, pairs, fine.margin) };
+      return {
+        rowsWritten: c[COUNT_CONTACTS],
+        pairsDropped: c[COUNT_PAIRS_DROPPED],
+        bricks: c[COUNT_BRICKS],
+        bricksDropped: c[COUNT_BRICKS_DROPPED],
+        sampleContacts: c[COUNT_SAMPLE_CONTACTS],
+        pairs: out,
+        rows: out.flatMap((x) => x.rows),
+        mirror: mirrorContacts(scene.refs, scene.bodies, pairs.slice(0, n * 2), fine.margin),
+      };
     },
     destroy() {
       fine.destroy();
@@ -107,45 +142,93 @@ export function makeScene(g: TestGpu, format: SdfFormat, specs: SdfModelSpec[], 
   return scene;
 }
 
+/** the bin of a world normal for a pair of bodies at pa and pb, as sdf-fine.wgsl pairFrame and binOf */
+export function binOf(w: readonly number[], pa: readonly number[], pb: readonly number[]): number {
+  const ax = [pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]];
+  const al = Math.hypot(...ax);
+  const n0 = al > 1e-5 ? ax.map((v) => v / al) : [0, 0, 1];
+  const cr = (a: number[], b: number[]) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  let t1 = cr(n0, Math.abs(n0[0]) > 0.7 ? [0, 1, 0] : [1, 0, 0]);
+  const tl = Math.hypot(...t1);
+  t1 = t1.map((v) => v / tl);
+  const t2 = cr(n0, t1);
+  const n = [n0, t1, t2].map((e) => e[0] * w[0] + e[1] * w[1] + e[2] * w[2]);
+  const m = n.map(Math.abs);
+  if (m[0] >= m[1] && m[0] >= m[2]) return n[0] < 0 ? 1 : 0;
+  if (m[1] >= m[2]) return n[1] < 0 ? 3 : 2;
+  return n[2] < 0 ? 5 : 4;
+}
+
 /**
- * The GPU's contacts against the mirror's: each mirror contact not within `edge` voxels of the margin has one GPU
- * contact of its pair at its point (within 0.01 cells), with its depth (0.005 cells), normal (1°), closing speed and
- * energy; and the GPU has no contact the mirror lacks (again but for the margin's edge). Returns the matches.
+ * A pass against the mirror, pair by pair:
+ * - the pair's record counts the mirror's sample contacts (but for those within `edge` voxels of the margin, which
+ *   the GPU's floats may put either side) and carries their largest energy;
+ * - it has 1 to 4 rows when anything touched, each one of the mirror's sample contacts (point 0.01 cells, depth 0.005
+ *   cells), no sample twice, the deepest sample among them;
+ * - a row's normal is the mean of the mirror's sample normals in its own normal's bin (2°), its closing speed is
+ *   along that normal, its energy the pair's.
+ * Returns each row with the mirror's sample it is.
  */
-export function expectMirror(contacts: Contact[], mirror: RefContact[], marginVox: (c: RefContact) => number, edge = 0.01): { gpu: Contact; ref: RefContact }[] {
-  const left = contacts.map((c) => ({ c, used: false }));
-  const out: { gpu: Contact; ref: RefContact }[] = [];
-  const missing: string[] = [];
-  for (const r of mirror) {
-    let best = -1;
-    let bd = 0.01;
-    left.forEach((x, k) => {
-      if (x.used || x.c.a !== r.a || x.c.b !== r.b) return;
-      const d = Math.hypot(x.c.point[0] - r.point[0], x.c.point[1] - r.point[1], x.c.point[2] - r.point[2]) + Math.abs(x.c.depth - r.depth);
-      if (d < bd) {
-        bd = d;
-        best = k;
-      }
-    });
-    if (best < 0) {
-      if (Math.abs(r.gapVox - marginVox(r)) > edge) missing.push(`pair ${r.a},${r.b} way ${r.way} at ${r.point.map((v) => v.toFixed(3))} depth ${r.depth.toFixed(4)}`);
-      continue;
+export function expectReduced(scene: Scene, r: RunResult, edge = 0.01): { gpu: Contact; ref: RefContact; pair: number }[] {
+  const out: { gpu: Contact; ref: RefContact; pair: number }[] = [];
+  expect(r.rowsWritten).toBe(r.rows.length);
+  expect(r.sampleContacts).toBe(r.pairs.reduce((s, p) => s + p.samples, 0));
+  r.pairs.forEach((pair, pi) => {
+    const a = scene.pairs[pi * 2];
+    const b = scene.pairs[pi * 2 + 1];
+    const mine = r.mirror.filter((m, k) => m.a === a && m.b === b && mirrorPair(scene, r.mirror, k) === pi);
+    const marginVox = (c: RefContact) => scene.fine.margin / scene.refs[scene.bodies[c.way ? c.a : c.b].model].voxel;
+    const unsure = mine.filter((c) => Math.abs(c.gapVox - marginVox(c)) <= edge).length;
+    expect(Math.abs(pair.samples - mine.length), `pair ${pi}: sample contacts ${pair.samples}, the mirror's ${mine.length}`).toBeLessThanOrEqual(unsure);
+    if (!mine.length) {
+      expect(pair.rows.length).toBe(0);
+      return;
     }
-    left[best].used = true;
-    out.push({ gpu: left[best].c, ref: r });
-  }
-  expect(missing, 'mirror contacts the GPU lacks').toEqual([]);
-  const extra = left.filter((x) => !x.used).map((x) => `pair ${x.c.a},${x.c.b} at ${x.c.point.map((v) => v.toFixed(3))} depth ${x.c.depth.toFixed(4)}`);
-  // (a GPU contact with no twin is only one at the margin's edge the mirror left out: its depth is the margin's)
-  expect(extra.length, `GPU contacts the mirror lacks: ${extra.slice(0, 5).join('; ')}`).toBeLessThanOrEqual(mirror.filter((r) => Math.abs(r.gapVox - marginVox(r)) <= edge).length + 0);
-  for (const { gpu, ref } of out) {
-    expect(Math.abs(gpu.depth - ref.depth)).toBeLessThan(0.005);
-    expect(angleDeg(gpu.normal, ref.normal)).toBeLessThan(1);
-    expect(Math.abs(gpu.closing - ref.closing)).toBeLessThan(0.01 + 0.01 * Math.abs(ref.closing));
-    expect(Math.abs(gpu.energy - ref.energy)).toBeLessThan(0.01 + 0.02 * Math.abs(ref.energy));
-    expect([gpu.a, gpu.b]).toEqual([ref.a, ref.b]);
-  }
+    if (pair.samples) {
+      expect(pair.rows.length).toBeGreaterThanOrEqual(1);
+      expect(pair.rows.length).toBeLessThanOrEqual(CONTACTS_PER_PAIR);
+    }
+    const top = Math.max(...mine.map((c) => c.energy));
+    expect(Math.abs(pair.energy - top)).toBeLessThan(0.01 + 0.02 * top);
+    const used = new Set<RefContact>();
+    for (const row of pair.rows) {
+      expect([row.a, row.b]).toEqual([a, b]);
+      let best: RefContact | null = null;
+      let bd = 0.01;
+      for (const m of mine) {
+        const d = Math.hypot(row.point[0] - m.point[0], row.point[1] - m.point[1], row.point[2] - m.point[2]) + Math.abs(row.depth - m.depth);
+        if (d < bd && !used.has(m)) {
+          bd = d;
+          best = m;
+        }
+      }
+      expect(best, `pair ${pi}: a row at ${row.point.map((v) => v.toFixed(3))} depth ${row.depth.toFixed(4)} is none of the mirror's samples`).not.toBeNull();
+      used.add(best!);
+      expect(Math.abs(row.depth - best!.depth)).toBeLessThan(0.005);
+      // the mean of the sample normals that point the same way
+      const pa = scene.bodies[a].pos;
+      const pb = scene.bodies[b].pos;
+      const bin = binOf(best!.normal, pa, pb);
+      const sum = [0, 0, 0];
+      for (const m of mine) if (binOf(m.normal, pa, pb) === bin) m.normal.forEach((v, k) => (sum[k] += v));
+      const l = Math.hypot(...sum);
+      const meanN = sum.map((v) => v / l);
+      expect(angleDeg(row.normal, meanN), `pair ${pi}: a row's normal against its bin's mean`).toBeLessThan(2);
+      expect(Math.abs(row.closing + (best!.vrel[0] * row.normal[0] + best!.vrel[1] * row.normal[1] + best!.vrel[2] * row.normal[2]))).toBeLessThan(0.02);
+      expect(Math.abs(row.energy - pair.energy)).toBeLessThan(1e-6 + 1e-6 * pair.energy);
+      out.push({ gpu: row, ref: best!, pair: pi });
+    }
+    if (pair.rows.length) expect(Math.max(...pair.rows.map((x) => x.depth))).toBeGreaterThan(Math.max(...mine.map((c) => c.depth)) - 0.01);
+  });
   return out;
+}
+
+/** which pair of the scene's list a mirror contact came from (the mirror walks the list in order, both ways a pair) */
+function mirrorPair(scene: Scene, mirror: RefContact[], k: number): number {
+  // (pairs in the tests' lists are distinct, but for the one that repeats a pair past the count)
+  const c = mirror[k];
+  for (let p = 0; p * 2 < scene.pairs.length; p++) if (scene.pairs[p * 2] === c.a && scene.pairs[p * 2 + 1] === c.b) return p;
+  return -1;
 }
 
 export interface Judged {
@@ -159,8 +242,8 @@ export interface Judged {
 }
 
 /**
- * Each matched contact against the exact voxel geometry: the brute-force distance and normal at its sample's point,
- * and whether the field's model is smooth there (the exact normal within 5° of itself at 12 points `reach` and
+ * Each contact against the exact voxel geometry: the brute-force distance and normal at its sample's point, and
+ * whether the field's model is smooth there (the exact normal within 5° of itself at 12 points `reach` and
  * `reach / 2` voxels away along the axes).
  */
 export function judge(scene: Scene, matches: { gpu: Contact; ref: RefContact }[], reach: number): Judged[] {
@@ -169,7 +252,7 @@ export function judge(scene: Scene, matches: { gpu: Contact; ref: RefContact }[]
     const mf = scene.refs[fb.model];
     const at: [number, number, number] = [r.q[0] + 0.5, r.q[1] + 0.5, r.q[2] + 0.5];
     const ex = exactAt(mf, at);
-    // (the GPU's normal back in the field model's frame, outward)
+    // (the normal back in the field model's frame, outward)
     const nw = (r.way ? gpu.normal.map((v) => -v) : gpu.normal) as [number, number, number];
     const nl = unrot(fb.quat, nw);
     let smooth = Math.hypot(...ex.n) > 0.5;

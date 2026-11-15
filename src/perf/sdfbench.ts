@@ -17,7 +17,7 @@
 
 import { initGpu } from '../gpu/device';
 import { urlFlags } from '../flags';
-import { COUNTS_BYTES, packBodies, type SdfFormat } from '../engine/sdf/contract';
+import { COUNT_BRICKS, COUNT_BRICKS_DROPPED, COUNT_CONTACTS, COUNT_SAMPLE_CONTACTS, COUNTS_BYTES, packBodies, type SdfFormat } from '../engine/sdf/contract';
 import { FINE_DEFAULT_CAP, FINE_DEFAULT_MARGIN, SdfFine } from '../engine/sdf/fine';
 import { SdfModels } from '../engine/sdf/models';
 import { benchScene, benchShapes, type BenchKind } from '../engine/sdf/shapes';
@@ -26,7 +26,7 @@ import { copyText, deviceTag, downloadJson, postDev, shareJson, stamp } from './
 
 declare const __BUILD_COMMIT__: string;
 
-const VERSION = 1;
+const VERSION = 2;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const mean = (a: number[]) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : NaN);
 const round = (v: number, d = 3) => (Number.isFinite(v) ? +v.toFixed(d) : null);
@@ -125,7 +125,7 @@ export async function sdfBench(): Promise<void> {
           vel: filled(dev, 'bench vel', packed.vel),
           info: filled(dev, 'bench info', packed.info),
         };
-        const fine = new SdfFine(dev, store, { maxPairs: pairs, maxContacts: 1 << 18 });
+        const fine = new SdfFine(dev, store, { maxPairs: pairs });
         fine.setParams(pairs, 0);
         const passes = (k: number) => {
           const enc = dev.createCommandEncoder();
@@ -183,10 +183,10 @@ export async function sdfBench(): Promise<void> {
           batchMs: round(batch),
           on: { frameMs: round(on.frameMs, 2), doneMs: round(on.doneMs, 2), frames: sums.on.dt.length },
           off: { frameMs: round(off.frameMs, 2), doneMs: round(off.doneMs, 2), frames: sums.off.dt.length },
-          threads: c[2] * 64,
-          contacts: c[0],
-          dropped: c[1],
-          chunksDropped: c[3],
+          threads: c[COUNT_BRICKS] * 16,
+          contacts: c[COUNT_CONTACTS],
+          sampleContacts: c[COUNT_SAMPLE_CONTACTS],
+          dropped: c[COUNT_BRICKS_DROPPED],
           passBytes: fine.bytes,
         });
         fine.destroy();
@@ -211,7 +211,7 @@ export async function sdfBench(): Promise<void> {
     build: __BUILD_COMMIT__,
     startedAt,
     endedAt: new Date().toISOString(),
-    what: 'fine collision (SDF, JFA bake): toggleFrameMs and toggleDoneMs are the pass on less off, per pass; batchMs a batch alone, wall, per pass. No timestamp queries.',
+    what: 'fine collision (SDF, JFA bake; v2: samples culled by brick, four contact rows a pair at most): toggleFrameMs and toggleDoneMs are the pass on less off, per pass; batchMs a batch alone, wall, per pass. No timestamp queries.',
     scene: { kind, cap: FINE_DEFAULT_CAP, margin: FINE_DEFAULT_MARGIN, windowS, windows },
     device: { adapter: { vendor: info.vendor, architecture: info.architecture, device: info.device, description: info.description }, ua: navigator.userAgent, clientHints: hints, screen: [innerWidth, innerHeight, devicePixelRatio] },
     wakeLock: { held: awake, log: wakeLog },
@@ -224,7 +224,7 @@ export async function sdfBench(): Promise<void> {
   panel.say(`Done: ${rows.length} configurations.`);
   const pad = (v: unknown, w: number) => String(v).padStart(w);
   panel.text(
-    ['format side pairs  toggle ms (frame / GPU done)  batch ms  contacts', ...rows.map((r) => `${String(r.format).padEnd(6)} ${pad(r.side, 3)} ${pad(r.pairs, 5)}  ${pad(r.toggleFrameMs, 8)} / ${pad(r.toggleDoneMs, 8)}  ${pad(r.batchMs, 8)}  ${pad(r.contacts, 7)}${r.dropped ? ` (${r.dropped} dropped)` : ''}`), '', 'bake ms: format side  one  64', ...bakes.map((b) => `${String(b.format).padEnd(6)} ${pad(b.side, 3)}  ${pad(b.bakeOneMs, 6)}  ${pad(b.bake64Ms, 7)}`)].join(String.fromCharCode(10)),
+    ['format side pairs  toggle ms (frame / GPU done)  batch ms  contacts', ...rows.map((r) => `${String(r.format).padEnd(6)} ${pad(r.side, 3)} ${pad(r.pairs, 5)}  ${pad(r.toggleFrameMs, 8)} / ${pad(r.toggleDoneMs, 8)}  ${pad(r.batchMs, 8)}  ${pad(r.contacts, 7)}${r.dropped ? ` (${r.dropped} bricks dropped)` : ''}`), '', 'bake ms: format side  one  64', ...bakes.map((b) => `${String(b.format).padEnd(6)} ${pad(b.side, 3)}  ${pad(b.bakeOneMs, 6)}  ${pad(b.bake64Ms, 7)}`)].join(String.fromCharCode(10)),
     true,
   );
   const status = panel.text('');

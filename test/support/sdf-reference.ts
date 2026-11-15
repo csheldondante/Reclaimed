@@ -26,8 +26,11 @@ export interface RefModel {
   exact: Float32Array;
   /** grad8: the unit gradient kept a voxel (x, y, z; as its snorm8 bytes decode) */
   grad: Float32Array | null;
-  /** the surface samples (contract.ts packSample), in x, y, z order */
+  /** the surface samples (contract.ts packSample) in the bake's order: brick by brick (4 × 4 × 4 padded voxels, x
+   *  fastest), voxel by voxel (x fastest) inside a brick */
   samples: number[];
+  /** the brick table: samples before each brick, then all of them */
+  bricks: number[];
   /** occupied voxels with an open face, and empty voxels with an occupied face neighbour (padded coordinates) */
   surfOcc: V3[];
   surfEmpty: V3[];
@@ -65,11 +68,25 @@ export function refModel(spec: SdfModelSpec, format: SdfFormat): RefModel {
           c[2] += z + 0.5;
         }
         if (!open) continue;
-        if (o) {
-          surfOcc.push([x, y, z]);
-          samples.push(packSample(x, y, z, open));
-        } else surfEmpty.push([x, y, z]);
+        if (o) surfOcc.push([x, y, z]);
+        else surfEmpty.push([x, y, z]);
       }
+  const bd = dims.map((v) => Math.ceil(v / 4));
+  const bricks: number[] = [];
+  for (let b = 0; b < bd[0] * bd[1] * bd[2]; b++) {
+    bricks.push(samples.length);
+    const o = [(b % bd[0]) * 4, (Math.floor(b / bd[0]) % bd[1]) * 4, Math.floor(b / (bd[0] * bd[1])) * 4];
+    for (let k = 0; k < 64; k++) {
+      const [x, y, z] = [o[0] + (k & 3), o[1] + ((k >> 2) & 3), o[2] + (k >> 4)];
+      if (!occ(x, y, z)) continue;
+      let open = 0;
+      F.forEach((f, i) => {
+        if (!occ(x + f[0], y + f[1], z + f[2])) open |= 1 << i;
+      });
+      if (open) samples.push(packSample(x, y, z, open));
+    }
+  }
+  bricks.push(samples.length);
   const field = new Float32Array(dims[0] * dims[1] * dims[2]);
   const exact = new Float32Array(field.length);
   for (let z = 0; z < dims[2]; z++)
@@ -97,7 +114,7 @@ export function refModel(spec: SdfModelSpec, format: SdfFormat): RefModel {
     }
   }
   const com: V3 = spec.com ? [spec.com[0] + SDF_PAD, spec.com[1] + SDF_PAD, spec.com[2] + SDF_PAD] : n ? [c[0] / n, c[1] / n, c[2] / n] : [dims[0] / 2, dims[1] / 2, dims[2] / 2];
-  return { spec, dims, voxel: spec.voxel, com, occ, field, exact, grad, samples, surfOcc, surfEmpty };
+  return { spec, dims, voxel: spec.voxel, com, occ, field, exact, grad, samples, bricks, surfOcc, surfEmpty };
 }
 
 /** the exact signed distance (voxels) and outward normal at a point in padded voxel coordinates, by brute force */
@@ -149,6 +166,8 @@ export interface RefContact extends Contact {
   /** the sample's point in the field model's padded voxel coordinates, and its ball there */
   q: V3;
   ball: number;
+  /** a's velocity less b's at the point */
+  vrel: V3;
 }
 
 /**
@@ -228,7 +247,7 @@ export function mirrorContacts(models: RefModel[], bodies: BodyRow[], pairs: Arr
         const ib = bb.invInertia ?? [0, 0, 0];
         const w = ba.invMass + bb.invMass + ua[0] * ua[0] * ia[0] + ua[1] * ua[1] * ia[1] + ua[2] * ua[2] * ia[2] + ub[0] * ub[0] * ib[0] + ub[1] * ub[1] * ib[1] + ub[2] * ub[2] * ib[2];
         const ap = Math.max(closing, 0);
-        out.push({ a, b, energy: w > 0 ? (0.5 * ap * ap) / w : 0, matA: ba.material ?? 0, matB: bb.material ?? 0, point, depth: -gap * mf.voxel, normal: nw, closing, way, sample: word, gapVox: gap, q, ball });
+        out.push({ a, b, energy: w > 0 ? (0.5 * ap * ap) / w : 0, matA: ba.material ?? 0, matB: bb.material ?? 0, point, depth: -gap * mf.voxel, normal: nw, closing, way, sample: word, gapVox: gap, q, ball, vrel: sub(va, vb) });
       }
     }
   return out;

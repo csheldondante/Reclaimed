@@ -14,7 +14,7 @@ import { makeBindGroup, makeCompute, type ComputeKernel } from '../../gpu/pipeli
 import modelWgsl from '../../shaders/engine/sdf-model.wgsl?raw';
 import bakeWgsl from '../../shaders/engine/sdf-bake.wgsl?raw';
 import { Arena } from './arena';
-import { SDF_MAX_SIDE, SDF_MODEL_BYTES, SDF_PAD, type SdfFormat } from './contract';
+import { SDF_MAX_SAMPLES, SDF_MAX_SIDE, SDF_MODEL_BYTES, SDF_PAD, type SdfFormat } from './contract';
 
 export interface SdfModelSpec {
   /** voxels a side */
@@ -33,8 +33,12 @@ export interface SdfModelInfo {
   dims: [number, number, number];
   fieldBase: number;
   fieldWords: number;
+  /** the brick table (bricks + 1 words: samples before each brick, then all of them); the samples follow it */
   sampleBase: number;
+  /** samples the list has room for */
   sampleCap: number;
+  /** bricks of 4 × 4 × 4 padded voxels */
+  bricks: number;
   occBase: number;
   occWords: number;
   voxel: number;
@@ -80,7 +84,8 @@ export function padOccupancy(spec: SdfModelSpec): { dims: [number, number, numbe
   return { dims, bits, surface, centroid };
 }
 
-const JOB_WORDS = 4;
+const JOB_WORDS = 8;
+const bricksOf = (dims: readonly number[]) => Math.ceil(dims[0] / 4) * Math.ceil(dims[1] / 4) * Math.ceil(dims[2] / 4);
 
 export class SdfModels {
   /** rows: contract.ts SdfModel */
@@ -104,7 +109,9 @@ export class SdfModels {
   private kSeed: ComputeKernel;
   private kJfa: ComputeKernel;
   private kFinal: ComputeKernel;
-  private kCommit: ComputeKernel;
+  private kBrickCount: ComputeKernel;
+  private kBrickOffsets: ComputeKernel;
+  private kBrickWrite: ComputeKernel;
   private scratch: [GPUBuffer, GPUBuffer] | null = null;
   private scratchThreads = 0;
 
@@ -118,10 +125,12 @@ export class SdfModels {
     private opts: { scratchThreads?: number } = {},
   ) {
     const parts = [sdfFormatWgsl(format), modelWgsl, bakeWgsl];
-    this.kSeed = makeCompute(device, 'sdf seed', parts, { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'read', 5: 'rw', 6: 'rw', 7: 'rw' }, 'seed');
+    this.kSeed = makeCompute(device, 'sdf seed', parts, { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'read', 5: 'rw' }, 'seed');
     this.kJfa = makeCompute(device, 'sdf jfa', parts, { 0: 'uniform', 1: 'read', 2: 'rw', 4: 'read', 5: 'rw' }, 'jfa');
     this.kFinal = makeCompute(device, 'sdf finalize', parts, { 0: 'uniform', 1: 'read', 2: 'rw', 4: 'read', 6: 'rw' }, 'finalize');
-    this.kCommit = makeCompute(device, 'sdf commit', parts, { 0: 'uniform', 1: 'read', 2: 'rw', 7: 'rw' }, 'commit');
+    this.kBrickCount = makeCompute(device, 'sdf brick count', parts, { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'read', 6: 'rw' }, 'brickCount');
+    this.kBrickOffsets = makeCompute(device, 'sdf brick offsets', parts, { 0: 'uniform', 1: 'read', 2: 'rw', 6: 'rw', 7: 'rw' }, 'brickOffsets');
+    this.kBrickWrite = makeCompute(device, 'sdf brick write', parts, { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'read', 6: 'rw' }, 'brickWrite');
     this.models = this.make('sdf models', 64 * SDF_MODEL_BYTES);
     this.data = this.make('sdf data', 4 << 16);
     this.occ = this.make('sdf occupancy', 4 << 12);
@@ -148,15 +157,22 @@ export class SdfModels {
     return next;
   }
 
+  /** the most bricks along a side of any model in the store (the fine pass's cull dispatch covers that many rows) */
+  get maxBricksSide(): number {
+    let most = 1;
+    for (const r of this.recs) if (r.live) most = Math.max(most, Math.ceil(Math.max(...r.dims) / 4));
+    return most;
+  }
+
   get count(): number {
     return this.recs.filter((r) => r.live).length;
   }
 
   info(id: number): SdfModelInfo {
     const r = this.rec(id);
-    const bytes = { field: r.fieldWords * 4, samples: r.sampleCap * 4, occupancy: r.occWords * 4, row: SDF_MODEL_BYTES + 4, total: 0 };
+    const bytes = { field: r.fieldWords * 4, samples: (r.bricks + 1 + r.sampleCap) * 4, occupancy: r.occWords * 4, row: SDF_MODEL_BYTES + 4, total: 0 };
     bytes.total = bytes.field + bytes.samples + bytes.occupancy + bytes.row;
-    return { dims: r.dims, fieldBase: r.fieldBase, fieldWords: r.fieldWords, sampleBase: r.sampleBase, sampleCap: r.sampleCap, occBase: r.occBase, occWords: r.occWords, voxel: r.voxel, com: r.com, bytes };
+    return { dims: r.dims, fieldBase: r.fieldBase, fieldWords: r.fieldWords, sampleBase: r.sampleBase, sampleCap: r.sampleCap, bricks: r.bricks, occBase: r.occBase, occWords: r.occWords, voxel: r.voxel, com: r.com, bytes };
   }
 
   private rec(id: number): Rec {
@@ -173,14 +189,16 @@ export class SdfModels {
     const occWords = p.bits.length;
     // (a model with no surface still gets a word: a range of nothing can't be freed)
     const sampleCap = Math.max(p.surface, 1);
+    if (sampleCap > SDF_MAX_SAMPLES) throw new Error(`SdfModels: a model with ${sampleCap} surface voxels (at most ${SDF_MAX_SAMPLES})`);
     const id = this.freeIds.pop() ?? this.recs.length;
     this.recs[id] = {
       live: true,
       dims: p.dims,
       fieldBase: this.dataArena.alloc(fieldWords),
       fieldWords,
-      sampleBase: this.dataArena.alloc(sampleCap),
+      sampleBase: this.dataArena.alloc(bricksOf(p.dims) + 1 + sampleCap),
       sampleCap,
+      bricks: bricksOf(p.dims),
       occBase: this.occArena.alloc(occWords),
       occWords,
       voxel: spec.voxel,
@@ -203,27 +221,29 @@ export class SdfModels {
 
   /**
    * A model whose occupancy bits a GPU pass rewrote (a body back from deformation, an eroded one): baked again by the
-   * next flush(), with no upload. `sampleCap` is the room for its surface voxels (the caller's bound: the CPU has not
+   * next flush(), with no upload. `sampleCap` is the room for its surface voxels: by default every voxel of the model
+   * (a bound that always holds: 4 B a voxel), or the caller's tighter bound, such as its count of matter voxels (the CPU has not
    * seen the new shape); `bakeCount` says afterwards if it was too small. `com` in the model's own voxel coordinates.
    */
   rebakeFromGpu(id: number, opts: { sampleCap?: number; com?: readonly [number, number, number] } = {}): void {
     const r = this.rec(id);
-    if (opts.sampleCap !== undefined) this.samplesFor(r, Math.max(opts.sampleCap, 1));
+    this.samplesFor(r, Math.max(opts.sampleCap ?? (r.dims[0] - 2 * SDF_PAD) * (r.dims[1] - 2 * SDF_PAD) * (r.dims[2] - 2 * SDF_PAD), 1));
     if (opts.com) r.com = [opts.com[0] + SDF_PAD, opts.com[1] + SDF_PAD, opts.com[2] + SDF_PAD];
     if (!this.pending.has(id)) this.pending.set(id, null);
   }
 
   private samplesFor(r: Rec, cap: number): void {
+    cap = Math.min(cap, SDF_MAX_SAMPLES);
     if (cap === r.sampleCap) return;
-    this.dataArena.free(r.sampleBase, r.sampleCap);
-    r.sampleBase = this.dataArena.alloc(cap);
+    this.dataArena.free(r.sampleBase, r.bricks + 1 + r.sampleCap);
+    r.sampleBase = this.dataArena.alloc(r.bricks + 1 + cap);
     r.sampleCap = cap;
   }
 
   remove(id: number): void {
     const r = this.rec(id);
     this.dataArena.free(r.fieldBase, r.fieldWords);
-    this.dataArena.free(r.sampleBase, r.sampleCap);
+    this.dataArena.free(r.sampleBase, r.bricks + 1 + r.sampleCap);
     this.occArena.free(r.occBase, r.occWords);
     r.live = false;
     this.pending.delete(id);
@@ -237,7 +257,7 @@ export class SdfModels {
 
   /**
    * Every pending model baked: the uploads, then the bake's dispatches in one submit. Returns how many models.
-   * A batch of threads T (padded voxels) is 1 seed + ceil(log2(longest side)) + 1 flood + 1 finalize + 1 commit dispatches.
+   * A batch of threads T (padded voxels) is 1 seed + ceil(log2(longest side)) + 1 flood + 1 finalize + 3 for the samples' bricks dispatches.
    */
   flush(): number {
     const ids = [...this.pending.keys()].sort((a, b) => a - b);
@@ -287,13 +307,14 @@ export class SdfModels {
     const dev = this.device;
     const jobs = new Uint32Array(ids.length * JOB_WORDS);
     let threads = 0;
+    let bricks = 0;
     let side = 0;
     ids.forEach((id, k) => {
       const r = this.recs[id];
-      jobs.set([id, threads, r.occBase, r.sampleCap], k * JOB_WORDS);
+      jobs.set([id, threads, r.occBase, r.sampleCap, bricks], k * JOB_WORDS);
       threads += Math.ceil((r.dims[0] * r.dims[1] * r.dims[2]) / 4) * 4;
+      bricks += r.bricks;
       side = Math.max(side, ...r.dims);
-      enc.clearBuffer(this.bakeCount, id * 4, 4);
     });
     const filled = (label: string, words: Uint32Array, usage: number) => {
       const b = dev.createBuffer({ label, size: words.byteLength, usage, mappedAtCreation: true });
@@ -303,7 +324,7 @@ export class SdfModels {
       return b;
     };
     const jobBuf = filled('sdf jobs', jobs, GPUBufferUsage.STORAGE);
-    const params = (step: number) => filled('sdf bake params', new Uint32Array([ids.length, threads, step, 0]), GPUBufferUsage.UNIFORM);
+    const params = (step: number) => filled('sdf bake params', new Uint32Array([ids.length, threads, step, bricks]), GPUBufferUsage.UNIFORM);
     const groups = Math.ceil(threads / 64);
     const pass = enc.beginComputePass({ label: 'sdf bake' });
     const run = (k: ComputeKernel, bg: GPUBindGroup, n: number) => {
@@ -314,7 +335,7 @@ export class SdfModels {
     };
     const p0 = params(0);
     const [s0, s1] = this.scratch!;
-    run(this.kSeed, makeBindGroup(dev, 'sdf seed', this.kSeed.layout, { 0: p0, 1: jobBuf, 2: this.models, 3: this.occ, 5: s0, 6: this.data, 7: this.bakeCount }), groups);
+    run(this.kSeed, makeBindGroup(dev, 'sdf seed', this.kSeed.layout, { 0: p0, 1: jobBuf, 2: this.models, 3: this.occ, 5: s0 }), groups);
     // the flood: strides N/2 … 1 for the power of two N at or past the longest side, then 1 again (JFA+1)
     let n = 1;
     while (n < side) n *= 2;
@@ -328,7 +349,11 @@ export class SdfModels {
       [from, to] = [to, from];
     }
     run(this.kFinal, makeBindGroup(dev, 'sdf finalize', this.kFinal.layout, { 0: p0, 1: jobBuf, 2: this.models, 4: from, 6: this.data }), this.format === 'snorm8' ? Math.ceil(threads / 4 / 64) : groups);
-    run(this.kCommit, makeBindGroup(dev, 'sdf commit', this.kCommit.layout, { 0: p0, 1: jobBuf, 2: this.models, 7: this.bakeCount }), Math.ceil(ids.length / 64));
+    // the surface samples, by brick, in a fixed order
+    const brickGroups = Math.ceil(bricks / 64);
+    run(this.kBrickCount, makeBindGroup(dev, 'sdf brick count', this.kBrickCount.layout, { 0: p0, 1: jobBuf, 2: this.models, 3: this.occ, 6: this.data }), brickGroups);
+    run(this.kBrickOffsets, makeBindGroup(dev, 'sdf brick offsets', this.kBrickOffsets.layout, { 0: p0, 1: jobBuf, 2: this.models, 6: this.data, 7: this.bakeCount }), Math.ceil(ids.length / 64));
+    run(this.kBrickWrite, makeBindGroup(dev, 'sdf brick write', this.kBrickWrite.layout, { 0: p0, 1: jobBuf, 2: this.models, 3: this.occ, 6: this.data }), brickGroups);
     pass.end();
   }
 

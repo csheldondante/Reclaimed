@@ -23257,3 +23257,42 @@ report kind), `src/perf/report-io.ts` (the kind), `test/unit/writing-sources.tes
 
 **Not done.** No phone run (PF11). Not wired into the engine; the body row layouts are the note's and unreconciled with
 `physics10` (PF10). No brick cull (PF2), no contact reduction (PF4), no 3D-texture field (PF9).
+
+## 2026-11-15 — fine collision, round 2: threads follow the overlap, four rows a pair, deterministic (PF2–PF6, `physics10-fine`)
+
+**Why.** Round 1's finding: the pass cost 1.1 ns a thread whatever the thread found (553,280 threads for 414 contacts),
+and a deep overlap gave 400 contacts a pair. Main's scope: cull before threads, reduce on the GPU, try the cheap normal
+fixes, make it deterministic, write the join with `physics10`. Rulings: `grad8`; both bodies sample; margin and cap are
+parameters.
+
+**What changed.**
+- *Bake:* samples sorted into bricks of 4³ voxels with an offset table, by three dispatches with no atomics (count a
+  brick, offsets a model, write a brick). The order is fixed, which also gives PF6.
+- *Pass:* `expand`, `cull`, `args`, `fine`, `reduce`. `cull` keeps a brick when its box, turned into the other body's
+  frame, reaches that body's box grown by the margin. `fine` runs a workgroup of 16 threads on up to 16 samples of a
+  surviving brick and writes into the pair's record. `reduce` writes at most four rows a pair at fixed places.
+- *Contract:* rows at `pair * 4`; `hits` (128 B a pair: sample contacts, largest energy, rows written, normal sums);
+  `counts` 32 B (rows, pairs past the room, sample groups, groups dropped, sample contacts).
+
+**Measured** (desktop proxy, Intel Xe integrated, Dawn D3D12, timestamps, median of 16, `grad8`,
+`SDF_BENCH=1 SDF_FORMATS=grad8 npx vitest run --project gpu sdf-fine-bench`). Before → after, ms: touching 16³ × 256
+0.66 → 0.20; × 1,024 2.36 → 0.46; × 4,096 10.6 → 1.97; touching 32³ × 256 2.16 → 0.33; deep 16³ × 256 0.72 → 0.46;
+× 1,024 2.75 → 1.70; × 4,096 11.9 → 6.6; deep 32³ × 256 1.11 → 2.16 (worse: the cap no longer bounds threads, and
+each sample contact does ten atomic writes). Threads at touching 16³ × 1,024: 2.2 M → 369 k.
+
+**Two forms tried and dropped, with numbers.** A workgroup of 64 a brick: bricks hold 14 samples on average, so
+1.6 M threads and 1.97 ms at 16³ × 1,024 (worse than the cull saved). One thread a half pair looping over all its
+bricks: 0.72 ms for 64 pairs of 32³, because a thread's loop is serial and 729 steps hold the dispatch up; a thread a
+row of bricks gave 0.13 ms.
+
+**Normals.** The rows' mean normal against the true one (`grad8`): ball 1.6° (samples 43° at worst), face over a
+corner 9.5° (54°), an edge in a face 46° at worst (one row is a real sample on the other box's 45° flank), a corner
+8°. Reading the gradient at the surface point instead: no change (9.4°, 46°, 7.6°). Left off.
+
+**Tests** (Node, Dawn): `sdf-bake` 15, `sdf-fine` 39 (13 a format), `sdf-arena` 3. New: the exact sample order and
+brick table against the CPU's; each pair's record and rows against the mirror; rows spread over the patch; pairs and
+groups past the room counted; the cap as a stride whose ticks sum to the uncapped count; the same rows bit for bit
+across passes and across fresh bakes.
+
+**Not done.** No phone run. The input rows are still the note's, not `physics10`'s (the join list is in the note).
+`normalAtSurface` is a measured variant left in the code, off.
