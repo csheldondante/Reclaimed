@@ -1400,9 +1400,12 @@ bake are not built; see the DEVLOG for the trade-off and PM4 for what the bake n
 
 The slab lies across the post with the brick slab at the post's foot and the block above. After the throw the block
 sits on the brick slab as a dark chewed lump with black gaps where it cracked, the bricks under it dented; the slab
-has lost its overhanging end and lies tilted across the post's top, one end in the air. Nothing is inside the post;
-nothing moves at the end. What looks wrong: the block is misshapen rather than broken into pieces; the slab's
-surface changes to darker banded faces when it settles; the cracks are holes (the break branch's work).
+has lost its overhanging end and lies on the post's top (level in one capture, tilted with an end in the air in
+another: the runs differ). Nothing is inside the post; nothing moves at the end. What looks wrong: **after it lands on
+the overhang the block glides down beside the post over several seconds instead of falling** (a deforming body sinks
+through another at about a cell a second, PM5); the block ends misshapen rather than in pieces; the cracks are black
+holes and a settled body's faces turn darker and banded (the break branch's work). Stills and GIF: `chain-abc*` in
+the session's scratchpad `physics10/`.
 
 ### Hand-over: where this stopped
 
