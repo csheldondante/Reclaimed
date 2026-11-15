@@ -148,7 +148,7 @@ test('D0.1: a cracked stone block comes to rest on the engine route about as fas
     console.log(`engine route:  still ${eng.still.toFixed(2)} s after the hit, mean rebound ${eng.rebound.toFixed(2)} cells, highest voxel ${eng.top.toFixed(2)} above the block's height, ${eng.alive} voxels left`);
   }
   expect(lat.still).toBeGreaterThan(0);
-  expect(eng.still).toBeGreaterThan(0);
+  expect(eng.still).toBeGreaterThanOrEqual(0);
   // The margin: within a second of the lattice route's, its rebound within half a cell. (Five runs: the lattice
   // route 0.33 to 0.80 s and 0.07 to 0.10 cells, the engine 0.45 to 1.45 s and 0.26 to 0.34 cells; before the voxel
   // hash was restored the engine took 7.57 s and came back up 1.88 cells.)
@@ -157,8 +157,11 @@ test('D0.1: a cracked stone block comes to rest on the engine route about as fas
   // time to still down to the lattice route's is BACKLOG PE35, the owner's "stone is too rubbery".)
   // (the lattice route's own figure runs from 0.33 to 0.82 s: against 0.33 the engine's 1.85 to 1.92 s missed 1.5 s by
   // a hair one run in three, so the bound is also never under 2.5 s, engine-stone's)
-  expect(eng.still).toBeLessThan(Math.max(lat.still + 1.5, 2.5));
-  expect(eng.rebound).toBeLessThan(lat.rebound + 0.5);
+  // (PE35, the owner's "stone is too rubbery": brittle materials on the engine route have no bounce, full ring
+  // damping and a give of 1 %, and part along their grain — still 0.00 to 0.05 s after the hit, rebound 0.00 to 0.03
+  // cells: now inside the lattice route's own figures, and held there)
+  expect(eng.still).toBeLessThan(0.85);
+  expect(eng.rebound).toBeLessThan(0.1);
   ok();
 });
 

@@ -19,7 +19,8 @@
 //   (`arm`, one thread a tick, sets them from the pool) — [8..10] the draw list's (engine_draw.wgsl).
 // heap (vec4): models and meshes. A model at h: [w, d, h, solid cells] [mesh first vertex (hAt), vertices, material |
 //   loose << 8, the parity of its box's first row (the hex lattice: odd rows sit half a cell right)] [a cell's mean
-//   mass, bound radius, 0, 0] [its lattice's frame in its rest frame (a quaternion: the identity for a model the host
+//   mass, bound radius, its grain's frame (u32: where its box's low corner stood in the first body's lattice), its grain's
+//   seed (u32)] [its lattice's frame in its rest frame (a quaternion: the identity for a model the host
 //   bakes; a settled part's rest frame is the world's where it settled)], then a record a lattice cell: xyz its rest
 //   place about the centre of mass, w (u32) material (6 bits; 0 none) | its 26 bonds << 6. A mesh vertex is MESH_V
 //   vec4: [its four voxels (cell k; NONE) — the first is the cell whose face the vertex is on] [their weights] [its
@@ -89,7 +90,8 @@ const PV_CRUMBLE: f32 = -2.0;
 // particle i: px[2i] xyz, w inverse mass (< 0: none; PV_CRUMBLE: `deaths` ends it); px[2i+1] xyz its place before this
 // substep, w its bonds (u32 bits: pb's word, kept here too for the draw, which has no binding left for pb)
 @group(0) @binding(23) var<storage, read_write> px: array<vec4<f32>>;
-// ps[3i] velocity; ps[3i+1] xyz its rest place (the model's frame; follows a plastic bend), w its material (u32);
+// ps[3i] velocity; ps[3i+1] xyz its rest place (the model's frame; follows a plastic bend), w its material (u32, 6
+// bits) | its grain cell << 6;
 // ps[3i+2] its region's rotation
 @group(0) @binding(24) var<storage, read_write> ps: array<vec4<f32>>;
 // pw[3i] its region's centre now about its own place, w mass; pw[3i+1] its rest centre; pw[3i+2] this substep's contacts (settling: its label)
@@ -151,6 +153,8 @@ fn n26(k: u32) -> vec3<i32> {
 }
 fn alive(i: u32) -> bool { return px[2u * i].w >= 0.0; }
 fn matOf(i: u32) -> u32 { return bitcast<u32>(ps[3u * i + 1u].w) & 63u; }
+/** its grain cell (engine_grain.wgsl; 26 bits of its id) */
+fn grainOf(i: u32) -> u32 { return bitcast<u32>(ps[3u * i + 1u].w) >> 6u; }
 
 /**
  * A mesh vertex's voxels that carry it: the cell whose face it is on (its first), and those of its others that cell is
@@ -323,8 +327,9 @@ fn fill(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
   if (!L.ok || L.state != S_NEW) { return; }
   var mw = 0u;
   var rest = vec3<f32>(0.0);
+  let mh = hAt(dmeta[slotAt(L.slot) + 2u]);
   if (L.k < L.dims.x * L.dims.y * L.dims.z) {
-    let m = heap[hAt(dmeta[slotAt(L.slot) + 2u]) + MODEL_HDR + L.k];
+    let m = heap[mh + MODEL_HDR + L.k];
     mw = bitcast<u32>(m.w);
     rest = m.xyz;
   }
@@ -340,7 +345,10 @@ fn fill(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
   px[2u * i] = vec4<f32>(p, 1.0 / max(pmA(mat).x, 0.01));
   px[2u * i + 1u] = vec4<f32>(p, bitcast<f32>(mw >> 6u));
   ps[3u * i] = vec4<f32>(slotV3(L.slot, 15u) + cross(slotV3(L.slot, 18u), rl), 0.0);
-  ps[3u * i + 1u] = vec4<f32>(rest, bitcast<f32>(mat));
+  // (its grain cell with its material: engine_grain.wgsl — a bond to a voxel of another cell is a flaw)
+  let gf = grainFrame(mh);
+  let gid = grainAt(mat, grainPos(vec3<i32>(gf.xyz) + cellOf(L.k, L.dims)), gf.w).id;
+  ps[3u * i + 1u] = vec4<f32>(rest, bitcast<f32>(mat | (gid << 6u)));
   ps[3u * i + 2u] = q;
   pw[3u * i] = vec4<f32>(0.0);
   pw[3u * i + 1u] = vec4<f32>(rest, 0.0);

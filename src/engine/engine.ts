@@ -18,7 +18,8 @@ import engineWgsl from '../shaders/engine.wgsl?raw';
 import compactWgsl from '../shaders/engine_compact.wgsl?raw';
 import stepWgsl from '../shaders/engine_step.wgsl?raw';
 import foldWgsl from '../shaders/engine_fold.wgsl?raw';
-import deformWgsl from '../shaders/engine_deform.wgsl?raw';
+import deformRaw from '../shaders/engine_deform.wgsl?raw';
+import grainWgsl from '../shaders/engine_grain.wgsl?raw';
 import latticeWgsl from '../shaders/engine_lattice.wgsl?raw';
 import drawWgsl from '../shaders/engine_draw.wgsl?raw';
 import settleWgsl from '../shaders/engine_settle.wgsl?raw';
@@ -28,6 +29,9 @@ import type { WorldGpu } from '../sim/world-gpu';
 import { TUNE } from '../tune/params';
 import { cellPos, nbr, NDIR } from '../world/lattice';
 import { MAT, MAX_MATERIALS } from '../world/materials';
+
+/** (the grain's functions go with every kernel that reads the heap: engine_grain.wgsl) */
+const deformWgsl = deformRaw + '\n' + grainWgsl;
 
 export type V3 = [number, number, number];
 export type Q = [number, number, number, number];
@@ -66,6 +70,9 @@ export interface EngineBody {
 const POSE_B = 64;
 const VEL_B = 32;
 const INFO_B = 64;
+/** engine.wgsl ET: floats (expand thresholds, the rigid bounce, the grain: engine_grain.wgsl GR_AT) */
+const ET_F = 480;
+const GR_AT = 96;
 /** engine.wgsl EngU */
 const EU_B = 192;
 /** engine_deform.wgsl: voxels a page, the pool's header, a slot's record and sums, where the live pages start, a model's header, a mesh vertex (vec4s) */
@@ -232,6 +239,9 @@ export interface EngineModel {
   readonly verts: number;
 }
 
+/** engine_grain.wgsl GR_* */
+const GRAIN = { none: 0, brick: 1, bedded: 2, lumps: 3 } as const;
+
 const pow2 = (n: number, from: number) => {
   let r = from;
   while (r < n) r *= 2;
@@ -385,8 +395,7 @@ export class Engine implements SimSystem {
     for (let i = 0; i < CMD_RING; i++) this.cu.push({ eu: world.buf('engine uniform (compact)', EU_B, U), ec: world.buf('engine commands', CMDS * 32, U) });
     this.events = world.buf('engine events', (EV_AT + EVENT_ROOM * EV_WORDS) * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     this.pm = world.buf('engine lattice materials', MAX_MATERIALS * 64, U);
-    device.queue.writeBuffer(this.pm, 0, packPhysMats());
-    this.et = world.buf('engine expand thresholds', 192, U);
+    this.et = world.buf('engine numbers a material', ET_F * 4, U);
     this.fu = world.buf('engine draw uniform', 16, U);
     this.ou = world.buf('engine uniform (occupancy)', EU_B, U);
     this.statBuf = world.buf('engine pool header read', POOL_HDR * 4, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
@@ -570,6 +579,9 @@ export class Engine implements SimSystem {
     // a cell's six neighbours by it; its lattice's frame: the rest frame's own)
     hu.set([mb.dims[0], mb.dims[1], mb.dims[2], mb.solid, id + MODEL_HDR + mb.recs.length / 4, verts, (body.mat & 255) | ((body.loose & 255) << 8), mb.lo[1] & 1]);
     hf.set([body.cellMass, body.radius], 8);
+    // (its grain's frame, engine_grain.wgsl: its box's low corner in its own lattice — the hex rows' parity kept — and a seed)
+    hu[10] = ((mb.lo[0] & 1023) | ((mb.lo[1] & 1023) << 11) | ((mb.lo[2] & 511) << 22)) >>> 0;
+    hu[11] = Math.imul(id + 1, 0x9e3779b1) >>> 0;
     hf.set([0, 0, 0, 1], 12);
     const q = this.device.queue;
     q.writeBuffer(this.heap, id * 16, H);
@@ -698,6 +710,7 @@ export class Engine implements SimSystem {
     f.set([T.stillV, T.stillT, T.crumb, TICK_DT / lsub], 40);
     u.set([Math.max(1, Math.round(T.latticeIters)), 0, lsub, 0], 44);
     f[45] = T.breakSmooth;
+    f[47] = T.shockReach;
     return U;
   }
 
@@ -743,14 +756,56 @@ export class Engine implements SimSystem {
     return this.seen;
   }
 
+  /**
+   * The lattice's material table as the engine's deforming voxels read it: physics.ts PHYS_MATS (the lattice route's,
+   * untouched) with the bounce, the give (a bond's break strain) and the ring damping of the panel's materials over
+   * it. Brittle materials not named take rock's; canvas, trash and rust keep the table's.
+   */
+  static lattice(): Float32Array {
+    const T = TUNE.engine;
+    const out = packPhysMats();
+    const set = (m: number, bounce: number, give: number, ring: number, crush?: number, crack?: number) => {
+      out[m * 16 + 4] = give;
+      out[m * 16 + 5] = bounce;
+      out[m * 16 + 12] = ring;
+      if (crush !== undefined) out[m * 16 + 7] = crush;
+      if (crack !== undefined) out[m * 16 + 13] = crack;
+    };
+    // (brittle: its rest shape never follows a bend — physics.ts PhysMat.yield 99)
+    for (let m = 1; m < MAX_MATERIALS; m++) if (out[m * 16 + 2] >= 99) set(m, T.bounceRock, T.giveRock, T.ringRock, T.crushRock, T.crackRock);
+    set(MAT.Concrete, T.bounceConcrete, T.giveConcrete, T.ringConcrete, T.crushConcrete, T.crackConcrete);
+    set(MAT.Brick, T.bounceBrick, T.giveBrick, T.ringBrick, T.crushBrick, T.crackBrick);
+    set(MAT.Steel, T.bounceSteel, T.giveSteel, T.ringSteel);
+    set(MAT.Wood, T.bounceWood, T.giveWood, T.ringWood);
+    return out;
+  }
+  private pmKey = '';
+  /** the table written when a number of it changed (the panel) */
+  private latticeMats(): void {
+    const T = TUNE.engine as Record<string, number>;
+    const key = ['Rock', 'Concrete', 'Brick', 'Steel', 'Wood'].map((m) => `${T[`bounce${m}`]},${T[`give${m}`]},${T[`ring${m}`]},${T[`crush${m}`]},${T[`crack${m}`]}`).join();
+    if (key === this.pmKey) return;
+    this.pmKey = key;
+    this.device.queue.writeBuffer(this.pm, 0, Engine.lattice());
+  }
+
   private thresholds(): Float32Array {
     const T = TUNE.engine;
-    const E = new Float32Array(48).fill(T.expandRock);
+    const E = new Float32Array(ET_F);
+    E.fill(T.expandRock, 0, 48);
     E[MAT.Concrete] = T.expandConcrete;
     E[MAT.Brick] = T.expandBrick;
     E[MAT.Steel] = T.expandSteel;
     E[MAT.Rust] = T.expandSteel;
     E[MAT.Wood] = T.expandWood;
+    // the rigid rows' bounce a material (engine.wgsl bounceAt: the solve reads the one `restitution` until it takes this)
+    const L = Engine.lattice();
+    for (let m = 0; m < 48; m++) E[48 + m] = Math.min(T.restitution, L[m * 16 + 5]);
+    // the grain (engine_grain.wgsl): kind, size along x, rows deep, up; course offset or seed jitter, roughness, flaw
+    const grain = (m: number, a: number[], b: number[]) => E.set([...a, ...b, 0], GR_AT + 8 * m);
+    for (let m = 1; m < 48; m++) if (L[m * 16 + 2] >= 99) grain(m, [GRAIN.bedded, T.grainRockBlock, T.grainRockBlock, T.grainRockBed], [T.grainRockJitter, T.grainRockRough, T.flawRock]);
+    grain(MAT.Concrete, [GRAIN.lumps, T.grainConcrete, T.grainConcrete, T.grainConcrete], [1, T.grainConcreteRough, T.flawConcrete]);
+    grain(MAT.Brick, [GRAIN.brick, T.grainBrickLength, T.grainBrickDepth, T.grainBrickCourse], [T.grainBrickOffset, T.grainBrickRough, T.flawBrick]);
     return E;
   }
 
@@ -779,6 +834,7 @@ export class Engine implements SimSystem {
     q.writeBuffer(this.eu[0], 0, this.uniform(true, 0));
     q.writeBuffer(this.eu[1], 0, this.uniform(false, 0));
     q.writeBuffer(this.et, 0, this.thresholds());
+    this.latticeMats();
     enc.clearBuffer(this.list, 0, LIST_AT * 4);
     enc.clearBuffer(this.events, 0, EV_AT * 4);
     enc.clearBuffer(this.dargs, 0, 32);

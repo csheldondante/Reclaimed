@@ -4,6 +4,7 @@
 // the bounds it has to keep (BACKLOG PE35 has the diagnosis and what is left to do).
 // Numbers: BREAK_LOG=1 npx vitest run --project gpu engine-stone --reporter=verbose
 import { afterAll, afterEach, beforeAll, expect, test } from 'vitest';
+import { POOL } from '../../src/engine/engine';
 import { modelMesh } from '../../src/engine/modelmesh';
 import { TUNE } from '../../src/tune/params';
 import { testGpu, type TestGpu } from './dawn';
@@ -73,13 +74,15 @@ test('deforming stone: a block from 24 cells barely rebounds, is still soon, and
     run = sp / n < 0.4 ? run + 1 : 0;
     if (run >= 30 && stillAt < 0) stillAt = (t - 29 - hit) / 60;
   }
-  log(`deforming stone 6x6x4 from 24 cells: mean rebound ${rebound.toFixed(3)} cells, still ${stillAt.toFixed(2)} s after the hit, the most a kept bond was stretched or squeezed ${(strain * 100).toFixed(1)} % (stone's break strain 4 %), its height squeezed at most ${squash.toFixed(2)} cells`);
-  // the bounds today (measured 0.26 to 0.34 cells, 0.45 to 1.8 s): the owner's "very little elasticity" wants them lower
-  expect(rebound).toBeLessThan(0.5);
+  log(`deforming stone 6x6x4 from 24 cells: mean rebound ${rebound.toFixed(3)} cells, still ${stillAt.toFixed(2)} s after the hit, the most a kept bond was stretched or squeezed ${(strain * 100).toFixed(1)} % (stone's give ${(T.giveRock * 100).toFixed(1)} %), its voxels' spread in height changed by at most ${squash.toFixed(2)} cells (its parts lie apart)`);
+  // The owner's "very little elasticity" (PE35). Before: rebound 0.25 to 0.34 cells, still 0.45 to 1.9 s after the hit,
+  // kept bonds strained to 4 %. Now (no bounce, full ring damping, a give of 1 %, parting along the grain): 0.02 to
+  // 0.03 cells, 0.05 s, 1.0 %. The lattice route is still in 0.33 to 0.82 s.
+  expect(rebound).toBeLessThan(0.08);
   expect(stillAt).toBeGreaterThanOrEqual(0);
-  expect(stillAt).toBeLessThan(2.5);
-  // (a bond past the break strain snaps within the substep it is judged in: none is kept far beyond it)
-  expect(strain).toBeLessThan(0.08);
+  expect(stillAt).toBeLessThan(0.5);
+  // (a bond past its give snaps within the substep it is judged in: none is kept beyond it — nothing visibly flexes)
+  expect(strain).toBeLessThan(0.015);
   expect(g.takeErrors()).toEqual([]);
   R.w.destroy();
 });
@@ -109,4 +112,52 @@ test('rigid stone: a block landing under its break threshold — how far it sink
   expect(back).toBeLessThan(0.5);
   expect(g.takeErrors()).toEqual([]);
   R.w.destroy();
+});
+
+// The lab's button "stone from three heights" (levels/playground.ts: a 4 x 4 x 3 block from 8, 24 and 48 cells): the
+// owner's stone does not flex, it breaks — whole from the lowest, cracked into a few parts from the middle one,
+// shattered into many from the highest. Each height in a world of its own (bodies do not meet each other yet).
+test('stone from three heights: whole, cracked, many parts', async () => {
+  const parts: number[] = [];
+  for (const h of [8, 24, 48]) {
+    const R = await breakRig(g, flat);
+    const cells = box(10, 12, 10 + h, 4, 4, 3);
+    const b = R.e.add({ cells, mesh: modelMesh(cells) })!;
+    let expanded = false;
+    let done = false;
+    for (let t = 0; t < 900 && !done; t += 5) {
+      await R.step(5);
+      const f = (await R.row(b.row)).flags;
+      if (f & DEFORM) expanded = true;
+      const pool = await R.pool();
+      done = t > 60 && pool[POOL.deforming] === 0 && (expanded || (f & ASLEEP) !== 0);
+    }
+    expect(done).toBe(true);
+    const rows = await R.rows();
+    const pool = await R.pool();
+    parts.push(rows.length);
+    log(`stone 4x4x3 from ${h} cells: ${expanded ? 'broke' : 'stayed rigid'}, ${rows.length} part${rows.length === 1 ? '' : 's'} of ${rows.map((r) => Math.round(r.mass / 2.7)).join(', ')} voxels, ${pool[POOL.crumbs]} voxels to the ground`);
+    expect(g.takeErrors()).toEqual([]);
+    R.w.destroy();
+  }
+  expect(parts[0]).toBe(1);
+  expect(parts[1]).toBeGreaterThanOrEqual(2);
+  expect(parts[1]).toBeLessThanOrEqual(5);
+  expect(parts[2]).toBeGreaterThanOrEqual(6);
+});
+
+// Steel and wood keep their give (the owner: the "Rigid lab looks good for steel reinforced concrete"): the table the
+// engine's deforming voxels read is the lattice route's but for the brittle materials.
+test('the brittle numbers touch only brittle materials: steel and wood keep the lattice route\'s', async () => {
+  const { Engine } = await import('../../src/engine/engine');
+  const { packPhysMats } = await import('../../src/physics/physics');
+  const { MAT } = await import('../../src/world/materials');
+  const a = Engine.lattice();
+  const b = packPhysMats();
+  for (const m of [MAT.Steel, MAT.Wood, MAT.Rust, MAT.Canvas, MAT.Trash]) expect([...a.subarray(m * 16, m * 16 + 16)].map((x) => +x.toFixed(4))).toEqual([...b.subarray(m * 16, m * 16 + 16)].map((x) => +x.toFixed(4)));
+  for (const m of [MAT.Stone, MAT.Brick, MAT.Concrete]) {
+    expect(a[m * 16 + 5]).toBeLessThanOrEqual(0.02);
+    expect(a[m * 16 + 4]).toBeLessThanOrEqual(0.015);
+    expect(a[m * 16 + 12]).toBe(1);
+  }
 });

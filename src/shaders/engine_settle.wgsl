@@ -338,7 +338,9 @@ fn partAlloc(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_ind
   let par = (bitcast<u32>(heap[src + 1u].w) + lo.y) & 1u;
   heap[h] = bitcast<vec4<f32>>(vec4<u32>(bd, A.x));
   heap[h + 1u] = bitcast<vec4<f32>>(vec4<u32>(((hp & 0x7fffffffu) + MODEL_HDR + cellsB) | 0x80000000u, 3u * tris, dmeta[s + 22u], par));
-  heap[h + 2u] = vec4<f32>(c.w / f32(A.x), rad, 0.0, 0.0);
+  // (its grain is the body's: its box's low corner in the first body's lattice, the same seed)
+  let gf = grainFrame(src);
+  heap[h + 2u] = vec4<f32>(c.w / f32(A.x), rad, bitcast<f32>(grainFramePack(gf.xyz + lo)), bitcast<f32>(gf.w));
   heap[h + 3u] = ps[3u * i];
   atomicAdd(&pool[P_PARTS], 1u);
 }

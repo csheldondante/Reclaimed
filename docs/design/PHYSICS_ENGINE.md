@@ -543,6 +543,22 @@ deforming stone flexes up to its 4 % break strain before a bond snaps, rebounds 
 gets a tenth of a contact's speed back; a rigid stone block landing flat sinks 0.001 cells and comes back 0.002, so
 the flat landing is not it; edge landings and topples are not measured. The test's bounds are today's numbers.
 
+## Stone and masonry as built (PE35; the look branch, 2026-11-15)
+
+- **The engine's own material numbers.** `Engine.lattice()` is `PHYS_MATS` with the panel's numbers over it for rock
+  (every brittle material not named), concrete, brick, steel and wood: bounce, give, ring damping, and for the brittle
+  ones crush and crack speed. The lattice route reads `PHYS_MATS` as before.
+- **Brittle = no bounce, give 1 %, ring damping 1.** No bond is kept past 1 % strain, so nothing visibly flexes.
+- **Shock.** `ps[3i].w` holds the shock that reached a voxel: its own hit, or the largest among its bonded neighbours
+  last substep times `shockReach`. `relax` snaps bonds by it, as it did by the hit of the struck voxels alone.
+- **Grain** (`engine_grain.wgsl`). A function of material and place in the body's rest lattice giving a grain cell and
+  the distance to its side: bricks in courses (length, depth, course, offset), bedded stone (bed, block, irregularity),
+  lumps (concrete). `fill` stores a voxel's grain cell beside its material. A bond between two grain cells of one
+  material is a flaw: it snaps at `flaw` x the give and, for certain, at `flaw` x the crack speed. A part keeps its
+  parent's grain (the model's header carries the grain's origin and seed), so a brick stays that brick.
+- **For the collision branch (one line):** the rigid solve's bounce a material is `bounceAt(material)` in
+  `engine.wgsl` (uploaded, never above the panel's `restitution`); `engine_step.wgsl` still reads `EU.a.z`.
+
 ## Hand-over: what is next
 
 First: PE35, the owner's stone (brittle materials with no elastic give, restitution a material, the rigid row on an

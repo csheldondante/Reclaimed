@@ -23424,3 +23424,37 @@ stone 6 x 6 x 4 from 24 cells: mean rebound 0.256 cells, still 1.90 s after the 
 
 **What.** Two tests with today's numbers as bounds; the diagnosis and the four things to do are in PE35. No material
 number was changed: the fix is a tuning of brittle materials the owner should see in the lab, and the session ended.
+
+## 2026-11-15 — Physics engine: stone and masonry do not flex or bounce, they part along their grain (PE35, PE36)
+
+**Why.** The owner: "the stone is too rubbery (it should probably have very little elasticity)". PE35's diagnosis:
+deforming stone flexed to its 4 % break strain, got a tenth of a contact's speed back, and rang.
+
+**What.**
+- `Engine.lattice()`: the engine's deforming voxels read their own copy of the lattice table. `PHYS_MATS` and
+  `phys.wgsl` are untouched (`?solver=lattice` as it was). On the panel, a material (rock, concrete, brick, steel,
+  wood): bounce, give (a bond's break strain), ring damping; for the brittle three also crush speed and crack speed.
+  Stone, brick and plain concrete: bounce 0, give 1 %, ring damping 1. Steel and wood keep the lattice route's numbers.
+- Lower give alone did not shatter anything: a 4-cell block is stopped almost rigidly within a substep, so bonds away
+  from the struck face see little strain, and the struck face went to dust (crush speed 14 against a 21 cells/s
+  landing). Two additions. A hit is now a **shock** each voxel passes to its bonded neighbours, a share a bond
+  (`shockReach`); bonds snap where it arrives faster than the crack speed. And the material has a **grain**
+  (`engine_grain.wgsl`, in the body's rest lattice: beds and blocks of stone, bricks in courses, lumps of concrete): a
+  bond across the grain is a flaw that snaps for certain at its share of the crack speed and of the give. So the body
+  parts into whole grain cells near the hit, further the harder the hit. The same function will shape the break faces.
+- The rigid solve's bounce a material is uploaded (`engine.wgsl bounceAt`) but not read: the solve belongs to the
+  collision branch (a one-line note in the hand-over).
+
+**Measured** (desktop proxy; `BREAK_LOG=1 npx vitest run --project gpu engine-stone engine-d0 --reporter=verbose`).
+Stone 6 x 6 x 4 from 24 cells, before → after: mean rebound 0.25 → 0.01 to 0.03 cells; still 0.52 to 1.9 s → 0.05 s
+after the hit (the lattice route: 0.33 to 0.82 s); the most a kept bond is strained 4.0 % → 0.8 to 1.0 %. The lab's
+4 x 4 x 3 block from 8 / 24 / 48 cells: stays rigid / 4 parts (6, 6, 16, 16 voxels, 4 to the ground) / 7 parts (4 to 9
+voxels, 7 to the ground); before, one lump less 16 to 20 voxels of dust from either height. A 12 x 4 x 3 slab flat
+from 30 cells: 16 parts.
+
+**Tests.** `engine-stone` 4 pass (bounds now 0.08 cells, 0.5 s, 1.5 %; three heights give 1, 2 to 5, 6 or more
+parts; steel and wood's rows of the table equal the lattice route's), `engine-d0` 4 pass (engine still within 0.85 s,
+rebound under 0.1), `engine`, `engine-break`, `engine-settle` pass. Unit: the roadlab writing lint only.
+
+**Not verified.** Nothing on the phone. The numbers are tuned on four drops in a flat test world; the lab's stills
+come with the capture item. A rigid stone row on an edge is still not measured (PE36).

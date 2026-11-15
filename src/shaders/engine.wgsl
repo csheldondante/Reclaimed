@@ -75,12 +75,16 @@ struct EngU {
   j: vec4<u32>,
   // x still speed (cells/s), y still time (s), z crumb size (voxels), w the lattice's substep (s)
   k: vec4<f32>,
-  // x the lattice's solver iterations, y break face smoothing (f32 bits), z the lattice's substeps a tick, w spare
+  // x the lattice's solver iterations, y break face smoothing (f32 bits), z the lattice's substeps a tick, w the share
+  // of a hit's shock that passes a bond (f32 bits)
   l: vec4<u32>,
 };
-// an impact's energy over the body's mass past which it deforms, a material (0: never)
-@group(0) @binding(17) var<uniform> ET: array<vec4<f32>, 12>;
+// Numbers a material (engine.ts `thresholds`): [0..11] an impact's energy over the body's mass past which it deforms
+// (0: never); [12..23] the share of the speed into a contact a rigid row is given back (bounceAt: for the rigid solve,
+// which reads EU.a.z for every material until it takes this); from 24 the grain (engine_grain.wgsl)
+@group(0) @binding(17) var<uniform> ET: array<vec4<f32>, 120>;
 fn expandAt(m: u32) -> f32 { return ET[(m & 63u) >> 2u][m & 3u]; }
+fn bounceAt(m: u32) -> f32 { return ET[12u + ((m & 63u) >> 2u)][m & 3u]; }
 fn sAt(i: u32) -> u32 { return select(i, EU.j.x + (i & 0x7fffffffu), (i >> 31u) == 1u); }
 fn hAt(i: u32) -> u32 { return select(i, EU.j.z + (i & 0x7fffffffu), (i >> 31u) == 1u); }
 @group(0) @binding(3) var<uniform> EU: EngU;

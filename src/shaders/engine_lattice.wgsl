@@ -45,7 +45,7 @@ fn predict(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
   let x = px[2u * i];
   var v = ps[3u * i].xyz;
   v.z -= worldG() * G.tune.voxelsGravity * h;
-  ps[3u * i] = vec4<f32>(v, 0.0);
+  ps[3u * i] = vec4<f32>(v, ps[3u * i].w);
   px[2u * i + 1u] = vec4<f32>(x.xyz, px[2u * i + 1u].w);
   px[2u * i] = vec4<f32>(x.xyz + v * h, x.w);
 }
@@ -322,10 +322,12 @@ fn finalize(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_inde
       }
     }
   }
-  // (x: how hard it hit, for relax's cracks)
-  pw[3u * i + 2u] = vec4<f32>(hitV, 0.0, 0.0, 0.0);
+  // (x: how hard it hit, y: the shock that reached it last substep — for relax's cracks; its neighbours read both)
+  let shock0 = ps[3u * i].w;
+  pw[3u * i + 2u] = vec4<f32>(hitV, shock0, 0.0, 0.0);
   let l = cellOf(L.k, L.dims);
   var bonds = pb[i];
+  let gi = grainOf(i);
   // damping: the speed at which its bonds stretch or squeeze is taken out, so a body doesn't ring after a knock
   let damp = pmD(m).x;
   var dv = vec3<f32>(0.0);
@@ -344,13 +346,16 @@ fn finalize(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_inde
     dv += e * dot(vj - v, e);
     nb += 1.0;
     // a bond past its break strain snaps (both ends judge the same numbers)
-    let lim = min(pmB(m).x, pmB(matOf(ju)).x);
+    // (across the grain of one material — two bricks, two blocks of a bedded stone — the bond is a flaw: it snaps at a
+    // share of the give, so a brittle body parts along its grain before it flexes: engine_grain.wgsl)
+    var lim = min(pmB(m).x, pmB(matOf(ju)).x);
+    if (matOf(ju) == m && grainOf(ju) != gi) { lim *= grainB(m).z; }
     let r0 = length(ps[3u * i + 1u].xyz - ps[3u * ju + 1u].xyz);
     if (abs(length(x.xyz - xj) / max(r0, 1e-3) - 1.0) > lim) { bonds &= ~(1u << k); }
   }
   if (nb > 0.0 && damp > 0.0) { v += dv / nb * damp; }
   v *= 1.0 - G.tune.voxelsAirDrag * h;
-  ps[3u * i] = vec4<f32>(v, 0.0);
+  ps[3u * i] = vec4<f32>(v, shock0);
   pb[i] = bonds;
   px[2u * i + 1u].w = bitcast<f32>(bonds);
   if (x.z < -20.0) { px[2u * i] = vec4<f32>(x.xyz, PV_DEAD); }
@@ -375,33 +380,55 @@ fn relax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   let d = eqrot(eqinv(ps[3u * i + 2u]), -pw[3u * i].xyz) - (r.xyz - pw[3u * i + 1u].xyz);
   let dl = length(d);
   if (dl > yieldD && pmA(m).w > 0.0) { ps[3u * i + 1u] = vec4<f32>(r.xyz + d * (1.0 - yieldD / dl) * min(1.0, pmA(m).w), r.w); }
-  // cracks: a bond whose either end hit something faster than the material's crack speed may snap (both ends draw the
-  // same random), more likely the harder the hit, so a hard landing breaks it into chunks
+  // Cracks. A hit is a shock that runs through the body a bond a substep, losing a share each bond (EU.l.w: its reach):
+  // the body breaks near where it was struck, and further the harder the hit. A bond whose either end the shock
+  // reached faster than the material's crack speed may snap (both ends draw the same random), more likely the harder;
+  // a bond across the grain — a flaw — snaps for certain at its share of that speed, so the body parts along its grain
+  // into whole chunks (engine_grain.wgsl) before it breaks across it.
   let crackV = pmD(m).y;
-  if (crackV <= 0.0) { return; }
   let l = cellOf(L.k, L.dims);
+  let own = pw[3u * i + 2u];
+  var reach = 0.0;
+  for (var k = 0u; k < 26u; k++) {
+    if ((pb[i] & (1u << k)) == 0u) { continue; }
+    let j = latIdx(L.slot, l + n26(k), L.dims);
+    if (j < 0) { continue; }
+    let o = pw[3u * u32(j) + 2u];
+    reach = max(reach, max(o.x, o.y));
+  }
+  ps[3u * i].w = max(own.x, reach * bitcast<f32>(EU.l.w));
+  if (crackV <= 0.0) { return; }
   let bonds = pb[i];
   var kept = bonds;
-  let hi = pw[3u * i + 2u].x;
+  let gi = grainOf(i);
+  var rough = 0u;
+  let hi = max(own.x, own.y);
   for (var k = 0u; k < 26u; k++) {
     if ((bonds & (1u << k)) == 0u) { continue; }
     let j = latIdx(L.slot, l + n26(k), L.dims);
     if (j < 0) { continue; }
     let ju = u32(j);
     let crackJ = pmD(matOf(ju)).y;
-    let hit = max(hi, pw[3u * ju + 2u].x);
-    let cv = select(crackV, min(crackV, crackJ), crackJ > 0.0);
+    let oj = pw[3u * ju + 2u];
+    let hit = max(hi, max(oj.x, oj.y));
+    var cv = select(crackV, min(crackV, crackJ), crackJ > 0.0);
+    // (a crack runs along the grain first: a flaw snaps at its share of the crack speed, and cleanly)
+    let flaw = matOf(ju) == m && grainOf(ju) != gi;
+    if (flaw) { cv *= grainB(m).z; }
     if (hit <= cv) { continue; }
-    let p = clamp((hit - cv) / (2.0 * cv), 0.0, 0.5);
+    let p = select(clamp((hit - cv) / (2.0 * cv), 0.0, 0.5), 2.0, flaw);
     let rnd = f32(hash3(min(i, ju), max(i, ju), EU.g.w) & 0xffffu) / 65536.0;
-    if (rnd < p) { kept &= ~(1u << k); }
+    if (rnd < p) {
+      kept &= ~(1u << k);
+      if (!flaw) { rough++; }
+    }
   }
   if (kept != bonds) {
     pb[i] = kept;
     px[2u * i + 1u].w = bitcast<f32>(kept);
-    // (a voxel the crack ran through on several sides crumbles: rubble and dust along the break, not clean cuts)
+    // (a voxel the crack ran through on several sides, across its own grain, crumbles: rubble and dust along the break)
     let r2 = f32(hash3(i, EU.g.w, 0x51edu) & 0xffffu) / 65536.0;
-    if (countOneBits(bonds & ~kept) >= 3u && r2 < 0.35) { px[2u * i] = vec4<f32>(x.xyz, PV_CRUMBLE); }
+    if (rough >= 3u && r2 < 0.35) { px[2u * i] = vec4<f32>(x.xyz, PV_CRUMBLE); }
   }
 }
 
