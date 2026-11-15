@@ -152,7 +152,7 @@ The user: "Please work on making the code match the design which is a lot cleane
 | DA-E8 | Budgeted voxel deformation and fracture; town buildings on the physics lattice like spawned buildings (§10) | L | open |
 | DA-P1 | Page table in its own binding, world-cell coordinates (§2) | L | open |
 | DA-P2 | Residency planner and wake API, city-centred; replaces the keep rect (§2, §5) | M | open (the keep rect itself is deleted: switchover — only the fortress used it) |
-| DA-P3 | Pages stack in z on overflow; delete merge and rubble-on-overflow (§1, §2) | L | open |
+| DA-P3 | Pages stack in z on overflow; delete merge and rubble-on-overflow (§1, §2). The user, 2026-11-15: "make sure the terrain streaming uses the pages system if it runs out of depth layers? The +/- 1 over the base surface" — a streamed or generated column that needs more than K intervals continues into the page above or below the base surface's page (cz ± 1) instead of being merged by `fitColumn` (world/layout.ts) or piled as rubble (game/colapply.ts); the generator, the streamer, the region store and far tiles all go through the same pages. Next after the physics engine (PE rows on `physics10`) | L | open |
 | DA-P4 | Resume mid-run (§23) | M | open |
 | DA-P5 | Flow model the only liquid; rain-level bake; sea per basin (§7) | L | wip — the only liquid (trackA-liquids, the pipes deleted); rain bake and sea per basin next |
 | DA-P6 | Loose material in the flow model (§8) | L | open |
