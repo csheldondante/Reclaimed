@@ -10,7 +10,8 @@
 // rows awake or deforming come first and are placed every frame; those of rows asleep come after and are placed once,
 // the frame after the list is made (the owner: static geometry stays on the GPU, moved by transforms — an asleep row
 // costs the frame nothing).
-// Out (render.wgsl vsSkin's triangle list): a vertex [xyz bits, material word] [its triangle's normal bits, 0].
+// Out (render.wgsl vsSkin's triangle list): a vertex [xyz bits, material word] [its normal's bits — its own, turned
+// with what carries it, where its material is smooth-shaded (rock: modelmesh.ts), else its triangle's — 0].
 @group(0) @binding(32) var<storage, read_write> dl: array<atomic<u32>>;
 @group(0) @binding(33) var<storage, read_write> dout: array<vec4<u32>>;
 @group(0) @binding(34) var<storage, read> dlR: array<u32>;
@@ -109,15 +110,16 @@ fn eskinEnd() {
   atomicStore(&dl[10], awake);
 }
 
-struct SkinV { p: vec3<f32>, rest: vec3<f32>, word: u32, ok: bool };
+struct SkinV { p: vec3<f32>, rest: vec3<f32>, n: vec4<f32>, word: u32, ok: bool };
 
 /** a vertex of a deforming body: by the voxels that carry it (engine_deform.wgsl `carries`) */
 fn skinVertex(v: u32, slot: u32, recs: u32) -> SkinV {
   let idx = bitcast<vec4<u32>>(heap[v]);
-  let wt = heap[v + 1u];
+  let nr = heap[v + 1u];
   let rest = heap[v + 2u];
   var o: SkinV;
   o.rest = rest.xyz;
+  o.n = nr;
   o.word = bitcast<u32>(rest.w);
   o.ok = false;
   if (idx.x == NONE) { return o; }
@@ -126,16 +128,20 @@ fn skinVertex(v: u32, slot: u32, recs: u32) -> SkinV {
   let bonds = bitcast<u32>(px[2u * jo + 1u].w);
   let d = slotDims(slot);
   var p = vec3<f32>(0.0);
+  var n = vec3<f32>(0.0);
   var ws = 0.0;
+  // (its voxels weigh the same: every face at a corner is carried alike)
   for (var k = 0u; k < 4u; k++) {
-    if (idx[k] == NONE || wt[k] <= 0.0 || !carries(slot, d, idx.x, bonds, idx[k])) { continue; }
+    if (idx[k] == NONE || !carries(slot, d, idx.x, bonds, idx[k])) { continue; }
     let j = partAt(slot, idx[k]);
     if (!alive(j)) { continue; }
-    p += (px[2u * j].xyz + eqrot(ps[3u * j + 2u], rest.xyz - heap[recs + idx[k]].xyz)) * wt[k];
-    ws += wt[k];
+    p += px[2u * j].xyz + eqrot(ps[3u * j + 2u], rest.xyz - heap[recs + idx[k]].xyz);
+    n += eqrot(ps[3u * j + 2u], nr.xyz);
+    ws += 1.0;
   }
   o.ok = ws > 0.0;
   o.p = p / max(ws, 1e-6);
+  o.n = vec4<f32>(n, nr.w);
   return o;
 }
 
@@ -148,6 +154,7 @@ fn eskin(@builtin(global_invocation_id) id: vec3<u32>) {
   let v0 = dlR[DL_AT + 2u * t + 1u];
   let fl = rowFlags(r);
   var ps3 = array<vec3<f32>, 3>(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
+  var ns3 = array<vec4<f32>, 3>(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
   var word = 0u;
   var shown = (fl & ROW_ALIVE) != 0u;
   if (shown && (fl & ROW_DEFORM) != 0u) {
@@ -158,6 +165,7 @@ fn eskin(@builtin(global_invocation_id) id: vec3<u32>) {
     let c = skinVertex(v0 + 2u * MESH_V, ids.y, recs);
     word = a.word;
     ps3 = array<vec3<f32>, 3>(a.p, b.p, c.p);
+    ns3 = array<vec4<f32>, 3>(a.n, b.n, c.n);
     // (its voxels mostly gone, or a crack has stretched it far past its rest size: the mesh parts there)
     let tear = G.tune.voxelsTear;
     shown = a.ok && b.ok && c.ok && length(a.p - b.p) <= length(a.rest - b.rest) * tear + 0.05 && length(b.p - c.p) <= length(b.rest - c.rest) * tear + 0.05 && length(c.p - a.p) <= length(c.rest - a.rest) * tear + 0.05;
@@ -168,16 +176,22 @@ fn eskin(@builtin(global_invocation_id) id: vec3<u32>) {
     if (dot(q0, q1) < 0.0) { q1 = -q1; }
     let q = normalize(mix(q0, q1, al));
     let x = mix(pose[4u * r].xyz, pose[4u * r + 2u].xyz, al);
-    for (var k = 0u; k < 3u; k++) { ps3[k] = x + eqrot(q, heap[v0 + k * MESH_V + 2u].xyz); }
+    for (var k = 0u; k < 3u; k++) {
+      ps3[k] = x + eqrot(q, heap[v0 + k * MESH_V + 2u].xyz);
+      let nr = heap[v0 + k * MESH_V + 1u];
+      ns3[k] = vec4<f32>(eqrot(q, nr.xyz), nr.w);
+    }
     word = bitcast<u32>(heap[v0 + 2u].w);
   }
   if (!shown) {
     // (nothing of it to draw: three vertices at one point)
     ps3 = array<vec3<f32>, 3>(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
   }
-  let n = bitcast<vec3<u32>>(normalize(cross(ps3[1] - ps3[0], ps3[2] - ps3[0]) + vec3<f32>(0.0, 0.0, 1e-9)));
+  let flatN = normalize(cross(ps3[1] - ps3[0], ps3[2] - ps3[0]) + vec3<f32>(0.0, 0.0, 1e-9));
   for (var k = 0u; k < 3u; k++) {
+    var n = flatN;
+    if (ns3[k].w > 0.5 && dot(ns3[k].xyz, ns3[k].xyz) > 1e-8) { n = normalize(ns3[k].xyz); }
     dout[6u * t + 2u * k] = vec4<u32>(bitcast<vec3<u32>>(ps3[k]), word);
-    dout[6u * t + 2u * k + 1u] = vec4<u32>(n, 0u);
+    dout[6u * t + 2u * k + 1u] = vec4<u32>(bitcast<vec3<u32>>(n), 0u);
   }
 }

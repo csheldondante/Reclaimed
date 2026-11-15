@@ -349,7 +349,7 @@ fn finalize(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_inde
     // (across the grain of one material — two bricks, two blocks of a bedded stone — the bond is a flaw: it snaps at a
     // share of the give, so a brittle body parts along its grain before it flexes: engine_grain.wgsl)
     var lim = min(pmB(m).x, pmB(matOf(ju)).x);
-    if (matOf(ju) == m && grainOf(ju) != gi) { lim *= grainB(m).z; }
+    if (matOf(ju) == m && grainOf(ju) != gi) { lim *= flawOf(m, gi, grainOf(ju)); }
     let r0 = length(ps[3u * i + 1u].xyz - ps[3u * ju + 1u].xyz);
     if (abs(length(x.xyz - xj) / max(r0, 1e-3) - 1.0) > lim) { bonds &= ~(1u << k); }
   }
@@ -402,6 +402,8 @@ fn relax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   var kept = bonds;
   let gi = grainOf(i);
   var rough = 0u;
+  var kick = vec3<f32>(0.0);
+  var kicks = 0.0;
   let hi = max(own.x, own.y);
   for (var k = 0u; k < 26u; k++) {
     if ((bonds & (1u << k)) == 0u) { continue; }
@@ -414,15 +416,22 @@ fn relax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
     var cv = select(crackV, min(crackV, crackJ), crackJ > 0.0);
     // (a crack runs along the grain first: a flaw snaps at its share of the crack speed, and cleanly)
     let flaw = matOf(ju) == m && grainOf(ju) != gi;
-    if (flaw) { cv *= grainB(m).z; }
+    if (flaw) { cv *= flawOf(m, gi, grainOf(ju)); }
     if (hit <= cv) { continue; }
     let p = select(clamp((hit - cv) / (2.0 * cv), 0.0, 0.5), 2.0, flaw);
     let rnd = f32(hash3(min(i, ju), max(i, ju), EU.g.w) & 0xffffu) / 65536.0;
     if (rnd < p) {
       kept &= ~(1u << k);
       if (!flaw) { rough++; }
+      // (a joint that parts throws its two sides apart a little: the pieces of a cracked block do not stand as they
+      // were, a hairline between them — pmD.z, a share of the shock; HACK, BACKLOG PE37: speed from nowhere)
+      if (flaw && alive(ju)) {
+        kick -= normalize(px[2u * ju].xyz - x.xyz + vec3<f32>(1e-6)) * hit;
+        kicks += 1.0;
+      }
     }
   }
+  if (kicks > 0.0) { ps[3u * i] = vec4<f32>(ps[3u * i].xyz + kick / kicks * pmD(m).z, ps[3u * i].w); }
   if (kept != bonds) {
     pb[i] = kept;
     px[2u * i + 1u].w = bitcast<f32>(kept);

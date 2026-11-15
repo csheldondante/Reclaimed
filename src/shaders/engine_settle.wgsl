@@ -368,7 +368,7 @@ fn partSamples(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_i
 
 /** A break vertex: the lattice corner j of column c on the plane under layer zl, for the part `label` whose cell `own`
  *  (in column c) has the face. rest: its place in the body's rest frame; p: where the part's voxels put it now. */
-struct BV { p: vec3<f32>, idx: vec4<u32>, wt: vec4<f32> };
+struct BV { p: vec3<f32>, idx: vec4<u32>, n: vec4<f32> };
 fn breakVertex(slot: u32, d: vec3<u32>, recs: u32, par: i32, frame: vec4<f32>, own: vec3<i32>, j: u32, zl: i32, label: u32, lo: vec3<u32>, bd: vec3<u32>) -> BV {
   var cols = array<vec2<i32>, 3>(own.xy, hexNbr(own.xy, CD1[j], par), hexNbr(own.xy, CD2[j], par));
   var rest: array<vec3<f32>, 6>;
@@ -376,6 +376,8 @@ fn breakVertex(slot: u32, d: vec3<u32>, recs: u32, par: i32, frame: vec4<f32>, o
   var part: array<i32, 6>;
   var cell: array<vec3<i32>, 6>;
   var rim = false;
+  var solid: array<bool, 6>;
+  var round = 1.0;
   var mean = vec3<f32>(0.0);
   var lowK = NONE;
   var highK = 0u;
@@ -384,11 +386,13 @@ fn breakVertex(slot: u32, d: vec3<u32>, recs: u32, par: i32, frame: vec4<f32>, o
     cell[a] = l;
     id[a] = NONE;
     part[a] = -1;
-    if (!srcSolid(recs, l, d)) {
+    solid[a] = srcSolid(recs, l, d);
+    if (!solid[a]) {
       rim = true;
       continue;
     }
     let k = u32(l.x) + d.x * (u32(l.y) + d.y * u32(l.z));
+    round = min(round, grainB(bitcast<u32>(heap[recs + k].w) & 63u).w);
     lowK = min(lowK, k);
     highK = max(highK, k);
     rest[a] = heap[recs + k].xyz;
@@ -402,9 +406,33 @@ fn breakVertex(slot: u32, d: vec3<u32>, recs: u32, par: i32, frame: vec4<f32>, o
   let ownA = select(0u, 3u, zl == own.z);
   var rv: vec3<f32>;
   if (rim) {
-    // on the body's outer surface: the cell's own corner, where the outer mesh has its vertices
+    // on the body's outer surface: where the outer mesh has its vertex for this corner (modelmesh.ts, the same rule) —
+    // the cell's own corner for what is built; for rock, drawn in to the mean of the middles of the edges the body's
+    // outer surface cuts round the corner, by the material's rounding. The six cells' places are the lattice's own,
+    // about the face's cell.
     let ang = 0.5235988 + 1.0471976 * f32(j);
-    rv = rest[ownA] + eqrot(frame, vec3<f32>(HEX_R * cos(ang), HEX_R * sin(ang), select(0.5, -0.5, zl == own.z)));
+    let hx = vec2<f32>(HEX_R * cos(ang), HEX_R * sin(ang));
+    let cp = rest[ownA] + eqrot(frame, vec3<f32>(hx, select(0.5, -0.5, zl == own.z)));
+    rv = cp;
+    if (round > 0.0) {
+      let c0 = cellPos(own.xy + vec2<i32>(0, par));
+      var at: array<vec3<f32>, 6>;
+      for (var a = 0u; a < 6u; a++) { at[a] = vec3<f32>(cellPos(cols[a % 3u] + vec2<i32>(0, par)) - c0 - hx, f32(a / 3u) - 0.5); }
+      var cut = vec3<f32>(0.0);
+      var n = 0.0;
+      for (var a = 0u; a < 6u; a++) {
+        let b = (a / 3u) * 3u + (a + 1u) % 3u;
+        if (solid[a] != solid[b]) {
+          cut += 0.5 * (at[a] + at[b]);
+          n += 1.0;
+        }
+        if (a < 3u && solid[a] != solid[a + 3u]) {
+          cut += 0.5 * (at[a] + at[a + 3u]);
+          n += 1.0;
+        }
+      }
+      if (n > 0.0) { rv = cp + eqrot(frame, cut / n * round); }
+    }
   } else {
     // inside: surface nets — the mean of the middles of the cut edges round the corner (three pairs of columns in
     // each layer, three columns between the layers)
@@ -428,7 +456,8 @@ fn breakVertex(slot: u32, d: vec3<u32>, recs: u32, par: i32, frame: vec4<f32>, o
   }
   var o: BV;
   o.idx = vec4<u32>(NONE);
-  o.wt = vec4<f32>(0.0);
+  // (a break face is drawn flat: its triangle's own normal)
+  o.n = vec4<f32>(0.0);
   var p = vec3<f32>(0.0);
   var m = 0u;
   var all = 0.0;
@@ -445,13 +474,12 @@ fn breakVertex(slot: u32, d: vec3<u32>, recs: u32, par: i32, frame: vec4<f32>, o
       m++;
     }
   }
-  for (var t = 0u; t < m; t++) { o.wt[t] = 1.0 / f32(m); }
   o.p = p / max(all, 1.0);
   return o;
 }
 fn putVertex(at: u32, v: BV, centre: vec3<f32>, word: u32) {
   heap[at] = bitcast<vec4<f32>>(v.idx);
-  heap[at + 1u] = v.wt;
+  heap[at + 1u] = v.n;
   heap[at + 2u] = vec4<f32>(v.p - centre, bitcast<f32>(word));
 }
 
@@ -544,11 +572,11 @@ fn triWrite(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var c = 0u; c < 3u; c++) {
     let v = T.v0 + c * MESH_V;
     let idx = bitcast<vec4<u32>>(heap[v]);
-    let wt = heap[v + 1u];
+    let nr = heap[v + 1u];
     let rest = heap[v + 2u];
     var o: BV;
     o.idx = vec4<u32>(NONE);
-    o.wt = vec4<f32>(0.0);
+    var nn = vec3<f32>(0.0);
     var p = vec3<f32>(0.0);
     var ws = 0.0;
     var m = 0u;
@@ -556,16 +584,17 @@ fn triWrite(@builtin(global_invocation_id) id: vec3<u32>) {
     // are the break faces — the part's mesh is closed. The deforming draw had it by the voxels its cell was still
     // bonded to, engine_deform.wgsl `carries`: where a bond inside the part had snapped, the hairline closes now.)
     for (var k = 0u; k < 4u; k++) {
-      if (idx[k] == NONE || wt[k] <= 0.0) { continue; }
+      if (idx[k] == NONE) { continue; }
       let j = partAt(T.slot, idx[k]);
       if (!alive(j) || labelOf(j) != T.label) { continue; }
-      p += (px[2u * j].xyz + eqrot(ps[3u * j + 2u], rest.xyz - heap[recs + idx[k]].xyz)) * wt[k];
-      ws += wt[k];
+      p += px[2u * j].xyz + eqrot(ps[3u * j + 2u], rest.xyz - heap[recs + idx[k]].xyz);
+      nn += eqrot(ps[3u * j + 2u], nr.xyz);
+      ws += 1.0;
       o.idx[m] = boxCell(cellOf(idx[k], d), lo, bd);
-      o.wt[m] = wt[k];
       m++;
     }
-    o.wt = o.wt / max(ws, 1e-6);
+    // (its normal as it lies now: the part's rest frame is the world's at this moment)
+    o.n = vec4<f32>(nn / max(length(nn), 1e-6), nr.w);
     o.p = p / max(ws, 1e-6);
     putVertex(mesh + (3u * t + c) * MESH_V, o, centre, bitcast<u32>(rest.w));
   }

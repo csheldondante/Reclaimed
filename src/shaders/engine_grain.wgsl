@@ -12,7 +12,7 @@
 // Numbers a material (the tuning panel; engine.ts `thresholds`): ET[GR_AT + 2m] = kind, cell size along x, along y
 // (rows), up; ET[GR_AT + 2m + 1] = x the offset a course (brick: a share of a brick's length) or the jitter of the
 // cells' seeds (0..1), y the break faces' roughness (cells), z the flaw (the share of the give a bond across the grain
-// has; 1: no flaw), w spare.
+// has; 1: no flaw), w how far its mesh corners are rounded (modelmesh.ts; 0: the cells' own corners, flat-shaded).
 const GR_AT: u32 = 24u;
 const GR_NONE: u32 = 0u;
 const GR_BRICK: u32 = 1u;
@@ -26,6 +26,17 @@ fn grRand(x: i32, y: i32, z: i32, s: u32) -> vec3<f32> {
   let h = grHash(bitcast<u32>(x) + s, bitcast<u32>(y), bitcast<u32>(z));
   return vec3<f32>(f32(h & 1023u), f32((h >> 10u) & 1023u), f32((h >> 20u) & 1023u)) / 1023.0;
 }
+/** How weak the joint between two grain cells of material m is: the share of the give and of the crack speed its bonds
+ *  have. Grain cells hold together in clumps (a grain id's top 8 bits: grainAt): a joint between two clumps has the
+ *  material's flaw, a joint inside a clump its square root (stronger) — so a wall comes apart in clumps of bricks with
+ *  whole bricks at their edges, and only a harder hit takes a clump apart brick by brick. (Joints drawn at random a
+ *  pair do not work: every grain cell touches many others, and a body with half its joints left is still one part.) */
+fn flawOf(m: u32, ga: u32, gb: u32) -> f32 {
+  let f = grainB(m).z;
+  return select(sqrt(f), f, (ga >> 18u) != (gb >> 18u));
+}
+// a clump is this many grain cells across (HACK, BACKLOG PE36: a fixed ratio, not a number a material)
+const GR_CLUMP: f32 = 2.5;
 /** a model's grain frame: xyz its box's low corner in the first body's lattice, w the seed */
 fn grainFrame(mh: u32) -> vec4<u32> {
   let o = bitcast<u32>(heap[mh + 2u].z);
@@ -83,8 +94,17 @@ fn grCells(q: vec3<f32>, jit: f32, layer: u32, s: u32, planar: bool, size: f32) 
   return g;
 }
 
-/** the grain cell of material m at place p (the grain's frame: grainPos of a cell, or any place between) */
+/** the grain cell of material m at place p (the grain's frame: grainPos of a cell, or any place between): 26 bits of
+ *  id — 18 of the cell's own, then 8 of the clump it is in */
 fn grainAt(m: u32, p: vec3<f32>, s: u32) -> Grain {
+  var g = grainCellAt(m, p, s);
+  if (g.id == 0u) { return g; }
+  let A = grainA(m);
+  let clump = grCells(p / (GR_CLUMP * vec3<f32>(A.y, max(A.y, A.z * ROW_H), max(A.w, 0.5 * A.y))), 1.0, 0x77u, s ^ 0x5bd1u, false, 1.0).id;
+  g.id = ((g.id >> 8u) & 0x3ffffu) | (((clump >> 8u) & 0xffu) << 18u);
+  return g;
+}
+fn grainCellAt(m: u32, p: vec3<f32>, s: u32) -> Grain {
   let A = grainA(m);
   let B = grainB(m);
   let kind = u32(A.x);

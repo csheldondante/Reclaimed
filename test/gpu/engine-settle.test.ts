@@ -70,8 +70,10 @@ function openEdges(tris: number[][], tol = 0.02): number {
       edges.set(key, (edges.get(key) ?? 0) + 1);
     }
   }
+  // (closed: every edge is shared by an even number of triangles — two, or four where two cells of a part touch only
+  // along an edge, which the grain's breaks leave more often than the plain ones did)
   let open = 0;
-  for (const n of edges.values()) if (n !== 2) open++;
+  for (const n of edges.values()) if (n % 2 !== 0) open++;
   return open;
 }
 /** the farthest a triangle of `a` is from the triangle of `b` nearest to it (vertex for vertex); -1: one has no match within 0.5 */

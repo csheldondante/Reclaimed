@@ -23,8 +23,9 @@
 //   seed (u32)] [its lattice's frame in its rest frame (a quaternion: the identity for a model the host
 //   bakes; a settled part's rest frame is the world's where it settled)], then a record a lattice cell: xyz its rest
 //   place about the centre of mass, w (u32) material (6 bits; 0 none) | its 26 bonds << 6. A mesh vertex is MESH_V
-//   vec4: [its four voxels (cell k; NONE) — the first is the cell whose face the vertex is on] [their weights] [its
-//   rest place, its material word].
+//   vec4: [its four voxels (cell k; NONE), which weigh the same — the first is the cell whose face the vertex is on]
+//   [its normal in the rest frame, w 1 smooth-shaded, 0 flat: its triangle's normal is drawn] [its rest place, its
+//   material word].
 const PAGE: u32 = 512u;
 const POOL_HDR: u32 = 64u;
 const SLOT_W: u32 = 24u;

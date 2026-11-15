@@ -23458,3 +23458,49 @@ rebound under 0.1), `engine`, `engine-break`, `engine-settle` pass. Unit: the ro
 
 **Not verified.** Nothing on the phone. The numbers are tuned on four drops in a flat test world; the lab's stills
 come with the capture item. A rigid stone row on an edge is still not measured (PE36).
+
+## 2026-11-15 — Physics engine: rock is drawn rounded and smooth, not as hex prisms; clumps and burst for brittle breaks (PE36 to PE38)
+
+**Why.** The orchestrator on the stills: a broken stone slab "reads as two staircases of hexagonal columns. That is a
+jump to voxels in all but name." The owner: "the render should not jump to voxel." DESIGN §10: "Meshing is chosen by
+material, never by solver."
+
+**A departure, for a ruling (PE38).** The brief said to reuse the old route's meshers. For structures that is already
+so (`buildBodyMesh`, the mesh the lattice route skins too). For rock the old route's mesher is the rock mesh (the
+field mesher over a copy of the layers). It cannot serve the engine without breaking what letter D guarantees: its
+triangles are not one cell's and its vertices are not on lattice corners, so a part cannot take its own cells' faces
+and a break face cannot be sealed to it without clipping (re-meshing) it; and the host lists its draws while parts
+are rows the host never learns of. So rock got the engine's own mesh, rounded: each corner to the mean of the middles
+of the cut edges round it (surface nets on the hex-prism lattice, the extractor the break faces use), a normal a
+corner. Same triangles, same owners, so expand, settle and the seam work unchanged.
+
+**What.**
+- `modelmesh.ts`: the shape by material (`Engine.roundOf`, panel `roundRock`); a normal a vertex in the slot that
+  held four equal weights (48 B a vertex as before). `engine_draw.wgsl`: the normal turned by the pose or by the
+  carrying voxels' rotations; flat materials draw the triangle's own. `engine_settle.wgsl`: the baked normal; the
+  break faces' rim placed by the same rounding rule.
+- Brittle breaks, after looking at stills of item 1: grain cells hold together in clumps (PE36.9), so brick comes
+  apart in clumps of bricks, not into single bricks that were all under the crumb size (a 6 x 3 x 6 brick section from
+  16 cells: 72 of 108 voxels went to the ground; now 18, with parts of 34, 25, 17, 5, 5, 4); a parted joint throws its
+  sides apart a little (`burst`, PE37), because a cracked block whose pieces stand as they were draws as a whole block.
+- **Found in the first stills and fixed:** the lab's brick section left nothing at all on the engine route (12 of 72
+  voxels, in the test written for it): every brick came apart, a brick is 2 voxels and the crumb size was 4, and its
+  struck side was ground away by a crush speed (16) under the landing's 20 cells/s. Now: crumb size 2 (a brick stays a
+  brick; only a single voxel goes to the ground), brick's crush 24 and crack 38, concrete's 22 and 34.
+- `engine-settle`'s closed-mesh check counts an edge with an odd number of triangles as open (was: any number but
+  two): two cells of a part that touch only along an edge share it four ways, which the grain's breaks leave.
+
+**Measured.** No-jump tests as before: the largest vertex move at expand 3.8e-6 cells, at settle (steel) 4.8e-7, a
+stone slab over a ridge 0 of 568 triangles past 0.05 cells (the most 0.038), expanding a settled part again 1.9e-6.
+Closed (welded at 0.02): no open edge. Stone 6 x 6 x 4 from 24 cells: rebound 0.015 cells, still 0.12 s after the
+hit, kept strain 0.7 %. Three heights (4 x 4 x 3): whole / 5 parts (32, 6, 6, 2, 2 voxels) / 8 parts (2 to 14
+voxels, 2 to the ground). The lab's brick section (8 x 3 x 3 from 22 cells): 10 parts of 2 to 14 voxels, 69 of 72
+voxels still bodies; a 12 x 4 x 3 stone slab flat from 30 cells: 19 parts, 142 of 144. Mesh cost: none added on the GPU (the same triangles; the rounding is done once on the CPU when a model is
+baked); a vertex stays 48 B.
+
+**Tests.** `test/unit/engine-modelmesh.test.ts` (3: brick keeps the body mesh and is flat-shaded; rock is closed,
+inside its cells, its straight side flat within 0.05 cells where the body mesh zigzags 0.29, normals outward;
+rounding 0 is the body mesh). `engine-stone` 5 (new: a brick section and a stone slab break into parts and at least
+70 % of each stays a body), `engine-settle` 8, `engine-break` 9, `engine-d0` 4, `engine` 13 pass.
+
+**Looked at** (stills, 412 x 915, the break station): see the hand-over in docs/design/PHYSICS_ENGINE.md.

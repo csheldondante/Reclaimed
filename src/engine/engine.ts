@@ -28,7 +28,7 @@ import { TICK_DT } from '../sim/flow';
 import type { WorldGpu } from '../sim/world-gpu';
 import { TUNE } from '../tune/params';
 import { cellPos, nbr, NDIR } from '../world/lattice';
-import { MAT, MAX_MATERIALS } from '../world/materials';
+import { fieldMeshed, MAT, MAX_MATERIALS } from '../world/materials';
 
 /** (the grain's functions go with every kernel that reads the heap: engine_grain.wgsl) */
 const deformWgsl = deformRaw + '\n' + grainWgsl;
@@ -770,6 +770,7 @@ export class Engine implements SimSystem {
       out[m * 16 + 12] = ring;
       if (crush !== undefined) out[m * 16 + 7] = crush;
       if (crack !== undefined) out[m * 16 + 13] = crack;
+      if (crush !== undefined) out[m * 16 + 14] = T.burst;
     };
     // (brittle: its rest shape never follows a bend — physics.ts PhysMat.yield 99)
     for (let m = 1; m < MAX_MATERIALS; m++) if (out[m * 16 + 2] >= 99) set(m, T.bounceRock, T.giveRock, T.ringRock, T.crushRock, T.crackRock);
@@ -783,10 +784,21 @@ export class Engine implements SimSystem {
   /** the table written when a number of it changed (the panel) */
   private latticeMats(): void {
     const T = TUNE.engine as Record<string, number>;
-    const key = ['Rock', 'Concrete', 'Brick', 'Steel', 'Wood'].map((m) => `${T[`bounce${m}`]},${T[`give${m}`]},${T[`ring${m}`]},${T[`crush${m}`]},${T[`crack${m}`]}`).join();
+    const key = T.burst + ['Rock', 'Concrete', 'Brick', 'Steel', 'Wood'].map((m) => `${T[`bounce${m}`]},${T[`give${m}`]},${T[`ring${m}`]},${T[`crush${m}`]},${T[`crack${m}`]}`).join();
     if (key === this.pmKey) return;
     this.pmKey = key;
     this.device.queue.writeBuffer(this.pm, 0, Engine.lattice());
+  }
+
+  /**
+   * Meshing by material (DESIGN §10): how far a mesh corner of this material is rounded (modelmesh.ts; 0: the cells'
+   * own corners and flat faces — what is built; 1: surface nets, smooth-shaded — rock, the materials the field mesh
+   * draws). The break faces read the same number (engine_settle.wgsl rimPlace).
+   */
+  static roundOf(): (mat: number) => number {
+    const L = Engine.lattice();
+    const r = TUNE.engine.roundRock;
+    return (m) => (fieldMeshed(m) && L[m * 16 + 2] >= 99 ? r : 0);
   }
 
   private thresholds(): Float32Array {
@@ -802,7 +814,9 @@ export class Engine implements SimSystem {
     const L = Engine.lattice();
     for (let m = 0; m < 48; m++) E[48 + m] = Math.min(T.restitution, L[m * 16 + 5]);
     // the grain (engine_grain.wgsl): kind, size along x, rows deep, up; course offset or seed jitter, roughness, flaw
-    const grain = (m: number, a: number[], b: number[]) => E.set([...a, ...b, 0], GR_AT + 8 * m);
+    const round = Engine.roundOf();
+    const grain = (m: number, a: number[], b: number[]) => E.set([...a, ...b, round(m)], GR_AT + 8 * m);
+    for (let m = 1; m < 48; m++) E[GR_AT + 8 * m + 6] = 1;
     for (let m = 1; m < 48; m++) if (L[m * 16 + 2] >= 99) grain(m, [GRAIN.bedded, T.grainRockBlock, T.grainRockBlock, T.grainRockBed], [T.grainRockJitter, T.grainRockRough, T.flawRock]);
     grain(MAT.Concrete, [GRAIN.lumps, T.grainConcrete, T.grainConcrete, T.grainConcrete], [1, T.grainConcreteRough, T.flawConcrete]);
     grain(MAT.Brick, [GRAIN.brick, T.grainBrickLength, T.grainBrickDepth, T.grainBrickCourse], [T.grainBrickOffset, T.grainBrickRough, T.flawBrick]);

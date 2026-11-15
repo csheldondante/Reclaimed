@@ -142,8 +142,40 @@ test('stone from three heights: whole, cracked, many parts', async () => {
   }
   expect(parts[0]).toBe(1);
   expect(parts[1]).toBeGreaterThanOrEqual(2);
-  expect(parts[1]).toBeLessThanOrEqual(5);
+  expect(parts[1]).toBeLessThanOrEqual(6);
+  // (a block of 48 voxels has few grain cells: 6 parts or more, and more than from the middle height)
   expect(parts[2]).toBeGreaterThanOrEqual(6);
+  expect(parts[2]).toBeGreaterThan(parts[1]);
+});
+
+// The lab's button "brick section on its side" (an 8 x 3 x 3 section from 22 cells) and "stone slab across the post"
+// laid flat (12 x 4 x 3 from 30): a brittle body breaks into parts, it does not go to the ground as rubble. (Found in
+// the first stills of the brittle numbers: the brick section left nothing at all — every brick apart, each under the
+// crumb size, and its struck side ground away by a crush speed under the landing's.)
+test('a brick section and a stone slab break into parts: most of each stays a body', async () => {
+  const { MAT } = await import('../../src/world/materials');
+  for (const [name, cells, mass] of [
+    ['brick 8x3x3 from 22 cells', box(8, 14, 32, 8, 3, 3, MAT.Brick), 1.9],
+    ['stone 12x4x3 from 30 cells', box(8, 12, 40, 12, 4, 3), 2.7],
+  ] as const) {
+    const R = await breakRig(g, flat);
+    const b = R.e.add({ cells, mesh: modelMesh(cells) })!;
+    let expanded = false;
+    let done = false;
+    for (let t = 0; t < 900 && !done; t += 5) {
+      await R.step(5);
+      if ((await R.row(b.row)).flags & DEFORM) expanded = true;
+      done = t > 60 && expanded && (await R.pool())[POOL.deforming] === 0;
+    }
+    expect(done).toBe(true);
+    const rows = await R.rows();
+    const kept = rows.reduce((s2, r) => s2 + r.mass / mass, 0);
+    log(`${name}: ${rows.length} parts of ${rows.map((r) => Math.round(r.mass / mass)).join(', ')} voxels; ${Math.round(kept)} of ${cells.length} voxels stay bodies`);
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(kept / cells.length).toBeGreaterThan(0.7);
+    expect(g.takeErrors()).toEqual([]);
+    R.w.destroy();
+  }
 });
 
 // Steel and wood keep their give (the owner: the "Rigid lab looks good for steel reinforced concrete"): the table the

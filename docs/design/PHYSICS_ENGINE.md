@@ -559,10 +559,51 @@ the flat landing is not it; edge landings and topples are not measured. The test
 - **For the collision branch (one line):** the rigid solve's bounce a material is `bounceAt(material)` in
   `engine.wgsl` (uploaded, never above the panel's `restitution`); `engine_step.wgsl` still reads `EU.a.z`.
 
+## The look, as built so far (the look branch, 2026-11-15)
+
+**Item 2 of the look brief, a departure awaiting a ruling (PE38).** Structures already drew with the old route's
+mesher (`buildBodyMesh`). Rock did not, and the old route's rock mesh cannot be reused without breaking letter D
+(its triangles are not one cell's, its vertices not on lattice corners: a break face cannot be sealed to it without
+clipping it; and the host lists its draws, while parts are rows the host never learns of). Options:
+1. **Built:** the engine's own mesh, rounded for rock by surface nets over the model's occupancy (the break faces'
+   extractor), a normal a corner. Same triangles and owners: expand, settle and the seam unchanged (tests pass).
+   Trade-off: the shape is a bevelled block, and the look is `fsBody`'s plain albedo, not `fsRock`'s rock texture.
+2. The rock mesh for whole bodies only, the engine's mesh once a body has broken. A visible swap at the first break
+   (to be hidden in dust), two looks for one material, and a slot of the rock mesh's copy a body.
+3. The rock mesh clipped on the GPU against the parts' field at settle. No jump, but it is re-meshing the body, and
+   a new GPU clipper with its own allocation.
+4. Option 1 plus the rock look in `fsBody` for a flagged word (the rest place carried to the fragment so the pattern
+   does not swim): the cheapest way to the old route's look. Not built.
+
+### How each state is drawn now
+
+| state | rock (stone, basalt, sandstone …) | what is built (brick, concrete, steel, wood) |
+|---|---|---|
+| rigid | its model's mesh, corners rounded, smooth-shaded, by the row's pose | the body mesh (cells' corners, flat faces), by the row's pose |
+| expanded | the same triangles by the voxels that carry each vertex; normals turned with them | the same |
+| cracked, mid-break | each face follows its side of the crack; **the gap is still an open hole until settle** (item 3c, not built) | the same |
+| settled part | its cells' share of that mesh baked, and break faces sealed to it (rim placed by the rounding rule); break faces are flat-shaded cell-face polygons with letter D's smoothing (**item 3a/3b not built: no grain in the faces yet**) | the same, rim at the cells' corners |
+| crumb | loose ground, a chip and dust (now only single voxels) | the same |
+
+### What the stills show (looked at; 412 x 915, `look-2-*-engine*` against `look-p2-*-lattice*` in the scratchpad)
+
+See the report of the look branch and DEVLOG. In short: engine stone now reads as smooth rounded blocks, no hex
+prisms and no zigzag sides; it is plainer than the lattice route's speckled rock and than the terrain. Break faces
+are still cell-face polygons: a tilted part shows steps on its broken side. Brick shows clumps, but no courses or
+bricks in its faces. Steel is unchanged.
+
 ## Hand-over: what is next
 
-First: PE35, the owner's stone (brittle materials with no elastic give, restitution a material, the rigid row on an
-edge), with a close stone drop in the station's capture to judge wobble.
+(The look branch, 2026-11-15.) Done: PE35 for the deforming state; rock's rounded mesh (PE38, awaiting a ruling).
+Next, in order: (3a) break-face corners placed from the field so a tilted break is a rough plane, not steps: in
+`breakVertex`, an inner corner goes to where the grain's boundary runs (`grainAt(...).d`, already returned: the
+distance to the grain cell's side) instead of the mean of cut edges, with the material's roughness (`grainB.y`,
+already uploaded); (3b) the brick faces then follow courses and brick ends by construction, since parts are whole
+grain cells; (3c) break faces while deforming need the labels every tick (PE31) or dust over the gap; (4) the
+captures, with the station moved off the tanker's land (PE34). For the collision branch: one line, `bounceAt` (above).
+
+Before that it was: PE35, the owner's stone (brittle materials with no elastic give, restitution a material, the rigid
+row on an edge), with a close stone drop in the station's capture to judge wobble.
 
 The round trip is built end to end (expand, lattice, settle, break faces, lab). Open, in the order I would take
 them: the grain function behind the break field (PE22); labels every tick so a face is drawn by its part while it
