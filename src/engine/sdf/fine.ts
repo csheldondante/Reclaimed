@@ -7,6 +7,9 @@
 // by its kernels and read by the solver, the event stage and the lattice hand-over; and the `work` buffer (the half
 // pairs' records and the brick list, rebuilt every pass) and the indirect args.
 // Transfers: one 32 B uniform a pass. The fine dispatch is sized on the GPU (indirect).
+// Rooms: `maxPairs` (the coarse pass's pair room: collide.ts keeps them one) and `maxBricks` (the sample groups'
+// list). Groups past the room are counted and both rows of their pair flagged in the engine-visible `missing` words
+// (contract.ts MISS_GROUPS); `grow` makes either room bigger with no new pipeline.
 //
 // Choices (the note was silent):
 // - Both bodies of a pair give samples, each in the other's field. One way misses a corner of the field's body
@@ -36,7 +39,7 @@ export interface FineOptions {
   cap?: number;
   /** contacts are written for gaps up to this, cells (a tuning parameter: `margin` can be set between passes) */
   margin?: number;
-  /** groups of up to 16 samples (a brick of samples is one to four groups) a pass tests at most, all pairs together (default 64 a half pair, 4,096 at least); a group past it is counted as dropped */
+  /** groups of up to 16 samples (a brick of samples is one to four groups) a pass tests at most, all pairs together (default 64 a half pair, 4,096 at least); a group past it is counted as dropped and its pair's rows flagged in `missing`. It grows (collide.ts) */
   maxBricks?: number;
 }
 
@@ -51,6 +54,8 @@ export interface FineInputs {
   info: GPUBuffer;
   /** a u32 a body row: its model row in the store */
   model: GPUBuffer;
+  /** a u32 a body row, contract.ts MISS_* (the coarse pass's `missing`): the pass sets a bit on both rows of a pair whose contacts it could not all make */
+  missing: GPUBuffer;
 }
 
 export const FINE_DEFAULT_CAP = 2048;
@@ -58,19 +63,22 @@ export const FINE_DEFAULT_MARGIN = 0.25;
 
 export class SdfFine {
   /** contract.ts "A contact row": CONTACTS_PER_PAIR rows a pair, pair p's at p * CONTACTS_PER_PAIR; `hits` says how many are written */
-  readonly contacts: GPUBuffer;
+  contacts!: GPUBuffer;
   /** contract.ts "A pair's record" */
-  readonly hits: GPUBuffer;
+  hits!: GPUBuffer;
   /** contract.ts COUNT_* */
   readonly counts: GPUBuffer;
-  readonly maxPairs: number;
-  readonly maxBricks: number;
+  /** the rooms (`grow` changes them, and replaces `contacts` and `hits`) */
+  maxPairs = 0;
+  maxBricks = 0;
   cap: number;
   margin: number;
 
   private params: GPUBuffer;
-  private work: GPUBuffer;
+  private work!: GPUBuffer;
   private args: GPUBuffer;
+  /** buffers replaced by `grow`, destroyed by `release` */
+  private retired: GPUBuffer[] = [];
   private kPairArgs: ComputeKernel;
   private kExpand: ComputeKernel;
   private kCull: ComputeKernel;
@@ -84,26 +92,51 @@ export class SdfFine {
     private models: SdfModels,
     opts: FineOptions,
   ) {
-    this.maxPairs = opts.maxPairs;
     this.cap = opts.cap ?? FINE_DEFAULT_CAP;
     this.margin = opts.margin ?? FINE_DEFAULT_MARGIN;
-    // (20 bits of half pair in a brick's word)
-    if (this.maxPairs * 2 > 1 << 20) throw new Error(`SdfFine: ${this.maxPairs} pairs (at most ${1 << 19})`);
-    this.maxBricks = opts.maxBricks ?? Math.max(4096, this.maxPairs * 2 * 64);
     const parts = [sdfFormatWgsl(models.format), modelWgsl, fineWgsl];
     this.kExpand = makeCompute(device, 'sdf expand', parts, { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 6: 'read', 8: 'rw', 12: 'rw', 13: 'read' }, 'expand');
-    this.kPairArgs = makeCompute(device, 'sdf pair args', parts, { 0: 'uniform', 2: 'read', 11: 'rw' }, 'pairArgs');
-    this.kCull = makeCompute(device, 'sdf cull', parts, { 0: 'uniform', 7: 'rw', 8: 'rw', 9: 'read' }, 'cull');
+    this.kPairArgs = makeCompute(device, 'sdf pair args', parts, { 0: 'uniform', 2: 'read', 7: 'rw', 11: 'rw' }, 'pairArgs');
+    this.kCull = makeCompute(device, 'sdf cull', parts, { 0: 'uniform', 7: 'rw', 8: 'rw', 9: 'read', 15: 'rw' }, 'cull');
     this.kArgs = makeCompute(device, 'sdf fine args', parts, { 0: 'uniform', 2: 'read', 7: 'rw', 11: 'rw' }, 'fineArgs');
     this.kFine = makeCompute(device, 'sdf fine', parts, { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 8: 'rw', 9: 'read', 12: 'rw', 14: 'read' }, 'fine');
     this.kReduce = makeCompute(device, 'sdf reduce', parts, { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 7: 'rw', 8: 'rw', 9: 'read', 10: 'rw', 12: 'rw' }, 'reduce');
     const S = GPUBufferUsage.STORAGE;
     this.params = device.createBuffer({ label: 'sdf fine params', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    this.contacts = device.createBuffer({ label: 'sdf contacts', size: this.maxPairs * CONTACTS_PER_PAIR * CONTACT_BYTES, usage: S | GPUBufferUsage.COPY_SRC });
-    this.hits = device.createBuffer({ label: 'sdf pair hits', size: this.maxPairs * PAIR_HIT_BYTES, usage: S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     this.counts = device.createBuffer({ label: 'sdf fine counts', size: COUNTS_BYTES, usage: S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
-    this.work = device.createBuffer({ label: 'sdf fine work', size: (this.maxPairs * 2 * HP_WORDS + this.maxBricks * 2) * 4, usage: S });
     this.args = device.createBuffer({ label: 'sdf fine args', size: 64, usage: S | GPUBufferUsage.INDIRECT });
+    this.grow({ maxPairs: opts.maxPairs, maxBricks: opts.maxBricks ?? Math.max(4096, opts.maxPairs * 2 * 64) });
+  }
+
+  /**
+   * A room made bigger (never smaller): the buffers that depend on it are made again, and the bind groups at the next
+   * `encode`; no pipeline. Nothing is copied: the pass rebuilds all of them each tick. The old buffers are kept until
+   * `release` (an encoder not yet submitted may still use them).
+   */
+  grow(to: { maxPairs?: number; maxBricks?: number }): void {
+    const dev = this.device;
+    const S = GPUBufferUsage.STORAGE;
+    const pairs = Math.max(to.maxPairs ?? 0, this.maxPairs);
+    const bricks = Math.max(to.maxBricks ?? 0, this.maxBricks);
+    // (27 bits of half pair in a group's word)
+    if (pairs * 2 > 1 << 27) throw new Error(`SdfFine: ${pairs} pairs (at most ${1 << 26})`);
+    if (pairs > this.maxPairs) {
+      if (this.contacts) this.retired.push(this.contacts, this.hits);
+      this.contacts = dev.createBuffer({ label: 'sdf contacts', size: pairs * CONTACTS_PER_PAIR * CONTACT_BYTES, usage: S | GPUBufferUsage.COPY_SRC });
+      this.hits = dev.createBuffer({ label: 'sdf pair hits', size: pairs * PAIR_HIT_BYTES, usage: S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    }
+    if (pairs > this.maxPairs || bricks > this.maxBricks) {
+      if (this.work) this.retired.push(this.work);
+      this.work = dev.createBuffer({ label: 'sdf fine work', size: (pairs * 2 * HP_WORDS + bricks * 2) * 4, usage: S });
+    }
+    this.maxPairs = pairs;
+    this.maxBricks = bricks;
+    this.bound = null;
+  }
+
+  /** the buffers `grow` replaced, destroyed: call when every encoder made before the growth has been submitted */
+  release(): void {
+    for (const b of this.retired.splice(0)) b.destroy();
   }
 
   /** bytes this pass holds on the GPU */
@@ -113,7 +146,7 @@ export class SdfFine {
 
   private bind(inputs: FineInputs): NonNullable<SdfFine['bound']> {
     const b = this.bound;
-    if (b && b.version === this.models.version && b.inputs.pairs === inputs.pairs && b.inputs.pairCount === inputs.pairCount && b.inputs.pose === inputs.pose && b.inputs.vel === inputs.vel && b.inputs.info === inputs.info && b.inputs.model === inputs.model) return b;
+    if (b && b.version === this.models.version && b.inputs.pairs === inputs.pairs && b.inputs.pairCount === inputs.pairCount && b.inputs.pose === inputs.pose && b.inputs.vel === inputs.vel && b.inputs.info === inputs.info && b.inputs.model === inputs.model && b.inputs.missing === inputs.missing) return b;
     const dev = this.device;
     const m = this.models;
     const rows = { 3: inputs.pose, 4: inputs.vel, 5: inputs.info };
@@ -121,8 +154,8 @@ export class SdfFine {
       inputs: { ...inputs },
       version: m.version,
       expand: makeBindGroup(dev, 'sdf expand', this.kExpand.layout, { 0: this.params, 1: inputs.pairs, 2: inputs.pairCount, 3: inputs.pose, 4: inputs.vel, 6: m.models, 8: this.work, 12: this.hits, 13: inputs.model }),
-      pairArgs: makeBindGroup(dev, 'sdf pair args', this.kPairArgs.layout, { 0: this.params, 2: inputs.pairCount, 11: this.args }),
-      cull: makeBindGroup(dev, 'sdf cull', this.kCull.layout, { 0: this.params, 7: this.counts, 8: this.work, 9: m.data }),
+      pairArgs: makeBindGroup(dev, 'sdf pair args', this.kPairArgs.layout, { 0: this.params, 2: inputs.pairCount, 7: this.counts, 11: this.args }),
+      cull: makeBindGroup(dev, 'sdf cull', this.kCull.layout, { 0: this.params, 7: this.counts, 8: this.work, 9: m.data, 15: inputs.missing }),
       args: makeBindGroup(dev, 'sdf fine args', this.kArgs.layout, { 0: this.params, 2: inputs.pairCount, 7: this.counts, 11: this.args }),
       fine: makeBindGroup(dev, 'sdf fine', this.kFine.layout, { 0: this.params, ...rows, 8: this.work, 9: m.data, 12: this.hits, 14: this.args }),
       reduce: makeBindGroup(dev, 'sdf reduce', this.kReduce.layout, { 0: this.params, ...rows, 7: this.counts, 8: this.work, 9: m.data, 10: this.contacts, 12: this.hits }),
@@ -141,11 +174,10 @@ export class SdfFine {
     this.device.queue.writeBuffer(this.params, 0, p);
   }
 
-  /** The pass encoded: the counts cleared, then pairArgs, expand (which clears its pairs' records), cull, args, fine, reduce, all but the two one-thread ones sized on the GPU. Call setParams first. */
+  /** The pass encoded: pairArgs (which zeroes this pass's counts), expand (which clears its pairs' records), cull, args, fine, reduce, all but the two one-thread ones sized on the GPU. Call setParams first. */
   encode(enc: GPUCommandEncoder, inputs: FineInputs, pairUpper: number, timestampWrites?: GPUComputePassTimestampWrites): void {
     const b = this.bind(inputs);
     void pairUpper;
-    enc.clearBuffer(this.counts);
     const pass = enc.beginComputePass({ label: 'sdf fine', timestampWrites });
     // (every dispatch after this one is sized on the GPU: by the pair count, then by the surviving groups)
     pass.setPipeline(this.kPairArgs.pipeline);
@@ -171,6 +203,7 @@ export class SdfFine {
   }
 
   destroy(): void {
+    this.release();
     for (const b of [this.params, this.contacts, this.hits, this.counts, this.work, this.args]) b.destroy();
   }
 }

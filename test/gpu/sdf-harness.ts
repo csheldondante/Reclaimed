@@ -62,6 +62,8 @@ export interface RunResult {
   rows: Contact[];
   /** every sample contact, from the CPU mirror */
   mirror: RefContact[];
+  /** the rows' `missing` words (contract.ts MISS_*) */
+  missing: number[];
 }
 
 export interface Scene {
@@ -93,6 +95,8 @@ export function makeScene(g: TestGpu, format: SdfFormat, specs: SdfModelSpec[], 
     vel: storage(g, 'test vel', packed.vel),
     info: storage(g, 'test info', packed.info),
     model: storage(g, 'test model', packed.model),
+    // (the coarse pass's words: here the test's own, never cleared)
+    missing: storage(g, 'test missing', new Uint32Array(Math.max(bodies.length, 4))),
   };
   const scene: Scene = {
     store,
@@ -123,8 +127,10 @@ export function makeScene(g: TestGpu, format: SdfFormat, specs: SdfModelSpec[], 
       const all = unpackContacts(await g.read(fine.contacts, n * CONTACTS_PER_PAIR * CONTACT_BYTES), n * CONTACTS_PER_PAIR);
       const out: PairResult[] = [];
       for (let p = 0; p < n; p++) out.push({ samples: hu[p * 32 + PAIR_HIT_SAMPLES], energy: hf[p * 32 + PAIR_HIT_ENERGY], rows: all.slice(p * CONTACTS_PER_PAIR, p * CONTACTS_PER_PAIR + hu[p * 32 + PAIR_HIT_ROWS]) });
+      const missing = [...new Uint32Array(await g.read(inputs.missing, scene.bodies.length * 4))];
       expect(g.takeErrors()).toEqual([]);
       return {
+        missing,
         rowsWritten: c[COUNT_CONTACTS],
         pairsDropped: c[COUNT_PAIRS_DROPPED],
         bricks: c[COUNT_BRICKS],

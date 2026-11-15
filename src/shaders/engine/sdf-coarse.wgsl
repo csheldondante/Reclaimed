@@ -26,14 +26,25 @@
 // its promoted entry at the awake row's level when it is finer); a pair with an oversize body by the other row, two
 // oversize awake rows by the higher.
 //
-// A table is two buffers, so that only the build's counters are atomics (an atomic load is an interlocked operation
-// on D3D; the sums and the queries read plain words). The counters (u32, atomics): counts [0, H), fill cursors
-// [H, 2H), the oversize count at 2H. The table proper (u32): run lengths [0, H), run starts [H, 2H), the oversize
-// count at 2H, block sums from 2H + 4, super sums, the oversize list (OVER rows), the runs. An awake entry is its
-// row; a sleeper entry row | level << 28 | promoted << 31.
-// The pair buffer: [0] pairs asked for, [1] oversize bodies past their lists' room, [2] work items dropped, then
-// (a, b) a pair from word 64. The ctl buffer: [0] the sleep epoch the sleeper table was built for, then indirect
-// arguments (coarse.ts CTL_*).
+// A table is two parts, so that only the build's counters are atomics (an atomic load is an interlocked operation
+// on D3D; the sums and the queries read plain words). The counters (u32, atomics, a buffer a table): counts [0, H),
+// fill cursors [H, 2H), the oversize count at 2H and its cursor at 2H + 1. The table proper (u32; both tables are in
+// one buffer, the awake one first, the sleepers' from word CP.slBase: stage B has only eight storage bindings): run
+// lengths [0, H), run starts [H, 2H), the oversize count at 2H, block sums from 2H + 4, super sums, the runs. The
+// oversize bodies are the first run (their own bucket of the counting sort: one entry a row, so they have exactly the
+// room they need and no list of their own to run out). An awake entry is its row; a sleeper entry
+// row | level << 28 | promoted << 31.
+//
+// Rooms (docs/design/PHYSICS_ENGINE.md "Round 6"). The runs cannot run out (an awake row has one entry, a sleeper one
+// a level at most). The work items and the pairs can: what was asked for is counted whole, so the CPU's rare read
+// (collide.ts) can make the room bigger, and until it has, the tick fails safe through `missing`, a word a row
+// (contract.ts MISS_*): a row whose candidates or pairs were not all written carries a bit there, and so does every
+// row it might have met. The engine holds a flagged row still that tick.
+//   items past the room   stage A flags its row and every entry of the run it could not cut into items
+//   pairs past the room   stage B flags both rows of the pair it could not write
+// The pair buffer: [0] pairs asked for, [1] work items asked for, [2] work items dropped, [8] the most pairs asked
+// for in a tick since the CPU last read, [9] the most items; then (a, b) a pair from word 64. The ctl buffer: [0] the
+// sleep epoch the sleeper table was built for, then indirect arguments (coarse.ts CTL_*).
 
 struct CoarseParams {
   rows: u32,
@@ -47,7 +58,8 @@ struct CoarseParams {
   itemRoom: u32,
   // entries the table's runs have room for
   runRoom: u32,
-  pad0: u32,
+  // where the sleeper table starts in the tables' buffer (words)
+  slBase: u32,
   pad1: u32,
   pad2: u32,
 }
@@ -57,10 +69,12 @@ const PAIRS_AT: u32 = 64u;
 const ITEMS_AT: u32 = 4u;
 const ROW_ALIVE: u32 = 1u;
 const ROW_ASLEEP: u32 = 2u;
-const OVER: u32 = 256u;
 const GROUP: u32 = 8u;
 const ARGS_ROW: u32 = 256u;
 const NO_ROW: u32 = 0xffffffffu;
+// (contract.ts MISS_*)
+const MISS_ITEMS: u32 = 1u;
+const MISS_PAIRS: u32 = 2u;
 
 @group(0) @binding(0) var<uniform> CP: CoarseParams;
 @group(0) @binding(1) var<storage, read> list: array<u32>;
@@ -76,18 +90,21 @@ const NO_ROW: u32 = 0xffffffffu;
 @group(0) @binding(8) var<storage, read_write> pairBuf: array<atomic<u32>>;
 @group(0) @binding(9) var<storage, read_write> ctl: array<u32>;
 @group(0) @binding(10) var<storage, read> sleepEpoch: array<u32>;
-// (the two tables, built: plain reads. An atomic load is an interlocked operation on D3D)
-@group(0) @binding(11) var<storage, read> awR: array<u32>;
-@group(0) @binding(12) var<storage, read> slR: array<u32>;
+// (the two tables, built, in their one buffer: plain reads. An atomic load is an interlocked operation on D3D)
+@group(0) @binding(11) var<storage, read> tabs: array<u32>;
+// (a word a row: MISS_* bits, cleared by the pass's encode each tick)
+@group(0) @binding(17) var<storage, read_write> missing: array<atomic<u32>>;
 @group(0) @binding(13) var<storage, read_write> items: array<u32>;
-// [0] items asked for, [1] items dropped
+// [0] items asked for, [1] items dropped (reset by the gate)
 @group(0) @binding(14) var<storage, read_write> itemCtl: array<atomic<u32>, 4>;
 
 fn oStart() -> u32 { return CP.heads; }
 fn oBlk() -> u32 { return 2u * CP.heads + 4u; }
 fn oSup() -> u32 { return oBlk() + CP.heads / 32u; }
-fn oOver() -> u32 { return oSup() + CP.heads / 1024u; }
-fn oRuns() -> u32 { return oOver() + OVER; }
+fn oRuns() -> u32 { return oSup() + CP.heads / 1024u; }
+/** word i of the awake table, of the sleeper table */
+fn awR(i: u32) -> u32 { return tabs[i]; }
+fn slR(i: u32) -> u32 { return tabs[CP.slBase + i]; }
 
 fn cellSize(l: u32) -> f32 {
   return CP.cellTop / f32(1u << (CP.levels - 1u - l));
@@ -124,11 +141,16 @@ fn radiusOf(r: u32) -> f32 {
 fn gate() {
   let rebuild = sleepEpoch[0] != ctl[0];
   ctl[0] = sleepEpoch[0];
+  // last tick's pairs into the high-water mark the CPU reads now and then; this tick's counts start at zero
+  atomicMax(&pairBuf[8], atomicLoad(&pairBuf[0]));
+  atomicStore(&pairBuf[0], 0u);
+  atomicStore(&itemCtl[0], 0u);
+  atomicStore(&itemCtl[1], 0u);
   let blocks = (CP.heads / 32u + 63u) / 64u;
   let supers = (CP.heads / 1024u + 63u) / 64u;
   let buckets = CP.heads / 64u;
   // the sleeper table: only when the epoch changed
-  ctl[4] = select(0u, (2u * CP.heads + 1u + 63u) / 64u, rebuild);
+  ctl[4] = select(0u, (2u * CP.heads + 2u + 63u) / 64u, rebuild);
   ctl[8] = select(0u, (CP.rows + 63u) / 64u, rebuild);
   ctl[12] = select(0u, blocks, rebuild);
   ctl[16] = select(0u, supers, rebuild);
@@ -150,7 +172,7 @@ fn gate() {
 
 @compute @workgroup_size(64)
 fn clearTab(@builtin(global_invocation_id) gid: vec3<u32>) {
-  if (gid.x < 2u * CP.heads + 1u) {
+  if (gid.x < 2u * CP.heads + 2u) {
     atomicStore(&tab[gid.x], 0u);
   }
 }
@@ -177,10 +199,7 @@ fn countCells(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
   let lv = levelOf(radiusOf(r));
   if (lv.y == 1u) {
-    let k = atomicAdd(&tab[2u * CP.heads], 1u);
-    if (k < OVER) {
-      tabB[oOver() + k] = r;
-    }
+    atomicAdd(&tab[2u * CP.heads], 1u);
     return;
   }
   let p = centre(r);
@@ -230,7 +249,8 @@ fn startCells(@builtin(global_invocation_id) gid: vec3<u32>) {
   for (var k = (i / 32u) * 32u; k < i; k++) {
     s += cntR[k];
   }
-  tabB[oStart() + i] = s;
+  // (the oversize bodies are the run before every bucket's)
+  tabB[oStart() + i] = s + cntR[2u * CP.heads];
   tabB[i] = cntR[i];
   if (i == 0u) {
     tabB[2u * CP.heads] = cntR[2u * CP.heads];
@@ -245,6 +265,10 @@ fn fillCells(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
   let lv = levelOf(radiusOf(r));
   if (lv.y == 1u) {
+    let at = atomicAdd(&tab[2u * CP.heads + 1u], 1u);
+    if (at < CP.runRoom) {
+      tabB[oRuns() + at] = r;
+    }
     return;
   }
   let p = centre(r);
@@ -269,7 +293,15 @@ fn emit(a: u32, kind: u32, l: u32, off: vec3<i32>, start: u32, len: u32) {
   let o = vec3<u32>(off + vec3<i32>(512));
   for (var j = 0u; j < n; j++) {
     if (k0 + j >= CP.itemRoom) {
+      // no room for the rest of the run: nothing is missed unsaid. This row and every entry left are flagged (the
+      // entries are not tested, so some flagged rows had no pair to miss: the safe side). A serial loop, in the rare
+      // tick before the room has grown.
       atomicAdd(&itemCtl[1], n - j);
+      atomicOr(&missing[a], MISS_ITEMS);
+      let base = select(CP.slBase, 0u, kind == 0u || kind == 3u) + oRuns();
+      for (var e = start + j * GROUP; e < start + len; e++) {
+        atomicOr(&missing[tabs[base + e] & 0x0fffffffu], MISS_ITEMS);
+      }
       break;
     }
     let w = ITEMS_AT + 4u * (k0 + j);
@@ -297,8 +329,8 @@ fn stageA(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
   // once a row: the oversize lists (few bodies, each tested against every awake row)
   if (big || l == lv.x) {
-    emit(a, 3u, l, vec3<i32>(0), 0u, min(awR[2u * CP.heads], OVER));
-    emit(a, 4u, l, vec3<i32>(0), 0u, min(slR[2u * CP.heads], OVER));
+    emit(a, 3u, l, vec3<i32>(0), 0u, awR(2u * CP.heads));
+    emit(a, 4u, l, vec3<i32>(0), 0u, slR(2u * CP.heads));
   }
   // the cells a body of this level could reach this row from: its centre within this row's radius plus the level's
   // largest radius (half a cell); for the finer sleepers kept at this level, a quarter cell
@@ -315,12 +347,12 @@ fn stageA(@builtin(global_invocation_id) gid: vec3<u32>) {
         let c = vec3<i32>(x, y, z);
         let b0 = bucket(c, l, 0u);
         if (!big) {
-          emit(a, 0u, l, c - home, awR[oStart() + b0], awR[b0]);
+          emit(a, 0u, l, c - home, awR(oStart() + b0), awR(b0));
         }
-        emit(a, 1u, l, c - home, slR[oStart() + b0], slR[b0]);
+        emit(a, 1u, l, c - home, slR(oStart() + b0), slR(b0));
         if ((big || l == lv.x) && all(c >= flo) && all(c <= fhi)) {
           let b1 = bucket(c, l, 1u);
-          emit(a, 2u, l, c - home, slR[oStart() + b1], slR[b1]);
+          emit(a, 2u, l, c - home, slR(oStart() + b1), slR(b1));
         }
       }
     }
@@ -334,8 +366,10 @@ fn argsB() {
   ctl[41] = (n + ARGS_ROW - 1u) / ARGS_ROW;
   ctl[42] = 1u;
   items[0] = n;
-  atomicStore(&pairBuf[1], max(awR[2u * CP.heads], OVER) - OVER + max(slR[2u * CP.heads], OVER) - OVER);
+  let asked = atomicLoad(&itemCtl[0]);
+  atomicStore(&pairBuf[1], asked);
   atomicStore(&pairBuf[2], atomicLoad(&itemCtl[1]));
+  atomicMax(&pairBuf[9], asked);
 }
 
 fn quatMat(q: vec4<f32>) -> mat3x3<f32> {
@@ -419,18 +453,18 @@ fn stageB(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
   if (kind >= 3u) {
     // an oversize body: no cell to check. Two oversize awake rows: the higher writes the pair
     if (kind == 3u) {
-      b = awR[oOver() + at];
+      b = awR(oRuns() + at);
       if (b == a || (lva.y == 1u && b > a)) {
         return;
       }
     } else {
-      b = slR[oOver() + at];
+      b = slR(oRuns() + at) & 0x0fffffffu;
     }
   } else {
     let pk = items[w + 3u];
     let c = cellOf(pa, l) + vec3<i32>(i32(pk & 1023u), i32((pk >> 10u) & 1023u), i32((pk >> 20u) & 1023u)) - vec3<i32>(512);
     if (kind == 0u) {
-      b = awR[oRuns() + at];
+      b = awR(oRuns() + at);
       // (the finer row writes an awake pair; at the same level the lower row)
       if (b == a || (l == lva.x && b < a)) {
         return;
@@ -439,7 +473,7 @@ fn stageB(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
         return;
       }
     } else {
-      let e = slR[oRuns() + at];
+      let e = slR(oRuns() + at);
       b = e & 0x0fffffffu;
       if (((e >> 28u) & 7u) != l || (e >> 31u) != kind - 1u) {
         return;
@@ -461,5 +495,9 @@ fn stageB(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
   if (k < CP.pairRoom) {
     atomicStore(&pairBuf[PAIRS_AT + 2u * k], a);
     atomicStore(&pairBuf[PAIRS_AT + 1u + 2u * k], b);
+  } else {
+    // (no room for the pair: both rows say so)
+    atomicOr(&missing[a], MISS_PAIRS);
+    atomicOr(&missing[b], MISS_PAIRS);
   }
 }

@@ -432,6 +432,54 @@ The whole path's largest row (pile, 16,384 all awake, 23,152 pairs: 8.7 ms) is t
 dispatch gives every half pair the rows of the store's biggest model (81 rows of bricks for the slab) although a crumb
 has one brick (PF23).
 
+### Round 6: rooms that grow, a tick that fails safe (2026-11-15)
+
+The owner's rule: no fixed cap that can drop a collision; paging before caps. Every room of the two passes, and what
+happens when it runs out:
+
+| room | when it runs out | grows |
+|---|---|---|
+| oversize bodies (was 256 awake + 256 asleep) | it cannot: they are a run of the table's counting sort, one entry a row | with the rows |
+| the tables' runs | they cannot: an awake row has one entry, a sleeper one a level at most | with the rows |
+| the engine's rows (`rows`) | `SdfCollide.encode` sees it on the CPU: the tables double before the tick's passes | at once, in that tick |
+| work items (64 a row) | stage A flags its row and every entry of the run it could not cut into items (`MISS_ITEMS`) | by the read |
+| pairs (8 a row) | stage B flags both rows of the pair it could not write (`MISS_PAIRS`) | by the read |
+| sample groups (64 a half pair) | `cull` flags both rows of the pair whose group found no room (`MISS_GROUPS`) | by the read |
+| a pair's contact rows | four a pair by design (the reduction); not a room | |
+| the model store | sized on the CPU before each bake; doubles there (one GPU to GPU copy) | at the bake |
+
+**Safe.** `missing` is a u32 a body row on the GPU (`SdfCollide.missing`; bits in `contract.ts` `MISS_*`), cleared by
+the coarse pass each tick. A nonzero word means the row may lack a pair or a contact this tick. The solver's part,
+not built here: hold a flagged row at its last pose for the tick. Every row of a pair that was not written, or was
+written with contacts left out, is flagged; for work items some rows are flagged that had nothing to miss (the entries
+were never tested).
+
+**Growth.** Each room counts what was asked of it whole, past its end too, and keeps the most asked in a tick. `poll`
+(after the engine's submit) copies those words, 128 B, and maps them: every 8 ticks, one read under way at most, and
+no tick waits for it. A room at half or more (`rooms.ts`) is doubled until the asking is under half, by the next
+`encode`: the buffers are made again and the bind groups with them. No pipeline is made (tested by counting
+`createComputePipeline` calls): the kernels' layouts never depended on the sizes, the rooms are in the uniforms.
+Nothing is copied, because the pass rebuilds every one of these buffers each tick.
+
+**Departures from the hand-over as written.** (1) An oversize body that does not fit its list was to fall back to
+every awake row; instead the list is gone (the same exactness, one mechanism fewer). (2) "Tested first next tick" is
+not built: the room has grown by then and the row is tested like any other. (3) The two tables are one buffer, so
+stage B has a binding free for `missing` (eight storage buffers a stage). (4) The read will be a timed read in play,
+which DESIGN §24 does not allow: BACKLOG PF26, the owner's call.
+
+**Tested** (`test/gpu/sdf-rooms.test.ts`, 6; `test/unit/sdf-rooms.test.ts`, 3). A pile of 1,500 rows with every room
+an eighth of what the scene asks: each tick, every pair brute force has and the pass lacks has both rows flagged, and
+so has every pair whose record differs from a roomy pass's; then the pair set is brute force's, every record the
+roomy pass's and no row flagged, and further ticks grow nothing. Each room alone. 400 oversize rows, awake and
+asleep. Rows grown from 300 to 700 mid-run.
+
+**Measured** (desktop proxy, Dawn in Node, pile of 4,096 rows all awake; `data/perf/sdf/rooms-bench.json`). The read:
+0.19 ms of CPU in the tick that starts one (0.015 ms a tick averaged over 8), the tick's wall time 2.02 ms with no
+read and 2.04 ms with one every 8 ticks (inside the noise); its answer lands 2 ms later. A growth: 0.06 to 0.46 ms
+making buffers, and the tick that does it encodes in 0.7 to 1.2 ms against 0.47 (the bind groups); its wall time 1.7
+to 3.3 ms against 2.6: no tick stalls. From an eighth, the rooms took three growth ticks in a row (a room that ran
+out hides what the next would be asked).
+
 ### Hand-over: joining body ↔ body into the engine
 
 Everything here is on `physics10-fine` (not merged anywhere). Code: `src/engine/sdf/` (`contract.ts` layouts,

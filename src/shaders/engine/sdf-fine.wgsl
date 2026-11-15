@@ -19,8 +19,13 @@
 //           degrees apart across the line of centres) computed again and written as the pair's contact rows
 //
 // The work buffer: HP_WORDS a half pair (index pair * 2 + way), then the brick list from P.maxPairs * 2 * HP_WORDS
-// on, two words a group of up to 16 samples of one brick: [half pair | samples << 20] [the first sample, a word index
+// on, two words a group of up to 16 samples of one brick: [half pair | samples << 27] [the first sample, a word index
 // in the data].
+//
+// Rooms (docs/design/PHYSICS_ENGINE.md "Round 6"). The list of sample groups can run out. What was asked for is
+// counted whole (counts[2], and the most since the CPU last read in counts[11]), so the room can be made bigger
+// (fine.ts grow, called by collide.ts); until it is, a group that found no room flags both rows of its pair in
+// `missing` (contract.ts MISS_GROUPS): the pair's contacts are not all there and the engine holds both rows still.
 //   0-11  three rows of the 3 x 4 transform: sampler padded-voxel point -> field coordinate (voxel centres at integers)
 //   12 a   13 b   14 the sampler's first sample (a word index in the data)   15 its sample count
 //   16 the sample stride (1: every sample every tick; s: this tick, the samples at places = tick mod s in the model's
@@ -41,6 +46,7 @@ const SLOTS: u32 = 4u;
 const ARGS_ROW: u32 = 256u;
 const GROUP: u32 = 16u;
 const NO_BID: u32 = 0u;
+const MISS_GROUPS: u32 = 4u;
 
 // (fine.ts FineParams, 32 B)
 struct FineParams {
@@ -85,7 +91,9 @@ struct Contact {
 @group(0) @binding(5) var<storage, read> info: array<vec4<f32>>;
 @group(0) @binding(6) var<storage, read> models: array<SdfModel>;
 // (contract.ts COUNT_*)
-@group(0) @binding(7) var<storage, read_write> counts: array<atomic<u32>, 8>;
+@group(0) @binding(7) var<storage, read_write> counts: array<atomic<u32>, 16>;
+// (a word a body row, contract.ts MISS_*: the coarse pass clears it each tick)
+@group(0) @binding(15) var<storage, read_write> missing: array<atomic<u32>>;
 @group(0) @binding(8) var<storage, read_write> work: array<u32>;
 @group(0) @binding(9) var<storage, read> data: array<u32>;
 @group(0) @binding(10) var<storage, read_write> contacts: array<Contact>;
@@ -139,6 +147,10 @@ fn unrot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
 // expand, 8-10 cull, 12-14 reduce. (Words 0-3 are fineArgs': the fine dispatch and the group count.)
 @compute @workgroup_size(1)
 fn pairArgs() {
+  // (this pass's counts start at zero; the words from 9 on are kept from pass to pass)
+  for (var k = 0u; k < 9u; k++) {
+    atomicStore(&counts[k], 0u);
+  }
   let n = min(pairCount[0], min(P.pairUpper, P.maxPairs));
   let halves = (2u * n + 63u) / 64u;
   args[4] = halves;
@@ -274,10 +286,13 @@ fn cull(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var s = 0u; s < m; s += GROUP) {
       let k = atomicAdd(&counts[2], 1u);
       if (k >= P.maxChunks) {
+        // (no room for the group: the pair's contacts are not all there, and both its rows say so)
         atomicAdd(&counts[3], 1u);
+        atomicOr(&missing[work[o + 12u]], MISS_GROUPS);
+        atomicOr(&missing[work[o + 13u]], MISS_GROUPS);
         continue;
       }
-      work[list + 2u * k] = h | (min(GROUP, m - s) << 20u);
+      work[list + 2u * k] = h | (min(GROUP, m - s) << 27u);
       work[list + 2u * k + 1u] = first + begin + lead + s * stride;
     }
   }
@@ -285,6 +300,8 @@ fn cull(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(1)
 fn fineArgs() {
+  // (the most groups asked for in a pass since the CPU last read)
+  atomicMax(&counts[11], atomicLoad(&counts[2]));
   let n = min(atomicLoad(&counts[2]), P.maxChunks);
   args[0] = min(n, ARGS_ROW);
   args[1] = (n + ARGS_ROW - 1u) / ARGS_ROW;
@@ -480,10 +497,10 @@ fn fine(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
   }
   let list = P.maxPairs * 2u * HP_WORDS;
   let cw = work[list + 2u * ci];
-  if (li >= (cw >> 20u)) {
+  if (li >= (cw >> 27u)) {
     return;
   }
-  let h = cw & 0xfffffu;
+  let h = cw & 0x7ffffffu;
   let o = h * HP_WORDS;
   let tw = work[o + 16u];
   let at = work[list + 2u * ci + 1u] + li * (tw & 0x7fffffffu);

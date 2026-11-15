@@ -23369,3 +23369,26 @@ specified in the note's hand-over (PF24, PF25). The three rooms still count what
 when they run out.
 
 **Tests** (Node, Dawn): `sdf-coarse` 8, `sdf-fine` 36, `sdf-bake` 15.
+
+## 2026-11-15 — rooms that grow, and a tick that fails safe (PF24, `physics10-fine`)
+
+**Why.** The owner's rule is paging before caps, and three rooms of the coarse pass could miss a collision when full
+(oversize lists of 256, work items, pairs), as could the fine pass's sample groups. Each only counted what it dropped.
+
+**What.** Oversize bodies are now a run of the tables' counting sort, so they have exactly the room they need. Work
+items, pairs and sample groups count what was asked of them whole and keep the most since the last read;
+`SdfCollide` (new, `src/engine/sdf/collide.ts`: both passes with one set of rooms) reads those words, 128 B, every 8
+ticks, asynchronously, and makes a room that is half full bigger at the next tick: buffers and bind groups only, no
+pipeline (`SdfCoarse.grow`, `SdfFine.grow`). In the tick that runs out, the rows that may lack a pair or a contact are
+flagged in `missing`, a word a row on the GPU, for the solver to hold still. The two tables became one buffer so that
+stage B has a storage binding free for the flags.
+
+**Measured** (desktop proxy, pile of 4,096 rows all awake). The read costs 0.19 ms of CPU in the tick that starts it
+and no GPU time I can see (2.02 against 2.04 ms a tick). A growth costs 0.06 to 0.46 ms making buffers; no tick
+stalls. The coarse bench is unchanged within the clock's step (pile, 16,384 rows all awake: coarse 1.4 to 1.8 ms).
+
+**Tests** (Node, Dawn): `sdf-rooms` 6 new (rooms an eighth of the need; each room alone; 400 oversize rows; rows grown
+mid-run; no pipeline made), `sdf-coarse` 8, `sdf-fine` 36, `sdf-bake` 15; unit `sdf-rooms` 3.
+
+**Left.** The solver's side of `missing` (the engine's). The read is a timed read in play at the join (PF26, the
+owner's call). Hacks: PF27.

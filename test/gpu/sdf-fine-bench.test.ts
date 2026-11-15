@@ -104,6 +104,7 @@ test.skipIf(!process.env.SDF_BENCH)(
               vel: storage(g, 'bench vel', packed.vel),
               info: storage(g, 'bench info', packed.info),
             model: storage(g, 'bench model', packed.model),
+              missing: storage(g, 'bench missing', new Uint32Array(scene.bodies.length)),
             };
             const fine = new SdfFine(g.device, store, {
               maxPairs: pairs,

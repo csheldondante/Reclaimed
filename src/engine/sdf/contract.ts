@@ -135,17 +135,32 @@ export const PAIR_HIT_ENERGY = 5;
 export const PAIR_HIT_ROWS = 6;
 
 /**
- * The counts buffer, 32 B (u32 each): contact rows written this pass; pairs the coarse stage wrote past the pass's
- * room (not tested); groups of samples tested (up to 16 samples of one brick each); groups dropped (past the pass's
- * room for them); sample contacts
- * (before the reduction). Nothing is dropped without one of these saying so.
+ * The counts buffer, 64 B (u32 each). Of this pass (zeroed when it starts): contact rows written; pairs the coarse
+ * stage wrote past the pass's room (not tested: none when both passes have the one room, collide.ts); groups of
+ * samples asked for (up to 16 samples of one brick each; past the room they are not tested); groups dropped; sample
+ * contacts (before the reduction). Kept from pass to pass: COUNT_HW_BRICKS, the most groups asked for in a pass since
+ * the CPU last cleared it. Nothing is dropped without one of these saying so, and without its rows flagged (MISS_*).
  */
 export const COUNT_CONTACTS = 0;
 export const COUNT_PAIRS_DROPPED = 1;
 export const COUNT_BRICKS = 2;
 export const COUNT_BRICKS_DROPPED = 3;
 export const COUNT_SAMPLE_CONTACTS = 4;
-export const COUNTS_BYTES = 32;
+export const COUNT_HW_BRICKS = 11;
+export const COUNTS_BYTES = 64;
+
+/**
+ * A row's word in the `missing` buffer (coarse.ts owns it; a u32 a body row, cleared each tick by the coarse pass):
+ * nonzero when a room ran out this tick before it could be made bigger, and the row may lack a pair or a contact.
+ * The engine holds such a row still for the tick (no move past its last pose); the room grows within a few ticks
+ * (collide.ts) and the row's pairs are found again. Which room, by bit:
+ */
+/** the coarse pass's work items: the row, or a row it might have met, was not tested (some flagged rows had nothing to miss) */
+export const MISS_ITEMS = 1;
+/** the pair list: a pair of this row was found and not written */
+export const MISS_PAIRS = 2;
+/** the fine pass's sample groups: a pair of this row was tested with some of its samples left out */
+export const MISS_GROUPS = 4;
 
 /** the most samples a model may keep: a sample's index is 16 bits in the reduction's bids */
 export const SDF_MAX_SAMPLES = 65536;

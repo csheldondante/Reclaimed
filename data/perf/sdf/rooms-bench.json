@@ -1,0 +1,91 @@
+{
+ "at": "2026-11-15T19:09:21.209Z",
+ "adapter": "intel / xe-lpg / D3D12 driver version 32.0.101.6104",
+ "what": "desktop proxy, Dawn in Node (D3D12): pile, 4,096 rows all awake. The read: a tick’s wall ms (submit to GPU done) and the CPU ms inside poll(), with no read, one every 8 ticks, one every tick. A growth: every room an eighth of the need, read every 8 ticks; the ticks in which a room was made bigger against the others",
+ "read every 0": {
+  "tickWallMs": 2.018,
+  "pollCpuMsMean": 0.0029,
+  "pollCpuMsMax": 0.024,
+  "reads": 0,
+  "readLagMs": null
+ },
+ "read every 8": {
+  "tickWallMs": 2.039,
+  "pollCpuMsMean": 0.0148,
+  "pollCpuMsMax": 0.193,
+  "reads": 13,
+  "readLagMs": 1.91
+ },
+ "read every 1": {
+  "tickWallMs": 2.164,
+  "pollCpuMsMean": 0.0878,
+  "pollCpuMsMax": 1.158,
+  "reads": 104,
+  "readLagMs": 2
+ },
+ "growth": {
+  "rooms": {
+   "rows": 4096,
+   "pairs": 11408,
+   "items": 221504,
+   "groups": 654464
+  },
+  "growths": [
+   {
+    "tick": 8,
+    "room": "pairs",
+    "from": 713,
+    "to": 1426,
+    "ms": 0.058
+   },
+   {
+    "tick": 8,
+    "room": "items",
+    "from": 13844,
+    "to": 221504,
+    "ms": 0.058
+   },
+   {
+    "tick": 9,
+    "room": "pairs",
+    "from": 1426,
+    "to": 11408,
+    "ms": 0.455
+   },
+   {
+    "tick": 9,
+    "room": "groups",
+    "from": 20452,
+    "to": 81808,
+    "ms": 0.455
+   },
+   {
+    "tick": 10,
+    "room": "groups",
+    "from": 81808,
+    "to": 654464,
+    "ms": 0.425
+   }
+  ],
+  "growthTicks": [
+   {
+    "wallMs": 1.747,
+    "encodeMs": 0.721,
+    "grew": 2
+   },
+   {
+    "wallMs": 2.943,
+    "encodeMs": 1.222,
+    "grew": 2
+   },
+   {
+    "wallMs": 3.283,
+    "encodeMs": 1.099,
+    "grew": 1
+   }
+  ],
+  "otherTicksWallMs": 2.567,
+  "otherTicksEncodeMs": 0.473,
+  "bytes": 15293344
+ }
+}

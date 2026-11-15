@@ -130,6 +130,7 @@ export async function sdfBench(): Promise<void> {
           vel: filled(dev, 'bench vel', packed.vel),
           info: filled(dev, 'bench info', packed.info),
           model: filled(dev, 'bench model', packed.model),
+          missing: filled(dev, 'bench missing', new Uint32Array(scene.bodies.length)),
         };
         const fine = new SdfFine(dev, store, { maxPairs: pairs });
         fine.setParams(pairs, 0);

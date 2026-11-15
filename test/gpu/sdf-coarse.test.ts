@@ -6,7 +6,7 @@
 // A pair within 0.001 cells of the edge of counting may fall either side (the GPU's floats).
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { COUNT_PAIRS_DROPPED, COUNTS_BYTES, PAIR_HIT_BYTES, PAIR_HIT_ROWS, packBodies, type BodyRow } from '../../src/engine/sdf/contract';
-import { CTL_SLEEPER_GROUPS, CTL_STAGE_A, PAIR_ASKED, PAIR_HEADER_WORDS, PAIR_ITEMS_DROPPED, PAIR_OVERSIZE_DROPPED, SdfCoarse, type CoarseInputs, type CoarseOptions } from '../../src/engine/sdf/coarse';
+import { CTL_SLEEPER_GROUPS, CTL_STAGE_A, PAIR_ASKED, PAIR_HEADER_WORDS, PAIR_ITEMS_DROPPED, SdfCoarse, type CoarseInputs, type CoarseOptions } from '../../src/engine/sdf/coarse';
 import { SdfFine } from '../../src/engine/sdf/fine';
 import { SdfModels } from '../../src/engine/sdf/models';
 import { awakeList, axisAngle, bodyOf, COARSE_MAX_DIAMETER, coarseScene, coarseShapes } from '../../src/engine/sdf/shapes';
@@ -31,7 +31,7 @@ interface Rig {
   bodies: BodyRow[];
   /** the rows uploaded again, with their awake list; `epoch` as the engine would bump it */
   set(bodies: BodyRow[], epoch: number): void;
-  /** one pass: the pairs written (a < b, sorted), the header (`oversize`: oversize bodies and work items dropped), the dispatch arguments it used */
+  /** one pass: the pairs written (a < b, sorted), the header (`oversize`: work items dropped), the dispatch arguments it used */
   run(): Promise<{ pairs: string[]; asked: number; oversize: number; sleeperGroups: number; pairGroups: number }>;
   expectBrute(r: { pairs: string[] }): void;
   destroy(): void;
@@ -75,7 +75,7 @@ function rig(bodies: BodyRow[], opts: Partial<CoarseOptions> = {}, format: 'grad
       expect(g.takeErrors()).toEqual([]);
       const pairs: string[] = [];
       for (let k = 0; k < n; k++) pairs.push(`${Math.min(raw[2 * k], raw[2 * k + 1])},${Math.max(raw[2 * k], raw[2 * k + 1])}`);
-      return { pairs: pairs.sort(), asked: head[PAIR_ASKED], oversize: head[PAIR_OVERSIZE_DROPPED] + head[PAIR_ITEMS_DROPPED], sleeperGroups: st[CTL_SLEEPER_GROUPS], pairGroups: st[CTL_STAGE_A] };
+      return { pairs: pairs.sort(), asked: head[PAIR_ASKED], oversize: head[PAIR_ITEMS_DROPPED], sleeperGroups: st[CTL_SLEEPER_GROUPS], pairGroups: st[CTL_STAGE_A] };
     },
     expectBrute(r) {
       const ref = brutePairs(me.bodies, specs, (b) => ids.indexOf(b.model), MARGIN);

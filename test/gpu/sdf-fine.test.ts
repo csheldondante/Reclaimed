@@ -13,7 +13,7 @@
 //          (the lean is printed with SDF_LOG=1, not bounded: at a model's medial sheet the exact normal itself flips).
 // SDF_LOG=1 prints each scene's numbers.
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import type { BodyRow, SdfFormat } from '../../src/engine/sdf/contract';
+import { MISS_GROUPS, type BodyRow, type SdfFormat } from '../../src/engine/sdf/contract';
 import type { SdfModelSpec } from '../../src/engine/sdf/models';
 import { axisAngle, ballShape, bodyOf, boxShape, lShape, massProps, notchShape, shape } from '../../src/engine/sdf/shapes';
 import { angleDeg, refModel, rot } from '../support/sdf-reference';
@@ -379,6 +379,7 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('fine collision, %s', (
     expect(r.pairs.map((x) => x.samples > 60)).toEqual([true, true, false]);
     expect(r.pairs[2].rows.length).toBe(0);
     expect([r.pairsDropped, r.bricksDropped]).toEqual([0, 0]);
+    expect(r.missing).toEqual([0, 0, 0, 0]);
     expect(r.sampleContacts).toBe(r.pairs[0].samples + r.pairs[1].samples);
     const bricks = r.bricks;
     scene.destroy();
@@ -394,6 +395,9 @@ describe.each(['f32', 'snorm8', 'grad8'] as SdfFormat[])('fine collision, %s', (
     r = await few.run();
     expect(r.bricks).toBe(bricks);
     expect(r.bricksDropped).toBe(bricks - 5);
+    // (and the tick is safe: both rows of a pair that lost a group say so)
+    expect(r.missing.filter((m) => m === MISS_GROUPS).length).toBeGreaterThanOrEqual(2);
+    expect(r.missing.every((m) => m === 0 || m === MISS_GROUPS)).toBe(true);
     few.destroy();
   });
 
