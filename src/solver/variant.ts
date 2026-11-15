@@ -12,8 +12,8 @@
 //   hybrid   rock and what's built on the node solver (rigid clusters that the judge's breaks split along cell
 //            boundaries), metal and wood on the voxel lattice
 //   engine   the physics engine of DESIGN §10 (src/engine, docs/design/PHYSICS_ENGINE.md), as far as it is built: a
-//            lab's dropped blocks are rigid rows on the GPU (terrain contacts, the agreed contact rules, sleep there, no
-//            readback); everything the judge frees goes as under `lattice` until the later steps land
+//            lab's dropped blocks and everything the judge frees (rock, structures, metal, wood) are rigid rows on the GPU
+//            (terrain contacts, body against body, sleep there, no readback): game/integrity/rows.ts
 //
 // The judge (what lets go) is picked apart: `?judge=runs|sections` (game/judge.ts JUDGES — the column judge and
 // the method of sections on the GPU, from branch `judge`).
@@ -25,11 +25,11 @@ export const VARIANTS: readonly SolverVariant[] = ['old', 'nodes', 'lattice', 'h
 /** what carries each kind of thing the judge frees */
 export interface Routing {
   /** rock: the CPU rigid rock, the node solver, or the voxel lattice */
-  rock: 'cpu' | 'nodes' | 'lattice';
+  rock: 'cpu' | 'nodes' | 'lattice' | 'engine';
   /** what the structure judge frees (concrete, brick): the columns' falling pieces, or as rock */
   structures: 'columns' | 'rock';
   /** metal and wood */
-  metal: 'nodes' | 'lattice';
+  metal: 'nodes' | 'lattice' | 'engine';
   /** wood bends (with the metal) or falls as rock (the baseline) */
   woodBends: boolean;
 }
@@ -39,9 +39,9 @@ export const ROUTING: Record<SolverVariant, Routing> = {
   nodes: { rock: 'nodes', structures: 'rock', metal: 'nodes', woodBends: true },
   lattice: { rock: 'lattice', structures: 'rock', metal: 'lattice', woodBends: true },
   hybrid: { rock: 'nodes', structures: 'rock', metal: 'lattice', woodBends: true },
-  // (build step 1 of the engine: what a lab drops is a rigid row; what the judge frees still goes the lattice's way
-  // until the terrain's pieces are rows too — docs/design/PHYSICS_ENGINE.md, build order)
-  engine: { rock: 'lattice', structures: 'rock', metal: 'lattice', woodBends: true },
+  // (terrain pieces are rows: docs/design/PHYSICS_ENGINE.md — nothing on this route goes to the voxel lattice or the
+  // CPU rock)
+  engine: { rock: 'engine', structures: 'rock', metal: 'engine', woodBends: true },
 };
 
 /** the default variant: the phone bench's smoothest (Pixel 9a, lattice x runs p95 20 / p99 35 ms; round 120) */

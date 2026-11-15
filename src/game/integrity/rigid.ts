@@ -16,6 +16,7 @@ import { bakeDust, erodeUnder, restingMass, unrest } from './resting';
 import { touchCols, writeColumn } from './columns';
 import { toLoose } from './loose';
 import { spawnLattice } from './lattice';
+import { spawnRow } from './rows';
 import { WAKE_HIT, REST_FILL } from './defs';
 import type { Integrity } from '../integrity';
 
@@ -47,6 +48,13 @@ export function spawnRigid(ig: Integrity, piece: ColPiece[], tip?: { pivot: [num
     }
   }
   // (the lattice variant: rock and what's built on the voxel lattice too — the tankers' solver for everything)
+  // (the engine variant: a rigid row of the physics engine — integrity/rows.ts)
+  if (ig.route.rock === 'engine') {
+    if (!ig.engine) throw new Error('spawnRigid: ?solver=engine with no engine installed');
+    touchCols(ig, piece, true);
+    spawnRow(ig, cells);
+    return;
+  }
   if (ig.route.rock === 'lattice' && ig.physics) {
     touchCols(ig, piece, true);
     spawnLattice(ig, cells, () => false);

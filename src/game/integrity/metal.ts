@@ -10,6 +10,7 @@ import { withColumns } from './tick';
 import { meshFor } from './rigid';
 import { edit, touchCols } from './columns';
 import { spawnLattice } from './lattice';
+import { spawnRow } from './rows';
 import { WOOD, METAL_MAX, WAKE_HIT } from './defs';
 import type { Integrity } from '../integrity';
 
@@ -127,7 +128,10 @@ export function wakeMetalNow(ig: Integrity, seeds: [number, number, number][]): 
   const plain = list.map((c) => ({ x: c.x, y: c.y, z: c.z, mat: c.mat }));
   // (the variant's: the voxel lattice — the physics voxels, drawn as their own voxels — or the node solver)
   let body: SolverBody | null = null;
-  if (ig.route.metal === 'lattice') {
+  if (ig.route.metal === 'engine') {
+    // (a rigid row: it stands on what its pinned cells stood on by contact — the engine has no pins yet, PT4)
+    if (!spawnRow(ig, plain)) return 'done';
+  } else if (ig.route.metal === 'lattice') {
     if (!spawnLattice(ig, plain, (c) => pins.has(key(c.x, c.y, c.z)))) return 'done';
   } else {
     body = solver!.add({ cells: plain, pinned: (c) => pins.has(key(c.x, c.y, c.z)), kind: 'deformable' });

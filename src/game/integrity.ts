@@ -41,6 +41,8 @@ import { regionThings, unrest, wakeResting } from './integrity/resting';
 import { edit, writeColumn } from './integrity/columns';
 import { chips, impact, keepBudget, project, resetProjection, toLoose } from './integrity/loose';
 import { dropModels, spawnLattice } from './integrity/lattice';
+import { spawnRow } from './integrity/rows';
+import type { EngineKit } from '../engine/install';
 import { METAL, WOOD, Grab, JB6_KEEP, GROUND_DUST, mainMat } from './integrity/defs';
 export { GROUND_DUST } from './integrity/defs';
 export type { Grab } from './integrity/defs';
@@ -59,6 +61,8 @@ export class Integrity {
   /** (solver step 2, the experiment) which representation moves what's freed (solver/variant.ts: ?solver=) */
   readonly variant: SolverVariant = solverVariant();
   readonly route: Routing = ROUTING[this.variant];
+  /** (`?solver=engine`) the physics engine: what the judge frees becomes its rigid rows (integrity/rows.ts) */
+  engine: EngineKit | null = null;
   /** what bends (goes to a deformable body): metal, and wood but for the baseline */
   bends(m: number): boolean {
     return METAL.has(m) || (this.route.woodBends && WOOD.has(m));
@@ -169,7 +173,7 @@ export class Integrity {
    * accurate number") the CPU rigid rock not stepped (the bodies frozen where they are, still drawn), the judge not run
    */
   readonly paused = { physics: false, judge: false };
-  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0, judgeMs: 0, judgeGpuMs: 0, readMs: 0, readKB: 0, blows: 0 };
+  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0, judgeMs: 0, judgeGpuMs: 0, readMs: 0, readKB: 0, blows: 0, rows: 0, rowCells: 0, rowMs: 0 };
   /** sleeping bodies projected per column: top, bottom (top < 0: none) — the
    *  GPU's bodyProj texture and the bodies' own collision share it */
   readonly proj: Float32Array;
@@ -448,6 +452,7 @@ export class Integrity {
     for (const c of cells) mats.set(c.mat, (mats.get(c.mat) ?? 0) + 1);
     const most = [...mats].sort((a, b) => b[1] - a[1])[0][0];
     const bent = cells.filter((c) => this.bends(c.mat)).length * 2 > cells.length;
+    if (this.route.rock === 'engine') return spawnRow(this, cells, vel);
     if (this.route.rock === 'lattice' || (bent && this.route.metal === 'lattice')) return spawnLattice(this, cells, () => false);
     if (bent) {
       if (!this.solver) return false;
@@ -472,7 +477,7 @@ export class Integrity {
 
   /** whether the variant has a body for metal (the node solver, or the voxel lattice) */
   get metalSolver(): boolean {
-    return !!(this.route.metal === 'nodes' ? this.solver : this.physics);
+    return !!(this.route.metal === 'nodes' ? this.solver : this.route.metal === 'engine' ? this.engine : this.physics);
   }
 
   /**
@@ -762,7 +767,7 @@ export class Integrity {
    * the rigid rock, or the old variant's structures: colbodies.ts). `?jb6=0` (measuring only) keeps it everywhere.
    */
   get keepsCopy(): boolean {
-    return JB6_KEEP || this.judge.id === 'runs' || !this.rigid || this.route.rock !== 'lattice' || this.route.structures === 'columns';
+    return JB6_KEEP || this.judge.id === 'runs' || !this.rigid || this.route.rock === 'cpu' || this.route.rock === 'nodes' || this.route.structures === 'columns';
   }
 
 }

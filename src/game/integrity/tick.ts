@@ -330,7 +330,7 @@ export async function pass(ig: Integrity, whole: boolean, want: Set<number> | nu
 /** What an analysis found, done: what crumbles crumbles, what breaks free falls. Did anything crumble? */
 export function apply(ig: Integrity, r: Fracture): boolean {
   // (round 96) metal isn't the judges': it's woken into the physics voxels, whole, where they found it
-  if (ig.rigid && (ig.route.metal === 'nodes' ? ig.solver : ig.physics)) takeMetal(ig, r);
+  if (ig.rigid && ig.metalSolver) takeMetal(ig, r);
   // (round 99) what other systems own found hanging free or giving: their owners told (the rock lets go: its cells
   // are ground again, and fall here with the rest as they do)
   if (ig.external) takeExternal(ig, r);

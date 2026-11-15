@@ -69,29 +69,611 @@ frames, because §3 says "A body is projected into the terrain only while it int
 
 ## Fine collision, body ↔ body
 
-The owner's steer (2026-11-15): "Just make bounding boxes or build trees and do tree tree collisions for intersecting
-RBs unless you think there is a faster GPU option? I do like spatial hashes but not for fully voxelated things". So:
-bounds in a hash for the coarse pass; never a voxel hash for rigid bodies; tree ↔ tree is the baseline to beat. All
-three options come from the one baked voxel model, shared by instances until a body deforms. Example: a 16³ model,
-about 1,350 surface voxels.
+**Chosen: a signed distance field per model, built on the GPU with a jump flood.** The owner, 2026-11-15: "SDF with
+JFA on GPU sounds like a winner for the fine collision". The earlier steer still holds for the coarse pass: "Just make
+bounding boxes or build trees and do tree tree collisions for intersecting RBs unless you think there is a faster GPU
+option? I do like spatial hashes but not for fully voxelated things". So: bounds in a hash give the pairs; the fine
+pass never hashes voxels.
 
-| | memory a model | work per intersecting pair | contact data | after fracture or deformation |
+**Built on `physics10-fine`, not wired into the game.** (What follows is round 1; round 2 below changed the pass
+and the rows.) `src/engine/sdf/` (`contract.ts` the layouts, `models.ts` the
+store and bake, `fine.ts` the pass), `src/shaders/engine/sdf-*.wgsl`, tests `test/gpu/sdf-bake.test.ts` and
+`sdf-fine.test.ts`, the desktop bench `sdf-fine-bench.test.ts`, the phone bench `sdfbench.html`.
+
+- **Model store.** One row a model (32 B: field offset, padded sides, sample offset and count, centre of mass, cells a
+  voxel). Each model is padded by one empty voxel a side. Occupancy bits go in; the bake writes the field and the
+  list of surface voxels. Instances share a row until a body deforms.
+- **Bake.** Seed, then a jump flood of ceil(log2(side)) + 1 passes, then finalize and commit: 9 dispatches for a batch
+  of 16³ models (a batch floods up to 2^18 padded voxels; more models run as more batches in the one submit). The
+  flood keeps the nearest matter voxel and the nearest empty voxel for every voxel; distance is to that voxel's box,
+  so the zero lies on the voxel faces. A model baked again after its voxels change takes the same path: `update`
+  (voxels changed on the CPU) or `rebakeFromGpu` (bits written by a GPU pass, no upload).
+- **Fine pass.** `expand` (a thread a half pair: bound spheres, the transform composed once, chunks of 64 samples
+  appended), `args` (the dispatch size, on the GPU), `fine` (a thread a sample: into the other body's frame, bounds,
+  8 field reads, a contact appended). Nothing is read back.
+- **Contact row, 48 B** (`contract.ts`): `u32 a, u32 b, f32 energy, u32 mats (a | b << 16), vec3f point, f32 depth,
+  vec3f normal (from b to a), f32 closing`. Counts in a 16 B buffer: contacts asked, contacts dropped, chunks, chunks
+  dropped. A reader takes min(asked, room).
+- **Inputs it expects** (stage 1 and 2's rows): `bodyPose` (pos, inverse mass; quat), `bodyVel` (linear, rest timer;
+  angular in the world frame, bound radius), `bodyInfo` (inverse inertia diagonal, material; flags, priority, model
+  row, grid id), `pairs` (a, b) with the count in word 0 of its own buffer.
+
+**Choices where the design was silent** (mine, each a proposal the owner can turn):
+
+1. **Both bodies give samples.** A corner of one body in a flat face of the other is seen only by the corner's own
+   sample: in the corner test, the face's samples alone report no overlap for a corner 0.5 deep. Cost: twice the
+   threads.
+2. **Sample cap 2,048 a half pair.** A bigger model's samples are taken evenly, the offset turning each tick, so every
+   sample is tested once in ceil(count / cap) ticks. A 16³ box has 1,352 samples (none skipped); a 32³ box 5,768
+   (each tested every third tick).
+3. **Margin 0.25 cells.** Gaps up to the margin give contacts with a negative depth.
+4. **Field format, by measurement.** Three were built: `f32` (4 B a voxel), `snorm8` (1 B, sixteenths of a voxel),
+   `grad8` (4 B: the snorm8 distance and a unit gradient kept at the bake, both interpolated). **`grad8` is my pick**:
+   the same speed as `f32` on the desktop, a normal that is continuous from cell to cell, and on a 12-voxel ball its
+   normals are within 8° of the true ball's on average (17° at worst) against 18° (38°) for the other two. `snorm8`
+   is the one to take if memory matters more: 12 KB for a 16³ model against 29.5 KB. The phone bench runs all three.
+5. **A surface sample is a point, not a ball.** It sits on the voxel's open face, edge or corner, so box corners are
+   exact. A voxel with no single open side on any axis (the inside of a one-voxel plate) is a ball of half a voxel.
+
+**Tested** (33 fine tests and 15 bake tests pass on Dawn, all three formats). The flood matches the brute-force
+distance at every voxel for boxes, a ball, an L, a notched block, a one-voxel plate and rod, a hollow shell, a diagonal
+stair, a comb and a girder. Its only misses: 64 voxels of a 32-voxel ball, 8.4 voxels or more inside, at most 0.175
+voxels off. The GPU's contacts equal a CPU mirror's (0.005 cells, 1°). Against the exact voxel geometry: on smooth
+ground (no edge within 1 voxel, 2 for `grad8`) depth and normal are exact; near an edge the depth is within 0.37
+voxels and the normal leans towards the next face.
+
+**Measured, desktop proxy** (Intel Xe integrated, Dawn D3D12 in Node, timestamp queries round the pass, median of 16;
+the adapter's clock ticks in 0.066 ms steps). `touch`: each pair overlapping by 0.75 voxels. `deep`: a third of each
+body inside the other.
+
+| scene | model | pairs | f32 ms | snorm8 ms | grad8 ms | threads | contacts |
+|---|---|---|---|---|---|---|---|
+| touch | 8³ | 256 | 0.39 | 0.20 | 0.20 | 141 k | 654 |
+| touch | 16³ | 64 | 0.20 | 0.20 | 0.20 | 140 k | 66 |
+| touch | 16³ | **256** | **0.66** | **0.59** | **0.66** | 553 k | 414 |
+| touch | 16³ | 1,024 | 2.2 | 2.3 | 2.4 | 2.2 M | 1,501 |
+| touch | 16³ | 4,096 | 9.0 | 9.6 | 10.6 | 8.9 M | 6,018 |
+| touch | 32³ | 256 | 2.1 | 1.4 | 2.2 | 1.0 M | 390 |
+| touch | 32³ | 4,096 | 16.8 | 18.4 | 18.6 | 16.8 M | 5,188 |
+| deep | 16³ | 256 | 0.66 | 0.66 | 0.72 | 553 k | 102 k |
+| deep | 32³ | 256 | 1.2 | 1.2 | 1.1 | 1.0 M | 194 k |
+
+Every row is in `data/perf/sdf/fine-bench.json`. Bake, wall time: one 16³ model about 1 ms (mostly the submit), 64 of
+them 9 ms; 64 of 32³ 60 to 72 ms. Bytes a 16³ box: 29,504 (`f32`, `grad8`) or 12,008 (`snorm8`); a 32³ box 185 KB or
+67 KB. The pass's own buffers at 256 pairs: 115 KB of work, plus 48 B a contact row.
+
+**Round 1's finding (answered in round 2 below).** 256 pairs of 16³ cost 0.6 to 0.7 ms here by timestamps, and 0.8 to
+1.3 ms in headless Chrome by the bench page's toggle: at the 1 ms line set for this pass. The cost follows the
+threads (about 1.1 ns each) and hardly the contacts: a touching pair spends over 99% of its threads on samples
+nowhere near the other body. The fix is to cull before threads are made: samples sorted into bricks at the bake, and
+`expand` making chunks only for bricks inside the other body's bounds (PF2). I estimate a tenth of the threads for
+touching pairs; not measured.
+
+**For the phone:** `sdfbench.html` (dev server: `http://<this PC>:5173/sdfbench.html`), about 5 minutes for every
+format, size and pair count; `?formats=grad8&sides=16&pairs=256,1024` for a short run. It toggles the pass on and off
+in windows and offers the report to download. The numbers to read are each row's `toggleDoneMs` and `toggleFrameMs`.
+
+### Round 2: cost, contact count, normals, the join (2026-11-15)
+
+Main's rulings: `grad8` is the packing; both bodies give samples; the margin and the cap are tuning parameters
+(`SdfFine.margin`, `SdfFine.cap`, settable between passes), not constants.
+
+**Threads follow the overlap (PF2).** The bake now sorts a model's samples into bricks of 4 × 4 × 4 voxels, in a fixed
+order, with a table of offsets (three dispatches: count, offsets, write; no atomics). The pass is `expand` (the
+transform a half pair), `cull` (a thread a half pair and a row of bricks: the bricks whose box, turned into the other
+body's frame, reaches its box grown by the margin), `args`, `fine` (a workgroup 16 samples of a surviving brick) and
+`reduce`. Same bench, same scenes, `grad8`, desktop proxy (Intel Xe integrated, timestamps, median of 16):
+
+| scene | model | pairs | before ms | after ms | threads before | threads after |
+|---|---|---|---|---|---|---|
+| touch | 16³ | 256 | 0.66 | 0.20 | 553 k | 96 k |
+| touch | 16³ | 1,024 | 2.36 | **0.46** | 2.2 M | 369 k |
+| touch | 16³ | 4,096 | 10.6 | 1.97 | 8.9 M | 1.47 M |
+| touch | 32³ | 256 | 2.16 | 0.33 | 1.0 M | 132 k |
+| deep | 16³ | 256 | 0.72 | 0.46 | 553 k | 400 k |
+| deep | 16³ | 1,024 | 2.75 | 1.70 | 2.2 M | 1.6 M |
+| deep | 16³ | 4,096 | 11.9 | 6.6 | 8.9 M | 6.4 M |
+| deep | 32³ | 256 | 1.11 | 2.16 | 1.0 M | 1.04 M |
+
+The after column includes the reduction. Small pair counts are not slower: 64 touching pairs of 16³ went from 0.20 to
+0.07 ms. One row is worse: deep pairs of 32³, because the cap used to bound the threads and now only skips samples
+after their thread exists (every third sample is tested a tick; all surviving samples get a thread), and every sample
+contact now does ten atomic writes for the reduction. Two forms that were slower, measured on the way: a workgroup of
+64 a brick (bricks hold 14 samples on average: 1.6 M threads at 16³ × 1,024, 1.97 ms), and one thread a half pair
+looping over all its bricks (a thread's loop is serial: 0.72 ms for 64 pairs of 32³ against 0.13 ms with a thread a
+row of bricks). Every row: `data/perf/sdf/fine-bench.json`; round 1's: `fine-bench-r1.json`.
+
+**Four contact rows a pair at most (PF4).** `fine` no longer appends rows. Every sample contact goes into its pair's
+record (`hits`, 128 B a pair): a count, the largest energy, its normal summed with the others that point the same way,
+and a bid for each of four places: the deepest, and the farthest out along three directions 120° apart across the
+line of centres. `reduce` (a thread a pair) computes the winners again and writes them at fixed places, rows
+`pair * 4` on. Why four: three spread points carry a resting or toppling body's torque, the deepest is the corner or
+edge that hit. In the bench: 0.74 rows a pair for touching 16³ pairs (many touch at one or two samples, or only
+within the margin), 4 for deep ones (408,516 sample contacts became 4,096 rows at 1,024 pairs). The pair's record
+keeps the full sample count and the largest energy for the event stage and the lattice hand-over. Nothing is dropped
+unsaid: rows have fixed room; pairs past the pass's room and sample groups past the list's room are counted in
+`counts`.
+
+**Normals near edges (PF3).** A row's normal is the mean of the pair's sample normals that point the same way (the
+same dominant axis in the pair's own axes). Against each scene's true normal, `grad8`:
+
+| scene | every sample, mean / worst | the rows, mean / worst | rows, normal read at the surface point |
+|---|---|---|---|
+| ball on ball | 22° / 43° | 1.6° / 1.6° | 1.6° / 1.6° |
+| box, face on face over a corner | 16° / 54° | 9.5° / 9.5° | 9.4° / 9.4° |
+| box, an edge in a face | 11° / 46° | 19° / 46° | 19° / 46° |
+| box, a corner in a face | 8° / 16° | 8° / 8° | 7.6° / 7.6° |
+
+The mean fixes the ball and takes the face's worst from 54° to 9.5°. It does not fix: the 9.5° bias where one box
+sits over another's corner (the rims on two sides lean the same way); the edge scene's third row, which is a sample of
+the lower box inside the upper box's 45° flank and keeps that flank's normal; the corner scene's second sample.
+Reading the gradient again at the contact's point on the surface changed nothing (the field is as rounded there), so
+that variant is measured and left off. Still poor near edges; not chased further.
+
+**Deterministic (PF6).** The sample order is fixed by the bake (brick by brick, voxel by voxel), bids tie-break on
+the sample's index, and rows have fixed places: the same scene gives the same rows bit for bit, across passes and
+across freshly baked stores (tested). `rebakeFromGpu` takes room for every voxel of the model by default (a bound
+that always holds, 4 B a voxel), or the caller's tighter bound; samples past a bound that is too small are counted.
+
+**The join with `physics10`** (read at c6f1bab7: `src/shaders/engine.wgsl`, `engine_step.wgsl`, `src/engine/engine.ts`;
+nothing merged). Its rows: `pose` 4 vec4 a row (last tick's centre and rotation, then centre + inverse mass, rotation),
+`vel` 2 vec4, `info` 3 vec4 (inverse inertia diagonal + flags; off-diagonal + mass; first sample, samples, material,
+cells), a sample list a body (`samples`: body-frame point + radius), two contact slots a sample, and a solve that is
+one thread a row over its own samples. What must change, and where:
+
+1. **Fine pass (mine): read its `pose` at 4 a row** (centre and inverse mass at `4r + 2`, rotation at `4r + 3`), and
+   treat an inverse mass below zero (a freed row) as zero. A few lines in `sdf-fine.wgsl`.
+2. **Fine pass (mine): read its `info` at 3 a row**: the inverse inertia diagonal from `3r`, the off-diagonal from
+   `3r + 1` (my effective mass uses the diagonal only today), the material from `3r + 2`. `vel` already matches word
+   for word.
+3. **Engine (theirs): a model row a body.** `info[3r + 2]` is full. Short term: a fourth vec4 a row holding the model
+   row. Better, later: the store's sample list replaces its `samples` buffer (its terrain pass reads the model's
+   samples by the sample rule in `contract.ts`), so one list serves terrain and bodies, instances share it, and
+   erosion becomes a copy of the model and `rebakeFromGpu`.
+4. **Engine (theirs): spawn bakes through the store** in the body's spawn frame, with the store's centre of mass the
+   row's centre (the store computes the same centroid from the voxels).
+5. **Engine (theirs): the coarse stage** (stage 2), writing `pairs` (a, b) and the count in word 0 of a buffer, with
+   no freed row in a pair.
+6. **Engine (theirs): the solve meets pair rows.** Its solve walks a row's own samples; pair contacts are 4 rows at
+   `pair * 4` with the pair's record saying how many. Either the coarse stage also writes each row's pair indices, or
+   the solve gains a pass over pairs that accumulates into `bodyDelta` (the note's stage 5).
+7. **Engine (theirs): events** from the pair's record (largest energy, the deepest row's point) into its event buffer.
+8. **Both: tuning.** `margin` should be its `EU.f.x` ("how near a gap is still a contact"); `cap` a new entry in
+   `tune/params.ts`.
+
+Items 1, 2 and 8 are small and mine to do at the merge; 3 to 7 are engine work that the note's stages 2 and 5
+already call for.
+
+### Round 3: the coarse pass (stage 2), built alone; exact, and over its budget (2026-11-15)
+
+(Answered by round 4 below: the pass was rebuilt and the fine pass's dispatches are sized by the pair count.)
+
+**Stopped for main's attention: the coarse pass gives the exact pair set, but costs 0.7 ms at 4,096 rows with 10%
+awake in a loose field and 4.2 ms in a pile, against the 0.3 ms line.**
+
+**What is built** (`src/engine/sdf/coarse.ts`, `sdf-coarse.wgsl`; the owner: "Just make bounding boxes … I do like
+spatial hashes but not for fully voxelated things"). A hash over body bounds, never voxels. Each body is in exactly one
+cell: the cell of its centre at the level whose cells hold its bound diameter (five levels, each half the one above;
+the top holds the biggest body). So a big body's bucket never fills with the small ones round it, and a query is at
+most 27 cells a level. The awake hash is rebuilt every tick by the awake rows. The sleeper hash is rebuilt only in a
+tick whose sleep epoch differs (its dispatches have zero workgroups otherwise): a sleeper at its own level, and once
+more at every coarser level under a second key, so an awake body finds the sleepers smaller than itself in its own
+level's cells. The pairs pass is a thread an awake row and a level. A pair is written once with no sort: an awake pair
+by the row at the finer level (same level: the lower row), an awake row and a sleeper by the awake row, and an entry
+counts only when the body's own cell is the cell asked for. A candidate is a pair only if the bound spheres and then
+the models' oriented boxes (15 axes) overlap. Pairs go to one buffer with a 256 B header (the count) in the layout the
+fine pass reads; it has room for 8 pairs a row and is made again bigger with the rows, as the engine's row buffers
+are; pairs past the room are counted and the fine pass reports them.
+
+The fine pass now reads the engine's rows as `physics10` has them (pose at 4 vec4 a row, info at 3 with the inertia's
+off-diagonal, an inverse mass below zero as immovable) plus one buffer the engine lacks: a model row a body.
+
+**Tested** (7 coarse tests on Dawn): random scenes of mixed sizes (a 2³ crumb to a 32 × 32 × 8 slab; piles and loose
+fields; all awake and part asleep) give exactly the brute-force pair set, each pair once; the same set with 1, 2 or 5
+levels; all asleep: no pair and no workgroup but the gate's; a sleeper found by an awake body bigger or smaller, and
+the sleeper hash following the epoch; 10,000 rows with 200 awake; pairs past the room and bodies too big for the top
+level counted; the pairs fed to the fine pass.
+
+**Measured** (desktop proxy, Intel Xe integrated, timestamps, median of 12; mixed sizes; fine pass sized by the pair
+buffer's room, see below):
+
+| scene | rows | awake | coarse ms | pairs |
 |---|---|---|---|---|
-| **a. tree ↔ tree** (the owner's baseline; octree over the voxels) | ~5 KB (≤ 585 nodes × 8 B) | one thread a pair with a stack of node pairs (4 levels, ~64 entries), sphere tests per node pair; or level by level, a dispatch and an append buffer a level, no stack | leaf overlaps give the point; normal from the leaf's open faces; depth from the overlap along it | rebuild the tree per piece |
-| **b. occupancy mip pyramid** (an implicit octree, no pointers) | ~0.6 KB (512 B of bits + mips) | one thread a surface voxel of A inside B's bounds: 1–3 bit reads coarse to fine, most end at the first; no stack | point is the sample; normal from 6 neighbour bits; depth by ≤ 3 steps | re-splat bits, reduce mips: two small dispatches; the erode rule clears a bit in place |
-| **c. signed distance field** (distance + gradient, 4 B a voxel) | 16 KB | one thread a surface voxel of A: 8 reads, no branch | depth and a smooth normal in one sample | re-splat, then a jump flood (4 passes at 16³); eroding needs a rebake |
+| loose | 1,024 | 103 | 0.66 | 28 |
+| loose | 1,024 | 1,024 | 0.33 | 133 |
+| loose | 4,096 | 446 | **0.72** | 131 |
+| loose | 4,096 | 4,096 | 0.46 | 609 |
+| loose | 16,384 | 1,740 | 1.25 | 476 |
+| loose | 16,384 | 16,384 | 1.18 | 2,409 |
+| pile | 1,024 | 103 | 2.8 | 229 |
+| pile | 4,096 | 446 | **4.2** | 1,016 |
+| pile | 4,096 | 4,096 | 1.6 | 5,701 |
+| pile | 16,384 | 1,740 | 5.8 | 4,549 |
+| pile | 16,384 | 16,384 | 3.7 | 23,152 |
 
-Impact energy is the same for all: ½ · effective mass · (closing speed along the normal)², summed per pair.
+One level against several (pile, 4,096 rows, all awake): 1 level 3.8 ms, 2 levels 1.6, 3 levels 1.4, 5 levels 1.6 to
+1.8. So levels are needed (a crumb beside a slab), and three would do for this mix.
 
-On a Mali tiler the stack traversal in (a) is the weak spot: threads of a workgroup diverge and the group waits for
-its slowest. (b) prunes like a tree with none of that. (c) costs the most memory but gives the smooth normals that
-"deflect and topple" wants. **Recommendation, to be settled by measurement: (b) for the test, and (c) only if (b)'s
-face-quantised normals look wrong in the lab.** This is my proposal, not the owner's method.
+**Why it is slow, as far as I got.** Fewer awake rows cost more, not less: the time is the longest single thread, not
+the sum. A big awake body walks the list of every smaller sleeper in its level's cells (46 cells wide at the top): a
+few hundred steps in one thread, and a thread's loop is serial (the same effect as the fine pass's brick loop, where
+729 steps cost 0.6 ms). Two things already done: the pairs kernel reads the table as plain words (an atomic load is an
+interlocked operation on D3D), and it visits only the cells a body of that level could reach from (8 of the 27, as a
+rule). What I would try next, none measured: sleepers kept in contiguous runs a cell (a counting sort when the epoch
+changes) so the pairs pass can be a thread a (row, run of 16) like the fine pass; or bigger sleepers' side doing the
+work for big awake bodies (a thread a sleeper near one). Both are design changes for main and the owner.
 
-**The benchmark:** `test/gpu/fine-collide-bench.test.ts`. 64, 256 and 1,024 intersecting pairs of 8³ and 16³ models
-at random poses; each option fills the same contact buffer; contacts checked against a CPU brute-force reference; ms
-per option printed (`FINE_LOG=1`). Then the same three on the phone bench as toggled windows: the phone is the final
-word. If tree ↔ tree wins or is within noise, it is the choice.
+**Found on the way, fixed.** The fine kernel read its group count with an atomic load in every thread. Read from the
+indirect arguments instead: touching 16³ × 1,024 went 0.46 → 0.20 ms, × 4,096 1.97 → 0.59 ms; deep 16³ × 256 0.46 →
+0.26, × 1,024 1.70 → 0.79, × 4,096 6.6 → 2.9; deep 32³ × 256 2.16 → 0.92 ms (PF14: now under round 1's 1.11). The cap
+is applied before a thread exists (only the tick's samples get threads). Reading a bid before writing it was twice as
+slow and is not done. The `normalAtSurface` variant is deleted.
+
+**Found on the way, not fixed.** The fine pass's expand, cull and reduce dispatches cover the pair buffer's room, not
+the pair count: with room for 65,536 pairs and 131 pairs, the fine pass costs 2.2 ms (PF19). They need indirect
+arguments from the count. The end-to-end numbers above are therefore not worth quoting, and the end-to-end scenes
+are not in `sdfbench.html` yet (PF20).
+
+### Round 4: the coarse pass's cost follows the candidates (2026-11-15)
+
+The owner on the structure, 2026-11-15: "Yeah you could also do a few levels of spatial hash if sizes vary too much.
+Binned into powers of two BB sizes. SAP is also a reasonable alternative to try for moving bodies." And then: "Yeah I
+don't know that SAP is actually any better and I don't know if it makes sense to try a hybrid and hash the tall piles
+along the remaining dimensions. If the hash is fast enough I like the simplicity of it". So: the multi-level hash over
+body bounds stays; sweep and prune was not built.
+
+Main's rulings: an inverse mass below zero is a freed row (in no table, never paired; the alive flag decides), zero is
+immovable; three levels unless the numbers say otherwise; the engine will supply a model row a body and a sleep epoch.
+
+**The cause, measured** (round 3's linked-list pass, pile, 4,096 rows, 446 awake, five levels): 3.80 ms. With the
+sleepers out of the hash: 0.20 ms. With nothing awake: under one clock tick. The longest walk by one thread: 1,263
+entries, 1,254 of them sleepers; 84,560 entries walked by 2,230 threads in all. So it was the long sleeper chains of
+the big awake bodies, a thread's loop being serial, as read.
+
+**The cure.** Each table is now a counting sort by bucket (count, sums a block of 32 and of 1,024, starts, fill), so a
+bucket's members are one run. Stage A (a thread an awake row and a level) cuts the runs of the cells a partner could be
+in into work items of up to 16 entries; stage B (dispatched indirectly over the items, a thread an entry) checks the
+entry is of that cell and level, then the spheres, then the oriented boxes, and writes the pair. No thread walks a
+list. The rule that writes each pair once with no sort: two awake rows by the one at the finer level (same level: the
+lower row); an awake row and a sleeper by the awake row; a pair with an oversize body by the other row, and two
+oversize awake rows by the higher. **Oversize bodies** (bigger than the top level's cell) are in a short list of their
+own, tested against every awake row, and an oversize awake row covers the sleeper cells it reaches: tested exact with
+a top cell of 20 cells under 16³ boxes and 32-cell slabs.
+
+**Every dispatch sized by what exists.** The awake table's by the awake rows, the sleeper table's only when the epoch
+changed, stage A by the awake rows, stage B by the items. The fine pass's expand, cull and reduce by the pair count
+(PF19), and a pair's record is cleared by its own expand thread, not by a clear of the room. What is left that is
+sized by room: a GPU clear of the awake table's counts each tick (8 B a bucket: 64 KB at 4,096 rows).
+
+**Measured** (desktop proxy, Intel Xe integrated, timestamps, median of 12, three levels; before = round 3's
+linked-list pass with five levels). Coarse alone, then coarse + fine + reduction:
+
+| scene | rows | awake | coarse ms, before → after | whole path ms, before → after | pairs |
+|---|---|---|---|---|---|
+| loose | 1,024 | 103 | 0.66 → 0.33 | 1.05 → 0.39 | 28 |
+| loose | 1,024 | 1,024 | 0.33 → 0.33 | 0.79 → 0.46 | 133 |
+| loose | 4,096 | 446 | 0.72 → **0.39** | 3.08 → 0.46 | 131 |
+| loose | 4,096 | 4,096 | 0.46 → 1.18 | 2.95 → 1.57 | 609 |
+| loose | 16,384 | 1,740 | 1.25 → 2.16 | 10.7 → 2.36 | 476 |
+| loose | 16,384 | 16,384 | 1.18 → 2.95 | 10.7 → 3.47 | 2,409 |
+| pile | 1,024 | 103 | 2.8 → 0.33 | 3.28 → 0.39 | 229 |
+| pile | 1,024 | 1,024 | 0.92 → 0.33 | 1.51 → 0.59 | 1,178 |
+| pile | 4,096 | 446 | 4.2 → **0.46** | 6.75 → 0.66 | 1,016 |
+| pile | 4,096 | 4,096 | 1.6 → 0.66 | 5.05 → 1.77 | 5,701 |
+| pile | 16,384 | 1,740 | 5.8 → 2.3 | 16.0 → 3.15 | 4,549 |
+| pile | 16,384 | 16,384 | 3.7 → 3.7 | 16.1 → 8.5 | 23,152 |
+| pile | 4,096 | **0** | 0.07 (one clock tick) | 0.07 | 0 |
+
+Against the targets at 4,096 rows with 10% awake: loose 0.39 ms (target about 0.3), pile 0.46 ms (under 1), nothing
+awake one clock tick. Levels on the 4,096-row pile (10% awake / all awake): one 0.46 / 0.85, two 0.39 / 0.66, three
+0.39 / 0.72, five 0.46 / 0.85 ms: two or three; three kept.
+
+**What got worse, and why.** A loose field with every row awake, and 16,384 rows: the pass now has a floor of about
+0.33 ms, and a cost that grows with the buckets (two a row), not with the work. The table build's sums run over every
+bucket whenever a row is awake, and they read the counts with atomic loads (an interlocked operation each on D3D):
+32,768 buckets at 16,384 rows. The fix, not done: keep the counts and cursors (atomics) in one buffer and the starts
+and runs in another, so the sums read plain words (PF22).
+
+**A pair's place in the contact rows (not built; left for the join).** Pairs are appended in thread order, so a
+pair's rows move from tick to tick. For warm starting the solver needs a stable place. What I would build: a
+persistent table keyed by (a, b), open addressing, one probe a pair in a small pass after stage B; a pair found keeps
+its slot, a new pair takes a free one, and slots not touched this tick are freed by a sweep sized by the table. The
+fine pass then writes a pair's rows at `slot * 4` and the solver reads its kept impulses there, with the key stored
+beside them. It is a new buffer, two kernels and a rule for freed slots: large enough that I left it, and say so.
+
+**Join list, added:** the engine supplies `model` (a u32 a row: the model row) and a sleep epoch word that changes on
+every sleep, wake, spawn or free of a sleeper and every move of one.
+
+### Round 5: the coarse pass's floor removed (2026-11-15); two of three items not built
+
+**Not built this round, and why it matters:** growing rooms with a fail-safe tick (item 2) and stable pair slots
+(item 3). Both are specified in the hand-over below. Until item 2 lands, three rooms can still miss a collision when
+they run out (each is counted): oversize lists (256 + 256), work items (64 a row), pairs (8 a row).
+
+**PF22, isolated then fixed.** The coarse pass by part, cumulative ms (`SDF_PROBE=1 npx vitest run --project gpu
+sdf-probe`, desktop proxy, timestamps, median of 12), before the fix:
+
+| scene | gate + sleepers | + awake table | + stage A | + stage B |
+|---|---|---|---|---|
+| pile 1,024 rows, 103 awake | 0.00 | 0.26 | 0.26 | 0.33 |
+| pile 4,096, 446 awake | 0.00 | 0.33 | 0.33 | 0.85 |
+| loose 4,096, all awake | 0.07 | 0.66 | 0.72 | 0.66 |
+| loose 16,384, 1,740 awake | 0.07 | 2.23 | 2.56 | 2.69 |
+| pile 16,384, all awake | 0.00 | 2.43 | 2.69 | 4.46 |
+
+So the floor and the growth with rows were the awake table's build: its sums ran over every bucket reading the counts
+with atomic loads. Fix: a table is two buffers, the counters (atomics, written only by count and fill) and the table
+proper (plain words). After: the awake table costs 0.07 to 0.13 ms in every scene above. Work items went from 16
+entries to 8 (16 was slower with everything awake, 4 slower for an awake body in a pile of sleepers: 0.66 ms against
+0.20).
+
+Coarse alone, round 3 → round 4 → now, and the whole path now (ms):
+
+| scene | rows | awake | coarse | whole path |
+|---|---|---|---|---|
+| loose | 1,024 | 103 | 0.66 → 0.33 → 0.26 | 0.39 |
+| loose | 1,024 | 1,024 | 0.33 → 0.33 → 0.13 | 0.26 |
+| loose | 4,096 | 446 | 0.72 → 0.39 → **0.20** | 0.33 |
+| loose | 4,096 | 4,096 | 0.46 → 1.18 → 0.46 to 0.66 | 1.18 |
+| loose | 16,384 | 1,740 | 1.25 → 2.16 → 0.39 | 0.72 |
+| loose | 16,384 | 16,384 | 1.18 → 2.95 → 0.92 | 1.57 |
+| pile | 1,024 | 103 | 2.8 → 0.33 → 0.20 | 0.33 |
+| pile | 4,096 | 446 | 4.2 → 0.46 → **0.26** | 0.66 |
+| pile | 4,096 | 4,096 | 1.6 → 0.66 → 0.46 | 2.16 |
+| pile | 16,384 | 1,740 | 5.8 → 2.3 → 0.46 | 1.97 |
+| pile | 16,384 | 16,384 | 3.7 → 3.7 → 1.84 | 8.7 |
+| pile | 4,096 | 0 | 0.07 (one clock tick) | 0.07 |
+
+The loose field with every row awake measured 0.46 ms in the probe and 0.66 ms in the bench run (the clock ticks in
+0.066 ms steps and runs differ by one or two): at round 3's 0.46, not below it. What is left in that scene is stage B:
+every awake row offers the entries of some 8 to 27 cells a level.
+
+The whole path's largest row (pile, 16,384 all awake, 23,152 pairs: 8.7 ms) is the fine pass, 6.9 ms of it: its cull
+dispatch gives every half pair the rows of the store's biggest model (81 rows of bricks for the slab) although a crumb
+has one brick (PF23).
+
+### Round 6: rooms that grow, a tick that fails safe (2026-11-15)
+
+The owner's rule: no fixed cap that can drop a collision; paging before caps. Every room of the two passes, and what
+happens when it runs out:
+
+| room | when it runs out | grows |
+|---|---|---|
+| oversize bodies (was 256 awake + 256 asleep) | it cannot: they are a run of the table's counting sort, one entry a row | with the rows |
+| the tables' runs | they cannot: an awake row has one entry, a sleeper one a level at most | with the rows |
+| the engine's rows (`rows`) | `SdfCollide.encode` sees it on the CPU: the tables double before the tick's passes | at once, in that tick |
+| work items (64 a row) | stage A flags its row and every entry of the run it could not cut into items (`MISS_ITEMS`) | by the read |
+| pairs (8 a row) | stage B flags both rows of the pair it could not write (`MISS_PAIRS`) | by the read |
+| cull items (8 a half pair) | `expand` flags both rows of the pair whose rows of bricks found no room (`MISS_CULL`) | by the read |
+| sample groups (64 a half pair) | `cull` flags both rows of the pair whose group found no room (`MISS_GROUPS`) | by the read |
+| a pair's contact rows | four a pair by design (the reduction); not a room | |
+| pair slots (a table twice the pairs) | `slots` flags both rows of the pair that found no free entry (`MISS_SLOTS`) | by the read |
+| the model store | sized on the CPU before each bake; doubles there (one GPU to GPU copy) | at the bake |
+
+**Safe.** `missing` is a u32 a body row on the GPU (`SdfCollide.missing`; bits in `contract.ts` `MISS_*`), cleared by
+the coarse pass each tick. A nonzero word means the row may lack a pair or a contact this tick. The solver's part,
+not built here: hold a flagged row at its last pose for the tick. Every row of a pair that was not written, or was
+written with contacts left out, is flagged; for work items some rows are flagged that had nothing to miss (the entries
+were never tested).
+
+**Growth.** Each room counts what was asked of it whole, past its end too, and keeps the most asked in a tick. `poll`
+(after the engine's submit) copies those words, 128 B, and maps them: every 8 ticks, one read under way at most, and
+no tick waits for it. A room at half or more (`rooms.ts`) is doubled until the asking is under half, by the next
+`encode`: the buffers are made again and the bind groups with them. No pipeline is made (tested by counting
+`createComputePipeline` calls): the kernels' layouts never depended on the sizes, the rooms are in the uniforms.
+Nothing is copied, because the pass rebuilds every one of these buffers each tick.
+
+**Departures from the hand-over as written.** (1) An oversize body that does not fit its list was to fall back to
+every awake row; instead the list is gone (the same exactness, one mechanism fewer). (2) "Tested first next tick" is
+not built: the room has grown by then and the row is tested like any other. (3) The two tables are one buffer, so
+stage B has a binding free for `missing` (eight storage buffers a stage). (4) The read will be a timed read in play,
+which DESIGN §24 does not allow: BACKLOG PF26, the owner's call.
+
+**Tested** (`test/gpu/sdf-rooms.test.ts`, 6, and 2 more with the cull below; `test/unit/sdf-rooms.test.ts`, 3). A pile of 1,500 rows with every room
+an eighth of what the scene asks: each tick, every pair brute force has and the pass lacks has both rows flagged, and
+so has every pair whose record differs from a roomy pass's; then the pair set is brute force's, every record the
+roomy pass's and no row flagged, and further ticks grow nothing. Each room alone. 400 oversize rows, awake and
+asleep. Rows grown from 300 to 700 mid-run.
+
+**Measured** (desktop proxy, Dawn in Node, pile of 4,096 rows all awake; `data/perf/sdf/rooms-bench.json`). The read:
+0.19 ms of CPU in the tick that starts one (0.015 ms a tick averaged over 8), the tick's wall time 2.02 ms with no
+read and 2.04 ms with one every 8 ticks (inside the noise); its answer lands 2 ms later. A growth (all five
+rooms from an eighth, with the slots and the cull items of the later commits in): 0.14 to 0.85 ms making buffers, and
+the tick that does it encodes in 1.2 to 1.8 ms against 0.57 (the bind groups). The wall time of the three growth
+ticks: 2.9, 3.6 and 8.4 ms against 2.9. **The last is a stall of about 5 ms in one tick**: it made the two biggest
+buffers at once (the sample groups 39,522 → 632,352 and the slots 4,096 → 16,384, some 10 MB that the driver clears
+at first use) and moved the slots. Under a frame, and once; a room that doubles instead of jumping sixteenfold costs
+less (the jump is what starting at an eighth does). From an eighth, the rooms took three growth ticks in a row (a
+room that ran out hides what the next would be asked).
+
+**Stable pair slots (PF25).** The solver will keep impulses a pair from tick to tick, so a pair's contact rows must
+stay in one place while the pair lasts. They now do: rows at `slot * 4`, the slot in the pair's record (word 7).
+
+- *The table.* Open addressing over a power of two of entries, keyed by the pair's rows (lower, higher: which body
+  the coarse pass names first can change when one falls asleep). An entry is a stamp (the epoch of the last pass that
+  touched it) and a key record of 16 B beside the rows: lower row, higher row, age in passes, the pair's index in this
+  pass's list.
+- *Probing.* Double hashing: entry `(h + i * step) & (entries - 1)`, `step` odd, `i` under 32. One walk a pair a pass,
+  by the pair's own thread in a small kernel (`slots`) before `expand`. It stops at its own key in an entry stamped
+  last pass (found: stamped now, age + 1) or at an entry never used (not in the table: every key took the first free
+  entry of its walk). Not found: it claims the first free entry it passed by compare-exchange, writes the key with
+  age 0 and zeroes the four rows. Each pair is in the list once (tested since round 3), so no two threads seek one key.
+- *Release.* No sweep. The epoch goes up one a pass; an entry is live when its stamp is this pass's or the last's, and
+  anything older is free. A pair absent for one pass has lost its slot.
+- *Growth.* At half full (entries that may be live: last pass's pairs and this pass's new ones, the most since the
+  last read), or at once when a pair finds no free entry in its 32 (that pair has no rows that pass and both its rows
+  are flagged `MISS_SLOTS`). The next `encode` runs `rehash` first: a thread an old entry, every entry live at the last
+  pass put in the new table with its key, age and rows, and `slotRemap[old]` its new place (`slotGeneration` goes up:
+  the solver moves its own impulses by the same map).
+- *Departure.* The pair's record (128 B: sample count, energy, rows written) stays by the pair's index in this
+  tick's list, not by slot: it is rebuilt every tick and the dispatches walk the list. Only the rows and the key
+  record are by slot.
+
+Tested (`test/gpu/sdf-slots.test.ts`, 6): a stack of six boxes keeps each pair's slot, and bit-identical rows, for 100
+passes with the list shuffled and either body named first; a pair absent for one pass comes back with age 0 and
+zeroed rows while the pair beside it keeps slot and age; 720 claims of 168 pairs through a table of 64; a growth
+keeps key, age and rows (checked in a pass with no pair, so the copy is the rehash's own); a table of 4 under 12
+pairs: 4 whole, 8 flagged with no rows; a pile of 1,100 rows through both passes: every pair a slot of its own with
+its key beside it, the table grown at half full with no pair failing and every age going on through it.
+
+Measured (`SDF_PROBE=1 npx vitest run --project gpu sdf-probe -t "pair slots"`; desktop proxy, timestamps round
+`pairArgs` + `slots` alone, median of 12): one clock tick (0.07 ms) for 4,549 and 5,701 pairs whether every pair finds
+its slot or claims a new one; 0.20 to 0.26 ms for 23,152 pairs found, 0.33 ms claiming. On the bench table the whole
+path moved by less than the runs differ (pile, 4,096 rows all awake: 1.57 to 1.97 ms before, 1.77 to 1.97 after).
+
+**The cull sized by each pair's own model (PF23).** The cull dispatch gave every half pair the brick rows of the
+store's biggest model (81 for the slab). Now `expand`, which already has the transform, turns the other body's box
+(grown by the margin) into a box of the sampler's bricks and appends a cull item for each row of bricks along x
+inside it; `cullArgs` sizes an indirect dispatch from the item count; `cull` is a thread an item and tests only the
+bricks of that row between the box's ends. The brick test itself is unchanged, so the contacts are the same rows
+(77,578 in the largest scene, before and after; a few groups fewer, because the box of bricks is tighter than the
+old test at a body's corners). The bound-sphere test left `expand` (the coarse pass has done it; a pair that is far
+apart asks for no item) to make room for the items' counter and the `missing` words in its eight bindings. The cull
+items are a room like the others: counted whole, grown by the read, both rows flagged `MISS_CULL` when it runs out.
+
+Before → after, the bench table (desktop proxy, Intel Xe, timestamps, median of 12 a run; three runs each side, the
+median run given; before is the slots commit):
+
+| scene | rows | awake | pairs | fine ms | whole path ms | cull items |
+|---|---|---|---|---|---|---|
+| loose | 4,096 | 446 | 131 | 0.13 → 0.13 | 0.26 → 0.26 | 1,875 |
+| loose | 4,096 | 4,096 | 609 | 0.20 → 0.39 | 0.46 → 0.85 | 9,196 |
+| loose | 16,384 | 1,740 | 476 | 0.33 → 0.33 | 0.72 → 0.66 | 6,794 |
+| loose | 16,384 | 16,384 | 2,409 | 0.92 → 0.72 | 2.16 → 1.90 | 35,810 |
+| pile | 4,096 | 446 | 1,016 | 0.26 → 0.33 | 0.46 → 0.46 | 14,502 |
+| pile | 4,096 | 4,096 | 5,701 | 1.31 → 1.25 | 1.70 → 1.70 | 85,314 |
+| pile | 16,384 | 1,740 | 4,549 | 1.11 → 0.85 | 1.44 → 1.18 | 64,942 |
+| pile | 16,384 | 16,384 | 23,152 | **5.64 → 4.65** | **7.08 → 6.16** | 339,350 |
+| pile | 4,096 | 0 | 0 | 0 | 0.07 | 0 |
+
+The 1,024-row scenes are at the clock's floor both sides (0.26 to 0.52 ms whole). Runs differ by one or two clock
+ticks (0.066 ms) in the small rows and by up to a third in the largest (after: 4.39, 4.65 and 5.77 ms), so only the
+last two rows show a change I would stand behind, and the loose field with 4,096 awake is not a real loss (its
+three runs after: 0.46, 0.85, 0.98; before: 0.46, 0.46, 0.52: one clock tick apart at best, unexplained at worst).
+
+**What the cull was not.** Round 5 read the largest row as "the fine pass, 6.9 ms of 8.7, because of the cull
+dispatch". By part now (`SDF_PROBE=1 … sdf-probe -t "pair slots"`, the same scene): slots 0.26 ms, expand and cull
+0.8, the samples' threads 4.8, reduce under a clock tick. The cull was a fifth; the rest is 9.7 M sample threads for
+23,152 pairs (420 a pair), which is the overlap itself in a pile half full of matter at random poses (BACKLOG PF29).
+
+**The page** (`sdfbench.html` v4 in headless Chrome, `node scripts/sdfbench.mjs --url http://localhost:5352`: 24
+configurations with 16,384 rows in, 3 min 37 s, no error; `data/perf/sdf/sdfbench-desktop.json`). The whole path, ms a
+tick, by the toggle's GPU-done difference and by a batch alone:
+
+| rows | awake | scene | toggle | batch | pairs |
+|---|---|---|---|---|---|
+| 4,096 | 446 | loose | 0.50 | 0.93 | 131 |
+| 4,096 | 4,096 | loose | 0.77 | 1.38 | 609 |
+| 4,096 | 446 | pile | 0.82 | 1.29 | 1,016 |
+| 4,096 | 4,096 | pile | 4.46 | 3.48 | 5,701 |
+| 16,384 | 1,740 | loose | 1.91 | 1.43 | 476 |
+| 16,384 | 16,384 | loose | 2.65 | 3.80 | 2,409 |
+| 16,384 | 1,740 | pile | 3.92 | 2.98 | 4,549 |
+| 16,384 | 16,384 | pile | 36.6 | 6.78 | 23,152 |
+
+Round 5's page runs at 4,096 rows (the only ones kept, `perf-reports/`): 0.48 to 1.47, 0.67 to 2.47, 0.96 to 1.51
+and 3.48 to 3.65 ms by the toggle: the same within their own spread. The last row's toggle (36.6 ms, and 12.8 and
+30.3 in two shorter runs, against a batch of 6.8 to 11.7) is not the pass's cost: the frame goes over the display's
+refresh and the GPU-done time jumps by whole frames. A first full run of the page, made while this machine was busy
+(its empty frames took 3.8 to 7.3 ms against 3.0 to 3.7), read two to four times higher throughout and is not kept.
+The phone run is the owner's (PF20).
+
+### Hand-over: joining body ↔ body into the engine
+
+(Joined on `physics10-join`: see "The join" at the end of this note for what was built, what changed against this hand-over and what is left.)
+
+Everything here is on `physics10-fine` (not merged anywhere). Code: `src/engine/sdf/` (`contract.ts` layouts,
+`models.ts` the model store, `coarse.ts`, `fine.ts`, `collide.ts` both passes with one set of rooms, `rooms.ts` the
+growth rule, `shapes.ts` test scenes), kernels `src/shaders/engine/sdf-*.wgsl`. Each kernel file's header states its
+scheme. The engine's row layout is the one in `physics10`'s `engine.wgsl` at c6f1bab7; if the breaking branch changed
+it, `contract.ts` "the engine's rows" and the three `poseOf` / `velOf` / `centre` helpers in the kernels are the only
+places that know it.
+
+**What the engine must supply (it has neither today).**
+1. `model`: a u32 a row, the row's model row in the store. Write it at spawn: `store.add({ size, vox, voxel })`
+   returns the model row; `store.flush()` bakes (once for all pending models; it submits its own commands). Instances
+   of the same voxel model share one row. The store's centre of mass is the matter's centroid in the model's voxel
+   coordinates: the row's `pose` centre must be that point. A body whose voxels change needs `store.update(id, spec)`
+   (CPU voxels) or `store.rebakeFromGpu(id)` (occupancy bits written by a GPU pass into `store.occ` at
+   `store.info(id).occBase`), then `flush()`.
+2. `sleepEpoch`: a buffer whose word 0 changes whenever a row falls asleep, wakes, is made or freed asleep, or a
+   sleeper is moved. `compact` is where the engine decides sleep: bump it there. The coarse pass rebuilds its sleeper
+   table only in a tick where the word differs from the one it last built for.
+
+**Buffers bound.** Read from the engine: `list` (the awake list: indirect arguments in words 0-2, the count in word
+3, rows from word 8; needs INDIRECT and STORAGE usage), `pose`, `vel`, `info`, `model`, `sleepEpoch`. The membership
+rule: only rows in the awake list and rows with ROW_ALIVE and ROW_ASLEEP in `info[3r].w` are in any table; an inverse
+mass below zero is a freed row and must be in neither; zero is immovable.
+
+**A tick, in order.** One object: `const collide = new SdfCollide(device, store, { rows, cellTop, margin })`.
+1. `collide.encode(enc, { list, pose, vel, info, model, sleepEpoch }, rowsInUse, tick)` in the engine's encoder,
+   after integration and `compact`. Nothing is read back. It makes any room bigger that the last read asked for (and
+   the rows' room at once if `rowsInUse` is past it), uploads three small uniforms, and encodes two compute passes:
+   - coarse: (two GPU clears: the awake table's counters, the rows' `missing` words) gate; the sleeper table
+     (clearTab, countCells, blockSum, superSum, startCells, fillCells: zero workgroups unless the epoch changed); the
+     awake table (the last five); stageA; argsB; stageB.
+   - fine: (rehash, only in the tick after the slots' table grew) pairArgs; slots; expand; cullArgs; cull; fineArgs;
+     fine; reduce.
+2. The solve, then events, in the same encoder.
+3. The engine's submit, then `collide.poll()`: it destroys the buffers a growth replaced, and every `readEvery`
+   ticks (8) starts the 128 B read of what was asked of the rooms. It never waits; the answer makes a room bigger at
+   a later `encode`.
+
+**What the solver reads.** A growth replaces buffers, so take them from the objects each tick (or when
+`collide.growths.length` changes), never keep them.
+- `collide.missing`: a u32 a body row, `contract.ts` `MISS_*` bits. Nonzero: the row may lack a pair or a contact
+  this tick, because a room ran out before it grew. Hold the row at its last pose for the tick (the solver's part,
+  not built). It is zero again once the room has grown, a few ticks later.
+- The pair list: `collide.coarse.pairBuf`, word 0 the pairs asked for, pairs (a, b) from word 64; take min(asked,
+  `collide.coarse.pairRoom`). A pair's index p in the list changes from tick to tick.
+- Pair p's record: `collide.fine.hits` at `p * 128` B: word 4 the sample contacts (what the lattice hand-over wants:
+  how much of the surface touched), word 5 the largest sample energy (f32 bits; also on every row), word 6 the rows
+  written (0 to 4), **word 7 the pair's slot** (`NO_SLOT`, 0xffffffff: no rows this tick, and both rows flagged).
+- The pair's contact rows: `collide.fine.contacts` rows `4 * slot` to `4 * slot + rows - 1`, 48 B each (`contract.ts`
+  "A contact row": a, b, energy, materials, point, depth, normal from b to a, closing speed). **The slot is the
+  pair's for as long as the pair is in the list every tick.** Keep impulses by slot.
+- **The key beside the rows:** `collide.fine.slotKeys` at `16 * slot` B: the pair's lower row, its higher row, the
+  slot's age in ticks, the pair's index p this tick. Age 0: the pair is new (or was away for a tick), the rows it did
+  not write are zero, and its impulses start from nothing.
+- At a growth of the slots' table every live pair moves: `collide.fine.slotGeneration` goes up, and after that
+  tick's `encode` `collide.fine.slotRemap` holds, for each old slot, its new slot or `NO_SLOT`. Move the impulses by
+  it before the solve (a kernel of the solver's own; the old table's size is the `from` of the growth in
+  `collide.growths`).
+- A row's index inside a slot follows the reduction's order and can change (PF28): match rows by point, or keep one
+  impulse a pair.
+
+**Tuning parameters.** `CollideOptions.margin` (cells; it sets both passes: to change it later set
+`collide.coarse.margin` and `collide.fine.margin` alike; the engine's `EU.f.x`), `collide.fine.cap` (samples a half pair a tick, default 2,048), `cellTop` (about the biggest
+common body's bound diameter), `levels` (3), `readEvery` (8). The rooms start at `pairsARow` (8), `itemRoom`,
+`cullRoom`, `groupRoom`, `slotRoom` and grow; none needs setting for correctness. Field format: `grad8`.
+
+**Open hacks and limits, by id** (docs/BACKLOG.md): PF3 normals near edges (rows take the mean; 9.5° over a corner,
+46° on one row of an edge in a face); PF5 cap and margin defaults are not from the phone; PF7 the field holds ±7.9
+voxels; PF8 one-voxel plates' rims; PF9 a 3D-texture field unmeasured; PF10 the store's arena has no compaction;
+PF11 and PF20 the phone runs asked of the owner; PF15 at most 65,536 samples a model, four rows a pair whatever its
+size; PF17 the join itself; PF21 pair order, the reach of an oversize row, a sleeper moved without an epoch bump is
+not found; PF26 the rooms' read is a timed read in play (the owner's call); PF27 the rooms' hacks; PF28 the slots'
+hacks; PF29 the samples' threads in a dense pile.
+
+**Tests a joiner should run first** (Node, real GPU, about a minute):
+`npx vitest run --project gpu sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots` (15 + 36 + 8 + 8 + 6 pass
+at this commit, one bench skipped), then `npm run typecheck` and `npx vitest run --project unit` (one failure on the
+base: `roadlab/control.ts` in the writing lint). Read first: `test/gpu/sdf-collide-rig.ts`, the smallest example of
+a tick (hand-made engine rows, `encode`, submit, `poll`, and everything the solver reads, read back); then
+`sdf-rooms.test.ts` "room for an eighth" (what `missing` promises) and `sdf-slots.test.ts` "a resting stack" and "a
+pair absent for one pass" (what a slot promises). `test/gpu/sdf-harness.ts` drives the fine pass alone from a
+hand-made pair list. Benches: `SDF_BENCH=1 npx vitest run --project gpu sdf-coarse-bench` (coarse and the whole
+path), `SDF_BENCH=1 … sdf-rooms -t "cost of the read"` (the read and a growth), `sdf-fine-bench` (the fine pass
+alone), `SDF_PROBE=1 … sdf-probe` (the coarse pass, the slots and the fine pass by part); the phone page is
+`sdfbench.html`.
+
+**Considered, not chosen** (both from the same baked voxel model):
+
+- **Tree ↔ tree** (an octree over the voxels, about 5 KB a 16³ model): one thread a pair with a stack of node pairs.
+  The owner's first baseline. On a tiler the threads of a workgroup diverge and the group waits for its slowest;
+  normals come from leaf faces. Not built.
+- **Occupancy mip pyramid** (about 0.6 KB): one thread a surface voxel, 1 to 3 bit reads. The least memory, but its
+  normals are voxel faces. Not built.
 
 ## How the lattice becomes stage 4
 
@@ -225,7 +807,7 @@ eroded to nothing is freed where it is (flags 0, inverse mass negative, its mesh
 ## Departures from DESIGN.md, and additions
 
 1. Sleepers are met through their own model, not their projection (§10 is silent). Cost: a second, event-built hash.
-2. Fine collision by mip pyramid (or SDF) instead of the owner's tree ↔ tree, only if the benchmark says so.
+2. Fine collision by signed distance field, the owner's choice of 2026-11-15, instead of the first baseline, tree ↔ tree.
 3. Owner + normal packed in the interval's spare word: at most 65,535 owners in a window.
 4. Paged particles with a GPU free stack; models shared until deformed (copy on deform). Additions.
 5. The budget's unit is voxels deforming at once. §10 says "a fixed budget per frame"; this is my reading.
@@ -249,10 +831,16 @@ eroded to nothing is freed where it is (flags 0, inverse mass negative, its mesh
 
 ## Hacks and limits
 
-- Contacts are one per surface sample; big bodies need a sample cap, found on the phone.
+- Contacts are one per surface sample. A half pair tests at most 2,048 samples a pass (a number of mine, to be set on
+  the phone); a pair reaches the solver as four rows at most.
+- The distance field rounds edges: within a voxel of an edge (two for `grad8`) a contact's normal leans towards the
+  next face, up to 54° at single samples. A pair's rows take the mean, which leaves 9.5° where a box sits over
+  another's corner and 46° on one row of an edge in a face (PF3).
+- Deep overlaps of big models are the fine pass's worst case: 256 pairs of 32³ a third inside each other cost
+  2.2 ms on the desktop (PF14).
 - Jacobi accumulation with fixed-point atomics: stacks settle slower than a coloured solve. §10 leaves the choice to
   measurement.
-- Mip-pyramid normals are quantised to voxel faces. Re-splatting a bent body loses shape below one voxel.
+- Re-splatting a bent body loses shape below one voxel.
 - Buildings collide at column resolution until owner + normal lands; no insides until INT8.
 - The hash chain guard (128) stays in stage 4 unless the budget makes it unreachable: a silent drop today.
 - Positions are f32 in window space; the shift on a slide stays.
@@ -265,6 +853,8 @@ eroded to nothing is freed where it is (flags 0, inverse mass negative, its mesh
 - The writing lint fails on `src/roadlab/control.ts` at this tip, before any change here.
 - A sleeper watches only the column under its centre: a long beam whose end loses its ground stays asleep. Any change
   of that column's word wakes it (a new interval, sand buried under something), and it sleeps again 0.6 s later.
+- Of this note, the fine collision pass (tests and desktop bench) and the lattice bench below have been run. The rest
+  has not.
 
 ## Open questions for the owner
 
@@ -669,3 +1259,201 @@ gated by `Engine.settles`, false today, which parks a still body in S_STILL). To
    skinned place minus the centre, its weights only the part's voxels. Then the break surface, by the owner's method.
 4. Tests listed in the brief for D; the equality test pattern is `R.drawn()` before and after.
 5. Then `Engine.settles = true`, wake a settled row as any row, and the lab station (E).
+
+## The join: bodies meet bodies in the engine (branch `physics10-join`, 2026-11-15)
+
+`physics10-break` (96c9c104) with `physics10-fine` (88899b14) merged in. Files: `src/engine/engine.ts`,
+`src/engine/sdf/hexmodel.ts` (new), `collide.ts`, `coarse.ts`, `fine.ts`; `src/shaders/engine_pairs.wgsl` (new),
+`engine.wgsl`, `engine_compact.wgsl`, `engine/sdf-coarse.wgsl`, `sdf-fine.wgsl`; tests `test/gpu/engine-pairs.test.ts`
+(8), `engine-pile.test.ts` (5 and a bench); the playground's `pile` station, `scripts/pilelab.mjs`. Step 1's kernels
+(`engine_step.wgsl`) are kept: the panel's `bodies meet bodies` at 0 runs them as before.
+
+### What is joined, and what is not
+
+Joined: rigid rows meet rigid rows, awake or asleep, with the agreed rules. **Not joined** (each a BACKLOG row, each
+with a safe stand-in, none half-wired): a deforming body's voxels against rigid rows (PJ5: they pass through, so a
+hard hit between bodies stays rigid unless the panel's `bodies break bodies` is on); a field for a part made at
+settle (PJ6: such a row is in no pair, it meets the ground only); the phone bench page, the floor ladder, the stage
+split at 1,000 to 50,000 rows and the row-level early-out for terrain contacts (PJ3: asked for by the owner and the
+coordinator while this was being built).
+
+### Row layouts reconciled
+
+- `info` is four vec4 a row on the engine's side (the hand-over read three): the two kernel files and `packBodies`
+  now use four. The material word is read whole (material | loose << 8).
+- `model`: a u32 a row, the engine's `sdfModel` buffer. A row with no model in the store holds 0xffffffff and the
+  coarse pass leaves it out of every pair.
+- The sleep epoch is word 7 of the awake list's header (`CoarseOptions.epochWord`), put up by `compact` (a wake, a
+  row made asleep, a sleeper moved by the window's slide) and by `rowFinish` (a row falls asleep). The list's header
+  is cleared each tick but for that word. `Engine.clear()` and a growth of the rows tell the coarse pass to build its
+  sleeper table again.
+- The awake list's buffer also holds 20 work words a row (`engine.wgsl` RW_*): what the pair solver adds into a row.
+  A kernel that writes them cannot be dispatched from the same buffer, so `compact` writes the list's dispatch
+  arguments a second time into a 32 B buffer of their own.
+
+### One model a mesh, baked ahead (the owner, 2026-11-15)
+
+"You going potentially make the distance fields and voxels for each mesh (instanced ones anyway)". A model is keyed by
+its content (`modelKey`: its cells about their box's corner, their materials, the parity of the box's first row);
+bodies with the same key share one heap model, mesh, distance field and sample list (tested: 100 instances, one
+bake). Models added before a tick are baked in one batch at that tick's start, so a level's bodies bake once before
+its first tick. **Next, not built (PJ9):** bake at build time or cache the baked bytes by content hash (the repo's
+warm cache) so a level load bakes nothing. A model first dropped in play (a lab button) still bakes in that tick: on
+the phone that is 7.6 ms for one 16-cube model, so play must not introduce new shapes that way.
+
+**The collision shape is the hex-prism cells resampled to cubes of half a cell** (`hexmodel.ts`; PJ4). At one cube a
+cell, blocks two cells wide stacked square fell through each other: the fine pass's samples are points on a voxel's
+open face, edge or corner, a two-voxel block is corners only, and every sample of one lay on an edge of the other.
+Cost: eight times the field and the bake. Sides are off by up to a quarter cell in x and y; tops and bottoms are exact.
+
+### A tick, in order
+
+`compact` → per substep: `integrate` → (first substep: coarse, fine, `pairPrep`) → `tfine` → `pairPre` →
+iterations of (`pairSolve`, `rowSolve`) → `pairPush` → `rowFinish` (the move, sleep) → stage 4's kernels → `fold` →
+the draw list. One compute pass. Pairs are found once a tick; a contact row's point is kept in each body's own frame,
+so its depth follows the bodies through the second substep.
+
+**Counts a tick** (defaults: 2 substeps, 6 pair iterations, deformation on): 1 compute pass (and the frame's skin
+pass); 146 dispatches, 9 of them direct (`compact`, five one-thread argument kernels of the pair passes, `arm`,
+`drawArm`, `drawEnd`) and 137 indirect, of which 75 are stage 4's lattice and settle kernels (zero workgroups unless
+a body deforms), 18 the pair passes', 35 the solver's; 6 GPU clears before the pass (the list's header 28 B, its
+arguments 32 B, the events' header 16 B, the deform arguments 32 B, the coarse pass's awake counters 8 B a bucket of
+room, the rows' `missing` words 4 B a row of room); no copy; 1,520 B uploaded (commands 512 B, three uniforms of
+224 B, thresholds 192 B, the pair passes' three uniforms 144 B) — no pose is uploaded; a bind group set a dispatch.
+With nothing awake every indirect dispatch has zero workgroups (tested: the list's and the pairs' arguments read 0).
+The two clears sized by room and the 75 idle dispatches are what I would cut first for the phone's floor (PJ3); I
+have not measured the floor on the phone and do not guess at it here.
+
+### The solver, as built: Jacobi with accumulate-and-apply, mass split by pair
+
+- **Terrain contacts are reduced, not walked.** `tfine` is a workgroup a row: its 64 threads share its samples, each
+  contact bids (an atomic max in workgroup memory) for one of 13 rows — the deepest on the ground, the farthest out
+  along eight directions, the deepest against a wall in each of four quarters — and after the barrier a thread a row
+  writes the winner. Erosion and the hardest stop are found in the same threads. The one-thread-a-row solve (5.7 ms
+  for 8 rows of 1,352 samples) is gone: a row's own thread goes over 13 rows.
+- **Pairs.** `pairSolve` is a thread a pair: it reads both bodies' velocities as the last iteration left them, solves
+  its own rows in turn on its own copy, and adds each body's change into the body's work words as fixed-point
+  integers with atomic adds. `rowSolve` is a thread a row: it takes the sum, then goes once over its terrain rows. A
+  body in n pairs gives each a 1/n share of its mass, so the sum cannot overshoot. Integer sums are the same in any
+  order: the run is deterministic (a pile of 48 run twice: every pose word identical).
+- **Why Jacobi and not colours:** it needs no graph colouring pass and no per-colour dispatches, and its cost is two
+  dispatches an iteration whatever the pile. Its price is convergence: a stack of five closes by 0.07 to 0.16 cells
+  an interface at 6 iterations and 0.04 at 12. A coloured solve is not built; the comparison is open (PJ3).
+- **Kept impulses.** A pair's row impulses are kept by pair slot (`pimp`) and start the next tick at `kept impulse`
+  (0.85); a slot of age 0 starts from nothing. When the slots' table grows, `pimpMove` moves them by the fine pass's
+  `slotRemap`.
+- **One plane a pair (hack, PJ7).** The fine pass's three outer rows are rim samples: the field is rounded there and
+  reads a gap of 0.15 to 0.25 cells and a normal leaning 45° where two faces touch. Left as they come, one row carried
+  a resting block and stacks sank and crept apart. Every row of a pair now takes the first row's normal and the outer
+  rows get `rim allowance` (0.2 cells) added to their depth, never past the deepest.
+
+### The rules, each a test, for pairs
+
+| rule | how | test |
+|---|---|---|
+| separation adds no speed | an impulse only stops an approach; overlap past the slop is a change of position at pushV at most | two blocks head-on at 4 cells/s each: both stop, centres never nearer than 4.2 (they are 4 wide), the largest gain of kinetic energy in a tick 0.05% of what they came in with |
+| overlap in the mass-scaled slop is not corrected | the smaller body's slop | the stacks: an interface rests 0.07 to 0.16 cells closed |
+| erode, don't push | **departure:** between bodies the softer (lower break threshold; the same: the lighter) is flagged for `expand` and stage 4 conserves its mass — chosen over eroding its model because a model is shared by its instances and eroding one would need a copy and a bake in a play tick. Off by default until voxels meet rigid rows (PJ5): today the default is push only | with `pairExpand` on: a stone block at 30 cells/s into another: both expand, 2 rows and 24 voxels on the ground afterwards, mass 280.8 + 64.8 of 345.6 |
+| sleepers stay | a sleeper is immovable to the solver until a hit's energy over its mass passes `wake threshold`; then it is stamped, the solver adds its impulses into its work words, and `compact` wakes it the next tick with them (momentum kept; one tick late) | a block creeping at 0.15 cells/s against a sleeper: its 64 pose bytes unchanged after 120 ticks; a block at 8 cells/s: awake and moved 0.68 cells |
+| deflect and topple | speed out at most restitution × speed in; friction a row | a block slides 12 cells down and off a sleeping steel slab tilted 20°; a heavy block moves a light one 1.6 cells, the light one moves the heavy 0.007 |
+| `missing` | a row a room could not serve this tick keeps its pose bit for bit, is immovable to its pairs, and gets the substep's gravity back so it goes on as it was | room for 2 pairs under a column of 6: flagged rows' poses unchanged each tick while a free block falls; with growth on, the rooms grow and the column rests |
+
+### The read (DESIGN §24)
+
+One read of 416 B (the pool's header, the awake count, what was asked of the pair rooms) replaces the two timed ones.
+It starts at a host event (`add`, `impulse`, `wake`, `wakeNear`, `shift`, `expand`, `release`, `clear`, and
+`Engine.kick()` for an edit), twice (the first shows the tick before the event), and is issued again four ticks on
+only while the last one showed rows awake, bodies deforming or settling, or a growth to come. With everything asleep
+none is issued (tested over 120 ticks). **Trade-off:** a wake that happens on the GPU alone (a sleeper's ground
+changed by a sim) is not seen by the CPU until the next event it knows of; the tick itself needs no read, and a room
+that runs out meanwhile holds its rows (`missing`) instead of dropping a collision. Terrain edits do not call `kick()`
+yet (PJ2).
+
+**The growth stall** (one tick 8.4 ms against 2.9): the pair rooms now grow one a tick (`spread`), not all at once.
+Not re-measured in isolation: see "worst tick" below.
+
+### Measured (desktop proxy: Dawn in Node, Intel Xe, D3D12; GPU timestamps a kernel, a clock of 0.066 ms steps)
+
+`PAIRS_BENCH=1 npx vitest run --project gpu engine-pile -t bench --reporter=verbose`. Mixed blocks of 8 to 27 cells
+poured into a pit; engine GPU ms a tick (every engine kernel, the pair passes included):
+
+| blocks | falling, no pair | piling | settling | all but a few asleep |
+|---|---|---|---|---|
+| 200 | 1.31 (terrain rows 0.46) | 2.36 (102 awake, 85 pairs) | 1.44 (1 awake) | 0.39 to 0.46 |
+| 1,000 | 2.56 (terrain rows 1.57) | 4.13 to 4.19 (1,000 and 826 awake, 1,435 and 2,524 pairs) | 2.69 (195 awake, 887 pairs) | 1.25 to 1.31 (2 awake) |
+
+- **Falling with no pair, the cost is the terrain rows' threads** (1.57 of 2.56 ms at 1,000): a row in the air still
+  spends its 64 threads on its samples. That is the row-level early-out the owner asked about (PJ3), not built.
+- With nothing awake the engine reads 0.39 to 0.46 ms, which is six or seven kernels showing one clock step each: the
+  clock's floor, not a cost I can split further here.
+- **Worst tick: one tick of 500 ms (200 blocks) and of 284 ms (1,000) wall in each run, at ticks with no growth. Not
+  explained** (a stall in Node, the driver or a read's mapping; not seen in the browser captures). The rest of the
+  ticks: 2.8 to 16.6 ms wall, which includes the test world's surface pass and the wait for the submit.
+- 2 of the 1,000 blocks were still awake after 40 s, in no pair. Not explained.
+- The repo's physics bench, engine route, desktop proxy (headless Chrome, D3D11, 412 × 915):
+  `node scripts/physbench.mjs --url http://localhost:5391 --pairs engine:runs`, six stages: p50 9.8 to 9.9, p95 10.9
+  to 11.3, p99 11.4 to 13.6 ms (the headless cap is 9.9); physics toggle +1.55 to +2.45 ms GPU, +5.46 on "drop the
+  line-up"; frame difference within ±0.05 ms. Beside it, **the owner's phone baseline for the lattice (Pixel 9a):
+  p50 16.6, p95 18 to 20 ms, physics toggle 1.9 to 3.1 ms GPU.** The desktop number is a proxy only, and against this
+  same desktop's lattice run (+0.3 to +0.8 ms GPU) the engine route is two to three times dearer here. Report:
+  `data/perf/sdf/physbench-engine-join-desktop.json`.
+- **The phone's collision numbers** (the owner's run of `sdfbench.html` v4, Pixel 9a): the whole pair path 1.8 ms at
+  28 pairs and 11.3 ms at 5,701; the fine pass alone 0.7 ms at 64 pairs. The floor is the problem, and this note's
+  counts above say where I would look; the ladder that would separate the causes on the phone is not built (PJ3).
+  When thousands are awake at once the engine does not degrade yet: it runs every pair (PJ3).
+
+### The lab
+
+`?solver=engine`, station `pile` (the seventh), on the river station's low ground with a level pad and a pit:
+`/?skipmenu=1&level=playground&tutorial=0&q=low&fresh=1&solver=engine`. Buttons: drop a stack, pour rubble into the
+pit, boulder into a stack, steel beam across two blocks, throw a block at a tower. The solver's numbers are on the
+tuning panel's engine group (pair iterations, kept impulse, wake threshold, rim allowance, the two switches).
+
+**What the stills show** (`node scripts/pilelab.mjs`; looked at; phone framing):
+- *Stack:* five blocks in a straight column, stone and concrete in turn, standing at the end. No lean I can see at
+  this zoom.
+- *Pit:* forty-eight blocks heaped in the pit, at mixed angles, the heap higher than the rim. At this zoom I cannot
+  tell whether any two are inside each other. The read-out says 13 bodies expanded on landing and made 11 parts:
+  those parts pass through the other bodies (PJ6).
+- *Boulder:* the brick stack is knocked apart, four bricks lying separately on the ground, the boulder at rest
+  beyond them.
+- *Beam:* the steel beam lies level across the two stone blocks.
+- *Tower:* after the throw the blocks are scattered, some in the pit. No still shows the tower standing before the
+  thrown block arrives, so the station's tower itself is unjudged (six such blocks stand and sleep in a Node run).
+- **What looks wrong:** nothing explodes or jitters in the stills; what I could not judge from them is small overlap
+  (interfaces close by up to 0.16 cells), the tower before the hit, and motion between frames. The GIFs are the place
+  to look for jitter.
+
+### Departures in the join
+
+1. Erode between bodies is "flag the softer for `expand`", and it is off by default (PJ5).
+2. A hard hit between bodies does not expand a body by default, for the same reason.
+3. A sleeper hit over the threshold wakes the tick after, not in the tick of the hit.
+4. Terrain contacts are 13 reduced rows a body, not every sample (step 1 solved every sample in one thread).
+5. Collision models are cubes of half a cell over hex-prism cells (PJ4).
+6. One plane a pair with a rim allowance (PJ7).
+7. Pairs are found once a tick, not once a substep.
+8. Settled parts are in no pair (PJ6).
+
+### Hand-over: where this stopped
+
+Built and tested to the boundary "pairs reach the solver". Next, in the order I would take them: PJ6 and PJ5 (a
+settled part's field with a stand-in, then voxels against rigid rows, then `pairExpand` on by default); PJ3 (the
+phone page with the floor ladder, the stage split, the early-out for terrain contacts); PJ7 in the fine pass;
+PJ8's findings. Run first: `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms
+sdf-slots`, `npm run typecheck`, `npx vitest run --project unit` (one failure on the base: the writing lint, PE17).
+
+## Terrain pieces are rows, step 4 as built (branch `physics10-terrain`, 2026-11-15)
+
+`ROUTING.engine` sends nothing to the voxel lattice or the CPU rock. `game/integrity/rows.ts spawnRow` is the one
+hand-over: rock and structures from `spawnRigid`, metal and wood from `wakeMetalNow`, a lab's `dropBody`. The cells
+are the judge's (CPU, as step 4 says); `Engine.add` makes the model, keyed by content, and its field is baked at the
+next tick. The columns are cut as before. Test: `test/gpu/engine-terrain.test.ts`.
+
+- **Drawn:** the engine's body mesh of the piece's cells (`engine/modelmesh.ts`). At release the surface changes
+  from the ground's rock mesh to flat stepped prisms: a departure from the owner's render rule, logged PT2, not
+  solved here.
+- **Release hitch:** 20.6 ms (137 cells) to 27.4 ms (318 cells) on the CPU, headless Chrome desktop; one bake batch
+  the tick after (PT3).
+- **Not built:** step 5 (the GPU trigger), the chain test, pins for woken metal (PT4), dust and sound at release,
+  rows going back to ground (PT5).
