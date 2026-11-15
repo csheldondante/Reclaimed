@@ -1,7 +1,9 @@
 // The fine collision pass's phone bench (docs/design/PHYSICS_ENGINE.md "Fine collision"): the same passes as
 // test/gpu/sdf-fine-bench.test.ts (the model store's bake and SdfFine over shapes.ts benchScene), in Chrome on the
 // phone, with a report to download. Its own page, sdfbench.html: no world, no level.
-//   /sdfbench.html                         every format × side × pairs, the `touch` scene (about 5 minutes)
+//   /sdfbench.html                         grad8 × side × pairs (the `touch` scene), then the whole path: coarse + fine +
+//                                          reduction on 1,024 to 16,384 rows of mixed sizes (about 4 minutes)
+//   …?formats=grad8,snorm8,f32             the other field formats too; …&rows=4096 the whole path at some sizes
 //   …?formats=grad8&sides=16&pairs=256     some
 //   …&kind=deep                            the deep scene (a third of each body inside the other)
 //   …&auto=1                               starts without the tap (headless: scripts/sdfbench.mjs)
@@ -20,13 +22,14 @@ import { urlFlags } from '../flags';
 import { COUNT_BRICKS, COUNT_BRICKS_DROPPED, COUNT_CONTACTS, COUNT_SAMPLE_CONTACTS, COUNTS_BYTES, packBodies, type SdfFormat } from '../engine/sdf/contract';
 import { FINE_DEFAULT_CAP, FINE_DEFAULT_MARGIN, SdfFine } from '../engine/sdf/fine';
 import { SdfModels } from '../engine/sdf/models';
-import { benchScene, benchShapes, type BenchKind } from '../engine/sdf/shapes';
+import { SdfCoarse, PAIR_ASKED } from '../engine/sdf/coarse';
+import { awakeList, benchScene, benchShapes, COARSE_MAX_DIAMETER, coarseScene, coarseShapes, type BenchKind } from '../engine/sdf/shapes';
 import { keepAwake, letSleep, Panel, wakeLog } from './bench/page';
 import { copyText, deviceTag, downloadJson, postDev, shareJson, stamp } from './report-io';
 
 declare const __BUILD_COMMIT__: string;
 
-const VERSION = 2;
+const VERSION = 3;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const mean = (a: number[]) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : NaN);
 const round = (v: number, d = 3) => (Number.isFinite(v) ? +v.toFixed(d) : null);
@@ -60,13 +63,15 @@ export async function sdfBench(): Promise<void> {
     const v = params.get(key);
     return v ? v.split(',').map(parse) : all;
   };
-  const formats = list<SdfFormat>('formats', ['grad8', 'snorm8', 'f32'], (s) => s as SdfFormat);
+  const formats = list<SdfFormat>('formats', ['grad8'], (s) => s as SdfFormat);
+  // the whole path (coarse + fine + reduction) on mixed sizes: rows, each 10% and all awake, loose and in a pile
+  const pathRows = list('rows', [1024, 4096, 16384], Number);
   const sides = list('sides', [8, 16, 32], Number);
   const pairCounts = list('pairs', [64, 256, 1024, 4096], Number);
   const kind = (params.get('kind') ?? 'touch') as BenchKind;
   const windowS = Number(params.get('window') ?? 1.2);
   const windows = Number(params.get('windows') ?? 3);
-  const configs = formats.length * sides.length * pairCounts.length;
+  const configs = formats.length * sides.length * pairCounts.length + pathRows.length * 4;
   panel.say(`Fine collision bench v${VERSION} (${__BUILD_COMMIT__}): ${configs} configurations, about ${Math.ceil((configs * (windows * 2 * (windowS + 0.25) + 1.5)) / 60)} min. Keep the screen on and this tab in front.`);
   if (params.get('auto') !== '1') await new Promise<void>((go) => panel.button('Start', true, go));
   const awake = await keepAwake();
@@ -197,6 +202,70 @@ export async function sdfBench(): Promise<void> {
       store.destroy();
     }
   }
+  // ---- the whole body ↔ body path: the coarse pass, the fine pass and the reduction in one tick
+  const paths: Record<string, unknown>[] = [];
+  if (pathRows.length) {
+    const store = new SdfModels(dev, 'grad8');
+    const ids = coarseShapes().map((sp) => store.add(sp));
+    store.flush();
+    for (const rowsN of pathRows)
+      for (const pile of [false, true])
+        for (const share of [0.1, 1]) {
+          panel.say(`${++done} / ${configs}: the whole path, ${rowsN} rows, ${share * 100}% awake, ${pile ? 'pile' : 'loose'}…`);
+          const scene = coarseScene(rowsN, share, pile ? 'pile' : 'loose', ids, 7);
+          const packed = packBodies(scene.bodies);
+          const listBuf = dev.createBuffer({ label: 'bench awake list', size: (8 + rowsN) * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST });
+          dev.queue.writeBuffer(listBuf, 0, awakeList(scene.awake, rowsN));
+          const inputs = { list: listBuf, pose: filled(dev, 'pose', packed.pose), vel: filled(dev, 'vel', packed.vel), info: filled(dev, 'info', packed.info), model: filled(dev, 'model', packed.model), sleepEpoch: filled(dev, 'epoch', new Uint32Array([1, 0, 0, 0])) };
+          const coarse = new SdfCoarse(dev, store, { rows: rowsN, cellTop: COARSE_MAX_DIAMETER + FINE_DEFAULT_MARGIN });
+          const fine = new SdfFine(dev, store, { maxPairs: coarse.pairRoom, maxBricks: coarse.pairRoom * 16 });
+          const fin = { ...coarse.finePairs, pose: inputs.pose, vel: inputs.vel, info: inputs.info, model: inputs.model };
+          coarse.setParams(rowsN);
+          fine.setParams(coarse.pairRoom, 0);
+          const ticks = (k: number) => {
+            const enc = dev.createCommandEncoder();
+            for (let i = 0; i < k; i++) {
+              coarse.encode(enc, inputs);
+              fine.encode(enc, fin, coarse.pairRoom);
+            }
+            return enc;
+          };
+          dev.queue.submit([ticks(2).finish()]);
+          await dev.queue.onSubmittedWorkDone();
+          const batchOf = async (k: number) => {
+            const t0 = performance.now();
+            dev.queue.submit([ticks(k).finish()]);
+            await dev.queue.onSubmittedWorkDone();
+            return (performance.now() - t0) / k;
+          };
+          const reps = Math.max(1, Math.min(16, Math.round(6 / Math.max(await batchOf(4), 0.05))));
+          const batch = Math.min(await batchOf(reps * 4), await batchOf(reps * 4));
+          const sums = { on: [] as number[], off: [] as number[] };
+          for (let w = 0; w < windows; w++)
+            for (const side of ['on', 'off'] as const) {
+              const until = performance.now() + (windowS + 0.25) * 1000;
+              const begin = performance.now() + 250;
+              while (performance.now() < until) {
+                const t = await frame();
+                const enc = side === 'on' ? ticks(reps) : dev.createCommandEncoder();
+                present(enc);
+                const t0 = performance.now();
+                dev.queue.submit([enc.finish()]);
+                const took = dev.queue.onSubmittedWorkDone().then(() => performance.now() - t0);
+                if (t >= begin) void took.then((ms) => sums[side].push(ms));
+              }
+              await dev.queue.onSubmittedWorkDone();
+            }
+          const c = await readCounts(dev, fine.counts);
+          const head = await readCounts(dev, coarse.pairBuf);
+          paths.push({ rows: rowsN, awake: scene.awake.length, kind: pile ? 'pile' : 'loose', reps, toggleDoneMs: round((mean(sums.on) - mean(sums.off)) / reps), batchMs: round(batch), pairs: head[PAIR_ASKED], pairsDropped: c[1], contactRows: c[COUNT_CONTACTS], sampleContacts: c[COUNT_SAMPLE_CONTACTS], threads: c[COUNT_BRICKS] * 16 });
+          coarse.destroy();
+          fine.destroy();
+          for (const b of Object.values(inputs)) b.destroy();
+          await sleep(50);
+        }
+    store.destroy();
+  }
   await letSleep();
   if (document.querySelector('.fatal')) errors.push(`fatal overlay: ${document.querySelector('.fatal')!.textContent}`);
   let hints: unknown = null;
@@ -218,6 +287,8 @@ export async function sdfBench(): Promise<void> {
     wakeLock: { held: awake, log: wakeLog },
     rows,
     bakes,
+    // the whole path: coarse + fine + reduction a tick, mixed sizes (shapes.ts coarseScene)
+    paths,
     errors,
   };
   const body = JSON.stringify(report);
@@ -225,7 +296,7 @@ export async function sdfBench(): Promise<void> {
   panel.say(`Done: ${rows.length} configurations.`);
   const pad = (v: unknown, w: number) => String(v).padStart(w);
   panel.text(
-    ['format side pairs  toggle ms (frame / GPU done)  batch ms  contacts', ...rows.map((r) => `${String(r.format).padEnd(6)} ${pad(r.side, 3)} ${pad(r.pairs, 5)}  ${pad(r.toggleFrameMs, 8)} / ${pad(r.toggleDoneMs, 8)}  ${pad(r.batchMs, 8)}  ${pad(r.contacts, 7)}${r.dropped ? ` (${r.dropped} bricks dropped)` : ''}`), '', 'bake ms: format side  one  64', ...bakes.map((b) => `${String(b.format).padEnd(6)} ${pad(b.side, 3)}  ${pad(b.bakeOneMs, 6)}  ${pad(b.bake64Ms, 7)}`)].join(String.fromCharCode(10)),
+    ['format side pairs  toggle ms (frame / GPU done)  batch ms  contacts', ...rows.map((r) => `${String(r.format).padEnd(6)} ${pad(r.side, 3)} ${pad(r.pairs, 5)}  ${pad(r.toggleFrameMs, 8)} / ${pad(r.toggleDoneMs, 8)}  ${pad(r.batchMs, 8)}  ${pad(r.contacts, 7)}${r.dropped ? ` (${r.dropped} bricks dropped)` : ''}`), '', 'whole path (coarse + fine + reduction): rows awake scene  toggle ms (GPU done)  batch ms  pairs  contact rows', ...paths.map((r) => `${pad(r.rows, 6)} ${pad(r.awake, 6)} ${String(r.kind).padEnd(5)}  ${pad(r.toggleDoneMs, 8)}  ${pad(r.batchMs, 8)}  ${pad(r.pairs, 7)}  ${pad(r.contactRows, 7)}`), '', 'bake ms: format side  one  64', ...bakes.map((b) => `${String(b.format).padEnd(6)} ${pad(b.side, 3)}  ${pad(b.bakeOneMs, 6)}  ${pad(b.bake64Ms, 7)}`)].join(String.fromCharCode(10)),
     true,
   );
   const status = panel.text('');

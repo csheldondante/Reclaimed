@@ -246,6 +246,8 @@ already call for.
 
 ### Round 3: the coarse pass (stage 2), built alone; exact, and over its budget (2026-11-15)
 
+(Answered by round 4 below: the pass was rebuilt and the fine pass's dispatches are sized by the pair count.)
+
 **Stopped for main's attention: the coarse pass gives the exact pair set, but costs 0.7 ms at 4,096 rows with 10%
 awake in a loose field and 4.2 ms in a pile, against the 0.3 ms line.**
 
@@ -311,6 +313,76 @@ slow and is not done. The `normalAtSurface` variant is deleted.
 the pair count: with room for 65,536 pairs and 131 pairs, the fine pass costs 2.2 ms (PF19). They need indirect
 arguments from the count. The end-to-end numbers above are therefore not worth quoting, and the end-to-end scenes
 are not in `sdfbench.html` yet (PF20).
+
+### Round 4: the coarse pass's cost follows the candidates (2026-11-15)
+
+The owner on the structure, 2026-11-15: "Yeah you could also do a few levels of spatial hash if sizes vary too much.
+Binned into powers of two BB sizes. SAP is also a reasonable alternative to try for moving bodies." And then: "Yeah I
+don't know that SAP is actually any better and I don't know if it makes sense to try a hybrid and hash the tall piles
+along the remaining dimensions. If the hash is fast enough I like the simplicity of it". So: the multi-level hash over
+body bounds stays; sweep and prune was not built.
+
+Main's rulings: an inverse mass below zero is a freed row (in no table, never paired; the alive flag decides), zero is
+immovable; three levels unless the numbers say otherwise; the engine will supply a model row a body and a sleep epoch.
+
+**The cause, measured** (round 3's linked-list pass, pile, 4,096 rows, 446 awake, five levels): 3.80 ms. With the
+sleepers out of the hash: 0.20 ms. With nothing awake: under one clock tick. The longest walk by one thread: 1,263
+entries, 1,254 of them sleepers; 84,560 entries walked by 2,230 threads in all. So it was the long sleeper chains of
+the big awake bodies, a thread's loop being serial, as read.
+
+**The cure.** Each table is now a counting sort by bucket (count, sums a block of 32 and of 1,024, starts, fill), so a
+bucket's members are one run. Stage A (a thread an awake row and a level) cuts the runs of the cells a partner could be
+in into work items of up to 16 entries; stage B (dispatched indirectly over the items, a thread an entry) checks the
+entry is of that cell and level, then the spheres, then the oriented boxes, and writes the pair. No thread walks a
+list. The rule that writes each pair once with no sort: two awake rows by the one at the finer level (same level: the
+lower row); an awake row and a sleeper by the awake row; a pair with an oversize body by the other row, and two
+oversize awake rows by the higher. **Oversize bodies** (bigger than the top level's cell) are in a short list of their
+own, tested against every awake row, and an oversize awake row covers the sleeper cells it reaches: tested exact with
+a top cell of 20 cells under 16³ boxes and 32-cell slabs.
+
+**Every dispatch sized by what exists.** The awake table's by the awake rows, the sleeper table's only when the epoch
+changed, stage A by the awake rows, stage B by the items. The fine pass's expand, cull and reduce by the pair count
+(PF19), and a pair's record is cleared by its own expand thread, not by a clear of the room. What is left that is
+sized by room: a GPU clear of the awake table's counts each tick (8 B a bucket: 64 KB at 4,096 rows).
+
+**Measured** (desktop proxy, Intel Xe integrated, timestamps, median of 12, three levels; before = round 3's
+linked-list pass with five levels). Coarse alone, then coarse + fine + reduction:
+
+| scene | rows | awake | coarse ms, before → after | whole path ms, before → after | pairs |
+|---|---|---|---|---|---|
+| loose | 1,024 | 103 | 0.66 → 0.33 | 1.05 → 0.39 | 28 |
+| loose | 1,024 | 1,024 | 0.33 → 0.33 | 0.79 → 0.46 | 133 |
+| loose | 4,096 | 446 | 0.72 → **0.39** | 3.08 → 0.46 | 131 |
+| loose | 4,096 | 4,096 | 0.46 → 1.18 | 2.95 → 1.57 | 609 |
+| loose | 16,384 | 1,740 | 1.25 → 2.16 | 10.7 → 2.36 | 476 |
+| loose | 16,384 | 16,384 | 1.18 → 2.95 | 10.7 → 3.47 | 2,409 |
+| pile | 1,024 | 103 | 2.8 → 0.33 | 3.28 → 0.39 | 229 |
+| pile | 1,024 | 1,024 | 0.92 → 0.33 | 1.51 → 0.59 | 1,178 |
+| pile | 4,096 | 446 | 4.2 → **0.46** | 6.75 → 0.66 | 1,016 |
+| pile | 4,096 | 4,096 | 1.6 → 0.66 | 5.05 → 1.77 | 5,701 |
+| pile | 16,384 | 1,740 | 5.8 → 2.3 | 16.0 → 3.15 | 4,549 |
+| pile | 16,384 | 16,384 | 3.7 → 3.7 | 16.1 → 8.5 | 23,152 |
+| pile | 4,096 | **0** | 0.07 (one clock tick) | 0.07 | 0 |
+
+Against the targets at 4,096 rows with 10% awake: loose 0.39 ms (target about 0.3), pile 0.46 ms (under 1), nothing
+awake one clock tick. Levels on the 4,096-row pile (10% awake / all awake): one 0.46 / 0.85, two 0.39 / 0.66, three
+0.39 / 0.72, five 0.46 / 0.85 ms: two or three; three kept.
+
+**What got worse, and why.** A loose field with every row awake, and 16,384 rows: the pass now has a floor of about
+0.33 ms, and a cost that grows with the buckets (two a row), not with the work. The table build's sums run over every
+bucket whenever a row is awake, and they read the counts with atomic loads (an interlocked operation each on D3D):
+32,768 buckets at 16,384 rows. The fix, not done: keep the counts and cursors (atomics) in one buffer and the starts
+and runs in another, so the sums read plain words (PF22).
+
+**A pair's place in the contact rows (not built; left for the join).** Pairs are appended in thread order, so a
+pair's rows move from tick to tick. For warm starting the solver needs a stable place. What I would build: a
+persistent table keyed by (a, b), open addressing, one probe a pair in a small pass after stage B; a pair found keeps
+its slot, a new pair takes a free one, and slots not touched this tick are freed by a sweep sized by the table. The
+fine pass then writes a pair's rows at `slot * 4` and the solver reads its kept impulses there, with the key stored
+beside them. It is a new buffer, two kernels and a rule for freed slots: large enough that I left it, and say so.
+
+**Join list, added:** the engine supplies `model` (a u32 a row: the model row) and a sleep epoch word that changes on
+every sleep, wake, spawn or free of a sleeper and every move of one.
 
 **Considered, not chosen** (both from the same baked voxel model):
 

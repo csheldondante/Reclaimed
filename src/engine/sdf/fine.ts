@@ -71,12 +71,13 @@ export class SdfFine {
   private params: GPUBuffer;
   private work: GPUBuffer;
   private args: GPUBuffer;
+  private kPairArgs: ComputeKernel;
   private kExpand: ComputeKernel;
   private kCull: ComputeKernel;
   private kArgs: ComputeKernel;
   private kFine: ComputeKernel;
   private kReduce: ComputeKernel;
-  private bound: { inputs: FineInputs; version: number; expand: GPUBindGroup; cull: GPUBindGroup; args: GPUBindGroup; fine: GPUBindGroup; reduce: GPUBindGroup } | null = null;
+  private bound: { inputs: FineInputs; version: number; pairArgs: GPUBindGroup; expand: GPUBindGroup; cull: GPUBindGroup; args: GPUBindGroup; fine: GPUBindGroup; reduce: GPUBindGroup } | null = null;
 
   constructor(
     private device: GPUDevice,
@@ -90,7 +91,8 @@ export class SdfFine {
     if (this.maxPairs * 2 > 1 << 20) throw new Error(`SdfFine: ${this.maxPairs} pairs (at most ${1 << 19})`);
     this.maxBricks = opts.maxBricks ?? Math.max(4096, this.maxPairs * 2 * 64);
     const parts = [sdfFormatWgsl(models.format), modelWgsl, fineWgsl];
-    this.kExpand = makeCompute(device, 'sdf expand', parts, { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 6: 'read', 8: 'rw', 13: 'read' }, 'expand');
+    this.kExpand = makeCompute(device, 'sdf expand', parts, { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 6: 'read', 8: 'rw', 12: 'rw', 13: 'read' }, 'expand');
+    this.kPairArgs = makeCompute(device, 'sdf pair args', parts, { 0: 'uniform', 2: 'read', 11: 'rw' }, 'pairArgs');
     this.kCull = makeCompute(device, 'sdf cull', parts, { 0: 'uniform', 7: 'rw', 8: 'rw', 9: 'read' }, 'cull');
     this.kArgs = makeCompute(device, 'sdf fine args', parts, { 0: 'uniform', 2: 'read', 7: 'rw', 11: 'rw' }, 'fineArgs');
     this.kFine = makeCompute(device, 'sdf fine', parts, { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 8: 'rw', 9: 'read', 12: 'rw', 14: 'read' }, 'fine');
@@ -101,7 +103,7 @@ export class SdfFine {
     this.hits = device.createBuffer({ label: 'sdf pair hits', size: this.maxPairs * PAIR_HIT_BYTES, usage: S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     this.counts = device.createBuffer({ label: 'sdf fine counts', size: COUNTS_BYTES, usage: S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     this.work = device.createBuffer({ label: 'sdf fine work', size: (this.maxPairs * 2 * HP_WORDS + this.maxBricks * 2) * 4, usage: S });
-    this.args = device.createBuffer({ label: 'sdf fine args', size: 16, usage: S | GPUBufferUsage.INDIRECT });
+    this.args = device.createBuffer({ label: 'sdf fine args', size: 64, usage: S | GPUBufferUsage.INDIRECT });
   }
 
   /** bytes this pass holds on the GPU */
@@ -118,7 +120,8 @@ export class SdfFine {
     return (this.bound = {
       inputs: { ...inputs },
       version: m.version,
-      expand: makeBindGroup(dev, 'sdf expand', this.kExpand.layout, { 0: this.params, 1: inputs.pairs, 2: inputs.pairCount, 3: inputs.pose, 4: inputs.vel, 6: m.models, 8: this.work, 13: inputs.model }),
+      expand: makeBindGroup(dev, 'sdf expand', this.kExpand.layout, { 0: this.params, 1: inputs.pairs, 2: inputs.pairCount, 3: inputs.pose, 4: inputs.vel, 6: m.models, 8: this.work, 12: this.hits, 13: inputs.model }),
+      pairArgs: makeBindGroup(dev, 'sdf pair args', this.kPairArgs.layout, { 0: this.params, 2: inputs.pairCount, 11: this.args }),
       cull: makeBindGroup(dev, 'sdf cull', this.kCull.layout, { 0: this.params, 7: this.counts, 8: this.work, 9: m.data }),
       args: makeBindGroup(dev, 'sdf fine args', this.kArgs.layout, { 0: this.params, 2: inputs.pairCount, 7: this.counts, 11: this.args }),
       fine: makeBindGroup(dev, 'sdf fine', this.kFine.layout, { 0: this.params, ...rows, 8: this.work, 9: m.data, 12: this.hits, 14: this.args }),
@@ -134,25 +137,27 @@ export class SdfFine {
   setParams(pairUpper: number, tick: number): void {
     const p = new ArrayBuffer(32);
     new Float32Array(p)[0] = this.margin;
-    new Uint32Array(p).set([Math.max(1, this.cap), tick >>> 0, 0, this.maxBricks, this.maxPairs, Math.min(pairUpper, this.maxPairs), 0], 1);
+    new Uint32Array(p).set([Math.max(1, this.cap), tick >>> 0, 0, this.maxBricks, this.maxPairs, Math.min(pairUpper, this.maxPairs), this.models.maxBricksSide], 1);
     this.device.queue.writeBuffer(this.params, 0, p);
   }
 
-  /** The pass encoded: counts and pair records cleared, then expand, cull, args, the indirect fine dispatch, reduce. Call setParams first. */
+  /** The pass encoded: the counts cleared, then pairArgs, expand (which clears its pairs' records), cull, args, fine, reduce, all but the two one-thread ones sized on the GPU. Call setParams first. */
   encode(enc: GPUCommandEncoder, inputs: FineInputs, pairUpper: number, timestampWrites?: GPUComputePassTimestampWrites): void {
     const b = this.bind(inputs);
-    const n = Math.max(1, Math.min(pairUpper, this.maxPairs));
+    void pairUpper;
     enc.clearBuffer(this.counts);
-    enc.clearBuffer(this.hits, 0, n * PAIR_HIT_BYTES);
     const pass = enc.beginComputePass({ label: 'sdf fine', timestampWrites });
-    const halves = Math.ceil((n * 2) / 64);
+    // (every dispatch after this one is sized on the GPU: by the pair count, then by the surviving groups)
+    pass.setPipeline(this.kPairArgs.pipeline);
+    pass.setBindGroup(0, b.pairArgs);
+    pass.dispatchWorkgroups(1);
     pass.setPipeline(this.kExpand.pipeline);
     pass.setBindGroup(0, b.expand);
-    pass.dispatchWorkgroups(halves);
+    pass.dispatchWorkgroupsIndirect(this.args, 16);
     pass.setPipeline(this.kCull.pipeline);
     pass.setBindGroup(0, b.cull);
     // (a thread a half pair and a row of bricks: the store's longest model side in bricks, squared, rows a half pair)
-    pass.dispatchWorkgroups(halves, this.models.maxBricksSide, this.models.maxBricksSide);
+    pass.dispatchWorkgroupsIndirect(this.args, 32);
     pass.setPipeline(this.kArgs.pipeline);
     pass.setBindGroup(0, b.args);
     pass.dispatchWorkgroups(1);
@@ -161,7 +166,7 @@ export class SdfFine {
     pass.dispatchWorkgroupsIndirect(this.args, 0);
     pass.setPipeline(this.kReduce.pipeline);
     pass.setBindGroup(0, b.reduce);
-    pass.dispatchWorkgroups(Math.ceil(n / 64));
+    pass.dispatchWorkgroupsIndirect(this.args, 48);
     pass.end();
   }
 

@@ -1,9 +1,9 @@
 {
  "kind": "sdfbench",
- "version": 2,
- "build": "ad0b5779",
- "startedAt": "2026-11-15T18:18:16.909Z",
- "endedAt": "2026-11-15T18:18:28.391Z",
+ "version": 3,
+ "build": "3d769158",
+ "startedAt": "2026-11-15T18:44:16.612Z",
+ "endedAt": "2026-11-15T18:45:04.218Z",
  "what": "fine collision (SDF, JFA bake; v2: samples culled by brick, four contact rows a pair at most): toggleFrameMs and toggleDoneMs are the pass on less off, per pass; batchMs a batch alone, wall, per pass. No timestamp queries.",
  "scene": {
   "kind": "touch",
@@ -56,58 +56,33 @@
    "side": 16,
    "kind": "touch",
    "pairs": 256,
-   "reps": 6,
-   "toggleFrameMs": -0.001,
-   "toggleDoneMs": 0.162,
-   "batchMs": 0.575,
+   "reps": 7,
+   "toggleFrameMs": 0,
+   "toggleDoneMs": 0.132,
+   "batchMs": 0.475,
    "on": {
-    "frameMs": 9.9,
+    "frameMs": 9.88,
     "doneMs": 4.28,
     "frames": 202
    },
    "off": {
-    "frameMs": 9.91,
-    "doneMs": 3.31,
-    "frames": 202
+    "frameMs": 9.88,
+    "doneMs": 3.35,
+    "frames": 203
    },
    "threads": 96400,
    "contacts": 189,
    "sampleContacts": 414,
    "dropped": 0,
-   "passBytes": 401488
-  },
-  {
-   "format": "grad8",
-   "side": 16,
-   "kind": "touch",
-   "pairs": 1024,
-   "reps": 3,
-   "toggleFrameMs": 0,
-   "toggleDoneMs": 0.761,
-   "batchMs": 1.25,
-   "on": {
-    "frameMs": 9.91,
-    "doneMs": 5.88,
-    "frames": 201
-   },
-   "off": {
-    "frameMs": 9.91,
-    "doneMs": 3.6,
-    "frames": 202
-   },
-   "threads": 369200,
-   "contacts": 748,
-   "sampleContacts": 1501,
-   "dropped": 0,
-   "passBytes": 1605712
+   "passBytes": 401536
   }
  ],
  "bakes": [
   {
    "format": "grad8",
    "side": 16,
-   "bakeOneMs": 3.5,
-   "bake64Ms": 9.4,
+   "bakeOneMs": 4.5,
+   "bake64Ms": 8.8,
    "boxBytes": {
     "field": 23328,
     "samples": 5912,
@@ -115,6 +90,112 @@
     "row": 36,
     "total": 30008
    }
+  }
+ ],
+ "paths": [
+  {
+   "rows": 1024,
+   "awake": 103,
+   "kind": "loose",
+   "reps": 2,
+   "toggleDoneMs": 0.996,
+   "batchMs": 2.425,
+   "pairs": 28,
+   "pairsDropped": 0,
+   "contactRows": 85,
+   "sampleContacts": 1382,
+   "threads": 9808
+  },
+  {
+   "rows": 1024,
+   "awake": 1024,
+   "kind": "loose",
+   "reps": 3,
+   "toggleDoneMs": 1.238,
+   "batchMs": 1.842,
+   "pairs": 133,
+   "pairsDropped": 0,
+   "contactRows": 430,
+   "sampleContacts": 9117,
+   "threads": 54768
+  },
+  {
+   "rows": 1024,
+   "awake": 103,
+   "kind": "pile",
+   "reps": 3,
+   "toggleDoneMs": 0.978,
+   "batchMs": 1.5,
+   "pairs": 229,
+   "pairsDropped": 0,
+   "contactRows": 754,
+   "sampleContacts": 15343,
+   "threads": 92416
+  },
+  {
+   "rows": 1024,
+   "awake": 1024,
+   "kind": "pile",
+   "reps": 2,
+   "toggleDoneMs": 1.288,
+   "batchMs": 2,
+   "pairs": 1178,
+   "pairsDropped": 0,
+   "contactRows": 3864,
+   "sampleContacts": 76475,
+   "threads": 474752
+  },
+  {
+   "rows": 4096,
+   "awake": 446,
+   "kind": "loose",
+   "reps": 3,
+   "toggleDoneMs": 1.465,
+   "batchMs": 1.642,
+   "pairs": 131,
+   "pairsDropped": 0,
+   "contactRows": 412,
+   "sampleContacts": 8663,
+   "threads": 52480
+  },
+  {
+   "rows": 4096,
+   "awake": 4096,
+   "kind": "loose",
+   "reps": 2,
+   "toggleDoneMs": 2.47,
+   "batchMs": 3.188,
+   "pairs": 609,
+   "pairsDropped": 0,
+   "contactRows": 2006,
+   "sampleContacts": 45792,
+   "threads": 267088
+  },
+  {
+   "rows": 4096,
+   "awake": 446,
+   "kind": "pile",
+   "reps": 2,
+   "toggleDoneMs": 1.514,
+   "batchMs": 2.875,
+   "pairs": 1016,
+   "pairsDropped": 0,
+   "contactRows": 3435,
+   "sampleContacts": 73896,
+   "threads": 437872
+  },
+  {
+   "rows": 4096,
+   "awake": 4096,
+   "kind": "pile",
+   "reps": 1,
+   "toggleDoneMs": 3.653,
+   "batchMs": 6,
+   "pairs": 5701,
+   "pairsDropped": 0,
+   "contactRows": 19216,
+   "sampleContacts": 445767,
+   "threads": 2562384
   }
  ],
  "errors": []

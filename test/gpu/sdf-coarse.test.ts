@@ -6,7 +6,7 @@
 // A pair within 0.001 cells of the edge of counting may fall either side (the GPU's floats).
 import { afterAll, beforeAll, expect, test } from 'vitest';
 import { COUNT_PAIRS_DROPPED, COUNTS_BYTES, PAIR_HIT_BYTES, PAIR_HIT_ROWS, packBodies, type BodyRow } from '../../src/engine/sdf/contract';
-import { PAIR_ASKED, PAIR_HEADER_WORDS, PAIR_OVERSIZE, SdfCoarse, type CoarseInputs, type CoarseOptions } from '../../src/engine/sdf/coarse';
+import { CTL_SLEEPER_GROUPS, CTL_STAGE_A, PAIR_ASKED, PAIR_HEADER_WORDS, PAIR_ITEMS_DROPPED, PAIR_OVERSIZE_DROPPED, SdfCoarse, type CoarseInputs, type CoarseOptions } from '../../src/engine/sdf/coarse';
 import { SdfFine } from '../../src/engine/sdf/fine';
 import { SdfModels } from '../../src/engine/sdf/models';
 import { awakeList, axisAngle, bodyOf, COARSE_MAX_DIAMETER, coarseScene, coarseShapes } from '../../src/engine/sdf/shapes';
@@ -31,7 +31,7 @@ interface Rig {
   bodies: BodyRow[];
   /** the rows uploaded again, with their awake list; `epoch` as the engine would bump it */
   set(bodies: BodyRow[], epoch: number): void;
-  /** one pass: the pairs written (a < b, sorted), the header, the dispatch arguments it used */
+  /** one pass: the pairs written (a < b, sorted), the header (`oversize`: oversize bodies and work items dropped), the dispatch arguments it used */
   run(): Promise<{ pairs: string[]; asked: number; oversize: number; sleeperGroups: number; pairGroups: number }>;
   expectBrute(r: { pairs: string[] }): void;
   destroy(): void;
@@ -71,11 +71,11 @@ function rig(bodies: BodyRow[], opts: Partial<CoarseOptions> = {}, format: 'grad
       const head = new Uint32Array(await g.read(coarse.pairBuf, PAIR_HEADER_WORDS * 4));
       const n = Math.min(head[PAIR_ASKED], coarse.pairRoom);
       const raw = n ? new Uint32Array(await g.read(coarse.pairBuf, n * 8, PAIR_HEADER_WORDS * 4)) : new Uint32Array(0);
-      const st = new Uint32Array(await g.read(coarse.state, 64));
+      const st = new Uint32Array(await g.read(coarse.ctl, 256));
       expect(g.takeErrors()).toEqual([]);
       const pairs: string[] = [];
       for (let k = 0; k < n; k++) pairs.push(`${Math.min(raw[2 * k], raw[2 * k + 1])},${Math.max(raw[2 * k], raw[2 * k + 1])}`);
-      return { pairs: pairs.sort(), asked: head[PAIR_ASKED], oversize: head[PAIR_OVERSIZE], sleeperGroups: st[4] + st[8], pairGroups: st[12] };
+      return { pairs: pairs.sort(), asked: head[PAIR_ASKED], oversize: head[PAIR_OVERSIZE_DROPPED] + head[PAIR_ITEMS_DROPPED], sleeperGroups: st[CTL_SLEEPER_GROUPS], pairGroups: st[CTL_STAGE_A] };
     },
     expectBrute(r) {
       const ref = brutePairs(me.bodies, specs, (b) => ids.indexOf(b.model), MARGIN);
@@ -125,7 +125,7 @@ test('random scenes of mixed sizes: exactly the brute-force pair set, each pair 
 
 test('one level or five: the same exact pair set', async () => {
   const scene = coarseScene(500, 0.6, 'pile', ids5, 9);
-  for (const levels of [1, 2, 5]) {
+  for (const levels of [1, 2, 3, 5]) {
     const r = rig(scene.bodies, { levels, pairsARow: 64 });
     r.expectBrute(await r.run());
     r.destroy();
@@ -189,7 +189,7 @@ test('10,000 rows with 200 awake: the brute-force set; the pass’s threads foll
   r.destroy();
 }, 120_000);
 
-test('nothing dropped unsaid: pairs past the room are counted and the fine pass says how many; a body too big for the top level is counted', async () => {
+test('nothing dropped unsaid: pairs past the room are counted and the fine pass says how many', async () => {
   const scene = coarseScene(3000, 1, 'pile', ids5, 4);
   const r = rig(scene.bodies, { pairsARow: 0.25 });
   const out = await r.run();
@@ -205,10 +205,22 @@ test('nothing dropped unsaid: pairs past the room are counted and the fine pass 
   expect(g.takeErrors()).toEqual([]);
   fine.destroy();
   r.destroy();
-  // a top level smaller than the 16³ boxes and the slabs: they are counted
-  const small = rig(scene.bodies, { cellTop: 20, pairsARow: 64 });
-  expect((await small.run()).oversize).toBe(scene.bodies.filter((b) => b.model >= 3).length);
-  small.destroy();
+});
+
+test('bodies bigger than the top level’s cell miss no pair: a top cell of 20 cells under 16³ boxes and 32-cell slabs, awake and asleep', async () => {
+  for (const [awake, seed] of [
+    [0.5, 21],
+    [1, 22],
+    [0.1, 23],
+  ] as const) {
+    const scene = coarseScene(500, awake, 'pile', ids5, seed);
+    const r = rig(scene.bodies, { cellTop: 20, pairsARow: 64 });
+    const out = await r.run();
+    expect(out.oversize).toBe(0);
+    expect(scene.bodies.filter((b) => b.model >= 3).length).toBeGreaterThan(20);
+    r.expectBrute(out);
+    r.destroy();
+  }
 });
 
 test('coarse into fine: the pairs feed the fine pass as they are, and touching pairs get contact rows', async () => {

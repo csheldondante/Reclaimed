@@ -23322,3 +23322,28 @@ before the atomic write measured twice as slow (an atomic load is an interlocked
 
 **Not done.** The end-to-end scenes in `sdfbench.html`; the fine pass's dispatches sized by the pair count (PF19); a
 coarse pass inside the budget.
+
+## 2026-11-15 — the coarse pass rebuilt: sorted cells, two stages, every dispatch sized by what exists (PF18–PF22, `physics10-fine`)
+
+**Why.** Round 3 stopped with the coarse pass at 0.72 ms (loose) and 4.2 ms (pile) for 4,096 rows with 10% awake.
+Main asked for the cause by measurement first. Pile, 446 awake: 3.80 ms; sleepers out of the hash 0.20 ms; nothing
+awake under a clock tick; the longest walk by one thread 1,263 entries (1,254 sleepers); 84,560 entries by 2,230
+threads. The owner on the structure: "If the hash is fast enough I like the simplicity of it": no sweep and prune.
+
+**What.** `sdf-coarse.wgsl` and `coarse.ts` rewritten: each table a counting sort by bucket; stage A cuts the runs
+into work items of 16; stage B, indirect over the items, tests an entry a thread. Oversize bodies in their own short
+lists, exact. The fine pass's expand, cull and reduce are indirect from the pair count (PF19) and a pair's record is
+cleared by its expand thread. Three levels by default.
+
+**Measured** (desktop proxy, Intel Xe integrated, timestamps, median of 12; `SDF_BENCH=1 npx vitest run --project gpu
+sdf-coarse-bench`, `data/perf/sdf/coarse-bench.json`). Coarse, 4,096 rows, 10% awake: loose 0.72 → 0.39 ms, pile
+4.2 → 0.46 ms; nothing awake 0.07 ms (one clock tick). The whole path (coarse + fine + reduction): loose 3.08 → 0.46,
+pile 6.75 → 0.66 ms. Worse: a loose field all awake (4,096 rows 0.46 → 1.18 ms) and 16,384 rows (10% awake 1.25 →
+2.16 loose), because the table build's sums run over every bucket with atomic loads (PF22).
+
+**Tests** (Node, Dawn): `sdf-coarse` 8 (the brute-force pair set with 1, 2, 3 and 5 levels, with sleepers, with bodies
+bigger than the top cell, at 10,000 rows), `sdf-fine` 36, `sdf-bake` 15. `sdfbench.html` v3 has the whole path's
+scenes and was run headless once.
+
+**Not done.** Stable pair slots (described in the note, left for the join). The plain-read table build (PF22). The
+phone run.

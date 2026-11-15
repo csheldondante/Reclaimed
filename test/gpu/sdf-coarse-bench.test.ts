@@ -61,7 +61,9 @@ test.skipIf(!process.env.SDF_BENCH)('coarse collision: GPU ms by rows, awake sha
     for (const b of Object.values(inputs)) b.destroy();
     return row;
   };
-  for (const kind of ['loose', 'pile'] as const) for (const rows of [1024, 4096, 16384]) for (const awake of [0.1, 1]) rowsOut.push(await measure(rows, awake, kind, 5));
+  for (const kind of ['loose', 'pile'] as const) for (const rows of [1024, 4096, 16384]) for (const awake of [0.1, 1]) rowsOut.push(await measure(rows, awake, kind, 3));
+  // (nothing awake: the pass's fixed cost)
+  rowsOut.push(await measure(4096, 0, 'pile', 3));
   const levels: Record<string, unknown>[] = [];
   for (const lv of [1, 2, 3, 5]) for (const awake of [0.1, 1]) levels.push(await measure(4096, awake, 'pile', lv));
   const pad = (v: unknown, w: number) => String(v).padStart(w);

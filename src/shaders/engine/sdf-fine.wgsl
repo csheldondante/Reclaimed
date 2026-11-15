@@ -9,7 +9,8 @@
 //           and a long one holds the whole dispatch up): the sampler's bricks (4 x 4 x 4 voxels of samples, sorted at the bake) whose bound
 //           sphere reaches the field's box, each one an entry in the work list. Threads follow the overlap, not
 //           the model.
-//   args    the fine and reduce dispatches' sizes (no CPU read)
+//   pairArgs, args  every dispatch's size from the pair count and the surviving groups (no CPU read; nothing is
+//           sized by a buffer's room)
 //   fine    a workgroup 16 samples of a surviving brick, a thread a sample: into the field's frame, out if past its bounds, the
 //           field read (8 words, trilinear), and if inside the margin the pair's record takes it in: its count, its
 //           largest energy, its normal summed with the others that point the same way, and its bid for each of the
@@ -50,7 +51,8 @@ struct FineParams {
   maxChunks: u32,
   maxPairs: u32,
   pairUpper: u32,
-  pad: u32,
+  // the store's longest model side, in bricks: cull's rows a half pair
+  cullSide: u32,
 }
 // (contract.ts "the engine's rows": the layout of physics10's engine.wgsl)
 struct BodyPose {
@@ -133,6 +135,23 @@ fn unrot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   return rot(vec4<f32>(-q.xyz, q.w), v);
 }
 
+// The dispatches' sizes from the pair count (no CPU read, and nothing sized by the buffers' room): args words 4-6
+// expand, 8-10 cull, 12-14 reduce. (Words 0-3 are fineArgs': the fine dispatch and the group count.)
+@compute @workgroup_size(1)
+fn pairArgs() {
+  let n = min(pairCount[0], min(P.pairUpper, P.maxPairs));
+  let halves = (2u * n + 63u) / 64u;
+  args[4] = halves;
+  args[5] = 1u;
+  args[6] = 1u;
+  args[8] = halves;
+  args[9] = P.cullSide;
+  args[10] = P.cullSide;
+  args[12] = (n + 63u) / 64u;
+  args[13] = 1u;
+  args[14] = 1u;
+}
+
 @compute @workgroup_size(64)
 fn expand(@builtin(global_invocation_id) gid: vec3<u32>) {
   let h = gid.x;
@@ -146,6 +165,12 @@ fn expand(@builtin(global_invocation_id) gid: vec3<u32>) {
     return;
   }
   let way = h & 1u;
+  if (way == 0u) {
+    // (the pair's record, cleared here: only the pairs that exist are touched)
+    for (var k = 0u; k < PH_WORDS; k++) {
+      atomicStore(&hits[pi * PH_WORDS + k], 0u);
+    }
+  }
   let pr = pairs[pi];
   // (s: the body whose samples are tested; f: the body whose field they are tested in)
   let s = select(pr.x, pr.y, way == 1u);
