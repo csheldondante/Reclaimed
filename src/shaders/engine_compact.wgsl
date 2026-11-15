@@ -16,6 +16,8 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
   if (r >= EU.e.x) { return; }
   var fl = rowFlags(r);
   if ((fl & ROW_ALIVE) == 0u) { return; }
+  // (its particles carry it: engine_deform.wgsl moves them)
+  if ((fl & ROW_DEFORM) != 0u) { return; }
   var wake = false;
   var dv = vec3<f32>(0.0);
   var shiftBy = vec3<f32>(0.0);
@@ -31,6 +33,10 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
       wake = true;
     } else if (k == 4u) {
       shiftBy += EC[c].a.xyz;
+    } else if (k == 5u && EC[c].b.y == r && (EU.e.w & 4u) != 0u && bitcast<u32>(info[4u * r + 3u].x) != 0u) {
+      wake = true;
+      fl = fl | ROW_EXPAND;
+      info[4u * r].w = bitcast<f32>(fl);
     }
   }
   // (a sleeper whose ground changed — dug, cut, washed out, built on: the surface pass's word of the column under its
@@ -46,7 +52,7 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
   if (wake) {
     if ((fl & ROW_ASLEEP) != 0u) {
       fl = fl & ~ROW_ASLEEP;
-      info[3u * r].w = bitcast<f32>(fl);
+      info[4u * r].w = bitcast<f32>(fl);
     }
     let v = vel[2u * r];
     vel[2u * r] = vec4<f32>(v.xyz + dv, 0.0);

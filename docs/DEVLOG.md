@@ -23284,3 +23284,44 @@ made when a body is added, fixed index ranges for rows made on the GPU until pag
 and not a grid) that should be ruled on before code. The one finding worth having now: drawing a rigid row by the
 lattice's own mesh from the start means the mesh never swaps, so there is no pop at the hand-over to hide.
 
+## 2026-11-15 — Physics engine, build step 2, letters A to C: paged particles made on demand, expand, the lattice on them (PE2, PE20-PE28)
+
+**Why.** The orchestrator overruled two parts of the mechanism written for review. A rigid row may not own particles
+(§10: "Asleep rows cost nothing"; 132 B a voxel is half a megabyte a 16³ body that never breaks), and the lattice's
+255 bodies and 131,072 voxels may not be built on (paging before caps). So the order was paging first, then expand,
+then the lattice on those particles only.
+
+**What.** `engine_deform.wgsl`: particles in pages of 512 from a GPU pool (a free stack, then a never-used counter),
+a deform slot a body with its page table, no body id in a particle. `expand` (a thread a row awake) takes the slot
+and pages; `fill` writes a particle a voxel of the row's shared model at pose × rest place. `engine_lattice.wgsl`: the
+lattice's kernels forked for this route (phys.wgsl is untouched, `?solver=lattice` as it was), dispatched over live
+pages from the GPU's count. `engine_draw.wgsl`: one mesh a body in every state, listed and placed on the GPU.
+`slots` moves each slot's state; still is decided there. Settle (letter D) and the lab station (E) are not built: a
+still body is parked (S_STILL).
+
+**Found on the way.**
+- Pages taken one at a time starved every body when several expanded in one tick (3 bodies wanting 8 of 16 pages took
+  5, 5 and 6 and all failed). Pages are now taken all or none. The test with 3 bodies in a 16-page pool covers it.
+- A kernel may not be dispatched from a buffer it writes: the per-page and per-slot dispatch arguments moved to their
+  own small buffer, set by a one-thread `arm` kernel.
+- The first expand rule took the fastest-closing contact's energy. A flat landing's corner sample has a quarter of
+  the body's effective mass, so a 6 × 6 × 4 block from 24 cells read 59 against a threshold of 60. Every contact
+  closing fast enough is now weighed and the hardest counts (the one under the centre of mass, about ½ v²).
+
+**Measured** (desktop proxy: Dawn in Node, Intel Xe, D3D12; wall time a tick, the surface pass included;
+`BREAK_LOG=1 npx vitest run --project gpu engine-break --reporter=verbose --silent=false`):
+- 8 rigid rows of 16³ awake 10.45 ms a tick; the tick they expand (32,768 voxels) 27.3 ms; 32,768 voxels deforming
+  12.6 ms a tick (about 2.2 ms over rigid).
+- At expansion the skinned mesh is the rigid mesh: 356 triangles, largest vertex move 3.8e-6 cells.
+- Stone 6 × 6 × 4 from 24 cells: 108 of 144 voxels left, 36 to the ground, bonds 2,416 → 1,340; still 8 s after the
+  hit (PE27). Steel 20 × 2 × 1 across a post: middle 16.03, ends 13.75, no bond snapped.
+- Bytes: a pristine row 160 B and 80 B a sample; a model 16 B a cell and 48 B a mesh vertex, shared; a deforming
+  voxel 132 B.
+
+**Tests.** `test/gpu/engine-break.test.ts` 8 pass; `test/gpu/engine.test.ts` 13 pass with deformation off (step 1's
+rules each alone). Unit project: 2 fail, the roadlab writing lint (PE17, from before) and nothing else once PE21 is
+in BACKLOG. One headless run of the `rigid` station under `?solver=engine` (412 × 915): bodies draw as meshes through
+the new draw, no page error.
+
+**Not verified.** Nothing on the phone. The break look in the lab (no break station yet). The lattice route side by
+side with this fork.

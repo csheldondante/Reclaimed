@@ -3645,3 +3645,13 @@ projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 w
   BARE stamp does for land made with a town.
 - `FortressReachGpu.markFrom(stores)` → `marks` (a word a box column) and `planSpans` (the plan solid, GPU-writable)
   for a town's reach without queries read back.
+
+## The physics engine, build step 2, letters A to C (2026-11-15, branch `physics10-break`)
+
+A rigid row owns no particles. On an impact past its material's threshold `expand` gives it a deform slot and pages
+of 512 particles from a GPU pool, written from its shared model in the heap. The lattice (`engine_lattice.wgsl`, a
+fork: `phys.wgsl` stays the old route's) steps live pages only, by indirect dispatch from the GPU's own count.
+Contracts: rows the host adds are even, rows the GPU makes odd; samples and the heap are two-halves buffers (`sAt`,
+`hAt` in `engine.wgsl`); the host reads only the pool's 256 B header every 4 ticks, to grow buffers ahead of need; a
+body is one mesh in every state (`engine_draw.wgsl`, drawn through `Renderer.addMesh`). Settle is not built
+(BACKLOG PE20). docs/design/PHYSICS_ENGINE.md "Step 2 as built" has the layouts' owners and the limits.

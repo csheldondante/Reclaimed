@@ -104,7 +104,7 @@ const PHYS: Partial<Record<number, PhysMat>> = {
 };
 
 /** The physics table as the GPU reads it (phys.wgsl PM: 4 vec4 per material). */
-function packPhysMats(): Float32Array {
+export function packPhysMats(): Float32Array {
   const out = new Float32Array(MAX_MATERIALS * 16);
   MATERIALS.forEach((_, m) => {
     const p = PHYS[m] ?? ROCKY;

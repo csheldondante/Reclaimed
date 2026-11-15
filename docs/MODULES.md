@@ -196,6 +196,7 @@ The living town on the GPU: its people’s routes and rides, the quarry and the 
 ## src/engine/
 
 - `engine.ts` — The physics engine's host (DESIGN §10, docs/design/PHYSICS_ENGINE.md, build step 1): rigid bodies as rows in GPU buffers, terrain contacts, the contact rules and sleep on the GPU, nothing read back. API: `Engine`, `bakeBody`, `EngineSpec`, `EngineBody`, `EVENT_ROOM`.
+- `modelmesh.ts` — A model's mesh for the engine (build step 2): the body mesh of its cells, each vertex weighted to up to four of the model's voxels; one mesh in every state (API: `modelMesh`).
 - `install.ts` — The engine in a world (`?solver=engine`): its system after the surface pass, its rows' meshes. API: `EngineKit`, `installEngine`.
 
 ## src/flora/

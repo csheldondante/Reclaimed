@@ -52,12 +52,14 @@ fn groundAtE(c: vec2<i32>, z: f32) -> Ground {
 fn fine(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
   if (wg.x >= list[3]) { return; }
   let r = list[LIST_AT + wg.x];
-  let m = bitcast<vec4<u32>>(info[3u * r + 2u]);
+  let m = bitcast<vec4<u32>>(info[4u * r + 2u]);
+  if ((rowFlags(r) & ROW_EXPAND) != 0u) { return; }
   let x = pose[4u * r + 2u].xyz;
   let q = pose[4u * r + 3u];
   let nearGap = EU.f.x;
+  let s0 = sAt(m.x);
   for (var s = li; s < m.y; s += 64u) {
-    let si = m.x + s;
+    let si = s0 + s;
     let sm = samples[si];
     var c0 = vec4<f32>(0.0, 0.0, 1.0, NO_CONTACT);
     var m0 = vec4<f32>(0.0);
@@ -175,13 +177,46 @@ fn solve(@builtin(global_invocation_id) id: vec3<u32>) {
   var still = vel[2u * r].w;
   var w = vel[2u * r + 1u].xyz;
   let bound = vel[2u * r + 1u].w;
-  var I0 = info[3u * r];
-  var I1 = info[3u * r + 1u];
-  let m = bitcast<vec4<u32>>(info[3u * r + 2u]);
-  let cellMass = info[3u * r + 2u].w;
+  var I0 = info[4u * r];
+  var I1 = info[4u * r + 1u];
+  let m = bitcast<vec4<u32>>(info[4u * r + 2u]);
+  let cellMass = info[4u * r + 2u].w;
+  let s0 = sAt(m.x);
+  let fl0 = bitcast<u32>(I0.w);
+  // (it deforms this tick: `expand` takes it as it came in — engine_deform.wgsl)
+  if ((fl0 & ROW_EXPAND) != 0u) { return; }
   if ((EU.e.w & 2u) != 0u) {
     pose[4u * r] = P;
     pose[4u * r + 1u] = q;
+  }
+  // (build step 2, DESIGN §10.4: "only for bodies in a true collision") the hardest stop among its contacts as it comes
+  // in, before anything is solved: its energy over the body's mass past the material's threshold, the row is not
+  // solved — it keeps the velocity it came with, and `expand` hands it to its particles, which take the hit themselves
+  let thr = expandAt(m.z & 0xffu);
+  if ((EU.e.w & 4u) != 0u && thr > 0.0 && (fl0 & ROW_DENIED) == 0u && bitcast<u32>(info[4u * r + 3u].x) != 0u) {
+    let vg = v - vec3<f32>(0.0, 0.0, worldG() * dt);
+    // (a contact's stop takes 1/2 stop^2 / k, k its inverse effective mass: at most 1/2 stop^2 x the mass, so only
+    // contacts closing fast enough are weighed — a flat landing's hardest is the one under the centre of mass)
+    var worst = 0.0;
+    for (var s = 0u; s < m.y; s++) {
+      let sm = samples[s0 + s];
+      if (sm.w <= 0.0) { continue; }
+      let rl = eqrot(q, sm.xyz);
+      for (var k = 0u; k < 2u; k++) {
+        let c = contacts[4u * (s0 + s) + 2u * k];
+        if (c.w <= NO_CONTACT) { continue; }
+        let rc = rl - c.xyz * sm.w;
+        let stop = min(c.w, 0.0) / dt - dot(vg + cross(w, rc), c.xyz);
+        if (stop <= 0.0 || 0.5 * stop * stop <= thr) { continue; }
+        let rn = cross(rc, c.xyz);
+        let kn = invM + dot(rn, invInertia(q, I0.xyz, I1.xyz, rn));
+        worst = max(worst, 0.5 * stop * stop / kn);
+      }
+    }
+    if (worst > thr * I1.w) {
+      info[4u * r].w = bitcast<f32>(fl0 | ROW_EXPAND);
+      return;
+    }
   }
   // gravity and the air
   v.z -= worldG() * dt;
@@ -196,7 +231,7 @@ fn solve(@builtin(global_invocation_id) id: vec3<u32>) {
   var hitMat = 0u;
   for (var it = 0u; it < EU.e.z; it++) {
     for (var s = 0u; s < m.y; s++) {
-      let si = m.x + s;
+      let si = s0 + s;
       let sm = samples[si];
       if (sm.w <= 0.0) { continue; }
       let rl = eqrot(q, sm.xyz);
@@ -264,7 +299,7 @@ fn solve(@builtin(global_invocation_id) id: vec3<u32>) {
   var mass = I1.w;
   let mass0 = mass;
   for (var s = 0u; s < m.y; s++) {
-    let si = m.x + s;
+    let si = s0 + s;
     let sm = samples[si];
     if (sm.w <= 0.0) { continue; }
     var gone = false;
@@ -330,6 +365,6 @@ fn solve(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   vel[2u * r] = vec4<f32>(v, still);
   vel[2u * r + 1u] = vec4<f32>(w, bound);
-  info[3u * r] = vec4<f32>(I0.xyz, bitcast<f32>(fl));
-  info[3u * r + 1u] = vec4<f32>(I1.xyz, mass);
+  info[4u * r] = vec4<f32>(I0.xyz, bitcast<f32>(fl));
+  info[4u * r + 1u] = vec4<f32>(I1.xyz, mass);
 }

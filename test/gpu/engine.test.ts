@@ -22,6 +22,8 @@ afterAll(() => g?.destroy());
 
 const LOG = !!process.env.ENGINE_LOG;
 const T = TUNE.engine as Record<string, number>;
+// (build step 1's rules, each alone: a hard landing stays rigid here — test/gpu/engine-break.test.ts has the round trip)
+T.deform = 0;
 const T0 = { ...T };
 afterEach(() => Object.assign(T, T0));
 
@@ -51,10 +53,10 @@ async function rig(col: (x: number, y: number) => Interval[], W = 32, H = 32, mo
       const D = e.debugBuffers;
       const P = await g.read(D.pose, 64, b.row * 64);
       const V = await g.read(D.vel, 32, b.row * 32);
-      const I = await g.read(D.info, 48, b.row * 48);
+      const I = await g.read(D.info, 64, b.row * 64);
       const p = new Float32Array(P);
       const v = new Float32Array(V);
-      const bytes = new Uint8Array(64 + 32 + 48);
+      const bytes = new Uint8Array(64 + 32 + 64);
       bytes.set(new Uint8Array(P), 0);
       bytes.set(new Uint8Array(V), 64);
       bytes.set(new Uint8Array(I), 96);

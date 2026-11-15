@@ -178,6 +178,9 @@ further pieces. §9: "The marked region … becomes voxel bodies that deform and
 
 ## Step 2, the round trip: the mechanism (not built; for review before code)
 
+**Ruled on (the orchestrator, 2026-11-15): departures 1 and 2 below are rejected, 3 is accepted. What is built is in
+"Step 2 as built" at the end of this note; this section stays as the proposal that was reviewed.**
+
 Read from the code on 2026-11-15. Two fixes the review asked for are built and tested (below); `expand` and `settle`
 are not. Everything here is a proposal for how §10.4's "A body returns to rigid once settled" is done with no readback.
 
@@ -295,3 +298,123 @@ so a build of either gives the same run.
 awake, so the phone run gives ms per scene but not ms per thousand voxels, which is what the stage 4 budget needs.
 Adding those two numbers to each row is a few lines in `src/perf/physbench.ts`; I have not made the change (PE8).
 
+## Step 2 as built: letters A to C (branch `physics10-break`)
+
+The orchestrator ruled on the mechanism above (2026-11-15): departures 1 and 2 rejected, 3 accepted. What is built
+follows the rulings, not the proposal. Files: `src/engine/engine.ts`, `modelmesh.ts`, `install.ts`;
+`src/shaders/engine_deform.wgsl`, `engine_lattice.wgsl`, `engine_draw.wgsl`; `test/gpu/engine-break.test.ts` (8 tests
+and a numbers run). **Letters D (settle) and E (the lab's break station) are not built.**
+
+- **A pristine row owns no particles.** A model lives once in the heap (16 B a lattice cell: rest place about the
+  centre of mass, material, 26 bonds), shared by every row made from it. `expand` gives a row a deform slot and pages
+  of 512 particles from a GPU pool; `fill` writes a particle a voxel at pose × rest place with the row's velocity and
+  spin.
+- **Paging before caps.** A particle carries no body id: its page knows its slot and its place in it, and lattice
+  neighbours are found by arithmetic through the slot's page table. No 255-body limit, no `PV_CAP`. Pages, slots and
+  rows are taken on the GPU (a free stack, then a never-used counter). Every buffer doubles and rebinds.
+- **Rows the GPU makes** take odd indices and the host's even ones, so neither needs the other's count. Samples and
+  the heap are each one buffer in two halves (the host's, then the GPU's), addressed past a line in the uniform.
+- **The one read:** the pool's header, 256 B, every 4 ticks, never waited for. It only sizes buffers ahead of need
+  (grow when half full). An allocation that finds no room is counted there; the body stays rigid.
+- **`expand` is decided in `solve`** from the hardest stop among the row's contacts (½ stop² over the contact's
+  inverse effective mass, against threshold × mass, a slider a material). The row is not solved that tick.
+- **Stage 4 is a fork** of the lattice's kernels (`engine_lattice.wgsl`): `phys.wgsl` is untouched and
+  `?solver=lattice` is as it was. They are dispatched over live pages only, from the GPU's count: nothing deforming,
+  no workgroups (tested). Still is decided on the GPU (mean voxel speed under the still speed for the still time).
+- **One mesh a body in every state** (the owner: "the render should not jump to voxel"). The draw list is built on
+  the GPU when a row comes or goes; `eskin` places each triangle each frame: a rigid row's by its pose, a deforming
+  body's by the voxels its vertices are weighted to. At the tick of expansion the two are the same triangles: the
+  largest vertex move measured is 3.8e-6 cells.
+
+### How each state is drawn
+
+| state | engine route (`physics10-break`) | lattice route today |
+|---|---|---|
+| rigid | the model's mesh by the row's pose | (none: a dropped body is lattice from the start) |
+| expanded | the same mesh, skinned to the particles by vertex weights | a body mesh (or the rock mesh for rock) skinned to its particles; its voxels hidden |
+| cracked | triangles stretched past the tear limit or with their voxels gone are dropped: **the break is an open hole, no break face is drawn** | the same: `skin` drops torn triangles, no break faces |
+| settled part | not built (letter D): a still body stays skinned to its standing particles | no settle: it stays lattice, asleep |
+| fragment | none exist: a crumbling voxel goes to loose ground with a chip and dust particles | bodies Integrity makes are hidden and go to dust; only `Physics.spawn(model)` (the test API) draws cubes and half-size cube fragments (body 255) |
+
+Freed terrain today: `spawnRigid` gives a rock piece a slot of the rock mesh (the field mesh's own copy of the
+region), so it is not drawn as cubes; a piece of built material gets the body mesh (hex prisms of its cells).
+
+### Measured (desktop proxy: Dawn in Node, Intel Xe, D3D12; wall time of a tick, the surface pass included)
+
+- 8 rigid rows of 16³ awake: 10.45 ms a tick (step 1's one-thread solve over 1,352 samples a row, PE15).
+- The tick those 8 expand (32,768 voxels): 27.3 ms, once.
+- 32,768 voxels deforming: 12.6 ms a tick, so about 2.2 ms over the rigid tick.
+- Bytes: a pristine row 160 B plus 80 B a surface sample; its model is shared (16 B a lattice cell, 48 B a mesh
+  vertex). A deforming voxel 132 B plus 8 B a page. A settled deformed voxel: not built (planned 16 B a cell of the
+  part's box plus its baked mesh).
+
+### Findings for the owner
+
+- **Cracked stone bounces for a long time.** A 6 × 6 × 4 stone block from 24 cells loses 36 voxels to the ground and
+  half its bonds, and its chunks rebound about 5 cells; it is still 8 s after the hit. The kernels are a line-for-line
+  port, so the lattice route likely does the same; I have not run the two side by side. To judge in the lab.
+- **A break is a hole today** on both routes. The owner's method for break faces is recorded below; it is not built.
+
+### Departures from the rulings and the design in A to C
+
+1. Rows the GPU makes take odd indices, the host's even ones. The ruling said "atomic counter plus free list": that
+   is what the odd rows use. Cost: up to half the row room unused when one side makes few rows (160 B each).
+2. The voxel hash is left out of the engine's stage 4, so deforming voxels do not meet each other. The note said it
+   stays among deforming voxels. It goes with body ↔ body (PE3).
+3. Left out of the fork: half-size fragments, heat, drives and pushes, the air shoved by a landing.
+4. A row that expands is frozen for the one tick it expands (not solved, lattice from the next tick).
+5. The transfer gate counts the pool header read as a §24 breach (a timed read in play). It is listed with PE21.
+6. Pages are taken all or none. Taking them one by one let bodies expanding in one tick starve each other.
+
+### Hacks and limits in A to C (all in BACKLOG PE20 to PE27)
+
+- Samples, heap words and the host's rows are never reused until a reset; only pages, slots and GPU rows are.
+- A slot's page table holds the biggest model's pages; a wider table re-lays the records (a copy a slot).
+- A model whose row eroded while rigid expands whole again (the eroded cells return).
+- The draw places every listed triangle every frame, asleep rows too, as step 1's did.
+- A still body is never woken until settle exists. `Engine.clear()` and `release()` are the only ways out.
+- A deforming body does not follow the window's slide.
+- Crumbled voxels go to the ground through the 1,024 events a tick; more wait a tick (none lost).
+- 16 host commands a tick; more wait.
+
+## Owner's directions for the next letters (2026-11-15, verbatim)
+
+**Rendering.** "the voxelized terrain should carve the mesh not turn into voxels visually it is fine to simulate as
+voxels with vertex weights tied to them but the render should not jump to voxel."
+
+**Break faces (replaces capping with voxel faces).** "When the lattice breaks we could use a scalar or normal field
+and then dual contour or marching tetrahedrons to close the gap so that the shape resembles whole bricks or whatever
+the material grain is."
+- A scalar field with normals over the part's voxels at its rest lattice; its iso-surface is the break surface.
+  Occupancy shaped by a grain function a material (brick courses, bedded stone, concrete aggregate, wood splinters,
+  torn metal), in the body's rest frame, on the tuning panel (cell size, aspect, offset a course, roughness).
+- Extraction on the GPU only over cells next to snapped bonds. The outer surface keeps its mesh: carve, never
+  re-mesh the body. Compare surface nets / dual contouring (a vertex a cell, a quad a sign-changing edge) with
+  marching tetrahedra by stills of brick and stone and by cost; name the choice and keep the other listed.
+- The new vertices are skinned to the part's voxels and baked with the mesh at settle. The seam with the original
+  surface must be closed: say how they meet.
+- If too big for D: land D with surface nets over plain occupancy behind the same interface (field → extractor →
+  skinned break mesh), grain kernels as the next letter. Never cube faces as a stand-in.
+
+**Terrain pieces as rows (PE13), to record, not built.** A freed piece takes its outer surface from the terrain's
+own mesh for that region, the terrain mesh is carved where it left, its voxels exist only for simulation with the
+mesh weighted to them, and the cut faces come from the same extractor and field for both the piece and the hole, so
+they fit like a broken thing. No jump to voxels at release.
+
+**Telekinesis rip (PE28).** See BACKLOG.
+
+## Hand-over: letter D, then E
+
+D is designed and its state machine is in place (`slots` in `engine_deform.wgsl`: LABEL0 → LABEL1 → PARTS → RELEASE,
+gated by `Engine.settles`, false today, which parks a still body in S_STILL). To build, in `engine_settle.wgsl`:
+1. `labelInit` / `labelStep` over the live pages while `dargs[4]` is set: a label a particle in `pw[3i+2].x`, the
+   least label among bonded neighbours with pointer jumping; changes counted in the slot's sums word 2.
+2. A thread a part's root: count, mass, centre, inertia, lattice box; under the crumb size mark `PV_CRUMBLE`
+   (`deaths` deposits). Else take a row (`takeOne` on P_ROW_*, row = 2g + 1), samples and heap (`takeRun`), write a
+   compact model (rest place = place − centre, rotation identity, bonds as they stand) and its row. A part that
+   finds no room adds to sums word 4 and is tried again. Bindings must stay ≤ 8 a kernel: split into scan, samples,
+   mesh, row.
+3. Mesh bake: the part's share of the source triangles with the same drop test as `eskin`; a vertex's place is the
+   skinned place minus the centre, its weights only the part's voxels. Then the break surface, by the owner's method.
+4. Tests listed in the brief for D; the equality test pattern is `R.drawn()` before and after.
+5. Then `Engine.settles = true`, wake a settled row as any row, and the lab station (E).
