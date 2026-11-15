@@ -535,7 +535,18 @@ Files: `src/shaders/engine_settle.wgsl` (new), `engine_draw.wgsl`, `engine_defor
 - **What looks wrong:** the hex-prism look of every body; break faces that are cell faces in thin bodies; the
   sawtooth of tilted prisms; no shatter into many pieces from any height; the crowded station.
 
+## The owner on the rigid lab (2026-11-15, verbatim): stone
+
+"Rigid lab looks good for steel reinforced concrete but the stone is too rubbery (it should probably have very little
+elasticity)". A requirement on stone, brick and plain concrete, deforming and rigid. Diagnosed, not fixed (PE35):
+deforming stone flexes up to its 4 % break strain before a bond snaps, rebounds 0.26 cells from a 24-cell drop and
+gets a tenth of a contact's speed back; a rigid stone block landing flat sinks 0.001 cells and comes back 0.002, so
+the flat landing is not it; edge landings and topples are not measured. The test's bounds are today's numbers.
+
 ## Hand-over: what is next
+
+First: PE35, the owner's stone (brittle materials with no elastic give, restitution a material, the rigid row on an
+edge), with a close stone drop in the station's capture to judge wobble.
 
 The round trip is built end to end (expand, lattice, settle, break faces, lab). Open, in the order I would take
 them: the grain function behind the break field (PE22); labels every tick so a face is drawn by its part while it

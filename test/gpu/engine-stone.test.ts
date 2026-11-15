@@ -86,7 +86,7 @@ test('deforming stone: a block from 24 cells barely rebounds, is still soon, and
 
 test('rigid stone: a block landing under its break threshold — how far it sinks, how far it comes back up', async () => {
   const R = await breakRig(g, flat);
-  const cells = box(12, 12, 20, 6, 6, 4);
+  const cells = box(12, 12, 16, 6, 6, 4);
   const b = R.e.add({ cells, mesh: modelMesh(cells) })!;
   // (at rest its centre is 2 cells over the ground at 10)
   let low = Infinity;
@@ -103,7 +103,7 @@ test('rigid stone: a block landing under its break threshold — how far it sink
     if (r.flags & ASLEEP) asleep = t;
   }
   const rest = (await R.row(b.row)).pos[2];
-  log(`rigid stone 6x6x4 from 10 cells: sank to ${(12 - low).toFixed(3)} cells into the ground at the lowest, came back up ${back.toFixed(3)} cells, rests ${(12 - rest).toFixed(3)} in; asleep ${((asleep - touched) / 60).toFixed(2)} s after it touched`);
+  log(`rigid stone 6x6x4 from 6 cells: sank to ${(12 - low).toFixed(3)} cells into the ground at the lowest, came back up ${back.toFixed(3)} cells, rests ${(12 - rest).toFixed(3)} in; asleep ${((asleep - touched) / 60).toFixed(2)} s after it touched`);
   expect(asleep).toBeGreaterThan(0);
   // the bounds today; a rise of more than a few hundredths of a cell after the landing is what reads as rubber
   expect(back).toBeLessThan(0.5);

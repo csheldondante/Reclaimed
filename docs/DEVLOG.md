@@ -23412,3 +23412,15 @@ deforming blocks still deforming, 0 parts; after, both settled (31 and 35 voxels
 
 **Not verified.** Nothing on the phone. No test stands at world-scale coordinates yet (the fix is checked in the
 page only): a gpu test of a body at x = 4,000 would pin it.
+
+## 2026-11-15 — Physics engine: the owner's "stone is too rubbery", diagnosed and pinned by a test, not fixed (PE35)
+
+**Why.** The owner on the rigid lab: "the stone is too rubbery (it should probably have very little elasticity)".
+
+**Measured** (`BREAK_LOG=1 npx vitest run --project gpu engine-stone --reporter=verbose`, desktop proxy): deforming
+stone 6 x 6 x 4 from 24 cells: mean rebound 0.256 cells, still 1.90 s after the hit, kept bonds strained up to 3.9 %
+(break strain 4 %), no squeeze of its height. Rigid, the same block flat from 6 cells: sinks 0.001 cells, comes back
+0.002, asleep 0.75 s after touching.
+
+**What.** Two tests with today's numbers as bounds; the diagnosis and the four things to do are in PE35. No material
+number was changed: the fix is a tuning of brittle materials the owner should see in the lab, and the session ended.
