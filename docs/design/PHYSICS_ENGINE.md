@@ -303,7 +303,7 @@ Adding those two numbers to each row is a few lines in `src/perf/physbench.ts`; 
 The orchestrator ruled on the mechanism above (2026-11-15): departures 1 and 2 rejected, 3 accepted. What is built
 follows the rulings, not the proposal. Files: `src/engine/engine.ts`, `modelmesh.ts`, `install.ts`;
 `src/shaders/engine_deform.wgsl`, `engine_lattice.wgsl`, `engine_draw.wgsl`; `test/gpu/engine-break.test.ts` (8 tests
-and a numbers run). **Letters D (settle) and E (the lab's break station) are not built.**
+and a numbers run). Letter D is built: see "Step 2, letter D as built" below.
 
 - **A pristine row owns no particles.** A model lives once in the heap (16 B a lattice cell: rest place about the
   centre of mass, material, 26 bonds), shared by every row made from it. `expand` gives a row a deform slot and pages
@@ -433,7 +433,87 @@ isn't covering up the cool effect when it rips free".
   freed chunk is then pulled along the spring toward the finger. Feedback while charging (the spring line, strain on
   the surface) is a UI note for that step. Not built.
 
-## Hand-over: letter D, then E
+## Step 2, letter D as built: settle, with break faces (branch `physics10-break`)
+
+Files: `src/shaders/engine_settle.wgsl` (new), `engine_draw.wgsl`, `engine_deform.wgsl`, `engine_compact.wgsl`,
+`src/engine/engine.ts`, `modelmesh.ts`; `test/gpu/engine-settle.test.ts` (6 tests, two numbers runs).
+
+- **The state machine** is `slots`'s, as designed: still for the still time, then LABEL0, LABEL1, PARTS, RELEASE. The
+  settle kernels are dispatched over the live pages only while a body settles (the GPU's count).
+- **Labels.** A label a voxel: the least lattice cell among the voxels it is bonded to (both ends holding the bond),
+  eight passes a tick with pointer jumping, till a whole tick changes none.
+- **Parts.** A thread a part's root. Under the crumb size: its voxels crumble and `deaths` lays them on the ground. The
+  whole body, every bond holding and within 0.02 cells of its model moved rigidly: its own row back, on the shared
+  model, nothing allocated. Otherwise a row (an odd one), samples and heap from the pool: a **compact model** (a
+  record a cell of the part's lattice box: its place about the part's centre where it lies, material, the bonds that
+  hold; the rest frame is the world's at that moment, the row's rotation the identity) and a **baked mesh**. The row
+  is written asleep; `compact` gives it the ground's word it sleeps on. Pages, the slot and the old row go back.
+- **A later `expand`** reads the compact model like any model: a bent beam re-expands bent, no vertex moves
+  (measured 1.9e-6 cells).
+- **Vertex weights changed** (`modelmesh.ts`): a vertex is weighted to the body's cells round its lattice corner
+  (at most four, equal weights, the cell whose face it is on first), not to the four nearest voxels. Every face at a
+  corner is then carried by the same voxels, and a triangle belongs to one cell, so a part's outer faces are exactly
+  its own cells'.
+- **Break faces** (the owner's method; the plain closed surface, grain not built). Field: the parts' labels over the
+  body's rest lattice. Extractor: surface nets on the hex-prism lattice, a vertex a lattice corner (three columns by
+  two layers meet there), a polygon a face between a cell of the part and a cell that was the body's but is not the
+  part's. A corner's place depends only on the corner: the mean of the middles of the cut edges round it
+  (`breakSmooth`), plus a noise of the corner (`breakRough`); both sides of a crack get the same surface. **The seam:**
+  a corner that also touches the body's outer surface stays at the cell's own corner, where the outer mesh has its
+  vertices, so the break is sealed to the original surface and the original surface is never re-meshed. Closed is
+  tested by welding vertices within 0.02 cells and counting edges with other than two triangles: none. The break
+  vertices are weighted to the part's cells round the corner and baked with the mesh.
+- **Marching tetrahedra was not built**, so there is no comparison: surface nets was the brief's starting point and
+  it closed against the original mesh by construction. The other stays listed (PE22).
+- **Break faces appear at settle only.** While a body deforms a crack is a hole (torn faces dropped), for the still
+  time plus at least four ticks. Live break faces need the labels every tick (PE31).
+- **The draw** (PE26): rows asleep come after the rows awake in the draw list, are placed once and stand; a frame
+  with nothing awake dispatches no workgroup.
+- **For the collision branch:** `Engine.occupancy(enc, row, out)` writes a row's lattice box, voxel count and a
+  material word a lattice cell into a buffer, on the GPU, for an SDF bake.
+
+### How each state is drawn now
+
+| state | engine route |
+|---|---|
+| rigid | its model's mesh by the row's pose; asleep: placed once, not every frame |
+| expanded | the same mesh, each face by the voxels its own cell is still bonded to |
+| cracked, mid-break | faces follow their own side of the crack; the gap between is an open hole; faces stretched past the tear limit are dropped |
+| settled part | its own baked mesh: the outer faces of its cells and the break faces that close it, rigid by the row's pose |
+| crumb | never drawn as a voxel: loose ground where it lay, a chip and dust particles |
+
+### Measured (desktop proxy: Dawn in Node, Intel Xe, D3D12; GPU timestamps a kernel)
+
+- Settle, the most a tick took: labels 0.2 to 0.3 ms (8 passes); a part's numbers, model, samples and row 0.39 ms
+  for a 144-voxel body, 3.67 ms for a 2,048-voxel one (the root threads' loops, PE32); the baked outer mesh 0.13 ms;
+  the break faces 0.20 to 0.26 ms.
+- A settled voxel: 20 to 27 B of compact model (16 B a cell of the part's box and a 64 B header), plus its mesh at
+  48 B a vertex unindexed: 574 B a voxel for a 1,467-voxel part, about 1 KB for parts of 60, 2 KB for one of 7.
+- At settle: a bent steel beam, no vertex moves (0); a stone slab broken over a ridge, 49 of 638 triangles move more
+  than 0.05 cells, the most 0.19 (hairlines inside a part closing, PE31).
+
+### Departures in letter D
+
+1. A vertex's weights are the cells round its corner, not the four nearest voxels (above). Trade-off: a bend is
+   blended over one cell's reach, not two; in return faces stay joined and a triangle has one owner.
+2. While deforming, a face is placed only by voxels its cell is still bonded to (the old rule blended across a crack
+   until the triangle tore). Trade-off: the baked mesh uses the part's voxels, so hairlines inside a part close at
+   settle (PE31).
+3. Faces the deforming draw had dropped as stretched come back at settle if their cell is in a part (a creased steel
+   beam: 42 of 492). No bond had snapped there.
+4. A settled row is written asleep, not awake: bodies do not meet each other yet, so an awake part would fall through
+   the part under it.
+5. Break faces are surface nets on the hex-prism lattice, the lattice the bodies have, not on a cubic grid.
+
+## Hand-over: letter E, then the grain
+
+Letter E (the lab's break station and the captures) is described in "Step 2, letter E" below if it was built in
+this session; otherwise it is the next thing. After it: the grain function behind the break field (PE22), live labels
+and break faces while a body deforms (PE31), the expand rule over the whole approach (PE30), the root threads' loops
+(PE32).
+
+## Hand-over as it was written for letter D (kept for the record)
+
 
 D is designed and its state machine is in place (`slots` in `engine_deform.wgsl`: LABEL0 → LABEL1 → PARTS → RELEASE,
 gated by `Engine.settles`, false today, which parks a still body in S_STILL). To build, in `engine_settle.wgsl`:

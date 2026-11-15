@@ -14,18 +14,6 @@
 struct PartP { p: vec4<f32>, v: vec4<f32>, m: vec4<u32> };
 @group(0) @binding(30) var<storage, read_write> parts: array<PartP>;
 @group(0) @binding(31) var<storage, read_write> counters: array<atomic<u32>>;
-// The voxel hash (u32, atomic), sized by the particles' room (V = pages x PAGE): [0] chains cut short by the guard since
-// `arm` last took the count (never silent: the pool's header has the total), heads from VH_AT, 2V of them (a particle
-// + 1; 0 none), then three words a particle: the next of its chain (+ 1), its bucket's index (0: not in), its bonds as
-// they stood when it went in. Only what was put in is cleared (`relax`, each particle its own bucket), so its cost
-// follows the voxels deforming, and between substeps it is all zero: a grown one starts empty.
-@group(0) @binding(38) var<storage, read_write> vh: array<atomic<u32>>;
-const VH_AT: u32 = 4u;
-const VH_GUARD: u32 = 128u;
-fn vhBucket(c: vec3<i32>) -> u32 {
-  return VH_AT + ((u32(c.x) * 73856093u) ^ (u32(c.y) * 19349663u) ^ (u32(c.z) * 83492791u)) % (2u * EU.g.x * PAGE);
-}
-fn vhRec(i: u32) -> u32 { return VH_AT + 2u * EU.g.x * PAGE + 3u * i; }
 const K_CHIP_P: u32 = 5u;
 const K_DUST_P: u32 = 1u;
 const K_HAZE_P: u32 = 15u;
@@ -58,7 +46,7 @@ fn predict(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
   var v = ps[3u * i].xyz;
   v.z -= worldG() * G.tune.voxelsGravity * h;
   ps[3u * i] = vec4<f32>(v, 0.0);
-  px[2u * i + 1u] = vec4<f32>(x.xyz, 0.0);
+  px[2u * i + 1u] = vec4<f32>(x.xyz, px[2u * i + 1u].w);
   px[2u * i] = vec4<f32>(x.xyz + v * h, x.w);
 }
 
@@ -359,6 +347,7 @@ fn finalize(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_inde
   v *= 1.0 - G.tune.voxelsAirDrag * h;
   ps[3u * i] = vec4<f32>(v, 0.0);
   pb[i] = bonds;
+  px[2u * i + 1u].w = bitcast<f32>(bonds);
   if (x.z < -20.0) { px[2u * i] = vec4<f32>(x.xyz, PV_DEAD); }
 }
 
@@ -404,6 +393,7 @@ fn relax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   }
   if (kept != bonds) {
     pb[i] = kept;
+    px[2u * i + 1u].w = bitcast<f32>(kept);
     // (a voxel the crack ran through on several sides crumbles: rubble and dust along the break, not clean cuts)
     let r2 = f32(hash3(i, EU.g.w, 0x51edu) & 0xffffu) / 65536.0;
     if (countOneBits(bonds & ~kept) >= 3u && r2 < 0.35) { px[2u * i] = vec4<f32>(x.xyz, PV_CRUMBLE); }

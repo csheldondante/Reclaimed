@@ -31,6 +31,13 @@ const ROW_EXPAND: u32 = 4u;
 const ROW_DEFORM: u32 = 8u;
 // no room for its particles this tick: it stays rigid (cleared at the end of the next tick)
 const ROW_DENIED: u32 = 16u;
+// asleep, and listed so in the draw list (engine_draw.wgsl: the triangles of rows asleep are placed once, not every
+// frame); `compact` asks for the list again when a row's sleep and this bit disagree
+const ROW_LISTED_ASLEEP: u32 = 32u;
+// a row settle made, asleep where its particles stood: `compact` gives it the ground's word it sleeps on
+const ROW_NEWSLEEP: u32 = 64u;
+// the pool's header word that asks for the draw list again (engine_deform.wgsl has the rest of the header)
+const P_DL_DIRTY: u32 = 20u;
 const NONE: u32 = 0xffffffffu;
 const NO_CONTACT: f32 = -1e8;
 // the list buffer (u32): [0] workgroups of 64 awake rows, [1] 1, [2] 1 (an indirect dispatch's arguments), [3] rows

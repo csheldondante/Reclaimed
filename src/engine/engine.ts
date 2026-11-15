@@ -21,6 +21,7 @@ import foldWgsl from '../shaders/engine_fold.wgsl?raw';
 import deformWgsl from '../shaders/engine_deform.wgsl?raw';
 import latticeWgsl from '../shaders/engine_lattice.wgsl?raw';
 import drawWgsl from '../shaders/engine_draw.wgsl?raw';
+import settleWgsl from '../shaders/engine_settle.wgsl?raw';
 import type { SimSystem } from '../sim/system';
 import { TICK_DT } from '../sim/flow';
 import type { WorldGpu } from '../sim/world-gpu';
@@ -73,10 +74,11 @@ export const POOL_HDR = 64;
 export const SLOT_W = 24;
 const SUMS_W = 8;
 export const DARGS_AT = 16;
-export const MODEL_HDR = 3;
+export const MODEL_HDR = 4;
 export const MESH_V = 3;
-/** engine_draw.wgsl: where the draw list's triangles start */
-export const DL_AT = 8;
+/** engine_deform.wgsl DL_AT: where the draw list's triangles start; engine_settle.wgsl OCC_AT */
+export const DL_AT = 16;
+export const OCC_AT = 4;
 /** the pool's header (engine_deform.wgsl P_*) */
 export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21, hashOver: 22 } as const;
 /** ticks between reads of the pool's header */
@@ -93,6 +95,8 @@ const CMDS = 16;
  *  submit each see their own */
 const CMD_RING = 4;
 const ROW_ALIVE = 1;
+/** label passes a tick while a body settles (engine_settle.wgsl labelStep: a label crosses a part in a few) */
+const LABEL_PASSES = 8;
 
 /** A body's mass, centre and inverse inertia from its cells, and its surface cells (pure: test/unit/engine-bake.test.ts). */
 export function bakeBody(cells: readonly EngineCell[]): {
@@ -298,6 +302,7 @@ export class Engine implements SimSystem {
   }
   private kargs!: GPUBuffer;
   private et: GPUBuffer;
+  private ou: GPUBuffer;
   private eu: GPUBuffer[] = [];
   private cu: { eu: GPUBuffer; ec: GPUBuffer }[] = [];
   private k: Record<string, { k: ComputeKernel; spec: BindSpec }> = {};
@@ -330,7 +335,7 @@ export class Engine implements SimSystem {
       const all = { ...base, ...spec };
       this.k[name] = { k: makeCompute(device, `engine-${name}`, [...parts, ...files], all, entry), spec: all };
     };
-    kernel('compact', [compactWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 12: 'read' });
+    kernel('compact', [compactWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 12: 'read', 18: 'rw' });
     kernel('fine', [stepWgsl], { 1: 'read', 4: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'read', 11: 'read', 12: 'read', 13: 'tex' });
     kernel('solve', [stepWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'read', 12: 'read', 15: 'rw' });
     kernel('fold', [foldWgsl], { 14: 'rw', 15: 'read' });
@@ -354,7 +359,24 @@ export class Engine implements SimSystem {
     const drw = [deformWgsl, drawWgsl];
     kernel('drawArm', drw, { 18: 'rw', 32: 'rw', 37: 'rw' });
     kernel('drawlist', drw, { 6: 'rw', 18: 'rw', 22: 'rw', 32: 'rw' });
-    kernel('drawEnd', drw, { 18: 'rw', 32: 'rw' });
+    kernel('drawlistAsleep', drw, { 6: 'rw', 18: 'rw', 22: 'rw', 32: 'rw' });
+    kernel('drawEnd', drw, { 18: 'rw', 32: 'rw', 37: 'rw' });
+    kernel('eskinEnd', drw, { 32: 'rw' });
+    // letter D: settle (engine_settle.wgsl) — the labels, then a part's numbers, model, mesh and row
+    const stl = [deformWgsl, settleWgsl];
+    const S4: BindSpec = { 19: 'rw', 21: 'read', 23: 'rw', 25: 'rw' };
+    kernel('labelInit', stl, S4);
+    kernel('labelStep', stl, { ...S4, 18: 'rw', 26: 'rw' });
+    kernel('partScan', stl, { ...S4, 22: 'rw', 24: 'rw', 26: 'rw', 38: 'rw' });
+    kernel('partCount', stl, { ...S4, 22: 'rw', 38: 'rw' });
+    kernel('triCount', stl, { 6: 'rw', 19: 'rw', 22: 'rw', 23: 'rw', 25: 'rw', 34: 'read', 38: 'rw' });
+    kernel('partAlloc', stl, { ...S4, 18: 'rw', 22: 'rw', 24: 'rw', 38: 'rw' });
+    kernel('partSamples', stl, { ...S4, 7: 'rw', 38: 'rw' });
+    kernel('partFaces', stl, { ...S4, 22: 'rw', 24: 'rw', 38: 'rw' });
+    kernel('triWrite', stl, { 6: 'rw', 19: 'rw', 22: 'rw', 23: 'rw', 24: 'rw', 25: 'rw', 34: 'read', 38: 'rw' });
+    kernel('partRecs', stl, { ...S4, 18: 'rw', 22: 'rw', 24: 'rw', 26: 'rw' });
+    kernel('partRow', stl, { ...S4, 4: 'rw', 5: 'rw', 6: 'rw', 24: 'rw' });
+    kernel('occupancy', stl, { 6: 'rw', 22: 'rw', 39: 'rw' });
     kernel('eskin', drw, { 4: 'rw', 6: 'rw', 19: 'rw', 22: 'rw', 23: 'rw', 24: 'rw', 33: 'rw', 34: 'read', 36: 'uniform' });
     this.kargs = world.buf('engine kernel dispatch', 64, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     const U = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
@@ -366,6 +388,7 @@ export class Engine implements SimSystem {
     device.queue.writeBuffer(this.pm, 0, packPhysMats());
     this.et = world.buf('engine expand thresholds', 192, U);
     this.fu = world.buf('engine draw uniform', 16, U);
+    this.ou = world.buf('engine uniform (occupancy)', EU_B, U);
     this.statBuf = world.buf('engine pool header read', POOL_HDR * 4, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
     this.resize({ rows: 64, pages: 16, slots: 16, table: 1 });
     this.drawRoom(4096);
@@ -521,7 +544,7 @@ export class Engine implements SimSystem {
       return makeBindGroup(this.device, `engine-${name}`, k.layout, Object.fromEntries(Object.keys(spec).map((b) => [b, over[Number(b)] ?? res[Number(b)]])));
     };
     const g: Record<string, GPUBindGroup> = {};
-    for (const name of Object.keys(this.k)) g[name] = make(name);
+    for (const name of Object.keys(this.k)) if (name !== 'occupancy') g[name] = make(name);
     this.cu.forEach((c, i) => (g[`compact${i}`] = make('compact', { 3: c.eu, 16: c.ec })));
     this.cu.forEach((c, i) => (g[`slots${i}`] = make('slots', { 3: c.eu, 16: c.ec })));
     g.solve0 = make('solve', { 3: this.eu[0] });
@@ -543,8 +566,11 @@ export class Engine implements SimSystem {
     const H = new ArrayBuffer(MODEL_HDR * 16);
     const hu = new Uint32Array(H);
     const hf = new Float32Array(H);
-    hu.set([mb.dims[0], mb.dims[1], mb.dims[2], mb.solid, id + MODEL_HDR + mb.recs.length / 4, verts, (body.mat & 255) | ((body.loose & 255) << 8), 0]);
+    // (the parity of its box's first row: the hex lattice's odd rows sit half a cell right — settle's break faces find
+    // a cell's six neighbours by it; its lattice's frame: the rest frame's own)
+    hu.set([mb.dims[0], mb.dims[1], mb.dims[2], mb.solid, id + MODEL_HDR + mb.recs.length / 4, verts, (body.mat & 255) | ((body.loose & 255) << 8), mb.lo[1] & 1]);
     hf.set([body.cellMass, body.radius], 8);
+    hf.set([0, 0, 0, 1], 12);
     const q = this.device.queue;
     q.writeBuffer(this.heap, id * 16, H);
     q.writeBuffer(this.heap, (id + MODEL_HDR) * 16, mb.recs);
@@ -604,11 +630,11 @@ export class Engine implements SimSystem {
   }
 
   /** a velocity change at the next tick (cells/s): a throw, a blast; it wakes the row */
-  impulse(b: EngineBody, dv: V3): void {
+  impulse(b: { row: number }, dv: V3): void {
     this.cmds.push({ kind: 1, row: b.row, a: [dv[0], dv[1], dv[2], 0] });
   }
 
-  wake(b: EngineBody): void {
+  wake(b: { row: number }): void {
     this.cmds.push({ kind: 2, row: b.row, a: [0, 0, 0, 0] });
   }
 
@@ -623,12 +649,12 @@ export class Engine implements SimSystem {
   }
 
   /** the row deforms at the next tick whatever hits it (a lab's button, a test): its particles are made as an impact's are */
-  expand(b: EngineBody): void {
+  expand(b: { row: number }): void {
     this.cmds.push({ kind: 5, row: b.row, a: [0, 0, 0, 0] });
   }
 
   /** a deforming body let go — its pages back to the pool, its row freed — or with none named, every one */
-  release(b?: EngineBody): void {
+  release(b?: { row: number }): void {
     this.cmds.push({ kind: 6, row: b ? b.row : 0xffffffff, a: [0, 0, 0, 0] });
   }
 
@@ -659,7 +685,7 @@ export class Engine implements SimSystem {
     f.set([T.slop, T.slopK, T.slopP, T.slopCap], 4);
     f.set([T.erodeDepth, T.restV, T.restW, T.restT], 8);
     f.set([T.airDrag, T.angDamp, T.stepUp, T.eventEnergy], 12);
-    f.set([T.nearGap, EVENT_ROOM, T.groundDamp, 0], 16);
+    f.set([T.nearGap, EVENT_ROOM, T.groundDamp, T.breakRough], 16);
     const fast = this.fastPath ?? T.fastPath >= 0.5;
     const d = this.d;
     const L = Engine.layout(d);
@@ -671,6 +697,7 @@ export class Engine implements SimSystem {
     const lsub = Math.max(1, Math.round(T.latticeSubsteps));
     f.set([T.stillV, T.stillT, T.crumb, TICK_DT / lsub], 40);
     u.set([Math.max(1, Math.round(T.latticeIters)), 0, lsub, 0], 44);
+    f[45] = T.breakSmooth;
     return U;
   }
 
@@ -800,6 +827,8 @@ export class Engine implements SimSystem {
     cur.pass.dispatchWorkgroups(1);
     run('drawlist');
     cur.pass.dispatchWorkgroupsIndirect(this.kargs, 32);
+    run('drawlistAsleep');
+    cur.pass.dispatchWorkgroupsIndirect(this.kargs, 32);
     run('drawEnd');
     cur.pass.dispatchWorkgroups(1);
     cur.pass.end();
@@ -817,8 +846,12 @@ export class Engine implements SimSystem {
     pass.setPipeline(this.k.eskin.k.pipeline);
     pass.setBindGroup(0, this.groups().eskin);
     pass.dispatchWorkgroupsIndirect(this.dl, 16);
+    // (the list has been placed whole: from the next frame only the rows awake are — engine_draw.wgsl)
+    pass.setPipeline(this.k.eskinEnd.k.pipeline);
+    pass.setBindGroup(0, this.groups().eskinEnd);
+    pass.dispatchWorkgroups(1);
     pass.end();
-    this.prof.dispatches++;
+    this.prof.dispatches += 2;
   }
 
   /** the lattice's substeps over the live pages, then the settling bodies' labels and parts (later letters of step 2) */
@@ -843,11 +876,54 @@ export class Engine implements SimSystem {
       each('deaths');
     }
     each('stats');
+    if (!this.settles) return;
+    // settle (engine_settle.wgsl): over the live pages only while a body settles (dargs[4], the GPU's count); the two
+    // mesh kernels over the draw list (dl[12], zero otherwise)
+    const settle = (name: string) => {
+      run(name);
+      cur.pass.dispatchWorkgroupsIndirect(this.dargs, 16);
+    };
+    const tris = (name: string) => {
+      run(name);
+      cur.pass.dispatchWorkgroupsIndirect(this.dl, 48);
+    };
+    settle('labelInit');
+    for (let i = 0; i < LABEL_PASSES; i++) settle('labelStep');
+    settle('partScan');
+    settle('partCount');
+    tris('triCount');
+    settle('partAlloc');
+    settle('partSamples');
+    settle('partFaces');
+    tris('triWrite');
+    settle('partRecs');
+    settle('partRow');
   }
 
-  /** letter D of build step 2 (settle: a still body's parts become rows) is not built: a still body's particles stand
-   *  where they are, stepped by nothing, drawn as its mesh, till it is let go */
-  readonly settles = false;
+  /**
+   * For the collision branch (body against body, PE3): a row's occupancy at its model's resolution into `out` (u32:
+   * its lattice box, its voxels, then a word a lattice cell from OCC_AT — its material, 0 none), for an SDF bake to
+   * take. A thread a cell, as many as `out` holds; the host need not know the row's model (a row the GPU made).
+   */
+  occupancy(enc: GPUCommandEncoder, row: number, out: GPUBuffer): void {
+    const U = this.uniform(false, 0);
+    const u = new Uint32Array(U);
+    const cells = out.size / 4 - OCC_AT;
+    u[27] = row;
+    u[35] = cells;
+    this.device.queue.writeBuffer(this.ou, 0, U);
+    const { k, spec } = this.k.occupancy;
+    const res: Record<number, GPUBuffer> = { 0: this.world.globals, 2: this.world.materials, 3: this.ou, 16: this.cu[0].ec, 17: this.et, 6: this.info, 22: this.heap, 39: out };
+    const pass = enc.beginComputePass({ label: 'engine occupancy' });
+    pass.setPipeline(k.pipeline);
+    pass.setBindGroup(0, makeBindGroup(this.device, 'engine-occupancy', k.layout, Object.fromEntries(Object.keys(spec).map((b) => [b, res[Number(b)]]))));
+    pass.dispatchWorkgroups(Math.ceil(cells / 64));
+    pass.end();
+  }
+
+  /** letter D of build step 2: a still deforming body's parts become rigid rows again (engine_settle.wgsl). (tests)
+   *  off: a still body's particles stand where they are, stepped by nothing, drawn as its mesh, till it is let go */
+  settles = true;
   /** (tests, the perf overlay) a compute pass a kernel, timed apart as `engine:<kernel>`; off: one pass, `engine` */
   timeKernels = false;
   /** (tests) the lattice's substeps skipped: deforming bodies stand as they are */

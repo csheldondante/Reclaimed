@@ -84,6 +84,8 @@ const SPEC = {
       stillV: { label: 'still speed', units: 'cells/s', min: 0.05, max: 3, step: 0.05, def: 0.4, help: 'a deforming body whose voxels move slower than this on average, for the still time, settles: its parts become rigid bodies again' },
       stillT: { label: 'still time', units: 's', min: 0.1, max: 3, step: 0.1, def: 0.5 },
       crumb: { label: 'crumb size', units: 'voxels', min: 1, max: 64, step: 1, def: 4, help: 'a part with fewer voxels than this goes to loose ground when the body settles' },
+      breakSmooth: { label: 'break face smoothing', units: 'share', min: 0, max: 1, step: 0.05, def: 1, help: 'where a break face\'s inner corners go: 0 the cells\' own corners (the hex zigzag), 1 the middle of the cut edges round each (surface nets: a straight crack comes out flat)' },
+      breakRough: { label: 'break face roughness', units: 'cells', min: 0, max: 0.3, step: 0.01, def: 0.08, help: 'how far a break face\'s inner corners are thrown off, each by its own noise (both sides of a crack get the same surface)' },
       latticeSubsteps: { label: 'lattice substeps', units: 'a tick', min: 1, max: 8, step: 1, def: 4, help: 'the deforming voxels are stepped this many times a tick' },
       latticeIters: { label: 'lattice iterations', units: 'a substep', min: 1, max: 8, step: 1, def: 4, help: 'shape-matching passes: more is stiffer' },
     },

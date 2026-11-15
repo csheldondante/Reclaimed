@@ -5,11 +5,12 @@
 // own model (engine_settle.wgsl). At the instant of expansion every particle sits at pose x rest place with the row's
 // rotation, so the two are the same triangles: nothing moves on the screen.
 //
-// The draw list (dl, u32): [0..3] the draw's arguments (vertices, 1, 0, 0), [4..6] `eskin`'s dispatch, [7] triangles,
-// then two words a triangle from DL_AT: its row, its first vertex's place in the heap. It is made again only when a
-// row comes or goes (the pool's dirty word), by the GPU: rows the GPU made are drawn with no word to the host.
+// The draw list (dl; its words are in engine_deform.wgsl) is made again only when a row comes or goes, falls asleep or
+// wakes (the pool's dirty word), by the GPU: rows the GPU made are drawn with no word to the host. The triangles of
+// rows awake or deforming come first and are placed every frame; those of rows asleep come after and are placed once,
+// the frame after the list is made (the owner: static geometry stays on the GPU, moved by transforms — an asleep row
+// costs the frame nothing).
 // Out (render.wgsl vsSkin's triangle list): a vertex [xyz bits, material word] [its triangle's normal bits, 0].
-const DL_AT: u32 = 8u;
 @group(0) @binding(32) var<storage, read_write> dl: array<atomic<u32>>;
 @group(0) @binding(33) var<storage, read_write> dout: array<vec4<u32>>;
 @group(0) @binding(34) var<storage, read> dlR: array<u32>;
@@ -23,25 +24,15 @@ fn drawArm() {
     atomicStore(&kargs[8], (EU.e.x + 63u) / 64u);
     atomicStore(&kargs[9], 1u);
     atomicStore(&kargs[10], 1u);
-    atomicStore(&dl[7], 0u);
+    atomicStore(&dl[8], 0u);
+    atomicStore(&dl[9], 0u);
   } else {
     atomicStore(&kargs[8], 0u);
   }
 }
 
-// a thread a row slot (only when the list is made again): its model's triangles into the list
-@compute @workgroup_size(64)
-fn drawlist(@builtin(global_invocation_id) id: vec3<u32>) {
-  let r = id.x;
-  if (r >= EU.e.x || (rowFlags(r) & ROW_ALIVE) == 0u) { return; }
-  let model = bitcast<u32>(info[4u * r + 3u].x);
-  if (model == 0u) { return; }
-  let h = bitcast<vec4<u32>>(heap[hAt(model) + 1u]);
-  let tris = h.y / 3u;
-  if (tris == 0u) { return; }
-  let base = atomicAdd(&dl[7], tris);
-  atomicMax(&pool[P_DL_WANT], base + tris);
-  let v0 = hAt(h.x);
+/** a row's triangles into the list from `base` */
+fn listRow(r: u32, base: u32, tris: u32, v0: u32) {
   for (var t = 0u; t < tris; t++) {
     if (base + t >= EU.i.w) { break; }
     atomicStore(&dl[DL_AT + 2u * (base + t)], r);
@@ -49,25 +40,78 @@ fn drawlist(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 }
 
+// a thread a row slot (only when the list is made again): the triangles of the rows awake or deforming, from the start
+@compute @workgroup_size(64)
+fn drawlist(@builtin(global_invocation_id) id: vec3<u32>) {
+  let r = id.x;
+  if (r >= EU.e.x) { return; }
+  let fl = rowFlags(r);
+  if ((fl & ROW_ALIVE) == 0u || (fl & ROW_ASLEEP) != 0u) { return; }
+  let model = bitcast<u32>(info[4u * r + 3u].x);
+  if (model == 0u) { return; }
+  info[4u * r].w = bitcast<f32>(fl & ~ROW_LISTED_ASLEEP);
+  let h = bitcast<vec4<u32>>(heap[hAt(model) + 1u]);
+  let tris = h.y / 3u;
+  if (tris == 0u) { return; }
+  listRow(r, atomicAdd(&dl[8], tris), tris, hAt(h.x));
+}
+
+// then the rows asleep, after them (the awake count is whole by now)
+@compute @workgroup_size(64)
+fn drawlistAsleep(@builtin(global_invocation_id) id: vec3<u32>) {
+  let r = id.x;
+  if (r >= EU.e.x) { return; }
+  let fl = rowFlags(r);
+  if ((fl & ROW_ALIVE) == 0u || (fl & ROW_ASLEEP) == 0u) { return; }
+  let model = bitcast<u32>(info[4u * r + 3u].x);
+  if (model == 0u) { return; }
+  info[4u * r].w = bitcast<f32>(fl | ROW_LISTED_ASLEEP);
+  let h = bitcast<vec4<u32>>(heap[hAt(model) + 1u]);
+  let tris = h.y / 3u;
+  if (tris == 0u) { return; }
+  listRow(r, atomicLoad(&dl[8]) + atomicAdd(&dl[9], tris), tris, hAt(h.x));
+}
+
 // one workgroup, every tick: the draw's and the skin's arguments from the count (past the room: what fits is drawn,
 // the pool's `want` tells the host, and the list is made again once it has grown)
 @compute @workgroup_size(1)
 fn drawEnd() {
-  let want = atomicLoad(&dl[7]);
-  let n = min(want, EU.i.w);
-  if (want > EU.i.w) { atomicStore(&pool[P_DL_DIRTY], 1u); }
-  atomicStore(&dl[0], 3u * n);
-  atomicStore(&dl[1], 1u);
-  atomicStore(&dl[2], 0u);
-  atomicStore(&dl[3], 0u);
-  atomicStore(&dl[4], (n + 63u) / 64u);
-  atomicStore(&dl[5], 1u);
-  atomicStore(&dl[6], 1u);
+  if (atomicLoad(&kargs[8]) != 0u) {
+    let awake = atomicLoad(&dl[8]);
+    let want = awake + atomicLoad(&dl[9]);
+    atomicMax(&pool[P_DL_WANT], want);
+    let n = min(want, EU.i.w);
+    if (want > EU.i.w) { atomicStore(&pool[P_DL_DIRTY], 1u); }
+    atomicStore(&dl[7], want);
+    atomicStore(&dl[0], 3u * n);
+    atomicStore(&dl[1], 1u);
+    atomicStore(&dl[2], 0u);
+    atomicStore(&dl[3], 0u);
+    // (the list is new: the next frame places all of it, the rows asleep too — once)
+    atomicStore(&dl[4], (n + 63u) / 64u);
+    atomicStore(&dl[5], 1u);
+    atomicStore(&dl[6], 1u);
+    atomicStore(&dl[10], n);
+    atomicStore(&dl[11], min(awake, EU.i.w));
+  }
+  // settle's mesh kernels go over the list as it stood when the tick began: only while a body settles
+  let m = min(atomicLoad(&dl[7]), EU.i.w);
+  atomicStore(&dl[12], select(0u, (m + 63u) / 64u, atomicLoad(&pool[P_SETTLING]) != 0u));
+  atomicStore(&dl[13], 1u);
+  atomicStore(&dl[14], 1u);
+}
+
+// one workgroup, every frame after `eskin`: the list has been placed whole — from now only the rows awake are
+@compute @workgroup_size(1)
+fn eskinEnd() {
+  let awake = atomicLoad(&dl[11]);
+  atomicStore(&dl[4], (awake + 63u) / 64u);
+  atomicStore(&dl[10], awake);
 }
 
 struct SkinV { p: vec3<f32>, rest: vec3<f32>, word: u32, ok: bool };
 
-/** a vertex of a deforming body: by the voxels it is weighted to */
+/** a vertex of a deforming body: by the voxels that carry it (engine_deform.wgsl `carries`) */
 fn skinVertex(v: u32, slot: u32, recs: u32) -> SkinV {
   let idx = bitcast<vec4<u32>>(heap[v]);
   let wt = heap[v + 1u];
@@ -75,25 +119,31 @@ fn skinVertex(v: u32, slot: u32, recs: u32) -> SkinV {
   var o: SkinV;
   o.rest = rest.xyz;
   o.word = bitcast<u32>(rest.w);
+  o.ok = false;
+  if (idx.x == NONE) { return o; }
+  let jo = partAt(slot, idx.x);
+  if (!alive(jo)) { return o; }
+  let bonds = bitcast<u32>(px[2u * jo + 1u].w);
+  let d = slotDims(slot);
   var p = vec3<f32>(0.0);
   var ws = 0.0;
   for (var k = 0u; k < 4u; k++) {
-    if (idx[k] == NONE || wt[k] <= 0.0) { continue; }
+    if (idx[k] == NONE || wt[k] <= 0.0 || !carries(slot, d, idx.x, bonds, idx[k])) { continue; }
     let j = partAt(slot, idx[k]);
     if (!alive(j)) { continue; }
     p += (px[2u * j].xyz + eqrot(ps[3u * j + 2u], rest.xyz - heap[recs + idx[k]].xyz)) * wt[k];
     ws += wt[k];
   }
-  o.ok = ws > 0.35;
+  o.ok = ws > 0.0;
   o.p = p / max(ws, 1e-6);
   return o;
 }
 
-// a thread a triangle of the list, every frame
+// a thread a triangle of the list that is to be placed this frame
 @compute @workgroup_size(64)
 fn eskin(@builtin(global_invocation_id) id: vec3<u32>) {
   let t = id.x;
-  if (t >= dlR[7] || t >= EU.i.w) { return; }
+  if (t >= dlR[10] || t >= EU.i.w) { return; }
   let r = dlR[DL_AT + 2u * t];
   let v0 = dlR[DL_AT + 2u * t + 1u];
   let fl = rowFlags(r);

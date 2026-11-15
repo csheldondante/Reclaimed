@@ -18,15 +18,18 @@
 // kargs (u32): [0..2] the per-page kernels' dispatch, [4..6] the per-slot kernels' — both zero while nothing deforms
 //   (`arm`, one thread a tick, sets them from the pool) — [8..10] the draw list's (engine_draw.wgsl).
 // heap (vec4): models and meshes. A model at h: [w, d, h, solid cells] [mesh first vertex (hAt), vertices, material |
-//   loose << 8, 0] [a cell's mean mass, bound radius, 0, 0], then a record a lattice cell: xyz its rest place about the
-//   centre of mass, w (u32) material (6 bits; 0 none) | its 26 bonds << 6. A mesh vertex is MESH_V vec4: [its four
-//   voxels (cell k; NONE)] [their weights] [its rest place, its material word].
+//   loose << 8, the parity of its box's first row (the hex lattice: odd rows sit half a cell right)] [a cell's mean
+//   mass, bound radius, 0, 0] [its lattice's frame in its rest frame (a quaternion: the identity for a model the host
+//   bakes; a settled part's rest frame is the world's where it settled)], then a record a lattice cell: xyz its rest
+//   place about the centre of mass, w (u32) material (6 bits; 0 none) | its 26 bonds << 6. A mesh vertex is MESH_V
+//   vec4: [its four voxels (cell k; NONE) — the first is the cell whose face the vertex is on] [their weights] [its
+//   rest place, its material word].
 const PAGE: u32 = 512u;
 const POOL_HDR: u32 = 64u;
 const SLOT_W: u32 = 24u;
 const SUMS_W: u32 = 8u;
 const DARGS_AT: u32 = 16u;
-const MODEL_HDR: u32 = 3u;
+const MODEL_HDR: u32 = 4u;
 const MESH_V: u32 = 3u;
 // the pool's header
 const P_PAGE_TOP: u32 = 0u;
@@ -50,9 +53,8 @@ const P_DEFORMING: u32 = 15u;
 const P_EXPANDS: u32 = 16u;
 const P_PARTS: u32 = 17u;
 const P_CRUMBS: u32 = 18u;
-// the draw list: triangles wanted, and whether it is to be made again
+// the draw list: triangles wanted (whether it is to be made again: P_DL_DIRTY, engine.wgsl)
 const P_DL_WANT: u32 = 19u;
-const P_DL_DIRTY: u32 = 20u;
 // slots settling now (labels, parts)
 const P_SETTLING: u32 = 21u;
 // the voxel hash's chains cut short by its guard, ever (engine_lattice.wgsl: contacts past it were not seen)
@@ -67,6 +69,12 @@ const S_PARTS: u32 = 5u;
 const S_RELEASE: u32 = 6u;
 // still, and settle not built yet (letter D): its particles stand, no lattice kernel steps them, its mesh is drawn by them
 const S_STILL: u32 = 7u;
+// The draw list (engine_draw.wgsl; settle's mesh kernels walk it too), u32: [0..3] the draw's arguments (vertices, 1,
+// 0, 0), [4..6] the frame's `eskin` dispatch, [7] triangles listed, [8] those of rows awake or deforming (they come
+// first), [9] those of rows asleep, [10] triangles `eskin` places this frame, [11] the awake ones (what a frame places
+// once the list has been placed whole), [12..14] the settle mesh kernels' dispatch (zero while nothing settles), then
+// two words a triangle from DL_AT: its row, its first vertex's place in the heap.
+const DL_AT: u32 = 16u;
 // a slot's record: [0] state, [1] row (NONE: none to free), [2] model (heap index), [3..5] its lattice box, [6] pages,
 // [7] how long it has been still (f32), [8..10] the row's centre when it expanded, [11..14] its rotation, [15..17] its
 // velocity, [18..20] its spin, [21] voxels alive at the last count, [22] its material | loose << 8
@@ -78,7 +86,8 @@ const PV_CRUMBLE: f32 = -2.0;
 @group(0) @binding(20) var<storage, read_write> dargsW: array<atomic<u32>>;
 @group(0) @binding(21) var<storage, read> dargs: array<u32>;
 @group(0) @binding(22) var<storage, read_write> heap: array<vec4<f32>>;
-// particle i: px[2i] xyz, w inverse mass (< 0: none; PV_CRUMBLE: `deaths` ends it); px[2i+1] its place before this substep
+// particle i: px[2i] xyz, w inverse mass (< 0: none; PV_CRUMBLE: `deaths` ends it); px[2i+1] xyz its place before this
+// substep, w its bonds (u32 bits: pb's word, kept here too for the draw, which has no binding left for pb)
 @group(0) @binding(23) var<storage, read_write> px: array<vec4<f32>>;
 // ps[3i] velocity; ps[3i+1] xyz its rest place (the model's frame; follows a plastic bend), w its material (u32);
 // ps[3i+2] its region's rotation
@@ -91,6 +100,18 @@ const PV_CRUMBLE: f32 = -2.0;
 @group(0) @binding(37) var<storage, read_write> kargs: array<atomic<u32>>;
 // the lattice's material table (physics.ts PHYS_MATS, 4 vec4 a material)
 @group(0) @binding(35) var<uniform> PM: array<vec4<f32>, 192>;
+// The voxel hash (u32, atomic), sized by the particles' room (V = pages x PAGE): [0] chains cut short by the guard since
+// `arm` last took the count (never silent: the pool's header has the total), heads from VH_AT, 2V of them (a particle
+// + 1; 0 none), then three words a particle: the next of its chain (+ 1), its bucket's index (0: not in), its bonds as
+// they stood when it went in. Only what was put in is cleared (`relax`, each particle its own bucket), so its cost
+// follows the voxels deforming, and between substeps it is all zero: a grown one starts empty.
+@group(0) @binding(38) var<storage, read_write> vh: array<atomic<u32>>;
+const VH_AT: u32 = 4u;
+const VH_GUARD: u32 = 128u;
+fn vhBucket(c: vec3<i32>) -> u32 {
+  return VH_AT + ((u32(c.x) * 73856093u) ^ (u32(c.y) * 19349663u) ^ (u32(c.z) * 83492791u)) % (2u * EU.g.x * PAGE);
+}
+fn vhRec(i: u32) -> u32 { return VH_AT + 2u * EU.g.x * PAGE + 3u * i; }
 fn pmA(m: u32) -> vec4<f32> { return PM[m * 4u]; }
 fn pmB(m: u32) -> vec4<f32> { return PM[m * 4u + 1u]; }
 fn pmC(m: u32) -> vec4<f32> { return PM[m * 4u + 2u]; }
@@ -131,6 +152,18 @@ fn n26(k: u32) -> vec3<i32> {
 fn alive(i: u32) -> bool { return px[2u * i].w >= 0.0; }
 fn matOf(i: u32) -> u32 { return bitcast<u32>(ps[3u * i + 1u].w) & 63u; }
 
+/**
+ * A mesh vertex's voxels that carry it: the cell whose face it is on (its first), and those of its others that cell is
+ * still bonded to. So a face follows its own side of a crack — while the body deforms (engine_draw.wgsl) and when its
+ * part's mesh is baked (engine_settle.wgsl), by the one rule: nothing moves when it settles.
+ */
+fn carries(slot: u32, d: vec3<u32>, own: u32, ownBonds: u32, k: u32) -> bool {
+  if (k == own) { return true; }
+  let dl = cellOf(k, d) - cellOf(own, d);
+  if (any(abs(dl) > vec3<i32>(1))) { return false; }
+  let b = u32((dl.x + 1) + 3 * (dl.y + 1) + 9 * (dl.z + 1));
+  return (ownBonds & (1u << select(b, b - 1u, b > 13u))) != 0u;
+}
 /** The particle a thread of a per-particle dispatch has (8 workgroups of 64 a live page), or NONE. */
 fn pidx(wg: u32, li: u32) -> u32 {
   let n = wg / 8u;
@@ -305,7 +338,7 @@ fn fill(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) l
   let rl = eqrot(q, rest);
   let p = slotV3(L.slot, 8u) + rl;
   px[2u * i] = vec4<f32>(p, 1.0 / max(pmA(mat).x, 0.01));
-  px[2u * i + 1u] = vec4<f32>(p, 0.0);
+  px[2u * i + 1u] = vec4<f32>(p, bitcast<f32>(mw >> 6u));
   ps[3u * i] = vec4<f32>(slotV3(L.slot, 15u) + cross(slotV3(L.slot, 18u), rl), 0.0);
   ps[3u * i + 1u] = vec4<f32>(rest, bitcast<f32>(mat));
   ps[3u * i + 2u] = q;
@@ -356,6 +389,11 @@ fn slots(@builtin(global_invocation_id) id: vec3<u32>) {
       info[4u * row].w = bitcast<f32>(0u);
       pose[4u * row + 2u].w = -1.0;
       atomicStore(&pool[P_DL_DIRTY], 1u);
+      // (a row the GPU made — an odd one — goes back on the free rows' stack: popped only in `partAlloc`)
+      if ((row & 1u) == 1u) {
+        let k = atomicAdd(&pool[P_ROW_TOP], 1u);
+        atomicStore(&pool[EU.h.z + k], row >> 1u);
+      }
     }
     dmeta[s] = S_FREE;
     let k = atomicAdd(&pool[P_SLOT_TOP], 1u);

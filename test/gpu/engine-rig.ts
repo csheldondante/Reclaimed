@@ -24,6 +24,10 @@ export interface BreakRig {
   /** one tick with each of the engine's kernels in a pass of its own, timed by the GPU (timestamp queries): ms by
    *  kernel, `total` their sum, `wall` the tick's submit to done; null where the device has no timestamps */
   gpuTick(): Promise<Map<string, number> | null>;
+  /** every row in use: its index, flags, mass, model (a heap index as the row holds it), centre */
+  rows(): Promise<{ row: number; flags: number; mass: number; model: number; pos: number[] }[]>;
+  /** a model's header: its lattice box, voxels, mesh vertices, and its records (4 floats a cell: rest place, material | bonds << 6) */
+  model(id: number): Promise<{ dims: number[]; solid: number; verts: number; recs: Float32Array }>;
 }
 
 export async function breakRig(g: TestGpu, col: (x: number, y: number) => Interval[], W = 32, H = 32): Promise<BreakRig> {
@@ -103,6 +107,23 @@ export async function breakRig(g: TestGpu, col: (x: number, y: number) => Interv
       out.set('total', total);
       out.set('wall', wall);
       return out;
+    },
+    rows: async () => {
+      const D = e.debugBuffers;
+      const n = e.rooms.rows;
+      const I = new Uint32Array(await g.read(D.info, n * 64));
+      const If = new Float32Array(I.buffer);
+      const P = new Float32Array(await g.read(D.pose, n * 64));
+      const out = [];
+      for (let r = 0; r < n; r++) if (I[r * 16 + 3] & 1) out.push({ row: r, flags: I[r * 16 + 3], mass: If[r * 16 + 7], model: I[r * 16 + 12], pos: [...P.slice(r * 16 + 8, r * 16 + 11)] });
+      return out;
+    },
+    model: async (id) => {
+      const at = id >>> 31 ? e.rooms.heap.cpu + (id & 0x7fffffff) : id;
+      const H = new Uint32Array(await g.read(e.debugBuffers.heap, 64, at * 16));
+      const cells = H[0] * H[1] * H[2];
+      const recs = new Float32Array(await g.read(e.debugBuffers.heap, cells * 16, (at + 4) * 16));
+      return { dims: [H[0], H[1], H[2]], solid: H[3], verts: H[5], recs };
     },
     drawn: async () => {
       const enc = g.device.createCommandEncoder();

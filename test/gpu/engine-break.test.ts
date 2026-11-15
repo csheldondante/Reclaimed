@@ -261,6 +261,9 @@ const slotState = async (R: BreakRig, row: number) => {
 
 test('C: a stone block dropped from height is deformed by the lattice — it cracks, comes to rest on the ground, and goes still on the GPU', async () => {
   const R = await breakRig(g, flat);
+  // (letter C's test is of the lattice and its still timer: settle — letter D, test/gpu/engine-settle.test.ts — is
+  // held off, so a still body's particles stand)
+  R.e.settles = false;
   const cells = box(12, 12, 34, 6, 6, 4);
   const b = R.e.add({ cells, mesh: modelMesh(cells) })!;
   let hit = -1;

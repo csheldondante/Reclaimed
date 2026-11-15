@@ -23352,3 +23352,39 @@ sit up to the crumble depth into the ground).
 
 **Not verified.** Nothing on the phone. The remaining gap in rebound against the lattice route (fragments are the
 likely part) is not run down.
+
+## 2026-11-15 — Physics engine, build step 2, letter D: settle, with break faces (PE20, PE22, PE26, PE30-PE32)
+
+**Why.** A deforming body never became rigid again: it stood on its particles for ever, could not be woken, and a
+crack was an open hole. The owner's rule is one mesh a body in every state, never cubes, and the break closed by a
+field and an extractor, not by cube faces.
+
+**What.** `engine_settle.wgsl`: labels over mutual bonds; a thread a part's root; a compact model and a baked mesh a
+part; break faces by surface nets on the hex-prism lattice, sealed to the original mesh at the corners that touch the
+outer surface; crumbs to the ground; the whole unbroken body back on its shared model. The draw list keeps rows
+asleep apart, placed once. A model's mesh vertices are weighted to the cells round their corner. `Engine.occupancy`
+for the collision branch. `Engine.settles` is on.
+
+**Found on the way.**
+- A stone block dropped flat cracks, sheds 28 to 45 voxels and stays one part: the bonds left still connect it. It
+  splits only across an edge (the test drops a slab over a ridge: parts of 65 and 58 voxels).
+- Weights to the four nearest voxels opened seams once faces were placed per owning cell (118 open edges on a bent
+  steel beam): the nearest four reach two cells away and differ from face to face. Weights to the cells round the
+  corner fixed it (0 open edges).
+- Baking by the bonded-to-owner voxels left 46 open edges in a cracked stone part: voxels with few bonds left have
+  noisy rotations. Baking by the part's voxels closes the mesh; the cost is PE31's hairline move.
+- The expand rule missed a 12 x 4 x 2 slab's hit on a ridge at about 21 cells/s (PE30).
+- The transfer gate's lexer took a local named `P` in `encode` for the `P` uploaded in `add`; renamed.
+
+**Measured** (desktop proxy; `BREAK_LOG=1 npx vitest run --project gpu engine-settle --reporter=verbose`): settle
+0.9 ms of GPU at most a tick for a 144-voxel body, 4.3 ms for a 2,048-voxel one (3.67 of it the root threads'
+loops); break faces 0.20 to 0.26 ms; a settled voxel 20 to 27 B of model and 0.6 to 2 KB with its unindexed mesh;
+re-expansion moves no vertex (1.9e-6 cells); settle moves none on a bent beam, up to 0.19 cells at 49 of 638
+triangles in a cracked stone part.
+
+**Tests.** `engine-settle` 6 pass (stone over a ridge: 2 rows, mass conserved to the voxel, pages back, 0 open edges
+on 820 to 844 triangles; steel beam: one row, bent compact model, no vertex moves at settle or re-expansion; shared
+model back; a settled part woken by an impulse and broken again by a hard hit; rows asleep dispatch no skin
+workgroup; occupancy). `engine-break` 8, `engine-d0` 3, `engine` 13 pass. Unit: the roadlab writing lint only (PE17).
+
+**Not verified.** Nothing on the phone. The look of the break faces (stills come with letter E). Grain is not built.

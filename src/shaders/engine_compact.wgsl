@@ -3,6 +3,7 @@
 // visit a row asleep.
 @group(0) @binding(10) var<storage, read_write> list: array<atomic<u32>>;
 @group(0) @binding(12) var<storage, read> surfaceIn: array<u32>;
+@group(0) @binding(18) var<storage, read_write> poolC: array<atomic<u32>>;
 
 @compute @workgroup_size(64)
 fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -43,7 +44,14 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
   // centre isn't the one it fell asleep on. One read a row asleep; the word is fresh this tick.)
   if ((fl & ROW_ASLEEP) != 0u) {
     let c = cellAt(x.xy);
-    if (inMap(c) && surfaceIn[colIdxI(c)] != bitcast<u32>(pose[4u * r].w)) { wake = true; }
+    if ((fl & ROW_NEWSLEEP) != 0u) {
+      // (settle made it asleep where its particles stood: the ground's word it sleeps on is taken here)
+      var word = 0u;
+      if (inMap(c)) { word = surfaceIn[colIdxI(c)]; }
+      pose[4u * r].w = bitcast<f32>(word);
+      fl = fl & ~ROW_NEWSLEEP;
+      info[4u * r].w = bitcast<f32>(fl);
+    } else if (inMap(c) && surfaceIn[colIdxI(c)] != bitcast<u32>(pose[4u * r].w)) { wake = true; }
   }
   if (any(shiftBy != vec3<f32>(0.0))) {
     pose[4u * r] = vec4<f32>(pose[4u * r].xyz + shiftBy, pose[4u * r].w);
@@ -57,6 +65,9 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
     let v = vel[2u * r];
     vel[2u * r] = vec4<f32>(v.xyz + dv, 0.0);
   }
+  // (the draw list keeps the triangles of rows asleep apart, placed once: a row that fell asleep or woke since it was
+  // made asks for it again)
+  if (((fl & ROW_ASLEEP) != 0u) != ((fl & ROW_LISTED_ASLEEP) != 0u) && bitcast<u32>(info[4u * r + 3u].x) != 0u) { atomicStore(&poolC[P_DL_DIRTY], 1u); }
   if ((fl & ROW_ASLEEP) != 0u) { return; }
   let k = atomicAdd(&list[3], 1u);
   atomicAdd(&list[4], 1u);

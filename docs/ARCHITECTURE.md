@@ -3655,3 +3655,14 @@ Contracts: rows the host adds are even, rows the GPU makes odd; samples and the 
 `hAt` in `engine.wgsl`); the host reads only the pool's 256 B header every 4 ticks, to grow buffers ahead of need; a
 body is one mesh in every state (`engine_draw.wgsl`, drawn through `Renderer.addMesh`). Settle is not built
 (BACKLOG PE20). docs/design/PHYSICS_ENGINE.md "Step 2 as built" has the layouts' owners and the limits.
+
+## The physics engine, build step 2, letter D: settle (2026-11-15, branch `physics10-break`)
+
+A still deforming body becomes rigid rows again on the GPU (`engine_settle.wgsl`): its bonds are labelled into parts,
+each part takes a row, samples and heap from the pool and gets a compact model and a baked mesh closed by break
+faces; crumbs go to the ground through the events; pages, slots and GPU rows return to their free stacks. Contracts
+added: a model's header is 4 vec4 (the fourth its lattice's frame; the parity of its box's first row in the second);
+a mesh vertex's first voxel is the cell whose face it is on; the draw list (`DL_AT` 16) keeps rows awake first and
+rows asleep after, placed once; `ROW_LISTED_ASLEEP` and `ROW_NEWSLEEP` are row flags; deforming voxels meet through
+the voxel hash (`vh`), which settle also uses for a part's counters; `Engine.occupancy` is the collision branch's
+entry. Still one read: the pool's header.
