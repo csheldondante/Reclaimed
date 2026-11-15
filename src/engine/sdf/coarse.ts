@@ -10,7 +10,7 @@
 // Transfers: two 48 B uniforms a pass.
 // Work: every dispatch but two one-thread ones is sized on the GPU by what exists: the awake table's by the awake
 // rows (nothing awake: no workgroups), the sleeper table's only in a tick whose sleep epoch changed, stage A by the
-// awake rows, stage B by the work items. Each tick the awake table's counts (8 B a bucket) are cleared by a GPU clear.
+// awake rows, stage B by the work items. Each tick the awake table's counters (8 B a bucket) are cleared by a GPU clear.
 //
 // Room: `rows` is the capacity the buffers are made for; the pair buffer has `pairsARow` pairs a row and the items (64 a row)
 // (grown with the rows: make a bigger SdfCoarse, as the engine makes its row buffers again). Pairs and items
@@ -67,6 +67,7 @@ export class SdfCoarse {
   /** [PAIR_ASKED] pairs asked for, [PAIR_OVERSIZE_DROPPED], [PAIR_ITEMS_DROPPED], then (a, b) a pair from word PAIR_HEADER_WORDS */
   readonly pairBuf: GPUBuffer;
   readonly ctl: GPUBuffer;
+  /** the tables proper (sdf-coarse.wgsl's header); their counters are private */
   readonly awake: GPUBuffer;
   readonly sleepers: GPUBuffer;
   readonly rows: number;
@@ -76,8 +77,11 @@ export class SdfCoarse {
   readonly heads: number;
   readonly cellTop: number;
   margin: number;
+  /** for the bench's isolation only: encode up to the sleeper table (0), the awake table (1), stage A (2), everything (3) */
+  upTo = 3;
 
   private params: [GPUBuffer, GPUBuffer];
+  private counters: [GPUBuffer, GPUBuffer];
   private items: GPUBuffer;
   private itemCtl: GPUBuffer;
   private k: Record<Kernel, ComputeKernel>;
@@ -102,23 +106,24 @@ export class SdfCoarse {
     this.heads = heads;
     const parts = [sdfFormatWgsl(models.format), modelWgsl, coarseWgsl];
     const mk = (name: Kernel, spec: Record<number, 'uniform' | 'read' | 'rw'>) => makeCompute(device, `sdf coarse ${name}`, parts, { 0: 'uniform', ...spec }, name);
-    const src = { 1: 'read', 2: 'read', 3: 'read', 4: 'read', 7: 'rw' } as const;
+    const src = { 1: 'read', 2: 'read', 3: 'read', 4: 'read', 7: 'rw', 16: 'rw' } as const;
     this.k = {
       gate: mk('gate', { 1: 'read', 9: 'rw', 10: 'read' }),
       clearTab: mk('clearTab', { 7: 'rw' }),
       countCells: mk('countCells', src),
-      blockSum: mk('blockSum', { 7: 'rw' }),
-      superSum: mk('superSum', { 7: 'rw' }),
-      startCells: mk('startCells', { 7: 'rw' }),
+      blockSum: mk('blockSum', { 15: 'read', 16: 'rw' }),
+      superSum: mk('superSum', { 16: 'rw' }),
+      startCells: mk('startCells', { 15: 'read', 16: 'rw' }),
       fillCells: mk('fillCells', src),
       stageA: mk('stageA', { 1: 'read', 2: 'read', 3: 'read', 11: 'read', 12: 'read', 13: 'rw', 14: 'rw' }),
       argsB: mk('argsB', { 8: 'rw', 9: 'rw', 11: 'read', 12: 'read', 13: 'rw', 14: 'rw' }),
       stageB: mk('stageB', { 2: 'read', 3: 'read', 5: 'read', 6: 'read', 8: 'rw', 11: 'read', 12: 'read', 13: 'rw' }),
     };
     const S = GPUBufferUsage.STORAGE;
-    const table = (label: string, runs: number) => device.createBuffer({ label, size: (3 * heads + 4 + heads / 32 + heads / 1024 + OVER + runs) * 4, usage: S | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+    const table = (label: string, runs: number) => device.createBuffer({ label, size: (2 * heads + 4 + heads / 32 + heads / 1024 + OVER + runs) * 4, usage: S | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     this.awake = table('sdf coarse awake table', this.rows);
     this.sleepers = table('sdf coarse sleeper table', this.rows * this.levels);
+    this.counters = [0, 1].map((mode) => device.createBuffer({ label: `sdf coarse counters ${mode}`, size: (2 * heads + 4) * 4, usage: S | GPUBufferUsage.COPY_DST })) as [GPUBuffer, GPUBuffer];
     this.params = [0, 1].map((mode) => device.createBuffer({ label: `sdf coarse params ${mode}`, size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })) as [GPUBuffer, GPUBuffer];
     this.pairBuf = device.createBuffer({ label: 'sdf pairs', size: (PAIR_HEADER_WORDS + this.pairRoom * 2) * 4, usage: S | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     this.items = device.createBuffer({ label: 'sdf coarse items', size: (4 + this.itemRoom * 4) * 4, usage: S });
@@ -154,7 +159,7 @@ export class SdfCoarse {
   encode(enc: GPUCommandEncoder, inputs: CoarseInputs, timestampWrites?: GPUComputePassTimestampWrites): void {
     const b = this.bind(inputs);
     // (the awake table's counts, cursors and oversize count; the pair and item counts)
-    enc.clearBuffer(this.awake, 0, (2 * this.heads + 4) * 4);
+    enc.clearBuffer(this.counters[0]);
     enc.clearBuffer(this.pairBuf, 0, 16);
     enc.clearBuffer(this.itemCtl);
     const pass = enc.beginComputePass({ label: 'sdf coarse', timestampWrites });
@@ -173,14 +178,18 @@ export class SdfCoarse {
     at('startCells', sl.startCells, this.ctl, 20);
     at('fillCells', sl.fillCells, this.ctl, CTL_SLEEPER_GROUPS);
     const aw = b.build[0];
+    if (this.upTo >= 1) {
     at('countCells', aw.countCells, inputs.list, 0);
     at('blockSum', aw.blockSum, this.ctl, 24);
     at('superSum', aw.superSum, this.ctl, 28);
     at('startCells', aw.startCells, this.ctl, 32);
     at('fillCells', aw.fillCells, inputs.list, 0);
-    at('stageA', b.one.stageA, this.ctl, CTL_STAGE_A);
-    at('argsB', b.one.argsB, null);
-    at('stageB', b.one.stageB, this.ctl, CTL_STAGE_B);
+    }
+    if (this.upTo >= 2) {
+      at('stageA', b.one.stageA, this.ctl, CTL_STAGE_A);
+      at('argsB', b.one.argsB, null);
+    }
+    if (this.upTo >= 3) at('stageB', b.one.stageB, this.ctl, CTL_STAGE_B);
     pass.end();
   }
 
@@ -191,8 +200,9 @@ export class SdfCoarse {
     const g = (name: Kernel, mode: number, res: Record<number, GPUBuffer>) => makeBindGroup(dev, `sdf coarse ${name}`, this.k[name].layout, { 0: this.params[mode], ...res });
     const build = (mode: number) => {
       const tab = mode ? this.sleepers : this.awake;
-      const src = { 1: inputs.list, 2: inputs.pose, 3: inputs.vel, 4: inputs.info, 7: tab };
-      return { clearTab: g('clearTab', mode, { 7: tab }), countCells: g('countCells', mode, src), blockSum: g('blockSum', mode, { 7: tab }), superSum: g('superSum', mode, { 7: tab }), startCells: g('startCells', mode, { 7: tab }), fillCells: g('fillCells', mode, src) };
+      const cnt = this.counters[mode];
+      const src = { 1: inputs.list, 2: inputs.pose, 3: inputs.vel, 4: inputs.info, 7: cnt, 16: tab };
+      return { clearTab: g('clearTab', mode, { 7: cnt }), countCells: g('countCells', mode, src), blockSum: g('blockSum', mode, { 15: cnt, 16: tab }), superSum: g('superSum', mode, { 16: tab }), startCells: g('startCells', mode, { 15: cnt, 16: tab }), fillCells: g('fillCells', mode, src) };
     };
     const tabs = { 11: this.awake, 12: this.sleepers };
     return (this.bound = {
@@ -209,6 +219,6 @@ export class SdfCoarse {
   }
 
   destroy(): void {
-    for (const b of [...this.params, this.awake, this.sleepers, this.pairBuf, this.items, this.itemCtl, this.ctl]) b.destroy();
+    for (const b of [...this.params, ...this.counters, this.awake, this.sleepers, this.pairBuf, this.items, this.itemCtl, this.ctl]) b.destroy();
   }
 }

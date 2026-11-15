@@ -23347,3 +23347,25 @@ scenes and was run headless once.
 
 **Not done.** Stable pair slots (described in the note, left for the join). The plain-read table build (PF22). The
 phone run.
+
+## 2026-11-15 — the coarse pass's floor removed; the hand-over for the join (PF22–PF25, `physics10-fine`)
+
+**Why.** Round 4 left a 0.33 ms floor whenever a row was awake and a cost that grew with the rows (2.2 ms at 16,384
+rows with 10% awake). Measured by part first (`SDF_PROBE=1 npx vitest run --project gpu sdf-probe`): the awake table's
+build was all of it (0.26 ms at 1,024 rows, 2.2 to 2.4 ms at 16,384, whatever was awake), its sums reading every
+bucket's count with an atomic load.
+
+**What.** A table is now two buffers: the counters (atomics) and the table proper (plain words). The build costs 0.07
+to 0.13 ms in every scene. Work items hold 8 entries (16: slower all awake; 4: slower for an awake body among
+sleepers, 0.66 ms against 0.20).
+
+**Measured** (desktop proxy, Intel Xe integrated, timestamps, median of 12). Coarse, round 4 → now: 4,096 rows with
+10% awake loose 0.39 → 0.20, pile 0.46 → 0.26 ms; loose all awake 1.18 → 0.46 to 0.66; 16,384 rows with 10% awake
+loose 2.16 → 0.39, pile 2.3 → 0.46; pile all awake 3.7 → 1.84. Whole path at 4,096 rows with 10% awake: loose 0.33,
+pile 0.66 ms.
+
+**Not built** (main's items 2 and 3): rooms that grow with a fail-safe tick, and stable pair slots. Both are
+specified in the note's hand-over (PF24, PF25). The three rooms still count what they drop and can miss a collision
+when they run out.
+
+**Tests** (Node, Dawn): `sdf-coarse` 8, `sdf-fine` 36, `sdf-bake` 15.

@@ -384,6 +384,128 @@ beside them. It is a new buffer, two kernels and a rule for freed slots: large e
 **Join list, added:** the engine supplies `model` (a u32 a row: the model row) and a sleep epoch word that changes on
 every sleep, wake, spawn or free of a sleeper and every move of one.
 
+### Round 5: the coarse pass's floor removed (2026-11-15); two of three items not built
+
+**Not built this round, and why it matters:** growing rooms with a fail-safe tick (item 2) and stable pair slots
+(item 3). Both are specified in the hand-over below. Until item 2 lands, three rooms can still miss a collision when
+they run out (each is counted): oversize lists (256 + 256), work items (64 a row), pairs (8 a row).
+
+**PF22, isolated then fixed.** The coarse pass by part, cumulative ms (`SDF_PROBE=1 npx vitest run --project gpu
+sdf-probe`, desktop proxy, timestamps, median of 12), before the fix:
+
+| scene | gate + sleepers | + awake table | + stage A | + stage B |
+|---|---|---|---|---|
+| pile 1,024 rows, 103 awake | 0.00 | 0.26 | 0.26 | 0.33 |
+| pile 4,096, 446 awake | 0.00 | 0.33 | 0.33 | 0.85 |
+| loose 4,096, all awake | 0.07 | 0.66 | 0.72 | 0.66 |
+| loose 16,384, 1,740 awake | 0.07 | 2.23 | 2.56 | 2.69 |
+| pile 16,384, all awake | 0.00 | 2.43 | 2.69 | 4.46 |
+
+So the floor and the growth with rows were the awake table's build: its sums ran over every bucket reading the counts
+with atomic loads. Fix: a table is two buffers, the counters (atomics, written only by count and fill) and the table
+proper (plain words). After: the awake table costs 0.07 to 0.13 ms in every scene above. Work items went from 16
+entries to 8 (16 was slower with everything awake, 4 slower for an awake body in a pile of sleepers: 0.66 ms against
+0.20).
+
+Coarse alone, round 3 → round 4 → now, and the whole path now (ms):
+
+| scene | rows | awake | coarse | whole path |
+|---|---|---|---|---|
+| loose | 1,024 | 103 | 0.66 → 0.33 → 0.26 | 0.39 |
+| loose | 1,024 | 1,024 | 0.33 → 0.33 → 0.13 | 0.26 |
+| loose | 4,096 | 446 | 0.72 → 0.39 → **0.20** | 0.33 |
+| loose | 4,096 | 4,096 | 0.46 → 1.18 → 0.46 to 0.66 | 1.18 |
+| loose | 16,384 | 1,740 | 1.25 → 2.16 → 0.39 | 0.72 |
+| loose | 16,384 | 16,384 | 1.18 → 2.95 → 0.92 | 1.57 |
+| pile | 1,024 | 103 | 2.8 → 0.33 → 0.20 | 0.33 |
+| pile | 4,096 | 446 | 4.2 → 0.46 → **0.26** | 0.66 |
+| pile | 4,096 | 4,096 | 1.6 → 0.66 → 0.46 | 2.16 |
+| pile | 16,384 | 1,740 | 5.8 → 2.3 → 0.46 | 1.97 |
+| pile | 16,384 | 16,384 | 3.7 → 3.7 → 1.84 | 8.7 |
+| pile | 4,096 | 0 | 0.07 (one clock tick) | 0.07 |
+
+The loose field with every row awake measured 0.46 ms in the probe and 0.66 ms in the bench run (the clock ticks in
+0.066 ms steps and runs differ by one or two): at round 3's 0.46, not below it. What is left in that scene is stage B:
+every awake row offers the entries of some 8 to 27 cells a level.
+
+The whole path's largest row (pile, 16,384 all awake, 23,152 pairs: 8.7 ms) is the fine pass, 6.9 ms of it: its cull
+dispatch gives every half pair the rows of the store's biggest model (81 rows of bricks for the slab) although a crumb
+has one brick (PF23).
+
+### Hand-over: joining body ↔ body into the engine
+
+Everything here is on `physics10-fine` (not merged anywhere). Code: `src/engine/sdf/` (`contract.ts` layouts,
+`models.ts` the model store, `coarse.ts`, `fine.ts`, `shapes.ts` test scenes), kernels `src/shaders/engine/sdf-*.wgsl`.
+Each kernel file's header states its scheme. The engine's row layout is the one in `physics10`'s `engine.wgsl` at
+c6f1bab7; if the breaking branch changed it, `contract.ts` "the engine's rows" and the three `poseOf` / `velOf` /
+`centre` helpers in the kernels are the only places that know it.
+
+**What the engine must supply (it has neither today).**
+1. `model`: a u32 a row, the row's model row in the store. Write it at spawn: `store.add({ size, vox, voxel })`
+   returns the model row; `store.flush()` bakes (once for all pending models; it submits its own commands). Instances
+   of the same voxel model share one row. The store's centre of mass is the matter's centroid in the model's voxel
+   coordinates: the row's `pose` centre must be that point. A body whose voxels change needs `store.update(id, spec)`
+   (CPU voxels) or `store.rebakeFromGpu(id)` (occupancy bits written by a GPU pass into `store.occ` at
+   `store.info(id).occBase`), then `flush()`.
+2. `sleepEpoch`: a buffer whose word 0 changes whenever a row falls asleep, wakes, is made or freed asleep, or a
+   sleeper is moved. `compact` is where the engine decides sleep: bump it there. The coarse pass rebuilds its sleeper
+   table only in a tick where the word differs from the one it last built for.
+
+**Buffers bound.** Read from the engine: `list` (the awake list: indirect arguments in words 0-2, the count in word
+3, rows from word 8; needs INDIRECT and STORAGE usage), `pose`, `vel`, `info`, `model`, `sleepEpoch`. The membership
+rule: only rows in the awake list and rows with ROW_ALIVE and ROW_ASLEEP in `info[3r].w` are in any table; an inverse
+mass below zero is a freed row and must be in neither; zero is immovable.
+
+**A tick, in order** (all in the engine's encoder, nothing read back):
+1. `coarse.setParams(rowsInUse)`; `fine.setParams(coarse.pairRoom, tick)` (two small uniform uploads).
+2. `coarse.encode(enc, { list, pose, vel, info, model, sleepEpoch })` after integration and `compact`. Dispatches:
+   gate; the sleeper table (clear, count, block sums, super sums, starts, fill: zero workgroups unless the epoch
+   changed); the awake table (the same five); stage A; argsB; stage B.
+3. `fine.encode(enc, { ...coarse.finePairs, pose, vel, info, model }, coarse.pairRoom)`. Dispatches: pairArgs,
+   expand, cull, args, fine, reduce.
+4. The solve, then events.
+
+**What the solver reads, a pair.** The pair list: `coarse.pairBuf`, word 0 the pairs asked for, pairs (a, b) from word
+64; take min(asked, `coarse.pairRoom`). Pair p's contact rows: `fine.contacts` rows `4p` to `4p + rows - 1`, 48 B each
+(`contract.ts` "A contact row": a, b, energy, materials, point, depth, normal from b to a, closing speed). Pair p's
+record: `fine.hits` at `p * 128` B: word 4 the sample contacts (what the lattice hand-over wants: how much of the
+surface touched), word 5 the largest sample energy (f32 bits; also on every row), word 6 the rows written (0 to 4).
+There is no key beside the rows yet and a pair's index p changes from tick to tick: see "stable pair slots" below.
+
+**Tuning parameters.** `fine.margin` (cells; also `CoarseOptions.margin`: keep them equal; the engine's
+`EU.f.x`), `fine.cap` (samples a half pair a tick, default 2,048), `CoarseOptions.cellTop` (about the biggest common
+body's bound diameter), `levels` (3), `pairsARow` (8). Field format: `grad8`.
+
+**To build at the join, specified here.**
+- *Rooms that grow, and a safe tick (PF24).* Three rooms can run out: oversize lists (256 awake, 256 asleep), work
+  items (64 a row), pairs (8 a row). Each already counts what it dropped (`pairBuf` words 1 and 2; pairs asked for
+  against the room). Wanted: a 16 B asynchronous read of `pairBuf`'s header every few ticks; at half full, make a
+  bigger `SdfCoarse` (and `SdfFine`, whose buffers follow `pairRoom`) and swap it in: the kernels' layouts do not
+  depend on the sizes, so the pipelines can be shared if the constructors are split from the buffer making. For the
+  tick in which a room runs out before the growth lands, "safe" should mean: a row whose candidates were dropped is
+  treated as blocked for that tick (no integration past its last pose) and is tested first next tick. That needs
+  stage A and stage B to mark the row (a bit a row in a small buffer) where they drop, which they do not do yet.
+- *Stable pair slots (PF25).* A persistent open-addressing table keyed by (a, b): a pass after stage B, a thread a
+  pair, one probe; a pair found keeps its slot and is stamped with the tick, a new pair takes a free slot; a sweep
+  frees slots not stamped this tick. The fine pass then writes a pair's rows at `slot * 4` instead of `p * 4`, with the
+  key stored in the pair's record, and the solver keeps its impulses by slot. Tests wanted: a resting stack keeps its
+  slots for 100 ticks; a pair that parts and returns gets a clean slot; growth keeps keys.
+
+**Open hacks and limits, by id** (docs/BACKLOG.md): PF3 normals near edges (rows take the mean; 9.5° over a corner,
+46° on one row of an edge in a face); PF5 cap and margin defaults are not from the phone; PF7 the field holds ±7.9
+voxels; PF8 one-voxel plates' rims; PF9 a 3D-texture field unmeasured; PF10 the store's arena has no compaction;
+PF11 and PF20 the phone runs asked of the owner; PF15 at most 65,536 samples a model, four rows a pair whatever its
+size; PF17 the join itself; PF21 pair order, oversize rooms, a sleeper moved without an epoch bump is not found; PF23
+the fine pass's cull rows; PF24 rooms that can miss; PF25 stable slots.
+
+**Tests a joiner should run first** (Node, real GPU, about a minute):
+`npx vitest run --project gpu sdf-bake sdf-fine.test sdf-coarse.test` (15 + 36 + 8 pass at this commit), then
+`npm run typecheck` and `npx vitest run --project unit` (one failure on the base: `roadlab/control.ts` in the writing
+lint). `test/gpu/sdf-coarse.test.ts` "coarse into fine" is the smallest example of both passes in one encoder with
+hand-made engine rows; `test/gpu/sdf-harness.ts` reads pairs, records and rows back. Benches: `SDF_BENCH=1 npx vitest
+run --project gpu sdf-coarse-bench` (coarse and the whole path), `sdf-fine-bench` (the fine pass alone),
+`SDF_PROBE=1 … sdf-probe` (the coarse pass by part); the phone page is `sdfbench.html`.
+
 **Considered, not chosen** (both from the same baked voxel model):
 
 - **Tree ↔ tree** (an octree over the voxels, about 5 KB a 16³ model): one thread a pair with a stack of node pairs.

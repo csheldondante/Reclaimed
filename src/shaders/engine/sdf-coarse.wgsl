@@ -16,7 +16,8 @@
 // starts (a bucket's start from those sums: no thread adds more than 94 numbers), fill.
 // Then no thread walks a list:
 //   stageA  a thread an awake row and a level: for each cell a partner could be in, the bucket's run cut into work
-//           items of up to 16 entries (row, which table, level, cell, start, length)
+//           items of up to 8 entries (row, which table, level, cell, start, length): runs are short as a rule, and a
+//           workgroup of 16 for one or two entries measured slower when all are awake, one of 4 slower for an awake body in a pile of sleepers
 //   argsB   the item count as stage B's indirect arguments
 //   stageB  a workgroup an item, a thread an entry: is it really of that cell and level (two cells can share a
 //           bucket); then the bound spheres, then the models' oriented boxes (grown by the margin); then the pair
@@ -25,9 +26,11 @@
 // its promoted entry at the awake row's level when it is finer); a pair with an oversize body by the other row, two
 // oversize awake rows by the higher.
 //
-// A table (u32): counts [0, H), fill cursors [H, 2H), the oversize count at 2H, starts from 2H + 4, block sums, super
-// sums, the oversize list (OVER rows), the runs. An awake entry is its row; a sleeper entry row | level << 28 |
-// promoted << 31.
+// A table is two buffers, so that only the build's counters are atomics (an atomic load is an interlocked operation
+// on D3D; the sums and the queries read plain words). The counters (u32, atomics): counts [0, H), fill cursors
+// [H, 2H), the oversize count at 2H. The table proper (u32): run lengths [0, H), run starts [H, 2H), the oversize
+// count at 2H, block sums from 2H + 4, super sums, the oversize list (OVER rows), the runs. An awake entry is its
+// row; a sleeper entry row | level << 28 | promoted << 31.
 // The pair buffer: [0] pairs asked for, [1] oversize bodies past their lists' room, [2] work items dropped, then
 // (a, b) a pair from word 64. The ctl buffer: [0] the sleep epoch the sleeper table was built for, then indirect
 // arguments (coarse.ts CTL_*).
@@ -55,7 +58,7 @@ const ITEMS_AT: u32 = 4u;
 const ROW_ALIVE: u32 = 1u;
 const ROW_ASLEEP: u32 = 2u;
 const OVER: u32 = 256u;
-const GROUP: u32 = 16u;
+const GROUP: u32 = 8u;
 const ARGS_ROW: u32 = 256u;
 const NO_ROW: u32 = 0xffffffffu;
 
@@ -66,8 +69,10 @@ const NO_ROW: u32 = 0xffffffffu;
 @group(0) @binding(4) var<storage, read> info: array<vec4<f32>>;
 @group(0) @binding(5) var<storage, read> bodyModel: array<u32>;
 @group(0) @binding(6) var<storage, read> models: array<SdfModel>;
-// (the table being built)
+// (the table being built: its counters, and the same buffer read plain by the sums; then the table proper)
 @group(0) @binding(7) var<storage, read_write> tab: array<atomic<u32>>;
+@group(0) @binding(15) var<storage, read> cntR: array<u32>;
+@group(0) @binding(16) var<storage, read_write> tabB: array<u32>;
 @group(0) @binding(8) var<storage, read_write> pairBuf: array<atomic<u32>>;
 @group(0) @binding(9) var<storage, read_write> ctl: array<u32>;
 @group(0) @binding(10) var<storage, read> sleepEpoch: array<u32>;
@@ -78,8 +83,8 @@ const NO_ROW: u32 = 0xffffffffu;
 // [0] items asked for, [1] items dropped
 @group(0) @binding(14) var<storage, read_write> itemCtl: array<atomic<u32>, 4>;
 
-fn oStart() -> u32 { return 2u * CP.heads + 4u; }
-fn oBlk() -> u32 { return 3u * CP.heads + 4u; }
+fn oStart() -> u32 { return CP.heads; }
+fn oBlk() -> u32 { return 2u * CP.heads + 4u; }
 fn oSup() -> u32 { return oBlk() + CP.heads / 32u; }
 fn oOver() -> u32 { return oSup() + CP.heads / 1024u; }
 fn oRuns() -> u32 { return oOver() + OVER; }
@@ -174,7 +179,7 @@ fn countCells(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (lv.y == 1u) {
     let k = atomicAdd(&tab[2u * CP.heads], 1u);
     if (k < OVER) {
-      atomicStore(&tab[oOver() + k], r);
+      tabB[oOver() + k] = r;
     }
     return;
   }
@@ -192,9 +197,9 @@ fn blockSum(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
   var s = 0u;
   for (var k = 0u; k < 32u; k++) {
-    s += atomicLoad(&tab[gid.x * 32u + k]);
+    s += cntR[gid.x * 32u + k];
   }
-  atomicStore(&tab[oBlk() + gid.x], s);
+  tabB[oBlk() + gid.x] = s;
 }
 
 @compute @workgroup_size(64)
@@ -204,9 +209,9 @@ fn superSum(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
   var s = 0u;
   for (var k = 0u; k < 32u; k++) {
-    s += atomicLoad(&tab[oBlk() + gid.x * 32u + k]);
+    s += tabB[oBlk() + gid.x * 32u + k];
   }
-  atomicStore(&tab[oSup() + gid.x], s);
+  tabB[oSup() + gid.x] = s;
 }
 
 @compute @workgroup_size(64)
@@ -217,15 +222,19 @@ fn startCells(@builtin(global_invocation_id) gid: vec3<u32>) {
   }
   var s = 0u;
   for (var k = 0u; k < i / 1024u; k++) {
-    s += atomicLoad(&tab[oSup() + k]);
+    s += tabB[oSup() + k];
   }
   for (var k = (i / 1024u) * 32u; k < i / 32u; k++) {
-    s += atomicLoad(&tab[oBlk() + k]);
+    s += tabB[oBlk() + k];
   }
   for (var k = (i / 32u) * 32u; k < i; k++) {
-    s += atomicLoad(&tab[k]);
+    s += cntR[k];
   }
-  atomicStore(&tab[oStart() + i], s);
+  tabB[oStart() + i] = s;
+  tabB[i] = cntR[i];
+  if (i == 0u) {
+    tabB[2u * CP.heads] = cntR[2u * CP.heads];
+  }
 }
 
 @compute @workgroup_size(64)
@@ -243,9 +252,9 @@ fn fillCells(@builtin(global_invocation_id) gid: vec3<u32>) {
   for (var l = lv.x; l < top; l++) {
     let promoted = select(0u, 1u, l > lv.x);
     let b = bucket(cellOf(p, l), l, promoted);
-    let at = atomicLoad(&tab[oStart() + b]) + atomicAdd(&tab[CP.heads + b], 1u);
+    let at = tabB[oStart() + b] + atomicAdd(&tab[CP.heads + b], 1u);
     if (at < CP.runRoom) {
-      atomicStore(&tab[oRuns() + at], select(r, r | (l << 28u) | (promoted << 31u), CP.mode == 1u));
+      tabB[oRuns() + at] = select(r, r | (l << 28u) | (promoted << 31u), CP.mode == 1u);
     }
   }
 }
@@ -388,7 +397,7 @@ fn boxesMeet(a: Box, b: Box) -> bool {
   return true;
 }
 
-@compute @workgroup_size(16)
+@compute @workgroup_size(8)
 fn stageB(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
   let ci = wg.y * ARGS_ROW + wg.x;
   if (ci >= items[0]) {
