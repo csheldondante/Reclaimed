@@ -236,6 +236,11 @@ export function labStationKit(scene: LevelScene): StationKit {
       scene.sleep?.wake(x, y, r + 8, Sleep.EVENT_S, now());
     },
     drop: (cells, vel) => {
+      // (?solver=engine: a rigid row of the physics engine, not the judge's movers)
+      if (scene.engine) {
+        scene.engine.drop(cells, vel);
+        return;
+      }
       if (!scene.integrity?.dropBody(cells, vel)) throw new Error('station drop: no node solver here (the level needs the rigid rock)');
       const [wx, wy] = cellPos(cells[0].x, cells[0].y);
       scene.sleep?.wake(wx, wy, 24, Sleep.EVENT_S, now());
@@ -268,6 +273,8 @@ export function resetStation(scene: LevelScene, s: Station): void {
   const { core } = scene;
   const [x0, y0, x1, y1] = s.rect;
   scene.integrity?.forget(x0, y0, x1, y1);
+  // (the engine's rows aren't known to the CPU by place: a reset lets every one go)
+  scene.engine?.clear();
   core.restoreChunks(x0 / CHUNK, y0 / CHUNK, x1 / CHUNK, y1 / CHUNK);
   const [wx0, wy0] = cellPos(x0, y0);
   const [wx1, wy1] = cellPos(x1, y1);

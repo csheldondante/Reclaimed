@@ -42,6 +42,16 @@ function press(R: Rec, station: string, label: string): void {
 
 /** the scripted scene: the same every run */
 const STAGES: Stage[] = [
+  {
+    // (the engine's rigid rows under ?solver=engine, the lattice's voxels otherwise: the rigid station's own buttons)
+    name: 'drop the rigid blocks',
+    run: async (R) => {
+      press(R, 'rigid', 'drop on the ramp');
+      press(R, 'rigid', 'a beam over the ledge');
+      press(R, 'rigid', 'drop a pile below');
+    },
+    secs: 8,
+  },
   { name: 'drop the line-up', run: (R) => press(R, 'metal', 'drop the line-up'), secs: 8 },
   {
     name: 'topple the rock towers',
@@ -240,7 +250,7 @@ export async function physBench(params: URLSearchParams): Promise<void> {
     panel.say(`physics bench ${step + 1}/${st.pairs.length} (${here}) — ${s.name}: physics off and on…`);
     const physicsToggle = await toggled(R, (off) => {
       const sim = R.core.sim;
-      for (const n of ['solver', 'physics']) off ? sim.paused.add(n) : sim.paused.delete(n);
+      for (const n of ['solver', 'physics', 'engine']) off ? sim.paused.add(n) : sim.paused.delete(n);
       if (R.scene.integrity) R.scene.integrity.paused.physics = off;
     });
     panel.say(`physics bench ${step + 1}/${st.pairs.length} (${here}) — ${s.name}: the judge off and on…`);

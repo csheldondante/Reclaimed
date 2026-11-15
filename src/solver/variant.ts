@@ -11,13 +11,16 @@
 //            tankers looked right at (2 × 2 × 2 blocks would be the node solver's job, not the lattice's)
 //   hybrid   rock and what's built on the node solver (rigid clusters that the judge's breaks split along cell
 //            boundaries), metal and wood on the voxel lattice
+//   engine   the physics engine of DESIGN §10 (src/engine, docs/design/PHYSICS_ENGINE.md), as far as it is built: a
+//            lab's dropped blocks are rigid rows on the GPU (terrain contacts, the agreed contact rules, sleep there, no
+//            readback); everything the judge frees goes as under `lattice` until the later steps land
 //
 // The judge (what lets go) is picked apart: `?judge=runs|sections` (game/judge.ts JUDGES — the column judge and
 // the method of sections on the GPU, from branch `judge`).
 
 import { urlFlags } from '../flags';
-export type SolverVariant = 'old' | 'nodes' | 'lattice' | 'hybrid';
-export const VARIANTS: readonly SolverVariant[] = ['old', 'nodes', 'lattice', 'hybrid'];
+export type SolverVariant = 'old' | 'nodes' | 'lattice' | 'hybrid' | 'engine';
+export const VARIANTS: readonly SolverVariant[] = ['old', 'nodes', 'lattice', 'hybrid', 'engine'];
 
 /** what carries each kind of thing the judge frees */
 export interface Routing {
@@ -36,6 +39,9 @@ export const ROUTING: Record<SolverVariant, Routing> = {
   nodes: { rock: 'nodes', structures: 'rock', metal: 'nodes', woodBends: true },
   lattice: { rock: 'lattice', structures: 'rock', metal: 'lattice', woodBends: true },
   hybrid: { rock: 'nodes', structures: 'rock', metal: 'lattice', woodBends: true },
+  // (build step 1 of the engine: what a lab drops is a rigid row; what the judge frees still goes the lattice's way
+  // until the terrain's pieces are rows too — docs/design/PHYSICS_ENGINE.md, build order)
+  engine: { rock: 'lattice', structures: 'rock', metal: 'lattice', woodBends: true },
 };
 
 /** the default variant: the phone bench's smoothest (Pixel 9a, lattice x runs p95 20 / p99 35 ms; round 120) */

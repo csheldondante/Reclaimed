@@ -23220,3 +23220,49 @@ scripts/physbench.mjs prints them.
 toggle's GPU diff was +0.31 to +0.84 ms. So the playground scenes move one to two thousand voxels while the kernels
 run over ten to thirteen thousand slots: most of the lattice's work today is slots that hold nothing awake.
 The phone: `/?skipmenu=1&level=playground&tutorial=0&q=low&physbench=1&pairs=lattice:runs`.
+
+## 2026-11-15 — the physics engine, build step 1: rigid rows on terrain (PE1, PE12–PE17, `physics10`)
+
+`?solver=engine` adds the engine of DESIGN §10 beside the other movers, as far as step 1 of
+docs/design/PHYSICS_ENGINE.md: bodies are rows in GPU buffers, tested against the terrain's columns, solved with the
+agreed contact rules, put to sleep on the GPU, drawn from the pose buffer. Nothing is read back. The default stays
+`lattice`; nothing was deleted (the owner sees it in the lab first).
+
+**Why these choices.**
+- *Indirect dispatch from a compacted list*, so "Asleep rows cost nothing": the lattice today runs its kernels over
+  ten to thirteen thousand slots to move one or two thousand voxels (PE8's numbers).
+- *Velocity-level contacts with the impulse kept per contact.* The first version applied an impulse per contact with
+  no memory; a resting block kept 0.02 cells/s of upward speed and crept 0.013 cells in a second inside its slop.
+  Kept per contact, the passes converge: the slop test holds to 2 mm and the residue is under 0.006 cells/s.
+- *A gap is a contact before it closes* (0.25 cells): the approach is stopped at the surface, so a fast body does not
+  tunnel. The cost: an impact stops dead. The softening the design wants for big hits is stage 4 and the erode rule
+  between bodies, not built yet.
+- *Walls as one mean face.* With a contact per hex face, a 6 x 2 x 2 block toppled off a shelf hung on the cliff and
+  slid down it for over 5 s: a straight cliff is a zigzag of hex faces and the block's own cells are a zigzag too.
+  With the faces round a sample taken as their mean normal and mean distance, it falls and rests in 3.5 s.
+- *Ground damping 0.3, not the CPU rock's 1.5.* At 1.5 a 2 x 2 x 2 block crept down a 12-step stair for over 8 s; at
+  0.3 it tumbles down in about 4.5 s at 3–5 cells/s.
+- *Heightfield first is a switch, off by default.* The owner asked whether most cells need full columns. Measured,
+  it made no difference on the desktop (below), so the simpler interval walk runs and the phone can judge the switch.
+- *A row's step comes from one function* (`rowDt`), for the time distortion field the owner asked for (PE12).
+
+**Tests** (test/gpu/engine.test.ts, 11, Dawn D3D12): free fall follows ½gt² within 3%; a dropped block rests on the
+column tops and sleeps, and the awake list then holds 0 rows and 0 workgroups; an overlap past the slop is moved out
+with no upward speed; an overlap inside the slop is left; a layer a cell deep in stone erodes, 4.000 cells lost and
+4.000 landed on the deposit; a sleeper's 144 bytes are unchanged while another row moves, and an impulse wakes it; a
+block in at 14.5 cells/s leaves at 0.31 at most (the bound is 0.78) and writes an impact event of 1,061; a block
+hung over an edge topples off and sleeps below; down a steep stair a block tumbles, on a shallow one it stays; the
+fast path and the walk rest at the same heights, in a cave and on its roof too.
+
+**Measured** (desktop proxy, Dawn in Node, a 64 x 64 world, wall time a tick with the surface pass, 2 substeps x 4
+passes, every row awake, 2 x 2 x 2 blocks of 8 samples; two runs): 256 rows 0.27–0.31 ms; 1,024 rows 0.27–0.31 ms
+(one outlier 0.82); 4,096 rows 0.51–0.61 ms with the heightfield first and 0.53–0.55 with the interval walk. The
+floor of about 0.25 ms is the tiny world's surface pass and the submit. Not a phone number.
+
+**Seen** (scripts/enginelab.mjs, 412 x 915, the `rigid` station): under the engine the blocks land, tip and lie at
+angles on the ramp and the low ground, and the beam ends leaning down the ledge's face; under the lattice the same
+buttons leave a few lumps of rubble, since it crumbles stone on impact. I looked at stills, not at the motion.
+
+**Not done.** Bodies do not meet each other. The judge's pieces still go to the lattice. No External at rest. No phone
+run. The writing lint fails on src/roadlab/control.ts at this tip (PE17), before this work.
+

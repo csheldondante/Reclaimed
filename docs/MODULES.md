@@ -193,6 +193,11 @@ The living town on the GPU: its people’s routes and rides, the quarry and the 
 - `petition.ts` (145) — ---- dialog/petition.ts … API: `PetitionAct`, `Petition`, `PetitionSpeaker`, `PetitionState` +4.
 - `portrait.ts` (119) — ---- dialog/portrait.ts … API: `portraitUrl`, `drawPortrait`.
 
+## src/engine/
+
+- `engine.ts` — The physics engine's host (DESIGN §10, docs/design/PHYSICS_ENGINE.md, build step 1): rigid bodies as rows in GPU buffers, terrain contacts, the contact rules and sleep on the GPU, nothing read back. API: `Engine`, `bakeBody`, `EngineSpec`, `EngineBody`, `EVENT_ROOM`.
+- `install.ts` — The engine in a world (`?solver=engine`): its system after the surface pass, its rows' meshes. API: `EngineKit`, `installEngine`.
+
 ## src/flora/
 
 - `bench.ts` (110) — The flora phone bench (round 119; API: `floraBench`.
@@ -626,6 +631,10 @@ Settlements: the atlas sites’ records (names, sizes, purposes, stories) and th
 WGSL. `common.wgsl` (+ layers, materials) is prepended to every kernel; flow/slope appended to kernels that declare them.
 
 - `agents.wgsl` (549) — ---- agents (round 52, docs/AGENTS.md) ----------------------------------------- The layer units walk on, …
+- `engine.wgsl` — The physics engine's rows, samples, contacts, lists and events: the layouts every engine kernel shares (engine/engine.ts mirrors them).
+- `engine_compact.wgsl` — The rows awake into a list, the host's commands taken: the one read a row asleep costs.
+- `engine_step.wgsl` — A substep: `fine` (a row's surface samples against the terrain's columns) and `solve` (the contact rules, the move, erosion, sleep, events).
+- `engine_fold.wgsl` — What erosion took from bodies, onto the ground's deposit.
 - `bodymesh.wgsl` (79) — Bodies' own meshes, skinned (round 120;
 - `chunkver.wgsl` (53) — ---- chunkver.wgsl …
 - `climate.wgsl` (145) — ---- climate: snow, ice, fallen leaves (round 50;

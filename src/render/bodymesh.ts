@@ -12,7 +12,11 @@ import bodyMeshWgsl from '../shaders/bodymesh.wgsl?raw';
 import { BM_VERT } from './bodymeshbuild';
 
 /** what moves a mesh this frame */
-export type MeshPose = { kind: 'nodes'; slot: number; com: readonly [number, number, number] } | { kind: 'matrix'; m: readonly number[] };
+export type MeshPose =
+  | { kind: 'nodes'; slot: number; com: readonly [number, number, number] }
+  | { kind: 'matrix'; m: readonly number[] }
+  /** a rigid row of the physics engine (engine/engine.ts): read from its pose buffer on the GPU, nothing uploaded */
+  | { kind: 'row'; row: number; com: readonly [number, number, number] };
 
 /** vec4s an entry (bodymesh.wgsl ENT_V) */
 const ENT_V = 5;
@@ -40,6 +44,7 @@ export class BodyMeshes {
   private dirty = false;
   private none: GPUBuffer;
   private nodes: { pose: GPUBuffer; lanes: GPUBuffer } | null = null;
+  private rows: GPUBuffer | null = null;
   /** (the out buffer made again: the renderer's draw of it is to be made again) */
   onBuffers?: () => void;
   stats = { bodies: 0, verts: 0 };
@@ -49,7 +54,7 @@ export class BodyMeshes {
     private world: WorldGpu,
     private profiler: Profiler,
   ) {
-    this.kernel = makeCompute(device, 'body-mesh', [bodyMeshWgsl], { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'rw' }, 'main');
+    this.kernel = makeCompute(device, 'body-mesh', [bodyMeshWgsl], { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'read' }, 'main');
     this.uni = world.buf('body mesh uniform', 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.args = world.buf('body mesh args', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.none = world.buf('body mesh no nodes', 256, GPUBufferUsage.STORAGE);
@@ -59,6 +64,12 @@ export class BodyMeshes {
   /** the node solver's buffers its meshes are skinned to (made again when it grows) */
   setNodes(n: { pose: GPUBuffer; lanes: GPUBuffer } | null): void {
     this.nodes = n;
+    this.group = null;
+  }
+
+  /** the physics engine's pose buffer its rows' meshes are placed by (made again when it grows) */
+  setRows(pose: GPUBuffer | null): void {
+    this.rows = pose;
     this.group = null;
   }
 
@@ -125,6 +136,9 @@ export class BodyMeshes {
       if (p.kind === 'nodes') {
         E.set([1, p.slot, 0, 0], o);
         E.set([p.com[0], p.com[1], p.com[2], 0], o + 4);
+      } else if (p.kind === 'row') {
+        E.set([3, p.row, 0, 0], o);
+        E.set([p.com[0], p.com[1], p.com[2], 0], o + 4);
       } else {
         E.set([2, 0, 0, 0], o);
         E.set(p.m, o + 8);
@@ -137,7 +151,7 @@ export class BodyMeshes {
     this.device.queue.writeBuffer(this.uni, 0, U);
     if (!this.group) {
       const n = this.nodes;
-      this.group = makeBindGroup(this.device, 'body-mesh', this.kernel.layout, { 0: this.uni, 1: this.rest, 2: this.ents, 3: n?.pose ?? this.none, 4: n?.lanes ?? this.none, 5: this.out });
+      this.group = makeBindGroup(this.device, 'body-mesh', this.kernel.layout, { 0: this.uni, 1: this.rest, 2: this.ents, 3: n?.pose ?? this.none, 4: n?.lanes ?? this.none, 5: this.out, 6: this.rows ?? this.none });
     }
     dispatch(enc, this.profiler, 'body-mesh', this.kernel, this.group, [Math.ceil(this.count / 64), 1]);
   }

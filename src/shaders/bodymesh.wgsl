@@ -9,12 +9,14 @@ struct BMU { alpha: f32, count: u32, pad0: u32, pad1: u32 };
 @group(0) @binding(0) var<uniform> U: BMU;
 // per vertex: [pos (spawn frame) | word bits] [normal | entry bits] [weights] [node indices bits]
 @group(0) @binding(1) var<storage, read> rest: array<vec4<f32>>;
-// per entry: [mode, slot, 0, 0] [rest centre of mass] [matrix row 0] [row 1] [row 2]
+// per entry: [mode (1 nodes, 2 matrix, 3 an engine row), slot or row, 0, 0] [rest centre of mass] [matrix row 0] [row 1] [row 2]
 @group(0) @binding(2) var<storage, read> ents: array<vec4<f32>>;
 // the node solver's (solver.wgsl): 4 vec4 a node — prev pos, prev rot, pos, rot; its lanes, LANE_V vec4 a node
 @group(0) @binding(3) var<storage, read> pose: array<vec4<f32>>;
 @group(0) @binding(4) var<storage, read> lane: array<vec4<f32>>;
 @group(0) @binding(5) var<storage, read_write> outv: array<vec4<u32>>;
+// the physics engine's rows (engine.wgsl pose): 4 vec4 a row — the tick's start pos, rot, then pos, rot now
+@group(0) @binding(6) var<storage, read> rows: array<vec4<f32>>;
 
 const NN: u32 = 64u;
 const LANE_V: u32 = 8u;
@@ -37,7 +39,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let e0 = ents[e * ENT_V];
   var wp = a.xyz;
   var wn = b.xyz;
-  if (e0.x > 1.5) {
+  if (e0.x > 2.5) {
+    // (a rigid row of the engine: its vertices about its rest centre of mass, turned and carried by the row, between
+    // the tick's start and now)
+    let j = u32(e0.y);
+    let al = clamp(U.alpha, 0.0, 1.0);
+    let q0 = rows[j * 4u + 1u];
+    var q1 = rows[j * 4u + 3u];
+    if (dot(q0, q1) < 0.0) { q1 = -q1; }
+    let q = normalize(mix(q0, q1, al));
+    wp = mix(rows[j * 4u].xyz, rows[j * 4u + 2u].xyz, al) + qrot(q, a.xyz - ents[e * ENT_V + 1u].xyz);
+    wn = qrot(q, b.xyz);
+  } else if (e0.x > 1.5) {
     // (the CPU's matrix: the spawn frame to the world)
     let r0 = ents[e * ENT_V + 2u];
     let r1 = ents[e * ENT_V + 3u];

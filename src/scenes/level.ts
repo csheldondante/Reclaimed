@@ -17,6 +17,7 @@ import { Editor } from '../ui/editor';
 import { Controls } from '../input/controls';
 import { ignoreTeardown } from '../gpu/pipeline';
 import { Physics } from '../physics/physics';
+import type { EngineKit } from '../engine/install';
 import type { LavaSystem } from '../sim/lava';
 import type { InhabitantsGpu } from '../inhabitants/system';
 import { Settlements } from '../settle/settlements';
@@ -224,6 +225,8 @@ export class LevelScene implements Scene {
   strokeStart = false;
   /** sandbox: physics voxels (docs/PHYSICS.md) */
   physics?: Physics;
+  /** the physics engine's rigid rows (?solver=engine; engine/install.ts) */
+  engine?: EngineKit;
   /** the agents layer (docs/AGENTS.md): units walking the surfaces by shared fields */
   agents!: Agents;
   /** (round 117, ?life=: src/inhabitants) creatures with bodies — the Inhabitants contract */

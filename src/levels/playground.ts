@@ -262,6 +262,42 @@ export const STATIONS: Station[] = [
     ],
   },
   {
+    // (the physics engine, build step 1 — docs/design/PHYSICS_ENGINE.md: rigid blocks on the river station's own land,
+    // its ramp, its ledge and the low ground under it. The drops go by the picked variant (k.drop): rigid rows under
+    // ?solver=engine, the lattice's voxels by default — the same buttons, side by side)
+    id: 'rigid',
+    name: 'rigid',
+    rect: [112, 96, 256, 176],
+    look: [197, 94, G + 8, 4],
+    hint: 'rigid blocks on stepped ground: onto the ramp, a beam over the ledge, a pile below. Blocks do not meet each other yet',
+    actions: [
+      {
+        label: 'drop on the ramp',
+        run: (k) => {
+          k.drop(cellsBox(184, 106, G + 20, 3, 3, 3, MAT.Stone));
+          k.drop(cellsBox(178, 110, G + 23, 2, 2, 5, MAT.Stone));
+          k.drop(cellsBox(189, 112, G + 21, 4, 2, 2, MAT.Concrete));
+        },
+      },
+      {
+        // (twelve long across the lip, its middle over the chute: it tips and goes down the face)
+        label: 'a beam over the ledge',
+        run: (k) => k.drop(cellsBox(191, 107, G + 14, 12, 2, 2, MAT.Stone)),
+      },
+      {
+        label: 'drop a pile below',
+        run: (k) => {
+          for (let i = 0; i < 6; i++) k.drop(cellsBox(203 + 4 * (i % 3), 104 + 5 * Math.floor(i / 3), G + 8 + 3 * i, 2 + (i % 2), 2, 2 + ((i + 1) % 2), i % 2 ? MAT.Concrete : MAT.Stone));
+        },
+      },
+      {
+        // (thrown at the ledge's face: it deflects and falls)
+        label: 'throw at the cliff',
+        run: (k) => k.drop(cellsBox(206, 108, G + 9, 3, 2, 2, MAT.Stone), [-9, 0, 4]),
+      },
+    ],
+  },
+  {
     id: 'dust',
     name: 'dust',
     rect: [16, 192, 112, 240],

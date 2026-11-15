@@ -3549,6 +3549,23 @@ the road's path is independent of both, "a guaranteed fixed path defined in curv
 - **K**: a road column holds 3 intervals at most in the lab (stone, soil, road): far under K 16. It needs a new
   interval only where the road sits on something it doesn't join (the fill joins soil).
 
+## The physics engine, build step 1 (2026-11-15, branch `physics10`; DESIGN §10, docs/design/PHYSICS_ENGINE.md)
+
+`?solver=engine` adds the engine beside the other movers (src/engine, shaders/engine*.wgsl). It is a `SimSystem`
+(`engine`, period 1) placed right after the surface pass.
+
+- **Reads:** `layers` and the chunk table (the terrain's intervals), and, with the panel's `engine.fastPath` on,
+  `surface` and the drift texture (the column top). **Writes:** `deposit` (what erosion takes from a body, as loose
+  ground) and its own buffers. It writes nothing else of the world's.
+- **Its own buffers:** `pose` (4 vec4 a row: the tick's start and now), `vel`, `info`, `samples`, `contacts`, the awake
+  list (its head is an indirect dispatch's arguments) and the tick's events (impacts with energy, erosion). `pose` is
+  what draws a row: render/bodymesh.ts reads it on the GPU (`MeshPose` kind `row`). The events buffer is what GPU
+  consumers will bind (build step 7).
+- **CPU to GPU:** a new row and its samples when a body is added; three small uniforms and the commands a tick.
+  **GPU to CPU:** none. Tests read the buffers through `Engine.debugBuffers`.
+- **Boundary:** the engine imports the lattice's material table (`physics.ts physMass`) for density and the loose
+  material, so both movers weigh a material the same.
+
 ## Limits (round 128o, DA-G3; DESIGN.md §24 "Limits … are documented with what they cost us")
 
 The hard sizes the world is built on, what holds them, and what raising each costs. test/unit/materials-tables.test.ts

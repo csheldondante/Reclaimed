@@ -79,6 +79,13 @@ interface PhysMat {
 }
 
 const ROCKY: PhysMat = { density: 2.5, stiffness: 1, yield: 99, plastic: 0, break: 0.035, restitution: 0.1, friction: 0.7, crumble: 14, soften: 1000, melt: 1600, heat: 0.45, loose: MAT.Rubble, damp: 0.5, crack: 9 };
+/** a material's density (mass a cell) and the loose material it crumbles to — what the rigid rows (src/engine) weigh
+ *  and erode by: one table for both */
+export function physMass(mat: number): { density: number; loose: number } {
+  const p = PHYS[mat] ?? ROCKY;
+  return { density: p.density, loose: p.loose };
+}
+
 const PHYS: Partial<Record<number, PhysMat>> = {
   [MAT.Stone]: { ...ROCKY, density: 2.7, break: 0.04 },
   [MAT.Concrete]: { ...ROCKY, density: 2.3, break: 0.02, crumble: 9, crack: 5 },

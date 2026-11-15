@@ -109,19 +109,72 @@ word. If tree ↔ tree wins or is within noise, it is the choice.
 
 ## Build order, riskiest first
 
-Each step: a Node gpu test, a lab station, a before/after GIF against today's default, a phone toggle diff.
+Each step: a Node gpu test, a lab station, a before/after GIF against today's default, a phone toggle diff. A step adds
+its route beside the old movers (`?solver=engine`); each deletion is its own later commit, after the owner's OK in the lab.
 
-1. **Rows on terrain** (stages 1, 3 terrain, 5, GPU sleep). Risk: rigid bodies on stepped columns must look heavy and
-   topple. Deletes the CPU rigid rock.
+1. **Rows on terrain** (stages 1, 3 terrain, 5, GPU sleep). **Built: see "Step 1 as built".** Then deletes the CPU
+   rigid rock.
 2. **Round trip for one body** (stage 4 without budget): row → particles → rows, with a split. The riskiest new
    part, and it carries the look the owner liked. Deletes the lattice's CPU sleep and both reads.
 3. **Body ↔ body** (stage 2, the fine benchmark, then the winner). Deletes the voxel hash for rigid bodies.
-4. **Budget and priority,** paged particles, the phone run that sets the budget. Deletes `PV_CAP` and the 8-bit id.
-5. **Events and rest:** GPU consumers; rest writes External (owner + normal) from the model on the GPU. Deletes
+4. **Terrain pieces as rows, fed by today's judge** (below). Deletes the lattice and the CPU rock as direct movers of
+   freed pieces (`spawnRigid`'s two branches, `integrity/lattice.ts spawnLattice` for rock, `ROUTING`).
+5. **The §9 GPU trigger** (DA-E3) in place of the judge (below). Deletes `game/judge.ts`, `fracture.ts`,
+   `integrity.ts` and `integrity/*`, `shaders/judge/*`, the rule in `structure.wgsl`, and the judge's 1–4 MB column
+   reads (DA-B12).
+6. **Budget and priority,** paged particles, the phone run that sets the budget. Deletes `PV_CAP` and the 8-bit id.
+7. **Events and rest:** GPU consumers; rest writes External (owner + normal) from the model on the GPU. Deletes
    `touches`, `Integrity.restRigid`'s CPU claims, `project.wgsl`'s `physCols` path.
-6. **Retire the rest:** the node solver, `variant.ts`. The CPU judge, sections judge and `structure.wgsl` rule go with
-   the §9 trigger (DA-E3), which is not in this note; the engine only accepts what it frees.
-7. **Kinematic rows, buildings waking** (DA-E6, DA-E8).
+8. **Retire the node solver** and `variant.ts`.
+9. **Kinematic rows, buildings waking** (DA-E6, DA-E8). A time distortion field (PE12) is a small step of its own
+   right after step 1: `rowDt` in `engine_step.wgsl` is its hook.
+
+## Terrain pieces are rows (the owner, 2026-11-15)
+
+"And terrain breaking needs rigidbodies to be complete. Pieces can hit and break other pieces." Terrain destruction is
+inside this engine's finish line. A piece freed from the terrain (a cut spire, an undercut mesa, ejecta, a wall) is an
+ordinary row with a model baked from the freed column region. From then on it is any other body: it meets bodies, a
+hit past the material threshold sends either one through stage 4, and the parts that settle are rows that can break
+further pieces. §9: "The marked region … becomes voxel bodies that deform and fracture within the engine's budget."
+
+- **The seam today:** `game/integrity/tick.ts:331 apply` cuts a verdict's pieces out of the columns on the GPU, then
+  `game/integrity/rigid.ts:33 spawnRigid` turns each piece's runs into cells on the CPU and hands them to a mover
+  (`:51` the lattice, `:55` the CPU rock). The judge knows the cells because it read the columns back (DA-B12).
+- **Step 4, the judge feeds rows.** `spawnRigid` calls the engine's `add` with those cells: no new read (the judge
+  has them), one upload of the row and its samples. This makes the chain testable before the trigger exists.
+- **Step 5, the trigger feeds rows with no CPU in between.** The trigger leaves a label per column run for each
+  marked region. Three dispatches over the marked columns only: `count` (atomics per label: cells, mass, centre,
+  second moments, surface cells), `alloc` (a thread a label: a row from an atomic row counter, a sample range from
+  an atomic bump), `write` (each surface cell writes its sample; the row gets mass, centre and inverse inertia; the
+  runs are cut from the columns in the same pass). The mesh is the rock mesh's own GPU path: the region copied into a
+  slot of its layers copy and meshed there (`render/rockmesh.ts`), written by a kernel instead of `alloc`'s CPU
+  packing. The CPU learns the new row count from a 4-byte async read after the edit, only to size `compact`.
+- **The chain's test** (`test/gpu/engine-chain.test.ts`, with steps 2–4): piece A cut from terrain falls on body B;
+  B fractures; a part of B hits C; C fractures. Asserted: every part is a row or loose ground, and mass is conserved
+  across terrain → rows → loose ground to within the deposit's rounding.
+- **The lab station:** in the rock lab and the playground's rock station, a spire toppled onto a second spire and a
+  stack of blocks, as part of the pile-up.
+- **When the budget is full:** candidates the `select` pass does not admit stay rigid. They still collide, and the
+  erode rule takes material where they overlap, so a big collapse loses detail (fewer bodies deform) and never waits
+  on stage 4. §9: "When the budget is full, or a piece is huge or off screen, the column result stands alone. The
+  piece falls as a rigid body, or turns to rubble behind dust."
+
+## Step 1 as built (`?solver=engine`)
+
+`src/engine/engine.ts`, `install.ts`; `src/shaders/engine.wgsl`, `engine_compact.wgsl`, `engine_step.wgsl`,
+`engine_fold.wgsl`; `test/gpu/engine.test.ts` (11 tests); the playground's `rigid` station; `scripts/enginelab.mjs`.
+
+- **Rows:** `pose` 64 B (the tick's start and now, drawn between them), `vel` 32 B, `info` 48 B, growing by doubling
+  with a GPU copy. A model's surface cells are its samples (16 B), with two contacts a sample (64 B): the ground under
+  it and the walls beside it.
+- **A tick:** `compact` (one read a row; the host's impulses and wakes), then per substep `fine` (a workgroup an
+  awake row) and `solve` (a thread an awake row), then `fold`. All but `compact` are indirect dispatches sized on the
+  GPU, so rows asleep cost one read.
+- **Drawing:** one mesh a body (`render/bodymesh.ts`, a third pose kind), placed on the GPU from `pose`.
+- **Nothing is read back** on this route. The transfer gate lists its three sites: uploads and one GPU copy.
+- **Not in step 1:** bodies do not meet each other; what the judge frees still goes to the lattice; a body at rest
+  claims no External; an impact stops dead instead of being softened by stage 4; a sleeper wakes only by an impulse or
+  `wakeNear`, not when the ground under it goes.
 
 ## Departures from DESIGN.md, and additions
 
@@ -132,6 +185,21 @@ Each step: a Node gpu test, a lab station, a before/after GIF against today's de
 5. The budget's unit is voxels deforming at once. §10 says "a fixed budget per frame"; this is my reading.
 6. Settling makes several rows from one body, and parts under the crumb size become loose ground. Addition.
 7. Kinematic rows use a capsule, not a voxel model. §10 says "one baked voxel model per object"; agents have none.
+8. **Heightfield first for terrain contact** (the owner asked whether most cells need full columns). The terrain
+   test can read the surface pass's column word and its loose run's depth (two reads) and walk the intervals only in
+   columns with an air gap (the word's gap bit, already there). It is derived state from the surface pass, not a
+   collision mesh, so §10's "tested against the **columns** directly" holds. Fresh in the same tick: the engine runs
+   right after the surface pass. Measured (desktop proxy, Dawn, 4,096 awake rows of 8 samples): 0.51–0.61 ms a tick
+   with it, 0.53–0.55 without; no difference outside noise. So the interval walk is the default and the fast path is
+   a panel switch (`engine.fastPath`) for the phone to judge. Trade-off: one more code path, heights quantised to
+   1/256 cell.
+9. Step 1's solve is each row over its own contacts in turn, with the impulse kept per contact, not the note's
+   `bodyDelta` accumulation: against terrain alone rows are independent. `bodyDelta` comes with body ↔ body.
+10. Contacts are two fixed slots a sample (64 B), not a counted 48 B list; point, closing speed and energy go to the
+    event instead. Events are a ring of 1,024 a tick.
+11. Wall contacts use the mean normal of the hex faces round a sample. Face by face, a straight cliff is a zigzag and
+    a body's own cells mesh with it like teeth: a toppled block hung on the cliff for seconds (the test's first run).
+12. Erosion in step 1 takes material from the body only, and only in solid ground; the dent in soft ground is step 7.
 
 ## Hacks and limits
 
@@ -142,7 +210,14 @@ Each step: a Node gpu test, a lab station, a before/after GIF against today's de
 - Buildings collide at column resolution until owner + normal lands; no insides until INT8.
 - The hash chain guard (128) stays in stage 4 unless the budget makes it unreachable: a silent drop today.
 - Positions are f32 in window space; the shift on a slide stays.
-- Nothing in this note has been run except the bench below.
+- Step 1: a sample is a sphere of half a cell at a surface cell's centre. A row's solve is one thread looping all its
+  samples, so a 2,000-sample block is slow. Interior cells are not samples: once a face erodes, the layer behind it is
+  held only by its edges. A row's inertia follows its mass, not its changed shape. A row eroded to nothing is moved
+  far below the map to hide its mesh (the CPU can't know). A station reset lets every row go. Sample and row ranges
+  are never reused until a reset. Over 65,535 awake rows won't dispatch. Events past 1,024 a tick are counted, not kept.
+- With `?sleepmore=1` the surface pass skips sleeping chunks; the fast path then trusts a chunk's last surface word
+  (not checked). The default interval walk has no such lag.
+- The writing lint fails on `src/roadlab/control.ts` at this tip, before any change here.
 
 ## Open questions for the owner
 

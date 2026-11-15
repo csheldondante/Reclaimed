@@ -7,6 +7,8 @@ import { loadLevelProgress } from '../../game/progress';
 import { Editor } from '../../ui/editor';
 import { PK } from '../../sim/particles';
 import { installPhysics } from '../../physics/install';
+import { installEngine } from '../../engine/install';
+import { solverVariant } from '../../solver/variant';
 import { installAgents } from '../../agents/install';
 import { installInhabitants } from '../../inhabitants/install';
 import { installTraits } from '../../traits/install';
@@ -86,6 +88,9 @@ export function attachTools(scene: LevelScene): void {
   registerSlice(scene.traits);
   // (round 117, inhabitants: ?life=1|dragon|town|viewer — creatures with bodies round the camera; src/inhabitants/install.ts)
   if (host.params.get('life')) scene.inhabitants = installInhabitants(core);
+  // (the physics engine's rigid rows, build step 1: docs/design/PHYSICS_ENGINE.md — beside the other movers, picked by
+  // ?solver=engine)
+  if (solverVariant(host.params) === 'engine') scene.engine = installEngine(core);
   if (scene.level.sandbox) {
     // the physics voxels (one GPU solver for every material, docs/PHYSICS.md)
     // and lava; the map's own ruins stay terrain until something touches
