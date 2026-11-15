@@ -23735,3 +23735,34 @@ of a slow clock under light load on the desktop. Run time 192 s.
 **Tests.** `node scripts/enginebench.mjs --url https://localhost:5453` (exits non-zero on a page error or no report);
 `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots` 119 passed.
 
+
+## 2026-11-15 — terrain pieces are rows: the judge feeds the engine (PT1, `physics10-terrain`)
+
+**Why.** The owner: "terrain breaks and seems to use the lattice." True by a step-1 shortcut: `ROUTING.engine` sent
+what the judge frees the voxel lattice's way. PHYSICS_ENGINE.md "Terrain pieces are rows", step 4: the judge feeds
+rows.
+
+**What.** `ROUTING.engine` is `{ rock: 'engine', structures: 'rock', metal: 'engine', woodBends: true }`. Under it
+every freed piece (rock and what's built through `spawnRigid`, metal and wood through `wakeMetalNow`, a lab's
+`dropBody`) goes to `game/integrity/rows.ts spawnRow`: the cells the judge already has on the CPU, one `Engine.add`
+(a model keyed by content, its distance field baked through the store at the next tick), at the cells' place, at
+rest. The columns are cut exactly as before (apply's cut stage, wakeMetal's edit). `Integrity.engine` is set by
+`attach-tools.ts` from `installEngine`. `keepsCopy` and `metalSolver` read the new route; the `lattice` route's code
+paths are unchanged.
+
+**Measured** (desktop proxy). Release hitch, the CPU side of `Engine.add` (samples, records, mesh, uploads), max of
+the run: 16.5 ms for 224 cells (Node, Dawn), 20.6 ms for the playground's spire (137 cells) and 27.4 ms for the
+mesa's front slab (318 cells) in headless Chrome. One bake batch of one model each. Not spread, not cached (PT3).
+
+**Seen** (412 x 915, `terrain-mesa*`, `terrain-spire*`): the spire tips over whole and lies on the ground; the mesa's
+front slab comes away, tips forward and rests in front of the mesa. No lattice body, no CPU rock (`freed:` line of
+the capture). At release the piece's surface changes: the ground is the textured rock mesh, the row is the engine's
+body mesh of its cells (flat grey, stepped hex prisms). That is a jump to a voxel look, against the owner's render
+rule; it is PT2, to be closed by the rock look arriving by merge and then PE13's own-surface work.
+
+**Tests.** `npx vitest run --project gpu engine-terrain` 3 passed (tower A: 224 cells, columns lost 224.000, fell
+2.00, asleep after 150 frames; tower B on a steel slab: fell 2.04 of a gap of 4, slab stayed at z 11.00);
+`npx vitest run --project gpu engine jb6 lattice-draw integrity` 61 passed, 1 failed under load
+(`engine-settle` "a settled part wakes by an impulse": passed when run again without the unit project beside it);
+`npm run typecheck` clean; `npx vitest run --project unit` 628 passed, 3 failed, the same 3 on the base cc095918
+(the writing lint, two of the transfer gate).

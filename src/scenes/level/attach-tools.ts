@@ -176,6 +176,7 @@ export function attachTools(scene: LevelScene): void {
     // (round 96; solver step 2) metal goes to the node solver (Integrity.wakeMetal); the physics voxels stay the
     // sandbox's tools' (the drop tool, the beam)
     if (scene.integrity.rigid && scene.physics) scene.integrity.physics = scene.physics;
+    if (scene.engine) scene.integrity.engine = scene.engine;
     core.globals.spanCollapse = false;
     weather.holdNatural(1e9);
   }

@@ -2,7 +2,8 @@
 // station under a solver variant, a button pressed, a GIF and stills at phone framing (412 x 915). The same buttons
 // under ?solver=lattice (today's default) and ?solver=engine give the before and the after.
 //   node scripts/pilelab.mjs --solver engine --out <dir>/pile-stack --press "drop a stack"
-//     [--zoom 8] [--look 206,92,16] [--frames 90] [--every 70] [--stills 10,30,60] [--wait 6000]
+//     [--station pile] [--zoom 8] [--look 206,92,16] [--frames 90] [--every 70] [--stills 10,30,60] [--wait 6000]
+// (terrain pieces as rows, PT1: --station slide --press "nick the spire" | "undercut the mesa")
 import gifenc from 'gifenc';
 import { PNG } from 'pngjs';
 import fs from 'node:fs';
@@ -22,6 +23,7 @@ await run({ name: 'pilelab', kind: 'behaviour', size: '412x915', dpr: 1, echo: t
   const every = Number(opt('every', '70'));
   const wait = Number(opt('wait', '6000'));
   const stills = opt('stills', '10,30,60').split(',').map(Number);
+  const station = opt('station', 'pile');
   const press = opt('press', 'drop a stack').split('|');
   const page = await R.page();
   await page.goto(R.url + '/?skipmenu=1&level=playground&tutorial=0&q=low&fresh=1&solver=' + solver, { waitUntil: 'load' });
@@ -29,16 +31,17 @@ await run({ name: 'pilelab', kind: 'behaviour', size: '412x915', dpr: 1, echo: t
   await R.fatal(page);
   await sleep(5000);
   await page.evaluate(
-    (look, zoom) => {
+    (look, zoom, station) => {
       const s = window.reclaimed.scene;
       s.tunePanel.el.hidden = true;
-      s.stationsBar.pick(s.level.stations.findIndex((x) => x.id === 'pile'));
+      s.stationsBar.pick(s.level.stations.findIndex((x) => x.id === station));
       for (const el of document.querySelectorAll('.tools, .toolbar, .palette')) el.style.display = 'none';
       if (look.length === 3) s.core.camera.target = look;
       if (zoom) s.core.camera.zoom = zoom;
     },
     look,
     zoom,
+    station,
   );
   await sleep(1500);
   await page.screenshot({ path: out + '-0.png' });
@@ -68,6 +71,11 @@ await run({ name: 'pilelab', kind: 'behaviour', size: '412x915', dpr: 1, echo: t
       return e ? { awake: e.awakeSeen, reads: e.reads, bakes: e.bakes, models: e.models.length, rows: e.rows, rooms: e.collide.rooms, pool: [...e.seen].slice(13, 23) } : null;
     });
     R.log('engine: ' + JSON.stringify(seen));
+    const ig = await page.evaluate(() => {
+      const i = window.reclaimed.scene.integrity;
+      return i ? { rows: i.stats.rows, rowCells: i.stats.rowCells, rowMs: i.stats.rowMs, lattice: i.physics?.bodies.length ?? 0, cpuRock: i.rigid?.list.length ?? 0 } : null;
+    });
+    R.log('freed: ' + JSON.stringify(ig));
   }
   await R.fatal(page);
   R.log('saved ' + out + '.gif and stills');

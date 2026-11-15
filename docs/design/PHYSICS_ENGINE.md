@@ -1342,3 +1342,18 @@ settled part's field with a stand-in, then voxels against rigid rows, then `pair
 phone page with the floor ladder, the stage split, the early-out for terrain contacts); PJ7 in the fine pass;
 PJ8's findings. Run first: `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms
 sdf-slots`, `npm run typecheck`, `npx vitest run --project unit` (one failure on the base: the writing lint, PE17).
+
+## Terrain pieces are rows, step 4 as built (branch `physics10-terrain`, 2026-11-15)
+
+`ROUTING.engine` sends nothing to the voxel lattice or the CPU rock. `game/integrity/rows.ts spawnRow` is the one
+hand-over: rock and structures from `spawnRigid`, metal and wood from `wakeMetalNow`, a lab's `dropBody`. The cells
+are the judge's (CPU, as step 4 says); `Engine.add` makes the model, keyed by content, and its field is baked at the
+next tick. The columns are cut as before. Test: `test/gpu/engine-terrain.test.ts`.
+
+- **Drawn:** the engine's body mesh of the piece's cells (`engine/modelmesh.ts`). At release the surface changes
+  from the ground's rock mesh to flat stepped prisms: a departure from the owner's render rule, logged PT2, not
+  solved here.
+- **Release hitch:** 20.6 ms (137 cells) to 27.4 ms (318 cells) on the CPU, headless Chrome desktop; one bake batch
+  the tick after (PT3).
+- **Not built:** step 5 (the GPU trigger), the chain test, pins for woken metal (PT4), dust and sound at release,
+  rows going back to ground (PT5).
