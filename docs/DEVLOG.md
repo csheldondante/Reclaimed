@@ -23178,3 +23178,32 @@ only as far as a slot is copied whole: a pass that re-packs with ivPack keeps th
 the times (the record has them). The fold past K joins the column's two lowest intervals (townstamp's smarter fold not
 copied). Structures are placeholders: no External intervals, no collision, not in the columns. Stairs, ramps and towers
 sit on the plain side of the step only. The lab's reveal is two discrete events (archgen's decal is the live one).
+
+## 2026-11-15 — the physics engine's build note, and the lattice measured on this tip (PE1–PE11, `physics10`)
+
+No code changed. docs/design/PHYSICS_ENGINE.md is the build note against DESIGN §10 (with §3 and §9): the six stages
+with their buffers, dispatches, what is reused and what each deletes; collision coverage per pair; the fine collision
+options; how the lattice becomes stage 4; the build order; departures; hacks and limits.
+
+**Why a note first.** docs/AGENT_RULES.md §1, and the owner's direction that the engine is built as the agreed design
+says. Reading the code turned up three things the plan has to start from:
+- The lattice reads 16 KB of body stats back every tick and decides sleep on the CPU (physics.ts:647, :761), against
+  §10's "No per-tick CPU readback of bodies." Its dispatches cover every used particle, asleep or not.
+- There are two projection paths, External intervals and the older `bodyProj` texture (`PROJ_K` 3), where §3 says
+  "There is no separate span list or span limit."
+- External intervals carry no owner and no normal (aux is the fallback material), so a body can't tell a rotated wall's
+  face from a column step.
+
+**The owner's steer on body ↔ body** (2026-11-15): bounding boxes, then tree ↔ tree for intersecting bodies, "unless you
+think there is a faster GPU option"; hashes are fine for bounds, not for every voxel. The note keeps tree ↔ tree as the
+baseline and proposes an occupancy mip pyramid (the same pruning, no stack) to be measured against it and a distance
+field in `test/gpu/fine-collide-bench.test.ts`, then on the phone.
+
+**Measured** (desktop proxy: headless Chrome, D3D11, Intel, 412 × 915, q=low; `node scripts/physbench.mjs --pairs
+lattice:runs`, one run, exit 0). Every stage p50 9.9 ms (the headless cap), p95 10.4–10.6, p99 10.7–11.5. Physics
+toggled off and on: frame −0.02 to +0.04 ms, GPU +0.33 to +0.8 ms (the line-up the most). Awake bodies 7–19. The
+integrity system's column reads were 1.1–3.8 MB each, 7–17 a stage, one at 171 ms latency (DA-B12). The bench works
+as it did in round 120; it reports no voxel counts, so it can't yet give ms per thousand voxels (PE8). The phone run:
+`/?skipmenu=1&level=playground&tutorial=0&q=low&physbench=1&pairs=lattice:runs`.
+
+**Not done.** No engine code, no test, no lab station, no phone number.

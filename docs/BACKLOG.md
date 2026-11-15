@@ -12,6 +12,27 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## The physics engine (2026-11-15, `physics10`; docs/design/PHYSICS_ENGINE.md)
+
+The build note against DESIGN §10, waiting for main's review. No engine code yet. Supersedes PH1's "needs a design
+review" and carries DA-E5 and DA-E8. The owner's steer on body ↔ body collision (2026-11-15): "Just make bounding boxes
+or build trees and do tree tree collisions for intersecting RBs unless you think there is a faster GPU option? I do
+like spatial hashes but not for fully voxelated things (that seems inefficient)".
+
+| id | item | size | status |
+|---|---|---|---|
+| PE1 | Rows on terrain: the integration buffer, terrain contacts from the columns, the solver's contact rules, sleep on the GPU, no body readback. Deletes the CPU rigid rock (rockbodies.ts, bodies.ts, colbodies.ts) | L | open (after review) |
+| PE2 | The round trip for one body: a rigid row becomes lattice particles on a true collision and rows again when settled, with a split into parts. Deletes the lattice's CPU sleep and its `bstat` and `touches` reads (a 16 KB read every tick today, against §10's rule) | L | open |
+| PE3 | Body ↔ body: a hash of body bounds, then the fine pass. `test/gpu/fine-collide-bench.test.ts` measures tree ↔ tree (the owner's baseline), the occupancy mip pyramid and the distance field; the phone bench decides. Deletes the voxel hash for rigid bodies | L | open |
+| PE4 | Budget and priority for deformation; particles in pages; the phone run that sets the budget. Deletes `PV_CAP` (131,072 voxels) and the 8-bit body id (255 bodies) | M | open |
+| PE5 | The collision-event buffer's GPU consumers; a body at rest writes its External intervals on the GPU with owner and face normal in the slot's spare word. Deletes `Integrity.restRigid`'s CPU claims and `project.wgsl`'s `physCols` / `bodyProj` path (a second span list with a limit of 3, against §3) | L | open |
+| PE6 | Retire the node solver and `solver/variant.ts`. The CPU judge, the sections judge and `structure.wgsl` go with DA-E3 | M | open |
+| PE7 | Kinematic rows (agents, heroes, vehicles) in the body hash; buildings waking into bodies past the threshold (DA-E6, DA-E8) | L | open |
+| PE8 | The physics bench reports no voxel counts (`Physics.used`, voxels awake), so a phone run gives ms a scene but not ms per thousand voxels. Add both to each row before the phone run that sets the stage 4 budget | S | open |
+| PE9 | Hack kept: the lattice's hash chain stops at 128 steps (phys.wgsl:479) and drops the contacts past it without a word. Remove or make it unreachable when the hash is sized to the budget (PE4) | S | open |
+| PE10 | Limit: the GPU grid table of §3 doesn't exist (only the 8-row frame table in grids/structures.ts and citygen's lot records), and External intervals carry no owner or normal. Buildings collide at column resolution until PE5; no insides until INT8 | M | open |
+| PE11 | Asked of the owner: sleepers met through their own model or the column projection; whether an agent stops a rolling rock or is only knocked down; whether before-GIFs recorded once from 7ea5e4da are enough when movers are deleted step by step | S | asked |
+
 ## Town contracts for Track B's unit minds (2026-11-10, `trackA-unitcontracts`; docs/design/TOWN_CONTRACTS.md)
 
 The coordinator's brief: three GPU contracts on the GPU towns for U2/U3 — GPU resident, no CPU readback, orders carry
