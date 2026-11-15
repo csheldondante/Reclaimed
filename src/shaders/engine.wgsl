@@ -43,6 +43,8 @@ const RW_WAKE: u32 = 19u;
 const RF_TOUCH: u32 = 1u;
 const RF_HOLD: u32 = 2u;
 const RF_EXPAND: u32 = 4u;
+// (this substep) the row is clear of the ground: it has no terrain rows and none is read (engine_ground.wgsl)
+const RF_AIR: u32 = 8u;
 const FPV: f32 = 4096.0;
 const FPP: f32 = 65536.0;
 // the list's header word that is the sleep epoch (the coarse pass reads it: it goes up whenever a row falls asleep,
@@ -107,10 +109,12 @@ struct EngU {
   j: vec4<u32>,
   // x still speed (cells/s), y still time (s), z crumb size (voxels), w the lattice's substep (s)
   k: vec4<f32>,
-  // x the lattice's solver iterations, y break face smoothing (f32 bits), z the lattice's substeps a tick, w spare
+  // x the lattice's solver iterations, y break face smoothing (f32 bits), z the lattice's substeps a tick, w which
+  // substep of the tick this is (the rigid rows': `integrate` and `tfine` keep a terrain list a substep)
   l: vec4<u32>,
   // (body against body, engine_pairs.wgsl) x a sleeper wakes when a hit's energy over its mass passes this, y the
-  // share of a pair's kept impulse it starts the next tick with, z what a rim row's depth is given back (cells), w spare
+  // share of a pair's kept impulse it starts the next tick with, z what a rim row's depth is given back (cells), w the
+  // margin of the row's test against the ground tops (cells; engine_ground.wgsl)
   m: vec4<f32>,
   // x the pair solver's iterations a substep, y the pairs' room, z the pair slots' room, w the old slots' room (a
   // growth's remap)
@@ -136,6 +140,11 @@ struct EngCmd { a: vec4<f32>, b: vec4<u32> };
 fn rwAt(r: u32) -> u32 { return LIST_AT + EU.e.x + r * RWW; }
 // (the word after the last row's work words: the ticks in which a row was awake, counted on the GPU — engine_pairs.wgsl gTick)
 fn tickAt() -> u32 { return LIST_AT + EU.e.x * (1u + RWW); }
+// (after it: the rows that may touch the ground, a list a substep — written by `integrate`, read by `tfine`; its
+// dispatch arguments are words 4 s of a buffer of their own, engine_pairs.wgsl targs: a kernel cannot be dispatched
+// from a buffer it writes)
+fn tlAt(s: u32) -> u32 { return tickAt() + 4u + s * EU.e.x; }
+const TARGS_AT: u32 = 0u;
 fn rowFlags(r: u32) -> u32 { return bitcast<u32>(info[4u * r].w); }
 fn eqrot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   let t = 2.0 * cross(q.xyz, v);

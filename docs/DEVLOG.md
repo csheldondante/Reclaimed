@@ -23735,3 +23735,42 @@ of a slow clock under light load on the desktop. Run time 192 s.
 **Tests.** `node scripts/enginebench.mjs --url https://localhost:5453` (exits non-zero on a page error or no report);
 `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots` 119 passed.
 
+## 2026-11-15 — terrain contacts the cheap way: a row above the ground costs no terrain threads (PP4, `physics10-join`)
+
+**Why.** The owner: "Why is the ground check slow? Isn't it essentially just index into a height grid and then done if
+you are above it?" It was not: every awake row spent a workgroup of 64 threads on its samples each substep, each
+sample walking seven columns' intervals, wherever the row was. 1,000 rows in free flight cost 1.6 to 2.0 ms of terrain
+work on the desktop and 10,000 cost tens of ms.
+
+**What.** `engine_ground.wgsl`: `gtop`, a record a chunk of columns (the highest top in each 4 x 4 block and in the
+chunk), made on the GPU by `tground` (a thread a chunk, one direct dispatch a tick) from the columns' intervals, only
+where the chunk's column version changed. `integrate` tests each awake row once a substep: bound radius plus this
+substep's travel plus the contact reach plus half a cell, against the highest top under that footprint (16 records
+read at most). Above it: the row is flagged `RF_AIR`, gets no terrain threads, and its terrain rows are not read. The
+rest join the substep's terrain list and `tfine` runs a workgroup a listed row. A sample now reads the column's height
+first and walks the intervals only when it is under the top of a column with air under its top (the surface pass
+already kept that flag); `heightfield first` is on by default.
+
+**How fresh after an edit.** Versions are per tick and several kernels may write the columns in a tick, some after the
+engine. `tground` makes a chunk's record again whenever its version is this tick's or the last's, so the record is the
+columns as they were when the engine ran this tick, before any row is tested. It is never older than that, so a stale
+record cannot let a row skip.
+
+**Departures.** The ground tops are made from the columns, not from `WorldGpu.surface` (a chunk asleep may skip the
+surface pass). Two levels (blocks and chunks), not a full pyramid: a footprint wider than 4 x 4 chunks is always
+tested. A substep its own list and uniform (eight at most).
+
+**Measured** (desktop proxy, Dawn in Node, Intel Xe; GPU timestamps, the least of five ticks; the machine was shared
+with another agent's GPU tests, so two runs each): rows in free flight, none colliding, every row given terrain
+threads as before against the row test: 1,000 rows 1.44 and 4.39 ms to 0.52 and 0.66; 10,000 rows 32.4 and 7.9 to 5.1
+and 1.2; 50,000 rows 53.9 and 100.5 to 7.9 and 10.8. Terrain threads: zero in all three. `integrate` itself, the test
+included, is 0.13 ms at 10,000 rows and 0.7 to 1.05 at 50,000. What is left at 50,000 is `rowSolve` (4.1: twelve
+dispatches a tick over rows with nothing to solve), the coarse and fine passes (4.0) and `rowFinish` (1.3).
+
+**Tests.** `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots`: 13 files,
+123 passed. `engine-ground.test.ts`: 49 rows in free flight and one off the map are on no terrain list, are first seen on
+it before they touch (centre 11.07 over ground at 10, half height 1), land at 11.00 and sleep; cave floor 6.000 under a roof, roof and open
+ground 13.000; a block at 9 cells/s stops with its centre 0.8 short of a cliff face; dug under while two ticks from
+landing it falls on to the pit floor (3.00), stone built under it it stops on the new top (12.92). Bench:
+`GROUND_BENCH=1 npx vitest run --project gpu engine-ground -t bench --reporter=verbose`.
+

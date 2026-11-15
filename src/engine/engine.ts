@@ -23,6 +23,7 @@ import latticeWgsl from '../shaders/engine_lattice.wgsl?raw';
 import drawWgsl from '../shaders/engine_draw.wgsl?raw';
 import settleWgsl from '../shaders/engine_settle.wgsl?raw';
 import pairsWgsl from '../shaders/engine_pairs.wgsl?raw';
+import groundWgsl from '../shaders/engine_ground.wgsl?raw';
 import { SdfCollide, type CollideOptions } from './sdf/collide';
 import { hexSdfSpec } from './sdf/hexmodel';
 import { SdfModels } from './sdf/models';
@@ -31,6 +32,7 @@ import { TICK_DT } from '../sim/flow';
 import type { WorldGpu } from '../sim/world-gpu';
 import { TUNE } from '../tune/params';
 import { cellPos, nbr, NDIR, ROW_H } from '../world/lattice';
+import { CHUNK } from '../world/layout';
 import { MAT, MAX_MATERIALS } from '../world/materials';
 
 export type V3 = [number, number, number];
@@ -109,6 +111,12 @@ const CMD_RING = 4;
 const ROW_ALIVE = 1;
 /** label passes a tick while a body settles (engine_settle.wgsl labelStep: a label crosses a part in a few) */
 const LABEL_PASSES = 8;
+/** substeps a tick at most (the panel's): a uniform and a terrain list each (engine.wgsl tlAt, TARGS_AT) */
+const SUBSTEPS_MOST = 8;
+/** the terrain lists' dispatch arguments: 16 B a substep (engine_pairs.wgsl targs) */
+const TARGS_B = 16 * SUBSTEPS_MOST;
+/** engine_ground.wgsl GT_WORDS */
+const GT_WORDS = 20;
 
 /** the tick's stages a bench can leave out (Engine.skip): the six of the note, and what else a tick encodes */
 export type EngineStage = 'compact' | 'integrate' | 'coarse' | 'fine' | 'terrain' | 'solve' | 'sleep' | 'stage4' | 'draw';
@@ -327,6 +335,8 @@ export class Engine implements SimSystem {
   private dummy: GPUBuffer;
   /** the awake list's dispatch arguments again (engine_compact.wgsl rargs) */
   private rargs: GPUBuffer;
+  /** the terrain lists' dispatch arguments (engine_pairs.wgsl targs) */
+  private targs: GPUBuffer;
   private pairRoom = 0;
   private slotRoom = 0;
   /** the distance-field models and the body ↔ body passes (src/engine/sdf) */
@@ -402,6 +412,10 @@ export class Engine implements SimSystem {
   /** (benches) the scene is held: every stage does its work, but `rowFinish` leaves each row where it was, at rest and
    *  awake — every tick is the tick after the one the hold began at (engine_pairs.wgsl rowFinish, EU.e.w bit 256) */
   hold = false;
+  /** cells added to a row's reach when it is tested against the ground tops (engine_pairs.wgsl integrate): half a cell
+   *  for a speed a hit gives it within the substep. (tests, benches) 1e9: every awake row gets terrain threads, as
+   *  before the test was built */
+  groundMargin = 0.5;
   /** what the last tick encoded was made of (the skin pass apart) */
   counts: TickCounts = { passes: 0, direct: 0, indirect: 0, clears: 0, copies: 0, uploads: 0, uploadBytes: 0 };
 
@@ -423,15 +437,19 @@ export class Engine implements SimSystem {
     kernel('solve', [stepWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'read', 12: 'read', 15: 'rw' });
     kernel('fold', [foldWgsl], { 14: 'rw', 15: 'read' });
     // bodies meeting bodies (engine_pairs.wgsl): the substep with pairs in it
-    kernel('integrate', [pairsWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw' });
-    kernel('tfine', [pairsWgsl], { 1: 'read', 4: 'rw', 6: 'rw', 7: 'rw', 10: 'rw', 11: 'read', 12: 'read', 13: 'tex', 40: 'rw' });
-    kernel('pimpMove', [pairsWgsl], { 42: 'rw', 48: 'read', 49: 'read' });
-    kernel('pairPrep', [pairsWgsl], { 4: 'rw', 41: 'rw', 42: 'rw', 43: 'read', 44: 'read', 45: 'read', 46: 'read' });
-    kernel('pairPre', [pairsWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 41: 'rw', 43: 'read', 47: 'read' });
-    kernel('pairSolve', [pairsWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 41: 'rw', 43: 'read' });
-    kernel('rowSolve', [pairsWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 40: 'rw', 47: 'read' });
-    kernel('pairPush', [pairsWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 41: 'rw', 42: 'rw', 43: 'read' });
-    kernel('rowFinish', [pairsWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 12: 'read', 15: 'rw', 40: 'rw', 47: 'read' });
+    // (engine_ground.wgsl first: the ground tops a row is tested against before its samples get threads)
+    const pw = [groundWgsl, pairsWgsl];
+    if (CHUNK !== 16) throw new Error('engine_ground.wgsl is written for chunks of 16 columns');
+    kernel('tground', pw, { 1: 'read', 11: 'read', 51: 'rw' });
+    kernel('integrate', pw, { 1: 'read', 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 51: 'rw', 52: 'rw' });
+    kernel('tfine', pw, { 1: 'read', 4: 'rw', 6: 'rw', 7: 'rw', 10: 'rw', 11: 'read', 12: 'read', 13: 'tex', 40: 'rw' });
+    kernel('pimpMove', pw, { 42: 'rw', 48: 'read', 49: 'read' });
+    kernel('pairPrep', pw, { 4: 'rw', 41: 'rw', 42: 'rw', 43: 'read', 44: 'read', 45: 'read', 46: 'read' });
+    kernel('pairPre', pw, { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 41: 'rw', 43: 'read', 47: 'read' });
+    kernel('pairSolve', pw, { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 41: 'rw', 43: 'read' });
+    kernel('rowSolve', pw, { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 40: 'rw', 47: 'read' });
+    kernel('pairPush', pw, { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 41: 'rw', 42: 'rw', 43: 'read' });
+    kernel('rowFinish', pw, { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 12: 'read', 15: 'rw', 40: 'rw', 47: 'read' });
     kernel('expand', [deformWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 18: 'rw', 19: 'rw', 22: 'rw', 27: 'read' });
     kernel('arm', [deformWgsl], { 18: 'rw', 37: 'rw' });
     kernel('pagelist', [deformWgsl], { 18: 'rw', 19: 'rw', 20: 'rw' });
@@ -474,7 +492,7 @@ export class Engine implements SimSystem {
     this.kargs = world.buf('engine kernel dispatch', 64, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     const U = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
     // (two for the substeps: the tick's first writes the pose the frame is drawn from)
-    this.eu = [world.buf('engine uniform (first substep)', EU_B, U), world.buf('engine uniform', EU_B, U)];
+    this.eu = Array.from({ length: SUBSTEPS_MOST }, (_, s) => world.buf(`engine uniform (substep ${s})`, EU_B, U));
     for (let i = 0; i < CMD_RING; i++) this.cu.push({ eu: world.buf('engine uniform (compact)', EU_B, U), ec: world.buf('engine commands', CMDS * 32, U) });
     this.events = world.buf('engine events', (EV_AT + EVENT_ROOM * EV_WORDS) * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     this.pm = world.buf('engine lattice materials', MAX_MATERIALS * 64, U);
@@ -484,6 +502,8 @@ export class Engine implements SimSystem {
     this.ou = world.buf('engine uniform (occupancy)', EU_B, U);
     this.statBuf = world.buf('engine chained read', READ_B, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
     this.rargs = world.buf('engine row dispatch', 32, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
+    this.targs = world.buf('engine terrain dispatch', TARGS_B, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    this.groundRoom();
     this.dummy = world.buf('engine (no slot growth)', 64, GPUBufferUsage.STORAGE);
     this.store = new SdfModels(device, 'grad8');
     // (the engine reads what was asked of the rooms itself, with the pool's header: one read, chained from events)
@@ -499,6 +519,17 @@ export class Engine implements SimSystem {
   }
 
   private olds: GPUBuffer[] = [];
+  /** the ground tops (engine_ground.wgsl gtop): a record a chunk of columns the world keeps versions for; made again, empty, when that count changes */
+  private gtop!: GPUBuffer;
+  private gtopChunks = 0;
+  private groundRoom(): void {
+    const n = this.world.versionChunks;
+    if (n === this.gtopChunks) return;
+    if (this.gtop) this.olds.push(this.gtop);
+    this.gtopChunks = n;
+    this.gtop = this.world.buf('engine ground tops', Math.max(1, n) * GT_WORDS * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    this.g = null;
+  }
   /** the buffers a growth replaced, let go once every encoder that may hold them has run */
   private letGo(): void {
     const olds = this.olds.splice(0);
@@ -602,7 +633,7 @@ export class Engine implements SimSystem {
       this.info = again(this.info, 'engine info', n.rows * INFO_B, o.rows * INFO_B);
       // (the list, then the rows' work words — engine.wgsl rwAt. Made again empty: a wake asked for in the tick before
       // a growth is lost, and the sleep epoch starts again, so the coarse pass is told to build its sleeper table)
-      this.list = again(this.list, 'engine awake list', (LIST_AT + n.rows * (1 + RWW) + 4) * 4, 0, S | GPUBufferUsage.INDIRECT);
+      this.list = again(this.list, 'engine awake list', (LIST_AT + n.rows * (1 + RWW + SUBSTEPS_MOST) + 4) * 4, 0, S | GPUBufferUsage.INDIRECT);
       this.sdfModel = again(this.sdfModel, 'engine row models', n.rows * 4, o.rows * 4);
       // (a row with no model in the store — every row the GPU makes at settle, till its field is baked: BACKLOG PJ6 —
       // is in no pair: the coarse pass reads this word)
@@ -687,7 +718,7 @@ export class Engine implements SimSystem {
       0: w.globals, 1: w.chunks, 2: w.materials, 3: this.eu[1], 16: this.cu[0].ec, 17: this.et,
       4: this.pose, 5: this.vel, 6: this.info, 7: this.samples, 8: this.contacts, 10: this.list, 11: w.layers, 12: w.surface, 13: w.driftView, 14: w.deposit, 15: this.events,
       18: this.pool, 19: this.dmeta, 20: this.dargs, 21: this.dargs, 22: this.heap, 23: this.px, 24: this.ps, 25: this.pw, 26: this.pb, 27: this.list, 28: this.events, 29: w.layers, 30: w.particles, 31: w.particleCounters, 32: this.dl, 33: this.dout, 34: this.dl, 35: this.pm, 36: this.fu, 37: this.kargs, 38: this.vh,
-      40: this.trow, 41: this.prow, 42: this.pimp, 43: pb[0], 44: pb[1], 45: pb[2], 46: pb[3], 47: pb[4], 48: this.pimpOld ?? this.dummy, 50: this.rargs, 49: (this.pimpOld && this.collide.fine.slotRemap) || this.dummy,
+      40: this.trow, 41: this.prow, 42: this.pimp, 43: pb[0], 44: pb[1], 45: pb[2], 46: pb[3], 47: pb[4], 48: this.pimpOld ?? this.dummy, 50: this.rargs, 51: this.gtop, 52: this.targs, 49: (this.pimpOld && this.collide.fine.slotRemap) || this.dummy,
     };
     const make = (name: string, over: Record<number, GPUBuffer> = {}) => {
       const { k, spec } = this.k[name];
@@ -698,7 +729,11 @@ export class Engine implements SimSystem {
     this.cu.forEach((c, i) => (g[`compact${i}`] = make('compact', { 3: c.eu, 16: c.ec })));
     this.cu.forEach((c, i) => (g[`slots${i}`] = make('slots', { 3: c.eu, 16: c.ec })));
     g.solve0 = make('solve', { 3: this.eu[0] });
-    g.integrate0 = make('integrate', { 3: this.eu[0] });
+    // (a substep its own uniform for the two kernels that keep a terrain list a substep)
+    for (let s = 0; s < SUBSTEPS_MOST; s++) {
+      g[`integrate${s}`] = make('integrate', { 3: this.eu[s] });
+      g[`tfine${s}`] = make('tfine', { 3: this.eu[s] });
+    }
     g.pairPre0 = make('pairPre', { 3: this.eu[0] });
     this.g = g;
     return g;
@@ -858,12 +893,12 @@ export class Engine implements SimSystem {
   }
 
   /** the step's parameters as a kernel reads them (engine.wgsl EngU) */
-  private uniform(first: boolean, cmds: number): ArrayBuffer {
+  private uniform(first: boolean, cmds: number, substep = 0): ArrayBuffer {
     const T = TUNE.engine;
     const U = new ArrayBuffer(EU_B);
     const f = new Float32Array(U);
     const u = new Uint32Array(U);
-    const sub = Math.max(1, Math.round(T.substeps));
+    const sub = Math.min(SUBSTEPS_MOST, Math.max(1, Math.round(T.substeps)));
     f.set([TICK_DT / sub, T.friction, T.restitution, T.pushV], 0);
     f.set([T.slop, T.slopK, T.slopP, T.slopCap], 4);
     f.set([T.erodeDepth, T.restV, T.restW, T.restT], 8);
@@ -879,9 +914,9 @@ export class Engine implements SimSystem {
     u.set([this.samp.cpu, this.samp.gpu, this.hp.cpu, this.hp.gpu], 36);
     const lsub = Math.max(1, Math.round(T.latticeSubsteps));
     f.set([T.stillV, T.stillT, T.crumb, TICK_DT / lsub], 40);
-    u.set([Math.max(1, Math.round(T.latticeIters)), 0, lsub, 0], 44);
+    u.set([Math.max(1, Math.round(T.latticeIters)), 0, lsub, substep], 44);
     f[45] = T.breakSmooth;
-    f.set([T.wakeEnergy, T.warmStart, T.rimDepth, 0], 48);
+    f.set([T.wakeEnergy, T.warmStart, T.rimDepth, this.groundMargin], 48);
     u.set([Math.max(1, Math.round(T.pairIters)), this.pairRoom, this.slotRoom, this.oldSlots], 52);
     return U;
   }
@@ -995,6 +1030,7 @@ export class Engine implements SimSystem {
     }
     this.watch();
     const pairs = TUNE.engine.pairs >= 0.5;
+    this.groundRoom();
     const skip = this.skip;
     const n: TickCounts = (this.counts = { passes: 1, direct: 0, indirect: 0, clears: 0, copies: 0, uploads: 0, uploadBytes: 0 });
     let moved = false;
@@ -1033,8 +1069,8 @@ export class Engine implements SimSystem {
     this.ring = (ring + 1) % CMD_RING;
     up(this.cu[ring].ec, C);
     up(this.cu[ring].eu, this.uniform(false, take.length));
-    up(this.eu[0], this.uniform(true, 0));
-    up(this.eu[1], this.uniform(false, 0));
+    const sub = Math.min(SUBSTEPS_MOST, Math.max(1, Math.round(TUNE.engine.substeps)));
+    for (let s = 0; s < sub; s++) up(this.eu[s], this.uniform(s === 0, 0, s));
     up(this.et, this.thresholds());
     const clear = (buf: GPUBuffer, offset?: number, size?: number) => {
       enc.clearBuffer(buf, offset, size);
@@ -1045,6 +1081,8 @@ export class Engine implements SimSystem {
       clear(this.list, 0, (LIST_AT - 1) * 4);
       clear(this.rargs);
     }
+    // (the terrain lists' counts; kept when a bench leaves `integrate`, which makes them, out of a held scene)
+    if (!skip.integrate) clear(this.targs);
     clear(this.events, 0, EV_AT * 4);
     clear(this.dargs, 0, 32);
     // (`timeKernels`: a pass a kernel, each with its own timestamps — what a tick is made of; else one pass)
@@ -1072,8 +1110,12 @@ export class Engine implements SimSystem {
       run('compact', `compact${ring}`);
       direct(Math.ceil(this.d.rows / 64));
     }
-    const sub = Math.max(1, Math.round(TUNE.engine.substeps));
     if (pairs) {
+      // (the ground tops, where the columns changed: a thread a chunk — engine_ground.wgsl)
+      if (!skip.terrain) {
+        run('tground');
+        direct(Math.ceil(this.gtopChunks / 64));
+      }
       // bodies meet bodies (engine_pairs.wgsl): integrate, the tick's pairs (coarse, fine: once, at the first
       // substep), the terrain rows, the solve, the move and sleep. Every dispatch sized on the GPU: by the rows awake
       // (the list) or by the pairs (the fine pass's own arguments)
@@ -1088,7 +1130,7 @@ export class Engine implements SimSystem {
       };
       const iters = Math.max(1, Math.round(TUNE.engine.pairIters));
       for (let s = 0; s < sub; s++) {
-        if (!skip.integrate) rowsOf('integrate', s === 0 ? 'integrate0' : 'integrate');
+        if (!skip.integrate) rowsOf('integrate', `integrate${s}`);
         if (s === 0) {
           if (this.timeKernels) {
             cur.pass.end();
@@ -1106,8 +1148,8 @@ export class Engine implements SimSystem {
           if (!skip.solve) pairsOf('pairPrep');
         }
         if (!skip.terrain) {
-          run('tfine');
-          indirect(this.rargs, 16);
+          run('tfine', `tfine${s}`);
+          indirect(this.targs, 16 * s);
         }
         if (!skip.solve) {
           pairsOf('pairPre', s === 0 ? 'pairPre0' : 'pairPre');
@@ -1260,7 +1302,7 @@ export class Engine implements SimSystem {
 
   /** (tests only: nothing in play reads a row) the buffers, to read back */
   get debugBuffers() {
-    return { model: this.sdfModel, prow: this.prow, pimp: this.pimp, pose: this.pose, vel: this.vel, info: this.info, samples: this.samples, list: this.list, events: this.events, pool: this.pool, dmeta: this.dmeta, dargs: this.dargs, kargs: this.kargs, dl: this.dl, dout: this.dout, heap: this.heap, px: this.px, ps: this.ps, pb: this.pb };
+    return { targs: this.targs, model: this.sdfModel, prow: this.prow, pimp: this.pimp, pose: this.pose, vel: this.vel, info: this.info, samples: this.samples, list: this.list, events: this.events, pool: this.pool, dmeta: this.dmeta, dargs: this.dargs, kargs: this.kargs, dl: this.dl, dout: this.dout, heap: this.heap, px: this.px, ps: this.ps, pb: this.pb };
   }
 
   /** (tests, the lab's read-out) the rooms now, and where the records start */

@@ -8,7 +8,7 @@
 //   …&auto=1                          starts without the tap (headless: scripts/enginebench.mjs)
 // A phone's GPU is a tiler and per-pass timestamps mislead there (the owner, round 120: "You need to toggle systems to
 // measure the diff"). Every number here is a difference between frames that encode a thing and frames that encode
-// nothing: windows of each variant in turn, the mean time from a frame's submit to the GPU done with it
+// nothing: windows of each variant in turn, the median time from a frame's submit to the GPU done with it
 // (onSubmittedWorkDone), less the same for an empty frame. `reps` ticks a frame lift the difference clear of the noise;
 // the number is a tick's.
 // The scenes are held (Engine.hold): every stage does a tick's work, and `rowFinish` leaves each row where it was, so
@@ -39,6 +39,12 @@ const KEY = 'reclaimed.enginebench.partial';
 const NL = String.fromCharCode(10);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const mean = (a: number[]) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : NaN);
+/** the middle value: a stalled frame or two in a window do not move it */
+const median = (a: number[]) => {
+  if (!a.length) return NaN;
+  const s = [...a].sort((x, y) => x - y);
+  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+};
 const round = (v: number, d = 3) => (Number.isFinite(v) ? +v.toFixed(d) : null);
 const QUALITY: Quality = { renderScale: 0.5, maxDpr: 1, rain: 1500, maxTicksPerFrame: 2, particles: 4096, agentSweeps: 2, shadowSize: 1024, meshSlots: 1 };
 const MAP = 128;
@@ -198,7 +204,7 @@ export async function engineBench(): Promise<void> {
 
   /**
    * The variants in turn, `windows` times round: frames that encode a variant `reps` times, and frames that encode
-   * nothing. A variant's cost is its mean GPU-done time less the empty frames', over its reps.
+   * nothing. A variant's cost is its median GPU-done time less the empty frames', over its reps.
    */
   const measure = async (label: string, variants: Variant[]): Promise<Row[]> => {
     const all: Variant[] = [{ name: 'empty frame', encode: () => {} }, ...variants];
@@ -230,10 +236,10 @@ export async function engineBench(): Promise<void> {
         await dev.queue.onSubmittedWorkDone();
         v.leave?.();
       }
-    const base = { done: mean(sums[0].done), dt: mean(sums[0].dt) };
+    const base = { done: median(sums[0].done), dt: mean(sums[0].dt) };
     return all.map((v, k) => {
       const reps = v.reps ?? 1;
-      const done = mean(sums[k].done);
+      const done = median(sums[k].done);
       const dt = mean(sums[k].dt);
       return { name: v.name, reps, ms: k ? round((done - base.done) / reps) : 0, frameMs: k ? round((dt - base.dt) / reps) : 0, doneMs: round(done, 2), intervalMs: round(dt, 2), frames: sums[k].dt.length, note: v.note };
     });
@@ -526,7 +532,7 @@ export async function engineBench(): Promise<void> {
     startedAt,
     endedAt: new Date().toISOString(),
     runSeconds: round((performance.now() - t00) / 1000, 0),
-    what: 'the joined physics engine: every ms is a difference of mean GPU-done time (submit to onSubmittedWorkDone) between frames that encode the thing and frames that encode nothing, over reps; frameMs the same by the frame interval. Held scenes: every tick does the same work. A stage’s cost is the whole tick less the tick without it. No timestamp queries.',
+    what: 'the joined physics engine: every ms is a difference of median GPU-done time (submit to onSubmittedWorkDone) between frames that encode the thing and frames that encode nothing, over reps; frameMs the same by the frame interval. Held scenes: every tick does the same work. A stage’s cost is the whole tick less the tick without it. No timestamp queries.',
     method: { windowS, windows, long },
     device: { adapter: { vendor: info.vendor, architecture: info.architecture, device: info.device, description: info.description }, ua: navigator.userAgent, clientHints: hints, screen: [innerWidth, innerHeight, devicePixelRatio] },
     wakeLock: { held: awake, log: wakeLog },

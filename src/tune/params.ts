@@ -74,7 +74,7 @@ const SPEC = {
       stepUp: { label: 'step up', units: 'cells', min: 0, max: 1, step: 0.05, def: 0.45, help: 'a ledge this high beside a sample is climbed, not a wall' },
       nearGap: { label: 'contact reach', units: 'cells', min: 0.05, max: 1, step: 0.05, def: 0.25, help: 'a gap this small is already a contact: the approach is stopped at the surface, not past it' },
       eventEnergy: { label: 'impact event', units: 'mass·cells²/s²', min: 1, max: 2000, step: 1, def: 50, help: 'an impact losing more than this writes a collision event' },
-      fastPath: { label: 'heightfield first', units: '0/1', min: 0, max: 1, step: 1, def: 0, help: 'the terrain test reads the column top from the surface pass first and walks the intervals only in columns with an air gap; 0: always the intervals' },
+      fastPath: { label: 'heightfield first', units: '0/1', min: 0, max: 1, step: 1, def: 1, help: 'the terrain test reads the column top from the surface pass first and walks the intervals only for a point under the top of a column with air under its top (a cave, an overhang); 0: always the intervals' },
       deform: { label: 'deformation', units: '0/1', min: 0, max: 1, step: 1, def: 1, help: 'build step 2: a body in a hard collision becomes particles, deforms or breaks, and its parts settle back into rigid bodies; 0: every impact stays rigid' },
       expandRock: { label: 'break threshold, rock', units: 'cells²/s²', min: 0, max: 400, step: 5, def: 60, help: 'an impact whose energy over the mass of the body passes this deforms it (stone and every material not named below); 0: never' },
       expandConcrete: { label: 'break threshold, concrete', units: 'cells²/s²', min: 0, max: 400, step: 5, def: 45 },
