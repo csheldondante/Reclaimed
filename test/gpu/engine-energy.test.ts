@@ -101,3 +101,36 @@ for (const [name, mat, w, d, h, from, sideMax] of [
     R.w.destroy();
   });
 }
+
+// BACKLOG PE30, measured here: the rigid solve judges each substep's stop against the break threshold, and a stop
+// under it is solved — so a block can lose up to sqrt(2 x threshold) = 11 cells/s to the rigid contact in the substep
+// before the one that expands it, and its voxels take the hit that much slower. Which drop loses how much goes by where
+// in a substep it meets the ground: a 6 x 6 x 4 block from 40 cells came in at 14.9 cells/s, from 24 cells at 20.1,
+// and broke into fewer parts from the higher drop. The fix is in the solve (the collision branch's): judge a contact
+// that binds this substep by the whole speed it comes in with. Marked as failing till then; it passes once fixed.
+test.fails('PE30: a block dropped from higher comes in faster (40 cells against 24)', async () => {
+  const speed: number[] = [];
+  for (const from of [24, 40]) {
+    const R = await breakRig(g, flat);
+    const cells = box(12, 12, FLOOR + from, 6, 6, 4);
+    const b = R.e.add({ cells, mesh: modelMesh(cells) })!;
+    let v = -1;
+    for (let t = 0; t < 400 && v < 0; t++) {
+      await R.step(1);
+      if (!((await R.row(b.row)).flags & DEFORM)) continue;
+      const p = await R.particles(b.row);
+      let s = 0;
+      let n = 0;
+      for (let k = 0; k < p.cells; k++) {
+        if (p.x[k * 4 + 3] <= 0) continue;
+        s += -p.v[k * 4 + 2];
+        n++;
+      }
+      v = s / n;
+    }
+    log(`stone 6x6x4 from ${from} cells: its voxels' speed down the tick it expands ${v.toFixed(1)} cells/s`);
+    speed.push(v);
+    R.w.destroy();
+  }
+  expect(speed[1]).toBeGreaterThan(speed[0]);
+});

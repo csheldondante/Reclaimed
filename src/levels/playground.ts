@@ -49,8 +49,9 @@ export interface StationKit {
   later(secs: number, f: () => void): void;
   /** (solver step 2) loose ground poured over world (x, y): `layers` cells of it within r (burying what's there) */
   pour(x: number, y: number, r: number, layers: number, mat: number): void;
-  /** (solver step 2) a body of these cells (storage x, y, cell z; air there) dropped into the node solver */
-  drop(cells: { x: number; y: number; z: number; mat: number }[], vel?: [number, number, number]): void;
+  /** (solver step 2) a body of these cells (storage x, y, cell z; air there) dropped into the node solver (`spin`,
+   *  rad/s: the physics engine's rows only — the other movers drop it without a turn) */
+  drop(cells: { x: number; y: number; z: number; mat: number }[], vel?: [number, number, number], spin?: [number, number, number]): void;
   /** (solver step 2) the metal at this cell (storage x, y, cell z) and all it connects to woken into the node solver */
   wakeMetal(x: number, y: number, z: number): void;
   /**
@@ -108,9 +109,17 @@ const METAL = {
   tanker: { x0: 238, x1: 250, y0: 226, y1: 231, z0: G + 8, h: 5 },
   grounds: { y0: 221, y1: 240, sand: [206, 219], dirt: [219, 228], stone: [228, 237] } as Grounds,
 };
-/** (the physics engine's break station, build step 2 letter E) a stone pad beside the tanker with a post across it,
- *  for a beam or a slab to be dropped over; the three heights a block is dropped from on the metal station's stone pad */
-const BREAK = { pad: { x0: 240, x1: 255, y0: 233, y1: 240 }, post: { x0: 246, x1: 248, y0: 233, y1: 240, h: 5 }, heights: [8, 24, 48] as [number, number, number] };
+/** (the physics engine's break station, build step 2 letter E; look round 3: on land of its own, between the rock
+ *  station and the breach — it stood on the metal station's, crowded by the tanker and its posts) Stone pads side by
+ *  side, each test on its own with open ground round it: three heights a block is dropped from, a post for a slab and
+ *  one for a steel beam to be dropped across, a pad a brick wall is pushed over on. */
+const BREAK = {
+  rect: [16, 80, 96, 112] as [number, number, number, number],
+  heights: { x: [54, 66, 78] as [number, number, number], y: 82, from: [8, 24, 48] as [number, number, number] },
+  slab: { x0: 50, x1: 64, y0: 97, y1: 104, post: [56, 58] as [number, number], h: 5 },
+  beam: { x0: 70, x1: 86, y0: 97, y1: 103, post: [77, 79] as [number, number], h: 5 },
+  brick: { x0: 38, x1: 50, y0: 80, y1: 94 },
+};
 const cellsBox = (x0: number, y0: number, z0: number, w: number, d: number, h: number, mat: number) => {
   const out: { x: number; y: number; z: number; mat: number }[] = [];
   for (let z = z0; z < z0 + h; z++) for (let y = y0; y < y0 + d; y++) for (let x = x0; x < x0 + w; x++) out.push({ x, y, z, mat });
@@ -438,31 +447,34 @@ export const STATIONS: Station[] = [
   {
     // (the physics engine, build step 2 — docs/design/PHYSICS_ENGINE.md: a rigid body in a hard collision becomes
     // voxel-lattice particles, deforms or breaks, and its parts settle back into rigid bodies with their breaks closed.
-    // On the metal station's land: its stone pad, and a pad with a post beside the tanker. The drops go by the picked
-    // variant (k.drop): the engine under ?solver=engine, the lattice's voxels by default — the same buttons)
+    // On land of its own. The drops go by the picked variant (k.drop): the engine under ?solver=engine, the lattice's
+    // voxels by default — the same buttons)
     id: 'break',
     name: 'break',
-    rect: [208, 192, 256, 240],
-    look: [240, 201, G + 2, 12],
-    hint: 'breaking: a stone block from three heights, a slab and a steel beam across a post, a brick section on its side. Bodies do not meet each other yet',
+    rect: BREAK.rect,
+    look: [66, 80, G + 2, 9],
+    hint: 'breaking: a stone block from three heights, a slab and a steel beam across a post, a brick wall pushed over. Bodies do not meet each other yet',
     actions: [
       {
-        // (from 8 it stays whole, from 24 it cracks and sheds, from 48 more of it goes)
+        // (from 8 it stays whole, from 24 it cracks, from 48 it breaks up. Each comes down moving sideways a little, as
+        // a thing that fell off something does: a break adds no speed, so what parts the pieces is the speed they had)
         label: 'stone from three heights',
-        run: (k) => BREAK.heights.forEach((h, i) => k.drop(cellsBox(231, 222 + 5 * i, G + h, 4, 4, 3, MAT.Stone))),
+        run: (k) => BREAK.heights.from.forEach((h, i) => k.drop(cellsBox(BREAK.heights.x[i], BREAK.heights.y, G + h, 6, 6, 4, MAT.Stone), [2.5, 1.5, 0])),
       },
       {
-        // (twelve long over the post: it snaps in two)
+        // (twelve long over the post: it snaps in two, a half each side)
         label: 'stone slab across the post',
-        run: (k) => k.drop(cellsBox(241, 235, G + 30, 12, 4, 3, MAT.Stone)),
+        run: (k) => k.drop(cellsBox(BREAK.slab.x0 + 1, BREAK.slab.y0 + 2, G + 30, 12, 4, 3, MAT.Stone)),
       },
       {
         label: 'steel beam across the post',
-        run: (k) => k.drop(cellsBox(240, 236, G + 24, 14, 2, 1, MAT.Steel)),
+        run: (k) => k.drop(cellsBox(BREAK.beam.x0 + 1, BREAK.beam.y0 + 2, G + 24, 14, 2, 1, MAT.Steel)),
       },
       {
-        label: 'brick section on its side',
-        run: (k) => k.drop(cellsBox(229, 236, G + 22, 8, 3, 3, MAT.Brick)),
+        // (a wall eight long, two deep, seven courses high, falling as it turns over: it lands on its face and breaks
+        // along its courses. The turn is the engine's: the lattice route drops it upright)
+        label: 'brick wall pushed over',
+        run: (k) => k.drop(cellsBox(BREAK.brick.x0 + 2, BREAK.brick.y0 + 3, G + 22, 8, 2, 7, MAT.Brick), [0, 1.5, 0], [1.1, 0, 0]),
       },
     ],
   },
@@ -679,11 +691,18 @@ export function generatePlayground(dims: WorldDims): MapData {
         }
       }
     for (const x of [t.x0 + 1, t.x1 - 2]) for (const y of [t.y0 + 1, t.y1 - 2]) put(x, y, G, t.z0, MAT.Concrete);
-    // (the break station's: a stone pad with a post across it)
-    const bp = BREAK.pad;
-    block(bp.x0, bp.y0, G - 2, bp.x1 - bp.x0, bp.y1 - bp.y0, 2, MAT.Stone);
-    const po = BREAK.post;
-    block(po.x0, po.y0, G, po.x1 - po.x0, po.y1 - po.y0, po.h, MAT.Stone);
+  }
+
+  // 10. break (the physics engine's): stone pads on land of its own — one under the three heights, one with a post
+  // across it for the slab, one for the steel beam, one the brick wall goes over on
+  {
+    const B = BREAK;
+    block(B.heights.x[0] - 3, B.heights.y - 2, G - 2, B.heights.x[2] - B.heights.x[0] + 12, 10, 2, MAT.Stone);
+    for (const t of [B.slab, B.beam]) {
+      block(t.x0, t.y0, G - 2, t.x1 - t.x0, t.y1 - t.y0, 2, MAT.Stone);
+      block(t.post[0], t.y0, G, t.post[1] - t.post[0], t.y1 - t.y0, t.h, MAT.Stone);
+    }
+    block(B.brick.x0, B.brick.y0, G - 2, B.brick.x1 - B.brick.x0, B.brick.y1 - B.brick.y0, 2, MAT.Stone);
   }
 
   // (round 110) the rivers: carved, filled and held as the atlas's (world/rivertable.ts → WorldGpu riverFlow)

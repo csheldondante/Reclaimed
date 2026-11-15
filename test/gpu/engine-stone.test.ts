@@ -114,15 +114,17 @@ test('rigid stone: a block landing under its break threshold — how far it sink
   R.w.destroy();
 });
 
-// The lab's button "stone from three heights" (levels/playground.ts: a 4 x 4 x 3 block from 8, 24 and 48 cells): the
-// owner's stone does not flex, it breaks — whole from the lowest, cracked into a few parts from the middle one,
-// shattered into many from the highest. Each height in a world of its own (bodies do not meet each other yet).
+// The lab's button "stone from three heights" (levels/playground.ts: a 6 x 6 x 4 block from 8, 24 and 48 cells, each
+// moving sideways a little as it comes down): the owner's stone does not flex, it breaks — whole from the lowest,
+// cracked into a few parts from the middle one, broken up from the highest: more parts, and more of it rubble on the
+// ground. Each height in a world of its own (bodies do not meet each other yet).
 test('stone from three heights: whole, cracked, many parts', async () => {
   const parts: number[] = [];
+  const rubble: number[] = [];
   for (const h of [8, 24, 48]) {
     const R = await breakRig(g, flat);
-    const cells = box(10, 12, 10 + h, 4, 4, 3);
-    const b = R.e.add({ cells, mesh: modelMesh(cells) })!;
+    const cells = box(10, 12, 10 + h, 6, 6, 4);
+    const b = R.e.add({ cells, mesh: modelMesh(cells), vel: [2.5, 1.5, 0] })!;
     let expanded = false;
     let done = false;
     for (let t = 0; t < 900 && !done; t += 5) {
@@ -136,16 +138,19 @@ test('stone from three heights: whole, cracked, many parts', async () => {
     const rows = await R.rows();
     const pool = await R.pool();
     parts.push(rows.length);
-    log(`stone 4x4x3 from ${h} cells: ${expanded ? 'broke' : 'stayed rigid'}, ${rows.length} part${rows.length === 1 ? '' : 's'} of ${rows.map((r) => Math.round(r.mass / 2.7)).join(', ')} voxels, ${pool[POOL.crumbs]} voxels to the ground`);
+    rubble.push(pool[POOL.crumbs]);
+    log(`stone 6x6x4 from ${h} cells: ${expanded ? 'broke' : 'stayed rigid'}, ${rows.length} part${rows.length === 1 ? '' : 's'} of ${rows.map((r) => Math.round(r.mass / 2.7)).join(', ')} voxels, ${pool[POOL.crumbs]} voxels to the ground`);
     expect(g.takeErrors()).toEqual([]);
     R.w.destroy();
   }
   expect(parts[0]).toBe(1);
   expect(parts[1]).toBeGreaterThanOrEqual(2);
-  expect(parts[1]).toBeLessThanOrEqual(6);
-  // (a block of 48 voxels has few grain cells: 6 parts or more, and more than from the middle height)
-  expect(parts[2]).toBeGreaterThanOrEqual(6);
+  expect(parts[1]).toBeLessThanOrEqual(7);
+  // (from the highest: more parts than from the middle one, and more of it on the ground as rubble — a part under
+  // stone's crumb size, 4 voxels, is no body)
   expect(parts[2]).toBeGreaterThan(parts[1]);
+  expect(rubble[0]).toBe(0);
+  expect(rubble[2]).toBeGreaterThan(rubble[1]);
 });
 
 // The lab's button "brick section on its side" (an 8 x 3 x 3 section from 22 cells) and "stone slab across the post"

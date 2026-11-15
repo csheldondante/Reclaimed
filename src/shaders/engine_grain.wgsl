@@ -35,8 +35,9 @@ fn flawOf(m: u32, ga: u32, gb: u32) -> f32 {
   let f = grainB(m).z;
   return select(sqrt(f), f, (ga >> 18u) != (gb >> 18u));
 }
-// a clump is this many grain cells across (HACK, BACKLOG PE36: a fixed ratio, not a number a material)
-const GR_CLUMP: f32 = 2.5;
+/** a clump is this many grain cells across (the panel's `grainClump`: the slot of material 0, which has no grain,
+ *  holds what is every material's) */
+fn grainClump() -> f32 { return max(ET[GR_AT].x, 1.0); }
 /** a model's grain frame: xyz its box's low corner in the first body's lattice, w the seed */
 fn grainFrame(mh: u32) -> vec4<u32> {
   let o = bitcast<u32>(heap[mh + 2u].z);
@@ -100,7 +101,7 @@ fn grainAt(m: u32, p: vec3<f32>, s: u32) -> Grain {
   var g = grainCellAt(m, p, s);
   if (g.id == 0u) { return g; }
   let A = grainA(m);
-  let clump = grCells(p / (GR_CLUMP * vec3<f32>(A.y, max(A.y, A.z * ROW_H), max(A.w, 0.5 * A.y))), 1.0, 0x77u, s ^ 0x5bd1u, false, 1.0).id;
+  let clump = grCells(p / (grainClump() * vec3<f32>(A.y, max(A.y, A.z * ROW_H), max(A.w, 0.5 * A.y))), 1.0, 0x77u, s ^ 0x5bd1u, false, 1.0).id;
   g.id = ((g.id >> 8u) & 0x3ffffu) | (((clump >> 8u) & 0xffu) << 18u);
   return g;
 }

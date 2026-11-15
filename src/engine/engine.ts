@@ -377,7 +377,7 @@ export class Engine implements SimSystem {
     const S4: BindSpec = { 19: 'rw', 21: 'read', 23: 'rw', 25: 'rw' };
     kernel('labelInit', stl, S4);
     kernel('labelStep', stl, { ...S4, 18: 'rw', 26: 'rw' });
-    kernel('partScan', stl, { ...S4, 22: 'rw', 24: 'rw', 26: 'rw', 38: 'rw' });
+    kernel('partScan', stl, { ...S4, 22: 'rw', 24: 'rw', 26: 'rw', 35: 'uniform', 38: 'rw' });
     kernel('partCount', stl, { ...S4, 22: 'rw', 38: 'rw' });
     kernel('triCount', stl, { 6: 'rw', 19: 'rw', 22: 'rw', 23: 'rw', 25: 'rw', 34: 'read', 38: 'rw' });
     kernel('partAlloc', stl, { ...S4, 18: 'rw', 22: 'rw', 24: 'rw', 38: 'rw' });
@@ -764,17 +764,19 @@ export class Engine implements SimSystem {
   static lattice(): Float32Array {
     const T = TUNE.engine;
     const out = packPhysMats();
-    const set = (m: number, bounce: number, give: number, ring: number, crush?: number, crack?: number) => {
+    const set = (m: number, bounce: number, give: number, ring: number, crush?: number, crack?: number, crumb?: number) => {
       out[m * 16 + 4] = give;
       out[m * 16 + 5] = bounce;
       out[m * 16 + 12] = ring;
       if (crush !== undefined) out[m * 16 + 7] = crush;
       if (crack !== undefined) out[m * 16 + 13] = crack;
+      // (the smallest part of it that stays a body when it settles: engine_settle.wgsl partScan)
+      if (crumb !== undefined) out[m * 16 + 14] = crumb;
     };
     // (brittle: its rest shape never follows a bend — physics.ts PhysMat.yield 99)
-    for (let m = 1; m < MAX_MATERIALS; m++) if (out[m * 16 + 2] >= 99) set(m, T.bounceRock, T.giveRock, T.ringRock, T.crushRock, T.crackRock);
-    set(MAT.Concrete, T.bounceConcrete, T.giveConcrete, T.ringConcrete, T.crushConcrete, T.crackConcrete);
-    set(MAT.Brick, T.bounceBrick, T.giveBrick, T.ringBrick, T.crushBrick, T.crackBrick);
+    for (let m = 1; m < MAX_MATERIALS; m++) if (out[m * 16 + 2] >= 99) set(m, T.bounceRock, T.giveRock, T.ringRock, T.crushRock, T.crackRock, T.crumbRock);
+    set(MAT.Concrete, T.bounceConcrete, T.giveConcrete, T.ringConcrete, T.crushConcrete, T.crackConcrete, T.crumbConcrete);
+    set(MAT.Brick, T.bounceBrick, T.giveBrick, T.ringBrick, T.crushBrick, T.crackBrick, T.crumbBrick);
     set(MAT.Steel, T.bounceSteel, T.giveSteel, T.ringSteel);
     set(MAT.Wood, T.bounceWood, T.giveWood, T.ringWood);
     return out;
@@ -783,7 +785,7 @@ export class Engine implements SimSystem {
   /** the table written when a number of it changed (the panel) */
   private latticeMats(): void {
     const T = TUNE.engine as Record<string, number>;
-    const key = ['Rock', 'Concrete', 'Brick', 'Steel', 'Wood'].map((m) => `${T[`bounce${m}`]},${T[`give${m}`]},${T[`ring${m}`]},${T[`crush${m}`]},${T[`crack${m}`]}`).join();
+    const key = ['Rock', 'Concrete', 'Brick', 'Steel', 'Wood'].map((m) => `${T[`bounce${m}`]},${T[`give${m}`]},${T[`ring${m}`]},${T[`crush${m}`]},${T[`crack${m}`]},${T[`crumb${m}`]}`).join();
     if (key === this.pmKey) return;
     this.pmKey = key;
     this.device.queue.writeBuffer(this.pm, 0, Engine.lattice());
@@ -818,6 +820,8 @@ export class Engine implements SimSystem {
     const round = Engine.roundOf();
     const grain = (m: number, a: number[], b: number[]) => E.set([...a, ...b, round(m)], GR_AT + 8 * m);
     for (let m = 1; m < 48; m++) E[GR_AT + 8 * m + 6] = 1;
+    // (material 0 has no grain: its slot holds what is every material's — how many grain cells across a clump is)
+    E[GR_AT] = T.grainClump;
     for (let m = 1; m < 48; m++) if (L[m * 16 + 2] >= 99) grain(m, [GRAIN.bedded, T.grainRockBlock, T.grainRockBlock, T.grainRockBed], [T.grainRockJitter, T.grainRockRough, T.flawRock]);
     grain(MAT.Concrete, [GRAIN.lumps, T.grainConcrete, T.grainConcrete, T.grainConcrete], [1, T.grainConcreteRough, T.flawConcrete]);
     grain(MAT.Brick, [GRAIN.brick, T.grainBrickLength, T.grainBrickDepth, T.grainBrickCourse], [T.grainBrickOffset, T.grainBrickRough, T.flawBrick]);

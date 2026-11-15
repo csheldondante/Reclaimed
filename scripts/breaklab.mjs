@@ -23,7 +23,7 @@ await run({ name: 'breaklab', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   const every = Number(opt('every', '70'));
   const wait = Number(opt('wait', '9000'));
   const stills = opt('stills', '10,30,60').split(',').map(Number);
-  const press = opt('press', 'stone from three heights|stone slab across the post|steel beam across the post|brick section on its side').split('|');
+  const press = opt('press', 'stone from three heights|stone slab across the post|steel beam across the post|brick wall pushed over').split('|');
   const page = await R.page();
   await page.goto(R.url + '/?skipmenu=1&level=playground&tutorial=0&q=low&fresh=1&solver=' + solver, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__boot?.at['level-ready'] || document.querySelector('.fatal'), { timeout: 300000, polling: 250 });

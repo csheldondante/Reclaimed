@@ -628,13 +628,22 @@ as dust and chips. `test/gpu/engine-energy.test.ts` holds it over a whole drop (
 
 ## Hand-over: what is next
 
-(The look branch, 2026-11-15.) Done: PE35 for the deforming state; rock's rounded mesh (PE38, awaiting a ruling).
-Next, in order: (3a) break-face corners placed from the field so a tilted break is a rough plane, not steps: in
-`breakVertex`, an inner corner goes to where the grain's boundary runs (`grainAt(...).d`, already returned: the
-distance to the grain cell's side) instead of the mean of cut edges, with the material's roughness (`grainB.y`,
-already uploaded); (3b) the brick faces then follow courses and brick ends by construction, since parts are whole
-grain cells; (3c) break faces while deforming need the labels every tick (PE31) or dust over the gap; (4) the
-captures, with the station moved off the tanker's land (PE34). For the collision branch: one line, `bounceAt` (above).
+(Look round 3, 2026-11-15; stopped at the owner's word to wrap up.) **Done:** `burst` removed and the energy rule
+tested (item 1); the rock look on engine stone, in the grain's frame (item 2, the ruling's option 4); break faces
+shaped by the grain, brick in courses of whole bricks, tilted breaks as planes (3a, 3b); the dark inside as cover for
+an open crack (3c's stand-in); crumb size a material's, clump size on the panel, the station on land of its own;
+`look-3-*` stills of the four tests on both routes.
+**Next, in the order I would take them:**
+1. PE42 (PE30): the solve's expand rule judged by the whole approach speed: two lines, the collision branch's file.
+   Then drop the `.fails` in `engine-energy.test.ts` and look at the three heights again (the highest should break
+   up more).
+2. PE31 / PE40.1-2: labels every tick, `cornerAt` run live, break faces while deforming: no hop at settle, no gap.
+3. PE43.2: a test of a second break sealing to an old break face, once bodies meet bodies.
+4. PE40.5: a QEF in `cornerAt` for sharp brick edges; PE41: fold the field mesh's copy of the rock response.
+5. The owner's eye in the lab on PE38 (option 4) and on the departure PE40.4 (brick's flat sides).
+For the collision branch: `bounceAt(material)` (above); PE42's patch; `Renderer.addMesh` has a fourth argument;
+`StationKit.drop` a third; the lattice table's word 14 is a material's crumb size; a mesh vertex's normal word now
+carries its corner (ARCHITECTURE.md, "The physics engine's draw").
 
 Before that it was: PE35, the owner's stone (brittle materials with no elastic give, restitution a material, the rigid
 row on an edge), with a close stone drop in the station's capture to judge wobble.

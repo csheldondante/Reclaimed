@@ -178,7 +178,9 @@ fn partScan(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_inde
     hi = max(hi, cl);
   }
   c /= M;
-  var verdict = select(V_WANT, V_CRUMB, f32(n) < EU.k.z);
+  // (under the crumb size — the panel's, and its material's where that is more: a brick stays a brick, a sliver of
+  // stone goes to the ground as rubble)
+  var verdict = select(V_WANT, V_CRUMB, f32(n) < max(EU.k.z, pmD(matOf(i)).z));
   let mh = hAt(dmeta[slotAt(L.slot) + 2u]);
   let recs = mh + MODEL_HDR;
   var q = ps[3u * i + 2u];

@@ -23594,3 +23594,29 @@ lines / many; stone has the terrain's facets and flecks. The slab's halves lean 
 faces. Brick reads as brick: courses, mortar, a toothed edge where a piece has tipped. Wrong still: the pieces of the
 blocks stand where they cracked (item 4); the brick section lands flat and stays one lump with loose bricks.
 
+## 2026-11-15 — Physics engine, look round 3, wrap-up: crumb size a material's, clump size on the panel, the break station on land of its own, PE30 measured (PE34, PE42, PE43)
+
+The owner asked to wrap this push up; this is what was in hand, finished, and the rest logged (PE43).
+
+- **Crumb size a material** (`crumbRock` 4, `crumbConcrete` 3, `crumbBrick` 2, in the lattice table's free word; the
+  panel's `crumb` is the floor). Why: with one size of 2 a broken slab left many 2- and 3-voxel stone rows; a brick is
+  2 voxels and must stay. The slab flat from 30 cells: 19 parts -> 14, 142 -> 127 of 144 voxels kept as bodies.
+- **`grainClump`** on the panel (was the constant `GR_CLUMP`), in the grain numbers' slot of material 0. Not tuned.
+- **The break station moved** off the metal station's land to `[16, 80, 96, 112]`: pads in two rows, each test apart.
+  The three blocks are the tests' 6 x 6 x 4 and come down moving sideways a little; the brick is a wall that turns as
+  it falls (`StationKit.drop` takes a spin; the engine's rows only). Why: a break adds no speed (item 1), so pieces lie
+  apart only by the speed they came with. The test of the three heights follows the lab: whole / 6 parts and 6 voxels
+  of rubble / 9 parts and 19 voxels of rubble.
+- **PE30 measured** (PE42): from 40 cells the block's voxels take the hit at 14.7 cells/s, from 24 at 20.1. The cause
+  and the two-line fix are in the solve, which is the collision branch's: pinned by a `test.fails`, not changed.
+
+**Tests.** Engine gpu: 7 files, 44 pass and 1 expected fail (PE30). Unit: the one known failure (the roadlab writing
+lint). Typecheck clean.
+
+**Looked at** (`look-3-*`, 412 x 915, both routes, in the scratchpad's physics10 folder): station at play zoom, and
+close: heights, slab, brick, beam. Engine: the far block whole, the middle one a low cracked lump with rubble round
+it, the near one in pieces with a chunk tipped off; the slab in two halves leaning on the post with pale break faces
+and dark break lines; the brick wall lying broken into runs of whole bricks in their courses; the beam bent over its
+post. Wrong still: the middle block reads as sunk more than cracked at play zoom; break faces are pale but flat-lit;
+the lattice route's brick is an upright red block with hex sides (no turn there), so that pair is not like for like.
+

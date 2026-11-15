@@ -235,10 +235,10 @@ export function labStationKit(scene: LevelScene): StationKit {
       core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP.POUR * 32 + mat + 512, radius: r, strength: layers });
       scene.sleep?.wake(x, y, r + 8, Sleep.EVENT_S, now());
     },
-    drop: (cells, vel) => {
+    drop: (cells, vel, spin) => {
       // (?solver=engine: a rigid row of the physics engine, not the judge's movers)
       if (scene.engine) {
-        scene.engine.drop(cells, vel);
+        scene.engine.drop(cells, vel, spin);
         return;
       }
       if (!scene.integrity?.dropBody(cells, vel)) throw new Error('station drop: no node solver here (the level needs the rigid rock)');
