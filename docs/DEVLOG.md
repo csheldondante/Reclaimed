@@ -23534,3 +23534,63 @@ Particles weigh nothing in any sum. The panel's `burst` and the table's word are
 **Hacks and limits.** PE39 (the sign of the shock word). Pieces of a block cracked on a flat landing stand where they
 were, as real ones do; they read only once the crack is drawn (the next items).
 
+## 2026-11-15 — Physics engine, look round 3, items 2 and 3: the rock look on engine stone; break faces shaped by the grain; brick in courses (PE22, PE38, PE40, PE41)
+
+One commit for items 2, 3a, 3b and the cover for 3c: they share the draw's vertex (the place in the grain's frame).
+
+**Design (data flow).** A model's grain frame is the lattice of the body it first was (its header: PE35). `eskin`
+writes, a vertex, its place in that frame (its own cell's lattice place, and its offset from that cell turned back by
+the model's frame quaternion: a few heap reads, rows awake only) beside its place in the world. No new buffer, no
+read, the same 32 B a vertex; the shadow pass still draws it with `vsSkin`. The look is drawn there by a new pair
+`vsEBody` / `fsEBody` (`Renderer.addMesh(verts, args, xform, engine)`). Rejected: carrying the grain place in the
+mesh (a fourth vec4 a vertex, 64 B for 48).
+
+**Item 2, the rock look (the ruling on PE38: option 4).** `fsEBody` draws stone and bedded rock with the response the
+rock mesh uses: `rockAlbedo` (flecks, the land's patches, strata bands and pebbles) and `rockDetail` (facets and
+cracks, or quarter-cell chips), cut out of `fsRock` into `render/bodies.wgsl`; `fsRock` now calls them (the lattice
+route's still looked at: unchanged). `meshTint`, `groundAlbedo`, `noDetail`, `jagged`, `bedded` moved there from
+`meshdraw.wgsl`, text unchanged. The facet's tilt is carried from the grain's frame to the world by the face's own two
+directions (screen derivatives of both places): no rotation a vertex. A break face (bit 29 of the word) shows the
+same stone, fresher. Normals are now interpolated: `VOut.nrm` is flat, so the "smooth" normals of the last round were
+one corner's a triangle.
+- **The dark patches at the bases (the heights still):** that. A side triangle whose first corner was on the bottom
+  bevel took that corner's normal, which points down and out: unlit. With interpolated normals they are gone.
+
+**Items 3a, 3b: the field's crossings.** `cornerAt` (engine_settle.wgsl) is the one place a lattice corner of a
+settling body is put. Where a break cuts an edge round the corner (two cells that were the body's, not one part now),
+the crossing is where the grain's joint crosses that edge: `grainCellAt` halved 6 times from the cell of the lower
+index (both parts get the same point); the middle where the break runs across the grain. The corner goes to the mean
+of the crossings: surface nets with the field's real crossings, so a tilted joint gives a plane. Brick: across the
+wall from the joints in the layer, its height from the joints between layers. On the outer surface the corner moves
+along the surface only, and `triWrite` places every outer vertex on such a corner by the same rule (a mesh vertex now
+keeps which corner of its cell it stands on, in its normal's fourth number), so the seam stays closed and the crack's
+line on the surface follows the joint, not the hex steps.
+- **Found and fixed: a brick's row.** `grainCellAt` had `v = y / rowHeight + 0.5`; a row's middle is at (row + 0.5) x
+  ROW_H, so every row's middle stood exactly on a joint and which brick a voxel was in went by a float's rounding.
+- **Brick's mesh** (a departure, PE40.4): brick and plain concrete are drawn in their layer's plane (`roundBuilt`):
+  sides flat, tops and edges sharp, flat-shaded. That is what removed the hex outlines. **The courses** are drawn by
+  `brickLook` from the grain's own numbers (4 floats of the panel into Globals), in the grain's frame: the mortar on a
+  wall's faces is where it comes apart.
+- **The break's line.** Pieces cracked where they stand keep their places (item 1), so an outer face's edge beyond
+  which the cell is another part's is marked when the part is baked (`breakEdge`) and drawn dark.
+
+**Item 3c, the cover.** Break faces while deforming are not built. Instead the inside of the body's skin (a face seen
+from behind: its normal on the far side of its own plane from the eye) is drawn as the material's inside in shadow,
+with the snapped bonds' dust: an open crack reads as a dark break in something solid. PE40.2 has what live faces need.
+
+**Measured (desktop proxy, Dawn, Intel Xe).** Settle, the most a tick: the break faces 2.88 ms (144 voxels) and 2.82
+(2,048 voxels; was 0.20 to 0.26), the baked outer mesh 0.46 to 0.52 (was 0.13), labels 0.26, once a settle. Triangles:
+the brick section (72 voxels) in 10 parts: 528 break triangles; a 12 x 4 x 3 slab's outer mesh: 628. At settle the most a vertex moves: 0.43 cells (a corner on a break going to the joint). Brick 8 x 3 x 3
+from 22 cells: 505 of 528 break triangles on a joint's plane within 0.1 cells (the furthest 0.19). Stone 6 x 6 x 4:
+1,158 of 1,944 outer vertices keep the grain place the rigid body had, the rest stand on a break's line within 0.55.
+
+**Tests.** `test/gpu/engine-grainface.test.ts` (2, new: brick's break faces on the joints' planes and every part
+closed; a vertex's grain place through rigid, deforming and settled). `test/unit/engine-modelmesh.test.ts` 4 (new:
+the plane-only rounding; each vertex's corner code names the corner it stands on). `engine-settle`'s move bound at
+settle 0.35 -> 0.5 with the reason. Engine gpu: 7 files, 44 pass. Typecheck clean.
+
+**Looked at** (412 x 915, zoom 26 to 30, `look-3a-*` in the scratchpad): three heights now read whole / a few crack
+lines / many; stone has the terrain's facets and flecks. The slab's halves lean on the post with pale rough break
+faces. Brick reads as brick: courses, mortar, a toothed edge where a piece has tipped. Wrong still: the pieces of the
+blocks stand where they cracked (item 4); the brick section lands flat and stays one lump with loose bricks.
+

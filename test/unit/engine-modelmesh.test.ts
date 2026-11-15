@@ -4,6 +4,7 @@
 import { expect, test } from 'vitest';
 import type { EngineCell } from '../../src/engine/engine';
 import { BM_VERT, buildBodyMesh } from '../../src/render/bodymeshbuild';
+import { cellPos } from '../../src/world/lattice';
 import { MAT } from '../../src/world/materials';
 
 // (engine.ts reaches modules that name GPU constants as they load: test/unit/steady.test.ts does the same)
@@ -17,10 +18,10 @@ const box = (w: number, d: number, h: number, mat: number): EngineCell[] => {
   for (let z = 4; z < 4 + h; z++) for (let y = 6; y < 6 + d; y++) for (let x = 10; x < 10 + w; x++) out.push({ x, y, z, mat });
   return out;
 };
-const mesh = (cells: EngineCell[], round: number) => {
+const mesh = (cells: EngineCell[], round: number, built = 0) => {
   const b = bakeBody(cells);
   const m = bakeModel(cells, b.com);
-  const v = modelMesh(cells, (mat) => (mat === MAT.Stone ? round : 0))({ com: b.com, lo: m.lo, dims: m.dims });
+  const v = modelMesh(cells, (mat) => (mat === MAT.Stone ? round : mat === MAT.Brick ? -built : 0))({ com: b.com, lo: m.lo, dims: m.dims });
   return { v, n: v.length / (MESH_V * 4), com: b.com };
 };
 /** edges not shared by exactly two triangles, vertices welded at 1e-3 */
@@ -38,16 +39,56 @@ function openEdges(v: Float32Array, n: number): number {
   return [...edges.values()].filter((c) => c !== 2).length;
 }
 
-test('what is built keeps the body mesh: brick has the cells\' own corners and is flat-shaded', () => {
+test('with no rounding what is built keeps the body mesh: the cells\' own corners, flat-shaded, each vertex its corner\'s code', () => {
   const cells = box(5, 3, 3, MAT.Brick);
   const { v, n, com } = mesh(cells, 1);
   const ref = buildBodyMesh(cells);
   expect(n).toBe(ref.length / BM_VERT);
   for (let i = 0; i < n; i++) {
     for (let q = 0; q < 3; q++) expect(v[i * 12 + 8 + q]).toBeCloseTo(ref[i * BM_VERT + q] - com[q], 5);
-    expect(v[i * 12 + 7]).toBe(0);
+    // (flat-shaded: bit 0 clear; the rest names one of its cell's twelve corners)
+    const w = v[i * 12 + 7];
+    expect(w % 2).toBe(0);
+    expect(w).toBeGreaterThanOrEqual(2);
+    expect(w).toBeLessThanOrEqual(24);
+    // the corner the code names is where the vertex stands: 30 + 60 j degrees round its cell, on its lower or upper plane
+    const k = new Uint32Array(v.buffer, v.byteOffset + i * 48, 1)[0];
+    const cx = 10 + (k % 5);
+    const cy = 6 + (Math.floor(k / 5) % 3);
+    const cz = 4 + Math.floor(k / 15);
+    const j = (w / 2 - 1) % 6;
+    const top = Math.floor((w / 2 - 1) / 6);
+    const a = ((30 + 60 * j) * Math.PI) / 180;
+    const [wx, wy] = cellPos(cx, cy);
+    expect(ref[i * BM_VERT]).toBeCloseTo(wx + 0.57735 * Math.cos(a), 3);
+    expect(ref[i * BM_VERT + 1]).toBeCloseTo(wy + 0.57735 * Math.sin(a), 3);
+    expect(ref[i * BM_VERT + 2]).toBeCloseTo(cz + top, 5);
   }
   expect(openEdges(v, n)).toBe(0);
+});
+
+test('brick and concrete are drawn in their layer\'s plane: sides flat, tops and edges where the cells\' are, flat-shaded, closed', () => {
+  const cells = box(8, 3, 3, MAT.Brick);
+  const { v, n, com } = mesh(cells, 1, 1);
+  const ref = buildBodyMesh(cells);
+  expect(openEdges(v, n)).toBe(0);
+  const sideY: number[] = [];
+  const refY: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const p = [v[i * 12 + 8], v[i * 12 + 9], v[i * 12 + 10]];
+    // its height is the cell's own: a layer's plane
+    expect(p[2]).toBeCloseTo(ref[i * BM_VERT + 2] - com[2], 5);
+    expect(Math.hypot(p[0] - (ref[i * BM_VERT] - com[0]), p[1] - (ref[i * BM_VERT + 1] - com[1]))).toBeLessThan(0.6);
+    expect(v[i * 12 + 7] % 2).toBe(0);
+    // the low-y side away from the ends: on the body mesh a zigzag 0.29 cells deep, here a plane
+    if (ref[i * BM_VERT + 1] - com[1] < -0.9 && Math.abs(p[0]) < 2.5) {
+      sideY.push(p[1]);
+      refY.push(ref[i * BM_VERT + 1] - com[1]);
+    }
+  }
+  expect(sideY.length).toBeGreaterThan(20);
+  expect(Math.max(...refY) - Math.min(...refY)).toBeGreaterThan(0.25);
+  expect(Math.max(...sideY) - Math.min(...sideY)).toBeLessThan(0.02);
 });
 
 test('rock is rounded and smooth-shaded: closed, inside its cells, straight sides flat, edges drawn in, normals outward', () => {
@@ -70,7 +111,7 @@ test('rock is rounded and smooth-shaded: closed, inside its cells, straight side
     hi = Math.max(hi, p[2]);
     const nr = [v[i * 12 + 4], v[i * 12 + 5], v[i * 12 + 6]];
     expect(Math.hypot(nr[0], nr[1], nr[2])).toBeCloseTo(1, 4);
-    expect(v[i * 12 + 7]).toBe(1);
+    expect(v[i * 12 + 7] % 2).toBe(1);
     // (a convex box: every normal looks away from its middle)
     expect(nr[0] * p[0] + nr[1] * p[1] + nr[2] * p[2]).toBeGreaterThan(0);
     // the low-y side at mid height, away from the ends: the hex zigzag (0.29 cells deep on the body mesh) is gone

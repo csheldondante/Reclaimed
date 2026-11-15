@@ -70,8 +70,8 @@ fn vsMesh(@builtin(vertex_index) vi: u32) -> MOut {
   return o;
 }
 
-/** large-scale ground patchiness at p (the forward pass's per vertex; the deferred resolve's per pixel) */
-fn meshTint(p: vec3<f32>) -> f32 { return 0.82 + 0.36 * fbm2(wo(p.xy) * 0.045 + vec2<f32>(p.z * 0.02)); }
+// (meshTint, groundAlbedo, noDetail and its ND_ bits, jagged and bedded are in render/bodies.wgsl, which every module
+// with this file has before it: the engine's bodies draw rock with the same response — rockAlbedo, rockDetail there)
 
 /** (perfopt) the mesh's vertex without the tint: the shadow pass's and the G-buffer's (the resolve takes the tint a pixel) */
 @vertex
@@ -194,11 +194,6 @@ fn roadLook(m: u32, alb: vec3<f32>, p: vec3<f32>, n1: f32) -> vec3<f32> {
   return alb * (0.86 + 0.24 * streak + 0.06 * n1);
 }
 
-/** A material's ground colour (blown dust: a greyer silt). */
-fn groundAlbedo(m: u32) -> vec3<f32> {
-  if (m == MAT_DRIFT) { return toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
-  return toLinear(MATS[m].albedo.rgb);
-}
 
 @fragment
 fn fsMesh(in: MOut) -> FOut {
@@ -283,16 +278,6 @@ fn resolveAt(pos: vec4<f32>) -> FOut {
   return meshShade(m);
 }
 
-/** (perfopt, ?nodetail=: the look's pieces left out, Camera.eye.w bits 2+ — renderer.ts DETAIL_BITS) */
-fn noDetail(bit: u32) -> bool { return ((u32(CAM.eye.w) >> 2u) & bit) != 0u; }
-const ND_STRATA: u32 = 1u;
-const ND_WATER: u32 = 2u;
-const ND_PLANTS: u32 = 4u;
-const ND_STAINS: u32 = 8u;
-const ND_STRUCT: u32 = 16u;
-const ND_WARP: u32 = 64u;
-const ND_FIELDS: u32 = 128u;
-const ND_SPECKS: u32 = 256u;
 
 
 /** The look of the mesh's surface at a point (the forward pass's and the deferred resolve's). */
@@ -564,10 +549,6 @@ fn meshSurf(in: MOut) -> Surf {
 
 fn voxMatR(w: u32) -> u32 { return w & 0xffu; }
 
-/** Broken or built: rubble, trash, litter, and every solid but stone (ruins: concrete, brick, asphalt, steel). */
-fn jagged(m: u32) -> bool {
-  return m == 4u || m == MAT_TRASH || m == MAT_LITTER || (matState(m) == ST_SOLID && m != MAT_STONE && m != MAT_QUARTZ && !bedded(m));
-}
 
 /**
  * Quartz as a cut gem (round 83): the smooth normal snapped to facets (12 ways round, 5 up: flat faces
@@ -599,5 +580,3 @@ fn gemLook(p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
   return c;
 }
 
-/** rock in beds (round 79): basalt, sandstone, obsidian — faceted as stone is, its strata tinted */
-fn bedded(m: u32) -> bool { return m == 23u || m == 30u || m == 35u; }

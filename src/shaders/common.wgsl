@@ -22,6 +22,10 @@ const MAX_CYCLONES: u32 = 4u;
 struct Tune {
   worldGravity: f32,
   worldGravityX: f32,
+  engineGrainBrickLength: f32,
+  engineGrainBrickDepth: f32,
+  engineGrainBrickCourse: f32,
+  engineGrainBrickOffset: f32,
   impactSoftSink: f32,
   impactSpray: f32,
   impactGroundEnergy: f32,

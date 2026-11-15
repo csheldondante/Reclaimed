@@ -19,8 +19,9 @@ export interface BreakRig {
   pool(): Promise<Uint32Array>;
   /** a deforming row's particles in lattice order: place (xyz, inverse mass), velocity, bonds */
   particles(r: number): Promise<{ x: Float32Array; v: Float32Array; bonds: Uint32Array; cells: number; pages: number[] }>;
-  /** the frame's draw run now (alpha 1: the poses as they are) and read: a triangle's row, its three vertices' places */
-  drawn(): Promise<{ tris: number; row: Uint32Array; p: Float32Array }>;
+  /** the frame's draw run now (alpha 1: the poses as they are) and read: a triangle's row, its three vertices' places,
+   *  their places in the grain's frame (the lattice of the body it first was), its material word (bit 29: a break face) */
+  drawn(): Promise<{ tris: number; row: Uint32Array; p: Float32Array; grain: Float32Array; word: Uint32Array }>;
   /** one tick with each of the engine's kernels in a pass of its own, timed by the GPU (timestamp queries): ms by
    *  kernel, `total` their sum, `wall` the tick's submit to done; null where the device has no timestamps */
   gpuTick(): Promise<Map<string, number> | null>;
@@ -134,8 +135,13 @@ export async function breakRig(g: TestGpu, col: (x: number, y: number) => Interv
       const L = new Uint32Array(await g.read(D.dl, Math.max(1, tris) * 8, DL_AT * 4));
       const O = new Float32Array(await g.read(D.dout, Math.max(1, tris) * 96));
       const p = new Float32Array(tris * 9);
-      for (let v = 0; v < tris * 3; v++) p.set(O.subarray(v * 8, v * 8 + 3), v * 3);
-      return { tris, row: Uint32Array.from({ length: tris }, (_, t) => L[2 * t]), p };
+      const grain = new Float32Array(tris * 9);
+      const W = new Uint32Array(O.buffer, O.byteOffset, O.length);
+      for (let v = 0; v < tris * 3; v++) {
+        p.set(O.subarray(v * 8, v * 8 + 3), v * 3);
+        grain.set(O.subarray(v * 8 + 4, v * 8 + 7), v * 3);
+      }
+      return { tris, row: Uint32Array.from({ length: tris }, (_, t) => L[2 * t]), p, grain, word: Uint32Array.from({ length: tris }, (_, t) => W[t * 24 + 3]) };
     },
   };
   // (the surface pass has run once before a body is tested against it)
@@ -149,3 +155,49 @@ export const box = (x0: number, y0: number, z0: number, w: number, d: number, h:
   for (let z = z0; z < z0 + h; z++) for (let y = y0; y < y0 + d; y++) for (let x = x0; x < x0 + w; x++) out.push({ x, y, z, mat });
   return out;
 };
+
+/** a row's drawn triangles, 9 floats each, in the list's order (collapsed ones left out) */
+export function trisOf(d: Awaited<ReturnType<BreakRig['drawn']>>, row: number): number[][] {
+  const out: number[][] = [];
+  for (let t = 0; t < d.tris; t++) {
+    if (d.row[t] !== row) continue;
+    const p = [...d.p.subarray(t * 9, t * 9 + 9)];
+    if (Math.hypot(p[3] - p[0], p[4] - p[1], p[5] - p[2]) < 1e-6) continue;
+    out.push(p);
+  }
+  return out;
+}
+/** edges of a triangle set that are not shared by exactly two triangles, vertices welded within `tol` */
+export function openEdges(tris: number[][], tol = 0.02): number {
+  const ids = new Map<string, number>();
+  const pts: number[][] = [];
+  const idOf = (x: number, y: number, z: number) => {
+    const c = [Math.round(x / tol), Math.round(y / tol), Math.round(z / tol)];
+    // (a point near a cell's edge may round either way: look in the cells round it)
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dz = -1; dz <= 1; dz++) {
+          const id = ids.get(`${c[0] + dx},${c[1] + dy},${c[2] + dz}`);
+          if (id !== undefined && Math.hypot(pts[id][0] - x, pts[id][1] - y, pts[id][2] - z) < tol) return id;
+        }
+    ids.set(c.join(','), pts.length);
+    pts.push([x, y, z]);
+    return pts.length - 1;
+  };
+  const edges = new Map<string, number>();
+  for (const t of tris) {
+    const v = [idOf(t[0], t[1], t[2]), idOf(t[3], t[4], t[5]), idOf(t[6], t[7], t[8])];
+    for (let k = 0; k < 3; k++) {
+      const a = v[k];
+      const b = v[(k + 1) % 3];
+      if (a === b) continue;
+      const key = a < b ? `${a},${b}` : `${b},${a}`;
+      edges.set(key, (edges.get(key) ?? 0) + 1);
+    }
+  }
+  // (closed: every edge is shared by an even number of triangles — two, or four where two cells of a part touch only
+  // along an edge, which the grain's breaks leave more often than the plain ones did)
+  let open = 0;
+  for (const n of edges.values()) if (n % 2 !== 0) open++;
+  return open;
+}

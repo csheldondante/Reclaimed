@@ -3666,3 +3666,16 @@ a mesh vertex's first voxel is the cell whose face it is on; the draw list (`DL_
 rows asleep after, placed once; `ROW_LISTED_ASLEEP` and `ROW_NEWSLEEP` are row flags; deforming voxels meet through
 the voxel hash (`vh`), which settle also uses for a part's counters; `Engine.occupancy` is the collision branch's
 entry. Still one read: the pool's header.
+
+## The physics engine's draw (2026-11-15, look round 3, branch `physics10-break`)
+
+The engine's bodies are drawn by their own pair in `render/bodies.wgsl`: `vsEBody` / `fsEBody`, through
+`Renderer.addMesh(verts, indirect, xform, engine = true)` (the shadow pass draws them with `vsSkin`: same stride).
+Contract of `Engine.drawOut`: two vec4<u32> a vertex — [place (f32 bits), material word (bit 29: a break face)]
+[place in the grain's frame (f32 bits), normal 10 bits an axis | bit 30: the triangle's edge from this vertex to the
+next is a break's line]. A mesh vertex in the heap keeps, in its normal's fourth number: bit 0 smooth-shaded, bits 1
+to 5 its corner of its face's cell + 1 (corner + 6 x upper plane), bit 6 the break's-line mark. Rock's look is
+`rockAlbedo` and `rockDetail` (render/bodies.wgsl), shared with `rockmesh.wgsl` `fsRock`. `Tune` has four engine
+floats (`engineGrainBrick*`): the brick's courses, read by the look. `engine_settle.wgsl` `cornerAt` is the one rule
+for where a lattice corner of a settling body stands; `modelmesh.ts` `place` is the same rule for a whole model.
+

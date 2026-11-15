@@ -26,12 +26,12 @@ export function installEngine(core: WorldCore): EngineKit {
   // (build step 2: one mesh a body in every state, listed and placed on the GPU — engine_draw.wgsl; the draw list and
   // its triangles are made again when they grow)
   let drawn = { out: engine.drawOut, args: engine.drawArgs };
-  core.renderer.addMesh(drawn.out, drawn.args);
+  core.renderer.addMesh(drawn.out, drawn.args, undefined, true);
   engine.onBuffers = () => {
     if (drawn.out === engine.drawOut && drawn.args === engine.drawArgs) return;
     core.renderer.removeMesh(drawn.args);
     drawn = { out: engine.drawOut, args: engine.drawArgs };
-    core.renderer.addMesh(drawn.out, drawn.args);
+    core.renderer.addMesh(drawn.out, drawn.args, undefined, true);
   };
   core.renderer.frameCompute.push((enc) => engine.skin(enc, core.renderAlpha()));
   return {

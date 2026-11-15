@@ -9,7 +9,7 @@ import { modelMesh } from '../../src/engine/modelmesh';
 import { TUNE } from '../../src/tune/params';
 import { MAT } from '../../src/world/materials';
 import { testGpu, type TestGpu } from './dawn';
-import { box, breakRig, flat, type BreakRig } from './engine-rig';
+import { box, breakRig, flat, openEdges, trisOf, type BreakRig } from './engine-rig';
 
 let g: TestGpu;
 beforeAll(async () => {
@@ -31,51 +31,6 @@ const log = (s: string) => {
 };
 
 type Drawn = Awaited<ReturnType<BreakRig['drawn']>>;
-/** a row's drawn triangles, 9 floats each, in the list's order (collapsed ones left out) */
-function trisOf(d: Drawn, row: number): number[][] {
-  const out: number[][] = [];
-  for (let t = 0; t < d.tris; t++) {
-    if (d.row[t] !== row) continue;
-    const p = [...d.p.subarray(t * 9, t * 9 + 9)];
-    if (Math.hypot(p[3] - p[0], p[4] - p[1], p[5] - p[2]) < 1e-6) continue;
-    out.push(p);
-  }
-  return out;
-}
-/** edges of a triangle set that are not shared by exactly two triangles, vertices welded within `tol` */
-function openEdges(tris: number[][], tol = 0.02): number {
-  const ids = new Map<string, number>();
-  const pts: number[][] = [];
-  const idOf = (x: number, y: number, z: number) => {
-    const c = [Math.round(x / tol), Math.round(y / tol), Math.round(z / tol)];
-    // (a point near a cell's edge may round either way: look in the cells round it)
-    for (let dx = -1; dx <= 1; dx++)
-      for (let dy = -1; dy <= 1; dy++)
-        for (let dz = -1; dz <= 1; dz++) {
-          const id = ids.get(`${c[0] + dx},${c[1] + dy},${c[2] + dz}`);
-          if (id !== undefined && Math.hypot(pts[id][0] - x, pts[id][1] - y, pts[id][2] - z) < tol) return id;
-        }
-    ids.set(c.join(','), pts.length);
-    pts.push([x, y, z]);
-    return pts.length - 1;
-  };
-  const edges = new Map<string, number>();
-  for (const t of tris) {
-    const v = [idOf(t[0], t[1], t[2]), idOf(t[3], t[4], t[5]), idOf(t[6], t[7], t[8])];
-    for (let k = 0; k < 3; k++) {
-      const a = v[k];
-      const b = v[(k + 1) % 3];
-      if (a === b) continue;
-      const key = a < b ? `${a},${b}` : `${b},${a}`;
-      edges.set(key, (edges.get(key) ?? 0) + 1);
-    }
-  }
-  // (closed: every edge is shared by an even number of triangles — two, or four where two cells of a part touch only
-  // along an edge, which the grain's breaks leave more often than the plain ones did)
-  let open = 0;
-  for (const n of edges.values()) if (n % 2 !== 0) open++;
-  return open;
-}
 /** the farthest a triangle of `a` is from the triangle of `b` nearest to it (vertex for vertex); -1: one has no match within 0.5 */
 function worstMove(a: number[][], b: number[][]): { worst: number; missing: number; over: number } {
   const key = (t: number[]) => `${Math.round((t[0] + t[3] + t[6]) / 1.5)},${Math.round((t[1] + t[4] + t[7]) / 1.5)},${Math.round((t[2] + t[5] + t[8]) / 1.5)}`;
@@ -166,12 +121,15 @@ test('D: a stone block dropped from height across a ridge breaks into parts that
   expect(trisOf(d, b.row).length).toBe(0);
   // The frame before: what was drawn of the deforming body is still there after. While it deforms a face is placed by
   // the voxels its own cell is still bonded to; baked, by its voxels that are the part's — so where a bond inside a
-  // part had snapped the hairline between two faces closes (a known, measured move: BACKLOG PE31).
+  // part had snapped the hairline between two faces closes (a known, measured move: BACKLOG PE31). And a vertex on a
+  // corner a break runs through goes to where the grain's joint crosses it (engine_settle.wgsl cornerAt), along the
+  // surface: never further than a cell's corner is from its middle (0.58 cells). That move shows at settle (PE40).
   const was = trisOf(before!, b.row);
   const mv = worstMove(was, all);
   log(`of ${was.length} triangles drawn while it deformed, ${mv.missing} have none within half a cell after, ${mv.over} moved more than 0.05 cells, the most ${mv.worst.toFixed(4)}`);
   expect(mv.missing).toBe(0);
-  expect(mv.worst).toBeLessThan(0.35);
+  // (a slab in 19 parts: nearly every corner of it stands on a break's line)
+  expect(mv.worst).toBeLessThan(0.5);
   ok();
   R.w.destroy();
 });

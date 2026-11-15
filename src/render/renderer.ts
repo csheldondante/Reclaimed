@@ -122,7 +122,10 @@ export class Renderer {
   /** meshes over physics bodies (render.wgsl vsSkin) */
   skinPipe!: GPURenderPipeline;
   shadowSkinPipe?: GPURenderPipeline;
-  meshSources: { indirect: GPUBuffer; group: GPUBindGroup; shadow?: GPUBindGroup }[] = [];
+  /** (`engine`: the physics engine's bodies — render/bodies.wgsl vsEBody and fsEBody, the look drawn in the body's own
+   *  frame; the same stride, so the shadow pass draws them as any skin) */
+  meshSources: { indirect: GPUBuffer; group: GPUBindGroup; shadow?: GPUBindGroup; engine?: boolean }[] = [];
+  ebodyPipe!: GPURenderPipeline;
   /** the structure grids' exposed voxels, as rotated cubes (structprep.wgsl → the body pipeline) */
   structPrep: ComputeKernel;
   structPrepGroup: GPUBindGroup;
@@ -652,6 +655,15 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       depthStencil: depthStencil(true),
     }, (p) => (this.skinPipe = p));
 
+    renderPipe(device, {
+      label: 'engine-bodies',
+      layout: pl,
+      vertex: { module: drawModule, entryPoint: 'vsEBody' },
+      fragment: { module: drawModule, entryPoint: 'fsEBody', targets: [{ format }, { format: PICK_FORMAT }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: depthStencil(true),
+    }, (p) => (this.ebodyPipe = p));
+
     // (round 99, ?meshinst=1) the instanced meshes: render.wgsl's bindings and look, their own vertex stage
     const miVertex = (module: GPUShaderModule): GPUVertexState => ({
       module,
@@ -753,9 +765,10 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
 
   /** `xform` (citygen M4a): where the mesh is — a uniform vec4, xyz added to every vertex (a town's grid placed in the
    *  window: its owner writes 16 bytes when the window slides, the mesh stays as it is on the GPU); none: as written */
-  addMesh(verts: GPUBuffer, indirect: GPUBuffer, xform?: GPUBuffer): void {
+  addMesh(verts: GPUBuffer, indirect: GPUBuffer, xform?: GPUBuffer, engine = false): void {
     this.meshSources.push({
       indirect,
+      engine,
       group: this.groupFor(verts, undefined, undefined, xform),
       shadow: this.shadowGroups ? this.groupFor(verts, this.lightCamBuf, this.noShadowViews!, xform) : undefined,
     });

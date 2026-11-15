@@ -115,7 +115,9 @@ fn grainCellAt(m: u32, p: vec3<f32>, s: u32) -> Grain {
     // courses A.w high; in a course, bricks A.y long along x, each course set off by B.x of a brick; A.z rows deep
     let k = floor(p.z / A.w);
     let u = (p.x + 0.25) / A.y + B.x * k;
-    let v = p.y / (A.z * ROW_H) + 0.5;
+    // (a row's middle is at (row + 0.5) x ROW_H — common.wgsl cellPos — so the joints run between the rows. It had + 0.5
+    // here, which put every row's middle exactly on a joint: which brick a voxel was in went by a float's rounding.)
+    let v = p.y / (A.z * ROW_H);
     let i = floor(u);
     let j = floor(v);
     g.id = grHash(bitcast<u32>(i32(i)) + s, bitcast<u32>(i32(j)), bitcast<u32>(i32(k))) | 1u;

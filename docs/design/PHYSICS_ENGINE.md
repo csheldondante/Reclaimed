@@ -603,6 +603,29 @@ bricks in its faces. Steel is unchanged.
 keeps its voxels' momentum; contacts between the sides stop them closing and never push; what the bond lets go is drawn
 as dust and chips. `test/gpu/engine-energy.test.ts` holds it over a whole drop (DEVLOG has the numbers).
 
+**Items 2 and 3 (the look in the grain's frame, the grain in the faces).**
+- **The draw.** `eskin` writes each vertex's place in the grain's frame (the lattice of the body it first was) beside
+  its place in the world; `fsEBody` draws the look there. Stone: the rock mesh's own response (`rockAlbedo`,
+  `rockDetail`, shared with `fsRock`). Brick: courses and mortar from the grain's numbers. A break face: the same
+  pattern, fresher. Normals interpolated (the dark bases of the last stills were flat normals on the bottom bevel).
+- **`cornerAt`**: the one rule for a lattice corner of a settling body. A break's crossing of an edge is where the
+  grain's joint crosses it; the corner is the mean of the crossings (brick: by axis); on the outer surface it moves
+  along the surface, and the outer faces' vertices on that corner go with it. Closed is tested for stone and brick.
+- **Brick and plain concrete** are drawn in their layer's plane (flat sides, sharp edges): a departure, PE40.4.
+- **A break's line** on the outer surface is drawn dark (the edge beyond which the cell is another part's).
+- **Not built:** break faces while deforming (the inside of the skin is drawn as dark interior instead: PE40.2);
+  a second break's seal is by construction, not tested.
+
+### How each state is drawn (look round 3)
+
+| state | rock | brick, plain concrete | steel, wood, the rest |
+|---|---|---|---|
+| rigid | rounded mesh, normals interpolated, the rock look in the grain's frame | sides flat, edges sharp, flat-shaded; brick in courses | cells' corners, flat-shaded, a third-cell variation |
+| expanded | the same triangles by their voxels; the same look (the grain place does not change) | the same | the same |
+| cracked, mid-break | faces follow their side; through the gap the skin's inside is drawn dark; dust from the snapped bonds | the same | the same |
+| settled part | its faces baked; corners on a break moved to the grain's joint; break faces on the joints, paler; the break's line dark | break faces on the bricks' joints: whole bricks | break faces by plain surface nets |
+| crumb | loose ground, a chip and dust | the same | the same |
+
 ## Hand-over: what is next
 
 (The look branch, 2026-11-15.) Done: PE35 for the deforming state; rock's rounded mesh (PE38, awaiting a ruling).

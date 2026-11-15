@@ -248,22 +248,11 @@ fn fsRock(in: ROut) -> FOut {
   let isTop = up && in.lpos.z > lk.top - 0.8;
   var alb = groundAlbedo(mat);
   if (isTop && lk.below != 0u && mat == lk.mat) { alb = mix(groundAlbedo(lk.below), alb, smoothstep(0.02, 0.2, lk.thick)); }
-  let scell = cellAt(ips.xy);
-  let vc = vec3<i32>(scell, i32(floor(ips.z)));
+  // (the rock's own response: render/bodies.wgsl rockAlbedo — the engine's bodies draw with it too)
   let sub = vec3<i32>(floor(sp * 4.0 - nL * 0.02));
   let n1 = randv(sub);
   let n2 = randv(sub + vec3<i32>(71, 13, 5));
-  let steep = 1.0 - smoothstep(0.3, 0.7, abs(nL.z));
-  if (!noDetail(ND_SPECKS)) { alb *= 1.0 + mix(1.0, 0.35, steep) * (0.12 * randv(vc) + 0.08 * n1 - 0.1); }
-  alb *= meshTint(sp);
-  if (mat >= 1u && mat <= 4u && !noDetail(ND_STRATA)) {
-    let band = strata(sp);
-    if (mat == 1u) { alb *= mix(vec3<f32>(0.8, 0.83, 0.9), vec3<f32>(1.16, 1.03, 0.88), band); }
-    if (mat == 2u) { alb *= mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), band); }
-    let pb = randv(sub + vec3<i32>(5, 77, 13));
-    if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
-  }
-  if ((mat == 23u || mat == 30u) && !noDetail(ND_STRATA)) { alb *= strataTint(mat, strata(sp)); }
+  alb = rockAlbedo(alb, mat, sp, nL);
   // the plants it carried on its top (the place it came from's cover)
   if (isTop && !noDetail(ND_PLANTS)) {
     let v = cellFields(sp.xy).y;
@@ -276,17 +265,10 @@ fn fsRock(in: ROut) -> FOut {
   // the detail layer, in its own frame, turned with it
   var lnrm = nW;
   if (CAM.viewport.z > 4.0) {
-    if (mat == MAT_STONE || bedded(mat)) {
-      let rf = rockFacet(sp, nL, 1.0);
-      lnrm = normalize(rkTurnF(in, rf.xyz));
-      alb *= rf.w;
-    } else if (jagged(mat)) {
-      let chip = vec3<i32>(floor(sp * 4.0 - nL * 0.1));
-      let t = vec3<f32>(randv(chip + vec3<i32>(1, 0, 0)), randv(chip + vec3<i32>(0, 1, 0)), randv(chip + vec3<i32>(0, 0, 1))) - 0.5;
-      lnrm = normalize(rkTurnF(in, normalize(nL + (t - nL * dot(t, nL)) * 1.3)));
-      let f = fract(sp * 4.0 - nL * 0.1);
-      let edge = min(min(f.x, 1.0 - f.x), min(min(f.y, 1.0 - f.y), min(f.z, 1.0 - f.z)));
-      alb *= 0.8 + 0.2 * smoothstep(0.0, 0.12, edge);
+    if (rockDetailed(mat)) {
+      let rd = rockDetail(mat, sp, nL);
+      lnrm = normalize(rkTurnF(in, rd.xyz));
+      alb *= rd.w;
     }
   }
   var col = alb * lighting(in.wpos, lnrm);

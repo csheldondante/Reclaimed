@@ -211,7 +211,7 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
     rd.profiler.draws++;
   }
   for (const v of SKIP.has('skins') ? [] : rd.meshSources) {
-    pass.setPipeline(rd.skinPipe);
+    pass.setPipeline(v.engine ? rd.ebodyPipe : rd.skinPipe);
     pass.setBindGroup(0, v.group);
     pass.drawIndirect(v.indirect, 0);
     rd.profiler.draws++;

@@ -791,13 +791,15 @@ export class Engine implements SimSystem {
 
   /**
    * Meshing by material (DESIGN §10): how far a mesh corner of this material is rounded (modelmesh.ts; 0: the cells'
-   * own corners and flat faces — what is built; 1: surface nets, smooth-shaded — rock, the materials the field mesh
-   * draws). The break faces read the same number (engine_settle.wgsl rimPlace).
+   * own corners and flat faces — steel, wood and the rest of what is built; over 0: surface nets, smooth-shaded —
+   * rock, the materials the field mesh draws; under 0: in its layer's plane only, flat-shaded — brick and plain
+   * concrete, whose walls are flat with sharp edges). The break faces read the same number (engine_settle.wgsl cornerAt).
    */
   static roundOf(): (mat: number) => number {
     const L = Engine.lattice();
     const r = TUNE.engine.roundRock;
-    return (m) => (fieldMeshed(m) && L[m * 16 + 2] >= 99 ? r : 0);
+    const b = -TUNE.engine.roundBuilt;
+    return (m) => (m === MAT.Brick || m === MAT.Concrete ? b : fieldMeshed(m) && L[m * 16 + 2] >= 99 ? r : 0);
   }
 
   private thresholds(): Float32Array {

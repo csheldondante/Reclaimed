@@ -187,3 +187,231 @@ fn strataTint(m: u32, b: f32) -> vec3<f32> {
   if (m == 30u) { return mix(vec3<f32>(1.16, 1.02, 0.84), vec3<f32>(0.84, 0.74, 0.74), b); }
   return mix(vec3<f32>(0.92, 0.94, 1.0), vec3<f32>(1.1, 0.96, 0.86), b);
 }
+
+// ---- the look's shared pieces (moved here from meshdraw.wgsl, unchanged, so the engine's bodies — fsEBody below, in
+// the draw module, which has no field mesh — draw rock with the response the terrain and the rock mesh use) ----------
+/** large-scale ground patchiness at p (the forward pass's per vertex; the deferred resolve's per pixel) */
+fn meshTint(p: vec3<f32>) -> f32 { return 0.82 + 0.36 * fbm2(wo(p.xy) * 0.045 + vec2<f32>(p.z * 0.02)); }
+
+/** A material's ground colour (blown dust: a greyer silt). */
+fn groundAlbedo(m: u32) -> vec3<f32> {
+  if (m == MAT_DRIFT) { return toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
+  return toLinear(MATS[m].albedo.rgb);
+}
+
+/** (perfopt, ?nodetail=: the look's pieces left out, Camera.eye.w bits 2+ — renderer.ts DETAIL_BITS) */
+fn noDetail(bit: u32) -> bool { return ((u32(CAM.eye.w) >> 2u) & bit) != 0u; }
+const ND_STRATA: u32 = 1u;
+const ND_WATER: u32 = 2u;
+const ND_PLANTS: u32 = 4u;
+const ND_STAINS: u32 = 8u;
+const ND_STRUCT: u32 = 16u;
+const ND_WARP: u32 = 64u;
+const ND_FIELDS: u32 = 128u;
+const ND_SPECKS: u32 = 256u;
+
+/** Broken or built: rubble, trash, litter, and every solid but stone (ruins: concrete, brick, asphalt, steel). */
+fn jagged(m: u32) -> bool {
+  return m == 4u || m == MAT_TRASH || m == MAT_LITTER || (matState(m) == ST_SOLID && m != MAT_STONE && m != MAT_QUARTZ && !bedded(m));
+}
+
+/** rock in beds (round 79): basalt, sandstone, obsidian — faceted as stone is, its strata tinted */
+fn bedded(m: u32) -> bool { return m == 23u || m == 30u || m == 35u; }
+
+/** Does the detail layer (rockDetail) draw this material? */
+fn rockDetailed(mat: u32) -> bool { return mat == MAT_STONE || bedded(mat) || jagged(mat); }
+
+/**
+ * Rock's colour at sp, a place in the piece's own frame (where it was when it was made: the pattern goes with the
+ * piece), its normal there nL: the flecks a cell and a quarter cell, the land's large patches, the strata's bands and
+ * their pebbles. One response for the rock mesh (rockmesh.wgsl fsRock) and the engine's bodies (fsEBody).
+ */
+fn rockAlbedo(alb0: vec3<f32>, mat: u32, sp: vec3<f32>, nL: vec3<f32>) -> vec3<f32> {
+  var alb = alb0;
+  let ips = sp - nL * 0.2;
+  let vc = vec3<i32>(cellAt(ips.xy), i32(floor(ips.z)));
+  let sub = vec3<i32>(floor(sp * 4.0 - nL * 0.02));
+  let n1 = randv(sub);
+  let steep = 1.0 - smoothstep(0.3, 0.7, abs(nL.z));
+  if (!noDetail(ND_SPECKS)) { alb *= 1.0 + mix(1.0, 0.35, steep) * (0.12 * randv(vc) + 0.08 * n1 - 0.1); }
+  alb *= meshTint(sp);
+  if (mat >= 1u && mat <= 4u && !noDetail(ND_STRATA)) {
+    let band = strata(sp);
+    if (mat == 1u) { alb *= mix(vec3<f32>(0.8, 0.83, 0.9), vec3<f32>(1.16, 1.03, 0.88), band); }
+    if (mat == 2u) { alb *= mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), band); }
+    let pb = randv(sub + vec3<i32>(5, 77, 13));
+    if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
+  }
+  if ((mat == 23u || mat == 30u) && !noDetail(ND_STRATA)) { alb *= strataTint(mat, strata(sp)); }
+  return alb;
+}
+
+/** The detail layer in the piece's own frame: xyz the normal there (to be turned with the piece), w what the colour is
+ *  multiplied by — stone and bedded rock in facets with cracks between, what is jagged in quarter-cell chips. */
+fn rockDetail(mat: u32, sp: vec3<f32>, nL: vec3<f32>) -> vec4<f32> {
+  if (mat == MAT_STONE || bedded(mat)) { return rockFacet(sp, nL, 1.0); }
+  let chip = vec3<i32>(floor(sp * 4.0 - nL * 0.1));
+  let t = vec3<f32>(randv(chip + vec3<i32>(1, 0, 0)), randv(chip + vec3<i32>(0, 1, 0)), randv(chip + vec3<i32>(0, 0, 1))) - 0.5;
+  let f = fract(sp * 4.0 - nL * 0.1);
+  let edge = min(min(f.x, 1.0 - f.x), min(min(f.y, 1.0 - f.y), min(f.z, 1.0 - f.z)));
+  return vec4<f32>(normalize(nL + (t - nL * dot(t, nL)) * 1.3), 0.8 + 0.2 * smoothstep(0.0, 0.12, edge));
+}
+
+// ---- the physics engine's bodies (engine/engine.ts, engine_draw.wgsl; docs/design/PHYSICS_ENGINE.md "Look round 3") ----
+// One mesh a body in every state, placed on the GPU. Two vec4<u32> a vertex, three a triangle, vsSkin's stride (the
+// shadow pass draws it with vsSkin: it reads the place only): [its place (f32 bits), the material word] [its place in
+// the grain's frame — the lattice of the body it first was, which a part keeps however often it breaks: f32 bits —
+// its normal, 10 bits an axis]. The look is drawn in the grain's frame, so it goes with the piece and does not swim,
+// the two sides of a crack carry one pattern, and a break face (the word's bit 29) shows the same stone inside, fresher.
+const MAT_BRICK_E: u32 = 11u;
+struct EOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) wpos: vec3<f32>,
+  @location(1) nrm: vec3<f32>,
+  @location(2) gpos: vec3<f32>,
+  @location(3) @interpolate(flat) word: u32,
+  // where in its triangle (1 at its own corner of the three), and which of the triangle's edges are a break's line (bit
+  // k: the edge from corner k to the next — engine_draw.wgsl, each vertex's bit 30)
+  @location(4) ck: vec3<f32>,
+  @location(5) @interpolate(flat) edges: u32,
+};
+
+@vertex
+fn vsEBody(@builtin(vertex_index) vi: u32) -> EOut {
+  var o: EOut;
+  let a = instances[vi * 2u];
+  let b = instances[vi * 2u + 1u];
+  let wp = bitcast<vec3<f32>>(a.xyz) + MESH_XF.xyz;
+  o.pos = CAM.viewProj * vec4<f32>(wp, 1.0);
+  o.wpos = wp;
+  o.nrm = vec3<f32>(f32(b.w & 1023u), f32((b.w >> 10u) & 1023u), f32((b.w >> 20u) & 1023u)) / 511.5 - 1.0;
+  o.gpos = bitcast<vec3<f32>>(b.xyz);
+  o.word = a.w;
+  o.ck = vec3<f32>(0.0);
+  o.ck[vi % 3u] = 1.0;
+  let t0 = vi - vi % 3u;
+  o.edges = ((instances[t0 * 2u + 1u].w >> 30u) & 1u) | (((instances[t0 * 2u + 3u].w >> 30u) & 1u) << 1u) | (((instances[t0 * 2u + 5u].w >> 30u) & 1u) << 2u);
+  return o;
+}
+
+/**
+ * Brick in its courses at p, a place in the grain's frame, on a face whose normal there is n: xyz what the brick's
+ * colour is multiplied by, w how much of the place is mortar. The courses are the grain's own (engine_grain.wgsl
+ * grainCellAt, GR_BRICK: the same numbers, the tuning panel's), so the joints drawn on a wall's faces are where it
+ * comes apart: the teeth of a broken edge are the bricks drawn.
+ */
+fn brickLook(p: vec3<f32>, n: vec3<f32>) -> vec4<f32> {
+  let len = max(G.tune.engineGrainBrickLength, 0.5);
+  let dep = max(G.tune.engineGrainBrickDepth, 1.0) * 0.8660254;
+  let crs = max(G.tune.engineGrainBrickCourse, 0.5);
+  // (the brick just behind the face: a face that lies on a joint is that brick's end, not the joint)
+  let q = p - n * 0.12;
+  let k = floor(q.z / crs);
+  let u = (q.x + 0.25) / len + G.tune.engineGrainBrickOffset * k;
+  let v = q.y / dep;
+  let w = q.z / crs;
+  let fu = fract(u);
+  let fv = fract(v);
+  let fw = fract(w);
+  let d = vec3<f32>(min(fu, 1.0 - fu) * len, min(fv, 1.0 - fv) * dep, min(fw, 1.0 - fw) * crs);
+  // (the joints a face shows are those that cross it: not the one it lies along)
+  let a = abs(n);
+  var j = 1e9;
+  if (a.x < 0.75) { j = min(j, d.x); }
+  if (a.y < 0.75) { j = min(j, d.y); }
+  if (a.z < 0.75) { j = min(j, d.z); }
+  let id = vec3<i32>(i32(floor(u)), i32(floor(v)), i32(k));
+  let tone = 0.82 + 0.32 * randv(id + vec3<i32>(11, 3, 57));
+  let warm = randv(id + vec3<i32>(5, 91, 2)) - 0.5;
+  let fleck = 0.94 + 0.12 * randv(vec3<i32>(floor(q * 5.0)));
+  return vec4<f32>(vec3<f32>(1.0 + 0.1 * warm, 1.0, 1.0 - 0.12 * warm) * tone * fleck, 1.0 - smoothstep(0.05, 0.1, j));
+}
+
+@fragment
+fn fsEBody(in: EOut) -> FOut {
+  // (derivatives first: the face's two directions in the grain's frame and in the world — they give the normal in the
+  // grain's frame and carry the detail's tilt from it to the world, with no rotation passed a vertex)
+  let e1 = dpdx(in.gpos);
+  let e2 = dpdy(in.gpos);
+  let w1 = dpdx(in.wpos);
+  let w2 = dpdy(in.wpos);
+  let ckw = fwidth(in.ck);
+  let word = in.word;
+  let mat = word & 0xffu;
+  var broken = ((word >> 29u) & 1u) != 0u;
+  var nW = normalize(in.nrm);
+  // Seen from behind: the inside of the body's skin, through a crack that has opened while it deforms (its break faces
+  // are made when it settles: engine_settle.wgsl). Drawn as the material's inside in shadow, so an open crack reads as
+  // a dark break in something solid, not as a lit hollow shell. (A settled part is closed: none of its faces is seen
+  // from behind.)
+  // (its normal lies on the far side of the triangle's own plane from the eye)
+  let gw = cross(w1, w2);
+  let inside = dot(gw, nW) * dot(gw, toEye(in.wpos)) < 0.0;
+  if (inside) {
+    nW = -nW;
+    broken = true;
+  }
+  var gl = cross(e1, e2);
+  if (dot(cross(w1, w2), nW) < 0.0) { gl = -gl; }
+  let nL = normalize(gl + vec3<f32>(0.0, 0.0, 1e-12));
+  let sp = in.gpos;
+  var alb = toLinear(MATS[mat].albedo.rgb);
+  var lnL = nL;
+  if (mat == MAT_STONE || bedded(mat)) {
+    alb = rockAlbedo(groundAlbedo(mat), mat, sp, nL);
+    if (CAM.viewport.z > 4.0) {
+      let rd = rockDetail(mat, sp, nL);
+      lnL = rd.xyz;
+      alb *= rd.w;
+    }
+    // (a break face: the stone inside, not yet weathered)
+    if (broken) { alb = mix(alb, groundAlbedo(mat) * 1.3, 0.45); }
+  } else if (mat == MAT_BRICK_E) {
+    let b = brickLook(sp, nL);
+    let mortar = toLinear(vec3<f32>(0.62, 0.6, 0.55));
+    alb = mix(alb * b.xyz * select(1.0, 1.18, broken), mortar * (0.9 + 0.2 * randv(vec3<i32>(floor(sp * 6.0)))), b.w * select(0.85, 0.55, broken));
+  } else {
+    // (what else is built: a little variation a third of a cell, in the piece's own frame; a break face fresher)
+    alb *= (0.88 + 0.24 * randv(vec3<i32>(floor(sp * 3.0 - nL * 0.02)))) * select(1.0, 1.15, broken);
+  }
+  // A break's line on the outer surface, drawn dark: pieces of a block cracked where it stands keep their places (a
+  // break adds no speed), and the hairline between them is what tells them apart. A twentieth of a cell wide, and
+  // never under a pixel.
+  if (!broken && in.edges != 0u) {
+    // (how far from each edge: the share of the way to the corner opposite, in pixels and in cells)
+    let px = in.ck / max(ckw, vec3<f32>(1e-6));
+    let cpp = max(length(e1), length(e2));
+    let dist = min(px, px * cpp / 0.05);
+    var near = 1e9;
+    if ((in.edges & 1u) != 0u) { near = min(near, dist.z); }
+    if ((in.edges & 2u) != 0u) { near = min(near, dist.x); }
+    if ((in.edges & 4u) != 0u) { near = min(near, dist.y); }
+    alb *= mix(0.3, 1.0, smoothstep(0.6, 1.3, near));
+  }
+  // the detail's normal turned with the piece: its part along the face's normal stays there, its part in the face goes
+  // by the face's own two directions
+  var n = nW;
+  let t = lnL - nL * dot(lnL, nL);
+  if (dot(t, t) > 1e-8) {
+    let a11 = dot(e1, e1);
+    let a12 = dot(e1, e2);
+    let a22 = dot(e2, e2);
+    let det = a11 * a22 - a12 * a12;
+    if (det > 1e-12) {
+      let b1 = dot(t, e1);
+      let b2 = dot(t, e2);
+      let ca = (b1 * a22 - b2 * a12) / det;
+      let cb = (b2 * a11 - b1 * a12) / det;
+      n = normalize(nW * dot(lnL, nL) + ca * w1 + cb * w2);
+    }
+  }
+  var col = alb * lighting(in.wpos, n);
+  if (inside) { col *= 0.4; }
+  col = haze(col, in.wpos);
+  var o: FOut;
+  o.color = vec4<f32>(toSrgb(col), 1.0);
+  // (pickable as a body: fsBody's flag)
+  let bc = clampCell(cellAt(in.wpos.xy));
+  o.pick = vec2<u32>(winIdx(bc) + 1u, pickInfo(mat, in.wpos.z, 0x8000u));
+  return o;
+}

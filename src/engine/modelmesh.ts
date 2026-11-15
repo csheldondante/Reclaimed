@@ -11,12 +11,18 @@
 //    voxel (engine_deform.wgsl `carries`): a face follows its own side of a crack, and settle gives it to that cell's
 //    part — a part's outer faces are exactly its own cells', and the break faces close it with no gap.
 //
-// The shape by material (`roundOf`, the panel's `roundRock`): what is built — brick, concrete, steel, wood — keeps the
-// cells' own corners and flat faces, as the world draws what is built. Rock is rounded and smooth-shaded: a corner goes
-// to the mean of the middles of the cut edges round it (surface nets over the model's occupancy on the hex-prism
-// lattice: the hex zigzag of a straight side comes out flat, an edge is bevelled, a corner blunted), and its normal is
-// the mean of the faces meeting there. The place depends only on the corner's six cells, so the break faces
-// (engine_settle.wgsl `rimPlace`: the same rule on the GPU) meet the outer surface exactly where it is.
+// The shape by material (`roundOf`: the panel's `roundRock` and `roundBuilt`). Rock is rounded and smooth-shaded: a
+// corner goes to the mean of the middles of the cut edges round it (surface nets over the model's occupancy on the
+// hex-prism lattice: the hex zigzag of a straight side comes out flat, an edge is bevelled, a corner blunted), and its
+// normal is the mean of the faces meeting there. Brick and plain concrete (a negative number from `roundOf`) are drawn
+// in their layer's plane only: a corner goes to the mean of the middles of the edges the surface cuts in its own
+// layers and keeps its height, so a wall's sides are flat (no hex outline), its top and its edges sharp, its faces
+// flat-shaded. Steel, wood and the rest keep the cells' own corners. The place depends only on the corner's six
+// cells, so the break faces (engine_settle.wgsl `cornerAt`: the same rule on the GPU) meet the outer surface exactly
+// where it is.
+// A vertex also keeps which corner of its face's cell it stands on (its normal's fourth number: bit 0 smooth-shaded,
+// the rest 2 x (1 + corner + 6 x upper plane)): settle places a vertex on a corner a break runs through by that
+// corner's rule, so an outer face ends on the break face.
 import { BM_VERT, buildBodyMesh } from '../render/bodymeshbuild';
 import { cellAt, cellPos, nbr, NDIR } from '../world/lattice';
 import { Engine, MESH_V, type EngineCell, type V3 } from './engine';
@@ -25,8 +31,9 @@ import { Engine, MESH_V, type EngineCell, type V3 } from './engine';
 const CORNER_REACH = 0.8;
 
 /** for Engine.addModel: the mesh's vertices as the heap keeps them, MESH_V vec4 each — [its voxels (lattice cell k;
- *  0xffffffff none), the cell whose face it is on first] [its normal in the rest frame, 1 smooth-shaded or 0 flat (the
- *  triangle's own normal is drawn)] [its place about the centre of mass, its material word] */
+ *  0xffffffff none), the cell whose face it is on first] [its normal in the rest frame, then bit 0: smooth-shaded (else
+ *  the triangle's own normal is drawn), the rest its corner's code] [its place about the centre of mass, its material
+ *  word] */
 export function modelMesh(cells: readonly EngineCell[], roundOf: (mat: number) => number = Engine.roundOf()): (m: { com: V3; lo: V3; dims: V3 }) => Float32Array {
   return ({ com, lo, dims }) => {
     const verts = buildBodyMesh(cells);
@@ -51,8 +58,15 @@ export function modelMesh(cells: readonly EngineCell[], roundOf: (mat: number) =
       if (three.length !== 3) throw new Error('modelMesh: a vertex off the lattice corners');
       // the six cells: three columns in the layer under the corner's plane, then in the one over it
       const six = [zp - 1, zp].flatMap((z) => three.map(([cx, cy]) => ({ c: [...cellPos(cx, cy), z + 0.5] as V3, mat: at.get(`${cx},${cy},${z}`) ?? 0 })));
+      // (the least rounding among its cells; in the layer's plane only if any of them is drawn so)
       let round = 1;
-      for (const s of six) if (s.mat) round = Math.min(round, roundOf(s.mat));
+      let planar = false;
+      for (const s of six)
+        if (s.mat) {
+          const r = roundOf(s.mat);
+          round = Math.min(round, Math.abs(r));
+          planar ||= r < 0;
+        }
       const cut: V3 = [0, 0, 0];
       let nc = 0;
       const edge = (a: number, b: number) => {
@@ -62,13 +76,15 @@ export function modelMesh(cells: readonly EngineCell[], roundOf: (mat: number) =
       };
       for (let a = 0; a < 6; a++) {
         edge(a, Math.floor(a / 3) * 3 + ((a + 1) % 3));
-        if (a < 3) edge(a, a + 3);
+        if (a < 3 && !planar) edge(a, a + 3);
       }
-      const r = { p: [0, 1, 2].map((q) => p[q] + (cut[q] / nc - p[q]) * round) as V3, smooth: round > 0, n: [0, 0, 0] as V3 };
+      const to = nc ? [cut[0] / nc, cut[1] / nc, planar ? p[2] : cut[2] / nc] : p;
+      const r = { p: [0, 1, 2].map((q) => p[q] + (to[q] - p[q]) * round) as V3, smooth: round > 0 && !planar, n: [0, 0, 0] as V3 };
       placed.set(k, r);
       return r;
     };
     const corner: { p: V3; smooth: boolean; n: V3 }[] = new Array(n);
+    const code = new Float32Array(n);
     for (let t = 0; t < n; t += 3) {
       // the cell whose face this triangle is on: just inside the face from its middle
       const mid = [0, 1, 2].map((a) => (verts[t * BM_VERT + a] + verts[(t + 1) * BM_VERT + a] + verts[(t + 2) * BM_VERT + a]) / 3 - 0.25 * verts[t * BM_VERT + 4 + a]);
@@ -91,6 +107,11 @@ export function modelMesh(cells: readonly EngineCell[], roundOf: (mat: number) =
         const o = v * 12;
         for (let k = 0; k < 4; k++) ou[o + k] = k < use.length ? use[k] : 0xffffffff;
         corner[v] = place(p, cols);
+        // (which corner of its face's cell: corner j stands at 30 + 60 j degrees from the cell's middle, on its lower or
+        // upper plane — engine_settle.wgsl cornerAt)
+        const [wx, wy] = cellPos(ox, oy);
+        const j = ((Math.round(((Math.atan2(p[1] - wy, p[0] - wx) * 180) / Math.PI - 30) / 60) % 6) + 6) % 6;
+        code[v] = 2 * (1 + j + (p[2] > oz + 0.5 ? 6 : 0));
         out[o + 11] = verts[v * BM_VERT + 3];
       }
       // the triangle's normal where its corners now stand, by its area, onto each smooth corner it meets
@@ -105,7 +126,7 @@ export function modelMesh(cells: readonly EngineCell[], roundOf: (mat: number) =
       const k = corner[v];
       const l = Math.hypot(k.n[0], k.n[1], k.n[2]);
       // (a face folded flat by the rounding has no normal of its own: up)
-      out.set(l > 1e-9 ? [k.n[0] / l, k.n[1] / l, k.n[2] / l, k.smooth ? 1 : 0] : [0, 0, 1, k.smooth ? 1 : 0], o + 4);
+      out.set(l > 1e-9 ? [k.n[0] / l, k.n[1] / l, k.n[2] / l, code[v] + (k.smooth ? 1 : 0)] : [0, 0, 1, code[v] + (k.smooth ? 1 : 0)], o + 4);
       out.set([k.p[0] - com[0], k.p[1] - com[1], k.p[2] - com[2]], o + 8);
     }
     return out;

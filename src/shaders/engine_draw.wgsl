@@ -10,8 +10,10 @@
 // rows awake or deforming come first and are placed every frame; those of rows asleep come after and are placed once,
 // the frame after the list is made (the owner: static geometry stays on the GPU, moved by transforms — an asleep row
 // costs the frame nothing).
-// Out (render.wgsl vsSkin's triangle list): a vertex [xyz bits, material word] [its normal's bits — its own, turned
-// with what carries it, where its material is smooth-shaded (rock: modelmesh.ts), else its triangle's — 0].
+// Out (render/bodies.wgsl vsEBody's triangle list; vsSkin's stride, so the shadow pass draws it as any skin): a vertex
+// [xyz bits, material word] [its place in the grain's frame (f32 bits: the lattice of the body it first was — the look
+// is drawn there, so it goes with the piece and both sides of a crack carry one pattern), its normal 10 bits an axis, bit 30 that the edge from it to the triangle's next vertex is a break's line —
+// its own, turned with what carries it, where its material is smooth-shaded (rock: modelmesh.ts), else its triangle's].
 @group(0) @binding(32) var<storage, read_write> dl: array<atomic<u32>>;
 @group(0) @binding(33) var<storage, read_write> dout: array<vec4<u32>>;
 @group(0) @binding(34) var<storage, read> dlR: array<u32>;
@@ -110,6 +112,21 @@ fn eskinEnd() {
   atomicStore(&dl[10], awake);
 }
 
+/** A mesh vertex's place in its model's grain frame (engine_grain.wgsl): its own cell's place in the first body's
+ *  lattice, and the vertex's offset from that cell turned back from the model's rest frame into the lattice's. */
+fn grainPlace(mh: u32, v: u32) -> vec3<f32> {
+  let own = bitcast<u32>(heap[v].x);
+  let rest = heap[v + 2u].xyz;
+  if (own == NONE) { return rest; }
+  let d = bitcast<vec4<u32>>(heap[mh]).xyz;
+  let gf = grainFrame(mh);
+  return grainPos(vec3<i32>(gf.xyz) + cellOf(own, d)) + eqrot(eqinv(heap[mh + 3u]), rest - heap[mh + MODEL_HDR + own].xyz);
+}
+fn packNormal(n: vec3<f32>) -> u32 {
+  let q = vec3<u32>(clamp(n * 0.5 + 0.5, vec3<f32>(0.0), vec3<f32>(1.0)) * 1023.0 + 0.5);
+  return q.x | (q.y << 10u) | (q.z << 20u);
+}
+
 struct SkinV { p: vec3<f32>, rest: vec3<f32>, n: vec4<f32>, word: u32, ok: bool };
 
 /** a vertex of a deforming body: by the voxels that carry it (engine_deform.wgsl `carries`) */
@@ -157,6 +174,7 @@ fn eskin(@builtin(global_invocation_id) id: vec3<u32>) {
   var ns3 = array<vec4<f32>, 3>(vec4<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0));
   var word = 0u;
   var shown = (fl & ROW_ALIVE) != 0u;
+  let mh = hAt(bitcast<u32>(info[4u * r + 3u].x));
   if (shown && (fl & ROW_DEFORM) != 0u) {
     let ids = bitcast<vec4<u32>>(info[4u * r + 3u]);
     let recs = hAt(ids.x) + MODEL_HDR;
@@ -190,8 +208,13 @@ fn eskin(@builtin(global_invocation_id) id: vec3<u32>) {
   let flatN = normalize(cross(ps3[1] - ps3[0], ps3[2] - ps3[0]) + vec3<f32>(0.0, 0.0, 1e-9));
   for (var k = 0u; k < 3u; k++) {
     var n = flatN;
-    if (ns3[k].w > 0.5 && dot(ns3[k].xyz, ns3[k].xyz) > 1e-8) { n = normalize(ns3[k].xyz); }
+    // (its normal word: bit 0 smooth-shaded, the rest its lattice corner — engine_settle.wgsl cornerCode)
+    if ((u32(ns3[k].w) & 1u) == 1u && dot(ns3[k].xyz, ns3[k].xyz) > 1e-8) { n = normalize(ns3[k].xyz); }
     dout[6u * t + 2u * k] = vec4<u32>(bitcast<vec3<u32>>(ps3[k]), word);
-    dout[6u * t + 2u * k + 1u] = vec4<u32>(bitcast<vec3<u32>>(n), 0u);
+    var gp = vec3<f32>(0.0);
+    if (shown) { gp = grainPlace(mh, v0 + k * MESH_V); }
+    // (bit 30: the triangle's edge from this vertex to the next is a break's line — its normal word's bit 6, set when
+    // its part settled)
+    dout[6u * t + 2u * k + 1u] = vec4<u32>(bitcast<vec3<u32>>(gp), packNormal(n) | (((u32(ns3[k].w) >> 6u) & 1u) << 30u));
   }
 }
