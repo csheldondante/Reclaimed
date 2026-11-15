@@ -1,34 +1,36 @@
 {
- "at": "2026-11-15T19:09:21.209Z",
+ "at": "2026-11-15T19:32:36.228Z",
  "adapter": "intel / xe-lpg / D3D12 driver version 32.0.101.6104",
  "what": "desktop proxy, Dawn in Node (D3D12): pile, 4,096 rows all awake. The read: a tick’s wall ms (submit to GPU done) and the CPU ms inside poll(), with no read, one every 8 ticks, one every tick. A growth: every room an eighth of the need, read every 8 ticks; the ticks in which a room was made bigger against the others",
  "read every 0": {
-  "tickWallMs": 2.018,
-  "pollCpuMsMean": 0.0029,
-  "pollCpuMsMax": 0.024,
+  "tickWallMs": 2.412,
+  "pollCpuMsMean": 0.0035,
+  "pollCpuMsMax": 0.019,
   "reads": 0,
   "readLagMs": null
  },
  "read every 8": {
-  "tickWallMs": 2.039,
-  "pollCpuMsMean": 0.0148,
-  "pollCpuMsMax": 0.193,
+  "tickWallMs": 2.34,
+  "pollCpuMsMean": 0.0169,
+  "pollCpuMsMax": 0.172,
   "reads": 13,
-  "readLagMs": 1.91
+  "readLagMs": 2.17
  },
  "read every 1": {
-  "tickWallMs": 2.164,
-  "pollCpuMsMean": 0.0878,
-  "pollCpuMsMax": 1.158,
+  "tickWallMs": 2.51,
+  "pollCpuMsMean": 0.1078,
+  "pollCpuMsMax": 0.612,
   "reads": 104,
-  "readLagMs": 2
+  "readLagMs": 2.32
  },
  "growth": {
   "rooms": {
    "rows": 4096,
    "pairs": 11408,
    "items": 221504,
-   "groups": 654464
+   "cull": 170640,
+   "groups": 632352,
+   "slots": 16384
   },
   "growths": [
    {
@@ -36,56 +38,91 @@
     "room": "pairs",
     "from": 713,
     "to": 1426,
-    "ms": 0.058
+    "ms": 0.138
    },
    {
     "tick": 8,
     "room": "items",
     "from": 13844,
     "to": 221504,
-    "ms": 0.058
+    "ms": 0.138
+   },
+   {
+    "tick": 8,
+    "room": "slots",
+    "from": 1024,
+    "to": 2048,
+    "ms": 0.138
    },
    {
     "tick": 9,
     "room": "pairs",
     "from": 1426,
     "to": 11408,
-    "ms": 0.455
+    "ms": 0.486
+   },
+   {
+    "tick": 9,
+    "room": "cull",
+    "from": 10665,
+    "to": 85320,
+    "ms": 0.486
    },
    {
     "tick": 9,
     "room": "groups",
-    "from": 20452,
-    "to": 81808,
-    "ms": 0.455
+    "from": 19761,
+    "to": 39522,
+    "ms": 0.486
+   },
+   {
+    "tick": 9,
+    "room": "slots",
+    "from": 2048,
+    "to": 4096,
+    "ms": 0.486
+   },
+   {
+    "tick": 10,
+    "room": "cull",
+    "from": 85320,
+    "to": 170640,
+    "ms": 0.85
    },
    {
     "tick": 10,
     "room": "groups",
-    "from": 81808,
-    "to": 654464,
-    "ms": 0.425
+    "from": 39522,
+    "to": 632352,
+    "ms": 0.85
+   },
+   {
+    "tick": 10,
+    "room": "slots",
+    "from": 4096,
+    "to": 16384,
+    "ms": 0.85
    }
   ],
   "growthTicks": [
    {
-    "wallMs": 1.747,
-    "encodeMs": 0.721,
-    "grew": 2
+    "wallMs": 2.882,
+    "encodeMs": 1.218,
+    "grew": 3
    },
    {
-    "wallMs": 2.943,
-    "encodeMs": 1.222,
-    "grew": 2
+    "wallMs": 3.569,
+    "encodeMs": 1.432,
+    "grew": 4
    },
    {
-    "wallMs": 3.283,
-    "encodeMs": 1.099,
-    "grew": 1
+    "wallMs": 8.384,
+    "encodeMs": 1.791,
+    "grew": 3
    }
   ],
-  "otherTicksWallMs": 2.567,
-  "otherTicksEncodeMs": 0.473,
-  "bytes": 15293344
+  "otherTicksWallMs": 2.925,
+  "otherTicksEncodeMs": 0.572,
+  "bytes": 17764656
  }
 }

@@ -1,16 +1,16 @@
 {
  "kind": "sdfbench",
- "version": 3,
+ "version": 4,
  "build": "3d769158",
- "startedAt": "2026-11-15T18:51:00.379Z",
- "endedAt": "2026-11-15T18:51:27.354Z",
- "what": "fine collision (SDF, JFA bake; v2: samples culled by brick, four contact rows a pair at most): toggleFrameMs and toggleDoneMs are the pass on less off, per pass; batchMs a batch alone, wall, per pass. No timestamp queries.",
+ "startedAt": "2026-11-15T19:41:26.029Z",
+ "endedAt": "2026-11-15T19:45:03.111Z",
+ "what": "fine collision (SDF, JFA bake; v2: samples culled by brick, four contact rows a pair at most; v4: stable pair slots, the cull sized by each pair’s model, rooms that grow): toggleFrameMs and toggleDoneMs are the pass on less off, per pass; batchMs a batch alone, wall, per pass. No timestamp queries.",
  "scene": {
   "kind": "touch",
   "cap": 2048,
   "margin": 0.25,
-  "windowS": 1,
-  "windows": 2
+  "windowS": 1.2,
+  "windows": 3
  },
  "device": {
   "adapter": {
@@ -53,36 +53,324 @@
  "rows": [
   {
    "format": "grad8",
-   "side": 16,
+   "side": 8,
+   "kind": "touch",
+   "pairs": 64,
+   "reps": 6,
+   "toggleFrameMs": 0,
+   "toggleDoneMs": 0.099,
+   "batchMs": 0.329,
+   "on": {
+    "frameMs": 8.33,
+    "doneMs": 4.2,
+    "frames": 432
+   },
+   "off": {
+    "frameMs": 8.33,
+    "doneMs": 3.61,
+    "frames": 432
+   },
+   "threads": 18912,
+   "contacts": 93,
+   "sampleContacts": 119,
+   "dropped": 0,
+   "passBytes": 134576
+  },
+  {
+   "format": "grad8",
+   "side": 8,
    "kind": "touch",
    "pairs": 256,
    "reps": 6,
-   "toggleFrameMs": -0.003,
-   "toggleDoneMs": 0.158,
-   "batchMs": 0.571,
+   "toggleFrameMs": 0,
+   "toggleDoneMs": 0.125,
+   "batchMs": 0.337,
    "on": {
-    "frameMs": 9.93,
-    "doneMs": 4.47,
-    "frames": 201
+    "frameMs": 8.33,
+    "doneMs": 4.32,
+    "frames": 432
    },
    "off": {
-    "frameMs": 9.95,
-    "doneMs": 3.52,
-    "frames": 202
+    "frameMs": 8.33,
+    "doneMs": 3.57,
+    "frames": 432
    },
-   "threads": 96400,
-   "contacts": 189,
-   "sampleContacts": 414,
+   "threads": 77360,
+   "contacts": 362,
+   "sampleContacts": 608,
    "dropped": 0,
-   "passBytes": 401536
+   "passBytes": 439472
+  },
+  {
+   "format": "grad8",
+   "side": 8,
+   "kind": "touch",
+   "pairs": 1024,
+   "reps": 1,
+   "toggleFrameMs": 0.491,
+   "toggleDoneMs": 2.216,
+   "batchMs": 2.5,
+   "on": {
+    "frameMs": 8.82,
+    "doneMs": 7.16,
+    "frames": 408
+   },
+   "off": {
+    "frameMs": 8.33,
+    "doneMs": 4.95,
+    "frames": 432
+   },
+   "threads": 303504,
+   "contacts": 1425,
+   "sampleContacts": 2169,
+   "dropped": 0,
+   "passBytes": 1757360
+  },
+  {
+   "format": "grad8",
+   "side": 8,
+   "kind": "touch",
+   "pairs": 4096,
+   "reps": 3,
+   "toggleFrameMs": 0.013,
+   "toggleDoneMs": 1.198,
+   "batchMs": 0.917,
+   "on": {
+    "frameMs": 8.37,
+    "doneMs": 7.88,
+    "frames": 430
+   },
+   "off": {
+    "frameMs": 8.33,
+    "doneMs": 4.29,
+    "frames": 432
+   },
+   "threads": 1208096,
+   "contacts": 5811,
+   "sampleContacts": 8495,
+   "dropped": 0,
+   "passBytes": 7028912
+  },
+  {
+   "format": "grad8",
+   "side": 16,
+   "kind": "touch",
+   "pairs": 64,
+   "reps": 4,
+   "toggleFrameMs": 0,
+   "toggleDoneMs": 0.513,
+   "batchMs": 0.556,
+   "on": {
+    "frameMs": 8.33,
+    "doneMs": 4.43,
+    "frames": 432
+   },
+   "off": {
+    "frameMs": 8.33,
+    "doneMs": 2.38,
+    "frames": 432
+   },
+   "threads": 23136,
+   "contacts": 38,
+   "sampleContacts": 65,
+   "dropped": 0,
+   "passBytes": 134576
+  },
+  {
+   "format": "grad8",
+   "side": 16,
+   "kind": "touch",
+   "pairs": 256,
+   "reps": 3,
+   "toggleFrameMs": 0,
+   "toggleDoneMs": 0.328,
+   "batchMs": 0.317,
+   "on": {
+    "frameMs": 8.33,
+    "doneMs": 4.15,
+    "frames": 432
+   },
+   "off": {
+    "frameMs": 8.33,
+    "doneMs": 3.17,
+    "frames": 432
+   },
+   "threads": 57936,
+   "contacts": 105,
+   "sampleContacts": 221,
+   "dropped": 0,
+   "passBytes": 439472
+  },
+  {
+   "format": "grad8",
+   "side": 16,
+   "kind": "touch",
+   "pairs": 1024,
+   "reps": 8,
+   "toggleFrameMs": 0,
+   "toggleDoneMs": 0.213,
+   "batchMs": 0.594,
+   "on": {
+    "frameMs": 8.33,
+    "doneMs": 5.27,
+    "frames": 432
+   },
+   "off": {
+    "frameMs": 8.33,
+    "doneMs": 3.56,
+    "frames": 432
+   },
+   "threads": 226160,
+   "contacts": 441,
+   "sampleContacts": 866,
+   "dropped": 0,
+   "passBytes": 1757360
+  },
+  {
+   "format": "grad8",
+   "side": 16,
+   "kind": "touch",
+   "pairs": 4096,
+   "reps": 3,
+   "toggleFrameMs": 0,
+   "toggleDoneMs": 0.427,
+   "batchMs": 0.75,
+   "on": {
+    "frameMs": 8.33,
+    "doneMs": 4.83,
+    "frames": 432
+   },
+   "off": {
+    "frameMs": 8.33,
+    "doneMs": 3.55,
+    "frames": 432
+   },
+   "threads": 906784,
+   "contacts": 1775,
+   "sampleContacts": 3514,
+   "dropped": 0,
+   "passBytes": 7028912
+  },
+  {
+   "format": "grad8",
+   "side": 32,
+   "kind": "touch",
+   "pairs": 64,
+   "reps": 8,
+   "toggleFrameMs": 0,
+   "toggleDoneMs": 0.108,
+   "batchMs": 0.316,
+   "on": {
+    "frameMs": 8.33,
+    "doneMs": 4.6,
+    "frames": 432
+   },
+   "off": {
+    "frameMs": 8.33,
+    "doneMs": 3.74,
+    "frames": 432
+   },
+   "threads": 28304,
+   "contacts": 25,
+   "sampleContacts": 43,
+   "dropped": 0,
+   "passBytes": 134576
+  },
+  {
+   "format": "grad8",
+   "side": 32,
+   "kind": "touch",
+   "pairs": 256,
+   "reps": 8,
+   "toggleFrameMs": 0,
+   "toggleDoneMs": 0.224,
+   "batchMs": 0.35,
+   "on": {
+    "frameMs": 8.33,
+    "doneMs": 4.71,
+    "frames": 432
+   },
+   "off": {
+    "frameMs": 8.33,
+    "doneMs": 2.92,
+    "frames": 432
+   },
+   "threads": 29120,
+   "contacts": 20,
+   "sampleContacts": 50,
+   "dropped": 0,
+   "passBytes": 439472
+  },
+  {
+   "format": "grad8",
+   "side": 32,
+   "kind": "touch",
+   "pairs": 1024,
+   "reps": 8,
+   "toggleFrameMs": 0,
+   "toggleDoneMs": 0.201,
+   "batchMs": 0.413,
+   "on": {
+    "frameMs": 8.33,
+    "doneMs": 5.33,
+    "frames": 432
+   },
+   "off": {
+    "frameMs": 8.33,
+    "doneMs": 3.72,
+    "frames": 432
+   },
+   "threads": 119744,
+   "contacts": 119,
+   "sampleContacts": 219,
+   "dropped": 0,
+   "passBytes": 1757360
+  },
+  {
+   "format": "grad8",
+   "side": 32,
+   "kind": "touch",
+   "pairs": 4096,
+   "reps": 6,
+   "toggleFrameMs": 0,
+   "toggleDoneMs": 0.387,
+   "batchMs": 0.75,
+   "on": {
+    "frameMs": 8.33,
+    "doneMs": 5.98,
+    "frames": 432
+   },
+   "off": {
+    "frameMs": 8.33,
+    "doneMs": 3.65,
+    "frames": 432
+   },
+   "threads": 461072,
+   "contacts": 414,
+   "sampleContacts": 740,
+   "dropped": 0,
+   "passBytes": 7028912
   }
  ],
  "bakes": [
   {
    "format": "grad8",
+   "side": 8,
+   "bakeOneMs": 3.2,
+   "bake64Ms": 4,
+   "boxBytes": {
+    "field": 4000,
+    "samples": 1296,
+    "occupancy": 128,
+    "row": 36,
+    "total": 5460
+   }
+  },
+  {
+   "format": "grad8",
    "side": 16,
-   "bakeOneMs": 4.4,
-   "bake64Ms": 8.8,
+   "bakeOneMs": 3.6,
+   "bake64Ms": 9.1,
    "boxBytes": {
     "field": 23328,
     "samples": 5912,
@@ -90,60 +378,177 @@
     "row": 36,
     "total": 30008
    }
+  },
+  {
+   "format": "grad8",
+   "side": 32,
+   "bakeOneMs": 5.1,
+   "bake64Ms": 45.4,
+   "boxBytes": {
+    "field": 157216,
+    "samples": 25992,
+    "occupancy": 4916,
+    "row": 36,
+    "total": 188160
+   }
   }
  ],
  "paths": [
   {
+   "rows": 1024,
+   "awake": 103,
+   "kind": "loose",
+   "reps": 3,
+   "toggleDoneMs": 0.293,
+   "batchMs": 1.267,
+   "pairs": 28,
+   "pairsDropped": 0,
+   "contactRows": 85,
+   "sampleContacts": 1382,
+   "threads": 9456
+  },
+  {
+   "rows": 1024,
+   "awake": 1024,
+   "kind": "loose",
+   "reps": 3,
+   "toggleDoneMs": 0.467,
+   "batchMs": 1.092,
+   "pairs": 133,
+   "pairsDropped": 0,
+   "contactRows": 430,
+   "sampleContacts": 9117,
+   "threads": 52848
+  },
+  {
+   "rows": 1024,
+   "awake": 103,
+   "kind": "pile",
+   "reps": 4,
+   "toggleDoneMs": 0.365,
+   "batchMs": 1.019,
+   "pairs": 229,
+   "pairsDropped": 0,
+   "contactRows": 754,
+   "sampleContacts": 15343,
+   "threads": 88880
+  },
+  {
+   "rows": 1024,
+   "awake": 1024,
+   "kind": "pile",
+   "reps": 3,
+   "toggleDoneMs": 0.807,
+   "batchMs": 1.425,
+   "pairs": 1178,
+   "pairsDropped": 0,
+   "contactRows": 3864,
+   "sampleContacts": 76475,
+   "threads": 456432
+  },
+  {
    "rows": 4096,
    "awake": 446,
    "kind": "loose",
-   "reps": 2,
-   "toggleDoneMs": 0.478,
-   "batchMs": 1.737,
+   "reps": 3,
+   "toggleDoneMs": 0.496,
+   "batchMs": 0.925,
    "pairs": 131,
    "pairsDropped": 0,
    "contactRows": 412,
    "sampleContacts": 8663,
-   "threads": 52480
+   "threads": 50784
   },
   {
    "rows": 4096,
    "awake": 4096,
    "kind": "loose",
    "reps": 3,
-   "toggleDoneMs": 0.667,
-   "batchMs": 1.417,
+   "toggleDoneMs": 0.771,
+   "batchMs": 1.375,
    "pairs": 609,
    "pairsDropped": 0,
    "contactRows": 2006,
    "sampleContacts": 45792,
-   "threads": 267088
+   "threads": 258192
   },
   {
    "rows": 4096,
    "awake": 446,
    "kind": "pile",
    "reps": 3,
-   "toggleDoneMs": 0.956,
-   "batchMs": 1.5,
+   "toggleDoneMs": 0.816,
+   "batchMs": 1.292,
    "pairs": 1016,
    "pairsDropped": 0,
    "contactRows": 3435,
    "sampleContacts": 73896,
-   "threads": 437872
+   "threads": 422304
   },
   {
    "rows": 4096,
    "awake": 4096,
    "kind": "pile",
    "reps": 1,
-   "toggleDoneMs": 3.481,
-   "batchMs": 5.225,
+   "toggleDoneMs": 4.459,
+   "batchMs": 3.475,
    "pairs": 5701,
    "pairsDropped": 0,
    "contactRows": 19216,
    "sampleContacts": 445767,
-   "threads": 2562384
+   "threads": 2476016
+  },
+  {
+   "rows": 16384,
+   "awake": 1740,
+   "kind": "loose",
+   "reps": 3,
+   "toggleDoneMs": 1.905,
+   "batchMs": 1.425,
+   "pairs": 476,
+   "pairsDropped": 0,
+   "contactRows": 1576,
+   "sampleContacts": 34379,
+   "threads": 196416
+  },
+  {
+   "rows": 16384,
+   "awake": 16384,
+   "kind": "loose",
+   "reps": 1,
+   "toggleDoneMs": 2.649,
+   "batchMs": 3.8,
+   "pairs": 2409,
+   "pairsDropped": 0,
+   "contactRows": 8030,
+   "sampleContacts": 175808,
+   "threads": 1016768
+  },
+  {
+   "rows": 16384,
+   "awake": 1740,
+   "kind": "pile",
+   "reps": 1,
+   "toggleDoneMs": 3.921,
+   "batchMs": 2.975,
+   "pairs": 4549,
+   "pairsDropped": 0,
+   "contactRows": 15203,
+   "sampleContacts": 326076,
+   "threads": 1874000
+  },
+  {
+   "rows": 16384,
+   "awake": 16384,
+   "kind": "pile",
+   "reps": 1,
+   "toggleDoneMs": 36.572,
+   "batchMs": 6.775,
+   "pairs": 23152,
+   "pairsDropped": 0,
+   "contactRows": 77578,
+   "sampleContacts": 1715161,
+   "threads": 9726320
   }
  ],
  "errors": []

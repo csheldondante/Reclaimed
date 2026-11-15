@@ -11,7 +11,7 @@
 // bit in `missing` (contract.ts MISS_*), which the solver reads to hold them still.
 // Transfers: the two passes' uniforms; the 128 B read above.
 
-import { COUNT_BRICKS, COUNT_CULL, COUNT_HW_BRICKS, COUNT_HW_CULL, COUNT_HW_SLOTS, COUNT_SLOT_FAILS_SINCE, COUNTS_BYTES } from './contract';
+import { COUNT_BRICKS, COUNT_CULL, COUNT_HW_BRICKS, COUNT_HW_CULL, COUNT_HW_SLOTS, COUNT_REHASH_FAILS, COUNT_SLOT_FAILS_SINCE, COUNTS_BYTES } from './contract';
 import { PAIR_ASKED, PAIR_HW_ITEMS, PAIR_HW_PAIRS, PAIR_ITEMS_ASKED, SdfCoarse, type CoarseInputs, type CoarseOptions } from './coarse';
 import { SdfFine } from './fine';
 import type { SdfModels } from './models';
@@ -52,6 +52,8 @@ export class SdfCollide {
   /** reads landed, and the last one's time from `poll` to its data, ms */
   reads = 0;
   lastReadMs = 0;
+  /** pairs a growth of the slots could not place (they started again in a new slot, age 0), as the reads have seen */
+  rehashFails = 0;
 
   private rd: GPUBuffer;
   private reading: Promise<void> | null = null;
@@ -142,6 +144,7 @@ export class SdfCollide {
         this.reads++;
         this.lastReadMs = performance.now() - t0;
         const c = w.subarray(HEAD_BYTES / 4);
+        this.rehashFails += c[COUNT_REHASH_FAILS];
         // (a pair that found no slot although the table was under half full: the table doubles all the same)
         const slots = c[COUNT_SLOT_FAILS_SINCE] ? Math.max(c[COUNT_HW_SLOTS], room.slots / 2) : c[COUNT_HW_SLOTS];
         const asked: Rooms = { pairs: Math.max(w[PAIR_ASKED], w[PAIR_HW_PAIRS]), items: Math.max(w[PAIR_ITEMS_ASKED], w[PAIR_HW_ITEMS]), cull: Math.max(c[COUNT_CULL], c[COUNT_HW_CULL]), groups: Math.max(c[COUNT_BRICKS], c[COUNT_HW_BRICKS]), slots };

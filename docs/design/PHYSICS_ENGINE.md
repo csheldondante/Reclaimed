@@ -469,7 +469,7 @@ not built: the room has grown by then and the row is tested like any other. (3) 
 stage B has a binding free for `missing` (eight storage buffers a stage). (4) The read will be a timed read in play,
 which DESIGN §24 does not allow: BACKLOG PF26, the owner's call.
 
-**Tested** (`test/gpu/sdf-rooms.test.ts`, 6; `test/unit/sdf-rooms.test.ts`, 3). A pile of 1,500 rows with every room
+**Tested** (`test/gpu/sdf-rooms.test.ts`, 6, and 2 more with the cull below; `test/unit/sdf-rooms.test.ts`, 3). A pile of 1,500 rows with every room
 an eighth of what the scene asks: each tick, every pair brute force has and the pass lacks has both rows flagged, and
 so has every pair whose record differs from a roomy pass's; then the pair set is brute force's, every record the
 roomy pass's and no row flagged, and further ticks grow nothing. Each room alone. 400 oversize rows, awake and
@@ -477,10 +477,14 @@ asleep. Rows grown from 300 to 700 mid-run.
 
 **Measured** (desktop proxy, Dawn in Node, pile of 4,096 rows all awake; `data/perf/sdf/rooms-bench.json`). The read:
 0.19 ms of CPU in the tick that starts one (0.015 ms a tick averaged over 8), the tick's wall time 2.02 ms with no
-read and 2.04 ms with one every 8 ticks (inside the noise); its answer lands 2 ms later. A growth: 0.06 to 0.46 ms
-making buffers, and the tick that does it encodes in 0.7 to 1.2 ms against 0.47 (the bind groups); its wall time 1.7
-to 3.3 ms against 2.6: no tick stalls. From an eighth, the rooms took three growth ticks in a row (a room that ran
-out hides what the next would be asked).
+read and 2.04 ms with one every 8 ticks (inside the noise); its answer lands 2 ms later. A growth (all five
+rooms from an eighth, with the slots and the cull items of the later commits in): 0.14 to 0.85 ms making buffers, and
+the tick that does it encodes in 1.2 to 1.8 ms against 0.57 (the bind groups). The wall time of the three growth
+ticks: 2.9, 3.6 and 8.4 ms against 2.9. **The last is a stall of about 5 ms in one tick**: it made the two biggest
+buffers at once (the sample groups 39,522 → 632,352 and the slots 4,096 → 16,384, some 10 MB that the driver clears
+at first use) and moved the slots. Under a frame, and once; a room that doubles instead of jumping sixteenfold costs
+less (the jump is what starting at an eighth does). From an eighth, the rooms took three growth ticks in a row (a
+room that ran out hides what the next would be asked).
 
 **Stable pair slots (PF25).** The solver will keep impulses a pair from tick to tick, so a pair's contact rows must
 stay in one place while the pair lasts. They now do: rows at `slot * 4`, the slot in the pair's record (word 7).
@@ -552,13 +556,36 @@ dispatch". By part now (`SDF_PROBE=1 … sdf-probe -t "pair slots"`, the same sc
 0.8, the samples' threads 4.8, reduce under a clock tick. The cull was a fifth; the rest is 9.7 M sample threads for
 23,152 pairs (420 a pair), which is the overlap itself in a pile half full of matter at random poses (BACKLOG PF29).
 
+**The page** (`sdfbench.html` v4 in headless Chrome, `node scripts/sdfbench.mjs --url http://localhost:5352`: 24
+configurations with 16,384 rows in, 3 min 37 s, no error; `data/perf/sdf/sdfbench-desktop.json`). The whole path, ms a
+tick, by the toggle's GPU-done difference and by a batch alone:
+
+| rows | awake | scene | toggle | batch | pairs |
+|---|---|---|---|---|---|
+| 4,096 | 446 | loose | 0.50 | 0.93 | 131 |
+| 4,096 | 4,096 | loose | 0.77 | 1.38 | 609 |
+| 4,096 | 446 | pile | 0.82 | 1.29 | 1,016 |
+| 4,096 | 4,096 | pile | 4.46 | 3.48 | 5,701 |
+| 16,384 | 1,740 | loose | 1.91 | 1.43 | 476 |
+| 16,384 | 16,384 | loose | 2.65 | 3.80 | 2,409 |
+| 16,384 | 1,740 | pile | 3.92 | 2.98 | 4,549 |
+| 16,384 | 16,384 | pile | 36.6 | 6.78 | 23,152 |
+
+Round 5's page runs at 4,096 rows (the only ones kept, `perf-reports/`): 0.48 to 1.47, 0.67 to 2.47, 0.96 to 1.51
+and 3.48 to 3.65 ms by the toggle: the same within their own spread. The last row's toggle (36.6 ms, and 12.8 and
+30.3 in two shorter runs, against a batch of 6.8 to 11.7) is not the pass's cost: the frame goes over the display's
+refresh and the GPU-done time jumps by whole frames. A first full run of the page, made while this machine was busy
+(its empty frames took 3.8 to 7.3 ms against 3.0 to 3.7), read two to four times higher throughout and is not kept.
+The phone run is the owner's (PF20).
+
 ### Hand-over: joining body ↔ body into the engine
 
 Everything here is on `physics10-fine` (not merged anywhere). Code: `src/engine/sdf/` (`contract.ts` layouts,
-`models.ts` the model store, `coarse.ts`, `fine.ts`, `shapes.ts` test scenes), kernels `src/shaders/engine/sdf-*.wgsl`.
-Each kernel file's header states its scheme. The engine's row layout is the one in `physics10`'s `engine.wgsl` at
-c6f1bab7; if the breaking branch changed it, `contract.ts` "the engine's rows" and the three `poseOf` / `velOf` /
-`centre` helpers in the kernels are the only places that know it.
+`models.ts` the model store, `coarse.ts`, `fine.ts`, `collide.ts` both passes with one set of rooms, `rooms.ts` the
+growth rule, `shapes.ts` test scenes), kernels `src/shaders/engine/sdf-*.wgsl`. Each kernel file's header states its
+scheme. The engine's row layout is the one in `physics10`'s `engine.wgsl` at c6f1bab7; if the breaking branch changed
+it, `contract.ts` "the engine's rows" and the three `poseOf` / `velOf` / `centre` helpers in the kernels are the only
+places that know it.
 
 **What the engine must supply (it has neither today).**
 1. `model`: a u32 a row, the row's model row in the store. Write it at spawn: `store.add({ size, vox, voxel })`
@@ -576,55 +603,67 @@ c6f1bab7; if the breaking branch changed it, `contract.ts` "the engine's rows" a
 rule: only rows in the awake list and rows with ROW_ALIVE and ROW_ASLEEP in `info[3r].w` are in any table; an inverse
 mass below zero is a freed row and must be in neither; zero is immovable.
 
-**A tick, in order** (all in the engine's encoder, nothing read back):
-1. `coarse.setParams(rowsInUse)`; `fine.setParams(coarse.pairRoom, tick)` (two small uniform uploads).
-2. `coarse.encode(enc, { list, pose, vel, info, model, sleepEpoch })` after integration and `compact`. Dispatches:
-   gate; the sleeper table (clear, count, block sums, super sums, starts, fill: zero workgroups unless the epoch
-   changed); the awake table (the same five); stage A; argsB; stage B.
-3. `fine.encode(enc, { ...coarse.finePairs, pose, vel, info, model }, coarse.pairRoom)`. Dispatches: pairArgs,
-   expand, cull, args, fine, reduce.
-4. The solve, then events.
+**A tick, in order.** One object: `const collide = new SdfCollide(device, store, { rows, cellTop, margin })`.
+1. `collide.encode(enc, { list, pose, vel, info, model, sleepEpoch }, rowsInUse, tick)` in the engine's encoder,
+   after integration and `compact`. Nothing is read back. It makes any room bigger that the last read asked for (and
+   the rows' room at once if `rowsInUse` is past it), uploads three small uniforms, and encodes two compute passes:
+   - coarse: (two GPU clears: the awake table's counters, the rows' `missing` words) gate; the sleeper table
+     (clearTab, countCells, blockSum, superSum, startCells, fillCells: zero workgroups unless the epoch changed); the
+     awake table (the last five); stageA; argsB; stageB.
+   - fine: (rehash, only in the tick after the slots' table grew) pairArgs; slots; expand; cullArgs; cull; fineArgs;
+     fine; reduce.
+2. The solve, then events, in the same encoder.
+3. The engine's submit, then `collide.poll()`: it destroys the buffers a growth replaced, and every `readEvery`
+   ticks (8) starts the 128 B read of what was asked of the rooms. It never waits; the answer makes a room bigger at
+   a later `encode`.
 
-**What the solver reads, a pair.** The pair list: `coarse.pairBuf`, word 0 the pairs asked for, pairs (a, b) from word
-64; take min(asked, `coarse.pairRoom`). Pair p's contact rows: `fine.contacts` rows `4p` to `4p + rows - 1`, 48 B each
-(`contract.ts` "A contact row": a, b, energy, materials, point, depth, normal from b to a, closing speed). Pair p's
-record: `fine.hits` at `p * 128` B: word 4 the sample contacts (what the lattice hand-over wants: how much of the
-surface touched), word 5 the largest sample energy (f32 bits; also on every row), word 6 the rows written (0 to 4).
-There is no key beside the rows yet and a pair's index p changes from tick to tick: see "stable pair slots" below.
+**What the solver reads.** A growth replaces buffers, so take them from the objects each tick (or when
+`collide.growths.length` changes), never keep them.
+- `collide.missing`: a u32 a body row, `contract.ts` `MISS_*` bits. Nonzero: the row may lack a pair or a contact
+  this tick, because a room ran out before it grew. Hold the row at its last pose for the tick (the solver's part,
+  not built). It is zero again once the room has grown, a few ticks later.
+- The pair list: `collide.coarse.pairBuf`, word 0 the pairs asked for, pairs (a, b) from word 64; take min(asked,
+  `collide.coarse.pairRoom`). A pair's index p in the list changes from tick to tick.
+- Pair p's record: `collide.fine.hits` at `p * 128` B: word 4 the sample contacts (what the lattice hand-over wants:
+  how much of the surface touched), word 5 the largest sample energy (f32 bits; also on every row), word 6 the rows
+  written (0 to 4), **word 7 the pair's slot** (`NO_SLOT`, 0xffffffff: no rows this tick, and both rows flagged).
+- The pair's contact rows: `collide.fine.contacts` rows `4 * slot` to `4 * slot + rows - 1`, 48 B each (`contract.ts`
+  "A contact row": a, b, energy, materials, point, depth, normal from b to a, closing speed). **The slot is the
+  pair's for as long as the pair is in the list every tick.** Keep impulses by slot.
+- **The key beside the rows:** `collide.fine.slotKeys` at `16 * slot` B: the pair's lower row, its higher row, the
+  slot's age in ticks, the pair's index p this tick. Age 0: the pair is new (or was away for a tick), the rows it did
+  not write are zero, and its impulses start from nothing.
+- At a growth of the slots' table every live pair moves: `collide.fine.slotGeneration` goes up, and after that
+  tick's `encode` `collide.fine.slotRemap` holds, for each old slot, its new slot or `NO_SLOT`. Move the impulses by
+  it before the solve (a kernel of the solver's own; the old table's size is the `from` of the growth in
+  `collide.growths`).
+- A row's index inside a slot follows the reduction's order and can change (PF28): match rows by point, or keep one
+  impulse a pair.
 
-**Tuning parameters.** `fine.margin` (cells; also `CoarseOptions.margin`: keep them equal; the engine's
-`EU.f.x`), `fine.cap` (samples a half pair a tick, default 2,048), `CoarseOptions.cellTop` (about the biggest common
-body's bound diameter), `levels` (3), `pairsARow` (8). Field format: `grad8`.
-
-**To build at the join, specified here.**
-- *Rooms that grow, and a safe tick (PF24).* Three rooms can run out: oversize lists (256 awake, 256 asleep), work
-  items (64 a row), pairs (8 a row). Each already counts what it dropped (`pairBuf` words 1 and 2; pairs asked for
-  against the room). Wanted: a 16 B asynchronous read of `pairBuf`'s header every few ticks; at half full, make a
-  bigger `SdfCoarse` (and `SdfFine`, whose buffers follow `pairRoom`) and swap it in: the kernels' layouts do not
-  depend on the sizes, so the pipelines can be shared if the constructors are split from the buffer making. For the
-  tick in which a room runs out before the growth lands, "safe" should mean: a row whose candidates were dropped is
-  treated as blocked for that tick (no integration past its last pose) and is tested first next tick. That needs
-  stage A and stage B to mark the row (a bit a row in a small buffer) where they drop, which they do not do yet.
-- *Stable pair slots (PF25).* A persistent open-addressing table keyed by (a, b): a pass after stage B, a thread a
-  pair, one probe; a pair found keeps its slot and is stamped with the tick, a new pair takes a free slot; a sweep
-  frees slots not stamped this tick. The fine pass then writes a pair's rows at `slot * 4` instead of `p * 4`, with the
-  key stored in the pair's record, and the solver keeps its impulses by slot. Tests wanted: a resting stack keeps its
-  slots for 100 ticks; a pair that parts and returns gets a clean slot; growth keeps keys.
+**Tuning parameters.** `CollideOptions.margin` (cells; it sets both passes: to change it later set
+`collide.coarse.margin` and `collide.fine.margin` alike; the engine's `EU.f.x`), `collide.fine.cap` (samples a half pair a tick, default 2,048), `cellTop` (about the biggest
+common body's bound diameter), `levels` (3), `readEvery` (8). The rooms start at `pairsARow` (8), `itemRoom`,
+`cullRoom`, `groupRoom`, `slotRoom` and grow; none needs setting for correctness. Field format: `grad8`.
 
 **Open hacks and limits, by id** (docs/BACKLOG.md): PF3 normals near edges (rows take the mean; 9.5° over a corner,
 46° on one row of an edge in a face); PF5 cap and margin defaults are not from the phone; PF7 the field holds ±7.9
 voxels; PF8 one-voxel plates' rims; PF9 a 3D-texture field unmeasured; PF10 the store's arena has no compaction;
 PF11 and PF20 the phone runs asked of the owner; PF15 at most 65,536 samples a model, four rows a pair whatever its
-size; PF17 the join itself; PF21 pair order, oversize rooms, a sleeper moved without an epoch bump is not found; PF23
-the fine pass's cull rows; PF24 rooms that can miss; PF25 stable slots.
+size; PF17 the join itself; PF21 pair order, the reach of an oversize row, a sleeper moved without an epoch bump is
+not found; PF26 the rooms' read is a timed read in play (the owner's call); PF27 the rooms' hacks; PF28 the slots'
+hacks; PF29 the samples' threads in a dense pile.
 
 **Tests a joiner should run first** (Node, real GPU, about a minute):
-`npx vitest run --project gpu sdf-bake sdf-fine.test sdf-coarse.test` (15 + 36 + 8 pass at this commit), then
-`npm run typecheck` and `npx vitest run --project unit` (one failure on the base: `roadlab/control.ts` in the writing
-lint). `test/gpu/sdf-coarse.test.ts` "coarse into fine" is the smallest example of both passes in one encoder with
-hand-made engine rows; `test/gpu/sdf-harness.ts` reads pairs, records and rows back. Benches: `SDF_BENCH=1 npx vitest
-run --project gpu sdf-coarse-bench` (coarse and the whole path), `sdf-fine-bench` (the fine pass alone),
-`SDF_PROBE=1 … sdf-probe` (the coarse pass by part); the phone page is `sdfbench.html`.
+`npx vitest run --project gpu sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots` (15 + 36 + 8 + 8 + 6 pass
+at this commit, one bench skipped), then `npm run typecheck` and `npx vitest run --project unit` (one failure on the
+base: `roadlab/control.ts` in the writing lint). Read first: `test/gpu/sdf-collide-rig.ts`, the smallest example of
+a tick (hand-made engine rows, `encode`, submit, `poll`, and everything the solver reads, read back); then
+`sdf-rooms.test.ts` "room for an eighth" (what `missing` promises) and `sdf-slots.test.ts` "a resting stack" and "a
+pair absent for one pass" (what a slot promises). `test/gpu/sdf-harness.ts` drives the fine pass alone from a
+hand-made pair list. Benches: `SDF_BENCH=1 npx vitest run --project gpu sdf-coarse-bench` (coarse and the whole
+path), `SDF_BENCH=1 … sdf-rooms -t "cost of the read"` (the read and a growth), `sdf-fine-bench` (the fine pass
+alone), `SDF_PROBE=1 … sdf-probe` (the coarse pass, the slots and the fine pass by part); the phone page is
+`sdfbench.html`.
 
 **Considered, not chosen** (both from the same baked voxel model):
 

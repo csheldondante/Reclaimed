@@ -23430,3 +23430,21 @@ cull was about a fifth of that fine pass. By part after: slots 0.26, expand and 
 
 **Tests** (Node, Dawn): `sdf-rooms` 8 (two new: cull items past the room; a crumb on a slab asks for 7 rows of
 bricks), `sdf-fine` 36 unchanged against the CPU mirror, `sdf-slots` 6, `sdf-coarse` 8, `sdf-bake` 15.
+
+## 2026-11-15 — the hand-over made true again; the benches and the page rerun (`physics10-fine`)
+
+**What.** The note's "Hand-over: joining body ↔ body into the engine" is rewritten for what is there now: one object
+(`SdfCollide`: `encode`, the engine's submit, `poll`), the dispatch order of both passes, the rows' `missing` words,
+the slot in a pair's record and the key record beside the rows, what a growth replaces and how the solver moves its
+own impulses, and the tests to read first (`test/gpu/sdf-collide-rig.ts`). `SdfCollide.rehashFails` counts the pairs
+a growth of the slots could not place.
+
+**Measured.** The read and a growth with all five rooms (`data/perf/sdf/rooms-bench.json`): the read 0.17 ms of CPU
+in the tick that starts one; a growth 0.14 to 0.85 ms making buffers, and one growth tick of 8.4 ms against 2.9 when
+the two biggest buffers were made at once (PF27). The page, v4, headless once with 16,384 rows in (3 min 37 s, no
+error): the whole path at 4,096 rows 0.50 to 4.46 ms by the toggle, as round 5's runs within their spread; at 16,384
+rows 1.9 to 3.9 ms, and the pile with every row awake 6.8 ms by the batch (its toggle is over the display's refresh
+and reads frames, not the pass).
+
+**Tests** (Node, Dawn): `sdf-bake` 15, `sdf-fine` 36, `sdf-coarse` 8, `sdf-rooms` 8, `sdf-slots` 6; unit `sdf-rooms`
+3. `npm run typecheck` clean; the unit project's one failure is the base's (`roadlab/control.ts`, the writing lint).
