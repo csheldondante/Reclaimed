@@ -34,6 +34,10 @@ export function installEngine(core: WorldCore): EngineKit {
     core.renderer.addMesh(drawn.out, drawn.args, undefined, true);
   };
   core.renderer.frameCompute.push((enc) => engine.skin(enc, core.renderAlpha()));
+  // (PA1: a streamed window's slide — WorldCore.onShift's sense is the window's move, so what stands in it moves by
+  // minus that; rows awake and asleep both (engine_compact.wgsl, command 4). Before this the rows kept their window
+  // coordinates and the land moved under them: a block at rest on a street was left inside a hill after a pan)
+  core.onShift.push((dx, dy, dz) => engine.shift(-dx, -dy, -dz));
   return {
     engine,
     drop: (cells, vel, spin) => engine.add({ cells, mesh: modelMesh(cells), vel, spin }),

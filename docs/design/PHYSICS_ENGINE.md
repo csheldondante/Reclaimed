@@ -1457,3 +1457,126 @@ next tick. The columns are cut as before. Test: `test/gpu/engine-terrain.test.ts
   the tick after (PT3).
 - **Not built:** step 5 (the GPU trigger), the chain test, pins for woken metal (PT4), dust and sound at release,
   rows going back to ground (PT5).
+
+## The engine in the real town (branch `physics10-atlas`, 2026-11-15)
+
+The owner: "When can we test this on atlas with buildings?" Tried: the atlas level at Muru (`?skipmenu=1&level=atlas&
+town=1&fresh=1&solver=engine`), 412 x 915, headless Chrome on the desktop GPU, through the lab runner.
+
+### What ran
+
+- **The engine installs there as it is.** `attach-tools.ts:93` installs it in every level under `?solver=engine`; the
+  atlas level is a sandbox level, so the judge is there too and hands what it frees to the engine (`:179`). No page
+  error, no fatal overlay, the town made (344 lots), the living town and the season loop up.
+- **Rows rest on terrain.** A 3x3x3 stone block dropped on open ground: its bottom at 105.97 over soil whose top is
+  105.8. A boulder (radius 2) beside it: at rest, asleep.
+- **Rows meet buildings as boxes.** The town's claims are External intervals in the columns (`colapply.wgsl`
+  `claimGrid`), and the engine's ground test walks every interval of a column whatever its material
+  (`engine_pairs.wgsl:65` `groundWalk`, the surface word in `groundAtE`). A 2x2x2 block dropped over a house: at rest
+  on the roof, bottom 107.22, the External span's top 107.2. A block thrown at 9 cells/s at a house's west wall
+  (the wall from x = 207): stopped with its east face at 207.1 and fell to the street, bottom 105.28 on soil at 105.3.
+  Nothing fell through, sank or flew off.
+- **The window's slide was not wired: fixed (PA1).** `Engine.shift` existed (command 4, `engine_compact.wgsl:44`)
+  and nothing called it: `installEngine` did not join `WorldCore.onShift`. Seen: a look at the town slid the window
+  and a block at rest on a roof was left 8 cells up inside a hill's column. Now `install.ts` passes the slide on
+  (minus the window's move). Measured after: the window moved 64 columns west, the four sleepers and one row in the
+  air each moved +64.00 in x at the next tick; the sleepers stayed asleep (the ground word they sleep on moved with
+  them) on the same columns; the row in the air landed on the street. The move reaches the rows one tick after the
+  land (a command of the next tick): a row awake is one tick inside the old place. Deforming bodies still do not
+  follow a slide (as before, line 966).
+- **A terrain edit beside the houses** (the sandbox's meteor, `reclaimed.meteorNow`): no error; the judge freed two
+  pieces as engine rows (host rows 13 to 15); the town logged "an edit damaged 10 building(s) and its roads" and
+  nothing else happened to them: the houses' mesh stands over the crater.
+- **Frame time, a desktop proxy only** (the lab's frames, each waiting on the GPU; noisy): 9.9 to 17 ms a frame
+  with no rows, 0 to 3.7 ms more with four rows. Not a phone measure: the phone bench is PP1's.
+
+### The lab
+
+`?skipmenu=1&level=atlas&town=1&fresh=1&solver=engine&physdemo=1` (`scenes/level/physdemo.ts`): three buttons over
+the game. "Drop stone blocks": twelve stone and brick blocks over the houses nearest the middle of the view. "Roll a
+boulder": a boulder (radius 3) from the highest open ground 12 to 22 columns away, thrown at the houses at 9 cells/s.
+"Clear". Each press reads the surface words once to find the houses (PA6). `scripts/lab/townphysdemo.mjs` plays it
+and saves frames; `scripts/lab/townengine.mjs` is the probe the numbers above came from.
+
+## Buildings on the engine: what is needed
+
+Today a house is three things that do not know each other: a lot record on the GPU (`citygen/gpu.ts:290`
+`lotRecords`, with `progress` and `lotCounts`), a plain extruded mesh made from it (`citygen/streets.wgsl:1015`
+`lotMesh`, vertices risen by `tlRise`, `gpu.ts:518`), and External spans in the columns claimed from it
+(`streets.wgsl:3362` `claimLots` into the claim grid, written to the columns by `colapply.wgsl` `claimGrid`). No
+voxel model of a house exists.
+
+**(a) Detecting a hit.** Today only an *edit* is detected: Integrity's dirty boxes go to `StaticClaims.damage`
+(`sim/static-claims.ts:193`), `ColumnApply.gridDamage` (`game/colapply.ts:222`, `colapply.wgsl:678`) finds the claim
+keys in the boxes, 64 words or fewer are read back, and `FieldTown.damaged` (`citygen/town.ts:175`, `:245`) adds
+them to a set and logs. Nothing reads the set. A body hitting a house makes an engine event (`EV_IMPACT`,
+`engine_pairs.wgsl:915`: row, material, place, energy) that names no owner: an External interval carries its
+fallback material in aux and no owner (the table's row "body ↔ building: needs owner + normal in the interval").
+The path: a small GPU consumer of the engine's events that, for an impact whose material is External and whose
+energy is over the building's threshold, looks up the claim grid at the impact's column (the same lookup
+`gridDamage` does: the span's owner word is the lot's key) and writes (lot key, energy, place) to a short list; the
+host reads that list with the engine's one chained read (`engine.ts:902`). No per-frame read: only after an impact
+event. **Size: S to M** (one kernel, the claim grid bound to the engine's event pass, a field on the read).
+
+**(b) A lot becomes a body.**
+- *The crudest honest version:* when a lot's key comes back over threshold, the host (1) marks the lot gone so
+  `claimLots` and `lotMesh` leave it out (a flag in the lot's progress word; the town's mesh run and reclaim already
+  run after a change: `town.ts:349-358`), (2) releases its External spans (the reclaim, or `colapply` `release` over
+  the lot's rectangle), (3) adds engine rows with box models of the lot's footprint x height in the wall's material
+  (stone or brick) at the lot's place: one row a lot, or the footprint cut into a few boxes (four to eight) so it
+  comes apart. The rows are drawn by the engine's mesh (stone or brick look), not the house's pastel mesh: **a
+  visible swap at the moment of the hit**, to be logged as such. The lot's footprint is a quad turned about z; the
+  box model is on the hex lattice, so its edges are stepped. Its cells come from the claim grid's columns of that key
+  (a read of the lot's rectangle, once, at the hit) or from the record's quad rasterised on the CPU. **Size: M.**
+- *The designed version* (DESIGN §3: "they deform and break their mesh"; §9): the building's own mesh skinned to a
+  voxel model made for it (walls, roof, floors as shell voxels, by the generator on the GPU), carved where it
+  breaks, with the look kept across the change of state (the owner's render rule, PT2). Needs the building
+  generator to make a lattice model with the mesh, the engine's skin to carry the house's materials and colours, and
+  models baked ahead (PT3). **Size: L**, and it rests on the building generator track.
+
+**(c) The claim and the town's state.** The lot marked destroyed in the records and in the town's edit log
+(`citygen/townlog.ts`; `town.ts:402` lays the log over a made town, so a destroyed house stays destroyed after a
+save and a slide); the External spans released (b); the living town told (its people's homes and works, the routes
+through the lot's door: `citylife`), the season loop's ledger (`season/ledger.ts`: a house's Labor, a store's
+Materials), the town contracts' named places if the lot was one (keep, stores, market: status to "none"). The rubble
+rows must not seal a street for good: reach is an invariant (AGENT_RULES §3b), so either rubble is walkable ground
+once at rest (rows going back to ground, PT5) or the town clears it. **Size: M** for the lot flag + log + release;
+**M** more for the living town and ledger.
+
+**(d) Undermining.** Ground removed under a house: External is "support that never gives by itself. When a piece
+containing them goes, their owner is told" (DESIGN §9). Today the judge's edit path tells the town through
+`gridDamage` (seen: the meteor, 10 lots named) and nothing follows. With (b), the same list of keys drives the same
+swap: a lot whose support columns are cut by more than a share of its footprint is released as rows. The share
+needs the lot's column count beside the damaged count (`gridDamage` returns keys only today). **Size: S** after
+(b).
+
+**(e) Not to forget.**
+- Walls and gates for raids (DA-E4: "raid and spell damage through the trigger; delete HP walls"): the town wall is
+  claimed by `wallClaim` (`gpu.ts:985`), drawn by its own mesh, and gates carry routes: a breach changes the side
+  map and the raid's roads. A wall segment as rows is the same swap as a lot, plus the contracts' update.
+- Fire: wood and thatch burn in the columns today; a house as External does not burn. A burnt lot should take the
+  same "lot gone" path with no rows (or charred ones).
+- The phone cost of many lots waking at once: the stage 4 budget does not exist yet (`select`, line 684); a meteor
+  on a street names ten lots in one tick. Rigid rows are cheap (they do not deform), but each new model is an upload
+  and a bake on the CPU today (PT3: 20 to 27 ms a piece). Ten houses in one tick is a quarter-second hitch until
+  models are baked ahead or made on the GPU. A cap is not the answer (AGENT_RULES §1b): spread the swaps over ticks
+  by the impact's energy order, or bake a lot's box model when the town is made.
+- The External span has one flat top a column: a house's pitched roof, eaves and doors are not in it. Bodies meet
+  the box, not the mesh (today's houses are boxes, so it matches; the building generator's will not).
+- Saving and streaming: rows are not saved with a region; a slide moves them (PA1) but a region that leaves takes
+  its ground and leaves the rows (PA5).
+
+### The smallest first slice (recommended)
+
+"A boulder knocks a house down" in the real town, as a visible swap: (a) in its small form — the engine's chained
+read carries the pool's header and no event today (`engine.ts:902-909`), so one kernel after the tick's events
+looks up the claim grid at each impact over the threshold and writes the lot keys hit (a few words) where that read
+already looks — then (b) crude: the
+lot flagged gone (mesh and claim leave it out at the next mesh run), four to eight box rows of brick at its place
+with the boulder's push, and (c) only the flag and the log line. What the owner would see: the boulder rolls in, the
+pastel house it hits is replaced in one frame by a handful of brick-coloured blocks the size of the house, which
+tumble over the street and come to rest; the houses beside it stand; people still walk to where the house was.
+About two to three days of work; the look (the house's own mesh breaking) and the town's bookkeeping come after.
+This departs from the design in two named ways: the swap of the mesh (PT2's rule), and the host making the rows from
+a few words read after an impact (DESIGN §24 allows a small read after an event; the designed trigger, step 5, makes
+the bodies on the GPU).

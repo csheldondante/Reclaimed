@@ -135,6 +135,22 @@ The owner: "terrain breaks and seems to use the lattice."
 | PT5 | Limits kept from the old hand-over and the engine: fractional run ends are rounded to whole cells a column (as the lattice path did); no dust or sound where a row tears free or lands (the CPU rock raised them); a row at rest never goes back into the columns and claims no External (PE5, PE16); the judge's tip pivot is not given to the row (it falls from rest and tips by its own contacts); the old lattice and the CPU rock are still constructed under `engine` (unused: nothing is spawned into them) | M | open |
 | PT6 | The brief's "topple the rock towers" is not a button on this branch: the rock station (`slide`) has "nick the spire" and "undercut the mesa"; those were captured | S | open |
 
+## The physics engine in the real town (`physics10-atlas`, 2026-11-15; docs/design/PHYSICS_ENGINE.md "The engine in the real town", "Buildings on the engine: what is needed")
+
+The owner: "When can we test this on atlas with buildings?"
+
+| id | item | size | status |
+|---|---|---|---|
+| PA1 | Under `?solver=engine` a streamed window's slide did not move the engine's rows (`Engine.shift` existed, nothing called it): a block at rest on a roof was left inside a hill after a look at the town. `engine/install.ts` joins `WorldCore.onShift`. Gate: `scripts/lab/townengine.mjs --args '{"slide":true}'` (rows at rest move by minus the window's move). No Dawn test of the wiring (it needs a WorldCore and a streamer): the lab scenario is the only check | S | done (this commit) |
+| PA2 | `?physdemo=1` (with `?solver=engine`, the atlas level and a town): three buttons over the game — stone blocks on the houses nearest the middle of the view, a boulder thrown at them from the highest open ground nearby, clear (`scenes/level/physdemo.ts`; `scripts/lab/townphysdemo.mjs` plays it) | S | done (this commit) |
+| PA3 | **Buildings do not break.** A body meets a house's External span as rock: it rests on the roof, stops at the wall. An edit that cuts lots (the meteor: 10 named) is logged by `FieldTown.damaged` and nothing follows: the houses' mesh stands over the crater. The path, with sizes, is in PHYSICS_ENGINE.md "Buildings on the engine: what is needed" (a: the hit names its lot, S-M; b: a lot becomes rows, M crude / L designed; c: the lot gone in the town's records, log, living town, ledger, M + M; d: undermining, S after b; e: walls and gates DA-E4, fire, many lots at once) | L | open |
+| PA4 | Limit: the slide reaches the rows as a command of the next tick, so a row awake is one tick in the land's old place (64 columns off for one tick; seen to land correctly after). Deforming bodies do not follow a slide at all (PHYSICS_ENGINE.md line 966, as before). Fix: apply the shift in the slide's own submit | S | open |
+| PA5 | Limit: rows are not saved with a region and do not leave with it: a region that leaves the window takes its ground, the rows on it stay in the row buffers at window coordinates off the map. Not tested here (the probe slid one region and came back) | M | open |
+| PA6 | Hack: each press of a `?physdemo=1` button reads the whole window's surface words back (4 B a column) to find the houses, and tells a house from a street by a threshold (External standing 2.5 or more over the lowest open column within 3, `HOUSE_RISE`, `REACH`); the boulder's speed (9 cells/s) and the pile's layout are fixed numbers. A demo's, behind the flag: the game's own tool would ask the town for its lots (the lot records on the GPU) | S | open |
+| PA7 | Hack: the lab scenarios `townengine.mjs` and `townphysdemo.mjs` read the engine's pose buffer and the layers back (debug reads) and find the built core by the same threshold; a look at a place slides the window, so they look, wait for the stream to settle and search again (up to 5 times) | S | open |
+| PA8 | Not measured: the phone cost of the engine in the town. Desktop lab frames only (9.9 to 17 ms a frame without rows, 0 to 3.7 ms more with four; noisy). No toggle diff at `?q=low` was run as AGENT_RULES §2 asks; the phone bench (PP1) has no town scene | M | open |
+| PA9 | Seen, not looked into: after the meteor beside the houses the demo's blocks and boulder are no longer in view in the still (thrown off, buried or under the smoke: not read back) | S | open |
+
 ## Town contracts for Track B's unit minds (2026-11-10, `trackA-unitcontracts`; docs/design/TOWN_CONTRACTS.md)
 
 The coordinator's brief: three GPU contracts on the GPU towns for U2/U3 — GPU resident, no CPU readback, orders carry

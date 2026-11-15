@@ -23971,3 +23971,32 @@ look's `latticeMats`) and `playground.ts` (the break station on its own land, th
 **Tests.** `npm run typecheck` clean; `npx vitest run --project gpu engine sdf` 127 passed, 3 failed
 (`engine-energy`: PM1, not reconciled); unit 632 passed, 3 failed (the same 3 as the base). PE42's fix tried, no
 effect, not applied.
+
+## 2026-11-15 — the engine in the real town: a first run at Muru (PA1-PA9, `physics10-atlas`)
+
+**Why.** The owner: "When can we test this on atlas with buildings?" The engine route had only run in the lab level.
+A scouting job: run it in the atlas level with a town, fix only what stops a first honest test, and write down what
+stands between today and "buildings break".
+**What ran** (`RECLAIMED_PORT=5871 node scripts/lab.mjs run scripts/lab/townengine.mjs --flags "&solver=engine"
+--args '{"slide":true}'`, Muru, 412 x 915, headless Chrome, desktop GPU). The engine installs in the atlas level
+with no change (it is a sandbox level: the judge feeds it too); no page error, no fatal overlay. A block on open
+ground rests on the soil (bottom 105.97, soil top 105.8). A block dropped over a house rests on the roof (bottom
+107.22, the External span's top 107.2). A block thrown at 9 cells/s at a house's wall stops at it (its face 0.1
+past the wall's column edge) and falls to the street. Nothing fell through or flew off.
+**What was wrong and fixed (PA1).** The window's slide did not reach the rows: `Engine.shift` was never called.
+Seen in the first runs as rows left where the land had been (a block "on a roof" inside a hill's column 8 cells
+up, and surface reads that disagreed before and after a look). `installEngine` now joins `WorldCore.onShift`.
+After: window moved 64 columns, every row moved 64.00 at the next tick, sleepers stayed asleep on the same ground.
+**The demo (PA2).** `?physdemo=1`: three buttons (blocks, boulder, clear), `scenes/level/physdemo.ts`.
+`scripts/lab/townphysdemo.mjs` plays it for a GIF. Looked at the stills: plain pastel box houses by the water; twelve
+grey and brick-red blocks come down among them, two at rest on roofs, the rest in the lanes; the boulder comes in
+from the right and stops against the houses and the pile; after the meteor a crater with lava and smoke, the
+houses' boxes still drawn over it, unbroken.
+**A terrain edit beside the houses.** The meteor: two freed pieces became engine rows; the town logged "an edit
+damaged 10 building(s) and its roads" and did nothing with it (PA3).
+**Frame time.** Desktop lab frames only, noisy: 9.9 to 17 ms without rows, 0 to 3.7 ms more with four rows. No
+phone number, no `?q=low` toggle diff (PA8).
+**Not built, on purpose.** Building destruction: the path from today's code, with file references and sizes, and
+the smallest first slice are in docs/design/PHYSICS_ENGINE.md "Buildings on the engine: what is needed".
+**Tests.** `npm run typecheck` clean. The lab scenarios above. The unit and GPU suites were not run (no engine
+kernel or shared code changed: one line of wiring in `install.ts`, one new file behind a flag).
