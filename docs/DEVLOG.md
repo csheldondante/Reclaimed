@@ -23424,3 +23424,244 @@ stone 6 x 6 x 4 from 24 cells: mean rebound 0.256 cells, still 1.90 s after the 
 
 **What.** Two tests with today's numbers as bounds; the diagnosis and the four things to do are in PE35. No material
 number was changed: the fix is a tuning of brittle materials the owner should see in the lab, and the session ended.
+
+## 2026-11-15 — fine collision by distance field, built and measured alone (PF1–PF13, `physics10-fine`)
+
+**What.** The fine half of body ↔ body collision as its own module, not wired into the game: `src/engine/sdf/`
+(`contract.ts`, `models.ts`, `fine.ts`, `arena.ts`, `shapes.ts`), `src/shaders/engine/sdf-model.wgsl`, `sdf-bake.wgsl`,
+`sdf-fine.wgsl`. docs/design/PHYSICS_ENGINE.md "Fine collision" has the design, the contracts and the table.
+
+**Why this method.** The owner, 2026-11-15: "SDF with JFA on GPU sounds like a winner for the fine collision". The
+note's tree ↔ tree and mip-pyramid options moved to "considered, not chosen".
+
+**Why each choice.**
+- *Distance to the voxel's box, two floods in one.* The flood keeps the nearest matter voxel and the nearest empty
+  voxel a voxel. Distance to the other voxel's box (not its centre) puts the zero on the voxel faces and makes corners
+  exact: with centre distances a voxel diagonal to a corner read 1.23 where the truth is 0.87.
+- *Both bodies give samples.* In the corner test the face's own samples report a gap of 0.08 for a corner 0.5 deep.
+- *A sample is a point on the open face, edge or corner*, one a surface voxel, so a box's corner is exact with no more
+  samples than surface voxels.
+- *Threads packed in chunks of 64 with an indirect dispatch*, so small models beside big ones waste at most 63 threads
+  and a pair whose bound spheres miss costs one thread. The transform from the sampler's voxels to the field's is
+  composed once a half pair, so a thread reads one record, one sample and 8 field words.
+- *Three field formats built to measure the packing* the note guessed at: `f32`, `snorm8` (1 B), `grad8` (distance and
+  a kept gradient, 4 B). `grad8` came from a test finding: the trilinear field's own gradient steps at cell faces, and
+  on a 12-voxel ball it is 18° from the true ball's normal on average (38° at worst); the kept, interpolated gradient
+  is 8° (17°) and continuous.
+
+**Measured** (desktop proxy: Intel Xe integrated, Dawn D3D12 in Node, `SDF_BENCH=1 npx vitest run --project gpu
+sdf-fine-bench`, timestamps round the pass, median of 16; `data/perf/sdf/fine-bench.json`). 256 touching pairs of 16³:
+0.66 / 0.59 / 0.66 ms (`f32` / `snorm8` / `grad8`), 553,280 threads, 414 contacts. 1,024 pairs: 2.2 to 2.4 ms. 256
+deep pairs of 16³: 0.66 to 0.72 ms with 102,000 contacts. So the cost is the threads (about 1.1 ns each), not the
+contacts. 32³, 256 touching pairs: 1.4 to 2.2 ms. Bake: 64 models of 16³ in 9 ms wall (18 dispatches), of 32³ in 60 to
+72 ms; one model about 1 ms. A 16³ box is 29,504 B (`f32`, `grad8`) or 12,008 B (`snorm8`).
+The bench page headless (Chrome, D3D11, `node scripts/sdfbench.mjs --query "formats=grad8,snorm8,f32&sides=16&pairs=256,1024&window=1&windows=2"`,
+exit 0, report saved, the Download button present): 256 pairs 0.84 to 1.28 ms by the GPU-done toggle, no frame
+interval difference (the frame stays inside the refresh).
+
+**Tests** (Node, real Dawn): `sdf-bake` 15 pass, `sdf-fine` 33 pass, `sdf-arena` (unit) 3 pass. The flood equals the
+brute-force distance for thin and concave models; its only misses are 64 voxels deep inside a 32-voxel ball (0.175
+voxels at most). Contacts equal a CPU mirror's; scenes: ball on ball, box on a face, an edge, a corner, a box on a
+tilted box, an L in a notch, separated pairs, mixed resolutions, a re-bake after voxels go, drops counted, the cap.
+
+**Found on the way.** The trilinear field rounds edges: within a voxel of an edge the normal leans (PF3). The cost is
+at the 1 ms line set for the pass and does not fall with fewer contacts (PF2: cull samples by brick before threads).
+The unit project has one failure that is on the base commit too (`src/roadlab/control.ts` not in the writing lint's
+table, PF13).
+
+**Shared files touched** (small, for the merge): `src/gpu/transfers.ts` (4 entries), `vite.config.ts` (the page and the
+report kind), `src/perf/report-io.ts` (the kind), `test/unit/writing-sources.test.ts` (the bench page).
+
+**Not done.** No phone run (PF11). Not wired into the engine; the body row layouts are the note's and unreconciled with
+`physics10` (PF10). No brick cull (PF2), no contact reduction (PF4), no 3D-texture field (PF9).
+
+## 2026-11-15 — fine collision, round 2: threads follow the overlap, four rows a pair, deterministic (PF2–PF6, `physics10-fine`)
+
+**Why.** Round 1's finding: the pass cost 1.1 ns a thread whatever the thread found (553,280 threads for 414 contacts),
+and a deep overlap gave 400 contacts a pair. Main's scope: cull before threads, reduce on the GPU, try the cheap normal
+fixes, make it deterministic, write the join with `physics10`. Rulings: `grad8`; both bodies sample; margin and cap are
+parameters.
+
+**What changed.**
+- *Bake:* samples sorted into bricks of 4³ voxels with an offset table, by three dispatches with no atomics (count a
+  brick, offsets a model, write a brick). The order is fixed, which also gives PF6.
+- *Pass:* `expand`, `cull`, `args`, `fine`, `reduce`. `cull` keeps a brick when its box, turned into the other body's
+  frame, reaches that body's box grown by the margin. `fine` runs a workgroup of 16 threads on up to 16 samples of a
+  surviving brick and writes into the pair's record. `reduce` writes at most four rows a pair at fixed places.
+- *Contract:* rows at `pair * 4`; `hits` (128 B a pair: sample contacts, largest energy, rows written, normal sums);
+  `counts` 32 B (rows, pairs past the room, sample groups, groups dropped, sample contacts).
+
+**Measured** (desktop proxy, Intel Xe integrated, Dawn D3D12, timestamps, median of 16, `grad8`,
+`SDF_BENCH=1 SDF_FORMATS=grad8 npx vitest run --project gpu sdf-fine-bench`). Before → after, ms: touching 16³ × 256
+0.66 → 0.20; × 1,024 2.36 → 0.46; × 4,096 10.6 → 1.97; touching 32³ × 256 2.16 → 0.33; deep 16³ × 256 0.72 → 0.46;
+× 1,024 2.75 → 1.70; × 4,096 11.9 → 6.6; deep 32³ × 256 1.11 → 2.16 (worse: the cap no longer bounds threads, and
+each sample contact does ten atomic writes). Threads at touching 16³ × 1,024: 2.2 M → 369 k.
+
+**Two forms tried and dropped, with numbers.** A workgroup of 64 a brick: bricks hold 14 samples on average, so
+1.6 M threads and 1.97 ms at 16³ × 1,024 (worse than the cull saved). One thread a half pair looping over all its
+bricks: 0.72 ms for 64 pairs of 32³, because a thread's loop is serial and 729 steps hold the dispatch up; a thread a
+row of bricks gave 0.13 ms.
+
+**Normals.** The rows' mean normal against the true one (`grad8`): ball 1.6° (samples 43° at worst), face over a
+corner 9.5° (54°), an edge in a face 46° at worst (one row is a real sample on the other box's 45° flank), a corner
+8°. Reading the gradient at the surface point instead: no change (9.4°, 46°, 7.6°). Left off.
+
+**Tests** (Node, Dawn): `sdf-bake` 15, `sdf-fine` 39 (13 a format), `sdf-arena` 3. New: the exact sample order and
+brick table against the CPU's; each pair's record and rows against the mirror; rows spread over the patch; pairs and
+groups past the room counted; the cap as a stride whose ticks sum to the uncapped count; the same rows bit for bit
+across passes and across fresh bakes.
+
+**Not done.** No phone run. The input rows are still the note's, not `physics10`'s (the join list is in the note).
+`normalAtSurface` is a measured variant left in the code, off.
+
+## 2026-11-15 — the coarse pass built alone: exact, over budget; the fine pass's atomic load (PF14, PF16–PF21, `physics10-fine`)
+
+**What.** `src/engine/sdf/coarse.ts` and `sdf-coarse.wgsl`: a hash over body bounds with five levels (a body in one
+cell at the level that holds its diameter), an awake hash rebuilt every tick, a sleeper hash rebuilt only when the
+engine's sleep epoch changes, a pairs pass that writes each pair once with no sort, a sphere test then a 15-axis box
+test, pairs in the fine pass's layout. The fine pass reads the engine's rows as `physics10` has them, plus a model row
+a body. docs/design/PHYSICS_ENGINE.md "Round 3" has the scheme, the table and the stop.
+
+**Why stopped.** Main's line: about 0.3 ms at 4,096 rows with 10% awake. Measured 0.72 ms (loose field) and 4.2 ms
+(pile), desktop proxy (Intel Xe integrated, timestamps, median of 12, `SDF_BENCH=1 npx vitest run --project gpu
+sdf-coarse-bench`, `data/perf/sdf/coarse-bench.json`). The pair set is exact in every test. The cost is the longest
+single thread: a big awake body walking every smaller sleeper in its level's cells. Fewer awake rows cost more.
+
+**Measured choices.** Levels: 1 level 3.8 ms, 2 levels 1.6, 3 levels 1.4, 5 levels 1.6 to 1.8 (pile, 4,096 rows, all
+awake). Plain reads of the table in the pairs kernel and visiting only reachable cells: loose 4,096 / 446 awake went
+2.0 → 0.72 ms, pile 5.3 → 4.2.
+
+**The fine pass.** A per-thread atomic load of the group count was most of its cost: read from the indirect arguments
+instead, touching 16³ × 1,024 0.46 → 0.20 ms, × 4,096 1.97 → 0.59; deep 32³ × 256 2.16 → 0.92 (PF14). Reading a bid
+before the atomic write measured twice as slow (an atomic load is an interlocked operation on D3D): not done.
+
+**Tests** (Node, Dawn): `sdf-coarse` 7, `sdf-fine` 36 (12 a format), `sdf-bake` 15.
+
+**Not done.** The end-to-end scenes in `sdfbench.html`; the fine pass's dispatches sized by the pair count (PF19); a
+coarse pass inside the budget.
+
+## 2026-11-15 — the coarse pass rebuilt: sorted cells, two stages, every dispatch sized by what exists (PF18–PF22, `physics10-fine`)
+
+**Why.** Round 3 stopped with the coarse pass at 0.72 ms (loose) and 4.2 ms (pile) for 4,096 rows with 10% awake.
+Main asked for the cause by measurement first. Pile, 446 awake: 3.80 ms; sleepers out of the hash 0.20 ms; nothing
+awake under a clock tick; the longest walk by one thread 1,263 entries (1,254 sleepers); 84,560 entries by 2,230
+threads. The owner on the structure: "If the hash is fast enough I like the simplicity of it": no sweep and prune.
+
+**What.** `sdf-coarse.wgsl` and `coarse.ts` rewritten: each table a counting sort by bucket; stage A cuts the runs
+into work items of 16; stage B, indirect over the items, tests an entry a thread. Oversize bodies in their own short
+lists, exact. The fine pass's expand, cull and reduce are indirect from the pair count (PF19) and a pair's record is
+cleared by its expand thread. Three levels by default.
+
+**Measured** (desktop proxy, Intel Xe integrated, timestamps, median of 12; `SDF_BENCH=1 npx vitest run --project gpu
+sdf-coarse-bench`, `data/perf/sdf/coarse-bench.json`). Coarse, 4,096 rows, 10% awake: loose 0.72 → 0.39 ms, pile
+4.2 → 0.46 ms; nothing awake 0.07 ms (one clock tick). The whole path (coarse + fine + reduction): loose 3.08 → 0.46,
+pile 6.75 → 0.66 ms. Worse: a loose field all awake (4,096 rows 0.46 → 1.18 ms) and 16,384 rows (10% awake 1.25 →
+2.16 loose), because the table build's sums run over every bucket with atomic loads (PF22).
+
+**Tests** (Node, Dawn): `sdf-coarse` 8 (the brute-force pair set with 1, 2, 3 and 5 levels, with sleepers, with bodies
+bigger than the top cell, at 10,000 rows), `sdf-fine` 36, `sdf-bake` 15. `sdfbench.html` v3 has the whole path's
+scenes and was run headless once.
+
+**Not done.** Stable pair slots (described in the note, left for the join). The plain-read table build (PF22). The
+phone run.
+
+## 2026-11-15 — the coarse pass's floor removed; the hand-over for the join (PF22–PF25, `physics10-fine`)
+
+**Why.** Round 4 left a 0.33 ms floor whenever a row was awake and a cost that grew with the rows (2.2 ms at 16,384
+rows with 10% awake). Measured by part first (`SDF_PROBE=1 npx vitest run --project gpu sdf-probe`): the awake table's
+build was all of it (0.26 ms at 1,024 rows, 2.2 to 2.4 ms at 16,384, whatever was awake), its sums reading every
+bucket's count with an atomic load.
+
+**What.** A table is now two buffers: the counters (atomics) and the table proper (plain words). The build costs 0.07
+to 0.13 ms in every scene. Work items hold 8 entries (16: slower all awake; 4: slower for an awake body among
+sleepers, 0.66 ms against 0.20).
+
+**Measured** (desktop proxy, Intel Xe integrated, timestamps, median of 12). Coarse, round 4 → now: 4,096 rows with
+10% awake loose 0.39 → 0.20, pile 0.46 → 0.26 ms; loose all awake 1.18 → 0.46 to 0.66; 16,384 rows with 10% awake
+loose 2.16 → 0.39, pile 2.3 → 0.46; pile all awake 3.7 → 1.84. Whole path at 4,096 rows with 10% awake: loose 0.33,
+pile 0.66 ms.
+
+**Not built** (main's items 2 and 3): rooms that grow with a fail-safe tick, and stable pair slots. Both are
+specified in the note's hand-over (PF24, PF25). The three rooms still count what they drop and can miss a collision
+when they run out.
+
+**Tests** (Node, Dawn): `sdf-coarse` 8, `sdf-fine` 36, `sdf-bake` 15.
+
+## 2026-11-15 — rooms that grow, and a tick that fails safe (PF24, `physics10-fine`)
+
+**Why.** The owner's rule is paging before caps, and three rooms of the coarse pass could miss a collision when full
+(oversize lists of 256, work items, pairs), as could the fine pass's sample groups. Each only counted what it dropped.
+
+**What.** Oversize bodies are now a run of the tables' counting sort, so they have exactly the room they need. Work
+items, pairs and sample groups count what was asked of them whole and keep the most since the last read;
+`SdfCollide` (new, `src/engine/sdf/collide.ts`: both passes with one set of rooms) reads those words, 128 B, every 8
+ticks, asynchronously, and makes a room that is half full bigger at the next tick: buffers and bind groups only, no
+pipeline (`SdfCoarse.grow`, `SdfFine.grow`). In the tick that runs out, the rows that may lack a pair or a contact are
+flagged in `missing`, a word a row on the GPU, for the solver to hold still. The two tables became one buffer so that
+stage B has a storage binding free for the flags.
+
+**Measured** (desktop proxy, pile of 4,096 rows all awake). The read costs 0.19 ms of CPU in the tick that starts it
+and no GPU time I can see (2.02 against 2.04 ms a tick). A growth costs 0.06 to 0.46 ms making buffers; no tick
+stalls. The coarse bench is unchanged within the clock's step (pile, 16,384 rows all awake: coarse 1.4 to 1.8 ms).
+
+**Tests** (Node, Dawn): `sdf-rooms` 6 new (rooms an eighth of the need; each room alone; 400 oversize rows; rows grown
+mid-run; no pipeline made), `sdf-coarse` 8, `sdf-fine` 36, `sdf-bake` 15; unit `sdf-rooms` 3.
+
+**Left.** The solver's side of `missing` (the engine's). The read is a timed read in play at the join (PF26, the
+owner's call). Hacks: PF27.
+
+## 2026-11-15 — stable pair slots (PF25, `physics10-fine`)
+
+**Why.** Pairs are appended in thread order, so a pair's contact rows moved from tick to tick. The solver will keep
+impulses a pair between ticks and needs them to stay put.
+
+**What.** A persistent open-addressing table in the fine pass, keyed by the pair's rows (lower, higher): double
+hashing, one walk of 32 at most a pair a pass, in a new kernel (`slots`) before `expand`. Contact rows are at
+`slot * 4`, with a 16 B key record beside them (pair, age, pair index); the pair's record names its slot. Entries are
+stamped with a pass epoch, so a pair absent for one pass has lost its slot with no sweep, and comes back to a zeroed
+slot with age 0. The table grows at half full, or when a pair finds no slot (that pair is flagged `MISS_SLOTS`), by
+a GPU rehash that keeps keys, ages and rows. `reduce` writes into the slot.
+
+**Measured** (desktop proxy, timestamps). `pairArgs` + `slots` alone: one clock tick (0.07 ms) at 4,549 and 5,701
+pairs, 0.20 to 0.26 ms at 23,152 pairs found and 0.33 ms when every pair claims. The whole path on the bench moved by
+less than its runs differ.
+
+**Tests** (Node, Dawn): `sdf-slots` 6 new; `sdf-fine` 36 and `sdf-rooms` 6 now read their rows through the slots.
+
+**Left.** PF28: a row's index inside a slot follows the reduction's order; the solver's own move at a growth.
+
+## 2026-11-15 — the fine pass's cull sized by each pair's own model (PF23, `physics10-fine`)
+
+**Why.** The cull dispatch covered, for every half pair, the brick rows of the store's biggest model: 81 rows for a
+crumb that has one brick, 3.75 M threads at 23,152 pairs. Round 5 named it as the cause of the largest row's 6.9 ms.
+
+**What.** `expand` turns the other body's box into a box of the sampler's bricks and appends a cull item a row of
+bricks inside it (7.3 a half pair in the pile); `cull` is dispatched indirectly over the items. The brick test is
+unchanged and so are the contact rows. The cull items are one more room that grows and fails safe (`MISS_CULL`).
+`expand` no longer tests the bound spheres (the coarse pass has).
+
+**Measured** (desktop proxy, three runs each side, the median run). Pile, 16,384 rows all awake: fine 5.64 → 4.65 ms,
+whole path 7.08 → 6.16 ms; with 10% awake 1.44 → 1.18 ms; the smaller scenes move by less than runs differ. So the
+cull was about a fifth of that fine pass. By part after: slots 0.26, expand and cull 0.8, the samples' threads 4.8 ms
+(9.7 M threads). The samples are the cost now (PF29).
+
+**Tests** (Node, Dawn): `sdf-rooms` 8 (two new: cull items past the room; a crumb on a slab asks for 7 rows of
+bricks), `sdf-fine` 36 unchanged against the CPU mirror, `sdf-slots` 6, `sdf-coarse` 8, `sdf-bake` 15.
+
+## 2026-11-15 — the hand-over made true again; the benches and the page rerun (`physics10-fine`)
+
+**What.** The note's "Hand-over: joining body ↔ body into the engine" is rewritten for what is there now: one object
+(`SdfCollide`: `encode`, the engine's submit, `poll`), the dispatch order of both passes, the rows' `missing` words,
+the slot in a pair's record and the key record beside the rows, what a growth replaces and how the solver moves its
+own impulses, and the tests to read first (`test/gpu/sdf-collide-rig.ts`). `SdfCollide.rehashFails` counts the pairs
+a growth of the slots could not place.
+
+**Measured.** The read and a growth with all five rooms (`data/perf/sdf/rooms-bench.json`): the read 0.17 ms of CPU
+in the tick that starts one; a growth 0.14 to 0.85 ms making buffers, and one growth tick of 8.4 ms against 2.9 when
+the two biggest buffers were made at once (PF27). The page, v4, headless once with 16,384 rows in (3 min 37 s, no
+error): the whole path at 4,096 rows 0.50 to 4.46 ms by the toggle, as round 5's runs within their spread; at 16,384
+rows 1.9 to 3.9 ms, and the pile with every row awake 6.8 ms by the batch (its toggle is over the display's refresh
+and reads frames, not the pass).
+
+**Tests** (Node, Dawn): `sdf-bake` 15, `sdf-fine` 36, `sdf-coarse` 8, `sdf-rooms` 8, `sdf-slots` 6; unit `sdf-rooms`
+3. `npm run typecheck` clean; the unit project's one failure is the base's (`roadlab/control.ts`, the writing lint).

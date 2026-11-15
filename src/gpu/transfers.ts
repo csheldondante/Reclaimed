@@ -86,6 +86,14 @@ const F24 = '§24 no per-frame readback in play';
 const S24 = '§24 reads are small and only after edits';
 
 export const TRANSFERS: TransferSite[] = [
+  // (physics10-fine, docs/design/PHYSICS_ENGINE.md "Fine collision": the model store and the fine pass; not wired into play yet — `play` says what each will be once the engine steps it)
+  { kind: 'upload', file: 'engine/sdf/fine.ts', fn: 'SdfFine.setParams', size: 'small', what: 'the fine pass’s uniform, 48 B', why: 'the margin, the sample cap, the tick and the buffers’ rooms, once a pass', rate: 'frame', play: 'no' },
+  { kind: 'upload', file: 'engine/sdf/coarse.ts', fn: 'SdfCoarse.setParams', size: 'small', what: 'the coarse pass’s two uniforms, 48 B each', why: 'the rows in use, the levels, the top cell and the margin, once a pass', rate: 'frame', play: 'no' },
+  { kind: 'upload', file: 'engine/sdf/models.ts', fn: 'SdfModels.flush', n: 2, size: 'small', what: 'a model’s 32 B row and its occupancy bits (padded voxels / 8: 729 B for 16³, 4.9 KB for 32³), a call each a model baked', why: 'a model added, or its voxels changed on the CPU; a model whose bits a GPU pass wrote uploads only the row', rate: 'demand', play: 'no' },
+  { kind: 'copy', file: 'engine/sdf/models.ts', fn: 'SdfModels.room', size: 'large', what: 'a store buffer’s bytes in use (fields and samples: from 256 KB, doubling), GPU to GPU', why: 'the store ran out of room and doubled: the models already baked are kept', rate: 'demand', play: 'no' },
+  { kind: 'upload', file: 'perf/sdfbench.ts', fn: 'sdfBench', size: 'large', what: 'a scene’s awake list, 4 B a row (up to 64 KB at 16,384 rows)', why: 'the fine collision bench (sdfbench.html) only: a stand-in for the engine’s awake list, once a configuration', rate: 'demand', play: 'no' },
+  { file: 'engine/sdf/collide.ts', fn: 'SdfCollide.poll', what: 'what was asked of the body ↔ body rooms (pairs, work items, sample groups, pair slots): 128 B', why: 'the rooms grow from it (the owner: paging before caps); asynchronous, one read under way at most, no tick waits. Not stepped by the game yet: at the join it is a timed read in play, which §24 does not allow, and needs the owner’s word (BACKLOG PF26)', rate: 'timed', every: '8 ticks (readEvery), and the tick after a growth', play: 'no' },
+  { file: 'perf/sdfbench.ts', fn: 'readCounts', what: 'the fine pass’s counts, 16 B', why: 'the fine collision bench (sdfbench.html) only: contacts and dropped, once a configuration', rate: 'demand', play: 'no' },
   // ==== GPU→CPU reads ====
   // ---- the world's own buffers (WorldCore): the wrappers, then every caller ----
   // (citygen M4a–M4d, docs/design/CITYGEN.md: inputs once a town is made or edited; the reads are a run's own words)
