@@ -575,6 +575,11 @@ clipping it; and the host lists its draws, while parts are rows the host never l
 4. Option 1 plus the rock look in `fsBody` for a flagged word (the rest place carried to the fragment so the pattern
    does not swim): the cheapest way to the old route's look. Not built.
 
+**The ruling on PE38 (the orchestrator, 2026-11-15; pending the owner's eye in the lab): option 4.** The engine's own
+mesh stays (rounded for rock by surface nets over the model's voxels), and the rock look goes into the body's fragment
+shader, so engine stone matches the terrain's and the old route's rock. One mesh through rigid, expanded and settled
+states; no swap. As built: "Look round 3" below.
+
 ### How each state is drawn now
 
 | state | rock (stone, basalt, sandstone …) | what is built (brick, concrete, steel, wood) |
@@ -591,6 +596,12 @@ See the report of the look branch and DEVLOG. In short: engine stone now reads a
 prisms and no zigzag sides; it is plainer than the lattice route's speckled rock and than the terrain. Break faces
 are still cell-face polygons: a tilted part shows steps on its broken side. Brick shows clumps, but no courses or
 bricks in its faces. Steel is unchanged.
+
+## Look round 3 (2026-11-15)
+
+**Item 1: `burst` is gone.** The owner: "Lose energy, never gain it." A snapped bond changes no velocity; each side
+keeps its voxels' momentum; contacts between the sides stop them closing and never push; what the bond lets go is drawn
+as dust and chips. `test/gpu/engine-energy.test.ts` holds it over a whole drop (DEVLOG has the numbers).
 
 ## Hand-over: what is next
 

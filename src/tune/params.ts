@@ -104,7 +104,6 @@ const SPEC = {
       crackBrick: { label: 'crack speed, brick', units: 'cells/s', min: 2, max: 80, step: 1, def: 38 },
       shockReach: { label: 'shock reach', units: 'share a bond', min: 0, max: 0.98, step: 0.02, def: 0.85, help: 'the share of a hit\'s shock that passes from a voxel to the next: 0, only the struck voxels crack; near 1, the whole body' },
       roundRock: { label: 'rock mesh rounding', units: 'share', min: 0, max: 1, step: 0.05, def: 1, help: 'how far a rock body\'s mesh corners are drawn in from the cells\' own (surface nets over its voxels: flat sides, bevelled edges, smooth shading). Read when a body is made. What is built — brick, concrete, steel, wood — keeps the cells\' corners' },
-      burst: { label: 'burst', units: 'share', min: 0, max: 0.5, step: 0.01, def: 0.08, help: 'brittle materials: a joint that parts throws its two sides apart at this share of the shock\'s speed, so the pieces of a cracked block fall away from each other. 0: they stand as they were' },
       flawRock: { label: 'grain flaw, rock', units: 'share', min: 0.02, max: 1, step: 0.02, def: 0.5, help: 'a bond across the grain (between two blocks of a bedded stone, two bricks) snaps at this share of the give and of the crack speed: a hard hit parts the body along its grain. 1: no flaw' },
       flawConcrete: { label: 'grain flaw, concrete', units: 'share', min: 0.02, max: 1, step: 0.02, def: 0.4 },
       flawBrick: { label: 'grain flaw, brick', units: 'share', min: 0.02, max: 1, step: 0.02, def: 0.3, help: 'the mortar: how much weaker than the brick' },

@@ -323,7 +323,9 @@ fn finalize(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_inde
     }
   }
   // (x: how hard it hit, y: the shock that reached it last substep — for relax's cracks; its neighbours read both)
-  let shock0 = ps[3u * i].w;
+  // (its sign: `relax` snapped a bond of it last substep)
+  let shock0 = abs(ps[3u * i].w);
+  var snapped = ps[3u * i].w < 0.0;
   pw[3u * i + 2u] = vec4<f32>(hitV, shock0, 0.0, 0.0);
   let l = cellOf(L.k, L.dims);
   var bonds = pb[i];
@@ -351,7 +353,22 @@ fn finalize(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_inde
     var lim = min(pmB(m).x, pmB(matOf(ju)).x);
     if (matOf(ju) == m && grainOf(ju) != gi) { lim *= flawOf(m, gi, grainOf(ju)); }
     let r0 = length(ps[3u * i + 1u].xyz - ps[3u * ju + 1u].xyz);
-    if (abs(length(x.xyz - xj) / max(r0, 1e-3) - 1.0) > lim) { bonds &= ~(1u << k); }
+    if (abs(length(x.xyz - xj) / max(r0, 1e-3) - 1.0) > lim) {
+      bonds &= ~(1u << k);
+      snapped = true;
+    }
+  }
+  // What a snapped bond lets go is drawn, not added to anything's speed (the owner: "Lose energy, never gain it"): dust
+  // out of the crack and a chip now and then — particles, which weigh nothing in the body's sums. One voxel in four
+  // with a bond gone: a crack through a block is a line of dust, not a cloud.
+  if (snapped && pmD(m).y > 0.0) {
+    let seed = hash3(i, EU.g.w, 0x3c6fu);
+    if ((seed & 3u) == 0u) {
+      let r = vec3<f32>(f32((seed >> 8u) & 255u), f32((seed >> 16u) & 255u), f32(seed >> 24u)) / 255.0 - 0.5;
+      let loose = u32(pmC(m).w);
+      spawnPart(x.xyz + r * 0.5, v * 0.5 + r * vec3<f32>(1.2, 1.2, 0.6) + vec3<f32>(0.0, 0.0, 0.5), 2.0 + r.z, K_DUST_P, seed, (loose & 255u) << 8u);
+      if ((seed & 0x30u) == 0u) { spawnPart(x.xyz + r * 0.5, v * 0.5 + r * 3.0 + vec3<f32>(0.0, 0.0, 1.5), 1.2, K_CHIP_P, seed ^ 0x77u, (m & 255u) << 8u); }
+    }
   }
   if (nb > 0.0 && damp > 0.0) { v += dv / nb * damp; }
   v *= 1.0 - G.tune.voxelsAirDrag * h;
@@ -402,8 +419,6 @@ fn relax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   var kept = bonds;
   let gi = grainOf(i);
   var rough = 0u;
-  var kick = vec3<f32>(0.0);
-  var kicks = 0.0;
   let hi = max(own.x, own.y);
   for (var k = 0u; k < 26u; k++) {
     if ((bonds & (1u << k)) == 0u) { continue; }
@@ -423,18 +438,16 @@ fn relax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
     if (rnd < p) {
       kept &= ~(1u << k);
       if (!flaw) { rough++; }
-      // (a joint that parts throws its two sides apart a little: the pieces of a cracked block do not stand as they
-      // were, a hairline between them — pmD.z, a share of the shock; HACK, BACKLOG PE37: speed from nowhere)
-      if (flaw && alive(ju)) {
-        kick -= normalize(px[2u * ju].xyz - x.xyz + vec3<f32>(1e-6)) * hit;
-        kicks += 1.0;
-      }
     }
   }
-  if (kicks > 0.0) { ps[3u * i] = vec4<f32>(ps[3u * i].xyz + kick / kicks * pmD(m).z, ps[3u * i].w); }
+  // (A bond that snaps adds no speed to either side — the owner: "Lose energy, never gain it". Each side keeps the
+  // momentum its own voxels have, and the contacts between them stop them closing, never push.)
   if (kept != bonds) {
     pb[i] = kept;
     px[2u * i + 1u].w = bitcast<f32>(kept);
+    // (what the bonds let go is drawn as dust and chips by the next `finalize`, which has the particles bound: told by
+    // the sign of the shock word, whose size is the shock as before)
+    ps[3u * i].w = -max(ps[3u * i].w, 1e-6);
     // (a voxel the crack ran through on several sides, across its own grain, crumbles: rubble and dust along the break)
     let r2 = f32(hash3(i, EU.g.w, 0x51edu) & 0xffffu) / 65536.0;
     if (rough >= 3u && r2 < 0.35) { px[2u * i] = vec4<f32>(x.xyz, PV_CRUMBLE); }

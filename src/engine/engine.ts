@@ -770,7 +770,6 @@ export class Engine implements SimSystem {
       out[m * 16 + 12] = ring;
       if (crush !== undefined) out[m * 16 + 7] = crush;
       if (crack !== undefined) out[m * 16 + 13] = crack;
-      if (crush !== undefined) out[m * 16 + 14] = T.burst;
     };
     // (brittle: its rest shape never follows a bend — physics.ts PhysMat.yield 99)
     for (let m = 1; m < MAX_MATERIALS; m++) if (out[m * 16 + 2] >= 99) set(m, T.bounceRock, T.giveRock, T.ringRock, T.crushRock, T.crackRock);
@@ -784,7 +783,7 @@ export class Engine implements SimSystem {
   /** the table written when a number of it changed (the panel) */
   private latticeMats(): void {
     const T = TUNE.engine as Record<string, number>;
-    const key = T.burst + ['Rock', 'Concrete', 'Brick', 'Steel', 'Wood'].map((m) => `${T[`bounce${m}`]},${T[`give${m}`]},${T[`ring${m}`]},${T[`crush${m}`]},${T[`crack${m}`]}`).join();
+    const key = ['Rock', 'Concrete', 'Brick', 'Steel', 'Wood'].map((m) => `${T[`bounce${m}`]},${T[`give${m}`]},${T[`ring${m}`]},${T[`crush${m}`]},${T[`crack${m}`]}`).join();
     if (key === this.pmKey) return;
     this.pmKey = key;
     this.device.queue.writeBuffer(this.pm, 0, Engine.lattice());

@@ -23504,3 +23504,33 @@ rounding 0 is the body mesh). `engine-stone` 5 (new: a brick section and a stone
 70 % of each stays a body), `engine-settle` 8, `engine-break` 9, `engine-d0` 4, `engine` 13 pass.
 
 **Looked at** (stills, 412 x 915, the break station): see the hand-over in docs/design/PHYSICS_ENGINE.md.
+
+## 2026-11-15 — Physics engine, look round 3, item 1: `burst` removed; a break gains no energy (PE37, PE39)
+
+**Why.** The owner's rule: "Lose energy, never gain it." PE37's `burst` threw the two sides of a parted joint apart at a
+share of the shock's speed: speed from nowhere, put in so a cracked block would not draw as a whole one. The ruling: take
+it out; pieces part with what the impact gave them, and the crack is made to read by drawing it.
+
+**What.** `engine_lattice.wgsl` `relax`: the kick is gone. A bond that snaps changes no velocity: each side keeps its own
+voxels' momentum, and the contacts between the sides stop them closing and never push (as before). What a snapped bond
+lets go is drawn: one voxel in four with a bond gone that substep spawns a dust particle, one in sixteen a chip
+(`finalize`, which has the particles bound; a snap in `relax` is told to it by the sign of the shock word: PE39).
+Particles weigh nothing in any sum. The panel's `burst` and the table's word are removed.
+
+**Test first.** `test/gpu/engine-energy.test.ts` (3: stone 6 x 6 x 4 from 24 cells, stone 4 x 4 x 3 from 48, brick
+8 x 3 x 3 from 22), every tick from the drop to the settle, read from the row and then from its voxels:
+- kinetic energy at any tick after the hit is under what came in (78,239 in, 11,875 the most after, for the first);
+- mechanical energy (kinetic and height) never stands above an earlier tick's by more than 0.057 / 0.008 / 0.002 % of
+  what came in. What is not in that sum is the strain the bonds hold: brittle bonds give 1 %, and the squeezed block's
+  mean height comes back 0.014 cells. Bound: 0.3 %;
+- the kinetic energy moving sideways after a flat landing (none came in): 0.140 / 0.071 / 0.041 % of what came in. With
+  `burst` it was 0.291 / 0.173 / 0.142 %: the bounds (0.21, 0.12, 0.09 %) fail the old kernel and pass the new one. The
+  total-energy sum alone does not tell them apart: the landing takes far more out in the tick the burst put its share in.
+
+**Measured.** Parts a test unchanged: 4 x 4 x 3 stone from 8 / 24 / 48 cells: whole / 5 parts (2, 2, 6, 6, 32 voxels) /
+8 parts; the brick section 10 parts, 69 of 72 voxels kept; the stone slab flat from 30: 19 parts, 142 of 144.
+`engine` gpu tests: 6 files, 42 pass. Typecheck clean.
+
+**Hacks and limits.** PE39 (the sign of the shock word). Pieces of a block cracked on a flat landing stand where they
+were, as real ones do; they read only once the crack is drawn (the next items).
+
