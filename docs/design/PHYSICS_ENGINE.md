@@ -69,29 +69,96 @@ frames, because §3 says "A body is projected into the terrain only while it int
 
 ## Fine collision, body ↔ body
 
-The owner's steer (2026-11-15): "Just make bounding boxes or build trees and do tree tree collisions for intersecting
-RBs unless you think there is a faster GPU option? I do like spatial hashes but not for fully voxelated things". So:
-bounds in a hash for the coarse pass; never a voxel hash for rigid bodies; tree ↔ tree is the baseline to beat. All
-three options come from the one baked voxel model, shared by instances until a body deforms. Example: a 16³ model,
-about 1,350 surface voxels.
+**Chosen: a signed distance field per model, built on the GPU with a jump flood.** The owner, 2026-11-15: "SDF with
+JFA on GPU sounds like a winner for the fine collision". The earlier steer still holds for the coarse pass: "Just make
+bounding boxes or build trees and do tree tree collisions for intersecting RBs unless you think there is a faster GPU
+option? I do like spatial hashes but not for fully voxelated things". So: bounds in a hash give the pairs; the fine
+pass never hashes voxels.
 
-| | memory a model | work per intersecting pair | contact data | after fracture or deformation |
-|---|---|---|---|---|
-| **a. tree ↔ tree** (the owner's baseline; octree over the voxels) | ~5 KB (≤ 585 nodes × 8 B) | one thread a pair with a stack of node pairs (4 levels, ~64 entries), sphere tests per node pair; or level by level, a dispatch and an append buffer a level, no stack | leaf overlaps give the point; normal from the leaf's open faces; depth from the overlap along it | rebuild the tree per piece |
-| **b. occupancy mip pyramid** (an implicit octree, no pointers) | ~0.6 KB (512 B of bits + mips) | one thread a surface voxel of A inside B's bounds: 1–3 bit reads coarse to fine, most end at the first; no stack | point is the sample; normal from 6 neighbour bits; depth by ≤ 3 steps | re-splat bits, reduce mips: two small dispatches; the erode rule clears a bit in place |
-| **c. signed distance field** (distance + gradient, 4 B a voxel) | 16 KB | one thread a surface voxel of A: 8 reads, no branch | depth and a smooth normal in one sample | re-splat, then a jump flood (4 passes at 16³); eroding needs a rebake |
+**Built on `physics10-fine`, not wired into the game.** `src/engine/sdf/` (`contract.ts` the layouts, `models.ts` the
+store and bake, `fine.ts` the pass), `src/shaders/engine/sdf-*.wgsl`, tests `test/gpu/sdf-bake.test.ts` and
+`sdf-fine.test.ts`, the desktop bench `sdf-fine-bench.test.ts`, the phone bench `sdfbench.html`.
 
-Impact energy is the same for all: ½ · effective mass · (closing speed along the normal)², summed per pair.
+- **Model store.** One row a model (32 B: field offset, padded sides, sample offset and count, centre of mass, cells a
+  voxel). Each model is padded by one empty voxel a side. Occupancy bits go in; the bake writes the field and the
+  list of surface voxels. Instances share a row until a body deforms.
+- **Bake.** Seed, then a jump flood of ceil(log2(side)) + 1 passes, then finalize and commit: 9 dispatches for a batch
+  of 16³ models (a batch floods up to 2^18 padded voxels; more models run as more batches in the one submit). The
+  flood keeps the nearest matter voxel and the nearest empty voxel for every voxel; distance is to that voxel's box,
+  so the zero lies on the voxel faces. A model baked again after its voxels change takes the same path: `update`
+  (voxels changed on the CPU) or `rebakeFromGpu` (bits written by a GPU pass, no upload).
+- **Fine pass.** `expand` (a thread a half pair: bound spheres, the transform composed once, chunks of 64 samples
+  appended), `args` (the dispatch size, on the GPU), `fine` (a thread a sample: into the other body's frame, bounds,
+  8 field reads, a contact appended). Nothing is read back.
+- **Contact row, 48 B** (`contract.ts`): `u32 a, u32 b, f32 energy, u32 mats (a | b << 16), vec3f point, f32 depth,
+  vec3f normal (from b to a), f32 closing`. Counts in a 16 B buffer: contacts asked, contacts dropped, chunks, chunks
+  dropped. A reader takes min(asked, room).
+- **Inputs it expects** (stage 1 and 2's rows): `bodyPose` (pos, inverse mass; quat), `bodyVel` (linear, rest timer;
+  angular in the world frame, bound radius), `bodyInfo` (inverse inertia diagonal, material; flags, priority, model
+  row, grid id), `pairs` (a, b) with the count in word 0 of its own buffer.
 
-On a Mali tiler the stack traversal in (a) is the weak spot: threads of a workgroup diverge and the group waits for
-its slowest. (b) prunes like a tree with none of that. (c) costs the most memory but gives the smooth normals that
-"deflect and topple" wants. **Recommendation, to be settled by measurement: (b) for the test, and (c) only if (b)'s
-face-quantised normals look wrong in the lab.** This is my proposal, not the owner's method.
+**Choices where the design was silent** (mine, each a proposal the owner can turn):
 
-**The benchmark:** `test/gpu/fine-collide-bench.test.ts`. 64, 256 and 1,024 intersecting pairs of 8³ and 16³ models
-at random poses; each option fills the same contact buffer; contacts checked against a CPU brute-force reference; ms
-per option printed (`FINE_LOG=1`). Then the same three on the phone bench as toggled windows: the phone is the final
-word. If tree ↔ tree wins or is within noise, it is the choice.
+1. **Both bodies give samples.** A corner of one body in a flat face of the other is seen only by the corner's own
+   sample: in the corner test, the face's samples alone report no overlap for a corner 0.5 deep. Cost: twice the
+   threads.
+2. **Sample cap 2,048 a half pair.** A bigger model's samples are taken evenly, the offset turning each tick, so every
+   sample is tested once in ceil(count / cap) ticks. A 16³ box has 1,352 samples (none skipped); a 32³ box 5,768
+   (each tested every third tick).
+3. **Margin 0.25 cells.** Gaps up to the margin give contacts with a negative depth.
+4. **Field format, by measurement.** Three were built: `f32` (4 B a voxel), `snorm8` (1 B, sixteenths of a voxel),
+   `grad8` (4 B: the snorm8 distance and a unit gradient kept at the bake, both interpolated). **`grad8` is my pick**:
+   the same speed as `f32` on the desktop, a normal that is continuous from cell to cell, and on a 12-voxel ball its
+   normals are within 8° of the true ball's on average (17° at worst) against 18° (38°) for the other two. `snorm8`
+   is the one to take if memory matters more: 12 KB for a 16³ model against 29.5 KB. The phone bench runs all three.
+5. **A surface sample is a point, not a ball.** It sits on the voxel's open face, edge or corner, so box corners are
+   exact. A voxel with no single open side on any axis (the inside of a one-voxel plate) is a ball of half a voxel.
+
+**Tested** (33 fine tests and 15 bake tests pass on Dawn, all three formats). The flood matches the brute-force
+distance at every voxel for boxes, a ball, an L, a notched block, a one-voxel plate and rod, a hollow shell, a diagonal
+stair, a comb and a girder. Its only misses: 64 voxels of a 32-voxel ball, 8.4 voxels or more inside, at most 0.175
+voxels off. The GPU's contacts equal a CPU mirror's (0.005 cells, 1°). Against the exact voxel geometry: on smooth
+ground (no edge within 1 voxel, 2 for `grad8`) depth and normal are exact; near an edge the depth is within 0.37
+voxels and the normal leans towards the next face.
+
+**Measured, desktop proxy** (Intel Xe integrated, Dawn D3D12 in Node, timestamp queries round the pass, median of 16;
+the adapter's clock ticks in 0.066 ms steps). `touch`: each pair overlapping by 0.75 voxels. `deep`: a third of each
+body inside the other.
+
+| scene | model | pairs | f32 ms | snorm8 ms | grad8 ms | threads | contacts |
+|---|---|---|---|---|---|---|---|
+| touch | 8³ | 256 | 0.39 | 0.20 | 0.20 | 141 k | 654 |
+| touch | 16³ | 64 | 0.20 | 0.20 | 0.20 | 140 k | 66 |
+| touch | 16³ | **256** | **0.66** | **0.59** | **0.66** | 553 k | 414 |
+| touch | 16³ | 1,024 | 2.2 | 2.3 | 2.4 | 2.2 M | 1,501 |
+| touch | 16³ | 4,096 | 9.0 | 9.6 | 10.6 | 8.9 M | 6,018 |
+| touch | 32³ | 256 | 2.1 | 1.4 | 2.2 | 1.0 M | 390 |
+| touch | 32³ | 4,096 | 16.8 | 18.4 | 18.6 | 16.8 M | 5,188 |
+| deep | 16³ | 256 | 0.66 | 0.66 | 0.72 | 553 k | 102 k |
+| deep | 32³ | 256 | 1.2 | 1.2 | 1.1 | 1.0 M | 194 k |
+
+Every row is in `data/perf/sdf/fine-bench.json`. Bake, wall time: one 16³ model about 1 ms (mostly the submit), 64 of
+them 9 ms; 64 of 32³ 60 to 72 ms. Bytes a 16³ box: 29,504 (`f32`, `grad8`) or 12,008 (`snorm8`); a 32³ box 185 KB or
+67 KB. The pass's own buffers at 256 pairs: 115 KB of work, plus 48 B a contact row.
+
+**The finding to weigh before building on it.** 256 pairs of 16³ cost 0.6 to 0.7 ms here by timestamps, and 0.8 to
+1.3 ms in headless Chrome by the bench page's toggle: at the 1 ms line set for this pass. The cost follows the
+threads (about 1.1 ns each) and hardly the contacts: a touching pair spends over 99% of its threads on samples
+nowhere near the other body. The fix is to cull before threads are made: samples sorted into bricks at the bake, and
+`expand` making chunks only for bricks inside the other body's bounds (PF2). I estimate a tenth of the threads for
+touching pairs; not measured.
+
+**For the phone:** `sdfbench.html` (dev server: `http://<this PC>:5173/sdfbench.html`), about 5 minutes for every
+format, size and pair count; `?formats=grad8&sides=16&pairs=256,1024` for a short run. It toggles the pass on and off
+in windows and offers the report to download. The numbers to read are each row's `toggleDoneMs` and `toggleFrameMs`.
+
+**Considered, not chosen** (both from the same baked voxel model):
+
+- **Tree ↔ tree** (an octree over the voxels, about 5 KB a 16³ model): one thread a pair with a stack of node pairs.
+  The owner's first baseline. On a tiler the threads of a workgroup diverge and the group waits for its slowest;
+  normals come from leaf faces. Not built.
+- **Occupancy mip pyramid** (about 0.6 KB): one thread a surface voxel, 1 to 3 bit reads. The least memory, but its
+  normals are voxel faces. Not built.
 
 ## How the lattice becomes stage 4
 
@@ -126,7 +193,7 @@ Each step: a Node gpu test, a lab station, a before/after GIF against today's de
 ## Departures from DESIGN.md, and additions
 
 1. Sleepers are met through their own model, not their projection (§10 is silent). Cost: a second, event-built hash.
-2. Fine collision by mip pyramid (or SDF) instead of the owner's tree ↔ tree, only if the benchmark says so.
+2. Fine collision by signed distance field, the owner's choice of 2026-11-15, instead of the first baseline, tree ↔ tree.
 3. Owner + normal packed in the interval's spare word: at most 65,535 owners in a window.
 4. Paged particles with a GPU free stack; models shared until deformed (copy on deform). Additions.
 5. The budget's unit is voxels deforming at once. §10 says "a fixed budget per frame"; this is my reading.
@@ -135,14 +202,19 @@ Each step: a Node gpu test, a lab station, a before/after GIF against today's de
 
 ## Hacks and limits
 
-- Contacts are one per surface sample; big bodies need a sample cap, found on the phone.
+- Contacts are one per surface sample. A half pair tests at most 2,048 samples a pass (a number of mine, to be set on
+  the phone); a deep overlap gives hundreds of contacts a pair and nothing reduces them yet (PF4).
+- The distance field rounds edges: within a voxel of an edge (two for `grad8`) a contact's normal leans towards the
+  next face, up to 54° at single samples. A box over another's corner gets a mean normal 9° off the face (PF3).
+- The fine pass costs about 1.1 ns a thread whether or not the sample is near the other body (PF2).
 - Jacobi accumulation with fixed-point atomics: stacks settle slower than a coloured solve. §10 leaves the choice to
   measurement.
-- Mip-pyramid normals are quantised to voxel faces. Re-splatting a bent body loses shape below one voxel.
+- Re-splatting a bent body loses shape below one voxel.
 - Buildings collide at column resolution until owner + normal lands; no insides until INT8.
 - The hash chain guard (128) stays in stage 4 unless the budget makes it unreachable: a silent drop today.
 - Positions are f32 in window space; the shift on a slide stays.
-- Nothing in this note has been run except the bench below.
+- Of this note, the fine collision pass (tests and desktop bench) and the lattice bench below have been run. The rest
+  has not.
 
 ## Open questions for the owner
 

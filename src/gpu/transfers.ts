@@ -86,6 +86,11 @@ const F24 = '§24 no per-frame readback in play';
 const S24 = '§24 reads are small and only after edits';
 
 export const TRANSFERS: TransferSite[] = [
+  // (physics10-fine, docs/design/PHYSICS_ENGINE.md "Fine collision": the model store and the fine pass; not wired into play yet — `play` says what each will be once the engine steps it)
+  { kind: 'upload', file: 'engine/sdf/fine.ts', fn: 'SdfFine.setParams', size: 'small', what: 'the fine pass’s uniform, 32 B', why: 'the margin, the sample cap, the tick and the buffers’ room, once a pass', rate: 'frame', play: 'no' },
+  { kind: 'upload', file: 'engine/sdf/models.ts', fn: 'SdfModels.flush', n: 2, size: 'small', what: 'a model’s 32 B row and its occupancy bits (padded voxels / 8: 729 B for 16³, 4.9 KB for 32³), a call each a model baked', why: 'a model added, or its voxels changed on the CPU; a model whose bits a GPU pass wrote uploads only the row', rate: 'demand', play: 'no' },
+  { kind: 'copy', file: 'engine/sdf/models.ts', fn: 'SdfModels.room', size: 'large', what: 'a store buffer’s bytes in use (fields and samples: from 256 KB, doubling), GPU to GPU', why: 'the store ran out of room and doubled: the models already baked are kept', rate: 'demand', play: 'no' },
+  { file: 'perf/sdfbench.ts', fn: 'readCounts', what: 'the fine pass’s counts, 16 B', why: 'the fine collision bench (sdfbench.html) only: contacts and dropped, once a configuration', rate: 'demand', play: 'no' },
   // ==== GPU→CPU reads ====
   // ---- the world's own buffers (WorldCore): the wrappers, then every caller ----
   // (citygen M4a–M4d, docs/design/CITYGEN.md: inputs once a town is made or edited; the reads are a run's own words)

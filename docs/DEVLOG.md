@@ -23207,3 +23207,53 @@ as it did in round 120; it reports no voxel counts, so it can't yet give ms per 
 `/?skipmenu=1&level=playground&tutorial=0&q=low&physbench=1&pairs=lattice:runs`.
 
 **Not done.** No engine code, no test, no lab station, no phone number.
+
+## 2026-11-15 — fine collision by distance field, built and measured alone (PF1–PF13, `physics10-fine`)
+
+**What.** The fine half of body ↔ body collision as its own module, not wired into the game: `src/engine/sdf/`
+(`contract.ts`, `models.ts`, `fine.ts`, `arena.ts`, `shapes.ts`), `src/shaders/engine/sdf-model.wgsl`, `sdf-bake.wgsl`,
+`sdf-fine.wgsl`. docs/design/PHYSICS_ENGINE.md "Fine collision" has the design, the contracts and the table.
+
+**Why this method.** The owner, 2026-11-15: "SDF with JFA on GPU sounds like a winner for the fine collision". The
+note's tree ↔ tree and mip-pyramid options moved to "considered, not chosen".
+
+**Why each choice.**
+- *Distance to the voxel's box, two floods in one.* The flood keeps the nearest matter voxel and the nearest empty
+  voxel a voxel. Distance to the other voxel's box (not its centre) puts the zero on the voxel faces and makes corners
+  exact: with centre distances a voxel diagonal to a corner read 1.23 where the truth is 0.87.
+- *Both bodies give samples.* In the corner test the face's own samples report a gap of 0.08 for a corner 0.5 deep.
+- *A sample is a point on the open face, edge or corner*, one a surface voxel, so a box's corner is exact with no more
+  samples than surface voxels.
+- *Threads packed in chunks of 64 with an indirect dispatch*, so small models beside big ones waste at most 63 threads
+  and a pair whose bound spheres miss costs one thread. The transform from the sampler's voxels to the field's is
+  composed once a half pair, so a thread reads one record, one sample and 8 field words.
+- *Three field formats built to measure the packing* the note guessed at: `f32`, `snorm8` (1 B), `grad8` (distance and
+  a kept gradient, 4 B). `grad8` came from a test finding: the trilinear field's own gradient steps at cell faces, and
+  on a 12-voxel ball it is 18° from the true ball's normal on average (38° at worst); the kept, interpolated gradient
+  is 8° (17°) and continuous.
+
+**Measured** (desktop proxy: Intel Xe integrated, Dawn D3D12 in Node, `SDF_BENCH=1 npx vitest run --project gpu
+sdf-fine-bench`, timestamps round the pass, median of 16; `data/perf/sdf/fine-bench.json`). 256 touching pairs of 16³:
+0.66 / 0.59 / 0.66 ms (`f32` / `snorm8` / `grad8`), 553,280 threads, 414 contacts. 1,024 pairs: 2.2 to 2.4 ms. 256
+deep pairs of 16³: 0.66 to 0.72 ms with 102,000 contacts. So the cost is the threads (about 1.1 ns each), not the
+contacts. 32³, 256 touching pairs: 1.4 to 2.2 ms. Bake: 64 models of 16³ in 9 ms wall (18 dispatches), of 32³ in 60 to
+72 ms; one model about 1 ms. A 16³ box is 29,504 B (`f32`, `grad8`) or 12,008 B (`snorm8`).
+The bench page headless (Chrome, D3D11, `node scripts/sdfbench.mjs --query "formats=grad8,snorm8,f32&sides=16&pairs=256,1024&window=1&windows=2"`,
+exit 0, report saved, the Download button present): 256 pairs 0.84 to 1.28 ms by the GPU-done toggle, no frame
+interval difference (the frame stays inside the refresh).
+
+**Tests** (Node, real Dawn): `sdf-bake` 15 pass, `sdf-fine` 33 pass, `sdf-arena` (unit) 3 pass. The flood equals the
+brute-force distance for thin and concave models; its only misses are 64 voxels deep inside a 32-voxel ball (0.175
+voxels at most). Contacts equal a CPU mirror's; scenes: ball on ball, box on a face, an edge, a corner, a box on a
+tilted box, an L in a notch, separated pairs, mixed resolutions, a re-bake after voxels go, drops counted, the cap.
+
+**Found on the way.** The trilinear field rounds edges: within a voxel of an edge the normal leans (PF3). The cost is
+at the 1 ms line set for the pass and does not fall with fewer contacts (PF2: cull samples by brick before threads).
+The unit project has one failure that is on the base commit too (`src/roadlab/control.ts` not in the writing lint's
+table, PF13).
+
+**Shared files touched** (small, for the merge): `src/gpu/transfers.ts` (4 entries), `vite.config.ts` (the page and the
+report kind), `src/perf/report-io.ts` (the kind), `test/unit/writing-sources.test.ts` (the bench page).
+
+**Not done.** No phone run (PF11). Not wired into the engine; the body row layouts are the note's and unreconciled with
+`physics10` (PF10). No brick cull (PF2), no contact reduction (PF4), no 3D-texture field (PF9).

@@ -1,0 +1,247 @@
+{
+ "kind": "sdfbench",
+ "version": 1,
+ "build": "26b1602f",
+ "startedAt": "2026-11-15T17:55:54.873Z",
+ "endedAt": "2026-11-15T17:56:26.767Z",
+ "what": "fine collision (SDF, JFA bake): toggleFrameMs and toggleDoneMs are the pass on less off, per pass; batchMs a batch alone, wall, per pass. No timestamp queries.",
+ "scene": {
+  "kind": "touch",
+  "cap": 2048,
+  "margin": 0.25,
+  "windowS": 1,
+  "windows": 2
+ },
+ "device": {
+  "adapter": {
+   "vendor": "intel",
+   "architecture": "xe-lpg",
+   "device": "",
+   "description": ""
+  },
+  "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36",
+  "clientHints": {
+   "brands": [
+    {
+     "brand": "Not-A.Brand",
+     "version": "99"
+    },
+    {
+     "brand": "Google Chrome",
+     "version": "157"
+    },
+    {
+     "brand": "Chromium",
+     "version": "157"
+    }
+   ],
+   "mobile": false,
+   "model": "",
+   "platform": "Windows",
+   "platformVersion": "19.0.0"
+  },
+  "screen": [
+   412,
+   915,
+   2.5999999046325684
+  ]
+ },
+ "wakeLock": {
+  "held": true,
+  "log": []
+ },
+ "rows": [
+  {
+   "format": "grad8",
+   "side": 16,
+   "kind": "touch",
+   "pairs": 256,
+   "reps": 2,
+   "toggleFrameMs": -0.013,
+   "toggleDoneMs": 0.84,
+   "batchMs": 1.638,
+   "on": {
+    "frameMs": 9.89,
+    "doneMs": 5.15,
+    "frames": 202
+   },
+   "off": {
+    "frameMs": 9.92,
+    "doneMs": 3.47,
+    "frames": 202
+   },
+   "threads": 553280,
+   "contacts": 414,
+   "dropped": 0,
+   "chunksDropped": 0,
+   "passBytes": 12697664
+  },
+  {
+   "format": "grad8",
+   "side": 16,
+   "kind": "touch",
+   "pairs": 1024,
+   "reps": 1,
+   "toggleFrameMs": 0.017,
+   "toggleDoneMs": 3.941,
+   "batchMs": 3.25,
+   "on": {
+    "frameMs": 9.92,
+    "doneMs": 7.32,
+    "frames": 201
+   },
+   "off": {
+    "frameMs": 9.9,
+    "doneMs": 3.38,
+    "frames": 202
+   },
+   "threads": 2220608,
+   "contacts": 1501,
+   "dropped": 0,
+   "chunksDropped": 0,
+   "passBytes": 13041728
+  },
+  {
+   "format": "snorm8",
+   "side": 16,
+   "kind": "touch",
+   "pairs": 256,
+   "reps": 2,
+   "toggleFrameMs": -0.004,
+   "toggleDoneMs": 1.1,
+   "batchMs": 1.813,
+   "on": {
+    "frameMs": 9.9,
+    "doneMs": 5.66,
+    "frames": 202
+   },
+   "off": {
+    "frameMs": 9.91,
+    "doneMs": 3.46,
+    "frames": 202
+   },
+   "threads": 553280,
+   "contacts": 414,
+   "dropped": 0,
+   "chunksDropped": 0,
+   "passBytes": 12697664
+  },
+  {
+   "format": "snorm8",
+   "side": 16,
+   "kind": "touch",
+   "pairs": 1024,
+   "reps": 1,
+   "toggleFrameMs": 0.012,
+   "toggleDoneMs": 3.888,
+   "batchMs": 3.5,
+   "on": {
+    "frameMs": 9.93,
+    "doneMs": 7.33,
+    "frames": 201
+   },
+   "off": {
+    "frameMs": 9.91,
+    "doneMs": 3.44,
+    "frames": 202
+   },
+   "threads": 2220608,
+   "contacts": 1501,
+   "dropped": 0,
+   "chunksDropped": 0,
+   "passBytes": 13041728
+  },
+  {
+   "format": "f32",
+   "side": 16,
+   "kind": "touch",
+   "pairs": 256,
+   "reps": 3,
+   "toggleFrameMs": -0.008,
+   "toggleDoneMs": 1.279,
+   "batchMs": 1.75,
+   "on": {
+    "frameMs": 9.91,
+    "doneMs": 7.26,
+    "frames": 202
+   },
+   "off": {
+    "frameMs": 9.93,
+    "doneMs": 3.43,
+    "frames": 202
+   },
+   "threads": 553280,
+   "contacts": 413,
+   "dropped": 0,
+   "chunksDropped": 0,
+   "passBytes": 12697664
+  },
+  {
+   "format": "f32",
+   "side": 16,
+   "kind": "touch",
+   "pairs": 1024,
+   "reps": 1,
+   "toggleFrameMs": -0.005,
+   "toggleDoneMs": 3.937,
+   "batchMs": 2.85,
+   "on": {
+    "frameMs": 9.91,
+    "doneMs": 7.16,
+    "frames": 202
+   },
+   "off": {
+    "frameMs": 9.92,
+    "doneMs": 3.22,
+    "frames": 201
+   },
+   "threads": 2220608,
+   "contacts": 1493,
+   "dropped": 0,
+   "chunksDropped": 0,
+   "passBytes": 13041728
+  }
+ ],
+ "bakes": [
+  {
+   "format": "grad8",
+   "side": 16,
+   "bakeOneMs": 3,
+   "bake64Ms": 9.1,
+   "boxBytes": {
+    "field": 23328,
+    "samples": 5408,
+    "occupancy": 732,
+    "row": 36,
+    "total": 29504
+   }
+  },
+  {
+   "format": "snorm8",
+   "side": 16,
+   "bakeOneMs": 3.2,
+   "bake64Ms": 9.3,
+   "boxBytes": {
+    "field": 5832,
+    "samples": 5408,
+    "occupancy": 732,
+    "row": 36,
+    "total": 12008
+   }
+  },
+  {
+   "format": "f32",
+   "side": 16,
+   "bakeOneMs": 3.2,
+   "bake64Ms": 9.4,
+   "boxBytes": {
+    "field": 23328,
+    "samples": 5408,
+    "occupancy": 732,
+    "row": 36,
+    "total": 29504
+   }
+  }
+ ],
+ "errors": []
+}
