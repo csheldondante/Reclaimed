@@ -11,12 +11,13 @@
 // SDF_BENCH=1 also measures the read and a growth (printed, and in data/perf/sdf/rooms-bench.json).
 import fs from 'node:fs';
 import { afterAll, beforeAll, expect, test } from 'vitest';
-import { MISS_GROUPS, MISS_ITEMS, MISS_PAIRS, type BodyRow } from '../../src/engine/sdf/contract';
+import { MISS_CULL, MISS_GROUPS, MISS_ITEMS, MISS_PAIRS, type BodyRow } from '../../src/engine/sdf/contract';
 import type { CollideOptions } from '../../src/engine/sdf/collide';
 import { SdfModels } from '../../src/engine/sdf/models';
-import { coarseScene, coarseShapes } from '../../src/engine/sdf/shapes';
+import { axisAngle, bodyOf, coarseScene, coarseShapes } from '../../src/engine/sdf/shapes';
 import { testGpu, type TestGpu } from './dawn';
 import { expectSafe, rig as rigOf, rowsOf, type Tick } from './sdf-collide-rig';
+import { expectReduced, makeScene } from './sdf-harness';
 
 let g: TestGpu;
 let store: SdfModels;
@@ -48,7 +49,7 @@ test('room for an eighth of what the scene asks: while the rooms grow every row 
 
   const eighth = (n: number) => Math.ceil(n / 8);
   // (the pair slots: a table an eighth of the pairs, where it should be twice them)
-  const r = rig(scene.bodies, { pairRoom: eighth(full.asked.pairs), itemRoom: eighth(full.asked.items), groupRoom: eighth(full.asked.groups), slotRoom: 256 });
+  const r = rig(scene.bodies, { pairRoom: eighth(full.asked.pairs), itemRoom: eighth(full.asked.items), cullRoom: eighth(full.asked.cull), groupRoom: eighth(full.asked.groups), slotRoom: 256 });
   let slotless = 0;
   let ticks = 0;
   let last: Tick | null = null;
@@ -75,13 +76,14 @@ test('room for an eighth of what the scene asks: while the rooms grow every row 
   expect(last, `the rooms had not grown after ${ticks} ticks: ${JSON.stringify(r.c.rooms)}`).not.toBeNull();
   // (a clean tick can come while a room is still over half full: the reads after it finish the growth, with nothing flagged)
   for (let k = 0; k < 3; k++) expect((await r.tick()).missing.some((m) => m !== 0)).toBe(false);
-  expect(new Set(r.c.growths.map((x) => x.room))).toEqual(new Set(['pairs', 'items', 'groups', 'slots']));
+  expect(new Set(r.c.growths.map((x) => x.room))).toEqual(new Set(['pairs', 'items', 'cull', 'groups', 'slots']));
   expect(slotless).toBeGreaterThan(100);
   expect(r.c.rooms.slots).toBeGreaterThan(full.asked.pairs * 2);
   // (grown until what is asked is under half of each)
   expect(r.c.rooms.pairs).toBeGreaterThan(full.asked.pairs * 2);
   expect(r.c.rooms.items).toBeGreaterThan(full.asked.items * 2);
   expect(r.c.rooms.groups).toBeGreaterThan(full.asked.groups * 2);
+  expect(r.c.rooms.cull).toBeGreaterThan(full.asked.cull * 2);
   expect([...last!.pairs].sort()).toEqual([...full.pairs].sort());
   for (const x of full.pairs) expect([last!.samples.get(x), last!.rowsOf.get(x)]).toEqual([full.samples.get(x), full.rowsOf.get(x)]);
   // settled: more ticks grow nothing more
@@ -137,6 +139,43 @@ test('sample groups past the room: both rows of every pair with contacts left ou
   const paired = new Set(t.pairs.flatMap(rowsOf));
   t.missing.forEach((m, i) => expect(m === 0 || (m === MISS_GROUPS && paired.has(i))).toBe(true));
   r.destroy();
+});
+
+test('cull items past the room: both rows of every pair with contacts left out are flagged (MISS_CULL), and no other row', async () => {
+  const scene = coarseScene(600, 1, 'pile', ids, 8);
+  const roomy = rig(scene.bodies, { readEvery: 0 });
+  const full = await roomy.tick();
+  roomy.destroy();
+  const r = rig(scene.bodies, { cullRoom: Math.ceil(full.asked.cull / 4), readEvery: 0 });
+  const t = await r.tick();
+  expect(t.asked.cullDropped).toBe(full.asked.cull - Math.ceil(full.asked.cull / 4));
+  const thin = t.pairs.filter((x) => t.samples.get(x) !== full.samples.get(x));
+  expect(thin.length).toBeGreaterThan(10);
+  for (const x of thin) for (const row of rowsOf(x)) expect(t.missing[row]).toBe(MISS_CULL);
+  const paired = new Set(t.pairs.flatMap(rowsOf));
+  t.missing.forEach((m, i) => expect(m === 0 || (m === MISS_CULL && paired.has(i))).toBe(true));
+  r.destroy();
+});
+
+test('the cull follows each pair’s own model: a crumb on a slab asks for a handful of rows of bricks, not the slab’s 27 twice, and its contacts are whole', async () => {
+  const [crumb, , , , slab] = specs;
+  // (the store also holds the slab: the dispatch used to give every half pair the biggest model's 81 rows)
+  const scene = makeScene(g, 'grad8', [crumb, slab], [bodyOf(crumb, 0, [3.2, 4.1, 4.75], axisAngle([0, 0, 1], 0.4)), bodyOf(slab, 1, [0, 0, 0])], [0, 1]);
+  const r = await scene.run();
+  expectReduced(scene, r);
+  expect(r.pairs[0].rows.length).toBeGreaterThanOrEqual(3);
+  // the crumb's one row of bricks, and the slab's rows under the crumb's padded box grown by the margin (two or three by two)
+  expect(r.cull).toBeGreaterThanOrEqual(2);
+  expect(r.cull).toBeLessThanOrEqual(8);
+  expect(r.cullDropped).toBe(0);
+  // two slabs crossed, one lying on the other: every row of each that the other covers, no more than there are
+  const two = makeScene(g, 'grad8', [slab], [bodyOf(slab, 0, [0, 0, 0]), bodyOf(slab, 0, [0, 0, 7.7], axisAngle([0, 0, 1], Math.PI / 4))], [0, 1]);
+  const r2 = await two.run();
+  expectReduced(two, r2);
+  expect(r2.cull).toBeGreaterThan(9);
+  expect(r2.cull).toBeLessThanOrEqual(54);
+  scene.destroy();
+  two.destroy();
 });
 
 test('oversize bodies have no room to run out of: 400 rows bigger than the top cell, awake and asleep, give the brute-force set', async () => {
@@ -245,7 +284,7 @@ test.skipIf(!process.env.SDF_BENCH)('the cost of the read and of a growth (deskt
     const roomy = rig(scene.bodies, { readEvery: 0 });
     const full = await roomy.tick();
     roomy.destroy();
-    const r = rig(scene.bodies, { pairRoom: Math.ceil(full.asked.pairs / 8), itemRoom: Math.ceil(full.asked.items / 8), groupRoom: Math.ceil(full.asked.groups / 8), readEvery: 8 });
+    const r = rig(scene.bodies, { pairRoom: Math.ceil(full.asked.pairs / 8), itemRoom: Math.ceil(full.asked.items / 8), cullRoom: Math.ceil(full.asked.cull / 8), groupRoom: Math.ceil(full.asked.groups / 8), slotRoom: 1024, readEvery: 8 });
     const ticks: { wallMs: number; encodeMs: number; grew: number }[] = [];
     for (let k = 0; k < 64; k++) {
       const grown = r.c.growths.length;

@@ -2,7 +2,7 @@
 // buffers, an SdfCollide over them, and one tick read back: the pairs, each one's record and slot, the rows' `missing`
 // words, what was asked of the rooms; and brute force's pair set (test/support/sdf-coarse-ref.ts).
 import { expect } from 'vitest';
-import { COUNT_BRICKS, COUNT_BRICKS_DROPPED, COUNT_SLOT_FAILS, COUNTS_BYTES, NO_SLOT, PAIR_HIT_BYTES, PAIR_HIT_ROWS, PAIR_HIT_SAMPLES, PAIR_HIT_SLOT, SLOT_KEY_AGE, SLOT_KEY_BYTES, SLOT_KEY_PAIR, packBodies, type BodyRow } from '../../src/engine/sdf/contract';
+import { COUNT_BRICKS, COUNT_BRICKS_DROPPED, COUNT_CULL, COUNT_CULL_DROPPED, COUNT_SLOT_FAILS, COUNTS_BYTES, NO_SLOT, PAIR_HIT_BYTES, PAIR_HIT_ROWS, PAIR_HIT_SAMPLES, PAIR_HIT_SLOT, SLOT_KEY_AGE, SLOT_KEY_BYTES, SLOT_KEY_PAIR, packBodies, type BodyRow } from '../../src/engine/sdf/contract';
 import { PAIR_ASKED, PAIR_HEADER_WORDS, PAIR_ITEMS_ASKED, PAIR_ITEMS_DROPPED, type CoarseInputs } from '../../src/engine/sdf/coarse';
 import { SdfCollide, type CollideOptions } from '../../src/engine/sdf/collide';
 import type { SdfModels, SdfModelSpec } from '../../src/engine/sdf/models';
@@ -32,7 +32,7 @@ export interface Tick {
   keyed: Map<string, boolean>;
   /** the rows' `missing` words */
   missing: Uint32Array;
-  asked: { pairs: number; items: number; itemsDropped: number; groups: number; groupsDropped: number; slotFails: number };
+  asked: { pairs: number; items: number; itemsDropped: number; groups: number; groupsDropped: number; slotFails: number; cull: number; cullDropped: number };
 }
 
 export interface Rig {
@@ -97,7 +97,7 @@ export function rig(world: RigWorld, bodies: BodyRow[], opts: Partial<CollideOpt
       c.poll();
       if (wait) await c.settled();
       expect(g.takeErrors()).toEqual([]);
-      const out: Tick = { pairs: [], samples: new Map(), rowsOf: new Map(), slotOf: new Map(), ageOf: new Map(), keyed: new Map(), missing, asked: { slotFails: counts[COUNT_SLOT_FAILS], pairs: head[PAIR_ASKED], items: head[PAIR_ITEMS_ASKED], itemsDropped: head[PAIR_ITEMS_DROPPED], groups: counts[COUNT_BRICKS], groupsDropped: counts[COUNT_BRICKS_DROPPED] } };
+      const out: Tick = { pairs: [], samples: new Map(), rowsOf: new Map(), slotOf: new Map(), ageOf: new Map(), keyed: new Map(), missing, asked: { slotFails: counts[COUNT_SLOT_FAILS], cull: counts[COUNT_CULL], cullDropped: counts[COUNT_CULL_DROPPED], pairs: head[PAIR_ASKED], items: head[PAIR_ITEMS_ASKED], itemsDropped: head[PAIR_ITEMS_DROPPED], groups: counts[COUNT_BRICKS], groupsDropped: counts[COUNT_BRICKS_DROPPED] } };
       for (let i = 0; i < k; i++) {
         const key = `${Math.min(raw[2 * i], raw[2 * i + 1])},${Math.max(raw[2 * i], raw[2 * i + 1])}`;
         out.pairs.push(key);

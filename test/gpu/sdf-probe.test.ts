@@ -1,6 +1,6 @@
 // (the coarse pass's cost by part: SDF_PROBE=1; the note's isolation numbers)
 import { test } from 'vitest';
-import { COUNT_SLOT_EPOCH, packBodies } from '../../src/engine/sdf/contract';
+import { COUNT_BRICKS, COUNT_CULL, COUNT_SLOT_EPOCH, COUNTS_BYTES, packBodies } from '../../src/engine/sdf/contract';
 import { SdfCoarse } from '../../src/engine/sdf/coarse';
 import { SdfFine } from '../../src/engine/sdf/fine';
 import { SdfModels } from '../../src/engine/sdf/models';
@@ -46,7 +46,7 @@ test.skipIf(!process.env.SDF_PROBE)('the coarse pass by part', async () => {
   }
 }, 300_000);
 
-// (the pair slots' cost: SDF_PROBE=1. The fine pass when every pair finds its own slot (a settled scene), and when
+// (the pair slots' cost, and the fine pass by part: SDF_PROBE=1. The fine pass when every pair finds its own slot (a settled scene), and when
 // every pair claims one (the probe jumps the table's epoch before each pass, so every slot has gone stale); and
 // pairArgs + slots alone, both ways)
 test.skipIf(!process.env.SDF_PROBE)('the pair slots by part', async () => {
@@ -92,11 +92,17 @@ test.skipIf(!process.env.SDF_PROBE)('the pair slots by part', async () => {
     };
     const found = await run(false);
     const claimed = await run(true);
+    const fc = new Uint32Array(await g.read(fine.counts, COUNTS_BYTES));
     fine.upTo = 0;
     const aloneFound = await run(false);
     const aloneClaimed = await run(true);
+    fine.upTo = 1;
+    const toCull = await run(false);
+    fine.upTo = 2;
+    const toFine = await run(false);
     const c = new Uint32Array(await g.read(coarse.pairBuf, 16));
     lines.push(`SLOTS ${kind} ${rows} rows, ${scene.awake.length} awake, ${c[0]} pairs: fine pass, every pair found ${found.toFixed(3)} | every pair claiming ${claimed.toFixed(3)} | pairArgs + slots alone: found ${aloneFound.toFixed(3)}, claiming ${aloneClaimed.toFixed(3)} ms`);
+    lines.push(`FINE BY PART ${kind} ${rows} rows, ${c[0]} pairs, ${fc[COUNT_CULL]} cull items, ${fc[COUNT_BRICKS]} groups: slots ${aloneFound.toFixed(3)} | + expand and cull ${toCull.toFixed(3)} | + the samples ${toFine.toFixed(3)} | + reduce ${found.toFixed(3)} ms`);
     coarse.destroy();
     fine.destroy();
     for (const b of Object.values(inputs)) b.destroy();

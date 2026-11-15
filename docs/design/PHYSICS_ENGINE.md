@@ -444,6 +444,7 @@ happens when it runs out:
 | the engine's rows (`rows`) | `SdfCollide.encode` sees it on the CPU: the tables double before the tick's passes | at once, in that tick |
 | work items (64 a row) | stage A flags its row and every entry of the run it could not cut into items (`MISS_ITEMS`) | by the read |
 | pairs (8 a row) | stage B flags both rows of the pair it could not write (`MISS_PAIRS`) | by the read |
+| cull items (8 a half pair) | `expand` flags both rows of the pair whose rows of bricks found no room (`MISS_CULL`) | by the read |
 | sample groups (64 a half pair) | `cull` flags both rows of the pair whose group found no room (`MISS_GROUPS`) | by the read |
 | a pair's contact rows | four a pair by design (the reduction); not a room | |
 | pair slots (a table twice the pairs) | `slots` flags both rows of the pair that found no free entry (`MISS_SLOTS`) | by the read |
@@ -515,6 +516,41 @@ Measured (`SDF_PROBE=1 npx vitest run --project gpu sdf-probe -t "pair slots"`; 
 `pairArgs` + `slots` alone, median of 12): one clock tick (0.07 ms) for 4,549 and 5,701 pairs whether every pair finds
 its slot or claims a new one; 0.20 to 0.26 ms for 23,152 pairs found, 0.33 ms claiming. On the bench table the whole
 path moved by less than the runs differ (pile, 4,096 rows all awake: 1.57 to 1.97 ms before, 1.77 to 1.97 after).
+
+**The cull sized by each pair's own model (PF23).** The cull dispatch gave every half pair the brick rows of the
+store's biggest model (81 for the slab). Now `expand`, which already has the transform, turns the other body's box
+(grown by the margin) into a box of the sampler's bricks and appends a cull item for each row of bricks along x
+inside it; `cullArgs` sizes an indirect dispatch from the item count; `cull` is a thread an item and tests only the
+bricks of that row between the box's ends. The brick test itself is unchanged, so the contacts are the same rows
+(77,578 in the largest scene, before and after; a few groups fewer, because the box of bricks is tighter than the
+old test at a body's corners). The bound-sphere test left `expand` (the coarse pass has done it; a pair that is far
+apart asks for no item) to make room for the items' counter and the `missing` words in its eight bindings. The cull
+items are a room like the others: counted whole, grown by the read, both rows flagged `MISS_CULL` when it runs out.
+
+Before → after, the bench table (desktop proxy, Intel Xe, timestamps, median of 12 a run; three runs each side, the
+median run given; before is the slots commit):
+
+| scene | rows | awake | pairs | fine ms | whole path ms | cull items |
+|---|---|---|---|---|---|---|
+| loose | 4,096 | 446 | 131 | 0.13 → 0.13 | 0.26 → 0.26 | 1,875 |
+| loose | 4,096 | 4,096 | 609 | 0.20 → 0.39 | 0.46 → 0.85 | 9,196 |
+| loose | 16,384 | 1,740 | 476 | 0.33 → 0.33 | 0.72 → 0.66 | 6,794 |
+| loose | 16,384 | 16,384 | 2,409 | 0.92 → 0.72 | 2.16 → 1.90 | 35,810 |
+| pile | 4,096 | 446 | 1,016 | 0.26 → 0.33 | 0.46 → 0.46 | 14,502 |
+| pile | 4,096 | 4,096 | 5,701 | 1.31 → 1.25 | 1.70 → 1.70 | 85,314 |
+| pile | 16,384 | 1,740 | 4,549 | 1.11 → 0.85 | 1.44 → 1.18 | 64,942 |
+| pile | 16,384 | 16,384 | 23,152 | **5.64 → 4.65** | **7.08 → 6.16** | 339,350 |
+| pile | 4,096 | 0 | 0 | 0 | 0.07 | 0 |
+
+The 1,024-row scenes are at the clock's floor both sides (0.26 to 0.52 ms whole). Runs differ by one or two clock
+ticks (0.066 ms) in the small rows and by up to a third in the largest (after: 4.39, 4.65 and 5.77 ms), so only the
+last two rows show a change I would stand behind, and the loose field with 4,096 awake is not a real loss (its
+three runs after: 0.46, 0.85, 0.98; before: 0.46, 0.46, 0.52: one clock tick apart at best, unexplained at worst).
+
+**What the cull was not.** Round 5 read the largest row as "the fine pass, 6.9 ms of 8.7, because of the cull
+dispatch". By part now (`SDF_PROBE=1 … sdf-probe -t "pair slots"`, the same scene): slots 0.26 ms, expand and cull
+0.8, the samples' threads 4.8, reduce under a clock tick. The cull was a fifth; the rest is 9.7 M sample threads for
+23,152 pairs (420 a pair), which is the overlap itself in a pile half full of matter at random poses (BACKLOG PF29).
 
 ### Hand-over: joining body ↔ body into the engine
 

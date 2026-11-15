@@ -161,6 +161,11 @@ export const COUNT_PAIRS_DROPPED = 1;
 export const COUNT_BRICKS = 2;
 export const COUNT_BRICKS_DROPPED = 3;
 export const COUNT_SAMPLE_CONTACTS = 4;
+/** this pass: cull items asked for (a row of a sampler's bricks inside the other body's box; past the room they are not tested); cull items dropped */
+export const COUNT_CULL = 5;
+export const COUNT_CULL_DROPPED = 6;
+/** kept: the most cull items asked for in a pass since the CPU last cleared it */
+export const COUNT_HW_CULL = 12;
 /** this pass: pairs that claimed a new slot; pairs that found none (flagged MISS_SLOTS) */
 export const COUNT_SLOT_CLAIMS = 7;
 export const COUNT_SLOT_FAILS = 8;
@@ -187,6 +192,8 @@ export const MISS_PAIRS = 2;
 export const MISS_GROUPS = 4;
 /** the pair slots: a pair of this row found no slot for its contact rows, and has none this tick */
 export const MISS_SLOTS = 8;
+/** the fine pass's cull items: a pair of this row was tested with some of its bricks left out */
+export const MISS_CULL = 16;
 
 /** the most samples a model may keep: a sample's index is 16 bits in the reduction's bids */
 export const SDF_MAX_SAMPLES = 65536;

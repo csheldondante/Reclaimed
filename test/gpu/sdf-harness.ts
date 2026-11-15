@@ -2,7 +2,7 @@
 // fine pass, each pair's record and contact rows read back, and every sample contact of the same pairs from the CPU
 // mirror (test/support/sdf-reference.ts).
 import { expect } from 'vitest';
-import { CONTACT_BYTES, CONTACTS_PER_PAIR, COUNT_BRICKS, COUNT_BRICKS_DROPPED, COUNT_CONTACTS, COUNT_PAIRS_DROPPED, COUNT_SAMPLE_CONTACTS, COUNTS_BYTES, PAIR_HIT_BYTES, PAIR_HIT_ENERGY, PAIR_HIT_ROWS, PAIR_HIT_SAMPLES, PAIR_HIT_SLOT, NO_SLOT, SLOT_KEY_AGE, SLOT_KEY_BYTES, packBodies, unpackContacts, SDF_SNORM_SCALE, type BodyRow, type Contact, type SdfFormat } from '../../src/engine/sdf/contract';
+import { CONTACT_BYTES, CONTACTS_PER_PAIR, COUNT_BRICKS, COUNT_BRICKS_DROPPED, COUNT_CULL, COUNT_CULL_DROPPED, COUNT_CONTACTS, COUNT_PAIRS_DROPPED, COUNT_SAMPLE_CONTACTS, COUNTS_BYTES, PAIR_HIT_BYTES, PAIR_HIT_ENERGY, PAIR_HIT_ROWS, PAIR_HIT_SAMPLES, PAIR_HIT_SLOT, NO_SLOT, SLOT_KEY_AGE, SLOT_KEY_BYTES, packBodies, unpackContacts, SDF_SNORM_SCALE, type BodyRow, type Contact, type SdfFormat } from '../../src/engine/sdf/contract';
 import { SdfFine, type FineInputs, type FineOptions } from '../../src/engine/sdf/fine';
 import { SdfModels, type SdfModelSpec } from '../../src/engine/sdf/models';
 import { angleDeg, exactAt, mirrorContacts, refModel, unrot, type RefContact, type RefModel } from '../support/sdf-reference';
@@ -62,6 +62,9 @@ export interface RunResult {
   pairsDropped: number;
   bricks: number;
   bricksDropped: number;
+  /** cull items asked for, and dropped */
+  cull: number;
+  cullDropped: number;
   sampleContacts: number;
   pairs: PairResult[];
   /** every pair's rows together */
@@ -148,6 +151,8 @@ export function makeScene(g: TestGpu, format: SdfFormat, specs: SdfModelSpec[], 
         pairsDropped: c[COUNT_PAIRS_DROPPED],
         bricks: c[COUNT_BRICKS],
         bricksDropped: c[COUNT_BRICKS_DROPPED],
+        cull: c[COUNT_CULL],
+        cullDropped: c[COUNT_CULL_DROPPED],
         sampleContacts: c[COUNT_SAMPLE_CONTACTS],
         pairs: out,
         rows: out.flatMap((x) => x.rows),

@@ -157,13 +157,6 @@ export class SdfModels {
     return next;
   }
 
-  /** the most bricks along a side of any model in the store (the fine pass's cull dispatch covers that many rows) */
-  get maxBricksSide(): number {
-    let most = 1;
-    for (const r of this.recs) if (r.live) most = Math.max(most, Math.ceil(Math.max(...r.dims) / 4));
-    return most;
-  }
-
   get count(): number {
     return this.recs.filter((r) => r.live).length;
   }

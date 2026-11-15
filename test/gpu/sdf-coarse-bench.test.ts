@@ -6,7 +6,7 @@
 // sdfbench.html. Prints a table and writes data/perf/sdf/coarse-bench.json. Skipped otherwise.
 import fs from 'node:fs';
 import { expect, test } from 'vitest';
-import { COUNTS_BYTES, COUNT_BRICKS, COUNT_CONTACTS, COUNT_PAIRS_DROPPED, COUNT_SAMPLE_CONTACTS, packBodies } from '../../src/engine/sdf/contract';
+import { COUNTS_BYTES, COUNT_BRICKS, COUNT_CONTACTS, COUNT_CULL, COUNT_PAIRS_DROPPED, COUNT_SAMPLE_CONTACTS, packBodies } from '../../src/engine/sdf/contract';
 import { PAIR_ASKED, SdfCoarse } from '../../src/engine/sdf/coarse';
 import { SdfFine } from '../../src/engine/sdf/fine';
 import { SdfModels } from '../../src/engine/sdf/models';
@@ -53,7 +53,7 @@ test.skipIf(!process.env.SDF_BENCH)('coarse collision: GPU ms by rows, awake sha
     const asked = new Uint32Array(await g.read(coarse.pairBuf, 16))[PAIR_ASKED];
     const c = new Uint32Array(await g.read(fine.counts, COUNTS_BYTES));
     expect(g.takeErrors()).toEqual([]);
-    const row = { rows, awake: scene.awake.length, kind, levels, coarseMs: ms(0, 1), fineMs: ms(2, 3), allMs: ms(0, 3), pairs: asked, pairsDropped: c[COUNT_PAIRS_DROPPED], threads: c[COUNT_BRICKS] * 16, sampleContacts: c[COUNT_SAMPLE_CONTACTS], contactRows: c[COUNT_CONTACTS], coarseBytes: coarse.bytes };
+    const row = { rows, awake: scene.awake.length, kind, levels, coarseMs: ms(0, 1), fineMs: ms(2, 3), allMs: ms(0, 3), pairs: asked, pairsDropped: c[COUNT_PAIRS_DROPPED], cullItems: c[COUNT_CULL], threads: c[COUNT_BRICKS] * 16, sampleContacts: c[COUNT_SAMPLE_CONTACTS], contactRows: c[COUNT_CONTACTS], coarseBytes: coarse.bytes };
     coarse.destroy();
     fine.destroy();
     qs.destroy();

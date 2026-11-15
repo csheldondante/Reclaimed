@@ -23412,3 +23412,21 @@ less than its runs differ.
 **Tests** (Node, Dawn): `sdf-slots` 6 new; `sdf-fine` 36 and `sdf-rooms` 6 now read their rows through the slots.
 
 **Left.** PF28: a row's index inside a slot follows the reduction's order; the solver's own move at a growth.
+
+## 2026-11-15 — the fine pass's cull sized by each pair's own model (PF23, `physics10-fine`)
+
+**Why.** The cull dispatch covered, for every half pair, the brick rows of the store's biggest model: 81 rows for a
+crumb that has one brick, 3.75 M threads at 23,152 pairs. Round 5 named it as the cause of the largest row's 6.9 ms.
+
+**What.** `expand` turns the other body's box into a box of the sampler's bricks and appends a cull item a row of
+bricks inside it (7.3 a half pair in the pile); `cull` is dispatched indirectly over the items. The brick test is
+unchanged and so are the contact rows. The cull items are one more room that grows and fails safe (`MISS_CULL`).
+`expand` no longer tests the bound spheres (the coarse pass has).
+
+**Measured** (desktop proxy, three runs each side, the median run). Pile, 16,384 rows all awake: fine 5.64 → 4.65 ms,
+whole path 7.08 → 6.16 ms; with 10% awake 1.44 → 1.18 ms; the smaller scenes move by less than runs differ. So the
+cull was about a fifth of that fine pass. By part after: slots 0.26, expand and cull 0.8, the samples' threads 4.8 ms
+(9.7 M threads). The samples are the cost now (PF29).
+
+**Tests** (Node, Dawn): `sdf-rooms` 8 (two new: cull items past the room; a crumb on a slab asks for 7 rows of
+bricks), `sdf-fine` 36 unchanged against the CPU mirror, `sdf-slots` 6, `sdf-coarse` 8, `sdf-bake` 15.

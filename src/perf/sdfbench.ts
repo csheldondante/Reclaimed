@@ -29,7 +29,7 @@ import { copyText, deviceTag, downloadJson, postDev, shareJson, stamp } from './
 
 declare const __BUILD_COMMIT__: string;
 
-const VERSION = 3;
+const VERSION = 4;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const mean = (a: number[]) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : NaN);
 const round = (v: number, d = 3) => (Number.isFinite(v) ? +v.toFixed(d) : null);
@@ -282,7 +282,7 @@ export async function sdfBench(): Promise<void> {
     build: __BUILD_COMMIT__,
     startedAt,
     endedAt: new Date().toISOString(),
-    what: 'fine collision (SDF, JFA bake; v2: samples culled by brick, four contact rows a pair at most): toggleFrameMs and toggleDoneMs are the pass on less off, per pass; batchMs a batch alone, wall, per pass. No timestamp queries.',
+    what: 'fine collision (SDF, JFA bake; v2: samples culled by brick, four contact rows a pair at most; v4: stable pair slots, the cull sized by each pair’s model, rooms that grow): toggleFrameMs and toggleDoneMs are the pass on less off, per pass; batchMs a batch alone, wall, per pass. No timestamp queries.',
     scene: { kind, cap: FINE_DEFAULT_CAP, margin: FINE_DEFAULT_MARGIN, windowS, windows },
     device: { adapter: { vendor: info.vendor, architecture: info.architecture, device: info.device, description: info.description }, ua: navigator.userAgent, clientHints: hints, screen: [innerWidth, innerHeight, devicePixelRatio] },
     wakeLock: { held: awake, log: wakeLog },

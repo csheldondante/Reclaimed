@@ -8,10 +8,10 @@
 // and read by the solver, the event stage and the lattice hand-over; and the slots' stamps, the `work` buffer (the
 // half pairs' records and the brick list, rebuilt every pass) and the indirect args.
 // Transfers: one 48 B uniform a pass. The fine dispatch is sized on the GPU (indirect).
-// Rooms: `maxPairs` (the coarse pass's pair room: collide.ts keeps them one), `maxBricks` (the sample groups' list)
-// and `slots` (the pair slots' table). Groups past the room and pairs that find no slot are counted and both rows of
-// their pair flagged in the engine-visible `missing` words (contract.ts MISS_GROUPS, MISS_SLOTS); `grow` makes any
-// room bigger with no new pipeline.
+// Rooms: `maxPairs` (the coarse pass's pair room: collide.ts keeps them one), `maxCull` (the cull items),
+// `maxBricks` (the sample groups' list) and `slots` (the pair slots' table). Items and groups past their room and
+// pairs that find no slot are counted and both rows of their pair flagged in the engine-visible `missing` words
+// (contract.ts MISS_CULL, MISS_GROUPS, MISS_SLOTS); `grow` makes any room bigger with no new pipeline.
 //
 // Stable pair slots (the scheme is in sdf-fine.wgsl's header): a pair keeps its slot, and so the place of its contact
 // rows, for as long as it is in the pair list every pass; absent for one pass, it has lost it, and a pair that comes
@@ -23,7 +23,9 @@
 // - Both bodies of a pair give samples, each in the other's field. One way misses a corner of the field's body
 //   resting in a flat face of the sampler until it is about a voxel deep. Cost: twice the threads.
 // - Threads follow the overlap: a model's samples are sorted into bricks of 4 × 4 × 4 voxels at the bake, and only the
-//   bricks whose box reaches the other body's box (grown by the margin) get threads, a workgroup 16 samples.
+//   bricks whose box reaches the other body's box (grown by the margin) get threads, a workgroup 16 samples. The
+//   bricks are found in two steps, each sized by the pair itself: `expand` asks for the rows of bricks inside the
+//   other body's box (cull items), `cull` tests the bricks of each row.
 // - A model with more samples than `cap` has every stride-th sample tested a tick (stride = ceil(count / cap)), the
 //   offset turning with the tick: every sample is tested once in `stride` ticks. Only the tick's samples get threads.
 // - Four contact rows a pair at most: the deepest sample, and the farthest out along three directions 120° apart
@@ -49,6 +51,8 @@ export interface FineOptions {
   margin?: number;
   /** groups of up to 16 samples (a brick of samples is one to four groups) a pass tests at most, all pairs together (default 64 a half pair, 4,096 at least); a group past it is counted as dropped and its pair's rows flagged in `missing`. It grows (collide.ts) */
   maxBricks?: number;
+  /** cull items a pass at most, all pairs together: a row of a sampler's bricks inside the other body's box (default 8 a half pair, 4,096 at least); an item past it is counted as dropped and its pair's rows flagged in `missing`. It grows (collide.ts) */
+  maxCull?: number;
   /** entries of the pair slots' table, a power of two (default: the power of two at or above maxPairs, 64 at least: at most half full while the pair room is, as collide.ts keeps it). It grows at half full */
   slots?: number;
 }
@@ -71,7 +75,7 @@ export interface FineInputs {
 export const FINE_DEFAULT_CAP = 2048;
 export const FINE_DEFAULT_MARGIN = 0.25;
 
-type Kernel = 'pairArgs' | 'slots' | 'rehash' | 'expand' | 'cull' | 'fineArgs' | 'fine' | 'reduce';
+type Kernel = 'pairArgs' | 'slots' | 'rehash' | 'expand' | 'cullArgs' | 'cull' | 'fineArgs' | 'fine' | 'reduce';
 
 export class SdfFine {
   /** contract.ts "A contact row": CONTACTS_PER_PAIR rows a slot, slot s's at s * CONTACTS_PER_PAIR; a pair's record names its slot and says how many are written. Replaced by `grow` */
@@ -89,11 +93,12 @@ export class SdfFine {
   /** the rooms (`grow` changes them) */
   maxPairs = 0;
   maxBricks = 0;
+  maxCull = 0;
   slots = 0;
   cap: number;
   margin: number;
-  /** for the bench's isolation only: encode pairArgs and slots alone (0), or everything (1) */
-  upTo = 1;
+  /** for the bench's isolation only: encode pairArgs and slots alone (0), up to the cull (1), up to the samples' threads (2), or everything (3) */
+  upTo = 3;
 
   private params: GPUBuffer;
   private work!: GPUBuffer;
@@ -119,8 +124,9 @@ export class SdfFine {
       pairArgs: mk('pairArgs', { 2: 'read', 7: 'rw', 11: 'rw' }),
       slots: mk('slots', { 1: 'read', 2: 'read', 7: 'rw', 10: 'rw', 12: 'rw', 15: 'rw', 16: 'rw', 17: 'rw' }),
       rehash: mk('rehash', { 7: 'rw', 10: 'rw', 16: 'rw', 17: 'rw', 19: 'read', 20: 'read', 21: 'read', 22: 'rw' }),
-      expand: mk('expand', { 1: 'read', 2: 'read', 3: 'read', 4: 'read', 6: 'read', 8: 'rw', 13: 'read' }),
-      cull: mk('cull', { 7: 'rw', 8: 'rw', 9: 'read', 15: 'rw' }),
+      expand: mk('expand', { 1: 'read', 2: 'read', 3: 'read', 6: 'read', 7: 'rw', 8: 'rw', 13: 'read', 15: 'rw' }),
+      cullArgs: mk('cullArgs', { 7: 'rw', 11: 'rw' }),
+      cull: mk('cull', { 7: 'rw', 8: 'rw', 9: 'read', 14: 'read', 15: 'rw' }),
       fineArgs: mk('fineArgs', { 2: 'read', 7: 'rw', 11: 'rw' }),
       fine: mk('fine', { 3: 'read', 4: 'read', 5: 'read', 8: 'rw', 9: 'read', 12: 'rw', 14: 'read' }),
       reduce: mk('reduce', { 3: 'read', 4: 'read', 5: 'read', 7: 'rw', 8: 'rw', 9: 'read', 10: 'rw', 12: 'rw' }),
@@ -134,7 +140,7 @@ export class SdfFine {
     this.args = device.createBuffer({ label: 'sdf fine args', size: 64, usage: S | GPUBufferUsage.INDIRECT });
     let slots = 64;
     while (slots < opts.maxPairs) slots *= 2;
-    this.grow({ maxPairs: opts.maxPairs, maxBricks: opts.maxBricks ?? Math.max(4096, opts.maxPairs * 2 * 64), slots: opts.slots ?? slots });
+    this.grow({ maxPairs: opts.maxPairs, maxBricks: opts.maxBricks ?? Math.max(4096, opts.maxPairs * 2 * 64), maxCull: opts.maxCull ?? Math.max(4096, opts.maxPairs * 2 * 8), slots: opts.slots ?? slots });
   }
 
   /**
@@ -143,11 +149,12 @@ export class SdfFine {
    * copied. The slots' table is kept: the next `encode` first moves every live slot (key, age, rows) into the new
    * table on the GPU. The old buffers are kept until `release` (an encoder not yet submitted may still use them).
    */
-  grow(to: { maxPairs?: number; maxBricks?: number; slots?: number }): void {
+  grow(to: { maxPairs?: number; maxBricks?: number; maxCull?: number; slots?: number }): void {
     const dev = this.device;
     const S = GPUBufferUsage.STORAGE;
     const pairs = Math.max(to.maxPairs ?? 0, this.maxPairs);
     const bricks = Math.max(to.maxBricks ?? 0, this.maxBricks);
+    const cull = Math.max(to.maxCull ?? 0, this.maxCull);
     const slots = Math.max(to.slots ?? 0, this.slots);
     // (27 bits of half pair in a group's word)
     if (pairs * 2 > 1 << 27) throw new Error(`SdfFine: ${pairs} pairs (at most ${1 << 26})`);
@@ -156,9 +163,9 @@ export class SdfFine {
       if (this.hits) this.retired.push(this.hits);
       this.hits = dev.createBuffer({ label: 'sdf pair hits', size: pairs * PAIR_HIT_BYTES, usage: S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     }
-    if (pairs > this.maxPairs || bricks > this.maxBricks) {
+    if (pairs > this.maxPairs || bricks > this.maxBricks || cull > this.maxCull) {
       if (this.work) this.retired.push(this.work);
-      this.work = dev.createBuffer({ label: 'sdf fine work', size: (pairs * 2 * HP_WORDS + bricks * 2) * 4, usage: S });
+      this.work = dev.createBuffer({ label: 'sdf fine work', size: (pairs * 2 * HP_WORDS + bricks * 2 + cull * 2) * 4, usage: S });
     }
     if (slots > this.slots) {
       if (this.contacts) {
@@ -175,6 +182,7 @@ export class SdfFine {
     }
     this.maxPairs = pairs;
     this.maxBricks = bricks;
+    this.maxCull = cull;
     this.slots = slots;
     this.bound = null;
   }
@@ -201,8 +209,9 @@ export class SdfFine {
       g: {
         pairArgs: g('pairArgs', { 2: inputs.pairCount, 7: this.counts, 11: this.args }),
         slots: g('slots', { 1: inputs.pairs, 2: inputs.pairCount, 7: this.counts, 10: this.contacts, 12: this.hits, 15: inputs.missing, 16: this.stamps, 17: this.slotKeys }),
-        expand: g('expand', { 1: inputs.pairs, 2: inputs.pairCount, 3: inputs.pose, 4: inputs.vel, 6: m.models, 8: this.work, 13: inputs.model }),
-        cull: g('cull', { 7: this.counts, 8: this.work, 9: m.data, 15: inputs.missing }),
+        expand: g('expand', { 1: inputs.pairs, 2: inputs.pairCount, 3: inputs.pose, 6: m.models, 7: this.counts, 8: this.work, 13: inputs.model, 15: inputs.missing }),
+        cullArgs: g('cullArgs', { 7: this.counts, 11: this.args }),
+        cull: g('cull', { 7: this.counts, 8: this.work, 9: m.data, 14: this.args, 15: inputs.missing }),
         fineArgs: g('fineArgs', { 2: inputs.pairCount, 7: this.counts, 11: this.args }),
         fine: g('fine', { ...rows, 8: this.work, 9: m.data, 12: this.hits, 14: this.args }),
         reduce: g('reduce', { ...rows, 7: this.counts, 8: this.work, 9: m.data, 10: this.contacts, 12: this.hits }),
@@ -218,14 +227,14 @@ export class SdfFine {
   setParams(pairUpper: number, tick: number): void {
     const p = new ArrayBuffer(48);
     new Float32Array(p)[0] = this.margin;
-    new Uint32Array(p).set([Math.max(1, this.cap), tick >>> 0, this.leaving?.slots ?? 0, this.maxBricks, this.maxPairs, Math.min(pairUpper, this.maxPairs), this.models.maxBricksSide, this.slots], 1);
+    new Uint32Array(p).set([Math.max(1, this.cap), tick >>> 0, this.leaving?.slots ?? 0, this.maxBricks, this.maxPairs, Math.min(pairUpper, this.maxPairs), this.maxCull, this.slots], 1);
     this.device.queue.writeBuffer(this.params, 0, p);
   }
 
   /**
    * The pass encoded: after a growth of the slots, rehash; then pairArgs (which zeroes this pass's counts), slots
-   * (which clears the pairs' records), expand, cull, fineArgs, fine, reduce, all but the two one-thread ones sized on
-   * the GPU. Call setParams first.
+   * (which clears the pairs' records), expand, cullArgs, cull, fineArgs, fine, reduce, all but the three one-thread
+   * ones sized on the GPU. Call setParams first.
    */
   encode(enc: GPUCommandEncoder, inputs: FineInputs, pairUpper: number, timestampWrites?: GPUComputePassTimestampWrites): void {
     const b = this.bind(inputs).g;
@@ -250,16 +259,15 @@ export class SdfFine {
     // (every dispatch after this one is sized on the GPU: by the pair count, then by the surviving groups)
     at('pairArgs', null);
     at('slots', 12);
-    if (this.upTo < 1) {
-      pass.end();
-      return;
+    if (this.upTo >= 1) {
+      at('expand', 4);
+      // (a thread a cull item: a row of bricks of one half pair, inside the other body's box)
+      at('cullArgs', null);
+      at('cull', 8);
+      at('fineArgs', null);
     }
-    at('expand', 4);
-    // (a thread a half pair and a row of bricks: the store's longest model side in bricks, squared, rows a half pair)
-    at('cull', 8);
-    at('fineArgs', null);
-    at('fine', 0);
-    at('reduce', 12);
+    if (this.upTo >= 2) at('fine', 0);
+    if (this.upTo >= 3) at('reduce', 12);
     pass.end();
   }
 

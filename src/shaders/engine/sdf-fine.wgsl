@@ -4,14 +4,17 @@
 // Every candidate pair is tested both ways (a's surface samples in b's field, then b's in a's): a corner of one body
 // in a flat face of the other is only seen by the corner's own sample.
 //   slots   a thread a pair: the pair's record cleared, and its slot in the persistent table found or claimed (below)
-//   expand  a thread a half pair: bound spheres rejected; the transform from the sampler's voxels to the field's,
-//           composed once
-//   cull    a thread a half pair and a row of the sampler's bricks along x (short loops: a thread's loop is serial,
-//           and a long one holds the whole dispatch up): the sampler's bricks (4 x 4 x 4 voxels of samples, sorted at the bake) whose bound
-//           sphere reaches the field's box, each one an entry in the work list. Threads follow the overlap, not
-//           the model.
-//   pairArgs, args  every dispatch's size from the pair count and the surviving groups (no CPU read; nothing is
-//           sized by a buffer's room)
+//   expand  a thread a half pair: the transform from the sampler's voxels to the field's, composed once; then the
+//           field's box (grown by the margin) as a box of the sampler's bricks, and a cull item for each row of
+//           bricks along x inside it: [half pair] [y | z << 8 | first x << 16 | last x << 24]. A crumb on a slab asks
+//           for one row of the crumb's and the few of the slab's under it, whatever the store's biggest model is
+//   cullArgs  the cull dispatch's size from the items
+//   cull    a thread a cull item (short loops: a thread's loop is serial, and a long one holds the whole dispatch
+//           up): the row's bricks (4 x 4 x 4 voxels of samples, sorted at the bake) whose box, turned into the
+//           field's frame, reaches the field's box, each one an entry in the work list. Threads follow the overlap,
+//           not the model.
+//   pairArgs, cullArgs, fineArgs  every dispatch's size from the pair count, the cull items and the surviving groups
+//           (no CPU read; nothing is sized by a buffer's room)
 //   fine    a workgroup 16 samples of a surviving brick, a thread a sample: into the field's frame, out if past its bounds, the
 //           field read (8 words, trilinear), and if inside the margin the pair's record takes it in: its count, its
 //           largest energy, its normal summed with the others that point the same way, and its bid for each of the
@@ -39,12 +42,13 @@
 //
 // The work buffer: HP_WORDS a half pair (index pair * 2 + way), then the brick list from P.maxPairs * 2 * HP_WORDS
 // on, two words a group of up to 16 samples of one brick: [half pair | samples << 27] [the first sample, a word index
-// in the data].
+// in the data]; then the cull items, two words each, from P.maxChunks * 2 words further.
 //
-// Rooms (docs/design/PHYSICS_ENGINE.md "Round 6"). The list of sample groups can run out. What was asked for is
-// counted whole (counts[2], and the most since the CPU last read in counts[11]), so the room can be made bigger
-// (fine.ts grow, called by collide.ts); until it is, a group that found no room flags both rows of its pair in
-// `missing` (contract.ts MISS_GROUPS): the pair's contacts are not all there and the engine holds both rows still.
+// Rooms (docs/design/PHYSICS_ENGINE.md "Round 6"). The cull items and the list of sample groups can run out. What was
+// asked for is counted whole (counts[5] and counts[2], and the most since the CPU last read in counts[12] and
+// counts[11]), so the rooms can be made bigger (fine.ts grow, called by collide.ts); until they are, an item or a
+// group that found no room flags both rows of its pair in `missing` (contract.ts MISS_CULL, MISS_GROUPS): the pair's
+// contacts are not all there and the engine holds both rows still.
 //   0-11  three rows of the 3 x 4 transform: sampler padded-voxel point -> field coordinate (voxel centres at integers)
 //   12 a   13 b   14 the sampler's first sample (a word index in the data)   15 its sample count
 //   16 the sample stride (1: every sample every tick; s: this tick, the samples at places = tick mod s in the model's
@@ -67,6 +71,9 @@ const GROUP: u32 = 16u;
 const NO_BID: u32 = 0u;
 const MISS_GROUPS: u32 = 4u;
 const MISS_SLOTS: u32 = 8u;
+const MISS_CULL: u32 = 16u;
+// (workgroups a row of the cull dispatch)
+const CULL_ROW: u32 = 1024u;
 const NO_SLOT: u32 = 0xffffffffu;
 const PROBES: u32 = 32u;
 
@@ -80,8 +87,8 @@ struct FineParams {
   maxChunks: u32,
   maxPairs: u32,
   pairUpper: u32,
-  // the store's longest model side, in bricks: cull's rows a half pair
-  cullSide: u32,
+  // the cull items' room
+  maxCull: u32,
   // the slot table's entries, a power of two
   slots: u32,
   pad1: u32,
@@ -179,7 +186,8 @@ fn unrot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
 }
 
 // The dispatches' sizes from the pair count (no CPU read, and nothing sized by the buffers' room): args words 4-6
-// expand, 8-10 cull, 12-14 reduce. (Words 0-3 are fineArgs': the fine dispatch and the group count.)
+// expand, 12-14 reduce and slots. (Words 0-3 are fineArgs': the fine dispatch and the group count; 7-10 cullArgs':
+// the cull items and the cull dispatch.)
 @compute @workgroup_size(1)
 fn pairArgs() {
   // (this pass's counts start at zero; the words from 9 on are kept from pass to pass)
@@ -193,9 +201,6 @@ fn pairArgs() {
   args[4] = halves;
   args[5] = 1u;
   args[6] = 1u;
-  args[8] = halves;
-  args[9] = P.cullSide;
-  args[10] = P.cullSide;
   args[12] = (n + 63u) / 64u;
   args[13] = 1u;
   args[14] = 1u;
@@ -333,7 +338,7 @@ fn expand(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (pi >= min(P.pairUpper, P.maxPairs)) {
     return;
   }
-  // (not tested until shown otherwise: cull reads this word for every half pair the dispatch covers)
+  // (not tested until shown otherwise: reduce reads the half pairs of every pair the dispatch covers)
   work[h * HP_WORDS + 16u] = 0u;
   if (pi >= pairCount[0]) {
     return;
@@ -348,11 +353,7 @@ fn expand(@builtin(global_invocation_id) gid: vec3<u32>) {
   work[o + 13u] = pr.y;
   let ps = poseOf(s);
   let pf = poseOf(f);
-  let reach = velOf(s).radius + velOf(f).radius + P.margin;
   let dp = ps.pos - pf.pos;
-  if (dot(dp, dp) > reach * reach) {
-    return;
-  }
   let ms = models[bodyModel[s]];
   let mf = models[bodyModel[f]];
   let count = ms.sampleCount;
@@ -387,18 +388,66 @@ fn expand(@builtin(global_invocation_id) gid: vec3<u32>) {
   work[o + 24u] = bitcast<u32>(mf.voxel);
   work[o + 25u] = ms.sampleBase;
   work[o + 26u] = ms.dims;
+  // The sampler's bricks that could hold a sample inside the field's box: the field's box (voxel centres 0 to
+  // dims - 1, grown by the margin and half a sampler voxel for a ball sample) turned into the sampler's frame, and
+  // that box's bounds there (m3 is a rotation times the scale: its inverse is its transpose over the scale squared).
+  let hf = 0.5 * (vec3<f32>(sdfDims(mf.dims)) - vec3<f32>(1.0));
+  let gf = hf + vec3<f32>(margin + 0.5 * scale);
+  let inv = 1.0 / (scale * scale);
+  let cs = vec3<f32>(dot(m3[0], hf - t), dot(m3[1], hf - t), dot(m3[2], hf - t)) * inv;
+  let es = vec3<f32>(dot(abs(m3[0]), gf), dot(abs(m3[1]), gf), dot(abs(m3[2]), gf)) * inv + vec3<f32>(0.01);
+  let top = vec3<i32>(bd) - vec3<i32>(1);
+  let b0 = max(vec3<i32>(floor((cs - es) * 0.25)), vec3<i32>(0));
+  let b1 = min(vec3<i32>(floor((cs + es) * 0.25)), top);
+  if (any(b1 < b0)) {
+    return;
+  }
+  // a cull item a row of those bricks along x
+  let ny = u32(b1.y - b0.y + 1);
+  let n = ny * u32(b1.z - b0.z + 1);
+  let k0 = atomicAdd(&counts[5], n);
+  let items = (P.maxPairs * 2u * HP_WORDS) + 2u * P.maxChunks;
+  for (var j = 0u; j < n; j++) {
+    if (k0 + j >= P.maxCull) {
+      // (no room for the rest: the pair's contacts are not all there, and both its rows say so)
+      atomicAdd(&counts[6], n - j);
+      atomicOr(&missing[pr.x], MISS_CULL);
+      atomicOr(&missing[pr.y], MISS_CULL);
+      break;
+    }
+    let y = u32(b0.y) + j % ny;
+    let z = u32(b0.z) + j / ny;
+    work[items + 2u * (k0 + j)] = h;
+    work[items + 2u * (k0 + j) + 1u] = y | (z << 8u) | (u32(b0.x) << 16u) | (u32(b1.x) << 24u);
+  }
+}
+
+@compute @workgroup_size(1)
+fn cullArgs() {
+  // (the most cull items asked for in a pass since the CPU last read)
+  atomicMax(&counts[12], atomicLoad(&counts[5]));
+  let n = min(atomicLoad(&counts[5]), P.maxCull);
+  let groups = (n + 63u) / 64u;
+  args[7] = n;
+  args[8] = min(groups, CULL_ROW);
+  args[9] = (groups + CULL_ROW - 1u) / CULL_ROW;
+  args[10] = 1u;
 }
 
 @compute @workgroup_size(64)
-fn cull(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let h = gid.x;
-  if ((h >> 1u) >= min(P.pairUpper, P.maxPairs)) {
+fn cull(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let ci = (wg.y * CULL_ROW + wg.x) * 64u + li;
+  // (the item count from the args, a plain read)
+  if (ci >= argsR[7]) {
     return;
   }
+  let list = P.maxPairs * 2u * HP_WORDS;
+  let item = list + 2u * P.maxChunks + 2u * ci;
+  let h = work[item];
+  let pk = work[item + 1u];
+  let gy = pk & 0xffu;
+  let gz = (pk >> 8u) & 0xffu;
   let o = h * HP_WORDS;
-  if (work[o + 16u] == 0u) {
-    return;
-  }
   let r0 = vec4<f32>(bitcast<f32>(work[o]), bitcast<f32>(work[o + 1u]), bitcast<f32>(work[o + 2u]), bitcast<f32>(work[o + 3u]));
   let r1 = vec4<f32>(bitcast<f32>(work[o + 4u]), bitcast<f32>(work[o + 5u]), bitcast<f32>(work[o + 6u]), bitcast<f32>(work[o + 7u]));
   let r2 = vec4<f32>(bitcast<f32>(work[o + 8u]), bitcast<f32>(work[o + 9u]), bitcast<f32>(work[o + 10u]), bitcast<f32>(work[o + 11u]));
@@ -406,20 +455,16 @@ fn cull(@builtin(global_invocation_id) gid: vec3<u32>) {
   let first = work[o + 14u];
   let sd = sdfDims(work[o + 26u]);
   let bd = sdfBricks(sd);
-  if (gid.y >= bd.y || gid.z >= bd.z) {
-    return;
-  }
   // the bricks whose box (its voxels inside the grid, turned into the field's frame: its reach along each of the
   // field's axes; half a voxel more for a ball sample) reaches the field's box grown by the margin
   let hi = vec3<f32>(sdfDims(work[o + 18u])) - vec3<f32>(1.0);
   let margin = bitcast<f32>(work[o + 20u]);
   let scale = bitcast<f32>(work[o + 19u]);
-  let list = P.maxPairs * 2u * HP_WORDS;
   let stride = work[o + 16u] & 0x7fffffffu;
   let phase = P.tick % stride;
-  for (var bx = 0u; bx < bd.x; bx++) {
-    let b = bx + bd.x * (gid.y + bd.y * gid.z);
-    let lo = vec3<u32>(bx, gid.y, gid.z) * 4u;
+  for (var bx = (pk >> 16u) & 0xffu; bx <= (pk >> 24u); bx++) {
+    let b = bx + bd.x * (gy + bd.y * gz);
+    let lo = vec3<u32>(bx, gy, gz) * 4u;
     let half = 0.5 * vec3<f32>(min(lo + vec3<u32>(4u), sd) - lo);
     let c = vec4<f32>(vec3<f32>(lo) + half, 1.0);
     let q = vec3<f32>(dot(r0, c), dot(r1, c), dot(r2, c));
