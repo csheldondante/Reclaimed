@@ -311,7 +311,7 @@ export const STATIONS: Station[] = [
     name: 'pile',
     rect: [112, 96, 256, 176],
     look: [214, 96, G + 4, 10],
-    hint: 'bodies on bodies: a stack, rubble poured into a pit, a boulder into a stack, a beam across two blocks, a block thrown at a tower. A part broken off by a hard landing passes through other bodies still',
+    hint: 'bodies on bodies: a stack, rubble poured into a pit, a boulder into a stack, a beam across two blocks, a block thrown at a tower, the chain. A hard hit breaks a body; its parts stay where they settle and hold what lands on them',
     actions: [
       {
         label: 'drop a stack',
@@ -352,6 +352,18 @@ export const STATIONS: Station[] = [
         run: (k) => {
           for (let i = 0; i < 6; i++) k.drop(cellsBox(216, 108, G + 3 + 2 * i, 2, 2, 2, i % 2 ? MAT.Stone : MAT.Brick));
           k.later(2.5, () => k.drop(cellsBox(205, 108, G + 8, 3, 2, 2, MAT.Stone), [14, 0, 2]));
+        },
+      },
+      {
+        // (pieces break pieces — docs/design/PHYSICS_ENGINE.md "Pieces break pieces"; test/gpu/engine-chain.test.ts: a
+        // stone slab B across a concrete post with one end overhanging, a brick slab C on the pad under that end, and
+        // a stone block A thrown down on the overhang: B breaks, what comes down breaks C)
+        label: 'the chain (A onto B onto C)',
+        run: (k) => {
+          k.drop(cellsBox(205, 120, G + 3, 6, 4, 6, MAT.Concrete));
+          k.drop(cellsBox(211, 120, G + 3, 5, 4, 1, MAT.Brick));
+          k.later(1.5, () => k.drop(cellsBox(200, 120, G + 10, 16, 4, 1, MAT.Stone)));
+          k.later(4.5, () => k.drop(cellsBox(212, 120, G + 34, 4, 4, 4, MAT.Stone), [0, 0, -15]));
         },
       },
     ],

@@ -71,6 +71,9 @@ fn meetLink(@builtin(global_invocation_id) id: vec3<u32>) {
           for (var k = 0u; k < 6u; k++) { atomicStore(&listA[rb + RW_MDV + k], 0u); }
           atomicStore(&listA[rb + RW_WAKE], gt);
           wake = true;
+          // (it stood as a wall to the voxels that hit it and they are stopped by now: the hit is weighed here, as a
+          // pair's is — half the closing by the speed it would have been given — and `compact` deforms it as it wakes)
+          if ((EU.e.w & 16u) != 0u) { atomicMax(&listA[rb + RW_ENERGY], bitcast<u32>(0.5 * min(mp * P.w, mc) * mc / P.w)); }
         }
       }
       if (wake) { mode = 2u; }

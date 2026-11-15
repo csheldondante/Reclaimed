@@ -1342,3 +1342,71 @@ settled part's field with a stand-in, then voxels against rigid rows, then `pair
 phone page with the floor ladder, the stage split, the early-out for terrain contacts); PJ7 in the fine pass;
 PJ8's findings. Run first: `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms
 sdf-slots`, `npm run typecheck`, `npx vitest run --project unit` (one failure on the base: the writing lint, PE17).
+
+## Pieces break pieces (branch `physics10-mech`, from `physics10-join` 4de1bb8f, 2026-11-15)
+
+Files: `src/shaders/engine_meetlink.wgsl`, `engine_meet.wgsl` (new); `engine.wgsl`, `engine_compact.wgsl`,
+`engine_pairs.wgsl`, `engine_deform.wgsl`, `engine_settle.wgsl`, `engine_draw.wgsl`, `engine_step.wgsl`,
+`src/engine/engine.ts`; hooks in `engine_lattice.wgsl`, `engine/sdf-coarse.wgsl`, `engine/sdf-fine.wgsl`; tests
+`test/gpu/engine-meet.test.ts` (5), `engine-chain.test.ts` (4); the pile station's button "the chain (A onto B onto C)".
+
+### Deforming voxels meet rigid rows (PJ5)
+
+- **Broadphase: the coarse pass, no voxel hash against rows.** A deforming body's row is in the awake list. `stats`
+  sums its voxels' bounds and fastest speed; `slots` writes the row's centre (the middle of the bounds), its radius
+  (the bounds', half a cell a voxel, a cell for what comes at it, what its fastest voxel covers in a tick) and the
+  zero quaternion for its rotation. The zero quaternion means "no rigid shape": the coarse pass tests such a row's
+  sphere only, the fine pass gives it no samples. So its pairs with rigid rows come out of the pair list.
+- **`meetLink`** (a thread a pair, once a tick, after the rigid substeps): for a pair of one deforming body and one
+  rigid row it writes a candidate record of 32 words — the row's field, its pose when the tick began and now, inverse
+  mass and inertia, material, how it takes a push — and links it into the body's list (a head a slot, then a chain
+  through the records: as long as the body has pairs, no room of its own). The lattice's kernel binds no row buffer.
+- **`meet`** (a thread a voxel, each lattice substep, after `collide`): each candidate's field read in the row's frame
+  gives depth and normal. The row is taken along the straight way from its pose at the tick's start to its pose now
+  across the lattice's substeps; closing is the voxel's move against the row's at that point. The lattice's rule:
+  never pushed out; stopped from closing by its share; past the material's overlap or its crumble speed the weaker
+  crumbles (`deaths`: its mass to the deposit); a voxel tougher than the row and deep in it flags the row.
+- **The reaction** goes into the row's work words as fixed-point atomics (`RW_MDV`, `RW_MDW`) and is taken at the next
+  tick's start (`integrate`; a sleeper stamped to wake: `compact`). A contact takes the row's inverse mass times its
+  contacts (last tick's count, or this tick's so far), and the row takes no more than brings it to the fastest
+  closing. Momentum the voxels lose reaches the row or is lost; none is made.
+- **The hold.** The reaction is a tick late, and voxels never push out, so a row resting on voxels sank 0.4 cells/s.
+  What the voxels gave a row is offered again before it moves: along the mean normal of the voxels touching it, up to
+  what the hold took last tick plus what their reaction added (`RW_MT`, `RW_MNS`, `RW_MCAP`, `RW_MUSED`, `RW_MH`).
+- **Sleepers.** A sleeper is a wall to voxels until it is stamped to wake: by what the voxels it stopped would have
+  given it (two ticks after the first touch), or by the deforming body beside it moving.
+- **Voxels of a body that is not stepped** (still, settling, held) do not move and still give a row its reaction.
+
+Counts: 5 dispatches a tick (`meetLink`, `meet` a lattice substep), indirect, encoded only while the host knows of a
+row awake or a body deforming or settling, or a read is owed or under way (`Engine.meets`).
+
+### Hard hits and erosion between bodies
+
+`pairExpand` is on by default. The pair solver's rule is as the join wrote it (the largest sample energy over a body's
+mass against its material's threshold; past slop + erode depth the softer is handed to stage 4). Added: a row hit by
+deforming voxels is weighed in `integrate` (half the fastest closing by the speed it was given); a sleeper in
+`meetLink` by what it would have been given.
+
+### Settled parts: the body's particles stand in (PJ6; a departure, BACKLOG PM4)
+
+`slots` moves a body whose parts became rows to `S_HELD` instead of releasing it. Its particles stand; the parts are
+asleep and pinned (`ROW_HELD`: `compact` ignores every wake); the body's row is asleep and deforming, so it is in the
+sleeper table by its voxels' bounds and awake rows pair with it; `pagelist` lists its pages only while a row is awake.
+The draw skips the body's row (its parts draw). The pool's header counts held slots (`P_HELD`), which the host does
+not take for activity. **No field is baked.** The brief's stand-ins (clipped parent field, box field) and the spread
+bake are not built; see the DEVLOG for the trade-off and PM4 for what the bake needs.
+
+### What the capture shows (`node scripts/pilelab.mjs --press "the chain (A onto B onto C)"`; looked at)
+
+The slab lies across the post with the brick slab at the post's foot and the block above. After the throw the block
+sits on the brick slab as a dark chewed lump with black gaps where it cracked, the bricks under it dented; the slab
+has lost its overhanging end and lies tilted across the post's top, one end in the air. Nothing is inside the post;
+nothing moves at the end. What looks wrong: the block is misshapen rather than broken into pieces; the slab's
+surface changes to darker banded faces when it settles; the cracks are holes (the break branch's work).
+
+### Hand-over: where this stopped
+
+Built and tested: items 1 to 3 of the brief with the stand-in above, one chain test, one lab button. Not built: the
+spread bake (PM4, the one thing that makes parts movable again), the mixed pile with breaking, the loose ends and the
+other lab buttons (PM6). Open findings: PM2, PM5. Run first:
+`npx vitest run --project gpu engine-meet engine-chain engine-pairs engine-settle`, `npm run typecheck`.

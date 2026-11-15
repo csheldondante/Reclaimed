@@ -100,7 +100,7 @@ export const MESH_V = 3;
 export const DL_AT = 16;
 export const OCC_AT = 4;
 /** the pool's header (engine_deform.wgsl P_*) */
-export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21, hashOver: 22 } as const;
+export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21, hashOver: 22, held: 23 } as const;
 /** engine.wgsl LIST_AT, EV_AT, EV_WORDS */
 const LIST_AT = 8;
 const EV_AT = 4;
@@ -419,7 +419,7 @@ export class Engine implements SimSystem {
     kernel('rowFinish', [pairsWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 12: 'read', 15: 'rw', 40: 'rw', 47: 'read' });
     kernel('expand', [deformWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 18: 'rw', 19: 'rw', 22: 'rw', 27: 'read' });
     kernel('arm', [deformWgsl], { 18: 'rw', 37: 'rw' });
-    kernel('pagelist', [deformWgsl], { 18: 'rw', 19: 'rw', 20: 'rw' });
+    kernel('pagelist', [deformWgsl], { 18: 'rw', 19: 'rw', 20: 'rw', 27: 'read' });
     kernel('fill', [deformWgsl], { 19: 'rw', 21: 'read', 22: 'rw', 23: 'rw', 24: 'rw', 25: 'rw', 26: 'rw', 35: 'uniform' });
     kernel('release', [deformWgsl], { 18: 'rw', 19: 'rw' });
     kernel('slots', [deformWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 18: 'rw', 19: 'rw', 51: 'rw' });
@@ -872,7 +872,7 @@ export class Engine implements SimSystem {
    */
   private meets(): boolean {
     if (TUNE.engine.pairs < 0.5 || TUNE.engine.deform < 0.5) return false;
-    return this.meetAlways || this.owed > 0 || this.statBusy || this.awakeSeen > 0 || this.seen[POOL.deforming] > 0 || this.seen[POOL.settling] > 0;
+    return this.meetAlways || this.owed > 0 || this.statBusy || this.awakeSeen > 0 || this.seen[POOL.deforming] > this.seen[POOL.held] || this.seen[POOL.settling] > 0;
   }
   /** (tests) the meet kernels encoded every tick whatever the host knows */
   meetAlways = false;
@@ -892,7 +892,7 @@ export class Engine implements SimSystem {
     const fast = this.fastPath ?? T.fastPath >= 0.5;
     const d = this.d;
     const L = Engine.layout(d);
-    u.set([d.rows, cmds, Math.max(1, Math.round(T.passes)), (fast ? 1 : 0) | (first ? 2 : 0) | (T.deform >= 0.5 ? 4 : 0) | (this.settles ? 8 : 0) | (T.pairExpand >= 0.5 ? 16 : 0)], 20);
+    u.set([d.rows, cmds, Math.max(1, Math.round(T.passes)), (fast ? 1 : 0) | (first ? 2 : 0) | (T.deform >= 0.5 ? 4 : 0) | (this.settles ? 8 : 0) | (T.pairExpand >= 0.5 ? 16 : 0) | (this.holdParts && T.pairs >= 0.5 ? 32 : 0)], 20);
     u.set([d.pages, d.slots, d.table, this.ticks], 24);
     u.set([L.pageStack, L.slotStack, L.rowStack, L.sums], 28);
     u.set([L.pageInfo, L.slotRec, L.tables, this.dlRoom], 32);
@@ -953,7 +953,8 @@ export class Engine implements SimSystem {
         this.awakeSeen = w[POOL_HDR + 3];
         const grows = this.growPairs && this.collide.consider(w.subarray(POOL_HDR + 8), rooms);
         const asked = [POOL.pageWant, POOL.slotWant, POOL.rowWant, POOL.sampWant, POOL.heapWant, POOL.dlWant, POOL.expands, POOL.parts].some((k) => was[k] !== this.seen[k]);
-        this.active = this.awakeSeen > 0 || this.seen[POOL.deforming] > 0 || this.seen[POOL.settling] > 0 || grows || asked;
+        // (a held body's row is asleep and its slot is not activity: it waits for nothing)
+        this.active = this.awakeSeen > 0 || this.seen[POOL.deforming] > this.seen[POOL.held] || this.seen[POOL.settling] > 0 || grows || asked;
         this.fresh = true;
       }, ignoreTeardown);
     }
@@ -1251,6 +1252,12 @@ export class Engine implements SimSystem {
   /** letter D of build step 2: a still deforming body's parts become rigid rows again (engine_settle.wgsl). (tests)
    *  off: a still body's particles stand where they are, stepped by nothing, drawn as its mesh, till it is let go */
   settles = true;
+  /**
+   * A settled body's particles are kept standing as the collision shape of the parts it settled into (engine_deform.wgsl
+   * S_HELD), and those parts stay asleep where they are. Without it (tests of the round trip alone) a part is a free row
+   * with no field: it meets the ground and passes through bodies (BACKLOG PJ6, PM1).
+   */
+  holdParts = true;
   /** (tests, the perf overlay) a compute pass a kernel, timed apart as `engine:<kernel>`; off: one pass, `engine` */
   timeKernels = false;
   /** (tests) off: deforming voxels are not put in the voxel hash, so they meet the ground only */

@@ -670,7 +670,8 @@ fn partRow(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
     rad = max(rad, length(px[2u * j].xyz - c.xyz) + 0.87);
   }
   vel[2u * row + 1u] = vec4<f32>(0.0, 0.0, 0.0, rad);
-  info[4u * row] = vec4<f32>(iv, bitcast<f32>(ROW_ALIVE | ROW_ASLEEP | ROW_NEWSLEEP));
+  info[4u * row] = vec4<f32>(iv, bitcast<f32>(ROW_ALIVE | ROW_ASLEEP | ROW_NEWSLEEP | select(0u, ROW_HELD, (EU.e.w & 32u) != 0u)));
+  dmeta[s + 24u] = 1u;
   info[4u * row + 1u] = vec4<f32>(io, c.w);
   info[4u * row + 2u] = vec4<f32>(bitcast<f32>(B.z), bitcast<f32>(bitcast<u32>(px[2u * i + 1u].y)), bitcast<f32>(dmeta[s + 22u]), c.w / f32(A.x));
   info[4u * row + 3u] = bitcast<vec4<f32>>(vec4<u32>(B.y, 0u, 0u, 0u));

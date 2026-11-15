@@ -94,6 +94,10 @@ const ROW_DENIED: u32 = 16u;
 const ROW_LISTED_ASLEEP: u32 = 32u;
 // a row settle made, asleep where its particles stood: `compact` gives it the ground's word it sleeps on
 const ROW_NEWSLEEP: u32 = 64u;
+// A part settle made, while its body's particles stand in for its collision shape (it has no distance field of its
+// own yet: engine_deform.wgsl S_HELD): it stays asleep where it is — no wake, no impulse — or it would leave its
+// collider behind
+const ROW_HELD: u32 = 128u;
 // the pool's header word that asks for the draw list again (engine_deform.wgsl has the rest of the header)
 const P_DL_DIRTY: u32 = 20u;
 const NONE: u32 = 0xffffffffu;
@@ -123,7 +127,8 @@ struct EngU {
   f: vec4<f32>,
   // x the rows' room (every row slot is read by `compact`), y commands, z solver passes, w bits: 1 the heightfield
   // fast path, 2 the tick's first substep, 4 deformation on (build step 2), 8 still bodies settle into rows (letter D),
-  // 16 a hard hit between bodies, or a deep overlap, hands a body to stage 4 (engine_pairs.wgsl)
+  // 16 a hard hit between bodies, or a deep overlap, hands a body to stage 4 (engine_pairs.wgsl), 32 a settled
+  // body's particles stand in for its parts' collision shapes (engine_deform.wgsl S_HELD)
   e: vec4<u32>,
   // (build step 2, engine_deform.wgsl) x the pages' room, y the slots' room, z pages a slot's table holds, w the tick
   g: vec4<u32>,

@@ -271,16 +271,17 @@ test('a fast stone block into a stone block: one deforms at least, and the mass 
   }
   expect(expands).toBeGreaterThanOrEqual(1);
   let P = await R.pool();
-  for (let t = 0; t < 30 * 60 && (P[15] || P[21] || t < 60); t += 30) {
+  // (a body whose parts became rows is held, its particles their collision shape: slots held are not deforming)
+  for (let t = 0; t < 30 * 60 && (P[15] > P[23] || P[21] || t < 60); t += 30) {
     await R.step(30);
     P = await R.pool();
   }
-  const rows = await R.rows();
+  const rows = (await R.rows()).filter((r) => !(r.flags & 8));
   const mass = rows.reduce((s, r) => s + r.mass, 0);
   // (a stone voxel's mass for each that crumbled to the ground: engine-settle.test.ts)
   const crumbs = P[18] * (hit.mass / 64);
   log(`hit at 30 cells/s: ${expands} expanded, ${rows.length} rows at rest, ${P[18]} voxels to the ground; mass ${mass.toFixed(1)} + ${crumbs.toFixed(1)} of ${mass0.toFixed(1)}`);
   ok();
-  expect(P[15]).toBe(0);
+  expect(P[15]).toBe(P[23]);
   expect(mass + crumbs).toBeCloseTo(mass0, 0);
 }, 240_000);

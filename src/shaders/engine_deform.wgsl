@@ -69,6 +69,13 @@ const S_PARTS: u32 = 5u;
 const S_RELEASE: u32 = 6u;
 // still, and settle not built yet (letter D): its particles stand, no lattice kernel steps them, its mesh is drawn by them
 const S_STILL: u32 = 7u;
+// Settled, with parts that are rows of their own now, and its particles kept standing: they are those parts' collision
+// shape (a part has no distance field until one is baked for it, and a bake is never run inside a play tick: BACKLOG
+// PM1). No lattice kernel steps them; rigid rows meet them as walls (engine_meet.wgsl), deforming voxels through the
+// hash. The body's own row stays, asleep and deforming, in the coarse pass's sleeper table by its voxels' bounds.
+const S_HELD: u32 = 8u;
+// slots held so (the host's read: they are not activity)
+const P_HELD: u32 = 23u;
 // The draw list (engine_draw.wgsl; settle's mesh kernels walk it too), u32: [0..3] the draw's arguments (vertices, 1,
 // 0, 0), [4..6] the frame's `eskin` dispatch, [7] triangles listed, [8] those of rows awake or deforming (they come
 // first), [9] those of rows asleep, [10] triangles `eskin` places this frame, [11] the awake ones (what a frame places
@@ -312,6 +319,8 @@ fn pagelist(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let pg = id.x;
   if (pg >= EU.g.x || dmeta[EU.i.x + 2u * pg] == 0u) { return; }
+  // (a held body's pages are gone over only while a row is awake to meet them)
+  if (dmeta[slotAt(dmeta[EU.i.x + 2u * pg] - 1u)] == S_HELD && rlist[3] == 0u) { return; }
   let k = atomicAdd(&dargsW[3], 1u);
   atomicAdd(&dargsW[0], 8u);
   if (atomicLoad(&pool[P_SETTLING]) != 0u) { atomicAdd(&dargsW[4], 8u); }
@@ -435,6 +444,7 @@ fn slots(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   if (drop) {
     if (st >= S_LABEL0 && st <= S_PARTS) { atomicSub(&pool[P_SETTLING], 1u); }
+    if (st == S_HELD) { atomicSub(&pool[P_HELD], 1u); }
     dmeta[s] = S_RELEASE;
     return;
   }
@@ -475,8 +485,16 @@ fn slots(@builtin(global_invocation_id) id: vec3<u32>) {
   if (st == S_PARTS) {
     // (every part a row or on its way to the ground; a part that found no room is tried again)
     if (failed == 0u && waiting == 0u) {
-      dmeta[s] = S_RELEASE;
       atomicSub(&pool[P_SETTLING], 1u);
+      if (dmeta[s + 24u] != 0u && (EU.e.w & 32u) != 0u && row != NONE) {
+        // (parts were made rows: the particles stand in for their shapes, the body's row sleeps as their bound)
+        dmeta[s] = S_HELD;
+        atomicAdd(&pool[P_HELD], 1u);
+        info[4u * row].w = bitcast<f32>(rowFlags(row) | ROW_ASLEEP | ROW_NEWSLEEP);
+        atomicStore(&pool[P_DL_DIRTY], 1u);
+      } else {
+        dmeta[s] = S_RELEASE;
+      }
     }
     return;
   }

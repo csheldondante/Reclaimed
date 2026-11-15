@@ -23740,3 +23740,47 @@ lost, the kinetic energy never passes what came in, the stone's front is at most
 Dropped on it: no voxel centre lower than 0.486 over the steel's top.
 
 **Tests.** `npx vitest run --project gpu engine-meet` (5).
+
+## 2026-11-15 — pieces break pieces: hard hits between bodies, held parts, the chain (`physics10-mech`)
+
+**Why.** The owner: "Pieces can hit and break other pieces." With voxels meeting rigid rows (the entry above) a hard
+hit between bodies can hand a body to the deforming stage, and what it breaks into has to go on colliding.
+
+**What.**
+- `bodies break bodies` (`pairExpand`) is on by default: a pair's largest sample energy over a body's mass past its
+  material's threshold expands that body; an overlap past slop + erode depth expands the softer one, whose voxels then
+  crumble against the other (mass to the deposit). A rigid row hit by deforming voxels is weighed the same way (half
+  the closing by the speed it was given); a sleeper, which stands as a wall to the voxels for the two ticks before it
+  wakes, by what they would have given it.
+- **Settled parts collide by a stand-in: their body's own particles, kept standing** (`S_HELD`). The parts are rows
+  with baked meshes as before, but asleep and pinned (`ROW_HELD`); the body's row stays, asleep, in the coarse pass's
+  sleeper table by its voxels' bounds; rigid rows meet the standing voxels through `meet` (as walls), deforming voxels
+  through the hash. No distance field is baked in play. A body that settles whole and unbent goes back to its shared
+  model and field, nothing held.
+- The chain as a test and as a lab button (the pile station, "the chain (A onto B onto C)").
+
+**Departure, with its trade-off.** The brief offered two stand-ins (the parent's field clipped to the part, or the
+part's box as a box field) and a field baked over several ticks to replace them. Built instead: the body's particles
+as the stand-in, and no bake. For: the shape is exact, nothing moves at settle, the fine pass needs no second kind of
+collider, and it is the mechanism of the entry above. Against, until the spread bake is built (BACKLOG PM4): a
+settled part cannot be moved, woken or broken again; its body's pages are never given back (132 B a voxel stays);
+what lands on it gets no friction. `Engine.holdParts = false` gives the old behaviour (free parts with no field).
+
+**Found by the tests.**
+- A hit at 20 cells/s between two 64-voxel stone blocks measures 60 against a threshold of 60: whether it breaks
+  turned on the tick it was first seen. The chain's block is thrown down at 15 cells/s to be clear of it.
+- A struck body at rest rarely cracks: the lattice's crack rule reads a voxel's own speed into a contact, which is
+  nothing for the body that was hit. A thin slab loses its overhang; a slab two cells thick held (BACKLOG PM5).
+- A deforming steel block wandered over flat ground at 0.8 cells/s for 15 s and more without settling (not checked
+  against the base branch; the chain uses stone: BACKLOG PM5).
+- A deforming body on another sinks through it at about a cell a second while both deform (the lattice's own voxel
+  contacts: they never push out).
+- Voxels standing still kept their last move and speed, which the voxel contacts read as motion: both are zero now.
+
+**Measured** (desktop proxy, Dawn in Node, Intel Xe). A tick with two bodies deforming in the chain: engine GPU 1.77 ms (region 0.39, collide 0.33, rowSolve 0.33, pairSolve 0.20, meet 0.07, the rest a clock step each). The chain, two runs: B deforms at tick 68, C at
+tick 280 and 284, everything asleep at tick 552 and 680; 4 and 6 expansions, 32 and 33 voxels to the ground; mass
+conserved (rows 627 to 629 of 714.8, the rest in those voxels of three materials). The two runs differ: one had a
+timed tick in it, and the hit on B sits near a threshold. Dispatches: 5 a tick more while a row is awake or a body deforms,
+none at rest; no bake in play.
+
+**Tests.** `npx vitest run --project gpu engine-chain` (4): steel into stone, a soft touch, the held parts, the chain.

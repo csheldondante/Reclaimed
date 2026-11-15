@@ -27,6 +27,15 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
   // (its particles carry it: engine_deform.wgsl moves them. Listed, so the coarse pass pairs it by its voxels' bounds
   // and its voxels meet the rigid rows of those pairs — engine_meet.wgsl; the rigid kernels pass it by)
   if ((fl & ROW_DEFORM) != 0u) {
+    // (its particles stand in for its settled parts — engine_deform.wgsl S_HELD: asleep, so it is in the coarse pass's
+    // sleeper table and costs nothing more; the table is told once)
+    if ((fl & ROW_ASLEEP) != 0u) {
+      if ((fl & ROW_NEWSLEEP) != 0u) {
+        info[4u * r].w = bitcast<f32>(fl & ~ROW_NEWSLEEP);
+        atomicAdd(&list[LIST_EPOCH], 1u);
+      }
+      return;
+    }
     let kd = atomicAdd(&list[3], 1u);
     atomicAdd(&list[4], 1u);
     atomicAdd(&rargs[4], 1u);
@@ -54,7 +63,7 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
       wake = true;
     } else if (k == 4u) {
       shiftBy += EC[c].a.xyz;
-    } else if (k == 5u && EC[c].b.y == r && (EU.e.w & 4u) != 0u && bitcast<u32>(info[4u * r + 3u].x) != 0u) {
+    } else if (k == 5u && EC[c].b.y == r && (EU.e.w & 4u) != 0u && bitcast<u32>(info[4u * r + 3u].x) != 0u && (fl & ROW_HELD) == 0u) {
       wake = true;
       fl = fl | ROW_EXPAND;
       info[4u * r].w = bitcast<f32>(fl);
@@ -112,6 +121,8 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
     pose[4u * r] = vec4<f32>(pose[4u * r].xyz + shiftBy, pose[4u * r].w);
     pose[4u * r + 2u] = vec4<f32>(x + shiftBy, pose[4u * r + 2u].w);
   }
+  // (a held part stays where its collider is)
+  if ((fl & ROW_HELD) != 0u) { wake = false; }
   if (wake) {
     if ((fl & ROW_ASLEEP) != 0u) {
       fl = fl & ~ROW_ASLEEP;

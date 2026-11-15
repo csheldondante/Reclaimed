@@ -123,6 +123,8 @@ test('D: a stone block dropped from height across a ridge breaks into parts that
   // (dropped flat on flat ground a stone block cracks and sheds voxels but its bonds still hold it in one part — the
   // numbers run below; across a ridge it snaps in two)
   const R = await breakRig(g, ridge);
+  // (the round trip alone: parts as free rows, their body's particles let go — Engine.holdParts)
+  R.e.holdParts = false;
   const cells = box(12, 12, 40, 12, 4, 3);
   const b = R.e.add({ cells, mesh: modelMesh(cells) })!;
   const { ticks, before } = await settleAll(R);
@@ -176,6 +178,8 @@ test('D: a stone block dropped from height across a ridge breaks into parts that
 
 test('D: a steel beam bent over a post settles as one row with a compact model of its bent shape; no vertex moves at settle, nor when it expands again', async () => {
   const R = await breakRig(g, (x, y) => (x >= 15 && x <= 16 && y >= 14 && y <= 17 ? [{ z0: 0, z1: 16, mat: MAT.Stone }] : [{ z0: 0, z1: 10, mat: MAT.Stone }]));
+  // (the round trip alone: parts as free rows, their body's particles let go — Engine.holdParts)
+  R.e.holdParts = false;
   const cells = box(6, 15, 32, 20, 2, 1, MAT.Steel);
   const b = R.e.add({ cells, mesh: modelMesh(cells) })!;
   const { before } = await settleAll(R);
@@ -239,6 +243,8 @@ test('D: a steel beam bent over a post settles as one row with a compact model o
 
 test('D: a body expanded and never broken or bent gives its row back on the shared model: no part, no heap taken', async () => {
   const R = await breakRig(g, flat);
+  // (the round trip alone: parts as free rows, their body's particles let go — Engine.holdParts)
+  R.e.holdParts = false;
   const cells = box(12, 12, 10, 4, 3, 3);
   const b = R.e.add({ cells, mesh: modelMesh(cells) })!;
   await R.step(60);
@@ -268,6 +274,8 @@ test('D: a body expanded and never broken or bent gives its row back on the shar
 
 test('D: a settled part wakes by an impulse like any row, and a hard hit expands it from its compact model with no vertex jump', async () => {
   const R = await breakRig(g, flat);
+  // (the round trip alone: parts as free rows, their body's particles let go — Engine.holdParts)
+  R.e.holdParts = false;
   const cells = box(12, 12, 34, 6, 6, 4);
   R.e.add({ cells, mesh: modelMesh(cells) })!;
   await settleAll(R);
@@ -315,6 +323,8 @@ test('D: a settled part wakes by an impulse like any row, and a hard hit expands
 
 test('D: rows asleep cost the frame no mesh work — their triangles are placed once and stand (PE26)', async () => {
   const R = await breakRig(g, flat);
+  // (the round trip alone: parts as free rows, their body's particles let go — Engine.holdParts)
+  R.e.holdParts = false;
   const a = box(8, 8, 10, 3, 3, 2);
   const c = box(16, 16, 10, 2, 2, 4);
   const ba = R.e.add({ cells: a, mesh: modelMesh(a) })!;
@@ -356,6 +366,8 @@ test('D: rows asleep cost the frame no mesh work — their triangles are placed 
 
 test('D: a row\'s occupancy at its model\'s resolution, for the collision branch', async () => {
   const R = await breakRig(g, flat);
+  // (the round trip alone: parts as free rows, their body's particles let go — Engine.holdParts)
+  R.e.holdParts = false;
   const cells = [...box(12, 12, 10, 3, 2, 2), { x: 15, y: 12, z: 10, mat: MAT.Steel }];
   const b = R.e.add({ cells })!;
   await R.step(2);
@@ -389,6 +401,8 @@ test.runIf(!!process.env.BREAK_LOG)('numbers: what a drop leaves, by shape, mate
     ['brick 6x3x6', 6, 3, 6, 30, MAT.Brick],
   ] as [string, number, number, number, number, number][]) {
     const R = await breakRig(g, name.includes('ridge') ? ridge : flat);
+    // (the round trip alone: parts as free rows, their body's particles let go — Engine.holdParts)
+    R.e.holdParts = false;
     const cells = box(12, 12, 10 + drop, w, d, h, mat);
     R.e.add({ cells, mesh: modelMesh(cells), spin: name.includes('brick') ? [0.6, 0, 0] : [0, 0, 0] });
     let ticks = -1;
@@ -413,6 +427,8 @@ test.runIf(!!process.env.BREAK_LOG)('numbers: what settling costs (GPU time by k
     ['stone 16x16x8 across a ridge', box(10, 8, 40, 16, 16, 8)],
   ] as [string, ReturnType<typeof box>][]) {
     const R = await breakRig(g, ridge);
+    // (the round trip alone: parts as free rows, their body's particles let go — Engine.holdParts)
+    R.e.holdParts = false;
     R.e.add({ cells, mesh: modelMesh(cells) });
     const most = new Map<string, number>();
     let began = false;

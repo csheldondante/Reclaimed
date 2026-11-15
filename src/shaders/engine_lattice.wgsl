@@ -258,7 +258,9 @@ fn collide(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
           }
           let n = d / dist;
           let over = 2.0 * RAD - dist;
-          let closing = -dot(v - ps[3u * ju].xyz, n);
+          // (a voxel of a body that is not being stepped — still, settling, held — stands: its last move and speed are stale)
+          let liveJ = Lj.ok && Lj.state == S_LIVE;
+          let closing = -dot(v - select(vec3<f32>(0.0), ps[3u * ju].xyz, liveJ), n);
           let mj = matOf(ju);
           let toughJ = pmA(mj).x * pmB(mj).w;
           // too fast for the weaker of the two: it breaks up (ties: the higher index); deeper than it can bear: it crumbles
@@ -266,8 +268,8 @@ fn collide(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
           if (!near && over > G.tune.voxelsCrumbleOverlap && (toughI < toughJ || (toughI == toughJ && i > ju))) { dying = true; }
           // stop them closing further (each its share); never part them
           // (a voxel of a body that is not being stepped — still, settling — does not give way: the whole stop is this one's)
-          let wj = select(0.0, max(xj.w, 0.0), Lj.ok && Lj.state == S_LIVE);
-          let shut = -dot((x - p0) - (xj.xyz - px[2u * ju + 1u].xyz), n);
+          let wj = select(0.0, max(xj.w, 0.0), liveJ);
+          let shut = -dot((x - p0) - select(vec3<f32>(0.0), xj.xyz - px[2u * ju + 1u].xyz, liveJ), n);
           if (shut > 0.0) { x += n * shut * x0.w / max(x0.w + wj, 1e-6); }
           nsum += n;
           if (!near) { fastest = max(fastest, closing * 0.5); }
