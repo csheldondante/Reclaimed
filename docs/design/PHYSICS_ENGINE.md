@@ -1430,3 +1430,27 @@ pairs' kernels are compiled with `engine_ground.wgsl` first, `integrate` and `tf
   between them and expects a deformation in the tick of the impact needs `stage4Gate = false` or a few ticks' grace.
 - The phone page is v3.
 
+### Direct, not indirect (PP11; after the owner's phone run of bench v3)
+
+The phone (Pixel 9a): an indirect dispatch costs about 0.1 ms whether or not it does anything, a direct one under
+0.01; a pass each adds little; clears, uploads and a slow clock are not it. The awake tick's fixed part was its 56 to
+136 indirect dispatches.
+
+- **Rows, tables, draw list, events: direct over the whole room** while the row room is 16,384 slots or fewer
+  (`Engine.DIRECT_ROWS`). Each thread leaves past the live count; the sleepers' table and the draw list read a flag
+  (`itemCtl[2]` from the coarse gate, pool header word 41 from `drawArm`) where they used a zero-size dispatch. No
+  live item can be past the dispatch, so a count that jumps needs no tail.
+- **Pairs: direct over the tick's pair budget** (`Engine.pairBudget`: twice the most pairs the last read saw + 512,
+  1,024 at least, the room at most, the whole room on a stale read), which is the tick's pair room for the coarse and
+  fine passes too. More pairs than that: their rows are held (`missing`) until the next read has raised it.
+- A row in no pair skips `rowSolve`.
+- **An awake tick with nothing deforming is 57 direct + 8 indirect** (the fine pass's five, `tfine`'s two, stage B):
+  about 1.3 ms of fixed cost by the phone's ladder, from 13.7 at the join. With a body deforming stage 4 adds 80
+  indirect (PP11b); past the bound, 27 + 38.
+- `Engine.directDispatch = false` is the tick as before. The phone page is v4.
+
+**Hand-over, as it stands now.** Built and tested: bench v4, the terrain row test, the quiet tick, stage 4's gate,
+direct dispatches with the pair budget. For the owner: one phone run of v4; the pause of a body at its first impact
+(PP8) and of rows past a pair budget (PP11a), in the lab; the sleeper undermined by a simulation alone (PP5a). Open:
+PP11b (stage 4 direct is the next largest), PP9 (the lattice seeded by the tick), PP10 (the pile does not hold), PP7.
+

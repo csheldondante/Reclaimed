@@ -91,6 +91,8 @@ export class SdfCoarse {
   readonly levels: number;
   readonly cellTop: number;
   margin: number;
+  /** pairs this tick may write, when less than the room (the engine's: it dispatches its pair kernels direct over this many). A pair past it is counted and its rows flagged in `missing`, as past the room */
+  pairBudget = Infinity;
   /** for the bench's isolation only: encode up to the sleeper table (0), the awake table (1), stage A (2), everything (3) */
   upTo = 3;
 
@@ -198,7 +200,7 @@ export class SdfCoarse {
     this.used = rows;
     for (const mode of [0, 1]) {
       const p = new ArrayBuffer(48);
-      new Uint32Array(p).set([rows, this.heads, this.levels, this.pairRoom, 0, 0, mode, this.itemRoom, mode ? this.rows * this.levels : this.rows, this.slBase]);
+      new Uint32Array(p).set([rows, this.heads, this.levels, Math.min(this.pairRoom, this.pairBudget), 0, 0, mode, this.itemRoom, mode ? this.rows * this.levels : this.rows, this.slBase]);
       new Float32Array(p).set([this.cellTop, this.margin], 4);
       this.device.queue.writeBuffer(this.params[mode], 0, p);
     }

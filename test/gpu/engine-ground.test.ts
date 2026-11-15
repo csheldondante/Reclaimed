@@ -445,6 +445,9 @@ test('the awake tick is mostly direct dispatches; a count that jumps in one tick
   const z = (P: Float32Array, b: EngineBody) => P[b.row * 16 + 10];
   const before = await poses();
   for (const b of upper) expect(z(before, b)).toBeCloseTo(16, 3);
+  // (and the pair budget set so that any new pair overruns it: the rows of the pairs past it are held, not passed through)
+  R.e.pairHeadroom = 0;
+  R.e.pairFloor = 1;
   // every sleeper woken in one tick: 10 awake to 510
   R.e.wakeNear([64, 64, 12], 400);
   await frames(R, 3);
@@ -456,6 +459,7 @@ test('the awake tick is mostly direct dispatches; a count that jumps in one tick
   await frames(R, 300);
   const end = await poses();
   const gaps = upper.map((b, k) => z(end, b) - z(end, lower[k]));
+  log(`pair rooms after: ${JSON.stringify(R.e.collide.rooms)}`);
   log(`510 awake in one tick: every hung block fell; at rest the upper sits ${Math.min(...gaps).toFixed(2)} to ${Math.max(...gaps).toFixed(2)} over the lower (2 when just touching), the lowest centre ${Math.min(...lower.map((b) => z(end, b))).toFixed(2)} (11 on the ground)`);
   for (const gp of gaps) {
     expect(gp).toBeGreaterThan(1.7);

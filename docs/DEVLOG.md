@@ -23832,3 +23832,45 @@ logged for the owner: a sleeper undermined by a simulation alone, with no host e
 a block thrown down at 25 cells/s is flagged at tick 7, keeps its pose while it waits, and is expanded at tick 10;
 the watch tick is off by default. Bench page v3. Suites: see the commit.
 
+## 2026-11-15 — direct, not indirect: the awake tick's fixed part (PP11, `physics10-join`)
+
+**Why.** The owner's phone run of the bench (v3, Pixel 9a) settled the floor: 65 dispatches of a shader that does
+nothing cost 0.4 to 0.5 ms direct and 6.4 to 6.6 ms indirect, with one workgroup or none; a pass each 1.5; clears and
+uploads in the noise; no slow-clock effect. So an indirect dispatch is about 0.1 ms and a direct one under 0.01. The
+awake tick was 3.65 to 7 ms against the old lattice's 1.9 to 3.1, and the solve cost 1.9 ms with no pair at all.
+
+**What.** Every kernel a thread a row or a pair already left at once past the GPU's live count. So they are
+dispatched direct over the whole room, where nothing live can be past the dispatch: the row kernels, the coarse
+pass's table builds (the sleepers' table gets a flag from the gate in place of a zero-size dispatch) and stage A, the
+draw list's two kernels (a flag from `drawArm`), `fold`. The pair kernels go over a pair budget from the last read,
+which the coarse and fine passes take as the tick's pair room: a tick with more pairs than it holds the rows of the
+pairs past it, the way a full room does. A row in no pair skips `rowSolve` (it has nothing to take; `rowFinish` does
+its terrain passes). Past 16,384 row slots the row kernels stay indirect: the empty workgroups would cost more.
+
+**Counts, an awake tick** (direct + indirect; `enginebench.html` v4 headless, and by the phone ladder's arithmetic,
+indirect x 0.1 + direct x 0.008 ms):
+
+| scene | at the join | with stage 4 gated | now | by the ladder, ms |
+|---|---|---|---|---|
+| 1,000 resting in stacks | 10 + 136 | 9 + 56 | 57 + 8 | 13.7 to 5.7 to 1.3 |
+| pile of 1,000, 10% awake | 10 + 136 | 9 + 56 | 57 + 8 | 13.7 to 5.7 to 1.3 |
+| 200 mid-pour (bodies deforming: stage 4 armed) | 10 + 136 | 10 + 136 | 58 + 88 | 13.7 to 13.7 to 9.3 |
+| 1,000 in free flight | 10 + 136 | 9 + 56 | 57 + 8 | 13.7 to 5.7 to 1.3 |
+| 10,000 in free flight | 10 + 136 | 9 + 56 | 27 + 38 | 13.7 to 5.7 to 4.0 |
+
+The desktop's own ms were not usable in this run (another agent's GPU tests on the same card: differences of either
+sign of several ms); the counts are exact and the phone run of v4 is the measure.
+
+**Safe when a count jumps.** Rows: the dispatch covers every slot, so there is no tail. Pairs: past the budget the
+rows are held (`missing`), bit for bit, and the next read raises the budget; none is dropped unseen (PP11a).
+
+**Not built.** Stage 4 while armed (80 indirect), the fine pass's five, stage B, `tfine`'s two, big rooms (PP11b).
+
+**Tests.** `engine-ground.test.ts`: ten awake among 500 asleep is 57 + 8 dispatches (9 + 56 with `directDispatch`
+off); every sleeper woken in one tick (10 awake to 510) with a pair budget of one: all 250 hung blocks fall, each
+comes to rest 2.00 over the block under it, none below the ground. `npx vitest run --project gpu engine sdf-bake
+sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots`: 126 passed, 1 timed out (`engine-d0` D0.1 at its 60 s limit on a
+loaded machine: it passes alone in 68 s with a longer limit, and took 87 s at the commit before in the same minute;
+127 passed on the direct step an hour earlier). `npm run typecheck` clean; unit project 630 passed, 1 failed (the
+roadlab writing lint, as on the base).
+

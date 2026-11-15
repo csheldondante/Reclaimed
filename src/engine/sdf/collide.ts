@@ -120,7 +120,7 @@ export class SdfCollide {
     if (rows > this.coarse.rows) want.rows = Math.max(rows, this.coarse.rows * 2);
     if (Object.keys(want).length) this.grow(want);
     this.coarse.setParams(rows);
-    this.fine.setParams(this.coarse.pairRoom, tick);
+    this.fine.setParams(Math.min(this.coarse.pairRoom, this.coarse.pairBudget), tick);
     // (`clears` false: a bench leaving the coarse pass out of a held scene — its tables stay as they were)
     if (clears) this.coarse.clears(enc);
     return { clears: clears ? (rows ? 2 : 1) : 0, uploads: 3, uploadBytes: 144 };
