@@ -40,6 +40,8 @@ export interface CoarseOptions {
   pairRoom?: number;
   /** the work items' room given outright (default 64 a row, 16,384 at least; it grows) */
   itemRoom?: number;
+  /** which word of `sleepEpoch` is the epoch (default 0; the engine keeps it in its awake list's header) */
+  epochWord?: number;
 }
 
 /** the engine's buffers the pass reads (contract.ts "the engine's rows") */
@@ -51,7 +53,7 @@ export interface CoarseInputs {
   info: GPUBuffer;
   /** a u32 a body row: its model row in the store */
   model: GPUBuffer;
-  /** word 0 changes whenever a row falls asleep, wakes, is made or freed asleep, or a sleeper is moved */
+  /** its epoch word (CoarseOptions.epochWord, default 0) changes whenever a row falls asleep, wakes, is made or freed asleep, or a sleeper is moved */
   sleepEpoch: GPUBuffer;
 }
 
@@ -113,7 +115,7 @@ export class SdfCoarse {
     if (this.levels < 1 || this.levels > 8) throw new Error(`SdfCoarse: ${this.levels} levels (1 to 8)`);
     this.cellTop = opts.cellTop;
     this.margin = opts.margin ?? 0.25;
-    const parts = [sdfFormatWgsl(models.format), modelWgsl, coarseWgsl];
+    const parts = [sdfFormatWgsl(models.format), `const SLEEP_EPOCH_WORD: u32 = ${opts.epochWord ?? 0}u;`, modelWgsl, coarseWgsl];
     const mk = (name: Kernel, spec: Record<number, 'uniform' | 'read' | 'rw'>) => makeCompute(device, `sdf coarse ${name}`, parts, { 0: 'uniform', ...spec }, name);
     const src = { 1: 'read', 2: 'read', 3: 'read', 4: 'read', 7: 'rw', 16: 'rw' } as const;
     this.k = {
@@ -204,11 +206,24 @@ export class SdfCoarse {
 
   /** The pass encoded: gate, the sleeper table if the epoch changed, the awake table, stage A, stage B. Call setParams first. */
   encode(enc: GPUCommandEncoder, inputs: CoarseInputs, timestampWrites?: GPUComputePassTimestampWrites): void {
-    const b = this.bind(inputs);
-    // (the awake table's counts, cursors and oversize count; the rows' missing words. The gate zeroes the pair and item counts)
+    this.clears(enc);
+    const pass = enc.beginComputePass({ label: 'sdf coarse', timestampWrites });
+    this.encodeInto(pass, inputs);
+    pass.end();
+  }
+
+  /** the tick's two GPU clears (the awake table's counts, cursors and oversize count; the rows' missing words), before the pass that holds `encodeInto` begins. The gate zeroes the pair and item counts */
+  clears(enc: GPUCommandEncoder): void {
     enc.clearBuffer(this.counters[0]);
     if (this.used) enc.clearBuffer(this.missing, 0, this.used * 4);
-    const pass = enc.beginComputePass({ label: 'sdf coarse', timestampWrites });
+  }
+
+  /** dispatches the pass encodes */
+  static readonly DISPATCHES = 15;
+
+  /** the pass's dispatches into a compute pass of the caller's (the engine keeps its whole tick in one); `clears` first */
+  encodeInto(pass: GPUComputePassEncoder, inputs: CoarseInputs): void {
+    const b = this.bind(inputs);
     const at = (name: Kernel, group: GPUBindGroup, buf: GPUBuffer | null, word = 0) => {
       pass.setPipeline(this.k[name].pipeline);
       pass.setBindGroup(0, group);
@@ -236,7 +251,11 @@ export class SdfCoarse {
       at('argsB', b.one.argsB, null);
     }
     if (this.upTo >= 3) at('stageB', b.one.stageB, this.ctl, CTL_STAGE_B);
-    pass.end();
+  }
+
+  /** the sleeper table is built again at the next pass whatever the epoch says (the engine's rows were all let go) */
+  invalidateSleepers(): void {
+    this.device.queue.writeBuffer(this.ctl, 0, new Uint32Array([0xffffffff]));
   }
 
   private bind(inputs: CoarseInputs): NonNullable<SdfCoarse['bound']> {

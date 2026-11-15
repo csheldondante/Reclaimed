@@ -110,6 +110,8 @@ const METAL = {
 };
 /** (the physics engine's break station, build step 2 letter E) a stone pad beside the tanker with a post across it,
  *  for a beam or a slab to be dropped over; the three heights a block is dropped from on the metal station's stone pad */
+/** (the physics engine's pile station) a pit on the river station's low ground for rubble to be poured into */
+const PILE = { pit: { x0: 224, x1: 242, y0: 100, y1: 114, floor: G - 3 }, pad: { x0: 200, x1: 222, y0: 100, y1: 126, top: G + 2 } };
 const BREAK = { pad: { x0: 240, x1: 255, y0: 233, y1: 240 }, post: { x0: 246, x1: 248, y0: 233, y1: 240, h: 5 }, heights: [8, 24, 48] as [number, number, number] };
 const cellsBox = (x0: number, y0: number, z0: number, w: number, d: number, h: number, mat: number) => {
   const out: { x: number; y: number; z: number; mat: number }[] = [];
@@ -297,6 +299,60 @@ export const STATIONS: Station[] = [
         // (thrown at the ledge's face: it deflects and falls)
         label: 'throw at the cliff',
         run: (k) => k.drop(cellsBox(206, 108, G + 9, 3, 2, 2, MAT.Stone), [-9, 0, 4]),
+      },
+    ],
+  },
+  {
+    // (the physics engine, bodies meeting bodies — docs/design/PHYSICS_ENGINE.md "The join": stacks, a pile in a pit,
+    // a boulder off the ledge into a stack, a beam across two blocks, a block thrown at a tower. On the river
+    // station's low ground, with a pit of its own. The drops go by the picked variant (k.drop): rigid rows that meet
+    // each other under ?solver=engine, the lattice's voxels by default — the same buttons)
+    id: 'pile',
+    name: 'pile',
+    rect: [112, 96, 256, 176],
+    look: [214, 96, G + 4, 10],
+    hint: 'bodies on bodies: a stack, rubble poured into a pit, a boulder into a stack, a beam across two blocks, a block thrown at a tower. A part broken off by a hard landing passes through other bodies still',
+    actions: [
+      {
+        label: 'drop a stack',
+        run: (k) => {
+          for (let i = 0; i < 5; i++) k.drop(cellsBox(204, 104, G + 3 + 2 * i, 3, 3, 2, i % 2 ? MAT.Concrete : MAT.Stone));
+        },
+      },
+      {
+        // (forty-eight mixed blocks in four layers over the pit)
+        label: 'pour rubble into the pit',
+        run: (k) => {
+          const shapes: [number, number, number, number][] = [[2, 2, 2, MAT.Stone], [3, 2, 2, MAT.Brick], [2, 2, 3, MAT.Concrete], [3, 3, 2, MAT.Stone]];
+          for (let i = 0; i < 48; i++) {
+            const sh = shapes[(i * 7 + Math.floor(i / 12)) % shapes.length];
+            const layer = Math.floor(i / 12);
+            k.drop(cellsBox(PILE.pit.x0 + 1 + (i % 4) * 4 + (layer % 2), PILE.pit.y0 + 1 + (Math.floor(i / 4) % 3) * 4, G + 6 + layer * 5, sh[0], sh[1], sh[2], sh[3]));
+          }
+        },
+      },
+      {
+        // (a stack at the foot of the ledge, and a boulder sent off the lip at it)
+        label: 'boulder into a stack',
+        run: (k) => {
+          for (let i = 0; i < 4; i++) k.drop(cellsBox(206, 112, G + 3 + 2 * i, 3, 3, 2, MAT.Brick));
+          k.later(1.5, () => k.drop(cellsBox(188, 112, G + 15, 4, 4, 4, MAT.Stone), [11, 0, 0]));
+        },
+      },
+      {
+        label: 'steel beam across two blocks',
+        run: (k) => {
+          k.drop(cellsBox(203, 120, G + 3, 3, 3, 3, MAT.Stone));
+          k.drop(cellsBox(212, 120, G + 3, 3, 3, 3, MAT.Stone));
+          k.later(1.5, () => k.drop(cellsBox(202, 121, G + 8, 14, 2, 1, MAT.Steel)));
+        },
+      },
+      {
+        label: 'throw a block at a tower',
+        run: (k) => {
+          for (let i = 0; i < 6; i++) k.drop(cellsBox(216, 108, G + 3 + 2 * i, 2, 2, 2, i % 2 ? MAT.Stone : MAT.Brick));
+          k.later(2.5, () => k.drop(cellsBox(205, 108, G + 8, 3, 2, 2, MAT.Stone), [14, 0, 2]));
+        },
       },
     ],
   },
@@ -607,6 +663,12 @@ export function generatePlayground(dims: WorldDims): MapData {
   {
     const R = RIVER;
     for (let y = R.y0; y < R.y1; y++) for (let x = R.x0; x < Math.min(R.x1, w); x++) ground(x, y, Math.round(riverTop(x) * 4) / 4);
+    // (the pile station's pit, on the low ground away from the channel)
+    const P = PILE.pit;
+    for (let y = P.y0; y < P.y1; y++) for (let x = P.x0; x < Math.min(P.x1, w); x++) ground(x, y, P.floor);
+    // (and a level pad beside it for its stacks)
+    const D = PILE.pad;
+    for (let y = D.y0; y < D.y1; y++) for (let x = D.x0; x < D.x1; x++) ground(x, y, D.top);
   }
   // 6. dust: drift and ash over the plain, a sandstone top on a thin leg
   {

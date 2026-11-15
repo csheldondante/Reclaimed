@@ -137,7 +137,7 @@ export class SdfFine {
     this.counts = device.createBuffer({ label: 'sdf fine counts', size: COUNTS_BYTES, usage: S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
     new Uint32Array(this.counts.getMappedRange())[COUNT_SLOT_EPOCH] = 1;
     this.counts.unmap();
-    this.args = device.createBuffer({ label: 'sdf fine args', size: 64, usage: S | GPUBufferUsage.INDIRECT });
+    this.args = device.createBuffer({ label: 'sdf fine args', size: 64, usage: S | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_SRC });
     let slots = 64;
     while (slots < opts.maxPairs) slots *= 2;
     this.grow({ maxPairs: opts.maxPairs, maxBricks: opts.maxBricks ?? Math.max(4096, opts.maxPairs * 2 * 64), maxCull: opts.maxCull ?? Math.max(4096, opts.maxPairs * 2 * 8), slots: opts.slots ?? slots });
@@ -237,9 +237,20 @@ export class SdfFine {
    * ones sized on the GPU. Call setParams first.
    */
   encode(enc: GPUCommandEncoder, inputs: FineInputs, pairUpper: number, timestampWrites?: GPUComputePassTimestampWrites): void {
-    const b = this.bind(inputs).g;
     void pairUpper;
     const pass = enc.beginComputePass({ label: 'sdf fine', timestampWrites });
+    this.encodeInto(pass, inputs);
+    pass.end();
+  }
+
+  /** the indirect arguments of a dispatch a thread a pair, workgroups of 64 (the solver's pair kernels use them): the buffer and the byte offset; valid after `pairArgs` has run in the tick */
+  get pairDispatch(): { buffer: GPUBuffer; offset: number } {
+    return { buffer: this.args, offset: 48 };
+  }
+
+  /** the pass's dispatches into a compute pass of the caller's */
+  encodeInto(pass: GPUComputePassEncoder, inputs: FineInputs): void {
+    const b = this.bind(inputs).g;
     const old = this.leaving;
     if (old) {
       // (the one dispatch sized on the CPU: a thread an entry of the table being left, once a growth)
@@ -268,7 +279,6 @@ export class SdfFine {
     }
     if (this.upTo >= 2) at('fine', 0);
     if (this.upTo >= 3) at('reduce', 12);
-    pass.end();
   }
 
   destroy(): void {

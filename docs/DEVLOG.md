@@ -23665,3 +23665,10 @@ and reads frames, not the pass).
 
 **Tests** (Node, Dawn): `sdf-bake` 15, `sdf-fine` 36, `sdf-coarse` 8, `sdf-rooms` 8, `sdf-slots` 6; unit `sdf-rooms`
 3. `npm run typecheck` clean; the unit project's one failure is the base's (`roadlab/control.ts`, the writing lint).
+
+## 2026-11-15 — the join: bodies meet bodies inside the engine's tick (PJ1–PJ9, `physics10-join`)
+
+**Why.** The engine (rows on terrain, expand, settle) and the body ↔ body module (distance-field models, coarse and
+fine passes, rooms, pair slots) were built apart. This joins them: docs/design/PHYSICS_ENGINE.md "The join" has the
+tick, the solver, the measurements, the departures and the hacks; BACKLOG PJ1–PJ9 the rows. (Written in full in the
+commit that closes the round; this entry marks the tested boundary "pairs reach the solver".)

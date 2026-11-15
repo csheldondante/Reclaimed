@@ -22,11 +22,15 @@ import deformWgsl from '../shaders/engine_deform.wgsl?raw';
 import latticeWgsl from '../shaders/engine_lattice.wgsl?raw';
 import drawWgsl from '../shaders/engine_draw.wgsl?raw';
 import settleWgsl from '../shaders/engine_settle.wgsl?raw';
+import pairsWgsl from '../shaders/engine_pairs.wgsl?raw';
+import { SdfCollide, type CollideOptions } from './sdf/collide';
+import { hexSdfSpec } from './sdf/hexmodel';
+import { SdfModels } from './sdf/models';
 import type { SimSystem } from '../sim/system';
 import { TICK_DT } from '../sim/flow';
 import type { WorldGpu } from '../sim/world-gpu';
 import { TUNE } from '../tune/params';
-import { cellPos, nbr, NDIR } from '../world/lattice';
+import { cellPos, nbr, NDIR, ROW_H } from '../world/lattice';
 import { MAT, MAX_MATERIALS } from '../world/materials';
 
 export type V3 = [number, number, number];
@@ -50,6 +54,8 @@ export interface EngineSpec {
   pose?: { pos?: V3; q?: Q };
   vel?: V3;
   spin?: V3;
+  /** added asleep where it is put (a level's standing things; a test's fixed block): it wakes as any sleeper does */
+  asleep?: boolean;
 }
 
 export interface EngineBody {
@@ -67,7 +73,15 @@ const POSE_B = 64;
 const VEL_B = 32;
 const INFO_B = 64;
 /** engine.wgsl EngU */
-const EU_B = 192;
+const EU_B = 224;
+/** engine.wgsl RWW: a row's work words in the awake list's buffer; engine_pairs.wgsl TRW, PRW (vec4s) */
+const RWW = 20;
+const TRW = 48;
+const PRW = 16;
+/** ticks between the reads of a chain (the read an event starts is at once) */
+const READ_GAP = 4;
+/** the chained read's bytes: the pool's header, the awake list's header, what was asked of the pair rooms */
+const READ_B = 64 * 4 + 32 + SdfCollide.ASKED_BYTES;
 /** engine_deform.wgsl: voxels a page, the pool's header, a slot's record and sums, where the live pages start, a model's header, a mesh vertex (vec4s) */
 export const PAGE = 512;
 export const POOL_HDR = 64;
@@ -81,8 +95,6 @@ export const DL_AT = 16;
 export const OCC_AT = 4;
 /** the pool's header (engine_deform.wgsl P_*) */
 export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21, hashOver: 22 } as const;
-/** ticks between reads of the pool's header */
-const STAT_EVERY = 4;
 /** engine.wgsl LIST_AT, EV_AT, EV_WORDS */
 const LIST_AT = 8;
 const EV_AT = 4;
@@ -220,6 +232,28 @@ export function bakeModel(cells: readonly EngineCell[], com: V3): ModelBake {
   return { lo, dims, recs, solid: cells.length };
 }
 
+/**
+ * A model's content: its cells about the least corner of their box, with their materials, and the parity of the box's
+ * first row (the lattice's odd rows sit half a cell right, so the same cells two rows up are the same shape and one
+ * row up are not). Two bodies with the same key are instances of one model: one heap model, one mesh, one distance
+ * field and sample list, baked once (the owner, 2026-11-15: "make the distance fields and voxels for each mesh
+ * (instanced ones anyway)"). Pure (test/unit/engine-bake.test.ts).
+ */
+export function modelKey(cells: readonly EngineCell[]): { key: string; lo: V3 } {
+  let lo: V3 = [Infinity, Infinity, Infinity];
+  for (const c of cells) lo = [Math.min(lo[0], c.x), Math.min(lo[1], c.y), Math.min(lo[2], c.z)];
+  const words = cells.map((c) => [c.x - lo[0], c.y - lo[1], c.z - lo[2], c.mat]).sort((a, b) => a[2] - b[2] || a[1] - b[1] || a[0] - b[0]);
+  // (two 32-bit FNV-1a hashes of the sorted cells, and their count: not the cells themselves — a key is kept a model)
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (const w of words)
+    for (const v of w) {
+      h1 = Math.imul(h1 ^ (v & 0xffff), 0x01000193) >>> 0;
+      h2 = Math.imul(h2 ^ (v + 0x9e37), 0x85ebca6b) >>> 0;
+    }
+  return { key: `${cells.length}:${lo[1] & 1}:${h1.toString(16)}:${h2.toString(16)}`, lo };
+}
+
 /** A voxel model in the heap: shared by every row made from it until one deforms (its parts then get their own). */
 export interface EngineModel {
   /** its header's heap index */
@@ -230,6 +264,8 @@ export interface EngineModel {
   readonly body: ReturnType<typeof bakeBody>;
   /** its mesh's vertices (0: it draws nothing) */
   readonly verts: number;
+  /** its row in the distance-field store (sdf/models.ts): what bodies meet it by */
+  readonly sdf: number;
 }
 
 const pow2 = (n: number, from: number) => {
@@ -267,6 +303,24 @@ export class Engine implements SimSystem {
   pose!: GPUBuffer;
   private vel!: GPUBuffer;
   private info!: GPUBuffer;
+  /** a u32 a row: its model's row in the distance-field store */
+  private sdfModel!: GPUBuffer;
+  /** a row's terrain contact rows this substep (engine_pairs.wgsl trow) */
+  private trow!: GPUBuffer;
+  /** the tick's pairs as the solver keeps them, and the impulses kept by pair slot (engine_pairs.wgsl prow, pimp) */
+  private prow!: GPUBuffer;
+  private pimp!: GPUBuffer;
+  private pimpOld: GPUBuffer | null = null;
+  private dummy: GPUBuffer;
+  /** the awake list's dispatch arguments again (engine_compact.wgsl rargs) */
+  private rargs: GPUBuffer;
+  private pairRoom = 0;
+  private slotRoom = 0;
+  /** the distance-field models and the body ↔ body passes (src/engine/sdf) */
+  readonly store: SdfModels;
+  readonly collide: SdfCollide;
+  /** a model was added since the last bake */
+  private unbaked = false;
   private samples!: GPUBuffer;
   private contacts!: GPUBuffer;
   /** the rows awake: its head an indirect dispatch's arguments (tests read it) */
@@ -312,6 +366,10 @@ export class Engine implements SimSystem {
   private ticks = 0;
   readonly bodies = new Set<EngineBody>();
   readonly models: EngineModel[] = [];
+  /** the models by content (modelKey), each with the corner of the cells it was made from: instances share one */
+  private byContent = new Map<string, { model: EngineModel; lo: V3 }>();
+  /** distance-field bakes so far: batches flushed, models in them (a test's count; the lab's read-out) */
+  readonly bakes = { batches: 0, models: 0 };
   /** a buffer made again (it grew): what binds it binds the new one */
   onBuffers?: () => void;
   /** (tests, the bench) the heightfield fast path of the terrain test, over the panel's switch when set */
@@ -321,6 +379,8 @@ export class Engine implements SimSystem {
   readonly seen = new Uint32Array(POOL_HDR);
   /** (tests) off: the buffers are not grown ahead, so the GPU's allocations run out */
   growAhead = true;
+  /** (tests) off: the pair passes' rooms stay as made, so they run out and their rows are held (`missing`) */
+  growPairs = true;
   private statBuf: GPUBuffer;
   private statBusy = false;
 
@@ -328,6 +388,8 @@ export class Engine implements SimSystem {
     private device: GPUDevice,
     private world: WorldGpu,
     private prof: Profiler,
+    /** (tests) the pair passes' rooms as first made */
+    opts: { collide?: Partial<CollideOptions> } = {},
   ) {
     const parts = [commonWgsl, layersWgsl, materialsWgsl, engineWgsl];
     const base: BindSpec = { 0: 'uniform', 2: 'uniform', 3: 'uniform', 16: 'uniform', 17: 'uniform' };
@@ -335,10 +397,20 @@ export class Engine implements SimSystem {
       const all = { ...base, ...spec };
       this.k[name] = { k: makeCompute(device, `engine-${name}`, [...parts, ...files], all, entry), spec: all };
     };
-    kernel('compact', [compactWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 12: 'read', 18: 'rw' });
+    kernel('compact', [compactWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 12: 'read', 18: 'rw', 50: 'rw' });
     kernel('fine', [stepWgsl], { 1: 'read', 4: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'read', 11: 'read', 12: 'read', 13: 'tex' });
     kernel('solve', [stepWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'read', 12: 'read', 15: 'rw' });
     kernel('fold', [foldWgsl], { 14: 'rw', 15: 'read' });
+    // bodies meeting bodies (engine_pairs.wgsl): the substep with pairs in it
+    kernel('integrate', [pairsWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw' });
+    kernel('tfine', [pairsWgsl], { 1: 'read', 4: 'rw', 6: 'rw', 7: 'rw', 10: 'rw', 11: 'read', 12: 'read', 13: 'tex', 40: 'rw' });
+    kernel('pimpMove', [pairsWgsl], { 42: 'rw', 48: 'read', 49: 'read' });
+    kernel('pairPrep', [pairsWgsl], { 4: 'rw', 41: 'rw', 42: 'rw', 43: 'read', 44: 'read', 45: 'read', 46: 'read' });
+    kernel('pairPre', [pairsWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 41: 'rw', 43: 'read', 47: 'read' });
+    kernel('pairSolve', [pairsWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 41: 'rw', 43: 'read' });
+    kernel('rowSolve', [pairsWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 40: 'rw', 47: 'read' });
+    kernel('pairPush', [pairsWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 41: 'rw', 42: 'rw', 43: 'read' });
+    kernel('rowFinish', [pairsWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 12: 'read', 15: 'rw', 40: 'rw', 47: 'read' });
     kernel('expand', [deformWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 18: 'rw', 19: 'rw', 22: 'rw', 27: 'read' });
     kernel('arm', [deformWgsl], { 18: 'rw', 37: 'rw' });
     kernel('pagelist', [deformWgsl], { 18: 'rw', 19: 'rw', 20: 'rw' });
@@ -389,8 +461,14 @@ export class Engine implements SimSystem {
     this.et = world.buf('engine expand thresholds', 192, U);
     this.fu = world.buf('engine draw uniform', 16, U);
     this.ou = world.buf('engine uniform (occupancy)', EU_B, U);
-    this.statBuf = world.buf('engine pool header read', POOL_HDR * 4, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
+    this.statBuf = world.buf('engine chained read', READ_B, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
+    this.rargs = world.buf('engine row dispatch', 32, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
+    this.dummy = world.buf('engine (no slot growth)', 64, GPUBufferUsage.STORAGE);
+    this.store = new SdfModels(device, 'grad8');
+    // (the engine reads what was asked of the rooms itself, with the pool's header: one read, chained from events)
+    this.collide = new SdfCollide(device, this.store, { rows: 64, cellTop: 12, margin: TUNE.engine.nearGap, readEvery: 0, spread: true, epochWord: 7, ...opts.collide });
     this.resize({ rows: 64, pages: 16, slots: 16, table: 1 });
+    this.pairRooms();
     this.drawRoom(4096);
     this.samp = { used: 0, cpu: 4096, gpu: 1024 };
     this.samples = this.halves(undefined, 'engine samples', 16, this.samp, 4096, 1024);
@@ -400,6 +478,15 @@ export class Engine implements SimSystem {
   }
 
   private olds: GPUBuffer[] = [];
+  /** the buffers a growth replaced, let go once every encoder that may hold them has run */
+  private letGo(): void {
+    const olds = this.olds.splice(0);
+    void this.device.queue.onSubmittedWorkDone().then(() => {
+      olds.forEach((o) => o.destroy());
+      this.collide.release();
+    });
+  }
+
   /** the buffers that grew are let go once what was copied out of them has run */
   private retire(enc?: GPUCommandEncoder): void {
     if (enc) this.device.queue.submit([enc.finish()]);
@@ -492,7 +579,15 @@ export class Engine implements SimSystem {
       this.pose = again(this.pose, 'engine pose', n.rows * POSE_B, o.rows * POSE_B);
       this.vel = again(this.vel, 'engine vel', n.rows * VEL_B, o.rows * VEL_B);
       this.info = again(this.info, 'engine info', n.rows * INFO_B, o.rows * INFO_B);
-      this.list = again(this.list, 'engine awake list', (LIST_AT + n.rows) * 4, 0, S | GPUBufferUsage.INDIRECT);
+      // (the list, then the rows' work words — engine.wgsl rwAt. Made again empty: a wake asked for in the tick before
+      // a growth is lost, and the sleep epoch starts again, so the coarse pass is told to build its sleeper table)
+      this.list = again(this.list, 'engine awake list', (LIST_AT + n.rows * (1 + RWW)) * 4, 0, S | GPUBufferUsage.INDIRECT);
+      this.sdfModel = again(this.sdfModel, 'engine row models', n.rows * 4, o.rows * 4);
+      // (a row with no model in the store — every row the GPU makes at settle, till its field is baked: BACKLOG PJ6 —
+      // is in no pair: the coarse pass reads this word)
+      this.device.queue.writeBuffer(this.sdfModel, o.rows * 4, new Uint32Array(n.rows - o.rows).fill(0xffffffff));
+      this.trow = again(this.trow, 'engine terrain rows', n.rows * TRW * 16, 0);
+      this.collide.coarse.invalidateSleepers();
     }
     if (n.pages !== o.pages) {
       const v = n.pages * PAGE;
@@ -531,13 +626,47 @@ export class Engine implements SimSystem {
     this.retire(enc);
   }
 
+  /** the solver's own buffers by the pair passes' rooms: made again when those grow (the slots' kept impulses moved on the GPU by the fine pass's remap, at the next tick's `pimpMove`) */
+  private pairRooms(): boolean {
+    const c = this.collide;
+    const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC;
+    let moved = false;
+    if (c.coarse.pairRoom !== this.pairRoom) {
+      if (this.prow) this.olds.push(this.prow);
+      this.pairRoom = c.coarse.pairRoom;
+      this.prow = this.world.buf('engine pair rows', this.pairRoom * PRW * 16, S);
+      this.g = null;
+    }
+    if (c.fine.slots !== this.slotRoom) {
+      if (this.pimpOld) this.olds.push(this.pimpOld);
+      this.pimpOld = this.pimp ?? null;
+      this.oldSlots = this.slotRoom;
+      this.slotRoom = c.fine.slots;
+      this.pimp = this.world.buf('engine pair impulses', this.slotRoom * 16, S);
+      moved = !!this.pimpOld;
+      this.g = null;
+    }
+    return moved;
+  }
+  private oldSlots = 0;
+  /** the pair passes' buffers the bind groups were made with (a growth replaces them) */
+  private boundTo: GPUBuffer[] = [];
+  private pairBuffers(): GPUBuffer[] {
+    const c = this.collide;
+    return [c.coarse.pairBuf, c.fine.hits, c.fine.contacts, c.fine.slotKeys, c.missing];
+  }
+
   private groups(): Record<string, GPUBindGroup> {
+    const pb = this.pairBuffers();
+    if (this.g && pb.some((b, i) => b !== this.boundTo[i])) this.g = null;
     if (this.g) return this.g;
+    this.boundTo = pb;
     const w = this.world;
     const res: Record<number, GPUBuffer | GPUTextureView> = {
       0: w.globals, 1: w.chunks, 2: w.materials, 3: this.eu[1], 16: this.cu[0].ec, 17: this.et,
       4: this.pose, 5: this.vel, 6: this.info, 7: this.samples, 8: this.contacts, 10: this.list, 11: w.layers, 12: w.surface, 13: w.driftView, 14: w.deposit, 15: this.events,
       18: this.pool, 19: this.dmeta, 20: this.dargs, 21: this.dargs, 22: this.heap, 23: this.px, 24: this.ps, 25: this.pw, 26: this.pb, 27: this.list, 28: this.events, 29: w.layers, 30: w.particles, 31: w.particleCounters, 32: this.dl, 33: this.dout, 34: this.dl, 35: this.pm, 36: this.fu, 37: this.kargs, 38: this.vh,
+      40: this.trow, 41: this.prow, 42: this.pimp, 43: pb[0], 44: pb[1], 45: pb[2], 46: pb[3], 47: pb[4], 48: this.pimpOld ?? this.dummy, 50: this.rargs, 49: (this.pimpOld && this.collide.fine.slotRemap) || this.dummy,
     };
     const make = (name: string, over: Record<number, GPUBuffer> = {}) => {
       const { k, spec } = this.k[name];
@@ -548,6 +677,8 @@ export class Engine implements SimSystem {
     this.cu.forEach((c, i) => (g[`compact${i}`] = make('compact', { 3: c.eu, 16: c.ec })));
     this.cu.forEach((c, i) => (g[`slots${i}`] = make('slots', { 3: c.eu, 16: c.ec })));
     g.solve0 = make('solve', { 3: this.eu[0] });
+    g.integrate0 = make('integrate', { 3: this.eu[0] });
+    g.pairPre0 = make('pairPre', { 3: this.eu[0] });
     this.g = g;
     return g;
   }
@@ -578,7 +709,10 @@ export class Engine implements SimSystem {
     // (a slot's page table holds the biggest model's pages)
     const pages = Math.ceil((mb.dims[0] * mb.dims[1] * mb.dims[2]) / PAGE);
     if (pages > this.d.table) this.resize({ ...this.d, table: pow2(pages, this.d.table) });
-    const m: EngineModel = { id, cells: cells.length, lo: mb.lo, dims: mb.dims, body, verts };
+    // (what bodies meet it by: its cells as a distance field, baked on the GPU in one batch at the next tick)
+    const sdf = this.store.add(hexSdfSpec(cells, body.com));
+    this.unbaked = true;
+    const m: EngineModel = { id, cells: cells.length, lo: mb.lo, dims: mb.dims, body, verts, sdf };
     this.models.push(m);
     return m;
   }
@@ -586,7 +720,21 @@ export class Engine implements SimSystem {
   /** A body: a row (an even index) of a model — its own from `cells`, or one shared. (No cells: null.) */
   add(spec: EngineSpec): EngineBody | null {
     if (!spec.model && !spec.cells?.length) return null;
-    const model = spec.model ?? this.addModel(spec.cells!, spec.mesh);
+    // (cells whose content a model already has are an instance of it: nothing uploaded or baked but the row; the
+    // model's centre moved to where these cells stand)
+    let model = spec.model;
+    let shift: V3 = [0, 0, 0];
+    if (!model) {
+      const k = modelKey(spec.cells!);
+      const hit = this.byContent.get(k.key);
+      if (hit) {
+        model = hit.model;
+        shift = [k.lo[0] - hit.lo[0], (k.lo[1] - hit.lo[1]) * ROW_H, k.lo[2] - hit.lo[2]];
+      } else {
+        model = this.addModel(spec.cells!, spec.mesh);
+        this.byContent.set(k.key, { model, lo: k.lo });
+      }
+    }
     const b = model.body;
     const n = b.samples.length / 4;
     if (2 * (this.rows + 1) > this.d.rows) this.resize({ ...this.d, rows: pow2(2 * (this.rows + 1), this.d.rows) });
@@ -594,7 +742,8 @@ export class Engine implements SimSystem {
     const row = 2 * this.rows++;
     const first = this.samp.used;
     this.samp.used += n;
-    const pos = spec.pose?.pos ?? b.com;
+    const com: V3 = [b.com[0] + shift[0], b.com[1] + shift[1], b.com[2] + shift[2]];
+    const pos = spec.pose?.pos ?? com;
     const q = spec.pose?.q ?? [0, 0, 0, 1];
     const P = new Float32Array(16);
     P.set([pos[0], pos[1], pos[2], 1 / b.mass, q[0], q[1], q[2], q[3]], 0);
@@ -607,7 +756,8 @@ export class Engine implements SimSystem {
     const If = new Float32Array(I);
     const Iu = new Uint32Array(I);
     If.set([b.invI[0], b.invI[1], b.invI[2]], 0);
-    Iu[3] = ROW_ALIVE;
+    // (asleep as settle's rows are made: `compact` takes the ground's word it sleeps on, and bumps the sleep epoch)
+    Iu[3] = ROW_ALIVE | (spec.asleep ? 2 | 64 : 0);
     If.set([b.invI[3], b.invI[4], b.invI[5], b.mass], 4);
     Iu[8] = first;
     Iu[9] = n;
@@ -615,11 +765,13 @@ export class Engine implements SimSystem {
     If[11] = b.cellMass;
     Iu[12] = model.id;
     this.device.queue.writeBuffer(this.info, row * INFO_B, I);
+    this.device.queue.writeBuffer(this.sdfModel, row * 4, new Uint32Array([model.sdf]));
+    this.kick();
     this.device.queue.writeBuffer(this.samples, first * 16, b.samples);
     this.tris += model.verts / 3;
     this.drawRoom(2 * this.tris);
     this.dirtyDraw();
-    const body: EngineBody = { row, restCom: b.com, cells: model.cells, samples: n, mass: b.mass, model };
+    const body: EngineBody = { row, restCom: com, cells: model.cells, samples: n, mass: b.mass, model };
     this.bodies.add(body);
     return body;
   }
@@ -632,30 +784,36 @@ export class Engine implements SimSystem {
   /** a velocity change at the next tick (cells/s): a throw, a blast; it wakes the row */
   impulse(b: { row: number }, dv: V3): void {
     this.cmds.push({ kind: 1, row: b.row, a: [dv[0], dv[1], dv[2], 0] });
+    this.kick();
   }
 
   wake(b: { row: number }): void {
     this.cmds.push({ kind: 2, row: b.row, a: [0, 0, 0, 0] });
+    this.kick();
   }
 
   /** every row within r of a point wakes (the ground there was cut, something was thrown in) */
   wakeNear(p: V3, r: number): void {
     this.cmds.push({ kind: 3, row: 0, a: [p[0], p[1], p[2], r] });
+    this.kick();
   }
 
   /** the window slid: every row moves with it */
   shift(dx: number, dy: number, dz: number): void {
     this.cmds.push({ kind: 4, row: 0, a: [dx, dy, dz, 0] });
+    this.kick();
   }
 
   /** the row deforms at the next tick whatever hits it (a lab's button, a test): its particles are made as an impact's are */
   expand(b: { row: number }): void {
     this.cmds.push({ kind: 5, row: b.row, a: [0, 0, 0, 0] });
+    this.kick();
   }
 
   /** a deforming body let go — its pages back to the pool, its row freed — or with none named, every one */
   release(b?: { row: number }): void {
     this.cmds.push({ kind: 6, row: b ? b.row : 0xffffffff, a: [0, 0, 0, 0] });
+    this.kick();
   }
 
   /** every row, model and particle let go (a level reset) */
@@ -665,11 +823,15 @@ export class Engine implements SimSystem {
     this.samp.used = 0;
     this.hp.used = 1;
     this.bodies.clear();
+    for (const m of this.models) this.store.remove(m.sdf);
     this.models.length = 0;
+    this.byContent.clear();
+    this.collide.coarse.invalidateSleepers();
+    this.kick();
     this.cmds.length = 0;
     this.seen.fill(0);
     const enc = this.device.createCommandEncoder({ label: 'engine clear' });
-    for (const b of [this.info, this.pool, this.dmeta, this.dargs, this.kargs]) enc.clearBuffer(b);
+    for (const b of [this.info, this.pool, this.dmeta, this.dargs, this.kargs, this.list]) enc.clearBuffer(b);
     enc.clearBuffer(this.dl, 0, DL_AT * 4);
     this.device.queue.submit([enc.finish()]);
   }
@@ -689,7 +851,7 @@ export class Engine implements SimSystem {
     const fast = this.fastPath ?? T.fastPath >= 0.5;
     const d = this.d;
     const L = Engine.layout(d);
-    u.set([d.rows, cmds, Math.max(1, Math.round(T.passes)), (fast ? 1 : 0) | (first ? 2 : 0) | (T.deform >= 0.5 ? 4 : 0) | (this.settles ? 8 : 0)], 20);
+    u.set([d.rows, cmds, Math.max(1, Math.round(T.passes)), (fast ? 1 : 0) | (first ? 2 : 0) | (T.deform >= 0.5 ? 4 : 0) | (this.settles ? 8 : 0) | (T.pairExpand >= 0.5 ? 16 : 0)], 20);
     u.set([d.pages, d.slots, d.table, this.ticks], 24);
     u.set([L.pageStack, L.slotStack, L.rowStack, L.sums], 28);
     u.set([L.pageInfo, L.slotRec, L.tables, this.dlRoom], 32);
@@ -698,23 +860,66 @@ export class Engine implements SimSystem {
     f.set([T.stillV, T.stillT, T.crumb, TICK_DT / lsub], 40);
     u.set([Math.max(1, Math.round(T.latticeIters)), 0, lsub, 0], 44);
     f[45] = T.breakSmooth;
+    f.set([T.wakeEnergy, T.warmStart, T.rimDepth, 0], 48);
+    u.set([Math.max(1, Math.round(T.pairIters)), this.pairRoom, this.slotRoom, this.oldSlots], 52);
     return U;
   }
 
-  /** the pool's header, read now and then (256 B, never waited for), then the buffers grown ahead of what it shows */
+  // ---- the one read (DESIGN §24: "CPU reads are small, async, and only after edits or events; nothing reads back per
+  // frame"). It starts when the host adds a body, changes a velocity, wakes rows, slides the window or says the
+  // world was edited; it is issued again only while the last one showed activity (rows awake, bodies deforming or
+  // settling, a buffer or a room about to grow). With everything asleep and nothing asked, none is issued.
+  // What it carries: the pool's header (what the GPU's allocators have asked for), the awake count, and what was asked
+  // of the pair passes' rooms. No body is in it. Trade-off: a wake that happens on the GPU alone (a sleeper's ground
+  // changed by a sim) is not seen by the CPU until the next event it knows of — the tick itself needs no read, and a
+  // room that runs out meanwhile holds its rows still (`missing`) instead of dropping a collision.
+  /** reads an event still owes: two, the one issued with the event shows the tick before it */
+  private owed = 2;
+  /** the last read showed activity: the chain goes on */
+  private active = false;
+  private nextRead = 0;
+  /** reads issued so far (a test's count; the lab's read-out) */
+  reads = 0;
+  /** rows awake as the last read saw them */
+  awakeSeen = 0;
+  /** a read landed since the buffers were last sized by it */
+  private fresh = false;
+
+  /** the host changed something the engine cannot see from the GPU's side alone (an edit under bodies, a spawn): the read chain starts */
+  kick(): void {
+    this.owed = 2;
+  }
+
   private watch(): void {
-    if (!this.statBusy && this.ticks % STAT_EVERY === 0) {
+    if (!this.statBusy && (this.owed > 0 || (this.active && this.ticks >= this.nextRead))) {
       this.statBusy = true;
-      const enc = this.device.createCommandEncoder({ label: 'engine pool header' });
+      this.active = false;
+      if (this.owed > 0) this.owed--;
+      this.nextRead = this.ticks + READ_GAP;
+      this.reads++;
+      const enc = this.device.createCommandEncoder({ label: 'engine chained read' });
       enc.copyBufferToBuffer(this.pool, 0, this.statBuf, 0, POOL_HDR * 4);
+      enc.copyBufferToBuffer(this.list, 0, this.statBuf, POOL_HDR * 4, 32);
+      this.collide.copyAsked(enc, this.statBuf, POOL_HDR * 4 + 32);
       this.device.queue.submit([enc.finish()]);
+      const rooms = this.collide.rooms;
       this.statBuf.mapAsync(GPUMapMode.READ).then(() => {
-        this.seen.set(new Uint32Array(this.statBuf.getMappedRange()));
+        const w = new Uint32Array(this.statBuf.getMappedRange().slice(0));
         this.statBuf.unmap();
         this.statBusy = false;
+        const was = [...this.seen];
+        this.seen.set(w.subarray(0, POOL_HDR));
+        this.awakeSeen = w[POOL_HDR + 3];
+        const grows = this.growPairs && this.collide.consider(w.subarray(POOL_HDR + 8), rooms);
+        const asked = [POOL.pageWant, POOL.slotWant, POOL.rowWant, POOL.sampWant, POOL.heapWant, POOL.dlWant, POOL.expands, POOL.parts].some((k) => was[k] !== this.seen[k]);
+        this.active = this.awakeSeen > 0 || this.seen[POOL.deforming] > 0 || this.seen[POOL.settling] > 0 || grows || asked;
+        this.fresh = true;
       }, ignoreTeardown);
     }
-    if (this.growAhead) this.ahead();
+    if (this.growAhead && this.fresh) {
+      this.fresh = false;
+      this.ahead();
+    }
   }
 
   /** Room for twice what the GPU has asked for so far (engine_deform.wgsl: its `want` counters), so it rarely runs out. */
@@ -740,6 +945,7 @@ export class Engine implements SimSystem {
     await tmp.mapAsync(GPUMapMode.READ);
     this.seen.set(new Uint32Array(tmp.getMappedRange()));
     tmp.destroy();
+    if (this.growAhead) this.ahead();
     return this.seen;
   }
 
@@ -760,7 +966,27 @@ export class Engine implements SimSystem {
       return;
     }
     this.ticks++;
+    // (models added since the last tick: baked now, in one batch — a level's bodies are added before its first tick)
+    if (this.unbaked) {
+      this.unbaked = false;
+      this.bakes.models += this.store.flush();
+      this.bakes.batches++;
+    }
     this.watch();
+    const pairs = TUNE.engine.pairs >= 0.5;
+    let moved = false;
+    if (pairs) {
+      // (before the pass begins: a growth the read asked for, the pair passes' uniforms and two GPU clears)
+      this.collide.coarse.margin = this.collide.fine.margin = TUNE.engine.nearGap;
+      this.collide.prepare(enc, this.d.rows, this.ticks);
+      moved = this.pairRooms();
+      if (!moved && this.pimpOld) {
+        this.olds.push(this.pimpOld);
+        this.pimpOld = null;
+        this.g = null;
+      }
+      this.letGo();
+    }
     const g = this.groups();
     const q = this.device.queue;
     const take = this.cmds.splice(0, CMDS);
@@ -779,7 +1005,9 @@ export class Engine implements SimSystem {
     q.writeBuffer(this.eu[0], 0, this.uniform(true, 0));
     q.writeBuffer(this.eu[1], 0, this.uniform(false, 0));
     q.writeBuffer(this.et, 0, this.thresholds());
-    enc.clearBuffer(this.list, 0, LIST_AT * 4);
+    // (the list's header but its last word, the sleep epoch)
+    enc.clearBuffer(this.list, 0, (LIST_AT - 1) * 4);
+    enc.clearBuffer(this.rargs);
     enc.clearBuffer(this.events, 0, EV_AT * 4);
     enc.clearBuffer(this.dargs, 0, 32);
     // (`timeKernels`: a pass a kernel, each with its own timestamps — what a tick is made of; else one pass)
@@ -797,11 +1025,53 @@ export class Engine implements SimSystem {
     run('compact', `compact${ring}`);
     cur.pass.dispatchWorkgroups(Math.ceil(this.d.rows / 64));
     const sub = Math.max(1, Math.round(TUNE.engine.substeps));
-    for (let s = 0; s < sub; s++) {
-      run('fine');
-      cur.pass.dispatchWorkgroupsIndirect(this.list, 16);
-      run('solve', s === 0 ? 'solve0' : 'solve');
-      cur.pass.dispatchWorkgroupsIndirect(this.list, 0);
+    if (pairs) {
+      // bodies meet bodies (engine_pairs.wgsl): integrate, the tick's pairs (coarse, fine: once, at the first
+      // substep), the terrain rows, the solve, the move and sleep. Every dispatch sized on the GPU: by the rows awake
+      // (the list) or by the pairs (the fine pass's own arguments)
+      const pd = this.collide.fine.pairDispatch;
+      const rowsOf = (name: string, group = name) => {
+        run(name, group);
+        cur.pass.dispatchWorkgroupsIndirect(this.rargs, 0);
+      };
+      const pairsOf = (name: string, group = name) => {
+        run(name, group);
+        cur.pass.dispatchWorkgroupsIndirect(pd.buffer, pd.offset);
+      };
+      const iters = Math.max(1, Math.round(TUNE.engine.pairIters));
+      for (let s = 0; s < sub; s++) {
+        rowsOf('integrate', s === 0 ? 'integrate0' : 'integrate');
+        if (s === 0) {
+          if (this.timeKernels) {
+            cur.pass.end();
+            cur.pass = enc.beginComputePass({ label: 'engine collide', timestampWrites: this.prof.timestamps('engine:collide') });
+          }
+          this.collide.encodeInto(cur.pass, { list: this.list, pose: this.pose, vel: this.vel, info: this.info, model: this.sdfModel, sleepEpoch: this.list });
+          this.prof.dispatches += 23;
+          if (moved) {
+            run('pimpMove');
+            cur.pass.dispatchWorkgroups(Math.ceil(this.oldSlots / 64));
+          }
+          pairsOf('pairPrep');
+        }
+        run('tfine');
+        cur.pass.dispatchWorkgroupsIndirect(this.rargs, 16);
+        pairsOf('pairPre', s === 0 ? 'pairPre0' : 'pairPre');
+        for (let i = 0; i < iters; i++) {
+          pairsOf('pairSolve');
+          rowsOf('rowSolve');
+        }
+        pairsOf('pairPush');
+        rowsOf('rowFinish');
+      }
+    } else {
+      // (step 1's route, kept: each row over its own terrain contacts; bodies pass through each other)
+      for (let s = 0; s < sub; s++) {
+        run('fine');
+        cur.pass.dispatchWorkgroupsIndirect(this.list, 16);
+        run('solve', s === 0 ? 'solve0' : 'solve');
+        cur.pass.dispatchWorkgroupsIndirect(this.list, 0);
+      }
     }
     if (TUNE.engine.deform >= 0.5) {
       // build step 2: rows into particles (the rows awake), the live pages listed and the new ones filled — the
@@ -933,7 +1203,7 @@ export class Engine implements SimSystem {
 
   /** (tests only: nothing in play reads a row) the buffers, to read back */
   get debugBuffers() {
-    return { pose: this.pose, vel: this.vel, info: this.info, samples: this.samples, list: this.list, events: this.events, pool: this.pool, dmeta: this.dmeta, dargs: this.dargs, kargs: this.kargs, dl: this.dl, dout: this.dout, heap: this.heap, px: this.px, ps: this.ps, pb: this.pb };
+    return { model: this.sdfModel, prow: this.prow, pimp: this.pimp, pose: this.pose, vel: this.vel, info: this.info, samples: this.samples, list: this.list, events: this.events, pool: this.pool, dmeta: this.dmeta, dargs: this.dargs, kargs: this.kargs, dl: this.dl, dout: this.dout, heap: this.heap, px: this.px, ps: this.ps, pb: this.pb };
   }
 
   /** (tests, the lab's read-out) the rooms now, and where the records start */

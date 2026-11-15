@@ -30,11 +30,11 @@ export interface BreakRig {
   model(id: number): Promise<{ dims: number[]; solid: number; verts: number; recs: Float32Array }>;
 }
 
-export async function breakRig(g: TestGpu, col: (x: number, y: number) => Interval[], W = 32, H = 32): Promise<BreakRig> {
+export async function breakRig(g: TestGpu, col: (x: number, y: number) => Interval[], W = 32, H = 32, opts: ConstructorParameters<typeof Engine>[3] = {}): Promise<BreakRig> {
   const w = await tinyWorld(g, tinyMap(W, H, 64, col), ['surface']);
   const prof = new Profiler(g.device, g.device.features.has('timestamp-query'));
   prof.active = false;
-  const e = new Engine(g.device, w.core.world, prof);
+  const e = new Engine(g.device, w.core.world, prof, opts);
   const sys = w.core.sim.systems;
   sys.splice(sys.findIndex((s) => s.name === 'surface') + 1, 0, e);
   const on = (s: { name: string }) => s.name === 'surface' || s.name === 'engine';

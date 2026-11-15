@@ -26,8 +26,10 @@ export interface CollideOptions extends CoarseOptions {
   cullRoom?: number;
   /** the pair slots' table given outright, a power of two (default fine.ts's; it grows) */
   slotRoom?: number;
-  /** ticks between reads of what was asked of the rooms (default 8; 0: never, the rooms stay as made) */
+  /** ticks between reads of what was asked of the rooms (default 8; 0: `poll` never reads — the engine reads the words itself with its own event-chained read: `copyAsked`, `consider`) */
   readEvery?: number;
+  /** one room made bigger a tick at most (the rows' apart), the others the tick after: the tick that made the two biggest buffers at once stalled (docs/design/PHYSICS_ENGINE.md "Round 6"). Default false */
+  spread?: boolean;
 }
 
 /** a room made bigger */
@@ -47,6 +49,7 @@ export class SdfCollide {
   readonly coarse: SdfCoarse;
   readonly fine: SdfFine;
   readEvery: number;
+  spread: boolean;
   /** every growth so far */
   readonly growths: Growth[] = [];
   /** reads landed, and the last one's time from `poll` to its data, ms */
@@ -70,6 +73,7 @@ export class SdfCollide {
     this.coarse = new SdfCoarse(device, models, opts);
     this.fine = new SdfFine(device, models, { maxPairs: this.coarse.pairRoom, cap: opts.cap, margin: opts.margin, maxBricks: opts.groupRoom, maxCull: opts.cullRoom, slots: opts.slotRoom });
     this.readEvery = opts.readEvery ?? 8;
+    this.spread = opts.spread ?? false;
     this.next = this.readEvery;
     this.rd = device.createBuffer({ label: 'sdf rooms read', size: HEAD_BYTES + COUNTS_BYTES, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   }
@@ -95,14 +99,69 @@ export class SdfCollide {
    * that a read asked for is applied first.
    */
   encode(enc: GPUCommandEncoder, inputs: CoarseInputs, rows: number, tick: number, timestamps?: { coarse?: GPUComputePassTimestampWrites; fine?: GPUComputePassTimestampWrites }): void {
+    this.prepare(enc, rows, tick);
+    this.coarse.encode(enc, inputs, timestamps?.coarse);
+    this.fine.encode(enc, { ...this.coarse.finePairs, pose: inputs.pose, vel: inputs.vel, info: inputs.info, model: inputs.model }, this.coarse.pairRoom, timestamps?.fine);
+  }
+
+  /**
+   * The engine's form of `encode`, in two halves so its whole tick is one compute pass: `prepare` before the pass
+   * begins (a growth a read asked for, the uniforms, the coarse pass's two GPU clears), then `encodeInto` inside it.
+   */
+  prepare(enc: GPUCommandEncoder, rows: number, tick: number): void {
     const want: Rooms = { ...this.want };
     this.want = null;
+    if (this.spread) {
+      // (the first room asked for now, the others kept for the next tick)
+      const later = Object.keys(want).slice(1);
+      if (later.length) this.want = Object.fromEntries(later.map((k) => [k, want[k]]));
+      for (const k of later) delete want[k];
+    }
     if (rows > this.coarse.rows) want.rows = Math.max(rows, this.coarse.rows * 2);
     if (Object.keys(want).length) this.grow(want);
     this.coarse.setParams(rows);
     this.fine.setParams(this.coarse.pairRoom, tick);
-    this.coarse.encode(enc, inputs, timestamps?.coarse);
-    this.fine.encode(enc, { ...this.coarse.finePairs, pose: inputs.pose, vel: inputs.vel, info: inputs.info, model: inputs.model }, this.coarse.pairRoom, timestamps?.fine);
+    this.coarse.clears(enc);
+  }
+
+  encodeInto(pass: GPUComputePassEncoder, inputs: CoarseInputs): void {
+    this.coarse.encodeInto(pass, inputs);
+    this.fine.encodeInto(pass, { ...this.coarse.finePairs, pose: inputs.pose, vel: inputs.vel, info: inputs.info, model: inputs.model });
+  }
+
+  /** a growth is waiting for the next `prepare` */
+  get growing(): boolean {
+    return this.want !== null;
+  }
+
+  /** bytes `copyAsked` copies */
+  static readonly ASKED_BYTES = HEAD_BYTES + COUNTS_BYTES;
+
+  /** what was asked of the rooms copied into `dst` (ASKED_BYTES from `offset`), and the high-water words started again: for a read of the caller's own (the engine's event-chained one) */
+  copyAsked(enc: GPUCommandEncoder, dst: GPUBuffer, offset: number): void {
+    enc.copyBufferToBuffer(this.coarse.pairBuf, 0, dst, offset, HEAD_BYTES);
+    enc.copyBufferToBuffer(this.fine.counts, 0, dst, offset + HEAD_BYTES, COUNTS_BYTES);
+    enc.clearBuffer(this.coarse.pairBuf, PAIR_HW_PAIRS * 4, 8);
+    enc.clearBuffer(this.fine.counts, COUNT_HW_BRICKS * 4, COUNTS_BYTES - COUNT_HW_BRICKS * 4);
+  }
+
+  /** `copyAsked`'s words, read: a room found half full is made bigger by the next `prepare`. `room`: the rooms when the copy was made. True if a growth was planned */
+  consider(w: Uint32Array, room: Rooms): boolean {
+    const c = w.subarray(HEAD_BYTES / 4);
+    this.rehashFails += c[COUNT_REHASH_FAILS];
+    // (a pair that found no slot although the table was under half full: the table doubles all the same)
+    const slots = c[COUNT_SLOT_FAILS_SINCE] ? Math.max(c[COUNT_HW_SLOTS], room.slots / 2) : c[COUNT_HW_SLOTS];
+    const asked: Rooms = { pairs: Math.max(w[PAIR_ASKED], w[PAIR_HW_PAIRS]), items: Math.max(w[PAIR_ITEMS_ASKED], w[PAIR_HW_ITEMS]), cull: Math.max(c[COUNT_CULL], c[COUNT_HW_CULL]), groups: Math.max(c[COUNT_BRICKS], c[COUNT_HW_BRICKS]), slots };
+    const plan = planRooms({ pairs: room.pairs, items: room.items, cull: room.cull, groups: room.groups, slots: room.slots }, asked);
+    if (!Object.keys(plan).length) return false;
+    this.want = { ...this.want, ...plan };
+    return true;
+  }
+
+  /** the buffers a growth replaced, destroyed: when every encoder made before the growth has been submitted (`poll` does it too) */
+  release(): void {
+    this.coarse.release();
+    this.fine.release();
   }
 
   private grow(want: Rooms): void {
@@ -129,11 +188,8 @@ export class SdfCollide {
     const dev = this.device;
     const t0 = performance.now();
     const enc = dev.createCommandEncoder({ label: 'sdf rooms read' });
-    enc.copyBufferToBuffer(this.coarse.pairBuf, 0, this.rd, 0, HEAD_BYTES);
-    enc.copyBufferToBuffer(this.fine.counts, 0, this.rd, HEAD_BYTES, COUNTS_BYTES);
     // (the high-water words start again from here)
-    enc.clearBuffer(this.coarse.pairBuf, PAIR_HW_PAIRS * 4, 8);
-    enc.clearBuffer(this.fine.counts, COUNT_HW_BRICKS * 4, COUNTS_BYTES - COUNT_HW_BRICKS * 4);
+    this.copyAsked(enc, this.rd, 0);
     dev.queue.submit([enc.finish()]);
     const room = this.rooms;
     this.reading = this.rd.mapAsync(GPUMapMode.READ).then(
@@ -143,17 +199,8 @@ export class SdfCollide {
         this.reading = null;
         this.reads++;
         this.lastReadMs = performance.now() - t0;
-        const c = w.subarray(HEAD_BYTES / 4);
-        this.rehashFails += c[COUNT_REHASH_FAILS];
-        // (a pair that found no slot although the table was under half full: the table doubles all the same)
-        const slots = c[COUNT_SLOT_FAILS_SINCE] ? Math.max(c[COUNT_HW_SLOTS], room.slots / 2) : c[COUNT_HW_SLOTS];
-        const asked: Rooms = { pairs: Math.max(w[PAIR_ASKED], w[PAIR_HW_PAIRS]), items: Math.max(w[PAIR_ITEMS_ASKED], w[PAIR_HW_ITEMS]), cull: Math.max(c[COUNT_CULL], c[COUNT_HW_CULL]), groups: Math.max(c[COUNT_BRICKS], c[COUNT_HW_BRICKS]), slots };
-        const plan = planRooms({ pairs: room.pairs, items: room.items, cull: room.cull, groups: room.groups, slots: room.slots }, asked);
-        if (Object.keys(plan).length) {
-          this.want = { ...this.want, ...plan };
-          // (a room that ran out hid some of what the next would be asked: look again as soon as it has grown)
-          this.next = this.polls + 1;
-        }
+        // (a room that ran out hid some of what the next would be asked: look again as soon as it has grown)
+        if (this.consider(w, room)) this.next = this.polls + 1;
       },
       (e: unknown) => {
         // (the pass destroyed while a read was under way)

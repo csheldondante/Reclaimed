@@ -31,14 +31,15 @@ export const SDF_SNORM_SCALE = 16;
 //   pose[4r+2]   xyz centre of mass, w inverse mass (below zero: a row that cannot be moved)
 //   pose[4r+3]   rotation (quat xyzw, body frame -> world)
 //   vel[2r]      xyz velocity, w rest timer                 vel[2r+1]   xyz spin (world), w bound radius (cells)
-//   info[3r]     xyz inverse inertia's diagonal (body frame), w flags (u32 bits: ROW_ALIVE, ROW_ASLEEP)
-//   info[3r+1]   xyz its off-diagonal (xy, xz, yz), w mass
-//   info[3r+2]   u32 bits: first sample, samples, material, cells (only the material is read here)
+//   info[4r]     xyz inverse inertia's diagonal (body frame), w flags (u32 bits: ROW_ALIVE, ROW_ASLEEP)
+//   info[4r+1]   xyz its off-diagonal (xy, xz, yz), w mass
+//   info[4r+2]   u32 bits: first sample, samples, material | loose << 8 (the word is read whole as the material)
+//   info[4r+3]   the engine's own (its heap model, its deform slot): not read here
 // and one buffer the engine does not have yet: `model`, a u32 a row, its model row in the store.
 
 export const POSE_FLOATS = 16;
 export const VEL_FLOATS = 8;
-export const INFO_FLOATS = 12;
+export const INFO_FLOATS = 16;
 export const ROW_ALIVE = 1;
 export const ROW_ASLEEP = 2;
 /** pairs, 8 B: body rows a, b (u32 each). The count is word 0 of a buffer (the coarse pass keeps both in one: a 16 B header, then the pairs) */

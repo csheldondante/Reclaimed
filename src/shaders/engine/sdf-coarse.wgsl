@@ -139,8 +139,8 @@ fn radiusOf(r: u32) -> f32 {
 
 @compute @workgroup_size(1)
 fn gate() {
-  let rebuild = sleepEpoch[0] != ctl[0];
-  ctl[0] = sleepEpoch[0];
+  let rebuild = sleepEpoch[SLEEP_EPOCH_WORD] != ctl[0];
+  ctl[0] = sleepEpoch[SLEEP_EPOCH_WORD];
   // last tick's pairs into the high-water mark the CPU reads now and then; this tick's counts start at zero
   atomicMax(&pairBuf[8], atomicLoad(&pairBuf[0]));
   atomicStore(&pairBuf[0], 0u);
@@ -185,7 +185,7 @@ fn sourceRow(i: u32) -> u32 {
     }
     return list[LIST_AT + i];
   }
-  if (i >= CP.rows || (bitcast<u32>(info[3u * i].w) & (ROW_ALIVE | ROW_ASLEEP)) != (ROW_ALIVE | ROW_ASLEEP)) {
+  if (i >= CP.rows || (bitcast<u32>(info[4u * i].w) & (ROW_ALIVE | ROW_ASLEEP)) != (ROW_ALIVE | ROW_ASLEEP)) {
     return NO_ROW;
   }
   return i;
@@ -486,6 +486,10 @@ fn stageB(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
   let reach = ra + radiusOf(b) + CP.margin;
   let d = pa - centre(b);
   if (dot(d, d) > reach * reach) {
+    return;
+  }
+  // (a row with no model in the store yet — the engine writes NO_MODEL — is in no pair: it has no field to test)
+  if (bodyModel[a] == 0xffffffffu || bodyModel[b] == 0xffffffffu) {
     return;
   }
   if (!boxesMeet(boxOf(a), boxOf(b))) {

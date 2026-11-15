@@ -19,6 +19,35 @@
 // Rows the host adds have even indices, rows the GPU makes (settle) odd ones: neither needs the other's count.
 // Samples and the heap (models, meshes) are each one buffer in two halves, the host's first then the GPU's: an index
 // with bit 31 set counts from where the GPU's half starts (sAt, hAt), so either half grows without the other knowing.
+// The awake list's buffer also holds the tick's work words, RWW a row from LIST_AT + the rows' room (rwAt): what the
+// pair solver accumulates into a row from every pair it is in, as fixed-point atomics (the same sums in any order).
+//   RW_DV, RW_DW   velocity and spin changes waiting to be taken (i32, 1/FPV): an awake row's by `rowSolve`; a
+//                  sleeper's, stamped to wake, by the next tick's `compact`
+//   RW_N           its pair contact rows this tick (tick & 0xffff) << 16 | count: the mass a contact may take
+//   RW_FLAGS       this substep (RF_*): it touches a body, it is held (a room ran out: `missing`), it is to deform
+//   RW_PUSH        position corrections out of overlaps (i32, 1/FPP), RW_PUSHN how many
+//   RW_V, RW_W     its velocity and spin after gravity (f32 bits), for the terrain pass's weighing of a hit
+//   RW_ENERGY      a sleeper's hardest hit while stamped (f32 bits): `compact` weighs it for deformation as it wakes
+//   RW_WAKE        the tick a pair asked this sleeper to wake (`compact` wakes it the tick after)
+const RWW: u32 = 20u;
+const RW_DV: u32 = 0u;
+const RW_DW: u32 = 3u;
+const RW_N: u32 = 6u;
+const RW_FLAGS: u32 = 7u;
+const RW_PUSH: u32 = 8u;
+const RW_PUSHN: u32 = 11u;
+const RW_V: u32 = 12u;
+const RW_W: u32 = 15u;
+const RW_ENERGY: u32 = 18u;
+const RW_WAKE: u32 = 19u;
+const RF_TOUCH: u32 = 1u;
+const RF_HOLD: u32 = 2u;
+const RF_EXPAND: u32 = 4u;
+const FPV: f32 = 4096.0;
+const FPP: f32 = 65536.0;
+// the list's header word that is the sleep epoch (the coarse pass reads it: it goes up whenever a row falls asleep,
+// wakes, is made asleep or is moved asleep; never cleared)
+const LIST_EPOCH: u32 = 7u;
 // A sample (the surface cells of its one baked voxel model, body frame, about the centre of mass):
 //   samples[s]   xyz, w its radius (half its cell's edge; < 0: eroded away)
 //   contacts[4s..4s+3]  two contacts a sample (the ground under it; the deepest wall beside it), each
@@ -41,7 +70,8 @@ const P_DL_DIRTY: u32 = 20u;
 const NONE: u32 = 0xffffffffu;
 const NO_CONTACT: f32 = -1e8;
 // the list buffer (u32): [0] workgroups of 64 awake rows, [1] 1, [2] 1 (an indirect dispatch's arguments), [3] rows
-// awake, [4] rows awake, [5] 1, [6] 1 (a workgroup a row), [7] spare, then the rows awake from LIST_AT
+// awake, [4] rows awake, [5] 1, [6] 1 (a workgroup a row), [7] the sleep epoch, then the rows awake from LIST_AT, then
+// the rows' work words (rwAt)
 const LIST_AT: u32 = 8u;
 // the event buffer (u32): [0] workgroups of 64 events, [1] 1, [2] 1, [3] events this tick, then EV_WORDS a event from
 // EV_AT: [kind, row, column (a per-column buffer's index) or 0, material] [point xyz, energy or volume as f32 bits]
@@ -63,7 +93,8 @@ struct EngU {
   // face roughness (cells)
   f: vec4<f32>,
   // x the rows' room (every row slot is read by `compact`), y commands, z solver passes, w bits: 1 the heightfield
-  // fast path, 2 the tick's first substep, 4 deformation on (build step 2), 8 still bodies settle into rows (letter D)
+  // fast path, 2 the tick's first substep, 4 deformation on (build step 2), 8 still bodies settle into rows (letter D),
+  // 16 a hard hit between bodies, or a deep overlap, hands a body to stage 4 (engine_pairs.wgsl)
   e: vec4<u32>,
   // (build step 2, engine_deform.wgsl) x the pages' room, y the slots' room, z pages a slot's table holds, w the tick
   g: vec4<u32>,
@@ -77,6 +108,12 @@ struct EngU {
   k: vec4<f32>,
   // x the lattice's solver iterations, y break face smoothing (f32 bits), z the lattice's substeps a tick, w spare
   l: vec4<u32>,
+  // (body against body, engine_pairs.wgsl) x a sleeper wakes when a hit's energy over its mass passes this, y the
+  // share of a pair's kept impulse it starts the next tick with, z what a rim row's depth is given back (cells), w spare
+  m: vec4<f32>,
+  // x the pair solver's iterations a substep, y the pairs' room, z the pair slots' room, w the old slots' room (a
+  // growth's remap)
+  n: vec4<u32>,
 };
 // an impact's energy over the body's mass past which it deforms, a material (0: never)
 @group(0) @binding(17) var<uniform> ET: array<vec4<f32>, 12>;
@@ -95,6 +132,7 @@ struct EngCmd { a: vec4<f32>, b: vec4<u32> };
 @group(0) @binding(7) var<storage, read_write> samples: array<vec4<f32>>;
 @group(0) @binding(8) var<storage, read_write> contacts: array<vec4<f32>>;
 
+fn rwAt(r: u32) -> u32 { return LIST_AT + EU.e.x + r * RWW; }
 fn rowFlags(r: u32) -> u32 { return bitcast<u32>(info[4u * r].w); }
 fn eqrot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   let t = 2.0 * cross(q.xyz, v);

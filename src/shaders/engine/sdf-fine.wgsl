@@ -159,13 +159,13 @@ fn velOf(r: u32) -> BodyVel {
 
 /** u . (inverse inertia of row r) u, u in the body's frame: the diagonal and the off-diagonal (xy, xz, yz) */
 fn invInertiaOn(r: u32, u: vec3<f32>) -> f32 {
-  let d = info[3u * r].xyz;
-  let o = info[3u * r + 1u].xyz;
+  let d = info[4u * r].xyz;
+  let o = info[4u * r + 1u].xyz;
   return dot(u * d, u) + 2.0 * (o.x * u.x * u.y + o.y * u.x * u.z + o.z * u.y * u.z);
 }
 
 fn materialOf(r: u32) -> u32 {
-  return bitcast<u32>(info[3u * r + 2u].z);
+  return bitcast<u32>(info[4u * r + 2u].z);
 }
 
 fn quatMat(q: vec4<f32>) -> mat3x3<f32> {

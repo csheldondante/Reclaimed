@@ -57,7 +57,7 @@ export function rig(world: RigWorld, bodies: BodyRow[], opts: Partial<CollideOpt
       out.set(a);
       return out;
     };
-    return { pose: grown(p.pose, 16), vel: grown(p.vel, 8), info: grown(p.info, 12), model: grown(p.model, 1), list: awakeList(b.map((_, i) => i).filter((i) => !b[i].asleep && !b[i].dead), room) };
+    return { pose: grown(p.pose, 16), vel: grown(p.vel, 8), info: grown(p.info, 16), model: grown(p.model, 1), list: awakeList(b.map((_, i) => i).filter((i) => !b[i].asleep && !b[i].dead), room) };
   };
   // (the engine's own buffers: room for the rows a test ends with)
   const room = Math.max(bufRows, bodies.length);
