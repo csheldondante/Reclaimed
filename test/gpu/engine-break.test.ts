@@ -4,14 +4,12 @@
 // of need from the pool's header (read now and then, never waited for by a tick).
 // Numbers for the DEVLOG: BREAK_LOG=1 npx vitest run --project gpu engine-break --reporter=verbose
 import { afterAll, afterEach, beforeAll, expect, test } from 'vitest';
-import { DL_AT, Engine, PAGE, POOL, SLOT_W, type EngineBody, type EngineCell, type EngineModel } from '../../src/engine/engine';
+import { PAGE, POOL, SLOT_W, type EngineBody, type EngineModel } from '../../src/engine/engine';
 import { modelMesh } from '../../src/engine/modelmesh';
 import { TUNE } from '../../src/tune/params';
-import type { Interval } from '../../src/world/layout';
 import { MAT } from '../../src/world/materials';
-import { tinyMap } from '../support/tinymap';
 import { testGpu, type TestGpu } from './dawn';
-import { tinyWorld, type TinyWorld } from './world';
+import { box, breakRig, flat, type BreakRig } from './engine-rig';
 
 let g: TestGpu;
 beforeAll(async () => {
@@ -27,87 +25,6 @@ const ALIVE = 1;
 const ASLEEP = 2;
 const DEFORM = 8;
 
-export interface BreakRig {
-  w: TinyWorld;
-  e: Engine;
-  step(n: number): Promise<void>;
-  /** a row's words: flags, mass, its slot, pose and velocity */
-  row(r: number): Promise<{ flags: number; mass: number; model: number; slot: number; pos: number[]; q: number[]; v: number[]; spin: number[]; invM: number }>;
-  flags(rows: number): Promise<Uint32Array>;
-  /** the pool's header, and the buffers grown by it (what the engine's own read does now and then) */
-  pool(): Promise<Uint32Array>;
-  /** a deforming row's particles in lattice order: place (xyz, inverse mass), velocity, bonds */
-  particles(r: number): Promise<{ x: Float32Array; v: Float32Array; bonds: Uint32Array; cells: number; pages: number[] }>;
-  /** the frame's draw run now (alpha 1: the poses as they are) and read: a triangle's row, its three vertices' places */
-  drawn(): Promise<{ tris: number; row: Uint32Array; p: Float32Array }>;
-}
-
-export async function breakRig(g: TestGpu, col: (x: number, y: number) => Interval[], W = 32, H = 32): Promise<BreakRig> {
-  const w = await tinyWorld(g, tinyMap(W, H, 64, col), ['surface']);
-  const e = new Engine(g.device, w.core.world, w.core.host.profiler);
-  const sys = w.core.sim.systems;
-  sys.splice(sys.findIndex((s) => s.name === 'surface') + 1, 0, e);
-  const on = (s: { name: string }) => s.name === 'surface' || s.name === 'engine';
-  const R: BreakRig = {
-    w,
-    e,
-    step: async (n) => {
-      for (let i = 0; i < n; i++) w.core.sim.step(w.core.globals, on);
-      await g.device.queue.onSubmittedWorkDone();
-    },
-    row: async (r) => {
-      const D = e.debugBuffers;
-      const I = await g.read(D.info, 64, r * 64);
-      const P = new Float32Array(await g.read(D.pose, 64, r * 64));
-      const V = new Float32Array(await g.read(D.vel, 32, r * 32));
-      const u = new Uint32Array(I);
-      return { flags: u[3], mass: new Float32Array(I)[7], model: u[12], slot: u[13], pos: [...P.slice(8, 11)], invM: P[11], q: [...P.slice(12, 16)], v: [...V.slice(0, 3)], spin: [...V.slice(4, 7)] };
-    },
-    flags: async (rows) => {
-      const u = new Uint32Array(await g.read(e.debugBuffers.info, rows * 64));
-      return Uint32Array.from({ length: rows }, (_, r) => u[r * 16 + 3]);
-    },
-    pool: () => e.readPool(),
-    particles: async (r) => {
-      const D = e.debugBuffers;
-      const row = await R.row(r);
-      const L = e.rooms;
-      const rec = new Uint32Array(await g.read(D.dmeta, SLOT_W * 4, (L.slotRec + SLOT_W * row.slot) * 4));
-      const cells = rec[3] * rec[4] * rec[5];
-      const pages = [...new Uint32Array(await g.read(D.dmeta, rec[6] * 4, (L.tables + row.slot * L.table) * 4))];
-      const x = new Float32Array(cells * 4);
-      const v = new Float32Array(cells * 4);
-      const bonds = new Uint32Array(cells);
-      for (let j = 0; j < pages.length; j++) {
-        const n = Math.min(PAGE, cells - j * PAGE);
-        const X = new Float32Array(await g.read(D.px, n * 32, pages[j] * PAGE * 32));
-        const S = new Float32Array(await g.read(D.ps, n * 48, pages[j] * PAGE * 48));
-        const B = new Uint32Array(await g.read(D.pb, n * 4, pages[j] * PAGE * 4));
-        for (let k = 0; k < n; k++) {
-          x.set(X.subarray(k * 8, k * 8 + 4), (j * PAGE + k) * 4);
-          v.set(S.subarray(k * 12, k * 12 + 4), (j * PAGE + k) * 4);
-        }
-        bonds.set(B, j * PAGE);
-      }
-      return { x, v, bonds, cells, pages };
-    },
-    drawn: async () => {
-      const enc = g.device.createCommandEncoder();
-      e.skin(enc, 1);
-      g.device.queue.submit([enc.finish()]);
-      const D = e.debugBuffers;
-      const tris = new Uint32Array(await g.read(D.dl, 32))[7];
-      const L = new Uint32Array(await g.read(D.dl, Math.max(1, tris) * 8, DL_AT * 4));
-      const O = new Float32Array(await g.read(D.dout, Math.max(1, tris) * 96));
-      const p = new Float32Array(tris * 9);
-      for (let v = 0; v < tris * 3; v++) p.set(O.subarray(v * 8, v * 8 + 3), v * 3);
-      return { tris, row: Uint32Array.from({ length: tris }, (_, t) => L[2 * t]), p };
-    },
-  };
-  // (the surface pass has run once before a body is tested against it)
-  await R.step(1);
-  return R;
-}
 
 /** letter A's tests are about the pages: the particles stand as `fill` wrote them, and nothing settles */
 function paging(R: BreakRig): void {
@@ -115,12 +32,6 @@ function paging(R: BreakRig): void {
   R.e.holdLattice = true;
 }
 
-export const flat = () => [{ z0: 0, z1: 10, mat: MAT.Stone }];
-export const box = (x0: number, y0: number, z0: number, w: number, d: number, h: number, mat: number = MAT.Stone): EngineCell[] => {
-  const out: EngineCell[] = [];
-  for (let z = z0; z < z0 + h; z++) for (let y = y0; y < y0 + d; y++) for (let x = x0; x < x0 + w; x++) out.push({ x, y, z, mat });
-  return out;
-};
 const ok = () => expect(g.takeErrors()).toEqual([]);
 
 /** every body asked to deform until all of them have (the host can't know which the GPU had room for: a test reads the flags) */
@@ -370,7 +281,9 @@ test('C: a stone block dropped from height is deformed by the lattice — it cra
     alive++;
     low = Math.min(low, p1.x[k * 4 + 2]);
   }
-  expect(low).toBeGreaterThan(10.2);
+  // (on the ground, top at 10: a voxel's centre half a cell above it, less what the lattice lets it sink before it
+  // crumbles — voxels.crumbleDepth, 0.6; pressed by the voxels above it, one may sit that deep, as on the lattice route)
+  expect(low).toBeGreaterThan(9.85);
   const P = await R.pool();
   // (every voxel is in the body or went to the ground: none lost)
   expect(alive + P[POOL.crumbs]).toBe(144);
@@ -422,37 +335,56 @@ test('C: a steel beam dropped across a post bends and keeps its bonds', async ()
 });
 
 // ---- numbers for the DEVLOG (desktop proxy; BREAK_LOG=1) --------------------------------------------------------------------
-test.runIf(!!process.env.BREAK_LOG)('numbers: a tick with nothing deforming, the tick 8 bodies of 16 x 16 x 16 expand, a tick with 32,768 voxels deforming', async () => {
-  const R = await breakRig(g, flat);
+const fmt = (m: Map<string, number> | null) => {
+  if (!m) return 'no timestamps on this device';
+  const top = [...m].filter(([k]) => k !== 'total' && k !== 'wall').sort((a, b) => b[1] - a[1]).slice(0, 7);
+  return `engine GPU ${m.get('total')!.toFixed(2)} ms (wall ${m.get('wall')!.toFixed(2)}): ${top.map(([k, v]) => `${k} ${v.toFixed(2)}`).join(', ')}`;
+};
+test.runIf(!!process.env.BREAK_LOG)('numbers: what a tick is made of — rows asleep, rows falling, the tick 8 bodies of 16 x 16 x 16 expand, a tick the buffers grow, 32,768 voxels deforming', async () => {
+  const R = await breakRig(g, flat, 64, 64);
   T.stillT = 1e9;
   const cells = box(8, 8, 10, 16, 16, 16);
   const m = R.e.addModel(cells, modelMesh(cells));
+  const at = (i: number, z: number): [number, number, number] => [m.body.com[0] + (i % 4) * 12, m.body.com[1] + Math.floor(i / 4) * 24, m.body.com[2] + z];
   const bodies: EngineBody[] = [];
-  for (let i = 0; i < 8; i++) bodies.push(R.e.add({ model: m })!);
-  await R.step(4);
-  // (room made first, so the timed ticks hold no growth)
-  R.e.growAhead = false;
-  const ms = async (n: number) => {
+  for (let i = 0; i < 8; i++) bodies.push(R.e.add({ model: m, pose: { pos: at(i, 0) } })!);
+  await R.step(90);
+  const wall = async (n: number) => {
     const t0 = performance.now();
     await R.step(n);
     return (performance.now() - t0) / n;
   };
-  const idle = await ms(60);
-  R.e.growAhead = true;
+  console.log(`numbers (${g.adapterInfo}); timestamps tick in steps of about 0.07 ms here`);
+  console.log(`8 rows asleep: wall ${(await wall(60)).toFixed(2)} ms a tick (the surface pass, the submit and the wait for it); ${fmt(await R.gpuTick())}`);
+  // (expanding: the first time the pool has 16 pages for 64 wanted — the header's read grows it)
+  R.e.growAhead = false;
   for (const b of bodies) R.e.expand(b);
-  await R.step(2);
+  console.log(`the tick they are asked to expand with room for two (16 pages): ${fmt(await R.gpuTick())}`);
   await R.pool();
-  await R.step(2);
+  const rooms0 = R.e.rooms.pages;
+  R.e.growAhead = true;
+  const tg = performance.now();
+  await R.step(1);
+  console.log(`the tick the buffers grow ahead (${rooms0} -> ${R.e.rooms.pages} pages: new buffers, a GPU copy of the particles, every bind group made again): wall ${(performance.now() - tg).toFixed(2)} ms`);
+  await expandAll(R, bodies);
+  let P = await R.pool();
+  console.log(`${P[POOL.deforming]} bodies, ${(P[POOL.pageNext] - P[POOL.pageTop]) * PAGE} voxels deforming (standing on the ground): wall ${(await wall(60)).toFixed(2)} ms a tick; ${fmt(await R.gpuTick())}`);
   R.e.release();
   await R.step(4);
+  // again with room made: rows falling, then the tick all eight expand
   const again: EngineBody[] = [];
-  for (let i = 0; i < 8; i++) again.push(R.e.add({ model: m })!);
+  for (let i = 0; i < 8; i++) again.push(R.e.add({ model: m, pose: { pos: at(i, 30) } })!);
   await R.step(4);
+  await R.pool();
+  await R.step(2);
+  console.log(`8 rows of 1,352 samples falling: wall ${(await wall(20)).toFixed(2)} ms a tick; ${fmt(await R.gpuTick())}`);
   for (const b of again) R.e.expand(b);
-  const exp = await ms(1);
-  const P = await R.pool();
-  const live = await ms(60);
-  console.log(`numbers (${g.adapterInfo}): rigid tick ${idle.toFixed(2)} ms; the tick 8 x 4,096 voxels expand ${exp.toFixed(2)} ms; ${P[POOL.deforming]} bodies, ${(P[POOL.pageNext] - P[POOL.pageTop]) * PAGE} voxels deforming ${live.toFixed(2)} ms a tick (wall time of submit to done, the surface pass included)`);
+  const pages0 = R.e.rooms.pages;
+  console.log(`the tick 8 x 4,096 voxels expand (room made ahead): ${fmt(await R.gpuTick())}`);
+  P = await R.pool();
+  expect(P[POOL.deforming]).toBe(8);
+  expect(R.e.rooms.pages).toBe(pages0);
+  console.log(`${P[POOL.deforming]} bodies, ${(P[POOL.pageNext] - P[POOL.pageTop]) * PAGE} voxels deforming (falling): wall ${(await wall(20)).toFixed(2)} ms a tick; ${fmt(await R.gpuTick())}`);
   ok();
   R.w.destroy();
 });

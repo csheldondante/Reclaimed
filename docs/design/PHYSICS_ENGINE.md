@@ -359,8 +359,8 @@ region), so it is not drawn as cubes; a piece of built material gets the body me
 
 1. Rows the GPU makes take odd indices, the host's even ones. The ruling said "atomic counter plus free list": that
    is what the odd rows use. Cost: up to half the row room unused when one side makes few rows (160 B each).
-2. The voxel hash is left out of the engine's stage 4, so deforming voxels do not meet each other. The note said it
-   stays among deforming voxels. It goes with body ↔ body (PE3).
+2. ~~The voxel hash is left out of the engine's stage 4.~~ Restored in D0 (below): deforming voxels meet each other;
+   a deforming voxel and a rigid row still do not (PE3).
 3. Left out of the fork: half-size fragments, heat, drives and pushes, the air shoved by a landing.
 4. A row that expands is frozen for the one tick it expands (not solved, lattice from the next tick).
 5. The transfer gate counts the pool header read as a §24 breach (a timed read in play). It is listed with PE21.
@@ -376,6 +376,26 @@ region), so it is not drawn as cubes; a piece of built material gets the body me
 - A deforming body does not follow the window's slide.
 - Crumbled voxels go to the ground through the 1,024 events a tick; more wait a tick (none lost).
 - 16 host commands a tick; more wait.
+
+### D0: three things settled before letter D (measured, `test/gpu/engine-d0.test.ts`, the numbers run)
+
+1. **Bounce: the missing voxel hash was the cause.** The same 6 × 6 × 4 stone block from 24 cells on both routes,
+   measured by its voxels: the lattice route is still 0.33 to 0.80 s after the hit, mean rebound 0.07 to 0.10 cells;
+   the fork took 7.57 s and 1.88 cells. On the lattice route a voxel touching an unbonded neighbour (the two sides of
+   a crack) has its speed along that contact held to the bounce (`finalize`), so a cracked block cannot ring. With the
+   hash restored the engine is still in 0.45 to 1.45 s, rebound 0.26 to 0.34 cells. No constant changed. What is
+   left of the difference is not explained: the lattice route loses about 41 voxels to fragments, the engine about 32.
+2. **Contacts among deforming voxels.** `vhash` puts every living voxel of a deforming body into a hash (heads
+   twice the particles' room, 20 B a voxel of room); `collide` reads its 27 cells as phys.wgsl does; `relax` clears
+   each voxel's own bucket, so clearing follows the voxels deforming and the table is empty between substeps. The
+   128-step chain guard is counted (the pool's header, `hashOver`), not silent. Two expanded bodies meet.
+3. **The expand tick does not hitch; the growth tick does.** With room made, the tick 8 bodies of 4,096 voxels
+   expand is 1.2 ms of engine GPU time (the draw list remade 0.46, `fill` 0.07). The 27.3 ms recorded above held a
+   grow-ahead: new buffers, a GPU copy, every bind group again, about 8 ms of wall here (PE29). The "ordinary tick"
+   of 10.45 ms was step 1's one-thread solve (5.7 ms for 8 rows of 1,352 samples, PE15) plus the test world's surface
+   pass and the wait for the submit (3.7 ms with every row asleep, engine GPU under 0.2 ms). 32,768 voxels deforming:
+   4.9 to 5.2 ms of engine GPU (region 1.6 to 2.0, gather 1.1 to 1.3, collide 0.9 to 1.1, the hash 0.2). Pipelines are
+   made in the level's pipeline batch, before the first frame.
 
 ## Owner's directions for the next letters (2026-11-15, verbatim)
 
@@ -401,7 +421,17 @@ own mesh for that region, the terrain mesh is carved where it left, its voxels e
 mesh weighted to them, and the cut faces come from the same extractor and field for both the piece and the hole, so
 they fit like a broken thing. No jump to voxels at release.
 
-**Telekinesis rip (PE28).** See BACKLOG.
+**Telekinesis rip (PE28).** See BACKLOG. The owner's refinement (2026-11-15): "Minor but for the telikinisis it should
+already be dampened spring like and increase force as you drag further from the grabbed material. I would not cut the
+material until the drag distance produces sufficient force. They gives players a cancel and it means their finger
+isn't covering up the cool effect when it rips free".
+- The grab anchors a damped spring at the grabbed matter; the force grows with the drag distance from the grab point
+  (stiffness, damping and maximum on the panel; reuse the drag tool's spring, SL17 `src/ui/editor.ts`, after checking it).
+- Nothing is cut at grab time. Below the force the lattice rule needs to snap the boundary bonds the matter stays put
+  (elastic give shown where affordable); dragging back or releasing cancels with no change to the world.
+- The cut happens when the spring force crosses the threshold, with the finger already away from the grab point; the
+  freed chunk is then pulled along the spring toward the finger. Feedback while charging (the spring line, strain on
+  the surface) is a UI note for that step. Not built.
 
 ## Hand-over: letter D, then E
 

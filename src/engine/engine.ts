@@ -78,7 +78,7 @@ export const MESH_V = 3;
 /** engine_draw.wgsl: where the draw list's triangles start */
 export const DL_AT = 8;
 /** the pool's header (engine_deform.wgsl P_*) */
-export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21 } as const;
+export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21, hashOver: 22 } as const;
 /** ticks between reads of the pool's header */
 const STAT_EVERY = 4;
 /** engine.wgsl LIST_AT, EV_AT, EV_WORDS */
@@ -279,6 +279,8 @@ export class Engine implements SimSystem {
   private ps!: GPUBuffer;
   private pw!: GPUBuffer;
   private pb!: GPUBuffer;
+  /** the voxel hash among deforming voxels (engine_lattice.wgsl vh): 20 B a voxel of room, all zero between substeps */
+  private vh!: GPUBuffer;
   private pm: GPUBuffer;
   private fu!: GPUBuffer;
   // the draw (engine_draw.wgsl): the list of triangles (its head the draw's arguments), and the triangles placed
@@ -343,11 +345,12 @@ export class Engine implements SimSystem {
     kernel('predict', lat, P4);
     kernel('region', lat, { ...P4, 25: 'rw', 26: 'rw' });
     kernel('gather', lat, { ...P4, 25: 'rw', 26: 'rw' });
-    kernel('collide', lat, { ...P4, 1: 'read', 25: 'rw', 29: 'read' });
+    kernel('vhash', lat, { ...P4, 26: 'rw', 38: 'rw' });
+    kernel('collide', lat, { ...P4, 1: 'read', 25: 'rw', 29: 'read', 38: 'rw' });
     kernel('finalize', lat, { ...P4, 25: 'rw', 26: 'rw', 30: 'rw', 31: 'rw' });
-    kernel('relax', lat, { ...P4, 25: 'rw', 26: 'rw' });
+    kernel('relax', lat, { ...P4, 25: 'rw', 26: 'rw', 38: 'rw' });
     kernel('deaths', lat, { ...P4, 18: 'rw', 28: 'rw', 30: 'rw', 31: 'rw' });
-    kernel('stats', lat, { ...P4, 18: 'rw' });
+    kernel('stats', lat, { ...P4, 18: 'rw', 38: 'rw' });
     const drw = [deformWgsl, drawWgsl];
     kernel('drawArm', drw, { 18: 'rw', 32: 'rw', 37: 'rw' });
     kernel('drawlist', drw, { 6: 'rw', 18: 'rw', 22: 'rw', 32: 'rw' });
@@ -475,6 +478,8 @@ export class Engine implements SimSystem {
       this.ps = again(this.ps, 'engine particles (state)', v * 48, ov * 48);
       this.pw = again(this.pw, 'engine particles (work)', v * 48, ov * 48);
       this.pb = again(this.pb, 'engine particles (bonds)', v * 4, ov * 4);
+      // (empty between substeps, so a grown one starts empty: nothing copied)
+      this.vh = again(this.vh, 'engine voxel hash', (4 + 5 * v) * 4, 0);
       this.dargs = again(this.dargs, 'engine deform dispatch', (DARGS_AT + n.pages) * 4, DARGS_AT * 4, S | GPUBufferUsage.INDIRECT);
     }
     const lo = Engine.layout(o);
@@ -509,7 +514,7 @@ export class Engine implements SimSystem {
     const res: Record<number, GPUBuffer | GPUTextureView> = {
       0: w.globals, 1: w.chunks, 2: w.materials, 3: this.eu[1], 16: this.cu[0].ec, 17: this.et,
       4: this.pose, 5: this.vel, 6: this.info, 7: this.samples, 8: this.contacts, 10: this.list, 11: w.layers, 12: w.surface, 13: w.driftView, 14: w.deposit, 15: this.events,
-      18: this.pool, 19: this.dmeta, 20: this.dargs, 21: this.dargs, 22: this.heap, 23: this.px, 24: this.ps, 25: this.pw, 26: this.pb, 27: this.list, 28: this.events, 29: w.layers, 30: w.particles, 31: w.particleCounters, 32: this.dl, 33: this.dout, 34: this.dl, 35: this.pm, 36: this.fu, 37: this.kargs,
+      18: this.pool, 19: this.dmeta, 20: this.dargs, 21: this.dargs, 22: this.heap, 23: this.px, 24: this.ps, 25: this.pw, 26: this.pb, 27: this.list, 28: this.events, 29: w.layers, 30: w.particles, 31: w.particleCounters, 32: this.dl, 33: this.dout, 34: this.dl, 35: this.pm, 36: this.fu, 37: this.kargs, 38: this.vh,
     };
     const make = (name: string, over: Record<number, GPUBuffer> = {}) => {
       const { k, spec } = this.k[name];
@@ -750,48 +755,54 @@ export class Engine implements SimSystem {
     enc.clearBuffer(this.list, 0, LIST_AT * 4);
     enc.clearBuffer(this.events, 0, EV_AT * 4);
     enc.clearBuffer(this.dargs, 0, 32);
-    const pass = enc.beginComputePass({ label: 'engine', timestampWrites: this.prof.timestamps('engine') });
+    // (`timeKernels`: a pass a kernel, each with its own timestamps — what a tick is made of; else one pass)
+    const cur = { pass: enc.beginComputePass({ label: 'engine', timestampWrites: this.prof.timestamps('engine') }) };
     const run = (name: string, group = name) => {
+      if (this.timeKernels) {
+        cur.pass.end();
+        cur.pass = enc.beginComputePass({ label: `engine ${name}`, timestampWrites: this.prof.timestamps(`engine:${name}`) });
+      }
+      const pass = cur.pass;
       pass.setPipeline(this.k[name].k.pipeline);
       pass.setBindGroup(0, g[group]);
       this.prof.dispatches++;
     };
     run('compact', `compact${ring}`);
-    pass.dispatchWorkgroups(Math.ceil(this.d.rows / 64));
+    cur.pass.dispatchWorkgroups(Math.ceil(this.d.rows / 64));
     const sub = Math.max(1, Math.round(TUNE.engine.substeps));
     for (let s = 0; s < sub; s++) {
       run('fine');
-      pass.dispatchWorkgroupsIndirect(this.list, 16);
+      cur.pass.dispatchWorkgroupsIndirect(this.list, 16);
       run('solve', s === 0 ? 'solve0' : 'solve');
-      pass.dispatchWorkgroupsIndirect(this.list, 0);
+      cur.pass.dispatchWorkgroupsIndirect(this.list, 0);
     }
     if (TUNE.engine.deform >= 0.5) {
       // build step 2: rows into particles (the rows awake), the live pages listed and the new ones filled — the
       // per-page and per-slot kernels dispatched from the GPU's own count: nothing deforming, no workgroups
       run('expand');
-      pass.dispatchWorkgroupsIndirect(this.list, 0);
+      cur.pass.dispatchWorkgroupsIndirect(this.list, 0);
       run('arm');
-      pass.dispatchWorkgroups(1);
+      cur.pass.dispatchWorkgroups(1);
       run('pagelist');
-      pass.dispatchWorkgroupsIndirect(this.kargs, 0);
+      cur.pass.dispatchWorkgroupsIndirect(this.kargs, 0);
       run('fill');
-      pass.dispatchWorkgroupsIndirect(this.dargs, 0);
-      this.deform(pass, run);
+      cur.pass.dispatchWorkgroupsIndirect(this.dargs, 0);
+      this.deform(cur, run);
       run('release');
-      pass.dispatchWorkgroupsIndirect(this.kargs, 0);
+      cur.pass.dispatchWorkgroupsIndirect(this.kargs, 0);
       run('slots', `slots${ring}`);
-      pass.dispatchWorkgroupsIndirect(this.kargs, 16);
+      cur.pass.dispatchWorkgroupsIndirect(this.kargs, 16);
     }
     run('fold');
-    pass.dispatchWorkgroupsIndirect(this.events, 0);
+    cur.pass.dispatchWorkgroupsIndirect(this.events, 0);
     // the draw list, made again by the GPU only when a row came or went
     run('drawArm');
-    pass.dispatchWorkgroups(1);
+    cur.pass.dispatchWorkgroups(1);
     run('drawlist');
-    pass.dispatchWorkgroupsIndirect(this.kargs, 32);
+    cur.pass.dispatchWorkgroupsIndirect(this.kargs, 32);
     run('drawEnd');
-    pass.dispatchWorkgroups(1);
-    pass.end();
+    cur.pass.dispatchWorkgroups(1);
+    cur.pass.end();
   }
 
   /**
@@ -811,11 +822,11 @@ export class Engine implements SimSystem {
   }
 
   /** the lattice's substeps over the live pages, then the settling bodies' labels and parts (later letters of step 2) */
-  private deform(pass: GPUComputePassEncoder, run: (name: string, group?: string) => void): void {
+  private deform(cur: { pass: GPUComputePassEncoder }, run: (name: string, group?: string) => void): void {
     const T = TUNE.engine;
     const each = (name: string) => {
       run(name);
-      pass.dispatchWorkgroupsIndirect(this.dargs, 0);
+      cur.pass.dispatchWorkgroupsIndirect(this.dargs, 0);
     };
     const sub = this.holdLattice ? 0 : Math.max(1, Math.round(T.latticeSubsteps));
     const iters = Math.max(1, Math.round(T.latticeIters));
@@ -825,6 +836,7 @@ export class Engine implements SimSystem {
         each('region');
         each('gather');
       }
+      each('vhash');
       each('collide');
       each('finalize');
       each('relax');
@@ -836,6 +848,8 @@ export class Engine implements SimSystem {
   /** letter D of build step 2 (settle: a still body's parts become rows) is not built: a still body's particles stand
    *  where they are, stepped by nothing, drawn as its mesh, till it is let go */
   readonly settles = false;
+  /** (tests, the perf overlay) a compute pass a kernel, timed apart as `engine:<kernel>`; off: one pass, `engine` */
+  timeKernels = false;
   /** (tests) the lattice's substeps skipped: deforming bodies stand as they are */
   holdLattice = false;
 

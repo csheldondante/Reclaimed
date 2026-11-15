@@ -4,14 +4,28 @@
 // body through its page (no 8-bit body id, no body table), and every kernel is dispatched over the live pages only —
 // eight workgroups a page, from the GPU's own count: nothing deforming, no workgroups. Its sleep is settling
 // (engine_settle.wgsl): nothing is read back, there is no CPU sleep. phys.wgsl stays as it is for ?solver=lattice.
-// Left out on this route for now (docs/design/PHYSICS_ENGINE.md, limits): the voxel hash (deforming voxels meet the
-// ground, not each other), half-size fragments (a crumbling voxel goes to loose ground, chips and dust: a body is only
-// ever drawn as its mesh), heat, the game's drives and pushes, the air shoved by a landing.
+// The voxel hash stays, only among deforming voxels (the build note, "How the lattice becomes stage 4"): the two sides
+// of a crack, and two deforming bodies, meet through it; a rigid row is never in it.
+// Left out on this route for now (docs/design/PHYSICS_ENGINE.md, limits): half-size fragments (a crumbling voxel goes
+// to loose ground, chips and dust: a body is only ever drawn as its mesh), heat, the game's drives and pushes, the air
+// shoved by a landing.
 @group(0) @binding(28) var<storage, read_write> dev: array<atomic<u32>>;
 @group(0) @binding(29) var<storage, read> layersD: array<vec4<u32>>;
 struct PartP { p: vec4<f32>, v: vec4<f32>, m: vec4<u32> };
 @group(0) @binding(30) var<storage, read_write> parts: array<PartP>;
 @group(0) @binding(31) var<storage, read_write> counters: array<atomic<u32>>;
+// The voxel hash (u32, atomic), sized by the particles' room (V = pages x PAGE): [0] chains cut short by the guard since
+// `arm` last took the count (never silent: the pool's header has the total), heads from VH_AT, 2V of them (a particle
+// + 1; 0 none), then three words a particle: the next of its chain (+ 1), its bucket's index (0: not in), its bonds as
+// they stood when it went in. Only what was put in is cleared (`relax`, each particle its own bucket), so its cost
+// follows the voxels deforming, and between substeps it is all zero: a grown one starts empty.
+@group(0) @binding(38) var<storage, read_write> vh: array<atomic<u32>>;
+const VH_AT: u32 = 4u;
+const VH_GUARD: u32 = 128u;
+fn vhBucket(c: vec3<i32>) -> u32 {
+  return VH_AT + ((u32(c.x) * 73856093u) ^ (u32(c.y) * 19349663u) ^ (u32(c.z) * 83492791u)) % (2u * EU.g.x * PAGE);
+}
+fn vhRec(i: u32) -> u32 { return VH_AT + 2u * EU.g.x * PAGE + 3u * i; }
 const K_CHIP_P: u32 = 5u;
 const K_DUST_P: u32 = 1u;
 const K_HAZE_P: u32 = 15u;
@@ -133,7 +147,22 @@ fn gather(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
   px[2u * i] = vec4<f32>(x.xyz + (sum / n - x.xyz) * pmA(matOf(i)).y, x.w);
 }
 
-// ---- 4. contacts: the ground under it and the columns beside it --------------------------------------------------------
+// ---- 4. contacts: the voxel hash, the ground under it, the columns beside it, other voxels --------------------------------
+// every voxel of a deforming body goes in, the still ones too (what moves still meets them)
+@compute @workgroup_size(64)
+fn vhash(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let i = pidx(wg.x, li);
+  if (i == NONE) { return; }
+  let L = latOf(i);
+  if (!L.ok || L.state == S_NEW || L.state == S_RELEASE || !alive(i)) { return; }
+  let h = vhBucket(vec3<i32>(floor(px[2u * i].xyz)));
+  let prev = atomicExchange(&vh[h], i + 1u);
+  let r = vhRec(i);
+  atomicStore(&vh[r], prev);
+  atomicStore(&vh[r + 1u], h);
+  atomicStore(&vh[r + 2u], pb[i]);
+}
+
 /** The ground in column c: the top of what lies at or below z, whether z is inside it, whether that is loose (x top, y inside, z granular, w material). */
 fn groundAtD(c: vec2<i32>, z: f32) -> vec4<f32> {
   if (!inMap(c)) { return vec4<f32>(-1e9, 0.0, 0.0, 0.0); }
@@ -193,6 +222,63 @@ fn collide(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index
         x -= vec3<f32>(DIRV[k] * into, 0.0);
       }
       nsum += vec3<f32>(-DIRV[k], 0.0);
+    }
+  }
+  // other deforming voxels: those it isn't bonded to (phys.wgsl `collide`, with the chain guard counted)
+  let l = cellOf(L.k, L.dims);
+  let bonds = atomicLoad(&vh[vhRec(i) + 2u]);
+  let cell = vec3<i32>(floor(x));
+  let toughI = pmA(m).x * crumbleV;
+  for (var dz = -1; dz <= 1; dz++) {
+    for (var dy = -1; dy <= 1; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        let cc = cell + vec3<i32>(dx, dy, dz);
+        var j = atomicLoad(&vh[vhBucket(cc)]);
+        var guard = 0u;
+        while (j != 0u) {
+          if (guard >= VH_GUARD) {
+            atomicAdd(&vh[0], 1u);
+            break;
+          }
+          guard++;
+          let ju = j - 1u;
+          j = atomicLoad(&vh[vhRec(ju)]);
+          if (ju == i) { continue; }
+          let xj = px[2u * ju];
+          if (xj.w < 0.0) { continue; }
+          if (any(vec3<i32>(floor(xj.xyz)) != cc)) { continue; }
+          let d = x - xj.xyz;
+          let dist = length(d);
+          if (dist >= 2.0 * RAD || dist < 1e-5) { continue; }
+          // bonded neighbours hold each other by their bonds; voxels of one body that started close (a squeeze, the
+          // two sides of a crack) only nudge each other, never crumble
+          var near = false;
+          let Lj = latOf(ju);
+          if (Lj.ok && Lj.slot == L.slot) {
+            let dl = cellOf(Lj.k, L.dims) - l;
+            if (all(abs(dl) <= vec3<i32>(1))) {
+              let k = u32((dl.x + 1) + 3 * (dl.y + 1) + 9 * (dl.z + 1));
+              let kk = select(k, k - 1u, k > 13u);
+              if ((bonds & (1u << kk)) != 0u) { continue; }
+            }
+            near = all(abs(dl) <= vec3<i32>(2));
+          }
+          let n = d / dist;
+          let over = 2.0 * RAD - dist;
+          let closing = -dot(v - ps[3u * ju].xyz, n);
+          let mj = matOf(ju);
+          let toughJ = pmA(mj).x * pmB(mj).w;
+          // too fast for the weaker of the two: it breaks up (ties: the higher index); deeper than it can bear: it crumbles
+          if (!near && closing > crumbleV && (toughI < toughJ || (toughI == toughJ && i > ju))) { fastest = max(fastest, closing); }
+          if (!near && over > G.tune.voxelsCrumbleOverlap && (toughI < toughJ || (toughI == toughJ && i > ju))) { dying = true; }
+          // stop them closing further (each its share); never part them
+          let wj = max(xj.w, 0.0);
+          let shut = -dot((x - p0) - (xj.xyz - px[2u * ju + 1u].xyz), n);
+          if (shut > 0.0) { x += n * shut * x0.w / max(x0.w + wj, 1e-6); }
+          nsum += n;
+          if (!near) { fastest = max(fastest, closing * 0.5); }
+        }
+      }
     }
   }
   // an impact past its crumble speed breaks some of the voxels that took it, more the harder it was; the rest hold
@@ -280,6 +366,11 @@ fn finalize(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_inde
 @compute @workgroup_size(64)
 fn relax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
   let i = pidx(wg.x, li);
+  // (the voxel hash, cleared where it was filled: this substep's contacts are done)
+  if (i != NONE) {
+    let hb = atomicExchange(&vh[vhRec(i) + 1u], 0u);
+    if (hb != 0u) { atomicStore(&vh[hb], 0u); }
+  }
   let L = stepping(i);
   if (!L.ok) { return; }
   let x = px[2u * i];
@@ -365,6 +456,8 @@ fn deaths(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
 // ---- once a tick: each slot's voxels counted and their speeds summed (the still timer is `slots`'s) -----------------------
 @compute @workgroup_size(64)
 fn stats(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  // (the hash's guard: what it cut short this tick, into the pool's header — the host's one read)
+  if (wg.x == 0u && li == 0u) { atomicAdd(&pool[P_HASH_OVER], atomicExchange(&vh[0], 0u)); }
   let i = pidx(wg.x, li);
   if (i == NONE) { return; }
   let L = latOf(i);

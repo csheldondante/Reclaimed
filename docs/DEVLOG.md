@@ -23325,3 +23325,30 @@ the new draw, no page error.
 
 **Not verified.** Nothing on the phone. The break look in the lab (no break station yet). The lattice route side by
 side with this fork.
+
+## 2026-11-15 — Physics engine, build step 2, D0: the voxel hash among deforming voxels; why the fork bounced; what an expand tick costs (PE24, PE27, PE29)
+
+**Why.** Three things in the hand-over had to be settled before settle is built on them: a cracked block that took
+8 s to stop, the two halves of a cracked block passing through each other, and an expand tick measured at 27.3 ms.
+
+**What.** `engine_lattice.wgsl` gains `vhash` and the voxel contacts of phys.wgsl's `collide`, over a hash sized by
+the particles' room and cleared only where it was filled (`relax`); the chain guard's cuts are counted in the pool's
+header. `Engine.timeKernels` puts each kernel in a pass of its own so a tick can be read by kernel with GPU
+timestamps (the test rig's `gpuTick`). No tuning constant changed.
+
+**Measured** (desktop proxy: Dawn in Node, Intel Xe, D3D12; `BREAK_LOG=1 npx vitest run --project gpu engine-d0
+engine-break --reporter=verbose`):
+- The drop on both routes, by voxels: lattice still 0.33 to 0.80 s after the hit, rebound 0.07 to 0.10 cells; the
+  fork before 7.57 s and 1.88 cells; with the hash 0.45 to 1.45 s and 0.26 to 0.34 cells (five runs).
+- With the hash off, the nearest two voxels of the cracked block came 0.06 cells apart and a block dropped on
+  another ended inside it; with it on, 0.74 cells, and the dropped block rests on the other.
+- Engine GPU time by kernel: rows asleep under 0.2 ms; 8 rows of 1,352 samples falling 6.2 ms (solve 5.7); the tick
+  8 x 4,096 voxels expand 1.2 ms; 32,768 voxels deforming 4.9 to 5.2 ms; the tick the buffers grow 11.9 ms of wall
+  against 3.7.
+
+**Tests.** `test/gpu/engine-d0.test.ts` 3 pass (the two contact tests fail with `vhash` not dispatched);
+`engine-break` 9 pass; `engine` 13 pass. The stone test's ground check now follows the lattice's rule (a voxel may
+sit up to the crumble depth into the ground).
+
+**Not verified.** Nothing on the phone. The remaining gap in rebound against the lattice route (fragments are the
+likely part) is not run down.

@@ -55,6 +55,8 @@ const P_DL_WANT: u32 = 19u;
 const P_DL_DIRTY: u32 = 20u;
 // slots settling now (labels, parts)
 const P_SETTLING: u32 = 21u;
+// the voxel hash's chains cut short by its guard, ever (engine_lattice.wgsl: contacts past it were not seen)
+const P_HASH_OVER: u32 = 22u;
 // a slot's state
 const S_FREE: u32 = 0u;
 const S_NEW: u32 = 1u;
