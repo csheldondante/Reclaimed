@@ -1,9 +1,10 @@
-// (physics10-atlas, PA2) `?physdemo=1` with `?solver=engine`: the physics engine's rigid rows in the real town — three
+// (physics10-atlas, PA2) `?physdemo=1` with `?solver=engine`: the physics engine's rigid rows in the real town — four
 // buttons over the game: stone blocks dropped on the houses nearest the middle of the view, a boulder set rolling at
 // them from the highest ground nearby, and every row let go. A demo for a first look, not a tool of the game: each
 // press reads the window's surface words back once (PA6) to find the houses (the town's claims are External columns;
 // a house stands well over the open ground beside it), and the bodies are dropped as a lab's are (engine/install.ts
-// drop). The houses do not break: a body meets a building's External span as it meets rock (PA3).
+// drop). A hit hard enough knocks the house down (level/housefall.ts, PA11): the boulder and the huge block do, the
+// small blocks mostly do not.
 // API: mountPhysDemo(scene).
 import { MAT } from '../../world/materials';
 import { cellAt, cellPos } from '../../world/lattice';
@@ -116,6 +117,12 @@ export function mountPhysDemo(scene: LevelScene): void {
     void withSite((s) => {
       const speed = 9;
       kit.drop(ball(s.hill[0], s.hill[1], s.hill[2] + 5, 3, MAT.Stone), [s.dir[0] * speed, s.dir[1] * speed, 0], [-s.dir[1] * 2, s.dir[0] * 2, 0]);
+    }),
+  );
+  button('slab', 'Drop a huge block', () =>
+    void withSite((s) => {
+      // (a meteor-sized block from high over the roof: 6 x 6 x 5 of stone)
+      kit.drop(box(s.roof[0] - 3, s.roof[1] - 3, s.roof[2] + 26, 6, 6, 5, MAT.Stone), [0, 0, -6]);
     }),
   );
   button('clear', 'Clear', () => kit.clear());

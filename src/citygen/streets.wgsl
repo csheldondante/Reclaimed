@@ -3538,6 +3538,8 @@ const STAGGER: f32 = 0.5;
  *  its build time eased from `from` × the span to `to` × the span over a span of the clock from `when`; the rest run
  *  on their start alone. (CG25) Its start too — the clock time its progress first passes 0, BUILT_AT a lot there from
  *  the outset, NOT_YET none set — to w7 (LSTART: frontStamp stamps it round the parcel for its streets). */
+/** (PA11) the gone lots' bits in STG, after the districts' stages (SC_MAX × 16 words): gpu.ts GONE_AT */
+const GONE_AT: u32 = 4096u;
 @compute @workgroup_size(64)
 fn tlProgress(@builtin(global_invocation_id) g: vec3<u32>) {
   let i = g.x;
@@ -3545,6 +3547,9 @@ fn tlProgress(@builtin(global_invocation_id) g: vec3<u32>) {
   if (i < REC_LM && i >= min(atomicLoad(&w6[0]), REC_LM)) { return; }
   let o = i * RECW;
   if (b1[o + 17u] == REC_NONE) { set5(i, 0.0); set7(i, NOT_YET); return; }
+  // (PA11) a lot knocked down (CityGen.markGone: a bit a lot after the districts' stages in STG): not built, as a lot
+  // not begun — its mesh sunk by tlRise, no claim made for it by claimLots
+  if (i < REC_LM && ((b2[GONE_AT + (i >> 5u)] >> (i & 31u)) & 1u) != 0u) { set5(i, 0.0); set7(i, NOT_YET); return; }
   var start = BUILT_AT;
   let did = b1[o + 18u] & 0xffffffu;
   if (u.h2.z > 0.5) { start = r4(SC_HEAD + did * SCW + 8u); }

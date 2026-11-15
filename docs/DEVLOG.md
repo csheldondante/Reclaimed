@@ -24000,3 +24000,19 @@ phone number, no `?q=low` toggle diff (PA8).
 the smallest first slice are in docs/design/PHYSICS_ENGINE.md "Buildings on the engine: what is needed".
 **Tests.** `npm run typecheck` clean. The lab scenarios above. The unit and GPU suites were not run (no engine
 kernel or shared code changed: one line of wiring in `install.ts`, one new file behind a flag).
+
+## 2026-11-15 — a hard hit knocks a house down: parked half way (PA10, PA11, `physics10-atlas`)
+
+**Why.** The first slice of "buildings break": the hit names its lot, the lot goes, blocks stand in its place.
+**Built and tested on Dawn.** The engine keeps a row's hit on an External interval (place, energy) in a ring after
+its events and tells the host at its chained read (`Engine.onOwnerHit`, PA10). A lot's footprint x height as blocks
+(`citygen/lotblocks.ts`), the swap itself (`game/housefall.ts`: spans let go to air, blocks added).
+`npx vitest run --project unit test/unit/lotblocks.test.ts`: 3 passed. `npx vitest run --project gpu
+test/gpu/engine-house.test.ts`: 3 passed (a thrown block's hit is kept and told; the felled lot's External is gone,
+rows of its volume and mass stand in its place and stay there).
+**Built, not yet run in the town.** The lot flagged gone in the generator (a bit a lot after the districts' stages,
+read by tlProgress: no progress, so its mesh sinks and claimLots leaves it out), `FieldTown.lotAt` / `takeLot`, the
+level's glue (`scenes/level/housefall.ts`, one lot a tick), a "Drop a huge block" demo button, the lab gate
+`scripts/lab/townhouse.mjs`. The gate could not open the lab twice running (another worktree's GPU tests held the
+GPU: "the GPU never finished"; the commit before this one failed the same way at the same time). Parked here for
+the phone's frame time (the next entry); PA11 stays open till the gate has run and the stills are looked at.

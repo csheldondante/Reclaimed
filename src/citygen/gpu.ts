@@ -407,7 +407,8 @@ export class CityGen {
     this.B.KEY = buf('lot keys', (LOT_ROOM + LM_ROOM) * 4);
     // (season loop: 16 f32 a district — on, end, then two slots of a, b, from, to, when — two cards' shares and their
     // stages; tlProgress reads it)
-    this.B.STG = buf('district stages', SC_ROOM * STG_BYTES);
+    // (PA11: and after them a bit a lot, set when it is knocked down — markGone; streets.wgsl GONE_AT)
+    this.B.STG = buf('district stages', SC_ROOM * STG_BYTES + LOT_ROOM / 8);
     this.claimRead = buf('claim read', 16, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.builtMode = world.built === 'core' ? 1 : 0;
     // (M4b: the population field — density, wealth, purpose, the arterials' distance — 4 words a column)
@@ -591,6 +592,57 @@ export class CityGen {
     // (SCT: a 4-word header, then SCW (9) words a district — word 8 its start; streets.wgsl BUILT_AT)
     this.device.queue.writeBuffer(this.B.SCT, (4 + id * 9 + 8) * 4, new Float32Array([-1e30]));
   }
+  // ---- (PA11) a lot knocked down --------------------------------------------------------------------------------
+  private goneBits = new Uint32Array(LOT_ROOM / 32);
+  /** the lots flagged gone since the town was made */
+  readonly goneLots = new Set<number>();
+  /**
+   * A lot flagged gone: tlProgress gives it no progress from the next animate on, so its mesh sinks (tlRise) and the
+   * next mesh run's claim grid leaves it out (claimLots). The record itself stays (it is made again each mesh run).
+   */
+  markGone(lot: number): void {
+    if (this.dead) return;
+    if (!(lot >= 0 && lot < LOT_ROOM)) throw new Error(`citygen: no lot ${lot}`);
+    this.goneLots.add(lot);
+    this.goneBits[lot >> 5] |= 1 << (lot & 31);
+    this.device.queue.writeBuffer(this.B.STG, SC_ROOM * STG_BYTES + (lot >> 5) * 4, this.goneBits, lot >> 5, 1);
+  }
+  /**
+   * (a read after an event: 4 B a column) The lots whose buildings are claimed at these grid columns: the claim
+   * grid's owner words (claimLots: the record's index + 1; 0 a road's, a plaza's or none), -1 for none.
+   */
+  async lotsAt(cols: readonly (readonly [number, number])[]): Promise<number[]> {
+    const { w, h } = this.world;
+    const N = w * h;
+    const src = this.claimGrid instanceof GPUBuffer ? { buffer: this.claimGrid, offset: 0 } : { buffer: this.claimGrid.buffer, offset: this.claimGrid.offset ?? 0 };
+    const tmp = this.device.createBuffer({ label: 'citygen lot at', size: Math.max(4, cols.length * 4), usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const enc = this.device.createCommandEncoder({ label: 'citygen lot at' });
+    const ok = cols.map(([x, y]) => x >= 0 && y >= 0 && x < w && y < h);
+    cols.forEach(([x, y], k) => ok[k] && enc.copyBufferToBuffer(src.buffer, src.offset + (N * 4 + (y * w + x) * 4 + 3) * 4, tmp, k * 4, 4));
+    this.device.queue.submit([enc.finish()]);
+    await tmp.mapAsync(GPUMapMode.READ);
+    const words = new Uint32Array(tmp.getMappedRange().slice(0));
+    tmp.destroy();
+    return cols.map((_, k) => (ok[k] ? words[k] - 1 : -1));
+  }
+  /**
+   * (a read after an event: 100 B) A lot's record as the engine's blocks need it: its kind, its footprint (grid world
+   * units), base and height (world z), its seed, and its progress now.
+   */
+  async readLot(lot: number): Promise<{ kind: number; quad: [number, number][]; base: number; height: number; hash: number; progress: number }> {
+    const tmp = this.device.createBuffer({ label: 'citygen lot read', size: RECW * 4 + 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const enc = this.device.createCommandEncoder({ label: 'citygen lot read' });
+    enc.copyBufferToBuffer(this.lotRecords, lot * RECW * 4, tmp, 0, RECW * 4);
+    enc.copyBufferToBuffer(this.progress, lot * 4, tmp, RECW * 4, 4);
+    this.device.queue.submit([enc.finish()]);
+    await tmp.mapAsync(GPUMapMode.READ);
+    const buf = tmp.getMappedRange().slice(0);
+    tmp.destroy();
+    const u = new Uint32Array(buf);
+    const f = new Float32Array(buf);
+    return { kind: u[17], quad: [0, 1, 2, 3].map((k) => [f[8 + k * 2], f[9 + k * 2]] as [number, number]), base: f[21], height: f[20], hash: u[23], progress: f[RECW] };
+  }
+
   /** (season life) the wall's stage: from → to (0..1 of the ring), eased over a build's span of the clock from `when` */
   wallStage(from: number, to: number, when: number): void {
     if (this.dead) return;

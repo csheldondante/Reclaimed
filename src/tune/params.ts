@@ -72,6 +72,7 @@ const SPEC = {
       angDamp: { label: 'spin damping', units: '1/s', min: 0, max: 3, step: 0.05, def: 0.6 },
       groundDamp: { label: 'ground damping', units: '1/s', min: 0, max: 6, step: 0.1, def: 0.3, help: 'speed and spin taken out while it touches the ground (1.5, the value of the CPU rock, made a block creep down a stair: test/gpu/engine.test.ts)' },
       stepUp: { label: 'step up', units: 'cells', min: 0, max: 1, step: 0.05, def: 0.45, help: 'a ledge this high beside a sample is climbed, not a wall' },
+      houseBreak: { label: 'house break', units: 'energy', min: 0, max: 60000, step: 250, def: 3000, help: 'a hit on a building (an External interval) that takes this much energy or more knocks its lot down: the house becomes blocks (PA11). A 2x2x2 stone block falling 8 cells takes about 1,000; a boulder of radius 3 at 9 cells/s about 13,000' },
       nearGap: { label: 'contact reach', units: 'cells', min: 0.05, max: 1, step: 0.05, def: 0.25, help: 'a gap this small is already a contact: the approach is stopped at the surface, not past it' },
       eventEnergy: { label: 'impact event', units: 'mass·cells²/s²', min: 1, max: 2000, step: 1, def: 50, help: 'an impact losing more than this writes a collision event' },
       fastPath: { label: 'heightfield first', units: '0/1', min: 0, max: 1, step: 1, def: 0, help: 'the terrain test reads the column top from the surface pass first and walks the intervals only in columns with an air gap; 0: always the intervals' },

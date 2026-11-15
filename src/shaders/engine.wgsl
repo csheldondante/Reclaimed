@@ -79,6 +79,8 @@ const EV_AT: u32 = 4u;
 const EV_WORDS: u32 = 8u;
 const EV_IMPACT: u32 = 1u;
 const EV_ERODE: u32 = 2u;
+/** (PA10) the hits on owners' matter kept after the events' room: engine.ts HIT_ROOM (pushHit) */
+const HIT_ROOM: u32 = 16u;
 
 struct EngU {
   // x substep (s), y friction, z restitution, w the fastest an overlap is pushed out (cells/s)

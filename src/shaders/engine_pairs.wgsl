@@ -115,6 +115,19 @@ fn pushEvent(kind: u32, row: u32, col: u32, mat: u32, p: vec3<f32>, val: f32) {
   atomicStore(&events[b + 7u], bitcast<u32>(val));
 }
 
+/** (PA10) a hit on an owner's matter (an External interval: a building): kept past the tick in a ring after the
+ *  events' room — count, then HIT_ROOM entries of place and energy — for the host's read after an event (engine.ts
+ *  hits): the owner is found from the place. */
+fn pushHit(row: u32, p: vec3<f32>, e: f32) {
+  let at = EV_AT + u32(EU.f.y) * EV_WORDS;
+  let k = atomicAdd(&events[at], 1u) % HIT_ROOM;
+  let b = at + 4u + k * 4u;
+  atomicStore(&events[b], bitcast<u32>(p.x));
+  atomicStore(&events[b + 1u], bitcast<u32>(p.y));
+  atomicStore(&events[b + 2u], bitcast<u32>(p.z));
+  atomicStore(&events[b + 3u], bitcast<u32>(e));
+}
+
 fn fpLoad(i: u32, scale: f32) -> vec3<f32> {
   return vec3<f32>(f32(bitcast<i32>(atomicLoad(&listA[i]))), f32(bitcast<i32>(atomicLoad(&listA[i + 1u]))), f32(bitcast<i32>(atomicLoad(&listA[i + 2u])))) / scale;
 }
@@ -912,7 +925,10 @@ fn rowFinish(@builtin(global_invocation_id) id: vec3<u32>) {
     w = vec3<f32>(0.0);
     slept = true;
   }
-  if (s.hitE > EU.d.w) { pushEvent(EV_IMPACT, r, 0u, s.hitMat, s.hitP, s.hitE); }
+  if (s.hitE > EU.d.w) {
+    pushEvent(EV_IMPACT, r, 0u, s.hitMat, s.hitP, s.hitE);
+    if (s.hitMat == MAT_EXTERNAL) { pushHit(r, s.hitP, s.hitE); }
+  }
   pose[4u * r + 2u] = vec4<f32>(x, invM);
   pose[4u * r + 3u] = q;
   if (slept) {

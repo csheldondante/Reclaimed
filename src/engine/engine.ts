@@ -88,7 +88,7 @@ const PRW = 16;
 /** ticks between the reads of a chain (the read an event starts is at once) */
 const READ_GAP = 4;
 /** the chained read's bytes: the pool's header, the awake list's header, what was asked of the pair rooms */
-const READ_B = 64 * 4 + 32 + SdfCollide.ASKED_BYTES;
+const READ_B = 64 * 4 + 32 + SdfCollide.ASKED_BYTES + (4 + 16 * 4) * 4;
 /** engine_deform.wgsl: voxels a page, the pool's header, a slot's record and sums, where the live pages start, a model's header, a mesh vertex (vec4s) */
 export const PAGE = 512;
 export const POOL_HDR = 64;
@@ -108,6 +108,17 @@ const EV_AT = 4;
 const EV_WORDS = 8;
 /** events a tick the buffer holds (more are counted, not kept: docs/design/PHYSICS_ENGINE.md, limits) */
 export const EVENT_ROOM = 1024;
+/** (PA10) hits on owners' matter (External: a building) kept in a ring after the events' room: a count word (3 spare), then
+ *  HIT_ROOM entries of place and energy (engine.wgsl HIT_ROOM, pushHit) */
+export const HIT_ROOM = 16;
+export const HIT_AT = EV_AT + EVENT_ROOM * EV_WORDS;
+const HIT_B = (4 + HIT_ROOM * 4) * 4;
+
+/** a row's hit on an owner's matter: where, and the energy the stop took */
+export interface OwnerHit {
+  p: V3;
+  energy: number;
+}
 /** commands a tick (engine.wgsl EC) */
 const CMDS = 16;
 /** the host's commands and the row count go to `compact` through one of these, a tick each: ticks encoded before a
@@ -486,7 +497,7 @@ export class Engine implements SimSystem {
     // (two for the substeps: the tick's first writes the pose the frame is drawn from)
     this.eu = [world.buf('engine uniform (first substep)', EU_B, U), world.buf('engine uniform', EU_B, U)];
     for (let i = 0; i < CMD_RING; i++) this.cu.push({ eu: world.buf('engine uniform (compact)', EU_B, U), ec: world.buf('engine commands', CMDS * 32, U) });
-    this.events = world.buf('engine events', (EV_AT + EVENT_ROOM * EV_WORDS) * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    this.events = world.buf('engine events', (EV_AT + EVENT_ROOM * EV_WORDS) * 4 + HIT_B, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     this.pm = world.buf('engine lattice materials', MAX_MATERIALS * 64, U);
     this.et = world.buf('engine numbers a material', ET_F * 4, U);
     this.fu = world.buf('engine draw uniform', 16, U);
@@ -924,6 +935,20 @@ export class Engine implements SimSystem {
     this.owed = 2;
   }
 
+  /** (PA10) told each hit of a row on an owner's matter (an External interval) the chained read brings: a building's
+   *  owner finds its lot from the place. Hits between two reads past HIT_ROOM are lost (the newest kept). */
+  onOwnerHit: ((h: OwnerHit) => void) | null = null;
+  private hitsSeen = 0;
+  private hitsFrom(w: Uint32Array): void {
+    const n = w[0];
+    const f = new Float32Array(w.buffer, w.byteOffset, w.length);
+    for (let k = Math.max(this.hitsSeen, n - HIT_ROOM); k < n; k++) {
+      const b = 4 + (k % HIT_ROOM) * 4;
+      this.onOwnerHit?.({ p: [f[b], f[b + 1], f[b + 2]], energy: f[b + 3] });
+    }
+    this.hitsSeen = n;
+  }
+
   private watch(): void {
     if (!this.statBusy && (this.owed > 0 || (this.active && this.ticks >= this.nextRead))) {
       this.statBusy = true;
@@ -935,6 +960,9 @@ export class Engine implements SimSystem {
       enc.copyBufferToBuffer(this.pool, 0, this.statBuf, 0, POOL_HDR * 4);
       enc.copyBufferToBuffer(this.list, 0, this.statBuf, POOL_HDR * 4, 32);
       this.collide.copyAsked(enc, this.statBuf, POOL_HDR * 4 + 32);
+      // (PA10: the hits on owners' matter, 272 B: the ring is not cleared — the host keeps how many it has seen)
+      const hitOff = POOL_HDR * 4 + 32 + SdfCollide.ASKED_BYTES;
+      enc.copyBufferToBuffer(this.events, HIT_AT * 4, this.statBuf, hitOff, HIT_B);
       this.device.queue.submit([enc.finish()]);
       const rooms = this.collide.rooms;
       this.statBuf.mapAsync(GPUMapMode.READ).then(() => {
@@ -948,6 +976,7 @@ export class Engine implements SimSystem {
         const asked = [POOL.pageWant, POOL.slotWant, POOL.rowWant, POOL.sampWant, POOL.heapWant, POOL.dlWant, POOL.expands, POOL.parts].some((k) => was[k] !== this.seen[k]);
         this.active = this.awakeSeen > 0 || this.seen[POOL.deforming] > 0 || this.seen[POOL.settling] > 0 || grows || asked;
         this.fresh = true;
+        this.hitsFrom(w.subarray(hitOff / 4, hitOff / 4 + 4 + HIT_ROOM * 4));
       }, ignoreTeardown);
     }
     if (this.growAhead && this.fresh) {

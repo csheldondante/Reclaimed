@@ -25,6 +25,7 @@ import { sendBuilders } from './town-tools';
 import { undo } from './sandbox-tools';
 import { mountLab, mountNoiseLab, mountRoadLab, mountStreetLab } from './labs';
 import { mountPhysDemo } from './physdemo';
+import { installHouseFall } from './housefall';
 import type { LevelScene } from '../level';
 
 /** the HUD, powers, life, and (sandbox) the physics, editor and integrity: the first part of attach */
@@ -178,6 +179,8 @@ export function attachTools(scene: LevelScene): void {
     // sandbox's tools' (the drop tool, the beam)
     if (scene.integrity.rigid && scene.physics) scene.integrity.physics = scene.physics;
     if (scene.engine) scene.integrity.engine = scene.engine;
+    // (PA11) a hard hit of an engine row on a building knocks its lot down (level/housefall.ts)
+    installHouseFall(scene);
     core.globals.spanCollapse = false;
     weather.holdNatural(1e9);
   }

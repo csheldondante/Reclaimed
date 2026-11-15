@@ -322,6 +322,75 @@ export class FieldTown {
    *  (render/bodies.wgsl fsBody clips each road fragment ahead of it) */
   private clock = 0;
 
+  // ---- (PA11) a building knocked down ---------------------------------------------------------------------------
+  /**
+   * The lot whose building is claimed at window point (x, y) (world units), or at the nearest of the columns round
+   * it — a hit on a wall lies on the edge of the footprint. Null: no building there. One small read (36 B), after an
+   * event.
+   */
+  async lotAt(x: number, y: number): Promise<number | null> {
+    if (this.gone || !this.grid) return null;
+    const p = this.gridPlace();
+    const [cx, cy] = cellAt(x, y);
+    const near9: [number, number, number][] = [];
+    for (let j = -1; j <= 1; j++)
+      for (let i = -1; i <= 1; i++) {
+        const px = cx + i + 0.5 + 0.5 * ((cy + j) & 1);
+        const py = (cy + j + 0.5) * ROW_H;
+        near9.push([cx + i - p.dx, cy + j - p.dy, Math.hypot(px - x, py - y)]);
+      }
+    near9.sort((a, b) => a[2] - b[2]);
+    const lots = await this.gen.lotsAt(near9.map(([gx, gy]) => [gx, gy] as const));
+    const k = lots.findIndex((l) => l >= 0 && l < REC_LM);
+    return k < 0 ? null : lots[k];
+  }
+
+  private remeshing = false;
+  private remeshAgain = false;
+  /** the mesh run after a lot went: the claim grid made again without it (the columns' spans are let go by the caller) */
+  private remeshForGone(): void {
+    if (this.remeshing) {
+      this.remeshAgain = true;
+      return;
+    }
+    this.remeshing = true;
+    void this.gen.run(this.params, 'mesh').then(
+      () => {
+        this.remeshing = false;
+        this.meshRuns++;
+        if (this.remeshAgain && !this.gone) {
+          this.remeshAgain = false;
+          this.remeshForGone();
+        }
+      },
+      (e) => {
+        this.remeshing = false;
+        if (!this.gone) throw e;
+      },
+    );
+  }
+
+  /**
+   * A standing building's lot taken from the town: flagged gone (CityGen.markGone), its mesh sunk at once (animate),
+   * its claim left out of the claim grid at the mesh run that follows. Returns the building as it stood, in the
+   * window's frame now — the caller lets its External spans go and puts what it likes in its place (game/housefall.ts).
+   * Null: not a building, not risen, or gone already. One small read (100 B), after an event.
+   * Not told: the living town (its people still go to the lot), the season's ledger, the edit log (not saved): PA13.
+   */
+  async takeLot(lot: number): Promise<{ quad: [number, number][]; base: number; height: number; hash: number } | null> {
+    if (this.gone || !this.grid || this.gen.goneLots.has(lot)) return null;
+    const r = await this.gen.readLot(lot);
+    if (this.gone || this.gen.goneLots.has(lot)) return null;
+    const height = r.height * Math.min(1, Math.max(0, r.progress));
+    // (streets.wgsl REC_BUILDING)
+    if (r.kind !== 1 || height < 0.05) return null;
+    const p = this.gridPlace();
+    this.gen.markGone(lot);
+    this.gen.animate(this.clock);
+    this.remeshForGone();
+    return { quad: r.quad.map(([x, y]) => [x + p.dx, y + p.dy * ROW_H] as [number, number]), base: r.base + p.dz, height, hash: r.hash };
+  }
+
   /** the town's lots for what builds on it (api/contracts/citygen.ts) */
   get lots(): CityLots {
     return { records: this.gen.lotRecords, counts: this.gen.lotCounts, progress: this.gen.progress, place: this.xform };
