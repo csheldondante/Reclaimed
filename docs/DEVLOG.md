@@ -23207,3 +23207,16 @@ as it did in round 120; it reports no voxel counts, so it can't yet give ms per 
 `/?skipmenu=1&level=playground&tutorial=0&q=low&physbench=1&pairs=lattice:runs`.
 
 **Not done.** No engine code, no test, no lab station, no phone number.
+
+## 2026-11-15 — the physics bench counts voxels (PE8, `physics10`)
+
+Why: the phone run of the lattice has to give a cost per thousand voxels, the unit of the stage 4 budget
+(docs/design/PHYSICS_ENGINE.md), and the report had only awake bodies. Each row now has `voxels`: `dispatched` (the
+slots the lattice's kernels run over: every slot in use, asleep or not, the fragment ring's 8,192 among them), `bodies`
+(the voxels its bodies were made of) and `awake` (those of bodies not asleep), at the stage's busiest frame.
+scripts/physbench.mjs prints them.
+
+**Measured** (desktop proxy, headless D3D11, 412 x 915, q=low, lattice:runs, one run, exit 0): voxels awake / in bodies / dispatched per stage 781 / 781 / 10,115; 1,145 / 1,145 / 10,912; 1,463 / 1,463 / 11,452; 1,909 / 1,909 / 12,324; 2,143 / 2,143 / 12,726. The physics
+toggle's GPU diff was +0.31 to +0.84 ms. So the playground scenes move one to two thousand voxels while the kernels
+run over ten to thirteen thousand slots: most of the lattice's work today is slots that hold nothing awake.
+The phone: `/?skipmenu=1&level=playground&tutorial=0&q=low&physbench=1&pairs=lattice:runs`.

@@ -30,6 +30,9 @@ export interface PhysRow {
   /** the columns' readback for the judge: reads, mean and worst latency, KB a read */
   read: { reads: number; ms: number; worst: number; kb: number };
   awake: number;
+  /** (PE8) the voxel lattice at the stage's busiest frame: the slots its kernels run over, its bodies' voxels, and
+   *  those of bodies awake */
+  voxels?: { dispatched: number; bodies: number; awake: number };
   /** frames past twice the median and a 30 fps frame; how many runs of them; the longest */
   slow: number;
   clusters: number;

@@ -190,6 +190,10 @@ export async function physBench(params: URLSearchParams): Promise<void> {
     P.resetTotals();
     const t: number[] = [];
     let awake = 0;
+    // (PE8: the voxel lattice's voxels at the stage's busiest frame — what its kernels are dispatched over (every slot
+    // in use, asleep or not, the fragment ring's 8192 among them), its bodies' voxels, and those of bodies awake —
+    // with the toggle's ms, a cost per thousand voxels)
+    const VX = { dispatched: 0, bodies: 0, awake: 0 };
     let on = true;
     const tick = () => {
       t.push(performance.now());
@@ -198,6 +202,15 @@ export async function physBench(params: URLSearchParams): Promise<void> {
       const ph = R.scene.physics;
       const physAwake = ph ? ph.bodies.length - (ph.asleep?.size ?? 0) : 0;
       awake = Math.max(awake, (ig?.rigid?.list.length ?? 0) + solverAwake + physAwake);
+      if (ph) {
+        let all = 0;
+        let up = 0;
+        for (const b of ph.bodies as { id: number; total: number }[]) {
+          all += b.total;
+          if (!ph.asleep?.has(b.id)) up += b.total;
+        }
+        if (up >= VX.awake) Object.assign(VX, { dispatched: ph.used, bodies: all, awake: up });
+      }
       const js = ig?.judge?.stats;
       if (js && js !== J.last && js.ms !== J.last?.ms) {
         J.last = { ...js };
@@ -273,6 +286,7 @@ export async function physBench(params: URLSearchParams): Promise<void> {
       judge: { passes: J.passes, ms: +(J.sum / Math.max(1, J.passes)).toFixed(2), worst: +J.worst.toFixed(2), gpuMs: J.gpuN ? +(J.gpu / J.gpuN).toFixed(2) : null, readKB: J.bytesN ? +(J.bytes / J.bytesN / 1024).toFixed(1) : null },
       read: { reads: RD.reads, ms: +(RD.sum / Math.max(1, RD.reads)).toFixed(2), worst: +RD.worst.toFixed(2), kb: +(RD.kb / Math.max(1, RD.reads)).toFixed(1) },
       awake,
+      voxels: VX,
       slow,
       clusters,
       longestRun: longest,
