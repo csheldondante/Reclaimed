@@ -69,6 +69,9 @@ const ROW_LISTED_ASLEEP: u32 = 32u;
 const ROW_NEWSLEEP: u32 = 64u;
 // the pool's header word that asks for the draw list again (engine_deform.wgsl has the rest of the header)
 const P_DL_DIRTY: u32 = 20u;
+// the pool's header word `compact` adds to for every row it finds waiting to deform (ROW_EXPAND), each tick it waits:
+// it only ever goes up. The host reads it with the header and encodes stage 4 when it has moved (engine.ts s4Open)
+const P_EXPAND_WAIT: u32 = 40u;
 const NONE: u32 = 0xffffffffu;
 const NO_CONTACT: f32 = -1e8;
 // the list buffer (u32): [0] workgroups of 64 awake rows, [1] 1, [2] 1 (an indirect dispatch's arguments), [3] rows

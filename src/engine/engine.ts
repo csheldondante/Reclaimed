@@ -96,7 +96,7 @@ export const MESH_V = 3;
 export const DL_AT = 16;
 export const OCC_AT = 4;
 /** the pool's header (engine_deform.wgsl P_*) */
-export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21, hashOver: 22 } as const;
+export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21, hashOver: 22, expandWait: 40 } as const;
 /** engine.wgsl LIST_AT, EV_AT, EV_WORDS */
 const LIST_AT = 8;
 const EV_AT = 4;
@@ -886,6 +886,7 @@ export class Engine implements SimSystem {
     this.kick();
     this.cmds.length = 0;
     this.seen.fill(0);
+    this.s4Words = [];
     const enc = this.device.createCommandEncoder({ label: 'engine clear' });
     for (const b of [this.info, this.pool, this.dmeta, this.dargs, this.kargs, this.list]) enc.clearBuffer(b);
     enc.clearBuffer(this.dl, 0, DL_AT * 4);
@@ -955,14 +956,56 @@ export class Engine implements SimSystem {
   // dispatch — and the tick after, one read of what it found: a sleeper woken that way moves a second late at most.
   // (Departure from DESIGN §24's "only after edits or events": one read a second while everything sleeps. 0: never,
   // and such a sleeper then wakes at the next host event.)
+  // ---- stage 4 only while something deforms (docs/design/PHYSICS_ENGINE.md "Stage 4 only while something deforms").
+  // Its 81 dispatches (expand, arm, the page list, fill, the lattice, settle, release, slots) are encoded only while
+  // the CPU has reason (s4Mode has the exact rule): the last read showed a body deforming or settling, a row waiting to deform (`compact` counts
+  // those: P_EXPAND_WAIT), an expansion or a part since the read before; or the host asked for one (`expand`,
+  // `release`); for 30 ticks after any of those; and whenever the last read is more than 12 ticks old (ticks stepped
+  // with no frame between them, a stalled read: then as before). A row flagged to deform is frozen as it came in by
+  // the rigid kernels until `expand` runs, so a gate that opens late delays its deformation — by the read's age, a few
+  // ticks — and loses nothing.
+  /** (tests, benches) off: stage 4 is encoded every tick anything is awake, as before */
+  stage4Gate = true;
+  private s4Until = -1;
+  /** the tick the last read to land was issued at */
+  private readAt = -1e9;
+  /** the header's words that only move when stage 4 has work, as the last header read (by either read) had them */
+  private s4Words: number[] = [];
+  /** a header just read: stage 4 stays encoded for 30 ticks if it shows a body deforming, settling, waiting to, or one made or ended since the header before */
+  private s4Evidence(): boolean {
+    const now = [POOL.expandWait, POOL.expands, POOL.parts, POOL.failExpand, POOL.failSettle].map((k) => this.seen[k]);
+    const busy = this.seen[POOL.deforming] > 0 || this.seen[POOL.settling] > 0 || now.some((v, i) => v !== (this.s4Words[i] ?? 0));
+    if (busy) this.s4Until = this.ticks + 30;
+    this.s4Words = now;
+    return busy;
+  }
+  /** the last tick `expand` was encoded, and whether the last chained read to land showed stage 4 any work */
+  private s4Armed = -1;
+  private s4Busy = true;
+  /**
+   * This tick's stage 4: `armed` (all of it), `drain` (all but `expand`: bodies already deforming go on, a row flagged
+   * to deform waits), `closed` (none). It closes only on a read issued after the last tick `expand` ran that shows
+   * nothing deforming, settling or waiting: no body can have begun to deform since, so none is ever left half way.
+   */
+  private s4Mode(): 'armed' | 'drain' | 'closed' {
+    if (!this.stage4Gate || this.ticks <= this.s4Until || this.ticks - this.readAt > 12) {
+      this.s4Armed = this.ticks;
+      return 'armed';
+    }
+    return this.readAt > this.s4Armed && !this.s4Busy ? 'closed' : 'drain';
+  }
+
   /** the last read to land showed nothing that can move, and nothing was asked since */
   private calm = false;
   /** quiet ticks since the last tick that encoded the engine */
   private idle = 0;
   /** a watch tick ran: one read is owed of what its `compact` found */
   private beat = false;
-  /** quiet ticks between watch ticks (60: a second); 0: none */
-  watchEvery = 60;
+  /** quiet ticks between watch ticks (60: a second); 0, the default: none — the read after a watch tick is a timed
+   *  read, which DESIGN §24 does not allow, and the CPU has no other way to learn that a simulation changed the ground
+   *  (the chunks' versions are read on the GPU only). So a sleeper undermined by a simulation alone wakes at the next
+   *  host event (BACKLOG PP5a) */
+  watchEvery = 0;
   /** ticks that encoded nothing (a test's count; the lab's read-out) */
   quietTicks = 0;
   /** a tick was encoded since the frame's skin pass last ran */
@@ -990,6 +1033,7 @@ export class Engine implements SimSystem {
       if (this.owed > 0) this.owed--;
       this.nextRead = this.ticks + READ_GAP;
       this.reads++;
+      const issuedAt = this.ticks;
       const enc = this.device.createCommandEncoder({ label: 'engine chained read' });
       enc.copyBufferToBuffer(this.pool, 0, this.statBuf, 0, POOL_HDR * 4);
       enc.copyBufferToBuffer(this.list, 0, this.statBuf, POOL_HDR * 4, 32);
@@ -1006,6 +1050,8 @@ export class Engine implements SimSystem {
         const grows = this.growPairs && this.collide.consider(w.subarray(POOL_HDR + 8), rooms);
         const asked = [POOL.pageWant, POOL.slotWant, POOL.rowWant, POOL.sampWant, POOL.heapWant, POOL.dlWant, POOL.expands, POOL.parts].some((k) => was[k] !== this.seen[k]);
         this.active = this.awakeSeen > 0 || this.seen[POOL.deforming] > 0 || this.seen[POOL.settling] > 0 || grows || asked;
+        this.readAt = issuedAt;
+        this.s4Busy = this.s4Evidence();
         // (an ask since this read was issued still owes its own)
         this.calm = !this.active && this.owed === 0;
         this.fresh = true;
@@ -1072,6 +1118,7 @@ export class Engine implements SimSystem {
     await tmp.mapAsync(GPUMapMode.READ);
     this.seen.set(new Uint32Array(tmp.getMappedRange()));
     tmp.destroy();
+    this.s4Evidence();
     if (this.growAhead) this.ahead();
     return this.seen;
   }
@@ -1135,6 +1182,8 @@ export class Engine implements SimSystem {
       n.uploadBytes += data.byteLength;
     };
     const take = this.cmds.splice(0, CMDS);
+    // (the host asked a body to deform or let one go: stage 4 runs from this tick)
+    if (take.some((c) => c.kind === 5 || c.kind === 6)) this.s4Until = this.ticks + 30;
     const C = new ArrayBuffer(CMDS * 32);
     const cf = new Float32Array(C);
     const cuv = new Uint32Array(C);
@@ -1248,11 +1297,14 @@ export class Engine implements SimSystem {
         indirect(this.list, 0);
       }
     }
-    if (TUNE.engine.deform >= 0.5 && !skip.stage4) {
+    const s4 = this.s4Mode();
+    if (TUNE.engine.deform >= 0.5 && !skip.stage4 && s4 !== 'closed') {
       // build step 2: rows into particles (the rows awake), the live pages listed and the new ones filled — the
       // per-page and per-slot kernels dispatched from the GPU's own count: nothing deforming, no workgroups
-      run('expand');
-      indirect(this.list, 0);
+      if (s4 === 'armed') {
+        run('expand');
+        indirect(this.list, 0);
+      }
       run('arm');
       direct(1);
       run('pagelist');

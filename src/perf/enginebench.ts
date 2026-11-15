@@ -37,7 +37,9 @@ declare const __BUILD_COMMIT__: string;
 
 // v2: the row-level terrain test and the quiet tick are in the engine (BACKLOG PP4, PP5); the ladder shows the tick
 // asleep both ways (quiet, and with the quiet gate off); medians, not means
-const VERSION = 2;
+// v3: stage 4 is encoded only while something deforms (PP6's first cut): the awake tick is 9 direct + 56 indirect
+// dispatches in these scenes, and the `stage4` share reads about nothing; the watch tick is off by default
+const VERSION = 3;
 const KEY = 'reclaimed.enginebench.partial';
 const NL = String.fromCharCode(10);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -425,7 +427,7 @@ export async function engineBench(): Promise<void> {
       const cq = { ...e.counts };
       const Q = await measure('floor ladder, asleep', [{ name: 'the real tick, 0 awake, 1,000 asleep (quiet)', encode: tick }]);
       Q[1].counts = cq;
-      Q[1].note = cq.direct + cq.indirect === 0 ? 'quiet: nothing encoded but `compact` alone every 60th tick' : 'the engine did not go quiet in 300 ticks';
+      Q[1].note = cq.direct + cq.indirect === 0 ? 'quiet: nothing encoded' : 'the engine did not go quiet in 300 ticks';
       await sleepers(1);
       await step(2);
       const c1 = { ...e.counts };

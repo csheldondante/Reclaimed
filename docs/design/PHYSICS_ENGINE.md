@@ -1416,3 +1416,17 @@ pairs' kernels are compiled with `engine_ground.wgsl` first, `integrate` and `tf
 `rowSolve` and `rowFinish` read `RF_AIR`; EU.e.w bit 256, EU.l.w and EU.m.w are taken. Run first: `npx vitest run
 --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots`, `npm run typecheck`.
 
+### Added after the hand-over above: stage 4's gate, and the watch read off (PP8, PP5a)
+
+- **Stage 4 only while something deforms.** Its 81 dispatches are encoded when the last read showed a body deforming
+  or settling, a row waiting to deform (pool header word 40, counted by `compact`), an expansion or a part since the
+  read before; when the host asked; for 30 ticks after; and when the last read is over 12 ticks old. The awake tick
+  is 9 direct + 56 indirect dispatches (was 10 + 136). A flagged row is frozen until `expand` runs, so the late case
+  delays a first deformation by the read's age (3 to about 8 ticks) and loses nothing. `Engine.stage4Gate`.
+- **The watch tick is off by default** (`Engine.watchEvery = 0`): the CPU cannot learn of a simulation's ground change
+  without a read, so the row "now, all asleep, every 60th tick" in the table above applies only when the option is
+  set, and a sleeper undermined by a simulation alone wakes at the next host event (PP5a, the owner's call).
+- For the mechanics branch: pool header word 40 and `Engine.s4Open` are new; a test that steps ticks with frames
+  between them and expects a deformation in the tick of the impact needs `stage4Gate = false` or a few ticks' grace.
+- The phone page is v3.
+

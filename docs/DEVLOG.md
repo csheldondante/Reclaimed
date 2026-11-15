@@ -23805,3 +23805,30 @@ impulse brings the whole tick back; a dig under the sleeper drops it from 11.00 
 engine and a watch tick every 20, `compact` runs 4 or 5 times in 100 ticks, one read each, and the dug-out sleeper
 falls. `npm run typecheck`. Unit project: 630 passed, 1 failed (the roadlab writing lint, as on the base).
 
+## 2026-11-15 — stage 4 only while something deforms; the idle watch read off by default (PP8, PP5a, `physics10-join`)
+
+**Why.** The ladder put the floor on indirect dispatches, and 81 of the awake tick's 146 dispatches belong to a stage
+4 that nearly always has nothing to deform. And the watch tick's read (one a second while everything sleeps) is a
+timed read, which DESIGN §24 does not allow.
+
+**Stage 4.** Encoded only while the CPU has reason: the last read showed a body deforming or settling, a row waiting
+to deform, an expansion or a part since the read before; the host asked; 30 ticks after any of those; or the last
+read is over 12 ticks old. `compact` counts the rows that wait (flagged `ROW_EXPAND`) into the pool header's word 40.
+A flagged row is already frozen by the rigid kernels until `expand` runs, so a late gate delays a deformation and
+cannot lose one: 3 ticks late in the test, about 8 at worst with a frame a tick. The body hangs for that long at a
+first impact: to look at in the lab.
+
+**Measured** (desktop proxy, Dawn in Node, Intel Xe; a pass a kernel, the least of seven ticks; mixed blocks piling in
+a pit, held at tick 150): 200 blocks (102 awake, 85 pairs) 10 direct + 136 indirect to 9 + 56; 2.62 to 2.23 ms by GPU
+timestamps, 8.81 to 5.90 ms wall a tick. 1,000 blocks (1,000 awake, 1,405 pairs) the same counts; 3.21 to 3.15 ms by
+timestamps, 9.76 to 6.88 ms wall. The timestamps do not see what the gate saves (the check before each indirect
+dispatch is outside the kernels' passes); the wall time does, and the phone bench's whole-tick rows will.
+
+**The watch read.** Looked for a way the CPU learns that a simulation changed a chunk's columns without a read: there
+is none (the versions are bumped and consumed on the GPU). So `Engine.watchEvery` is 0 by default and the gap is
+logged for the owner: a sleeper undermined by a simulation alone, with no host event, wakes at the next host event.
+
+**Tests.** `engine-ground.test.ts`: one block awake at rest is 9 + 56 dispatches gated and 10 + 136 with the gate off;
+a block thrown down at 25 cells/s is flagged at tick 7, keeps its pose while it waits, and is expanded at tick 10;
+the watch tick is off by default. Bench page v3. Suites: see the commit.
+

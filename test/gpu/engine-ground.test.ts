@@ -323,3 +323,92 @@ test('a sleeper whose ground changes with no host event is found by the watch ti
   ok();
   R.w.destroy();
 });
+
+// ---- stage 4 only while something deforms (BACKLOG PP6, its first cut) -------------------------------------------------
+test('stage 4 is encoded only while something deforms; a hard landing still deforms, a few ticks late at most; the watch tick is off by default', async () => {
+  T.deform = 1;
+  T.restT = 1e9;
+  const R = await rig(flat);
+  expect(R.e.watchEvery).toBe(0);
+  R.e.add({ cells: box(8, 14, 10, 2, 2, 2) });
+  await frames(R, 24);
+  const gated = { ...R.e.counts };
+  R.e.stage4Gate = false;
+  await frames(R, 2);
+  const whole = { ...R.e.counts };
+  R.e.stage4Gate = true;
+  // (it closes again through a drain: a read issued after the last tick `expand` ran)
+  await frames(R, 16);
+  log(`one block awake at rest: ${gated.direct} direct + ${gated.indirect} indirect dispatches with stage 4 gated, ${whole.direct} + ${whole.indirect} without the gate`);
+  expect(whole.indirect - gated.indirect).toBe(80);
+  expect(whole.direct - gated.direct).toBe(1);
+  expect(R.e.counts.indirect).toBe(gated.indirect);
+  // a block thrown down hard: flagged to deform by the rigid kernels, frozen, then expanded once a read has shown it
+  const hard = R.e.add({ cells: box(20, 14, 13, 4, 4, 4), vel: [0, 0, -25] })!;
+  const D = R.e.debugBuffers;
+  let flagged = -1;
+  let expanded = -1;
+  let held: number[] | null = null;
+  for (let t = 0; t < 80 && expanded < 0; t++) {
+    await frames(R, 1);
+    const r = await R.row(hard);
+    if (flagged < 0 && r.flags & 4) {
+      flagged = t;
+      held = r.pos;
+    } else if (flagged >= 0 && r.flags & 4) expect(r.pos).toEqual(held);
+    if (new Uint32Array(await g.read(D.pool, 4, 16 * 4))[0] > 0) expanded = t;
+  }
+  log(`hard landing: flagged to deform at tick ${flagged}, expanded at tick ${expanded} (${expanded - flagged} ticks later), ${R.e.counts.indirect} indirect dispatches then`);
+  expect(flagged).toBeGreaterThanOrEqual(0);
+  expect(expanded).toBeGreaterThanOrEqual(flagged);
+  expect(expanded - flagged).toBeLessThanOrEqual(12);
+  expect(R.e.counts.indirect).toBe(whole.indirect);
+  ok();
+  R.w.destroy();
+});
+
+// GROUND_BENCH=1: the awake tick with stage 4 gated and not, `n` mixed blocks piling in a pit (held at tick 150)
+test.skipIf(!process.env.GROUND_BENCH).each([200, 1000])('bench: %i blocks piling, the tick with stage 4 gated and not', async (n) => {
+  T.deform = 1;
+  const pit = (x: number, y: number): Interval[] => [{ z0: 0, z1: x >= 4 && x < 92 && y >= 4 && y < 92 ? 4 : 10, mat: MAT.Stone }];
+  const R = await breakRig(g, pit, 96, 96);
+  R.e.stage4Gate = true;
+  const SHAPES: [number, number, number, number][] = [[2, 2, 2, MAT.Stone], [3, 2, 2, MAT.Brick], [4, 2, 2, MAT.Concrete], [2, 2, 4, MAT.Stone], [3, 3, 3, MAT.Steel]];
+  for (let k = 0; k < n; k++) {
+    const s = SHAPES[(k * 7 + Math.floor(k / 12)) % SHAPES.length];
+    const layer = Math.floor(k / 144);
+    R.e.add({ cells: box(6 + (k % 12) * 5 + (layer % 2), 6 + (Math.floor(k / 12) % 12) * 6 + 2 * (layer % 2), 14 + layer * 5, s[0], s[1], s[2], s[3]) });
+  }
+  const turn = async (k: number) => {
+    for (let i = 0; i < k; i++) {
+      await R.step(1);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  };
+  T.deform = 0;
+  await turn(150);
+  T.deform = 1;
+  R.e.hold = true;
+  await turn(50);
+  const least = async () => {
+    const runs: Map<string, number>[] = [];
+    for (let i = 0; i < 7; i++) {
+      const m = await R.gpuTick();
+      if (m) runs.push(m);
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    runs.sort((a, c) => a.get('total')! - c.get('total')!);
+    return runs.length ? `${runs[0].get('total')!.toFixed(2)} ms GPU, ${Math.min(...runs.map((m) => m.get('wall')!)).toFixed(2)} ms wall` : 'no timestamps';
+  };
+  const on = await least();
+  await turn(2);
+  const cOn = { ...R.e.counts };
+  R.e.stage4Gate = false;
+  await turn(4);
+  const cOff = { ...R.e.counts };
+  const off = await least();
+  const L = new Uint32Array(await g.read(R.e.debugBuffers.list, 32));
+  const P = new Uint32Array(await g.read(R.e.collide.coarse.pairBuf, 16));
+  console.log(`${n} blocks piling (held: ${L[3]} awake, ${P[0]} pairs): every stage ${off}, ${cOff.direct} direct + ${cOff.indirect} indirect; stage 4 gated ${on}, ${cOn.direct} direct + ${cOn.indirect} indirect`);
+  ok();
+}, 600_000);

@@ -98,6 +98,8 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
     vel[2u * r + 1u] = vec4<f32>(sp.xyz + dw, sp.w);
   }
   if (epoch) { atomicAdd(&list[LIST_EPOCH], 1u); }
+  // (it waits to deform: frozen as it came in till `expand` runs, which the host encodes once it has read this)
+  if ((fl & ROW_EXPAND) != 0u) { atomicAdd(&poolC[P_EXPAND_WAIT], 1u); }
   // (the draw list keeps the triangles of rows asleep apart, placed once: a row that fell asleep or woke since it was
   // made asks for it again)
   if (((fl & ROW_ASLEEP) != 0u) != ((fl & ROW_LISTED_ASLEEP) != 0u) && bitcast<u32>(info[4u * r + 3u].x) != 0u) { atomicStore(&poolC[P_DL_DIRTY], 1u); }
