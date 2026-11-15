@@ -23774,3 +23774,34 @@ ground 13.000; a block at 9 cells/s stops with its centre 0.8 short of a cliff f
 landing it falls on to the pit floor (3.00), stone built under it it stops on the new top (12.92). Bench:
 `GROUND_BENCH=1 npx vitest run --project gpu engine-ground -t bench --reporter=verbose`.
 
+## 2026-11-15 — asleep costs nothing: the quiet tick; the phone bench v2 (PP5, `physics10-join`)
+
+**Why.** 200 sleeping blocks cost 0.4 ms a tick by timestamps and the bench says the whole asleep tick is 2.56 (the first run) to 6.4 (the v2 run, a noisier machine) ms
+by the frame's GPU-done time on the desktop: with nothing awake the tick was still 146 dispatches, 136 of them
+indirect and each checked on the GPU before it runs. Nothing in that tick can do anything.
+
+**What.** The CPU already has what it needs: the event-chained read, and its own asks (every one calls `kick`). When
+the last read to land showed nothing awake, deforming, settling or growing and nothing was asked since, `encode`
+returns before it makes anything: no pass, no dispatch, no clear, no upload, no read. The frame's skin pass runs once
+more after the last whole tick (the draw list is placed whole) and is then left out too. The host's world events now
+reach the engine (`kickOnEvents`), which they did not (PJ2).
+
+**The gap, and the departure.** A sleeper whose ground a simulation changes on the GPU with no host event was noticed
+by `compact` every tick; a quiet engine does not run it. So every 60 quiet ticks `compact` alone runs (one direct
+dispatch) and the tick after it one read: a read a second while everything sleeps, against DESIGN §24's "only after
+edits or events". `Engine.watchEvery = 0` turns it off. For the owner to rule on (PP5a).
+
+**Measured, desktop proxy** (headless Chrome, Intel Xe, `enginebench.html` v2, the ladder; median GPU-done time less
+an empty frame's): the tick with 1,000 asleep and nothing awake, the gate off 2.56 (the first run) to 6.4 (the v2 run, a noisier machine) ms; quiet -0.9 (no different from the rows that encode nothing, -1.1 to -2.1 in the same run: its empty frames read about 1.5 ms slow) ms (0
+dispatches; before: 9 direct and 136 indirect, 6 clears, 8 uploads of 1,520 B). One awake among 1,000 asleep:
+3.1 to 3.4 ms, the tick as it stands (10 direct, 136 indirect, 7 clears). The awake tick's dispatches are not cut: PP6.
+
+**The phone bench, v2.** The ladder shows the asleep tick both ways; medians in place of means (a stalled frame moved
+a mean by milliseconds); the clears include the terrain lists' 128 B. Headless run 202 s, report written.
+
+**Tests.** `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots`: 13 files, 125 passed, 9 skipped.
+`engine-ground.test.ts`: 100 ticks asleep make nothing and issue no read (345 quiet ticks of the test's 632); an
+impulse brings the whole tick back; a dig under the sleeper drops it from 11.00 to 3.00; with no event told to the
+engine and a watch tick every 20, `compact` runs 4 or 5 times in 100 ticks, one read each, and the dug-out sleeper
+falls. `npm run typecheck`. Unit project: 630 passed, 1 failed (the roadlab writing lint, as on the base).
+

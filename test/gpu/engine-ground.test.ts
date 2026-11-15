@@ -4,6 +4,7 @@
 // Numbers for the DEVLOG: GROUND_LOG=1 npx vitest run --project gpu engine-ground --reporter=verbose
 import { afterAll, afterEach, beforeAll, expect, test } from 'vitest';
 import { Engine, type EngineBody, type EngineCell } from '../../src/engine/engine';
+import { kickOnEvents } from '../../src/engine/install';
 import { OP } from '../../src/sim/edit-ops';
 import { EventKind } from '../../src/sim/globals';
 import { TUNE } from '../../src/tune/params';
@@ -37,11 +38,12 @@ interface Rig {
   lists(): Promise<{ awake: number; terrain: number[] }>;
 }
 
-async function rig(col: (x: number, y: number) => Interval[], W = 32, H = 32): Promise<Rig> {
+async function rig(col: (x: number, y: number) => Interval[], W = 32, H = 32, tap = true): Promise<Rig> {
   const w = await tinyWorld(g, tinyMap(W, H, 64, col), ['surface']);
   const e = new Engine(g.device, w.core.world, w.core.host.profiler);
   const sys = w.core.sim.systems;
   sys.splice(sys.findIndex((s) => s.name === 'surface') + 1, 0, e);
+  if (tap) kickOnEvents(w.core.sim, e);
   const on = (s: { name: string }) => s.name === 'surface' || s.name === 'engine' || s.name === 'edit';
   const R: Rig = {
     w,
@@ -231,3 +233,93 @@ test.skipIf(!process.env.GROUND_BENCH).each([1000, 10000, 50000])('bench: %i row
   expect([A[0], A[4]]).toEqual([0, 0]);
   ok();
 }, 600_000);
+
+// ---- asleep costs nothing (docs/design/PHYSICS_ENGINE.md "Asleep costs nothing"; BACKLOG PP5) -------------------------
+/** ticks one at a time with the event loop turned between them, as between frames: the engine's own read lands */
+async function frames(R: Rig, n: number, each?: () => void): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    await R.step(1);
+    each?.();
+    await new Promise((r) => setTimeout(r, 0));
+  }
+}
+const dig = (R: Rig, x: number, y: number) => {
+  for (let k = 0; k < 8; k++) R.w.core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP.DIG * 32 + 512, radius: 3.5, strength: 3 });
+};
+
+test('everything asleep: a tick encodes nothing and no read is issued; an impulse and an edit each wake the sleeper', async () => {
+  const R = await rig(flat);
+  const b = R.e.add({ cells: box(14, 14, 10, 2, 2, 2) })!;
+  // (five more asleep from the start)
+  for (let k = 0; k < 5; k++) R.e.add({ cells: box(4 + k * 5, 24, 10, 2, 2, 2), asleep: true });
+  await frames(R, 150);
+  const rest = await R.row(b);
+  expect(rest.flags & 2).toBe(2);
+  expect(R.e.quietTicks).toBeGreaterThan(0);
+  R.e.watchEvery = 0;
+  const q0 = R.e.quietTicks;
+  const reads0 = R.e.reads;
+  let made = 0;
+  await frames(R, 100, () => {
+    const c = R.e.counts;
+    made += c.passes + c.direct + c.indirect + c.clears + c.copies + c.uploads;
+  });
+  expect(made).toBe(0);
+  expect(R.e.quietTicks - q0).toBe(100);
+  expect(R.e.reads).toBe(reads0);
+  // (and the frame's skin pass encodes nothing either: no error, nothing to see here but that it runs)
+  const enc = g.device.createCommandEncoder();
+  R.e.skin(enc, 1);
+  g.device.queue.submit([enc.finish()]);
+  // an impulse: the next tick is a whole one again
+  R.e.impulse(b, [0, 0, 6]);
+  await frames(R, 12);
+  expect(R.e.counts.indirect).toBeGreaterThan(0);
+  expect((await R.row(b)).pos[2]).toBeGreaterThan(rest.pos[2] + 0.3);
+  await frames(R, 220);
+  expect((await R.row(b)).flags & 2).toBe(2);
+  expect(R.e.counts.direct + R.e.counts.indirect).toBe(0);
+  // an edit under it (the host's event reaches the engine: install.ts kickOnEvents)
+  dig(R, rest.pos[0], rest.pos[1]);
+  await frames(R, 150);
+  const after = await R.row(b);
+  log(`quiet: ${R.e.quietTicks} quiet ticks of ${150 + 100 + 12 + 220 + 150}, ${R.e.reads} reads; dug out it went from ${rest.pos[2].toFixed(2)} to ${after.pos[2].toFixed(2)}`);
+  expect(after.pos[2]).toBeLessThan(rest.pos[2] - 1);
+  ok();
+  R.w.destroy();
+});
+
+test('a sleeper whose ground changes with no host event is found by the watch tick, a direct dispatch now and then', async () => {
+  // (no tap: the dig below stands for a simulation changing the ground on the GPU with nothing said to the engine)
+  const R = await rig(flat, 32, 32, false);
+  R.e.watchEvery = 20;
+  const b = R.e.add({ cells: box(14, 14, 10, 2, 2, 2) })!;
+  await frames(R, 150);
+  const rest = await R.row(b);
+  expect(rest.flags & 2).toBe(2);
+  const reads0 = R.e.reads;
+  let direct = 0;
+  let indirect = 0;
+  await frames(R, 100, () => {
+    direct += R.e.counts.direct;
+    indirect += R.e.counts.indirect;
+  });
+  // (asleep and unchanged: `compact` alone every twentieth tick, and one read after each)
+  expect(indirect).toBe(0);
+  expect(direct).toBeGreaterThanOrEqual(4);
+  expect(direct).toBeLessThanOrEqual(5);
+  expect(R.e.reads - reads0).toBe(direct);
+  expect([...(await R.row(b)).pos]).toEqual([...rest.pos]);
+  dig(R, rest.pos[0], rest.pos[1]);
+  let woke = -1;
+  await frames(R, 60, () => {
+    if (woke < 0 && R.e.counts.indirect > 0) woke = R.e.quietTicks;
+  });
+  await frames(R, 150);
+  const after = await R.row(b);
+  log(`watch tick every 20: whole ticks again within 60 of the dig (${woke >= 0}); it went from ${rest.pos[2].toFixed(2)} to ${after.pos[2].toFixed(2)}`);
+  expect(woke).toBeGreaterThanOrEqual(0);
+  expect(after.pos[2]).toBeLessThan(rest.pos[2] - 1);
+  ok();
+  R.w.destroy();
+});

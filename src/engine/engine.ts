@@ -944,12 +944,49 @@ export class Engine implements SimSystem {
   /** the host changed something the engine cannot see from the GPU's side alone (an edit under bodies, a spawn): the read chain starts */
   kick(): void {
     this.owed = 2;
+    this.calm = false;
   }
 
+  // ---- the quiet tick (docs/design/PHYSICS_ENGINE.md "Asleep costs nothing"). When the last read to land showed
+  // nothing awake, deforming, settling or growing, and the host has asked nothing since (every ask calls `kick`), no
+  // row can be awake: the tick encodes nothing at all, and the frame's skin pass is left out once it has placed the
+  // list whole. What the CPU cannot know is a sleeper whose ground a simulation changed on the GPU with no host event
+  // (`compact` is what notices that). So every `watchEvery` quiet ticks `compact` alone is encoded — one direct
+  // dispatch — and the tick after, one read of what it found: a sleeper woken that way moves a second late at most.
+  // (Departure from DESIGN §24's "only after edits or events": one read a second while everything sleeps. 0: never,
+  // and such a sleeper then wakes at the next host event.)
+  /** the last read to land showed nothing that can move, and nothing was asked since */
+  private calm = false;
+  /** quiet ticks since the last tick that encoded the engine */
+  private idle = 0;
+  /** a watch tick ran: one read is owed of what its `compact` found */
+  private beat = false;
+  /** quiet ticks between watch ticks (60: a second); 0: none */
+  watchEvery = 60;
+  /** ticks that encoded nothing (a test's count; the lab's read-out) */
+  quietTicks = 0;
+  /** a tick was encoded since the frame's skin pass last ran */
+  private skinOwed = true;
+
   private watch(): void {
-    if (!this.statBusy && (this.owed > 0 || (this.active && this.ticks >= this.nextRead))) {
+    if (!this.statBusy && (this.owed > 0 || (this.active && this.ticks >= this.nextRead))) this.issueRead(false);
+    this.grown();
+  }
+
+  /** the buffers sized ahead by what the last read showed */
+  private grown(): void {
+    if (this.growAhead && this.fresh) {
+      this.fresh = false;
+      this.ahead();
+    }
+  }
+
+  /** the chained read issued; `keepCalm`: a watch tick's (the engine stays quiet while it is on its way) */
+  private issueRead(keepCalm: boolean): void {
+    {
       this.statBusy = true;
       this.active = false;
+      if (!keepCalm) this.calm = false;
       if (this.owed > 0) this.owed--;
       this.nextRead = this.ticks + READ_GAP;
       this.reads++;
@@ -969,13 +1006,47 @@ export class Engine implements SimSystem {
         const grows = this.growPairs && this.collide.consider(w.subarray(POOL_HDR + 8), rooms);
         const asked = [POOL.pageWant, POOL.slotWant, POOL.rowWant, POOL.sampWant, POOL.heapWant, POOL.dlWant, POOL.expands, POOL.parts].some((k) => was[k] !== this.seen[k]);
         this.active = this.awakeSeen > 0 || this.seen[POOL.deforming] > 0 || this.seen[POOL.settling] > 0 || grows || asked;
+        // (an ask since this read was issued still owes its own)
+        this.calm = !this.active && this.owed === 0;
         this.fresh = true;
       }, ignoreTeardown);
     }
-    if (this.growAhead && this.fresh) {
-      this.fresh = false;
-      this.ahead();
+  }
+
+  /** nothing can be awake: the CPU's own proof (the last read, and no ask since). Never while a bench holds a scene */
+  private quiet(): boolean {
+    return this.calm && this.owed === 0 && !this.cmds.length && !this.hold && !this.unbaked && !this.collide.growing && Object.keys(this.skip).length === 0;
+  }
+
+  /** a quiet tick: nothing, or every `watchEvery` of them `compact` alone, and the tick after it one read */
+  private quietTick(enc: GPUCommandEncoder): void {
+    const n: TickCounts = (this.counts = { passes: 0, direct: 0, indirect: 0, clears: 0, copies: 0, uploads: 0, uploadBytes: 0 });
+    this.quietTicks++;
+    this.idle++;
+    this.grown();
+    if (this.beat) {
+      if (!this.statBusy) {
+        this.beat = false;
+        this.issueRead(true);
+      }
+      return;
     }
+    if (!this.watchEvery || this.idle % this.watchEvery !== 0) return;
+    const ring = this.ring;
+    this.ring = (ring + 1) % CMD_RING;
+    this.device.queue.writeBuffer(this.cu[ring].ec, 0, new ArrayBuffer(CMDS * 32));
+    this.device.queue.writeBuffer(this.cu[ring].eu, 0, this.uniform(false, 0));
+    enc.clearBuffer(this.list, 0, (LIST_AT - 1) * 4);
+    enc.clearBuffer(this.rargs);
+    const pass = enc.beginComputePass({ label: 'engine watch', timestampWrites: this.prof.timestamps('engine') });
+    pass.setPipeline(this.k.compact.k.pipeline);
+    pass.setBindGroup(0, this.groups()[`compact${ring}`]);
+    pass.dispatchWorkgroups(Math.ceil(this.d.rows / 64));
+    pass.end();
+    this.prof.dispatches++;
+    Object.assign(n, { passes: 1, direct: 1, clears: 2, uploads: 2, uploadBytes: CMDS * 32 + EU_B });
+    this.beat = true;
+    this.skinOwed = true;
   }
 
   /** Room for twice what the GPU has asked for so far (engine_deform.wgsl: its `want` counters), so it rarely runs out. */
@@ -1028,6 +1099,13 @@ export class Engine implements SimSystem {
       this.bakes.models += this.store.flush();
       this.bakes.batches++;
     }
+    if (this.quiet()) {
+      this.quietTick(enc);
+      return;
+    }
+    this.idle = 0;
+    this.beat = false;
+    this.skinOwed = true;
     this.watch();
     const pairs = TUNE.engine.pairs >= 0.5;
     this.groundRoom();
@@ -1210,6 +1288,9 @@ export class Engine implements SimSystem {
    */
   skin(enc: GPUCommandEncoder, alpha: number): void {
     if (!this.rows) return;
+    // (quiet, and the list placed whole since the last tick that ran: nothing moves, nothing to place)
+    if (this.calm && !this.skinOwed) return;
+    this.skinOwed = false;
     this.device.queue.writeBuffer(this.fu, 0, new Float32Array([alpha, 0, 0, 0]));
     const pass = enc.beginComputePass({ label: 'engine skin', timestampWrites: this.prof.timestamps('engine-skin') });
     pass.setPipeline(this.k.eskin.k.pipeline);

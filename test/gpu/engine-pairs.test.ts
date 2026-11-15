@@ -227,6 +227,9 @@ test('nothing awake: no workgroup beyond the fixed ones, and no read is issued',
   await R.step(12);
   await new Promise((r) => setTimeout(r, 20));
   await R.step(4);
+  // (the watch tick apart — `compact` alone every 60th quiet tick and one read after it, BACKLOG PP5a: off here,
+  // tested in engine-ground.test.ts)
+  R.e.watchEvery = 0;
   const reads = R.e.reads;
   await R.step(120);
   expect(R.e.reads).toBe(reads);

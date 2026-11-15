@@ -1342,3 +1342,77 @@ settled part's field with a stand-in, then voxels against rigid rows, then `pair
 phone page with the floor ladder, the stage split, the early-out for terrain contacts); PJ7 in the fine pass;
 PJ8's findings. Run first: `npx vitest run --project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms
 sdf-slots`, `npm run typecheck`, `npx vitest run --project unit` (one failure on the base: the writing lint, PE17).
+
+## The tick on a phone: where the time goes, and what was cut (branch `physics10-join`, 2026-11-15)
+
+The owner's phone (Pixel 9a) gave the collision path a floor of about 1.8 ms whatever the work. This section is the
+answer so far, the two cuts made, and what is left. Desktop numbers are a proxy; the page below is for the phone.
+
+### The owner's three questions
+
+- **"What else contributed to the floor?"** On the desktop: the indirect dispatches. 145 dispatches of a shader that
+  does nothing cost nothing measurable when direct (in one pass or a pass each, the pipeline set once or each time)
+  and 1.6 to 1.75 ms when indirect, with one workgroup or with none. WebGPU checks an indirect dispatch's arguments on
+  the GPU before it runs: a hidden dispatch and two changes of pipeline for each. The tick had 136 of them, 75 for a
+  stage 4 with nothing deforming. The tick's clears (up to 655 KB) and its uploads (1,520 B) cost nothing measurable.
+  Four ticks a frame cost more than four times one: no sign of a slow clock under light load, on the desktop.
+- **"A lot of moving things that are not colliding: is the cost the coarse or the fine collision?"** Neither; it was
+  the ground check. With the row test below, 10,000 rows in free flight are 1.2 to 5.1 ms a tick and 50,000 are 7.9 to
+  10.8, of which `integrate` is 0.13 and 0.7 to 1.05 ms: integration is nearly free, as assumed. What is left at 50,000
+  is the solver's twelve row passes with nothing to solve (4.1), the coarse and fine passes (4.0), the move (1.3).
+- **"Why is the ground check slow? Isn't it just an index into a height grid?"** It was a workgroup of 64 threads a
+  row a substep, each sample walking seven columns' intervals, wherever the row was. It is now the index into a height
+  grid first.
+
+### Terrain contacts, the cheap way (PP4)
+
+`engine_ground.wgsl`. `gtop`: a record a chunk of columns, the highest top of each 4 x 4 block and of the chunk, made
+by `tground` (a thread a chunk, one direct dispatch) from the columns' intervals where the chunk's version is this
+tick's or the last's, so it is the columns as they were when the engine ran this tick. `integrate` tests each awake
+row once a substep: bound radius + the substep's travel + the contact reach + half a cell (`Engine.groundMargin`),
+against the highest top under that footprint. Above: `RF_AIR`, no terrain threads, its terrain rows not read. Else it
+joins the substep's terrain list (in the awake list's buffer after the tick word; its dispatch arguments in `targs`)
+and `tfine` runs a workgroup a listed row. A sample reads the column's height first and walks the intervals only
+under the top of a column with air under its top. Limits: PP4a.
+
+### Asleep costs nothing (PP5)
+
+When the last read to land showed nothing awake, deforming, settling or growing, and nothing was asked since, a tick
+encodes nothing and the skin pass is left out after one more run. Every 60 such ticks `compact` alone runs and one
+read follows (the ground under a sleeper changed by a simulation alone): a departure from §24 for the owner to rule
+on (PP5a). The host's events call `kick()` (`install.ts` `kickOnEvents`).
+
+### Counts a tick, now
+
+| | passes | direct | indirect | clears | uploads |
+|---|---|---|---|---|---|
+| before, awake or asleep | 1 | 9 | 137 (136 with nothing to move slots) | 6 | 8, 1,520 B |
+| now, something awake | 1 | 10 (`tground` added) | 136 | 7 (the terrain lists' counts, 128 B) | 8, 1,520 B |
+| now, all asleep | 0 | 0 | 0 | 0 | 0 |
+| now, all asleep, every 60th tick | 1 | 1 (`compact`) | 0 | 2 | 2, 736 B; one read of 416 B the tick after |
+
+Desktop, `enginebench.html` v2: 1,000 asleep and nothing awake 2.56 (the first run) to 6.4 (the v2 run, a noisier machine) ms with the gate off, -0.9 (no different from the rows that encode nothing, -1.1 to -2.1 in the same run: its empty frames read about 1.5 ms slow) ms quiet;
+one awake among them 3.1 to 3.4 ms. **The awake tick's 136 indirect dispatches are not cut** (PP6 has the order I would
+take them in and what each saves); stage 4's idle share is the largest, 1.4 to 2.3 ms on the desktop.
+
+### The phone bench
+
+`https://192.168.1.3:5453/enginebench.html` (the dev server of this worktree: `npx vite --config local/vite.https.mts
+--host --port 5453 --strictPort`; `local/` is copied from `physics10-fine` and git-ignored). Tap Start; about
+3.5 minutes; the screen is kept awake; a table and Download report at the end; an unfinished run's results are
+offered at the next load. `?only=ladder,split` leaves the solver section out; `?long=1` runs longer windows. Method:
+frames that encode a thing against frames that encode nothing, by the median time from submit to the GPU done; held
+scenes (`Engine.hold`), a stage left out with `Engine.skip` (bench only: PP2). Headless: `node scripts/enginebench.mjs
+--url https://localhost:5453`. On this desktop the stage shares were not repeatable while another agent's GPU tests
+ran on the same card (shares of several ms either sign); the ladder's rows were. Read the phone's.
+
+### Hand-over: where this stopped
+
+Done and tested: the bench page (v2), the terrain row test, the quiet tick. Not built: the awake tick's dispatch cuts
+(PP6: stage 4's gate first), the loose ends (PP7). For the owner: the phone run of the page; the ruling on the watch
+tick's read (PP5a). The mechanics branch (`physics10-mech`) shares `engine.ts` and `engine_pairs.wgsl` with this one:
+here `encode` was rewritten round counting helpers (`run`, `direct`, `indirect`, `clear`, `up`) and stage skips, the
+pairs' kernels are compiled with `engine_ground.wgsl` first, `integrate` and `tfine` take a bind group a substep,
+`rowSolve` and `rowFinish` read `RF_AIR`; EU.e.w bit 256, EU.l.w and EU.m.w are taken. Run first: `npx vitest run
+--project gpu engine sdf-bake sdf-fine.test sdf-coarse.test sdf-rooms sdf-slots`, `npm run typecheck`.
+

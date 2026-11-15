@@ -21,6 +21,7 @@ import { initGpu } from '../gpu/device';
 import { urlFlags } from '../flags';
 import { beginPipelineBatch, endPipelineBatch } from '../gpu/pipeline';
 import { Profiler } from '../gpu/profiler';
+import { kickOnEvents } from '../engine/install';
 import { Engine, type EngineBody, type EngineCell, type EngineStage, type TickCounts } from '../engine/engine';
 import { WorldCore, type Host, type Quality } from '../scenes/world-core';
 import type { SimSystem } from '../sim/system';
@@ -34,7 +35,9 @@ import { copyText, deviceTag, downloadJson, postDev, shareJson, stamp } from './
 
 declare const __BUILD_COMMIT__: string;
 
-const VERSION = 1;
+// v2: the row-level terrain test and the quiet tick are in the engine (BACKLOG PP4, PP5); the ladder shows the tick
+// asleep both ways (quiet, and with the quiet gate off); medians, not means
+const VERSION = 2;
 const KEY = 'reclaimed.enginebench.partial';
 const NL = String.fromCharCode(10);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -140,6 +143,7 @@ export async function engineBench(): Promise<void> {
   const e = new Engine(dev, core.world, prof);
   const sys = core.sim.systems;
   sys.splice(sys.findIndex((s) => s.name === 'surface') + 1, 0, e);
+  kickOnEvents(core.sim, e);
   const on = (s: SimSystem) => s.name === 'surface' || s.name === 'engine';
   await dev.queue.onSubmittedWorkDone();
   const setupMs = performance.now() - t00;
@@ -388,7 +392,7 @@ export async function engineBench(): Promise<void> {
         while (rows < bodies * 2) rows *= 2;
         let heads = 4096;
         while (heads < rows * 2) heads *= 2;
-        const sizes = [28, 32, 16, 32, (2 * heads + 4) * 4, rows * 4];
+        const sizes = [28, 32, 128, 16, 32, (2 * heads + 4) * 4, rows * 4];
         const bufs = sizes.map((s) => dev.createBuffer({ size: Math.ceil(s / 4) * 4 + 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }));
         return { bytes: sizes.reduce((a, c) => a + c, 0), encode: (enc: GPUCommandEncoder) => bufs.forEach((b, i) => enc.clearBuffer(b, 0, Math.ceil(sizes[i] / 4) * 4)) };
       };
@@ -408,9 +412,20 @@ export async function engineBench(): Promise<void> {
         { name: `${D} indirect (0 workgroups), one pass, set each`, encode: trivial('zero', 'one pass', true) },
         ...cl.map((c) => ({ name: `the tick's ${c0.clears} clears at ${c.n} rows (${c.bytes} B)`, encode: c.encode })),
         { name: `the tick's ${upSizes.length} uploads (${upSizes.reduce((a, c) => a + c, 0)} B)`, encode: () => uploads() },
-        { name: 'the real tick, 0 awake, 1,000 asleep', encode: tick },
+        { name: 'the whole tick, 0 awake, 1,000 asleep (the quiet gate off: as v1 ran it)', encode: tick },
       ]);
       A[A.length - 1].counts = c0;
+      // the same scene as play runs it: once a read has shown nothing awake, a tick encodes nothing
+      e.hold = false;
+      for (let i = 0, still = 0; i < 300 && still < 3; i++) {
+        await step(1);
+        await sleep(4);
+        still = e.counts.direct + e.counts.indirect === 0 ? still + 1 : 0;
+      }
+      const cq = { ...e.counts };
+      const Q = await measure('floor ladder, asleep', [{ name: 'the real tick, 0 awake, 1,000 asleep (quiet)', encode: tick }]);
+      Q[1].counts = cq;
+      Q[1].note = cq.direct + cq.indirect === 0 ? 'quiet: nothing encoded but `compact` alone every 60th tick' : 'the engine did not go quiet in 300 ticks';
       await sleepers(1);
       await step(2);
       const c1 = { ...e.counts };
@@ -423,7 +438,7 @@ export async function engineBench(): Promise<void> {
       const four = (B[2].ms ?? NaN) * 4;
       sections.ladder = {
         tickCounts: c0,
-        rows: [...A, ...B.slice(1)],
+        rows: [...A, Q[1], ...B.slice(1)],
         scaling: { oneTickMs: round(one), fourTicksMs: round(four), fourOverOne: round(four / one, 2), reading: four < 2.5 * one ? 'four ticks cost far less than four times one: a light frame is being run slowly (the GPU’s clock scales down under light load, or a fixed cost a frame)' : 'four ticks cost about four times one: the cost is the work, not a slow clock' },
       };
       for (const b of [...store, args, ...upBufs]) b.destroy();

@@ -1,6 +1,7 @@
 // The engine's test rig (test/gpu/engine-break.test.ts, engine-d0.test.ts, engine-settle.test.ts): a tiny world with
 // the surface pass and the engine stepping, and the engine's buffers read back (tests only: nothing in play reads them).
 import { DL_AT, Engine, PAGE, SLOT_W, type EngineCell } from '../../src/engine/engine';
+import { kickOnEvents } from '../../src/engine/install';
 import { Profiler } from '../../src/gpu/profiler';
 import type { Interval } from '../../src/world/layout';
 import { MAT } from '../../src/world/materials';
@@ -37,6 +38,7 @@ export async function breakRig(g: TestGpu, col: (x: number, y: number) => Interv
   const e = new Engine(g.device, w.core.world, prof, opts);
   const sys = w.core.sim.systems;
   sys.splice(sys.findIndex((s) => s.name === 'surface') + 1, 0, e);
+  kickOnEvents(w.core.sim, e);
   const on = (s: { name: string }) => s.name === 'surface' || s.name === 'engine';
   const R: BreakRig = {
     w,
