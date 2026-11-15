@@ -766,6 +766,8 @@ fn rowSolve(@builtin(global_invocation_id) id: vec3<u32>) {
   let r = atomicLoad(&listA[LIST_AT + id.x]);
   let me = takeMine(r);
   if (!me.go) { return; }
+  // (in no pair this tick: nothing was added to it, and `rowFinish` goes over its terrain rows every pass itself)
+  if ((atomicLoad(&listA[rwAt(r) + RW_N]) & 0xffff0000u) != ((gTick() & 0xffffu) << 16u)) { return; }
   let P = pose[4u * r + 2u];
   var s = TS(me.v, me.w, false, 0.0, P.xyz, 0u);
   // (clear of the ground this substep: it has no terrain rows — what its row of `trow` holds is an older substep's)

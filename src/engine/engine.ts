@@ -964,6 +964,19 @@ export class Engine implements SimSystem {
   // with no frame between them, a stalled read: then as before). A row flagged to deform is frozen as it came in by
   // the rigid kernels until `expand` runs, so a gate that opens late delays its deformation — by the read's age, a few
   // ticks — and loses nothing.
+  // ---- direct dispatches (docs/design/PHYSICS_ENGINE.md "Direct, not indirect"). On the owner's phone an indirect
+  // dispatch costs about 0.1 ms whether or not it does anything (its arguments are checked on the GPU first) and a
+  // direct one under 0.01. So while the rooms are small the kernels a thread a row or a pair are dispatched direct
+  // over the whole room — every row slot, every pair the room holds — and each thread leaves at once past the live
+  // count, as it always did. Nothing live can be past such a dispatch, so there is no tail to handle: a count that
+  // jumps in a tick (10 awake to 500) is covered like any other. Past the bounds below the empty workgroups would
+  // cost more than the checks and the dispatches are indirect as before.
+  /** (tests, benches) off: every dispatch sized by the GPU's counts is indirect, as before */
+  directDispatch = true;
+  /** row slots and pairs up to which the row and pair kernels are dispatched direct (256 and 512 workgroups) */
+  static readonly DIRECT_ROWS = 16384;
+  static readonly DIRECT_PAIRS = 32768;
+
   /** (tests, benches) off: stage 4 is encoded every tick anything is awake, as before */
   stage4Gate = true;
   private s4Until = -1;
@@ -1233,6 +1246,7 @@ export class Engine implements SimSystem {
       cur.pass.dispatchWorkgroupsIndirect(buf, offset);
       n.indirect++;
     };
+    const rowsDirect = this.directDispatch && this.d.rows <= Engine.DIRECT_ROWS;
     if (!skip.compact) {
       run('compact', `compact${ring}`);
       direct(Math.ceil(this.d.rows / 64));
@@ -1249,11 +1263,14 @@ export class Engine implements SimSystem {
       const pd = this.collide.fine.pairDispatch;
       const rowsOf = (name: string, group = name) => {
         run(name, group);
-        indirect(this.rargs, 0);
+        if (rowsDirect) direct(Math.ceil(this.d.rows / 64));
+        else indirect(this.rargs, 0);
       };
+      const pairsDirect = this.directDispatch && this.pairRoom <= Engine.DIRECT_PAIRS;
       const pairsOf = (name: string, group = name) => {
         run(name, group);
-        indirect(pd.buffer, pd.offset);
+        if (pairsDirect) direct(Math.ceil(this.pairRoom / 64));
+        else indirect(pd.buffer, pd.offset);
       };
       const iters = Math.max(1, Math.round(TUNE.engine.pairIters));
       for (let s = 0; s < sub; s++) {
@@ -1264,7 +1281,7 @@ export class Engine implements SimSystem {
             cur.pass = enc.beginComputePass({ label: 'engine collide', timestampWrites: this.prof.timestamps('engine:collide') });
             n.passes++;
           }
-          const cc = this.collide.encodeInto(cur.pass, { list: this.list, pose: this.pose, vel: this.vel, info: this.info, model: this.sdfModel, sleepEpoch: this.list }, { coarse: !skip.coarse, fine: !skip.fine });
+          const cc = this.collide.encodeInto(cur.pass, { list: this.list, pose: this.pose, vel: this.vel, info: this.info, model: this.sdfModel, sleepEpoch: this.list }, { coarse: !skip.coarse, fine: !skip.fine, direct: rowsDirect });
           n.direct += cc.direct;
           n.indirect += cc.indirect;
           this.prof.dispatches += cc.direct + cc.indirect;
@@ -1319,14 +1336,17 @@ export class Engine implements SimSystem {
     }
     if (!skip.draw) {
       run('fold');
-      indirect(this.events, 0);
+      if (this.directDispatch) direct(Math.ceil(EVENT_ROOM / 64));
+      else indirect(this.events, 0);
       // the draw list, made again by the GPU only when a row came or went
       run('drawArm');
       direct(1);
       run('drawlist');
-      indirect(this.kargs, 32);
+      if (rowsDirect) direct(Math.ceil(this.d.rows / 64));
+      else indirect(this.kargs, 32);
       run('drawlistAsleep');
-      indirect(this.kargs, 32);
+      if (rowsDirect) direct(Math.ceil(this.d.rows / 64));
+      else indirect(this.kargs, 32);
       run('drawEnd');
       direct(1);
     }

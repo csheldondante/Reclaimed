@@ -146,6 +146,8 @@ fn gate() {
   atomicStore(&pairBuf[0], 0u);
   atomicStore(&itemCtl[0], 0u);
   atomicStore(&itemCtl[1], 0u);
+  // (for the table kernels when they are dispatched direct: is the sleepers' table built this tick)
+  atomicStore(&itemCtl[2], select(0u, 1u, rebuild));
   let blocks = (CP.heads / 32u + 63u) / 64u;
   let supers = (CP.heads / 1024u + 63u) / 64u;
   let buckets = CP.heads / 64u;
@@ -172,6 +174,10 @@ fn gate() {
 
 @compute @workgroup_size(64)
 fn clearTab(@builtin(global_invocation_id) gid: vec3<u32>) {
+  // (dispatched direct, by the room: the sleepers' table is built only in a tick the gate asked for it)
+  if (CP.mode == 1u && atomicLoad(&itemCtl[2]) == 0u) {
+    return;
+  }
   if (gid.x < 2u * CP.heads + 2u) {
     atomicStore(&tab[gid.x], 0u);
   }
@@ -193,6 +199,10 @@ fn sourceRow(i: u32) -> u32 {
 
 @compute @workgroup_size(64)
 fn countCells(@builtin(global_invocation_id) gid: vec3<u32>) {
+  // (dispatched direct, by the room: the sleepers' table is built only in a tick the gate asked for it)
+  if (CP.mode == 1u && atomicLoad(&itemCtl[2]) == 0u) {
+    return;
+  }
   let r = sourceRow(gid.x);
   if (r == NO_ROW) {
     return;
@@ -211,6 +221,10 @@ fn countCells(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn blockSum(@builtin(global_invocation_id) gid: vec3<u32>) {
+  // (dispatched direct, by the room: the sleepers' table is built only in a tick the gate asked for it)
+  if (CP.mode == 1u && atomicLoad(&itemCtl[2]) == 0u) {
+    return;
+  }
   if (gid.x >= CP.heads / 32u) {
     return;
   }
@@ -223,6 +237,10 @@ fn blockSum(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn superSum(@builtin(global_invocation_id) gid: vec3<u32>) {
+  // (dispatched direct, by the room: the sleepers' table is built only in a tick the gate asked for it)
+  if (CP.mode == 1u && atomicLoad(&itemCtl[2]) == 0u) {
+    return;
+  }
   if (gid.x >= CP.heads / 1024u) {
     return;
   }
@@ -235,6 +253,10 @@ fn superSum(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn startCells(@builtin(global_invocation_id) gid: vec3<u32>) {
+  // (dispatched direct, by the room: the sleepers' table is built only in a tick the gate asked for it)
+  if (CP.mode == 1u && atomicLoad(&itemCtl[2]) == 0u) {
+    return;
+  }
   let i = gid.x;
   if (i >= CP.heads) {
     return;
@@ -259,6 +281,10 @@ fn startCells(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn fillCells(@builtin(global_invocation_id) gid: vec3<u32>) {
+  // (dispatched direct, by the room: the sleepers' table is built only in a tick the gate asked for it)
+  if (CP.mode == 1u && atomicLoad(&itemCtl[2]) == 0u) {
+    return;
+  }
   let r = sourceRow(gid.x);
   if (r == NO_ROW) {
     return;

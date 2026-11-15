@@ -72,6 +72,8 @@ const P_DL_DIRTY: u32 = 20u;
 // the pool's header word `compact` adds to for every row it finds waiting to deform (ROW_EXPAND), each tick it waits:
 // it only ever goes up. The host reads it with the header and encodes stage 4 when it has moved (engine.ts s4Open)
 const P_EXPAND_WAIT: u32 = 40u;
+// 1 in a tick the draw list is made again (`drawArm`): the list's two kernels, dispatched direct, read it
+const P_DL_MAKING: u32 = 41u;
 const NONE: u32 = 0xffffffffu;
 const NO_CONTACT: f32 = -1e8;
 // the list buffer (u32): [0] workgroups of 64 awake rows, [1] 1, [2] 1 (an indirect dispatch's arguments), [3] rows

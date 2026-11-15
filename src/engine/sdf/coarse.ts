@@ -117,14 +117,14 @@ export class SdfCoarse {
     this.margin = opts.margin ?? 0.25;
     const parts = [sdfFormatWgsl(models.format), `const SLEEP_EPOCH_WORD: u32 = ${opts.epochWord ?? 0}u;`, modelWgsl, coarseWgsl];
     const mk = (name: Kernel, spec: Record<number, 'uniform' | 'read' | 'rw'>) => makeCompute(device, `sdf coarse ${name}`, parts, { 0: 'uniform', ...spec }, name);
-    const src = { 1: 'read', 2: 'read', 3: 'read', 4: 'read', 7: 'rw', 16: 'rw' } as const;
+    const src = { 1: 'read', 2: 'read', 3: 'read', 4: 'read', 7: 'rw', 14: 'rw', 16: 'rw' } as const;
     this.k = {
       gate: mk('gate', { 1: 'read', 8: 'rw', 9: 'rw', 10: 'read', 14: 'rw' }),
-      clearTab: mk('clearTab', { 7: 'rw' }),
+      clearTab: mk('clearTab', { 7: 'rw', 14: 'rw' }),
       countCells: mk('countCells', src),
-      blockSum: mk('blockSum', { 15: 'read', 16: 'rw' }),
-      superSum: mk('superSum', { 16: 'rw' }),
-      startCells: mk('startCells', { 15: 'read', 16: 'rw' }),
+      blockSum: mk('blockSum', { 14: 'rw', 15: 'read', 16: 'rw' }),
+      superSum: mk('superSum', { 14: 'rw', 16: 'rw' }),
+      startCells: mk('startCells', { 14: 'rw', 15: 'read', 16: 'rw' }),
       fillCells: mk('fillCells', src),
       stageA: mk('stageA', { 1: 'read', 2: 'read', 3: 'read', 11: 'read', 13: 'rw', 14: 'rw', 17: 'rw' }),
       argsB: mk('argsB', { 8: 'rw', 9: 'rw', 13: 'rw', 14: 'rw' }),
@@ -222,8 +222,40 @@ export class SdfCoarse {
   static readonly DISPATCHES = 15;
 
   /** the pass's dispatches into a compute pass of the caller's (the engine keeps its whole tick in one); `clears` first */
-  encodeInto(pass: GPUComputePassEncoder, inputs: CoarseInputs): void {
+  /**
+   * `direct`: the table builds and stage A dispatched direct, sized by the rooms (the rows in use, the buckets), not
+   * by counts on the GPU: an indirect dispatch's arguments are checked on the GPU before it runs, which on a phone
+   * costs about 0.1 ms each whether or not it does anything. Every such kernel leaves at once past the live count
+   * (the awake rows, the rows in use) or when its table is not built this tick, and the dispatch covers every row
+   * and bucket there is, so nothing live is ever past it. Stage B (sized by the work items) stays indirect.
+   */
+  encodeInto(pass: GPUComputePassEncoder, inputs: CoarseInputs, direct = false): void {
     const b = this.bind(inputs);
+    if (direct) {
+      const go = (name: Kernel, group: GPUBindGroup, x: number, y = 1) => {
+        pass.setPipeline(this.k[name].pipeline);
+        pass.setBindGroup(0, group);
+        pass.dispatchWorkgroups(Math.max(1, x), y);
+      };
+      const h = this.heads;
+      const rows = Math.ceil(this.used / 64);
+      go('gate', b.one.gate, 1);
+      for (const t of [b.build[1], b.build[0]]) {
+        // (the awake table's counters are cleared by the host: its `clearTab` is the sleepers' only)
+        if (t === b.build[1]) go('clearTab', t.clearTab, Math.ceil((2 * h + 2) / 64));
+        go('countCells', t.countCells, rows);
+        go('blockSum', t.blockSum, Math.ceil(h / 32 / 64));
+        go('superSum', t.superSum, Math.ceil(h / 1024 / 64));
+        go('startCells', t.startCells, h / 64);
+        go('fillCells', t.fillCells, rows);
+      }
+      go('stageA', b.one.stageA, rows, this.levels);
+      go('argsB', b.one.argsB, 1);
+      pass.setPipeline(this.k.stageB.pipeline);
+      pass.setBindGroup(0, b.one.stageB);
+      pass.dispatchWorkgroupsIndirect(this.ctl, CTL_STAGE_B * 4);
+      return;
+    }
     const at = (name: Kernel, group: GPUBindGroup, buf: GPUBuffer | null, word = 0) => {
       pass.setPipeline(this.k[name].pipeline);
       pass.setBindGroup(0, group);
@@ -267,8 +299,9 @@ export class SdfCoarse {
       // (a table's own part of the tables' buffer)
       const tab: GPUBufferBinding = mode ? { buffer: this.tables, offset: this.slBase * 4 } : { buffer: this.tables, offset: 0, size: this.slBase * 4 };
       const cnt = this.counters[mode];
-      const src = { 1: inputs.list, 2: inputs.pose, 3: inputs.vel, 4: inputs.info, 7: cnt, 16: tab };
-      return { clearTab: g('clearTab', mode, { 7: cnt }), countCells: g('countCells', mode, src), blockSum: g('blockSum', mode, { 15: cnt, 16: tab }), superSum: g('superSum', mode, { 16: tab }), startCells: g('startCells', mode, { 15: cnt, 16: tab }), fillCells: g('fillCells', mode, src) };
+      const ic = this.itemCtl;
+      const src = { 1: inputs.list, 2: inputs.pose, 3: inputs.vel, 4: inputs.info, 7: cnt, 14: ic, 16: tab };
+      return { clearTab: g('clearTab', mode, { 7: cnt, 14: ic }), countCells: g('countCells', mode, src), blockSum: g('blockSum', mode, { 14: ic, 15: cnt, 16: tab }), superSum: g('superSum', mode, { 14: ic, 16: tab }), startCells: g('startCells', mode, { 14: ic, 15: cnt, 16: tab }), fillCells: g('fillCells', mode, src) };
     };
     const tabs = { 11: this.tables };
     return (this.bound = {

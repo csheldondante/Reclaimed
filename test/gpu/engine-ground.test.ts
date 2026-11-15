@@ -412,3 +412,56 @@ test.skipIf(!process.env.GROUND_BENCH).each([200, 1000])('bench: %i blocks pilin
   console.log(`${n} blocks piling (held: ${L[3]} awake, ${P[0]} pairs): every stage ${off}, ${cOff.direct} direct + ${cOff.indirect} indirect; stage 4 gated ${on}, ${cOn.direct} direct + ${cOn.indirect} indirect`);
   ok();
 }, 600_000);
+
+// ---- direct, not indirect (docs/design/PHYSICS_ENGINE.md "Direct, not indirect"; BACKLOG PP11) --------------------------
+test('the awake tick is mostly direct dispatches; a count that jumps in one tick is covered: 500 sleepers woken at once all move, none passes through another or the ground', async () => {
+  T.deform = 1;
+  const R = await rig(flat, 128, 128);
+  const lower: EngineBody[] = [];
+  const upper: EngineBody[] = [];
+  // 250 pairs asleep: one block on the ground, one hung asleep three cells over it
+  for (let k = 0; k < 250; k++) {
+    const x = 6 + (k % 16) * 7;
+    const y = 6 + Math.floor(k / 16) * 7;
+    lower.push(R.e.add({ cells: box(x, y, 10, 2, 2, 2), asleep: true })!);
+    upper.push(R.e.add({ cells: box(x, y, 15, 2, 2, 2), asleep: true })!);
+  }
+  // and ten awake, kept awake
+  T.restT = 1e9;
+  for (let k = 0; k < 10; k++) R.e.add({ cells: box(6 + k * 7, 120, 10, 2, 2, 2) });
+  await frames(R, 40);
+  expect((await R.lists()).awake).toBe(10);
+  const c = { ...R.e.counts };
+  R.e.directDispatch = false;
+  await frames(R, 2);
+  const was = { ...R.e.counts };
+  R.e.directDispatch = true;
+  await frames(R, 2);
+  log(`ten awake among 500 asleep: ${c.direct} direct + ${c.indirect} indirect dispatches (all sized on the GPU: ${was.direct} + ${was.indirect}); by the phone's ladder (0.1 ms an indirect, 0.008 a direct) ${(c.indirect * 0.1 + c.direct * 0.008).toFixed(2)} ms against ${(was.indirect * 0.1 + was.direct * 0.008).toFixed(2)}`);
+  expect(c.indirect).toBeLessThanOrEqual(10);
+  expect(c.direct + c.indirect).toBe(was.direct + was.indirect);
+  const D = R.e.debugBuffers;
+  const poses = async () => new Float32Array(await g.read(D.pose, R.e.rooms.rows * 64));
+  const z = (P: Float32Array, b: EngineBody) => P[b.row * 16 + 10];
+  const before = await poses();
+  for (const b of upper) expect(z(before, b)).toBeCloseTo(16, 3);
+  // every sleeper woken in one tick: 10 awake to 510
+  R.e.wakeNear([64, 64, 12], 400);
+  await frames(R, 3);
+  expect((await R.lists()).awake).toBe(510);
+  const soon = await poses();
+  // (not one left out: every hung block has begun to fall)
+  expect(upper.filter((b) => z(soon, b) < z(before, b) - 1e-4).length).toBe(250);
+  T.restT = T0.restT;
+  await frames(R, 300);
+  const end = await poses();
+  const gaps = upper.map((b, k) => z(end, b) - z(end, lower[k]));
+  log(`510 awake in one tick: every hung block fell; at rest the upper sits ${Math.min(...gaps).toFixed(2)} to ${Math.max(...gaps).toFixed(2)} over the lower (2 when just touching), the lowest centre ${Math.min(...lower.map((b) => z(end, b))).toFixed(2)} (11 on the ground)`);
+  for (const gp of gaps) {
+    expect(gp).toBeGreaterThan(1.7);
+    expect(gp).toBeLessThan(2.1);
+  }
+  for (const b of lower) expect(z(end, b)).toBeGreaterThan(10.8);
+  ok();
+  R.w.destroy();
+}, 240_000);

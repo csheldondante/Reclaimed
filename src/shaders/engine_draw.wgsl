@@ -26,8 +26,10 @@ fn drawArm() {
     atomicStore(&kargs[10], 1u);
     atomicStore(&dl[8], 0u);
     atomicStore(&dl[9], 0u);
+    atomicStore(&pool[P_DL_MAKING], 1u);
   } else {
     atomicStore(&kargs[8], 0u);
+    atomicStore(&pool[P_DL_MAKING], 0u);
   }
 }
 
@@ -44,7 +46,7 @@ fn listRow(r: u32, base: u32, tris: u32, v0: u32) {
 @compute @workgroup_size(64)
 fn drawlist(@builtin(global_invocation_id) id: vec3<u32>) {
   let r = id.x;
-  if (r >= EU.e.x) { return; }
+  if (r >= EU.e.x || atomicLoad(&pool[P_DL_MAKING]) == 0u) { return; }
   let fl = rowFlags(r);
   if ((fl & ROW_ALIVE) == 0u || (fl & ROW_ASLEEP) != 0u) { return; }
   let model = bitcast<u32>(info[4u * r + 3u].x);
@@ -60,7 +62,7 @@ fn drawlist(@builtin(global_invocation_id) id: vec3<u32>) {
 @compute @workgroup_size(64)
 fn drawlistAsleep(@builtin(global_invocation_id) id: vec3<u32>) {
   let r = id.x;
-  if (r >= EU.e.x) { return; }
+  if (r >= EU.e.x || atomicLoad(&pool[P_DL_MAKING]) == 0u) { return; }
   let fl = rowFlags(r);
   if ((fl & ROW_ALIVE) == 0u || (fl & ROW_ASLEEP) == 0u) { return; }
   let model = bitcast<u32>(info[4u * r + 3u].x);
