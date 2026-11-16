@@ -49,6 +49,8 @@ export interface TableOptions {
    *  hazard (season/realm.ts liveFire). Default true at the table: nothing here needs the 3D fire (off in the 3D game:
    *  BACKLOG LS-63) */
   liveFire?: boolean;
+  /** raiders in the last season, to try another number than the game's (BACKLOG CT-18) */
+  raiders?: number;
 }
 
 /** the ids of the base game's cards (a pack's may not clash with them) */
@@ -235,6 +237,7 @@ export class Table {
       land: () => ({ left: 14, open: [] }),
       seasons: o.seasons ?? RUN_SEASONS,
       liveFire: o.liveFire ?? true,
+      ...(o.raiders !== undefined ? { raiders: o.raiders } : {}),
       // (CT-17: the sites on a ring round the town's centre, so "next to" and "close" mean something here)
       where: (spot) => {
         const i = SITES.findIndex((s) => s.key === spot);

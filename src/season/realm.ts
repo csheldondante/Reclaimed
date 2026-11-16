@@ -131,6 +131,8 @@ export interface RealmOptions {
    *  pack, loaded. A helper here never replaces one of the realm's own. `things` is given the realm's own list and
    *  returns the whole list (a pack's things added, their tags lent to the place they stand at) */
   extra?: { templates?: TemplateDef[]; helpers?: Record<string, Helper>; rules?: RuleDef[]; things?: (base: Thing[]) => Thing[] };
+  /** (card-table, tuning) raiders in the run's last stage (default realm-templates.ts RAIDERS) */
+  raiders?: number;
   /** (card-table) told each time synergy rules fire, with the firings (a front end's log of what, how much, why) */
   onRules?: (hits: RuleHit[]) => void;
   /** deal the live fire at the market in place of the instant `fire-wards` hazard (off: BACKLOG LS-63) */
@@ -232,7 +234,7 @@ export class Realm {
     const world = o.liveFire ? [...WORLD_TEMPLATES.filter((t) => t.id !== 'fire-wards'), FIRE_TEMPLATE] : WORLD_TEMPLATES;
     const templates: TemplateDef[] = [...CATALOG.map(projectTemplate).filter((t): t is TemplateDef => t !== null), ...world, ...(o.extra?.templates ?? [])];
     // (the arc's turns are the history's: this run's seasons after the turn it began at)
-    const rel = raidArc(o.home, this.seasons);
+    const rel = raidArc(o.home, this.seasons, ...(o.raiders !== undefined ? [o.raiders] : []));
     const arc = { ...rel, stages: rel.stages.map((s) => ({ ...s, turn: this.t0 + s.turn })) };
     // (the arc's entity is the world's: a new run's arc starts from its first stage)
     const old = f.entity(`arc:${arc.id}`);

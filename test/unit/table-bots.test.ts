@@ -14,7 +14,8 @@ describe('bots play the card table', () => {
   const templates = [...CATALOG.map(projectTemplate).filter((t) => t !== null).map((t) => t!.id), ...WORLD_TEMPLATES.map((t) => t.id)];
   const packs = process.env.TABLE_PACK ? [JSON.parse(fs.readFileSync(process.env.TABLE_PACK, 'utf8'))] : undefined;
   if (packs) templates.push(...(packs[0].cards ?? []).map((c: { id: string }) => c.id));
-  const rep = runBots({ seeds: Array.from({ length: N }, (_, i) => 7 + i), seasons: SEASONS, templates, ...(packs ? { packs } : {}) });
+  const raiders = process.env.TABLE_RAIDERS ? { raiders: Number(process.env.TABLE_RAIDERS) } : {};
+  const rep = runBots({ seeds: Array.from({ length: N }, (_, i) => 7 + i), seasons: SEASONS, templates, ...(packs ? { packs } : {}), ...raiders });
   const timed = `${rep.text}\n(${rep.runs.length} runs in ${Date.now() - t0} ms)\n`;
   if (process.env.TABLE_OUT) fs.writeFileSync(process.env.TABLE_OUT, timed);
   console.log(`\n${timed}`);

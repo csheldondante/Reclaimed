@@ -34,7 +34,8 @@ describe('the card table plays a run on the Realm', () => {
     greedy(t);
     expect(t.over).toBe(true);
     expect(t.realm.fight !== null || t.realm.averted).toBe(true);
-    expect(t.curve.length).toBe(OPTS.seasons - 1);
+    // (paid off, the run ends as the last season begins; fought, the last season is played with the raid on the table)
+    expect(t.curve.length).toBe(t.realm.averted ? OPTS.seasons - 1 : OPTS.seasons);
     expect(t.story().length).toBeGreaterThan(0);
   });
 

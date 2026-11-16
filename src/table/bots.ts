@@ -117,7 +117,7 @@ function castSeason(p: Policy, t: Table): void {
 }
 
 /** one whole run by a policy */
-export function playRun(p: Policy, o: { seed: number; leader: string; seasons: number; packs?: Pack[] }): RunStat {
+export function playRun(p: Policy, o: { seed: number; leader: string; seasons: number; packs?: Pack[]; raiders?: number }): RunStat {
   const t = new Table(o);
   let trouble: number | null = null;
   const idle: number[] = [];
@@ -179,12 +179,13 @@ const mean = (a: number[]): number => (a.length ? a.reduce((x, y) => x + y, 0) /
 const pad = (s: string | number, n: number): string => String(s).padEnd(n);
 
 /** every policy plays every leader on each seed; the table of what happened */
-export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy[]; leaders?: string[]; templates: string[]; packs?: Pack[] }): BotReport {
+export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy[]; leaders?: string[]; templates: string[]; packs?: Pack[]; raiders?: number }): BotReport {
   const policies = (o.policies ?? POLICIES).filter((p) => p.name !== 'pack cards first' || !!o.packs?.length);
   const leaders = o.leaders ?? LEADERS.map((l) => l.id);
   const runs: RunStat[] = [];
-  for (const p of policies) for (const leader of leaders) for (const seed of o.seeds) runs.push(playRun(p, { seed, leader, seasons: o.seasons, ...(o.packs ? { packs: o.packs } : {}) }));
+  for (const p of policies) for (const leader of leaders) for (const seed of o.seeds) runs.push(playRun(p, { seed, leader, seasons: o.seasons, ...(o.packs ? { packs: o.packs } : {}), ...(o.raiders !== undefined ? { raiders: o.raiders } : {}) }));
   const L: string[] = [];
+  if (o.raiders !== undefined) L.push(`Raiders in the last season: ${o.raiders}`);
   if (o.packs?.length) L.push(`Packs in play: ${o.packs.map((x) => x.pack.name).join(', ')}`);
   L.push(`Bots: ${policies.length} policies x ${leaders.length} leaders x ${o.seeds.length} seeds = ${runs.length} runs of ${o.seasons} seasons`);
   L.push('');
@@ -225,8 +226,10 @@ export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy
   const seen = new Set(runs.flatMap((r) => r.seen));
   const active = runs.filter((r) => r.taken.length).length;
   L.push(`Cards taken in the most runs (of ${active} that took any): ${[...taken].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => `${k} ${v}`).join(', ')}`);
-  L.push(`Cards never taken by any bot: ${[...seen].filter((x) => !taken.has(x)).sort().join(', ') || 'none'}`);
-  L.push(`Cards never on a board: ${o.templates.filter((x) => !seen.has(x)).sort().join(', ') || 'none'}`);
+  // (an event that begins by itself — the raid, refugees on the road — is neither offered nor taken)
+  const began = new Set(runs.flatMap((r) => r.events.map((e) => e.template)));
+  L.push(`Cards never taken by any bot: ${[...seen].filter((x) => !taken.has(x) && !began.has(x)).sort().join(', ') || 'none'}`);
+  L.push(`Cards never on a board: ${o.templates.filter((x) => !seen.has(x) && !began.has(x)).sort().join(', ') || 'none'}`);
   const lapsed = new Map<string, number>();
   for (const r of runs) for (const x of r.lapsed) lapsed.set(x, (lapsed.get(x) ?? 0) + 1);
   L.push(`Threats that ran out (times): ${[...lapsed].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}`);
