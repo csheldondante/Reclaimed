@@ -12,6 +12,7 @@ import { HIT_AT, HIT_ROOM, type OwnerHit } from '../../src/engine/engine';
 import { modelMesh } from '../../src/engine/modelmesh';
 import { fellLot } from '../../src/game/housefall';
 import { physMass } from '../../src/physics/physics';
+import { ownedByRow } from '../../src/sim/external';
 import { cellPos, ROW_H } from '../../src/world/lattice';
 import { readColumn, type Interval } from '../../src/world/layout';
 import { MAT } from '../../src/world/materials';
@@ -101,11 +102,12 @@ test('the lot felled: its External intervals gone, rows of its volume and mass i
   expect(out.cells).toBe(64 * HOUSE.h);
   expect(out.blocks.length).toBeGreaterThanOrEqual(2);
   await R.step(2);
-  // (the columns: no External left anywhere; the house's are the floor alone)
+  // (the columns: none of the house's External left anywhere; the house's are the floor alone. A row asleep is in the
+  // columns as External of its own — "Rest claims External": those name their row in word 3 and are set aside here)
   const L = await layers();
   for (let y = 0; y < 32; y++)
     for (let x = 0; x < 48; x++) {
-      const c = readColumn(core.packed, L, x, y);
+      const c = readColumn(core.packed, L, x, y).filter((v) => !(v.mat === MAT.External && ownedByRow(v.own)));
       expect(c.some((v) => v.mat === MAT.External)).toBe(false);
       if (inHouse(x, y)) expect(c[c.length - 1].z1).toBeCloseTo(FLOOR, 3);
     }

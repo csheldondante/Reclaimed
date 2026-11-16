@@ -304,11 +304,14 @@ test('a sleeper whose ground changes with no host event is found by the watch ti
     direct += R.e.counts.direct;
     indirect += R.e.counts.indirect;
   });
-  // (asleep and unchanged: `compact` alone every twentieth tick, and one read after each)
+  // (asleep and unchanged: every twentieth tick `compact` and the claims' two kernels — `claimCols` for a row it
+  // wakes, `tground` for the support watch under a claimed sleeper ("Rest claims External": a claimed row's ground is
+  // watched in the columns, not by `compact`) — three direct dispatches, and one read after each)
   expect(indirect).toBe(0);
-  expect(direct).toBeGreaterThanOrEqual(4);
-  expect(direct).toBeLessThanOrEqual(5);
-  expect(R.e.reads - reads0).toBe(direct);
+  expect(direct % 3).toBe(0);
+  expect(direct / 3).toBeGreaterThanOrEqual(4);
+  expect(direct / 3).toBeLessThanOrEqual(5);
+  expect(R.e.reads - reads0).toBe(direct / 3);
   expect([...(await R.row(b)).pos]).toEqual([...rest.pos]);
   dig(R, rest.pos[0], rest.pos[1]);
   let woke = -1;

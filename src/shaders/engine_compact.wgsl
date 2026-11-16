@@ -213,7 +213,17 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
       info[4u * r].w = bitcast<f32>(fl);
       // (made asleep: the coarse pass's sleeper table is out of date)
       epoch = true;
-    } else if ((fl & ROW_CLAIMED) == 0u && inMap(c) && surfaceIn[colIdxI(c)] != bitcast<u32>(pose[4u * r].w)) { wake = true; }
+    } else if ((fl & ROW_CLAIMED) == 0u && inMap(c)) {
+      let now = surfaceIn[colIdxI(c)];
+      let was = bitcast<u32>(pose[4u * r].w);
+      if (now != was) {
+        // (not its ground changing: a body's claim written in that column — a sleeper under it claimed first, its
+        // External is now the column's firm top, no lower than the top was. A body is watched by its owner and by the
+        // pairs, not here; the word is taken again, so a top that later comes down wakes it. A row waiting for its own
+        // claim job is in this state for a few ticks — BACKLOG PS13)
+        if (sfMat(now) == MAT_EXTERNAL && sfZ(now) >= sfZ(was)) { pose[4u * r].w = bitcast<f32>(now); } else { wake = true; }
+      }
+    }
     // (claimed, its own intervals are in that word, and what it stands on is watched under every column of the claim
     // by the kernel that sees the columns change: engine_ground.wgsl)
     // (a pair asked it to wake last tick — engine_pairs.wgsl pairPre: a hit over the threshold, or what it leans on

@@ -24798,3 +24798,47 @@ event), PS6 (joining writers and five sims do not carry word 3), PS7 (no free sl
 PS8 (32 chunk jobs a tick; a footprint over 32 chunks claims nothing), PS9 (one ray a column; the field's fat; liquid
 intervals), PS10 (a partial cut of a claim does nothing to the body), PS11 (a row dying while its clear waits; slides
 not tested; rows with no field), PS12 (sand on a claim and the fast path).
+
+## 2026-11-16 — rest claims External: the regression run that the last commit did not get, and what it found (PS13-PS17)
+
+**Why.** Commit 82506aab changed shared kernels (`compact`, `tground`, `groundWalk`, the lattice's `collide`,
+colapply, `bumpColumn`, and `ivKeep` in eight column writers) and was pushed with only `engine-claim` run: the PC ran
+out of memory under the whole GPU project. This is that run, one file at a time (Dawn in Node, D3D12), every GPU
+test file, then the unit project and smoke.
+
+**The old route is unharmed.** Every file that runs a column writer or the old physics passes unchanged: `colapply`
+22, `chunkver` 21, `external` 3, `external-take` 1, `buried-external` 3, `static-claims` 1, `integrity` 7, `solver` 21,
+`lattice-draw` 1, `water` 1, `jb6` 5, `thinwall` 2, `tilelist` 3, `towncontracts` 7, `roadstamp` 1, `cities` 1,
+`cpu-write-asleep` 3, `coarse-live` 3, `fieldmesh-versions` 2, `undercover` 1, `sides` 1. `ivKeep` differs from the
+`ivPack` it replaced only in word 3, which nothing but the engine's claims writes (looked for: no other writer of an
+interval's fourth word). `npm run smoke` passes (the atlas level, default route).
+
+**What the engine's own tests found, each fixed at its cause but one:**
+
+| file | first run | cause | now |
+|---|---|---|---|
+| engine-ground "an edit wakes the sleeper" | fail: block at 11.00 over ground dug to 2 | a dig takes a cell a tick: the claim was gone, and the row woken, after the event's two reads had shown nothing awake; the engine went quiet with the row awake in the air (PS15) | pass: `P_CLAIM_STIR` keeps the read chain alive while columns by a claim change |
+| engine-ground "the watch tick" | fail: 10 direct, 5 expected | the watch tick was already `compact` + `claimCols` (by design, the count not updated); and a claimed sleeper's ground is watched by `tground`, which the watch tick did not run | pass: the watch tick runs `tground` too (3 direct); the test counts 3 (PS16) |
+| engine-ground "500 sleepers woken at once" | fail: 216 awake of 10 | a block asleep and not yet claimed woke when the block under it claimed (the surface word under its centre changed) (PS13) | pass: `compact`'s narrower rule; the test unchanged |
+| the same, second cause | — | the claim writer's own insert moved another row's claim up a slot, which told that row it was cut (PS17) | `bumpColumnOwn` |
+| engine-house "the lot felled" | fail: External left in the columns | the test asked for no External anywhere; the fallen blocks, asleep, are External now | test changed: no External but a row's own |
+| engine-pile "the same pile twice" | fail: poses 0.010 apart | the claim job's grant is a race (PS14) | **not fixed**; pinned: 1e-3 with claims off, 0.1 with claims on |
+| engine-chain "PM4 ... thrown" | fails about one run in two | a thrown part must end over a cell from where it lay; it ended 0.26 away in a run with claims on and 0.90 in a run with claims off, and over a cell in others (stage 4 is not the same every run) | unchanged; passed in the full run |
+| fieldreach "a U round a wall", formations (5 drills) | time out at 60 s | wall time at the limit on this PC (the U test's file takes 121 s on the commit before the claims and 123 s now; it passed there, by a second); they step `surface` and `agents` only | not this branch's; formations was not run on the older commit |
+
+**The table** (every GPU file, the second round, after the fixes): engine 13, engine-claim 4, engine-ground 8 (5
+benches skipped), engine-pairs 8, engine-pile 6 (2 benches skipped), engine-chain 5, engine-settle 6, engine-meet 5,
+engine-break 8, engine-d0 4, engine-grab 7, engine-terrain 3, engine-station 2, engine-energy 4, engine-rebreak 2,
+engine-house 3, engine-stone 5, engine-grainface 2, sdf-bake 15, colapply 22, external 3, static-claims 1,
+integrity 7, agentevents 6, atlasgraph 1, boxsum 1, buried-external 3, chunkver 21, cities 1, coarse-live 3,
+cpu-write-asleep 3, external-take 1, fieldcap 3, fieldmesh-versions 2, fieldpages 4, flora-plan 2, flora-wgsl 6,
+huntreact 2, huntseed 2, inhabitants 10, jb6 5, judge-equal 14, judge-shapes 15, lattice-draw 1, living 4, los 6,
+notice 2, probe 1, profiler 1, reachfix 1, roadride-long 1, roadstamp 1, rockmesh-room 3, sdf-coarse 8, sdf-fine 36,
+sdf-rooms 8, sdf-slots 6, sides 1, solver 21, sway 1, terrain-atlas 2, terrain-flood 2, thinwall 2, tilelist 3,
+towncontracts 7, traits 8, treequery 1, undercover 1, unitminds-u2 13 expected failures, unitpick 1, water 1,
+wind-shove 2: all pass. fieldreach 2 of 3 and formations 8 of 13 (the time-outs above). Unit: 649 pass, 1 fails
+(`writing-sources` on `src/roadlab/control.ts`, PO4, as before). Typecheck clean.
+
+**Hacks and limits.** PS13 (the narrowed watch has a hole: External rising under a sleeper that is not yet claimed),
+PS14 (the same pile twice differs by a hundredth of a cell: not fixed), PS15 (an edit that reaches a claim only
+after ticks that change no column version by it is not followed), PS16 (the watch tick is 3 direct dispatches).

@@ -28,7 +28,7 @@ const CHUNKS_RW = '@group(0) @binding(1) var<storage, read_write> chunks: array<
  * neither. Throws if it does without the chunk table declared.
  */
 export function writerCode(code: string): string | null {
-  if (!/\bbump(Column|Water)\(/.test(code) || code.includes('fn bumpColumn(')) return null;
+  if (!/\bbump(Column|ColumnOwn|Water)\(/.test(code) || code.includes('fn bumpColumn(')) return null;
   const i = code.indexOf(CHUNKS_READ);
   if (i < 0) throw new Error('chunk versions: a kernel calls bumpColumn or bumpWater without layers.wgsl (the chunk table)');
   const end = i + CHUNKS_READ.length;

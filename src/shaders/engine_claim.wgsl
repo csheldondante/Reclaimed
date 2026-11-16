@@ -59,7 +59,8 @@ fn claimDist(M: ClaimModel, x: vec3<f32>, q: vec4<f32>, p: vec3<f32>) -> f32 {
   return claimField(M.fieldBase, dims, c);
 }
 
-/** the column written back: slots changed are bumped (the chunk's versions: the mesh, the ground tops) */
+/** the column written back: slots changed are bumped (the chunk's versions: the mesh, the ground tops). No owner is
+ *  told (chunkver.wgsl bumpColumnOwn): these writes cut no claim, they put one in or take the row's own out */
 fn claimStore(q: vec2<u32>, sl: vec2<u32>, a: ptr<function, array<vec4<u32>, MAX_K>>, n: u32) {
   for (var s = 0u; s < sl.y; s++) {
     var v = vec4<u32>(0u);
@@ -67,7 +68,7 @@ fn claimStore(q: vec2<u32>, sl: vec2<u32>, a: ptr<function, array<vec4<u32>, MAX
     let old = layersW[sl.x + s];
     if (any(old != v)) {
       layersW[sl.x + s] = v;
-      bumpColumn(q, old, v);
+      bumpColumnOwn(q, old, v);
     }
   }
 }

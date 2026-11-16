@@ -140,6 +140,11 @@ const P_CLAIMS: u32 = 43u;
 const P_CLAIM_WAIT: u32 = 44u;
 const P_CLAIM_FULL: u32 = 45u;
 const P_CLAIM_BIG: u32 = 46u;
+// the tick + 1 `tground` last made again a chunk that holds a row's live claim, or in which one was cut (engine_ground.wgsl):
+// the ground by a sleeper is changing. The host's read sees the word move and keeps ticking, so the support watch is
+// run for as long as an edit goes on changing those columns (a dig takes a cell a tick: the claim is gone, and its row
+// woken, ticks after the host's event)
+const P_CLAIM_STIR: u32 = 47u;
 // the pool's header word that asks for the draw list again (engine_deform.wgsl has the rest of the header)
 const P_DL_DIRTY: u32 = 20u;
 // the pool's header word `compact` adds to for every row it finds waiting to deform (ROW_EXPAND), each tick it waits:

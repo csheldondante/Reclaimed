@@ -125,7 +125,7 @@ export const MESH_V = 3;
 export const DL_AT = 16;
 export const OCC_AT = 4;
 /** the pool's header (engine_deform.wgsl P_*) */
-export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21, hashOver: 22, grab: 23, held: 24, expandWait: 40, claims: 43, claimWait: 44, claimFull: 45, claimBig: 46 } as const;
+export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21, hashOver: 22, grab: 23, held: 24, expandWait: 40, claims: 43, claimWait: 44, claimFull: 45, claimBig: 46, claimStir: 47 } as const;
 /** the claims' table (engine.wgsl CJ_*, CR_*): its head (the tick's job count and chunk locks, cleared each tick), the
  *  jobs' room, where the rows' records start and their words a row. sim/external.ts ROW_CLAIM_AT / ROW_CLAIM_WORDS are
  *  the same numbers: the orphan pass reads a record's second word */
@@ -505,7 +505,7 @@ export class Engine implements SimSystem {
     // (engine_ground.wgsl first: the ground tops a row is tested against before its samples get threads)
     const pw = [groundWgsl, pairsWgsl];
     if (CHUNK !== 16) throw new Error('engine_ground.wgsl is written for chunks of 16 columns');
-    kernel('tground', pw, { 1: 'read', 10: 'rw', 11: 'read', 51: 'rw', 74: 'read' });
+    kernel('tground', pw, { 1: 'read', 10: 'rw', 11: 'read', 18: 'rw', 51: 'rw', 74: 'read' });
     kernel('integrate', pw, { 1: 'read', 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 51: 'rw', 52: 'rw' });
     kernel('tfine', pw, { 1: 'read', 4: 'rw', 6: 'rw', 7: 'rw', 10: 'rw', 11: 'read', 12: 'read', 13: 'tex', 40: 'rw' });
     kernel('pimpMove', pw, { 42: 'rw', 48: 'read', 49: 'read' });
@@ -1349,7 +1349,7 @@ export class Engine implements SimSystem {
         this.seen.set(w.subarray(0, POOL_HDR));
         this.awakeSeen = w[POOL_HDR + 3];
         const grows = this.growPairs && this.collide.consider(w.subarray(POOL_HDR + 8), rooms);
-        const asked = [POOL.pageWant, POOL.slotWant, POOL.rowWant, POOL.sampWant, POOL.heapWant, POOL.dlWant, POOL.expands, POOL.parts, POOL.claimWait].some((k) => was[k] !== this.seen[k]);
+        const asked = [POOL.pageWant, POOL.slotWant, POOL.rowWant, POOL.sampWant, POOL.heapWant, POOL.dlWant, POOL.expands, POOL.parts, POOL.claimWait, POOL.claimStir].some((k) => was[k] !== this.seen[k]);
         // (a held body's row is asleep and its slot is not activity: it waits for nothing)
         this.active = this.awakeSeen > 0 || this.seen[POOL.deforming] > this.seen[POOL.held] || this.seen[POOL.settling] > 0 || grows || asked;
         this.readAt = issuedAt;
@@ -1369,7 +1369,8 @@ export class Engine implements SimSystem {
     return this.calm && !this.grabT && this.owed === 0 && !this.cmds.length && !this.hold && !this.unbaked && !this.collide.growing && Object.keys(this.skip).length === 0;
   }
 
-  /** a quiet tick: nothing, or every `watchEvery` of them `compact` alone, and the tick after it one read */
+  /** a quiet tick: nothing, or every `watchEvery` of them `compact` with the claims' two kernels (`claimCols`, and
+   *  `tground` for the support watch), and the tick after it one read */
   private quietTick(enc: GPUCommandEncoder): void {
     const n: TickCounts = (this.counts = { passes: 0, direct: 0, indirect: 0, clears: 0, copies: 0, uploads: 0, uploadBytes: 0 });
     this.quietTicks++;
@@ -1398,9 +1399,19 @@ export class Engine implements SimSystem {
     pass.setPipeline(this.k.claimCols.k.pipeline);
     pass.setBindGroup(0, this.groups().claimCols);
     pass.dispatchWorkgroups(CLAIM.jobs, Math.ceil((CHUNK * CHUNK) / 64));
+    let direct = 2;
+    // (the claims' support watch, where the columns changed: a claimed sleeper's ground is watched by `tground` alone —
+    // engine_ground.wgsl; what it finds moves the pool's P_CLAIM_STIR, which the watch tick's read shows: whole ticks
+    // again, and `compact` wakes the row it stamped. BACKLOG PS5)
+    if (this.claims && TUNE.engine.pairs >= 0.5 && this.gtopChunks) {
+      pass.setPipeline(this.k.tground.k.pipeline);
+      pass.setBindGroup(0, this.groups().tground);
+      pass.dispatchWorkgroups(Math.ceil(this.gtopChunks / 64));
+      direct++;
+    }
     pass.end();
-    this.prof.dispatches += 2;
-    Object.assign(n, { passes: 1, direct: 2, clears: 3, uploads: 2, uploadBytes: CMDS * 32 + EU_B });
+    this.prof.dispatches += direct;
+    Object.assign(n, { passes: 1, direct, clears: 3, uploads: 2, uploadBytes: CMDS * 32 + EU_B });
     this.beat = true;
     this.skinOwed = true;
   }

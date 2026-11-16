@@ -19,6 +19,8 @@
 @group(0) @binding(51) var<storage, read_write> gtop: array<u32>;
 // the rows' claims (engine.wgsl CR_*): the support watch checks a claim is its row's live one
 @group(0) @binding(74) var<storage, read> claimG: array<u32>;
+// the pool's header: P_CLAIM_STIR alone (engine.wgsl)
+@group(0) @binding(18) var<storage, read_write> poolG: array<atomic<u32>>;
 
 const GT_WORDS: u32 = 20u;
 /** chunkver.wgsl VER_VEC2 (not included here: that file is appended only to kernels that write the columns) */
@@ -42,6 +44,8 @@ fn tground(@builtin(global_invocation_id) id: vec3<u32>) {
   let g = gtAt(c);
   if (gtop[g.x] == g.y + 1u && g.y < G.tick) { return; }
   var whole = 0.0;
+  // (a row's live claim stands in this chunk, whose columns changed: P_CLAIM_STIR)
+  var stir = false;
   for (var b = 0u; b < 16u; b++) {
     var top = 0.0;
     for (var k = 0u; k < 16u; k++) {
@@ -56,9 +60,12 @@ fn tground(@builtin(global_invocation_id) id: vec3<u32>) {
         // row's claim that stood on something when it was written — OWN_SUP — and has nothing touching its underside
         // now. Its owner is stamped to wake, as a pair stamps a sleeper: `compact` wakes it next tick and its claim
         // goes. Only in chunks whose columns changed: this kernel's own gate.)
-        if (ivMat(v) == MAT_EXTERNAL && ownIsRow(v.w) && (v.w & OWN_SUP) != 0u && ivZ0(v) - under > 1e-3) {
+        if (ivMat(v) == MAT_EXTERNAL && ownIsRow(v.w)) {
           let row = ownRowOf(v.w);
-          if (row < EU.e.x && claimG[CR_AT + row * CR_WORDS + 1u] == ownGenOf(v.w)) { atomicStore(&listA[rwAt(row) + RW_WAKE], gTick() + 1u); }
+          if (row < EU.e.x && claimG[CR_AT + row * CR_WORDS + 1u] == ownGenOf(v.w)) {
+            stir = true;
+            if ((v.w & OWN_SUP) != 0u && ivZ0(v) - under > 1e-3) { atomicStore(&listA[rwAt(row) + RW_WAKE], gTick() + 1u); }
+          }
         }
         under = ivZ1(v);
       }
@@ -71,8 +78,12 @@ fn tground(@builtin(global_invocation_id) id: vec3<u32>) {
   let cut = chunks[across * (G.mapH / cs) + GT_VER_VEC2 * (g.x / GT_WORDS) + 1u].y;
   if (ownIsRow(cut)) {
     let row = ownRowOf(cut);
-    if (row < EU.e.x && claimG[CR_AT + row * CR_WORDS + 1u] == ownGenOf(cut)) { atomicStore(&listA[rwAt(row) + RW_WAKE], gTick() + 1u); }
+    if (row < EU.e.x && claimG[CR_AT + row * CR_WORDS + 1u] == ownGenOf(cut)) {
+      stir = true;
+      atomicStore(&listA[rwAt(row) + RW_WAKE], gTick() + 1u);
+    }
   }
+  if (stir) { atomicStore(&poolG[P_CLAIM_STIR], G.tick + 1u); }
   gtop[g.x + 1u] = bitcast<u32>(whole);
   gtop[g.x] = g.y + 1u;
 }

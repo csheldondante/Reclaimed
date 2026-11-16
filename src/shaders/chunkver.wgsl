@@ -35,10 +35,19 @@ fn chunkVerAt(q: vec2<u32>) -> u32 {
  *  columns' version if it changed, its 4 x 4 block's shape version if the mesh would see it */
 fn bumpColumn(q: vec2<u32>, old: vec4<u32>, nv: vec4<u32>) {
   if (all(old == nv)) { return; }
+  // (a row's claim no longer in its slot: its owner is to be told — DESIGN §3 "a real cut")
+  if ((old.z & 0xffu) == 39u && (old.w & 0xe0000000u) == 0x20000000u && nv.w != old.w) { chunks[chunkVerAt(q) + 1u].y = old.w; }
+  bumpColumnOwn(q, old, nv);
+}
+
+/** bumpColumn for the claims' own writer (engine_claim.wgsl): the versions move, and no owner is told. A claim written
+ *  under another row's (a stack's lower block claimed after the upper) moves that row's interval up a slot and cuts
+ *  nothing; a claim cleared from under another's is seen by the support watch (engine_ground.wgsl), which looks at
+ *  what the claim stands on */
+fn bumpColumnOwn(q: vec2<u32>, old: vec4<u32>, nv: vec4<u32>) {
+  if (all(old == nv)) { return; }
   let at = chunkVerAt(q);
   chunks[at].x = G.tick + 1u;
-  // (a row's claim no longer in its slot: its owner is to be told — DESIGN §3 "a real cut")
-  if ((old.z & 0xffu) == 39u && (old.w & 0xe0000000u) == 0x20000000u && nv.w != old.w) { chunks[at + 1u].y = old.w; }
   if (shapeMoved(old, nv)) {
     let cs = G.chunkSize;
     let b = ((q.y % cs) / SHAPE_BLOCK) * (cs / SHAPE_BLOCK) + (q.x % cs) / SHAPE_BLOCK;
