@@ -22,7 +22,8 @@ import { mutators } from '../../mutate';
 import type { MutateEngine } from '../../mutate/engine';
 import { ROW_H, cellAt } from '../../world/lattice';
 import { restoreMutators } from './mutators';
-import { SITES, type SiteKey } from '../../season/realm-templates';
+import { DEAD_RISE, type SiteKey } from '../../season/realm-templates';
+import { declutter, placeSites, REACH as SITE_REACH } from '../../season/sites';
 import { mountRunUi, type Asking, type Marker, type Phase, type RunGame } from '../../season/run-ui';
 import * as W from '../../season/run-words';
 import { WAVE_NO_ROAD } from '../../season/words';
@@ -31,7 +32,9 @@ import type { LevelScene } from '../level';
 import { REGION } from '../streamer/defs';
 import { startSeasonLoop, storeReady } from './season';
 
-/** the world's record in the world store: the fact layer, the characters, the holdings (WorldState's snapshot) */
+/** the world's record in the world store: the fact layer, the characters, the holdings (WorldState's snapshot).
+ *  FIXED-CITY (BACKLOG LS-40): one record a page, with one town's ledger in it; a run that follows a moving group needs
+ *  the group's own holdings and place saved beside the world */
 const WORLD_KEY = 'realm:world';
 /** the sim's speed while the raiders march in (they walk from outside the town) */
 const MARCH_SPEED = 3;
@@ -63,6 +66,10 @@ const SPAWN_TOLD_FRAMES = 20;
 
 /** a spell's blow: its radius (cells), its damage, its cost */
 const HEATRAY = { radius: 5, damage: 3, magic: 1 };
+/** the live event's spell, and the dead it is cast on: how many get up, in clumps this far apart (cells), and the wall
+ *  seconds the event may take before it is left as it stands */
+const FIRE = { radius: 4.5, damage: 12, magic: 1 };
+const DEAD = { n: 5, spread: 7, seconds: 120 };
 
 class Game implements RunGame {
   phase: Phase = 'boot';
@@ -96,6 +103,8 @@ class Game implements RunGame {
     mid: (() => V3 | null) | null;
   } | null = null;
   private speed0 = 1;
+  /** the live event under way (the dead rising): its units still up, when it began, how it ends */
+  private event: { up: Set<number>; t: number; unwatch: () => void; end: (won: boolean) => void } | null = null;
   private pitch0 = Math.PI / 3;
 
   constructor(
@@ -125,6 +134,7 @@ class Game implements RunGame {
       last = now;
       this.cam.update(dt);
       this.watchFight(dt);
+      this.watchEvent(dt);
     };
     requestAnimationFrame(tick);
     // (on the window, before the map's own input: the level's input layer lies over the canvas, so a listener on the
@@ -163,6 +173,8 @@ class Game implements RunGame {
 
   // ---- the town's places ------------------------------------------------------------------------------
 
+  // FIXED-CITY (BACKLOG LS-40): the run's place is the one town the season loop opened on; the camera, the sites, the
+  // road the raid comes by and the hills and mountain round it are all read from this town
   private get town() {
     return this.season.town !== null ? this.towns.live.get(this.season.town) : undefined;
   }
@@ -175,19 +187,59 @@ class Game implements RunGame {
     return [p[0], p[1], this.z(p[0], p[1])];
   }
 
+  /** the home town's sites, each as an offset from the town's centre (x cells, y world units): placed once a town
+   *  (season/sites.ts placeSites) from what the CPU knows of it — its approach roads, the atlas's ground and rivers */
+  private placed: { town: string; at: Record<SiteKey, [number, number]> } | null = null;
+
   /**
-   * Where a site of the home town is on the map (a window point). A stand-in rule (BACKLOG LS-3): a ring round the
-   * town's centre by the site's place in the list, the gates and roads farther out — not yet the town's own lot of
-   * that kind.
+   * Where a site of the home town is on the map (a window point): its own place in the town as laid out (LS-3) —
+   * beside its road, on a bank, on high ground, round the heart; never in the atlas's water or on an approach road.
+   * FIXED-CITY: one town's sites, placed once for the page.
    */
   private spot(site: SiteKey): [number, number] | null {
     const t = this.town;
-    if (!t) return null;
-    const i = SITES.findIndex((s) => s.key === site);
+    const a = this.scene.opts.atlas;
+    const S = this.scene.stream;
+    if (!t || !a || !S) return null;
     const c = t.centreInWindow();
-    const out = SITES[i].kind === 'gate' || SITES[i].kind === 'fields';
-    const r = t.box.R * (out ? 0.34 + 0.03 * (i % 3) : 0.1 + 0.035 * (i % 6));
-    return [c[0] + Math.cos(i * 2.399) * r, c[1] + Math.sin(i * 2.399) * r];
+    if (this.placed?.town !== t.site.id) {
+      // (window point → the atlas's world units)
+      const wx = (x: number) => x - c[0] + t.site.at[0];
+      const wy = (y: number) => y - c[1] + t.site.at[1];
+      // (the atlas's rivers near the town: a node a texel, each with the next one down — segments, with their width)
+      const nf = new Float32Array(a.atlas.riverNodes.buffer, a.atlas.riverNodes.byteOffset, a.atlas.riverNodes.length);
+      const nu = a.atlas.riverNodes;
+      const reach = 2.5 * t.box.R;
+      const segs: [number, number, number, number, number][] = [];
+      for (let i = 0; i + 7 < nu.length; i += 8) {
+        if (Math.hypot(nf[i] - t.site.at[0], nf[i + 1] - t.site.at[1]) > reach) continue;
+        const n = nu[i + 4] * 8;
+        const to = n + 7 < nu.length && n !== i ? [nf[n], nf[n + 1]] : [nf[i], nf[i + 1]];
+        if (Math.hypot(to[0] - nf[i], to[1] - nf[i + 1]) > 200) continue;
+        segs.push([nf[i], nf[i + 1], to[0], to[1], nf[i + 3]]);
+      }
+      const inRiver = (x: number, y: number) =>
+        segs.some(([ax, ay, bx, by, w]) => {
+          const dx = bx - ax;
+          const dy = by - ay;
+          const l2 = dx * dx + dy * dy;
+          const k = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+          return Math.hypot(x - ax - k * dx, y - ay - k * dy) < w / 2 + 3;
+        });
+      const sea = a.atlas.p.sea;
+      const at = placeSites({
+        centre: c,
+        R: t.box.R,
+        roads: Array.from({ length: t.roadCount }, (_, k) => t.roadInWindow(k)),
+        dry: (x, y) => a.atlas.macroAt(wx(x), wy(y)) > sea + 0.4 && !inRiver(wx(x), wy(y)),
+        height: (x, y) => a.atlas.macroAt(wx(x), wy(y)),
+      });
+      for (const k of Object.keys(at) as SiteKey[]) at[k] = [at[k][0] - c[0], at[k][1] - c[1]];
+      this.placed = { town: t.site.id, at };
+      console.log(`[loop] sites placed: ${segs.length} river reaches near ${t.site.name}, ${t.roadCount} roads`);
+    }
+    const o = this.placed.at[site];
+    return o ? [c[0] + o[0], c[1] + o[1]] : null;
   }
 
   markers(): Marker[] {
@@ -195,12 +247,13 @@ class Game implements RunGame {
     const r = this.realm;
     const cam = this.scene.core.camera;
     if (this.phase === 'attack') return this.fightMarks();
+    if (this.phase === 'event') return this.eventMarks();
     if (!t || !r || (this.phase !== 'city' && this.phase !== 'petition')) return [];
     const out: Marker[] = [];
     const put = (id: string, label: string, kind: Marker['kind'], at: [number, number] | null) => {
       if (!at) return;
       const [x, y] = cam.project(at[0], at[1], this.z(at[0], at[1]));
-      if (x > -50 && y > -50 && x < innerWidth + 50 && y < innerHeight + 50) out.push({ id, label, kind, x, y });
+      if (x > 0 && y > 0 && x < innerWidth && y < innerHeight) out.push({ id, label, kind, x, y });
     };
     for (const o of r.offers()) {
       if (o.status !== 'offered') continue;
@@ -209,6 +262,11 @@ class Game implements RunGame {
     }
     const n = r.threatIn();
     if (n !== null && n > 0) put('threat', W.threatTag(n), 'threat', this.spot('road'));
+    // (names kept apart and on the screen, between the top bar and the sheet: LS-3, LS-28)
+    const sheet = document.querySelector('.run-sheet')?.getBoundingClientRect().top ?? innerHeight;
+    const bar = document.querySelector('.run-top')?.getBoundingClientRect().bottom ?? 0;
+    const free = declutter(out.map((m) => ({ x: m.x, y: m.y, chars: m.label.length })), innerWidth, bar + 4, sheet - 4);
+    out.forEach((m, i) => ([m.x, m.y] = free[i]));
     return out;
   }
 
@@ -242,6 +300,107 @@ class Game implements RunGame {
     side(forces.members(f.raiders), 'raider', W.RAIDERS_TAG);
     side(war.squadGroups.flatMap((g) => forces.members(g)), 'soldier', W.SOLDIERS_TAG);
     return out;
+  }
+
+  /** the live event's marks: a ring round each of the dead still up, and their count */
+  private eventMarks(): Marker[] {
+    const units = this.scene.units;
+    const ev = this.event;
+    if (!ev || !units) return [];
+    const cam = this.scene.core.camera;
+    const out: Marker[] = [];
+    let sx = 0;
+    let top = Infinity;
+    for (const id of ev.up) {
+      const at = units.get(id)?.at;
+      if (!at) continue;
+      const [x, y] = cam.project(at[0], at[1], at[2]);
+      out.push({ id: String(id), label: '', kind: 'raider', x, y });
+      sx += x;
+      top = Math.min(top, y);
+    }
+    if (out.length) out.push({ id: 'theirs', label: `${W.DEAD_TAG} ${ev.up.size}`, kind: 'side', x: sx / out.length, y: top });
+    return out;
+  }
+
+  /** (scripts) where the dead still up are on the screen (px) */
+  deadAt(): [number, number][] {
+    return this.eventMarks().filter((m) => m.kind === 'raider').map((m) => [m.x, m.y]);
+  }
+
+  /**
+   * The small live event (item 4: play alternates between choosing and casting): a few of the dead get up at the burial
+   * ground; the camera goes there, the player casts Fire on them (1 Magic a cast). True: all are down. False: left as
+   * they stand (the player's choice, no Magic, or DEAD.seconds passed) — the rest are taken away and the card stays
+   * offered until it lapses. The dead are the units' own 'shambler' kind; Fire is the units' area blow with the
+   * lightning strike as its look, as Heat ray is (a stand-in look: BACKLOG LS-7).
+   */
+  private playDead(at: [number, number]): Promise<boolean> {
+    const units = this.scene.units;
+    if (!units) return Promise.resolve(true);
+    const up = new Set<number>();
+    for (let k = 0; k < DEAD.n; k++) {
+      const clump = k < 3 ? -1 : 1;
+      up.add(units.spawn('shambler', [at[0] + clump * DEAD.spread * 0.5 + (k % 3) * 1.4, at[1] + clump * 2 + (k % 2) * 1.6], null, { hostile: true }) as number);
+    }
+    const unwatch = units.observe([...up]);
+    units.died.push((v) => void this.event?.up.delete(v.id as number));
+    this.pitch0 = this.scene.core.camera.elevation;
+    this.armed = null;
+    // (the camera on them, then after them: the dead walk toward whoever is near — round 3's first event left the screen)
+    const mid = (): V3 | null => {
+      let n = 0;
+      const m: V3 = [0, 0, 0];
+      for (const id of up) {
+        const p = units.get(id)?.at;
+        if (!p) continue;
+        n++;
+        for (let k = 0; k < 3; k++) m[k] += p[k];
+      }
+      return n ? [m[0] / n, m[1] / n, m[2] / n] : null;
+    };
+    void this.cam.look(this.at3(at), { zoom: FIGHT_ZOOM * 0.7, ease: 1.2, place: [0.5, 0.36] }).then(() => {
+      if (this.event?.up === up) this.cam.follow(mid);
+    });
+    console.log(`[loop] the dead rise: ${up.size} at ${at.map((v) => Math.round(v))}`);
+    return new Promise((res) => {
+      this.event = { up, t: 0, unwatch, end: res };
+      this.fightLine = W.deadLine(up.size, pools(this.season.ledger).magic);
+      this.set('event');
+    });
+  }
+
+  private watchEvent(dt: number): void {
+    const ev = this.event;
+    if (!ev || this.phase !== 'event') return;
+    ev.t += dt;
+    const cam = this.scene.core.camera;
+    if (!this.cam.busy) cam.elevation += (FIGHT_PITCH - cam.elevation) * Math.min(1, dt * 1.2);
+    const magic = pools(this.season.ledger).magic;
+    const line = W.deadLine(ev.up.size, magic);
+    if (line !== this.fightLine) {
+      this.fightLine = line;
+      this.changed();
+    }
+    if (ev.up.size === 0) this.endEvent(true);
+    else if (ev.t > DEAD.seconds) this.endEvent(false);
+  }
+
+  leave(): void {
+    if (this.event) this.endEvent(false);
+  }
+
+  private endEvent(won: boolean): void {
+    const ev = this.event;
+    if (!ev) return;
+    this.event = null;
+    this.cam.follow(null);
+    ev.unwatch();
+    for (const id of ev.up) this.scene.units?.remove(id);
+    this.scene.core.camera.elevation = this.pitch0;
+    this.armed = null;
+    console.log(`[loop] the dead: ${won ? 'all burned' : `${ev.up.size} left`}`);
+    ev.end(won);
   }
 
   asking(): Asking[] {
@@ -401,9 +560,14 @@ class Game implements RunGame {
     const act = last ? actOf(tree, last.node, last.choice) : undefined;
     console.log(`[loop] petition ${o.template}: ${act ?? 'closed'}`);
     if (act === 'commit' && can) {
-      r.commit(id);
-      this.season.setLedger(r.ledger);
-      this.notes = [...this.notes, W.agreedLine(speaker.name, o.opp.title)];
+      // (the live event's card is played before it is committed: all burned, it resolves as any card does)
+      const won = o.template !== DEAD_RISE || (await this.playDead(at ?? this.town!.centreInWindow()));
+      if (won) {
+        r.ledger = this.season.ledger;
+        r.commit(id);
+        this.season.setLedger(r.ledger);
+        this.notes = [...this.notes, W.agreedLine(speaker.name, o.opp.title)];
+      } else this.notes = [...this.notes, W.DEAD_LEFT];
     } else if (act === 'refuse') {
       r.refuse(id);
       this.notes = [...this.notes, W.refusedLine(speaker.name)];
@@ -629,7 +793,8 @@ class Game implements RunGame {
   /** the camera back on the whole town, above the sheet */
   showTown(): void {
     const t = this.town;
-    if (t) void this.cam.look(this.at3(t.centreInWindow()), { zoom: innerWidth / (0.9 * t.box.R), place: [0.5, 0.36], ease: 1.2 });
+    // (the sites' reach across the screen: every name a card can stand at is in view)
+    if (t) void this.cam.look(this.at3(t.centreInWindow()), { zoom: innerWidth / (2 * (SITE_REACH + 0.06) * t.box.R), place: [0.5, 0.36], ease: 1.2 });
   }
 
   /** (scripts) where the raiders are on the screen now (px), or null: none watched */
@@ -646,19 +811,20 @@ class Game implements RunGame {
   /** a tap on the map with a spell armed: cast there (Heat ray: a blow over an area on the units there, shown with
    *  the level's own lightning strike — a stand-in look) */
   private cast(e: PointerEvent): void {
-    if (this.phase !== 'attack' || this.armed !== 'heatray') return;
+    const sp = this.phase === 'event' && this.armed === 'fire' ? FIRE : this.phase === 'attack' && this.armed === 'heatray' ? HEATRAY : null;
+    if (!sp) return;
     const rect = this.scene.host.canvas.getBoundingClientRect();
     const g = this.scene.core.camera.groundAt(e.clientX - rect.left, e.clientY - rect.top, this.scene.heightAt);
     if (!g) return console.warn('[loop] heat ray: no ground under the tap');
-    if (pools(this.season.ledger).magic < HEATRAY.magic) {
-      this.fightLine = W.shortText({ magic: HEATRAY.magic });
+    if (pools(this.season.ledger).magic < sp.magic) {
+      this.fightLine = W.shortText({ magic: sp.magic });
       return this.arm(null);
     }
-    this.season.setLedger(lose(this.season.ledger, { magic: HEATRAY.magic }));
+    this.season.setLedger(lose(this.season.ledger, { magic: sp.magic }));
     this.realm!.ledger = this.season.ledger;
-    this.scene.units?.strike?.({ at: [g[0], g[1]], radius: HEATRAY.radius, damage: HEATRAY.damage }, 'spell');
+    this.scene.units?.strike?.({ at: [g[0], g[1]], radius: sp.radius, damage: sp.damage }, 'spell');
     this.scene.powers.scriptStrike(g[0], g[1], g[2]);
-    console.log(`[loop] heat ray at ${g[0].toFixed(0)}, ${g[1].toFixed(0)}`);
+    console.log(`[loop] ${this.armed} at ${g[0].toFixed(0)}, ${g[1].toFixed(0)}`);
     this.arm(null);
   }
 }

@@ -42,7 +42,9 @@ export const BOARD = 3;
 /** seasons before the attack from which the raiders can be paid off */
 export const TRIBUTE_SEASONS = 3;
 
-export type SpellId = 'heatray';
+/** 'heatray': unlocked by the tower's lens, cast in a fight. 'fire': the one spell every leader has, cast in a live
+ *  event (the dead rising) */
+export type SpellId = 'heatray' | 'fire';
 /** cells round the gate burned when the raiders break in */
 export const SACK_RADIUS = 30;
 
@@ -70,7 +72,9 @@ export const CAMP_ID = 'copper-hollow';
 export interface RealmOptions {
   /** the world as saved, or the atlas's own (never changed: restored into a new WorldState) */
   world: WorldSnapshot;
-  /** the home town's settlement id */
+  /** the home town's settlement id. FIXED-CITY (BACKLOG LS-40): one settlement for the whole run — its sites are the
+   *  cards' locations, its ledger the run's pools, its gate what the raid breaks; a run that follows a moving group
+   *  needs a locus that can change (LIVING_WORLD's "locus"), with the sites and the ledger following it */
   home: EntityId;
   seed: number;
   leader: Leader;
@@ -114,6 +118,7 @@ export class Realm {
     this.seasons = o.seasons ?? RUN_SEASONS;
     this.leader = o.leader;
     this.led = o.ledger;
+    // FIXED-CITY: the world's holdings are one town's ledger
     this.w.holdings = o.ledger.holdings;
     const f = this.w.facts;
     if (!this.w.settlement(o.home)) throw new Error(`realm: no settlement ${o.home} in the world`);
@@ -265,6 +270,7 @@ export class Realm {
    * (40 for each town that fell and sent them — the migrations in the history), carts through the gate the season they
    * arrive, and the ore wagons of a mining camp while it stands.
    */
+  // FIXED-CITY: what comes home comes to the one home town, and its living town is the only one fed
   life(): { people: number; wagons: number } {
     const f = this.w.facts;
     const came = f.events({ kind: 'migration' }).filter((e) => e.to.includes(this.home));
@@ -279,7 +285,8 @@ export class Realm {
     return mutators.record().list.filter((m) => m.fact !== undefined && mine.has(m.fact));
   }
 
-  /** the standing settlement nearest the home town (the neighbour its cards are about); null: none */
+  /** the standing settlement nearest the home town (the neighbour its cards are about); null: none.
+   *  FIXED-CITY: "nearest" is measured from the one home town */
   neighbour(): EntityId | null {
     const h = this.w.settlement(this.home)!;
     let best: EntityId | null = null;

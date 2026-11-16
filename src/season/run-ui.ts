@@ -10,7 +10,7 @@ import type { Leader, SpellId } from './realm';
 import * as W from './run-words';
 import { incomeLine, POOL_ICON, POOL_NAME } from './words';
 
-export type Phase = 'boot' | 'leader' | 'city' | 'petition' | 'season' | 'attack' | 'result' | 'end';
+export type Phase = 'boot' | 'leader' | 'city' | 'petition' | 'season' | 'event' | 'attack' | 'result' | 'end';
 
 export interface Marker {
   /** an offer's id (the threat: 'threat') */
@@ -44,6 +44,8 @@ export interface RunGame {
   readonly fightLine: string | null;
   readonly resultLines: string[];
   readonly armed: SpellId | null;
+  /** (a live event) give it up as it stands */
+  leave(): void;
   /** the fact layer's history as sentences: this run's (with its season), and the earlier runs' */
   history(): { season: number; text: string }[];
   before(): string[];
@@ -220,6 +222,9 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       const s = btn(W.SKIP, () => game.skip(), 'quiet');
       s.disabled = !game.canSkip;
       go.append(s);
+    } else if (phase === 'event' && run) {
+      sheet.append(el('h3', undefined, W.DEAD_TITLE), el('div', undefined, game.fightLine ?? ''), el('div', game.armed ? 'warn' : 'note', game.armed ? W.SPELL_AIM : W.DEAD_HOW));
+      go.append(btn(W.SPELL_NAME.fire, () => game.arm(game.armed === 'fire' ? null : 'fire'), game.armed === 'fire' ? 'on' : undefined), btn(W.DEAD_LEAVE, () => game.leave(), 'quiet'));
     } else if (phase === 'attack' && run) {
       sheet.append(el('h3', undefined, W.ATTACK_TITLE), el('div', undefined, game.fightLine ?? W.ATTACK_WAIT));
       if (!run.spells.length) sheet.append(el('div', 'note', W.SPELL_NONE));

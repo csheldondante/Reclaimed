@@ -17,7 +17,9 @@ import type { ArcDef, TemplateDef } from '../living/engine';
 import type { Effect, Pred } from '../living/dsl';
 import { PEOPLE_KIND, type Pool, type SeasonCard } from './ledger';
 
-/** the home town's sites a card can stand at: a key, its name, and what the place is (for the scene's marker rule) */
+/** the home town's sites a card can stand at: a key, its name, and what the place is (for the scene's marker rule).
+ *  FIXED-CITY (BACKLOG LS-40): a fixed list of one town's named places, made as fact entities at the run's start; every
+ *  template binds `$town` to the home town and `$site` to one of these ("your gate", "the market") */
 export const SITES = [
   { key: 'keep', name: 'the keep yard', kind: 'military' },
   { key: 'forge', name: 'the smithy', kind: 'workshop' },
@@ -38,6 +40,7 @@ export const SITES = [
   { key: 'road', name: 'the trade road', kind: 'gate' },
   { key: 'pit', name: 'the ore yard', kind: 'workshop' },
   { key: 'wagons', name: 'the wagon yard', kind: 'gate' },
+  { key: 'graves', name: 'the old burial ground', kind: 'landmark' },
 ] as const;
 export type SiteKey = (typeof SITES)[number]['key'];
 export const siteId = (home: string, key: SiteKey): string => `site:${home}:${key}`;
@@ -141,6 +144,8 @@ function hazard(o: { id: string; site: SiteKey; title: string; pitch: string; ro
   };
 }
 
+/** the live event's template: agreeing means going there and casting (the scene plays it before the commit) */
+export const DEAD_RISE = 'dead-rise';
 /** raiders in the run's last stage */
 export const RAIDERS = 6;
 
@@ -289,6 +294,32 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     once: true,
   },
   {
+    // (a small live event mid-run: a few of the dead get up; the player goes there and casts — scenes/level/loop.ts
+    // playDead. The sign in the streets while the card stands is the mutators' own; left alone, it grows)
+    id: DEAD_RISE,
+    title: 'Burn the risen dead',
+    pitch: 'The dead are up in the old burial ground. Fire will put them down again.',
+    themes: ['magic', 'undead'],
+    bind: at('graves'),
+    eligible: [{ helper: 'after', args: [0.35] }, { not: { event: { kind: 'dead-burned', involving: '$town' } } }, { not: { event: { kind: 'dead-loose', involving: '$town' } } }],
+    threat: true,
+    live: true,
+    parts: { urgency: 0.72 },
+    at: 'site',
+    setup: [{ helper: 'sign', args: ['deadrise', '$town', 0.1] }],
+    requires: { agents: [] },
+    turns: 1,
+    work: 'talk',
+    outcome: [{ helper: 'sign', args: ['deadrise', '$town', 0] }, { event: 'dead-burned', by: ['player'], to: ['$site', '$town'], note: 'you burned the risen dead in the old burial ground', weight: 0.3 }],
+    outcomeText: 'The dead are ash. The burial ground is quiet.',
+    onExpire: [{ helper: 'pool', args: ['unrest', 1] }, { helper: 'sign', args: ['deadrise', '$town', 0.9, 3] }, { event: 'dead-loose', by: [], to: ['$site', '$town'], note: 'the dead got out of the burial ground and walk the streets', weight: -0.4 }],
+    expireText: 'The dead are out of the burial ground. They walk the streets at night. Unrest +1.',
+    presenter: { of: '$town', role: 'gravedigger', own: true, verb: 'warns', line: 'The dead are up and walking in the old burial ground. Some are in the streets already. Come and burn them.' },
+    reward: { text: 'You go there and cast Fire on them. Each cast costs 1 Magic.' },
+    offerTurns: 2,
+    once: true,
+  },
+  {
     id: 'pay-raiders',
     title: 'Pay the raiders off',
     pitch: 'The raiders on the road want tribute. Paid, they leave and no attack comes.',
@@ -324,6 +355,7 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
  * `seasons` is the run's length (a knob: 16 by default, the orchestrator's number, not the user's). Its stages land at
  * a quarter, a half and the end.
  */
+// FIXED-CITY: the arc is bound to the home town; its last stage is an attack on that town's gate
 export function raidArc(home: string, seasons: number, n = RAIDERS): ArcDef {
   const q = Math.max(1, Math.round(seasons / 4));
   return {

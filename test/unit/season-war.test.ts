@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { START_INCOME, START_POOLS } from '../../src/season/catalog';
 import { grant, lose, newLedger, pools, total } from '../../src/season/ledger';
 import { TownForces, unitsRef } from '../../src/season/forces';
-import { military, raidPlaces, SeasonWar, settle, SQUAD, townHeart, waveIn, waveSize } from '../../src/season/war';
+import { gateWindow, military, raidPlaces, SeasonWar, settle, SQUAD, townHeart, waveIn, waveSize } from '../../src/season/war';
 import { fightLine, FORCES_FULL, NO_SOLDIERS, RANKS_NO_ROOM, SOLDIERS_NO_PLACE, soldiersLine, WAVE_NO_ROAD, waveNowLine, waveSoonLine } from '../../src/season/words';
 import { PLACE, type PlaceRef } from '../../src/api/contracts/townplaces';
 import type { OrderFailure, PlaceRef as UPlaceRef, SpawnAtOpts, SquadOrder, UnitId, Units, UnitView } from '../../src/api/contracts/units';
@@ -548,6 +548,21 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
     // (raiders are in: a second call is refused)
     expect(war.call(6, 1)).toBe(false);
     expect(war.lines).not.toContain(WAVE_NO_ROAD);
+  });
+
+  it('a raid called at a gate brings every squad to that gate (posted a gate each before its road was known)', async () => {
+    const st: Record<number, 'ok'> = { [PLACE.muster]: 'ok', [PLACE.spawn0 + 2]: 'ok' };
+    for (let k = 0; k < 4; k++) st[PLACE.gate0 + k] = 'ok';
+    const { f, units, tick } = forces(st);
+    const l = { ...grant(start(), { might: 2 }), built: ['walls'] };
+    const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 0, ledger: () => l, raid: () => 6, calls: true });
+    war.season(l);
+    await tick();
+    const squads = units.spawns.filter((x) => x.kind === 'guard').map((x) => x.g);
+    expect(squads.length).toBeGreaterThan(1);
+    expect(war.call(6, 2)).toBe(true);
+    await tick();
+    for (const g of squads) expect(units.orderOf(g)).toMatchObject({ kind: 'guard', at: gateWindow(0, 2) });
   });
 
   it('with walls and no raid, the last squad marches out of the first standing gate from its slot, then back to its post', async () => {

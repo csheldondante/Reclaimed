@@ -23548,3 +23548,36 @@ The bench is 178 s here with the first-frame stall: on a slower boot it would pa
 was checked by eye on two frames, and by the living town's GPU tests, not by reading riders back in the browser.
 Agents' leftovers: PI-19. Not done: PI-9 (the first frames' stall: no time spent), the ambience (PI-3: no CPU source
 that survives a slide).
+
+## 2026-11-15 (night) — loop skeleton round 3: the mutators under the outcomes, the fight seen, the long run (`loop-skeleton`)
+
+**Why.** The owner's frame: "Play an actual attack with the soldiers you've built and then see the mutations from all
+your choices", "the whole point is to make the map a living visual representation of your choices", and "you need long
+enough to actually build an engine and prepare for the threat".
+
+- **Merges.** `origin/mutators` (b0d87471, then caf512de) and `origin/phone-idle` (66f51279). The census on the loop's
+  URL at idle (the leader screen, 20 s, `scripts/census.mjs --params loop=1 --states idle`): 0.21 indirect dispatches
+  a frame, 0.92 KB read back a frame, nothing made in a frame; est. phone 0.59 ms. The loop adds no per-frame GPU work
+  (its markers are DOM, placed each frame by `camera.project`).
+- **Outcomes cause land changes** (947e8058). `Realm.physical` is gone. Walks at 412x915, Muru: the dam left to break
+  → `flooded@14535,4589 r34`; the market's fire → `burned r22`; a raid that breaks in → `burned r30` where the raiders
+  stood, and the crime sign; the neighbour left → `captured`; the mountain → `melted r70` 600 cells south with ash
+  fall 0.87 and darkness on the town; the hill → `buried r24`; the camp → `founded`. After a reload the list is laid
+  over the land again with the saved world bound first ("3 changes of earlier runs laid over the land, 1 signs on").
+  Looked at: the burned district after a sack reads at once (black roofless lots by the river); the far lava is a
+  dark tongue on a hillside with no glow at that zoom; under the eruption's signs the town is plainly dark with ash
+  flakes; the flood does not read as a flood (silt on the bank, the river as before: MU-28).
+- **The fight** (20534d42). Rings and side names; zoom 22, pitch 40 degrees. Unprepared, 7 seasons: 6 of 6 raiders in,
+  no soldiers (nowhere to gather), the district burned. Prepared (walls), 7 seasons: 12 soldiers, 6 raiders dead, 4
+  soldiers lost. **Prepared, 16 seasons: nobody fights, twice** (BACKLOG LS-45).
+- **The dealer** (886a18c9). Ties were list order (LS-30): with a board of 3 the tail of the list was never offered.
+  Now a draw by template, place and turn, and scores from `worth`. Threat cards are the dealer's events, one at a
+  time, on a schedule (LS-35). Decisions a season in the walks: 4, 5, 5, 4, 5, 5 (nothing agreed); 2 to 3 (the long
+  prepared walk, 15 seasons).
+- **The long run.** Bots in Node (`test/unit/realm-bots.test.ts`, 16 seasons): walls first holds, answer every threat
+  holds (walls), trade and tribute holds (tribute), everything holds; idle falls; the keep engine falls (its chain
+  never completes). At 4 seasons only the tribute holds. The scripted walk: 15 seasons in 136 to 144 s of wall time,
+  9 to 9.6 s a season with its petitions. The live event at season 6: 5 dead, 7 and 10 casts of Fire (several missed:
+  the dead walk off; the camera now follows them).
+- **Sites** (LS-3): `season/sites.ts`, 5 unit tests. In the still the four names stand apart on lots of the town.
+

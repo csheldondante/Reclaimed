@@ -18,7 +18,7 @@ export const leader = (id: string): Leader => {
   return l;
 };
 
-export const SPELL_NAME: Record<SpellId, string> = { heatray: 'Heat ray' };
+export const SPELL_NAME: Record<SpellId, string> = { heatray: 'Heat ray', fire: 'Fire' };
 export const SPELL_NONE = 'You have no spells. Some projects give you one.';
 export const SPELL_AIM = 'Tap the ground to cast it.';
 export const SPELL_STANDIN = 'Stand-in. Heat ray shows as a lightning strike for now.';
@@ -131,3 +131,13 @@ export const sentence = (t: string): string => {
 /** the fight's two sides, over their figures (a count follows) */
 export const RAIDERS_TAG = 'Raiders';
 export const SOLDIERS_TAG = 'Your soldiers';
+
+/** the live event: the dead in the burial ground */
+export const DEAD_TITLE = 'The dead are up';
+export const DEAD_TAG = 'The dead';
+export const DEAD_HOW = 'Press Fire, then tap the dead. Each cast costs 1 Magic.';
+export const DEAD_LEAVE = 'Leave them';
+export const DEAD_LEFT = 'You left the dead where they stand.';
+export function deadLine(alive: number, magic: number): string {
+  return `${alive} of the dead ${alive === 1 ? 'is' : 'are'} still up. You have ${magic} Magic.`;
+}

@@ -122,7 +122,44 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       });
       if (at) await page.mouse.click(at.x, at.y);
     }
-    await phase('city', 20000);
+    await phase('city|event', 20000);
+    // (the live event: the dead are up at the burial ground — Fire pressed, a tap on one of them, until none is left)
+    if ((await state()).phase === 'event') {
+      await wait(3500);
+      await shot('loop-6-event-dead');
+      const frames = [];
+      let casts = 0;
+      for (let k = 0; k < 14 && (await state()).phase === 'event'; k++) {
+        const at = (await page.evaluate(() => window.rungame.deadAt()))[0];
+        if (!at) {
+          await wait(500);
+          continue;
+        }
+        await tap('.run-sheet .go button', 'Fire');
+        await wait(250);
+        await page.mouse.click(at[0], at[1]);
+        casts++;
+        await wait(300);
+        if (casts === 1) await shot('loop-6-event-cast');
+        frames.push(await page.screenshot({ type: 'png' }));
+        await wait(1100);
+        frames.push(await page.screenshot({ type: 'png' }));
+      }
+      const left = await page.evaluate(() => window.rungame.deadAt().length);
+      log(`the dead: ${casts} casts, ${left} left, phase ${(await state()).phase}`);
+      R.check('the live event was played: Fire cast on the dead until none was left', casts > 0 && (await state()).phase !== 'event', { casts, left });
+      if (opt('gif', '1') !== '0' && frames.length) {
+        const enc = GIFEncoder();
+        for (const b of frames) {
+          const png = PNG.sync.read(Buffer.from(b));
+          const pal = quantize(png.data, 256);
+          enc.writeFrame(applyPalette(png.data, pal), png.width, png.height, { palette: pal, delay: 450 });
+        }
+        enc.finish();
+        fs.writeFileSync(path.join(out, 'loop-6-event.gif'), enc.bytes());
+      }
+      await phase('city', 20000);
+    }
     await wait(1000);
     if (first) await shot('loop-4-allocated');
     first = false;
@@ -138,6 +175,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   // 5: seasons pass until the attack (or the end)
   let n = 0;
   const decisions = [];
+  const t0 = Date.now();
   for (;;) {
     decisions.push((await state()).asking.length);
     await wait(400);
@@ -162,10 +200,12 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       await wait(1500);
     }
     if (s.phase !== 'city') break;
+    if (n % 4 === 0) await shot(`loop-5-city-s${s.season}`);
     await playSeason();
     if (n > 40) throw new Error('the attack never came');
   }
   log(`decisions a season: ${decisions.join(', ')}`);
+  log(`${n} seasons in ${((Date.now() - t0) / 1000).toFixed(0)} s of wall time, the time-lapse skipped after 1.5 s: ${((Date.now() - t0) / 1000 / n).toFixed(1)} s a season with its petitions`);
   R.check('the decisions a season stay few', Math.max(...decisions) <= 5, decisions);
 
   // 7: the attack: the camera down the road, the raid called, the march, the fight, a spell cast, the result

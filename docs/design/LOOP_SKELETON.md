@@ -44,9 +44,7 @@ season ledger.
   cleared by `&fresh=1`); the next run and a reload start from it.
 - The run's own small state (its length, spells unlocked, the raid due, the fight) is `Realm`'s, in memory. A reload
   mid-run starts at the leader screen in the saved world (not resumed: BACKLOG LS-8).
-- Physical changes an outcome names (flooded, burned, melted, buried, founded, captured, vassal) are a list of named
-  stubs (`Realm.physical`, each with the event that caused it) until `origin/mutators` is merged. Nothing is drawn yet;
-  the end screen says so.
+- Physical changes an outcome names are the mutators' entries (round 3, below), each carrying its fact event's id.
 - No GPU readback is added. The fact snapshot is JSON written at a season's end (its size is in the DEVLOG).
 
 **The templates** (`season/realm-templates.ts`): one a season catalog card (11, with the catalog's own chain: houses,
@@ -56,6 +54,85 @@ the arc. All deterministic. Each stands at a site of the home town (`SITES`: 17 
 
 **Decisions a season.** The dealer's own limit (4 resource cards, counted over what is already offered, plus its one
 guarantee): 4 or 5. Unit-tested with pools four times larger; the walk logs the count each season.
+
+## Round 3 (2026-11-15, night): the mutators, the fight, the long run
+
+**The land changes.** `origin/mutators` (caf512de) and `origin/phone-idle` (66f51279) are merged. An outcome names the
+mutators: `mutate` and `sign` (theirs) for a whole place, and two helpers the realm registers, `mutateAt` (the land
+round a site of the home town, or round a spot out of it) and `found` (a new camp). The fact layer stays the world's
+state; each entry of the mutators' list is what the land shows of one fact event and carries its id. The realm binds
+its world to the mutators at a run's start (`useWorld`); the loop lays the saved list over the window with the saved
+world bound first, so nothing is recorded twice. The mutators' season is the history's turn, which runs on across runs.
+
+| Outcome | What is written |
+|---|---|
+| The dam left to break | `flooded` round the dam (radius 34), the bank nearest the town's heart |
+| The fire mage's wards refused | `burned` round the market (22) |
+| The shrine left unfed | `melted` on the mountain, the highest ground 420 to 640 cells off; the mutators cast ash fall and darkness on the town for three seasons. Thin ash falls while the card stands |
+| The hill left to slide | `buried` round the mill street (24) |
+| The raid breaks in | `burned` where the raiders stood (30), the crime sign for three seasons |
+| A neighbour left to fall | `captured` by the raiders; its people migrate to you |
+| A neighbour relieved | `vassal` of the player, 1 a season |
+| The mining camp | `founded` in the hills (a settlement record); lost to raiders: `destroyed` |
+| The dead left alone, refugees turned away | the `deadrise` and `crime` signs |
+
+Still waiting on a mutator: a district abandoned (theirs is a whole place), a reveal of the change (MU-3), flood water
+that stays (MU-28: it drains in seconds, so the flood shows as silt on the bank and drowned lots, not standing water),
+a founded camp that is built (MU-6).
+
+**The fight.** A ring round every raider and soldier, each side's name and count, the camera at zoom 22 and a 40 degree
+pitch; when it ends the camera pulls back over the district. On a called raid every squad goes to the gate the raid
+comes at (before, each stood at its own gate and a raid could reach an empty one).
+
+**Threats.** Threatening cards (OPPORTUNITY_CATALOG: "count down to a negative outcome if not intercepted") are the
+dealer's events: outside its resource limit, at most one standing, each with its place in the run (BACKLOG LS-35). The
+board is 3 (`realm.ts BOARD`), plus the dealer's one guarantee, plus one threat: a season asks at most 5 things.
+Equal scores are drawn by template, place and turn; projects score by what they give.
+
+**Consequences come home.** `Realm.life()` reads the fact layer: 40 more people in the streets for each town whose
+refugees came, 10 carts the season they arrive, 14 ore wagons while the mining camp stands. A named refugee asks for
+huts. A threat card can lose the camp.
+
+**The long run.** 16 seasons (`RUN_SEASONS`, a tunable; the orchestrator's number). The major threat shows from the
+first season (its countdown on the top bar and over the road; scouts at season 4, a farm burned at 8). Smaller threats
+come one at a time on the way. One live event sits mid-run: at season 6 the dead get up in the old burial ground, the
+player goes there and casts Fire on them (1 Magic a cast), then goes back to choosing. In the scripted walk a season
+takes 9 s with its petitions (the time-lapse skipped after 1.5 s; it can be skipped at once).
+
+*The lab.* The card lab's bots (`opps/deck.ts`: ev, bigmoney, engine, random) play the lab's own deck over three
+resources (labor, influence, power) toward a climax card; the season's cards are a different deck over six pools
+(Labor and Might locked, Materials, Magic and Intel spent, Unrest a state). They were not mapped onto each other.
+The nearest mapping would be labor = Labor, power = Might, influence = Materials + Intel, with Magic and Unrest having
+no lab pool; it loses what makes the season's cards differ, so the check was run on the realm itself instead:
+`test/unit/realm-bots.test.ts`, six fixed-preference bots over 16 seasons. "Holds" is a proxy (tribute paid, or walls
+or a keep and 4 Might) because the fight does not run in Node.
+
+| Bot | Result at 16 seasons | Built |
+|---|---|---|
+| idle | falls (nowhere for soldiers to gather) | nothing; every threat lapsed |
+| walls first | holds (walls, Might 4) | quarry, walls, lumber, houses |
+| keep engine | falls: the keep's chain never completes | quarry, lumber, houses x3, farms x3 |
+| trade and tribute | holds (tribute paid) | quarry, lumber, houses x3, farms, market; income 8 |
+| answer every threat | holds (walls, Might 4) | quarry, walls |
+| everything | holds (tribute paid) | 14 cards, the keep at the end; income 14 |
+
+Two ways hold (walls and Might; an economy that pays the tribute). Decisions a season: 0 to 5 for every bot, no
+higher late than early. At 4 seasons only the tribute holds, which is the owner's point about length; it also says the
+tribute (6 Materials, last 3 seasons) is cheap.
+
+**Placement.** `season/sites.ts placeSites`: each site at a place of its kind (beside its road, on a bank, on high
+ground, round the heart), on dry land by the atlas, off the approach roads, within 0.62 of the town's reach so all fit
+the screen; `declutter` keeps names apart and on the screen. Limits: BACKLOG LS-36.
+
+**FIXED-CITY.** BACKLOG LS-40 lists every place the loop bakes one home town a run; each has a comment at the site.
+
+**Open defect (BACKLOG LS-45):** in the 16-season prepared walk the soldiers never fight: 12 stand somewhere else
+while 6 raiders stand inside the gate, and the fight is settled as broken through. The 7-season prepared walk holds.
+Not found yet; bisect by land change first.
+
+**Not done:** a mid-run reload resuming the season (LS-8); the save made smaller (LS-29); the cutaway on a petition
+(LS-9: the field town's mesh never calls `cutAway`); far places looked at on the atlas map; the brawl and fire-and-rain
+events.
 
 ## Assumptions for the owner (each is the simplest thing; say which to change)
 
@@ -72,6 +149,12 @@ guarantee): 4 or 5. Unit-tested with pools four times larger; the walk logs the 
 10. The catalog's chain is kept as the engine to build: soldiers by the keep take 9 seasons, by the walls 3.
 11. A small list of who is asking stays on the sheet for reach on a phone (the map's names are the main way). Say
     if it should go.
+12. (round 3) Smaller threats come on a fixed schedule, one at a time (BACKLOG LS-35). The design asks for pacing from
+    the world's state.
+13. (round 3) Fire is a spell every leader has, cast only in the live event; Heat ray is built (the tower's lens).
+14. (round 3) A raid that breaks in burns the district where the raiders stood; nothing else of the town is lost.
+15. (round 3) Refugees add people to the streets and 1 Unrest; housed, 2 of them become Labor.
+16. (round 3) The board is 3 projects, with one guaranteed card against the threat and one threat card: 5 a season.
 
 ## Conformance (round 2, 2026-11-15): the skeleton against the opportunity design
 
