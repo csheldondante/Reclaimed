@@ -181,7 +181,7 @@ them in the city. The loop's two hand-written copies (`playDead`; `beginAttack`,
 | The raid | forced, in the run's last season | raiders in by a road to its gate (no walls: the town's heart); the squads at their posts; spells the run has unlocked; 150 s | raiders left after each soldier standing holds one, and the rules stop more |
 | The dead | the gravedigger's card, agreed | 5 dead at the burial ground; Fire | how many are still up |
 | A parade | the piper's card, 1 Materials | a column in by a road to the market, watchers, petals | the crowd at the market |
-| A fire at the market | the fire mage's card | the fire system lit at 6 stalls; Rain; 80 s | stalls burned down |
+| A fire at the market (**not dealt**: nothing catches in the town, BACKLOG LS-63; the instant `fire-wards` hazard stands) | the fire mage's card | the fire system lit at 6 stalls; Rain; 80 s | stalls burned down |
 | Refugees | forced, when a far town falls | people and carts in by a road to the stores | a camp by the watch post |
 
 **The season goes on round it.** Agreeing takes the player to the event. Unless it is the raid, "Back to the town"
@@ -414,9 +414,10 @@ the start and the units are made to match; (b) casts counted as fixed worth (`{ 
 4. *A parade's crowd is unit groups, not the townspeople.* The riders cannot gather (SYSTEMS.md recipe 1). The crowd
    count is the groups' own "arrived" (the GPU's group count), not `agents.arrivals`: the units' adapter does not
    give out a field to ask it of.
-5. *The fire burns stalls the event puts down, not the generated buildings.* The fire system's fuel is what lies on
-   a column; citygen's buildings are meshes it does not know. The lots that burn get the mutators' `burned`
-   condition where a stall stayed alight (BACKLOG LS-63). The true connection — buildings as fuel — is new work.
+5. *No live fire yet.* The fire system's fuel is what lies on a column; citygen's buildings are meshes it does not
+   know, and what the event put down for it to burn was not laid and never read alight in the town (BACKLOG LS-63).
+   The event is written and unit-tested; its card is not dealt, and the market still burns the old way (an instant
+   mutator when the wards are refused).
 6. *Rules read sites, not lots.* A thing is a site of the home town, the town, a far town, the camp. "Same district"
    is "within N cells" of a site's point; a route is the straight way between a column's first and last place.
 7. *Few decisions a round holds*: the parade is one more project card within the board's 3; forced events are not

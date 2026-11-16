@@ -101,6 +101,7 @@ export interface LiveRun {
   last: V3 | null;
   fx: number;
   over: boolean;
+  ending?: boolean;
 }
 
 export interface LiveHost {
@@ -228,9 +229,9 @@ export class LiveRunner {
         const a = (k / hz.points) * Math.PI * 2 + 0.4;
         const r = hz.spread * (0.45 + 0.55 * ((k * 7) % 3) / 2);
         const at: [number, number] = [c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r];
-        // (what burns: a stall of timber at each spot — the fire system burns timber, canvas and plants, and the
+        // (what burns: a stall's canvas at each spot — the fire system burns canvas, timber and plants, and the
         // generated buildings are meshes it does not know; BACKLOG LS-63)
-        terrain.build(at[0], at[1], 'Wood', { radius: 1.6, layers: 2 });
+        terrain.build(at[0], at[1], 'canvas', { radius: 1.6, layers: 2 });
         return { at, alightFor: 0, alight: false, burned: false };
       });
       run.hazard = { points, lit: false, read: 0 };
@@ -474,7 +475,7 @@ export class LiveRunner {
   update(dt: number): void {
     const scene = this.h.scene;
     for (const run of [...this.runs]) {
-      if (run.over) continue;
+      if (run.over || run.ending) continue;
       if (run.entry) {
         this.enter(run, dt);
         if (run.over || run.entry.step !== 'in') continue;
@@ -565,7 +566,9 @@ export class LiveRunner {
 
   /** an event over by itself: the host resolves it */
   private end(run: LiveRun): void {
-    if (run.over) return;
+    if (run.over || run.ending) return;
+    // (told once: a host that fails to resolve it is not asked again every frame)
+    run.ending = true;
     this.h.ended(run);
   }
 

@@ -328,6 +328,11 @@ class Game implements RunGame {
    *  at its result */
   private liveEnded(run: LiveRun): void {
     const at = this.live.focus === run;
+    // (the census's event has no card to resolve: taken out of the city)
+    if (run.id.startsWith('measure:')) {
+      this.live.close(run);
+      return this.set('city');
+    }
     const rep = this.resolveLive(run);
     void this.save();
     if (run.def.stay && this.realm!.fight) return this.set('result');

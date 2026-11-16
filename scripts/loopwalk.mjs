@@ -248,7 +248,8 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   let runes = 0;
   const rune = async () => {
     const s0 = await state();
-    if (s0.phase !== 'city' || s0.pools.magic < 1 || !s0.built.includes('farms') || R.argv.includes('--norune')) return;
+    // (each season once farms are built — the rule that doubles their crop then fires; before that, once, to see it)
+    if (s0.phase !== 'city' || s0.pools.magic < 2 || (!s0.built.includes('farms') && runes > 0) || R.argv.includes('--norune')) return;
     await page.evaluate(() => window.rungame.showTown());
     await wait(1800);
     const at = await page.evaluate(() => window.rungame.siteAt('fields'));

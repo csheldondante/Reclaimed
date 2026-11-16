@@ -225,7 +225,7 @@ const PARADE_T: TemplateDef = {
 
 // ---- a fire at the market ---------------------------------------------------------------------------------------------
 
-/** The real fire system lit at six spots round the market (the stalls: timber and canvas put there as it starts). The
+/** The real fire system lit at six spots round the market (the stalls: canvas put there as it starts). The
  *  player brings rain on it. It ends when nothing is alight (20 s in at the earliest) or after 80 s. A spot that stayed
  *  alight long enough is a burned lot; the lots burned get the `burned` condition where they stand. */
 const FIRE_EVENT: LiveDef = {
@@ -330,4 +330,12 @@ const REFUGEE_T: TemplateDef = {
 };
 
 /** the run's live events, as templates */
-export const LIVE_TEMPLATES: TemplateDef[] = [RAID_T, DEAD_T, PARADE_T, FIRE_T, REFUGEE_T];
+export const LIVE_TEMPLATES: TemplateDef[] = [RAID_T, DEAD_T, PARADE_T, REFUGEE_T];
+/**
+ * The fire at the market, NOT DEALT (BACKLOG LS-63): in the town nothing the event puts down catches — a probe at the
+ * market read no fire on canvas or trash laid with `terrain.build`, nor on plants grown there, and the ground's
+ * material did not change — so the event showed no flame and read "nothing burned" by itself. Until a fire can burn in
+ * a generated town the instant `fire-wards` hazard stands in its place; `RealmOptions.liveFire` deals this instead (the
+ * unit tests of its data, and whoever fixes the fuel).
+ */
+export const FIRE_TEMPLATE: TemplateDef = FIRE_T;

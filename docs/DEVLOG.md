@@ -24091,7 +24091,7 @@ synnergies designed like a card game not hard coded." Before this round the loop
 **Found on the way.**
 - *Does the fire system burn generated buildings?* No (read, `shaders/fire.wgsl fuelAt`): fuel is plants, oil,
   timber, canvas and trash on top of a column; citygen's buildings are meshes. The smallest true connection made:
-  the event puts a timber stall down at each of its 6 spots and lights those in the real fire system; a spot seen
+  the event puts a canvas stall down at each of its 6 spots and lights those in the real fire system; a spot seen
   alight for 12 s is a burned lot and gets the mutators' `burned` condition there (BACKLOG LS-63: buildings as fuel
   is the real fix).
 - *A spawn's refusal can be told after its units were taken for standing.* The first walk hung on the refugees: road
@@ -24115,3 +24115,55 @@ rune doubles the crop once, nothing on unworked or burned fields, walls with a g
 parade, a fire with water close by, an event resolved at the season's end. `realm.test`, `realm-bots`,
 `realm-resume` updated (the raid through `playForced`). 93 pass in the six files run alone (live-rules, realm, realm-bots, realm-resume,
 living, season-war); typecheck clean. `writing-sources` still fails on `src/roadlab/control.ts`, as before this round.
+
+## 2026-11-16 — loop skeleton round 6, the close: the walks, the fire that does not burn, the census (`loop-skeleton`, LS-63, LS-72 to LS-75)
+
+**The fire event is not dealt.** `terrain.deposit` and then `terrain.build` refused timber (a plant in the material
+table); with canvas the event ran but showed no flame and ended by itself reading "0 of 6 alight, 0 burned". A probe
+at the market (headless, `q=low`): after `terrain.build` of canvas and of trash, `terrain.put` of canvas and
+`plants.grow`, the ground still read soil (or `external` under a building) and `fire.fireAt` read 0 for 20 s after
+`fire.ignite`. Why is not found (BACKLOG LS-63). A win nobody earned is worse than no event, so the card is out of
+the deal (`realm-events.ts FIRE_TEMPLATE`, `RealmOptions.liveFire`), its data and resolution stay unit-tested, and
+the instant `fire-wards` hazard is back. The Fire spell still calls `fire.ignite`; what the player sees of it is the
+particle burst.
+
+**Walks by a finger** (412x915, `q=low`; stills in the session's scratch folder `loop/r6/`):
+- *Prepared, 16 seasons, reload in season 9 — the final tree: passed, every check.* Refugees in by road 2 (roads 0
+  and 1 refused: water), 12 people and 3 carts; three parades (crowd 7, 8, 8; "The parade passed the mountain shrine
+  and some of the crowd prayed there: +2 Magic."; "With unrest in the town, 6 fewer people came out for the
+  parade."); the dead, 5 of 5 in view, burned; the rune drawn twice, and with farms built "The growth rune doubled
+  the crop on the east fields: +2 Materials."; the reload identical; decisions a season 2 to 5; the raid: 6 raiders,
+  heat ray 5 → 3, 1 soldier lost, "Your walls and their garrison stopped 2 raiders at the gate."; the end, the
+  reload, run 2.
+- *Unprepared, 5 seasons — one commit earlier (before the fire was taken out and the runner's end guard): one check
+  failed.* Six things asked in season 3 (LS-73). The rest passed: refugees, the raid with no soldiers ("6 of 6
+  raiders got into the town. They took 6 Materials. Unrest +1.").
+- *`--fast`, 5 seasons — the same earlier tree: one check failed.* One name over the map took a press over 31 px
+  (LS-74). The rest passed, the rune by a tap and the raid held (3 soldiers lost of 12).
+- Not run again on the final tree: the unprepared and `--fast` walks (the change since: no fire card, the fire-wards
+  hazard back, the end guard).
+- Looked at: the refugees on the road (a knot of figures and carts, "Refugees 12" over them); the parade through the
+  gate (a file of nine under its name; it was night — the sim runs at 3× while a column is on the road — and no
+  petal showed); the dead with a Fire cast (a yellow burst on one, rings on the rest); the fight at the gate (red
+  and blue rings meeting, both names apart); the result with the rule's line; the rune close up (a thicket of new
+  bushes where the tap was) and from the town's zoom (a small brighter patch); the town's sheet with the rune's
+  button between Map and Next season.
+
+**Census** (`scripts/census.mjs --params loop=1 --pick ysolt --states idle,event --event dead-rise`; counts, the
+phone's ms from the model):
+
+| State | est. phone ms a frame | indirect dispatches a frame | read back a frame |
+|---|---|---|---|
+| idle, the town | 1.05 | 0.60 (all `liquid-water`, as before: LS-55) | 1.76 KB |
+| a live event running (the dead: 5 units) | 2.34 | 4.87 (4.01 the units' own passes, which run while any unit exists) | 1.27 KB |
+| the fire event as it was (nothing alight) | 1.40 | 0.94 | 0.99 KB |
+
+The runner adds no pass. What an event costs is the units system being awake: about 1.3 ms a frame by the model, as
+in any raid before this round. Nothing new at idle.
+
+**Also.** A halted column is counted as arrived (LS-72: the units' own `arrived` never came for a column sent to the
+stores; every column this round halted at the same spot, 134,133). The road that took the last column is tried
+first. A runner's end is told once (a host that failed to resolve it was asked again every frame).
+
+**Tests.** The four realm files pass alone (45); typecheck clean; `writing-sources` fails on `src/roadlab/control.ts`
+as before.

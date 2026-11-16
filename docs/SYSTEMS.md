@@ -98,10 +98,10 @@ startRunLoop` → `src/scenes/level/season.ts startSeasonLoop`. Script handles: 
 | System | What it does | Status | Entry point | How to call | Known limits |
 |---|---|---|---|---|---|
 | Live event as data | Who takes part (groups: kind, side, count, tags, where from, order with formation), a hazard, seconds, spells allowed, when it ends, how its result is read (counts by tag, lots burned, casts), worked out (`derive`) and mapped to a tier | W | `src/living/live.ts: LiveDef, LiveState, idleState, liveRead, liveDerive, liveTier, liveEnded, checkLive` | A template's `play: { area, forced?, event: LiveDef }`, `vars: 'live'`, tiered `outcomes` | Pure. Places: named places of the town, a road's spawn point or gate, a site. No route by street |
-| The run's live events | The raid, the dead in the burial ground, a parade, a fire at the market, refugees walking in | W | `src/season/realm-events.ts: LIVE_TEMPLATES` | Add a `TemplateDef` with `play.event` | Numbers are first guesses (LS-66) |
+| The run's live events | The raid, the dead in the burial ground, a parade, refugees walking in (W); a fire at the market (S: written and unit-tested, not dealt — nothing catches in the town, LS-63) | W / S | `src/season/realm-events.ts: LIVE_TEMPLATES` | Add a `TemplateDef` with `play.event` | Numbers are first guesses (LS-66) |
 | Resolving one | From the state it is in: numbers read → rules applied → derived → tier → the template's outcome through the engine; at the season's end by itself; in Node from the state nobody played | W | `season/realm.ts: Realm.finishLive, tellLive, liveRunning, forcedLive, playForced, runNumbers` | `realm.finishLive(offerId, told?)` | Who decides a fight: the live counts, then one line of arithmetic (LS-56, open) |
 | The runner | Plays any `LiveDef` in the city: groups made by place, by site or in by a road (the camera down each road in turn); the hazard lit; story camera; sim speed on the march; counts from the units' own events; goes on while the player is elsewhere | W | `src/scenes/level/live-runner.ts: LiveRunner` (`rungame.liveDebug()`) | `runner.start(offer, def, site)`; `runner.told(run)`; `runner.close(run)` | One entering column a run; people vanish when it ends; a reload restarts only the raid (LS-65) |
-| Hazard: fire | The real fire system lit at N spots (a timber stall put down at each); a spot alight 12 s is a burned lot; lots burned get the `burned` condition where they stand | W | `live-runner.ts` (`hazard`); `realm.ts` helper `burnPoints` | `hazard: { kind: 'fire', at, points, spread, radius, intensity }` | Reads the fire mirror's pages (a few KB) every 2 s while a fire event runs. Generated buildings do not burn in the fire system (LS-63) |
+| Hazard: fire | The real fire system lit at N spots (canvas put down at each); a spot alight 12 s is a burned lot; lots burned get the `burned` condition where they stand | S (not dealt: in the town the canvas is not laid and nothing reads alight — LS-63) | `live-runner.ts` (`hazard`); `realm.ts` helper `burnPoints` | `hazard: { kind: 'fire', at, points, spread, radius, intensity }` | Reads the fire mirror's pages (a few KB) every 2 s while a fire event runs. Generated buildings do not burn in the fire system (LS-63) |
 | Tags | Each site's tags from what it is and its state; the home town's (wall, garrison, unrest); trade partners | W | `season/realm-rules.ts: SITE_TAGS, RUIN, TIMED`; `realm.ts: Realm.things, partners, mark` | `realm.things()` | Derived on demand from the fact layer and the ledger; sites only (lots are GPU-side) |
 | Synergy rules | Trigger (season end, a fact event's kind, a live event's read) + tag queries with a relation of place (near the first thing, near the event, on its route, same town) + an effect on a pool or on one of the event's numbers (add, multiply) + capacity + firings a season; each firing recorded (`rule-fired`) and told in one line | W | `src/living/rules.ts: RuleDef, RuleBook`; the run's ten: `season/realm-rules.ts: RULES` | Add a `RuleDef` to `RULES` | A route is the straight way from start to end; no rule may write a fact another reads |
 | Spells | Heat ray (a blow on units), Fire (a blow + the fire system lit), Rain (a storm over the tap), Growth rune (plants grown, the field `growth-active` for the season) | W | `scenes/level/loop.ts: Game.castAt`; `realm.ts: Realm.cast, SPELL_COST, BASIC_SPELLS` | `realm.cast('growth', 'fields')` | Aimed by a tap; a cast is a fact event (`spell-cast`) |
@@ -145,7 +145,7 @@ startRunLoop` → `src/scenes/level/season.ts startSeasonLoop`. Script handles: 
 | Sky dim, ash fall | Two numbers the signs set | W | `core.skyDim`, `core.ashFall` (`scenes/world-core.ts`) | set by `showSigns` | — |
 | Water | Depth and flow per column; flood and drain | W | `src/api/water.ts: Water` (`scene.worldApi.water`); `src/flow/liquid.ts: LiquidSystem` (`?flow=1`) | `water.flood(x, y, { radius, depth })`; `water.drain(…)` | Mirror reads are cached, not per frame |
 | Rivers | Held rivers by table, per-watershed wetness, cuts | W | `weather/catchwet.ts: CatchmentWet`; `weather/riverwet.ts: RiverWet` | via mutators `dried` | — |
-| Fire | Fuel catches, spreads, heats, brings timber down | W (called by the loop: the fire event's hazard, the Fire spell) | `src/api/fire.ts: Fire.ignite, fireAt`; `shaders/fire.wgsl`; event `EV_IGNITE` | `worldApi.fire.ignite(x, y, { radius, intensity })` | Fuel is plants, oil, timber, canvas, trash on top of a column (`fire.wgsl: fuelAt`). Citygen's buildings are meshes: they do not burn in it (LS-63) |
+| Fire | Fuel catches, spreads, heats, brings timber down | W (the Fire spell calls `ignite`; nothing was seen to catch in the loop's town: LS-63) | `src/api/fire.ts: Fire.ignite, fireAt`; `shaders/fire.wgsl`; event `EV_IGNITE` | `worldApi.fire.ignite(x, y, { radius, intensity })` | Fuel is plants, oil, timber, canvas, trash on top of a column (`fire.wgsl: fuelAt`). Citygen's buildings are meshes: they do not burn in it (LS-63) |
 | Lightning, chip, scare, grow, ripple, mend | One-tick world events | W | `src/sim/globals.ts: EventKind`; `shaders/common.wgsl: EV_*` | `globals.events.push({ kind, x, y, radius, strength })` | Seen only by period-1 systems; more than 4 a tick wait |
 | Lava | Vents, flow, cooling, steam | L (sandbox levels; `?flow=1`) | `src/sim/lava.ts: LavaSystem`; `flow/liquid.ts: LAVA` | `scenes/level/impacts.ts: ventAtPick` | Not in the atlas town level unless flow is on |
 | Wind | Blows, gusts, blasts, strokes, wakes painted into the wind field | W | `src/api/wind.ts: Wind` | `wind.gust(x, y, r, strength, dir)`; `wind.blast(x, y, r, strength)` | Painted wind lives ~45 s (`sim/windrect.ts`) |
@@ -292,7 +292,8 @@ can see needs that news line or a marker.
 
 ### 4. A fire or riot as a real-time crisis that ends by itself at season end — **M** each, on the existing event shell
 
-**Round 6: the fire is built** — `FIRE_EVENT` on the runner; a riot is data to write (a hostile loose group at the
+**Round 6: the fire is written but does not burn in the town and is not dealt (BACKLOG LS-63)** — `FIRE_EVENT` on
+the runner; a riot is data to write (a hostile loose group at the
 market, squads as `from: 'squads'`).
 
 Existing calls:
@@ -444,8 +445,8 @@ the `pool` helper and `Bonus`'s charges / cooldown bookkeeping. Add one predicat
 ## Not verified
 
 - Nothing was run: no game, no test, no browser. "Wired" is read from call paths.
-- (answered in round 6: the fire system does not burn citygen's buildings — its fuel is what lies on top of a
-  column; `worldApi.fire` works in the loop.)
+- (round 6: the fire system does not burn citygen's buildings — its fuel is what lies on top of a column. Whether
+  anything at all burns in the loop's town is NOT verified: a probe read no fire and no laid material, LS-63.)
 - How wagons and ships choose a gate or quay; what they look like at play zoom.
 - That `spawnAt` with `'worker'` or `'cart'` behaves well under formation orders (the mapping exists in
   `AgentUnits.kindOf`; only soldiers and raiders are exercised by the game and the tests read).

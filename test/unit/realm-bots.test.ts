@@ -21,10 +21,10 @@ interface Bot {
 }
 const BOTS: Bot[] = [
   { name: 'idle', want: [] },
-  { name: 'walls first', want: ['build:walls', 'tower-lens', 'build:quarry', 'build:lumber', 'mend-dam', 'market-fire', 'shore-hill', 'feed-shrine', 'build:houses'] },
+  { name: 'walls first', want: ['build:walls', 'tower-lens', 'build:quarry', 'build:lumber', 'mend-dam', 'fire-wards', 'shore-hill', 'feed-shrine', 'build:houses'] },
   { name: 'keep engine', want: ['build:houses', 'build:workshops', 'build:keep', 'build:quarry', 'build:lumber', 'house-refugees', 'build:farms', 'mend-dam'] },
   { name: 'trade and tribute', want: ['build:quarry', 'build:lumber', 'mining-outpost', 'build:houses', 'build:market', 'build:trade', 'guard-camp', 'pay-raiders', 'build:farms'] },
-  { name: 'answer every threat', want: ['relieve-neighbour', 'mend-dam', 'market-fire', 'feed-shrine', 'shore-hill', 'guard-camp', 'house-refugees', 'build:walls', 'build:quarry'] },
+  { name: 'answer every threat', want: ['relieve-neighbour', 'mend-dam', 'fire-wards', 'feed-shrine', 'shore-hill', 'guard-camp', 'house-refugees', 'build:walls', 'build:quarry'] },
   { name: 'everything', want: ['*'] },
 ];
 

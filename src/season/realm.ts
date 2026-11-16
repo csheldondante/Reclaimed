@@ -32,6 +32,7 @@ import { hasLand, type Land } from './deal';
 import { adopt, lose, grant, pools, total, POOL_ROLE, type Pool, type Pools, type SeasonLedger } from './ledger';
 import { cardOfTemplate, projectTemplate, raidArc, siteId, SITES, WORLD_TEMPLATES, type SiteKey } from './realm-templates';
 import { RUIN, RULES, SITE_TAGS, TIMED } from './realm-rules';
+import { FIRE_TEMPLATE } from './realm-events';
 import { placeState } from '../mutate/facts';
 import { military, SQUAD } from './war';
 import { mutators, type Mutation, type PhysicalKind } from '../mutate';
@@ -125,6 +126,8 @@ export interface RealmOptions {
   /** a run under way taken up again (`Realm.runState`), over the world saved with it: no new run begins, nothing is
    *  dealt, the ledger given is the one saved */
   resume?: RunState;
+  /** deal the live fire at the market in place of the instant `fire-wards` hazard (off: BACKLOG LS-63) */
+  liveFire?: boolean;
 }
 
 /** a run under way, as saved beside the world (BACKLOG LS-8): the realm's own small state and the engine's */
@@ -218,7 +221,9 @@ export class Realm {
       mutators.season(f.turn);
     }
     f.drainChanged();
-    const templates: TemplateDef[] = [...CATALOG.map(projectTemplate).filter((t): t is TemplateDef => t !== null), ...WORLD_TEMPLATES];
+    // (the live fire is dealt only when asked for: realm-events.ts FIRE_TEMPLATE, BACKLOG LS-63)
+    const world = o.liveFire ? [...WORLD_TEMPLATES.filter((t) => t.id !== 'fire-wards'), FIRE_TEMPLATE] : WORLD_TEMPLATES;
+    const templates: TemplateDef[] = [...CATALOG.map(projectTemplate).filter((t): t is TemplateDef => t !== null), ...world];
     // (the arc's turns are the history's: this run's seasons after the turn it began at)
     const rel = raidArc(o.home, this.seasons);
     const arc = { ...rel, stages: rel.stages.map((s) => ({ ...s, turn: this.t0 + s.turn })) };

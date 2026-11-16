@@ -6,12 +6,14 @@ import { briarWorld } from '../../src/living/briar';
 import { checkLive, idleState, liveDerive, liveEnded, liveRead, liveTier, type LiveDef, type LiveState } from '../../src/living/live';
 import { RuleBook, type RuleDef, type Thing } from '../../src/living/rules';
 import { grant, newLedger, nextSeason, pools, total, type SeasonLedger } from '../../src/season/ledger';
-import { LIVE_TEMPLATES, MARKET_FIRE, PARADE, RAID } from '../../src/season/realm-events';
+import { FIRE_TEMPLATE, LIVE_TEMPLATES as DEALT, MARKET_FIRE, PARADE, RAID } from '../../src/season/realm-events';
 import { Realm, type Leader } from '../../src/season/realm';
 import { RULES, SITE_TAGS } from '../../src/season/realm-rules';
 import { siteId, SITES } from '../../src/season/realm-templates';
 import { lint } from '../support/writing';
 
+/** every live event written, the fire that is not dealt among them (BACKLOG LS-63) */
+const LIVE_TEMPLATES = [...DEALT, FIRE_TEMPLATE];
 const def = (id: string): LiveDef => LIVE_TEMPLATES.find((t) => t.id === id)!.play!.event!;
 
 describe('a live event as data (living/live.ts)', () => {
@@ -189,7 +191,7 @@ describe('tags and synergy rules (living/rules.ts)', () => {
 
 const YSOLT: Leader = { id: 'ysolt', name: 'Marshal Ysolt', line: 'A soldier.', pools: { magic: 3, might: 3, labor: 4, materials: 6, intel: 1 }, income: { materials: 2, magic: 1 } };
 const realm = (ledger: SeasonLedger, seasons = 16, where?: (s: string) => [number, number] | null): Realm =>
-  new Realm({ world: briarWorld().ws.snapshot(), home: 'briar-hollow', seed: 7, leader: YSOLT, ledger, land: () => ({ left: 14, open: [] }), seasons, ...(where ? { where } : {}) });
+  new Realm({ world: briarWorld().ws.snapshot(), home: 'briar-hollow', seed: 7, leader: YSOLT, ledger, land: () => ({ left: 14, open: [] }), seasons, ...(where ? { where, liveFire: true } : {}) });
 const built = (...cards: string[]): SeasonLedger => ({ ...newLedger(YSOLT.pools, YSOLT.income), built: cards });
 const season = (r: Realm): string[] => {
   const news = r.endSeason();
