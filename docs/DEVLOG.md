@@ -24732,3 +24732,31 @@ but crumbled in two runs of three: the pieces under it expand too and voxels mee
 the other pieces out of the world first (expanded and let go) so that it is of the ground alone, as it was written.
 
 **Hacks and limits.** PR7 (above), PR8 (the sums' range; step 1's kernel keeps the old rule).
+
+## 2026-11-15 — pieces are bodies: the lab looked at, the counts, the tests run
+
+**Looked at** (headless Chrome, 412 x 915, `scripts/pilelab.mjs`; stills `pm-*.png` in the session's scratchpad
+`physics10/`). Three captures; the rigid, metal, slide and river stations were not captured this round.
+- *Cannon at the brick wall and the stone tower* (five balls): the wall goes down into one low red heap and the balls
+  come to rest on it and round it, none inside it that I can see; the tower is knocked over and lies whole beside the
+  heap — it did not break. The read-out: 11 expansions, 9 parts, 94 voxels to the ground, everything asleep at the
+  end. At this zoom I cannot tell single bricks apart in the heap, so "pieces pile on each other" is shown by the
+  test (`engine-chain` PM4) and by the balls lying on the heap, not by a still of stacked pieces.
+- *Stack, then rubble into the pit:* the stack stands. The pit's heap is lower than it was (about level with the rim;
+  it stood over the rim before): 45 of the blocks expanded on landing (13 before), 40 parts, 115 voxels to the
+  ground. That is PE30's fix at work — every block now hits at the speed it fell with (BACKLOG PR9, for the owner).
+- *The chain:* the slab breaks and lies tilted across the post with the block on its low end; the brick slab at the
+  post's foot is not broken (2 expansions, 6 parts). Everything is asleep 8 s after (it was not before: 2 rows awake
+  14 s after). C not breaking is as it was on this branch with free parts (PO13).
+
+**Counts a tick** (`node scripts/enginecounts.mjs`, the six scenes): asleep 0 + 0; awake with nothing deforming
+57 direct + 8 indirect (unchanged); stage 4 open 58 + 93 (unchanged); stage 4 open and a body settling as the last
+read saw it 59 + 103 (the parts' bake: 1 + 10).
+
+**Tests run after both changes** (Dawn in Node): `engine-chain`, `-settle`, `-meet`, `-break`, `-pile`, `-d0`,
+`-pairs`, `-ground`, `-grab`, `-terrain`, `-grainface`, `engine.test`, `sdf-bake`: all pass (95 tests; that
+run was before the last small edit, which says whether a hit weighed by the resultant is on a building — after it
+only `engine-house`, `-stone` and `-rebreak` were run again, and pass); `engine-station` and `-energy` pass after
+the changes the entries above name; `npm run smoke` passes (the atlas level on the default route: it does not run
+the engine). The unit project: one failure, `writing-sources` on `src/roadlab/control.ts` (PO4, not this branch's);
+the transfer gate lists the two new uploads (`SdfModels.reserveGpu`, `Engine.clear`). Not run: the phone.
