@@ -212,7 +212,17 @@ trigger happens and its things exist; the player is told `why`.
   "why": "the growth rune doubled the crop on {a}: +{n} Materials" }
 ```
 
-- `on`: `"turn"` (each season) · `{ "live": "parade" }` (when that kind of live event is read) · `{ "event": "name" }`.
+- `on`: `"turn"` (each season) · `{ "live": "parade" }` (when that kind of live event is read) · `{ "event": "name" }`
+  (when that is written in the world's history; each firing still counts against `perSeason`). The names a rule can
+  wait for, each tested:
+  - `"pack-done:<card-id>"`: a card of a loaded pack was taken and is done. `"pack-lapsed:<card-id>"`: it ran out.
+  - a land change to a SITE by any card, base or pack: `burned`, `flooded`, `melted`, `buried`, `dried`, `withered`,
+    `greened`.
+  - the base game's events: `built`, `made-safe`, `scouts-seen`, `farm-burned`, `tribute-paid`, `raid-held`,
+    `raid-broke`, `raid-missed`, `lens-lit`, `camp-opened`, `camp-held`, `camp-lost`, `relieved`, `fell`,
+    `refugees-arrived`, `refugees-housed`, `refugees-resettled`, `refugees-turned-away`, `dead-burned`, `dead-loose`,
+    `parade-held`, `parade-thin`, `fire-fought`, `sellswords-hired`, `spell-cast`, `ability-cast`.
+  Any other name is refused.
 - `a` and optional `b`: `{ "tags": [...], "not": [...], "near": { "of": "a" | "event" | "route", "cells": 90 } }`.
   All tags must be on one thing. `near` is optional; 70 cells is "passes by", 90 "next to", 110 "close".
   `near` goes on `b` when it is `"of": "a"`. `"event"` and `"route"` exist only for a rule `on` a live event.
@@ -285,6 +295,33 @@ What the player casts on a thing in play. (Into an event only the three existing
 - Existing abilities, which must not be declared again: `growth-rune` (on a field: it is `growth-active` this
   season), `fire`, `rain` (every leader has these three), `heat-ray` (unlocked by a card). Each costs 1 Magic.
   Not built: `gust`, `telekinesis`. Say what should be seen in `look`.
+
+## Several packs together
+
+Packs are made to be loaded together. Check a set with one command; after each file's own report comes a TOGETHER
+report: `node scripts/packcheck.mjs a.json b.json c.json d.json`. Play a set: pick several files in the page's
+"Packs" drawer (each has a "Take out" button), or `table.html?pack=a.json,b.json`. Bots:
+`node scripts/tablebots.mjs --pack a.json,b.json`. The example pair is `packs/cross-a.json` + `packs/cross-b.json`.
+
+- **Ids** of cards, things, rules, events and abilities must differ across packs: start each with the pack's id. A
+  rule may not use a base rule's id (`blessed-fields`, `temple-procession`, `garrisoned-walls`, `gate-market`,
+  `water-by-fire`, `sullen-festival`, `harvest-home`, `tower-watch`, `forge-by-keep`, `camp-hands`, `garrison-pay`,
+  `roofs-to-mend`, `idle-hands`, `bread-for-all`).
+- **A pack cannot name another pack's thing, card or ability** (`has_thing`, `no_thing`, `resolved`, `leads_to`,
+  `put`, `remove`, `unlock` take this pack's ids). Packs read each other through TAGS.
+- **Existing tags** are always shared: a rule on `["field", "worked"]` sees every pack's and the base game's fields.
+- **A shared custom tag**: every pack that produces or reads it declares it in its own `tags` list with the same
+  `id`, `on` and `timed`, and `"shared": true`. The id is not prefixed with a pack id. `"shared": true` stops the
+  "nothing produces / nothing reads" warnings for the one file; the TOGETHER check then looks over the whole set and
+  refuses a tag declared with a different `timed` or `on` in two packs.
+- A thing lends its tags to its place, so two packs' things on one site combine: pack A's seed store on
+  `site:fields` makes the east fields `seed-stored`, and pack B's rule on `["field", "seed-stored"]` pays.
+- **A rule about another pack's card or event kind** (`{ "event": "pack-done:<their card>" }`, `{ "live": "<their
+  kind>" }`) gets a LOOK when its file is checked alone and is checked for real in the TOGETHER report. A rule that
+  changes an amount of another pack's event kind must name an amount that event lists.
+- One card stands at a site at a time, over all packs and the base game: the TOGETHER report says to look when more
+  than 3 cards of the set stand at one site. One threat stands at a time: it says to look above 4 threats.
+- Rules run in this order: the base game's, then each pack's in the order the packs were loaded, in file order.
 
 ## Rules for the writing
 

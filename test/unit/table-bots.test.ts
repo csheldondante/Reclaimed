@@ -12,8 +12,9 @@ const SEASONS = Number(process.env.TABLE_SEASONS ?? 16);
 describe('bots play the card table', () => {
   const t0 = Date.now();
   const templates = [...CATALOG.map(projectTemplate).filter((t) => t !== null).map((t) => t!.id), ...WORLD_TEMPLATES.map((t) => t.id)];
-  const packs = process.env.TABLE_PACK ? [JSON.parse(fs.readFileSync(process.env.TABLE_PACK, 'utf8'))] : undefined;
-  if (packs) templates.push(...(packs[0].cards ?? []).map((c: { id: string }) => c.id));
+  // (TABLE_PACK: one file, or several with commas — loaded together)
+  const packs = process.env.TABLE_PACK ? process.env.TABLE_PACK.split(',').map((f) => JSON.parse(fs.readFileSync(f.trim(), 'utf8'))) : undefined;
+  for (const p of packs ?? []) templates.push(...(p.cards ?? []).map((c: { id: string }) => c.id));
   const raiders = process.env.TABLE_RAIDERS ? { raiders: Number(process.env.TABLE_RAIDERS) } : {};
   const rep = runBots({ seeds: Array.from({ length: N }, (_, i) => 7 + i), seasons: SEASONS, templates, ...(packs ? { packs } : {}), ...raiders });
   const timed = `${rep.text}\n(${rep.runs.length} runs in ${Date.now() - t0} ms)\n`;

@@ -7,6 +7,7 @@ import { POOLS, type Pool, type Pools } from '../season/ledger';
 import { POOL_NAME } from '../season/words';
 
 export const FAR = 'Far places';
+export const PACK_REMOVE = 'Take out';
 export const rulesCount = (paid: number, ready: number, of: number): string => `${paid} paid, ${ready} ready, of ${of}`;
 export const PLAIN_PLACES = 'Places with nothing on them yet';
 export const TAGS_TITLE = 'Tags in play';

@@ -23,16 +23,17 @@ let armed: string | null = null;
 const open = new Set<string>(params.get('open')?.split(',') ?? []);
 let table = new Table({ seed, leader, seasons });
 
-function restart(): void {
+/** the run started again. `added`: packs being added to the set — refused with their report, the set stays as it was */
+function restart(added: Pack[] = []): void {
   armed = null;
   try {
-    table = new Table({ seed, leader, seasons, packs });
+    table = new Table({ seed, leader, seasons, packs: [...packs, ...added] });
+    packs = [...packs, ...added];
     packError = '';
   } catch (e) {
-    // (a pack with errors: its report shown, the base game played)
+    // (a pack with errors, or packs that clash: the report shown, the run played with the packs there were)
     packError = (e as Error).message;
-    packs = [];
-    table = new Table({ seed, leader, seasons });
+    table = new Table({ seed, leader, seasons, packs });
   }
 }
 
@@ -147,9 +148,16 @@ function rules(): string {
   return drawer('rules', `${W.RULES_TITLE} (${W.rulesCount(paid, ready, list.length)})`, `<div class="why">${W.RULES_HELP}</div>${body}<div class="place">${W.TAGS_TITLE}</div><div class="tags">${tagList.map((t) => `<span class="tag state">${esc(t.tag)}${t.n > 1 ? ` ×${t.n}` : ''}</span>`).join('')}</div>`);
 }
 
+/** the packs in play: each with a button to take it out, what the validator says to look at, and a picker that adds
+ *  one or several files (the run starts again with the new set) */
 function packDrawer(): string {
-  const lines = table.packs.flatMap((p) => [`<div>${esc(W.packLine(p.name, p.templates.length))}</div>`, ...p.left.map((x) => `<div class="need">${esc(W.packLeft(x.card, x.why))}</div>`), ...p.problems.map((x) => `<div class="why">${esc(x.where)}: ${esc(x.text)}</div>`)]);
-  return drawer('packs', W.PACK_TITLE, `${lines.join('') || `<div class="dim">${W.PACK_NONE}</div>`}${packError ? `<pre class="need" style="white-space:pre-wrap">${esc(packError)}</pre>` : ''}<div class="bar" style="margin-top:6px"><label>${W.PACK_LOAD} <input id="packfile" type="file" accept=".json,application/json" style="width:auto"></label></div>`, !!packError);
+  const lines = table.packs.flatMap((p) => [
+    `<div class="bar"><span style="flex:1">${esc(W.packLine(p.name, p.templates.length))}</span><button data-act="unpack" data-id="${esc(p.id)}">${W.PACK_REMOVE}</button></div>`,
+    ...p.left.map((x) => `<div class="need">${esc(W.packLeft(x.card, x.why))}</div>`),
+    ...p.problems.map((x) => `<div class="why">${esc(x.where)}: ${esc(x.text)}</div>`),
+  ]);
+  const both = table.together.map((x) => `<div class="why">${esc(x.where)}: ${esc(x.text)}</div>`).join('');
+  return drawer('packs', `${W.PACK_TITLE} (${table.packs.length})`, `${lines.join('') || `<div class="dim">${W.PACK_NONE}</div>`}${both}${packError ? `<pre class="need" style="white-space:pre-wrap">${esc(packError)}</pre>` : ''}<div class="bar" style="margin-top:6px"><label>${W.PACK_LOAD} <input id="packfile" type="file" multiple accept=".json,application/json" style="width:auto"></label></div>`, !!packError);
 }
 
 function log(): string {
@@ -204,6 +212,9 @@ app.addEventListener('click', (e) => {
     // (still armed while there is something left to cast it on: a second cast is one tap)
     const a = table.abilities().find((x) => x.id === armed);
     if (!a || !a.can || !a.targets.length) armed = null;
+  } else if (act === 'unpack') {
+    packs = packs.filter((p) => p.pack.id !== id);
+    restart();
   } else if (act === 'next') table = table.next(leader);
   else if (act === 'restart') {
     seed = Number((document.getElementById('seed') as HTMLInputElement).value) || 0;
@@ -218,32 +229,33 @@ app.addEventListener('change', (e) => {
   const el = e.target as HTMLElement;
   if (el.id === 'leader') leader = (el as HTMLSelectElement).value;
   if (el.id === 'packfile') {
-    const f = (el as HTMLInputElement).files?.[0];
-    if (f) void f.text().then((t) => usePack(t));
+    const files = [...((el as HTMLInputElement).files ?? [])];
+    if (files.length) void Promise.all(files.map((f) => f.text())).then(usePacks);
   }
 });
 
-/** a pack's text: checked and loaded, and the run started again with it mixed into the base cards */
-function usePack(t: string): void {
+/** packs' texts: checked and loaded with the packs already in play, and the run started again with the whole set
+ *  mixed into the base cards. A pack already in play (the same id) is replaced: the file was edited and picked again */
+function usePacks(texts: string[]): void {
+  let added: Pack[];
   try {
-    packs = [JSON.parse(t) as Pack];
+    added = texts.map((t) => JSON.parse(t) as Pack);
   } catch (e) {
-    packs = [];
     packError = `Not readable as JSON. ${(e as Error).message}`;
     draw();
     return;
   }
-  restart();
+  packs = packs.filter((p) => !added.some((a) => a?.pack?.id === p.pack.id));
+  restart(added);
   draw();
 }
-const packUrl = params.get('pack');
-if (packUrl)
-  void fetch(packUrl)
-    .then((r) => (r.ok ? r.text() : Promise.reject(new Error(`${packUrl}: ${r.status}`))))
-    .then(usePack, (e: Error) => {
-      packError = e.message;
-      draw();
-    });
+// (?pack=a.json,b.json: several packs, loaded together)
+const packUrls = (params.get('pack') ?? '').split(',').filter((u) => u);
+if (packUrls.length)
+  void Promise.all(packUrls.map((u) => fetch(u).then((r) => (r.ok ? r.text() : Promise.reject(new Error(`${u}: ${r.status}`)))))).then(usePacks, (e: Error) => {
+    packError = e.message;
+    draw();
+  });
 
 // (scripts and the browser console)
 (window as unknown as { table: () => Table }).table = () => table;

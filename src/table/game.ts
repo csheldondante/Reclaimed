@@ -19,7 +19,7 @@ import { grant, lose, newLedger, nextSeason, pools, total, POOLS, POOL_ROLE, typ
 import { CATALOG } from '../season/catalog';
 import { FIRE_TEMPLATE } from '../season/realm-events';
 import { projectTemplate, SITES, WORLD_TEMPLATES, type SiteKey } from '../season/realm-templates';
-import type { Pack, PackAbility } from '../packs/check';
+import { checkTogether, reportText, type Pack, type PackAbility, type Problem } from '../packs/check';
 import { castAbility, lentTo, loadPack, packHelpers, packThings, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
 import { BASIC_SPELLS, Realm, RUN_SEASONS, SPELL_COST, type SpellId } from '../season/realm';
 import { LEADERS, leader as leaderOf, resultTitle, SPELL_NAME, threatText, costText } from '../season/run-words';
@@ -204,6 +204,8 @@ export class Table {
   /** the run's number in this world (1 the first) */
   run = 1;
   readonly packs: LoadedPack[];
+  /** what the validator says to look at over the loaded packs together */
+  readonly together: Problem[];
   /** pack abilities the run has unlocked (CT-12: not yet part of the Realm's saved run) */
   readonly unlocked: string[] = [];
 
@@ -214,6 +216,10 @@ export class Table {
     const ledger: SeasonLedger = { ...newLedger(who.pools, who.income), built: [...(o.built ?? [])] };
     const base = baseCards();
     this.packs = (o.packs ?? []).map((p) => loadPack(p, { cards: base, boost: o.boost ?? true }));
+    // (several packs: what only shows when they are loaded together — an id two share, a tag declared differently)
+    const together = checkTogether(o.packs ?? []);
+    if (together.some((x) => x.level === 'error')) throw new Error(reportText('The packs together', together));
+    this.together = together;
     const world = o.world ?? briarWorld().ws.snapshot();
     const centre = world.settlements.find((s) => s.id === HOME)!.at;
     // (the helpers a pack's cards name read the run through this; the Realm deals once while it is being made, before

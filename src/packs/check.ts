@@ -39,6 +39,8 @@ export interface PackTag {
   meaning: string;
   timed?: boolean;
   ruins?: boolean;
+  /** other packs declare the same tag (the same id, `on` and `timed`) and produce or read it */
+  shared?: boolean;
 }
 export interface PackThing {
   id: string;
@@ -200,7 +202,7 @@ function numbersOf(x: unknown, out: number[] = []): number[] {
  * Every problem in a pack. `base`: ids of the game's own cards and rules (a pack's must not clash with them).
  */
 export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: readonly string[] } = {}): Problem[] {
-  base = { cards: base.cards ?? BASE_CARD_IDS, rules: base.rules ?? [] };
+  base = { cards: base.cards ?? BASE_CARD_IDS, rules: base.rules ?? BASE_RULE_IDS };
   const out: Problem[] = [];
   const err = (where: string, text: string): void => void out.push({ level: 'error', where, text });
   const warn = (where: string, text: string): void => void out.push({ level: 'warn', where, text });
@@ -504,7 +506,13 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     if (!r.name || !r.why) err(w, 'A rule needs a "name" and a "why" in plain words.');
     const on = r.on as 'turn' | { event?: string; live?: string };
     if (on !== 'turn' && !(isObj(on) && (typeof on.event === 'string' || typeof on.live === 'string'))) err(w, '"on" is "turn", { "live": "<kind>" } or { "event": "<name>" }.');
-    if (isObj(on) && typeof on.live === 'string' && !liveTags.has(on.live)) err(w, `It triggers on the live event kind "${on.live}", which no event has. Kinds: ${[...liveTags].join(', ')}.`);
+    if (isObj(on) && typeof on.event === 'string') {
+      const why = eventTrigger(on.event, cardIds);
+      if (why === 'other') warn(w, `It triggers on "${on.event}", a card that is not in this pack. Fine only if a pack loaded with it has that card.`);
+      else if (why) err(w, why);
+    }
+    // (another pack loaded with this one may have the kind: checked over the whole set by checkTogether)
+    if (isObj(on) && typeof on.live === 'string' && !liveTags.has(on.live)) warn(w, `It triggers on the live event kind "${on.live}", which no event of this pack or the base game has. Fine only if a pack loaded with it has one. Kinds here: ${[...liveTags].join(', ')}.`);
     for (const [k, q] of [['a', r.a], ['b', r.b]] as const) {
       if (k === 'a' && (!isObj(q) || !Array.isArray(q.tags) || !q.tags.length)) err(w, '"a" needs a list of tags.');
       if (!q) continue;
@@ -541,9 +549,110 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     if (!['site', 'town', 'far-town', 'unit', 'effect'].includes(t.on)) err(`tags (${t.id})`, `"on" is site, town, far-town, unit or effect. It is ${JSON.stringify(t.on)}.`);
     if (!t.meaning) err(`tags (${t.id})`, 'A tag needs a "meaning" in plain words.');
     if (t.ruins) err(`tags (${t.id})`, '"ruins": true is not supported yet. Only the existing ruin tags remove working tags; set them with "mutate".');
-    if (!produced.has(t.id)) warn(`tags (${t.id})`, 'Nothing produces this tag: no thing carries it and no effect sets it.');
-    if (!read.has(t.id)) warn(`tags (${t.id})`, 'Nothing reads this tag: no rule, condition or ability looks for it.');
+    // (a shared tag: another pack loaded with this one may produce or read it — checked over the set by checkTogether)
+    if (!t.shared && !produced.has(t.id)) warn(`tags (${t.id})`, 'Nothing produces this tag: no thing carries it and no effect sets it. If another pack does, mark the tag "shared": true.');
+    if (!t.shared && !read.has(t.id)) warn(`tags (${t.id})`, 'Nothing reads this tag: no rule, condition or ability looks for it. If another pack does, mark the tag "shared": true.');
   }
+  return out;
+}
+
+/** what the base game records in the world's history that a rule `on: { "event": name }` can wait for (the events its
+ *  cards and its arc write: season/realm-templates.ts, realm-events.ts, realm.ts) */
+export const BASE_EVENT_KINDS: readonly string[] = [
+  'built', 'made-safe', 'scouts-seen', 'farm-burned', 'tribute-paid', 'raid-held', 'raid-broke', 'raid-missed', 'lens-lit', 'camp-opened', 'camp-held', 'camp-lost',
+  'relieved', 'fell', 'refugees-arrived', 'refugees-housed', 'refugees-resettled', 'refugees-turned-away', 'dead-burned', 'dead-loose', 'parade-held', 'parade-thin',
+  'fire-fought', 'sellswords-hired', 'spell-cast', 'ability-cast',
+];
+/** Why a rule's event trigger is no good (null: it is fine; 'other': it names a card this pack has not). A pack can
+ *  wait for: a base event; a land change to a SITE by any card (`burned`, `flooded` …); a card of a pack done
+ *  (`pack-done:<card-id>`) or run out (`pack-lapsed:<card-id>`). */
+export function eventTrigger(name: string, cards: ReadonlySet<string>): string | 'other' | null {
+  if (BASE_EVENT_KINDS.includes(name) || LAND_KINDS.includes(name)) return null;
+  const m = /^pack-(done|lapsed):(.+)$/.exec(name);
+  if (m) return cards.has(m[2]) ? null : 'other';
+  return `Unknown event "${name}". A rule can wait for: a card done ("pack-done:<card-id>") or run out ("pack-lapsed:<card-id>"); a land change to a site (${LAND_KINDS.join(', ')}); or one of the base game's events: ${BASE_EVENT_KINDS.join(', ')}.`;
+}
+
+/** the base game's rule ids (season/realm-rules.ts): two rules with one id stop the game from starting */
+export const BASE_RULE_IDS: readonly string[] = ['blessed-fields', 'temple-procession', 'garrisoned-walls', 'gate-market', 'water-by-fire', 'sullen-festival', 'harvest-home', 'tower-watch', 'forge-by-keep', 'camp-hands', 'garrison-pay', 'roofs-to-mend', 'idle-hands', 'bread-for-all'];
+/** cards of several packs on one site before the validator says to look (one card stands at a site at a time) */
+export const SITE_CROWD = 3;
+/** threats over all the packs before the validator says to look (one threat stands at a time) */
+export const THREAT_CROWD = 4;
+
+/**
+ * Problems that only show when several packs are loaded together (each has passed `checkPack` alone): an id two packs
+ * share, a tag two packs declare differently, a rule on a live event kind none of them has, and — to look at — too
+ * many cards on one site or too many threats over the set.
+ */
+export function checkTogether(packs: readonly Pack[]): Problem[] {
+  const out: Problem[] = [];
+  const err = (where: string, text: string): void => void out.push({ level: 'error', where, text });
+  const warn = (where: string, text: string): void => void out.push({ level: 'warn', where, text });
+  const name = (p: Pack): string => p?.pack?.id ?? '?';
+  const owner = new Map<string, string>();
+  for (const p of packs) {
+    if (packs.filter((q) => name(q) === name(p)).length > 1 && !owner.has(`pack:${name(p)}`)) err(name(p), `Two packs have the id "${name(p)}". Each pack needs its own id.`);
+    owner.set(`pack:${name(p)}`, name(p));
+    for (const [kind, list] of [['card', p.cards], ['thing', p.things], ['rule', p.rules], ['event', p.events], ['ability', p.abilities]] as const)
+      for (const x of list ?? []) {
+        const first = owner.get(x.id);
+        if (first && first !== name(p)) err(`${name(p)} ${kind} (${x.id})`, `The id "${x.id}" is also used in the pack "${first}". Put each pack's id in front of its ids: "${name(p)}-…".`);
+        else owner.set(x.id, name(p));
+      }
+  }
+  // (a shared custom tag: each pack that uses it declares it, and every declaration says the same)
+  const tags = new Map<string, { pack: string; on: string; timed: boolean }>();
+  for (const p of packs)
+    for (const t of p.tags ?? []) {
+      const was = tags.get(t.id);
+      if (!was) tags.set(t.id, { pack: name(p), on: t.on, timed: !!t.timed });
+      else if (was.timed !== !!t.timed) err(`${name(p)} tags (${t.id})`, `The pack "${was.pack}" declares the tag "${t.id}" with "timed": ${was.timed}; here it is ${!!t.timed}. A shared tag must be declared the same in every pack.`);
+      else if (was.on !== t.on) err(`${name(p)} tags (${t.id})`, `The pack "${was.pack}" declares the tag "${t.id}" with "on": "${was.on}"; here it is "${t.on}". A shared tag must be declared the same in every pack.`);
+    }
+  // (over the whole set, each declared tag is produced by something and read by something)
+  const made = new Set<string>();
+  const read = new Set<string>();
+  const walk = (x: unknown): void => {
+    if (Array.isArray(x)) return void x.forEach(walk);
+    if (!isObj(x)) return;
+    if (typeof x.tag === 'string' && typeof x.on === 'string') made.add(x.tag);
+    for (const k of ['town_has', 'site_has'] as const) if (Array.isArray(x[k])) for (const t of x[k] as string[]) read.add(t);
+    for (const v of Object.values(x)) walk(v);
+  };
+  for (const p of packs) {
+    for (const t of p.things ?? []) for (const x of t.tags ?? []) made.add(x);
+    for (const r of p.rules ?? []) for (const q of [r.a, r.b]) for (const x of [...(q?.tags ?? []), ...(q?.not ?? [])]) read.add(x);
+    for (const a of p.abilities ?? []) for (const x of a.target?.tags ?? []) read.add(x);
+    walk([p.cards, p.abilities]);
+  }
+  for (const [id, t] of tags) {
+    if (!made.has(id)) warn(`${t.pack} tags (${id})`, 'No loaded pack produces this tag: no thing carries it and no effect sets it.');
+    if (!read.has(id)) warn(`${t.pack} tags (${id})`, 'No loaded pack reads this tag: no rule, condition or ability looks for it.');
+  }
+  const kinds = new Set([...LIVE_KINDS, ...packs.flatMap((p) => (p.events ?? []).map((e) => e.tag))]);
+  const allCards = new Set(packs.flatMap((p) => (p.cards ?? []).map((c) => c.id)));
+  for (const p of packs)
+    for (const r of p.rules ?? []) {
+      const on = r.on as 'turn' | { live?: string };
+      if (isObj(on) && typeof on.live === 'string' && !kinds.has(on.live)) err(`${name(p)} rules (${r.id})`, `It triggers on the live event kind "${on.live}", which no event of any loaded pack or the base game has.`);
+      const ev = (r.on as { event?: string }).event;
+      if (typeof ev === 'string' && eventTrigger(ev, allCards) === 'other') err(`${name(p)} rules (${r.id})`, `It triggers on "${ev}", but no loaded pack has that card.`);
+      // (a rule of one pack about an event kind of another must name numbers that event lists)
+      const fx = r.effect as { amount?: string };
+      const names = [...(isObj(on) && typeof on.live === 'string' && typeof fx?.amount === 'string' ? [fx.amount] : []), ...(isObj(on) && typeof on.live === 'string' && isObj(r.per) ? [(r.per as { amount: string }).amount] : [])];
+      for (const q of packs) if (q !== p) for (const e of q.events ?? []) for (const a of names) if (isObj(on) && e.tag === on.live && !(e.amounts ?? []).includes(a)) err(`${name(p)} rules (${r.id})`, `It reads the amount "${a}", but the event "${e.id}" of the pack "${name(q)}" is a "${e.tag}" event and does not list "${a}" in "amounts". The game would stop when that event ends.`);
+    }
+  const sites = new Map<string, string[]>();
+  let threats = 0;
+  for (const p of packs)
+    for (const c of p.cards ?? []) {
+      const s = c.presenter?.at ?? '?';
+      sites.set(s, [...(sites.get(s) ?? []), c.id]);
+      if (c.threat) threats++;
+    }
+  for (const [s, ids] of sites) if (ids.length > SITE_CROWD) warn(`all packs (${s})`, `${ids.length} cards stand at ${s}: ${ids.join(', ')}. One card stands at a site at a time, so they wait for each other. Spread them over more sites.`);
+  if (threats > THREAT_CROWD) warn('all packs', `${threats} threats over the loaded packs. One threat stands at a time, and a run has 15 seasons: some will never come up.`);
   return out;
 }
 

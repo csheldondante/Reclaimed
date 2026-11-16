@@ -1,4 +1,5 @@
-// (card-table) The bots' table: node scripts/tablebots.mjs [--seeds 3] [--seasons 16] [--pack packs/sample.json] [--raiders 18]
+// (card-table) The bots' table: node scripts/tablebots.mjs [--seeds 3] [--seasons 16] [--pack a.json,b.json] [--raiders 18]
+// (--pack takes one file or several with commas: they are loaded together)
 // Runs test/unit/table-bots.test.ts alone in Node (no browser) and prints its report.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
