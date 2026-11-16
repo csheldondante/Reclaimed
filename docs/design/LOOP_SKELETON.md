@@ -147,7 +147,8 @@ map, that a drag on the map pans it, that the dead and the raiders are in view b
 
 **The moments.** A Map button on the sheet opens the world's map with a badge for each changed place. While a
 season passes with something under way the camera closes in on the district being built (the season loop already
-turned it there; at the town's zoom it was a few pixels). In the fight the raiders' name stands above their figures
+turned it there; at the town's zoom it was a few pixels) — built, then switched off: BACKLOG LS-54, a dead end in the
+story camera's queue). In the fight the raiders' name stands above their figures
 and the soldiers' below theirs.
 
 **Open defect (BACKLOG LS-50):** soldiers who are already standing at their post when the raiders come may die
@@ -279,3 +280,41 @@ moves any of it, except that paying the tribute ends the arc.
 threat, what the raiders' pawn is, what the dealer weighs), and the owner's threat list is still pending. The engine
 needs nothing new for 2: a threat's `when` clause can read facts today; the schedule would become a floor. Building
 it without those choices would be a variant passed off as the design.
+
+## Conformance: who decides the fight (2026-11-16; not conformed, nothing built)
+
+**The invariant** (the owner's handoff, as relayed): strategic resolution is deterministic and independent of
+playback; the visual simulation renders the outcome and is never its authority; live interventions (spells) enter as
+explicit, logged, bounded results.
+
+**Where the outcome is decided today.** In the live simulation, in three steps:
+1. `scenes/level/loop.ts watchFight`: the attack ends when the units say so — `f.alive === 0` (every raider dead), or
+   no soldier left for `SACK_SECONDS`, or `ATTACK_SECONDS` of wall time. `f` is `SeasonWar.fight`: counts read from
+   the units (`TownForces.report`: living members, the dead counted from the units' `died` events).
+2. `loop.ts endAttack`: `fight = { raiders: f.n, left: f.alive, fallen: f.fallen }` — the units' counts — goes to
+   `SeasonWar.resolve` (`season/war.ts settle`: a point of Might for each 3 soldiers fallen, a Material for each
+   raider left, Unrest +1 if any) and to `Realm.fought`.
+3. `season/realm.ts fought`: `held = raiders > 0 && left === 0` writes `raid-held` or `raid-broke` to the history,
+   and on a break the burned district and the crime sign.
+A spell is `units.strike` on the live units (`loop.ts castAt`); its result is whatever the units' step makes of it.
+Nothing is logged but the Magic spent. So frame rate, pathing and where a squad happened to stand decide a run
+(LS-23, LS-45, LS-50 are all this).
+
+**The smallest change.**
+- A pure function in `season/realm.ts`, unit-tested: `resolveRaid({ raiders, might, walls, keep, casts })` →
+  `{ left, fallen, held }`. Its inputs are facts the realm already has (the ledger's Might and `built`, the raid's
+  size from the arc, the casts so far). `test/unit/realm-bots.test.ts` already holds a first rule as its proxy
+  ("walls or a keep, and Might of 4, holds 6"); the owner sets the real one.
+- `Realm.fought` calls it instead of taking counts; `loop.ts endAttack` passes no counts from the units, and
+  `SeasonWar.resolve` settles the ledger from the resolver's `left` and `fallen`.
+- A cast becomes a record: `Realm.cast(spell)` spends the Magic, appends a fact event (`spell-cast`, the spell, the
+  season) and counts toward `casts`, each worth a fixed, capped number of raiders in the resolver. The strike on the
+  live units stays as its picture.
+- The fight renders the result: resolved when the attack begins (or when the last cast is allowed), then the units
+  are made to match — raiders beyond `left` and soldiers beyond `fallen` are struck down by the scene as the lines
+  meet, and the attack screen ends on a timer once it has shown that. `watchFight`'s three endings go.
+- What changes for the player: the result no longer depends on the playback; a spell's worth is stated on its button.
+
+**Open for the owner:** the rule itself (how Might, walls, the keep and the raid's size weigh); whether the result is
+shown before the fight plays; how many casts count and for how much; whether casting stays aimed (a tap on the map)
+when where it lands no longer matters.

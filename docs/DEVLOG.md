@@ -23971,3 +23971,32 @@ at the default zoom: left of the village a dark ringed hollow and beside it a lo
 as a hole with a dark bottom, the mound as a mound; both are small (the pit about 37 px across), and a tree still
 stands in the pit (the plants' draw kept it). The close still is framed on the village and cuts the pit off: no close
 look at the benches. Not done: the approach road joined to an atlas road (the road system was not read).
+
+## 2026-11-16 — loop skeleton round 4, the close: the long walks by a finger, the census, what was taken back (`loop-skeleton`)
+
+**16-season walks wholly by touch.**
+- Prepared, a reload in season 9 (n-touch16, build 23cd37bf): every touch control reachable but one name (38 px,
+  since 42), the live event played (4 casts), the reload identical (season, pools, board, spells, land), the raid at
+  the gate, Heat ray by a tap (6 raiders to 2), 6 raiders dead for 4 soldiers, the end, run 2. Its two failed checks:
+  the dead off the screen in the live event (5 of 5), the 38 px name.
+- Nothing agreed (n-touch16-none): passed whole; the raid sacks the town; run 2. Decisions fall to 0 to 2 late
+  (LS-42).
+- **The next build hung in the attack** (p-touch16, with the close-up on the district being built): "the camera
+  down road 0" and then nothing for 120 s. The story camera queues shots; a petition's held frame is let go by a
+  `release` that does nothing if the frame has not begun; the look sent at the season's end put the frame behind it;
+  the frame then held for good and the attack's look never ran. A fix (let go only after arrival) hung a petition
+  instead (q-touch16) and was taken out. **Taken back:** the close-up while a season passes, and the event's early
+  release. The race itself is still there for a player who answers a petition within about a second of opening it
+  after a camera move (LS-54). The tree as committed was not walked again after taking these out.
+
+**The census** (`scripts/census.mjs --params loop=1 --pick ysolt --states idle,season`, one browser alone, after the
+a32abb96 merge): idle in the town with its names up: **1.08 indirect dispatches a frame at 1.08 ticks a frame (1.0 a
+tick), all of it `liquid-water`**; 1.39 KB read back a frame; nothing made in a frame; est. phone 1.54 ms. The
+season's time-lapse: 4.60 a frame (living 3.48, liquid-water 1.08); est. phone 2.18 ms; **its gate fails: 2.6 MB
+read back in the time-lapse (PI-5)**. Round 3's "0.21 at idle" does not hold: the same census at this round's first
+commit (2b6dc231, the leader screen) reads 1.01 a frame, all liquid-water, and the megabyte read is there before
+this round's merges too (48e9d626: 2.59 MB). So neither came with this round; the loop adds no dispatch. Who owns
+them: the liquid's indirect a tick (the flood kernel, mutators round 2) and the time-lapse's read (not looked for).
+
+**The fight is not to be the judge** (the owner's invariant, 2026-11-16): written in LOOP_SKELETON.md "Conformance:
+who decides the fight". Nothing built.

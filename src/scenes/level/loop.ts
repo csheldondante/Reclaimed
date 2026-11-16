@@ -388,9 +388,7 @@ class Game implements RunGame {
     void this.cam.look(this.at3(at), { zoom: FIGHT_ZOOM * 0.7, ease: 1.2, place: [0.5, 0.36] }).then(() => {
       if (this.event?.up === up) this.cam.follow(mid);
     });
-    // (the petition's held frame let go, straight on to that look: a shot waits behind a held frame, and the event
-    // was played with the camera still on the petition — the dead off the screen's top, 5 of 5; LS-47)
-    void this.cam.release(0.2);
+
     console.log(`[loop] the dead rise: ${up.size} at ${at.map((v) => Math.round(v))}`);
     return new Promise((res) => {
       this.event = { up, t: 0, unwatch, end: res };
@@ -695,7 +693,8 @@ class Game implements RunGame {
     // expiry, the arc moves on; then the ledger's own season plays as the time-lapse)
     this.notes = r.endSeason();
     this.season.setLedger(r.ledger);
-    this.building = this.season.ledger.projects.length > 0;
+    // (the close-up on the district being built is off: BACKLOG LS-54)
+    this.building = false;
     this.set('season');
     void this.season.next().then(async () => {
       while (this.season.playing) await new Promise((res) => setTimeout(res, 100));
