@@ -8,8 +8,12 @@
 //   plWatch   (a thread a record, and the ring's and arterials' words) a sum of hashes of what a solve reads: each
 //             record's words and its progress's class (not begun, rising, built), the counts, the ring, the arterials
 //   plWake    (one thread) a solve when the sum moved, the uniform's version moved, or the clock passed the last solve's
-//             wake clock (a gate's wall crossing "up"); the eight kernels below are indirect dispatches, 0 workgroups
-//             when nothing woke one (UC-8: they ran every frame before)
+//             wake clock (a gate's wall crossing "up"); it writes the slot's solve word (TP_ON_AT), and the eight
+//             kernels below — DIRECT dispatches — read it first and do nothing when it is 0 (UC-8: a solve only on a
+//             change. Phone-idle round 2: they were indirect dispatches of 0 workgroups, ~0.1 ms each on the phone
+//             whatever their size; a wake is the GPU's alone — plWet's water, the records' hashes — so nothing is read
+//             back to sleep them on the CPU. The word lives in the table because the lot kernels' 8 storage buffers
+//             are the stage's limit)
 //   plClear   the slot's district index, purposes, fill counters and picks cleared
 //   plCount   (a thread a record) each lot counted into its (district, kind) bin; the district's purpose; stage A picks'
 //             keys (stores, market, keep, muster: an atomic min)
@@ -56,8 +60,6 @@ struct TownP {
 /** the towns' clock (s): x — the gates' rise; written by the CPU as it moves (4 bytes, every towns' slot) */
 struct Clock { t: vec4<f32> };
 @group(0) @binding(13) var<uniform> CLK: Clock;
-/** the solve's indirect dispatches: a town slot's 12 words — clear, the lot kernels, one workgroup */
-@group(0) @binding(14) var<storage, read_write> PARGS: array<u32>;
 /** (UC-13: plHead and plWet only) the world's columns and their water where a spawn point and its approach stand — the
  *  chunk table is layers.wgsl's binding 1 */
 @group(0) @binding(15) var<storage, read> layers: array<vec4<u32>>;
@@ -79,9 +81,6 @@ const PC_WET_LAST: u32 = 8u;
 /** frames at least between solves the spawn candidates' standing alone wakes: the water flickers across DEEP every tick
  *  where a river laps a bank (as sidemap.wgsl WATER_GAP) */
 const WET_GAP: u32 = 120u;
-const PA_STRIDE: u32 = 12u;
-/** the clear kernel's workgroups (its 3072 threads) */
-const CLEAR_GROUPS: u32 = 48u;
 /** the ring's words a solve reads (WB_S + NB) and the arterials' (4 + NART × AW) */
 const WALL_WORDS: u32 = 584u;
 const ART_WORDS: u32 = 2212u;
@@ -105,6 +104,8 @@ const TP_LIST_AT: u32 = 37832u;
 const TP_PICK_AT: u32 = 41928u;
 /** the clock a solve must run again by (f32: a gate's wall up, or down), WAKE_NEVER none */
 const TP_WAKE_AT: u32 = 41980u;
+/** 1 while this frame's solve runs (plWake writes it every frame; the solve's kernels' gate), else 0 */
+const TP_ON_AT: u32 = 41981u;
 
 const PL_MUSTER: u32 = 0u;
 const PL_STORES: u32 = 1u;
@@ -156,6 +157,8 @@ const SPOT_STEP: f32 = 1.2;
 const CROWD_R: f32 = 3.0;
 
 fn base() -> u32 { return TP.dims.z * TP_TOWN_WORDS; }
+/** the solve's gate: no solve was woken this frame */
+fn solveOff() -> bool { return atomicLoad(&PT[TP.dims.z * TP_TOWN_WORDS + TP_ON_AT]) == 0u; }
 fn ptGet(i: u32) -> u32 { return atomicLoad(&PT[base() + i]); }
 fn ptSet(i: u32, v: u32) { atomicStore(&PT[base() + i], v); }
 
@@ -418,6 +421,7 @@ fn indexed(r: u32) -> bool { return recValid(r) && lotKind(r) != K_NONE && lotDi
 
 @compute @workgroup_size(64)
 fn plClear(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (solveOff()) { return; }
   let i = g.x;
   if (i < TP_DISTRICTS * TP_KINDS * 2u) { ptSet(TP_DIX_AT + i, 0u); }
   if (i < TP_DISTRICTS) { ptSet(TP_DPUR_AT + i, NONE); }
@@ -427,6 +431,7 @@ fn plClear(@builtin(global_invocation_id) g: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn plCount(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (solveOff()) { return; }
   let r = recOf(g.x);
   if (!indexed(r)) { return; }
   atomicAdd(&PT[base() + TP_DIX_AT + 2u * bin(r) + 1u], 1u);
@@ -440,6 +445,8 @@ fn plCount(@builtin(global_invocation_id) g: vec3<u32>) {
 var<workgroup> scanS: array<u32, 256>;
 @compute @workgroup_size(256)
 fn plScan(@builtin(local_invocation_index) li: u32) {
+  // (the gate: its writes only — a barrier must be reached by every thread alike, so no thread returns early)
+  let on = !solveOff();
   var sum = 0u;
   for (var k = 0u; k < TP_KINDS; k++) { sum += ptGet(TP_DIX_AT + 2u * (li * TP_KINDS + k) + 1u); }
   scanS[li] = sum;
@@ -456,14 +463,17 @@ fn plScan(@builtin(local_invocation_index) li: u32) {
     let b = li * TP_KINDS + k;
     let n = ptGet(TP_DIX_AT + 2u * b + 1u);
     let f = min(first, TP_LOT_ROOM);
-    ptSet(TP_DIX_AT + 2u * b, f);
-    ptSet(TP_DIX_AT + 2u * b + 1u, min(n, TP_LOT_ROOM - f));
+    if (on) {
+      ptSet(TP_DIX_AT + 2u * b, f);
+      ptSet(TP_DIX_AT + 2u * b + 1u, min(n, TP_LOT_ROOM - f));
+    }
     first += n;
   }
 }
 
 @compute @workgroup_size(64)
 fn plScatter(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (solveOff()) { return; }
   let r = recOf(g.x);
   if (!indexed(r)) { return; }
   let b = bin(r);
@@ -477,6 +487,7 @@ fn plScatter(@builtin(global_invocation_id) g: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn plRank(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (solveOff()) { return; }
   let r = recOf(g.x);
   if (!indexed(r)) { return; }
   let b = bin(r);
@@ -502,6 +513,7 @@ fn plRank(@builtin(global_invocation_id) g: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn plSeedB(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (solveOff()) { return; }
   let r = recOf(g.x);
   if (!indexed(r)) { return; }
   pickSeedMin(PL_BARRACKS, r);
@@ -509,6 +521,7 @@ fn plSeedB(@builtin(global_invocation_id) g: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn plWriteB(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (solveOff()) { return; }
   let r = recOf(g.x);
   if (!indexed(r)) { return; }
   pickWrite(PL_BARRACKS, r);
@@ -516,6 +529,7 @@ fn plWriteB(@builtin(global_invocation_id) g: vec3<u32>) {
 
 @compute @workgroup_size(1)
 fn plHead() {
+  if (solveOff()) { return; }
   // (the header: townplace.wgsl's words)
   ptSet(0u, 1u);
   ptSet(1u, TP.misc.x);
@@ -654,8 +668,6 @@ fn plWatch(@builtin(global_invocation_id) g: vec3<u32>) {
   if (h != 0u) { atomicAdd(&PCTL[TP.dims.z * PC_STRIDE + PC_ACC], h); }
 }
 
-fn pargs(at: u32, n: u32) { PARGS[at] = n; PARGS[at + 1u] = 1u; PARGS[at + 2u] = 1u; }
-
 @compute @workgroup_size(1)
 fn plWake() {
   let o = TP.dims.z * PC_STRIDE;
@@ -672,14 +684,10 @@ fn plWake() {
     atomicStore(&PCTL[o + PC_WET_LAST], frame);
     why |= 8u;
   }
-  let a = TP.dims.z * PA_STRIDE;
   if (why != 0u) {
     atomicAdd(&PCTL[o + PC_SOLVES], 1u);
     atomicStore(&PCTL[o + PC_WHY], why);
     atomicStore(&PCTL[o + PC_WET_SEEN], wet);
   }
-  let on = why != 0u;
-  pargs(a, select(0u, CLEAR_GROUPS, on));
-  pargs(a + 3u, select(0u, TP.misc.z, on));
-  pargs(a + 6u, select(0u, 1u, on));
+  ptSet(TP_ON_AT, select(0u, 1u, why != 0u));
 }

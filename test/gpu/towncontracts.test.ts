@@ -12,7 +12,7 @@ import { tinyWorld, type TinyWorld } from './world';
 import { tinyMap } from '../support/tinymap';
 import { MAT } from '../../src/world/materials';
 import { cellPos } from '../../src/world/lattice';
-import { TownContracts, SC, PC, type ContractTown } from '../../src/towncontracts/contracts';
+import { TownContracts, SC, PC, TOWN_WORDS, sideSettled, placesSettled, type ContractTown } from '../../src/towncontracts/contracts';
 import { PLACE, PLACE_STATUS } from '../../src/api/contracts/townplaces';
 import townplaceWgsl from '../../src/shaders/townplace.wgsl?raw';
 import { makeBindGroup, makeCompute } from '../../src/gpu/pipeline';
@@ -479,6 +479,89 @@ fn main() {
       expect(g.takeErrors()).toEqual([]);
     } finally {
       q.writeBuffer = write0;
+      tc.dispose();
+      s.w.destroy();
+    }
+  }, 120_000);
+
+  // (phone-idle round 2) every dispatch is direct — an indirect one costs the phone ~0.1 ms at 0 workgroups — and the
+  // solves' kernels are gated in the kernel: settled, nothing is solved and the state words say so; a wake solves once
+  // and the words settle again
+  it('idle: no indirect dispatch, the solves gated off (no solve counted); a wake solves once and settles again', async () => {
+    const s = await townSetup(true);
+    const { tc, t, place, n } = s;
+    // (the pass encoder's dispatches, counted where they are encoded)
+    const e0 = g.device.createCommandEncoder();
+    const p0 = e0.beginComputePass();
+    const proto = Object.getPrototypeOf(p0) as GPUComputePassEncoder;
+    p0.end();
+    e0.finish();
+    const direct0 = proto.dispatchWorkgroups;
+    const indirect0 = proto.dispatchWorkgroupsIndirect;
+    expect(typeof direct0).toBe('function');
+    expect(typeof indirect0).toBe('function');
+    const count = { direct: 0, indirect: 0 };
+    proto.dispatchWorkgroups = function (this: GPUComputePassEncoder, ...a: Parameters<typeof direct0>) {
+      count.direct++;
+      return direct0.apply(this, a);
+    };
+    proto.dispatchWorkgroupsIndirect = function (this: GPUComputePassEncoder, ...a: Parameters<typeof indirect0>) {
+      count.indirect++;
+      return indirect0.apply(this, a);
+    };
+    const words = async () => {
+      const ctl = await tc.debugRead('ctl');
+      const slot = await tc.debugRead('places', TOWN_WORDS * 4);
+      const pctl = await tc.debugRead('pctl');
+      return { ctl, slot, side: ctl[SC.solves], places: pctl[PC.solves] };
+    };
+    try {
+      // (the first solves: the places' in the first frame, the side map's within a few)
+      await frames(tc, t, 0, 12);
+      let w = await words();
+      expect(w.places, 'the places solved once').toBe(1);
+      expect(w.side, 'the side map solved once').toBe(1);
+      expect(sideSettled(w.ctl), 'the side map settled').toBe(true);
+      expect(placesSettled(w.slot), 'the places settled').toBe(true);
+      // (idle: 30 frames — one town: the side map's 32 dispatches and the places' 11, none indirect; nothing solved)
+      count.direct = count.indirect = 0;
+      await frames(tc, t, (f) => 0.1 * f, 30);
+      // (frames' own debug read dispatches nothing: 'pctl' is a copy)
+      expect(count.indirect, 'no indirect dispatch at idle').toBe(0);
+      expect(count.direct / 30, 'direct dispatches a frame').toBe(43);
+      w = await words();
+      expect(w.side, 'idle: the side map not solved').toBe(1);
+      expect(w.places, 'idle: the places not solved').toBe(1);
+      expect(sideSettled(w.ctl)).toBe(true);
+      expect(placesSettled(w.slot)).toBe(true);
+      // (the gated threads a frame at idle: the window's 12288 columns × 20 dispatches; the places' clear, 5 lot kernels
+      // of the lots made + the landmarks' room, the scan and the head)
+      const lotGroups = Math.ceil((n + 64) / 64);
+      expect(tc.idleThreads()).toEqual({ side: 20 * 12288, places: 3072 + 5 * 64 * lotGroups + 257 });
+      // (wakes: a slide — the places; the gate rule — the side map; one solve each, in the frame the CPU's word arrives,
+      // and settled after)
+      count.direct = count.indirect = 0;
+      place.dx += 6;
+      tc.gates = 'open';
+      await frames(tc, t, 3, 1);
+      w = await words();
+      expect(w.places, 'a slide: the places solved in its frame').toBe(2);
+      expect(w.ctl[SC.state] !== 0 || w.side === 2, 'the gate rule: the side map solving in its frame').toBe(true);
+      await frames(tc, t, 3, 11);
+      w = await words();
+      expect(w.side, 'the gate rule: one solve').toBe(2);
+      expect(w.places).toBe(2);
+      expect(sideSettled(w.ctl), 'the side map settled again').toBe(true);
+      expect(placesSettled(w.slot), 'the places settled again').toBe(true);
+      expect(count.indirect, 'no indirect dispatch while solving').toBe(0);
+      expect(count.direct / 12).toBe(43);
+      await frames(tc, t, 3, 20);
+      w = await words();
+      expect([w.side, w.places], 'asleep again: nothing solved').toEqual([2, 2]);
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      proto.dispatchWorkgroups = direct0;
+      proto.dispatchWorkgroupsIndirect = indirect0;
       tc.dispose();
       s.w.destroy();
     }
