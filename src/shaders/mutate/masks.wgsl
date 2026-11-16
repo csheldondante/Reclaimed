@@ -48,6 +48,8 @@ const MUT_MINE: u32 = 13u;
 const MAT_RUBBLE_U: u32 = 4u;
 // (the 'deadrise' sign's ground mark: a burial ground broken open — mutate/list.ts GPU_GRAVES)
 const MUT_GRAVES: u32 = 14u;
+// (the sign ended: the mark taken off again — mutate/list.ts GPU_UNGRAVES)
+const MUT_UNGRAVES: u32 = 15u;
 const MAT_BONE_U: u32 = 16u;
 
 // (mutate/index.ts LOT_CONDITION)

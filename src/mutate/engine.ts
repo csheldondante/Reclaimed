@@ -5,7 +5,7 @@
 import type { Applied, Mutation, MutationRecord, MutationSpec, Mutators, PlaceState, Sign, SignSpec } from './index';
 import { MUTATORS } from './index';
 import type { MutateGpu, MutLots, Origin } from './gpu';
-import { applied, GPU_KIND, GPU_LOOT, GPU_UNLOOT, isLand, landOp, WorldList, type ListWorld } from './list';
+import { applied, GPU_KIND, GPU_LOOT, GPU_UNGRAVES, GPU_UNLOOT, isLand, landOp, WorldList, type LandMark, type ListWorld } from './list';
 import { ROW_H } from '../world/lattice';
 import type { FactWorld } from '../living/world';
 import type { TileLandWritten } from '../render/tileland';
@@ -232,8 +232,8 @@ export class MutateEngine implements Mutators {
   /** (the streamer's onWritten, after the static claims') window rectangle [lx, lx + w) × [ly, ly + h) was just written
    *  with arriving land: every land entry that reaches it written there, in list order. True: some entry did. */
   landWritten(lx: number, ly: number, w: number, h: number): boolean {
-    if (!this.worldList.all.length) return false;
-    return this.write(this.worldList.all, [lx, ly, lx + w, ly + h], []);
+    if (!this.worldList.all.length && !this.marksNow.length) return false;
+    return this.write([...this.worldList.all, ...this.marksNow], [lx, ly, lx + w, ly + h], []);
   }
 
   /**
@@ -244,10 +244,10 @@ export class MutateEngine implements Mutators {
    * tiles are made again then). True: some entry did.
    */
   tileWritten(t: TileLandWritten): boolean {
-    if (!this.worldList.all.length) return false;
+    if (!this.worldList.all.length && !this.marksNow.length) return false;
     const wr = this.host.wrap;
     const jobs: { m: Mutation; o: Origin; box: [number, number, number, number] }[] = [];
-    for (const m of this.worldList.all) {
+    for (const m of [...this.worldList.all, ...this.marksNow]) {
       if (landOp(m) === null) continue;
       // (the tile's origin as the entry sees it: moved by whole worlds to the copy nearest the tile)
       const kx = wr ? Math.round((m.cell[0] - (t.x0 + t.side / 2)) / wr.cols) : 0;
@@ -261,6 +261,23 @@ export class MutateEngine implements Mutators {
     }
     this.host.gpu.tileWrite(t, jobs);
     return jobs.length > 0;
+  }
+
+  /** the signs' ground marks written now (list.ts LandMark: derived from the signs on, written wherever entries are) */
+  marksNow: LandMark[] = [];
+
+  /** The signs changed: a mark whose sign ended is taken off the land again (the inverse op, and its far tiles made
+   *  again), a new sign's mark written. Nothing while no sign with a mark is on or was. */
+  private syncMarks(): void {
+    // FIXED-CITY (BACKLOG MU-26): a sign that names no place marks the home settlement
+    const now = this.worldList.marks(this.host.home?.()?.id ?? null);
+    const put = (m: LandMark) => {
+      this.write([m], undefined, []);
+      this.far(m);
+    };
+    for (const m of this.marksNow) if (!now.some((q) => q.id === m.id)) put({ ...m, op: GPU_UNGRAVES });
+    for (const m of now) if (!this.marksNow.some((q) => q.id === m.id)) put(m);
+    this.marksNow = now;
   }
 
   /** an entry's land changed (it was applied, or its flood's level was taken): what draws its area from a copy of the
@@ -311,6 +328,7 @@ export class MutateEngine implements Mutators {
     for (const m of this.worldList.all) this.far(m);
     this.replay();
     this.rewrite();
+    this.syncMarks();
     this.host.signsChanged?.(this.worldList.signs());
   }
 
@@ -318,6 +336,7 @@ export class MutateEngine implements Mutators {
     const s = this.worldList.sign(spec);
     // FIXED-CITY (BACKLOG MU-26): a sign with no place is recorded on the home settlement
     if (this.world) recordSign(this.world, spec.kind, spec.place ?? this.host.home?.()?.id ?? null, s !== null, spec.cause);
+    this.syncMarks();
     this.host.signsChanged?.(this.worldList.signs());
     this.host.changed?.(this.worldList.record());
     return s;
@@ -332,6 +351,7 @@ export class MutateEngine implements Mutators {
     if (!this.worldList.season(n)) return;
     const now = this.worldList.signs();
     if (this.world) for (const s of before) if (!now.some((q) => q.kind === s.kind && q.place === s.place)) recordSign(this.world, s.kind, s.place, false);
+    this.syncMarks();
     this.host.signsChanged?.(this.worldList.signs());
     this.host.changed?.(this.worldList.record());
   }

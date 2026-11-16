@@ -138,7 +138,7 @@ after a pan across it. Limits: BACKLOG MU-51..54.
 | abandoned | — | standing lots abandoned (faded, sagging) |
 | captured | — | standing lots occupied (the roof in the holder's colour) |
 | vassal | — | none; owner and tribute in `places()`; `restless` true |
-| founded | with `purpose: 'mining'`: a pit cut in benches and a spoil heap just past the town's edge, under broken rock (`MUT_MINE`) | its own town: the entry is a site of the field towns (`FieldTowns.addSite`), built by the town generator when the window nears it — streets, houses, people (MU-6, MU-50) |
+| founded | with `purpose: 'mining'`: a pit 0.7 of its radius deep cut in three benches with a dark rock floor, and a spoil heap 0.7 of its radius tall, just past the town's edge (`MUT_MINE`) | its own town: the entry is a site of the field towns (`FieldTowns.addSite`), built by the town generator when the window nears it — streets, houses, people (MU-6, MU-50) |
 
 A column whose top is a building's External span (a cell or more thick) is left alone; a road's paving is ground.
 
@@ -156,7 +156,7 @@ world units or more).
 |---|---|---|
 | ashfall | the weather's rain draw makes pale flakes and dark cinders over the view (`rain.wgsl`), and what faces up is dusted grey (`render/light.wgsl ashDust`); one Globals number | one draw of up to 2 200 instances; no CPU work |
 | darkness | the sun and sky scaled and browned in the Globals (`WorldCore.skyDim`) | none |
-| deadrise | a burial ground broken open at the town's edge (black ground, pale stones, 30 cells across: `MUT_GRAVES`, one dispatch) and 4–12 green-bodied `shambler` units on it; the ground stays when the sign ends (MU-43: partial) | the units' own |
+| deadrise | a burial ground broken open at the place's edge (black ground, pale stones, 30 cells across: `MUT_GRAVES`) — a ground mark DERIVED from the sign (`WorldList.marks`: placed by the place's record, written with the list on resident land, arriving land and far tiles; taken off by `MUT_UNGRAVES` when the sign ends, bare ground left) — and 10–24 `shambler` units on it while its town is live (MU-43: partial, it does not read at the default zoom) | the units' own |
 | crime | 6–22% of standing buildings `looted` (condition 10: dark walls, a dark red roof); `unrest` on the sign | none (one dispatch on, one off) |
 
 ## The map
@@ -280,3 +280,24 @@ in. Contract additions: `purpose: 'mining'` on a founded spec and entry. Outside
 catchwet, wetfield), the wilt contract (common, wilt, ecology), the flora draw (floraput, floralook, meshinst,
 vegprep, florafield, the viewer), `FieldTowns.addSite`, the looted colour (streets.wgsl), the shambler's colours
 (agent-units), the material table (`char`), the transfer list, the level's frame and scene fields.
+
+## Hand-over (round 6, 2026-11-15 night)
+
+Done: land mutators past the window's edge (MU-49: the list written into each far tile's land before its bake, tiles
+made again in place when an entry is applied; plan and cost in "Past the window's edge" above) and a cut river dry
+past the edge (MU-47); the dried disc's soft rim; the river settle no longer whole-window on every slide (part of
+MU-48). Partial: the dead rise (MU-43: its ground is now a mark derived from the sign, written everywhere the list is
+and taken off when the sign ends; the close still reads; the default zoom still does not say the dead walk — no ring
+or bigger marker was built); the mine (MU-50: a deeper benched pit with a dark floor and a taller heap; small at the
+default zoom; no road join). Found, not fixed: MU-46 (the red is the town generator's cut-off outline, drawn when a
+town is made with its flood already in the land); MU-54 (the pale rectangle in the lake is a generator stamp, there
+with no mutator). New rows: MU-51 (far tiles fill in over a second, not at once), MU-52, MU-53, MU-55.
+
+Contract additions (none changes a call): none in `src/mutate/index.ts`. New hooks other code may use:
+`MutateHost.farChanged`, `MutateEngine.tileWritten` / `marksNow`, `WorldList.marks`, `Streamer.onTileLand`,
+`TileLandSource.written`, `TileCache.restale`, `RIVER_WET_PAD`, `CatchmentWet.field / fieldMargin / stormy`. Outside
+`src/mutate`: render (tilecache, tileland, tilelandgpu, tileworld), scenes/streamer, scenes/level (frame, mutators),
+sim (world-gpu, systems), shaders/riverheld, weather (catchwet, wetfield), gpu/transfers, the stills script (`--only
+edge --edgekind <kind>`; the dead's close still framed on the mark).
+
+Stills: scratchpad `mutators/r6/` — edge-burned, edge-withered, edge-dried, dried2, dead, founded, reload.

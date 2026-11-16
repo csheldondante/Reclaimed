@@ -23522,3 +23522,40 @@ still lowers all water in the disc, the lake's included (a rule that tells a lak
 in the land kernel: MU-48 stays open for that).
 
 **Tests.** gpu mutators 48 pass; unit as before (MU-14's known fail); typecheck clean.
+
+## 2026-11-15 (night) — mutators round 6, items 3-5: the dead's ground as a sign's mark, the red roofs after a reload, the mine's pit (`mutators`, MU-43, MU-46, MU-50)
+
+**The dead rise (MU-43) — still partial.** The burial ground was a one-off write by the level (a town's centre, its
+box): it stayed when the sign ended, was not written on arriving land unless its town was made again, and no far tile
+had it. Now it is derived from the sign, which the record already keeps: `WorldList.marks` places it by the place's
+own record (a direction by the place's id, 0.55 of its radius out), and the engine writes it wherever it writes the
+list — resident land when the sign goes on, arriving land, far tiles — and takes it off with the inverse op
+(`land.wgsl MUT_UNGRAVES`: the stone, then the black skin) when the sign ends or its season passes. gpu test: on,
+written again by arriving land the same, off — the columns as before the sign. 24 walkers at strength 1 (was 12).
+**Looked at:** r6/dead/deadrise-close.png, the close still round 5 missed, framed on the mark: black broken ground,
+rows of white stones, about twenty small figures among them — a graveyard with people in it. r6/dead/deadrise.png at
+the default zoom: a small dark stony patch by the bridge (this town's direction puts it between the houses and the
+river); the figures are 4 px and read reddish-dark. **It does not say "the dead walk" at the default zoom.** Not
+built: the bigger marker or pale-green ring. The units' look table can give a halo, but it is one 3/16-cell voxel (half
+a pixel here); a readable ring is a marker pass in the units' draw, which was not started. r6/dead/deadrise-off.png:
+the mark gone, bare brown earth where it was.
+
+**Red roofs after a reload (MU-46) — the cause, by the code.** Not a roof colour and not a lot condition: the red is
+`streets.wgsl C_CUTOFF`, the town generator's warning outline round a building its reach does not join to its road
+(M4b). The reach is solved when a town is made and after a slide. In the reload proof the home town is flooded: before
+the reload the town stood, then the flood came — no new solve; after it the flood is in the land when the town is
+made, so its buildings are found cut off and outlined. The same world draws two ways by the order of events. The
+lot conditions are the same either side (the reload proof passes again: r6/reload). **Not fixed.** Tried: the towns'
+reach asked for again when a mutator changes ground or water (as after a slide). r6/reload/before-home.png still has
+no outline and after-home.png has one on every building, the dry ones up the hill too — so either a later solve does
+not redraw (the outline is put in when the mesh is made) or the solve's start (the town's seed cell) stands in the
+flood and joins nothing. The hook was taken out again: unverified, and a reach solve an apply. Left for the town
+generator's owner with the question whether a flooded town should wear the warning red at all (it would be read as
+the crime sign). Not run: the reload with no mutator applied (the code says nothing would differ).
+
+**The mine (MU-50).** The pit is 0.7 of its radius deep (was 0.42), three benches of a third each, the lowest floored
+with dark rock (basalt; the benches keep rubble); the heap 0.7 of its radius tall (was 0.55). r6/founded/founded.png
+at the default zoom: left of the village a dark ringed hollow and beside it a low grey mound — the hollow now reads
+as a hole with a dark bottom, the mound as a mound; both are small (the pit about 37 px across), and a tree still
+stands in the pit (the plants' draw kept it). The close still is framed on the village and cuts the pit off: no close
+look at the benches. Not done: the approach road joined to an atlas road (the road system was not read).
