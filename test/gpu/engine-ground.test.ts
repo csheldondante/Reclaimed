@@ -340,7 +340,9 @@ test('stage 4 is encoded only while something deforms; a hard landing still defo
   // (it closes again through a drain: a read issued after the last tick `expand` ran)
   await frames(R, 16);
   log(`one block awake at rest: ${gated.direct} direct + ${gated.indirect} indirect dispatches with stage 4 gated, ${whole.direct} + ${whole.indirect} without the gate`);
-  expect(whole.indirect - gated.indirect).toBe(80);
+  // (80 on physics10-join; 85 since physics10-mech's meet kernels joined stage 4 on physics10-one: `meetLink` and a
+  // `meet` a lattice substep, encoded while a row is awake)
+  expect(whole.indirect - gated.indirect).toBe(80 + 1 + Math.round(T.latticeSubsteps));
   expect(whole.direct - gated.direct).toBe(1);
   expect(R.e.counts.indirect).toBe(gated.indirect);
   // a block thrown down hard: flagged to deform by the rigid kernels, frozen, then expanded once a read has shown it

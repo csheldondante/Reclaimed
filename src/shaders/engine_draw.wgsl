@@ -68,6 +68,8 @@ fn drawlistAsleep(@builtin(global_invocation_id) id: vec3<u32>) {
   if (r >= EU.e.x || atomicLoad(&pool[P_DL_MAKING]) == 0u) { return; }
   let fl = rowFlags(r);
   if ((fl & ROW_ALIVE) == 0u || (fl & ROW_ASLEEP) == 0u) { return; }
+  // (a held body's own row: its parts are drawn, each by its baked mesh)
+  if ((fl & ROW_DEFORM) != 0u) { return; }
   let model = bitcast<u32>(info[4u * r + 3u].x);
   if (model == 0u) { return; }
   info[4u * r].w = bitcast<f32>(fl | ROW_LISTED_ASLEEP);

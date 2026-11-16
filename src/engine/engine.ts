@@ -26,6 +26,8 @@ import settleWgsl from '../shaders/engine_settle.wgsl?raw';
 import pairsWgsl from '../shaders/engine_pairs.wgsl?raw';
 import groundWgsl from '../shaders/engine_ground.wgsl?raw';
 import { PAIR_ASKED, PAIR_HW_PAIRS } from './sdf/coarse';
+import meetWgsl from '../shaders/engine_meet.wgsl?raw';
+import meetLinkWgsl from '../shaders/engine_meetlink.wgsl?raw';
 import { SdfCollide, type CollideOptions } from './sdf/collide';
 import { hexSdfSpec } from './sdf/hexmodel';
 import { SdfModels } from './sdf/models';
@@ -85,7 +87,7 @@ const GR_AT = 96;
 /** engine.wgsl EngU */
 const EU_B = 288;
 /** engine.wgsl RWW: a row's work words in the awake list's buffer; engine_pairs.wgsl TRW, PRW (vec4s) */
-const RWW = 20;
+const RWW = 40;
 const TRW = 48;
 const PRW = 16;
 /** ticks between the reads of a chain (the read an event starts is at once) */
@@ -95,8 +97,12 @@ const READ_B = 64 * 4 + 32 + SdfCollide.ASKED_BYTES + (4 + 16 * 4) * 4;
 /** engine_deform.wgsl: voxels a page, the pool's header, a slot's record and sums, where the live pages start, a model's header, a mesh vertex (vec4s) */
 export const PAGE = 512;
 export const POOL_HDR = 64;
-export const SLOT_W = 24;
-const SUMS_W = 8;
+export const SLOT_W = 28;
+const SUMS_W = 16;
+/** engine_meetlink.wgsl CW: a candidate row's record (u32s); the most lattice substeps a tick (the panel's)
+ */
+const CAND_W = 32;
+const MEET_SUBS = 8;
 export const DARGS_AT = 16;
 export const MODEL_HDR = 4;
 export const MESH_V = 3;
@@ -104,7 +110,7 @@ export const MESH_V = 3;
 export const DL_AT = 16;
 export const OCC_AT = 4;
 /** the pool's header (engine_deform.wgsl P_*) */
-export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21, hashOver: 22, grab: 23, expandWait: 40 } as const;
+export const POOL = { pageTop: 0, pageNext: 1, pageWant: 2, slotTop: 3, slotNext: 4, slotWant: 5, rowTop: 6, rowNext: 7, rowWant: 8, sampNext: 9, sampWant: 10, heapNext: 11, heapWant: 12, failExpand: 13, failSettle: 14, deforming: 15, expands: 16, parts: 17, crumbs: 18, dlWant: 19, dlDirty: 20, settling: 21, hashOver: 22, grab: 23, held: 24, expandWait: 40 } as const;
 /** engine.wgsl LIST_AT, EV_AT, EV_WORDS */
 const LIST_AT = 8;
 const EV_AT = 4;
@@ -476,10 +482,13 @@ export class Engine implements SimSystem {
     kernel('rowFinish', pw, { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 12: 'read', 15: 'rw', 40: 'rw', 47: 'read' });
     kernel('expand', [deformWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 18: 'rw', 19: 'rw', 22: 'rw', 27: 'read' });
     kernel('arm', [deformWgsl], { 18: 'rw', 37: 'rw' });
-    kernel('pagelist', [deformWgsl], { 18: 'rw', 19: 'rw', 20: 'rw' });
+    kernel('pagelist', [deformWgsl], { 18: 'rw', 19: 'rw', 20: 'rw', 27: 'read' });
     kernel('fill', [deformWgsl], { 19: 'rw', 21: 'read', 22: 'rw', 23: 'rw', 24: 'rw', 25: 'rw', 26: 'rw', 35: 'uniform' });
     kernel('release', [deformWgsl], { 18: 'rw', 19: 'rw' });
-    kernel('slots', [deformWgsl], { 4: 'rw', 6: 'rw', 18: 'rw', 19: 'rw' });
+    kernel('slots', [deformWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 18: 'rw', 19: 'rw', 56: 'rw' });
+    // deforming voxels meet rigid rows (engine_meetlink.wgsl, engine_meet.wgsl): the candidates a pair, the contact a voxel
+    kernel('meetLink', [meetLinkWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 43: 'read', 56: 'rw', 59: 'read', 60: 'read' });
+    kernel('meet', [deformWgsl, meetWgsl], { 10: 'rw', 19: 'rw', 21: 'read', 23: 'rw', 24: 'rw', 25: 'rw', 56: 'rw', 58: 'read', 35: 'uniform', 57: 'uniform' });
     const P4: BindSpec = { 19: 'rw', 21: 'read', 23: 'rw', 24: 'rw', 35: 'uniform' };
     const lat = [deformWgsl, latticeWgsl];
     kernel('predict', lat, P4);
@@ -523,6 +532,7 @@ export class Engine implements SimSystem {
     this.et = world.buf('engine numbers a material', ET_F * 4, U);
     this.fu = world.buf('engine draw uniform', 16, U);
     this.ou = world.buf('engine uniform (occupancy)', EU_B, U);
+    for (let s = 0; s < MEET_SUBS; s++) this.mu.push(world.buf('engine uniform (meet substep)', 16, U));
     this.statBuf = world.buf('engine chained read', READ_B, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
     this.rargs = world.buf('engine row dispatch', 32, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.targs = world.buf('engine terrain dispatch', TARGS_B, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
@@ -731,17 +741,34 @@ export class Engine implements SimSystem {
     return [c.coarse.pairBuf, c.fine.hits, c.fine.contacts, c.fine.slotKeys, c.missing];
   }
 
+  /** the candidate rows of the deforming bodies (engine_meetlink.wgsl): a head a slot, a record a pair of the list — made again when either room grows (nothing kept: it is written every tick) */
+  private cand: GPUBuffer | null = null;
+  private candBuf(): GPUBuffer {
+    const size = (this.d.slots + this.pairRoom * CAND_W) * 4;
+    if (!this.cand || this.cand.size !== size) {
+      if (this.cand) this.olds.push(this.cand);
+      this.cand = this.world.buf('engine meet candidates', size, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+    }
+    return this.cand;
+  }
+  private mu: GPUBuffer[] = [];
+  private muFor = 0;
+  private storeVersion = -1;
+
   private groups(): Record<string, GPUBindGroup> {
     const pb = this.pairBuffers();
-    if (this.g && pb.some((b, i) => b !== this.boundTo[i])) this.g = null;
+    if (this.g && (pb.some((b, i) => b !== this.boundTo[i]) || this.storeVersion !== this.store.version)) this.g = null;
     if (this.g) return this.g;
     this.boundTo = pb;
+    this.storeVersion = this.store.version;
     const w = this.world;
     const res: Record<number, GPUBuffer | GPUTextureView> = {
       0: w.globals, 1: w.chunks, 2: w.materials, 3: this.eu[1], 16: this.cu[0].ec, 17: this.et,
       4: this.pose, 5: this.vel, 6: this.info, 7: this.samples, 8: this.contacts, 10: this.list, 11: w.layers, 12: w.surface, 13: w.driftView, 14: w.deposit, 15: this.events,
       18: this.pool, 19: this.dmeta, 20: this.dargs, 21: this.dargs, 22: this.heap, 23: this.px, 24: this.ps, 25: this.pw, 26: this.pb, 27: this.list, 28: this.events, 29: w.layers, 30: w.particles, 31: w.particleCounters, 32: this.dl, 33: this.dout, 34: this.dl, 35: this.pm, 36: this.fu, 37: this.kargs, 38: this.vh,
       40: this.trow, 41: this.prow, 42: this.pimp, 43: pb[0], 44: pb[1], 45: pb[2], 46: pb[3], 47: pb[4], 48: this.pimpOld ?? this.dummy, 50: this.rargs, 51: this.gtop, 52: this.targs, 49: (this.pimpOld && this.collide.fine.slotRemap) || this.dummy,
+      // (the meet kernels': 56 to 60 since the merge into physics10-one — 51 and 52 are the ground tops' and the terrain lists')
+      56: this.candBuf(), 57: this.mu[0], 58: this.store.data, 59: this.sdfModel, 60: this.store.models,
     };
     const make = (name: string, over: Record<number, GPUBuffer> = {}) => {
       const { k, spec } = this.k[name];
@@ -758,6 +785,7 @@ export class Engine implements SimSystem {
       g[`tfine${s}`] = make('tfine', { 3: this.eu[s] });
     }
     g.pairPre0 = make('pairPre', { 3: this.eu[0] });
+    this.mu.forEach((m, s) => (g[`meet${s}`] = make('meet', { 57: m })));
     this.g = g;
     return g;
   }
@@ -950,6 +978,20 @@ export class Engine implements SimSystem {
     this.device.queue.submit([enc.finish()]);
   }
 
+  /**
+   * Whether the tick encodes the kernels by which deforming voxels meet rigid rows (five dispatches: the candidates,
+   * then one a lattice substep). They have work only while a body deforms or stands as particles, and a body can only
+   * come to deform while a row is awake: so they are encoded while the host knows of either (the last read showed rows
+   * awake, bodies deforming or settling) or cannot know yet (a read is owed or under way), and never with everything
+   * asleep. (The blind spot is the event-chained read's own, BACKLOG PJ2: a wake the GPU made alone.)
+   */
+  private meets(): boolean {
+    if (TUNE.engine.pairs < 0.5 || TUNE.engine.deform < 0.5) return false;
+    return this.meetAlways || this.owed > 0 || this.statBusy || this.awakeSeen > 0 || this.seen[POOL.deforming] > this.seen[POOL.held] || this.seen[POOL.settling] > 0;
+  }
+  /** (tests) the meet kernels encoded every tick whatever the host knows */
+  meetAlways = false;
+
   /** the step's parameters as a kernel reads them (engine.wgsl EngU) */
   private uniform(first: boolean, cmds: number, substep = 0): ArrayBuffer {
     const T = TUNE.engine;
@@ -965,7 +1007,7 @@ export class Engine implements SimSystem {
     const fast = this.fastPath ?? T.fastPath >= 0.5;
     const d = this.d;
     const L = Engine.layout(d);
-    u.set([d.rows, cmds, Math.max(1, Math.round(T.passes)), (fast ? 1 : 0) | (first ? 2 : 0) | (T.deform >= 0.5 ? 4 : 0) | (this.settles ? 8 : 0) | (T.pairExpand >= 0.5 ? 16 : 0) | (this.hold ? 256 : 0)], 20);
+    u.set([d.rows, cmds, Math.max(1, Math.round(T.passes)), (fast ? 1 : 0) | (first ? 2 : 0) | (T.deform >= 0.5 ? 4 : 0) | (this.settles ? 8 : 0) | (T.pairExpand >= 0.5 ? 16 : 0) | (this.holdParts && T.pairs >= 0.5 ? 32 : 0) | (this.hold ? 256 : 0)], 20);
     u.set([d.pages, d.slots, d.table, this.ticks], 24);
     u.set([L.pageStack, L.slotStack, L.rowStack, L.sums], 28);
     u.set([L.pageInfo, L.slotRec, L.tables, this.dlRoom], 32);
@@ -1081,7 +1123,10 @@ export class Engine implements SimSystem {
   /** a header just read: stage 4 stays encoded for 30 ticks if it shows a body deforming, settling, waiting to, or one made or ended since the header before */
   private s4Evidence(): boolean {
     const now = [POOL.expandWait, POOL.expands, POOL.parts, POOL.failExpand, POOL.failSettle].map((k) => this.seen[k]);
-    const busy = this.seen[POOL.deforming] > 0 || this.seen[POOL.settling] > 0 || now.some((v, i) => v !== (this.s4Words[i] ?? 0));
+    // (held bodies — holdParts — are not deforming; their standing voxels still answer rows through `meet`, which is
+    // stage 4's, so the stage stays open while a row is awake beside them)
+    const held = this.seen[POOL.held];
+    const busy = this.seen[POOL.deforming] > held || (held > 0 && this.awakeSeen > 0) || this.seen[POOL.settling] > 0 || now.some((v, i) => v !== (this.s4Words[i] ?? 0));
     if (busy) this.s4Until = this.ticks + 30;
     this.s4Words = now;
     return busy;
@@ -1159,7 +1204,8 @@ export class Engine implements SimSystem {
         this.awakeSeen = w[POOL_HDR + 3];
         const grows = this.growPairs && this.collide.consider(w.subarray(POOL_HDR + 8), rooms);
         const asked = [POOL.pageWant, POOL.slotWant, POOL.rowWant, POOL.sampWant, POOL.heapWant, POOL.dlWant, POOL.expands, POOL.parts].some((k) => was[k] !== this.seen[k]);
-        this.active = this.awakeSeen > 0 || this.seen[POOL.deforming] > 0 || this.seen[POOL.settling] > 0 || grows || asked;
+        // (a held body's row is asleep and its slot is not activity: it waits for nothing)
+        this.active = this.awakeSeen > 0 || this.seen[POOL.deforming] > this.seen[POOL.held] || this.seen[POOL.settling] > 0 || grows || asked;
         this.readAt = issuedAt;
         this.pairsSeen = Math.max(w[POOL_HDR + 8 + PAIR_ASKED], w[POOL_HDR + 8 + PAIR_HW_PAIRS]);
         this.s4Busy = this.s4Evidence();
@@ -1389,6 +1435,13 @@ export class Engine implements SimSystem {
     if (!skip.integrate) clear(this.targs);
     clear(this.events, 0, EV_AT * 4);
     clear(this.dargs, 0, 32);
+    // (deforming voxels meet rigid rows: each lattice substep's share of the tick, written when the substeps change)
+    const meet = this.meets();
+    const lsub = Math.min(MEET_SUBS, Math.max(1, Math.round(TUNE.engine.latticeSubsteps)));
+    if (meet && this.muFor !== lsub) {
+      this.muFor = lsub;
+      for (let s = 0; s < lsub; s++) up(this.mu[s], new Float32Array([s / lsub, (s + 1) / lsub, 0, 0]));
+    }
     // (`timeKernels`: a pass a kernel, each with its own timestamps — what a tick is made of; else one pass)
     const cur = { pass: enc.beginComputePass({ label: 'engine', timestampWrites: this.prof.timestamps('engine') }) };
     const run = (name: string, group = name) => {
@@ -1492,7 +1545,13 @@ export class Engine implements SimSystem {
       indirect(this.kargs, 0);
       run('fill');
       indirect(this.dargs, 0);
-      this.deform(run, indirect);
+      if (meet) {
+        // (a thread a pair of the tick's list: zero workgroups with no pair)
+        const pd = this.collide.fine.pairDispatch;
+        run('meetLink');
+        indirect(pd.buffer, pd.offset);
+      }
+      this.deform(run, indirect, meet);
       run('release');
       indirect(this.kargs, 0);
       run('slots', `slots${ring}`);
@@ -1541,7 +1600,7 @@ export class Engine implements SimSystem {
   }
 
   /** the lattice's substeps over the live pages, then the settling bodies' labels and parts (later letters of step 2) */
-  private deform(run: (name: string, group?: string) => void, indirect: (buf: GPUBuffer, offset: number) => void): void {
+  private deform(run: (name: string, group?: string) => void, indirect: (buf: GPUBuffer, offset: number) => void, meet: boolean): void {
     const T = TUNE.engine;
     const each = (name: string) => {
       run(name);
@@ -1557,6 +1616,10 @@ export class Engine implements SimSystem {
       }
       if (this.voxelHash) each('vhash');
       each('collide');
+      if (meet && s < MEET_SUBS) {
+        run('meet', `meet${s}`);
+        indirect(this.dargs, 0);
+      }
       each('finalize');
       each('relax');
       each('deaths');
@@ -1610,6 +1673,14 @@ export class Engine implements SimSystem {
   /** letter D of build step 2: a still deforming body's parts become rigid rows again (engine_settle.wgsl). (tests)
    *  off: a still body's particles stand where they are, stepped by nothing, drawn as its mesh, till it is let go */
   settles = true;
+  /**
+   * A settled body's particles are kept standing as the collision shape of the parts it settled into (engine_deform.wgsl
+   * S_HELD), and those parts stay asleep where they are: pinned, never to be moved, woken or broken again (a hack:
+   * BACKLOG PM4). Off, the default since the merge into physics10-one (the owner's ruling: the hack is not left on): a
+   * part is a free row with no field — it meets the ground and passes through other bodies (BACKLOG PJ6, PM4) until a
+   * field is baked for it. A test says which mode it runs in.
+   */
+  holdParts = false;
   /** (tests, the perf overlay) a compute pass a kernel, timed apart as `engine:<kernel>`; off: one pass, `engine` */
   timeKernels = false;
   /** (tests) off: deforming voxels are not put in the voxel hash, so they meet the ground only */
@@ -1619,7 +1690,7 @@ export class Engine implements SimSystem {
 
   /** (tests only: nothing in play reads a row) the buffers, to read back */
   get debugBuffers() {
-    return { targs: this.targs, model: this.sdfModel, prow: this.prow, pimp: this.pimp, pose: this.pose, vel: this.vel, info: this.info, samples: this.samples, list: this.list, events: this.events, pool: this.pool, dmeta: this.dmeta, dargs: this.dargs, kargs: this.kargs, dl: this.dl, dout: this.dout, heap: this.heap, px: this.px, ps: this.ps, pb: this.pb };
+    return { targs: this.targs, cand: this.candBuf(), model: this.sdfModel, prow: this.prow, pimp: this.pimp, pose: this.pose, vel: this.vel, info: this.info, samples: this.samples, list: this.list, events: this.events, pool: this.pool, dmeta: this.dmeta, dargs: this.dargs, kargs: this.kargs, dl: this.dl, dout: this.dout, heap: this.heap, px: this.px, ps: this.ps, pb: this.pb };
   }
 
   /** (tests, the lab's read-out) the rooms now, and where the records start */

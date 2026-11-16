@@ -518,7 +518,10 @@ fn stageB(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index)
   if (bodyModel[a] == 0xffffffffu || bodyModel[b] == 0xffffffffu) {
     return;
   }
-  if (!boxesMeet(boxOf(a), boxOf(b))) {
+  // (a row whose rotation is the zero quaternion has no rigid shape — the engine's deforming bodies, whose centre and
+  // radius bound their voxels: its sphere is its whole test)
+  let shapeless = dot(pose[4u * a + 3u], pose[4u * a + 3u]) < 0.5 || dot(pose[4u * b + 3u], pose[4u * b + 3u]) < 0.5;
+  if (!shapeless && !boxesMeet(boxOf(a), boxOf(b))) {
     return;
   }
   let k = atomicAdd(&pairBuf[0], 1u);

@@ -24,8 +24,28 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
   if (r >= EU.e.x) { return; }
   var fl = rowFlags(r);
   if ((fl & ROW_ALIVE) == 0u) { return; }
-  // (its particles carry it: engine_deform.wgsl moves them)
-  if ((fl & ROW_DEFORM) != 0u) { return; }
+  // (its particles carry it: engine_deform.wgsl moves them. Listed, so the coarse pass pairs it by its voxels' bounds
+  // and its voxels meet the rigid rows of those pairs — engine_meet.wgsl; the rigid kernels pass it by)
+  if ((fl & ROW_DEFORM) != 0u) {
+    // (its particles stand in for its settled parts — engine_deform.wgsl S_HELD: asleep, so it is in the coarse pass's
+    // sleeper table and costs nothing more; the table is told once)
+    if ((fl & ROW_ASLEEP) != 0u) {
+      if ((fl & ROW_NEWSLEEP) != 0u) {
+        info[4u * r].w = bitcast<f32>(fl & ~ROW_NEWSLEEP);
+        atomicAdd(&list[LIST_EPOCH], 1u);
+      }
+      return;
+    }
+    let kd = atomicAdd(&list[3], 1u);
+    atomicAdd(&list[4], 1u);
+    atomicAdd(&rargs[4], 1u);
+    if (kd % 64u == 0u) {
+      atomicAdd(&list[0], 1u);
+      atomicAdd(&rargs[0], 1u);
+    }
+    atomicStore(&list[LIST_AT + kd], r);
+    return;
+  }
   var wake = false;
   var epoch = false;
   var dv = vec3<f32>(0.0);
@@ -44,7 +64,7 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
       wake = true;
     } else if (k == 4u) {
       shiftBy += EC[c].a.xyz;
-    } else if (k == 5u && EC[c].b.y == r && (EU.e.w & 4u) != 0u && bitcast<u32>(info[4u * r + 3u].x) != 0u) {
+    } else if (k == 5u && EC[c].b.y == r && (EU.e.w & 4u) != 0u && bitcast<u32>(info[4u * r + 3u].x) != 0u && (fl & ROW_HELD) == 0u) {
       wake = true;
       fl = fl | ROW_EXPAND;
       info[4u * r].w = bitcast<f32>(fl);
@@ -92,7 +112,22 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
       wake = true;
       dv += vec3<f32>(f32(bitcast<i32>(atomicExchange(&list[b + RW_DV], 0u))), f32(bitcast<i32>(atomicExchange(&list[b + RW_DV + 1u], 0u))), f32(bitcast<i32>(atomicExchange(&list[b + RW_DV + 2u], 0u)))) / FPV;
       dw += vec3<f32>(f32(bitcast<i32>(atomicExchange(&list[b + RW_DW], 0u))), f32(bitcast<i32>(atomicExchange(&list[b + RW_DW + 1u], 0u))), f32(bitcast<i32>(atomicExchange(&list[b + RW_DW + 2u], 0u)))) / FPV;
-      let e = bitcast<f32>(atomicExchange(&list[b + RW_ENERGY], 0u));
+      var e = bitcast<f32>(atomicExchange(&list[b + RW_ENERGY], 0u));
+      // (and what deforming voxels gave it while it was stamped — engine_meet.wgsl: never more than brings it to the
+      // fastest of them; the hit weighed as a pair's is, half the closing by the speed it was given)
+      var mdv = vec3<f32>(f32(bitcast<i32>(atomicExchange(&list[b + RW_MDV], 0u))), f32(bitcast<i32>(atomicExchange(&list[b + RW_MDV + 1u], 0u))), f32(bitcast<i32>(atomicExchange(&list[b + RW_MDV + 2u], 0u)))) / FPM;
+      var mdw = vec3<f32>(f32(bitcast<i32>(atomicExchange(&list[b + RW_MDW], 0u))), f32(bitcast<i32>(atomicExchange(&list[b + RW_MDW + 1u], 0u))), f32(bitcast<i32>(atomicExchange(&list[b + RW_MDW + 2u], 0u)))) / FPM;
+      let mc = bitcast<f32>(atomicExchange(&list[b + RW_MC], 0u));
+      atomicStore(&list[b + RW_MN], 0u);
+      atomicStore(&list[b + RW_MP], 0u);
+      let ml = length(mdv);
+      if (ml > mc) {
+        mdv *= mc / max(ml, 1e-9);
+        mdw *= mc / max(ml, 1e-9);
+      }
+      dv += mdv;
+      dw += mdw;
+      if ((EU.e.w & 16u) != 0u) { e = max(e, 0.5 * min(ml, mc) * mc * info[4u * r + 1u].w); }
       let mi = bitcast<vec4<u32>>(info[4u * r + 2u]);
       let thr = expandAt(mi.z & 0xffu);
       if ((EU.e.w & 4u) != 0u && thr > 0.0 && e > thr * info[4u * r + 1u].w && bitcast<u32>(info[4u * r + 3u].x) != 0u) {
@@ -106,6 +141,8 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
     pose[4u * r] = vec4<f32>(pose[4u * r].xyz + shiftBy, pose[4u * r].w);
     pose[4u * r + 2u] = vec4<f32>(x + shiftBy, pose[4u * r + 2u].w);
   }
+  // (a held part stays where its collider is)
+  if ((fl & ROW_HELD) != 0u) { wake = false; }
   if (wake) {
     if ((fl & ROW_ASLEEP) != 0u) {
       fl = fl & ~ROW_ASLEEP;

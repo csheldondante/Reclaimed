@@ -24313,3 +24313,121 @@ pass under the direct dispatches and the row skip.
 `npx vitest run --project unit`: the roadlab writing lint only (PO4).
 
 **Hacks and limits.** None added; the join's own stand (PP11a, PP11b, PP5a).
+## 2026-11-15 — deforming voxels meet rigid rows (PJ5, `physics10-mech`)
+
+**Why.** The owner: "terrain breaking needs rigidbodies to be complete. Pieces can hit and break other pieces." Until
+now a body that had become lattice particles passed through every rigid row, so a hard hit between bodies had to stay
+rigid.
+
+**What.** A deforming body's row is in the awake list again, with the centre and radius of its voxels' bounds (`stats`
+sums them, `slots` writes them) and the zero quaternion for a rotation: the coarse pass pairs it by its sphere, the
+fine pass gives it no samples. `meetLink` (a thread a pair, once a tick, after the rigid substeps) writes a candidate
+record for each pair of one deforming body and one rigid row and links it into the body's list; `meet` (a thread a
+voxel, each lattice substep, after `collide`) reads each candidate's distance field in the row's frame — depth and
+normal in one read — and applies the lattice's rule: never pushed out, stopped from closing by its share, crumbling
+past the material's overlap or its crumble speed. The reaction goes into the row's work words as fixed-point atomics
+and is taken at the next tick's start. No voxel is hashed against a rigid row; nothing is read back.
+
+**Found by the tests, and what was done.**
+- The reaction lands a tick late (the lattice steps after the rigid substeps), so a block resting on voxels sank a
+  tick of gravity every tick (0.4 cells/s) and voxels never push out. What the voxels gave a row is now offered again
+  before it moves (the hold: along the mean normal of the voxels touching it, up to what it took last tick plus what
+  their reaction added). A block then rests 0.06 cells into standing voxels and stays.
+- A row's velocity does not change while the lattice steps, so each contact takes the row's inverse mass times its
+  contacts (last tick's count, or this tick's so far): the sum cannot throw it back; and it takes no more than brings
+  it to the fastest closing.
+- `partRow` had no binding left to read a model's radius: a slot's record keeps the row's radius from `expand`.
+
+**Measured** (desktop proxy, Dawn in Node). Five dispatches a tick more while the host knows of a row awake or a body
+deforming (`meetLink`, and `meet` a lattice substep), none with everything asleep (145 against 150 counted). A stone
+block of 64 voxels at 10 cells/s into a sleeping steel block: the steel never has more momentum than the stone has
+lost, the kinetic energy never passes what came in, the stone's front is at most 0.06 cells past the steel's face.
+Dropped on it: no voxel centre lower than 0.486 over the steel's top.
+
+**Tests.** `npx vitest run --project gpu engine-meet` (5).
+
+## 2026-11-15 — pieces break pieces: hard hits between bodies, held parts, the chain (`physics10-mech`)
+
+**Why.** The owner: "Pieces can hit and break other pieces." With voxels meeting rigid rows (the entry above) a hard
+hit between bodies can hand a body to the deforming stage, and what it breaks into has to go on colliding.
+
+**What.**
+- `bodies break bodies` (`pairExpand`) is on by default: a pair's largest sample energy over a body's mass past its
+  material's threshold expands that body; an overlap past slop + erode depth expands the softer one, whose voxels then
+  crumble against the other (mass to the deposit). A rigid row hit by deforming voxels is weighed the same way (half
+  the closing by the speed it was given); a sleeper, which stands as a wall to the voxels for the two ticks before it
+  wakes, by what they would have given it.
+- **Settled parts collide by a stand-in: their body's own particles, kept standing** (`S_HELD`). The parts are rows
+  with baked meshes as before, but asleep and pinned (`ROW_HELD`); the body's row stays, asleep, in the coarse pass's
+  sleeper table by its voxels' bounds; rigid rows meet the standing voxels through `meet` (as walls), deforming voxels
+  through the hash. No distance field is baked in play. A body that settles whole and unbent goes back to its shared
+  model and field, nothing held.
+- The chain as a test and as a lab button (the pile station, "the chain (A onto B onto C)").
+
+**Departure, with its trade-off.** The brief offered two stand-ins (the parent's field clipped to the part, or the
+part's box as a box field) and a field baked over several ticks to replace them. Built instead: the body's particles
+as the stand-in, and no bake. For: the shape is exact, nothing moves at settle, the fine pass needs no second kind of
+collider, and it is the mechanism of the entry above. Against, until the spread bake is built (BACKLOG PM4): a
+settled part cannot be moved, woken or broken again; its body's pages are never given back (132 B a voxel stays);
+what lands on it gets no friction. `Engine.holdParts = false` gives the old behaviour (free parts with no field).
+
+**Found by the tests.**
+- A hit at 20 cells/s between two 64-voxel stone blocks measures 60 against a threshold of 60: whether it breaks
+  turned on the tick it was first seen. The chain's block is thrown down at 15 cells/s to be clear of it.
+- A struck body at rest rarely cracks: the lattice's crack rule reads a voxel's own speed into a contact, which is
+  nothing for the body that was hit. A thin slab loses its overhang; a slab two cells thick held (BACKLOG PM5).
+- A deforming steel block wandered over flat ground at 0.8 cells/s for 15 s and more without settling (not checked
+  against the base branch; the chain uses stone: BACKLOG PM5).
+- A deforming body on another sinks through it at about a cell a second while both deform (the lattice's own voxel
+  contacts: they never push out).
+- Voxels standing still kept their last move and speed, which the voxel contacts read as motion: both are zero now.
+
+**Measured** (desktop proxy, Dawn in Node, Intel Xe). A tick with two bodies deforming in the chain: engine GPU 1.77 ms (region 0.39, collide 0.33, rowSolve 0.33, pairSolve 0.20, meet 0.07, the rest a clock step each). The chain, two runs: B deforms at tick 68, C at
+tick 280 and 284, everything asleep at tick 552 and 680; 4 and 6 expansions, 32 and 33 voxels to the ground; mass
+conserved (rows 627 to 629 of 714.8, the rest in those voxels of three materials). The two runs differ: one had a
+timed tick in it, and the hit on B sits near a threshold. Dispatches: 5 a tick more while a row is awake or a body deforms,
+none at rest; no bake in play.
+
+**Tests.** `npx vitest run --project gpu engine-chain` (4): steel into stone, a soft touch, the held parts, the chain.
+
+## 2026-11-15 — one branch: `physics10-mech` merged into `physics10-one`; held parts off by default (PO6, PO7)
+
+**What.** `physics10-mech` 3c9a8b82 (deforming voxels meet rigid rows: `meetLink`, `meet`; hard hits between bodies
+expand them, `pairExpand` on; the chain test and button; settled parts held as standing particles). It was cut from
+the join before the phone work, the terrain rows, the look and the grab, so it met all four:
+- **Numbers that collided, moved on this side:** `ROW_HELD` 128 to 256 (128 is the grab's `ROW_GRAB`); the pool
+  header's `P_HELD` 23 to 24 (23 is `P_GRAB`); the meet kernels' bindings 51 to 55 moved to 56 to 60 (51 and 52 are
+  the ground tops' and the terrain lists'); the uniform's bits keep both 32 (held parts) and 256 (a bench's held scene).
+- `integrate`: the voxels' reaction is added, then the grab's spring, then gravity. `tfine` reads the substep's
+  terrain list (the join) and leaves a deforming row alone (mech).
+- The tick: the join's counted uploads, clears and dispatches kept; `meetLink` and `meet` are encoded inside stage 4
+  through the same counted `indirect`, so `Engine.counts` sees them.
+- The read: a held slot is not activity (mech) beside the join's pair budget, quiet flag and stage 4 evidence. Stage
+  4's gate counts held slots out of `deforming` and stays open while a row is awake beside held voxels (their
+  reaction is `meet`'s, which is stage 4's).
+- Docs: both sides' text kept; BACKLOG has the mechanics' rows under their own heading with a note that PM1 to PM3
+  are used twice (the merge `physics10-all`'s rows in the terrain section, the mechanics' here).
+
+**Held parts off by default (the owner's ruling).** `Engine.holdParts = false`: a settled part is a free row again. It
+has no distance field, so it meets the ground and passes through other bodies (PJ6, PM4). Tests say their mode:
+`engine-chain`'s "slab broken over a ridge" and "the chain" set `holdParts = true` (they are tests of that mode; with
+free parts what breaks off B passes through C and C does not break); `engine-chain`'s steel into stone and
+`engine-pile`'s fast stone block run in the default and say so; `engine-settle`'s already set it off.
+
+**Tests changed by the merge, and why.** `engine-meet` "nothing awake": on mech it counted five dispatches fewer than
+with the kernels forced on; here the join's quiet tick encodes nothing at all with everything asleep, so the test now
+holds that (0 dispatches, forced or not) and that a tick awake encodes `meetLink` once and `meet` a lattice substep.
+`engine-ground` stage 4: 85 indirect dispatches with the gate off (80 + the five meet kernels). `engine-pile` read
+the held count by its old index.
+
+**Tests.** `npm run typecheck` clean. `npx vitest run --project gpu test/gpu/engine test/gpu/sdf --reporter=verbose`,
+alone on the GPU: 158 passed, 1 failed, 1 expected fail, 15 skipped (24 files), 1,083 s — the one was `engine-ground`'s
+count above; fixed, the file 8 passed. Before that run `engine-meet` and `engine-chain` had 3 failures of the modes
+and constants above; fixed, 9 passed. `npx vitest run --project unit`: 639 passed, 1 failed (the roadlab writing
+lint, PO4).
+
+**Counts.** An awake tick with nothing deforming is unchanged by this merge (the meet kernels are inside stage 4,
+which the gate leaves out); with stage 4 open it is five indirect dispatches more than on the join.
+
+**Hacks and limits.** PO7 (with held parts off, parts pass through bodies: the open gap); PM2, PM5 (the mechanics' own);
+the lab's chain button runs in the default mode, where C does not break.
