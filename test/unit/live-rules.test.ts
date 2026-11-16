@@ -6,7 +6,7 @@ import { briarWorld } from '../../src/living/briar';
 import { checkLive, idleState, liveDerive, liveEnded, liveRead, liveTier, type LiveDef, type LiveState } from '../../src/living/live';
 import { RuleBook, type RuleDef, type Thing } from '../../src/living/rules';
 import { grant, newLedger, nextSeason, pools, total, type SeasonLedger } from '../../src/season/ledger';
-import { FIRE_TEMPLATE, LIVE_TEMPLATES as DEALT, MARKET_FIRE, PARADE, RAID } from '../../src/season/realm-events';
+import { DEAD_RISE, FIRE_TEMPLATE, LIVE_TEMPLATES as DEALT, MARKET_FIRE, PARADE, RAID } from '../../src/season/realm-events';
 import { Realm, type Leader } from '../../src/season/realm';
 import { RULES, SITE_TAGS } from '../../src/season/realm-rules';
 import { siteId, SITES } from '../../src/season/realm-templates';
@@ -85,6 +85,12 @@ describe('a live event as data (living/live.ts)', () => {
     expect(checkLive('x', { ...d, ends: [{ when: 'none', tag: 'ghost' }] }, ['raid', 'soldiers']).join(' ')).toContain('tag ghost');
     expect(checkLive('x', { ...d, tiers: [{ tier: 'success', when: [['left', '=', 0]] }] }, ['raid', 'soldiers']).join(' ')).toContain('last tier');
     expect(checkLive('x', d, []).join(' ')).toContain('not one of the run');
+    // (round 7: watchers lining a road need a group coming in by one; a finale needs figures to follow; people walk
+    // off to a place, not a site)
+    const dead = def(DEAD_RISE);
+    expect(checkLive('x', { ...dead, groups: [...dead.groups, { id: 'l', kind: 'worker', side: 'folk', n: 2, tags: ['liner'], from: 'lining' }] }).join(' ')).toContain('none comes in by a road');
+    expect(checkLive('x', { ...dead, camera: { zoom: 10 }, finale: { seconds: 3, burst: 'petals', count: 5 } }).join(' ')).toContain('follows none');
+    expect(checkLive('x', { ...dead, after: { go: { site: 'graves' }, seconds: 5 } }).join(' ')).toContain('not a site');
   });
 });
 

@@ -650,6 +650,17 @@ fn formAnchor(@builtin(global_invocation_id) id: vec3<u32>) {
   let m = formMode(g);
   if (m == 0u || m == 5u) { return; }
   let o = grpO(g);
+  // (loop round 7, BACKLOG LS-72) the window slid since the anchor and its trail were written: they move with the land,
+  // as the units did (Agents.shift). Before, a field march's anchor stayed at its old window point — after a slide its
+  // ranks' slots lay round a place 64 cells or more away, the column never formed and never arrived
+  let slid = vec3<f32>(bitcast<f32>(atomicLoad(&mail[MAIL_SLID])), bitcast<f32>(atomicLoad(&mail[MAIL_SLID + 1u])), bitcast<f32>(atomicLoad(&mail[MAIL_SLID + 2u])));
+  let ex0 = o + EXTRA_AT + EX_SLID;
+  let moved = slid - mailV3(ex0);
+  if (any(moved != vec3<f32>(0.0))) {
+    mailSetV3(o + FORM_AT + 5u, mailV3(o + FORM_AT + 5u) - moved);
+    for (var i = 0u; i < TRAIL_N; i++) { mailSetV3(o + TRAIL_AT + i * 4u, mailV3(o + TRAIL_AT + i * 4u) - moved); }
+    mailSetV3(ex0, slid);
+  }
   let dt = AP.step.x;
   let lag = formF(g, 10u);
   let was = vec2<f32>(formF(g, 5u), formF(g, 6u));

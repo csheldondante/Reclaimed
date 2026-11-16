@@ -180,11 +180,20 @@ const PARADE_EVENT: LiveDef = {
   how: 'The marchers come in by the road and go to the market. You can leave: it goes on without you.',
   line: '{marching} marchers are on their way. {out} people are out to watch.',
   groups: [
-    { id: 'marchers', kind: 'worker', side: 'folk', n: 9, tags: ['marcher', 'crowd'], from: { place: 'spawn', road: 'entry' }, order: { kind: 'go', at: { place: 'market', else: { place: 'stores' } }, formation: 'column', discipline: 0.8 } },
-    { id: 'watchers', kind: 'worker', side: 'folk', n: 'watchers', tags: ['watcher', 'crowd'], from: { place: 'stores' }, order: { kind: 'go', at: { place: 'market', else: { place: 'stores' } }, formation: 'loose' } },
+    // (round 7: loose, kept together, not a column — a field march in a column split for its first half minute on the
+    // road and its slots trailed 100 cells behind once the window slid; LS-72, BACKLOG LS-76)
+    { id: 'marchers', kind: 'worker', side: 'folk', n: 9, tags: ['marcher', 'crowd'], from: { place: 'spawn', road: 'entry' }, order: { kind: 'go', at: { place: 'market', else: { place: 'stores' } }, formation: 'loose' } },
+    { id: 'watchers', kind: 'worker', side: 'folk', n: 'watchers', tags: ['watcher', 'crowd', 'onlooker'], from: { place: 'stores' }, order: { kind: 'go', at: { place: 'market', else: { place: 'stores' } }, formation: 'loose' } },
+    // (round 7: as many again stand along the road the column comes in by — what the player sees on the way; not
+    // counted in the crowd, which the rules and the tiers read as before)
+    { id: 'lining', kind: 'worker', side: 'folk', n: 'watchers', tags: ['liner', 'onlooker'], from: 'lining' },
   ],
   fx: { burst: 'petals', over: 'marchers', every: 1.2, count: 16 },
-  camera: { follow: 'marcher', zoom: 11 },
+  // (round 7: close enough that a figure is a figure at 412 px wide, and steep enough that the houses do not hide the
+  // street; a cheer at the market, then everyone walks off)
+  camera: { follow: 'marcher', zoom: 16, pitch: 55 },
+  finale: { seconds: 6, burst: 'petals', count: 40 },
+  after: { go: { place: 'muster', else: { place: 'stores' } }, seconds: 25 },
   marchSpeed: 3,
   ends: [{ when: 'arrived', group: 'marchers' }],
   result: [
@@ -193,7 +202,11 @@ const PARADE_EVENT: LiveDef = {
     { as: 'out', count: 'alive', tag: 'watcher' },
   ],
   tiers: [{ tier: 'triumph', when: [['crowd', '>=', 14]] }, { tier: 'success', when: [['crowd', '>=', 8]] }, { tier: 'failure' }],
-  marks: [['marcher', 'The parade']],
+  // (round 7: the people out to watch named where they stand, no ring — the parade is what is ringed)
+  marks: [
+    ['marcher', 'The parade', true],
+    ['onlooker', 'Watching', false],
+  ],
 };
 
 const PARADE_T: TemplateDef = {
@@ -290,10 +303,11 @@ const REFUGEE_EVENT: LiveDef = {
   how: 'They come in by the road with what they could carry. You can leave: they walk on without you.',
   line: '{walking} refugees and {carts} carts are on the road.',
   groups: [
-    { id: 'people', kind: 'worker', side: 'folk', n: 12, tags: ['refugee'], from: { place: 'spawn', road: 'entry' }, order: { kind: 'go', at: { place: 'stores' }, formation: 'column', discipline: 0.3 } },
-    { id: 'carts', kind: 'cart', side: 'folk', n: 3, tags: ['cart'], from: { place: 'spawn', road: 'entry' }, order: { kind: 'go', at: { place: 'stores' }, formation: 'column', discipline: 0.3 } },
+    { id: 'people', kind: 'worker', side: 'folk', n: 12, tags: ['refugee'], from: { place: 'spawn', road: 'entry' }, order: { kind: 'go', at: { place: 'stores' }, formation: 'loose' } },
+    { id: 'carts', kind: 'cart', side: 'folk', n: 3, tags: ['cart'], from: { place: 'spawn', road: 'entry' }, order: { kind: 'go', at: { place: 'stores' }, formation: 'loose' } },
   ],
-  camera: { follow: 'refugee', zoom: 10 },
+  camera: { follow: 'refugee', zoom: 15, pitch: 55 },
+  after: { go: { place: 'stores' }, seconds: 30 },
   marchSpeed: 3,
   ends: [{ when: 'arrived', group: 'people' }],
   result: [
@@ -301,7 +315,11 @@ const REFUGEE_EVENT: LiveDef = {
     { as: 'carts', count: 'alive', tag: 'cart' },
   ],
   tiers: [{ tier: 'success' }],
-  marks: [['refugee', 'Refugees']],
+  // (round 7: a ring round each, the carts' too — at the road's zoom a cart is a few pixels)
+  marks: [
+    ['refugee', 'Refugees', true],
+    ['cart', '', true],
+  ],
 };
 
 const REFUGEE_T: TemplateDef = {

@@ -1441,8 +1441,10 @@ fn jfaRApply(@builtin(global_invocation_id) id: vec3<u32>) {
 // ---- (FC12 stage 2, UNIT_MINDS_U2.md §9f) line of sight, seen-only targets, ranged units --------------------------------
 // mail (binding 16; agents.ts MAIL_*), u32 words:
 //   head   [0] arrows fired (the ring's cursor), [1] frames from a target coming into sight to the first shot, summed,
-//          [2] how many, [3] shots, [4] arrows landed on their target, [5] missed (the target gone), [6] direct steps
-//   aim    12 a slot, written once a frame by aimTick (after notice) and read by the step — the target as the last frame
+//          [2] how many, [3] shots, [4] arrows landed on their target, [5] missed (the target gone), [6] direct steps,
+//          [12-14] (loop round 7) the window's whole slide since the agents were made (f32 x cells, y world units, z
+//          cells; the CPU's, Agents.shift: MAIL_SLID) — what a formation's anchor and trail are moved by (orders.wgsl)
+//   aim   12 a slot, written once a frame by aimTick (after notice) and read by the step — the target as the last frame
 //          left it, so no unit reads another's row while that one's own thread writes it: 0-2 the target's feet, 3 its
 //          code, 4-6 where it was last seen, 7 flags (AIM_SEEN now, AIM_EVER seen since taken, AIM_SHOT fired since it
 //          came into sight, AIM_INRANGE in its range and sight — the step's), 8 the tick it was last seen, 9 the tick
@@ -1453,6 +1455,7 @@ fn jfaRApply(@builtin(global_invocation_id) id: vec3<u32>) {
 //          5-7 from, 8-10 to, 11 alive
 @group(0) @binding(16) var<storage, read_write> mail: array<atomic<u32>>;
 const MAIL_HEAD: u32 = 16u;
+const MAIL_SLID: u32 = 12u;
 const MAIL_AIM: u32 = 16u;
 const AIM_W: u32 = 12u;
 const MAIL_ACC: u32 = MAIL_AIM + MAX_SLOTS * AIM_W;
@@ -1477,7 +1480,7 @@ const TRAIL_AT: u32 = FORM_AT + 16u;
 const RUNS: u32 = 8u;
 const RUN_W: u32 = 8u;
 const RUNS_AT: u32 = TRAIL_AT + TRAIL_N * 4u;
-const GROUP_W: u32 = RUNS_AT + RUNS * RUN_W + 8u + 8u;
+const GROUP_W: u32 = RUNS_AT + RUNS * RUN_W + 8u + 12u;
 /** (U2 round 7) the man order's run fields, a word each (round 6b: up to 8, one a run; FORM_AT + 15 their count) */
 const RUNF_AT: u32 = RUNS_AT + RUNS * RUN_W;
 const MAIL_GRP: u32 = MAIL_ARR + MAIL_ARROWS * ARROW_W;
@@ -1498,13 +1501,15 @@ const RANK_LEAVE: u32 = 0x10000u;
 const RANK_LOOSE: u32 = 3u;
 /** (round 6b) a group's spare words (orders.wgsl): EX_VEL the formation anchor's velocity (2 f32), EX_N its ranks
  *  last counted + 1, EX_ASK the anchor's ask for a new order, EX_SUM the members' x, y sums (i32, 1/16 cell; groupCount),
- *  EX_MID their middle last frame (x, y; groupEmit; 0 none yet) */
+ *  EX_MID their middle last frame (x, y; groupEmit; 0 none yet), (loop round 7) EX_SLID the window's slide (MAIL_SLID)
+ *  its anchor and trail were last moved to (3 f32; formAnchor) */
 const EXTRA_AT: u32 = RUNF_AT + 8u;
 const EX_VEL: u32 = 0u;
 const EX_N: u32 = 2u;
 const EX_ASK: u32 = 3u;
 const EX_SUM: u32 = 4u;
 const EX_MID: u32 = 6u;
+const EX_SLID: u32 = 8u;
 /** (round 6b) steering weights: alignment (a steering rank, × the formation's speed over its own), cohesion (a loose
  *  group, toward its middle past LOOSE_R cells) */
 const ALIGN_W: f32 = 0.5;

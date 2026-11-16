@@ -146,7 +146,9 @@ const REF_AT = 20;
 const FORM_AT = REF_AT + ORDER_ALTS * 2 * REF_W;
 const TRAIL_AT = FORM_AT + 16;
 const RUNS_AT = TRAIL_AT + 32 * 4;
-const GROUP_W = RUNS_AT + 8 * 8 + 8 + 8;
+const GROUP_W = RUNS_AT + 8 * 8 + 8 + 12;
+/** (loop round 7) units.wgsl MAIL_SLID: the head's words 12-14, the window's whole slide (f32 x, y, z) */
+const MAIL_SLID = 12;
 /** (U2 round 7) the man order's run fields, a word each (units.wgsl RUNF_AT: the record's last 8 words) */
 const RUNF_AT = RUNS_AT + 8 * 8;
 /** ranks a group (units.wgsl RANKS): the most a formation places */
@@ -564,7 +566,8 @@ export class Agents implements SimSystem {
     enc.copyBufferToBuffer(this.frontDbg, 0, tmp, 0, 256);
     enc.copyBufferToBuffer(this.mail, 0, tmp, 256, 64);
     enc.clearBuffer(this.frontDbg);
-    enc.clearBuffer(this.mail, 4, 60);
+    // (words 1-11: 12-14 are the window's slide, MAIL_SLID)
+    enc.clearBuffer(this.mail, 4, 44);
     this.device.queue.submit([enc.finish()]);
     await tmp.mapAsync(GPUMapMode.READ);
     const u = new Uint32Array(tmp.getMappedRange().slice(0));
@@ -1180,7 +1183,14 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     // their pages let go there and the fields round them relaxed into them: units.wgsl scopeIn. The kept points
     // (keepInScope) move with the land)
     for (const [k, pts] of this.kept) this.kept.set(k, pts.map(([x, y]) => [x - dx, y - dy] as [number, number]));
+    // (loop round 7, BACKLOG LS-72: a formation's anchor and trail live in `mail` in window points and did not move —
+    // a column on the march when the window slid stood formed round where its anchor had been, 100 cells off, and
+    // never arrived. The GPU moves them by the slide it has not yet applied: orders.wgsl formAnchor)
+    this.slid = [this.slid[0] + dx, this.slid[1] + dy, this.slid[2] + dz];
+    this.device.queue.writeBuffer(this.mail, MAIL_SLID * 4, new Float32Array(this.slid));
   }
+  /** the window's whole slide since these agents were made (units.wgsl MAIL_SLID) */
+  private slid: [number, number, number] = [0, 0, 0];
 
   /**
    * (U2 round 5b, §9f) Unit slot `slot` told of a target by the game (an order: a target code, notice.ts): hunted where

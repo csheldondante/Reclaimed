@@ -41,8 +41,10 @@ export interface LiveGroup {
   n: number | string;
   /** what its members count as in `result`, `ends` and the rules ('raider', 'soldier', 'dead', 'marcher', 'crowd') */
   tags: string[];
-  /** where they start. 'squads': the town's soldiers as they already stand at their posts (none are made) */
-  from: LiveWhere | 'squads';
+  /** where they start. 'squads': the town's soldiers as they already stand at their posts (none are made). 'lining':
+   *  standing along both sides of the road the event's entering group comes in by, inside the town (made when that
+   *  road is known; they stand where they are put — watchers lining a parade's way) */
+  from: LiveWhere | 'squads' | 'lining';
   /** a group at a site starts in clumps this far apart (cells) */
   spread?: number;
   order?: { kind: 'go' | 'guard' | 'attack'; at: LiveWhere; formation?: 'column' | 'line' | 'loose'; discipline?: number };
@@ -94,7 +96,13 @@ export interface LiveDef {
   fx?: { burst: string; over: string; every: number; count: number };
   /** what the camera follows (a tag's living units), else where it looks; its zoom (px a cell), and closer once a
    *  blow has landed */
-  camera: { follow?: string; at?: LiveWhere; zoom: number; fightZoom?: number };
+  camera: { follow?: string; at?: LiveWhere; zoom: number; fightZoom?: number; pitch?: number };
+  /** (round 7) once it ends by itself: the camera stays on it this many seconds more, with a burst over its followed
+   *  figures every second (a parade's cheer at the market), before it is resolved */
+  finale?: { seconds: number; burst: string; count: number };
+  /** (round 7) once it is over its people (not the town's soldiers, not foes) walk off loose to a place of the town
+   *  and are let go after `seconds` — they do not vanish where they stand */
+  after?: { go: LiveWhere; seconds: number };
   /** wall seconds it may take; absent: until it ends by itself or the season does */
   seconds?: number;
   /** spells the player may cast while at it ('known': every spell the run has) */
@@ -108,8 +116,9 @@ export interface LiveDef {
   derive?: LiveCalc[];
   /** the first row whose conditions all hold; a row with none is the default */
   tiers: { tier: Tier; when?: LiveCond[] }[];
-  /** numbers the result's marks show over the figures: [tag, the side's name] */
-  marks?: [string, string][];
+  /** numbers the result's marks show over the figures: [tag, the side's name]; a fight's sides have a ring round each
+   *  figure, people who take no part one only when the third is true (round 7: a parade's marchers, refugees' carts) */
+  marks?: [string, string, boolean?][];
 }
 
 /** an event as it stands: what the runner counts (from the units' own events), or what nobody played */
@@ -252,5 +261,10 @@ export function checkLive(id: string, def: LiveDef, run: readonly string[] = [])
   if (!def.tiers.length || def.tiers[def.tiers.length - 1].when?.length) p.push(`${id}: its last tier row must have no conditions`);
   if (def.camera.follow && !tags.has(def.camera.follow)) p.push(`${id}: the camera follows tag ${def.camera.follow}, which no group has`);
   if (def.fx && !groups.has(def.fx.over)) p.push(`${id}: its particles are over group ${def.fx.over}, which it has not`);
+  const entering = def.groups.some((g) => typeof g.from === 'object' && 'road' in g.from && g.from.road === 'entry');
+  if (def.groups.some((g) => g.from === 'lining') && !entering) p.push(`${id}: a group lines the road of an entering group, and none comes in by a road`);
+  for (const g of def.groups) if (g.from === 'lining' && g.order) p.push(`${id}: group ${g.id} lines a road and stands there: it has no order`);
+  if (def.finale && !def.camera.follow) p.push(`${id}: its finale bursts over the figures the camera follows, and it follows none`);
+  if (def.after && 'site' in def.after.go) p.push(`${id}: its people walk off to a place of the town, not a site`);
   return p;
 }

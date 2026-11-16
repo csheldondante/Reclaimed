@@ -50,12 +50,6 @@ const HAZARD_READ = 2;
 const BURN_SECONDS = 12;
 /** seconds after a hazard's stalls are put down that they are lit (the edit lands at the next tick) */
 const LIGHT_AFTER = 0.6;
-/** a group sent somewhere that has not moved (its middle, within HALT_CELLS) for this many seconds stands where it
- *  was going, as near as it could get: counted as arrived. The units' own word for it (`arrived(g)`: every member on
- *  its slot at the place) does not come for a column sent to a building's place among houses — seen: refugees stood by
- *  the stores for 4 minutes (BACKLOG LS-72) */
-const HALT_SECONDS = 8;
-const HALT_CELLS = 1.2;
 /** an event's units' factions */
 const FACTION = { town: 'f-town', foe: 'f-raiders', folk: 'f-town' } as const;
 /** the units' kinds a group may be made of by place (season/forces.ts ForceKind) */
@@ -72,14 +66,18 @@ interface RunGroup {
   dead0: number;
   dead: number;
   arrived: boolean;
-  /** where its middle was when last looked at, and the seconds it has not moved since */
-  was: V3 | null;
-  still: number;
-  look: number;
 }
 
 /** a group that comes in by a road */
-const entering = (g: LiveGroup): boolean => g.from !== 'squads' && 'place' in g.from && g.from.place === 'spawn' && g.from.road === 'entry';
+const entering = (g: LiveGroup): boolean => typeof g.from === 'object' && 'place' in g.from && g.from.place === 'spawn' && g.from.road === 'entry';
+/** (round 7) the time of day an event is played in: one begun at night is played from morning (figures at night are
+ *  dark on dark ground; seen in round 6's parade). A first guess, tunable (BACKLOG LS-66) */
+const LIVE_DAY = { from: 0.27, to: 0.7, start: 0.3 };
+/** (round 7) watchers lining a road: on its points from this share of the way out of the town's middle to that, this
+ *  far to each side of its middle line (cells) */
+const LINE_FROM = 0.18;
+const LINE_TO = 0.75;
+const LINE_SIDE = 2.4;
 
 export interface LiveRun {
   id: string;
@@ -102,6 +100,15 @@ export interface LiveRun {
   fx: number;
   over: boolean;
   ending?: boolean;
+  /** (round 7) seconds into its finale (LiveDef.finale); undefined: not begun */
+  finale?: number;
+}
+
+/** (round 7) an event's people walking off after it is over: let go when the seconds are up */
+interface Leaving {
+  forces: GroupId[];
+  units: number[];
+  left: number;
 }
 
 export interface LiveHost {
@@ -129,6 +136,8 @@ export class LiveRunner {
   private roadTaken = 0;
   /** a unit of an event → its run and group */
   private ofUnit = new Map<number, [LiveRun, RunGroup]>();
+  /** (round 7) people of events that are over, walking off */
+  private leaving: Leaving[] = [];
 
   constructor(private h: LiveHost) {}
 
@@ -195,9 +204,11 @@ export class LiveRunner {
     const forces = this.h.scene.townForces!;
     for (const g of def.groups) {
       const n = groupSize(g, numbers);
-      const rg: RunGroup = { def: g, force: null, units: new Set(), squads: g.from === 'squads', made: 0, dead0: 0, dead: 0, arrived: false, was: null, still: 0, look: 0 };
+      const rg: RunGroup = { def: g, force: null, units: new Set(), squads: g.from === 'squads', made: 0, dead0: 0, dead: 0, arrived: false };
       run.groups.set(g.id, rg);
-      if (g.from === 'squads') {
+      if (g.from === 'lining') {
+        // (made with the entering group, along its road: enter)
+      } else if (g.from === 'squads') {
         const war = this.h.season.war;
         const gs = war?.squadGroups ?? [];
         rg.made = gs.reduce((s, x) => s + (forces.report(x)?.alive ?? 0), 0);
@@ -237,6 +248,10 @@ export class LiveRunner {
       run.hazard = { points, lit: false, read: 0 };
     }
     this.runs.push(run);
+    // (round 7: played by day, and the day held while it runs — the sim's speed on the march ran a parade into night)
+    const day = this.h.scene.core.dayNight;
+    if (day.timeOfDay < LIVE_DAY.from || day.timeOfDay > LIVE_DAY.to) day.timeOfDay = LIVE_DAY.start;
+    day.held = true;
     this.goTo(run);
     // (the road that took the last column is tried first: a road whose spawn point is in water stays so)
     if (run.entry && this.roadTaken > 0) run.entry.road = this.roadTaken - 1;
@@ -255,10 +270,53 @@ export class LiveRunner {
     const o = rg.def.order;
     if (o) forces.orderGroup(rg.force, { kind: o.kind, at: to ?? this.ref(o.at, k), ...(o.formation ? { formation: o.formation } : {}), ...(o.discipline !== undefined ? { discipline: o.discipline } : {}) });
     else rg.arrived = true;
-    rg.was = null;
-    rg.still = 0;
-    // (its people's places read while the event runs: the camera follows them, and a halt is seen)
+    // (its people's places read while the event runs: the camera follows them)
     run.unwatch.push(this.h.scene.units!.observe(forces.members(rg.force)));
+  }
+
+  /**
+   * (round 7) Watchers lining road k inside the town: n people stood in pairs, one each side of the road's middle line,
+   * spread along it from LINE_FROM to LINE_TO of the way out of the town's middle (the road as the town laid it,
+   * FieldTown.roadInWindow). They stand where they are put (a unit's own guard post); the column walks between them as
+   * far as its way keeps to the road (a `go` takes the shortest walkable way: BACKLOG LS-64).
+   */
+  private line(run: LiveRun, rg: RunGroup, n: number, k: number): void {
+    const units = this.h.scene.units!;
+    const road = this.h.town()?.roadInWindow(k) ?? [];
+    if (road.length < 2 || n <= 0) return;
+    const acc = [0];
+    for (let i = 1; i < road.length; i++) acc.push(acc[i - 1] + Math.hypot(road[i][0] - road[i - 1][0], road[i][1] - road[i - 1][1]));
+    const len = acc[acc.length - 1];
+    const pairs = Math.ceil(n / 2);
+    for (let j = 0; j < n; j++) {
+      const s = len * (LINE_FROM + ((LINE_TO - LINE_FROM) * (Math.floor(j / 2) + 0.5)) / pairs);
+      let i = 1;
+      while (i < road.length - 1 && acc[i] < s) i++;
+      const [a, b] = [road[i - 1], road[i]];
+      const seg = Math.max(acc[i] - acc[i - 1], 1e-6);
+      const t = Math.min(1, Math.max(0, (s - acc[i - 1]) / seg));
+      const side = j % 2 ? -1 : 1;
+      // (across the road: its direction turned a quarter)
+      const nx = -(b[1] - a[1]) / seg;
+      const ny = (b[0] - a[0]) / seg;
+      const at: [number, number] = [a[0] + (b[0] - a[0]) * t + nx * LINE_SIDE * side, a[1] + (b[1] - a[1]) * t + ny * LINE_SIDE * side];
+      const id = units.spawn(rg.def.kind, at, FACTION[rg.def.side], { hostile: false }) as number;
+      rg.units.add(id);
+      this.ofUnit.set(id, [run, rg]);
+    }
+    rg.made = rg.units.size;
+    rg.arrived = true;
+    run.unwatch.push(units.observe([...rg.units]));
+  }
+
+  /** a group's own units taken out (a road refused after its watchers were stood along it) */
+  private unmake(rg: RunGroup): void {
+    for (const id of rg.units) {
+      this.h.scene.units?.remove(id);
+      this.ofUnit.delete(id);
+    }
+    rg.units.clear();
+    rg.made = 0;
   }
 
   /** the player taken to an event (its camera, its spells) */
@@ -390,6 +448,7 @@ export class LiveRunner {
         if (g.force !== null) forces.disband(g.force);
         this.make(run, g, groupSize(g.def, numbers), from, k, to);
       }
+      for (const g of run.groups.values()) if (g.def.from === 'lining') this.line(run, g, groupSize(g.def, numbers), k);
       console.log(`[live] ${run.template}: called down road ${k}${e.direct ? ' for the heart of the town' : ''}`);
       e.step = 'called';
       e.calm = 0;
@@ -409,6 +468,7 @@ export class LiveRunner {
         g.force = null;
         g.made = 0;
       }
+      for (const g of run.groups.values()) if (g.def.from === 'lining') this.unmake(g);
       return this.nextRoad(run);
     }
     if (e.step !== 'called' || e.calm++ <= SPAWN_TOLD_FRAMES || !ids.length) return;
@@ -489,7 +549,6 @@ export class LiveRunner {
         const there = run.fighting || Object.values(s.groups).some((g) => g.tags.includes(e.while) && g.arrived && g.alive > 0);
         run.absent[e.tag] = !there || Object.values(s.groups).some((g) => g.tags.includes(e.tag) && g.alive > 0) ? 0 : (run.absent[e.tag] ?? 0) + dt;
       }
-      this.halts(run, dt);
       this.hazard(run, dt);
       const f = run.def.camera.follow;
       const m = f ? this.mid(run, f) : null;
@@ -503,42 +562,46 @@ export class LiveRunner {
       }
       // (the sim sped up while its people are still on the road)
       if (run.entry && run.def.marchSpeed) scene.speed = !run.fighting && ![...run.groups.values()].some((g) => entering(g.def) && g.arrived) ? Math.max(this.speed0, run.def.marchSpeed) : this.speed0;
-      if (liveEnded(run.def, this.state(run))) this.end(run);
+      // (round 7: its finale — the camera stays on its people at their place, a burst over them each second — then
+      // it ends)
+      const fin = run.def.finale;
+      if (run.finale !== undefined && fin) {
+        const s0 = Math.floor(run.finale);
+        run.finale += dt;
+        const p = Math.floor(run.finale) > s0 ? this.mid(run, run.def.camera.follow!) : null;
+        if (p) this.api.fx.burst(fin.burst as never, p[0] + (Math.random() - 0.5) * 4, p[1] + (Math.random() - 0.5) * 4, p[2] + 2.5, { count: fin.count });
+        if (run.finale >= fin.seconds) this.end(run);
+      } else if (liveEnded(run.def, this.state(run))) {
+        if (fin && this.focus === run) {
+          run.finale = 0;
+          // (the watchers along the way come to where it ended)
+          const m = this.mid(run, run.def.camera.follow!);
+          const liners = [...run.groups.values()].filter((g) => g.def.from === 'lining').flatMap((g) => [...g.units]);
+          if (m && liners.length) this.h.scene.units?.order(liners, { kind: 'guard', at: [m[0], m[1]] });
+          console.log(`[live] ${run.template}: its finale, ${fin.seconds} s`);
+        } else this.end(run);
+      }
     }
+    this.walkOff(dt);
     const run = this.focus;
     if (run && !run.over && !this.h.cam.busy && (!run.entry || run.entry.step === 'in')) {
       const cam = scene.core.camera;
       if (run.def.camera.follow) {
         const want = run.fighting && run.def.camera.fightZoom ? run.def.camera.fightZoom : run.def.camera.zoom;
         cam.zoom *= Math.exp(Math.log(want / cam.zoom) * Math.min(1, dt * 1.2));
-        cam.elevation += (EVENT_PITCH - cam.elevation) * Math.min(1, dt * 1.2);
+        const pitch = run.def.camera.pitch !== undefined ? (run.def.camera.pitch * Math.PI) / 180 : EVENT_PITCH;
+        cam.elevation += (pitch - cam.elevation) * Math.min(1, dt * 1.2);
       }
     }
   }
 
-  /** a group on its way that has stopped moving stands where it was going (HALT_SECONDS) */
-  private halts(run: LiveRun, dt: number): void {
-    const forces = this.h.scene.townForces;
-    const units = this.h.scene.units;
-    for (const g of run.groups.values()) {
-      if (g.force === null || g.arrived || !g.def.order || g.def.order.kind === 'attack' || (g.look += dt) < 1) continue;
-      let n = 0;
-      const m: V3 = [0, 0, 0];
-      for (const id of forces?.members(g.force) ?? []) {
-        const p = units?.get(id)?.at;
-        if (!p) continue;
-        n++;
-        for (let k = 0; k < 3; k++) m[k] += p[k] / 1;
-      }
-      if (!n) continue;
-      const at: V3 = [m[0] / n, m[1] / n, m[2] / n];
-      g.still = g.was && Math.hypot(at[0] - g.was[0], at[1] - g.was[1]) < HALT_CELLS ? g.still + g.look : 0;
-      if (g.still === 0) g.was = at;
-      g.look = 0;
-      if (g.still >= HALT_SECONDS && run.t > HALT_SECONDS + 4) {
-        g.arrived = true;
-        console.log(`[live] ${run.template}: ${g.def.id} halted at ${at.map((v) => Math.round(v))}: counted as arrived`);
-      }
+  /** (round 7) the people of events that are over walking off: let go when their seconds are up */
+  private walkOff(dt: number): void {
+    for (const l of [...this.leaving]) {
+      if ((l.left -= dt) > 0) continue;
+      for (const g of l.forces) this.h.scene.townForces?.disband(g);
+      for (const id of l.units) this.h.scene.units?.remove(id);
+      this.leaving.splice(this.leaving.indexOf(l), 1);
     }
   }
 
@@ -581,16 +644,28 @@ export class LiveRunner {
     run.over = true;
     const forces = this.h.scene.townForces;
     const units = this.h.scene.units;
+    // (round 7, LS-64: people who take no part in a fight walk off and are let go later — they do not vanish in view)
+    const after = run.def.after;
+    const off: Leaving = { forces: [], units: [], left: after?.seconds ?? 0 };
     for (const g of run.groups.values()) {
-      if (g.force !== null) forces?.disband(g.force);
+      const walks = !!after && g.def.side === 'folk';
+      if (g.force !== null) {
+        if (walks && forces) {
+          forces.orderGroup(g.force, { kind: 'go', at: this.ref(after.go, 0), formation: 'loose' });
+          off.forces.push(g.force);
+        } else forces?.disband(g.force);
+      }
       for (const id of g.units) {
-        units?.remove(id);
+        if (walks) off.units.push(id);
+        else units?.remove(id);
         this.ofUnit.delete(id);
       }
     }
+    if (off.forces.length || off.units.length) this.leaving.push(off);
     for (const u of run.unwatch) u();
     if (run.entry && run.def.marchSpeed) this.h.scene.speed = this.speed0;
     this.runs.splice(this.runs.indexOf(run), 1);
+    if (!this.runs.length) this.h.scene.core.dayNight.held = false;
     if (this.focus === run) {
       this.unfocus();
       if (run.def.stay && at) void this.h.cam.look(at, { zoom: AFTER_ZOOM, ease: 1.5, place: [0.5, 0.36] });
@@ -607,7 +682,7 @@ export class LiveRunner {
     if (!run || !units || (run.entry && run.entry.step !== 'in')) return [];
     const cam = this.h.scene.core.camera;
     const out: Marker[] = [];
-    for (const [tag, name] of run.def.marks ?? []) {
+    for (const [tag, name, ring] of run.def.marks ?? []) {
       const side = [...run.groups.values()].find((g) => g.def.tags.includes(tag))?.def.side ?? 'folk';
       const ids = this.ids(run, tag);
       let n = 0;
@@ -620,6 +695,7 @@ export class LiveRunner {
         const [x, y] = cam.project(at[0], at[1], at[2]);
         if (x < -20 || y < -20 || x > innerWidth + 20 || y > innerHeight + 20) continue;
         if (side !== 'folk') out.push({ id: String(id), label: '', kind: side === 'foe' ? 'raider' : 'soldier', x, y });
+        else if (ring) out.push({ id: String(id), label: '', kind: 'folk', x, y });
         n++;
         sx += x;
         top = Math.min(top, y);
@@ -627,7 +703,7 @@ export class LiveRunner {
       }
       // (the foes' name above their figures, the town's below theirs: the two never lie on each other)
       // (people who take no part in a fight wear the town's colour, their name above them)
-      if (n) out.push({ id: side === 'foe' ? 'theirs' : side === 'town' ? 'ours' : 'folk', label: `${name} ${ids.length}`, kind: 'side', x: sx / n, y: side === 'town' ? low : top });
+      if (n && name) out.push({ id: side === 'foe' ? 'theirs' : side === 'town' ? 'ours' : `folk:${tag}`, label: `${name} ${ids.length}`, kind: 'side', x: sx / n, y: side === 'town' ? low : top });
     }
     return out;
   }

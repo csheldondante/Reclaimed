@@ -560,6 +560,44 @@ test('spawnAt spawn k also gate k else barracks: with gate k invalid the spawn f
   expect(g.takeErrors()).toEqual([]);
 });
 
+test('loop round 7 (LS-72): a slide moves a field march\'s anchor and trail with the land; the column still arrives', async () => {
+  const { agents, units, run } = await world();
+  const at = (x: number): [number, number, number] => [...cellPos(x, 40), 10] as [number, number, number];
+  const D = 10;
+  units.usePlaces(fakePlaces({ [PLACE.barracks]: at(30), [PLACE.muster]: at(70) }));
+  const gid = units.spawnAt!('soldier', 'f-town', { town: 0, place: PLACE.barracks }, 6);
+  const arrived: number[] = [];
+  units.arrived.push((x) => arrived.push(x));
+  await run(30);
+  units.orderGroup!(gid, { kind: 'go', at: { town: 0, place: PLACE.muster }, formation: 'column' });
+  await run(TPS * 6);
+  const L = agents.mailLayout;
+  const read = async () => {
+    const f = new Float32Array(await agents.readRaw('mail'));
+    const u = new Uint32Array(f.buffer);
+    const o = L.groups;
+    const head = u[o + L.formAt + 12];
+    const t = o + L.formAt + 16 + head * 4;
+    return { anchor: [f[o + L.formAt + 5], f[o + L.formAt + 6]], trail: [f[t], f[t + 1]], st: u[o + L.formAt + 8] };
+  };
+  const before = await read();
+  // (the window slid D cells east: everything in window points moves D west — the units by Agents.shift, the place table
+  // by its own solve, here written again)
+  agents.shift(D, 0, 0);
+  units.usePlaces(fakePlaces({ [PLACE.barracks]: at(30 - D), [PLACE.muster]: at(70 - D) }));
+  await run(1);
+  const after = await read();
+  log(`slide: before ${JSON.stringify(before)} after ${JSON.stringify(after)}`);
+  // (one step's march at most, FORM_SPEED 2 cells/s)
+  expect(before.st).toBe(1);
+  expect(Math.abs(after.anchor[0] - (before.anchor[0] - D))).toBeLessThan(0.2);
+  expect(Math.abs(after.anchor[1] - before.anchor[1])).toBeLessThan(0.2);
+  expect(Math.abs(after.trail[0] - (before.trail[0] - D))).toBeLessThan(0.9);
+  await run(TPS * 60, async () => arrived.includes(gid));
+  expect(arrived.filter((x) => x === gid).length).toBe(1);
+  expect(g.takeErrors()).toEqual([]);
+});
+
 test('U2-FORMBITS: 40 order groups in formation at once — every one forms and arrives (anchors, places and arrivals for groups past 8 and 31)', async () => {
   const { units, run } = await world();
   // (10 named places in pairs 18 cells apart (2 × 5); 4 squads spawned at each, each walking in a column to its pair's

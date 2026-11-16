@@ -32,8 +32,12 @@ export class DayNight {
   /** seconds per full day */
   dayLength = 480;
   timeOfDay = 0.32;
+  /** (loop round 7) the time of day stands still (a live event plays: the sim sped up on the march must not run the
+   *  day into night) */
+  held = false;
 
   update(dt: number): void {
+    if (this.held) return;
     this.timeOfDay = (this.timeOfDay + dt / this.dayLength) % 1;
   }
 

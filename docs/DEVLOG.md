@@ -24167,3 +24167,36 @@ first. A runner's end is told once (a host that failed to resolve it was asked a
 
 **Tests.** The four realm files pass alone (45); typecheck clean; `writing-sources` fails on `src/roadlab/control.ts`
 as before.
+
+## 2026-11-16 — loop skeleton round 7 (1): live events that read; why a column never arrived (`loop-skeleton`, LS-64, LS-72, LS-76 to LS-79)
+
+**Why.** Round 6's stills: the parade was nine tiny figures on dark ground at night outside the town, the refugees'
+still showed a road and nobody. A player could not tell what was happening without the sheet's text.
+
+**LS-72, the root cause.** A new lab, `scripts/lab/liveshot.mjs --event <template> --mail`, plays one event with
+`rungame.measureEvent` and prints each order group's GPU words every few seconds. The parade's column: anchor state
+`FS_FORM` for the whole minute, anchor point fixed at (168, 77) while the place it went to moved (6 → 70 → 134 → 198 in
+x) as the camera followed and the window slid. A field march's anchor and trail are window points in `mail`, and
+`Agents.shift` moved only the units: after the first slide every rank's slot lay round a point 64+ cells off, the lag
+never fell under 2.4, the column never formed and so never arrived. Fix: the CPU writes the window's whole slide into
+mail's head (`MAIL_SLID`, words 12-14); `formAnchor` moves each group's anchor and trail by what it has not yet applied
+(`EX_SLID`, 3 words added to a group record). GPU test: "a slide moves a field march's anchor and trail with the land;
+the column still arrives" — failed on the old code (anchor off by 10.03 after a 10-cell slide), passes now;
+`formations.test.ts` 13 of 14 (the drill-discipline test times out at 60 s with or without the change).
+
+With that fixed the column formed but split on the road (lag 19 → 153 cells over 25 s, then moved; LS-76, not
+bisected). The parade and the refugees now walk `loose` — a crowd kept together — and the units' own `arrived` came at
+38 s (parade) and 35 s (refugees). The stand-still timer is deleted.
+
+**Readable.** All data on the one runner (`LiveDef`): `camera.pitch` 55° and zoom 16/15 (a figure is a figure at 412
+px, houses hide less of the street); a gold ring round each marcher, refugee and cart (`marks` third field); the day
+held while any event runs, and one begun at night is played from morning (LS-78); `from: 'lining'` stands as many
+watchers as the town sends along the entering road, named "Watching"; `finale` keeps the camera on the end place 6 s
+with petals and brings the watchers to it; `after` sends marchers and refugees off loose to a place and lets them go
+25-30 s later instead of removing them in view.
+
+**Looked at** (412x915, `q=low`, stills in the session scratch `loop/r7/p2`, `r1`): the parade on the road at noon (nine
+gold rings over the road, "The parade 9"), on the grass outside the houses, and at the stores among the houses with
+petals (season 1: no market yet); the refugees on the road (12 rings and the carts' darker figures ringed) and among
+the houses. Not seen: the watchers along the road next to the parade — the column took the grass beside the road and
+then a way between houses (LS-77).
