@@ -12,6 +12,18 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## The owner's phone test of the physics lab (2026-11-15, `physics10-one`; one time-boxed round, the rest logged)
+| # | Item | Size | Status |
+|---|---|---|---|
+| PX1 | Telekinesis on touch. The owner: "the telekinesis controls still don't work because drag moves the screen so it needs something else like double tap then drag or to freeze the screen when it is selected". The double tap + drag exists (`controls.ts secondPress`, TKN1) but on the phone the drag still pans | S | open |
+| PX2 | Metal to deform. The owner: "there still isn't any metal to test deformation (the water tower should be metal!)". The whole tower in steel on the engine's lattice, and a lab station where a heavy block drops on a steel structure | S | open |
+| PX3 | Sandbox tools on the atlas town with the engine. The owner: "The atlas tests should also be in sandbox mode so I can drop meteors and ships using the new physics system on this." | M | open |
+| PX4 | Second breaks. The owner: "the pieces don't crumble as easily when they collide after breaking which looks way less cool". A broken piece dropped from its parent's height must crack as the parent did | M | open |
+| PX5 | The lab river. The owner: "the river runs out of water and I thought it was supposed to be steady state" | S | open |
+| PX6 | The destroy button. The owner: "I think the destroy button could also launch debris or else be a dislove and turn material into gravel or sand." Debris only with speed from a stated blast energy (lose energy, never gain it) | M | open |
+| PX7 | Waking and collapse. The owner: "things don't seem to wake up as easily and sometimes look floaty when ground under part of them is destroyed which suggests the collapse logic may not be as good". Investigate and log only this round | M | open |
+| PX8 | The case for the GPU. The owner: "So far nothing really shows the benefit of my moving to the GPU." No lab scene shows a body count or a break the CPU route could not hold; to design with the owner (a scene of thousands of bodies, a town-wide hit, the phone's frame time shown beside it) | M | open |
+
 ## The physics engine, one branch (2026-11-15, `physics10-one`: `physics10-atlas` 401ec42c + `-all` + `-join` + `-mech`)
 | PO1 | Merge `physics10-all` a4e92649 (the energy fix, the station test, steel legs, telekinesis). Reconciled: the uniform is 288 B — the grab keeps `EU.o/p/q`, the look's shock reach moves again, to `EU.r.x`; the pool header keeps both `grab` (23) and `expandWait` (40); the quiet tick never while a grab is held (the two sleeping-block grab tests failed without it: the read after the grab's tick showed the rows still asleep, and every tick after encoded nothing) | S | done (this merge) |
 | PO2 | Limit kept from PO1: while a grab is held the engine's tick is encoded every tick, also when the ray took nothing (the host is never told whether a row was taken). To fix with the pool's `P_GRAB` word in the chained read | S | open |
