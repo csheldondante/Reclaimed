@@ -23580,4 +23580,8 @@ enough to actually build an engine and prepare for the threat".
   9 to 9.6 s a season with its petitions. The live event at season 6: 5 dead, 7 and 10 casts of Fire (several missed:
   the dead walk off; the camera now follows them).
 - **Sites** (LS-3): `season/sites.ts`, 5 unit tests. In the still the four names stand apart on lots of the town.
+- **After the commit above.** Raid arrivals, ten walks in a row (4 seasons, nothing agreed): 10 of 10. Sending every
+  squad to the raid's gate was taken out: with it a 7-season prepared walk lost 12 soldiers for no raider; without it
+  the next one held (6 raiders dead, 2 soldiers lost, Heat ray 5 to 3). One walk a setting: the fight's outcome is not
+  pinned (LS-23, LS-45).
 

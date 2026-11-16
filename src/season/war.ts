@@ -485,9 +485,8 @@ export class SeasonWar {
     const g = f.spawnAt('raider', RAIDER_FACTION, from, n);
     f.orderGroup(g, { kind: 'attack', at: to });
     this.wave = { g, n, stage: 'coming', failed: false, a: k, tried: 0, called: true };
-    // (the squads to the gate the raid comes at: posted a gate each at the season's start, when its road was not known,
-    // they stood at other gates while the raiders reached theirs and nobody fought — the 16-season walk, round 3)
-    if (paired) for (const s of this.squads) this.post(f, s, k, 0);
+    // (round 3 tried sending every squad to this gate on the call: the 16-season walk still saw no fight, and the
+    // 7-season walk then lost 12 soldiers for no raider where it had held before — taken out again; BACKLOG LS-45)
     console.log(`[forces] a raid of ${n} called down road ${k}${paired ? ' at its gate' : ' at the heart of the town'}`);
     this.changed();
     return true;

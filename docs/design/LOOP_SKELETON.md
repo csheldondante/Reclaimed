@@ -81,8 +81,7 @@ that stays (MU-28: it drains in seconds, so the flood shows as silt on the bank 
 a founded camp that is built (MU-6).
 
 **The fight.** A ring round every raider and soldier, each side's name and count, the camera at zoom 22 and a 40 degree
-pitch; when it ends the camera pulls back over the district. On a called raid every squad goes to the gate the raid
-comes at (before, each stood at its own gate and a raid could reach an empty one).
+pitch; when it ends the camera pulls back over the district.
 
 **Threats.** Threatening cards (OPPORTUNITY_CATALOG: "count down to a negative outcome if not intercepted") are the
 dealer's events: outside its resource limit, at most one standing, each with its place in the run (BACKLOG LS-35). The
