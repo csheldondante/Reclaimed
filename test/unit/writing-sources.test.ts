@@ -71,6 +71,7 @@ const SOURCES: Record<string, Source> = {
   'perf/hitch-hud.ts': { who: 'dev', why: 'the hitch HUD (?hitch=1)' },
   'perf/pagebench.ts': { who: 'dev', why: 'a bench' },
   'perf/physbench.ts': { who: 'dev', why: 'a bench' },
+  'scenes/level/physdemo.ts': { who: 'dev', why: 'the physics demo’s buttons behind ?physdemo=1 (PA2)' },
   'perf/sdfbench.ts': { who: 'dev', why: 'a bench' },
   'perf/enginebench.ts': { who: 'dev', why: 'a bench' },
   'perf/flowbench.ts': { who: 'dev', why: 'a bench (the liquid toggle diff)' },

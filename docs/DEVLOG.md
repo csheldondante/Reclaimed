@@ -24136,3 +24136,27 @@ prepevery=2 bandh=2 shadowsize=512 hybrid=1 settle=0 sleepmore=1`).
 `engine-energy` "a break gains no energy" (PM1, known); `engine-settle` "D: ... its pages return" (passed when run
 again alone); `engine-d0` D0.1 timed out at 60 s (passed alone in 84 s with a longer limit). Another worktree's GPU
 tests were running on the same GPU throughout: whether the merge slowed D0.1 is not known (PA16).
+
+## 2026-11-15 — a hard hit knocks a house down, in the town (PA11 done; PA12-PA14, PA17 open)
+
+**Why.** The owner wants to see buildings break in the real town; the coordinator's steer: crude and honest, end to
+end first.
+**What happens.** Under `?solver=engine` a row that hits a building with 3,000 or more of energy (the panel's
+"house break") names the place (PA10); the town finds the lot there (36 B read), takes it (100 B read: flagged gone,
+its mesh sunk by the next animate, a mesh run makes the claim grid again without it), and in the same step the
+lot's External spans are let go to air and plain concrete blocks of its footprint x height are added, under dust.
+One lot a tick. A swap, not a break of the house's mesh: the known hack (PA12).
+**Fixed on the way.** The static claims' arena lacked COPY_SRC: the first hit in the town raised the fatal overlay
+("usage doesn't include BufferUsage::CopySrc"); the lab gate caught it.
+**The gate** (`RECLAIMED_PORT=5871 node scripts/lab.mjs run scripts/lab/townhouse.mjs --flags
+"&solver=engine&physdemo=1"`, Muru, 412 x 915): the boulder felled lot 16 (a hit of 3,912; 1 block, 20 cells, 7.6
+ms), the huge block lot 147 (9,705; 4 blocks, 111 cells, 18.5 ms); both flagged, no External at their middle column,
+the claim grid names neither. Looked at the stills (`atlas-house-*`): the salmon-roofed house in the middle of the
+view is gone after the huge block lands, grey flat-sided blocks lie where it stood with the block and the boulder
+beside them; the houses round it stand. The hut the boulder felled is too small to make out.
+**What the town does about a gone lot today:** nothing beyond its mesh and claim. The living town's people still
+go there, the ledger and the named places are not told, nothing is saved (PA13).
+**Tests.** `npm run typecheck` clean. `npx vitest run --project unit`: 637 passed, 1 failed
+(`writing-sources`: `roadlab/control.ts`, not this branch's). `test/gpu/engine-house.test.ts` 3 passed (before
+the merge; the merged tree's engine and sdf run is the entry above). The new reads are listed in
+`gpu/transfers.ts`.

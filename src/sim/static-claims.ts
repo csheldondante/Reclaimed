@@ -129,7 +129,8 @@ export class StaticClaims implements StaticSet {
   ownedSlot(): OwnedSlot | null {
     const k = this.arenaUsed.indexOf(null);
     if (k < 0) return null;
-    this.arena ??= this.io.device.createBuffer({ label: 'static claims owned arena', size: OWN_HEAD_BYTES + OWN_SLOTS * OWN_SLOT_BYTES, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    // (COPY_SRC: an owner reads a few of its own words after an event — citygen's lotsAt, PA11)
+    this.arena ??= this.io.device.createBuffer({ label: 'static claims owned arena', size: OWN_HEAD_BYTES + OWN_SLOTS * OWN_SLOT_BYTES, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     this.arenaUsed[k] = 'taken';
     return { binding: { buffer: this.arena, offset: OWN_HEAD_BYTES + k * OWN_SLOT_BYTES, size: OWN_SLOT_BYTES }, index: k };
   }
