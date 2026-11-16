@@ -3,6 +3,7 @@
 // synergy rules fired how often, which cards nobody took, how many decisions a season asked. Engine synergies tested
 // in seconds, in Node. A policy only scores the cards on the board; it never reads or changes the model.
 import { POOLS, total, type Pools } from '../season/ledger';
+import type { Pack } from '../packs/check';
 import { LEADERS, Table, type OppCard } from './game';
 
 export interface Policy {
@@ -45,6 +46,8 @@ export const POLICIES: Policy[] = [
   },
   { name: 'answer every threat', score: (c) => (c.threat ? 10 : isOne(c, 'build:quarry', 'build:lumber', 'build:walls', 'house-refugees') ? 4 : null) },
   { name: 'everything', score: (c) => (c.threat ? 2 : 1) },
+  // (a pack being tried: its cards first, then anything)
+  { name: 'pack cards first', score: (c) => (c.tags.some((x) => x.startsWith('pack:')) ? 10 : c.threat ? 2 : 1) },
   { name: 'trade and tribute', score: order(['pay-raiders', 'build:quarry', 'build:lumber', 'mining-outpost', 'build:houses', 'build:market', 'build:trade', 'guard-camp', 'build:farms']) },
 ];
 
@@ -70,7 +73,7 @@ export interface RunStat {
 }
 
 /** one whole run by a policy */
-export function playRun(p: Policy, o: { seed: number; leader: string; seasons: number }): RunStat {
+export function playRun(p: Policy, o: { seed: number; leader: string; seasons: number; packs?: Pack[] }): RunStat {
   const t = new Table(o);
   let trouble: number | null = null;
   while (!t.over) {
@@ -84,6 +87,8 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
         .sort((a, b) => b.s - a.s || (a.c.template < b.c.template ? -1 : 1))[0];
       if (!best || !t.take(best.c.id)) break;
     }
+    // (every bot casts what it has on the first thing that can take it, while there is Magic)
+    for (const a of t.abilities()) if (a.can && a.targets.length) t.cast(a.id, a.targets[0]);
     p.cast?.(t);
     const lapsed = t.lapsed.length;
     const season = t.season;
@@ -123,12 +128,13 @@ const mean = (a: number[]): number => (a.length ? a.reduce((x, y) => x + y, 0) /
 const pad = (s: string | number, n: number): string => String(s).padEnd(n);
 
 /** every policy plays every leader on each seed; the table of what happened */
-export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy[]; leaders?: string[]; templates: string[] }): BotReport {
+export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy[]; leaders?: string[]; templates: string[]; packs?: Pack[] }): BotReport {
   const policies = o.policies ?? POLICIES;
   const leaders = o.leaders ?? LEADERS.map((l) => l.id);
   const runs: RunStat[] = [];
-  for (const p of policies) for (const leader of leaders) for (const seed of o.seeds) runs.push(playRun(p, { seed, leader, seasons: o.seasons }));
+  for (const p of policies) for (const leader of leaders) for (const seed of o.seeds) runs.push(playRun(p, { seed, leader, seasons: o.seasons, ...(o.packs ? { packs: o.packs } : {}) }));
   const L: string[] = [];
+  if (o.packs?.length) L.push(`Packs in play: ${o.packs.map((x) => x.pack.name).join(', ')}`);
   L.push(`Bots: ${policies.length} policies x ${leaders.length} leaders x ${o.seeds.length} seeds = ${runs.length} runs of ${o.seasons} seasons`);
   L.push('');
   L.push(`${pad('policy', 24)}${pad('held', 6)}${pad('paid', 6)}${pad('fell', 6)}${pad('trouble', 9)}${pad('asked', 7)}${pad('took', 6)}${pad('Might', 7)}${pad('built', 7)}pools at the end (Magic Might Labor Materials Intel Unrest)`);

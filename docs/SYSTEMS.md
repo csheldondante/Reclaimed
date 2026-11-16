@@ -206,6 +206,19 @@ startRunLoop` → `src/scenes/level/season.ts startSeasonLoop`. Script handles: 
 | Warmed world snapshot | IndexedDB | `src/sim/warm-cache.ts`; `sim/snapshot.ts` |
 | Clear everything | `&fresh=1` | `src/fresh-start.ts` |
 
+## 13. Card table, bots and packs (branch `card-table`; docs/design/CARD_TABLE.md, docs/design/PACK_FORMAT.md)
+
+The same run as the 3D loop with no world, no GPU and no canvas: one model (`Realm`), two front ends.
+
+| System | What it does | Status | Entry point | How to call | Known limits |
+|---|---|---|---|---|---|
+| Table driver | Plays a run on the `Realm` with no scene: offers as view records, take, pass, cast, end season, the raid, next run; records the moves | W | `src/table/game.ts: Table, replay` | `new Table({ seed, leader, seasons, packs })`; `t.cards()`; `t.take(id)`; `t.endSeason()`; `t.things()`; `t.abilities()`; `t.cast(id, target)` | Briar Hollow test world; the raid's result and `things()` are stand-ins until round 6's live events and `Realm.things()` merge (CT-1, CT-6) |
+| Table page | Header with six pools and the threat, offers as readable cards, abilities with targets, things in play with tags by place, the log, packs drawer, seed / leader / length | W | `table.html`, `src/table/main.ts`, words in `src/table/words.ts` | `npm run dev` then `/table.html?seed=7&leader=ysolt&seasons=16&pack=/packs/sample.json`; console `table()` | No rules log, no "why not", no live event card yet (CT-14) |
+| Bots | Nine policies play whole runs; a table of ends, pool curves, decisions a season, rules fired, cards never taken, threats that ran out | W | `src/table/bots.ts: POLICIES, playRun, runBots`; `test/unit/table-bots.test.ts` | `node scripts/tablebots.mjs [--seeds n] [--seasons n] [--pack file.json]` | About 1.3 s a 16-season run; seeds do not vary the deal (CT-3) |
+| Pack validator | One pack's JSON checked against the engine's words; problems in plain words for an outside author | W | `src/packs/check.ts: checkPack, reportText` (no run-time imports) | `node scripts/packcheck.mjs packs/sample.json` | Numbers written as words are not checked |
+| Pack loader | Cards to `TemplateDef` on the existing helpers plus eight `pack*` helpers; things, tags, abilities; rules carried as `RuleDef` | W (cards, things, tags, abilities); D (rules fire, live events) | `src/packs/load.ts: loadPack, packHelpers, packThings, packTagsOn, castAbility, effectsText` | `new Realm({ …, extra: { templates, helpers: packHelpers(packs, host) } })` | CT-10 to CT-13 |
+| Realm: extra content | More templates and helpers than the base game's | W | `src/season/realm.ts: RealmOptions.extra` | see above | Rules not yet (CT-13) |
+
 ## Recipes
 
 Sizes: **S** under 3 h, **M** 3–8 h, **L** more. Builder hours, with unit tests and one phone check.
