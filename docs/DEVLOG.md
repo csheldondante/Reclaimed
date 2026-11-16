@@ -24000,3 +24000,54 @@ them: the liquid's indirect a tick (the flood kernel, mutators round 2) and the 
 
 **The fight is not to be the judge** (the owner's invariant, 2026-11-16): written in LOOP_SKELETON.md "Conformance:
 who decides the fight". Nothing built.
+
+## 2026-11-16 — loop skeleton round 5: the story camera's queue (`loop-skeleton`, LS-54, LS-47)
+
+**The dead end, and what it really was.** LS-54 was written as "a release that does nothing if the frame has not
+begun". The unit test of the queue, written first, showed a wider cause: **a look never started the shot waiting
+behind it** (only a frame's release and a reveal's end did). So a petition opened within 1.2 s of any camera move put
+its frame behind that look, the frame never began, `release` found nothing held, and the queue stayed full for good:
+the attack's look never ran, the raid was never called (p-touch16). How fast the petition was answered did not
+matter. A second look sent while one was under way had the same end.
+
+**The fix** (`src/story/camera.ts`):
+- A look, when it is through, starts the shot waiting behind it; that shot goes back to where the look left the view.
+- `release` on a frame still waiting takes it out of the queue and settles its promise (the intended fix); on a frame
+  that holds the view it ends the hold as before; with neither it does nothing, so a second release is harmless.
+- A frame's hold begins in the same step as the frame, not a promise step later (a release could fall between).
+- Shots sent in the same step run in turn (`taken`): before, a look given the view began its move a step later, and
+  a second shot sent meanwhile began with it; the two replaced each other's move. Found by the `--fast` walk: three
+  looks in a row took 1.2 s, not 3.6 s.
+
+**Unit tests** (`test/unit/story-camera.test.ts`, 6 new; 4 of the first 5 failed before the fix): a frame released
+while waiting behind a look (the queue drains, the next look runs, the frame never takes the view); a frame behind a
+look begins when the look ends and goes back to the look's end on release; a held frame let go goes on to the waiting
+look and a second release does nothing; a release with a look and a frame both waiting takes out the frame only; a
+look behind a look; three looks and a frame sent in one step run in turn.
+
+**Back on** (`scenes/level/loop.ts`): the close-up on the district being built while a season passes, and the live
+event letting the petition's frame go as it starts, so its look at the dead runs at once (LS-47). New: after the live
+event the camera goes back over the town (the event's look left the view at the burial ground).
+
+**Walks by touch, 412x915, one browser at a time** (stills in the session's scratchpad, loop/r5):
+- `--fast`, 16 seasons, prepared (fast16-second, the tree before the `taken` guard): passed whole, exit 0. 13
+  releases: the frame holding the view 11 times, still waiting once (taken out), none once; each petition's name
+  pressed 22 to 214 ms after a camera move. The live event: 5 of 5 of the dead in view (y 425 to 489 between the top
+  bar at 100 and the sheet at 769), 2 casts. The camera down roads 0, 1, 2, the raid called, Heat ray 5 raiders to 1,
+  the town held (6 raiders dead, 4 soldiers), the end, run 2. Before it, a first `--fast` walk with the default cards
+  (fast16-first) ran the same to the end; its only failed check was the script's own (no release found a frame
+  waiting: a dialog takes a finger about 2.5 s, one camera move 1.2 s), which is why `--fast` now sends three moves
+  before every other petition.
+- Prepared with a reload in season 9, **the final tree** (prep16, build 8ff88d2b): every check passed up to the
+  attack's start — the dead 5 of 5 in view, 3 casts; the reload identical; "the camera down road 0" — and then the
+  machine stopped the run for lack of memory (another worktree's two headless browsers were up). **Not run on the
+  final tree: the rest of that walk, the unprepared walk, the `--fast` walk** (BACKLOG LS-58).
+- Looked at: the presenter's dialog (portrait, costs, five answers; the name tag over its place above the panel);
+  the district close-up (zoom 9, but the building is two white boxes at the top edge, most of the screen meadow and
+  river: LS-59); the live event (five ringed figures among trees mid-screen, "The dead 5" above them); the fight
+  (raiders' and soldiers' rings meeting at the wall, the two name tags apart); the aftermath (the district where
+  they stood, "The town held").
+
+**Tests.** Unit: 687 pass, 1 fail — `writing-sources` (src/roadlab/control.ts not placed), failing before this
+change too. `realm-resume` and `realm` failed once each while a walk was running beside them and pass alone
+(timing under load). Typecheck clean.

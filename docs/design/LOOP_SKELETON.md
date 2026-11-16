@@ -147,8 +147,9 @@ map, that a drag on the map pans it, that the dead and the raiders are in view b
 
 **The moments.** A Map button on the sheet opens the world's map with a badge for each changed place. While a
 season passes with something under way the camera closes in on the district being built (the season loop already
-turned it there; at the town's zoom it was a few pixels) — built, then switched off: BACKLOG LS-54, a dead end in the
-story camera's queue). In the fight the raiders' name stands above their figures
+turned it there; at the town's zoom it was a few pixels). It was switched off for a dead end in the story camera's
+queue (BACKLOG LS-54) and is on again since round 5, with the live event's camera on the dead as the event starts
+(LS-47); the last camera change still wants its walks (LS-58), and the close-up's framing is poor (LS-59). In the fight the raiders' name stands above their figures
 and the soldiers' below theirs.
 
 **Open defect (BACKLOG LS-50):** soldiers who are already standing at their post when the raiders come may die

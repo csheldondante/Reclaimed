@@ -49,8 +49,9 @@ export class StoryCamera {
   /** the point a shot holds (kept seen) */
   private focus: V3 | null = null;
   private held = false;
-  /** shots waiting (a reveal behind a held frame) */
-  private queue: (() => void)[] = [];
+  /** shots waiting (a reveal behind a held frame, a frame behind a look), first in first out. `frame`: a frame's
+   *  entry, with what settles its promise if it is taken out before it begins (`release`) */
+  private queue: { start: () => void; frame?: () => void }[] = [];
   /** the hold being waited out (skip() ends it) */
   private holding: { left: number; done: () => void } | null = null;
   private following: (() => V3 | null) | null = null;
@@ -71,23 +72,43 @@ export class StoryCamera {
 
   /** a shot is under way, not counting the ease home (a new shot cuts that short rather than waiting) */
   private get engaged(): boolean {
-    return (this.move !== null && !this.returning) || this.held || this.holding !== null || this.queue.length > 0;
+    return this.taken || (this.move !== null && !this.returning) || this.held || this.holding !== null || this.queue.length > 0;
   }
   private returning = false;
+  /** a look or a reveal has been given the view and has not begun its move yet (it begins a step later: the view is
+   *  taken meanwhile, or a second shot sent in the same step would begin with it and the two would fight; LS-54) */
+  private taken = false;
 
-  /** Ease to `at` and hold there until `release()`. Resolves on arrival. */
+  /**
+   * Ease to `at` and hold there until `release()`. Resolves on arrival, or when it is released while still waiting
+   * behind another shot (it then never takes the view). The hold begins in the same step as the frame does, so a
+   * release can never fall between the two.
+   */
   frame(at: V3, opts: ShotOpts = {}): Promise<void> {
-    return this.take().then(() => {
-      this.held = true;
-      return this.go(at, { zoom: 14, ease: 0.9, place: [0.5, 0.32], ...opts });
+    return new Promise((arrived) => {
+      const begin = () => {
+        this.saveHome();
+        this.held = true;
+        void this.go(at, { zoom: 14, ease: 0.9, place: [0.5, 0.32], ...opts }).then(arrived);
+      };
+      if (!this.engaged) begin();
+      else this.queue.push({ start: begin, frame: arrived });
     });
   }
 
-  /** Let go of a held frame: back to the player's view (or straight on to a waiting reveal). */
+  /**
+   * Let go of a frame. One that holds the view: back to the player's view (or straight on to the shot waiting). One
+   * still waiting in the queue (BACKLOG LS-54: a dialog answered before the camera got to it): taken out of the queue,
+   * the shots behind it move up. No frame held or waiting: nothing.
+   */
   release(seconds = 0.8): Promise<void> {
-    if (!this.held) return Promise.resolve();
-    this.held = false;
-    return this.next(seconds);
+    if (this.held) {
+      this.held = false;
+      return this.next(seconds);
+    }
+    const k = this.queue.findIndex((q) => q.frame);
+    if (k >= 0) this.queue.splice(k, 1)[0].frame!();
+    return Promise.resolve();
   }
 
   /** Ease to `at`, hold `hold` seconds (skip() cuts it short), ease back. Resolves when the view is back. */
@@ -104,7 +125,13 @@ export class StoryCamera {
     await this.take();
     await this.go(at, { zoom: 8, ease: 1.5, ...opts });
     this.focus = null;
-    if (!this.engaged) this.home = null;
+    // (the shot waiting behind it starts from here, and here is the view it goes back to; before LS-54 a look never
+    // started the next one: a second look, or a frame, sent while one was under way waited for good)
+    const n = this.queue.shift();
+    if (n) {
+      this.home = null;
+      n.start();
+    } else if (!this.engaged) this.home = null;
   }
 
   /** Cut a reveal's hold short (a tap): the camera goes on at once. */
@@ -182,21 +209,26 @@ export class StoryCamera {
 
   /** wait for the shots before this one; the first one saves the player's view */
   private take(): Promise<void> {
-    const start = () => {
-      if (!this.home) this.home = { t: [...this.camera.target] as V3, zoom: this.camera.zoom };
+    const begin = () => {
+      this.saveHome();
+      this.taken = true;
     };
     if (!this.engaged) {
-      start();
+      begin();
       return Promise.resolve();
     }
-    return new Promise((go) => this.queue.push(() => (start(), go())));
+    return new Promise((go) => this.queue.push({ start: () => (begin(), go()) }));
+  }
+
+  private saveHome(): void {
+    if (!this.home) this.home = { t: [...this.camera.target] as V3, zoom: this.camera.zoom };
   }
 
   /** a shot ends: the next one waiting starts from here, or the view goes home */
   private next(seconds: number): Promise<void> {
     const n = this.queue.shift();
     if (n) {
-      n();
+      n.start();
       return Promise.resolve();
     }
     // (round 97: a shot whose ease home was already taken by another (a reveal over a reveal, both skipped) has no
@@ -218,6 +250,7 @@ export class StoryCamera {
   private go(at: V3, o: Required<Pick<ShotOpts, 'zoom' | 'ease'>> & ShotOpts): Promise<void> {
     this.focus = [...at] as V3;
     this.returning = false;
+    this.taken = false;
     // (the point sits at `place` on the screen: the target is that far from it across the ground, at the shot's zoom)
     const [px, py] = o.place ?? [0.5, 0.5];
     const cam = this.camera;

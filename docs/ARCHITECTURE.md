@@ -2261,7 +2261,10 @@ Coded against src/api/contracts (dialog.ts, run.ts, story.ts, world.ts); each pi
 - `src/run/hud.ts` — `ObjectiveHud(root, run)`: the shown objectives, bottom left.
 - `src/story/camera.ts` — `StoryCamera(camera, { dither?, slice? })`: `frame`/`release`, `reveal`, `look`,
   `follow`, `skip`, `idle`, `busy`, `update(dt)`. Writes only `camera.target` and `camera.zoom`; the
-  cutaway through Dither.see / Slice.update.
+  cutaway through Dither.see / Slice.update. Shots run one at a time, first in first out: a shot sent while
+  another has the view waits; a look, a reveal's end and a frame's release each start the one waiting.
+  `release` on a frame still waiting takes it out of the queue (its promise settles; it never takes the
+  view); with no frame held or waiting it does nothing (loop-skeleton, LS-54).
 - `src/story/play.ts` — `StoryPlay.start({ ui, camera, api, world, story, stage, cut })`: the above over the
   world API (terrain for heights and the cast's pillars; plants, water, fx for play-scale stand-ins of
   atlas events). `Stage` maps story locations and cast to world positions: the region generator's output

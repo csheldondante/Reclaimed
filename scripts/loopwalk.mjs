@@ -5,6 +5,12 @@
 // Drives the page by its own buttons: a tap on a name over the map, the dialog's choices, Next season.
 //   node scripts/loopwalk.mjs [--out <dir>] [--leader ysolt] [--agree build:walls,tower-lens] [--runlen 5] [--gif 0] [--touch]
 // `--touch`: the whole walk by a finger (pointerType touch): see `touch` below.
+// `--fast`: each petition is opened within 300 ms of a camera move (the camera sent back over the town, as the season's
+// end does) and answered as fast as the dialog allows, so its camera frame waits behind that move (BACKLOG LS-54, once
+// a dead end: the attack's camera never went down the road). A dialog takes a finger about 2.5 s and one move 1.2 s, so
+// after one move the frame has begun by the answer; every other petition is opened after three moves in a row (3.6 s
+// of them), and its frame is still waiting when it is let go. The walk fails unless both were met, and then goes on to
+// the attack as any walk.
 // `--agree`: the templates to say yes to when they are offered and can be paid, in that order of preference; everything
 // else is left to run out. The default prepares (walls: soldiers gather; the tower's heat ray); `--agree none` prepares
 // nothing. It fails unless the raid arrives (LS-16).
@@ -35,6 +41,23 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   // pointerType 'touch', with no hover before the press — and nothing is driven by a script's click or the game's
   // own calls: what a thumb cannot reach fails the walk)
   const touch = R.argv.includes('--touch');
+  const fast = R.argv.includes('--fast');
+  /** (--fast) what each release of the story camera found: its frame holding the view, waiting in the queue, or none */
+  const releases = () => page.evaluate(() => window.__releases ?? []);
+  const found = [];
+  let talks = 0;
+  const watchReleases = () =>
+    page.evaluate(() => {
+      const cam = window.rungame.cam;
+      if (cam.__watched) return;
+      cam.__watched = true;
+      window.__releases = [];
+      const release = cam.release.bind(cam);
+      cam.release = (s) => {
+        window.__releases.push(cam.held ? 'held' : cam.queue.some((q) => q.frame) ? 'waiting' : 'none');
+        return release(s);
+      };
+    });
   const page = await R.page();
   if (touch) await page.setViewport({ width: 412, height: 915, deviceScaleFactor: 1, hasTouch: true, isMobile: true });
   /** a press at a screen point: a finger's tap, or the mouse's click */
@@ -129,6 +152,14 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       const y = r.top + r.height / 2;
       return document.elementFromPoint(x, y) === b ? { x, y, label: g.label } : null;
     }, id);
+    let moved = 0;
+    if (fast) {
+      await watchReleases();
+      await page.evaluate((n) => {
+        for (let k = 0; k < n; k++) window.rungame.showTown();
+      }, talks++ % 2 ? 1 : 3);
+      moved = Date.now();
+    }
     if (m) {
       // (the name's own height is the text's; what a thumb needs is the area that takes the press)
       if (touch) {
@@ -148,6 +179,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
         if (hitH < THUMB) unreachable.push(`a name over the map takes a press over ${hitH} px`);
       }
       await press(m.x, m.y);
+      if (fast) log(`fast: the name pressed ${Date.now() - moved} ms after the camera moved`);
     } else if (touch) {
       // (a name the map does not show, or covered: the sheet's row for it, by a finger)
       const who = await page.evaluate((oid) => window.rungame.asking().find((a) => a.id === oid)?.who, id);
@@ -156,14 +188,14 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     log(`${template}: ${m ? 'tapped on the map' : 'opened from the list (its name is covered or off screen)'}`);
     await phase('petition', 10000);
     await page.waitForFunction(() => document.querySelectorAll('.dlg-choice').length > 0, { timeout: 20000, polling: 200 });
-    await wait(600);
-    if (first) await shot('loop-3-petition');
+    if (!fast) await wait(600);
+    if (first && !fast) await shot('loop-3-petition');
     const can = await page.evaluate(() => {
       const b = [...document.querySelectorAll('.dlg-choice')].find((e) => e.textContent.includes('Agree.'));
       return !!b && !b.disabled && !b.classList.contains('disabled');
     });
     await tap('.dlg-choice', yes && can ? 'Agree.' : 'Not now.');
-    if (first) {
+    if (first && !fast) {
       await wait(700);
       await shot('loop-3-answer');
       log(`after the answer: ${JSON.stringify(await page.evaluate(() => ({ talking: window.rungame.talking, phase: window.rungame.phase, choices: document.querySelectorAll('.dlg-choice').length, text: document.querySelector('.dlg-text')?.textContent?.slice(0, 60) })))} unreachable so far: ${JSON.stringify(unreachable)}`);
@@ -171,7 +203,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     // (their answer, then a tap to close it)
     for (let k = 0; k < 40; k++) {
       if (!(await page.evaluate(() => window.rungame.talking))) break;
-      await wait(500);
+      await wait(fast ? 60 : 500);
       // (the dialog goes on at a press on its panel, not a click)
       const at = await page.evaluate(() => {
         const r = document.querySelector('.dlg-text')?.getBoundingClientRect();
@@ -180,6 +212,12 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       if (at) await press(at.x, at.y);
     }
     await phase('city|event', 20000);
+    if (fast) {
+      const rel = await releases();
+      found.push(...rel);
+      await page.evaluate(() => (window.__releases = []));
+      log(`fast: answered ${Date.now() - moved} ms after the camera moved; its releases found the frame: ${JSON.stringify(rel)}`);
+    }
     // (the live event: the dead are up at the burial ground — Fire pressed, a tap on one of them, until none is left)
     if ((await state()).phase === 'event') {
       await wait(3500);
@@ -373,6 +411,9 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     if (n > 40) throw new Error('the attack never came');
   }
   log(`decisions a season: ${decisions.join(', ')}`);
+  if (fast) {
+    R.check('fast: petitions were answered with their camera frame still waiting behind camera moves, and begun after one (LS-54)', found.includes('waiting') && found.includes('held'), found.join(' '));
+  }
   log(`${n} seasons in ${((Date.now() - t0) / 1000).toFixed(0)} s of wall time, the time-lapse skipped after 1.5 s: ${((Date.now() - t0) / 1000 / n).toFixed(1)} s a season with its petitions`);
   R.check('the decisions a season stay few', Math.max(...decisions) <= 5, decisions);
 

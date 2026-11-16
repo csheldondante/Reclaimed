@@ -388,7 +388,10 @@ class Game implements RunGame {
     void this.cam.look(this.at3(at), { zoom: FIGHT_ZOOM * 0.7, ease: 1.2, place: [0.5, 0.36] }).then(() => {
       if (this.event?.up === up) this.cam.follow(mid);
     });
-
+    // (the petition's frame let go, straight on to that look: a shot waits behind a held frame, and the event was
+    // played with the camera still on the petition — the dead off the screen's top, 5 of 5; LS-47. A frame that has
+    // not begun yet is taken out of the queue: LS-54)
+    void this.cam.release(0.2);
     console.log(`[loop] the dead rise: ${up.size} at ${at.map((v) => Math.round(v))}`);
     return new Promise((res) => {
       this.event = { up, t: 0, unwatch, end: res };
@@ -676,6 +679,8 @@ class Game implements RunGame {
       this.notes = [...this.notes, W.refusedLine(speaker.name)];
     }
     void this.cam.release();
+    // (the live event left the view at the burial ground, the player's there: back over the town and its names)
+    if (act === 'commit' && can && o.template === DEAD_RISE) this.showTown();
     // (an answer given is kept: a reload comes back to this season with it)
     if (act === 'commit' || act === 'refuse') void this.save();
     this.set('city');
@@ -693,8 +698,7 @@ class Game implements RunGame {
     // expiry, the arc moves on; then the ledger's own season plays as the time-lapse)
     this.notes = r.endSeason();
     this.season.setLedger(r.ledger);
-    // (the close-up on the district being built is off: BACKLOG LS-54)
-    this.building = false;
+    this.building = this.season.ledger.projects.length > 0;
     this.set('season');
     void this.season.next().then(async () => {
       while (this.season.playing) await new Promise((res) => setTimeout(res, 100));
