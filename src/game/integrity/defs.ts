@@ -20,8 +20,11 @@ export type Grab =
   | { kind: 'rigid'; b: RockBody }
   | { kind: 'solver'; body: SolverBody }
   | { kind: 'phys'; body: PhysBody }
-  /** (`?solver=engine`) the engine's own grab: the row is picked on the GPU, the host knows only where it asked */
-  | { kind: 'engine'; at: [number, number, number] };
+  /** (`?solver=engine`) the engine's own grab: the row is picked on the GPU, the host does not know which or where */
+  | { kind: 'engine' };
+
+/** the view ray through the finger (Camera.ray): a point on it, its direction (unit); for a pick, the thumb's radius (cells) */
+export type GrabRay = { o: [number, number, number]; d: [number, number, number]; r?: number };
 
 /** (round 120) a hit harder than this (cells/s) wakes the map's metal it struck (wakeMetalNear) */
 export const WAKE_HIT = 3;

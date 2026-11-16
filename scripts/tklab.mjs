@@ -1,6 +1,6 @@
 // The telekinesis tool's capture (the playground's pile station, ?solver=engine by default): a stack is dropped, then
 // with the tool picked a single drag (which must not grab) and a double tap + drag on the stack (which must), by real
-// mouse input; a GIF and stills at phone framing.
+// mouse input, on the stack's top block (the pick is by the finger's view ray); a GIF and stills at phone framing.
 //   node scripts/tklab.mjs --out <dir>/tk [--solver engine] [--frames 70] [--every 70]
 import gifenc from 'gifenc';
 import { PNG } from 'pngjs';
@@ -43,8 +43,8 @@ await run({ name: 'tklab', kind: 'behaviour', size: '412x915', dpr: 1, echo: tru
     cam.target[0] -= wx;
     cam.target[1] -= wy;
     cam.update();
-    // (the stack's foot, its ground at 12: the tool picks by the ground under the finger — BACKLOG TK8)
-    const z = 12.5;
+    // (the top block of the five, its centre at 20.4: the tool picks what the finger's view ray passes — TK8)
+    const z = Number(new URLSearchParams(location.search).get('tkz') ?? 20.4);
     const p = cam.project(x, y, z);
     return { p, tool: s.editor.tool, z };
   });
@@ -73,7 +73,7 @@ await run({ name: 'tklab', kind: 'behaviour', size: '412x915', dpr: 1, echo: tru
         const P = new Float32Array(await read(D.pose, 64 * 10));
         for (let r = 0; r < 10; r += 2) rows.push([P[r * 16 + 8], P[r * 16 + 9], P[r * 16 + 10]].map((v) => +v.toFixed(1)).join(' '));
       }
-      return { held: s.dragHold ? s.dragHold.g.kind : null, at: s.dragHold?.g.at?.map((v) => +v.toFixed(1)), slot: slot === null ? null : slot ? slot & 0xfffff : 'none', rows, cam: [...s.core.camera.target].map((v) => +v.toFixed(2)) };
+      return { held: s.dragHold ? s.dragHold.g.kind : null, slot: slot === null ? null : slot ? slot & 0xfffff : 'none', rows, cam: [...s.core.camera.target].map((v) => +v.toFixed(2)) };
     });
   await page.screenshot({ path: out + '-0.png' });
   // a single drag: no grab
@@ -91,7 +91,7 @@ await run({ name: 'tklab', kind: 'behaviour', size: '412x915', dpr: 1, echo: tru
   await page.mouse.down();
   await page.mouse.move(sx + 10, sy - 4, { steps: 3 });
   const double = await state();
-  R.log('single drag held: ' + single.held + '; double tap + drag held: ' + double.held + ', asked at ' + double.at + ', the rows at ' + double.rows.join(' | '));
+  R.log('single drag held: ' + single.held + '; double tap + drag held: ' + double.held + ', the rows at ' + double.rows.join(' | '));
   let held = double;
   const enc = GIFEncoder();
   const path = (i) => (i < 20 ? [sx + 10 + i * 6, sy - 4 - i * 4] : i < 40 ? [sx + 130 - (i - 20) * 12, sy - 84] : [sx - 110 + (i - 40) * 14, sy - 84 + (i - 40) * 2]);

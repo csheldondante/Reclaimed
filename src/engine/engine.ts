@@ -80,7 +80,7 @@ const INFO_B = 64;
 const ET_F = 480;
 const GR_AT = 96;
 /** engine.wgsl EngU */
-const EU_B = 256;
+const EU_B = 272;
 /** engine.wgsl RWW: a row's work words in the awake list's buffer; engine_pairs.wgsl TRW, PRW (vec4s) */
 const RWW = 20;
 const TRW = 48;
@@ -384,9 +384,9 @@ export class Engine implements SimSystem {
   private cu: { eu: GPUBuffer; ec: GPUBuffer }[] = [];
   private k: Record<string, { k: ComputeKernel; spec: BindSpec }> = {};
   private g: Record<string, GPUBindGroup> | null = null;
-  private cmds: { kind: number; row: number; a: [number, number, number, number] }[] = [];
-  /** where the grabbed row is pulled to (grabTarget); null: nothing is held */
-  private grabT: V3 | null = null;
+  private cmds: { kind: number; row: number; a: [number, number, number, number]; dir?: V3 }[] = [];
+  /** the finger's ray the grabbed row is pulled to (grabTarget); null: nothing is held */
+  private grabT: { o: V3; d: V3; lift: number } | null = null;
   private ring = 0;
   private ticks = 0;
   readonly bodies = new Set<EngineBody>();
@@ -852,20 +852,25 @@ export class Engine implements SimSystem {
   }
 
   /**
-   * The host's grab (the telekinesis tool): at the next tick the row — awake or asleep — whose centre is nearest `p`
-   * within `r` plus its bound radius is taken (engine_compact.wgsl, the pool's P_GRAB), and from the tick after it is
-   * awake and pulled to the target `grabTarget` gives (engine.wgsl grabPull: a damped spring on its centre, its weight
-   * held up; stiffness, damping and cap on the panel). The host is never told which row, or whether any: with none in
-   * reach the spring has nothing to act on. One grab at a time: a new one lets the last go.
+   * The host's grab (the telekinesis tool): what is under the finger. At the next tick, of the rows — awake or asleep —
+   * whose bound sphere the ray from `o` along `d` (unit) passes within `r` of, the one nearest along the ray is taken
+   * (engine_compact.wgsl, the pool's P_GRAB), and from the tick after it is awake and pulled to the target
+   * `grabTarget` gives (engine.wgsl grabPull: a damped spring on its centre, its weight held up; stiffness, damping
+   * and cap on the panel). The host is never told which row, or whether any: with none on the ray the spring has
+   * nothing to act on. One grab at a time: a new one lets the last go.
    */
-  grab(p: V3, r: number): void {
+  grab(o: V3, d: V3, r: number): void {
     this.grabRelease();
-    this.cmds.push({ kind: 7, row: 0, a: [p[0], p[1], p[2], r] });
+    this.cmds.push({ kind: 7, row: 0, a: [o[0], o[1], o[2], r], dir: [d[0], d[1], d[2]] });
   }
 
-  /** where the grabbed row is pulled to, from the next tick till it is let go */
-  grabTarget(t: V3): void {
-    this.grabT = [t[0], t[1], t[2]];
+  /**
+   * Where the grabbed row is pulled to, from the next tick till it is let go: the point where the finger's view ray
+   * (from `o` along `d`, unit) crosses the level plane `lift` over the height the row was at when the hold began — the
+   * GPU's to work out, it alone knows that height.
+   */
+  grabTarget(o: V3, d: V3, lift = 0): void {
+    this.grabT = { o: [o[0], o[1], o[2]], d: [d[0], d[1], d[2]], lift };
   }
 
   /** the grab let go: the spring is gone, the row keeps the velocity it had (a throw) */
@@ -924,7 +929,10 @@ export class Engine implements SimSystem {
     f[47] = T.shockReach;
     f.set([T.wakeEnergy, T.warmStart, T.rimDepth, 0], 48);
     u.set([Math.max(1, Math.round(T.pairIters)), this.pairRoom, this.slotRoom, this.oldSlots], 52);
-    if (this.grabT) f.set([this.grabT[0], this.grabT[1], this.grabT[2], 1], 56);
+    if (this.grabT) {
+      f.set([...this.grabT.o, 1], 56);
+      f.set([...this.grabT.d, this.grabT.lift], 64);
+    }
     f.set([T.grabK, T.grabDamp, T.grabCap, 0], 60);
     return U;
   }
@@ -1132,6 +1140,8 @@ export class Engine implements SimSystem {
       cf.set(c.a, i * 8);
       cuv[i * 8 + 4] = c.kind;
       cuv[i * 8 + 5] = c.row;
+      // (a pick ray's direction, in the words after the kind: engine.wgsl EngCmd, kind 7)
+      if (c.dir) cf.set(c.dir, i * 8 + 5);
     });
     const ring = this.ring;
     this.ring = (ring + 1) % CMD_RING;

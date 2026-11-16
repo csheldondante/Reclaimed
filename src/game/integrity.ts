@@ -43,9 +43,9 @@ import { chips, impact, keepBudget, project, resetProjection, toLoose } from './
 import { dropModels, spawnLattice } from './integrity/lattice';
 import { spawnRow } from './integrity/rows';
 import type { EngineKit } from '../engine/install';
-import { METAL, WOOD, Grab, JB6_KEEP, GROUND_DUST, mainMat } from './integrity/defs';
+import { METAL, WOOD, Grab, GrabRay, JB6_KEEP, GROUND_DUST, mainMat } from './integrity/defs';
 export { GROUND_DUST } from './integrity/defs';
-export type { Grab } from './integrity/defs';
+export type { Grab, GrabRay } from './integrity/defs';
 
 export class Integrity {
   readonly bodies: Bodies;
@@ -676,10 +676,11 @@ export class Integrity {
    * (round 120, the user: "Consider a telekinetic drag tool to test swinging tankers and rocks into things") The body
    * nearest world (x, y, z) within `r` of it (and its own size) — a rigid rock, a node-solver body (metal, wood), a
    * voxel-lattice body — to be pulled (pull). Null: none near. Under `?solver=engine` the bodies are the engine's rows,
-   * which the CPU does not know the places of: the engine is asked to grab the row nearest the point (Engine.grab, picked
-   * on the GPU at its next tick), and a grab is always returned — with no row in reach its pull moves nothing.
+   * which the CPU does not know the places of: given the finger's view ray, the engine is asked to grab the row under it
+   * (Engine.grab, picked on the GPU at its next tick), and a grab is always returned — with no row there its pull moves
+   * nothing.
    */
-  grabAt(x: number, y: number, z: number, r: number): Grab | null {
+  grabAt(x: number, y: number, z: number, r: number, ray?: GrabRay): Grab | null {
     let best: Grab | null = null;
     let bd = Infinity;
     const consider = (g: Grab, p: V3, size: number) => {
@@ -697,17 +698,17 @@ export class Integrity {
         const st = this.physics.state(body);
         if (st && st.alive > 0) consider({ kind: 'phys', body }, st.pos, 0.5 * Math.hypot(...body.dims) * body.size);
       }
-    if (!best && this.engine) {
-      this.engine.engine.grab([x, y, z], r);
-      return { kind: 'engine', at: [x, y, z] };
+    if (!best && this.engine && ray) {
+      this.engine.engine.grab(ray.o, ray.d, ray.r ?? 1);
+      return { kind: 'engine' };
     }
     return best;
   }
 
   /** where a grabbed body is and how it moves (null: it's gone) */
   grabState(g: Grab): { pos: V3; vel: V3 } | null {
-    // (the engine's: where the grab was asked — the row's own place is the GPU's alone)
-    if (g.kind === 'engine') return this.engine ? { pos: g.at, vel: [0, 0, 0] } : null;
+    // (the engine's: the row's place is the GPU's alone)
+    if (g.kind === 'engine') return null;
     if (g.kind === 'rigid') return this.rigid?.list.includes(g.b) ? { pos: g.b.pos, vel: g.b.v } : null;
     if (g.kind === 'solver') {
       const r = this.solver?.bodies.has(g.body) ? this.solver.read(g.body) : undefined;
@@ -720,16 +721,18 @@ export class Integrity {
   /**
    * Pull a grabbed body toward `target` (world) for dt s: a damped spring on its centre (it swings, overshoots a little,
    * and carries its speed into what it hits — the hit goes through the same rules: breaks, dents, the ground giving),
-   * its weight held up. False: it's gone.
+   * its weight held up. False: it's gone. The engine's rows take the finger's view ray, not `target`: the row is pulled to
+   * where the ray crosses the level plane 2 over the height it was grabbed at, which only the GPU knows.
    */
-  pull(g: Grab, target: V3, dt: number, k = 40): boolean {
-    const s = this.grabState(g);
-    if (!s) return false;
+  pull(g: Grab, target: V3, dt: number, k = 40, ray?: GrabRay): boolean {
     // (the engine's rows: the same spring, stepped on the GPU — engine.wgsl grabPull; its numbers are the panel's)
     if (g.kind === 'engine') {
-      this.engine!.engine.grabTarget(target);
+      if (!this.engine || !ray) return false;
+      this.engine.engine.grabTarget(ray.o, ray.d, 2);
       return true;
     }
+    const s = this.grabState(g);
+    if (!s) return false;
     const c = 2 * Math.sqrt(k) * 0.6;
     const dv: V3 = [0, 1, 2].map((a) => (k * (target[a] - s.pos[a]) - c * s.vel[a]) * dt) as V3;
     dv[2] += worldG() * dt;

@@ -94,10 +94,11 @@ export function wireInput(scene: LevelScene): void {
         const [gx, gy, gz] = p;
         const reach = 48 / camera.zoom + 2;
         // (on the ground under the finger or anything stood on it up to a body's height above)
-        const g = ig.grabAt(gx, gy, gz + 2, reach + 2);
+        // (the engine's rows: what the finger's view ray passes within a thumb of, the nearest the eye)
+        const g = ig.grabAt(gx, gy, gz + 2, reach + 2, { ...camera.ray(sx, sy), r: 20 / camera.zoom });
         if (!g) return false;
-        const st = ig.grabState(g)!;
-        scene.dragHold = { g, h: st.pos[2] + 2, at: [sx, sy] };
+        // (the height it is held at: 2 over where it was; the engine's rows keep theirs on the GPU)
+        scene.dragHold = { g, h: (ig.grabState(g)?.pos[2] ?? gz + 2) + 2, at: [sx, sy] };
         return true;
       }
       // the heat beam: on while held, aimed at what's under the pointer (frame())

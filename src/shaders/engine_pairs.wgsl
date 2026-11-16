@@ -179,7 +179,7 @@ fn integrate(@builtin(global_invocation_id) id: vec3<u32>) {
   var v = vel[2u * r];
   var w = vel[2u * r + 1u];
   // (the host's grab: its spring, before gravity so the weight it holds up cancels; held, it is not still however it hangs)
-  if ((fl & ROW_GRAB) != 0u && EU.o.w > 0.5) { v = vec4<f32>(grabPull(P.xyz, v.xyz, dt), 0.0); }
+  if ((fl & ROW_GRAB) != 0u && EU.o.w > 0.5) { v = vec4<f32>(grabPull(P.xyz, v.xyz, dt, info[4u * r + 3u].z), 0.0); }
   v.z -= worldG() * dt;
   v = vec4<f32>(v.xyz * max(0.0, 1.0 - EU.d.x * dt), v.w);
   w = vec4<f32>(w.xyz * max(0.0, 1.0 - EU.d.y * dt), w.w);

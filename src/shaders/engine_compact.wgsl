@@ -49,10 +49,13 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
       fl = fl | ROW_EXPAND;
       info[4u * r].w = bitcast<f32>(fl);
     } else if (k == 7u) {
-      // (the host's grab: every row in reach bids its nearness, the nearest is left in the slot when the kernel ends)
+      // (the host's grab: every row the pick ray passes — within the thumb's radius of its bound sphere, ahead of the
+      // ray's start — bids how near the eye it is; the nearest is left in the slot when the kernel ends)
       picking = true;
-      let d = distance(x, EC[c].a.xyz);
-      if (d < EC[c].a.w + vel[2u * r + 1u].w) { atomicMax(&poolC[P_GRAB], ((4095u - min(u32(d * 64.0), 4094u)) << 20u) | (r & 0xfffffu)); }
+      let rd = bitcast<vec3<f32>>(EC[c].b.yzw);
+      let along = dot(x - EC[c].a.xyz, rd);
+      let off = length(x - EC[c].a.xyz - rd * along);
+      if (along > 0.0 && off < EC[c].a.w + vel[2u * r + 1u].w) { atomicMax(&poolC[P_GRAB], ((4095u - min(u32(along * 4.0), 4094u)) << 20u) | (r & 0xfffffu)); }
     }
   }
   // (the row the grab holds, from the tick after the pick — while rows bid the slot is not settled: it is awake and
@@ -62,6 +65,8 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
   if (mine != ((fl & ROW_GRAB) != 0u)) {
     fl = fl ^ ROW_GRAB;
     info[4u * r].w = bitcast<f32>(fl);
+    // (the hold begins: the height it is at is the plane it is dragged in — engine.wgsl grabPull)
+    if (mine) { info[4u * r + 3u].z = x.z; }
   }
   if (mine) { wake = true; }
   // (a sleeper whose ground changed — dug, cut, washed out, built on: the surface pass's word of the column under its

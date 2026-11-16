@@ -1,6 +1,7 @@
 // The engine's grab (the telekinesis tool under ?solver=engine; engine.ts grab / grabTarget / grabRelease): the row
-// nearest a point is picked on the GPU (no read tells the host which), a damped spring pulls its centre to the host's
-// target with its weight held up, and letting go drops the spring and nothing else.
+// under the finger's view ray, the nearest along it, is picked on the GPU (no read tells the host which), a damped
+// spring pulls its centre to where the ray crosses the level plane at the height it was grabbed at (plus a lift) with
+// its weight held up, and letting go drops the spring and nothing else.
 // Numbers for the DEVLOG: GRAB_LOG=1 npx vitest run --project gpu engine-grab --reporter=verbose
 import { afterAll, afterEach, beforeAll, expect, test } from 'vitest';
 import { POOL } from '../../src/engine/engine';
@@ -31,6 +32,11 @@ function sleeper(R: BreakRig, x: number, y: number) {
   const cells = box(x, y, 10, 3, 3, 3);
   return R.e.add({ cells, mesh: modelMesh(cells), asleep: true })!;
 }
+type V3 = [number, number, number];
+const DOWN: V3 = [0, 0, -1];
+/** a ray straight down through (x, y): what it crosses a level plane at is (x, y) */
+const over = (x: number, y: number): V3 => [x, y, 60];
+const slot = async (R: BreakRig) => new Uint32Array(await g.read(R.e.debugBuffers.pool, 4, POOL.grab * 4))[0];
 const poseBits = async (R: BreakRig, row: number) => [...new Uint32Array(await g.read(R.e.debugBuffers.pose, 64, row * 64))];
 const awake = async (R: BreakRig) => new Uint32Array(await g.read(R.e.debugBuffers.list, 32))[3];
 
@@ -47,9 +53,8 @@ for (const pairs of [1, 0]) {
     const farBits = await poseBits(R, far.row);
     expect((await R.row(a.row)).flags & ASLEEP).toBe(ASLEEP);
     const target = [p0[0] + 6, p0[1], p0[2] + 2];
-    // (both blocks are in reach: the nearer is the one taken)
-    R.e.grab([p0[0] + 0.5, p0[1], p0[2]], 40);
-    R.e.grabTarget(target as [number, number, number]);
+    R.e.grab(over(p0[0] + 0.5, p0[1]), DOWN, 0.5);
+    R.e.grabTarget(over(target[0], target[1]), DOWN, 2);
     let past = 0;
     let at30 = 0;
     let fastest = 0;
@@ -79,8 +84,8 @@ test('let go while it moves, a grabbed block keeps its velocity: the spring is g
   const a = sleeper(R, 6, 12);
   await R.step(2);
   const p0 = (await R.row(a.row)).pos;
-  R.e.grab(p0 as [number, number, number], 2);
-  R.e.grabTarget([p0[0] + 6, p0[1], p0[2] + 4]);
+  R.e.grab(over(p0[0], p0[1]), DOWN, 0.5);
+  R.e.grabTarget(over(p0[0] + 6, p0[1]), DOWN, 4);
   await R.step(14);
   const before = await R.row(a.row);
   expect(Math.hypot(before.v[0], before.v[1])).toBeGreaterThan(3);
@@ -97,24 +102,24 @@ test('let go while it moves, a grabbed block keeps its velocity: the spring is g
   await R.step(10);
   const later = await R.row(a.row);
   expect(later.pos[0] - after.pos[0]).toBeGreaterThan(0.8 * after.v[0] * (10 / HZ));
-  expect(new Uint32Array(await g.read(R.e.debugBuffers.pool, 4, POOL.grab * 4))[0]).toBe(0);
+  expect(await slot(R)).toBe(0);
   ok();
 });
 
-test('a grab with nothing in reach changes nothing and wakes nothing', async () => {
+test('a ray that passes no body grabs nothing: nothing changes and nothing wakes', async () => {
   const R = await breakRig(g, flat);
   const a = sleeper(R, 4, 4);
   const b = sleeper(R, 10, 4);
   await R.step(2);
   const bits = [await poseBits(R, a.row), await poseBits(R, b.row)];
   expect(await awake(R)).toBe(0);
-  R.e.grab([24, 20, 11.5], 2);
-  R.e.grabTarget([24, 14, 14]);
+  R.e.grab(over(24, 20), DOWN, 2);
+  R.e.grabTarget(over(24, 14), DOWN, 2);
   for (let t = 0; t < 30; t++) {
     await R.step(1);
     expect(await awake(R)).toBe(0);
   }
-  expect(new Uint32Array(await g.read(R.e.debugBuffers.pool, 4, POOL.grab * 4))[0]).toBe(0);
+  expect(await slot(R)).toBe(0);
   expect([await poseBits(R, a.row), await poseBits(R, b.row)]).toEqual(bits);
   for (const r of [a, b]) expect((await R.row(r.row)).flags & (ASLEEP | GRAB)).toBe(ASLEEP);
   ok();
@@ -125,8 +130,8 @@ test('the spring slack adds no energy: a block held at the place it lies stays a
   const a = sleeper(R, 12, 12);
   await R.step(2);
   const p0 = (await R.row(a.row)).pos;
-  R.e.grab(p0 as [number, number, number], 2);
-  R.e.grabTarget(p0 as [number, number, number]);
+  R.e.grab(over(p0[0], p0[1]), DOWN, 0.5);
+  R.e.grabTarget(over(p0[0], p0[1]), DOWN, 0);
   let fastest = 0;
   let off = 0;
   for (let t = 0; t < 120; t++) {
@@ -139,5 +144,62 @@ test('the spring slack adds no energy: a block held at the place it lies stays a
   expect((await R.row(a.row)).flags & (ASLEEP | GRAB)).toBe(GRAB);
   expect(fastest).toBeLessThan(0.01);
   expect(off).toBeLessThan(0.01);
+  ok();
+});
+
+// (the owner's ruling on TK8: "the tool must grab what is under the finger, not what stands on the ground point behind it")
+test('a ray through the top block of a stack of five grabs it and not the bottom one, and it is held at its own height', async () => {
+  const R = await breakRig(g, flat);
+  const rows = [];
+  for (let i = 0; i < 5; i++) {
+    const cells = box(12, 12, 10 + 2 * i, 3, 3, 2);
+    rows.push(R.e.add({ cells, mesh: modelMesh(cells), asleep: true })!);
+  }
+  await R.step(2);
+  const top = (await R.row(rows[4].row)).pos;
+  const bottomBits = await poseBits(R, rows[0].row);
+  // (a view ray as the camera's: down at a slant, through the top block's centre; it passes within a thumb of the
+  // blocks under it too, and its ground point is far behind the stack)
+  const l = Math.hypot(1, 0.6, -0.8);
+  const d: V3 = [1 / l, 0.6 / l, -0.8 / l];
+  const from = (p: number[]): V3 => [p[0] - d[0] * 40, p[1] - d[1] * 40, p[2] - d[2] * 40];
+  R.e.grab(from(top), d, 2);
+  R.e.grabTarget(from(top), d, 0);
+  await R.step(30);
+  expect((await slot(R)) & 0xfffff).toBe(rows[4].row);
+  expect((await R.row(rows[4].row)).flags & (ASLEEP | GRAB)).toBe(GRAB);
+  for (const b of rows.slice(0, 4)) expect((await R.row(b.row)).flags & GRAB).toBe(0);
+  expect(await poseBits(R, rows[0].row)).toEqual(bottomBits);
+  // (the finger moves 5 cells sideways: the block goes there in the plane it was grabbed in, not down to the ground)
+  const aim = [top[0] + 5, top[1], top[2]];
+  R.e.grabTarget(from(aim), d, 0);
+  let low = Infinity;
+  for (let t = 0; t < 180; t++) {
+    await R.step(1);
+    low = Math.min(low, (await R.row(rows[4].row)).pos[2]);
+  }
+  const r = await R.row(rows[4].row);
+  log(`grab by ray: the top block of five (row ${rows[4].row}) from ${top.map((v) => v.toFixed(2))} to ${r.pos.map((v) => v.toFixed(2))}, lowest ${low.toFixed(3)}`);
+  expect(Math.hypot(r.pos[0] - aim[0], r.pos[1] - aim[1], r.pos[2] - aim[2])).toBeLessThan(0.1);
+  expect(low).toBeGreaterThan(top[2] - 0.1);
+  expect(await poseBits(R, rows[0].row)).toEqual(bottomBits);
+  ok();
+});
+
+test('a slanted ray that misses every body grabs nothing', async () => {
+  const R = await breakRig(g, flat);
+  const a = sleeper(R, 12, 12);
+  await R.step(2);
+  const bits = await poseBits(R, a.row);
+  const p = (await R.row(a.row)).pos;
+  const l = Math.hypot(1, 0.6, -0.8);
+  const d: V3 = [1 / l, 0.6 / l, -0.8 / l];
+  // (through a point 8 cells beside the block: further than its bound and a thumb)
+  R.e.grab([p[0] - d[0] * 40, p[1] + 8 - d[1] * 40, p[2] - d[2] * 40], d, 1);
+  R.e.grabTarget([p[0] - d[0] * 40, p[1] + 2 - d[1] * 40, p[2] - d[2] * 40], d, 0);
+  await R.step(20);
+  expect(await slot(R)).toBe(0);
+  expect(await awake(R)).toBe(0);
+  expect(await poseBits(R, a.row)).toEqual(bits);
   ok();
 });

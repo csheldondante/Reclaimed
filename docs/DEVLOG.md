@@ -24021,3 +24021,26 @@ point is the ground under the finger, which there was 12 cells behind the stack 
 the player when nothing was in reach (and the screen does not pan then, under the engine route); the lift height is
 from the ground under the finger, not the row's own height; one grab at a time, nearest centre wins, deforming bodies
 are not grabbed; a tap with the tool picked does nothing; the double tap's timing is untried on a phone.
+
+## 2026-11-15 — telekinesis picks by the finger's view ray (TK8, TK4; `physics10-all`)
+
+**Why.** The first cut picked by the ground point under the finger: a double tap on the middle of a stack asked 12
+cells behind it and took nothing. Main's ruling: "pick by the finger's view ray — the tool must grab what is under the
+finger, not what stands on the ground point behind it", and a block grabbed high stays high.
+
+**What.** `Engine.grab(rayOrigin, rayDir, radius)`: in `compact` every row whose bound sphere the ray passes within
+the radius of bids how far along the ray its centre is; the nearest the eye stays in `P_GRAB`. `grabTarget(rayOrigin,
+rayDir, lift)`: the tick's uniform carries the finger's ray, and `grabPull` crosses it with the level plane at the
+height the row was at when the hold began (written to the row's spare word `info[4r+3].z` by `compact` as it marks
+the row) plus the lift. The host still learns nothing of the row. The tool passes `camera.ray` at the press and each
+frame, a thumb of 20 px, lift 2; the old routes' point pick is unchanged.
+
+**Measured.** The top block of a stack of five (row 8, centre z 19.00) taken by a slanted ray through it, the bottom
+block's pose bit for bit; the finger 5 cells sideways: the block at 18.67, 11.69, 19.00, never under 18.998. The 6
+cell pull as before (overshoot 0.509). Capture (`tk-ray.gif`, the pile station): a double tap on the top of the stack
+lifted the top block off (20.5 to 22.4) with the four under it standing, and threw it at the lift.
+
+**Tests.** `npx vitest run --project gpu engine-grab` 7 passed; `npx vitest run --project gpu engine` 65 passed, 1 failed, 1 expected fail, 5 skipped: `engine-d0` D0.1 timed out at 60 s, twice; alone it passes in 59.2 s, and in 59.9 s on the commit before this one (a wall-time margin, TK9, not this change); `npm run typecheck` clean; `npx vitest run --project unit` 634 passed, 3 failed, the same 3 as the base.
+
+**Hacks and limits** (BACKLOG TK5): bound spheres, not shapes; nearness in quarter cells, a tie goes to the higher
+row index, not the closer as ruled. TK2, TK3, TK6, TK7 stand.
