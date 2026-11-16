@@ -401,6 +401,33 @@ export const STATIONS: Station[] = [
     ],
   },
   {
+    // (rest claims External — docs/design/PHYSICS_ENGINE.md "Rest claims External"; DESIGN §3: under ?solver=engine
+    // a block asleep is in the columns as External, so sand piles against it and on it and the ground's mesh closes
+    // round it; lifted out with telekinesis — double tap + drag — its intervals are air and the sand falls in. On the
+    // pile station's pad. By default, the old movers: the blocks are the judge's bodies)
+    id: 'sand',
+    name: 'sand',
+    rect: [192, 96, 224, 128],
+    look: [209, 104, G + 4, 6],
+    hint: 'blocks at rest, buried: set the blocks down, pour sand over them (it piles against and on them), then lift one out (double tap + drag): the sand falls into the hole',
+    actions: [
+      {
+        label: 'set down three blocks',
+        run: (k) => {
+          k.drop(cellsBox(203, 106, PILE.pad.top + 1, 3, 3, 3, MAT.Stone));
+          k.drop(cellsBox(209, 108, PILE.pad.top + 1, 4, 2, 2, MAT.Brick));
+          k.drop(cellsBox(214, 105, PILE.pad.top + 1, 2, 2, 4, MAT.Concrete));
+        },
+      },
+      {
+        label: 'pour sand over them',
+        run: (k) => {
+          for (const x of [204, 210, 215]) k.pour(...wp(x, 107), 5, 2, MAT.Sand);
+        },
+      },
+    ],
+  },
+  {
     id: 'dust',
     name: 'dust',
     rect: [16, 192, 112, 240],

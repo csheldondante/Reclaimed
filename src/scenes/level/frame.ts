@@ -274,6 +274,9 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     const hold = scene.dragHold;
     const g = hold.g!;
     const [tx, ty] = camera.groundAt(hold.at[0], hold.at[1], () => hold.h);
+    // (an engine row lifted out of the ground leaves air where its claim was — DESIGN §3: the loose ground round the
+    // hole must be awake to fall into it; 8 s, the sleep system's own event time)
+    if (g.kind === 'engine') scene.sleep?.wake(tx, ty, 14, 8, performance.now() / 1000);
     // (the finger's view ray too: the engine's rows are pulled to where it crosses their own drag plane)
     if (!scene.integrity.pull(g, [tx, ty, hold.h], Math.min(dt, 1 / 20), 40, camera.ray(hold.at[0], hold.at[1]))) {
       scene.integrity.letGo(g);
