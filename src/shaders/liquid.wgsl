@@ -44,6 +44,8 @@ struct PartQ { p: vec4<f32>, v: vec4<f32>, m: vec4<u32> };
 @group(0) @binding(13) var<storage, read_write> counters: array<atomic<u32>>;
 @group(0) @binding(14) var<storage, read_write> waterPrevL: array<f32>;
 @group(0) @binding(16) var<storage, read> waterSourceL: array<f32>;
+/** a source word at or under -1 is a held flood stage: -(FLOOD_STAGE_BIAS + its level in window z) (mutate/flood.wgsl) */
+const FLOOD_STAGE_BIAS: f32 = 1024.0;
 @group(0) @binding(19) var<storage, read_write> fluxC: array<Dirs>;
 // (lava's publish: the water it boils)
 @group(0) @binding(20) var<storage, read_write> waterB: array<f32>;
@@ -738,6 +740,12 @@ fn publishWater(@builtin(global_invocation_id) id: vec3<u32>) {
   var nd = select(d, r0.y, (u32(r0.w) >> 3u) == stepNow());
   // (a source: cells^3 a second — PW6)
   nd += rainAt(cellPos(p)) * G.tune.waterRain * (1.0 - snowShare(airTempAt(sfZ(surface[i])))) + max(waterSourceL[i], 0.0) * DTQ;
+  // (mutators, BACKLOG MU-28 — an orchestrator's ruling, an owner question) A held flood stage: a column whose source
+  // word is a stage (waterSource <= -1: -(FLOOD_STAGE_BIAS + the level, window z), written by the flood modifier and
+  // cleared when the waters recede) holds its open water up to that level — a boundary condition, as the rivers'
+  // table is and as a source is. What runs off it is made good each step, so its chunk comes to "in matches out" and
+  // sleeps; nothing is dispatched or read for it at rest.
+  if (waterSourceL[i] <= -1.0 && (u32(r0.w) >> 3u) == stepNow()) { nd = max(nd, -waterSourceL[i] - FLOOD_STAGE_BIAS - r0.x); }
   nd = max(0.0, nd - select(EVAP_DEEP_Q, G.tune.waterEvap, nd < 0.08));
   if (sfCount(surface[i]) == 0u) { nd = 0.0; }
   waterPrevL[i] = d;

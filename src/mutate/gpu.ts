@@ -68,7 +68,7 @@ export class MutateGpu {
     const parts = [commonWgsl, layersWgsl, materialsWgsl, masksWgsl, landWgsl];
     this.land = makeCompute(device, 'mutate-land', parts, { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'uniform', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 14: 'rw' }, 'mutLand');
     this.lots = makeCompute(device, 'mutate-lots', [commonWgsl, materialsWgsl, masksWgsl, lotsWgsl], { 0: 'uniform', 2: 'uniform', 5: 'uniform', 10: 'read', 11: 'read', 12: 'rw', 13: 'uniform' }, 'mutLots');
-    this.flood = makeCompute(device, 'mutate-flood', [commonWgsl, layersWgsl, materialsWgsl, masksWgsl, floodWgsl], { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'rw', 5: 'uniform', 6: 'rw', 7: 'rw' }, 'mutFlood');
+    this.flood = makeCompute(device, 'mutate-flood', [commonWgsl, layersWgsl, materialsWgsl, masksWgsl, floodWgsl], { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'rw', 5: 'uniform', 6: 'rw', 7: 'rw', 8: 'rw' }, 'mutFlood');
     const fb = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'uniform', 15: 'rw', 16: 'rw' } as const;
     const fparts = [commonWgsl, layersWgsl, materialsWgsl, masksWgsl, floodScanWgsl];
     this.scan = makeCompute(device, 'mutate-flood-scan', fparts, fb, 'mutFloodScan');
@@ -178,7 +178,7 @@ export class MutateGpu {
             // (the silt first — land.wgsl — then the water to the level over it: flood.wgsl)
             const pw = this.params(m, o, b, 0, strength);
             levelTo.push(pw.offset!);
-            const gw = makeBindGroup(this.device, 'mutate-flood-write', this.flood.layout, { 0: W.globals, 1: W.chunks, 2: W.materials, 3: W.layers, 4: W.water, 5: pw, 6: W.contam, 7: W.contamNext });
+            const gw = makeBindGroup(this.device, 'mutate-flood-write', this.flood.layout, { 0: W.globals, 1: W.chunks, 2: W.materials, 3: W.layers, 4: W.water, 5: pw, 6: W.contam, 7: W.contamNext, 8: W.waterSource });
             mine.push({ k: this.flood, g: gw, x: gx, y: gy });
           }
         }

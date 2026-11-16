@@ -7,6 +7,9 @@
 @group(0) @binding(4) var<storage, read_write> water: array<f32>;
 @group(0) @binding(6) var<storage, read_write> contam: array<vec2<f32>>;
 @group(0) @binding(7) var<storage, read_write> contamNext: array<vec2<f32>>;
+/** the liquid's source word a column: at or under -1 a held flood stage, -(1024 + the level in window z) — liquid.wgsl
+ *  FLOOD_STAGE_BIAS: the liquid holds the column's water at that level instead of draining it (BACKLOG MU-28) */
+@group(0) @binding(8) var<storage, read_write> waterSource: array<f32>;
 
 @compute @workgroup_size(8, 8)
 fn mutFlood(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -29,8 +32,11 @@ fn mutFlood(@builtin(global_invocation_id) id: vec3<u32>) {
   let top = ivZ1(tv);
   if (ivMat(tv) == MAT_EXTERNAL && top - ivZ0(tv) >= BUILDING_T) { return; }
   let j = colIdxI(p);
-  let want = floodLevel(d) - top;
+  let lvl = floodLevel(d);
+  let want = lvl - top;
   let before = water[j];
+  // (the stage held by the liquid; a river's or a spring's own inflow there stays the river's: the table holds those)
+  if (want > 0.05 && waterSource[j] <= 0.0) { waterSource[j] = -(1024.0 + lvl); }
   if (want > 0.05 && want > before) {
     water[j] = want;
     // (what was dissolved in the water that stood here is thinned by what came; a dry column's is gone)

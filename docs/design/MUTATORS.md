@@ -195,6 +195,19 @@ there is no generator input today, and the post-generation write is what exists.
 4. `captured` shows as a roof colour from the holder's name. `vassal` changes no lot.
 5. The far place's pin on the map is the map's own pin, with the place's name and what happened, not a tint.
 
+## Round 3 rulings (the orchestrator's, on this branch; owner questions, not decided design)
+
+1. **Standing flood water: a held flood stage** (BACKLOG MU-28). A flood holds a level over its area as a boundary
+   condition inside the liquid's own contract: the column's source word (`waterSource` <= -1 is -(1024 + level)),
+   which `liquid.wgsl publishWater` holds the open water up to. No refill from the mutator. Question for the owner:
+   is a held stage the right model, or should a flood be the river table's stage / the recorded `flood` AtlasEvent
+   realised by the generator? Cost at rest is not measured (MU-33). Receding is not built (MU-35).
+2. **Instant everywhere.** The owner's later words win: mutators are instant everywhere; round 128r's staged
+   time-lapse stays for the player's own city where the sim is live.
+3. The region dials nothing realises (MU-22): left, logged.
+
+Round 3 did item A only (flooded reads: flood-held-b.png at play zoom, flood-held-wide-b.png wide). B-F not started.
+
 ## Hand-over (round 2, 2026-11-15 night)
 
 Done: item 1 (the fact layer, above). Partial: item 2 — the flood's level, colour and rim are right and tested, and

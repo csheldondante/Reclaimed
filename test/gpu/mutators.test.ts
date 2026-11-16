@@ -308,8 +308,8 @@ test('world state: a place destroyed, abandoned, captured — its lots all carry
 // The user (2026-11-15): "the local simulation and playable battle make the instant mutations read as fully simulated".
 // An instant end state must be one the live sims would leave: woken on it, they barely move it.
 describe('woken sims leave an instant result nearly as it is', () => {
-  const closedBowl = (x: number, y: number) => 12 - 6 * Math.exp(-((x - 32) ** 2 + (y - 32) ** 2) / 160);
-  async function bowlRig(systems: string[] | 'all') {
+  const hollow = (x: number, y: number) => 12 - 6 * Math.exp(-((x - 32) ** 2 + (y - 32) ** 2) / 160);
+  async function bowlRig(systems: string[] | 'all', closedBowl: (x: number, y: number) => number = hollow) {
     const map = tinyMap(W, H, 48, (x, y) => {
       const z = closedBowl(x, y);
       return [{ z0: 0, z1: z - 1, mat: MAT.Stone }, { z0: z - 1, z1: z, mat: MAT.Soil }];
@@ -321,6 +321,37 @@ describe('woken sims leave an instant result nearly as it is', () => {
     const eng = new MutateEngine({ gpu, world, origin: () => [0, 0, 0], towns: () => [] });
     return { w, gpu, eng };
   }
+
+  // (round 3, BACKLOG MU-28) On open ground the flow model drained a flood in seconds: at Muru 1 900 flooded columns
+  // fell to 400 in 12 s. The flood's level is now a stage the liquid holds (liquid.wgsl publishWater, the source word).
+  test('flooded on an open slope, then the liquid woken for 5 s: the stage holds the water at its level', async () => {
+    const slope = (x: number, _y: number) => 14 - 0.12 * x;
+    const r = await bowlRig(['surface', 'liquid-water'], slope);
+    r.eng.apply({ kind: 'flooded', at: AT, radius: R, strength: 1, seed: 1 });
+    await r.eng.levels;
+    const level = r.eng.record().list[0].params[0];
+    const a = (await r.w.read('water')).slice();
+    await r.w.step(300);
+    const b = await r.w.read('water');
+    let n = 0;
+    let low = 0;
+    let worst = 0;
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        if (dist(x, y) > R * 0.5 || a[i] < 0.3) continue;
+        n++;
+        // (silt lies under the water: the surface is the level whatever the bed)
+        worst = Math.max(worst, a[i] - b[i]);
+        if (b[i] < a[i] - 0.25) low++;
+      }
+    console.log(`[mutators] flood on a slope woken 5 s: level ${level.toFixed(2)}, ${n} flooded columns in the core, ${low} fell by a quarter cell or more, the most ${worst.toFixed(3)}`);
+    expect(g.takeErrors()).toEqual([]);
+    expect(n).toBeGreaterThan(100);
+    expect(low).toBe(0);
+    r.gpu.dispose();
+    r.w.destroy();
+  });
 
   test('flooded in a closed hollow, then the liquid woken for 5 s: the water keeps its volume and its level', async () => {
     const r = await bowlRig(['surface', 'liquid-water']);

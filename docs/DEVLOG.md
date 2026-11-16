@@ -23262,3 +23262,20 @@ brown); no flakes show in the air; a speckle on the houses. Does not read (MU-31
 fail (roadlab writing lint, MU-14); gpu mutators 39 pass (flood: level kept on the entry, one level, no water over it,
 written whole once on arrival).
 
+## 2026-11-15 (night) — mutators round 3, item A: a held flood stage, so the flood stands (`mutators`)
+
+**Why.** Round 2 measured the flow model draining a flood on open ground in seconds (MU-28). The orchestrator ruled:
+hold the level as a boundary condition inside the liquid's contract, not a refill from the mutator.
+
+**What.** `flood.wgsl` writes the column's source word as -(1024 + level) where it adds water; `liquid.wgsl
+publishWater` — where a source's inflow is already added — holds the open water up to that level. The depth kernel
+was tried first and is at eight storage buffers; publishWater binds the source already.
+
+**Measured / looked at.** gpu test, an open slope (falls 0.12 a cell), the liquid stepped 300 times: no flooded column
+of the core falls a quarter cell (40 tests pass). Not run: the same test with the hold removed, to prove it fails
+without it. Muru, radius 60: 4 871 wet columns at 0.3 s, 5 065 about 30 s later (flood-held.png, flood-held-b.png):
+wide dark water over the east of the town, houses standing in it with the drowned tint, the bridge under, a shoreline
+following the ground on the west. It reads at a glance. Wrong in it: a straight edge where the raised water meets the
+held river (MU-36); and the headless sim made only about 90 ticks in that time with 123-129 chunks awake, so "the same
+water at 30 s" is 90 ticks of evidence, and the cost and the settling are unmeasured (MU-33).
+
