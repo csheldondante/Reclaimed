@@ -23279,3 +23279,26 @@ following the ground on the west. It reads at a glance. Wrong in it: a straight 
 held river (MU-36); and the headless sim made only about 90 ticks in that time with 123-129 chunks awake, so "the same
 water at 30 s" is 90 ticks of evidence, and the cost and the settling are unmeasured (MU-33).
 
+## 2026-11-15 (late) — mutators round 4, item 1: the flood's edge (`mutators`, MU-36)
+
+**Why.** flood-held-b.png showed a raised rectangle of water with straight steps where the flood met the river. The
+rim's level fell to "the river's level" (the 20th percentile of the standing water inside the core), which is over the
+real water wherever the river or the lake lies lower; the held core then poured water out past the rim for ever. The
+chunks the write had touched were awake and rose; their sleeping neighbours did not: the sheet ended on chunk edges.
+
+**What.** (1) `floodscan.wgsl` counts a third histogram, the outer ring's surfaces (ground or water), and the rim now
+falls to a quarter cell under the lowest of them, so at the rim the flood's level is under everything there and the
+flood's surface (the higher of the level and what stood there) is continuous. (2) The rim's columns carry an EDGE
+stage, -(4096 + level), which `liquid.wgsl publishWater` keeps the water AT, up or down: what the held core sheds
+runs down the rim and is taken up there. The core keeps round 3's held stage (up only).
+
+**Measured.** gpu, the open slope (0.12 a cell), radius 20, 300 steps: 279 core columns, none fell; tallest step
+between neighbouring columns from the core's edge outwards 0.71 cells (silt noise and the hex rows included); water
+beyond the radius after 300 steps 0.02 cells. The same test with the hold switched off in publishWater (run once,
+restored): FAILS, 279 of 279 fell a quarter cell or more, the most 1.86 — so the test does prove the hold. 40 pass.
+
+**Looked at.** r4/reload/before-home.png (Muru, the place's own radius 80, zoom 2.67 px a cell — the default; the
+camera's floor was 0.82-1.13, so the zoom was not clamped): a round dark flood over the east of the town with a soft
+edge into the lake and the river, no rectangle, no straight step. A straight grey Y under the water north of the town
+is the road and its bridge, drowned. Not shown: that the chunks reach rest and sleep (MU-33, the phone bench).
+

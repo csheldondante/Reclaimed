@@ -73,7 +73,7 @@ export class MutateGpu {
     const fparts = [commonWgsl, layersWgsl, materialsWgsl, masksWgsl, floodScanWgsl];
     this.scan = makeCompute(device, 'mutate-flood-scan', fparts, fb, 'mutFloodScan');
     this.pick = makeCompute(device, 'mutate-flood-pick', fparts, fb, 'mutFloodPick');
-    this.floodHist = device.createBuffer({ label: 'mutate-flood-hist', size: 512 * 4, usage: GPUBufferUsage.STORAGE });
+    this.floodHist = device.createBuffer({ label: 'mutate-flood-hist', size: 768 * 4, usage: GPUBufferUsage.STORAGE });
     this.floodOut = device.createBuffer({ label: 'mutate-flood-out', size: FLOOD_SLOTS * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     this.ready = new Promise((res) => whenPipelinesReady(res));
     this.uni = device.createBuffer({ label: 'mutate-params', size: SLOT * SLOTS, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });

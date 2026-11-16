@@ -345,10 +345,25 @@ describe('woken sims leave an instant result nearly as it is', () => {
         worst = Math.max(worst, a[i] - b[i]);
         if (b[i] < a[i] - 0.25) low++;
       }
-    console.log(`[mutators] flood on a slope woken 5 s: level ${level.toFixed(2)}, ${n} flooded columns in the core, ${low} fell by a quarter cell or more, the most ${worst.toFixed(3)}`);
+    // (round 4, BACKLOG MU-36) The rim: the flood's surface comes down to the ground round it with no step, and what
+    // the held core sheds is taken up in the rim — nothing pours out over the land below.
+    const sf = await r.w.read('surface');
+    const top = Float32Array.from(new Uint32Array(sf.buffer, sf.byteOffset, W * H), (v) => (v & 0x1ffff) / 256);
+    let step = 0;
+    let outside = 0;
+    for (let y = 1; y < H - 1; y++)
+      for (let x = 1; x < W - 1; x++) {
+        const i = y * W + x;
+        if (dist(x, y) > R) outside += b[i];
+        if (dist(x, y) < R * 0.6 || dist(x, y) > R + 2) continue;
+        for (const k of [i + 1, i + W]) if (a[i] > 0.05 || a[k] > 0.05) step = Math.max(step, Math.abs(top[i] + a[i] - top[k] - a[k]));
+      }
+    console.log(`[mutators] flood on a slope woken 5 s: level ${level.toFixed(2)}, ${n} flooded columns in the core, ${low} fell by a quarter cell or more, the most ${worst.toFixed(3)}; the rim's tallest step between neighbours ${step.toFixed(3)}, water beyond the radius after 5 s ${outside.toFixed(2)}`);
     expect(g.takeErrors()).toEqual([]);
     expect(n).toBeGreaterThan(100);
     expect(low).toBe(0);
+    expect(step).toBeLessThan(0.75);
+    expect(outside).toBeLessThan(3);
     r.gpu.dispose();
     r.w.destroy();
   });

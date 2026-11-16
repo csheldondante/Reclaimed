@@ -7,9 +7,16 @@
 @group(0) @binding(4) var<storage, read_write> water: array<f32>;
 @group(0) @binding(6) var<storage, read_write> contam: array<vec2<f32>>;
 @group(0) @binding(7) var<storage, read_write> contamNext: array<vec2<f32>>;
-/** the liquid's source word a column: at or under -1 a held flood stage, -(1024 + the level in window z) — liquid.wgsl
- *  FLOOD_STAGE_BIAS: the liquid holds the column's water at that level instead of draining it (BACKLOG MU-28) */
+/** the liquid's source word a column (liquid.wgsl FLOOD_STAGE_BIAS, FLOOD_EDGE_BIAS; BACKLOG MU-28, MU-36):
+ *  inside the rim a HELD stage, -(1024 + the level in window z): the liquid holds the column's water up to it instead
+ *  of draining it. In the rim an EDGE stage, -(4096 + the level): the liquid keeps the column's water AT it, up or
+ *  down — the higher of the flood's falling level and what stood there (the river, the lake, dry ground). What the
+ *  held core sheds runs down the rim and is taken up there, so nothing is poured into the water beyond the rim: that
+ *  made a raised straight-edged sheet over the river in round 3 (the chunks awake rose, the sleeping ones did not) */
 @group(0) @binding(8) var<storage, read_write> waterSource: array<f32>;
+
+const FLOOD_STAGE_BIAS_M: f32 = 1024.0;
+const FLOOD_EDGE_BIAS_M: f32 = 4096.0;
 
 @compute @workgroup_size(8, 8)
 fn mutFlood(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -35,8 +42,16 @@ fn mutFlood(@builtin(global_invocation_id) id: vec3<u32>) {
   let lvl = floodLevel(d);
   let want = lvl - top;
   let before = water[j];
-  // (the stage held by the liquid; a river's or a spring's own inflow there stays the river's: the table holds those)
-  if (want > 0.05 && waterSource[j] <= 0.0) { waterSource[j] = -(1024.0 + lvl); }
+  // (a river's or a spring's own inflow there stays the river's: the table holds those)
+  if (waterSource[j] <= 0.0) {
+    if (d < FLOOD_RIM) {
+      if (want > 0.05) { waterSource[j] = -(FLOOD_STAGE_BIAS_M + lvl); }
+    } else if (top < MP.p.x) {
+      // (the edge: at the higher of the falling level and what is there now. Idempotent: written again it finds the
+      // water it left, and the higher of the two is the same)
+      waterSource[j] = -(FLOOD_EDGE_BIAS_M + max(lvl, top + select(0.0, before, before > 0.05)));
+    }
+  }
   if (want > 0.05 && want > before) {
     water[j] = want;
     // (what was dissolved in the water that stood here is thinned by what came; a dry column's is gone)

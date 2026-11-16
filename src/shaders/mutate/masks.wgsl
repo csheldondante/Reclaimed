@@ -85,11 +85,13 @@ fn mfbm(p: vec2<f32>, s: u32) -> f32 {
 /** how far out of the entry's disc a window point is (1: its rim) */
 fn mutD(wp: vec2<f32>) -> f32 { return distance(wp, MP.at.xy) / max(MP.at.z, 1.0); }
 
-/** flooded — p.x: the water's level (window z); p.y: the level of the standing water it rose from (window z; far
- *  below: none). The level a point's water stands at: flat inside the rim, falling away to the river's own beyond */
+/** flooded — p.x: the water's level (window z); p.y: the level the rim falls to (window z; far below: not taken —
+ *  floodscan.wgsl: a quarter cell under the lowest ground or water of the outer ring). The level a point's water
+ *  stands at: flat inside the rim, falling smoothly beyond it to under everything at the rim itself, so the flood's
+ *  surface (the higher of this and what was there) meets the land and the water round it with no step (MU-36) */
 fn floodLevel(d: f32) -> f32 {
-  let t = smoothstep(FLOOD_RIM, 1.0, d);
-  let low = select(MP.p.x - FLOOD_RIM_DROP, max(MP.p.y, MP.p.x - 2.0 * FLOOD_RIM_DROP), MP.p.y > MP.p.x - 2.0 * FLOOD_RIM_DROP);
+  let t = smoothstep(FLOOD_RIM, 0.98, d);
+  let low = select(MP.p.x - FLOOD_RIM_DROP, clamp(MP.p.y, MP.p.x - 2.0 * FLOOD_RIM_DROP, MP.p.x - 1.0), MP.p.y > -1e8);
   return mix(MP.p.x, low, t);
 }
 
