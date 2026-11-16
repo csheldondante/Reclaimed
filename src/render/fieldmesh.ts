@@ -6,6 +6,8 @@
 // finer and four times the cost). This side writes the layout (a uniform),
 // dispatches, and culls to the view: the chunks drawn, and the chunks
 // rebuilt (near the view; the rest when they come into it).
+// (phone-idle, 2026-11-15: a frame is one compute pass of direct dispatches, or nothing when it may sleep — "what a
+// frame encodes", below. API beside the draws: encode, cull / pin, urgent, shift, setWanted, setCaves, wake, canSleep.)
 
 import { ignoreTeardown, makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
 import { UnsupportedError } from '../gpu/device';
@@ -18,6 +20,8 @@ import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
 import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import fieldMeshWgsl from '../shaders/fieldmesh.wgsl?raw';
 import type { WorldGpu } from '../sim/world-gpu';
+import { LIVE } from '../sim/cull';
+import { SettledRead } from '../gpu/settled';
 import { urlFlags } from '../flags';
 
 /** round 82: ?readback=0 — the renderer's and the mesh's periodic readbacks off (main.ts: the timestamps too) */
@@ -293,7 +297,8 @@ export class FieldMesh {
         30: this.region,
       });
     this.changed = makeCompute(device, 'fieldmesh-changed', parts, spec, 'changedChunks');
-    this.argsK = makeCompute(device, 'fieldmesh-args', parts, spec, 'rebuildArgs');
+    // (phone-idle: the indirect path's args kernel is made when that path is first asked for — encodeIndirect)
+    this.makeArgsK = () => makeCompute(device, 'fieldmesh-args', parts, spec, 'rebuildArgs');
     this.changedF = makeCompute(device, 'fieldmesh-changed-fresh', parts, spec, 'changedFresh');
     this.bounds = makeCompute(device, 'fieldmesh-bounds', parts, spec, 'chunkBounds');
     // (round 93, the pool: the count and alloc passes between — the alloc ones a single workgroup, dispatched direct)
@@ -302,10 +307,15 @@ export class FieldMesh {
       : (['columnTops', 'sampleField', 'makeVerts', 'makeQuads'] as const);
     const names: Record<string, string> = { columnTops: 'tops', sampleField: 'sample', countVerts: 'count', allocVerts: 'alloc', makeVerts: 'verts', countQuads: 'qcount', allocQuads: 'qalloc', makeQuads: 'quads' };
     for (const entry of steps) {
-      const k = makeCompute(device, `fieldmesh-${entry}`, parts, spec, entry);
+      // (phone-idle: the rebuild's kernels over a slot's columns of samples — fieldmesh.wgsl's entries named …Z; the
+      // allocs are one workgroup either way)
+      const one = entry.startsWith('alloc');
+      const k = makeCompute(device, `fieldmesh-${entry}`, parts, spec, one ? entry : `${entry}Z`);
       this.kernels.push(k);
-      this.steps.push({ name: `fieldmesh-${names[entry]}`, direct: entry.startsWith('alloc'), tops: entry === 'columnTops' });
+      this.steps.push({ name: `fieldmesh-${names[entry]}`, direct: one, tops: entry === 'columnTops' });
     }
+    // (the path before's — `indirect` — made when it's first asked for: a workgroup 4 × 4 × 4 samples, z packing the slots)
+    this.makeBlockKernels = () => steps.map((entry, i) => (entry.startsWith('alloc') ? this.kernels[i] : makeCompute(device, `fieldmesh-${entry}-block`, parts, spec, entry)));
     this.makeGroups();
   }
 
@@ -313,11 +323,16 @@ export class FieldMesh {
   private makeGroup!: (k: ComputeKernel) => GPUBindGroup;
   private makeGroups(): void {
     this.changedGroup = this.makeGroup(this.changed);
-    this.argsGroup = this.makeGroup(this.argsK);
+    if (this.argsK) this.argsGroup = this.makeGroup(this.argsK);
     this.changedFGroup = this.makeGroup(this.changedF);
     this.boundsGroup = this.makeGroup(this.bounds);
     this.groups = this.kernels.map((k) => this.makeGroup(k));
+    if (this.blockKernels) this.blockGroups = this.blockKernels.map((k) => this.makeGroup(k));
   }
+  /** (`indirect`, the path before) the rebuild's kernels as they were dispatched then, and their groups */
+  private makeBlockKernels!: () => ComputeKernel[];
+  private blockKernels?: ComputeKernel[];
+  private blockGroups: GPUBindGroup[] = [];
   private steps: { name: string; direct: boolean; tops: boolean }[] = [];
 
   // ---- (round 93) the page pool ----------------------------------------------------------------------------
@@ -339,6 +354,7 @@ export class FieldMesh {
   poolVersion = 0;
   /** (round 120) its source's buffers made again (the rock mesh's copy grew): its groups again, and the draws' (poolVersion) */
   sourceChanged(): void {
+    this.wake();
     this.makeGroups();
     this.poolVersion++;
   }
@@ -357,6 +373,8 @@ export class FieldMesh {
     enc.copyBufferToBuffer(old, 0, this.verts, 0, old.size);
     this.device.queue.submit([enc.finish()]);
     this.pages = want;
+    // (the new pages are pushed by the next alloc pass)
+    this.wake();
     this.device.queue.writeBuffer(this.state, (this.freeAt + 1) * 4, new Uint32Array([want]));
     this.makeGroups();
     this.poolVersion++;
@@ -389,8 +407,9 @@ export class FieldMesh {
   /** the rebuild's indirect dispatch (round 81) and where the state keeps it */
   private args!: GPUBuffer;
   private argsAt = 0;
-  private argsK!: ComputeKernel;
-  private argsGroup!: GPUBindGroup;
+  private argsK?: ComputeKernel;
+  private argsGroup?: GPUBindGroup;
+  private makeArgsK!: () => ComputeKernel;
   /** its passes' and buffers' names begin so ('band ': the profiler tells the two apart) */
   private pre = '';
 
@@ -415,6 +434,7 @@ export class FieldMesh {
     const moved = (f === null) !== (old === null) || (f && old && Math.hypot(f[0] - old[0], f[1] - old[1]) > CAVE_NEAR / 4);
     if (on === this.caveOn && !moved) return;
     const all = on !== this.caveOn;
+    this.wake();
     this.caveOn = on;
     this.caveFocus = f;
     const fl = new Float32Array(this.layout);
@@ -449,6 +469,7 @@ export class FieldMesh {
     if (!this.on) return;
     const n = this.nx * this.ny;
     if (want && want.length !== n) throw new Error(`FieldMesh.setWanted: ${want.length} chunks, not ${n}`);
+    this.wake();
     const old = this.wanted;
     // (round 128o, DA-B28: a chunk turning meshed or not changes how its neighbours close their caves toward it —
     // fieldmesh.wgsl colUnmeshed: the wanted ones round it rebuilt, drawn meanwhile)
@@ -482,6 +503,7 @@ export class FieldMesh {
 
   setBand(oz: number, zMax: number): void {
     if (!this.on || !this.src) return;
+    this.wake();
     const f = new Float32Array(this.layout);
     f.set([-oz - 1, -oz, 1e30, 0], 16);
     f.set([0, zMax, 1, this.openEdge], 20);
@@ -502,6 +524,7 @@ export class FieldMesh {
   openEdges(): void {
     this.openEdge = 1;
     if (!this.on) return;
+    this.wake();
     new Float32Array(this.layout)[23] = 1;
     this.device.queue.writeBuffer(this.region, 0, this.layout);
   }
@@ -534,6 +557,7 @@ export class FieldMesh {
    */
   shift(dcx: number, dcy: number, t: [number, number, number]): void {
     if (!this.on) return;
+    this.wake();
     this.slides++;
     const dev = this.device;
     if (!this.shiftK) {
@@ -602,6 +626,7 @@ export class FieldMesh {
    */
   urgent(x0: number, y0: number, x1: number, y1: number, frames = 3): void {
     if (!this.on || this.src) return;
+    this.wake();
     const n = this.nx * this.ny;
     if (this.urgentLeft.length !== n) this.urgentLeft = new Uint8Array(n);
     const i0 = Math.max(0, Math.floor((x0 - 3) / CHUNK));
@@ -621,32 +646,188 @@ export class FieldMesh {
     return this.urgentN > 0;
   }
 
+  // ---- (phone-idle, 2026-11-15) what a frame encodes -----------------------------------------------------------
+  // On the phone an indirect dispatch costs ~0.1 ms whether it runs 1 workgroup or 0, a direct one ~0.008 ms, a
+  // compute pass ~0.02 ms (docs/FRAMECOST.md). The frame before: 10 passes, 5 of them indirect, every frame, to
+  // rebuild nothing. Now one pass: the two change passes, the bounds and the rebuild, all dispatched direct — the
+  // rebuild over the slots the CPU knows may be taken this frame (the ordinary ones, and one a chunk it marked urgent:
+  // fieldmesh.wgsl changedChunk hands out no more), a slot not taken returning at once (jobSync). A direct dispatch's
+  // room is the CPU's, so the rebuild's workgroups are a slot's 4 × 4 columns of samples, each walking its blocks of z
+  // (fieldmesh.wgsl's entries named …Z): 81 workgroups a slot a kernel at spacing 1 whatever the world's height, where
+  // a workgroup a 4 × 4 × 4 block (the path before) was 81 × ceil(samples of z / 4) — thousands a slot to return at
+  // once every idle frame. The same chunks are rebuilt in the same frames as before: each block is treated by the
+  // same code, the kernels in the same order.
+  //
+  // Asleep (`canSleep`): nothing is encoded at all — no pass, no upload, no copy, no read. The gate is gpu/settled.ts:
+  // a wake is what the CPU knows may have changed a near chunk's key or what it was built from —
+  //   the sim ticked a live chunk (WorldGpu.tiles' live list had a chunk at the last tick; no tiles: always) — woken
+  //     every frame it holds, so no read is taken meanwhile: the GPU's change check runs alone each frame;
+  //   urgent marks (an edit's, a falling piece's, land arriving), a slide (shift), setWanted, setCaves, setBand,
+  //     openEdges, sourceChanged, the pool grown, a chunk come near the view (cull, pin);
+  //   `wake()`, for any other writer of the columns or of a source's versions.
+  // Awake and not woken for the gate's hold (2 frames), the count of near chunks not built from their key
+  // (fieldmesh.wgsl changedChunk: the args' first word) is read, 16 bytes, one read in flight; 0 puts it to sleep.
+  // So a rebuild pending (no slot yet, starved of pages) keeps it awake, and reads happen only after a wake ends.
+  // Off unless asked (?meshsleep=1, or `canSleep` set): the sim's own systems that write sleeping chunks (town stamps,
+  // place ops, the land brush), WorldGpu.bumpChunks and the page writes don't call `wake()` yet — asleep, their
+  // changes would not be meshed until something else woke it.
+
+  /** (a test's reference, a bench's toggle: ?meshindirect=1) the path before: a pass a kernel, the rebuild dispatched
+   *  indirect from the GPU's count, every frame */
+  indirect = urlFlags().get('meshindirect') === '1';
+  /** asleep — nothing encoded — when the CPU knows nothing may have changed and the GPU said nothing is owed (above) */
+  canSleep = urlFlags().get('meshsleep') === '1';
+  private gate?: SettledRead;
+  /** frames `encode` found it asleep (tests, the overlay) */
+  sleptFrames = 0;
+  /** an awake frame was encoded since the stats / the free stack were last read: read once more when it sleeps */
+  private statOwed = false;
+  private freeOwed = false;
+  /** the near words as last uploaded */
+  private nearSent = new Uint32Array(0);
+
+  /** Something may have changed a near chunk's key (a writer of the columns, of a source's versions) or what's built:
+   *  the change check runs until the GPU says nothing is owed. */
+  wake(hold?: number): void {
+    this.gate?.wake(hold);
+  }
+
+  /** this frame: asleep? (the gate made when first asked; woken here by what holds — the sim's live chunks, urgent marks) */
+  private asleep(): boolean {
+    if (!this.canSleep || this.indirect) return false;
+    if (!this.gate) {
+      // (its staging buffer the world's, freed with it)
+      const world = this.world;
+      const made = { createBuffer: (d: GPUBufferDescriptor) => world.buf(d.label ?? 'settled read', d.size, d.usage) } as unknown as GPUDevice;
+      this.gate = new SettledRead(made, `${this.pre}fieldmesh`, this.state, this.argsAt, 16, (w) => w[0] === 0);
+      this.gate.wake();
+    }
+    const tiles = this.world.tiles;
+    if (this.urgentN > 0 || (!this.src && (!tiles || tiles.count(LIVE) > 0))) this.gate.wake();
+    return !this.gate.awake;
+  }
+
   /** Find the chunks near the view that changed and rebuild a few of them. */
   encode(enc: GPUCommandEncoder, cam: Camera): void {
     if (!this.on) return;
-    const chunks = this.nx * this.ny;
-    this.device.queue.writeBuffer(this.state, 0, new Uint32Array([0]));
-    // (round 86: the ordinary slots' count, the args' spare word)
-    this.device.queue.writeBuffer(this.state, this.argsAt + 12, new Uint32Array([0]));
-    // (state word 15: the frame, so the second hash pass knows what the first took)
-    this.device.queue.writeBuffer(this.state, 15 * 4, new Uint32Array([++this.frameNo]));
-    let nearW = this.near;
-    if (this.urgentN > 0 || this.wanted) {
-      if (this.nearOut.length !== chunks) this.nearOut = new Uint32Array(chunks);
-      nearW = this.nearOut;
-      nearW.set(this.near);
-      for (let c = 0; c < chunks && this.urgentN > 0; c++) {
-        if (!this.urgentLeft[c]) continue;
-        if (nearW[c]) nearW[c] |= URGENT_BIT;
-        if (--this.urgentLeft[c] === 0) this.urgentN--;
+    const asleep = this.asleep();
+    if (asleep) this.sleptFrames++;
+    else {
+      const chunks = this.nx * this.ny;
+      // (state word 0: the chunks found changed, zeroed; 1..14 the slots' chunks; 15: the frame, so the second change
+      // pass knows what the first took)
+      const head = new Uint32Array(16);
+      head[15] = ++this.frameNo;
+      this.device.queue.writeBuffer(this.state, 0, head);
+      // (the args' words zeroed: the near chunks not built from their key; round 86: the ordinary slots' count)
+      this.device.queue.writeBuffer(this.state, this.argsAt, new Uint32Array(4));
+      let nearW = this.near;
+      /** chunks marked urgent this frame: each may take a slot over the ordinary ones */
+      let marked = 0;
+      if (this.urgentN > 0 || this.wanted) {
+        if (this.nearOut.length !== chunks) this.nearOut = new Uint32Array(chunks);
+        nearW = this.nearOut;
+        nearW.set(this.near);
+        for (let c = 0; c < chunks && this.urgentN > 0; c++) {
+          if (!this.urgentLeft[c]) continue;
+          if (nearW[c]) {
+            nearW[c] |= URGENT_BIT;
+            marked++;
+          }
+          if (--this.urgentLeft[c] === 0) this.urgentN--;
+        }
+        // (round 117, terrain — TR24: the hybrid's chunks the mesh doesn't draw, marked: a drawn chunk's field closes the
+        // caves at its side toward them — fieldmesh.wgsl UNMESHED_BIT, colDist)
+        if (this.wanted) for (let c = 0; c < chunks; c++) if (!this.wanted[c]) nearW[c] |= UNMESHED_BIT;
       }
-      // (round 117, terrain — TR24: the hybrid's chunks the mesh doesn't draw, marked: a drawn chunk's field closes the
-      // caves at its side toward them — fieldmesh.wgsl UNMESHED_BIT, colDist)
-      if (this.wanted) for (let c = 0; c < chunks; c++) if (!this.wanted[c]) nearW[c] |= UNMESHED_BIT;
+      // (phone-idle: uploaded when they differ from what the GPU holds — still, the camera's near words don't move)
+      if (this.nearSent.length !== chunks) this.nearSent = new Uint32Array(chunks);
+      let same = true;
+      for (let c = 0; c < chunks && same; c++) same = nearW[c] === this.nearSent[c];
+      if (!same) {
+        this.nearSent.set(nearW);
+        this.device.queue.writeBuffer(this.state, (CHUNK0 + chunks * CSTRIDE) * 4, nearW);
+      }
+      if (this.indirect) this.encodeIndirect(enc);
+      else this.encodeDirect(enc, Math.min(this.slots, this.ordinary + marked));
+      this.statOwed = true;
+      this.freeOwed = this.pool;
     }
-    this.device.queue.writeBuffer(this.state, (CHUNK0 + chunks * CSTRIDE) * 4, nearW);
-    // (round 128o, DA-B28: the near chunks' shape keys against what they were built from — no column read; the band's
-    // and the rock mesh's sources keep versions too)
+    // (round 93: the free stack's header, now and then — the pool grows when it runs short; phone-idle: and once more
+    // when it falls asleep, if a frame was encoded since the last)
+    if (this.pool && READBACK && !this.freeBusy && (asleep ? this.freeOwed : this.freeEvery++ % POOL_READ_EVERY === 0)) {
+      enc.copyBufferToBuffer(this.state, this.freeAt * 4, this.freeBuf!, 0, FREE_HEAD * 4);
+      this.freeBusy = true;
+      this.freeNeeded = true;
+      this.freeOwed = false;
+    }
+    // (round 82: every 60th time, not 10th — the chunks' tops for the culling move slowly)
+    if (READBACK && !this.statBusy && (asleep ? this.statOwed : this.statEvery++ % this.statPeriod === 0)) {
+      enc.copyBufferToBuffer(this.state, 0, this.statBuf!, 0, this.statBuf!.size);
+      this.statSlides = this.slides;
+      this.statBusy = true;
+      this.statNeeded = true;
+      this.statOwed = false;
+    }
+    if (!asleep) this.gate?.encode(enc);
+  }
+
+  /**
+   * (phone-idle) The frame's one pass, every dispatch direct: the change passes (round 128o, DA-B28: the near chunks'
+   * shape keys against what they were built from — no column read; the band's and the rock mesh's sources keep
+   * versions too), the rebuilt chunks' tops and bottoms (a workgroup a slot), then the rebuild over `slots` slots'
+   * samples — those not taken return at once.
+   */
+  private encodeDirect(enc: GPUCommandEncoder, slots: number): void {
+    const chunks = this.nx * this.ny;
+    const name = `${this.pre}fieldmesh`;
+    const pass = enc.beginComputePass({ label: name, timestampWrites: this.profiler.timestamps(name) });
+    for (const [k, g] of [[this.changedF, this.changedFGroup], [this.changed, this.changedGroup]] as const) {
+      pass.setPipeline(k.pipeline);
+      pass.setBindGroup(0, g);
+      pass.dispatchWorkgroups(Math.ceil(chunks / 64));
+    }
+    pass.setPipeline(this.bounds.pipeline);
+    pass.setBindGroup(0, this.boundsGroup);
+    pass.dispatchWorkgroups(slots);
+    this.profiler.dispatches += 3;
+    const [sx, sy] = this.slotRoom;
+    this.kernels.forEach((k, i) => {
+      const st = this.steps[i];
+      // (the tops only for cavemesh)
+      if (st.tops && !this.caveOn) return;
+      pass.setPipeline(k.pipeline);
+      pass.setBindGroup(0, this.groups[i]);
+      // (round 93: the pool's alloc passes are one workgroup every frame — the releases are given back even when nothing's rebuilt)
+      if (st.direct) pass.dispatchWorkgroups(1);
+      else pass.dispatchWorkgroups(sx, sy, slots);
+      this.profiler.dispatches++;
+    });
+    pass.end();
+  }
+
+  /** a rebuild slot's room: the workgroups its samples take along x and y (a workgroup a 4 × 4 column of samples —
+   *  the direct path's dispatch is these by the slots), and the blocks of four samples of z each walks (the path
+   *  before dispatched a workgroup a block: x · y · z a slot) — fieldmesh.wgsl colBlocks, job() */
+  get slotRoom(): [number, number, number] {
+    const s = Math.ceil((this.side + 3) / 4);
+    return [s, s, Math.ceil(this.nz / 4)];
+  }
+  /** rebuild slots a frame: all of them (the ordinary ones and the urgent chunks'), the ordinary ones */
+  get slotCount(): [number, number] {
+    return [this.slots, this.ordinary];
+  }
+
+  /** The path before (`indirect`): a pass a kernel, the rebuild sized on the GPU to the chunks found changed. */
+  private encodeIndirect(enc: GPUCommandEncoder): void {
+    const chunks = this.nx * this.ny;
+    if (!this.argsK || !this.blockKernels) {
+      this.argsK = this.makeArgsK();
+      this.argsGroup = this.makeGroup(this.argsK);
+      this.blockKernels = this.makeBlockKernels();
+      this.blockGroups = this.blockKernels.map((k) => this.makeGroup(k));
+    }
+    const blockKernels = this.blockKernels;
     {
       const pass = enc.beginComputePass({ label: `${this.pre}fieldmesh-changed`, timestampWrites: this.profiler.timestamps(`${this.pre}fieldmesh-changed`) });
       for (const [k, g] of [[this.changedF, this.changedFGroup], [this.changed, this.changedGroup]] as const) {
@@ -660,13 +841,11 @@ export class FieldMesh {
     {
       const pass = enc.beginComputePass({ label: `${this.pre}fieldmesh-args` });
       pass.setPipeline(this.argsK.pipeline);
-      pass.setBindGroup(0, this.argsGroup);
+      pass.setBindGroup(0, this.argsGroup!);
       pass.dispatchWorkgroups(1);
       pass.end();
       enc.copyBufferToBuffer(this.state, this.argsAt, this.args, 0, 12);
     }
-    // (round 128o, DA-B28: the rebuilt chunks' tops and bottoms, which the rebuild's samples read — a workgroup a slot,
-    // those not taken return at once)
     {
       const pass = enc.beginComputePass({ label: `${this.pre}fieldmesh-bounds`, timestampWrites: this.profiler.timestamps(`${this.pre}fieldmesh-bounds`) });
       pass.setPipeline(this.bounds.pipeline);
@@ -674,34 +853,19 @@ export class FieldMesh {
       pass.dispatchWorkgroups(this.slots);
       pass.end();
     }
-    this.kernels.forEach((k, i) => {
+    blockKernels.forEach((k, i) => {
       const st = this.steps[i];
       const name = this.pre + st.name;
-      // (the tops only for cavemesh)
       if (st.tops && !this.caveOn) return;
       const pass = enc.beginComputePass({ label: name, timestampWrites: this.profiler.timestamps(name) });
       pass.setPipeline(k.pipeline);
-      pass.setBindGroup(0, this.groups[i]);
-      // (round 93: the pool's alloc passes are one workgroup every frame — the releases are given back even when nothing's rebuilt)
+      pass.setBindGroup(0, this.blockGroups[i]);
       if (st.direct) pass.dispatchWorkgroups(1);
       else pass.dispatchWorkgroupsIndirect(this.args, 0);
       pass.end();
       this.profiler.dispatches++;
     });
     this.profiler.dispatches += 4;
-    // (round 93: the free stack's header, now and then — the pool grows when it runs short)
-    if (this.pool && READBACK && !this.freeBusy && this.freeEvery++ % POOL_READ_EVERY === 0) {
-      enc.copyBufferToBuffer(this.state, this.freeAt * 4, this.freeBuf!, 0, FREE_HEAD * 4);
-      this.freeBusy = true;
-      this.freeNeeded = true;
-    }
-    // (round 82: every 60th time, not 10th — the chunks' tops for the culling move slowly)
-    if (READBACK && !this.statBusy && this.statEvery++ % this.statPeriod === 0) {
-      enc.copyBufferToBuffer(this.state, 0, this.statBuf!, 0, this.statBuf!.size);
-      this.statSlides = this.slides;
-      this.statBusy = true;
-      this.statNeeded = true;
-    }
   }
 
   /**
@@ -756,6 +920,8 @@ export class FieldMesh {
         // change found when every rebuild slot was taken is found again)
         const was = this.near[c];
         this.near[c] = within(1.5) || (leadOn && ahead(1.25)) ? (was === 0 ? 11 : Math.max(1, was - 1)) : 0;
+        // (phone-idle: a chunk come near may have changed while it wasn't looked at — the GPU's check decides)
+        if (was === 0 && this.near[c]) this.wake();
         if (this.near[c]) {
           r[0] = Math.min(r[0], cx * CHUNK);
           r[1] = Math.min(r[1], cy * CHUNK * ROW_H);
@@ -782,6 +948,7 @@ export class FieldMesh {
     }
     for (let c = 0; c < chunks; c++) {
       this.inView[c] = on[c] ? 1 : 0;
+      if (on[c] && this.near[c] === 0) this.wake();
       this.near[c] = on[c] ? (this.near[c] === 0 ? 11 : Math.max(1, this.near[c] - 1)) : 0;
     }
   }

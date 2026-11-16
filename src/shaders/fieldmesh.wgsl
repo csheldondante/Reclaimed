@@ -277,6 +277,9 @@ fn changedChunk(c: u32, freshOnly: bool) {
     atomicStore(&state[b + 6u], h);
     return;
   }
+  // (phone-idle: a near chunk not built from its key — counted whether it gets a slot or not, in the args' first word,
+  // zeroed by the CPU each frame: 0 after both passes says nothing near is owed or being rebuilt — fieldmesh.ts's gate)
+  atomicAdd(&state[argsBase()], 1u);
   // (round 86: the slots past MR.pr.x are the urgent chunks'; the rest take turns at the first MR.pr.x, counted in
   // the args' spare word, argsBase() + 3, zeroed by the CPU each frame)
   if (!urgent && atomicAdd(&state[argsBase() + 3u], 1u) >= MR.pr.x) {
@@ -379,15 +382,12 @@ var<workgroup> wgJob: vec4<u32>;
 var<workgroup> wgN: atomic<u32>;
 var<workgroup> wgBase: u32;
 
-/** The rebuild slot and local sample a thread is for (call in uniform control flow: it syncs the workgroup). */
-fn job(id: vec3<u32>, li: u32) -> Job {
-  let zs = (MR.n.z + 3u) / 4u * 4u;
-  var j: Job;
-  j.slot = id.z / zs;
-  j.l = vec3<u32>(id.xy, id.z % zs);
+/** The workgroup's first thread reads rebuild slot `slot`'s job for all of it (call in uniform control flow: it
+ *  syncs the workgroup). A slot not taken this frame has none: its threads return at once. */
+fn jobSync(slot: u32, li: u32) {
   if (li == 0u) {
     var c = NONE;
-    if (j.slot < min(atomicLoad(&state[0]), MR.k.y)) { c = atomicLoad(&state[1u + j.slot]); }
+    if (slot < min(atomicLoad(&state[0]), MR.k.y)) { c = atomicLoad(&state[1u + slot]); }
     var top = 0u;
     var r = 0u;
     var bot = 0u;
@@ -400,6 +400,13 @@ fn job(id: vec3<u32>, li: u32) -> Job {
     atomicStore(&wgN, 0u);
   }
   workgroupBarrier();
+}
+
+/** The job as the thread for slot `slot`'s local sample l sees it (after jobSync; uniform control flow: it syncs). */
+fn jobOf(slot: u32, l: vec3<u32>) -> Job {
+  var j: Job;
+  j.slot = slot;
+  j.l = l;
   let w = workgroupUniformLoad(&wgJob);
   j.c = w.x;
   j.top = bitcast<f32>(w.y);
@@ -409,12 +416,32 @@ fn job(id: vec3<u32>, li: u32) -> Job {
   return j;
 }
 
+/** The rebuild slot and local sample a thread is for when a workgroup is 4 x 4 x 4 samples and z packs the slots (the
+ *  indirect path's dispatch; call in uniform control flow: it syncs the workgroup). */
+fn job(id: vec3<u32>, li: u32) -> Job {
+  let zs = (MR.n.z + 3u) / 4u * 4u;
+  let slot = id.z / zs;
+  jobSync(slot, li);
+  return jobOf(slot, vec3<u32>(id.xy, id.z % zs));
+}
+/** such a workgroup's first local z */
+fn blockZ(wid: vec3<u32>) -> u32 { return (wid.z * 4u) % ((MR.n.z + 3u) / 4u * 4u); }
+
+// (phone-idle, 2026-11-15) The direct path's dispatch: a workgroup is a 4 x 4 column of a slot's samples, its z the
+// slot — (ceil(sideN / 4))^2 workgroups a slot whatever the world's height, so the slots dispatched with nothing to
+// rebuild cost a few hundred workgroups that return at once, not thousands. Each walks its column's blocks of four
+// samples of z in turn (colBlocks; block b's local sample: colSample), a block treated exactly as the indirect
+// path's 4 x 4 x 4 workgroup is — the same body, the same one claim a block. The entries named ...Z are these.
+fn colBlocks() -> u32 { return (MR.n.z + 3u) / 4u; }
+fn colSample(wid: vec3<u32>, lid: vec3<u32>, b: u32) -> vec3<u32> { return vec3<u32>(wid.xy * 4u + lid.xy, b * 4u + lid.z); }
+
 /** Claim `n` of a chunk's vertices (state word `word`) for this thread, one atomic a workgroup; NONE: no room. */
 fn claim(j: Job, n: u32, li: u32, word: u32, cap: u32) -> u32 {
   let off = atomicAdd(&wgN, n);
   workgroupBarrier();
   if (li == 0u) {
-    let total = atomicLoad(&wgN);
+    // (taken and zeroed: a column's next block counts from 0 — its threads sync before they add, jobOf)
+    let total = atomicExchange(&wgN, 0u);
     var base = NONE;
     if (j.c != NONE && total > 0u) {
       base = atomicAdd(&state[cbase(j.c) + word], total);
@@ -433,17 +460,15 @@ fn claim(j: Job, n: u32, li: u32, word: u32, cap: u32) -> u32 {
 /**
  * (perfopt) A workgroup whose 4 samples of z (and the ones either side it reads) are all under the chunk's
  * lowest boundary (solid, -FAR) or all over its top (air, FAR) has no surface: it returns before reading the
- * scratch. Most of a chunk's height is one or the other. Uniform: the workgroup's id and the job's words.
+ * scratch. Most of a chunk's height is one or the other. Uniform: the block's first local z (z0) and the job's words.
  */
-fn idleBlock(wid: vec3<u32>) -> bool {
+fn idleBlock(z0: u32) -> bool {
   if (!IDLE_SKIP) { return false; }
   // (the job's words again, not the Job: the analysis takes a struct with a thread's sample in it as non-uniform)
   let w = workgroupUniformLoad(&wgJob);
   if (w.x == NONE) { return true; }
   let top = bitcast<f32>(w.y);
   let bot = MR.zb.y + bitcast<f32>(w.w);
-  let zs = (MR.n.z + 3u) / 4u * 4u;
-  let z0 = (wid.z * 4u) % zs;
   let lo = MR.zb.x + (f32(z0) - 2.0) * MR.o.y;
   let hi = MR.zb.x + (f32(z0) + 5.0) * MR.o.y;
   return hi < bot - 3.0 - MR.o.y || lo > top + 2.0 + MR.o.y;
@@ -455,14 +480,12 @@ fn idleBlock(wid: vec3<u32>) -> bool {
  * read samples from 8 steps under the chunk's lowest boundary (bot − 3) to 7 over its top (top + 2) — so a block
  * wholly 10 steps past either isn't sampled at all (its scratch keeps whatever it held; nobody looks).
  */
-fn sampleIdle(wid: vec3<u32>) -> bool {
+fn sampleIdle(z0: u32) -> bool {
   if (!IDLE_SKIP) { return false; }
   let w = workgroupUniformLoad(&wgJob);
   if (w.x == NONE) { return true; }
   let top = bitcast<f32>(w.y);
   let bot = MR.zb.y + bitcast<f32>(w.w);
-  let zs = (MR.n.z + 3u) / 4u * 4u;
-  let z0 = (wid.z * 4u) % zs;
   // (its samples' z: local z0 .. z0 + 3, sample l at MR.zb.x + (l − 1) · h)
   let lo = MR.zb.x + (f32(z0) - 1.0) * MR.o.y;
   let hi = MR.zb.x + (f32(z0) + 2.0) * MR.o.y;
@@ -508,7 +531,14 @@ fn colTopAt(q: vec2<i32>) -> f32 {
 /** each sample column's floor of what's meshed: CAVE_DEEP under the lowest top of its cell and the six round it */
 @compute @workgroup_size(4, 4, 4)
 fn columnTops(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32) {
-  let j = job(id, li);
+  topsBody(job(id, li));
+}
+@compute @workgroup_size(4, 4, 4)
+fn columnTopsZ(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  jobSync(wid.z, li);
+  topsBody(jobOf(wid.z, colSample(wid, lid, 0u)));
+}
+fn topsBody(j: Job) {
   if (!j.ok || j.l.z != 0u || MR.cv.w < 0.5) { return; }
   let p = samplePos(j, j.l);
   let c = cellAt(p.xy);
@@ -519,8 +549,15 @@ fn columnTops(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoc
 
 @compute @workgroup_size(4, 4, 4)
 fn sampleField(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wid: vec3<u32>) {
-  let j = job(id, li);
-  if (sampleIdle(wid) || !j.ok) { return; }
+  sampleBody(job(id, li), blockZ(wid));
+}
+@compute @workgroup_size(4, 4, 4)
+fn sampleFieldZ(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  jobSync(wid.z, li);
+  for (var b = 0u; b < colBlocks(); b++) { sampleBody(jobOf(wid.z, colSample(wid, lid, b)), b * 4u); }
+}
+fn sampleBody(j: Job, z0: u32) {
+  if (sampleIdle(z0) || !j.ok) { return; }
   let p = samplePos(j, j.l);
   // (above everything in the chunk: air; round 81: 3 under its lowest boundary, solid — no field: the deep
   // rock under the ground was most of a rebuild's samples)
@@ -549,8 +586,15 @@ const EDGE = array<vec2<u32>, 12>(
 
 @compute @workgroup_size(4, 4, 4)
 fn makeVerts(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wid: vec3<u32>) {
-  let j = job(id, li);
-  if (idleBlock(wid)) {
+  vertsBody(job(id, li), li, blockZ(wid));
+}
+@compute @workgroup_size(4, 4, 4)
+fn makeVertsZ(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  jobSync(wid.z, li);
+  for (var b = 0u; b < colBlocks(); b++) { vertsBody(jobOf(wid.z, colSample(wid, lid, b)), li, b * 4u); }
+}
+fn vertsBody(j: Job, li: u32, z0: u32) {
+  if (idleBlock(z0)) {
     // (no vertex in it: the cells' records say so for the quads)
     if (j.ok) { scratch[sampleIdx(j, j.l) + slotSamples()] = NONE; }
     return;
@@ -669,12 +713,19 @@ fn quadsAt(j: Job) -> Quads {
 
 @compute @workgroup_size(4, 4, 4)
 fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wid: vec3<u32>) {
-  let j = job(id, li);
+  quadsBody(job(id, li), li, blockZ(wid));
+}
+@compute @workgroup_size(4, 4, 4)
+fn makeQuadsZ(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  jobSync(wid.z, li);
+  for (var b = 0u; b < colBlocks(); b++) { quadsBody(jobOf(wid.z, colSample(wid, lid, b)), li, b * 4u); }
+}
+fn quadsBody(j: Job, li: u32, z0: u32) {
   let l = j.l;
   // (the chunk is built from the key it was found with — before the idle return: the first sample's workgroup may be idle)
   // (round 93: unless it found no pages — then it's owed, and made again when the pool has room)
   if (j.ok && all(l == vec3<u32>(1u)) && (atomicLoad(&state[cbase(j.c) + 13u]) & STARVED) == 0u) { atomicStore(&state[cbase(j.c) + 5u], atomicLoad(&state[cbase(j.c) + 6u])); }
-  if (idleBlock(wid)) { return; }
+  if (idleBlock(z0)) { return; }
   let qs = quadsAt(j);
   let n = qs.n;
   let at = claim(j, n * 6u, li, 0u, capI(j.r));
@@ -722,9 +773,9 @@ fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
 fn countInto(j: Job, n: u32, li: u32, word: u32) {
   atomicAdd(&wgN, n);
   workgroupBarrier();
-  if (li == 0u && j.c != NONE) {
-    let t = atomicLoad(&wgN);
-    if (t > 0u) { atomicAdd(&state[rtBase(j.r) + word], t); }
+  if (li == 0u) {
+    let t = atomicExchange(&wgN, 0u);
+    if (j.c != NONE && t > 0u) { atomicAdd(&state[rtBase(j.r) + word], t); }
   }
 }
 
@@ -740,15 +791,29 @@ fn cellCrossed(j: Job, l: vec3<u32>) -> bool {
 
 @compute @workgroup_size(4, 4, 4)
 fn countVerts(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wid: vec3<u32>) {
-  let j = job(id, li);
-  if (idleBlock(wid)) { return; }
+  countVertsBody(job(id, li), li, blockZ(wid));
+}
+@compute @workgroup_size(4, 4, 4)
+fn countVertsZ(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  jobSync(wid.z, li);
+  for (var b = 0u; b < colBlocks(); b++) { countVertsBody(jobOf(wid.z, colSample(wid, lid, b)), li, b * 4u); }
+}
+fn countVertsBody(j: Job, li: u32, z0: u32) {
+  if (idleBlock(z0)) { return; }
   countInto(j, select(0u, 1u, j.ok && cellCrossed(j, j.l)), li, 2u);
 }
 
 @compute @workgroup_size(4, 4, 4)
 fn countQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wid: vec3<u32>) {
-  let j = job(id, li);
-  if (idleBlock(wid)) { return; }
+  countQuadsBody(job(id, li), li, blockZ(wid));
+}
+@compute @workgroup_size(4, 4, 4)
+fn countQuadsZ(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  jobSync(wid.z, li);
+  for (var b = 0u; b < colBlocks(); b++) { countQuadsBody(jobOf(wid.z, colSample(wid, lid, b)), li, b * 4u); }
+}
+fn countQuadsBody(j: Job, li: u32, z0: u32) {
+  if (idleBlock(z0)) { return; }
   countInto(j, quadsAt(j).n, li, 3u);
 }
 
@@ -877,6 +942,11 @@ fn shiftChunks(@builtin(global_invocation_id) id: vec3<u32>) {
 // the mesh's GPU time (each pass ~0.1 ms a frame on the desktop). Written after the change passes into
 // the words after the ranges' translations, then copied to the dispatch's own buffer (fieldmesh.ts: a
 // buffer bound for writing can't be a dispatch's indirect arguments in the same pass).
+// (phone-idle, 2026-11-15: on the phone an indirect dispatch costs ~0.1 ms whether it runs 1 workgroup or 0, so the
+// rebuild is dispatched direct now, over the slots the CPU knows may be taken this frame — the ordinary ones and one a
+// chunk it marked urgent; a slot not taken returns at once in job(). rebuildArgs is only the path before's,
+// fieldmesh.ts `indirect`: a test's reference and a bench's toggle. The args' words: [0] near chunks not built from
+// their key (changedChunk), [3] the ordinary slots' count; rebuildArgs overwrites [0..2] after the change passes.)
 fn argsBase() -> u32 { return offBase() + MR.n.x * MR.n.y * 4u; }
 
 @compute @workgroup_size(1)
