@@ -140,6 +140,7 @@ export class AwakeTiles {
       this.near = new Uint8Array(this.chunks);
     }
     const st = this.staggerFor(origin);
+    this.tickNow = tick;
     const live = this.live;
     // (round 107, pages P2.3b: the masks' bits are the slots')
     const table = this.pages.table;
@@ -166,6 +167,35 @@ export class AwakeTiles {
       if (k) this.device.queue.writeBuffer(l.buf, 0, l.data, 0, Math.max(4, Math.ceil(k / 4) * 4));
       l.count = k;
     }
+  }
+
+  /** the tick of the last update */
+  private tickNow = 0;
+
+  /**
+   * (phone-idle) Into `out` (a byte a chunk), as of the last update: 1 where a flow of sleeping rate n is not frozen in
+   * the chunk (common.wgsl flowFrozen: live, or its slow turn) or in one of the eight round it; returns how many. What a
+   * flow's GPU-made run list can hold beside the chunks its owner knows of (flow/liquid.ts: the direct dispatch's
+   * bound). Before the first update: every chunk.
+   */
+  nearUnfrozen(n: number, out: Uint8Array): number {
+    const { cx, cy, chunks, live } = this;
+    if (live.length !== chunks) {
+      out.fill(1, 0, chunks);
+      return chunks;
+    }
+    const st = this.stagger;
+    const tick = this.tickNow;
+    out.fill(0, 0, chunks);
+    for (let j = 0; j < cy; j++)
+      for (let i = 0; i < cx; i++) {
+        const c = j * cx + i;
+        if (!live[c] && !(n > 0 && (tick + st[c]) % n === 0)) continue;
+        for (let b = Math.max(0, j - 1); b <= Math.min(cy - 1, j + 1); b++) for (let a = Math.max(0, i - 1); a <= Math.min(cx - 1, i + 1); a++) out[b * cx + a] = 1;
+      }
+    let k = 0;
+    for (let c = 0; c < chunks; c++) k += out[c];
+    return k;
   }
 
   /** (simscale) a custom list's chunks this tick (chunk indices, each once; its owner's pass dispatched over them) */
@@ -201,7 +231,7 @@ export class AwakeTiles {
  * dispatched over a tile list instead: the entry renamed, a wrapper by its name that finds this workgroup's
  * columns from the list. Throws if the kernel isn't of that shape (no silent full dispatch).
  */
-export function cullSource(src: string, entry: string, vec4s: number): string {
+export function cullSource(src: string, entry: string, vec4s: number, /** (cullSourceCounted) the wrapper's first line */ gate = ''): string {
   const re = new RegExp(`@compute\\s+@workgroup_size\\(8,\\s*8\\)\\s*fn ${entry}\\(@builtin\\(global_invocation_id\\) (\\w+): vec3<u32>\\)`);
   const m = src.match(re);
   if (!m) throw new Error(`simcull: kernel entry ${entry} isn't an 8 × 8 per-column pass`);
@@ -213,6 +243,7 @@ export function cullSource(src: string, entry: string, vec4s: number): string {
 @group(0) @binding(${TILES_BINDING}) var<uniform> TILES: array<vec4<u32>, ${vec4s}>;
 @compute @workgroup_size(8, 8)
 fn ${entry}(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
+${gate}
   let t = wg.x >> 2u;
   // (round 107, pages: an entry is cx | cy << 6 | px << 12 | py << 18 — the chunk and its page's place, sim/cull.ts
   // packEntry: the workgroup's own page needs no table load — common.wgsl setOwnPage)
@@ -224,6 +255,26 @@ fn ${entry}(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) 
   if (q.x >= G.mapW || q.y >= G.mapH) { return; }
   ${inner}(vec3<u32>(q, 0u));
 }
+`
+  );
+}
+
+/** the binding a counted culled kernel reads its list's count at (cullSourceCounted) */
+export const TILE_COUNT_BINDING = 38;
+
+/**
+ * (phone-idle) cullSource for a list made on the GPU and dispatched DIRECT: the list's args (GpuTileList.args, bound
+ * `uniform` at TILE_COUNT_BINDING) hold the workgroups it has, and a workgroup past them returns. The CPU dispatches a
+ * bound it knows (at least the list's workgroups); on the phone an indirect dispatch costs ~0.1 ms whatever it runs
+ * (docs/FRAMECOST.md), a direct one ~0.008 ms. Dispatched indirect it is cullSource's kernel: no workgroup is past.
+ */
+export function cullSourceCounted(src: string, entry: string, vec4s: number): string {
+  return (
+    cullSource(src, entry, vec4s, '  if (wg.x >= TILE_COUNT.x) { return; }') +
+    `
+// (sim/cull.ts cullSourceCounted) the list's dispatch args: x its workgroups (four a chunk listed)
+struct TileCountArgs { x: u32, y: u32, z: u32 }
+@group(0) @binding(${TILE_COUNT_BINDING}) var<uniform> TILE_COUNT: TileCountArgs;
 `
   );
 }
@@ -342,7 +393,8 @@ export class GpuTileList {
   constructor(device: GPUDevice, label: string, tiles: AwakeTiles) {
     this.bytes = tiles.vec4s * 16;
     this.list = device.createBuffer({ label: `${label} list`, size: this.bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-    this.args = device.createBuffer({ label: `${label} args`, size: 12, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+    // (phone-idle: UNIFORM too — a counted kernel reads its count there, cullSourceCounted)
+    this.args = device.createBuffer({ label: `${label} args`, size: 12, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     this.uniform = device.createBuffer({ label: `${label} tiles`, size: this.bytes, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
   /** empty: its args back to (0, 1, 1) — from `empty`, a constant (0, 1, 1) */
@@ -356,6 +408,11 @@ export class GpuTileList {
   /** the culled kernel (pipeline and group set) over the list */
   dispatch(pass: GPUComputePassEncoder): void {
     pass.dispatchWorkgroupsIndirect(this.args, 0);
+  }
+  /** (phone-idle) a counted kernel (cullSourceCounted; pipeline and group set) over the list, direct: `chunks` at least
+   *  the chunks it lists — the CPU's bound; the workgroups past the list's own return */
+  dispatchBound(pass: GPUComputePassEncoder, chunks: number): void {
+    if (chunks > 0) pass.dispatchWorkgroups(chunks * WG_PER_CHUNK, 1);
   }
   destroy(): void {
     for (const b of [this.list, this.args, this.uniform]) b.destroy();

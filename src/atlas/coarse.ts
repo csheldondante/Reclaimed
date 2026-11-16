@@ -10,6 +10,7 @@
 
 import { makeBindGroup, makeComputeAsync, makeModule, type ComputeKernel } from '../gpu/pipeline';
 import coarseW from './coarse.wgsl?raw';
+import { SettledRead } from '../gpu/settled';
 
 /** floats a cell (coarse.wgsl CCell) */
 const CELL_FLOATS = 8;
@@ -18,6 +19,8 @@ const MAX_VENTS = 8;
 /** (DA-B15) cells a tile side: the step runs over live tiles only (coarse.wgsl TILE) */
 const TILE = 8;
 export const EV = { meteor: 1, ash: 2, cone: 3 } as const;
+/** (phone-idle) steps between the reads that ask whether the world has come to rest, at most (from 1, doubling) */
+const READ_EVERY_MAX = 16;
 
 export interface CoarseEvent {
   kind: number;
@@ -74,6 +77,17 @@ export class Coarse {
   private args: GPUBuffer;
   /** the rain, evaporation and erosion the live tiles were judged under: a change makes every tile live a step */
   private judged = '';
+  /**
+   * (phone-idle) The world at rest costs nothing: a step is encoded only while awake — from its making, an event, a
+   * vent pouring or the rain, evaporation or erosion changing, until a read of the live tiles' count (4 bytes, a step
+   * after the wake, then at doubling gaps) says none. A step with no live tile leaves no mark, so the next has none
+   * either: at rest every step till the next wake is the same nothing. Null without culling (every tile, every step).
+   */
+  private settle: SettledRead | null;
+  private readIn = 0;
+  private asked = 0;
+  /** the step under way is encoded (decided at its first part) */
+  private stepLive = true;
   readonly vents: { x: number; y: number; rate: number; r: number; steps: number }[] = [];
   /** rain and evaporation a step (cells of water), and how hard running water wears the ground (0: not at all) */
   rain = 0;
@@ -111,6 +125,26 @@ export class Coarse {
     this.list = mk('live list', T * 4);
     this.args = device.createBuffer({ label: 'coarse live args', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     device.queue.writeBuffer(this.args, 0, new Uint32Array([0, 1, 1, 0]));
+    this.settle = cull ? new SettledRead(device, 'coarse', this.args, 0, 4, (w) => w[0] === 0, 1) : null;
+  }
+
+  private wake(): void {
+    this.settle?.wake();
+    this.asked = 0;
+    this.readIn = 0;
+  }
+
+  /** does part k of the step under way run? Decided as the step begins (k 0): awake, or woken by what the CPU knows */
+  private live(k: number): boolean {
+    if (k === 0) {
+      const st = this.settle;
+      if (st && (this.pouring() || `${this.rain},${this.evap},${this.erode}` !== this.judged)) this.wake();
+      this.stepLive = !st || st.awake;
+    }
+    return this.stepLive;
+  }
+  private pouring(): boolean {
+    return this.vents.length > 0;
   }
 
   /** world units a cell, across and down */
@@ -193,9 +227,11 @@ export class Coarse {
     if (!this.kFlux) return;
     this.finishPart();
     for (let s = 0; s < n; s++) {
-      const enc = this.device.createCommandEncoder({ label: 'coarse step' });
-      for (let k = 0; k < 3; k++) this.encodePart(enc, k);
-      this.device.queue.submit([enc.finish()]);
+      if (this.live(0)) {
+        const enc = this.device.createCommandEncoder({ label: 'coarse step' });
+        for (let k = 0; k < 3; k++) this.encodePart(enc, k);
+        this.device.queue.submit([enc.finish()]);
+      }
       this.stepped();
     }
   }
@@ -210,9 +246,11 @@ export class Coarse {
   stepPart(): void {
     this.flushSnaps();
     if (!this.kFlux) return;
-    const enc = this.device.createCommandEncoder({ label: 'coarse step part' });
-    this.encodePart(enc, this.part);
-    this.device.queue.submit([enc.finish()]);
+    if (this.live(this.part)) {
+      const enc = this.device.createCommandEncoder({ label: 'coarse step part' });
+      this.encodePart(enc, this.part);
+      this.device.queue.submit([enc.finish()]);
+    }
     if (++this.part === 3) this.stepped();
   }
   /** the next part of the step under way (0: none begun) */
@@ -220,9 +258,11 @@ export class Coarse {
 
   private finishPart(): void {
     if (this.part === 0) return;
-    const enc = this.device.createCommandEncoder({ label: 'coarse step rest' });
-    while (this.part < 3) this.encodePart(enc, this.part++);
-    this.device.queue.submit([enc.finish()]);
+    if (this.stepLive) {
+      const enc = this.device.createCommandEncoder({ label: 'coarse step rest' });
+      while (this.part < 3) this.encodePart(enc, this.part++);
+      this.device.queue.submit([enc.finish()]);
+    }
     this.stepped();
   }
 
@@ -247,6 +287,12 @@ export class Coarse {
       cp.setBindGroup(0, this.gFlux!);
       cp.dispatchWorkgroupsIndirect(this.args, 0);
       cp.end();
+      // (phone-idle: at rest? Asked while nothing the CPU knows keeps it live)
+      const st = this.settle;
+      if (st && !this.pouring() && --this.readIn <= 0) {
+        st.encode(enc);
+        this.readIn = Math.min(READ_EVERY_MAX, 1 << Math.min(this.asked++, 30));
+      }
     } else if (k === 1) {
       const cp = enc.beginComputePass({ timestampWrites: t?.timestamps('coarse-depth') });
       cp.setPipeline(this.kDepth!.pipeline);
@@ -277,6 +323,8 @@ export class Coarse {
     if (!this.kEvent) throw new Error('the coarse world is not made yet');
     this.flushSnaps();
     this.finishPart();
+    // (its marks make tiles live at the next step)
+    this.wake();
     this.writeUni(e);
     const enc = this.device.createCommandEncoder({ label: 'coarse event' });
     const cp = enc.beginComputePass();
@@ -406,6 +454,7 @@ export class Coarse {
 
   dispose(): void {
     for (const b of [this.cells, this.next, this.base, this.fW, this.fL, this.fT, this.uni, this.actIn, this.actOut, this.list, this.args]) b.destroy();
+    this.settle?.destroy();
   }
 }
 

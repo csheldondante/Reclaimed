@@ -71,7 +71,8 @@ struct PartQ { p: vec4<f32>, v: vec4<f32>, m: vec4<u32> };
 
 const MAX_SPRINGS: u32 = 8u;
 struct LiquidU {
-  // x step, y springs, z the steady wake tolerance (cells a tick), w 1: every chunk runs (?lqall=1, a check: lqList)
+  // x step, y springs, z the steady wake tolerance (cells a tick), w bit 0: every chunk runs (?lqall=1, a check:
+  // lqList), w >> 1: the tickets of a step (lqList: sleeping chunks' first steps far from anything awake)
   step: vec4<u32>,
   // springs: x, y (world), z (height it pours in at), rate (cells^3/s)
   springs: array<vec4<f32>, 8>,
@@ -966,6 +967,7 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
 // or its land just came in), bit 1 a real step this step (realStep)
 @group(0) @binding(37) var<storage, read_write> lqState: array<vec4<u32>>;
 @group(0) @binding(40) var<storage, read_write> runList: array<u32>;
+// (x: 4 a chunk listed — the counted wrapper's count, sim/cull.ts cullSourceCounted; y: 1 + the tickets taken, lqList)
 @group(0) @binding(41) var<storage, read_write> runArgs: array<atomic<u32>, 3>;
 @group(0) @binding(42) var<storage, read_write> wetList: array<u32>;
 @group(0) @binding(43) var<storage, read_write> wetArgs: array<atomic<u32>, 3>;
@@ -1064,7 +1066,7 @@ fn lqList(@builtin(global_invocation_id) id: vec3<u32>) {
   let cu = vec2<u32>(c);
   let slot = colSlot(cu);
   var st = lqState[slot];
-  var run = LQ.step.w == 1u;
+  var run = (LQ.step.w & 1u) == 1u;
   if (run) {
   } else if (!chunkFrozen(c)) {
     run = liveRun(c);
@@ -1080,7 +1082,12 @@ fn lqList(@builtin(global_invocation_id) id: vec3<u32>) {
     run = run || (wetC(c) && chunkScale(cu * COLS_PAGE) != 1.0);
   }
   // (holding liquid and never run — just made, or its land just came in: a real step, asleep or not — lqFrozen)
-  let real = wetC(c) && st.x == NEVER;
+  var real = wetC(c) && st.x == NEVER;
+  // (phone-idle: the passes are dispatched direct over a bound the CPU knows — src/flow/liquid.ts `bound` — and a chunk
+  // that runs for this alone, asleep with nothing awake by it, is the one runner the CPU can't place: each takes a
+  // ticket, LQ.step.w >> 1 of them a step — the chunks whose land just came in and a few over; past them it waits a
+  // step, still never run. The count is runArgs.y, 1 as the step begins: the args' reset)
+  if (real && !run && st.z == 0u && atomicAdd(&runArgs[1], 1u) > (LQ.step.w >> 1u)) { real = false; }
   run = run || real;
   st.w = select(st.w & ~2u, st.w | 2u, real);
   if (run) { st.z = LINGER; } else if (st.z > 0u) { st.z -= 1u; run = true; }
