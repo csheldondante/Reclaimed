@@ -89,7 +89,11 @@ export type AtlasEventKind =
   | 'settlement-stores'
   /** (round 125, facts) a structure placed in a settlement directly, no agents building it (detail.settlement,
    *  detail.building: its id, detail.use: its uses, detail.name): the region generator lays it out on arrival */
-  | 'settlement-building';
+  | 'settlement-building'
+  /** (2026-11-15, mutators) a new settlement of the world (detail.settlement: its id, detail.name, detail.at: world
+   *  units, detail.radius, detail.size, detail.faction: its holder or null): the record is added; the town generator
+   *  builds it when its land is visited */
+  | 'settlement-founded';
 
 export interface AtlasEvent {
   id: string;

@@ -68,6 +68,9 @@ export interface MutationSpec {
   /** what caused it: the id of the fact event or opportunity (src/living: FactEvent, `about.opp`), so the inspector,
    *  the map and the end-of-run screen can go from a change in the land to the choice that made it */
   cause?: string;
+  /** the fact event that already records this change (mutate/facts.ts recordMutation: a template's outcome made it on
+   *  its own world). Given: `apply` writes the physical side only. Left out: `apply` records the facts itself */
+  fact?: string;
 }
 
 /** One entry of the world modifier list: everything an op needs, so it can run on any column at any time. JSON. */
@@ -91,6 +94,9 @@ export interface Mutation {
   size?: 'camp' | 'village' | 'town';
   /** what caused it (MutationSpec.cause); not part of its identity */
   cause?: string;
+  /** the fact event that records it (FactEvent.id in the bound fact world): the fact layer holds who owns the place
+   *  and what state it is in; this entry is only what the land, the lots and the map show of it */
+  fact?: string;
   /** its place in the list (the order ops are applied in) */
   seq: number;
 }
@@ -105,7 +111,8 @@ export interface Applied extends Mutation {
 
 export type PlaceStatus = 'standing' | 'founded' | 'destroyed' | 'abandoned' | 'occupied' | 'vassal';
 
-/** A place as the list has left it — what the loop's dealer reads to deal cards about other places. */
+/** A place read from the fact world (mutate/facts.ts placeState) — what the loop's dealer reads to deal cards about
+ *  other places. Nothing here is kept by the mutators: owner, status and tribute are the fact layer's. */
 export interface PlaceState {
   id: string;
   name: string;
@@ -124,7 +131,7 @@ export interface PlaceState {
   conditions: PhysicalKind[];
   /** true: something bad may come of it (a vassal resents, an occupied town may rise) — a source of negative cards */
   restless: boolean;
-  /** the list entries about it, in order */
+  /** the fact events about it (FactEvent ids: the mutators' kinds), in order */
   history: string[];
 }
 
@@ -231,6 +238,10 @@ export interface Mutators {
   signs(place?: string): Sign[];
   /** the loop's season number: signs whose `until` is before it end */
   season(n: number): void;
+  /** the fact world the mutators write to and read places from (living/world.ts FactWorld). The level binds its own
+   *  when it starts; a run with its own world binds that. Entries whose fact event this world lacks are recorded in it */
+  useWorld(w: import('../living/world').FactWorld | null): void;
+  readonly world: import('../living/world').FactWorld | null;
 }
 
 export const MUTATORS: readonly MutatorInfo[] = [
@@ -271,4 +282,8 @@ export const mutators: Mutators & { bind(impl: Mutators | null): void; readonly 
   sign: (spec) => need().sign(spec),
   signs: (place) => (bound ? bound.signs(place) : []),
   season: (n) => bound?.season(n),
+  useWorld: (w) => need().useWorld(w),
+  get world() {
+    return bound ? bound.world : null;
+  },
 };

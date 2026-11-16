@@ -3,6 +3,34 @@
 Branch `mutators` (from `fortress` 555bdca3). Code: `src/mutate/`, `src/shaders/mutate/`, `src/scenes/level/mutators.ts`.
 Test: `test/gpu/mutators.test.ts`. Lab: `/?skipmenu=1&level=atlas&town=1&mutlab=1&fresh=1`.
 
+## What changed in the contract (round 2, 2026-11-15 night) — for the loop branch
+
+1. **Place state lives in the fact layer.** `mutators.places()` / `place(id)` are reads of the bound `FactWorld`
+   (`src/mutate/facts.ts placeState`): owner from `occupies` / `vassal_of` / the settlement record's holder, status from
+   the record's condition and those relations, tribute from `pays_tribute_to` (`meta.perSeason`). The list keeps no
+   owner or status. `PlaceState.history` is now fact event ids (was list entry ids). `owner` is an entity id (a
+   faction's, `'player'`); show it with `mutators.world.name(id)`.
+2. **`mutators.useWorld(factWorld)` / `mutators.world`.** The level binds the atlas's own world when the mutators
+   attach (`MemoryWorldState.restore(settlements.wiki.snapshot)`). A run or the season loop with its own world must
+   bind that one; entries whose fact event the new world lacks are recorded in it (a saved list replays onto a new
+   run's world). With no world bound a state kind throws.
+3. **State kinds are fact mutations** (`recordMutation`): `destroyed` → settlement-condition `ruined`; `abandoned` →
+   `abandoned`; `captured` → `occupies` + tag `condition.occupied` + settlement-owner when the holder is a faction;
+   `vassal` → `vassal_of` + `pays_tribute_to`; `founded` → a new AtlasEvent kind `settlement-founded` (the record) + the
+   entity + a `founding` event. **`by` must be an entity of the fact world** (a faction id, a polity, `'player'`): a
+   free-text holder ('Iron League') now throws.
+4. **Land kinds record too:** one fact event of the kind's name, a tag `condition.<kind>` on each settlement the area
+   covers; `dried` also lowers the region's river inflow through `setRiverInflow` (the recorded way).
+5. **Every entry carries `fact`** (the FactEvent id) beside `cause` (the opportunity's id, written to
+   `FactEvent.about.opp`). `MutationSpec.fact` given: `apply` writes the physical side only.
+6. **Outcome kinds for templates** (`src/mutate/outcomes.ts`, registered into `living/dsl.ts HELPERS`):
+   `{ helper: 'mutate', args: [kind, '$where', strength?, seed?, '$by'?, tribute?] }` and
+   `{ helper: 'sign', args: [kind, '$where', strength, seasons?] }`. Facts go to the template's own world with the
+   opportunity as cause (so a dry run's diff shows them); a real resolution then calls `mutators.apply` / `.sign`.
+7. **Signs** are also a tag `condition.<sign>` on the place while on, and one event when they start.
+8. Unchanged: `list()`, `apply()`'s spec and result, `record()` / `restore()` (version 2; entries gain `fact`),
+   `sign()` / `signs()` / `season()`, `LOT_CONDITION`.
+
 ## The user's words (2026-11-15)
 
 - "More focus on mutations since we have so much built in that area for a reason. I want melted, flooded, buried, burned etc"
@@ -114,19 +142,28 @@ fact event with its cause.
 **Aligned.** The land mutators are the physical half of that decision: instant writes of authoritative state, no sim
 run. Every entry and sign can carry `cause` (a fact event's or an opportunity's id), kept in the record.
 
-**Not aligned yet (BACKLOG MU-21); read this before building on `places()`.**
-- `mutators.places()` / `place(id)` and the state kinds `founded`, `destroyed`, `abandoned`, `captured`, `vassal` are a
-  **parallel list** of who holds a place and what state it is in. The fact layer already holds that (`controls`,
-  settlement condition, claims, events) and `living/mutations.ts` already changes it. They should go: `places()` a
-  read of the fact store, the state kinds calls of `setControl` / `setCondition` (with a `tribute` economic relation),
-  and only their physical side (the lots' condition, the map's mark) left here, keyed by the fact event's id.
-- `dried` lowers water in an area and shuts its columns' sources. The recorded way is `river-inflow`
-  (`living/mutations.ts`: a region's inflow factor). `dried` should become the physical projection of that event.
-- The template engine's outcome kinds do not name the physical mutators yet. Wanted: outcome kinds `land` (kind,
-  place, strength, seed) and `sign` in the template DSL that call `mutators.apply` / `mutators.sign` with the
-  opportunity's id as `cause`.
-- The catalog (docs/design/OPPORTUNITY_CATALOG.md) has not been read against the mutators here; the list of physical
-  changes it needs and this module lacks is not made.
+**Done in round 2 (MU-21).** The fact layer on this base is whole: `api/contracts/facts*.ts` (entities, scoped tags,
+typed relations, claims, events), `world-state.ts` (settlement records, AtlasEvents, regions' river inflow),
+`living/` (FactWorld, the template engine and its DSL, `mutations.ts`), `opps/` (the dealer on that engine), the
+inspector. What the switchover deleted is the old towns' *realisers* of settlement events (a fallen town charred,
+peopled: BACKLOG SW-G5) — the lots' condition word here is their replacement. The parallel list is deleted; see "What
+changed in the contract" above. Not done: `dried`'s land op is still an area write as well as the inflow change
+(MU-16); the AtlasEvents `flood`, `burn`, `bury`, `overgrow`, `shadow`, `raise-dead`, `storm` (region-wide dials no
+system on this base realises) are not emitted — a land mutator is an area, and a region dial set from it would say
+more than happened (MU-22).
+
+**The catalog against the mutators** (docs/design/OPPORTUNITY_CATALOG.md, every physical change its entries call for).
+Covered here: a new town or outpost (founded); a town burned or raided (burned, destroyed, the crime sign); evacuated
+or abandoned (abandoned, with the engine's `migrate`); conquered or occupied (captured); tribute or vassal (vassal);
+unending night (darkness — look only); overgrowth (greened); lava and ash (melted, ash fall); drought (dried,
+withered, with `inflow`); flood (flooded). Covered by the engine's own effects: buildings placed in a settlement,
+stores, control, laws, alliances, claims. **Missing** (BACKLOG MU-23): structures outside a settlement (a pass fort, a
+beacon chain, a remote mine, a ritual site); a structure changing state (lit, staged, dilapidated); roads, bridges,
+tunnels, rail, gates between settlements; a bridge or dam broken and repaired; power lines and lights; a deserted
+town resettled and any dispel (no inverse ops but `greened`); a district's distinct look, riots, curfew, checkpoints
+(lockdown is reserved, unbuilt); festival dress; busy or empty markets; caravans, ships, armies, refugee columns as
+moving things; an undead army (the sign is a few walkers); creatures; revealed sites; a lifted or walking city; a new
+volcano cone; a river's course changed; storm fronts; snow and ice; plague, quarantine, pollution; battlefield dead.
 
 **Contradiction for the owner.** Tonight's words ask for instant mutators on places that are not loaded, written into
 the land when it arrives. The recorded design routes a river through its steady-flow inflow (the atlas's tables) and a

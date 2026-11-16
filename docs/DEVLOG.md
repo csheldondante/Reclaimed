@@ -23213,3 +23213,21 @@ houses go grey-green, no water shows on the paved streets; only the river's sand
 over the town, not the river; unverified in game). Crime and the dead rise: no still (three runs died in the watchdog,
 MU-20). A far city (Vagug) flooded and captured while not loaded arrived with wide water round it and its roofs in the
 holder's colour. The map shows pins with a line of text; the drawn areas are a few pixels at the map's opening zoom.
+
+## 2026-11-15 (night) — mutators round 2, item 1: the place states move into the fact layer (`mutators`)
+
+**Why.** Round 1 kept its own list of who holds a place and what state it is in (`WorldList.place`). The recorded
+design (FACTIONS_WORLD_STATE.md §7, DECISIONS round 120/125) already has that home: the settlement's record through
+`WorldState.apply`, typed relations, condition tags, an event history; "Outcomes are near-instant mutations of
+authoritative state". Two lists of the same thing would drift, and the dealer and the inspector read the fact one.
+
+**What.** `src/mutate/facts.ts`: `recordMutation` (each kind as fact mutations through `living/mutations.ts`, one event,
+its id on the entry as `fact`), `placeState` / `placeStates` (reads), `recordSign`. `WorldList.place(s)` deleted.
+`MutateEngine.useWorld` binds a FactWorld and replays entries it lacks. `src/mutate/outcomes.ts` registers the
+template helpers `mutate` and `sign` (facts on the template's world, physical side only on a real resolution). A new
+AtlasEvent kind `settlement-founded` (world.ts, world-state.ts): there was no way to add a settlement through its
+owner. The level binds the atlas's world (`wiki.snapshot`) and realises its river inflow (`useRiverWorld`), so `dried`
+on a place now lowers its region's rivers the recorded way.
+
+**Tests.** unit: mutators-facts 6, mutators-list 4; gpu: mutators 39 (the world-state test now reads the fact world).
+

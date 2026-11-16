@@ -1,10 +1,10 @@
 // The world modifier list (docs/design/MUTATORS.md): the persistent truth of what the mutators did. Pure — no GPU, no
-// DOM: entries made from a spec (their numbers fixed from the atlas's ground, never from the window), found by the land
-// they touch, and the places' states derived from them. The GPU ops (mutate/gpu.ts) are a pure function of an entry and
+// DOM: entries made from a spec (their numbers fixed from the atlas's ground, never from the window). It holds the
+// PHYSICAL projection only: who owns a place and what state it is in are the fact layer's (mutate/facts.ts). The GPU ops (mutate/gpu.ts) are a pure function of an entry and
 // a column, so the list is all a save needs.
 import { MAT } from '../world/materials';
 import { ROW_H } from '../world/lattice';
-import type { Applied, Mutation, MutationRecord, MutationSpec, MutatorKind, PhysicalKind, PlaceState, Sign, SignSpec } from './index';
+import type { Applied, Mutation, MutationRecord, MutationSpec, MutatorKind, PhysicalKind, Sign, SignSpec } from './index';
 
 /** a place as the atlas knows it (a settlement's record: settle/settlements.ts), positions in world units */
 export interface AtlasPlace {
@@ -102,6 +102,7 @@ export class WorldList {
     if (spec.by !== undefined) m.by = spec.by;
     if (spec.tribute !== undefined) m.tribute = spec.tribute;
     if (spec.cause !== undefined) m.cause = spec.cause;
+    if (spec.fact !== undefined) m.fact = spec.fact;
     if (spec.kind === 'founded') {
       m.name = spec.name ?? 'New camp';
       m.size = spec.size ?? 'camp';
@@ -118,6 +119,11 @@ export class WorldList {
     m.seq = this.entries.length;
     this.entries.push(m);
     return { m, fresh: true };
+  }
+
+  /** the last entry taken off again (its facts were refused) */
+  drop(m: Mutation): void {
+    if (this.entries[this.entries.length - 1] === m) this.entries.pop();
   }
 
   /** the op's own numbers (index.ts Mutation.params), world z */
@@ -174,59 +180,6 @@ export class WorldList {
     if (a) return a;
     const f = this.entries.find((m) => m.kind === 'founded' && m.place === id);
     return f ? { id, name: f.name ?? id, at: [f.cell[0], f.cell[1] * ROW_H], radius: f.radius, size: f.size ?? 'camp', faction: f.by ?? null } : null;
-  }
-
-  /** One place as the list has left it (an atlas place the list never touched: standing, its own). */
-  place(id: string): PlaceState | null {
-    const a = this.place0(id);
-    if (!a) return null;
-    const s: PlaceState = { id, name: a.name, at: [Math.round(a.at[0]), Math.round(a.at[1] / ROW_H)], size: a.size, owner: a.faction ?? '', status: 'standing', tribute: 0, population: 1, conditions: [], restless: false, history: [] };
-    for (const m of this.entries) {
-      const mine = m.place === id;
-      // (a land entry by area counts for a place whose centre lies in it)
-      const inArea = isLand(m.kind) && Math.hypot(m.cell[0] - a.at[0], m.cell[1] * ROW_H - a.at[1]) <= m.radius;
-      if (!mine && !inArea) continue;
-      s.history.push(m.id);
-      if (isLand(m.kind)) {
-        s.conditions.push(m.kind);
-        if (s.population > 0) s.population = Math.max(0.1, s.population * (1 - 0.5 * m.strength));
-        continue;
-      }
-      if (m.kind === 'founded') {
-        s.status = 'founded';
-        s.owner = m.by ?? '';
-      } else if (m.kind === 'destroyed') {
-        s.status = 'destroyed';
-        s.population = 0;
-        s.tribute = 0;
-      } else if (m.kind === 'abandoned') {
-        s.status = 'abandoned';
-        s.population = 0;
-        s.tribute = 0;
-      } else if (m.kind === 'captured') {
-        s.status = 'occupied';
-        s.owner = m.by ?? 'unknown';
-        s.tribute = 0;
-      } else if (m.kind === 'vassal') {
-        s.status = 'vassal';
-        s.owner = m.by ?? 'unknown';
-        s.tribute = m.tribute ?? 1;
-      }
-    }
-    s.restless = (s.status === 'vassal' || s.status === 'occupied') && s.population > 0;
-    return s;
-  }
-
-  /** every place the list has touched (by name or by area), in the order it first did */
-  places(): PlaceState[] {
-    const ids: string[] = [];
-    const add = (id: string) => void (ids.includes(id) || ids.push(id));
-    const atlas = this.world.places();
-    for (const m of this.entries) {
-      if (m.place) add(m.place);
-      else for (const a of atlas) if (Math.hypot(m.cell[0] - a.at[0], m.cell[1] * ROW_H - a.at[1]) <= m.radius) add(a.id);
-    }
-    return ids.map((id) => this.place(id)).filter((p): p is PlaceState => p !== null);
   }
 
   record(): MutationRecord {

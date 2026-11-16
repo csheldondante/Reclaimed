@@ -7,6 +7,8 @@ import { MUTATORS } from './index';
 import type { MutateGpu, MutLots, Origin } from './gpu';
 import { applied, GPU_KIND, GPU_LOOT, GPU_UNLOOT, isLand, WorldList, type ListWorld } from './list';
 import { ROW_H } from '../world/lattice';
+import type { FactWorld } from '../living/world';
+import { hasEvent, placeState, placeStates, recordMutation, recordSign } from './facts';
 
 /** a live town: where it is in the window now (world units), how far its lots reach, its lots, and what to do once
  *  they changed */
@@ -36,6 +38,8 @@ export interface MutateHost {
   signsChanged?(signs: readonly Sign[]): void;
   /** the player's home place (its id and where: world units), for what a far event casts on it; null: none */
   home?(): { id: string; at: readonly [number, number] } | null;
+  /** the region of a world point (x cells, y world units), for the fact events of changes that name no settlement */
+  regionAt?(x: number, y: number): number;
   /** true: each write is timed (a lab, a test) — `lastMs` */
   time?: boolean;
 }
@@ -52,8 +56,32 @@ export class MutateEngine implements Mutators {
   /** per kind, the GPU ms of its last timed write */
   readonly ms: Record<string, number | null> = {};
 
+  /** the fact world written to and read from (mutate/facts.ts); null: none bound — land kinds still write the land,
+   *  state kinds are refused (there is nowhere for the state to live) */
+  world: FactWorld | null = null;
+
   constructor(private host: MutateHost) {
     this.worldList = new WorldList(host.world);
+  }
+
+  useWorld(w: FactWorld | null): void {
+    this.world = w;
+    if (w) this.replay();
+  }
+
+  /** an entry's change recorded in the bound fact world (its event's id kept on the entry) */
+  private fact(m: Mutation): void {
+    if (!this.world) return;
+    m.fact = recordMutation(this.world, m, { cause: m.cause, regionAt: this.host.regionAt });
+  }
+
+  /** every entry (and sign) whose fact event the bound world lacks recorded in it, in list order: a saved list laid
+   *  over a world that never heard of it (a new run's world made from the atlas) */
+  private replay(): void {
+    const w = this.world;
+    if (!w) return;
+    for (const m of this.worldList.all) if (!m.fact || !hasEvent(w, m.fact, m.kind === 'founded' ? 'founding' : m.kind)) this.fact(m);
+    for (const s of this.worldList.signs()) recordSign(w, s.kind, s.place, true, s.cause ?? undefined);
   }
 
   list() {
@@ -121,8 +149,18 @@ export class MutateEngine implements Mutators {
   }
 
   apply(spec: MutationSpec): Applied {
+    if (!isLand(spec.kind) && !this.world && !spec.fact) throw new Error(`mutators: ${spec.kind} changes a place's state, and no fact world is bound to hold it (mutators.useWorld)`);
     const { m, fresh } = this.worldList.add(spec);
     if (!fresh) return applied(m, false, false);
+    // (the facts first: a refused state change — an unknown holder — leaves no entry behind)
+    if (!spec.fact) {
+      try {
+        this.fact(m);
+      } catch (e) {
+        this.worldList.drop(m);
+        throw e;
+      }
+    }
     const resident = this.write([m], undefined, this.host.towns());
     // (a distant eruption: ash fall and darkness on the home town for three seasons, stronger the nearer it is)
     const home = m.kind === 'melted' ? this.host.home?.() : null;
@@ -133,6 +171,7 @@ export class MutateEngine implements Mutators {
         const until = this.worldList.seasonNow + 3;
         this.worldList.sign({ kind: 'ashfall', place: home.id, strength, until, cause: m.id });
         this.worldList.sign({ kind: 'darkness', place: home.id, strength, until, cause: m.id });
+        if (this.world) for (const k of ['ashfall', 'darkness'] as const) recordSign(this.world, k, home.id, true, m.cause);
         this.host.signsChanged?.(this.worldList.signs());
       }
     }
@@ -167,11 +206,11 @@ export class MutateEngine implements Mutators {
   }
 
   places(): PlaceState[] {
-    return this.worldList.places();
+    return this.world ? placeStates(this.world) : [];
   }
 
   place(id: string): PlaceState | null {
-    return this.worldList.place(id);
+    return this.world ? placeState(this.world, id) : null;
   }
 
   record(): MutationRecord {
@@ -180,12 +219,14 @@ export class MutateEngine implements Mutators {
 
   restore(record: MutationRecord): void {
     this.worldList.restore(record);
+    this.replay();
     this.rewrite();
     this.host.signsChanged?.(this.worldList.signs());
   }
 
   sign(spec: SignSpec): Sign | null {
     const s = this.worldList.sign(spec);
+    if (this.world) recordSign(this.world, spec.kind, spec.place ?? this.host.home?.()?.id ?? null, s !== null, spec.cause);
     this.host.signsChanged?.(this.worldList.signs());
     this.host.changed?.(this.worldList.record());
     return s;
@@ -196,7 +237,10 @@ export class MutateEngine implements Mutators {
   }
 
   season(n: number): void {
+    const before = this.worldList.signs();
     if (!this.worldList.season(n)) return;
+    const now = this.worldList.signs();
+    if (this.world) for (const s of before) if (!now.some((q) => q.kind === s.kind && q.place === s.place)) recordSign(this.world, s.kind, s.place, false);
     this.host.signsChanged?.(this.worldList.signs());
     this.host.changed?.(this.worldList.record());
   }

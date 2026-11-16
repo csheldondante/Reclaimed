@@ -14,6 +14,10 @@ import { warpWindow } from '../../api/atlas-world';
 import { PK } from '../../sim/particles';
 import { ROW_H, cellAt } from '../../world/lattice';
 import type { LevelScene } from '../level';
+import { MemoryWorldState } from '../../api/contracts/world-state';
+import { FactWorld } from '../../living/world';
+import { registerMutatorOutcomes } from '../../mutate/outcomes';
+import { useRiverWorld } from './runs';
 
 const KEY = 'mutators:list';
 /** the map's colours a kind */
@@ -114,9 +118,17 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
       const s = homeId ? st.settlement(homeId) : null;
       return s ? { id: s.id, at: s.at } : null;
     },
+    regionAt: (x, y) => st.regionAt(x, y),
     time: lab,
   });
   mutators.bind(eng);
+  // (the fact world the place states live in: the atlas's own world — its settlements, factions and their entities, as
+  // a run makes it (scenes/level/runs.ts). A run or the season loop with its own world binds that: mutators.useWorld.
+  // Its rivers' inflow is realised by the river field, as for a run's world: a `dried` place lowers it)
+  const ws = MemoryWorldState.restore(structuredClone(st.wiki.snapshot));
+  useRiverWorld(scene, ws);
+  eng.useWorld(new FactWorld(ws));
+  registerMutatorOutcomes();
   (globalThis as { mutators?: unknown }).mutators = mutators;
   (globalThis as { mutateEngine?: unknown }).mutateEngine = eng;
   // (after the static claims' own hook — scenes/level/statics.ts: a building's columns are claimed when the ops look)
@@ -156,7 +168,7 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
       ...(prevMarks?.() ?? []),
       ...eng.places().map((p) => ({
         at: p.at,
-        name: `${p.name}: ${[...p.conditions, ...(p.status === 'standing' ? [] : [p.status])].join(', ')}${p.owner && p.status !== 'standing' ? ` (${p.owner})` : ''}`,
+        name: `${p.name}: ${[...p.conditions, ...(p.status === 'standing' ? [] : [p.status])].join(', ')}${p.owner && p.status !== 'standing' ? ` (${eng.world?.name(p.owner) ?? p.owner})` : ''}`,
         colour: MARK[p.status === 'standing' ? (p.conditions[p.conditions.length - 1] ?? 'founded') : p.status],
       })),
     ];
@@ -257,15 +269,19 @@ function startLab(scene: LevelScene, towns: FieldTowns, eng: MutateEngine): void
         return `${kind} at ${m.cell[0]}, ${m.cell[1]}: ${m.resident ? 'written now' : 'waits for its land'}`;
       }
       if (kind === 'founded') {
-        const m = mutators.apply({ kind, at: here(), name: 'New camp', size: 'camp', by: 'player' });
+        const m = mutators.apply({ kind, at: here(), name: 'New camp', size: 'camp' });
         return `${m.name} founded at ${m.cell[0]}, ${m.cell[1]} (a record, and a house on the map)`;
       }
       const t = town();
       if (!t) return 'No town is loaded near here.';
-      mutators.apply({ kind, place: t.id, by: 'Iron League', tribute: 3 });
+      // (the holder: a real faction of the world, not the town's own)
+      const w = mutators.world!;
+      const by = w.facts.find({ kind: 'faction' }).find((f) => f.id !== w.controllerOf(t.id))?.id;
+      if (!by) return 'No other faction in this world.';
+      mutators.apply({ kind, place: t.id, by, tribute: 3 });
       timing(kind);
       const p = mutators.place(t.id)!;
-      return `${p.name}: ${p.status}${p.owner ? `, held by ${p.owner}` : ''}${p.tribute ? `, pays ${p.tribute} a season` : ''}`;
+      return `${p.name}: ${p.status}${p.owner ? `, held by ${w.name(p.owner)}` : ''}${p.tribute ? `, pays ${p.tribute} a season` : ''}`;
     },
     sign: (kind) => {
       const on = mutators.signs().some((s) => s.kind === kind);
@@ -277,7 +293,9 @@ function startLab(scene: LevelScene, towns: FieldTowns, eng: MutateEngine): void
       if (!s) return 'No far place found.';
       far = s;
       const f = mutators.apply({ kind: 'flooded', place: s.id, seed: 3 });
-      mutators.apply({ kind: 'captured', place: s.id, by: 'Iron League' });
+      const w = mutators.world!;
+      const by = w.facts.find({ kind: 'faction' }).find((q) => q.id !== w.controllerOf(s.id))?.id;
+      if (by) mutators.apply({ kind: 'captured', place: s.id, by });
       return `${s.name} flooded and captured: ${f.resident ? 'written now' : 'not loaded, it will arrive that way'}. Open the map to see it.`;
     },
     erupt: () => {

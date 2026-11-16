@@ -11,6 +11,7 @@ import { unpackColumns } from '../../src/world/mapfile';
 import { ROW_H } from '../../src/world/lattice';
 import { MAT } from '../../src/world/materials';
 import { tinyMap } from '../support/tinymap';
+import { mutWorld } from '../support/mutworld';
 import { testGpu, type TestGpu } from './dawn';
 import { tinyWorld, type TinyWorld } from './world';
 
@@ -259,13 +260,19 @@ test('world state: a place destroyed, abandoned, captured — its lots all carry
   const r = await rig();
   const world: ListWorld = { ...listWorld, place: (id) => (id === 'faketown' ? { id, name: 'Fake Town', at: [32, 32 * ROW_H], radius: 40, size: 'town', faction: 'locals' } : null), places: () => [world.place('faketown')!] };
   const eng = new MutateEngine({ gpu: r.gpu, world, origin: () => r.origin.o, towns: () => [r.town] });
-  eng.apply({ kind: 'captured', place: 'faketown', by: 'Iron League' });
+  // (no fact world: there is nowhere for a place's state to live, so a state kind is refused)
+  expect(() => eng.apply({ kind: 'captured', place: 'faketown', by: 'iron-league' })).toThrow(/no fact world/);
+  const fw = mutWorld([world.place('faketown')!]);
+  eng.useWorld(fw);
+  const cap = eng.apply({ kind: 'captured', place: 'faketown', by: 'iron-league' });
   expect(await conds(r)).toEqual([LOT_CONDITION.occupied, LOT_CONDITION.occupied, LOT_CONDITION.occupied, LOT_CONDITION.occupied]);
-  expect(eng.place('faketown')).toMatchObject({ owner: 'Iron League', status: 'occupied', restless: true });
-  eng.apply({ kind: 'vassal', place: 'faketown', by: 'player', tribute: 3 });
-  expect(eng.place('faketown')).toMatchObject({ owner: 'player', status: 'vassal', tribute: 3, restless: true });
+  // (the state is the fact world's: the settlement's record, the relation, the event the entry names)
+  expect(fw.settlement('faketown')!.faction).toBe('iron-league');
+  expect(fw.facts.events({ kind: 'captured' }).map((e) => e.id)).toEqual([cap.fact]);
+  expect(eng.place('faketown')).toMatchObject({ owner: 'iron-league', status: 'occupied', restless: true });
   eng.apply({ kind: 'destroyed', place: 'faketown' });
   expect(await conds(r)).toEqual([LOT_CONDITION.burned, LOT_CONDITION.burned, LOT_CONDITION.burned, LOT_CONDITION.burned]);
+  expect(fw.settlement('faketown')!.condition).toBe('ruined');
   expect(eng.place('faketown')).toMatchObject({ status: 'destroyed', population: 0, tribute: 0, restless: false });
   expect(eng.places().map((p) => p.id)).toEqual(['faketown']);
   expect(g.takeErrors()).toEqual([]);
