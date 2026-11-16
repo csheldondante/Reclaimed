@@ -230,7 +230,7 @@ export class LiveRunner {
         const at: [number, number] = [c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r];
         // (what burns: a stall of timber at each spot — the fire system burns timber, canvas and plants, and the
         // generated buildings are meshes it does not know; BACKLOG LS-63)
-        terrain.deposit(at[0], at[1], 'Wood', { radius: 1.6, layers: 2 });
+        terrain.build(at[0], at[1], 'Wood', { radius: 1.6, layers: 2 });
         return { at, alightFor: 0, alight: false, burned: false };
       });
       run.hazard = { points, lit: false, read: 0 };

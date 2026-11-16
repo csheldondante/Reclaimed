@@ -140,6 +140,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   log(JSON.stringify(await state()));
 
   /** the live events met, by template, and what the season's news said of rules that fired */
+  const RULE_LINE = /doubled the crop|prayed there|stopped \d+ (more )?raider|bucket lines|fewer people came|more people to the parade|counted the scouts|sold at|worked the/;
   const met = new Set();
   const fired = [];
   /**
@@ -240,6 +241,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     await shot(`loop-ev-${tpl}-end`);
     const notes = await page.evaluate(() => window.rungame.notes);
     log(`after ${tpl}: ${JSON.stringify(notes)}`);
+    fired.push(...notes.filter((t) => RULE_LINE.test(t) && !fired.includes(t)));
   };
 
   /** (round 6) the growth rune, by a finger: its button on the town's sheet, then a tap on the east fields */
@@ -440,7 +442,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     log(JSON.stringify(s));
     const news = await page.evaluate(() => window.rungame.notes);
     log(`news: ${JSON.stringify(news)}`);
-    fired.push(...news.filter((t) => /doubled the crop|prayed there|stopped \d+ raiders|bucket lines|fewer people came|more people to the parade|counted the scouts|sold at/.test(t)));
+    fired.push(...news.filter((t) => RULE_LINE.test(t) && !fired.includes(t)));
     // (a change in the land this season: the camera on it, a still)
     if (s.phase === 'city' && /flooded|burned|buried|Lava|founded/.test(news.join(' '))) {
       const seen = await page.evaluate(() => window.rungame.showLast());
@@ -598,6 +600,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     await wait(3500);
     await shot('loop-7-result-district');
     log(`war: ${JSON.stringify(await page.evaluate(() => window.rungame.resultLines))}`);
+    fired.push(...(await page.evaluate(() => window.rungame.resultLines)).filter((t) => RULE_LINE.test(t)));
     await tap('.run-sheet .go button', 'Continue');
   }
   await phase('end', 60000);
