@@ -3,7 +3,7 @@
 // leaders differ by something real, and every line the skeleton shows passes the writing lint.
 import { describe, expect, it } from 'vitest';
 import { newLedger, nextSeason, pools, total } from '../../src/season/ledger';
-import { decodeWorld, deckFor, encode, endSeason, comesHome, CRIME_UNREST, signsNow, fought, HAND_SIZE, mutate, newRun, REFUGEES, tribute, WAGONS, newWorld, play, raidDue, shortOf, startLedger, threatDone, type Petition, type RunRecord } from '../../src/season/run';
+import { decodeWorld, deckFor, encode, endSeason, comesHome, CRIME_UNREST, signsNow, fought, HAND_SIZE, mutate, newRun, REFUGEES, tribute, WAGONS, newWorld, play, raidDue, roadLook, shortOf, startLedger, threatDone, type Petition, type RunRecord } from '../../src/season/run';
 import { attackLine, costText, expiredLine, LEADERS, leader, leftText, PETITIONS, playedLine, presenterLine, RAIDERS, resultLines, bringsLine, changeLine, placeLine, tributeLine, homeLines, SIGN_NAME } from '../../src/season/run-words';
 import { lint } from '../support/writing';
 
@@ -232,19 +232,45 @@ describe('the run record (season/run.ts)', () => {
     expect(l1.projects).toEqual([]);
   });
 
-  it('leaders differ by something real: their pools, and which suit comes up first', () => {
+  it('leaders differ by something real: their pools, the card they hear first, and which suit comes up after', () => {
     const start = LEADERS.map((l) => JSON.stringify(pools(startLedger(l, null, newLedger))));
     expect(new Set(start).size).toBe(LEADERS.length);
+    expect(new Set(LEADERS.map((l) => l.opens)).size).toBe(LEADERS.length);
     for (const l of LEADERS) {
+      const far = PETITIONS.filter((p) => p.first).length;
+      const defence = PETITIONS.filter((p) => p.defence && p.id !== l.opens).length;
       let first = 0;
       const N = 400;
-      for (let seed = 1; seed <= N; seed++) if (pet(deckFor(l, PETITIONS, seed)[0]).suit === l.suit) first++;
-      const town = PETITIONS.filter((p) => !p.threat && !p.first && !p.when);
+      for (let seed = 1; seed <= N; seed++) {
+        const d = deckFor(l, PETITIONS, seed);
+        // (their own card first and of their suit; the defence in the hand by season 2 at the latest)
+        expect(d[0]).toBe(l.opens);
+        expect(pet(d[0]).suit).toBe(l.suit);
+        expect(d.indexOf('barracks')).toBeLessThanOrEqual(1 + far);
+        if (pet(d[1 + far + defence]).suit === l.suit) first++;
+      }
+      const town = PETITIONS.filter((p) => !p.threat && !p.first && !p.when && !p.defence && p.id !== l.opens);
       const own = town.filter((p) => p.suit === l.suit).length;
       const all = town.length;
       expect(first / N).toBeGreaterThan(own / all + 0.1);
       expect(deckFor(l, PETITIONS, 5).slice().sort()).toEqual(PETITIONS.filter((p) => !p.threat && !p.when).map((p) => p.id).sort());
     }
+  });
+
+  it('the camera looks down a road from where the window is sure to hold the rest of it (LS-16)', () => {
+    // (Muru's east road: out from the centre to the box's corner, 184 cells away; the window sure for 68 round the camera)
+    const road: [number, number][] = [];
+    for (let k = 0; k <= 46; k++) road.push([144 + (158 * k) / 46, 109 - (94 * k) / 46]);
+    const at = roadLook(road, 68)!;
+    const end = road[road.length - 1];
+    expect(Math.max(Math.abs(at[0] - end[0]), Math.abs(at[1] - end[1]))).toBeGreaterThanOrEqual(68);
+    expect(Math.max(Math.abs(at[0] - end[0]), Math.abs(at[1] - end[1]))).toBeLessThan(68 + 4);
+    // (every point from there on is within the sure cells of it)
+    const i = road.findIndex((p) => p[0] === at[0] && p[1] === at[1]);
+    for (const p of road.slice(i)) expect(Math.max(Math.abs(p[0] - at[0]), Math.abs(p[1] - at[1]))).toBeLessThan(68 + 4);
+    // (a short road: its start; no road: none)
+    expect(roadLook([[0, 0], [10, 0]], 68)).toEqual([0, 0]);
+    expect(roadLook([[0, 0]], 68)).toBeNull();
   });
 
   it("every line the skeleton shows passes the writing lint (docs/WRITING.md)", () => {

@@ -521,6 +521,35 @@ describe('SeasonWar (squads and raids through the adapter)', () => {
     expect(war.lines).toContain(WAVE_NO_ROAD);
   });
 
+  it('a raid the host calls (the loop, LS-16): the season posts the squads and spawns no raiders; a call goes down one road only, a refused one fails with no chain, and the call down the next road arrives', async () => {
+    // (Muru: roads 0 and 1 meet the river, road 2 is dry — and only while the window holds it)
+    const { f, units, tick } = forces({ [PLACE.barracks]: 'ok', [PLACE.spawn0]: 'water', [PLACE.spawn0 + 1]: 'water', [PLACE.spawn0 + 2]: 'ok', [PLACE.stores]: 'ok' });
+    const l = { ...grant(start(), { might: 1 }), built: ['keep'] };
+    const war = new SeasonWar({ forces: () => f, town: () => 0, firstWave: 0, ledger: () => l, raid: () => 6, calls: true });
+    war.season(l);
+    await tick();
+    expect(units.spawns.filter((x) => x.kind === 'raider')).toEqual([]);
+    expect(war.fight).toBeNull();
+    // (the squads are at their raid post already: the town's heart)
+    for (const { g } of units.spawns.filter((x) => x.kind === 'guard')) expect(units.orderOf(g)).toEqual({ kind: 'guard', at: townHeart(0), formation: 'line' });
+    expect(war.call(6, 0)).toBe(true);
+    await tick();
+    let rs = units.spawns.filter((x) => x.kind === 'raider');
+    expect(rs.length).toBe(1);
+    expect(rs[0].at).toEqual(unitsRef({ town: 0, place: PLACE.spawn0 }));
+    expect(war.fight?.failed).toBe(true);
+    expect(war.call(6, 2)).toBe(true);
+    await tick();
+    rs = units.spawns.filter((x) => x.kind === 'raider');
+    expect(rs.length).toBe(2);
+    expect(war.fight?.failed).toBe(false);
+    expect(war.fight?.alive).toBe(6);
+    expect(units.placeOf(units.members(rs[1].g)[0])).toBe(PLACE.stores);
+    // (raiders are in: a second call is refused)
+    expect(war.call(6, 1)).toBe(false);
+    expect(war.lines).not.toContain(WAVE_NO_ROAD);
+  });
+
   it('with walls and no raid, the last squad marches out of the first standing gate from its slot, then back to its post', async () => {
     const { f, units, tick } = forces({ [PLACE.muster]: 'ok', [PLACE.gate0]: 'ok', [PLACE.gate0 + 1]: 'water', [PLACE.gate0 + 2]: 'ok' });
     const l = { ...grant(start(), { might: 1 }), built: ['walls'] };

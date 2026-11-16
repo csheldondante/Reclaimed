@@ -10,13 +10,14 @@ import type { FieldTowns } from '../../citygen/towns';
 import { lose, newLedger, pools, total, type SeasonLedger } from '../../season/ledger';
 import type { SeasonLoop } from '../../season/loop';
 import type { Mutators } from '../../season/mutation';
-import { comesHome, decodeWorld, encode, endRun, endSeason, fought, mutate, newRun, newWorld, play, raidDue, startLedger, threatDone, type Mutation, type Petition, type RunRecord, type SpellId, type WorldChange, type WorldRecord } from '../../season/run';
+import { comesHome, decodeWorld, encode, endRun, endSeason, fought, mutate, newRun, newWorld, play, raidDue, roadLook, startLedger, threatDone, type Mutation, type Petition, type RunRecord, type SpellId, type WorldChange, type WorldRecord } from '../../season/run';
 import { mountRunUi, type Marker, type Phase, type RunGame } from '../../season/run-ui';
 import * as W from '../../season/run-words';
 import { WAVE_NO_ROAD } from '../../season/words';
 import { StoryCamera, type V3 } from '../../story/camera';
 import type { LevelScene } from '../level';
 import { standinMutators } from './loop-standin';
+import { REGION } from '../streamer/defs';
 import { startSeasonLoop, storeReady } from './season';
 
 const WORLD_KEY = 'loop:world';
@@ -27,6 +28,23 @@ const MARCH_SPEED = 3;
 const SACK_SECONDS = 5;
 /** wall seconds an attack may take at most before it is called as it stands */
 const ATTACK_SECONDS = 150;
+/** the camera's zoom (screen px a cell) down a road before the raid is called, on the raiders marching, and on the
+ *  fight: at 412 px across, a figure about a cell wide reads from 12 up */
+const ROAD_ZOOM = 4;
+const MARCH_ZOOM = 8;
+const FIGHT_ZOOM = 15;
+/** the window slides when the camera comes within this many regions of its edge (scenes/streamer.ts update): the
+ *  cells round the camera's target the window is sure to hold are half the window less that; and the margin kept
+ *  inside it for the spawn point's crowd */
+const SLIDE_REGIONS = 1.25;
+const SURE_MARGIN = 12;
+/** frames the window must be still before a raid is called: the place table's spawn points wake a solve at most every
+ *  120 frames (towncontracts/places.wgsl WET_GAP), and the solve lands a frame or two later */
+const PLACE_SETTLE_FRAMES = 130;
+/** frames after a raid's call by which a refused spawn has been told (the units' events are read a frame or two
+ *  behind): the raiders are watched and the sim sped up only after */
+const SPAWN_TOLD_FRAMES = 20;
+
 /** a spell's blow: its radius (cells), its damage, its cost */
 const HEATRAY = { radius: 5, damage: 3, magic: 1 };
 
@@ -44,7 +62,23 @@ class Game implements RunGame {
   private cam: StoryCamera;
   private mutators: Mutators;
   /** the attack under way: when it began (s), when the town was first left with no soldier, the raiders watched */
-  private attack: { t: number; sackAt: number | null; unwatch: (() => void) | null; following: boolean } | null = null;
+  private attack: {
+    t: number;
+    sackAt: number | null;
+    unwatch: (() => void) | null;
+    following: boolean;
+    /** the raid's size */
+    n: number;
+    /** the road the raid is being called down (the town's arterials' order), and whether straight for the heart */
+    road: number;
+    direct: boolean;
+    /** the camera going to the road, the window settling there, the raid called */
+    step: 'look' | 'settle' | 'called';
+    /** frames the window has been still with the camera on the road */
+    calm: number;
+    /** the middle of the raiders alive (window point), once they are watched */
+    mid: (() => V3 | null) | null;
+  } | null = null;
   /** world changes in the town applied and recorded, their reveals not yet played */
   private reveals: { text: string; frame: [number, number]; radius: number; play?: () => { done: Promise<void> } }[] = [];
   /** the end screen left to look at a change's place */
@@ -71,7 +105,15 @@ class Game implements RunGame {
       this.watchFight(dt);
     };
     requestAnimationFrame(tick);
-    scene.host.canvas.addEventListener('pointerdown', (e) => this.cast(e), true);
+    // (on the window, before the map's own input: the level's input layer lies over the canvas, so a listener on the
+    // canvas never heard the tap — round 1's cast was never seen. A tap on the loop's own screens is not a cast)
+    window.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (!(e.target instanceof Element && e.target.closest('.run-sheet, .run-top, .run-marks, .run-full'))) this.cast(e);
+      },
+      true,
+    );
   }
 
   get ledger(): SeasonLedger {
@@ -316,35 +358,90 @@ class Game implements RunGame {
 
   // ---- the attack -------------------------------------------------------------------------------------
 
+  /**
+   * The attack begins (LS-16): the raid is called by this screen, a road at a time, once the camera looks down that
+   * road. A spawn point stands only on ground the world's window holds (townplaces UC-13), and the window is where the
+   * camera is: round 1 let the season post the raid with the camera wherever the last card left it, and at Muru the one
+   * dry spawn point (the east road's, 184 cells from the centre of a 320-cell window) was outside it in three walks of
+   * four.
+   */
   private beginAttack(): void {
-    this.attack = { t: 0, sackAt: null, unwatch: null, following: false };
-    this.fightLine = null;
+    const n = raidDue(this.run!, this.run!.season) ?? 0;
+    this.attack = { t: 0, sackAt: null, unwatch: null, following: false, n, road: -1, direct: false, step: 'look', calm: 0, mid: null };
+    this.fightLine = W.ATTACK_WAIT;
     this.speed0 = this.scene.speed;
-    this.scene.speed = Math.max(this.speed0, MARCH_SPEED);
     this.set('attack');
+    this.nextRoad();
   }
 
-  /** each frame of an attack: the raiders watched and followed, its line, and its end */
+  /** the camera down the next road into town (then, with walls and no road's gate standing, each road again straight
+   *  for the town's heart); none left: the raid found no road, said loudly */
+  private nextRoad(): void {
+    const a = this.attack!;
+    const t = this.town;
+    const war = this.season.war;
+    const roads = t?.roadCount ?? 0;
+    a.road++;
+    if (a.road >= roads && war?.walled && !a.direct) {
+      a.direct = true;
+      a.road = 0;
+    }
+    if (!t || a.road >= roads) {
+      console.error(`[loop] the raid found no road into ${t?.site.name ?? 'the town'}: ${roads} roads tried`);
+      return this.endAttack(war?.fight ?? null);
+    }
+    const { w, h } = this.scene.core.dims;
+    const at = roadLook(t.roadInWindow(a.road), Math.min(w, h) / 2 - SLIDE_REGIONS * REGION - SURE_MARGIN);
+    if (!at) return this.nextRoad();
+    a.step = 'look';
+    a.calm = 0;
+    // (the road before's raiders were never made: nothing of theirs is watched)
+    a.unwatch?.();
+    a.unwatch = null;
+    a.mid = null;
+    a.following = false;
+    console.log(`[loop] the camera down road ${a.road}`);
+    void this.cam.look(this.at3(at), { zoom: ROAD_ZOOM, ease: 1.2, place: [0.5, 0.4] }).then(() => {
+      if (this.attack === a && a.step === 'look') a.step = 'settle';
+    });
+  }
+
+  /** each frame of an attack: the raid called once the window is still on its road, the raiders watched and followed,
+   *  its line, and its end */
   private watchFight(dt: number): void {
     const a = this.attack;
     const war = this.season.war;
     if (!a || !war || this.phase !== 'attack') return;
     a.t += dt;
-    const f = war.fight;
-    if (!f) {
+    if (a.step !== 'called') {
+      // (the window still on the road: the land a slide brought is written and the place table has solved over it —
+      // its spawn points wake a solve at most every PLACE_SETTLE_FRAMES)
+      a.calm = a.step === 'settle' && !this.scene.stream?.busy ? a.calm + 1 : 0;
+      if (a.calm > PLACE_SETTLE_FRAMES && war.call(a.n, a.road, a.direct)) {
+        a.step = 'called';
+        a.calm = 0;
+      }
       if (a.t > ATTACK_SECONDS) this.endAttack(null);
       return;
     }
+    const f = war.fight;
+    if (!f) return this.endAttack(null);
     const units = this.scene.units;
     const forces = this.scene.townForces;
-    if (!a.unwatch && units && forces) {
+    // (this road's spawn point was refused — water, or no gate on it: the next road)
+    if (f.failed && !forces?.members(f.raiders).length) {
+      this.scene.speed = this.speed0;
+      return this.nextRoad();
+    }
+    // (watched once they stand: a spawn's refusal comes a few frames after its call, with the group's members gone)
+    if (!a.unwatch && units && forces && a.calm++ > SPAWN_TOLD_FRAMES) {
       const ids = forces.members(f.raiders);
       if (ids.length) {
         a.unwatch = units.observe(ids);
         const mid = (): V3 | null => {
           let n = 0;
           const s: V3 = [0, 0, 0];
-          for (const id of forces.members(f.raiders)) {
+          for (const id of forces.members(war.fight?.raiders ?? -1)) {
             const at = units.get(id)?.at;
             if (!at) continue;
             n++;
@@ -352,18 +449,29 @@ class Game implements RunGame {
           }
           return n ? [s[0] / n, s[1] / n, s[2] / n] : null;
         };
+        a.mid = mid;
+        this.scene.speed = Math.max(this.speed0, MARCH_SPEED);
         // (the camera to the raiders once their place is read, then sliding after them)
         const go = () => {
           if (this.attack !== a) return;
           const p = mid();
           if (!p) return void setTimeout(go, 100);
-          void this.cam.look(p, { zoom: 7, ease: 1 }).then(() => this.cam.follow(mid));
-          a.following = true;
+          void this.cam.look(p, { zoom: MARCH_ZOOM, ease: 1, place: [0.5, 0.4] }).then(() => {
+            if (this.attack !== a) return;
+            this.cam.follow(mid);
+            a.following = true;
+          });
         };
         go();
       }
     }
     if (f.stage !== 'coming') this.scene.speed = this.speed0;
+    // (the camera closes in as the raiders reach the town and the fight starts: figures read on a phone)
+    if (a.following && !this.cam.busy) {
+      const cam = this.scene.core.camera;
+      const want = f.stage === 'coming' ? MARCH_ZOOM : FIGHT_ZOOM;
+      cam.zoom *= Math.exp(Math.log(want / cam.zoom) * Math.min(1, dt * 1.2));
+    }
     const line = f.failed ? WAVE_NO_ROAD : W.attackLine(f.n, f.alive, f.soldiers, f.stage);
     if (line !== this.fightLine) {
       this.fightLine = line;
@@ -397,6 +505,12 @@ class Game implements RunGame {
     this.set('result');
   }
 
+  /** (scripts) where the raiders are on the screen now (px), or null: none watched */
+  raidAt(): [number, number] | null {
+    const p = this.attack?.mid?.();
+    return p ? this.scene.core.camera.project(p[0], p[1], p[2]) : null;
+  }
+
   arm(spell: SpellId | null): void {
     this.armed = spell;
     this.changed();
@@ -408,7 +522,7 @@ class Game implements RunGame {
     if (this.phase !== 'attack' || this.armed !== 'heatray') return;
     const rect = this.scene.host.canvas.getBoundingClientRect();
     const g = this.scene.core.camera.groundAt(e.clientX - rect.left, e.clientY - rect.top, this.scene.heightAt);
-    if (!g) return;
+    if (!g) return console.warn('[loop] heat ray: no ground under the tap');
     if (pools(this.season.ledger).magic < HEATRAY.magic) {
       this.fightLine = W.shortText({ magic: HEATRAY.magic });
       return this.arm(null);
@@ -428,6 +542,8 @@ export function startRunLoop(scene: LevelScene, towns: FieldTowns): void {
     dealer: false,
     // (BACKLOG SF-5: the raid is a card's effect — the threat's expiry — not the fixed schedule)
     raid: (s) => (game?.run ? raidDue(game.run, s) : null),
+    // (LS-16: the attack screen calls it, with the camera down the road it comes by)
+    calls: true,
     ready: () => void game!.load(),
     // (what far places bring home is seen in the town: refugees in the streets, a settlement's wagons on the road)
     life: (l) => {

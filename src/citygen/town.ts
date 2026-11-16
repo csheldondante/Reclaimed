@@ -200,7 +200,8 @@ export class FieldTown {
     this.bare = makeCompute(io.device, 'citygen bare', [commonWgsl, bareWgsl], { 0: 'uniform', 3: 'read', 4: 'rw', 5: 'rw', 6: 'uniform', 7: 'read', 8: 'read' });
     this.bareU = io.device.createBuffer({ label: `citygen ${site.id} bare`, size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     // (the reach's start: the first road's point at the core's distance — on the road into town, not in the river)
-    const road = site.roads.map((l) => l.map(local)).find((l) => l.length > 1) ?? [centre];
+    this.roadsLocal = site.roads.map((l) => l.map(local));
+    const road = this.roadsLocal.find((l) => l.length > 1) ?? [centre];
     this.seed = road.reduce((b, p) => (Math.abs(Math.hypot(p[0] - centre[0], p[1] - centre[1]) - box.core) < Math.abs(Math.hypot(b[0] - centre[0], b[1] - centre[1]) - box.core) ? p : b), road[0]);
     this.made = io
       .rawGround(box.x0, box.y0, box.w, box.h, this.raw)
@@ -391,6 +392,35 @@ export class FieldTown {
   /** world z to the window's (the mesh's offset: its z less the window's oz) */
   oz(): number {
     return this.io.oz();
+  }
+
+  /** its atlas roads in the grid's frame, in the arterials' order (townplaces: arterial k is road k) */
+  private roadsLocal: [number, number][][] = [];
+  /** how many roads lead into the town (its arterials) */
+  get roadCount(): number {
+    return this.roadsLocal.length;
+  }
+  /**
+   * (loop-skeleton, LS-16) Road k from the town outward as window points now: from its point nearest the centre to the
+   * last one inside the town's box (the generator cuts an arterial there). What a camera needs to look down a road
+   * before a raid is called on it; nothing here says where the place table's spawn point is.
+   */
+  roadInWindow(k: number): [number, number][] {
+    const line = this.roadsLocal[k];
+    if (!line?.length) return [];
+    const c = this.centreLocal;
+    const d = (p: readonly [number, number]) => Math.hypot(p[0] - c[0], p[1] - c[1]);
+    let k0 = 0;
+    line.forEach((p, i) => {
+      if (d(p) < d(line[k0])) k0 = i;
+    });
+    const out: [number, number][] = [];
+    for (let i = k0; i < line.length; i++) {
+      const p = line[i];
+      if (p[0] < 0 || p[1] < 0 || p[0] >= this.box.w || p[1] >= this.box.h * ROW_H) break;
+      out.push(this.inWindow(p));
+    }
+    return out;
   }
 
   /** a point of the town's grid frame (world units) in the window now */

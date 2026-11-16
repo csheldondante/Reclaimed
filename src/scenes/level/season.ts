@@ -41,6 +41,8 @@ export interface SeasonOpts {
   ui?: boolean;
   dealer?: boolean;
   raid?: (season: number) => number | null;
+  /** the host calls the raid due (SeasonWar.call) */
+  calls?: boolean;
   ready?: () => void;
   /** the living town's counts from the ledger, with what else the game adds (refugees, a settlement's wagons) */
   life?: (l: TownLife) => TownLife;
@@ -129,6 +131,7 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns, opts: Seas
       man: p.get('man') === '1',
       ledger: () => loop.ledger,
       raid: opts.raid,
+      calls: opts.calls,
     });
     (globalThis as { war?: SeasonWar }).war = loop.war;
   }

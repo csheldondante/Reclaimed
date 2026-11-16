@@ -258,7 +258,7 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       if (game.armed) sheet.append(el('div', 'warn', W.SPELL_AIM), el('div', 'stand', W.SPELL_STANDIN));
       sheet.append(el('div', 'stand', `${W.SPELL_LATER.telekinesis} ${W.RUNE_LATER}`));
     } else if (phase === 'result' && run?.fight) {
-      sheet.append(el('h3', undefined, run.fight.held ? W.RESULT_HELD : W.RESULT_BROKEN));
+      sheet.append(el('h3', undefined, W.resultTitle(run.fight)));
       for (const t of game.resultLines) sheet.append(el('div', undefined, t));
       go.append(btn(W.CONTINUE, () => game.proceed()));
     } else if (phase === 'mutation' && game.change) {

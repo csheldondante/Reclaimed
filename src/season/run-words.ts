@@ -16,6 +16,7 @@ export const LEADERS: readonly Leader[] = [
     pools: { magic: 1, might: 3, labor: 4, materials: 4, intel: 1, unrest: 0 },
     income: { materials: 2, magic: 1 },
     suit: 'arms',
+    opens: 'barracks',
   },
   {
     id: 'dunstan',
@@ -24,6 +25,7 @@ export const LEADERS: readonly Leader[] = [
     pools: { magic: 1, might: 1, labor: 6, materials: 7, intel: 1, unrest: 0 },
     income: { materials: 2, magic: 1 },
     suit: 'build',
+    opens: 'forge',
   },
   {
     id: 'ilveth',
@@ -32,6 +34,7 @@ export const LEADERS: readonly Leader[] = [
     pools: { magic: 4, might: 1, labor: 4, materials: 4, intel: 3, unrest: 0 },
     income: { materials: 2, magic: 2 },
     suit: 'lore',
+    opens: 'tower',
   },
 ];
 
@@ -172,6 +175,7 @@ export const PETITIONS: readonly Petition[] = [
   {
     id: 'barracks',
     suit: 'arms',
+    defence: true,
     presenter: { name: 'Captain Orrin', role: 'the captain of the guard' },
     title: 'Build a barracks',
     ask: 'My recruits sleep in a barn. Give me a barracks and I will give you soldiers.',
@@ -277,6 +281,9 @@ export const ATTACK_TITLE = 'The raiders attack';
 export const ATTACK_WAIT = 'The raiders are on their way.';
 export const RESULT_HELD = 'The town held';
 export const RESULT_BROKEN = 'The raiders broke through';
+export const RESULT_NONE = 'No raid came';
+/** the result's title: nobody came (LS-20), the town held, or the raiders broke through */
+export const resultTitle = (f: NonNullable<RunRecord['fight']>): string => (f.raiders === 0 ? RESULT_NONE : f.held ? RESULT_HELD : RESULT_BROKEN);
 export const CONTINUE = 'Continue';
 export const WORLD_CHANGES = 'The world changes';
 export const END_TITLE = 'The run is over';
@@ -328,7 +335,11 @@ export function attackLine(n: number, alive: number, soldiers: number, stage: 'c
 export function resultLines(f: NonNullable<RunRecord['fight']>, lost: { might: number; materials: number; unrest: number }): string[] {
   const out: string[] = [];
   if (f.raiders === 0) out.push('No raider reached the town.');
-  else out.push(f.left ? `${f.left} of ${f.raiders} raiders got into the town.` : `All ${f.raiders} raiders are dead.`);
+  else if (f.left === 0) out.push(`All ${f.raiders} raiders are dead.`);
+  else {
+    const dead = f.raiders - f.left;
+    out.push(`${f.left} of ${f.raiders} raiders got into the town.${dead === 1 ? ' 1 raider died.' : dead ? ` ${dead} raiders died.` : ''}`);
+  }
   out.push(f.fallen === 0 ? 'You lost no soldiers.' : f.fallen === 1 ? '1 soldier died.' : `${f.fallen} soldiers died.`);
   if (lost.might) out.push(`You lost ${lost.might} Might.`);
   if (lost.materials) out.push(`They took ${lost.materials} Materials.`);

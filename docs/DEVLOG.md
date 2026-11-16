@@ -23232,3 +23232,35 @@ on the phone (LS-11). The unit suite: 636 pass; `writing-sources` fails as it do
 `terrain/partition.test.ts` failed once in the full run under load and passes alone.
 
 **Limits.** In BACKLOG LS-1 … LS-22 and the assumptions list in LOOP_SKELETON.md.
+
+## 2026-11-15 — loop skeleton round 2: the raid arrives (LS-16), and what the fight showed
+
+**Cause.** `node scripts/loopspawn.mjs` reads the place table's spawn entries at each camera the loop uses. Muru, window
+320 x 320, town radius 120: spawn points 0 and 1 are one point in the river (water 2.3 to 2.7 deep) and read `water`
+always; spawn point 2 (the east road) is 158 cells east and 94 north of the centre, 18 cells inside the window's edge
+when the window sits on the town and outside it otherwise (on the leader screen it read `water` with its point out of
+the window). A spawn point needs ground the window holds (UC-13), the window follows the camera in 64-cell steps, and
+round 1 let the season post the raid wherever the last card left the camera; the refusal then stuck (`failed`).
+
+**Fix.** The raid belongs to the attack screen. `beginAttack` looks down a road (`roadLook`: the point 68 cells back
+from the road's end at the town's box, so the window is sure to hold the rest), waits until the window has been still
+130 frames (the place table wakes on its spawn points at most every 120), and calls the raid down that road alone
+(`SeasonWar.call`; `WarHost.calls` stops the season spawning it). A refused road moves the camera to the next; with
+none left it says so and logs an error. The squads still take their raid posts when the season lands. Rejected: reading
+the place table on the CPU to pick the road (170 KB, and the contract says orders carry indices only).
+
+**Walks** (412x915, `node scripts/loopwalk.mjs`, Ilveth: tower, mine, barracks). Before: 1 of 4 (round 1). After the
+fix: raiders made on road 2 in 4 of 4 walks that reached the attack (roads 0 and 1 refused first each time, about 6 s);
+three of those had the camera on them (one earlier walk watched the wrong group: fixed). One more walk died at boot
+(LS-12). Ten in a row were not run: the work was stopped for the conformance review.
+
+**What the fight showed, plainly.** 9 soldiers against 6 raiders lost 9 for 1 or 2 every time (LS-23): preparing does
+not help yet. Figures are blobs at zoom 15 (LS-24). The heat ray's tap never reached round 1's listener (the input
+layer covers the canvas); heard on the window it cast and killed 1 raider (LS-26). The result now says how many raiders
+died, and "No raid came" when none did (LS-20). Deck order forced so a walk can prepare (LS-27).
+
+**Boot.** The home town's first make holds the GPU about 32 s in every headless boot; the 20 s watchdog fired in 3 of
+7 (LS-12). The walk throws such a boot away and counts it.
+
+Tests: unit 637 pass, `writing-sources` fails on `roadlab/control.ts` as on the base (LS-13). New: `season-war` (a
+called raid: one road, no chain, the next road arrives), `run` (roadLook; leaders' opening cards).

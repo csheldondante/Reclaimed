@@ -107,6 +107,10 @@ export interface WarHost {
   /** (loop-skeleton, BACKLOG SF-5) the raid due in a season as a card's effect says (its size; null none): given, it
    *  replaces the fixed schedule (`firstWave`) */
   raid?(season: number): number | null;
+  /** (loop-skeleton, LS-16) the raid due is called by the host (`SeasonWar.call`), one road at a time, once its camera
+   *  looks down that road: a spawn point stands only on ground the window holds (townplaces UC-13), and the window is
+   *  where the camera is. The season still sends the squads to their raid posts; it spawns no raiders itself */
+  calls?: boolean;
 }
 
 /** where a squad is sent: its post */
@@ -126,7 +130,7 @@ export class SeasonWar {
   /** the soldiers: a group a free point of Might */
   private squads: GroupId[] = [];
   private posts = new Map<GroupId, Post>();
-  private wave: { g: GroupId; n: number; stage: 'coming' | 'there' | 'fighting'; failed: boolean; a: number; tried: number; fellBack?: boolean } | null = null;
+  private wave: { g: GroupId; n: number; stage: 'coming' | 'there' | 'fighting'; failed: boolean; a: number; tried: number; fellBack?: boolean; called?: boolean } | null = null;
   /** squads sent to a shared place after a 'pool-full' this season (once each: no loop) */
   private fellBack = new Set<GroupId>();
   /** squads refused a field in this batch of events: placed once the batch is through, so none picks a place whose
@@ -233,7 +237,7 @@ export class SeasonWar {
             w.fellBack = true;
             f.orderGroup(g, { kind: 'attack', at: townHeart(this.town) });
           }
-        } else if (r?.size || w.tried >= SPAWNS || (!this.ring && w.tried + PLACE_CHAIN >= SPAWNS)) w.failed = true;
+        } else if (r?.size || w.called || w.tried >= SPAWNS || (!this.ring && w.tried + PLACE_CHAIN >= SPAWNS)) w.failed = true;
         else {
           f.disband(g);
           this.raid(f, w.n, w.a, w.tried + PLACE_CHAIN);
@@ -400,7 +404,7 @@ export class SeasonWar {
       this.post(f, g, j, 0);
     });
     // (a raid due this season: raidPlaces)
-    if (k !== null && !this.wave) {
+    if (k !== null && !this.wave && !this.host.calls) {
       this.raid(f, k.n, k.a, 0);
       console.log(`[forces] season ${l.season}: a raid of ${k.n}, arterials from ${k.a}${this.ring ? '' : ' (no walls: at the keep)'}`);
     }
@@ -453,6 +457,37 @@ export class SeasonWar {
     const g = f.spawnAt('raider', RAIDER_FACTION, from, n);
     f.orderGroup(g, { kind: 'attack', at: to });
     this.wave = { g, n, stage: this.wave?.stage ?? 'coming', failed: false, a, tried };
+  }
+
+  /**
+   * (loop-skeleton, LS-16; WarHost.calls) A raid of n called now down road `a` alone: from its spawn point to its gate
+   * (the walls built: each valid only with the other), or with `direct` (and with no walls) to the town's heart. No
+   * chain: a refusal marks the raid failed (`fight.failed`) and the caller, who holds the camera, calls the next road.
+   * A call that failed before (no raider made) is let go first. False: the town's contracts aren't up, or a raid with
+   * raiders in it is on.
+   */
+  call(n: number, a: number, direct = false): boolean {
+    const f = this.hooked;
+    if (!f || this.town < 0) return false;
+    if (this.wave) {
+      if (f.report(this.wave.g)?.size) return false;
+      f.disband(this.wave.g);
+    }
+    const k = a % SPAWNS;
+    const paired = this.ring && !direct;
+    const from: PlaceRef = paired ? { town: this.town, place: PLACE.spawn0 + k, also: PLACE.gate0 + k } : at(this.town, PLACE.spawn0 + k);
+    const to: PlaceRef = paired ? { town: this.town, place: PLACE.gate0 + k, also: PLACE.spawn0 + k } : townHeart(this.town);
+    const g = f.spawnAt('raider', RAIDER_FACTION, from, n);
+    f.orderGroup(g, { kind: 'attack', at: to });
+    this.wave = { g, n, stage: 'coming', failed: false, a: k, tried: 0, called: true };
+    console.log(`[forces] a raid of ${n} called down road ${k}${paired ? ' at its gate' : ' at the heart of the town'}`);
+    this.changed();
+    return true;
+  }
+
+  /** the walls stand this season: a raid comes at a gate */
+  get walled(): boolean {
+    return this.ring;
   }
 
   /** (scripts and shots) the groups now */

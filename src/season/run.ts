@@ -24,6 +24,8 @@ export interface Leader {
   income: Partial<Pools>;
   /** the suit this leader's petitions lean to */
   suit: Suit;
+  /** the petition this leader always hears first (their own people's plan) */
+  opens: string;
 }
 
 /** what a card does when played, or when it expires unplayed */
@@ -89,6 +91,9 @@ export interface Petition {
   when?: { place: string; status: PlaceStatus };
   /** signs seen in your town while the card is in the hand: the warning the card's words point at */
   warns?: SignKind[];
+  /** what the threat's "what helps" names: dealt right after the first hand, so there is time to build it before the
+   *  threat's countdown ends */
+  defence?: boolean;
 }
 
 /** a card in the hand: the petition and the seasons it has left */
@@ -176,13 +181,17 @@ function rand(seed: number): () => number {
 export const SUIT_WEIGHT = 3;
 
 /**
- * The deck's order for a leader: a weighted shuffle of the town's cards, the leader's suit SUIT_WEIGHT times as likely
- * at each draw; the cards about far places (`first`) follow the first draw, so they are in the first hand. Cards dealt
- * on a place's status (`when`) are not in it: `fill` deals them while their place stands so.
+ * The deck's order for a leader: the leader's own opening card, then the cards about far places (`first`) — the first
+ * hand; then the defence cards (so the threat can be prepared for in time); then a weighted shuffle of the town's other
+ * cards, the leader's suit SUIT_WEIGHT times as likely at each draw. Cards dealt on a place's status (`when`) are not
+ * in it: `fill` deals them while their place stands so.
  */
 export function deckFor(leader: Leader, cards: readonly Petition[], seed: number): string[] {
   const r = rand(seed);
-  const left = cards.filter((c) => !c.threat && !c.first && !c.when).map((c) => ({ id: c.id, w: c.suit === leader.suit ? SUIT_WEIGHT : 1 }));
+  const town = cards.filter((c) => !c.threat && !c.first && !c.when);
+  const opens = town.filter((c) => c.id === leader.opens).map((c) => c.id);
+  const defence = town.filter((c) => c.defence && c.id !== leader.opens).map((c) => c.id);
+  const left = town.filter((c) => !opens.includes(c.id) && !defence.includes(c.id)).map((c) => ({ id: c.id, w: c.suit === leader.suit ? SUIT_WEIGHT : 1 }));
   const out: string[] = [];
   while (left.length) {
     let x = r() * left.reduce((s, c) => s + c.w, 0);
@@ -191,7 +200,7 @@ export function deckFor(leader: Leader, cards: readonly Petition[], seed: number
     out.push(left.splice(i, 1)[0].id);
   }
   const far = cards.filter((c) => c.first && !c.threat && !c.when).map((c) => c.id);
-  return [...out.slice(0, 1), ...far, ...out.slice(1)];
+  return [...opens, ...far, ...defence, ...out];
 }
 
 const find = (cards: readonly Petition[], id: string): Petition => {
@@ -407,6 +416,22 @@ export function threatDone(run: RunRecord, cards: readonly Petition[]): boolean 
 }
 
 export const endRun = (run: RunRecord): RunRecord => ({ ...run, over: true });
+
+/**
+ * (LS-16) Where the camera looks down a road before a raid is called on it. `road`: its points from the town outward,
+ * ending where the town's box does; `sure`: the cells round the camera's target the world's window is sure to hold.
+ * The point `sure` back from the road's end, measured along each axis: the window then holds the road from there to
+ * its end — the stretch a spawn point stands on (past the town's limit, short of the road's end). A road shorter than
+ * that: its first point. Null: no road.
+ */
+export function roadLook(road: readonly (readonly [number, number])[], sure: number): [number, number] | null {
+  if (road.length < 2) return null;
+  const end = road[road.length - 1];
+  for (let i = road.length - 1; i >= 0; i--) {
+    if (Math.max(Math.abs(road[i][0] - end[0]), Math.abs(road[i][1] - end[1])) >= sure) return [road[i][0], road[i][1]];
+  }
+  return [road[0][0], road[0][1]];
+}
 
 /** the records as bytes for the world store, and back (a version this build doesn't read is an error, not a guess) */
 export function encode(o: WorldRecord | RunRecord): Uint8Array {
