@@ -58,7 +58,12 @@ const MAT_SAND_U: u32 = 3u;
 const MAT_ASH_U: u32 = 17u;
 const MAT_SILT_U: u32 = 22u;
 const MAT_BASALT_U: u32 = 23u;
-const MUT_OUT: u32 = 18u;
+const MAT_OBSIDIAN_U: u32 = 35u;
+/** melted: the glassy skin over the flow's body, cells; and how thick the flow must be to carry one (its thin edge
+ *  stays ropy grey basalt) */
+const GLASS_T: f32 = 0.25;
+const GLASS_FROM: f32 = 0.85;
+const MUT_OUT: u32 = 20u;
 /** the ash a fire leaves on the ground, cells */
 const ASH_T: f32 = 0.3;
 /** a building's span: External at least this thick (a road's paving is thinner) */

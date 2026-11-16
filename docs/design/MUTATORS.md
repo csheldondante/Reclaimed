@@ -98,9 +98,9 @@ The same modifier applied twice is one entry (its id: kind, place or cell, radiu
 |---|---|---|
 | flooded | `water` up to a level over each column's top (never lowered), clean (the column's dissolved contamination cleared), over a thin layer of silt; plants under it gone. The level is taken on the GPU from the place's real ground the first time its whole area is in the window (`floodscan.wgsl`: over 22-70% of the dry ground by strength, 1.5 to 6.5 cells over the standing water it rises from) and kept on the entry (`params` [level, 1, the rim's low level]); flat inside 62% of the radius, then falling smoothly to a quarter cell under the lowest ground or water of the outer ring, so the flood meets what is round it with no step. The liquid holds it: the core's columns a held stage (up only), the rim's an edge stage (kept at, both ways) — Round 3 rulings, BACKLOG MU-36, MU-38 | drowned where the level is half a cell or more over the lot's base |
 | burned | plants removed; soil's top 0.3 becomes ash (the fire sim's own material); ragged edge, patches spared under strength 1 | burned (walls black, roof gone, height × 0.6) |
-| melted | a basalt cap (the lava sim's set rock) in a pool round a vent and a lobed tongue downhill (the direction from the macro ground), 0.4–3 cells thick, never over ground higher than the vent; water removed; cracks set to 1150° ground heat, which the render fields already draw as glow | destroyed (a dark stump; the claim released) |
+| melted | a basalt cap (the lava sim's set rock), with a glassy obsidian skin where it lies thick (MU-41), in a pool round a vent and a lobed tongue downhill (the direction from the macro ground), 0.4–3 cells thick, never over ground higher than the vent; water removed; cracks set to 1150° ground heat, which the render fields already draw as glow | destroyed (slumped to 20-50% of its height, black; the claim released) |
 | buried | a sand interval on the top: dunes across a seeded wind, thinning to nothing at the rim; up to 2 + 5 × strength cells | buried where the sand is a fifth of the building's height or 1.2 cells |
-| dried | `water` lowered by 1 + 3 × strength cells (deeper water stays as pools), the columns' `waterSource` shut, bank plants browned (`wilt`) | none |
+| dried | `water` lowered by 1 + 3 × strength cells (deeper water stays as pools), the columns' `waterSource` shut, bank plants browned (`wilt`); and the region's river inflow lowered in the fact layer, which the river field carries on downstream (`weather/inflow.ts`, MU-42) | none |
 | withered | the plants' own dead state: `wilt` fully brown and the ground hostile, so woken plants stay dead | none |
 | greened | the plants' field raised to shrubs and woods on soil, healthy | none |
 | destroyed | — | every lot of the place burned; population 0 |
@@ -123,7 +123,7 @@ world units or more).
 
 | sign | what shows (all existing systems) | cost while on |
 |---|---|---|
-| ashfall | the particles' ash kind, a few bursts a frame over the view | up to 4 burst requests a frame |
+| ashfall | the weather's rain draw makes pale flakes and dark cinders over the view (`rain.wgsl`), and what faces up is dusted grey (`render/light.wgsl ashDust`); one Globals number | one draw of up to 2 200 instances; no CPU work |
 | darkness | the sun and sky scaled and browned in the Globals (`WorldCore.skyDim`) | none |
 | deadrise | 4–12 `shambler` units (undead by the traits) in the town's streets | the units' own |
 | crime | 6–22% of standing buildings `looted` (condition 10); `unrest` on the sign | none (one dispatch on, one off) |
@@ -131,9 +131,11 @@ world units or more).
 ## The map
 
 "the whole point is to make the map a living visual representation of your choices". `AtlasMap.overlay` draws every
-entry at its place: a land entry's area in its kind's colour (a tongue along the flow for `melted`, a bar for a dry
-reach), a cross for a destroyed or abandoned place, a house for a founded one, a flag for a holder; `AtlasMap.marks`
-adds a pin with the place's name and what happened. The map's own image (ground, rivers) is not redrawn (MU-5, MU-16).
+land entry's area in its kind's colour (a tongue along the flow for `melted`, a bar for a dry reach), and at every
+changed place — read from `places()` — a row of badges, one a condition, each with its own picture and plain word:
+drowned, burned, under lava, buried, river dry, withered, overgrown, occupied (the holder's colour), vassal, founded,
+abandoned, destroyed (`src/mutate/mapmarks.ts`). The mutators add no pins. The map's own image (ground, rivers) is not
+redrawn (MU-16).
 
 ## The lot condition word
 
@@ -222,4 +224,14 @@ not looked at in a still), withered, the dead rise and crime in a browser, `play
 `FieldTowns` still do not know it).
 
 Stills: headless runs need `&pace=0` and a 50 s wait while other agents share the GPU (MU-32).
+
+## Hand-over (round 4, 2026-11-15 late)
+
+Done: the flood's edge (MU-36); the reload proof (`node scripts/mutators-reload.mjs --dir <folder>`: passes, nothing
+needed fixing); ash fall (MU-31); the map's badges (MU-5). Partial: a dried river (the inflow cut is carried downstream, but the
+still shows the river running: MU-42); melted
+(obsidian skin, slumped lots; no glint, MU-41); the dead rise and crime (stills taken, neither reads: MU-43, MU-44);
+withered (the grass browns, the trees stay green: MU-17). Not started: founded places built when streamed in (MU-6);
+`play()` (MU-3). Stills: `node scripts/mutators-stills.mjs --dir <folder> [--only ash,dark,dead,crime,withered,dried,map,melted]`.
+The lab's script hooks: `mutlab.go(id)`, `mutlab.live()`, `mutlab.conditions(id)`.
 

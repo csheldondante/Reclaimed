@@ -3628,3 +3628,20 @@ projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 w
   BARE stamp does for land made with a town.
 - `FortressReachGpu.markFrom(stores)` → `marks` (a word a box column) and `planSpans` (the plan solid, GPU-writable)
   for a town's reach without queries read back.
+
+## World mutators' contract words (branch `mutators`; docs/design/MUTATORS.md)
+
+The mutators write only WorldGpu contract buffers. Three of those carry meanings other systems must know:
+
+- **`waterSource` (f32 a column), read by `liquid.wgsl publishWater`.** Over 0: a source, cells^3 a second. -1e-30:
+  shut by `dried` (MU-15). At or under -1 and over -4096: a HELD flood stage, -(1024 + level in window z) — the open
+  water is held up to the level. At or under -4096: an EDGE stage, -(4096 + level) — the water is kept at the level,
+  up or down (a flood's rim). One float, four meanings: BACKLOG MU-34.
+- **Globals `gustDir[i].w`** (four spare words): the ash fall — strength 0..1, then the ground point the view shows,
+  x, y, z (`sim/globals.ts ashFall`, `common.wgsl ashFall()`). Read by `rain.wgsl` (the flakes are the rain draw's
+  first `round(strength * ASH_FLAKES)` instances; `scenes/world-core.ts` adds the same count to the draw) and by
+  `render/light.wgsl ashDust` (the lit draws' albedo). BACKLOG MU-39.
+- **A region's river inflow factor** (`WorldState` `river-inflow`, `scenes/level/runs.ts useRiverWorld`) is carried
+  downstream by `weather/inflow.ts carryInflow` before it reaches the rivers' wetness field: it cuts what runs
+  through the region, not only the reaches inside it.
+

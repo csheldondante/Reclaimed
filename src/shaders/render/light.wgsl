@@ -24,6 +24,20 @@ fn coverLook(alb: vec3<f32>, nrm: vec3<f32>, wpos: vec3<f32>, ztop: f32, cover: 
   return mix(alb, toLinear(c) * (0.94 + 0.12 * sub), k);
 }
 
+/**
+ * (mutators' 'ashfall' sign) Ash settled on what faces up — ground, roofs, tree tops: the albedo greyed by the fall's
+ * strength, patchy, thinner on slopes, none on walls. A look only, from one Globals number: it comes and goes with the
+ * sign and writes nothing. The albedo in, out.
+ */
+fn ashDust(alb: vec3<f32>, wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
+  let a = G.gustDir[0].w;
+  if (a <= 0.0 || nrm.z < 0.3) { return alb; }
+  let w = wo(wpos.xy);
+  let n = 0.6 * vnoise(w * 0.9) + 0.4 * vnoise(w * 0.23 + 31.0);
+  let k = smoothstep(0.3, 0.8, nrm.z) * clamp(a * (0.22 + 0.62 * n), 0.0, 0.7);
+  return mix(alb, toLinear(vec3<f32>(0.6, 0.59, 0.58)) * (0.9 + 0.2 * n), k);
+}
+
 fn toSrgb(c: vec3<f32>) -> vec3<f32> { return pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2)); }
 
 /** Column whose fields describe this fragment (step slightly into the surface). */

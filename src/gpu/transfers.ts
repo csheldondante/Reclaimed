@@ -235,6 +235,7 @@ export const TRANSFERS: TransferSite[] = [
   { file: 'gpu/profiler.ts', fn: 'Profiler.endFrame', what: 'timestamps, up to 1 KB', why: 'the perf overlay', rate: 'frame', play: 'debug', flag: '?perf=1 / ?hitch=1' },
 
   // ---- labs, benches, tests ----
+  { file: 'scenes/level/mutators.ts', fn: 'conditions', n: 1, what: 'a live town’s lot condition words, 4 B a lot record (about 130 KB)', why: 'the reload check counts a town’s lot conditions before and after a reload (scripts/mutators-reload.mjs); only when the lab’s hook is called', rate: 'edit', play: 'flag', flag: '?mutlab=1' },
   { file: 'mutate/gpu.ts', fn: 'MutateGpu.readMs', n: 1, what: 'a write’s two timestamps, 16 B', why: 'the mutator lab’s and the gpu test’s GPU ms a mutator; only when the host asks for timing (?mutlab=1)', rate: 'edit', play: 'flag', flag: '?mutlab=1' },
   { file: 'mutate/gpu.ts', fn: 'MutateGpu.readLevels', n: 1, what: 'a flood’s level as its GPU scan chose it, 16 B a flood', why: 'kept on the world modifier list’s entry so the flood is the same after a reload; once a flood, the first time its whole area is in the window — never to choose the level, which goes GPU to GPU', rate: 'edit', play: 'yes' },
   { file: 'roadlab/grader.ts', fn: 'RoadGrader.run', n: 2, what: 'the lay’s stats, 32 B, and its two timestamps, 16 B', why: 'the road lab’s report: kernel GPU ms, intervals against K (RD1)', rate: 'edit', play: 'no' },

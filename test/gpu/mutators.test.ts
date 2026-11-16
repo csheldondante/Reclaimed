@@ -214,7 +214,7 @@ describe.each(KINDS)('$kind', ({ kind, lots }) => {
       expect(after.veg[i]).toBe(0);
       expect(before.veg[i]).toBe(2);
     } else if (kind === 'melted') {
-      expect(top.mat).toBe(MAT.Basalt);
+      expect([MAT.Basalt, MAT.Obsidian]).toContain(top.mat);
       let hot = 0;
       for (let k = 0; k < W * H; k++) if (after.lava[k * 4 + 2] > 1000) hot++;
       expect(hot).toBeGreaterThan(3);

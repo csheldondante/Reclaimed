@@ -289,7 +289,7 @@ fn fsRock(in: ROut) -> FOut {
       alb *= 0.8 + 0.2 * smoothstep(0.0, 0.12, edge);
     }
   }
-  var col = alb * lighting(in.wpos, lnrm);
+  var col = ashDust(alb, in.wpos, lnrm) * lighting(in.wpos, lnrm);
   if (mat == MAT_QUARTZ) { col = gemLook(in.wpos, nW); }
   col = haze(col, in.wpos);
   var o: FOut;

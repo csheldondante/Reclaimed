@@ -23302,3 +23302,44 @@ camera's floor was 0.82-1.13, so the zoom was not clamped): a round dark flood o
 edge into the lake and the river, no rectangle, no straight step. A straight grey Y under the water north of the town
 is the road and its bridge, drowned. Not shown: that the chunks reach rest and sleep (MU-33, the phone bench).
 
+## 2026-11-15 (late) — mutators round 4, items 2-5: reload proof, ash fall, melted, the map's badges, a dry river carried downstream (`mutators`)
+
+**Reload (item 2).** `scripts/mutators-reload.mjs`: a fresh load of the lab; flooded at the home town (Muru, loaded),
+burned + captured at Bumku and buried at Vagug (both not loaded: `resident` false); stills of home, the map, and each
+far place after travelling there; `saveAll`; the page loaded again without `fresh=1`; the same stills and reads.
+Result: the list, the place states (owner, status, conditions), the signs and each town's lot condition counts are
+identical (Muru 79 drowned; Bumku 122 burned, 17 occupied; Vagug 248 buried), and the land in the stills matches
+(r4/reload/before-*.png, after-*.png). One visible difference: Muru's standing roofs are white before and red after
+(MU-46: same conditions, taken to be the town's build state). Nothing needed fixing. The level's fact world is still
+rebuilt each load and the list replayed (MU-25): the result matches.
+
+**Ash fall (item 3, MU-31).** Round 2's particle bursts could not be seen. The weather already draws falling flakes:
+`rain.wgsl` (snow). The ash is now that draw's first instances — a world-anchored tile of flakes wrapped round the
+ground point the view shows, sized in pixels (2-5 px) so they show at any zoom, pale flakes and dark cinders so they
+show over light and dark ground — and a grey dusting of what faces up in the lit draws (`ashDust`). First try
+(strength 1 as a 92% cover, the far tiles' water dusted too): the whole map went grey with straight edges where the
+near water met the tiles' (ash.png, first run). Fixed: cover at most 70% and patchy, water never. The four numbers
+ride in spare Globals words (MU-39). Cost: one draw of 2 200 six-vertex instances while the sign is on, nothing when
+off, no CPU loop (round 2's requestAnimationFrame burst loop is gone). Not measured on the phone.
+
+**Melted (item 3).** Thick lava cools to an obsidian skin over basalt; melted lots slump to 20-50% by their seed
+(MU-41). melted.png: a black flow from the east of the town across the river, the houses it reached gone dark and low.
+The glass does not glint: no shader draws specular.
+
+**The map (item 4, MU-5).** Badges with a picture and a word a condition, from `places()` (mapmarks.ts); the pins are
+gone. map.png: drowned, burned + occupied, buried + abandoned, founded, occupied, river dry all read at a glance.
+
+**Dry river (item 5).** The first still showed the river still running below a dried town: the region's inflow factor
+only touched the 31 river nodes inside the region (of 53 975), so the river ran full again at the region's edge. The
+factor is now carried down the graph (`weather/inflow.ts`, 3 unit tests; 8 731 nodes under their reference). **It
+still does not read:** stills2/dried.png shows the river below the town running blue, only new sand bars by the lake;
+the cause is not found (MU-42 lists what to check). Withered (stills2/withered.png): the grass round the town goes
+brown with a ragged edge, the trees stay green (MU-17) — it reads as bare earth, not as dying woods. The dead rise
+and crime: stills taken, neither reads (MU-43, MU-44).
+
+**Zoom.** The stills are at the default zoom, 2.67 px a cell. The camera raises any zoom under `zoomFloor` (the tile
+cache's limit, 0.8-2.0 in these runs, changing as tiles load) — that is why a wider zoom asked for by a script did
+not take in round 3.
+
+**Tests.** typecheck clean; gpu mutators 40 pass; unit 632 pass, 1 known fail (roadlab writing lint, MU-14).
+

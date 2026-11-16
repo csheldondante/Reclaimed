@@ -101,6 +101,9 @@ export class WorldCore {
   readonly tiers: Tiers;
   /** (mutators' 'darkness' sign, src/mutate) 0..1: the sun's and the sky's light dimmed and browned in the Globals */
   skyDim = 0;
+  /** (mutators' 'ashfall' sign) 0..1: grey flakes falling over the view (the rain draw's instances, rain.wgsl) and a
+   *  grey dusting on what faces up (render/light.wgsl ashDust). Nothing is drawn or encoded for it at 0 */
+  ashFall = 0;
   /** (round 83) what judges what's changed — structures and rock (game/integrity.ts); the world API's edits mark it */
   integrity?: { markDirty(x: number, y: number, r: number, cut?: number): void };
   /** per-column buffers of the modules a game installed (agents' fields): a streamed window's slide moves them (round 80) */
@@ -294,6 +297,10 @@ export class WorldCore {
     g.sun = this.light.dir;
     g.sunCol = [this.light.col[0], this.light.col[1], this.light.col[2], this.light.timeOfDay];
     g.sky = [this.light.sky[0], this.light.sky[1], this.light.sky[2], this.light.night];
+    // (mutators' 'ashfall' sign: the strength and where the view looks, for the flakes and the dusting)
+    const af = Math.fround(this.ashFall);
+    const ac = this.camera.focus ?? this.camera.target;
+    g.ashFall = af > 0 ? [af, ac[0], ac[1], ac[2]] : undefined;
     // (mutators' 'darkness' sign: the sun and the sky dimmed and browned, as under a far eruption's smoke)
     if (this.skyDim > 0) {
       const k = 1 - 0.72 * this.skyDim;
@@ -375,7 +382,8 @@ export class WorldCore {
       // (round 82, V21: under a slice what's cut open of the rock, past every surface, is dark — a section)
       clear: this.camera.cut.slice !== null ? SECTION_DARK : flashSky(this.light.clear, this.globals.flash),
       sun: this.light.dir,
-      rainParticles: Math.round(this.weather.storms.reduce((a, st) => a + q.rain * 0.55 * st.intensity * (st.radius / 26), 0)),
+      // (the ash fall's flakes are the draw's first instances: rain.wgsl, common.wgsl ASH_FLAKES)
+      rainParticles: Math.round(this.weather.storms.reduce((a, st) => a + q.rain * 0.55 * st.intensity * (st.radius / 26), 0)) + Math.round(Math.fround(this.ashFall) * 2200),
     });
     const afterProfile = prof.endFrame(enc);
     device.queue.submit([enc.finish()]);

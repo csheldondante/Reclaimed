@@ -3667,7 +3667,8 @@ fn condColour(c: u32, word: u32, roof: bool) -> u32 {
   switch (word & 255u) {
     case 1u: { return cmix(c, select(0x4e6660u, 0x3f5650u, roof), 0.72); }
     case 2u: { return select(0x2b2623u, 0x15120fu, roof); }
-    case 3u: { return 0x1d1a1au; }
+    // (melted: slumped black glass, the top catching a little light)
+    case 3u: { return select(0x131116u, 0x2c2933u, roof); }
     case 4u: { return cmix(c, 0xcdb27au, 0.45); }
     case 5u: { return cmix(c, select(0x8f8b80u, 0x6f6a5eu, roof), 0.7); }
     case 6u: { return select(cmix(c, 0x6a665fu, 0.25), holderColour((word >> 8u) & 255u), roof); }
@@ -3681,7 +3682,8 @@ fn condColour(c: u32, word: u32, roof: bool) -> u32 {
 fn condHeight(h: f32, word: u32) -> f32 {
   switch (word & 255u) {
     case 2u: { return h * 0.6; }
-    case 3u: { return min(h, 0.6); }
+    // (melted: slumped to a fifth to a half of its height, by the lot)
+    case 3u: { return h * (0.2 + 0.3 * f32((word >> 8u) & 255u) / 255.0); }
     case 5u: { return h * 0.93; }
     default: { return h; }
   }

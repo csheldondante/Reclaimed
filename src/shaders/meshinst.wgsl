@@ -112,7 +112,7 @@ fn fsInst(in: MIOut) -> FOut {
     }
     alb = toLinear(lc);
   }
-  var col = alb * lighting(in.wpos, n);
+  var col = ashDust(alb, in.wpos, n) * lighting(in.wpos, n);
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);

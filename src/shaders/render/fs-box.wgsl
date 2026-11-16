@@ -265,7 +265,7 @@ fn fsBox(in: VOut) -> FOut {
     lnrm = rf.xyz;
     alb *= rf.w;
   }
-  var col = alb * lighting(lpos, lnrm);
+  var col = ashDust(alb, lpos, lnrm) * lighting(lpos, lnrm);
   // lava (sim/lava.ts): its own light, by temperature (the damage bits):
   // a dark crust with glowing cracks as it cools, orange to yellow-white hot
   if (mat == MAT_LAVA_M) {

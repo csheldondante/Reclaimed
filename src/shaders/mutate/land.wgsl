@@ -96,15 +96,23 @@ fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
   } else if (kind == MUT_MELTED) {
-    if (tm == MAT_BASALT_U) {
+    if (tm == MAT_BASALT_U || tm == MAT_OBSIDIAN_U) {
       // (written already: only its cracks' heat made sure of)
       if (meltT(wp, w, top - 0.4) > 0.0 && meltCrack(w)) { lava[j].z = max(lava[j].z, 1150.0); }
       return;
     }
     let t = meltT(wp, w, top);
     if (t <= 0.0 || top + t + 2.0 >= f32(G.zMax)) { return; }
-    o[n] = ivPack(top, top + t, MAT_BASALT_U, 0u);
-    n += 1u;
+    // (round 4, the owner: "glassy dark slumped". The flow's body is the lava sim's set rock; where it lay thick it
+    // cooled to a glassy black skin — obsidian, the material table's own — and its thin edge stays grey basalt)
+    if (t >= GLASS_FROM) {
+      o[n] = ivPack(top, top + t - GLASS_T, MAT_BASALT_U, 0u);
+      o[n + 1u] = ivPack(top + t - GLASS_T, top + t, MAT_OBSIDIAN_U, 0u);
+      n += 2u;
+    } else {
+      o[n] = ivPack(top, top + t, MAT_BASALT_U, 0u);
+      n += 1u;
+    }
     veg[j] = 0.0;
     vegNext[j] = 0.0;
     if (water[j] > 0.0) {

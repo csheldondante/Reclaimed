@@ -15,6 +15,7 @@
 import { NODE_WORDS, type Catchments } from '../atlas/rivers';
 import { RIVER_WET } from '../sim/world-gpu';
 import { ROW_H } from '../world/lattice';
+import { carryInflow } from './inflow';
 
 /** seconds the hillside's runoff takes to follow the rain most of the way (riverwet.ts LAG_S, the climate's) */
 const LAG_S = 20;
@@ -170,10 +171,16 @@ export class CatchmentWet {
     this.sw = Float32Array.from(sw);
   }
 
-  /** (merge124) the regions' inflow factors (those not 1), by the region each node is in */
+  /** (merge124) The regions' inflow factors (those not 1), by the region each node is in — carried on downstream
+   *  (weather/inflow.ts carryInflow: a river dried in one region runs low below it) */
   setInflow(regionAt: (x: number, y: number) => number, factors: ReadonlyMap<number, number>): void {
+    if (!factors.size) {
+      this.inflow.fill(1);
+      return;
+    }
     const f = new Float32Array(this.g.nodes.buffer, this.g.nodes.byteOffset, this.g.nodes.length);
-    for (let k = 0; k < this.count; k++) this.inflow[k] = factors.size ? (factors.get(regionAt(f[k * NODE_WORDS], f[k * NODE_WORDS + 1])) ?? 1) : 1;
+    const C = this.g.catchments;
+    carryInflow(C.order, this.next, C.own, C.ref, (k) => factors.get(regionAt(f[k * NODE_WORDS], f[k * NODE_WORDS + 1])) ?? 1, this.inflow);
   }
 
   /** a step of dt seconds (game time) with the storms' rain */
