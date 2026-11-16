@@ -40,15 +40,6 @@ fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
   let j = colIdxI(p);
   let n0 = n;
 
-  if (kind == MUT_FLOODED) {
-    let want = floodLevel(d) - top;
-    if (want > 0.05 && want > water[j]) {
-      let before = water[j];
-      water[j] = want;
-      bumpWater(vec2<u32>(x, y), before, want);
-    }
-    return;
-  }
   if (kind == MUT_DRIED) {
     // (the river's water taken off to p.x deep, less toward the rim: what lay deeper stays as pools; its source shut,
     // so a woken river stays dry; what grows on its banks browns. Done once a column: the shut source is written as
@@ -79,7 +70,19 @@ fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
     wilt[j] = vec4<f32>(0.0, 0.0, wilt[j].z, wilt[j].w);
     return;
   }
-  if (kind == MUT_BURNED) {
+  if (kind == MUT_FLOODED) {
+    // (what a flood leaves where it stood, whether or not its water stays — the live liquid drains whatever is not in
+    // a basin, BACKLOG MU-28: silt over the streets, yards and fields under the level, thicker the deeper they lay,
+    // and nothing green left under it. Written before the water (flood.wgsl), which then stands to the level over it)
+    let depth = floodLevel(d) - top;
+    if (d >= 0.98 || depth < 0.25 || tm == MAT_SILT_U) { return; }
+    let t = clamp(0.1 + 0.08 * depth, 0.14, 0.55) * (0.7 + 0.6 * mnoise(w * 0.21, MP.k.y + 13u));
+    if (top + t + 2.0 >= f32(G.zMax)) { return; }
+    o[n] = ivPack(top, top + t, MAT_SILT_U, 0u);
+    n += 1u;
+    veg[j] = 0.0;
+    vegNext[j] = 0.0;
+  } else if (kind == MUT_BURNED) {
     if (!burnIn(w, d)) { return; }
     veg[j] = 0.0;
     vegNext[j] = 0.0;

@@ -85,7 +85,7 @@ export interface Mutation {
   strength: number;
   seed: number;
   /** the op's own numbers, fixed when it was applied (from the atlas's ground, never from the window): 'flooded' the
-   *  water's level (world z), 'melted' the vent's cell and height, 'buried' the base depth, 'dried' the depth of water
+   *  water's level (world z) and whether it was taken from the place's real ground yet (1) or is the atlas's guess (0), 'melted' the vent's cell and height, 'buried' the base depth, 'dried' the depth of water
    *  taken off */
   params: number[];
   by?: string;

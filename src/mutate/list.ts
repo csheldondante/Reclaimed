@@ -145,7 +145,9 @@ export class WorldList {
       }
       const mean = sum / (N + 1);
       const base = Math.max(lo, this.world.sea > -1e8 ? this.world.sea : lo);
-      return [base + strength * Math.max(2.5, 1 + 0.6 * (mean - lo))];
+      // ([1]: 0 — this is the atlas's guess; the engine replaces it with the level taken from the place's real ground
+      // the first time its whole area is in the window, and sets 1: mutate/engine.ts, floodscan.wgsl)
+      return [base + strength * Math.max(2.5, 1 + 0.6 * (mean - lo)), 0];
     }
     if (kind === 'melted') {
       // downhill by the atlas's ground over the area; the vent on the uphill side

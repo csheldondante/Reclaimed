@@ -31,15 +31,20 @@ export interface MutateHost {
   wrap?: { cols: number; rows: number };
   /** window box [x0, y0, x1, y1) was written by a mutator: what's derived from its columns follows (the liquid's
    *  records of its chunks, the meshes) */
-  landChanged?(x0: number, y0: number, x1: number, y1: number): void;
+  landChanged?(x0: number, y0: number, x1: number, y1: number, kind: Mutation['kind']): void;
   /** the list changed: keep it (the save) */
   changed?(record: MutationRecord): void;
   /** the signs changed (one on, off or ended, or a restore): show them (the sky, the ash, the lots, the dead) */
   signsChanged?(signs: readonly Sign[]): void;
-  /** the player's home place (its id and where: world units), for what a far event casts on it; null: none */
+  /** the player's home place (its id and where: world units), for what a far event casts on it; null: none.
+   *  FIXED-CITY (BACKLOG MU-26): one fixed home settlement a run; a run that follows a moving group needs "where the
+   *  run's base is now" here instead */
   home?(): { id: string; at: readonly [number, number] } | null;
   /** the region of a world point (x cells, y world units), for the fact events of changes that name no settlement */
   regionAt?(x: number, y: number): number;
+  /** false: some of the window's land is still on its way (a slide or a warp under way) — a flood's level is not
+   *  taken from it yet. Left out: the window's land is always whole */
+  loaded?(): boolean;
   /** true: each write is timed (a lab, a test) — `lastMs` */
   time?: boolean;
 }
@@ -55,6 +60,12 @@ export class MutateEngine implements Mutators {
   lastMs: Promise<number | null> = Promise.resolve(null);
   /** per kind, the GPU ms of its last timed write */
   readonly ms: Record<string, number | null> = {};
+
+  /** flood entries whose level is being read back (16 bytes, once): their writes wait for it */
+  private levelling = new Set<Mutation>();
+  private waited = new Set<Mutation>();
+  /** resolves when no flood level is on its way (a test's and the lab's wait) */
+  levels: Promise<void> = Promise.resolve();
 
   /** the fact world written to and read from (mutate/facts.ts); null: none bound — land kinds still write the land,
    *  state kinds are refused (there is nowhere for the state to live) */
@@ -128,16 +139,47 @@ export class MutateEngine implements Mutators {
     const drawn = new Set<MutTown>();
     for (const m of ms) {
       const o = this.originFor(m, o0);
-      const box = land && isLand(m.kind) ? this.boxOf(m, o, within) : null;
-      const ts = towns.filter((t) => this.touches(m, t, o));
+      let box = land && isLand(m.kind) ? this.boxOf(m, o, within) : null;
+      let ts = towns.filter((t) => this.touches(m, t, o));
+      // (a flood whose level is not taken from the land yet — index.ts Mutation.params: it is written whole, once its
+      // whole area is in the window, with its level chosen there on the GPU; until then nothing of it is written, so
+      // land arriving a piece at a time ends as land flooded in one go)
+      const pickLevel = m.kind === 'flooded' && m.params[1] !== 1;
+      if (pickLevel) {
+        if (this.levelling.has(m)) {
+          this.waited.add(m);
+          continue;
+        }
+        const whole = this.boxOf(m, o);
+        const { w, h } = this.host.gpu.dims;
+        const ry = m.radius / ROW_H;
+        const cx = m.cell[0] - o[0];
+        const cy = m.cell[1] - o[1];
+        if (!whole || cx - m.radius - 1 < 0 || cy - ry - 1 < 0 || cx + m.radius + 2 > w || cy + ry + 2 > h || this.host.loaded?.() === false) continue;
+        box = whole;
+        ts = this.host.towns().filter((t) => this.touches(m, t, o));
+      }
       if (!box && !ts.length) continue;
       any = true;
-      const r = this.host.gpu.write([m], o, box, ts.map((t) => t.lots), !!this.host.time);
+      const r = this.host.gpu.write([m], o, box, ts.map((t) => t.lots), !!this.host.time, undefined, pickLevel ? new Set([m]) : undefined);
+      if (pickLevel) {
+        this.levelling.add(m);
+        const oz = o[2];
+        const got = this.host.gpu.readLevels(1).then((lv) => {
+          m.params = [lv[0] + oz, 1, lv[1] < -1e8 ? -1e9 : lv[1] + oz];
+          this.levelling.delete(m);
+          // (what waited for the level — land that arrived, a town made meanwhile — written now; the same ops, so
+          // what was written already stays as it is)
+          if (this.waited.delete(m)) this.write([m], undefined, this.host.towns());
+          this.host.changed?.(this.worldList.record());
+        });
+        this.levels = Promise.all([this.levels, got]).then(() => undefined);
+      }
       if (r) {
         last = r;
         void r.then((v) => (this.ms[m.kind] = v));
       }
-      if (box) this.host.landChanged?.(...box);
+      if (box) this.host.landChanged?.(box[0], box[1], box[2], box[3], m.kind);
       for (const t of ts) {
         drawn.add(t);
         if (m.kind === 'melted') released.add(t);
@@ -163,6 +205,8 @@ export class MutateEngine implements Mutators {
     }
     const resident = this.write([m], undefined, this.host.towns());
     // (a distant eruption: ash fall and darkness on the home town for three seasons, stronger the nearer it is)
+    // FIXED-CITY (BACKLOG MU-26): the signs are cast on the home settlement's id, and the distance is taken from where
+    // it stands when the eruption happens
     const home = m.kind === 'melted' ? this.host.home?.() : null;
     if (home && m.place !== home.id) {
       const d = Math.hypot(m.cell[0] - home.at[0], m.cell[1] * ROW_H - home.at[1]);
@@ -189,6 +233,8 @@ export class MutateEngine implements Mutators {
   /** a town's lots were just made (or made again): every entry about it or over it written into their conditions */
   townMade(t: MutTown): boolean {
     if (!this.worldList.all.length) return false;
+    const waiting = this.worldList.all.filter((m) => m.kind === 'flooded' && m.params[1] !== 1);
+    if (waiting.length) this.write(waiting, undefined, [t]);
     return this.write(this.worldList.all, undefined, [t], false);
   }
 
@@ -226,6 +272,7 @@ export class MutateEngine implements Mutators {
 
   sign(spec: SignSpec): Sign | null {
     const s = this.worldList.sign(spec);
+    // FIXED-CITY (BACKLOG MU-26): a sign with no place is recorded on the home settlement
     if (this.world) recordSign(this.world, spec.kind, spec.place ?? this.host.home?.()?.id ?? null, s !== null, spec.cause);
     this.host.signsChanged?.(this.worldList.signs());
     this.host.changed?.(this.worldList.record());

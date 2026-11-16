@@ -21,7 +21,9 @@ test('an entry keeps the numbers it was made with; the same modifier again is th
   expect(a.fresh).toBe(true);
   expect(a.m.cell).toEqual([5000, 900]);
   expect(a.m.radius).toBe(20);
-  expect(a.m.params.length).toBe(1);
+  // (the level as the atlas guesses it, and 0: not yet taken from the place's real ground)
+  expect(a.m.params.length).toBe(2);
+  expect(a.m.params[1]).toBe(0);
   const b = L.add({ kind: 'flooded', place: 'kaud', seed: 3 });
   expect(b.fresh).toBe(false);
   expect(b.m).toBe(a.m);

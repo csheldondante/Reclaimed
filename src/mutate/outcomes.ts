@@ -20,6 +20,7 @@ type Arg = string | number;
 function mutate(c: Ctx, [kind, at, strength, seed, by, tribute]: Arg[]): void {
   if (!MUTATORS.some((m) => m.kind === kind)) throw new Error(`template: no mutator ${String(kind)}`);
   const id = ref(c, String(at));
+  // FIXED-CITY (BACKLOG MU-27): a mutation's area is a settlement's centre and reach
   const s = c.w.settlementOf(id);
   if (!s) throw new Error(`template: mutate ${String(kind)} — ${id} is not in a settlement`);
   const holder = by !== undefined ? ref(c, String(by)) : undefined;
@@ -39,6 +40,7 @@ function mutate(c: Ctx, [kind, at, strength, seed, by, tribute]: Arg[]): void {
 function sign(c: Ctx, [kind, at, strength, seasons]: Arg[]): void {
   if (!SIGNS.some((s) => s.kind === kind)) throw new Error(`template: no sign ${String(kind)}`);
   const id = ref(c, String(at));
+  // FIXED-CITY (BACKLOG MU-27): the sign lands on the settlement the bound entity is in
   const place = c.w.settlementOf(id)?.id ?? id;
   const on = (typeof strength === 'number' ? strength : 1) > 0;
   recordSign(c.w, kind as SignKind, place, on, c.cause);

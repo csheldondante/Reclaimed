@@ -236,6 +236,7 @@ export const TRANSFERS: TransferSite[] = [
 
   // ---- labs, benches, tests ----
   { file: 'mutate/gpu.ts', fn: 'MutateGpu.readMs', n: 1, what: 'a write’s two timestamps, 16 B', why: 'the mutator lab’s and the gpu test’s GPU ms a mutator; only when the host asks for timing (?mutlab=1)', rate: 'edit', play: 'flag', flag: '?mutlab=1' },
+  { file: 'mutate/gpu.ts', fn: 'MutateGpu.readLevels', n: 1, what: 'a flood’s level as its GPU scan chose it, 16 B a flood', why: 'kept on the world modifier list’s entry so the flood is the same after a reload; once a flood, the first time its whole area is in the window — never to choose the level, which goes GPU to GPU', rate: 'edit', play: 'yes' },
   { file: 'roadlab/grader.ts', fn: 'RoadGrader.run', n: 2, what: 'the lay’s stats, 32 B, and its two timestamps, 16 B', why: 'the road lab’s report: kernel GPU ms, intervals against K (RD1)', rate: 'edit', play: 'no' },
   { file: 'noiselab/lab.ts', fn: 'NoiseLabGpu.once', what: 'the lab window, w×h×16 B', why: 'the noise lab page', rate: 'edit', play: 'no' },
   { file: 'perf/bench/device.ts', fn: 'readOnce', what: 'up to 34 MB', why: 'the bench\'s readback rate', rate: 'demand', play: 'no' },
