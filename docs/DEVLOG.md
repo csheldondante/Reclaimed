@@ -23275,3 +23275,27 @@ watchdog's limit in that span is 180 s; outside it, 20 s as before. A hang in th
 Rejected: raising the limit everywhere (a real hang would take three minutes to say so). Startup time itself is not
 touched (CG28 holds the 32 s). Checked: one full walk with no stall after the change; that is thin, and there is no
 unit test for the frame loop, so the count of clean boots is kept in the next entries.
+
+## 2026-11-15 — the realm: the home-town run on the living engine (rework step 1, pure)
+
+Why: round 1's cards, deck, hand, effects and world record stood beside the engine (LOOP_SKELETON.md, Conformance).
+`season/realm.ts` puts a home-town run on what exists: `LivingEngine` deals (the one dealer), commits and resolves (the
+one contract) over the fact world, on the same Holdings record the season ledger keeps its pools in. A town project is a
+template made from a season catalog card; the engine commits it and the ledger adopts the commitment (`ledger.adopt`,
+`Project.external`) so the season loop still builds it stage by stage and adds what the card gives. The world's
+opportunities are templates too (`season/realm-templates.ts`), deterministic, each at a site of the home town. The
+raiders are the run's arc (`raidArc`): stages at a quarter, a half and the end of the run's seasons (a knob, default 16:
+the orchestrator's number). A physical change is a named stub (`Realm.physical`) until the mutators merge.
+
+Three small engine changes, each because the home-town run needed it and the engine had no way: a card presented by a
+member holding its own role (`PresenterSpec.own`: the smith asks for the forge, not whoever is free); the dealer's
+resource limit counted over what is already offered (`EngineOptions.limitBoard`: with cards that stay several seasons
+the board reached 9 offers by season 3; with it, 4 and the dealer's one guarantee); an arc's effects passed the run's
+helpers. The horde run's behaviour is unchanged (both options default off; `living`, `opps`, `season` tests pass).
+
+Measured in the unit test world (Briar Hollow): offers on the board 4 or 5 in season 1 and no more with pools four
+times larger, three seasons on. The catalog's own chain (houses, then workshops, then the keep: 9 seasons) is kept: it
+is the engine to build, and why a run needs more than four seasons.
+
+Not yet: the screen (the old one still runs on round 1's rules), saving the fact layer, the dealer's scores for these
+templates (several tie at 0.92, so which four are dealt first is their order in the list).

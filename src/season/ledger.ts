@@ -80,6 +80,9 @@ export interface Project {
   card: SeasonCard;
   /** the contract's commitment: the people it holds, the goods spent, the season it ends (resolvesTurn) */
   commitment: Commitment;
+  /** (season/realm.ts) its commitment was made, and is resolved, by the living engine (its people come back there, its
+   *  outcome changes the fact layer there): the ledger shows its stages and adds what its card gives, nothing more */
+  external?: boolean;
 }
 
 export interface SeasonLedger {
@@ -254,6 +257,19 @@ export function commit(l: SeasonLedger, card: SeasonCard): SeasonLedger {
   return { ...l, holdings, projects: [...l.projects, { id, card, commitment }] };
 }
 
+/**
+ * (season/realm.ts) A project the living engine committed (the contract's commit already made on these holdings): kept
+ * here so the season builds it stage by stage and adds what its card gives. `id` is the engine's offer; `ends` the
+ * season the engine resolves it in.
+ */
+export function adopt(l: SeasonLedger, card: SeasonCard, commitment: Commitment, id: string, ends: number): SeasonLedger {
+  if (l.projects.some((p) => p.id === id)) throw new Error(`season: project ${id} is already under way`);
+  const holdings = structuredClone(l.holdings);
+  gain(holdings, { unrest: card.unrestOnStart ?? 0 });
+  strike(holdings);
+  return { ...l, holdings, projects: [...l.projects, { id, card, commitment: { ...commitment, turn: l.season, resolvesTurn: ends }, external: true }] };
+}
+
 /** Undo a start made this season: its people free and its goods back, as if never started. */
 export function uncommit(l: SeasonLedger, project: string): SeasonLedger {
   const p = l.projects.find((x) => x.id === project);
@@ -289,7 +305,7 @@ export function nextSeason(l: SeasonLedger): SeasonResult {
       return;
     }
     // (the contract's resolve: its people back; then what the card gives)
-    h = oppResolve(h, p.commitment, { now: season, turn: season }).holdings;
+    if (!p.external) h = oppResolve(h, p.commitment, { now: season, turn: season }).holdings;
     finished.push(p.card.id);
     gain(h, p.card.gives ?? {});
     gain(h, { unrest: p.card.unrestOnDone ?? 0 });

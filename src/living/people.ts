@@ -25,6 +25,9 @@ export interface PresenterSpec {
   verb: string;
   /** the ask: what they want and why it matters to them */
   line: string;
+  /** (season/realm.ts) the card is its role's own: presented by a member of the group who holds this role (the smith
+   *  asks for the forge), made if there is none — never by whoever of the group is free */
+  own?: boolean;
   /** their answer to "What's in it for me?" (default: the reward, plainly) */
   gain?: string;
   /** their answer to "What if I say no?" (default: what refusing does, plainly) */
@@ -53,8 +56,8 @@ export function membersOf(w: FactWorld, group: EntityId): EntityId[] {
 }
 
 /** a free member of the group to present, or null (one must be made) */
-export function pickPresenter(w: FactWorld, group: EntityId, busy: Set<EntityId>): EntityId | null {
-  return membersOf(w, group).find((id) => !busy.has(id)) ?? null;
+export function pickPresenter(w: FactWorld, group: EntityId, busy: Set<EntityId>, role?: string): EntityId | null {
+  return membersOf(w, group).find((id) => !busy.has(id) && (role === undefined || w.ws.character(id)?.role === role)) ?? null;
 }
 
 /** the species a group's people are (its biology tag, else its members', else human) */

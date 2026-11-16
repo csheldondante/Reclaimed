@@ -159,6 +159,10 @@ export interface EngineOptions {
   hooks?: string[];
   /** the run's clock (minutes): a commitment's start */
   clock?: () => number;
+  /** (season/realm.ts) the dealer's resource limit counts what is already offered: offers that stay several turns (a
+   *  home-town run's) fill the board, and a deal adds only what room is left — so the choices a turn stay few however
+   *  long cards stand. Default false: each deal its own limit (the horde run's cards last a turn or two) */
+  limitBoard?: boolean;
 }
 
 /** One major arc: stages at turns, each an instant mutation (and a per-turn one while it holds). */
@@ -586,7 +590,7 @@ export class LivingEngine {
       }
       // (its presenter: a free member of the group from the cast, else one is made when it is shown)
       const group = ref(ctx, t.presenter.of);
-      const presenter = pickPresenter(this.w, group, new Set([...busy, ...presenting]));
+      const presenter = pickPresenter(this.w, group, new Set([...busy, ...presenting]), t.presenter.own ? t.presenter.role : undefined);
       if (presenter) subjects.push(presenter);
       const stores = (t.requires.stores ?? []).map((s) => {
         const at = ref(ctx, s.at);
@@ -640,7 +644,8 @@ export class LivingEngine {
       });
       meta.set(`${t.id}|${first.offer}`, { c, preview: diff, unlocks, subjects, place, presenter, group });
     }
-    const tune = this.dealerTune();
+    const tune0 = this.dealerTune();
+    const tune = this.opts.limitBoard ? { ...tune0, resourceMax: Math.max(0, tune0.resourceMax - this.offers.filter((o) => o.status === 'offered').length) } : tune0;
     const dealer = props.length ? deal(props, { holdings: this.w.holdings, turn, at: pAt, dist: this.opts.dist ?? (() => 0), conflictHooks: this.opts.hooks ?? this.arc?.themes ?? [], recent: this.recent, tune, onePerPlace }) : null;
     const dealt: Offer[] = [];
     for (const d of dealer?.dealt ?? []) {
@@ -653,7 +658,7 @@ export class LivingEngine {
       let setup: string[] = [];
       let presenter = m.presenter;
       // (two cards may have picked the same free member: the second asks the group again before anyone is made)
-      if (!presenter || presenting.has(presenter)) presenter = pickPresenter(this.w, m.group, new Set([...busy, ...presenting]));
+      if (!presenter || presenting.has(presenter)) presenter = pickPresenter(this.w, m.group, new Set([...busy, ...presenting]), t.presenter.own ? t.presenter.role : undefined);
       if (!presenter) {
         const before = this.w.full();
         presenter = makePresenter(this.w, m.group, t.presenter.role, id);
@@ -946,11 +951,12 @@ export class LivingEngine {
     const next = this.arc.stages[stage + 1];
     if (next && this.turn >= next.turn) {
       stage++;
-      const diff = applyBatch(this.w, next.effects, { ...this.arc.bind }, `${id}:${stage}`);
+      // (season/realm.ts: an arc's effects may name the run's own helpers, as a card's do)
+      const diff = applyBatch(this.w, next.effects, { ...this.arc.bind }, `${id}:${stage}`, undefined, { stage: this.opts.stage });
       this.w.facts.entity(id)!.attrs.stage = stage;
       this.w.facts.record({ kind: 'arc-stage', by: [id], to: Object.values(this.arc.bind), note: `${this.arc.name}: ${next.name} — ${next.text}` });
       this.log.push(`turn ${this.turn}: ${this.arc.name} — ${next.name} (${diff.length} changes)`);
       this.changes.push({ turn: this.turn, what: `${this.arc.name}: ${next.name} — ${next.text}`, lines: diff });
-    } else if (stage >= 0 && this.arc.stages[stage].each) applyBatch(this.w, this.arc.stages[stage].each!, { ...this.arc.bind }, `${id}:${stage}:turn`);
+    } else if (stage >= 0 && this.arc.stages[stage].each) applyBatch(this.w, this.arc.stages[stage].each!, { ...this.arc.bind }, `${id}:${stage}:turn`, undefined, { stage: this.opts.stage });
   }
 }
