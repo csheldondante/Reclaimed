@@ -23585,3 +23585,55 @@ enough to actually build an engine and prepare for the threat".
   the next one held (6 raiders dead, 2 soldiers lost, Heat ray 5 to 3). One walk a setting: the fight's outcome is not
   pinned (LS-23, LS-45).
 
+## 2026-11-15 (late) — loop skeleton round 4, item 1: why the soldiers never fought (LS-45), found by bisect (`loop-skeleton`)
+
+**The cause.** A unit that the window slides away from kept stepping on a column that was not its own: the units'
+step clamps a unit's cell to the window (`units.wgsl` `clampCell`), so off the window it stood on the edge column.
+A slide far enough to rebuild the window gives that column a floor of 0 for a while; the step puts a unit more than
+two drops above its floor "straight onto it"; back in its town the unit stands 100 cells under the ground, finds no
+surface, and never moves again. The 16-season walk looks at each land change (`showLast`): the mining camp and the
+mountain are 170 to 640 cells off. The 7-season walk's changes are all in the town. That is the whole difference.
+
+**The bisect** (7-season prepared walks, the camera taken east of the town in season 5 and brought back, the
+soldiers' places read before, away and back; logs in the round's scratchpad `loop/r4/`):
+
+| Trip (cells) | Soldiers' z away | z back | After |
+|---|---|---|---|
+| none (a-base7) | | | held: 6 raiders dead, 3 soldiers lost |
+| 150 (t-150) | 101 to 103 | 102 to 104 | walk on |
+| 300 (t-300) | 101 to 103 | 102 to 104 | walk on |
+| 520 (t-520, b-trip7) | **0** | **0** | never move; b-trip7: 12 soldiers idle at one spot, 6 raiders in, the 150 s cap |
+| 520, fixed (h-520) | 101 to 102 | 102 | held: 6 raiders dead, 4 soldiers lost |
+
+**The fix.** `units.wgsl` `unitStep`: a unit whose cell is off the window does not step (`!inMap(cellAt(pos))`); it
+waits as it is and steps again when the window holds its column. One line in the general system, not in the loop:
+later runs follow moving groups (LS-40), and any unit left behind a slide had this.
+
+**Two more found on the way.**
+- *The home town let go.* The camera 900 cells off lets Muru go (citygen DROP 448 columns from the window). The
+  units kept its living town's route buffer bound for man and march: "living routes used in submit while destroyed"
+  every tick, the fatal overlay (f-900). Fixed: `LivingTowns.onDrop` tells the units, which bind the cleared table
+  (`AgentUnits.dropRoutes`). With that fixed the run still broke: the raid "found no road, 0 roads tried" while the
+  town was being made again (g-900). So the loop keeps its camera within 650 cells of the home town
+  (`loop.ts keepNear`, FIXED-CITY): past the farthest place an outcome names (640), short of letting the town go.
+- *The fight's outcome still swings* (LS-23). One walk of the fixed build, with the soldiers also watched by the
+  script from season 5 (f-520): all 12 reached the gate before the raiders, stood there idle and died without a
+  swing; 6 of 6 raiders in. The same trip without the script's watch (h-520) and the watch without the trip (h-obs)
+  both held. Not found. One walk a setting.
+
+**Touch.** `scripts/loopwalk.mjs --touch`: every press a finger's (CDP touch events, pointerType touch, 412x915,
+hasTouch), no script click and none of the game's own calls for a player's move; it fails on a control under 40 px,
+covered or off the screen, on the map moving under a press on the loop's own screens, and if a drag on the map does
+not pan. Names over the map take a press over 46 px now (28 before), the sheet's rows 44, its buttons 46.
+
+**No spell was ever cast in a fight (LS-46, LS-26).** `ui/style.css` gives every child of `#ui` `pointer-events:
+auto` by id; the loop's marks layer covers the screen and set `none` by class, which loses. Every press on the map
+landed on that layer: the cast's listener took it for one of the loop's own screens and did nothing, and the map
+never panned. The walks' "Heat ray 5 to 3" were the soldiers' kills. A 2-season probe (the spell armed by script, a
+tap on the raiders): armed still set after 3 taps, no cast, by touch and by mouse. Fixed: the layer's rule carries the
+id; only a name's own button is the loop's. The cast aims where the press's ray meets the level the figures stand at
+(their places are already read while a fight is on), not the ground under the press, which the world answers only
+after a page read that a finger never asked for. After: one tap, `heatray at 167, 134`, 6 of 6 raiders dead, by touch
+and by mouse (1 of 1 each). That is too strong for 1 Magic: Heat ray's damage is 2 of a raider's 3 health now (an
+assumption for the owner). With the map hearing presses again, the loop turns the map's own tools off
+(`LevelScene.cardsOnly`): a tap does nothing, a drag pans.

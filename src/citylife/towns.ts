@@ -207,7 +207,11 @@ export class LivingTowns {
     return out;
   }
 
+  /** told a living town's route buffer just before it is destroyed (who binds it lets it go: the units' man and march) */
+  readonly onDrop: ((routes: GPUBuffer) => void)[] = [];
+
   private drop(id: string, l: Live): void {
+    for (const f of this.onDrop) f(l.life.routes);
     this.io.removeVoxels(l.life.vargs);
     this.io.removeVoxels(l.works.vargs);
     this.io.removeMesh(l.life.pargs);

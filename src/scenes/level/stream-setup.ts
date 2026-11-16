@@ -403,6 +403,8 @@ export function attachStream(scene: LevelScene): void {
               const site = tc.townSite(i);
               return site ? (scene.livingTowns?.routeRead(site)?.buffer ?? null) : null;
             });
+            // (LS-48: a living town let go — its routes unbound from the units before the buffer is destroyed)
+            scene.livingTowns?.onDrop.push((buf) => units.dropRoutes(buf));
             // (phone-idle round 2: the contracts sleep on the CPU's word — what play does to the land near a town wakes
             // them: a breach is an edit. The towns' own changes they see in setTowns)
             core.sim.eventTaps.push((sent) => {

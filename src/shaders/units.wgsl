@@ -347,6 +347,12 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   let rooted = (caps & CAP_ROOTED) != 0u;
   var info = unitInfo(a);
   if (((info >> 8u) & 1u) == 0u) { return; }
+  // (loop-skeleton, BACKLOG LS-45) off the window — the window slid away from where it stands: it has no column of its
+  // own, so it does not step. Before, it stood on the window's edge column (clampCell); a slide far enough to rebuild
+  // the window gave that column a floor of 0 for a while, the unit was put "straight onto it", and back in its town it
+  // stood 100 cells under the ground and never moved again: 12 soldiers who never fought. It waits as it is and steps
+  // again when the window holds its column.
+  if (!inMap(cellAt(a.xy))) { return; }
   let uid = unitId(u, info);
   var grp = info & 0xffu;
   // (moved to another group by the game: agents.regroup)

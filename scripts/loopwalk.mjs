@@ -3,7 +3,8 @@
 // committed, seasons passing with their news, the raiders' arc, the attack (the camera down the road, the march, the
 // fight, a spell cast), its result, the end of the run read from the history, and a new run in the same saved world.
 // Drives the page by its own buttons: a tap on a name over the map, the dialog's choices, Next season.
-//   node scripts/loopwalk.mjs [--out <dir>] [--leader ysolt] [--agree build:walls,tower-lens] [--runlen 5] [--gif 0]
+//   node scripts/loopwalk.mjs [--out <dir>] [--leader ysolt] [--agree build:walls,tower-lens] [--runlen 5] [--gif 0] [--touch]
+// `--touch`: the whole walk by a finger (pointerType touch): see `touch` below.
 // `--agree`: the templates to say yes to when they are offered and can be paid, in that order of preference; everything
 // else is left to run out. The default prepares (walls: soldiers gather; the tower's heat ray); `--agree none` prepares
 // nothing. It fails unless the raid arrives (LS-16).
@@ -30,7 +31,19 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   fs.mkdirSync(out, { recursive: true });
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (...a) => R.log(...a);
+  // (--touch: every press is a finger's — CDP Input.dispatchTouchEvent, which the page hears as pointer events of
+  // pointerType 'touch', with no hover before the press — and nothing is driven by a script's click or the game's
+  // own calls: what a thumb cannot reach fails the walk)
+  const touch = R.argv.includes('--touch');
   const page = await R.page();
+  if (touch) await page.setViewport({ width: 412, height: 915, deviceScaleFactor: 1, hasTouch: true, isMobile: true });
+  /** a press at a screen point: a finger's tap, or the mouse's click */
+  const press = (x, y) => (touch ? page.touchscreen.tap(x, y) : page.mouse.click(x, y));
+  /** controls pressed that a thumb could not: smaller than THUMB px, covered, or off the screen */
+  const THUMB = 40;
+  const unreachable = [];
+  const pans = [];
+  const camAt = () => page.evaluate(() => [...window.reclaimed.camera.target, window.reclaimed.camera.zoom]);
   page.on('console', (m) => {
     const t = m.text();
     if (/^\[(loop|forces)\]/.test(t)) log(t.slice(0, 300));
@@ -40,16 +53,30 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     log(`shot ${name}: ${JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('.run-sheet h3, .run-full h2, .run-top .r-title, .dlg-name, .dlg-title')].map((e) => e.textContent)))}`);
   };
   const phase = (p, ms = 240000) => page.waitForFunction((q) => q.split('|').includes(window.rungame?.phase), { timeout: ms, polling: 200 }, p);
-  const tap = (sel, text) =>
-    page.evaluate(
-      (s, t) => {
+  /** press a control of the page found by its selector and words. With the mouse: the element's click, as before.
+   *  By touch: a tap at its middle, after checking a thumb can reach it (on the screen, not covered, THUMB px tall;
+   *  a control in the full screen's scrolling list is scrolled to first, as a finger would) */
+  const tap = async (sel, text) => {
+    const at = await page.evaluate(
+      (s, t, byTouch) => {
         const b = [...document.querySelectorAll(s)].find((e) => !t || e.textContent.includes(t));
         if (!b) throw new Error(`no ${s} with "${t}"`);
-        b.click();
+        if (!byTouch) return void b.click();
+        if (b.closest('.run-full')) b.scrollIntoView({ block: 'center' });
+        const r = b.getBoundingClientRect();
+        const x = r.left + r.width / 2;
+        const y = r.top + r.height / 2;
+        const top = document.elementFromPoint(x, y);
+        return { x, y, w: Math.round(r.width), h: Math.round(r.height), hit: !!top && (top === b || b.contains(top)), on: x > 0 && y > 0 && x < innerWidth && y < innerHeight, over: top && top !== b ? top.className || top.tagName : null };
       },
       sel,
       text,
+      touch,
     );
+    if (!touch) return;
+    if (!at.hit || !at.on || at.h < THUMB) unreachable.push(`${sel} "${text ?? ''}" ${at.w}x${at.h}${at.on ? '' : ' off the screen'}${at.hit ? '' : ` covered by ${at.over}`}`);
+    await press(at.x, at.y);
+  };
   const state = () =>
     page.evaluate(() => {
       const g = window.rungame;
@@ -74,10 +101,13 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   await shot('loop-1-leader');
 
   // 2: the town under the chosen leader, what people ask over their places
-  await page.evaluate((who) => {
-    const box = [...document.querySelectorAll('.run-full .leader')].find((e) => e.textContent.toLowerCase().includes(who));
-    box.querySelector('button').click();
-  }, leader);
+  const pickLeader = async (who) => {
+    const k = await page.evaluate((w) => [...document.querySelectorAll('.run-full .leader')].findIndex((e) => e.textContent.toLowerCase().includes(w)), who);
+    if (k < 0) throw new Error(`no leader ${who}`);
+    await page.evaluate((i) => document.querySelectorAll('.run-full .leader')[i].querySelector('button').setAttribute('data-walk', 'pick'), k);
+    await tap('.run-full .leader button[data-walk=pick]');
+  };
+  await pickLeader(leader);
   await phase('city');
   await wait(2500);
   await shot('loop-2-city');
@@ -97,10 +127,32 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       const r = b.getBoundingClientRect();
       const x = r.left + r.width / 2;
       const y = r.top + r.height / 2;
-      return document.elementFromPoint(x, y) === b ? { x, y } : null;
+      return document.elementFromPoint(x, y) === b ? { x, y, label: g.label } : null;
     }, id);
-    if (m) await page.mouse.click(m.x, m.y);
-    else await page.evaluate((oid) => window.rungame.open(oid), id);
+    if (m) {
+      // (the name's own height is the text's; what a thumb needs is the area that takes the press)
+      if (touch) {
+        const hitH = await page.evaluate(
+          (x, y, label) => {
+            const is = (dy) => document.elementFromPoint(x, y + dy)?.textContent === label;
+            let up = 0;
+            let down = 0;
+            while (up < 40 && is(-up - 1)) up++;
+            while (down < 40 && is(down + 1)) down++;
+            return up + down + 1;
+          },
+          m.x,
+          m.y,
+          m.label,
+        );
+        if (hitH < THUMB) unreachable.push(`a name over the map takes a press over ${hitH} px`);
+      }
+      await press(m.x, m.y);
+    } else if (touch) {
+      // (a name the map does not show, or covered: the sheet's row for it, by a finger)
+      const who = await page.evaluate((oid) => window.rungame.asking().find((a) => a.id === oid)?.who, id);
+      await tap('.run-sheet button.item', who);
+    } else await page.evaluate((oid) => window.rungame.open(oid), id);
     log(`${template}: ${m ? 'tapped on the map' : 'opened from the list (its name is covered or off screen)'}`);
     await phase('petition', 10000);
     await page.waitForFunction(() => document.querySelectorAll('.dlg-choice').length > 0, { timeout: 20000, polling: 200 });
@@ -120,13 +172,18 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
         const r = document.querySelector('.dlg-text')?.getBoundingClientRect();
         return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
       });
-      if (at) await page.mouse.click(at.x, at.y);
+      if (at) await press(at.x, at.y);
     }
     await phase('city|event', 20000);
     // (the live event: the dead are up at the burial ground — Fire pressed, a tap on one of them, until none is left)
     if ((await state()).phase === 'event') {
       await wait(3500);
       await shot('loop-6-event-dead');
+      {
+        const v = await page.evaluate(() => ({ dead: window.rungame.deadAt(), top: document.querySelector('.run-top')?.getBoundingClientRect().bottom ?? 0, sheet: document.querySelector('.run-sheet')?.getBoundingClientRect().top ?? innerHeight }));
+        const seen = v.dead.filter(([x, y]) => x > 12 && x < 400 && y > v.top + 12 && y < v.sheet - 8).length;
+        R.check('the live event: every one of the dead is in view, between the top bar and the sheet', v.dead.length > 0 && seen === v.dead.length, { seen, of: v.dead.length, top: Math.round(v.top), sheet: Math.round(v.sheet), at: v.dead.map((q) => q.map(Math.round)) });
+      }
       const frames = [];
       let casts = 0;
       for (let k = 0; k < 14 && (await state()).phase === 'event'; k++) {
@@ -137,7 +194,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
         }
         await tap('.run-sheet .go button', 'Fire');
         await wait(250);
-        await page.mouse.click(at[0], at[1]);
+        await press(at[0], at[1]);
         casts++;
         await wait(300);
         if (casts === 1) await shot('loop-6-event-cast');
@@ -172,6 +229,55 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   };
   await playSeason();
 
+  // (touch) a finger on the loop's own screens must not move the map: a tap and a swipe on the sheet, a tap on the top
+  // bar; and a drag on the map itself still pans it (the player can look round)
+  if (touch) {
+    await wait(2500);
+    const swipe = async (x0, y0, x1, y1) => {
+      await page.touchscreen.touchStart(x0, y0);
+      for (let k = 1; k <= 6; k++) {
+        await page.touchscreen.touchMove(x0 + ((x1 - x0) * k) / 6, y0 + ((y1 - y0) * k) / 6);
+        await wait(30);
+      }
+      await page.touchscreen.touchEnd();
+      await wait(600);
+    };
+    const moved = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) > 0.5 || Math.abs(a[3] - b[3]) > 0.01;
+    const sheet = await page.evaluate(() => {
+      const r = document.querySelector('.run-sheet h3').getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    let c0 = await camAt();
+    await press(sheet.x, sheet.y);
+    await wait(500);
+    if (moved(c0, await camAt())) pans.push('a tap on the sheet');
+    c0 = await camAt();
+    await swipe(sheet.x, sheet.y + 30, sheet.x + 40, sheet.y - 30);
+    if (moved(c0, await camAt())) pans.push('a swipe on the sheet');
+    c0 = await camAt();
+    await press(200, 20);
+    await wait(500);
+    if (moved(c0, await camAt())) pans.push('a tap on the top bar');
+    // (the map itself: a spot with no name under it)
+    const free = await page.evaluate(() => {
+      for (let y = 140; y < 420; y += 20)
+        for (let x = 60; x < 300; x += 30) {
+          const e = document.elementFromPoint(x, y);
+          if (e && !e.closest('.run-marks button, .run-sheet, .run-top')) return { x, y };
+        }
+      return null;
+    });
+    c0 = await camAt();
+    if (free) await swipe(free.x, free.y, free.x + 70, free.y + 50);
+    const c1 = await camAt();
+    const panned = free ? moved(c0, c1) : false;
+    log(`touch: a drag on the map ${panned ? 'pans it' : 'does not pan it'} (${JSON.stringify({ free, from: c0.map(Math.round), to: c1.map(Math.round) })})`);
+    R.check("touch: nothing on the loop's own screens moves the map", pans.length === 0, pans);
+    R.check('touch: a drag on the map pans it', panned, { free });
+    await page.evaluate(() => window.rungame.showTown());
+    await wait(1800);
+  }
+
   // 5: seasons pass until the attack (or the end)
   let n = 0;
   const decisions = [];
@@ -184,7 +290,9 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     await wait(n === 0 ? 6000 : 1500);
     if (n < 2) await shot(`loop-5-season${n + 1}`);
     // (the rest of the time-lapse skipped: a season is a few seconds)
-    await page.evaluate(() => window.rungame.canSkip && window.rungame.skip());
+    if (touch) {
+      if (await page.evaluate(() => window.rungame.phase === 'season' && window.rungame.canSkip)) await tap('.run-sheet .go button', 'Skip');
+    } else await page.evaluate(() => window.rungame.canSkip && window.rungame.skip());
     n++;
     await phase('city|attack|result|end', 120000);
     const s = await state();
@@ -200,6 +308,25 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       await wait(1500);
     }
     if (s.phase !== 'city') break;
+    // (LS-45's bisect: the camera away from the town and back — the window slides off it — in one chosen season)
+    if (String(s.season) === opt('trip', '')) {
+      const watch = R.argv.includes('--watch');
+      const dbg = async (what) => log(`${what}: ${JSON.stringify(await page.evaluate((w) => window.rungame.fightDebug(w), watch))}`);
+      await dbg('before the trip');
+      await wait(1500);
+      await dbg('before the trip');
+      await page.evaluate((d) => window.rungame.lookOff(d, 0), Number(opt('tripfar', '520')));
+      await wait(5000);
+      await shot(`loop-trip-s${s.season}`);
+      await dbg('away');
+      await page.evaluate(() => window.rungame.showTown());
+      await wait(4000);
+      await dbg('back');
+      await wait(4000);
+      await dbg('back, 4 s on');
+      log(`trip: away and back in season ${s.season}`);
+      if (opt('stop', '') === 'trip') return;
+    }
     if (n % 4 === 0) await shot(`loop-5-city-s${s.season}`);
     await playSeason();
     if (n > 40) throw new Error('the attack never came');
@@ -236,6 +363,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       if (k % 5 === 0) {
         fs.writeFileSync(path.join(out, 'frames', `f-${String(k).padStart(3, '0')}.png`), frames[frames.length - 1]);
         log(`attack ${k}: ${st.f?.stage} raiders ${st.f?.alive} soldiers ${st.f?.soldiers} at ${st.at?.map((v) => Math.round(v))} zoom ${st.zoom.toFixed(1)}`);
+        if (k % 10 === 0) log(`who is where: ${JSON.stringify(await page.evaluate(() => window.rungame.fightDebug()))}`);
       }
       const still = async (name) => {
         if (seen.has(name)) return;
@@ -254,7 +382,11 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
         await shot('loop-7-attack-spell-armed');
         const at = await page.evaluate(() => window.rungame.raidAt());
         const before = await page.evaluate(() => window.war.fight.alive);
-        await page.mouse.click(at[0], at[1]);
+        {
+          const v = await page.evaluate(() => ({ top: document.querySelector('.run-top')?.getBoundingClientRect().bottom ?? 0, sheet: document.querySelector('.run-sheet')?.getBoundingClientRect().top ?? innerHeight }));
+          R.check('the fight: the raiders are in view, between the top bar and the sheet', at[1] > v.top + 12 && at[1] < v.sheet - 8 && at[0] > 12 && at[0] < 400, { at: at.map(Math.round), top: Math.round(v.top), sheet: Math.round(v.sheet) });
+        }
+        await press(at[0], at[1]);
         await wait(350);
         await shot('loop-7-attack-spell');
         frames.push(await page.screenshot({ type: 'png' }));
@@ -294,6 +426,11 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   log(`land (the mutators' entries this run caused): ${JSON.stringify(ended.land)}`);
   log(`mutators: ${JSON.stringify(await page.evaluate(() => ({ list: window.mutators.record().list.map((m) => `${m.kind}@${m.place ?? m.cell.join(',')} r${Math.round(m.radius)} fact ${m.fact}`), signs: window.mutators.signs().map((s) => `${s.kind} ${s.strength} until ${s.until}`) })))}`);
   R.check('the end of the run reads the history', ended.history.length > 0, ended.history.length);
+  // (touch) the end screen's own way on: its button, by a finger, to the leader screen
+  if (touch) {
+    await tap('.run-full button.big', 'Start a new run');
+    await phase('leader', 10000);
+  }
   // the saved world: the store holds the fact layer; a reload reads it (the leader screen lists what is remembered)
   await wait(1500);
   const u = new URL(page.url());
@@ -306,11 +443,12 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   log(`after a reload the world remembers: ${JSON.stringify(kept)}`);
   R.check('the fact layer survives a reload', kept.length >= ended.history.length, { kept: kept.length, had: ended.history.length });
   // a new run in the same world
-  await page.evaluate(() => [...document.querySelectorAll('.run-full .leader')].find((e) => e.textContent.includes('Dunstan')).querySelector('button').click());
+  await pickLeader('dunstan');
   await phase('city', 10000);
   await wait(2500);
   await shot('loop-8-newrun-city');
   const again = await page.evaluate(() => ({ run: window.rungame.run.n, before: window.rungame.before().length }));
   log(`new run: ${JSON.stringify(again)} ${JSON.stringify(await state())}`);
   R.check('the new run is run 2 of the same world', again.run === 2 && again.before >= ended.history.length, again);
+  if (touch) R.check(`touch: every control pressed was on the screen, not covered, and at least ${THUMB} px tall`, unreachable.length === 0, [...new Set(unreachable)]);
 });

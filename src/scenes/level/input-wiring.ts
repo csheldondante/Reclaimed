@@ -64,10 +64,14 @@ export function wireInput(scene: LevelScene): void {
   scene.controls = new Controls(host.canvas, {
     tap: (sx, sy) => {
       if (held()) return void scene.storyPlay!.cam.skip();
+      // (the main loop: its tools are its cards and spells — a tap on the map is not a power of Nature's)
+      if (scene.cardsOnly) return;
       tap(sx, sy);
     },
     dragStart: (sx, sy) => {
       if (held()) return false;
+      // (the main loop: a drag on the map pans it, never a gust)
+      if (scene.cardsOnly) return false;
       if (camera.fly) {
         scene.flyDrag = [sx, sy];
         return true;

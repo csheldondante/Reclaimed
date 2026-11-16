@@ -585,6 +585,9 @@ export class LevelScene implements Scene {
    * and the ways on at each area's edge, the finale at the town, what's left of it remembered.
    */
   playRaising = false;
+  /** (loop-skeleton) the map takes no tool or power from a press: a tap does nothing, a drag pans (the main loop's
+   *  tools are its cards and its spells, which hear the press themselves — scenes/level/loop.ts) */
+  cardsOnly = false;
 
   resize(renderW: number, renderH: number, cssW: number, cssH: number): void {
     this.renderW = renderW;

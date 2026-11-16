@@ -64,8 +64,16 @@ const PLACE_SETTLE_FRAMES = 130;
  *  behind): the raiders are watched and the sim sped up only after */
 const SPAWN_TOLD_FRAMES = 20;
 
+/** how far from the home town's centre the camera may go (cells): past the mountain an outcome can name (640), short
+ *  of where the town would be let go (its box 448 columns from a 320-column window: about 680) */
+const HOME_REACH = 650;
 /** a spell's blow: its radius (cells), its damage, its cost */
-const HEATRAY = { radius: 5, damage: 3, magic: 1 };
+/** times a cast asks for the ground's pages under its tap before it gives up (a camera that moved meanwhile: again) */
+const CAST_WAIT_FRAMES = 4;
+// (round 4: damage 2 of a raider's 3 health. At 3, the first cast that ever landed killed all 6 raiders on the march for
+// 1 Magic and the soldiers had no part; at 2 it wounds every raider in reach and a second cast or the soldiers finish
+// them. A tunable for the owner: LOOP_SKELETON.md assumption 17)
+const HEATRAY = { radius: 5, damage: 2, magic: 1 };
 /** the live event's spell, and the dead it is cast on: how many get up, in clumps this far apart (cells), and the wall
  *  seconds the event may take before it is left as it stands */
 const FIRE = { radius: 4.5, damage: 12, magic: 1 };
@@ -114,6 +122,7 @@ class Game implements RunGame {
     private mut: MutateEngine | null,
   ) {
     this.cam = new StoryCamera(scene.core.camera, scene.storyCut ?? {});
+    scene.cardsOnly = true;
     // (a shot's points are window coordinates: they slide with the window)
     scene.core.onShift.push((dx, dy, dz) => this.cam.shift(dx, dy, dz));
     season.onChange.push(() => this.changed());
@@ -133,6 +142,7 @@ class Game implements RunGame {
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
       this.cam.update(dt);
+      this.keepNear();
       this.watchFight(dt);
       this.watchEvent(dt);
     };
@@ -142,7 +152,7 @@ class Game implements RunGame {
     window.addEventListener(
       'pointerdown',
       (e) => {
-        if (!(e.target instanceof Element && e.target.closest('.run-sheet, .run-top, .run-marks, .run-full, .dlg'))) this.cast(e);
+        if (!(e.target instanceof Element && e.target.closest('.run-sheet, .run-top, .run-marks button, .run-full, .dlg'))) this.cast(e);
       },
       true,
     );
@@ -476,6 +486,26 @@ class Game implements RunGame {
     return [S.origin[0] + cx, S.origin[1] + cy];
   }
 
+  /**
+   * The camera kept within HOME_REACH of the home town. FIXED-CITY (BACKLOG LS-40): the run's town must stay made — a
+   * town farther than citygen's DROP (448 columns) from the window is let go, and with it the run's squads, its place
+   * table slot and its roads (seen: the camera 900 cells off, then "the raid found no road", 0 roads; BACKLOG LS-48).
+   * Far places are looked at on the atlas map, not by panning there. A run that follows a moving group keeps its
+   * group's ground made instead.
+   */
+  private keepNear(): void {
+    const t = this.town;
+    if (!t || this.phase === 'boot' || this.phase === 'leader') return;
+    const cam = this.scene.core.camera;
+    const c = t.centreInWindow();
+    const dx = cam.target[0] - c[0];
+    const dy = cam.target[1] - c[1];
+    const d = Math.hypot(dx, dy);
+    if (d <= HOME_REACH) return;
+    cam.target[0] = c[0] + (dx / d) * HOME_REACH;
+    cam.target[1] = c[1] + (dy / d) * HOME_REACH;
+  }
+
   // ---- saving -----------------------------------------------------------------------------------------
 
   async load(): Promise<void> {
@@ -797,6 +827,31 @@ class Game implements RunGame {
     if (t) void this.cam.look(this.at3(t.centreInWindow()), { zoom: innerWidth / (2 * (SITE_REACH + 0.06) * t.box.R), place: [0.5, 0.36], ease: 1.2 });
   }
 
+  /** (scripts) the camera `dx`, `dy` cells off the town's centre: the window slides off the town (LS-45's bisect) */
+  lookOff(dx: number, dy: number): void {
+    const t = this.town;
+    if (!t) return;
+    const c = t.centreInWindow();
+    void this.cam.look(this.at3([c[0] + dx, c[1] + dy]), { zoom: 5, ease: 1.2, place: [0.5, 0.36] });
+  }
+
+  /** (scripts) the fight as the units stand: each squad's post and report, where each soldier and raider is (window
+   *  cells) and what it is doing */
+  fightDebug(watch = false): unknown {
+    const war = this.season.war;
+    const units = this.scene.units;
+    const forces = this.scene.townForces;
+    if (!war || !units || !forces) return null;
+    if (watch) units.observe(war.squadGroups.flatMap((g) => forces.members(g)));
+    const who = (ids: number[]) =>
+      ids.map((id) => {
+        const v = units.get(id);
+        return v ? `${v.at ? v.at.map((x) => Math.round(x)).join(',') : 'unread'} ${v.state} ${v.job.kind}${v.hostile ? ' hostile' : ''} hp${v.health}` : 'gone';
+      });
+    const { w, h } = this.scene.core.dims;
+    return { window: [w, h], origin: this.scene.stream?.origin, war: war.debug(), soldiers: war.squadGroups.map((g) => who(forces.members(g) as number[])), raiders: who(forces.members(war.fight?.raiders ?? -1) as number[]), town: this.town?.centreInWindow().map((v) => Math.round(v)) };
+  }
+
   /** (scripts) where the raiders are on the screen now (px), or null: none watched */
   raidAt(): [number, number] | null {
     const p = this.attack?.mid?.();
@@ -811,11 +866,49 @@ class Game implements RunGame {
   /** a tap on the map with a spell armed: cast there (Heat ray: a blow over an area on the units there, shown with
    *  the level's own lightning strike — a stand-in look) */
   private cast(e: PointerEvent): void {
-    const sp = this.phase === 'event' && this.armed === 'fire' ? FIRE : this.phase === 'attack' && this.armed === 'heatray' ? HEATRAY : null;
-    if (!sp) return;
+    const id = this.phase === 'event' && this.armed === 'fire' ? 'fire' : this.phase === 'attack' && this.armed === 'heatray' ? 'heatray' : null;
+    if (!id) return;
     const rect = this.scene.host.canvas.getBoundingClientRect();
-    const g = this.scene.core.camera.groundAt(e.clientX - rect.left, e.clientY - rect.top, this.scene.heightAt);
-    if (!g) return console.warn('[loop] heat ray: no ground under the tap');
+    // (the map's own tool and pan are not given this press: the cast is the gesture)
+    e.stopPropagation();
+    e.preventDefault();
+    this.castAt(id, e.clientX - rect.left, e.clientY - rect.top, CAST_WAIT_FRAMES);
+  }
+
+  /** the height the figures a spell is cast on stand at (the raiders of the fight, the dead of the event): the mean of
+   *  those the units read (they are observed while either is on); null: none read */
+  private figuresZ(): number | null {
+    const units = this.scene.units;
+    const ids = this.event ? [...this.event.up] : (this.scene.townForces?.members(this.season.war?.fight?.raiders ?? -1) ?? []);
+    const zs = ids.map((id) => units?.get(id)?.at?.[2]).filter((z): z is number => z !== undefined);
+    return zs.length ? zs.reduce((s, z) => s + z, 0) / zs.length : null;
+  }
+
+  /**
+   * The cast at a screen point: where the press's ray meets the level the figures stand at (their own places, which
+   * the units already read while a fight or the event is on). Before, it asked for the ground under the press
+   * (scene.heightAt): that answers null until the column's page has been read and again after its chunk has run — in
+   * a fight the chunks under the figures run every tick, and a finger has no hover before its press to have asked for
+   * the page, so the cast found no ground or waited for it past the fight's end (LS-46; a touch and a mouse press both
+   * cast nothing, 2 of 2). With no figure read (none in play), the ground's pages are asked for once and waited for.
+   */
+  private castAt(id: 'fire' | 'heatray', sx: number, sy: number, tries: number): void {
+    const sp = id === 'fire' ? FIRE : HEATRAY;
+    if (this.armed !== id) return;
+    const cam = this.scene.core.camera;
+    const z = this.figuresZ();
+    const g = z !== null ? cam.groundAt(sx, sy, () => z) : cam.groundAt(sx, sy, this.scene.heightAt);
+    if (!g) {
+      const terrain = this.scene.worldApi?.terrain;
+      if (tries <= 0 || !terrain) return console.warn('[loop] spell: the ground under the tap was never read');
+      // (the screen's reach in cells round the camera's target, both ways)
+      const r = Math.max(innerWidth, innerHeight) / cam.zoom;
+      const [tx, ty] = cam.target;
+      return void terrain.load(tx - r, ty - r, tx + r, ty + r).then(
+        () => this.castAt(id, sx, sy, tries - 1),
+        (e) => console.warn(`[loop] spell: the ground's pages could not be read: ${e}`),
+      );
+    }
     if (pools(this.season.ledger).magic < sp.magic) {
       this.fightLine = W.shortText({ magic: sp.magic });
       return this.arm(null);
@@ -824,7 +917,7 @@ class Game implements RunGame {
     this.realm!.ledger = this.season.ledger;
     this.scene.units?.strike?.({ at: [g[0], g[1]], radius: sp.radius, damage: sp.damage }, 'spell');
     this.scene.powers.scriptStrike(g[0], g[1], g[2]);
-    console.log(`[loop] ${this.armed} at ${g[0].toFixed(0)}, ${g[1].toFixed(0)}`);
+    console.log(`[loop] ${id} at ${g[0].toFixed(0)}, ${g[1].toFixed(0)}`);
     this.arm(null);
   }
 }

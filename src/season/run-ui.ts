@@ -72,8 +72,13 @@ const CSS = `
 .run-top .r-pool.unrest b{color:#ff9b7a}
 .run-top .r-sign{background:#4a3a56;border:1px solid #c9a2ff;border-radius:10px;padding:2px 7px;white-space:nowrap}
 .run-top .r-threat{font-size:12px;color:#ffb199;flex:1 0 100%;font-weight:600}
-.run-marks{position:absolute;inset:0;z-index:20;pointer-events:none;overflow:hidden}
+/* (ui/style.css gives every child of #ui pointer-events:auto, by id: without the id here the marks' layer, which covers
+   the screen, took every press meant for the map — no pan, and no spell was ever cast in a fight; LS-46) */
+#ui > .run-marks,#ui > .run-top{pointer-events:none}
+.run-marks{position:absolute;inset:0;z-index:20;overflow:hidden}
 .run-marks button{position:absolute;transform:translate(-50%,-100%);pointer-events:auto;font:700 13px system-ui,sans-serif;padding:5px 9px;border-radius:14px 14px 14px 2px;border:2px solid #221;background:#f2e3b0;color:#221;white-space:nowrap}
+/* (a thumb's reach: the name is 28 px tall; what takes the press is 46 px, above and below it) */
+.run-marks button::after{content:'';position:absolute;left:-4px;right:-4px;top:-9px;bottom:-9px}
 .run-marks button.threat{background:#e2573f;color:#fff}
 .run-marks button.raider,.run-marks button.soldier{width:22px;height:22px;padding:0;border-radius:50%;background:rgba(226,60,40,.28);border:3px solid #ff3b2f;transform:translate(-50%,-62%);pointer-events:none;box-shadow:0 0 0 1px #000}
 .run-marks button.soldier{background:rgba(50,140,255,.28);border-color:#39a0ff}
@@ -91,12 +96,12 @@ const CSS = `
 .run-sheet .note{font-size:13px;color:#d0d0d0}
 .run-sheet .stand{font-size:12px;color:#c9a2ff}
 .run-sheet .list{display:flex;flex-direction:column;gap:5px}
-.run-sheet .item{display:flex;gap:8px;align-items:center;background:#2c3038;border-radius:10px;padding:8px;border:0;color:inherit;font:inherit;text-align:left}
+.run-sheet .item{display:flex;gap:8px;align-items:center;min-height:44px;box-sizing:border-box;background:#2c3038;border-radius:10px;padding:8px;border:0;color:inherit;font:inherit;text-align:left}
 .run-sheet .item.threat{background:#4a2a26}
 .run-sheet .item span{flex:1}
 .run-sheet .item i{font-style:normal;font-size:12px;color:#d9c99a;white-space:nowrap}
 .run-sheet .go{display:flex;gap:8px}
-.run-sheet .go button{flex:1;font:700 16px system-ui;padding:12px;border-radius:10px;border:0;background:#e8b84a;color:#221}
+.run-sheet .go button{flex:1;min-height:46px;font:700 16px system-ui;padding:12px;border-radius:10px;border:0;background:#e8b84a;color:#221}
 .run-sheet .go button.quiet{background:#555;color:#eee}
 .run-sheet .go button.on{outline:3px solid #fff}
 .run-sheet .go button:disabled{opacity:.45}
@@ -108,7 +113,7 @@ const CSS = `
 .run-full .leader .body{flex:1;display:flex;flex-direction:column;gap:5px}
 .run-full .leader b{font-size:16px}
 .run-full .leader .starts{font-size:12px;color:#d9c99a}
-.run-full button.big{font:700 15px system-ui;padding:10px;border-radius:10px;border:0;background:#e8b84a;color:#221}
+.run-full button.big{min-height:44px;font:700 15px system-ui;padding:10px;border-radius:10px;border:0;background:#e8b84a;color:#221}
 .run-full ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px}
 .run-full button.small{font:600 13px system-ui;padding:3px 10px;border-radius:8px;border:0;background:#e8b84a;color:#221}
 .run-full .stand{font-size:12px;color:#c9a2ff}

@@ -341,6 +341,18 @@ export class AgentUnits implements Units {
   // ---- (U2 round 5) place orders: a town place by indices, resolved on the GPU (orders.wgsl) ----------------------
 
   /**
+   * (loop-skeleton, BACKLOG LS-48) A town's routes are gone (its living town let go, the buffer about to be destroyed):
+   * if they are the ones bound for man and march, the cleared table is bound instead — orders that read them fail as
+   * with no wall. Before, the bind group kept the destroyed buffer and every later step was a GPU validation error
+   * ("living routes used in submit while destroyed"): the camera taken about 900 cells from a town with a patrol.
+   */
+  dropRoutes(buf: GPUBuffer): void {
+    if (this.agents.routesBound !== buf) return;
+    this.agents.useRoutes(null);
+    this.routesTown = null;
+  }
+
+  /**
    * The town contracts' place table (TownContractsApi.places) and, for each town slot, a few points round it in the
    * window (the agents' scope kept there while a group is ordered in it — the fields reach no farther than the scope).
    */
