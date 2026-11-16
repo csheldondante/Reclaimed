@@ -44,10 +44,10 @@ import { BGCHECK, BgCheck } from './bgcheck';
 import { encode, encodeCeiling } from './renderer/encode';
 import { drawGrid, windowDrawn, windowMoved } from './renderer/grid';
 import { enableBand, enableRockMesh } from './renderer/features';
-import { CAM_BYTES, SHADOW_SIZE, SHADOW_FORMAT, VEG_INSTANCES, INST_GROW, INST_START, INST_GROW_AT, PICK_FORMAT, PickHit, DEPTH_FORMAT, RenderOptions, DETAIL_BITS, SKIP, type ShadowViews } from './renderer/defs';
+import { CAM_BYTES, SHADOW_SIZE, SHADOW_FORMAT, VEG_INSTANCES, INST_GROW, INST_START, INST_GROW_AT, PICK_FORMAT, PickHit, DEPTH_FORMAT, RenderOptions, DETAIL_BITS, SKIP, type ShadowViews, type FrameCompute } from './renderer/defs';
 import { urlFlags } from '../flags';
 export { SKIP } from './renderer/defs';
-export type { PickHit, RenderOptions } from './renderer/defs';
+export type { PickHit, RenderOptions, FrameCompute } from './renderer/defs';
 import { buildMeshDraws } from './renderer/mesh-draws';
 
 // (round 117, structures: the city's pieces — src/structures/gpu.ts, shaders/structmesh.wgsl + structgame.wgsl)
@@ -749,7 +749,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
   }
 
   /** (round 120) compute run at the start of each frame's encode, before anything's drawn (bodies' meshes skinned) */
-  readonly frameCompute: ((enc: GPUCommandEncoder) => void)[] = [];
+  readonly frameCompute: FrameCompute[] = [];
 
   /** `xform` (citygen M4a): where the mesh is — a uniform vec4, xyz added to every vertex (a town's grid placed in the
    *  window: its owner writes 16 bytes when the window slides, the mesh stays as it is on the GPU); none: as written */

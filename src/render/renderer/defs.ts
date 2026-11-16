@@ -73,6 +73,12 @@ export const DETAIL_BITS: Record<string, number> = { strata: 1, water: 2, plants
 /** (perfopt, tcache) the cached terrain layer's margin past the screen, render pixels a side */
 export const TC_MARGIN = 24;
 export const SKIP = new Set((urlFlags().get('skip') ?? '').split(',').filter(Boolean));
+/**
+ * A frame's compute hook (Renderer.frameCompute). `skipKey` (phone-idle): the `?skip=` name that leaves it out — the
+ * idle bench toggles each hook by it (perf/idlebench.ts: living, towncontracts, bodymesh); a hook without one is left
+ * out by `framecompute`.
+ */
+export type FrameCompute = ((enc: GPUCommandEncoder) => void) & { skipKey?: string };
 
 
 /** (round 83) is anything cut from the camera's view (a slice, a hole round a point kept seen)? */

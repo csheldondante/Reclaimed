@@ -23178,3 +23178,62 @@ only as far as a slot is copied whole: a pass that re-packs with ivPack keeps th
 the times (the record has them). The fold past K joins the column's two lowest intervals (townstamp's smarter fold not
 copied). Structures are placeholders: no External intervals, no collision, not in the columns. Stairs, ramps and towers
 sit on the plain side of the step only. The lab's reveal is two discrete events (archgen's decal is the live one).
+
+## 2026-11-15 — the idle frame counted: a census, the ranking, the valley's reads off, the idle bench (PI-1..PI-10, `phone-idle`)
+
+The user on the Pixel 9a, about the atlas level with a town: "very very slow. Unplayable really". The same day's phone
+measurements gave the cost of a call (docs/FRAMECOST.md "The phone's cost model"): an indirect dispatch ~0.1 ms whether
+it does 1 workgroup or 0, a direct one ~0.008 ms, a pass ~0.02 ms, a read of 1–3 MB 20–35 ms. So the question became
+what the idle frame asks for, by count, since per-pass timestamps don't add up on a tiler.
+
+**The census** (`?census=1`; src/gpu/census.ts the counter and the scopes, src/perf/census.ts the page's side;
+test/unit/census.test.ts). The WebGPU prototypes are wrapped in one place (as perf/readstats.ts wraps `mapAsync`), so
+no call site changes; systems open a scope round what they encode (`censusEnter` / `censusLeave`: one null check when
+off). The counter lives in gpu/ because the sim and the renderer open scopes and the engine may not import perf/ (the
+boundary gate caught the first placement). Unscoped calls fall to their pass's or buffer's label, so nothing is lost.
+`scripts/census.mjs` runs the user's level headless in four states.
+
+**What it found** (desktop headless, 412x915, the user's URL; FRAMECOST has the tables):
+- Idle: 75.6 indirect dispatches, 74.5 direct, 60.6 compute passes, 3.3 render passes, 27 draws and 191 indirect
+  draws, 1.26 reads (34.7 KB) a frame, 0.86 ticks. The model: 9.9 ms a frame on the phone, 7.6 of it the indirect
+  dispatches. The living town's graph is 30 of them and the town contracts 28: both encode their whole solve every
+  frame as indirect dispatches the GPU sizes to 0 when settled.
+- The link without `q=low` is the same page: `q` defaults to low and the phone's flags are added either way
+  (`scripts/census.mjs --noq`: the same quality, flags and counts).
+- Panning and the time-lapse: `Integrity`'s judge reads the whole layers buffer back after each slide or edit, 27–29 MB
+  a read (PI-5).
+- The level's first two frames hold the GPU 25–30 s headless here, past main.ts's 20 s watchdog (PI-9). The census
+  and the bench wait it out and say so; they don't hide another fatal.
+
+**The cut: the valley's timed reads off in the town game** (scenes/level/season.ts). `ValleyReads` reads the wind
+field at 4 Hz and the plants and the water at 1 Hz, ~400 KB each at this window, for the sandbox's painted wind, its
+Nature and its ambience. DA-B5 (round 128o) turned them off in fortress play; `startFortress` did it, and the
+switchover deleted fortress mode, so the town game had run them since 2026-11-10. Off where the season loop takes the
+sandbox's tools away. Idle: 34.7 KB → 0.91 KB read back a frame (2.4 MB → 63 KB a second), reads 1.26 → 0.99 a frame
+(what is left is the units' sync, DA-B2b). **It changes sound:** the ambience hears no plants or water round the view
+(birdsong, insects, running water, frogs), as in fortress play after DA-B5. PI-3 is the GPU reduction that brings them
+back.
+
+**Why nothing else was cut.** Every other indirect dispatch is GPU-gated by design (UC-8, RT2-4, LT-F6, DA-B26): the
+wake is a GPU word the CPU never reads, so the CPU has nothing to gate on, and the brief's rule was to gate only from
+what the CPU already knows, never by adding a read. LT-F6 had left exactly this open ("a CPU signal only if the phone
+bench shows empty dispatches cost"). FRAMECOST "The decision the rest needs" lists three patterns (a settled signal
+read after events; direct dispatch gated in the kernel; fewer encoded). Each is a design change: asked, not built.
+
+**The idle bench** (`?idlebench=1`, src/perf/idlebench.ts, on physbench's toggle method): the idle frame's interval,
+GPU-done time and census; 19 systems off and on (the sim's `paused` set, the renderer's `?skip=` set, which the
+frame-compute hooks now answer to by a `skipKey`); and five probes that price the decision's patterns on the phone:
+64 indirect dispatches of 0, 64 direct, 16 direct of 1024 gated workgroups, a 64-byte read a frame, 128 indirect
+draws of 0. Headless (scripts/idlebench.mjs) it completes and writes its report; the desktop's differences are noise
+(±3 ms between windows on an iGPU with no vsync), which is the point of running it on the phone.
+
+**Measured.** Desktop proxy only (Intel iGPU, D3D11, headless Chrome). Census counts are exact; the model's ms are the
+phone's per-call costs times those counts, not a phone run. Idle model 9.9 → 9.5 ms a frame.
+
+**Hacks and limits.** The census wraps prototypes: a call made through a saved unwrapped reference isn't counted (none
+found). A texture copy's bytes are texels × 4, not the format's. Reads are counted in the frame that starts them. The
+bench's coarse-world toggle swaps `Coarse.stepPart` for a no-op while off (a bench-only monkeypatch); its UI toggle
+hides `#ui`; its indirect-draw probe borrows the renderer's body pipeline. The bench's GPU-done time includes waiting
+on a frame already in flight. The scripts take down the watchdog's overlay after the first-frame stall (only that
+message) so the states after it can be measured. test/unit/writing-sources.test.ts fails on `fortress` 555bdca3 for
+src/roadlab/control.ts (not this branch's; left).

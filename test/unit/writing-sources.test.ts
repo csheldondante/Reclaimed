@@ -55,6 +55,7 @@ const SOURCES: Record<string, Source> = {
   'lab/lab.ts': { who: 'dev', why: 'the town lab’s overlay for shots (markContracts: the side map and named places)' },
   'citygen/panel.ts': { who: 'dev', why: 'citygen’s time-lapse and districts debug panel (?timelapse=1, ?citypanel=1)' },
   'perf/citygenbench.ts': { who: 'dev', why: 'a bench' },
+  'perf/idlebench.ts': { who: 'dev', why: 'a bench' },
   'perf/livingbench.ts': { who: 'dev', why: 'a bench' },
   'streetlab/control.ts': { who: 'dev', why: 'the street lab’s panel' },
   'citylife/towns.ts': { who: 'dev', why: 'the living town’s debug panel (?living=1)' },

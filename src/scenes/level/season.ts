@@ -119,6 +119,14 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoo
   }
   // (the sandbox's tool panel hidden: the cards are the player's only tool here)
   scene.editor?.setVisible(false);
+  // (phone-idle, 2026-11-15; DA-B5, DESIGN §24 "no per-frame GPU→CPU readback in play") The sandbox valley's timed reads
+  // go with its tools: the wind field at 4 Hz (rgba32float, ~400 KB a read at this window) for storms that feel painted
+  // wind, the particle counters at 2 Hz for the sandbox's Nature, the plants and the water at 1 Hz (~400 KB each) for
+  // the ambience. DA-B5 turned them off in fortress play (startFortress dropped them); the switchover deleted fortress
+  // mode and the town game ran them again: ~6 reads and ~2.4 MB a second at idle (the census, docs/FRAMECOST.md).
+  // What it changes: the ambience hears no plants or water round the view (birdsong, insects, running water, frogs),
+  // as in fortress play after DA-B5 — BACKLOG PI-3 has the GPU reduction that would bring them back without a read.
+  scene.valleyReads = null;
   scene.seasonUi = mountSeasonUi(host.ui, loop);
   (globalThis as { season?: SeasonLoop }).season = loop;
   loop.init().then(

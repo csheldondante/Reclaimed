@@ -25,7 +25,7 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
   // look flags (render.wgsl Camera.eye.w; DA-B7: the static casters' shadow map looked up too)
   new Float32Array(rd.camData)[19] = (rd.flatTops ? 1 : 0) | (rd.fieldMesh.on ? 2 : 0) | (Renderer.opts.noDetail << 2) | (rd.shadowStillOn() ? SHADOW_STILL_BIT : 0);
   rd.fieldMesh.cull(cam);
-  for (const f of rd.frameCompute) f(enc);
+  for (const f of rd.frameCompute) if (!SKIP.has(f.skipKey ?? 'framecompute')) f(enc);
   // (round 86: the grid's chunks in view, and near it for the terrain cache)
   if (gridLive(rd)) {
     const n = rd.gridOn!.on.length;

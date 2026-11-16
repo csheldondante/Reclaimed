@@ -12,6 +12,26 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Phone idle (2026-11-15, `phone-idle`) — the atlas town's idle frame on the Pixel 9a: "very very slow. Unplayable really"
+
+The census, the ranking and the decision: docs/FRAMECOST.md "The idle frame's census". The phone's run of
+`?idlebench=1` is the user's.
+
+| id | item | size | status |
+|---|---|---|---|
+| PI-1 | The frame census: every GPU call counted per frame and system (`?census=1`), the phone's cost model applied, the user's level in four states (scripts/census.mjs), the ranking in FRAMECOST | M | done (`phone-idle`) |
+| PI-2 | The sandbox valley's timed reads ran in the town game since the switchover (wind 4 Hz, plants and water 1 Hz, ~400 KB each: 2.4 MB a second at idle); DA-B5 had them off in fortress play | S | done (`phone-idle`: off where the season loop starts; 34.7 → 0.91 KB a frame; census gate) |
+| PI-3 | The ambience hears no plants or water in the town game (birdsong, insects, running water, frogs silent, as in fortress play after DA-B5): a GPU reduction round the view (a few bytes, read after it changes) brings them back. **Sound change for the user to check** | S | open |
+| PI-4 | **Decision for the user:** 76 indirect dispatches a frame at idle (~7.6 ms on the phone by the cost model), GPU-gated by design: living graph 30, town contracts 28, terrain mesh 5, water 6 a tick, lava 5 a tick, wind 2 a tick, sway 1, coarse 0.75. The CPU can't skip them from what it knows. Pattern A (a settled signal read after events), B (direct dispatch gated in the kernel) or C (fewer encoded: latency); the bench's probes price A and B. FRAMECOST "The decision the rest needs" | L | asked |
+| PI-5 | `Integrity`'s judge reads the whole layers buffer back after every slide and edit (`ColumnCopy.readWhole`, 27–29 MB; 7–10 reads in a 10 s pan, 5 in a time-lapse): by the cost model 350+ ms each. Structural: the judge's copy by region, or the judge on the GPU (the physics redesign) | L | open |
+| PI-6 | 61 compute passes a frame at idle (~0.9 ms by the model): the sim's `dispatch` helper begins a pass a dispatch; runs of dispatches with no copy between could share a pass (the profiler's timestamps are per pass: they'd time the run) | M | open |
+| PI-7 | The units' sync reads ~1 time a frame (0.7 KB): the last per-frame read at idle (DA-B2b's watched sync). The bench's read probe prices it | M | open (with DA-B2b) |
+| PI-8 | The idle phone bench (`?idlebench=1`: the idle frame, its census, 19 systems toggled, 5 probes; scripts/idlebench.mjs headless) | M | done (`phone-idle`); the phone's run is the user's |
+| PI-9 | The level's first two frames hold the GPU 25–30 s headless on the desktop (D3D11): past main.ts's 20 s watchdog, whose "the GPU never finished" overlay comes up though the frames then run. Unknown on the phone (the bench notes the overlay if it is up). Which work it is wasn't found (one pipeline, `tiles mask`, is made in those frames). Startup, under CG28 | M | open |
+| PI-10 | 191 indirect draws a frame at idle (123 in the world pass, 68 in the shadow pass: the mesh chunks and the towns): not in the cost model; the bench's probe prices 128 of them | S | open (after the phone run) |
+| PI-11 | Hacks to fix: the bench's coarse-world toggle swaps `Coarse.stepPart` (give Coarse a `paused` flag); the census and bench scripts take down the watchdog's overlay after the first-frame stall (goes with PI-9) | S | open |
+| PI-12 | test/unit/writing-sources.test.ts fails on `fortress` 555bdca3: src/roadlab/control.ts shows text and isn't in SOURCES (RD1's file; not `phone-idle`'s) | S | open |
+
 ## Town contracts for Track B's unit minds (2026-11-10, `trackA-unitcontracts`; docs/design/TOWN_CONTRACTS.md)
 
 The coordinator's brief: three GPU contracts on the GPU towns for U2/U3 — GPU resident, no CPU readback, orders carry

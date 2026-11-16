@@ -204,6 +204,8 @@ async function main() {
   if (params.get('fieldbench') === '1') void import('./perf/fieldbench').then((m) => m.fieldBench(params));
   // (trackA-liquids, DA-P5: ?flowbench=1 — the liquid's phone bench on the flow lab: src/perf/flowbench.ts)
   if (params.get('flowbench') === '1') void import('./perf/flowbench').then((m) => m.flowBench(params));
+  // (phone-idle: ?idlebench=1 — the atlas town at idle, each system toggled, the census's counts: src/perf/idlebench.ts)
+  if (params.get('idlebench') === '1') void import('./perf/idlebench').then((m) => m.idleBench(params));
   if (pageBench === 'run') void pageBenchRun();
   if (bench === 'level')
     void benchLevel({

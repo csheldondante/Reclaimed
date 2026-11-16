@@ -2598,6 +2598,22 @@ keeps the types the tile systems use.
   `Terrain.keepFresh` points (a hero's) have their unread pages within 48 cells read before anything asks; their
   queries keep them current. (`?mirror=full`, the camera-target focus and the whole read every 8th are gone.)
 
+## The frame census (2026-11-15, branch `phone-idle`)
+
+`src/gpu/census.ts` counts every GPU call per frame and per system; off unless `?census=1` (or `?idlebench=1`), when
+`src/perf/census.ts` wraps the WebGPU prototypes with it. A system says which calls are its own by opening a scope
+round what it encodes: `const c = censusEnter('name'); …; censusLeave(c)` (one null check when off). Scopes are opened
+by `Simulation.step` (each system by its name), the level's frame (planner, stream, coarse, citygen, living, agents,
+sim, render, integrity), the renderer's encode (shore, renderprep, fieldmesh, band, rockmesh, shadow, tiles, draw) and
+the frame-compute hooks (living, towncontracts, bodymesh). A new system that encodes outside those opens its own; an
+unscoped call is counted under its pass's or buffer's label. `PHONE_MODEL` is the phone's measured cost of a call
+(docs/FRAMECOST.md); change it only with a phone measurement. The counter is in gpu/ because the engine opens scopes
+and may not import perf/.
+
+`Renderer.frameCompute` hooks carry an optional `skipKey` (`render/renderer/defs.ts` `FrameCompute`): `?skip=<key>`
+and the idle bench leave that hook out (`living`, `towncontracts`, `bodymesh`; a hook without one answers to
+`framecompute`).
+
 ## Benchmark (round 101, branch `bench`)
 
 **How to run it on the phone.** Plug the Pixel in if you can, open

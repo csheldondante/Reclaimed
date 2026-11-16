@@ -237,6 +237,7 @@ export const TRANSFERS: TransferSite[] = [
   // ---- labs, benches, tests ----
   { file: 'roadlab/grader.ts', fn: 'RoadGrader.run', n: 2, what: 'the lay’s stats, 32 B, and its two timestamps, 16 B', why: 'the road lab’s report: kernel GPU ms, intervals against K (RD1)', rate: 'edit', play: 'no' },
   { file: 'noiselab/lab.ts', fn: 'NoiseLabGpu.once', what: 'the lab window, w×h×16 B', why: 'the noise lab page', rate: 'edit', play: 'no' },
+  { file: 'perf/idlebench.ts', fn: 'readHook', what: '64 B a frame, only while its probe window is open', why: "the idle bench's probe: what a small read a frame costs on the phone (docs/FRAMECOST.md, the decision)", rate: 'frame', play: 'debug', flag: '?idlebench=1' },
   { file: 'perf/bench/device.ts', fn: 'readOnce', what: 'up to 34 MB', why: 'the bench\'s readback rate', rate: 'demand', play: 'no' },
   { file: 'perf/bench/page.ts', fn: 'GpuTimer.read', what: 'timestamps', why: 'bench timing', rate: 'demand', play: 'no' },
   { file: 'perf/bench/timestamps.ts', fn: 'read', what: '≤ 96 B timestamps', why: 'bench timing', rate: 'demand', play: 'no' },

@@ -87,7 +87,12 @@ await run({ name: 'census', kind: 'behaviour' }, async (R) => {
   await take();
   if (states.includes('idle')) {
     await R.sleep(idleS * 1000);
-    say(`idle (${idleS} s, the camera still)`, await take());
+    const idle = await take();
+    say(`idle (${idleS} s, the camera still)`, idle);
+    // (the idle gates: what a cut removed stays removed)
+    R.check("idle: the sandbox valley's timed reads don't run in the town game (DA-B5, PI-2)", !idle.systems.some((s) => s.system === 'valley-reads'), idle.systems.find((s) => s.system === 'valley-reads')?.labels);
+    R.check('idle: under 4 KB read back a frame', idle.total.readBytes < 4096, { readKB: +(idle.total.readBytes / 1024).toFixed(2), reads: idle.total.reads });
+    R.check('idle: nothing made in a frame (pipelines, bind groups, buffers, textures)', idle.total.pipelines + idle.total.bindGroups + idle.total.textures < 0.05 && idle.total.buffers < 0.2, { pipelines: idle.total.pipelines, bindGroups: idle.total.bindGroups, buffers: idle.total.buffers, textures: idle.total.textures });
   }
   if (states.includes('pan')) {
     // (the camera moved 30 cells a second for 10 s, as a held pan does: the window slides after it)

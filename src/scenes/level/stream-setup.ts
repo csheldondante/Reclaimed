@@ -27,6 +27,7 @@ import { mountTownPanel } from '../../citygen/panel';
 import { startSeasonLoop } from './season';
 import { whenPipelinesReady } from '../../gpu/pipeline';
 import { censusEnter, censusLeave } from '../../gpu/census';
+import type { FrameCompute } from '../../render/renderer';
 
 /** sleep and the streamed window, with what follows its slides */
 export function attachStream(scene: LevelScene): void {
@@ -348,6 +349,7 @@ export function attachStream(scene: LevelScene): void {
           // season loop unless ?livingpanel=1, on otherwise unless ?livingpanel=0)
           if (host.params.get('living') !== '0') {
             livingFromUrl(host.params);
+            const hooks0 = core.renderer.frameCompute.length;
             const lt = new LivingTowns({
               logs: towns.logs,
               townTime: () => towns.townTime,
@@ -362,6 +364,8 @@ export function attachStream(scene: LevelScene): void {
               dims: { w: dims.w, h: dims.h },
               world: { globals: core.world.globals, chunks: core.world.chunks, materials: core.world.materials, layers: core.world.layers, veg: core.world.veg, vegNext: core.world.vegNext },
             });
+            // (phone-idle: the hook it added named for ?skip=living and the idle bench's toggle)
+            for (const f of core.renderer.frameCompute.slice(hooks0)) f.skipKey = 'living';
             lt.debugGraph = host.params.get('livingdebug') === '1';
             scene.livingTowns = lt;
             (globalThis as { living?: LivingTowns }).living = lt;
@@ -391,12 +395,14 @@ export function attachStream(scene: LevelScene): void {
               const site = tc.townSite(i);
               return site ? (scene.livingTowns?.routeRead(site)?.buffer ?? null) : null;
             });
-            core.renderer.frameCompute.push((enc) => {
+            const tcHook: FrameCompute = (enc) => {
               const cq = censusEnter('towncontracts');
               tc.setTowns([...towns.live.values()].filter((t) => t.times), towns.townTime);
               tc.encode(enc, host.profiler?.timestamps('towncontracts'));
               censusLeave(cq);
-            });
+            };
+            tcHook.skipKey = 'towncontracts';
+            core.renderer.frameCompute.push(tcHook);
           }
           // (the first look now: the town the level opens on made before the first frames)
           towns.update(Infinity);

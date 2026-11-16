@@ -39,7 +39,9 @@ export function censusTable(r: CensusReport): Record<string, Record<string, numb
  * printed every `?censusevery=` seconds (10; 0 never).
  */
 export function startCensus(params: URLSearchParams): Census | null {
-  if (params.get('census') !== '1' || typeof GPUBuffer === 'undefined') return null;
+  // (?idlebench=1 counts too: its report carries the idle frame's census)
+  const bench = params.get('idlebench') === '1';
+  if ((params.get('census') !== '1' && !bench) || typeof GPUBuffer === 'undefined') return null;
   const c = new Census(() => performance.now());
   censusUse(c);
   installCensus(c, { GPUCommandEncoder, GPUComputePassEncoder, GPURenderPassEncoder, GPUQueue, GPUBuffer, GPUDevice }, GPUMapMode.READ);
@@ -57,7 +59,7 @@ export function startCensus(params: URLSearchParams): Census | null {
       return io.downloadJson(JSON.stringify({ kind: 'reclaimed-census', url: location.href, at: new Date().toISOString(), model: PHONE_MODEL, report: c.take(false) }, null, 1), `reclaimed-census-${io.stamp()}.json`);
     },
   };
-  const every = Number(params.get('censusevery') ?? 10);
+  const every = Number(params.get('censusevery') ?? (bench ? 0 : 10));
   if (every > 0) setInterval(() => table(), every * 1000);
   return c;
 }
