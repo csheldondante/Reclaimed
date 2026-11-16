@@ -154,6 +154,12 @@ export class TownForces {
     return { id, kind: g.kind, size: alive + g.dead, alive, dead: g.dead, arrived: g.arrived, failed: g.failed };
   }
 
+  /** (loop-skeleton) the group's living members' unit ids (the camera follows a raid: Units.observe) */
+  members(id: GroupId): UnitId[] {
+    const g = this.groups.get(id);
+    return g ? this.units.members(g.ug) : [];
+  }
+
   /** the group's living members taken out of play (raiders leaving, soldiers sent home), and the group forgotten */
   disband(id: GroupId): void {
     const g = this.groups.get(id);

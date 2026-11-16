@@ -12,6 +12,35 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Loop skeleton (2026-11-15, `loop-skeleton`, DECISIONS round 129; docs/design/LOOP_SKELETON.md)
+
+The main loop as one walk-through (`?skipmenu=1&level=atlas&town=1&loop=1&fresh=1`). Every row is a hack, a limit or a
+placeholder of the skeleton, to fix.
+
+| id | item | size | status |
+|---|---|---|---|
+| LS-0 | The skeleton: leader pick, town, petitions by named characters, commit, season, threat card, attack, world changes, end of run, new run in the same world; `season/run.ts` rules + 15 unit tests; `scripts/loopwalk.mjs` | L | done (`loop-skeleton`, round 1) |
+| LS-1 | **Stand-in mutators** (`scenes/level/loop-standin.ts` behind `season/mutation.ts`): flooded and burned are a 3 s reveal of the world's water and ignite events, not an end state; melted, buried and every far change draw nothing; nothing is put back after a reload. Merge `mutators`, import its contract, delete the stand-in, read places from its record instead of `WorldRecord.places` | M | open (waits on `origin/mutators`) |
+| LS-2 | Far places are a list on the leader and end screens; they are not on the atlas map, have no position, and "Show" works only for changes in the town. Wire the atlas map view and jump to each | M | open |
+| LS-3 | Characters' markers stand at fixed spots in the town's core (a golden-angle ring), not at their own building; near changes pick a spot by rule (lowest ring sample, east, north, west, centre), not a real district or lot | M | open |
+| LS-4 | Petition cards borrow catalog work by id (the barracks is the `keep` district with its own numbers; the forge is `workshops`), so the season summary says "The keep is finished"; tower, dam, hill props and the mining camp are `stub` work: nothing rises in the town | M | open |
+| LS-5 | The attack: the sim runs at 3× while the raiders march in; raiders in a town with no soldier left are given 5 s, then the fight is called; a 150 s wall-time cap calls it as it stands. Timers, not causes: the fight should end by its own rules (the raiders reach the stores and leave; DESIGN §19) | M | open |
+| LS-6 | A raid can start while a near change's reveal still has the camera (the war posts the raid when the season's stages land) | S | open |
+| LS-7 | Heat ray is the units' area blow plus the lightning strike as its look, 1 Magic a cast; the strike also does what lightning does to the ground. No rune drawing (a labelled note on screen); telekinesis is a disabled button ("arrives with the new physics") | M | open |
+| LS-8 | The run record is not saved: a reload starts at the leader screen in the same world; a project in flight when a run ends is dropped from the ledger (its half-built district stays) | S | open |
+| LS-9 | No cutaway on a petition: the story camera frames the spot with a plain zoom (this level makes no dither or slice) | S | open |
+| LS-10 | Leaders have no portraits ("Portrait to come"); they differ only by pools, income and suit weight (×3) | S | asked (assumption 1) |
+| LS-11 | Phone frame cost of the loop's screens not measured (DOM only: markers placed each frame by `camera.project`); no toggle diff this round | S | open |
+| LS-12 | Headless boot of the level stalls the GPU past the 20 s watchdog in some runs at 412x915 (the fatal overlay, with the town made a few seconds later); seen with `&loop=1` twice and not in one run without it — undiagnosed | S | open |
+| LS-13 | `test/unit/writing-sources.test.ts` fails on `origin/fortress` 555bdca3 as cut: `src/roadlab/control.ts` shows text and isn't placed (not this branch's change; left for its owner) | S | open |
+| LS-14 | SF-5 (the raid as a card): done in the skeleton by `WarHost.raid`; the fixed schedule still runs without `&loop=1` | S | open |
+| LS-15 | Far changes coming home are counts only: a captured town adds 40 people to the living town's commuters (not a column of refugees walking in by the road; labelled on screen), a founded camp adds 14 wagons (`people.wagons`; not checked by eye that they show without a trade route). A lost camp stops wagons and income by rule (tested), but no card loses it yet, and the smith's costs don't change | M | open |
+| LS-16 | **The raid never arrives at Muru in the real game:** with no walls every spawn point of the town's three arterials is refused by the place table (`water`, `none`) in three walk-throughs, so the attack screen shows "Raiders were seen, but they found no road into town" and the result "The town held" with no fight. Same cause would hit the fixed-schedule raid (UC-13's rule: a spawn point needs dry walkable ground on its arterial in the window). The attack's camera follow, sack timer, spell cast and losses are therefore untested in the browser | M | open (first of round 2) |
+| LS-17 | Signs (ash fall, darkness, the dead, crime) are flags shown as chips in the top bar ("Stand-in"), derived in `run.ts` `signsNow`; nothing is drawn in the town and `mutators.sign` isn't called. Only the shrine card warns and leaves signs; no rising-dead threat yet | M | open (waits on `origin/mutators`) |
+| LS-18 | A place already founded can be offered again in a later run (the mining camp card is dealt again); a run's signs end with the run | S | open |
+| LS-19 | `StoryCamera` had no part in a window slide (fixed: `shift`, wired by the loop only): the hero runs' story cameras (`story/play.ts`) don't call it | S | open |
+| LS-20 | The result title says "The town held" when no raider reached the town | S | open |
+
 ## Town contracts for Track B's unit minds (2026-11-10, `trackA-unitcontracts`; docs/design/TOWN_CONTRACTS.md)
 
 The coordinator's brief: three GPU contracts on the GPU towns for U2/U3 — GPU resident, no CPU readback, orders carry

@@ -104,6 +104,9 @@ export interface WarHost {
   /** (?man=1, off by default) after the walls, squads man the wall-walk instead of guarding the gates — it needs the
    *  walls' baked routes (trackA-wallstair) and Track B's route riding; a squad whose man order fails guards a gate */
   man?: boolean;
+  /** (loop-skeleton, BACKLOG SF-5) the raid due in a season as a card's effect says (its size; null none): given, it
+   *  replaces the fixed schedule (`firstWave`) */
+  raid?(season: number): number | null;
 }
 
 /** where a squad is sent: its post */
@@ -172,10 +175,20 @@ export class SeasonWar {
         else if (r && r.size) out.push(waveNowLine(this.wave.n, r.alive, this.wave.stage));
       }
     }
-    if (this.soon) out.push(waveSoonLine(waveSize(this.nextIndex)));
+    if (this.soon) out.push(waveSoonLine(this.soonSize));
     return out;
   }
-  private nextIndex = 0;
+  private soonSize = 0;
+
+  /** (loop-skeleton) the raid as it stands, for the screen that shows it: its size, the raiders and soldiers alive, how
+   *  far it has come; null: no raid on */
+  get fight(): { n: number; alive: number; soldiers: number; fallen: number; stage: 'coming' | 'there' | 'fighting'; failed: boolean; raiders: GroupId } | null {
+    const f = this.hooked;
+    const w = this.wave;
+    if (!f || !w) return null;
+    const soldiers = this.squads.reduce((s, g) => s + (f.report(g)?.alive ?? 0), 0);
+    return { n: w.n, alive: f.report(w.g)?.alive ?? 0, soldiers, fallen: this.fallen, stage: w.stage, failed: w.failed, raiders: w.g };
+  }
   private retry: ReturnType<typeof setTimeout> | null = null;
 
   private changed(): void {
@@ -364,7 +377,17 @@ export class SeasonWar {
     this.town = town;
     this.ring = l.built.includes('walls');
     while (this.squads.length < want) this.squads.push(f.spawnAt('soldier', TOWN_FACTION, this.raise(), SQUAD));
-    const k = waveIn(l.season, this.host.firstWave);
+    // (the raid due: a card's effect — the host's `raid` — or the fixed schedule)
+    const due = (season: number): { n: number; a: number } | null => {
+      if (this.host.raid) {
+        const n = this.host.raid(season);
+        // (from the first arterial on: the windows of spawn points are tried in turn)
+        return n === null ? null : { n, a: 0 };
+      }
+      const i = waveIn(season, this.host.firstWave);
+      return i === null ? null : { n: waveSize(i), a: i % SPAWNS };
+    };
+    const k = due(l.season);
     const raidNow = k !== null || !!this.wave;
     // (posts: with the walls, squad j guards the first standing gate from slot j on — a window of gates a call, the next
     // on orderFailed — so the squads spread over the gates there are (or mans run j, ?man=1); the last squad marches
@@ -378,14 +401,12 @@ export class SeasonWar {
     });
     // (a raid due this season: raidPlaces)
     if (k !== null && !this.wave) {
-      const a = k % SPAWNS;
-      const n = waveSize(k);
-      this.raid(f, n, a, 0);
-      console.log(`[forces] season ${l.season}: raid ${k} of ${n}, arterials from ${a}${this.ring ? '' : ' (no walls: at the keep)'}`);
+      this.raid(f, k.n, k.a, 0);
+      console.log(`[forces] season ${l.season}: a raid of ${k.n}, arterials from ${k.a}${this.ring ? '' : ' (no walls: at the keep)'}`);
     }
-    const next = waveIn(l.season + 1, this.host.firstWave);
+    const next = due(l.season + 1);
     this.soon = next !== null;
-    this.nextIndex = next ?? 0;
+    this.soonSize = next?.n ?? 0;
     this.changed();
   }
 

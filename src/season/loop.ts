@@ -29,6 +29,9 @@ export interface SeasonHost {
   /** (saving) a season's end: the loop's state written (with the town's edit log — the host's); at boot, read back */
   persist?(s: SeasonSave): Promise<void>;
   restore?(): Promise<SeasonSave | null>;
+  /** (loop-skeleton) false: no hand is dealt from the catalog — the run's petitions are the cards (season/run.ts), played
+   *  through `setLedger` */
+  dealer?: boolean;
 }
 
 /** (saving) the season loop's state: the ledger, the land, its districts and shares, what was dealt (plain data) */
@@ -125,6 +128,11 @@ export class SeasonLoop {
   }
 
   private deal(): void {
+    if (this.host.dealer === false) {
+      this.hand = [];
+      this.started.clear();
+      return;
+    }
     const { offers } = dealHand({ ledger: this.ledger, land: this.land, recent: this.recent, tune: this.host.tune });
     this.hand = offers;
     this.started.clear();
@@ -155,6 +163,15 @@ export class SeasonLoop {
     this.shares = new Map(s.shares);
     this.recent = s.recent;
     this.summary = s.summary;
+  }
+
+  /** (loop-skeleton) the ledger replaced by the run's rules (a petition played, an expiry's effect, a new run's
+   *  start): the ledger is still the one place the pools live */
+  setLedger(l: SeasonLedger): void {
+    if (this.playing) throw new Error("season: the ledger can't change while a season plays");
+    this.ledger = l;
+    this.host.life?.(townLife(l));
+    this.changed();
   }
 
   /** (scripts and shots only) pools granted */
@@ -235,18 +252,21 @@ export class SeasonLoop {
       // (trackA-forces: the season's fight settled into the pools first — the fallen, what the raiders took)
       const fight = this.war?.resolve(this.ledger) ?? null;
       if (fight) this.ledger = fight.ledger;
+      // (loop-skeleton: a project's card is the ledger's own — a petition's card needn't be in the catalog)
+      const mine = new Map(this.ledger.projects.map((p) => [p.card.id, p.card]));
+      const cardOf = (id: string) => mine.get(id) ?? card(id);
       const r = nextSeason(this.ledger);
       for (const ch of r.changes) {
-        const c = card(ch.card);
+        const c = cardOf(ch.card);
         if (ch.first && c.work.kind === 'district') await this.place(ch.project, c.work.district, c.work.parts);
         // (season life: the walls card's first season makes the ring round the town as it stands)
         if (ch.first && c.work.kind === 'walls' && this.town !== null) this.host.districts.wallStart(this.town);
       }
-      const walls = r.changes.filter((ch) => card(ch.card).work.kind === 'walls');
+      const walls = r.changes.filter((ch) => cardOf(ch.card).work.kind === 'walls');
       this.lastWalls = walls;
       this.ledger = r.ledger;
       this.last = r;
-      this.summary = summaryLine(r, card) + (fight?.line ? ` ${fight.line}` : '');
+      this.summary = summaryLine(r, cardOf) + (fight?.line ? ` ${fight.line}` : '');
       const shown: Step[] = [];
       for (const ch of r.changes) {
         const sh = this.shares.get(ch.project);

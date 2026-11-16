@@ -19,6 +19,8 @@ const SOURCES: Record<string, Source> = {
   'opps/words.ts': { who: 'words' },
   'season/words.ts': { who: 'words' },
   'season/ui.ts': { who: 'player', helpers: [{ name: 'el', arg: 2 }] },
+  'season/run-words.ts': { who: 'words' },
+  'season/run-ui.ts': { who: 'player', helpers: [{ name: 'el', arg: 2 }, { name: 'btn', arg: 0 }, { name: 'row', arg: 0 }, { name: 'row', arg: 1 }] },
   'opps/level-opps.ts': { who: 'player', helpers: [{ name: 'h', arg: 1 }, { name: 'btn', arg: 0 }] },
   'dialog/dialog.ts': { who: 'player' },
   'api/atlas-map.ts': { who: 'player' },

@@ -123,6 +123,24 @@ export class StoryCamera {
   }
   private idlers: (() => void)[] = [];
 
+  /**
+   * (loop-skeleton) The streamed window slid: everything a shot keeps in window coordinates moves by (−dx, −dy, −dz), as
+   * the camera's own target does (Camera.shift; WorldCore.onShift). Without it a move under way kept easing to where
+   * its target used to be, which slid the window again: the view ran away from the town.
+   */
+  shift(dx: number, dy: number, dz: number): void {
+    const mv = (p: V3 | null | undefined) => {
+      if (!p) return;
+      p[0] -= dx;
+      p[1] -= dy;
+      p[2] -= dz;
+    };
+    mv(this.move?.from.t);
+    mv(this.move?.to.t);
+    mv(this.home?.t);
+    mv(this.focus);
+  }
+
   /** Each frame, before drawing. */
   update(dt: number): void {
     const cam = this.camera;

@@ -25,6 +25,7 @@ import { TownContracts } from '../../towncontracts/contracts';
 import { livingFromUrl } from '../../citylife/params';
 import { mountTownPanel } from '../../citygen/panel';
 import { startSeasonLoop } from './season';
+import { startRunLoop } from './loop';
 import { whenPipelinesReady } from '../../gpu/pipeline';
 
 /** sleep and the streamed window, with what follows its slides */
@@ -339,7 +340,9 @@ export function attachStream(scene: LevelScene): void {
           }
           // (trackA-opps: the season loop on the town — docs/design/SEASON_LOOP.md; switchover: the default, ?opps=0 off)
           const opps = host.params.get('opps') !== '0';
-          if (opps) startSeasonLoop(scene, towns);
+          // (loop-skeleton: ?loop=1 — the main loop's skeleton over the season loop, docs/design/LOOP_SKELETON.md)
+          if (opps && host.params.get('loop') === '1') startRunLoop(scene, towns);
+          else if (opps) startSeasonLoop(scene, towns);
           S.onSlide.push(() => towns.slid());
           S.onWarp.push(() => towns.warped());
           // (living town, docs/design/LIVING_TOWN.md — each made town's people, its quarry and clearing, on the GPU; the

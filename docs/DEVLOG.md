@@ -23178,3 +23178,53 @@ only as far as a slot is copied whole: a pass that re-packs with ivPack keeps th
 the times (the record has them). The fold past K joins the column's two lowest intervals (townstamp's smarter fold not
 copied). Structures are placeholders: no External intervals, no collision, not in the columns. Stairs, ramps and towers
 sit on the plain side of the step only. The lab's reveal is two discrete events (archgen's decal is the live one).
+
+## 2026-11-15 — the main loop's walking skeleton, round 1 (LS-0, `loop-skeleton`; docs/design/LOOP_SKELETON.md)
+
+**Why.** The user (DECISIONS round 129): the game is "pick a leader, see their city, … characters … ask for resources
+for projects. Allocate resources. See buildings go up … Prepare for the negative opportunities. Play an actual attack
+… then see the mutations from all your choices." Every moment had to exist in order behind one link before any is made
+good. Link: `?skipmenu=1&level=atlas&town=1&loop=1&fresh=1`.
+
+**Audit (what `fortress` 555bdca3 already had).** The season loop on the atlas level's GPU town was real and on by
+default: pools and cards through the one opportunity contract (`season/ledger.ts`), the dealer, district stages as a
+time-lapse (`SeasonLoop.next`, `SimTiers.showcase`), the living town's people from the ledger, soldiers and raids
+(`season/war.ts`, `TownForces`, GPU units), saving (season record + the town's edit log in the region store). Missing:
+a leader, named characters, expiry, a threat as a card (raids were a fixed schedule: SF-5), an attack screen with a
+result, spells in a fight, any world change, a run and a world that outlives it.
+
+**What was built.** Rules, pure (`season/run.ts`, 15 unit tests in `test/unit/run.test.ts`): the run record (leader,
+hand with seasons left, deck, played, expired, spells, the raid due, the fight, changes due) and the world record
+(runs, changes each recorded once, places with owner, status and tribute). A petition is one card: cost (a town project
+committed through the ledger — people locked, goods spent — or goods spent at once), effect if agreed, effect if it
+runs out, a named presenter. The pools stay in the ledger alone: the run's rules return a new ledger and the scene
+hands it to `SeasonLoop.setLedger`. Small hooks in what existed, nothing forked: `SeasonHost.dealer` (no catalog hand),
+a project's card read from the ledger (a petition's card needn't be in the catalog), `WarHost.raid` (the raid due is
+the threat card's expiry, replacing the schedule when given), `SeasonWar.fight` and `TownForces.members` (the attack
+screen reads the raid and follows the raiders with `Units.observe`), `SeasonOpts.life` (what far places bring home is
+added to the living town's counts). Screens (`season/run-ui.ts`, words in `season/run-words.ts`) and the wiring
+(`scenes/level/loop.ts`).
+
+**Mutations.** The user then asked for more weight on them, then for instant ones that also land far away, then that
+far changes come home and are seen in the city. The loop codes against a local copy of the `mutators` branch's
+announced contract (`season/mutation.ts`) with a stand-in (`scenes/level/loop-standin.ts`): a change is applied and
+recorded the moment a card is agreed or runs out; near ones get a short reveal (flood: the water edit event; burn: the
+ignite event), far ones set a place's owner, status and tribute. Coming home, with what the living town has:
+a captured town adds 40 people to the streets (`people.commuters`), Unrest +1 and a named refugee's card; a founded
+camp adds 14 wagons (`people.wagons`) and +1 Materials a season. The refugees are more people in the streets, not a
+column walking in by the road (labelled on screen; LS-15).
+
+**A root cause found and fixed.** The first walk-through's petition shot ended two towns away. `StoryCamera` keeps a
+move's ends, its home and its focus in window coordinates and had no part in a window slide: easing toward a spot slid
+the window, the stale target then meant a place 64 columns on, which slid it again. `StoryCamera.shift` moves them
+with the window (wired to `WorldCore.onShift`); `test/unit/story-camera.test.ts` fails without it.
+
+**Walk-through** (`node scripts/loopwalk.mjs`, 412x915, on the shared runner): passes end to end — leader, town,
+petition, agreed, three seasons, the threat's countdown 3-2-1, the attack screen, result, end of run, a second run in
+the same world with its changes and places kept, the world record in the store. **What it showed wrong:** the raid
+itself does not arrive at Muru in the real game: every spawn point of the town's three arterials is refused (`none`,
+`water`), so the attack screen reports "Raiders were seen, but they found no road into town" (LS-16). The level's boot
+tripped the 20 s GPU watchdog in 3 of 6 headless runs while other agents used the GPU (LS-12). Not measured: frame
+cost on the phone (LS-11).
+
+**Limits.** In BACKLOG LS-1 … LS-16 and the assumptions list in LOOP_SKELETON.md.

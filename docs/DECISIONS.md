@@ -3,6 +3,42 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-15 — round 129: the main game loop, as one walk-through (`loop-skeleton`; docs/design/LOOP_SKELETON.md)
+
+The user's words, as passed on by the coordinator, verbatim:
+
+- The loop: "Game starts, pick a leader, see their city, zoom in on cutaways and characters so they can ask for
+  resources for projects. Allocate resources. See buildings go up and workers work. It should feel alive. Prepare for the
+  negative opportunities. Play an actual attack with the soldiers you've built and then see the mutations from all your
+  choices. Abandoned cities. Magma burned land. Floods. Buried things. Zombies. Undead cities. Totalitarian lockdowns
+  etc. Strategy loop is just preparing for the opportunity and mutating the world."
+- "Persistent world, run challenges, opportunities, world state mutators, world that changes across time technology,
+  politics, burying flooding etc".
+- Spells: "Cool spells draw runes and telikinisis or has rats etc unlocked by your choices" (read: cool spells — drawn
+  runes, telekinesis, heat rays and the like — unlocked by the choices you make).
+- Mutations: "More focus on mutations since we have so much built in that area for a reason. I want melted, flooded,
+  buried, burned etc".
+- Instant, and far away: "Try making instant mutators instead since a lot of opportunities will happen in other area of
+  the world like new mining settlements or other cities being captured or destroyed or occupied or made into vassala
+  that have to pay tribute or invoke negative opportunities".
+- Far changes come home: "the local simulation and playable battle make the instant mutations read as fully simulated
+  and the whole point is it feels like the whole world changes in reaction to your choices" and "it's what makes your
+  choices juicy. You let a city fall and you get refugees. You lose a mining colony and ship volume decreases etc. It
+  makes the choices feel real". → A rule for every far-away card: its consequence is seen in your city, not only as a
+  number.
+- Signs: "Weather effects too. Darkness and ash raining down are a great way to indicate a distant eruption. Having
+  random undead rise in the city or crime are all indicators." → Ambient signs in a place while a condition lasts, as
+  the warning before a card's countdown ends and the aftermath after it; a threat card's words point at the sign the
+  player can already see.
+
+→ What was built on them (crude, every moment in order, one link): a leader picked from three; the town; named
+characters' petitions as the opportunity cards; the cost committed from the pools; the season's time-lapse; the threat
+as a dealt card with a countdown (not the fixed raid schedule); the attack played with the soldiers built and a spell
+bar; world changes applied at once when a card is agreed or expires, near (flooded, burned, melted, buried) and far
+(a mining camp founded, a town captured or made a vassal that pays tribute and sends its own cards); the end-of-run
+list; a new run in the same saved world. The mutators themselves are the `mutators` branch's; the loop holds a stand-in
+behind their contract. The assumptions made where the design is silent are listed in LOOP_SKELETON.md for the user.
+
 ## 2026-11-11 — UC-6 (Track A, `trackA-uc6`): frozen chunks wake; the window's edge for now
 
 - Approved: a perturbed frozen chunk is **woken** to find its new steady state; its flux is no longer rescaled by its

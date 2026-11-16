@@ -9,6 +9,7 @@ import { OPP_TUNE } from '../../opps/tune';
 import { SeasonLoop } from '../../season/loop';
 import { mountSeasonUi } from '../../season/ui';
 import { TownForces } from '../../season/forces';
+import type { TownLife } from '../../season/life';
 import { FIRST_WAVE, SeasonWar } from '../../season/war';
 import { LIVING_TUNING } from '../../citylife/params';
 import type { LevelScene } from '../level';
@@ -25,7 +26,7 @@ const AIM_Y = 0.32;
 const seasonKey = (at: readonly [number, number]) => `season:${Math.round(at[0])},${Math.round(at[1])}`;
 
 /** the world store once it's open (it opens as the window's land comes in); null without one */
-async function storeReady(scene: LevelScene): Promise<RegionStore | null> {
+export async function storeReady(scene: LevelScene): Promise<RegionStore | null> {
   for (let k = 0; k < 600; k++) {
     const s = scene.stream?.store;
     if (s) return s;
@@ -34,7 +35,18 @@ async function storeReady(scene: LevelScene): Promise<RegionStore | null> {
   return null;
 }
 
-export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoop {
+/** (loop-skeleton, ?loop=1) how the main loop's skeleton runs the season loop: its own screens, its own cards (no
+ *  hand dealt from the catalog), the raid a card's effect; `ready` once the season's town is found */
+export interface SeasonOpts {
+  ui?: boolean;
+  dealer?: boolean;
+  raid?: (season: number) => number | null;
+  ready?: () => void;
+  /** the living town's counts from the ledger, with what else the game adds (refugees, a settlement's wagons) */
+  life?: (l: TownLife) => TownLife;
+}
+
+export function startSeasonLoop(scene: LevelScene, towns: FieldTowns, opts: SeasonOpts = {}): SeasonLoop {
   // (saving: the towns' edit logs kept in the world store)
   towns.logs.store = {
     get: async (k) => {
@@ -57,6 +69,7 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoo
     districts: towns,
     tiers: core.tiers,
     tune: { ...OPP_TUNE.dealer },
+    dealer: opts.dealer,
     seconds: Number(p.get('seasonsecs') ?? SEASON_SECONDS),
     look: cam
       ? (to) => {
@@ -94,7 +107,8 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoo
       }
       return null;
     },
-    life: (s) => {
+    life: (s0) => {
+      const s = opts.life?.(s0) ?? s0;
       for (const k of ['commuters', 'farmers', 'builders', 'quarrymen', 'stoneCarts', 'woodcutters', 'logCarts', 'wagons', 'ships'] as const) LIVING_TUNING.set(`people.${k}`, s[k]);
       LIVING_TUNING.set('quarry.on', s.quarry ? 1 : 0);
       LIVING_TUNING.set('forest.on', s.camp ? 1 : 0);
@@ -114,12 +128,13 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoo
       // (?man=1: squads man the wall-walk after the walls — off until the walls' baked routes and Track B's route riding)
       man: p.get('man') === '1',
       ledger: () => loop.ledger,
+      raid: opts.raid,
     });
     (globalThis as { war?: SeasonWar }).war = loop.war;
   }
   // (the sandbox's tool panel hidden: the cards are the player's only tool here)
   scene.editor?.setVisible(false);
-  scene.seasonUi = mountSeasonUi(host.ui, loop);
+  if (opts.ui !== false) scene.seasonUi = mountSeasonUi(host.ui, loop);
   (globalThis as { season?: SeasonLoop }).season = loop;
   loop.init().then(
     () => {
@@ -132,6 +147,7 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoo
         const [x, y] = aim(c);
         core.camera.target = [x, y, scene.heightAt(c[0], c[1]) ?? core.camera.target[2]];
       }
+      opts.ready?.();
     },
     (e) => {
       throw e;
