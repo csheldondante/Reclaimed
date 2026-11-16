@@ -8,9 +8,9 @@ import { POOLS, POOL_ROLE, pools } from '../../src/season/ledger';
 import { SITES } from '../../src/season/realm-templates';
 import { LEADERS } from '../../src/season/run-words';
 import { SPELL_MECH } from '../../src/living/live';
-import { LIVE_TEMPLATES } from '../../src/season/realm-events';
+import { FIRE_TEMPLATE, LIVE_TEMPLATES } from '../../src/season/realm-events';
 import { RUIN, RULES, SITE_TAGS, TIMED } from '../../src/season/realm-rules';
-import { BASE_CARD_IDS, checkPack, EVENT_ABILITIES, FAR_KINDS, GOODS, KNOWN_TAGS, LAND_KINDS, LEADER_IDS, LIVE_KINDS, PEOPLE, POOL_NAMES, SIGN_KINDS, SITE_KEYS, type Pack } from '../../src/packs/check';
+import { BASE_CARD_IDS, checkPack, EVENT_ABILITIES, FAR_KINDS, GOODS, KNOWN_TAGS, LAND_KINDS, LEADER_IDS, LIVE_AMOUNTS, LIVE_KINDS, LIVE_NEEDS, PEOPLE, POOL_NAMES, SIGN_KINDS, SITE_KEYS, type Pack } from '../../src/packs/check';
 import { loadPack, thingEntity } from '../../src/packs/load';
 import { baseCards, Table } from '../../src/table/game';
 
@@ -34,12 +34,20 @@ describe('the pack validator', () => {
     for (const t of [...Object.values(SITE_TAGS).flatMap((s) => s.is), ...RUIN, ...TIMED, ...RULES.flatMap((r) => [...r.a.tags, ...(r.b?.tags ?? [])])]) expect(KNOWN_TAGS, t).toContain(t);
     expect(EVENT_ABILITIES.map((a) => a.replace('-', '')).sort()).toEqual(Object.keys(SPELL_MECH).sort());
     expect(LIVE_KINDS).toEqual(expect.arrayContaining(LIVE_TEMPLATES.map((t) => t.play!.event!.tag)));
+    for (const t of [...LIVE_TEMPLATES, FIRE_TEMPLATE]) expect(LIVE_AMOUNTS[t.play!.event!.tag], t.id).toEqual(t.play!.event!.result.map((r) => r.as));
+    for (const r of RULES) {
+      if (typeof r.on === 'string' || !('live' in r.on)) continue;
+      const names = [...('amount' in r.effect ? [r.effect.amount] : []), ...(typeof r.per === 'object' ? [r.per.amount] : [])];
+      for (const a of names) expect(LIVE_NEEDS[r.on.live], `${r.id} changes ${a}`).toContain(a);
+    }
   });
 
   const more: [string, (p: Pack) => void, RegExp][] = [
     ['a result of the event with no if_tier', (p) => void delete card(p, 'sample-thresh-fire').if_tier!.cost, /can end in "cost", but "if_tier" has no "cost"/],
     ['a crowd with nobody tagged crowd', (p) => void p.events![0].amounts.push('crowd'), /Give a group the tag "crowd"/],
     ['an ability that does nothing in an event', (p) => void (p.events![0].abilities = ['growth-rune']), /does nothing when cast into an event yet/],
+    ['a fire event without the amount the base rules change', (p) => void (p.events![0].amounts = ['alive:bucket-line']), /A "fire" event must list the amount "burned"/],
+    ['a rule naming an amount a base event has not', (p) => void (p.rules![2].effect = { amount: 'crowd', op: 'add', n: 1 }), /A "fire" event of the base game has no amount "crowd"/],
     ['a game tag set by an effect', (p) => void card(p, 'sample-build-granary').if_taken!.push({ tag: 'worked', on: 'site:fields' }), /is set by the game itself/],
   ];
   for (const [name, breakIt, want] of more)

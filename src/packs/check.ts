@@ -148,6 +148,16 @@ export const LIVE_KINDS: readonly string[] = ['raid', 'parade', 'fire', 'rising'
 /** abilities that do something when cast into a live event (living/live.ts SPELL_MECH) */
 export const EVENT_ABILITIES: readonly string[] = ['fire', 'heat-ray', 'rain'];
 export const AMOUNTS: readonly string[] = ['crowd', 'stopped', 'burned'];
+/** the numbers each of the base game's live events has (season/realm-events.ts), which a rule on that kind may name */
+export const LIVE_AMOUNTS: Record<string, readonly string[]> = {
+  raid: ['raiders', 'alive', 'soldiers', 'fallen', 'stopped'],
+  rising: ['up'],
+  parade: ['crowd', 'marching', 'out'],
+  fire: ['lots', 'burned', 'alight'],
+  refugees: ['walking', 'carts'],
+};
+/** the numbers the base game's rules change in each kind of live event (season/realm-rules.ts) */
+export const LIVE_NEEDS: Record<string, readonly string[]> = { raid: ['stopped'], parade: ['crowd'], fire: ['burned'] };
 export const BASE_ABILITIES: readonly string[] = ['growth-rune', 'fire', 'heat-ray', 'rain'];
 export const UNIT_KINDS: readonly string[] = ['soldier', 'raider', 'worker', 'cart', 'dead'];
 /** the base game's card ids (season/realm-templates.ts): a pack's may not clash with them */
@@ -466,6 +476,8 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
         }
     });
     if (!cards.some((c) => c.live === e.id)) warn(w, 'No card starts this event.');
+    // (the base game's rules about this kind of event change these numbers: an event of the kind must have them)
+    for (const a of LIVE_NEEDS[e.tag] ?? []) if (!amounts.has(a)) err(w, `A "${e.tag}" event must list the amount "${a}": the base game's rules about ${e.tag} events change it.`);
   });
 
   // ---- abilities ----
@@ -509,6 +521,14 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     } else {
       if (on === 'turn' || !isObj(on) || typeof on.live !== 'string') err(w, 'Only a rule "on": { "live": ... } can change an event\'s amount.');
       if (!['add', 'mul'].includes(fx.op)) err(w, '"op" is "add" or "mul".');
+    }
+    // (a rule on a live event names numbers every event of that kind must have: the engine stops on a missing one)
+    if (isObj(on) && typeof on.live === 'string') {
+      const names = [...('amount' in (fx ?? {}) ? [(fx as { amount: string }).amount] : []), ...(isObj(r.per) ? [(r.per as { amount: string }).amount] : [])];
+      for (const a of names) {
+        if (LIVE_AMOUNTS[on.live] && !LIVE_AMOUNTS[on.live].includes(a)) err(w, `A "${on.live}" event of the base game has no amount "${a}". It has: ${LIVE_AMOUNTS[on.live].join(', ')}.`);
+        for (const e of events) if (e.tag === on.live && !(e.amounts ?? []).includes(a)) err(w, `It reads the amount "${a}", but the event "${e.id}" of that kind does not list it in "amounts".`);
+      }
     }
     if (r.need) pool(r.need.pool, `${w}.need`);
     if (r.per === 'b' && !r.b) err(w, '"per": "b" counts a second thing the rule does not name.');

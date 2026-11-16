@@ -1,4 +1,11 @@
-# Opportunity pack format (draft 2, 2026-11-16: matched to the loader)
+# Opportunity pack format (draft 3, 2026-11-16: everything in it is played)
+
+**Changed since draft 2.** (1) Rules fire. (2) Events play, and a card with `live` is dealt like any other.
+(3) An event has no `where`: it plays at the place of the card that starts it. (4) A `live` card needs an `if_tier`
+entry for every result its event can give; `if_taken` is not allowed on it. (5) `crowd` needs a group tagged
+`crowd`. (6) An event may list only `fire`, `heat-ray`, `rain`, and what each does to an event is fixed (below).
+(7) An effect may set `festival` and `growth-active` but no longer `sheltered`. (8) New base cards whose ids are
+taken: `raid`, `gate-parade`, `refugees-arrive`, `resettle-refugees`, `market-fire`. (9) Event kind `refugees` exists.
 
 A pack is one JSON file: a themed set of opportunity cards, the things they put in play, the synergy rules between
 those things, live events, and abilities. It is written for an outside author (a person or a model) who has not seen
@@ -9,15 +16,15 @@ the code. The loader (`src/packs/load.ts`) turns a pack into the engine's own ty
 warnings. **Try a pack:** open `table.html`, open "Packs" at the bottom, pick the file (or `table.html?pack=<url>`).
 A new run starts with the pack's cards mixed into the base cards.
 
-**What is played today, and what is only checked:**
+**What is played today** (at the card table; the 3D game does not load packs yet):
 
 | Block | Today |
 |---|---|
-| `cards` (no `live`) | Played: dealt with the base cards, cost paid, effects applied, expiry applied. |
+| `cards` | Played: dealt with the base cards, cost paid, effects applied, expiry applied. |
 | `things`, `tags` | Played: shown in play with their tags; a thing on a ruined site shows `ruined` instead. |
-| `abilities` | Played at the card table: unlocked by a card, cast on a thing in play for Magic. |
-| `rules` | Checked and loaded. They do not fire yet: the rule system is not merged into this branch (BACKLOG CT-13). |
-| `events`, cards with `live` | Checked. Not played from packs yet (BACKLOG CT-11). The card is left out and the page says so. |
+| `abilities` | Played: unlocked by a card, cast on a thing in play for Magic. |
+| `rules` | Played: they fire with the base game's rules, and the Rules list says what each lacks. |
+| `events`, cards with `live` | Played without real time: the event card shows who is in it, the rules that apply and the result it would have now; the player casts spells into it; it resolves when the season ends. |
 
 Anything a pack needs that is not in the vocabularies below goes in the pack's `wants` list, in plain words, instead
 of being invented inline. The validator rejects invented fields.
@@ -92,8 +99,8 @@ Ruin (these remove working tags): `burned`, `flooded`, `buried`, `melted`, `aban
 `lost`, shown together as `ruined`. The home town: `town`, `home`, `wall`, `garrison`, `unrest`. Far towns:
 `trade-partner`, `standing`.
 
-The game sets the existing tags itself. An effect may set only the pack's own tags and `sheltered`, `festival`,
-`growth-active`.
+The game sets the existing tags itself. An effect may set only the pack's own tags and `festival`,
+`growth-active` (both timed).
 
 ## things
 
@@ -148,7 +155,9 @@ What a card puts in play. Shown to the player as a small card with its tags.
 - `leads_to`: cards that can only appear after this one is done. Prefer state (`appears_when`) over fixed chains.
 - `live`: an event id from `events`; then `if_tier` replaces `if_taken`:
   `"if_tier": { "triumph": [...], "success": [...], "cost": [...], "failure": [...], "disaster": [...] }`
-  (any subset). Checked, not played yet.
+  There must be one entry for every result the event's `tiers` can give, each with a `say`. A `live` card has no
+  `if_taken`. Taking the card starts the event; the season's end resolves it. If the card is not taken,
+  `if_expires` applies as for any card. Its "if you take it" line is the event's `how`.
 
 **What the player reads.** The card's "if you take it" and "if you leave it" lines are written by the loader from the
 effects, so the numbers are always the real ones: your `say` sentences first, then one short sentence per effect
@@ -171,8 +180,8 @@ want them said twice. Any number you do write in `say` or `pitch` must be a numb
 - `{ "pool": "magic", "add": 2 }`: now. A whole number, not 0. `{ "pool": "might", "add": 1 }` adds 3 soldiers.
 - `{ "income": "materials", "add": 1 }`: every season from now. Goods only (`materials`, `magic`, `intel`).
 - `{ "put": "thing-id", "at": "site:fields" }` (`at` optional: the thing's own) · `{ "remove": "thing-id" }`.
-- `{ "tag": "sheltered", "on": "site:gate" }` · `{ "untag": "ash-covered", "on": "site:fields" }`. `on`: a site
-  or `"town"`. Only the pack's own tags and `sheltered`, `festival`, `growth-active`.
+- `{ "tag": "ash-covered", "on": "site:fields" }` · `{ "untag": "ash-covered", "on": "site:fields" }`. `on`: a
+  site or `"town"`. Only the pack's own tags and `festival`, `growth-active`.
 - `{ "mutate": "flooded", "where": "site:dam" }`: a real change to the land. Kinds: `flooded`, `burned`, `melted`,
   `buried`, `dried`, `withered`, `greened`. `where`: a site, `"town"` or `"far:neighbour"`. The first four ruin a
   site: it shows `ruined` and things on it lose their tags.
@@ -223,7 +232,6 @@ pack's own.
 ```json
 { "id": "volcano-ember-rain", "tag": "fire",
   "title": "Embers on the thatch", "how": "Call rain on the flames.",
-  "where": "site:quarter",
   "groups": [ { "who": "worker", "count": 6, "tags": ["bucket-line"], "from": "site:river", "order": "go",
                 "formation": "line", "to": "event" } ],
   "hazard": { "kind": "fire", "points": 5, "spread": 30 },
@@ -235,22 +243,33 @@ pack's own.
              { "tier": "disaster" } ] }
 ```
 
-- `tag` is what rules trigger on. Existing kinds: `raid`, `parade`, `fire`, `rising` (the dead). A new kind is
-  allowed if it can be told with the fields here; otherwise put it in `wants`.
+- An event plays at the place of the card that starts it (`presenter.at`). It has no place of its own.
+- `tag` is what rules trigger on. Existing kinds: `raid`, `parade`, `fire`, `rising` (the dead), `refugees`. A new
+  kind is allowed if it can be told with the fields here; otherwise put it in `wants`.
+- How it ends when nobody plays it in real time (the card table, and the season's end in the 3D game): every group
+  with the order `go` arrives; foes (`raider`, `dead`) stay up; every lot of a fire burns. Each cast then changes
+  that: `fire` puts down 1 foe, `heat-ray` 2 foes, `rain` puts out 2 burning lots. Each cast costs 1 Magic. Then the
+  rules `on: { "live": tag }` change the amounts, and the first `tiers` row that holds is the result.
+- `abilities`: which of `fire`, `heat-ray`, `rain` may be cast into it. Nothing else can be cast into an event yet.
+- An event needs at least one group or a hazard. A group needs a whole-number `count` and at least one tag.
 - `groups`: `who` is `soldier`, `raider`, `worker`, `cart`, `dead`; `order` is `go`, `guard`, `attack`;
   `formation` is `column`, `line`, `loose`; `from` and `to` are sites, `"gate"`, `"road"` (off the map edge) or
   `"event"`.
 - `hazard`: only `fire`.
-- `amounts`: numbers the event ends with, which rules can change and tiers read: `crowd` (who came to watch),
-  `stopped` (attackers stopped), `burned` (lots burned; needs a fire hazard), `alive:<group tag>`,
-  `dead:<group tag>` for a tag one of the event's groups has.
+- `amounts`: numbers the event ends with, which rules can change and tiers read: `crowd` (the people of groups
+  tagged `crowd` who arrived; give such a group the order `go`), `stopped` (starts at 0; only rules add to it),
+  `burned` (lots burned; needs a fire hazard), `alive:<group tag>`, `dead:<group tag>` for a tag one of the
+  event's groups has. A rule may only change an amount the event lists. The base game's rules change `burned` in
+  every `fire` event, `stopped` in every `raid` and `crowd` in every `parade`, so an event of one of those kinds
+  must list that amount. A pack rule on a base kind may name only that kind's numbers: raid `raiders`, `alive`,
+  `soldiers`, `fallen`, `stopped`; parade `crowd`, `marching`, `out`; fire `lots`, `burned`, `alight`; rising `up`.
 - `tiers`: the first row whose `when` holds is the result. Each test is `{ "amount": ..., "lte" | "gte": n }`. The
   last row has no `when`. The validator refuses a row that can never be reached.
 - `seconds` optional; with none it runs until it ends by itself or the season does.
 
 ## abilities
 
-What the player casts on a thing in play (and, later, in the live city).
+What the player casts on a thing in play. (Into an event only the three existing spells can be cast: see events.)
 
 ```json
 { "id": "volcano-ash-ward", "name": "Ash ward", "cost": { "magic": 1 },
@@ -263,8 +282,9 @@ What the player casts on a thing in play (and, later, in the live city).
 - `target.tags`: a thing in play must carry all of them to be a legal target. Ruined things are never targets.
 - `effect`: `tag` or `untag` with `"on": "target"`, or `pool`. Nothing else yet.
 - A pack ability must be unlocked by a card (`{ "unlock": "id" }`).
-- Existing abilities, which an event may list and which must not be declared again: `growth-rune`, `fire`,
-  `heat-ray`, `rain`. Not built: `gust`, `telekinesis`. Say what should be seen in `look`.
+- Existing abilities, which must not be declared again: `growth-rune` (on a field: it is `growth-active` this
+  season), `fire`, `rain` (every leader has these three), `heat-ray` (unlocked by a card). Each costs 1 Magic.
+  Not built: `gust`, `telekinesis`. Say what should be seen in `look`.
 
 ## Rules for the writing
 
