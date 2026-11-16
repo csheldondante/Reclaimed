@@ -1,4 +1,11 @@
-# Opportunity pack format (draft 3, 2026-11-16: everything in it is played)
+# Opportunity pack format (draft 4, 2026-11-16: several packs together)
+
+**Changed since draft 3.** (1) Several packs load together; `packcheck` gives a TOGETHER report; shared custom tags
+take `"shared": true` (see "Several packs together"). (2) The event names a rule can wait for are a fixed, tested
+list; any other name is refused. (3) New words: a thing's `upkeep`, a card's `weight`, an ability's `in_event`.
+(4) A rule on another pack's event kind is a LOOK in its own file and checked in the TOGETHER report.
+(5) Still not built: `arrive` with a count or of anything but refugees; far places other than the neighbour;
+`units`; `offer`; a pack tag that ruins; choices with more than take or leave.
 
 **Changed since draft 2.** (1) Rules fire. (2) Events play, and a card with `live` is dealt like any other.
 (3) An event has no `where`: it plays at the place of the card that starts it. (4) A `live` card needs an `if_tier`
@@ -119,7 +126,10 @@ What a card puts in play. Shown to the player as a small card with its tags.
   `granary` too, and a policy `at: "town"` gives the home town its tags. So a rule can ask for one thing with
   `["field", "granary"]`, or `["home", "night-watch"]`.
 - At least one tag. `capacity`: a number, kept for later (nothing reads it yet).
-- Not supported yet: `upkeep` (a cost each season). Put the cost on the card.
+- `"upkeep": { "materials": 2 }`: goods taken each season while it is in play (`materials`, `magic`, `intel`; not
+  people). It shows in the Rules list as "Upkeep: <name>" and in the log each season. If the pool is empty nothing
+  is taken and nothing else happens: an unpaid thing still stands. A number in the thing's `text` must be a number
+  of its upkeep or capacity.
 
 ## cards
 
@@ -151,6 +161,9 @@ What a card puts in play. Shown to the player as a small card with its tags.
 - `threat: true`: it is on the board whatever the player holds and its `if_expires` is the bad outcome;
   `offer_seasons` (default 3) is the countdown. Only one threat stands at a time, so a threat may wait its turn.
 - `once`: default true. `false` lets the card come back after a rest of 3 seasons.
+- `"weight": 1` to `5` (optional): how soon the card comes up among the cards whose conditions hold and whose site
+  is free. 5 comes up as soon as it can; 3 is a middling base card; 1 comes up when little else fits. It is not a
+  chance: nothing is random. For a threat it orders the threats that are waiting.
 - `if_expires` is required for a threat and expected for every card: passing should cost or risk something.
 - `leads_to`: cards that can only appear after this one is done. Prefer state (`appears_when`) over fixed chains.
 - `live`: an event id from `events`; then `if_tier` replaces `if_taken`:
@@ -289,9 +302,16 @@ What the player casts on a thing in play. (Into an event only the three existing
 ```
 
 - `cost`: Magic only, a whole number.
-- `target.tags`: a thing in play must carry all of them to be a legal target. Ruined things are never targets.
+- `target.tags`: a thing in play must carry all of them to be a legal target. Ruined things are never targets. The
+  thing's OWN tags count, not tags lent to it: `["field"]` aims at the east fields, `["granary"]` at the granary
+  itself and not at the fields it stands on.
 - `effect`: `tag` or `untag` with `"on": "target"`, or `pool`. Nothing else yet.
-- A pack ability must be unlocked by a card (`{ "unlock": "id" }`).
+- **Into a live event** (in place of, or beside, `target` + `effect`):
+  `"in_event": { "kinds": ["raid"], "kills": 3 }` or `{ "kinds": ["fire"], "douses": 3 }`. Each cast puts down that
+  many foes, or puts out that many burning lots, in any live event of one of those kinds, the base game's too.
+  Exactly one of `kills` and `douses`. Fire does 1, Heat ray 2, Rain 2: above 3 the validator says to look.
+- A pack ability must be unlocked by a card (`{ "unlock": "id" }`). It is the player's for that run; it is written
+  in the run's history, so a saved run keeps it.
 - Existing abilities, which must not be declared again: `growth-rune` (on a field: it is `growth-active` this
   season), `fire`, `rain` (every leader has these three), `heat-ray` (unlocked by a card). Each costs 1 Magic.
   Not built: `gust`, `telekinesis`. Say what should be seen in `look`.

@@ -23,6 +23,16 @@ const SIGN_WORD: Record<string, string> = { ashfall: 'Ash falls on the town', da
 const SITE_NAME: Record<string, string> = { keep: 'the keep yard', forge: 'the smithy', quarter: 'the weavers\' street', fields: 'the east fields', market: 'the market', gate: 'the road gate', tower: 'the old tower', dam: 'the old dam', shrine: 'the mountain shrine', mill: 'the mill street', wall: 'the town\'s edge', watch: 'the watch post', harbour: 'the waterside', quarry: 'the quarry hill', woods: 'the woods', river: 'the river crossing', road: 'the trade road', pit: 'the ore yard', wagons: 'the wagon yard', graves: 'the old burial ground' };
 const BASE_SPELL: Record<string, string> = { 'heat-ray': 'heatray', fire: 'fire', rain: 'rain', 'growth-rune': 'growth' };
 
+/** the tag only a pack's thing itself carries (never lent, never shown): its upkeep rule reads it */
+export const IS = 'is:';
+const isTag = (thing: string): string => `${IS}${thing}`;
+/** what a cast of each pack ability does to a live event (as living/live.ts SPELL_MECH for the spells) */
+export function packMech(packs: readonly LoadedPack[]): Record<string, { kills?: number; douses?: number }> {
+  return Object.fromEntries(packs.flatMap((p) => p.abilities).filter((a) => !!a.in_event).map((a) => [a.id, { ...(a.in_event!.kills ? { kills: a.in_event!.kills } : {}), ...(a.in_event!.douses ? { douses: a.in_event!.douses } : {}) }]));
+}
+/** the fact event that says a pack's ability is the player's (this run's history has it: saved with the world) */
+export const UNLOCKED = 'ability-unlocked:';
+
 /** the id of a pack's thing in the fact world */
 export const thingEntity = (id: string): EntityId => `thing:${id}`;
 /** the fact events a pack card leaves: resolved, run out */
@@ -52,8 +62,8 @@ export interface PackHost {
   home(): EntityId;
   /** the tags on the home town and on each of its sites now */
   tags(where: 'town' | 'site'): string[][];
-  /** an ability of a pack is the player's from now on */
-  unlock(id: string): void;
+  /** the history's turn of the run's first season (an ability unlocked in an earlier run is not this run's) */
+  began(): number;
 }
 
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
@@ -184,7 +194,8 @@ function template(c: PackCard, p: Pack, after: string[], boost: boolean): Templa
     at: 'site',
     // (the dealer's score parts: as the base game's hazards and mid-value projects; `boost`: above them, so a pack
     // being tried comes up early)
-    ...(c.threat ? { threat: true, parts: { urgency: boost ? 0.9 : 0.7 } } : { parts: { ev: boost ? 0.95 : 0.5 } }),
+    // (`weight` 1..5 is the card's own say, with or without the boost: 0.2 a step, 3 a middling base card)
+    ...(c.threat ? { threat: true, parts: { urgency: c.weight ? 0.4 + 0.1 * c.weight : boost ? 0.9 : 0.7 } } : { parts: { ev: c.weight ? 0.2 * c.weight - 0.1 : boost ? 0.95 : 0.5 } }),
     live: true,
     requires: { agents, goods },
     turns: c.build_seasons ?? 1,
@@ -209,8 +220,13 @@ export function loadPack(p: Pack, base: { cards?: readonly string[]; rules?: rea
     const after = (p.cards ?? []).filter((o) => o.leads_to?.includes(c.id)).map((o) => o.id);
     templates.push(template(c, p, after, !!base.boost));
   }
+  // (a thing's upkeep is a rule like any other: each season it is in play, so much of a pool goes — and the rules
+  // list shows it. The thing alone carries the tag the rule reads: it is not lent to its place)
+  const upkeep: RuleDef[] = (p.things ?? []).flatMap((t) =>
+    Object.entries(t.upkeep ?? {}).map(([pool, n]): RuleDef => ({ id: `upkeep:${t.id}:${pool}`, name: `Upkeep: ${t.name}`, on: 'turn', a: { tags: [isTag(t.id)] }, effect: { pool, n: -n }, why: `{a} cost you {n} ${POOL_WORD[pool]}` })),
+  );
   // (a pack's rules are the engine's RuleDef as written: the validator has checked their shape)
-  return { id: p.pack.id, name: p.pack.name, templates, rules: (p.rules ?? []) as unknown as RuleDef[], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], left, problems };
+  return { id: p.pack.id, name: p.pack.name, templates, rules: [...((p.rules ?? []) as unknown as RuleDef[]), ...upkeep], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], left, problems };
 }
 
 /** a pack's place word as a live event's place: a site, the gate or the road the event's column came by, or the
@@ -271,6 +287,7 @@ const inForce = (w: FactWorld, v: unknown): boolean => v === true || (typeof v =
 
 export function packHelpers(packs: readonly LoadedPack[], host: PackHost): Record<string, Helper> {
   const things = new Map(packs.flatMap((p) => p.things.map((t) => [t.id, t] as const)));
+  const abilityName = (id: string): string => packs.flatMap((p) => p.abilities).find((a) => a.id === id)?.name ?? id;
   return {
     packPool: { pred: (_c, a) => host.pool(String(a[0])) >= Number(a[1]) && host.pool(String(a[0])) <= Number(a[2]) },
     packSeason: { pred: (_c, a) => host.season() >= Number(a[0]) },
@@ -307,7 +324,8 @@ export function packHelpers(packs: readonly LoadedPack[], host: PackHost): Recor
       },
     },
     packUntag: { effect: (c, a) => void c.w.facts.dropTag(idOf(c.b, a[0]), 'condition', String(a[1])) },
-    packUnlock: { effect: (c, a) => void (c.dry || host.unlock(String(a[0]))) },
+    // (written in the history, so the run's save has it: Table.unlocked reads this run's events)
+    packUnlock: { effect: (c, a) => void (c.w.facts.events({ kind: `${UNLOCKED}${String(a[0])}` }).some((e) => e.turn >= host.began()) || c.w.facts.record({ kind: `${UNLOCKED}${String(a[0])}`, by: ['player'], to: [host.home()], note: `you learned ${abilityName(String(a[0]))}` })) },
   };
 }
 
@@ -343,7 +361,7 @@ export function withPackThings(w: FactWorld, packs: readonly LoadedPack[], base:
   for (const t of packThings(w, packs)) {
     const place = t.site ? base.find((x) => x.id === t.site) : town;
     const ruined = !!place?.tags.includes('ruined');
-    out.push({ id: t.id, name: t.def.name, tags: ruined ? ['ruined'] : [...t.def.tags, ...packTagsOn(w, t.id, packs)], at: place?.at ?? null, town: home });
+    out.push({ id: t.id, name: t.def.name, tags: [...(ruined ? ['ruined'] : [...t.def.tags, ...packTagsOn(w, t.id, packs)]), isTag(t.def.id)], at: place?.at ?? null, town: home });
   }
   return out;
 }
@@ -365,7 +383,7 @@ export function castAbility(w: FactWorld, a: PackAbility, target: EntityId, pack
   const e = w.facts.entity(target);
   if (!e) throw new Error(`pack: no thing ${target} to cast ${a.id} on`);
   const gains: Record<string, number> = {};
-  for (const fx of a.effect) {
+  for (const fx of a.effect ?? []) {
     if ('tag' in fx) w.facts.setTag(target, 'condition', fx.tag, tagValue(w, timed.includes(fx.tag)), `ability:${a.id}`);
     else if ('untag' in fx) w.facts.dropTag(target, 'condition', fx.untag);
     else if ('pool' in fx) gains[fx.pool] = (gains[fx.pool] ?? 0) + fx.add;

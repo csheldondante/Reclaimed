@@ -20,7 +20,7 @@ import { CATALOG } from '../season/catalog';
 import { FIRE_TEMPLATE } from '../season/realm-events';
 import { projectTemplate, SITES, WORLD_TEMPLATES, type SiteKey } from '../season/realm-templates';
 import { checkTogether, reportText, type Pack, type PackAbility, type Problem } from '../packs/check';
-import { castAbility, lentTo, loadPack, packHelpers, packThings, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
+import { castAbility, IS, lentTo, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
 import { BASIC_SPELLS, Realm, RUN_SEASONS, SPELL_COST, type SpellId } from '../season/realm';
 import { LEADERS, leader as leaderOf, resultTitle, SPELL_NAME, threatText, costText } from '../season/run-words';
 import { ROW_H } from '../world/lattice';
@@ -206,8 +206,12 @@ export class Table {
   readonly packs: LoadedPack[];
   /** what the validator says to look at over the loaded packs together */
   readonly together: Problem[];
-  /** pack abilities the run has unlocked (CT-12: not yet part of the Realm's saved run) */
-  readonly unlocked: string[] = [];
+  /** pack abilities the run has unlocked: read from this run's history (an `ability-unlocked:<id>` event), so they are
+   *  saved with the world and the run */
+  get unlocked(): string[] {
+    const known = new Set(this.packs.flatMap((p) => p.abilities.map((a) => a.id)));
+    return [...new Set(this.realm.history().filter((e) => e.kind.startsWith(UNLOCKED)).map((e) => e.kind.slice(UNLOCKED.length)))].filter((id) => known.has(id));
+  }
 
   constructor(readonly o: TableOptions) {
     this.seed = o.seed;
@@ -231,7 +235,7 @@ export class Table {
       leader: () => who.id,
       home: () => HOME,
       tags: (where) => (made ? made.things().filter((t) => t.town === HOME && (where === 'town') === (t.id === HOME)).map((t) => [...t.tags]) : []),
-      unlock: (id) => void (this.unlocked.includes(id) || this.unlocked.push(id)),
+      began: () => (made ? made.w.turn - made.season + 1 : 0),
     };
     this.realm = new Realm({
       world,
@@ -358,7 +362,7 @@ export class Table {
       const place = t.id === HOME ? W.TOWN : t.town !== HOME ? W.FAR : pack ? (pack.site ? r.w.name(pack.site) : W.TOWN) : t.name;
       // (a place with nothing on it: what it is, and standing)
       const plain = !!site && !pack && !t.tags.some((x) => !['standing', ...(site ? siteIs(r, t.id) : [])].includes(x));
-      return { id: t.id, name: t.name, place, tags: [...t.tags], lent, ruined: t.tags.includes('ruined'), plain, text: pack?.def.text ?? '' };
+      return { id: t.id, name: t.name, place, tags: t.tags.filter((x) => !x.startsWith(IS)), lent, ruined: t.tags.includes('ruined'), plain, text: pack?.def.text ?? '' };
     });
   }
 
@@ -373,7 +377,11 @@ export class Table {
   }
   /** a live event's state as it would end now: what the Realm was last told */
   private stateOf(o: Offer): LiveState {
-    return mechState(this.realm.liveOf(o)!, this.realm.runNumbers(), this.casts.get(o.id) ?? {});
+    return mechState(this.realm.liveOf(o)!, this.realm.runNumbers(), this.casts.get(o.id) ?? {}, this.mech);
+  }
+  /** what a cast of each spell and each pack ability does to a live event */
+  private get mech(): Record<string, { kills?: number; douses?: number }> {
+    return { ...SPELL_MECH, ...packMech(this.packs) };
   }
   private tell(o: Offer): void {
     this.realm.tellLive(o.id, { state: this.stateOf(o) });
@@ -391,10 +399,15 @@ export class Table {
       const targets = s === 'growth' ? things.filter((t) => !t.ruined && t.tags.includes('field') && !t.tags.includes('growth-active') && !!siteKey(r, t.id)).map((t) => t.id) : live.filter((o) => fits(r.liveOf(o)!, s)).map((o) => o.id);
       return { id: SPELL_ID + s, name: SPELL_NAME[s], cost: SPELL_COST[s], text: W.SPELL_TEXT[s], targets, can: magic >= SPELL_COST[s] };
     });
+    const mech = this.mech;
     const mine = this.unlocked.map((id): AbilityView => {
       const a = this.ability(id);
       const cost = a.cost.magic ?? 0;
-      return { id, name: a.name, cost, text: a.text, targets: things.filter((t) => !t.ruined && a.target!.tags.every((x) => t.tags.includes(x) && !t.lent.includes(x))).map((t) => t.id), can: magic >= cost };
+      const onThings = a.target ? things.filter((t) => !t.ruined && a.target!.tags.every((x) => t.tags.includes(x) && !t.lent.includes(x))).map((t) => t.id) : [];
+      // (a pack ability with `in_event`: into a live event of one of its kinds that lists it)
+      // (its own `kinds` are its leave: it need not be on the event's list of spells)
+      const onEvents = a.in_event ? live.filter((o) => a.in_event!.kinds.includes(r.liveOf(o)!.tag) && fits({ ...r.liveOf(o)!, spells: ['known'] }, id, mech)).map((o) => o.id) : [];
+      return { id, name: a.name, cost, text: a.text, targets: [...onThings, ...onEvents], can: magic >= cost };
     });
     return [...base, ...mine];
   }
@@ -403,7 +416,7 @@ export class Table {
    *  still burning for one that puts fire out) */
   useful(ability: string, event: string): boolean {
     const o = this.realm.liveRunning().find((x) => x.id === event);
-    const m = SPELL_MECH[ability.slice(SPELL_ID.length)];
+    const m = this.mech[ability.startsWith(SPELL_ID) ? ability.slice(SPELL_ID.length) : ability];
     if (!o || !m) return false;
     const s = this.stateOf(o);
     const def = this.realm.liveOf(o)!;
@@ -429,7 +442,7 @@ export class Table {
         groups: def.groups.map((g) => ({ who: W.UNIT_NAME[g.kind] ?? g.kind, n: s.groups[g.id].made, alive: s.groups[g.id].alive, side: g.side })),
         hazard: def.hazard ? { points: s.points, burned: s.burned } : null,
         spells: known.filter((x) => fits(def, x)).map((x) => SPELL_NAME[x]),
-        casts: Object.entries(casts).map(([k, n]) => ({ name: SPELL_NAME[k as SpellId] ?? k, n })),
+        casts: Object.entries(casts).map(([k, n]) => ({ name: SPELL_NAME[k as SpellId] ?? this.packs.flatMap((x) => x.abilities).find((a) => a.id === k)?.name ?? k, n })),
         rules: p.hits.map((h) => `${h.name}. ${h.text}.`),
         tier: p.tier,
         outcome: p.text,
@@ -450,7 +463,7 @@ export class Table {
   /** the tags on things in play now, each with how many things carry it */
   tagsInPlay(): { tag: string; n: number }[] {
     const count = new Map<string, number>();
-    for (const t of this.realm.things()) for (const x of t.tags) count.set(x, (count.get(x) ?? 0) + 1);
+    for (const t of this.realm.things()) for (const x of t.tags) if (!x.startsWith(IS)) count.set(x, (count.get(x) ?? 0) + 1);
     return [...count].map(([tag, n]) => ({ tag, n })).sort((a, b) => (a.tag < b.tag ? -1 : 1));
   }
   /** synergy rules fired this run: a rule's name → times */
@@ -538,12 +551,20 @@ export class Table {
         this.casts.set(event.id, c);
         this.tell(event);
       }
+    } else if (event) {
+      // (a pack ability cast into a live event: its Magic spent, the cast logged, the Realm told how the event stands)
+      r.ledger = lose(r.ledger, { magic: v.cost });
+      r.w.facts.record({ kind: 'ability-cast', by: ['player'], to: [event.place], note: W.castNote(v.name, on) });
+      const c = this.casts.get(event.id) ?? {};
+      c[id] = (c[id] ?? 0) + 1;
+      this.casts.set(event.id, c);
+      this.tell(event);
     } else {
       let l = lose(r.ledger, { magic: v.cost });
       const gains = castAbility(r.w, this.ability(id), target, this.packs);
       for (const [k, n] of Object.entries(gains) as [Pool, number][]) l = k === 'unrest' ? lose(l, { unrest: n }) : n > 0 ? grant(l, { [k]: n }) : lose(l, { [k]: -n });
       r.ledger = l;
-      r.w.facts.record({ kind: 'ability-cast', by: ['player'], to: [event ? event.place : target], note: W.castNote(v.name, on) });
+      r.w.facts.record({ kind: 'ability-cast', by: ['player'], to: [target], note: W.castNote(v.name, on) });
     }
     this.spent += v.cost;
     this.moves.push(`cast ${id} ${event ? event.template : target}`);
@@ -609,8 +630,8 @@ export class Table {
 /** a live event's spell list allows a spell ('known': every spell the run has) */
 const allows = (list: readonly string[], spell: string): boolean => list.includes(spell) || list.includes('known');
 /** a spell is allowed in a live event and has something there to act on: foes to put down, or a fire to put out */
-function fits(def: LiveDef, spell: string): boolean {
-  const m = SPELL_MECH[spell];
+function fits(def: LiveDef, spell: string, mech: Record<string, { kills?: number; douses?: number }> = SPELL_MECH): boolean {
+  const m = mech[spell];
   return !!m && allows(def.spells ?? [], spell) && ((!!m.kills && def.groups.some((g) => g.side === 'foe')) || (!!m.douses && !!def.hazard));
 }
 /** the site of the home town an entity is (null: none) */

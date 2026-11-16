@@ -273,15 +273,15 @@ export const SPELL_MECH: Record<string, { kills?: number; douses?: number }> = {
  * foes put down in the groups' order, fire points put out. Pure: the same casts give the same state. The card table
  * and the bots resolve events from this (`Realm.tellLive` then `finishLive`); the 3D game tells its own counts.
  */
-export function mechState(def: LiveDef, run: LiveVars, casts: Record<string, number> = {}): LiveState {
+export function mechState(def: LiveDef, run: LiveVars, casts: Record<string, number> = {}, mech: Record<string, { kills?: number; douses?: number }> = SPELL_MECH): LiveState {
   const s = idleState(def, run);
   for (const g of def.groups) if (g.order?.kind === 'go') s.groups[g.id].arrived = true;
   s.casts = { ...casts };
   let kills = 0;
   let douses = 0;
   for (const [spell, n] of Object.entries(casts)) {
-    kills += (SPELL_MECH[spell]?.kills ?? 0) * n;
-    douses += (SPELL_MECH[spell]?.douses ?? 0) * n;
+    kills += (mech[spell]?.kills ?? 0) * n;
+    douses += (mech[spell]?.douses ?? 0) * n;
   }
   for (const g of def.groups) {
     if (g.side !== 'foe' || kills <= 0) continue;

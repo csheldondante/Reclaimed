@@ -45,7 +45,7 @@ describe('the pack validator', () => {
   const more: [string, (p: Pack) => void, RegExp][] = [
     ['a result of the event with no if_tier', (p) => void delete card(p, 'sample-thresh-fire').if_tier!.cost, /can end in "cost", but "if_tier" has no "cost"/],
     ['a crowd with nobody tagged crowd', (p) => void p.events![0].amounts.push('crowd'), /Give a group the tag "crowd"/],
-    ['an ability that does nothing in an event', (p) => void (p.events![0].abilities = ['growth-rune']), /does nothing when cast into an event yet/],
+    ['an ability that does nothing in an event', (p) => void (p.events![0].abilities = ['growth-rune']), /does nothing when cast into an event/],
     ['a fire event without the amount the base rules change', (p) => void (p.events![0].amounts = ['alive:bucket-line']), /A "fire" event must list the amount "burned"/],
     ['a rule naming an amount a base event has not', (p) => void (p.rules![2].effect = { amount: 'crowd', op: 'add', n: 1 }), /A "fire" event of the base game has no amount "crowd"/],
     ['a game tag set by an effect', (p) => void card(p, 'sample-build-granary').if_taken!.push({ tag: 'worked', on: 'site:fields' }), /is set by the game itself/],

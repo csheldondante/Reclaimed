@@ -50,6 +50,8 @@ export interface PackThing {
   tags: string[];
   text: string;
   capacity?: number;
+  /** goods taken each season while it is in play (materials, magic, intel) */
+  upkeep?: Record<string, number>;
   art?: string;
 }
 export interface PackCard {
@@ -68,6 +70,8 @@ export interface PackCard {
   if_tier?: Partial<Record<TierName, PackEffect[]>>;
   live?: string | null;
   leads_to?: string[];
+  /** 1 to 5: how soon it comes up among the cards whose conditions hold (3: as a middling base card) */
+  weight?: number;
   art?: string;
 }
 /** a rule: the engine's own RuleDef (living/rules.ts), unchanged */
@@ -109,7 +113,9 @@ export interface PackAbility {
   name: string;
   cost: Record<string, number>;
   target?: { tags: string[] };
-  effect: PackEffect[];
+  effect?: PackEffect[];
+  /** cast into a live event of one of these kinds: each cast puts down so many foes, or puts out so many burning lots */
+  in_event?: { kinds: string[]; kills?: number; douses?: number };
   text: string;
   look?: string;
 }
@@ -266,7 +272,11 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     place(t.at, w, { town: true });
     if (!Array.isArray(t.tags) || !t.tags.length) err(w, 'A thing needs at least one tag, or no rule can read it.');
     for (const x of t.tags ?? []) needTag(x, w, 'made');
-    if ('upkeep' in t) err(w, `"upkeep" is ${NOT_YET.upkeep}.`);
+    for (const [k, n] of Object.entries(t.upkeep ?? {})) {
+      if (!GOODS.includes(k)) err(w, `Upkeep can be paid in ${GOODS.join(', ')} only. It asks for ${k}.`);
+      if (!Number.isInteger(n) || n < 1) err(w, `Upkeep is a whole number, 1 or more. ${k} is ${JSON.stringify(n)}.`);
+    }
+    for (const n of numbersIn(t.text ?? '')) if (!numbersOf([t.upkeep, t.capacity]).includes(n)) err(w, `The text says ${n}, but the thing's upkeep and capacity have no such number.`);
   });
 
   // ---- effects ----
@@ -373,6 +383,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) err(`${w}.cost`, `A cost is a whole number, 1 or more. ${k} is ${JSON.stringify(n)}.`);
     }
     if (c.build_seasons !== undefined && (!Number.isInteger(c.build_seasons) || c.build_seasons < 1 || c.build_seasons > 4)) err(w, '"build_seasons" is a whole number from 1 to 4.');
+    if (c.weight !== undefined && (!Number.isInteger(c.weight) || c.weight < 1 || c.weight > 5)) err(w, '"weight" is a whole number from 1 (comes up late, when little else fits) to 5 (comes up as soon as it can).');
     if (c.offer_seasons !== undefined && (!Number.isInteger(c.offer_seasons) || c.offer_seasons < 1)) err(w, '"offer_seasons" is a whole number, 1 or more.');
     if (c.live) {
       if (!eventIds.has(c.live)) err(w, `"live" names the event "${c.live}", which is not in the pack's "events".`);
@@ -457,7 +468,13 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       for (const k of ['from', 'to'] as const) if (g[k] !== undefined && !['gate', 'road', 'event'].includes(g[k]!) && !siteOf(g[k])) err(w, `A group's "${k}" is a site ("site:<name>"), "gate", "road" or "event". It is ${JSON.stringify(g[k])}.`);
     }
     if (e.hazard && e.hazard.kind !== 'fire') err(w, `The hazard "${e.hazard.kind}" is not supported yet. Only "fire" exists.`);
-    for (const a of e.abilities ?? []) if (!EVENT_ABILITIES.includes(a)) err(w, abilityIds.has(a) ? `The ability "${a}" does nothing when cast into an event yet. The ones that do: ${EVENT_ABILITIES.join(', ')}.` : `Unknown ability "${a}". The ones that can be cast into an event: ${EVENT_ABILITIES.join(', ')}.`);
+    for (const a of e.abilities ?? []) {
+      if (EVENT_ABILITIES.includes(a)) continue;
+      const mine = abilities.find((x) => x.id === a);
+      if (!mine) err(w, abilityIds.has(a) ? `The ability "${a}" does nothing when cast into an event. The spells that do: ${EVENT_ABILITIES.join(', ')}.` : `Unknown ability "${a}". An event may list ${EVENT_ABILITIES.join(', ')}, or an ability of this pack that has "in_event".`);
+      else if (!mine.in_event) err(w, `The ability "${a}" has no "in_event", so it does nothing when cast into an event.`);
+      else if (!mine.in_event.kinds?.includes(e.tag)) err(w, `The ability "${a}" is for events of kind ${JSON.stringify(mine.in_event.kinds)}, and this event is a "${e.tag}".`);
+    }
     if (!Array.isArray(e.tiers) || !e.tiers.length) return err(w, 'An event needs "tiers": how its result is read.');
     e.tiers.forEach((t, k) => {
       const tw = `${w}.tiers[${k}]`;
@@ -492,11 +509,21 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       if (!Number.isInteger(n) || n < 1) err(w, 'An ability costs a whole number of Magic, 1 or more.');
     }
     if (!a.cost || !Object.keys(a.cost).length) err(w, 'An ability needs a "cost" in Magic.');
-    if (!a.target?.tags?.length) err(w, 'An ability needs a "target" with tags: what it can be cast on.');
+    const ie = a.in_event;
+    if (!ie && !a.target?.tags?.length) err(w, 'An ability needs a "target" with tags (what it can be cast on), or "in_event" (the events it can be cast into).');
+    if (a.target && !a.effect?.length) err(w, 'An ability with a "target" needs an "effect".');
+    if (a.effect?.length && !a.target?.tags?.length) err(w, 'An ability with an "effect" needs a "target" with tags.');
+    if (ie) {
+      if (!Array.isArray(ie.kinds) || !ie.kinds.length) err(w, '"in_event" needs "kinds": the kinds of event it can be cast into.');
+      for (const k of ie.kinds ?? []) if (!liveTags.has(k)) warn(w, `"in_event" names the event kind "${k}", which no event of this pack or the base game has.`);
+      const n = [ie.kills, ie.douses].filter((x) => x !== undefined);
+      if (n.length !== 1 || !Number.isInteger(n[0]) || n[0]! < 1) err(w, '"in_event" needs exactly one of "kills" (foes put down by a cast) or "douses" (burning lots put out), a whole number, 1 or more.');
+      if ((ie.kills ?? 0) > 3 || (ie.douses ?? 0) > 3) warn(w, 'One cast does more than 3. Heat ray, the strongest spell of the base game, does 2.');
+    }
     for (const t of a.target?.tags ?? []) needTag(t, w, 'read');
     effects(a.effect, `${w}.effect`, { ability: true });
     for (const e of a.effect ?? []) if (!('tag' in e) && !('untag' in e) && !('pool' in e) && !('say' in e)) err(w, `An ability's effect can set or clear a tag on its target, or change a pool. ${JSON.stringify(e)} is not supported yet.`);
-    for (const n of numbersIn(a.text ?? '')) if (![...numbersOf(a.cost), ...numbersOf(a.effect)].includes(n)) err(w, `The text says ${n}, but the ability's cost and effects have no such number.`);
+    for (const n of numbersIn(a.text ?? '')) if (![...numbersOf(a.cost), ...numbersOf(a.effect), ...numbersOf(a.in_event)].includes(n)) err(w, `The text says ${n}, but the ability's cost and effects have no such number.`);
     if (!cards.some((c) => JSON.stringify([c.if_taken, c.if_tier]).includes(`"unlock":"${a.id}"`))) warn(w, 'No card unlocks this ability.');
   });
 

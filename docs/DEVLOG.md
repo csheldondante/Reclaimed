@@ -24263,3 +24263,28 @@ Vitest files time out at 5 s when two run at once on this machine; each passes a
 casts, the growth rune's rule, replay with casts), `packs` 35, `realm` 16, `realm-resume` 5, `realm-bots` 5,
 `live-rules` 19, `writing` 8. Typecheck clean. Whole suite not run. Two phone shots looked at (event card with its
 rule and prediction; the rules list).
+
+## 2026-11-16 — Packs together, and four more words in the format (`card-table`)
+
+**Why.** Four outside-authored packs are coming, meant to be loaded together and to read each other.
+
+**Together.** `check.ts: checkTogether` (ids two packs share, a shared tag declared differently, rules on an event
+kind or a card nobody has, crowded sites, too many threats); the page, the bots and `packcheck` take several files.
+Shared custom tags: each pack declares the tag the same and marks it `"shared": true`; at run time tags are plain
+strings, so nothing else was needed — proved by `packs/cross-a.json` + `cross-b.json` in a test (A's seed store on
+the east fields, B's rule on `field` + `seed-stored` pays +1 Magic, B's card gated on the same two tags appears
+only then).
+
+**Event triggers.** Verified by test, each firing once when it happens: `pack-done:<card>`, `pack-lapsed:<card>`,
+and `burned` from a pack card's `mutate` on a site. The validator now refuses any other name than those, the land
+changes and the base game's 26 event kinds (a test holds the list to what the base templates write).
+
+**New words.** `upkeep` on a thing is a generated turn rule on a tag only that thing carries (so it shows in the
+rules list and the log like any rule). `weight` 1..5 on a card is the dealer's score part (0.2 a step). `in_event`
+on an ability gives it kills or douses through the same table as the spells (`mechState`'s fourth argument).
+Unlocked abilities are `ability-unlocked:<id>` events of the run, read back from its history.
+
+**Not done, and why.** `arrive` with a count: the Realm counts 40 people a migration event. Seeds that change the
+deal: the dealer is deterministic by score and round 6's tests rest on that (CT-24).
+
+**Tests.** One file at a time: `packs-together` 11, `packs-more` 3, `packs` 35, `table` 4, `table-live` 11.
