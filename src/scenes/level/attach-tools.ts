@@ -187,7 +187,14 @@ export function attachTools(scene: LevelScene): void {
       scene.integrity.engine = scene.engine;
       // (PQ3) a row's hard hit on the ground is a blow to the ground, as the other movers' are: soft ground sinks
       // under it, hard ground struck past impact.groundEnergy crumbles (edit.wgsl decides on the columns)
-      scene.engine.engine.onGroundHit = (h) => integ.groundBlow(h.p[0], h.p[1], h.p[2], h.energy);
+      // (and it raises dust, as the old movers' hits do — rigid.ts stepRigid: the old route's look. Dust grains only:
+      // the hit ring tells the place and the energy, not what was hit, so no cloud of a material. Hits under the
+      // ring's bar — engine.wgsl HIT_GROUND_MIN — are not told and raise none: BACKLOG PV8)
+      scene.engine.engine.onGroundHit = (h) => {
+        integ.groundBlow(h.p[0], h.p[1], h.p[2], h.energy);
+        const hard = Math.sqrt(h.energy);
+        core.sim.particles.burst({ kind: PK.Dust, x: h.p[0], y: h.p[1], z: h.p[2] + 0.3, count: Math.round(Math.min(40, 6 + hard / 6) * TUNE.bursts.dustCount), speed: TUNE.bursts.dustSpeed, spread: Math.min(2.5, 0.6 + hard / 80) });
+      };
     }
     // (PA11) a hard hit of an engine row on a building knocks its lot down (level/housefall.ts)
     installHouseFall(scene);

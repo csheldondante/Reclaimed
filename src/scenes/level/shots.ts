@@ -6,6 +6,7 @@
 // lot down and a hard hit on the ground crumbles it (level/housefall.ts).
 // API: cannonAtPick, meteorRowAtPick.
 import { ignoreTeardown } from '../../gpu/pipeline';
+import { modelMesh } from '../../engine/modelmesh';
 import { ballCells, launch, type V3 } from '../../game/ballistic';
 import { worldG } from '../../tune/params';
 import { cellAt, cellPos } from '../../world/lattice';
@@ -56,7 +57,11 @@ function fire(scene: LevelScene, start: V3, to: V3, shot: { r: number; mat: numb
     scene.hud.say('Out of range.', 2);
     return false;
   }
-  if (!kit.drop(ballCells(cx, cy, cz, shot.r, shot.mat), v)) {
+  // (a ball is drawn round whatever it is made of: the mesh's rounding rule at its fullest — modelmesh.ts; a steel
+  // ball by steel's own rule was a lump of hex prisms. If it deforms, its settled parts' corners are placed by the
+  // material's rule again: BACKLOG PV9)
+  const cells = ballCells(cx, cy, cz, shot.r, shot.mat);
+  if (!kit.engine.add({ cells, mesh: modelMesh(cells, () => 1), vel: v })) {
     scene.hud.say('No room for more bodies.', 2);
     return false;
   }

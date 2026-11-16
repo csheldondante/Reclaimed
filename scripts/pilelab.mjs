@@ -3,6 +3,7 @@
 // under ?solver=lattice (today's default) and ?solver=engine give the before and the after.
 //   node scripts/pilelab.mjs --solver engine --out <dir>/pile-stack --press "drop a stack"
 //     [--station pile] [--zoom 8] [--look 206,92,16] [--frames 90] [--every 70] [--stills 10,30,60] [--wait 6000]
+//     [--eval js]
 //     [--tool cannon --taps "x,y,z@frame;x,y,z@frame"]: a tool picked and real touch taps (PQ9) at world points
 //     (storage column, row, cell z) at those frames; fails if a tap moves the camera. --press "" presses nothing
 // (terrain pieces as rows, PT1: --station slide --press "nick the spire" | "undercut the mesa")
@@ -50,6 +51,9 @@ await run({ name: 'pilelab', kind: 'behaviour', size: '412x915', dpr: 1, echo: t
     zoom,
     station,
   );
+  // (--eval js: run in the page before the buttons, e.g. "reclaimed.scene.engine.engine.claims = false")
+  const js = opt('eval', '');
+  if (js) await page.evaluate(js);
   await sleep(1500);
   await page.screenshot({ path: out + '-0.png' });
   await page.evaluate((press) => {

@@ -24842,3 +24842,34 @@ wind-shove 2: all pass. fieldreach 2 of 3 and formations 8 of 13 (the time-outs 
 **Hacks and limits.** PS13 (the narrowed watch has a hole: External rising under a sleeper that is not yet claimed),
 PS14 (the same pile twice differs by a hundredth of a cell: not fixed), PS15 (an edit that reaches a claim only
 after ticks that change no column version by it is not followed), PS16 (the watch tick is 3 direct dispatches).
+
+## 2026-11-16 — physics parked: the sand station run, the look against the old physics, round shots, dust on hard hits
+
+**The sand station** (`node scripts/sandlab.mjs`, real double tap + drag; looked at). Three blocks asleep: 3 claims,
+0 + 0. Sand poured: it piles against and on them, the stone's top stands out of it. The stone lifted out: held, not
+thrown; the sand closes over where it lay; set down, 3 claims again and the engine quiet 12 s on. The capture is
+framed with the blocks at its left edge (PV11).
+
+**The look against the old physics** (`scripts/pilelab.mjs` on both routes, eight scenes, pairs by
+`scripts/sidebyside-look.mjs`; the list is in docs/design/PHYSICS_ENGINE.md). The engine is better where the old
+route does not break at all (the brick wall, the cannon's wall) and level on the mesa. It is worse on: stone
+(darker, squarer), a heap in shade (one dark mass), steel (hex prisms, flat blue-grey), no dust or sound on impacts.
+What had read as "plain grey debris" was the cannon's steel balls: lumps of hex prisms lying by the wall.
+
+**Fixed, each in one place:** a shot's ball is meshed at full rounding (`shots.ts`): round and smooth-shaded
+(`look-engine-cannonfix-*`). A hard ground hit, which the hit ring already brings to the host, raises a burst of
+dust grains sized by its energy (`attach-tools.ts`; a faint cloud by the wall in `look-engine-cannonfix-44.png`, not
+isolated in a still of its own). Nothing is added a tick and nothing is read: the burst is in the callback of the
+read the engine already makes.
+
+**Found and not fixed:** the steel tower is crushed to a scrap under the steel block and the lab's chain no longer
+breaks its slab, with claims off as well: regressions inside the engine since the phone round (PV5, PV6).
+
+**Counts** (`node scripts/enginecounts.mjs --seconds 6`): quiet 0 + 0 (stack, stones, wall, mesa at 12 s); awake 58
+direct + 8 indirect; stage 4 open 59 + 93; a body settling 60 + 103. At 12 s the pit had 4 of 48 rows awake and the
+chain 2 of 4 with stage 4 open.
+
+**Also:** `pilelab.mjs --eval js` (run in the page before the buttons: claims off for a comparison).
+
+**Hacks and limits.** PV9 (a ball's rounding is the mesh's alone: a ball that breaks changes shape at settle), PV8
+(dust for hard ground hits only, no material cloud), PV2 (no sound), PV5 and PV6 (not bisected), PV11.

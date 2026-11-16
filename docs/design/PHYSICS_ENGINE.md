@@ -2013,3 +2013,118 @@ As planned. Found on the way:
 - The first beam scenario (three piers, an end one dug) was stable on the other two: the test's fault, not the code's.
 
 Counts a tick (the host's tally): quiet 0 + 0; awake 58 direct + 8 indirect (was 57 + 8: `claimCols`).
+
+### Found by the regression run (2026-11-16; BACKLOG PS13 to PS17, DEVLOG the same day)
+
+The commit above was pushed with only `engine-claim` run. Every GPU test file was then run one at a time. What changed:
+- **The read chain follows the columns by a claim** (`P_CLAIM_STIR`, pool word 47). `tground` writes the tick there
+  whenever it re-makes a chunk that holds a live claim or had one cut; the host's read sees the word move and keeps
+  ticking. Before it, a dig that took a claim away a cell a tick woke its row after the event's two reads had shown
+  nothing awake, and the engine went quiet with the row awake in the air.
+- **A sleeper not yet claimed** no longer wakes when the block under it claims: in `compact`, a new surface word
+  whose firm top is External and no lower than the old top is a body's claim put in under it; the word is taken
+  again. Not exact (PS13): External rising under it by another writer does not wake it either.
+- **The claim writer tells no owner** (`chunkver.wgsl bumpColumnOwn`): its own insert moved another row's claim up a
+  slot, and PS4's word reported that as a cut.
+- **The watch tick** (off by default) is `compact`, `claimCols` and `tground`: 3 direct dispatches.
+- **Not fixed (PS14):** the same pile run twice ends a hundredth of a cell apart with claims on, because the grant of a
+  chunk's claim job is a race between `compact`'s threads. Exact with claims off.
+
+### The sand station (run and looked at, 2026-11-16)
+
+`node scripts/sandlab.mjs` (stills `sand-1` to `sand-6` in the scratchpad's `physics10/sand/`). Three blocks set down
+and asleep: 3 claims, the engine quiet (0 + 0). Sand poured over them: it piles against and on them and does not pass
+through; the stone block's top stands out of the sand as its own mesh, the brick is covered. The stone lifted out by a
+real double tap + drag: held by the engine (2 claims while it is up), not thrown; the sand closes over where it lay.
+Set down beside the heap: at rest, 3 claims again, quiet 12 s on (the engine keeps ticking while the sand by the
+claims still moves: `P_CLAIM_STIR`). Not judged: the sand's faces against a block's side at close range (the capture
+is at zoom 15 and the blocks stand at its left edge).
+
+## Look against the old physics (2026-11-16)
+
+The owner: "I like that we are consolidating to the GPU but currently it's a little worse looking than what we had
+before and that would be nice to fix rather than accept the regression." The lab's stations under the default route
+and under `?solver=engine`, the same buttons (`scripts/pilelab.mjs`, 412 x 915; stills `look-old-*` and
+`look-engine-*`, pairs `look-pair-*` made by `scripts/sidebyside-look.mjs`, in the scratchpad's `physics10/`).
+
+What the pairs show, station by station:
+
+| station | old | engine | which looks better |
+|---|---|---|---|
+| stone from three heights | three smooth, speckled boulders, lighter than the ground | three blocks with the rock look, darker, corners squarer, break lines dark | old (rounder, lighter) |
+| brick wall pushed over | the wall still stands | the wall lies flat, bricks and mortar drawn | engine |
+| undercut the mesa | the slab down on the ground, rock look | the same | level |
+| rubble into the pit | a bright heap: red brick, white concrete, light stone | the heap is dark: stone near black in the pit's shade, little brick showing | old |
+| the chain | everything down as one heap of rubble | the slab tipped on the post with the ball on it, nothing broken (with claims off too) | old (the engine did not break it in the lab) |
+| block on a steel tower | a tangled wreck beside the pad | the tower is crushed to a scrap a cell high, the block beside it | old |
+| cannon at the wall | no cannon on the old route (the wall falls as one slab, the tower as one piece) | wall in brick pieces, tower standing or in two; **the three balls lay about as big blue-grey lumps of hex prisms** | engine once the balls are round (fixed) |
+
+**Every way the engine looks worse, with its cause:**
+
+1. **Cannonballs and steel debris were lumps of hex prisms, plain blue-grey.** Cause: the mesh's rounding is by
+   material and steel has none; steel's look is its flat albedo. This is what read as "plain grey debris".
+   **Fixed for shots:** a ball's mesh is made at full rounding (`shots.ts`), so it is round and smooth-shaded. Steel
+   pieces from a break are still prisms (PV1).
+2. **No dust on impacts.** Cause: the engine's impacts are in the events buffer on the GPU, and only hard ground hits
+   (`HIT_GROUND_MIN`, 1,000) reach the host, through the hit ring. **Fixed for those:** each raises a burst of dust
+   grains sized by its energy (`attach-tools.ts`, the existing particle bursts). Softer landings raise none; the
+   designed route is a GPU consumer of the events buffer that spawns the particles with no read (PV8). No sound
+   (PV2): the old route's `onCollapse` has no caller on the engine's side.
+3. **Stone is darker and squarer than the old route's boulders.** Cause: the engine draws the model's own cells
+   rounded by surface nets (a bevelled block); the old route meshes a rock as a smooth blob and lights it paler. The
+   rock response is the same function; the shape and the normals are not (PV3).
+4. **A heap in shade reads as one dark mass.** Cause: as 3, and concrete and stone have no edge light between
+   pieces; the old route's pieces are separate lattice bodies with brighter faces (PV4).
+5. **The steel tower is crushed to a scrap instead of crumpling.** Cause not found this round: the tower body under
+   the steel block ends a cell high with most of its voxels gone to the ground or folded flat; with claims off the
+   same. The phone round's stills (`fb-metal-*`) showed legs folding and the tank sagging: the engine changes since then are
+   PR1's erosion rule and PQ4's resultant. A regression inside the engine, to bisect (PV5).
+6. **The chain does not break in the lab** (it does in `engine-chain`, on a test rig): the stone slab tips on the
+   post under the thrown block and stays whole. With claims off the same. The lab's first break height changed with
+   PE30 (PR9); the chain's drop was not re-tuned (PV6).
+7. **Break faces:** flat, paler polygons on the cells' faces with a dark line at the break; a brick break is a jagged
+   stair of whole bricks. The old route has no break faces at all (its pieces are whole voxels), so this is not worse,
+   but up close the stair reads as blocks, not as broken brick (PE40.5 stands).
+8. **Pieces too few and too big:** the cannon's wall comes apart in two or three slabs; the old route does not break
+   it at all. The owner's "more, smaller pieces" is the grain's clump size on the panel (PV7).
+9. **A vertex hop at settle:** not seen in these stills (they are of the end state). PE31 stands as logged.
+10. **Town house debris is plain concrete blocks:** not looked at this round (the lab's house station was not
+    captured); the cause is known from the code: `fellLot` drops the lot as blocks of one material (PA11's slice).
+
+Not reproduced: "the mesa slab renders plain grey". In these stills the slab has the rock look on both routes.
+
+## Hand-over: physics parked here (2026-11-16)
+
+**What works** (tested in Node on Dawn, and looked at in the lab):
+- Rigid rows on terrain and on each other, asleep at no cost: a quiet tick encodes nothing (0 + 0), measured in four
+  of the lab's six scenes at 12 s (the pit still had 4 of 48 awake and the chain 2 of 4: still settling).
+- Hard hits deform: expand to voxels, break along the grain, settle into parts that are bodies with their own
+  distance fields; second breaks; pieces break pieces.
+- Sleepers are in the columns as External (claimed on sleep, cleared on wake); sand buries them; a dig or a blow
+  under any column of a claim wakes the row; telekinesis lifts a buried block out.
+- Telekinesis by touch, the cannon, the engine's meteor, houses felled by a hard hit.
+- The old default physics and the rest of the game are unchanged by all of it (the whole GPU project and smoke).
+
+**What does not** (each a BACKLOG row):
+- The same pile twice differs by a hundredth of a cell with claims on (PS14).
+- With the engine quiet, ground changed by a simulation alone is seen at the next host event (PS5).
+- A partial cut of a claim does nothing to the body (PS10); collapse of what a body holds up is still the CPU judge's.
+- The steel tower is crushed flat and the lab's chain does not break (PV5, PV6): regressions inside the engine since
+  the phone round, not bisected.
+- Parts' fields and models are never freed (PR2). The parts' bake has not been timed on the phone (PR5).
+- `engine-chain`'s thrown part and `engine-d0` D0.1 fail now and then (stage 4 is not the same every run; TKN9).
+
+**Dispatches a tick** (`node scripts/enginecounts.mjs`, 2026-11-16): quiet 0 + 0; awake, nothing deforming 58 direct +
+8 indirect; stage 4 open 59 + 93 (59 + 88 or 92 seen for a tick); a body settling 60 + 103. The watch tick, when the
+host turns it on: 3 direct.
+
+**Next, in this order:**
+1. **The GPU collapse trigger (DA-E3):** what a body or the ground holds up falls when its support goes, decided on
+   the GPU from the columns (connected components to an anchor), with the claims' support watch as its first user.
+   PS10 (a cut erodes the body) belongs to it.
+2. **Houses shed pieces:** a hit takes the cells it reaches off a lot as rows of the building's own materials, not
+   the whole lot as concrete blocks (PA11's slice replaced; PQ13's doubled energy with it).
+3. **PS5:** while the sleep system has chunks awake and the last read showed live claims, a quiet tick encodes
+   `compact`, `claimCols`, `tground` (3 direct) and a read every 4 ticks. The watch tick is this already, on a timer.
+4. **PR2:** free a part's field and model when its row dies (a free list by size in the store's GPU region).
+5. **The phone bench of the bake** (PR5), with PS14's deterministic grant and the look list (PV1 to PV8) after it.

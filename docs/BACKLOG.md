@@ -12,6 +12,22 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## The engine's look against the old physics (2026-11-16, `physics10-one`; docs/design/PHYSICS_ENGINE.md "Look against the old physics")
+The owner: "currently it's a little worse looking than what we had before and that would be nice to fix rather than accept the regression."
+| # | Item | Size | Status |
+|---|---|---|---|
+| PV1 | Steel (and wood, and what else is built) is drawn as its cells' hex prisms, flat-shaded, plain albedo: steel debris and the pieces of a steel body read as blue-grey lumps. Shots are round now (PV9); a material's own rounding and a metal look in `fsEBody` (edge wear, a sheen) are not built | M | open |
+| PV2 | No sound on the engine's impacts or breaks: the old route's `onCollapse` has no caller on the engine's side. The hit ring's ground hits could call it today (one place, as the dust); not done: audio cannot be checked by an agent | S | open |
+| PV3 | Engine stone is darker and squarer than the old route's boulders (a bevelled block by surface nets against a smooth blob, lit paler). To look at with the owner: more rounding for small stone bodies, the old rock mesh's light response | M | open |
+| PV4 | A heap of engine pieces in shade reads as one dark mass (the pit): no edge light between pieces, stone near black | S | open |
+| PV5 | **Regression inside the engine, not bisected:** the lab's "block on a steel tower" crushes the tower to a scrap a cell high (the phone round's stills showed legs folding and the tank sagging: PQ2). The same with claims off. The engine changes since are PR1's erosion rule and PQ4's resultant | M | open |
+| PV6 | **Regression in the lab, not bisected:** "the chain (A onto B onto C)" no longer breaks B: the slab tips on the post under the thrown block and stays whole (claims off: the same; `engine-chain` passes on its own rig). The chain's drop was not re-tuned when PE30 moved the first-break speeds (PR9) | S | open |
+| PV7 | Pieces too few and too big (the cannon's wall: two or three slabs). The grain's clump size is on the panel; a default the owner likes is not chosen | S | asked |
+| PV8 | Dust on the engine's impacts: built for hard ground hits only (the hit ring, `HIT_GROUND_MIN` 1,000 and up: a burst of dust grains sized by the energy, `attach-tools.ts`). Softer landings, hits between bodies and breaks raise none on the host's side (a break's own dust and chips are the GPU's). Designed route: a GPU consumer of the engine's events buffer that spawns particles with no read. The burst has no material cloud (the ring does not say what was hit) | M | part done |
+| PV9 | Hack: a shot's ball is meshed at full rounding whatever its material (`shots.ts`), so a steel ball is round; if it deforms and settles, its parts' corners are placed by steel's own rule (none): a visible change of shape at settle for a ball that breaks. Fix with PV1 (rounding a property of the body, carried to the settle kernels) | S | open |
+| PV10 | Town house debris is plain concrete blocks (`fellLot` drops the lot as blocks of one material). Not looked at this round; the fix is "houses shed pieces" in the hand-over | M | open |
+| PV11 | `scripts/sandlab.mjs` frames the blocks at the left edge of the picture at zoom 15: the sand's faces against a block's side were not judged at close range | S | open |
+
 ## Rest claims External (2026-11-16, `physics10-one`; docs/design/PHYSICS_ENGINE.md "Rest claims External")
 | # | Item | Size | Status |
 |---|---|---|---|
