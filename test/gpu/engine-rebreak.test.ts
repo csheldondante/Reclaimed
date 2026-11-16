@@ -1,14 +1,12 @@
 // PQ4 (the owner, 2026-11-15: "the pieces don't crumble as easily when they collide after breaking which looks way
 // less cool"): a broken piece thrown at the ground at the speed its parent came down with must break as its parent
-// did — it expands, and it sheds voxels or comes apart. Measured here against the ground alone (a settled part meets
-// no other body until PM4 is built: BACKLOG PM4, PQ4).
-// AN EXPECTED FAILURE TODAY (test.fails; found 2026-11-15, not fixed): the piece does not deform at all at the
-// parent's landing speed (21.7 cells/s from 24 cells; engine-settle's own test needs 30). The expand rule weighs the
-// hardest single contact's energy, 1/2 stop^2 / k with k the contact's inverse effective mass, against threshold x
-// the whole mass (engine_pairs.wgsl tfine, engine_step.wgsl): a box landing flat has a contact under its centre of
-// mass (k = 1/m, the whole energy counts), an irregular piece lying on a few points off its centre does not (each
-// contact's effective mass is a fraction of m), so the same fall passes the bar for the parent and not for its piece.
-// When the rule is changed this test passes and `.fails` comes off.
+// did — it expands, and it sheds voxels or comes apart. Measured here against the ground alone: the other pieces are
+// taken out of the world first (on the heap of its fellows the outcome goes either way: BACKLOG PR7).
+// Until the rule was changed this was an expected failure: the piece did not deform at all. The expand rule weighed
+// the hardest single contact's energy, 1/2 stop^2 / k with k the contact's inverse effective mass, against threshold
+// x the whole mass (engine_pairs.wgsl tfine): a box landing flat has a contact under its centre of mass (k = 1/m, the
+// whole energy counts), an irregular piece lying on a few points has none. The contacts are now weighed together, as
+// one resultant at their centroid (docs/design/PHYSICS_ENGINE.md "Pieces are bodies", item 2).
 // Numbers: BREAK_LOG=1 npx vitest run --project gpu engine-rebreak --reporter=verbose
 import { afterAll, afterEach, beforeAll, expect, test } from 'vitest';
 import { POOL } from '../../src/engine/engine';
@@ -45,7 +43,7 @@ async function settleAll(R: BreakRig, most = 900): Promise<boolean> {
 }
 
 for (const [name, mat, density] of [['stone', MAT.Stone, 2.7], ['brick', MAT.Brick, 0]] as [string, number, number][]) {
-  test.fails(`a ${name} block's largest piece, thrown down at the speed its parent landed with, breaks again`, async () => {
+  test(`a ${name} block's largest piece, thrown down at the speed its parent landed with, breaks again`, async () => {
     const R = await breakRig(g, flat);
     R.e.holdParts = false;
     const FALL = 24;
@@ -53,14 +51,30 @@ for (const [name, mat, density] of [['stone', MAT.Stone, 2.7], ['brick', MAT.Bri
     R.e.add({ cells, mesh: modelMesh(cells) })!;
     expect(await settleAll(R)).toBe(true);
     await R.step(2);
-    const P1 = await R.pool();
+    let P1 = await R.pool();
     const parts1 = (await R.rows()).filter((r) => r.row % 2 === 1).sort((a, c) => c.mass - a.mass);
     const big = parts1[0];
     const bigVox = (await R.model(big.model)).solid;
     log(`${name} 6x6x4 from ${FALL}: ${parts1.length} parts (largest ${bigVox} voxels of 144), ${P1[POOL.crumbs]} voxels to the ground`);
-    // (asleep where it lies)
-    for (let t = 0; t < 300 && !((await R.row(big.row)).flags & ASLEEP); t++) await R.step(1);
-    expect((await R.row(big.row)).flags & ASLEEP).toBe(ASLEEP);
+    // The piece lies in the heap of its fellows, which are bodies too now (PM4). This test is of a piece's hit on the
+    // ground alone, so the others are taken out of the world (expanded and let go: a test's way to end a row), and the
+    // piece comes down the cell or two onto the ground and sleeps there.
+    for (const o of parts1.slice(1)) {
+      R.e.expand({ row: o.row });
+      await R.step(3);
+      R.e.release({ row: o.row });
+      await R.step(3);
+    }
+    R.e.wake({ row: big.row });
+    await R.step(30);
+    for (let t = 0; t < 600 && !((await R.row(big.row)).flags & ASLEEP); t += 10) await R.step(10);
+    const lies = await R.row(big.row);
+    const left = (await R.rows()).filter((r) => r.row !== big.row).length;
+    log(`the largest piece alone on the ground at ${lies.pos.map((x) => x.toFixed(1))} (${left} other rows left), ${lies.flags & DEFORM ? 'deforming' : 'rigid'}`);
+    expect(left).toBe(0);
+    expect(lies.flags & (ASLEEP | DEFORM)).toBe(ASLEEP);
+    const rows1 = (await R.rows()).length;
+    P1 = await R.pool();
     // the parent's landing speed, given to the piece where it lies on the ground
     const v = Math.sqrt(2 * worldG() * FALL);
     R.e.impulse({ row: big.row }, [0, 0, -v]);
@@ -73,9 +87,9 @@ for (const [name, mat, density] of [['stone', MAT.Stone, 2.7], ['brick', MAT.Bri
     expect(await settleAll(R)).toBe(true);
     await R.step(2);
     const P2 = await R.pool();
-    const parts2 = (await R.rows()).filter((r) => r.row % 2 === 1);
+    const parts2 = await R.rows();
     const shed = P2[POOL.crumbs] - P1[POOL.crumbs];
-    const more = parts2.length - parts1.length;
+    const more = parts2.length - rows1;
     log(`its largest piece thrown down at ${v.toFixed(1)} cells/s: ${more} more parts, ${shed} more voxels to the ground (${((100 * shed) / bigVox).toFixed(1)} % of it; the parent lost ${((100 * P1[POOL.crumbs]) / 144).toFixed(1)} %)`);
     // it cracked: it came apart, or it shed voxels
     expect(more > 0 || shed > 0).toBe(true);

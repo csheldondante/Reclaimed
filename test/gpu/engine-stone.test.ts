@@ -114,14 +114,16 @@ test('rigid stone: a block landing under its break threshold — how far it sink
   R.w.destroy();
 });
 
-// The lab's button "stone from three heights" (levels/playground.ts: a 6 x 6 x 4 block from 8, 24 and 48 cells, each
+// The lab's button "stone from three heights" (levels/playground.ts: a 6 x 6 x 4 block from 5, 24 and 48 cells, each
 // moving sideways a little as it comes down): the owner's stone does not flex, it breaks — whole from the lowest,
 // cracked into a few parts from the middle one, broken up from the highest: more parts, and more of it rubble on the
 // ground. Each height in a world of its own (bodies do not meet each other yet).
 test('stone from three heights: whole, cracked, many parts', async () => {
   const parts: number[] = [];
   const rubble: number[] = [];
-  for (const h of [8, 24, 48]) {
+  // (the lowest was 8 cells till BACKLOG PE30 was fixed: 78 a mass against the bar of 60, whole only by where in a
+  // substep it landed; 5 cells is 49)
+  for (const h of [5, 24, 48]) {
     const R = await breakRig(g, flat);
     const cells = box(10, 12, 10 + h, 6, 6, 4);
     const b = R.e.add({ cells, mesh: modelMesh(cells), vel: [2.5, 1.5, 0] })!;

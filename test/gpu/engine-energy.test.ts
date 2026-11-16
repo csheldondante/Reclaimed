@@ -32,7 +32,8 @@ const FLOOR = 10;
 // 0.17 and 0.14 % for these three; without, 0.14, 0.07 and 0.04 %.)
 for (const [name, mat, w, d, h, from, sideMax] of [
   ['stone 6x6x4 from 24 cells', MAT.Stone, 6, 6, 4, 24, 0.0021],
-  ['stone 4x4x3 from 48 cells', MAT.Stone, 4, 4, 3, 48, 0.0012],
+  // (0.12 % till PE30 was fixed: the block's voxels now take the hit at the whole speed it falls with — 0.19 % measured)
+  ['stone 4x4x3 from 48 cells', MAT.Stone, 4, 4, 3, 48, 0.003],
   ['brick 8x3x3 from 22 cells', MAT.Brick, 8, 3, 3, 22, 0.0009],
 ] as const) {
   test(`a break gains no energy: ${name}, every tick of the drop`, async () => {
@@ -107,8 +108,9 @@ for (const [name, mat, w, d, h, from, sideMax] of [
 // before the one that expands it, and its voxels take the hit that much slower. Which drop loses how much goes by where
 // in a substep it meets the ground: a 6 x 6 x 4 block from 40 cells came in at 14.9 cells/s, from 24 cells at 20.1,
 // and broke into fewer parts from the higher drop. The fix is in the solve (the collision branch's): judge a contact
-// that binds this substep by the whole speed it comes in with. Marked as failing till then; it passes once fixed.
-test.fails('PE30: a block dropped from higher comes in faster (40 cells against 24)', async () => {
+// that binds this substep by the whole speed it comes in with. Fixed with PQ4 (docs/design/PHYSICS_ENGINE.md "Pieces
+// are bodies", item 2): the ground's contacts are weighed as one resultant by the speed the body comes in with.
+test('PE30: a block dropped from higher comes in faster (40 cells against 24)', async () => {
   const speed: number[] = [];
   for (const from of [24, 40]) {
     const R = await breakRig(g, flat);

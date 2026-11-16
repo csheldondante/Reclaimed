@@ -117,7 +117,7 @@ const METAL = {
  *  one for a steel beam to be dropped across, a pad a brick wall is pushed over on. */
 const BREAK = {
   rect: [16, 80, 96, 112] as [number, number, number, number],
-  heights: { x: [54, 66, 78] as [number, number, number], y: 82, from: [8, 24, 48] as [number, number, number] },
+  heights: { x: [54, 66, 78] as [number, number, number], y: 82, from: [5, 24, 48] as [number, number, number] },
   slab: { x0: 50, x1: 64, y0: 97, y1: 104, post: [56, 58] as [number, number], h: 5 },
   beam: { x0: 70, x1: 86, y0: 97, y1: 103, post: [77, 79] as [number, number], h: 5 },
   brick: { x0: 38, x1: 50, y0: 80, y1: 94 },
@@ -558,7 +558,8 @@ export const STATIONS: Station[] = [
     hint: 'breaking: a stone block from three heights, a slab and a steel beam across a post, a brick wall pushed over',
     actions: [
       {
-        // (from 8 it stays whole, from 24 it cracks, from 48 it breaks up. Each comes down moving sideways a little, as
+        // (from 5 it stays whole — under stone's bar: 49 against 60; it was 8 till the bar was judged by the whole speed a
+        // block comes in with, BACKLOG PE30 —, from 24 it cracks, from 48 it breaks up. Each comes down moving sideways a little, as
         // a thing that fell off something does: a break adds no speed, so what parts the pieces is the speed they had)
         label: 'stone from three heights',
         run: (k) => BREAK.heights.from.forEach((h, i) => k.drop(cellsBox(BREAK.heights.x[i], BREAK.heights.y, G + h, 6, 6, 4, MAT.Stone), [2.5, 1.5, 0])),

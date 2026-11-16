@@ -342,6 +342,13 @@ var<workgroup> wBid: array<atomic<u32>, 13>;
 var<workgroup> wWorst: atomic<u32>;
 // (PQ3) the hardest stop among its contacts on an owner's matter (External: a building)
 var<workgroup> wWorstExt: atomic<u32>;
+// (PQ4) the closing contacts as one resultant: the sum of their stopping speeds, of their places about the centre and
+// of their normals, each weighed by its stopping speed (i32 bits, 1/64)
+var<workgroup> wStop: atomic<u32>;
+var<workgroup> wStopAt: array<atomic<u32>, 3>;
+var<workgroup> wStopN: array<atomic<u32>, 3>;
+// (the share of that weight on an owner's matter: a hit weighed by the resultant is on a building when most of it is)
+var<workgroup> wStopExt: atomic<u32>;
 var<workgroup> wEroded: atomic<u32>;
 var<workgroup> wLost: atomic<u32>;
 var<workgroup> wTouch: atomic<u32>;
@@ -425,7 +432,18 @@ fn tfine(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
           if (cc.w <= NO_CONTACT) { continue; }
           let rc = rl - cc.xyz * sm.w;
           let stop = min(cc.w, 0.0) / dt - dot(v + cross(w, rc), cc.xyz);
-          if (stop <= 0.0 || 0.5 * stop * stop <= thr) { continue; }
+          if (stop <= 0.0) { continue; }
+          // (every closing contact goes into the resultant, weighed by how hard it closes; 64 cells/s weighs the most)
+          let ws = min(stop, 64.0) * 64.0;
+          atomicAdd(&wStop, u32(ws));
+          let wr = vec3<i32>(rc * ws);
+          let wn = vec3<i32>(cc.xyz * ws);
+          for (var a = 0u; a < 3u; a++) {
+            atomicAdd(&wStopAt[a], bitcast<u32>(wr[a]));
+            atomicAdd(&wStopN[a], bitcast<u32>(wn[a]));
+          }
+          if (u32(select(c.gm.x, c.wm.x, k == 1u)) == MAT_EXTERNAL) { atomicAdd(&wStopExt, u32(ws)); }
+          if (0.5 * stop * stop <= thr) { continue; }
           let rn = cross(rc, cc.xyz);
           let kn = invM + dot(rn, invInertia(q, I0.xyz, I1.xyz, rn));
           atomicMax(&wWorst, bitcast<u32>(0.5 * stop * stop / kn));
@@ -464,14 +482,36 @@ fn tfine(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   if (on && li == TSLOTS) {
     trow[tb] = bitcast<vec4<f32>>(vec4<u32>(atomicLoad(&wTouch), min(atomicLoad(&wEroded), TEVENTS), 0u, 0u));
     trow[tb + 1u] = vec4<f32>(f32(atomicLoad(&wLost)) / 1024.0, 0.0, 0.0, 0.0);
-    if (!frozen && weigh && bitcast<f32>(atomicLoad(&wWorst)) > thr * I1.w) {
+    // The hit's energy over the body's mass against its material's bar (DESIGN §10.4). The contacts act together: as
+    // one resultant at R, the mean of their places weighed by their stopping speeds, along the mean n of their
+    // normals. What stopping the body there takes is 1/2 S² / k, S its speed into the ground at R, k its inverse
+    // effective mass there. Contacts all round the centre: R is under it, k = 1/m, the whole energy of the approach
+    // — a flat landing, as before, and a piece come down on a few points (PQ4: it weighed a fraction as each point
+    // alone, and never broke again). Contacts on one side: what one contact there takes. The hardest single contact
+    // is kept beside it (a corner swung into the ground).
+    var hitE = bitcast<f32>(atomicLoad(&wWorst));
+    let sw = f32(atomicLoad(&wStop));
+    if (weigh && sw > 0.0) {
+      let R = vec3<f32>(f32(bitcast<i32>(atomicLoad(&wStopAt[0]))), f32(bitcast<i32>(atomicLoad(&wStopAt[1]))), f32(bitcast<i32>(atomicLoad(&wStopAt[2])))) / sw;
+      let ns = vec3<f32>(f32(bitcast<i32>(atomicLoad(&wStopN[0]))), f32(bitcast<i32>(atomicLoad(&wStopN[1]))), f32(bitcast<i32>(atomicLoad(&wStopN[2]))));
+      if (dot(ns, ns) > 0.0) {
+        let n = normalize(ns);
+        let S = -dot(v + cross(w, R), n);
+        let rn = cross(R, n);
+        let kn = invM + dot(rn, invInertia(q, I0.xyz, I1.xyz, rn));
+        if (S > 0.0 && 0.5 * S * S > thr) { hitE = max(hitE, 0.5 * S * S / kn); }
+      }
+    }
+    if (!frozen && weigh && hitE > thr * I1.w) {
       atomicOr(&listA[rb + RW_FLAGS], RF_EXPAND);
       // (PQ3: the row is not solved — its particles take the hit — so its own thread has no stop to tell the host of.
       // The hit that sent it to stage 4 is kept here for that thread (.w 1): on a building if one of its contacts on
       // External passed the event bar, else on the ground)
       let we = bitcast<f32>(atomicLoad(&wWorstExt));
-      let onOwner = we > EU.d.w;
-      trow[tb + 1u] = vec4<f32>(f32(atomicLoad(&wLost)) / 1024.0, select(bitcast<f32>(atomicLoad(&wWorst)), we, onOwner), select(0.0, f32(MAT_EXTERNAL), onOwner), 1.0);
+      // (on an owner's matter: a single contact on it passed the event bar, or most of the resultant's weight is on it)
+      let single = we > EU.d.w;
+      let onOwner = single || 2.0 * f32(atomicLoad(&wStopExt)) > sw;
+      trow[tb + 1u] = vec4<f32>(f32(atomicLoad(&wLost)) / 1024.0, select(hitE, we, single), select(0.0, f32(MAT_EXTERNAL), onOwner), 1.0);
     }
   }
 }

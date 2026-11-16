@@ -49,9 +49,12 @@ test('the brick wall pushed over breaks into parts', async () => {
   expect(r.parts).toBeGreaterThan(1);
 }, 240_000);
 
-test('the stone block: whole from 8 cells, in parts from 24 and from 48', async () => {
+// (the first height was 8 cells. A fall of 8 cells is 78 cells²/s² a mass, over stone's bar of 60: it stayed whole only
+// because the rigid contact took part of its speed before the bar was weighed — BACKLOG PE30, fixed with PQ4. From 5
+// cells it is 49: under the bar, whole whatever the tick it lands on.)
+test('the stone block: whole from 5 cells, in parts from 24 and from 48', async () => {
   const n: number[] = [];
-  for (const h of [8, 24, 48]) {
+  for (const h of [5, 24, 48]) {
     const r = await drop(box(20, 20, FLOOR + h, 6, 6, 4, MAT.Stone), [2.5, 1.5, 0]);
     log(`stone from ${h}: deformed ${r.hit}, ${r.parts} rows at rest`);
     n.push(r.parts);

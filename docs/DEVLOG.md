@@ -24699,3 +24699,36 @@ again makes 2 more parts and they get fields (8 baked in all). The fields of a s
 **Hacks and limits.** BACKLOG PR1 to PR6: the erosion rule's energy condition (asked); fields and compact models
 never given back till a reset; parts over 126 cells clipped; one lattice frame a part and a quarter cell of fatness;
 the bake's cost not measured on the phone; `holdParts` kept for two tests.
+
+## 2026-11-15 — second breaks: the ground's contacts weighed together (PQ4)
+
+**Why.** The owner: "the pieces don't crumble as easily when they collide after breaking which looks way less cool".
+Measured last round: the largest piece of a broken block, thrown down at its parent's landing speed, was not even
+handed to stage 4. The rule weighed the hardest single contact's stopping energy against threshold x the whole mass:
+a flat box has a sample under its centre (the whole mass stops there), an irregular piece on a few points has none.
+
+**What** (`engine_pairs.wgsl tfine`; the plan in PHYSICS_ENGINE.md "Pieces are bodies", item 2). The contacts act
+together. Every closing sample adds its place about the centre and its normal, weighed by its stopping speed, into
+three sums in the workgroup; the row's thread takes the resultant's point R and normal n, the speed S of the body
+into the ground at R, its inverse effective mass k there, and weighs 1/2 S² / k beside the hardest single contact.
+Contacts round the centre: k = 1/m, the energy of the whole approach (a flat landing's number is what it was).
+Contacts on one side: a single contact's. It is the energy one stop at one point takes, so it is never more than the
+body has. No constant was changed.
+
+**Measured** (`BREAK_LOG=1 npx vitest run --project gpu engine-rebreak`, three runs, each passing): stone 6 x 6 x 4
+from 24 cells: 6 parts, the largest 40 voxels; alone on the ground and thrown down at 21.7 cells/s it deforms on the
+hit and comes apart in two. Brick: 19 parts, the largest 24 voxels; thrown down it makes 8 more parts. Before: neither
+deformed at all. The first-break tests moved, and why is PE30: the old rule weighed a sample's stop less the gap it still had to
+close, so a block lost up to 11 cells/s to the rigid contact, at random by where in a substep it landed, before it
+was handed to stage 4. The resultant is weighed by the speed the body comes in with, which is PE30's own fix: its
+test (a drop from 40 cells comes in faster than one from 24) passes and is a normal test now. What moved with it:
+`engine-station`'s stone block from 8 cells (78 a mass against the bar of 60) cracks in two — it stayed whole before
+by that accident — so the first height is 5 cells (49) in the test and in the lab's button; `engine-energy`'s sideways
+share for a 4 x 4 x 3 block from 48 cells is 0.19 % of what came in (its bound was 0.12 %, now 0.3 %); the energy
+after a break never passes the energy before it, as before. No break threshold was changed (PR9, for the owner).
+
+**Found, not fixed (PR7).** Where it lay on the heap of its fellows the same piece was handed to stage 4 every time
+but crumbled in two runs of three: the pieces under it expand too and voxels meet voxels softly (PM5). The test takes
+the other pieces out of the world first (expanded and let go) so that it is of the ground alone, as it was written.
+
+**Hacks and limits.** PR7 (above), PR8 (the sums' range; step 1's kernel keeps the old rule).

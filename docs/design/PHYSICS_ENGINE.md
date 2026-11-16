@@ -1903,3 +1903,32 @@ owner). Without it a heap of fresh pieces ground itself down at the first touch;
 Counts a tick (the host's tally; `engine-ground`): quiet 0 + 0 and awake with nothing deforming unchanged; with stage
 4 open and a body settling as the last read saw it, 2 direct and 10 indirect more than before (`bakeBegin`; `partField`,
 `partOcc`, `partLive` over the settling pages; the store's six bake kernels, the flood twice).
+
+### Item 2 as built
+
+As planned, in `tfine` only (three workgroup sums before its barrier; the row's thread weighs the resultant). One
+thing the plan had wrong: it expected the first-break tests not to move. They moved, because the resultant is weighed
+by the speed the body comes in with and the old rule was not (BACKLOG PE30: a sample's stop less the gap it had still
+to close, so up to 11 cells/s was lost to the rigid contact before the bar was weighed). PE30's test passes: a block
+from 24 cells comes in at 20.1 cells/s as before, from 40 cells at 25.3 (it was 14.9). The lab's first height went
+from 8 to 5 cells; no threshold was changed (PR9). On a heap a piece is handed to stage 4 every time but does not
+always crumble (PR7: voxels meet voxels softly, PM5).
+
+### Items 3 and 4 (rest claims External; the sand station): not built this round. What was read
+
+A sleeping row still writes nothing to the columns and wakes by the surface word under its centre alone (PQ7, PQ10
+stand as written). Read while planning, for whoever builds it next:
+1. **Unclaimed External is turned back into ground on the GPU.** `sim/external.ts`: "External intervals no instance
+   claims are orphans: they become their fallback material", and the town's GPU-owned grids have an orphan pass and an
+   edit check of their own (`game/colapply.ts`, `sim/static-claims.ts`). Read, not run: a row's claim written by a new kernel looks to be
+   taken by those passes unless the engine's rows are an owner they know. This is the first thing to settle, and it is
+   a contract change (ARCHITECTURE "External intervals"), not an engine detail.
+2. **The projection is nearly there.** A row's model in the distance-field store is its occupancy in cubes of half a
+   cell (the host's models, and now every part's: item 1). A thread a column of the row's bound can walk that field
+   top to bottom in the row's pose and write the spans it is inside of; no new representation is needed.
+3. **The owner word.** An interval's aux word is its fallback material today; the claim must name the row (PE10), so
+   that a kernel that changes a column under a claim can flag the row awake (a word in the rows' work words, as
+   `RW_WAKE` is stamped by the pair solver) with no host event.
+4. **The row's own ground test** (`sampleContacts`, `tground`) must pass over External that names itself, or it rests
+   on its own claim; and the ground tops (`engine_ground.wgsl`) must not count it.
+5. Not checked: that the granular sim, the flow and the field mesher treat External as solid and as air on every path.
