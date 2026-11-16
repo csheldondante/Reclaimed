@@ -48,6 +48,9 @@ const F_REPLANT: u32 = 8u;
 const F_DEBUG: u32 = 16u;
 /** (the living bench, ?livingbench=1) the relax sweeps dispatched every frame even when settled: the graph forced awake */
 const F_AWAKE: u32 = 32u;
+/** the graph's kernels (build, relax, check, wall work) are encoded this frame: living.ts sets it while it is awake.
+ *  Unset, `gate` only watches: it changes nothing of the graph and says in L_WANT whether there is work */
+const F_SOLVE: u32 = 64u;
 
 const ROW_H: f32 = 0.8660254;
 const NONE: u32 = 0xffffffffu;
@@ -117,6 +120,10 @@ const L_SWEEPS: u32 = 7u;
 /** the wake word: a GPU edit that changed what the graph is made from (works.wgsl: a walked column dug out, the
  *  clearing's camp placed) sets it; `gate` turns it into a rebuild once the graph is settled. No CPU signal */
 const L_WAKE: u32 = 40u;
+/** the graph has work the CPU must encode (living.ts reads it, graphSettled). A frame that solves (F_SOLVE): the gate
+ *  saw the graph not settled or did wall work this frame. A frame that doesn't: the gate's watch saw a wake word, a
+ *  phase that isn't settled, or the wall changed. And the pool's switch sets it when there's a wall: its routes follow */
+const L_WANT: u32 = 41u;
 /** the gate's snapshot: relax sweeps run this frame (the phase was 1 at its start), the trace ran (it was 2) */
 const L_RELAXING: u32 = 8u;
 const L_TRACING: u32 = 9u;
@@ -350,10 +357,24 @@ fn doorCol(r: u32) -> u32 {
 
 // ---- the gate: the build's and the relax's indirect args from the phase ----
 // IND: [0..3) build over columns, [3..6) build over lots, [6..9) build one thread, [9..12) relax (8 × 8 tiles),
-// [12..15) trace, [15..18) build over hash slots
+// [15..18) build over hash slots, [18..27) the check, [30..33) the wall's work. (The trace and the hash's clearing are
+// direct dispatches with an early-out: they run every frame, the kernels above only while living.ts is awake.)
 @compute @workgroup_size(1)
 fn gate() {
   var ph = lt(L_PHASE);
+  // (the frame's own counts: riding, working, idle — what the panel shows is one frame's)
+  setLt(L_C + C_RIDING, 0u);
+  setLt(L_C + C_WORKING, 0u);
+  setLt(L_C + C_IDLE, 0u);
+  if ((u.m.z & F_SOLVE) == 0u) {
+    // (the watch: the graph's kernels aren't encoded this frame. Nothing of the graph is changed — a wake word stays,
+    // a phase asked stays asked — and L_WANT says there's work. The trace goes on while the graph is settled)
+    if (ph != 4u || lt(L_WAKE) != 0u || wallWants(ph)) { setLt(L_WANT, 1u); }
+    setLt(L_GPH, ph);
+    setLt(L_RELAXING, 0u);
+    setLt(L_TRACING, select(0u, 1u, ph == 4u));
+    return;
+  }
   // (woken by a GPU edit while settled: the graph made again)
   if (ph == 4u && lt(L_WAKE) != 0u) {
     setLt(L_WAKE, 0u);
@@ -366,19 +387,12 @@ fn gate() {
   IND[3] = select(0u, (u.m.x + 63u) / 64u, b); IND[4] = 1u; IND[5] = 1u;
   IND[6] = select(0u, 1u, b); IND[7] = 1u; IND[8] = 1u;
   IND[9] = select(0u, (u.n.x + 7u) / 8u, ph == 1u || ph == 3u || (u.m.z & F_AWAKE) != 0u); IND[10] = (u.n.y + 7u) / 8u; IND[11] = 1u;
-  // (the hash cleared only on a pool switch: poolSwitch writes these)
-  IND[27] = 0u; IND[28] = 1u; IND[29] = 1u;
-  IND[12] = select(0u, (min(lt(L_TQ), TQ_ROOM) + 63u) / 64u, ph == 4u); IND[13] = 1u; IND[14] = 1u;
   IND[15] = select(0u, HASH / 64u, b); IND[16] = 1u; IND[17] = 1u;
   // (the connectivity check: over the columns at phase 2 and 5, over the lots at 2, one thread at 2 and 5)
   IND[18] = select(0u, cols, ph == 2u || ph == 5u); IND[19] = 1u; IND[20] = 1u;
   IND[21] = select(0u, (u.m.x + 63u) / 64u, ph == 2u); IND[22] = 1u; IND[23] = 1u;
   IND[24] = select(0u, 1u, ph == 2u || ph == 5u); IND[25] = 1u; IND[26] = 1u;
   setLt(L_GPH, ph);
-  // (the frame's own counts: riding, working, idle — what the panel shows is one frame's)
-  setLt(L_C + C_RIDING, 0u);
-  setLt(L_C + C_WORKING, 0u);
-  setLt(L_C + C_IDLE, 0u);
   setLt(L_RELAXING, select(0u, 1u, ph == 1u || ph == 3u));
   setLt(L_TRACING, select(0u, 1u, ph == 4u));
   if (b) {
@@ -386,7 +400,9 @@ fn gate() {
     setLt(L_Q + Q_PICK, 0u);
   }
   // (season life: the wall's routes and table, worked on only when the wall changed)
-  wallWatch(ph);
+  let walled = wallWatch(ph);
+  // (not settled, or the wall worked on this frame: living.ts stays awake a frame more)
+  setLt(L_WANT, select(0u, 1u, ph != 4u || walled));
 }
 
 // ---- the build (phase 0): the walkable mask, the hubs' seeds ----
@@ -967,9 +983,12 @@ fn poolSwitch() {
   setLt(L_Q + Q_RAMPV, 0u);
   setLt(L_Q + Q_RAMP, 0u);
   setLt(L_CLEARHASH, 1u);
-  IND[27] = HASH / 64u;
+  // (a wall: its routes are traced again into the new half — the gate's watch sees the generations at the next frame;
+  // said now, so living.ts doesn't sleep between)
+  if (lt(L_WALL + WL_FULL) != 2u) { setLt(L_WANT, 1u); }
   atomicAdd(&LT[L_C + C_SWITCHES], 1u);
 }
+/** (a thread a hash slot, every frame: a direct dispatch that returns at once unless the pool switched this frame) */
 @compute @workgroup_size(64)
 fn hashClear(@builtin(global_invocation_id) g: vec3<u32>) {
   if (g.x >= HASH || lt(L_CLEARHASH) == 0u) { return; }
@@ -1064,11 +1083,12 @@ fn traceDown(start: u32, hub: u32) -> u32 {
   bump(C_TRACED, 1u);
   return rid | (genOf(rid) << 16u);
 }
-/** (a thread a queued key, phase 4) traced down its hub's field (traceDown) */
+/** (a thread a queued key, phase 4) traced down its hub's field (traceDown). Every frame, a direct dispatch over the
+ *  queue's room: threads past the queued keys return at once, all of them while the graph isn't settled */
 @compute @workgroup_size(64)
 fn trace(@builtin(global_invocation_id) g: vec3<u32>) {
   let q = g.x;
-  if (q >= min(lt(L_TQ), TQ_ROOM)) { return; }
+  if (lt(L_TRACING) != 1u || q >= min(lt(L_TQ), TQ_ROOM)) { return; }
   let s = lt(L_TQL + q);
   let key = lt(L_HASH + s * 2u);
   let r = traceDown(key / HUBS - 1u, key % HUBS);
@@ -2075,28 +2095,47 @@ fn wallCopy() {
   }
   setLt(L_WALL + WL_MADE, 1u);
 }
-/** (gate, a thread, every frame) the wall's work dispatched (IND 30) when the ring is new, a piece has risen, the
- *  graph has settled again or the pool's halves moved on; else 0 workgroups */
-fn wallWatch(ph: u32) {
+/** the ring's signature: its pieces and corners and the pool's halves' generations (never 0 or 2: bit 0 set) */
+fn wallSig() -> u32 {
+  var hs = hash(WALLW[1] ^ (WALLW[2] << 8u)) ^ hash(RB[0] * 65599u + RB[1]);
+  for (var b = 0u; b < WNB; b++) { hs = hash(hs ^ WALLW[WB_KIND2 + b] ^ WALLW[WB_V2 + 2u * b]); }
+  return hs | 1u;
+}
+/** the pieces risen at the town's clock (a bit a piece) */
+fn wallRisenNow() -> array<u32, 3> {
+  var m = array<u32, 3>(0u, 0u, 0u);
+  for (var b = 0u; b < WNB; b++) { if (wallRiseAt(b) >= 1.0) { m[b / 32u] |= 1u << (b % 32u); } }
+  return m;
+}
+/** (gate's watch, a frame the graph's kernels aren't encoded) whether wallWatch would dispatch the wall's work; nothing
+ *  written. The graph not settled: the gate says so itself */
+fn wallWants(ph: u32) -> bool {
+  if (WALLW[0] != 1u) { return lt(L_WALL + WL_FULL) != 2u; }
+  if (ph != 4u) { return false; }
+  if (wallSig() != lt(L_WALL + WL_FULL)) { return true; }
+  let m = wallRisenNow();
+  return m[0] != lt(L_WALL + WL_RISEN) || m[1] != lt(L_WALL + WL_RISEN + 1u) || m[2] != lt(L_WALL + WL_RISEN + 2u);
+}
+/** (gate, a thread, each frame the graph's kernels are encoded) the wall's work dispatched (IND 30) when the ring is
+ *  new, a piece has risen, the graph has settled again or the pool's halves moved on; else 0 workgroups. True: work */
+fn wallWatch(ph: u32) -> bool {
   IND[30] = 0u; IND[31] = 1u; IND[32] = 1u;
   if (WALLW[0] != 1u) {
     // (no wall: its empty table written once)
-    if (lt(L_WALL + WL_FULL) != 2u) { setLt(L_WALL + WL_FULL, 2u); IND[30] = 1u; }
-    return;
+    if (lt(L_WALL + WL_FULL) != 2u) { setLt(L_WALL + WL_FULL, 2u); IND[30] = 1u; return true; }
+    return false;
   }
   // (the graph not settled: the table kept as it is; everything again once it settles)
-  if (ph != 4u) { setLt(L_WALL + WL_FULL, 0u); return; }
-  var hs = hash(WALLW[1] ^ (WALLW[2] << 8u)) ^ hash(RB[0] * 65599u + RB[1]);
-  for (var b = 0u; b < WNB; b++) { hs = hash(hs ^ WALLW[WB_KIND2 + b] ^ WALLW[WB_V2 + 2u * b]); }
-  hs = hs | 1u;
+  if (ph != 4u) { setLt(L_WALL + WL_FULL, 0u); return false; }
+  let hs = wallSig();
   var work = false;
   if (hs != lt(L_WALL + WL_FULL)) { setLt(L_WALL + WL_FULL, hs); wallCopy(); work = true; }
-  var m = array<u32, 3>(0u, 0u, 0u);
-  for (var b = 0u; b < WNB; b++) { if (wallRiseAt(b) >= 1.0) { m[b / 32u] |= 1u << (b % 32u); } }
+  let m = wallRisenNow();
   for (var j = 0u; j < 3u; j++) {
     if (m[j] != lt(L_WALL + WL_RISEN + j)) { setLt(L_WALL + WL_RISEN + j, m[j]); work = true; }
   }
   if (work) { IND[30] = 1u; }
+  return work;
 }
 
 fn wlRisen(b: u32) -> bool { let s = b % WNB; return ((lt(L_WALL + WL_RISEN + s / 32u) >> (s % 32u)) & 1u) == 1u; }

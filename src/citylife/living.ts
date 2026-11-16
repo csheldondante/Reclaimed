@@ -1,11 +1,21 @@
 // (living town, docs/design/LIVING_TOWN.md) A citygen town's people on the GPU: the route graph from its road raster,
 // the hubs' fields relaxed with no readback, cached routes in a points pool, riders on kinematic trips with their jobs'
 // state machine, drawn as voxel figures (routes.wgsl); the quarry and the clearing as world operations (works.wgsl).
-// The CPU writes the parameters' uniform (counts, rates, the works' numbers, the grid's place in the window) and encodes
-// a fixed list of dispatches a frame; what runs and how much is decided on the GPU (indirect dispatches from the state
-// words). Nothing is read back but the debug panel's counters (`counters`, only while someone looks).
+// The CPU writes the parameters' uniform (counts, rates, the works' numbers, the grid's place in the window).
+//
+// Two parts (phone-idle, 2026-11-15: an indirect dispatch costs ~0.1 ms on the phone whether it does work or not):
+// - every frame, one pass of direct dispatches: the gate's watch, the pool's switch, the trace of the route keys the
+//   riders asked (over the queue's room, early-out), the riders, the works' stages, the figures — the city stays alive;
+// - the graph (build, relax, connectivity check, wall work: indirect dispatches sized by the gate from the phase word)
+//   only while awake: from a CPU-known event (made, `rebuild`, `wake`: the town's mesh run) until a small read of the
+//   state words (gpu/settled.ts) says it is settled (`graphSettled`). Asleep, none of it is encoded.
+// Wakes only the GPU knows (the works dig out a walked column, the clearing's camp is placed, a wall piece rises with
+// the clock, the pool's halves switch under a wall's routes): the gate's watch says so in a state word and the same
+// read, taken every WATCH_EVERY frames while such a wake can happen, hears it.
+// Nothing else is read back but the debug panel's counters (`counters`, only while someone looks).
 import routesWgsl from './routes.wgsl?raw';
 import { makeBindGroup, makeCompute, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
+import { SettledRead } from '../gpu/settled';
 import { LIVING_TUNING, type LivingValues } from './params';
 
 /** routes.wgsl's LT layout: its words (to the wall's block's end: L_WALL + WL_WORDS), the counters' first word, the
@@ -38,6 +48,32 @@ const L_WALL = 53032;
 export const MAX_RIDERS = 4096;
 /** routes.wgsl RELAX_INNER: sweeps a relax dispatch makes */
 const RELAX_INNER = 4;
+/** routes.wgsl HASH / 64 and TQ_ROOM / 64: the hash's clearing's and the trace's direct dispatches (early-out) */
+const HASH_GROUPS = 8192 / 64;
+const TRACE_GROUPS = 2048 / 64;
+/** routes.wgsl F_SOLVE: the graph's kernels are encoded this frame */
+const F_SOLVE = 64;
+/** the state words the settled read takes (the first SETTLED_WORDS of LT) and the ones it looks at (routes.wgsl L_*) */
+const SETTLED_WORDS = 48;
+const L_PHASE = 0;
+const L_RELAXING = 8;
+const L_GPH = 10;
+const L_SWITCH = 14;
+const L_WAKE = 40;
+const L_WANT = 41;
+/** asleep, frames between the reads that listen for a wake only the GPU knows (three a second at 60 fps) */
+export const WATCH_EVERY = 20;
+
+/**
+ * Whether the graph has nothing more to do, from the state words' head as a frame left them: the phase is settled (4)
+ * and was at the frame's gate (its snapshot), nothing relaxed this frame, no wake word waits (works.wgsl: a walked
+ * column dug out), no pool switch is asked (the wall's routes follow one), and the gate found no work (L_WANT: the
+ * wall's table, or — watching — anything at all).
+ */
+export function graphSettled(w: Uint32Array): boolean {
+  return w[L_PHASE] === 4 && w[L_GPH] === 4 && w[L_RELAXING] === 0 && w[L_SWITCH] === 0 && w[L_WAKE] === 0 && w[L_WANT] === 0;
+}
+
 /** voxels a rider at most (figures: legs, torso, head, a cart and its load, a falling trunk) */
 const VOX_PER = 14;
 const NONE = 0xffffffff;
@@ -108,7 +144,7 @@ const SPECS: Record<K, BindSpec> = {
   relaxCheck: { 0: 'uniform', 10: 'rw' },
   trace: { 0: 'uniform', 1: 'read', 2: 'read', 8: 'rw', 9: 'rw', 10: 'rw', 11: 'rw', 15: 'read' },
   traceDone: { 0: 'uniform', 10: 'rw' },
-  poolSwitch: { 0: 'uniform', 10: 'rw', 11: 'rw', 14: 'rw' },
+  poolSwitch: { 0: 'uniform', 10: 'rw', 11: 'rw' },
   passMeshClear: { 0: 'uniform', 19: 'rw' },
   passMesh: { 0: 'uniform', 2: 'read', 8: 'rw', 18: 'rw', 19: 'rw' },
   hashClear: { 0: 'uniform', 10: 'rw' },
@@ -129,10 +165,11 @@ const SPECS: Record<K, BindSpec> = {
 /** routes.wgsl struct P's bytes (12 vec4s) */
 const P_BYTES = 192;
 
-/** the GPU's ms of each part of the frame (timestamps; null without them) */
-export type LivingTimes = Record<'graph' | 'riders' | 'figures' | 'works', number | null>;
+/** the GPU's ms of each part of the frame (timestamps; null without them): the graph's pass (only while it solves) and
+ *  the every-frame pass (trace, riders, works, figures) */
+export type LivingTimes = Record<'graph' | 'people', number | null>;
 
-/** an extra stage (the works: quarry and clearing) encoded in the frame after the riders */
+/** an extra stage (the works: quarry and clearing) encoded in the frame after the riders, in their pass */
 export interface LivingStage {
   encode(cp: GPUComputePassEncoder, frame: number): void;
 }
@@ -167,9 +204,14 @@ export class LivingTown {
   /** (the living bench, ?livingbench=1, only) the graph forced awake: its relax sweeps dispatched every frame even when
    *  settled — the toggle diff's "awake" side */
   debugAwake = false;
-  /** (the living bench only) the graph's pass not encoded at all — the toggle diff's measure of what the settled graph's
-   *  empty indirect dispatches cost. Never in play: the graph would never wake */
+  /** (the living bench only) the graph's pass never encoded, whatever woke it — the toggle diff's other side (settled,
+   *  the graph is asleep and this changes nothing). Never in play: the graph would never be made */
   debugSkipGraph = false;
+  /** (tests only) the graph's pass encoded every frame, as before it slept: the run a sleeping town is compared with */
+  debugNoSleep = false;
+  /** the graph's sleep: awake from a wake till the state words read settled (gpu/settled.ts) */
+  private sleep: SettledRead;
+  private lastFlags = -1;
   /** (tests only) a rider forced overridden (its index + 1; 0 none): routes.wgsl's `overridden` stub */
   debugOverride = 0;
   /** the last counters read (the panel's) */
@@ -229,6 +271,34 @@ export class LivingTown {
       this.k[name] = k;
       this.g[name] = makeBindGroup(device, `living ${name}`, k.layout, Object.fromEntries(Object.keys(spec).map((b) => [Number(b), R[Number(b)]])));
     }
+    // (awake to begin with: the graph is made. A read that says "not settled" while asleep is the watch's: a wake)
+    this.sleep = new SettledRead(device, 'living graph', this.lt, 0, SETTLED_WORDS * 4, (w) => {
+      const settled = graphSettled(w);
+      if (!settled && !this.sleep.awake) this.sleep.wake();
+      return settled;
+    });
+  }
+
+  /** a CPU-known event that may have changed what the graph is made from (the town's mesh run: its roads, lots, wall):
+   *  the graph's kernels are encoded again until the state words read settled */
+  wake(): void {
+    this.sleep.wake();
+  }
+
+  /** the graph's kernels are encoded this frame (awake) */
+  get awake(): boolean {
+    return this.sleep.awake;
+  }
+
+  /** (tests, the census) the sleep's wakes, reads and sleeps so far */
+  get sleepStats(): Readonly<{ wakes: number; reads: number; slept: number }> {
+    return this.sleep.gate.stats;
+  }
+
+  /** a wake only the GPU knows can happen: the works (a walked column dug out, the camp placed) or a wall (a piece
+   *  rising with the clock, its routes after a pool switch) — asleep, the watch's read listens for it */
+  private get watching(): boolean {
+    return !!this.values.quarry.on || !!this.values.forest.on || !!this.input.wall;
   }
 
   /** how many riders: the counts' sum */
@@ -238,7 +308,7 @@ export class LivingTown {
   }
 
   /** the parameters' uniform for this frame (routes.wgsl struct P) */
-  private writeParams(dt: number, place: LivingPlace): void {
+  private writeParams(dt: number, place: LivingPlace, solve: boolean): void {
     const v = this.values;
     const p = v.people;
     const a = new ArrayBuffer(P_BYTES);
@@ -248,7 +318,7 @@ export class LivingTown {
     const ends: number[] = [];
     let acc = 0;
     for (const n of [p.commuters, p.farmers, p.quarrymen, p.stoneCarts, p.woodcutters, p.logCarts, p.builders]) ends.push((acc = Math.min(MAX_RIDERS, acc + n)));
-    const flags = 1 | (v.quarry.on ? 2 : 0) | (v.forest.on ? 4 : 0) | (v.forest.replant ? 8 : 0) | (this.debugGraph ? 16 : 0) | (this.debugAwake ? 32 : 0);
+    const flags = this.flags() | (solve ? F_SOLVE : 0);
     U.set([this.input.w, this.input.h, this.riders, this.frameNo], 0);
     U.set([this.input.lotRoom, this.input.lotRoom, flags, v.graph.sweeps], 4);
     U.set([ends[0], ends[1], ends[2], ends[3]], 8);
@@ -269,6 +339,12 @@ export class LivingTown {
     this.device.queue.writeBuffer(this.routes, 16, new Float32Array([place.dx, place.dy * 0.8660254, place.dz]));
   }
 
+  /** routes.wgsl F_*: the works on, the debug switches (F_SOLVE is the frame's own) */
+  private flags(): number {
+    const v = this.values;
+    return 1 | (v.quarry.on ? 2 : 0) | (v.forest.on ? 4 : 0) | (v.forest.replant ? 8 : 0) | (this.debugGraph ? 16 : 0) | (this.debugAwake ? 32 : 0);
+  }
+
   /** the jobs dealt again when the counts change (the riders' rows cleared: each is dealt at its next frame) */
   private redeal(enc: GPUCommandEncoder): void {
     const p = this.values.people;
@@ -279,14 +355,22 @@ export class LivingTown {
   }
 
   /**
-   * The frame's GPU work, encoded into `enc`: the build (when the state says so), the relax sweeps (while the fields
-   * settle), the trace (new route keys), the ramp, the riders, the works' stages, the figures. `ts` names a pass's
-   * timestamps (the profiler's).
+   * The frame's GPU work, encoded into `enc` (which must be submitted in this task: the settled read maps after it).
+   * While awake, the graph's pass: the build (when the state says so), the relax sweeps (while the fields settle), the
+   * check, the wall's work — indirect, sized by the gate. Every frame, one pass of direct dispatches: the trace (new
+   * route keys), the ramp, the riders, the works' stages, the figures. `ts` names a pass's timestamps (the profiler's).
    */
   frame(enc: GPUCommandEncoder, dt: number, place: LivingPlace, ts?: (name: string) => GPUComputePassTimestampWrites | undefined): void {
     const sdt = Math.min(dt, 0.1) * this.values.people.speed;
     this.time += sdt;
-    this.writeParams(sdt, place);
+    // (the works switched on or off, a debug switch: a look at the graph — the build reads the flags)
+    const flags = this.flags();
+    if (flags !== this.lastFlags) {
+      if (this.lastFlags !== -1) this.sleep.wake();
+      this.lastFlags = flags;
+    }
+    const solve = !this.debugSkipGraph && (this.sleep.awake || this.debugAwake || this.debugNoSleep);
+    this.writeParams(sdt, place, solve);
     this.redeal(enc);
     const run = (cp: GPUComputePassEncoder, k: K, x: number | [GPUBuffer, number]) => {
       cp.setPipeline(this.k[k].pipeline);
@@ -300,9 +384,9 @@ export class LivingTown {
       body(cp);
       cp.end();
     };
-    // (one pass for the graph: the build, the relax sweeps, the connectivity check, the trace — each indirect, sized by
-    // the phase word: settled, they're dispatches of 0 workgroups)
-    if (!this.debugSkipGraph) pass('graph', (cp) => {
+    // (one pass for the graph, only while awake: the build, the relax sweeps, the connectivity check — each indirect,
+    // sized by the gate from the phase word)
+    if (solve) pass('graph', (cp) => {
       // (build)
       run(cp, 'gate', 1);
       // (season life: the wall's routes and table — 0 workgroups unless the wall changed)
@@ -323,7 +407,7 @@ export class LivingTown {
       run(cp, 'passMesh', ind(0));
     // (relax)
       // (the frame's sweeps in turn, RELAX_INNER in place a dispatch: one after another is what carries a distance far;
-      // settled, each is 0 workgroups)
+      // not relaxing, each is 0 workgroups)
       const disp = Math.max(2, Math.ceil(this.values.graph.sweeps / RELAX_INNER));
       for (let k = 0; k < disp - 1; k++) run(cp, 'relax', ind(9));
       run(cp, 'relaxMark', 1);
@@ -336,13 +420,17 @@ export class LivingTown {
       run(cp, 'checkPick', ind(18));
       run(cp, 'checkLay', ind(18));
       run(cp, 'checkStep', ind(24));
-    // (trace)
-      run(cp, 'poolSwitch', 1);
-      run(cp, 'hashClear', ind(27));
-      run(cp, 'trace', ind(12));
-      run(cp, 'traceDone', 1);
     });
-    pass('riders', (cp) => {
+    // (one pass for what runs every frame, all direct)
+    pass('people', (cp) => {
+      // (asleep: the gate's watch — the frame's counts, the phase's snapshot, whether there's work)
+      if (!solve) run(cp, 'gate', 1);
+      // (trace: the keys the riders queued, over the queue's room — its threads return at once past the queued keys,
+      // the hash's unless the pool switched this frame)
+      run(cp, 'poolSwitch', 1);
+      run(cp, 'hashClear', HASH_GROUPS);
+      run(cp, 'trace', TRACE_GROUPS);
+      run(cp, 'traceDone', 1);
       if (this.frameNo % 30 === 0) {
         run(cp, 'sitesClear', 1);
         run(cp, 'sites', Math.ceil(this.input.lotRoom / 64));
@@ -356,15 +444,19 @@ export class LivingTown {
         for (let k = 0; k < 4; k++) run(cp, 'seaRelax', Math.ceil((this.input.w * this.input.h) / 64));
         run(cp, 'ships', Math.ceil(ships / 64));
       }
-    });
-    if (this.stages.length) pass('works', (cp) => this.stages.forEach((s) => s.encode(cp, this.frameNo)));
-    pass('figures', (cp) => {
+      // (the works: quarry and clearing)
+      for (const s of this.stages) s.encode(cp, this.frameNo);
       run(cp, 'figuresClear', 1);
       // (and past the riders, a thread a wall segment: its red marks where the town doesn't reach its walk)
       run(cp, 'figures', Math.ceil((this.riders + 72) / 64));
       // (and the wall's table's routes with their widths: a thread a route past the columns)
       if (this.debugGraph) run(cp, 'overlay', Math.ceil((this.input.w * this.input.h + WW_ROOM + GATE_SLOTS) / 64));
     });
+    // (the state words read, small and async: awake, until they say settled; asleep, now and then while a wake only
+    // the GPU knows can happen — the read's "not settled" wakes it)
+    if (this.sleep.awake) {
+      if (solve) this.sleep.encode(enc);
+    } else if (!this.debugSkipGraph && this.watching && this.frameNo % WATCH_EVERY === 0) this.sleep.encode(enc);
     this.frameNo++;
   }
 
@@ -382,6 +474,7 @@ export class LivingTown {
   /** the graph made again (the town's road raster was drawn again: a district's roads appeared): 4 bytes */
   rebuild(): void {
     this.device.queue.writeBuffer(this.lt, 0, new Uint32Array([0]));
+    this.sleep.wake();
   }
 
   /** (debug: the panel, scripts) the head of the state words, read once (a few hundred bytes, async); null while one's
@@ -420,6 +513,7 @@ export class LivingTown {
   }
 
   dispose(): void {
+    this.sleep.destroy();
     for (const b of this.all) b.destroy();
   }
 }
