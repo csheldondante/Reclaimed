@@ -23299,3 +23299,30 @@ is the engine to build, and why a run needs more than four seasons.
 
 Not yet: the screen (the old one still runs on round 1's rules), saving the fact layer, the dealer's scores for these
 templates (several tie at 0.92, so which four are dealt first is their order in the list).
+
+## 2026-11-15 — the loop runs on the engine: cards over their places, the petition dialog, the fact layer saved (rework steps 2 and 3)
+
+**Deleted:** `season/run.ts` (the run record, the deck and hand, effects, the world record), `season/mutation.ts`,
+`scenes/level/loop-standin.ts`, `test/unit/run.test.ts`, the `Petition` type and its 20 cards. `run-words.ts` keeps the
+leaders and the screens' own lines; `run-ui.ts` and `scenes/level/loop.ts` are rewritten on `Realm`.
+
+**What the engine does for each moment now.** The deal: `LivingEngine.deal` (the one dealer). Shown: a name and a
+countdown over the card's site, the raiders' countdown on the top bar and over the road. Going there: the story camera
+frames the site and the petition opens as the engine's own dialog (`petitionTree`: portrait, voice, Needs / Takes /
+You get / If you refuse). Agreeing: `LivingEngine.commit` on the ledger's holdings. A season: `advance` (resolve,
+expire, the arc), then the season loop's time-lapse. The end: the fact layer's history. Saved: the WorldState snapshot
+under `realm:world` at each season's end and at the fight; a reload and the next run start from it.
+
+**Walk** (`node scripts/loopwalk.mjs`, 412x915, Ysolt, 5 seasons, agreeing to the walls and the tower lens): passed end
+to end. Decisions a season: 4, 5, 5, 3. The walls were built in season 4; 12 soldiers stood at the gate; the raid came
+down road 2 (roads 0 and 1 refused first); the heat ray killed 2; **the town held: 6 raiders dead, 4 soldiers** — the
+first held town, and the first sign that preparing matters (walls and a gate, against the heart's line that lost 9 to
+2). After a reload the leader screen listed the same 14 events; the new run was run 2 with the walls still built.
+One walk only; the unprepared walk and the 10 in a row are not run yet. Boots: 3 of 3 clean since the watchdog change.
+
+**Seen wrong in the stills.** The names over the map overlap, run off the left edge and one covers the raiders' tag
+(the stand-in ring: LS-3). Figures in the fight are a few pixels (LS-24). The end screen reads well.
+
+**Measured.** The world's record: 2.33 MB of JSON a save (LS-29: the whole atlas world, not what changed).
+
+Tests: unit 631 pass, `writing-sources` fails on `roadlab/control.ts` as on the base; `realm.test.ts` 10.

@@ -1,27 +1,32 @@
-// (loop-skeleton; docs/design/LOOP_SKELETON.md) ?loop=1: the main game loop's walking skeleton on the town the level
-// opens on. Pick a leader → the town → named people ask (petitions: the opportunity cards) → agree by committing the
-// cost → Next season (the season loop's time-lapse) → the threat's countdown ends → the attack plays with the soldiers
-// built, spells cast → the end of the run → a new run in the same world. World changes (the mutators' contract) are
-// applied and saved at once whenever a card is agreed or runs out, in the town or far away; one in the town gets a short
-// reveal with the camera on it. This file is the wiring only: the rules are season/run.ts (pure), the pools the season ledger, the
-// building and the fight the season loop and its war, the screens season/run-ui.ts, every line season/run-words.ts.
-// `window.rungame` for scripts.
+// (loop-skeleton; docs/design/LOOP_SKELETON.md) ?loop=1: the main game loop on the town the level opens on, run on the
+// existing engine. Pick a leader → the town, with what people ask shown over their places → go to one: the presenter's
+// dialog (the petition) → agree: the cost committed → Next season (the season loop's time-lapse) → … → the raiders'
+// arc reaches its last stage → the attack plays with the soldiers built, spells cast → the end of the run, read from
+// the fact layer's history → a new run in the same saved world.
+// This file is the wiring only. The rules are season/realm.ts (the living engine joined to the season ledger), the
+// templates season/realm-templates.ts, the pools the season ledger, the building and the fight the season loop and its
+// war, the screens season/run-ui.ts, the dialog dialog/petition.ts. `window.rungame` for scripts.
+import type { WorldSnapshot } from '../../api/contracts/world';
 import type { FieldTowns } from '../../citygen/towns';
-import { lose, newLedger, pools, total, type SeasonLedger } from '../../season/ledger';
+import { DialogBox, type Speaker } from '../../dialog/dialog';
+import { actOf, petitionTree } from '../../dialog/petition';
+import { portraitUrl } from '../../dialog/portrait';
+import { meetPerson, petitionOf } from '../../living/present';
+import { capitalise } from '../../living/plain';
+import { lose, newLedger, pools, total, type Pool, type Pools, type SeasonLedger } from '../../season/ledger';
 import type { SeasonLoop } from '../../season/loop';
-import type { Mutators } from '../../season/mutation';
-import { comesHome, decodeWorld, encode, endRun, endSeason, fought, mutate, newRun, newWorld, play, raidDue, roadLook, startLedger, threatDone, type Mutation, type Petition, type RunRecord, type SpellId, type WorldChange, type WorldRecord } from '../../season/run';
-import { mountRunUi, type Marker, type Phase, type RunGame } from '../../season/run-ui';
+import { Realm, roadLook, RUN_SEASONS, type SpellId } from '../../season/realm';
+import { SITES, type SiteKey } from '../../season/realm-templates';
+import { mountRunUi, type Asking, type Marker, type Phase, type RunGame } from '../../season/run-ui';
 import * as W from '../../season/run-words';
 import { WAVE_NO_ROAD } from '../../season/words';
 import { StoryCamera, type V3 } from '../../story/camera';
 import type { LevelScene } from '../level';
-import { standinMutators } from './loop-standin';
 import { REGION } from '../streamer/defs';
 import { startSeasonLoop, storeReady } from './season';
 
-const WORLD_KEY = 'loop:world';
-const MUTATORS_KEY = 'loop:mutators';
+/** the world's record in the world store: the fact layer, the characters, the holdings (WorldState's snapshot) */
+const WORLD_KEY = 'realm:world';
 /** the sim's speed while the raiders march in (they walk from outside the town) */
 const MARCH_SPEED = 3;
 /** seconds raiders stay in a town with no soldier left before the fight is called */
@@ -50,17 +55,17 @@ const HEATRAY = { radius: 5, damage: 3, magic: 1 };
 
 class Game implements RunGame {
   phase: Phase = 'boot';
-  run: RunRecord | null = null;
-  world: WorldRecord = newWorld();
-  selected: Petition | null = null;
+  realm: Realm | null = null;
   notes: string[] = [];
   fightLine: string | null = null;
   resultLines: string[] = [];
-  change: { text: string; standin: boolean } | null = null;
   armed: SpellId | null = null;
   readonly onChange: (() => void)[] = [];
   private cam: StoryCamera;
-  private mutators: Mutators;
+  /** the world as saved (null: the atlas's own), and its history before this page's runs */
+  private saved: WorldSnapshot | null = null;
+  private talk: DialogBox;
+  private speakers = new Map<string, Speaker>();
   /** the attack under way: when it began (s), when the town was first left with no soldier, the raiders watched */
   private attack: {
     t: number;
@@ -79,10 +84,6 @@ class Game implements RunGame {
     /** the middle of the raiders alive (window point), once they are watched */
     mid: (() => V3 | null) | null;
   } | null = null;
-  /** world changes in the town applied and recorded, their reveals not yet played */
-  private reveals: { text: string; frame: [number, number]; radius: number; play?: () => { done: Promise<void> } }[] = [];
-  /** the end screen left to look at a change's place */
-  looking: WorldChange | null = null;
   private speed0 = 1;
 
   constructor(
@@ -93,9 +94,17 @@ class Game implements RunGame {
     this.cam = new StoryCamera(scene.core.camera, scene.storyCut ?? {});
     // (a shot's points are window coordinates: they slide with the window)
     scene.core.onShift.push((dx, dy, dz) => this.cam.shift(dx, dy, dz));
-    // (the stand-in until the `mutators` branch merges: season/mutation.ts)
-    this.mutators = standinMutators(scene.core);
     season.onChange.push(() => this.changed());
+    // (the petition: the dialog the engine's own run uses — opps/level-opps.ts)
+    this.talk = new DialogBox(scene.host.ui, {
+      className: 'petition',
+      speaker: (id) => {
+        const sp = this.speakers.get(id);
+        if (!sp) throw new Error(`petition: no speaker ${id}`);
+        return sp;
+      },
+      check: () => true,
+    });
     let last = performance.now();
     const tick = (now: number) => {
       requestAnimationFrame(tick);
@@ -110,7 +119,7 @@ class Game implements RunGame {
     window.addEventListener(
       'pointerdown',
       (e) => {
-        if (!(e.target instanceof Element && e.target.closest('.run-sheet, .run-top, .run-marks, .run-full'))) this.cast(e);
+        if (!(e.target instanceof Element && e.target.closest('.run-sheet, .run-top, .run-marks, .run-full, .dlg'))) this.cast(e);
       },
       true,
     );
@@ -122,6 +131,15 @@ class Game implements RunGame {
   get canSkip(): boolean {
     return this.season.playing;
   }
+  get leader() {
+    return this.realm?.leader ?? null;
+  }
+  get run() {
+    const r = this.realm;
+    return r ? { season: r.season, seasons: r.seasons, n: this.runs, threatIn: r.threatIn(), averted: r.averted, spells: [...r.spells], fight: r.fight } : null;
+  }
+  /** runs begun in this world (the history's count) */
+  private runs = 0;
   private changed(): void {
     for (const f of this.onChange) f();
   }
@@ -140,139 +158,189 @@ class Game implements RunGame {
     return this.scene.heightAt(x, y) ?? this.scene.core.camera.target[2];
   }
 
-  /** a named part of the town as a window point */
-  private spot(s: NonNullable<Mutation['near']>['spot'], share = 0.45): [number, number] | null {
-    const t = this.town;
-    if (!t) return null;
-    const c = t.centreInWindow();
-    const R = t.box.R * share;
-    if (s === 'centre') return c;
-    if (s === 'east') return [c[0] + R, c[1]];
-    if (s === 'west') return [c[0] - R, c[1]];
-    if (s === 'north') return [c[0], c[1] - R];
-    // (the lowest ground of a ring round the centre, from the level's own height reader)
-    let best: [number, number] = c;
-    let low = Infinity;
-    for (let k = 0; k < 16; k++) {
-      const p: [number, number] = [c[0] + Math.cos((k * Math.PI) / 8) * R, c[1] + Math.sin((k * Math.PI) / 8) * R];
-      const z = this.scene.heightAt(p[0], p[1]);
-      if (z !== null && z < low) [low, best] = [z, p];
-    }
-    return best;
+  private at3(p: [number, number]): V3 {
+    return [p[0], p[1], this.z(p[0], p[1])];
   }
 
-  /** where a petition's character stands: a fixed place in the town's core for each (the threat: out on the east road) */
-  private stand(p: Petition): [number, number] | null {
+  /**
+   * Where a site of the home town is on the map (a window point). A stand-in rule (BACKLOG LS-3): a ring round the
+   * town's centre by the site's place in the list, the gates and roads farther out — not yet the town's own lot of
+   * that kind.
+   */
+  private spot(site: SiteKey): [number, number] | null {
     const t = this.town;
     if (!t) return null;
-    if (p.threat) return this.spot('east', 0.4);
-    const i = W.PETITIONS.indexOf(p);
+    const i = SITES.findIndex((s) => s.key === site);
     const c = t.centreInWindow();
-    const r = t.box.R * (0.1 + 0.035 * (i % 6));
+    const out = SITES[i].kind === 'gate' || SITES[i].kind === 'fields';
+    const r = t.box.R * (out ? 0.34 + 0.03 * (i % 3) : 0.1 + 0.035 * (i % 6));
     return [c[0] + Math.cos(i * 2.399) * r, c[1] + Math.sin(i * 2.399) * r];
   }
 
   markers(): Marker[] {
     const t = this.town;
+    const r = this.realm;
     const cam = this.scene.core.camera;
-    if (!t || !this.run || this.phase === 'leader' || (this.phase === 'end' && !this.looking) || this.phase === 'boot') return [];
+    if (!t || !r || (this.phase !== 'city' && this.phase !== 'petition')) return [];
     const out: Marker[] = [];
-    const put = (id: string, label: string, kind: Marker['kind'], at: [number, number]) => {
+    const put = (id: string, label: string, kind: Marker['kind'], at: [number, number] | null) => {
+      if (!at) return;
       const [x, y] = cam.project(at[0], at[1], this.z(at[0], at[1]));
       if (x > -50 && y > -50 && x < innerWidth + 50 && y < innerHeight + 50) out.push({ id, label, kind, x, y });
     };
-    for (const c of this.world.changes) if (c.near?.town === t.site.name) put(c.id, W.changeTag(c), 'change', t.inWindow(c.near.at));
-    if (this.phase === 'city' || this.phase === 'petition')
-      for (const h of this.run.hand) {
-        const p = W.PETITIONS.find((x) => x.id === h.id)!;
-        const at = this.stand(p);
-        if (at) put(p.id, W.markerLabel(p), p.threat ? 'threat' : 'ask', at);
-      }
+    for (const o of r.offers()) {
+      if (o.status !== 'offered') continue;
+      const site = r.siteOf(o);
+      if (site) put(o.id, `${r.w.name(o.presenter)} · ${W.leftText(r.left(o))}`, 'ask', this.spot(site));
+    }
+    const n = r.threatIn();
+    if (n !== null && n > 0) put('threat', W.threatTag(n), 'threat', this.spot('road'));
     return out;
   }
 
-  private at3(p: [number, number]): V3 {
-    return [p[0], p[1], this.z(p[0], p[1])];
+  asking(): Asking[] {
+    const r = this.realm;
+    if (!r) return [];
+    return r
+      .offers()
+      .filter((o) => o.status === 'offered')
+      .map((o) => ({ id: o.id, who: r.w.name(o.presenter), title: o.opp.title, left: r.left(o) }));
+  }
+
+  working(): string[] {
+    const r = this.realm;
+    return r ? r.offers().filter((o) => o.status === 'committed').map((o) => o.opp.title) : [];
+  }
+
+  history(): { season: number; text: string }[] {
+    const r = this.realm;
+    if (!r) return [];
+    const t0 = r.w.turn - r.season;
+    return r
+      .history()
+      .filter((e) => SHOWN.has(e.kind) || (e.weight ?? 0) !== 0)
+      .map((e) => ({ season: e.turn - t0, text: W.sentence(e.note ?? e.kind) }));
+  }
+
+  before(): string[] {
+    const r = this.realm;
+    const now = r ? r.history().map((e) => e.id) : [];
+    const all = r ? r.history(true) : ((this.saved?.facts as { events?: { id: number; kind: string; note?: string; weight?: number }[] } | undefined)?.events ?? []);
+    return all.filter((e) => !now.includes(e.id as never) && (SHOWN.has(e.kind) || (e.weight ?? 0) !== 0)).map((e) => W.sentence(e.note ?? e.kind));
+  }
+
+  land(): string[] {
+    const r = this.realm;
+    return r ? r.physical.map((p) => W.landLine(p.kind, r.w.name(p.at))) : [];
   }
 
   // ---- saving -----------------------------------------------------------------------------------------
 
   async load(): Promise<void> {
     const st = await storeReady(this.scene);
-    if (st?.has(WORLD_KEY)) this.world = decodeWorld(await st.get(WORLD_KEY));
-    if (st?.has(MUTATORS_KEY)) this.mutators.restore(JSON.parse(new TextDecoder().decode(await st.get(MUTATORS_KEY))));
-    console.log(`[loop] world: ${this.world.runs} runs before, ${this.world.changes.length} changes`);
+    if (st?.has(WORLD_KEY)) this.saved = JSON.parse(new TextDecoder().decode(await st.get(WORLD_KEY))) as WorldSnapshot;
+    const before = this.before();
+    console.log(`[loop] world: ${this.saved ? `saved, ${before.length} things remembered` : 'new'}`);
     this.set('leader');
   }
 
+  /** the world's record saved whole: the fact layer, the characters, the holdings */
   private async save(): Promise<void> {
     const st = this.scene.stream?.store;
-    if (!st) return;
-    await st.put(WORLD_KEY, encode(this.world), { session: 'loop', hash: 0 });
-    await st.put(MUTATORS_KEY, new TextEncoder().encode(JSON.stringify(this.mutators.record())), { session: 'loop', hash: 0 });
+    const r = this.realm;
+    if (!st || !r) return;
+    this.saved = r.snapshot();
+    const bytes = new TextEncoder().encode(JSON.stringify(this.saved));
+    // (the store takes the bytes: their length said first)
+    console.log(`[loop] world saved: ${bytes.length} B, ${r.history(true).length} events`);
+    await st.put(WORLD_KEY, bytes, { session: 'loop', hash: 0 });
   }
 
   // ---- the player's moves -----------------------------------------------------------------------------
 
   pick(id: string): void {
     const who = W.leader(id);
-    const before = this.world.runs > 0 ? this.season.ledger : null;
-    const { run, world } = newRun(who, W.PETITIONS, this.world, (this.world.runs + 1) * 7919 + W.LEADERS.indexOf(who));
-    this.run = run;
-    this.world = world;
+    const a = this.scene.opts.atlas;
+    const home = this.season.town;
+    if (!a?.settlements || home === null) throw new Error('loop: no atlas world or no home town');
+    // (a new run: the leader's pools; what earlier runs built is kept — the season's own ledger holds it, also after a
+    // reload, where the season loop restores it with the town)
+    const ledger: SeasonLedger = { ...newLedger(who.pools, who.income), built: [...this.season.ledger.built] };
+    const seasons = Number(this.scene.host.params.get('runlen') ?? RUN_SEASONS);
+    this.realm = new Realm({ world: this.saved ?? a.settlements.wiki.snapshot, home, seed: a.atlas.p.seed, leader: who, ledger, land: () => this.season.land, seasons });
+    this.runs = this.realm.history(true).filter((e) => e.kind === 'run-began').length;
     this.notes = [];
     this.resultLines = [];
-    this.season.setLedger(startLedger(who, before, newLedger));
+    this.season.setLedger(this.realm.ledger);
     void this.save();
-    console.log(`[loop] run ${run.n}: ${who.name}; hand ${run.hand.map((h) => h.id).join(', ')}`);
+    console.log(`[loop] run ${this.runs}: ${who.name}, ${seasons} seasons; asking: ${this.asking().map((x) => `${x.who} (${x.title})`).join(', ')}`);
     this.set('city');
     // (the town framed above the sheet: its core across the screen)
     const t = this.town;
     if (t) void this.cam.look(this.at3(t.centreInWindow()), { zoom: innerWidth / (0.9 * t.box.R), place: [0.5, 0.36], ease: 1.2 });
   }
 
+  /**
+   * Go to an opportunity's place and hear its presenter: the camera frames the site, the petition opens as a dialog;
+   * agreeing commits its cost through the realm (the engine's commit on the ledger's holdings), refusing is remembered.
+   */
   open(id: string): void {
-    if (this.phase !== 'city' && this.phase !== 'petition') return;
-    const p = W.PETITIONS.find((x) => x.id === id);
-    if (!p || !this.run?.hand.some((h) => h.id === id)) return;
-    this.selected = p;
-    const at = this.stand(p);
-    // (the story camera's frame: the place above the card sheet. No cutaway in this level yet — a plain zoom)
-    if (at) void this.cam.frame(this.at3(at), { zoom: Math.max(6, this.scene.core.camera.zoom * (this.phase === 'city' ? 2.2 : 1)), place: [0.5, 0.25] });
-    this.set('petition');
+    void this.petition(id);
   }
-
-  back(): void {
-    this.selected = null;
+  private async petition(id: string): Promise<void> {
+    const r = this.realm;
+    if (!r || this.phase !== 'city' || this.talk.isOpen) return;
+    const o = r.offers().find((x) => x.id === id && x.status === 'offered');
+    if (!o) return;
+    const site = r.siteOf(o);
+    const at = site ? this.spot(site) : null;
+    this.set('petition');
+    if (at) void this.cam.frame(this.at3(at), { zoom: Math.max(6, this.scene.core.camera.zoom * 2.2), place: [0.5, 0.22] });
+    const { petition, speaker } = petitionOf(r.engine, id);
+    meetPerson(r.w, speaker.id, id);
+    // (the cost in the pools' own words: the contract's agents are "workers 3", which is not how the player counts)
+    const locks: Partial<Pools> = {};
+    for (const q of o.opp.requires) if (q.kind === 'workers' || q.kind === 'army') locks[q.kind === 'workers' ? 'labor' : 'might'] = q.count;
+    const turns = 'turns' in o.opp.duration ? o.opp.duration.turns : 1;
+    const miss = r.short(o);
+    const can = !Object.keys(miss).length;
+    const tree = petitionTree({ ...petition, needs: W.costText(locks, o.opp.costs as Partial<Record<Pool, number>>, turns), takes: W.takesText(turns), agree: W.AGREE, canAgree: can ? true : W.shortText(miss) }, speaker, r.leader.name);
+    this.speakers.set(speaker.id, { name: speaker.name, title: capitalise(speaker.role), colour: speaker.persona.portrait.cloth, portrait: portraitUrl(speaker.persona.portrait) });
+    const path = await this.talk.open(tree);
+    const last = path.at(-1);
+    const act = last ? actOf(tree, last.node, last.choice) : undefined;
+    console.log(`[loop] petition ${o.template}: ${act ?? 'closed'}`);
+    if (act === 'commit' && can) {
+      r.commit(id);
+      this.season.setLedger(r.ledger);
+      this.notes = [...this.notes, W.agreedLine(speaker.name, o.opp.title)];
+    } else if (act === 'refuse') {
+      r.refuse(id);
+      this.notes = [...this.notes, W.refusedLine(speaker.name)];
+    }
     void this.cam.release();
     this.set('city');
   }
 
-  agree(): void {
-    const p = this.selected;
-    if (!p || !this.run) return;
-    const r = play(this.run, this.season.ledger, W.PETITIONS, p.id);
-    this.run = r.run;
-    this.season.setLedger(r.ledger);
-    this.notes = [...this.notes, W.playedLine(p)];
-    this.applyDue();
-    this.back();
-    void this.reveal().then(() => this.phase === 'mutation' && this.set('city'));
+  /** (scripts) answer the open petition: the dialog's own buttons are the player's way */
+  get talking(): boolean {
+    return this.talk.isOpen;
   }
 
   next(): void {
-    if (this.phase !== 'city' || !this.run || this.season.playing) return;
-    const e = endSeason(this.run, this.season.ledger, W.PETITIONS, this.world);
-    this.run = e.run;
-    this.season.setLedger(e.ledger);
-    // (instant: what the expired cards set off is in the world and saved before the season plays)
-    this.applyDue();
-    this.notes = [...e.expired.map((p) => W.expiredLine(p, p.expires)), ...(Object.keys(e.tribute).length ? [W.tributeLine(e.tribute)] : []), ...W.homeLines(comesHome(this.world))];
+    const r = this.realm;
+    if (this.phase !== 'city' || !r || this.season.playing) return;
+    // (the opportunities' season first: commitments due resolve into the fact layer, offers past their time fire their
+    // expiry, the arc moves on; then the ledger's own season plays as the time-lapse)
+    this.notes = r.endSeason();
+    this.season.setLedger(r.ledger);
     this.set('season');
     void this.season.next().then(async () => {
-      // (the season's time-lapse played out, or skipped)
-      while (this.season.playing) await new Promise((r) => setTimeout(r, 100));
-      await this.flow();
+      while (this.season.playing) await new Promise((res) => setTimeout(res, 100));
+      r.afterSeason(this.season.ledger);
+      this.season.setLedger(r.ledger);
+      await this.save();
+      this.flow();
     });
   }
 
@@ -280,79 +348,19 @@ class Game implements RunGame {
     this.season.skip();
   }
 
-  /** what comes next: the reveals of what changed in the town, then the attack if it is due, the end if the threat
-   *  is past */
-  private async flow(): Promise<void> {
-    await this.reveal();
-    const run = this.run!;
-    if (raidDue(run, run.season) !== null) return this.beginAttack();
-    if (threatDone(run, W.PETITIONS)) return this.set('end');
+  /** what comes next: the attack if the arc brought it, the end if the threat is past */
+  private flow(): void {
+    const r = this.realm!;
+    if (r.raid !== null) return this.beginAttack();
+    if (r.over) return this.set('end');
     this.set('city');
   }
 
-  /**
-   * Every due world change applied through the mutators and recorded, at once: far ones wherever the camera is (the
-   * place's owner, status and tribute set in the world's places), ones in the town at their spot — their short reveal
-   * queued for when the camera can go there.
-   */
-  private applyDue(): void {
-    const t = this.town;
-    let run = this.run!;
-    for (const d of [...run.due]) {
-      const seed = run.n * 131 + run.season;
-      if (d.mutation.far) {
-        this.mutators.apply({ kind: d.mutation.kind, place: d.mutation.far.id, strength: 1, seed });
-        ({ run, world: this.world } = mutate(run, this.world, d.id));
-      } else if (t && d.mutation.near) {
-        const at = this.spot(d.mutation.near.spot) ?? t.centreInWindow();
-        const radius = d.mutation.near.size * t.box.R;
-        const done = this.mutators.apply({ kind: d.mutation.kind, place: t.site.name, area: { at, radius }, strength: 1, seed });
-        const o = t.inWindow([0, 0]);
-        ({ run, world: this.world } = mutate(run, this.world, d.id, { town: t.site.name, at: [at[0] - o[0], at[1] - o[1]], radius }));
-        this.reveals.push({ text: d.text, frame: [at[0] - o[0], at[1] - o[1]], radius, play: done.play });
-      } else continue;
-      console.log(`[loop] world change ${d.id}: ${d.mutation.kind} at ${d.mutation.where}${d.mutation.far ? ' (far)' : ''}`);
-    }
-    this.run = run;
-    void this.save();
-    // (the living town's counts again: a far change comes home — SeasonLoop.setLedger passes them on)
-    if (!this.season.playing) this.season.setLedger(this.season.ledger);
-    this.changed();
-  }
-
-  /** the queued reveals, one at a time: the camera on the place, the mutator's reveal played, back */
-  private async reveal(): Promise<void> {
-    while (this.reveals.length) {
-      const r = this.reveals.shift()!;
-      this.change = { text: r.text, standin: true };
-      this.set('mutation');
-      const t = this.town;
-      // (its place kept in the town's frame: the window may have slid since it was applied)
-      if (t) await this.cam.frame(this.at3(t.inWindow(r.frame)), { zoom: Math.max(3, innerWidth / (3.2 * r.radius)), place: [0.5, 0.36], ease: 1 });
-      await (r.play?.().done ?? new Promise((res) => setTimeout(res, 1500)));
-      await new Promise((res) => setTimeout(res, 800));
-      await this.cam.release();
-    }
-    this.change = null;
-  }
-
-  /** from the end screen: the camera to a change's place in the town (far places: the world map, not wired yet) */
-  look(id: string | null): void {
-    const c = id === null ? null : (this.world.changes.find((x) => x.id === id) ?? null);
-    const t = this.town;
-    if (this.looking) void this.cam.release();
-    this.looking = c?.near && t ? c : null;
-    if (this.looking?.near && t) void this.cam.frame(this.at3(t.inWindow(this.looking.near.at)), { zoom: Math.max(3, innerWidth / (3.2 * this.looking.near.radius)), place: [0.5, 0.4] });
-    this.changed();
-  }
-
   proceed(): void {
-    if (this.phase === 'result') void this.flow();
+    if (this.phase === 'result') this.flow();
   }
 
   again(): void {
-    this.look(null);
-    if (this.run) this.run = endRun(this.run);
     this.set('leader');
   }
 
@@ -366,7 +374,7 @@ class Game implements RunGame {
    * four.
    */
   private beginAttack(): void {
-    const n = raidDue(this.run!, this.run!.season) ?? 0;
+    const n = this.realm!.raid ?? 0;
     this.attack = { t: 0, sackAt: null, unwatch: null, following: false, n, road: -1, direct: false, step: 'look', calm: 0, mid: null };
     this.fightLine = W.ATTACK_WAIT;
     this.speed0 = this.scene.speed;
@@ -497,10 +505,11 @@ class Game implements RunGame {
     if (settled) this.season.setLedger(settled.ledger);
     const l1 = this.season.ledger;
     const lost = { might: before.might - total(l1, 'might'), materials: before.materials - pools(l1).materials, unrest: pools(l1).unrest - before.unrest };
-    this.run = fought(this.run!, fight, W.PETITIONS.find((p) => p.threat));
-    this.resultLines = [...(f?.failed ? [WAVE_NO_ROAD] : []), ...W.resultLines(this.run.fight!, lost)];
-    // (broken through: the threat's world change, in the world at once; its reveal after the result is read)
-    this.applyDue();
+    this.realm!.ledger = this.season.ledger;
+    this.realm!.fought(fight);
+    this.resultLines = [...(f?.failed ? [WAVE_NO_ROAD] : []), ...W.resultLines(this.realm!.fight!, lost)];
+    // (the fight is in the history, and a district burned is named for the mutators: saved at once)
+    void this.save();
     console.log(`[loop] attack over: ${JSON.stringify({ ...fight, ...lost })}`);
     this.set('result');
   }
@@ -528,6 +537,7 @@ class Game implements RunGame {
       return this.arm(null);
     }
     this.season.setLedger(lose(this.season.ledger, { magic: HEATRAY.magic }));
+    this.realm!.ledger = this.season.ledger;
     this.scene.units?.strike?.({ at: [g[0], g[1]], radius: HEATRAY.radius, damage: HEATRAY.damage }, 'spell');
     this.scene.powers.scriptStrike(g[0], g[1], g[2]);
     console.log(`[loop] heat ray at ${g[0].toFixed(0)}, ${g[1].toFixed(0)}`);
@@ -535,21 +545,19 @@ class Game implements RunGame {
   }
 }
 
+/** the history's kinds the end-of-run screen always shows (the rest: those with a weight) */
+const SHOWN = new Set(['built', 'founding', 'relieved', 'fell', 'raid-held', 'raid-broke', 'tribute-paid', 'made-safe', 'flooded', 'burned', 'melted', 'buried', 'lens-lit', 'farm-burned', 'scouts-seen']);
+
 export function startRunLoop(scene: LevelScene, towns: FieldTowns): void {
   let game: Game | null = null;
   const season = startSeasonLoop(scene, towns, {
     ui: false,
     dealer: false,
-    // (BACKLOG SF-5: the raid is a card's effect — the threat's expiry — not the fixed schedule)
-    raid: (s) => (game?.run ? raidDue(game.run, s) : null),
-    // (LS-16: the attack screen calls it, with the camera down the road it comes by)
+    // (the raid is the arc's last stage — the realm's — not the fixed schedule; LS-16: the attack screen calls it, with
+    // the camera down the road it comes by)
+    raid: () => game?.realm?.raid ?? null,
     calls: true,
     ready: () => void game!.load(),
-    // (what far places bring home is seen in the town: refugees in the streets, a settlement's wagons on the road)
-    life: (l) => {
-      const h = game ? comesHome(game.world) : { people: 0, wagons: 0 };
-      return { ...l, commuters: l.commuters + h.people, wagons: l.wagons + h.wagons };
-    },
   });
   game = new Game(scene, towns, season);
   scene.seasonUi = mountRunUi(scene.host.ui, game);

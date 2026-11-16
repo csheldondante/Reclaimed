@@ -284,6 +284,11 @@ export class Realm {
     }
   }
 
+  /** seasons until the raiders attack (0: this season); null: paid off, or fought */
+  threatIn(): number | null {
+    return this.averted || this.fight ? null : Math.max(0, this.seasons - this.season);
+  }
+
   /** the run is over: the threat fought or paid off */
   get over(): boolean {
     return this.fight !== null || (this.averted && this.season >= this.seasons);
@@ -313,4 +318,20 @@ function arcLine(what: string): string {
   const i = what.indexOf(' — ');
   const t = i >= 0 ? what.slice(i + 3) : what;
   return /[.!?]$/.test(t) ? t : `${t}.`;
+}
+
+/**
+ * (LS-16) Where the camera looks down a road before a raid is called on it. `road`: its points from the town outward,
+ * ending where the town's box does; `sure`: the cells round the camera's target the world's window is sure to hold.
+ * The point `sure` back from the road's end, measured along each axis: the window then holds the road from there to
+ * its end — the stretch a spawn point stands on (past the town's limit, short of the road's end). A road shorter than
+ * that: its first point. Null: no road.
+ */
+export function roadLook(road: readonly (readonly [number, number])[], sure: number): [number, number] | null {
+  if (road.length < 2) return null;
+  const end = road[road.length - 1];
+  for (let i = road.length - 1; i >= 0; i--) {
+    if (Math.max(Math.abs(road[i][0] - end[0]), Math.abs(road[i][1] - end[1])) >= sure) return [road[i][0], road[i][1]];
+  }
+  return [road[0][0], road[0][1]];
 }

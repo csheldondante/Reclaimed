@@ -1,48 +1,59 @@
-// (loop-skeleton; docs/design/LOOP_SKELETON.md "Screens") The main loop's screens, phone first, crude on purpose: pick a
-// leader, the town with its people's names over it, a petition as a card (cost, if you agree, if you wait too long),
-// the season passing, the attack with the spell bar, its result, a world change, the end of the run. A view only: it
-// reads the game (RunGame — scenes/level/loop.ts implements it) and calls it back; every line from run-words.ts.
+// (loop-skeleton; docs/design/LOOP_SKELETON.md "Conformance") The home-town run's screens, phone first, crude on purpose.
+// Opportunities are shown over their places on the map: a name and a countdown at the site the card stands at; a tap
+// goes there and opens the presenter's dialog (the petition: dialog/petition.ts, opened by the scene). There is no
+// hand. Kept for reach on a phone: a short list of the same names on the sheet, each opening the same dialog (say if it
+// should go). The rest: pick a leader, the top bar (pools, the raiders' countdown), the season's news, the attack with
+// the spell bar, its result, the end of the run read from the fact layer's history. A view only: it reads the game
+// (RunGame — scenes/level/loop.ts implements it) and calls it back; its lines are run-words.ts.
 import { POOL_ROLE, POOLS, pools, total, type SeasonLedger } from './ledger';
-import type { Petition, RunRecord, SpellId, WorldChange, WorldRecord } from './run';
-import { shortOf, signsNow } from './run';
+import type { Leader, SpellId } from './realm';
 import * as W from './run-words';
 import { incomeLine, POOL_ICON, POOL_NAME } from './words';
 
-export type Phase = 'boot' | 'leader' | 'city' | 'petition' | 'season' | 'attack' | 'result' | 'mutation' | 'end';
+export type Phase = 'boot' | 'leader' | 'city' | 'petition' | 'season' | 'attack' | 'result' | 'end';
 
 export interface Marker {
+  /** an offer's id (the threat: 'threat') */
   id: string;
   label: string;
-  kind: 'ask' | 'threat' | 'change';
+  kind: 'ask' | 'threat';
   x: number;
   y: number;
 }
 
+/** an offer as the screens list it */
+export interface Asking {
+  id: string;
+  who: string;
+  title: string;
+  left: number;
+}
+
 export interface RunGame {
   readonly phase: Phase;
-  readonly run: RunRecord | null;
-  readonly world: WorldRecord;
+  readonly leader: Leader | null;
+  /** the run: its season, its length, which run of this world it is; null before a leader is picked */
+  readonly run: { season: number; seasons: number; n: number; threatIn: number | null; averted: boolean; spells: SpellId[]; fight: W.Fight | null } | null;
   readonly ledger: SeasonLedger;
-  readonly selected: Petition | null;
-  /** what just happened, newest last (a card agreed, cards that ran out) */
+  /** what is offered now, and what is under way */
+  asking(): Asking[];
+  working(): string[];
+  /** the season's news, newest last */
   readonly notes: string[];
-  /** the attack as it stands, and its result once over */
   readonly fightLine: string | null;
   readonly resultLines: string[];
-  /** the world change being shown */
-  readonly change: { text: string; standin: boolean } | null;
   readonly armed: SpellId | null;
-  /** the end screen left to look at this change's place */
-  readonly looking: WorldChange | null;
-  look(change: string | null): void;
+  /** the fact layer's history as sentences: this run's (with its season), and the earlier runs' */
+  history(): { season: number; text: string }[];
+  before(): string[];
+  /** the physical changes this run named (the mutators' work, not drawn yet) */
+  land(): string[];
   readonly canSkip: boolean;
   readonly onChange: (() => void)[];
   /** the names over the map now, in screen px */
   markers(): Marker[];
   pick(leader: string): void;
-  open(petition: string): void;
-  agree(): void;
-  back(): void;
+  open(offer: string): void;
   next(): void;
   skip(): void;
   arm(spell: SpellId | null): void;
@@ -57,7 +68,7 @@ const CSS = `
 .run-top .r-pool i{font-style:normal;opacity:.7;font-size:11px;margin-left:2px}
 .run-top .r-pool.unrest b{color:#ff9b7a}
 .run-top .r-sign{background:#4a3a56;border:1px solid #c9a2ff;border-radius:10px;padding:2px 7px;white-space:nowrap}
-.run-top .r-stand{font-size:11px;color:#c9a2ff;flex:1 0 100%}
+.run-top .r-threat{font-size:12px;color:#ffb199;flex:1 0 100%;font-weight:600}
 .run-marks{position:absolute;inset:0;z-index:20;pointer-events:none;overflow:hidden}
 .run-marks button{position:absolute;transform:translate(-50%,-100%);pointer-events:auto;font:700 13px system-ui,sans-serif;padding:5px 9px;border-radius:14px 14px 14px 2px;border:2px solid #221;background:#f2e3b0;color:#221;white-space:nowrap}
 .run-marks button.threat{background:#e2573f;color:#fff}
@@ -108,12 +119,6 @@ const btn = (text: string, on: () => void, cls?: string): HTMLButtonElement => {
   b.onclick = on;
   return b;
 };
-const row = (label: string, text: string): HTMLElement => {
-  const r = el('div', 'row');
-  r.append(el('b', undefined, label), el('span', undefined, text));
-  return r;
-};
-
 /** a leader's start as a line: every pool's number */
 const startsLine = (p: Partial<Record<(typeof POOLS)[number], number>>): string =>
   POOLS.filter((k) => k !== 'unrest')
@@ -129,22 +134,14 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
   const full = el('div', 'run-full');
   ui.append(style, marks, top, sheet, full);
 
-  const card = (p: Petition, left: number): HTMLElement[] => {
-    const out: HTMLElement[] = [el('h3', undefined, p.title), el('div', 'who', W.presenterLine(p)), el('div', 'ask', p.ask)];
-    out.push(row(W.COST, W.costText(p)), row(W.IF_PLAYED, p.played.text), row(W.IF_EXPIRES, p.expires.text));
-    if (p.threat) out.push(row(W.HELPS, p.threat.helps), el('div', 'warn', W.bringsLine(p)));
-    out.push(el('div', p.threat ? 'warn' : 'note', W.leftText(p, left)));
-    return out;
-  };
-
   const render = () => {
-    const { phase, run, world } = game;
+    const { phase, run } = game;
     const l = game.ledger;
-    // ---- the top: the leader, the season, the pools
+    // ---- the top: the leader, the season, the pools and what each season brings, the raiders' countdown
     top.style.display = run && phase !== 'leader' && phase !== 'end' ? '' : 'none';
     top.replaceChildren();
-    if (run) {
-      top.append(el('span', 'r-title', W.leaderTitle(W.leader(run.leader).name, run.season, run.n)));
+    if (run && game.leader) {
+      top.append(el('span', 'r-title', W.leaderTitle(game.leader.name, run.season, run.seasons, run.n)));
       const free = pools(l);
       for (const k of POOLS) {
         const chip = el('span', `r-pool ${k}`);
@@ -153,31 +150,15 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
         if (each) chip.append(el('i', undefined, incomeLine(each)));
         top.appendChild(chip);
       }
-      // (the signs seen in the town now: flags until the mutators' signs draw them)
-      const signs = signsNow(run, l, W.PETITIONS);
-      for (const k of signs) top.appendChild(el('span', 'r-sign', W.SIGN_NAME[k]));
-      if (signs.length) top.appendChild(el('span', 'r-stand', W.STANDIN_SIGNS));
+      const threat = W.threatText(run.threatIn, run.averted);
+      if (threat && !run.fight) top.appendChild(el('span', 'r-threat', threat));
     }
     // ---- the full screens: pick a leader, the end of the run
-    full.style.display = phase === 'leader' || (phase === 'end' && !game.looking) ? '' : 'none';
-    /** a list of world changes: near ones can be shown on the map; far ones wait for the world map */
-    const changes = (list: WorldChange[], show: boolean): HTMLElement => {
+    full.style.display = phase === 'leader' || phase === 'end' ? '' : 'none';
+    const list = (lines: string[]): HTMLElement => {
       const ul = el('ul');
-      let far = false;
-      for (const c of list) {
-        const li = el('li', undefined, `${c.near ? W.NEAR : W.FAR}. ${W.changeLine(c)} `);
-        if (show && c.near) li.appendChild(btn(W.SHOW, () => game.look(c.id), 'small'));
-        far ||= !c.near;
-        ul.appendChild(li);
-      }
-      if (far) ul.appendChild(el('li', 'stand', W.FAR_MAP_LATER));
+      for (const t of lines) ul.appendChild(el('li', undefined, t));
       return ul;
-    };
-    const places = (): HTMLElement[] => {
-      if (!world.places.length) return [];
-      const ul = el('ul');
-      for (const p of world.places) ul.appendChild(el('li', undefined, W.placeLine(p)));
-      return [el('h4', undefined, W.PLACES_TITLE), ul];
     };
     full.replaceChildren();
     if (phase === 'leader') {
@@ -189,62 +170,48 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
         box.append(el('div', 'portrait', W.PORTRAIT), body);
         full.appendChild(box);
       }
-      if (world.changes.length) full.append(el('h4', undefined, W.WORLD_KEPT), changes(world.changes, false), ...places());
+      const old = game.before();
+      if (old.length) full.append(el('h4', undefined, W.WORLD_KEPT), list(old));
     }
     if (phase === 'end' && run) {
       full.append(el('h2', undefined, W.END_TITLE), el('div', 'sub', W.runLine(run.n)));
       if (game.resultLines.length) full.append(el('div', undefined, game.resultLines.join(' ')));
       full.append(el('h4', undefined, W.END_LIST));
-      const mine = world.changes.filter((c) => run.mutations.includes(c.id));
+      const mine = game.history();
       if (!mine.length) full.append(el('div', undefined, W.END_NONE));
-      else full.appendChild(changes(mine, true));
-      const old = world.changes.filter((c) => !run.mutations.includes(c.id));
-      if (old.length) full.append(el('h4', undefined, W.END_BEFORE), changes(old, true));
-      full.append(...places());
-      // (each choice paired with what it caused: agreed, or left until it ran out)
-      const pet = (id: string) => W.PETITIONS.find((x) => x.id === id)!;
-      const acts = [...run.played.map((x) => ({ s: x.season, t: W.playedLine(pet(x.id)) })), ...run.expired.map((x) => ({ s: x.season, t: W.expiredLine(pet(x.id), pet(x.id).expires) }))].sort((a, b) => a.s - b.s);
-      if (acts.length) {
-        const ul = el('ul');
-        for (const a of acts) ul.appendChild(el('li', undefined, `${W.seasonLabel(a.s)}. ${a.t}`));
-        full.append(el('h4', undefined, W.CHOICES_TITLE), ul);
-      }
+      else full.appendChild(list(mine.map((e) => `${W.seasonLabel(e.season)}. ${e.text}`)));
+      const land = game.land();
+      if (land.length) full.append(el('h4', undefined, W.END_LAND), list(land), el('div', 'stand', W.LAND_LATER));
+      const old = game.before();
+      if (old.length) full.append(el('h4', undefined, W.END_BEFORE), list(old));
       full.append(btn(W.NEW_RUN, () => game.again(), 'big'));
     }
     // ---- the sheet
-    sheet.style.display = phase === 'boot' || phase === 'leader' || (phase === 'end' && !game.looking) ? 'none' : '';
+    sheet.style.display = phase === 'boot' || phase === 'leader' || phase === 'end' || phase === 'petition' ? 'none' : '';
     sheet.replaceChildren();
     const go = el('div', 'go');
-    if (phase === 'end' && game.looking) {
-      sheet.append(el('h3', undefined, W.KIND_NAME[game.looking.kind]), el('div', undefined, W.changeLine(game.looking)), el('div', 'stand', W.STANDIN_MUTATION));
-      go.append(btn(W.BACK_LIST, () => game.look(null)));
-    } else if (phase === 'city' && run) {
-      sheet.append(el('h3', undefined, W.ASKS_TITLE), el('div', 'note', W.TAP_MARKER));
+    if (phase === 'city' && run) {
+      const asks = game.asking();
+      sheet.append(el('h3', undefined, asks.length ? W.ASKS_TITLE : W.ASKS_NONE));
+      if (asks.length) sheet.append(el('div', 'note', W.TAP_MARKER));
       for (const t of game.notes) sheet.append(el('div', 'note', t));
-      const list = el('div', 'list');
-      for (const h of run.hand) {
-        const p = W.PETITIONS.find((x) => x.id === h.id)!;
-        const item = el('button', `item${p.threat ? ' threat' : ''}`);
-        item.append(el('span', undefined, `${p.presenter.name}. ${p.title}`), el('i', undefined, W.leftText(p, h.left)));
-        item.onclick = () => game.open(p.id);
-        list.appendChild(item);
+      const box = el('div', 'list');
+      for (const a of asks) {
+        const item = el('button', 'item');
+        item.append(el('span', undefined, `${a.who}. ${a.title}`), el('i', undefined, W.leftText(a.left)));
+        item.onclick = () => game.open(a.id);
+        box.appendChild(item);
       }
-      sheet.appendChild(list);
+      for (const t of game.working()) {
+        const item = el('div', 'item');
+        item.append(el('span', undefined, t), el('i', undefined, W.WORKING));
+        box.appendChild(item);
+      }
+      sheet.appendChild(box);
       go.append(btn(W.NEXT, () => game.next()));
-    } else if (phase === 'petition' && run && game.selected) {
-      const p = game.selected;
-      const left = run.hand.find((h) => h.id === p.id)?.left ?? 0;
-      sheet.append(...card(p, left));
-      const miss = shortOf(l, p);
-      const can = !Object.keys(miss).length;
-      if (!can) sheet.append(el('div', 'need', W.shortText(miss)));
-      const yes = btn(W.PLAY, () => game.agree());
-      yes.disabled = !can;
-      go.append(yes, btn(W.LEAVE, () => game.back(), 'quiet'));
     } else if (phase === 'season') {
       sheet.append(el('h3', undefined, W.BUILDING));
       for (const t of game.notes) sheet.append(el('div', 'note', t));
-      if (game.world.places.some((p) => p.status === 'captured')) sheet.append(el('div', 'stand', W.STANDIN_HOME));
       const s = btn(W.SKIP, () => game.skip(), 'quiet');
       s.disabled = !game.canSkip;
       go.append(s);
@@ -252,18 +219,15 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       sheet.append(el('h3', undefined, W.ATTACK_TITLE), el('div', undefined, game.fightLine ?? W.ATTACK_WAIT));
       if (!run.spells.length) sheet.append(el('div', 'note', W.SPELL_NONE));
       for (const sp of run.spells) go.append(btn(W.SPELL_NAME[sp], () => game.arm(game.armed === sp ? null : sp), game.armed === sp ? 'on' : undefined));
-      const later = btn(W.SPELL_NAME.telekinesis, () => undefined, 'quiet');
+      const later = btn(W.TELEKINESIS, () => undefined, 'quiet');
       later.disabled = true;
       go.append(later);
       if (game.armed) sheet.append(el('div', 'warn', W.SPELL_AIM), el('div', 'stand', W.SPELL_STANDIN));
-      sheet.append(el('div', 'stand', `${W.SPELL_LATER.telekinesis} ${W.RUNE_LATER}`));
+      sheet.append(el('div', 'stand', W.SPELL_LATER));
     } else if (phase === 'result' && run?.fight) {
       sheet.append(el('h3', undefined, W.resultTitle(run.fight)));
       for (const t of game.resultLines) sheet.append(el('div', undefined, t));
       go.append(btn(W.CONTINUE, () => game.proceed()));
-    } else if (phase === 'mutation' && game.change) {
-      sheet.append(el('h3', undefined, W.WORLD_CHANGES), el('div', undefined, game.change.text));
-      if (game.change.standin) sheet.append(el('div', 'stand', W.STANDIN_MUTATION));
     }
     if (go.childElementCount) sheet.appendChild(go);
   };
@@ -280,11 +244,12 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       seen.add(key);
       let b = made.get(key);
       if (!b) {
-        b = el('button', m.kind === 'ask' ? undefined : m.kind, m.label);
-        if (m.kind !== 'change') b.onclick = () => game.open(m.id);
+        b = el('button', m.kind === 'ask' ? undefined : m.kind);
+        if (m.kind === 'ask') b.onclick = () => game.open(m.id);
         made.set(key, b);
         marks.appendChild(b);
       }
+      if (b.textContent !== m.label) b.textContent = m.label;
       b.style.left = `${m.x.toFixed(1)}px`;
       b.style.top = `${m.y.toFixed(1)}px`;
     }

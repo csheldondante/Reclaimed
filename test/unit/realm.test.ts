@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { briarWorld } from '../../src/living/briar';
 import { grant, newLedger, nextSeason, pools, total, type SeasonLedger } from '../../src/season/ledger';
-import { Realm, type Leader } from '../../src/season/realm';
+import { Realm, roadLook, type Leader } from '../../src/season/realm';
 import { projectId } from '../../src/season/realm-templates';
 import type { WorldSnapshot } from '../../src/api/contracts/world';
 import { lint } from '../support/writing';
@@ -164,6 +164,18 @@ describe('the realm (season/realm.ts)', () => {
     for (const id of cast) expect(b.ws.character(id)?.alive).toBe(true);
     expect(b.season).toBe(4);
     expect(a.season).toBeGreaterThan(2);
+  });
+
+  it('the camera looks down a road from where the window is sure to hold the rest of it (LS-16)', () => {
+    // (Muru's east road: out from the centre to the box's corner, 184 cells away; the window sure for 68 round the camera)
+    const road: [number, number][] = [];
+    for (let k = 0; k <= 46; k++) road.push([144 + (158 * k) / 46, 109 - (94 * k) / 46]);
+    const at = roadLook(road, 68)!;
+    const end = road[road.length - 1];
+    expect(Math.max(Math.abs(at[0] - end[0]), Math.abs(at[1] - end[1]))).toBeGreaterThanOrEqual(68);
+    expect(Math.max(Math.abs(at[0] - end[0]), Math.abs(at[1] - end[1]))).toBeLessThan(68 + 4);
+    expect(roadLook([[0, 0], [10, 0]], 68)).toEqual([0, 0]);
+    expect(roadLook([[0, 0]], 68)).toBeNull();
   });
 
   it('every line an offer shows passes the writing lint', () => {
