@@ -26,6 +26,7 @@ import { livingFromUrl } from '../../citylife/params';
 import { mountTownPanel } from '../../citygen/panel';
 import { startSeasonLoop } from './season';
 import { whenPipelinesReady } from '../../gpu/pipeline';
+import { censusEnter, censusLeave } from '../../gpu/census';
 
 /** sleep and the streamed window, with what follows its slides */
 export function attachStream(scene: LevelScene): void {
@@ -391,8 +392,10 @@ export function attachStream(scene: LevelScene): void {
               return site ? (scene.livingTowns?.routeRead(site)?.buffer ?? null) : null;
             });
             core.renderer.frameCompute.push((enc) => {
+              const cq = censusEnter('towncontracts');
               tc.setTowns([...towns.live.values()].filter((t) => t.times), towns.townTime);
               tc.encode(enc, host.profiler?.timestamps('towncontracts'));
+              censusLeave(cq);
             });
           }
           // (the first look now: the town the level opens on made before the first frames)

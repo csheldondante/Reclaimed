@@ -10,6 +10,7 @@
 // place tool); the GPU structure rule only collapses damage here (its
 // span-support rule would turn overhangs to rubble before this sees them).
 
+import { censusEnter, censusLeave } from '../gpu/census';
 import { CHUNK, type Interval } from '../world/layout';
 import { floatingRuns, WorldVox, type Fracture } from './fracture';
 import { JUDGE_ID, JUDGES, type RockJudge } from './judge';
@@ -235,7 +236,11 @@ export class Integrity {
         core.renderer.removeMesh(bm.args);
         core.renderer.addMesh(bm.out, bm.args);
       };
-      core.renderer.frameCompute.push((enc) => bm.encode(enc, core.renderAlpha()));
+      core.renderer.frameCompute.push((enc) => {
+        const cq = censusEnter('bodymesh');
+        bm.encode(enc, core.renderAlpha());
+        censusLeave(cq);
+      });
       const solver = this.solver;
       if (solver) {
         const nodes = () => {

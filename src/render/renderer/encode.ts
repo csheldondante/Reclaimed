@@ -12,11 +12,15 @@ import { encodeGBuffer, encodeShadow, writeLight } from './gbuffer-shadow';
 import { drawGrid, gridCull, gridLive } from './grid';
 import { VERTS_PER_PRISM, VERTS_PER_BOX, VERTS_PER_TOP, INST_GROW, RenderOptions, SKIP, SHADOW_STILL_BIT, cutOn } from './defs';
 import { Renderer } from '../renderer';
+import { censusEnter, censusLeave } from '../../gpu/census';
 
 /** Renderer.encode (the class keeps the method, documented there) */
 export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
+  // (?census=1: the frame's parts by name — perf/census.ts)
+  let cq = censusEnter('render-sync');
   syncMeshPool(rd);
   syncInst(rd);
+  censusLeave(cq);
   cam.write(rd.camData);
   // look flags (render.wgsl Camera.eye.w; DA-B7: the static casters' shadow map looked up too)
   new Float32Array(rd.camData)[19] = (rd.flatTops ? 1 : 0) | (rd.fieldMesh.on ? 2 : 0) | (Renderer.opts.noDetail << 2) | (rd.shadowStillOn() ? SHADOW_STILL_BIT : 0);
@@ -54,7 +58,10 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
     );
   if (prepDue && rd.meshInst) rd.device.queue.writeBuffer(rd.indirect, MI_ARGS_WORD * 4, rd.meshInst.argsReset());
 
+  cq = censusEnter('shore');
   if (!SKIP.has('shore')) rd.shore.encode(enc, performance.now());
+  censusLeave(cq);
+  cq = censusEnter('renderprep');
   if (!SKIP.has('prep') && prepDue) {
     const pass = enc.beginComputePass({ label: 'renderprep', timestampWrites: rd.profiler.timestamps('renderprep') });
     pass.setPipeline(rd.prep.pipeline);
@@ -86,23 +93,35 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
     rd.profiler.dispatches += 2;
     if (!SKIP.has('water')) rd.waterSurf?.encode(enc);
   }
+  censusLeave(cq);
   // (round 82: with a band, the window's mesh and the band's look for changes and rebuild on alternate frames —
   // a frame never rebuilds both: on the phone the rebuilds were the biggest share of the p95 spikes)
   const turn = rd.meshTurn++ & 1;
   // (round 86: but chunks marked urgent — an edit's, a falling piece's — are looked at every frame)
   const tMesh = performance.now(); // (round 100, hitchrec: timing)
+  cq = censusEnter('fieldmesh');
   if (!SKIP.has('meshprep') && !rd.holdMesh && (!rd.band || turn === 0 || rd.fieldMesh.hasUrgent)) rd.fieldMesh.encode(enc, cam);
+  censusLeave(cq);
   record('mesh', performance.now() - tMesh); // (round 100, hitchrec: timing)
+  cq = censusEnter('band');
   if (rd.band && !SKIP.has('band') && !rd.holdMesh && turn === 1) rd.band.mesh.encode(enc, cam);
+  censusLeave(cq);
+  cq = censusEnter('rockmesh');
   if (rd.rockMesh) rd.rockMesh.encode(enc, cam);
+  censusLeave(cq);
+  cq = censusEnter('shadow');
   if (rd.shadowGroups && !SKIP.has('shadow') && shadowDue) encodeShadow(rd, enc, shadowDue);
+  censusLeave(cq);
 
   // (round 103, ?tiles=1: the tiles baked this frame, and those drawn past the window — their mask for the rings)
+  cq = censusEnter('tiles');
   if (rd.tiles && !SKIP.has('tiles')) {
     rd.tiles.encode(enc, cam, rd.depth!.width);
     rd.tiles.prepare(cam);
     rd.tiles.encodeMask(enc);
   }
+  censusLeave(cq);
+  cq = censusEnter('draw');
   // (perfopt, ?defer=1: the mesh's G-buffer pass, its depth the world pass's)
   if (tcMode === 'refresh') encodeTerrainCache(rd, enc);
   // (the deferred pipelines compile off the main thread from the start: forward until they're in)
@@ -245,6 +264,7 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
   rd.profiler.draws += 3;
   if (BGCHECK) (rd as { bgCheck?: BgCheck }).bgCheck ??= new BgCheck(rd.device);
   rd.bgCheck?.encode(enc, rd.depth!, rd.pickTex!, rd.profiler.timestamps('bgcheck'));
+  censusLeave(cq);
 
   if (rd.pickRequest && !rd.pickBusy) {
     const { x, y, resolve } = rd.pickRequest;

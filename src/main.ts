@@ -23,6 +23,7 @@ import { startReadStats } from './perf/readstats';
 import { frameDue } from './scenes/frame-cap';
 import { benchGpu, benchGpuUp, benchLevel, benchLoadingNote, benchMode, benchSkip, benchStageNote, benchStandalone, benchWatchdog } from './perf/bench';
 import { urlFlags } from './flags';
+import { censusFrame, startCensus } from './perf/census';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
 const QUALITY: Record<string, Quality> = {
@@ -38,6 +39,8 @@ async function main() {
   await freshStart(params);
   // (round 128n: ?readstats=1 — every GPU read counted by label: perf/readstats.ts)
   startReadStats(params);
+  // (phone-idle: ?census=1 — every GPU call counted per frame and system: perf/census.ts)
+  startCensus(params);
   // (low by default, for phones: round 54; ?q=medium|high on a desktop)
   const qualityName = params.get('q') ?? 'low';
   const quality = QUALITY[qualityName];
@@ -266,6 +269,7 @@ async function main() {
       const c0 = hitch ? performance.now() : 0;
       pacer?.begin(now, inFlight);
       scene?.frame(now, dt);
+      censusFrame();
       if (!firstFrame) bootMark((firstFrame = 'first-frame'));
       // (round 108: the bug report's picture, while the frame is still on the canvas)
       serviceShot(canvas);

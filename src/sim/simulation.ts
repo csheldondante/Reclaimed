@@ -29,6 +29,7 @@ import type { WorldGpu } from './world-gpu';
 import { ParticleSystem } from './particles';
 import { WeatherCoverSystem } from '../weather/cover';
 import { ProjectSystem, StructTickSystem } from '../grids/systems';
+import { censusEnter, censusLeave, censusTick } from '../gpu/census';
 
 // (perfopt: the tick rate, ?simhz= — sim/flow.ts)
 export { TICK_HZ, TICK_DT } from './flow';
@@ -149,6 +150,8 @@ export class Simulation {
 
   step(globals: GlobalsState, filter?: (s: SimSystem) => boolean): void {
     globals.tick = this.tick;
+    censusTick();
+    const cs = censusEnter('sim-tick');
     this.uploadGlobals(globals);
     // events are one-tick impulses: consumed by exactly this tick; so are the
     // stroke segments stamped into the wind field (gusts[1..]). A tick
@@ -174,15 +177,25 @@ export class Simulation {
       if (this.paused.has(sys.name)) continue;
       if (sys.perFrame && !this.lastOfFrame) continue;
       const t0 = performance.now();
+      const cq = censusEnter(sys.name);
       sys.encode(enc, this.tick);
+      censusLeave(cq);
       const dt = performance.now() - t0;
       this.cpuMs.set(sys.name, (this.cpuMs.get(sys.name) ?? dt) * 0.95 + dt * 0.05);
       this.encodeTotals.set(sys.name, (this.encodeTotals.get(sys.name) ?? 0) + dt);
     }
     this.device.queue.submit([enc.finish()]);
+    const cst = censusEnter(this.stats.name);
     this.stats.afterSubmit();
+    censusLeave(cst);
     // (systems added later, e.g. the sandbox's physics, may read back too)
-    for (const sys of this.systems) if (sys !== this.stats) (sys as { afterSubmit?: () => void }).afterSubmit?.();
+    for (const sys of this.systems)
+      if (sys !== this.stats) {
+        const cq = censusEnter(sys.name);
+        (sys as { afterSubmit?: () => void }).afterSubmit?.();
+        censusLeave(cq);
+      }
+    censusLeave(cs);
     this.tick++;
   }
 

@@ -2,6 +2,7 @@
 // town that's made gets its people (LivingTown: routes, riders, the works), let go with it. Their GPU work is encoded
 // in the renderer's frame (frameCompute) with the profiler's timestamps; their figures are the renderer's voxels. The
 // panel (?living=1) is the tuning editor over LIVING_TUNING with a line of counters read twice a second while it's open.
+import { censusEnter, censusLeave } from '../gpu/census';
 import type { FieldTown } from '../citygen/town';
 import { REC_LM } from '../citygen/gpu';
 import type { Profiler } from '../gpu/profiler';
@@ -53,7 +54,11 @@ export class LivingTowns {
   debugGraph = false;
   panel?: TunePanel;
   private dt = 0;
-  private hook = (enc: GPUCommandEncoder) => this.encode(enc);
+  private hook = (enc: GPUCommandEncoder) => {
+    const cq = censusEnter('living');
+    this.encode(enc);
+    censusLeave(cq);
+  };
 
   constructor(private io: LivingTownsIO) {
     io.frameCompute.push(this.hook);
