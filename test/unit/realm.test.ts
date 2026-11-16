@@ -71,7 +71,8 @@ describe('the realm (season/realm.ts)', () => {
     const r = realm();
     const offs = r.offers().filter((o) => o.status === 'offered');
     expect(offs.length).toBeGreaterThan(1);
-    expect(offs.length).toBeLessThanOrEqual(r.engine.dealerTune().resourceMax + 1);
+    // (the board, the dealer's one guarantee, one threatening card)
+    expect(offs.length).toBeLessThanOrEqual(r.engine.dealerTune().resourceMax + 2);
     const sites = offs.map((o) => r.siteOf(o));
     expect(sites.every((s) => s !== null)).toBe(true);
     expect(new Set(sites).size).toBe(sites.length);
@@ -88,7 +89,17 @@ describe('the realm (season/realm.ts)', () => {
     const n = (r: Realm) => r.offers().filter((o) => o.status === 'offered').length;
     expect(n(big)).toBeLessThanOrEqual(Math.max(n(small), small.engine.dealerTune().resourceMax));
     for (let k = 0; k < 3; k++) season(big);
-    expect(n(big)).toBeLessThanOrEqual(small.engine.dealerTune().resourceMax + small.engine.dealerTune().unaffordable);
+    expect(n(big)).toBeLessThanOrEqual(small.engine.dealerTune().resourceMax + 2);
+  });
+
+  it('nothing agreed for a whole run: the choices a season never pass the dealer\'s limit and its one guarantee', () => {
+    const r = realm({ seasons: 16 });
+    const counts: number[] = [];
+    for (let k = 0; k < 15; k++) {
+      counts.push(r.offers().filter((o) => o.status === 'offered').length);
+      season(r);
+    }
+    expect(Math.max(...counts), counts.join(',')).toBeLessThanOrEqual(5);
   });
 
   it('committing a project locks the ledger\'s own people and spends its goods; the ledger builds it and its people come back', () => {
@@ -168,7 +179,7 @@ describe('the realm (season/realm.ts)', () => {
     // (sacked: the district by the gate burned — an area of the home town, the raid's own event its fact — and thieves
     // in the town for three seasons)
     const broke = r.history().find((e) => e.kind === 'raid-broke')!;
-    const burn = m.applied.find((p) => p.kind === 'burned')!;
+    const burn = m.applied.find((p) => p.kind === 'burned' && p.radius === 30)!;
     expect(burn).toMatchObject({ fact: broke.id, radius: 30 });
     expect(burn.at).toEqual(r.cellOf('gate'));
     expect(m.signs.find((s) => s.kind === 'crime')).toMatchObject({ place: r.home, until: r.w.turn + 3 });

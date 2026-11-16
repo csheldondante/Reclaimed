@@ -42,8 +42,13 @@ const ATTACK_SECONDS = 150;
 /** the camera's zoom (screen px a cell) down a road before the raid is called, on the raiders marching, and on the
  *  fight: at 412 px across, a figure about a cell wide reads from 12 up */
 const ROAD_ZOOM = 4;
-const MARCH_ZOOM = 8;
-const FIGHT_ZOOM = 15;
+const MARCH_ZOOM = 10;
+const FIGHT_ZOOM = 22;
+/** the camera's pitch on the fight (radians): lower than the town's 60°, so a standing figure is taller on the screen
+ *  (its height × zoom × cos pitch: 1.6 cells × 22 × 0.77 = 27 px) */
+const FIGHT_PITCH = (40 * Math.PI) / 180;
+/** the zoom the camera pulls back to when a fight is over: the district round it in view */
+const AFTER_ZOOM = 5;
 /** the window slides when the camera comes within this many regions of its edge (scenes/streamer.ts update): the
  *  cells round the camera's target the window is sure to hold are half the window less that; and the margin kept
  *  inside it for the spawn point's crowd */
@@ -91,6 +96,7 @@ class Game implements RunGame {
     mid: (() => V3 | null) | null;
   } | null = null;
   private speed0 = 1;
+  private pitch0 = Math.PI / 3;
 
   constructor(
     private scene: LevelScene,
@@ -188,6 +194,7 @@ class Game implements RunGame {
     const t = this.town;
     const r = this.realm;
     const cam = this.scene.core.camera;
+    if (this.phase === 'attack') return this.fightMarks();
     if (!t || !r || (this.phase !== 'city' && this.phase !== 'petition')) return [];
     const out: Marker[] = [];
     const put = (id: string, label: string, kind: Marker['kind'], at: [number, number] | null) => {
@@ -202,6 +209,38 @@ class Game implements RunGame {
     }
     const n = r.threatIn();
     if (n !== null && n > 0) put('threat', W.threatTag(n), 'threat', this.spot('road'));
+    return out;
+  }
+
+  /** the fight's marks (LS-24): a ring round every raider and soldier alive, and each side's name and count over its
+   *  middle — a figure is a few px of colour at any zoom the town still reads at */
+  private fightMarks(): Marker[] {
+    const a = this.attack;
+    const war = this.season.war;
+    const units = this.scene.units;
+    const forces = this.scene.townForces;
+    const f = war?.fight;
+    if (!a || !a.unwatch || !war || !units || !forces || !f) return [];
+    const cam = this.scene.core.camera;
+    const out: Marker[] = [];
+    const side = (ids: number[], kind: 'raider' | 'soldier', name: string) => {
+      let n = 0;
+      let sx = 0;
+      let top = Infinity;
+      for (const id of ids) {
+        const at = units.get(id)?.at;
+        if (!at) continue;
+        const [x, y] = cam.project(at[0], at[1], at[2]);
+        if (x < -20 || y < -20 || x > innerWidth + 20 || y > innerHeight + 20) continue;
+        out.push({ id: String(id), label: '', kind, x, y });
+        n++;
+        sx += x;
+        top = Math.min(top, y);
+      }
+      if (n) out.push({ id: kind === 'raider' ? 'theirs' : 'ours', label: `${name} ${ids.length}`, kind: 'side', x: sx / n, y: top });
+    };
+    side(forces.members(f.raiders), 'raider', W.RAIDERS_TAG);
+    side(war.squadGroups.flatMap((g) => forces.members(g)), 'soldier', W.SOLDIERS_TAG);
     return out;
   }
 
@@ -242,7 +281,8 @@ class Game implements RunGame {
     const r = this.realm;
     if (!r) return [];
     const evs = new Map(r.history().map((e) => [e.id, e]));
-    return r.changes().map((m) => W.landLine(m.kind, m.name ?? r.w.name(evs.get(m.fact!)?.to[0] ?? m.place ?? r.home)));
+    void evs;
+    return r.changes().map((m) => W.landLine(m.kind, r.placeName(m)));
   }
 
   /**
@@ -327,8 +367,7 @@ class Game implements RunGame {
     console.log(`[loop] run ${this.runs}: ${who.name}, ${seasons} seasons; asking: ${this.asking().map((x) => `${x.who} (${x.title})`).join(', ')}`);
     this.set('city');
     // (the town framed above the sheet: its core across the screen)
-    const t = this.town;
-    if (t) void this.cam.look(this.at3(t.centreInWindow()), { zoom: innerWidth / (0.9 * t.box.R), place: [0.5, 0.36], ease: 1.2 });
+    this.showTown();
   }
 
   /**
@@ -429,6 +468,7 @@ class Game implements RunGame {
     this.attack = { t: 0, sackAt: null, unwatch: null, following: false, n, road: -1, direct: false, step: 'look', calm: 0, mid: null };
     this.fightLine = W.ATTACK_WAIT;
     this.speed0 = this.scene.speed;
+    this.pitch0 = this.scene.core.camera.elevation;
     this.set('attack');
     this.nextRoad();
   }
@@ -496,7 +536,9 @@ class Game implements RunGame {
     if (!a.unwatch && units && forces && a.calm++ > SPAWN_TOLD_FRAMES) {
       const ids = forces.members(f.raiders);
       if (ids.length) {
-        a.unwatch = units.observe(ids);
+        // (the soldiers watched too: the fight's marks stand on each)
+        const un = [units.observe(ids), units.observe(war.squadGroups.flatMap((g) => forces.members(g)))];
+        a.unwatch = () => un.forEach((u) => u());
         const mid = (): V3 | null => {
           let n = 0;
           const s: V3 = [0, 0, 0];
@@ -530,6 +572,8 @@ class Game implements RunGame {
       const cam = this.scene.core.camera;
       const want = f.stage === 'coming' ? MARCH_ZOOM : FIGHT_ZOOM;
       cam.zoom *= Math.exp(Math.log(want / cam.zoom) * Math.min(1, dt * 1.2));
+      // (and comes down: figures stand taller on the screen)
+      cam.elevation += (FIGHT_PITCH - cam.elevation) * Math.min(1, dt * 1.2);
     }
     const line = f.failed ? WAVE_NO_ROAD : W.attackLine(f.n, f.alive, f.soldiers, f.stage);
     if (line !== this.fightLine) {
@@ -543,9 +587,14 @@ class Game implements RunGame {
 
   private endAttack(f: NonNullable<SeasonLoop['war']>['fight'] | null): void {
     const a = this.attack!;
+    // (where the raiders stand as it ends: the district that burns if they broke in, and what the camera pulls back to)
+    const mid = a.mid?.() ?? null;
+    const S = this.scene.stream;
+    const cell = mid && S ? ([S.origin[0] + cellAt(mid[0], mid[1])[0], S.origin[1] + cellAt(mid[0], mid[1])[1]] as [number, number]) : undefined;
     this.attack = null;
     a.unwatch?.();
     this.cam.follow(null);
+    this.scene.core.camera.elevation = this.pitch0;
     this.scene.speed = this.speed0;
     this.armed = null;
     const l0 = this.season.ledger;
@@ -557,12 +606,30 @@ class Game implements RunGame {
     const l1 = this.season.ledger;
     const lost = { might: before.might - total(l1, 'might'), materials: before.materials - pools(l1).materials, unrest: pools(l1).unrest - before.unrest };
     this.realm!.ledger = this.season.ledger;
-    this.realm!.fought(fight);
+    this.realm!.fought(fight, cell);
+    if (mid) void this.cam.look(mid, { zoom: AFTER_ZOOM, ease: 1.5, place: [0.5, 0.36] });
     this.resultLines = [...(f?.failed ? [WAVE_NO_ROAD] : []), ...W.resultLines(this.realm!.fight!, lost)];
     // (the fight is in the history, and a district burned is named for the mutators: saved at once)
     void this.save();
     console.log(`[loop] attack over: ${JSON.stringify({ ...fight, ...lost })}`);
     this.set('result');
+  }
+
+  /** the camera on the latest change this run made to the land that the window holds (its kind; null: none) */
+  showLast(): string | null {
+    const S = this.scene.stream;
+    const m = this.realm?.changes().at(-1);
+    if (!S || !m) return null;
+    const x = m.cell[0] - S.origin[0];
+    const y = (m.cell[1] - S.origin[1]) * ROW_H;
+    void this.cam.look(this.at3([x, y]), { zoom: Math.max(3, Math.min(7, innerWidth / (2.6 * m.radius))), ease: 1.2, place: [0.5, 0.36] });
+    return m.kind;
+  }
+
+  /** the camera back on the whole town, above the sheet */
+  showTown(): void {
+    const t = this.town;
+    if (t) void this.cam.look(this.at3(t.centreInWindow()), { zoom: innerWidth / (0.9 * t.box.R), place: [0.5, 0.36], ease: 1.2 });
   }
 
   /** (scripts) where the raiders are on the screen now (px), or null: none watched */

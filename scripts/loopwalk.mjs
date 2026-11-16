@@ -151,7 +151,16 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     await phase('city|attack|result|end', 120000);
     const s = await state();
     log(JSON.stringify(s));
-    log(`news: ${JSON.stringify(await page.evaluate(() => window.rungame.notes))}`);
+    const news = await page.evaluate(() => window.rungame.notes);
+    log(`news: ${JSON.stringify(news)}`);
+    // (a change in the land this season: the camera on it, a still)
+    if (s.phase === 'city' && /flooded|burned|buried|Lava|founded/.test(news.join(' '))) {
+      const seen = await page.evaluate(() => window.rungame.showLast());
+      await wait(2600);
+      await shot(`loop-6-change-s${s.season}-${seen ?? 'none'}`);
+      await page.evaluate(() => window.rungame.showTown());
+      await wait(1500);
+    }
     if (s.phase !== 'city') break;
     await playSeason();
     if (n > 40) throw new Error('the attack never came');
@@ -231,6 +240,9 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     await phase('result', 200000);
     await wait(800);
     await shot('loop-7-result');
+    // (the camera pulls back over where the raiders stood: broken through, that district is burned)
+    await wait(3500);
+    await shot('loop-7-result-district');
     log(`war: ${JSON.stringify(await page.evaluate(() => window.rungame.resultLines))}`);
     await tap('.run-sheet .go button', 'Continue');
   }
@@ -239,7 +251,8 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   await shot('loop-8-end');
   const ended = await page.evaluate(() => ({ history: window.rungame.history(), land: window.rungame.land() }));
   log(`history: ${JSON.stringify(ended.history)}`);
-  log(`land (named, not drawn): ${JSON.stringify(ended.land)}`);
+  log(`land (the mutators' entries this run caused): ${JSON.stringify(ended.land)}`);
+  log(`mutators: ${JSON.stringify(await page.evaluate(() => ({ list: window.mutators.record().list.map((m) => `${m.kind}@${m.place ?? m.cell.join(',')} r${Math.round(m.radius)} fact ${m.fact}`), signs: window.mutators.signs().map((s) => `${s.kind} ${s.strength} until ${s.until}`) })))}`);
   R.check('the end of the run reads the history', ended.history.length > 0, ended.history.length);
   // the saved world: the store holds the fact layer; a reload reads it (the leader screen lists what is remembered)
   await wait(1500);

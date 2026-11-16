@@ -35,6 +35,10 @@ import { ROW_H } from '../world/lattice';
 
 /** seasons to the run's major threat (a knob; 16 is the orchestrator's number, not the user's) */
 export const RUN_SEASONS = 16;
+/** the projects and ventures on offer at once (the dealer's resource limit, counted over what still stands). With the
+ *  dealer's one guarantee (a card that answers the run's threat) and the one threatening card a season's schedule lets
+ *  stand, a season asks at most BOARD + 2 things of the player, however long the run or large the holdings */
+export const BOARD = 3;
 /** seasons before the attack from which the raiders can be paid off */
 export const TRIBUTE_SEASONS = 3;
 
@@ -136,9 +140,10 @@ export class Realm {
     if (old) old.attrs.stage = -1;
     this.engine = new LivingEngine(this.w, templates, arc, o.home, {
       stage: this.stage(),
-      tune: o.tune ?? (() => ({ ...OPP_TUNE.dealer, reach: Number.MAX_VALUE })),
+      tune: o.tune ?? (() => ({ ...OPP_TUNE.dealer, reach: Number.MAX_VALUE, resourceMax: BOARD })),
       economy: false,
       limitBoard: true,
+      threatMax: 1,
       rng: () => 0,
     });
     this.last = this.engine.deal();
@@ -189,6 +194,9 @@ export class Realm {
       hasSpell: { pred: (_c, a) => this.spells.includes(a[0] as SpellId) },
       threatComing: { pred: () => !this.averted && !this.fight && this.raid === null },
       threatNear: { pred: () => this.seasons - this.season < TRIBUTE_SEASONS },
+      // (after share: the run is at least that far along — the smaller threats come one at a time, spread over the run)
+      after: { pred: (_c, a) => this.season >= Math.max(1, Math.ceil(Number(a[0]) * this.seasons)) },
+
       pool: { effect: (c, a) => void (c.dry || pool(a[0] as Pool, Number(a[1]))) },
       income: {
         effect: (c, a) => {
@@ -231,14 +239,21 @@ export class Realm {
    * so — the latest one `cause` recorded (a template records its event before it names this). The mutators write the
    * land and the lots there at once, or when that land next arrives. Nothing bound (a test): the facts stand alone.
    */
-  private landAt(kind: PhysicalKind, site: EntityId, radius: number, strength: number, cause: string, spot?: Spot): void {
+  private landAt(kind: PhysicalKind, site: EntityId, radius: number, strength: number, cause: string, spot?: Spot, cell?: readonly [number, number]): void {
     if (!mutators.ready) return;
     const ev = this.w.facts.events().filter((e) => e.about?.opp === cause || e.id === cause).at(-1);
     const key = spot ?? (this.w.facts.entity(site)?.attrs?.site as SiteKey | undefined);
     if (!key) throw new Error(`realm: ${site} is no site of the home town`);
     let seed = 1;
     for (const ch of site) seed = (seed * 31 + ch.charCodeAt(0)) & 0xffff;
-    mutators.apply({ kind, at: this.cellOf(key), radius, strength, seed, cause, ...(ev ? { fact: ev.id } : {}) });
+    const m = mutators.apply({ kind, at: cell ? [Math.round(cell[0]), Math.round(cell[1])] : this.cellOf(key), radius, strength, seed, cause, ...(ev ? { fact: ev.id } : {}) });
+    this.whereOf.set(m.id, spot === 'mountain' ? 'the mountain' : this.w.name(site));
+  }
+  /** the place each of this run's land changes is named by (the site it was about), by the entry's id */
+  private whereOf = new Map<string, string>();
+  /** the name of the place an entry of `changes()` is about */
+  placeName(m: Mutation): string {
+    return this.whereOf.get(m.id) ?? m.name ?? this.w.name(m.place ?? this.home);
   }
 
   /** what this run changed in the land and the places of the world: the mutators' entries whose fact event is this
@@ -334,18 +349,19 @@ export class Realm {
     this.sync();
   }
 
-  /** the attack fought: written to the history; broken through, the district the raiders came by is burned */
-  fought(f: { raiders: number; left: number; fallen: number }): void {
+  /** the attack fought: written to the history; broken through, the district the raiders came by is burned — round
+   *  `at` (world cells: where they stood when the fight was called), else round the road gate's own place */
+  fought(f: { raiders: number; left: number; fallen: number }, at?: readonly [number, number]): void {
     const held = f.raiders > 0 && f.left === 0;
     this.fight = { ...f, held };
     this.raid = null;
     const e = this.w.facts.record({ kind: held ? 'raid-held' : 'raid-broke', by: [], to: [this.home], note: held ? `the town held against ${f.raiders} raiders; ${f.fallen} soldiers died` : `${f.left} of ${f.raiders} raiders broke into the town; ${f.fallen} soldiers died`, weight: held ? 0.5 : -0.6 });
     if (!held && f.raiders > 0) {
       // (sacked: the district by the gate burned, its people gone; thieves in what is left for three seasons)
-      const at = siteId(this.home, 'gate');
-      this.w.facts.setTag(at, 'condition', 'burned', true, 'raid');
-      this.w.facts.setTag(at, 'condition', 'abandoned', true, 'raid');
-      this.landAt('burned', at, SACK_RADIUS, 1, e.id);
+      const gate = siteId(this.home, 'gate');
+      this.w.facts.setTag(gate, 'condition', 'burned', true, 'raid');
+      this.w.facts.setTag(gate, 'condition', 'abandoned', true, 'raid');
+      this.landAt('burned', gate, SACK_RADIUS, 1, e.id, undefined, at);
       if (mutators.ready) mutators.sign({ kind: 'crime', place: this.home, strength: 0.8, until: this.w.turn + 3, cause: e.id });
     }
   }

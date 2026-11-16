@@ -107,6 +107,9 @@ export interface TemplateDef {
   live?: boolean;
   /** once a run: its binding rests for good after it resolves */
   once?: boolean;
+  /** a threatening opportunity (OPPORTUNITY_CATALOG.md: "Some threatening opportunities instead count down to a
+   *  negative outcome if not intercepted"): the dealer's event — on the board whatever is held, outside its limits */
+  threat?: boolean;
   /** passing it by is no slight (a way not taken): its presenter isn't answered when it lapses */
   passable?: boolean;
   /** (round 125) who presents it (a named person of a bound group) and what the player gets */
@@ -163,6 +166,9 @@ export interface EngineOptions {
    *  home-town run's) fill the board, and a deal adds only what room is left — so the choices a turn stay few however
    *  long cards stand. Default false: each deal its own limit (the horde run's cards last a turn or two) */
   limitBoard?: boolean;
+  /** (season/realm.ts) threatening cards (TemplateDef.threat) standing at once, at most: the most urgent proposed is
+   *  dealt when there is room, the rest wait for a later deal. Default: no cap */
+  threatMax?: number;
 }
 
 /** One major arc: stages at turns, each an instant mutation (and a per-turn one while it holds). */
@@ -640,13 +646,22 @@ export class LivingEngine {
         at: first.location.at,
         ...(t.play?.forced ? { forced: true } : {}),
         ...(t.play?.towardClimax ? { towardClimax: true } : {}),
+        ...(t.threat ? { event: true } : {}),
         hooks: t.hooks ?? t.themes,
       });
       meta.set(`${t.id}|${first.offer}`, { c, preview: diff, unlocks, subjects, place, presenter, group });
     }
+    if (this.opts.threatMax !== undefined) {
+      let room = this.opts.threatMax - this.offers.filter((o) => o.status === 'offered' && this.template(o.template).threat).length;
+      for (const p of props.filter((x) => x.event).sort((a, b) => (b.parts.urgency ?? 0) - (a.parts.urgency ?? 0))) if (room-- <= 0) props.splice(props.indexOf(p), 1);
+    }
     const tune0 = this.dealerTune();
-    const tune = this.opts.limitBoard ? { ...tune0, resourceMax: Math.max(0, tune0.resourceMax - this.offers.filter((o) => o.status === 'offered').length) } : tune0;
-    const dealer = props.length ? deal(props, { holdings: this.w.holdings, turn, at: pAt, dist: this.opts.dist ?? (() => 0), conflictHooks: this.opts.hooks ?? this.arc?.themes ?? [], recent: this.recent, tune, onePerPlace }) : null;
+    const tune = this.opts.limitBoard ? { ...tune0, resourceMax: Math.max(0, tune0.resourceMax - this.offers.filter((o) => o.status === 'offered' && !this.template(o.template).threat).length) } : tune0;
+    const conflictHooks = this.opts.hooks ?? this.arc?.themes ?? [];
+    // (limitBoard: the board is what was dealt before and still stands — the guarantee of a card tied to the conflict
+    // counts those too, or a standing card and the guarantee's own make one more choice than the limit)
+    const conflictOnBoard = !!this.opts.limitBoard && this.offers.some((o) => o.status === 'offered' && (this.template(o.template).hooks ?? this.template(o.template).themes).some((h) => conflictHooks.includes(h)));
+    const dealer = props.length ? deal(props, { holdings: this.w.holdings, turn, at: pAt, dist: this.opts.dist ?? (() => 0), conflictHooks, conflictOnBoard, recent: this.recent, tune, onePerPlace }) : null;
     const dealt: Offer[] = [];
     for (const d of dealer?.dealt ?? []) {
       const m = meta.get(`${d.opp.template}|${d.opp.offer}`);

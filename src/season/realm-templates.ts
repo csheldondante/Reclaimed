@@ -95,14 +95,18 @@ export function projectTemplate(c: SeasonCard): TemplateDef | null {
 const cap = (t: string): string => t.charAt(0).toUpperCase() + t.slice(1);
 
 /** a hazard: a small cost now, or its expiry changes the land (a named physical change) */
-function hazard(o: { id: string; site: SiteKey; title: string; pitch: string; role: string; line: string; workers?: number; goods?: Record<string, number>; done: string; kind: string; where: string; lapse: string; unrest?: number; offerTurns: number; radius: number; spot?: string; setup?: Effect[]; calm?: Effect[] }): TemplateDef {
+function hazard(o: { id: string; site: SiteKey; title: string; pitch: string; role: string; line: string; workers?: number; goods?: Record<string, number>; done: string; kind: string; where: string; lapse: string; unrest?: number; offerTurns: number; radius: number; spot?: string; setup?: Effect[]; calm?: Effect[]; after: number }): TemplateDef {
   return {
     id: o.id,
     title: o.title,
     pitch: o.pitch,
     themes: ['hazard', o.kind],
     bind: at(o.site),
-    eligible: [{ not: { tag: ['$site', 'condition', o.kind], is: true } }],
+    // (its place in the run: the smaller threats come one at a time, spread over the seasons before the raid)
+    eligible: [{ not: { tag: ['$site', 'condition', o.kind], is: true } }, { helper: 'after', args: [o.after] }],
+    threat: true,
+    live: true,
+    parts: { urgency: 0.7 },
     at: 'site',
     requires: { agents: o.workers ? [{ kind: 'workers', count: o.workers }] : [], ...(o.goods ? { goods: o.goods } : {}) },
     turns: 1,
@@ -183,7 +187,10 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     pitch: 'Raiders ring {other}. Soldiers sent now would break the ring.',
     themes: ['war', 'diplomacy'],
     bind: [...at('watch'), { as: 'other', kind: 'settlement', shared: true, where: [{ helper: 'neighbour', args: ['$other'] }] }],
-    eligible: [{ not: { event: { kind: 'relieved', involving: '$other' } } }, { not: { tag: ['$other', 'condition', 'occupied'], is: true } }],
+    eligible: [{ not: { event: { kind: 'relieved', involving: '$other' } } }, { not: { tag: ['$other', 'condition', 'occupied'], is: true } }, { helper: 'after', args: [0.12] }],
+    threat: true,
+    live: true,
+    parts: { urgency: 0.8 },
     at: 'site',
     requires: { agents: [{ kind: 'army', count: 1 }] },
     turns: 1,
@@ -214,6 +221,9 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     themes: ['war', 'raiders'],
     bind: at('gate'),
     eligible: [{ helper: 'threatComing' }, { helper: 'threatNear' }],
+    threat: true,
+    live: true,
+    parts: { urgency: 1 },
     at: 'site',
     requires: { agents: [], goods: { materials: 6 } },
     turns: 1,
@@ -226,13 +236,13 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     cooldown: 1,
     hooks: ['raiders'],
   },
-  hazard({ id: 'mend-dam', site: 'dam', title: 'Mend the old dam', pitch: 'The old dam is cracked. Two workers and some stone will hold it.', role: 'dam keeper', line: 'The old dam is cracked from top to bottom. Two workers and some stone will hold it.', workers: 2, goods: { materials: 2 }, done: 'The dam is mended. The lower town stays dry.', kind: 'flooded', where: 'the lower town', lapse: 'The dam broke. The lower town is flooded.', offerTurns: 2, radius: 34 }),
-  hazard({ id: 'fire-wards', site: 'market', title: 'Pay for fire wards', pitch: 'A fire mage works by the market. Wards on its roofs keep her fire in her hearth.', role: 'fire mage', line: 'My work gets hot. Pay for wards on the market roofs. I will not ask twice.', goods: { magic: 1 }, done: 'The market is warded. The fire stays in the hearth.', kind: 'burned', where: 'the market', lapse: 'The fire got loose. The market burned.', unrest: 1, offerTurns: 2, radius: 22 }),
-  hazard({ id: 'feed-shrine', site: 'shrine', title: 'Feed the mountain shrine', pitch: 'Ash falls on the town. Stone and an offering at the shrine may quiet the mountain.', role: 'shrine keeper', line: 'Ash has been falling for days. The mountain will break soon. Send stone and an offering.', goods: { materials: 2, magic: 1 }, done: 'The shrine is fed. The mountain sleeps.', kind: 'melted', where: 'the mountain', lapse: 'The mountain broke. Lava ran down its side. Ash and darkness hang over the town.', offerTurns: 2, radius: 70, spot: 'mountain',
+  hazard({ id: 'mend-dam', site: 'dam', title: 'Mend the old dam', pitch: 'The old dam is cracked. Two workers and some stone will hold it.', role: 'dam keeper', line: 'The old dam is cracked from top to bottom. Two workers and some stone will hold it.', workers: 2, goods: { materials: 2 }, done: 'The dam is mended. The lower town stays dry.', kind: 'flooded', where: 'the lower town', lapse: 'The dam broke. The lower town is flooded.', offerTurns: 2, radius: 34, after: 0.25 }),
+  hazard({ id: 'fire-wards', site: 'market', title: 'Pay for fire wards', pitch: 'A fire mage works by the market. Wards on its roofs keep her fire in her hearth.', role: 'fire mage', line: 'My work gets hot. Pay for wards on the market roofs. I will not ask twice.', goods: { magic: 1 }, done: 'The market is warded. The fire stays in the hearth.', kind: 'burned', where: 'the market', lapse: 'The fire got loose. The market burned.', unrest: 1, offerTurns: 2, radius: 22, after: 0.45 }),
+  hazard({ id: 'feed-shrine', site: 'shrine', title: 'Feed the mountain shrine', pitch: 'Ash falls on the town. Stone and an offering at the shrine may quiet the mountain.', role: 'shrine keeper', line: 'Ash has been falling for days. The mountain will break soon. Send stone and an offering.', goods: { materials: 2, magic: 1 }, done: 'The shrine is fed. The mountain sleeps.', kind: 'melted', where: 'the mountain', lapse: 'The mountain broke. Lava ran down its side. Ash and darkness hang over the town.', offerTurns: 2, radius: 70, spot: 'mountain', after: 0.6,
     // (the sign the keeper points at: thin ash over the town while the card stands; fed, it stops. Broken, the eruption
     // casts its own ash and darkness for three seasons — mutate/engine.ts)
     setup: [{ helper: 'sign', args: ['ashfall', '$town', 0.4] }], calm: [{ helper: 'sign', args: ['ashfall', '$town', 0] }] }),
-  hazard({ id: 'shore-hill', site: 'mill', title: 'Shore up the hill', pitch: 'The hill above the mill is slipping. One worker with timber can pin it.', role: 'miller', line: 'The hill above my mill is slipping. One worker with timber can pin it.', workers: 1, goods: { materials: 1 }, done: 'The hill is pinned. The mill is safe.', kind: 'buried', where: 'the mill street', lapse: 'The hill slid. The mill street is buried.', offerTurns: 2, radius: 24 }),
+  hazard({ id: 'shore-hill', site: 'mill', title: 'Shore up the hill', pitch: 'The hill above the mill is slipping. One worker with timber can pin it.', role: 'miller', line: 'The hill above my mill is slipping. One worker with timber can pin it.', workers: 1, goods: { materials: 1 }, done: 'The hill is pinned. The mill is safe.', kind: 'buried', where: 'the mill street', lapse: 'The hill slid. The mill street is buried.', offerTurns: 2, radius: 24, after: 0.78 }),
 ];
 
 /**

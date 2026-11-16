@@ -72,6 +72,9 @@ export interface DealContext {
   dist: (a: [number, number], b: [number, number]) => number;
   /** what the conflict is about: a dealt opportunity sharing one is "tied to the conflict" */
   conflictHooks: string[];
+  /** a card tied to the conflict already stands on the board from an earlier deal (offers that stay several turns): the
+   *  guarantee is met and adds none */
+  conflictOnBoard?: boolean;
   /** what was dealt on earlier turns (variety) */
   recent: { template: string; place: string; turn: number }[];
   tune: DealerTune;
@@ -251,7 +254,8 @@ export function deal(props: Proposal[], ctx: DealContext): DealReport {
     }
   // 8 tied to the conflict
   const tied = (c: Cand) => c.p.hooks.some((h) => ctx.conflictHooks.includes(h));
-  if (dealt.some(tied)) guarantees.push('tied to the conflict: dealt');
+  if (ctx.conflictOnBoard) guarantees.push('tied to the conflict: on the board from an earlier deal');
+  else if (dealt.some(tied)) guarantees.push('tied to the conflict: dealt');
   else {
     const t = pool.find((c) => c.affordable && tied(c) && !dealt.includes(c));
     if (t) {

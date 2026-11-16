@@ -127,3 +127,7 @@ export const sentence = (t: string): string => {
   const s = t.charAt(0).toUpperCase() + t.slice(1);
   return /[.!?]$/.test(s) ? s : `${s}.`;
 };
+
+/** the fight's two sides, over their figures (a count follows) */
+export const RAIDERS_TAG = 'Raiders';
+export const SOLDIERS_TAG = 'Your soldiers';

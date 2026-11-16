@@ -184,6 +184,11 @@ export class SeasonWar {
   }
   private soonSize = 0;
 
+  /** (loop-skeleton) the soldiers' groups (the fight's screen marks each soldier) */
+  get squadGroups(): readonly GroupId[] {
+    return this.squads;
+  }
+
   /** (loop-skeleton) the raid as it stands, for the screen that shows it: its size, the raiders and soldiers alive, how
    *  far it has come; null: no raid on */
   get fight(): { n: number; alive: number; soldiers: number; fallen: number; stage: 'coming' | 'there' | 'fighting'; failed: boolean; raiders: GroupId } | null {
