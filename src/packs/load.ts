@@ -225,8 +225,31 @@ export function loadPack(p: Pack, base: { cards?: readonly string[]; rules?: rea
   const upkeep: RuleDef[] = (p.things ?? []).flatMap((t) =>
     Object.entries(t.upkeep ?? {}).map(([pool, n]): RuleDef => ({ id: `upkeep:${t.id}:${pool}`, name: `Upkeep: ${t.name}`, on: 'turn', a: { tags: [isTag(t.id)] }, effect: { pool, n: -n }, why: `{a} cost you {n} ${POOL_WORD[pool]}` })),
   );
-  // (a pack's rules are the engine's RuleDef as written: the validator has checked their shape)
-  return { id: p.pack.id, name: p.pack.name, templates, rules: [...((p.rules ?? []) as unknown as RuleDef[]), ...upkeep], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], left, problems };
+  // (a pack's rules are the engine's RuleDef as written: the validator has checked their shape. A rule that sets a
+  // timed tag is told so here: the tag's declaration says it)
+  const timed = new Set(['festival', 'growth-active', ...(p.tags ?? []).filter((t) => t.timed).map((t) => t.id)]);
+  const own = ((p.rules ?? []) as unknown as RuleDef[]).map((r): RuleDef => ('tag' in r.effect && timed.has(r.effect.tag) ? { ...r, effect: { ...r.effect, timed: true } } : r));
+  return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], left, problems };
+}
+
+/**
+ * (chains) The loaded packs joined: a card that some rule of the set offers or starts comes up only by that rule. Its
+ * own conditions are replaced by the Realm's `ruleAsked` (and "not done for good" if it is `once`); it is dealt
+ * outside the board's limits, like the base game's tribute card, so it is on the table the season it is asked for;
+ * a started live card is `forced`: its event begins as it is dealt. Call once, over all the packs of a run.
+ */
+export function linkPacks(packs: readonly LoadedPack[]): void {
+  const templates = new Map(packs.flatMap((p) => p.templates.map((t) => [t.id, t] as const)));
+  for (const r of packs.flatMap((p) => p.rules)) {
+    const fx = r.effect;
+    const id = 'offer' in fx ? fx.offer : 'start' in fx ? fx.start : null;
+    const t = id ? templates.get(id) : undefined;
+    if (!t) continue;
+    t.eligible = [{ helper: 'ruleAsked', args: [t.id] }, ...(t.once ? [{ not: { event: { kind: doneKind(t.id), involving: '$town' } } } as Pred] : [])];
+    if (!t.threat) t.threat = 'arc';
+    t.cooldown = 0;
+    if ('start' in fx && t.play?.event) t.play = { ...t.play, forced: true };
+  }
 }
 
 /** a pack's place word as a live event's place: a site, the gate or the road the event's column came by, or the

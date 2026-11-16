@@ -20,8 +20,8 @@ import { CATALOG } from '../season/catalog';
 import { FIRE_TEMPLATE } from '../season/realm-events';
 import { projectTemplate, SITES, WORLD_TEMPLATES, type SiteKey } from '../season/realm-templates';
 import { checkTogether, reportText, type Pack, type PackAbility, type Problem } from '../packs/check';
-import { castAbility, IS, lentTo, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
-import { BASIC_SPELLS, Realm, RUN_SEASONS, SPELL_COST, type SpellId } from '../season/realm';
+import { castAbility, IS, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
+import { BASIC_SPELLS, Realm, RUN_SEASONS, SPELL_COST, type RunState, type SpellId } from '../season/realm';
 import { LEADERS, leader as leaderOf, resultTitle, SPELL_NAME, threatText, costText } from '../season/run-words';
 import { ROW_H } from '../world/lattice';
 import * as W from './words';
@@ -51,6 +51,16 @@ export interface TableOptions {
   liveFire?: boolean;
   /** raiders in the last season, to try another number than the game's (BACKLOG CT-18) */
   raiders?: number;
+  /** a run under way taken up again (`Table.save`), with the same seed, leader and packs */
+  resume?: TableSave;
+}
+
+/** a run under way, as saved: the world, the Realm's own state, the ledger, the casts into the events under way */
+export interface TableSave {
+  world: WorldSnapshot;
+  run: RunState;
+  ledger: SeasonLedger;
+  casts: [string, Record<string, number>][];
 }
 
 /** the ids of the base game's cards (a pack's may not clash with them) */
@@ -98,6 +108,8 @@ export interface EventView {
   casts: { name: string; n: number }[];
   /** the rules that would apply if it ended now, each with its reason */
   rules: string[];
+  /** what one of its results will set off: the rules that wait for it and are ready */
+  after: string[];
   /** how it would come out if it ended now */
   tier: string;
   outcome: string;
@@ -217,14 +229,15 @@ export class Table {
     this.seed = o.seed;
     const who = leaderOf(o.leader);
     // (a new run: the leader's pools; what earlier runs built is kept — scenes/level/loop.ts `pick` does the same)
-    const ledger: SeasonLedger = { ...newLedger(who.pools, who.income), built: [...(o.built ?? [])] };
+    const ledger: SeasonLedger = o.resume ? o.resume.ledger : { ...newLedger(who.pools, who.income), built: [...(o.built ?? [])] };
     const base = baseCards();
     this.packs = (o.packs ?? []).map((p) => loadPack(p, { cards: base, boost: o.boost ?? true }));
+    linkPacks(this.packs);
     // (several packs: what only shows when they are loaded together — an id two share, a tag declared differently)
     const together = checkTogether(o.packs ?? []);
     if (together.some((x) => x.level === 'error')) throw new Error(reportText('The packs together', together));
     this.together = together;
-    const world = o.world ?? briarWorld().ws.snapshot();
+    const world = o.resume?.world ?? o.world ?? briarWorld().ws.snapshot();
     const centre = world.settlements.find((s) => s.id === HOME)!.at;
     // (the helpers a pack's cards name read the run through this; the Realm deals once while it is being made, before
     // there is a run to read: that deal sees the leader's pools and no tags, and the deal is made again below)
@@ -248,6 +261,7 @@ export class Table {
       seasons: o.seasons ?? RUN_SEASONS,
       liveFire: o.liveFire ?? true,
       ...(o.raiders !== undefined ? { raiders: o.raiders } : {}),
+      ...(o.resume ? { resume: o.resume.run } : {}),
       // (CT-17: the sites on a ring round the town's centre, so "next to" and "close" mean something here)
       where: (spot) => {
         const i = SITES.findIndex((s) => s.key === spot);
@@ -267,8 +281,19 @@ export class Table {
       },
     });
     made = this.realm;
-    if (this.packs.length) this.realm.afterSeason(this.realm.ledger);
     this.run = this.realm.history(true).filter((e) => e.kind === 'run-began').length;
+    if (o.resume) {
+      // (a run taken up again: nothing is dealt and nothing begins; the casts made into what is under way are told again)
+      for (const [template, casts] of o.resume.casts) {
+        const live = this.realm.liveRunning().find((x) => x.template === template);
+        if (!live) continue;
+        this.casts.set(live.id, { ...casts });
+        this.tell(live);
+      }
+      this.mark();
+      return;
+    }
+    if (this.packs.length) this.realm.afterSeason(this.realm.ledger);
     this.say('run', W.runBegan(who.name, this.run, this.realm.seasons));
     this.begin();
     this.mark();
@@ -444,6 +469,8 @@ export class Table {
         spells: known.filter((x) => fits(def, x)).map((x) => SPELL_NAME[x]),
         casts: Object.entries(casts).map(([k, n]) => ({ name: SPELL_NAME[k as SpellId] ?? this.packs.flatMap((x) => x.abilities).find((a) => a.id === k)?.name ?? k, n })),
         rules: p.hits.map((h) => `${h.name}. ${h.text}.`),
+        // (chains: the rules that wait for one of this event's results, each with what it will set off)
+        after: r.rules.rules.filter((x) => typeof x.on !== 'string' && 'live' in x.on && x.on.live === def.tag && !!x.on.tier && r.rules.check(x).ok).map((x) => W.setsOff((x.on as { tier: string[] }).tier, x.name, W.ruleSays(x, (id) => this.cardTitle(id)))),
         tier: p.tier,
         outcome: p.text,
       };
@@ -457,8 +484,18 @@ export class Table {
       const c = book.check(r);
       const fired = this.recent.filter((h) => h.rule === r.id).map((h) => `${h.text}.`);
       const ready = c.ok || (c.missing?.kind === 'spent' && fired.length > 0);
-      return { id: r.id, name: r.name, says: W.ruleSays(r), when: W.ruleWhen(r.on), fired, ready: c.ok, why: c.ok ? W.ruleReady(r.on, c.things ?? []) : ready ? W.RULE_SPENT : W.whyNot(c.missing as RuleMissing) };
+      return { id: r.id, name: r.name, says: W.ruleSays(r, (id) => this.cardTitle(id)), when: W.ruleWhen(r.on), fired, ready: c.ok, why: c.ok ? W.ruleReady(r.on, c.things ?? []) : ready ? W.RULE_SPENT : W.whyNot(c.missing as RuleMissing) };
     });
+  }
+  /** a card's title by its id (a rule's words name the card it offers) */
+  private cardTitle(id: string): string {
+    return this.realm.engine.templates.find((t) => t.id === id)?.title ?? id;
+  }
+  /** the run as it stands, to take up again (`TableOptions.resume`): the world, the Realm's run, the ledger, and the
+   *  casts made into the live events under way (by template) */
+  save(): TableSave {
+    const r = this.realm;
+    return structuredClone({ world: r.snapshot(), run: r.runState(), ledger: r.ledger, casts: r.liveRunning().map((o) => [o.template, this.casts.get(o.id) ?? {}] as [string, Record<string, number>]) });
   }
   /** the tags on things in play now, each with how many things carry it */
   tagsInPlay(): { tag: string; n: number }[] {
@@ -526,7 +563,8 @@ export class Table {
   /** rule firings not yet in the log, as lines */
   private logged = 0;
   private flushRules(): void {
-    for (const { hit } of this.hits.slice(this.logged)) this.say('rule', W.ruleLine(hit.name, hit.text));
+    // (a chain reads as a chain: the rule that had set the card going → what happened → this rule)
+    for (const { hit } of this.hits.slice(this.logged)) this.say('rule', W.chainLine(hit.after, hit.act || hit.after ? cap(hit.what ?? '') || undefined : undefined, W.ruleLine(hit.name, hit.text)));
     this.logged = this.hits.length;
   }
 
@@ -627,6 +665,7 @@ export class Table {
   }
 }
 
+const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 /** a live event's spell list allows a spell ('known': every spell the run has) */
 const allows = (list: readonly string[], spell: string): boolean => list.includes(spell) || list.includes('known');
 /** a spell is allowed in a live event and has something there to act on: foes to put down, or a fire to put out */

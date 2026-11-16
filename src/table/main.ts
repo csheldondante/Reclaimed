@@ -94,6 +94,7 @@ function events(): string {
   <div class="row dim">${esc(e.how)}${casts ? ` ${esc(casts)}.` : ''}</div>
   ${e.rules.length ? e.rules.map((r) => `<div class="row rule">${esc(r)}</div>`).join('') : `<div class="row dim">${W.NO_RULES_APPLY}</div>`}
   <div class="row predict tier-${esc(e.tier)}"><b>${W.PREDICT}. ${esc(W.TIER_NAME[e.tier] ?? e.tier)}.</b> ${esc(e.outcome)}</div>
+  ${e.after.map((a) => `<div class="row chain">${esc(a)}</div>`).join('')}
 </div>`;
     })
     .join('');

@@ -1,4 +1,8 @@
-# Opportunity pack format (draft 4, 2026-11-16: several packs together)
+# Opportunity pack format (draft 5, 2026-11-16: rules that chain)
+
+**Changed since draft 4.** Rules can chain (see "Chains"): (1) a rule can wait for a live event's RESULT,
+`"on": { "live": "raid", "tier": ["success"] }`; (2) a rule's effect can be an act: `offer` a card, `start` a live
+card, `tag` or `untag` the thing it matched; (3) what an act causes sets off other rules. Example: `packs/arena.json`.
 
 **Changed since draft 3.** (1) Several packs load together; `packcheck` gives a TOGETHER report; shared custom tags
 take `"shared": true` (see "Several packs together"). (2) The event names a rule can wait for are a fixed, tested
@@ -249,6 +253,46 @@ trigger happens and its things exist; the player is told `why`.
 
 Write rules so they cross packs: read general tags (`field`, `temple`, `water`, `garrison`, `festival`), not only the
 pack's own.
+
+## Chains
+
+A thing in play can make one event lead to the next: win a fight, and a harder challenger comes. Full example:
+`packs/arena.json` (a fighting pit; three bouts, each started by the win before; each win pays and draws a crowd).
+
+**Wait for a result.** `"on": { "live": "bout", "tier": ["success", "triumph"] }` fires AFTER the event's result
+is picked, when it is one of those. (`{ "live": "bout" }` with no `tier` still fires BEFORE, and is the only kind
+that can change an amount.) A result rule can change a pool or act; it cannot change an amount.
+Waiting for a card: `{ "event": "pack-done:<card-id>" }`, `{ "event": "pack-lapsed:<card-id>" }`.
+
+**Acts**, in place of a pool or an amount in `effect`:
+- `{ "offer": "card-id" }`: that card is asked of the player from the next deal. The player may take it or leave it.
+- `{ "start": "card-id" }`: for a card with `live`: its event begins by itself, as the raid does. The card must have
+  no `cost`. The player casts into it that season and it resolves at the season's end.
+- `{ "tag": "tag-id", "on": "a" }` · `{ "untag": "tag-id", "on": "a" }`: on every thing the rule's `a` matched. The
+  pack's own tags, `festival` or `growth-active`. A tag declared `timed` lasts to the end of the season.
+
+**A card that a rule offers or starts comes up ONLY that way.** Its own `appears_when` is not used (the validator
+says to remove it). It is not counted against the board's three cards, so it is there the season it is asked for,
+unless another card stands at its site. `once` still holds: a `once` card that is done never comes back.
+
+**How a chain runs, and why it ends.**
+- When an event's result is picked: the result rules fire in order (a tag one sets is seen by the next), then the
+  rules that wait for the card's `pack-done`. So "the win makes the pit `pit-champion`" can be followed, in the same
+  moment, by "a done bout at a `pit-champion` pit starts the next bout".
+- A started or offered card is dealt at the next deal. Results are picked at a season's end, so **each step of a
+  chain takes one season**: bout 1 in season 5, bout 2 in season 6, bout 3 in season 7.
+- An act that changes nothing is no firing: the card is on the table or asked for already, a `once` card is done,
+  the tag is there already.
+- Every rule fires at most `perSeason` times a season (default 1). A rule that acts may ask for at most 3. Over all
+  acting rules there is a budget of 24 firings a season; past it the game stops with an error that names the chain.
+- A chain that comes back to itself (bout 3's win starts bout 1 again, with `"once": false` cards) is allowed. It
+  goes round one step a season for as long as its things are in play. The validator says to LOOK at it.
+
+**What the player sees.** The log reads a chain as a chain: "A name to beat → Two caravan guards call you out: good
+result → Rule: The Red Wolf hears. …". An event's card lists what each result will set off. The Rules list says
+what an acting rule will do in words ("Then this begins at once: "Two caravan guards call you out".").
+
+A `why` of an acting rule has no amount: do not write `{n}` in it.
 
 ## events
 

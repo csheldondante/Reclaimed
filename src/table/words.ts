@@ -39,19 +39,28 @@ const near = (cells: number): string => (cells <= 70 ? 'passing' : cells <= 90 ?
 /** when a rule is looked at */
 export function ruleWhen(on: RuleTrigger): string {
   if (on === 'turn') return 'Each season';
-  if (typeof on !== 'string' && 'live' in on) return `When a ${on.live} event ends`;
+  if (typeof on !== 'string' && 'live' in on) return on.tier ? `When a ${on.live} event ends in ${on.tier.map((t) => (TIER_NAME[t] ?? t).toLowerCase()).join(' or ')}` : `When a ${on.live} event ends`;
   return `When "${typeof on === 'string' ? on : on.event}" happens`;
 }
 /** what a rule reads and gives: "One thing that is "field" + "worked" + "growth-active". +2 Materials." */
-export function ruleSays(r: RuleDef): string {
+export function ruleSays(r: RuleDef, card: (id: string) => string = (id) => id): string {
   const a = `One thing that is ${query(r.a)}${r.a.near && r.a.near.of !== 'a' ? `, ${near(r.a.near.cells)} the event` : ''}.`;
   const b = r.b ? ` And one that is ${query(r.b)}${r.b.near ? (r.b.near.of === 'a' ? `, ${near(r.b.near.cells)} the first` : `, ${near(r.b.near.cells)} the event`) : ''}.` : '';
   const need = r.need ? ` Needs ${pool(r.need.pool)} ${r.need.gte !== undefined ? `${r.need.gte} or more` : `${r.need.lte} or less`}.` : '';
   const fx = r.effect;
   const each = r.per === 'a' ? ' for each such thing' : r.per === 'b' ? ' for each second thing' : r.per ? ` for every ${r.per.each} of ${r.per.amount}` : '';
+  if ('offer' in fx) return `${a}${b}${need} Then this is asked of you: "${card(fx.offer)}".`;
+  if ('start' in fx) return `${a}${b}${need} Then this begins at once: "${card(fx.start)}".`;
+  if ('tag' in fx) return `${a}${b}${need} Then it becomes "${fx.tag}"${fx.timed ? ' for the season' : ''}.`;
+  if ('untag' in fx) return `${a}${b}${need} Then it is no longer "${fx.untag}".`;
   const gives = 'pool' in fx ? `${fx.n > 0 ? '+' : ''}${fx.n} ${pool(fx.pool)}${each}` : fx.op === 'mul' ? `"${fx.amount}" times ${fx.n}${each}` : `${fx.n > 0 ? '+' : ''}${fx.n} "${fx.amount}"${each}`;
   return `${a}${b}${need} Gives ${gives}${r.cap !== undefined ? `, at most ${r.cap}` : ''}.`;
 }
+/** a chain's links before a rule's line: the rule that had set it going, and what happened */
+export const chainLine = (after: string | undefined, what: string | undefined, line: string): string => `${after ? `${after} → ` : ''}${what ? `${what} → ` : ''}${line}`;
+/** on an event's card: what a result will set off */
+export const setsOff = (tiers: string[], name: string, says: string): string => `If it ends in ${tiers.map((t) => (TIER_NAME[t] ?? t).toLowerCase()).join(' or ')}: ${name}. ${says}`;
+export const resultWhat = (title: string, tier: string): string => `${title}: ${(TIER_NAME[tier] ?? tier).toLowerCase()}`;
 export const ruleReady = (on: RuleTrigger, things: string[]): string => `Ready: ${things.join(' and ')}. ${on === 'turn' ? 'It pays when the season ends.' : `It pays ${ruleWhen(on).toLowerCase()}.`}`;
 /** the one thing a rule lacks */
 export function whyNot(m: RuleMissing): string {

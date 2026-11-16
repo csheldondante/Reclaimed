@@ -24288,3 +24288,30 @@ Unlocked abilities are `ability-unlocked:<id>` events of the run, read back from
 deal: the dealer is deterministic by score and round 6's tests rest on that (CT-24).
 
 **Tests.** One file at a time: `packs-together` 11, `packs-more` 3, `packs` 35, `table` 4, `table-live` 11.
+
+## 2026-11-16 — Rules that chain (`card-table`)
+
+**Why.** The owner: "an in play thing that makes winning a fight cause a new challenger opportunity and a next
+fight … it could build surprising engines." The rule book's no-loops ban was stricter than needed: `perSeason`
+already bounds every rule.
+
+**What.** `living/rules.ts`: a trigger on a live event's result (`{ live, tier }`, fired after the tier is picked;
+`{ live }` alone still fires before and is the only kind that changes an amount); effects that act (`offer`, `start`,
+`tag`, `untag`) through `RuleWorld.act`; the things are read again after an act, so the next rule sees a tag just
+set; acting rules capped at 3 a season each and 24 a season together, past which the book throws with the chain's
+rule ids. `season/realm.ts`: `act` (a card asked for is kept in `asked`, saved with the run; the template's
+`ruleAsked` condition lets the next deal put it on the board), result rules fired in `finishLive` before the
+outcome's own events are read, `what` / `after` on each firing so a chain can be read back. `packs/load.ts:
+linkPacks` rewrites the conditions of a card that a rule offers or starts.
+
+**Order that mattered.** First version read the outcome's events (`pack-done`) before the result rules: "a done
+bout at a champion's pit starts the next bout" then ran before "a win makes the pit a champion's" and the chain
+never went on. Result rules now come first.
+
+**Measured (`packs/arena.json`, bots, 30 runs).** It does not run away: 18 runs dug the pit; bout 1 won 18 of 18,
+bout 2 15 of 18, bout 3 14 of 15; at most three bouts a run, one a season. A whole chain pays 12 Materials, 3 Magic
+and 1 Might for about 4 Magic of casts and 1 Materials a season of upkeep.
+
+**Tests.** `chains` 13 (result trigger, tag re-read, perSeason, budget error, save and load of the book; the arena
+on the Realm: three bouts in three seasons, the chain in the log, what a win will set off on the card, a lost bout
+ends it, saved after the second win and taken up, the same run from the same moves). Regression files pass alone.

@@ -22,7 +22,8 @@ import { MemoryWorldState } from '../api/contracts/world-state';
 import { text, type Ctx, type Helper, type Stage } from '../living/dsl';
 import { LivingEngine, outcomesOf, type EngineReport, type Offer, type TemplateDef, type EngineState } from '../living/engine';
 import { idleState, liveDerive, liveNames, liveRead, liveTier, type LiveDef, type LiveState, type LiveVars } from '../living/live';
-import { RuleBook, type RuleDef, type RuleHit, type RuleOccasion, type RuleState, type Thing } from '../living/rules';
+import { RuleBook, type RuleAct, type RuleDef, type RuleHit, type RuleOccasion, type RuleState, type Thing } from '../living/rules';
+import { liveWhat } from './live-words';
 import type { Tier } from '../api/contracts/opportunity';
 import { seedLocus } from '../living/seed';
 import { FactWorld } from '../living/world';
@@ -158,6 +159,8 @@ export interface RunState {
   seen?: number;
   /** the trade partners standing when the season began (the news says when one is gone) */
   partners?: number;
+  /** (chains) the cards a rule has asked for that are not yet done: card → the rule's name */
+  asked?: [string, string][];
 }
 
 export class Realm {
@@ -248,7 +251,8 @@ export class Realm {
       rng: () => 0,
       liveNumbers: Object.keys(this.runNumbers()),
     });
-    this.rules = new RuleBook([...RULES, ...(o.extra?.rules ?? [])], { things: () => this.things(), pool: (k) => pools(this.led)[k as Pool] ?? 0, gain: (k, n) => this.addPool(k as Pool, n) });
+    this.rules = new RuleBook([...RULES, ...(o.extra?.rules ?? [])], { things: () => this.things(), pool: (k) => pools(this.led)[k as Pool] ?? 0, gain: (k, n) => this.addPool(k as Pool, n), act: (fx, things, rule) => this.act(fx, things, rule) });
+    for (const [k, v] of res?.asked ?? []) this.asked.set(k, v);
     if (res?.rules) this.rules.load(res.rules);
     else this.rules.season(this.w.turn);
     this.seen = res?.seen ?? this.w.facts.events().length;
@@ -261,7 +265,7 @@ export class Realm {
 
   /** the run as it stands, to save beside the world's snapshot (`RealmOptions.resume` takes it up) */
   runState(): RunState {
-    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, averted: this.averted, fight: this.fight, where: [...this.whereOf], engine: this.engine.state(), rules: this.rules.save(), seen: this.seen, partners: this.partnersWere };
+    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, averted: this.averted, fight: this.fight, where: [...this.whereOf], engine: this.engine.state(), rules: this.rules.save(), seen: this.seen, partners: this.partnersWere, asked: [...this.asked] };
   }
   /** the history's turn before this run's first season */
   private t0: number;
@@ -311,6 +315,8 @@ export class Realm {
         },
       },
       hasSpell: { pred: (_c, a) => this.spells.includes(a[0] as SpellId) },
+      // (chains) a rule has put this card on offer, or started it, and it is not yet done
+      ruleAsked: { pred: (_c, a) => this.asked.has(String(a[0])) },
       // (built card: the town has built it)
       built: { pred: (_c, a) => this.led.built.includes(String(a[0])) },
       threatComing: { pred: () => !this.averted && !this.fight && this.raid === null },
@@ -504,10 +510,64 @@ export class Realm {
     const evs = this.w.facts.events();
     const fresh = evs.slice(this.seen);
     this.seen = evs.length;
-    for (const e of fresh) if (e.kind !== 'rule-fired') hits.push(...this.fireRules({ on: { event: e.kind } }));
+    for (const e of fresh) {
+      if (e.kind === 'rule-fired') continue;
+      // (a card a rule had put on offer, now done or run out: the rules it fires are that rule's chain)
+      const card = /^pack-(?:done|lapsed):(.+)$/.exec(e.kind)?.[1];
+      const after = card ? this.asked.get(card) : undefined;
+      hits.push(...this.fireRules({ on: { event: e.kind }, ...(e.note ? { what: e.note } : {}), ...(after ? { after } : {}) }));
+      if (card) this.asked.delete(card);
+    }
     // (the rules' own records are seen, and trigger nothing)
     this.seen = this.w.facts.events().length;
     return hits;
+  }
+
+  /** the cards a rule has put on offer or started and that are not yet done or run out: card → the rule's name */
+  private asked = new Map<string, string>();
+  /** a card was asked for since the last deal */
+  private dealDue = false;
+
+  /**
+   * (card-table: chains) An acting rule's act, for the rule book (living/rules.ts RuleAct). `offer` / `start`: the
+   * card is wanted from now — its template's `ruleAsked` condition holds, so the next deal puts it on the board (a
+   * started live card is `forced`: it begins as it is dealt). False if it is unknown, on the board or under way
+   * already, asked for already, or done for good (`once`). `tag` / `untag`: on each thing the rule matched.
+   */
+  private act(fx: RuleAct, things: Thing[], rule: RuleDef): boolean {
+    const f = this.w.facts;
+    if ('offer' in fx || 'start' in fx) {
+      const id = 'offer' in fx ? fx.offer : fx.start;
+      const t = this.engine.templates.find((x) => x.id === id);
+      if (!t || this.asked.has(id)) return false;
+      if (this.engine.offers.some((o) => o.template === id && (o.status === 'offered' || o.status === 'committed'))) return false;
+      if (t.once && this.engine.past.some((o) => o.template === id && o.status === 'resolved' && o.dealt > this.t0)) return false;
+      this.asked.set(id, rule.name);
+      this.dealDue = true;
+      return true;
+    }
+    let changed = false;
+    for (const a of things) {
+      if (!f.entity(a.id)) continue;
+      const cur = f.tag(a.id, 'condition', 'tag' in fx ? fx.tag : fx.untag)?.value;
+      const on = cur === true || (typeof cur === 'string' && Number(cur) >= this.w.turn);
+      if ('tag' in fx && !on) {
+        f.setTag(a.id, 'condition', fx.tag, fx.timed ? String(this.w.turn) : true, `rule:${rule.id}`);
+        changed = true;
+      } else if ('untag' in fx && on) {
+        f.dropTag(a.id, 'condition', fx.untag);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  /** a card a rule asked for mid-season is dealt now (at a season's end the season's own deal does it) */
+  private dealAsked(): void {
+    if (!this.dealDue) return;
+    this.dealDue = false;
+    this.last = this.engine.redeal();
+    this.sync();
   }
 
   // ---- live events (living/live.ts; the scene's runner plays them: scenes/level/live-runner.ts) ------------------------
@@ -551,9 +611,16 @@ export class Realm {
     this.w.holdings = this.led.holdings;
     this.engine.resolve(id, tier);
     this.sync();
-    hits.push(...this.pump());
     const oc = outcomesOf(t)[tier] ?? outcomesOf(t).success;
     const title = text(this.engine.ctx(t, o.bind, o.id), t.title);
+    // (card-table: chains) the result is picked: the rules about results fire now, as the chain of whichever rule had
+    // offered or started this card — before the events its outcome wrote are read, so a tag a win sets is there for
+    // the rule that waits for the card to be done
+    const after = this.asked.get(o.template);
+    hits.push(...this.fireRules({ on: { live: def.tag, tier: [tier] }, vars: { ...out }, at: this.posOf(how.at ?? this.cellOf(site ?? 'market')), route: null, what: liveWhat(title, tier), ...(after ? { after } : {}) }));
+    hits.push(...this.pump());
+    // (a card with no record of its own end: no longer asked for)
+    this.asked.delete(o.template);
     const lines = [...(oc ? [text(this.engine.ctx(t, o.bind, o.id), oc.text)] : []), ...hits.map((h) => `${h.text}.`)];
     console.log(`[realm] live event ${o.template}: ${tier} ${JSON.stringify(out)}${hits.length ? ` rules: ${hits.map((h) => h.rule).join(', ')}` : ''}`);
     return { id, template: o.template, title, tier, vars: out, lines, hits };
@@ -601,6 +668,7 @@ export class Realm {
     if (spell === 'growth' && site) this.mark(at, 'growth-active', 'spell');
     this.w.facts.record({ kind: 'spell-cast', by: ['player'], to: [at], note: spell === 'growth' ? `you drew a growth rune over ${this.w.name(at)}` : `you cast ${spell} at ${this.w.name(at)}` });
     this.said.push(...this.pump().map((h) => `${h.text}.`));
+    this.dealAsked();
     return true;
   }
 
@@ -709,6 +777,7 @@ export class Realm {
     const c = cardOfTemplate(o.template);
     if (c) this.led = adopt(this.led, card(c), o.commitment!, o.id, this.season + (o.resolvesTurn! - this.w.turn));
     this.w.holdings = this.led.holdings;
+    this.dealAsked();
     return o;
   }
 
@@ -757,6 +826,7 @@ export class Realm {
   /** after the ledger's season (income in, people back from the fight): the deal again over what is free now */
   afterSeason(l: SeasonLedger): void {
     this.ledger = l;
+    this.dealDue = false;
     this.last = this.engine.redeal();
     this.sync();
   }

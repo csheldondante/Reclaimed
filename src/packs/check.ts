@@ -78,11 +78,11 @@ export interface PackCard {
 export interface PackRule {
   id: string;
   name: string;
-  on: 'turn' | { event: string } | { live: string };
+  on: 'turn' | { event: string } | { live: string; tier?: string[] };
   a: PackQuery;
   b?: PackQuery;
   need?: { pool: string; gte?: number; lte?: number };
-  effect: { pool: string; n: number } | { amount: string; op: 'add' | 'mul'; n: number };
+  effect: { pool: string; n: number } | { amount: string; op: 'add' | 'mul'; n: number } | { offer: string } | { start: string } | { tag: string; on: 'a'; timed?: boolean } | { untag: string; on: 'a' };
   per?: 'a' | 'b' | { amount: string; each: number };
   cap?: number;
   perSeason?: number;
@@ -548,8 +548,33 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       if (q.near?.of === 'a' && k === 'a') err(`${w}.a`, 'The first thing cannot be near itself. Put "near" on "b".');
       if (q.near && q.near.of !== 'a' && on === 'turn') err(`${w}.${k}`, 'Only a live event has a place or a route. A rule "on": "turn" can only use "near": { "of": "a" }.');
     }
-    const fx = r.effect;
-    if (!isObj(fx) || typeof fx.n !== 'number' || fx.n === 0) err(w, 'A rule needs an "effect" with a number "n" that is not 0.');
+    const fx = r.effect as { pool: string; n: number } | { amount: string; op: 'add' | 'mul'; n: number };
+    const tier = isObj(on) ? (on as { tier?: string[] }).tier : undefined;
+    if (tier !== undefined) {
+      if (!isObj(on) || typeof on.live !== 'string') err(w, '"tier" goes with "live": { "live": "raid", "tier": ["success"] }.');
+      if (!Array.isArray(tier) || !tier.length) err(w, '"tier" is a list of results.');
+      else for (const t of tier) if (!TIERS.includes(t)) err(w, `Unknown result "${t}". The results are ${TIERS.join(', ')}.`);
+    }
+    const act = actOf(r);
+    if (act) {
+      // (a rule that does something: offers a card, starts a live card, tags the thing it matched)
+      if ((r.perSeason ?? 1) > ACT_PER_SEASON) err(w, `A rule that offers, starts or tags may fire at most ${ACT_PER_SEASON} times a season. "perSeason" is ${r.perSeason}.`);
+      if (act.kind === 'offer' || act.kind === 'start') {
+        const c = cards.find((x) => x.id === act.id);
+        if (!c) warn(w, `It ${act.kind}s the card "${act.id}", which is not in this pack. Fine only if a pack loaded with it has that card.`);
+        else {
+          if (act.kind === 'start' && !c.live) err(w, `It starts the card "${act.id}", which has no "live" event. Use "offer" for a card the player takes.`);
+          if (act.kind === 'start' && Object.keys(c.cost ?? {}).length) err(w, `It starts the card "${act.id}", which has a cost. A card that begins by itself cannot cost anything.`);
+          if (c.appears_when?.length) warn(w, `The card "${act.id}" comes up only when this rule ${act.kind}s it: its own "appears_when" is not used. Remove it.`);
+        }
+        if (on === 'turn' && c && c.once === false) warn(w, `Each season it ${act.kind}s "${act.id}" again, for as long as its things are in play.`);
+      } else {
+        needTag(act.id, w, 'made');
+        if (KNOWN_TAGS.includes(act.id) && !['festival', 'growth-active'].includes(act.id)) err(w, `The tag "${act.id}" is set by the game itself. A rule may set the pack's own tags, "festival" and "growth-active".`);
+        if ((r.effect as { on?: string }).on !== 'a') err(w, 'A rule tags the thing it matched: "on": "a".');
+      }
+    } else if (!isObj(fx) || typeof fx.n !== 'number' || fx.n === 0) err(w, 'A rule needs an "effect": a pool or an amount with a number "n" that is not 0, or "offer", "start", "tag", "untag".');
+    else if (tier !== undefined && 'amount' in fx) err(w, 'A rule about a result ("tier") comes after the event\'s numbers are read: it cannot change an amount. It can change a pool, or offer, start or tag.');
     else if ('pool' in fx) {
       pool(fx.pool, `${w}.effect`);
       if (fx.n > 0 && typeof r.cap !== 'number') err(w, 'This rule adds to a pool and has no "cap". Every rule that adds to a pool needs one.');
@@ -567,9 +592,12 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     }
     if (r.need) pool(r.need.pool, `${w}.need`);
     if (r.per === 'b' && !r.b) err(w, '"per": "b" counts a second thing the rule does not name.');
-    if (r.why && !/\{n\}/.test(r.why)) warn(w, 'Its "why" does not say how much. Add {n}.');
+    if (!act && r.why && !/\{n\}/.test(r.why)) warn(w, 'Its "why" does not say how much. Add {n}.');
     for (const n of numbersIn((r.why ?? '').replace(/\{\w+\}/g, ''))) if (!numbersOf([r.effect, r.cap, r.per]).includes(n)) err(w, `Its "why" says ${n}, but the rule's data has no such number. Use {n} for the amount.`);
   });
+
+  // ---- chains that come back to themselves (to look at: each step is bounded, one firing a season) ----
+  for (const c of chainCycles([p])) warn(`rules (${c.rule})`, cycleText(c.way));
 
   // ---- tags nothing produces, tags nothing reads ----
   for (const t of tags) {
@@ -598,6 +626,56 @@ export function eventTrigger(name: string, cards: ReadonlySet<string>): string |
   const m = /^pack-(done|lapsed):(.+)$/.exec(name);
   if (m) return cards.has(m[2]) ? null : 'other';
   return `Unknown event "${name}". A rule can wait for: a card done ("pack-done:<card-id>") or run out ("pack-lapsed:<card-id>"); a land change to a site (${LAND_KINDS.join(', ')}); or one of the base game's events: ${BASE_EVENT_KINDS.join(', ')}.`;
+}
+
+const cycleText = (way: string[]): string => `This chain comes back to itself: ${way.join(' -> ')}. It will go round again each season for as long as its things are in play and its cards can come back ("once": false). Make sure that is meant.`;
+/** the most an acting rule may ask for as `perSeason` (living/rules.ts ACT_PER_SEASON) */
+export const ACT_PER_SEASON = 3;
+/** what an acting rule does (null: it changes a pool or an amount) */
+export function actOf(r: PackRule): { kind: 'offer' | 'start' | 'tag' | 'untag'; id: string } | null {
+  const fx = r.effect as Record<string, unknown>;
+  if (!isObj(fx)) return null;
+  for (const k of ['offer', 'start', 'tag', 'untag'] as const) if (typeof fx[k] === 'string') return { kind: k, id: fx[k] as string };
+  return null;
+}
+/**
+ * The chains a set of packs can make, as far as the data shows: a rule that offers or starts a card is followed by
+ * the rules that card sets off (its `pack-done` / `pack-lapsed` event; for a live card, the rules on its event's kind
+ * that wait for a result). Returns each rule that can come back to itself, with the way round.
+ */
+export function chainCycles(packs: readonly Pack[]): { rule: string; pack: string; way: string[] }[] {
+  const rules = packs.flatMap((p) => (p.rules ?? []).map((r) => ({ r, pack: p.pack.id })));
+  const cards = new Map(packs.flatMap((p) => (p.cards ?? []).map((c) => [c.id, { c, kind: (p.events ?? []).find((e) => e.id === c.live)?.tag }] as const)));
+  const next = (id: string): string[] => {
+    const act = actOf(rules.find((x) => x.r.id === id)!.r);
+    const card = act && (act.kind === 'offer' || act.kind === 'start') ? cards.get(act.id) : undefined;
+    if (!act || !card) return [];
+    return rules
+      .filter(({ r }) => {
+        const on = r.on as { event?: string; live?: string; tier?: string[] };
+        if (!isObj(on)) return false;
+        return on.event === `pack-done:${act.id}` || on.event === `pack-lapsed:${act.id}` || (!!card.kind && on.live === card.kind && !!on.tier);
+      })
+      .map(({ r }) => r.id);
+  };
+  const out: { rule: string; pack: string; way: string[] }[] = [];
+  for (const { r, pack } of rules) {
+    if (!actOf(r)) continue;
+    const stack: string[][] = next(r.id).map((x) => [x]);
+    const seen = new Set<string>();
+    while (stack.length) {
+      const way = stack.pop()!;
+      const at = way[way.length - 1];
+      if (at === r.id) {
+        out.push({ rule: r.id, pack, way: [r.id, ...way] });
+        break;
+      }
+      if (seen.has(at)) continue;
+      seen.add(at);
+      for (const n of next(at)) stack.push([...way, n]);
+    }
+  }
+  return out;
 }
 
 /** the base game's rule ids (season/realm-rules.ts): two rules with one id stop the game from starting */
@@ -651,6 +729,7 @@ export function checkTogether(packs: readonly Pack[]): Problem[] {
     for (const t of p.things ?? []) for (const x of t.tags ?? []) made.add(x);
     for (const r of p.rules ?? []) for (const q of [r.a, r.b]) for (const x of [...(q?.tags ?? []), ...(q?.not ?? [])]) read.add(x);
     for (const a of p.abilities ?? []) for (const x of a.target?.tags ?? []) read.add(x);
+    for (const r of p.rules ?? []) if (actOf(r)?.kind === 'tag') made.add(actOf(r)!.id);
     walk([p.cards, p.abilities]);
   }
   for (const [id, t] of tags) {
@@ -659,6 +738,13 @@ export function checkTogether(packs: readonly Pack[]): Problem[] {
   }
   const kinds = new Set([...LIVE_KINDS, ...packs.flatMap((p) => (p.events ?? []).map((e) => e.tag))]);
   const allCards = new Set(packs.flatMap((p) => (p.cards ?? []).map((c) => c.id)));
+  // (chains over the set: a rule that offers or starts a card of another pack, and chains that come back round)
+  for (const p of packs)
+    for (const r of p.rules ?? []) {
+      const act = actOf(r);
+      if (act && (act.kind === 'offer' || act.kind === 'start') && !allCards.has(act.id)) err(`${name(p)} rules (${r.id})`, `It ${act.kind}s the card "${act.id}", but no loaded pack has that card.`);
+    }
+  if (packs.length > 1) for (const c of chainCycles(packs)) if (!chainCycles(packs.filter((p) => name(p) === c.pack)).some((x) => x.rule === c.rule)) warn(`${c.pack} rules (${c.rule})`, cycleText(c.way));
   for (const p of packs)
     for (const r of p.rules ?? []) {
       const on = r.on as 'turn' | { live?: string };
@@ -672,10 +758,12 @@ export function checkTogether(packs: readonly Pack[]): Problem[] {
     }
   const sites = new Map<string, string[]>();
   let threats = 0;
+  // (a card that only a rule offers or starts comes one at a time, after another: it does not crowd its site)
+  const chained = new Set(packs.flatMap((p) => (p.rules ?? []).map((r) => actOf(r)).filter((a) => a && (a.kind === 'offer' || a.kind === 'start')).map((a) => a!.id)));
   for (const p of packs)
     for (const c of p.cards ?? []) {
       const s = c.presenter?.at ?? '?';
-      sites.set(s, [...(sites.get(s) ?? []), c.id]);
+      if (!chained.has(c.id)) sites.set(s, [...(sites.get(s) ?? []), c.id]);
       if (c.threat) threats++;
     }
   for (const [s, ids] of sites) if (ids.length > SITE_CROWD) warn(`all packs (${s})`, `${ids.length} cards stand at ${s}: ${ids.join(', ')}. One card stands at a site at a time, so they wait for each other. Spread them over more sites.`);
