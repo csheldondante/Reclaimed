@@ -23203,3 +23203,13 @@ more than 0.001. A burial with every system stepped 300 ticks: no column's top m
 (condColour, condHeight, claimLots' skip), citygen/town.ts (`conditionsChanged`, `lots.condition`), citygen/towns.ts
 (`onMade`), api/contracts/citygen.ts (CityLots.condition, room), scenes/level/stream-setup.ts (one call),
 gpu/transfers.ts (two entries), test/unit/writing-sources.test.ts (two dev sources).
+
+**Stills, looked at** (headless Chrome, 412 x 915, q=low, Muru, the lab's radius 40; scratchpad mutators/mut-*.png):
+burned and destroyed read at a glance (black gutted houses, ash ground); buried reads (dunes over the upper district,
+houses half under); melted reads as a dark rock field with embers running to the river, its cracks too faint;
+captured reads loudly (every roof in the holder's violet); darkness reads; flooded does NOT read in the town (a few
+houses go grey-green, no water shows on the paved streets; only the river's sandbars go under); ash fall does not read
+(a few specks); withered is a brown patch under the houses; the dry river showed no change in the still (the disc was
+over the town, not the river; unverified in game). Crime and the dead rise: no still (three runs died in the watchdog,
+MU-20). A far city (Vagug) flooded and captured while not loaded arrived with wide water round it and its roofs in the
+holder's colour. The map shows pins with a line of text; the drawn areas are a few pixels at the map's opening zoom.
