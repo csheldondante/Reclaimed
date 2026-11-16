@@ -24221,3 +24221,45 @@ first. A runner's end is told once (a host that failed to resolve it was asked a
 
 **Tests.** The four realm files pass alone (45); typecheck clean; `writing-sources` fails on `src/roadlab/control.ts`
 as before.
+
+## 2026-11-16 — Card table on round 6: live events, rules log, pack rules and events, bots and a first tuning (`card-table`)
+
+**Merge.** `origin/loop-skeleton` 583dc6d1 merged. `realm.ts RealmOptions` keeps both `liveFire` and the table's
+`extra` (now also `rules` and `things`). A thing's tags lent to its place is not in round 6 (LS-75): kept here, in
+`packs/load.ts: withPackThings`, through `extra.things`.
+
+**Stand-ins deleted.** The table's fight (CT-1) and its own things list (CT-6). The raid is round 6's template,
+begun as a forced live event and resolved by `Realm.finishLive`.
+
+**Added to the model, for both front ends.** `living/live.ts: mechState, SPELL_MECH` (an event's end with nobody
+playing it: groups told to go arrive, each logged cast does a fixed thing). `living/rules.ts: RuleBook.preview`
+(what would fire, nothing changed), `check` (the first thing a rule lacks, as data), `fired`. `season/realm.ts:
+predictLive` (tier and line if it ended now), options `onRules`, `raiders`, `extra.rules`, `extra.things`.
+
+**Why mechState.** With round 6's `idleState` nothing arrives, so in Node a parade always fails and a cast changes
+nothing. The table tells the Realm `mechState` when an event begins and after each cast; the Realm's own four steps
+then read it.
+
+**Rules list.** Every rule: paid (with its reason), ready, or the one thing missing with the closest thing and the
+tags it lacks ("Missing: nothing in play is "field" + "worked" + "growth-active". Closest: the east fields lacks
+"growth-active".").
+
+**Packs.** Rules fire; events play (`liveDef`). The validator now also holds a pack to the numbers the engine has: a
+rule that names an amount an event of its kind lacks would stop the Realm ("the event has no number"), so a `fire`
+event must list `burned`, and a rule on a base kind may name only that kind's numbers. Format doc: draft 3.
+
+**Measured (bots, base cards, 27 runs, 6 raiders).** Before the tuning: `spells only` (no card taken, 6 casts of
+Fire) held 3 of 3; `walls, no spells` held 3 of 3; Materials left 31 to 105; Magic left 7 to 22; 1.8 to 4.8 workers
+free at a season's start; Unrest 5 to 7 with nothing lost by it; `Procession past the shrine` and `Watch from the
+tower` never fired; the neighbour's siege ran out in 19 of 27. After the tuning commit (four rules, one card):
+Materials left 4 to 29 (86 for the bot that builds no garrison and pays the tribute). With `--raiders 18`: `spells
+only` 1 of 3, `walls, no spells` 1 of 3, `walls and might` with spells 3 of 3, tribute still 3 of 3 with 86 left.
+
+**Found.** Round 6's tests pin 6 raiders, the tribute and the season the neighbour falls (four tests in three files
+failed when those were changed), so those three are proposals with a switch (`tablebots --raiders`), not applied.
+Vitest files time out at 5 s when two run at once on this machine; each passes alone.
+
+**Tests.** One file at a time: `table` 4, `table-live` 11 (mechState, RuleBook.check, the raid from the model,
+casts, the growth rune's rule, replay with casts), `packs` 35, `realm` 16, `realm-resume` 5, `realm-bots` 5,
+`live-rules` 19, `writing` 8. Typecheck clean. Whole suite not run. Two phone shots looked at (event card with its
+rule and prediction; the rules list).
