@@ -49,7 +49,8 @@ export function wireInput(scene: LevelScene): void {
     if (scene.editor?.tool === 'place') return void placeAtPick(scene, sx, sy);
     if (scene.editor?.tool === 'town') return void townAtPick(scene, sx, sy);
     if (scene.editor?.tool === 'drop') return void dropAtPick(scene, sx, sy);
-    if (scene.editor?.tool === 'beam') return;
+    // (telekinesis: a tap is the first half of the double tap that starts a grab — nothing else answers it)
+    if (scene.editor?.tool === 'beam' || scene.editor?.tool === 'drag') return;
     if (scene.editor?.tool === 'volcano') return void ventAtPick(scene, sx, sy);
     if (scene.editor?.tool === 'meteor') return void meteorAtPick(scene, sx, sy);
     const g = under(sx, sy);
@@ -66,7 +67,7 @@ export function wireInput(scene: LevelScene): void {
       if (held()) return void scene.storyPlay!.cam.skip();
       tap(sx, sy);
     },
-    dragStart: (sx, sy) => {
+    dragStart: (sx, sy, second) => {
       if (held()) return false;
       if (camera.fly) {
         scene.flyDrag = [sx, sy];
@@ -81,8 +82,11 @@ export function wireInput(scene: LevelScene): void {
         dropAtPick(scene, sx, sy);
         return true;
       }
-      // (round 120) telekinesis: the body nearest the press, within a thumb's reach, held while dragging
+      // (round 120) telekinesis: the body nearest the press, within a thumb's reach, held while dragging. (the user,
+      // 2026-11-15: "the telekinesis needs a double tap to start because drag moves the screen") Only a drag whose
+      // press came straight after a tap in the same place grabs; any other pans as with no tool.
       if (scene.editor?.tool === 'drag') {
+        if (!second) return false;
         const ig = scene.integrity;
         if (!ig) return false;
         const p = under(sx, sy);
@@ -90,10 +94,11 @@ export function wireInput(scene: LevelScene): void {
         const [gx, gy, gz] = p;
         const reach = 48 / camera.zoom + 2;
         // (on the ground under the finger or anything stood on it up to a body's height above)
-        const g = ig.grabAt(gx, gy, gz + 2, reach + 2);
+        // (the engine's rows: what the finger's view ray passes within a thumb of, the nearest the eye)
+        const g = ig.grabAt(gx, gy, gz + 2, reach + 2, { ...camera.ray(sx, sy), r: 20 / camera.zoom });
         if (!g) return false;
-        const st = ig.grabState(g)!;
-        scene.dragHold = { g, h: st.pos[2] + 2, at: [sx, sy] };
+        // (the height it is held at: 2 over where it was; the engine's rows keep theirs on the GPU)
+        scene.dragHold = { g, h: (ig.grabState(g)?.pos[2] ?? gz + 2) + 2, at: [sx, sy] };
         return true;
       }
       // the heat beam: on while held, aimed at what's under the pointer (frame())
@@ -142,7 +147,10 @@ export function wireInput(scene: LevelScene): void {
     dragEnd: () => {
       if (scene.flyDrag) return void (scene.flyDrag = undefined);
       // (let go: it flies on with the speed it had)
-      if (scene.dragHold) return void (scene.dragHold = undefined);
+      if (scene.dragHold) {
+        scene.integrity?.letGo(scene.dragHold.g);
+        return void (scene.dragHold = undefined);
+      }
       if (scene.beamAt) {
         scene.beamAt = undefined;
         if (scene.physics) scene.physics.beam = null;

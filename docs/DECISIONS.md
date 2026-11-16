@@ -3711,3 +3711,12 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   → soldiers are raised only once the keep card is started or built (its barracks) or the walls are built (the
   muster yard); no market square fallback. With none, no squads; raids still come and simply reach their target.
   The player's fortress joins the list when it exists as a place.
+
+## 2026-11-15 — telekinesis starts by a double tap (`physics10-all`)
+
+- The user: "the telekinesis needs a double tap to start because drag moves the screen" → with the tool picked a
+  single drag pans as with no tool; a tap and then a press within 350 ms and 40 px of it starts the grab, and the drag
+  from that second press pulls. On every route.
+- The user, on the pull: "it should already be dampened spring like and increase force as you drag further from the
+  grabbed material." → the engine's grab is the same damped spring the old routes have (stiffness 40, damping 0.6 of
+  critical), with a cap on the pull, all three on the tuning panel (engine group).

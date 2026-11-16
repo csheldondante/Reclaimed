@@ -231,6 +231,9 @@ fn solve(@builtin(global_invocation_id) id: vec3<u32>) {
       return;
     }
   }
+  // (the host's grab: its spring — engine.wgsl grabPull — before gravity, so the weight it holds up cancels)
+  let grabbed = (fl0 & ROW_GRAB) != 0u && EU.o.w > 0.5;
+  if (grabbed) { v = grabPull(x, v, dt, info[4u * r + 3u].z); }
   // gravity and the air
   v.z -= worldG() * dt;
   v *= max(0.0, 1.0 - EU.d.x * dt);
@@ -356,7 +359,7 @@ fn solve(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   // sleep, decided here
-  if (touching && length(v) < EU.c.y && length(w) < EU.c.z) { still += dt; } else { still = 0.0; }
+  if (touching && !grabbed && length(v) < EU.c.y && length(w) < EU.c.z) { still += dt; } else { still = 0.0; }
   var slept = false;
   if (still > EU.c.w && fl != 0u) {
     fl = fl | ROW_ASLEEP;

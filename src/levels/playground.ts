@@ -752,7 +752,8 @@ export function generatePlayground(dims: WorldDims): MapData {
           put(x, y, t.z0 + t.h - 1, t.z0 + t.h, MAT.Steel);
         }
       }
-    for (const x of [t.x0 + 1, t.x1 - 2]) for (const y of [t.y0 + 1, t.y1 - 2]) put(x, y, G, t.z0, MAT.Concrete);
+    // (the user, 2026-11-15: "the water tower should be steel not concrete" — its legs were concrete)
+    for (const x of [t.x0 + 1, t.x1 - 2]) for (const y of [t.y0 + 1, t.y1 - 2]) put(x, y, G, t.z0, MAT.Steel);
   }
 
   // 10. break (the physics engine's): stone pads on land of its own — one under the three heights, one with a post

@@ -15,7 +15,8 @@
 //   info[4r]     xyz the diagonal of its inverse inertia (body frame), w flags (u32 bits)
 //   info[4r+1]   xyz the off-diagonal (xy, xz, yz), w its mass
 //   info[4r+2]   u32 bits: first sample (sAt), samples, material | loose << 8; w (f32) a cell's mass
-//   info[4r+3]   u32 bits: its model (a heap index, hAt; 0 none), its deform slot while ROW_DEFORM, 0, 0
+//   info[4r+3]   u32 bits: its model (a heap index, hAt; 0 none), its deform slot while ROW_DEFORM, (f32) the height
+//                it was grabbed at while ROW_GRAB, 0
 // Rows the host adds have even indices, rows the GPU makes (settle) odd ones: neither needs the other's count.
 // Samples and the heap (models, meshes) are each one buffer in two halves, the host's first then the GPU's: an index
 // with bit 31 set counts from where the GPU's half starts (sAt, hAt), so either half grows without the other knowing.
@@ -67,11 +68,19 @@ const ROW_DENIED: u32 = 16u;
 const ROW_LISTED_ASLEEP: u32 = 32u;
 // a row settle made, asleep where its particles stood: `compact` gives it the ground's word it sleeps on
 const ROW_NEWSLEEP: u32 = 64u;
+// the host's grab holds it (the pool's P_GRAB names it; `compact` sets and clears this every tick): a spring pulls its
+// centre to the host's target (grabPull) and it does not fall asleep
+const ROW_GRAB: u32 = 128u;
 // the pool's header word that asks for the draw list again (engine_deform.wgsl has the rest of the header)
 const P_DL_DIRTY: u32 = 20u;
 // the pool's header word `compact` adds to for every row it finds waiting to deform (ROW_EXPAND), each tick it waits:
 // it only ever goes up. The host reads it with the header and encodes stage 4 when it has moved (engine.ts s4Open)
 const P_EXPAND_WAIT: u32 = 40u;
+// the pool's header word that is the host's grab (engine.ts grab): 0 none, else (4095 - how far along the pick ray
+// its centre is, in 1/4 cells) << 20 | the row — the greatest is the nearest the eye, taken by `compact` with an
+// atomic max the tick the command comes (rows past 2^20 cannot be named: the rows' room is far under it). The height
+// of the plane it is dragged in — its centre's when the hold began — is the row's own: info[4r+3].z
+const P_GRAB: u32 = 23u;
 const NONE: u32 = 0xffffffffu;
 const NO_CONTACT: f32 = -1e8;
 // the list buffer (u32): [0] workgroups of 64 awake rows, [1] 1, [2] 1 (an indirect dispatch's arguments), [3] rows
@@ -124,8 +133,15 @@ struct EngU {
   // x the pair solver's iterations a substep, y the pairs' room, z the pair slots' room, w the old slots' room (a
   // growth's remap)
   n: vec4<u32>,
-  // (the merge of the look and the join: l.w is the substep's) x the share of a hit's shock that passes a bond, yzw spare
+  // (the host's grab, engine.ts grabTarget) xyz a point on the finger's view ray, w > 0.5 while the grab is held
   o: vec4<f32>,
+  // the grab's spring: x stiffness (1/s²), y damping (share of critical), z the most it accelerates a row (cells/s²)
+  p: vec4<f32>,
+  // xyz the finger's view ray's direction (unit), w how far over the height it was grabbed at the row is held
+  q: vec4<f32>,
+  // (the look; moved twice by merges: l.w is the substep's, o the grab's) x the share of a hit's shock that passes a
+  // bond, yzw spare
+  r: vec4<f32>,
 };
 // Numbers a material (engine.ts `thresholds`): [0..11] an impact's energy over the body's mass past which it deforms
 // (0: never); [12..23] the share of the speed into a contact a rigid row is given back (bounceAt: for the rigid solve,
@@ -138,7 +154,9 @@ fn hAt(i: u32) -> u32 { return select(i, EU.j.z + (i & 0x7fffffffu), (i >> 31u) 
 @group(0) @binding(3) var<uniform> EU: EngU;
 // what the host asks this tick (engine.ts): a xyz + w, b: kind (1 a velocity change dv = a.xyz to row b.y, 2 wake row
 // b.y, 3 wake every row within a.w of a.xyz, 4 move every row by a.xyz — the window slid, 5 row b.y deforms now
-// whatever hit it — a lab's button, a test — 6 the deforming body of row b.y is let go, or with b.y NONE all of them)
+// whatever hit it — a lab's button, a test — 6 the deforming body of row b.y is let go, or with b.y NONE all of them,
+// 7 a pick ray from a.xyz along b.yzw (f32 bits, unit): of the rows whose bound sphere it passes within a.w of, the
+// one nearest along it is grabbed: P_GRAB)
 struct EngCmd { a: vec4<f32>, b: vec4<u32> };
 @group(0) @binding(16) var<uniform> EC: array<EngCmd, 16>;
 @group(0) @binding(4) var<storage, read_write> pose: array<vec4<f32>>;
@@ -161,3 +179,19 @@ fn eqrot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   return v + q.w * t + cross(q.xyz, t);
 }
 fn eqinv(q: vec4<f32>) -> vec4<f32> { return vec4<f32>(-q.xyz, q.w); }
+
+/**
+ * A grabbed row's velocity after a step of the host's spring (Integrity.pull's, on the GPU): toward the target by how
+ * far it is, damped, never past the cap; its weight held up. An acceleration, so every mass swings the same. The
+ * target is where the finger's view ray crosses the level plane at the height the row was grabbed at (`h`) plus the
+ * lift: grabbed high it stays high. A ray along that plane has no such point: no pull.
+ */
+fn grabPull(x: vec3<f32>, v: vec3<f32>, dt: f32, h: f32) -> vec3<f32> {
+  let hold = vec3<f32>(0.0, 0.0, worldG() * dt);
+  if (abs(EU.q.z) < 1e-4) { return v + hold; }
+  let aim = EU.o.xyz + EU.q.xyz * ((h + EU.q.w - EU.o.z) / EU.q.z);
+  var a = EU.p.x * (aim - x) - 2.0 * sqrt(EU.p.x) * EU.p.y * v;
+  let l = length(a);
+  if (l > EU.p.z) { a *= EU.p.z / l; }
+  return v + a * dt + hold;
+}

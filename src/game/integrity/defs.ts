@@ -16,7 +16,15 @@ export const WOOD: ReadonlySet<number> = new Set<number>([MAT.Wood, MAT.Log]);
 /** (round 96) cells of metal woken at once at most (wake.ts WAKE_MAX) */
 export const METAL_MAX = 6000;
 /** (round 120) a body held by the drag tool (Integrity.grabAt) */
-export type Grab = { kind: 'rigid'; b: RockBody } | { kind: 'solver'; body: SolverBody } | { kind: 'phys'; body: PhysBody };
+export type Grab =
+  | { kind: 'rigid'; b: RockBody }
+  | { kind: 'solver'; body: SolverBody }
+  | { kind: 'phys'; body: PhysBody }
+  /** (`?solver=engine`) the engine's own grab: the row is picked on the GPU, the host does not know which or where */
+  | { kind: 'engine' };
+
+/** the view ray through the finger (Camera.ray): a point on it, its direction (unit); for a pick, the thumb's radius (cells) */
+export type GrabRay = { o: [number, number, number]; d: [number, number, number]; r?: number };
 
 /** (round 120) a hit harder than this (cells/s) wakes the map's metal it struck (wakeMetalNear) */
 export const WAKE_HIT = 3;

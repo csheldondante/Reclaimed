@@ -397,7 +397,7 @@ fn relax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   let d = eqrot(eqinv(ps[3u * i + 2u]), -pw[3u * i].xyz) - (r.xyz - pw[3u * i + 1u].xyz);
   let dl = length(d);
   if (dl > yieldD && pmA(m).w > 0.0) { ps[3u * i + 1u] = vec4<f32>(r.xyz + d * (1.0 - yieldD / dl) * min(1.0, pmA(m).w), r.w); }
-  // Cracks. A hit is a shock that runs through the body a bond a substep, losing a share each bond (EU.o.x: its reach):
+  // Cracks. A hit is a shock that runs through the body a bond a substep, losing a share each bond (EU.r.x: its reach):
   // the body breaks near where it was struck, and further the harder the hit. A bond whose either end the shock
   // reached faster than the material's crack speed may snap (both ends draw the same random), more likely the harder;
   // a bond across the grain — a flaw — snaps for certain at its share of that speed, so the body parts along its grain
@@ -413,7 +413,7 @@ fn relax(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
     let o = pw[3u * u32(j) + 2u];
     reach = max(reach, max(o.x, o.y));
   }
-  ps[3u * i].w = max(own.x, reach * EU.o.x);
+  ps[3u * i].w = max(own.x, reach * EU.r.x);
   if (crackV <= 0.0) { return; }
   let bonds = pb[i];
   var kept = bonds;

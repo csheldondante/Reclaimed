@@ -199,6 +199,8 @@ fn integrate(@builtin(global_invocation_id) id: vec3<u32>) {
   let dt = EU.a.x;
   var v = vel[2u * r];
   var w = vel[2u * r + 1u];
+  // (the host's grab: its spring, before gravity so the weight it holds up cancels; held, it is not still however it hangs)
+  if ((fl & ROW_GRAB) != 0u && EU.o.w > 0.5) { v = vec4<f32>(grabPull(P.xyz, v.xyz, dt, info[4u * r + 3u].z), 0.0); }
   v.z -= worldG() * dt;
   v = vec4<f32>(v.xyz * max(0.0, 1.0 - EU.d.x * dt), v.w);
   w = vec4<f32>(w.xyz * max(0.0, 1.0 - EU.d.y * dt), w.w);
@@ -758,6 +760,16 @@ fn takeMine(r: u32) -> Mine {
   let rf = atomicLoad(&listA[b + RW_FLAGS]);
   if ((rf & RF_EXPAND) != 0u) {
     // (its hit passed its material's bar: not solved — `expand` hands it to its particles as it came in)
+    // (PM1: "as it came in" — this substep's `integrate` gave it gravity and the air already, and its particles take
+    // the whole tick's themselves: taken back, or the tick it expands counts a substep of gravity twice)
+    let dt = EU.a.x;
+    var v0 = vel[2u * r];
+    var w0 = vel[2u * r + 1u];
+    v0 = vec4<f32>(v0.xyz / max(1e-3, 1.0 - EU.d.x * dt), v0.w);
+    w0 = vec4<f32>(w0.xyz / max(1e-3, 1.0 - EU.d.y * dt), w0.w);
+    v0.z += worldG() * dt;
+    vel[2u * r] = v0;
+    vel[2u * r + 1u] = w0;
     info[4u * r].w = bitcast<f32>(fl | ROW_EXPAND);
     return o;
   }

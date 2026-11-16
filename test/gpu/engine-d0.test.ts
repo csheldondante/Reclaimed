@@ -163,7 +163,10 @@ test('D0.1: a cracked stone block comes to rest on the engine route about as fas
   expect(eng.still).toBeLessThan(0.85);
   expect(eng.rebound).toBeLessThan(0.1);
   ok();
-});
+  // (the limit: two routes of 720 ticks, each tick read back whole — 59 to 60 s on physics10-all, 84 s after the join's
+  // gated stage 4 on physics10-atlas, on this PC alone on the GPU; the project's 60 s was a wall-time miss, not a
+  // behaviour one: BACKLOG TKN9, PA16)
+}, 180_000);
 
 // ---- D0.2: contacts among deforming voxels (the voxel hash, only over what deforms) ----------------------------------------
 /** the least distance between two living voxels (x: 4 floats a voxel, w < 0 gone) of a and b (the same set: every pair once) */

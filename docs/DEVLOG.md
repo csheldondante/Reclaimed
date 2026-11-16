@@ -24160,3 +24160,100 @@ go there, the ledger and the named places are not told, nothing is saved (PA13).
 (`writing-sources`: `roadlab/control.ts`, not this branch's). `test/gpu/engine-house.test.ts` 3 passed (before
 the merge; the merged tree's engine and sdf run is the entry above). The new reads are listed in
 `gpu/transfers.ts`.
+## 2026-11-15 — the merge's energy rise fixed; the brick wall pinned (PM1, PM2, `physics10-all`)
+
+**Why.** After the merge `engine-energy` failed (energy up 0.48 to 0.55 % of what came in, at the tick a row
+expands), and the brick wall looked unbroken in a far still. **What.** The rise was a substep of gravity counted
+twice: the join's `integrate` runs before `tfine` marks a row to expand, so the row was handed over with the
+substep's gravity and air already in its speed, and its particles then took the whole tick's. `takeMine` takes the
+substep back at the hand-over ("as it came in", as step 1's `solve` did by returning before gravity). Measured after:
+0.056, 0.010, 0.000 % (bound 0.3 %, unchanged). The brick wall was not broken by the merge: `engine-station.test.ts`
+drops the station's wall and blocks through the merged tick (17 rows; 1, 9, 10 rows) and the close still shows runs
+of whole bricks. Noted: the release hitch read 66 ms for 318 cells on the merge (PM3).
+
+## 2026-11-15 — telekinesis: a double tap starts it, and it grabs the engine's rows (TKN1, `physics10-all`)
+
+**Why.** The owner: "the telekinesis needs a double tap to start because drag moves the screen." And under
+`?solver=engine` the tool grabbed nothing: bodies there are rows on the GPU, the CPU does not know where they are
+(DESIGN §10, no readback of bodies), so `Integrity.grabAt` found none.
+
+**What.** (1) `Controls` marks a press that comes within 350 ms and 40 px of a tap's lift (`secondPress`, a pure
+function) and passes it to `dragStart`; the input wiring lets the tool grab only on such a press, any other drag pans.
+With the tool picked a tap does nothing else. (2) Three host calls on the engine: `grab(point, radius)` is a command
+(kind 7) taken by `compact`, where every row in reach, awake or asleep, bids its nearness into a pool header word
+with an atomic max (`P_GRAB`: nearness << 20 | row); from the next tick `compact` wakes that row and marks it
+(`ROW_GRAB`) while the host holds a target; `grabTarget` is two words of the tick's uniform; `grabRelease` clears the
+word. The spring is `grabPull` in `engine.wgsl`, called by `integrate` (bodies meet bodies) and `solve` (the
+terrain-only route) before gravity: `Integrity.pull`'s spring as an acceleration (stiffness 40, damping 0.6 of
+critical, capped at 300 cells/s², the three on the panel), the weight held up; a held row does not fall asleep.
+Nothing is read back: the host never learns which row, or whether any. `Integrity.grabAt` returns a
+`{ kind: 'engine' }` grab when no CPU body is near and the engine is installed, `pull` forwards the target, a new
+`letGo` drops the spring (the tool calls it at the lift).
+
+**Measured** (`GRAB_LOG=1`, a 3 x 3 x 3 stone block asleep on a floor, pulled 6 cells sideways and 2 up): 6.32 cells
+on after 0.5 s, fastest 20.0 cells/s, overshoot 0.51 cells (bound 1; the spring alone gives 0.57), 0.016 cells off and
+at rest after 4 s, the same on both routes. Let go at 18.5 cells/s sideways it has 18.4 a tick later and gravity's
+0.16 off its rise. Held at the place it lies: speed and drift exactly 0 over 2 s (the first try applied the spring
+after the air's drag and drifted 0.017 cells; before gravity the weight cancels exactly). A grab 14 cells from the
+nearest block: both sleepers' poses bit for bit, none awake, the slot 0.
+
+**Capture** (`node scripts/tklab.mjs`, the pile station, headless Chrome, real mouse input; `tk-engine.gif` and
+stills): a single drag on the stack held nothing; a tap, a press 120 ms later and a drag held an engine grab — the
+stack's bottom block (row 0) came out from under the other four, which fell, hung at the lifted height following the
+pointer, and let go while moving landed 2.6 cells on. A first run aimed at the stack's middle took nothing: the pick
+point is the ground under the finger, which there was 12 cells behind the stack (TKN8).
+
+**Tests.** `npx vitest run --project gpu engine-grab` 5 passed; `npx vitest run --project gpu engine` 64 passed, 1 expected fail, 5 skipped (12 files); `npm run typecheck` clean; `npx vitest run --project unit` 634 passed, 3 failed, the same 3 as the base (the writing lint; two of the transfer gate: `Engine.up` and the engine bench, not this change's — the grab's uploads are 4 bytes and two words of the tick's uniform).
+
+**Hacks and limits** (BACKLOG TKN2 to TKN8): the pick is by the ground under the finger, so a tall body is picked at its foot; the spring acts at the centre of mass, not the touched point; no sign to
+the player when nothing was in reach (and the screen does not pan then, under the engine route); the lift height is
+from the ground under the finger, not the row's own height; one grab at a time, nearest centre wins, deforming bodies
+are not grabbed; a tap with the tool picked does nothing; the double tap's timing is untried on a phone.
+
+## 2026-11-15 — telekinesis picks by the finger's view ray (TKN8, TKN4; `physics10-all`)
+
+**Why.** The first cut picked by the ground point under the finger: a double tap on the middle of a stack asked 12
+cells behind it and took nothing. Main's ruling: "pick by the finger's view ray — the tool must grab what is under the
+finger, not what stands on the ground point behind it", and a block grabbed high stays high.
+
+**What.** `Engine.grab(rayOrigin, rayDir, radius)`: in `compact` every row whose bound sphere the ray passes within
+the radius of bids how far along the ray its centre is; the nearest the eye stays in `P_GRAB`. `grabTarget(rayOrigin,
+rayDir, lift)`: the tick's uniform carries the finger's ray, and `grabPull` crosses it with the level plane at the
+height the row was at when the hold began (written to the row's spare word `info[4r+3].z` by `compact` as it marks
+the row) plus the lift. The host still learns nothing of the row. The tool passes `camera.ray` at the press and each
+frame, a thumb of 20 px, lift 2; the old routes' point pick is unchanged.
+
+**Measured.** The top block of a stack of five (row 8, centre z 19.00) taken by a slanted ray through it, the bottom
+block's pose bit for bit; the finger 5 cells sideways: the block at 18.67, 11.69, 19.00, never under 18.998. The 6
+cell pull as before (overshoot 0.509). Capture (`tk-ray.gif`, the pile station): a double tap on the top of the stack
+lifted the top block off (20.5 to 22.4) with the four under it standing, and threw it at the lift.
+
+**Tests.** `npx vitest run --project gpu engine-grab` 7 passed; `npx vitest run --project gpu engine` 65 passed, 1 failed, 1 expected fail, 5 skipped: `engine-d0` D0.1 timed out at 60 s, twice; alone it passes in 59.2 s, and in 59.9 s on the commit before this one (a wall-time margin, TKN9, not this change); `npm run typecheck` clean; `npx vitest run --project unit` 634 passed, 3 failed, the same 3 as the base.
+
+**Hacks and limits** (BACKLOG TKN5): bound spheres, not shapes; nearness in quarter cells, a tie goes to the higher
+row index, not the closer as ruled. TKN2, TKN3, TKN6, TKN7 stand.
+
+## 2026-11-15 — one branch: `physics10-all` merged into `physics10-one` (PO1 to PO4)
+
+**Why.** The engine was built on several branches in a day; the owner wants one lab link and one town link.
+`physics10-one` starts at `physics10-atlas` 401ec42c and takes the others one at a time, green before the next.
+
+**What.** `physics10-all` a4e92649 (the energy fix at the tick a row expands, `engine-station`, steel legs on the
+water tower, telekinesis). Conflicts: `engine.ts`, `engine.wgsl`, BACKLOG, DEVLOG (both sides' text kept).
+- The uniform: both sides had added a word `EU.o` (the atlas merge for the look's shock reach, this branch for the
+  grab's ray). The grab keeps `o`, `p`, `q` (nine uses); the shock reach moves to a new word `EU.r.x` (two uses in
+  `engine_lattice.wgsl`); `EU_B` 288.
+- The pool header keeps `grab` (23) and `expandWait` (40).
+- `watch()` keeps the join's split (`issueRead`, `grown`) with the grab's term in its condition.
+- **Found by the grab tests, fixed:** a sleeping block grabbed did not move (0.05 cells of 6). The read issued with
+  the grab's tick showed every row still asleep (the row wakes the tick after), so the join's quiet tick encoded
+  nothing from then on. `quiet()` is now false while a grab is held. Limit: PO2.
+- `engine-d0` D0.1 has its own limit of 180 s (82 s alone; PO3).
+
+**Tests.** `npm run typecheck` clean. `npx vitest run --project gpu test/gpu/engine test/gpu/sdf`, alone on the GPU:
+146 passed, 3 failed, 1 expected fail, 15 skipped (22 files) — the three were D0.1's timeout and the two grab tests
+above; after the fixes `engine-grab` 7 passed, `engine-d0` 4 passed. `engine-energy` passes whole (the three failures
+known on the atlas branch are gone with `takeMine`). `npx vitest run --project unit`: 639 passed, 1 failed (the
+roadlab writing lint, PO4); the transfer gate passes.
+
+**Hacks and limits.** PO2 (a held grab keeps the tick encoded), PO3 (a test's limit raised, not its cost removed).

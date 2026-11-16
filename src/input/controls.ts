@@ -9,8 +9,9 @@
 
 export interface ControlHandlers {
   tap(sx: number, sy: number): void;
-  /** Return true if a drag starting here is a gesture; false lets it pan (touch) or be ignored. */
-  dragStart(sx: number, sy: number): boolean;
+  /** Return true if a drag starting here is a gesture; false lets it pan (touch) or be ignored. `second`: its press
+   *  was the second of a double tap (secondPress). */
+  dragStart(sx: number, sy: number, second: boolean): boolean;
   /** (round 128d) Whether a one-button drag that isn't a gesture pans with the mouse too (touch always does). */
   dragPans?(): boolean;
   dragMove(sx: number, sy: number): void;
@@ -21,6 +22,14 @@ export interface ControlHandlers {
 }
 
 const TAP_SLOP = 6;
+/** a double tap: the second press this soon after the tap's lift (ms), this near it (px: a thumb) */
+export const DOUBLE_MS = 350;
+export const DOUBLE_PX = 40;
+
+/** Is a press at (x, y), time t (ms), the second of a double tap — soon enough after the last tap and near it? */
+export function secondPress(tap: { t: number; x: number; y: number } | null, t: number, x: number, y: number): boolean {
+  return !!tap && t >= tap.t && t - tap.t <= DOUBLE_MS && Math.hypot(x - tap.x, y - tap.y) <= DOUBLE_PX;
+}
 
 interface Press {
   id: number;
@@ -35,11 +44,15 @@ interface Press {
   panning: boolean;
   /** was part of a two-finger pan/pinch: never a tap or a gesture */
   multi: boolean;
+  /** pressed straight after a tap in the same place (secondPress) */
+  second: boolean;
 }
 
 export class Controls {
   private presses = new Map<number, Press>();
   private pinch = 0;
+  /** the last tap's lift (primary button, one finger), till a press answers it */
+  private lastTap: { t: number; x: number; y: number } | null = null;
   private abort = new AbortController();
 
   dispose(): void {
@@ -64,7 +77,10 @@ export class Controls {
         gesture: false,
         panning: false,
         multi: false,
+        second: e.button === 0 && secondPress(this.lastTap, e.timeStamp, e.clientX, e.clientY),
       };
+      // (a tap is answered by one press only: a third is a first again)
+      this.lastTap = null;
       this.presses.set(e.pointerId, p);
       if (this.touches().length >= 2) {
         this.resetPinch();
@@ -100,7 +116,7 @@ export class Controls {
       if (!p.moved && Math.hypot(p.x - p.x0, p.y - p.y0) > TAP_SLOP) {
         p.moved = true;
         if (p.button === 0) {
-          p.gesture = h.dragStart(p.x0, p.y0);
+          p.gesture = h.dragStart(p.x0, p.y0, p.second);
           p.panning = !p.gesture && (p.touch || !!h.dragPans?.());
         }
       }
@@ -120,7 +136,10 @@ export class Controls {
         return;
       }
       if (p.button !== 0 || p.multi) return;
-      if (!p.moved) h.tap(p.x, p.y);
+      if (!p.moved) {
+        this.lastTap = { t: e.timeStamp, x: p.x, y: p.y };
+        h.tap(p.x, p.y);
+      }
       else if (p.gesture) h.dragEnd(p.x, p.y);
     };
     el.addEventListener('pointerup', end, { signal });
