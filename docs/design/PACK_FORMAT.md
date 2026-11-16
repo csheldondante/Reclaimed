@@ -1,27 +1,40 @@
-# Opportunity pack format (draft 1, 2026-11-16)
+# Opportunity pack format (draft 2, 2026-11-16: matched to the loader)
 
 A pack is one JSON file: a themed set of opportunity cards, the things they put in play, the synergy rules between
 those things, live events, and abilities. It is written for an outside author (a person or a model) who has not seen
-the code. A loader turns a pack into the engine's own types (`TemplateDef` in `src/living/engine.ts`, `RuleDef` in
-`src/living/rules.ts`, `LiveDef` in `src/living/live.ts`); a validator rejects what the engine cannot do.
+the code. The loader (`src/packs/load.ts`) turns a pack into the engine's own types; the validator
+(`src/packs/check.ts`) rejects what the engine cannot do and says why in plain words.
 
-**Status: the loader and validator are not built yet (BACKLOG CT rows on branch `card-table`).** The `rules` block is
-the engine's real `RuleDef`, unchanged. The `cards`, `things`, `events` and `abilities` blocks are a simpler authoring
-layer; their fields may shift a little when the loader is written. Anything a pack needs that is not in the
-vocabularies below goes in the pack's `wants` list, in plain words, instead of being invented inline.
+**Check a pack:** `node scripts/packcheck.mjs your-pack.json`. Fix every line marked FIX. Lines marked LOOK are
+warnings. **Try a pack:** open `table.html`, open "Packs" at the bottom, pick the file (or `table.html?pack=<url>`).
+A new run starts with the pack's cards mixed into the base cards.
+
+**What is played today, and what is only checked:**
+
+| Block | Today |
+|---|---|
+| `cards` (no `live`) | Played: dealt with the base cards, cost paid, effects applied, expiry applied. |
+| `things`, `tags` | Played: shown in play with their tags; a thing on a ruined site shows `ruined` instead. |
+| `abilities` | Played at the card table: unlocked by a card, cast on a thing in play for Magic. |
+| `rules` | Checked and loaded. They do not fire yet: the rule system is not merged into this branch (BACKLOG CT-13). |
+| `events`, cards with `live` | Checked. Not played from packs yet (BACKLOG CT-11). The card is left out and the page says so. |
+
+Anything a pack needs that is not in the vocabularies below goes in the pack's `wants` list, in plain words, instead
+of being invented inline. The validator rejects invented fields.
 
 ## The game in five lines (for the author)
 
-- A run is about 16 seasons in one town. Each season the player sees 3 to 5 opportunities, each presented by a named
-  person at a place in the town, and takes a few of them. Few decisions per season, however large the realm.
-- Six pools: `magic`, `might`, `labor`, `materials`, `intel`, `unrest` (unrest is bad; high unrest weakens the rest).
+- A run is 16 seasons in one town. The attack comes in the last, so there are 15 seasons of choices. Each season the
+  player sees 3 to 5 opportunities, each presented by a named person at a place in the town, and takes a few.
+- Six pools: `magic`, `might`, `labor`, `materials`, `intel`, `unrest`. Unrest is bad: each point keeps one free
+  worker away. Labor and Might are people: a cost LOCKS them while the card is built, then they come back. Materials,
+  Magic and Intel are goods: a cost SPENDS them. Each Might is 3 soldiers.
 - Taking a card costs pools and puts THINGS in play: buildings, garrisons, policies, effects. Things carry TAGS.
 - RULES read tags and pay off: "a worked field with an active growth rune yields double". Finding and stacking rules
   is the fun. Rules must be thematically obvious so a player can guess them.
-- THREATS are cards that count down to a bad outcome unless answered. LIVE EVENTS (a raid, a parade, a fire, a riot)
-  play in the city in real time; the player casts ABILITIES into them; they resolve by themselves at season end.
-  Outcomes change the real world: land floods or burns, towns fall, refugees arrive. Nothing is rolled: the same
-  choices always give the same result.
+- THREATS are cards that count down to a bad outcome unless answered. LIVE EVENTS (a raid, a parade, a fire) play in
+  the city; the player casts ABILITIES into them; they resolve by themselves at season end. Outcomes change the real
+  world: land floods or burns, towns fall, refugees arrive. Nothing is rolled: the same choices give the same result.
 
 ## File shape
 
@@ -41,22 +54,36 @@ vocabularies below goes in the pack's `wants` list, in plain words, instead of b
 }
 ```
 
-Ids are lowercase with hyphens, unique in the pack, and prefixed with the pack id when they could clash
-(`volcano-ash-sweepers`). Target size: 12 to 20 cards, 6 to 10 rules, 1 or 2 threats, 1 to 3 live events, 2 to 4
-abilities.
+Ids are lowercase words joined by hyphens, unique in the whole pack (a card and a thing may not share one), and
+prefixed with the pack id (`volcano-ash-sweepers`). A card id may not be one of the base game's. The pack's
+`appears_when` is added to every card's. Target size: 12 to 20 cards, 6 to 10 rules, 1 or 2 threats, 1 to 3 live
+events, 2 to 4 abilities. A full example that passes the validator: `packs/sample.json`.
+
+## Places
+
+A place is written one of three ways. Nothing else is accepted.
+
+- `"town"`: the home town.
+- `"site:<name>"`: one of the town's 20 named sites. The names, with what each is (its tags):
+  `keep` (keep), `forge` (workshop), `quarter` (homes), `fields` (field), `market` (market), `gate` (gate),
+  `tower` (tower), `dam` (water, dam), `shrine` (temple), `mill` (workshop, mill), `wall` (rampart),
+  `watch` (gate, watch), `harbour` (water, quay), `quarry` (quarry), `woods` (woods), `river` (water, river),
+  `road` (road), `pit` (workshop, ore), `wagons` (yard), `graves` (graves).
+  A site is named by its NAME, not by a tag: `site:fields`, not `site:field`.
+- `"far:neighbour"`: the nearest standing town. It is the only far place a card can name. A card that names it
+  appears only while such a town stands.
 
 ## tags
 
-New tags the pack introduces. Existing tags (below) need no entry.
+New tags the pack introduces. Existing tags (below) need no entry and must not be declared again.
 
 ```json
-{ "id": "ash-covered", "on": "site", "meaning": "Ash lies on it; fields under ash do not yield.",
-  "timed": false, "ruins": false }
+{ "id": "ash-covered", "on": "site", "meaning": "Ash lies on it; fields under ash do not yield.", "timed": false }
 ```
 
-- `on`: `site` (a place in the town), `town` (the home town), `far-town`, `unit`, `effect`.
+- `on`: `site`, `town`, `far-town`, `unit`, `effect`. A note for the reader; the engine does not use it.
 - `timed`: true if it lasts only to the end of the season it is set in.
-- `ruins`: true if a thing carrying it loses its working tags (as `burned` does).
+- A pack tag cannot ruin a thing. Only the existing ruin tags remove working tags; they are set with `mutate`.
 
 **Existing tags.** What a site is: `keep`, `workshop`, `mill`, `ore`, `homes`, `field`, `market`, `gate`, `watch`,
 `tower`, `water`, `dam`, `river`, `quay`, `temple`, `rampart`, `quarry`, `woods`, `road`, `yard`, `graves`, `camp`.
@@ -65,20 +92,27 @@ Ruin (these remove working tags): `burned`, `flooded`, `buried`, `melted`, `aban
 `lost`, shown together as `ruined`. The home town: `town`, `home`, `wall`, `garrison`, `unrest`. Far towns:
 `trade-partner`, `standing`.
 
+The game sets the existing tags itself. An effect may set only the pack's own tags and `sheltered`, `festival`,
+`growth-active`.
+
 ## things
 
 What a card puts in play. Shown to the player as a small card with its tags.
 
 ```json
 { "id": "volcano-ash-sweepers", "name": "Ash sweepers", "kind": "policy",
-  "at": "town", "tags": ["ash-crew"], "upkeep": { "labor": 1 },
+  "at": "town", "tags": ["ash-crew"],
   "text": "Crews clear ash from roofs and fields each season.",
   "art": "A line of townsfolk with brooms and carts on a grey street, warm lantern light, painterly." }
 ```
 
 - `kind`: `building`, `garrison`, `policy`, `effect`, `relic`, `people`.
-- `at`: `town`, or a site by tag (`"site:field"`, `"site:temple"`), or `"far:<role>"` for a far place bound by a card.
-- `upkeep`: pools taken each season while it stands (optional). `capacity`: a number rules may read (optional).
+- `at`: `"town"` or `"site:<name>"`. A thing on a site that is ruined shows `ruined` and loses its tags.
+- A thing's tags are also carried by the place it stands at: a granary on `site:fields` makes the east fields a
+  `granary` too, and a policy `at: "town"` gives the home town its tags. So a rule can ask for one thing with
+  `["field", "granary"]`, or `["home", "night-watch"]`.
+- At least one tag. `capacity`: a number, kept for later (nothing reads it yet).
+- Not supported yet: `upkeep` (a cost each season). Put the cost on the card.
 
 ## cards
 
@@ -93,7 +127,7 @@ What a card puts in play. Shown to the player as a small card with its tags.
   "build_seasons": 1,
   "if_taken":   [ { "put": "volcano-refugee-camp", "at": "site:gate" },
                   { "pool": "unrest", "add": -1 },
-                  { "say": "Tents go up by the gate. Forty people have a roof." } ],
+                  { "say": "Tents go up by the gate." } ],
   "if_expires": [ { "pool": "unrest", "add": 2 },
                   { "say": "They sleep in the road. The town mutters." } ],
   "live": null,
@@ -101,42 +135,67 @@ What a card puts in play. Shown to the player as a small card with its tags.
   "art": "Image prompt, one sentence." }
 ```
 
-- `presenter.at` is where the card sits on the map. One card per place at a time.
+- `presenter.at` must be a `site:<name>`. It is where the card sits. One card per site at a time, so spread a pack's
+  cards over several sites. `presenter.role` is a trade ("miller"). `presenter.name` is a note only: the game names
+  the person who holds that trade in the town and keeps that name all run.
+- `cost`: whole numbers. `labor` and `might` are locked for `build_seasons` (1 to 4, default 1) and come back.
+  `materials`, `magic`, `intel` are spent. Unrest cannot be a cost.
+- `if_taken` applies when the build is done, `build_seasons` after the card is taken.
 - `threat: true`: it is on the board whatever the player holds and its `if_expires` is the bad outcome;
-  `offer_seasons` is the countdown. A threat should be visible several seasons early.
-- `live`: an event id from `events`; taking (or, for a threat, failing to answer) the card starts that event, and the
-  event's tier picks which of `if_tier` applies instead of `if_taken`:
+  `offer_seasons` (default 3) is the countdown. Only one threat stands at a time, so a threat may wait its turn.
+- `once`: default true. `false` lets the card come back after a rest of 3 seasons.
+- `if_expires` is required for a threat and expected for every card: passing should cost or risk something.
+- `leads_to`: cards that can only appear after this one is done. Prefer state (`appears_when`) over fixed chains.
+- `live`: an event id from `events`; then `if_tier` replaces `if_taken`:
   `"if_tier": { "triumph": [...], "success": [...], "cost": [...], "failure": [...], "disaster": [...] }`
-  (any subset; nearest lower tier is used when one is missing).
-- `leads_to`: cards that can only appear after this one resolves. Prefer state (`appears_when`) over fixed chains.
+  (any subset). Checked, not played yet.
 
-**Conditions** (`appears_when`, each object is one test, all must hold):
-`{ "pool": "unrest", "gte": 3 }` · `{ "season_gte": 4 }` · `{ "has_thing": "id" }` · `{ "no_thing": "id" }` ·
-`{ "town_has": ["tag", ...] }` · `{ "site_has": ["field", "worked"] }` · `{ "far_town_is": ["destroyed"] }` ·
-`{ "sign": "ashfall" }` · `{ "resolved": "card-id" }` · `{ "leader": "id" }`.
+**What the player reads.** The card's "if you take it" and "if you leave it" lines are written by the loader from the
+effects, so the numbers are always the real ones: your `say` sentences first, then one short sentence per effect
+("+1 Materials each season.", "Unrest +1.", "The mill street burns."). Do not repeat the numbers in `say` unless you
+want them said twice. Any number you do write in `say` or `pitch` must be a number in the card's cost or effects.
 
-**Effects** (`if_taken`, `if_expires`, `if_tier`, in order):
-- `{ "pool": "magic", "add": 2 }` — now. `{ "income": "materials", "add": 1 }` — every season from now.
-- `{ "put": "thing-id", "at": "site:field" }` · `{ "remove": "thing-id" }`.
-- `{ "tag": "sheltered", "on": "site:camp" }` · `{ "untag": "worked", "on": "site:field" }`.
-- `{ "mutate": "flooded", "where": "site:dam" }` — a real change to the land. Kinds: `flooded`, `burned`, `buried`,
-  `melted`, `dried`, `withered`, `overgrown`, `abandoned`, `destroyed`. `where`: a site, `"town"`, or `"far:<role>"`.
-- `{ "far": "captured", "where": "far:neighbour", "by": "raiders" }` — kinds: `captured`, `vassal` (with `"tribute": n`),
-  `destroyed`, `abandoned`, `founded` (with `"purpose": "mining"` optional).
-- `{ "sign": "ashfall", "seasons": 3, "strength": 0.7 }` — seen in the home town. Kinds: `ashfall`, `darkness`,
-  `deadrise`, `crime`.
-- `{ "arrive": "refugees", "count": 40, "from": "far:neighbour" }` — people walk in by road. Kinds: `refugees`,
-  `wagons`, `soldiers`.
-- `{ "units": "soldier", "add": 4 }` — the garrison. `{ "unlock": "ability-id" }` · `{ "offer": "card-id", "in": 2 }`.
-- `{ "say": "One plain sentence the player reads." }` — at least one per branch.
+**Conditions** (`appears_when`; each object is one test; all must hold):
+- `{ "pool": "unrest", "gte": 3 }` or `"lte"`: a pool's free amount now.
+- `{ "season_gte": 4 }`: 1 to 15.
+- `{ "has_thing": "id" }` · `{ "no_thing": "id" }`: a thing of this pack is, or is not, in play.
+- `{ "town_has": ["tag", ...] }`: the home town carries all of them.
+- `{ "site_has": ["tag", ...] }`: some one site, or thing on a site, carries all of them.
+- `{ "far_town_is": ["destroyed"] }`: some far town is in one of these states: `standing`, `destroyed`,
+  `abandoned`, `occupied`, `vassal`, `founded`.
+- `{ "resolved": "card-id" }`: that card of this pack was taken and is done.
+- `{ "leader": "ysolt" }`: the run's leader. Ids: `ysolt` (soldier), `dunstan` (builder), `ilveth` (tower keeper).
+- Not supported yet: `{ "sign": ... }`. Use `resolved` of the card that set the sign.
+
+**Effects** (`if_taken`, `if_expires`, `if_tier`; in order):
+- `{ "pool": "magic", "add": 2 }`: now. A whole number, not 0. `{ "pool": "might", "add": 1 }` adds 3 soldiers.
+- `{ "income": "materials", "add": 1 }`: every season from now. Goods only (`materials`, `magic`, `intel`).
+- `{ "put": "thing-id", "at": "site:fields" }` (`at` optional: the thing's own) · `{ "remove": "thing-id" }`.
+- `{ "tag": "sheltered", "on": "site:gate" }` · `{ "untag": "ash-covered", "on": "site:fields" }`. `on`: a site
+  or `"town"`. Only the pack's own tags and `sheltered`, `festival`, `growth-active`.
+- `{ "mutate": "flooded", "where": "site:dam" }`: a real change to the land. Kinds: `flooded`, `burned`, `melted`,
+  `buried`, `dried`, `withered`, `greened`. `where`: a site, `"town"` or `"far:neighbour"`. The first four ruin a
+  site: it shows `ruined` and things on it lose their tags.
+- `{ "far": "captured", "where": "far:neighbour", "by": "raiders" }`: kinds `captured`, `vassal`, `destroyed`,
+  `abandoned`. `by`: `raiders` or `player`. A vassal's `"tribute": n` is recorded on the map only; add an `income`
+  effect for what it pays. `{ "far": "founded", "id": "copper-ford", "name": "Copper Ford", "purpose": "mining" }`
+  founds a new camp in the hills (`purpose` optional).
+- `{ "sign": "ashfall", "seasons": 3, "strength": 0.7 }`: seen in the home town. Kinds: `ashfall`, `darkness`,
+  `deadrise`, `crime`. Strength 0 to 1.
+- `{ "arrive": "refugees", "count": 40, "from": "far:neighbour" }`: people walk in by road. Only refugees, only
+  from the neighbour, always 40.
+- `{ "unlock": "ability-id" }`: an ability of this pack, or `heat-ray`.
+- `{ "say": "One plain sentence the player reads." }`: at least one per branch.
+- Not supported yet (the validator says what to write instead): `units` (use `pool` `might`), `offer` (use
+  `resolved` on the later card), `arrive` of wagons or soldiers, far places other than the neighbour.
 
 ## rules
 
-The engine's own format. A rule fires once per season (unless `perSeason` says more) when its trigger happens and its
-things exist; the player is told `why`.
+The engine's own format (`RuleDef`), unchanged. A rule fires once per season (unless `perSeason` says more) when its
+trigger happens and its things exist; the player is told `why`.
 
 ```json
-{ "id": "blessed-fields", "name": "Rune-fed fields",
+{ "id": "volcano-blessed-fields", "name": "Rune-fed fields",
   "on": "turn",
   "a": { "tags": ["field", "worked", "growth-active"] },
   "effect": { "pool": "materials", "n": 2 },
@@ -144,15 +203,17 @@ things exist; the player is told `why`.
   "why": "the growth rune doubled the crop on {a}: +{n} Materials" }
 ```
 
-- `on`: `"turn"` (each season) · `{ "live": "parade" }` (during that kind of live event) · `{ "event": "fact-name" }`.
-- `a` and optional `b`: `{ "tags": [...], "near": { "of": "a" | "event" | "route", "cells": 90 } }`. All tags must be
-  on one thing. `near` is optional; 70 cells is "passes by", 90 "next to", 110 "close".
+- `on`: `"turn"` (each season) · `{ "live": "parade" }` (when that kind of live event is read) · `{ "event": "name" }`.
+- `a` and optional `b`: `{ "tags": [...], "not": [...], "near": { "of": "a" | "event" | "route", "cells": 90 } }`.
+  All tags must be on one thing. `near` is optional; 70 cells is "passes by", 90 "next to", 110 "close".
+  `near` goes on `b` when it is `"of": "a"`. `"event"` and `"route"` exist only for a rule `on` a live event.
 - `need`: `{ "pool": "unrest", "lte": 2 }` (optional).
 - `effect`: a pool (`{ "pool": "magic", "n": 1 }`), or one of a live event's numbers
-  (`{ "amount": "crowd", "op": "add" | "mul", "n": 0.5 }`).
+  (`{ "amount": "crowd", "op": "add" | "mul", "n": 0.5 }`; only for a rule `on` a live event).
 - `per`: `"a"`, `"b"` (n for each thing matched) or `{ "amount": "crowd", "each": 6 }` (n per 6 of the crowd).
-- `cap`: the most one firing may add (a temple holds so many). Every rule that adds to a pool needs a `cap`.
-- `why`: plain words; `{a}` `{b}` the things' names, `{n}` how much, `{count}` how many matched.
+- `cap`: the most one firing may add. Every rule that adds to a pool needs a `cap`; the validator refuses it without.
+- `why`: plain words; `{a}` `{b}` the things' names, `{n}` how much, `{count}` how many matched. Write the amount as
+  `{n}`, never as a digit.
 
 Write rules so they cross packs: read general tags (`field`, `temple`, `water`, `garrison`, `festival`), not only the
 pack's own.
@@ -161,51 +222,57 @@ pack's own.
 
 ```json
 { "id": "volcano-ember-rain", "tag": "fire",
-  "title": "Embers on the thatch", "how": "Call rain or blow the fire away from the houses.",
-  "where": "site:homes",
+  "title": "Embers on the thatch", "how": "Call rain on the flames.",
+  "where": "site:quarter",
   "groups": [ { "who": "worker", "count": 6, "tags": ["bucket-line"], "from": "site:river", "order": "go",
                 "formation": "line", "to": "event" } ],
   "hazard": { "kind": "fire", "points": 5, "spread": 30 },
   "seconds": 90,
-  "abilities": ["rain", "gust"],
+  "abilities": ["rain"],
   "amounts": ["burned"],
   "tiers": [ { "tier": "triumph", "when": [ { "amount": "burned", "lte": 0 } ] },
              { "tier": "cost",    "when": [ { "amount": "burned", "lte": 2 } ] },
              { "tier": "disaster" } ] }
 ```
 
-- `tag` is what rules trigger on. Existing kinds: `raid`, `parade`, `fire`, `rising` (the dead). A new kind (`riot`,
-  `flood`, `plague-carts`) is allowed if it can be told with the fields here; otherwise put it in `wants`.
-- `groups`: `who` is `soldier`, `raider`, `worker`, `cart`, `dead`, `townsfolk`; `order` is `go`, `guard`, `attack`,
-  `drill`, `man` (walls), `march`; `formation` is `column`, `line`, `loose`; `from` and `to` are sites, `"gate"`,
-  `"road"` (off the map edge) or `"event"`.
-- `hazard`: only `fire` exists today.
-- `amounts`: numbers the event ends with, which rules can change and tiers read. Existing: `crowd` (who came to
-  watch), `stopped` (attackers stopped), `burned` (lots burned), `alive:<group tag>`, `dead:<group tag>`.
-- `seconds` optional; with none it runs until it ends by itself or the season does. The first tier whose `when` holds
-  is the result; the last has no `when`.
+- `tag` is what rules trigger on. Existing kinds: `raid`, `parade`, `fire`, `rising` (the dead). A new kind is
+  allowed if it can be told with the fields here; otherwise put it in `wants`.
+- `groups`: `who` is `soldier`, `raider`, `worker`, `cart`, `dead`; `order` is `go`, `guard`, `attack`;
+  `formation` is `column`, `line`, `loose`; `from` and `to` are sites, `"gate"`, `"road"` (off the map edge) or
+  `"event"`.
+- `hazard`: only `fire`.
+- `amounts`: numbers the event ends with, which rules can change and tiers read: `crowd` (who came to watch),
+  `stopped` (attackers stopped), `burned` (lots burned; needs a fire hazard), `alive:<group tag>`,
+  `dead:<group tag>` for a tag one of the event's groups has.
+- `tiers`: the first row whose `when` holds is the result. Each test is `{ "amount": ..., "lte" | "gte": n }`. The
+  last row has no `when`. The validator refuses a row that can never be reached.
+- `seconds` optional; with none it runs until it ends by itself or the season does.
 
 ## abilities
 
-What the player casts in the live city or on an in-play card.
+What the player casts on a thing in play (and, later, in the live city).
 
 ```json
-{ "id": "growth-rune", "name": "Growth rune", "cost": { "magic": 1 },
-  "target": { "tags": ["field"] }, "effect": [ { "tag": "growth-active", "on": "target" } ],
-  "text": "Draw it on a field: the crop springs up. The field counts as blessed this season.",
-  "look": "green shoots rise in a ring where it is drawn" }
+{ "id": "volcano-ash-ward", "name": "Ash ward", "cost": { "magic": 1 },
+  "target": { "tags": ["field"] }, "effect": [ { "tag": "warded", "on": "target" } ],
+  "text": "Cast it on a field. Ash does not settle there this season.",
+  "look": "a pale dome shimmers over the furrows" }
 ```
 
-Existing: `growth-rune` (fields), `fire` (burns units and lots), `heat-ray` (a line of burn), `rain` (puts fire out,
-fills water), `gust` (pushes fire, smoke and light things), `telekinesis` (lifts and throws a body). New abilities
-should reuse these effects where they can; say what should be seen in `look`.
+- `cost`: Magic only, a whole number.
+- `target.tags`: a thing in play must carry all of them to be a legal target. Ruined things are never targets.
+- `effect`: `tag` or `untag` with `"on": "target"`, or `pool`. Nothing else yet.
+- A pack ability must be unlocked by a card (`{ "unlock": "id" }`).
+- Existing abilities, which an event may list and which must not be declared again: `growth-rune`, `fire`,
+  `heat-ray`, `rain`. Not built: `gust`, `telekinesis`. Say what should be seen in `look`.
 
 ## Rules for the writing
 
 - Player text is plain and concrete: who, what, how much. No lore paragraphs, no invented jargon, no exclamation.
-- Every number in text must match the data beside it.
+- Every number in text must match the data beside it. The validator checks digits in `say`, `pitch`, an ability's
+  `text` and a rule's `why`. It cannot check numbers written as words ("forty"), so write digits.
 - Each card has a cost, an effect if taken and an effect if it expires. Passing must cost something or risk something.
-- Named presenters are townspeople with a trade and a place; reuse 6 to 8 names across the pack so they become known.
+- Named presenters are townspeople with a trade and a place; reuse 6 to 8 trades across the pack so they become known.
 - A pack should contain its own small engine (two or three rules that feed each other), at least one rule that pays
   off with another pack's tags, one choice between two good things that cannot both be had, and one threat whose
   answer depends on what the player built earlier.

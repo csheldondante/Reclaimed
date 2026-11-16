@@ -93,6 +93,9 @@ export interface RealmOptions {
   /** a run under way taken up again (`Realm.runState`), over the world saved with it: no new run begins, nothing is
    *  dealt, the ledger given is the one saved */
   resume?: RunState;
+  /** (card-table, packs/load.ts) more opportunities than the base game's, and the helpers their conditions and effects
+   *  name: an outside-authored pack, loaded. A helper here never replaces one of the realm's own */
+  extra?: { templates?: TemplateDef[]; helpers?: Record<string, Helper> };
 }
 
 /** a run under way, as saved beside the world (BACKLOG LS-8): the realm's own small state and the engine's */
@@ -170,7 +173,7 @@ export class Realm {
       mutators.season(f.turn);
     }
     f.drainChanged();
-    const templates: TemplateDef[] = [...CATALOG.map(projectTemplate).filter((t): t is TemplateDef => t !== null), ...WORLD_TEMPLATES];
+    const templates: TemplateDef[] = [...CATALOG.map(projectTemplate).filter((t): t is TemplateDef => t !== null), ...WORLD_TEMPLATES, ...(o.extra?.templates ?? [])];
     // (the arc's turns are the history's: this run's seasons after the turn it began at)
     const rel = raidArc(o.home, this.seasons);
     const arc = { ...rel, stages: rel.stages.map((s) => ({ ...s, turn: this.t0 + s.turn })) };
@@ -271,7 +274,7 @@ export class Realm {
         },
       },
     };
-    return { helpers };
+    return { helpers: { ...(this.o.extra?.helpers ?? {}), ...helpers } };
   }
 
   /** where a spot is in world cells [x, row]: the scene's answer, else a fixed way off the town's centre */

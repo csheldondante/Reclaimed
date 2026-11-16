@@ -24070,3 +24070,38 @@ keeps what was built and the history. One phone-size shot (412x915) looked at: h
 
 **Found.** The attack comes on entering the last season, so a 16-season run has 15 seasons of choices. The raid's
 result is a stand-in until round 6's live events merge (BACKLOG CT-1).
+
+## 2026-11-16 — Card table: bots, things in play, abilities, outside-authored packs (`card-table`)
+
+**Why.** The owner will have another model draft themed content packs (docs/design/PACK_FORMAT.md) and wants to try
+one within a minute of it being written; and wants bots to test engines in seconds.
+
+**Bots** (`src/table/bots.ts`, `node scripts/tablebots.mjs`). Eight policies x three leaders, 16 seasons, 24 runs in
+32 s. First findings from the base cards: every policy that will pay the tribute pays it and none holds by force;
+Materials pile up unspent (35 to 64 at the end) and Magic reaches about 20 with nothing to spend it on; the
+neighbour's siege runs out in 20 of 24 runs (it asks for a soldier in season 2); a second seed gives the same run
+(the seed only names people: CT-3).
+
+**Packs** (`src/packs/check.ts`, `src/packs/load.ts`, `packs/sample.json`). A card becomes a `TemplateDef` built
+from the template language and the Realm's and mutators' existing helpers (`pool`, `income`, `mutateAt`, `mutate`,
+`sign`, `found`, `spell`, `neighbour`, `refugeeCohort`); eight small helpers cover the rest (`packPool`, `packSeason`,
+`packLeader`, `packTags`, `packFar`, `packPut`, `packRemove`, `packTag` / `packUntag`, `packUnlock`). The Realm
+gained one option, `extra: { templates, helpers }`. The words a card shows for "if taken" and "if left" are written
+from its effects, so the numbers shown are the numbers applied. The validator has no run-time imports, so
+`node scripts/packcheck.mjs` runs it directly; a test holds its word lists to the engine's (pools, sites, land
+changes, signs, leaders, base card ids).
+
+**Format doc.** Draft 1 promised things the engine cannot do; draft 2 says what is true (sites by name, people
+locked and goods spent, the land-change kinds, one far place, refugees only, no upkeep, events and rules checked but
+not yet played). Each change is listed in the hand-over report.
+
+**Found.** An entity cannot be bound twice in one template: a card whose effect names its own site must use the
+card's site binding. A fact tag's value cannot be a turn number (`tagRefusal`: a number is an intensity 0..1) and
+the `custom` scope is not allowed on a site, so timed tags here are a `condition` tag plus an `until:<tag>`
+attribute. A thing's tags are lent to the place it stands at, or a rule asking one thing for `home` and
+`night-watch` could never match.
+
+**Measured.** `test/unit/packs.test.ts` 28 tests, 0.4 s: 22 kinds of mistake each reported in words; the sample
+pack played on the Realm (granary built in two seasons and its income added, blessing unlocked and cast for 1 Magic,
+its timed tag gone next season, the unanswered mill fire leaving the mill street `ruined, burned`). Two phone-size
+shots looked at (412x915): the armed ability lights its legal target; ruined things show red tags.

@@ -51,3 +51,16 @@ export function deltaLine(before: Pools, after: Pools): string {
   const parts = POOLS.filter((k) => after[k] !== before[k]).map((k) => `${POOL_NAME[k]} ${after[k] > before[k] ? '+' : ''}${after[k] - before[k]}`);
   return parts.length ? `The season changed your pools. ${parts.join(', ')}.` : '';
 }
+
+export const TOWN = 'The town';
+export const castNote = (ability: string, on: string): string => `you cast ${ability} on ${on}`;
+export const castLine = (ability: string, on: string, cost: number): string => `You cast ${ability} on ${on}. It cost ${cost} Magic.`;
+export const castCost = (cost: number): string => `${cost} Magic`;
+export const PICK_TARGET = 'Tap a lit card to cast it there.';
+export const NO_TARGET = 'Nothing in play can take it now.';
+export const ABILITIES_NONE = 'You have no abilities yet. Some cards give you one.';
+export const PACK_TITLE = 'Packs';
+export const PACK_LOAD = 'Load a pack file';
+export const PACK_NONE = 'Only the base cards are in play.';
+export const packLine = (name: string, cards: number): string => `${name}. ${cards} cards added.`;
+export const packLeft = (card: string, why: string): string => `Left out: ${card}. ${why}`;
