@@ -101,6 +101,40 @@ reserved for overgrown, undead, lockdown). Next byte: how far (0–255; for occu
 BACKLOG TM6's disrepair. `streets.wgsl tlRise` reads it (binding 5): `condColour` tints, `condHeight` cuts.
 `claimLots` reads it (binding 3): a destroyed lot keeps no claim. `FieldTown.conditionsChanged(reclaim)` draws again.
 
+## Conformance with the opportunity system's design (2026-11-15, late)
+
+The orchestrator pointed at the recorded decision (docs/design/FACTIONS_WORLD_STATE.md, DECISIONS rounds 120-128r):
+"Outcomes are near-instant mutations of authoritative state. A river falls when its steady-flow inflow is lowered. A
+structure is placed directly, with no agents building it. Full simulation runs only where the player is looking."
+The code from those sessions: the fact layer (`src/api/contracts/facts*.ts`: entities, scoped tags, typed relations,
+claims, events) and the template engine's outcomes (`src/living/mutations.ts`: `river-inflow`, a building placed,
+stores, faction power, `setCondition`, migration, `setControl`), each of which applies an AtlasEvent and records a
+fact event with its cause.
+
+**Aligned.** The land mutators are the physical half of that decision: instant writes of authoritative state, no sim
+run. Every entry and sign can carry `cause` (a fact event's or an opportunity's id), kept in the record.
+
+**Not aligned yet (BACKLOG MU-21); read this before building on `places()`.**
+- `mutators.places()` / `place(id)` and the state kinds `founded`, `destroyed`, `abandoned`, `captured`, `vassal` are a
+  **parallel list** of who holds a place and what state it is in. The fact layer already holds that (`controls`,
+  settlement condition, claims, events) and `living/mutations.ts` already changes it. They should go: `places()` a
+  read of the fact store, the state kinds calls of `setControl` / `setCondition` (with a `tribute` economic relation),
+  and only their physical side (the lots' condition, the map's mark) left here, keyed by the fact event's id.
+- `dried` lowers water in an area and shuts its columns' sources. The recorded way is `river-inflow`
+  (`living/mutations.ts`: a region's inflow factor). `dried` should become the physical projection of that event.
+- The template engine's outcome kinds do not name the physical mutators yet. Wanted: outcome kinds `land` (kind,
+  place, strength, seed) and `sign` in the template DSL that call `mutators.apply` / `mutators.sign` with the
+  opportunity's id as `cause`.
+- The catalog (docs/design/OPPORTUNITY_CATALOG.md) has not been read against the mutators here; the list of physical
+  changes it needs and this module lacks is not made.
+
+**Contradiction for the owner.** Tonight's words ask for instant mutators on places that are not loaded, written into
+the land when it arrives. The recorded design routes a river through its steady-flow inflow (the atlas's tables) and a
+settlement's state through AtlasEvents the generators read. Both are "instant state"; they differ in where the change
+is projected: this module writes columns after generation, the recorded design changes the generator's inputs. For
+water and rivers the generator's inputs are the better home (MU-1, MU-16); for burn, burial, lava and lot conditions
+there is no generator input today, and the post-generation write is what exists.
+
 ## Assumptions for the owner
 
 1. A flood's level comes from the atlas's coarse ground, so it is the same for loaded and unloaded land. It is not a

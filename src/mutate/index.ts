@@ -65,6 +65,9 @@ export interface MutationSpec {
   /** 'founded': the new place's name and kind */
   name?: string;
   size?: 'camp' | 'village' | 'town';
+  /** what caused it: the id of the fact event or opportunity (src/living: FactEvent, `about.opp`), so the inspector,
+   *  the map and the end-of-run screen can go from a change in the land to the choice that made it */
+  cause?: string;
 }
 
 /** One entry of the world modifier list: everything an op needs, so it can run on any column at any time. JSON. */
@@ -86,6 +89,8 @@ export interface Mutation {
   tribute?: number;
   name?: string;
   size?: 'camp' | 'village' | 'town';
+  /** what caused it (MutationSpec.cause); not part of its identity */
+  cause?: string;
   /** its place in the list (the order ops are applied in) */
   seq: number;
 }

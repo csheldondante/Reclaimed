@@ -101,6 +101,7 @@ export class WorldList {
     const m: Mutation = { id: '', kind: spec.kind, place, cell, radius, strength, seed, params: this.params(spec.kind, cell, radius, strength, seed), seq: -1 };
     if (spec.by !== undefined) m.by = spec.by;
     if (spec.tribute !== undefined) m.tribute = spec.tribute;
+    if (spec.cause !== undefined) m.cause = spec.cause;
     if (spec.kind === 'founded') {
       m.name = spec.name ?? 'New camp';
       m.size = spec.size ?? 'camp';
