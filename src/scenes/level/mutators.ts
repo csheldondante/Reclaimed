@@ -252,7 +252,7 @@ function startLab(scene: LevelScene, towns: FieldTowns, eng: MutateEngine): void
   mountMutLab(host.ui, {
     apply: (kind) => {
       if (isLand(kind)) {
-        const m = mutators.apply({ kind, at: here(), radius: Number(host.params.get('mutr') ?? 26), strength: Number(host.params.get('muts') ?? 1), seed: seed++ });
+        const m = mutators.apply({ kind, at: here(), radius: Number(host.params.get('mutr') ?? 40), strength: Number(host.params.get('muts') ?? 1), seed: seed++ });
         timing(kind);
         return `${kind} at ${m.cell[0]}, ${m.cell[1]}: ${m.resident ? 'written now' : 'waits for its land'}`;
       }
