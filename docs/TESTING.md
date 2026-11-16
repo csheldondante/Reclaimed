@@ -147,6 +147,13 @@ Every read of the page's flags goes through src/flags.ts `urlFlags()`: a read of
 bundle runs the readers in. `node scripts/flagcheck.mjs` loads the built `town` lab with no `q`, `q=low` and `q=high`
 and checks what each runs with (the shadow cache, prepEvery, the shadow maps, in-place columns).
 
+## The frame census's gates (scripts/census.mjs, phone-idle)
+
+`node scripts/census.mjs` (a behaviour check, ~3 min) counts the user's level per frame and system in four states
+(docs/FRAMECOST.md) and fails when the idle frame regresses on what was cut: the sandbox valley's reads running in the
+town game, more than 4 KB read back a frame, anything made in a frame (pipelines, bind groups, buffers, textures). Add
+a gate there with each cut. `test/unit/census.test.ts` covers the counter itself.
+
 ## When to use the browser
 
 Use it only for what Node can't show: the page's boot (the build, the menu, the streamer, IndexedDB), drawing and

@@ -2,6 +2,7 @@
 // town that's made gets its people (LivingTown: routes, riders, the works), let go with it. Their GPU work is encoded
 // in the renderer's frame (frameCompute) with the profiler's timestamps; their figures are the renderer's voxels. The
 // panel (?living=1) is the tuning editor over LIVING_TUNING with a line of counters read twice a second while it's open.
+import { censusEnter, censusLeave } from '../gpu/census';
 import type { FieldTown } from '../citygen/town';
 import { REC_LM } from '../citygen/gpu';
 import type { Profiler } from '../gpu/profiler';
@@ -37,6 +38,8 @@ interface Live {
   works: Works;
   /** the town's mesh runs its graph was built from (a new run: a district's roads appeared — the graph made again) */
   meshRuns: number;
+  /** the town's mesh runs last seen (each one wakes the graph's sleep) */
+  seenRuns: number;
   sinceRebuild: number;
 }
 /** (saving) the works' words kept: the quarry's head (routes.wgsl Q_*: site, bench, progress, rim, benches …) and the
@@ -53,7 +56,11 @@ export class LivingTowns {
   debugGraph = false;
   panel?: TunePanel;
   private dt = 0;
-  private hook = (enc: GPUCommandEncoder) => this.encode(enc);
+  private hook = (enc: GPUCommandEncoder) => {
+    const cq = censusEnter('living');
+    this.encode(enc);
+    censusLeave(cq);
+  };
 
   constructor(private io: LivingTownsIO) {
     io.frameCompute.push(this.hook);
@@ -104,13 +111,19 @@ export class LivingTowns {
       this.io.addVoxels(life.vox, life.vargs);
       this.io.addVoxels(works.vox, works.vargs);
       this.io.addMesh(life.pmesh, life.pargs, lots.place);
-      this.live.set(id, { town: t, life, works, meshRuns: t.meshRuns, sinceRebuild: 0 });
+      this.live.set(id, { town: t, life, works, meshRuns: t.meshRuns, seenRuns: t.meshRuns, sinceRebuild: 0 });
       console.log(`[living] ${t.site.name}: ${life.riders} people, ${((life.bytes + works.bytes) / 1048576).toFixed(1)} MB`);
     }
     // (citygen redrew its roads — a time-lapse does every 2 s: the graph made again at most every REBUILD_S, so routes
     // get traced between; riders on routes already traced ride on meanwhile)
     for (const l of this.live.values()) {
       l.sinceRebuild += dt;
+      // (a mesh run — every 2 s while the town animates, a wall begun or risen, the roads' rule changed: the graph's
+      // sleep ended, so its gate looks at the wall at once; the rebuild itself waits its turn below)
+      if (l.town.meshRuns !== l.seenRuns) {
+        l.seenRuns = l.town.meshRuns;
+        l.life.wake();
+      }
       if (l.town.meshRuns !== l.meshRuns && l.sinceRebuild >= REBUILD_S) {
         l.meshRuns = l.town.meshRuns;
         l.sinceRebuild = 0;

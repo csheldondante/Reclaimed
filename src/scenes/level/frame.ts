@@ -26,6 +26,7 @@ import { aimBeam, stepMeteors } from './impacts';
 import { CUTAWAY, PLANNER_OFF, COARSE_PARTS, CAM_CLAMP, PLAN_OFF } from './flags';
 import type { LevelScene } from '../level';
 import { worldApiOf } from './world-api';
+import { censusEnter, censusLeave } from '../../gpu/census';
 
 export function levelFrame(scene: LevelScene, now: number, dt: number, driven = false): void {
   // (round 128l, tooling: lab.run steps the scene itself, as fast as the GPU goes — the display's frames wait; the town
@@ -94,7 +95,11 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   }
   // (round 113, tilesfirst — the planner: one footprint, each layer's reach from its measured latency at the camera's
   // speed, holes first and rendering before simulation; scenes/planner.ts)
-  planFrame(scene);
+  {
+    const cq = censusEnter('planner');
+    planFrame(scene);
+    censusLeave(cq);
+  }
   // (a slide in progress: the sim waits for the regions coming in)
   // (round 128i, FT-67; the user on the Pixel 9a: "flickering of the town (position jumping)") The slide runs here,
   // right after the camera moved and before anything this frame reads or writes window coordinates: its synchronous
@@ -103,28 +108,56 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   // written for the window as it is now and land before this frame's draw. Run after them (as it was), the slide
   // moved the camera after the rows were written: the town drew a region off for one frame (131.6 px at zoom 2.6,
   // scripts/townslide.mjs) and jumped back the next.
-  void scene.stream?.update();
+  {
+    const cq = censusEnter('stream');
+    void scene.stream?.update();
+    censusLeave(cq);
+  }
   scene.director.update(dt);
   // geysers (round 75)
-  if (scene.opts.atlas) stepGeysers(scene, dt * scene.speed);
+  {
+    const cq = censusEnter('geysers');
+    if (scene.opts.atlas) stepGeysers(scene, dt * scene.speed);
+    censusLeave(cq);
+  }
   // the coarse world goes on (round 71): a step every 4th frame (a step a frame cost ~1.5 ms). (Round 114, framepace:
   // its three parts on three frames of the four — the whole step on one frame was its GPU's largest spike; Coarse.
   // stepPart. ?coarseparts=0 the whole step every 4th frame, to compare)
   if (scene.opts.atlas) {
     const c = scene.opts.atlas.atlas.coarse;
     const k = ++scene.coarseFrame % 4;
+    const cq = censusEnter('coarse');
     if (!COARSE_PARTS) k === 0 && c.step(1);
     else if (k < 3) c.stepPart();
+    censusLeave(cq);
   }
   // (round 88) the units' sync and thinking
   // (citygen M4b: the field towns near the window made, the far ones let go)
-  scene.fieldTowns?.update(dt);
+  {
+    const cq = censusEnter('citygen');
+    scene.fieldTowns?.update(dt);
+    censusLeave(cq);
+  }
   // (living town: new towns' people; the frame's GPU work is in the renderer's frameCompute)
-  scene.livingTowns?.update(dt * scene.speed);
-  scene.statics?.frame();
-  if (scene.inhabitants) lifeFrame(scene, dt * scene.speed);
+  {
+    const cq = censusEnter('living');
+    scene.livingTowns?.update(dt * scene.speed);
+    censusLeave(cq);
+  }
+  {
+    const cq = censusEnter('statics');
+    scene.statics?.frame();
+    censusLeave(cq);
+  }
+  {
+    const cq = censusEnter('inhabitants');
+    if (scene.inhabitants) lifeFrame(scene, dt * scene.speed);
+    censusLeave(cq);
+  }
   if (scene.units && !scene.stream?.busy) {
+    const cq = censusEnter('agents');
     scene.units.update(dt * scene.speed);
+    censusLeave(cq);
   }
 
   const simDt = dt * scene.speed;
@@ -145,7 +178,11 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   scene.nature.update(simDt, stats);
   // (round 128o, DA-B5) the sandbox valley's reads — the painted wind for its storms, smoke and grime for its Nature,
   // veg and water for its ambience (level/valley-reads.ts)
-  scene.valleyReads?.frame(dt);
+  {
+    const cq = censusEnter('valley-reads');
+    scene.valleyReads?.frame(dt);
+    censusLeave(cq);
+  }
 
   scene.lensK += ((scene.lensOn ? 1 : 0) - scene.lensK) * Math.min(1, dt * 8);
   const lc = scene.hoverWorld ?? [camera.target[0], camera.target[1]];
@@ -212,7 +249,9 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     core.clock.pause(simDt, scene.speed);
     scene.simHeld[held] = (scene.simHeld[held] ?? 0) + 1;
   }
+  const cqSim = censusEnter('sim');
   const ticks = held ? 0 : core.advance(now, simDt, scene.speed);
+  censusLeave(cqSim);
   record('sim', performance.now() - tSim); // (round 100, hitchrec: timing)
   scene.ticksAvg = scene.ticksAvg * 0.95 + ticks * 0.05;
   // (round 83, V21: ?cutaway=1 — the camera's puck, the slice and the orbit round it; `cutFeet` a script's
@@ -257,7 +296,11 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     camera.cut = { slice: null, see: [], boxes: [] };
   }
   const tRender = performance.now(); // (round 100, hitchrec: timing)
-  core.render();
+  {
+    const cq = censusEnter('render');
+    core.render();
+    censusLeave(cq);
+  }
   record('render', performance.now() - tRender); // (round 100, hitchrec: timing)
 
   hud.setWind(powers.windTier());
@@ -283,7 +326,11 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     // cyclones batter what they pass: look there
     for (const cy of weather.cyclones) scene.integrity.markDirty(cy.x, cy.y, cy.radius * 2.5);
     const tJudge = performance.now(); // (round 100, hitchrec: timing)
-    scene.integrity.update(dt * scene.speed);
+    {
+      const cq = censusEnter('integrity');
+      scene.integrity.update(dt * scene.speed);
+      censusLeave(cq);
+    }
     record('judge', performance.now() - tJudge); // (round 100, hitchrec: timing)
   }
   weather.dustiness = core.pollution;

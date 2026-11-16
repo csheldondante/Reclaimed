@@ -252,6 +252,8 @@ async function rideTown(ptsRoom?: number, wall = false): Promise<Uint32Array> {
     wallData.words[0] = 1;
     new Float32Array(wallData.words.buffer).set([0.5, 0.5, -1e9], 4);
     dev.queue.writeBuffer(wallBuf, 0, wallData.words);
+    // (in play the ring is made by citygen's mesh run, which LivingTowns hears: the graph's sleep ended)
+    town.wake();
     await frames(4);
     const t1 = await table();
     const runs = t1[0];
@@ -263,6 +265,7 @@ async function rideTown(ptsRoom?: number, wall = false): Promise<Uint32Array> {
     for (let i = 0; i < runs; i++) expect(t1[5 + i * 3]).toBe((t1[6 + i * 3] >> 17) & 1);
     // (all of it risen: the stage moved on, nothing else)
     dev.queue.writeBuffer(wallBuf, 16, new Float32Array([1, 1, -1e9]));
+    town.wake();
     await frames(4);
     const t2 = await table();
     expect(t2[2]).toBeGreaterThan(t1[2]);

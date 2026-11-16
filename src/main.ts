@@ -23,6 +23,7 @@ import { startReadStats } from './perf/readstats';
 import { frameDue } from './scenes/frame-cap';
 import { benchGpu, benchGpuUp, benchLevel, benchLoadingNote, benchMode, benchSkip, benchStageNote, benchStandalone, benchWatchdog } from './perf/bench';
 import { urlFlags } from './flags';
+import { censusFrame, startCensus } from './perf/census';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
 const QUALITY: Record<string, Quality> = {
@@ -38,6 +39,8 @@ async function main() {
   await freshStart(params);
   // (round 128n: ?readstats=1 — every GPU read counted by label: perf/readstats.ts)
   startReadStats(params);
+  // (phone-idle: ?census=1 — every GPU call counted per frame and system: perf/census.ts)
+  startCensus(params);
   // (low by default, for phones: round 54; ?q=medium|high on a desktop)
   const qualityName = params.get('q') ?? 'low';
   const quality = QUALITY[qualityName];
@@ -201,6 +204,8 @@ async function main() {
   if (params.get('fieldbench') === '1') void import('./perf/fieldbench').then((m) => m.fieldBench(params));
   // (trackA-liquids, DA-P5: ?flowbench=1 — the liquid's phone bench on the flow lab: src/perf/flowbench.ts)
   if (params.get('flowbench') === '1') void import('./perf/flowbench').then((m) => m.flowBench(params));
+  // (phone-idle: ?idlebench=1 — the atlas town at idle, each system toggled, the census's counts: src/perf/idlebench.ts)
+  if (params.get('idlebench') === '1') void import('./perf/idlebench').then((m) => m.idleBench(params));
   if (pageBench === 'run') void pageBenchRun();
   if (bench === 'level')
     void benchLevel({
@@ -284,6 +289,7 @@ async function main() {
       const c0 = hitch ? performance.now() : 0;
       pacer?.begin(now, inFlight);
       scene?.frame(now, dt);
+      censusFrame();
       if (!firstFrame) bootMark((firstFrame = 'first-frame'));
       // (round 108: the bug report's picture, while the frame is still on the canvas)
       serviceShot(canvas);

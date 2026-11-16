@@ -54,6 +54,7 @@ import { SLEEP_MORE } from './sleep';
 import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst, flowN } from './flow';
 import { CUSTOM, GpuTileList, LIVE, cullKernel, cullSource, dispatchTiles } from './cull';
 import { LIFE_S, WindRects } from './windrect';
+import { SettledRead } from '../gpu/settled';
 import { EventKind, MAX_EVENTS, type GlobalsState, type WorldEvent } from './globals';
 import { BLOW_TAG, EditBusy, OP, editOpOf } from './edit-ops';
 
@@ -354,13 +355,20 @@ export class RenderFieldsSystem implements SimSystem {
 }
 
 /** The player's persistent wind field (windfield.wgsl): advect, spread, decay, stamp strokes. */
+/** (phone-idle) a world's wind field system: what the sway asks whether the air is stirred (WindFieldSystem.stirred) */
+const windOf = new WeakMap<WorldGpu, WindFieldSystem>();
+/** (phone-idle) frames between the sway's reads that ask whether its springs have settled, at most (from 1, doubling) */
+const SWAY_READ_EVERY_MAX = 16;
+
 export class WindFieldSystem implements SimSystem {
   readonly name = 'windfield';
   // (perfopt, ?windhz=: every WIND_K ticks, each update the time since — sim/flow.ts)
   readonly period = WIND_K;
   private k: ComputeKernel;
   /** (round 104, simscale) a uniform and its bind group per dispatch of a tick: the painted box, the band, strips */
-  private slots: { buf: GPUBuffer; group: GPUBindGroup }[] = [];
+  private slots: { buf: GPUBuffer; group: GPUBindGroup; sent: string }[] = [];
+  /** (phone-idle) this tick's wind past the field, as the CPU knows it (collect): a storm, the cursor's breeze, a cyclone */
+  private gusty = true;
   /** (DA-B16) the painted box made on the GPU (the CPU's and things landing's: windfield.wgsl windBox), its args and
    *  corners (wbox), the shove's stamp, its input; the box's run and its copy into the field */
   private boxK: ComputeKernel;
@@ -403,19 +411,37 @@ export class WindFieldSystem implements SimSystem {
     const rb = device.createBuffer({ label: 'windfield box run', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(rb, 0, new Uint32Array([0, 0, 0, 1]));
     this.boxRun = { buf: rb, group: makeBindGroup(device, 'windfield box run', this.k.layout, { 0: w.globals, 2: w.materials, 15: w.windFieldView, 16: w.windFieldNextView, 30: w.physPuff, 31: w.windBlows, 32: rb, 33: this.wbox }) };
+    windOf.set(world, this);
   }
-  private slot(i: number): { buf: GPUBuffer; group: GPUBindGroup } {
+  /**
+   * (phone-idle) May things have landed lately — the shoves only the GPU has (phys.wgsl's puff, windBox's stamp)? The
+   * physics voxels write the puff only on a tick they run, and mark it (WorldGpu.physColsTick; the solver marks it too:
+   * more ticks than needed, never fewer); the wind reads it an update later and its stamp lives LIFE_S on.
+   */
+  private landing(tick: number): boolean {
+    const at = this.world.physColsTick;
+    return at >= 0 && (tick - at - this.period - 2) * FLOW_SUB < LIFE_S * 60;
+  }
+  /**
+   * (phone-idle) Is the air stirred past the map's own breeze anywhere, as far as the CPU knows: painted wind (strokes,
+   * blows, ripples, things landing lately), a storm, the cursor's breeze, a cyclone? The sway sleeps when not.
+   */
+  stirred(tick: number): boolean {
+    return this.gusty || !this.rects || this.rects.box(tick) !== null || this.landing(tick);
+  }
+  private slot(i: number): { buf: GPUBuffer; group: GPUBindGroup; sent: string } {
     let s = this.slots[i];
     if (!s) {
       const buf = this.device.createBuffer({ label: `windfield rect ${i}`, size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
       const w = this.world;
-      s = { buf, group: makeBindGroup(this.device, `windfield ${i}`, this.k.layout, { 0: w.globals, 2: w.materials, 15: w.windFieldView, 16: w.windFieldNextView, 30: w.physPuff, 31: w.windBlows, 32: buf, 33: this.wbox }) };
+      s = { buf, sent: '', group: makeBindGroup(this.device, `windfield ${i}`, this.k.layout, { 0: w.globals, 2: w.materials, 15: w.windFieldView, 16: w.windFieldNextView, 30: w.physPuff, 31: w.windBlows, 32: buf, 33: this.wbox }) };
       this.slots[i] = s;
     }
     return s;
   }
   /** this tick's painting (Simulation.step): the player's strokes and the clicks' ripples */
   collect(g: GlobalsState, sent: readonly WorldEvent[], tick: number): void {
+    this.gusty = g.storms.length > 0 || g.cyclones.length > 0 || (g.gusts[0]?.strength ?? 0) > 0;
     const r = this.rects;
     if (!r) return;
     for (const gg of g.gusts.slice(1)) {
@@ -439,51 +465,82 @@ export class WindFieldSystem implements SimSystem {
     if (ty > 0) this.fresh.push([0, this.th - ty, this.tw, this.th]);
     if (ty < 0) this.fresh.push([0, 0, this.tw, -ty]);
   }
-  private run(enc: GPUCommandEncoder, i: number, r: [number, number, number, number], mode: number): void {
+  /** rectangle r's dispatch in mode `mode` (pipeline set), its uniform in slot i — written when it changed; false: empty */
+  private runIn(pass: GPUComputePassEncoder, i: number, r: [number, number, number, number], mode: number): boolean {
     const [x0, y0, x1, y1] = r;
-    if (x1 <= x0 || y1 <= y0) return;
+    if (x1 <= x0 || y1 <= y0) return false;
     const s = this.slot(i);
-    this.device.queue.writeBuffer(s.buf, 0, new Uint32Array([x0, y0, mode, 0]));
-    dispatch(enc, this.prof, this.name, this.k, s.group, [Math.ceil((x1 - x0) / 8), Math.ceil((y1 - y0) / 8)]);
-    // (round 105, ringwin: the rectangle where it lies, cut at the ring's seam)
-    for (const q of this.world.ring.pieces(x0, y0, x1, y1, true)) enc.copyTextureToTexture({ texture: this.world.windFieldNext, origin: { x: q.px, y: q.py } }, { texture: this.world.windField, origin: { x: q.px, y: q.py } }, [q.w, q.h]);
+    const key = `${x0},${y0},${mode}`;
+    if (s.sent !== key) this.device.queue.writeBuffer(s.buf, 0, new Uint32Array([x0, y0, mode, 0]));
+    s.sent = key;
+    pass.setBindGroup(0, s.group);
+    pass.dispatchWorkgroups(Math.ceil((x1 - x0) / 8), Math.ceil((y1 - y0) / 8));
+    this.prof.dispatches++;
+    return true;
+  }
+  /**
+   * One pass an update (phone-idle): `first`'s dispatches (the painted box's), then each job's rectangle — its slot, its
+   * texels, its mode — and after the pass each rectangle's new texels into the field everything reads (round 105,
+   * ringwin: where it lies, cut at the ring's seam).
+   */
+  private run(enc: GPUCommandEncoder, jobs: [number, [number, number, number, number], number][], first?: (pass: GPUComputePassEncoder) => void): void {
+    const pass = enc.beginComputePass({ label: this.name, timestampWrites: this.prof.timestamps(this.name) });
+    first?.(pass);
+    pass.setPipeline(this.k.pipeline);
+    const ran = jobs.filter(([i, r, mode]) => this.runIn(pass, i, r, mode));
+    pass.end();
+    for (const [, r] of ran)
+      for (const q of this.world.ring.pieces(r[0], r[1], r[2], r[3], true)) enc.copyTextureToTexture({ texture: this.world.windFieldNext, origin: { x: q.px, y: q.py } }, { texture: this.world.windField, origin: { x: q.px, y: q.py } }, [q.w, q.h]);
   }
   encode(enc: GPUCommandEncoder, tick = 0): void {
     if (!this.rects) {
-      this.run(enc, 0, [0, 0, this.tw, this.th], 0);
+      this.run(enc, [[0, [0, 0, this.tw, this.th], 0]]);
       return;
     }
-    let i = 0;
     // the painted wind, where it is: the CPU's box (strokes, blows, ripples) and, on the GPU, round where things landed
     // lately (DA-B16: it was the whole field while any physics body existed)
+    // (phone-idle: nothing painted and nothing landed lately — no box, no painted update, nothing uploaded: only the map's
+    // own wind's band)
     const box = (this.lastBox = this.rects.box(tick));
-    const bi = new ArrayBuffer(32);
-    new Int32Array(bi, 0, 4).set(box ?? [0, 0, 0, 0]);
-    new Float32Array(bi, 16, 4).set([tick * FLOW_SUB, LIFE_S * 60, this.slid[0], this.slid[1]]);
+    const landing = this.landing(tick);
+    const paint = box || landing;
+    if (paint) {
+      const bi = new ArrayBuffer(32);
+      new Int32Array(bi, 0, 4).set(box ?? [0, 0, 0, 0]);
+      new Float32Array(bi, 16, 4).set([tick * FLOW_SUB, LIFE_S * 60, this.slid[0], this.slid[1]]);
+      this.device.queue.writeBuffer(this.boxIn, 0, bi);
+    }
+    // (the stamp's slide: sent with the box; no stamp alive, none to slide)
     this.slid = [0, 0];
-    this.device.queue.writeBuffer(this.boxIn, 0, bi);
-    dispatch(enc, this.prof, 'windfield-box', this.boxK, this.boxGroup, [1, 1]);
-    const pass = enc.beginComputePass({ label: this.name, timestampWrites: this.prof.timestamps(this.name) });
-    pass.setPipeline(this.k.pipeline);
-    pass.setBindGroup(0, this.boxRun.group);
-    pass.dispatchWorkgroupsIndirect(this.wbox, 0);
-    pass.end();
-    const cp = enc.beginComputePass({ label: 'windfield-copy', timestampWrites: this.prof.timestamps('windfield-copy') });
-    cp.setPipeline(this.copyK.pipeline);
-    cp.setBindGroup(0, this.copyGroup);
-    cp.dispatchWorkgroupsIndirect(this.wbox, 0);
-    cp.end();
     // the map's own wind under it everywhere else: a band an update (all of it every WIND_BANDS updates), and the
-    // land just come in at once
+    // land just come in at once (a band's uniform is its own slot: written once)
     const rows = Math.ceil(this.th / WIND_BANDS);
     const b0 = this.band * rows;
+    const jobs: [number, [number, number, number, number], number][] = [[this.band, [0, b0, this.tw, Math.min(this.th, b0 + rows)], 1]];
+    this.fresh.splice(0).forEach((f, j) => jobs.push([WIND_BANDS + j, [Math.max(0, f[0]), Math.max(0, f[1]), Math.min(this.tw, f[2]), Math.min(this.th, f[3])], 1]));
     this.band = (this.band + 1) % WIND_BANDS;
-    this.run(enc, i++, [0, b0, this.tw, Math.min(this.th, b0 + rows)], 1);
-    for (const f of this.fresh.splice(0)) this.run(enc, i++, [Math.max(0, f[0]), Math.max(0, f[1]), Math.min(this.tw, f[2]), Math.min(this.th, f[3])], 1);
+    this.run(enc, jobs, (pass) => {
+      if (!paint) return;
+      pass.setPipeline(this.boxK.pipeline);
+      pass.setBindGroup(0, this.boxGroup);
+      pass.dispatchWorkgroups(1, 1);
+      // (the update and its copy over the GPU's box, direct — an indirect dispatch costs the phone ~0.1 ms whatever it
+      // runs: over the CPU's box, which is the GPU's while nothing has landed lately (windBox: its stamp is dead); else
+      // over the whole field, the texels past the GPU's box returning — the kernels' own check)
+      const gx = landing || !box ? Math.ceil(this.tw / 8) : Math.ceil((box[2] - box[0]) / 8);
+      const gy = landing || !box ? Math.ceil(this.th / 8) : Math.ceil((box[3] - box[1]) / 8);
+      pass.setPipeline(this.k.pipeline);
+      pass.setBindGroup(0, this.boxRun.group);
+      pass.dispatchWorkgroups(gx, gy);
+      pass.setPipeline(this.copyK.pipeline);
+      pass.setBindGroup(0, this.copyGroup);
+      pass.dispatchWorkgroups(gx, gy);
+      this.prof.dispatches += 3;
+    });
   }
   /** (prime) the whole field made at once: the map's own wind everywhere, before anything reads it */
   prime(enc: GPUCommandEncoder): void {
-    this.run(enc, 0, [0, 0, this.tw, this.th], this.rects ? 1 : 0);
+    this.run(enc, [[0, [0, 0, this.tw, this.th], this.rects ? 1 : 0]]);
   }
 }
 
@@ -620,6 +677,14 @@ export class SwaySystem implements SimSystem {
   readonly perFrame = true;
   private s: { k: ComputeKernel; group: GPUBindGroup };
   private lister?: { k: ComputeKernel; group: GPUBindGroup; list: GpuTileList; empty: GPUBuffer; n: GPUBuffer; count: number };
+  /**
+   * (phone-idle) The sway asleep on the CPU's word: awake while the air is stirred as far as the CPU knows
+   * (WindFieldSystem.stirred) and, after, until a read of its list's count says no chunk is windy or still swinging;
+   * then nothing is encoded or uploaded — the plants keep the lean they have, as a chunk off the list does.
+   */
+  private settle?: SettledRead;
+  private readIn = 0;
+  private asked = 0;
   private restless: GPUBuffer;
   private all: number[] = [];
   constructor(
@@ -651,13 +716,23 @@ export class SwaySystem implements SimSystem {
     const lk = makeCompute(device, 'sway-list', [commonWgsl, materialsWgsl, `const VEC4S: u32 = ${tiles.vec4s}u;`, swayListWgsl], lspec, 'swayList');
     const lgroup = makeBindGroup(device, 'sway-list', lk.layout, { 0: world.globals, 2: world.materials, 3: world.surface, 5: this.restless, 6: list.list, 7: list.args, 8: n, 15: world.windFieldView, [TILES]: tiles.list(SWAY_SCOPE) });
     this.lister = { k: lk, group: lgroup, list, empty, n, count: all.length };
+    this.settle = new SettledRead(device, 'sway', list.args, 0, 4, (w) => w[0] === 0, 1);
   }
-  encode(enc: GPUCommandEncoder): void {
+  encode(enc: GPUCommandEncoder, tick = 0): void {
     const L = this.lister;
     if (!L) {
       dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
       return;
     }
+    const st = this.settle!;
+    // (no wind system for this world: the CPU knows nothing of its air — never asleep)
+    const stirred = windOf.get(this.world)?.stirred(tick) ?? true;
+    if (stirred) {
+      st.wake();
+      this.asked = 0;
+      this.readIn = 0;
+    }
+    if (!st.awake) return;
     // (the chunks the wind wakes, or still settling: listed on the GPU, then the spring over them, indirect. The scope's
     // entries carry each chunk's page — packed again each frame, so a slide's new pages are the list's)
     this.world.tiles!.setList(SWAY_SCOPE, this.all);
@@ -671,9 +746,16 @@ export class SwaySystem implements SimSystem {
     const p2 = enc.beginComputePass({ label: 'sway', timestampWrites: this.prof.timestamps('sway') });
     p2.setBindGroup(0, this.s.group);
     p2.setPipeline(this.s.k.pipeline);
+    // (indirect: the list is anything from one gust's chunks to the whole window under a storm, and only the GPU has it;
+    // awake only while the wind blows or the springs swing)
     L.list.dispatch(p2);
     p2.end();
     this.prof.dispatches += 2;
+    // (settled? asked once the air is still, a frame after, then at doubling gaps while the springs swing)
+    if (!stirred && --this.readIn <= 0) {
+      st.encode(enc);
+      this.readIn = Math.min(SWAY_READ_EVERY_MAX, 1 << Math.min(this.asked++, 30));
+    }
   }
 }
 

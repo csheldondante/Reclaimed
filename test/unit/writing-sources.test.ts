@@ -60,6 +60,7 @@ const SOURCES: Record<string, Source> = {
   'scenes/level/mutators.ts': { who: 'dev', why: 'the mutator lab’s notes and the map pins’ labels (?mutlab=1; the pins are a stand-in until the map tints places: BACKLOG MU-5)' },
   'citygen/panel.ts': { who: 'dev', why: 'citygen’s time-lapse and districts debug panel (?timelapse=1, ?citypanel=1)' },
   'perf/citygenbench.ts': { who: 'dev', why: 'a bench' },
+  'perf/idlebench.ts': { who: 'dev', why: 'a bench' },
   'perf/livingbench.ts': { who: 'dev', why: 'a bench' },
   'streetlab/control.ts': { who: 'dev', why: 'the street lab’s panel' },
   'citylife/towns.ts': { who: 'dev', why: 'the living town’s debug panel (?living=1)' },

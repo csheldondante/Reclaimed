@@ -23409,3 +23409,142 @@ brown); no flakes show in the air; a speckle on the houses. Does not read (MU-31
 fail (roadlab writing lint, MU-14); gpu mutators 39 pass (flood: level kept on the entry, one level, no water over it,
 written whole once on arrival).
 
+## 2026-11-15 — the idle frame counted: a census, the ranking, the valley's reads off, the idle bench (PI-1..PI-10, `phone-idle`)
+
+The user on the Pixel 9a, about the atlas level with a town: "very very slow. Unplayable really". The same day's phone
+measurements gave the cost of a call (docs/FRAMECOST.md "The phone's cost model"): an indirect dispatch ~0.1 ms whether
+it does 1 workgroup or 0, a direct one ~0.008 ms, a pass ~0.02 ms, a read of 1–3 MB 20–35 ms. So the question became
+what the idle frame asks for, by count, since per-pass timestamps don't add up on a tiler.
+
+**The census** (`?census=1`; src/gpu/census.ts the counter and the scopes, src/perf/census.ts the page's side;
+test/unit/census.test.ts). The WebGPU prototypes are wrapped in one place (as perf/readstats.ts wraps `mapAsync`), so
+no call site changes; systems open a scope round what they encode (`censusEnter` / `censusLeave`: one null check when
+off). The counter lives in gpu/ because the sim and the renderer open scopes and the engine may not import perf/ (the
+boundary gate caught the first placement). Unscoped calls fall to their pass's or buffer's label, so nothing is lost.
+`scripts/census.mjs` runs the user's level headless in four states.
+
+**What it found** (desktop headless, 412x915, the user's URL; FRAMECOST has the tables):
+- Idle: 75.6 indirect dispatches, 74.5 direct, 60.6 compute passes, 3.3 render passes, 27 draws and 191 indirect
+  draws, 1.26 reads (34.7 KB) a frame, 0.86 ticks. The model: 9.9 ms a frame on the phone, 7.6 of it the indirect
+  dispatches. The living town's graph is 30 of them and the town contracts 28: both encode their whole solve every
+  frame as indirect dispatches the GPU sizes to 0 when settled.
+- The link without `q=low` is the same page: `q` defaults to low and the phone's flags are added either way
+  (`scripts/census.mjs --noq`: the same quality, flags and counts).
+- Panning and the time-lapse: `Integrity`'s judge reads the whole layers buffer back after each slide or edit, 27–29 MB
+  a read (PI-5).
+- The level's first two frames hold the GPU 25–30 s headless here, past main.ts's 20 s watchdog (PI-9). The census
+  and the bench wait it out and say so; they don't hide another fatal.
+
+**The cut: the valley's timed reads off in the town game** (scenes/level/season.ts). `ValleyReads` reads the wind
+field at 4 Hz and the plants and the water at 1 Hz, ~400 KB each at this window, for the sandbox's painted wind, its
+Nature and its ambience. DA-B5 (round 128o) turned them off in fortress play; `startFortress` did it, and the
+switchover deleted fortress mode, so the town game had run them since 2026-11-10. Off where the season loop takes the
+sandbox's tools away. Idle: 34.7 KB → 0.91 KB read back a frame (2.4 MB → 63 KB a second), reads 1.26 → 0.99 a frame
+(what is left is the units' sync, DA-B2b). **It changes sound:** the ambience hears no plants or water round the view
+(birdsong, insects, running water, frogs), as in fortress play after DA-B5. PI-3 is the GPU reduction that brings them
+back.
+
+**Why nothing else was cut.** Every other indirect dispatch is GPU-gated by design (UC-8, RT2-4, LT-F6, DA-B26): the
+wake is a GPU word the CPU never reads, so the CPU has nothing to gate on, and the brief's rule was to gate only from
+what the CPU already knows, never by adding a read. LT-F6 had left exactly this open ("a CPU signal only if the phone
+bench shows empty dispatches cost"). FRAMECOST "The decision the rest needs" lists three patterns (a settled signal
+read after events; direct dispatch gated in the kernel; fewer encoded). Each is a design change: asked, not built.
+
+**The idle bench** (`?idlebench=1`, src/perf/idlebench.ts, on physbench's toggle method): the idle frame's interval,
+GPU-done time and census; 19 systems off and on (the sim's `paused` set, the renderer's `?skip=` set, which the
+frame-compute hooks now answer to by a `skipKey`); and five probes that price the decision's patterns on the phone:
+64 indirect dispatches of 0, 64 direct, 16 direct of 1024 gated workgroups, a 64-byte read a frame, 128 indirect
+draws of 0. Headless (scripts/idlebench.mjs) it completes and writes its report; the desktop's differences are noise
+(±3 ms between windows on an iGPU with no vsync), which is the point of running it on the phone.
+
+**Measured.** Desktop proxy only (Intel iGPU, D3D11, headless Chrome). Census counts are exact; the model's ms are the
+phone's per-call costs times those counts, not a phone run. Idle model 9.9 → 9.5 ms a frame.
+
+**Hacks and limits.** The census wraps prototypes: a call made through a saved unwrapped reference isn't counted (none
+found). A texture copy's bytes are texels × 4, not the format's. Reads are counted in the frame that starts them. The
+bench's coarse-world toggle swaps `Coarse.stepPart` for a no-op while off (a bench-only monkeypatch); its UI toggle
+hides `#ui`; its indirect-draw probe borrows the renderer's body pipeline. The bench's GPU-done time includes waiting
+on a frame already in flight. The scripts take down the watchdog's overlay after the first-frame stall (only that
+message) so the states after it can be measured. test/unit/writing-sources.test.ts fails on `fortress` 555bdca3 for
+src/roadlab/control.ts (not this branch's; left).
+
+**Checks run.** `npx vitest run --project unit` (627 passed, 1 failed: PI-12, the base's), `npm run typecheck`,
+`node scripts/census.mjs` (its three idle gates pass), `node scripts/census.mjs --noq`, `node scripts/idlebench.mjs`
+(24 toggles at the first defaults, 194 s; at the shorter defaults only a 7-toggle run was timed, 80 s — the full set at
+12 s and 1 s windows is ~155 s by sum, not run), `npm run smoke` (atlas: loaded, no fatal, its sim running). The smoke
+takes no picture; the user's level was looked at in the census's shot before and after the cut (the town, its river
+and bridge, the card sheet: the same) and the bench's page in its own.
+
+## 2026-11-15 — a slide alone reads nothing back: the judge's 27 MB copy only when a pass is asked for (PI-5, `phone-idle` round 2)
+
+The orchestrator's ruling after round 1: the judge's whole-window read first, lazy and event-driven. The census had
+`Integrity` reading the whole layers buffer back after every slide (27–29 MB, 7–10 times in a 10 s pan, 5 in a
+time-lapse whose camera eases across regions).
+
+**The cause.** A slide sets `orphanCheck` (External intervals no claim holds go back to ground). That check went
+through a judge pass, and a kept copy's pass reads whole after a slide (the copy is of the window before). So every
+slide bought a whole read with nothing to judge. The check itself never needed the read: it is one GPU kernel
+(`gpuEdit.orphans`) fed the claims the CPU holds.
+
+**The change** (game/integrity/tick.ts `orphansAfterSlide`). With a kept copy and nothing to judge (no dirty box, no
+cut seed, no body, no rigid rock) the tick runs the orphan kernel and returns: no pass, no read. It waits for the
+slide's land as a pass does (`landPending`). The copy stays the old window's until something asks for a pass (an edit,
+a blow, a body); that pass reads whole, as before, and does the copy's own orphan check and the claims' check then.
+
+**Measured** (scripts/census.mjs, desktop headless, per frame):
+
+| state | read back before | after | model before → after |
+|---|---|---|---|
+| pan, 30 cells/s for 10 s | 383 KB a frame (7–10 reads of 27–29 MB) | 6.8 KB a frame, none of it Integrity's | 14.2 → 9.7 ms |
+| Next season time-lapse | 185 KB a frame (5 reads of 27 MB) | 1.1 KB a frame | 11.9 → 10.1 ms |
+
+**Tests.** test/gpu/integrity-slide.test.ts: three slides read 0 bytes and run no pass, the check clears; an edit
+after them gets its pass on a whole read; nothing more is read after. The existing integrity, external, external-take
+and buried-external GPU tests pass. scripts/census.mjs gates the pan (Integrity reads nothing) and the time-lapse
+(under 1 MB read in all).
+
+**Hacks and limits.** The level's first read of the whole copy stays (once, at boot: consumers read `cols.whole`
+without asking). A pass asked for after a slide still reads whole (27 MB once per request): the judge can't yet work
+from the dirty box alone when its copy is of another window (`readFor` reads chunks only into a copy of this window) —
+PI-5 stays open for that. Between a slide and the next pass the claims aren't verified against the columns
+(`ext.verify`); before, a slide's pass did it as a side effect. Nothing cuts a claim without an edit marking a box, and
+at rest with no slide it was never run either.
+
+## 2026-11-15 — round 2: the idle frame asleep (PI-13..PI-20, `phone-idle`)
+
+The orchestrator ruled on round 1's open decision: event-driven solves sleep on the CPU's word with a small
+event-chained read (allowed by DESIGN §24), every-frame work goes direct with an early-out in the kernel, and a sim
+with nothing changing encodes nothing. Four agents took a system each in the one worktree (living town, town
+contracts, the liquids with wind, sway and coarse, the terrain mesh); main wrote the shared gate, did the judge's read,
+and ran the combined state in the browser.
+
+- **The settled gate** (gpu/settled.ts; test/unit/settled.test.ts): `wake()` on a CPU-known event; while awake the
+  system encodes its work and a copy of a few state words, one read in flight; a read taken after the last wake (and
+  its hold) that says settled puts it to sleep. No event, no read.
+- **Town contracts** (32b50ae5, 9913cd07): first made every dispatch direct and gated in the kernel (0 indirect, but
+  1.31 M early-out threads a frame at rest: ruled not acceptable); then asleep at rest on two settled reads. Wakes:
+  the town set, the gate rule, a slide, the place uniform, a town's mesh runs (a district rising), a gate's wall up,
+  any sim event near the town (`Simulation.eventTaps` → `wakeAt`). **Behaviour, as ruled:** a change only the GPU
+  knows waits for the next wake (PI-14a).
+- **Living town** (bd670b85): the graph's pass only while unsettled; settled, one pass of ~9 direct dispatches plus
+  the works. GPU-only wakes are heard by a read every 20 frames, only while a quarry, a forest or a wall exists
+  (ruled an event-chained read: those works start from a card); a rebuild can start up to 20 frames late (PI-14b).
+- **Terrain mesh** (fcd18597): 10 passes and 5 indirect → 1 pass, 10 direct. The build kernels re-threaded so a
+  direct dispatch over one slot is 81 workgroups a kernel at any height. Full sleep is built and off (PI-15).
+- **Liquids, wind, sway, coarse** (e39908f7): lava asleep with none; water direct but for `prep`; the wind field's
+  box kernels only when painted or something landed; sway and coarse asleep at rest. The game's lava is still the
+  older system (PI-17).
+- **The judge's read** (9482f25d): see the entry above.
+
+**Measured** (FRAMECOST "Round 2"): idle 75.6 → 1.4 indirect dispatches a frame, the model 9.9 → 1.9 ms (1.1 ms in the
+bench's own idle window); panning 14.2 → 1.7; the time-lapse 11.9 → 2.9; just loaded 5.3 → 2.0. Desktop counts; the
+phone's bench run is the user's.
+
+**Hacks and limits.** The holds (2 frames by default, 4 for the contracts, 1 for the liquids), the living town's
+20-frame watch, the liquid's `SPILL = 8` and its read gaps doubling to 64 ticks, the wind's 2-tick landing margin.
+The contracts' deferred GPU-only wakes and a side solve that can pause mid-rounds until the next wake. Existing tests
+of the contracts and the living town gained explicit `wake()` calls where they write buffers behind the CPU's back.
+The bench is 178 s here with the first-frame stall: on a slower boot it would pass three minutes. The people moving
+was checked by eye on two frames, and by the living town's GPU tests, not by reading riders back in the browser.
+Agents' leftovers: PI-19. Not done: PI-9 (the first frames' stall: no time spent), the ambience (PI-3: no CPU source
+that survives a slide).

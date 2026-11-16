@@ -11,15 +11,23 @@
 // 2: no piece) is a barrier too, as citygen meant it: the water there is the wall (its banks would let a walker round
 // the last tower otherwise — Muru's river does).
 //
-// Woken on the GPU, never by the CPU's reading anything:
+// Encoded only while the CPU holds the side map awake (contracts.ts: a CPU-known event — the towns, the gate rule, a
+// slide, an edit near a town, a town's mesh run — until a small read of CTL says settled; asleep, nothing is dispatched).
+// While awake, what starts a solve is decided here:
 //   sideWatch (a town: a thread a chunk)  the newest shape version of the chunks over its ring's box (a piece risen, a
 //                                         breach) and their water class's, a hash of its ring's words, its ring's box
 //   sideWake (one thread)                 a shape version newer than the last solve's, a hash moved, the window slid
 //                                         (G.org, G.ring), the CPU's input epoch moved (towns made or let go, the gate
 //                                         rule), or (at most every WATER_GAP frames) a newer water class → a solve starts
 //                                         when none is running (a change mid-solve waits for the next)
-// A solve: sideClear, sideRaster (a town), sidePrep, then rounds of sideHook + sideJump + sideRound (indirect: 0
-// workgroups once settled) until a round changes nothing, then sideFinal writes the map and sideDone counts the solve.
+// A solve: sideClear, sideRaster (a town), sidePrep, then rounds of sideHook + sideJump + sideRound until a round
+// changes nothing, then sideFinal writes the map and sideDone counts the solve.
+// The solve's kernels are DIRECT dispatches gated here (phone-idle round 2: an indirect dispatch costs the phone ~0.1 ms
+// even at 0 workgroups, 20 of them a frame): every thread reads SC_STATE first and returns unless its stage is on —
+// ST_PREP (clear, raster, prep), ST_ROUNDS (hook, jump), ST_FINAL (final). The one-thread kernels move the state exactly
+// where they set the indirect arguments before, so the same kernels do work in the same order in the same frame.
+// Asleep, the watch doesn't run: a shape version moved by a sim's own kernel, or the water's class crossing by itself,
+// is seen by the first sideWatch after the next CPU wake (the versions are kept: SC_SEENV, SC_SEENW).
 
 // (the chunk table, binding 1: layers.wgsl's, prepended — and materials.wgsl after it)
 @group(0) @binding(3) var<storage, read> layers: array<vec4<u32>>;
@@ -30,26 +38,19 @@
 @group(0) @binding(8) var<storage, read_write> TOP: array<f32>;
 @group(0) @binding(9) var<storage, read_write> CTL: array<atomic<u32>>;
 @group(0) @binding(10) var<storage, read_write> SIDES: array<u32>;
-/** the solve's indirect dispatches (SC_ARG_*): bound only by the one-thread kernels that set them — a buffer read as
- *  indirect args can't be bound writable in the dispatch it sizes */
-@group(0) @binding(12) var<storage, read_write> ARGS: array<u32>;
 
 struct SideP {
   /** the town's grid in the window: x, y (world units), z (window z less world z), unused */
   place: vec4<f32>,
-  /** x the town's slot (NONE: the global kernels'), y 1 gates closed, z the CPU's input epoch, w the window's columns
-   *  dispatch (workgroups of 64) */
+  /** x the town's slot (NONE: the global kernels'), y 1 gates closed, z the CPU's input epoch, w (the global kernels')
+   *  the CPU's frame count — every frame, awake or asleep: WATER_GAP is real frames */
   misc: vec4<u32>,
   /** x the deepest water walked (a deeper column is a barrier), y the highest step between neighbours, zw unused */
   f: vec4<f32>,
 };
 @group(0) @binding(11) var<uniform> SP: SideP;
 
-// ---- ARGS: three indirect dispatches (x, y, z, pad) ----
-const SC_ARG_PREP: u32 = 0u;
-const SC_ARG_ROUND: u32 = 4u;
-const SC_ARG_FINAL: u32 = 8u;
-// ---- CTL (towncontracts/contracts.ts SC — keep in step) ----
+// ---- CTL (towncontracts/contracts.ts SC — keep in step; words 0–11 unused: the indirect arguments' once) ----
 const SC_STATE: u32 = 12u;
 const SC_CHANGED: u32 = 13u;
 const SC_DIRTY: u32 = 14u;
@@ -104,7 +105,8 @@ const VER_VEC2: u32 = 10u;
 fn N() -> u32 { return G.mapW * G.mapH; }
 fn ctl(i: u32) -> u32 { return atomicLoad(&CTL[i]); }
 fn setCtl(i: u32, v: u32) { atomicStore(&CTL[i], v); }
-fn args(at: u32, n: u32) { ARGS[at] = n; ARGS[at + 1u] = 1u; ARGS[at + 2u] = 1u; }
+/** the solve's gate: a stage's threads do nothing unless the state is theirs */
+fn stageOff(st: u32) -> bool { return atomicLoad(&CTL[SC_STATE]) != st; }
 
 fn corner(b: u32) -> vec2<f32> { let o = WB_V + 2u * (b % NB); return vec2<f32>(bitcast<f32>(WALLW[o]), bitcast<f32>(WALLW[o + 1u])); }
 fn segDist(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, past: f32) -> f32 {
@@ -175,7 +177,7 @@ fn sideWake() {
   var dirty = ctl(SC_DIRTY);
   let v = ctl(SC_NEWV);
   if (v != ctl(SC_SEENV)) { setCtl(SC_SEENV, v); dirty = 1u; }
-  let frame = ctl(SC_FRAME) + 1u;
+  let frame = SP.misc.w;
   setCtl(SC_FRAME, frame);
   let wv = ctl(SC_NEWCLASS);
   if (wv != ctl(SC_SEENW) && frame - ctl(SC_LASTW) >= WATER_GAP) { setCtl(SC_SEENW, wv); setCtl(SC_LASTW, frame); dirty = 1u; }
@@ -191,9 +193,6 @@ fn sideWake() {
   if (ctl(SC_STATE) == ST_IDLE && dirty == 1u) {
     setCtl(SC_STATE, ST_PREP);
     dirty = 0u;
-    args(SC_ARG_PREP, SP.misc.w);
-  } else {
-    args(SC_ARG_PREP, 0u);
   }
   setCtl(SC_DIRTY, dirty);
 }
@@ -201,12 +200,14 @@ fn sideWake() {
 // ---- a solve ----
 @compute @workgroup_size(64)
 fn sideClear(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (stageOff(ST_PREP)) { return; }
   if (g.x < N()) { atomicStore(&MASK[g.x], 0u); }
 }
 
 /** a town's region (inside its ring, or on the wall's band) and, with gates closed, its gates' barriers */
 @compute @workgroup_size(64)
 fn sideRaster(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (stageOff(ST_PREP)) { return; }
   let i = g.x;
   let s = SP.misc.x;
   if (i >= N() || WALLW[0] != 1u) { return; }
@@ -248,6 +249,7 @@ fn sideRaster(@builtin(global_invocation_id) g: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn sidePrep(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (stageOff(ST_PREP)) { return; }
   let i = g.x;
   if (i >= N()) { return; }
   let c = winXY(i);
@@ -273,14 +275,13 @@ fn sidePrep(@builtin(global_invocation_id) g: vec3<u32>) {
 fn sideAfterPrep() {
   if (ctl(SC_STATE) != ST_PREP) { return; }
   setCtl(SC_STATE, ST_ROUNDS);
-  args(SC_ARG_PREP, 0u);
-  args(SC_ARG_ROUND, SP.misc.w);
   setCtl(SC_CHANGED, 0u);
   setCtl(SC_ROUNDS, 0u);
 }
 
 @compute @workgroup_size(64)
 fn sideHook(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (stageOff(ST_ROUNDS)) { return; }
   let i = g.x;
   if (i >= N()) { return; }
   let l = atomicLoad(&LABEL[i]);
@@ -305,6 +306,7 @@ fn sideHook(@builtin(global_invocation_id) g: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn sideJump(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (stageOff(ST_ROUNDS)) { return; }
   let i = g.x;
   if (i >= N()) { return; }
   let l0 = atomicLoad(&LABEL[i]);
@@ -327,14 +329,13 @@ fn sideRound() {
   setCtl(SC_ROUNDS, ctl(SC_ROUNDS) + 1u);
   if (ctl(SC_CHANGED) == 0u) {
     setCtl(SC_STATE, ST_FINAL);
-    args(SC_ARG_ROUND, 0u);
-    args(SC_ARG_FINAL, SP.misc.w);
   }
   setCtl(SC_CHANGED, 0u);
 }
 
 @compute @workgroup_size(64)
 fn sideFinal(@builtin(global_invocation_id) g: vec3<u32>) {
+  if (stageOff(ST_FINAL)) { return; }
   let i = g.x;
   if (i >= N()) { return; }
   let m = atomicLoad(&MASK[i]) & M_TOWN;
@@ -346,7 +347,6 @@ fn sideFinal(@builtin(global_invocation_id) g: vec3<u32>) {
 fn sideDone() {
   if (ctl(SC_STATE) != ST_FINAL) { return; }
   setCtl(SC_STATE, ST_IDLE);
-  args(SC_ARG_FINAL, 0u);
   setCtl(SC_SOLVES, ctl(SC_SOLVES) + 1u);
   setCtl(SC_LAST_ROUNDS, ctl(SC_ROUNDS));
 }
