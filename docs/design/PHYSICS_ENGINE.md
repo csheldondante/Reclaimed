@@ -1761,3 +1761,62 @@ Built and tested: items 1 to 3 of the brief with the stand-in above, one chain t
 spread bake (PM4, the one thing that makes parts movable again), the mixed pile with breaking, the loose ends and the
 other lab buttons (PM6). Open findings: PM2, PM5. Run first:
 `npx vitest run --project gpu engine-meet engine-chain engine-pairs engine-settle`, `npm run typecheck`.
+
+## One branch (`physics10-one`, 2026-11-15): what was merged, and where settled parts stand
+
+`physics10-one` is `physics10-atlas` 401ec42c with `physics10-all` a4e92649, `physics10-join` 719c22cb and
+`physics10-mech` 3c9a8b82 merged in that order. The sections above are each branch's own, kept whole.
+
+### Numbers the branches both used, as they are now
+
+| what | now | was |
+|---|---|---|
+| the uniform `EngU` | 288 B: `o`, `p`, `q` the grab's; `r.x` the look's shock reach | the look had `l.w`, then `o.x` |
+| row flags | `ROW_GRAB` 128, `ROW_HELD` 256 | both 128 |
+| pool header | `P_GRAB` 23, `P_HELD` 24, `P_EXPAND_WAIT` 40, `P_DL_MAKING` 41 | grab and held both 23 |
+| bindings | 51 the ground tops, 52 the terrain lists' arguments; 56 to 60 the meet kernels' (candidates, the substep's share, the store's data, the rows' models, the store's rows) | the meet kernels had 51 to 55 |
+| uniform bits `EU.e.w` | 32 held parts, 256 a bench's held scene | — |
+
+### The tick, merged
+
+A quiet tick encodes nothing (the join). It is never quiet while a grab is held (the read issued with the grab's tick
+shows the row still asleep). Measured in the playground (`node scripts/enginecounts.mjs`, the six lab scenes): asleep
+0 + 0; awake with nothing deforming 57 direct + 8 indirect (the
+join's count; the meet kernels are inside stage 4, which the gate leaves out). With stage 4 open: 85 indirect more
+(80 + `meetLink` + a `meet` a lattice substep).
+
+### Settled parts (PM4): not built on this branch. Where it stands
+
+`Engine.holdParts` is **off** by default: a settled part is a free row with no distance field. It rests on the ground
+and other bodies pass through it. Pinned by `test/gpu/engine-chain.test.ts` "PM4, not built" (an expected failure: a
+block dropped on a settled part ends on the ground under it, 11.00 against the part's 12.79). The held mode
+(`holdParts = true`: the body's particles stand in, the parts pinned) still works and is held by two tests of
+`engine-chain`; it is the hack the owner ruled out as a default.
+
+Nothing of the bake was started: it was read through and judged more than the two hours given. What it needs, in
+the order to build, and what was found while reading:
+
+1. **The host must learn of a new part.** Today it does not know which rows the GPU made (`partRow`,
+   `engine_settle.wgsl`). A log is needed: row, the part's heap model (its identity), and the bounds of its cells
+   about its centre — appended by `partRow`, read with the chained read (which already carries the pool's header).
+2. **Read latency is the hard part of the stand-in.** The log lands some ticks after settle. A box field made from
+   it needs a store row and a bake of its own, after that read: so a box stand-in cannot cover the first ticks. Two
+   ways that can: (a) keep the held particles as the stand-in until the field is ready, then clear `ROW_HELD` and
+   let the slot go in one tick (BACKLOG PM4's own plan; everything it needs but the swap exists and is tested); (b)
+   an analytic box in the fine and coarse passes for a row whose model word says "box" (new shader paths in
+   `sdf-fine.wgsl` and `sdf-coarse.wgsl`, both ways round: samples against it and its samples against others). (a)
+   departs from the brief's wording ("its oriented bounding box as a box field"): a design change for the owner.
+3. **A part's cells are not on a lattice.** A compact model holds each cell's rest place where it lay (a bent beam
+   keeps its bend), so `hexSdfSpec`'s rule (a cube is matter when a lattice cell holds its centre) does not carry
+   over. A GPU kernel must mark the store's occupancy bits from the records' places (a thread a cell, atomic OR into
+   the cubes it covers), into a store row allotted without CPU bits (`SdfModels` has no such `add` yet).
+4. **The spread bake.** `SdfModels.flush` encodes seed, the flood's passes, finalize and the bricks in one submit.
+   It needs a stepped form: scratch kept across ticks, a budget of flood passes a tick, the model's row written last.
+5. **The swap must check the row.** Between the log and the swap the row may have been expanded again, freed and
+   given to another part. The model word must be written by a command `compact` runs, which checks the row's heap
+   model against the log's (not by a host write to the row's model word).
+6. **A part's model must be given back** when its row dies (expanded again, crumbled, cleared): the host is not told
+   today, so the store would leak a field a part. The same log can carry deaths.
+7. Tests asked for: a block cracked in two, both halves resting on the ground and on each other from the first tick
+   after settle; a third block dropped on a settled half rests on it (the pinned test, `.fails` taken off); the half
+   hit again breaks again; no pose changes at the swap.

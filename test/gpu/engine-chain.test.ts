@@ -134,6 +134,32 @@ test('a slab broken over a ridge: its parts stay where they settled and hold wha
   expect(P[POOL.deforming]).toBe(1);
 }, 240_000);
 
+// THE GAP, pinned (BACKLOG PM4, PO7; MODE: free parts, the default). A settled part is a row with no distance field:
+// a block dropped on it falls through it to the ground. This test states what PM4 is to make true and is expected to
+// fail until then: when a part has its own field (or a stand-in), take `.fails` off.
+test.fails('PM4, not built: a block dropped on a settled part (free parts, the default) rests on it', async () => {
+  const R = await breakRig(g, ridge);
+  expect(R.e.holdParts).toBe(false);
+  const slab = R.e.add({ cells: box(12, 12, 40, 12, 4, 3) })!;
+  for (let t = 0; t < 300 && !(await R.pool())[POOL.expands]; t += 10) await R.step(10);
+  await rest(R, 30 * 60);
+  const parts = (await R.rows()).filter((r) => r.flags & ALIVE && !(r.flags & DEFORM) && r.mass < slab.mass);
+  expect(parts.length).toBeGreaterThanOrEqual(2);
+  const big = parts.sort((a, b) => b.mass - a.mass)[0];
+  const cx = Math.round(big.pos[0] - 0.5);
+  const cy = Math.round(big.pos[1] / 0.866 - 0.5);
+  const block = R.e.add({ cells: box(cx - 1, cy - 1, Math.ceil(big.pos[2]) + 4, 2, 2, 2) })!;
+  let low = Infinity;
+  for (let t = 0; t < 300; t += 10) {
+    await R.step(10);
+    low = Math.min(low, (await R.row(block.row)).pos[2]);
+  }
+  log(`free parts: a block dropped on the part at z ${big.pos[2].toFixed(2)} went as low as ${low.toFixed(2)}`);
+  ok();
+  // (on the part its centre stays a cell over the part's; through it, it ends on the ground under the part's centre)
+  expect(low).toBeGreaterThan(big.pos[2] + 0.5);
+}, 240_000);
+
 // The chain, as the lab's button has it (src/levels/playground.ts, the pile station): a stone slab B lies across a
 // concrete post with one end overhanging; a thin brick slab C lies on the ground under the overhang. A stone block A
 // is thrown down on the overhang. B is to break, what comes down — the end of B, and A with it — to land on C, and C

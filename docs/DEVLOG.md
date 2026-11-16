@@ -24431,3 +24431,44 @@ which the gate leaves out); with stage 4 open it is five indirect dispatches mor
 
 **Hacks and limits.** PO7 (with held parts off, parts pass through bodies: the open gap); PM2, PM5 (the mechanics' own);
 the lab's chain button runs in the default mode, where C does not break.
+
+## 2026-11-15 — one branch: settled parts not built, the gap pinned; captures, the bench, the counts (PO8 to PO12, PM4)
+
+**Settled parts (PM4): not built.** Read through against the two hours given and not started: it needs a GPU log of
+new parts, a kernel that marks the store's occupancy from a part's records (its cells are not on a lattice), a store
+row made without CPU bits, a stepped bake, a swap that checks the row is still the same part, and the model given back
+when the part dies; and a box field made after the read cannot cover the first ticks after settle (PHYSICS_ENGINE.md
+"One branch" has each with its reason). `holdParts` stays off. The gap is pinned: `engine-chain` "PM4, not built: a
+block dropped on a settled part rests on it" is an expected failure (the block ends at 11.00, on the ground, under a
+part at 12.79).
+
+**The bench was broken under `engine:runs`, fixed.** Its tanker stage grabbed by a point; under the engine route the
+tanker is an engine row, which is grabbed by a ray: the stage threw and no report came. It passes a ray straight down
+now (PO8; the tanker is dragged at 2 over its height, not swung into the girders). `node scripts/physbench.mjs --pairs
+engine:runs`, desktop (Intel Xe, headless Chrome, 412 x 915), alone on the GPU, frame ms p50 / p95 / p99: the rigid
+blocks 9.8 / 12.3 / 13.5; the line-up 9.9 / 11.2 / 13.5; the rock towers 9.9 / 18.3 / 153.9; the mesa 9.9 / 12.5 /
+39.5; the house towers 9.9 / 11.3 / 15.2; the tanker 9.7 / 11.1 / 11.9. (Two earlier runs overlapped each other on
+the GPU and are not kept.)
+
+**Dispatches a tick** (`node scripts/enginecounts.mjs`, new: `Engine.counts` sampled in the lab's scenes, no GPU read):
+asleep 0 direct + 0 indirect; awake with nothing deforming 57 + 8; with stage 4 open 58 + 93, in every scene (the
+stack, the pit, the chain, stone from three heights, the brick wall, the mesa). Two ticks in a scene read 58 + 92.
+The chain was still at 58 + 93 with 2 rows awake 14 s after the press; the pit had 3 of 48 rows awake.
+
+**Captures** (412 x 915, `one-*` in the session's scratchpad `physics10/`; each looked at):
+- the stack: five blocks stand as dropped. Small in the frame at the station's own view.
+- the pit: the rubble lies in the pit, some blocks broken, dark where they cracked.
+- the brick wall: flat on its pad in bricks. Stone from three heights: three blocks on their pads, the one from the
+  highest cracked and darker.
+- the mesa: its slab came off whole and leans at the mesa's foot, plain grey beside the textured rock (PT2).
+- the chain: the block sits on the slab's overhanging end as a dark lump; the brick slab under it is cracked; the
+  slab did not come down on it (free parts, the default: PO7).
+- telekinesis: one drag grabs nothing; a double tap and drag lifts the top block (20.4 to 22.4) off the four under
+  it, which stand; let go, it falls to the ground.
+- the town: the huge block fells the house (lot 148, a hit of 22,264): plain grey blocks where it stood (PA12), the
+  boulder and the block beside them. Two of four runs; the other two settled on other houses and felled none (PO9).
+
+**Tests.** `npm run typecheck` clean; `engine-chain` 4 passed, 1 expected fail; the unit project as before (PO4).
+
+**Hacks and limits.** PO7 (parts pass through bodies), PO8 (the bench's tanker is dragged, not swung), PO9 (the town
+gate by where the view settles), PO12 (`failSettle` counts, not looked into), PO2, PO3.

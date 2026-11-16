@@ -73,7 +73,12 @@ const STAGES: Stage[] = [
       // (the drag tool's pull: the tanker grabbed where it lies — the metal station's, storage x 238–250, rows 226–231,
       // on ground at 10 — swung up and across into the girder bridge, rows 197–199 at 20)
       const RH = Math.sqrt(3) / 2;
-      const g = ig.grabAt(244, 228.5 * RH, 14, 16);
+      // (under ?solver=engine the tanker is a row of the engine, which is grabbed by a view ray and not by a point — the
+      // telekinesis tool's route: a ray straight down through the tanker, then through each target. The engine holds the
+      // row 2 over the height it was grabbed at, so there the tanker is dragged across at that height and is not swung
+      // up into the girders: BACKLOG PO8. Before this the stage threw under engine:runs and the bench gave no report.)
+      const down = (p: [number, number, number]) => ({ o: [p[0], p[1], p[2] + 60] as [number, number, number], d: [0, 0, -1] as [number, number, number], r: 4 });
+      const g = ig.grabAt(244, 228.5 * RH, 14, 16, down([244, 228.5 * RH, 14]));
       if (!g) throw new Error('physbench: no tanker to grab at the metal station');
       const path: [number, number, number][] = [
         [244, 228.5 * RH, 30],
@@ -82,9 +87,10 @@ const STAGES: Stage[] = [
       ];
       for (const target of path)
         for (let k = 0; k < 40; k++) {
-          ig.pull(g, target, 1 / 60);
+          ig.pull(g, target, 1 / 60, 40, down(target));
           await new Promise((r) => requestAnimationFrame(r));
         }
+      ig.letGo(g);
     },
     secs: 6,
   },

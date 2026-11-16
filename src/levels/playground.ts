@@ -283,7 +283,7 @@ export const STATIONS: Station[] = [
     name: 'rigid',
     rect: [112, 96, 256, 176],
     look: [197, 94, G + 8, 4],
-    hint: 'rigid blocks on stepped ground: onto the ramp, a beam over the ledge, a pile below. Blocks do not meet each other yet',
+    hint: 'rigid blocks on stepped ground: onto the ramp, a beam over the ledge, a pile below',
     actions: [
       {
         label: 'drop on the ramp',
@@ -320,7 +320,7 @@ export const STATIONS: Station[] = [
     name: 'pile',
     rect: [112, 96, 256, 176],
     look: [214, 96, G + 4, 10],
-    hint: 'bodies on bodies: a stack, rubble poured into a pit, a boulder into a stack, a beam across two blocks, a block thrown at a tower, the chain. A hard hit breaks a body; its parts stay where they settle and hold what lands on them',
+    hint: 'bodies on bodies: a stack, rubble poured into a pit, a boulder into a stack, a beam across two blocks, a block thrown at a tower, the chain. A hard hit breaks a body; its parts rest on the ground but other bodies still pass through them',
     actions: [
       {
         label: 'drop a stack',
@@ -521,7 +521,7 @@ export const STATIONS: Station[] = [
     name: 'break',
     rect: BREAK.rect,
     look: [66, 80, G + 2, 9],
-    hint: 'breaking: a stone block from three heights, a slab and a steel beam across a post, a brick wall pushed over. Bodies do not meet each other yet',
+    hint: 'breaking: a stone block from three heights, a slab and a steel beam across a post, a brick wall pushed over',
     actions: [
       {
         // (from 8 it stays whole, from 24 it cracks, from 48 it breaks up. Each comes down moving sideways a little, as
