@@ -58,5 +58,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let at = cellPos(vec2<i32>(id.xy)) + (vec2<f32>(rand3(id.x, id.y, 562u), rand3(id.x, id.y, 563u)) - 0.5) * 0.6;
   if (!floraSeen(at, top, 3.5, 1.2)) { return; }
   if (rand3(id.x, id.y, 564u) >= smoothstep(3.5, 6.0, PC.viewport.z * FLORA_RPX)) { return; }
-  floraPut(FL_REED, id.xy, at, top, 0.85 + 0.3 * smoothstep(0.4, 1.0, m), 0.06, 7u);
+  floraPut(FL_REED, id.xy, at, top, 0.85 + 0.3 * smoothstep(0.4, 1.0, m), 0.06, 7u, 0.0);
 }

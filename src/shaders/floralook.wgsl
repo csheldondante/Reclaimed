@@ -30,8 +30,11 @@ fn floraSway(k: u32, part: u32, a: vec3<f32>, sway: f32, at: vec2<f32>, lean: ve
   return vec3<f32>(off * sway, -dot(off, off) * sway * sway * 0.25);
 }
 
-/** A flora fragment's colour (sRGB-ish albedo, before toLinear) and, in w, its material (MAT_*), or −1: discard. */
-fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32, salt: u32) -> vec4<f32> {
+/** A flora fragment's colour (sRGB-ish albedo, before toLinear) and, in w, its material (MAT_*), or −1: discard.
+ *  `dead` (0..1; mutators round 5, BACKLOG MU-17 — "trees dying"): the plant has died that far. A dead tree stands
+ *  bare — most of its leaf faces gone by their own hash, what hangs on grey-brown (a conifer's needles rust) — its
+ *  wood weathered pale; grass and blades go to straw; petals fall. */
+fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32, salt: u32, dead: f32) -> vec4<f32> {
   let b = k * 6u;
   let fr = randv(vec3<i32>(floor(wpos * 1.7)) + vec3<i32>(i32(salt & 255u), 5, 11));
   let decid = FLORA_COL[b].w > 0.5;
@@ -45,6 +48,7 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
       if (randv(q) < 0.2) { c = markC; }
     }
     c = c * select(1.0, 0.7, part == 7u) * (0.88 + 0.2 * rnd);
+    c = mix(c, vec3<f32>(0.56, 0.53, 0.47) * (0.85 + 0.25 * rnd), dead * 0.6);
   } else if (part == 4u) {
     mat = f32(MAT_LEAVES);
     // winter: a deciduous crown thins to its twigs (faces drop out by their own hash as the season bares it)
@@ -54,19 +58,29 @@ fn floraLook(k: u32, part: u32, wpos: vec3<f32>, n: vec3<f32>, h: f32, rnd: f32,
       let sc = smoothstep(0.0, 0.3, seasonColour() * 1.3 - rnd * 0.3);
       c = mix(c, FLORA_COL[b + 4u].rgb * (0.75 + 0.35 * fr) * (0.72 + 0.3 * n.z), sc);
     }
+    if (dead > 0.0) {
+      // (a second hash: winter's bare faces and death's are not the same ones)
+      let fd = randv(vec3<i32>(floor(wpos * 1.7)) + vec3<i32>(17, i32(salt & 255u), 3));
+      if (fd < dead * select(0.45, 0.68, decid)) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+      let gone = select(vec3<f32>(0.5, 0.3, 0.14), vec3<f32>(0.44, 0.37, 0.27), decid) * (0.75 + 0.4 * fr) * (0.75 + 0.3 * n.z);
+      c = mix(c, gone, dead);
+    }
   } else if (part == 5u) {
     mat = f32(MAT_GRASS);
     // blades: dark at the foot, light at the tips (so a meadow reads as blades against its ground)
     c = mix(FLORA_COL[b + 2u].rgb, FLORA_COL[b + 3u].rgb, clamp(0.1 + 0.95 * h + 0.15 * (fr - 0.5), 0.0, 1.0));
     if (decid) { c = seasonGrass(c, fract(rnd * 3.7)); }
+    c = mix(c, vec3<f32>(0.66, 0.56, 0.27) * (0.8 + 0.3 * fr), dead);
   } else if (part == 6u) {
     mat = f32(MAT_FLOWER);
     // each flower its own colour from a meadow palette, tinted by the species
     let pal = array<vec3<f32>, 4>(vec3<f32>(0.95, 0.95, 0.98), vec3<f32>(0.95, 0.8, 0.2), vec3<f32>(0.75, 0.4, 0.85), vec3<f32>(0.9, 0.3, 0.3));
+    if (dead > 0.5) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
     c = pal[min(u32(rnd * 4.0), 3u)] * FLORA_COL[b + 5u].rgb * 1.08;
   } else {
     mat = f32(MAT_GRASS);
     c = FLORA_ACC[k].rgb * (0.85 + 0.3 * fr);
+    c = mix(c, vec3<f32>(0.5, 0.4, 0.22), dead);
   }
   return vec4<f32>(c, mat);
 }

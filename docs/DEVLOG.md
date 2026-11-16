@@ -23384,3 +23384,36 @@ factor path is unchanged by the cuts (a cut is the smaller of the two).
 
 **Tests.** unit 636 pass (3 new), 1 known fail (MU-14); gpu mutators 41 pass (riverSettle: dry under the cut, whole
 past it, a pond off the table and a held flood column left, twice the same); typecheck clean.
+
+## 2026-11-15 (later) — mutators round 5, item 2: withered woods stand dead (`mutators`, MU-17)
+
+**What was wrong.** Round 4's withered browned the ground's cover and left the trees green. Two causes. The tree draw
+(the flora library's instances, `meshinst.wgsl` / `floralook.wgsl`) never read the plants' health. And the first
+still with trees in it (r5/withered2/withered.png) showed the browning itself undone in straight-edged blocks: in
+every awake chunk the wilt system takes the ground's hostility afresh each tick (none here) and heals the brownness
+at 0.04 a second, and where it has not yet, the ecology clears browned plants away (0.04 x brownness a step). The
+mutator's "the ground hostile, so woken plants stay dead" was never true: it wrote a number the wilt system
+overwrites.
+
+**The fix.** (a) A per-instance condition the tree draw reads: `vegprep.wgsl` already reads the column's wilt word
+when it places the plants; the brownness (0.35..0.6 to 0..1) now rides in the instance's unused fourth row
+(`floraput.wgsl floraPut(…, dead)`), and `floraLook(…, dead)` draws it — a dead broadleaf drops 68% of its leaf faces
+by their own hash and what hangs on is grey-brown, a conifer keeps more and rusts, wood weathers pale, grass and
+blades go to straw, petals fall. No new buffer, no new pass, nothing a frame that was not there (one more float an
+instance in a row that was zero). It follows the wilt field, so plants the game's own poison browns go bare too.
+(b) A blight mark in the wilt contract (`common.wgsl WILT_BLIGHT`: +4 on wilt.x, beside the +2 "established"):
+the wilt system keeps it, holds the ground hostile and the brownness as written; the ecology neither grows nor
+clears a blighted column's plants (fire still burns them); `greened` clears it. (c) The write: brownness 0.52-0.92
+by a world noise (straw with browner patches: `wither()` draws straw to 0.5, brown past it) instead of 1 everywhere.
+
+**Stills, looked at** (r5/withered3, radius 260 to take in the woods south of the town): withered.png at the default
+zoom — the ground round the town is straw yellow with brown patches, the grove on the island and the woods south of
+the river are rust and grey-brown clumps, no green left inside the area; it reads as dying land. withered-close.png
+(9 px a cell): bare grey trunks with a few twigs stand on yellow ground. **What does not read:** the area ends in
+straight lines at the top and bottom of the phone's view — that is the window's edge (320 cells); the land past it
+is drawn by the tile cache from its own generation (`render/tilelandgpu.ts`), which no mutator writes. This holds
+for every land mutator (MU-49), and is the same gap as MU-47.
+
+**Tests.** gpu mutators 42 pass (new: withered, every system woken 5 s — the brownness, the mark and the plants are
+exactly as written; not run against the old code to see it fail), flora-wgsl 6 pass (the four shaders compile);
+unit as before.

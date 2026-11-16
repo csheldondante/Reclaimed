@@ -232,7 +232,13 @@ describe.each(KINDS)('$kind', ({ kind, lots }) => {
       expect(after.src[45 * W + 32]).toBeGreaterThan(-1e-20);
       expect(after.src[45 * W + 2]).toBeCloseTo(0.2, 5);
     } else if (kind === 'withered') {
-      expect(after.wilt[(20 * W + 32) * 4 + 1]).toBe(1);
+      // (dying: yellowed to brown by its noise — past where the trees go bare (0.35..0.6, vegprep.wgsl) — and the
+      // ground hostile, so woken plants stay dead)
+      const y = after.wilt[(20 * W + 32) * 4 + 1];
+      expect(y).toBeGreaterThanOrEqual(0.52 - 1e-6);
+      expect(y).toBeLessThanOrEqual(0.92 + 1e-6);
+      // (blighted: common.wgsl WILT_BLIGHT 4 + hostility 1)
+      expect(after.wilt[(20 * W + 32) * 4]).toBe(5);
       expect(after.veg[20 * W + 32]).toBe(2);
     } else {
       expect(after.veg[20 * W + 32]).toBeGreaterThan(2.1);
@@ -420,6 +426,37 @@ describe('woken sims leave an instant result nearly as it is', () => {
     r.gpu.dispose();
     r.w.destroy();
   });
+});
+
+// (round 5, BACKLOG MU-17) In the level the withered ground went green again in seconds wherever chunks were awake:
+// the wilt system took the hostility from the ground each tick (none) and healed the brownness, and where it had not
+// yet, the ecology cleared the browned plants away. Blighted columns are left as written.
+test('withered, then the plants’ systems woken for 5 s: still dead, still standing', async () => {
+  const map = tinyMap(W, H, 48, (x, y) => [{ z0: 0, z1: 11, mat: MAT.Stone }, { z0: 11, z1: 12, mat: MAT.Soil }]);
+  map.vegetation.fill(4.2);
+  map.moisture.fill(0.5);
+  const w = await tinyWorld(g, map, 'all');
+  const gpu = new MutateGpu(g.device, w.core.world, W, H);
+  await gpu.ready;
+  const eng = new MutateEngine({ gpu, world: { ground: () => 12, sea: -1e9, place: () => null, places: () => [] }, origin: () => [0, 0, 0], towns: () => [] });
+  eng.apply({ kind: 'withered', at: AT, radius: R, strength: 1, seed: 1 });
+  await w.step(2);
+  const i = 32 * W + 32;
+  const far = 2 * W + 2;
+  const a = { wilt: (await w.core.readBuffer('wilt')).slice(), veg: (await w.core.readBuffer('veg')).slice() };
+  await w.step(300);
+  const b = { wilt: (await w.core.readBuffer('wilt')).slice(), veg: (await w.core.readBuffer('veg')).slice() };
+  expect(g.takeErrors()).toEqual([]);
+  expect(a.wilt[i * 4 + 1]).toBeGreaterThanOrEqual(0.52 - 1e-6);
+  expect(b.wilt[i * 4 + 1]).toBe(a.wilt[i * 4 + 1]);
+  expect(b.wilt[i * 4]).toBeGreaterThanOrEqual(5);
+  expect(b.veg[i]).toBe(a.veg[i]);
+  expect(b.veg[i]).toBeGreaterThan(4);
+  // (outside the place the woods live on, unmarked)
+  expect(b.wilt[far * 4]).toBeLessThan(4);
+  expect(b.wilt[far * 4 + 1]).toBeLessThan(0.1);
+  gpu.dispose();
+  w.destroy();
 });
 
 test('a far eruption casts ash fall and darkness on the home town for three seasons; a near one casts none', async () => {

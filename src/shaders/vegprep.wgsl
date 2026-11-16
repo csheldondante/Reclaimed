@@ -227,10 +227,14 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
   instTree[o + 3u] = vec4<f32>(pl.trunk + 0.5, base, pl.crown + select(0.0, 0.5, k == 3u), half);
 }
 
+/** (mutators round 5, BACKLOG MU-17) how far the plants of the column being written have died (0..1): its brownness
+ *  (wilt.wgsl's y), set once in main — the library plants placed on it carry it to the draw (floraput.wgsl) */
+var<private> plantDead: f32 = 0.0;
+
 fn floraInstance(r: vec2<u32>, c: vec2<u32>, top: f32, scale: f32, lean: f32) {
   // (round 117, perf: a tree off screen, its shadow too, isn't drawn — up to 20 cells tall, 6 across)
   if (!floraSeen(cellPos(vec2<i32>(c)), top, 20.0, 6.0)) { return; }
-  floraPut(r, c, cellPos(vec2<i32>(c)), top, scale, lean, 0u);
+  floraPut(r, c, cellPos(vec2<i32>(c)), top, scale, lean, 0u, plantDead);
 }
 
 /**
@@ -254,17 +258,17 @@ fn floraSmall(c: vec2<u32>, top: f32, v: f32, pl: VegPlan) -> bool {
   // (shrubland — succession 2.6 to 3.6 — is the thicket, a soft barrier; under the woods' canopy only a few: the
   // forest floor stays open, ferns and leaf litter)
   // (round 119: a thicket under ~25 render px tall is drawn as its far lump, ~16 triangles)
-  if (pl.shrub && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(select(FL_SHRUB_L1, FL_SHRUB, px * 1.6 >= 25.0), c, at, top, 0.8, 0.05, 1u); }
+  if (pl.shrub && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(select(FL_SHRUB_L1, FL_SHRUB, px * 1.6 >= 25.0), c, at, top, 0.8, 0.05, 1u, plantDead); }
   if (v >= 3.6 && !pl.tree) {
     // the woodland floor: ferns in the shade, here and there
-    if (fine && rand3(c.x, c.y, 543u) < 0.16) { floraPut(FL_FERN, c, at, top, 1.0, 0.05, 2u); }
+    if (fine && rand3(c.x, c.y, 543u) < 0.16) { floraPut(FL_FERN, c, at, top, 1.0, 0.05, 2u, plantDead); }
     return true;
   }
   if (pl.tufts > 0u && v >= 1.4 && fine) {
     // tall grass: the meadows (taller the lusher), thinning toward the woods' shade
     let lush = smoothstep(1.4, 2.6, v) * (1.0 - smoothstep(3.3, 3.8, v));
-    if (rand3(c.x, c.y, 544u) < 0.25 + 0.7 * lush) { floraPut(FL_TALLGRASS, c, at, top, 0.7 + 0.45 * lush, 0.08, 3u); }
-    if (pl.flower) { floraPut(FL_FLOWER, c, at + vec2<f32>(0.3, -0.2), top, 1.0, 0.1, 4u); }
+    if (rand3(c.x, c.y, 544u) < 0.25 + 0.7 * lush) { floraPut(FL_TALLGRASS, c, at, top, 0.7 + 0.45 * lush, 0.08, 3u, plantDead); }
+    if (pl.flower) { floraPut(FL_FLOWER, c, at + vec2<f32>(0.3, -0.2), top, 1.0, 0.1, 4u, plantDead); }
     return true;
   }
   return pl.flower;
@@ -299,6 +303,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     // (perfopt, ?tufts=0: no grass tufts — quarter-cell boxes, a third of a pixel at low; the mesh's plant cover draws the grass)
     if (!TUFTS) { pl.tufts = 0u; }
     tap = wilt[i];
+    plantDead = smoothstep(0.35, 0.6, tap.y);
     // (round 117, flora: the meadows' and woodland floor's small plants are library meshes — floraSmall — and take no
     // room in the box lists)
     if (FLORA && G.misc.w < 0.5 && (plF.tufts > 0u || pl.shrub || pl.flower || veg[i] >= 3.6)) { pl.tufts = 0u; floraKeep = true; }

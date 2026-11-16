@@ -45,7 +45,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let v = veg[i];
   let s = wilt[i];
   let diff = u32(G.env.w + 0.5);
-  let established = s.x >= 2.0 || v >= 0.6;
+  // (mutators round 5: a blighted column — common.wgsl WILT_BLIGHT — stays fully hostile and as brown as written)
+  let blight = wiltBlighted(s.x);
+  let sx = s.x - select(0.0, WILT_BLIGHT, blight);
+  let established = sx >= 2.0 || v >= 0.6;
   let oiled = oil[i] > 0.02;
   // green ground that has taken hold shrugs off a little drifting poison
   // (medium); on hard it doesn't
@@ -57,6 +60,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (diff == 0u && established) { h = 0.0; }
   if (water[i] > drown) { h = 1.0; }
   if (moisture[i] < 0.04) { h = max(h, 0.8); } // drought
+  if (blight) { h = 1.0; }
   // hard: a gale strips and browns what grows
   var galeBrown = 0.0;
   if (diff == 2u && v > 0.05) {
@@ -79,6 +83,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     b -= 0.08 * PER_TICK * simStep();
   }
   b += galeBrown * simStep();
+  if (blight && !buried && fire[i] <= 0.15) { b = s.y; }
 
   // the player's plantings
   var good = s.z;
@@ -119,5 +124,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       good = select(t, good, good > 0.0 && t == floor(good));
     }
   }
-  wilt[i] = vec4<f32>(h + select(0.0, 2.0, established), clamp(b, 0.0, 1.0), good, bad);
+  wilt[i] = vec4<f32>(h + select(0.0, 2.0, established) + select(0.0, WILT_BLIGHT, blight), clamp(b, 0.0, 1.0), good, bad);
 }

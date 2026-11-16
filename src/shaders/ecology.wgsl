@@ -55,6 +55,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     v = max(0.0, v - fire[i] * mix(0.6, 0.12, smoothstep(2.0, 4.0, v)) * simStep());
   } else if (gr <= 0.0) {
     // baked: as it stands
+  } else if (wiltBlighted(wl.x)) {
+    // (mutators round 5, BACKLOG MU-17: blighted plants stand dead — they neither grow nor wither away)
   } else if (wl.y > 0.4) {
     // browned: withers away
     v = max(0.0, v - 0.04 * wl.y * simStep() * gr);

@@ -66,8 +66,12 @@ await run({ name: 'mutators-stills', kind: 'behaviour', size: '412x915', dpr: 1,
     await ev(() => void mutators.sign({ kind: 'crime', strength: 0 }));
   }
   if (only.has('withered')) {
-    await ev(() => mutators.apply({ kind: 'withered', place: reclaimed.scene.opts.atlas.startTown, radius: 110, seed: 4 }).resident);
+    // (--witherr: the radius — 260 takes in the woods south of the home town, to judge the dead trees)
+    await ev((radius) => mutators.apply({ kind: 'withered', place: reclaimed.scene.opts.atlas.startTown, radius, seed: 4 }).resident, Number(R.opt('witherr', 110)));
     await shot('withered.png', 12000);
+    await ev(() => void (reclaimed.camera.zoom = 9));
+    await shot('withered-close.png', 4000);
+    await ev(() => void (reclaimed.camera.zoom = 2.6689733724321005));
   }
   if (only.has('dried')) {
     await ev(() => mutators.apply({ kind: 'dried', place: reclaimed.scene.opts.atlas.startTown, radius: 110, seed: 5 }).resident);

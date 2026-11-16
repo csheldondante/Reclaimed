@@ -825,8 +825,17 @@ fn windAt(p: vec3<f32>) -> vec2<f32> {
   return w;
 }
 
-/** Hostility 0..1 from wilt.x (which carries +2 when the column is established). */
-fn wiltHostility(x: f32) -> f32 { return select(x, x - 2.0, x >= 2.0); }
+/** (mutators round 5, BACKLOG MU-17) wilt.x carries +4 when the column's plants are BLIGHTED: dead where they stand
+ *  for good (a `withered` place — "trees dying"). The wilt system keeps the mark, holds the ground fully hostile and
+ *  the brownness as written; the ecology neither grows nor clears them (fire still burns them). Cleared by whoever
+ *  writes the column's wilt anew (the mutators' `greened`). */
+const WILT_BLIGHT: f32 = 4.0;
+fn wiltBlighted(x: f32) -> bool { return x >= WILT_BLIGHT; }
+/** Hostility 0..1 from wilt.x (which carries +2 when the column is established, +4 when blighted). */
+fn wiltHostility(x: f32) -> f32 {
+  let y = x - select(0.0, WILT_BLIGHT, x >= WILT_BLIGHT);
+  return select(y, y - 2.0, y >= 2.0);
+}
 
 // ---- litter stripping (shared contract: material system ↔ particles) ----
 // Strong wind tears loose litter off the ground one cell at a time. The

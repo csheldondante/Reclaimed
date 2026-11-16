@@ -57,9 +57,14 @@ fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
   if (kind == MUT_WITHERED) {
-    // (the plants' own dead state: fully brown, the ground hostile to them, so woken plants stay dead and die back)
+    // (the plants' own dying state — wilt.wgsl's y, which the ground's cover draws as straw then brown and the trees
+    // as bare and grey (floralook.wgsl, round 5): yellowed with browner patches by a world noise, and blighted, so
+    // woken plants stand dead as written. Written once a column: twice is the same)
     if (!burnIn(w, d) || veg[j] <= 0.0) { return; }
-    wilt[j] = vec4<f32>(max(wilt[j].x, 1.0), 1.0, wilt[j].z, wilt[j].w);
+    let y = 0.52 + 0.4 * smoothstep(0.35, 0.75, mfbm(w * 0.09, MP.k.y + 21u));
+    // (the mark: common.wgsl WILT_BLIGHT — the wilt system and the ecology leave a blighted column as it is written)
+    if (wiltBlighted(wilt[j].x)) { return; }
+    wilt[j] = vec4<f32>(WILT_BLIGHT + 1.0 + select(0.0, 2.0, wilt[j].x >= 2.0), max(wilt[j].y, y), wilt[j].z, wilt[j].w);
     return;
   }
   if (kind == MUT_GREENED) {
