@@ -24051,3 +24051,22 @@ event the camera goes back over the town (the event's look left the view at the 
 **Tests.** Unit: 687 pass, 1 fail — `writing-sources` (src/roadlab/control.ts not placed), failing before this
 change too. `realm-resume` and `realm` failed once each while a walk was running beside them and pass alone
 (timing under load). Typecheck clean.
+
+## 2026-11-16 — Card table, steps a and b (`card-table`; docs/design/CARD_TABLE.md)
+
+**Why.** The owner asked for a parallel card-game front end on the same world model, with no graphics, to test
+engine synergies and whether the decisions are fun in seconds instead of minutes of 3D play.
+
+**What.** `table.html` + `src/table/`: `game.ts` is a driver with no DOM that does what `scenes/level/loop.ts` does
+without a scene (makes the `Realm`, takes and passes offers, `Realm.endSeason` then `ledger.nextSeason` then
+`Realm.afterSeason`, the next run on the saved world). `main.ts` draws it: header with the six pools and income, the
+threat's countdown, each offer as a card (who asks, cost, what it gives, what happens if left and when, tags), what
+is under way, the log, end season, run end, next run. Nothing of the model is copied; every number on a card is read
+from the offer.
+
+**Measured.** `test/unit/table.test.ts` (4 tests, 1.7 s): a card's shown cost equals the pools' change when taken;
+a greedy 8-season run ends with the fight; replaying the recorded moves gives the same log and pool curves; run 2
+keeps what was built and the history. One phone-size shot (412x915) looked at: header, pools and two cards fit.
+
+**Found.** The attack comes on entering the last season, so a 16-season run has 15 seasons of choices. The raid's
+result is a stand-in until round 6's live events merge (BACKLOG CT-1).

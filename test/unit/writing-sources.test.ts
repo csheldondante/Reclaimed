@@ -56,6 +56,9 @@ const SOURCES: Record<string, Source> = {
   'mutate/mapmarks.ts': { who: 'words' },
   // ---- a developer's ----
   'cardlab/main.ts': { who: 'dev', why: 'the card lab page' },
+  'table/words.ts': { who: 'words' },
+  'table/game.ts': { who: 'dev', why: 'the card table driver: no DOM, its lines are table/words.ts' },
+  'table/main.ts': { who: 'dev', why: 'the card table page: its lines are table/words.ts and the lines of the model' },
   'lab/lab.ts': { who: 'dev', why: 'the town lab’s overlay for shots (markContracts: the side map and named places)' },
   'mutate/lab.ts': { who: 'dev', why: 'the mutator lab’s buttons and note (?mutlab=1)' },
   'scenes/level/mutators.ts': { who: 'dev', why: 'the mutator lab’s notes (?mutlab=1)' },
