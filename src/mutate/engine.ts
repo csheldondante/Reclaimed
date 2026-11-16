@@ -8,10 +8,11 @@ import type { MutateGpu, MutLots, Origin } from './gpu';
 import { applied, GPU_KIND, isLand, WorldList, type ListWorld } from './list';
 import { ROW_H } from '../world/lattice';
 
-/** a live town: where it is (world units), how far its lots reach, its lots, and what to do once they changed */
+/** a live town: where it is in the window now (world units), how far its lots reach, its lots, and what to do once
+ *  they changed */
 export interface MutTown {
   id: string;
-  at: readonly [number, number];
+  centre(): readonly [number, number];
   radius: number;
   lots: MutLots;
   /** its lots' conditions were written: draw them again (`released`: some may have lost their claim) */
@@ -24,6 +25,8 @@ export interface MutateHost {
   /** the window's origin now: world cells (x, row) and its oz. null: no window (nothing is resident) */
   origin(): Origin | null;
   towns(): readonly MutTown[];
+  /** the world's size in cells when it wraps (the atlas's cols and rows) */
+  wrap?: { cols: number; rows: number };
   /** window box [x0, y0, x1, y1) was written by a mutator: what's derived from its columns follows (the liquid's
    *  records of its chunks, the meshes) */
   landChanged?(x0: number, y0: number, x1: number, y1: number): void;
@@ -48,80 +51,90 @@ export class MutateEngine implements Mutators {
     return MUTATORS;
   }
 
-  /** the part of the window an entry reaches (null: none) */
-  private boxOf(m: Mutation, o: Origin): [number, number, number, number] | null {
+  /** the window's origin as entry `m` sees it: moved by whole worlds so the entry's cell is the copy nearest the window */
+  private originFor(m: Mutation, o: Origin): Origin {
+    const wr = this.host.wrap;
+    if (!wr) return o;
     const { w, h } = this.host.gpu.dims;
+    const kx = Math.round((m.cell[0] - (o[0] + w / 2)) / wr.cols);
+    const ky = Math.round((m.cell[1] - (o[1] + h / 2)) / wr.rows);
+    return [o[0] + kx * wr.cols, o[1] + ky * wr.rows, o[2]];
+  }
+
+  /** the part of window box `within` an entry reaches (null: none) */
+  private boxOf(m: Mutation, o: Origin, within?: readonly [number, number, number, number]): [number, number, number, number] | null {
+    const { w, h } = this.host.gpu.dims;
+    const q = within ?? [0, 0, w, h];
     const cx = m.cell[0] - o[0];
     const cy = m.cell[1] - o[1];
     const ry = m.radius / ROW_H;
-    const b: [number, number, number, number] = [Math.max(0, Math.floor(cx - m.radius - 1)), Math.max(0, Math.floor(cy - ry - 1)), Math.min(w, Math.ceil(cx + m.radius + 2)), Math.min(h, Math.ceil(cy + ry + 2))];
+    const b: [number, number, number, number] = [Math.max(q[0], Math.floor(cx - m.radius - 1)), Math.max(q[1], Math.floor(cy - ry - 1)), Math.min(q[2], Math.ceil(cx + m.radius + 2)), Math.min(q[3], Math.ceil(cy + ry + 2))];
     return b[2] > b[0] && b[3] > b[1] ? b : null;
   }
 
-  private townsOf(m: Mutation): MutTown[] {
-    if (GPU_KIND[m.kind] === null) return [];
-    return this.host.towns().filter((t) => (m.place !== null && m.place === t.id) || (isLand(m.kind) && Math.hypot(m.cell[0] - t.at[0], m.cell[1] * ROW_H - t.at[1]) <= m.radius + t.radius));
+  /** does entry `m` change town `t`'s lots? (it names the town, or its area reaches the town's lots) */
+  private touches(m: Mutation, t: MutTown, o: Origin): boolean {
+    if (GPU_KIND[m.kind] === null) return false;
+    if (m.place !== null && m.place === t.id) return true;
+    if (!isLand(m.kind)) return false;
+    const c = t.centre();
+    return Math.hypot(m.cell[0] + 0.5 - o[0] - c[0], (m.cell[1] + 0.5 - o[1]) * ROW_H - c[1]) <= m.radius + t.radius;
   }
 
-  /** one entry written into what's resident of it; true: something was */
-  private writeNow(m: Mutation, strength?: number): boolean {
-    const o = this.host.origin();
-    if (!o) return false;
-    const box = isLand(m.kind) ? this.boxOf(m, o) : null;
-    const towns = this.townsOf(m);
-    if (!box && !towns.length) return false;
-    const r = this.host.gpu.write([m], o, box, towns.map((t) => t.lots), !!this.host.time, strength);
-    if (r) {
-      this.lastMs = r;
-      void r.then((v) => (this.ms[m.kind] = v));
+  /** entries written (in order) into window box `within` and into `towns`' lots; true: something was */
+  private write(ms: readonly Mutation[], within: readonly [number, number, number, number] | undefined, towns: readonly MutTown[], land = true): boolean {
+    const o0 = this.host.origin();
+    if (!o0) return false;
+    let any = false;
+    let last: Promise<number | null> | null = null;
+    const released = new Set<MutTown>();
+    const drawn = new Set<MutTown>();
+    for (const m of ms) {
+      const o = this.originFor(m, o0);
+      const box = land && isLand(m.kind) ? this.boxOf(m, o, within) : null;
+      const ts = towns.filter((t) => this.touches(m, t, o));
+      if (!box && !ts.length) continue;
+      any = true;
+      const r = this.host.gpu.write([m], o, box, ts.map((t) => t.lots), !!this.host.time);
+      if (r) {
+        last = r;
+        void r.then((v) => (this.ms[m.kind] = v));
+      }
+      if (box) this.host.landChanged?.(...box);
+      for (const t of ts) {
+        drawn.add(t);
+        if (m.kind === 'melted') released.add(t);
+      }
     }
-    if (box) this.host.landChanged?.(...box);
-    for (const t of towns) t.changed(m.kind === 'melted');
-    return true;
+    if (last) this.lastMs = last;
+    for (const t of drawn) t.changed(released.has(t));
+    return any;
   }
 
   apply(spec: MutationSpec): Applied {
     const { m, fresh } = this.worldList.add(spec);
     if (!fresh) return applied(m, false, false);
-    const resident = this.writeNow(m);
+    const resident = this.write([m], undefined, this.host.towns());
     this.host.changed?.(this.worldList.record());
     return applied(m, resident, true);
   }
 
   /** (the streamer's onWritten, after the static claims') window rectangle [lx, lx + w) × [ly, ly + h) was just written
-   *  with arriving land: every land entry that reaches it written there, in list order. Returns the entries written. */
-  landWritten(lx: number, ly: number, w: number, h: number): number {
-    const o = this.host.origin();
-    if (!o || !this.worldList.all.length) return 0;
-    const ms = this.worldList.over(o[0] + lx, o[1] + ly, o[0] + lx + w, o[1] + ly + h);
-    if (!ms.length) return 0;
-    this.host.gpu.write(ms, o, [lx, ly, lx + w, ly + h], []);
-    this.host.landChanged?.(lx, ly, lx + w, ly + h);
-    return ms.length;
+   *  with arriving land: every land entry that reaches it written there, in list order. True: some entry did. */
+  landWritten(lx: number, ly: number, w: number, h: number): boolean {
+    if (!this.worldList.all.length) return false;
+    return this.write(this.worldList.all, [lx, ly, lx + w, ly + h], []);
   }
 
   /** a town's lots were just made (or made again): every entry about it or over it written into their conditions */
-  townMade(t: MutTown): number {
-    const o = this.host.origin();
-    if (!o) return 0;
-    const ms = this.worldList.near(t.at, t.radius, t.id);
-    if (!ms.length) return 0;
-    this.host.gpu.write(ms, o, null, [t.lots]);
-    t.changed(ms.some((m) => m.kind === 'melted'));
-    return ms.length;
+  townMade(t: MutTown): boolean {
+    if (!this.worldList.all.length) return false;
+    return this.write(this.worldList.all, undefined, [t], false);
   }
 
   /** everything resident written again from the list (after a restore; idempotent) */
   rewrite(): void {
-    const o = this.host.origin();
-    if (!o) return;
-    const { w, h } = this.host.gpu.dims;
-    const land = this.worldList.over(o[0], o[1], o[0] + w, o[1] + h);
-    if (land.length) {
-      this.host.gpu.write(land, o, [0, 0, w, h], []);
-      this.host.landChanged?.(0, 0, w, h);
-    }
-    for (const t of this.host.towns()) this.townMade(t);
+    this.write(this.worldList.all, undefined, this.host.towns());
   }
 
   /**

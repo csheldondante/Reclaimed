@@ -27,18 +27,7 @@ struct MutParams {
   org: vec4<f32>,
 };
 
-@group(0) @binding(3) var<storage, read_write> layers: array<vec4<u32>>;
-@group(0) @binding(4) var<storage, read_write> water: array<f32>;
 @group(0) @binding(5) var<uniform> MP: MutParams;
-@group(0) @binding(6) var<storage, read_write> veg: array<f32>;
-@group(0) @binding(7) var<storage, read_write> vegNext: array<f32>;
-/** molten rock's contract (x depth, y temperature, z the ground's heat, w level): the cracks' glow is the ground's heat */
-@group(0) @binding(8) var<storage, read_write> lava: array<vec4<f32>>;
-/** a town's lot records (api/contracts/citygen.ts), its counts, its lots' condition words, its frame's place */
-@group(0) @binding(10) var<storage, read> lotRecs: array<u32>;
-@group(0) @binding(11) var<storage, read> lotCounts: array<u32>;
-@group(0) @binding(12) var<storage, read_write> lotCond: array<u32>;
-@group(0) @binding(13) var<uniform> lotPlace: vec4<f32>;
 
 const MUT_FLOODED: u32 = 0u;
 const MUT_BURNED: u32 = 1u;

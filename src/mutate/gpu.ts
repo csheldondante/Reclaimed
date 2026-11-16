@@ -67,6 +67,7 @@ export class MutateGpu {
 
   /** an entry's numbers for the kernel, in the window as it is now */
   private params(m: Mutation, o: Origin, box: readonly [number, number, number, number], room = 0, strength = m.strength): GPUBufferBinding {
+    // (the entry's cell in the window: `o` is the origin it's nearest to — MutateEngine.originFor, the world wraps)
     const kind = GPU_KIND[m.kind];
     if (kind === null) throw new Error(`mutators: ${m.kind} writes nothing on the GPU`);
     const buf = new ArrayBuffer(PARAM_BYTES);
@@ -85,6 +86,7 @@ export class MutateGpu {
       f.set([p[0] * (strength / Math.max(m.strength, 1e-6)), p[1], 0, 0], 12);
       f.set([p[2], p[3]], 16);
     }
+    // (noise positions are world positions: the window's origin as this entry sees it)
     f.set([ox, oy * ROW_H, oz, 0], 20);
     if (this.slot >= SLOTS) throw new Error('mutators: more dispatches in one submit than the parameter slots (flush first)');
     const off = this.slot++ * SLOT;

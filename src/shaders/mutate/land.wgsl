@@ -1,4 +1,10 @@
 // ---- mutate/land.wgsl: a thread a column of an entry's box (masks.wgsl before it; needs layers.wgsl) ------------
+@group(0) @binding(3) var<storage, read_write> layers: array<vec4<u32>>;
+@group(0) @binding(4) var<storage, read_write> water: array<f32>;
+@group(0) @binding(6) var<storage, read_write> veg: array<f32>;
+@group(0) @binding(7) var<storage, read_write> vegNext: array<f32>;
+/** molten rock's contract (x depth, y temperature, z the ground's heat, w level): the cracks' glow is the ground's heat */
+@group(0) @binding(8) var<storage, read_write> lava: array<vec4<f32>>;
 @compute @workgroup_size(8, 8)
 fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
   let x = MP.box.x + id.x;

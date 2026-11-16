@@ -1,4 +1,10 @@
 // ---- mutate/lots.wgsl: a town's lot conditions from an entry (masks.wgsl before it) ------------------------------
+/** a town's lot records (api/contracts/citygen.ts), its counts, its lots' condition words, its frame's place */
+@group(0) @binding(10) var<storage, read> lotRecs: array<u32>;
+@group(0) @binding(11) var<storage, read> lotCounts: array<u32>;
+@group(0) @binding(12) var<storage, read_write> lotCond: array<u32>;
+@group(0) @binding(13) var<uniform> lotPlace: vec4<f32>;
+
 /** one thread a lot record: its condition from the entry (the same masks, at the lot's middle and its base) */
 @compute @workgroup_size(64)
 fn mutLots(@builtin(global_invocation_id) id: vec3<u32>) {

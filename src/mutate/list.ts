@@ -136,16 +136,6 @@ export class WorldList {
     return [];
   }
 
-  /** the land entries whose area reaches world box [x0, x1) × [row0, row1), in list order */
-  over(x0: number, row0: number, x1: number, row1: number): Mutation[] {
-    return this.entries.filter((m) => isLand(m.kind) && m.cell[0] + m.radius >= x0 && m.cell[0] - m.radius < x1 && m.cell[1] + m.radius / ROW_H >= row0 && m.cell[1] - m.radius / ROW_H < row1);
-  }
-
-  /** every entry that changes lots within `radius` (world units) of a world point (a town's), in list order */
-  near(at: readonly [number, number], radius: number, placeId?: string): Mutation[] {
-    return this.entries.filter((m) => GPU_KIND[m.kind] !== null && (m.place !== null && m.place === placeId ? true : isLand(m.kind) && Math.hypot(m.cell[0] - at[0], m.cell[1] * ROW_H - at[1]) <= m.radius + radius));
-  }
-
   private place0(id: string): AtlasPlace | null {
     const a = this.world.place(id);
     if (a) return a;

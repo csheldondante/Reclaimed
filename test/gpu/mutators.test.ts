@@ -82,7 +82,7 @@ async function rig(): Promise<Rig> {
     room,
   };
   const origin = { o: [0, 0, 0] as Origin | null };
-  const town: Rig['town'] = { id: 'faketown', at: [32, 32 * ROW_H], radius: 40, lots, changes: 0, changed: () => void town.changes++ };
+  const town: Rig['town'] = { id: 'faketown', centre: () => [32, 32 * ROW_H], radius: 40, lots, changes: 0, changed: () => void town.changes++ };
   const eng = new MutateEngine({ gpu, world: listWorld, origin: () => origin.o, towns: () => (origin.o && origin.o[0] === 0 ? [town] : []), time: true });
   const r = { w, gpu, eng, origin, town };
   rigs.push(r);
@@ -221,7 +221,7 @@ describe.each(KINDS)('$kind', ({ kind, lots }) => {
     // (the player travels there: the window's regions arrive in some order, one of them twice; then the town is made)
     b.origin.o = [0, 0, 0];
     let wrote = 0;
-    for (const [lx, ly] of [[32, 32], [0, 0], [32, 0], [0, 32], [32, 32]]) wrote += b.eng.landWritten(lx, ly, 32, 32);
+    for (const [lx, ly] of [[32, 32], [0, 0], [32, 0], [0, 32], [32, 32]]) wrote += b.eng.landWritten(lx, ly, 32, 32) ? 1 : 0;
     expect(wrote).toBe(5);
     b.eng.townMade(b.town);
     const arrived = await snap(b);
@@ -245,4 +245,75 @@ test('world state: a place destroyed, abandoned, captured — its lots all carry
   expect(eng.place('faketown')).toMatchObject({ status: 'destroyed', population: 0, tribute: 0, restless: false });
   expect(eng.places().map((p) => p.id)).toEqual(['faketown']);
   expect(g.takeErrors()).toEqual([]);
+});
+
+// The user (2026-11-15): "the local simulation and playable battle make the instant mutations read as fully simulated".
+// An instant end state must be one the live sims would leave: woken on it, they barely move it.
+describe('woken sims leave an instant result nearly as it is', () => {
+  const closedBowl = (x: number, y: number) => 12 - 6 * Math.exp(-((x - 32) ** 2 + (y - 32) ** 2) / 160);
+  async function bowlRig(systems: string[] | 'all') {
+    const map = tinyMap(W, H, 48, (x, y) => {
+      const z = closedBowl(x, y);
+      return [{ z0: 0, z1: z - 1, mat: MAT.Stone }, { z0: z - 1, z1: z, mat: MAT.Soil }];
+    });
+    const w = await tinyWorld(g, map, systems);
+    const gpu = new MutateGpu(g.device, w.core.world, W, H);
+    await gpu.ready;
+    const world: ListWorld = { ground: (x, y) => closedBowl(x, y / ROW_H), sea: -1e9, place: () => null, places: () => [] };
+    const eng = new MutateEngine({ gpu, world, origin: () => [0, 0, 0], towns: () => [] });
+    return { w, gpu, eng };
+  }
+
+  test('flooded in a closed hollow, then the liquid woken for 5 s: the water keeps its volume and its level', async () => {
+    const r = await bowlRig(['surface', 'liquid-water']);
+    r.eng.apply({ kind: 'flooded', at: AT, radius: R, strength: 0.6, seed: 1 });
+    const a = (await r.w.read('water')).slice();
+    await r.w.step(300);
+    const b = await r.w.read('water');
+    let va = 0;
+    let vb = 0;
+    let moved = 0;
+    for (let i = 0; i < W * H; i++) {
+      va += a[i];
+      vb += b[i];
+      moved = Math.max(moved, Math.abs(a[i] - b[i]));
+    }
+    console.log(`[mutators] flood woken 5 s: volume ${va.toFixed(1)} -> ${vb.toFixed(1)}, the most a column's depth moved ${moved.toFixed(3)}`);
+    expect(g.takeErrors()).toEqual([]);
+    expect(va).toBeGreaterThan(50);
+    expect(Math.abs(vb - va)).toBeLessThan(0.02 * va);
+    expect(moved).toBeLessThan(0.25);
+    r.gpu.dispose();
+    r.w.destroy();
+  });
+
+  test('buried, then every system woken for 5 s: the sand has not slumped much', async () => {
+    const r = await bowlRig('all');
+    r.eng.apply({ kind: 'buried', at: AT, radius: R, strength: 1, seed: 1 });
+    const top = async () => {
+      const s = await r.w.read('surface');
+      return Float32Array.from(new Uint32Array(s.buffer, s.byteOffset, W * H), (v) => (v & 0x1ffff) / 256);
+    };
+    await r.w.step(2);
+    const a = await top();
+    await r.w.step(300);
+    const b = await top();
+    let moved = 0;
+    let sum = 0;
+    let n = 0;
+    for (let i = 0; i < W * H; i++) {
+      const d = Math.abs(a[i] - b[i]);
+      moved = Math.max(moved, d);
+      if (dist(i % W, Math.floor(i / W)) < R) {
+        sum += d;
+        n++;
+      }
+    }
+    console.log(`[mutators] burial woken 5 s: the most a column's top moved ${moved.toFixed(3)}, mean ${(sum / n).toFixed(4)}`);
+    expect(g.takeErrors()).toEqual([]);
+    expect(moved).toBeLessThan(1);
+    expect(sum / n).toBeLessThan(0.15);
+    r.gpu.dispose();
+    r.w.destroy();
+  });
 });

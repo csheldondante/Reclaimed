@@ -324,13 +324,25 @@ export class FieldTown {
 
   /** the town's lots for what builds on it (api/contracts/citygen.ts) */
   get lots(): CityLots {
-    return { records: this.gen.lotRecords, counts: this.gen.lotCounts, progress: this.gen.progress, place: this.xform };
+    return { records: this.gen.lotRecords, counts: this.gen.lotCounts, progress: this.gen.progress, condition: this.gen.condition, room: REC_LM + LM_ROOM, place: this.xform };
   }
 
   /** (time-lapse) the clock it animates till (the town's clock, s), and when its claims were last made again */
   private animUntil = -Infinity;
   private lastClaim = -Infinity;
   private reclaiming = false;
+  private reclaimOwed = false;
+
+  /**
+   * (mutators, src/mutate) The lots' condition words were written on the GPU: the buildings drawn again from them now
+   * (tlRise: one submit, nothing read); `reclaim`: some lots lost their claim (destroyed) — the claim grid made again
+   * and claimed over the window on the next frame.
+   */
+  conditionsChanged(reclaim: boolean): void {
+    if (this.gone) return;
+    this.gen.animate(this.clock);
+    if (reclaim) this.reclaimOwed = true;
+  }
 
   /**
    * (time-lapse) Each frame, the town's clock (s): while districts are building, the lots' progress and the buildings
@@ -345,8 +357,9 @@ export class FieldTown {
     }
     const busy = now < this.animUntil;
     if (busy) this.gen.animate(now);
-    const due = busy ? now - this.lastClaim > 2 : this.lastClaim < this.animUntil && this.animUntil > -Infinity;
+    const due = this.reclaimOwed || (busy ? now - this.lastClaim > 2 : this.lastClaim < this.animUntil && this.animUntil > -Infinity);
     if (due && !this.reclaiming) {
+      this.reclaimOwed = false;
       this.lastClaim = now;
       this.reclaiming = true;
       this.gen.animate(now);
