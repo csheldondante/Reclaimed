@@ -68,6 +68,19 @@ struct Params {
  *  count; grid e at 16 + 8e: its first window column (gx, gy, i32), its columns and rows, gz (f32: world z to window z),
  *  its base (words), 0, 0 — then each grid dense in claimGrid's layout from its base (w × h columns, a span each) */
 @group(0) @binding(6) var<storage, read> owned: array<u32>;
+/** (physics10-one, the External contract's third owner kind: sim/external.ts "GPU-owned rows") the rows' claim table:
+ *  ROW_CLAIM_WORDS a row from ROW_CLAIM_AT, a record's second word its live claim's generation (0: none). An External
+ *  interval names its owner in word 3 (bits 29-31 the kind, 1: a row; 20-27 the generation; 0-19 the row): it is held
+ *  while that row's live claim is that generation. Bound to a few zero words when no such owner exists. */
+@group(0) @binding(7) var<storage, read> ownRows: array<u32>;
+const ROW_CLAIM_AT: u32 = 264u;
+const ROW_CLAIM_WORDS: u32 = 4u;
+fn ownedByRow(w: u32) -> bool { return (w & 0xe0000000u) == 0x20000000u; }
+fn rowHolds(w: u32) -> bool {
+  if (!ownedByRow(w)) { return false; }
+  let at = ROW_CLAIM_AT + (w & 0xfffffu) * ROW_CLAIM_WORDS + 1u;
+  return at < arrayLength(&ownRows) && ownRows[at] == ((w >> 20u) & 0xffu);
+}
 const OWN_MAX: u32 = 8u;
 struct OwnSpan { z: vec2<f32>, who: u32, ok: bool }
 /** grid e's span over window column (x, y): its z (window z) and owner word; ok false when it has none there */
@@ -171,11 +184,18 @@ fn store(b: vec4<u32>, a: ptr<function, array<vec4<u32>, MAX_IV>>, n0: u32) {
   var shaped = false;
   for (var s = 0u; s < k; s++) {
     var v = vec4<u32>(0u);
-    if (s < n) { v = vec4<u32>((*a)[s].xyz, 0u); }
+    // (word 3 is an External interval's owner — sim/external.ts: carried; any other interval's is zero)
+    if (s < n) { v = vec4<u32>((*a)[s].xyz, select(0u, (*a)[s].w, matOf((*a)[s]) == MAT_EXTERNAL)); }
     let old = slots[b.x + s];
     if (any(old != v)) {
       slots[b.x + s] = v;
       moved = true;
+      // (a row's claim no longer in its slot: chunkver.wgsl bumpColumn's rule, the word the support watch reads)
+      if (matOf(old) == MAT_EXTERNAL && ownedByRow(old.w) && v.w != old.w) {
+        let cs = P.chunkSize;
+        let t = chunks[(b.w / cs) * P.chunksX + b.z / cs];
+        chunks[P.chunksX * (P.mapH / cs) + 10u * (t.x / (cs * cs * t.y)) + 1u].y = old.w;
+      }
       shaped = shaped || shapeMoved(old, v);
     }
   }
@@ -202,7 +222,7 @@ fn join(a: ptr<function, array<vec4<u32>, MAX_IV>>, n: u32) -> u32 {
     let v = (*a)[i];
     if (m > 0u) {
       let last = (*a)[m - 1u];
-      if (matOf(last) == matOf(v) && abs(z1Of(last) - z0Of(v)) < 1e-4 && auxOf(last) == auxOf(v)) {
+      if (matOf(last) == matOf(v) && abs(z1Of(last) - z0Of(v)) < 1e-4 && auxOf(last) == auxOf(v) && last.w == v.w) {
         (*a)[m - 1u] = vec4<u32>(last.x, v.y, last.z, 0u);
         continue;
       }
@@ -420,6 +440,8 @@ fn orphans(@builtin(global_invocation_id) gid: vec3<u32>) {
   for (var i = 0u; i < n; i++) {
     let v = a[i];
     if (matOf(v) != MAT_EXTERNAL) { if (m < MAX_IV) { out[m] = v; } m++; continue; }
+    // (a row's live claim is held whole: its owner is named in the interval itself)
+    if (rowHolds(v.w)) { if (m < MAX_IV) { out[m] = v; } m++; continue; }
     // (the parts of it no claimed span holds, in order)
     var rest: array<vec2<f32>, 24>;
     var nr = 1u;

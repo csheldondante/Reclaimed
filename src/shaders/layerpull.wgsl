@@ -141,7 +141,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (shake > 0.0 && dd > 0.0) { textureStore(shakeOut, texCol(vec2<i32>(p)), vec4<f32>(f32(G.tick), shake, 0.0, 0.0)); }
     for (var k = kk + 1u; k < n; k++) {
       let w = arr[k];
-      arr[k] = ivPack(ivZ0(w) + dd, ivZ1(w) + dd, ivMat(w), ivAux(w));
+      arr[k] = ivKeep(w, ivZ0(w) + dd, ivZ1(w) + dd);
     }
     // (pulled away to nothing: the run goes)
     if (ivZ1(arr[kk]) - ivZ0(arr[kk]) < 1e-3) {

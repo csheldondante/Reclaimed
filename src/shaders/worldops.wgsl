@@ -21,7 +21,7 @@ fn opTake(arr: ptr<function, array<vec4<u32>, MAX_K>>, n: ptr<function, u32>, am
     *n -= 1u;
     (*arr)[*n] = IV_NONE;
   } else {
-    (*arr)[*n - 1u] = ivPack(ivZ0(t), ivZ1(t) - got, ivMat(t), ivAux(t));
+    (*arr)[*n - 1u] = ivKeep(t, ivZ0(t), ivZ1(t) - got);
   }
   return got;
 }

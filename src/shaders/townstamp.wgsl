@@ -110,7 +110,7 @@ fn stampCols(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
     let lower = o[bk - 1u];
-    o[bk - 1u] = ivPack(ivZ0(lower), ivZ1(o[bk]), ivMat(lower), ivAux(lower));
+    o[bk - 1u] = ivKeep(lower, ivZ0(lower), ivZ1(o[bk]));
     for (var k = bk; k + 1u < n; k++) { o[k] = o[k + 1u]; }
     n -= 1u;
   }

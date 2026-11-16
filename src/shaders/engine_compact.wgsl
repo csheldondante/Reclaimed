@@ -7,6 +7,112 @@
 // the list's dispatch arguments again, in a buffer of their own (words 0-2 and 4-6 as the list's): a kernel that
 // writes the list's buffer (the rows' work words, engine_pairs.wgsl) cannot be dispatched from it
 @group(0) @binding(50) var<storage, read_write> rargs: array<atomic<u32>>;
+// the rows' claims and the tick's claim jobs (engine.wgsl CJ_*, CR_*; engine_claim.wgsl does the jobs)
+@group(0) @binding(74) var<storage, read_write> claimC: array<atomic<u32>>;
+
+/** this tick's jobs for the chunks [c0, c1] (window chunks), all or none: each chunk's lock taken (no other job writes
+ *  it this tick) and a job slot each. False: not this tick (the caller counts the wait and asks again next tick). */
+fn claimJobs(r: u32, word: u32, c0: vec2<u32>, c1: vec2<u32>) -> bool {
+  let across = G.chunksX;
+  let n = (c1.x - c0.x + 1u) * (c1.y - c0.y + 1u);
+  var got = 0u;
+  var ok = true;
+  for (var i = 0u; i < n && ok; i++) {
+    let c = c0 + vec2<u32>(i % (c1.x - c0.x + 1u), i / (c1.x - c0.x + 1u));
+    let k = c.y * across + c.x;
+    if (k >= CJ_LOCK_WORDS * 32u) { ok = false; break; }
+    let bit = 1u << (k % 32u);
+    if ((atomicOr(&claimC[CJ_LOCK + k / 32u], bit) & bit) != 0u) { ok = false; } else { got = i + 1u; }
+  }
+  var first = 0u;
+  if (ok) {
+    first = atomicAdd(&claimC[0], n);
+    if (first + n > CJ_MAX) {
+      atomicSub(&claimC[0], n);
+      ok = false;
+    }
+  }
+  if (!ok) {
+    // (the locks it took given back: a thread that met one of them meanwhile waits a tick it need not have)
+    for (var i = 0u; i < got; i++) {
+      let c = c0 + vec2<u32>(i % (c1.x - c0.x + 1u), i / (c1.x - c0.x + 1u));
+      let k = c.y * across + c.x;
+      atomicAnd(&claimC[CJ_LOCK + k / 32u], ~(1u << (k % 32u)));
+    }
+    return false;
+  }
+  for (var i = 0u; i < n; i++) {
+    let c = c0 + vec2<u32>(i % (c1.x - c0.x + 1u), i / (c1.x - c0.x + 1u));
+    let j = CJ_AT + (first + i) * CJ_WORDS;
+    atomicStore(&claimC[j], r);
+    atomicStore(&claimC[j + 1u], word);
+    atomicStore(&claimC[j + 2u], c.x | (c.y << 16u));
+  }
+  return true;
+}
+
+/**
+ * A row's claim kept in step with its sleep (DESIGN §3, §10 "At rest"): asleep and unclaimed, its footprint is given
+ * to this tick's jobs to write as External intervals naming it; awake (or deforming) and claimed, to clear. Returns
+ * the row's flags. A job that finds no room waits a tick (P_CLAIM_WAIT, which the host sees move).
+ */
+fn claimStep(r: u32, flIn: u32, shiftBy: vec3<f32>) -> u32 {
+  var fl = flIn;
+  let rec = CR_AT + r * CR_WORDS;
+  let claimed = (fl & ROW_CLAIMED) != 0u;
+  if (claimed && any(shiftBy.xy != vec2<f32>(0.0))) {
+    // (the window slid: the claim lies where the land now is)
+    let o = atomicLoad(&claimC[rec + 2u]);
+    let nx = i32(o & 0xffffu) + i32(round(shiftBy.x));
+    let ny = i32(o >> 16u) + i32(round(shiftBy.y / ROW_H));
+    atomicStore(&claimC[rec + 2u], u32(max(nx, 0)) | (u32(max(ny, 0)) << 16u));
+  }
+  if ((EU.e.w & 512u) == 0u && !claimed) { return fl; }
+  let rest = (fl & ROW_ASLEEP) != 0u && (fl & (ROW_DEFORM | ROW_HELD)) == 0u && (EU.e.w & 512u) != 0u;
+  if (!rest && (fl & ROW_NOCLAIM) != 0u) { fl = fl & ~ROW_NOCLAIM; }
+  let cs = G.chunkSize;
+  if (claimed && !rest) {
+    let o = atomicLoad(&claimC[rec + 2u]);
+    let e = atomicLoad(&claimC[rec + 3u]);
+    let lo = vec2<u32>(o & 0xffffu, o >> 16u);
+    let hi = lo + vec2<u32>(max(e & 0xffffu, 1u), max(e >> 16u, 1u)) - vec2<u32>(1u);
+    let gen = atomicLoad(&claimC[rec + 1u]);
+    if (claimJobs(r, CJ_CLEAR | (gen << 8u), lo / cs, hi / cs)) {
+      atomicStore(&claimC[rec + 1u], 0u);
+      atomicSub(&poolC[P_CLAIMS], 1u);
+      fl = fl & ~ROW_CLAIMED;
+    } else { atomicAdd(&poolC[P_CLAIM_WAIT], 1u); }
+  } else if (!claimed && rest && (fl & ROW_NOCLAIM) == 0u && bitcast<u32>(info[4u * r + 3u].x) != 0u) {
+    // (its footprint: the columns its bound sphere can stand over — a column's cell lies within a cell and a half of
+    // its index in x, a row in y: common.wgsl cellPos)
+    let x = pose[4u * r + 2u].xyz;
+    let reach = vel[2u * r + 1u].w + 0.5;
+    let last = vec2<i32>(i32(G.mapW) - 1, i32(G.mapH) - 1);
+    let lo = max(vec2<i32>(i32(floor(x.x - reach - 1.5)), i32(floor((x.y - reach) / ROW_H)) - 1), vec2<i32>(0));
+    let hi = min(vec2<i32>(i32(ceil(x.x + reach)), i32(ceil((x.y + reach) / ROW_H))), last);
+    // (wholly off the window: nothing to claim, and it is asked again when it next sleeps)
+    if (hi.x < lo.x || hi.y < lo.y) { return fl | ROW_NOCLAIM; }
+    let c0 = vec2<u32>(lo) / cs;
+    let c1 = vec2<u32>(hi) / cs;
+    if ((c1.x - c0.x + 1u) * (c1.y - c0.y + 1u) > CJ_MAX) {
+      atomicAdd(&poolC[P_CLAIM_BIG], 1u);
+      return fl | ROW_NOCLAIM;
+    }
+    var gen = (atomicLoad(&claimC[rec]) & 0xffu) + 1u;
+    if (gen > 255u) { gen = 1u; }
+    let mat = bitcast<u32>(info[4u * r + 2u].z) & 0xffu;
+    // (the record first: the job's threads read it this tick)
+    atomicStore(&claimC[rec + 2u], u32(lo.x) | (u32(lo.y) << 16u));
+    atomicStore(&claimC[rec + 3u], u32(hi.x - lo.x + 1) | (u32(hi.y - lo.y + 1) << 16u));
+    if (claimJobs(r, CJ_WRITE | (gen << 8u) | (mat << 16u), c0, c1)) {
+      atomicStore(&claimC[rec], gen);
+      atomicStore(&claimC[rec + 1u], gen);
+      atomicAdd(&poolC[P_CLAIMS], 1u);
+      fl = fl | ROW_CLAIMED;
+    } else { atomicAdd(&poolC[P_CLAIM_WAIT], 1u); }
+  }
+  return fl;
+}
 
 @compute @workgroup_size(64)
 fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -27,6 +133,11 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
   // (its particles carry it: engine_deform.wgsl moves them. Listed, so the coarse pass pairs it by its voxels' bounds
   // and its voxels meet the rigid rows of those pairs — engine_meet.wgsl; the rigid kernels pass it by)
   if ((fl & ROW_DEFORM) != 0u) {
+    // (a claim it still holds from before it was handed to stage 4: cleared)
+    if ((fl & ROW_CLAIMED) != 0u) {
+      fl = claimStep(r, fl, vec3<f32>(0.0));
+      info[4u * r].w = bitcast<f32>(fl);
+    }
     // (its particles stand in for its settled parts — engine_deform.wgsl S_HELD: asleep, so it is in the coarse pass's
     // sleeper table and costs nothing more; the table is told once)
     if ((fl & ROW_ASLEEP) != 0u) {
@@ -102,7 +213,9 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
       info[4u * r].w = bitcast<f32>(fl);
       // (made asleep: the coarse pass's sleeper table is out of date)
       epoch = true;
-    } else if (inMap(c) && surfaceIn[colIdxI(c)] != bitcast<u32>(pose[4u * r].w)) { wake = true; }
+    } else if ((fl & ROW_CLAIMED) == 0u && inMap(c) && surfaceIn[colIdxI(c)] != bitcast<u32>(pose[4u * r].w)) { wake = true; }
+    // (claimed, its own intervals are in that word, and what it stands on is watched under every column of the claim
+    // by the kernel that sees the columns change: engine_ground.wgsl)
     // (a pair asked it to wake last tick — engine_pairs.wgsl pairPre: a hit over the threshold, or what it leans on
     // moved. It wakes with what the pair solver gave it meanwhile, and deforms if the hit passed its material's bar.)
     let b = rwAt(r);
@@ -155,6 +268,13 @@ fn compact(@builtin(global_invocation_id) id: vec3<u32>) {
     vel[2u * r + 1u] = vec4<f32>(sp.xyz + dw, sp.w);
   }
   if (epoch) { atomicAdd(&list[LIST_EPOCH], 1u); }
+  {
+    let f2 = claimStep(r, fl, shiftBy);
+    if (f2 != fl) {
+      fl = f2;
+      info[4u * r].w = bitcast<f32>(fl);
+    }
+  }
   // (it waits to deform: frozen as it came in till `expand` runs, which the host encodes once it has read this)
   if ((fl & ROW_EXPAND) != 0u) { atomicAdd(&poolC[P_EXPAND_WAIT], 1u); }
   // (the draw list keeps the triangles of rows asleep apart, placed once: a row that fell asleep or woke since it was

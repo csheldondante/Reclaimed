@@ -170,7 +170,7 @@ fn rise(@builtin(global_invocation_id) id: vec3<u32>) {
       } else {
         // (split: the bottom pressed, the rest still loose)
         for (var k = n; k > k2 + 1u; k--) { arr[k] = arr[k - 1u]; }
-        arr[k2 + 1u] = ivPack(ivZ0(u) + lith, ivZ1(u), ivMat(u), ivAux(u));
+        arr[k2 + 1u] = ivKeep(u, ivZ0(u) + lith, ivZ1(u));
         arr[k2] = ivPack(ivZ0(u), ivZ0(u) + lith, pressed, 0u);
         n += 1u;
         lith = 0.0;
@@ -204,10 +204,10 @@ fn rise(@builtin(global_invocation_id) id: vec3<u32>) {
     // what lies over the run rides up
     for (var k = n; k > kr + 1u; k--) {
       let w = arr[k - 1u];
-      arr[k - 1u] = ivPack(ivZ0(w) + dd, ivZ1(w) + dd, ivMat(w), ivAux(w));
+      arr[k - 1u] = ivKeep(w, ivZ0(w) + dd, ivZ1(w) + dd);
     }
     if (ivMat(v) == mat || n >= cs.y) {
-      arr[kr] = ivPack(ivZ0(v), z1 + dd, ivMat(v), ivAux(v));
+      arr[kr] = ivKeep(v, ivZ0(v), z1 + dd);
     } else {
       // a new band on the run (what's over it moves up a slot)
       for (var k = n; k > kr + 1u; k--) { arr[k] = arr[k - 1u]; }

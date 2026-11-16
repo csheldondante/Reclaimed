@@ -118,7 +118,7 @@ fn roadLay(@builtin(global_invocation_id) id: vec3<u32>) {
     let v = layers[cs.x + k];
     let z0 = ivZ0(v);
     if (z0 >= keepTo - 1e-4) { break; }
-    if (ivZ1(v) <= keepTo) { o[n] = v; } else { o[n] = ivPack(z0, keepTo, ivMat(v), ivAux(v)); }
+    if (ivZ1(v) <= keepTo) { o[n] = v; } else { o[n] = ivKeep(v, z0, keepTo); }
     n += 1u;
   }
   let kept = select(0.0, ivZ1(o[max(n, 1u) - 1u]), n > 0u);

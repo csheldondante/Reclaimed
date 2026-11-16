@@ -104,6 +104,42 @@ const ROW_GRAB: u32 = 128u;
 // own yet: engine_deform.wgsl S_HELD): it stays asleep where it is — no wake, no impulse — or it would leave its
 // collider behind. (256 since the merge into physics10-one: 128 is the grab's)
 const ROW_HELD: u32 = 256u;
+// (DESIGN §3, §10 "At rest"; engine_claim.wgsl) asleep, its space is claimed in the columns as External intervals that
+// name it: `compact` sets this when it gives the claim's write a job, and clears it when it gives its clearing one
+const ROW_CLAIMED: u32 = 512u;
+// asleep and too wide for a tick's claim jobs (CJ_MAX chunks): it claims nothing (counted once: P_CLAIM_BIG)
+const ROW_NOCLAIM: u32 = 1024u;
+// ---- a row's claim (sim/external.ts "GPU-owned rows" has the contract; mirrored there and in colapply.wgsl) ----------
+// An External interval's word 3 names its owner: bits 29-31 the owner's kind (OWN_ROW: an engine row), bit 28 the row's
+// own (its underside stood on something when it was claimed: the support watch, engine_ground.wgsl), bits 20-27 the
+// claim's generation (1..255: a row used again never owns a dead claim), bits 0-19 the row.
+const OWN_KIND_MASK: u32 = 0xe0000000u;
+const OWN_ROW: u32 = 0x20000000u;
+const OWN_SUP: u32 = 0x10000000u;
+fn ownIsRow(w: u32) -> bool { return (w & OWN_KIND_MASK) == OWN_ROW; }
+fn ownRowOf(w: u32) -> u32 { return w & 0xfffffu; }
+fn ownGenOf(w: u32) -> u32 { return (w >> 20u) & 0xffu; }
+fn ownWord(row: u32, gen: u32, sup: bool) -> u32 { return OWN_ROW | select(0u, OWN_SUP, sup) | ((gen & 0xffu) << 20u) | (row & 0xfffffu); }
+// The claims' table (u32; engine.ts `claimT`): [0] the tick's jobs (cleared by the host each tick, with the locks),
+// [CJ_LOCK ..] a bit a window chunk: a job writes it this tick (two jobs never write one column), [CJ_AT ..] CJ_MAX
+// jobs of CJ_WORDS: [row, op (1 write, 2 clear) | generation << 8 | material << 16, chunk x | chunk y << 16, spare],
+// then CR_WORDS a row from CR_AT: [0] its generation counter, [1] its live claim's generation (0: none; the orphan
+// pass reads this word), [2] the claim's first column x | y << 16, [3] its columns across | down << 16
+const CJ_LOCK: u32 = 8u;
+const CJ_LOCK_WORDS: u32 = 128u;
+const CJ_AT: u32 = 136u;
+const CJ_WORDS: u32 = 4u;
+const CJ_MAX: u32 = 32u;
+const CR_AT: u32 = 264u;
+const CR_WORDS: u32 = 4u;
+const CJ_WRITE: u32 = 1u;
+const CJ_CLEAR: u32 = 2u;
+// the pool's header words of the claims: live claims; jobs that found no room in their tick (it only goes up: the host
+// keeps ticking while it moves); claimed spans a column had no free slot for (DA-P3); rows too wide to claim
+const P_CLAIMS: u32 = 43u;
+const P_CLAIM_WAIT: u32 = 44u;
+const P_CLAIM_FULL: u32 = 45u;
+const P_CLAIM_BIG: u32 = 46u;
 // the pool's header word that asks for the draw list again (engine_deform.wgsl has the rest of the header)
 const P_DL_DIRTY: u32 = 20u;
 // the pool's header word `compact` adds to for every row it finds waiting to deform (ROW_EXPAND), each tick it waits:

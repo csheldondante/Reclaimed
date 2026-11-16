@@ -24760,3 +24760,41 @@ only `engine-house`, `-stone` and `-rebreak` were run again, and pass); `engine-
 the changes the entries above name; `npm run smoke` passes (the atlas level on the default route: it does not run
 the engine). The unit project: one failure, `writing-sources` on `src/roadlab/control.ts` (PO4, not this branch's);
 the transfer gate lists the two new uploads (`SdfModels.reserveGpu`, `Engine.clear`). Not run: the phone.
+
+## 2026-11-16 — rest claims External: the owner contract, the claim at sleep, support gone wakes (PQ10, PQ7; PS1-PS3)
+
+**Why.** The owner: "At rest should enter intervals right?" and "things don't seem to wake up as easily and sometimes
+look floaty when ground under part of them is destroyed". DESIGN §3 and §10 say a body at rest claims its space as
+External naming its owner, and wakes when its support goes. A sleeping row wrote nothing and watched one column.
+
+**Confirmed first** (`test/gpu/engine-claim.test.ts`, test 1): an External interval the orphan pass knows no owner
+for becomes its fallback material. So the engine's rows had to be an owner the pass knows.
+
+**Built** (docs/design/PHYSICS_ENGINE.md "Rest claims External" has the three plans):
+- *The contract:* a third owner kind, GPU-owned rows (`sim/external.ts`). The owner is named in the interval's word 3
+  and held by the orphan pass through the owner's table. No exemption: a dead generation is an orphan.
+- *The claim:* `compact` gives a row that fell asleep jobs (one a chunk of its footprint), `claimCols` walks each
+  column's centre line through the row's distance field and writes the spans inside as External where the column is
+  air; a waking row's claim is cleared the tick it wakes. Rows pass over row-named External in their ground tests.
+- *The wake:* `tground`, which already re-reads every column of a chunk whose version moved, stamps the owner of a
+  claim that stood on something and no longer does. A claim a tool cut away is told through one word a chunk.
+
+**Measured** (Dawn in Node, `engine-claim`, 4 tests pass). A 3x3x3 stone block asleep on flat stone: 9 to 16 columns
+claimed, each one interval from the ground (10.000) to within 0.3 of its top, aux stone, the row and generation in
+word 3; `claimFull` 0. An upward impulse: no row-named interval left 6 ticks later, the column bit for bit as before.
+Asleep again: the next generation. The beam (12 x 3 x 2 stone): on two end piers with one dug away it wakes within 3
+frames of the dig and ends tilted over 0.15 rad and half a cell lower; on three piers with the middle one dug away it
+wakes, ends within 0.15 cells and 0.03 rad of where it lay, asleep and claimed again.
+
+**Two things the first run showed.** A dig cuts External like any ground, and left the row asleep in the air: the
+"cut" word in the chunk's versions was added for that. `edit.wgsl` re-packed the intervals it kept with word 3 zero:
+`ivKeep` now carries it in the writers that re-pack an interval whole.
+
+**Counts a tick:** quiet 0 + 0 (tested: 60 ticks asleep and claimed encode nothing); awake 58 direct + 8 indirect
+(57 + 8 before: `claimCols`, 128 workgroups that leave after one read when there is no job).
+
+**Hacks and limits.** BACKLOG PS4 (one "cut" word a chunk), PS5 (a simulation alone with the engine quiet: next host
+event), PS6 (joining writers and five sims do not carry word 3), PS7 (no free slot: the span is left out, counted),
+PS8 (32 chunk jobs a tick; a footprint over 32 chunks claims nothing), PS9 (one ray a column; the field's fat; liquid
+intervals), PS10 (a partial cut of a claim does nothing to the body), PS11 (a row dying while its clear waits; slides
+not tested; rows with no field), PS12 (sand on a claim and the fast path).

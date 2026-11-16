@@ -205,7 +205,7 @@ fn landAt(arr: ptr<function, array<vec4<u32>, MAX_K>>, n: u32, cap: u32, p: vec2
     // blends in, as on top — no hairline strata)
     let onLoose = matState(ivMat(v)) == ST_GRANULAR;
     if (abs(ivZ1(v) - fl) < 1e-3 && (ivMat(v) == mat || (onLoose && add < 0.02))) {
-      (*arr)[at - 1u] = ivPack(ivZ0(v), fl + add, ivMat(v), ivAux(v));
+      (*arr)[at - 1u] = ivKeep(v, ivZ0(v), fl + add);
       return n;
     }
   }
@@ -833,7 +833,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (mySpill[k] <= 0.0) { continue; }
       let si = u32(src[k]);
       let v = arr[si];
-      arr[si] = ivPack(ivZ0(v), max(ivZ1(v) - mySpill[k], ivZ0(v)), ivMat(v), ivAux(v));
+      arr[si] = ivKeep(v, ivZ0(v), max(ivZ1(v) - mySpill[k], ivZ0(v)));
     }
     // what runs in lands on my floor at that height
     for (var k = 0u; k < NDIR; k++) {
@@ -854,7 +854,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         // (a trace of another on loose ground blends in, as landAt: no
         // hairline strata filling the slots)
         if (ivMat(v) == fm || (matState(ivMat(v)) == ST_GRANULAR && add < 0.02)) {
-          arr[f] = ivPack(ivZ0(v), ivZ1(v) + add, ivMat(v), ivAux(v));
+          arr[f] = ivKeep(v, ivZ0(v), ivZ1(v) + add);
         } else if (n < cs.y) {
           for (var t = n; t > f + 1u; t--) { arr[t] = arr[t - 1u]; z1o[t] = z1o[t - 1u]; }
           // (on the floor as it is now: something may have run out of it)
@@ -909,7 +909,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         if (z1 - z0 > 0.05) { textureStore(airOut, texCol(vec2<i32>(p)), vec4<f32>(own[0], min(z1 - z0, 2.0) * 0.1, z0, 6.0 + 8.0 * f32(ivMat(v)))); }
         z0 -= f;
         z1 -= f;
-        arr[k] = ivPack(z0, z1, ivMat(v), ivAux(v));
+        arr[k] = ivKeep(v, z0, z1);
       }
       floorZ = z1;
     }

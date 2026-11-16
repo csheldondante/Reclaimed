@@ -493,6 +493,9 @@ fn ivEmpty(v: vec4<u32>) -> bool { return v.y == 0u; }
 fn ivPack(z0: f32, z1: f32, mat: u32, aux: u32) -> vec4<u32> {
   return vec4<u32>(bitcast<u32>(z0), bitcast<u32>(z1), (mat & 0xffu) | ((aux & 0xffu) << 8u), 0u);
 }
+/** interval `v` with new ends: its material, aux and word 3 kept (an External interval's owner word, sim/external.ts
+ *  "GPU-owned rows": a pass that rewrites a column carries it) */
+fn ivKeep(v: vec4<u32>, z0: f32, z1: f32) -> vec4<u32> { return vec4<u32>(bitcast<u32>(z0), bitcast<u32>(z1), v.z, v.w); }
 const IV_NONE: vec4<u32> = vec4<u32>(0u);
 
 // ---- surface packing (written by the surface system) ----

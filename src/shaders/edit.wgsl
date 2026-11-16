@@ -144,9 +144,9 @@ fn smashCol(arr: ptr<function, array<vec4<u32>, MAX_K>>, n: u32, k: u32, lo: f32
     if (z1 <= hole0 || z0 >= hi || hi <= hole0) { out[m] = v; m += 1u; continue; }
     // keep what lies below and above the hole (room permitting); a solid's
     // share of the hole becomes its rubble
-    if (z0 < hole0) { out[m] = ivPack(z0, hole0, mt, ivAux(v)); m += 1u; }
+    if (z0 < hole0) { out[m] = ivKeep(v, z0, hole0); m += 1u; }
     if (open && matState(mt) == ST_SOLID && m < k) { out[m] = ivPack(max(z0, hole0), min(z1, hi), rubbleOf(mt), 0u); m += 1u; }
-    if (z1 > hi && m < k) { out[m] = ivPack(hi, z1, mt, ivAux(v)); m += 1u; }
+    if (z1 > hi && m < k) { out[m] = ivKeep(v, hi, z1); m += 1u; }
   }
   if (m <= k) {
     for (var j = 0u; j < MAX_K; j++) { (*arr)[j] = select(IV_NONE, out[j], j < m); }
@@ -242,8 +242,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let z0 = ivZ0(v);
         let z1 = ivZ1(v);
         if (z1 <= lo || z0 >= hi) { out[m] = v; m += 1u; continue; }
-        if (z0 < lo) { out[m] = ivPack(z0, lo, ivMat(v), ivAux(v)); m += 1u; }
-        if (z1 > hi && m < cs.y) { out[m] = ivPack(hi, z1, ivMat(v), ivAux(v)); m += 1u; }
+        if (z0 < lo) { out[m] = ivKeep(v, z0, lo); m += 1u; }
+        if (z1 > hi && m < cs.y) { out[m] = ivKeep(v, hi, z1); m += 1u; }
       }
       if (m <= cs.y) {
         for (var k = 0u; k < MAX_K; k++) { arr[k] = select(IV_NONE, out[k], k < m); }
@@ -288,7 +288,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             let t = arr[n - 1u];
             let cut = sinkCut(t, dp, reach, depth);
             if (cut > 0.0) {
-              if (ivZ1(t) - cut > ivZ0(t) + 1e-3) { arr[n - 1u] = ivPack(ivZ0(t), ivZ1(t) - cut, ivMat(t), ivAux(t)); }
+              if (ivZ1(t) - cut > ivZ0(t) + 1e-3) { arr[n - 1u] = ivKeep(t, ivZ0(t), ivZ1(t) - cut); }
               else { n -= 1u; arr[n] = IV_NONE; }
             }
           }
@@ -364,22 +364,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     } else if (op == OP_DIG) {
       if (!(n == 1u && z1 <= 2.0)) {
         if (z1 - 1.0 <= ivZ0(top) + 1e-3) { n -= 1u; arr[n] = IV_NONE; }
-        else { arr[n - 1u] = ivPack(ivZ0(top), z1 - 1.0, ivMat(top), ivAux(top)); }
+        else { arr[n - 1u] = ivKeep(top, ivZ0(top), z1 - 1.0); }
       }
     } else if (op == OP_BEDROCK) {
       // stone grows at the bottom; everything above moves up a cell
       if (z1 + 2.0 < f32(G.zMax)) {
         for (var k = 1u; k < n; k++) {
           let v = arr[k];
-          arr[k] = ivPack(ivZ0(v) + 1.0, ivZ1(v) + 1.0, ivMat(v), ivAux(v));
+          arr[k] = ivKeep(v, ivZ0(v) + 1.0, ivZ1(v) + 1.0);
         }
         let b = arr[0];
         if (ivMat(b) == MAT_STONE || n >= cs.y) {
-          arr[0] = ivPack(ivZ0(b), ivZ1(b) + 1.0, ivMat(b), ivAux(b));
+          arr[0] = ivKeep(b, ivZ0(b), ivZ1(b) + 1.0);
         } else {
           for (var k = n; k > 0u; k--) { arr[k] = arr[k - 1u]; }
           arr[0] = ivPack(0.0, 1.0, MAT_STONE, 0u);
-          arr[1] = ivPack(ivZ0(b) + 1.0, ivZ1(b) + 1.0, ivMat(b), ivAux(b));
+          arr[1] = ivKeep(b, ivZ0(b) + 1.0, ivZ1(b) + 1.0);
           n += 1u;
         }
       }
@@ -390,7 +390,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let z2 = ivZ1(t2);
       if (ivMat(t2) == mat) { arr[n - 1u] = ivPack(ivZ0(t2), z2 + 1.0, mat, ivAux(t2)); }
       else if (n < cs.y) { arr[n] = ivPack(z2, z2 + 1.0, mat, 0u); n += 1u; }
-      else { arr[n - 1u] = ivPack(ivZ0(t2), z2 + 1.0, ivMat(t2), ivAux(t2)); }
+      else { arr[n - 1u] = ivKeep(t2, ivZ0(t2), z2 + 1.0); }
     }
   }
   if (pending <= 0.0 && owed < 1.0 && op != OP_POUR && op != OP_BEDROCK) { timer = 0.0; }

@@ -1932,3 +1932,84 @@ stand as written). Read while planning, for whoever builds it next:
 4. **The row's own ground test** (`sampleContacts`, `tground`) must pass over External that names itself, or it rests
    on its own claim; and the ground tops (`engine_ground.wgsl`) must not count it.
 5. Not checked: that the granular sim, the flow and the field mesher treat External as solid and as air on every path.
+
+## Rest claims External (round of 2026-11-16; BACKLOG PQ10, PQ7, PS1 to PS12)
+
+The owner: "At rest should enter intervals right? Maybe even show burying or digging out some rb in sand?" and "things
+don't seem to wake up as easily and sometimes look floaty when ground under part of them is destroyed".
+
+### Item 1, the ownership contract: plan
+
+1. **The design** (DESIGN §3): an object's projection is External intervals "naming the owner"; "a claimed interval
+   with no owner is an error"; only an owner or a real cut writes them.
+2. **Today:** an interval's aux is its fallback material; who owns it is known only to the CPU registry (spans by
+   instance) and to the GPU-owned static grids' arena. The orphan pass makes every other External its fallback.
+3. **Confirm first** (`engine-claim.test.ts`, first test): an External interval written with no owner known to the
+   pass becomes its fallback. It does.
+4. **Build: a third owner kind in the same contract, GPU-owned rows** (`sim/external.ts`). The interval's word 3
+   (spare until now; BACKLOG DA-A5's direction) names the owner: kind, generation, row. The owner keeps a table the
+   orphan pass binds (colapply binding 7), a word a row: the generation of its live claim. The pass holds an
+   interval whose row's live generation is its own, and treats any other as the orphan it is (the fallback in place:
+   a body whose row is gone is baked into the ground, §10's "baked into terrain ... when the body buffer needs room").
+5. Nothing is exempted inside the pass: a row-named interval with no table bound, or a dead generation, is an orphan.
+6. **Carrying the word:** colapply's `store` and `join`, and every writer that re-packs an interval it keeps
+   (`ivKeep`, common.wgsl), carry word 3. The CPU's `Interval` has `own`; `orphanColumn` leaves row-named intervals
+   to the GPU's pass; the rock judge takes them out of what it frees and tells the owner (`RowOwners.loose`).
+7. **Tested:** the first test (held by a live generation; an orphan under another generation or none); `colapply`,
+   `external`, `static-claims`, `integrity` as they were.
+
+### Item 2, sleep writes the claim, wake clears it: plan
+
+1. **The design** (§3, §10): at rest a body "claims its space as External intervals"; "a resting object is projected
+   once"; the projection comes from the one baked model; lifting it out "its intervals become air".
+2. **Who decides:** `compact`, the one thread a row has while asleep. Asleep and unclaimed: a write job. Awake (or
+   handed to stage 4) and claimed: a clear job. `ROW_CLAIMED` in the row's flags; the claim's generation and its
+   box of columns in the row's record of the claims' table (`claimT`: jobs at its head, 4 words a row).
+3. **Jobs:** one a window chunk of the footprint, 32 a tick. A chunk has one job a tick (a bit a chunk, taken with
+   an atomic): two rows never write one column in a tick. A job with no room waits a tick (`P_CLAIM_WAIT` moves, the
+   host's read sees it and keeps ticking). A footprint over 32 chunks claims nothing (`P_CLAIM_BIG`, `ROW_NOCLAIM`).
+4. **`claimCols`** (engine_claim.wgsl), direct, 32 x 4 workgroups after `compact`: a thread a column of a job's
+   chunk walks the column's centre line through the row's distance field in steps of half a voxel and writes each
+   span inside as External where the column is air. Aux: the row's material. Word 3: the row, the generation, and
+   whether the span's underside stands on something (within 0.3 of what is under it: then brought down onto it).
+5. **K:** a column with no free slot leaves the span out and counts it (`P_CLAIM_FULL`; DA-P3). Nothing is merged.
+6. **The row's own ground test** passes over every row-named External (`groundWalk`, the lattice's `collide`): its
+   own claim, and another sleeper's, which it meets as that row's model as before.
+7. **Sleep's old watch** (the surface word under the centre) is not used while the row is claimed: its own claim
+   is in that word.
+8. `Engine.clear()` takes every row-named interval out (`claimWipe`, a thread a column, once).
+9. **Tested** (`engine-claim`, second test): the claim's place, extent, owner and aux; a quiet tick still 0 + 0;
+   cleared the tick it wakes; a new generation when it sleeps again; a dead generation neither held nor waking
+   the row; `clear()`.
+10. **Cost:** an awake tick 1 direct more (`claimCols`); a quiet tick none.
+
+### Item 3, support gone wakes the owner: plan
+
+1. **The design** (§3): "External keeps its absolute heights. Ground eroded from under it becomes air, which goes to
+   the judge and then physics"; §10: sleepers stay put "unless an impulse wakes them or their support goes".
+2. **The signal that exists:** the chunks' column versions (chunkver.wgsl), which every column writer bumps, and
+   `tground`, the engine's thread a chunk that already re-reads every column of a chunk whose version moved.
+3. **Build, in `tground`'s walk:** an External interval that names a row's live claim, was standing on something
+   when written (`OWN_SUP`) and has nothing touching its underside now: its row is stamped to wake (`RW_WAKE`, as a
+   pair stamps a sleeper); `compact` wakes it next tick and its claim goes. No new dispatch, no read, work only in
+   changed chunks.
+4. **A claim cut by a tool** leaves nothing to look at. `bumpColumn` (and colapply's `store`) put the owner word of
+   a row's claim that left its slot in the chunk's one unused version word; `tground` wakes that row if the claim is
+   still its live one. One word a chunk: PS4.
+5. **Physics decides what the woken row does:** it tips, slides or stays, and claims again when it sleeps.
+6. **Tested** (PQ7's repro, `engine-claim`): a 12-long beam asleep on two end piers, one pier dug away: it wakes
+   and tips; on three piers, the middle one dug away: it wakes, stays within 0.15 of where it lay and sleeps again.
+7. **Not in this item:** a change made by a simulation with no host event while the engine is quiet is still seen
+   only at the next host event (PP5a stands; PS5).
+
+### As built (items 1 to 3)
+
+As planned. Found on the way:
+- **A dig takes a claim out like any ground** (edit.wgsl DIG cuts External), and left the row asleep in the air with
+  `ROW_CLAIMED` set. Hence plan item 3.4, which was not in the first draft.
+- **edit.wgsl rebuilt the intervals it kept with word 3 zero**, so a claim near a dig lost its owner. Hence `ivKeep`
+  in the writers (23 places, mechanical). Writers that join two touching intervals of one material may still join
+  two rows' claims (PS6).
+- The first beam scenario (three piers, an end one dug) was stable on the other two: the test's fault, not the code's.
+
+Counts a tick (the host's tally): quiet 0 + 0; awake 58 direct + 8 indirect (was 57 + 8: `claimCols`).

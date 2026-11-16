@@ -209,7 +209,7 @@ export async function pass(ig: Integrity, whole: boolean, want: Set<number> | nu
       ig.orphanCheck = false;
       const claimed = ext.claimedSpans();
       // (citygen M4b: the GPU-owned grid's spans held on the GPU; its columns not judged on the CPU)
-      ig.gpuEdit.orphans(gpuCols(ig), claimed, ext.statics?.ownedJob?.() ?? null);
+      ig.gpuEdit.orphans(gpuCols(ig), claimed, ext.statics?.ownedJob?.() ?? null, ext.rowOwners?.job() ?? null);
       if (!sparse)
         for (const k of externalCols(ig)) {
           const x = k % 65536;

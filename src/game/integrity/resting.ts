@@ -6,7 +6,7 @@ import { MAT, MATERIALS, MatState } from '../../world/materials';
 import { type Fracture } from '../fracture';
 import { cellAt, cellPos, ROW_H } from '../../world/lattice';
 import { RB, type RockBody, type V3 } from '../rockbodies';
-import { OWNER_ROCK, type ExternalCol, type ExternalInstance } from '../../sim/external';
+import { OWNER_ROCK, ownedByRow, type ExternalCol, type ExternalInstance } from '../../sim/external';
 import { fieldMeshed } from '../../world/materials';
 import { type ApplyStage } from '../colapply';
 import { allocRock, fastForward, restingMesh, toIndex } from './rigid';
@@ -255,6 +255,8 @@ export function unrest(ig: Integrity, inst: ExternalInstance, why: 'room' | 'lea
 export function takeExternal(ig: Integrity, r: Fracture): void {
   const ext = ig.external!;
   const hit: ExternalCol[] = [];
+  // (physics10-one: a GPU-owned row's claim — sim/external.ts — is taken out too, and its row told: it wakes where it lies)
+  const rows = new Set<number>();
   // (round 110: taken out of what falls or crumbles — the owner wakes its thing, which takes them back as itself;
   // round 99 made them their fallback material in the piece, and the rock was freed again as a new body, meshed
   // again. One no instance owns stays in, as its fallback)
@@ -264,6 +266,10 @@ export function takeExternal(ig: Integrity, r: Fracture): void {
       for (const iv of c.ivs) {
         if (iv.mat !== MAT.External) {
           keep.push(iv);
+          continue;
+        }
+        if (ownedByRow(iv.own)) {
+          rows.add(iv.own!);
           continue;
         }
         const owned = ext.at(c.x, c.y, iv.z0, iv.z1);
@@ -283,6 +289,7 @@ export function takeExternal(ig: Integrity, r: Fracture): void {
   if (r.pieces) r.pieces = r.pieces.map((p) => p.filter((c) => c.ivs.length));
   if (r.crumbleRuns) r.crumbleRuns = r.crumbleRuns.filter((c) => c.ivs.length);
   if (hit.length) ext.loose(hit);
+  if (rows.size) ext.rowOwners?.loose([...rows]);
 }
 
 /** (round 99) The columns (y · 65536 + x) with an External interval in the CPU copy (a scan of its words). */

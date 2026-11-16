@@ -249,6 +249,18 @@ the agents' surfaces don't hold it) until it's whole and its land has come; one 
 it took only air). Drawing doesn't follow claims: the pieces are drawn whole either way, and the ground under them is
 the same (a claim takes only free cells, so letting go to air puts back what was there).
 
+**GPU-owned rows (physics10-one, 2026-11-16): the third owner kind.** An owner whose things come and go on the GPU
+(the physics engine's rows at rest, `engine_claim.wgsl`) writes its own External intervals there and names itself in
+the interval's **word 3**: bits 29-31 the kind (1: a row), bit 28 the owner's own (the engine: the span stood on
+something when claimed), bits 20-27 the claim's generation, bits 0-19 the row. It keeps a table the orphan pass binds
+(colapply binding 7; `ROW_CLAIM_AT` 264 words in, 4 a row, the second the live claim's generation). An interval is
+held while its row's live generation is its own; any other is an orphan (its aux material in place). Rules for
+everyone else: a pass that rewrites a column carries an External interval's word 3 (`ivKeep`, common.wgsl; colapply's
+`store`) and does not join two intervals with different words; `bumpColumn` and `store` note the owner word of a
+claim that leaves its slot in the chunk's second version vec2's y (the engine's support watch reads it). The CPU's
+`Interval.own` is that word; `orphanColumn` leaves row-named intervals alone; the rock judge takes them out of what
+it frees and calls `ExternalRegistry.rowOwners.loose`. Open limits: BACKLOG PS4, PS6.
+
 **What the sims may assume.** That an External interval is solid ground (they need not know of owners); that it
 does not move or change by itself; that its owner draws it. What owners may assume: that the cells they claimed
 stay External until a sim cuts or moves them, which they hear of within a judge's pass of the read (0.35 s, at
@@ -3597,6 +3609,8 @@ holds the material tables to each other.
 edit and brush params (material in the low byte, shake in 8-15). The test checks `MAX_MATERIALS` fits the interval,
 surface, pick and CPU `writeSlot` masks. Past 256 ids, interval word 2's free 16 bits are the room; the surface word has
 none.
+
+**Interval word 3** is zero but for an External interval a GPU-owned row claims: its owner word ("External intervals", above).
 
 **The aux byte (interval word 2, bits 8-15) means three things.** A solid's damage (bits 0-3) and support level (bits
 4-7, structure.wgsl); an External interval's fallback material (sim/external.ts: what it becomes if its owner lets

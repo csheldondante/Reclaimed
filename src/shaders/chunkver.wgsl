@@ -5,7 +5,9 @@
 //   [0].y what its surfaces read beside the columns: its water's class (waterclass.wgsl: crossed a walker's band) or
 //         its places,
 //   [1].x its water's depth at all,
-//   [1].y unused,
+//   [1].y not a version: the owner word (sim/external.ts "GPU-owned rows") of a row's claim a writer took out of a
+//         slot — cut, or moved to another slot — the last such in the chunk. The engine's support watch
+//         (engine_ground.wgsl) wakes that row if the claim is still its live one; a dead claim's word is ignored,
 //   [2..9] its shape as the field mesh sees it, a word per 4 x 4 columns (SHAPE_BLOCK; shapekey.wgsl: a slot's ends to
 //         1/16, its material) or the structures over them, so a mesh chunk's key covers what it reads, not a whole
 //         16-column chunk past its margin;
@@ -35,6 +37,8 @@ fn bumpColumn(q: vec2<u32>, old: vec4<u32>, nv: vec4<u32>) {
   if (all(old == nv)) { return; }
   let at = chunkVerAt(q);
   chunks[at].x = G.tick + 1u;
+  // (a row's claim no longer in its slot: its owner is to be told — DESIGN §3 "a real cut")
+  if ((old.z & 0xffu) == 39u && (old.w & 0xe0000000u) == 0x20000000u && nv.w != old.w) { chunks[at + 1u].y = old.w; }
   if (shapeMoved(old, nv)) {
     let cs = G.chunkSize;
     let b = ((q.y % cs) / SHAPE_BLOCK) * (cs / SHAPE_BLOCK) + (q.x % cs) / SHAPE_BLOCK;

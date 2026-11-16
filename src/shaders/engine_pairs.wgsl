@@ -71,6 +71,9 @@ fn groundWalk(c: vec2<i32>, z: f32) -> Ground {
     let v = layersIn[cs.x + s];
     if (ivEmpty(v)) { break; }
     if (ivZ0(v) > z) { break; }
+    // (a row's claim is not ground to a row: its own it passes over, another's it meets as the sleeper's model — the
+    // pair passes; DESIGN §3 "the others see the owner's matter only as a read-only projection")
+    if (ivMat(v) == MAT_EXTERNAL && ownIsRow(v.w)) { continue; }
     g.top = ivZ1(v);
     g.mat = ivMat(v);
     g.gran = select(0.0, 1.0, matState(g.mat) == ST_GRANULAR);
@@ -90,7 +93,8 @@ fn groundAtE(c: vec2<i32>, z: f32) -> Ground {
     let s = surfaceIn[colIdxI(c)];
     let d = textureLoad(driftIn, texCol(c), 0);
     let top = sfZ(s) + d.x;
-    if (!sfGap(s) || z >= top) {
+    // (a column whose top is External may be a row's claim: walked, so the claim is passed over)
+    if (sfMat(s) != MAT_EXTERNAL && (!sfGap(s) || z >= top)) {
       if (d.x > 0.0) { return Ground(top, z < top, 1.0, u32(d.z)); }
       return Ground(top, z < top, 0.0, sfMat(s));
     }

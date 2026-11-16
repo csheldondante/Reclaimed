@@ -43,6 +43,36 @@ export interface OwnedArenaJob {
   table: Uint32Array;
 }
 
+/**
+ * (physics10-one; DESIGN §3 "an object's projection is ordinary intervals of material External (naming the owner
+ * grid ...)") The contract's third owner kind, GPU-owned rows: an owner whose things come and go on the GPU (the
+ * physics engine's rows at rest: engine_claim.wgsl) writes its own External intervals there and names itself in the
+ * interval's word 3 — bits 29-31 the owner's kind (OWN_KIND_ROW), bit 28 the owner's own, bits 20-27 the claim's
+ * generation, bits 0-19 the row. It keeps a table the orphan pass reads (colapply.wgsl binding 7): ROW_CLAIM_WORDS a
+ * row from ROW_CLAIM_AT, a record's second word the generation of its live claim (0: none). Such an interval is held
+ * while its row's live claim has its generation; otherwise it is an orphan like any other (its fallback material in
+ * place: a body whose row is gone is baked into the ground). Passes that rewrite a column carry word 3 of an External
+ * interval and never join two with different owner words. The CPU never judges these intervals (it cannot see the
+ * table): orphanColumn leaves them, the rock judge takes them out of what it frees and tells the owner (`loose`).
+ */
+export interface OwnedRowsJob {
+  buf: GPUBuffer;
+}
+export interface RowOwners {
+  /** the table as the orphan pass reads it (null: none yet) */
+  job(): OwnedRowsJob | null;
+  /** the rock judge found these owner words' intervals hanging free: their rows wake */
+  loose(owns: number[]): void;
+}
+export const OWN_KIND_MASK = 0xe0000000;
+export const OWN_KIND_ROW = 0x20000000;
+export const ROW_CLAIM_AT = 264;
+export const ROW_CLAIM_WORDS = 4;
+/** does this owner word (an External interval's word 3) name a GPU-owned row? */
+export function ownedByRow(own: number | undefined): boolean {
+  return (((own ?? 0) & OWN_KIND_MASK) >>> 0) === OWN_KIND_ROW;
+}
+
 export const MESHINST = typeof location !== 'undefined' && urlFlags().get('meshinst') === '1';
 
 /** Who owns an instance (a small id; ExternalRegistry.owner). */
@@ -224,11 +254,12 @@ export function releaseSpan(col: Interval[], c: { z0: number; z1: number }, fall
  * rule ExternalRegistry.orphans applies on the CPU and colapply.wgsl `orphans` on the GPU.
  */
 export function orphanColumn(col: Interval[], mine: { z0: number; z1: number }[]): Interval[] | null {
-  if (!col.some((iv) => iv.mat === MAT.External)) return null;
+  if (!col.some((iv) => iv.mat === MAT.External && !ownedByRow(iv.own))) return null;
   let changed = false;
   const out: Interval[] = [];
   for (const iv of col) {
-    if (iv.mat !== MAT.External) {
+    // (a GPU-owned row's claim is its owner's and the GPU's orphan pass's to judge)
+    if (iv.mat !== MAT.External || ownedByRow(iv.own)) {
       out.push(iv);
       continue;
     }
@@ -282,6 +313,8 @@ export class ExternalRegistry {
   epoch = 0;
   /** (round 128j) the static things' claims (sim/static-claims.ts; null: none) */
   statics: StaticSet | null = null;
+  /** (physics10-one) the GPU-owned rows (the physics engine's rows at rest; null: none) */
+  rowOwners: RowOwners | null = null;
   stats ={ claimed: 0, cut: 0, loose: 0, released: 0, orphans: 0, live: 0, cells: 0, ms: 0 };
 
   constructor(private cols: ColumnAccess) {
@@ -554,7 +587,7 @@ function join(col: Interval[]): Interval[] {
   const out: Interval[] = [];
   for (const iv of [...col].sort((a, b) => a.z0 - b.z0)) {
     const last = out[out.length - 1];
-    if (last && last.mat === iv.mat && Math.abs(last.z1 - iv.z0) < 1e-4 && (last.aux ?? 0) === (iv.aux ?? 0)) last.z1 = iv.z1;
+    if (last && last.mat === iv.mat && Math.abs(last.z1 - iv.z0) < 1e-4 && (last.aux ?? 0) === (iv.aux ?? 0) && (last.own ?? 0) === (iv.own ?? 0)) last.z1 = iv.z1;
     else out.push({ ...iv });
   }
   return out;

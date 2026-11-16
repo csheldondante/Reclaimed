@@ -144,6 +144,11 @@ export function attachTools(scene: LevelScene): void {
     // pieces; the structure system only collapses damage
     const integ = new Integrity(core, rockbodyFor(scene.level.id));
     scene.integrity = integ;
+    // (the engine's rows at rest are an owner the orphan pass and the rock judge know: sim/external.ts "GPU-owned rows")
+    if (scene.engine && integ.external) {
+      const eng = scene.engine.engine;
+      integ.external.rowOwners = { job: () => ({ buf: eng.rowClaims }), loose: (owns) => owns.forEach((o) => eng.wake({ row: o & 0xfffff })) };
+    }
     core.integrity = integ;
     // lightning seeks what you see (loose ground, fallen bodies) and breaks
     // the bodies it strikes (round 19)

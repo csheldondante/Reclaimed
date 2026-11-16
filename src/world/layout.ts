@@ -37,12 +37,12 @@ const u1 = new Uint32Array(f1.buffer);
 const bitsOf = (z: number) => ((f1[0] = z), u1[0]);
 
 /** Write an interval into slot `slot` of `slots` (a slot index, not a word index). */
-export function writeSlot(slots: Uint32Array, slot: number, z0: number, z1: number, mat: number, aux = 0): void {
+export function writeSlot(slots: Uint32Array, slot: number, z0: number, z1: number, mat: number, aux = 0, own = 0): void {
   const o = slot * SLOT_WORDS;
   slots[o] = bitsOf(z0);
   slots[o + 1] = bitsOf(z1);
   slots[o + 2] = ((mat & 0xff) | ((aux & 0xff) << 8)) >>> 0;
-  slots[o + 3] = 0;
+  slots[o + 3] = own >>> 0;
 }
 
 /** The interval in slot `slot`, or null if the slot is empty. */
@@ -51,7 +51,10 @@ export function readSlot(slots: Uint32Array, slot: number): Interval | null {
   if (slots[o + 1] === 0) return null;
   const f = new Float32Array(slots.buffer, slots.byteOffset + o * 4, 2);
   const w = slots[o + 2];
-  return { z0: f[0], z1: f[1], mat: w & 0xff, aux: (w >>> 8) & 0xff };
+  const iv: Interval = { z0: f[0], z1: f[1], mat: w & 0xff, aux: (w >>> 8) & 0xff };
+  // (only where one is named: every other interval reads as it always did)
+  if (slots[o + 3]) iv.own = slots[o + 3];
+  return iv;
 }
 
 /** First and one-past-last whole cell an interval covers (cells whose centre lies inside it). */
@@ -125,6 +128,8 @@ export interface Interval {
   mat: number;
   /** aux byte (support·16 + damage) when read back from the GPU; 0 if absent */
   aux?: number;
+  /** word 3: an External interval's owner word (sim/external.ts "GPU-owned rows"); absent or 0: none named */
+  own?: number;
 }
 
 /** CPU-side authoring representation used by map generation only. */
@@ -234,7 +239,7 @@ export function readColumn(p: PackedWorld, slots: Uint32Array, x: number, y: num
 /** Column (x, y) packed into its K slots (empty slots zeroed), ready to write at slot `base`. */
 export function packColumn(col: Interval[], k: number): Uint32Array {
   const data = new Uint32Array(k * SLOT_WORDS);
-  col.forEach((iv, s) => writeSlot(data, s, iv.z0, iv.z1, iv.mat, iv.aux ?? 0));
+  col.forEach((iv, s) => writeSlot(data, s, iv.z0, iv.z1, iv.mat, iv.aux ?? 0, iv.own ?? 0));
   return data;
 }
 

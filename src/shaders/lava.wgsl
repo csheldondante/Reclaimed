@@ -220,12 +220,12 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   if (rise > 0.0 && n > 0u && top + d < f32(G.zMax) - 4.0) {
     let dz = rise * DT_L;
     let b = layers[cs.x];
-    layers[cs.x] = ivPack(ivZ0(b), ivZ1(b) + dz, ivMat(b), ivAux(b));
+    layers[cs.x] = ivKeep(b, ivZ0(b), ivZ1(b) + dz);
     // (round 128o, DA-B9: the column changed - its chunk's versions, chunkver.wgsl bumpColumn)
     bumpColumn(id.xy, b, layers[cs.x]);
     for (var s = 1u; s < n; s++) {
       let u = layers[cs.x + s];
-      layers[cs.x + s] = ivPack(ivZ0(u) + dz, ivZ1(u) + dz, ivMat(u), ivAux(u));
+      layers[cs.x + s] = ivKeep(u, ivZ0(u) + dz, ivZ1(u) + dz);
       bumpColumn(id.xy, u, layers[cs.x + s]);
     }
     top += dz;
@@ -277,11 +277,11 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
             continue;
           }
           if (ivZ0(v) < lo - 1e-3) {
-            if (nn < MAX_K) { arr[nn] = ivPack(ivZ0(v), lo, ivMat(v), ivAux(v)); }
+            if (nn < MAX_K) { arr[nn] = ivKeep(v, ivZ0(v), lo); }
             nn += 1u;
           }
           if (ivZ1(v) > hi + 1e-3) {
-            if (nn < MAX_K) { arr[nn] = ivPack(hi, ivZ1(v), ivMat(v), ivAux(v)); }
+            if (nn < MAX_K) { arr[nn] = ivKeep(v, hi, ivZ1(v)); }
             nn += 1u;
           }
         }
@@ -360,12 +360,12 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
           let n0 = n;
           if (z1 >= ivZ0(u) - 1e-3) {
             // (the gap filled: the two become one)
-            layers[cs.x + uf] = ivPack(ivZ0(v), ivZ1(u), ivMat(v), ivAux(v));
+            layers[cs.x + uf] = ivKeep(v, ivZ0(v), ivZ1(u));
             for (var s = uf + 1u; s + 1u < n; s++) { layers[cs.x + s] = layers[cs.x + s + 1u]; }
             n -= 1u;
             layers[cs.x + n] = IV_NONE;
           } else {
-            layers[cs.x + uf] = ivPack(ivZ0(v), z1, ivMat(v), ivAux(v));
+            layers[cs.x + uf] = ivKeep(v, ivZ0(v), z1);
           }
           for (var s = uf; s < n0; s++) { bumpColumn(id.xy, before[s], layers[cs.x + s]); }
         }
@@ -380,7 +380,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
     if (dz > 0.0) {
       gh -= dz * LATENT;
       let z1 = ivZ1(v) - dz;
-      let nv = select(ivPack(ivZ0(v), z1, ivMat(v), ivAux(v)), IV_NONE, z1 <= ivZ0(v) + 1e-3);
+      let nv = select(ivKeep(v, ivZ0(v), z1), IV_NONE, z1 <= ivZ0(v) + 1e-3);
       layers[cs.x + n - 1u] = nv;
       bumpColumn(id.xy, v, nv);
       if (z1 <= ivZ0(v) + 1e-3) { n -= 1u; }
@@ -463,10 +463,10 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
         r += 1u;
       }
       let v = layers[cs.x + r - 1u];
-      layers[cs.x + r - 1u] = ivPack(ivZ0(v), ivZ1(v) + dz, ivMat(v), ivAux(v));
+      layers[cs.x + r - 1u] = ivKeep(v, ivZ0(v), ivZ1(v) + dz);
       for (var s = r; s < n; s++) {
         let u = layers[cs.x + s];
-        layers[cs.x + s] = ivPack(ivZ0(u) + dz, ivZ1(u) + dz, ivMat(u), ivAux(u));
+        layers[cs.x + s] = ivKeep(u, ivZ0(u) + dz, ivZ1(u) + dz);
       }
       top += dz;
     }

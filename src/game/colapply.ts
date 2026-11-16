@@ -148,7 +148,7 @@ export interface GridClaimJob {
 /** (citygen M4b) the GPU-owned static grids' arena (sim/static-claims.ts OwnedArena): its buffer (bound whole: the
  *  table at its head, colapply.wgsl ownedSpanOf) and the table's words as they are now (written before a pass) */
 export type { OwnedArenaJob } from '../sim/external';
-import type { OwnedArenaJob } from '../sim/external';
+import type { OwnedArenaJob, OwnedRowsJob } from '../sim/external';
 
 const MAX_CUTS = 32;
 /** (round 128g) the materials a free claim takes (sim/external.ts freeMat), as the kernel's mask */
@@ -164,7 +164,7 @@ const PARAM_STRIDE = 256;
 const KERNELS = ['applyCuts', 'spillTarget', 'spillDeposit', 'depositAdd', 'release', 'orphans', 'claim', 'claimGrid', 'take', 'seat', 'gridDamage'] as const;
 type Kernel = (typeof KERNELS)[number];
 // (round 128o, DA-B9: the chunk table writable — the chunks' versions after it, sim/chunkver.ts)
-const BINDS = { 0: 'uniform', 1: 'rw', 2: 'rw', 3: 'read', 4: 'rw', 5: 'rw', 6: 'read' } as const;
+const BINDS = { 0: 'uniform', 1: 'rw', 2: 'rw', 3: 'read', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read' } as const;
 type ParamKey = 'nOps' | 'nSpill' | 'nGone' | 'hashCap' | 'opOff' | 'cutOff' | 'spillOff' | 'goneOff' | 'nDep' | 'depOff' | 'nKeys' | 'keyOff' | 'refOff' | 'spanOff' | 'maskLo' | 'maskHi' | 'seatBase' | 'seatAux' | 'free';
 
 interface Dispatch {
@@ -255,6 +255,7 @@ export class ColumnApply {
         4: this.dmg!,
         5: this.noDeposit,
         6: arena.buf,
+        7: this.noOwned,
       });
       const pass = enc.beginComputePass({ label: 'colapply gridDamage' });
       pass.setPipeline(this.pipes.gridDamage);
@@ -281,8 +282,8 @@ export class ColumnApply {
    * External intervals no claimed span holds made ground again over the whole window (sim/external.ts orphans; the
    * registry's claimedSpans: column key y · 65536 + x → spans in its order).
    */
-  orphans(cols: GpuColumns, claimed: Map<number, { z0: number; z1: number }[]>, owned: OwnedArenaJob | null = null): void {
-    const enc = this.encode(cols, [], claimed, undefined, owned);
+  orphans(cols: GpuColumns, claimed: Map<number, { z0: number; z1: number }[]>, owned: OwnedArenaJob | null = null, rows: OwnedRowsJob | null = null): void {
+    const enc = this.encode(cols, [], claimed, undefined, owned, rows);
     if (enc) this.device.queue.submit([enc.finish()]);
     for (const f of this.onApply) f();
   }
@@ -335,6 +336,7 @@ export class ColumnApply {
         4: hash,
         5: this.noDeposit,
         6: this.noOwned,
+        7: this.noOwned,
       });
       const pass = enc.beginComputePass({ label: 'colapply claimGrid' });
       pass.setPipeline(this.pipes.claimGrid);
@@ -346,7 +348,7 @@ export class ColumnApply {
     for (const f of this.onApply) f();
   }
 
-  private encode(cols: GpuColumns, stages: ApplyStage[], claimed: Map<number, { z0: number; z1: number }[]> | null, target?: SpillTarget, owned: OwnedArenaJob | null = null): GPUCommandEncoder | null {
+  private encode(cols: GpuColumns, stages: ApplyStage[], claimed: Map<number, { z0: number; z1: number }[]> | null, target?: SpillTarget, owned: OwnedArenaJob | null = null, rows: OwnedRowsJob | null = null): GPUCommandEncoder | null {
     const { packed } = cols;
     const W = packed.dims.w;
     const H = packed.dims.h;
@@ -522,6 +524,8 @@ export class ColumnApply {
         4: hash,
         5: target?.deposit ?? this.noDeposit,
         6: d.kernel === 'orphans' && owned ? owned.buf : this.noOwned,
+        // (the rows' claim table: a row's live claim is held — sim/external.ts OwnedRowsJob)
+        7: d.kernel === 'orphans' && rows ? rows.buf : this.noOwned,
       });
       // (a pass each: every dispatch sees the last one's writes)
       const pass = enc.beginComputePass({ label: `colapply ${d.kernel}` });

@@ -167,6 +167,8 @@ fn groundAtD(c: vec2<i32>, z: f32) -> vec4<f32> {
     let v = layersD[cs.x + s];
     if (ivEmpty(v)) { break; }
     if (ivZ0(v) > z) { break; }
+    // (a row's claim is not ground to a voxel: it meets the sleeper's model — engine_meet.wgsl)
+    if (ivMat(v) == MAT_EXTERNAL && ownIsRow(v.w)) { continue; }
     top = ivZ1(v);
     mat = ivMat(v);
     gran = select(0.0, 1.0, matState(mat) == ST_GRANULAR);
