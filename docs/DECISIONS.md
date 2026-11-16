@@ -3,6 +3,33 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-15 — round 129b: the skeleton against the opportunity design (`loop-skeleton`, round 2)
+
+The user's words, as passed on by the coordinator, verbatim:
+
+- The frame: "the design is well thought out. It's a 4x but with fast rounds, that use legacy to let scope grow and
+  change and the world build without creep in actions per turn".
+- The rhythm: "the gameplay with opportunities between action and spells in the live city is sort of a mashup of a deck
+  builder (Dominion inspired) and master of magic with armies and a wizard".
+- Run length, correcting round 1's "about four seasons": "I think you need way more than four seasons for the strategy
+  to play at all. It's a deck builder under the hood and you need long enough to actually build an engine and prepare
+  for the threat."
+- On round 1 itself: "Did you look up the design for the opportunity system? There was a whole design session".
+
+→ Read as (the coordinator's reading; the documents outrank it):
+- A round is fast: few opportunities, a brisk reveal, next. The number of decisions a round does not grow with the
+  realm: bigger holdings bring bigger cards, not more of them.
+- Scope grows through legacy: what a run leaves in the world is what the next run starts from and what its card
+  stacks are made from.
+- Opportunity rounds (the deck builder) alternate with live action in the city, where the player is the wizard:
+  spells cast while the armies raised fight on their own. Smaller live events on the way, not only the last attack.
+  Spells and armies are both things the deck builds; Magic is what casting spends.
+- Run length is a knob, default long: about 16 seasons to the major threat. **16 is the coordinator's number, not the
+  user's** (an assumption to confirm).
+- The existing design is followed wherever it already answers the question. Round 1 did not: its cards, deck, hand,
+  far places and world record stand beside the engine (LOOP_SKELETON.md, "Conformance"). They are to be replaced, not
+  kept.
+
 ## 2026-11-15 — round 129: the main game loop, as one walk-through (`loop-skeleton`; docs/design/LOOP_SKELETON.md)
 
 The user's words, as passed on by the coordinator, verbatim:

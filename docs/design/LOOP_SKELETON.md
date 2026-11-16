@@ -1,5 +1,13 @@
 # LOOP_SKELETON — the main game loop, walking skeleton (branch `loop-skeleton`, 2026-11-15)
 
+**The test for every choice here** (the user, 2026-11-15, verbatim): "the design is well thought out. It's a 4x but
+with fast rounds, that use legacy to let scope grow and change and the world build without creep in actions per turn".
+And the rhythm: "the gameplay with opportunities between action and spells in the live city is sort of a mashup of a
+deck builder (Dominion inspired) and master of magic with armies and a wizard". And the length: "I think you need way
+more than four seasons for the strategy to play at all. It's a deck builder under the hood and you need long enough to
+actually build an engine and prepare for the threat." **Round 1 was built without reading the opportunity design; see
+"Conformance" below before changing anything here.**
+
 The user's requirement (DECISIONS 2026-11-15, verbatim there): game starts, pick a leader, see their city, zoom in on
 characters who ask for resources for projects, allocate, see buildings go up and workers work, prepare for the negative
 opportunities, play an actual attack with the soldiers you built, then see the mutations from all your choices. "Strategy
@@ -115,3 +123,62 @@ raiders spawned, marched in with the camera on them and sacked a town with no so
 point (BACKLOG LS-16). A fight with soldiers and a spell cast are unseen.
 Stand-in: 8's look (the mutators), far places on the map, signs, refugees as a column. Persisting: the world record,
 the town as built. Next: LS-16, then merge `mutators`.
+
+## Conformance (round 2, 2026-11-15): the skeleton against the opportunity design
+
+Read: STRATEGIC_MAP.md, FACTIONS_WORLD_STATE.md, OPPORTUNITY_CATALOG.md, LIVING_WORLD_v3.md, SEASON_LOOP.md, DESIGN §21
+to §23, DECISIONS round 120 on (the hand, relics, Dominion). RUN_LOOP.md and NEXT_SEASON.md were only skimmed. The
+code: the fact layer (`api/contracts/facts.ts`, `facts-store.ts`, `facts-rules.ts`, `living/world.ts`,
+`living/mutations.ts`), the template engine (`living/engine.ts` `TemplateDef`, `LivingEngine`; `living/dsl.ts`), the
+one contract (`api/contracts/opportunity.ts` commit, resolve, relics), the one dealer (`opps/dealer.ts`, tuning in
+`opps/tune.ts`, the why lines), kingdoms and bots (`opps/kingdom.ts`, `opps/deck.ts`: ev, bigmoney, engine, random;
+`cardlab.html?deck=1`), petitions as dialogs (`dialog/petition.ts`, `living/present.ts`), cards pinned on the atlas
+map (`opps/level-opps.ts`).
+
+**Where the engine runs today.** The living engine, the fact layer, map pins and petition dialogs are wired only for
+`?level=atlas&run=opps` (the horde slice). The town level (`&town=1`) runs the season loop, which uses the contract
+and the dealer over its own `SeasonCard` catalog and shows a hand, with no facts. So the season loop is half way, and
+the skeleton went further from the design, not nearer.
+
+| Round 1 built | Uses the engine? | What replaces it |
+|---|---|---|
+| Pools, commit, projects (`season/ledger.ts`) | Yes: the opportunity contract | kept |
+| `Petition` and the 20 cards in `run-words.ts` | No: a third card type | `TemplateDef` entries (the catalog's own where they fit: INF-01 the mining outpost, INF-02 the workshop, INF-14 a settlement) with bindings to real places and people |
+| The deck, `fill`, `HAND_SIZE`, `Leader.opens`, `defence` (`run.ts`); the season dealer switched off | No: a second dealer | `LivingEngine.deal` through `opps/dealer.ts`; a leader is tags and holdings the dealer reads |
+| Effects (`Effect`, `Mutation`, `due`, `mutate`) | No | DSL effects (`living/dsl.ts apply`) into the fact store and, for land, the mutators |
+| `WorldRecord` (changes, places) under `loop:world` | No: a second world state | `MemoryWorldState.facts` (entities, relations, claims, the event history), saved with the world. It is not saved to disk today: that is new work |
+| Far places list (Harrowgate, Copper Hollow are invented) | No | the fact layer's settlements and polities seeded from the atlas (`living/seed.ts`); the mutators branch is being told the same |
+| The threat card and its countdown | Partly (a card with an expiry is right) | the run's one arc (`ArcDef`), with stages seen on the map |
+| The hand list on the sheet (`run-ui.ts`) | No: the design says never a hand | opportunities over their places with a timer; the petition is the dialog (`petitionTree`) when you go there. Kept already: names over the map. A small list may stay for reach on a phone if the user allows it |
+| Presenters (a name and a role, fixed spots) | No | `living/people.ts` and `cast.ts`: named people who remember across runs |
+| Signs chips; end-of-run causes | No | signs from the mutators; causes read from the event history |
+| The attack (`SeasonWar`, `TownForces`), the camera, the spell bar | n/a (live action) | kept; the raid becomes a template whose cost includes playing it |
+
+**What the engine already did that the skeleton re-invented:** a card with a cost, a played effect and an expiry;
+dealing few, the most expensive you can afford, one a place, with reasons; presenters; outcomes as world changes;
+relics; a world that carries over.
+
+**Decisions a round.** Today the skeleton offers at most 3 cards and the threat: 4, fixed by `HAND_SIZE`, so flat by
+a cap and not by the dealer's rule. The season loop's dealer also deals 4 (`deal.ts HAND`). The long scripted run
+does not exist yet, so its late-season number cannot be stated; the gate for it is: decisions in season 14 no more
+than in season 2.
+
+**Where the documents and tonight's words differ (tonight's win where explicit; listed for the user):**
+1. Length. DESIGN §21 leaves "15 to 50 minutes" unrevisited and the card lab counts turns (default 40); tonight: way
+   more than four seasons. 16 is the coordinator's figure.
+2. "No rolls" (the coordinator's summary) against `TemplateDef.odds` and tiers in the engine, and the catalog's
+   "outcomes can be uncertain". Which holds?
+3. Instant mutators against FACTIONS §7 "mutate the authoritative simulation": the mutators' list and the fact
+   store are two records of the same change unless one derives from the other. Proposed: facts are the truth for who
+   holds what; the mutators' list is the truth for land; a far place's status is read from facts.
+4. Pools. The season's six (round 128q/r) against the card lab's three: the bots check balance in the lab's pools, so
+   a 16-season check in the lab needs the six pools there, or a mapping.
+5. "One town per run" and "one displayed opportunity per location": a home-town run puts most cards in one place.
+   The skeleton reads "location" as the presenter's lot in the town.
+6. Petitions in a hand list were an experiment the user named in round 126, then corrected; the map and the dialog
+   are the rule.
+
+**Order of the rework (not started):** (a) templates, dealer and facts under the skeleton; (b) cards over places and
+the petition dialog, the hand gone; (c) far places from facts, with the mutators; (d) the kingdom and a 16-season
+check with the bots; (e) one small live event mid-run with spells; then the round 2 list (LS-23 first: soldiers lose
+9 to 2, so preparing cannot matter until that is found).
