@@ -24489,3 +24489,29 @@ materials' question (PM5), and the lab's button runs with free parts, where C ca
 The test is left as it is: it fails about one run in two until this is decided.
 
 **Hacks and limits.** A test on this branch that goes either way (PO13).
+
+## 2026-11-15 — the owner's phone test, PX1: telekinesis by touch
+
+**The owner.** "the telekinesis controls still don't work because drag moves the screen so it needs something else
+like double tap then drag or to freeze the screen when it is selected".
+
+**Reproduced** with real touch input in headless Chrome (`scripts/tktouch.mjs`, `Input.dispatchTouchEvent`, the pile
+station): a double tap + drag on the stack held nothing and the camera moved 14 units. The pointer events were right
+(tap, second press 158 ms later 4 px away). The cause: the tool asked for the ground under the press before grabbing
+(`camera.groundAt` over `scene.heightAt`), and that answer is null until the column's page is read. A mouse hovers
+before it presses, so the page is read by then; a finger does not, so the first ask at the press failed and the drag
+fell to a pan. The earlier check (TKN1, TKN7) was by a scripted mouse only.
+
+**The fix.** The second press dragged makes the hold at once (the gesture is the tool's, the screen stays) and the
+body is taken when the ground is read, a frame or so later (`src/scenes/level/hold.ts takeHold`, called at the drag's
+start and each frame while it waits). While a hold stands the camera neither pans nor zooms: `Controls` asks
+`gestureKeeps()` and ignores further fingers and the wheel; the scene's pan and zoom refuse too.
+
+**Checked.** `tktouch.mjs` after: held `engine`, the engine's grab slot holds row 8 (the top block of five), camera
+moved 0.000; a second finger dragged while held: still held, camera and zoom unchanged; two fingers with nothing held
+pan as before. `test/unit/controls-touch.test.ts` (6 tests, synthetic touch events through `Controls`).
+Not checked: the owner's phone itself.
+
+**Hacks and limits.** A single drag with the tool still pans (the double tap starts the grab, as the tool's hint
+says); a double tap + drag on empty ground keeps the screen and pulls nothing (TKN3). Other tools that ask the ground
+at a drag's start (the gust, the brushes) have the same first-ask gap by touch and still fall to a pan: PX11.

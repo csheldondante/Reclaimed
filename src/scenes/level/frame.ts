@@ -23,6 +23,7 @@ import { stepGeysers } from './atlas-controls';
 import { birdArrivals, confineToReach, hearing, refreshReach, showComplete } from './valley';
 import { brush, drawRing } from './sandbox-tools';
 import { aimBeam, stepMeteors } from './impacts';
+import { takeHold } from './hold';
 import { CUTAWAY, PLANNER_OFF, COARSE_PARTS, CAM_CLAMP, PLAN_OFF } from './flags';
 import type { LevelScene } from '../level';
 import { worldApiOf } from './world-api';
@@ -269,12 +270,16 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   drawRing(scene);
   if (scene.beamAt && scene.physics && !scene.beamPicking) aimBeam(scene, scene.beamAt);
   // (round 120) the held body pulled to where the finger is, at the height it was lifted to
-  if (scene.dragHold && scene.integrity) {
-    const [tx, ty] = camera.groundAt(scene.dragHold.at[0], scene.dragHold.at[1], () => scene.dragHold!.h);
+  if (scene.dragHold && scene.integrity && takeHold(scene) && scene.dragHold.g) {
+    const hold = scene.dragHold;
+    const g = hold.g!;
+    const [tx, ty] = camera.groundAt(hold.at[0], hold.at[1], () => hold.h);
     // (the finger's view ray too: the engine's rows are pulled to where it crosses their own drag plane)
-    if (!scene.integrity.pull(scene.dragHold.g, [tx, ty, scene.dragHold.h], Math.min(dt, 1 / 20), 40, camera.ray(scene.dragHold.at[0], scene.dragHold.at[1]))) {
-      scene.integrity.letGo(scene.dragHold.g);
-      scene.dragHold = undefined;
+    if (!scene.integrity.pull(g, [tx, ty, hold.h], Math.min(dt, 1 / 20), 40, camera.ray(hold.at[0], hold.at[1]))) {
+      scene.integrity.letGo(g);
+      // (the body is gone; the gesture is still the tool's till the finger lifts)
+      hold.g = undefined;
+      hold.none = true;
     }
   }
   // (round 87: the beam bores through rock with no edit event — what it undercuts is judged while it's held)

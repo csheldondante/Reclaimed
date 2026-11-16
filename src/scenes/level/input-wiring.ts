@@ -7,6 +7,7 @@ import { worldAt } from './atlas-controls';
 import { pickTown, townAtPick } from './town-tools';
 import { pickSmash, smashAt, undo } from './sandbox-tools';
 import { beamAim, dropAtPick, meteorAtPick, placeAtPick, ventAtPick } from './impacts';
+import { takeHold } from './hold';
 import type { LevelScene } from '../level';
 
 /** the canvas controls and the window's keys */
@@ -87,18 +88,12 @@ export function wireInput(scene: LevelScene): void {
       // press came straight after a tap in the same place grabs; any other pans as with no tool.
       if (scene.editor?.tool === 'drag') {
         if (!second) return false;
-        const ig = scene.integrity;
-        if (!ig) return false;
-        const p = under(sx, sy);
-        if (!p) return false;
-        const [gx, gy, gz] = p;
-        const reach = 48 / camera.zoom + 2;
-        // (on the ground under the finger or anything stood on it up to a body's height above)
-        // (the engine's rows: what the finger's view ray passes within a thumb of, the nearest the eye)
-        const g = ig.grabAt(gx, gy, gz + 2, reach + 2, { ...camera.ray(sx, sy), r: 20 / camera.zoom });
-        if (!g) return false;
-        // (the height it is held at: 2 over where it was; the engine's rows keep theirs on the GPU)
-        scene.dragHold = { g, h: (ig.grabState(g)?.pos[2] ?? gz + 2) + 2, at: [sx, sy] };
+        if (!scene.integrity) return false;
+        // (PX1: the gesture is the tool's from here, so the screen stays; the body is taken once the ground under the
+        // press is read — a finger has no hover before it, so the first ask is often not answered yet, and the drag
+        // used to fall to a pan: the owner's phone, "drag moves the screen")
+        scene.dragHold = { h: 0, at: [sx, sy], from: [sx, sy] };
+        takeHold(scene);
         return true;
       }
       // the heat beam: on while held, aimed at what's under the pointer (frame())
@@ -148,7 +143,7 @@ export function wireInput(scene: LevelScene): void {
       if (scene.flyDrag) return void (scene.flyDrag = undefined);
       // (let go: it flies on with the speed it had)
       if (scene.dragHold) {
-        scene.integrity?.letGo(scene.dragHold.g);
+        if (scene.dragHold.g) scene.integrity?.letGo(scene.dragHold.g);
         return void (scene.dragHold = undefined);
       }
       if (scene.beamAt) {
@@ -175,8 +170,10 @@ export function wireInput(scene: LevelScene): void {
       if (scene.editor?.tool === 'smash') pickSmash(scene, sx, sy);
       if (scene.editor?.tool === 'town') pickTown(scene, sx, sy);
     },
+    // (PX1: while a body is held, or being taken, the camera neither pans nor zooms)
+    gestureKeeps: () => !!scene.dragHold,
     pan: (dx, dy) => {
-      if (held()) return;
+      if (held() || scene.dragHold) return;
       // (flying: a right drag looks round)
       if (camera.fly) {
         camera.fly.yaw -= dx * 0.004;
@@ -188,7 +185,7 @@ export function wireInput(scene: LevelScene): void {
       camera.target[1] -= wy;
     },
     zoomAt: (sx, sy, f) => {
-      if (!held()) zoomAt(sx, sy, f);
+      if (!held() && !scene.dragHold) zoomAt(sx, sy, f);
     },
   });
 

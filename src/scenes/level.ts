@@ -266,8 +266,9 @@ export class LevelScene implements Scene {
   lava?: LavaSystem;
   /** sandbox: the heat beam's pointer while held */
   beamAt?: [number, number];
-  /** (round 120) the drag tool's hold: the body, the height it's held at, where the pointer is (CSS px) */
-  dragHold?: { g: Grab; h: number; at: [number, number] };
+  /** (round 120) the drag tool's hold: the body, the height it's held at, where the pointer is (CSS px). (PX1) `from`:
+   *  where it was pressed; `g` unset while the ground there isn't read yet (level/hold.ts); `none`: nothing there */
+  dragHold?: { g?: Grab; none?: boolean; h: number; at: [number, number]; from: [number, number] };
   beamWoke = -Infinity;
   beamLine?: SVGLineElement;
   beamDot?: SVGCircleElement;

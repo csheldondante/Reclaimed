@@ -4,6 +4,7 @@
 //   RMB drag  → pan        MMB drag → zoom        wheel / pinch → zoom
 //   two fingers → pan and pinch; a finger that took part in one only pans
 //   until it lifts (no tap, no gust from where it first landed)
+//   a gesture that keeps the screen (gestureKeeps: a held body) → further fingers and the wheel do nothing
 //   hover     → cursor breeze
 // This module knows nothing about the game; it only classifies gestures.
 
@@ -14,6 +15,9 @@ export interface ControlHandlers {
   dragStart(sx: number, sy: number, second: boolean): boolean;
   /** (round 128d) Whether a one-button drag that isn't a gesture pans with the mouse too (touch always does). */
   dragPans?(): boolean;
+  /** (PX1) Whether the gesture under way keeps the screen (a held body): while it does, a further finger is ignored
+   *  (it neither ends the gesture nor pans nor pinches) and the wheel does not zoom. */
+  gestureKeeps?(): boolean;
   dragMove(sx: number, sy: number): void;
   dragEnd(sx: number, sy: number): void;
   hover(sx: number, sy: number): void;
@@ -62,7 +66,11 @@ export class Controls {
   constructor(el: HTMLElement, h: ControlHandlers) {
     const signal = this.abort.signal;
     el.addEventListener('contextmenu', (e) => e.preventDefault(), { signal });
+    // (PX1: a gesture that keeps the screen, a held body)
+    const kept = () => !!h.gestureKeeps?.() && [...this.presses.values()].some((p) => p.gesture);
     el.addEventListener('pointerdown', (e) => {
+      // (a further finger while a body is held: not a press at all, so its moves and its lift do nothing)
+      if (kept()) return;
       el.setPointerCapture(e.pointerId);
       if (e.button === 1) e.preventDefault(); // no autoscroll on middle click
       const p: Press = {
@@ -148,6 +156,7 @@ export class Controls {
       'wheel',
       (e) => {
         e.preventDefault();
+        if (kept()) return;
         h.zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
       },
       { passive: false, signal },
