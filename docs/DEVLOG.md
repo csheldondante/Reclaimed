@@ -23178,3 +23178,28 @@ only as far as a slot is copied whole: a pass that re-packs with ivPack keeps th
 the times (the record has them). The fold past K joins the column's two lowest intervals (townstamp's smarter fold not
 copied). Structures are placeholders: no External intervals, no collision, not in the columns. Stairs, ramps and towers
 sit on the plain side of the step only. The lab's reveal is two discrete events (archgen's decal is the live one).
+
+## 2026-11-15 — world mutators: instant GPU ops from a world modifier list (`mutators`)
+
+**Why.** The user wants the world visibly changed by the player's choices ("melted, flooded, buried, burned"), and
+changed in places that are not loaded ("a lot of opportunities will happen in other area of the world"). A first plan
+(stage the sims' own events as a time-lapse) was dropped before any of it was built past the contract: it cannot reach
+unloaded land and its result depends on what was awake.
+
+**What.** docs/design/MUTATORS.md. The world modifier list (mutate/list.ts) is the truth; each entry's numbers are
+fixed from the atlas's macro ground when applied. Two kernels (shaders/mutate): `mutLand`, a thread a column of the
+entry's box, in roadgrade.wgsl's pattern (rebuild the top, bumpColumn / bumpWater); `mutLots`, a thread a lot record,
+writing the new condition word (`CityGen.condition`) that `tlRise` and `claimLots` read. Every rule is a pure function
+of the column or record and the entry, with noise hashed from world lattice points and idempotent writes, so the
+streamer's `onWritten` hook can write a region at a time and get the same land.
+
+**Measured** (Dawn D3D12, a 64 x 64 world, radius 20, land and four lots, one submit): flooded 0.07 ms (304 columns),
+burned 0.20 ms (1128), melted 0.13 ms (622), buried about the same. In the lab at Muru (headless Chrome, D3D11,
+412 x 915, q=low) a flood of radius 26: 0.05-0.07 ms. Not measured on the phone (MU-9).
+Woken sims: a flood in a closed hollow, the liquid stepped 300 ticks: volume 155.4 -> 155.3, no column's depth moved
+more than 0.001. A burial with every system stepped 300 ticks: no column's top moved.
+
+**Shared files touched.** citygen/gpu.ts (the condition buffer, bound in tlRise and claimLots), citygen/streets.wgsl
+(condColour, condHeight, claimLots' skip), citygen/town.ts (`conditionsChanged`, `lots.condition`), citygen/towns.ts
+(`onMade`), api/contracts/citygen.ts (CityLots.condition, room), scenes/level/stream-setup.ts (one call),
+gpu/transfers.ts (two entries), test/unit/writing-sources.test.ts (two dev sources).

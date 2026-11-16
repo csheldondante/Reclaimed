@@ -12,6 +12,31 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## World mutators (2026-11-15, `mutators`; docs/design/MUTATORS.md)
+
+The user: "I want melted, flooded, buried, burned etc"; "Try making instant mutators instead since a lot of
+opportunities will happen in other area of the world"; "the local simulation and playable battle make the instant
+mutations read as fully simulated". Instant GPU ops from a persistent world modifier list; land written at once or as it
+arrives; a condition word a lot.
+
+| id | item | size | status |
+|---|---|---|---|
+| MU-0 | The contract (`src/mutate/index.ts`), the world modifier list, the four land ops and the lot conditions on the GPU, the level's hooks (arriving land, new towns, the store, map pins), the lab (`?mutlab=1`), test/gpu/mutators.test.ts | L | done (`mutators`) |
+| MU-1 | **Flood is not a basin fill** (a limit): the level is one number from the atlas's coarse ground, falling away at the rim. In a closed hollow the woken liquid leaves it alone (tested); on open sloping ground it stands where the sim would run it off, and wakes into a flow. Fix: the level and the basin's mask from `terrain/flood.ts` (the GPU flood fill, spill height) for region-scale floods, and a column-scale connected fill for a district. No silt line where the water stood | M | open |
+| MU-2 | **Burial is a draped layer** (a limit): dunes across a seeded wind, under the repose angle (woken sediment does not move it: tested), but not piled against walls or in the lee of buildings, and never on roofs. Fix: a second pass that reads the neighbours' External spans (a lee and a windward term), or a short bake of the sediment sim behind the list | M | open |
+| MU-3 | `mutators.play` does nothing (resolves at once): no cheap, honest reveal found yet. Options: the op run at a rising strength BEFORE the final write (the flood works that way as it is: its water only rises), or a dust / steam cover of particles over the area for a second | M | open |
+| MU-4 | **Hack:** a building's column is told from a road's paving by its External span's thickness (a cell or more: `BUILDING_T`). The span's owner key would say it exactly | S | open |
+| MU-5 | The map shows a changed place as a pin with a line of text (the map's own pin hook; a run's story pins would replace them: `AtlasMap.marks` has one owner). Wanted: a tint or mark drawn on the map's image for the area (flooded blue, burned black, rock, sand), from the list | M | open |
+| MU-6 | `founded` is a record and a pin only: the place answers `mutators.place(id)` and shows on the map, but the settlements list and the town generator do not know it, so nothing is built when visited. Needs a settlement seed added at run time (settle/settlements.ts, FieldTowns' sites) | M | open |
+| MU-7 | The lot look is crude (the brief's "tint, roof removed, height cut"): drowned a murky tint, burned black at 0.6 height, destroyed a dark stump 0.6 high, buried a sand tint, abandoned grey and 7% lower, occupied the roof in the holder's hue. The building generator should read the word properly (with TM6's disrepair in bits 16-23) | M | open (building-generator session) |
+| MU-8 | A town made after its land arrived claims its buildings over land already mutated (sand or rock may lie inside a footprint, under the mesh); a town there when the land is written keeps its footprints clear. The two differ only inside claimed columns. Also: a town's distance to an entry ignores the world's wrap (the land ops handle it) | S | open |
+| MU-9 | Not measured on the phone: the ops' GPU ms (desktop: 0.05-0.2 ms an entry), and the cost at a region's arrival with a long list (one dispatch an entry that reaches the region). A toggle diff on the phone bench | S | open (the user's phone) |
+| MU-10 | The melted flow is a mask (a pool and one lobed tongue along the macro ground's downhill, clipped where the ground rises over the vent), not the paths lava would take: no levees, no toe, no branching round obstacles. Fix: a few passes of a flow-field descent over the area's own heights (resident land), or the basin tool with magma for a lava lake | M | open |
+| MU-11 | Burned ground only changes soil (to ash) and removes plants; rock, sand and paving show nothing, and there is no char on tree trunks (trees are in the plants' field: they go at once) | S | open |
+| MU-12 | Round 2: abandoned to overgrown (the plants' field grown over the lots as an instant op), undead (the traits system's kind on the town's people, a dark tint), lockdown (gates shut, patrols: Track B's orders), zombies as a roaming threat, the atlas-scale tint (MU-5). The condition values are reserved (7-9) | L | open |
+| MU-13 | Population in `places()` is a rule of thumb (each land mutator halves it at strength 1; destroyed and abandoned zero it); the living town's people are not removed or changed by any mutator yet | M | open |
+| MU-14 | test/unit/writing-sources fails on `src/roadlab/control.ts` at the base commit (555bdca3), before this branch | S | open (road lab) |
+
 ## Town contracts for Track B's unit minds (2026-11-10, `trackA-unitcontracts`; docs/design/TOWN_CONTRACTS.md)
 
 The coordinator's brief: three GPU contracts on the GPU towns for U2/U3 — GPU resident, no CPU readback, orders carry
@@ -2264,7 +2289,7 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
 | TM3 | Parade: a march along an arterial route | M | open (after Track B's march order: SF-2) |
 | TM4 | Plague dead-collection: carts and collectors on the routes, bodies in the street | M | open (needs Track B death / corpse units) |
 | TM5 | Undead labour: townsfolk become undead and haul endlessly, no rest state | M | open (living town + Track B unit kinds) |
-| TM6 | Disrepair: a per-lot condition word (prosperous / worn / ruined / destroyed) the building generator and construction shader read | M | open (citygen contract field; building-generator session) |
+| TM6 | Disrepair: a per-lot condition word (prosperous / worn / ruined / destroyed) the building generator and construction shader read | M | open (citygen contract field; building-generator session). 2026-11-15: the word exists, `CityLots.condition` (mutators, MU-0): low byte the mutators' condition, bits 16-23 free for disrepair |
 | TM7 | Banners per district mood | S | open |
 | TM8 | Town lighting moods | S | open (night lights SW-G6) |
 | TM9 | Weather: storms and fog tied to opportunities | M | open |
