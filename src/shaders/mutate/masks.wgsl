@@ -46,6 +46,9 @@ const MUT_UNLOOT: u32 = 9u;
 // (a founded mining place's workings: a pit cut in benches and a spoil heap — mutate/list.ts GPU_MINE)
 const MUT_MINE: u32 = 13u;
 const MAT_RUBBLE_U: u32 = 4u;
+// (the 'deadrise' sign's ground mark: a burial ground broken open — mutate/list.ts GPU_GRAVES)
+const MUT_GRAVES: u32 = 14u;
+const MAT_BONE_U: u32 = 16u;
 
 // (mutate/index.ts LOT_CONDITION)
 const LC_DROWNED: u32 = 1u;
@@ -59,6 +62,8 @@ const LC_LOOTED: u32 = 10u;
 const MAT_SOIL_U: u32 = 2u;
 const MAT_SAND_U: u32 = 3u;
 const MAT_ASH_U: u32 = 17u;
+/** burned ground (world/materials.ts MAT.Char) */
+const MAT_CHAR_U: u32 = 42u;
 const MAT_SILT_U: u32 = 22u;
 const MAT_BASALT_U: u32 = 23u;
 const MAT_OBSIDIAN_U: u32 = 35u;

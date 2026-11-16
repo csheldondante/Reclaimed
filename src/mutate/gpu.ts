@@ -252,6 +252,35 @@ const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
     this.dispatches++;
   }
 
+  /** A mark of a raw land kind (masks.wgsl MUT_*) written round window point `at` (world units in the window): the
+   *  'deadrise' sign's broken burial ground. One dispatch over its box; nothing read. Null: none of it is in the window. */
+  landMark(kind: number, at: readonly [number, number], radius: number, seed: number, o: Origin): [number, number, number, number] | null {
+    const ry = radius / ROW_H;
+    const cy = at[1] / ROW_H;
+    const b: [number, number, number, number] = [Math.max(0, Math.floor(at[0] - radius - 1)), Math.max(0, Math.floor(cy - ry - 1)), Math.min(this.w, Math.ceil(at[0] + radius + 2)), Math.min(this.h, Math.ceil(cy + ry + 2))];
+    if (b[2] <= b[0] || b[3] <= b[1]) return null;
+    const buf = new ArrayBuffer(PARAM_BYTES);
+    const u = new Uint32Array(buf);
+    const f = new Float32Array(buf);
+    u.set(b, 0);
+    f.set([at[0], at[1], radius, 1], 4);
+    u.set([kind, seed >>> 0, 0, 0], 8);
+    f.set([o[0], o[1] * ROW_H, o[2], 0], 20);
+    this.slot = 0;
+    this.device.queue.writeBuffer(this.uni, 0, buf);
+    const W = this.world;
+    const g = makeBindGroup(this.device, 'mutate-land', this.land.layout, { 0: W.globals, 1: W.chunks, 2: W.materials, 3: W.layers, 4: W.water, 5: { buffer: this.uni, offset: 0, size: PARAM_BYTES }, 6: W.veg, 7: W.vegNext, 8: W.lava, 9: W.waterSource, 14: W.wilt });
+    const enc = this.device.createCommandEncoder({ label: 'mutate-mark' });
+    const pass = enc.beginComputePass({ label: 'mutate-mark' });
+    pass.setPipeline(this.land.pipeline);
+    pass.setBindGroup(0, g);
+    pass.dispatchWorkgroups(Math.ceil((b[2] - b[0]) / 8), Math.ceil((b[3] - b[1]) / 8));
+    pass.end();
+    this.device.queue.submit([enc.finish()]);
+    this.dispatches++;
+    return b;
+  }
+
   /** The rivers of window box [x0, y0, x1, y1) settled to their cut (riverset.wgsl): a river column whose wetness is
    *  under the climate's holds no more than the table's depth at it. One dispatch; nothing read. */
   riverSettle(box: readonly [number, number, number, number]): void {

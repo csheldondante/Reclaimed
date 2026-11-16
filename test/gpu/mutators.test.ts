@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { LOT_CONDITION, type MutatorKind } from '../../src/mutate';
 import { MutateEngine, type MutTown } from '../../src/mutate/engine';
 import { MutateGpu, type Origin } from '../../src/mutate/gpu';
-import type { ListWorld } from '../../src/mutate/list';
+import { GPU_GRAVES, type ListWorld } from '../../src/mutate/list';
 import { unpackColumns } from '../../src/world/mapfile';
 import { ROW_H } from '../../src/world/lattice';
 import { MAT } from '../../src/world/materials';
@@ -210,7 +210,7 @@ describe.each(KINDS)('$kind', ({ kind, lots }) => {
       console.log(`[mutators] flood level ${level.toFixed(2)}: ${under} of ${all} columns inside the rim under water, ${high} columns of the map at or over the level`);
 
     } else if (kind === 'burned') {
-      expect(top.mat).toBe(MAT.Ash);
+      expect(top.mat).toBe(MAT.Char);
       expect(after.veg[i]).toBe(0);
       expect(before.veg[i]).toBe(2);
     } else if (kind === 'melted') {
@@ -564,6 +564,47 @@ test('founded, mining: a pit cut into the ground and a heap piled on it, both un
     }
   expect(outside).toBe(0);
   r.eng.rewrite();
+  const again = await snap(r);
+  expect(Array.from(again.layers)).toEqual(Array.from(after.layers));
+  expect(g.takeErrors()).toEqual([]);
+});
+
+// ---- (round 5, BACKLOG MU-43) the 'deadrise' sign's ground mark ------------------------------------------------
+test('landMark, the burial ground: black ground with pale stones inside its radius, nothing outside; written again it is the same', async () => {
+  const r = await rig();
+  const before = await snap(r);
+  const at: [number, number] = [20.5, 20.5 * ROW_H];
+  const box = r.gpu.landMark(GPU_GRAVES, at, 8, 77, [0, 0, 0]);
+  expect(box).not.toBeNull();
+  const after = await snap(r);
+  const ca = cols(r, before);
+  const cb = cols(r, after);
+  let black = 0;
+  let stones = 0;
+  let outside = 0;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const d = Math.hypot(x + 0.5 + 0.5 * (y & 1) - at[0], (y + 0.5) * ROW_H - at[1]);
+      const top = cb[i][cb[i].length - 1];
+      if (d > 8) {
+        if (JSON.stringify(ca[i]) !== JSON.stringify(cb[i])) outside++;
+        continue;
+      }
+      if (top.mat === MAT.Basalt) black++;
+      if (top.mat === MAT.Bone) {
+        stones++;
+        // (a stone stands on the black skin, half a cell to a cell tall)
+        expect(cb[i][cb[i].length - 2].mat).toBe(MAT.Basalt);
+        expect(top.z1 - top.z0).toBeGreaterThan(0.45);
+      }
+    }
+  expect(outside).toBe(0);
+  // (most of the disc turned; a few stones in rows)
+  expect(black).toBeGreaterThan(100);
+  expect(stones).toBeGreaterThan(3);
+  expect(stones).toBeLessThan(black / 3);
+  r.gpu.landMark(GPU_GRAVES, at, 8, 77, [0, 0, 0]);
   const again = await snap(r);
   expect(Array.from(again.layers)).toEqual(Array.from(after.layers));
   expect(g.takeErrors()).toEqual([]);

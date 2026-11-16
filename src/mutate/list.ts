@@ -31,6 +31,8 @@ const LAND: ReadonlySet<MutatorKind> = new Set(['flooded', 'burned', 'melted', '
 export const isLand = (k: MutatorKind): k is PhysicalKind => LAND.has(k);
 /** the land kernel's code for a founded mining place's workings (shaders/mutate/masks.wgsl MUT_MINE) */
 export const GPU_MINE = 13;
+/** the land kernel's code for the 'deadrise' sign's ground mark (masks.wgsl MUT_GRAVES) */
+export const GPU_GRAVES = 14;
 /** a founded place's reach by its size (cells): the town generator's own radii (citygen/town.ts RADIUS) */
 export const FOUNDED_RADIUS: Record<NonNullable<Mutation['size']>, number> = { camp: 30, village: 72, town: 120 };
 /** the land kernel's code for an entry (null: it writes no land): a land kind's own; a founded mining place's workings */

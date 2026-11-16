@@ -23443,3 +23443,31 @@ heap**: at 2.67 px a cell a 5-cell hole and a 6-cell cone are a few pixels of re
 round trip); gpu mutators 43 pass (the pit's floor down by its depth under rubble, the heap up, nothing else moved,
 written again the same, a plain founded place writes nothing). Not checked in a browser: a founded place after a
 reload (the list is restored and its sites added by the same path), and one founded on water or a cliff.
+
+## 2026-11-15 (later) — mutators round 5, items 4-5: the dead's ground, crime's marked houses, char (`mutators`, MU-43, MU-44, MU-45)
+
+**The dead rise (MU-43) — partial.** Round 4's walkers could not be seen at 2.67 px a cell. Now the sign writes a
+ground mark where they rise: a burial ground broken open at the town's edge, 30 cells across — a black skin on the
+ground with pale stones in rows (`land.wgsl MUT_GRAVES`, `MutateGpu.landMark`: one dispatch when the sign goes on, and
+again when its town is made again; nothing while it stays on). The walkers stand on it; their body is green (the
+units' shambler kind: torso grass green, head bone — was all bone, which is plaster's colour). No mist: the particles
+have no emitter that is not a burning column, and a CPU emitter a frame is what round 4 removed for the ash.
+r5/signs2/deadrise.png, looked at: a dark patch with white dots south of the town, plainly new and plainly not a
+field. **It reads as a dark stony patch; it does not say "the dead walk" by itself, and the walkers are still not
+visible at the default zoom** (a 1.4-cell figure is 4 px). The close still was framed on the town, not the burial
+ground, so the walkers' new colour is not looked at. The opened ground stays when the sign ends.
+
+**Crime (MU-44).** Chosen: the lots' own condition draw, because nothing cheap makes smoke without a fire. A looted
+house now has smoke-dark walls and a raw dark red roof (`citygen/streets.wgsl condColour`, was boarded brown).
+r5/signs1/crime.png: a dozen red roofs scattered among the white ones, read at once as marked houses. Whether red
+says crime rather than, say, plague is the owner's to judge. Risk: MU-46 (a reloaded town's roofs drawn red) would
+be mistaken for it.
+
+**Burned ground (MU-45).** The pink was the ash material itself: [0.55, 0.42, 0.38], the old game's reddish dust
+(the menu's mound), which the burn wrote over soil. That material is left alone; burned soil now takes a new one,
+`char` (MAT 42, [0.17, 0.165, 0.16], loose, not lifted by wind, plants return through it). r5/signs1/burned.png: the
+town's ground is black with the roads pale through it and the houses dark — it reads as burned. It is flat black:
+no grey ash patches, no ember glow (MU-11 still holds: rock, sand and paving show nothing).
+
+**Tests.** gpu mutators 44 pass (burial ground: black inside, stones on the skin, nothing outside, twice the same;
+burned soil is char); unit 636 pass, 1 known fail (MU-14); typecheck clean.

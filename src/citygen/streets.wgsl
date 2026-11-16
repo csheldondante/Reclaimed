@@ -3672,8 +3672,9 @@ fn condColour(c: u32, word: u32, roof: bool) -> u32 {
     case 4u: { return cmix(c, 0xcdb27au, 0.45); }
     case 5u: { return cmix(c, select(0x8f8b80u, 0x6f6a5eu, roof), 0.7); }
     case 6u: { return select(cmix(c, 0x6a665fu, 0.25), holderColour((word >> 8u) & 255u), roof); }
-    // (looted: boarded brown walls, the roof dull)
-    case 10u: { return select(0x7a5a3au, cmix(c, 0x4a3a2cu, 0.6), roof); }
+    // (looted — the mutators' 'crime' sign, BACKLOG MU-44: brown among white read as "some houses changed"; now the
+    // walls smoke-dark and the roof a raw dark red, a marked house that shows among plaster at the default zoom)
+    case 10u: { return select(0x2e2624u, 0x8e1410u, roof); }
     default: { return c; }
   }
 }

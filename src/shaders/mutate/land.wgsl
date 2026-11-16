@@ -91,12 +91,13 @@ fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!burnIn(w, d)) { return; }
     veg[j] = 0.0;
     vegNext[j] = 0.0;
-    // (soil chars to ash on top; rock, sand, paving and what's ash already stay)
+    // (soil chars on top — black char, MAT.Char: the fire sim's ash is the old game's reddish dust and read as salmon
+    // paving, BACKLOG MU-45; rock, sand, paving and what's charred already stay)
     if (tm == MAT_SOIL_U) {
-      if (top - ivZ0(tv) <= ASH_T + 0.05) { o[n - 1u] = ivPack(ivZ0(tv), top, MAT_ASH_U, 0u); }
+      if (top - ivZ0(tv) <= ASH_T + 0.05) { o[n - 1u] = ivPack(ivZ0(tv), top, MAT_CHAR_U, 0u); }
       else {
         o[n - 1u] = ivPack(ivZ0(tv), top - ASH_T, tm, ivAux(tv));
-        o[n] = ivPack(top - ASH_T, top, MAT_ASH_U, 0u);
+        o[n] = ivPack(top - ASH_T, top, MAT_CHAR_U, 0u);
         n += 1u;
       }
     }
@@ -126,6 +127,22 @@ fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
       bumpWater(vec2<u32>(x, y), before, 0.0);
     }
     if (meltCrack(w)) { lava[j].z = max(lava[j].z, 1150.0); }
+  } else if (kind == MUT_GRAVES) {
+    // (round 5, BACKLOG MU-43: where the dead rise — a patch of ground turned black, ragged at its edge, with pale
+    // stones and bones standing in rows on a world lattice. The black skin is the mark that the column is done)
+    if (tm == MAT_BASALT_U || tm == MAT_BONE_U) { return; }
+    if (d + 0.3 * (mnoise(w * 0.4, MP.k.y + 41u) - 0.5) > 0.92 || top + 3.0 >= f32(G.zMax)) { return; }
+    let g = vec2<i32>(floor(w / vec2<f32>(3.0, 2.6)));
+    let inCell = fract(w / vec2<f32>(3.0, 2.6));
+    let stone = mhash(g.x, g.y, MP.k.y + 43u) < 0.45 && all(abs(inCell - vec2<f32>(0.5)) < vec2<f32>(0.22, 0.26));
+    o[n] = ivPack(top, top + 0.15, MAT_BASALT_U, 0u);
+    n += 1u;
+    if (stone) {
+      o[n] = ivPack(top + 0.15, top + 0.15 + 0.5 + 0.5 * mhash(g.y, g.x, MP.k.y + 44u), MAT_BONE_U, 0u);
+      n += 1u;
+    }
+    veg[j] = 0.0;
+    vegNext[j] = 0.0;
   } else if (kind == MUT_MINE) {
     // (round 5, BACKLOG MU-6: "new mining settlements" — the workings beside the town. A pit: the column cut down in
     // benches, deepest in the middle (0.42 of its radius), and floored with a skin of broken rock; a heap: spoil piled

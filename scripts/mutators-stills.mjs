@@ -2,7 +2,7 @@
 // turn with a still of it at the default zoom, the panels hidden. For the eye: nothing is asserted but that the page
 // lives.
 //
-//   node scripts/mutators-stills.mjs --dir <folder> [--only ash,dark,dead,crime,withered,dried,map,melted] [--wait 50000]
+//   node scripts/mutators-stills.mjs --dir <folder> [--only ash,dark,dead,crime,withered,dried,founded,map,burned,melted] [--wait 50000]
 import fs from 'node:fs';
 import path from 'node:path';
 import { run, sleep } from './lib/runner.mjs';
@@ -11,7 +11,7 @@ const URL0 = '/?skipmenu=1&level=atlas&town=1&mutlab=1&fresh=1&opps=0&livingpane
 
 await run({ name: 'mutators-stills', kind: 'behaviour', size: '412x915', dpr: 1, echo: false }, async (R) => {
   const dir = R.opt('dir', '.');
-  const only = new Set((R.opt('only', 'ash,dark,dead,crime,withered,dried,map,melted') ?? '').split(','));
+  const only = new Set((R.opt('only', 'ash,dark,dead,crime,withered,dried,founded,map,burned,melted') ?? '').split(','));
   fs.mkdirSync(dir, { recursive: true });
   const page = await R.page();
   await page.goto(`${R.url}${URL0}`, { waitUntil: 'load' });
@@ -128,6 +128,11 @@ await run({ name: 'mutators-stills', kind: 'behaviour', size: '412x915', dpr: 1,
     await page.screenshot({ path: path.join(dir, 'map.png') });
     console.log(`saved ${path.join(dir, 'map.png')}`);
     await ev(() => void reclaimed.scene.atlasMap.close());
+  }
+  if (only.has('burned')) {
+    // (the burned ground's colour at the default zoom: char, BACKLOG MU-45)
+    await ev(() => mutators.apply({ kind: 'burned', place: reclaimed.scene.opts.atlas.startTown, radius: 110, seed: 6 }).resident);
+    await shot('burned.png', 12000);
   }
   if (only.has('melted')) {
     await ev(() => mutators.apply({ kind: 'melted', place: reclaimed.scene.opts.atlas.startTown, seed: 5 }).resident);

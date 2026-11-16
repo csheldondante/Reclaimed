@@ -97,7 +97,7 @@ The same modifier applied twice is one entry (its id: kind, place or cell, radiu
 | kind | what is written | lots |
 |---|---|---|
 | flooded | `water` up to a level over each column's top (never lowered), clean (the column's dissolved contamination cleared), over a thin layer of silt; plants under it gone. The level is taken on the GPU from the place's real ground the first time its whole area is in the window (`floodscan.wgsl`: over 22-70% of the dry ground by strength, 1.5 to 6.5 cells over the standing water it rises from) and kept on the entry (`params` [level, 1, the rim's low level]); flat inside 62% of the radius, then falling smoothly to a quarter cell under the lowest ground or water of the outer ring, so the flood meets what is round it with no step. The liquid holds it: the core's columns a held stage (up only), the rim's an edge stage (kept at, both ways) — Round 3 rulings, BACKLOG MU-36, MU-38 | drowned where the level is half a cell or more over the lot's base |
-| burned | plants removed; soil's top 0.3 becomes ash (the fire sim's own material); ragged edge, patches spared under strength 1 | burned (walls black, roof gone, height × 0.6) |
+| burned | plants removed; soil's top 0.3 becomes char (MAT 42, near black: MU-45; the fire sim's ash is reddish); ragged edge, patches spared under strength 1 | burned (walls black, roof gone, height × 0.6) |
 | melted | a basalt cap (the lava sim's set rock), with a glassy obsidian skin where it lies thick (MU-41), in a pool round a vent and a lobed tongue downhill (the direction from the macro ground), 0.4–3 cells thick, never over ground higher than the vent; water removed; cracks set to 1150° ground heat, which the render fields already draw as glow | destroyed (slumped to 20-50% of its height, black; the claim released) |
 | buried | a sand interval on the top: dunes across a seeded wind, thinning to nothing at the rim; up to 2 + 5 × strength cells | buried where the sand is a fifth of the building's height or 1.2 cells |
 | dried | `water` lowered by 1 + 3 × strength cells (deeper water stays as pools), the columns' `waterSource` shut, bank plants browned (`wilt`); the region's river inflow lowered in the fact layer; and the river through the place cut — its nodes in the disc and every reach above them (`weather/inflow.ts reachAbove`), carried on below until tributaries make it up — with the window's river columns settled to the cut at once (`riverset.wgsl`; past the window's edge the tiles do not show it: MU-47) | none |
@@ -125,8 +125,8 @@ world units or more).
 |---|---|---|
 | ashfall | the weather's rain draw makes pale flakes and dark cinders over the view (`rain.wgsl`), and what faces up is dusted grey (`render/light.wgsl ashDust`); one Globals number | one draw of up to 2 200 instances; no CPU work |
 | darkness | the sun and sky scaled and browned in the Globals (`WorldCore.skyDim`) | none |
-| deadrise | 4–12 `shambler` units (undead by the traits) in the town's streets | the units' own |
-| crime | 6–22% of standing buildings `looted` (condition 10); `unrest` on the sign | none (one dispatch on, one off) |
+| deadrise | a burial ground broken open at the town's edge (black ground, pale stones, 30 cells across: `MUT_GRAVES`, one dispatch) and 4–12 green-bodied `shambler` units on it; the ground stays when the sign ends (MU-43: partial) | the units' own |
+| crime | 6–22% of standing buildings `looted` (condition 10: dark walls, a dark red roof); `unrest` on the sign | none (one dispatch on, one off) |
 
 ## The map
 
@@ -235,3 +235,17 @@ withered (the grass browns, the trees stay green: MU-17). Not started: founded p
 `play()` (MU-3). Stills: `node scripts/mutators-stills.mjs --dir <folder> [--only ash,dark,dead,crime,withered,dried,map,melted]`.
 The lab's script hooks: `mutlab.go(id)`, `mutlab.live()`, `mutlab.conditions(id)`.
 
+
+## Hand-over (round 5, 2026-11-15 later)
+
+Done: a dry river bed (MU-42: a cut of the river's nodes at the place and above, the window's columns settled;
+`node scripts/mutators-river.mjs` prints the river draw's inputs); withered woods (MU-17: per-instance death in the
+tree draw, the blight mark in the wilt contract); founded places built by the town generator, a mine's pit and heap
+(MU-6); crime (MU-44); char (MU-45). Partial: the dead rise (MU-43: the ground mark shows, it does not say what it
+is). **The finding of the round (MU-49, MU-47):** land past the window's edge — the top and bottom of the phone's
+view at the default zoom — is drawn by the tile cache from its own generation, which no mutator writes and where
+rivers are drawn at the climate's wetness; every land mutator ends in a straight line there until the land streams
+in. Contract additions: `purpose: 'mining'` on a founded spec and entry. Outside `src/mutate`: weather (inflow,
+catchwet, wetfield), the wilt contract (common, wilt, ecology), the flora draw (floraput, floralook, meshinst,
+vegprep, florafield, the viewer), `FieldTowns.addSite`, the looted colour (streets.wgsl), the shambler's colours
+(agent-units), the material table (`char`), the transfer list, the level's frame and scene fields.
