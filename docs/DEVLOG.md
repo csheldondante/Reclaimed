@@ -23237,3 +23237,10 @@ hides `#ui`; its indirect-draw probe borrows the renderer's body pipeline. The b
 on a frame already in flight. The scripts take down the watchdog's overlay after the first-frame stall (only that
 message) so the states after it can be measured. test/unit/writing-sources.test.ts fails on `fortress` 555bdca3 for
 src/roadlab/control.ts (not this branch's; left).
+
+**Checks run.** `npx vitest run --project unit` (627 passed, 1 failed: PI-12, the base's), `npm run typecheck`,
+`node scripts/census.mjs` (its three idle gates pass), `node scripts/census.mjs --noq`, `node scripts/idlebench.mjs`
+(24 toggles at the first defaults, 194 s; at the shorter defaults only a 7-toggle run was timed, 80 s — the full set at
+12 s and 1 s windows is ~155 s by sum, not run), `npm run smoke` (atlas: loaded, no fatal, its sim running). The smoke
+takes no picture; the user's level was looked at in the census's shot before and after the cut (the town, its river
+and bridge, the card sheet: the same) and the bench's page in its own.
