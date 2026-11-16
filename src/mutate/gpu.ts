@@ -13,7 +13,7 @@ import lotsWgsl from '../shaders/mutate/lots.wgsl?raw';
 import type { WorldGpu } from '../sim/world-gpu';
 import { ROW_H } from '../world/lattice';
 import type { Mutation } from './index';
-import { GPU_KIND, holderHue } from './list';
+import { GPU_KIND, holderHue, isLand } from './list';
 
 /** a town's lots as the mutators write them (api/contracts/citygen.ts CityLots, with its condition words) */
 export interface MutLots {
@@ -48,12 +48,12 @@ export class MutateGpu {
 
   constructor(
     private readonly device: GPUDevice,
-    private readonly world: Pick<WorldGpu, 'globals' | 'chunks' | 'materials' | 'layers' | 'water' | 'veg' | 'vegNext' | 'lava'>,
+    private readonly world: Pick<WorldGpu, 'globals' | 'chunks' | 'materials' | 'layers' | 'water' | 'veg' | 'vegNext' | 'lava' | 'waterSource' | 'wilt'>,
     private readonly w: number,
     private readonly h: number,
   ) {
     const parts = [commonWgsl, layersWgsl, materialsWgsl, masksWgsl, landWgsl];
-    this.land = makeCompute(device, 'mutate-land', parts, { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'uniform', 6: 'rw', 7: 'rw', 8: 'rw' }, 'mutLand');
+    this.land = makeCompute(device, 'mutate-land', parts, { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'uniform', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 14: 'rw' }, 'mutLand');
     this.lots = makeCompute(device, 'mutate-lots', [commonWgsl, materialsWgsl, masksWgsl, lotsWgsl], { 0: 'uniform', 2: 'uniform', 5: 'uniform', 10: 'read', 11: 'read', 12: 'rw', 13: 'uniform' }, 'mutLots');
     this.ready = new Promise((res) => whenPipelinesReady(res));
     this.uni = device.createBuffer({ label: 'mutate-params', size: SLOT * SLOTS, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -82,7 +82,8 @@ export class MutateGpu {
     else if (m.kind === 'melted') {
       f.set([p[0] - ox, p[1] - oy * ROW_H, p[2] - oz, p[3] * (strength / Math.max(m.strength, 1e-6)), 0, 0, 0, 0], 12);
       f.set([p[4], p[5]], 16);
-    } else if (m.kind === 'buried') {
+    } else if (m.kind === 'dried') f.set([p[0], 0, 0, 0], 12);
+    else if (m.kind === 'buried') {
       f.set([p[0] * (strength / Math.max(m.strength, 1e-6)), p[1], 0, 0], 12);
       f.set([p[2], p[3]], 16);
     }
@@ -121,7 +122,7 @@ export class MutateGpu {
     };
     for (const m of ms) {
       if (GPU_KIND[m.kind] === null) continue;
-      if (box && GPU_KIND[m.kind]! <= 3) {
+      if (box && isLand(m.kind)) {
         // (the entry's own box within the one asked)
         const cx = m.cell[0] - o[0];
         const cy = m.cell[1] - o[1];
@@ -129,10 +130,12 @@ export class MutateGpu {
         const b: [number, number, number, number] = [Math.max(box[0], Math.floor(cx - m.radius - 1)), Math.max(box[1], Math.floor(cy - ry - 1)), Math.min(box[2], Math.ceil(cx + m.radius + 2)), Math.min(box[3], Math.ceil(cy + ry + 2))];
         if (b[2] > b[0] && b[3] > b[1]) {
           if (this.slot >= SLOTS) push();
-          const g = makeBindGroup(this.device, 'mutate-land', this.land.layout, { 0: W.globals, 1: W.chunks, 2: W.materials, 3: W.layers, 4: W.water, 5: this.params(m, o, b, 0, strength), 6: W.veg, 7: W.vegNext, 8: W.lava });
+          const g = makeBindGroup(this.device, 'mutate-land', this.land.layout, { 0: W.globals, 1: W.chunks, 2: W.materials, 3: W.layers, 4: W.water, 5: this.params(m, o, b, 0, strength), 6: W.veg, 7: W.vegNext, 8: W.lava, 9: W.waterSource, 14: W.wilt });
           jobs.push({ k: this.land, g, x: Math.ceil((b[2] - b[0]) / 8), y: Math.ceil((b[3] - b[1]) / 8) });
         }
       }
+      // (these change no lot)
+      if (m.kind === 'dried' || m.kind === 'withered' || m.kind === 'greened') continue;
       for (const t of towns) {
         if (this.slot >= SLOTS) push();
         const g = makeBindGroup(this.device, 'mutate-lots', this.lots.layout, { 0: W.globals, 2: W.materials, 5: this.params(m, o, [0, 0, 0, 0], t.room, strength), 10: t.records, 11: t.counts, 12: t.condition, 13: t.place });
@@ -143,6 +146,28 @@ export class MutateGpu {
     push();
     if (!timed) return time ? Promise.resolve(null) : null;
     return this.readMs();
+  }
+
+  /** every lot of a town under a raw kind code (mutLots: the 'crime' sign's loot and its undoing): one dispatch */
+  lotsOnly(kind: number, t: MutLots, strength: number, seed: number): void {
+    const buf = new ArrayBuffer(PARAM_BYTES);
+    const u = new Uint32Array(buf);
+    const f = new Float32Array(buf);
+    // (no area: the centre the lots' own frame, the radius everything)
+    f.set([0, 0, 1e9, strength], 4);
+    u.set([kind, seed, t.room, 0], 8);
+    this.slot = 0;
+    this.device.queue.writeBuffer(this.uni, 0, buf);
+    const W = this.world;
+    const g = makeBindGroup(this.device, 'mutate-lots', this.lots.layout, { 0: W.globals, 2: W.materials, 5: { buffer: this.uni, offset: 0, size: PARAM_BYTES }, 10: t.records, 11: t.counts, 12: t.condition, 13: t.place });
+    const enc = this.device.createCommandEncoder({ label: 'mutate-lots' });
+    const pass = enc.beginComputePass({ label: 'mutate-lots' });
+    pass.setPipeline(this.lots.pipeline);
+    pass.setBindGroup(0, g);
+    pass.dispatchWorkgroups(Math.ceil(t.room / 64), 1);
+    pass.end();
+    this.device.queue.submit([enc.finish()]);
+    this.dispatches++;
   }
 
   /** the last timed submit's GPU ms (16 bytes read, once) */

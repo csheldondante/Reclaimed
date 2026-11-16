@@ -50,6 +50,12 @@ async function rig(): Promise<Rig> {
     return [{ z0: 0, z1: z - 1, mat: MAT.Stone }, { z0: z - 1, z1: z, mat: MAT.Soil }];
   });
   map.vegetation.fill(2);
+  // (a river down the middle row band: water with a source)
+  for (let y = 44; y < 48; y++)
+    for (let x = 0; x < W; x++) {
+      map.water[y * W + x] = y === 45 || y === 46 ? 5 : 1.5;
+      map.waterSource[y * W + x] = 0.2;
+    }
   const w = await tinyWorld(g, map, []);
   const gpu = new MutateGpu(g.device, w.core.world, W, H);
   await gpu.ready;
@@ -94,11 +100,13 @@ interface Snap {
   water: Float32Array;
   veg: Float32Array;
   lava: Float32Array;
+  wilt: Float32Array;
+  src: Float32Array;
 }
 async function snap(r: Rig): Promise<Snap> {
   const c = r.w.core;
-  const [layers, water, veg, lava] = await Promise.all([c.readBuffer('layers'), c.readBuffer('water'), c.readBuffer('veg'), c.readBuffer('lava')]);
-  return { layers: new Uint32Array(layers.buffer.slice(0)), water: water.slice(), veg: veg.slice(), lava: lava.slice() };
+  const [layers, water, veg, lava, wilt, src] = await Promise.all([c.readBuffer('layers'), c.readBuffer('water'), c.readBuffer('veg'), c.readBuffer('lava'), c.readBuffer('wilt'), c.readBuffer('waterSource')]);
+  return { layers: new Uint32Array(layers.buffer.slice(0)), water: water.slice(), veg: veg.slice(), lava: lava.slice(), wilt: wilt.slice(), src: src.slice() };
 }
 const cols = (r: Rig, s: Snap) => unpackColumns(r.w.core.packed, s.layers).cols;
 const conds = async (r: Rig) => [...new Uint32Array(await g.read(r.town.lots.condition, LOTS.length * 4))].map((c) => c & 0xff);
@@ -123,7 +131,7 @@ function changedCols(r: Rig, a: Snap, b: Snap): { inside: number; outside: numbe
   for (let y = 0; y < H; y++)
     for (let x = 0; x < W; x++) {
       const i = y * W + x;
-      const same = JSON.stringify(ca[i]) === JSON.stringify(cb[i]) && a.water[i] === b.water[i] && a.veg[i] === b.veg[i] && a.lava[i * 4 + 2] === b.lava[i * 4 + 2];
+      const same = JSON.stringify(ca[i]) === JSON.stringify(cb[i]) && a.water[i] === b.water[i] && a.veg[i] === b.veg[i] && a.lava[i * 4 + 2] === b.lava[i * 4 + 2] && a.wilt[i * 4] === b.wilt[i * 4] && a.wilt[i * 4 + 1] === b.wilt[i * 4 + 1] && a.src[i] === b.src[i];
       if (same) continue;
       if (dist(x, y) < R) inside++;
       else outside++;
@@ -138,6 +146,10 @@ const KINDS: { kind: MutatorKind; lots: number[] }[] = [
   // (the vent uphill — west — and the flow east through the hollow: the hollow's lot and the low one go)
   { kind: 'melted', lots: [LOT_CONDITION.destroyed, 0, LOT_CONDITION.destroyed, 0] },
   { kind: 'buried', lots: [LOT_CONDITION.buried, LOT_CONDITION.buried, LOT_CONDITION.buried, 0] },
+  // (these change no lot)
+  { kind: 'dried', lots: [0, 0, 0, 0] },
+  { kind: 'withered', lots: [0, 0, 0, 0] },
+  { kind: 'greened', lots: [0, 0, 0, 0] },
 ];
 
 describe.each(KINDS)('$kind', ({ kind, lots }) => {
@@ -183,9 +195,21 @@ describe.each(KINDS)('$kind', ({ kind, lots }) => {
       // (uphill of the vent, inside the radius: untouched)
       const up = c[32 * W + 14];
       expect(up[up.length - 1].mat).toBe(MAT.Soil);
-    } else {
+    } else if (kind === 'buried') {
       expect(top.mat).toBe(MAT.Sand);
       expect(top.z1 - top.z0).toBeGreaterThan(1);
+    } else if (kind === 'dried') {
+      // (the shallows dry, a pool left in the deep middle; the source shut)
+      expect(after.water[44 * W + 32]).toBe(0);
+      expect(after.water[45 * W + 32]).toBeCloseTo(1, 3);
+      expect(after.src[45 * W + 32]).toBeLessThanOrEqual(0);
+      expect(after.src[45 * W + 32]).toBeGreaterThan(-1e-20);
+      expect(after.src[45 * W + 2]).toBeCloseTo(0.2, 5);
+    } else if (kind === 'withered') {
+      expect(after.wilt[(20 * W + 32) * 4 + 1]).toBe(1);
+      expect(after.veg[20 * W + 32]).toBe(2);
+    } else {
+      expect(after.veg[20 * W + 32]).toBeGreaterThan(2.1);
     }
   });
 

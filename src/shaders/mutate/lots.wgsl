@@ -27,6 +27,17 @@ fn mutLots(@builtin(global_invocation_id) id: vec3<u32>) {
   let cur = lotCond[r];
   let m = MP.k.x;
   if (m == MUT_RESTORED) { lotCond[r] = 0u; return; }
+  // (the 'crime' sign: a share of the standing buildings looted, by the lot's own seed; and put right)
+  if (m == MUT_UNLOOT) {
+    if ((cur & 0xffu) == LC_LOOTED) { lotCond[r] = cur & 0xffff0000u; }
+    return;
+  }
+  if (m == MUT_LOOT) {
+    if ((cur & 0xffu) == 0u && kind == 1u && mhash(i32(lotRecs[o + 23u] & 0xffffu), i32(lotRecs[o + 23u] >> 16u), MP.k.y) < 0.06 + 0.16 * MP.at.w) {
+      lotCond[r] = (cur & 0xffff0000u) | LC_LOOTED | (255u << 8u);
+    }
+    return;
+  }
   if ((cur & 0xffu) == LC_DESTROYED) { return; }
   var c2 = 0u;
   var sev = 0.0;

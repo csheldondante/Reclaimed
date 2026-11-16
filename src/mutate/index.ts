@@ -32,7 +32,7 @@
 // (a settlement's id): its centre and its extent are the area.
 
 /** physical: the land and the lots on it are rewritten */
-export type PhysicalKind = 'flooded' | 'burned' | 'melted' | 'buried';
+export type PhysicalKind = 'flooded' | 'burned' | 'melted' | 'buried' | 'dried' | 'withered' | 'greened';
 /** world state: a record changes and the place shows it (the map's mark, its lots' condition) */
 export type StateKind = 'founded' | 'destroyed' | 'abandoned' | 'captured' | 'vassal';
 export type MutatorKind = PhysicalKind | StateKind;
@@ -79,7 +79,8 @@ export interface Mutation {
   strength: number;
   seed: number;
   /** the op's own numbers, fixed when it was applied (from the atlas's ground, never from the window): 'flooded' the
-   *  water's level (world z), 'melted' the vent's cell and height, 'buried' the base depth */
+   *  water's level (world z), 'melted' the vent's cell and height, 'buried' the base depth, 'dried' the depth of water
+   *  taken off */
   params: number[];
   by?: string;
   tribute?: number;
@@ -125,7 +126,61 @@ export interface PlaceState {
 export interface MutationRecord {
   version: 2;
   list: Mutation[];
+  /** the signs on now (absent in a record made before signs) */
+  signs?: Sign[];
+  /** the loop's season when recorded (signs end by it) */
+  season?: number;
 }
+
+/**
+ * SIGNS: ambient indicators a world condition casts on a place while it lasts — usually the player's own city. The
+ * user (2026-11-15): "Weather effects too. Darkness and ash raining down are a great way to indicate a distant
+ * eruption. Having random undead rise in the city or crime are all indicators." Instant to switch on and off, cheap
+ * while on, saved with the list.
+ *
+ *   mutators.sign({ kind: 'ashfall', place: 'muru', strength: 0.7, until: 6 })   // till season 6 (the loop's count)
+ *   mutators.sign({ kind: 'ashfall', place: 'muru', strength: 0 })               // off
+ *   mutators.signs('muru')                                                       // the signs on there now
+ *   mutators.season(5)                                                           // the loop's season: signs past theirs end
+ *
+ * A `melted` mutation applied away from the home town casts ash fall and darkness on it for three seasons, by distance.
+ */
+export type SignKind = 'ashfall' | 'darkness' | 'deadrise' | 'crime';
+
+export interface SignSpec {
+  kind: SignKind;
+  /** the place it is cast on (an atlas place id); left out: wherever the player is */
+  place?: string;
+  /** 0..1; 0 switches it off. Default 1 */
+  strength?: number;
+  /** the last season it lasts through (the loop's season number); left out: until switched off */
+  until?: number;
+  /** what cast it (a mutation's id), for the "why" line */
+  cause?: string;
+}
+
+export interface Sign {
+  kind: SignKind;
+  place: string | null;
+  strength: number;
+  until: number | null;
+  cause: string | null;
+  /** 'crime', 'deadrise': the Unrest it adds while on (the loop reads it) */
+  unrest: number;
+}
+
+export interface SignInfo {
+  kind: SignKind;
+  name: string;
+  description: string;
+}
+
+export const SIGNS: readonly SignInfo[] = [
+  { kind: 'ashfall', name: 'Ash fall', description: 'Grey ash drifts down over the town.' },
+  { kind: 'darkness', name: 'Darkness', description: 'The sky goes dim and brown, as under smoke.' },
+  { kind: 'deadrise', name: 'The dead rise', description: 'A few of the dead get up and wander the streets.' },
+  { kind: 'crime', name: 'Crime', description: 'Some houses are looted and boarded up. Unrest grows.' },
+];
 
 /**
  * A lot's visible condition: one u32 a lot record (the record's index), in a GPU buffer beside the town's progress
@@ -143,6 +198,8 @@ export const LOT_CONDITION = {
   destroyed: 3,
   /** sediment stands against it: it keeps its claim under the sand, to be dug out */
   buried: 4,
+  /** (the 'crime' sign) broken into and boarded up */
+  looted: 10,
   /** nobody lives there: faded, the roof sagging */
   abandoned: 5,
   /** held by another: its roof in the holder's colour */
@@ -163,6 +220,12 @@ export interface Mutators {
   place(id: string): PlaceState | null;
   record(): MutationRecord;
   restore(record: MutationRecord): void;
+  /** a sign switched on (or off: strength 0); the same kind on the same place again replaces it */
+  sign(spec: SignSpec): Sign | null;
+  /** the signs on now (on `place`, or everywhere) */
+  signs(place?: string): Sign[];
+  /** the loop's season number: signs whose `until` is before it end */
+  season(n: number): void;
 }
 
 export const MUTATORS: readonly MutatorInfo[] = [
@@ -170,6 +233,9 @@ export const MUTATORS: readonly MutatorInfo[] = [
   { kind: 'burned', group: 'land', name: 'Fire', description: 'Fire has gone through. Roofs are gone, walls are black, and the green is ash.' },
   { kind: 'melted', group: 'land', name: 'Magma', description: 'A vent opened and lava ran downhill. What it reached is gone under black rock.' },
   { kind: 'buried', group: 'land', name: 'Burial', description: 'Sand lies over the district. The houses stand half under it.' },
+  { kind: 'dried', group: 'land', name: 'Dry river', description: 'The river has run dry. Only a few pools are left in its bed, and the banks go brown.' },
+  { kind: 'withered', group: 'land', name: 'Wither', description: 'The trees and grass have died and stand brown.' },
+  { kind: 'greened', group: 'land', name: 'Green', description: 'The land has grown over, thick and green.' },
   { kind: 'founded', group: 'state', name: 'Found a place', description: 'A new camp or village stands here.' },
   { kind: 'destroyed', group: 'state', name: 'Destroy', description: 'The place is a burned ruin. Nobody is left.' },
   { kind: 'abandoned', group: 'state', name: 'Abandon', description: 'Its people have gone. The houses stand empty.' },
@@ -197,4 +263,7 @@ export const mutators: Mutators & { bind(impl: Mutators | null): void; readonly 
   place: (id) => (bound ? bound.place(id) : null),
   record: () => (bound ? bound.record() : { version: 2, list: [] }),
   restore: (record) => need().restore(record),
+  sign: (spec) => need().sign(spec),
+  signs: (place) => (bound ? bound.signs(place) : []),
+  season: (n) => bound?.season(n),
 };

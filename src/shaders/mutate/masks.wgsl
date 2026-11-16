@@ -38,6 +38,11 @@ const MUT_RUINED: u32 = 4u;
 const MUT_ABANDONED: u32 = 5u;
 const MUT_OCCUPIED: u32 = 6u;
 const MUT_RESTORED: u32 = 7u;
+const MUT_LOOT: u32 = 8u;
+const MUT_WITHERED: u32 = 10u;
+const MUT_GREENED: u32 = 11u;
+const MUT_DRIED: u32 = 12u;
+const MUT_UNLOOT: u32 = 9u;
 
 // (mutate/index.ts LOT_CONDITION)
 const LC_DROWNED: u32 = 1u;
@@ -46,6 +51,7 @@ const LC_DESTROYED: u32 = 3u;
 const LC_BURIED: u32 = 4u;
 const LC_ABANDONED: u32 = 5u;
 const LC_OCCUPIED: u32 = 6u;
+const LC_LOOTED: u32 = 10u;
 
 const MAT_SOIL_U: u32 = 2u;
 const MAT_SAND_U: u32 = 3u;

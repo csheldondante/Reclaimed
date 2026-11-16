@@ -1,10 +1,14 @@
 // The mutator lab's buttons (?mutlab=1; docs/design/MUTATORS.md): one per mutator, applied to the land under the
 // middle of the screen (or to the town there), a far place mutated and visited, and a reload to show it persists.
 // A developer's panel: DOM only, the level hands it what each button does (scenes/level/mutators.ts).
-import { MUTATORS, type MutatorKind } from './index';
+import { MUTATORS, SIGNS, type MutatorKind, type SignKind } from './index';
 
 export interface MutLabActions {
   apply(kind: MutatorKind): string;
+  /** a sign switched on, or off if it is on */
+  sign(kind: SignKind): string;
+  /** a far place melted: the eruption casts ash and darkness here */
+  erupt(): string;
   /** a far place mutated (not loaded): what was done, as a line */
   far(): string;
   /** travel to the far place */
@@ -24,7 +28,7 @@ export function mountMutLab(parent: HTMLElement, act: MutLabActions): HTMLElemen
     b.textContent = label;
     b.title = title;
     b.dataset.mut = label;
-    b.style.cssText = 'padding:7px 9px;border-radius:6px;border:1px solid #223;background:#f3eee6;color:#123;';
+    b.style.cssText = 'padding:5px 7px;border-radius:6px;border:1px solid #223;background:#f3eee6;color:#123;';
     b.addEventListener('click', (e) => {
       e.stopPropagation();
       const said = f();
@@ -34,6 +38,8 @@ export function mountMutLab(parent: HTMLElement, act: MutLabActions): HTMLElemen
     el.appendChild(b);
   };
   for (const m of MUTATORS) btn(m.name, m.description, () => act.apply(m.kind));
+  for (const g of SIGNS) btn(g.name, g.description, () => act.sign(g.kind));
+  btn('Far eruption', 'Melt a place that is not loaded: ash and darkness fall here', () => act.erupt());
   btn('Far place', 'Flood and capture a place that is not loaded', () => act.far());
   btn('Go there', 'Travel to the far place', () => act.go());
   btn('Reload', 'Load the page again: the saved world shows the same changes', () => act.reload());

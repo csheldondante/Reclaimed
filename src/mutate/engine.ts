@@ -2,10 +2,10 @@
 // (mutate/gpu.ts) joined to a window of land. `apply` appends to the list and writes what is in the window at once;
 // `landWritten` (the streamer's hook) writes arriving land; `townMade` writes a town's lot conditions when its lots are
 // made. All three run the same ops from the same entries, so land ends the same whichever way it was written.
-import type { Applied, Mutation, MutationRecord, MutationSpec, Mutators, PlaceState } from './index';
+import type { Applied, Mutation, MutationRecord, MutationSpec, Mutators, PlaceState, Sign, SignSpec } from './index';
 import { MUTATORS } from './index';
 import type { MutateGpu, MutLots, Origin } from './gpu';
-import { applied, GPU_KIND, isLand, WorldList, type ListWorld } from './list';
+import { applied, GPU_KIND, GPU_LOOT, GPU_UNLOOT, isLand, WorldList, type ListWorld } from './list';
 import { ROW_H } from '../world/lattice';
 
 /** a live town: where it is in the window now (world units), how far its lots reach, its lots, and what to do once
@@ -32,9 +32,16 @@ export interface MutateHost {
   landChanged?(x0: number, y0: number, x1: number, y1: number): void;
   /** the list changed: keep it (the save) */
   changed?(record: MutationRecord): void;
+  /** the signs changed (one on, off or ended, or a restore): show them (the sky, the ash, the lots, the dead) */
+  signsChanged?(signs: readonly Sign[]): void;
+  /** the player's home place (its id and where: world units), for what a far event casts on it; null: none */
+  home?(): { id: string; at: readonly [number, number] } | null;
   /** true: each write is timed (a lab, a test) — `lastMs` */
   time?: boolean;
 }
+
+/** how far an eruption's ash and darkness reach (world units): at this distance they are at their weakest */
+export const ERUPTION_REACH = 4000;
 
 export class MutateEngine implements Mutators {
   readonly worldList: WorldList;
@@ -115,6 +122,18 @@ export class MutateEngine implements Mutators {
     const { m, fresh } = this.worldList.add(spec);
     if (!fresh) return applied(m, false, false);
     const resident = this.write([m], undefined, this.host.towns());
+    // (a distant eruption: ash fall and darkness on the home town for three seasons, stronger the nearer it is)
+    const home = m.kind === 'melted' ? this.host.home?.() : null;
+    if (home && m.place !== home.id) {
+      const d = Math.hypot(m.cell[0] - home.at[0], m.cell[1] * ROW_H - home.at[1]);
+      if (d > m.radius) {
+        const strength = Math.min(1, Math.max(0.3, 1 - d / ERUPTION_REACH));
+        const until = this.worldList.seasonNow + 3;
+        this.worldList.sign({ kind: 'ashfall', place: home.id, strength, until, cause: m.id });
+        this.worldList.sign({ kind: 'darkness', place: home.id, strength, until, cause: m.id });
+        this.host.signsChanged?.(this.worldList.signs());
+      }
+    }
     this.host.changed?.(this.worldList.record());
     return applied(m, resident, true);
   }
@@ -160,5 +179,31 @@ export class MutateEngine implements Mutators {
   restore(record: MutationRecord): void {
     this.worldList.restore(record);
     this.rewrite();
+    this.host.signsChanged?.(this.worldList.signs());
+  }
+
+  sign(spec: SignSpec): Sign | null {
+    const s = this.worldList.sign(spec);
+    this.host.signsChanged?.(this.worldList.signs());
+    this.host.changed?.(this.worldList.record());
+    return s;
+  }
+
+  signs(place?: string): Sign[] {
+    return this.worldList.signs(place);
+  }
+
+  season(n: number): void {
+    if (!this.worldList.season(n)) return;
+    this.host.signsChanged?.(this.worldList.signs());
+    this.host.changed?.(this.worldList.record());
+  }
+
+  /** (the 'crime' sign) a share of town `t`'s standing lots looted (`on`), or its looted lots put right */
+  loot(t: MutTown, on: boolean, strength: number, seed: number): void {
+    const o = this.host.origin();
+    if (!o) return;
+    this.host.gpu.lotsOnly(on ? GPU_LOOT : GPU_UNLOOT, t.lots, strength, seed);
+    t.changed(false);
   }
 }

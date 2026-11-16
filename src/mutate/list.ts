@@ -4,7 +4,7 @@
 // a column, so the list is all a save needs.
 import { MAT } from '../world/materials';
 import { ROW_H } from '../world/lattice';
-import type { Applied, Mutation, MutationRecord, MutationSpec, MutatorKind, PhysicalKind, PlaceState } from './index';
+import type { Applied, Mutation, MutationRecord, MutationSpec, MutatorKind, PhysicalKind, PlaceState, Sign, SignSpec } from './index';
 
 /** a place as the atlas knows it (a settlement's record: settle/settlements.ts), positions in world units */
 export interface AtlasPlace {
@@ -27,11 +27,15 @@ export interface ListWorld {
   places(): AtlasPlace[];
 }
 
-const LAND: ReadonlySet<MutatorKind> = new Set(['flooded', 'burned', 'melted', 'buried']);
+const LAND: ReadonlySet<MutatorKind> = new Set(['flooded', 'burned', 'melted', 'buried', 'dried', 'withered', 'greened']);
 export const isLand = (k: MutatorKind): k is PhysicalKind => LAND.has(k);
 
 /** mutate/land.wgsl MUT_* */
-export const GPU_KIND: Record<MutatorKind, number | null> = { flooded: 0, burned: 1, melted: 2, buried: 3, destroyed: 4, abandoned: 5, captured: 6, vassal: null, founded: null };
+/** mutLots' codes for the 'crime' sign: a share of the lots looted, and put right again */
+export const GPU_LOOT = 8;
+export const GPU_UNLOOT = 9;
+
+export const GPU_KIND: Record<MutatorKind, number | null> = { flooded: 0, burned: 1, melted: 2, buried: 3, destroyed: 4, abandoned: 5, captured: 6, vassal: null, founded: null, withered: 10, greened: 11, dried: 12 };
 
 /** the radius of an area given without one, and of a place the atlas gives none */
 export const DEFAULT_RADIUS = 28;
@@ -52,6 +56,32 @@ export function holderHue(by: string): number {
 
 export class WorldList {
   private entries: Mutation[] = [];
+  private on: Sign[] = [];
+  /** the loop's season (signs end by it) */
+  seasonNow = 0;
+
+  /** A sign on, replaced or (strength 0) off. Returns the sign as it stands (null: off). */
+  sign(spec: SignSpec): Sign | null {
+    const place = spec.place ?? null;
+    this.on = this.on.filter((s) => !(s.kind === spec.kind && s.place === place));
+    const strength = Math.min(1, Math.max(0, spec.strength ?? 1));
+    if (strength <= 0) return null;
+    const s: Sign = { kind: spec.kind, place, strength, until: spec.until ?? null, cause: spec.cause ?? null, unrest: spec.kind === 'crime' ? Math.ceil(strength * 2) : spec.kind === 'deadrise' ? 1 : 0 };
+    this.on.push(s);
+    return s;
+  }
+
+  signs(place?: string): Sign[] {
+    return this.on.filter((s) => place === undefined || s.place === place || s.place === null).map((s) => ({ ...s }));
+  }
+
+  /** the season is `n` now: true if a sign ended */
+  season(n: number): boolean {
+    this.seasonNow = n;
+    const before = this.on.length;
+    this.on = this.on.filter((s) => s.until === null || s.until >= n);
+    return this.on.length !== before;
+  }
   constructor(private world: ListWorld) {}
 
   get all(): readonly Mutation[] {
@@ -133,6 +163,8 @@ export class WorldList {
       const a = rnd(seed, 2) * Math.PI * 2;
       return [2 + 5 * strength, MAT.Sand, Math.cos(a), Math.sin(a)];
     }
+    // (how deep the water taken off is: what lies deeper stays as pools)
+    if (kind === 'dried') return [1 + 3 * strength];
     return [];
   }
 
@@ -197,13 +229,15 @@ export class WorldList {
   }
 
   record(): MutationRecord {
-    return { version: 2, list: this.entries.map((m) => ({ ...m, cell: [...m.cell] as [number, number], params: [...m.params] })) };
+    return { version: 2, list: this.entries.map((m) => ({ ...m, cell: [...m.cell] as [number, number], params: [...m.params] })), signs: this.on.map((s) => ({ ...s })), season: this.seasonNow };
   }
 
   /** the list as saved (its entries keep their numbers: the atlas isn't asked again) */
   restore(r: MutationRecord): void {
     if (r.version !== 2) throw new Error(`mutators: a record of version ${(r as { version: number }).version}, this build reads 2`);
     this.entries = r.list.map((m, i) => ({ ...m, cell: [...m.cell] as [number, number], params: [...m.params], seq: i }));
+    this.on = (r.signs ?? []).map((s) => ({ ...s }));
+    this.seasonNow = r.season ?? 0;
   }
 }
 

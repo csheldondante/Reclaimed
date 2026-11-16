@@ -5,6 +5,12 @@
 @group(0) @binding(7) var<storage, read_write> vegNext: array<f32>;
 /** molten rock's contract (x depth, y temperature, z the ground's heat, w level): the cracks' glow is the ground's heat */
 @group(0) @binding(8) var<storage, read_write> lava: array<vec4<f32>>;
+/** the springs and rivers' inflow a column (the liquid's source) */
+@group(0) @binding(9) var<storage, read_write> waterSource: array<f32>;
+/** the plants' health (wilt.wgsl): x the ground's hostility to plants, y their brownness */
+@group(0) @binding(14) var<storage, read_write> wilt: array<vec4<f32>>;
+/** a dried column's source: shut, and marked as dried (a negative far too small to drain anything) */
+const DRIED_MARK: f32 = -1e-30;
 @compute @workgroup_size(8, 8)
 fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
   let x = MP.box.x + id.x;
@@ -41,6 +47,36 @@ fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
       water[j] = want;
       bumpWater(vec2<u32>(x, y), before, want);
     }
+    return;
+  }
+  if (kind == MUT_DRIED) {
+    // (the river's water taken off to p.x deep, less toward the rim: what lay deeper stays as pools; its source shut,
+    // so a woken river stays dry; what grows on its banks browns. Done once a column: the shut source is written as
+    // a negative too small to count (DRIED_MARK) — the mark that this column was dried already, BACKLOG MU-15)
+    let take = MP.p.x * (1.0 - smoothstep(0.8, 0.97, d));
+    if (take <= 0.0 || waterSource[j] < 0.0) { return; }
+    let before = water[j];
+    let after = max(0.0, before - take);
+    if (after != before) {
+      water[j] = after;
+      bumpWater(vec2<u32>(x, y), before, after);
+    }
+    waterSource[j] = DRIED_MARK;
+    if (veg[j] > 0.0) { wilt[j].y = max(wilt[j].y, 0.6); }
+    return;
+  }
+  if (kind == MUT_WITHERED) {
+    // (the plants' own dead state: fully brown, the ground hostile to them, so woken plants stay dead and die back)
+    if (!burnIn(w, d) || veg[j] <= 0.0) { return; }
+    wilt[j] = vec4<f32>(max(wilt[j].x, 1.0), 1.0, wilt[j].z, wilt[j].w);
+    return;
+  }
+  if (kind == MUT_GREENED) {
+    // (grown over: shrubs to woods by a noise, healthy; never on water, rock stays as its growth cap leaves it)
+    if (!burnIn(w, d) || water[j] > 0.05 || tm != MAT_SOIL_U) { return; }
+    let v = 2.2 + 2.2 * mfbm(w * 0.12, MP.k.y + 9u);
+    if (v > veg[j]) { veg[j] = v; vegNext[j] = v; }
+    wilt[j] = vec4<f32>(0.0, 0.0, wilt[j].z, wilt[j].w);
     return;
   }
   if (kind == MUT_BURNED) {
