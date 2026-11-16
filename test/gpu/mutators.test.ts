@@ -441,3 +441,47 @@ test('a far eruption casts ash fall and darkness on the home town for three seas
   expect(near.signs()).toEqual([]);
   expect(g.takeErrors()).toEqual([]);
 });
+
+// ---- (round 5, BACKLOG MU-42) a river run dry: the window's river columns settled to the cut ----------------------
+test('riverSettle: river columns under a cut hold the table’s depth at it; the river beyond the cut, water off the table and a flood’s held stage are left; twice is the same', async () => {
+  const r = await rig();
+  const c = r.w.core;
+  const dev = g.device;
+  // (the rig's river band — rows 44..47, 5 deep at its line, 1.5 at its banks — as the atlas's table has it)
+  const table = new Float32Array(W * H * 4);
+  for (let y = 44; y < 48; y++)
+    for (let x = 0; x < W; x++) table.set([0.1, 0, y === 45 || y === 46 ? 5 : 1.5, 5], (y * W + x) * 4);
+  dev.queue.writeTexture({ texture: c.world.riverFlow }, c.world.ring.texToStore(table, 4), { bytesPerRow: c.world.riverFlow.width * 16 }, [c.world.riverFlow.width, c.world.riverFlow.height]);
+  // (the wetness field: the climate's 1 taken off west of x = 24 — a cut to nothing — easing to none by x = 32)
+  const wet = c.world.riverWet;
+  const field = new Float32Array(wet.width * wet.height);
+  for (let j = 0; j < wet.height; j++) for (let i = 0; i < wet.width; i++) field[j * wet.width + i] = i <= 3 ? -1 : 0;
+  dev.queue.writeTexture({ texture: wet }, field, { bytesPerRow: wet.width * 4 }, [wet.width, wet.height]);
+  // (a pond off the table, inside the cut; and a river column a flood holds)
+  const before = await snap(r);
+  const pond = 20 * W + 10;
+  const heldCol = 45 * W + 6;
+  const water = before.water.slice();
+  water[pond] = 2;
+  const src = before.src.slice();
+  src[heldCol] = -(1024 + 20);
+  dev.queue.writeBuffer(c.world.water, 0, c.world.ring.toStore(water, 1));
+  dev.queue.writeBuffer(c.world.waterSource, 0, c.world.ring.toStore(src, 1));
+  const d0 = r.gpu.dispatches;
+  r.gpu.riverSettle([0, 0, W, H]);
+  expect(r.gpu.dispatches - d0).toBe(1);
+  const a = await snap(r);
+  for (let y = 44; y < 48; y++) {
+    // (under the whole cut: a dry bed)
+    for (let x = 0; x < 24; x++) if (y * W + x !== heldCol) expect(a.water[y * W + x], `dry at ${x},${y}`).toBe(0);
+    // (past it: as it was)
+    for (let x = 33; x < W; x++) expect(a.water[y * W + x], `whole at ${x},${y}`).toBe(before.water[y * W + x]);
+    // (between: lowered, never raised)
+    for (let x = 24; x < 33; x++) expect(a.water[y * W + x]).toBeLessThanOrEqual(before.water[y * W + x]);
+  }
+  expect(a.water[pond]).toBe(2);
+  expect(a.water[heldCol]).toBe(before.water[heldCol]);
+  r.gpu.riverSettle([0, 0, W, H]);
+  const b = await snap(r);
+  expect(Array.from(b.water)).toEqual(Array.from(a.water));
+});

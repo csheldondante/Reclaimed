@@ -16,6 +16,8 @@ export class RiverWetField {
   private best: Float32Array;
   private vals: Float32Array;
   private wet = false;
+  /** the texels' nodes were mapped again since the last upload */
+  private fresh = true;
   private fw: number;
   private fh: number;
   /** the writes' cost (ms, a running mean) and the uploads made */
@@ -56,6 +58,7 @@ export class RiverWetField {
         }
     }
     this.wet = true;
+    this.fresh = true;
   }
 
   /** the texels from the nodes' storm water; uploaded if any is wet (or was). (merge124) `inflow` per node: a region's
@@ -71,13 +74,18 @@ export class RiverWetField {
   private upload(ex: Float32Array, inflow: Float32Array | undefined, climate: number): void {
     const { node, vals } = this;
     let any = false;
+    let moved = false;
     for (let t = 0; t < vals.length; t++) {
       const n = node[t];
       const k = n >= 0 && inflow ? inflow[n] : 1;
       const v = n >= 0 ? ex[n] * k + climate * (k - 1) : 0;
+      // (mutators round 5: uploaded only when a texel moved — a standing cut used to upload the field every frame)
+      if (Math.abs(v - vals[t]) > 1e-4) moved = true;
       vals[t] = v;
       if (Math.abs(v) > 1e-4) any = true;
     }
+    if (!moved && !this.fresh) return;
+    this.fresh = false;
     if (!any && !this.wet) return;
     this.wet = any;
     this.uploads++;

@@ -23343,3 +23343,44 @@ not take in round 3.
 
 **Tests.** typecheck clean; gpu mutators 40 pass; unit 632 pass, 1 known fail (roadlab writing lint, MU-14).
 
+
+## 2026-11-15 (later) — mutators round 5, item 1: a river run dry shows a dry bed (`mutators`, MU-42)
+
+**The cause, by numbers, not stills.** `node scripts/mutators-river.mjs` reads the river draw's inputs before and after
+`dried` at the home town (window 320 x 320, the town at 144, 190): the table's depth on river columns, the wetness the
+held rivers and the tiles read, the depth the table gives at it, the water the columns hold, by distance. Round 4's
+state, 15 s after the cut: within 60 cells the field said dry on 929 of 929 columns (held depth 0), **yet 546 of them
+held water (mean 0.47 cells)**; chunks awake went 0 to 79. Three causes:
+
+1. **The water the window's columns hold was never told.** The field reaches the held rivers' rating and the tiles at
+   once, but the columns came in at the reference depth and only ease to the table on a sleeping chunk's slow turn.
+2. **The cut was a region's, and the river comes from outside it.** The river through Muru rises south of the region:
+   it arrived at the region's edge whole and poured into the emptied bed (the live liquid, correctly).
+3. A lake stands on the river's course just below the town (15 069 standing columns not in the table); the area op
+   lowers it 4 cells inside the disc and it levels back into the channel by the bridge. Left: it is a lake.
+
+**The fix.** (a) A `dried` entry is a cut of the river through its place: the river's nodes inside its disc and every
+reach above them take the factor (`weather/inflow.ts reachAbove`, `CatchmentWet.setInflow(…, cuts)`), and round 4's
+carry takes it on below the place until tributaries make it up — at Muru every node from the springs to the town is
+0, and below it 0, 0.02, 0.05, then 0.33 where a tributary of 573 joins a river of 1 356. (b) The window's river
+columns are settled to the cut in one dispatch (`shaders/mutate/riverset.wgsl`, `MutateGpu.riverSettle`): a river
+column whose wetness is under the climate's holds no more than the table's depth at it; only lowered; a flood's stage
+left. It runs when the field is fitted again (a cut made, the window moved) and once in a frame in which land arrived
+— never while no river is cut. (c) The field is uploaded only when a texel moved: a standing cut used to upload it
+every frame (550 uploads in 15 s; now 2).
+
+**After** (same script): within 110 cells 2 349 of 2 349 river columns are dry by the table, 409 still hold water (the
+lake's backwater by the bridge and the pools the op leaves), mean 0.27 from 1.61; awake chunks 40 from 79.
+r5/river2/river-after.png, looked at: the bed from the bridge south to the fork and both branches above it are bare
+sand and gravel, no blue; the lake north of the town stays, with a wider sand shore. **What still does not read:** at
+the bottom right of the still the river is blue again — that is past the window's edge, where the tiles draw rivers
+at the climate's wetness because the wetness field covers the window only (MU-47).
+
+**The template engine's droughts.** Round 4's carry changed every `river-inflow` event's reach. Unit test
+(catchwet-inflow.test.ts): the drought arc's first stage emits region 11 at 0.7 and region 12 at 0.75; through the
+carry a region's node is at exactly its factor when the water above is whole, the next region's under its own factor
+by what the river above lost and never under the two together, the reach above untouched, nothing dry. The region
+factor path is unchanged by the cuts (a cut is the smaller of the two).
+
+**Tests.** unit 636 pass (3 new), 1 known fail (MU-14); gpu mutators 41 pass (riverSettle: dry under the cut, whole
+past it, a pond off the table and a held flood column left, twice the same); typecheck clean.

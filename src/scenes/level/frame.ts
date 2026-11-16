@@ -189,14 +189,18 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
   if (scene.catchWet && scene.wetField) {
     const S = scene.stream ?? { origin: [0, 0] };
     const key = `${S.origin[0]},${S.origin[1]}`;
+    let refit = false;
     if (key !== scene.catchAt) {
       scene.catchAt = key;
       scene.catchWet.setWindow(S.origin[0], S.origin[1], dims.w, dims.h);
-      if (scene.settlements) scene.catchWet.setInflow((x, y) => scene.settlements!.regionAt(x, y), scene.riverInflow);
+      if (scene.settlements) scene.catchWet.setInflow((x, y) => scene.settlements!.regionAt(x, y), scene.riverInflow, scene.riverCuts);
       scene.wetField.map(scene.catchWet);
+      refit = true;
     }
     scene.catchWet.update(dt * scene.speed, weather);
     scene.wetField.write(scene.catchWet.ex, scene.catchWet.inflow, scene.riverWet.value);
+    // (mutators round 5: the field is as the inflows and cuts have it now — whoever settles the window's rivers to it)
+    scene.riverFieldWritten?.(refit);
     globals.riverWet = scene.riverWet.update(dt * scene.speed, globals.season ?? 0, []);
   } else globals.riverWet = scene.riverWet.update(dt * scene.speed, globals.season ?? 0, weather.storms);
   // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms

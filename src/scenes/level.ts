@@ -37,7 +37,7 @@ import { FarLand } from '../atlas/far';
 import type { MapData } from '../world/mapgen';
 import { Sleep } from '../sim/sleep';
 import { RiverWet } from '../weather/riverwet';
-import { CatchmentWet } from '../weather/catchwet';
+import { CatchmentWet, type RiverCut } from '../weather/catchwet';
 import { RiverWetField } from '../weather/wetfield';
 import { riverMode, useRivers } from '../sim/world-gpu';
 import { type FlowKit } from '../flow/install';
@@ -153,6 +153,11 @@ export class LevelScene implements Scene {
   /** (merge124) the regions' rivers' inflow factors the run's world set (a card's drought or diversion: WorldState's
    *  `river-inflow`), realised in the river-wetness field where the player looks */
   riverInflow = new Map<number, number>();
+  /** (mutators round 5) rivers run dry at a place (weather/catchwet.ts RiverCut): the `dried` entries of the modifier list */
+  riverCuts: RiverCut[] = [];
+  /** (mutators round 5) called each frame after the river field is written; `refit`: it was fitted again this frame
+   *  (the window moved, an inflow or a cut changed) */
+  riverFieldWritten?: (refit: boolean) => void;
   /** (round 109) the atlas level's: each watershed's storm water (weather/catchwet.ts), its field over the window
    *  (weather/wetfield.ts), and the window's origin they were fitted to */
   catchWet?: CatchmentWet;

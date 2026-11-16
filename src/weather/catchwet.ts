@@ -15,7 +15,7 @@
 import { NODE_WORDS, type Catchments } from '../atlas/rivers';
 import { RIVER_WET } from '../sim/world-gpu';
 import { ROW_H } from '../world/lattice';
-import { carryInflow } from './inflow';
+import { carryInflow, reachAbove } from './inflow';
 
 /** seconds the hillside's runoff takes to follow the rain most of the way (riverwet.ts LAG_S, the climate's) */
 const LAG_S = 20;
@@ -47,6 +47,14 @@ export interface RainSource {
   storms: readonly { x: number; y: number; radius: number; intensity: number; shape: readonly number[] }[];
   /** the rain at a window point (Weather.rainAt) */
   rainAt(x: number, y: number): number;
+}
+
+/** a river run dry at a place (world units): the factor its nodes within the radius, and every reach above them, take */
+export interface RiverCut {
+  x: number;
+  y: number;
+  radius: number;
+  factor: number;
 }
 
 export class CatchmentWet {
@@ -172,15 +180,34 @@ export class CatchmentWet {
   }
 
   /** (merge124) The regions' inflow factors (those not 1), by the region each node is in — carried on downstream
-   *  (weather/inflow.ts carryInflow: a river dried in one region runs low below it) */
-  setInflow(regionAt: (x: number, y: number) => number, factors: ReadonlyMap<number, number>): void {
-    if (!factors.size) {
+   *  (weather/inflow.ts carryInflow: a river dried in one region runs low below it). (mutators round 5) `cuts`: rivers
+   *  run dry at a place (world units; the river's nodes within `radius` of it): every reach above those nodes takes the
+   *  factor too (reachAbove), so the river fails from its springs and the cut carries on below the place */
+  setInflow(regionAt: (x: number, y: number) => number, factors: ReadonlyMap<number, number>, cuts: readonly RiverCut[] = []): void {
+    if (!factors.size && !cuts.length) {
       this.inflow.fill(1);
       return;
     }
-    const f = new Float32Array(this.g.nodes.buffer, this.g.nodes.byteOffset, this.g.nodes.length);
-    const C = this.g.catchments;
-    carryInflow(C.order, this.next, C.own, C.ref, (k) => factors.get(regionAt(f[k * NODE_WORDS], f[k * NODE_WORDS + 1])) ?? 1, this.inflow);
+    const { g, count } = this;
+    const f = new Float32Array(g.nodes.buffer, g.nodes.byteOffset, g.nodes.length);
+    const C = g.catchments;
+    let cut: Float32Array | null = null;
+    for (const c of cuts) {
+      const seeded = new Uint8Array(count);
+      let any = false;
+      for (let k = 0; k < count; k++) {
+        let dx = f[k * NODE_WORDS] - c.x;
+        let dy = f[k * NODE_WORDS + 1] - c.y;
+        dx -= Math.round(dx / g.worldW) * g.worldW;
+        dy -= Math.round(dy / g.worldH) * g.worldH;
+        if (dx * dx + dy * dy <= c.radius * c.radius) seeded[k] = 1, (any = true);
+      }
+      if (!any) continue;
+      const up = reachAbove(C.order, this.next, seeded);
+      cut ??= new Float32Array(count).fill(1);
+      for (let k = 0; k < count; k++) if (up[k]) cut[k] = Math.min(cut[k], c.factor);
+    }
+    carryInflow(C.order, this.next, C.own, C.ref, (k) => Math.min(factors.get(regionAt(f[k * NODE_WORDS], f[k * NODE_WORDS + 1])) ?? 1, cut ? cut[k] : 1), this.inflow);
   }
 
   /** a step of dt seconds (game time) with the storms' rain */

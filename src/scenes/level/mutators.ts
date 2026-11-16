@@ -79,6 +79,31 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
     }
   };
 
+  // ---- rivers run dry (BACKLOG MU-42): every `dried` entry is a cut of the river through its place — the river's nodes
+  // in its disc and every reach above them (weather/catchwet.ts RiverCut), which the river field carries on downstream.
+  // The held rivers and the tiles read the field; the water the window's columns hold is settled to it in one dispatch
+  // when the field is fitted again and when land arrives (riverset.wgsl). Nothing runs while no river is cut.
+  let cutsKey = '';
+  let settle = false;
+  const syncCuts = (rec: MutationRecord) => {
+    const cuts = rec.list.filter((m) => m.kind === 'dried').map((m) => ({ x: m.cell[0], y: m.cell[1] * ROW_H, radius: m.radius, factor: Math.max(0, 1 - m.strength) }));
+    const key = JSON.stringify(cuts);
+    if (key === cutsKey) return;
+    cutsKey = key;
+    scene.riverCuts = cuts;
+    // (the field's nodes take it the next frame: the window's catchments fitted again)
+    scene.catchAt = '';
+  };
+  const cut = () => scene.riverCuts.length > 0 || [...scene.riverInflow.values()].some((v) => v < 1);
+  scene.riverFieldWritten = (refit) => {
+    if (!(refit || settle) || !cut()) return;
+    settle = false;
+    gpu.riverSettle([0, 0, core.dims.w, core.dims.h]);
+    scene.flow?.water.forget(0, 0, core.dims.w, core.dims.h);
+  };
+  // (arriving land comes in with its rivers at the reference: settled after the field's next write)
+  S.onWritten.push(() => void (settle = cut()));
+
   const eng = new MutateEngine({
     gpu,
     world: {
@@ -99,7 +124,10 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
       scene.flow?.water.forget(x0, y0, x1 - x0, y1 - y0);
       scene.flow?.lava.forget(x0, y0, x1 - x0, y1 - y0);
     },
-    changed: (rec) => void S.store?.put(KEY, new TextEncoder().encode(JSON.stringify(rec)), { session: 'town', hash: 0 }),
+    changed: (rec) => {
+      void S.store?.put(KEY, new TextEncoder().encode(JSON.stringify(rec)), { session: 'town', hash: 0 });
+      syncCuts(rec);
+    },
     signsChanged: showSigns,
     home: () => {
       const s = homeId ? st.settlement(homeId) : null;
@@ -142,6 +170,7 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
     // (what was applied before the store opened stays, after the saved ones)
     const mine = eng.record().list;
     eng.restore(rec);
+    syncCuts(eng.record());
     for (const m of mine) eng.apply({ ...m, at: m.cell, place: m.place ?? undefined });
   })();
 

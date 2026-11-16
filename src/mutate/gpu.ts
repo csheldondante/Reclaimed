@@ -12,7 +12,9 @@ import landWgsl from '../shaders/mutate/land.wgsl?raw';
 import lotsWgsl from '../shaders/mutate/lots.wgsl?raw';
 import floodWgsl from '../shaders/mutate/flood.wgsl?raw';
 import floodScanWgsl from '../shaders/mutate/floodscan.wgsl?raw';
-import type { WorldGpu } from '../sim/world-gpu';
+import riverSetWgsl from '../shaders/mutate/riverset.wgsl?raw';
+import riverHeldWgsl from '../shaders/riverheld.wgsl?raw';
+import { RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS, type WorldGpu } from '../sim/world-gpu';
 import { ROW_H } from '../world/lattice';
 import type { Mutation } from './index';
 import { GPU_KIND, holderHue, isLand } from './list';
@@ -47,6 +49,7 @@ export class MutateGpu {
   private readonly flood: ComputeKernel;
   private readonly scan: ComputeKernel;
   private readonly pick: ComputeKernel;
+  private readonly river: ComputeKernel;
   private readonly floodHist: GPUBuffer;
   private readonly floodOut: GPUBuffer;
   private readonly uni: GPUBuffer;
@@ -61,7 +64,7 @@ export class MutateGpu {
 
   constructor(
     private readonly device: GPUDevice,
-    private readonly world: Pick<WorldGpu, 'globals' | 'chunks' | 'materials' | 'layers' | 'water' | 'veg' | 'vegNext' | 'lava' | 'waterSource' | 'wilt' | 'contam' | 'contamNext'>,
+    private readonly world: Pick<WorldGpu, 'globals' | 'chunks' | 'materials' | 'layers' | 'water' | 'veg' | 'vegNext' | 'lava' | 'waterSource' | 'wilt' | 'contam' | 'contamNext' | 'riverFlowView' | 'riverWetView'>,
     private readonly w: number,
     private readonly h: number,
   ) {
@@ -73,6 +76,14 @@ export class MutateGpu {
     const fparts = [commonWgsl, layersWgsl, materialsWgsl, masksWgsl, floodScanWgsl];
     this.scan = makeCompute(device, 'mutate-flood-scan', fparts, fb, 'mutFloodScan');
     this.pick = makeCompute(device, 'mutate-flood-pick', fparts, fb, 'mutFloodPick');
+    // (the rivers' table as the held rivers read it — riverheld.wgsl, its table on: where the world has none the
+    // texture is empty and nothing is written)
+    const held = `const RIVER_TABLE: bool = true;
+const RIVER_DEPTH_EXP: f32 = ${RIVER_DEPTH_EXP};
+const RIVER_SPEED_EXP: f32 = ${RIVER_SPEED_EXP};
+const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
+`;
+    this.river = makeCompute(device, 'mutate-river', [commonWgsl, layersWgsl, materialsWgsl, masksWgsl, riverSetWgsl, held + riverHeldWgsl], { 0: 'uniform', 1: 'read', 2: 'uniform', 4: 'rw', 5: 'uniform', 9: 'read', 22: 'tex', 62: 'tex' }, 'mutRiverSet');
     this.floodHist = device.createBuffer({ label: 'mutate-flood-hist', size: 768 * 4, usage: GPUBufferUsage.STORAGE });
     this.floodOut = device.createBuffer({ label: 'mutate-flood-out', size: FLOOD_SLOTS * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     this.ready = new Promise((res) => whenPipelinesReady(res));
@@ -231,6 +242,25 @@ export class MutateGpu {
     pass.setPipeline(this.lots.pipeline);
     pass.setBindGroup(0, g);
     pass.dispatchWorkgroups(Math.ceil(t.room / 64), 1);
+    pass.end();
+    this.device.queue.submit([enc.finish()]);
+    this.dispatches++;
+  }
+
+  /** The rivers of window box [x0, y0, x1, y1) settled to their cut (riverset.wgsl): a river column whose wetness is
+   *  under the climate's holds no more than the table's depth at it. One dispatch; nothing read. */
+  riverSettle(box: readonly [number, number, number, number]): void {
+    const buf = new ArrayBuffer(PARAM_BYTES);
+    new Uint32Array(buf).set(box, 0);
+    this.slot = 0;
+    this.device.queue.writeBuffer(this.uni, 0, buf);
+    const W = this.world;
+    const g = makeBindGroup(this.device, 'mutate-river', this.river.layout, { 0: W.globals, 1: W.chunks, 2: W.materials, 4: W.water, 5: { buffer: this.uni, offset: 0, size: PARAM_BYTES }, 9: W.waterSource, 22: W.riverFlowView, 62: W.riverWetView });
+    const enc = this.device.createCommandEncoder({ label: 'mutate-river' });
+    const pass = enc.beginComputePass({ label: 'mutate-river' });
+    pass.setPipeline(this.river.pipeline);
+    pass.setBindGroup(0, g);
+    pass.dispatchWorkgroups(Math.ceil((box[2] - box[0]) / 8), Math.ceil((box[3] - box[1]) / 8));
     pass.end();
     this.device.queue.submit([enc.finish()]);
     this.dispatches++;

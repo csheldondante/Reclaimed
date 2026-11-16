@@ -23,3 +23,24 @@ export function carryInflow(order: ArrayLike<number>, next: ArrayLike<number>, o
     if (nx !== k) carried[nx] += q;
   }
 }
+
+/**
+ * The nodes of the reaches above the seeded ones (mutators round 5, 'dried': a river that runs dry at a place fails
+ * from its springs down — the water that reached the place came from above it): a node is marked when it is seeded or
+ * runs, by any number of reaches, into a seeded one. With those nodes' factor cut, carryInflow takes the cut on
+ * downstream of the place until tributaries make it up.
+ * @param order the nodes, every node before the one it runs into
+ * @param next per node: the node it runs into (itself: a mouth)
+ * @param seeded per node: 1 where the cut is made (the river's nodes at the place)
+ * @returns per node: 1 where it is seeded or upstream of a seeded node
+ */
+export function reachAbove(order: ArrayLike<number>, next: ArrayLike<number>, seeded: ArrayLike<number>): Uint8Array {
+  const up = new Uint8Array(seeded.length);
+  // (downstream first: a node's mark is known before the nodes that run into it ask)
+  for (let i = order.length - 1; i >= 0; i--) {
+    const k = order[i];
+    const nx = next[k];
+    up[k] = seeded[k] || (nx !== k && up[nx]) ? 1 : 0;
+  }
+  return up;
+}
