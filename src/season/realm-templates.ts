@@ -146,8 +146,12 @@ function hazard(o: { id: string; site: SiteKey; title: string; pitch: string; ro
 }
 
 export { DEAD_RISE } from './realm-events';
-/** raiders in the run's last stage */
+/** raiders in the run's last stage. (card-table, BACKLOG CT-18: proposed 18, not applied — three of round 6's test
+ *  files pin 6. With 6, the bots held the raid with walls alone and no spell, or with 6 casts of Fire and no card
+ *  taken. `RealmOptions.raiders` tries another number: `node scripts/tablebots.mjs --raiders 18`) */
 export const RAIDERS = 6;
+/** Materials the raiders take to leave (CT-18: proposed 15, not applied; every bot ended a run with 31 or more) */
+export const TRIBUTE = 6;
 
 /** the world's opportunities of a home-town run */
 export const WORLD_TEMPLATES: TemplateDef[] = [
@@ -233,6 +237,8 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     expireText: '{other} falls. Raiders hold it now. Its refugees reach your gate. Unrest +1.',
     presenter: { of: '$other', role: 'rider', own: true, verb: 'asks', line: 'Raiders ring {other}. Send soldiers now or the town falls.', gain: '{other} will pay you 1 Materials each season.' },
     reward: { text: '{other} pays you 1 Materials each season.' },
+    // (card-table, CT-18: proposed 2 seasons, not applied — a test of round 6 pins the season the town falls. It ran
+    // out unanswered in 19 of 27 bot runs: it comes in season 2 and asks for a soldier that same season)
     offerTurns: 1,
     once: true,
   },
@@ -326,16 +332,38 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     live: true,
     parts: { urgency: 1 },
     at: 'site',
-    requires: { agents: [], goods: { materials: 6 } },
+    requires: { agents: [], goods: { materials: TRIBUTE } },
     turns: 1,
     work: 'talk',
-    outcome: [{ helper: 'avert' }, { event: 'tribute-paid', by: ['player'], to: ['$town'], note: 'you paid the raiders 6 Materials and they left', weight: -0.1 }],
+    outcome: [{ helper: 'avert' }, { event: 'tribute-paid', by: ['player'], to: ['$town'], note: `you paid the raiders ${TRIBUTE} Materials and they left`, weight: -0.1 }],
     outcomeText: 'The raiders take the tribute and leave.',
     presenter: { of: '$town', role: 'scout', own: true, verb: 'warns', line: 'I counted the raiders camped on the road. They want tribute. Pay them or get ready to fight.' },
     reward: { text: 'No attack comes this run.' },
     offerTurns: 2,
     cooldown: 1,
     hooks: ['raiders'],
+  },
+  {
+    // (card-table tuning, CT-18: a way to turn Materials into soldiers, again and again. Every bot ended with 31 to
+    // 105 Materials unspent; Might came only from the keep and the walls)
+    id: 'hire-sellswords',
+    title: 'Hire a company of sellswords',
+    pitch: 'A company of sellswords is camped by the wagon yard. For 8 Materials they stay.',
+    themes: ['war', 'raiders'],
+    hooks: ['raiders'],
+    bind: at('wagons'),
+    eligible: [{ helper: 'after', args: [0.3] }, { helper: 'threatComing' }],
+    at: 'site',
+    requires: { agents: [], goods: { materials: 8 } },
+    turns: 1,
+    work: 'talk',
+    outcome: [{ helper: 'pool', args: ['might', 1] }, { event: 'sellswords-hired', by: ['player'], to: ['$site', '$town'], note: 'you hired a company of sellswords for 8 Materials', weight: 0.1 }],
+    outcomeText: 'The sellswords take your pay. +1 Might.',
+    presenter: { of: '$town', role: 'sellsword captain', own: true, verb: 'offers', line: 'Three good blades, and we have fought raiders before. 8 Materials and we stay until it is done.', gain: 'One more Might. Each Might is 3 soldiers.' },
+    reward: { text: '+1 Might. Each Might is 3 soldiers.' },
+    offerTurns: 2,
+    cooldown: 2,
+    parts: { ev: 0.45 },
   },
   hazard({ id: 'mend-dam', site: 'dam', title: 'Mend the old dam', pitch: 'The old dam is cracked. Two workers and some stone will hold it.', role: 'dam keeper', line: 'The old dam is cracked from top to bottom. Two workers and some stone will hold it.', workers: 2, goods: { materials: 2 }, done: 'The dam is mended. The lower town stays dry.', kind: 'flooded', where: 'the lower town', lapse: 'The dam broke. The lower town is flooded.', offerTurns: 2, radius: 34, after: 0.25 }),
   hazard({ id: 'fire-wards', site: 'market', title: 'Pay for fire wards', pitch: 'A fire mage works by the market. Wards on its roofs keep her fire in her hearth.', role: 'fire mage', line: 'My work gets hot. Pay for wards on the market roofs. I will not ask twice.', goods: { magic: 1 }, done: 'The market is warded. The fire stays in the hearth.', kind: 'burned', where: 'the market', lapse: 'The fire got loose. The market burned.', unrest: 1, offerTurns: 2, radius: 22, after: 0.45 }),

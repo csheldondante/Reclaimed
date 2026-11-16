@@ -139,4 +139,42 @@ export const RULES: RuleDef[] = [
     effect: { pool: 'materials', n: 1 },
     why: 'refugees from {a} worked {b}: +{n} Materials',
   },
+  // ---- (card-table tuning, BACKLOG CT-18) what a town costs to keep: the bots ended every run with 31 to 105
+  // Materials unspent and Unrest at 5 to 7 with nothing lost by it. Each is a line a player can guess. ----
+  {
+    id: 'garrison-pay',
+    name: 'Soldiers want paying',
+    on: 'turn',
+    a: { tags: ['home', 'garrison'] },
+    effect: { pool: 'materials', n: -2 },
+    why: 'your garrison was fed and paid: {n} Materials gone',
+  },
+  {
+    id: 'roofs-to-mend',
+    name: 'Roofs to mend',
+    on: 'turn',
+    a: { tags: ['homes', 'worked'] },
+    effect: { pool: 'materials', n: -1 },
+    why: 'the houses on {a} needed timber: {n} Materials gone',
+  },
+  {
+    id: 'idle-hands',
+    name: 'Thieves and strikers',
+    on: 'turn',
+    a: { tags: ['home', 'unrest'] },
+    need: { pool: 'unrest', gte: 3 },
+    effect: { pool: 'materials', n: -3 },
+    why: 'with Unrest at 3 or more, thieves and strikers cost you {n} Materials',
+  },
+  {
+    // (the fields feed the homes: a reason to build both, and the first rule that takes Unrest down every season)
+    id: 'bread-for-all',
+    name: 'Bread for every house',
+    on: 'turn',
+    a: { tags: ['field', 'worked'] },
+    b: { tags: ['homes', 'worked'] },
+    need: { pool: 'unrest', gte: 1 },
+    effect: { pool: 'unrest', n: -1 },
+    why: 'grain from {a} fed {b}: Unrest -{n}',
+  },
 ];
