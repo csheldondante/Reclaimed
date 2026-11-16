@@ -8,7 +8,7 @@ import type { FieldTowns } from '../../citygen/towns';
 import { mutators, type MutationRecord, type MutatorKind, type Sign, type SignKind } from '../../mutate';
 import { MutateEngine, type MutTown } from '../../mutate/engine';
 import { MutateGpu } from '../../mutate/gpu';
-import { FOUNDED_RADIUS, GPU_GRAVES, holderHue, isLand } from '../../mutate/list';
+import { FOUNDED_RADIUS, GRAVES_RADIUS, holderHue, isLand } from '../../mutate/list';
 import { BADGE_COLOUR, badgesOf, drawBadges } from '../../mutate/mapmarks';
 import { mountMutLab } from '../../mutate/lab';
 import { warpWindow } from '../../api/atlas-world';
@@ -44,22 +44,18 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns, opts: { res
 
   // ---- the signs shown (docs/design/MUTATORS.md "Signs"): nothing runs while none is on
   const shown = { crime: new Set<string>(), dead: [] as number[], deadTown: null as string | null };
-  /** the burial ground's radius (cells) */
-  const GRAVES_R = 15;
-  /** A town's burial ground (window units): at its edge, in a direction by its id; its mark written into the land now
-   *  (idempotent: when the sign goes on, and again when the town is made again after its land came back). */
-  const graveyard = (t: MutTown): [number, number] => {
-    let h = 2166136261;
-    for (const ch of t.id) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
-    const ang = (h / 4294967296) * Math.PI * 2;
-    const c = t.centre();
-    const at: [number, number] = [c[0] + Math.cos(ang) * t.radius * 0.36, c[1] + Math.sin(ang) * t.radius * 0.36];
-    const b = gpu.landMark(GPU_GRAVES, at, GRAVES_R, h, [S.origin[0], S.origin[1], S.oz]);
-    if (b) {
-      scene.flow?.water.forget(b[0], b[1], b[2] - b[0], b[3] - b[1]);
-      scene.flow?.lava.forget(b[0], b[1], b[2] - b[0], b[3] - b[1]);
-    }
-    return at;
+  const GRAVES_R = GRAVES_RADIUS;
+  /** A town's burial ground (window units), or null: the engine's own mark for the sign (mutate/list.ts marks — an
+   *  entry derived from the sign: written with the list on resident land, arriving land and far tiles, and taken off
+   *  when the sign ends; round 6, MU-43). The walkers stand on it. */
+  const graveyard = (t: MutTown): [number, number] | null => {
+    const m = eng.marksNow.find((q) => q.place === t.id);
+    if (!m) return null;
+    let dx = m.cell[0] - S.origin[0];
+    let dy = m.cell[1] - S.origin[1];
+    dx -= Math.round((dx - core.dims.w / 2) / a.atlas.p.cols) * a.atlas.p.cols;
+    dy -= Math.round((dy - core.dims.h / 2) / a.atlas.p.rows) * a.atlas.p.rows;
+    return [dx + 0.5, (dy + 0.5) * ROW_H];
   };
   // FIXED-CITY (BACKLOG MU-27): a sign shows only while its place's FieldTown is live in the window (or it names no
   // place); a sign on a camp, an army or a column of refugees has nothing to show on
@@ -89,12 +85,13 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns, opts: { res
     const dead = strongest(signs, 'deadrise');
     const units = scene.units;
     if (units && dead > 0 && !shown.dead.length) {
-      const sign = signs.find((q) => q.kind === 'deadrise' && q.place !== null && towns.live.has(q.place));
-      const t = liveTowns().find((q) => q.id === sign?.place) ?? liveTowns()[0];
-      if (t) {
+      // (the live town a sign's mark stands by: the sign's own place, the home town for a sign that names none)
+      const t = liveTowns().find((q) => eng.marksNow.some((m) => m.place === q.id));
+      const at = t ? graveyard(t) : null;
+      if (t && at) {
         shown.deadTown = t.id;
-        const at = graveyard(t);
-        for (let k = 0; k < Math.round(4 + 8 * dead); k++) {
+        // (round 6, MU-43: more of them — 10 to 24 — so the ground is plainly walked on at the default zoom)
+        for (let k = 0; k < Math.round(10 + 14 * dead); k++) {
           const ang = Math.random() * Math.PI * 2;
           const r = Math.random() * GRAVES_R * 0.75;
           shown.dead.push(units.spawn('shambler', [at[0] + Math.cos(ang) * r, at[1] + Math.sin(ang) * r], null, { hostile: true }) as number);
@@ -228,8 +225,6 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns, opts: { res
     made.set(t.site.id, mt);
     shown.crime.delete(t.site.id);
     eng.townMade(mt);
-    // (the dead's ground written again on land that came back with the town)
-    if (shown.deadTown === t.site.id) graveyard(mt);
     showSigns(eng.signs());
   };
   towns.onMade.push(add);

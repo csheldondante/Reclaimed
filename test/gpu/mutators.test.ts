@@ -548,9 +548,17 @@ test('founded, mining: a pit cut into the ground and a heap piled on it, both un
   const [px, py, pr, hx, hy, hr] = m!.params;
   const pit = [Math.floor(px), Math.floor(py / ROW_H)];
   const heap = [Math.floor(hx), Math.floor(hy / ROW_H)];
-  // (the pit's middle: the floor, 0.42 of its radius down, under a skin of rubble)
-  expect(topOf(cb, pit[0], pit[1]).mat).toBe(MAT.Rubble);
-  expect(topOf(ca, pit[0], pit[1]).z1 - topOf(cb, pit[0], pit[1]).z1).toBeGreaterThan(pr * 0.42 - 0.5);
+  // (the pit's middle: the floor, 0.7 of its radius down — or down to the world's floor — under a skin of dark rock)
+  expect(topOf(cb, pit[0], pit[1]).mat).toBe(MAT.Basalt);
+  expect(topOf(ca, pit[0], pit[1]).z1 - topOf(cb, pit[0], pit[1]).z1).toBeGreaterThan(Math.min(pr * 0.7, topOf(ca, pit[0], pit[1]).z1 - 1.2) - 0.5);
+  // (its benches: rubble-topped columns cut less deep than the middle, round it)
+  let benches = 0;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const d = Math.hypot(x + 0.5 + 0.5 * (y & 1) - px, (y + 0.5) * ROW_H - py);
+      if (d < pr && d > pr * 0.5 && topOf(cb, x, y).mat === MAT.Rubble && topOf(cb, x, y).z1 < topOf(ca, x, y).z1 - 0.3) benches++;
+    }
+  expect(benches).toBeGreaterThan(20);
   // (the heap's middle: spoil piled up)
   expect(topOf(cb, heap[0], heap[1]).mat).toBe(MAT.Rubble);
   expect(topOf(cb, heap[0], heap[1]).z1 - topOf(ca, heap[0], heap[1]).z1).toBeGreaterThan(hr * 0.3);
@@ -644,4 +652,37 @@ describe.each(['burned', 'buried', 'melted', 'withered'] as const)('a far tile w
     expect(far.gpu.tileDispatches).toBe(1);
     expect(g.takeErrors()).toEqual([]);
   });
+});
+
+// (round 6, BACKLOG MU-43) The dead-rise sign's burial ground is derived from the sign: written when the sign goes on
+// (and with the list on arriving land and far tiles), taken off again when the sign ends.
+test('the dead rise: the sign writes its burial ground by its place, and its end takes it off again', async () => {
+  const r = await rig();
+  const place = { id: 'faketown', name: 'Fake', at: [32, 32 * ROW_H] as const, radius: 30, size: 'town' };
+  const far: number[][] = [];
+  const eng = new MutateEngine({ gpu: r.gpu, world: { ...listWorld, place: (id) => (id === 'faketown' ? place : null) }, origin: () => [0, 0, 0], towns: () => [], home: () => ({ id: 'faketown', at: place.at }), farChanged: (...b) => void far.push(b) });
+  const before = await snap(r);
+  eng.sign({ kind: 'deadrise', strength: 1 });
+  expect(eng.marksNow.length).toBe(1);
+  expect(far.length).toBe(1);
+  const m = eng.marksNow[0];
+  // (at the place's edge, a pure function of the sign and the place: the same asked again)
+  expect(Math.hypot(m.cell[0] - 32, (m.cell[1] - 32) * ROW_H)).toBeGreaterThan(10);
+  expect(eng.worldList.marks('faketown')[0].cell).toEqual(m.cell);
+  const on = await snap(r);
+  const c = cols(r, on);
+  let black = 0;
+  for (let i = 0; i < W * H; i++) if (c[i].some((iv) => iv.mat === MAT.Basalt)) black++;
+  expect(black).toBeGreaterThan(100);
+  // (arriving land takes it with the list; a far tile's land too)
+  expect(eng.landWritten(0, 0, W, H)).toBe(true);
+  expect(Array.from((await snap(r)).layers)).toEqual(Array.from(on.layers));
+  eng.sign({ kind: 'deadrise', strength: 0 });
+  expect(eng.marksNow.length).toBe(0);
+  expect(far.length).toBe(2);
+  const off = await snap(r);
+  // (the ground as it was; what grew on it does not come back at once)
+  expect(Array.from(off.layers)).toEqual(Array.from(before.layers));
+  expect(eng.landWritten(0, 0, W, H)).toBe(false);
+  expect(g.takeErrors()).toEqual([]);
 });

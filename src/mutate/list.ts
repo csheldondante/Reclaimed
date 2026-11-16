@@ -36,7 +36,20 @@ export const GPU_GRAVES = 14;
 /** a founded place's reach by its size (cells): the town generator's own radii (citygen/town.ts RADIUS) */
 export const FOUNDED_RADIUS: Record<NonNullable<Mutation['size']>, number> = { camp: 30, village: 72, town: 120 };
 /** the land kernel's code for an entry (null: it writes no land): a land kind's own; a founded mining place's workings */
-export const landOp = (m: Pick<Mutation, 'kind' | 'purpose'>): number | null => (isLand(m.kind) ? GPU_KIND[m.kind] : m.kind === 'founded' && m.purpose === 'mining' ? GPU_MINE : null);
+export const landOp = (m: Pick<Mutation, 'kind' | 'purpose'> & { op?: number }): number | null => m.op ?? (isLand(m.kind) ? GPU_KIND[m.kind] : m.kind === 'founded' && m.purpose === 'mining' ? GPU_MINE : null);
+/** the land kernel's code that takes a burial ground's mark off again (masks.wgsl MUT_UNGRAVES) */
+export const GPU_UNGRAVES = 15;
+/** the burial ground's radius (cells) */
+export const GRAVES_RADIUS = 15;
+/**
+ * (round 6, BACKLOG MU-43) A sign's ground mark as the land kernel takes it: entry-shaped, DERIVED from the sign (which
+ * the record keeps) and never kept in the list itself — while the sign is on it is written wherever the list's
+ * entries are (resident land, arriving land, far tiles), and taken off again when the sign ends (`op` the inverse).
+ * HACK (BACKLOG MU-55): it rides as a `founded` entry with its own `op`, the one kind with no lot and no state side.
+ */
+export interface LandMark extends Mutation {
+  op: number;
+}
 
 /** mutate/land.wgsl MUT_* */
 /** mutLots' codes for the 'crime' sign: a share of the lots looted, and put right again */
@@ -81,6 +94,30 @@ export class WorldList {
 
   signs(place?: string): Sign[] {
     return this.on.filter((s) => place === undefined || s.place === place || s.place === null).map((s) => ({ ...s }));
+  }
+
+  /**
+   * The ground marks of the signs on now (round 6, MU-43): a 'deadrise' sign's burial ground broken open, at the edge
+   * of its place in a direction by the place's id — a pure function of the sign and the place's record, so it is the
+   * same wherever and whenever it is written. `home`: the place of a sign that names none.
+   * FIXED-CITY (BACKLOG MU-27): a sign's place is a settlement (or a founded place); a camp or a column on the move
+   * has no record to stand the mark by.
+   */
+  marks(home: string | null): LandMark[] {
+    const out: LandMark[] = [];
+    for (const s of this.on) {
+      if (s.kind !== 'deadrise') continue;
+      const id = s.place ?? home;
+      const p = id ? this.place0(id) : null;
+      if (!id || !p) continue;
+      let h = 2166136261;
+      for (const ch of id) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+      const ang = (h / 4294967296) * Math.PI * 2;
+      const d = Math.min(Math.max(p.radius, 30), 90) * 0.55;
+      const cell: [number, number] = [Math.round(p.at[0] + Math.cos(ang) * d), Math.round((p.at[1] + Math.sin(ang) * d) / ROW_H)];
+      out.push({ id: `graves:${id}:${cell[0]}:${cell[1]}`, kind: 'founded', op: GPU_GRAVES, place: id, cell, radius: GRAVES_RADIUS, strength: 1, seed: h, params: [0, 0, 0, 0, 0, 0], seq: -1 });
+    }
+    return out;
   }
 
   /** the season is `n` now: true if a sign ended */

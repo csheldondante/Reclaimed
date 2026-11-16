@@ -54,11 +54,22 @@ await run({ name: 'mutators-stills', kind: 'behaviour', size: '412x915', dpr: 1,
   if (only.has('dead')) {
     await ev(() => void mutators.sign({ kind: 'deadrise', strength: 1 }));
     await shot('deadrise.png', 12000);
-    // (and close: the walkers are a cell across)
-    await ev(() => void (reclaimed.camera.zoom = 9));
-    await shot('deadrise-close.png', 4000);
-    await ev(() => void (reclaimed.camera.zoom = 2.6689733724321005));
+    // (and close, on the burial ground itself — round 5's close still was framed on the town: the walkers are a cell
+    // across)
+    const home = await ev(() => [...reclaimed.camera.target]);
+    await ev(() => {
+      const m = mutateEngine.marksNow[0];
+      const o = reclaimed.scene.stream.origin;
+      reclaimed.camera.target[0] = m.cell[0] - o[0] + 0.5;
+      reclaimed.camera.target[1] = (m.cell[1] - o[1] + 0.5) * 0.8660254;
+      reclaimed.camera.zoom = 9;
+      return { mark: m.cell, origin: [...o] };
+    });
+    await shot('deadrise-close.png', 5000);
+    await ev((t) => void ((reclaimed.camera.target[0] = t[0]), (reclaimed.camera.target[1] = t[1]), (reclaimed.camera.zoom = 2.6689733724321005)), home);
     await ev(() => void mutators.sign({ kind: 'deadrise', strength: 0 }));
+    // (the sign ended: the ground closed again, the dead gone)
+    await shot('deadrise-off.png', 8000);
   }
   if (only.has('crime')) {
     await ev(() => void mutators.sign({ kind: 'crime', strength: 1 }));
