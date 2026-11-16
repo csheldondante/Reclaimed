@@ -43,7 +43,7 @@ await run({ name: 'tklab', kind: 'behaviour', size: '412x915', dpr: 1, echo: tru
     cam.target[0] -= wx;
     cam.target[1] -= wy;
     cam.update();
-    // (the top block of the five, its centre at 20.4: the tool picks what the finger's view ray passes — TK8)
+    // (the top block of the five, its centre at 20.4: the tool picks what the finger's view ray passes — TKN8)
     const z = Number(new URLSearchParams(location.search).get('tkz') ?? 20.4);
     const p = cam.project(x, y, z);
     return { p, tool: s.editor.tool, z };

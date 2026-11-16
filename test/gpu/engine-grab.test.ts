@@ -147,7 +147,7 @@ test('the spring slack adds no energy: a block held at the place it lies stays a
   ok();
 });
 
-// (the owner's ruling on TK8: "the tool must grab what is under the finger, not what stands on the ground point behind it")
+// (the owner's ruling on TKN8: "the tool must grab what is under the finger, not what stands on the ground point behind it")
 test('a ray through the top block of a stack of five grabs it and not the bottom one, and it is held at its own height', async () => {
   const R = await breakRig(g, flat);
   const rows = [];

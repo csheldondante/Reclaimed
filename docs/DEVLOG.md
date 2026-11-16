@@ -23983,7 +23983,7 @@ substep back at the hand-over ("as it came in", as step 1's `solve` did by retur
 drops the station's wall and blocks through the merged tick (17 rows; 1, 9, 10 rows) and the close still shows runs
 of whole bricks. Noted: the release hitch read 66 ms for 318 cells on the merge (PM3).
 
-## 2026-11-15 — telekinesis: a double tap starts it, and it grabs the engine's rows (TK1, `physics10-all`)
+## 2026-11-15 — telekinesis: a double tap starts it, and it grabs the engine's rows (TKN1, `physics10-all`)
 
 **Why.** The owner: "the telekinesis needs a double tap to start because drag moves the screen." And under
 `?solver=engine` the tool grabbed nothing: bodies there are rows on the GPU, the CPU does not know where they are
@@ -24013,16 +24013,16 @@ nearest block: both sleepers' poses bit for bit, none awake, the slot 0.
 stills): a single drag on the stack held nothing; a tap, a press 120 ms later and a drag held an engine grab — the
 stack's bottom block (row 0) came out from under the other four, which fell, hung at the lifted height following the
 pointer, and let go while moving landed 2.6 cells on. A first run aimed at the stack's middle took nothing: the pick
-point is the ground under the finger, which there was 12 cells behind the stack (TK8).
+point is the ground under the finger, which there was 12 cells behind the stack (TKN8).
 
 **Tests.** `npx vitest run --project gpu engine-grab` 5 passed; `npx vitest run --project gpu engine` 64 passed, 1 expected fail, 5 skipped (12 files); `npm run typecheck` clean; `npx vitest run --project unit` 634 passed, 3 failed, the same 3 as the base (the writing lint; two of the transfer gate: `Engine.up` and the engine bench, not this change's — the grab's uploads are 4 bytes and two words of the tick's uniform).
 
-**Hacks and limits** (BACKLOG TK2 to TK8): the pick is by the ground under the finger, so a tall body is picked at its foot; the spring acts at the centre of mass, not the touched point; no sign to
+**Hacks and limits** (BACKLOG TKN2 to TKN8): the pick is by the ground under the finger, so a tall body is picked at its foot; the spring acts at the centre of mass, not the touched point; no sign to
 the player when nothing was in reach (and the screen does not pan then, under the engine route); the lift height is
 from the ground under the finger, not the row's own height; one grab at a time, nearest centre wins, deforming bodies
 are not grabbed; a tap with the tool picked does nothing; the double tap's timing is untried on a phone.
 
-## 2026-11-15 — telekinesis picks by the finger's view ray (TK8, TK4; `physics10-all`)
+## 2026-11-15 — telekinesis picks by the finger's view ray (TKN8, TKN4; `physics10-all`)
 
 **Why.** The first cut picked by the ground point under the finger: a double tap on the middle of a stack asked 12
 cells behind it and took nothing. Main's ruling: "pick by the finger's view ray — the tool must grab what is under the
@@ -24040,7 +24040,7 @@ block's pose bit for bit; the finger 5 cells sideways: the block at 18.67, 11.69
 cell pull as before (overshoot 0.509). Capture (`tk-ray.gif`, the pile station): a double tap on the top of the stack
 lifted the top block off (20.5 to 22.4) with the four under it standing, and threw it at the lift.
 
-**Tests.** `npx vitest run --project gpu engine-grab` 7 passed; `npx vitest run --project gpu engine` 65 passed, 1 failed, 1 expected fail, 5 skipped: `engine-d0` D0.1 timed out at 60 s, twice; alone it passes in 59.2 s, and in 59.9 s on the commit before this one (a wall-time margin, TK9, not this change); `npm run typecheck` clean; `npx vitest run --project unit` 634 passed, 3 failed, the same 3 as the base.
+**Tests.** `npx vitest run --project gpu engine-grab` 7 passed; `npx vitest run --project gpu engine` 65 passed, 1 failed, 1 expected fail, 5 skipped: `engine-d0` D0.1 timed out at 60 s, twice; alone it passes in 59.2 s, and in 59.9 s on the commit before this one (a wall-time margin, TKN9, not this change); `npm run typecheck` clean; `npx vitest run --project unit` 634 passed, 3 failed, the same 3 as the base.
 
-**Hacks and limits** (BACKLOG TK5): bound spheres, not shapes; nearness in quarter cells, a tie goes to the higher
-row index, not the closer as ruled. TK2, TK3, TK6, TK7 stand.
+**Hacks and limits** (BACKLOG TKN5): bound spheres, not shapes; nearness in quarter cells, a tie goes to the higher
+row index, not the closer as ruled. TKN2, TKN3, TKN6, TKN7 stand.
