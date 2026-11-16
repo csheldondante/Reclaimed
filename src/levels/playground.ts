@@ -334,7 +334,7 @@ export const STATIONS: Station[] = [
     name: 'pile',
     rect: [112, 96, 256, 176],
     look: [214, 96, G + 4, 10],
-    hint: 'bodies on bodies: a stack, rubble poured into a pit, a boulder into a stack, a beam across two blocks, a block thrown at a tower, the chain. A hard hit breaks a body; its parts rest on the ground but other bodies still pass through them',
+    hint: 'bodies on bodies: a stack, rubble poured into a pit, a boulder into a stack, a beam across two blocks, a block thrown at a tower, the chain. A hard hit breaks a body; its pieces are bodies too: they pile, can be thrown, and break again',
     actions: [
       {
         label: 'drop a stack',

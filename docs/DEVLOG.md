@@ -24661,3 +24661,41 @@ gone wakes it" is PQ7's fix, the same mechanism from the other side. The granula
 treats External as solid on every path.
 
 **Hacks and limits.** None added by this entry; everything above is open in BACKLOG under its number.
+
+## 2026-11-15 — pieces are bodies: a settled part gets its own distance field, on the GPU (PM4)
+
+**Why.** The owner: "The whole point of the physics system was to get rigidbodies alongside the breakable systems so
+we could cheaply have pieces break off larger structures and then still have them tumble and crash." A piece that
+broke off was a row with no distance field: it met the ground and every other body passed through it.
+
+**What.** `engine_partsdf.wgsl` (new), `engine_deform.wgsl` (`slots`, `pagelist`), `sdf-bake.wgsl` with two fronts
+(`sdf-bake-host.wgsl`: the host's uniform and job buffer, as before; `sdf-bake-ring.wgsl`: a ring of jobs the GPU
+fills), `SdfModels.reserveGpu`, `engine.ts`. The plan is in PHYSICS_ENGINE.md "Pieces are bodies", item 1; built as
+planned:
+- The model store has a region the GPU allocates in by itself (rows, field and sample words, occupancy bits; bump
+  counters and `want` words). The host reserves it in chunks and adds one when the chained read shows a want past the
+  room. The host is never told of a part.
+- At settle a part is made a row as before, but pinned and with no model word; its body's particles stand as its
+  collision shape (the mechanics branch's held state) for the ticks of the bake only. `partField` gives it a store
+  row and a job; `partOcc` marks the half-cell cubes its cells hold, each cell a box in the part's lattice frame;
+  the store's own bake kernels run from the ring, seed and two flood passes a tick, the field and the sample bricks
+  with the last pass; `partLive` writes the row's model word and lets it go, asleep where it is; the slot frees its
+  pages when every part is live. A freed row's model word is cleared (`slots`), so a reused row never has another's
+  shape.
+- **A rule added to the pair solver's erosion** (BACKLOG PR1, for the owner to confirm): past the erode depth the
+  softer body goes to stage 4 only if the pair's hit energy is worth one of its cells. Found by the test: a small
+  block dropped on a heap of six fresh pieces woke them, they settled half a cell into each other (their fields are
+  a quarter cell fat, the rigid contact takes one plane a pair), each passed the erode depth and was expanded again,
+  and the heap never came to rest (10 expansions in 5 s). With the erode depth at 3 the heap held, so it was this
+  rule and not the hit; with the energy condition: no expansion, all asleep within 160 ticks, the block on the piece.
+
+**Measured** (Dawn in Node, Intel Xe; `CHAIN_LOG=1 npx vitest run --project gpu engine-chain`): a stone block
+6 x 6 x 4 from 24 cells: 6 parts pinned when made, 6 fields asked and 6 baked, all let go within 20 ticks of the tick
+they were made (the test reads every 20), pose bytes equal before and after; a 2 x 2 x 2 block dropped on the largest
+(centre 12.57) goes no lower than 14.5; the highest part thrown up and sideways moves and lands; the largest expanded
+again makes 2 more parts and they get fields (8 baked in all). The fields of a six-piece heap overlap one cube deep
+(0.25 cells) on every touching pair. The held mode's two tests and the chain pass unchanged.
+
+**Hacks and limits.** BACKLOG PR1 to PR6: the erosion rule's energy condition (asked); fields and compact models
+never given back till a reset; parts over 126 cells clipped; one lattice frame a part and a quarter cell of fatness;
+the bake's cost not measured on the phone; `holdParts` kept for two tests.

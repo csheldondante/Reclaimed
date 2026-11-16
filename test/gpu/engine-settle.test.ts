@@ -65,12 +65,16 @@ function worstMove(a: number[][], b: number[][]): { worst: number; missing: numb
 async function settleAll(R: BreakRig, most = 900): Promise<{ ticks: number; before: Drawn | null }> {
   let before: Drawn | null = null;
   let began = false;
+  let parts = (await R.pool())[POOL.parts];
   for (let t = 0; t < most; t++) {
     await R.step(1);
     const P = await R.pool();
     if (P[POOL.deforming] > 0) {
       began = true;
-      if (P[POOL.settling] > 0) before = await R.drawn();
+      // (drawn by its particles: till the tick its parts are made rows. After that the body stands for a few ticks
+      // more while their fields are baked — PM4 — and the frame is already the parts' own meshes)
+      if (P[POOL.settling] > 0 && P[POOL.parts] === parts) before = await R.drawn();
+      parts = P[POOL.parts];
     } else if (began) return { ticks: t, before };
   }
   throw new Error('settleAll: a body never settled');

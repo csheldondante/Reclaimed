@@ -342,8 +342,10 @@ test('stage 4 is encoded only while something deforms; a hard landing still defo
   log(`one block awake at rest: ${gated.direct} direct + ${gated.indirect} indirect dispatches with stage 4 gated, ${whole.direct} + ${whole.indirect} without the gate`);
   // (80 on physics10-join; 85 since physics10-mech's meet kernels joined stage 4 on physics10-one: `meetLink` and a
   // `meet` a lattice substep, encoded while a row is awake)
-  expect(whole.indirect - gated.indirect).toBe(80 + 1 + Math.round(T.latticeSubsteps));
-  expect(whole.direct - gated.direct).toBe(1);
+  // and 10 more with the parts' bake (PM4: three kernels over the settling pages, seven of the store's bake), which
+  // has one direct dispatch of its own (`bakeBegin`)
+  expect(whole.indirect - gated.indirect).toBe(80 + 1 + Math.round(T.latticeSubsteps) + 10);
+  expect(whole.direct - gated.direct).toBe(2);
   expect(R.e.counts.indirect).toBe(gated.indirect);
   // a block thrown down hard: flagged to deform by the rigid kernels, frozen, then expanded once a read has shown it
   const hard = R.e.add({ cells: box(20, 14, 13, 4, 4, 4), vel: [0, 0, -25] })!;
@@ -364,7 +366,8 @@ test('stage 4 is encoded only while something deforms; a hard landing still defo
   expect(flagged).toBeGreaterThanOrEqual(0);
   expect(expanded).toBeGreaterThanOrEqual(flagged);
   expect(expanded - flagged).toBeLessThanOrEqual(12);
-  expect(R.e.counts.indirect).toBe(whole.indirect);
+  // (stage 4 whole, but for the parts' bake: its ten are encoded only once a read has shown a body settling — PM4)
+  expect(R.e.counts.indirect).toBe(whole.indirect - 10);
   ok();
   R.w.destroy();
 });

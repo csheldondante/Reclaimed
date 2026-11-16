@@ -13,6 +13,7 @@
 import { makeBindGroup, makeCompute, type ComputeKernel } from '../../gpu/pipeline';
 import modelWgsl from '../../shaders/engine/sdf-model.wgsl?raw';
 import bakeWgsl from '../../shaders/engine/sdf-bake.wgsl?raw';
+import bakeHostWgsl from '../../shaders/engine/sdf-bake-host.wgsl?raw';
 import { Arena } from './arena';
 import { SDF_MAX_SAMPLES, SDF_MAX_SIDE, SDF_MODEL_BYTES, SDF_PAD, type SdfFormat } from './contract';
 
@@ -46,6 +47,16 @@ export interface SdfModelInfo {
   com: [number, number, number];
   /** GPU bytes: field, samples, occupancy, row + counter */
   bytes: { field: number; samples: number; occupancy: number; row: number; total: number };
+}
+
+/** a region of the store the GPU allocates in (SdfModels.reserveGpu) */
+export interface SdfGpuRegion {
+  idBase: number;
+  ids: number;
+  dataBase: number;
+  dataWords: number;
+  occBase: number;
+  occWords: number;
 }
 
 interface Rec extends Omit<SdfModelInfo, 'bytes'> {
@@ -124,7 +135,7 @@ export class SdfModels {
     readonly format: SdfFormat,
     private opts: { scratchThreads?: number } = {},
   ) {
-    const parts = [sdfFormatWgsl(format), modelWgsl, bakeWgsl];
+    const parts = [sdfFormatWgsl(format), modelWgsl, bakeHostWgsl, bakeWgsl];
     this.kSeed = makeCompute(device, 'sdf seed', parts, { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'read', 5: 'rw' }, 'seed');
     this.kJfa = makeCompute(device, 'sdf jfa', parts, { 0: 'uniform', 1: 'read', 2: 'rw', 4: 'read', 5: 'rw' }, 'jfa');
     this.kFinal = makeCompute(device, 'sdf finalize', parts, { 0: 'uniform', 1: 'read', 2: 'rw', 4: 'read', 6: 'rw' }, 'finalize');
@@ -243,6 +254,37 @@ export class SdfModels {
     this.freeIds.push(id);
   }
 
+  /**
+   * A region the GPU hands out by itself (the engine's settled parts: shaders/engine_partsdf.wgsl): model rows,
+   * and a run of the data's words and of the occupancy's, taken from the arenas here and never looked into again — the
+   * GPU bump-allocates inside it, writes the rows and bakes them. The buffers are made big enough now, the occupancy's
+   * run zeroed (a bake reads it as it is). Call between frames: a buffer that grows is replaced.
+   */
+  reserveGpu(ids: number, dataWords: number, occWords: number): SdfGpuRegion {
+    const idBase = this.recs.length;
+    for (let i = 0; i < ids; i++) this.recs.push({ live: false } as Rec);
+    const r: SdfGpuRegion = { idBase, ids, dataBase: this.dataArena.alloc(dataWords), dataWords, occBase: this.occArena.alloc(occWords), occWords };
+    this.ensure();
+    this.device.queue.writeBuffer(this.occ, r.occBase * 4, new Uint32Array(occWords));
+    return r;
+  }
+
+  /** a region given back (a level's reset): its rows are free again, its words back in the arenas */
+  releaseGpu(r: SdfGpuRegion): void {
+    this.dataArena.free(r.dataBase, r.dataWords);
+    this.occArena.free(r.occBase, r.occWords);
+    for (let i = 0; i < r.ids; i++) this.freeIds.push(r.idBase + i);
+  }
+
+  /** every buffer big enough for what the arenas and the rows hold now */
+  private ensure(): void {
+    const prev = { data: this.dataArena.end, occ: this.occArena.end };
+    this.models = this.room(this.models, this.recs.length * SDF_MODEL_BYTES, this.recs.length * SDF_MODEL_BYTES);
+    this.bakeCount = this.room(this.bakeCount, this.recs.length * 4, this.recs.length * 4);
+    this.data = this.room(this.data, prev.data * 4, prev.data * 4);
+    this.occ = this.room(this.occ, prev.occ * 4, prev.occ * 4);
+  }
+
   /** words in use and free inside the arenas (a report's numbers) */
   usage(): { dataWords: number; dataHoles: number; occWords: number; occHoles: number; dataBytes: number; occBytes: number } {
     return { dataWords: this.dataArena.end, dataHoles: this.dataArena.holeWords, occWords: this.occArena.end, occHoles: this.occArena.holeWords, dataBytes: this.data.size, occBytes: this.occ.size };
@@ -256,11 +298,7 @@ export class SdfModels {
     const ids = [...this.pending.keys()].sort((a, b) => a - b);
     if (!ids.length) return 0;
     const dev = this.device;
-    const prev = { data: this.dataArena.end, occ: this.occArena.end };
-    this.models = this.room(this.models, this.recs.length * SDF_MODEL_BYTES, this.recs.length * SDF_MODEL_BYTES);
-    this.bakeCount = this.room(this.bakeCount, this.recs.length * 4, this.recs.length * 4);
-    this.data = this.room(this.data, prev.data * 4, prev.data * 4);
-    this.occ = this.room(this.occ, prev.occ * 4, prev.occ * 4);
+    this.ensure();
     for (const id of ids) {
       const r = this.recs[id];
       const row = new ArrayBuffer(SDF_MODEL_BYTES);

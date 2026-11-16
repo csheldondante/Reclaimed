@@ -95,7 +95,16 @@ async function tickAgainstBrute(R: BreakRig, specs: SdfModelSpec[]): Promise<{ p
     return { pos: [p[0], p[1], p[2]], quat: [p[4], p[5], p[6], p[7]], invMass: p[3], radius: before.vel[r * 8 + 7], model: before.model[r], asleep: !listed, dead: !(fl & ALIVE) || before.model[r] === 0xffffffff || (!listed && !(fl & ASLEEP)) };
   });
   const margin = R.e.collide.coarse.margin;
-  const ref = brutePairs(bodies, specs, (b) => (b.model === 0xffffffff ? 0 : b.model), margin);
+  // (a part made at settle has a model the GPU allocated and baked — PM4: its box is read from the store's row)
+  for (const b of bodies) {
+    if (b.dead || specs[b.model]) continue;
+    const mw = new Uint32Array(await g.read(R.e.store.models, 32, b.model * 32));
+    const mf = new Float32Array(mw.buffer);
+    specs[b.model] = { size: [(mw[1] & 255) - 2, ((mw[1] >> 8) & 255) - 2, ((mw[1] >> 16) & 255) - 2], vox: [], voxel: mf[7], com: [mf[4] - 1, mf[5] - 1, mf[6] - 1] };
+  }
+  // (a row that is in no pair — dead, or with no model — is given any box: the reference leaves it out)
+  const any = specs.findIndex(Boolean);
+  const ref = brutePairs(bodies, specs, (b) => (specs[b.model] ? b.model : any), margin);
   const sure = ref.filter((x) => x.slack > 1e-3).map((x) => `${x.a},${x.b}`);
   const maybe = new Set(ref.filter((x) => Math.abs(x.slack) <= 1e-3).map((x) => `${x.a},${x.b}`));
   const have = new Set(got);

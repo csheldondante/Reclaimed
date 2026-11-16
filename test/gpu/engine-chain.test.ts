@@ -2,7 +2,7 @@
 // bodies expands them, a settled body's parts go on colliding, and the chain — A breaks B, a part of B breaks C. On
 // Dawn over a tiny world. Numbers for the DEVLOG: CHAIN_LOG=1 npx vitest run --project gpu engine-chain --reporter=verbose
 import { afterAll, afterEach, beforeAll, expect, test } from 'vitest';
-import { POOL } from '../../src/engine/engine';
+import { BK, POOL } from '../../src/engine/engine';
 import { TUNE } from '../../src/tune/params';
 import { MAT } from '../../src/world/materials';
 import { testGpu, type TestGpu } from './dawn';
@@ -134,18 +134,43 @@ test('a slab broken over a ridge: its parts stay where they settled and hold wha
   expect(P[POOL.deforming]).toBe(1);
 }, 240_000);
 
-// THE GAP, pinned (BACKLOG PM4, PO7; MODE: free parts, the default). A settled part is a row with no distance field:
-// a block dropped on it falls through it to the ground. This test states what PM4 is to make true and is expected to
-// fail until then: when a part has its own field (or a stand-in), take `.fails` off.
-test.fails('PM4, not built: a block dropped on a settled part (free parts, the default) rests on it', async () => {
-  const R = await breakRig(g, ridge);
+// PM4 (docs/design/PHYSICS_ENGINE.md "Pieces are bodies"; MODE: free parts, the default). A settled part gets a
+// distance field of its own, baked on the GPU over a few ticks while its body's particles stand for it; then it is a
+// row like any other. (Till PM4 was built this was the pinned gap: a block dropped on a part fell through it.)
+test('PM4: a settled part is a body — a block dropped on it rests on it, nothing moves at the swap, thrown it lands on another part, hit hard it breaks again', async () => {
+  // (a stone block from 24 cells on flat ground: it breaks into a few pieces that come to rest in a heap)
+  const R = await breakRig(g, flat);
   expect(R.e.holdParts).toBe(false);
-  const slab = R.e.add({ cells: box(12, 12, 40, 12, 4, 3) })!;
+  const D = R.e.debugBuffers;
+  const slab = R.e.add({ cells: box(12, 12, 34, 6, 6, 4) })!;
   for (let t = 0; t < 300 && !(await R.pool())[POOL.expands]; t += 10) await R.step(10);
-  await rest(R, 30 * 60);
+  // the tick its parts are made rows: pinned, no field yet, the body's particles standing for them
+  let held: { row: number; flags: number }[] = [];
+  for (let t = 0; t < 30 * 60 && !held.length; t++) {
+    await R.step(1);
+    if ((await R.pool())[POOL.parts]) held = (await R.rows()).filter((r) => r.flags & HELD);
+  }
+  expect(held.length).toBeGreaterThanOrEqual(2);
+  const poseAt = async (row: number) => [...new Uint8Array(await g.read(D.pose, 32, row * 64 + 32))];
+  const before = await Promise.all(held.map((h) => poseAt(h.row)));
+  const modelsHeld = new Uint32Array(await g.read(D.model, R.e.rooms.rows * 4));
+  expect(held.every((h) => modelsHeld[h.row] === 0xffffffff)).toBe(true);
+  const ticks = await rest(R, 30 * 60, 0);
+  let P = await R.pool();
   const parts = (await R.rows()).filter((r) => r.flags & ALIVE && !(r.flags & DEFORM) && r.mass < slab.mass);
-  expect(parts.length).toBeGreaterThanOrEqual(2);
-  const big = parts.sort((a, b) => b.mass - a.mass)[0];
+  const models = new Uint32Array(await g.read(D.model, R.e.rooms.rows * 4));
+  const bk = R.e.bkSeen;
+  log(`PM4: ${held.length} parts pinned when made; let go within ${ticks} ticks: ${bk[BK.made]} fields asked, ${bk[BK.live]} baked; ${P[POOL.deforming]} bodies deforming, ${P[POOL.held]} held`);
+  // every part has its field and is let go, its pose bit for bit where settle put it; the body's slot and particles are gone
+  expect(parts.length).toBe(held.length);
+  expect(parts.every((r) => !(r.flags & HELD) && r.flags & ASLEEP && models[r.row] !== 0xffffffff)).toBe(true);
+  expect(bk[BK.live]).toBe(held.length);
+  expect(P[POOL.deforming]).toBe(0);
+  expect(P[POOL.held]).toBe(0);
+  expect(await Promise.all(held.map((h) => poseAt(h.row)))).toEqual(before);
+  // a block dropped on the biggest part rests on it
+  const sorted = parts.sort((a, b) => b.mass - a.mass);
+  const big = sorted[0];
   const cx = Math.round(big.pos[0] - 0.5);
   const cy = Math.round(big.pos[1] / 0.866 - 0.5);
   const block = R.e.add({ cells: box(cx - 1, cy - 1, Math.ceil(big.pos[2]) + 4, 2, 2, 2) })!;
@@ -154,10 +179,41 @@ test.fails('PM4, not built: a block dropped on a settled part (free parts, the d
     await R.step(10);
     low = Math.min(low, (await R.row(block.row)).pos[2]);
   }
-  log(`free parts: a block dropped on the part at z ${big.pos[2].toFixed(2)} went as low as ${low.toFixed(2)}`);
+  log(`a block dropped on the part at z ${big.pos[2].toFixed(2)} went as low as ${low.toFixed(2)}`);
   ok();
   // (on the part its centre stays a cell over the part's; through it, it ends on the ground under the part's centre)
   expect(low).toBeGreaterThan(big.pos[2] + 0.5);
+  // the part lying highest (nothing on it but, at most, the block), thrown up and sideways: it moves as a row does and
+  // comes down on the heap or the ground, not into them
+  const rowsNow = await R.rows();
+  const top = parts.map((q) => rowsNow.find((r) => r.row === q.row)!).sort((a, b) => b.pos[2] - a.pos[2]).find((r) => r.row !== big.row)!;
+  const from = top.pos;
+  R.e.impulse({ row: top.row }, [6, 0, 8]);
+  let high = -Infinity;
+  for (let t = 0; t < 240; t += 4) {
+    await R.step(4);
+    high = Math.max(high, (await R.row(top.row)).pos[2]);
+  }
+  const s1 = await R.row(top.row);
+  log(`the highest part (mass ${top.mass.toFixed(1)}) thrown from ${from.map((v) => v.toFixed(1))}: as high as ${high.toFixed(2)}, at rest at ${s1.pos.map((v) => v.toFixed(2))}`);
+  expect(high).toBeGreaterThan(from[2] + 1);
+  expect(Math.hypot(s1.pos[0] - from[0], s1.pos[1] - from[1])).toBeGreaterThan(1);
+  // (never inside the ground: its centre is over the ground's top at least)
+  expect(s1.pos[2]).toBeGreaterThan(10.2);
+  // the biggest part hit again breaks again, and its pieces get fields of their own
+  const made0 = (await R.pool())[POOL.parts];
+  R.e.expand({ row: big.row });
+  await R.step(2);
+  R.e.impulse({ row: block.row }, [0, 0, -30]);
+  await R.step(4);
+  await rest(R, 30 * 60);
+  P = await R.pool();
+  const after = (await R.rows()).filter((r) => r.flags & ALIVE);
+  const models2 = new Uint32Array(await g.read(D.model, R.e.rooms.rows * 4));
+  log(`the biggest part expanded again: ${P[POOL.parts] - made0} more parts, ${R.e.bkSeen[BK.live]} fields baked in all, ${after.length} rows`);
+  ok();
+  expect(P[POOL.deforming]).toBe(0);
+  expect(after.every((r) => !(r.flags & (HELD | DEFORM)) && models2[r.row] !== 0xffffffff)).toBe(true);
 }, 240_000);
 
 // The chain, as the lab's button has it (src/levels/playground.ts, the pile station): a stone slab B lies across a

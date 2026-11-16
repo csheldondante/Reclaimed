@@ -30,7 +30,11 @@ import meetWgsl from '../shaders/engine_meet.wgsl?raw';
 import meetLinkWgsl from '../shaders/engine_meetlink.wgsl?raw';
 import { SdfCollide, type CollideOptions } from './sdf/collide';
 import { hexSdfSpec } from './sdf/hexmodel';
-import { SdfModels } from './sdf/models';
+import { SdfModels, sdfFormatWgsl, type SdfGpuRegion } from './sdf/models';
+import partSdfWgsl from '../shaders/engine_partsdf.wgsl?raw';
+import sdfModelWgsl from '../shaders/engine/sdf-model.wgsl?raw';
+import sdfBakeWgsl from '../shaders/engine/sdf-bake.wgsl?raw';
+import sdfBakeRingWgsl from '../shaders/engine/sdf-bake-ring.wgsl?raw';
 import type { SimSystem } from '../sim/system';
 import { TICK_DT } from '../sim/flow';
 import type { WorldGpu } from '../sim/world-gpu';
@@ -93,7 +97,17 @@ const PRW = 16;
 /** ticks between the reads of a chain (the read an event starts is at once) */
 const READ_GAP = 4;
 /** the chained read's bytes: the pool's header, the awake list's header, what was asked of the pair rooms */
-const READ_B = 64 * 4 + 32 + SdfCollide.ASKED_BYTES + (4 + 16 * 4) * 4;
+const READ_B = 64 * 4 + 32 + SdfCollide.ASKED_BYTES + (4 + 16 * 4) * 4 + 32 * 4;
+/** the parts' bake (engine_partsdf.wgsl BK_*): its header's words, where its dispatch arguments and its ring of jobs start */
+export const BK = { tail: 0, head: 1, end: 2, serial: 8, idWant: 12, dataWant: 13, occWant: 14, scratchWant: 15, scratchSerial: 16, made: 17, live: 18 } as const;
+const BK_HDR = 32;
+const BK_ARGS = 24;
+const BK_RING = 64;
+const BK_JOBS = 1024;
+/** a region of the model store the GPU allocates parts' fields in, as first reserved (a bigger one follows a `want`): rows, data words, occupancy words */
+const FIELD_REGION = { ids: 256, data: 1 << 17, occ: 1 << 13 };
+/** padded voxels the parts' bake floods in one batch (16 B of scratch each): what a tick's two flood passes go over at most */
+const FIELD_SCRATCH = 1 << 16;
 /** engine_deform.wgsl: voxels a page, the pool's header, a slot's record and sums, where the live pages start, a model's header, a mesh vertex (vec4s) */
 export const PAGE = 512;
 export const POOL_HDR = 64;
@@ -485,7 +499,7 @@ export class Engine implements SimSystem {
     kernel('pagelist', [deformWgsl], { 18: 'rw', 19: 'rw', 20: 'rw', 27: 'read' });
     kernel('fill', [deformWgsl], { 19: 'rw', 21: 'read', 22: 'rw', 23: 'rw', 24: 'rw', 25: 'rw', 26: 'rw', 35: 'uniform' });
     kernel('release', [deformWgsl], { 18: 'rw', 19: 'rw' });
-    kernel('slots', [deformWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 18: 'rw', 19: 'rw', 56: 'rw' });
+    kernel('slots', [deformWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 18: 'rw', 19: 'rw', 56: 'rw', 59: 'rw' });
     // deforming voxels meet rigid rows (engine_meetlink.wgsl, engine_meet.wgsl): the candidates a pair, the contact a voxel
     kernel('meetLink', [meetLinkWgsl], { 4: 'rw', 5: 'rw', 6: 'rw', 10: 'rw', 43: 'read', 56: 'rw', 59: 'read', 60: 'read' });
     kernel('meet', [deformWgsl, meetWgsl], { 10: 'rw', 19: 'rw', 21: 'read', 23: 'rw', 24: 'rw', 25: 'rw', 56: 'rw', 58: 'read', 35: 'uniform', 57: 'uniform' });
@@ -521,6 +535,28 @@ export class Engine implements SimSystem {
     kernel('partRecs', stl, { ...S4, 18: 'rw', 22: 'rw', 24: 'rw', 26: 'rw' });
     kernel('partRow', stl, { ...S4, 4: 'rw', 5: 'rw', 6: 'rw', 24: 'rw' });
     kernel('occupancy', stl, { 6: 'rw', 22: 'rw', 39: 'rw' });
+    // settled parts get distance fields (engine_partsdf.wgsl; the store's bake kernels with their parameters from the ring)
+    const pf = [deformWgsl, settleWgsl, partSdfWgsl];
+    kernel('bakeBegin', pf, { 70: 'rw', 71: 'uniform' });
+    kernel('partField', pf, { 19: 'rw', 21: 'read', 23: 'rw', 24: 'rw', 25: 'rw', 70: 'rw', 71: 'uniform', 73: 'rw' });
+    kernel('partOcc', pf, { 19: 'rw', 21: 'read', 23: 'rw', 24: 'rw', 25: 'rw', 70: 'rw', 71: 'uniform', 72: 'rw', 73: 'rw' });
+    kernel('partLive', pf, { 6: 'rw', 18: 'rw', 19: 'rw', 21: 'read', 23: 'rw', 25: 'rw', 59: 'rw', 70: 'rw' });
+    const bp = [sdfFormatWgsl('grad8'), sdfModelWgsl, sdfBakeRingWgsl, sdfBakeWgsl];
+    const bake = (name: string, spec: BindSpec, entry: string) => {
+      const all: BindSpec = { 0: 'read', 2: 'rw', 8: 'uniform', ...spec };
+      this.kb[name] = { k: makeCompute(device, `engine-${name}`, bp, all, entry), spec: all };
+    };
+    bake('bakeSeed', { 3: 'read', 5: 'rw' }, 'seed');
+    bake('bakeFlood', { 4: 'read', 5: 'rw' }, 'jfa');
+    bake('bakeField', { 4: 'read', 6: 'rw' }, 'finalize');
+    bake('bakeBrickCount', { 3: 'read', 6: 'rw' }, 'brickCount');
+    bake('bakeBrickOffsets', { 6: 'rw', 7: 'rw' }, 'brickOffsets');
+    bake('bakeBrickWrite', { 3: 'read', 6: 'rw' }, 'brickWrite');
+    const SI = GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+    this.bkBuf = world.buf('engine part fields (jobs)', (BK_RING + BK_JOBS * 8) * 4, SI);
+    this.bku = world.buf('engine uniform (part fields)', 48, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.bj = [0, 1].map((k) => world.buf(`engine uniform (flood pass ${k})`, 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST));
+    this.bj.forEach((b, k) => device.queue.writeBuffer(b, 0, new Uint32Array([k, 0, 0, 0])));
     kernel('eskin', drw, { 4: 'rw', 6: 'rw', 19: 'rw', 22: 'rw', 23: 'rw', 24: 'rw', 33: 'rw', 34: 'read', 36: 'uniform' });
     this.kargs = world.buf('engine kernel dispatch', 64, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     const U = GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST;
@@ -541,6 +577,8 @@ export class Engine implements SimSystem {
     this.store = new SdfModels(device, 'grad8');
     // (the engine reads what was asked of the rooms itself, with the pool's header: one read, chained from events)
     this.collide = new SdfCollide(device, this.store, { rows: 64, cellTop: 12, margin: TUNE.engine.nearGap, readEvery: 0, spread: true, epochWord: 7, ...opts.collide });
+    this.fieldRegion(FIELD_REGION.ids, FIELD_REGION.data, FIELD_REGION.occ);
+    this.fieldScratch(FIELD_SCRATCH);
     this.resize({ rows: 64, pages: 16, slots: 16, table: 1 });
     this.pairRooms();
     this.drawRoom(4096);
@@ -549,6 +587,60 @@ export class Engine implements SimSystem {
     this.contacts = this.halves(undefined, 'engine contacts', 64, this.samp, 4096, 1024);
     this.hp = { used: 1, cpu: 4096, gpu: 4096 };
     this.heap = this.halves(undefined, 'engine heap', 16, this.hp, 4096, 4096);
+  }
+
+  // ---- settled parts' distance fields (engine_partsdf.wgsl; docs/design/PHYSICS_ENGINE.md "Pieces are bodies") ----
+  /** the store's bake kernels with their parameters read from the ring (sdf-bake-ring.wgsl): bindings 0 to 8 of their own */
+  private kb: Record<string, { k: ComputeKernel; spec: BindSpec }> = {};
+  /** the bake's state, dispatch arguments and ring of jobs: the GPU's own */
+  private bkBuf: GPUBuffer;
+  private bku: GPUBuffer;
+  private bj: GPUBuffer[];
+  /** the flood's two scratch buffers (16 B a padded voxel of a batch) */
+  private scr: GPUBuffer[] = [];
+  private scrRoom = 0;
+  private scrSerial = 0;
+  /** the regions of the store reserved for the GPU so far; the last is the one it allocates in */
+  private regions: SdfGpuRegion[] = [];
+  private regionSerial = 0;
+  /** the bake's header as last read (BK) */
+  readonly bkSeen = new Uint32Array(BK_HDR);
+  /**
+   * A settled part gets a distance field of its own, baked on the GPU over a few ticks while its body's particles
+   * stand in for it (BACKLOG PM4). (tests) off: a part is a row with no field — it meets the ground only.
+   */
+  bakeParts = true;
+  private writeBku(): void {
+    const r = this.regions[this.regions.length - 1];
+    this.device.queue.writeBuffer(this.bku, 0, new Uint32Array([this.regionSerial, r.idBase, r.ids, this.scrRoom, r.dataBase, r.dataWords, r.occBase, r.occWords, this.scrSerial, 0, 0, 0]));
+  }
+  /** a new region of the store for the GPU to allocate in (the last one's unused tail is left) */
+  private fieldRegion(ids: number, data: number, occ: number): void {
+    this.regions.push(this.store.reserveGpu(ids, data, occ));
+    this.regionSerial++;
+    this.writeBku();
+    this.g = null;
+  }
+  /** the flood's scratch with room for this many padded voxels; a batch in flight is formed again (`bakeBegin`) */
+  private fieldScratch(threads: number): void {
+    this.olds.push(...this.scr);
+    this.scrRoom = threads;
+    this.scrSerial++;
+    this.scr = [0, 1].map((k) => this.world.buf(`engine part fields (scratch ${k})`, threads * 8, GPUBufferUsage.STORAGE));
+    if (this.regions.length) this.writeBku();
+    this.g = null;
+  }
+  /** by the bake's header as last read: another region when the GPU asked for more than this one holds, a bigger scratch for a job it cannot hold */
+  private fieldRoom(): void {
+    const s = this.bkSeen;
+    const r = this.regions[this.regions.length - 1];
+    if (s[BK.serial] === this.regionSerial && (s[BK.idWant] > r.ids || s[BK.dataWant] > r.dataWords || s[BK.occWant] > r.occWords))
+      this.fieldRegion(pow2(2 * s[BK.idWant], FIELD_REGION.ids), pow2(2 * s[BK.dataWant], FIELD_REGION.data), pow2(2 * s[BK.occWant], FIELD_REGION.occ));
+    if (s[BK.scratchSerial] === this.scrSerial && s[BK.scratchWant] > this.scrRoom) this.fieldScratch(pow2(s[BK.scratchWant], this.scrRoom));
+  }
+  /** whether the tick encodes the parts' bake: only while the last read showed a body settling (or is too old to say) */
+  private fields(): boolean {
+    return this.bakeParts && TUNE.engine.pairs >= 0.5 && (!this.stage4Gate || this.seen[POOL.settling] > 0 || this.ticks - this.readAt > 12);
   }
 
   private olds: GPUBuffer[] = [];
@@ -769,6 +861,7 @@ export class Engine implements SimSystem {
       40: this.trow, 41: this.prow, 42: this.pimp, 43: pb[0], 44: pb[1], 45: pb[2], 46: pb[3], 47: pb[4], 48: this.pimpOld ?? this.dummy, 50: this.rargs, 51: this.gtop, 52: this.targs, 49: (this.pimpOld && this.collide.fine.slotRemap) || this.dummy,
       // (the meet kernels': 56 to 60 since the merge into physics10-one — 51 and 52 are the ground tops' and the terrain lists')
       56: this.candBuf(), 57: this.mu[0], 58: this.store.data, 59: this.sdfModel, 60: this.store.models,
+      70: this.bkBuf, 71: this.bku, 72: this.store.occ, 73: this.store.models,
     };
     const make = (name: string, over: Record<number, GPUBuffer> = {}) => {
       const { k, spec } = this.k[name];
@@ -786,6 +879,17 @@ export class Engine implements SimSystem {
     }
     g.pairPre0 = make('pairPre', { 3: this.eu[0] });
     this.mu.forEach((m, s) => (g[`meet${s}`] = make('meet', { 57: m })));
+    // (the parts' bake: the store's buffers by the bake kernels' own numbers; the flood's two passes swap the scratch)
+    const st = this.store;
+    const bres = (src: GPUBuffer, dst: GPUBuffer, pass: number): Record<number, GPUBuffer> => ({ 0: this.bkBuf, 2: st.models, 3: st.occ, 4: src, 5: dst, 6: st.data, 7: st.bakeCount, 8: this.bj[pass] });
+    const bmake = (name: string, as: string, r: Record<number, GPUBuffer>) => {
+      const { k, spec } = this.kb[name];
+      g[as] = makeBindGroup(this.device, `engine-${as}`, k.layout, Object.fromEntries(Object.keys(spec).map((b) => [b, r[Number(b)]])));
+    };
+    const [s0, s1] = this.scr;
+    for (const name of Object.keys(this.kb)) if (name !== 'bakeFlood') bmake(name, name, bres(s0, s0, 0));
+    bmake('bakeFlood', 'bakeFlood0', bres(s0, s1, 0));
+    bmake('bakeFlood', 'bakeFlood1', bres(s1, s0, 1));
     this.g = g;
     return g;
   }
@@ -964,6 +1068,11 @@ export class Engine implements SimSystem {
     this.hp.used = 1;
     this.bodies.clear();
     for (const m of this.models) this.store.remove(m.sdf);
+    // (the parts' fields go with their rows: the regions back to the store, a fresh one reserved, no row with a model)
+    for (const r of this.regions.splice(0)) this.store.releaseGpu(r);
+    this.fieldRegion(FIELD_REGION.ids, FIELD_REGION.data, FIELD_REGION.occ);
+    this.bkSeen.fill(0);
+    this.device.queue.writeBuffer(this.sdfModel, 0, new Uint32Array(this.d.rows).fill(0xffffffff));
     this.models.length = 0;
     this.byContent.clear();
     this.collide.coarse.invalidateSleepers();
@@ -973,7 +1082,7 @@ export class Engine implements SimSystem {
     this.seen.fill(0);
     this.s4Words = [];
     const enc = this.device.createCommandEncoder({ label: 'engine clear' });
-    for (const b of [this.info, this.pool, this.dmeta, this.dargs, this.kargs, this.list]) enc.clearBuffer(b);
+    for (const b of [this.info, this.pool, this.dmeta, this.dargs, this.kargs, this.list, this.bkBuf]) enc.clearBuffer(b);
     enc.clearBuffer(this.dl, 0, DL_AT * 4);
     this.device.queue.submit([enc.finish()]);
   }
@@ -1007,7 +1116,7 @@ export class Engine implements SimSystem {
     const fast = this.fastPath ?? T.fastPath >= 0.5;
     const d = this.d;
     const L = Engine.layout(d);
-    u.set([d.rows, cmds, Math.max(1, Math.round(T.passes)), (fast ? 1 : 0) | (first ? 2 : 0) | (T.deform >= 0.5 ? 4 : 0) | (this.settles ? 8 : 0) | (T.pairExpand >= 0.5 ? 16 : 0) | (this.holdParts && T.pairs >= 0.5 ? 32 : 0) | (this.hold ? 256 : 0)], 20);
+    u.set([d.rows, cmds, Math.max(1, Math.round(T.passes)), (fast ? 1 : 0) | (first ? 2 : 0) | (T.deform >= 0.5 ? 4 : 0) | (this.settles ? 8 : 0) | (T.pairExpand >= 0.5 ? 16 : 0) | (this.holdParts && T.pairs >= 0.5 ? 32 : 0) | (this.bakeParts && T.pairs >= 0.5 ? 64 : 0) | (this.hold ? 256 : 0)], 20);
     u.set([d.pages, d.slots, d.table, this.ticks], 24);
     u.set([L.pageStack, L.slotStack, L.rowStack, L.sums], 28);
     u.set([L.pageInfo, L.slotRec, L.tables, this.dlRoom], 32);
@@ -1198,6 +1307,8 @@ export class Engine implements SimSystem {
       // (PA10: the hits on owners' matter, 272 B: the ring is not cleared — the host keeps how many it has seen)
       const hitOff = POOL_HDR * 4 + 32 + SdfCollide.ASKED_BYTES;
       enc.copyBufferToBuffer(this.events, HIT_AT * 4, this.statBuf, hitOff, HIT_B);
+      // (the parts' bake: what it asked of the store's region and of the scratch, 128 B)
+      enc.copyBufferToBuffer(this.bkBuf, 0, this.statBuf, hitOff + HIT_B, BK_HDR * 4);
       this.device.queue.submit([enc.finish()]);
       const rooms = this.collide.rooms;
       this.statBuf.mapAsync(GPUMapMode.READ).then(() => {
@@ -1218,6 +1329,7 @@ export class Engine implements SimSystem {
         this.calm = !this.active && this.owed === 0;
         this.fresh = true;
         this.hitsFrom(w.subarray(hitOff / 4, hitOff / 4 + 4 + HIT_ROOM * 4));
+        this.bkSeen.set(w.subarray((hitOff + HIT_B) / 4, (hitOff + HIT_B) / 4 + BK_HDR));
       }, ignoreTeardown);
     }
   }
@@ -1270,16 +1382,20 @@ export class Engine implements SimSystem {
     this.resize(n);
     this.room(0, 2 * s[POOL.sampWant], 0, 2 * s[POOL.heapWant]);
     this.drawRoom(2 * s[POOL.dlWant]);
+    this.fieldRoom();
   }
 
   /** (tests) the header read now, and the buffers grown by it */
   async readPool(): Promise<Uint32Array> {
-    const tmp = this.device.createBuffer({ size: POOL_HDR * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const tmp = this.device.createBuffer({ size: (POOL_HDR + BK_HDR) * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
     const enc = this.device.createCommandEncoder();
     enc.copyBufferToBuffer(this.pool, 0, tmp, 0, POOL_HDR * 4);
+    enc.copyBufferToBuffer(this.bkBuf, 0, tmp, POOL_HDR * 4, BK_HDR * 4);
     this.device.queue.submit([enc.finish()]);
     await tmp.mapAsync(GPUMapMode.READ);
-    this.seen.set(new Uint32Array(tmp.getMappedRange()));
+    const both = new Uint32Array(tmp.getMappedRange());
+    this.seen.set(both.subarray(0, POOL_HDR));
+    this.bkSeen.set(both.subarray(POOL_HDR));
     tmp.destroy();
     this.s4Evidence();
     if (this.growAhead) this.ahead();
@@ -1456,7 +1572,7 @@ export class Engine implements SimSystem {
         n.passes++;
       }
       const pass = cur.pass;
-      pass.setPipeline(this.k[name].k.pipeline);
+      pass.setPipeline((this.k[name] ?? this.kb[name]).k.pipeline);
       pass.setBindGroup(0, g[group]);
       this.prof.dispatches++;
     };
@@ -1556,7 +1672,7 @@ export class Engine implements SimSystem {
         run('meetLink');
         indirect(pd.buffer, pd.offset);
       }
-      this.deform(run, indirect, meet);
+      this.deform(run, direct, indirect, meet);
       run('release');
       indirect(this.kargs, 0);
       run('slots', `slots${ring}`);
@@ -1605,7 +1721,7 @@ export class Engine implements SimSystem {
   }
 
   /** the lattice's substeps over the live pages, then the settling bodies' labels and parts (later letters of step 2) */
-  private deform(run: (name: string, group?: string) => void, indirect: (buf: GPUBuffer, offset: number) => void, meet: boolean): void {
+  private deform(run: (name: string, group?: string) => void, direct: (groups: number) => void, indirect: (buf: GPUBuffer, offset: number) => void, meet: boolean): void {
     const T = TUNE.engine;
     const each = (name: string) => {
       run(name);
@@ -1652,6 +1768,25 @@ export class Engine implements SimSystem {
     tris('triWrite');
     settle('partRecs');
     settle('partRow');
+    if (!this.fields()) return;
+    // a settled part's own distance field (engine_partsdf.wgsl), the bake spread over ticks: the batch moved on, new
+    // parts' rows and occupancy, seed and two flood passes, the field and the sample bricks, the parts whose job is done
+    const bake = (name: string, arg: number, group = name) => {
+      run(name, group);
+      indirect(this.bkBuf, (BK_ARGS + 4 * arg) * 4);
+    };
+    run('bakeBegin');
+    direct(1);
+    settle('partField');
+    settle('partOcc');
+    bake('bakeSeed', 0);
+    bake('bakeFlood', 1, 'bakeFlood0');
+    bake('bakeFlood', 1, 'bakeFlood1');
+    bake('bakeField', 2);
+    bake('bakeBrickCount', 3);
+    bake('bakeBrickOffsets', 4);
+    bake('bakeBrickWrite', 3);
+    settle('partLive');
   }
 
   /**
@@ -1695,7 +1830,7 @@ export class Engine implements SimSystem {
 
   /** (tests only: nothing in play reads a row) the buffers, to read back */
   get debugBuffers() {
-    return { targs: this.targs, cand: this.candBuf(), model: this.sdfModel, prow: this.prow, pimp: this.pimp, pose: this.pose, vel: this.vel, info: this.info, samples: this.samples, list: this.list, events: this.events, pool: this.pool, dmeta: this.dmeta, dargs: this.dargs, kargs: this.kargs, dl: this.dl, dout: this.dout, heap: this.heap, px: this.px, ps: this.ps, pb: this.pb };
+    return { bk: this.bkBuf, targs: this.targs, cand: this.candBuf(), model: this.sdfModel, prow: this.prow, pimp: this.pimp, pose: this.pose, vel: this.vel, info: this.info, samples: this.samples, list: this.list, events: this.events, pool: this.pool, dmeta: this.dmeta, dargs: this.dargs, kargs: this.kargs, dl: this.dl, dout: this.dout, heap: this.heap, px: this.px, ps: this.ps, pb: this.pb };
   }
 
   /** (tests, the lab's read-out) the rooms now, and where the records start */

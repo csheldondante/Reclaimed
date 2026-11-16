@@ -923,6 +923,10 @@ fn pairPush(@builtin(global_invocation_id) id: vec3<u32>) {
     var loser = NONE;
     if (ta > 0.0 && (tb <= 0.0 || ta < tb || (ta == tb && A.invM >= B.invM))) { loser = H.x; }
     else if (tb > 0.0) { loser = H.y; }
+    // (how much is removed goes by the hit's energy — DESIGN §10: it must be worth one cell of the loser at least, by
+    // its material's bar. Under that nothing is lost and the overlap is only moved out, slowly, above: pieces that
+    // settle into each other when a pile is disturbed do not grind each other down. BACKLOG PR1)
+    if (loser != NONE && prow[base + 1u].x < select(tb, ta, loser == H.x) * info[4u * loser + 2u].w) { loser = NONE; }
     if (loser != NONE) {
       let fl = rowFlags(loser);
       if ((fl & ROW_ASLEEP) != 0u) { atomicStore(&listA[rwAt(loser) + RW_WAKE], gTick()); }

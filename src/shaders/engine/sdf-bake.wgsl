@@ -5,7 +5,7 @@
 // at most t (a binary search of at most log2(jobs) steps). The scratch holds, per thread, the nearest occupied voxel
 // and the nearest empty voxel found so far (x | y << 8 | z << 16, or SDF_NONE).
 //   seed      every voxel is its own nearest of its kind
-//   jfa       a jump flood pass at P.step: the 26 neighbours at that stride offer their nearest of each kind
+//   jfa       a jump flood pass at bkStep(): the 26 neighbours at that stride offer their nearest of each kind
 //   finalize  empty voxel: + distance to the nearest occupied voxel's box; occupied: - distance to the nearest empty
 //             voxel's box. So the zero is on the voxel faces and corners are exact. grad8 also keeps the unit
 //             gradient, by central differences of those distances (one-sided at the grid's edge).
@@ -17,6 +17,8 @@
 //   brickWrite    the brick's samples written at its offset, those past the job's room left out
 // The table is at the model's sampleBase (bricks + 1 words), the samples right after it.
 // Distance is from the voxel's centre to the other voxel's box (the cube of side 1 round its centre), in voxels.
+// Where the parameters come from is in front of this file: sdf-bake-host.wgsl (a uniform and a job buffer a dispatch:
+// models.ts) or sdf-bake-ring.wgsl (a ring of jobs the GPU fills, the bake spread over ticks: the engine's settled parts).
 
 struct BakeParams {
   jobs: u32,
@@ -36,8 +38,6 @@ struct Job {
   pad2: u32,
 }
 
-@group(0) @binding(0) var<uniform> P: BakeParams;
-@group(0) @binding(1) var<storage, read> jobs: array<Job>;
 @group(0) @binding(2) var<storage, read_write> models: array<SdfModel>;
 @group(0) @binding(3) var<storage, read> occ: array<u32>;
 @group(0) @binding(4) var<storage, read> src: array<vec2<u32>>;
@@ -47,10 +47,10 @@ struct Job {
 
 fn jobOf(t: u32) -> u32 {
   var lo = 0u;
-  var hi = P.jobs;
+  var hi = bkJobs();
   while (hi - lo > 1u) {
     let mid = (lo + hi) / 2u;
-    if (jobs[mid].tBase <= t) {
+    if (jobAt(mid).tBase <= t) {
       lo = mid;
     } else {
       hi = mid;
@@ -94,11 +94,12 @@ fn boxD2(v: vec3<i32>, s: u32) -> f32 {
 
 @compute @workgroup_size(64)
 fn seed(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (!bkRun(0u)) { return; }
   let t = gid.x;
-  if (t >= P.threads) {
+  if (t >= bkThreads()) {
     return;
   }
-  let job = jobs[jobOf(t)];
+  let job = jobAt(jobOf(t));
   let m = models[job.model];
   let d = sdfDims(m.dims);
   let i = t - job.tBase;
@@ -117,11 +118,12 @@ fn seed(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn jfa(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (!bkRun(1u)) { return; }
   let t = gid.x;
-  if (t >= P.threads) {
+  if (t >= bkThreads()) {
     return;
   }
-  let job = jobs[jobOf(t)];
+  let job = jobAt(jobOf(t));
   let d = sdfDims(models[job.model].dims);
   let i = t - job.tBase;
   if (i >= d.x * d.y * d.z) {
@@ -131,7 +133,7 @@ fn jfa(@builtin(global_invocation_id) gid: vec3<u32>) {
   var best = src[t];
   var bo = boxD2(p, best.x);
   var be = boxD2(p, best.y);
-  let s = i32(P.step);
+  let s = i32(bkStep());
   for (var dz = -1; dz <= 1; dz++) {
     for (var dy = -1; dy <= 1; dy++) {
       for (var dx = -1; dx <= 1; dx++) {
@@ -169,13 +171,14 @@ fn signedAt(t: u32, i: u32, d: vec3<u32>) -> f32 {
 
 @compute @workgroup_size(64)
 fn finalize(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (!bkRun(2u)) { return; }
   if (SDF_FORMAT == SDF_SNORM8) {
     // (a thread a word of four voxels: no two threads share a word)
     let t = gid.x * 4u;
-    if (t >= P.threads) {
+    if (t >= bkThreads()) {
       return;
     }
-    let job = jobs[jobOf(t)];
+    let job = jobAt(jobOf(t));
     let m = models[job.model];
     let d = sdfDims(m.dims);
     let n = d.x * d.y * d.z;
@@ -194,10 +197,10 @@ fn finalize(@builtin(global_invocation_id) gid: vec3<u32>) {
     data[m.fieldBase + (i >> 2u)] = w;
   } else {
     let t = gid.x;
-    if (t >= P.threads) {
+    if (t >= bkThreads()) {
       return;
     }
-    let job = jobs[jobOf(t)];
+    let job = jobAt(jobOf(t));
     let m = models[job.model];
     let d = sdfDims(m.dims);
     let i = t - job.tBase;
@@ -251,10 +254,10 @@ fn openOf(base: u32, p: vec3<i32>, d: vec3<u32>) -> u32 {
 
 fn jobOfBrick(t: u32) -> u32 {
   var lo = 0u;
-  var hi = P.jobs;
+  var hi = bkJobs();
   while (hi - lo > 1u) {
     let mid = (lo + hi) / 2u;
-    if (jobs[mid].bBase <= t) {
+    if (jobAt(mid).bBase <= t) {
       lo = mid;
     } else {
       hi = mid;
@@ -265,10 +268,11 @@ fn jobOfBrick(t: u32) -> u32 {
 
 @compute @workgroup_size(64)
 fn brickCount(@builtin(global_invocation_id) gid: vec3<u32>) {
-  if (gid.x >= P.bricks) {
+  if (!bkRun(2u)) { return; }
+  if (gid.x >= bkBricks()) {
     return;
   }
-  let job = jobs[jobOfBrick(gid.x)];
+  let job = jobAt(jobOfBrick(gid.x));
   let m = models[job.model];
   let d = sdfDims(m.dims);
   let bd = sdfBricks(d);
@@ -288,10 +292,11 @@ fn brickCount(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn brickOffsets(@builtin(global_invocation_id) gid: vec3<u32>) {
-  if (gid.x >= P.jobs) {
+  if (!bkRun(2u)) { return; }
+  if (gid.x >= bkJobs()) {
     return;
   }
-  let job = jobs[gid.x];
+  let job = jobAt(gid.x);
   let m = models[job.model];
   let bd = sdfBricks(sdfDims(m.dims));
   let nb = bd.x * bd.y * bd.z;
@@ -308,10 +313,11 @@ fn brickOffsets(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(64)
 fn brickWrite(@builtin(global_invocation_id) gid: vec3<u32>) {
-  if (gid.x >= P.bricks) {
+  if (!bkRun(2u)) { return; }
+  if (gid.x >= bkBricks()) {
     return;
   }
-  let job = jobs[jobOfBrick(gid.x)];
+  let job = jobAt(jobOfBrick(gid.x));
   let m = models[job.model];
   let d = sdfDims(m.dims);
   let bd = sdfBricks(d);

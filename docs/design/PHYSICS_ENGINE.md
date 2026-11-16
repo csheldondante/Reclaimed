@@ -1835,3 +1835,71 @@ One time-boxed round after the owner tried the lab on the phone. What changed in
   centre, and only after a host event (PQ7). A sleeper claims no External, so nothing buries it (PQ10).
 - **Tools, not engine:** telekinesis by touch (PQ1), a steel tower to crumple (PQ2), the cannon and the engine's
   meteor, `?sandbox=1` on the town (PQ3, PQ9).
+
+## Pieces are bodies (round of 2026-11-15, after the owner's phone test)
+
+The owner: "The whole point of the physics system was to get rigidbodies alongside the breakable systems so we could
+cheaply have pieces break off larger structures and then still have them tumble and crash."
+
+### Item 1, PM4: plan (written before the code)
+
+1. **The design** (DESIGN §10): one baked voxel model an object; a body returns to rigid once settled; no per-tick
+   CPU read. So a part's field is baked on the GPU from its own compact model, and the host is never told of a part.
+2. **Allocation on the GPU.** The model store gets a region the GPU hands out itself (model rows, field and sample
+   words, occupancy bits: bump counters with `want` words, as the heap's GPU half). The host reserves it in chunks
+   from its arenas and gives a new chunk when the chained read shows a `want` past the room: paged, no cap.
+3. **The cover before the bake lands: the body's own particles, which are still (that is why it settles).** Parts are
+   made rows as today but pinned (`ROW_HELD`) and with no model word, the slot stands in `S_HELD` with its voxels as
+   their collision shape (the mechanics branch's tested path) — for the few ticks of the bake only. No box stand-in.
+4. **`partField`** (a thread a part's root): bounds of its voxels in the part's rest frame, a store row, a job in a
+   ring. **`partOcc`** (a thread a voxel): the cubes of half a cell whose centre its cell holds, in the part's lattice
+   frame, OR-ed into the occupancy bits (a part's cells are where they lie, not on the world's lattice).
+5. **The bake spread over ticks:** the store's own kernels (`sdf-bake.wgsl`), their parameters read from the job
+   ring instead of a uniform; a batch of jobs up to the scratch's room; seed and two flood passes a tick, the field
+   and the sample bricks in the tick of the last pass. A job larger than the scratch asks for a bigger one.
+6. **The swap, on the GPU** (`partLive`, a thread a root): its job done, the row's model word is written, `ROW_HELD`
+   cleared, the sleeper table told; when every part of a slot is live the slot lets its pages go. The row cannot have
+   been reused meanwhile: it is pinned until this kernel frees it. A freed row's model word is set to none (`slots`).
+7. **Tests** (`engine-chain`): the pinned failure "a block dropped on a settled part rests on it" passes as a normal
+   test; a part's pose bytes do not change at the swap; a part hit again expands again; the dropped block wakes a
+   part it pushes. Lab: the cannon at the brick wall, pieces pile.
+8. **Cost:** inside stage 4's gate only, and only while the last read showed a body settling: 1 direct + 10 indirect
+   dispatches. A quiet tick and an awake tick with nothing deforming are unchanged.
+9. **Not in this item:** a part's field is not given back when its row dies (the heap's compact models are not
+   either): logged. A part wider than 126 cells has no field (the store's 255 voxels a side).
+
+### Item 2, second breaks (PQ4): plan (written before the code)
+
+1. **The design** (DESIGN §10.4): deformation "only for bodies in a true collision (energy past a material
+   threshold)". The bar is an energy over the body's mass; a piece of the same material at the same impact energy
+   a mass must pass it as its parent does.
+2. **Today** (`tfine`): the hardest single contact's stopping energy, 1/2 stop² / k (k that contact's inverse
+   effective mass), against threshold x the whole mass. A box landing flat has a sample under its centre (k = 1/m:
+   the whole energy counts). A piece on a few points has none: each contact alone could only tip it, so each weighs
+   a fraction of the mass — but the contacts act together, and together they stop it.
+3. **The rule, on physical grounds:** the ground's contacts act as one resultant at their centroid. The closing
+   samples' places are summed, weighed by their stopping speed (three atomic sums in the workgroup, before its one
+   barrier); the row's thread takes the resultant's point R and normal n, its stopping speed S there and its inverse
+   effective mass k = 1/m + (R x n) . I⁻¹ (R x n); the energy is 1/2 S² / k. Contacts all round the centre give
+   k = 1/m (the whole approach energy: what a flat landing has today); contacts on one side give what a single
+   contact there gives. It is an energy a single stop takes from the body, so it never exceeds what the body has.
+4. The energy weighed is the larger of this and the hardest single contact (today's number: a spinning corner).
+5. **Tests:** `engine-rebreak` as a normal test (stone and brick); then the first-break tests as they are
+   (`engine-break`, `-station`, `-energy`, `-d0`): a flat landing's number is the same by construction, so they are
+   expected not to move; re-tuned only if they do.
+6. Not touched: step 1's kernel (`engine_step.wgsl`, the route with `bodies meet bodies` off) keeps the old rule.
+
+### Item 1 as built
+
+Built as planned (files: `engine_partsdf.wgsl`, `engine/sdf-bake-ring.wgsl`, `engine/sdf-bake-host.wgsl`,
+`engine_deform.wgsl` `slots` and `pagelist`, `sdf/models.ts reserveGpu`, `engine.ts` "settled parts' distance
+fields"). Uniform bit `EU.e.w` 64 is the mode; a slot's word 24 is 2 while it stands for its parts; a root's words
+`pw[3r+2]` hold its label, the store row, the job's number and the verdict (`V_FIELD` 6, `V_LIVE` 7). The host reads
+the bake's header (128 B) with the chained read, for the region's and the scratch's `want` words only.
+
+One thing the plan did not have: **the pair solver's erosion needed an energy condition** (BACKLOG PR1, asked of the
+owner). Without it a heap of fresh pieces ground itself down at the first touch; the measurement is in the DEVLOG.
+
+Counts a tick (the host's tally; `engine-ground`): quiet 0 + 0 and awake with nothing deforming unchanged; with stage
+4 open and a body settling as the last read saw it, 2 direct and 10 indirect more than before (`bakeBegin`; `partField`,
+`partOcc`, `partLive` over the settling pages; the store's six bake kernels, the flood twice).
