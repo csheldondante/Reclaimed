@@ -3670,3 +3670,28 @@ The mutators write only WorldGpu contract buffers. Three of those carry meanings
   downstream by `weather/inflow.ts carryInflow` before it reaches the rivers' wetness field: it cuts what runs
   through the region, not only the reaches inside it.
 
+
+## Live events and synergy rules (loop-skeleton round 6; docs/SYSTEMS.md section 3b)
+
+One system plays the raid, the dead, a parade, a fire and refugees. Its parts and who owns what:
+
+| Part | File | Owns | Never does |
+|---|---|---|---|
+| The event as data | `src/living/live.ts` (`LiveDef`) | who takes part, where, the hazard, the spells, the ends, and the four steps of reading a result: `liveRead` → rules → `liveDerive` → `liveTier`; `idleState` (the event as nobody played it) | touch the GPU, the DOM or the fact layer |
+| The card | `TemplateDef.play.event` (`src/living/engine.ts`) | committed like any card; not resolved by its turns — `LivingEngine.resolve(id, tier)` | make a `Challenge` (the contract's asks for a player pawn) |
+| The run's events | `src/season/realm-events.ts` | the five templates and their numbers | — |
+| Resolving | `Realm.finishLive(id, told?)` (`src/season/realm.ts`) | numbers → `RuleBook.fire` → tier → the template's outcome through the engine; `endSeason` resolves every event still running; `tellLive` keeps what the scene last told | know units, cameras or frames |
+| Playing | `LiveRunner` (`src/scenes/level/live-runner.ts`) | groups through `TownForces` / `Units`, the entry by a road, the hazard, the camera, the sim's speed, the counts (from the units' died / hurt / arrived events), `told(run)` | decide an outcome |
+| The screen | `scenes/level/loop.ts` (`beginLive`, `liveEnded`, `castAt`), `season/run-ui.ts` (`liveNow`) | phase `event`; leaving and going back; spells | — |
+| Tags | `Realm.things()` with `season/realm-rules.ts SITE_TAGS, RUIN, TIMED` | each thing's tags from what it is and its state, derived on demand | store tags of its own |
+| Rules | `src/living/rules.ts` (`RuleDef`, `RuleBook`); the run's: `realm-rules.ts RULES` | triggers `'turn'` (the season's end, before the turn), `{ event }` (a fact event's kind, pumped once each), `{ live }` (an event's read); effects on a pool (`RuleWorld.gain`) or on one of the event's numbers | write a fact (its record `rule-fired` is the realm's, and never a trigger) |
+
+**The contract between the scene and the realm** is `LiveTold`: `{ state: LiveState, at?, route?, burned? }` — counts by
+group, the hazard's points, casts; where the event was, the way its column took, which points burned (world cells
+[x, row]). The realm reads nothing else of the live city, so a test can tell it any state.
+
+**A timed tag** is a `condition` whose value is the turn it ends with, as text (a number in the fact layer is an
+intensity 0..1): `Realm.mark`.
+
+**Cost.** The runner adds no pass and no dispatch. It observes its own groups' units (the units' existing small
+read of observed records) and, for a fire only, asks the fire mirror for the pages of its 6 spots every 2 s.

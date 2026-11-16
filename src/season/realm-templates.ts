@@ -16,6 +16,7 @@
 import type { ArcDef, TemplateDef } from '../living/engine';
 import type { Effect, Pred } from '../living/dsl';
 import { PEOPLE_KIND, type Pool, type SeasonCard } from './ledger';
+import { LIVE_TEMPLATES } from './realm-events';
 
 /** the home town's sites a card can stand at: a key, its name, and what the place is (for the scene's marker rule).
  *  FIXED-CITY (BACKLOG LS-40): a fixed list of one town's named places, made as fact entities at the run's start; every
@@ -144,8 +145,7 @@ function hazard(o: { id: string; site: SiteKey; title: string; pitch: string; ro
   };
 }
 
-/** the live event's template: agreeing means going there and casting (the scene plays it before the commit) */
-export const DEAD_RISE = 'dead-rise';
+export { DEAD_RISE } from './realm-events';
 /** raiders in the run's last stage */
 export const RAIDERS = 6;
 
@@ -245,16 +245,17 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     themes: ['town', 'refugees'],
     // (at the watch post, where their rider stood: the road gate is the tribute's place, one card a place)
     bind: at('watch'),
-    eligible: [{ event: { kind: 'fell', involving: '$town' } }, { not: { event: { kind: 'refugees-housed', involving: '$town' } } }, { not: { event: { kind: 'refugees-turned-away', involving: '$town' } } }],
+    eligible: [{ event: { kind: 'fell', involving: '$town' } }, { not: { event: { kind: 'refugees-housed', involving: '$town' } } }, { not: { event: { kind: 'refugees-turned-away', involving: '$town' } } }, { not: { event: { kind: 'refugees-resettled', involving: '$town' } } }],
     at: 'site',
     requires: { agents: [{ kind: 'workers', count: 1 }], goods: { materials: 2 } },
     turns: 1,
     work: 'labour',
-    outcome: [{ helper: 'pool', args: ['labor', 2] }, { helper: 'pool', args: ['unrest', -1] }, { event: 'refugees-housed', by: ['player'], to: ['$town'], note: 'you housed the refugees by the watch post. Two of them work for you now', weight: 0.4 }],
+    outcome: [{ helper: 'pool', args: ['labor', 2] }, { helper: 'pool', args: ['unrest', -1] }, { helper: 'camp', args: ['$site', 'sheltered'] }, { event: 'refugees-housed', by: ['player'], to: ['$town'], note: 'you housed the refugees by the watch post. Two of them work for you now', weight: 0.4 }],
     outcomeText: 'The refugees have huts by the watch post. Two of them join your workers. Unrest -1.',
     onExpire: [
       { helper: 'pool', args: ['unrest', 1] },
       { helper: 'sign', args: ['crime', '$town', 0.5, 3] },
+      { helper: 'camp', args: ['$site', 'abandoned'] },
       { event: 'refugees-turned-away', by: ['player'], to: ['$town'], note: 'you left the refugees in the mud. Some of them steal to eat', weight: -0.4 },
     ],
     expireText: 'The refugees are left in the mud. Some steal to eat: houses are broken into. Unrest +1.',
@@ -263,6 +264,27 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     offerTurns: 3,
     once: true,
     parts: { urgency: 0.6 },
+  },
+  {
+    // (round 6: the camp's other answer — resettled on the farms, they are not a camp any more: a steady yield, no
+    // new hands for the town and no huts by the gate. Sheltered, turned away or resettled: one of the three)
+    id: 'resettle-refugees',
+    title: 'Settle the refugees on the farms',
+    pitch: 'The refugees could work the east fields for a share of the crop. They would leave the camp for good.',
+    themes: ['town', 'refugees', 'food'],
+    bind: at('fields'),
+    eligible: [{ event: { kind: 'fell', involving: '$town' } }, { helper: 'built', args: ['farms'] }, { not: { event: { kind: 'refugees-housed', involving: '$town' } } }, { not: { event: { kind: 'refugees-turned-away', involving: '$town' } } }, { not: { event: { kind: 'refugees-resettled', involving: '$town' } } }],
+    at: 'site',
+    requires: { agents: [], goods: { materials: 1 } },
+    turns: 1,
+    work: 'talk',
+    outcome: [{ helper: 'income', args: ['materials', 1] }, { helper: 'camp', args: ['$site', 'abandoned'] }, { event: 'refugees-resettled', by: ['player'], to: ['$town'], note: 'you settled the refugees on the farms. They pay you a share of the crop', weight: 0.3 }],
+    outcomeText: 'The refugees leave the camp for the farms. +1 Materials each season.',
+    presenter: { of: '$town', role: 'reeve', own: true, verb: 'offers', line: 'Those people by the watch post know how to farm. Give me seed for them and I will put them on the east fields.', gain: 'One more Materials every season.' },
+    reward: { text: '+1 Materials each season.' },
+    offerTurns: 3,
+    once: true,
+    parts: { urgency: 0.5 },
   },
   {
     // (the camp you founded can be lost: its wagons and its ore go with it)
@@ -294,32 +316,6 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     once: true,
   },
   {
-    // (a small live event mid-run: a few of the dead get up; the player goes there and casts — scenes/level/loop.ts
-    // playDead. The sign in the streets while the card stands is the mutators' own; left alone, it grows)
-    id: DEAD_RISE,
-    title: 'Burn the risen dead',
-    pitch: 'The dead are up in the old burial ground. Fire will put them down again.',
-    themes: ['magic', 'undead'],
-    bind: at('graves'),
-    eligible: [{ helper: 'after', args: [0.35] }, { not: { event: { kind: 'dead-burned', involving: '$town' } } }, { not: { event: { kind: 'dead-loose', involving: '$town' } } }],
-    threat: true,
-    live: true,
-    parts: { urgency: 0.72 },
-    at: 'site',
-    setup: [{ helper: 'sign', args: ['deadrise', '$town', 0.1] }],
-    requires: { agents: [] },
-    turns: 1,
-    work: 'talk',
-    outcome: [{ helper: 'sign', args: ['deadrise', '$town', 0] }, { event: 'dead-burned', by: ['player'], to: ['$site', '$town'], note: 'you burned the risen dead in the old burial ground', weight: 0.3 }],
-    outcomeText: 'The dead are ash. The burial ground is quiet.',
-    onExpire: [{ helper: 'pool', args: ['unrest', 1] }, { helper: 'sign', args: ['deadrise', '$town', 0.9, 3] }, { event: 'dead-loose', by: [], to: ['$site', '$town'], note: 'the dead got out of the burial ground and walk the streets', weight: -0.4 }],
-    expireText: 'The dead are out of the burial ground. They walk the streets at night. Unrest +1.',
-    presenter: { of: '$town', role: 'gravedigger', own: true, verb: 'warns', line: 'The dead are up and walking in the old burial ground. Some are in the streets already. Come and burn them.' },
-    reward: { text: 'You go there and cast Fire on them. Each cast costs 1 Magic.' },
-    offerTurns: 2,
-    once: true,
-  },
-  {
     id: 'pay-raiders',
     title: 'Pay the raiders off',
     pitch: 'The raiders on the road want tribute. Paid, they leave and no attack comes.',
@@ -342,11 +338,12 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     hooks: ['raiders'],
   },
   hazard({ id: 'mend-dam', site: 'dam', title: 'Mend the old dam', pitch: 'The old dam is cracked. Two workers and some stone will hold it.', role: 'dam keeper', line: 'The old dam is cracked from top to bottom. Two workers and some stone will hold it.', workers: 2, goods: { materials: 2 }, done: 'The dam is mended. The lower town stays dry.', kind: 'flooded', where: 'the lower town', lapse: 'The dam broke. The lower town is flooded.', offerTurns: 2, radius: 34, after: 0.25 }),
-  hazard({ id: 'fire-wards', site: 'market', title: 'Pay for fire wards', pitch: 'A fire mage works by the market. Wards on its roofs keep her fire in her hearth.', role: 'fire mage', line: 'My work gets hot. Pay for wards on the market roofs. I will not ask twice.', goods: { magic: 1 }, done: 'The market is warded. The fire stays in the hearth.', kind: 'burned', where: 'the market', lapse: 'The fire got loose. The market burned.', unrest: 1, offerTurns: 2, radius: 22, after: 0.45 }),
   hazard({ id: 'feed-shrine', site: 'shrine', title: 'Feed the mountain shrine', pitch: 'Ash falls on the town. Stone and an offering at the shrine may quiet the mountain.', role: 'shrine keeper', line: 'Ash has been falling for days. The mountain will break soon. Send stone and an offering.', goods: { materials: 2, magic: 1 }, done: 'The shrine is fed. The mountain sleeps.', kind: 'melted', where: 'the mountain', lapse: 'The mountain broke. Lava ran down its side. Ash and darkness hang over the town.', offerTurns: 2, radius: 70, spot: 'mountain', after: 0.6,
     // (the sign the keeper points at: thin ash over the town while the card stands; fed, it stops. Broken, the eruption
     // casts its own ash and darkness for three seasons — mutate/engine.ts)
     setup: [{ helper: 'sign', args: ['ashfall', '$town', 0.4] }], calm: [{ helper: 'sign', args: ['ashfall', '$town', 0] }] }),
+  // (the live events: the raid, the dead, a parade, a fire at the market, refugees walking in — season/realm-events.ts)
+  ...LIVE_TEMPLATES,
   hazard({ id: 'shore-hill', site: 'mill', title: 'Shore up the hill', pitch: 'The hill above the mill is slipping. One worker with timber can pin it.', role: 'miller', line: 'The hill above my mill is slipping. One worker with timber can pin it.', workers: 1, goods: { materials: 1 }, done: 'The hill is pinned. The mill is safe.', kind: 'buried', where: 'the mill street', lapse: 'The hill slid. The mill street is buried.', offerTurns: 2, radius: 24, after: 0.78 }),
 ];
 

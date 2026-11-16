@@ -129,7 +129,7 @@ export function checkTemplates(ts: TemplateDef[]): string[] {
     if (!t.bind.some((b) => b.as === t.at)) p.push(`template ${t.id}: its place (${t.at}) isn't one of its bindings`);
     if (!(t.turns >= 1)) p.push(`template ${t.id}: turns ${t.turns}`);
     if (!t.outcomes && !t.outcome) p.push(`template ${t.id}: no outcome`);
-    if (t.play && !t.requires.agents.some((r) => r.kind === 'player')) p.push(`template ${t.id}: a played card requires the player`);
+    if (t.play && !t.play.event && !t.requires.agents.some((r) => r.kind === 'player')) p.push(`template ${t.id}: a played card requires the player`);
     for (const r of t.requires.agents) if (!AGENT_KINDS.includes(r.kind)) p.push(`template ${t.id}: no agent kind ${r.kind}`);
     if (t.setup) walk(`template ${t.id}`, t.setup);
   }

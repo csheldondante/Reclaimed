@@ -36,6 +36,7 @@ import { attachment, hops, stakes } from './attachment';
 import { DAYS_PER_TURN, diffWorld, type FactWorld } from './world';
 import { MemoryDiplomacy } from '../api/contracts/diplomacy-memory';
 import { capitalise } from './plain';
+import { checkLive, type LiveDef } from './live';
 
 export interface StoreNeed {
   at: Ref;
@@ -81,7 +82,13 @@ export interface TemplateDef {
   // ---- (merge124) a run's cards (living/horde.ts): tiered, rolled or played, reading the run through its stage ----
   /** the player plays it: `area` the bound site whose play it opens (the stage's `challenge` helper says what is played
    *  there, its encounter and minutes); forced (dealt alone), the climax, a way toward the climax */
-  play?: { area: Ref; forced?: boolean; climax?: boolean; towardClimax?: boolean };
+  play?: { area: Ref; forced?: boolean; climax?: boolean; towardClimax?: boolean;
+    /** (loop-skeleton round 6, living/live.ts) a live event played in the city, as data: who takes part, where, the
+     *  hazard, the spells, when it ends and how its result is read into a tier. Committed, the card is not resolved by
+     *  its turns: its runner — or the season's end — resolves it at the tier its result reads (`resolve(id, tier)`).
+     *  It makes no `Challenge` of the contract's: that asks for a player pawn among the holdings, which a town's
+     *  pools have not */
+    event?: LiveDef };
   /** requirement tiers, smallest first (the dealer deals the largest the holdings meet); default [requires] */
   tiers?: { agents: Requirement[]; goods?: Goods }[];
   /** a crew's odds of each outcome (rolled when committed), or a helper's name giving them for the tier */
@@ -170,6 +177,8 @@ export interface EngineOptions {
    *  dealt when there is room, the rest wait for a later deal. A card of the run's arc (`threat: 'arc'`: the tribute)
    *  is neither counted nor held back. Default: no cap */
   threatMax?: number;
+  /** (living/live.ts) the run's numbers a live event's groups may be sized by ('raid', 'soldiers') */
+  liveNumbers?: readonly string[];
 }
 
 /** One major arc: stages at turns, each an instant mutation (and a per-turn one while it holds). */
@@ -427,6 +436,8 @@ export class LivingEngine {
     // (templates with problems are refused where they're used: never patched)
     const bad = checkTemplates(templates);
     if (bad.length) throw new Error(`templates: ${bad.join('; ')}`);
+    const live = templates.flatMap((t) => (t.play?.event ? checkLive(t.id, t.play.event, opts.liveNumbers ?? []) : []));
+    if (live.length) throw new Error(`live events: ${live.join('; ')}`);
     if (arc && !w.facts.entity(`arc:${arc.id}`)) w.facts.add({ id: `arc:${arc.id}`, kind: 'arc', name: arc.name, attrs: { stage: -1 } });
   }
 
@@ -547,7 +558,7 @@ export class LivingEngine {
     for (const [tr, o] of Object.entries(outcomesOf(t)) as [Tier, TierOutcome][]) {
       outcomes[tr] = {
         text: say(c, o.text),
-        effects: [...(rewarded(tr, o) ? rewardEffects(t.reward, key, t.play ? '' : this.locus, c) : []), ...(o.goods ? rewardEffects({ text: '', goods: o.goods }, key, '', c) : []), ...(o.tag ? [{ kind: 'tag' as const, add: [...o.tag.add], ...(o.tag.bonuses ? { bonuses: structuredClone(o.tag.bonuses) } : {}) }] : [])],
+        effects: [...(rewarded(tr, o) ? rewardEffects(t.reward, key, t.play && !t.play.event ? '' : this.locus, c) : []), ...(o.goods ? rewardEffects({ text: '', goods: o.goods }, key, '', c) : []), ...(o.tag ? [{ kind: 'tag' as const, add: [...o.tag.add], ...(o.tag.bonuses ? { bonuses: structuredClone(o.tag.bonuses) } : {}) }] : [])],
         ...(o.losses !== undefined ? { losses: num(c, o.losses) } : {}),
       };
     }
@@ -559,7 +570,7 @@ export class LivingEngine {
     } else odds = t.odds;
     let challenge: Challenge | undefined;
     let minutes = 0;
-    if (t.play) {
+    if (t.play && !t.play.event) {
       const h = helper(c, 'challenge');
       if (!h?.challenge) throw new Error(`template ${t.id}: a played card needs the stage's challenge helper`);
       ({ challenge, minutes } = h.challenge(c, [t.play.area]));
@@ -572,7 +583,7 @@ export class LivingEngine {
       title,
       pitch: say(c, t.pitch),
       location: { region: loc.region, ...(loc.settlement ? { settlement: loc.settlement } : {}), at: loc.at, name: loc.name ?? this.w.name(place) },
-      duration: t.play ? { minutes: +minutes.toFixed(2) } : { turns: t.turnsVar ? num(c, t.turnsVar) : t.turns },
+      duration: t.play && !t.play.event ? { minutes: +minutes.toFixed(2) } : { turns: t.turnsVar ? num(c, t.turnsVar) : t.turns },
       ...(challenge ? { challenge } : {}),
       ...(odds ? { odds } : {}),
       outcomes,
@@ -788,7 +799,7 @@ export class LivingEngine {
     const { holdings, commitment } = commitOpp(this.w.holdings, o.opp, { id: o.id, now: this.opts.clock?.() ?? 0, turn: this.turn, ...(u !== undefined ? { u } : {}) });
     const notes: string[] = [];
     let resolvesTurn: number | undefined;
-    if (!t.play) {
+    if (!t.play || t.play.event) {
       const crewAgents = holdings.agents.filter((x) => commitment.agents.includes(x.id) && x.kind !== 'player');
       const labour = crewAgents.filter((x) => x.kind === 'workers' || x.kind === 'army');
       const crew = t.work === 'labour' ? labour : crewAgents;
@@ -822,7 +833,8 @@ export class LivingEngine {
           if (living.length) this.w.facts.record({ kind: 'objection', by: living.map((c) => c.id), to: ['player'], about: { opp: o.id }, note: `${rule.objection.why} (${living.map((c) => c.name).join(', ')})` });
           notes.push(rule.objection.why);
         }
-      resolvesTurn = this.turn + timing.turns;
+      // (a live event: resolved by its runner or the season's end, at the tier its result reads — not by its turns)
+      resolvesTurn = t.play?.event ? undefined : this.turn + timing.turns;
     } else this.w.holdings = holdings;
     // (the world model keeps what the agents are committed to: where, what, when — a later run finds them there)
     (this.w.holdings.commitments ??= []).push({ id: o.id, template: o.template, title: o.opp.title, agents: [...commitment.agents], location: structuredClone(o.opp.location), turn: this.turn, ...(resolvesTurn !== undefined ? { resolvesTurn } : {}), ...(commitment.rolled ? { rolled: commitment.rolled } : {}) });

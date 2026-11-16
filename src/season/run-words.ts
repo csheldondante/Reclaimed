@@ -18,7 +18,7 @@ export const leader = (id: string): Leader => {
   return l;
 };
 
-export const SPELL_NAME: Record<SpellId, string> = { heatray: 'Heat ray', fire: 'Fire' };
+export const SPELL_NAME: Record<SpellId, string> = { heatray: 'Heat ray', fire: 'Fire', rain: 'Rain', growth: 'Growth rune' };
 export const SPELL_NONE = 'You have no spells. Some projects give you one.';
 export const SPELL_AIM = 'Tap the ground to cast it.';
 export const SPELL_STANDIN = 'Stand-in. Heat ray shows as a lightning strike for now.';
@@ -38,8 +38,6 @@ export const NEXT = 'Next season';
 export const MAP = 'Map';
 export const SKIP = 'Skip';
 export const BUILDING = 'The season passes. The town builds.';
-export const ATTACK_TITLE = 'The raiders attack';
-export const ATTACK_WAIT = 'The raiders are on their way.';
 export const RESULT_HELD = 'The town held';
 export const RESULT_BROKEN = 'The raiders broke through';
 export const RESULT_NONE = 'No raid came';
@@ -84,14 +82,6 @@ export const agreedLine = (who: string, title: string): string => `You agreed wi
 export const refusedLine = (who: string): string => `You said no to ${who}.`;
 export const shortText = (miss: Partial<Pools>): string => `You need ${poolsLine(miss)} more.`;
 
-export function attackLine(n: number, alive: number, soldiers: number, stage: 'coming' | 'there' | 'fighting'): string {
-  const mine = soldiers === 0 ? 'You have no soldiers.' : soldiers === 1 ? '1 soldier stands ready.' : `${soldiers} soldiers stand ready.`;
-  if (alive === 0) return `All ${n} raiders are dead.`;
-  if (stage === 'fighting') return `Your soldiers are fighting. ${alive} of ${n} raiders are left.`;
-  if (stage === 'there') return `The raiders are in the town. ${alive} of ${n} are left. ${mine}`;
-  return `${alive} raiders are marching on the town. ${mine}`;
-}
-
 export interface Fight {
   raiders: number;
   left: number;
@@ -132,12 +122,15 @@ export const sentence = (t: string): string => {
 export const RAIDERS_TAG = 'Raiders';
 export const SOLDIERS_TAG = 'Your soldiers';
 
-/** the live event: the dead in the burial ground */
-export const DEAD_TITLE = 'The dead are up';
-export const DEAD_TAG = 'The dead';
-export const DEAD_HOW = 'Press Fire, then tap the dead. Each cast costs 1 Magic.';
-export const DEAD_LEAVE = 'Leave them';
-export const DEAD_LEFT = 'You left the dead where they stand.';
-export function deadLine(alive: number, magic: number): string {
-  return `${alive} of the dead ${alive === 1 ? 'is' : 'are'} still up. You have ${magic} Magic.`;
-}
+/** a live event (round 6): its own words are its template's (season/realm-events.ts); these are the screen's */
+export const LIVE_LEAVE = 'Back to the town';
+export const LIVE_WAIT = 'They are on the road.';
+export const underWay = (title: string): string => `${title} · under way`;
+/** a line with an event's numbers in it: '{alive} of {raiders} raiders are left.' */
+export const fill = (line: string, v: Record<string, number>): string => line.replace(/\{(\w+)\}/g, (m, k: string) => (k in v ? String(v[k]) : m));
+
+export const SPELLS_TITLE = 'Your spells';
+export const GROWTH_HOW = 'Tap the east fields to draw the growth rune. Farms there yield double this season. It costs 1 Magic.';
+export const GROWTH_CAST = 'You drew a growth rune over the east fields. They grow fast until the season ends.';
+export const GROWTH_MISS = 'Tap the east fields to draw the growth rune there.';
+export const RAIN_CAST = 'Rain falls where you tapped.';

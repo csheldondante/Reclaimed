@@ -161,6 +161,66 @@ arrivals job in the living town); white boxes for buildings at fight zoom on `q=
 visibly different figures (a ring's colour tells them apart); far places visited; the brawl and fire-and-rain events;
 threat pacing from the world's state (Conformance, round 4).
 
+## Round 6 (2026-11-16): one live-event system, tags and synergy rules
+
+The owner's direction (verbatim): "I do think this may be a mistake to differentiate combat from other events like
+parades or riots or fires. I would strongly consider using the same system for all of them." "Let's make these
+realtime for now and they can resolve automatically when the season ends with a different outcome based on your
+strategic interactions including casting spells." "Those engines should all be defined in terms of tags and
+synnergies designed like a card game not hard coded." "I would have abilities like double output from the field of
+growth effect is active."
+
+**One system for every live event.** A template says what is played with `play.event` (`living/live.ts LiveDef`):
+groups (kind, side, count, tags, where they start, their order and formation), an optional hazard, optional seconds,
+the spells allowed, when it ends, and how its result is read. One runner (`scenes/level/live-runner.ts`) plays any of
+them in the city. The loop's two hand-written copies (`playDead`; `beginAttack`, `nextRoad`, `watchFight`,
+`endAttack`) and `Realm.fought` are deleted. Five events are data on it (`season/realm-events.ts`):
+
+| Event | How it starts | What is played | Its result |
+|---|---|---|---|
+| The raid | forced, in the run's last season | raiders in by a road to its gate (no walls: the town's heart); the squads at their posts; spells the run has unlocked; 150 s | raiders left after each soldier standing holds one, and the rules stop more |
+| The dead | the gravedigger's card, agreed | 5 dead at the burial ground; Fire | how many are still up |
+| A parade | the piper's card, 1 Materials | a column in by a road to the market, watchers, petals | the crowd at the market |
+| A fire at the market | the fire mage's card | the fire system lit at 6 stalls; Rain; 80 s | stalls burned down |
+| Refugees | forced, when a far town falls | people and carts in by a road to the stores | a camp by the watch post |
+
+**The season goes on round it.** Agreeing takes the player to the event. Unless it is the raid, "Back to the town"
+leaves it running: its name stands over the map where it is, a tap goes back. An event ends by itself (its `ends`,
+its seconds), or "Next season" resolves every one still running from the state it is in.
+
+**How a result is read** (the same four steps live, at the season's end, and in Node where nothing ran):
+numbers counted from the event (`result`: units alive by tag, stalls burned, casts) → the synergy rules change a
+named number, each with its reason → numbers worked out (`derive`) → the first tier row that fits. That tier's outcome
+runs through the engine like any card's, with the numbers as its vars. Nothing is read back from the units: counts
+come from their own died / hurt / arrived events. A fire's spots are read through the fire mirror's pages (a few KB)
+every 2 s while a fire event runs.
+
+**Tags and rules.** Each thing's tags come from what it is and its state (`season/realm-rules.ts SITE_TAGS`; the
+realm's `things()`): a field is `field`, `standing`, `worked` once farms are built, `growth-active` for the season a
+rune was drawn on it; burned, it is only `ruined`, `burned` and every rule about it stops. A rule
+(`living/rules.ts RuleDef`) is a trigger, tag queries with a relation of place, an effect on a pool or on one of an
+event's numbers, a capacity and a limit a season. The first ten:
+
+| Rule | When | Needs | Does |
+|---|---|---|---|
+| Rune-fed fields | season end | a worked field with a growth rune | +2 Materials |
+| Procession past the shrine | a parade read | the shrine within 70 cells of its way | +1 Magic for each 6 of the crowd, at most 2 |
+| Garrisoned walls | the raid read | walls and soldiers gathered | 2 raiders stopped |
+| Market by the gate | season end | a market built; trade partners standing | +1 Materials a partner, at most 3 |
+| Water close by | a fire read | water within 110 cells | half the burning stalls saved |
+| A sullen town | a parade read | Unrest above 0 | half the crowd |
+| Harvest home | a parade read | a worked field with a growth rune | 4 more in the crowd |
+| Watch from the tower | scouts seen | the tower standing; soldiers gathered | +1 Intel |
+| Forge by the keep | the raid read | workshops and a keep within 90 cells | 1 raider stopped |
+| Hands from the camp | season end | the refugees' camp sheltered; a worked field | +1 Materials |
+
+Each firing is a line on the season's news or the event's result ("The growth rune doubled the crop on the east
+fields: +2 Materials.") and a `rule-fired` event in the history.
+
+**A spell every season.** The growth rune is on the town's sheet each season: press it, tap the east fields; the
+plants there grow (the ecology's own call), 1 Magic, the field `growth-active`. Fire now lights the fire system where
+it lands (and still burns units); Rain is a storm over the tap.
+
 ## Assumptions for the owner (each is the simplest thing; say which to change)
 
 1. Run length: 16 seasons to the raid by default (`RUN_SEASONS`; the orchestrator's number, not the owner's).
@@ -188,6 +248,16 @@ threat pacing from the world's state (Conformance, round 4).
 19. (round 4) The camera stays within 650 cells of the home town; far places are seen on the map, not visited.
 20. (round 4) A run is saved at its start, at each answer and at each season's end. Closing the tab during a
     season's time-lapse or the attack comes back to just before it.
+21. (round 6) When a live event is read, each soldier still standing holds one raider and the rest get in; walls with
+    a garrison stop 2 more. Unfought (the bots, a season's end), the same sum decides it.
+22. (round 6) A parade's crowd is 9 marchers and 4 to 10 watchers (2 more a housing card); 8 calm the town by 1, 14 by 2.
+23. (round 6) A stall alight 12 s has burned down; up to 2 of 6 lost is still a fire fought; water within 110 cells
+    saves half.
+24. (round 6) Every leader has Fire, Rain and the growth rune; each cast costs 1 Magic. The rune pays 2 Materials on
+    worked fields (the farms' own yield again), once a season.
+25. (round 6) An event left running is resolved at the season's end as it stands. After a reload, an event that was
+    running is resolved as nobody played it (the raid starts again).
+26. (round 6) Trade partners are the 3 towns nearest the home town once the trade route is built, and the mining camp.
 
 ## Conformance (round 2, 2026-11-15): the skeleton against the opportunity design
 
@@ -319,3 +389,39 @@ Nothing is logged but the Magic spent. So frame rate, pathing and where a squad 
 **Open for the owner:** the rule itself (how Might, walls, the keep and the raid's size weigh); whether the result is
 shown before the fight plays; how many casts count and for how much; whether casting stays aimed (a tap on the map)
 when where it lands no longer matters.
+
+## Conformance, round 6 (2026-11-16): live events and rules against the design
+
+**Who decides a fight: still open.** The owner: "resolve with whatever's is easiest for now. Simulation or mechanical
+strategically determined outcome. We can iterate and try different things later." What is built: while an event
+plays, the units' counts decide (as before); when it is read, what is still standing is settled by one line of
+arithmetic in the event's data (`derive`), and the rules add to it. So the invariant of the section above
+("resolution deterministic and independent of playback") is met only for an event nobody played (Node, a season's
+end after a reload). The path is now one: making the raid's result a pure rule means changing `RAID_EVENT.result`
+to read the run's numbers instead of the units', and having the runner show it. To try: (a) the resolver decides at
+the start and the units are made to match; (b) casts counted as fixed worth (`{ read: 'casts' }` exists);
+(c) as now.
+
+**Departures from the design docs, with their trade-offs.**
+1. *No `Challenge` of the opportunity contract.* A live event's card is committed and resolved through the contract
+   (`commit`, `resolve` at a tier), but makes no `Challenge`: that asks for a player pawn among the holdings, and a
+   town's pools have none. Cost: the contract's own check "a played card requires the player" does not cover these.
+2. *The raid is a card, forced, not only an arc stage.* The arc's last stage still says the raid is due; a forced
+   template then puts it on the board and the loop begins it. `OPPORTUNITY_CATALOG` has threats count down to an
+   outcome; here the outcome is played.
+3. *Opportunities "over places": a running event is shown over where it is* ("The parade · under way"), a tap goes
+   back. No hand, as the design asks.
+4. *A parade's crowd is unit groups, not the townspeople.* The riders cannot gather (SYSTEMS.md recipe 1). The crowd
+   count is the groups' own "arrived" (the GPU's group count), not `agents.arrivals`: the units' adapter does not
+   give out a field to ask it of.
+5. *The fire burns stalls the event puts down, not the generated buildings.* The fire system's fuel is what lies on
+   a column; citygen's buildings are meshes it does not know. The lots that burn get the mutators' `burned`
+   condition where a stall stayed alight (BACKLOG LS-63). The true connection — buildings as fuel — is new work.
+6. *Rules read sites, not lots.* A thing is a site of the home town, the town, a far town, the camp. "Same district"
+   is "within N cells" of a site's point; a route is the straight way between a column's first and last place.
+7. *Few decisions a round holds*: the parade is one more project card within the board's 3; forced events are not
+   choices. The growth rune adds one tap a season.
+
+**To try (game rules picked as the easiest working version; all tunable, BACKLOG LS-66):** the rule numbers above;
+a parade along a named street; rules on lots and districts once the CPU knows them; a riot as data; the raid decided
+by a pure rule; rune drawing instead of a tap; rule cards the player earns (today all ten are always on).

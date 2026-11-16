@@ -24051,3 +24051,67 @@ event the camera goes back over the town (the event's look left the view at the 
 **Tests.** Unit: 687 pass, 1 fail — `writing-sources` (src/roadlab/control.ts not placed), failing before this
 change too. `realm-resume` and `realm` failed once each while a walk was running beside them and pass alone
 (timing under load). Typecheck clean.
+
+## 2026-11-16 — loop skeleton round 6: one live-event system; tags and synergy rules; a spell every season (`loop-skeleton`, LS-61 to LS-71)
+
+**Why.** The owner (DECISIONS 2026-11-16): "I do think this may be a mistake to differentiate combat from other
+events like parades or riots or fires. I would strongly consider using the same system for all of them." "Let's make
+these realtime for now and they can resolve automatically when the season ends with a different outcome based on your
+strategic interactions including casting spells." "Those engines should all be defined in terms of tags and
+synnergies designed like a card game not hard coded." Before this round the loop had two hand-written live things
+(the raid: `beginAttack`, `nextRoad`, `watchFight`, `endAttack`, `SeasonWar.call`, `Realm.fought`; the dead:
+`playDead`, tied to one template id), and no rule could say "X near Y gives Z".
+
+**What was built.**
+- *A live event is data* (`src/living/live.ts`): `TemplateDef.play.event` — groups (kind, side, count, tags, where
+  from, order and formation), a hazard, seconds, spells, ends, and how the result is read (`result` → rules →
+  `derive` → `tiers`). Pure: `idleState` is the event as nobody played it, so Node resolves the same events (the
+  bots now hold or fall by the raid's own data instead of a proxy).
+- *One runner* (`src/scenes/level/live-runner.ts`) plays any of them: groups made by place (`TownForces`, widened to
+  workers and carts), by site, or in by a road (the camera down each road in turn — the raid's own road search, kept,
+  now for any column); the hazard; the story camera; the sim's speed on the march; counts from the units' own events.
+  It goes on while the player is elsewhere; the loop's event and attack code is deleted (`loop.ts` 1034 → about 880
+  lines with the new spells in it).
+- *The realm resolves* (`Realm.finishLive`): the numbers read, the rules applied, a tier, and
+  `LivingEngine.resolve(id, tier)` — so every result is the template's own outcomes in the fact layer. At a
+  season's end every event still running is resolved from the state the scene last told.
+- *Five events as data* (`src/season/realm-events.ts`): the raid (forced), the dead, a parade (the piper), a fire at
+  the market (the fire mage; it replaces the instant `fire-wards` hazard), refugees walking in (forced when a far
+  town falls). A second answer for the refugees (`resettle-refugees`) beside shelter and turning away.
+- *Tags and rules* (`src/living/rules.ts`, `src/season/realm-rules.ts`): `RuleDef` — trigger, tag queries with a
+  relation of place, an effect on a pool or on one of an event's numbers, capacity, firings a season; `RuleBook`
+  fires them, the realm records each (`rule-fired`) and tells it in one line. Ten rules. Tags are derived
+  (`Realm.things`): a ruined thing has lost its working tags.
+- *Spells*: the growth rune every season on the town's sheet (the ecology's `plants.grow`, the field
+  `growth-active`); Fire lights the fire system where it lands; Rain is the weather's own storm. A cast is a fact
+  event (`spell-cast`).
+- *Trade partners*: `Realm.partners()`; the trade route's wagons and ships scale with those still standing
+  (`Realm.life().trade`), and the news says when one is gone.
+
+**Found on the way.**
+- *Does the fire system burn generated buildings?* No (read, `shaders/fire.wgsl fuelAt`): fuel is plants, oil,
+  timber, canvas and trash on top of a column; citygen's buildings are meshes. The smallest true connection made:
+  the event puts a timber stall down at each of its 6 spots and lights those in the real fire system; a spot seen
+  alight for 12 s is a burned lot and gets the mutators' `burned` condition there (BACKLOG LS-63: buildings as fuel
+  is the real fix).
+- *A spawn's refusal can be told after its units were taken for standing.* The first walk hung on the refugees: road
+  0's spawn point was in water, told more than 20 frames after the call; the runner had already taken the group for
+  made. The old raid code looked for the refusal every frame; the runner now does too (until one of the group has
+  died or arrived), and the player cannot leave an entering column in its first 3 s.
+- *A site holds one card.* The parade first stood at the weavers' street and kept the houses card off the board for
+  8 seasons (`realm.test`); it stands at the shrine now, with a small worth so a building outranks it.
+- *A number in the fact layer is an intensity (0..1).* A timed tag's end is stored as text.
+
+**Walks: owed at this commit.** Pushed early for the card-table track, which reads the Realm's rules, things, spells
+and live events. Seen so far by a finger (412x915, `q=low`, 7 seasons): refugees refused on roads 0 and 1 (water),
+in by road 2, 12 people and 3 carts, counted as arrived when they halted in the town (the units' own `arrived` never
+came for a column sent to the stores: BACKLOG LS-72), the camp's line in the news. The parade, the fire, the dead, the
+raid and the rune on this tree: in the next entry.
+
+**Tests.** `test/unit/live-rules.test.ts` (19): every event's data well formed; the raid's ends and its read (held,
+sacked, time up, a rule's 2 stopped, no road); the fire and the parade; each rule kind (trigger, once a season,
+capacity, near / event / route, a pool's level, no effect refused, bounded firing, save and load); on the realm: the
+rune doubles the crop once, nothing on unworked or burned fields, walls with a garrison in the raid, unrest halving a
+parade, a fire with water close by, an event resolved at the season's end. `realm.test`, `realm-bots`,
+`realm-resume` updated (the raid through `playForced`). 93 pass in the six files run alone (live-rules, realm, realm-bots, realm-resume,
+living, season-war); typecheck clean. `writing-sources` still fails on `src/roadlab/control.ts`, as before this round.

@@ -3819,3 +3819,23 @@ and the solve's end is the allowed kind (DESIGN §24); so is the living town's r
 forest or a wall work exists. A million early-out threads a frame is not an acceptable resting state. The town
 contracts' GPU-only wakes wait for the next CPU-known wake. The terrain mesh's full sleep stays off until its writers
 signal. The ambience stays cut, on the owner's list.
+
+## 2026-11-16 — one system for every live event; tags and synergies as data (the owner, via the orchestrator)
+
+The owner, verbatim (relayed in the round 6 brief of `loop-skeleton`):
+- "I do think this may be a mistake to differentiate combat from other events like parades or riots or fires. I
+  would strongly consider using the same system for all of them."
+- "Let's make these realtime for now and they can resolve automatically when the season ends with a different outcome
+  based on your strategic interactions including casting spells."
+- On who decides a fight: "resolve with whatever's is easiest for now. Simulation or mechanical strategically
+  determined outcome. We can iterate and try different things later."
+- "Those engines should all be defined in terms of tags and synnergies designed like a card game not hard coded."
+  "I would have abilities like double output from the field of growth effect is active. Etc. make the tags and
+  synnergies thematically appropriate and then finding them and optimizing engines to deal with crises will be fun."
+- "if a system we want doesn't exist then build it. Do the least work to get the best polished gameplay." "Use the
+  systems we already built."
+- The genre: a Dominion-style deck builder crossed with Master of Magic (armies and a wizard); every season the city
+  is live and the player can act in it.
+
+Built on it: `docs/design/LOOP_SKELETON.md` "Round 6" and "Conformance, round 6" (what departs from the design docs,
+and what is still the owner's to decide: who decides a fight, every rule's numbers).

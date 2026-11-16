@@ -1,4 +1,4 @@
-# SYSTEMS — master sheet of what is built (stock-take 2026-11-16, branch `loop-skeleton` at 611a6c3b)
+# SYSTEMS — master sheet of what is built (stock-take 2026-11-16, branch `loop-skeleton` at 611a6c3b; live events and rules added in round 6)
 
 Read this before building anything. Every row was read from the code, not from the design docs. Nothing was run for
 this sheet (no game, no tests, no browser): "wired" means the call path exists in the source.
@@ -33,8 +33,8 @@ startRunLoop` → `src/scenes/level/season.ts startSeasonLoop`. Script handles: 
 | Drill | An anchor loops round a yard, soldiers hold slots | W | `SquadOrder` `drill`; `season/war.ts: SeasonWar.drill` | `orderGroup(g, { kind: 'drill', at, formation: 'column' })` | Stands formed if the loop does not fit |
 | March | Column along gate slot k's route out of the town; `leave` drops them past the window and fires `left(g)` | W (the patrol) | `SquadOrder` `march`; `orders.wgsl` (`OK_MARCH`); `routeread.wgsl: gateRoute` | `orderGroup(g, { kind: 'march', town, gate })` | **Outward along a gate route only.** No march in, no march to a place, no arbitrary route id. One town's routes bound at a time (`'busy'`) |
 | Man the walls | Posts along each wall-walk run, single file up the stairs | L (`?man=1`, `scripts/lab/townwalls.mjs`) | `SquadOrder` `man`; `orders.wgsl: manSeed`; `war.ts: SeasonWar.man` | `orderGroup(g, { kind: 'man', town, side })` | Off by default; up to 8 run fields |
-| Town forces adapter | The season's one door to Units: groups, reports (alive, fallen), events by group | W | `src/season/forces.ts: TownForces` (`scene.townForces`) | `forces.spawnAt('soldier'|'raider', f, ref, n)`; `forces.report(g)` | `ForceKind` is soldier or raider only |
-| Squads and raids | Might → squads of 3; drill, gate guard, patrol; raiders spawned at a road's spawn point and sent to attack | W | `src/season/war.ts: SeasonWar` (`window.war`) | `war.season(ledger)`; `war.call(n, road, direct)`; `war.resolve(ledger)` | Raid-only bookkeeping (posts, wave); see recipe 6 |
+| Town forces adapter | The season's one door to Units: groups, reports (alive, fallen), events by group | W | `src/season/forces.ts: TownForces` (`scene.townForces`) | `forces.spawnAt('soldier'|'raider'|'worker'|'cart', f, ref, n)`; `forces.report(g)` | `ForceKind`: soldier, raider, worker, cart (round 6) |
+| Squads | Might → squads of 3; drill, gate guard, patrol | W | `src/season/war.ts: SeasonWar` (`window.war`) | `war.season(ledger)`; `war.squadGroups`; `war.settled()` | In the loop the raid is a live event (section 3b); `war.call` / `war.resolve` raid the default town game (`?loop` absent) only |
 | Fighting | GPU picks targets, strikes, applies damage; fight rules by wall side and height | W | `src/agents/notice.ts`; `AgentUnits.fightRules`, `fightFlags` | `units.fightRules({ open: false })` | Line of sight and ranged units: D (`UNIT_MINDS_U2.md` §9f) |
 | Area blow, hold, throw | Damage + shove over a disc; hold a unit in the air; throw it | W (strike) / L (hold, release: `src/play/heroes/lich.ts`) | `AgentUnits.strike`, `hold`, `release` | `units.strike({ at, radius, damage, push }, 'spell')` | `maxHeld` 8 |
 | Unit query | Units within a radius, asked of the GPU (two small reads, async) | W | `Units.query`; `agents/reads.ts: UnitReads.near` | `await units.query([x,y], r, { hostile })` | On demand only; sees units, not riders |
@@ -46,7 +46,7 @@ startRunLoop` → `src/scenes/level/season.ts startSeasonLoop`. Script handles: 
 | Townspeople (riders) | Commuters, farmers, quarrymen, woodcutters, builders walking streets on cached routes | W | `src/citylife/living.ts: LivingTown`; `citylife/routes.wgsl`; `citylife/towns.ts: LivingTowns` (`scene.livingTowns`) | Counts only: `LIVING_TUNING.set('people.commuters', n)` (`citylife/params.ts`) | Jobs fixed in WGSL (`J_*`, 8 hubs `H_*`); no "go there now"; no lanes or queueing; cannot be hit |
 | Workers and construction | Builders go stores → a rising lot → work → back; quarry dug bench by bench; clearing felled to stumps; stockpiles | W | `citylife/works.ts: Works`; `works.wgsl`; `season/life.ts: townLife` | `SeasonHost.life` sets counts from the ledger each season | Builders carry no stone; pit lost when streamed land regenerates |
 | Carts, wagons, ships | Stone and log carts; trade wagons in by a gate to a shop and out; ships to the harbour's quays | W (wagons, ships via cards `trade`, `harbour`) | `routes.wgsl` `J_STONE, J_LOGS, J_WAGON, J_SHIP`; `life.ts: LIFE` | `LIVING_TUNING.set('people.wagons', n)`; `'people.ships'` | One number per town; not tied to a far place or a named gate |
-| Arrivals from the world | Refugees = +40 commuters per fallen town, +10 wagons that season; a camp's 14 ore wagons | W | `season/realm.ts: Realm.life`; hook `scenes/level/loop.ts: startRunLoop` (`life:`) | Driven by `migration` events and the camp's facts | Counts only: nobody walks in; no camp is made |
+| Arrivals from the world | Refugees = +40 commuters per fallen town, +10 wagons that season; a camp's 14 ore wagons; the trade route's wagons and ships by the share of its far towns still standing (round 6) | W | `season/realm.ts: Realm.life, partners`; hook `scenes/level/loop.ts: startRunLoop` (`life:`) | Driven by `migration` events, the camp's facts, `partners()` | The column walking in is the live event `refugees-arrive` (section 3b); no tents on the ground |
 | Agent work crews | Units that dig, haul and build a planned town block by block | L (sandbox town tool, `api/world.ts`) | `agents/crew.ts: Crew`; `agents/buildcrew.ts: BuildCrew`; `build/town.ts: Town` | `scenes/level/town-tools.ts: sendBuilders` | Older town system, not citygen's |
 | Creatures with bodies | Rigged animals round the camera | L (`?life=1|dragon|town|viewer`) | `src/inhabitants/install.ts: installInhabitants` | — | Not in the loop |
 | CPU units | A few dozen CPU-steered units | L (`story/hero-run.ts`) | `src/units/simple.ts: SimpleUnits` | — | Superseded by AgentUnits |
@@ -76,10 +76,10 @@ startRunLoop` → `src/scenes/level/season.ts startSeasonLoop`. Script handles: 
 | System | What it does | Status | Entry point | How to call | Known limits |
 |---|---|---|---|---|---|
 | Opportunity contract | Holdings, requirements, commit (lock people, spend goods), resolve by tier | W | `src/api/contracts/opportunity.ts: commit, resolve, affords, relics, fired` | `commit(h, opp, at)`; `resolve(h, c, at)` | — |
-| Template engine | Templates as data: bind, eligible, setup, requires, turns, outcome, onExpire, presenter, reward, threat | W | `src/living/engine.ts: LivingEngine, TemplateDef, ArcDef` | `engine.deal()`; `engine.commit(offerId)`; `engine.advance()` | `play` field (a card played live) is used by the horde run only |
+| Template engine | Templates as data: bind, eligible, setup, requires, turns, outcome, onExpire, presenter, reward, threat | W | `src/living/engine.ts: LivingEngine, TemplateDef, ArcDef` | `engine.deal()`; `engine.commit(offerId)`; `engine.advance()`; `engine.resolve(id, tier)` | `play.area` + a `Challenge` (a hero's play) is the horde run's; `play.event` (a live event in the city) is the loop's: section 3b |
 | Template language | Predicates and effects over the fact world; `forEach`, `when`, named helpers | W | `src/living/dsl.ts: Pred, Effect, HELPERS, holds` | `{ tag: ['$site','condition','burned'] }`; `{ helper: 'pool', args: ['unrest', 1] }` | No distance predicate; no trigger on events |
 | The game's templates | 11 town projects, mining outpost, tower lens, relieve neighbour, house refugees, guard camp, the dead, pay raiders, 4 hazards; the raid arc | W | `src/season/realm-templates.ts: WORLD_TEMPLATES, projectTemplate, raidArc` | Add a `TemplateDef` to `WORLD_TEMPLATES` | Threats come on a fixed share of the run (`after`), not from world state |
-| Realm helpers | isHome, siteIs, canBuild, hasSpell, after, pool, income, spell, raid, avert, mutateAt, found | W | `src/season/realm.ts: Realm` (its `Stage` helpers) | `{ helper: 'mutateAt', args: ['burned', '$site', 30, 1] }` | Defined in a closure in `Realm`, not a shared registry |
+| Realm helpers | isHome, siteIs, canBuild, hasSpell, after, pool, income, spell, raid, avert, mutateAt, found; round 6: raidDue, live (vars), raidOver, mark, burnPoints, camp; `pool` and `mutateAt` take a live event's numbers and place | W | `src/season/realm.ts: Realm` (its `Stage` helpers) | `{ helper: 'mutateAt', args: ['burned', '$site', 30, 1] }` | Defined in a closure in `Realm`, not a shared registry |
 | Dealer | Filters, tiers, scores (13 parts incl. synergy, stakes, urgency), deals within limits, explains every choice | W | `src/opps/dealer.ts: deal, DealReport` | via `LivingEngine.deal`; tuning `opps/tune.ts: OPP_TUNE` | `synergy` is a number a template supplies; nothing computes it in the game |
 | Fact layer | Entities (13 kinds), scoped tags, intensities, relations, claims, event history, invariants | W | `api/contracts/facts.ts: FactStore`; `facts-store.ts: MemoryFacts`; `src/living/world.ts: FactWorld` | `w.facts.setTag(id, 'condition', 'burned', true, cause)`; `w.facts.record({ kind, by, to, note })`; `w.facts.events({ kind })` | No subscription to recorded events |
 | World state | Regions, factions, settlements (stores, people, condition), characters, holdings | W | `api/contracts/world-state.ts: MemoryWorldState` | `ws.snapshot()`; `MemoryWorldState.restore(s)` | — |
@@ -92,6 +92,19 @@ startRunLoop` → `src/scenes/level/season.ts startSeasonLoop`. Script handles: 
 | Validator | Checks every deal and template | W (tests, inspector) | `src/gm/oppcheck.ts: checkLiving, checkTemplates` | — | — |
 | Other template sets | Briar Hollow library; the horde slice | L (`inspector`, `?run=opps`) | `living/library.ts: TEMPLATES`; `living/horde.ts: HORDE_TEMPLATES, HordeStage` | — | — |
 | Card lab | Deck-builder playground, kingdoms of stacks, bot policies | L (`cardlab.html`) | `src/opps/deck.ts: DeckRun`; `opps/kingdom.ts: generateKingdom` | — | Own card format (`CardDef`), not `TemplateDef` |
+
+## 3b. Live events and synergy rules (round 6)
+
+| System | What it does | Status | Entry point | How to call | Known limits |
+|---|---|---|---|---|---|
+| Live event as data | Who takes part (groups: kind, side, count, tags, where from, order with formation), a hazard, seconds, spells allowed, when it ends, how its result is read (counts by tag, lots burned, casts), worked out (`derive`) and mapped to a tier | W | `src/living/live.ts: LiveDef, LiveState, idleState, liveRead, liveDerive, liveTier, liveEnded, checkLive` | A template's `play: { area, forced?, event: LiveDef }`, `vars: 'live'`, tiered `outcomes` | Pure. Places: named places of the town, a road's spawn point or gate, a site. No route by street |
+| The run's live events | The raid, the dead in the burial ground, a parade, a fire at the market, refugees walking in | W | `src/season/realm-events.ts: LIVE_TEMPLATES` | Add a `TemplateDef` with `play.event` | Numbers are first guesses (LS-66) |
+| Resolving one | From the state it is in: numbers read → rules applied → derived → tier → the template's outcome through the engine; at the season's end by itself; in Node from the state nobody played | W | `season/realm.ts: Realm.finishLive, tellLive, liveRunning, forcedLive, playForced, runNumbers` | `realm.finishLive(offerId, told?)` | Who decides a fight: the live counts, then one line of arithmetic (LS-56, open) |
+| The runner | Plays any `LiveDef` in the city: groups made by place, by site or in by a road (the camera down each road in turn); the hazard lit; story camera; sim speed on the march; counts from the units' own events; goes on while the player is elsewhere | W | `src/scenes/level/live-runner.ts: LiveRunner` (`rungame.liveDebug()`) | `runner.start(offer, def, site)`; `runner.told(run)`; `runner.close(run)` | One entering column a run; people vanish when it ends; a reload restarts only the raid (LS-65) |
+| Hazard: fire | The real fire system lit at N spots (a timber stall put down at each); a spot alight 12 s is a burned lot; lots burned get the `burned` condition where they stand | W | `live-runner.ts` (`hazard`); `realm.ts` helper `burnPoints` | `hazard: { kind: 'fire', at, points, spread, radius, intensity }` | Reads the fire mirror's pages (a few KB) every 2 s while a fire event runs. Generated buildings do not burn in the fire system (LS-63) |
+| Tags | Each site's tags from what it is and its state; the home town's (wall, garrison, unrest); trade partners | W | `season/realm-rules.ts: SITE_TAGS, RUIN, TIMED`; `realm.ts: Realm.things, partners, mark` | `realm.things()` | Derived on demand from the fact layer and the ledger; sites only (lots are GPU-side) |
+| Synergy rules | Trigger (season end, a fact event's kind, a live event's read) + tag queries with a relation of place (near the first thing, near the event, on its route, same town) + an effect on a pool or on one of the event's numbers (add, multiply) + capacity + firings a season; each firing recorded (`rule-fired`) and told in one line | W | `src/living/rules.ts: RuleDef, RuleBook`; the run's ten: `season/realm-rules.ts: RULES` | Add a `RuleDef` to `RULES` | A route is the straight way from start to end; no rule may write a fact another reads |
+| Spells | Heat ray (a blow on units), Fire (a blow + the fire system lit), Rain (a storm over the tap), Growth rune (plants grown, the field `growth-active` for the season) | W | `scenes/level/loop.ts: Game.castAt`; `realm.ts: Realm.cast, SPELL_COST, BASIC_SPELLS` | `realm.cast('growth', 'fields')` | Aimed by a tap; a cast is a fact event (`spell-cast`) |
 
 ## 4. Season and run loop
 
@@ -108,7 +121,7 @@ startRunLoop` → `src/scenes/level/season.ts startSeasonLoop`. Script handles: 
 | Earlier season UI | Card sheet with a dealt hand, fixed raid schedule | L (`?loop` absent: the default town game) | `season/ui.ts: mountSeasonUi`; `season/deal.ts: dealHand` | — | Replaced in the loop by the realm |
 | Hero run modes | Story runs, situation runs, opportunity runs with a hero on the atlas | L (`?run=<story>`, `?run=sit`, `?run=opps`) | `scenes/level/runs.ts`; `src/runsit/level-sit.ts: LevelSit`; `src/opps/level-opps.ts: LevelOpps`; `src/story/play.ts: StoryPlay` | — | Not the loop |
 | Run planner | Region-graph run plans, viewer | L (`?runplan=view`) | `src/runplan/plan.ts`; `runplan/viewer.ts` | — | — |
-| Fight decided by a rule, not by playback | — | D | `docs/design/LOOP_SKELETON.md` "who decides the fight" | — | Today the units' counts decide |
+| Fight decided by a rule, not by playback | Half: what is still standing when a live event is read is settled by its `derive` arithmetic; in Node the whole raid is | S | `season/realm-events.ts` (`RAID_EVENT.derive`); `docs/design/LOOP_SKELETON.md` "who decides the fight" | — | While it plays, the units' counts decide (LS-56) |
 
 ## 5. Mutators and signs
 
@@ -127,12 +140,12 @@ startRunLoop` → `src/scenes/level/season.ts startSeasonLoop`. Script handles: 
 
 | System | What it does | Status | Entry point | How to call | Known limits |
 |---|---|---|---|---|---|
-| Storms, dust storms, cyclones | CPU entities that give rain, shade and wind fields | W (runs under the loop) | `src/weather/weather.ts: Weather` (`reclaimed.weather`) | `weather.spawn(x, y)`; `weather.spawnDust(x, y)`; `weather.spawnCyclone(x, y, spin)` | No loop code calls them |
+| Storms, dust storms, cyclones | CPU entities that give rain, shade and wind fields | W (runs under the loop) | `src/weather/weather.ts: Weather` (`reclaimed.weather`) | `weather.spawn(x, y)`; `weather.spawnDust(x, y)`; `weather.spawnCyclone(x, y, spin)` | The loop's Rain spell calls `spawn` |
 | Day, night, seasons | Sun, moon, season of the year | W | `weather/daynight.ts: DayNight`; `globals.season` | `?tod=`, `?day=`, `?season=` | — |
 | Sky dim, ash fall | Two numbers the signs set | W | `core.skyDim`, `core.ashFall` (`scenes/world-core.ts`) | set by `showSigns` | — |
 | Water | Depth and flow per column; flood and drain | W | `src/api/water.ts: Water` (`scene.worldApi.water`); `src/flow/liquid.ts: LiquidSystem` (`?flow=1`) | `water.flood(x, y, { radius, depth })`; `water.drain(…)` | Mirror reads are cached, not per frame |
 | Rivers | Held rivers by table, per-watershed wetness, cuts | W | `weather/catchwet.ts: CatchmentWet`; `weather/riverwet.ts: RiverWet` | via mutators `dried` | — |
-| Fire | Fuel catches, spreads, heats, brings timber down | W (system runs) / not called by the loop | `src/api/fire.ts: Fire.ignite, fireAt`; `shaders/fire.wgsl`; event `EV_IGNITE` | `worldApi.fire.ignite(x, y, { radius, intensity })` | Whether citygen's buildings burn in it: not verified |
+| Fire | Fuel catches, spreads, heats, brings timber down | W (called by the loop: the fire event's hazard, the Fire spell) | `src/api/fire.ts: Fire.ignite, fireAt`; `shaders/fire.wgsl`; event `EV_IGNITE` | `worldApi.fire.ignite(x, y, { radius, intensity })` | Fuel is plants, oil, timber, canvas, trash on top of a column (`fire.wgsl: fuelAt`). Citygen's buildings are meshes: they do not burn in it (LS-63) |
 | Lightning, chip, scare, grow, ripple, mend | One-tick world events | W | `src/sim/globals.ts: EventKind`; `shaders/common.wgsl: EV_*` | `globals.events.push({ kind, x, y, radius, strength })` | Seen only by period-1 systems; more than 4 a tick wait |
 | Lava | Vents, flow, cooling, steam | L (sandbox levels; `?flow=1`) | `src/sim/lava.ts: LavaSystem`; `flow/liquid.ts: LAVA` | `scenes/level/impacts.ts: ventAtPick` | Not in the atlas town level unless flow is on |
 | Wind | Blows, gusts, blasts, strokes, wakes painted into the wind field | W | `src/api/wind.ts: Wind` | `wind.gust(x, y, r, strength, dir)`; `wind.blast(x, y, r, strength)` | Painted wind lives ~45 s (`sim/windrect.ts`) |
@@ -145,9 +158,11 @@ startRunLoop` → `src/scenes/level/season.ts startSeasonLoop`. Script handles: 
 
 | System | What it does | Status | Entry point | How to call | Known limits |
 |---|---|---|---|---|---|
-| Heat ray (loop) | Area blow on units, 1 Magic, shown as a lightning strike | S (look is a stand-in) | `scenes/level/loop.ts: Game.castAt`, `HEATRAY` | `units.strike({ at, radius: 5, damage: 2 }, 'spell')` + `powers.scriptStrike(x, y, z)` | Cast only in phase `attack`; unlocked by template `tower-lens` |
-| Fire (loop) | Same blow, damage 12, in the dead event | S | `loop.ts` `FIRE`, `castAt` | as above | Cast only in phase `event`; does not ignite anything |
-| Spell bar and arming | Buttons, tap to aim | W | `season/run-ui.ts`; `Game.arm`, `Game.cast` | — | Two spells (`realm.ts: SpellId`) |
+| Heat ray (loop) | Area blow on units, 1 Magic, shown as a lightning strike | S (look is a stand-in) | `scenes/level/loop.ts: Game.castAt`, `HEATRAY` | `units.strike({ at, radius: 5, damage: 2 }, 'spell')` + `powers.scriptStrike(x, y, z)` | Cast at a live event that allows it (`spells: ['known']`: the raid); unlocked by template `tower-lens` |
+| Fire (loop) | A blow (damage 12) and the fire system lit where it lands | W | `loop.ts` `FIRE`, `castAt` | `units.strike(…)` + `fire.ignite(x, y, { radius: 3 })` + `fx.burst('flame')` | Cast at a live event that allows it (the dead) |
+| Rain (loop) | A storm over the tap: it rains there and puts fire out | W | `loop.ts castAt` | `core.weather.spawn(x, y)` | Cast at a live event that allows it (the fire) |
+| Growth rune (loop) | Every season, in the town: plants grown round the tap on the east fields; the field is `growth-active` until the season ends (rule `blessed-fields`) | W | `loop.ts castAt`, `GROWTH`; `Realm.cast` | `plants.grow(x, y, { radius: 11, strength: 45 })` | One field (the site `fields`); a tap, not a drawn rune |
+| Spell bar and arming | Buttons, tap to aim | W | `season/run-ui.ts`; `Game.arm`, `Game.cast`, `Game.allowed` | — | Four spells (`realm.ts: SpellId`) |
 | Telekinesis | Text only in the loop | D in the loop / L elsewhere | `run-words.ts: SPELL_LATER`; real ones: `Units.hold/release`, `game/integrity.ts` (`Grab`), `play/core/levitate.ts` | — | — |
 | Rune drawing | — | D | `docs/design/FORTRESS_MODE.md` "Spells" | — | Swirl detection exists (`powers.ts: checkSwirl`) |
 | Gestures (sandbox hands) | Tap = grow / lightning under a storm; drag = wind gust; swirl = cyclone or storm | L (off in the loop: a tap does nothing, a drag pans) | `src/game/powers.ts: Powers` (`reclaimed.powers`) | `powers.scriptTap(x, y)`; `powers.scriptStroke(pts, secs)`; `powers.gustStart/Move/End` | — |
@@ -212,6 +227,9 @@ Sizes: **S** under 3 h, **M** 3–8 h, **L** more. Builder hours, with unit test
 
 ### 1. A parade — **M** (a first version), **L** (along a named street with townspeople gathering)
 
+**Round 6: the first version is built** — `season/realm-events.ts` `PARADE_EVENT` (a column in by a road to the
+market, watchers as a loose unit group, petals, the story camera). The gaps below stand (BACKLOG LS-64).
+
 `march` and `formation` are implemented on the GPU (`orders.wgsl: formAnchor, formSlots`), tested
 (`test/gpu/formations.test.ts`) and used in the game (drill, gate lines, the patrol).
 
@@ -237,6 +255,9 @@ Gaps:
 
 ### 2. Refugees walking in and camping by the gate — **M** (column and a camp mark), **L** (tents people live in)
 
+**Round 6: the column is built** — `REFUGEE_EVENT` (people and carts in by a road, forced when a far town falls);
+the camp is a thing of the fact world (`camp:<home>`), with no tents on the ground yet (BACKLOG LS-67).
+
 Existing calls:
 - The fact: `{ helper: 'refugeeCohort', args: ['$town', '$town'] }` and the `migrate` effect; `Realm.life()` already
   turns each `migration` event into +40 commuters and +10 wagons that season.
@@ -257,6 +278,8 @@ Gaps:
 
 ### 3. Fewer wagons and boats because a far place was destroyed — **S**
 
+**Round 6: built** — `Realm.partners()` and `Realm.life().trade`; the season's news says when a partner is gone.
+
 Existing calls: the whole chain exists for one case. `guard-camp` expiring runs `mutate destroyed copper-hollow`;
 `Realm.life()` then drops the camp's 14 wagons; `startRunLoop`'s `life:` hook feeds
 `LIVING_TUNING.set('people.wagons', n)` each season (`scenes/level/season.ts`). Ships: `people.ships`.
@@ -268,6 +291,9 @@ Gaps: one number per town — a wagon is not "from" a place and does not pick th
 can see needs that news line or a marker.
 
 ### 4. A fire or riot as a real-time crisis that ends by itself at season end — **M** each, on the existing event shell
+
+**Round 6: the fire is built** — `FIRE_EVENT` on the runner; a riot is data to write (a hostile loose group at the
+market, squads as `from: 'squads'`).
 
 Existing calls:
 - The card with a deadline and an automatic result: `TemplateDef` with `threat: true`, `offerTurns`, `onExpire`,
@@ -302,6 +328,8 @@ Gaps:
 - There is no "left the radius" event, so the unit count is visits, not people present now.
 
 ### 6. One live-event system for raids, parades, riots and fires — **L** to unify fully; **M** for the runner with the raid left as it is
+
+**Round 6: built, the raid on it** — section 3b. What follows is how it was before (kept for the reasoning).
 
 How the raid runs today (all raid-only code):
 1. The arc's last stage runs the `raid` helper (`realm-templates.ts: raidArc` → `Realm.raid = n`).
@@ -355,6 +383,8 @@ Also open: LOOP_SKELETON.md asks that the result be a pure rule and the playback
 the place to do that once.
 
 ### 7. Tags and synergies as data — **M** for a rule table on the fact layer
+
+**Round 6: built** — section 3b (`living/rules.ts`, `season/realm-rules.ts`).
 
 What exists:
 - Fact layer: scoped tags on any entity (`facts.ts: TagScope` — biology, custom, economy, government, law, culture,
@@ -414,7 +444,8 @@ the `pool` helper and `Bonus`'s charges / cooldown bookkeeping. Add one predicat
 ## Not verified
 
 - Nothing was run: no game, no test, no browser. "Wired" is read from call paths.
-- Whether the fire system burns citygen's buildings, and whether `worldApi.fire` reads work in the loop.
+- (answered in round 6: the fire system does not burn citygen's buildings — its fuel is what lies on top of a
+  column; `worldApi.fire` works in the loop.)
 - How wagons and ships choose a gate or quay; what they look like at play zoom.
 - That `spawnAt` with `'worker'` or `'cart'` behaves well under formation orders (the mapping exists in
   `AgentUnits.kindOf`; only soldiers and raiders are exercised by the game and the tests read).

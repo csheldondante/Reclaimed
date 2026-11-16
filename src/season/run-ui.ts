@@ -10,7 +10,8 @@ import type { Leader, SpellId } from './realm';
 import * as W from './run-words';
 import { incomeLine, POOL_ICON, POOL_NAME } from './words';
 
-export type Phase = 'boot' | 'leader' | 'city' | 'petition' | 'season' | 'event' | 'attack' | 'result' | 'end';
+/** 'event': the player is at a live event (the raid, the dead, a parade, a fire: one runner plays them all) */
+export type Phase = 'boot' | 'leader' | 'city' | 'petition' | 'season' | 'event' | 'result' | 'end';
 
 export interface Marker {
   /** an offer's id (the threat: 'threat') */
@@ -44,7 +45,11 @@ export interface RunGame {
   readonly fightLine: string | null;
   readonly resultLines: string[];
   readonly armed: SpellId | null;
-  /** (a live event) give it up as it stands */
+  /** the live event the player is at: its words, the spells it allows, whether the player may go back to the town */
+  readonly liveNow: { title: string; how: string; spells: SpellId[]; wantsSpells: boolean; canLeave: boolean } | null;
+  /** the spells the player may cast in the town now (the growth rune) */
+  readonly citySpells: SpellId[];
+  /** (a live event) back to the town: it goes on without the player */
   leave(): void;
   /** the fact layer's history as sentences: this run's (with its season), and the earlier runs' */
   history(): { season: number; text: string }[];
@@ -86,6 +91,7 @@ const CSS = `
 .run-marks button.soldier{background:rgba(50,140,255,.28);border-color:#39a0ff}
 .run-marks button.side{pointer-events:none;font-size:12px;padding:3px 8px;border-radius:10px;background:#e2573f;color:#fff;transform:translate(-50%,-260%)}
 .run-marks button.side.ours{background:#2f7fd6;transform:translate(-50%,90%)}
+.run-marks button.side.folk{background:#2f7fd6}
 .run-marks button.change{background:#3b3340;color:#f0d9ff;border-color:#c9a2ff;border-radius:4px;font-weight:600;font-size:12px}
 .run-sheet{position:absolute;left:0;right:0;bottom:0;z-index:30;background:rgba(22,24,28,.94);color:#f2efe8;font:14px system-ui,sans-serif;border-radius:14px 14px 0 0;padding:10px 12px calc(12px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:7px;max-height:60vh;overflow-y:auto}
 .run-sheet h3{margin:0;font-size:16px}
@@ -222,28 +228,31 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
         box.appendChild(item);
       }
       sheet.appendChild(box);
+      // (round 6: a spell every season — the growth rune over a field; what it does is said once it is pressed)
+      if (game.armed) sheet.append(el('div', 'warn', W.GROWTH_HOW));
       // (the world's map: far places and what has changed at each — the mutators' badges)
       const map = btn(W.MAP, () => game.map(), 'quiet');
       map.style.flex = '0 0 76px';
-      go.append(map, btn(W.NEXT, () => game.next()));
+      go.append(map);
+      for (const sp of game.citySpells) {
+        const b = btn(W.SPELL_NAME[sp], () => game.arm(game.armed === sp ? null : sp), game.armed === sp ? 'on quiet' : 'quiet');
+        b.style.flex = '0 0 112px';
+        b.style.fontSize = '14px';
+        go.append(b);
+      }
+      go.append(btn(W.NEXT, () => game.next()));
     } else if (phase === 'season') {
       sheet.append(el('h3', undefined, W.BUILDING));
       for (const t of game.notes) sheet.append(el('div', 'note', t));
       const s = btn(W.SKIP, () => game.skip(), 'quiet');
       s.disabled = !game.canSkip;
       go.append(s);
-    } else if (phase === 'event' && run) {
-      sheet.append(el('h3', undefined, W.DEAD_TITLE), el('div', undefined, game.fightLine ?? ''), el('div', game.armed ? 'warn' : 'note', game.armed ? W.SPELL_AIM : W.DEAD_HOW));
-      go.append(btn(W.SPELL_NAME.fire, () => game.arm(game.armed === 'fire' ? null : 'fire'), game.armed === 'fire' ? 'on' : undefined), btn(W.DEAD_LEAVE, () => game.leave(), 'quiet'));
-    } else if (phase === 'attack' && run) {
-      sheet.append(el('h3', undefined, W.ATTACK_TITLE), el('div', undefined, game.fightLine ?? W.ATTACK_WAIT));
-      if (!run.spells.length) sheet.append(el('div', 'note', W.SPELL_NONE));
-      for (const sp of run.spells) go.append(btn(W.SPELL_NAME[sp], () => game.arm(game.armed === sp ? null : sp), game.armed === sp ? 'on' : undefined));
-      const later = btn(W.TELEKINESIS, () => undefined, 'quiet');
-      later.disabled = true;
-      go.append(later);
-      if (game.armed) sheet.append(el('div', 'warn', W.SPELL_AIM), el('div', 'stand', W.SPELL_STANDIN));
-      sheet.append(el('div', 'stand', W.SPELL_LATER));
+    } else if (phase === 'event' && run && game.liveNow) {
+      const ev = game.liveNow;
+      sheet.append(el('h3', undefined, ev.title), el('div', undefined, game.fightLine ?? ''), el('div', game.armed ? 'warn' : 'note', game.armed ? W.SPELL_AIM : ev.spells.length || !ev.wantsSpells ? ev.how : `${ev.how} ${W.SPELL_NONE}`));
+      for (const sp of ev.spells) go.append(btn(W.SPELL_NAME[sp], () => game.arm(game.armed === sp ? null : sp), game.armed === sp ? 'on' : undefined));
+      if (ev.canLeave) go.append(btn(W.LIVE_LEAVE, () => game.leave(), 'quiet'));
+      if (game.armed === 'heatray') sheet.append(el('div', 'stand', W.SPELL_STANDIN));
     } else if (phase === 'result' && run?.fight) {
       sheet.append(el('h3', undefined, W.resultTitle(run.fight)));
       for (const t of game.resultLines) sheet.append(el('div', undefined, t));
@@ -270,7 +279,10 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
         marks.appendChild(b);
       }
       if (b.textContent !== m.label) b.textContent = m.label;
-      if (m.kind === 'side') b.classList.toggle('ours', m.id === 'ours');
+      if (m.kind === 'side') {
+        b.classList.toggle('ours', m.id === 'ours');
+        b.classList.toggle('folk', m.id === 'folk');
+      }
       b.style.left = `${m.x.toFixed(1)}px`;
       b.style.top = `${m.y.toFixed(1)}px`;
     }

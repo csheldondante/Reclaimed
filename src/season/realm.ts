@@ -19,15 +19,21 @@
 import type { EntityId, FactEvent } from '../api/contracts/facts';
 import type { WorldSnapshot } from '../api/contracts/world';
 import { MemoryWorldState } from '../api/contracts/world-state';
-import { text, type Helper, type Stage } from '../living/dsl';
-import { LivingEngine, type EngineReport, type Offer, type TemplateDef, type EngineState } from '../living/engine';
+import { text, type Ctx, type Helper, type Stage } from '../living/dsl';
+import { LivingEngine, outcomesOf, type EngineReport, type Offer, type TemplateDef, type EngineState } from '../living/engine';
+import { idleState, liveDerive, liveNames, liveRead, liveTier, type LiveDef, type LiveState, type LiveVars } from '../living/live';
+import { RuleBook, type RuleHit, type RuleOccasion, type RuleState, type Thing } from '../living/rules';
+import type { Tier } from '../api/contracts/opportunity';
 import { seedLocus } from '../living/seed';
 import { FactWorld } from '../living/world';
 import { OPP_TUNE, type DealerTune } from '../opps/tune';
 import { CATALOG, card } from './catalog';
 import { hasLand, type Land } from './deal';
-import { adopt, lose, grant, pools, POOL_ROLE, type Pool, type Pools, type SeasonLedger } from './ledger';
+import { adopt, lose, grant, pools, total, POOL_ROLE, type Pool, type Pools, type SeasonLedger } from './ledger';
 import { cardOfTemplate, projectTemplate, raidArc, siteId, SITES, WORLD_TEMPLATES, type SiteKey } from './realm-templates';
+import { RUIN, RULES, SITE_TAGS, TIMED } from './realm-rules';
+import { placeState } from '../mutate/facts';
+import { military, SQUAD } from './war';
 import { mutators, type Mutation, type PhysicalKind } from '../mutate';
 import { recordMutation } from '../mutate/facts';
 import '../mutate/outcomes';
@@ -42,11 +48,37 @@ export const BOARD = 3;
 /** seasons before the attack from which the raiders can be paid off */
 export const TRIBUTE_SEASONS = 3;
 
-/** 'heatray': unlocked by the tower's lens, cast in a fight. 'fire': the one spell every leader has, cast in a live
- *  event (the dead rising) */
-export type SpellId = 'heatray' | 'fire';
-/** cells round the gate burned when the raiders break in */
-export const SACK_RADIUS = 30;
+/** 'heatray': unlocked by the tower's lens, cast in a fight. The three every leader has: 'fire' (cast in a live event:
+ *  it sets what will burn alight and burns the dead), 'rain' (a storm over the tap: it puts a fire out), 'growth' (a
+ *  rune over a field, any season: the plants there grow and the field is 'growth-active' until the season ends) */
+export type SpellId = 'heatray' | 'fire' | 'rain' | 'growth';
+export const BASIC_SPELLS: readonly SpellId[] = ['fire', 'rain', 'growth'];
+/** what a cast costs in Magic (a tunable: BACKLOG LS-66) */
+export const SPELL_COST: Record<SpellId, number> = { heatray: 1, fire: 1, rain: 1, growth: 1 };
+/** far towns that count as trade partners once the trade route is built: the nearest so many */
+export const PARTNERS = 3;
+/** the refugees' camp by the watch post, as a thing of the fact world */
+export const campId = (home: string): string => `camp:${home}`;
+
+/** a live event as the scene tells it: its state, where it was (world cells [x, row]), the way its marchers took, and
+ *  the hazard's points that burned */
+export interface LiveTold {
+  state: LiveState;
+  at?: readonly [number, number];
+  route?: readonly [readonly [number, number], readonly [number, number]];
+  burned?: readonly (readonly [number, number])[];
+}
+/** how a live event came out: its tier, its numbers, and what to tell the player (the outcome's line, then a line a
+ *  rule that fired: what, how much, why) */
+export interface LiveReport {
+  id: string;
+  template: string;
+  title: string;
+  tier: Tier;
+  vars: LiveVars;
+  lines: string[];
+  hits: RuleHit[];
+}
 
 export interface Leader {
   id: string;
@@ -109,6 +141,11 @@ export interface RunState {
   /** each land change's place in the player's words (a mutation's id → "the old dam") */
   where: [string, string][];
   engine: EngineState;
+  /** (round 6) the synergy rules' firings this season, and the history's events they have seen */
+  rules?: RuleState;
+  seen?: number;
+  /** the trade partners standing when the season began (the news says when one is gone) */
+  partners?: number;
 }
 
 export class Realm {
@@ -129,6 +166,16 @@ export class Realm {
   /** what happened this season, in the player's words (resolved, lapsed, the arc) */
   news: string[] = [];
   last: EngineReport;
+  /** the tags-and-synergy rules (season/realm-rules.ts), over this world's things */
+  readonly rules: RuleBook;
+  /** the history's events the rules have seen (an event recorded is a trigger once) */
+  private seen = 0;
+  /** rule lines not yet in a season's news (fired by an answer given mid-season) */
+  private said: string[] = [];
+  /** each live event's numbers once read (the template's `vars: 'live'`), and what the scene told of it */
+  private liveOut = new Map<string, LiveVars>();
+  private told = new Map<string, LiveTold>();
+  private partnersWere = -1;
 
   constructor(private o: RealmOptions) {
     this.ws = MemoryWorldState.restore(structuredClone(o.world));
@@ -156,6 +203,7 @@ export class Realm {
       this.averted = res.averted;
       this.fight = res.fight;
       for (const [k, v] of res.where ?? []) this.whereOf.set(k, v);
+      this.partnersWere = res.partners ?? -1;
     } else {
       // (a run's turn is its season; the history's turns run on across runs)
       const start = Math.max(f.turn, 0) + 1;
@@ -184,7 +232,12 @@ export class Realm {
       limitBoard: true,
       threatMax: 1,
       rng: () => 0,
+      liveNumbers: Object.keys(this.runNumbers()),
     });
+    this.rules = new RuleBook(RULES, { things: () => this.things(), pool: (k) => pools(this.led)[k as Pool] ?? 0, gain: (k, n) => this.addPool(k as Pool, n) });
+    if (res?.rules) this.rules.load(res.rules);
+    else this.rules.season(this.w.turn);
+    this.seen = res?.seen ?? this.w.facts.events().length;
     if (res) {
       this.engine.load(res.engine);
       this.last = { turn: this.w.turn, dealt: [], kept: this.engine.offers, notProposed: [], dealer: null, evaluated: { templates: 0, of: 0, changed: 0 }, ms: 0 };
@@ -194,7 +247,7 @@ export class Realm {
 
   /** the run as it stands, to save beside the world's snapshot (`RealmOptions.resume` takes it up) */
   runState(): RunState {
-    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, averted: this.averted, fight: this.fight, where: [...this.whereOf], engine: this.engine.state() };
+    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, averted: this.averted, fight: this.fight, where: [...this.whereOf], engine: this.engine.state(), rules: this.rules.save(), seen: this.seen, partners: this.partnersWere };
   }
   /** the history's turn before this run's first season */
   private t0: number;
@@ -219,11 +272,16 @@ export class Realm {
   // ---- what the templates ask of the run (living/dsl.ts Stage) -------------------------------------------------------
 
   private stage(): Stage {
-    const pool = (k: Pool, n: number) => {
-      const l = { ...this.led, holdings: this.w.holdings };
-      const next = k === 'unrest' ? lose(l, { unrest: n }) : n >= 0 ? grant(l, { [k]: n }) : lose(l, { [k]: -n });
-      this.w.holdings = next.holdings;
-      this.led = { ...this.led, holdings: next.holdings };
+    const pool = (k: Pool, n: number) => void this.addPool(k, n);
+    /** a helper's amount: a number, or one of the card's numbers by name ('-left': taken away) */
+    const amount = (c: Ctx, x: string | number | undefined): number => {
+      if (typeof x === 'number') return x;
+      const s = String(x ?? 0);
+      if (!Number.isNaN(Number(s))) return Number(s);
+      const neg = s.startsWith('-');
+      const v = c.vars?.[neg ? s.slice(1) : s];
+      if (typeof v !== 'number') throw new Error(`realm: no number ${s} in ${c.cause}'s vars`);
+      return neg ? -v : v;
     };
     const helpers: Record<string, Helper> = {
       isHome: { pred: (c, a) => refOf(c.b, a[0]) === this.home },
@@ -239,12 +297,61 @@ export class Realm {
         },
       },
       hasSpell: { pred: (_c, a) => this.spells.includes(a[0] as SpellId) },
+      // (built card: the town has built it)
+      built: { pred: (_c, a) => this.led.built.includes(String(a[0])) },
       threatComing: { pred: () => !this.averted && !this.fight && this.raid === null },
       threatNear: { pred: () => this.seasons - this.season < TRIBUTE_SEASONS },
       // (after share: the run is at least that far along — the smaller threats come one at a time, spread over the run)
       after: { pred: (_c, a) => this.season >= Math.max(1, Math.ceil(Number(a[0]) * this.seasons)) },
 
-      pool: { effect: (c, a) => void (c.dry || pool(a[0] as Pool, Number(a[1]))) },
+      // (round 6) the raid is due and not yet fought: its card is on the board
+      raidDue: { pred: () => this.raid !== null && !this.fight },
+      // (a live event's numbers, for its card's words and its outcome's amounts: the run's own, every name it counts at
+      // 0, then what was read once it is over — living/live.ts)
+      live: {
+        vars: (c) => {
+          const t = this.engine.templates.find((x) => c.cause === x.id || c.cause.startsWith(`${x.id}:`));
+          const id = [...this.liveOut.keys()].find((k) => c.cause === k || c.cause.startsWith(`${k}:`));
+          return { ...this.runNumbers(), ...(t?.play?.event ? liveNames(t.play.event) : {}), ...(id ? this.liveOut.get(id) : {}) };
+        },
+      },
+      // (the raid is over: what the run's screens and its end read)
+      raidOver: {
+        effect: (c) => {
+          if (c.dry) return;
+          const [raiders, left, fallen] = [amount(c, 'raiders'), amount(c, 'left'), amount(c, 'fallen')];
+          this.fight = { raiders, left, fallen, held: raiders > 0 && left === 0 };
+          this.raid = null;
+        },
+      },
+      // (mark $thing tag: a state that lasts to the end of this season — 'festival', 'growth-active')
+      mark: { effect: (c, a) => void (c.dry || this.mark(refOf(c.b, a[0]), String(a[1]), c.cause)) },
+      // (burnPoints $site radius: the lots that burned in a live fire get the `burned` condition where they stand — the
+      // points the scene told; none told (nothing ran): one burn round the site, as wide as the share that burned)
+      burnPoints: {
+        effect: (c, a) => {
+          if (c.dry) return;
+          const site = refOf(c.b, a[0]);
+          const id = [...this.told.keys()].find((k) => c.cause === k || c.cause.startsWith(`${k}:`));
+          const cells = id ? (this.told.get(id)?.burned ?? []) : [];
+          for (const cell of cells) this.landAt('burned', site, Number(a[1]), 1, c.cause, undefined, cell);
+          const n = amount(c, 'burned');
+          if (!cells.length && n > 0) this.landAt('burned', site, Math.round(Number(a[1]) * Math.sqrt(n)), 1, c.cause);
+        },
+      },
+      // (camp $site state?: the refugees' camp by a site of the town — a thing of the fact world the rules and a later card
+      // read; its tents on the ground are the scene's)
+      camp: {
+        effect: (c, a) => {
+          const site = refOf(c.b, a[0]);
+          const id = campId(this.home);
+          if (!c.w.facts.entity(id)) c.w.facts.add({ id, kind: 'site', name: 'the refugee camp', at: { region: this.w.settlement(this.home)!.region, settlement: this.home }, attrs: { camp: true, by: site }, cause: c.cause });
+          // (camp $site state: what became of it — 'sheltered' (huts raised), 'abandoned' (its people moved on or sent away))
+          if (a[1]) c.w.facts.setTag(id, 'condition', String(a[1]), true, c.cause);
+        },
+      },
+
+      pool: { effect: (c, a) => void (c.dry || pool(a[0] as Pool, amount(c, a[1]))) },
       income: {
         effect: (c, a) => {
           if (c.dry) return;
@@ -257,7 +364,14 @@ export class Realm {
       avert: { effect: (c) => void (c.dry || (this.averted = true)) },
       // (mutateAt kind $site radius strength? spot?: the land round a site of the home town changed — or round a spot
       // out of it, when one is named: the mountain. The physical side of the event the template has just recorded)
-      mutateAt: { effect: (c, a) => void (c.dry || this.landAt(a[0] as PhysicalKind, refOf(c.b, a[1]), Number(a[2]), Number(a[3] ?? 1), c.cause, a[4] as Spot | undefined)) },
+      // (round 6: spot 'live' — where the live event the card played was when it ended, as the scene told)
+      mutateAt: {
+        effect: (c, a) => {
+          if (c.dry) return;
+          const id = a[4] === 'live' ? [...this.told.keys()].find((k) => c.cause === k || c.cause.startsWith(`${k}:`)) : undefined;
+          this.landAt(a[0] as PhysicalKind, refOf(c.b, a[1]), Number(a[2]), Number(a[3] ?? 1), c.cause, a[4] === 'live' ? undefined : (a[4] as Spot | undefined), id ? this.told.get(id)?.at : undefined);
+        },
+      },
       // (found id name purpose?: a new camp in the hills, with what it is for — 'mining': the mutators cut a pit and
       // heap its spoil beside it, and the camp is built as a site of the field towns when the window nears it; — the settlement's record, its entity, its event, its place on the map)
       found: {
@@ -272,6 +386,182 @@ export class Realm {
       },
     };
     return { helpers };
+  }
+
+  /** a pool changed by an outcome or a rule: added to (negative: taken, never below what is there; Unrest moves both
+   *  ways). Returns what was really added */
+  private addPool(k: Pool, n: number): number {
+    const l = { ...this.led, holdings: this.w.holdings };
+    const was = k === 'might' || k === 'labor' ? total(l, k) : pools(l)[k];
+    const next = k === 'unrest' ? lose(l, { unrest: n }) : n >= 0 ? grant(l, { [k]: n }) : lose(l, { [k]: -n });
+    this.w.holdings = next.holdings;
+    this.led = { ...this.led, holdings: next.holdings };
+    return (k === 'might' || k === 'labor' ? total(next, k) : pools(next)[k]) - was;
+  }
+
+  /** a state on a thing that lasts to the end of this season: a condition whose value is the turn it ends with (as
+   *  text: a number in the fact layer is an intensity) */
+  private mark(id: EntityId, tag: string, cause: string): void {
+    this.w.facts.setTag(id, 'condition', tag, String(this.w.turn), cause);
+  }
+
+  // ---- things and their tags (the synergy rules read these: season/realm-rules.ts) -----------------------------------
+
+  /** the run's numbers a live event's groups and words may name */
+  runNumbers(): LiveVars {
+    const p = pools(this.led);
+    const houses = this.led.built.filter((c) => c === 'houses').length;
+    return { raid: this.raid ?? 0, soldiers: military(this.led) ? p.might * SQUAD : 0, watchers: 4 + 2 * Math.min(3, houses) };
+  }
+
+  /** where a thing is, in world units (x cells, y) */
+  private posOf(cell: readonly [number, number]): [number, number] {
+    return [cell[0], cell[1] * ROW_H];
+  }
+
+  /** the far towns the home town trades with: once the trade route is built, the nearest PARTNERS that the atlas has
+   *  (standing or not: a fallen one is a partner lost); and any place that supplies the town (the mining camp).
+   *  FIXED-CITY: partners of the one home town */
+  partners(): { id: EntityId; standing: boolean }[] {
+    const f = this.w.facts;
+    const h = this.w.settlement(this.home)!;
+    const ids = new Set<EntityId>(f.relations({ type: 'supplies', to: this.home }).map((r) => r.from));
+    if (this.led.built.includes('trade')) {
+      const near = this.ws.settlements.filter((s) => s.id !== this.home && s.size !== 'camp' && f.entity(s.id)).sort((a, b) => Math.hypot(a.at[0] - h.at[0], a.at[1] - h.at[1]) - Math.hypot(b.at[0] - h.at[0], b.at[1] - h.at[1]));
+      for (const s of near.slice(0, PARTNERS)) ids.add(s.id);
+    }
+    return [...ids].map((id) => {
+      const st = placeState(this.w, id)?.status;
+      const s = this.w.settlement(id);
+      const down = st === 'destroyed' || st === 'abandoned' || st === 'occupied' || s?.condition === 'ruined' || s?.condition === 'abandoned' || !!f.tag(id, 'condition', 'lost') || !!f.tag(id, 'condition', 'occupied');
+      return { id, standing: !down };
+    });
+  }
+
+  /**
+   * Every persistent thing the rules know, with its tags: what it is, and its state. A site that is burned, flooded,
+   * buried, melted or abandoned carries only 'ruined' and those words — its working tags are gone, so every rule about
+   * what it was stops.
+   */
+  things(): Thing[] {
+    const f = this.w.facts;
+    const l = this.led;
+    const out: Thing[] = [];
+    const h = this.w.settlement(this.home)!;
+    const ruinOf = (id: EntityId) => RUIN.filter((k) => !!f.tag(id, 'condition', k)?.value);
+    const timed = (id: EntityId) => TIMED.filter((k) => Number(f.tag(id, 'condition', k)?.value ?? -1) >= this.w.turn);
+    for (const s of SITES) {
+      const id = siteId(this.home, s.key);
+      if (!f.entity(id)) continue;
+      const ruin = ruinOf(id);
+      const meta = SITE_TAGS[s.key];
+      const tags = ruin.length ? ['ruined', ...ruin] : [...meta.is, 'standing', ...(meta.built && l.built.includes(meta.built) ? ['worked'] : []), ...timed(id)];
+      out.push({ id, name: s.name, tags, at: this.posOf(this.cellOf(s.key)), town: this.home });
+    }
+    const p = pools(l);
+    const sacked = ruinOf(siteId(this.home, 'gate')).length > 0;
+    out.push({ id: this.home, name: this.w.name(this.home), tags: ['town', 'home', ...(l.built.includes('walls') && !sacked ? ['wall'] : []), ...(military(l) && p.might > 0 ? ['garrison'] : []), ...(p.unrest > 0 ? ['unrest'] : [])], at: [h.at[0], h.at[1]], town: this.home });
+    for (const x of this.partners()) {
+      const s = this.w.settlement(x.id);
+      out.push({ id: x.id, name: this.w.name(x.id), tags: ['town', 'trade-partner', x.standing ? 'standing' : 'ruined'], at: s ? [s.at[0], s.at[1]] : null, town: x.id });
+    }
+    const camp = campId(this.home);
+    if (f.entity(camp)) out.push({ id: camp, name: 'the refugee camp', tags: ['camp', ...(f.tag(camp, 'condition', 'sheltered')?.value ? ['sheltered'] : []), ...(f.tag(camp, 'condition', 'abandoned')?.value ? ['ruined'] : ['standing'])], at: this.posOf(this.cellOf('watch')), town: this.home });
+    return out;
+  }
+
+  /** the rules fired on an occasion: each firing recorded in the history (why a pool moved) */
+  private fireRules(o: RuleOccasion): RuleHit[] {
+    this.w.holdings = this.led.holdings;
+    const hits = this.rules.fire(o);
+    for (const h of hits) this.w.facts.record({ kind: 'rule-fired', by: h.things.filter((id) => !!this.w.facts.entity(id)), to: [this.home], note: h.text });
+    return hits;
+  }
+
+  /** the history's new events as triggers (a rule's own record is never one), each once */
+  private pump(): RuleHit[] {
+    const hits: RuleHit[] = [];
+    const evs = this.w.facts.events();
+    const fresh = evs.slice(this.seen);
+    this.seen = evs.length;
+    for (const e of fresh) if (e.kind !== 'rule-fired') hits.push(...this.fireRules({ on: { event: e.kind } }));
+    // (the rules' own records are seen, and trigger nothing)
+    this.seen = this.w.facts.events().length;
+    return hits;
+  }
+
+  // ---- live events (living/live.ts; the scene's runner plays them: scenes/level/live-runner.ts) ------------------------
+
+  /** a template's live event, or null */
+  liveOf(o: Offer): LiveDef | null {
+    return this.engine.template(o.template).play?.event ?? null;
+  }
+  /** the live events under way: agreed (or forced) and not yet resolved */
+  liveRunning(): Offer[] {
+    return this.engine.running().filter((o) => !!this.liveOf(o));
+  }
+  /** a forced live event on the board (the raid, refugees arriving): nobody asks, it begins */
+  forcedLive(): Offer | null {
+    return this.engine.offered.find((o) => !!this.liveOf(o) && !!this.engine.template(o.template).play?.forced) ?? null;
+  }
+  /** the scene says how a live event stands (kept until it is resolved: the season's end reads it) */
+  tellLive(id: string, told: LiveTold): void {
+    this.told.set(id, told);
+  }
+
+  /**
+   * A live event resolved from the state it is in — its own end, or the season's: its numbers counted, the rules
+   * applied to them, a tier read, the template's outcome for that tier run through the engine. `told` absent: what the
+   * scene last told; none (nothing ran: a test, the bots, a reload): the event as nobody played it.
+   */
+  finishLive(id: string, told?: LiveTold): LiveReport {
+    const o = this.engine.running().find((x) => x.id === id);
+    const def = o && this.liveOf(o);
+    if (!o || !def) throw new Error(`realm: no live event ${id} under way`);
+    const t = this.engine.template(o.template);
+    const run = this.runNumbers();
+    const how = told ?? this.told.get(id) ?? { state: idleState(def, run) };
+    this.told.set(id, how);
+    const site = this.w.facts.entity(o.place)?.attrs?.site as SiteKey | undefined;
+    const vars = liveRead(def, how.state, run);
+    const hits = this.fireRules({ on: { live: def.tag }, vars, at: this.posOf(how.at ?? this.cellOf(site ?? 'market')), route: how.route ? [this.posOf(how.route[0]), this.posOf(how.route[1])] : null });
+    const out = liveDerive(def, vars);
+    const tier = liveTier(def, out);
+    this.liveOut.set(id, out);
+    this.w.holdings = this.led.holdings;
+    this.engine.resolve(id, tier);
+    this.sync();
+    hits.push(...this.pump());
+    const oc = outcomesOf(t)[tier] ?? outcomesOf(t).success;
+    const title = text(this.engine.ctx(t, o.bind, o.id), t.title);
+    const lines = [...(oc ? [text(this.engine.ctx(t, o.bind, o.id), oc.text)] : []), ...hits.map((h) => `${h.text}.`)];
+    console.log(`[realm] live event ${o.template}: ${tier} ${JSON.stringify(out)}${hits.length ? ` rules: ${hits.map((h) => h.rule).join(', ')}` : ''}`);
+    return { id, template: o.template, title, tier, vars: out, lines, hits };
+  }
+
+  /** (a test, the bots) every forced live event on the board begun and resolved as nobody played it */
+  playForced(): LiveReport[] {
+    const out: LiveReport[] = [];
+    for (let o = this.forcedLive(); o; o = this.forcedLive()) {
+      this.commit(o.id);
+      out.push(this.finishLive(o.id));
+    }
+    return out;
+  }
+
+  /**
+   * A spell cast (LOOP_SKELETON.md "who decides the fight": a cast is a record): its Magic spent and an event written.
+   * A growth rune over a site marks it 'growth-active' until the season ends. False: not enough Magic.
+   */
+  cast(spell: SpellId, site?: SiteKey): boolean {
+    const cost = SPELL_COST[spell];
+    if (pools(this.led).magic < cost) return false;
+    this.addPool('magic', -cost);
+    const at = site ? siteId(this.home, site) : this.home;
+    if (spell === 'growth' && site) this.mark(at, 'growth-active', 'spell');
+    this.w.facts.record({ kind: 'spell-cast', by: ['player'], to: [at], note: spell === 'growth' ? `you drew a growth rune over ${this.w.name(at)}` : `you cast ${spell} at ${this.w.name(at)}` });
+    this.said.push(...this.pump().map((h) => `${h.text}.`));
+    return true;
   }
 
   /** where a spot is in world cells [x, row]: the scene's answer, else a fixed way off the town's centre */
@@ -311,11 +601,15 @@ export class Realm {
    * arrive, and the ore wagons of a mining camp while it stands.
    */
   // FIXED-CITY: what comes home comes to the one home town, and its living town is the only one fed
-  life(): { people: number; wagons: number } {
+  life(): { people: number; wagons: number; trade: number } {
     const f = this.w.facts;
     const came = f.events({ kind: 'migration' }).filter((e) => e.to.includes(this.home));
     const camp = !!f.entity(CAMP_ID) && f.relations({ type: 'controls', from: 'player', to: CAMP_ID }).length > 0 && !f.tag(CAMP_ID, 'condition', 'lost');
-    return { people: REFUGEES * came.length, wagons: (camp ? CAMP_WAGONS : 0) + (came.some((e) => e.turn === this.w.turn) ? ARRIVAL_CARTS : 0) };
+    // (round 6, SYSTEMS.md recipe 3: the trade route's wagons and ships come from the far towns it reaches — the share
+    // of them still standing)
+    const ps = this.partners().filter((x) => x.id !== CAMP_ID);
+    const trade = ps.length ? ps.filter((x) => x.standing).length / ps.length : 1;
+    return { people: REFUGEES * came.length, wagons: (camp ? CAMP_WAGONS : 0) + (came.some((e) => e.turn === this.w.turn) ? ARRIVAL_CARTS : 0), trade };
   }
 
   /** what this run changed in the land and the places of the world: the mutators' entries whose fact event is this
@@ -371,6 +665,7 @@ export class Realm {
     this.w.holdings = this.led.holdings;
     const o = this.engine.commit(id);
     this.sync();
+    this.said.push(...this.pump().map((h) => `${h.text}.`));
     const c = cardOfTemplate(o.template);
     if (c) this.led = adopt(this.led, card(c), o.commitment!, o.id, this.season + (o.resolvesTurn! - this.w.turn));
     this.w.holdings = this.led.holdings;
@@ -389,6 +684,12 @@ export class Realm {
    */
   endSeason(): string[] {
     this.w.holdings = this.led.holdings;
+    // (round 6: a live event still under way is resolved now, from the state it is in)
+    const live = this.liveRunning().map((o) => this.finishLive(o.id));
+    // (the season's own rules, while its states still hold — a growth rune lasts to this point: one line a firing:
+    // what, how much, why)
+    const turned = this.fireRules({ on: 'turn' });
+    this.w.holdings = this.led.holdings;
     const before = this.engine.changes.length;
     const past = this.engine.past.length;
     this.last = this.engine.advance();
@@ -401,7 +702,15 @@ export class Realm {
       return line ? [text(this.engine.ctx(t, o.bind, o.id), line)] : [];
     });
     const arc = this.engine.changes.slice(before).filter((c) => !/^(resolved|lapsed|committed): /.test(c.what)).map((c) => arcLine(c.what));
-    this.news = [...told, ...arc];
+    // (the season turns for the rules: each may fire again; then what the season's own events fire)
+    this.rules.season(this.w.turn);
+    const hits = [...turned, ...this.pump()];
+    this.sync();
+    const ps = this.partners().filter((x) => x.id !== CAMP_ID);
+    const standing = ps.filter((x) => x.standing).length;
+    const fewer = this.partnersWere >= 0 && standing < this.partnersWere && ps.length ? [`Fewer wagons come by the trade road: ${standing} of ${ps.length} towns on it still stand.`] : [];
+    this.partnersWere = ps.length ? standing : -1;
+    this.news = [...live.flatMap((r) => r.lines), ...told, ...arc, ...this.said.splice(0), ...hits.map((h) => `${h.text}.`), ...fewer];
     return this.news;
   }
 
@@ -410,23 +719,6 @@ export class Realm {
     this.ledger = l;
     this.last = this.engine.redeal();
     this.sync();
-  }
-
-  /** the attack fought: written to the history; broken through, the district the raiders came by is burned — round
-   *  `at` (world cells: where they stood when the fight was called), else round the road gate's own place */
-  fought(f: { raiders: number; left: number; fallen: number }, at?: readonly [number, number]): void {
-    const held = f.raiders > 0 && f.left === 0;
-    this.fight = { ...f, held };
-    this.raid = null;
-    const e = this.w.facts.record({ kind: held ? 'raid-held' : 'raid-broke', by: [], to: [this.home], note: held ? `the town held against ${f.raiders} raiders; ${f.fallen} soldiers died` : `${f.left} of ${f.raiders} raiders broke into the town; ${f.fallen} soldiers died`, weight: held ? 0.5 : -0.6 });
-    if (!held && f.raiders > 0) {
-      // (sacked: the district by the gate burned, its people gone; thieves in what is left for three seasons)
-      const gate = siteId(this.home, 'gate');
-      this.w.facts.setTag(gate, 'condition', 'burned', true, 'raid');
-      this.w.facts.setTag(gate, 'condition', 'abandoned', true, 'raid');
-      this.landAt('burned', gate, SACK_RADIUS, 1, e.id, undefined, at);
-      if (mutators.ready) mutators.sign({ kind: 'crime', place: this.home, strength: 0.8, until: this.w.turn + 3, cause: e.id });
-    }
   }
 
   /** seasons until the raiders attack (0: this season); null: paid off, or fought */
