@@ -492,6 +492,12 @@ export class SeasonWar {
     return true;
   }
 
+  /** (round 6) the soldiers fallen were settled elsewhere (a live event's outcome took the Might): not again at the
+   *  next season */
+  settled(): void {
+    this.fallen = 0;
+  }
+
   /** the walls stand this season: a raid comes at a gate */
   get walled(): boolean {
     return this.ring;

@@ -155,7 +155,7 @@ describe('the realm (season/realm.ts)', () => {
     expect(r.life().people).toBe(0);
     season(r);
     expect(r.history().some((e) => e.kind === 'migration' && e.to.includes(r.home))).toBe(true);
-    expect(r.life()).toEqual({ people: 40, wagons: 10 });
+    expect(r.life()).toMatchObject({ people: 40, wagons: 10 });
     const o = until(r, 'house-refugees');
     expect(r.ws.character(o.presenter)?.role).toBe('refugee');
     expect(r.life().wagons).toBe(0);
@@ -207,7 +207,11 @@ describe('the realm (season/realm.ts)', () => {
     expect(r.raid).toBe(6);
     expect(news.join(' ')).toContain('scouts are seen on the road');
     expect(r.over).toBe(false);
-    r.fought({ raiders: 6, left: 4, fallen: 0 });
+    // (round 6: the raid is a live event's card, forced; resolved here as nobody played it — Might 3 and nowhere for
+    // soldiers to gather: all 6 get in)
+    expect(r.forcedLive()?.template).toBe('raid');
+    const rep = r.playForced().find((x) => x.template === 'raid')!;
+    expect(rep).toMatchObject({ template: 'raid', tier: 'failure', vars: { raiders: 6, left: 6 } });
     expect(r.over).toBe(true);
     expect(r.fight?.held).toBe(false);
     expect(r.history().some((e) => e.kind === 'raid-broke')).toBe(true);
@@ -238,7 +242,7 @@ describe('the realm (season/realm.ts)', () => {
   it('with no world bound to the mutators the facts alone change (a test, the inspector)', () => {
     const r = realm({ seasons: 4 });
     for (let k = 0; k < 3; k++) season(r);
-    r.fought({ raiders: 6, left: 4, fallen: 0 });
+    r.playForced();
     expect(r.w.facts.tag(`site:${r.home}:gate`, 'condition', 'burned')?.value).toBe(true);
     expect(r.changes()).toEqual([]);
   });

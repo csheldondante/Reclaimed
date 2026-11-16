@@ -7,7 +7,10 @@ import { MUTATORS, SIGNS } from '../../src/mutate';
 import { POOLS, POOL_ROLE, pools } from '../../src/season/ledger';
 import { SITES } from '../../src/season/realm-templates';
 import { LEADERS } from '../../src/season/run-words';
-import { BASE_CARD_IDS, checkPack, FAR_KINDS, GOODS, LAND_KINDS, LEADER_IDS, PEOPLE, POOL_NAMES, SIGN_KINDS, SITE_KEYS, type Pack } from '../../src/packs/check';
+import { SPELL_MECH } from '../../src/living/live';
+import { LIVE_TEMPLATES } from '../../src/season/realm-events';
+import { RUIN, RULES, SITE_TAGS, TIMED } from '../../src/season/realm-rules';
+import { BASE_CARD_IDS, checkPack, EVENT_ABILITIES, FAR_KINDS, GOODS, KNOWN_TAGS, LAND_KINDS, LEADER_IDS, LIVE_KINDS, PEOPLE, POOL_NAMES, SIGN_KINDS, SITE_KEYS, type Pack } from '../../src/packs/check';
 import { loadPack, thingEntity } from '../../src/packs/load';
 import { baseCards, Table } from '../../src/table/game';
 
@@ -27,7 +30,25 @@ describe('the pack validator', () => {
     expect(SIGN_KINDS).toEqual(SIGNS.map((s) => s.kind));
     expect(LEADER_IDS).toEqual(LEADERS.map((l) => l.id));
     expect([...BASE_CARD_IDS].sort()).toEqual(baseCards().sort());
+    // (the tags the rules read: what a site is, the ruin words, the timed states; and the spells an event can take)
+    for (const t of [...Object.values(SITE_TAGS).flatMap((s) => s.is), ...RUIN, ...TIMED, ...RULES.flatMap((r) => [...r.a.tags, ...(r.b?.tags ?? [])])]) expect(KNOWN_TAGS, t).toContain(t);
+    expect(EVENT_ABILITIES.map((a) => a.replace('-', '')).sort()).toEqual(Object.keys(SPELL_MECH).sort());
+    expect(LIVE_KINDS).toEqual(expect.arrayContaining(LIVE_TEMPLATES.map((t) => t.play!.event!.tag)));
   });
+
+  const more: [string, (p: Pack) => void, RegExp][] = [
+    ['a result of the event with no if_tier', (p) => void delete card(p, 'sample-thresh-fire').if_tier!.cost, /can end in "cost", but "if_tier" has no "cost"/],
+    ['a crowd with nobody tagged crowd', (p) => void p.events![0].amounts.push('crowd'), /Give a group the tag "crowd"/],
+    ['an ability that does nothing in an event', (p) => void (p.events![0].abilities = ['growth-rune']), /does nothing when cast into an event yet/],
+    ['a game tag set by an effect', (p) => void card(p, 'sample-build-granary').if_taken!.push({ tag: 'worked', on: 'site:fields' }), /is set by the game itself/],
+  ];
+  for (const [name, breakIt, want] of more)
+    it(`reports ${name}`, () => {
+      const p = copy();
+      breakIt(p);
+      const e = errors(p);
+      expect(e.some((x) => want.test(x)), e.join('\n') || 'no errors').toBe(true);
+    });
 
   it('passes the sample pack', () => {
     expect(errors(SAMPLE)).toEqual([]);
@@ -75,10 +96,14 @@ describe('the pack validator', () => {
 });
 
 describe('a loaded pack', () => {
-  it('becomes templates whose words carry the data\'s numbers; a live card is left out and said so', () => {
+  it('becomes templates whose words carry the data\'s numbers; a live card carries its event and a result for each tier', () => {
     const l = loadPack(SAMPLE, { cards: baseCards() });
-    expect(l.templates.map((t) => t.id)).toEqual(['sample-build-granary', 'sample-bless-harvest', 'sample-night-watch-card', 'sample-mill-fire', 'sample-take-in-neighbours']);
-    expect(l.left.map((x) => x.card)).toEqual(['sample-thresh-fire']);
+    expect(l.templates.map((t) => t.id)).toEqual(['sample-build-granary', 'sample-bless-harvest', 'sample-night-watch-card', 'sample-mill-fire', 'sample-take-in-neighbours', 'sample-thresh-fire']);
+    expect(l.left).toEqual([]);
+    const live = l.templates[5];
+    expect(live.play!.event).toMatchObject({ tag: 'fire', spells: ['rain'], hazard: { kind: 'fire', points: 5 }, tiers: [{ tier: 'triumph', when: [['burned', '<=', 0]] }, { tier: 'cost', when: [['burned', '<=', 2]] }, { tier: 'disaster' }] });
+    expect(Object.keys(live.outcomes!)).toEqual(['triumph', 'cost', 'disaster']);
+    expect(live.outcomes!.cost!.text).toBe('You lose 2 Materials of grain. -2 Materials.');
     const g = l.templates[0];
     expect(g.requires).toEqual({ agents: [{ kind: 'workers', count: 2 }], goods: { materials: 3 } });
     expect(g.turns).toBe(2);
@@ -114,7 +139,11 @@ describe('a loaded pack', () => {
         expect(pools(t.realm.ledger).magic).toBe(magic - 1);
         expect(t.things().find((x) => x.id === a.targets[0])!.tags).toEqual(['granary', 'blessed']);
         cast = true;
+        // (the pack's rule reads the pack's tags: ready now, and it pays at the season's end)
+        expect(t.rules().find((r) => r.id === 'sample-blessed-granary')!.ready).toBe(true);
+        const before = t.hits.length;
         t.endSeason();
+        expect(t.hits.slice(before).find((h) => h.hit.rule === 'sample-blessed-granary')?.hit).toMatchObject({ pool: 'materials', delta: 2 });
         // (a timed tag: gone when the season it was set in is over)
         expect(t.things().find((x) => x.id === thingEntity('sample-granary'))!.tags).toEqual(['granary']);
         continue;
@@ -130,6 +159,44 @@ describe('a loaded pack', () => {
     expect(t.lapsed).toContain('sample-mill-fire');
     const mill = t.things().find((x) => x.name === 'the mill street')!;
     expect(mill.ruined).toBe(true);
-    expect(mill.tags).toEqual(['ruined', 'burned']);
+    expect(mill.tags.slice(0, 2)).toEqual(['ruined', 'burned']);
+  });
+
+  it('a pack\'s event plays: rain cast into it, the pack\'s rule about its own policy changes the result, its tier\'s effects apply', () => {
+    // (the sample's fire, held back a few seasons so the granary and the night watch are both in play when it comes)
+    const p = copy();
+    card(p, 'sample-thresh-fire').appears_when!.push({ season_gte: 7 });
+    const t = new Table({ seed: 7, leader: 'ilveth', seasons: 16, packs: [p] });
+    const want = ['sample-build-granary', 'sample-night-watch-card', 'sample-thresh-fire', 'build:quarry', 'build:lumber'];
+    let done = false;
+    for (let s = 0; s < 14 && !t.over && !done; s++) {
+      for (const id of want) {
+        const c = t.cards().find((x) => x.template === id);
+        if (c && !Object.keys(c.short).length) t.take(c.id);
+      }
+      const e = t.liveEvents().find((x) => x.template === 'sample-thresh-fire');
+      if (e) {
+        expect(e.hazard).toEqual({ points: 5, burned: 5 });
+        // (the night watch is in play: the pack's rule takes one burning lot off, said on the card before anything is cast)
+        expect(t.things().find((x) => x.id === 'briar-hollow')!.tags).toContain('night-watch');
+        expect(e.rules.some((r) => /Lanterns at the fire/.test(r))).toBe(true);
+        expect(e.tier).toBe('disaster');
+        expect(t.cast('spell:rain', e.id)).toBe(true);
+        expect(t.liveEvents()[0]).toMatchObject({ tier: 'cost', hazard: { burned: 3 } });
+        expect(t.cast('spell:rain', e.id)).toBe(true);
+        expect(t.liveEvents()[0]).toMatchObject({ tier: 'triumph', hazard: { burned: 1 } });
+        const unrest = pools(t.realm.ledger).unrest;
+        const before = t.hits.length;
+        t.endSeason();
+        expect(t.events.at(-1)).toMatchObject({ template: 'sample-thresh-fire', tier: 'triumph' });
+        expect(t.hits.slice(before).some((h) => h.hit.rule === 'sample-watch-on-fire' && h.hit.delta === -1)).toBe(true);
+        expect(t.realm.w.facts.entity(thingEntity('sample-granary'))).toBeTruthy();
+        expect(unrest === 0 || pools(t.realm.ledger).unrest < unrest + 2).toBe(true);
+        done = true;
+        continue;
+      }
+      t.endSeason();
+    }
+    expect(done, `taken ${t.taken.join(',')}; seen ${[...t.seen].join(',')}`).toBe(true);
   });
 });

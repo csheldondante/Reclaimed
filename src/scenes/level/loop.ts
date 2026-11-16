@@ -13,9 +13,11 @@ import { actOf, petitionTree } from '../../dialog/petition';
 import { portraitUrl } from '../../dialog/portrait';
 import { meetPerson, petitionOf } from '../../living/present';
 import { capitalise } from '../../living/plain';
-import { lose, newLedger, pools, total, type Pool, type Pools, type SeasonLedger } from '../../season/ledger';
+import { newLedger, pools, total, type Pool, type Pools, type SeasonLedger } from '../../season/ledger';
 import type { SeasonLoop } from '../../season/loop';
-import { Realm, roadLook, RUN_SEASONS, type RunState, type SpellId, type Spot } from '../../season/realm';
+import { BASIC_SPELLS, Realm, RUN_SEASONS, SPELL_COST, type LiveReport, type RunState, type SpellId, type Spot } from '../../season/realm';
+import type { Offer } from '../../living/engine';
+import { LiveRunner, type LiveRun } from './live-runner';
 import { applyDelta, delta, type Delta } from '../../api/snapshot-delta';
 import { MemoryWorldState } from '../../api/contracts/world-state';
 import { FactWorld } from '../../living/world';
@@ -23,14 +25,12 @@ import { mutators } from '../../mutate';
 import type { MutateEngine } from '../../mutate/engine';
 import { ROW_H, cellAt } from '../../world/lattice';
 import { restoreMutators } from './mutators';
-import { DEAD_RISE, type SiteKey } from '../../season/realm-templates';
+import type { SiteKey } from '../../season/realm-templates';
 import { declutter, placeSites, REACH as SITE_REACH } from '../../season/sites';
 import { mountRunUi, type Asking, type Marker, type Phase, type RunGame } from '../../season/run-ui';
 import * as W from '../../season/run-words';
-import { WAVE_NO_ROAD } from '../../season/words';
 import { StoryCamera, type V3 } from '../../story/camera';
 import type { LevelScene } from '../level';
-import { REGION } from '../streamer/defs';
 import { startSeasonLoop, storeReady } from './season';
 
 /** the world's record in the world store: the fact layer, the characters, the holdings (WorldState's snapshot).
@@ -45,36 +45,8 @@ interface SavedRun {
   world: Delta | null;
   run: { state: RunState; ledger: SeasonLedger; notes: string[] } | null;
 }
-/** the sim's speed while the raiders march in (they walk from outside the town) */
-const MARCH_SPEED = 3;
-/** seconds raiders stay in a town with no soldier left before the fight is called */
-const SACK_SECONDS = 5;
-/** wall seconds an attack may take at most before it is called as it stands */
-const ATTACK_SECONDS = 150;
-/** the camera's zoom (screen px a cell) down a road before the raid is called, on the raiders marching, and on the
- *  fight: at 412 px across, a figure about a cell wide reads from 12 up */
-const ROAD_ZOOM = 4;
-const MARCH_ZOOM = 10;
-const FIGHT_ZOOM = 22;
 /** the zoom on a district being built while a season passes: its lots and the people working on them read */
 const BUILD_ZOOM = 9;
-/** the camera's pitch on the fight (radians): lower than the town's 60°, so a standing figure is taller on the screen
- *  (its height × zoom × cos pitch: 1.6 cells × 22 × 0.77 = 27 px) */
-const FIGHT_PITCH = (40 * Math.PI) / 180;
-/** the zoom the camera pulls back to when a fight is over: the district round it in view */
-const AFTER_ZOOM = 5;
-/** the window slides when the camera comes within this many regions of its edge (scenes/streamer.ts update): the
- *  cells round the camera's target the window is sure to hold are half the window less that; and the margin kept
- *  inside it for the spawn point's crowd */
-const SLIDE_REGIONS = 1.25;
-const SURE_MARGIN = 12;
-/** frames the window must be still before a raid is called: the place table's spawn points wake a solve at most every
- *  120 frames (towncontracts/places.wgsl WET_GAP), and the solve lands a frame or two later */
-const PLACE_SETTLE_FRAMES = 130;
-/** frames after a raid's call by which a refused spawn has been told (the units' events are read a frame or two
- *  behind): the raiders are watched and the sim sped up only after */
-const SPAWN_TOLD_FRAMES = 20;
-
 /** how far from the home town's centre the camera may go (cells): past the mountain an outcome can name (640), short
  *  of where the town would be let go (its box 448 columns from a 320-column window: about 680) */
 const HOME_REACH = 650;
@@ -84,11 +56,12 @@ const CAST_WAIT_FRAMES = 4;
 // (round 4: damage 2 of a raider's 3 health. At 3, the first cast that ever landed killed all 6 raiders on the march for
 // 1 Magic and the soldiers had no part; at 2 it wounds every raider in reach and a second cast or the soldiers finish
 // them. A tunable for the owner: LOOP_SKELETON.md assumption 17)
-const HEATRAY = { radius: 5, damage: 2, magic: 1 };
+const HEATRAY = { radius: 5, damage: 2 };
 /** the live event's spell, and the dead it is cast on: how many get up, in clumps this far apart (cells), and the wall
  *  seconds the event may take before it is left as it stands */
-const FIRE = { radius: 4.5, damage: 12, magic: 1 };
-const DEAD = { n: 5, spread: 7, seconds: 120 };
+const FIRE = { radius: 4.5, damage: 12, light: 3 };
+/** the growth rune: how near the fields' place the tap must be (cells), how wide and how hard the plants grow */
+const GROWTH = { reach: 60, radius: 11, strength: 45 };
 
 class Game implements RunGame {
   phase: Phase = 'boot';
@@ -103,28 +76,8 @@ class Game implements RunGame {
   private saved: WorldSnapshot | null = null;
   private talk: DialogBox;
   private speakers = new Map<string, Speaker>();
-  /** the attack under way: when it began (s), when the town was first left with no soldier, the raiders watched */
-  private attack: {
-    t: number;
-    sackAt: number | null;
-    unwatch: (() => void) | null;
-    following: boolean;
-    /** the raid's size */
-    n: number;
-    /** the road the raid is being called down (the town's arterials' order), and whether straight for the heart */
-    road: number;
-    direct: boolean;
-    /** the camera going to the road, the window settling there, the raid called */
-    step: 'look' | 'settle' | 'called';
-    /** frames the window has been still with the camera on the road */
-    calm: number;
-    /** the middle of the raiders alive (window point), once they are watched */
-    mid: (() => V3 | null) | null;
-  } | null = null;
-  private speed0 = 1;
-  /** the live event under way (the dead rising): its units still up, when it began, how it ends */
-  private event: { up: Set<number>; t: number; unwatch: () => void; end: (won: boolean) => void } | null = null;
-  private pitch0 = Math.PI / 3;
+  /** the live events (round 6): one runner plays the raid, the dead, a parade, a fire — scenes/level/live-runner.ts */
+  private live: LiveRunner;
 
   constructor(
     private scene: LevelScene,
@@ -147,6 +100,7 @@ class Game implements RunGame {
       },
       check: () => true,
     });
+    this.live = new LiveRunner({ scene, cam: this.cam, season, realm: () => this.realm, town: () => this.town, spot: (k) => this.spot(k), z: (x, y) => this.z(x, y), changed: () => this.changed(), ended: (run) => this.liveEnded(run) });
     let last = performance.now();
     const tick = (now: number) => {
       requestAnimationFrame(tick);
@@ -155,8 +109,8 @@ class Game implements RunGame {
       this.cam.update(dt);
       this.keepNear();
       this.watchBuild(dt);
-      this.watchFight(dt);
-      this.watchEvent(dt);
+      this.live.update(dt);
+      this.liveLine();
     };
     requestAnimationFrame(tick);
     // (on the window, before the map's own input: the level's input layer lies over the canvas, so a listener on the
@@ -268,8 +222,7 @@ class Game implements RunGame {
     const t = this.town;
     const r = this.realm;
     const cam = this.scene.core.camera;
-    if (this.phase === 'attack') return this.fightMarks();
-    if (this.phase === 'event') return this.eventMarks();
+    if (this.phase === 'event') return this.live.marks();
     if (!t || !r || (this.phase !== 'city' && this.phase !== 'petition')) return [];
     const out: Marker[] = [];
     const put = (id: string, label: string, kind: Marker['kind'], at: [number, number] | null) => {
@@ -284,6 +237,11 @@ class Game implements RunGame {
     }
     const n = r.threatIn();
     if (n !== null && n > 0) put('threat', W.threatTag(n), 'threat', this.spot('road'));
+    // (a live event going on without the player: its name over where it is — a tap goes back to it)
+    for (const run of this.live.runs) {
+      const at = this.live.where(run);
+      if (at) put(`live:${run.id}`, W.underWay(run.def.title), 'ask', [at[0], at[1]]);
+    }
     // (names kept apart and on the screen, between the top bar and the sheet: LS-3, LS-28)
     const sheet = document.querySelector('.run-sheet')?.getBoundingClientRect().top ?? innerHeight;
     const bar = document.querySelector('.run-top')?.getBoundingClientRect().bottom ?? 0;
@@ -292,145 +250,106 @@ class Game implements RunGame {
     return out;
   }
 
-  /** the fight's marks (LS-24): a ring round every raider and soldier alive, and each side's name and count over its
-   *  middle — a figure is a few px of colour at any zoom the town still reads at */
-  private fightMarks(): Marker[] {
-    const a = this.attack;
-    const war = this.season.war;
-    const units = this.scene.units;
-    const forces = this.scene.townForces;
-    const f = war?.fight;
-    if (!a || !a.unwatch || !war || !units || !forces || !f) return [];
-    const cam = this.scene.core.camera;
-    const out: Marker[] = [];
-    const side = (ids: number[], kind: 'raider' | 'soldier', name: string) => {
-      let n = 0;
-      let sx = 0;
-      let top = Infinity;
-      let low = -Infinity;
-      for (const id of ids) {
-        const at = units.get(id)?.at;
-        if (!at) continue;
-        const [x, y] = cam.project(at[0], at[1], at[2]);
-        if (x < -20 || y < -20 || x > innerWidth + 20 || y > innerHeight + 20) continue;
-        out.push({ id: String(id), label: '', kind, x, y });
-        n++;
-        sx += x;
-        top = Math.min(top, y);
-        low = Math.max(low, y);
-      }
-      // (the raiders' name above their figures, the soldiers' below theirs: the two never lie on each other when the
-      // lines meet — LS-47)
-      if (n) out.push({ id: kind === 'raider' ? 'theirs' : 'ours', label: `${name} ${ids.length}`, kind: 'side', x: sx / n, y: kind === 'raider' ? top : low });
-    };
-    side(forces.members(f.raiders), 'raider', W.RAIDERS_TAG);
-    side(war.squadGroups.flatMap((g) => forces.members(g)), 'soldier', W.SOLDIERS_TAG);
-    return out;
-  }
-
-  /** the live event's marks: a ring round each of the dead still up, and their count */
-  private eventMarks(): Marker[] {
-    const units = this.scene.units;
-    const ev = this.event;
-    if (!ev || !units) return [];
-    const cam = this.scene.core.camera;
-    const out: Marker[] = [];
-    let sx = 0;
-    let top = Infinity;
-    for (const id of ev.up) {
-      const at = units.get(id)?.at;
-      if (!at) continue;
-      const [x, y] = cam.project(at[0], at[1], at[2]);
-      out.push({ id: String(id), label: '', kind: 'raider', x, y });
-      sx += x;
-      top = Math.min(top, y);
-    }
-    if (out.length) out.push({ id: 'theirs', label: `${W.DEAD_TAG} ${ev.up.size}`, kind: 'side', x: sx / out.length, y: top });
-    return out;
-  }
-
-  /** (scripts) where the dead still up are on the screen (px) */
+  /** (scripts) where the figures of the live event the player is at are on the screen (px): the dead, the raiders */
   deadAt(): [number, number][] {
-    return this.eventMarks().filter((m) => m.kind === 'raider').map((m) => [m.x, m.y]);
+    return this.live.figures();
   }
+
+  // ---- live events --------------------------------------------------------------------------------------
+
+  /** the live event the player is at, for the sheet */
+  get liveNow(): { title: string; how: string; spells: SpellId[]; wantsSpells: boolean; canLeave: boolean } | null {
+    const run = this.live.focus;
+    return run && this.phase === 'event' ? { title: run.def.title, how: run.def.how, spells: this.allowed(), wantsSpells: !!run.def.spells?.length, canLeave: this.live.canLeave } : null;
+  }
+
+  /** the spells the player may cast now: at a live event the ones it allows ('known': those the run has unlocked); in
+   *  the town, the growth rune */
+  private allowed(): SpellId[] {
+    const r = this.realm;
+    if (!r) return [];
+    if (this.phase === 'city') return ['growth'];
+    const run = this.live.focus;
+    if (this.phase !== 'event' || !run) return [];
+    return (run.def.spells ?? []).flatMap((s) => (s === 'known' ? r.spells : BASIC_SPELLS.includes(s as SpellId) || r.spells.includes(s as SpellId) ? [s as SpellId] : []));
+  }
+  get citySpells(): SpellId[] {
+    return this.phase === 'city' ? this.allowed() : [];
+  }
+
+  /** a live event begun (its card agreed to, or forced: the raid): the one runner plays it; the player is taken there */
+  private beginLive(o: Offer): void {
+    const r = this.realm!;
+    const def = r.liveOf(o);
+    if (!def) throw new Error(`loop: ${o.template} has no live event`);
+    this.armed = null;
+    const run = this.live.start(o, def, r.siteOf(o));
+    this.fightLine = W.fill(def.line, this.live.numbers(run));
+    this.set('event');
+  }
+
+  /** the sheet's line of the event the player is at, from its numbers as the units tell them */
+  private liveLine(): void {
+    const run = this.live.focus;
+    if (!run || this.phase !== 'event' || this.lineHeld > performance.now()) return;
+    const line = run.entry && run.entry.step !== 'in' ? W.LIVE_WAIT : W.fill(run.def.line, this.live.numbers(run));
+    if (line === this.fightLine) return;
+    this.fightLine = line;
+    this.changed();
+  }
+  /** a line said about a cast stays this long (ms since the page began) before the event's own line is back */
+  private lineHeld = 0;
 
   /**
-   * The small live event (item 4: play alternates between choosing and casting): a few of the dead get up at the burial
-   * ground; the camera goes there, the player casts Fire on them (1 Magic a cast). True: all are down. False: left as
-   * they stand (the player's choice, no Magic, or DEAD.seconds passed) — the rest are taken away and the card stays
-   * offered until it lapses. The dead are the units' own 'shambler' kind; Fire is the units' area blow with the
-   * lightning strike as its look, as Heat ray is (a stand-in look: BACKLOG LS-7).
+   * A live event resolved from the state it is in: told to the realm (its numbers read, the rules applied, the
+   * template's outcome for the tier that fits run through the engine), then taken out of the city.
    */
-  private playDead(at: [number, number]): Promise<boolean> {
-    const units = this.scene.units;
-    if (!units) return Promise.resolve(true);
-    const up = new Set<number>();
-    for (let k = 0; k < DEAD.n; k++) {
-      const clump = k < 3 ? -1 : 1;
-      up.add(units.spawn('shambler', [at[0] + clump * DEAD.spread * 0.5 + (k % 3) * 1.4, at[1] + clump * 2 + (k % 2) * 1.6], null, { hostile: true }) as number);
-    }
-    const unwatch = units.observe([...up]);
-    units.died.push((v) => void this.event?.up.delete(v.id as number));
-    this.pitch0 = this.scene.core.camera.elevation;
+  private resolveLive(run: LiveRun): LiveReport {
+    const r = this.realm!;
+    const l0 = this.season.ledger;
+    const before = { might: total(l0, 'might'), materials: pools(l0).materials, unrest: pools(l0).unrest };
+    r.ledger = this.season.ledger;
+    const rep = r.finishLive(run.id, this.live.told(run));
+    this.season.setLedger(r.ledger);
+    this.live.close(run);
     this.armed = null;
-    // (the camera on them, then after them: the dead walk toward whoever is near — round 3's first event left the screen)
-    const mid = (): V3 | null => {
-      let n = 0;
-      const m: V3 = [0, 0, 0];
-      for (const id of up) {
-        const p = units.get(id)?.at;
-        if (!p) continue;
-        n++;
-        for (let k = 0; k < 3; k++) m[k] += p[k];
-      }
-      return n ? [m[0] / n, m[1] / n, m[2] / n] : null;
-    };
-    void this.cam.look(this.at3(at), { zoom: FIGHT_ZOOM * 0.7, ease: 1.2, place: [0.5, 0.36] }).then(() => {
-      if (this.event?.up === up) this.cam.follow(mid);
-    });
-    // (the petition's frame let go, straight on to that look: a shot waits behind a held frame, and the event was
-    // played with the camera still on the petition — the dead off the screen's top, 5 of 5; LS-47. A frame that has
-    // not begun yet is taken out of the queue: LS-54)
-    void this.cam.release(0.2);
-    console.log(`[loop] the dead rise: ${up.size} at ${at.map((v) => Math.round(v))}`);
-    return new Promise((res) => {
-      this.event = { up, t: 0, unwatch, end: res };
-      this.fightLine = W.deadLine(up.size, pools(this.season.ledger).magic);
-      this.set('event');
-    });
+    if (run.def.stay && r.fight) {
+      // (the soldiers fallen are in the outcome's Might: not settled again by the season's war)
+      this.season.war?.settled();
+      const l1 = this.season.ledger;
+      const lost = { might: before.might - total(l1, 'might'), materials: before.materials - pools(l1).materials, unrest: pools(l1).unrest - before.unrest };
+      this.resultLines = [...W.resultLines(r.fight, lost), ...rep.lines.slice(1)];
+    }
+    console.log(`[loop] live event ${run.template} over: ${rep.tier} ${JSON.stringify(rep.vars)}; ${rep.lines.join(' ')}`);
+    return rep;
   }
 
-  private watchEvent(dt: number): void {
-    const ev = this.event;
-    if (!ev || this.phase !== 'event') return;
-    ev.t += dt;
-    const cam = this.scene.core.camera;
-    if (!this.cam.busy) cam.elevation += (FIGHT_PITCH - cam.elevation) * Math.min(1, dt * 1.2);
-    const magic = pools(this.season.ledger).magic;
-    const line = W.deadLine(ev.up.size, magic);
-    if (line !== this.fightLine) {
-      this.fightLine = line;
-      this.changed();
+  /** an event ended by itself (the runner's call): resolved at once; the player is back in the town, or — the raid —
+   *  at its result */
+  private liveEnded(run: LiveRun): void {
+    const at = this.live.focus === run;
+    // (the census's event has no card to resolve: taken out of the city)
+    if (run.id.startsWith('measure:')) {
+      this.live.close(run);
+      return this.set('city');
     }
-    if (ev.up.size === 0) this.endEvent(true);
-    else if (ev.t > DEAD.seconds) this.endEvent(false);
+    const rep = this.resolveLive(run);
+    void this.save();
+    if (run.def.stay && this.realm!.fight) return this.set('result');
+    this.notes = [...this.notes, ...rep.lines];
+    if (at) {
+      this.showTown();
+      // (back in the town — or straight on to another event nobody asks about: the raid behind the refugees)
+      this.flow();
+    } else this.changed();
   }
 
   leave(): void {
-    if (this.event) this.endEvent(false);
-  }
-
-  private endEvent(won: boolean): void {
-    const ev = this.event;
-    if (!ev) return;
-    this.event = null;
-    this.cam.follow(null);
-    ev.unwatch();
-    for (const id of ev.up) this.scene.units?.remove(id);
-    this.scene.core.camera.elevation = this.pitch0;
+    if (this.phase !== 'event' || !this.live.canLeave) return;
+    this.live.leave();
     this.armed = null;
-    console.log(`[loop] the dead: ${won ? 'all burned' : `${ev.up.size} left`}`);
-    ev.end(won);
+    this.showTown();
+    this.set('city');
   }
 
   asking(): Asking[] {
@@ -640,6 +559,12 @@ class Game implements RunGame {
    * agreeing commits its cost through the realm (the engine's commit on the ledger's holdings), refusing is remembered.
    */
   open(id: string): void {
+    // (a live event going on: back to it)
+    const run = id.startsWith('live:') ? this.live.runs.find((x) => `live:${x.id}` === id) : undefined;
+    if (run && this.phase === 'city') {
+      this.live.goTo(run);
+      return this.set('event');
+    }
     void this.petition(id);
   }
   private async petition(id: string): Promise<void> {
@@ -666,21 +591,21 @@ class Game implements RunGame {
     const act = last ? actOf(tree, last.node, last.choice) : undefined;
     console.log(`[loop] petition ${o.template}: ${act ?? 'closed'}`);
     if (act === 'commit' && can) {
-      // (the live event's card is played before it is committed: all burned, it resolves as any card does)
-      const won = o.template !== DEAD_RISE || (await this.playDead(at ?? this.town!.centreInWindow()));
-      if (won) {
-        r.ledger = this.season.ledger;
-        r.commit(id);
-        this.season.setLedger(r.ledger);
-        this.notes = [...this.notes, W.agreedLine(speaker.name, o.opp.title)];
-      } else this.notes = [...this.notes, W.DEAD_LEFT];
+      r.ledger = this.season.ledger;
+      const done = r.commit(id);
+      this.season.setLedger(r.ledger);
+      this.notes = [...this.notes, W.agreedLine(speaker.name, o.opp.title)];
+      // (a live event's card: agreed, it begins — played in the city while the season goes on, resolved by its own end
+      // or the season's)
+      if (r.liveOf(done)) {
+        void this.save();
+        return this.beginLive(done);
+      }
     } else if (act === 'refuse') {
       r.refuse(id);
       this.notes = [...this.notes, W.refusedLine(speaker.name)];
     }
     void this.cam.release();
-    // (the live event left the view at the burial ground, the player's there: back over the town and its names)
-    if (act === 'commit' && can && o.template === DEAD_RISE) this.showTown();
     // (an answer given is kept: a reload comes back to this season with it)
     if (act === 'commit' || act === 'refuse') void this.save();
     this.set('city');
@@ -696,6 +621,14 @@ class Game implements RunGame {
     if (this.phase !== 'city' || !r || this.season.playing) return;
     // (the opportunities' season first: commitments due resolve into the fact layer, offers past their time fire their
     // expiry, the arc moves on; then the ledger's own season plays as the time-lapse)
+    // (round 6: the live events still going are told to the realm as they stand and taken out of the city; the season's
+    // end resolves each from that state)
+    for (const run of [...this.live.runs]) {
+      r.tellLive(run.id, this.live.told(run));
+      this.live.close(run);
+    }
+    this.armed = null;
+    r.ledger = this.season.ledger;
     this.notes = r.endSeason();
     this.season.setLedger(r.ledger);
     this.building = this.season.ledger.projects.length > 0;
@@ -705,7 +638,7 @@ class Game implements RunGame {
       r.afterSeason(this.season.ledger);
       this.season.setLedger(r.ledger);
       await this.save();
-      if (this.building && r.raid === null) this.showTown();
+      if (this.building && !r.forcedLive()) this.showTown();
       this.building = false;
       this.flow();
     });
@@ -718,7 +651,19 @@ class Game implements RunGame {
   /** what comes next: the attack if the arc brought it, the end if the threat is past */
   private flow(): void {
     const r = this.realm!;
-    if (r.raid !== null) return this.beginAttack();
+    // (a live event nobody asks about — the raid in the run's last season, refugees on the road: it begins. One left
+    // under way by a reload that the player must stay at: again from its start)
+    const stay = r.liveRunning().find((o) => r.liveOf(o)?.stay && !this.live.runs.some((x) => x.id === o.id));
+    if (stay) return this.beginLive(stay);
+    const forced = r.over ? null : r.forcedLive();
+    if (forced) {
+      r.ledger = this.season.ledger;
+      const o = r.commit(forced.id);
+      this.season.setLedger(r.ledger);
+      void this.save();
+      return this.beginLive(o);
+    }
+    if (r.raid !== null) console.error('[loop] the raid is due and its card was not dealt');
     if (r.over) return this.set('end');
     this.set('city');
   }
@@ -733,167 +678,6 @@ class Game implements RunGame {
 
   map(): void {
     this.scene.atlasMap?.open();
-  }
-
-  // ---- the attack -------------------------------------------------------------------------------------
-
-  /**
-   * The attack begins (LS-16): the raid is called by this screen, a road at a time, once the camera looks down that
-   * road. A spawn point stands only on ground the world's window holds (townplaces UC-13), and the window is where the
-   * camera is: round 1 let the season post the raid with the camera wherever the last card left it, and at Muru the one
-   * dry spawn point (the east road's, 184 cells from the centre of a 320-cell window) was outside it in three walks of
-   * four.
-   */
-  private beginAttack(): void {
-    const n = this.realm!.raid ?? 0;
-    this.attack = { t: 0, sackAt: null, unwatch: null, following: false, n, road: -1, direct: false, step: 'look', calm: 0, mid: null };
-    this.fightLine = W.ATTACK_WAIT;
-    this.speed0 = this.scene.speed;
-    this.pitch0 = this.scene.core.camera.elevation;
-    this.set('attack');
-    this.nextRoad();
-  }
-
-  /** the camera down the next road into town (then, with walls and no road's gate standing, each road again straight
-   *  for the town's heart); none left: the raid found no road, said loudly */
-  private nextRoad(): void {
-    const a = this.attack!;
-    const t = this.town;
-    const war = this.season.war;
-    const roads = t?.roadCount ?? 0;
-    a.road++;
-    if (a.road >= roads && war?.walled && !a.direct) {
-      a.direct = true;
-      a.road = 0;
-    }
-    if (!t || a.road >= roads) {
-      console.error(`[loop] the raid found no road into ${t?.site.name ?? 'the town'}: ${roads} roads tried`);
-      return this.endAttack(war?.fight ?? null);
-    }
-    const { w, h } = this.scene.core.dims;
-    const at = roadLook(t.roadInWindow(a.road), Math.min(w, h) / 2 - SLIDE_REGIONS * REGION - SURE_MARGIN);
-    if (!at) return this.nextRoad();
-    a.step = 'look';
-    a.calm = 0;
-    // (the road before's raiders were never made: nothing of theirs is watched)
-    a.unwatch?.();
-    a.unwatch = null;
-    a.mid = null;
-    a.following = false;
-    console.log(`[loop] the camera down road ${a.road}`);
-    void this.cam.look(this.at3(at), { zoom: ROAD_ZOOM, ease: 1.2, place: [0.5, 0.4] }).then(() => {
-      if (this.attack === a && a.step === 'look') a.step = 'settle';
-    });
-  }
-
-  /** each frame of an attack: the raid called once the window is still on its road, the raiders watched and followed,
-   *  its line, and its end */
-  private watchFight(dt: number): void {
-    const a = this.attack;
-    const war = this.season.war;
-    if (!a || !war || this.phase !== 'attack') return;
-    a.t += dt;
-    if (a.step !== 'called') {
-      // (the window still on the road: the land a slide brought is written and the place table has solved over it —
-      // its spawn points wake a solve at most every PLACE_SETTLE_FRAMES)
-      a.calm = a.step === 'settle' && !this.scene.stream?.busy ? a.calm + 1 : 0;
-      if (a.calm > PLACE_SETTLE_FRAMES && war.call(a.n, a.road, a.direct)) {
-        a.step = 'called';
-        a.calm = 0;
-      }
-      if (a.t > ATTACK_SECONDS) this.endAttack(null);
-      return;
-    }
-    const f = war.fight;
-    if (!f) return this.endAttack(null);
-    const units = this.scene.units;
-    const forces = this.scene.townForces;
-    // (this road's spawn point was refused — water, or no gate on it: the next road)
-    if (f.failed && !forces?.members(f.raiders).length) {
-      this.scene.speed = this.speed0;
-      return this.nextRoad();
-    }
-    // (watched once they stand: a spawn's refusal comes a few frames after its call, with the group's members gone)
-    if (!a.unwatch && units && forces && a.calm++ > SPAWN_TOLD_FRAMES) {
-      const ids = forces.members(f.raiders);
-      if (ids.length) {
-        // (the soldiers watched too: the fight's marks stand on each)
-        const un = [units.observe(ids), units.observe(war.squadGroups.flatMap((g) => forces.members(g)))];
-        a.unwatch = () => un.forEach((u) => u());
-        const mid = (): V3 | null => {
-          let n = 0;
-          const s: V3 = [0, 0, 0];
-          for (const id of forces.members(war.fight?.raiders ?? -1)) {
-            const at = units.get(id)?.at;
-            if (!at) continue;
-            n++;
-            for (let k = 0; k < 3; k++) s[k] += at[k];
-          }
-          return n ? [s[0] / n, s[1] / n, s[2] / n] : null;
-        };
-        a.mid = mid;
-        this.scene.speed = Math.max(this.speed0, MARCH_SPEED);
-        // (the camera to the raiders once their place is read, then sliding after them)
-        const go = () => {
-          if (this.attack !== a) return;
-          const p = mid();
-          if (!p) return void setTimeout(go, 100);
-          void this.cam.look(p, { zoom: MARCH_ZOOM, ease: 1, place: [0.5, 0.4] }).then(() => {
-            if (this.attack !== a) return;
-            this.cam.follow(mid);
-            a.following = true;
-          });
-        };
-        go();
-      }
-    }
-    if (f.stage !== 'coming') this.scene.speed = this.speed0;
-    // (the camera closes in as the raiders reach the town and the fight starts: figures read on a phone)
-    if (a.following && !this.cam.busy) {
-      const cam = this.scene.core.camera;
-      const want = f.stage === 'coming' ? MARCH_ZOOM : FIGHT_ZOOM;
-      cam.zoom *= Math.exp(Math.log(want / cam.zoom) * Math.min(1, dt * 1.2));
-      // (and comes down: figures stand taller on the screen)
-      cam.elevation += (FIGHT_PITCH - cam.elevation) * Math.min(1, dt * 1.2);
-    }
-    const line = f.failed ? WAVE_NO_ROAD : W.attackLine(f.n, f.alive, f.soldiers, f.stage);
-    if (line !== this.fightLine) {
-      this.fightLine = line;
-      this.changed();
-    }
-    if (f.stage !== 'coming' && f.soldiers === 0 && f.alive > 0) a.sackAt ??= a.t;
-    const over = f.failed || f.alive === 0 || (a.sackAt !== null && a.t - a.sackAt > SACK_SECONDS) || a.t > ATTACK_SECONDS;
-    if (over) this.endAttack(f);
-  }
-
-  private endAttack(f: NonNullable<SeasonLoop['war']>['fight'] | null): void {
-    const a = this.attack!;
-    // (where the raiders stand as it ends: the district that burns if they broke in, and what the camera pulls back to)
-    const mid = a.mid?.() ?? null;
-    const S = this.scene.stream;
-    const cell = mid && S ? ([S.origin[0] + cellAt(mid[0], mid[1])[0], S.origin[1] + cellAt(mid[0], mid[1])[1]] as [number, number]) : undefined;
-    this.attack = null;
-    a.unwatch?.();
-    this.cam.follow(null);
-    this.scene.core.camera.elevation = this.pitch0;
-    this.scene.speed = this.speed0;
-    this.armed = null;
-    const l0 = this.season.ledger;
-    const before = { might: total(l0, 'might'), materials: pools(l0).materials, unrest: pools(l0).unrest };
-    // (raiders who found no road, or none came: nobody got in)
-    const fight = { raiders: f && !f.failed ? f.n : 0, left: f && !f.failed ? f.alive : 0, fallen: f?.fallen ?? 0 };
-    const settled = this.season.war?.resolve(l0) ?? null;
-    if (settled) this.season.setLedger(settled.ledger);
-    const l1 = this.season.ledger;
-    const lost = { might: before.might - total(l1, 'might'), materials: before.materials - pools(l1).materials, unrest: pools(l1).unrest - before.unrest };
-    this.realm!.ledger = this.season.ledger;
-    this.realm!.fought(fight, cell);
-    if (mid) void this.cam.look(mid, { zoom: AFTER_ZOOM, ease: 1.5, place: [0.5, 0.36] });
-    this.resultLines = [...(f?.failed ? [WAVE_NO_ROAD] : []), ...W.resultLines(this.realm!.fight!, lost)];
-    // (the fight is in the history, and a district burned is named for the mutators: saved at once)
-    void this.save();
-    console.log(`[loop] attack over: ${JSON.stringify({ ...fight, ...lost })}`);
-    this.set('result');
   }
 
   /** the camera on the latest change this run made to the land that the window holds (its kind; null: none) */
@@ -922,27 +706,51 @@ class Game implements RunGame {
     void this.cam.look(this.at3([c[0] + dx, c[1] + dy]), { zoom: 5, ease: 1.2, place: [0.5, 0.36] });
   }
 
-  /** (scripts) the fight as the units stand: each squad's post and report, where each soldier and raider is (window
-   *  cells) and what it is doing */
-  fightDebug(watch = false): unknown {
-    const war = this.season.war;
-    const units = this.scene.units;
+  /** (scripts) the live events as the units tell them: each one's numbers, and the squads' posts */
+  liveDebug(): unknown {
     const forces = this.scene.townForces;
-    if (!war || !units || !forces) return null;
-    if (watch) units.observe(war.squadGroups.flatMap((g) => forces.members(g)));
-    const who = (ids: number[]) =>
-      ids.map((id) => {
-        const v = units.get(id);
-        return v ? `${v.at ? v.at.map((x) => Math.round(x)).join(',') : 'unread'} ${v.state} ${v.job.kind}${v.hostile ? ' hostile' : ''} hp${v.health}` : 'gone';
-      });
-    const { w, h } = this.scene.core.dims;
-    return { window: [w, h], origin: this.scene.stream?.origin, war: war.debug(), soldiers: war.squadGroups.map((g) => who(forces.members(g) as number[])), raiders: who(forces.members(war.fight?.raiders ?? -1) as number[]), town: this.town?.centreInWindow().map((v) => Math.round(v)) };
+    const war = this.season.war;
+    return { focus: this.live.focus?.template ?? null, runs: this.live.runs.map((r) => ({ template: r.template, t: Math.round(r.t), entry: r.entry, fighting: r.fighting, numbers: this.live.numbers(r), state: this.live.state(r) })), squads: war?.squadGroups.map((g) => forces?.report(g)) ?? [], war: war?.debug() };
   }
 
-  /** (scripts) where the raiders are on the screen now (px), or null: none watched */
+  /** (scripts: the census) a live event of the run played now without its card, to measure a frame while one runs.
+   *  It is never resolved: the page is closed after */
+  measureEvent(template: string): boolean {
+    const r = this.realm;
+    const t = r?.engine.templates.find((x) => x.id === template);
+    const def = t?.play?.event;
+    if (!r || !def || this.phase !== 'city') return false;
+    const site = (t.bind.find((b) => b.as === 'site')?.where?.[0] as { args?: unknown[] } | undefined)?.args?.[1] as SiteKey | undefined;
+    this.live.start({ id: `measure:${template}`, template } as Offer, def, site ?? null);
+    this.set('event');
+    return true;
+  }
+
+  /** (scripts) the raid as the fight's screen counts it, or null: no raid on */
+  fightView(): { n: number; alive: number; soldiers: number; fallen: number; stage: 'coming' | 'there' | 'fighting'; failed: boolean } | null {
+    const run = this.live.runs.find((r) => r.def.tag === 'raid');
+    if (!run) return null;
+    const v = this.live.numbers(run);
+    return { n: v.raiders, alive: v.alive, soldiers: v.soldiers, fallen: v.fallen, stage: run.fighting ? 'fighting' : run.groups.get('raiders')?.arrived ? 'there' : 'coming', failed: false };
+  }
+
+  /** (scripts) where a site of the town is on the screen (px) */
+  siteAt(site: SiteKey): [number, number] | null {
+    const at = this.spot(site);
+    return at ? (this.scene.core.camera.project(at[0], at[1], this.z(at[0], at[1])) as [number, number]) : null;
+  }
+
+  /** (scripts) the camera on a site of the town at a zoom */
+  lookAt(site: SiteKey, zoom: number): void {
+    const at = this.spot(site);
+    if (at) void this.cam.look(this.at3(at), { zoom, ease: 1.2, place: [0.5, 0.36] });
+  }
+
+  /** (scripts) where the figures the event's camera follows are on the screen now (px), or null: none read */
   raidAt(): [number, number] | null {
-    const p = this.attack?.mid?.();
-    return p ? this.scene.core.camera.project(p[0], p[1], p[2]) : null;
+    const run = this.live.focus;
+    const p = run && (!run.entry || run.entry.step === 'in') && run.def.camera.follow ? this.live.where(run) : null;
+    return p && this.live.figures().length ? this.scene.core.camera.project(p[0], p[1], p[2]) : null;
   }
 
   arm(spell: SpellId | null): void {
@@ -950,11 +758,10 @@ class Game implements RunGame {
     this.changed();
   }
 
-  /** a tap on the map with a spell armed: cast there (Heat ray: a blow over an area on the units there, shown with
-   *  the level's own lightning strike — a stand-in look) */
+  /** a tap on the map with a spell armed that may be cast now: cast there */
   private cast(e: PointerEvent): void {
-    const id = this.phase === 'event' && this.armed === 'fire' ? 'fire' : this.phase === 'attack' && this.armed === 'heatray' ? 'heatray' : null;
-    if (!id) return;
+    const id = this.armed;
+    if (!id || !this.allowed().includes(id)) return;
     const rect = this.scene.host.canvas.getBoundingClientRect();
     // (the map's own tool and pan are not given this press: the cast is the gesture)
     e.stopPropagation();
@@ -962,48 +769,75 @@ class Game implements RunGame {
     this.castAt(id, e.clientX - rect.left, e.clientY - rect.top, CAST_WAIT_FRAMES);
   }
 
-  /** the height the figures a spell is cast on stand at (the raiders of the fight, the dead of the event): the mean of
-   *  those the units read (they are observed while either is on); null: none read */
-  private figuresZ(): number | null {
-    const units = this.scene.units;
-    const ids = this.event ? [...this.event.up] : (this.scene.townForces?.members(this.season.war?.fight?.raiders ?? -1) ?? []);
-    const zs = ids.map((id) => units?.get(id)?.at?.[2]).filter((z): z is number => z !== undefined);
-    return zs.length ? zs.reduce((s, z) => s + z, 0) / zs.length : null;
+  /** what the player is told about a cast: on the event's sheet for a few seconds, or in the town's news */
+  private tell(line: string): void {
+    if (this.phase === 'event') {
+      this.fightLine = line;
+      this.lineHeld = performance.now() + 3500;
+    } else this.notes = [...this.notes.filter((t) => t !== line), line];
+    this.changed();
   }
 
   /**
-   * The cast at a screen point: where the press's ray meets the level the figures stand at (their own places, which
-   * the units already read while a fight or the event is on). Before, it asked for the ground under the press
-   * (scene.heightAt): that answers null until the column's page has been read and again after its chunk has run — in
-   * a fight the chunks under the figures run every tick, and a finger has no hover before its press to have asked for
-   * the page, so the cast found no ground or waited for it past the fight's end (LS-46; a touch and a mouse press both
-   * cast nothing, 2 of 2). With no figure read (none in play), the ground's pages are asked for once and waited for.
+   * The cast at a screen point: where the press's ray meets the level the event's figures stand at (their own places,
+   * which the units already read while an event is on) — the ground under a press answers null until its page has been
+   * read and again after its chunk has run, and a finger has no hover before its press to have asked for it (LS-46).
+   * With no figure read (a fire, the growth rune), the ground's pages are asked for once and waited for.
+   * Each spell is the real system's call where one exists: Fire sets what will burn alight (the fire system) and
+   * burns the units there; Rain is a storm over the tap (the weather's own, which puts fire out); the growth rune grows
+   * the plants there (the ecology's) and marks the field for the season. Heat ray's look is still the lightning strike.
    */
-  private castAt(id: 'fire' | 'heatray', sx: number, sy: number, tries: number): void {
-    const sp = id === 'fire' ? FIRE : HEATRAY;
+  private castAt(id: SpellId, sx: number, sy: number, tries: number): void {
     if (this.armed !== id) return;
+    const r = this.realm!;
     const cam = this.scene.core.camera;
-    const z = this.figuresZ();
+    const w = this.scene.worldApi;
+    if (!w?.fire || !w.fx || !w.plants || !w.terrain) throw new Error('loop: this level has no world API for fire, particles, plants and ground');
+    const api = { fire: w.fire, fx: w.fx, plants: w.plants, terrain: w.terrain };
+    const z = id === 'heatray' || id === 'fire' ? this.live.figuresZ() : null;
     const g = z !== null ? cam.groundAt(sx, sy, () => z) : cam.groundAt(sx, sy, this.scene.heightAt);
     if (!g) {
-      const terrain = this.scene.worldApi?.terrain;
-      if (tries <= 0 || !terrain) return console.warn('[loop] spell: the ground under the tap was never read');
+      const terrain = api.terrain;
+      if (tries <= 0) return console.warn('[loop] spell: the ground under the tap was never read');
       // (the screen's reach in cells round the camera's target, both ways)
-      const r = Math.max(innerWidth, innerHeight) / cam.zoom;
+      const reach = Math.max(innerWidth, innerHeight) / cam.zoom;
       const [tx, ty] = cam.target;
-      return void terrain.load(tx - r, ty - r, tx + r, ty + r).then(
+      return void terrain.load(tx - reach, ty - reach, tx + reach, ty + reach).then(
         () => this.castAt(id, sx, sy, tries - 1),
         (e) => console.warn(`[loop] spell: the ground's pages could not be read: ${e}`),
       );
     }
-    if (pools(this.season.ledger).magic < sp.magic) {
-      this.fightLine = W.shortText({ magic: sp.magic });
+    if (id === 'growth') {
+      // (a rune over the fields: anywhere else it has no field to feed)
+      const f = this.spot('fields');
+      if (!f || Math.hypot(g[0] - f[0], g[1] - f[1]) > GROWTH.reach) return this.tell(W.GROWTH_MISS);
+    }
+    if (pools(this.season.ledger).magic < SPELL_COST[id]) {
+      this.tell(W.shortText({ magic: SPELL_COST[id] }));
       return this.arm(null);
     }
-    this.season.setLedger(lose(this.season.ledger, { magic: sp.magic }));
-    this.realm!.ledger = this.season.ledger;
-    this.scene.units?.strike?.({ at: [g[0], g[1]], radius: sp.radius, damage: sp.damage }, 'spell');
-    this.scene.powers.scriptStrike(g[0], g[1], g[2]);
+    r.ledger = this.season.ledger;
+    r.cast(id, id === 'growth' ? 'fields' : undefined);
+    this.season.setLedger(r.ledger);
+    const run = this.live.focus;
+    if (run && this.phase === 'event') run.casts[id] = (run.casts[id] ?? 0) + 1;
+    if (id === 'heatray') {
+      this.scene.units?.strike?.({ at: [g[0], g[1]], radius: HEATRAY.radius, damage: HEATRAY.damage }, 'spell');
+      this.scene.powers.scriptStrike(g[0], g[1], g[2]);
+    } else if (id === 'fire') {
+      this.scene.units?.strike?.({ at: [g[0], g[1]], radius: FIRE.radius, damage: FIRE.damage }, 'spell');
+      api.fire.ignite(g[0], g[1], { radius: FIRE.light, intensity: 0.9 });
+      api.fx.burst('flame', g[0], g[1], g[2] + 0.5, { count: 40 });
+    } else if (id === 'rain') {
+      this.scene.core.weather.spawn(g[0], g[1]);
+      api.fx.burst('splash', g[0], g[1], g[2] + 0.5, { count: 30 });
+      this.tell(W.RAIN_CAST);
+    } else {
+      api.plants.grow(g[0], g[1], { radius: GROWTH.radius, strength: GROWTH.strength });
+      api.fx.burst('leaves', g[0], g[1], g[2] + 1, { count: 50 });
+      this.tell(W.GROWTH_CAST);
+      void this.save();
+    }
     console.log(`[loop] ${id} at ${g[0].toFixed(0)}, ${g[1].toFixed(0)}`);
     this.arm(null);
   }
@@ -1023,8 +857,9 @@ export function startRunLoop(scene: LevelScene, towns: FieldTowns, mut: MutateEn
     calls: true,
     // (consequences come home: refugees in the streets, a camp's ore wagons — the fact layer's, through the realm)
     life: (l) => {
+      // (round 6: the trade route's wagons and ships by the share of its far towns still standing)
       const x = game?.realm?.life();
-      return x ? { ...l, commuters: l.commuters + x.people, wagons: l.wagons + x.wagons } : l;
+      return x ? { ...l, commuters: l.commuters + x.people, wagons: Math.round(l.wagons * x.trade) + x.wagons, ships: Math.round(l.ships * x.trade) } : l;
     },
     ready: () => void game!.load(),
   });

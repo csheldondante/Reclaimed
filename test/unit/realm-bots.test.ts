@@ -13,7 +13,6 @@ import { newLedger, nextSeason, pools, total } from '../../src/season/ledger';
 import { Realm, RUN_SEASONS, type Leader } from '../../src/season/realm';
 
 const LEADER: Leader = { id: 'ysolt', name: 'Marshal Ysolt', line: 'A soldier.', pools: { magic: 1, might: 3, labor: 4, materials: 6, intel: 1 }, income: { materials: 2, magic: 1 } };
-const HOLD_MIGHT = 4;
 
 interface Bot {
   name: string;
@@ -66,7 +65,10 @@ function play(bot: Bot, seasons: number, seed = 7): Played {
   }
   const might = total(r.ledger, 'might');
   const fort = r.ledger.built.includes('walls') || r.ledger.built.includes('keep');
-  const holds = r.averted || (fort && might >= HOLD_MIGHT);
+  // (round 6: the raid is a live event resolved here as nobody played it — each soldier standing holds a raider, the
+  // rules add what the town's tags earn: season/realm-events.ts, realm-rules.ts)
+  r.playForced();
+  const holds = r.averted || !!r.fight?.held;
   return { bot: bot.name, holds, how: r.averted ? 'tribute paid' : fort ? `${r.ledger.built.includes('walls') ? 'walls' : 'keep'}, Might ${might}` : `nowhere to gather, Might ${might}`, might, built: r.ledger.built, lapsed, asked, took, income: Object.values(r.ledger.income).reduce((a, b) => a + (b ?? 0), 0) + 0 * pools(r.ledger).materials };
 }
 

@@ -16,10 +16,11 @@ import type { FactionId } from '../api/contracts/world';
 import type { Formation, OrderFailure, PlaceRef as UnitsPlaceRef, SpawnAtOpts, SquadOrder, UnitId, Units, UnitView } from '../api/contracts/units';
 import { chainLength, type GroupId, type PlaceRef } from '../api/contracts/townplaces';
 
-export type ForceKind = 'soldier' | 'raider';
+/** (round 6) 'worker' and 'cart': a live event's people who take no part in a fight (a parade, refugees) */
+export type ForceKind = 'soldier' | 'raider' | 'worker' | 'cart';
 /** a group's order, with townplaces' PlaceRefs (turned into the Units contract's at the call) */
 export type ForceOrder =
-  | { kind: 'guard' | 'go' | 'attack'; at: PlaceRef; formation?: Formation }
+  | { kind: 'guard' | 'go' | 'attack'; at: PlaceRef; formation?: Formation; discipline?: number }
   | { kind: 'drill'; at: PlaceRef; formation: Formation }
   | { kind: 'man'; town: number; side?: number }
   | { kind: 'march'; town: number; gate: number; leave?: boolean };
@@ -37,10 +38,10 @@ export interface GroupReport {
 }
 
 /** each kind's unit kind on the Units contract (the lab and the figures tell soldiers by 'guard') */
-const KIND: Record<ForceKind, string> = { soldier: 'guard', raider: 'raider' };
+const KIND: Record<ForceKind, string> = { soldier: 'guard', raider: 'raider', worker: 'worker', cart: 'cart' };
 /** each kind's spawn opts: sight in cells (a raider sees a little farther: it hunts), pace class, health. The pace
  *  itself is the kind's on the GPU (soldier 3.2, raider 3.4); `speed` only picks the class */
-export const FORCE_OPTS: Record<ForceKind, SpawnAtOpts> = { soldier: { sight: 22, speed: 3.2, health: 3 }, raider: { sight: 24, speed: 3.4, health: 3 } };
+export const FORCE_OPTS: Record<ForceKind, SpawnAtOpts> = { soldier: { sight: 22, speed: 3.2, health: 3 }, raider: { sight: 24, speed: 3.4, health: 3 }, worker: { sight: 10, speed: 2.4, health: 2 }, cart: { sight: 10, speed: 2.4, health: 4 } };
 
 interface Group {
   id: GroupId;

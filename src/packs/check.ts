@@ -93,7 +93,8 @@ export interface PackEvent {
   tag: string;
   title: string;
   how: string;
-  where: string;
+  /** not used: an event plays at the place of the card that starts it */
+  where?: string;
   groups?: { who: string; count: number | string; tags: string[]; from: string; order?: string; formation?: string; to?: string }[];
   hazard?: { kind: string; points: number; spread: number };
   seconds?: number;
@@ -143,12 +144,14 @@ export const TIERS: readonly string[] = ['triumph', 'success', 'cost', 'failure'
 export const THING_KINDS: readonly string[] = ['building', 'garrison', 'policy', 'effect', 'relic', 'people'];
 export const LEADER_IDS: readonly string[] = ['ysolt', 'dunstan', 'ilveth'];
 export const FAR_STATES: readonly string[] = ['standing', 'destroyed', 'abandoned', 'occupied', 'vassal', 'founded'];
-export const LIVE_KINDS: readonly string[] = ['raid', 'parade', 'fire', 'rising'];
+export const LIVE_KINDS: readonly string[] = ['raid', 'parade', 'fire', 'rising', 'refugees'];
+/** abilities that do something when cast into a live event (living/live.ts SPELL_MECH) */
+export const EVENT_ABILITIES: readonly string[] = ['fire', 'heat-ray', 'rain'];
 export const AMOUNTS: readonly string[] = ['crowd', 'stopped', 'burned'];
 export const BASE_ABILITIES: readonly string[] = ['growth-rune', 'fire', 'heat-ray', 'rain'];
 export const UNIT_KINDS: readonly string[] = ['soldier', 'raider', 'worker', 'cart', 'dead'];
 /** the base game's card ids (season/realm-templates.ts): a pack's may not clash with them */
-export const BASE_CARD_IDS: readonly string[] = ['build:houses', 'build:farms', 'build:market', 'build:workshops', 'build:harbour', 'build:keep', 'build:quarry', 'build:lumber', 'build:bridge', 'build:trade', 'build:walls', 'mining-outpost', 'tower-lens', 'relieve-neighbour', 'house-refugees', 'guard-camp', 'dead-rise', 'pay-raiders', 'mend-dam', 'fire-wards', 'feed-shrine', 'shore-hill'];
+export const BASE_CARD_IDS: readonly string[] = ['build:houses', 'build:farms', 'build:market', 'build:workshops', 'build:harbour', 'build:keep', 'build:quarry', 'build:lumber', 'build:bridge', 'build:trade', 'build:walls', 'mining-outpost', 'tower-lens', 'relieve-neighbour', 'house-refugees', 'guard-camp', 'dead-rise', 'pay-raiders', 'mend-dam', 'fire-wards', 'feed-shrine', 'shore-hill', 'raid', 'gate-parade', 'refugees-arrive', 'resettle-refugees', 'market-fire'];
 export const COND_KEYS: readonly string[] = ['pool', 'season_gte', 'has_thing', 'no_thing', 'town_has', 'site_has', 'far_town_is', 'resolved', 'leader'];
 export const EFFECT_KEYS: readonly string[] = ['pool', 'income', 'put', 'remove', 'tag', 'untag', 'mutate', 'far', 'sign', 'arrive', 'unlock', 'say'];
 /** written in the first draft of the format, not built: each with what to write instead (BACKLOG CT-10..) */
@@ -279,7 +282,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       } else if (key === 'tag' || key === 'untag') {
         const t = String(x[key]);
         needTag(t, w, 'made');
-        if (KNOWN_TAGS.includes(t) && !['sheltered', 'festival', 'growth-active'].includes(t)) err(w, `The tag "${t}" is set by the game itself (what a site is, or what happened to it). To ruin a site use "mutate"; to add your own state, declare a tag in "tags".`);
+        if (KNOWN_TAGS.includes(t) && !['festival', 'growth-active'].includes(t)) err(w, `The tag "${t}" is set by the game itself (what a site is, or what happened to it). To ruin a site use "mutate"; to add your own state, declare a tag in "tags".`);
         place(String(x.on), w, { town: true, target: o.ability });
       } else if (key === 'mutate') {
         if (!LAND_KINDS.includes(String(x.mutate))) err(w, `Unknown land change "${String(x.mutate)}". The kinds are ${LAND_KINDS.join(', ')}. For a far town use "far".`);
@@ -362,6 +365,9 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     if (c.live) {
       if (!eventIds.has(c.live)) err(w, `"live" names the event "${c.live}", which is not in the pack's "events".`);
       if (!c.if_tier || !Object.keys(c.if_tier).length) err(w, 'A card with a live event needs "if_tier": what each result does.');
+      if (c.if_taken?.length) err(w, 'A card with a live event has no "if_taken". Its event\'s result picks one of "if_tier".');
+      // (every result its event can give needs its effects: nothing is guessed for a missing one)
+      for (const row of events.find((e) => e.id === c.live)?.tiers ?? []) if (c.if_tier && TIERS.includes(row.tier) && !(row.tier in c.if_tier)) err(`${w}.if_tier`, `The event "${c.live}" can end in "${row.tier}", but "if_tier" has no "${row.tier}". Add it.`);
       for (const [t, list] of Object.entries(c.if_tier ?? {})) {
         if (!TIERS.includes(t)) err(`${w}.if_tier`, `Unknown result "${t}". The results are ${TIERS.join(', ')}.`);
         effects(list, `${w}.if_tier.${t}`);
@@ -420,22 +426,26 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     const w = `events[${i}] (${e.id})`;
     if (!e.title || !e.how) err(w, 'An event needs a "title" and a "how" (what the player can do).');
     if (!e.tag) err(w, 'An event needs a "tag": the kind rules trigger on.');
-    place(e.where, `${w}.where`);
+    if (e.where !== undefined) warn(w, '"where" is not used: an event plays at the place of the card that starts it ("presenter.at"). Remove it.');
+    if (!(e.groups ?? []).length && !e.hazard) err(w, 'An event needs at least one group or a hazard.');
     const amounts = new Set<string>(Array.isArray(e.amounts) ? e.amounts : []);
     const groupTags = new Set((e.groups ?? []).flatMap((g) => g.tags ?? []));
     for (const a of amounts) {
       const m = /^(alive|dead):(.+)$/.exec(a);
       if (m ? !groupTags.has(m[2]) : !AMOUNTS.includes(a)) err(w, `Unknown amount "${a}". The amounts are ${AMOUNTS.join(', ')}, "alive:<group tag>" and "dead:<group tag>" for a tag one of its groups has.`);
       if (a === 'burned' && !e.hazard) err(w, 'The amount "burned" needs a "hazard" of kind "fire".');
+      if (a === 'crowd' && !groupTags.has('crowd')) err(w, 'The amount "crowd" counts the people of groups tagged "crowd" who arrive. Give a group the tag "crowd" and the order "go".');
     }
     for (const g of e.groups ?? []) {
+      if (typeof g.count !== 'number' || !Number.isInteger(g.count) || g.count < 1) err(w, `A group's "count" is a whole number, 1 or more. It is ${JSON.stringify(g.count)}.`);
+      if (!Array.isArray(g.tags) || !g.tags.length) err(w, 'A group needs at least one tag.');
       if (!UNIT_KINDS.includes(g.who)) err(w, `Unknown unit "${g.who}". The units are ${UNIT_KINDS.join(', ')}.`);
       if (g.order !== undefined && !['go', 'guard', 'attack'].includes(g.order)) err(w, `The order "${g.order}" is not supported yet. The orders are go, guard, attack.`);
       if (g.formation !== undefined && !['column', 'line', 'loose'].includes(g.formation)) err(w, `Unknown formation "${g.formation}". The formations are column, line, loose.`);
       for (const k of ['from', 'to'] as const) if (g[k] !== undefined && !['gate', 'road', 'event'].includes(g[k]!) && !siteOf(g[k])) err(w, `A group's "${k}" is a site ("site:<name>"), "gate", "road" or "event". It is ${JSON.stringify(g[k])}.`);
     }
     if (e.hazard && e.hazard.kind !== 'fire') err(w, `The hazard "${e.hazard.kind}" is not supported yet. Only "fire" exists.`);
-    for (const a of e.abilities ?? []) if (!abilityIds.has(a)) err(w, `Unknown ability "${a}". Existing: ${BASE_ABILITIES.join(', ')}; or one in the pack's "abilities".`);
+    for (const a of e.abilities ?? []) if (!EVENT_ABILITIES.includes(a)) err(w, abilityIds.has(a) ? `The ability "${a}" does nothing when cast into an event yet. The ones that do: ${EVENT_ABILITIES.join(', ')}.` : `Unknown ability "${a}". The ones that can be cast into an event: ${EVENT_ABILITIES.join(', ')}.`);
     if (!Array.isArray(e.tiers) || !e.tiers.length) return err(w, 'An event needs "tiers": how its result is read.');
     e.tiers.forEach((t, k) => {
       const tw = `${w}.tiers[${k}]`;

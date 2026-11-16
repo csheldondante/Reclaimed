@@ -99,7 +99,6 @@
   "events": [
     { "id": "sample-thresh-blaze", "tag": "fire",
       "title": "Fire on the threshing floor", "how": "Call rain on the flames.",
-      "where": "site:fields",
       "groups": [ { "who": "worker", "count": 6, "tags": ["bucket-line"], "from": "site:river", "order": "go", "formation": "line", "to": "event" } ],
       "hazard": { "kind": "fire", "points": 5, "spread": 30 },
       "seconds": 90,

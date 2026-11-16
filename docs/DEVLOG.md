@@ -24105,3 +24105,119 @@ attribute. A thing's tags are lent to the place it stands at, or a rule asking o
 pack played on the Realm (granary built in two seasons and its income added, blessing unlocked and cast for 1 Magic,
 its timed tag gone next season, the unanswered mill fire leaving the mill street `ruined, burned`). Two phone-size
 shots looked at (412x915): the armed ability lights its legal target; ruined things show red tags.
+
+## 2026-11-16 — loop skeleton round 6: one live-event system; tags and synergy rules; a spell every season (`loop-skeleton`, LS-61 to LS-71)
+
+**Why.** The owner (DECISIONS 2026-11-16): "I do think this may be a mistake to differentiate combat from other
+events like parades or riots or fires. I would strongly consider using the same system for all of them." "Let's make
+these realtime for now and they can resolve automatically when the season ends with a different outcome based on your
+strategic interactions including casting spells." "Those engines should all be defined in terms of tags and
+synnergies designed like a card game not hard coded." Before this round the loop had two hand-written live things
+(the raid: `beginAttack`, `nextRoad`, `watchFight`, `endAttack`, `SeasonWar.call`, `Realm.fought`; the dead:
+`playDead`, tied to one template id), and no rule could say "X near Y gives Z".
+
+**What was built.**
+- *A live event is data* (`src/living/live.ts`): `TemplateDef.play.event` — groups (kind, side, count, tags, where
+  from, order and formation), a hazard, seconds, spells, ends, and how the result is read (`result` → rules →
+  `derive` → `tiers`). Pure: `idleState` is the event as nobody played it, so Node resolves the same events (the
+  bots now hold or fall by the raid's own data instead of a proxy).
+- *One runner* (`src/scenes/level/live-runner.ts`) plays any of them: groups made by place (`TownForces`, widened to
+  workers and carts), by site, or in by a road (the camera down each road in turn — the raid's own road search, kept,
+  now for any column); the hazard; the story camera; the sim's speed on the march; counts from the units' own events.
+  It goes on while the player is elsewhere; the loop's event and attack code is deleted (`loop.ts` 1034 → about 880
+  lines with the new spells in it).
+- *The realm resolves* (`Realm.finishLive`): the numbers read, the rules applied, a tier, and
+  `LivingEngine.resolve(id, tier)` — so every result is the template's own outcomes in the fact layer. At a
+  season's end every event still running is resolved from the state the scene last told.
+- *Five events as data* (`src/season/realm-events.ts`): the raid (forced), the dead, a parade (the piper), a fire at
+  the market (the fire mage; it replaces the instant `fire-wards` hazard), refugees walking in (forced when a far
+  town falls). A second answer for the refugees (`resettle-refugees`) beside shelter and turning away.
+- *Tags and rules* (`src/living/rules.ts`, `src/season/realm-rules.ts`): `RuleDef` — trigger, tag queries with a
+  relation of place, an effect on a pool or on one of an event's numbers, capacity, firings a season; `RuleBook`
+  fires them, the realm records each (`rule-fired`) and tells it in one line. Ten rules. Tags are derived
+  (`Realm.things`): a ruined thing has lost its working tags.
+- *Spells*: the growth rune every season on the town's sheet (the ecology's `plants.grow`, the field
+  `growth-active`); Fire lights the fire system where it lands; Rain is the weather's own storm. A cast is a fact
+  event (`spell-cast`).
+- *Trade partners*: `Realm.partners()`; the trade route's wagons and ships scale with those still standing
+  (`Realm.life().trade`), and the news says when one is gone.
+
+**Found on the way.**
+- *Does the fire system burn generated buildings?* No (read, `shaders/fire.wgsl fuelAt`): fuel is plants, oil,
+  timber, canvas and trash on top of a column; citygen's buildings are meshes. The smallest true connection made:
+  the event puts a canvas stall down at each of its 6 spots and lights those in the real fire system; a spot seen
+  alight for 12 s is a burned lot and gets the mutators' `burned` condition there (BACKLOG LS-63: buildings as fuel
+  is the real fix).
+- *A spawn's refusal can be told after its units were taken for standing.* The first walk hung on the refugees: road
+  0's spawn point was in water, told more than 20 frames after the call; the runner had already taken the group for
+  made. The old raid code looked for the refusal every frame; the runner now does too (until one of the group has
+  died or arrived), and the player cannot leave an entering column in its first 3 s.
+- *A site holds one card.* The parade first stood at the weavers' street and kept the houses card off the board for
+  8 seasons (`realm.test`); it stands at the shrine now, with a small worth so a building outranks it.
+- *A number in the fact layer is an intensity (0..1).* A timed tag's end is stored as text.
+
+**Walks: owed at this commit.** Pushed early for the card-table track, which reads the Realm's rules, things, spells
+and live events. Seen so far by a finger (412x915, `q=low`, 7 seasons): refugees refused on roads 0 and 1 (water),
+in by road 2, 12 people and 3 carts, counted as arrived when they halted in the town (the units' own `arrived` never
+came for a column sent to the stores: BACKLOG LS-72), the camp's line in the news. The parade, the fire, the dead, the
+raid and the rune on this tree: in the next entry.
+
+**Tests.** `test/unit/live-rules.test.ts` (19): every event's data well formed; the raid's ends and its read (held,
+sacked, time up, a rule's 2 stopped, no road); the fire and the parade; each rule kind (trigger, once a season,
+capacity, near / event / route, a pool's level, no effect refused, bounded firing, save and load); on the realm: the
+rune doubles the crop once, nothing on unworked or burned fields, walls with a garrison in the raid, unrest halving a
+parade, a fire with water close by, an event resolved at the season's end. `realm.test`, `realm-bots`,
+`realm-resume` updated (the raid through `playForced`). 93 pass in the six files run alone (live-rules, realm, realm-bots, realm-resume,
+living, season-war); typecheck clean. `writing-sources` still fails on `src/roadlab/control.ts`, as before this round.
+
+## 2026-11-16 — loop skeleton round 6, the close: the walks, the fire that does not burn, the census (`loop-skeleton`, LS-63, LS-72 to LS-75)
+
+**The fire event is not dealt.** `terrain.deposit` and then `terrain.build` refused timber (a plant in the material
+table); with canvas the event ran but showed no flame and ended by itself reading "0 of 6 alight, 0 burned". A probe
+at the market (headless, `q=low`): after `terrain.build` of canvas and of trash, `terrain.put` of canvas and
+`plants.grow`, the ground still read soil (or `external` under a building) and `fire.fireAt` read 0 for 20 s after
+`fire.ignite`. Why is not found (BACKLOG LS-63). A win nobody earned is worse than no event, so the card is out of
+the deal (`realm-events.ts FIRE_TEMPLATE`, `RealmOptions.liveFire`), its data and resolution stay unit-tested, and
+the instant `fire-wards` hazard is back. The Fire spell still calls `fire.ignite`; what the player sees of it is the
+particle burst.
+
+**Walks by a finger** (412x915, `q=low`; stills in the session's scratch folder `loop/r6/`):
+- *Prepared, 16 seasons, reload in season 9 — the final tree: passed, every check.* Refugees in by road 2 (roads 0
+  and 1 refused: water), 12 people and 3 carts; three parades (crowd 7, 8, 8; "The parade passed the mountain shrine
+  and some of the crowd prayed there: +2 Magic."; "With unrest in the town, 6 fewer people came out for the
+  parade."); the dead, 5 of 5 in view, burned; the rune drawn twice, and with farms built "The growth rune doubled
+  the crop on the east fields: +2 Materials."; the reload identical; decisions a season 2 to 5; the raid: 6 raiders,
+  heat ray 5 → 3, 1 soldier lost, "Your walls and their garrison stopped 2 raiders at the gate."; the end, the
+  reload, run 2.
+- *Unprepared, 5 seasons — one commit earlier (before the fire was taken out and the runner's end guard): one check
+  failed.* Six things asked in season 3 (LS-73). The rest passed: refugees, the raid with no soldiers ("6 of 6
+  raiders got into the town. They took 6 Materials. Unrest +1.").
+- *`--fast`, 5 seasons — the same earlier tree: one check failed.* One name over the map took a press over 31 px
+  (LS-74). The rest passed, the rune by a tap and the raid held (3 soldiers lost of 12).
+- Not run again on the final tree: the unprepared and `--fast` walks (the change since: no fire card, the fire-wards
+  hazard back, the end guard).
+- Looked at: the refugees on the road (a knot of figures and carts, "Refugees 12" over them); the parade through the
+  gate (a file of nine under its name; it was night — the sim runs at 3× while a column is on the road — and no
+  petal showed); the dead with a Fire cast (a yellow burst on one, rings on the rest); the fight at the gate (red
+  and blue rings meeting, both names apart); the result with the rule's line; the rune close up (a thicket of new
+  bushes where the tap was) and from the town's zoom (a small brighter patch); the town's sheet with the rune's
+  button between Map and Next season.
+
+**Census** (`scripts/census.mjs --params loop=1 --pick ysolt --states idle,event --event dead-rise`; counts, the
+phone's ms from the model):
+
+| State | est. phone ms a frame | indirect dispatches a frame | read back a frame |
+|---|---|---|---|
+| idle, the town | 1.05 | 0.60 (all `liquid-water`, as before: LS-55) | 1.76 KB |
+| a live event running (the dead: 5 units) | 2.34 | 4.87 (4.01 the units' own passes, which run while any unit exists) | 1.27 KB |
+| the fire event as it was (nothing alight) | 1.40 | 0.94 | 0.99 KB |
+
+The runner adds no pass. What an event costs is the units system being awake: about 1.3 ms a frame by the model, as
+in any raid before this round. Nothing new at idle.
+
+**Also.** A halted column is counted as arrived (LS-72: the units' own `arrived` never came for a column sent to the
+stores; every column this round halted at the same spot, 134,133). The road that took the last column is tried
+first. A runner's end is told once (a host that failed to resolve it was asked again every frame).
+
+**Tests.** The four realm files pass alone (45); typecheck clean; `writing-sources` fails on `src/roadlab/control.ts`
+as before.

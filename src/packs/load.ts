@@ -8,10 +8,13 @@
 // reads is the number the engine applies; the author's `say` sentences are added after it.
 import type { EntityId } from '../api/contracts/facts';
 import type { BindSpec, Effect, Helper, Pred } from '../living/dsl';
+import type { Tier } from '../api/contracts/opportunity';
 import type { TemplateDef } from '../living/engine';
+import type { LiveCond, LiveDef, LiveWhere } from '../living/live';
+import type { RuleDef, Thing } from '../living/rules';
 import type { FactWorld } from '../living/world';
 import { placeStates } from '../mutate/facts';
-import { checkPack, reportText, siteOf, GOODS, PEOPLE, type Pack, type PackAbility, type PackCard, type PackCond, type PackEffect, type PackEvent, type PackRule, type PackTag, type PackThing, type Problem } from './check';
+import { checkPack, reportText, siteOf, GOODS, PEOPLE, type Pack, type PackAbility, type PackCard, type PackCond, type PackEffect, type PackEvent, type PackTag, type PackThing, type Problem } from './check';
 
 const POOL_WORD: Record<string, string> = { magic: 'Magic', might: 'Might', labor: 'Labor', materials: 'Materials', intel: 'Intel', unrest: 'Unrest' };
 const LAND_WORD: Record<string, string> = { flooded: 'is flooded', burned: 'burns', melted: 'goes under lava', buried: 'is buried', dried: 'dries up', withered: 'withers', greened: 'grows over, thick and green' };
@@ -31,7 +34,7 @@ export interface LoadedPack {
   name: string;
   templates: TemplateDef[];
   /** the engine's RuleDef, as written */
-  rules: PackRule[];
+  rules: RuleDef[];
   tags: PackTag[];
   things: PackThing[];
   events: PackEvent[];
@@ -142,12 +145,24 @@ function effects(list: readonly PackEffect[], p: Pack, need: Set<string>, note: 
 function template(c: PackCard, p: Pack, after: string[], boost: boolean): TemplateDef {
   const site = siteOf(c.presenter.at)!;
   const need = new Set<string>([`own:${site}`]);
+  const event = c.live ? p.events!.find((e) => e.id === c.live)! : null;
   const taken = c.if_taken ?? [];
   const left = c.if_expires ?? [];
-  const takenText = effectsText(taken, p);
+  // (a live card: what the player reads for "if taken" is what there is to do at the event)
+  const takenText = event ? event.how : effectsText(taken, p);
   const leftText = effectsText(left, p);
   const outcome = effects(taken, p, need, takenText);
   const onExpire = effects(left, p, need, leftText);
+  const done = (note: string): Effect => ({ event: doneKind(c.id), by: ['player'], to: ['$site', '$town'], note, weight: 0.2 });
+  // (each result of its event: its effects, and its words written from them)
+  const outcomes = event
+    ? Object.fromEntries(
+        (Object.entries(c.if_tier ?? {}) as [Tier, PackEffect[]][]).map(([tier, list]) => {
+          const words = effectsText(list, p);
+          return [tier, { text: words, effects: [...effects(list, p, need, words), done(words)] }];
+        }),
+      )
+    : null;
   const cost = c.cost ?? {};
   const agents = PEOPLE.filter((k) => cost[k] > 0).map((k) => ({ kind: k === 'labor' ? ('workers' as const) : ('army' as const), count: cost[k] }));
   const goods = Object.fromEntries(GOODS.filter((k) => cost[k] > 0).map((k) => [k, cost[k]]));
@@ -174,8 +189,7 @@ function template(c: PackCard, p: Pack, after: string[], boost: boolean): Templa
     requires: { agents, goods },
     turns: c.build_seasons ?? 1,
     work: 'labour',
-    outcome: [...outcome, { event: doneKind(c.id), by: ['player'], to: ['$site', '$town'], note: takenText, weight: 0.2 }],
-    outcomeText: takenText,
+    ...(event && outcomes ? { play: { area: '$site', event: liveDef(event) }, vars: 'live', outcomes } : { outcome: [...outcome, done(takenText)], outcomeText: takenText }),
     ...(left.length ? { onExpire: [...onExpire, { event: lapsedKind(c.id), by: [], to: ['$site', '$town'], note: leftText, weight: -0.3 }], expireText: leftText } : {}),
     presenter: { of: '$town', role: c.presenter.role, own: true, verb: c.threat ? 'warns' : 'asks', line: c.pitch },
     reward: { text: takenText },
@@ -192,15 +206,56 @@ export function loadPack(p: Pack, base: { cards?: readonly string[]; rules?: rea
   const left: LoadedPack['left'] = [];
   const templates: TemplateDef[] = [];
   for (const c of p.cards ?? []) {
-    // (BACKLOG CT-11) a live event's card waits for the live-event system (living/live.ts) to be merged
-    if (c.live) {
-      left.push({ card: c.id, why: 'It starts a live event. Live events are not played from packs yet.' });
-      continue;
-    }
     const after = (p.cards ?? []).filter((o) => o.leads_to?.includes(c.id)).map((o) => o.id);
     templates.push(template(c, p, after, !!base.boost));
   }
-  return { id: p.pack.id, name: p.pack.name, templates, rules: p.rules ?? [], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], left, problems };
+  // (a pack's rules are the engine's RuleDef as written: the validator has checked their shape)
+  return { id: p.pack.id, name: p.pack.name, templates, rules: (p.rules ?? []) as unknown as RuleDef[], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], left, problems };
+}
+
+/** a pack's place word as a live event's place: a site, the gate or the road the event's column came by, or the
+ *  event's own place (the site of the card that starts it) */
+function liveWhere(ref: string | undefined): LiveWhere {
+  if (ref === 'gate') return { place: 'gate', road: 'entry' };
+  if (ref === 'road') return { place: 'spawn', road: 'entry' };
+  const k = siteOf(ref);
+  return { site: k ?? 'here' };
+}
+const UNIT_KIND: Record<string, { kind: string; side: 'town' | 'foe' | 'folk' }> = { soldier: { kind: 'guard', side: 'town' }, raider: { kind: 'raider', side: 'foe' }, dead: { kind: 'shambler', side: 'foe' }, worker: { kind: 'worker', side: 'folk' }, cart: { kind: 'cart', side: 'folk' } };
+
+/** a pack's event as the engine's LiveDef (living/live.ts): played at the site of the card that starts it */
+export function liveDef(e: PackEvent): LiveDef {
+  const groups: LiveDef['groups'] = (e.groups ?? []).map((g, i) => ({
+    id: `g${i}`,
+    kind: UNIT_KIND[g.who].kind,
+    side: UNIT_KIND[g.who].side,
+    n: Number(g.count),
+    tags: [...new Set([...g.tags, g.who])],
+    from: liveWhere(g.from),
+    ...(g.order ? { order: { kind: g.order as 'go' | 'guard' | 'attack', at: liveWhere(g.to ?? 'event'), ...(g.formation ? { formation: g.formation as 'column' | 'line' | 'loose' } : {}) } } : {}),
+  }));
+  const foe = groups.find((g) => g.side === 'foe');
+  const goer = groups.find((g) => g.order?.kind === 'go');
+  return {
+    tag: e.tag,
+    title: e.title,
+    how: e.how,
+    line: e.how,
+    groups,
+    ...(e.hazard ? { hazard: { kind: 'fire' as const, at: { site: 'here' }, points: e.hazard.points, spread: e.hazard.spread, radius: 2.5, intensity: 0.9 } } : {}),
+    camera: { at: { site: 'here' }, zoom: 10 },
+    ...(e.seconds !== undefined ? { seconds: e.seconds } : {}),
+    spells: (e.abilities ?? []).map((a) => BASE_SPELL[a] ?? a),
+    ends: e.hazard ? [{ when: 'out', after: 20 }] : foe ? [{ when: 'none', tag: foe.tags[0] }] : goer ? [{ when: 'arrived', group: goer.id }] : [],
+    result: e.amounts.map((a) => {
+      const m = /^(alive|dead):(.+)$/.exec(a);
+      if (m) return { as: a, count: m[1] as 'alive' | 'dead', tag: m[2] };
+      if (a === 'burned') return { as: a, read: 'burned' as const };
+      if (a === 'crowd') return { as: a, count: 'arrived' as const, tag: 'crowd' };
+      return { as: a, value: 0 };
+    }),
+    tiers: e.tiers.map((t) => ({ tier: t.tier as Tier, ...(t.when?.length ? { when: t.when.map((c): LiveCond => [c.amount, c.lte !== undefined ? '<=' : '>=', (c.lte ?? c.gte)!]) } : {}) })),
+  };
 }
 
 // ---- the helpers a pack's cards name (given to the Realm: RealmOptions.extra.helpers) --------------------------------
@@ -209,8 +264,10 @@ const idOf = (b: Record<string, EntityId>, r: unknown): EntityId => {
   const s = String(r ?? '');
   return s.startsWith('$') ? (b[s.slice(1)] ?? s) : s;
 };
-/** the attribute a timed tag's last turn is kept in (a tag's value cannot be a turn: facts.ts tagRefusal) */
-const untilKey = (tag: string): string => `until:${tag}`;
+/** a tag's value in the fact layer: true, or for a timed one the turn it ends with, as text (the Realm's own way:
+ *  season/realm.ts `mark` — a number in the fact layer is an intensity) */
+const tagValue = (w: FactWorld, timed: boolean): true | string => (timed ? String(w.turn) : true);
+const inForce = (w: FactWorld, v: unknown): boolean => v === true || (typeof v === 'string' && Number(v) >= w.turn);
 
 export function packHelpers(packs: readonly LoadedPack[], host: PackHost): Record<string, Helper> {
   const things = new Map(packs.flatMap((p) => p.things.map((t) => [t.id, t] as const)));
@@ -246,11 +303,7 @@ export function packHelpers(packs: readonly LoadedPack[], host: PackHost): Recor
     },
     packTag: {
       effect: (c, a) => {
-        const id = idOf(c.b, a[0]);
-        c.w.facts.setTag(id, 'condition', String(a[1]), true, c.cause);
-        const e = c.w.facts.entity(id)!;
-        if (Number(a[2])) e.attrs[untilKey(String(a[1]))] = c.w.turn;
-        else delete e.attrs[untilKey(String(a[1]))];
+        c.w.facts.setTag(idOf(c.b, a[0]), 'condition', String(a[1]), tagValue(c.w, !!Number(a[2])), c.cause);
       },
     },
     packUntag: { effect: (c, a) => void c.w.facts.dropTag(idOf(c.b, a[0]), 'condition', String(a[1])) },
@@ -262,8 +315,37 @@ export function packHelpers(packs: readonly LoadedPack[], host: PackHost): Recor
 export function packTagsOn(w: FactWorld, id: EntityId, packs: readonly LoadedPack[]): string[] {
   const e = w.facts.entity(id);
   if (!e) return [];
-  const known = new Set([...packs.flatMap((p) => p.tags.map((t) => t.id)), 'sheltered', 'festival', 'growth-active']);
-  return e.tags.filter((t) => t.scope === 'condition' && t.value === true && known.has(t.key) && (e.attrs[untilKey(t.key)] === undefined || Number(e.attrs[untilKey(t.key)]) >= w.turn)).map((t) => t.key);
+  const known = new Set(packs.flatMap((p) => p.tags.map((t) => t.id)));
+  return e.tags.filter((t) => t.scope === 'condition' && known.has(t.key) && inForce(w, t.value)).map((t) => t.key);
+}
+
+/** the tags the pack things standing at a place lend it (null: the town itself) */
+export function lentTo(w: FactWorld, packs: readonly LoadedPack[], place: EntityId | null): string[] {
+  return packThings(w, packs)
+    .filter((t) => t.site === place)
+    .flatMap((t) => [...t.def.tags, ...packTagsOn(w, t.id, packs)]);
+}
+
+/**
+ * The Realm's things with the packs' added (RealmOptions.extra.things): each pack thing in play as a thing of its own,
+ * at its site's place; a thing on a ruined site carries only 'ruined'. A thing's tags are also lent to the place it
+ * stands at (its site, or the home town) while that place is not ruined, so a rule can ask one thing for "field" and
+ * "granary", or "home" and "night-watch". Pack tags set on the Realm's own things are added to them.
+ * (Round 6 has not this lending: BACKLOG LS-75.)
+ */
+export function withPackThings(w: FactWorld, packs: readonly LoadedPack[], base: readonly Thing[], home: EntityId): Thing[] {
+  const out: Thing[] = base.map((t) => {
+    if (t.tags.includes('ruined')) return { ...t };
+    const more = [...packTagsOn(w, t.id, packs), ...(t.id === home ? lentTo(w, packs, null) : lentTo(w, packs, t.id))];
+    return { ...t, tags: [...new Set([...t.tags, ...more])] };
+  });
+  const town = base.find((t) => t.id === home);
+  for (const t of packThings(w, packs)) {
+    const place = t.site ? base.find((x) => x.id === t.site) : town;
+    const ruined = !!place?.tags.includes('ruined');
+    out.push({ id: t.id, name: t.def.name, tags: ruined ? ['ruined'] : [...t.def.tags, ...packTagsOn(w, t.id, packs)], at: place?.at ?? null, town: home });
+  }
+  return out;
 }
 
 /** the pack things in play: each with its tags and the site it stands at (null: the town) */
@@ -284,10 +366,8 @@ export function castAbility(w: FactWorld, a: PackAbility, target: EntityId, pack
   if (!e) throw new Error(`pack: no thing ${target} to cast ${a.id} on`);
   const gains: Record<string, number> = {};
   for (const fx of a.effect) {
-    if ('tag' in fx) {
-      w.facts.setTag(target, 'condition', fx.tag, true, `ability:${a.id}`);
-      if (timed.includes(fx.tag)) e.attrs[untilKey(fx.tag)] = w.turn;
-    } else if ('untag' in fx) w.facts.dropTag(target, 'condition', fx.untag);
+    if ('tag' in fx) w.facts.setTag(target, 'condition', fx.tag, tagValue(w, timed.includes(fx.tag)), `ability:${a.id}`);
+    else if ('untag' in fx) w.facts.dropTag(target, 'condition', fx.untag);
     else if ('pool' in fx) gains[fx.pool] = (gains[fx.pool] ?? 0) + fx.add;
   }
   return gains;

@@ -152,6 +152,17 @@ await run({ name: 'census', kind: 'behaviour' }, async (R) => {
     await R.sleep(10000);
     say('after the season (10 s)', await take());
   }
+  if (states.includes('event')) {
+    // (loop round 6: a live event running — `--event <template>`, with --params loop=1 --pick <leader>: the fire at the
+    // market by default, the one event that reads anything back)
+    const tpl = R.opt('event', 'market-fire');
+    const ok = await p.evaluate((t) => window.rungame?.measureEvent(t) ?? false, tpl);
+    R.check(`event: ${tpl} begun`, ok);
+    await R.sleep(6000);
+    await take();
+    await R.sleep(idleS * 1000);
+    say(`event (${tpl}, ${idleS} s from 6 s in)`, await take());
+  }
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, JSON.stringify(reports, null, 1));
   R.log(`written ${out}`);

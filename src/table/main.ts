@@ -19,6 +19,8 @@ let packs: Pack[] = [];
 let packError = '';
 /** the ability tapped, waiting for its target */
 let armed: string | null = null;
+/** the drawers left open (a redraw keeps them) */
+const open = new Set<string>(params.get('open')?.split(',') ?? []);
 let table = new Table({ seed, leader, seasons });
 
 function restart(): void {
@@ -33,6 +35,9 @@ function restart(): void {
     table = new Table({ seed, leader, seasons });
   }
 }
+
+const drawer = (id: string, title: string, body: string, force = false): string => `<details data-drawer="${id}" ${force || open.has(id) ? 'open' : ''}><summary>${esc(title)}</summary>${body}</details>`;
+const tags = (list: readonly string[], cls: string): string => `<div class="tags">${list.map((x) => `<span class="tag ${cls}">${esc(x)}</span>`).join('')}</div>`;
 
 function header(): string {
   const t = table;
@@ -59,9 +64,9 @@ function opps(): string {
   <div class="who">${esc(c.who)}, ${esc(c.role)}. ${esc(cap(c.place))}.</div>
   <div class="say">"${esc(c.line)}"</div>
   <div class="row"><b>${W.COST}.</b> ${esc(c.cost)}</div>
-  <div class="row"><b>${W.IF_TAKEN}.</b> ${esc(c.gives)}</div>
+  <div class="row"><b>${W.IF_TAKEN}.</b> ${esc(c.gives)}${c.live ? ` ${W.LIVE_NOTE}` : ''}</div>
   <div class="row ${c.lapse ? 'bad' : ''}"><b>${W.IF_LEFT}.</b> ${esc(c.lapse ?? W.NO_LAPSE)} ${esc(W.leftLine(c.left))}</div>
-  <div class="tags">${c.tags.map((x) => `<span class="tag">${esc(x)}</span>`).join('')}</div>
+  ${tags(c.tags, '')}
   ${miss ? `<div class="need">${esc(W.needLine(miss))}</div>` : ''}
   <div class="acts"><button class="main" data-act="take" data-id="${esc(c.id)}" ${miss ? 'disabled' : ''}>${W.TAKE}</button><button data-act="pass" data-id="${esc(c.id)}">${W.PASS}</button></div>
 </div>`;
@@ -71,45 +76,80 @@ function opps(): string {
   return `<h2>${W.OPPS_TITLE}</h2><div class="grid">${body}</div>`;
 }
 
+/** the live events under way: who is in it, what can be cast, the rules that would apply and how it would end now */
+function events(): string {
+  const list = table.liveEvents();
+  if (!list.length) return '';
+  const ab = table.abilities().find((a) => a.id === armed);
+  const body = list
+    .map((e) => {
+      const target = !!ab && ab.targets.includes(e.id);
+      const who = [...e.groups.map((g) => W.groupLine(g.who, g.n, g.alive)), ...(e.hazard ? [W.hazardLine(e.hazard.burned, e.hazard.points)] : [])].join('. ');
+      const casts = e.casts.map((c) => W.castsLine(c.name, c.n)).join('. ');
+      return `<div class="card event ${target ? 'target' : ''}" ${target ? `data-act="target" data-id="${esc(e.id)}"` : ''} data-event="${esc(e.template)}">
+  <h3>${esc(e.title)}</h3>
+  <div class="who">${esc(cap(e.place))}.</div>
+  ${who ? `<div class="row">${esc(who)}.</div>` : ''}
+  <div class="row dim">${esc(e.how)}${casts ? ` ${esc(casts)}.` : ''}</div>
+  ${e.rules.length ? e.rules.map((r) => `<div class="row rule">${esc(r)}</div>`).join('') : `<div class="row dim">${W.NO_RULES_APPLY}</div>`}
+  <div class="row predict tier-${esc(e.tier)}"><b>${W.PREDICT}. ${esc(W.TIER_NAME[e.tier] ?? e.tier)}.</b> ${esc(e.outcome)}</div>
+</div>`;
+    })
+    .join('');
+  return `<h2>${W.EVENTS_TITLE}</h2><div class="grid">${body}</div>`;
+}
+
 function working(): string {
   const w = table.working();
-  const built = table.built();
-  const a = w.length ? `<h2>${W.WORK_TITLE}</h2><div class="small">${w.map((x) => `<div class="thing"><b>${esc(x.title)}</b><div class="dim">${esc(W.doneIn(x.left))}</div></div>`).join('')}</div>` : '';
-  const b = built.length ? `<h2>${W.BUILT_TITLE}</h2><div class="tags">${built.map((x) => `<span class="tag state">${esc(x)}</span>`).join('')}</div>` : '';
-  return a + b;
+  return w.length ? `<h2>${W.WORK_TITLE}</h2><div class="small">${w.map((x) => `<div class="thing"><b>${esc(x.title)}</b><div class="dim">${esc(W.doneIn(x.left))}</div></div>`).join('')}</div>` : '';
 }
 
 function inPlay(): string {
   const things = table.things();
   const ab = table.abilities().find((a) => a.id === armed);
-  const places = [...new Set(things.map((t) => t.place))];
-  const body = places
-    .map((pl) => {
-      const cards = things
-        .filter((t) => t.place === pl)
-        .map((t) => {
-          const target = !!ab && ab.targets.includes(t.id);
-          return `<div class="thing ${t.ruined ? 'ruined' : ''} ${target ? 'target' : ''}" ${target ? `data-act="target" data-id="${esc(t.id)}"` : ''}><b>${esc(cap(t.name))}</b>${t.text ? `<div class="dim">${esc(t.text)}</div>` : ''}<div class="tags">${t.tags.map((x) => `<span class="tag ${t.ruined ? 'ruin' : 'state'}">${esc(x)}</span>`).join('')}</div></div>`;
-        })
-        .join('');
-      return `<div class="place">${esc(pl)}</div><div class="small">${cards}</div>`;
-    })
-    .join('');
-  return `<h2>${W.PLAY_TITLE}</h2>${body}`;
+  const card = (t: (typeof things)[number]): string => {
+    const target = !!ab && ab.targets.includes(t.id);
+    return `<div class="thing ${t.ruined ? 'ruined' : ''} ${target ? 'target' : ''}" ${target ? `data-act="target" data-id="${esc(t.id)}"` : ''}><b>${esc(cap(t.name))}</b>${t.text ? `<div class="dim">${esc(t.text)}</div>` : ''}${tags(t.tags, t.ruined ? 'ruin' : 'state')}</div>`;
+  };
+  // (a place with nothing on it yet goes in a drawer, unless the armed ability can be cast on it)
+  const shown = things.filter((t) => !t.plain || (!!ab && ab.targets.includes(t.id)));
+  const plain = things.filter((t) => !shown.includes(t));
+  const places = [...new Set(shown.map((t) => t.place))];
+  const body = places.map((pl) => `<div class="place">${esc(pl)}</div><div class="small">${shown.filter((t) => t.place === pl).map(card).join('')}</div>`).join('');
+  return `<h2>${W.PLAY_TITLE}</h2>${body}${plain.length ? drawer('plain', `${W.PLAIN_PLACES} (${plain.length})`, `<div class="small">${plain.map(card).join('')}</div>`) : ''}`;
 }
 
 function abilities(): string {
   if (table.over) return '';
   const list = table.abilities();
+  const armedOne = list.find((a) => a.id === armed);
   const body = list.length
-    ? `<div class="wheel">${list.map((a) => `<button class="${a.id === armed ? 'armed' : ''}" data-act="arm" data-id="${esc(a.id)}" ${a.can && a.targets.length ? '' : 'disabled'} title="${esc(a.text)}">${esc(a.name)} · ${esc(W.castCost(a.cost))}</button>`).join('')}</div>${list.map((a) => `<div class="why">${esc(a.name)}. ${esc(a.text)}${a.targets.length ? '' : ` ${W.NO_TARGET}`}</div>`).join('')}${armed ? `<div class="why ok">${W.PICK_TARGET}</div>` : ''}`
+    ? `<div class="wheel">${list.map((a) => `<button class="${a.id === armed ? 'armed' : ''}" data-act="arm" data-id="${esc(a.id)}" ${a.can && a.targets.length ? '' : 'disabled'} title="${esc(a.text)}">${esc(a.name)} · ${esc(W.castCost(a.cost))}</button>`).join('')}</div>${armedOne ? `<div class="why ok">${esc(armedOne.text)} ${W.PICK_TARGET}</div>` : ''}`
     : `<div class="dim">${W.ABILITIES_NONE}</div>`;
   return `<h2>${W.ABILITIES_TITLE}</h2>${body}`;
 }
 
+/** the discovery tool: every rule, what paid last season with its reason, what is ready, and for the rest the one
+ *  thing missing; then the tags in play */
+function rules(): string {
+  const list = table.rules();
+  const order = (r: (typeof list)[number]): number => (r.fired.length ? 0 : r.ready ? 1 : 2);
+  const body = [...list]
+    .sort((a, b) => order(a) - order(b))
+    .map((r) => {
+      const state = r.fired.length ? 'paid' : r.ready ? 'ready' : 'not';
+      return `<div class="rulecard ${state}" data-rule="${esc(r.id)}"><b>${esc(r.name)}</b> <span class="dim">${esc(r.when)}</span><div class="says">${esc(r.says)}</div>${r.fired.map((f) => `<div class="why ok">${esc(f)}</div>`).join('')}<div class="why ${state === 'not' ? 'no' : ''}">${esc(r.why)}</div></div>`;
+    })
+    .join('');
+  const tagList = table.tagsInPlay();
+  const paid = list.filter((r) => r.fired.length).length;
+  const ready = list.filter((r) => !r.fired.length && r.ready).length;
+  return drawer('rules', `${W.RULES_TITLE} (${W.rulesCount(paid, ready, list.length)})`, `<div class="why">${W.RULES_HELP}</div>${body}<div class="place">${W.TAGS_TITLE}</div><div class="tags">${tagList.map((t) => `<span class="tag state">${esc(t.tag)}${t.n > 1 ? ` ×${t.n}` : ''}</span>`).join('')}</div>`);
+}
+
 function packDrawer(): string {
   const lines = table.packs.flatMap((p) => [`<div>${esc(W.packLine(p.name, p.templates.length))}</div>`, ...p.left.map((x) => `<div class="need">${esc(W.packLeft(x.card, x.why))}</div>`), ...p.problems.map((x) => `<div class="why">${esc(x.where)}: ${esc(x.text)}</div>`)]);
-  return `<details ${packError ? 'open' : ''}><summary>${W.PACK_TITLE}</summary>${lines.join('') || `<div class="dim">${W.PACK_NONE}</div>`}${packError ? `<pre class="need" style="white-space:pre-wrap">${esc(packError)}</pre>` : ''}<div class="bar" style="margin-top:6px"><label>${W.PACK_LOAD} <input id="packfile" type="file" accept=".json,application/json" style="width:auto"></label></div></details>`;
+  return drawer('packs', W.PACK_TITLE, `${lines.join('') || `<div class="dim">${W.PACK_NONE}</div>`}${packError ? `<pre class="need" style="white-space:pre-wrap">${esc(packError)}</pre>` : ''}<div class="bar" style="margin-top:6px"><label>${W.PACK_LOAD} <input id="packfile" type="file" accept=".json,application/json" style="width:auto"></label></div>`, !!packError);
 }
 
 function log(): string {
@@ -129,15 +169,24 @@ function end(): string {
 function footer(): string {
   const leaders = LEADERS.map((l) => `<option value="${l.id}" ${l.id === leader ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
   const main = table.over ? `<button class="main" data-act="next">${W.NEW_RUN}</button>` : `<button class="main" data-act="end">${W.END_SEASON}</button>`;
-  const setup = `<details><summary>${W.SETUP}</summary><div class="bar" style="margin-top:6px"><label>${W.SEED} <input id="seed" type="number" value="${seed}"></label><label>${W.LENGTH} <input id="seasons" type="number" min="4" max="40" value="${seasons}"></label><select id="leader" title="${W.LEADER}">${leaders}</select><button data-act="restart">${W.RESTART}</button></div></details>`;
+  const setup = drawer('setup', W.SETUP, `<div class="bar" style="margin-top:6px"><label>${W.SEED} <input id="seed" type="number" value="${seed}"></label><label>${W.LENGTH} <input id="seasons" type="number" min="4" max="40" value="${seasons}"></label><select id="leader" title="${W.LEADER}">${leaders}</select><button data-act="restart">${W.RESTART}</button></div>`);
   return `${setup}<footer><div class="bar">${main}</div></footer>`;
 }
 
 function draw(): void {
   const y = window.scrollY;
-  app.innerHTML = header() + end() + opps() + abilities() + inPlay() + working() + log() + packDrawer() + footer();
+  const built = table.built();
+  const builtRow = built.length ? `<h2>${W.BUILT_TITLE}</h2>${tags(built, 'state')}` : '';
+  app.innerHTML = header() + end() + events() + opps() + abilities() + rules() + inPlay() + working() + builtRow + log() + packDrawer() + footer();
   window.scrollTo(0, y);
 }
+
+app.addEventListener('toggle', (e) => {
+  const d = (e.target as HTMLElement).closest<HTMLDetailsElement>('[data-drawer]');
+  if (!d) return;
+  if (d.open) open.add(d.dataset.drawer!);
+  else open.delete(d.dataset.drawer!);
+}, true);
 
 app.addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
@@ -146,11 +195,15 @@ app.addEventListener('click', (e) => {
   const id = b.dataset.id ?? '';
   if (act === 'take') table.take(id);
   else if (act === 'pass') table.pass(id);
-  else if (act === 'end') table.endSeason();
-  else if (act === 'arm') armed = armed === id ? null : id;
+  else if (act === 'end') {
+    armed = null;
+    table.endSeason();
+  } else if (act === 'arm') armed = armed === id ? null : id;
   else if (act === 'target' && armed) {
     table.cast(armed, id);
-    armed = null;
+    // (still armed while there is something left to cast it on: a second cast is one tap)
+    const a = table.abilities().find((x) => x.id === armed);
+    if (!a || !a.can || !a.targets.length) armed = null;
   } else if (act === 'next') table = table.next(leader);
   else if (act === 'restart') {
     seed = Number((document.getElementById('seed') as HTMLInputElement).value) || 0;
@@ -193,6 +246,6 @@ if (packUrl)
     });
 
 // (scripts and the browser console)
-(window as unknown as { table: () => Table; tableDraw: () => void }).table = () => table;
+(window as unknown as { table: () => Table }).table = () => table;
 (window as unknown as { tableDraw: () => void }).tableDraw = draw;
 draw();

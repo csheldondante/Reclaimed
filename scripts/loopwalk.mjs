@@ -11,6 +11,9 @@
 // after one move the frame has begun by the answer; every other petition is opened after three moves in a row (3.6 s
 // of them), and its frame is still waiting when it is let go. The walk fails unless both were met, and then goes on to
 // the attack as any walk.
+// (round 6) live events are played as they come (`playEvent`: the dead, a fire, a parade, refugees; `--leave` leaves a
+// parade running), the growth rune is drawn each season once farms are built (`--norune`: not), and `--need a,b`
+// fails unless the walk met each (a template's id, `rune`, `rule`).
 // `--agree`: the templates to say yes to when they are offered and can be paid, in that order of preference; everything
 // else is left to run out. The default prepares (walls: soldiers gather; the tower's heat ray); `--agree none` prepares
 // nothing. It fails unless the raid arrives (LS-16).
@@ -136,6 +139,142 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   await shot('loop-2-city');
   log(JSON.stringify(await state()));
 
+  /** the live events met, by template, and what the season's news said of rules that fired */
+  const RULE_LINE = /doubled the crop|prayed there|stopped \d+ (more )?raider|bucket lines|fewer people came|more people to the parade|counted the scouts|sold at|worked the/;
+  const met = new Set();
+  const fired = [];
+  /**
+   * (round 6) A live event the player is at, played by a finger: the dead burned with Fire, a fire fought with Rain, a
+   * parade or refugees watched to their end (or left, with --leave: it goes on without the player and the season's end
+   * resolves it). The raid has its own part below. A still of each moment.
+   */
+  const playEvent = async () => {
+    if ((await state()).phase !== 'event') return;
+    const live = () => page.evaluate(() => window.rungame.liveDebug());
+    const tpl = (await live()).focus;
+    if (!tpl || tpl === 'raid') return;
+    met.add(tpl);
+    log(`live event: ${tpl}`);
+    const view = () => page.evaluate(() => ({ top: document.querySelector('.run-top')?.getBoundingClientRect().bottom ?? 0, sheet: document.querySelector('.run-sheet')?.getBoundingClientRect().top ?? innerHeight }));
+    if (tpl === 'dead-rise') {
+      await wait(3500);
+      await shot('loop-6-event-dead');
+      {
+        const v = { ...(await view()), dead: await page.evaluate(() => window.rungame.deadAt()) };
+        const seen = v.dead.filter(([x, y]) => x > 12 && x < 400 && y > v.top + 12 && y < v.sheet - 8).length;
+        R.check('the live event: every one of the dead is in view, between the top bar and the sheet', v.dead.length > 0 && seen === v.dead.length, { seen, of: v.dead.length, top: Math.round(v.top), sheet: Math.round(v.sheet), at: v.dead.map((q) => q.map(Math.round)) });
+      }
+      let casts = 0;
+      for (let k = 0; k < 14 && (await state()).phase === 'event'; k++) {
+        const at = (await page.evaluate(() => window.rungame.deadAt()))[0];
+        if (!at) {
+          await wait(500);
+          continue;
+        }
+        await tap('.run-sheet .go button', 'Fire');
+        await wait(250);
+        await press(at[0], at[1]);
+        casts++;
+        await wait(300);
+        if (casts === 1) await shot('loop-6-event-cast');
+        await wait(1100);
+      }
+      const left = await page.evaluate(() => window.rungame.deadAt().length);
+      log(`the dead: ${casts} casts, ${left} left, phase ${(await state()).phase}`);
+      R.check('the live event was played: Fire cast on the dead until none was left', casts > 0 && (await state()).phase !== 'event', { casts, left });
+    } else if (tpl === 'market-fire') {
+      await wait(6000);
+      await shot('loop-ev-fire-1-alight');
+      log(`fire: ${JSON.stringify((await live()).runs.find((r) => r.template === tpl)?.numbers)}`);
+      // (Rain pressed, then a tap on the flames: the middle of the view above the sheet, and to each side of it)
+      const v = await view();
+      const mid = [206, v.top + (v.sheet - v.top) * 0.5];
+      let casts = 0;
+      for (const [dx, dy] of [[0, 0], [-70, -30], [70, 30]]) {
+        if ((await state()).phase !== 'event' || (await state()).pools.magic < 1) break;
+        await tap('.run-sheet .go button', 'Rain');
+        await wait(250);
+        await press(mid[0] + dx, mid[1] + dy);
+        casts++;
+        await wait(2500);
+        if (casts === 1) await shot('loop-ev-fire-2-rain');
+      }
+      await wait(6000);
+      await shot('loop-ev-fire-3-later');
+      log(`fire after ${casts} casts of Rain: ${JSON.stringify((await live()).runs.find((r) => r.template === tpl)?.numbers)}`);
+      R.check('the fire was fought: Rain was cast on it', casts > 0, { casts });
+      await page.waitForFunction(() => window.rungame.phase !== 'event', { timeout: 120000, polling: 300 });
+    } else {
+      // (a parade, refugees: in by a road — the camera down it, then on the column)
+      await wait(2500);
+      await shot(`loop-ev-${tpl}-1-road`);
+      await page.waitForFunction(() => !!window.rungame.raidAt() || window.rungame.phase !== 'event', { timeout: 150000, polling: 300 });
+      await wait(5000);
+      await shot(`loop-ev-${tpl}-2-march`);
+      {
+        const v = { ...(await view()), at: await page.evaluate(() => window.rungame.raidAt()) };
+        if (v.at) R.check(`${tpl}: the column is in view, between the top bar and the sheet`, v.at[1] > v.top + 12 && v.at[1] < v.sheet - 8 && v.at[0] > 12 && v.at[0] < 400, { at: v.at.map(Math.round), top: Math.round(v.top), sheet: Math.round(v.sheet) });
+      }
+      log(`${tpl}: ${JSON.stringify((await live()).runs.find((r) => r.template === tpl)?.numbers)}`);
+      if (R.argv.includes('--leave') && (await page.evaluate(() => window.rungame.liveNow?.canLeave))) {
+        await tap('.run-sheet .go button', 'Back to the town');
+        await phase('city', 10000);
+        await wait(1500);
+        await shot(`loop-ev-${tpl}-3-left`);
+        R.check(`${tpl}: left, it goes on without the player, its name over the map`, (await live()).runs.some((r) => r.template === tpl) && (await page.evaluate(() => window.rungame.markers().some((m) => m.id.startsWith('live:')))));
+        return;
+      }
+      for (let k = 0; k < 30 && (await state()).phase === 'event'; k++) {
+        await wait(8000);
+        if (k === 2) await shot(`loop-ev-${tpl}-3-on`);
+      }
+      R.check(`${tpl}: it ended by itself`, (await state()).phase !== 'event', (await live()).runs.find((r) => r.template === tpl)?.numbers);
+      // (still going: left, so the walk goes on — the season's end resolves it)
+      if ((await state()).phase === 'event') {
+        await tap('.run-sheet .go button', 'Back to the town');
+        await phase('city', 10000);
+        return;
+      }
+    }
+    await phase('city|event|result|end', 30000);
+    await wait(1500);
+    await shot(`loop-ev-${tpl}-end`);
+    const notes = await page.evaluate(() => window.rungame.notes);
+    log(`after ${tpl}: ${JSON.stringify(notes)}`);
+    fired.push(...notes.filter((t) => RULE_LINE.test(t) && !fired.includes(t)));
+  };
+
+  /** (round 6) the growth rune, by a finger: its button on the town's sheet, then a tap on the east fields */
+  let runes = 0;
+  const rune = async () => {
+    const s0 = await state();
+    // (each season once farms are built — the rule that doubles their crop then fires; before that, once, to see it)
+    if (s0.phase !== 'city' || s0.pools.magic < 2 || (!s0.built.includes('farms') && runes > 0) || R.argv.includes('--norune')) return;
+    await page.evaluate(() => window.rungame.showTown());
+    await wait(1800);
+    const at = await page.evaluate(() => window.rungame.siteAt('fields'));
+    const v = await page.evaluate(() => ({ top: document.querySelector('.run-top')?.getBoundingClientRect().bottom ?? 0, sheet: document.querySelector('.run-sheet')?.getBoundingClientRect().top ?? innerHeight }));
+    if (!at || at[1] < v.top + 8 || at[1] > v.sheet - 8) return log(`rune: the east fields are not in view (${at})`);
+    // (not on a name over the map: a little below the fields' own point if one lies there)
+    const free = await page.evaluate(([x, y]) => [0, 14, -14, 28].map((d) => [x, y + d]).find(([px, py]) => !document.elementFromPoint(px, py)?.closest('.run-marks button, .run-sheet, .run-top')) ?? null, at);
+    if (!free) return log('rune: a name lies over the east fields');
+    await tap('.run-sheet .go button', 'Growth rune');
+    await wait(250);
+    await press(free[0], free[1]);
+    await wait(900);
+    runes++;
+    const s1 = await state();
+    if (runes === 1) {
+      await shot('loop-rune-1-cast');
+      await page.evaluate(() => window.rungame.lookAt('fields', 9));
+      await wait(4000);
+      await shot('loop-rune-2-fields');
+      await page.evaluate(() => window.rungame.showTown());
+      await wait(1500);
+    }
+    R.check('the growth rune was drawn over the east fields by a tap: 1 Magic spent', s1.pools.magic === s0.pools.magic - 1, { before: s0.pools.magic, after: s1.pools.magic, notes: await page.evaluate(() => window.rungame.notes) });
+  };
+
   // 3 + 4: go to a name over the map, hear the petition, agree: its cost committed
   let first = true;
   /** the dialog answered: `yes` the agree line if it can be said, else "Not now." */
@@ -218,48 +357,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       await page.evaluate(() => (window.__releases = []));
       log(`fast: answered ${Date.now() - moved} ms after the camera moved; its releases found the frame: ${JSON.stringify(rel)}`);
     }
-    // (the live event: the dead are up at the burial ground — Fire pressed, a tap on one of them, until none is left)
-    if ((await state()).phase === 'event') {
-      await wait(3500);
-      await shot('loop-6-event-dead');
-      {
-        const v = await page.evaluate(() => ({ dead: window.rungame.deadAt(), top: document.querySelector('.run-top')?.getBoundingClientRect().bottom ?? 0, sheet: document.querySelector('.run-sheet')?.getBoundingClientRect().top ?? innerHeight }));
-        const seen = v.dead.filter(([x, y]) => x > 12 && x < 400 && y > v.top + 12 && y < v.sheet - 8).length;
-        R.check('the live event: every one of the dead is in view, between the top bar and the sheet', v.dead.length > 0 && seen === v.dead.length, { seen, of: v.dead.length, top: Math.round(v.top), sheet: Math.round(v.sheet), at: v.dead.map((q) => q.map(Math.round)) });
-      }
-      const frames = [];
-      let casts = 0;
-      for (let k = 0; k < 14 && (await state()).phase === 'event'; k++) {
-        const at = (await page.evaluate(() => window.rungame.deadAt()))[0];
-        if (!at) {
-          await wait(500);
-          continue;
-        }
-        await tap('.run-sheet .go button', 'Fire');
-        await wait(250);
-        await press(at[0], at[1]);
-        casts++;
-        await wait(300);
-        if (casts === 1) await shot('loop-6-event-cast');
-        frames.push(await page.screenshot({ type: 'png' }));
-        await wait(1100);
-        frames.push(await page.screenshot({ type: 'png' }));
-      }
-      const left = await page.evaluate(() => window.rungame.deadAt().length);
-      log(`the dead: ${casts} casts, ${left} left, phase ${(await state()).phase}`);
-      R.check('the live event was played: Fire cast on the dead until none was left', casts > 0 && (await state()).phase !== 'event', { casts, left });
-      if (opt('gif', '1') !== '0' && frames.length) {
-        const enc = GIFEncoder();
-        for (const b of frames) {
-          const png = PNG.sync.read(Buffer.from(b));
-          const pal = quantize(png.data, 256);
-          enc.writeFrame(applyPalette(png.data, pal), png.width, png.height, { palette: pal, delay: 450 });
-        }
-        enc.finish();
-        fs.writeFileSync(path.join(out, 'loop-6-event.gif'), enc.bytes());
-      }
-      await phase('city', 20000);
-    }
+    await playEvent();
     await wait(1000);
     if (first) await shot('loop-4-allocated');
     first = false;
@@ -338,11 +436,14 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       if (await page.evaluate(() => window.rungame.phase === 'season' && window.rungame.canSkip)) await tap('.run-sheet .go button', 'Skip');
     } else await page.evaluate(() => window.rungame.canSkip && window.rungame.skip());
     n++;
-    await phase('city|attack|result|end', 120000);
+    await phase('city|event|result|end', 120000);
+    // (an event nobody asks about: refugees on the road)
+    await playEvent();
     const s = await state();
     log(JSON.stringify(s));
     const news = await page.evaluate(() => window.rungame.notes);
     log(`news: ${JSON.stringify(news)}`);
+    fired.push(...news.filter((t) => RULE_LINE.test(t) && !fired.includes(t)));
     // (a change in the land this season: the camera on it, a still)
     if (s.phase === 'city' && /flooded|burned|buried|Lava|founded/.test(news.join(' '))) {
       const seen = await page.evaluate(() => window.rungame.showLast());
@@ -361,7 +462,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       u.searchParams.delete('fresh');
       await page.goto('about:blank');
       await page.goto(u.toString(), { waitUntil: 'load' });
-      await page.waitForFunction(() => ['leader', 'city', 'attack'].includes(window.rungame?.phase) || document.querySelector('.fatal'), { timeout: 300000, polling: 200 });
+      await page.waitForFunction(() => ['leader', 'city', 'event'].includes(window.rungame?.phase) || document.querySelector('.fatal'), { timeout: 300000, polling: 200 });
       await wait(3000);
       const after = { ...(await state()), ...(await snap()) };
       await shot(`loop-reload-s${s.season}`);
@@ -390,7 +491,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     // (LS-45's bisect: the camera away from the town and back — the window slides off it — in one chosen season)
     if (String(s.season) === opt('trip', '')) {
       const watch = R.argv.includes('--watch');
-      const dbg = async (what) => log(`${what}: ${JSON.stringify(await page.evaluate((w) => window.rungame.fightDebug(w), watch))}`);
+      const dbg = async (what) => log(`${what}: ${JSON.stringify(await page.evaluate((w) => window.rungame.liveDebug(w), watch))}`);
       await dbg('before the trip');
       await wait(1500);
       await dbg('before the trip');
@@ -407,6 +508,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       if (opt('stop', '') === 'trip') return;
     }
     if (n % 4 === 0) await shot(`loop-5-city-s${s.season}`);
+    await rune();
     await playSeason();
     if (n > 40) throw new Error('the attack never came');
   }
@@ -418,12 +520,13 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   R.check('the decisions a season stay few', Math.max(...decisions) <= 5, decisions);
 
   // 7: the attack: the camera down the road, the raid called, the march, the fight, a spell cast, the result
-  if (['attack', 'result'].includes((await state()).phase)) {
+  if ((await state()).phase === 'result' || (await page.evaluate(() => window.rungame.liveDebug().focus)) === 'raid') {
+    met.add('raid');
     await wait(2500);
     await shot('loop-7-attack-road');
     // (arrived: raiders stand in the world, their places read — not only a group asked for)
     await page.waitForFunction(() => !!window.rungame.raidAt() || window.rungame.phase === 'result', { timeout: 120000, polling: 200 });
-    const fight0 = await page.evaluate(() => (window.rungame.raidAt() ? window.war?.fight : null) ?? null);
+    const fight0 = await page.evaluate(() => (window.rungame.raidAt() ? window.rungame.fightView() : null) ?? null);
     R.check('the raid arrived', !!fight0 && fight0.alive > 0 && !fight0.failed, fight0);
     log(`raid: ${JSON.stringify(fight0)}`);
     fs.mkdirSync(path.join(out, 'frames'), { recursive: true });
@@ -438,14 +541,14 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     let cast = false;
     let soldiers0 = 0;
     for (let k = 0; k < 400; k++) {
-      const st = await page.evaluate(() => ({ phase: window.rungame.phase, f: window.war?.fight ?? null, at: window.rungame.raidAt(), spell: window.rungame.run.spells[0] ?? null, zoom: window.reclaimed.camera.zoom }));
-      if (st.phase !== 'attack') break;
+      const st = await page.evaluate(() => ({ phase: window.rungame.phase, f: window.rungame.fightView(), at: window.rungame.raidAt(), spell: window.rungame.run.spells[0] ?? null, zoom: window.reclaimed.camera.zoom }));
+      if (st.phase !== 'event') break;
       soldiers0 = Math.max(soldiers0, st.f?.soldiers ?? 0);
       if (frames.length < 120) frames.push(await page.screenshot({ type: 'png' }));
       if (k % 5 === 0) {
         fs.writeFileSync(path.join(out, 'frames', `f-${String(k).padStart(3, '0')}.png`), frames[frames.length - 1]);
         log(`attack ${k}: ${st.f?.stage} raiders ${st.f?.alive} soldiers ${st.f?.soldiers} at ${st.at?.map((v) => Math.round(v))} zoom ${st.zoom.toFixed(1)}`);
-        if (k % 10 === 0) log(`who is where: ${JSON.stringify(await page.evaluate(() => window.rungame.fightDebug()))}`);
+        if (k % 10 === 0) log(`who is where: ${JSON.stringify(await page.evaluate(() => window.rungame.liveDebug()))}`);
       }
       const still = async (name) => {
         if (seen.has(name)) return;
@@ -463,7 +566,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
         await wait(250);
         await shot('loop-7-attack-spell-armed');
         const at = await page.evaluate(() => window.rungame.raidAt());
-        const before = await page.evaluate(() => window.war.fight.alive);
+        const before = await page.evaluate(() => window.rungame.fightView().alive);
         {
           const v = await page.evaluate(() => ({ top: document.querySelector('.run-top')?.getBoundingClientRect().bottom ?? 0, sheet: document.querySelector('.run-sheet')?.getBoundingClientRect().top ?? innerHeight }));
           R.check('the fight: the raiders are in view, between the top bar and the sheet', at[1] > v.top + 12 && at[1] < v.sheet - 8 && at[0] > 12 && at[0] < 400, { at: at.map(Math.round), top: Math.round(v.top), sheet: Math.round(v.sheet) });
@@ -473,7 +576,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
         await shot('loop-7-attack-spell');
         frames.push(await page.screenshot({ type: 'png' }));
         await wait(1200);
-        const after = await page.evaluate(() => window.war?.fight?.alive ?? 0);
+        const after = await page.evaluate(() => window.rungame.fightView()?.alive ?? 0);
         log(`heat ray: raiders alive ${before} -> ${after}`);
         R.check('the heat ray was cast and hit', after < before, { before, after });
       }
@@ -498,6 +601,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     await wait(3500);
     await shot('loop-7-result-district');
     log(`war: ${JSON.stringify(await page.evaluate(() => window.rungame.resultLines))}`);
+    fired.push(...(await page.evaluate(() => window.rungame.resultLines)).filter((t) => RULE_LINE.test(t)));
     await tap('.run-sheet .go button', 'Continue');
   }
   await phase('end', 60000);
@@ -533,4 +637,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   log(`new run: ${JSON.stringify(again)} ${JSON.stringify(await state())}`);
   R.check('the new run is run 2 of the same world', again.run === 2 && again.before >= ended.history.length, again);
   if (touch) R.check(`touch: every control pressed was on the screen, not covered, and at least ${THUMB} px tall`, unreachable.length === 0, [...new Set(unreachable)]);
+  // (round 6) what this walk met: `--need gate-parade,market-fire,rune,rule` fails unless it met each
+  log(`live events met: ${[...met].join(', ') || 'none'}; growth runes drawn: ${runes}; rules that fired: ${JSON.stringify(fired)}`);
+  for (const what of opt('need', '').split(',').filter(Boolean)) R.check(`this walk met: ${what}`, what === 'rune' ? runes > 0 : what === 'rule' ? fired.length > 0 : met.has(what), { met: [...met], runes, fired });
 });
