@@ -58,6 +58,9 @@ The same modifier applied twice is one entry (its id: kind, place or cell, radiu
 | burned | plants removed; soil's top 0.3 becomes ash (the fire sim's own material); ragged edge, patches spared under strength 1 | burned (walls black, roof gone, height × 0.6) |
 | melted | a basalt cap (the lava sim's set rock) in a pool round a vent and a lobed tongue downhill (the direction from the macro ground), 0.4–3 cells thick, never over ground higher than the vent; water removed; cracks set to 1150° ground heat, which the render fields already draw as glow | destroyed (a dark stump; the claim released) |
 | buried | a sand interval on the top: dunes across a seeded wind, thinning to nothing at the rim; up to 2 + 5 × strength cells | buried where the sand is a fifth of the building's height or 1.2 cells |
+| dried | `water` lowered by 1 + 3 × strength cells (deeper water stays as pools), the columns' `waterSource` shut, bank plants browned (`wilt`) | none |
+| withered | the plants' own dead state: `wilt` fully brown and the ground hostile, so woken plants stay dead | none |
+| greened | the plants' field raised to shrubs and woods on soil, healthy | none |
 | destroyed | — | every lot of the place burned; population 0 |
 | abandoned | — | standing lots abandoned (faded, sagging) |
 | captured | — | standing lots occupied (the roof in the holder's colour) |
@@ -66,11 +69,35 @@ The same modifier applied twice is one entry (its id: kind, place or cell, radiu
 
 A column whose top is a building's External span (a cell or more thick) is left alone; a road's paving is ground.
 
+## Signs
+
+"Weather effects too. Darkness and ash raining down are a great way to indicate a distant eruption. Having random
+undead rise in the city or crime are all indicators." (the user, 2026-11-15)
+
+`mutators.sign({ kind, place?, strength, until? })` (strength 0: off), `mutators.signs(place?)`, `mutators.season(n)`
+(the loop's season number; a sign past its `until` ends). Saved in the record with the list. A `melted` entry applied
+away from the home town casts `ashfall` and `darkness` on it for three seasons, strength by distance (0.3 at 4000
+world units or more).
+
+| sign | what shows (all existing systems) | cost while on |
+|---|---|---|
+| ashfall | the particles' ash kind, a few bursts a frame over the view | up to 4 burst requests a frame |
+| darkness | the sun and sky scaled and browned in the Globals (`WorldCore.skyDim`) | none |
+| deadrise | 4–12 `shambler` units (undead by the traits) in the town's streets | the units' own |
+| crime | 6–22% of standing buildings `looted` (condition 10); `unrest` on the sign | none (one dispatch on, one off) |
+
+## The map
+
+"the whole point is to make the map a living visual representation of your choices". `AtlasMap.overlay` draws every
+entry at its place: a land entry's area in its kind's colour (a tongue along the flow for `melted`, a bar for a dry
+reach), a cross for a destroyed or abandoned place, a house for a founded one, a flag for a holder; `AtlasMap.marks`
+adds a pin with the place's name and what happened. The map's own image (ground, rivers) is not redrawn (MU-5, MU-16).
+
 ## The lot condition word
 
 `CityGen.condition` / `CityLots.condition`: one u32 a lot record, beside the progress buffer. Low byte:
-`LOT_CONDITION` (0 standing, 1 drowned, 2 burned, 3 destroyed, 4 buried, 5 abandoned, 6 occupied; 7–9 reserved for
-overgrown, undead, lockdown). Next byte: how far (0–255; for occupied, the holder's hue). Bits 16–23 are free for
+`LOT_CONDITION` (0 standing, 1 drowned, 2 burned, 3 destroyed, 4 buried, 5 abandoned, 6 occupied, 10 looted; 7–9
+reserved for overgrown, undead, lockdown). Next byte: how far (0–255; for occupied, the holder's hue). Bits 16–23 are free for
 BACKLOG TM6's disrepair. `streets.wgsl tlRise` reads it (binding 5): `condColour` tints, `condHeight` cuts.
 `claimLots` reads it (binding 3): a destroyed lot keeps no claim. `FieldTown.conditionsChanged(reclaim)` draws again.
 

@@ -3726,3 +3726,10 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   simulated and the whole point is it feels like the whole world changes in reaction to your choices". → an instant
   end state uses the sims' own materials and must be one the woken sims leave alone (tested for the flood in a closed
   hollow and the burial; where it isn't yet: BACKLOG MU-1, MU-2, MU-10).
+- (via the coordinator) The user: "Weather effects too. Darkness and ash raining down are a great way to indicate a
+  distant eruption. Having random undead rise in the city or crime are all indicators." → signs: ambient indicators
+  cast on a place while a condition lasts (`mutators.sign`, `mutators.signs`); a far `melted` casts ash fall and
+  darkness on the home town for three seasons.
+- (via the coordinator) The user: "A river running dry, trees dying, the whole point is to make the map a living
+  visual representation of your choices". → `dried`, `withered` (and `greened`) as instant land ops; every entry is
+  drawn on the atlas map at its place.
