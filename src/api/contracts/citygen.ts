@@ -66,6 +66,12 @@ export interface CityLots {
    * Its index is the record's.
    */
   readonly progress: GPUBuffer;
+  /** (mutators, src/mutate/index.ts LOT_CONDITION) each record's condition word (STORAGE, read-write; u32 a record:
+   *  the low byte the condition, the next how far it has gone, 0 standing). The mutators write it on the GPU; the
+   *  town's mesh shows it (a tint, the roof gone, the height cut) and a destroyed lot keeps no claim */
+  readonly condition: GPUBuffer;
+  /** the records the buffers hold (lots then landmark sites) */
+  readonly room: number;
   /** where the grid's frame is in the window (UNIFORM; vec4 f32: xyz added to a position), rewritten on a slide */
   readonly place: GPUBuffer;
 }

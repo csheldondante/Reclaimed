@@ -139,6 +139,18 @@ export class MemoryWorldState implements WorldState {
         f.relations[t] = Math.max(-1, Math.min(1, (f.relations[t] ?? 0) + m));
       }
     }
+    if (e.kind === 'settlement-founded') {
+      const d = e.detail ?? {};
+      const id = d.settlement;
+      if (typeof id !== 'string' || !id) throw new Error(`AtlasEvent ${e.id}: settlement-founded needs detail.settlement`);
+      const at = d.at as [number, number] | undefined;
+      if (!at || at.length !== 2) throw new Error(`AtlasEvent ${e.id}: settlement-founded needs detail.at`);
+      const f = (d.faction as FactionId | null | undefined) ?? null;
+      if (f !== null && !this.factions.has(f)) throw new Error(`AtlasEvent ${e.id}: settlement-founded needs detail.faction, a known faction or null`);
+      // (founded again — a replay of the same event on a restored world: the record it has stays)
+      if (!this.settlements.some((s) => s.id === id))
+        this.settlements.push({ id, name: String(d.name ?? id), region: e.regions[0], faction: f, at: [at[0], at[1]], radius: Number(d.radius ?? 20), size: (d.size as import('./settlement').Settlement['size']) ?? 'camp', condition: 'thriving', grids: [], buildings: [], people: [], stores: {}, needs: [] });
+    }
     if (e.kind === 'settlement-condition' || e.kind === 'settlement-owner' || e.kind === 'migrate' || e.kind === 'settlement-stores' || e.kind === 'settlement-building') this.applySettlement(e);
     if (e.kind === 'faction-attitude') {
       const f = this.factions.get(e.detail?.faction as FactionId);

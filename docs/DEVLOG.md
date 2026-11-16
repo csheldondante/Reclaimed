@@ -23326,3 +23326,55 @@ One walk only; the unprepared walk and the 10 in a row are not run yet. Boots: 3
 **Measured.** The world's record: 2.33 MB of JSON a save (LS-29: the whole atlas world, not what changed).
 
 Tests: unit 631 pass, `writing-sources` fails on `roadlab/control.ts` as on the base; `realm.test.ts` 10.
+## 2026-11-15 — world mutators: instant GPU ops from a world modifier list (`mutators`)
+
+**Why.** The user wants the world visibly changed by the player's choices ("melted, flooded, buried, burned"), and
+changed in places that are not loaded ("a lot of opportunities will happen in other area of the world"). A first plan
+(stage the sims' own events as a time-lapse) was dropped before any of it was built past the contract: it cannot reach
+unloaded land and its result depends on what was awake.
+
+**What.** docs/design/MUTATORS.md. The world modifier list (mutate/list.ts) is the truth; each entry's numbers are
+fixed from the atlas's macro ground when applied. Two kernels (shaders/mutate): `mutLand`, a thread a column of the
+entry's box, in roadgrade.wgsl's pattern (rebuild the top, bumpColumn / bumpWater); `mutLots`, a thread a lot record,
+writing the new condition word (`CityGen.condition`) that `tlRise` and `claimLots` read. Every rule is a pure function
+of the column or record and the entry, with noise hashed from world lattice points and idempotent writes, so the
+streamer's `onWritten` hook can write a region at a time and get the same land.
+
+**Measured** (Dawn D3D12, a 64 x 64 world, radius 20, land and four lots, one submit): flooded 0.07 ms (304 columns),
+burned 0.20 ms (1128), melted 0.13 ms (622), buried about the same. In the lab at Muru (headless Chrome, D3D11,
+412 x 915, q=low) a flood of radius 26: 0.05-0.07 ms. Not measured on the phone (MU-9).
+Woken sims: a flood in a closed hollow, the liquid stepped 300 ticks: volume 155.4 -> 155.3, no column's depth moved
+more than 0.001. A burial with every system stepped 300 ticks: no column's top moved.
+
+**Shared files touched.** citygen/gpu.ts (the condition buffer, bound in tlRise and claimLots), citygen/streets.wgsl
+(condColour, condHeight, claimLots' skip), citygen/town.ts (`conditionsChanged`, `lots.condition`), citygen/towns.ts
+(`onMade`), api/contracts/citygen.ts (CityLots.condition, room), scenes/level/stream-setup.ts (one call),
+gpu/transfers.ts (two entries), test/unit/writing-sources.test.ts (two dev sources).
+
+**Stills, looked at** (headless Chrome, 412 x 915, q=low, Muru, the lab's radius 40; scratchpad mutators/mut-*.png):
+burned and destroyed read at a glance (black gutted houses, ash ground); buried reads (dunes over the upper district,
+houses half under); melted reads as a dark rock field with embers running to the river, its cracks too faint;
+captured reads loudly (every roof in the holder's violet); darkness reads; flooded does NOT read in the town (a few
+houses go grey-green, no water shows on the paved streets; only the river's sandbars go under); ash fall does not read
+(a few specks); withered is a brown patch under the houses; the dry river showed no change in the still (the disc was
+over the town, not the river; unverified in game). Crime and the dead rise: no still (three runs died in the watchdog,
+MU-20). A far city (Vagug) flooded and captured while not loaded arrived with wide water round it and its roofs in the
+holder's colour. The map shows pins with a line of text; the drawn areas are a few pixels at the map's opening zoom.
+
+## 2026-11-15 (night) — mutators round 2, item 1: the place states move into the fact layer (`mutators`)
+
+**Why.** Round 1 kept its own list of who holds a place and what state it is in (`WorldList.place`). The recorded
+design (FACTIONS_WORLD_STATE.md §7, DECISIONS round 120/125) already has that home: the settlement's record through
+`WorldState.apply`, typed relations, condition tags, an event history; "Outcomes are near-instant mutations of
+authoritative state". Two lists of the same thing would drift, and the dealer and the inspector read the fact one.
+
+**What.** `src/mutate/facts.ts`: `recordMutation` (each kind as fact mutations through `living/mutations.ts`, one event,
+its id on the entry as `fact`), `placeState` / `placeStates` (reads), `recordSign`. `WorldList.place(s)` deleted.
+`MutateEngine.useWorld` binds a FactWorld and replays entries it lacks. `src/mutate/outcomes.ts` registers the
+template helpers `mutate` and `sign` (facts on the template's world, physical side only on a real resolution). A new
+AtlasEvent kind `settlement-founded` (world.ts, world-state.ts): there was no way to add a settlement through its
+owner. The level binds the atlas's world (`wiki.snapshot`) and realises its river inflow (`useRiverWorld`), so `dried`
+on a place now lowers its region's rivers the recorded way.
+
+**Tests.** unit: mutators-facts 6, mutators-list 4; gpu: mutators 39 (the world-state test now reads the fact world).
+

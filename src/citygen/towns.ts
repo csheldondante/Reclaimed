@@ -24,6 +24,8 @@ export class FieldTowns implements CityDistricts {
   readonly live = new Map<string, FieldTown>();
   /** (saving) each town's edit log (citygen/townlog.ts): its inputs, laid over it when it's made again */
   readonly logs = new TownLogs();
+  /** (mutators) called when a town's lots are first made (its records and condition words are there to write) */
+  readonly onMade: ((town: FieldTown) => void)[] = [];
   readonly stats = { made: 0, dropped: 0, slotsFull: 0, lastMakeMs: 0 };
   private boxes = new Map<string, FieldTownBox>();
   private clock = 0;
@@ -222,6 +224,9 @@ export class FieldTowns implements CityDistricts {
     const t0 = performance.now();
     const town = new FieldTown(this.io, s);
     this.live.set(s.id, town);
+    void town.made.then(() => {
+      if (this.live.get(s.id) === town) for (const cb of this.onMade) cb(town);
+    }, () => {});
     this.stats.made++;
     this.making = town.made.then(
       (t) => {

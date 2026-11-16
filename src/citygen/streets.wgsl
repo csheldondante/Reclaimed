@@ -3370,7 +3370,8 @@ fn claimLots(@builtin(global_invocation_id) g: vec3<u32>) {
   let o = r * RECW;
   let kind = b1[o + 17u];
   let h = r1(o + 20u) * clamp(r2(r), 0.0, 1.0);
-  let built = (kind == REC_BUILDING || kind == REC_LANDMARK) && h >= 0.05;
+  // (mutators: a destroyed lot keeps no claim — the lava's rock lies where it stood)
+  let built = (kind == REC_BUILDING || kind == REC_LANDMARK) && h >= 0.05 && (b3[r] & 255u) != LC_DESTROYED;
   if (kind == REC_FIELD) {
     claimField(r, o);
     return;
@@ -3636,8 +3637,54 @@ fn riseColour(v: u32, id: u32, top: bool) -> u32 {
     if (!top) { return C_FOOT; }
     return select(C_PLANK, C_SCAFFOLD, up);
   }
-  if (top && up) { return roofColour(u32(hsh(b1[id * RECW + 23u] * 7u + 3u) * 5.999)); }
-  return C_WALL;
+  var c = C_WALL;
+  if (top && up) { c = roofColour(u32(hsh(b1[id * RECW + 23u] * 7u + 3u) * 5.999)); }
+  return condColour(c, w5[id], top && up);
+}
+// (mutators, src/mutate/index.ts LOT_CONDITION: a lot's condition word — w5 in tlRise, b3 in claimLots — low byte the
+// condition, the next how far it has gone. The crude look for now: a tint, the roof gone, the height cut)
+const LC_DROWNED: u32 = 1u;
+const LC_BURNED: u32 = 2u;
+const LC_DESTROYED: u32 = 3u;
+const LC_BURIED: u32 = 4u;
+const LC_ABANDONED: u32 = 5u;
+const LC_OCCUPIED: u32 = 6u;
+fn cmix(a: u32, b: u32, t: f32) -> u32 {
+  let va = vec3<f32>(f32((a >> 16u) & 255u), f32((a >> 8u) & 255u), f32(a & 255u));
+  let vb = vec3<f32>(f32((b >> 16u) & 255u), f32((b >> 8u) & 255u), f32(b & 255u));
+  let m = vec3<u32>(clamp(mix(va, vb, t), vec3<f32>(0.0), vec3<f32>(255.0)));
+  return (m.x << 16u) | (m.y << 8u) | m.z;
+}
+/** a holder's roof colour from its hue byte: strong, dark enough to read as a banner */
+fn holderColour(hue: u32) -> u32 {
+  let h = f32(hue) / 256.0 * 6.2831853;
+  let v = vec3<f32>(0.5) + 0.5 * cos(vec3<f32>(h, h - 2.094, h + 2.094));
+  let m = vec3<u32>(v * vec3<f32>(190.0) + vec3<f32>(30.0));
+  return (m.x << 16u) | (m.y << 8u) | m.z;
+}
+/** a finished building's colour `c` under its lot's condition word (roof: the vertex is a roof's) */
+fn condColour(c: u32, word: u32, roof: bool) -> u32 {
+  switch (word & 255u) {
+    case 1u: { return cmix(c, select(0x4e6660u, 0x3f5650u, roof), 0.72); }
+    case 2u: { return select(0x2b2623u, 0x15120fu, roof); }
+    case 3u: { return 0x1d1a1au; }
+    case 4u: { return cmix(c, 0xcdb27au, 0.45); }
+    case 5u: { return cmix(c, select(0x8f8b80u, 0x6f6a5eu, roof), 0.7); }
+    case 6u: { return select(cmix(c, 0x6a665fu, 0.25), holderColour((word >> 8u) & 255u), roof); }
+    // (looted: boarded brown walls, the roof dull)
+    case 10u: { return select(0x7a5a3au, cmix(c, 0x4a3a2cu, 0.6), roof); }
+    default: { return c; }
+  }
+}
+/** a building's height under its lot's condition: a burned one has lost its roof and top, a destroyed one is a stump,
+ *  an abandoned one sags */
+fn condHeight(h: f32, word: u32) -> f32 {
+  switch (word & 255u) {
+    case 2u: { return h * 0.6; }
+    case 3u: { return min(h, 0.6); }
+    case 5u: { return h * 0.93; }
+    default: { return h; }
+  }
 }
 /** one thread a vertex: the tagged ones moved by their lot's progress or their district's start (b1 the records, r2
  *  PROG, b3 VTAG, b4 SCT; w7 the mesh; args its count) */
@@ -3653,7 +3700,7 @@ fn tlRise(@builtin(global_invocation_id) g: vec3<u32>) {
   var z = z0;
   if (kind == TG_TOP) {
     let o = id * RECW;
-    z = r1(o + 21u) + r1(o + 20u) * r2(id) + select(0.0, 0.06, (tag & OUTLINE_BIT) != 0u);
+    z = r1(o + 21u) + condHeight(r1(o + 20u) * r2(id), w5[id]) + select(0.0, 0.06, (tag & OUTLINE_BIT) != 0u);
     // (a lot not begun: its roof and outline sunk out of sight — its walls' bases with them: TG_BASE)
     if (r2(id) <= 0.0) { z = z0 - 1000.0; }
     if ((tag & OUTLINE_BIT) == 0u) { w7[v * 8u + 3u] = riseColour(v, id, true); }

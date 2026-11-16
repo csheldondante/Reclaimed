@@ -2,7 +2,8 @@
 // Hollow test world (living/briar.ts): the deal is the dealer's (few, one a site, a presenter of the card's role), a
 // commitment locks the ledger's own people, a project is built by the ledger's seasons, an expiry changes the fact
 // layer, the arc brings the raid, and the fact layer saved is what the next run starts from.
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { mutators, type Applied, type Mutation, type MutationSpec, type SignSpec } from '../../src/mutate';
 import { briarWorld } from '../../src/living/briar';
 import { grant, newLedger, nextSeason, pools, total, type SeasonLedger } from '../../src/season/ledger';
 import { Realm, roadLook, type Leader } from '../../src/season/realm';
@@ -13,8 +14,8 @@ import { lint } from '../support/writing';
 const YSOLT: Leader = { id: 'ysolt', name: 'Marshal Ysolt', line: 'A soldier.', pools: { magic: 1, might: 3, labor: 4, materials: 6, intel: 1 }, income: { materials: 2, magic: 1 } };
 const LAND = { left: 14, open: [] };
 
-function realm(o: { world?: WorldSnapshot; seasons?: number; ledger?: SeasonLedger; seed?: number } = {}): Realm {
-  return new Realm({ world: o.world ?? briarWorld().ws.snapshot(), home: 'briar-hollow', seed: o.seed ?? 7, leader: YSOLT, ledger: o.ledger ?? newLedger(YSOLT.pools, YSOLT.income), land: () => LAND, seasons: o.seasons ?? 4 });
+function realm(o: { world?: WorldSnapshot; seasons?: number; ledger?: SeasonLedger; seed?: number; where?: (s: string) => [number, number] | null } = {}): Realm {
+  return new Realm({ world: o.world ?? briarWorld().ws.snapshot(), home: 'briar-hollow', seed: o.seed ?? 7, leader: YSOLT, ledger: o.ledger ?? newLedger(YSOLT.pools, YSOLT.income), land: () => LAND, seasons: o.seasons ?? 4, ...(o.where ? { where: o.where } : {}) });
 }
 
 /** a whole season: the opportunities' end, the ledger's own season, the deal again */
@@ -32,6 +33,38 @@ function until(r: Realm, template: string, n = 8) {
   if (!o) throw new Error(`${template} was not offered in ${n} seasons: ${r.offers().map((x) => x.template).join(', ')}`);
   return o;
 }
+
+/** the mutators bound as a recorder: what the realm's outcomes ask of them (the GPU side is test/gpu/mutators.test.ts) */
+function recorder(): { applied: MutationSpec[]; signs: SignSpec[]; seasons: number[] } {
+  const applied: MutationSpec[] = [];
+  const list: Mutation[] = [];
+  const signs: SignSpec[] = [];
+  const seasons: number[] = [];
+  mutators.bind({
+    list: () => [],
+    apply: (sp) => {
+      applied.push(sp);
+      const m: Mutation = { id: `m${list.length}`, kind: sp.kind, place: sp.place ?? null, cell: [sp.at?.[0] ?? 0, sp.at?.[1] ?? 0], radius: sp.radius ?? 0, strength: sp.strength ?? 1, seed: sp.seed ?? 1, params: [], seq: list.length, ...(sp.fact ? { fact: sp.fact } : {}), ...(sp.cause ? { cause: sp.cause } : {}), ...(sp.name ? { name: sp.name } : {}) };
+      list.push(m);
+      return { ...m, resident: true, fresh: true } as Applied;
+    },
+    play: () => Promise.resolve(),
+    places: () => [],
+    place: () => null,
+    record: () => ({ version: 2, list, season: seasons.at(-1) ?? 0 }),
+    restore: () => {},
+    sign: (sp) => {
+      signs.push(sp);
+      return null;
+    },
+    signs: () => [],
+    season: (n) => void seasons.push(n),
+    useWorld: () => {},
+    world: null,
+  });
+  return { applied, signs, seasons };
+}
+afterEach(() => mutators.bind(null));
 
 describe('the realm (season/realm.ts)', () => {
   it('deals few, each over its own site of the home town, each brought by someone of its role', () => {
@@ -83,7 +116,8 @@ describe('the realm (season/realm.ts)', () => {
     expect(offer(r, projectId('keep'))).toBeUndefined();
   });
 
-  it('a card left to expire changes the fact layer: the neighbour falls, unrest rises, a physical change is named', () => {
+  it('a card left to expire changes the fact layer: the neighbour falls, unrest rises, and the mutators are told with the event that says so', () => {
+    const m = recorder();
     const r = realm({ seasons: 12 });
     const o = until(r, 'relieve-neighbour');
     const other = o!.bind.other;
@@ -94,12 +128,18 @@ describe('the realm (season/realm.ts)', () => {
     expect(r.w.facts.tag(other, 'condition', 'occupied')?.value).toBe(true);
     expect(pools(r.ledger).unrest).toBeGreaterThanOrEqual(unrest + 1);
     expect(r.news.concat(r.history().map((e) => e.note)).join(' ')).toContain('fell to raiders');
-    expect(r.physical.some((p) => p.kind === 'captured' && p.at === other)).toBe(true);
+    // (the place's state is the fact layer's: who holds it; the mutators' entry is its look and carries the event's id)
+    expect(r.w.facts.relations({ type: 'occupies', to: other })[0]?.from).toBe('raiders');
+    const cap = m.applied.find((p) => p.kind === 'captured');
+    expect(cap).toMatchObject({ place: other, by: 'raiders' });
+    expect(r.w.facts.events({ kind: 'captured' }).some((e) => e.id === cap!.fact)).toBe(true);
+    expect(r.changes().some((c) => c.kind === 'captured')).toBe(true);
     expect(r.history().some((e) => e.kind === 'fell')).toBe(true);
     expect(offer(r, 'relieve-neighbour')).toBeUndefined();
   });
 
   it('helped, the neighbour swears to you and pays each season', () => {
+    const m = recorder();
     const r = realm({ seasons: 12 });
     const o = until(r, 'relieve-neighbour');
     const income = r.ledger.income.materials ?? 0;
@@ -108,10 +148,11 @@ describe('the realm (season/realm.ts)', () => {
     season(r);
     expect(r.w.relations({ type: 'vassal_of', from: o.bind.other }).length).toBe(1);
     expect(r.ledger.income.materials).toBe(income + 1);
-    expect(r.physical.some((p) => p.kind === 'vassal')).toBe(true);
+    expect(m.applied.find((p) => p.kind === 'vassal')).toMatchObject({ place: o.bind.other, by: 'player', tribute: 1 });
   });
 
   it('the arc: scouts, a farm burned, then the raid in the run\'s last season; fought, the run is over and the history says how', () => {
+    const m = recorder();
     const r = realm({ seasons: 4 });
     expect(r.raid).toBeNull();
     const news: string[] = [];
@@ -124,7 +165,49 @@ describe('the realm (season/realm.ts)', () => {
     expect(r.over).toBe(true);
     expect(r.fight?.held).toBe(false);
     expect(r.history().some((e) => e.kind === 'raid-broke')).toBe(true);
-    expect(r.physical.some((p) => p.kind === 'burned')).toBe(true);
+    // (sacked: the district by the gate burned — an area of the home town, the raid's own event its fact — and thieves
+    // in the town for three seasons)
+    const broke = r.history().find((e) => e.kind === 'raid-broke')!;
+    const burn = m.applied.find((p) => p.kind === 'burned')!;
+    expect(burn).toMatchObject({ fact: broke.id, radius: 30 });
+    expect(burn.at).toEqual(r.cellOf('gate'));
+    expect(m.signs.find((s) => s.kind === 'crime')).toMatchObject({ place: r.home, until: r.w.turn + 3 });
+  });
+
+  it('a hazard left alone changes the land round its site: one event, and the mutators\' entry carries its id', () => {
+    const m = recorder();
+    const cells: Record<string, [number, number]> = { dam: [5000, 3000], mountain: [4400, 3300] };
+    const r = realm({ seasons: 16, where: (s) => cells[s] ?? null });
+    for (let k = 0; k < 14 && !m.applied.some((p) => p.kind === 'flooded'); k++) season(r);
+    const flood = m.applied.find((p) => p.kind === 'flooded')!;
+    expect(flood).toMatchObject({ at: [5000, 3000], radius: 34 });
+    const ev = r.history().filter((e) => e.kind === 'flooded');
+    expect(ev.length).toBe(1);
+    expect(flood.fact).toBe(ev[0].id);
+    expect(r.w.facts.tag(`site:${r.home}:dam`, 'condition', 'flooded')?.value).toBe(true);
+    // (the mutators keep the history's turn as their season: it runs on across runs)
+    expect(m.seasons.at(-1)).toBe(r.w.turn);
+  });
+
+  it('with no world bound to the mutators the facts alone change (a test, the inspector)', () => {
+    const r = realm({ seasons: 4 });
+    for (let k = 0; k < 3; k++) season(r);
+    r.fought({ raiders: 6, left: 4, fallen: 0 });
+    expect(r.w.facts.tag(`site:${r.home}:gate`, 'condition', 'burned')?.value).toBe(true);
+    expect(r.changes()).toEqual([]);
+  });
+
+  it('a mining camp founded is a settlement of the world: its record, its entity, the player its holder', () => {
+    const m = recorder();
+    const r = realm({ seasons: 16, ledger: grant(newLedger(YSOLT.pools, YSOLT.income), { materials: 6, labor: 4 }) });
+    const o = until(r, 'mining-outpost');
+    r.commit(o.id);
+    season(r);
+    season(r);
+    expect(r.w.settlement('copper-hollow')?.name).toBe('Copper Hollow');
+    expect(r.w.facts.relations({ type: 'controls', from: 'player', to: 'copper-hollow' }).length).toBe(1);
+    expect(m.applied.find((p) => p.kind === 'founded')).toMatchObject({ place: 'copper-hollow', name: 'Copper Hollow', at: r.cellOf('hills') });
+    expect(offer(r, 'mining-outpost')).toBeUndefined();
   });
 
   it('the raiders can be paid off in the last seasons: no raid comes', () => {

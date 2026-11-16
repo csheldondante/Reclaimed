@@ -102,6 +102,8 @@ export class WorldCore {
   readonly flow: FlowKit;
   /** (round 108, simtiers) which slow processes change the map — live or baked — and the bakes (api/contracts/simtiers.ts) */
   readonly tiers: Tiers;
+  /** (mutators' 'darkness' sign, src/mutate) 0..1: the sun's and the sky's light dimmed and browned in the Globals */
+  skyDim = 0;
   /** (round 83) what judges what's changed — structures and rock (game/integrity.ts); the world API's edits mark it */
   integrity?: { markDirty(x: number, y: number, r: number, cut?: number): void };
   /** per-column buffers of the modules a game installed (agents' fields): a streamed window's slide moves them (round 80) */
@@ -295,6 +297,13 @@ export class WorldCore {
     g.sun = this.light.dir;
     g.sunCol = [this.light.col[0], this.light.col[1], this.light.col[2], this.light.timeOfDay];
     g.sky = [this.light.sky[0], this.light.sky[1], this.light.sky[2], this.light.night];
+    // (mutators' 'darkness' sign: the sun and the sky dimmed and browned, as under a far eruption's smoke)
+    if (this.skyDim > 0) {
+      const k = 1 - 0.72 * this.skyDim;
+      const t = [1 - 0.05 * this.skyDim, 1 - 0.2 * this.skyDim, 1 - 0.38 * this.skyDim];
+      g.sunCol = [g.sunCol[0] * k * t[0], g.sunCol[1] * k * t[1], g.sunCol[2] * k * t[2], g.sunCol[3]];
+      g.sky = [g.sky[0] * k * t[0], g.sky[1] * k * t[1], g.sky[2] * k * t[2], g.sky[3]];
+    }
 
     // (round 113, the planner's — scenes/planner.ts: rendering before simulation — while the view has undrawn land the
     // sim's ticks a frame are cut; its time catches up later, capped as ever)

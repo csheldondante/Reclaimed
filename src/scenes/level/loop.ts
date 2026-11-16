@@ -15,7 +15,13 @@ import { meetPerson, petitionOf } from '../../living/present';
 import { capitalise } from '../../living/plain';
 import { lose, newLedger, pools, total, type Pool, type Pools, type SeasonLedger } from '../../season/ledger';
 import type { SeasonLoop } from '../../season/loop';
-import { Realm, roadLook, RUN_SEASONS, type SpellId } from '../../season/realm';
+import { Realm, roadLook, RUN_SEASONS, type SpellId, type Spot } from '../../season/realm';
+import { MemoryWorldState } from '../../api/contracts/world-state';
+import { FactWorld } from '../../living/world';
+import { mutators } from '../../mutate';
+import type { MutateEngine } from '../../mutate/engine';
+import { ROW_H, cellAt } from '../../world/lattice';
+import { restoreMutators } from './mutators';
 import { SITES, type SiteKey } from '../../season/realm-templates';
 import { mountRunUi, type Asking, type Marker, type Phase, type RunGame } from '../../season/run-ui';
 import * as W from '../../season/run-words';
@@ -90,6 +96,7 @@ class Game implements RunGame {
     private scene: LevelScene,
     private towns: FieldTowns,
     private season: SeasonLoop,
+    private mut: MutateEngine | null,
   ) {
     this.cam = new StoryCamera(scene.core.camera, scene.storyCut ?? {});
     // (a shot's points are window coordinates: they slide with the window)
@@ -229,9 +236,45 @@ class Game implements RunGame {
     return all.filter((e) => !now.includes(e.id as never) && (SHOWN.has(e.kind) || (e.weight ?? 0) !== 0)).map((e) => W.sentence(e.note ?? e.kind));
   }
 
+  /** what this run changed in the land and the world's places: the mutators' entries its events caused, each named by
+   *  the place its event is about */
   land(): string[] {
     const r = this.realm;
-    return r ? r.physical.map((p) => W.landLine(p.kind, r.w.name(p.at))) : [];
+    if (!r) return [];
+    const evs = new Map(r.history().map((e) => [e.id, e]));
+    return r.changes().map((m) => W.landLine(m.kind, m.name ?? r.w.name(evs.get(m.fact!)?.to[0] ?? m.place ?? r.home)));
+  }
+
+  /**
+   * Where a site of the home town, or a spot out of it, is in world cells [x, row] (the mutators' coordinates). A site:
+   * its place on the map. The hills (a camp's) and the mountain (the one that breaks): the highest of the atlas's
+   * coarse ground on a ring round the town — near for the hills, far enough for the mountain that its lava is not the
+   * town's and its ash is.
+   */
+  private where(spot: Spot): [number, number] | null {
+    const a = this.scene.opts.atlas;
+    const S = this.scene.stream;
+    const t = this.town;
+    if (!a || !S || !t) return null;
+    if (spot === 'hills' || spot === 'mountain') {
+      const [r0, r1] = spot === 'hills' ? [170, 260] : [420, 640];
+      const [hx, hy] = t.site.at;
+      let best: [number, number] | null = null;
+      let top = -Infinity;
+      for (let k = 0; k < 48; k++) {
+        const ang = (k / 48) * Math.PI * 2;
+        const r = r0 + ((k * 7) % 5) * ((r1 - r0) / 4);
+        const x = hx + Math.cos(ang) * r;
+        const y = hy + Math.sin(ang) * r;
+        const z = a.atlas.macroAt(x, y);
+        if (z > top) [top, best] = [z, [Math.round(x), Math.round(y / ROW_H)]];
+      }
+      return best;
+    }
+    const at = this.spot(spot);
+    if (!at) return null;
+    const [cx, cy] = cellAt(at[0], at[1]);
+    return [S.origin[0] + cx, S.origin[1] + cy];
   }
 
   // ---- saving -----------------------------------------------------------------------------------------
@@ -241,6 +284,14 @@ class Game implements RunGame {
     if (st?.has(WORLD_KEY)) this.saved = JSON.parse(new TextDecoder().decode(await st.get(WORLD_KEY))) as WorldSnapshot;
     const before = this.before();
     console.log(`[loop] world: ${this.saved ? `saved, ${before.length} things remembered` : 'new'}`);
+    // (the mutators' saved list laid over the window, with the saved world bound first: its entries' fact events are in
+    // it, so nothing is recorded twice. A run then binds its own world — season/realm.ts)
+    const a = this.scene.opts.atlas;
+    if (this.mut && a?.settlements) {
+      this.mut.useWorld(new FactWorld(MemoryWorldState.restore(structuredClone(this.saved ?? a.settlements.wiki.snapshot))));
+      await restoreMutators(this.mut);
+      console.log(`[loop] mutators: ${mutators.record().list.length} changes of earlier runs laid over the land, ${mutators.signs().length} signs on`);
+    }
     this.set('leader');
   }
 
@@ -267,7 +318,7 @@ class Game implements RunGame {
     // reload, where the season loop restores it with the town)
     const ledger: SeasonLedger = { ...newLedger(who.pools, who.income), built: [...this.season.ledger.built] };
     const seasons = Number(this.scene.host.params.get('runlen') ?? RUN_SEASONS);
-    this.realm = new Realm({ world: this.saved ?? a.settlements.wiki.snapshot, home, seed: a.atlas.p.seed, leader: who, ledger, land: () => this.season.land, seasons });
+    this.realm = new Realm({ world: this.saved ?? a.settlements.wiki.snapshot, home, seed: a.atlas.p.seed, leader: who, ledger, land: () => this.season.land, seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y) });
     this.runs = this.realm.history(true).filter((e) => e.kind === 'run-began').length;
     this.notes = [];
     this.resultLines = [];
@@ -548,7 +599,7 @@ class Game implements RunGame {
 /** the history's kinds the end-of-run screen always shows (the rest: those with a weight) */
 const SHOWN = new Set(['built', 'founding', 'relieved', 'fell', 'raid-held', 'raid-broke', 'tribute-paid', 'made-safe', 'flooded', 'burned', 'melted', 'buried', 'lens-lit', 'farm-burned', 'scouts-seen']);
 
-export function startRunLoop(scene: LevelScene, towns: FieldTowns): void {
+export function startRunLoop(scene: LevelScene, towns: FieldTowns, mut: MutateEngine | null): void {
   let game: Game | null = null;
   const season = startSeasonLoop(scene, towns, {
     ui: false,
@@ -559,7 +610,7 @@ export function startRunLoop(scene: LevelScene, towns: FieldTowns): void {
     calls: true,
     ready: () => void game!.load(),
   });
-  game = new Game(scene, towns, season);
+  game = new Game(scene, towns, season, mut);
   scene.seasonUi = mountRunUi(scene.host.ui, game);
   (globalThis as { rungame?: Game }).rungame = game;
 }

@@ -290,6 +290,9 @@ export class CityGen {
   readonly lotRecords: GPUBuffer;
   readonly lotCounts: GPUBuffer;
   readonly progress: GPUBuffer;
+  /** (mutators, src/mutate LOT_CONDITION) each record's condition word (u32; 0 standing): written on the GPU by the
+   *  mutators, read by tlRise (the building's look) and claimLots (a destroyed lot keeps no claim) */
+  readonly condition: GPUBuffer;
   /** (M4b) the town's claim grid (colapply claimGrid's layout, dense: w × h columns, a span each) and its columns;
    *  per lot record 1 when it's cut off from the town's reach (lotReach) */
   readonly claimGrid: GPUBuffer | GPUBufferBinding;
@@ -365,6 +368,7 @@ export class CityGen {
     // sites, words a record, the sites' first record)
     this.lotRecords = buf('lot records', (LOT_ROOM + LM_ROOM) * RECW * 4);
     this.progress = buf('lot progress', (LOT_ROOM + LM_ROOM) * 4);
+    this.condition = buf('lot condition', (LOT_ROOM + LM_ROOM) * 4);
     this.lotCounts = buf('lot counts', 16);
     // (M4b: the roads' columns as drawn, the claim grid, the records cut off)
     // (CG25: then the front field — each column's earliest start of the lots whose parcels touch it, an ordered f32:
@@ -515,7 +519,7 @@ export class CityGen {
     this.encodeOnly('citygen animate', () => {
       const B = this.B;
       this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 3: B.KEY, 4: B.SCT, 5: this.progress, 6: B.CNT, 7: B.LSTART }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
-      this.k('tlRise', {}, { 1: this.lotRecords, 2: this.progress, 3: B.VTAG, 4: B.SCT, 6: B.WALL, 7: this.verts }, Math.ceil(this.vertRoom / 64), 1, true);
+      this.k('tlRise', {}, { 1: this.lotRecords, 2: this.progress, 3: B.VTAG, 4: B.SCT, 5: this.condition, 6: B.WALL, 7: this.verts }, Math.ceil(this.vertRoom / 64), 1, true);
     });
   }
 
@@ -977,10 +981,10 @@ export class CityGen {
     if (p.shape > 1) this.k2('roadShape', {}, { 5: B.VTAG, 1: B.HS, 2: B.PTS, 3: HH, 4: B.FD, 6: B.ROADS, 7: this.verts }, true);
     this.k('meshCap', {}, {}, 1, 1, true);
     // (time-lapse: the tagged vertices where the clock puts them)
-    this.k('tlRise', {}, { 1: this.lotRecords, 2: this.progress, 3: B.VTAG, 4: B.SCT, 6: B.WALL, 7: this.verts }, Math.ceil(this.vertRoom / 64), 1, true);
+    this.k('tlRise', {}, { 1: this.lotRecords, 2: this.progress, 3: B.VTAG, 4: B.SCT, 5: this.condition, 6: B.WALL, 7: this.verts }, Math.ceil(this.vertRoom / 64), 1, true);
     // (M4b: the claim grid — the roads' and decks' columns, then the buildings' over them)
     this.k2('claimRoads', {}, { 1: B.ROADS, 2: B.M, 3: B.H, 7: this.claimGrid });
-    this.k('claimLots', { count: LOT_ROOM }, { 1: this.lotRecords, 2: this.progress, 4: B.CNT, 7: this.claimGrid }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
+    this.k('claimLots', { count: LOT_ROOM }, { 1: this.lotRecords, 2: this.progress, 3: this.condition, 4: B.CNT, 7: this.claimGrid }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
     // (season life: the wall's columns over them, the road raster marked where it stands)
     this.k('wallClaim', {}, { 1: B.WALL, 2: B.AD, 3: HH, 4: B.FD, 5: B.ROADS, 7: this.claimGrid }, 1);
     this.cp.end();

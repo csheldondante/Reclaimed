@@ -26,6 +26,7 @@ import { livingFromUrl } from '../../citylife/params';
 import { mountTownPanel } from '../../citygen/panel';
 import { startSeasonLoop } from './season';
 import { startRunLoop } from './loop';
+import { attachMutators } from './mutators';
 import { whenPipelinesReady } from '../../gpu/pipeline';
 
 /** sleep and the streamed window, with what follows its slides */
@@ -340,8 +341,12 @@ export function attachStream(scene: LevelScene): void {
           }
           // (trackA-opps: the season loop on the town — docs/design/SEASON_LOOP.md; switchover: the default, ?opps=0 off)
           const opps = host.params.get('opps') !== '0';
+          // (mutators, docs/design/MUTATORS.md: the world modifier list on this window; ?mutlab=1 its lab. Before the
+          // loop: the run binds its own fact world to them and lays the saved list over it — scenes/level/loop.ts)
+          const run = opps && host.params.get('loop') === '1';
+          const mut = attachMutators(scene, towns, { restore: !run });
           // (loop-skeleton: ?loop=1 — the main loop's skeleton over the season loop, docs/design/LOOP_SKELETON.md)
-          if (opps && host.params.get('loop') === '1') startRunLoop(scene, towns);
+          if (run) startRunLoop(scene, towns, mut);
           else if (opps) startSeasonLoop(scene, towns);
           S.onSlide.push(() => towns.slid());
           S.onWarp.push(() => towns.warped());

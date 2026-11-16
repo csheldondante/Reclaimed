@@ -3774,3 +3774,25 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   → soldiers are raised only once the keep card is started or built (its barracks) or the walls are built (the
   muster yard); no market square fallback. With none, no squads; raids still come and simply reach their target.
   The player's fortress joins the list when it exists as a place.
+
+## 2026-11-15 — world mutators are instant (mutators)
+
+- The user: "More focus on mutations since we have so much built in that area for a reason. I want melted, flooded,
+  buried, burned etc" and "…then see the mutations from all your choices. Abandoned cities. Magma burned land. Floods.
+  Buried things. Zombies. Undead cities. Totalitarian lockdowns etc. Strategy loop is just preparing for the
+  opportunity and mutating the world."
+- (via the coordinator) The user: "Try making instant mutators instead since a lot of opportunities will happen in
+  other area of the world like new mining settlements or other cities being captured or destroyed or occupied or made
+  into vassala that have to pay tribute or invoke negative opportunities". → a mutator is an instant, deterministic
+  GPU op from a persistent world modifier list; land not loaded is written when it arrives; no sim is run for it.
+- (via the coordinator) The user: "the local simulation and playable battle make the instant mutations read as fully
+  simulated and the whole point is it feels like the whole world changes in reaction to your choices". → an instant
+  end state uses the sims' own materials and must be one the woken sims leave alone (tested for the flood in a closed
+  hollow and the burial; where it isn't yet: BACKLOG MU-1, MU-2, MU-10).
+- (via the coordinator) The user: "Weather effects too. Darkness and ash raining down are a great way to indicate a
+  distant eruption. Having random undead rise in the city or crime are all indicators." → signs: ambient indicators
+  cast on a place while a condition lasts (`mutators.sign`, `mutators.signs`); a far `melted` casts ash fall and
+  darkness on the home town for three seasons.
+- (via the coordinator) The user: "A river running dry, trees dying, the whole point is to make the map a living
+  visual representation of your choices". → `dried`, `withered` (and `greened`) as instant land ops; every entry is
+  drawn on the atlas map at its place.

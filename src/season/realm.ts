@@ -9,7 +9,11 @@
 //     expiry, the run's arc moves on), then the ledger's own season (income, stages) — the caller runs that between
 //     `endSeason` and `afterSeason`, since the season loop owns it;
 //   - the world's record: the fact layer (entities, relations, claims, the event history) in the WorldState, saved
-//     whole (`snapshot`) and read by the next run.
+//     whole (`snapshot`) and read by the next run;
+//   - what the land and the lots show of it: the mutators (mutate/index.ts). A template's outcome names them — `mutate`
+//     and `sign` (mutate/outcomes.ts) for a whole place, `mutateAt` and `found` here for a part of the home town or a
+//     new place — and each entry carries the id of the fact event that says what happened. With no world bound to the
+//     mutators (a test, the inspector) the facts alone change.
 // The run's own state (its length, the spells unlocked, the raid due, the fight) is small and kept here; each change is
 // also an event in the history. Pure: no DOM, no GPU, no clock.
 import type { EntityId, FactEvent } from '../api/contracts/facts';
@@ -24,6 +28,10 @@ import { CATALOG, card } from './catalog';
 import { hasLand, type Land } from './deal';
 import { adopt, lose, grant, pools, POOL_ROLE, type Pool, type Pools, type SeasonLedger } from './ledger';
 import { cardOfTemplate, projectTemplate, raidArc, siteId, SITES, WORLD_TEMPLATES, type SiteKey } from './realm-templates';
+import { mutators, type Mutation, type PhysicalKind } from '../mutate';
+import { recordMutation } from '../mutate/facts';
+import '../mutate/outcomes';
+import { ROW_H } from '../world/lattice';
 
 /** seasons to the run's major threat (a knob; 16 is the orchestrator's number, not the user's) */
 export const RUN_SEASONS = 16;
@@ -31,6 +39,8 @@ export const RUN_SEASONS = 16;
 export const TRIBUTE_SEASONS = 3;
 
 export type SpellId = 'heatray';
+/** cells round the gate burned when the raiders break in */
+export const SACK_RADIUS = 30;
 
 export interface Leader {
   id: string;
@@ -40,15 +50,14 @@ export interface Leader {
   income: Partial<Pools>;
 }
 
-/** a physical change an outcome named, for the mutators (a stub until `origin/mutators` is merged): what, and where */
-export interface PhysicalAsk {
-  kind: string;
-  /** a site of the home town, or another place of the world (a fact entity) */
-  at: EntityId;
-  /** the event that caused it (the fact layer's history) */
-  cause: number | string;
-  season: number;
-}
+/** a spot a land change can be put that is no site of the town: the hills a camp is founded in, the mountain that
+ *  breaks */
+export type Spot = SiteKey | 'hills' | 'mountain';
+
+/** the raiders as an entity of the fact world (who holds a town they took) */
+export const RAIDERS_ID = 'raiders';
+/** the mining camp the run can found */
+export const CAMP_ID = 'copper-hollow';
 
 export interface RealmOptions {
   /** the world as saved, or the atlas's own (never changed: restored into a new WorldState) */
@@ -63,6 +72,11 @@ export interface RealmOptions {
   land: () => Land;
   /** the run's length in seasons (default RUN_SEASONS) */
   seasons?: number;
+  /** where a site of the home town (or a spot out of it) is, in world cells [x, row]: the scene's, from the town as it
+   *  is laid out. Absent (a test): the town's own centre, the hills and the mountain a fixed way off it */
+  where?: (spot: Spot) => readonly [number, number] | null;
+  /** the region of a world point (x cells, y world units): a founded place's */
+  regionAt?: (x: number, y: number) => number;
   tune?: () => DealerTune;
 }
 
@@ -81,8 +95,6 @@ export class Realm {
   /** the threat is over: fought, or paid off */
   fight: { raiders: number; left: number; fallen: number; held: boolean } | null = null;
   averted = false;
-  /** physical changes outcomes named, not yet handed to the mutators */
-  readonly physical: PhysicalAsk[] = [];
   /** what happened this season, in the player's words (resolved, lapsed, the arc) */
   news: string[] = [];
   last: EngineReport;
@@ -99,6 +111,7 @@ export class Realm {
     if (!this.w.settlement(o.home)) throw new Error(`realm: no settlement ${o.home} in the world`);
     seedLocus(this.w, o.home, o.seed);
     this.w.diplomacy.idOf({ player: true });
+    if (!f.entity(RAIDERS_ID)) f.add({ id: RAIDERS_ID, kind: 'army', name: 'the raiders', cause: 'realm' });
     // (the home town's sites: named buildings and districts a card stands at — once a world)
     const region = this.w.settlement(o.home)!.region;
     for (const s of SITES) if (!f.entity(siteId(o.home, s.key))) f.add({ id: siteId(o.home, s.key), kind: 'site', name: s.name, at: { region, settlement: o.home }, attrs: { site: s.key, what: s.kind }, cause: 'realm' });
@@ -107,6 +120,12 @@ export class Realm {
     f.turn = start;
     this.t0 = start - 1;
     f.record({ kind: 'run-began', by: ['player'], to: [o.home], note: `${o.leader.name} took the town` });
+    // (the mutators read and write this run's world from here on; their seasons are the history's turns, which run on
+    // across runs: a sign cast in one run's last season ends in the next run's third)
+    if (mutators.ready) {
+      mutators.useWorld(this.w);
+      mutators.season(f.turn);
+    }
     f.drainChanged();
     const templates: TemplateDef[] = [...CATALOG.map(projectTemplate).filter((t): t is TemplateDef => t !== null), ...WORLD_TEMPLATES];
     // (the arc's turns are the history's: this run's seasons after the turn it began at)
@@ -181,9 +200,52 @@ export class Realm {
       spell: { effect: (c, a) => void (c.dry || this.spells.includes(a[0] as SpellId) || this.spells.push(a[0] as SpellId)) },
       raid: { effect: (c, a) => void (c.dry || this.averted || (this.raid = Number(a[0]))) },
       avert: { effect: (c) => void (c.dry || (this.averted = true)) },
-      physical: { effect: (c, a) => void (c.dry || this.physical.push({ kind: String(a[0]), at: refOf(c.b, a[1]), cause: c.cause, season: this.season })) },
+      // (mutateAt kind $site radius strength? spot?: the land round a site of the home town changed — or round a spot
+      // out of it, when one is named: the mountain. The physical side of the event the template has just recorded)
+      mutateAt: { effect: (c, a) => void (c.dry || this.landAt(a[0] as PhysicalKind, refOf(c.b, a[1]), Number(a[2]), Number(a[3] ?? 1), c.cause, a[4] as Spot | undefined)) },
+      // (found id name: a new camp in the hills — the settlement's record, its entity, its event, its place on the map)
+      found: {
+        effect: (c, a) => {
+          const id = String(a[0]);
+          const cell = this.cellOf('hills');
+          const spec = { kind: 'founded' as const, place: id, cell, radius: 30, strength: 1, by: 'player', name: String(a[1]), size: 'camp' as const };
+          const fact = recordMutation(c.w, spec, { cause: c.cause, regionAt: this.o.regionAt ?? (() => this.w.settlement(this.home)!.region) });
+          if (!c.dry && mutators.ready) mutators.apply({ kind: 'founded', place: id, at: cell, radius: 30, by: 'player', name: spec.name, size: 'camp', cause: c.cause, fact });
+        },
+      },
     };
     return { helpers };
+  }
+
+  /** where a spot is in world cells [x, row]: the scene's answer, else a fixed way off the town's centre */
+  cellOf(spot: Spot): [number, number] {
+    const at = this.o.where?.(spot);
+    if (at) return [Math.round(at[0]), Math.round(at[1])];
+    const h = this.w.settlement(this.home)!;
+    const off = spot === 'hills' ? [220, -60] : spot === 'mountain' ? [-520, 180] : [0, 0];
+    return [Math.round(h.at[0] + off[0]), Math.round((h.at[1] + off[1]) / ROW_H)];
+  }
+
+  /**
+   * The land round a site changed (flooded, burned, melted, buried): the physical projection of the fact event that says
+   * so — the latest one `cause` recorded (a template records its event before it names this). The mutators write the
+   * land and the lots there at once, or when that land next arrives. Nothing bound (a test): the facts stand alone.
+   */
+  private landAt(kind: PhysicalKind, site: EntityId, radius: number, strength: number, cause: string, spot?: Spot): void {
+    if (!mutators.ready) return;
+    const ev = this.w.facts.events().filter((e) => e.about?.opp === cause || e.id === cause).at(-1);
+    const key = spot ?? (this.w.facts.entity(site)?.attrs?.site as SiteKey | undefined);
+    if (!key) throw new Error(`realm: ${site} is no site of the home town`);
+    let seed = 1;
+    for (const ch of site) seed = (seed * 31 + ch.charCodeAt(0)) & 0xffff;
+    mutators.apply({ kind, at: this.cellOf(key), radius, strength, seed, cause, ...(ev ? { fact: ev.id } : {}) });
+  }
+
+  /** what this run changed in the land and the places of the world: the mutators' entries whose fact event is this
+   *  run's (empty with no world bound to them) */
+  changes(): Mutation[] {
+    const mine = new Set(this.history().map((e) => e.id));
+    return mutators.record().list.filter((m) => m.fact !== undefined && mine.has(m.fact));
   }
 
   /** the standing settlement nearest the home town (the neighbour its cards are about); null: none */
@@ -253,6 +315,7 @@ export class Realm {
     const past = this.engine.past.length;
     this.last = this.engine.advance();
     this.sync();
+    if (mutators.ready) mutators.season(this.w.turn);
     // (the season's news in the cards' own words: what was done, what was left too long; then the arc's stage)
     const told = this.engine.past.slice(past).flatMap((o) => {
       const t = this.engine.template(o.template);
@@ -278,9 +341,12 @@ export class Realm {
     this.raid = null;
     const e = this.w.facts.record({ kind: held ? 'raid-held' : 'raid-broke', by: [], to: [this.home], note: held ? `the town held against ${f.raiders} raiders; ${f.fallen} soldiers died` : `${f.left} of ${f.raiders} raiders broke into the town; ${f.fallen} soldiers died`, weight: held ? 0.5 : -0.6 });
     if (!held && f.raiders > 0) {
+      // (sacked: the district by the gate burned, its people gone; thieves in what is left for three seasons)
       const at = siteId(this.home, 'gate');
       this.w.facts.setTag(at, 'condition', 'burned', true, 'raid');
-      this.physical.push({ kind: 'burned', at, cause: e.id, season: this.season });
+      this.w.facts.setTag(at, 'condition', 'abandoned', true, 'raid');
+      this.landAt('burned', at, SACK_RADIUS, 1, e.id);
+      if (mutators.ready) mutators.sign({ kind: 'crime', place: this.home, strength: 0.8, until: this.w.turn + 3, cause: e.id });
     }
   }
 

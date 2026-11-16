@@ -108,7 +108,7 @@ function fakeTown(id: string, o: { w: number; h: number; centre: [number, number
     site: { id },
     box: { w: o.w, h: o.h, R: o.R },
     centre: o.centre,
-    lots: { records: buf(o.records ?? new Uint32Array(4)), counts: buf(new Uint32Array([o.n ?? 0, 0, RECW, REC_LM])), progress: buf(o.progress ?? new Float32Array(4)), place: buf(new Float32Array(4)) },
+    lots: { records: buf(o.records ?? new Uint32Array(4)), counts: buf(new Uint32Array([o.n ?? 0, 0, RECW, REC_LM])), progress: buf(o.progress ?? new Float32Array(4)), condition: buf(new Uint32Array(4)), room: 1, place: buf(new Float32Array(4)) },
     routes: { roads: buf(new Uint32Array(N)), heights: buf(new Float32Array(N).fill(o.heights ?? 10)), wet: buf(new Float32Array(N)), pop: buf(o.pop ?? new Float32Array(N * 4)), art: buf(o.art ?? new Uint32Array(4 + 8 * AW)), wall: buf(o.wall) },
     times: { lots: o.n ?? 0 },
     gridPlace: () => o.place ?? { dx: 0, dy: 0, dz: 0 },
