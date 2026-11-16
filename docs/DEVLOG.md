@@ -23221,10 +23221,14 @@ with the window (wired to `WorldCore.onShift`); `test/unit/story-camera.test.ts`
 
 **Walk-through** (`node scripts/loopwalk.mjs`, 412x915, on the shared runner): passes end to end — leader, town,
 petition, agreed, three seasons, the threat's countdown 3-2-1, the attack screen, result, end of run, a second run in
-the same world with its changes and places kept, the world record in the store. **What it showed wrong:** the raid
-itself does not arrive at Muru in the real game: every spawn point of the town's three arterials is refused (`none`,
-`water`), so the attack screen reports "Raiders were seen, but they found no road into town" (LS-16). The level's boot
-tripped the 20 s GPU watchdog in 3 of 6 headless runs while other agents used the GPU (LS-12). Not measured: frame
-cost on the phone (LS-11).
+the same world with its changes and places kept, the world record in the store. **What it showed wrong:** in three walks (Ysolt) the raid
+did not arrive at Muru: every spawn point of the town's three arterials was refused (`none`, `water`), so the attack
+screen reported "Raiders were seen, but they found no road into town". In a fourth walk (Ilveth, no soldiers) 6 raiders
+spawned, marched in over the bridge with the camera on them, and sacked the town: 6 Materials taken, Unrest +1, the east
+district's change applied and tagged (LS-16: it depends on the window). A fight with soldiers and a spell cast are
+still unseen. The burn stand-in shows nothing on buildings (LS-22); "east" is screen-left (LS-21). The level's boot
+tripped the 20 s GPU watchdog in 4 of 8 headless runs while other agents used the GPU (LS-12). Not measured: frame cost
+on the phone (LS-11). The unit suite: 636 pass; `writing-sources` fails as it does on the base (LS-13);
+`terrain/partition.test.ts` failed once in the full run under load and passes alone.
 
-**Limits.** In BACKLOG LS-1 … LS-16 and the assumptions list in LOOP_SKELETON.md.
+**Limits.** In BACKLOG LS-1 … LS-22 and the assumptions list in LOOP_SKELETON.md.

@@ -110,7 +110,8 @@ sack the town after 5 s there); the attack capped at 150 s of wall time (a cap �
 ## Round 1 result (2026-11-15)
 
 Real: 1 leader pick, 2 the town, 3 petitions and the camera, 4 commit, 5 the season's time-lapse with ageing and
-expiry, 6 the threat card. Wired but not seen working: 7 — the raid is the card's expiry and the attack screen, camera
-follow, spell bar and result exist, but at Muru the raiders find no spawn point (BACKLOG LS-16), so no fight plays.
+expiry, 6 the threat card. Wired, seen once: 7 — the raid is the card's expiry; in one walk of four the
+raiders spawned, marched in with the camera on them and sacked a town with no soldiers; in three they found no spawn
+point (BACKLOG LS-16). A fight with soldiers and a spell cast are unseen.
 Stand-in: 8's look (the mutators), far places on the map, signs, refugees as a column. Persisting: the world record,
 the town as built. Next: LS-16, then merge `mutators`.
