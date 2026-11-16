@@ -220,6 +220,9 @@ interface Tile {
   q: Part;
   /** (round 112, tilefix) a render-only tile's extent known on the CPU (TileLandGpu.boundOf: a0, b1, tw, th — conservative) */
   boxed?: boolean;
+  /** (mutators round 6, MU-49) what it was baked from has changed since (TileCache.restale): made again in place — drawn
+   *  as it is until then, so nothing flashes */
+  stale?: boolean;
 }
 
 /** a bake slot: its camera and groups (made again when the mesh's buffers change) */
@@ -753,6 +756,7 @@ export class TileCache {
     } else this.stats.again++;
     t.bakedAt = this.frame;
     t.usedAt = this.frame;
+    t.stale = false;
     this.stats.bakes++;
     return t;
   }
@@ -954,7 +958,46 @@ export class TileCache {
       big.sort((a, b) => a.d - b.d);
       for (const b of big.slice(0, n - out.length)) out.push({ rx: b.rx, ry: b.ry, remake: true });
     }
+    // (mutators round 6, MU-49: tiles whose land changed under them — a world modifier applied there — made again in
+    // place, nearest first, after the holes: those past the window, and a window region's while it still draws)
+    if (this.staleCount > 0 && out.length < n) {
+      const w0 = Math.floor(ox / R);
+      const h0 = Math.floor(oy / R);
+      const st: { rx: number; ry: number; d: number }[] = [];
+      let left = 0;
+      for (const t of this.tiles.values()) {
+        if (!t.stale) continue;
+        left++;
+        if (Math.round(t.az * 1e4) !== Math.round(cam.azimuth * 1e4) || skip(`${t.rx},${t.ry}`)) continue;
+        const inWin = t.rx >= w0 && t.rx < w0 + W / R && t.ry >= h0 && t.ry < h0 + H / R;
+        if (inWin && !this.drawnSet.has(`${t.rx},${t.ry}`)) continue;
+        st.push({ rx: t.rx, ry: t.ry, d: Math.hypot(t.rx - crx, t.ry - cry) });
+      }
+      this.staleCount = left;
+      st.sort((a, b) => a.d - b.d);
+      for (const b of st.slice(0, n - out.length)) if (!out.some((o) => o.rx === b.rx && o.ry === b.ry)) out.push({ rx: b.rx, ry: b.ry, remake: true });
+    }
     return out;
+  }
+
+  /** (mutators round 6) tiles marked stale and not made again yet, at most (0: none — `wanted` looks at none) */
+  private staleCount = 0;
+  /**
+   * (mutators round 6, MU-49) The land of a box of the world (cells; on its torus, W x H) was changed by a world
+   * modifier: every tile of a region meeting it is made again from the land as it is now — a render-only tile by the
+   * land's maker (in place: it draws as it was until its new bake), a window region's by the window's next bake of
+   * it. Nothing runs while no tile is stale.
+   */
+  restale(x0: number, y0: number, w: number, h: number, W: number, H: number): void {
+    const mod = (v: number, n: number) => ((v % n) + n) % n;
+    const meets = (a: number, size: number, b: number, len: number, wrap: number) => mod(a - b, wrap) < len || mod(b - a, wrap) < size;
+    for (const t of this.tiles.values()) {
+      if (!meets(t.rx * R, R, x0, w, W) || !meets(t.ry * R, R, y0, h, H)) continue;
+      t.stale = true;
+      // (the window's own bake of it: first in its turn — encode's score)
+      t.bakedAt = -1e9;
+      this.staleCount++;
+    }
   }
 
   /**

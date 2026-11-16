@@ -14,8 +14,11 @@ import floodWgsl from '../shaders/mutate/flood.wgsl?raw';
 import floodScanWgsl from '../shaders/mutate/floodscan.wgsl?raw';
 import riverSetWgsl from '../shaders/mutate/riverset.wgsl?raw';
 import riverHeldWgsl from '../shaders/riverheld.wgsl?raw';
-import { RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS, type WorldGpu } from '../sim/world-gpu';
+import { RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS, RIVER_WET_PAD, type WorldGpu } from '../sim/world-gpu';
 import { ROW_H } from '../world/lattice';
+import { CHUNK } from '../world/layout';
+import { VERSION_WORDS } from '../sim/chunkver';
+import type { TileLandWritten } from '../render/tileland';
 import type { Mutation } from './index';
 import { GPU_KIND, holderHue, landOp } from './list';
 
@@ -82,6 +85,7 @@ export class MutateGpu {
 const RIVER_DEPTH_EXP: f32 = ${RIVER_DEPTH_EXP};
 const RIVER_SPEED_EXP: f32 = ${RIVER_SPEED_EXP};
 const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
+const RIVER_WET_PAD: i32 = ${RIVER_WET_PAD};
 `;
     this.river = makeCompute(device, 'mutate-river', [commonWgsl, layersWgsl, materialsWgsl, masksWgsl, riverSetWgsl, held + riverHeldWgsl], { 0: 'uniform', 1: 'read', 2: 'uniform', 4: 'rw', 5: 'uniform', 9: 'read', 22: 'tex', 62: 'tex' }, 'mutRiverSet');
     this.floodHist = device.createBuffer({ label: 'mutate-flood-hist', size: 768 * 4, usage: GPUBufferUsage.STORAGE });
@@ -97,7 +101,7 @@ const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
   }
 
   /** an entry's numbers for the kernel, in the window as it is now */
-  private params(m: Mutation, o: Origin, box: readonly [number, number, number, number], room = 0, strength = m.strength, floodSlot = -1): GPUBufferBinding {
+  private params(m: Mutation, o: Origin, box: readonly [number, number, number, number], room = 0, strength = m.strength, floodSlot = -1, into?: { buf: GPUBuffer; off: number }): GPUBufferBinding {
     // (the entry's cell in the window: `o` is the origin it's nearest to — MutateEngine.originFor, the world wraps)
     const kind = landOp(m) ?? GPU_KIND[m.kind];
     if (kind === null) throw new Error(`mutators: ${m.kind} writes nothing on the GPU`);
@@ -126,6 +130,10 @@ const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
     }
     // (noise positions are world positions: the window's origin as this entry sees it)
     f.set([ox, oy * ROW_H, oz, 0], 20);
+    if (into) {
+      this.device.queue.writeBuffer(into.buf, into.off, buf);
+      return { buffer: into.buf, offset: into.off, size: PARAM_BYTES };
+    }
     if (this.slot >= SLOTS) throw new Error('mutators: more dispatches in one submit than the parameter slots (flush first)');
     const off = this.slot++ * SLOT;
     this.device.queue.writeBuffer(this.uni, off, buf);
@@ -214,6 +222,79 @@ const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
     push();
     if (!timed) return time ? Promise.resolve(null) : null;
     return this.readMs();
+  }
+
+  /** the far tiles' side of the ops (tileWrite): what their world has no buffer for, and their parameters' slots */
+  private tile: { side: number; chunks: GPUBuffer; vegNext: GPUBuffer; waterSource: GPUBuffer; contamNext: GPUBuffer; uni: GPUBuffer; slots: number; used: number; frame: number } | null = null;
+  /** tile dispatches encoded so far (a test's and the lab's count) */
+  tileDispatches = 0;
+
+  /**
+   * (round 6, BACKLOG MU-49) Entries written into a far tile's land (render/tileland.ts TileLandWritten: the tiles'
+   * world, right after its generation, before its render preparation and bake): the same kernels over the tile's own
+   * contract buffers, each entry's box and origin the tile's (`jobs`, in list order), encoded into the bake's encoder.
+   * A dispatch an entry (two for a flood: its silt, its water); nothing read back, nothing submitted here. The tiles'
+   * world keeps no next-step copies and no water sources of its own: scratch ones stand in (the sources copied from
+   * the generated record, so a river's own inflow is told from a flood's stage as in the window), and a chunk table
+   * with room for the versions the kernels bump (the tiles' has none; nothing reads them).
+   */
+  tileWrite(t: TileLandWritten, jobs: readonly { m: Mutation; o: Origin; box: readonly [number, number, number, number] }[]): void {
+    if (!jobs.length) return;
+    const dev = this.device;
+    const N = t.side * t.side;
+    const W = t.world;
+    let T = this.tile;
+    if (!T || T.side !== t.side) {
+      const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+      // (the versions follow the table, keyed by where a chunk's slots lie in the layers: every chunk's worth of them)
+      const chunkSlots = Math.ceil(W.layers.size / 16 / (CHUNK * CHUNK * t.layout.K));
+      T = this.tile = {
+        side: t.side,
+        chunks: dev.createBuffer({ label: 'mutate-tile-chunks', size: W.chunks.size + chunkSlots * VERSION_WORDS * 4, usage: S }),
+        vegNext: dev.createBuffer({ label: 'mutate-tile-vegNext', size: N * 4, usage: S }),
+        waterSource: dev.createBuffer({ label: 'mutate-tile-waterSource', size: N * 4, usage: S }),
+        contamNext: dev.createBuffer({ label: 'mutate-tile-contamNext', size: N * 8, usage: S }),
+        uni: dev.createBuffer({ label: 'mutate-tile-params', size: SLOT * 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+        slots: 64,
+        used: 0,
+        frame: -1,
+      };
+    }
+    if (T.frame !== t.frame) {
+      T.frame = t.frame;
+      T.used = 0;
+    }
+    const need = jobs.reduce((n, j) => n + (j.m.kind === 'flooded' ? 2 : 1), 0);
+    if (T.used + need > T.slots) {
+      // (more dispatches in one frame's bakes than the slots: a bigger buffer from here on — the one this frame's
+      // earlier groups hold stays theirs)
+      T.slots = Math.max(T.slots * 2, need);
+      T.uni = dev.createBuffer({ label: 'mutate-tile-params', size: SLOT * T.slots, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      T.used = 0;
+    }
+    t.enc.copyBufferToBuffer(W.chunks, 0, T.chunks, 0, W.chunks.size);
+    const src = t.layout.bufs.find((b) => b.name === 'waterSource');
+    if (src) t.enc.copyBufferToBuffer(W.layers, t.slotOff + src.off, T.waterSource, 0, src.bytes);
+    else t.enc.clearBuffer(T.waterSource);
+    const slot = () => ({ buf: T.uni, off: T.used++ * SLOT });
+    const pass = t.enc.beginComputePass({ label: 'mutate-tile' });
+    for (const { m, o, box } of jobs) {
+      const gx = Math.ceil((box[2] - box[0]) / 8);
+      const gy = Math.ceil((box[3] - box[1]) / 8);
+      const g = makeBindGroup(dev, 'mutate-tile-land', this.land.layout, { 0: W.globals, 1: T.chunks, 2: W.materials, 3: W.layers, 4: W.water, 5: this.params(m, o, box, 0, undefined, -1, slot()), 6: W.veg, 7: T.vegNext, 8: W.lava, 9: T.waterSource, 14: W.wilt });
+      pass.setPipeline(this.land.pipeline);
+      pass.setBindGroup(0, g);
+      pass.dispatchWorkgroups(gx, gy);
+      this.tileDispatches++;
+      if (m.kind === 'flooded') {
+        const gw = makeBindGroup(dev, 'mutate-tile-flood', this.flood.layout, { 0: W.globals, 1: T.chunks, 2: W.materials, 3: W.layers, 4: W.water, 5: this.params(m, o, box, 0, undefined, -1, slot()), 6: W.contam, 7: T.contamNext, 8: T.waterSource });
+        pass.setPipeline(this.flood.pipeline);
+        pass.setBindGroup(0, gw);
+        pass.dispatchWorkgroups(gx, gy);
+        this.tileDispatches++;
+      }
+    }
+    pass.end();
   }
 
   /** the levels the last submit's flood scans chose, a slot each: [level (window z), the standing

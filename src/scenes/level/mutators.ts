@@ -109,7 +109,6 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
   // The held rivers and the tiles read the field; the water the window's columns hold is settled to it in one dispatch
   // when the field is fitted again and when land arrives (riverset.wgsl). Nothing runs while no river is cut.
   let cutsKey = '';
-  let settle = false;
   const syncCuts = (rec: MutationRecord) => {
     const cuts = rec.list.filter((m) => m.kind === 'dried').map((m) => ({ x: m.cell[0], y: m.cell[1] * ROW_H, radius: m.radius, factor: Math.max(0, 1 - m.strength) }));
     const key = JSON.stringify(cuts);
@@ -120,14 +119,35 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
     scene.catchAt = '';
   };
   const cut = () => scene.riverCuts.length > 0 || [...scene.riverInflow.values()].some((v) => v < 1);
+  // (round 6, BACKLOG MU-48: the whole window is settled — and the liquid's records of it forgotten — only when a cut
+  // or an inflow itself changed; land that arrives is settled in its own rectangle, and only its records forgotten.
+  // Before, every slide of the window settled and forgot all of it)
+  const arrived: [number, number, number, number][] = [];
+  let settledFor = '';
   scene.riverFieldWritten = (refit) => {
-    if (!(refit || settle) || !cut()) return;
-    settle = false;
-    gpu.riverSettle([0, 0, core.dims.w, core.dims.h]);
-    scene.flow?.water.forget(0, 0, core.dims.w, core.dims.h);
+    if (!refit && !arrived.length) return;
+    if (!cut()) {
+      arrived.length = 0;
+      settledFor = '';
+      return;
+    }
+    const sig = refit ? JSON.stringify([scene.riverCuts, [...scene.riverInflow]]) : settledFor;
+    if (sig !== settledFor) {
+      settledFor = sig;
+      arrived.length = 0;
+      gpu.riverSettle([0, 0, core.dims.w, core.dims.h]);
+      scene.flow?.water.forget(0, 0, core.dims.w, core.dims.h);
+      return;
+    }
+    for (const [lx, ly, w, h] of arrived.splice(0)) {
+      gpu.riverSettle([lx, ly, lx + w, ly + h]);
+      scene.flow?.water.forget(lx, ly, w, h);
+    }
   };
   // (arriving land comes in with its rivers at the reference: settled after the field's next write)
-  S.onWritten.push(() => void (settle = cut()));
+  S.onWritten.push((lx, ly, w, h) => {
+    if (cut()) arrived.push([lx, ly, w, h]);
+  });
 
   // ---- founded places built (BACKLOG MU-6): every `founded` entry is a site of the field towns — the town generator's
   // own path (citygen/towns.ts: made on the GPU when the window nears it, let go far behind, the same again on return:
@@ -171,6 +191,8 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
       scene.flow?.water.forget(x0, y0, x1 - x0, y1 - y0);
       scene.flow?.lava.forget(x0, y0, x1 - x0, y1 - y0);
     },
+    // (the far tiles over it made again with the change in them — BACKLOG MU-49; nothing while none is there)
+    farChanged: (x0, y0, w, h) => core.renderer.tiles?.restale(x0, y0, w, h, a.atlas.p.cols, a.atlas.p.rows),
     changed: (rec) => {
       void S.store?.put(KEY, new TextEncoder().encode(JSON.stringify(rec)), { session: 'town', hash: 0 });
       syncCuts(rec);
@@ -196,6 +218,8 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
   (globalThis as { mutateEngine?: unknown }).mutateEngine = eng;
   // (after the static claims' own hook — scenes/level/statics.ts: a building's columns are claimed when the ops look)
   S.onWritten.push((lx, ly, w, h) => void eng.landWritten(lx, ly, w, h));
+  // (and the land past the window, as each far tile's is made: the same entries, the same ops — BACKLOG MU-49)
+  S.onTileLand.push((t) => void eng.tileWritten(t));
   const add = (t: FieldTown) => {
     if (towns.live.get(t.site.id) !== t) return;
     const mt = townOf(t);

@@ -63,6 +63,15 @@ export class CatchmentWet {
   /** the kept nodes, upstream first, and where each is in the window (window units: x, y) */
   live = new Int32Array(0);
   livePos = new Float32Array(0);
+  /** (mutators round 6) the nodes the wetness field is mapped from (weather/wetfield.ts) and where each is (window
+   *  units): those within `fieldMargin` of the window — set once a move of the window, not stepped */
+  field = new Int32Array(0);
+  fieldPos = new Float32Array(0);
+  /** how far past the window the field's nodes are taken (window units; the field's own reach past it) */
+  fieldMargin = 0;
+  /** some kept node carries storm water now (the last update's): while false and nothing else moved, the field is as
+   *  it was written */
+  stormy = false;
   private next: Int32Array;
   private tau: Float32Array;
   private R: Float32Array;
@@ -139,6 +148,18 @@ export class CatchmentWet {
       if (was[k] && !this.kept[k]) this.R[k] = this.Q[k] = this.inQ[k] = this.ex[k] = 0;
       if (this.kept[k]) m++;
     }
+    // (mutators round 6, MU-47: the field's nodes — every node within `fieldMargin` of the window, wider than the kept
+    // ones: the far tiles' rivers take their inflow's cut from the field; their storm water stays 0 past the kept box)
+    const FM = Math.max(M, this.fieldMargin);
+    const fn: number[] = [];
+    const fp: number[] = [];
+    for (let k = 0; k < this.count; k++) {
+      const x = lx(f[k * NODE_WORDS]);
+      const y = ly(f[k * NODE_WORDS + 1]);
+      if (x >= -FM && x <= W + FM && y >= -FM && y <= H + FM) fn.push(k), fp.push(x, y);
+    }
+    this.field = Int32Array.from(fn);
+    this.fieldPos = Float32Array.from(fp);
     this.live = new Int32Array(m);
     this.livePos = new Float32Array(m * 2);
     let j = 0;
@@ -234,6 +255,7 @@ export class CatchmentWet {
       }
     }
     const a = 1 - Math.exp(-dt / LAG_S);
+    let stormy = false;
     for (let j = 0; j < live.length; j++) {
       const k = live[j];
       R[k] += (RAIN * rain[k] - R[k]) * a;
@@ -243,7 +265,9 @@ export class CatchmentWet {
       const nx = next[k];
       if (nx !== k && kept[nx]) inQ[nx] += Q[k];
       ex[k] = ref[k] > 0 ? Math.min(MAX_EX, Q[k] / ref[k]) : 0;
+      if (ex[k] > 1e-4) stormy = true;
     }
+    this.stormy = stormy;
     this.ms = performance.now() - t0;
     this.updates++;
     this.msMean += (this.ms - this.msMean) / Math.min(this.updates, 600);

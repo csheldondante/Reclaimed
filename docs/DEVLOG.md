@@ -23471,3 +23471,54 @@ no grey ash patches, no ember glow (MU-11 still holds: rock, sand and paving sho
 
 **Tests.** gpu mutators 44 pass (burial ground: black inside, stones on the skin, nothing outside, twice the same;
 burned soil is char); unit 636 pass, 1 known fail (MU-14); typecheck clean.
+
+## 2026-11-15 (night) — mutators round 6, items 1-2: the window's edge, the dry river's edge and settle (`mutators`, MU-49, MU-47, MU-48)
+
+**Why.** Every land mutator ended in a straight line where the window's land (320 cells) gives way to the far tiles:
+at the default zoom on the phone that is the top and bottom of the screen (the view shows about 230 rows past the
+window each way). The owner: "the whole point is to make the map a living visual representation of your choices".
+
+**How a far tile is made** (read first): the window's own generator into a scratch slot, copied into the tiles' small
+world, the render preparation, one bake (`render/tilelandgpu.ts`). A river is not baked wet: the tile's DRAW floods the
+baked bed each frame at `riverWetAt`, from the window's wetness field, which ended at the window.
+
+**Built.** (1) `Streamer.onTileLand`, the twin of `onWritten`: called from the bake, after the land is in the tiles'
+world and before its render preparation, with the bake's encoder. `MutateEngine.tileWritten` encodes every land entry
+whose box meets the tile — the same kernels (`land.wgsl`, `flood.wgsl`), the tile's origin, one dispatch an entry (two
+for a flood). The tiles' world has no next-step copies, no water sources and no room for the chunks' versions the
+kernels bump: `MutateGpu.tileWrite` keeps scratch ones (the sources copied from the generated record). (2)
+`TileCache.restale(box)`: a tile over changed land is marked stale and made again in place by the land's maker (it
+draws as it was until its new bake, so nothing flashes to the stand-in); `apply`, a flood's level being taken and
+`restore` call it through the host's `farChanged`. (3) The wetness field reaches 48 texels (384 cells) past the window
+on every side (`RIVER_WET_PAD`; `riverWetAt` offsets by it); its nodes are taken that far (`CatchmentWet.field`, mapped
+once a window move). The field's per-frame CPU loop (now 18 769 texels, was 1 681) is skipped while no storm water
+moves, the climate holds and nothing was mapped again — before it ran every frame.
+
+**Measured** (desktop, headless Chrome on D3D11, `pace=0`, 412 x 915, the GPU shared with other agents): a burn of
+radius 300 at the home town reaches 96 far tiles; `tileDispatches` 84 after the apply, tiles `again` 96; the field's
+one write a window move 0.9-1.1 ms, catchwet's step 0.01-0.05 ms a frame as before. gpu test: a far tile written with
+burned, buried, melted and withered is column for column (layers, veg, wilt, water) what the window's path writes.
+**The phone is not measured** (MU-9): a tile an entry reaches costs one more compute pass in its bake.
+
+**Looked at** (scratchpad mutators/r6/edge-burned, edge-withered, edge-dried; radius 300, the default zoom):
+`edge-burned-1s.png`, a second after the apply, shows the old defect — the black ends on the window's straight edges
+top and bottom; `edge-burned.png` (12 s) shows the burn carried on past both edges with its ragged rim, no straight
+line; after a pan south and north across the edge (`-south`, `-north`) it holds. Withered: straw to the coast north
+and a ragged rim south. Dried: the lake drained to its bed and the river's bed bare to the bottom of the view and on
+past the window's edge after the pan; no blue reach. **Not instant past the edge:** the far tiles fill in a few a
+frame after the apply (4 bakes a frame on a phone); in the headless run it took more than a second for 96 tiles, and
+the straight edge shows until then (MU-51). A pop while panning cannot be judged from stills; the mechanism (the same
+ops on the same columns either side) is what says there is none, and the tile's and the window's draws of the same
+columns already differed slightly before this.
+
+**Item 2.** The pale straight-edged rectangle between the lake and the town is in `base.png` with no mutator applied:
+with the lake drained (`edge-dried.png`) it is a flat rectangular platform with roads along it under the water — the
+generator's, not any mutator's op (MU-54, not fixed here). The dried disc's hard brown circle: the browning now fades
+over the outer half of the radius, ragged by a world noise (`land.wgsl`; r6/dried2/dried.png: the brown fades into the
+green). MU-48's settle: the whole window was settled and the liquid's records of all of it forgotten on EVERY slide
+(the field is fitted again then). Now the whole window only when a cut or an inflow itself changed; arriving land is
+settled in its own rectangle and only its records forgotten (`scenes/level/mutators.ts`). Not changed: the area op
+still lowers all water in the disc, the lake's included (a rule that tells a lake from a river needs the river table
+in the land kernel: MU-48 stays open for that).
+
+**Tests.** gpu mutators 48 pass; unit as before (MU-14's known fail); typecheck clean.

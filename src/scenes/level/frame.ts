@@ -10,7 +10,7 @@ import { abilityHost, lifeFocus, wilderness } from '../../inhabitants/install';
 import { mountViewer } from '../../inhabitants/viewer';
 import { REGION } from '../streamer';
 import { CatchmentWet } from '../../weather/catchwet';
-import { RiverWetField } from '../../weather/wetfield';
+import { FIELD_MARGIN, RiverWetField } from '../../weather/wetfield';
 import { riverMode } from '../../sim/world-gpu';
 import { Dither, Orbit, Slice } from '../../api/cutaway';
 import { Puck } from '../../api/puck';
@@ -192,13 +192,15 @@ export function levelFrame(scene: LevelScene, now: number, dt: number, driven = 
     let refit = false;
     if (key !== scene.catchAt) {
       scene.catchAt = key;
+      // (mutators round 6, MU-47: the field's nodes reach as far past the window as the field does)
+      scene.catchWet.fieldMargin = FIELD_MARGIN;
       scene.catchWet.setWindow(S.origin[0], S.origin[1], dims.w, dims.h);
       if (scene.settlements) scene.catchWet.setInflow((x, y) => scene.settlements!.regionAt(x, y), scene.riverInflow, scene.riverCuts);
       scene.wetField.map(scene.catchWet);
       refit = true;
     }
     scene.catchWet.update(dt * scene.speed, weather);
-    scene.wetField.write(scene.catchWet.ex, scene.catchWet.inflow, scene.riverWet.value);
+    scene.wetField.write(scene.catchWet.ex, scene.catchWet.inflow, scene.riverWet.value, scene.catchWet.stormy);
     // (mutators round 5: the field is as the inflows and cuts have it now — whoever settles the window's rivers to it)
     scene.riverFieldWritten?.(refit);
     globals.riverWet = scene.riverWet.update(dt * scene.speed, globals.season ?? 0, []);

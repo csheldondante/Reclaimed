@@ -351,6 +351,9 @@ export class TileLandGpu {
     this.patchGlobals(enc, job.slot, job.rx, job.ry);
     // (round 108, TC18: the slot into the tiles' world, the window's render preparation run on it)
     this.tw.arrive(enc, sl.table, job.slot * this.src.layout.bytes);
+    // (mutators round 6, MU-49: what is written into arriving land after its generation — the world modifier list —
+    // written into the tile's the same way, before its render preparation: a far tile is baked with it)
+    this.src.written?.({ enc, world: this.tw, layout: this.src.layout, slotOff: job.slot * this.src.layout.bytes, x0: job.rx * R - this.border, y0: job.ry * R - this.border, oz: job.oz, side: this.S, frame: this.cache.frameNo });
     this.tw.prepare(enc);
     // (round 108, TC20: the weather's cover told of the land as made — the texels it holds nothing of yet)
     this.host.seedCover(enc, this.tw, this.S, this.border, this.border + R);

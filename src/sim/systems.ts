@@ -40,7 +40,7 @@ import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
 import { TILES_BINDING as TILES } from './cull';
 import riverHeldWgsl from '../shaders/riverheld.wgsl?raw';
-import { riverMode, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS, STATS_COUNT, type WorldGpu } from './world-gpu';
+import { riverMode, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS, RIVER_WET_PAD, STATS_COUNT, type WorldGpu } from './world-gpu';
 import { urlFlags } from '../flags';
 
 /** (round 84) riverheld.wgsl with its constants: the atlas's rivers held at their steady state (world-gpu riverFlow) —
@@ -49,6 +49,7 @@ export const riverHeld = () => `const RIVER_TABLE: bool = ${riverMode() === 'tab
 const RIVER_DEPTH_EXP: f32 = ${RIVER_DEPTH_EXP};
 const RIVER_SPEED_EXP: f32 = ${RIVER_SPEED_EXP};
 const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
+const RIVER_WET_PAD: i32 = ${RIVER_WET_PAD};
 ` + riverHeldWgsl;
 import { SLEEP_MORE } from './sleep';
 import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst, flowN } from './flow';

@@ -9,6 +9,7 @@ import { MutateGpu, type Origin } from '../../src/mutate/gpu';
 import { GPU_GRAVES, type ListWorld } from '../../src/mutate/list';
 import { unpackColumns } from '../../src/world/mapfile';
 import { ROW_H } from '../../src/world/lattice';
+import { RIVER_WET_PAD } from '../../src/sim/world-gpu';
 import { MAT } from '../../src/world/materials';
 import { tinyMap } from '../support/tinymap';
 import { mutWorld } from '../support/mutworld';
@@ -492,7 +493,7 @@ test('riverSettle: river columns under a cut hold the table’s depth at it; the
   // (the wetness field: the climate's 1 taken off west of x = 24 — a cut to nothing — easing to none by x = 32)
   const wet = c.world.riverWet;
   const field = new Float32Array(wet.width * wet.height);
-  for (let j = 0; j < wet.height; j++) for (let i = 0; i < wet.width; i++) field[j * wet.width + i] = i <= 3 ? -1 : 0;
+  for (let j = 0; j < wet.height; j++) for (let i = 0; i < wet.width; i++) field[j * wet.width + i] = i - RIVER_WET_PAD <= 3 ? -1 : 0;
   dev.queue.writeTexture({ texture: wet }, field, { bytesPerRow: wet.width * 4 }, [wet.width, wet.height]);
   // (a pond off the table, inside the cut; and a river column a flood holds)
   const before = await snap(r);
@@ -608,4 +609,39 @@ test('landMark, the burial ground: black ground with pale stones inside its radi
   const again = await snap(r);
   expect(Array.from(again.layers)).toEqual(Array.from(after.layers));
   expect(g.takeErrors()).toEqual([]);
+});
+
+// (round 6, BACKLOG MU-49) The far tiles' path: a tile's land is written by the same ops from the same entries, into
+// the bake's own encoder (MutateEngine.tileWritten). Here the tile's world is a second tiny world of the same ground
+// with nothing resident: what the tile path writes must be, column for column, what the window's path wrote.
+describe.each(['burned', 'buried', 'melted', 'withered'] as const)('a far tile written with %s', (kind) => {
+  test('column for column what the window holds', async () => {
+    const near = await rig();
+    const far = await rig();
+    near.eng.apply({ kind, at: AT, radius: R, strength: 1, seed: 5 });
+    far.origin.o = null;
+    const changes: number[][] = [];
+    const eng = new MutateEngine({ gpu: far.gpu, world: listWorld, origin: () => null, towns: () => [], farChanged: (...b) => void changes.push(b) });
+    expect(eng.apply({ kind, at: AT, radius: R, strength: 1, seed: 5 }).resident).toBe(false);
+    // (the tiles over its box are told to be made again)
+    expect(changes.length).toBe(1);
+    expect(changes[0][0]).toBeLessThan(AT[0] - R);
+    const before = await snap(far);
+    const enc = g.device.createCommandEncoder();
+    const cw = far.w.core.world;
+    const t = { enc, world: cw, layout: { bufs: [], K: 1 } as never, slotOff: 0, x0: 0, y0: 0, oz: 0, side: W, frame: 1 };
+    expect(eng.tileWritten(t)).toBe(true);
+    // (a second tile in the same frame's encoder, off to the side of the entry's reach: nothing of it there)
+    expect(eng.tileWritten({ ...t, x0: 4 * W })).toBe(false);
+    g.device.queue.submit([enc.finish()]);
+    const a = await snap(near);
+    const b = await snap(far);
+    expect(changedCols(far, before, b).inside).toBeGreaterThan(50);
+    expect(Array.from(b.layers)).toEqual(Array.from(a.layers));
+    expect(Array.from(b.veg)).toEqual(Array.from(a.veg));
+    expect(Array.from(b.wilt)).toEqual(Array.from(a.wilt));
+    expect(Array.from(b.water)).toEqual(Array.from(a.water));
+    expect(far.gpu.tileDispatches).toBe(1);
+    expect(g.takeErrors()).toEqual([]);
+  });
 });

@@ -53,7 +53,10 @@ fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
       bumpWater(vec2<u32>(x, y), before, after);
     }
     waterSource[j] = DRIED_MARK;
-    if (veg[j] > 0.0) { wilt[j].y = max(wilt[j].y, 0.6); }
+    // (round 6: the browning fades out over the outer half of the radius, ragged by a world noise — it ended on the
+    // circle itself, a hard brown disc on the grass)
+    let brown = 0.6 * (1.0 - smoothstep(0.45, 0.9, d + 0.3 * (mfbm(w * 0.07, MP.k.y + 51u) - 0.5)));
+    if (veg[j] > 0.0 && brown > 0.04) { wilt[j].y = max(wilt[j].y, brown); }
     return;
   }
   if (kind == MUT_WITHERED) {

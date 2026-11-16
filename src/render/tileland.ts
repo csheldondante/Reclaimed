@@ -17,6 +17,27 @@ export interface TileLandSource {
    *  the slot's), its per-column summary (the batch's, (R + 2 border)²) into meta — nothing read back; resolves once
    *  it's all submitted. (round 112, tilefast) `order`: its place in the pacer's tiles' lane, lower first */
   landTile(x0: number, y0: number, buf: GPUBuffer, off: number, meta: { buf: GPUBuffer; off: number }, order: number): Promise<void> | null;
+  /** (mutators round 6, MU-49; Streamer.onTileLand) a tile's land is in its world, generated and not yet prepared for
+   *  its bake: what the window's land gets written into it after its generation (Streamer.onWritten: the world
+   *  modifier list) encoded here, into the bake's own encoder. Nothing read back; nothing when no one listens. */
+  written?(t: TileLandWritten): void;
+}
+
+/** a tile's land as its writers see it (render/tileworld.ts): the per-column contract buffers of a world `side` cells
+ *  square whose cell (0, 0) is world cell (x0, y0), cut at window height oz */
+export interface TileLandWritten {
+  enc: GPUCommandEncoder;
+  world: { globals: GPUBuffer; chunks: GPUBuffer; materials: GPUBuffer; layers: GPUBuffer; water: GPUBuffer; veg: GPUBuffer; lava: GPUBuffer; wilt: GPUBuffer; contam: GPUBuffer };
+  /** the slot the land was generated into (in `world.layers`), and its record's layout: the kept fields the tiles'
+   *  world has no buffer for (the water's sources) are read from there */
+  layout: RegionLayout;
+  slotOff: number;
+  x0: number;
+  y0: number;
+  oz: number;
+  side: number;
+  /** the renderer's frame (TileCache.frameNo): several tiles are written in one frame's encoder */
+  frame: number;
 }
 
 /** (round 105, tilelatency) a region's way from wanted to drawn (performance.now() ms; 0: not that stage's) */

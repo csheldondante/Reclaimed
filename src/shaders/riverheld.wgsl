@@ -3,7 +3,7 @@
 // simulated — its depth is the atlas's table at the rivers' wetness, its flux the pipes' steady flux for that, and
 // it's drawn flowing by the table's flow. The including shader declares
 //   @group(0) @binding(22) var riverFlowTex: texture_2d<f32>;
-// and is prefixed with RIVER_TABLE, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS (sim/systems.ts riverHeld). A
+// and is prefixed with RIVER_TABLE, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS, RIVER_WET_PAD (sim/systems.ts riverHeld). A
 // shader that calls riverWetAt binds the riverWet field (sim/world-gpu.ts riverWet) at RIVER_WET_BINDING (62).
 
 /** (round 109, watershed) the rivers' storm water at the window's coarse texels (sim/world-gpu.ts riverWet) */
@@ -24,7 +24,7 @@ struct RiverHere {
 fn riverWet() -> f32 { return select(max(G.ocean.w, 0.05), 1.0, G.ocean.w <= 0.0); }
 /** (round 109 — the user: "I want it per water shed please") A river's wetness at a place (window cells; its discharge
  *  over the reference's): the climate's plus the storm water its own watershed's rain sends down it (the riverWet
- *  field, bilinear; 0 past the window). Every reader with a position asks this. */
+ *  field, bilinear; 0 past the field, which reaches RIVER_WET_PAD texels past the window). Every reader with a position asks this. */
 fn riverWetAt(cellXY: vec2<f32>) -> f32 {
   let d = vec2<i32>(textureDimensions(riverWetTex));
   let t = (cellXY - 0.5) / RIVER_WET_CELLS;
@@ -33,7 +33,8 @@ fn riverWetAt(cellXY: vec2<f32>) -> f32 {
   var e = 0.0;
   for (var k = 0; k < 4; k++) {
     let o = vec2<i32>(k & 1, k >> 1);
-    let c = i + o;
+    // (the field reaches RIVER_WET_PAD texels past the window on every side: the far tiles' rivers — mutators round 6)
+    let c = i + o + vec2<i32>(RIVER_WET_PAD);
     if (any(c < vec2<i32>(0)) || any(c >= d)) { continue; }
     let w = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
     e += w * textureLoad(riverWetTex, c, 0).x;

@@ -2686,6 +2686,12 @@ clears them).
     `TILE_BORDER` (2) cells of its neighbours' round it, into the corner of a slot of a wider layout (the region's next
     whole pages: 80²; `FinishTarget.corner`), its Globals' origin the border's corner. The grid's lattice and normals
     at the region's edge read its neighbours' real columns, as the window's do.
+  - **What is written into arriving land is written into a tile's** (mutators round 6, MU-49). `Streamer.onTileLand`
+    (the twin of `onWritten`; render/tileland.ts `TileLandWritten`): called from the bake once the land is in the
+    tiles' world and before its render preparation, with the bake's encoder, the tile world's contract buffers and the
+    tile's origin. The world modifier list is the one listener (`MutateEngine.tileWritten`: the window's own kernels).
+    `TileCache.restale(box)` has the tiles over changed land made again in place. The rivers' wetness field
+    (`WorldGpu.riverWet`) reaches `RIVER_WET_PAD` texels past the window for the tiles' draw (riverheld.wgsl riverWetAt).
   - **The window's render preparation on it.** render/tileworld.ts `TileWorld` (one a TileLandGpu) implements
     sim/systems.ts `PrepWorld` (what SurfaceSystem and RenderFieldsSystem read and write): its layers are the scratch
     slot's pages, its kept fields copied in per bake (as the streamer's copyIn brings a pool slot into the window),

@@ -138,4 +138,30 @@ await run({ name: 'mutators-stills', kind: 'behaviour', size: '412x915', dpr: 1,
     await ev(() => mutators.apply({ kind: 'melted', place: reclaimed.scene.opts.atlas.startTown, seed: 5 }).resident);
     await shot('melted.png', 15000);
   }
+  if (only.has('edge')) {
+    // (round 6, BACKLOG MU-49 / MU-47: a mutator wide enough to cross the window's edge (the window is 320 cells; the
+    // view at the default zoom shows ~230 rows past it, top and bottom) — the far tiles must carry it on with no
+    // straight line; then a pan across the edge, a still a second into it and one settled.
+    // --edgekind burned|withered|dried|buried|flooded|melted, --edger the radius)
+    const kind = R.opt('edgekind', 'burned');
+    const radius = Number(R.opt('edger', 300));
+    const stats = () => ev(() => ({ tiles: { ...reclaimed.renderer.tiles.stats, cal: undefined }, tileDispatches: mutateEngine.host?.gpu?.tileDispatches, origin: [...reclaimed.scene.stream.origin], wetUploads: reclaimed.scene.wetField?.uploads, wetMs: reclaimed.scene.wetField?.msMean, catchMs: reclaimed.scene.catchWet?.msMean }));
+    await stats();
+    await ev(({ kind, radius }) => mutators.apply({ kind, place: reclaimed.scene.opts.atlas.startTown, radius, seed: 6 }).resident, { kind, radius });
+    await shot(`edge-${kind}-1s.png`, 1000);
+    await shot(`edge-${kind}.png`, 12000);
+    await stats();
+    const pan = async (dy, name) => {
+      // (a pan, not a jump: 120 world units over two seconds)
+      for (let k = 0; k < 24; k++) {
+        await ev((d) => void (reclaimed.camera.target[1] += d), dy / 24);
+        await sleep(80);
+      }
+      await shot(`edge-${kind}-${name}-1s.png`, 1000);
+      await shot(`edge-${kind}-${name}.png`, 10000);
+    };
+    await pan(140, 'south');
+    await pan(-280, 'north');
+    await stats();
+  }
 });

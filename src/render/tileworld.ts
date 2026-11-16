@@ -62,7 +62,9 @@ export class TileWorld implements PrepWorld {
     this.materials = world.materials;
     // (the window's: the field mesh on — renderfields takes the flow, not the sun's march — as the window's own)
     this.meshRegion = world.meshRegion;
-    this.chunks = buf('chunks', layout.rc * layout.rc * 8);
+    // (COPY_SRC: what writes a tile's land with the window's column kernels takes the table into one with room for the
+    // chunks' versions — mutate/gpu.ts tileWrite)
+    this.chunks = buf('chunks', layout.rc * layout.rc * 8, B | GPUBufferUsage.COPY_SRC);
     this.layers = land;
     this.surface = buf('surface', N * 4);
     this.renderFields = buf('renderFields', N * 16);

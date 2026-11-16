@@ -8,6 +8,7 @@ import type { MutateGpu, MutLots, Origin } from './gpu';
 import { applied, GPU_KIND, GPU_LOOT, GPU_UNLOOT, isLand, landOp, WorldList, type ListWorld } from './list';
 import { ROW_H } from '../world/lattice';
 import type { FactWorld } from '../living/world';
+import type { TileLandWritten } from '../render/tileland';
 import { hasEvent, placeState, placeStates, recordMutation, recordSign } from './facts';
 
 /** a live town: where it is in the window now (world units), how far its lots reach, its lots, and what to do once
@@ -32,6 +33,9 @@ export interface MutateHost {
   /** window box [x0, y0, x1, y1) was written by a mutator: what's derived from its columns follows (the liquid's
    *  records of its chunks, the meshes) */
   landChanged?(x0: number, y0: number, x1: number, y1: number, kind: Mutation['kind']): void;
+  /** (round 6, MU-49) the land of a box of world cells (x0, y0, w, h) was changed by an entry, resident or not: what
+   *  draws it from its own copy of the land (the far tiles) is made again */
+  farChanged?(x0: number, y0: number, w: number, h: number): void;
   /** the list changed: keep it (the save) */
   changed?(record: MutationRecord): void;
   /** the signs changed (one on, off or ended, or a restore): show them (the sky, the ash, the lots, the dead) */
@@ -171,6 +175,7 @@ export class MutateEngine implements Mutators {
           // (what waited for the level — land that arrived, a town made meanwhile — written now; the same ops, so
           // what was written already stays as it is)
           if (this.waited.delete(m)) this.write([m], undefined, this.host.towns());
+          this.far(m);
           this.host.changed?.(this.worldList.record());
         });
         this.levels = Promise.all([this.levels, got]).then(() => undefined);
@@ -204,6 +209,7 @@ export class MutateEngine implements Mutators {
       }
     }
     const resident = this.write([m], undefined, this.host.towns());
+    this.far(m);
     // (a distant eruption: ash fall and darkness on the home town for three seasons, stronger the nearer it is)
     // FIXED-CITY (BACKLOG MU-26): the signs are cast on the home settlement's id, and the distance is taken from where
     // it stands when the eruption happens
@@ -228,6 +234,41 @@ export class MutateEngine implements Mutators {
   landWritten(lx: number, ly: number, w: number, h: number): boolean {
     if (!this.worldList.all.length) return false;
     return this.write(this.worldList.all, [lx, ly, lx + w, ly + h], []);
+  }
+
+  /**
+   * (round 6, BACKLOG MU-49; the streamer's onTileLand) A far tile's land was just generated, into its own world: every
+   * land entry that reaches it written there, in list order, by the same ops as the window's — so the tile is baked
+   * with the change in it and the land looks the same either side of the window's edge. A flood whose level has not
+   * been taken from its real ground yet is written at the atlas's level (the window writes it only once levelled; its
+   * tiles are made again then). True: some entry did.
+   */
+  tileWritten(t: TileLandWritten): boolean {
+    if (!this.worldList.all.length) return false;
+    const wr = this.host.wrap;
+    const jobs: { m: Mutation; o: Origin; box: [number, number, number, number] }[] = [];
+    for (const m of this.worldList.all) {
+      if (landOp(m) === null) continue;
+      // (the tile's origin as the entry sees it: moved by whole worlds to the copy nearest the tile)
+      const kx = wr ? Math.round((m.cell[0] - (t.x0 + t.side / 2)) / wr.cols) : 0;
+      const ky = wr ? Math.round((m.cell[1] - (t.y0 + t.side / 2)) / wr.rows) : 0;
+      const o: Origin = [t.x0 + kx * (wr?.cols ?? 0), t.y0 + ky * (wr?.rows ?? 0), t.oz];
+      const cx = m.cell[0] - o[0];
+      const cy = m.cell[1] - o[1];
+      const ry = m.radius / ROW_H;
+      const box: [number, number, number, number] = [Math.max(0, Math.floor(cx - m.radius - 1)), Math.max(0, Math.floor(cy - ry - 1)), Math.min(t.side, Math.ceil(cx + m.radius + 2)), Math.min(t.side, Math.ceil(cy + ry + 2))];
+      if (box[2] > box[0] && box[3] > box[1]) jobs.push({ m, o, box });
+    }
+    this.host.gpu.tileWrite(t, jobs);
+    return jobs.length > 0;
+  }
+
+  /** an entry's land changed (it was applied, or its flood's level was taken): what draws its area from a copy of the
+   *  land — the far tiles — is told (the host's farChanged: a box of world cells) */
+  private far(m: Mutation): void {
+    if (landOp(m) === null) return;
+    const ry = Math.ceil(m.radius / ROW_H) + 2;
+    this.host.farChanged?.(m.cell[0] - m.radius - 2, m.cell[1] - ry, 2 * m.radius + 4, 2 * ry);
   }
 
   /** a town's lots were just made (or made again): every entry about it or over it written into their conditions */
@@ -264,7 +305,10 @@ export class MutateEngine implements Mutators {
   }
 
   restore(record: MutationRecord): void {
+    // (the far tiles of what the list held and of what it holds now are made again)
+    for (const m of this.worldList.all) this.far(m);
     this.worldList.restore(record);
+    for (const m of this.worldList.all) this.far(m);
     this.replay();
     this.rewrite();
     this.host.signsChanged?.(this.worldList.signs());
