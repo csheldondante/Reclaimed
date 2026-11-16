@@ -121,6 +121,9 @@ export function worldSaveOf(params: URLSearchParams, p: AtlasParams, gen: { rive
   };
 }
 
+/** (LS-12) what the page says while the first town is made */
+const LOADING_TOWN = "Building the town. This takes a while the first time.";
+
 export class LevelScene implements Scene {
   readonly core: WorldCore;
   nature = new Nature();
@@ -641,6 +644,11 @@ export class LevelScene implements Scene {
   /** (round 128o, DA-B5; DESIGN.md §24) 30 fps while the game is paused */
   maxFps(): number | null {
     return this.speed === 0 ? CAP_FPS : null;
+  }
+
+  /** (LS-12) the first town's make: the one known long hold of the GPU after the level's first frame */
+  loading(): string | null {
+    return this.fieldTowns?.firstMake ? LOADING_TOWN : null;
   }
 
   frame(now: number, dt: number, driven = false): void {

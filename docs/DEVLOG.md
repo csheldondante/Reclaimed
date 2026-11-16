@@ -23264,3 +23264,14 @@ died, and "No raid came" when none did (LS-20). Deck order forced so a walk can 
 
 Tests: unit 637 pass, `writing-sources` fails on `roadlab/control.ts` as on the base (LS-13). New: `season-war` (a
 called raid: one road, no chain, the next road arrives), `run` (roadLook; leaders' opening cards).
+
+## 2026-11-15 — the boot watchdog no longer fires on the first town's make (LS-12)
+
+The 20 s watchdog (round 114: frames held with the GPU's work never done) fired during a known piece of work: the home
+town's first make, 30 to 35 s with every frame held in each of 6 headless boots (D3D11, two other agents on the GPU;
+later towns take 0.5 to 1.5 s, so it is the generator's first pipelines). A false "Reclaimed can't run here" in 3 of 7
+boots. Now `Scene.loading()` names such work (the level: `FieldTowns.firstMake`), the page shows the line, and the
+watchdog's limit in that span is 180 s; outside it, 20 s as before. A hang in the make still ends in the overlay.
+Rejected: raising the limit everywhere (a real hang would take three minutes to say so). Startup time itself is not
+touched (CG28 holds the 32 s). Checked: one full walk with no stall after the change; that is thin, and there is no
+unit test for the frame loop, so the count of clean boots is kept in the next entries.

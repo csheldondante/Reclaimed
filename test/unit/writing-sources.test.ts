@@ -27,6 +27,7 @@ const SOURCES: Record<string, Source> = {
   'game/powers.ts': { who: 'player' },
   'gpu/device.ts': { who: 'player' },
   'hero/touchpad.ts': { who: 'player' },
+  'main.ts': { who: 'player' },
   'play/input/controls.ts': { who: 'player' },
   'play/sandbox/sandbox.ts': { who: 'player', helpers: [{ name: 'tool', arg: 1 }, { name: 'btn', arg: 0 }] },
   'play/session.ts': { who: 'player' },

@@ -68,6 +68,9 @@ export interface Scene {
   frame(now: number, dt: number): void;
   /** (round 128o, DA-B5) the most frames a second it wants now (scenes/frame-cap.ts); none: every display frame */
   maxFps?(): number | null;
+  /** (LS-12) a known long piece of first-load work is under way, in the player's words ("Building the town"); null
+   *  none. While it is, the page shows it and the frame loop's watchdog uses its loading limit */
+  loading?(): string | null;
   resize(renderW: number, renderH: number, cssW: number, cssH: number): void;
   dispose(): void;
 }

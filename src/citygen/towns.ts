@@ -28,6 +28,12 @@ export class FieldTowns implements CityDistricts {
   private boxes = new Map<string, FieldTownBox>();
   private clock = 0;
   private making: Promise<unknown> | null = null;
+  /** (LS-12) the first town of this page is being made: its generator's pipelines compile then, which holds the GPU
+   *  for tens of seconds (32 s measured headless on D3D11; later towns take under 1 s). The frame loop's watchdog gives
+   *  this span its own limit and the page says what it is doing (main.ts, Scene.loading) */
+  get firstMake(): boolean {
+    return this.making !== null && this.stats.made === 1;
+  }
   private dead = false;
   /** (the phone bench's pan back) no town made or let go while set */
   paused = false;

@@ -230,6 +230,22 @@ async function main() {
   // (20 s: a first load's generation held every frame for 6 s on the desktop iGPU with its work done in the end — a
   // GPU that's slow, not stuck; the phone's held for over 60 s)
   const STALL_MS = 20000;
+  // (LS-12) while the scene says it is loading (the first town's make: its pipelines compile, 32 s measured with every
+  // frame held), that is work, not a hang: the page says so and the watchdog waits this long instead. A real hang in
+  // it still ends in the fatal overlay.
+  const LOADING_STALL_MS = 180000;
+  const loadingEl = document.createElement('div');
+  loadingEl.className = 'loading-note';
+  loadingEl.style.cssText = 'position:fixed;left:50%;top:42%;transform:translate(-50%,-50%);z-index:60;padding:10px 16px;border-radius:10px;background:rgba(18,20,24,.88);color:#f2efe8;font:15px system-ui,sans-serif;display:none;pointer-events:none';
+  document.body.appendChild(loadingEl);
+  let loadingShown = '';
+  const showLoading = (t: string | null) => {
+    const s = t ?? '';
+    if (s === loadingShown) return;
+    loadingShown = s;
+    loadingEl.textContent = s;
+    loadingEl.style.display = s ? '' : 'none';
+  };
   let heldSince = 0;
   let lastDone = performance.now();
   let stalled = false;
@@ -246,11 +262,13 @@ async function main() {
       requestAnimationFrame(frame);
       return;
     }
+    const loading = scene?.loading?.() ?? null;
+    showLoading(loading);
     if (pace && inFlight >= (pacer?.maxInFlight ?? 2)) {
       hitch?.rec?.heldFrame();
       pacer?.held();
       heldSince ||= now;
-      if (!stalled && now - heldSince > STALL_MS) {
+      if (!stalled && now - heldSince > (loading ? LOADING_STALL_MS : STALL_MS)) {
         stalled = true;
         fail(`the GPU never finished: ${inFlight} frames in flight, every frame held for ${((now - heldSince) / 1000).toFixed(1)} s, the last work done ${((performance.now() - lastDone) / 1000).toFixed(1)} s ago${hitch ? `, readbacks pending ${hitch.mem.io.pendingMaps} (slowest done: ${hitch.mem.slowMap.label} ${hitch.mem.slowMap.ms.toFixed(0)} ms)` : ''}${(scene as unknown as { stream?: { busy?: boolean; busyWhy?: string } } | null)?.stream?.busy ? `, the streamer busy (${(scene as unknown as { stream: { busyWhy?: string } }).stream.busyWhy})` : ''}`);
       }
