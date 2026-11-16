@@ -60,6 +60,10 @@ export type Spot = SiteKey | 'hills' | 'mountain';
 
 /** the raiders as an entity of the fact world (who holds a town they took) */
 export const RAIDERS_ID = 'raiders';
+/** people a fallen town's refugees add to the streets, the carts they come with (that season), a camp's ore wagons */
+export const REFUGEES = 40;
+export const ARRIVAL_CARTS = 10;
+export const CAMP_WAGONS = 14;
 /** the mining camp the run can found */
 export const CAMP_ID = 'copper-hollow';
 
@@ -254,6 +258,18 @@ export class Realm {
   /** the name of the place an entry of `changes()` is about */
   placeName(m: Mutation): string {
     return this.whereOf.get(m.id) ?? m.name ?? this.w.name(m.place ?? this.home);
+  }
+
+  /**
+   * What the world's state adds to the living town's streets (season/life.ts counts): the people who came as refugees
+   * (40 for each town that fell and sent them — the migrations in the history), carts through the gate the season they
+   * arrive, and the ore wagons of a mining camp while it stands.
+   */
+  life(): { people: number; wagons: number } {
+    const f = this.w.facts;
+    const came = f.events({ kind: 'migration' }).filter((e) => e.to.includes(this.home));
+    const camp = !!f.entity(CAMP_ID) && f.relations({ type: 'controls', from: 'player', to: CAMP_ID }).length > 0 && !f.tag(CAMP_ID, 'condition', 'lost');
+    return { people: REFUGEES * came.length, wagons: (camp ? CAMP_WAGONS : 0) + (came.some((e) => e.turn === this.w.turn) ? ARRIVAL_CARTS : 0) };
   }
 
   /** what this run changed in the land and the places of the world: the mutators' entries whose fact event is this

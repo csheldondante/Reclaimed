@@ -103,7 +103,7 @@ describe('the realm (season/realm.ts)', () => {
   });
 
   it('committing a project locks the ledger\'s own people and spends its goods; the ledger builds it and its people come back', () => {
-    const r = realm({ seasons: 8 });
+    const r = realm({ seasons: 16 });
     const o = until(r, projectId('houses'));
     const before = pools(r.ledger);
     const workers = total(r.ledger, 'labor');
@@ -147,6 +147,41 @@ describe('the realm (season/realm.ts)', () => {
     expect(r.changes().some((c) => c.kind === 'captured')).toBe(true);
     expect(r.history().some((e) => e.kind === 'fell')).toBe(true);
     expect(offer(r, 'relieve-neighbour')).toBeUndefined();
+  });
+
+  it('a town that falls sends its people: they are in your streets, and one of them asks for huts', () => {
+    const r = realm({ seasons: 16 });
+    until(r, 'relieve-neighbour');
+    expect(r.life().people).toBe(0);
+    season(r);
+    expect(r.history().some((e) => e.kind === 'migration' && e.to.includes(r.home))).toBe(true);
+    expect(r.life()).toEqual({ people: 40, wagons: 10 });
+    const o = until(r, 'house-refugees');
+    expect(r.ws.character(o.presenter)?.role).toBe('refugee');
+    expect(r.life().wagons).toBe(0);
+    const labor = total(r.ledger, 'labor');
+    r.commit(o.id);
+    season(r);
+    season(r);
+    expect(total(r.ledger, 'labor')).toBe(labor + 2);
+  });
+
+  it('a mining camp sends ore wagons while it stands; lost to raiders, they stop and its ore with them', () => {
+    const m = recorder();
+    const r = realm({ seasons: 16, ledger: grant(newLedger(YSOLT.pools, YSOLT.income), { materials: 6, labor: 4 }) });
+    r.commit(until(r, 'mining-outpost').id);
+    season(r);
+    season(r);
+    expect(r.life().wagons).toBeGreaterThanOrEqual(14);
+    const income = r.ledger.income.materials ?? 0;
+    until(r, 'guard-camp', 14);
+    season(r);
+    season(r);
+    expect(m.applied.find((p) => p.kind === 'destroyed')).toMatchObject({ place: 'copper-hollow' });
+    expect(r.w.settlement('copper-hollow')?.condition).toBe('ruined');
+    expect(r.ledger.income.materials).toBe(income - 1);
+    expect(r.life().wagons % 14).not.toBe(0 + 14);
+    expect(r.life().wagons).toBeLessThan(14);
   });
 
   it('helped, the neighbour swears to you and pays each season', () => {

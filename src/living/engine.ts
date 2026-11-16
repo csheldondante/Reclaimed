@@ -109,7 +109,7 @@ export interface TemplateDef {
   once?: boolean;
   /** a threatening opportunity (OPPORTUNITY_CATALOG.md: "Some threatening opportunities instead count down to a
    *  negative outcome if not intercepted"): the dealer's event — on the board whatever is held, outside its limits */
-  threat?: boolean;
+  threat?: boolean | 'arc';
   /** passing it by is no slight (a way not taken): its presenter isn't answered when it lapses */
   passable?: boolean;
   /** (round 125) who presents it (a named person of a bound group) and what the player gets */
@@ -167,7 +167,8 @@ export interface EngineOptions {
    *  long cards stand. Default false: each deal its own limit (the horde run's cards last a turn or two) */
   limitBoard?: boolean;
   /** (season/realm.ts) threatening cards (TemplateDef.threat) standing at once, at most: the most urgent proposed is
-   *  dealt when there is room, the rest wait for a later deal. Default: no cap */
+   *  dealt when there is room, the rest wait for a later deal. A card of the run's arc (`threat: 'arc'`: the tribute)
+   *  is neither counted nor held back. Default: no cap */
   threatMax?: number;
 }
 
@@ -652,8 +653,8 @@ export class LivingEngine {
       meta.set(`${t.id}|${first.offer}`, { c, preview: diff, unlocks, subjects, place, presenter, group });
     }
     if (this.opts.threatMax !== undefined) {
-      let room = this.opts.threatMax - this.offers.filter((o) => o.status === 'offered' && this.template(o.template).threat).length;
-      for (const p of props.filter((x) => x.event).sort((a, b) => (b.parts.urgency ?? 0) - (a.parts.urgency ?? 0))) if (room-- <= 0) props.splice(props.indexOf(p), 1);
+      let room = this.opts.threatMax - this.offers.filter((o) => o.status === 'offered' && this.template(o.template).threat === true).length;
+      for (const p of props.filter((x) => x.event && this.template(x.template).threat === true).sort((a, b) => (b.parts.urgency ?? 0) - (a.parts.urgency ?? 0))) if (room-- <= 0) props.splice(props.indexOf(p), 1);
     }
     const tune0 = this.dealerTune();
     const tune = this.opts.limitBoard ? { ...tune0, resourceMax: Math.max(0, tune0.resourceMax - this.offers.filter((o) => o.status === 'offered' && !this.template(o.template).threat).length) } : tune0;

@@ -182,13 +182,17 @@ export function deal(props: Proposal[], ctx: DealContext): DealReport {
   }
   // 5 one offer of a template at a place
   const best = new Map<string, Cand>();
-  for (const c of [...cands].sort((a, b) => Number(b.affordable) - Number(a.affordable) || b.score - a.score)) {
+  // (equal scores: a draw by the template, its place and the turn — never the order the proposals came in, which would
+  // offer the head of a list every time and leave its tail waiting; LS-30)
+  const draw = (c: Cand) => tieDraw(`${c.p.template}@${c.p.place}@${ctx.turn}`);
+  const byScore = (a: Cand, b: Cand) => b.score - a.score || draw(a) - draw(b);
+  for (const c of [...cands].sort((a, b) => Number(b.affordable) - Number(a.affordable) || byScore(a, b))) {
     const k = ctx.onePerPlace ? c.p.place : `${c.p.template}@${c.p.place}`;
     const had = best.get(k);
     if (!had) best.set(k, c);
     else reject(c.p, 'one', ctx.onePerPlace ? `one card a place: "${had.p.title}" scores higher at ${c.p.place}` : `one offer of ${c.p.template} at ${c.p.place}: "${had.p.title}" is dealt instead`, c.score);
   }
-  const pool = [...best.values()].sort((a, b) => b.score - a.score);
+  const pool = [...best.values()].sort(byScore);
   const guarantees: string[] = [];
   const dealt: Cand[] = [];
   const out = (c: Cand, why: string) => reject(c.p, 'limits', why, c.score);
@@ -295,4 +299,11 @@ export function reportLines(r: DealReport): string[] {
     ...r.rejected.map((x) => `- ${x.title} [${x.step}] ${x.why}`),
     ...r.guarantees.map((g) => `= ${g}`),
   ];
+}
+
+/** a fixed draw in [0, 1) from a key (FNV-1a): the dealer's tie-break */
+export function tieDraw(key: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
+  return (h >>> 0) / 4294967296;
 }

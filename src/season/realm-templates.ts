@@ -36,6 +36,8 @@ export const SITES = [
   { key: 'woods', name: 'the woods', kind: 'fields' },
   { key: 'river', name: 'the river crossing', kind: 'water' },
   { key: 'road', name: 'the trade road', kind: 'gate' },
+  { key: 'pit', name: 'the ore yard', kind: 'workshop' },
+  { key: 'wagons', name: 'the wagon yard', kind: 'gate' },
 ] as const;
 export type SiteKey = (typeof SITES)[number]['key'];
 export const siteId = (home: string, key: SiteKey): string => `site:${home}:${key}`;
@@ -75,7 +77,7 @@ export function projectTemplate(c: SeasonCard): TemplateDef | null {
     id: projectId(c.id),
     title: c.title,
     pitch: c.pitch,
-    themes: c.id === 'keep' || c.id === 'walls' ? ['town', 'build', 'war', 'raiders'] : ['town', 'build'],
+    themes: c.id === 'keep' || c.id === 'walls' ? ['town', 'build', 'war', 'raiders'] : ['town', 'build', KIND[c.id] ?? 'works'],
     ...(c.id === 'keep' || c.id === 'walls' ? { hooks: ['raiders'] } : {}),
     bind: at(ask.site),
     eligible: [{ helper: 'canBuild', args: [c.id] }],
@@ -89,8 +91,17 @@ export function projectTemplate(c: SeasonCard): TemplateDef | null {
     reward: { text: gives ? `${gives}.` : c.pitch },
     offerTurns: 3,
     cooldown: 1,
-    parts: { theme: 0.6 },
+    // (what it is worth, for the dealer's score: what it gives and what it pays a season, over the seasons it takes —
+    // the scores differ by the cards' own numbers, LS-30)
+    parts: { ev: worth(c) },
   };
+}
+/** what a project's card is about (the dealer's neglect is by theme: a kind not taken for a while rises) */
+const KIND: Record<string, string> = { houses: 'homes', farms: 'food', market: 'trade', trade: 'trade', harbour: 'trade', workshops: 'works', quarry: 'stone', lumber: 'stone', bridge: 'roads' };
+/** a card's worth 0..1: 2 a point it gives, 3 a point of income, a season of work */
+export function worth(c: SeasonCard): number {
+  const sum = (r?: Partial<Record<Pool, number>>) => Object.values(r ?? {}).reduce((a, b) => a + (b ?? 0), 0);
+  return Math.min(1, (2 * sum(c.gives) + 3 * sum(c.income)) / Math.max(1, c.seasons) / 6);
 }
 const cap = (t: string): string => t.charAt(0).toUpperCase() + t.slice(1);
 
@@ -141,7 +152,7 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     title: 'Found a mining camp',
     pitch: 'There is copper in the hills. A crew and timber would start a camp that sends ore home.',
     themes: ['expansion', 'economy'],
-    bind: at('gate'),
+    bind: at('pit'),
     eligible: [{ not: { helper: 'exists', args: ['copper-hollow'] } }],
     at: 'site',
     requires: { agents: [{ kind: 'workers', count: 1 }], goods: { materials: 2 } },
@@ -160,6 +171,7 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     reward: { text: '+1 Materials each season.' },
     offerTurns: 3,
     once: true,
+    parts: { ev: 0.5 },
   },
   {
     // (INF-03 at a small scale: a place of learning gives a spell)
@@ -179,6 +191,7 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     reward: { text: 'You can cast Heat ray in a fight. Each cast costs 1 Magic.' },
     offerTurns: 3,
     once: true,
+    parts: { ev: 0.6 },
   },
   {
     // (a neighbour under attack: helped, it pays you; left, it falls and its people come to you)
@@ -206,6 +219,10 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
       { condition: ['$other', 'besieged'] },
       { helper: 'mutate', args: ['captured', '$other', 1, 1, 'raiders'] },
       { helper: 'pool', args: ['unrest', 1] },
+      // (its people come to you: a share of every role moves — the world's own migrate — and they are a cohort of your
+      // town from now on; the living town shows them: season/realm.ts life)
+      { migrate: ['$other', '$town', 0.3], note: 'refugees from {other} walked in along the road' },
+      { helper: 'refugeeCohort', args: ['$town', '$town'] },
       { event: 'fell', by: [], to: ['$other', '$town'], note: '{other} fell to raiders. Its refugees reached your gate', weight: -0.6 },
     ],
     expireText: '{other} falls. Raiders hold it now. Its refugees reach your gate. Unrest +1.',
@@ -215,13 +232,70 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     once: true,
   },
   {
+    // (the refugees' own ask, by one of them: housed, they work for you; turned away, thieves — OPPORTUNITY_CATALOG
+    // RES: "resettlement")
+    id: 'house-refugees',
+    title: 'House the refugees',
+    pitch: 'The refugees sleep under carts by the watch post. Timber and one worker would raise them huts.',
+    themes: ['town', 'refugees'],
+    // (at the watch post, where their rider stood: the road gate is the tribute's place, one card a place)
+    bind: at('watch'),
+    eligible: [{ event: { kind: 'fell', involving: '$town' } }, { not: { event: { kind: 'refugees-housed', involving: '$town' } } }, { not: { event: { kind: 'refugees-turned-away', involving: '$town' } } }],
+    at: 'site',
+    requires: { agents: [{ kind: 'workers', count: 1 }], goods: { materials: 2 } },
+    turns: 1,
+    work: 'labour',
+    outcome: [{ helper: 'pool', args: ['labor', 2] }, { helper: 'pool', args: ['unrest', -1] }, { event: 'refugees-housed', by: ['player'], to: ['$town'], note: 'you housed the refugees by the watch post. Two of them work for you now', weight: 0.4 }],
+    outcomeText: 'The refugees have huts by the watch post. Two of them join your workers. Unrest -1.',
+    onExpire: [
+      { helper: 'pool', args: ['unrest', 1] },
+      { helper: 'sign', args: ['crime', '$town', 0.5, 3] },
+      { event: 'refugees-turned-away', by: ['player'], to: ['$town'], note: 'you left the refugees in the mud. Some of them steal to eat', weight: -0.4 },
+    ],
+    expireText: 'The refugees are left in the mud. Some steal to eat: houses are broken into. Unrest +1.',
+    presenter: { of: '$town', role: 'refugee', own: true, verb: 'asks', line: 'We walked four days with what we could carry. Give us timber and one of your builders and we will raise our own huts.', gain: 'Two of us will work for you.' },
+    reward: { text: '+2 Labor. Unrest -1.' },
+    offerTurns: 3,
+    once: true,
+    parts: { urgency: 0.6 },
+  },
+  {
+    // (the camp you founded can be lost: its wagons and its ore go with it)
+    id: 'guard-camp',
+    title: 'Guard Copper Hollow',
+    pitch: 'Raiders circle the mining camp. Soldiers sent now would see them off.',
+    themes: ['war', 'economy'],
+    bind: at('wagons'),
+    eligible: [{ helper: 'exists', args: ['copper-hollow'] }, { not: { tag: ['copper-hollow', 'condition', 'lost'], is: true } }, { not: { event: { kind: 'camp-held', involving: '$town' } } }, { helper: 'after', args: [0.5] }],
+    threat: true,
+    live: true,
+    parts: { urgency: 0.75 },
+    at: 'site',
+    requires: { agents: [{ kind: 'army', count: 1 }] },
+    turns: 1,
+    work: 'travel',
+    outcome: [{ event: 'camp-held', by: ['player'], to: ['copper-hollow', '$town'], note: 'your soldiers saw the raiders off Copper Hollow', weight: 0.3 }],
+    outcomeText: 'Your soldiers see the raiders off. Copper Hollow keeps digging.',
+    onExpire: [
+      { setTag: ['copper-hollow', 'condition', 'lost', true] },
+      { helper: 'mutate', args: ['destroyed', 'copper-hollow', 1, 1, 'raiders'] },
+      { helper: 'income', args: ['materials', -1] },
+      { event: 'camp-lost', by: [], to: ['copper-hollow', '$town'], note: 'raiders burned Copper Hollow. Its ore wagons stopped', weight: -0.5 },
+    ],
+    expireText: 'Raiders burn Copper Hollow. Its ore wagons stop. Materials -1 each season.',
+    presenter: { of: '$town', role: 'carter', own: true, verb: 'warns', line: 'I drive the ore wagons. Raiders watched us load at Copper Hollow. Send soldiers or the camp is gone.' },
+    reward: { text: 'Copper Hollow keeps sending ore.' },
+    offerTurns: 2,
+    once: true,
+  },
+  {
     id: 'pay-raiders',
     title: 'Pay the raiders off',
     pitch: 'The raiders on the road want tribute. Paid, they leave and no attack comes.',
     themes: ['war', 'raiders'],
     bind: at('gate'),
     eligible: [{ helper: 'threatComing' }, { helper: 'threatNear' }],
-    threat: true,
+    threat: 'arc',
     live: true,
     parts: { urgency: 1 },
     at: 'site',

@@ -675,6 +675,11 @@ export function startRunLoop(scene: LevelScene, towns: FieldTowns, mut: MutateEn
     // the camera down the road it comes by)
     raid: () => game?.realm?.raid ?? null,
     calls: true,
+    // (consequences come home: refugees in the streets, a camp's ore wagons — the fact layer's, through the realm)
+    life: (l) => {
+      const x = game?.realm?.life();
+      return x ? { ...l, commuters: l.commuters + x.people, wagons: l.wagons + x.wagons } : l;
+    },
     ready: () => void game!.load(),
   });
   game = new Game(scene, towns, season, mut);
