@@ -43,6 +43,9 @@ const MUT_WITHERED: u32 = 10u;
 const MUT_GREENED: u32 = 11u;
 const MUT_DRIED: u32 = 12u;
 const MUT_UNLOOT: u32 = 9u;
+// (a founded mining place's workings: a pit cut in benches and a spoil heap — mutate/list.ts GPU_MINE)
+const MUT_MINE: u32 = 13u;
+const MAT_RUBBLE_U: u32 = 4u;
 
 // (mutate/index.ts LOT_CONDITION)
 const LC_DROWNED: u32 = 1u;

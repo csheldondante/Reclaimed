@@ -23417,3 +23417,29 @@ for every land mutator (MU-49), and is the same gap as MU-47.
 **Tests.** gpu mutators 42 pass (new: withered, every system woken 5 s — the brownness, the mark and the plants are
 exactly as written; not run against the old code to see it fail), flora-wgsl 6 pass (the four shaders compile);
 unit as before.
+
+## 2026-11-15 (later) — mutators round 5, item 3: founded places are built (`mutators`, MU-6)
+
+**Why.** "New mining settlements": `founded` was a record and a badge; travelling there showed empty land.
+
+**How.** No second generator. Every `founded` entry of the list becomes a site of the field towns
+(`FieldTowns.addSite`, the one addition to citygen): made on the GPU when the window nears it, let go far behind, the
+same on return — a pure function of its seed, the ground and its population field, as every atlas town is. A camp is
+built at the generator's smallest grid (a village's: under it the generator makes no streets). Its two approach
+roads run toward the nearest atlas settlement and away from it, so the layout has an arterial. A site gets the
+towns' people like any other. `founded` takes `purpose: 'mining'` (a contract addition): the site leans to workshops
+(the settlements' own purpose word) and the entry writes workings just past the town's edge — a pit cut in three
+benches (0.42 of its radius deep) and a spoil heap, both under broken rock (`land.wgsl MUT_MINE`, the entry's own
+dispatch on apply and on stream-in; the rubble on top is the mark that makes it idempotent). The entry's reach is its
+town's radius by size (x 1.6 with workings).
+
+**Stills, looked at** (r5/founded1; a mining village founded 520 cells east of home, then travelled to):
+founded.png at the default zoom — a dirt main street with side lanes, about ten white houses along it, and two grey
+discs of broken rock west of it; founded-close.png (6 px a cell) — the street, the houses, a tall building, people
+walking. **It reads as a small new settlement. The workings read as two grey patches, not clearly as a pit and a
+heap**: at 2.67 px a cell a 5-cell hole and a 6-cell cone are a few pixels of relief under flat light (MU-50).
+
+**Tests.** unit mutators-list (reach by size, the workings inside the reach and past the town's edge, landOp, JSON
+round trip); gpu mutators 43 pass (the pit's floor down by its depth under rubble, the heap up, nothing else moved,
+written again the same, a plain founded place writes nothing). Not checked in a browser: a founded place after a
+reload (the list is restored and its sites added by the same path), and one founded on water or a cliff.

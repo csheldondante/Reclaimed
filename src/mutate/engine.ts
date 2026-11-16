@@ -5,7 +5,7 @@
 import type { Applied, Mutation, MutationRecord, MutationSpec, Mutators, PlaceState, Sign, SignSpec } from './index';
 import { MUTATORS } from './index';
 import type { MutateGpu, MutLots, Origin } from './gpu';
-import { applied, GPU_KIND, GPU_LOOT, GPU_UNLOOT, isLand, WorldList, type ListWorld } from './list';
+import { applied, GPU_KIND, GPU_LOOT, GPU_UNLOOT, isLand, landOp, WorldList, type ListWorld } from './list';
 import { ROW_H } from '../world/lattice';
 import type { FactWorld } from '../living/world';
 import { hasEvent, placeState, placeStates, recordMutation, recordSign } from './facts';
@@ -139,7 +139,7 @@ export class MutateEngine implements Mutators {
     const drawn = new Set<MutTown>();
     for (const m of ms) {
       const o = this.originFor(m, o0);
-      let box = land && isLand(m.kind) ? this.boxOf(m, o, within) : null;
+      let box = land && landOp(m) !== null ? this.boxOf(m, o, within) : null;
       let ts = towns.filter((t) => this.touches(m, t, o));
       // (a flood whose level is not taken from the land yet — index.ts Mutation.params: it is written whole, once its
       // whole area is in the window, with its level chosen there on the GPU; until then nothing of it is written, so

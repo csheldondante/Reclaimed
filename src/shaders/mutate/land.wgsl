@@ -126,6 +126,39 @@ fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
       bumpWater(vec2<u32>(x, y), before, 0.0);
     }
     if (meltCrack(w)) { lava[j].z = max(lava[j].z, 1150.0); }
+  } else if (kind == MUT_MINE) {
+    // (round 5, BACKLOG MU-6: "new mining settlements" — the workings beside the town. A pit: the column cut down in
+    // benches, deepest in the middle (0.42 of its radius), and floored with a skin of broken rock; a heap: spoil piled
+    // in a cone with a ragged foot. Both leave rubble on top, which is the mark that the column is done: written
+    // twice, or a region at a time, it is the same)
+    if (tm == MAT_RUBBLE_U) { return; }
+    let dp = length(wp - MP.p.xy) / max(MP.p.z, 1.0);
+    let dh = length(wp - MP.q.xy) / max(MP.q.z, 1.0);
+    let rag = mnoise(w * 0.35, MP.k.y + 31u);
+    if (dp < 1.0) {
+      // (three benches and the floor: steps of a third of the depth)
+      let depth = MP.p.z * 0.42;
+      let cut = depth * ceil((1.0 - smoothstep(0.3, 1.0, dp + 0.08 * (rag - 0.5))) * 3.0) / 3.0;
+      if (cut < 0.3) { return; }
+      let floorZ = max(top - cut, 1.0);
+      loop {
+        if (n == 0u) { break; }
+        let v = o[n - 1u];
+        if (ivZ1(v) <= floorZ) { break; }
+        if (ivZ0(v) >= floorZ) { n -= 1u; }
+        else { o[n - 1u] = ivPack(ivZ0(v), floorZ, ivMat(v), ivAux(v)); break; }
+      }
+      if (n == 0u) { return; }
+      o[n] = ivPack(floorZ, floorZ + 0.2, MAT_RUBBLE_U, 0u);
+      n += 1u;
+    } else if (dh < 1.0) {
+      let t = MP.q.z * 0.55 * (1.0 - dh) * (0.8 + 0.4 * rag);
+      if (t < 0.25 || top + t + 2.0 >= f32(G.zMax)) { return; }
+      o[n] = ivPack(top, top + t, MAT_RUBBLE_U, 0u);
+      n += 1u;
+    } else { return; }
+    veg[j] = 0.0;
+    vegNext[j] = 0.0;
   } else if (kind == MUT_BURIED) {
     let mat = u32(MP.p.y);
     if (tm == mat) { return; }

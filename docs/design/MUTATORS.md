@@ -83,7 +83,7 @@ outcome helpers resolve to a settlement.
 
 ```ts
 mutators.list()                                   // kinds: { kind, group: 'land' | 'state', name, description }
-mutators.apply({ kind, place?, at?, radius?, strength?, seed?, by?, tribute?, name?, size? })  // → Applied
+mutators.apply({ kind, place?, at?, radius?, strength?, seed?, by?, tribute?, name?, size?, purpose? })  // → Applied (purpose: 'mining', founded only — round 5)
 //   place: an atlas settlement id; at: world cells [x, row]. Applied: the entry + resident (written now?) + fresh
 mutators.play(entry)                              // presentation; not built (resolves at once): MU-3
 mutators.places() / mutators.place(id)            // PlaceState: owner, status, tribute, population, conditions, restless
@@ -107,7 +107,7 @@ The same modifier applied twice is one entry (its id: kind, place or cell, radiu
 | abandoned | — | standing lots abandoned (faded, sagging) |
 | captured | — | standing lots occupied (the roof in the holder's colour) |
 | vassal | — | none; owner and tribute in `places()`; `restless` true |
-| founded | — | a record and a pin; the town generator does not build it yet (MU-6) |
+| founded | with `purpose: 'mining'`: a pit cut in benches and a spoil heap just past the town's edge, under broken rock (`MUT_MINE`) | its own town: the entry is a site of the field towns (`FieldTowns.addSite`), built by the town generator when the window nears it — streets, houses, people (MU-6, MU-50) |
 
 A column whose top is a building's External span (a cell or more thick) is left alone; a road's paving is ground.
 

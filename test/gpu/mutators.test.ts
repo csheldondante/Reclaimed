@@ -522,3 +522,49 @@ test('riverSettle: river columns under a cut hold the table’s depth at it; the
   const b = await snap(r);
   expect(Array.from(b.water)).toEqual(Array.from(a.water));
 });
+
+// ---- (round 5, BACKLOG MU-6) a founded mining place's workings: a pit cut in benches and a spoil heap ------------
+test('founded, mining: a pit cut into the ground and a heap piled on it, both under broken rock; nothing else moved; written again it is the same; a plain founded place writes no land', async () => {
+  const r = await rig();
+  r.eng.useWorld(mutWorld([]));
+  const before = await snap(r);
+  const d0 = r.gpu.dispatches;
+  r.eng.apply({ kind: 'founded', at: [20, 20], name: 'New camp' });
+  expect(r.gpu.dispatches).toBe(d0);
+  // (a seed whose workings fall inside this small world: the town's centre is put far to one side)
+  let m = null as ReturnType<typeof r.eng.apply> | null;
+  for (let seed = 1; seed < 400 && !m; seed++) {
+    const p = r.eng.worldList.make({ kind: 'founded', at: [-4, 30], name: 'Deepcut', purpose: 'mining', seed }).params;
+    const inside = (x: number, y: number, rad: number) => x - rad > 2 && x + rad < W - 2 && y / ROW_H - rad / ROW_H > 2 && y / ROW_H + rad / ROW_H < H - 2;
+    if (inside(p[0], p[1], p[2]) && inside(p[3], p[4], p[5])) m = r.eng.apply({ kind: 'founded', at: [-4, 30], name: 'Deepcut', purpose: 'mining', seed });
+  }
+  expect(m).not.toBeNull();
+  expect(m!.resident).toBe(true);
+  const after = await snap(r);
+  const ca = cols(r, before);
+  const cb = cols(r, after);
+  const topOf = (c: typeof ca, x: number, y: number) => c[y * W + x][c[y * W + x].length - 1];
+  const [px, py, pr, hx, hy, hr] = m!.params;
+  const pit = [Math.floor(px), Math.floor(py / ROW_H)];
+  const heap = [Math.floor(hx), Math.floor(hy / ROW_H)];
+  // (the pit's middle: the floor, 0.42 of its radius down, under a skin of rubble)
+  expect(topOf(cb, pit[0], pit[1]).mat).toBe(MAT.Rubble);
+  expect(topOf(ca, pit[0], pit[1]).z1 - topOf(cb, pit[0], pit[1]).z1).toBeGreaterThan(pr * 0.42 - 0.5);
+  // (the heap's middle: spoil piled up)
+  expect(topOf(cb, heap[0], heap[1]).mat).toBe(MAT.Rubble);
+  expect(topOf(cb, heap[0], heap[1]).z1 - topOf(ca, heap[0], heap[1]).z1).toBeGreaterThan(hr * 0.3);
+  // (nothing outside the two)
+  let outside = 0;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const wx = x + 0.5 + 0.5 * (y & 1);
+      const wy = (y + 0.5) * ROW_H;
+      if (Math.hypot(wx - px, wy - py) < pr + 1 || Math.hypot(wx - hx, wy - hy) < hr + 1) continue;
+      if (JSON.stringify(ca[y * W + x]) !== JSON.stringify(cb[y * W + x])) outside++;
+    }
+  expect(outside).toBe(0);
+  r.eng.rewrite();
+  const again = await snap(r);
+  expect(Array.from(again.layers)).toEqual(Array.from(after.layers));
+  expect(g.takeErrors()).toEqual([]);
+});

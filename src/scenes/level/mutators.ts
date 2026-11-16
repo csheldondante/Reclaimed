@@ -8,7 +8,7 @@ import type { FieldTowns } from '../../citygen/towns';
 import { mutators, type MutationRecord, type MutatorKind, type Sign, type SignKind } from '../../mutate';
 import { MutateEngine, type MutTown } from '../../mutate/engine';
 import { MutateGpu } from '../../mutate/gpu';
-import { holderHue, isLand } from '../../mutate/list';
+import { FOUNDED_RADIUS, holderHue, isLand } from '../../mutate/list';
 import { BADGE_COLOUR, badgesOf, drawBadges } from '../../mutate/mapmarks';
 import { mountMutLab } from '../../mutate/lab';
 import { warpWindow } from '../../api/atlas-world';
@@ -104,6 +104,28 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
   // (arriving land comes in with its rivers at the reference: settled after the field's next write)
   S.onWritten.push(() => void (settle = cut()));
 
+  // ---- founded places built (BACKLOG MU-6): every `founded` entry is a site of the field towns — the town generator's
+  // own path (citygen/towns.ts: made on the GPU when the window nears it, let go far behind, the same again on return:
+  // a pure function of its seed, the ground and its population field). Its approach road runs toward the nearest
+  // settlement of the atlas and on past the far side, so the generator has an arterial to hang its streets on.
+  const syncFounded = (rec: MutationRecord) => {
+    for (const m of rec.list) {
+      if (m.kind !== 'founded' || !m.place) continue;
+      const at: [number, number] = [m.cell[0] + 0.5, (m.cell[1] + 0.5) * ROW_H];
+      const R = FOUNDED_RADIUS[m.size ?? 'camp'];
+      const near = st.near(at, 1e9).find((q) => q.id !== m.place);
+      let dx = near ? near.at[0] - at[0] : 1;
+      let dy = near ? near.at[1] - at[1] : 0;
+      dx -= Math.round(dx / a.atlas.worldW) * a.atlas.worldW;
+      dy -= Math.round(dy / a.atlas.worldH) * a.atlas.worldH;
+      const l = Math.hypot(dx, dy) || 1;
+      const way = (k: number): [number, number][] => [0, 0.5, 1, 1.5, 2].map((t) => [at[0] + (dx / l) * R * t * k, at[1] + (dy / l) * R * t * k]);
+      // (a camp is built as the generator's smallest grid, a village: under it the generator makes no streets —
+      // citygen/town.ts hasGrid)
+      towns.addSite({ id: m.place, name: m.name ?? m.place, at, size: m.size === 'town' ? 'town' : 'village', roads: [way(1), way(-1)], seed: (m.seed * 2654435761 + m.cell[0] * 40503 + m.cell[1] * 9973) >>> 0, purpose: m.purpose });
+    }
+  };
+
   const eng = new MutateEngine({
     gpu,
     world: {
@@ -127,6 +149,7 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
     changed: (rec) => {
       void S.store?.put(KEY, new TextEncoder().encode(JSON.stringify(rec)), { session: 'town', hash: 0 });
       syncCuts(rec);
+      syncFounded(rec);
     },
     signsChanged: showSigns,
     home: () => {
@@ -171,6 +194,7 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
     const mine = eng.record().list;
     eng.restore(rec);
     syncCuts(eng.record());
+    syncFounded(eng.record());
     for (const m of mine) eng.apply({ ...m, at: m.cell, place: m.place ?? undefined });
   })();
 
@@ -251,9 +275,11 @@ function startLab(scene: LevelScene, towns: FieldTowns, eng: MutateEngine): void
   // conditions counted (a readback of its condition words, asked for by a check, never by the game))
   (globalThis as { mutlab?: unknown }).mutlab = {
     go: (id: string) => {
+      // (an atlas settlement, or a place founded this run: the list's own)
       const s = st.settlement(id);
-      if (!s) throw new Error(`mutlab: no place ${id}`);
-      return warpWindow(a.atlas, S, core.dims, Math.round(s.at[0]), Math.round(s.at[1] / ROW_H));
+      const cell = s ? [Math.round(s.at[0]), Math.round(s.at[1] / ROW_H)] : eng.places().find((q) => q.id === id)?.at;
+      if (!cell) throw new Error(`mutlab: no place ${id}`);
+      return warpWindow(a.atlas, S, core.dims, cell[0], cell[1]);
     },
     live: () => [...towns.live.keys()],
     conditions: async (id: string): Promise<Record<number, number> | null> => {
@@ -283,7 +309,7 @@ function startLab(scene: LevelScene, towns: FieldTowns, eng: MutateEngine): void
       }
       if (kind === 'founded') {
         const m = mutators.apply({ kind, at: here(), name: 'New camp', size: 'camp' });
-        return `${m.name} founded at ${m.cell[0]}, ${m.cell[1]} (a record, and a house on the map)`;
+        return `${m.name} founded at ${m.cell[0]}, ${m.cell[1]}: its streets and houses are made when the land round it is in view`;
       }
       const t = town();
       if (!t) return 'No town is loaded near here.';

@@ -17,7 +17,7 @@ import riverHeldWgsl from '../shaders/riverheld.wgsl?raw';
 import { RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS, type WorldGpu } from '../sim/world-gpu';
 import { ROW_H } from '../world/lattice';
 import type { Mutation } from './index';
-import { GPU_KIND, holderHue, isLand } from './list';
+import { GPU_KIND, holderHue, landOp } from './list';
 
 /** a town's lots as the mutators write them (api/contracts/citygen.ts CityLots, with its condition words) */
 export interface MutLots {
@@ -99,7 +99,7 @@ const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
   /** an entry's numbers for the kernel, in the window as it is now */
   private params(m: Mutation, o: Origin, box: readonly [number, number, number, number], room = 0, strength = m.strength, floodSlot = -1): GPUBufferBinding {
     // (the entry's cell in the window: `o` is the origin it's nearest to — MutateEngine.originFor, the world wraps)
-    const kind = GPU_KIND[m.kind];
+    const kind = landOp(m) ?? GPU_KIND[m.kind];
     if (kind === null) throw new Error(`mutators: ${m.kind} writes nothing on the GPU`);
     const buf = new ArrayBuffer(PARAM_BYTES);
     const u = new Uint32Array(buf);
@@ -115,6 +115,11 @@ const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
       f.set([p[0] - ox, p[1] - oy * ROW_H, p[2] - oz, p[3] * (strength / Math.max(m.strength, 1e-6)), 0, 0, 0, 0], 12);
       f.set([p[4], p[5]], 16);
     } else if (m.kind === 'dried') f.set([p[0], 0, 0, 0], 12);
+    else if (m.kind === 'founded') {
+      // (a mining place's workings: the pit and the heap in the window — list.ts workings)
+      f.set([p[0] - ox, p[1] - oy * ROW_H, p[2], 0], 12);
+      f.set([p[3] - ox, p[4] - oy * ROW_H, p[5], 0], 16);
+    }
     else if (m.kind === 'buried') {
       f.set([p[0] * (strength / Math.max(m.strength, 1e-6)), p[1], 0, 0], 12);
       f.set([p[2], p[3]], 16);
@@ -161,14 +166,14 @@ const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
     };
     let floodSlot = 0;
     for (const m of ms) {
-      if (GPU_KIND[m.kind] === null) continue;
+      if (GPU_KIND[m.kind] === null && landOp(m) === null) continue;
       // (an entry's dispatches stay in one submit: the level's copy lands in parameter slots of the same encoder)
       if (this.slot + 4 + towns.length > SLOTS) push();
       const mine: Job[] = [];
       const levelTo: number[] = [];
       const pick = level.has(m) && m.kind === 'flooded' && box !== null && floodSlot < FLOOD_SLOTS;
       const fs = pick ? floodSlot++ : 0;
-      if (box && isLand(m.kind)) {
+      if (box && landOp(m) !== null) {
         // (the entry's own box within the one asked)
         const cx = m.cell[0] - o[0];
         const cy = m.cell[1] - o[1];
@@ -195,7 +200,7 @@ const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
         }
       }
       // (these change no lot)
-      if (!(m.kind === 'dried' || m.kind === 'withered' || m.kind === 'greened'))
+      if (!(m.kind === 'dried' || m.kind === 'withered' || m.kind === 'greened' || m.kind === 'founded'))
         for (const t of towns) {
           const pb = this.params(m, o, [0, 0, 0, 0], t.room, strength);
           levelTo.push(pb.offset!);

@@ -1,7 +1,7 @@
 // The world modifier list (src/mutate/list.ts, docs/design/MUTATORS.md): pure. An entry's numbers come from the
 // atlas's ground when it is applied and are kept; the same modifier twice is one entry; the record goes through JSON and back unchanged.
 import { expect, test } from 'vitest';
-import { WorldList, type ListWorld } from '../../src/mutate/list';
+import { FOUNDED_RADIUS, GPU_MINE, landOp, WorldList, type ListWorld } from '../../src/mutate/list';
 import { ROW_H } from '../../src/world/lattice';
 
 const places = [
@@ -72,4 +72,34 @@ test('signs: on, replaced, off, ended by the season, kept in the record', () => 
   expect(L.signs().map((s) => s.kind)).toEqual(['crime']);
   expect(L.sign({ kind: 'crime', place: 'muru', strength: 0 })).toBeNull();
   expect(L.signs()).toEqual([]);
+});
+
+// ---- (round 5, BACKLOG MU-6) a founded place reaches as far as its town; a mining one has workings beside it
+test('founded: its reach by its size; a mining place carries its workings just past the town’s edge, inside its reach, and is the only state kind that writes land', () => {
+  const L = new WorldList(world());
+  const camp = L.add({ kind: 'founded', at: [300, 400], name: 'New camp' }).m;
+  expect(camp.radius).toBe(FOUNDED_RADIUS.camp);
+  expect(camp.params).toEqual([]);
+  expect(landOp(camp)).toBeNull();
+  const mine = L.add({ kind: 'founded', at: [900, 400], name: 'Deepcut', size: 'village', purpose: 'mining', seed: 3 }).m;
+  expect(mine.purpose).toBe('mining');
+  expect(landOp(mine)).toBe(GPU_MINE);
+  expect(mine.radius).toBe(Math.round(FOUNDED_RADIUS.village * 1.6));
+  const [px, py, pr, hx, hy, hr] = mine.params;
+  const c = [900.5, 400.5 * ROW_H];
+  for (const [x, y, r] of [[px, py, pr], [hx, hy, hr]]) {
+    const d = Math.hypot(x - c[0], y - c[1]);
+    // (past the town's edge, the whole of it inside the entry's reach)
+    expect(d - r).toBeGreaterThan(FOUNDED_RADIUS.village * 0.95);
+    expect(d + r).toBeLessThan(mine.radius);
+  }
+  // (the pit and the heap stand apart)
+  expect(Math.hypot(px - hx, py - hy)).toBeGreaterThan(pr + hr);
+  // (a land kind is its own code; the other state kinds write no land)
+  expect(landOp(L.add({ kind: 'burned', place: 'muru' }).m)).toBe(1);
+  expect(landOp({ kind: 'captured' })).toBeNull();
+  // (through JSON and back: the purpose and the workings kept)
+  const again = new WorldList(world());
+  again.restore(JSON.parse(JSON.stringify(L.record())));
+  expect(again.all[1]).toMatchObject({ purpose: 'mining', params: mine.params });
 });

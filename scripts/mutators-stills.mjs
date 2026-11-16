@@ -82,6 +82,25 @@ await run({ name: 'mutators-stills', kind: 'behaviour', size: '412x915', dpr: 1,
       return { riverInflow: [...s.riverInflow], nodes: inflow.length, lowered: inflow.filter((v) => v < 1).length, wet: reclaimed.globals.riverWet };
     });
   }
+  if (only.has('founded')) {
+    // (a mining village founded far from home, then travelled to: its streets, houses, pit and spoil heap as the land
+    // and the town arrive — BACKLOG MU-6)
+    const id = await ev(() => {
+      const a = reclaimed.scene.opts.atlas;
+      const home = a.settlements.settlement(a.startTown);
+      const m = mutators.apply({ kind: 'founded', at: [Math.round(home.at[0]) + Number(new URLSearchParams(location.search).get('fdx') ?? 520), Math.round(home.at[1] / 0.8660254) + 160], name: 'Deepcut', size: 'village', purpose: 'mining', seed: 3 });
+      return m.place;
+    });
+    await ev((id) => void mutlab.go(id), id);
+    await page.waitForFunction((id) => mutlab.live().includes(id), { timeout: 180000, polling: 500 }, id);
+    await shot('founded.png', Number(R.opt('fwait', 45000)));
+    await ev((id) => ({ live: mutlab.live(), place: mutators.place(id) }), id);
+    await ev(() => void (reclaimed.camera.zoom = 6));
+    await shot('founded-close.png', 4000);
+    await ev(() => void (reclaimed.camera.zoom = 2.6689733724321005));
+    await ev(() => void mutlab.go(reclaimed.scene.opts.atlas.startTown));
+    await sleep(20000);
+  }
   if (only.has('map')) {
     await ev(() => {
       const a = reclaimed.scene.opts.atlas;
