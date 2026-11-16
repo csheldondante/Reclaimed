@@ -107,6 +107,8 @@ const METAL = {
   girder: { x0: 212, x1: 240, y0: 197, y1: 199, z0: G + 10 },
   pylon: { x0: 222, x1: 228, y0: 214, y1: 220, h: 20 },
   tanker: { x0: 238, x1: 250, y0: 226, y1: 231, z0: G + 8, h: 5 },
+  /** (PX2) where the steel tower body is set down: open ground between the bridge and the tanker */
+  tower: { x: 241, y: 207 },
   grounds: { y0: 221, y1: 240, sand: [206, 219], dirt: [219, 228], stone: [228, 237] } as Grounds,
 };
 /** (the physics engine's break station, build step 2 letter E; look round 3: on land of its own, between the rock
@@ -125,6 +127,18 @@ const PILE = { pit: { x0: 224, x1: 242, y0: 100, y1: 114, floor: G - 3 }, pad: {
 const cellsBox = (x0: number, y0: number, z0: number, w: number, d: number, h: number, mat: number) => {
   const out: { x: number; y: number; z: number; mat: number }[] = [];
   for (let z = z0; z < z0 + h; z++) for (let y = y0; y < y0 + d; y++) for (let x = x0; x < x0 + w; x++) out.push({ x, y, z, mat });
+  return out;
+};
+
+/** (PX2) a steel water tower as a body's cells, its corner at (x0, y0, z0): four legs 6 tall, a hollow tank 7 x 5 x 4
+ *  on them (walls, floor and roof a cell thick) */
+const steelTower = (x0: number, y0: number, z0: number) => {
+  const out: { x: number; y: number; z: number; mat: number }[] = [];
+  for (const x of [x0, x0 + 6]) for (const y of [y0, y0 + 4]) for (let z = z0; z < z0 + 6; z++) out.push({ x, y, z, mat: MAT.Steel });
+  for (let z = z0 + 6; z < z0 + 10; z++)
+    for (let y = y0; y < y0 + 5; y++)
+      for (let x = x0; x < x0 + 7; x++)
+        if (z === z0 + 6 || z === z0 + 9 || x === x0 || x === x0 + 6 || y === y0 || y === y0 + 4) out.push({ x, y, z, mat: MAT.Steel });
   return out;
 };
 
@@ -458,8 +472,19 @@ export const STATIONS: Station[] = [
     name: 'metal',
     rect: [208, 192, 256, 240],
     look: [232, 190, 14, 6],
-    hint: 'node solver, metal: a girder bridge (a boulder dropped on it), a pylon (three legs cut), a tanker (dropped) — dents, bends, snaps; buried',
+    hint: 'metal: a steel tower with a block dropped on it, a girder bridge (a boulder dropped on it), a pylon (three legs cut), a tanker (dropped) — dents, bends, snaps; buried',
     actions: [
+      {
+        // (PX2; the owner, 2026-11-15: "there still isn't any metal to test deformation (the water tower should be
+        // metal!)") A steel water tower set down as a body — four legs and a hollow tank, all steel — and a heavy block
+        // dropped on it from 36 up. Under ?solver=engine the hit turns the tower into lattice voxels: steel bends and
+        // crumples and stays in one piece where stone would shatter
+        label: 'block on a steel tower',
+        run: (k) => {
+          k.drop(steelTower(METAL.tower.x, METAL.tower.y, G + 1));
+          k.later(2.5, () => k.drop(cellsBox(METAL.tower.x + 1, METAL.tower.y, G + 41, 5, 5, 3, MAT.Steel)));
+        },
+      },
       {
         label: 'boulder on the bridge',
         run: (k) => {

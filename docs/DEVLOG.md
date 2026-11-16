@@ -24515,3 +24515,24 @@ Not checked: the owner's phone itself.
 **Hacks and limits.** A single drag with the tool still pans (the double tap starts the grab, as the tool's hint
 says); a double tap + drag on empty ground keeps the screen and pulls nothing (TKN3). Other tools that ask the ground
 at a drag's start (the gust, the brushes) have the same first-ask gap by touch and still fall to a pan: PX11.
+
+## 2026-11-15 — the owner's phone test, PX2: metal to deform
+
+**The owner.** "there still isn't any metal to test deformation (the water tower should be metal!)".
+
+**What was there.** The metal station's water tower (`METAL.tanker`) is steel already, tank and legs, but it stands as
+columns of the map: nothing in the station made it a body and hit it hard, so no steel was seen to bend.
+
+**Added.** The metal station's first button, "block on a steel tower": a steel water tower set down as an engine row
+(four legs, a hollow tank 7 x 5 x 4; `steelTower` in `levels/playground.ts`) and, 2.5 s later, a steel block 5 x 5 x 3
+dropped on it from 40 cells up. Under `?solver=engine` the hit hands the tower to the lattice (stage 4).
+
+**Looked at** (`pilelab.mjs --station metal --press "block on a steel tower"`, still `fb-metal-95.png`): the legs
+splay and fold under the tank, the tank sags to the ground with the block on it; one piece, nothing shattered.
+
+**Found.** A stone block 5 x 5 x 4 from 36 up did not deform the tower: the stone broke up on it and the tower only
+tipped over (two rows at the end, no steel voxels). The hitter has to be steel for the tower to pass its threshold
+(PX12).
+
+**Hacks and limits.** The tower is a dropped body, not the map's standing tower (that one becomes a row only when the
+judge frees it, and then falls 8 cells: too little to bend). Not run under the other solver variants. PX12.
