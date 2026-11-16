@@ -231,6 +231,12 @@ function probes(R: Rec): Toggle[] {
     pass.setBindGroup(0, rd.bodyGroup);
     for (let k = 0; k < 128; k++) pass.drawIndirect(drawArgs, 0);
   };
+  // (the ladder's other rung: the same draws direct — what an indirect draw costs over a direct one)
+  const drawDirectHook = (pass: GPURenderPassEncoder) => {
+    pass.setPipeline(rd.bodyPipe);
+    pass.setBindGroup(0, rd.bodyGroup);
+    for (let k = 0; k < 128; k++) pass.draw(36, 0);
+  };
   return [
     { name: 'probe: 64 indirect × 0', kind: 'probe', calls: 64, what: '64 indirect dispatches of 0 workgroups in one pass (the model: ~0.1 ms each)', set: compute('ind64', (p) => { for (let k = 0; k < 64; k++) p.dispatchWorkgroupsIndirect(zero, 0); }) },
     { name: 'probe: 64 direct × 1', kind: 'probe', calls: 64, what: '64 direct dispatches of 1 workgroup in one pass (the model: ~0.008 ms each)', set: compute('dir64', (p) => { for (let k = 0; k < 64; k++) p.dispatchWorkgroups(1); }) },
@@ -255,6 +261,17 @@ function probes(R: Rec): Toggle[] {
         const i = rd.extraDraws.indexOf(drawHook);
         if (off && i >= 0) rd.extraDraws.splice(i, 1);
         if (!off && i < 0) rd.extraDraws.push(drawHook);
+      },
+    },
+    {
+      name: 'probe: 128 direct draws × 0',
+      kind: 'probe',
+      calls: 128,
+      what: 'the same 128 draws direct (36 vertices, 0 instances): the indirect draws less these is what indirection costs a draw',
+      set: (off) => {
+        const i = rd.extraDraws.indexOf(drawDirectHook);
+        if (off && i >= 0) rd.extraDraws.splice(i, 1);
+        if (!off && i < 0) rd.extraDraws.push(drawDirectHook);
       },
     },
   ];
@@ -295,6 +312,7 @@ export async function idleBench(params: URLSearchParams): Promise<void> {
   const notes: string[] = [];
   panel.say('idle bench: waiting for the town…');
   // (the start town made and its season's hand dealt: the level as the player first sees it)
+  // FIXED-CITY (BACKLOG PI-20): the bench measures at the run's start town.
   const t0 = performance.now();
   const season = () => (globalThis as { season?: { town: string | null } }).season;
   while (!season()?.town && performance.now() - t0 < 120000) await sleep(250);

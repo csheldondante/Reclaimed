@@ -81,6 +81,7 @@ await run({ name: 'census', kind: 'behaviour' }, async (R) => {
     say('settle (the first 8 s after the level is ready)', await take());
   }
   // (the town made, its people given, the first hand dealt; then the world left alone)
+  // FIXED-CITY (BACKLOG PI-20): the census measures at the run's start town.
   await p.waitForFunction(() => window.season?.town != null || document.querySelector('.fatal'), { timeout: 180000, polling: 250 });
   await R.fatal(p);
   await R.sleep(Number(R.opt('settle', 25)) * 1000);

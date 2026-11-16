@@ -23279,3 +23279,42 @@ from the dirty box alone when its copy is of another window (`readFor` reads chu
 PI-5 stays open for that. Between a slide and the next pass the claims aren't verified against the columns
 (`ext.verify`); before, a slide's pass did it as a side effect. Nothing cuts a claim without an edit marking a box, and
 at rest with no slide it was never run either.
+
+## 2026-11-15 — round 2: the idle frame asleep (PI-13..PI-20, `phone-idle`)
+
+The orchestrator ruled on round 1's open decision: event-driven solves sleep on the CPU's word with a small
+event-chained read (allowed by DESIGN §24), every-frame work goes direct with an early-out in the kernel, and a sim
+with nothing changing encodes nothing. Four agents took a system each in the one worktree (living town, town
+contracts, the liquids with wind, sway and coarse, the terrain mesh); main wrote the shared gate, did the judge's read,
+and ran the combined state in the browser.
+
+- **The settled gate** (gpu/settled.ts; test/unit/settled.test.ts): `wake()` on a CPU-known event; while awake the
+  system encodes its work and a copy of a few state words, one read in flight; a read taken after the last wake (and
+  its hold) that says settled puts it to sleep. No event, no read.
+- **Town contracts** (32b50ae5, 9913cd07): first made every dispatch direct and gated in the kernel (0 indirect, but
+  1.31 M early-out threads a frame at rest: ruled not acceptable); then asleep at rest on two settled reads. Wakes:
+  the town set, the gate rule, a slide, the place uniform, a town's mesh runs (a district rising), a gate's wall up,
+  any sim event near the town (`Simulation.eventTaps` → `wakeAt`). **Behaviour, as ruled:** a change only the GPU
+  knows waits for the next wake (PI-14a).
+- **Living town** (bd670b85): the graph's pass only while unsettled; settled, one pass of ~9 direct dispatches plus
+  the works. GPU-only wakes are heard by a read every 20 frames, only while a quarry, a forest or a wall exists
+  (ruled an event-chained read: those works start from a card); a rebuild can start up to 20 frames late (PI-14b).
+- **Terrain mesh** (fcd18597): 10 passes and 5 indirect → 1 pass, 10 direct. The build kernels re-threaded so a
+  direct dispatch over one slot is 81 workgroups a kernel at any height. Full sleep is built and off (PI-15).
+- **Liquids, wind, sway, coarse** (e39908f7): lava asleep with none; water direct but for `prep`; the wind field's
+  box kernels only when painted or something landed; sway and coarse asleep at rest. The game's lava is still the
+  older system (PI-17).
+- **The judge's read** (9482f25d): see the entry above.
+
+**Measured** (FRAMECOST "Round 2"): idle 75.6 → 1.4 indirect dispatches a frame, the model 9.9 → 1.9 ms (1.1 ms in the
+bench's own idle window); panning 14.2 → 1.7; the time-lapse 11.9 → 2.9; just loaded 5.3 → 2.0. Desktop counts; the
+phone's bench run is the user's.
+
+**Hacks and limits.** The holds (2 frames by default, 4 for the contracts, 1 for the liquids), the living town's
+20-frame watch, the liquid's `SPILL = 8` and its read gaps doubling to 64 ticks, the wind's 2-tick landing margin.
+The contracts' deferred GPU-only wakes and a side solve that can pause mid-rounds until the next wake. Existing tests
+of the contracts and the living town gained explicit `wake()` calls where they write buffers behind the CPU's back.
+The bench is 178 s here with the first-frame stall: on a slower boot it would pass three minutes. The people moving
+was checked by eye on two frames, and by the living town's GPU tests, not by reading riders back in the browser.
+Agents' leftovers: PI-19. Not done: PI-9 (the first frames' stall: no time spent), the ambience (PI-3: no CPU source
+that survives a slide).

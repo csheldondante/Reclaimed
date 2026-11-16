@@ -126,6 +126,7 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoo
   // mode and the town game ran them again: ~6 reads and ~2.4 MB a second at idle (the census, docs/FRAMECOST.md).
   // What it changes: the ambience hears no plants or water round the view (birdsong, insects, running water, frogs),
   // as in fortress play after DA-B5 — BACKLOG PI-3 has the GPU reduction that would bring them back without a read.
+  // FIXED-CITY (BACKLOG PI-20): keyed to the season loop starting on the level's start town.
   scene.valleyReads = null;
   scene.seasonUi = mountSeasonUi(host.ui, loop);
   (globalThis as { season?: SeasonLoop }).season = loop;

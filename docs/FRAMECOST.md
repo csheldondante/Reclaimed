@@ -358,3 +358,68 @@ windows, the 26 s first-frame stall included), now 12 s and 1 s. The desktop's d
 | PI-7 | The units' sync reads ~1 time a frame (0.7 KB): DA-B2b's watched sync | ? (the read probe) |
 | PI-9 | The first frames hold the GPU 25–30 s headless on the desktop; unknown on the phone | boot |
 | PI-3 | The ambience (birdsong, insects, water, frogs) without a read: a GPU reduction round the view, a few bytes | – |
+
+## Round 2: the result (2026-11-15, the orchestrator's rulings applied)
+
+The rulings: the judge's whole read lazy; solves that change only on events gated on the CPU by a wake plus a small
+event-chained read (`src/gpu/settled.ts`, DESIGN §24's "small, async, only after edits or events"); what must run every
+frame dispatched direct with an early-out in the kernel; a sim with nothing changing encodes nothing.
+
+### The four states, before → after (per frame; desktop headless 412x915; ms by the phone's cost model)
+
+| state | indirect | direct | compute passes | read back (KB) | model ms |
+|---|---|---|---|---|---|
+| just loaded (first 8 s) | 29.7 → 1.3 | 51.9 → 57.9 | 43.5 → 36.9 | 75.7 → 42.1 | 5.3 → 2.0 |
+| **idle, camera still** | **75.6 → 1.4** | 74.5 → 84.3 | 60.6 → 48.7 | 34.7 → 0.9 | **9.9 → 1.9** |
+| panning 30 cells/s | 74.8 → 1.1 | 75.9 → 78.6 | 59.7 → 40.3 | 383 → 7.9 | 14.2 → 1.7 |
+| Next season time-lapse | 75.7 → 8.5 | 80.4 → 110 | 64.2 → 53.7 | 185 → 1.4 | 11.9 → 2.9 |
+
+The after run happened to run 1.39 ticks a frame at idle (the before run 0.86: this desktop's frame rate), so its
+per-tick systems count higher than they would at one tick a frame; the bench's idle frame on the same build, at 0.69
+ticks, counted 0.7 indirect and 26 compute passes, model 1.1 ms. Render passes (3.3), draws (27) and indirect draws
+(191) are unchanged.
+
+### Idle, by system, after
+
+| system | before: indirect / direct / passes | after | how |
+|---|---|---|---|
+| living town | 30 / 18.4 / 4 | 0 / 18.4 / 1 | the graph (build, relax, check, wall work) sleeps on a settled read; riders, trace, works and figures one direct pass |
+| town contracts | 28 / 15 / 1 | 0 / 0 / 0 | asleep at rest: nothing encoded; two settled reads; awake, 43 direct gated in the kernel |
+| terrain mesh | 5 / 6 / 10 | 0 / 10 / 1 | one pass, the build kernels direct over the slot's room (405 workgroups a frame), gated; full sleep built, off (PI-15) |
+| liquid, water | 6 / 2 / 8 a tick | 1 / 7 / 2 a tick | direct from the CPU's awake list with an in-kernel check; `prep` stays indirect (PI-16) |
+| liquid, lava | 5 / 2 / 7 a tick | 0 / 0 / 0 | asleep with no lava: nothing; woken by a spring or land come in |
+| wind field | 2 / 2 / 3.4 a tick | 0 / 1 / 1 a tick | the map-wind band only; painted: 4 direct |
+| sway | 1 / 1 / 2 | 0 / 0 / 0 at rest | awake while the CPU knows of wind, a storm, the cursor's breeze |
+| coarse world | 0.75 / 0.25 / 1 | 0 / 0 / 0 at rest | woken by an event, a vent, the climate's terms changing |
+| valley reads | 0.11 reads, 34 KB | gone | round 1 |
+| particles, lava (older), oil, structure, contamination, moisture, fire, surface, wilt, sediment … | direct, a pass each | unchanged | now the top of the idle list: ~35 passes a frame (PI-6) |
+
+Where an indirect dispatch remains: the water's `prep` (its count runs from 0 to every wet chunk of the window); and,
+only while they are awake, the living graph's solve (28), sway's and the coarse world's lists.
+
+### The 191 indirect draws
+
+One `drawIndexedIndirect` per terrain mesh chunk in view in the world pass and again in the shadow pass (the chunk's
+index count is the GPU's), plus the trees' kinds, the instance lists, and the towns' meshes and figures. Left as they
+are. The bench has both rungs: 128 indirect draws of 0 instances and the same 128 direct.
+
+### Checked on the combined state
+
+`scripts/census.mjs` (all gates pass), `scripts/idlebench.mjs` (25 toggles, 178 s after the level is up, the 26 s
+first-frame stall included: inside three minutes, barely, on this desktop), `npm run typecheck`, the unit project (631
+passed; the one failure is PI-12, the base's), `npm run smoke`, and `scripts/towngif.mjs` at idle and in a time-lapse:
+the town, the river and the bridge draw as before, the houses of the season's card are built, and the figures on the
+roads are in different places between the first and last frames (by eye; the script's pixel count is mostly water).
+
+### The owner's note (2026-11-15), verbatim
+
+"One minor point but build things using the systems we developed like pages. The first runs we want to build are
+centered on a city but the opportunity system and simulation layers are intentionally built more generally. The plan
+is to eventually have runs that follow migrant groups such as refugees, armies, settlers or adventurers. Don't spend
+time designing around it but note that it is the plan so any shortcuts should record places where they bake the fixed
+city assumption per run."
+
+Tagged `FIXED-CITY` tonight (BACKLOG PI-20, a comment at each site): the valley reads' cut is keyed to the season loop
+starting on the start town (scenes/level/season.ts); the idle bench, the census and the town GIF wait for that start
+town. The other gates are keyed to general events (a slide, a chunk's wake, an edit near a town, a town's own
+changes) and hold for any number of towns or none.

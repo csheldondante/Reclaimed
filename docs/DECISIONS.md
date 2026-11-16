@@ -3711,3 +3711,20 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   → soldiers are raised only once the keep card is started or built (its barracks) or the walls are built (the
   muster yard); no market square fallback. With none, no squads; raids still come and simply reach their target.
   The player's fortress joins the list when it exists as a place.
+
+## 2026-11-15 — runs will follow moving groups later; record fixed-city shortcuts (the owner, via the orchestrator)
+
+"One minor point but build things using the systems we developed like pages. The first runs we want to build are
+centered on a city but the opportunity system and simulation layers are intentionally built more generally. The plan
+is to eventually have runs that follow migrant groups such as refugees, armies, settlers or adventurers. Don't spend
+time designing around it but note that it is the plan so any shortcuts should record places where they bake the fixed
+city assumption per run."
+
+No redesign. A shortcut that relies on the run sitting at one town gets a BACKLOG row tagged `FIXED-CITY` and a
+comment with that word at the site (first rows: PI-20).
+
+The orchestrator's rulings the same night (phone-idle round 2): a small read that runs only between a CPU-known event
+and the solve's end is the allowed kind (DESIGN §24); so is the living town's read every 20 frames while a quarry, a
+forest or a wall work exists. A million early-out threads a frame is not an acceptable resting state. The town
+contracts' GPU-only wakes wait for the next CPU-known wake. The terrain mesh's full sleep stays off until its writers
+signal. The ambience stays cut, on the owner's list.
