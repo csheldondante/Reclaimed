@@ -39,7 +39,10 @@ declare const __BUILD_COMMIT__: string;
 // asleep both ways (quiet, and with the quiet gate off); medians, not means
 // v3: stage 4 is encoded only while something deforms (PP6's first cut): the awake tick is 9 direct + 56 indirect
 // dispatches in these scenes, and the `stage4` share reads about nothing; the watch tick is off by default
-const VERSION = 3;
+// v4: the kernels a thread a row or a pair, the coarse pass's table builds, fold and the draw list are dispatched
+// direct while the rooms are small (PP11): an awake tick in the 1,000-row scenes is 57 direct + 8 indirect dispatches
+// (the 10,000 and 50,000 free-flight scenes are past the bound and stay indirect)
+const VERSION = 4;
 const KEY = 'reclaimed.enginebench.partial';
 const NL = String.fromCharCode(10);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

@@ -25,6 +25,7 @@ import drawWgsl from '../shaders/engine_draw.wgsl?raw';
 import settleWgsl from '../shaders/engine_settle.wgsl?raw';
 import pairsWgsl from '../shaders/engine_pairs.wgsl?raw';
 import groundWgsl from '../shaders/engine_ground.wgsl?raw';
+import { PAIR_ASKED, PAIR_HW_PAIRS } from './sdf/coarse';
 import { SdfCollide, type CollideOptions } from './sdf/collide';
 import { hexSdfSpec } from './sdf/hexmodel';
 import { SdfModels } from './sdf/models';
@@ -975,7 +976,7 @@ export class Engine implements SimSystem {
     f[45] = T.breakSmooth;
     f.set([T.wakeEnergy, T.warmStart, T.rimDepth, this.groundMargin], 48);
     f[68] = T.shockReach;
-    u.set([Math.max(1, Math.round(T.pairIters)), this.pairRoom, this.slotRoom, this.oldSlots], 52);
+    u.set([Math.max(1, Math.round(T.pairIters)), Math.min(this.pairRoom, this.pairsNow || this.pairRoom), this.slotRoom, this.oldSlots], 52);
     if (this.grabT) {
       f.set([...this.grabT.o, 1], 56);
       f.set([...this.grabT.d, this.grabT.lift], 64);
@@ -1040,6 +1041,36 @@ export class Engine implements SimSystem {
   // with no frame between them, a stalled read: then as before). A row flagged to deform is frozen as it came in by
   // the rigid kernels until `expand` runs, so a gate that opens late delays its deformation — by the read's age, a few
   // ticks — and loses nothing.
+  // ---- direct dispatches (docs/design/PHYSICS_ENGINE.md "Direct, not indirect"). On the owner's phone an indirect
+  // dispatch costs about 0.1 ms whether or not it does anything (its arguments are checked on the GPU first) and a
+  // direct one under 0.01. So while the rooms are small the kernels a thread a row or a pair are dispatched direct
+  // over the whole room — every row slot, every pair the room holds — and each thread leaves at once past the live
+  // count, as it always did. Nothing live can be past such a dispatch, so there is no tail to handle: a count that
+  // jumps in a tick (10 awake to 500) is covered like any other. Past the bounds below the empty workgroups would
+  // cost more than the checks and the dispatches are indirect as before.
+  /** (tests, benches) off: every dispatch sized by the GPU's counts is indirect, as before */
+  directDispatch = true;
+  // The pair kernels are dispatched over this tick's pair budget, not the whole room (a room is eight pairs a row
+  // slot: mostly empty): twice the most pairs any tick asked for as the last read saw, plus `pairHeadroom`, 1,024 at
+  // least, the room at most — and the whole room whenever that read is over 12 ticks old. The budget is given to the
+  // coarse and fine passes as the tick's pair room, so a tick that finds more pairs than it fails safe the way a full
+  // room does: the pairs past it are counted (the next read raises the budget) and their rows are flagged `missing`
+  // and held where they are, bit for bit. No pair is solved for half its rows and none is dropped unseen.
+  /** pairs of headroom over twice the last count seen ((tests) 0 with `pairFloor` 1: a budget any new pair overruns) */
+  pairHeadroom = 512;
+  pairFloor = 1024;
+  /** the most pairs a tick asked for, as the last read saw it (-1: no read yet) */
+  private pairsSeen = -1;
+  /** this tick's pair budget */
+  private pairsNow = 0;
+  private pairBudget(): number {
+    if (!this.directDispatch || this.pairsSeen < 0 || this.ticks - this.readAt > 12) return this.pairRoom;
+    return Math.min(this.pairRoom, pow2(2 * this.pairsSeen + this.pairHeadroom, this.pairFloor));
+  }
+  /** row slots and pairs up to which the row and pair kernels are dispatched direct (256 and 512 workgroups) */
+  static readonly DIRECT_ROWS = 16384;
+  static readonly DIRECT_PAIRS = 32768;
+
   /** (tests, benches) off: stage 4 is encoded every tick anything is awake, as before */
   stage4Gate = true;
   private s4Until = -1;
@@ -1130,6 +1161,7 @@ export class Engine implements SimSystem {
         const asked = [POOL.pageWant, POOL.slotWant, POOL.rowWant, POOL.sampWant, POOL.heapWant, POOL.dlWant, POOL.expands, POOL.parts].some((k) => was[k] !== this.seen[k]);
         this.active = this.awakeSeen > 0 || this.seen[POOL.deforming] > 0 || this.seen[POOL.settling] > 0 || grows || asked;
         this.readAt = issuedAt;
+        this.pairsSeen = Math.max(w[POOL_HDR + 8 + PAIR_ASKED], w[POOL_HDR + 8 + PAIR_HW_PAIRS]);
         this.s4Busy = this.s4Evidence();
         // (an ask since this read was issued still owes its own)
         this.calm = !this.active && this.owed === 0;
@@ -1303,6 +1335,7 @@ export class Engine implements SimSystem {
     if (pairs) {
       // (before the pass begins: a growth the read asked for, the pair passes' uniforms and two GPU clears)
       this.collide.coarse.margin = this.collide.fine.margin = TUNE.engine.nearGap;
+      this.collide.coarse.pairBudget = this.pairsNow = this.pairBudget();
       const pc = this.collide.prepare(enc, this.d.rows, this.ticks, !skip.coarse);
       n.clears += pc.clears;
       n.uploads += pc.uploads;
@@ -1377,6 +1410,7 @@ export class Engine implements SimSystem {
       cur.pass.dispatchWorkgroupsIndirect(buf, offset);
       n.indirect++;
     };
+    const rowsDirect = this.directDispatch && this.d.rows <= Engine.DIRECT_ROWS;
     if (!skip.compact) {
       run('compact', `compact${ring}`);
       direct(Math.ceil(this.d.rows / 64));
@@ -1393,11 +1427,14 @@ export class Engine implements SimSystem {
       const pd = this.collide.fine.pairDispatch;
       const rowsOf = (name: string, group = name) => {
         run(name, group);
-        indirect(this.rargs, 0);
+        if (rowsDirect) direct(Math.ceil(this.d.rows / 64));
+        else indirect(this.rargs, 0);
       };
+      const pairsDirect = this.directDispatch && this.pairsNow <= Engine.DIRECT_PAIRS;
       const pairsOf = (name: string, group = name) => {
         run(name, group);
-        indirect(pd.buffer, pd.offset);
+        if (pairsDirect) direct(Math.ceil(this.pairsNow / 64));
+        else indirect(pd.buffer, pd.offset);
       };
       const iters = Math.max(1, Math.round(TUNE.engine.pairIters));
       for (let s = 0; s < sub; s++) {
@@ -1408,7 +1445,7 @@ export class Engine implements SimSystem {
             cur.pass = enc.beginComputePass({ label: 'engine collide', timestampWrites: this.prof.timestamps('engine:collide') });
             n.passes++;
           }
-          const cc = this.collide.encodeInto(cur.pass, { list: this.list, pose: this.pose, vel: this.vel, info: this.info, model: this.sdfModel, sleepEpoch: this.list }, { coarse: !skip.coarse, fine: !skip.fine });
+          const cc = this.collide.encodeInto(cur.pass, { list: this.list, pose: this.pose, vel: this.vel, info: this.info, model: this.sdfModel, sleepEpoch: this.list }, { coarse: !skip.coarse, fine: !skip.fine, direct: rowsDirect });
           n.direct += cc.direct;
           n.indirect += cc.indirect;
           this.prof.dispatches += cc.direct + cc.indirect;
@@ -1463,14 +1500,17 @@ export class Engine implements SimSystem {
     }
     if (!skip.draw) {
       run('fold');
-      indirect(this.events, 0);
+      if (this.directDispatch) direct(Math.ceil(EVENT_ROOM / 64));
+      else indirect(this.events, 0);
       // the draw list, made again by the GPU only when a row came or went
       run('drawArm');
       direct(1);
       run('drawlist');
-      indirect(this.kargs, 32);
+      if (rowsDirect) direct(Math.ceil(this.d.rows / 64));
+      else indirect(this.kargs, 32);
       run('drawlistAsleep');
-      indirect(this.kargs, 32);
+      if (rowsDirect) direct(Math.ceil(this.d.rows / 64));
+      else indirect(this.kargs, 32);
       run('drawEnd');
       direct(1);
     }

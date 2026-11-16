@@ -81,6 +81,8 @@ const P_EXPAND_WAIT: u32 = 40u;
 // atomic max the tick the command comes (rows past 2^20 cannot be named: the rows' room is far under it). The height
 // of the plane it is dragged in — its centre's when the hold began — is the row's own: info[4r+3].z
 const P_GRAB: u32 = 23u;
+// 1 in a tick the draw list is made again (`drawArm`): the list's two kernels, dispatched direct, read it
+const P_DL_MAKING: u32 = 41u;
 const NONE: u32 = 0xffffffffu;
 const NO_CONTACT: f32 = -1e8;
 // the list buffer (u32): [0] workgroups of 64 awake rows, [1] 1, [2] 1 (an indirect dispatch's arguments), [3] rows

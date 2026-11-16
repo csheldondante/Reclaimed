@@ -1,0 +1,1098 @@
+{
+ "kind": "enginebench",
+ "version": 4,
+ "build": "4de1bb8f",
+ "startedAt": "2026-11-15T23:34:29.899Z",
+ "endedAt": "2026-11-15T23:37:33.651Z",
+ "runSeconds": 184,
+ "what": "the joined physics engine: every ms is a difference of median GPU-done time (submit to onSubmittedWorkDone) between frames that encode the thing and frames that encode nothing, over reps; frameMs the same by the frame interval. Held scenes: every tick does the same work. A stage’s cost is the whole tick less the tick without it. No timestamp queries.",
+ "method": {
+  "windowS": 0.7,
+  "windows": 2,
+  "long": false
+ },
+ "device": {
+  "adapter": {
+   "vendor": "intel",
+   "architecture": "xe-lpg",
+   "device": "",
+   "description": ""
+  },
+  "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36",
+  "clientHints": {
+   "brands": [
+    {
+     "brand": "Not-A.Brand",
+     "version": "99"
+    },
+    {
+     "brand": "Google Chrome",
+     "version": "157"
+    },
+    {
+     "brand": "Chromium",
+     "version": "157"
+    }
+   ],
+   "mobile": false,
+   "model": "",
+   "platform": "Windows",
+   "platformVersion": "19.0.0"
+  },
+  "screen": [
+   412,
+   915,
+   2.5999999046325684
+  ]
+ },
+ "wakeLock": {
+  "held": true,
+  "log": []
+ },
+ "setupMs": 19708,
+ "tune": {
+  "substeps": 2,
+  "pairIters": 6,
+  "deform": 1,
+  "fastPath": 1
+ },
+ "sections": {
+  "ladder": {
+   "tickCounts": {
+    "passes": 1,
+    "direct": 57,
+    "indirect": 8,
+    "clears": 7,
+    "copies": 0,
+    "uploads": 8,
+    "uploadBytes": 1520
+   },
+   "rows": [
+    {
+     "name": "empty frame",
+     "reps": 1,
+     "ms": 0,
+     "frameMs": 0,
+     "doneMs": 12.35,
+     "intervalMs": 9.98,
+     "frames": 140
+    },
+    {
+     "name": "1 empty compute pass (the tick's)",
+     "reps": 1,
+     "ms": -2.05,
+     "frameMs": -0.046,
+     "doneMs": 10.3,
+     "intervalMs": 9.93,
+     "frames": 140
+    },
+    {
+     "name": "65 empty compute passes",
+     "reps": 1,
+     "ms": -1.65,
+     "frameMs": 0.089,
+     "doneMs": 10.7,
+     "intervalMs": 10.06,
+     "frames": 139
+    },
+    {
+     "name": "65 one-workgroup dispatches, direct, one pass, one pipeline",
+     "reps": 1,
+     "ms": -3.55,
+     "frameMs": -0.032,
+     "doneMs": 8.8,
+     "intervalMs": 9.94,
+     "frames": 141
+    },
+    {
+     "name": "65 direct, one pass, pipeline and bind group set each",
+     "reps": 1,
+     "ms": -3.95,
+     "frameMs": 0.095,
+     "doneMs": 8.4,
+     "intervalMs": 10.07,
+     "frames": 139
+    },
+    {
+     "name": "65 direct, a pass each",
+     "reps": 1,
+     "ms": -8.55,
+     "frameMs": -0.059,
+     "doneMs": 3.8,
+     "intervalMs": 9.92,
+     "frames": 141
+    },
+    {
+     "name": "65 indirect (1 workgroup), one pass, set each",
+     "reps": 1,
+     "ms": -5.45,
+     "frameMs": 0.392,
+     "doneMs": 6.9,
+     "intervalMs": 10.37,
+     "frames": 136
+    },
+    {
+     "name": "65 indirect (0 workgroups), one pass, set each",
+     "reps": 1,
+     "ms": -4.95,
+     "frameMs": -0.114,
+     "doneMs": 7.4,
+     "intervalMs": 9.86,
+     "frames": 143
+    },
+    {
+     "name": "the tick's 7 clears at 1024 rows (41212 B)",
+     "reps": 1,
+     "ms": -8.45,
+     "frameMs": -0.054,
+     "doneMs": 3.9,
+     "intervalMs": 9.92,
+     "frames": 140
+    },
+    {
+     "name": "the tick's 7 clears at 4096 rows (164092 B)",
+     "reps": 1,
+     "ms": -7.55,
+     "frameMs": 0.462,
+     "doneMs": 4.8,
+     "intervalMs": 10.44,
+     "frames": 134
+    },
+    {
+     "name": "the tick's 7 clears at 16384 rows (655612 B)",
+     "reps": 1,
+     "ms": -5.45,
+     "frameMs": 1.002,
+     "doneMs": 6.9,
+     "intervalMs": 10.98,
+     "frames": 126
+    },
+    {
+     "name": "the tick's 8 uploads (1520 B)",
+     "reps": 1,
+     "ms": -6.35,
+     "frameMs": 1.328,
+     "doneMs": 6,
+     "intervalMs": 11.3,
+     "frames": 124
+    },
+    {
+     "name": "the whole tick, 0 awake, 1,000 asleep (the quiet gate off: as v1 ran it)",
+     "reps": 1,
+     "ms": 2.55,
+     "frameMs": 5.033,
+     "doneMs": 14.9,
+     "intervalMs": 15.01,
+     "frames": 95,
+     "counts": {
+      "passes": 1,
+      "direct": 57,
+      "indirect": 8,
+      "clears": 7,
+      "copies": 0,
+      "uploads": 8,
+      "uploadBytes": 1520
+     }
+    },
+    {
+     "name": "the real tick, 0 awake, 1,000 asleep (quiet)",
+     "reps": 1,
+     "ms": -11.85,
+     "frameMs": -0.457,
+     "doneMs": 13.9,
+     "intervalMs": 12.24,
+     "frames": 114,
+     "note": "quiet: nothing encoded",
+     "counts": {
+      "passes": 0,
+      "direct": 0,
+      "indirect": 0,
+      "clears": 0,
+      "copies": 0,
+      "uploads": 0,
+      "uploadBytes": 0
+     }
+    },
+    {
+     "name": "the real tick, 1 awake, 1,000 asleep",
+     "reps": 1,
+     "ms": 0.5,
+     "frameMs": -0.25,
+     "doneMs": 8.55,
+     "intervalMs": 9.89,
+     "frames": 142,
+     "counts": {
+      "passes": 1,
+      "direct": 57,
+      "indirect": 8,
+      "clears": 7,
+      "copies": 0,
+      "uploads": 8,
+      "uploadBytes": 1520
+     }
+    },
+    {
+     "name": "the real tick 4 times a frame (a tick’s share)",
+     "reps": 4,
+     "ms": 18.987,
+     "frameMs": 3.303,
+     "doneMs": 84,
+     "intervalMs": 23.35,
+     "frames": 59,
+     "counts": {
+      "passes": 1,
+      "direct": 57,
+      "indirect": 8,
+      "clears": 7,
+      "copies": 0,
+      "uploads": 8,
+      "uploadBytes": 1520
+     }
+    }
+   ],
+   "scaling": {
+    "oneTickMs": 0.5,
+    "fourTicksMs": 75.948,
+    "fourOverOne": 151.9,
+    "reading": "four ticks cost about four times one: the cost is the work, not a slow clock"
+   }
+  },
+  "split": [
+   {
+    "scene": "1,000 resting in 250 stacks",
+    "awake": 1000,
+    "pairs": 750,
+    "reps": 2,
+    "tickMs": 20.025,
+    "tickFrameMs": -0.718,
+    "batchMs": 2.6,
+    "stages": {
+     "integrate": 12.675,
+     "coarse": 5.575,
+     "fine": -3.925,
+     "terrain": -1.125,
+     "solve": 12.675,
+     "sleep": -2.775,
+     "stage4": -4.15,
+     "compact": -1.5,
+     "draw": 9.675
+    },
+    "counts": {
+     "passes": 1,
+     "direct": 57,
+     "indirect": 8,
+     "clears": 7,
+     "copies": 0,
+     "uploads": 8,
+     "uploadBytes": 1520
+    },
+    "buildMs": 336,
+    "rooms": {
+     "rows": 2048,
+     "pairs": 2048,
+     "items": 32768,
+     "cull": 16384,
+     "groups": 131072,
+     "slots": 2048
+    },
+    "rows": [
+     {
+      "name": "empty frame",
+      "reps": 1,
+      "ms": 0,
+      "frameMs": 0,
+      "doneMs": 6.9,
+      "intervalMs": 13.8,
+      "frames": 101
+     },
+     {
+      "name": "the whole tick",
+      "reps": 2,
+      "ms": 20.025,
+      "frameMs": -0.718,
+      "doneMs": 46.95,
+      "intervalMs": 12.36,
+      "frames": 102
+     },
+     {
+      "name": "without integrate",
+      "reps": 2,
+      "ms": 7.35,
+      "frameMs": -1.111,
+      "doneMs": 21.6,
+      "intervalMs": 11.57,
+      "frames": 121
+     },
+     {
+      "name": "without coarse collision",
+      "reps": 2,
+      "ms": 14.45,
+      "frameMs": -0.755,
+      "doneMs": 35.8,
+      "intervalMs": 12.29,
+      "frames": 113
+     },
+     {
+      "name": "without fine collision",
+      "reps": 2,
+      "ms": 23.95,
+      "frameMs": -0.317,
+      "doneMs": 54.8,
+      "intervalMs": 13.16,
+      "frames": 107
+     },
+     {
+      "name": "without terrain contacts",
+      "reps": 2,
+      "ms": 21.15,
+      "frameMs": -0.972,
+      "doneMs": 49.2,
+      "intervalMs": 11.85,
+      "frames": 119
+     },
+     {
+      "name": "without solve",
+      "reps": 2,
+      "ms": 7.35,
+      "frameMs": -1.341,
+      "doneMs": 21.6,
+      "intervalMs": 11.11,
+      "frames": 125
+     },
+     {
+      "name": "without move and sleep",
+      "reps": 2,
+      "ms": 22.8,
+      "frameMs": -0.088,
+      "doneMs": 52.5,
+      "intervalMs": 13.62,
+      "frames": 103
+     },
+     {
+      "name": "without stage 4 (idle: nothing deforms)",
+      "reps": 2,
+      "ms": 24.175,
+      "frameMs": -0.635,
+      "doneMs": 55.25,
+      "intervalMs": 12.53,
+      "frames": 112
+     },
+     {
+      "name": "without compact (the awake list)",
+      "reps": 2,
+      "ms": 21.525,
+      "frameMs": -0.306,
+      "doneMs": 49.95,
+      "intervalMs": 13.18,
+      "frames": 104
+     },
+     {
+      "name": "without fold and draw list",
+      "reps": 2,
+      "ms": 10.35,
+      "frameMs": -1.246,
+      "doneMs": 27.6,
+      "intervalMs": 11.3,
+      "frames": 123
+     }
+    ]
+   },
+   {
+    "scene": "pile of 1,000, 10% awake",
+    "awake": 100,
+    "pairs": 598,
+    "reps": 2,
+    "tickMs": 6.525,
+    "tickFrameMs": 1.287,
+    "batchMs": 2.7,
+    "stages": {
+     "integrate": -2.625,
+     "coarse": -13.85,
+     "fine": -5.025,
+     "terrain": -6.2,
+     "solve": 0.575,
+     "sleep": -17.575,
+     "stage4": 1.975,
+     "compact": -1.95,
+     "draw": -9.575
+    },
+    "counts": {
+     "passes": 1,
+     "direct": 57,
+     "indirect": 8,
+     "clears": 7,
+     "copies": 0,
+     "uploads": 8,
+     "uploadBytes": 1520
+    },
+    "buildMs": 251,
+    "rooms": {
+     "rows": 2048,
+     "pairs": 8192,
+     "items": 65536,
+     "cull": 32768,
+     "groups": 131072,
+     "slots": 16384
+    },
+    "rows": [
+     {
+      "name": "empty frame",
+      "reps": 1,
+      "ms": 0,
+      "frameMs": 0,
+      "doneMs": 4.7,
+      "intervalMs": 9.91,
+      "frames": 141
+     },
+     {
+      "name": "the whole tick",
+      "reps": 2,
+      "ms": 6.525,
+      "frameMs": 1.287,
+      "doneMs": 17.75,
+      "intervalMs": 12.48,
+      "frames": 112
+     },
+     {
+      "name": "without integrate",
+      "reps": 2,
+      "ms": 9.15,
+      "frameMs": 0.517,
+      "doneMs": 23,
+      "intervalMs": 10.94,
+      "frames": 128
+     },
+     {
+      "name": "without coarse collision",
+      "reps": 2,
+      "ms": 20.375,
+      "frameMs": 0.998,
+      "doneMs": 45.45,
+      "intervalMs": 11.9,
+      "frames": 118
+     },
+     {
+      "name": "without fine collision",
+      "reps": 2,
+      "ms": 11.55,
+      "frameMs": 0.237,
+      "doneMs": 27.8,
+      "intervalMs": 10.38,
+      "frames": 135
+     },
+     {
+      "name": "without terrain contacts",
+      "reps": 2,
+      "ms": 12.725,
+      "frameMs": 0.39,
+      "doneMs": 30.15,
+      "intervalMs": 10.69,
+      "frames": 130
+     },
+     {
+      "name": "without solve",
+      "reps": 2,
+      "ms": 5.95,
+      "frameMs": 0.206,
+      "doneMs": 16.6,
+      "intervalMs": 10.32,
+      "frames": 136
+     },
+     {
+      "name": "without move and sleep",
+      "reps": 2,
+      "ms": 24.1,
+      "frameMs": 1.442,
+      "doneMs": 52.9,
+      "intervalMs": 12.79,
+      "frames": 108
+     },
+     {
+      "name": "without stage 4 (idle: nothing deforms)",
+      "reps": 2,
+      "ms": 4.55,
+      "frameMs": 0.033,
+      "doneMs": 13.8,
+      "intervalMs": 9.97,
+      "frames": 140
+     },
+     {
+      "name": "without compact (the awake list)",
+      "reps": 2,
+      "ms": 8.475,
+      "frameMs": 0.601,
+      "doneMs": 21.65,
+      "intervalMs": 11.11,
+      "frames": 126
+     },
+     {
+      "name": "without fold and draw list",
+      "reps": 2,
+      "ms": 16.1,
+      "frameMs": 0.509,
+      "doneMs": 36.9,
+      "intervalMs": 10.93,
+      "frames": 128
+     }
+    ]
+   },
+   {
+    "scene": "200 poured into a pit, mid-pour",
+    "awake": 168,
+    "pairs": 50,
+    "reps": 1,
+    "tickMs": 28.2,
+    "tickFrameMs": 1.617,
+    "batchMs": 7.825,
+    "stages": {
+     "integrate": 20.3,
+     "coarse": 28.45,
+     "fine": 28.4,
+     "terrain": 20.4,
+     "solve": 26.35,
+     "sleep": 25.8,
+     "stage4": 24.9,
+     "compact": 28.5,
+     "draw": 29.4
+    },
+    "counts": {
+     "passes": 1,
+     "direct": 58,
+     "indirect": 88,
+     "clears": 7,
+     "copies": 0,
+     "uploads": 8,
+     "uploadBytes": 1520
+    },
+    "buildMs": 793,
+    "rooms": {
+     "rows": 2048,
+     "pairs": 8192,
+     "items": 65536,
+     "cull": 32768,
+     "groups": 131072,
+     "slots": 16384
+    },
+    "rows": [
+     {
+      "name": "empty frame",
+      "reps": 1,
+      "ms": 0,
+      "frameMs": 0,
+      "doneMs": 7.8,
+      "intervalMs": 10.06,
+      "frames": 138
+     },
+     {
+      "name": "the whole tick",
+      "reps": 1,
+      "ms": 28.2,
+      "frameMs": 1.617,
+      "doneMs": 36,
+      "intervalMs": 11.68,
+      "frames": 119
+     },
+     {
+      "name": "without integrate",
+      "reps": 1,
+      "ms": 7.9,
+      "frameMs": 0.173,
+      "doneMs": 15.7,
+      "intervalMs": 10.24,
+      "frames": 137
+     },
+     {
+      "name": "without coarse collision",
+      "reps": 1,
+      "ms": -0.25,
+      "frameMs": -0.115,
+      "doneMs": 7.55,
+      "intervalMs": 9.95,
+      "frames": 140
+     },
+     {
+      "name": "without fine collision",
+      "reps": 1,
+      "ms": -0.2,
+      "frameMs": -0.109,
+      "doneMs": 7.6,
+      "intervalMs": 9.95,
+      "frames": 140
+     },
+     {
+      "name": "without terrain contacts",
+      "reps": 1,
+      "ms": 7.8,
+      "frameMs": 0.299,
+      "doneMs": 15.6,
+      "intervalMs": 10.36,
+      "frames": 135
+     },
+     {
+      "name": "without solve",
+      "reps": 1,
+      "ms": 1.85,
+      "frameMs": 0.155,
+      "doneMs": 9.65,
+      "intervalMs": 10.22,
+      "frames": 136
+     },
+     {
+      "name": "without move and sleep",
+      "reps": 1,
+      "ms": 2.4,
+      "frameMs": -0.142,
+      "doneMs": 10.2,
+      "intervalMs": 9.92,
+      "frames": 140
+     },
+     {
+      "name": "without stage 4 (idle: nothing deforms)",
+      "reps": 1,
+      "ms": 3.3,
+      "frameMs": 0.103,
+      "doneMs": 11.1,
+      "intervalMs": 10.17,
+      "frames": 138
+     },
+     {
+      "name": "without compact (the awake list)",
+      "reps": 1,
+      "ms": -0.3,
+      "frameMs": -0.1,
+      "doneMs": 7.5,
+      "intervalMs": 9.96,
+      "frames": 141
+     },
+     {
+      "name": "without fold and draw list",
+      "reps": 1,
+      "ms": -1.2,
+      "frameMs": -0.162,
+      "doneMs": 6.6,
+      "intervalMs": 9.9,
+      "frames": 141
+     }
+    ]
+   },
+   {
+    "scene": "1,000 in free flight",
+    "awake": 1000,
+    "pairs": 0,
+    "reps": 4,
+    "tickMs": 18.487,
+    "tickFrameMs": 1.985,
+    "batchMs": 1.675,
+    "stages": {
+     "integrate": 5.037,
+     "coarse": 2.312,
+     "fine": 3.937,
+     "terrain": 18.574,
+     "solve": 18.462,
+     "sleep": 18.712,
+     "stage4": 18.462,
+     "compact": 18.962,
+     "draw": 18.187
+    },
+    "counts": {
+     "passes": 1,
+     "direct": 57,
+     "indirect": 8,
+     "clears": 7,
+     "copies": 0,
+     "uploads": 8,
+     "uploadBytes": 1520
+    },
+    "buildMs": 202,
+    "rooms": {
+     "rows": 2048,
+     "pairs": 8192,
+     "items": 65536,
+     "cull": 32768,
+     "groups": 131072,
+     "slots": 16384
+    },
+    "rows": [
+     {
+      "name": "empty frame",
+      "reps": 1,
+      "ms": 0,
+      "frameMs": 0,
+      "doneMs": 8.5,
+      "intervalMs": 9.89,
+      "frames": 141
+     },
+     {
+      "name": "the whole tick",
+      "reps": 4,
+      "ms": 18.487,
+      "frameMs": 1.985,
+      "doneMs": 82.45,
+      "intervalMs": 17.83,
+      "frames": 78
+     },
+     {
+      "name": "without integrate",
+      "reps": 4,
+      "ms": 13.45,
+      "frameMs": 1.328,
+      "doneMs": 62.3,
+      "intervalMs": 15.2,
+      "frames": 91
+     },
+     {
+      "name": "without coarse collision",
+      "reps": 4,
+      "ms": 16.175,
+      "frameMs": 1.819,
+      "doneMs": 73.2,
+      "intervalMs": 17.17,
+      "frames": 81
+     },
+     {
+      "name": "without fine collision",
+      "reps": 4,
+      "ms": 14.55,
+      "frameMs": 2.494,
+      "doneMs": 66.7,
+      "intervalMs": 19.86,
+      "frames": 69
+     },
+     {
+      "name": "without terrain contacts",
+      "reps": 4,
+      "ms": -0.087,
+      "frameMs": 0.688,
+      "doneMs": 8.15,
+      "intervalMs": 12.64,
+      "frames": 110
+     },
+     {
+      "name": "without solve",
+      "reps": 4,
+      "ms": 0.025,
+      "frameMs": 0.567,
+      "doneMs": 8.6,
+      "intervalMs": 12.16,
+      "frames": 115
+     },
+     {
+      "name": "without move and sleep",
+      "reps": 4,
+      "ms": -0.225,
+      "frameMs": 0.45,
+      "doneMs": 7.6,
+      "intervalMs": 11.69,
+      "frames": 119
+     },
+     {
+      "name": "without stage 4 (idle: nothing deforms)",
+      "reps": 4,
+      "ms": 0.025,
+      "frameMs": 0.013,
+      "doneMs": 8.6,
+      "intervalMs": 9.94,
+      "frames": 142
+     },
+     {
+      "name": "without compact (the awake list)",
+      "reps": 4,
+      "ms": -0.475,
+      "frameMs": 0.63,
+      "doneMs": 6.6,
+      "intervalMs": 12.41,
+      "frames": 113
+     },
+     {
+      "name": "without fold and draw list",
+      "reps": 4,
+      "ms": 0.3,
+      "frameMs": 0.493,
+      "doneMs": 9.7,
+      "intervalMs": 11.86,
+      "frames": 118
+     }
+    ]
+   },
+   {
+    "scene": "10,000 in free flight",
+    "awake": 10000,
+    "pairs": 0,
+    "reps": 2,
+    "tickMs": 36.6,
+    "tickFrameMs": 3.594,
+    "batchMs": 3,
+    "stages": {
+     "integrate": 23.175,
+     "coarse": 22.25,
+     "fine": 25.625,
+     "terrain": 15.65,
+     "solve": 33.3,
+     "sleep": 26.175,
+     "stage4": 32.25,
+     "compact": 27.025,
+     "draw": 28.95
+    },
+    "counts": {
+     "passes": 1,
+     "direct": 27,
+     "indirect": 38,
+     "clears": 7,
+     "copies": 0,
+     "uploads": 8,
+     "uploadBytes": 1520
+    },
+    "buildMs": 435,
+    "rooms": {
+     "rows": 32768,
+     "pairs": 8192,
+     "items": 524288,
+     "cull": 32768,
+     "groups": 131072,
+     "slots": 16384
+    },
+    "rows": [
+     {
+      "name": "empty frame",
+      "reps": 1,
+      "ms": 0,
+      "frameMs": 0,
+      "doneMs": 5.1,
+      "intervalMs": 10.01,
+      "frames": 139
+     },
+     {
+      "name": "the whole tick",
+      "reps": 2,
+      "ms": 36.6,
+      "frameMs": 3.594,
+      "doneMs": 78.3,
+      "intervalMs": 17.19,
+      "frames": 81
+     },
+     {
+      "name": "without integrate",
+      "reps": 2,
+      "ms": 13.425,
+      "frameMs": 0.662,
+      "doneMs": 31.95,
+      "intervalMs": 11.33,
+      "frames": 124
+     },
+     {
+      "name": "without coarse collision",
+      "reps": 2,
+      "ms": 14.35,
+      "frameMs": 0.372,
+      "doneMs": 33.8,
+      "intervalMs": 10.75,
+      "frames": 129
+     },
+     {
+      "name": "without fine collision",
+      "reps": 2,
+      "ms": 10.975,
+      "frameMs": 0.633,
+      "doneMs": 27.05,
+      "intervalMs": 11.27,
+      "frames": 124
+     },
+     {
+      "name": "without terrain contacts",
+      "reps": 2,
+      "ms": 20.95,
+      "frameMs": 0.932,
+      "doneMs": 47,
+      "intervalMs": 11.87,
+      "frames": 117
+     },
+     {
+      "name": "without solve",
+      "reps": 2,
+      "ms": 3.3,
+      "frameMs": 0.234,
+      "doneMs": 11.7,
+      "intervalMs": 10.47,
+      "frames": 133
+     },
+     {
+      "name": "without move and sleep",
+      "reps": 2,
+      "ms": 10.425,
+      "frameMs": 0.899,
+      "doneMs": 25.95,
+      "intervalMs": 11.8,
+      "frames": 118
+     },
+     {
+      "name": "without stage 4 (idle: nothing deforms)",
+      "reps": 2,
+      "ms": 4.35,
+      "frameMs": 0.042,
+      "doneMs": 13.8,
+      "intervalMs": 10.09,
+      "frames": 138
+     },
+     {
+      "name": "without compact (the awake list)",
+      "reps": 2,
+      "ms": 9.575,
+      "frameMs": 0.911,
+      "doneMs": 24.25,
+      "intervalMs": 11.83,
+      "frames": 118
+     },
+     {
+      "name": "without fold and draw list",
+      "reps": 2,
+      "ms": 7.65,
+      "frameMs": 0.001,
+      "doneMs": 20.4,
+      "intervalMs": 10.01,
+      "frames": 139
+     }
+    ]
+   },
+   {
+    "scene": "50,000 in free flight",
+    "awake": 50000,
+    "pairs": 0,
+    "reps": 1,
+    "tickMs": 110.6,
+    "tickFrameMs": 21.327,
+    "batchMs": 22.65,
+    "stages": {
+     "integrate": 39.5,
+     "coarse": 54.25,
+     "fine": 35.4,
+     "terrain": 25.5,
+     "solve": 55.75,
+     "sleep": 31.75,
+     "stage4": 36.1,
+     "compact": 39.5,
+     "draw": 31.35
+    },
+    "counts": {
+     "passes": 1,
+     "direct": 27,
+     "indirect": 38,
+     "clears": 7,
+     "copies": 0,
+     "uploads": 8,
+     "uploadBytes": 1520
+    },
+    "buildMs": 2088,
+    "rooms": {
+     "rows": 131072,
+     "pairs": 8192,
+     "items": 2097152,
+     "cull": 32768,
+     "groups": 131072,
+     "slots": 16384
+    },
+    "rows": [
+     {
+      "name": "empty frame",
+      "reps": 1,
+      "ms": 0,
+      "frameMs": 0,
+      "doneMs": 5,
+      "intervalMs": 10.04,
+      "frames": 139
+     },
+     {
+      "name": "the whole tick",
+      "reps": 1,
+      "ms": 110.6,
+      "frameMs": 21.327,
+      "doneMs": 115.6,
+      "intervalMs": 31.37,
+      "frames": 43
+     },
+     {
+      "name": "without integrate",
+      "reps": 1,
+      "ms": 71.1,
+      "frameMs": 7.37,
+      "doneMs": 76.1,
+      "intervalMs": 17.41,
+      "frames": 80
+     },
+     {
+      "name": "without coarse collision",
+      "reps": 1,
+      "ms": 56.35,
+      "frameMs": 2.739,
+      "doneMs": 61.35,
+      "intervalMs": 12.78,
+      "frames": 108
+     },
+     {
+      "name": "without fine collision",
+      "reps": 1,
+      "ms": 75.2,
+      "frameMs": 6.362,
+      "doneMs": 80.2,
+      "intervalMs": 16.4,
+      "frames": 84
+     },
+     {
+      "name": "without terrain contacts",
+      "reps": 1,
+      "ms": 85.1,
+      "frameMs": 8.724,
+      "doneMs": 90.1,
+      "intervalMs": 18.77,
+      "frames": 75
+     },
+     {
+      "name": "without solve",
+      "reps": 1,
+      "ms": 54.85,
+      "frameMs": 2.605,
+      "doneMs": 59.85,
+      "intervalMs": 12.65,
+      "frames": 108
+     },
+     {
+      "name": "without move and sleep",
+      "reps": 1,
+      "ms": 78.85,
+      "frameMs": 7.859,
+      "doneMs": 83.85,
+      "intervalMs": 17.9,
+      "frames": 76
+     },
+     {
+      "name": "without stage 4 (idle: nothing deforms)",
+      "reps": 1,
+      "ms": 74.5,
+      "frameMs": 6.986,
+      "doneMs": 79.5,
+      "intervalMs": 17.03,
+      "frames": 82
+     },
+     {
+      "name": "without compact (the awake list)",
+      "reps": 1,
+      "ms": 71.1,
+      "frameMs": 5.678,
+      "doneMs": 76.1,
+      "intervalMs": 15.72,
+      "frames": 87
+     },
+     {
+      "name": "without fold and draw list",
+      "reps": 1,
+      "ms": 79.25,
+      "frameMs": 8.265,
+      "doneMs": 84.25,
+      "intervalMs": 18.31,
+      "frames": 77
+     }
+    ]
+   }
+  ]
+ },
+ "errors": []
+}
