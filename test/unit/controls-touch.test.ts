@@ -1,4 +1,4 @@
-// Touch gestures through Controls (src/input/controls.ts), by synthetic pointer events of type touch (PX1; the owner's
+// Touch gestures through Controls (src/input/controls.ts), by synthetic pointer events of type touch (PQ1; the owner's
 // phone, 2026-11-15: "the telekinesis controls still don't work because drag moves the screen"). A double tap's second
 // press dragged is offered to the tool as `second`; a gesture that keeps the screen (a held body) is not ended, panned
 // or pinched by a further finger, nor zoomed by the wheel; with nothing held two fingers pan and pinch as before.

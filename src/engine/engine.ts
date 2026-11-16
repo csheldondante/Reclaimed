@@ -1056,13 +1056,18 @@ export class Engine implements SimSystem {
   /** (PA10) told each hit of a row on an owner's matter (an External interval) the chained read brings: a building's
    *  owner finds its lot from the place. Hits between two reads past HIT_ROOM are lost (the newest kept). */
   onOwnerHit: ((h: OwnerHit) => void) | null = null;
+  /** (PQ3) told each hard hit of a row on the ground itself (engine.wgsl HIT_GROUND_MIN and up; in the same ring, its
+   *  energy stored negative): the host's blow to the ground there */
+  onGroundHit: ((h: OwnerHit) => void) | null = null;
   private hitsSeen = 0;
   private hitsFrom(w: Uint32Array): void {
     const n = w[0];
     const f = new Float32Array(w.buffer, w.byteOffset, w.length);
     for (let k = Math.max(this.hitsSeen, n - HIT_ROOM); k < n; k++) {
       const b = 4 + (k % HIT_ROOM) * 4;
-      this.onOwnerHit?.({ p: [f[b], f[b + 1], f[b + 2]], energy: f[b + 3] });
+      const h: OwnerHit = { p: [f[b], f[b + 1], f[b + 2]], energy: Math.abs(f[b + 3]) };
+      if (f[b + 3] < 0) this.onGroundHit?.(h);
+      else this.onOwnerHit?.(h);
     }
     this.hitsSeen = n;
   }

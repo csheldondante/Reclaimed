@@ -47,6 +47,7 @@ export type EditTool =
   | 'beam'
   | 'volcano'
   | 'meteor'
+  | 'cannon'
   | 'water'
   | 'drain'
   | 'oil'
@@ -114,6 +115,7 @@ const TOOLS: [EditTool, string, string][] = [
   ['drag', '🫳', 'Telekinesis: double tap a body (a tanker, a rock, a piece), then drag — let go to throw it; swing it into things. A single drag moves the screen'],
   ['beam', '🔥', 'Heat beam: hold on something — steel glows, softens and melts, so you can cut it; the ground melts into lava'],
   ['volcano', '🌋', 'Volcano: tap — a cone rises out of the ground, then lava pours down its sides and sets into basalt'],
+  ['cannon', '💣', 'Cannon: tap a place — a steel ball is fired at it from the side of the view. It knocks pieces off what it hits'],
   ['meteor', '☄️', 'Meteor: tap — it falls smoking from the sky and blows out a crater: what it hits turns to dust, the blast of air throws it out'],
   ['water', '💧', 'Pour water'],
   ['drain', '◌', 'Drain water and oil'],

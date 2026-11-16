@@ -19,6 +19,7 @@ import { qRotate, qYawPitchRoll } from '../../grids/structures';
 import { terrainSystem, worldAt } from './atlas-controls';
 import { impact } from './impacts';
 import { traitStationDriver } from './labs';
+import { cannonAtPick, meteorRowAtPick } from './shots';
 import type { LevelScene } from '../level';
 import { captureTownFixture } from './town-fixture';
 import { worldApiOf } from './world-api';
@@ -200,6 +201,9 @@ export function exposeTestApi(scene: LevelScene, api: ReturnType<typeof testApi>
     toggleFly: () => scene.toggleFly(),
     // (round 86) the meteor tool's landing at world (x, y, z) now, without its flight; the last great meteor's window edit (ms)
     meteorNow: (x: number, y: number, z: number) => impact(scene, [x, y, z]),
+    // (PQ9, PQ3) the cannon's and the engine meteor's tap at a screen point (CSS px), as the tools' taps make them
+    cannonAt: (sx: number, sy: number) => cannonAtPick(scene, sx, sy),
+    meteorRowAt: (sx: number, sy: number) => meteorRowAtPick(scene, sx, sy),
     editLiveMs: () => scene.editLiveMs,
     // the coarse world's events at a window cell (round 71): coarse.meteor(x, y, r), coarse.erupt(x, y)
     // (round 80: `coarse`, not `world` — that's the GPU world, as everything else reads it: worldapitest broke)

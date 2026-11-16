@@ -72,6 +72,7 @@ const SOURCES: Record<string, Source> = {
   'perf/pagebench.ts': { who: 'dev', why: 'a bench' },
   'perf/physbench.ts': { who: 'dev', why: 'a bench' },
   'scenes/level/physdemo.ts': { who: 'dev', why: 'the physics demo’s buttons behind ?physdemo=1 (PA2)' },
+  'scenes/level/shots.ts': { who: 'dev', why: 'the sandbox’s cannon and engine meteor: three short words to the tester (PQ3, PQ9)' },
   'perf/sdfbench.ts': { who: 'dev', why: 'a bench' },
   'perf/enginebench.ts': { who: 'dev', why: 'a bench' },
   'perf/flowbench.ts': { who: 'dev', why: 'a bench (the liquid toggle diff)' },

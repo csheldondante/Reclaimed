@@ -117,8 +117,10 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns): SeasonLoo
     });
     (globalThis as { war?: SeasonWar }).war = loop.war;
   }
-  // (the sandbox's tool panel hidden: the cards are the player's only tool here)
-  scene.editor?.setVisible(false);
+  // (the sandbox's tool panel hidden: the cards are the player's only tool here. PQ3, the owner: "The atlas tests
+  // should also be in sandbox mode so I can drop meteors and ships using the new physics system on this" — kept with
+  // ?sandbox=1, and with ?physdemo=1, the engine's demo in the town)
+  if (!(p.get('sandbox') === '1' || p.get('physdemo') === '1')) scene.editor?.setVisible(false);
   scene.seasonUi = mountSeasonUi(host.ui, loop);
   (globalThis as { season?: SeasonLoop }).season = loop;
   loop.init().then(

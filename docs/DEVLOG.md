@@ -24490,7 +24490,10 @@ The test is left as it is: it fails about one run in two until this is decided.
 
 **Hacks and limits.** A test on this branch that goes either way (PO13).
 
-## 2026-11-15 — the owner's phone test, PX1: telekinesis by touch
+## 2026-11-15 — the owner's phone test, PQ1: telekinesis by touch
+
+(The ids of this round are PQ1 to PQ13. The first three commits name them PX1, PX2, PX9, PX10: PX was taken by an
+older series, so they were renamed.)
 
 **The owner.** "the telekinesis controls still don't work because drag moves the screen so it needs something else
 like double tap then drag or to freeze the screen when it is selected".
@@ -24514,9 +24517,9 @@ Not checked: the owner's phone itself.
 
 **Hacks and limits.** A single drag with the tool still pans (the double tap starts the grab, as the tool's hint
 says); a double tap + drag on empty ground keeps the screen and pulls nothing (TKN3). Other tools that ask the ground
-at a drag's start (the gust, the brushes) have the same first-ask gap by touch and still fall to a pan: PX11.
+at a drag's start (the gust, the brushes) have the same first-ask gap by touch and still fall to a pan: PQ11.
 
-## 2026-11-15 — the owner's phone test, PX2: metal to deform
+## 2026-11-15 — the owner's phone test, PQ2: metal to deform
 
 **The owner.** "there still isn't any metal to test deformation (the water tower should be metal!)".
 
@@ -24532,7 +24535,129 @@ splay and fold under the tank, the tank sags to the ground with the block on it;
 
 **Found.** A stone block 5 x 5 x 4 from 36 up did not deform the tower: the stone broke up on it and the tower only
 tipped over (two rows at the end, no steel voxels). The hitter has to be steel for the tower to pass its threshold
-(PX12).
+(PQ12).
 
 **Hacks and limits.** The tower is a dropped body, not the map's standing tower (that one becomes a row only when the
-judge frees it, and then falls 8 cells: too little to bend). Not run under the other solver variants. PX12.
+judge frees it, and then falls 8 cells: too little to bend). Not run under the other solver variants. PQ12.
+
+## 2026-11-15 — the owner's phone test, PQ3 and PQ9: the sandbox on the atlas town, the engine's meteor, the cannon
+
+**The owner.** "The atlas tests should also be in sandbox mode so I can drop meteors and ships using the new physics
+system on this." And: "it would be nice to have a test like a button to shoot cannonballs at the places you tap".
+
+**The sandbox's tools on the town.** The atlas level is a sandbox level already; the season loop hid the tool panel
+(`season.ts`). `?sandbox=1` keeps it, and `?physdemo=1` implies it. The link:
+`?skipmenu=1&level=atlas&town=1&fresh=1&solver=engine&sandbox=1`. Dropped bodies (the drop tool: the tanker, the
+ship) were engine rows on this route already (`Integrity.dropModels`).
+
+**The meteor under the engine** is a body: a stone ball of radius 3 at 60 cells/s from up and behind
+(`level/shots.ts METEOR`). The old meteor (a flight of particles, then a crater edit) is unchanged on the other
+routes. **The cannon** (a new tool in the panel): tap a place and a steel ball of radius 2 (57 cells) is fired at it
+at 40 cells/s from 30 cells to the left of the view, on the flatter ballistic arc (`game/ballistic.ts launch`: the
+stated speed aimed, a target out of range refused; `test/unit/ballistic.test.ts`). A tap is a tap: it does not pan.
+
+**What a hard hit on the world did before: nothing.** Found with the first town run (a meteor on a roof, three
+balls at a wall: 4 rows, no lot down, no blow): a row whose hit passes its own material's threshold is not solved,
+it is handed to stage 4 with the speed it came with, and its thread tells the host of no hit. Only a hit soft enough
+to leave the row rigid reached `onOwnerHit`. So the harder the shot, the less the house knew.
+**Changed** (`engine_pairs.wgsl tfine`, `rowFinish`; `engine.wgsl HIT_GROUND_MIN`):
+- the hit that sends a row to stage 4 on the ground or a building is kept in its terrain row and told to the host
+  from the row's middle, as a rigid stop is;
+- a hit on the ground itself of 1,000 or more (the lowest `impact.groundEnergy` can be set) joins the same 16-entry
+  ring, its energy stored negative; the host hands it to the edit pass as a blow (`Integrity.groundBlow`, as the
+  other movers do): soft ground sinks, hard ground past `groundEnergy` crumbles, what that undercuts the judge frees
+  as rows. No new buffer, binding, dispatch or read: the ring comes with the chained read as before.
+
+**Checked.**
+- The town (`scripts/lab/townshots.mjs`, Muru, the same two houses as the run before the change): the meteor
+  knocked lot 161 down (a hit of 258,039: 8 blocks, 264 cells); three cannonballs knocked down lots 201 (100,468) and
+  188 (6,605); 4 blows to the ground; 20 rows at the end. Stills `fb-meteor-town.png`, `fb-cannon-town.png`
+  (looked at: grey blocks where a house stood, then dust; the tools' panel covers part of it, and the lab's town is
+  drawn as flat coloured lots, so the picture is weak evidence; the counts are the evidence).
+- The lab, by real touch taps (`pilelab.mjs --station pile --press "a wall and a tower for the cannon" --tool cannon
+  --taps ...`, `fb-cannon-wall-*.png`, looked at): a ball knocks a bite out of the brick wall body along its courses
+  and the rest of the wall stands; the stone tower takes a ball and stands; no tap moved the camera.
+- `engine-house` 3 passed (a slow hit still tells nothing).
+
+**What the owner asked to see and what happens instead.**
+- A house does not shed pieces. A hard hit swaps the whole lot for plain concrete blocks (PA11, PA12); the blocks are
+  rows and tumble, but the rest of the house does not stand. Houses are External claims with one mesh a lot; pieces
+  off a standing house need the building as its own grid of bodies (`PHYSICS_ENGINE.md` "Buildings on the engine").
+- The lab's standing structures (the build station's chimney and tower) are columns of the map. A ball that grazed
+  the chimney's top bounced off (a hit of 2,270, under the ground's 15,000); a square hit was not captured after the
+  change. Whether the blow then cuts the chimney and the judge frees its top as rows was not checked.
+- The pieces off the brick wall body were small: 61 voxels went to the ground as loose material and few parts became
+  rows. They do not meet each other (PM4).
+- The meteor makes no crater of its own: the ground gets a blow of the hit's energy (a ball of at most 3 cells).
+
+**Hacks and limits.**
+- The hit told to the host and the ball's own deformation are the same energy counted twice: the ball keeps its
+  speed into stage 4 and the house or the ground is also told the whole hit. Nothing gains speed from it (a lot is
+  swapped for blocks at rest, ground is cut), but the energy is not shared out. The designed route is stage 4's
+  voxels meeting the building's own bodies (PQ13).
+- The place told is the row's middle, not the contact: a ball's middle is 2 cells outside the wall it hit, so a
+  side hit can miss its lot (`lotAt` is by column). A roof hit is right.
+- A hit is on a building if any contact on External passed the event bar that substep, else on the ground.
+- The 16-entry ring now carries ground hits too: many hard landings between two reads can push a house's hit out.
+- The fast-path kernel (`engine_step.wgsl`) has the ground hit for rigid stops, not the stage-4 hand-over's.
+- The engine's meteor has no trail, flash or dust of its own; the cannon has no gun, sound or muzzle flash.
+- `townshots.mjs` depends on where the lab's view settles (PO9): one run of four looked at a lake and fired at nothing.
+
+## 2026-11-15 — the owner's phone test: what was measured and logged, not fixed (PQ4, PQ5, PQ6, PQ7, PQ10)
+
+The round's time went to telekinesis, the steel tower, the sandbox tools and the cannon. These five were looked at
+for a few minutes each and are logged with what was found.
+
+**PQ4, second breaks** ("the pieces don't crumble as easily when they collide after breaking"). Two causes.
+1. Pieces do not meet each other or any other body: a settled part is a row with no distance field (PM4, not built;
+   `PHYSICS_ENGINE.md` "Settled parts"). A piece can only break again on the ground.
+2. On the ground a piece is harder to break than its parent. Measured, `test/gpu/engine-rebreak.test.ts`: a stone
+   block 6 x 6 x 4 from 24 cells breaks into 6 parts (the largest 40 voxels, 9 voxels to the ground); a brick one into
+   19 parts. The largest piece, asleep where it lay, given the parent's landing speed straight down (21.7 cells/s),
+   **does not deform at all** in either material (`engine-settle`'s own test of a second hit uses 30 cells/s). The test
+   is kept as an expected failure. The likely cause, read from the rule and not confirmed by a measurement: a row is
+   sent to stage 4 when its hardest single contact's energy, 1/2 stop^2 / k (k the contact's inverse effective mass),
+   passes threshold x the whole mass (`engine_pairs.wgsl tfine`). A box landing flat has a contact under its centre
+   of mass, so the whole energy counts; an irregular piece resting on a few points off its centre has none.
+   Not changed: it is the rule every first break is tuned on (the lab's three heights, `engine-energy`).
+
+**PQ5, the lab river** ("the river runs out of water"). Not reproduced. The playground under `?solver=engine`, left
+alone: wet columns in the river's station (x 112..256, y 100..172, deeper than 0.05) 229 at 10 s and 215 at 120 s,
+volume 70.0 and 65.1, the rivers' wetness 1 both times. The river is the table's (discharge 0.3 by the season's
+wetness, `weather/riverwet.ts`), so it has no store to run out of. Not tried: after the station's "surge" (a spring at
+6 for 8 s, then set to 0), after bodies or rubble in the channel, a longer wait, the phone itself.
+
+**PQ6, the destroy button.** Not built. The tool is `sandbox-tools.ts smashAt`: an edit event (`OP.SMASH`) cuts a
+ball out of the columns on the GPU, and the material is gone. Both variants start from that kernel: debris needs the
+cut cells handed to the engine as rows with a speed from a stated blast energy (the cells are not on the CPU: the
+judge's read or a GPU write of rows, PE13 step 5); dissolve needs the cut to write loose material (gravel, sand) in
+place instead of air, which is the blow's own path for soft ground (`edit.wgsl` BLOW_TAG) and looks the cheaper.
+
+**PQ7, bodies not waking, floaty.** Read, not run. A sleeping row wakes when the surface word of the one column
+under its **centre** is not the one it fell asleep on (`engine_compact.wgsl`, "a sleeper whose ground changed"), and
+only on a tick the engine runs: a quiet engine runs only after a host event (`install.ts kickOnEvents`).
+- Repro A (part of the ground): the pile station, "steel beam across two blocks" or a 12-long stone beam at rest on
+  flat ground; with the break tool take the ground from under one end only. Expected by the owner: the end drops.
+  Expected from the code: the beam stays asleep, level, over the hole (the column under its middle did not change).
+- Repro B (no host event): a row asleep on sand or a river bank that the water or the slump carries away. No event
+  is sent, so the engine never looks.
+- Repro C: a settled part under another body (PM4).
+The designed fix is DESIGN §9's GPU collapse trigger (DA-E3) with §3's External claims (PQ10, PE5): a sleeper's
+footprint is in the columns as External with its owner, so the pass that changes a column (an edit, a slump, the
+flow) finds the owner of what stood on it and wakes that row on the GPU, with no host event and no readback. Until
+then the smallest true step: keep the surface words of the columns under the row's resting contacts (up to its 13
+terrain slots), not its centre's alone, and compare them in `compact`.
+
+**PQ10, rest claims External; the sand station.** Not built, not started in code. Against DESIGN §3 and the build
+note's step 7, today: a sleeping row writes nothing to the columns (`PHYSICS_ENGINE.md` line 758), so sand, wind and
+water pass through where it lies and nothing can bury it; the old CPU rock does claim (`integrity/rigid.ts
+restRigid`, `sim/external.ts`), by CPU writes the design rules out for the engine. What is missing, in order: (1) a
+kernel at sleep that writes the row's footprint from its model into the columns' K slots as External (a thread a
+column of its bound, the model's occupancy walked top to bottom), and one at wake that clears them; (2) External
+intervals carry no owner and no face normal (PE10): the slot's spare word must name the row; (3) several External
+intervals a column (INT8); (4) the engine's own ground test must skip the External a row wrote for itself, or the
+row would rest on its own claim; (5) whether the terrain mesher treats a row's External as air, as §3 asks, was not checked; (6) "support
+gone wakes it" is PQ7's fix, the same mechanism from the other side. The granular sim was not read to check that it
+treats External as solid on every path.
+
+**Hacks and limits.** None added by this entry; everything above is open in BACKLOG under its number.

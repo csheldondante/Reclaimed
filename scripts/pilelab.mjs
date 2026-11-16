@@ -3,6 +3,8 @@
 // under ?solver=lattice (today's default) and ?solver=engine give the before and the after.
 //   node scripts/pilelab.mjs --solver engine --out <dir>/pile-stack --press "drop a stack"
 //     [--station pile] [--zoom 8] [--look 206,92,16] [--frames 90] [--every 70] [--stills 10,30,60] [--wait 6000]
+//     [--tool cannon --taps "x,y,z@frame;x,y,z@frame"]: a tool picked and real touch taps (PQ9) at world points
+//     (storage column, row, cell z) at those frames; fails if a tap moves the camera. --press "" presses nothing
 // (terrain pieces as rows, PT1: --station slide --press "nick the spire" | "undercut the mesa")
 import gifenc from 'gifenc';
 import { PNG } from 'pngjs';
@@ -24,7 +26,12 @@ await run({ name: 'pilelab', kind: 'behaviour', size: '412x915', dpr: 1, echo: t
   const wait = Number(opt('wait', '6000'));
   const stills = opt('stills', '10,30,60').split(',').map(Number);
   const station = opt('station', 'pile');
-  const press = opt('press', 'drop a stack').split('|');
+  const press = opt('press', 'drop a stack').split('|').filter(Boolean);
+  const tool = opt('tool', '');
+  const taps = opt('taps', '').split(';').filter(Boolean).map((t) => {
+    const [p, f] = t.split('@');
+    return { p: p.split(',').map(Number), f: Number(f ?? 0) };
+  });
   const page = await R.page();
   await page.goto(R.url + '/?skipmenu=1&level=playground&tutorial=0&q=low&fresh=1&solver=' + solver, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__boot?.at['level-ready'] || document.querySelector('.fatal'), { timeout: 300000, polling: 250 });
@@ -52,8 +59,21 @@ await run({ name: 'pilelab', kind: 'behaviour', size: '412x915', dpr: 1, echo: t
       b.click();
     }
   }, press);
+  const cdp = await page.createCDPSession();
+  if (tool) await page.evaluate((tool) => document.querySelector(`[data-t="${tool}"]`).click(), tool);
+  const cam = () => page.evaluate(() => [...window.reclaimed.scene.core.camera.target]);
   const enc = GIFEncoder();
   for (let i = 0; i < frames; i++) {
+    for (const t of taps.filter((t) => t.f === i)) {
+      const at = await page.evaluate((p) => window.reclaimed.scene.core.camera.project(p[0] + 0.5 + 0.5 * (p[1] & 1), (p[1] + 0.5) * Math.sqrt(3) / 2, p[2]), t.p);
+      const c0 = await cam();
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: at[0], y: at[1], id: 0 }] });
+      await sleep(50);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      const c1 = await cam();
+      R.log('tap at screen ' + at.slice(0, 2).map((v) => v.toFixed(0)) + ' (frame ' + i + ')');
+      if (Math.hypot(c1[0] - c0[0], c1[1] - c0[1]) > 1e-6) throw new Error('pilelab: a tap moved the camera');
+    }
     const shot = Buffer.from(await page.screenshot({ type: 'png' }));
     if (stills.includes(i)) fs.writeFileSync(out + '-' + i + '.png', shot);
     const png = PNG.sync.read(shot);
@@ -73,7 +93,7 @@ await run({ name: 'pilelab', kind: 'behaviour', size: '412x915', dpr: 1, echo: t
     R.log('engine: ' + JSON.stringify(seen));
     const ig = await page.evaluate(() => {
       const i = window.reclaimed.scene.integrity;
-      return i ? { rows: i.stats.rows, rowCells: i.stats.rowCells, rowMs: i.stats.rowMs, lattice: i.physics?.bodies.length ?? 0, cpuRock: i.rigid?.list.length ?? 0 } : null;
+      return i ? { blows: i.stats.blows, rows: i.stats.rows, rowCells: i.stats.rowCells, rowMs: i.stats.rowMs, lattice: i.physics?.bodies.length ?? 0, cpuRock: i.rigid?.list.length ?? 0 } : null;
     });
     R.log('freed: ' + JSON.stringify(ig));
   }

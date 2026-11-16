@@ -1,4 +1,4 @@
-// The telekinesis tool by touch (PX1; the playground's pile station, ?solver=engine): real touch input through
+// The telekinesis tool by touch (PQ1; the playground's pile station, ?solver=engine): real touch input through
 // Chrome (pointerType touch), on the stack's top block. Each gesture reports whether a grab is held and how far the
 // camera moved. Fails if a grab pans the camera or if a second finger moves it while a body is held.
 //   node scripts/tktouch.mjs --out <dir>/fb-tk [--solver engine]

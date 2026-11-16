@@ -1820,3 +1820,18 @@ the order to build, and what was found while reading:
 7. Tests asked for: a block cracked in two, both halves resting on the ground and on each other from the first tick
    after settle; a third block dropped on a settled half rests on it (the pinned test, `.fails` taken off); the half
    hit again breaks again; no pose changes at the swap.
+
+## The owner's phone test (2026-11-15; BACKLOG PQ1 to PQ13, DEVLOG the same day)
+
+One time-boxed round after the owner tried the lab on the phone. What changed in the engine itself:
+
+- **Hard hits reach the host.** A row handed to stage 4 by a hit on the ground or a building told the host nothing
+  (only a rigid stop did), so the hardest hits felled no house. `tfine` now leaves that hit in the row's terrain row
+  and the row's thread pushes it to the hit ring; hits on the ground of 1,000 or more join the ring with their energy
+  negative and become blows to the ground (`Integrity.groundBlow`). Hacks: PQ13 (the energy is told whole while the
+  row keeps its speed; the place is the row's middle; one 16-entry ring for both).
+- **Found, not fixed.** A settled piece is harder to send to stage 4 than its parent at the same speed
+  (`test/gpu/engine-rebreak.test.ts`, an expected failure; PQ4). A sleeper looks only at the column under its
+  centre, and only after a host event (PQ7). A sleeper claims no External, so nothing buries it (PQ10).
+- **Tools, not engine:** telekinesis by touch (PQ1), a steel tower to crumple (PQ2), the cannon and the engine's
+  meteor, `?sandbox=1` on the town (PQ3, PQ9).

@@ -8,6 +8,7 @@ import { pickTown, townAtPick } from './town-tools';
 import { pickSmash, smashAt, undo } from './sandbox-tools';
 import { beamAim, dropAtPick, meteorAtPick, placeAtPick, ventAtPick } from './impacts';
 import { takeHold } from './hold';
+import { cannonAtPick, meteorRowAtPick } from './shots';
 import type { LevelScene } from '../level';
 
 /** the canvas controls and the window's keys */
@@ -53,7 +54,10 @@ export function wireInput(scene: LevelScene): void {
     // (telekinesis: a tap is the first half of the double tap that starts a grab — nothing else answers it)
     if (scene.editor?.tool === 'beam' || scene.editor?.tool === 'drag') return;
     if (scene.editor?.tool === 'volcano') return void ventAtPick(scene, sx, sy);
-    if (scene.editor?.tool === 'meteor') return void meteorAtPick(scene, sx, sy);
+    // (PQ9) the cannon: a ball of the engine at the place tapped
+    if (scene.editor?.tool === 'cannon') return void cannonAtPick(scene, sx, sy);
+    // (PQ3: under ?solver=engine the meteor is a body of the engine, and what it breaks it breaks by its hit)
+    if (scene.editor?.tool === 'meteor') return void (scene.engine ? meteorRowAtPick(scene, sx, sy) : meteorAtPick(scene, sx, sy));
     const g = under(sx, sy);
     if (!g) return void requestAnimationFrame(() => tap(sx, sy));
     const [wx, wy] = g;
@@ -89,7 +93,7 @@ export function wireInput(scene: LevelScene): void {
       if (scene.editor?.tool === 'drag') {
         if (!second) return false;
         if (!scene.integrity) return false;
-        // (PX1: the gesture is the tool's from here, so the screen stays; the body is taken once the ground under the
+        // (PQ1: the gesture is the tool's from here, so the screen stays; the body is taken once the ground under the
         // press is read — a finger has no hover before it, so the first ask is often not answered yet, and the drag
         // used to fall to a pan: the owner's phone, "drag moves the screen")
         scene.dragHold = { h: 0, at: [sx, sy], from: [sx, sy] };
@@ -170,7 +174,7 @@ export function wireInput(scene: LevelScene): void {
       if (scene.editor?.tool === 'smash') pickSmash(scene, sx, sy);
       if (scene.editor?.tool === 'town') pickTown(scene, sx, sy);
     },
-    // (PX1: while a body is held, or being taken, the camera neither pans nor zooms)
+    // (PQ1: while a body is held, or being taken, the camera neither pans nor zooms)
     gestureKeeps: () => !!scene.dragHold,
     pan: (dx, dy) => {
       if (held() || scene.dragHold) return;

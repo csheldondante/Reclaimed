@@ -178,7 +178,12 @@ export function attachTools(scene: LevelScene): void {
     // (round 96; solver step 2) metal goes to the node solver (Integrity.wakeMetal); the physics voxels stay the
     // sandbox's tools' (the drop tool, the beam)
     if (scene.integrity.rigid && scene.physics) scene.integrity.physics = scene.physics;
-    if (scene.engine) scene.integrity.engine = scene.engine;
+    if (scene.engine) {
+      scene.integrity.engine = scene.engine;
+      // (PQ3) a row's hard hit on the ground is a blow to the ground, as the other movers' are: soft ground sinks
+      // under it, hard ground struck past impact.groundEnergy crumbles (edit.wgsl decides on the columns)
+      scene.engine.engine.onGroundHit = (h) => integ.groundBlow(h.p[0], h.p[1], h.p[2], h.energy);
+    }
     // (PA11) a hard hit of an engine row on a building knocks its lot down (level/housefall.ts)
     installHouseFall(scene);
     core.globals.spanCollapse = false;

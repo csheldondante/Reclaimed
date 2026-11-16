@@ -130,6 +130,11 @@ const EV_IMPACT: u32 = 1u;
 const EV_ERODE: u32 = 2u;
 /** (PA10) the hits on owners' matter kept after the events' room: engine.ts HIT_ROOM (pushHit) */
 const HIT_ROOM: u32 = 16u;
+/** (PQ3) a hit on the ground itself joins that ring from this energy up, its energy stored negative (an owner's hit
+ *  is positive): the host hands it to the edit pass as a blow (Integrity.groundBlow), which decides what the ground
+ *  does. 1000 is the lowest `impact.groundEnergy` can be tuned to (tune/params.ts), so no blow that could crumble
+ *  ground is kept from the host and the small ones do not crowd the ring. */
+const HIT_GROUND_MIN: f32 = 1000.0;
 
 struct EngU {
   // x substep (s), y friction, z restitution, w the fastest an overlap is pushed out (cells/s)

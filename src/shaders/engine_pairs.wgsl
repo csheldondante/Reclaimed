@@ -340,6 +340,8 @@ fn sampleContacts(x: vec3<f32>, q: vec4<f32>, sm: vec4<f32>) -> SC {
 // (the workgroup's reduction: a bid a slot — score (12 bits) << 20 | sample; the hardest stop; what erosion took)
 var<workgroup> wBid: array<atomic<u32>, 13>;
 var<workgroup> wWorst: atomic<u32>;
+// (PQ3) the hardest stop among its contacts on an owner's matter (External: a building)
+var<workgroup> wWorstExt: atomic<u32>;
 var<workgroup> wEroded: atomic<u32>;
 var<workgroup> wLost: atomic<u32>;
 var<workgroup> wTouch: atomic<u32>;
@@ -427,6 +429,9 @@ fn tfine(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
           let rn = cross(rc, cc.xyz);
           let kn = invM + dot(rn, invInertia(q, I0.xyz, I1.xyz, rn));
           atomicMax(&wWorst, bitcast<u32>(0.5 * stop * stop / kn));
+          var cmat = c.gm.x;
+          if (k == 1u) { cmat = c.wm.x; }
+          if (u32(cmat) == MAT_EXTERNAL) { atomicMax(&wWorstExt, bitcast<u32>(0.5 * stop * stop / kn)); }
         }
       }
     }
@@ -459,7 +464,15 @@ fn tfine(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_index) 
   if (on && li == TSLOTS) {
     trow[tb] = bitcast<vec4<f32>>(vec4<u32>(atomicLoad(&wTouch), min(atomicLoad(&wEroded), TEVENTS), 0u, 0u));
     trow[tb + 1u] = vec4<f32>(f32(atomicLoad(&wLost)) / 1024.0, 0.0, 0.0, 0.0);
-    if (!frozen && weigh && bitcast<f32>(atomicLoad(&wWorst)) > thr * I1.w) { atomicOr(&listA[rb + RW_FLAGS], RF_EXPAND); }
+    if (!frozen && weigh && bitcast<f32>(atomicLoad(&wWorst)) > thr * I1.w) {
+      atomicOr(&listA[rb + RW_FLAGS], RF_EXPAND);
+      // (PQ3: the row is not solved — its particles take the hit — so its own thread has no stop to tell the host of.
+      // The hit that sent it to stage 4 is kept here for that thread (.w 1): on a building if one of its contacts on
+      // External passed the event bar, else on the ground)
+      let we = bitcast<f32>(atomicLoad(&wWorstExt));
+      let onOwner = we > EU.d.w;
+      trow[tb + 1u] = vec4<f32>(f32(atomicLoad(&wLost)) / 1024.0, select(bitcast<f32>(atomicLoad(&wWorst)), we, onOwner), select(0.0, f32(MAT_EXTERNAL), onOwner), 1.0);
+    }
   }
 }
 
@@ -935,7 +948,19 @@ fn rowFinish(@builtin(global_invocation_id) id: vec3<u32>) {
   let pushN = atomicExchange(&listA[rb + RW_PUSHN], 0u);
   // (held: the substep's gravity is given back, so it goes on as it was when the room has grown)
   if (me.held) { vel[2u * r].z += worldG() * EU.a.x; }
-  if (!me.go) { return; }
+  if (!me.go) {
+    // (PQ3) expanded by a hit on the ground or a building this substep (tfine left it in its terrain row, .w 1): the
+    // host is told as it is of a rigid row's hard stop, from the row's middle
+    if ((rf0 & (RF_EXPAND | RF_AIR)) == RF_EXPAND && !me.held) {
+      let T1 = trow[r * TRW + 1u];
+      if (T1.w > 0.5) {
+        // (told once: a later substep of this tick finds the mark taken)
+        trow[r * TRW + 1u] = vec4<f32>(T1.xyz, 0.0);
+        if (u32(T1.z) == MAT_EXTERNAL) { pushHit(r, pose[4u * r + 2u].xyz, T1.y); } else if (T1.y >= HIT_GROUND_MIN) { pushHit(r, pose[4u * r + 2u].xyz, -T1.y); }
+      }
+    }
+    return;
+  }
   let P = pose[4u * r + 2u];
   let dt = EU.a.x;
   var x = P.xyz;
@@ -1027,7 +1052,7 @@ fn rowFinish(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   if (s.hitE > EU.d.w) {
     pushEvent(EV_IMPACT, r, 0u, s.hitMat, s.hitP, s.hitE);
-    if (s.hitMat == MAT_EXTERNAL) { pushHit(r, s.hitP, s.hitE); }
+    if (s.hitMat == MAT_EXTERNAL) { pushHit(r, s.hitP, s.hitE); } else if (s.hitE >= HIT_GROUND_MIN) { pushHit(r, s.hitP, -s.hitE); }
   }
   pose[4u * r + 2u] = vec4<f32>(x, invM);
   pose[4u * r + 3u] = q;

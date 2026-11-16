@@ -369,7 +369,7 @@ fn solve(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   if (hitE > EU.d.w) {
     pushEvent(EV_IMPACT, r, 0u, hitMat, hitP, hitE);
-    if (hitMat == MAT_EXTERNAL) { pushHit(r, hitP, hitE); }
+    if (hitMat == MAT_EXTERNAL) { pushHit(r, hitP, hitE); } else if (hitE >= HIT_GROUND_MIN) { pushHit(r, hitP, -hitE); }
   }
   pose[4u * r + 2u] = vec4<f32>(x, invM);
   pose[4u * r + 3u] = q;

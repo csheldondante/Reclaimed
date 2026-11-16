@@ -107,7 +107,7 @@ const METAL = {
   girder: { x0: 212, x1: 240, y0: 197, y1: 199, z0: G + 10 },
   pylon: { x0: 222, x1: 228, y0: 214, y1: 220, h: 20 },
   tanker: { x0: 238, x1: 250, y0: 226, y1: 231, z0: G + 8, h: 5 },
-  /** (PX2) where the steel tower body is set down: open ground between the bridge and the tanker */
+  /** (PQ2) where the steel tower body is set down: open ground between the bridge and the tanker */
   tower: { x: 241, y: 207 },
   grounds: { y0: 221, y1: 240, sand: [206, 219], dirt: [219, 228], stone: [228, 237] } as Grounds,
 };
@@ -130,7 +130,7 @@ const cellsBox = (x0: number, y0: number, z0: number, w: number, d: number, h: n
   return out;
 };
 
-/** (PX2) a steel water tower as a body's cells, its corner at (x0, y0, z0): four legs 6 tall, a hollow tank 7 x 5 x 4
+/** (PQ2) a steel water tower as a body's cells, its corner at (x0, y0, z0): four legs 6 tall, a hollow tank 7 x 5 x 4
  *  on them (walls, floor and roof a cell thick) */
 const steelTower = (x0: number, y0: number, z0: number) => {
   const out: { x: number; y: number; z: number; mat: number }[] = [];
@@ -378,6 +378,15 @@ export const STATIONS: Station[] = [
         },
       },
       {
+        // (PQ9, the cannon's target: a brick wall ten long, two deep, eight courses high, and a stone tower beside it,
+        // set down as bodies. Pick the cannon in the tools and tap them)
+        label: 'a wall and a tower for the cannon',
+        run: (k) => {
+          k.drop(cellsBox(200, 118, G + 3, 10, 2, 8, MAT.Brick));
+          k.drop(cellsBox(214, 117, G + 3, 3, 3, 12, MAT.Stone));
+        },
+      },
+      {
         // (pieces break pieces — docs/design/PHYSICS_ENGINE.md "Pieces break pieces"; test/gpu/engine-chain.test.ts: a
         // stone slab B across a concrete post with one end overhanging, a brick slab C on the pad under that end, and
         // a stone block A thrown down on the overhang: B breaks, what comes down breaks C)
@@ -475,7 +484,7 @@ export const STATIONS: Station[] = [
     hint: 'metal: a steel tower with a block dropped on it, a girder bridge (a boulder dropped on it), a pylon (three legs cut), a tanker (dropped) — dents, bends, snaps; buried',
     actions: [
       {
-        // (PX2; the owner, 2026-11-15: "there still isn't any metal to test deformation (the water tower should be
+        // (PQ2; the owner, 2026-11-15: "there still isn't any metal to test deformation (the water tower should be
         // metal!)") A steel water tower set down as a body — four legs and a hollow tank, all steel — and a heavy block
         // dropped on it from 36 up. Under ?solver=engine the hit turns the tower into lattice voxels: steel bends and
         // crumples and stays in one piece where stone would shatter

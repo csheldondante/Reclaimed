@@ -1,4 +1,4 @@
-// The telekinesis tool's hold (round 120; PX1): a second press dragged makes a hold at once, so the gesture is the
+// The telekinesis tool's hold (round 120; PQ1): a second press dragged makes a hold at once, so the gesture is the
 // tool's and the screen stays; the body is taken when the ground under the press is read. A finger has no hover
 // before its press, so the first ask for that ground is often not answered yet (scene.heightAt: null, its page asked
 // for); the hold waits a frame for it instead of letting the drag fall to a pan.

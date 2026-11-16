@@ -15,7 +15,7 @@ export interface ControlHandlers {
   dragStart(sx: number, sy: number, second: boolean): boolean;
   /** (round 128d) Whether a one-button drag that isn't a gesture pans with the mouse too (touch always does). */
   dragPans?(): boolean;
-  /** (PX1) Whether the gesture under way keeps the screen (a held body): while it does, a further finger is ignored
+  /** (PQ1) Whether the gesture under way keeps the screen (a held body): while it does, a further finger is ignored
    *  (it neither ends the gesture nor pans nor pinches) and the wheel does not zoom. */
   gestureKeeps?(): boolean;
   dragMove(sx: number, sy: number): void;
@@ -66,7 +66,7 @@ export class Controls {
   constructor(el: HTMLElement, h: ControlHandlers) {
     const signal = this.abort.signal;
     el.addEventListener('contextmenu', (e) => e.preventDefault(), { signal });
-    // (PX1: a gesture that keeps the screen, a held body)
+    // (PQ1: a gesture that keeps the screen, a held body)
     const kept = () => !!h.gestureKeeps?.() && [...this.presses.values()].some((p) => p.gesture);
     el.addEventListener('pointerdown', (e) => {
       // (a further finger while a body is held: not a press at all, so its moves and its lift do nothing)
