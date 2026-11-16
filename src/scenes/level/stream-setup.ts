@@ -395,10 +395,15 @@ export function attachStream(scene: LevelScene): void {
               const site = tc.townSite(i);
               return site ? (scene.livingTowns?.routeRead(site)?.buffer ?? null) : null;
             });
+            // (phone-idle round 2: the contracts sleep on the CPU's word — what play does to the land near a town wakes
+            // them: a breach is an edit. The towns' own changes they see in setTowns)
+            core.sim.eventTaps.push((sent) => {
+              for (const e of sent) if (e.kind !== EventKind.Scare && e.kind !== EventKind.Ripple) tc.wakeAt(e.x, e.y, e.radius ?? 0);
+            });
             const tcHook: FrameCompute = (enc) => {
               const cq = censusEnter('towncontracts');
               tc.setTowns([...towns.live.values()].filter((t) => t.times), towns.townTime);
-              tc.encode(enc, host.profiler?.timestamps('towncontracts'));
+              tc.encode(enc, () => host.profiler?.timestamps('towncontracts'));
               censusLeave(cq);
             };
             tcHook.skipKey = 'towncontracts';

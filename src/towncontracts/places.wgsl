@@ -11,9 +11,11 @@
 //             wake clock (a gate's wall crossing "up"); it writes the slot's solve word (TP_ON_AT), and the eight
 //             kernels below — DIRECT dispatches — read it first and do nothing when it is 0 (UC-8: a solve only on a
 //             change. Phone-idle round 2: they were indirect dispatches of 0 workgroups, ~0.1 ms each on the phone
-//             whatever their size; a wake is the GPU's alone — plWet's water, the records' hashes — so nothing is read
-//             back to sleep them on the CPU. The word lives in the table because the lot kernels' 8 storage buffers
-//             are the stage's limit)
+//             whatever their size. The word lives in the table because the lot kernels' 8 storage buffers are the
+//             stage's limit). It also keeps what the CPU's settled read wants (contracts.ts: the watch and the solve
+//             are encoded only while the CPU holds the places awake): PC_BUSY — a solve this frame, or the lots'
+//             progress moved since the last frame (something is rising) — and PC_WAKE, the wake clock, which the CPU
+//             compares with the towns' clock to wake by itself
 //   plClear   the slot's district index, purposes, fill counters and picks cleared
 //   plCount   (a thread a record) each lot counted into its (district, kind) bin; the district's purpose; stage A picks'
 //             keys (stores, market, keep, muster: an atomic min)
@@ -57,7 +59,8 @@ struct TownP {
 @group(0) @binding(11) var<uniform> TP: TownP;
 /** (the watch) a town slot's words: PC_* */
 @group(0) @binding(12) var<storage, read_write> PCTL: array<atomic<u32>>;
-/** the towns' clock (s): x — the gates' rise; written by the CPU as it moves (4 bytes, every towns' slot) */
+/** the towns' clock (s): x — the gates' rise; y the CPU's frame count (u32 bits: every frame, awake or asleep —
+ *  WET_GAP is real frames); written by the CPU each frame the places are encoded */
 struct Clock { t: vec4<f32> };
 @group(0) @binding(13) var<uniform> CLK: Clock;
 /** (UC-13: plHead and plWet only) the world's columns and their water where a spawn point and its approach stand — the
@@ -66,7 +69,7 @@ struct Clock { t: vec4<f32> };
 @group(0) @binding(16) var<storage, read> water: array<f32>;
 
 // ---- the watch's words (contracts.ts PC: keep in step) ----
-const PC_STRIDE: u32 = 12u;
+const PC_STRIDE: u32 = 16u;
 const PC_ACC: u32 = 0u;
 const PC_SEEN: u32 = 1u;
 const PC_VERSION: u32 = 2u;
@@ -78,6 +81,12 @@ const PC_WET: u32 = 5u;
 const PC_WET_SEEN: u32 = 6u;
 const PC_FRAME: u32 = 7u;
 const PC_WET_LAST: u32 = 8u;
+/** the sum of the lots' progress values' hashes this frame (plWatch) and last frame's; bit 0 a solve this frame, bit 1
+ *  the progress moved since the last frame encoded; the table's wake clock as plWake found it (f32 bits) */
+const PC_PACC: u32 = 9u;
+const PC_PSEEN: u32 = 10u;
+const PC_BUSY: u32 = 11u;
+const PC_WAKE: u32 = 12u;
 /** frames at least between solves the spawn candidates' standing alone wakes: the water flickers across DEEP every tick
  *  where a river laps a bank (as sidemap.wgsl WATER_GAP) */
 const WET_GAP: u32 = 120u;
@@ -661,6 +670,8 @@ fn plWatch(@builtin(global_invocation_id) g: vec3<u32>) {
     var x = pcg(r ^ 0x9e3779b9u);
     for (var w = 0u; w < RECW; w++) { x = pcg(x ^ REC[r * RECW + w]); }
     h += pcg(x ^ progClass(PROG[r]));
+    // (the progress itself: moving from frame to frame while its lot rises — the CPU's "still rising")
+    atomicAdd(&PCTL[TP.dims.z * PC_STRIDE + PC_PACC], pcg(pcg(r ^ 0x3c6ef372u) ^ bitcast<u32>(PROG[r])));
   }
   if (t < WALL_WORDS) { h += pcg(WALLW[t] ^ pcg(t + 0x51ed27u)); }
   if (t < ART_WORDS) { h += pcg(ART[t] ^ pcg(t + 0x2545f491u)); }
@@ -679,7 +690,8 @@ fn plWake() {
   // (UC-13: the spawn candidates' standing moved — the water crossed DEEP, a column's top moved — at most every WET_GAP
   // frames; any solve reads it, so it's seen then)
   let wet = atomicExchange(&PCTL[o + PC_WET], 0u);
-  let frame = atomicAdd(&PCTL[o + PC_FRAME], 1u) + 1u;
+  let frame = bitcast<u32>(CLK.t.y);
+  atomicStore(&PCTL[o + PC_FRAME], frame);
   if (wet != atomicLoad(&PCTL[o + PC_WET_SEEN]) && frame - atomicLoad(&PCTL[o + PC_WET_LAST]) >= WET_GAP) {
     atomicStore(&PCTL[o + PC_WET_LAST], frame);
     why |= 8u;
@@ -690,4 +702,9 @@ fn plWake() {
     atomicStore(&PCTL[o + PC_WET_SEEN], wet);
   }
   ptSet(TP_ON_AT, select(0u, 1u, why != 0u));
+  let pacc = atomicExchange(&PCTL[o + PC_PACC], 0u);
+  let moving = pacc != atomicExchange(&PCTL[o + PC_PSEEN], pacc);
+  atomicStore(&PCTL[o + PC_BUSY], select(0u, 1u, why != 0u) | select(0u, 2u, moving));
+  // (the wake clock as the last solve left it: this frame's solve, if any, shows in PC_BUSY)
+  atomicStore(&PCTL[o + PC_WAKE], ptGet(TP_WAKE_AT));
 }

@@ -12,7 +12,7 @@ import { tinyWorld, type TinyWorld } from './world';
 import { tinyMap } from '../support/tinymap';
 import { MAT } from '../../src/world/materials';
 import { cellPos } from '../../src/world/lattice';
-import { TownContracts, SC, PC, TOWN_WORDS, sideSettled, placesSettled, type ContractTown } from '../../src/towncontracts/contracts';
+import { TownContracts, SC, PC, TP_PUBLIC_WORDS, sideSettled, placesSettled, type ContractTown } from '../../src/towncontracts/contracts';
 import { PLACE, PLACE_STATUS } from '../../src/api/contracts/townplaces';
 import townplaceWgsl from '../../src/shaders/townplace.wgsl?raw';
 import { makeBindGroup, makeCompute } from '../../src/gpu/pipeline';
@@ -212,6 +212,8 @@ describe('the side map', () => {
       expect(west.length).toBeGreaterThan(3);
       w.core.stampColumns([{ cuts: [], release: west.map(([x, y]) => ({ x, y, z0: 10, z1: 14.5, fallback: 0, toAir: true })) }]);
       await w.step(2);
+      // (phone-idle round 2: the edit's event, as the level's tap passes it — asleep, the versions aren't watched)
+      tc.wakeAt(B[0] - R, B[1], 2);
       c = await solve(w, tc, [ta, tb], c[SC.solves] + 1);
       s = await tc.debugRead('sides');
       expect(g.takeErrors()).toEqual([]);
@@ -219,6 +221,100 @@ describe('the side map', () => {
       expect(at(s, A), 'A untouched').toBe(1);
       console.log(`[towncontracts] side map solves ${c[SC.solves]}, last ${c[SC.lastRounds]} rounds`);
       tc.dispose();
+    } finally {
+      w.destroy();
+    }
+  }, 120_000);
+
+  // (phone-idle round 2) asleep and woken by the CPU's word: the same map as an always-awake run after the gate rule and
+  // after an edit under the wall (a breach); a breach with no CPU word waits for the next wake
+  it('asleep until a CPU word: the gate rule and an edit under the wall give the map an always-awake run gives', async () => {
+    const w = await tinyWorld(g, tinyMap(W, H, 32, () => [{ z0: 0, z1: 10, mat: MAT.Stone }]), ['surface']);
+    try {
+      const ra = ringWords(A[0], A[1], R, [], [33, 34, 35, 36, 37]);
+      const rb = ringWords(B[0], B[1], R, []);
+      const cols = [...wallCols(ra.corners, ra.kind), ...wallCols(rb.corners, rb.kind)];
+      w.core.stampColumns([{ cuts: [], claim: cols.map(([x, y]) => ({ x, y, z0: 10, z1: 14.5, aux: MAT.Rubble })) }]);
+      await w.step(2);
+      const towns = [fakeTown('A', { w: W, h: H, centre: A, R, wall: ra.words }), fakeTown('B', { w: W, h: H, centre: B, R, wall: rb.words })];
+      const world = { globals: w.core.world.globals, chunks: w.core.world.chunks, layers: w.core.world.layers, water: w.core.world.water, w: W, h: H };
+      const sidesBuf = () => g.device.createBuffer({ size: W * H * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      const tc = new TownContracts(g.device, world, sidesBuf());
+      const ref = new TownContracts(g.device, world, sidesBuf(), { sleep: false });
+      const step = async (n: number) => {
+        for (let f = 0; f < n; f++) {
+          const enc = g.device.createCommandEncoder();
+          for (const c of [tc, ref]) {
+            c.setTowns(towns, 0);
+            c.encode(enc);
+          }
+          g.device.queue.submit([enc.finish()]);
+          await g.device.queue.onSubmittedWorkDone();
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      };
+      const at = (s: Uint32Array, p: [number, number]) => {
+        const y = Math.round(p[1] / ROW_H - 0.5);
+        const x = Math.round(p[0] - 0.5 - 0.5 * (y & 1));
+        return s[y * W + x];
+      };
+      const same = async (what: string) => {
+        const a = await tc.debugRead('sides');
+        expect([...a], what).toEqual([...(await ref.debugRead('sides'))]);
+        return a;
+      };
+      const asleep = async (what: string) => {
+        expect(tc.state, `${what}: asleep again`).toMatchObject({ side: false, places: false });
+        const reads = tc.state.reads;
+        const solves = (await tc.debugRead('ctl'))[SC.solves];
+        await step(10);
+        expect(tc.state.reads, `${what}: no read asleep`).toBe(reads);
+        expect((await tc.debugRead('ctl'))[SC.solves], `${what}: no solve asleep`).toBe(solves);
+      };
+      await step(16);
+      let s = await same('made');
+      expect([at(s, A), at(s, B)]).toEqual([1, 2]);
+      await asleep('made');
+      // (the gate rule)
+      tc.gates = 'open';
+      ref.gates = 'open';
+      await step(16);
+      s = await same('the gates open');
+      expect([at(s, A), at(s, B)]).toEqual([0, 2]);
+      await asleep('the gate rule');
+      // (an edit under the wall: B's west piece let go, and the level's tap — wakeAt — as the event is sent)
+      const west = (c: [number, number], rr: typeof rb) => wallCols(rr.corners, rr.kind).filter(([x, y]) => cellPos(x, y)[0] < c[0] - R + 1.5 && Math.abs(cellPos(x, y)[1] - c[1]) < 2.5);
+      let reads = tc.state.reads;
+      w.core.stampColumns([{ cuts: [], release: west(B, rb).map(([x, y]) => ({ x, y, z0: 10, z1: 14.5, fallback: 0, toAir: true })) }]);
+      tc.wakeAt(B[0] - R, B[1], 2);
+      await w.step(2);
+      await step(16);
+      s = await same('B breached');
+      expect(at(s, B)).toBe(0);
+      expect(tc.state.reads - reads, 'a breach: a read a gate, or two').toBeLessThanOrEqual(4);
+      await asleep('a breach');
+      // (an edit far from every town wakes nothing)
+      const wakes = tc.state.wakes;
+      tc.wakeAt(B[0], B[1] + 400, 2);
+      expect(tc.state.wakes).toBe(wakes);
+      // (dropped at rest, by the ruling: the gates closed again, then A's west piece gone with no CPU word — unseen until
+      // the next wake)
+      tc.gates = 'closed';
+      ref.gates = 'closed';
+      await step(16);
+      s = await same('the gates closed');
+      expect(at(s, A)).toBe(1);
+      w.core.stampColumns([{ cuts: [], release: west(A, ra).map(([x, y]) => ({ x, y, z0: 10, z1: 14.5, fallback: 0, toAir: true })) }]);
+      await w.step(2);
+      await step(16);
+      expect(at(await ref.debugRead('sides'), A), 'the reference sees it').toBe(0);
+      expect(at(await tc.debugRead('sides'), A), 'unseen asleep').toBe(1);
+      tc.wake();
+      await step(16);
+      await same('seen at the next wake');
+      expect(g.takeErrors()).toEqual([]);
+      tc.dispose();
+      ref.dispose();
     } finally {
       w.destroy();
     }
@@ -445,21 +541,26 @@ fn main() {
       expect(uWrites, 'the uniform written once').toBe(1);
       let tab = await readTable(tc);
       expect(tab.r[201 + 4 * 2], 'seed 303 not begun').toBe(PLACE_STATUS.none);
-      // (a card's lot begins rising: house 303 (record 3) to 0.5 — one solve; rising further within the class: none)
+      // (a card's lot begins rising: house 303 (record 3) to 0.5 — one solve; rising further within the class: none.
+      // Phone-idle round 2: each with the CPU's word — tc.wake(), as a town's mesh run gives it)
       q.writeBuffer(t.lots.progress, 3 * 4, new Float32Array([0.5]));
+      tc.wake();
       expect(await frames(tc, t, 0, 4), 'a lot rising: one solve').toBe(2);
       tab = await readTable(tc);
       expect(tab.r[200 + 4 * 2]).toBe(303);
       expect(tab.r[201 + 4 * 2], 'seed 303 rising').toBe(PLACE_STATUS.rising);
       q.writeBuffer(t.lots.progress, 3 * 4, new Float32Array([0.7]));
+      tc.wake();
       expect(await frames(tc, t, 0, 4), 'still rising: no solve').toBe(2);
       q.writeBuffer(t.lots.progress, 3 * 4, new Float32Array([1]));
+      tc.wake();
       expect(await frames(tc, t, 0, 4), 'built: one solve').toBe(3);
       expect((await readTable(tc)).r[201 + 4 * 2]).toBe(PLACE_STATUS.ok);
       // (a ring change: a filler gate at segment 10 — gate slot 8 valid after one solve)
       expect(tab.named(PLACE.gate0 + 8).status).toBe(PLACE_STATUS.none);
       ring.words[WB_KIND + 10] = 1;
       q.writeBuffer(t.routes.wall, 0, ring.words);
+      tc.wake();
       expect(await frames(tc, t, 0, 4), 'a ring change: one solve').toBe(4);
       tab = await readTable(tc);
       expect(tab.named(PLACE.gate0 + 8).status).toBe(PLACE_STATUS.ok);
@@ -484,85 +585,133 @@ fn main() {
     }
   }, 120_000);
 
-  // (phone-idle round 2) every dispatch is direct — an indirect one costs the phone ~0.1 ms at 0 workgroups — and the
-  // solves' kernels are gated in the kernel: settled, nothing is solved and the state words say so; a wake solves once
-  // and the words settle again
-  it('idle: no indirect dispatch, the solves gated off (no solve counted); a wake solves once and settles again', async () => {
+  // (phone-idle round 2) the contracts sleep on the CPU's word: asleep nothing is encoded, uploaded or read; a CPU-known
+  // event wakes them, they solve as an always-awake run does, a small read says settled and they sleep again
+  /** frames one at a time, each submitted and the queue's work awaited (a gate's read can land) */
+  async function stepFrames(tcs: TownContracts[], t: ContractTown, now: (f: number) => number, n: number, each?: (f: number) => void) {
+    for (let f = 0; f < n; f++) {
+      each?.(f);
+      const enc = g.device.createCommandEncoder();
+      for (const tc of tcs) {
+        tc.setTowns([t], now(f));
+        tc.encode(enc);
+      }
+      g.device.queue.submit([enc.finish()]);
+      await g.device.queue.onSubmittedWorkDone();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+  const publicWords = async (tc: TownContracts) => [...(await tc.debugRead('places', TP_PUBLIC_WORDS * 4))];
+
+  it('asleep: 60 frames encode no pass, no dispatch, no copy, no upload, no read; nothing is solved', async () => {
     const s = await townSetup(true);
-    const { tc, t, place, n } = s;
-    // (the pass encoder's dispatches, counted where they are encoded)
+    const { tc, t } = s;
     const e0 = g.device.createCommandEncoder();
     const p0 = e0.beginComputePass();
-    const proto = Object.getPrototypeOf(p0) as GPUComputePassEncoder;
+    const passProto = Object.getPrototypeOf(p0) as GPUComputePassEncoder;
+    const encProto = Object.getPrototypeOf(e0) as GPUCommandEncoder;
     p0.end();
     e0.finish();
-    const direct0 = proto.dispatchWorkgroups;
-    const indirect0 = proto.dispatchWorkgroupsIndirect;
-    expect(typeof direct0).toBe('function');
-    expect(typeof indirect0).toBe('function');
-    const count = { direct: 0, indirect: 0 };
-    proto.dispatchWorkgroups = function (this: GPUComputePassEncoder, ...a: Parameters<typeof direct0>) {
-      count.direct++;
-      return direct0.apply(this, a);
-    };
-    proto.dispatchWorkgroupsIndirect = function (this: GPUComputePassEncoder, ...a: Parameters<typeof indirect0>) {
-      count.indirect++;
-      return indirect0.apply(this, a);
-    };
-    const words = async () => {
-      const ctl = await tc.debugRead('ctl');
-      const slot = await tc.debugRead('places', TOWN_WORDS * 4);
-      const pctl = await tc.debugRead('pctl');
-      return { ctl, slot, side: ctl[SC.solves], places: pctl[PC.solves] };
-    };
+    const q = g.device.queue;
+    const orig = { direct: passProto.dispatchWorkgroups, indirect: passProto.dispatchWorkgroupsIndirect, pass: encProto.beginComputePass, copy: encProto.copyBufferToBuffer, write: q.writeBuffer };
+    const count = { direct: 0, indirect: 0, passes: 0, copies: 0, uploads: 0 };
+    const wrap = <F extends (...a: never[]) => unknown>(f: F, k: keyof typeof count): F =>
+      function (this: unknown, ...a: never[]) {
+        count[k]++;
+        return f.apply(this, a);
+      } as F;
     try {
-      // (the first solves: the places' in the first frame, the side map's within a few)
-      await frames(tc, t, 0, 12);
-      let w = await words();
-      expect(w.places, 'the places solved once').toBe(1);
-      expect(w.side, 'the side map solved once').toBe(1);
-      expect(sideSettled(w.ctl), 'the side map settled').toBe(true);
-      expect(placesSettled(w.slot), 'the places settled').toBe(true);
-      // (idle: 30 frames — one town: the side map's 32 dispatches and the places' 11, none indirect; nothing solved)
-      count.direct = count.indirect = 0;
-      await frames(tc, t, (f) => 0.1 * f, 30);
-      // (frames' own debug read dispatches nothing: 'pctl' is a copy)
-      expect(count.indirect, 'no indirect dispatch at idle').toBe(0);
-      expect(count.direct / 30, 'direct dispatches a frame').toBe(43);
-      w = await words();
-      expect(w.side, 'idle: the side map not solved').toBe(1);
-      expect(w.places, 'idle: the places not solved').toBe(1);
-      expect(sideSettled(w.ctl)).toBe(true);
-      expect(placesSettled(w.slot)).toBe(true);
-      // (the gated threads a frame at idle: the window's 12288 columns × 20 dispatches; the places' clear, 5 lot kernels
-      // of the lots made + the landmarks' room, the scan and the head)
-      const lotGroups = Math.ceil((n + 64) / 64);
-      expect(tc.idleThreads()).toEqual({ side: 20 * 12288, places: 3072 + 5 * 64 * lotGroups + 257 });
-      // (wakes: a slide — the places; the gate rule — the side map; one solve each, in the frame the CPU's word arrives,
-      // and settled after)
-      count.direct = count.indirect = 0;
-      place.dx += 6;
-      tc.gates = 'open';
-      await frames(tc, t, 3, 1);
-      w = await words();
-      expect(w.places, 'a slide: the places solved in its frame').toBe(2);
-      expect(w.ctl[SC.state] !== 0 || w.side === 2, 'the gate rule: the side map solving in its frame').toBe(true);
-      await frames(tc, t, 3, 11);
-      w = await words();
-      expect(w.side, 'the gate rule: one solve').toBe(2);
-      expect(w.places).toBe(2);
-      expect(sideSettled(w.ctl), 'the side map settled again').toBe(true);
-      expect(placesSettled(w.slot), 'the places settled again').toBe(true);
-      expect(count.indirect, 'no indirect dispatch while solving').toBe(0);
-      expect(count.direct / 12).toBe(43);
-      await frames(tc, t, 3, 20);
-      w = await words();
-      expect([w.side, w.places], 'asleep again: nothing solved').toEqual([2, 2]);
+      await stepFrames([tc], t, () => 0, 16);
+      expect(tc.state, 'asleep after the first solves').toMatchObject({ side: false, places: false });
+      const before = { ctl: await tc.debugRead('ctl'), pctl: await tc.debugRead('pctl'), reads: tc.state.reads };
+      expect([before.ctl[SC.solves], before.pctl[PC.solves]]).toEqual([1, 1]);
+      expect(sideSettled(before.ctl)).toBe(true);
+      expect(placesSettled(before.pctl, [0])).toBe(true);
+      passProto.dispatchWorkgroups = wrap(orig.direct, 'direct');
+      passProto.dispatchWorkgroupsIndirect = wrap(orig.indirect, 'indirect');
+      encProto.beginComputePass = wrap(orig.pass, 'passes');
+      encProto.copyBufferToBuffer = wrap(orig.copy, 'copies');
+      q.writeBuffer = wrap(orig.write, 'uploads').bind(q);
+      // (the towns' clock moving all the while, as in play: by itself it wakes nothing)
+      await stepFrames([tc], t, (f) => 1 + 0.1 * f, 60);
+      expect(count).toEqual({ direct: 0, indirect: 0, passes: 0, copies: 0, uploads: 0 });
+      expect(tc.state.reads, 'no read').toBe(before.reads);
+      passProto.dispatchWorkgroups = orig.direct;
+      passProto.dispatchWorkgroupsIndirect = orig.indirect;
+      encProto.beginComputePass = orig.pass;
+      encProto.copyBufferToBuffer = orig.copy;
+      q.writeBuffer = orig.write;
+      expect([(await tc.debugRead('ctl'))[SC.solves], (await tc.debugRead('pctl'))[PC.solves]], 'nothing solved').toEqual([1, 1]);
+      // (awake it is one pass of direct dispatches: a wake, counted)
+      passProto.dispatchWorkgroups = wrap(orig.direct, 'direct');
+      passProto.dispatchWorkgroupsIndirect = wrap(orig.indirect, 'indirect');
+      encProto.beginComputePass = wrap(orig.pass, 'passes');
+      tc.wake();
+      await stepFrames([tc], t, () => 7, 1);
+      expect([count.passes, count.direct, count.indirect], 'awake: one pass, 43 direct, no indirect').toEqual([1, 43, 0]);
       expect(g.takeErrors()).toEqual([]);
     } finally {
-      proto.dispatchWorkgroups = direct0;
-      proto.dispatchWorkgroupsIndirect = indirect0;
+      passProto.dispatchWorkgroups = orig.direct;
+      passProto.dispatchWorkgroupsIndirect = orig.indirect;
+      encProto.beginComputePass = orig.pass;
+      encProto.copyBufferToBuffer = orig.copy;
+      q.writeBuffer = orig.write;
       tc.dispose();
+      s.w.destroy();
+    }
+  }, 120_000);
+
+  it('a slide, and a district rising after a mesh run, give the table an always-awake run gives; then asleep, no reads', async () => {
+    const s = await townSetup(true);
+    const { tc, t, place } = s;
+    // (the reference: the same town and world, never asleep)
+    const ref = new TownContracts(g.device, { globals: s.w.core.world.globals, chunks: s.w.core.world.chunks, layers: s.w.core.world.layers, water: s.w.core.world.water, w: 128, h: 96 }, g.device.createBuffer({ size: 128 * 96 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }), { sleep: false });
+    const asleep = async (what: string) => {
+      expect(tc.state, `${what}: asleep again`).toMatchObject({ side: false, places: false });
+      const reads = tc.state.reads;
+      await stepFrames([tc, ref], t, () => 0, 10);
+      expect(tc.state.reads, `${what}: no read asleep`).toBe(reads);
+    };
+    try {
+      await stepFrames([tc, ref], t, () => 0, 16);
+      expect(await publicWords(tc)).toEqual(await publicWords(ref));
+      await asleep('made');
+      // (a slide: the grid 6 columns on — the CPU's own word)
+      let reads = tc.state.reads;
+      place.dx += 6;
+      await stepFrames([tc, ref], t, () => 0, 1);
+      expect(await publicWords(tc), 'a slide: solved in its frame').toEqual(await publicWords(ref));
+      await stepFrames([tc, ref], t, () => 0, 12);
+      expect(tc.state.reads - reads, 'a slide: a read a gate').toBeLessThanOrEqual(4);
+      expect(tc.state.reads - reads).toBeGreaterThanOrEqual(2);
+      await asleep('a slide');
+      // (a district rising: citygen's mesh run done — the CPU's word — then house 303's progress moving on the GPU for
+      // 24 frames, 0 to 1: begun, rising, built. Awake while it moves, by the read's word alone)
+      reads = tc.state.reads;
+      const solves0 = (await tc.debugRead('pctl'))[PC.solves];
+      (t as { meshRuns?: number }).meshRuns = 1;
+      const awake: boolean[] = [];
+      await stepFrames([tc, ref], t, () => 0, 24, (f) => {
+        g.device.queue.writeBuffer(t.lots.progress, 3 * 4, new Float32Array([(f + 1) / 24]));
+        awake.push(tc.state.places);
+      });
+      expect(awake.every((a, f) => a || f === 0), 'awake while the progress moves').toBe(true);
+      expect(await publicWords(tc), 'built: the table as the reference').toEqual(await publicWords(ref));
+      expect((await readTable(tc)).r[201 + 4 * 2]).toBe(PLACE_STATUS.ok);
+      expect((await tc.debugRead('pctl'))[PC.solves] - solves0, 'begun and built: two solves').toBe(2);
+      await stepFrames([tc, ref], t, () => 0, 12);
+      await asleep('risen');
+      // (dropped at rest, by the ruling: a write to citygen's buffers with no CPU word waits for the next wake)
+      g.device.queue.writeBuffer(t.lots.progress, 3 * 4, new Float32Array([0]));
+      await stepFrames([tc, ref], t, () => 0, 8);
+      expect(await publicWords(tc), 'unseen asleep').not.toEqual(await publicWords(ref));
+      tc.wake();
+      await stepFrames([tc, ref], t, () => 0, 2);
+      expect(await publicWords(tc), 'seen at the next wake').toEqual(await publicWords(ref));
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      tc.dispose();
+      ref.dispose();
       s.w.destroy();
     }
   }, 120_000);
@@ -615,15 +764,21 @@ fn main() {
     }
   }, 120_000);
 
-  it('the water rising under a spawn point wakes one solve (within WET_GAP frames), not one a frame', async () => {
+  // (phone-idle round 2: asleep the water isn't watched — the flood is seen at the next CPU word, once)
+  it('the water rising under a spawn point: one solve at the next wake, not one a frame', async () => {
     const s = await spawnSetup(null);
     try {
       expect(await frames(s.tc, s.t, 0, 2)).toBe(1);
       expect((await readTable(s.tc)).named(PLACE.spawn0).at[0]).toBeCloseTo(46, 3);
+      // (asleep first: frames a task each, so the gates' reads land)
+      for (let k = 0; k < 10; k++) await frames(s.tc, s.t, 0, 1);
+      expect(s.tc.state).toMatchObject({ side: false, places: false });
       // (a flood: the river under the approach, written into the world's water — its ring-paged columns)
       const ring = s.w.core.ring;
       for (let y = 0; y < 64; y++) for (let x = 36; x <= 40; x++) g.device.queue.writeBuffer(s.w.core.world.water, ring.idx(x, y) * 4, new Float32Array([2]));
-      expect(await frames(s.tc, s.t, 0, 130), 'the flood: one solve').toBe(2);
+      expect(await frames(s.tc, s.t, 0, 130), 'the flood, asleep: unseen').toBe(1);
+      s.tc.wake();
+      expect(await frames(s.tc, s.t, 0, 4), 'the flood: one solve at the wake').toBe(2);
       const s0 = (await readTable(s.tc)).named(PLACE.spawn0);
       expect(s0.valid).toBe(true);
       expect(s0.approach[0]).toBeGreaterThan(40.5 + 3);

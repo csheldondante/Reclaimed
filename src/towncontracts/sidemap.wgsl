@@ -11,7 +11,9 @@
 // 2: no piece) is a barrier too, as citygen meant it: the water there is the wall (its banks would let a walker round
 // the last tower otherwise — Muru's river does).
 //
-// Woken on the GPU, never by the CPU's reading anything:
+// Encoded only while the CPU holds the side map awake (contracts.ts: a CPU-known event — the towns, the gate rule, a
+// slide, an edit near a town, a town's mesh run — until a small read of CTL says settled; asleep, nothing is dispatched).
+// While awake, what starts a solve is decided here:
 //   sideWatch (a town: a thread a chunk)  the newest shape version of the chunks over its ring's box (a piece risen, a
 //                                         breach) and their water class's, a hash of its ring's words, its ring's box
 //   sideWake (one thread)                 a shape version newer than the last solve's, a hash moved, the window slid
@@ -23,9 +25,9 @@
 // The solve's kernels are DIRECT dispatches gated here (phone-idle round 2: an indirect dispatch costs the phone ~0.1 ms
 // even at 0 workgroups, 20 of them a frame): every thread reads SC_STATE first and returns unless its stage is on —
 // ST_PREP (clear, raster, prep), ST_ROUNDS (hook, jump), ST_FINAL (final). The one-thread kernels move the state exactly
-// where they set the indirect arguments before, so the same kernels do work in the same order in the same frame. Why
-// gated and not slept on the CPU's word: the wakes are the GPU's alone — the shape words move by the sims' own kernels
-// (measured at Muru: every few seconds) and the water's class by the water — and nothing is read back to hear them.
+// where they set the indirect arguments before, so the same kernels do work in the same order in the same frame.
+// Asleep, the watch doesn't run: a shape version moved by a sim's own kernel, or the water's class crossing by itself,
+// is seen by the first sideWatch after the next CPU wake (the versions are kept: SC_SEENV, SC_SEENW).
 
 // (the chunk table, binding 1: layers.wgsl's, prepended — and materials.wgsl after it)
 @group(0) @binding(3) var<storage, read> layers: array<vec4<u32>>;
@@ -40,8 +42,8 @@
 struct SideP {
   /** the town's grid in the window: x, y (world units), z (window z less world z), unused */
   place: vec4<f32>,
-  /** x the town's slot (NONE: the global kernels'), y 1 gates closed, z the CPU's input epoch, w the window's columns
-   *  dispatch (workgroups of 64) */
+  /** x the town's slot (NONE: the global kernels'), y 1 gates closed, z the CPU's input epoch, w (the global kernels')
+   *  the CPU's frame count — every frame, awake or asleep: WATER_GAP is real frames */
   misc: vec4<u32>,
   /** x the deepest water walked (a deeper column is a barrier), y the highest step between neighbours, zw unused */
   f: vec4<f32>,
@@ -175,7 +177,7 @@ fn sideWake() {
   var dirty = ctl(SC_DIRTY);
   let v = ctl(SC_NEWV);
   if (v != ctl(SC_SEENV)) { setCtl(SC_SEENV, v); dirty = 1u; }
-  let frame = ctl(SC_FRAME) + 1u;
+  let frame = SP.misc.w;
   setCtl(SC_FRAME, frame);
   let wv = ctl(SC_NEWCLASS);
   if (wv != ctl(SC_SEENW) && frame - ctl(SC_LASTW) >= WATER_GAP) { setCtl(SC_SEENW, wv); setCtl(SC_LASTW, frame); dirty = 1u; }
