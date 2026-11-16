@@ -24472,3 +24472,20 @@ The chain was still at 58 + 93 with 2 rows awake 14 s after the press; the pit h
 
 **Hacks and limits.** PO7 (parts pass through bodies), PO8 (the bench's tanker is dragged, not swung), PO9 (the town
 gate by where the view settles), PO12 (`failSettle` counts, not looked into), PO2, PO3.
+
+## 2026-11-15 — one branch: the chain test goes either way on the merged branch (PO13, open)
+
+**Found at the last check.** `engine-chain` "the chain: A falls on B and B breaks; a part of B falls on C and C
+breaks" (held parts mode) passed in the full run after the merge and twice alone, then failed. Counted: on
+`physics10-one` 3 passes in 6 runs; on `physics10-mech` 3c9a8b82 (checked out here, the same test) 4 in 4.
+- mech: B deforms at tick 68, C at tick 260 to 296; 4 to 6 expansions; B ends as 3 to 5 held parts.
+- one: B deforms at tick 68 the same; then 2 expansions and 8 held parts, and C deforms at tick 428 or never ("expected
+  -1 to be greater than 68").
+So B's first break is the same and what follows is not: B comes apart into more, smaller parts and what lands on C is
+not enough to break it. The mechanics branch had not met the look (grain break faces, stone without elasticity: a
+brittle body parts along its grain); the merged branch has both. Not bisected between the three merges (the look
+came with the base, `physics10-atlas`); not fixed: whether the chain should still break C with the look's stone is the
+materials' question (PM5), and the lab's button runs with free parts, where C cannot break at all (PO7).
+The test is left as it is: it fails about one run in two until this is decided.
+
+**Hacks and limits.** A test on this branch that goes either way (PO13).
