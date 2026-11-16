@@ -55,7 +55,8 @@ export const MUTATION_EVENTS: readonly string[] = [...LAND, ...Object.values(STA
 
 const isLandKind = (k: string): k is PhysicalKind => (LAND as readonly string[]).includes(k);
 
-/** the settlements whose centre a land change covers (Settlement.at: world units) */
+/** the settlements whose centre a land change covers (Settlement.at: world units).
+ *  FIXED-CITY (BACKLOG MU-27): only settlements are tagged; a group standing in the area (an army's camp) is not */
 function covered(w: FactWorld, s: FactSpec): string[] {
   const out: string[] = [];
   for (const t of w.ws.settlements) if (w.facts.entity(t.id) && (t.id === s.place || Math.hypot(s.cell[0] - t.at[0], s.cell[1] * ROW_H - t.at[1]) <= s.radius)) out.push(t.id);
@@ -142,7 +143,9 @@ export function recordMutation(w: FactWorld, s: FactSpec, o: FactOpts = {}): str
   return f.record({ kind: 'vassal', by: [holder], to: [place], where, about: about(), note: `${w.name(place)} sworn to ${w.name(holder)}, paying ${s.tribute ?? 1} a season` }).id;
 }
 
-/** A sign on a place as facts: a condition tag while it is on (dropped when off), an event when it starts. Returns the
+/** FIXED-CITY (BACKLOG MU-27): a sign's place must be a settlement entity; a group on the move (an army, refugees)
+ *  cannot carry one yet.
+ *  A sign on a place as facts: a condition tag while it is on (dropped when off), an event when it starts. Returns the
  *  event's id (null: switched off, or the place is not an entity of this world). */
 export function recordSign(w: FactWorld, kind: SignKind, place: string | null, on: boolean, cause?: string): string | null {
   const f = w.facts;

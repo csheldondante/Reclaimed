@@ -56,14 +56,16 @@ const LC_LOOTED: u32 = 10u;
 const MAT_SOIL_U: u32 = 2u;
 const MAT_SAND_U: u32 = 3u;
 const MAT_ASH_U: u32 = 17u;
+const MAT_SILT_U: u32 = 22u;
 const MAT_BASALT_U: u32 = 23u;
 const MUT_OUT: u32 = 18u;
 /** the ash a fire leaves on the ground, cells */
 const ASH_T: f32 = 0.3;
 /** a building's span: External at least this thick (a road's paving is thinner) */
 const BUILDING_T: f32 = 1.0;
-/** the flood's level falls away over the last part of the radius, so no wall of water stands at the rim */
-const FLOOD_RIM: f32 = 0.82;
+/** the flood's level falls away over the outer part of the radius — down to the standing water it rose from (the
+ *  river's own level) where there is one — so no wall of water stands at the rim */
+const FLOOD_RIM: f32 = 0.62;
 const FLOOD_RIM_DROP: f32 = 6.0;
 
 fn mhash(x: i32, y: i32, s: u32) -> f32 {
@@ -83,8 +85,13 @@ fn mfbm(p: vec2<f32>, s: u32) -> f32 {
 /** how far out of the entry's disc a window point is (1: its rim) */
 fn mutD(wp: vec2<f32>) -> f32 { return distance(wp, MP.at.xy) / max(MP.at.z, 1.0); }
 
-/** flooded — p.x: the water's level (window z). The level a point's water stands at (falling away at the rim) */
-fn floodLevel(d: f32) -> f32 { return MP.p.x - FLOOD_RIM_DROP * smoothstep(FLOOD_RIM, 1.0, d); }
+/** flooded — p.x: the water's level (window z); p.y: the level of the standing water it rose from (window z; far
+ *  below: none). The level a point's water stands at: flat inside the rim, falling away to the river's own beyond */
+fn floodLevel(d: f32) -> f32 {
+  let t = smoothstep(FLOOD_RIM, 1.0, d);
+  let low = select(MP.p.x - FLOOD_RIM_DROP, max(MP.p.y, MP.p.x - 2.0 * FLOOD_RIM_DROP), MP.p.y > MP.p.x - 2.0 * FLOOD_RIM_DROP);
+  return mix(MP.p.x, low, t);
+}
 
 /** burned: is world point `w` (d from the centre) in the burn? Its edge ragged; at strength under 1 patches are spared */
 fn burnIn(w: vec2<f32>, d: f32) -> bool {

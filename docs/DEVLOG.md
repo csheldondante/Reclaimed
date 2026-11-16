@@ -23231,3 +23231,34 @@ on a place now lowers its region's rivers the recorded way.
 
 **Tests.** unit: mutators-facts 6, mutators-list 4; gpu: mutators 39 (the world-state test now reads the fact world).
 
+## 2026-11-15 (night) — mutators round 2, item 2: why the flood does not read, measured (`mutators`)
+
+**Three causes, in the order found** (Muru, 412 x 915, q=low, radius 40, strength 1; stills in scratchpad
+mutators/r2/flooded-*.png, each looked at).
+
+1. *The level.* From the atlas's coarse ground it was 102.4 over a town whose ground runs 97-104. Now a GPU histogram
+   of the disc's own ground picks it (`floodscan.wgsl`, two dispatches, copied into the write's parameters on the GPU;
+   16 bytes read once to keep it on the entry): 104.15 here. Desktop GPU 0.2-0.5 ms for scan + pick + silt + water +
+   lots.
+2. *The colour.* With the level right the town went under an opaque olive-brown sheet with hard edges
+   (flooded-2.png). `render/water.wgsl` colours water by `contam.y / depth`; a dry column's word there is not zero.
+   The flood now clears it where it adds water (`flood.wgsl`, its own kernel: land.wgsl's is at eight storage buffers).
+3. *The flow model.* Clean water at the right level is gone in seconds (flooded-4.png at 0.7 s: white foam pouring off
+   the east of the town; flooded-4-b.png at 17 s: dry streets). Counted in the 81 x 93 columns round the centre: 1 206
+   wet before, 3 098 at 0.3 s (mean 1.4 deep), 1 603 at 12 s (mean 0.8): only hollows keep it. `flow/steady.ts` wakes a
+   chunk whose water is out of balance and the liquid finds the steady state, which on a slope beside a lower river is
+   "drained". Not forgetting the liquid's records (tried) keeps water in sleeping chunks but then it is not drawn, and
+   the awake ones drain all the same. So the instant end state "water standing in the streets" is not one the live sim
+   leaves alone unless the terrain is a basin (the gpu test's closed hollow still holds: 39 pass). BACKLOG MU-28.
+
+**Kept.** The level, the clean water, a rim that falls to the river's own level (no slab of raised water over the
+river: flooded-1.png), silt under the level (weak: MU-29). **Not claimed:** flooded does not read at Muru. A player
+sees a moment of foam, then a town with a few grey houses.
+
+**Ash fall.** 4 bursts of 3 -> 16 bursts of 6 a frame, wider and at all heights. ash-dark.png: darkness reads (dim,
+brown); no flakes show in the air; a speckle on the houses. Does not read (MU-31).
+
+**Tests.** `npm run typecheck` clean; unit mutators-facts 6 + mutators-list 4 pass; unit project 629 pass, 1 known
+fail (roadlab writing lint, MU-14); gpu mutators 39 pass (flood: level kept on the entry, one level, no water over it,
+written whole once on arrival).
+

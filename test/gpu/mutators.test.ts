@@ -141,8 +141,9 @@ function changedCols(r: Rig, a: Snap, b: Snap): { inside: number; outside: numbe
 }
 
 const KINDS: { kind: MutatorKind; lots: number[] }[] = [
-  // (the hollow's lot is under the level; the high one isn't; the far one never)
-  { kind: 'flooded', lots: [LOT_CONDITION.drowned, 0, LOT_CONDITION.standing, 0] },
+  // (the level is taken from the place's own ground: the hollow's lot and the low one stand in water, the high one
+  // is over it, the far one never)
+  { kind: 'flooded', lots: [LOT_CONDITION.drowned, 0, LOT_CONDITION.drowned, 0] },
   { kind: 'burned', lots: [LOT_CONDITION.burned, LOT_CONDITION.burned, LOT_CONDITION.burned, 0] },
   // (the vent uphill — west — and the flow east through the hollow: the hollow's lot and the low one go)
   { kind: 'melted', lots: [LOT_CONDITION.destroyed, 0, LOT_CONDITION.destroyed, 0] },
@@ -164,6 +165,7 @@ describe.each(KINDS)('$kind', ({ kind, lots }) => {
     expect(m.resident).toBe(true);
     expect(m.fresh).toBe(true);
     const ms = await a.eng.lastMs;
+    await a.eng.levels;
     after = await snap(a);
     expect(g.takeErrors()).toEqual([]);
     const ch = changedCols(a, before, after);
@@ -180,10 +182,33 @@ describe.each(KINDS)('$kind', ({ kind, lots }) => {
     const i = AT[1] * W + AT[0];
     const top = c[i][c[i].length - 1];
     if (kind === 'flooded') {
-      const level = a.eng.record().list[0].params[0];
+      // (the level was chosen on the GPU from the ground in the disc and kept on the entry: the atlas's guess replaced)
+      const [level, fixed] = a.eng.record().list[0].params;
+      expect(fixed).toBe(1);
       expect(after.water[i]).toBeCloseTo(level - top.z1, 3);
-      // (high ground inside the radius stays dry)
-      expect(after.water[32 * W + 16]).toBe(0);
+      // (a basin fill of the real ground: at strength 1 most of the disc's ground is under water; the hill stays dry, below)
+      let under = 0;
+      let all = 0;
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++)
+          if (dist(x, y) < R * 0.6) {
+            all++;
+            if (after.water[y * W + x] > 0.05) under++;
+          }
+      expect(under / all).toBeGreaterThan(0.5);
+      // (one level: no water stands over it, ground at or over it is dry, and inside the rim the water's top is it)
+      let high = 0;
+      for (let y = 0; y < H; y++)
+        for (let x = 0; x < W; x++) {
+          const k = y * W + x;
+          const t = c[k][c[k].length - 1].z1;
+          if (before.water[k] > 0) continue;
+          expect(t + after.water[k]).toBeLessThanOrEqual(Math.max(t, level) + 1e-3);
+          if (t >= level) high++;
+          if (dist(x, y) < R * 0.6 && t < level - 0.06) expect(t + after.water[k]).toBeCloseTo(level, 2);
+        }
+      console.log(`[mutators] flood level ${level.toFixed(2)}: ${under} of ${all} columns inside the rim under water, ${high} columns of the map at or over the level`);
+
     } else if (kind === 'burned') {
       expect(top.mat).toBe(MAT.Ash);
       expect(after.veg[i]).toBe(0);
@@ -247,8 +272,10 @@ describe.each(KINDS)('$kind', ({ kind, lots }) => {
     b.origin.o = [0, 0, 0];
     let wrote = 0;
     for (const [lx, ly] of [[32, 32], [0, 0], [32, 0], [0, 32], [32, 32]]) wrote += b.eng.landWritten(lx, ly, 32, 32) ? 1 : 0;
-    expect(wrote).toBe(5);
+    // (a flood is written whole, once, when its whole area is in the window: its level is taken there)
+    expect(wrote).toBe(kind === 'flooded' ? 1 : 5);
     b.eng.townMade(b.town);
+    await b.eng.levels;
     const arrived = await snap(b);
     expect(g.takeErrors()).toEqual([]);
     expect(changedCols(b, after, arrived)).toEqual({ inside: 0, outside: 0 });

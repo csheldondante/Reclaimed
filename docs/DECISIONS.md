@@ -3733,3 +3733,10 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
 - (via the coordinator) The user: "A river running dry, trees dying, the whole point is to make the map a living
   visual representation of your choices". → `dried`, `withered` (and `greened`) as instant land ops; every entry is
   drawn on the atlas map at its place.
+- (via the coordinator, 2026-11-15) The user: "One minor point but build things using the systems we developed like
+  pages. The first runs we want to build are centered on a city but the opportunity system and simulation layers are
+  intentionally built more generally. The plan is to eventually have runs that follow migrant groups such as refugees,
+  armies, settlers or adventurers. Don't spend time designing around it but note that it is the plan so any shortcuts
+  should record places where they bake the fixed city assumption per run." → nothing is redesigned for moving runs;
+  every place the mutators assume one fixed home city a run carries a `FIXED-CITY` comment and a BACKLOG row
+  (MU-26, MU-27). The land path is the streaming system's own hook (`Streamer.onWritten`), not a town's.

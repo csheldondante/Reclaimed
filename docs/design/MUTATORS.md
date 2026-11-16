@@ -31,6 +31,20 @@ Test: `test/gpu/mutators.test.ts`. Lab: `/?skipmenu=1&level=atlas&town=1&mutlab=
 8. Unchanged: `list()`, `apply()`'s spec and result, `record()` / `restore()` (version 2; entries gain `fact`),
    `sign()` / `signs()` / `season()`, `LOT_CONDITION`.
 
+## The fixed-city assumption (the owner, 2026-11-15)
+
+"The first runs we want to build are centered on a city but the opportunity system and simulation layers are
+intentionally built more generally. The plan is to eventually have runs that follow migrant groups such as refugees,
+armies, settlers or adventurers. Don't spend time designing around it but note that it is the plan so any shortcuts
+should record places where they bake the fixed city assumption per run."
+
+General already: land entries are keyed by world cells and written by `Streamer.onWritten` (the streaming system's own
+hook, a region at a time; no town involved), and the list is saved in the world store. Town-specific by nature: lot
+conditions (`FieldTowns.onMade`). Baked-in, marked `FIXED-CITY` in the code (BACKLOG MU-26, MU-27): the run's home is
+the start town (`MutateHost.home`), a far eruption's signs land on it, a sign with no place is recorded on it; a
+sign's place must be a settlement and shows only on a live FieldTown; the dead rise in the first live FieldTown; the
+outcome helpers resolve to a settlement.
+
 ## The user's words (2026-11-15)
 
 - "More focus on mutations since we have so much built in that area for a reason. I want melted, flooded, buried, burned etc"
@@ -82,7 +96,7 @@ The same modifier applied twice is one entry (its id: kind, place or cell, radiu
 
 | kind | what is written | lots |
 |---|---|---|
-| flooded | `water` up to a level over each column's top (never lowered). The level: the lowest macro ground of the area plus a share of its rise (not under the sea); it falls away over the last 18% of the radius | drowned where the level is half a cell or more over the lot's base |
+| flooded | `water` up to a level over each column's top (never lowered), clean (the column's dissolved contamination cleared), over a thin layer of silt; plants under it gone. The level is taken on the GPU from the place's real ground the first time its whole area is in the window (`floodscan.wgsl`: over 22-70% of the dry ground by strength, 1.5 to 6.5 cells over the standing water it rises from) and kept on the entry (`params` [level, 1, river level]); flat inside 62% of the radius, falling to the river's own level at the rim. **It does not stay on open ground: BACKLOG MU-28** | drowned where the level is half a cell or more over the lot's base |
 | burned | plants removed; soil's top 0.3 becomes ash (the fire sim's own material); ragged edge, patches spared under strength 1 | burned (walls black, roof gone, height × 0.6) |
 | melted | a basalt cap (the lava sim's set rock) in a pool round a vent and a lobed tongue downhill (the direction from the macro ground), 0.4–3 cells thick, never over ground higher than the vent; water removed; cracks set to 1150° ground heat, which the render fields already draw as glow | destroyed (a dark stump; the claim released) |
 | buried | a sand interval on the top: dunes across a seeded wind, thinning to nothing at the rim; up to 2 + 5 × strength cells | buried where the sand is a fifth of the building's height or 1.2 cells |
@@ -181,8 +195,18 @@ there is no generator input today, and the post-generation write is what exists.
 4. `captured` shows as a roof colour from the holder's name. `vassal` changes no lot.
 5. The far place's pin on the map is the map's own pin, with the place's name and what happened, not a tint.
 
-## Hand-over: what is next
+## Hand-over (round 2, 2026-11-15 night)
 
-See BACKLOG `MU-*`. In order: the reveal (MU-3); a true basin level from `terrain/flood.ts` for region-scale floods
-(MU-1); sediment against walls and in the lee (MU-2); founded places built by the town generator (MU-6); abandoned and
-overgrown, undead, lockdown through the reserved condition values and the traits system; the phone bench (MU-9).
+Done: item 1 (the fact layer, above). Partial: item 2 — the flood's level, colour and rim are right and tested, and
+the cause it does not read is found and is not the mutator's to fix: **the flow model drains it** (BACKLOG MU-28; the
+measurements are in the DEVLOG). Read MU-28 before touching the flood again; the next step is a held flood stage in
+the liquid / river table, or the recorded `flood` AtlasEvent realised by the generator — the owner's call. Item 3:
+ash fall made denser and still does not read (MU-31); darkness reads. Not started: the map as the record (MU-5), the
+browser persistence proof (the list and the level's facts are replayed on load — untested in a browser), dried on a
+real reach (`dried` now lowers the region's river inflow through the fact layer, which the river field realises —
+not looked at in a still), withered, the dead rise and crime in a browser, `play()` (MU-3), founded places built
+(MU-6: the fact layer now has the settlement record through `settlement-founded`; `settle/settlements.ts` and
+`FieldTowns` still do not know it).
+
+Stills: headless runs need `&pace=0` and a 50 s wait while other agents share the GPU (MU-32).
+

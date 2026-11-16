@@ -43,20 +43,25 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
   });
   const liveTowns = () => [...made.entries()].filter(([id]) => towns.live.has(id)).map(([, t]) => t);
   const lab = host.params.get('mutlab') === '1';
+  // FIXED-CITY (BACKLOG MU-26): the run's home is the atlas's start town, for the whole run
   const homeId = a.startTown ?? null;
 
   // ---- the signs shown (docs/design/MUTATORS.md "Signs"): nothing runs while none is on
   const shown = { crime: new Set<string>(), dead: [] as number[], ash: 0, raf: 0 };
+  // FIXED-CITY (BACKLOG MU-27): a sign shows only while its place's FieldTown is live in the window (or it names no
+  // place); a sign on a camp, an army or a column of refugees has nothing to show on
   const strongest = (signs: readonly Sign[], kind: SignKind) => signs.filter((s) => s.kind === kind && (s.place === null || towns.live.has(s.place))).reduce((m, s) => Math.max(m, s.strength), 0);
   const ashFrame = () => {
     shown.raf = 0;
     if (shown.ash <= 0) return;
     // (the particles' own ash, a few bursts a frame high over the view: it drifts down on the wind)
     const t = core.camera.target;
-    for (let k = 0; k < Math.ceil(4 * shown.ash); k++) {
-      const x = t[0] + (Math.random() - 0.5) * 70;
-      const y = t[1] + (Math.random() - 0.5) * 70;
-      core.sim.particles.burst({ kind: PK.Ash, x, y, z: t[2] + 14 + Math.random() * 10, count: 3, speed: 0.6, spread: 5, vel: [1.2, 0.6, -2.2] });
+    // (round 2: round 1's four bursts of three were "a few specks" at play zoom. Enough to see as a fall: a burst
+    // every few cells of the view each frame, spread wide, at several heights so the air is full top to bottom)
+    for (let k = 0; k < Math.ceil(16 * shown.ash); k++) {
+      const x = t[0] + (Math.random() - 0.5) * 110;
+      const y = t[1] + (Math.random() - 0.5) * 110;
+      core.sim.particles.burst({ kind: PK.Ash, x, y, z: t[2] + 4 + Math.random() * 22, count: 6, speed: 0.6, spread: 9, vel: [1.2, 0.6, -2.2] });
     }
     shown.raf = requestAnimationFrame(ashFrame);
   };
@@ -77,6 +82,7 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns): MutateEngi
     }
     // (the dead rise: a few of the walking dead — the units' own 'shambler' kind, undead by the traits — in the streets
     // of the town under the view; removed when the sign ends)
+    // FIXED-CITY (BACKLOG MU-27): the dead rise in the first live FieldTown's streets, not at the sign's own place
     const dead = strongest(signs, 'deadrise');
     const units = scene.units;
     if (units && dead > 0 && !shown.dead.length) {
