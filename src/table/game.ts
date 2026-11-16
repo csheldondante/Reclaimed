@@ -90,6 +90,14 @@ export class Table {
   readonly took: number[] = [];
   /** threatening offers that ran out (template ids) */
   readonly lapsed: string[] = [];
+  /** every template that was on the board at a season's start, and those taken, in order */
+  readonly seen = new Set<string>();
+  readonly taken: string[] = [];
+  /** synergy rules fired this run: a rule's name → times (filled once the model has rules: BACKLOG CT-5) */
+  private fired: Record<string, number> = {};
+  ruleCounts(): Record<string, number> {
+    return { ...this.fired };
+  }
   /** the fight's lines once it is fought */
   result: { title: string; lines: string[] } | null = null;
   /** the run's number in this world (1 the first) */
@@ -114,6 +122,7 @@ export class Table {
   private mark(): void {
     this.curve.push(pools(this.realm.ledger));
     this.asked.push(this.offered().length);
+    for (const o of this.offered()) this.seen.add(o.template);
     this.took.push(0);
   }
 
@@ -199,6 +208,7 @@ export class Table {
     this.realm.commit(o.id);
     this.moves.push(`take ${o.template}`);
     this.took[this.took.length - 1]++;
+    this.taken.push(o.template);
     this.say('took', W.took(o.opp.title));
     return true;
   }

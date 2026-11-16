@@ -12,6 +12,18 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Card table (2026-11-16, `card-table`; docs/design/CARD_TABLE.md)
+
+The same run as the 3D loop, as a plain card page (`table.html`) and Node bots. One model, two front ends.
+
+| id | item | size | status |
+|---|---|---|---|
+| CT-0 | The page plays a whole run by taps on the Realm: offers as readable cards, six pools with income, the threat's countdown, end season, run end, next run in the same world; `src/table/game.ts` (driver, no DOM), `table/main.ts`, `test/unit/table.test.ts` | M | done (`card-table`, step b) |
+| CT-1 | **Hack (CT-TEMP).** The raid's result at the table is a stand-in in `table/game.ts: fightNow` (each soldier stops one raider when there are walls or a keep; one soldier falls for two raiders stopped; losses by `war.ts: settle`). Replace with round 6's `Realm.finishLive` / `playForced` at the merge | S | open |
+| CT-2 | **Limit.** The table has no town plan: `land` always has room, so district cards never run out of land as they can in the 3D town | S | open |
+| CT-3 | **Limit.** The seed only picks the named people (`seedLocus`); the dealer is deterministic (`rng: () => 0`), so two seeds with the same taps give the same cards. Seeded variety in what is dealt is a model question (the dealer's tune) | S | open |
+| CT-4 | **Limit.** The table always starts from the Briar Hollow test world (`living/briar.ts`), not an atlas world; far places are that world's few | S | open |
+
 ## Loop skeleton (2026-11-15, `loop-skeleton`, DECISIONS round 129; docs/design/LOOP_SKELETON.md)
 
 The main loop as one walk-through (`?skipmenu=1&level=atlas&town=1&loop=1&fresh=1`). Every row is a hack, a limit or a
