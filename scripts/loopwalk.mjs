@@ -280,6 +280,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
 
   // 5: seasons pass until the attack (or the end)
   let n = 0;
+  let mapped = false;
   const decisions = [];
   const t0 = Date.now();
   for (;;) {
@@ -306,6 +307,22 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       await shot(`loop-6-change-s${s.season}-${seen ?? 'none'}`);
       await page.evaluate(() => window.rungame.showTown());
       await wait(1500);
+    }
+    // (the world's map, once two things have changed: the mutators' badges for this run's changes)
+    if (s.phase === 'city' && !mapped && (await page.evaluate(() => window.rungame.land().length)) >= 2) {
+      mapped = true;
+      await tap('.run-sheet .go button', 'Map');
+      await wait(2500);
+      await shot(`loop-9-map-s${s.season}`);
+      log(`map: open ${await page.evaluate(() => window.reclaimed.scene.atlasMap.isOpen)}; this run's changes: ${JSON.stringify(await page.evaluate(() => window.rungame.land()))}`);
+      const x = await page.evaluate(() => {
+        const b = [...window.reclaimed.scene.atlasMap.el.querySelectorAll('button')].find((e) => e.textContent === '×');
+        const r = b.getBoundingClientRect();
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      });
+      await press(x.x, x.y);
+      await wait(600);
+      R.check('the map opens from the sheet and closes by its own button', !(await page.evaluate(() => window.reclaimed.scene.atlasMap.isOpen)));
     }
     if (s.phase !== 'city') break;
     // (LS-45's bisect: the camera away from the town and back — the window slides off it — in one chosen season)

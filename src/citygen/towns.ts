@@ -47,6 +47,15 @@ export class FieldTowns implements CityDistricts {
     for (const s of sites) this.boxes.set(s.id, fieldTownBox(s));
   }
 
+  /** (mutators round 5, BACKLOG MU-6) A site added while the level runs — a place founded this run: made like any
+   *  other when the window nears it, let go far behind. The same id again is the site it has. */
+  addSite(s: FieldTownSite): boolean {
+    if (this.boxes.has(s.id)) return false;
+    this.sites.push(s);
+    this.boxes.set(s.id, fieldTownBox(s));
+    return true;
+  }
+
   /** how far a town's box is from the window (columns, rows; 0 overlapping) */
   gap(id: string): number {
     const b = this.boxes.get(id)!;

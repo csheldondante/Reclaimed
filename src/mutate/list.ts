@@ -29,6 +29,14 @@ export interface ListWorld {
 
 const LAND: ReadonlySet<MutatorKind> = new Set(['flooded', 'burned', 'melted', 'buried', 'dried', 'withered', 'greened']);
 export const isLand = (k: MutatorKind): k is PhysicalKind => LAND.has(k);
+/** the land kernel's code for a founded mining place's workings (shaders/mutate/masks.wgsl MUT_MINE) */
+export const GPU_MINE = 13;
+/** the land kernel's code for the 'deadrise' sign's ground mark (masks.wgsl MUT_GRAVES) */
+export const GPU_GRAVES = 14;
+/** a founded place's reach by its size (cells): the town generator's own radii (citygen/town.ts RADIUS) */
+export const FOUNDED_RADIUS: Record<NonNullable<Mutation['size']>, number> = { camp: 30, village: 72, town: 120 };
+/** the land kernel's code for an entry (null: it writes no land): a land kind's own; a founded mining place's workings */
+export const landOp = (m: Pick<Mutation, 'kind' | 'purpose'>): number | null => (isLand(m.kind) ? GPU_KIND[m.kind] : m.kind === 'founded' && m.purpose === 'mining' ? GPU_MINE : null);
 
 /** mutate/land.wgsl MUT_* */
 /** mutLots' codes for the 'crime' sign: a share of the lots looted, and put right again */
@@ -94,11 +102,13 @@ export class WorldList {
     if (spec.place && !pl && spec.kind !== 'founded') throw new Error(`mutators: no place "${spec.place}"`);
     if (!pl && !spec.at) throw new Error(`mutators: ${spec.kind} needs a place or an \`at\``);
     const cell: [number, number] = spec.at ? [Math.round(spec.at[0]), Math.round(spec.at[1])] : [Math.round(pl!.at[0]), Math.round(pl!.at[1] / ROW_H)];
-    const radius = Math.max(4, Math.round(spec.radius ?? pl?.radius ?? DEFAULT_RADIUS));
+    // (a founded place reaches as far as its town will, and half as far again where it has workings beside it)
+    const foundedR = spec.kind === 'founded' ? FOUNDED_RADIUS[spec.size ?? 'camp'] * (spec.purpose === 'mining' ? 1.6 : 1) : undefined;
+    const radius = Math.max(4, Math.round(spec.radius ?? foundedR ?? pl?.radius ?? DEFAULT_RADIUS));
     const strength = Math.min(1, Math.max(0, spec.strength ?? 1));
     const seed = (spec.seed ?? 1) >>> 0;
     const place = spec.kind === 'founded' ? (spec.place ?? `founded-${cell[0]}-${cell[1]}`) : (spec.place ?? null);
-    const m: Mutation = { id: '', kind: spec.kind, place, cell, radius, strength, seed, params: this.params(spec.kind, cell, radius, strength, seed), seq: -1 };
+    const m: Mutation = { id: '', kind: spec.kind, place, cell, radius, strength, seed, params: spec.kind === 'founded' && spec.purpose === 'mining' ? this.workings(cell, FOUNDED_RADIUS[spec.size ?? 'camp'], seed) : this.params(spec.kind, cell, radius, strength, seed), seq: -1 };
     if (spec.by !== undefined) m.by = spec.by;
     if (spec.tribute !== undefined) m.tribute = spec.tribute;
     if (spec.cause !== undefined) m.cause = spec.cause;
@@ -106,6 +116,7 @@ export class WorldList {
     if (spec.kind === 'founded') {
       m.name = spec.name ?? 'New camp';
       m.size = spec.size ?? 'camp';
+      if (spec.purpose !== undefined) m.purpose = spec.purpose;
     }
     m.id = [m.kind, place ?? '', cell[0], cell[1], radius, strength, seed, m.by ?? '', m.tribute ?? ''].join(':');
     return m;
@@ -175,6 +186,18 @@ export class WorldList {
     // (how deep the water taken off is: what lies deeper stays as pools)
     if (kind === 'dried') return [1 + 3 * strength];
     return [];
+  }
+
+  /** A mining place's workings, just past its town's edge (world units): the pit [x, y, radius] and, round from it,
+   *  the spoil heap [x, y, radius] — where, by the seed; how deep and how high, by their radii (land.wgsl MUT_MINE). */
+  private workings(cell: readonly [number, number], townR: number, seed: number): number[] {
+    const a = rnd(seed, 5) * Math.PI * 2;
+    const cx = cell[0] + 0.5;
+    const cy = (cell[1] + 0.5) * ROW_H;
+    const pitR = Math.min(16, Math.max(9, townR * 0.2));
+    const d = townR * 1.18;
+    const b = a + (pitR * 2.3) / d;
+    return [cx + Math.cos(a) * d, cy + Math.sin(a) * d, pitR, cx + Math.cos(b) * d, cy + Math.sin(b) * d, pitR * 0.85];
   }
 
   private place0(id: string): AtlasPlace | null {

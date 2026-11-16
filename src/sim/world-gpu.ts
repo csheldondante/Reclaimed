@@ -56,6 +56,10 @@ export const RIVER_DEPTH_EXP = 0.6;
 export const RIVER_SPEED_EXP = 0.4;
 /** (round 109) cells between the riverWet field's texels (WorldGpu riverWet) */
 export const RIVER_WET_CELLS = 8;
+/** (mutators round 6, MU-47) texels the riverWet field reaches past the window on every side (48 x 8 = 384 cells): the
+ *  far tiles drawn there take a river's wetness from it as the window's columns do, so a river cut dry (or swollen)
+ *  does not run at the climate's again from the window's edge. Past the field a river is at the climate's */
+export const RIVER_WET_PAD = 48;
 /** ?riverwet=x: the rivers' wetness held at x, everywhere (the climate's and each watershed's storms' otherwise:
  *  riverheld.wgsl riverWetAt) */
 export const RIVER_WET = (() => {
@@ -276,7 +280,8 @@ export class WorldGpu {
   readonly coverView: GPUTextureView;
   /**
    * (round 109, watershed) The rivers' storm water at the window's coarse texels (r32float, texel (i, j) the window's
-   * cell (i, j) · RIVER_WET_CELLS; 0 past the rivers): what a river carries from the storms on its own catchment and
+   * cell (i - RIVER_WET_PAD, j - RIVER_WET_PAD) · RIVER_WET_CELLS — it reaches RIVER_WET_PAD texels past the window on
+   * every side, for the far tiles: mutators round 6; 0 past the rivers): what a river carries from the storms on its own catchment and
    * its reaches upstream, over its reference discharge (weather/catchwet.ts; written by weather/wetfield.ts). A river's
    * wetness is the climate's (Globals ocean.w: the season) plus this — read only through riverheld.wgsl riverWetAt.
    * All 0 where there's no river graph (the valley levels: their wetness the climate's, storms and all).
@@ -508,7 +513,7 @@ export class WorldGpu {
     this.coverView = this.coverTex.createView();
     this.riverWet = device.createTexture({
       label: 'riverWet',
-      size: { width: Math.floor((this.w - 1) / RIVER_WET_CELLS) + 2, height: Math.floor((this.h - 1) / RIVER_WET_CELLS) + 2 },
+      size: { width: Math.floor((this.w - 1) / RIVER_WET_CELLS) + 2 + 2 * RIVER_WET_PAD, height: Math.floor((this.h - 1) / RIVER_WET_CELLS) + 2 + 2 * RIVER_WET_PAD },
       format: 'r32float',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });

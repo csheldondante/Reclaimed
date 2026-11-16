@@ -141,6 +141,9 @@ export const MAT = {
   DirtRoad: 40,
   /** (road lab, RD1) the same interval paved: cobble setts (the road's reveal end) */
   Cobble: 41,
+  /** (mutators round 5, BACKLOG MU-45) burned ground: black char and dark ash, what the `burned` mutator leaves on
+   *  soil. Loose like ash but heavy: it lies where it is (the wind does not lift it), and plants come back through it */
+  Char: 42,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -241,6 +244,9 @@ export const MATERIALS: MaterialDef[] = [
   // (meshdraw.wgsl roadLook)
   { ...NONE, name: 'dirt road', albedo: [0.68, 0.56, 0.4], state: MatState.Solid, bear: 1, porosity: 0.35, smooth: 2 },
   { ...NONE, name: 'cobble', albedo: [0.5, 0.49, 0.47], state: MatState.Solid, bear: 1, porosity: 0.15, specular: 0.12, smooth: 2 },
+  // (mutators round 5, MU-45) burned ground. Ash (above) is the old game's reddish dust: over a burned town's fields
+  // it read as salmon paving. Char is near black with a cold grey cast, for value against soil (0.36) and plaster
+  { ...NONE, name: 'char', albedo: [0.17, 0.165, 0.16], state: MatState.Granular, bear: 0.2, reposeDry: 1.2, reposeWet: 1, strength: 0.15, growthCap: 3, suitability: 0.6, porosity: 0.4, smooth: 2 },
 ];
 
 /** (road lab, RD1: 40 → 48 for the road surfaces; the uniform's MATS, phys.wgsl PM and solver.wgsl SM sized by it) */

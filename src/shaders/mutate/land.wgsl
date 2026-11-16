@@ -53,13 +53,21 @@ fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
       bumpWater(vec2<u32>(x, y), before, after);
     }
     waterSource[j] = DRIED_MARK;
-    if (veg[j] > 0.0) { wilt[j].y = max(wilt[j].y, 0.6); }
+    // (round 6: the browning fades out over the outer half of the radius, ragged by a world noise — it ended on the
+    // circle itself, a hard brown disc on the grass)
+    let brown = 0.6 * (1.0 - smoothstep(0.45, 0.9, d + 0.3 * (mfbm(w * 0.07, MP.k.y + 51u) - 0.5)));
+    if (veg[j] > 0.0 && brown > 0.04) { wilt[j].y = max(wilt[j].y, brown); }
     return;
   }
   if (kind == MUT_WITHERED) {
-    // (the plants' own dead state: fully brown, the ground hostile to them, so woken plants stay dead and die back)
+    // (the plants' own dying state — wilt.wgsl's y, which the ground's cover draws as straw then brown and the trees
+    // as bare and grey (floralook.wgsl, round 5): yellowed with browner patches by a world noise, and blighted, so
+    // woken plants stand dead as written. Written once a column: twice is the same)
     if (!burnIn(w, d) || veg[j] <= 0.0) { return; }
-    wilt[j] = vec4<f32>(max(wilt[j].x, 1.0), 1.0, wilt[j].z, wilt[j].w);
+    let y = 0.52 + 0.4 * smoothstep(0.35, 0.75, mfbm(w * 0.09, MP.k.y + 21u));
+    // (the mark: common.wgsl WILT_BLIGHT — the wilt system and the ecology leave a blighted column as it is written)
+    if (wiltBlighted(wilt[j].x)) { return; }
+    wilt[j] = vec4<f32>(WILT_BLIGHT + 1.0 + select(0.0, 2.0, wilt[j].x >= 2.0), max(wilt[j].y, y), wilt[j].z, wilt[j].w);
     return;
   }
   if (kind == MUT_GREENED) {
@@ -86,25 +94,34 @@ fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!burnIn(w, d)) { return; }
     veg[j] = 0.0;
     vegNext[j] = 0.0;
-    // (soil chars to ash on top; rock, sand, paving and what's ash already stay)
+    // (soil chars on top — black char, MAT.Char: the fire sim's ash is the old game's reddish dust and read as salmon
+    // paving, BACKLOG MU-45; rock, sand, paving and what's charred already stay)
     if (tm == MAT_SOIL_U) {
-      if (top - ivZ0(tv) <= ASH_T + 0.05) { o[n - 1u] = ivPack(ivZ0(tv), top, MAT_ASH_U, 0u); }
+      if (top - ivZ0(tv) <= ASH_T + 0.05) { o[n - 1u] = ivPack(ivZ0(tv), top, MAT_CHAR_U, 0u); }
       else {
         o[n - 1u] = ivPack(ivZ0(tv), top - ASH_T, tm, ivAux(tv));
-        o[n] = ivPack(top - ASH_T, top, MAT_ASH_U, 0u);
+        o[n] = ivPack(top - ASH_T, top, MAT_CHAR_U, 0u);
         n += 1u;
       }
     }
   } else if (kind == MUT_MELTED) {
-    if (tm == MAT_BASALT_U) {
+    if (tm == MAT_BASALT_U || tm == MAT_OBSIDIAN_U) {
       // (written already: only its cracks' heat made sure of)
       if (meltT(wp, w, top - 0.4) > 0.0 && meltCrack(w)) { lava[j].z = max(lava[j].z, 1150.0); }
       return;
     }
     let t = meltT(wp, w, top);
     if (t <= 0.0 || top + t + 2.0 >= f32(G.zMax)) { return; }
-    o[n] = ivPack(top, top + t, MAT_BASALT_U, 0u);
-    n += 1u;
+    // (round 4, the owner: "glassy dark slumped". The flow's body is the lava sim's set rock; where it lay thick it
+    // cooled to a glassy black skin — obsidian, the material table's own — and its thin edge stays grey basalt)
+    if (t >= GLASS_FROM) {
+      o[n] = ivPack(top, top + t - GLASS_T, MAT_BASALT_U, 0u);
+      o[n + 1u] = ivPack(top + t - GLASS_T, top + t, MAT_OBSIDIAN_U, 0u);
+      n += 2u;
+    } else {
+      o[n] = ivPack(top, top + t, MAT_BASALT_U, 0u);
+      n += 1u;
+    }
     veg[j] = 0.0;
     vegNext[j] = 0.0;
     if (water[j] > 0.0) {
@@ -113,6 +130,55 @@ fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
       bumpWater(vec2<u32>(x, y), before, 0.0);
     }
     if (meltCrack(w)) { lava[j].z = max(lava[j].z, 1150.0); }
+  } else if (kind == MUT_GRAVES) {
+    // (round 5, BACKLOG MU-43: where the dead rise — a patch of ground turned black, ragged at its edge, with pale
+    // stones and bones standing in rows on a world lattice. The black skin is the mark that the column is done)
+    if (tm == MAT_BASALT_U || tm == MAT_BONE_U) { return; }
+    if (d + 0.3 * (mnoise(w * 0.4, MP.k.y + 41u) - 0.5) > 0.92 || top + 3.0 >= f32(G.zMax)) { return; }
+    let g = vec2<i32>(floor(w / vec2<f32>(3.0, 2.6)));
+    let inCell = fract(w / vec2<f32>(3.0, 2.6));
+    let stone = mhash(g.x, g.y, MP.k.y + 43u) < 0.45 && all(abs(inCell - vec2<f32>(0.5)) < vec2<f32>(0.22, 0.26));
+    o[n] = ivPack(top, top + 0.15, MAT_BASALT_U, 0u);
+    n += 1u;
+    if (stone) {
+      o[n] = ivPack(top + 0.15, top + 0.15 + 0.5 + 0.5 * mhash(g.y, g.x, MP.k.y + 44u), MAT_BONE_U, 0u);
+      n += 1u;
+    }
+    veg[j] = 0.0;
+    vegNext[j] = 0.0;
+  } else if (kind == MUT_MINE) {
+    // (round 5, BACKLOG MU-6: "new mining settlements" — the workings beside the town. A pit: the column cut down in
+    // benches, deepest in the middle (0.42 of its radius), and floored with a skin of broken rock; a heap: spoil piled
+    // in a cone with a ragged foot. Both leave rubble on top, which is the mark that the column is done: written
+    // twice, or a region at a time, it is the same)
+    if (tm == MAT_RUBBLE_U) { return; }
+    let dp = length(wp - MP.p.xy) / max(MP.p.z, 1.0);
+    let dh = length(wp - MP.q.xy) / max(MP.q.z, 1.0);
+    let rag = mnoise(w * 0.35, MP.k.y + 31u);
+    if (dp < 1.0) {
+      // (three benches and the floor: steps of a third of the depth)
+      let depth = MP.p.z * 0.42;
+      let cut = depth * ceil((1.0 - smoothstep(0.3, 1.0, dp + 0.08 * (rag - 0.5))) * 3.0) / 3.0;
+      if (cut < 0.3) { return; }
+      let floorZ = max(top - cut, 1.0);
+      loop {
+        if (n == 0u) { break; }
+        let v = o[n - 1u];
+        if (ivZ1(v) <= floorZ) { break; }
+        if (ivZ0(v) >= floorZ) { n -= 1u; }
+        else { o[n - 1u] = ivPack(ivZ0(v), floorZ, ivMat(v), ivAux(v)); break; }
+      }
+      if (n == 0u) { return; }
+      o[n] = ivPack(floorZ, floorZ + 0.2, MAT_RUBBLE_U, 0u);
+      n += 1u;
+    } else if (dh < 1.0) {
+      let t = MP.q.z * 0.55 * (1.0 - dh) * (0.8 + 0.4 * rag);
+      if (t < 0.25 || top + t + 2.0 >= f32(G.zMax)) { return; }
+      o[n] = ivPack(top, top + t, MAT_RUBBLE_U, 0u);
+      n += 1u;
+    } else { return; }
+    veg[j] = 0.0;
+    vegNext[j] = 0.0;
   } else if (kind == MUT_BURIED) {
     let mat = u32(MP.p.y);
     if (tm == mat) { return; }

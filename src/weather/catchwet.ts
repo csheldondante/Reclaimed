@@ -15,6 +15,7 @@
 import { NODE_WORDS, type Catchments } from '../atlas/rivers';
 import { RIVER_WET } from '../sim/world-gpu';
 import { ROW_H } from '../world/lattice';
+import { carryInflow, reachAbove } from './inflow';
 
 /** seconds the hillside's runoff takes to follow the rain most of the way (riverwet.ts LAG_S, the climate's) */
 const LAG_S = 20;
@@ -48,12 +49,29 @@ export interface RainSource {
   rainAt(x: number, y: number): number;
 }
 
+/** a river run dry at a place (world units): the factor its nodes within the radius, and every reach above them, take */
+export interface RiverCut {
+  x: number;
+  y: number;
+  radius: number;
+  factor: number;
+}
+
 export class CatchmentWet {
   /** per node: the storm water over its reference discharge (0 outside the kept nodes) */
   readonly ex: Float32Array;
   /** the kept nodes, upstream first, and where each is in the window (window units: x, y) */
   live = new Int32Array(0);
   livePos = new Float32Array(0);
+  /** (mutators round 6) the nodes the wetness field is mapped from (weather/wetfield.ts) and where each is (window
+   *  units): those within `fieldMargin` of the window — set once a move of the window, not stepped */
+  field = new Int32Array(0);
+  fieldPos = new Float32Array(0);
+  /** how far past the window the field's nodes are taken (window units; the field's own reach past it) */
+  fieldMargin = 0;
+  /** some kept node carries storm water now (the last update's): while false and nothing else moved, the field is as
+   *  it was written */
+  stormy = false;
   private next: Int32Array;
   private tau: Float32Array;
   private R: Float32Array;
@@ -130,6 +148,18 @@ export class CatchmentWet {
       if (was[k] && !this.kept[k]) this.R[k] = this.Q[k] = this.inQ[k] = this.ex[k] = 0;
       if (this.kept[k]) m++;
     }
+    // (mutators round 6, MU-47: the field's nodes — every node within `fieldMargin` of the window, wider than the kept
+    // ones: the far tiles' rivers take their inflow's cut from the field; their storm water stays 0 past the kept box)
+    const FM = Math.max(M, this.fieldMargin);
+    const fn: number[] = [];
+    const fp: number[] = [];
+    for (let k = 0; k < this.count; k++) {
+      const x = lx(f[k * NODE_WORDS]);
+      const y = ly(f[k * NODE_WORDS + 1]);
+      if (x >= -FM && x <= W + FM && y >= -FM && y <= H + FM) fn.push(k), fp.push(x, y);
+    }
+    this.field = Int32Array.from(fn);
+    this.fieldPos = Float32Array.from(fp);
     this.live = new Int32Array(m);
     this.livePos = new Float32Array(m * 2);
     let j = 0;
@@ -170,10 +200,35 @@ export class CatchmentWet {
     this.sw = Float32Array.from(sw);
   }
 
-  /** (merge124) the regions' inflow factors (those not 1), by the region each node is in */
-  setInflow(regionAt: (x: number, y: number) => number, factors: ReadonlyMap<number, number>): void {
-    const f = new Float32Array(this.g.nodes.buffer, this.g.nodes.byteOffset, this.g.nodes.length);
-    for (let k = 0; k < this.count; k++) this.inflow[k] = factors.size ? (factors.get(regionAt(f[k * NODE_WORDS], f[k * NODE_WORDS + 1])) ?? 1) : 1;
+  /** (merge124) The regions' inflow factors (those not 1), by the region each node is in — carried on downstream
+   *  (weather/inflow.ts carryInflow: a river dried in one region runs low below it). (mutators round 5) `cuts`: rivers
+   *  run dry at a place (world units; the river's nodes within `radius` of it): every reach above those nodes takes the
+   *  factor too (reachAbove), so the river fails from its springs and the cut carries on below the place */
+  setInflow(regionAt: (x: number, y: number) => number, factors: ReadonlyMap<number, number>, cuts: readonly RiverCut[] = []): void {
+    if (!factors.size && !cuts.length) {
+      this.inflow.fill(1);
+      return;
+    }
+    const { g, count } = this;
+    const f = new Float32Array(g.nodes.buffer, g.nodes.byteOffset, g.nodes.length);
+    const C = g.catchments;
+    let cut: Float32Array | null = null;
+    for (const c of cuts) {
+      const seeded = new Uint8Array(count);
+      let any = false;
+      for (let k = 0; k < count; k++) {
+        let dx = f[k * NODE_WORDS] - c.x;
+        let dy = f[k * NODE_WORDS + 1] - c.y;
+        dx -= Math.round(dx / g.worldW) * g.worldW;
+        dy -= Math.round(dy / g.worldH) * g.worldH;
+        if (dx * dx + dy * dy <= c.radius * c.radius) seeded[k] = 1, (any = true);
+      }
+      if (!any) continue;
+      const up = reachAbove(C.order, this.next, seeded);
+      cut ??= new Float32Array(count).fill(1);
+      for (let k = 0; k < count; k++) if (up[k]) cut[k] = Math.min(cut[k], c.factor);
+    }
+    carryInflow(C.order, this.next, C.own, C.ref, (k) => Math.min(factors.get(regionAt(f[k * NODE_WORDS], f[k * NODE_WORDS + 1])) ?? 1, cut ? cut[k] : 1), this.inflow);
   }
 
   /** a step of dt seconds (game time) with the storms' rain */
@@ -200,6 +255,7 @@ export class CatchmentWet {
       }
     }
     const a = 1 - Math.exp(-dt / LAG_S);
+    let stormy = false;
     for (let j = 0; j < live.length; j++) {
       const k = live[j];
       R[k] += (RAIN * rain[k] - R[k]) * a;
@@ -209,7 +265,9 @@ export class CatchmentWet {
       const nx = next[k];
       if (nx !== k && kept[nx]) inQ[nx] += Q[k];
       ex[k] = ref[k] > 0 ? Math.min(MAX_EX, Q[k] / ref[k]) : 0;
+      if (ex[k] > 1e-4) stormy = true;
     }
+    this.stormy = stormy;
     this.ms = performance.now() - t0;
     this.updates++;
     this.msMean += (this.ms - this.msMean) / Math.min(this.updates, 600);

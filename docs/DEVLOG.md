@@ -23637,3 +23637,263 @@ after a page read that a finger never asked for. After: one tap, `heatray at 167
 and by mouse (1 of 1 each). That is too strong for 1 Magic: Heat ray's damage is 2 of a raider's 3 health now (an
 assumption for the owner). With the map hearing presses again, the loop turns the map's own tools off
 (`LevelScene.cardsOnly`): a tap does nothing, a drag pans.
+## 2026-11-15 (night) — mutators round 3, item A: a held flood stage, so the flood stands (`mutators`)
+
+**Why.** Round 2 measured the flow model draining a flood on open ground in seconds (MU-28). The orchestrator ruled:
+hold the level as a boundary condition inside the liquid's contract, not a refill from the mutator.
+
+**What.** `flood.wgsl` writes the column's source word as -(1024 + level) where it adds water; `liquid.wgsl
+publishWater` — where a source's inflow is already added — holds the open water up to that level. The depth kernel
+was tried first and is at eight storage buffers; publishWater binds the source already.
+
+**Measured / looked at.** gpu test, an open slope (falls 0.12 a cell), the liquid stepped 300 times: no flooded column
+of the core falls a quarter cell (40 tests pass). Not run: the same test with the hold removed, to prove it fails
+without it. Muru, radius 60: 4 871 wet columns at 0.3 s, 5 065 about 30 s later (flood-held.png, flood-held-b.png):
+wide dark water over the east of the town, houses standing in it with the drowned tint, the bridge under, a shoreline
+following the ground on the west. It reads at a glance. Wrong in it: a straight edge where the raised water meets the
+held river (MU-36); and the headless sim made only about 90 ticks in that time with 123-129 chunks awake, so "the same
+water at 30 s" is 90 ticks of evidence, and the cost and the settling are unmeasured (MU-33).
+
+## 2026-11-15 (late) — mutators round 4, item 1: the flood's edge (`mutators`, MU-36)
+
+**Why.** flood-held-b.png showed a raised rectangle of water with straight steps where the flood met the river. The
+rim's level fell to "the river's level" (the 20th percentile of the standing water inside the core), which is over the
+real water wherever the river or the lake lies lower; the held core then poured water out past the rim for ever. The
+chunks the write had touched were awake and rose; their sleeping neighbours did not: the sheet ended on chunk edges.
+
+**What.** (1) `floodscan.wgsl` counts a third histogram, the outer ring's surfaces (ground or water), and the rim now
+falls to a quarter cell under the lowest of them, so at the rim the flood's level is under everything there and the
+flood's surface (the higher of the level and what stood there) is continuous. (2) The rim's columns carry an EDGE
+stage, -(4096 + level), which `liquid.wgsl publishWater` keeps the water AT, up or down: what the held core sheds
+runs down the rim and is taken up there. The core keeps round 3's held stage (up only).
+
+**Measured.** gpu, the open slope (0.12 a cell), radius 20, 300 steps: 279 core columns, none fell; tallest step
+between neighbouring columns from the core's edge outwards 0.71 cells (silt noise and the hex rows included); water
+beyond the radius after 300 steps 0.02 cells. The same test with the hold switched off in publishWater (run once,
+restored): FAILS, 279 of 279 fell a quarter cell or more, the most 1.86 — so the test does prove the hold. 40 pass.
+
+**Looked at.** r4/reload/before-home.png (Muru, the place's own radius 80, zoom 2.67 px a cell — the default; the
+camera's floor was 0.82-1.13, so the zoom was not clamped): a round dark flood over the east of the town with a soft
+edge into the lake and the river, no rectangle, no straight step. A straight grey Y under the water north of the town
+is the road and its bridge, drowned. Not shown: that the chunks reach rest and sleep (MU-33, the phone bench).
+
+## 2026-11-15 (late) — mutators round 4, items 2-5: reload proof, ash fall, melted, the map's badges, a dry river carried downstream (`mutators`)
+
+**Reload (item 2).** `scripts/mutators-reload.mjs`: a fresh load of the lab; flooded at the home town (Muru, loaded),
+burned + captured at Bumku and buried at Vagug (both not loaded: `resident` false); stills of home, the map, and each
+far place after travelling there; `saveAll`; the page loaded again without `fresh=1`; the same stills and reads.
+Result: the list, the place states (owner, status, conditions), the signs and each town's lot condition counts are
+identical (Muru 79 drowned; Bumku 122 burned, 17 occupied; Vagug 248 buried), and the land in the stills matches
+(r4/reload/before-*.png, after-*.png). One visible difference: Muru's standing roofs are white before and red after
+(MU-46: same conditions, taken to be the town's build state). Nothing needed fixing. The level's fact world is still
+rebuilt each load and the list replayed (MU-25): the result matches.
+
+**Ash fall (item 3, MU-31).** Round 2's particle bursts could not be seen. The weather already draws falling flakes:
+`rain.wgsl` (snow). The ash is now that draw's first instances — a world-anchored tile of flakes wrapped round the
+ground point the view shows, sized in pixels (2-5 px) so they show at any zoom, pale flakes and dark cinders so they
+show over light and dark ground — and a grey dusting of what faces up in the lit draws (`ashDust`). First try
+(strength 1 as a 92% cover, the far tiles' water dusted too): the whole map went grey with straight edges where the
+near water met the tiles' (ash.png, first run). Fixed: cover at most 70% and patchy, water never. The four numbers
+ride in spare Globals words (MU-39). Cost: one draw of 2 200 six-vertex instances while the sign is on, nothing when
+off, no CPU loop (round 2's requestAnimationFrame burst loop is gone). Not measured on the phone.
+
+**Melted (item 3).** Thick lava cools to an obsidian skin over basalt; melted lots slump to 20-50% by their seed
+(MU-41). melted.png: a black flow from the east of the town across the river, the houses it reached gone dark and low.
+The glass does not glint: no shader draws specular.
+
+**The map (item 4, MU-5).** Badges with a picture and a word a condition, from `places()` (mapmarks.ts); the pins are
+gone. map.png: drowned, burned + occupied, buried + abandoned, founded, occupied, river dry all read at a glance.
+
+**Dry river (item 5).** The first still showed the river still running below a dried town: the region's inflow factor
+only touched the 31 river nodes inside the region (of 53 975), so the river ran full again at the region's edge. The
+factor is now carried down the graph (`weather/inflow.ts`, 3 unit tests; 8 731 nodes under their reference). **It
+still does not read:** stills2/dried.png shows the river below the town running blue, only new sand bars by the lake;
+the cause is not found (MU-42 lists what to check). Withered (stills2/withered.png): the grass round the town goes
+brown with a ragged edge, the trees stay green (MU-17) — it reads as bare earth, not as dying woods. The dead rise
+and crime: stills taken, neither reads (MU-43, MU-44).
+
+**Zoom.** The stills are at the default zoom, 2.67 px a cell. The camera raises any zoom under `zoomFloor` (the tile
+cache's limit, 0.8-2.0 in these runs, changing as tiles load) — that is why a wider zoom asked for by a script did
+not take in round 3.
+
+**Tests.** typecheck clean; gpu mutators 40 pass; unit 632 pass, 1 known fail (roadlab writing lint, MU-14).
+
+
+## 2026-11-15 (later) — mutators round 5, item 1: a river run dry shows a dry bed (`mutators`, MU-42)
+
+**The cause, by numbers, not stills.** `node scripts/mutators-river.mjs` reads the river draw's inputs before and after
+`dried` at the home town (window 320 x 320, the town at 144, 190): the table's depth on river columns, the wetness the
+held rivers and the tiles read, the depth the table gives at it, the water the columns hold, by distance. Round 4's
+state, 15 s after the cut: within 60 cells the field said dry on 929 of 929 columns (held depth 0), **yet 546 of them
+held water (mean 0.47 cells)**; chunks awake went 0 to 79. Three causes:
+
+1. **The water the window's columns hold was never told.** The field reaches the held rivers' rating and the tiles at
+   once, but the columns came in at the reference depth and only ease to the table on a sleeping chunk's slow turn.
+2. **The cut was a region's, and the river comes from outside it.** The river through Muru rises south of the region:
+   it arrived at the region's edge whole and poured into the emptied bed (the live liquid, correctly).
+3. A lake stands on the river's course just below the town (15 069 standing columns not in the table); the area op
+   lowers it 4 cells inside the disc and it levels back into the channel by the bridge. Left: it is a lake.
+
+**The fix.** (a) A `dried` entry is a cut of the river through its place: the river's nodes inside its disc and every
+reach above them take the factor (`weather/inflow.ts reachAbove`, `CatchmentWet.setInflow(…, cuts)`), and round 4's
+carry takes it on below the place until tributaries make it up — at Muru every node from the springs to the town is
+0, and below it 0, 0.02, 0.05, then 0.33 where a tributary of 573 joins a river of 1 356. (b) The window's river
+columns are settled to the cut in one dispatch (`shaders/mutate/riverset.wgsl`, `MutateGpu.riverSettle`): a river
+column whose wetness is under the climate's holds no more than the table's depth at it; only lowered; a flood's stage
+left. It runs when the field is fitted again (a cut made, the window moved) and once in a frame in which land arrived
+— never while no river is cut. (c) The field is uploaded only when a texel moved: a standing cut used to upload it
+every frame (550 uploads in 15 s; now 2).
+
+**After** (same script): within 110 cells 2 349 of 2 349 river columns are dry by the table, 409 still hold water (the
+lake's backwater by the bridge and the pools the op leaves), mean 0.27 from 1.61; awake chunks 40 from 79.
+r5/river2/river-after.png, looked at: the bed from the bridge south to the fork and both branches above it are bare
+sand and gravel, no blue; the lake north of the town stays, with a wider sand shore. **What still does not read:** at
+the bottom right of the still the river is blue again — that is past the window's edge, where the tiles draw rivers
+at the climate's wetness because the wetness field covers the window only (MU-47).
+
+**The template engine's droughts.** Round 4's carry changed every `river-inflow` event's reach. Unit test
+(catchwet-inflow.test.ts): the drought arc's first stage emits region 11 at 0.7 and region 12 at 0.75; through the
+carry a region's node is at exactly its factor when the water above is whole, the next region's under its own factor
+by what the river above lost and never under the two together, the reach above untouched, nothing dry. The region
+factor path is unchanged by the cuts (a cut is the smaller of the two).
+
+**Tests.** unit 636 pass (3 new), 1 known fail (MU-14); gpu mutators 41 pass (riverSettle: dry under the cut, whole
+past it, a pond off the table and a held flood column left, twice the same); typecheck clean.
+
+## 2026-11-15 (later) — mutators round 5, item 2: withered woods stand dead (`mutators`, MU-17)
+
+**What was wrong.** Round 4's withered browned the ground's cover and left the trees green. Two causes. The tree draw
+(the flora library's instances, `meshinst.wgsl` / `floralook.wgsl`) never read the plants' health. And the first
+still with trees in it (r5/withered2/withered.png) showed the browning itself undone in straight-edged blocks: in
+every awake chunk the wilt system takes the ground's hostility afresh each tick (none here) and heals the brownness
+at 0.04 a second, and where it has not yet, the ecology clears browned plants away (0.04 x brownness a step). The
+mutator's "the ground hostile, so woken plants stay dead" was never true: it wrote a number the wilt system
+overwrites.
+
+**The fix.** (a) A per-instance condition the tree draw reads: `vegprep.wgsl` already reads the column's wilt word
+when it places the plants; the brownness (0.35..0.6 to 0..1) now rides in the instance's unused fourth row
+(`floraput.wgsl floraPut(…, dead)`), and `floraLook(…, dead)` draws it — a dead broadleaf drops 68% of its leaf faces
+by their own hash and what hangs on is grey-brown, a conifer keeps more and rusts, wood weathers pale, grass and
+blades go to straw, petals fall. No new buffer, no new pass, nothing a frame that was not there (one more float an
+instance in a row that was zero). It follows the wilt field, so plants the game's own poison browns go bare too.
+(b) A blight mark in the wilt contract (`common.wgsl WILT_BLIGHT`: +4 on wilt.x, beside the +2 "established"):
+the wilt system keeps it, holds the ground hostile and the brownness as written; the ecology neither grows nor
+clears a blighted column's plants (fire still burns them); `greened` clears it. (c) The write: brownness 0.52-0.92
+by a world noise (straw with browner patches: `wither()` draws straw to 0.5, brown past it) instead of 1 everywhere.
+
+**Stills, looked at** (r5/withered3, radius 260 to take in the woods south of the town): withered.png at the default
+zoom — the ground round the town is straw yellow with brown patches, the grove on the island and the woods south of
+the river are rust and grey-brown clumps, no green left inside the area; it reads as dying land. withered-close.png
+(9 px a cell): bare grey trunks with a few twigs stand on yellow ground. **What does not read:** the area ends in
+straight lines at the top and bottom of the phone's view — that is the window's edge (320 cells); the land past it
+is drawn by the tile cache from its own generation (`render/tilelandgpu.ts`), which no mutator writes. This holds
+for every land mutator (MU-49), and is the same gap as MU-47.
+
+**Tests.** gpu mutators 42 pass (new: withered, every system woken 5 s — the brownness, the mark and the plants are
+exactly as written; not run against the old code to see it fail), flora-wgsl 6 pass (the four shaders compile);
+unit as before.
+
+## 2026-11-15 (later) — mutators round 5, item 3: founded places are built (`mutators`, MU-6)
+
+**Why.** "New mining settlements": `founded` was a record and a badge; travelling there showed empty land.
+
+**How.** No second generator. Every `founded` entry of the list becomes a site of the field towns
+(`FieldTowns.addSite`, the one addition to citygen): made on the GPU when the window nears it, let go far behind, the
+same on return — a pure function of its seed, the ground and its population field, as every atlas town is. A camp is
+built at the generator's smallest grid (a village's: under it the generator makes no streets). Its two approach
+roads run toward the nearest atlas settlement and away from it, so the layout has an arterial. A site gets the
+towns' people like any other. `founded` takes `purpose: 'mining'` (a contract addition): the site leans to workshops
+(the settlements' own purpose word) and the entry writes workings just past the town's edge — a pit cut in three
+benches (0.42 of its radius deep) and a spoil heap, both under broken rock (`land.wgsl MUT_MINE`, the entry's own
+dispatch on apply and on stream-in; the rubble on top is the mark that makes it idempotent). The entry's reach is its
+town's radius by size (x 1.6 with workings).
+
+**Stills, looked at** (r5/founded1; a mining village founded 520 cells east of home, then travelled to):
+founded.png at the default zoom — a dirt main street with side lanes, about ten white houses along it, and two grey
+discs of broken rock west of it; founded-close.png (6 px a cell) — the street, the houses, a tall building, people
+walking. **It reads as a small new settlement. The workings read as two grey patches, not clearly as a pit and a
+heap**: at 2.67 px a cell a 5-cell hole and a 6-cell cone are a few pixels of relief under flat light (MU-50).
+
+**Tests.** unit mutators-list (reach by size, the workings inside the reach and past the town's edge, landOp, JSON
+round trip); gpu mutators 43 pass (the pit's floor down by its depth under rubble, the heap up, nothing else moved,
+written again the same, a plain founded place writes nothing). Not checked in a browser: a founded place after a
+reload (the list is restored and its sites added by the same path), and one founded on water or a cliff.
+
+## 2026-11-15 (later) — mutators round 5, items 4-5: the dead's ground, crime's marked houses, char (`mutators`, MU-43, MU-44, MU-45)
+
+**The dead rise (MU-43) — partial.** Round 4's walkers could not be seen at 2.67 px a cell. Now the sign writes a
+ground mark where they rise: a burial ground broken open at the town's edge, 30 cells across — a black skin on the
+ground with pale stones in rows (`land.wgsl MUT_GRAVES`, `MutateGpu.landMark`: one dispatch when the sign goes on, and
+again when its town is made again; nothing while it stays on). The walkers stand on it; their body is green (the
+units' shambler kind: torso grass green, head bone — was all bone, which is plaster's colour). No mist: the particles
+have no emitter that is not a burning column, and a CPU emitter a frame is what round 4 removed for the ash.
+r5/signs2/deadrise.png, looked at: a dark patch with white dots south of the town, plainly new and plainly not a
+field. **It reads as a dark stony patch; it does not say "the dead walk" by itself, and the walkers are still not
+visible at the default zoom** (a 1.4-cell figure is 4 px). The close still was framed on the town, not the burial
+ground, so the walkers' new colour is not looked at. The opened ground stays when the sign ends.
+
+**Crime (MU-44).** Chosen: the lots' own condition draw, because nothing cheap makes smoke without a fire. A looted
+house now has smoke-dark walls and a raw dark red roof (`citygen/streets.wgsl condColour`, was boarded brown).
+r5/signs1/crime.png: a dozen red roofs scattered among the white ones, read at once as marked houses. Whether red
+says crime rather than, say, plague is the owner's to judge. Risk: MU-46 (a reloaded town's roofs drawn red) would
+be mistaken for it.
+
+**Burned ground (MU-45).** The pink was the ash material itself: [0.55, 0.42, 0.38], the old game's reddish dust
+(the menu's mound), which the burn wrote over soil. That material is left alone; burned soil now takes a new one,
+`char` (MAT 42, [0.17, 0.165, 0.16], loose, not lifted by wind, plants return through it). r5/signs1/burned.png: the
+town's ground is black with the roads pale through it and the houses dark — it reads as burned. It is flat black:
+no grey ash patches, no ember glow (MU-11 still holds: rock, sand and paving show nothing).
+
+**Tests.** gpu mutators 44 pass (burial ground: black inside, stones on the skin, nothing outside, twice the same;
+burned soil is char); unit 636 pass, 1 known fail (MU-14); typecheck clean.
+
+## 2026-11-15 (night) — mutators round 6, items 1-2: the window's edge, the dry river's edge and settle (`mutators`, MU-49, MU-47, MU-48)
+
+**Why.** Every land mutator ended in a straight line where the window's land (320 cells) gives way to the far tiles:
+at the default zoom on the phone that is the top and bottom of the screen (the view shows about 230 rows past the
+window each way). The owner: "the whole point is to make the map a living visual representation of your choices".
+
+**How a far tile is made** (read first): the window's own generator into a scratch slot, copied into the tiles' small
+world, the render preparation, one bake (`render/tilelandgpu.ts`). A river is not baked wet: the tile's DRAW floods the
+baked bed each frame at `riverWetAt`, from the window's wetness field, which ended at the window.
+
+**Built.** (1) `Streamer.onTileLand`, the twin of `onWritten`: called from the bake, after the land is in the tiles'
+world and before its render preparation, with the bake's encoder. `MutateEngine.tileWritten` encodes every land entry
+whose box meets the tile — the same kernels (`land.wgsl`, `flood.wgsl`), the tile's origin, one dispatch an entry (two
+for a flood). The tiles' world has no next-step copies, no water sources and no room for the chunks' versions the
+kernels bump: `MutateGpu.tileWrite` keeps scratch ones (the sources copied from the generated record). (2)
+`TileCache.restale(box)`: a tile over changed land is marked stale and made again in place by the land's maker (it
+draws as it was until its new bake, so nothing flashes to the stand-in); `apply`, a flood's level being taken and
+`restore` call it through the host's `farChanged`. (3) The wetness field reaches 48 texels (384 cells) past the window
+on every side (`RIVER_WET_PAD`; `riverWetAt` offsets by it); its nodes are taken that far (`CatchmentWet.field`, mapped
+once a window move). The field's per-frame CPU loop (now 18 769 texels, was 1 681) is skipped while no storm water
+moves, the climate holds and nothing was mapped again — before it ran every frame.
+
+**Measured** (desktop, headless Chrome on D3D11, `pace=0`, 412 x 915, the GPU shared with other agents): a burn of
+radius 300 at the home town reaches 96 far tiles; `tileDispatches` 84 after the apply, tiles `again` 96; the field's
+one write a window move 0.9-1.1 ms, catchwet's step 0.01-0.05 ms a frame as before. gpu test: a far tile written with
+burned, buried, melted and withered is column for column (layers, veg, wilt, water) what the window's path writes.
+**The phone is not measured** (MU-9): a tile an entry reaches costs one more compute pass in its bake.
+
+**Looked at** (scratchpad mutators/r6/edge-burned, edge-withered, edge-dried; radius 300, the default zoom):
+`edge-burned-1s.png`, a second after the apply, shows the old defect — the black ends on the window's straight edges
+top and bottom; `edge-burned.png` (12 s) shows the burn carried on past both edges with its ragged rim, no straight
+line; after a pan south and north across the edge (`-south`, `-north`) it holds. Withered: straw to the coast north
+and a ragged rim south. Dried: the lake drained to its bed and the river's bed bare to the bottom of the view and on
+past the window's edge after the pan; no blue reach. **Not instant past the edge:** the far tiles fill in a few a
+frame after the apply (4 bakes a frame on a phone); in the headless run it took more than a second for 96 tiles, and
+the straight edge shows until then (MU-51). A pop while panning cannot be judged from stills; the mechanism (the same
+ops on the same columns either side) is what says there is none, and the tile's and the window's draws of the same
+columns already differed slightly before this.
+
+**Item 2.** The pale straight-edged rectangle between the lake and the town is in `base.png` with no mutator applied:
+with the lake drained (`edge-dried.png`) it is a flat rectangular platform with roads along it under the water — the
+generator's, not any mutator's op (MU-54, not fixed here). The dried disc's hard brown circle: the browning now fades
+over the outer half of the radius, ragged by a world noise (`land.wgsl`; r6/dried2/dried.png: the brown fades into the
+green). MU-48's settle: the whole window was settled and the liquid's records of all of it forgotten on EVERY slide
+(the field is fitted again then). Now the whole window only when a cut or an inflow itself changed; arriving land is
+settled in its own rectangle and only its records forgotten (`scenes/level/mutators.ts`). Not changed: the area op
+still lowers all water in the disc, the lake's included (a rule that tells a lake from a river needs the river table
+in the land kernel: MU-48 stays open for that).
+
+**Tests.** gpu mutators 48 pass; unit as before (MU-14's known fail); typecheck clean.

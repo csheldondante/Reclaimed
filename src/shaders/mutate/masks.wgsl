@@ -43,6 +43,12 @@ const MUT_WITHERED: u32 = 10u;
 const MUT_GREENED: u32 = 11u;
 const MUT_DRIED: u32 = 12u;
 const MUT_UNLOOT: u32 = 9u;
+// (a founded mining place's workings: a pit cut in benches and a spoil heap — mutate/list.ts GPU_MINE)
+const MUT_MINE: u32 = 13u;
+const MAT_RUBBLE_U: u32 = 4u;
+// (the 'deadrise' sign's ground mark: a burial ground broken open — mutate/list.ts GPU_GRAVES)
+const MUT_GRAVES: u32 = 14u;
+const MAT_BONE_U: u32 = 16u;
 
 // (mutate/index.ts LOT_CONDITION)
 const LC_DROWNED: u32 = 1u;
@@ -56,9 +62,16 @@ const LC_LOOTED: u32 = 10u;
 const MAT_SOIL_U: u32 = 2u;
 const MAT_SAND_U: u32 = 3u;
 const MAT_ASH_U: u32 = 17u;
+/** burned ground (world/materials.ts MAT.Char) */
+const MAT_CHAR_U: u32 = 42u;
 const MAT_SILT_U: u32 = 22u;
 const MAT_BASALT_U: u32 = 23u;
-const MUT_OUT: u32 = 18u;
+const MAT_OBSIDIAN_U: u32 = 35u;
+/** melted: the glassy skin over the flow's body, cells; and how thick the flow must be to carry one (its thin edge
+ *  stays ropy grey basalt) */
+const GLASS_T: f32 = 0.25;
+const GLASS_FROM: f32 = 0.85;
+const MUT_OUT: u32 = 20u;
 /** the ash a fire leaves on the ground, cells */
 const ASH_T: f32 = 0.3;
 /** a building's span: External at least this thick (a road's paving is thinner) */
@@ -85,11 +98,13 @@ fn mfbm(p: vec2<f32>, s: u32) -> f32 {
 /** how far out of the entry's disc a window point is (1: its rim) */
 fn mutD(wp: vec2<f32>) -> f32 { return distance(wp, MP.at.xy) / max(MP.at.z, 1.0); }
 
-/** flooded — p.x: the water's level (window z); p.y: the level of the standing water it rose from (window z; far
- *  below: none). The level a point's water stands at: flat inside the rim, falling away to the river's own beyond */
+/** flooded — p.x: the water's level (window z); p.y: the level the rim falls to (window z; far below: not taken —
+ *  floodscan.wgsl: a quarter cell under the lowest ground or water of the outer ring). The level a point's water
+ *  stands at: flat inside the rim, falling smoothly beyond it to under everything at the rim itself, so the flood's
+ *  surface (the higher of this and what was there) meets the land and the water round it with no step (MU-36) */
 fn floodLevel(d: f32) -> f32 {
-  let t = smoothstep(FLOOD_RIM, 1.0, d);
-  let low = select(MP.p.x - FLOOD_RIM_DROP, max(MP.p.y, MP.p.x - 2.0 * FLOOD_RIM_DROP), MP.p.y > MP.p.x - 2.0 * FLOOD_RIM_DROP);
+  let t = smoothstep(FLOOD_RIM, 0.98, d);
+  let low = select(MP.p.x - FLOOD_RIM_DROP, clamp(MP.p.y, MP.p.x - 2.0 * FLOOD_RIM_DROP, MP.p.x - 1.0), MP.p.y > -1e8);
   return mix(MP.p.x, low, t);
 }
 

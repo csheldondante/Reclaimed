@@ -169,6 +169,9 @@ export interface GlobalsState {
   hfield?: { bits: Uint32Array; across: number; side: number };
   /** (round 105, ringwin) the window's ring offset (cells: common.wgsl Globals.ring) — absent: 0, 0 */
   ring?: [number, number];
+  /** (mutators' 'ashfall' sign) ash falling over the view: its strength 0..1 and the ground point the screen's centre
+   *  shows (window units) — common.wgsl Globals.gustDir's four w words. Absent: none */
+  ashFall?: [number, number, number, number];
   /** (round 107, pages) the page table, window chunk -> its page's place px | py << 8 (sim/pages.ts Pages.entries) — absent: left as it was */
   pages?: Uint16Array;
   /** (P2.2) the table backwards: slot -> window chunk, cx | cy << 8 (Pages.inv) — with `pages` */
@@ -236,6 +239,8 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer, pageVec4 = 512):
       f.fill(0, 88 + i * 4, 92 + i * 4);
     }
   }
+  // (the ash fall: the four gusts' spare w words — common.wgsl Globals.gustDir, ashFall())
+  for (let i = 0; i < 4; i++) f[91 + i * 4] = s.ashFall?.[i] ?? 0;
   f.set(s.sky, 104);
   f.set(s.sunCol, 108);
   f.set(s.lens, 112);

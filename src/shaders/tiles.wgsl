@@ -402,6 +402,7 @@ fn fsTile(in: TOut) -> TFrag {
     alb = groundAlbedo(MAT_ICE) * (0.9 + 0.15 * r);
     film = 0.3;
   }
+  if (film < 0.5) { alb = ashDust(alb, p, n); }
   var col = alb * lighting(p, n);
   if (((b.x >> 30u) & 1u) != 0u) { col = gemLook(p, n); }
   col += filmSheen(p, n, vec3<f32>(0.0, 0.0, 1.0), film);

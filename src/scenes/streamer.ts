@@ -46,7 +46,7 @@ import type { WorldCore } from './world-core';
 import { settleLand } from '../sim/sleep';
 import { MATERIALS, MatState } from '../world/materials';
 import { type FinishTarget } from '../atlas/finish';
-import type { TileLandSource } from '../render/tileland';
+import type { TileLandSource, TileLandWritten } from '../render/tileland';
 import { bootMark } from '../perf/boot-marks';
 import { enteringFor, inWindow, nearFirst, regionOutside, regionSlots } from './streamer/regions';
 import { copyOut, toBody } from './streamer/freeze';
@@ -205,6 +205,12 @@ export class Streamer {
    * anything reads it: window rectangle (lx, ly, w, h) — the static grids' claims written there (sim/static-claims.ts)
    */
   readonly onWritten: ((lx: number, ly: number, w: number, h: number) => void)[] = [];
+  /**
+   * (mutators round 6, MU-49) onWritten's twin for the land past the window: called when a render-only tile's land is
+   * in its own world, generated and not yet prepared for its bake (render/tileland.ts TileLandWritten) — whoever
+   * writes arriving land after its generation writes the tile's the same way, into the bake's encoder
+   */
+  readonly onTileLand: ((t: TileLandWritten) => void)[] = [];
   /**
    * (round 128j) what must be ready before a region's land can be written (a slide waits for it as for the land made
    * ahead): world region corner (wx, wy), side R — the static grids' plans over it (a settlement's, settle/settlements.ts
@@ -541,6 +547,9 @@ export class Streamer {
         if (!this.source.regionInto) return null;
         const target: FinishTarget = { buf, off, layout, oz: this.oz, zMax: this.core.dims.zMax, K: this.K, colK: this.colK, settle: !settleLand(), corner: true };
         return this.source.regionInto(x0 - b, y0 - b, R + 2 * b, R + 2 * b, target, { pace: 'tile', stamps: 'made', summary: meta, order }).then(() => undefined);
+      },
+      written: (t) => {
+        for (const f of this.onTileLand) f(t);
       },
     };
     return this.tileSrc;

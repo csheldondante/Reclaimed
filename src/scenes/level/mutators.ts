@@ -8,10 +8,10 @@ import type { FieldTowns } from '../../citygen/towns';
 import { mutators, type MutationRecord, type MutatorKind, type Sign, type SignKind } from '../../mutate';
 import { MutateEngine, type MutTown } from '../../mutate/engine';
 import { MutateGpu } from '../../mutate/gpu';
-import { isLand } from '../../mutate/list';
+import { FOUNDED_RADIUS, GPU_GRAVES, holderHue, isLand } from '../../mutate/list';
+import { BADGE_COLOUR, badgesOf, drawBadges } from '../../mutate/mapmarks';
 import { mountMutLab } from '../../mutate/lab';
 import { warpWindow } from '../../api/atlas-world';
-import { PK } from '../../sim/particles';
 import { ROW_H, cellAt } from '../../world/lattice';
 import type { LevelScene } from '../level';
 import { MemoryWorldState } from '../../api/contracts/world-state';
@@ -20,12 +20,6 @@ import { registerMutatorOutcomes } from '../../mutate/outcomes';
 import { useRiverWorld } from './runs';
 
 const KEY = 'mutators:list';
-/** the map's colours a kind */
-const MARK: Record<string, string> = {
-  flooded: '#3f7fc4', burned: '#2a2420', melted: '#b3261a', buried: '#d8c08a', dried: '#b59a6a', withered: '#8a8474', greened: '#3f9a4a',
-  founded: '#8fd18a', destroyed: '#b0483a', abandoned: '#9a968c', occupied: '#c05ad0', vassal: '#e6c84a',
-};
-
 /** `restore: false`: the caller lays the saved list over the window itself (`restoreMutators`), once it has bound its
  *  own fact world — the main loop's run, whose saved world already holds the entries' fact events */
 export function attachMutators(scene: LevelScene, towns: FieldTowns, opts: { restore?: boolean } = {}): MutateEngine | null {
@@ -49,28 +43,32 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns, opts: { res
   const homeId = a.startTown ?? null;
 
   // ---- the signs shown (docs/design/MUTATORS.md "Signs"): nothing runs while none is on
-  const shown = { crime: new Set<string>(), dead: [] as number[], ash: 0, raf: 0 };
+  const shown = { crime: new Set<string>(), dead: [] as number[], deadTown: null as string | null };
+  /** the burial ground's radius (cells) */
+  const GRAVES_R = 15;
+  /** A town's burial ground (window units): at its edge, in a direction by its id; its mark written into the land now
+   *  (idempotent: when the sign goes on, and again when the town is made again after its land came back). */
+  const graveyard = (t: MutTown): [number, number] => {
+    let h = 2166136261;
+    for (const ch of t.id) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+    const ang = (h / 4294967296) * Math.PI * 2;
+    const c = t.centre();
+    const at: [number, number] = [c[0] + Math.cos(ang) * t.radius * 0.36, c[1] + Math.sin(ang) * t.radius * 0.36];
+    const b = gpu.landMark(GPU_GRAVES, at, GRAVES_R, h, [S.origin[0], S.origin[1], S.oz]);
+    if (b) {
+      scene.flow?.water.forget(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+      scene.flow?.lava.forget(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+    }
+    return at;
+  };
   // FIXED-CITY (BACKLOG MU-27): a sign shows only while its place's FieldTown is live in the window (or it names no
   // place); a sign on a camp, an army or a column of refugees has nothing to show on
   const strongest = (signs: readonly Sign[], kind: SignKind) => signs.filter((s) => s.kind === kind && (s.place === null || towns.live.has(s.place))).reduce((m, s) => Math.max(m, s.strength), 0);
-  const ashFrame = () => {
-    shown.raf = 0;
-    if (shown.ash <= 0) return;
-    // (the particles' own ash, a few bursts a frame high over the view: it drifts down on the wind)
-    const t = core.camera.target;
-    // (round 2: round 1's four bursts of three were "a few specks" at play zoom. Enough to see as a fall: a burst
-    // every few cells of the view each frame, spread wide, at several heights so the air is full top to bottom)
-    for (let k = 0; k < Math.ceil(16 * shown.ash); k++) {
-      const x = t[0] + (Math.random() - 0.5) * 110;
-      const y = t[1] + (Math.random() - 0.5) * 110;
-      core.sim.particles.burst({ kind: PK.Ash, x, y, z: t[2] + 4 + Math.random() * 22, count: 6, speed: 0.6, spread: 9, vel: [1.2, 0.6, -2.2] });
-    }
-    shown.raf = requestAnimationFrame(ashFrame);
-  };
   const showSigns = (signs: readonly Sign[]) => {
     core.skyDim = strongest(signs, 'darkness');
-    shown.ash = strongest(signs, 'ashfall');
-    if (shown.ash > 0 && !shown.raf) shown.raf = requestAnimationFrame(ashFrame);
+    // (ash fall: one number in the Globals — the weather's own rain draw makes the flakes of it, the lit surfaces
+    // their grey dusting (rain.wgsl, render/light.wgsl ashDust). Nothing runs on the CPU while it is on)
+    core.ashFall = strongest(signs, 'ashfall');
     // (crime: a share of each live town's lots looted while its sign is on, put right when it ends)
     for (const t of liveTowns()) {
       const s = signs.find((q) => q.kind === 'crime' && (q.place === t.id || q.place === null));
@@ -82,21 +80,96 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns, opts: { res
         eng.loot(t, false, 0, 11);
       }
     }
-    // (the dead rise: a few of the walking dead — the units' own 'shambler' kind, undead by the traits — in the streets
-    // of the town under the view; removed when the sign ends)
-    // FIXED-CITY (BACKLOG MU-27): the dead rise in the first live FieldTown's streets, not at the sign's own place
+    // (the dead rise, BACKLOG MU-43: a burial ground broken open at the town's edge — black turned earth with pale
+    // stones, the mutators' own land mark (land.wgsl MUT_GRAVES), a patch 30 cells across so it shows at the default
+    // zoom — and a few of the walking dead standing on it: the units' own 'shambler' kind, undead by the traits, pale
+    // with a sickly green body. The dead go when the sign ends; the opened ground stays)
+    // FIXED-CITY (BACKLOG MU-27): the dead rise at the sign's own town when it is live, else at the first live
+    // FieldTown — never at a camp, an army or open country
     const dead = strongest(signs, 'deadrise');
     const units = scene.units;
     if (units && dead > 0 && !shown.dead.length) {
-      const t = liveTowns()[0];
-      const c = t ? t.centre() : [core.camera.target[0], core.camera.target[1]];
-      for (let k = 0; k < Math.round(4 + 8 * dead); k++) {
-        const ang = Math.random() * Math.PI * 2;
-        const r = 6 + Math.random() * 22;
-        shown.dead.push(units.spawn('shambler', [c[0] + Math.cos(ang) * r, c[1] + Math.sin(ang) * r], null, { hostile: true }) as number);
+      const sign = signs.find((q) => q.kind === 'deadrise' && q.place !== null && towns.live.has(q.place));
+      const t = liveTowns().find((q) => q.id === sign?.place) ?? liveTowns()[0];
+      if (t) {
+        shown.deadTown = t.id;
+        const at = graveyard(t);
+        for (let k = 0; k < Math.round(4 + 8 * dead); k++) {
+          const ang = Math.random() * Math.PI * 2;
+          const r = Math.random() * GRAVES_R * 0.75;
+          shown.dead.push(units.spawn('shambler', [at[0] + Math.cos(ang) * r, at[1] + Math.sin(ang) * r], null, { hostile: true }) as number);
+        }
       }
     } else if (units && dead <= 0 && shown.dead.length) {
       for (const id of shown.dead.splice(0)) units.remove(id);
+      shown.deadTown = null;
+    }
+  };
+
+  // ---- rivers run dry (BACKLOG MU-42): every `dried` entry is a cut of the river through its place — the river's nodes
+  // in its disc and every reach above them (weather/catchwet.ts RiverCut), which the river field carries on downstream.
+  // The held rivers and the tiles read the field; the water the window's columns hold is settled to it in one dispatch
+  // when the field is fitted again and when land arrives (riverset.wgsl). Nothing runs while no river is cut.
+  let cutsKey = '';
+  const syncCuts = (rec: MutationRecord) => {
+    const cuts = rec.list.filter((m) => m.kind === 'dried').map((m) => ({ x: m.cell[0], y: m.cell[1] * ROW_H, radius: m.radius, factor: Math.max(0, 1 - m.strength) }));
+    const key = JSON.stringify(cuts);
+    if (key === cutsKey) return;
+    cutsKey = key;
+    scene.riverCuts = cuts;
+    // (the field's nodes take it the next frame: the window's catchments fitted again)
+    scene.catchAt = '';
+  };
+  const cut = () => scene.riverCuts.length > 0 || [...scene.riverInflow.values()].some((v) => v < 1);
+  // (round 6, BACKLOG MU-48: the whole window is settled — and the liquid's records of it forgotten — only when a cut
+  // or an inflow itself changed; land that arrives is settled in its own rectangle, and only its records forgotten.
+  // Before, every slide of the window settled and forgot all of it)
+  const arrived: [number, number, number, number][] = [];
+  let settledFor = '';
+  scene.riverFieldWritten = (refit) => {
+    if (!refit && !arrived.length) return;
+    if (!cut()) {
+      arrived.length = 0;
+      settledFor = '';
+      return;
+    }
+    const sig = refit ? JSON.stringify([scene.riverCuts, [...scene.riverInflow]]) : settledFor;
+    if (sig !== settledFor) {
+      settledFor = sig;
+      arrived.length = 0;
+      gpu.riverSettle([0, 0, core.dims.w, core.dims.h]);
+      scene.flow?.water.forget(0, 0, core.dims.w, core.dims.h);
+      return;
+    }
+    for (const [lx, ly, w, h] of arrived.splice(0)) {
+      gpu.riverSettle([lx, ly, lx + w, ly + h]);
+      scene.flow?.water.forget(lx, ly, w, h);
+    }
+  };
+  // (arriving land comes in with its rivers at the reference: settled after the field's next write)
+  S.onWritten.push((lx, ly, w, h) => {
+    if (cut()) arrived.push([lx, ly, w, h]);
+  });
+
+  // ---- founded places built (BACKLOG MU-6): every `founded` entry is a site of the field towns — the town generator's
+  // own path (citygen/towns.ts: made on the GPU when the window nears it, let go far behind, the same again on return:
+  // a pure function of its seed, the ground and its population field). Its approach road runs toward the nearest
+  // settlement of the atlas and on past the far side, so the generator has an arterial to hang its streets on.
+  const syncFounded = (rec: MutationRecord) => {
+    for (const m of rec.list) {
+      if (m.kind !== 'founded' || !m.place) continue;
+      const at: [number, number] = [m.cell[0] + 0.5, (m.cell[1] + 0.5) * ROW_H];
+      const R = FOUNDED_RADIUS[m.size ?? 'camp'];
+      const near = st.near(at, 1e9).find((q) => q.id !== m.place);
+      let dx = near ? near.at[0] - at[0] : 1;
+      let dy = near ? near.at[1] - at[1] : 0;
+      dx -= Math.round(dx / a.atlas.worldW) * a.atlas.worldW;
+      dy -= Math.round(dy / a.atlas.worldH) * a.atlas.worldH;
+      const l = Math.hypot(dx, dy) || 1;
+      const way = (k: number): [number, number][] => [0, 0.5, 1, 1.5, 2].map((t) => [at[0] + (dx / l) * R * t * k, at[1] + (dy / l) * R * t * k]);
+      // (a camp is built as the generator's smallest grid, a village: under it the generator makes no streets —
+      // citygen/town.ts hasGrid)
+      towns.addSite({ id: m.place, name: m.name ?? m.place, at, size: m.size === 'town' ? 'town' : 'village', roads: [way(1), way(-1)], seed: (m.seed * 2654435761 + m.cell[0] * 40503 + m.cell[1] * 9973) >>> 0, purpose: m.purpose });
     }
   };
 
@@ -120,7 +193,13 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns, opts: { res
       scene.flow?.water.forget(x0, y0, x1 - x0, y1 - y0);
       scene.flow?.lava.forget(x0, y0, x1 - x0, y1 - y0);
     },
-    changed: (rec) => void S.store?.put(KEY, new TextEncoder().encode(JSON.stringify(rec)), { session: 'town', hash: 0 }),
+    // (the far tiles over it made again with the change in them — BACKLOG MU-49; nothing while none is there)
+    farChanged: (x0, y0, w, h) => core.renderer.tiles?.restale(x0, y0, w, h, a.atlas.p.cols, a.atlas.p.rows),
+    changed: (rec) => {
+      void S.store?.put(KEY, new TextEncoder().encode(JSON.stringify(rec)), { session: 'town', hash: 0 });
+      syncCuts(rec);
+      syncFounded(rec);
+    },
     signsChanged: showSigns,
     home: () => {
       const s = homeId ? st.settlement(homeId) : null;
@@ -141,12 +220,16 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns, opts: { res
   (globalThis as { mutateEngine?: unknown }).mutateEngine = eng;
   // (after the static claims' own hook — scenes/level/statics.ts: a building's columns are claimed when the ops look)
   S.onWritten.push((lx, ly, w, h) => void eng.landWritten(lx, ly, w, h));
+  // (and the land past the window, as each far tile's is made: the same entries, the same ops — BACKLOG MU-49)
+  S.onTileLand.push((t) => void eng.tileWritten(t));
   const add = (t: FieldTown) => {
     if (towns.live.get(t.site.id) !== t) return;
     const mt = townOf(t);
     made.set(t.site.id, mt);
     shown.crime.delete(t.site.id);
     eng.townMade(mt);
+    // (the dead's ground written again on land that came back with the town)
+    if (shown.deadTown === t.site.id) graveyard(mt);
     showSigns(eng.signs());
   };
   towns.onMade.push(add);
@@ -163,86 +246,58 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns, opts: { res
     // (what was applied before the store opened stays, after the saved ones)
     const mine = eng.record().list;
     eng.restore(rec);
+    syncCuts(eng.record());
+    syncFounded(eng.record());
     for (const m of mine) eng.apply({ ...m, at: m.cell, place: m.place ?? undefined });
   });
   if (opts.restore !== false) void restoreMutators(eng);
 
-  // ---- the atlas map: the map itself is the record. Every land entry drawn at its place in the map's own drawing (its
-  // area in the kind's colour: water, char, rock, sand, a dry bed, dead or new green), a ruin's cross, a new place's
-  // house, a holder's flag; and a pin with the place's name and what happened (the cheapest honest version: MU-5)
+  // ---- the atlas map: the map itself is the record (BACKLOG MU-5). Every land entry's area drawn at its place in its
+  // kind's colour (water, char, rock, sand, a dry bed, dead or new green), and every changed place — read from the
+  // fact layer, `places()` — a row of badges, one a condition, each with its own picture and its plain word: drowned,
+  // burned, buried, under lava, occupied (in the holder's colour), vassal, founded, abandoned, destroyed
+  // (mutate/mapmarks.ts). The map's pins (`marks`) are left to their owner, a run's objectives.
   const map = scene.atlasMap;
   if (map) {
-    const prevMarks = map.marks;
-    map.marks = () => [
-      ...(prevMarks?.() ?? []),
-      ...eng.places().map((p) => ({
-        at: p.at,
-        name: `${p.name}: ${[...p.conditions, ...(p.status === 'standing' ? [] : [p.status])].join(', ')}${p.owner && p.status !== 'standing' ? ` (${eng.world?.name(p.owner) ?? p.owner})` : ''}`,
-        colour: MARK[p.status === 'standing' ? (p.conditions[p.conditions.length - 1] ?? 'founded') : p.status],
-      })),
-    ];
     const prevOver = map.overlay;
     const texel = a.atlas.worldW / a.atlas.p.n;
+    const hueColour = (by: string) => {
+      const h = (holderHue(by) / 256) * Math.PI * 2;
+      const c = [h, h - 2.094, h + 2.094].map((q) => Math.round((0.5 + 0.5 * Math.cos(q)) * 190 + 30));
+      return `rgb(${c[0]},${c[1]},${c[2]})`;
+    };
     map.overlay = (ctx, px, scale) => {
       prevOver?.(ctx, px, scale);
-      for (const m of eng.record().list) {
+      const list = eng.record().list;
+      for (const m of list) {
+        if (!isLand(m.kind)) continue;
         const [x, y] = px(m.cell[0], m.cell[1]);
-        const r = Math.max(6, m.radius / texel / scale);
+        const r = Math.max(7, m.radius / texel / scale);
         ctx.save();
-        if (isLand(m.kind)) {
-          ctx.globalAlpha = 0.78;
-          ctx.fillStyle = MARK[m.kind];
-          ctx.beginPath();
-          if (m.kind === 'melted') {
-            // (a tongue from the vent, downhill)
-            const ang = Math.atan2(m.params[5], m.params[4]);
-            ctx.ellipse(x, y, r * 1.1, r * 0.55, ang, 0, Math.PI * 2);
-          } else if (m.kind === 'dried') ctx.rect(x - r, y - 2, 2 * r, 4);
-          else ctx.arc(x, y, r, 0, Math.PI * 2);
-          ctx.fill();
-          if (m.kind === 'melted') {
-            ctx.strokeStyle = '#ff9a3a';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-          }
-        } else if (m.kind === 'destroyed' || m.kind === 'abandoned') {
-          ctx.strokeStyle = MARK[m.kind];
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(x - 6, y - 6);
-          ctx.lineTo(x + 6, y + 6);
-          ctx.moveTo(x + 6, y - 6);
-          ctx.lineTo(x - 6, y + 6);
+        ctx.globalAlpha = 0.72;
+        ctx.fillStyle = BADGE_COLOUR[m.kind];
+        ctx.beginPath();
+        if (m.kind === 'melted') {
+          // (a tongue from the vent, downhill)
+          const ang = Math.atan2(m.params[5], m.params[4]);
+          ctx.ellipse(x, y, r * 1.1, r * 0.55, ang, 0, Math.PI * 2);
+        } else if (m.kind === 'dried') ctx.rect(x - r, y - 2, 2 * r, 4);
+        else ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+        if (m.kind === 'melted') {
+          ctx.strokeStyle = '#ff9a3a';
+          ctx.lineWidth = 1.5;
           ctx.stroke();
-        } else if (m.kind === 'founded') {
-          ctx.fillStyle = MARK.founded;
-          ctx.strokeStyle = '#123';
-          ctx.beginPath();
-          ctx.moveTo(x - 6, y + 5);
-          ctx.lineTo(x - 6, y - 2);
-          ctx.lineTo(x, y - 8);
-          ctx.lineTo(x + 6, y - 2);
-          ctx.lineTo(x + 6, y + 5);
-          ctx.closePath();
-          ctx.fill();
-          ctx.stroke();
-        } else {
-          // (captured, vassal: the holder's flag)
-          ctx.strokeStyle = '#123';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(x + 8, y + 6);
-          ctx.lineTo(x + 8, y - 12);
-          ctx.stroke();
-          ctx.fillStyle = MARK[m.kind === 'vassal' ? 'vassal' : 'occupied'];
-          ctx.beginPath();
-          ctx.moveTo(x + 8, y - 12);
-          ctx.lineTo(x + 20, y - 8);
-          ctx.lineTo(x + 8, y - 4);
-          ctx.closePath();
-          ctx.fill();
         }
         ctx.restore();
+        // (a change that names no place: its badge on the land itself)
+        if (m.place === null) drawBadges(ctx, [m.kind], x, y, { words: true });
+      }
+      for (const p of eng.places()) {
+        const kinds = badgesOf(p);
+        if (!kinds.length) continue;
+        const [x, y] = px(p.at[0], p.at[1]);
+        drawBadges(ctx, kinds, x, y - 13, { words: true, tint: p.owner && p.status === 'occupied' ? hueColour(p.owner) : undefined });
       }
     };
   }
@@ -277,6 +332,35 @@ function startLab(scene: LevelScene, towns: FieldTowns, eng: MutateEngine): void
     const [x, y] = here();
     return st.near([x, y * ROW_H], 1e9).find((q) => !towns.live.has(q.id) && (q.size === 'town' || q.size === 'village' || q.size === 'city') && Math.hypot(q.at[0] - x, q.at[1] - y * ROW_H) > 300) ?? null;
   };
+  // (the lab's hooks for scripts — scripts/mutators-reload.mjs: travel to a place by its id, and a live town's lot
+  // conditions counted (a readback of its condition words, asked for by a check, never by the game))
+  (globalThis as { mutlab?: unknown }).mutlab = {
+    go: (id: string) => {
+      // (an atlas settlement, or a place founded this run: the list's own)
+      const s = st.settlement(id);
+      const cell = s ? [Math.round(s.at[0]), Math.round(s.at[1] / ROW_H)] : eng.places().find((q) => q.id === id)?.at;
+      if (!cell) throw new Error(`mutlab: no place ${id}`);
+      return warpWindow(a.atlas, S, core.dims, cell[0], cell[1]);
+    },
+    live: () => [...towns.live.keys()],
+    conditions: async (id: string): Promise<Record<number, number> | null> => {
+      const t = towns.live.get(id);
+      if (!t) return null;
+      await t.made;
+      const dev = host.gpu.device;
+      const n = t.lots.room * 4;
+      const rd = dev.createBuffer({ label: 'mutlab-cond', size: n, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const enc = dev.createCommandEncoder();
+      enc.copyBufferToBuffer(t.lots.condition, 0, rd, 0, n);
+      dev.queue.submit([enc.finish()]);
+      await rd.mapAsync(GPUMapMode.READ);
+      const out: Record<number, number> = {};
+      for (const v of new Uint32Array(rd.getMappedRange())) out[v & 255] = (out[v & 255] ?? 0) + 1;
+      rd.unmap();
+      rd.destroy();
+      return out;
+    },
+  };
   mountMutLab(host.ui, {
     apply: (kind) => {
       if (isLand(kind)) {
@@ -286,7 +370,7 @@ function startLab(scene: LevelScene, towns: FieldTowns, eng: MutateEngine): void
       }
       if (kind === 'founded') {
         const m = mutators.apply({ kind, at: here(), name: 'New camp', size: 'camp' });
-        return `${m.name} founded at ${m.cell[0]}, ${m.cell[1]} (a record, and a house on the map)`;
+        return `${m.name} founded at ${m.cell[0]}, ${m.cell[1]}: its streets and houses are made when the land round it is in view`;
       }
       const t = town();
       if (!t) return 'No town is loaded near here.';

@@ -49,7 +49,7 @@ export interface RunGame {
   /** the fact layer's history as sentences: this run's (with its season), and the earlier runs' */
   history(): { season: number; text: string }[];
   before(): string[];
-  /** the physical changes this run named (the mutators' work, not drawn yet) */
+  /** the physical changes this run named (the mutators' entries, drawn on the land) */
   land(): string[];
   readonly canSkip: boolean;
   readonly onChange: (() => void)[];
@@ -62,6 +62,8 @@ export interface RunGame {
   arm(spell: SpellId | null): void;
   proceed(): void;
   again(): void;
+  /** open the world's map (far places, and what has changed at each) */
+  map(): void;
 }
 
 const CSS = `
@@ -193,7 +195,7 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       if (!mine.length) full.append(el('div', undefined, W.END_NONE));
       else full.appendChild(list(mine.map((e) => `${W.seasonLabel(e.season)}. ${e.text}`)));
       const land = game.land();
-      if (land.length) full.append(el('h4', undefined, W.END_LAND), list(land), el('div', 'stand', W.LAND_LATER));
+      if (land.length) full.append(el('h4', undefined, W.END_LAND), list(land));
       const old = game.before();
       if (old.length) full.append(el('h4', undefined, W.END_BEFORE), list(old));
       full.append(btn(W.NEW_RUN, () => game.again(), 'big'));
@@ -220,7 +222,10 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
         box.appendChild(item);
       }
       sheet.appendChild(box);
-      go.append(btn(W.NEXT, () => game.next()));
+      // (the world's map: far places and what has changed at each — the mutators' badges)
+      const map = btn(W.MAP, () => game.map(), 'quiet');
+      map.style.flex = '0 0 76px';
+      go.append(map, btn(W.NEXT, () => game.next()));
     } else if (phase === 'season') {
       sheet.append(el('h3', undefined, W.BUILDING));
       for (const t of game.notes) sheet.append(el('div', 'note', t));

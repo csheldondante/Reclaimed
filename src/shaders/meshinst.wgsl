@@ -11,6 +11,8 @@ struct MIOut {
   @location(1) @interpolate(flat) info: vec4<u32>,
   // local height share up the part (0 its foot, 1 its top): the crown darker underneath
   @location(2) h: f32,
+  // (mutators round 5) a library plant's death, 0..1 (floraput.wgsl: the instance's fourth row, x)
+  @location(3) @interpolate(flat) dead: f32,
 };
 
 fn miKind(vi: u32) -> u32 {
@@ -67,6 +69,7 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   o.info = vec4<u32>(k, select(part, fpart, fl), winIdx(cell), u32(seed * 65535.0));
   // (flora: the sway weight stands in for the height share up the plant — it rises with it)
   o.h = select(a.z, sway, fl);
+  o.dead = select(0.0, p.x, fl);
   return o;
 }
 
@@ -83,7 +86,7 @@ fn fsInst(in: MIOut) -> FOut {
   var mat = MAT_WOOD;
   if (part >= 3u) {
     // (round 117, flora) the generated species' look (floralook.wgsl, shared with the viewer page)
-    let fl = floraLook(k, part, in.wpos, n, in.h, rnd, in.info.w);
+    let fl = floraLook(k, part, in.wpos, n, in.h, rnd, in.info.w, in.dead);
     if (fl.w < 0.0) { discard; }
     mat = u32(fl.w);
     alb = toLinear(fl.rgb);
@@ -112,7 +115,7 @@ fn fsInst(in: MIOut) -> FOut {
     }
     alb = toLinear(lc);
   }
-  var col = alb * lighting(in.wpos, n);
+  var col = ashDust(alb, in.wpos, n) * lighting(in.wpos, n);
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);

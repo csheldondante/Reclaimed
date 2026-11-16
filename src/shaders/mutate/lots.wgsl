@@ -47,7 +47,8 @@ fn mutLots(@builtin(global_invocation_id) id: vec3<u32>) {
   } else if (m == MUT_BURNED) {
     if (burnIn(w, d)) { c2 = LC_BURNED; sev = 1.0; }
   } else if (m == MUT_MELTED) {
-    if (meltT(wp, w, base + 0.5) > 0.0) { c2 = LC_DESTROYED; sev = 1.0; }
+    // (how far it slumped: the lot's own seed — streets.wgsl condHeight)
+    if (meltT(wp, w, base + 0.5) > 0.0) { c2 = LC_DESTROYED; sev = mhash(i32(lotRecs[o + 23u] & 0xffffu), i32(lotRecs[o + 23u] >> 16u), MP.k.y + 21u); }
   } else if (m == MUT_BURIED) {
     let t = buryDepth(w, d);
     if (t >= 0.2 * h || t >= 1.2) { c2 = LC_BURIED; sev = t / h; }

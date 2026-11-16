@@ -65,6 +65,9 @@ export interface MutationSpec {
   /** 'founded': the new place's name and kind */
   name?: string;
   size?: 'camp' | 'village' | 'town';
+  /** 'founded' (round 5, an addition): what the place is for — 'mining': it has workings beside it, a pit cut in
+   *  benches and a spoil heap, and its town leans to workshops (the settlements' own purpose word) */
+  purpose?: 'mining';
   /** what caused it: the id of the fact event or opportunity (src/living: FactEvent, `about.opp`), so the inspector,
    *  the map and the end-of-run screen can go from a change in the land to the choice that made it */
   cause?: string;
@@ -92,6 +95,7 @@ export interface Mutation {
   tribute?: number;
   name?: string;
   size?: 'camp' | 'village' | 'town';
+  purpose?: 'mining';
   /** what caused it (MutationSpec.cause); not part of its identity */
   cause?: string;
   /** the fact event that records it (FactEvent.id in the bound fact world): the fact layer holds who owns the place

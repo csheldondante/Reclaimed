@@ -318,11 +318,11 @@ fn meshShade(in: MOut) -> FOut {
   // (?look=lookup: the interval's material and the lighting, none of the detail)
   if (MESH_LOOK == 1u) {
     var f: FOut;
-    f.color = vec4<f32>(toSrgb(haze(s.alb * lighting(in.wpos, s.nrm), in.wpos)), 1.0);
+    f.color = vec4<f32>(toSrgb(haze(ashDust(s.alb, in.wpos, s.nrm) * lighting(in.wpos, s.nrm), in.wpos)), 1.0);
     f.pick = vec2<u32>(s.ci + 1u, pickInfo(s.mat, in.wpos.z, 0u));
     return f;
   }
-  var col = s.alb * lighting(in.wpos, s.lnrm);
+  var col = ashDust(s.alb, in.wpos, s.nrm) * lighting(in.wpos, s.lnrm);
   // (round 83: quartz cut as a gem — the hoverbike's playtest: the giant crystals didn't look faceted)
   if (s.gem) { col = gemLook(in.wpos, s.nrm); }
   col += filmSheen(in.wpos, s.nrm, s.filmN, s.film);

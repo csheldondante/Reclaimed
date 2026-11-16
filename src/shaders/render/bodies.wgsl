@@ -148,7 +148,7 @@ fn fsBody(in: VOut) -> FOut {
   }
   // (CG25: laid as dirt first, the road's own surface coming through after REV_DIRT_S)
   if (in.tint > -1e29) { alb = mix(toLinear(REV_DIRT), alb, smoothstep(0.4 * REV_DIRT_S, REV_DIRT_S, revAge)); }
-  var col = alb * lighting(in.wpos, nrm);
+  var col = ashDust(alb, in.wpos, nrm) * lighting(in.wpos, nrm);
   if (physV) {
     // heat (bits 16..23, a share of its melting point): dull red, orange, then white
     let heat = f32((word >> 16u) & 0xffu) / 255.0;

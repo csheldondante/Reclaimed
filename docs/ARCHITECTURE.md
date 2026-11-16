@@ -2702,6 +2702,12 @@ clears them).
     `TILE_BORDER` (2) cells of its neighbours' round it, into the corner of a slot of a wider layout (the region's next
     whole pages: 80²; `FinishTarget.corner`), its Globals' origin the border's corner. The grid's lattice and normals
     at the region's edge read its neighbours' real columns, as the window's do.
+  - **What is written into arriving land is written into a tile's** (mutators round 6, MU-49). `Streamer.onTileLand`
+    (the twin of `onWritten`; render/tileland.ts `TileLandWritten`): called from the bake once the land is in the
+    tiles' world and before its render preparation, with the bake's encoder, the tile world's contract buffers and the
+    tile's origin. The world modifier list is the one listener (`MutateEngine.tileWritten`: the window's own kernels).
+    `TileCache.restale(box)` has the tiles over changed land made again in place. The rivers' wetness field
+    (`WorldGpu.riverWet`) reaches `RIVER_WET_PAD` texels past the window for the tiles' draw (riverheld.wgsl riverWetAt).
   - **The window's render preparation on it.** render/tileworld.ts `TileWorld` (one a TileLandGpu) implements
     sim/systems.ts `PrepWorld` (what SurfaceSystem and RenderFieldsSystem read and write): its layers are the scratch
     slot's pages, its kept fields copied in per bake (as the streamer's copyIn brings a pool slot into the window),
@@ -3644,3 +3650,20 @@ projected spans `PROJ_K` 3 a column (grids/structures.ts); the page table 4096 w
   BARE stamp does for land made with a town.
 - `FortressReachGpu.markFrom(stores)` → `marks` (a word a box column) and `planSpans` (the plan solid, GPU-writable)
   for a town's reach without queries read back.
+
+## World mutators' contract words (branch `mutators`; docs/design/MUTATORS.md)
+
+The mutators write only WorldGpu contract buffers. Three of those carry meanings other systems must know:
+
+- **`waterSource` (f32 a column), read by `liquid.wgsl publishWater`.** Over 0: a source, cells^3 a second. -1e-30:
+  shut by `dried` (MU-15). At or under -1 and over -4096: a HELD flood stage, -(1024 + level in window z) — the open
+  water is held up to the level. At or under -4096: an EDGE stage, -(4096 + level) — the water is kept at the level,
+  up or down (a flood's rim). One float, four meanings: BACKLOG MU-34.
+- **Globals `gustDir[i].w`** (four spare words): the ash fall — strength 0..1, then the ground point the view shows,
+  x, y, z (`sim/globals.ts ashFall`, `common.wgsl ashFall()`). Read by `rain.wgsl` (the flakes are the rain draw's
+  first `round(strength * ASH_FLAKES)` instances; `scenes/world-core.ts` adds the same count to the draw) and by
+  `render/light.wgsl ashDust` (the lit draws' albedo). BACKLOG MU-39.
+- **A region's river inflow factor** (`WorldState` `river-inflow`, `scenes/level/runs.ts useRiverWorld`) is carried
+  downstream by `weather/inflow.ts carryInflow` before it reaches the rivers' wetness field: it cuts what runs
+  through the region, not only the reaches inside it.
+

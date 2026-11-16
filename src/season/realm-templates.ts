@@ -164,7 +164,7 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     turns: 1,
     work: 'labour',
     outcome: [
-      { helper: 'found', args: ['copper-hollow', 'Copper Hollow'] },
+      { helper: 'found', args: ['copper-hollow', 'Copper Hollow', 'mining'] },
       { setTag: ['copper-hollow', 'economy', 'mine', true] },
       { relate: ['player', 'controls', 'copper-hollow'] },
       { relate: ['copper-hollow', 'supplies', '$town'] },

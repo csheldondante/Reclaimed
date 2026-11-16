@@ -93,7 +93,8 @@ struct Globals {
   misc: vec4<f32>,
   // wind impulses (player gusts, cursor breeze): x, y, radius, strength
   gusts: array<vec4<f32>, 4>,
-  // per gust: direction x, y (unit), falloff shape, unused
+  // per gust: direction x, y (unit), falloff shape; w — the four together — the ash fall (the mutators' sign,
+  // sim/globals.ts ashFall): its strength 0..1, then the ground point the screen's centre shows, x, y, z (window units)
   gustDir: array<vec4<f32>, 4>,
   // sky / day-night: rgb ambient sky colour, w = night factor 0..1
   sky: vec4<f32>,
@@ -518,6 +519,10 @@ fn pcg(v: u32) -> u32 {
 fn hash3(x: u32, y: u32, z: u32) -> u32 { return pcg((x + bitcast<u32>(i32(G.org.z))) ^ pcg((y + bitcast<u32>(i32(G.org.w))) ^ pcg(z))); }
 /** A world position in the frame that stays with the land (a streamed window's origin added): noise of positions. */
 fn wo(p: vec2<f32>) -> vec2<f32> { return p + G.org.xy; }
+/** the ash fall (Globals.gustDir's w words): xyz the ground point the view is centred on, w its strength (0: none) */
+fn ashFall() -> vec4<f32> { return vec4<f32>(G.gustDir[1].w, G.gustDir[2].w, G.gustDir[3].w, G.gustDir[0].w); }
+/** ash flakes drawn at strength 1 (rain.wgsl; scenes/world-core.ts adds them to the rain draw's instances) */
+const ASH_FLAKES: f32 = 2200.0;
 fn rand3(x: u32, y: u32, z: u32) -> f32 { return f32(hash3(x, y, z) >> 8u) / 16777216.0; }
 fn randv(p: vec3<i32>) -> f32 { return rand3(bitcast<u32>(p.x), bitcast<u32>(p.y), bitcast<u32>(p.z)); }
 
@@ -820,8 +825,17 @@ fn windAt(p: vec3<f32>) -> vec2<f32> {
   return w;
 }
 
-/** Hostility 0..1 from wilt.x (which carries +2 when the column is established). */
-fn wiltHostility(x: f32) -> f32 { return select(x, x - 2.0, x >= 2.0); }
+/** (mutators round 5, BACKLOG MU-17) wilt.x carries +4 when the column's plants are BLIGHTED: dead where they stand
+ *  for good (a `withered` place — "trees dying"). The wilt system keeps the mark, holds the ground fully hostile and
+ *  the brownness as written; the ecology neither grows nor clears them (fire still burns them). Cleared by whoever
+ *  writes the column's wilt anew (the mutators' `greened`). */
+const WILT_BLIGHT: f32 = 4.0;
+fn wiltBlighted(x: f32) -> bool { return x >= WILT_BLIGHT; }
+/** Hostility 0..1 from wilt.x (which carries +2 when the column is established, +4 when blighted). */
+fn wiltHostility(x: f32) -> f32 {
+  let y = x - select(0.0, WILT_BLIGHT, x >= WILT_BLIGHT);
+  return select(y, y - 2.0, y >= 2.0);
+}
 
 // ---- litter stripping (shared contract: material system ↔ particles) ----
 // Strong wind tears loose litter off the ground one cell at a time. The

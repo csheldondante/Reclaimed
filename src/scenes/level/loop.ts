@@ -648,6 +648,10 @@ class Game implements RunGame {
     this.set('leader');
   }
 
+  map(): void {
+    this.scene.atlasMap?.open();
+  }
+
   // ---- the attack -------------------------------------------------------------------------------------
 
   /**

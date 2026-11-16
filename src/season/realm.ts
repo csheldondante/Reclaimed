@@ -220,14 +220,16 @@ export class Realm {
       // (mutateAt kind $site radius strength? spot?: the land round a site of the home town changed — or round a spot
       // out of it, when one is named: the mountain. The physical side of the event the template has just recorded)
       mutateAt: { effect: (c, a) => void (c.dry || this.landAt(a[0] as PhysicalKind, refOf(c.b, a[1]), Number(a[2]), Number(a[3] ?? 1), c.cause, a[4] as Spot | undefined)) },
-      // (found id name: a new camp in the hills — the settlement's record, its entity, its event, its place on the map)
+      // (found id name purpose?: a new camp in the hills, with what it is for — 'mining': the mutators cut a pit and
+      // heap its spoil beside it, and the camp is built as a site of the field towns when the window nears it; — the settlement's record, its entity, its event, its place on the map)
       found: {
         effect: (c, a) => {
           const id = String(a[0]);
           const cell = this.cellOf('hills');
-          const spec = { kind: 'founded' as const, place: id, cell, radius: 30, strength: 1, by: 'player', name: String(a[1]), size: 'camp' as const };
+          const purpose = a[2] === 'mining' ? ('mining' as const) : undefined;
+          const spec = { kind: 'founded' as const, place: id, cell, radius: 30, strength: 1, by: 'player', name: String(a[1]), size: 'camp' as const, ...(purpose ? { purpose } : {}) };
           const fact = recordMutation(c.w, spec, { cause: c.cause, regionAt: this.o.regionAt ?? (() => this.w.settlement(this.home)!.region) });
-          if (!c.dry && mutators.ready) mutators.apply({ kind: 'founded', place: id, at: cell, radius: 30, by: 'player', name: spec.name, size: 'camp', cause: c.cause, fact });
+          if (!c.dry && mutators.ready) mutators.apply({ kind: 'founded', place: id, at: cell, radius: 30, by: 'player', name: spec.name, size: 'camp', ...(purpose ? { purpose } : {}), cause: c.cause, fact });
         },
       },
     };

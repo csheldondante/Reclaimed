@@ -68,7 +68,7 @@ fn fsPlant(in: PO) -> @location(0) vec4<f32> {
     return shade(vec3<f32>(s, s * 0.98, s * 0.93), n, in.wpos);
   }
   let rnd = f32(in.info.z) / 65535.0;
-  let fl = floraLook(in.info.x, in.info.y, in.wpos, n, in.h, rnd, in.info.z);
+  let fl = floraLook(in.info.x, in.info.y, in.wpos, n, in.h, rnd, in.info.z, 0.0);
   if (fl.w < 0.0) { discard; }
   return shade(fl.rgb, n, in.wpos);
 }

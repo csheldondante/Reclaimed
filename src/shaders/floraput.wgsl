@@ -7,8 +7,10 @@
  * (round 117, flora) A plant of species range r (first kind, variants) at column c: a variant by the column's hash,
  * turned, scaled by `scale` (± 10 %), leaning up to `lean` (a skew: the foot stays put). Offset within the cell by
  * `off` (quarter cells, so small plants don't line up on the grid). Its sway comes from the column's bend in the draw.
+ * `dead` (0..1; mutators round 5, BACKLOG MU-17): how far the plant has died — the column's brownness (wilt.wgsl's y)
+ * as the caller reads it; the draw bares and greys it (floralook.wgsl). Rides in the instance's fourth row, x.
  */
-fn floraPut(r: vec2<u32>, c: vec2<u32>, at: vec2<f32>, top: f32, scale: f32, lean: f32, salt: u32) {
+fn floraPut(r: vec2<u32>, c: vec2<u32>, at: vec2<f32>, top: f32, scale: f32, lean: f32, salt: u32, dead: f32) {
   let k = r.x + min(u32(rand3(c.x, c.y, 530u + salt) * f32(r.y)), r.y - 1u);
   let j = atomicAdd(&indirect[MI_ARGS + k * 5u + 1u], 1u);
   if (j >= MI_CAP) { return; }
@@ -22,7 +24,7 @@ fn floraPut(r: vec2<u32>, c: vec2<u32>, at: vec2<f32>, top: f32, scale: f32, lea
   instTree[o] = vec4<f32>(cs, -sn, lx * s, at.x);
   instTree[o + 1u] = vec4<f32>(sn, cs, ly * s, at.y);
   instTree[o + 2u] = vec4<f32>(0.0, 0.0, s, top);
-  instTree[o + 3u] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+  instTree[o + 3u] = vec4<f32>(dead, 0.0, 0.0, 0.0);
 }
 // (round 117, flora) the view, as renderprep.wgsl's PrepCam (the renderer's camera buffer: render.wgsl Camera's head)
 struct PrepCam {

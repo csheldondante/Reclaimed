@@ -6,9 +6,10 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { LOT_CONDITION, type MutatorKind } from '../../src/mutate';
 import { MutateEngine, type MutTown } from '../../src/mutate/engine';
 import { MutateGpu, type Origin } from '../../src/mutate/gpu';
-import type { ListWorld } from '../../src/mutate/list';
+import { GPU_GRAVES, type ListWorld } from '../../src/mutate/list';
 import { unpackColumns } from '../../src/world/mapfile';
 import { ROW_H } from '../../src/world/lattice';
+import { RIVER_WET_PAD } from '../../src/sim/world-gpu';
 import { MAT } from '../../src/world/materials';
 import { tinyMap } from '../support/tinymap';
 import { mutWorld } from '../support/mutworld';
@@ -210,11 +211,11 @@ describe.each(KINDS)('$kind', ({ kind, lots }) => {
       console.log(`[mutators] flood level ${level.toFixed(2)}: ${under} of ${all} columns inside the rim under water, ${high} columns of the map at or over the level`);
 
     } else if (kind === 'burned') {
-      expect(top.mat).toBe(MAT.Ash);
+      expect(top.mat).toBe(MAT.Char);
       expect(after.veg[i]).toBe(0);
       expect(before.veg[i]).toBe(2);
     } else if (kind === 'melted') {
-      expect(top.mat).toBe(MAT.Basalt);
+      expect([MAT.Basalt, MAT.Obsidian]).toContain(top.mat);
       let hot = 0;
       for (let k = 0; k < W * H; k++) if (after.lava[k * 4 + 2] > 1000) hot++;
       expect(hot).toBeGreaterThan(3);
@@ -232,7 +233,13 @@ describe.each(KINDS)('$kind', ({ kind, lots }) => {
       expect(after.src[45 * W + 32]).toBeGreaterThan(-1e-20);
       expect(after.src[45 * W + 2]).toBeCloseTo(0.2, 5);
     } else if (kind === 'withered') {
-      expect(after.wilt[(20 * W + 32) * 4 + 1]).toBe(1);
+      // (dying: yellowed to brown by its noise — past where the trees go bare (0.35..0.6, vegprep.wgsl) — and the
+      // ground hostile, so woken plants stay dead)
+      const y = after.wilt[(20 * W + 32) * 4 + 1];
+      expect(y).toBeGreaterThanOrEqual(0.52 - 1e-6);
+      expect(y).toBeLessThanOrEqual(0.92 + 1e-6);
+      // (blighted: common.wgsl WILT_BLIGHT 4 + hostility 1)
+      expect(after.wilt[(20 * W + 32) * 4]).toBe(5);
       expect(after.veg[20 * W + 32]).toBe(2);
     } else {
       expect(after.veg[20 * W + 32]).toBeGreaterThan(2.1);
@@ -308,8 +315,8 @@ test('world state: a place destroyed, abandoned, captured — its lots all carry
 // The user (2026-11-15): "the local simulation and playable battle make the instant mutations read as fully simulated".
 // An instant end state must be one the live sims would leave: woken on it, they barely move it.
 describe('woken sims leave an instant result nearly as it is', () => {
-  const closedBowl = (x: number, y: number) => 12 - 6 * Math.exp(-((x - 32) ** 2 + (y - 32) ** 2) / 160);
-  async function bowlRig(systems: string[] | 'all') {
+  const hollow = (x: number, y: number) => 12 - 6 * Math.exp(-((x - 32) ** 2 + (y - 32) ** 2) / 160);
+  async function bowlRig(systems: string[] | 'all', closedBowl: (x: number, y: number) => number = hollow) {
     const map = tinyMap(W, H, 48, (x, y) => {
       const z = closedBowl(x, y);
       return [{ z0: 0, z1: z - 1, mat: MAT.Stone }, { z0: z - 1, z1: z, mat: MAT.Soil }];
@@ -321,6 +328,52 @@ describe('woken sims leave an instant result nearly as it is', () => {
     const eng = new MutateEngine({ gpu, world, origin: () => [0, 0, 0], towns: () => [] });
     return { w, gpu, eng };
   }
+
+  // (round 3, BACKLOG MU-28) On open ground the flow model drained a flood in seconds: at Muru 1 900 flooded columns
+  // fell to 400 in 12 s. The flood's level is now a stage the liquid holds (liquid.wgsl publishWater, the source word).
+  test('flooded on an open slope, then the liquid woken for 5 s: the stage holds the water at its level', async () => {
+    const slope = (x: number, _y: number) => 14 - 0.12 * x;
+    const r = await bowlRig(['surface', 'liquid-water'], slope);
+    r.eng.apply({ kind: 'flooded', at: AT, radius: R, strength: 1, seed: 1 });
+    await r.eng.levels;
+    const level = r.eng.record().list[0].params[0];
+    const a = (await r.w.read('water')).slice();
+    await r.w.step(300);
+    const b = await r.w.read('water');
+    let n = 0;
+    let low = 0;
+    let worst = 0;
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        if (dist(x, y) > R * 0.5 || a[i] < 0.3) continue;
+        n++;
+        // (silt lies under the water: the surface is the level whatever the bed)
+        worst = Math.max(worst, a[i] - b[i]);
+        if (b[i] < a[i] - 0.25) low++;
+      }
+    // (round 4, BACKLOG MU-36) The rim: the flood's surface comes down to the ground round it with no step, and what
+    // the held core sheds is taken up in the rim — nothing pours out over the land below.
+    const sf = await r.w.read('surface');
+    const top = Float32Array.from(new Uint32Array(sf.buffer, sf.byteOffset, W * H), (v) => (v & 0x1ffff) / 256);
+    let step = 0;
+    let outside = 0;
+    for (let y = 1; y < H - 1; y++)
+      for (let x = 1; x < W - 1; x++) {
+        const i = y * W + x;
+        if (dist(x, y) > R) outside += b[i];
+        if (dist(x, y) < R * 0.6 || dist(x, y) > R + 2) continue;
+        for (const k of [i + 1, i + W]) if (a[i] > 0.05 || a[k] > 0.05) step = Math.max(step, Math.abs(top[i] + a[i] - top[k] - a[k]));
+      }
+    console.log(`[mutators] flood on a slope woken 5 s: level ${level.toFixed(2)}, ${n} flooded columns in the core, ${low} fell by a quarter cell or more, the most ${worst.toFixed(3)}; the rim's tallest step between neighbours ${step.toFixed(3)}, water beyond the radius after 5 s ${outside.toFixed(2)}`);
+    expect(g.takeErrors()).toEqual([]);
+    expect(n).toBeGreaterThan(100);
+    expect(low).toBe(0);
+    expect(step).toBeLessThan(0.75);
+    expect(outside).toBeLessThan(3);
+    r.gpu.dispose();
+    r.w.destroy();
+  });
 
   test('flooded in a closed hollow, then the liquid woken for 5 s: the water keeps its volume and its level', async () => {
     const r = await bowlRig(['surface', 'liquid-water']);
@@ -376,6 +429,37 @@ describe('woken sims leave an instant result nearly as it is', () => {
   });
 });
 
+// (round 5, BACKLOG MU-17) In the level the withered ground went green again in seconds wherever chunks were awake:
+// the wilt system took the hostility from the ground each tick (none) and healed the brownness, and where it had not
+// yet, the ecology cleared the browned plants away. Blighted columns are left as written.
+test('withered, then the plants’ systems woken for 5 s: still dead, still standing', async () => {
+  const map = tinyMap(W, H, 48, (x, y) => [{ z0: 0, z1: 11, mat: MAT.Stone }, { z0: 11, z1: 12, mat: MAT.Soil }]);
+  map.vegetation.fill(4.2);
+  map.moisture.fill(0.5);
+  const w = await tinyWorld(g, map, 'all');
+  const gpu = new MutateGpu(g.device, w.core.world, W, H);
+  await gpu.ready;
+  const eng = new MutateEngine({ gpu, world: { ground: () => 12, sea: -1e9, place: () => null, places: () => [] }, origin: () => [0, 0, 0], towns: () => [] });
+  eng.apply({ kind: 'withered', at: AT, radius: R, strength: 1, seed: 1 });
+  await w.step(2);
+  const i = 32 * W + 32;
+  const far = 2 * W + 2;
+  const a = { wilt: (await w.core.readBuffer('wilt')).slice(), veg: (await w.core.readBuffer('veg')).slice() };
+  await w.step(300);
+  const b = { wilt: (await w.core.readBuffer('wilt')).slice(), veg: (await w.core.readBuffer('veg')).slice() };
+  expect(g.takeErrors()).toEqual([]);
+  expect(a.wilt[i * 4 + 1]).toBeGreaterThanOrEqual(0.52 - 1e-6);
+  expect(b.wilt[i * 4 + 1]).toBe(a.wilt[i * 4 + 1]);
+  expect(b.wilt[i * 4]).toBeGreaterThanOrEqual(5);
+  expect(b.veg[i]).toBe(a.veg[i]);
+  expect(b.veg[i]).toBeGreaterThan(4);
+  // (outside the place the woods live on, unmarked)
+  expect(b.wilt[far * 4]).toBeLessThan(4);
+  expect(b.wilt[far * 4 + 1]).toBeLessThan(0.1);
+  gpu.dispose();
+  w.destroy();
+});
+
 test('a far eruption casts ash fall and darkness on the home town for three seasons; a near one casts none', async () => {
   const r = await rig();
   const seen: string[][] = [];
@@ -394,4 +478,170 @@ test('a far eruption casts ash fall and darkness on the home town for three seas
   near.apply({ kind: 'melted', at: AT, radius: R, seed: 3 });
   expect(near.signs()).toEqual([]);
   expect(g.takeErrors()).toEqual([]);
+});
+
+// ---- (round 5, BACKLOG MU-42) a river run dry: the window's river columns settled to the cut ----------------------
+test('riverSettle: river columns under a cut hold the table’s depth at it; the river beyond the cut, water off the table and a flood’s held stage are left; twice is the same', async () => {
+  const r = await rig();
+  const c = r.w.core;
+  const dev = g.device;
+  // (the rig's river band — rows 44..47, 5 deep at its line, 1.5 at its banks — as the atlas's table has it)
+  const table = new Float32Array(W * H * 4);
+  for (let y = 44; y < 48; y++)
+    for (let x = 0; x < W; x++) table.set([0.1, 0, y === 45 || y === 46 ? 5 : 1.5, 5], (y * W + x) * 4);
+  dev.queue.writeTexture({ texture: c.world.riverFlow }, c.world.ring.texToStore(table, 4), { bytesPerRow: c.world.riverFlow.width * 16 }, [c.world.riverFlow.width, c.world.riverFlow.height]);
+  // (the wetness field: the climate's 1 taken off west of x = 24 — a cut to nothing — easing to none by x = 32)
+  const wet = c.world.riverWet;
+  const field = new Float32Array(wet.width * wet.height);
+  for (let j = 0; j < wet.height; j++) for (let i = 0; i < wet.width; i++) field[j * wet.width + i] = i - RIVER_WET_PAD <= 3 ? -1 : 0;
+  dev.queue.writeTexture({ texture: wet }, field, { bytesPerRow: wet.width * 4 }, [wet.width, wet.height]);
+  // (a pond off the table, inside the cut; and a river column a flood holds)
+  const before = await snap(r);
+  const pond = 20 * W + 10;
+  const heldCol = 45 * W + 6;
+  const water = before.water.slice();
+  water[pond] = 2;
+  const src = before.src.slice();
+  src[heldCol] = -(1024 + 20);
+  dev.queue.writeBuffer(c.world.water, 0, c.world.ring.toStore(water, 1));
+  dev.queue.writeBuffer(c.world.waterSource, 0, c.world.ring.toStore(src, 1));
+  const d0 = r.gpu.dispatches;
+  r.gpu.riverSettle([0, 0, W, H]);
+  expect(r.gpu.dispatches - d0).toBe(1);
+  const a = await snap(r);
+  for (let y = 44; y < 48; y++) {
+    // (under the whole cut: a dry bed)
+    for (let x = 0; x < 24; x++) if (y * W + x !== heldCol) expect(a.water[y * W + x], `dry at ${x},${y}`).toBe(0);
+    // (past it: as it was)
+    for (let x = 33; x < W; x++) expect(a.water[y * W + x], `whole at ${x},${y}`).toBe(before.water[y * W + x]);
+    // (between: lowered, never raised)
+    for (let x = 24; x < 33; x++) expect(a.water[y * W + x]).toBeLessThanOrEqual(before.water[y * W + x]);
+  }
+  expect(a.water[pond]).toBe(2);
+  expect(a.water[heldCol]).toBe(before.water[heldCol]);
+  r.gpu.riverSettle([0, 0, W, H]);
+  const b = await snap(r);
+  expect(Array.from(b.water)).toEqual(Array.from(a.water));
+});
+
+// ---- (round 5, BACKLOG MU-6) a founded mining place's workings: a pit cut in benches and a spoil heap ------------
+test('founded, mining: a pit cut into the ground and a heap piled on it, both under broken rock; nothing else moved; written again it is the same; a plain founded place writes no land', async () => {
+  const r = await rig();
+  r.eng.useWorld(mutWorld([]));
+  const before = await snap(r);
+  const d0 = r.gpu.dispatches;
+  r.eng.apply({ kind: 'founded', at: [20, 20], name: 'New camp' });
+  expect(r.gpu.dispatches).toBe(d0);
+  // (a seed whose workings fall inside this small world: the town's centre is put far to one side)
+  let m = null as ReturnType<typeof r.eng.apply> | null;
+  for (let seed = 1; seed < 400 && !m; seed++) {
+    const p = r.eng.worldList.make({ kind: 'founded', at: [-4, 30], name: 'Deepcut', purpose: 'mining', seed }).params;
+    const inside = (x: number, y: number, rad: number) => x - rad > 2 && x + rad < W - 2 && y / ROW_H - rad / ROW_H > 2 && y / ROW_H + rad / ROW_H < H - 2;
+    if (inside(p[0], p[1], p[2]) && inside(p[3], p[4], p[5])) m = r.eng.apply({ kind: 'founded', at: [-4, 30], name: 'Deepcut', purpose: 'mining', seed });
+  }
+  expect(m).not.toBeNull();
+  expect(m!.resident).toBe(true);
+  const after = await snap(r);
+  const ca = cols(r, before);
+  const cb = cols(r, after);
+  const topOf = (c: typeof ca, x: number, y: number) => c[y * W + x][c[y * W + x].length - 1];
+  const [px, py, pr, hx, hy, hr] = m!.params;
+  const pit = [Math.floor(px), Math.floor(py / ROW_H)];
+  const heap = [Math.floor(hx), Math.floor(hy / ROW_H)];
+  // (the pit's middle: the floor, 0.42 of its radius down, under a skin of rubble)
+  expect(topOf(cb, pit[0], pit[1]).mat).toBe(MAT.Rubble);
+  expect(topOf(ca, pit[0], pit[1]).z1 - topOf(cb, pit[0], pit[1]).z1).toBeGreaterThan(pr * 0.42 - 0.5);
+  // (the heap's middle: spoil piled up)
+  expect(topOf(cb, heap[0], heap[1]).mat).toBe(MAT.Rubble);
+  expect(topOf(cb, heap[0], heap[1]).z1 - topOf(ca, heap[0], heap[1]).z1).toBeGreaterThan(hr * 0.3);
+  // (nothing outside the two)
+  let outside = 0;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const wx = x + 0.5 + 0.5 * (y & 1);
+      const wy = (y + 0.5) * ROW_H;
+      if (Math.hypot(wx - px, wy - py) < pr + 1 || Math.hypot(wx - hx, wy - hy) < hr + 1) continue;
+      if (JSON.stringify(ca[y * W + x]) !== JSON.stringify(cb[y * W + x])) outside++;
+    }
+  expect(outside).toBe(0);
+  r.eng.rewrite();
+  const again = await snap(r);
+  expect(Array.from(again.layers)).toEqual(Array.from(after.layers));
+  expect(g.takeErrors()).toEqual([]);
+});
+
+// ---- (round 5, BACKLOG MU-43) the 'deadrise' sign's ground mark ------------------------------------------------
+test('landMark, the burial ground: black ground with pale stones inside its radius, nothing outside; written again it is the same', async () => {
+  const r = await rig();
+  const before = await snap(r);
+  const at: [number, number] = [20.5, 20.5 * ROW_H];
+  const box = r.gpu.landMark(GPU_GRAVES, at, 8, 77, [0, 0, 0]);
+  expect(box).not.toBeNull();
+  const after = await snap(r);
+  const ca = cols(r, before);
+  const cb = cols(r, after);
+  let black = 0;
+  let stones = 0;
+  let outside = 0;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const d = Math.hypot(x + 0.5 + 0.5 * (y & 1) - at[0], (y + 0.5) * ROW_H - at[1]);
+      const top = cb[i][cb[i].length - 1];
+      if (d > 8) {
+        if (JSON.stringify(ca[i]) !== JSON.stringify(cb[i])) outside++;
+        continue;
+      }
+      if (top.mat === MAT.Basalt) black++;
+      if (top.mat === MAT.Bone) {
+        stones++;
+        // (a stone stands on the black skin, half a cell to a cell tall)
+        expect(cb[i][cb[i].length - 2].mat).toBe(MAT.Basalt);
+        expect(top.z1 - top.z0).toBeGreaterThan(0.45);
+      }
+    }
+  expect(outside).toBe(0);
+  // (most of the disc turned; a few stones in rows)
+  expect(black).toBeGreaterThan(100);
+  expect(stones).toBeGreaterThan(3);
+  expect(stones).toBeLessThan(black / 3);
+  r.gpu.landMark(GPU_GRAVES, at, 8, 77, [0, 0, 0]);
+  const again = await snap(r);
+  expect(Array.from(again.layers)).toEqual(Array.from(after.layers));
+  expect(g.takeErrors()).toEqual([]);
+});
+
+// (round 6, BACKLOG MU-49) The far tiles' path: a tile's land is written by the same ops from the same entries, into
+// the bake's own encoder (MutateEngine.tileWritten). Here the tile's world is a second tiny world of the same ground
+// with nothing resident: what the tile path writes must be, column for column, what the window's path wrote.
+describe.each(['burned', 'buried', 'melted', 'withered'] as const)('a far tile written with %s', (kind) => {
+  test('column for column what the window holds', async () => {
+    const near = await rig();
+    const far = await rig();
+    near.eng.apply({ kind, at: AT, radius: R, strength: 1, seed: 5 });
+    far.origin.o = null;
+    const changes: number[][] = [];
+    const eng = new MutateEngine({ gpu: far.gpu, world: listWorld, origin: () => null, towns: () => [], farChanged: (...b) => void changes.push(b) });
+    expect(eng.apply({ kind, at: AT, radius: R, strength: 1, seed: 5 }).resident).toBe(false);
+    // (the tiles over its box are told to be made again)
+    expect(changes.length).toBe(1);
+    expect(changes[0][0]).toBeLessThan(AT[0] - R);
+    const before = await snap(far);
+    const enc = g.device.createCommandEncoder();
+    const cw = far.w.core.world;
+    const t = { enc, world: cw, layout: { bufs: [], K: 1 } as never, slotOff: 0, x0: 0, y0: 0, oz: 0, side: W, frame: 1 };
+    expect(eng.tileWritten(t)).toBe(true);
+    // (a second tile in the same frame's encoder, off to the side of the entry's reach: nothing of it there)
+    expect(eng.tileWritten({ ...t, x0: 4 * W })).toBe(false);
+    g.device.queue.submit([enc.finish()]);
+    const a = await snap(near);
+    const b = await snap(far);
+    expect(changedCols(far, before, b).inside).toBeGreaterThan(50);
+    expect(Array.from(b.layers)).toEqual(Array.from(a.layers));
+    expect(Array.from(b.veg)).toEqual(Array.from(a.veg));
+    expect(Array.from(b.wilt)).toEqual(Array.from(a.wilt));
+    expect(Array.from(b.water)).toEqual(Array.from(a.water));
+    expect(far.gpu.tileDispatches).toBe(1);
+    expect(g.takeErrors()).toEqual([]);
+  });
 });

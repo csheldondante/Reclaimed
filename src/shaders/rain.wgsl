@@ -12,7 +12,7 @@ struct Camera {
 struct VOut {
   @builtin(position) pos: vec4<f32>,
   @location(0) a: f32,
-  // 1: a snowflake (round 50: a cold storm, common.wgsl airTempAt)
+  // 1: a snowflake (round 50: a cold storm, common.wgsl airTempAt); 2: an ash flake, 3: a dark cinder (the mutators' sign)
   @location(1) snow: f32,
 };
 
@@ -26,11 +26,38 @@ fn vsRain(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0);
   o.a = 0.0;
   o.snow = 0.0;
+  // (mutators' 'ashfall' sign: the draw's first instances are ash flakes — pale grey, slow, swaying — over the whole
+  // view: a tile of world-anchored flakes wrapped round the ground point the view is centred on, so panning moves
+  // through them and none pops. Sized in screen pixels, never under three, so they show at play zoom)
+  let ash = ashFall();
+  let ashN = u32(round(ash.w * ASH_FLAKES));
+  if (ii < ashN) {
+    let L = 300.0;
+    let h = vec2<f32>(rand3(ii, 71u, 1u), rand3(ii, 71u, 2u));
+    let span = 46.0;
+    let speed = 3.5 + rand3(ii, 71u, 3u) * 3.5;
+    let fall = fract(G.time * speed / span + rand3(ii, 71u, 4u)) * span;
+    let sw = f32(ii) * 1.7 + G.time * 0.9;
+    let drift = vec2<f32>(G.windX, G.windY) * fall / speed * 0.35 + vec2<f32>(sin(sw), cos(sw * 0.8)) * 0.7;
+    let xy = ash.xy + (fract(h - (wo(ash.xy) + drift) / L) - 0.5) * L;
+    let c = CAM.viewProj * vec4<f32>(xy, ash.z - 4.0 + span - fall, 1.0);
+    if (c.w <= 0.0) { return o; }
+    let half = (1.0 + 0.7 * rand3(ii, 71u, 5u)) / CAM.viewport.xy * 2.0;
+    let q = QUAD[vi];
+    // (a little taller than wide: it reads as falling in a still)
+    o.pos = vec4<f32>(c.xy + vec2<f32>(q.x, (q.y * 2.0 - 1.0) * 1.5) * half * c.w, c.z, c.w);
+    // (fading in at the top of the fall and out at the bottom of it)
+    o.a = 0.8 * smoothstep(0.0, 6.0, fall) * smoothstep(span, span - 5.0, fall);
+    // (two tones, so the fall shows over light ground and dark: pale flakes, and dark cinders — 2 and 3)
+    o.snow = select(2.0, 3.0, rand3(ii, 71u, 6u) < 0.3);
+    return o;
+  }
   if (G.numStorms == 0u) { return o; }
-  let si = ii % G.numStorms;
+  let ri = ii - ashN;
+  let si = ri % G.numStorms;
   let s = G.storms[si];
   let b = G.stormsB[si];
-  let k = ii / G.numStorms;
+  let k = ri / G.numStorms;
   if (rand3(k, si, 3u) > s.w * (0.6 + 0.4 * b.z)) { return o; }
   let ang = rand3(k, si, 1u) * 6.2831853;
   let rad = sqrt(rand3(k, si, 2u)) * s.z * 0.9;
@@ -76,7 +103,9 @@ struct FOut {
 @fragment
 fn fsRain(in: VOut) -> FOut {
   var o: FOut;
-  o.color = vec4<f32>(mix(vec3<f32>(0.78, 0.82, 0.86), vec3<f32>(0.96, 0.97, 1.0), in.snow), in.a);
+  o.color = vec4<f32>(mix(vec3<f32>(0.78, 0.82, 0.86), vec3<f32>(0.96, 0.97, 1.0), min(in.snow, 1.0)), in.a);
+  // (ash: grey flakes, a little darker than the dusting they leave)
+  if (in.snow > 1.5) { o.color = vec4<f32>(select(vec3<f32>(0.84, 0.83, 0.8), vec3<f32>(0.3, 0.29, 0.28), in.snow > 2.5), in.a); }
   o.pick = vec2<u32>(0u);
   return o;
 }
