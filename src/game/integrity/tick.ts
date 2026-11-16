@@ -77,6 +77,15 @@ export function update(ig: Integrity, dt: number): void {
   // (kept: a pass reads the copy — the first one with nothing to judge too, to have it)
   if (!ig.dirty.length && !ig.rockSeeds.size && !ig.bodies.list.length && !rigidN && !ig.orphanCheck && (!kept || ig.cols.any)) return;
   // (with only sleeping bodies about, a slower pass still checks they're held up; the rigid rock's ground is read round it)
+  // (phone-idle PI-5, 2026-11-15) A slide alone asks for no read. It owes one thing, the orphan check, and that runs on
+  // the GPU from the claims the CPU already holds (gpuEdit.orphans). Until round 2 it went through a kept pass, whose
+  // read is whole after a slide: the whole layers buffer back (27–29 MB at this window) 7–10 times in a 10 s pan with
+  // nothing to judge. The copy stays the old window's until something asks for a judge pass (an edit, a blow, a body,
+  // the rigid rock): that pass's read is whole, as before, and checks the copy's orphans and the claims then.
+  if (kept && ig.cols.any && !ig.dirty.length && !ig.rockSeeds.size && !ig.bodies.list.length && !rigidN) {
+    orphansAfterSlide(ig);
+    return;
+  }
   ig.t = ig.dirty.length || ig.rockSeeds.size || ig.bodies.anyAwake || rigidN ? PASS : 1.0;
   ig.urgent = false;
   ig.busy = true;
@@ -124,6 +133,25 @@ export function update(ig: Integrity, dt: number): void {
     // (round 120: judge B answers from the GPU — the pass waits for its verdict, and no other pass starts meanwhile)
     return pass(ig, got === 'whole', null, asOf).then(done);
   }, ignoreTeardown);
+}
+
+/**
+ * (phone-idle PI-5) The orphan check a slide owes, with nothing else to judge: External intervals no claim holds made
+ * ground again on the GPU, from the CPU's claims — nothing read back. Owed while the slide's land is still coming in
+ * (landPending), as in a pass. True once done.
+ */
+export function orphansAfterSlide(ig: Integrity): boolean {
+  if (!ig.orphanCheck) return true;
+  const ext = ig.external;
+  if (!ext) {
+    ig.orphanCheck = false;
+    return true;
+  }
+  if (ig.landPending?.()) return false;
+  ig.orphanCheck = false;
+  ig.gpuEdit.orphans(gpuCols(ig), ext.claimedSpans(), ext.statics?.ownedJob?.() ?? null);
+  ig.stats.slideOrphans++;
+  return true;
 }
 
 /**

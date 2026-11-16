@@ -302,6 +302,12 @@ on its edits (5 reads of 27 MB in 10 s). BACKLOG PI-5.
 After: idle 75.7 indirect, 74.9 direct, 61.1 compute and 3.3 render passes, 0.99 reads (0.91 KB), model 9.5 ms.
 `scripts/census.mjs` gates it: no valley reads at idle, under 4 KB read back a frame, nothing made in a frame.
 
+### Round 2 (the orchestrator's rulings, 2026-11-15)
+
+| cut | before → after (a frame) | model |
+|---|---|---|
+| A slide alone reads nothing back: `Integrity`'s orphan check after a slide runs on the GPU instead of through a judge pass whose kept copy is read whole (`game/integrity/tick.ts` `orphansAfterSlide`) | pan: 383 KB → 6.8 KB read back, 7–10 reads of 27–29 MB → none; time-lapse: 185 KB → 1.1 KB | pan 14.2 → 9.7 ms; time-lapse 11.9 → 10.1 ms; as hitches, 350+ ms each gone |
+
 ## The decision the rest needs
 
 Every remaining indirect dispatch is indirect on purpose. Round 128o and the town tracks moved "is there work" onto

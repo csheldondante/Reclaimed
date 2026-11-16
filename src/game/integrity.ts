@@ -171,7 +171,7 @@ export class Integrity {
    * accurate number") the CPU rigid rock not stepped (the bodies frozen where they are, still drawn), the judge not run
    */
   readonly paused = { physics: false, judge: false };
-  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0, judgeMs: 0, judgeGpuMs: 0, readMs: 0, readKB: 0, blows: 0 };
+  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0, judgeMs: 0, judgeGpuMs: 0, readMs: 0, readKB: 0, blows: 0, slideOrphans: 0 };
   /** sleeping bodies projected per column: top, bottom (top < 0: none) — the
    *  GPU's bodyProj texture and the bodies' own collision share it */
   readonly proj: Float32Array;

@@ -23244,3 +23244,38 @@ src/roadlab/control.ts (not this branch's; left).
 12 s and 1 s windows is ~155 s by sum, not run), `npm run smoke` (atlas: loaded, no fatal, its sim running). The smoke
 takes no picture; the user's level was looked at in the census's shot before and after the cut (the town, its river
 and bridge, the card sheet: the same) and the bench's page in its own.
+
+## 2026-11-15 — a slide alone reads nothing back: the judge's 27 MB copy only when a pass is asked for (PI-5, `phone-idle` round 2)
+
+The orchestrator's ruling after round 1: the judge's whole-window read first, lazy and event-driven. The census had
+`Integrity` reading the whole layers buffer back after every slide (27–29 MB, 7–10 times in a 10 s pan, 5 in a
+time-lapse whose camera eases across regions).
+
+**The cause.** A slide sets `orphanCheck` (External intervals no claim holds go back to ground). That check went
+through a judge pass, and a kept copy's pass reads whole after a slide (the copy is of the window before). So every
+slide bought a whole read with nothing to judge. The check itself never needed the read: it is one GPU kernel
+(`gpuEdit.orphans`) fed the claims the CPU holds.
+
+**The change** (game/integrity/tick.ts `orphansAfterSlide`). With a kept copy and nothing to judge (no dirty box, no
+cut seed, no body, no rigid rock) the tick runs the orphan kernel and returns: no pass, no read. It waits for the
+slide's land as a pass does (`landPending`). The copy stays the old window's until something asks for a pass (an edit,
+a blow, a body); that pass reads whole, as before, and does the copy's own orphan check and the claims' check then.
+
+**Measured** (scripts/census.mjs, desktop headless, per frame):
+
+| state | read back before | after | model before → after |
+|---|---|---|---|
+| pan, 30 cells/s for 10 s | 383 KB a frame (7–10 reads of 27–29 MB) | 6.8 KB a frame, none of it Integrity's | 14.2 → 9.7 ms |
+| Next season time-lapse | 185 KB a frame (5 reads of 27 MB) | 1.1 KB a frame | 11.9 → 10.1 ms |
+
+**Tests.** test/gpu/integrity-slide.test.ts: three slides read 0 bytes and run no pass, the check clears; an edit
+after them gets its pass on a whole read; nothing more is read after. The existing integrity, external, external-take
+and buried-external GPU tests pass. scripts/census.mjs gates the pan (Integrity reads nothing) and the time-lapse
+(under 1 MB read in all).
+
+**Hacks and limits.** The level's first read of the whole copy stays (once, at boot: consumers read `cols.whole`
+without asking). A pass asked for after a slide still reads whole (27 MB once per request): the judge can't yet work
+from the dirty box alone when its copy is of another window (`readFor` reads chunks only into a copy of this window) —
+PI-5 stays open for that. Between a slide and the next pass the claims aren't verified against the columns
+(`ext.verify`); before, a slide's pass did it as a side effect. Nothing cuts a claim without an edit marking a box, and
+at rest with no slide it was never run either.

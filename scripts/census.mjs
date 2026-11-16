@@ -112,7 +112,9 @@ await run({ name: 'census', kind: 'behaviour' }, async (R) => {
           requestAnimationFrame(step);
         }),
     );
-    say('pan (30 cells a second for 10 s)', await take());
+    const pan = await take();
+    say('pan (30 cells a second for 10 s)', pan);
+    R.check('pan: Integrity reads nothing back (PI-5: a slide alone asks for no judge pass)', (pan.systems.find((s) => s.system === 'integrity')?.readBytes ?? 0) === 0, pan.systems.find((s) => s.system === 'integrity')?.labels?.slice(0, 3));
     await R.sleep(5000);
     await take();
   }
@@ -135,7 +137,9 @@ await run({ name: 'census', kind: 'behaviour' }, async (R) => {
     const t0 = Date.now();
     await p.waitForFunction(() => window.__seasonDone && !window.season.playing, { timeout: 120000, polling: 100 });
     R.log(`season: the time-lapse played ${((Date.now() - t0) / 1000).toFixed(1)} s`);
-    say('season (the Next season time-lapse)', await take());
+    const lapse = await take();
+    say('season (the Next season time-lapse)', lapse);
+    R.check('time-lapse: no megabyte read (PI-5)', lapse.total.readBytes * lapse.frames < 1048576, { readKB: +((lapse.total.readBytes * lapse.frames) / 1024).toFixed(0), integrity: lapse.systems.find((s) => s.system === 'integrity')?.labels?.slice(0, 3) });
     await R.sleep(10000);
     say('after the season (10 s)', await take());
   }
