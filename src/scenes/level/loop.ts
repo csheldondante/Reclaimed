@@ -56,6 +56,8 @@ const ATTACK_SECONDS = 150;
 const ROAD_ZOOM = 4;
 const MARCH_ZOOM = 10;
 const FIGHT_ZOOM = 22;
+/** the zoom on a district being built while a season passes: its lots and the people working on them read */
+const BUILD_ZOOM = 9;
 /** the camera's pitch on the fight (radians): lower than the town's 60°, so a standing figure is taller on the screen
  *  (its height × zoom × cos pitch: 1.6 cells × 22 × 0.77 = 27 px) */
 const FIGHT_PITCH = (40 * Math.PI) / 180;
@@ -152,6 +154,7 @@ class Game implements RunGame {
       last = now;
       this.cam.update(dt);
       this.keepNear();
+      this.watchBuild(dt);
       this.watchFight(dt);
       this.watchEvent(dt);
     };
@@ -304,6 +307,7 @@ class Game implements RunGame {
       let n = 0;
       let sx = 0;
       let top = Infinity;
+      let low = -Infinity;
       for (const id of ids) {
         const at = units.get(id)?.at;
         if (!at) continue;
@@ -313,8 +317,11 @@ class Game implements RunGame {
         n++;
         sx += x;
         top = Math.min(top, y);
+        low = Math.max(low, y);
       }
-      if (n) out.push({ id: kind === 'raider' ? 'theirs' : 'ours', label: `${name} ${ids.length}`, kind: 'side', x: sx / n, y: top });
+      // (the raiders' name above their figures, the soldiers' below theirs: the two never lie on each other when the
+      // lines meet — LS-47)
+      if (n) out.push({ id: kind === 'raider' ? 'theirs' : 'ours', label: `${name} ${ids.length}`, kind: 'side', x: sx / n, y: kind === 'raider' ? top : low });
     };
     side(forces.members(f.raiders), 'raider', W.RAIDERS_TAG);
     side(war.squadGroups.flatMap((g) => forces.members(g)), 'soldier', W.SOLDIERS_TAG);
@@ -381,6 +388,9 @@ class Game implements RunGame {
     void this.cam.look(this.at3(at), { zoom: FIGHT_ZOOM * 0.7, ease: 1.2, place: [0.5, 0.36] }).then(() => {
       if (this.event?.up === up) this.cam.follow(mid);
     });
+    // (the petition's held frame let go, straight on to that look: a shot waits behind a held frame, and the event
+    // was played with the camera still on the petition — the dead off the screen's top, 5 of 5; LS-47)
+    void this.cam.release(0.2);
     console.log(`[loop] the dead rise: ${up.size} at ${at.map((v) => Math.round(v))}`);
     return new Promise((res) => {
       this.event = { up, t: 0, unwatch, end: res };
@@ -494,6 +504,19 @@ class Game implements RunGame {
     const [cx, cy] = cellAt(at[0], at[1]);
     return [S.origin[0] + cx, S.origin[1] + cy];
   }
+
+  /**
+   * A season passing with something under way: the camera closes in on where it is built (the season loop already
+   * turns the camera to the district it is staging — scenes/level/season.ts `look`; at the town's zoom a new house was
+   * a few pixels). Back over the town when the season is through (`next`).
+   */
+  private watchBuild(dt: number): void {
+    if (this.phase !== 'season' || !this.season.playing || !this.building) return;
+    const cam = this.scene.core.camera;
+    cam.zoom *= Math.exp(Math.log(BUILD_ZOOM / cam.zoom) * Math.min(1, dt * 1.5));
+  }
+  /** this season's time-lapse has a project of the town's to show */
+  private building = false;
 
   /**
    * The camera kept within HOME_REACH of the home town. FIXED-CITY (BACKLOG LS-40): the run's town must stay made — a
@@ -672,12 +695,15 @@ class Game implements RunGame {
     // expiry, the arc moves on; then the ledger's own season plays as the time-lapse)
     this.notes = r.endSeason();
     this.season.setLedger(r.ledger);
+    this.building = this.season.ledger.projects.length > 0;
     this.set('season');
     void this.season.next().then(async () => {
       while (this.season.playing) await new Promise((res) => setTimeout(res, 100));
       r.afterSeason(this.season.ledger);
       this.season.setLedger(r.ledger);
       await this.save();
+      if (this.building && r.raid === null) this.showTown();
+      this.building = false;
       this.flow();
     });
   }

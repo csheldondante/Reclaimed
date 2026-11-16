@@ -85,7 +85,7 @@ const CSS = `
 .run-marks button.raider,.run-marks button.soldier{width:22px;height:22px;padding:0;border-radius:50%;background:rgba(226,60,40,.28);border:3px solid #ff3b2f;transform:translate(-50%,-62%);pointer-events:none;box-shadow:0 0 0 1px #000}
 .run-marks button.soldier{background:rgba(50,140,255,.28);border-color:#39a0ff}
 .run-marks button.side{pointer-events:none;font-size:12px;padding:3px 8px;border-radius:10px;background:#e2573f;color:#fff;transform:translate(-50%,-260%)}
-.run-marks button.side.ours{background:#2f7fd6}
+.run-marks button.side.ours{background:#2f7fd6;transform:translate(-50%,90%)}
 .run-marks button.change{background:#3b3340;color:#f0d9ff;border-color:#c9a2ff;border-radius:4px;font-weight:600;font-size:12px}
 .run-sheet{position:absolute;left:0;right:0;bottom:0;z-index:30;background:rgba(22,24,28,.94);color:#f2efe8;font:14px system-ui,sans-serif;border-radius:14px 14px 0 0;padding:10px 12px calc(12px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:7px;max-height:60vh;overflow-y:auto}
 .run-sheet h3{margin:0;font-size:16px}

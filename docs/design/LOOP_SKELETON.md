@@ -40,10 +40,12 @@ season ledger.
   the ledger's pure functions and the engine; `Realm.ledger`).
 - What the world is: the fact layer in the `WorldState` (entities, tags, relations, claims, the event history, the
   named people), seeded from the atlas's own world (`settlements.wiki.snapshot`) and at the home town
-  (`living/seed.ts seedLocus`). Saved whole at each season's end and at the fight (`realm:world` in the world store,
-  cleared by `&fresh=1`); the next run and a reload start from it.
-- The run's own small state (its length, spells unlocked, the raid due, the fight) is `Realm`'s, in memory. A reload
-  mid-run starts at the leader screen in the saved world (not resumed: BACKLOG LS-8).
+  (`living/seed.ts seedLocus`). Saved as what differs from the atlas's own world (`api/snapshot-delta.ts`: about
+  0.1 MB, against 2.3 MB whole) under `realm:world` in the world store, cleared by `&fresh=1`; the next run and a
+  reload start from it.
+- The run's own small state (its length, spells unlocked, the raid due, the fight) is `Realm`'s; with the engine's
+  own state (`LivingEngine.state`) it is saved beside the world at the run's start, each answer, each season's end and
+  after the fight. A reload mid-run goes straight back to the same season (round 4).
 - Physical changes an outcome names are the mutators' entries (round 3, below), each carrying its fact event's id.
 - No GPU readback is added. The fact snapshot is JSON written at a season's end (its size is in the DEVLOG).
 
@@ -125,13 +127,37 @@ the screen; `declutter` keeps names apart and on the screen. Limits: BACKLOG LS-
 
 **FIXED-CITY.** BACKLOG LS-40 lists every place the loop bakes one home town a run; each has a comment at the site.
 
-**Open defect (BACKLOG LS-45):** in the 16-season prepared walk the soldiers never fight: 12 stand somewhere else
-while 6 raiders stand inside the gate, and the fight is settled as broken through. The 7-season prepared walk holds.
-Not found yet; bisect by land change first.
+## Round 4 (2026-11-15, late): playable by a finger
 
-**Not done:** a mid-run reload resuming the season (LS-8); the save made smaller (LS-29); the cutaway on a petition
-(LS-9: the field town's mesh never calls `cutAway`); far places looked at on the atlas map; the brawl and fire-and-rain
-events.
+**Found and fixed** (each with its measurement in the DEVLOG):
+- *The soldiers who never fought (LS-45).* A unit the window slid away from was left under the ground for good; the
+  long walk looks at far land changes, the short one does not. Fixed in the units' step.
+- *No spell was ever cast in a fight (LS-46).* The loop's marks layer took every press on the map. Fixed; a spell
+  aims at the level the figures stand at. Heat ray's damage is 2 of a raider's 3 health (assumption 17).
+- *The tap that closes a dialog pressed the screen beneath* (cards agreed that nobody chose, on a phone). Fixed in
+  the dialog.
+- *The home town let go under the run* (the camera 900 cells off): the fatal overlay. Fixed; the loop's camera stays
+  within 650 cells of the home town (FIXED-CITY).
+- A reload mid-run resumes it (LS-8); the save is about 0.1 MB (LS-29).
+
+**The walk by a finger.** `node scripts/loopwalk.mjs --touch` drives the whole loop with touch events and checks that
+every control is on the screen, not covered and at least 40 px tall, that nothing on the loop's screens moves the
+map, that a drag on the map pans it, that the dead and the raiders are in view between the top bar and the sheet.
+`--reload N` closes the tab in season N and opens it again.
+
+**The moments.** A Map button on the sheet opens the world's map with a badge for each changed place. While a
+season passes with something under way the camera closes in on the district being built (the season loop already
+turned it there; at the town's zoom it was a few pixels). In the fight the raiders' name stands above their figures
+and the soldiers' below theirs.
+
+**Open defect (BACKLOG LS-50):** soldiers who are already standing at their post when the raiders come may die
+without a swing (1 walk of 5 this round; LS-23's family). Not found.
+
+**Not done:** the cutaway on a petition and the camera on the presenter at their own building (LS-9, LS-36: the
+card's site is a place of its kind, not the presenter's lot); refugees walking in as a column (LS-37: needs an
+arrivals job in the living town); white boxes for buildings at fight zoom on `q=low`; raiders and soldiers as
+visibly different figures (a ring's colour tells them apart); far places visited; the brawl and fire-and-rain events;
+threat pacing from the world's state (Conformance, round 4).
 
 ## Assumptions for the owner (each is the simplest thing; say which to change)
 
@@ -154,6 +180,12 @@ events.
 14. (round 3) A raid that breaks in burns the district where the raiders stood; nothing else of the town is lost.
 15. (round 3) Refugees add people to the streets and 1 Unrest; housed, 2 of them become Labor.
 16. (round 3) The board is 3 projects, with one guaranteed card against the threat and one threat card: 5 a season.
+17. (round 4) Heat ray: 1 Magic a cast, every raider within 5 cells loses 2 of 3 health. At 3 one cast killed the
+    whole raid on the march. Fire (the live event) is unchanged.
+18. (round 4) In the loop a tap on the map does nothing and a drag pans; the map's own tools (rain, gusts) are off.
+19. (round 4) The camera stays within 650 cells of the home town; far places are seen on the map, not visited.
+20. (round 4) A run is saved at its start, at each answer and at each season's end. Closing the tab during a
+    season's time-lapse or the attack comes back to just before it.
 
 ## Conformance (round 2, 2026-11-15): the skeleton against the opportunity design
 
@@ -213,3 +245,37 @@ than in season 2.
 the petition dialog, the hand gone; (c) far places from facts, with the mutators; (d) the kingdom and a 16-season
 check with the bots; (e) one small live event mid-run with spells; then the round 2 list (LS-23 first: soldiers lose
 9 to 2, so preparing cannot matter until that is found).
+
+## Conformance, round 4: threat pacing (not conformed; the gap)
+
+**What the design says.** OPPORTUNITY_CATALOG: "Arc pacing is world-state driven, not necessarily a fixed five-step
+plot. An advancing pawn/front/track makes the approach legible... consequences accumulate before the terminal
+encounter. Averted threats should produce legitimate alternative conclusions." FACTIONS_WORLD_STATE §6: an arc is "a
+sequence of stages/advancing world events rather than a short timer to a final fight", its progress "legible in the
+actual map simulation"; "individual threat cards and opportunities appear as situations develop"; "time for
+engine-building investments to pay off before pressure mounts".
+
+**What the loop does.** The raid arc's stages land on fixed seasons (`raidArc`: scouts at a quarter of the run, a
+farm burned at a half, the attack in the last season). Each smaller threat becomes eligible after a fixed share of
+the run (`TemplateDef.threat.after`: neighbour 0.12, dam 0.25, the dead 0.35, market fire 0.45, the camp 0.5, the
+mountain 0.6, the hill 0.78), one standing at a time (`threatMax`). Nothing the player does or that the world holds
+moves any of it, except that paying the tribute ends the arc.
+
+**The gap, item by item.**
+1. *Stages by a clock, not by the world.* The raiders have no place: no camp on the map, no pawn on the road. The
+   design wants the arc's stage read from something that advances and can be seen and acted on (the raiders' camp,
+   their march from a town they took).
+2. *Threats by a clock, not by what led to them.* Each hazard should become possible because of a fact: the dam
+   cracks after a flood season or when its keeper was refused; the dead rise where people died unburied (a fallen
+   neighbour's refugees, a lost fight); the market fire needs the fire mage's shop; the camp is raided because it
+   exists and the raiders hold the neighbour. Today only the camp's card reads a fact (the camp stands).
+3. *Pressure does not answer the player.* The design's "enough time for investments to mature" is a share of the run
+   here. A dealer that reads the world would hold a threat back while the board is full of unanswered ones and bring
+   one when the town is rich and idle.
+4. *Averted is one case.* Only the tribute is an alternative conclusion; breaking the raiders' camp, or relieving
+   the neighbour so the raid never forms, are not.
+
+**Why it was not done this round.** Each of 1 to 4 is a design choice about what causes what (which fact opens which
+threat, what the raiders' pawn is, what the dealer weighs), and the owner's threat list is still pending. The engine
+needs nothing new for 2: a threat's `when` clause can read facts today; the schedule would become a floor. Building
+it without those choices would be a variant passed off as the design.

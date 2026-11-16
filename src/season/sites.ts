@@ -158,7 +158,9 @@ export interface Label {
  * label placed before it. Returns the anchors to draw at, in the order given.
  */
 export function declutter(labels: readonly Label[], width: number, top = 0, bottom = Infinity): P2[] {
-  const H = 32;
+  // (a name's row: 42 px, so each name keeps at least a thumb's 40 px of its own when names stack — round 4's touch
+  // walk measured 38 with rows of 32)
+  const H = 42;
   const placed: { x0: number; x1: number; y0: number; y1: number }[] = [];
   return labels.map((l) => {
     const w = Math.min(width - 8, 8.2 * l.chars + 26);

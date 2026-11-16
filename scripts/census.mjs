@@ -6,6 +6,7 @@
 //   node scripts/census.mjs [--noq] [--states settle,idle,pan,season] [--idle 20] [--out perf-reports/census.json] [--top 16] [--labels]
 //   --noq     the link without q=low (the user's first link)
 //   --labels  each system's labels (passes, buffers) under it
+//   --pick <leader>  (with --params loop=1) pick the main loop's leader before measuring
 import fs from 'node:fs';
 import path from 'node:path';
 import { run, ROOT } from './lib/runner.mjs';
@@ -84,6 +85,13 @@ await run({ name: 'census', kind: 'behaviour' }, async (R) => {
   // FIXED-CITY (BACKLOG PI-20): the census measures at the run's start town.
   await p.waitForFunction(() => window.season?.town != null || document.querySelector('.fatal'), { timeout: 180000, polling: 250 });
   await R.fatal(p);
+  // (--pick <leader>: with --params loop=1, the main loop's leader picked first, so idle is the town with its names
+  // over the map and not the leader screen)
+  if (R.opt('pick', '')) {
+    await p.waitForFunction(() => window.rungame?.phase === 'leader', { timeout: 180000, polling: 250 });
+    await p.evaluate((who) => window.rungame.pick(who), R.opt('pick', ''));
+    R.log(`the loop's leader picked: ${R.opt('pick', '')}`);
+  }
   await R.sleep(Number(R.opt('settle', 25)) * 1000);
   await take();
   if (states.includes('idle')) {
