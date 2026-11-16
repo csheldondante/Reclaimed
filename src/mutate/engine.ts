@@ -40,6 +40,8 @@ export interface MutateHost {
   time?: boolean;
 }
 
+/** an eruption nearer the home town than this (world units) is seen itself: no sign is cast */
+export const ERUPTION_NEAR = 250;
 /** how far an eruption's ash and darkness reach (world units): at this distance they are at their weakest */
 export const ERUPTION_REACH = 4000;
 
@@ -126,7 +128,7 @@ export class MutateEngine implements Mutators {
     const home = m.kind === 'melted' ? this.host.home?.() : null;
     if (home && m.place !== home.id) {
       const d = Math.hypot(m.cell[0] - home.at[0], m.cell[1] * ROW_H - home.at[1]);
-      if (d > m.radius) {
+      if (d > Math.max(m.radius, ERUPTION_NEAR)) {
         const strength = Math.min(1, Math.max(0.3, 1 - d / ERUPTION_REACH));
         const until = this.worldList.seasonNow + 3;
         this.worldList.sign({ kind: 'ashfall', place: home.id, strength, until, cause: m.id });

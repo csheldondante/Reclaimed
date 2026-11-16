@@ -341,3 +341,23 @@ describe('woken sims leave an instant result nearly as it is', () => {
     r.w.destroy();
   });
 });
+
+test('a far eruption casts ash fall and darkness on the home town for three seasons; a near one casts none', async () => {
+  const r = await rig();
+  const seen: string[][] = [];
+  const eng = new MutateEngine({ gpu: r.gpu, world: listWorld, origin: () => r.origin.o, towns: () => [], home: () => ({ id: 'home', at: [2000, 32 * ROW_H] }), signsChanged: (s) => void seen.push(s.map((q) => q.kind)) });
+  eng.season(2);
+  eng.apply({ kind: 'melted', at: AT, radius: R, seed: 2 });
+  const signs = eng.signs('home');
+  expect(signs.map((s) => s.kind).sort()).toEqual(['ashfall', 'darkness']);
+  expect(signs[0].until).toBe(5);
+  expect(signs[0].strength).toBeGreaterThan(0.3);
+  expect(signs[0].strength).toBeLessThan(0.3 + 1e-9 + 0.7);
+  expect(seen.length).toBe(1);
+  eng.season(6);
+  expect(eng.signs()).toEqual([]);
+  const near = new MutateEngine({ gpu: r.gpu, world: listWorld, origin: () => r.origin.o, towns: () => [], home: () => ({ id: 'home', at: [100, 32 * ROW_H] }) });
+  near.apply({ kind: 'melted', at: AT, radius: R, seed: 3 });
+  expect(near.signs()).toEqual([]);
+  expect(g.takeErrors()).toEqual([]);
+});

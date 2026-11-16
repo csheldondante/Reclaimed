@@ -73,3 +73,21 @@ test('a founded place is a place: it answers by its id and can be mutated by nam
   expect(L.place(m.place!)).toMatchObject({ status: 'destroyed', population: 0 });
   expect(() => L.add({ kind: 'flooded', place: 'nowhere' })).toThrow(/no place/);
 });
+
+test('signs: on, replaced, off, ended by the season, kept in the record', () => {
+  const L = new WorldList(world());
+  expect(L.sign({ kind: 'ashfall', place: 'muru', strength: 0.5, until: 3 })).toMatchObject({ kind: 'ashfall', place: 'muru', strength: 0.5, until: 3, unrest: 0 });
+  L.sign({ kind: 'ashfall', place: 'muru', strength: 0.8, until: 4 });
+  L.sign({ kind: 'crime', place: 'muru' });
+  expect(L.signs('muru').map((s) => [s.kind, s.strength])).toEqual([['ashfall', 0.8], ['crime', 1]]);
+  expect(L.signs('muru').find((s) => s.kind === 'crime')!.unrest).toBe(2);
+  expect(L.signs('kaud')).toEqual([]);
+  const L2 = new WorldList(world());
+  L2.restore(JSON.parse(JSON.stringify(L.record())));
+  expect(L2.signs()).toEqual(L.signs());
+  expect(L.season(4)).toBe(false);
+  expect(L.season(5)).toBe(true);
+  expect(L.signs().map((s) => s.kind)).toEqual(['crime']);
+  expect(L.sign({ kind: 'crime', place: 'muru', strength: 0 })).toBeNull();
+  expect(L.signs()).toEqual([]);
+});
