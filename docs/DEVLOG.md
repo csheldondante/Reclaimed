@@ -23897,3 +23897,41 @@ still lowers all water in the disc, the lake's included (a rule that tells a lak
 in the land kernel: MU-48 stays open for that).
 
 **Tests.** gpu mutators 48 pass; unit as before (MU-14's known fail); typecheck clean.
+
+## 2026-11-15 (late) — loop skeleton round 4, items 2, 3, 5: the mutators merged again, the walk by a finger, a run taken up after a reload (`loop-skeleton`)
+
+**Mutators** (`origin/mutators` 8208b9d2, then a32abb96). The mining camp is founded with `purpose: 'mining'`. The
+end screen's "the land does not show these yet" line is gone. A Map button on the sheet opens the world's map with
+the mutators' badges; before, the loop had no way to the map on a phone.
+
+**The walk by a finger** (`loopwalk.mjs --touch`). What it found, each a real phone defect:
+- *The tap that closes a dialog pressed the screen beneath.* The dialog closes on the press; the browser still sends
+  the finger's click when it lifts, to whatever is under it by then — the sheet, back on screen. In the first touch
+  walks a second petition opened by itself and cards were agreed that nobody chose (a quarry, the relief of Bumku),
+  and the walk hung in a petition. Fixed in `dialog/dialog.ts`: the press that closes the talk swallows that one click.
+  Every dialog in the game had this on a phone.
+- *No press reached the map* (the marks layer; the entry above).
+- Sizes: names over the map, the sheet's rows and buttons (the entry above). The walk's check: every control pressed
+  was on the screen, not covered, at least 40 px tall — none failed in the 7-season walk.
+- Nothing on the loop's own screens moves the map (a tap and a swipe on the sheet, a tap on the top bar); a drag on
+  the map pans it.
+A 7-season prepared walk wholly by touch (m2-touch7): leader, names tapped on the map, the dialog, Agree, Next
+season and Skip, the map opened and closed, the attack, Heat ray by a tap on the raiders (`heatray at 150, 156`,
+5 raiders to 0 with the soldiers), 3 soldiers lost, the end, a new run. All its touch checks passed.
+
+**A run taken up after a reload (LS-8).** `LivingEngine.state()` / `load()`: the engine's own state beside the fact
+layer as plain data (offers, past, cooldowns, setups, themes). `Realm.runState()` and `RealmOptions.resume`. The loop
+saves the run with the world at the run's start, at each answer, at each season's end and after the fight, and on a
+load with a run under way goes straight to it. Unit test first (`test/unit/realm-resume.test.ts`): a run saved after
+8 seasons, through JSON, plays the remaining seasons exactly as the run never interrupted (offers, pools, spells,
+raid, events, news). It found one bug on the way: a once-only card rests until `Infinity`, which JSON writes as
+null, so after a reload every once-only threat was dealt again. In the walk (the tab closed in season 4, opened
+without `fresh=1`): the same phase, season, pools, income, board, spells, countdown, history and land changes; the
+one difference was a land change's name ("the old dam" read "Muru"), kept in the run's state since.
+
+**A bounded save (LS-29).** `api/snapshot-delta.ts`: the save is what differs from the world as the atlas makes it —
+objects key by key, arrays of things with ids by id, an append-only history costing only its new events — with unit
+tests (the same world back; nothing changed, nothing saved). Muru, 7 seasons: **104 to 131 KB** a save (95 to 104 KB
+the world's changes, the rest the run's state), against 2.31 to 2.35 MB before. It grows by about 1.4 KB an event.
+The cost: 37 to 75 ms a save on the desktop (two 2.3 MB stringifies to compare); on a phone that is a visible hitch
+at each answer and season's end — BACKLOG LS-51.

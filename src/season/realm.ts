@@ -20,7 +20,7 @@ import type { EntityId, FactEvent } from '../api/contracts/facts';
 import type { WorldSnapshot } from '../api/contracts/world';
 import { MemoryWorldState } from '../api/contracts/world-state';
 import { text, type Helper, type Stage } from '../living/dsl';
-import { LivingEngine, type EngineReport, type Offer, type TemplateDef } from '../living/engine';
+import { LivingEngine, type EngineReport, type Offer, type TemplateDef, type EngineState } from '../living/engine';
 import { seedLocus } from '../living/seed';
 import { FactWorld } from '../living/world';
 import { OPP_TUNE, type DealerTune } from '../opps/tune';
@@ -90,6 +90,25 @@ export interface RealmOptions {
   /** the region of a world point (x cells, y world units): a founded place's */
   regionAt?: (x: number, y: number) => number;
   tune?: () => DealerTune;
+  /** a run under way taken up again (`Realm.runState`), over the world saved with it: no new run begins, nothing is
+   *  dealt, the ledger given is the one saved */
+  resume?: RunState;
+}
+
+/** a run under way, as saved beside the world (BACKLOG LS-8): the realm's own small state and the engine's */
+export interface RunState {
+  v: 1;
+  leader: string;
+  seasons: number;
+  /** the history's turn before the run's first season */
+  t0: number;
+  spells: SpellId[];
+  raid: number | null;
+  averted: boolean;
+  fight: Realm['fight'];
+  /** each land change's place in the player's words (a mutation's id → "the old dam") */
+  where: [string, string][];
+  engine: EngineState;
 }
 
 export class Realm {
@@ -128,11 +147,22 @@ export class Realm {
     // (the home town's sites: named buildings and districts a card stands at — once a world)
     const region = this.w.settlement(o.home)!.region;
     for (const s of SITES) if (!f.entity(siteId(o.home, s.key))) f.add({ id: siteId(o.home, s.key), kind: 'site', name: s.name, at: { region, settlement: o.home }, attrs: { site: s.key, what: s.kind }, cause: 'realm' });
-    // (a run's turn is its season; the history's turns run on across runs)
-    const start = Math.max(f.turn, 0) + 1;
-    f.turn = start;
-    this.t0 = start - 1;
-    f.record({ kind: 'run-began', by: ['player'], to: [o.home], note: `${o.leader.name} took the town` });
+    const res = o.resume;
+    if (res) {
+      // (a run under way: its turn is the saved world's, its own state as saved)
+      this.t0 = res.t0;
+      this.spells.push(...res.spells);
+      this.raid = res.raid;
+      this.averted = res.averted;
+      this.fight = res.fight;
+      for (const [k, v] of res.where ?? []) this.whereOf.set(k, v);
+    } else {
+      // (a run's turn is its season; the history's turns run on across runs)
+      const start = Math.max(f.turn, 0) + 1;
+      f.turn = start;
+      this.t0 = start - 1;
+      f.record({ kind: 'run-began', by: ['player'], to: [o.home], note: `${o.leader.name} took the town` });
+    }
     // (the mutators read and write this run's world from here on; their seasons are the history's turns, which run on
     // across runs: a sign cast in one run's last season ends in the next run's third)
     if (mutators.ready) {
@@ -146,7 +176,7 @@ export class Realm {
     const arc = { ...rel, stages: rel.stages.map((s) => ({ ...s, turn: this.t0 + s.turn })) };
     // (the arc's entity is the world's: a new run's arc starts from its first stage)
     const old = f.entity(`arc:${arc.id}`);
-    if (old) old.attrs.stage = -1;
+    if (old && !res) old.attrs.stage = -1;
     this.engine = new LivingEngine(this.w, templates, arc, o.home, {
       stage: this.stage(),
       tune: o.tune ?? (() => ({ ...OPP_TUNE.dealer, reach: Number.MAX_VALUE, resourceMax: BOARD })),
@@ -155,8 +185,16 @@ export class Realm {
       threatMax: 1,
       rng: () => 0,
     });
-    this.last = this.engine.deal();
+    if (res) {
+      this.engine.load(res.engine);
+      this.last = { turn: this.w.turn, dealt: [], kept: this.engine.offers, notProposed: [], dealer: null, evaluated: { templates: 0, of: 0, changed: 0 }, ms: 0 };
+    } else this.last = this.engine.deal();
     this.sync();
+  }
+
+  /** the run as it stands, to save beside the world's snapshot (`RealmOptions.resume` takes it up) */
+  runState(): RunState {
+    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, averted: this.averted, fight: this.fight, where: [...this.whereOf], engine: this.engine.state() };
   }
   /** the history's turn before this run's first season */
   private t0: number;

@@ -163,6 +163,11 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       return !!b && !b.disabled && !b.classList.contains('disabled');
     });
     await tap('.dlg-choice', yes && can ? 'Agree.' : 'Not now.');
+    if (first) {
+      await wait(700);
+      await shot('loop-3-answer');
+      log(`after the answer: ${JSON.stringify(await page.evaluate(() => ({ talking: window.rungame.talking, phase: window.rungame.phase, choices: document.querySelectorAll('.dlg-choice').length, text: document.querySelector('.dlg-text')?.textContent?.slice(0, 60) })))} unreachable so far: ${JSON.stringify(unreachable)}`);
+    }
     // (their answer, then a tap to close it)
     for (let k = 0; k < 40; k++) {
       if (!(await page.evaluate(() => window.rungame.talking))) break;
@@ -307,6 +312,25 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       await shot(`loop-6-change-s${s.season}-${seen ?? 'none'}`);
       await page.evaluate(() => window.rungame.showTown());
       await wait(1500);
+    }
+    // (--reload N: the tab closed in season N and opened again without fresh=1 — the same season, pools, board, cards
+    // under way and land changes; LS-8)
+    if (s.phase === 'city' && String(s.season) === opt('reload', '')) {
+      const snap = () => page.evaluate(() => ({ land: window.rungame.land(), list: window.mutators.record().list.length, spells: window.rungame.run.spells, threatIn: window.rungame.run.threatIn, history: window.rungame.history().length }));
+      await wait(1500);
+      const before = { ...(await state()), ...(await snap()) };
+      const u = new URL(page.url());
+      u.searchParams.delete('fresh');
+      await page.goto('about:blank');
+      await page.goto(u.toString(), { waitUntil: 'load' });
+      await page.waitForFunction(() => ['leader', 'city', 'attack'].includes(window.rungame?.phase) || document.querySelector('.fatal'), { timeout: 300000, polling: 200 });
+      await wait(3000);
+      const after = { ...(await state()), ...(await snap()) };
+      await shot(`loop-reload-s${s.season}`);
+      log(`reload in season ${s.season}:
+  before ${JSON.stringify(before)}
+  after  ${JSON.stringify(after)}`);
+      R.check('a reload mid-run comes back to the same season, pools, board and world changes', JSON.stringify(before) === JSON.stringify(after), { season: [before.season, after.season], phase: after.phase });
     }
     // (the world's map, once two things have changed: the mutators' badges for this run's changes)
     if (s.phase === 'city' && !mapped && (await page.evaluate(() => window.rungame.land().length)) >= 2) {

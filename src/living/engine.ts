@@ -231,6 +231,18 @@ export interface NotProposed {
   why: string;
 }
 
+/** the engine's state as saved (LivingEngine.state) */
+export interface EngineState {
+  offers: Offer[];
+  past: Offer[];
+  /** binding key → the turn it may be dealt again (null: never) */
+  rest: [string, number | null][];
+  setupDone: string[];
+  taken: [string, number][];
+  recent: { template: string; place: string; turn: number }[];
+  recovering: Agent[];
+}
+
 export interface EngineReport {
   turn: number;
   dealt: Offer[];
@@ -379,6 +391,32 @@ export class LivingEngine {
 
   /** (round 125) the run's locus: focus grows outward from it and its cast */
   locus: EntityId;
+
+  /**
+   * (loop-skeleton, BACKLOG LS-8) The engine's own state beside the fact layer, as plain data: what is offered and
+   * under way, what was resolved or lapsed, the cooldowns, the setups made, the themes taken. With the world's snapshot
+   * it is everything a run under way needs to go on after a reload (the arc's stage is the fact layer's). The report,
+   * the log and the caches are not state: they are made again by the next deal.
+   */
+  state(): EngineState {
+    return structuredClone({ offers: this.offers, past: this.past, rest: [...this.rest].map(([k, v]) => [k, Number.isFinite(v) ? v : null] as [string, number | null]), setupDone: [...this.setupDone], taken: [...this.taken], recent: this.recent, recovering: this.recovering });
+  }
+
+  /** a saved state taken up (`state()`), over the world it was saved with: nothing is dealt */
+  load(s: EngineState): void {
+    const c = structuredClone(s);
+    this.offers = c.offers;
+    this.past = c.past;
+    // (a once-only card rests for good: Infinity, which JSON has no word for — null in the save)
+    this.rest = new Map(c.rest.map(([k, v]) => [k, v ?? Infinity]));
+    this.setupDone = new Set(c.setupDone);
+    this.taken = new Map(c.taken);
+    this.recent = c.recent;
+    this.recovering = c.recovering;
+    this.cache.clear();
+    this.dryCache.clear();
+    this.worldVersion = -1;
+  }
 
   constructor(w: FactWorld, templates: TemplateDef[], arc?: ArcDef, locus?: EntityId, opts: EngineOptions = {}) {
     this.w = w;

@@ -99,6 +99,18 @@ export class DialogBox implements Dialog {
       e.preventDefault();
       e.stopPropagation();
       this.advance();
+      // (a finger's press that closed the talk: the browser still sends its click when the finger lifts, to whatever
+      // is under it now that the panel is gone — a button of the screen beneath was pressed by the tap that closed the
+      // dialog (the main loop's touch walk: a second petition opened, cards agreed that nobody chose). That one click
+      // is swallowed)
+      if (!this.talk) {
+        const eat = (c: Event) => {
+          c.preventDefault();
+          c.stopPropagation();
+        };
+        window.addEventListener('click', eat, { capture: true, once: true });
+        setTimeout(() => window.removeEventListener('click', eat, { capture: true }), 700);
+      }
     };
     this.scrim.addEventListener('pointerdown', advance, { signal });
     this.panel.addEventListener('pointerdown', (e) => {

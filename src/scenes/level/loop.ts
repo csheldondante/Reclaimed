@@ -15,7 +15,8 @@ import { meetPerson, petitionOf } from '../../living/present';
 import { capitalise } from '../../living/plain';
 import { lose, newLedger, pools, total, type Pool, type Pools, type SeasonLedger } from '../../season/ledger';
 import type { SeasonLoop } from '../../season/loop';
-import { Realm, roadLook, RUN_SEASONS, type SpellId, type Spot } from '../../season/realm';
+import { Realm, roadLook, RUN_SEASONS, type RunState, type SpellId, type Spot } from '../../season/realm';
+import { applyDelta, delta, type Delta } from '../../api/snapshot-delta';
 import { MemoryWorldState } from '../../api/contracts/world-state';
 import { FactWorld } from '../../living/world';
 import { mutators } from '../../mutate';
@@ -36,6 +37,14 @@ import { startSeasonLoop, storeReady } from './season';
  *  FIXED-CITY (BACKLOG LS-40): one record a page, with one town's ledger in it; a run that follows a moving group needs
  *  the group's own holdings and place saved beside the world */
 const WORLD_KEY = 'realm:world';
+/** the record under WORLD_KEY (round 4, BACKLOG LS-8 and LS-29): the world as what differs from the atlas's own
+ *  (api/snapshot-delta.ts), and the run under way — its state, its ledger, the season's news — or null between runs.
+ *  An older save is the world's snapshot whole (it has no `v`). */
+interface SavedRun {
+  v: 2;
+  world: Delta | null;
+  run: { state: RunState; ledger: SeasonLedger; notes: string[] } | null;
+}
 /** the sim's speed while the raiders march in (they walk from outside the town) */
 const MARCH_SPEED = 3;
 /** seconds raiders stay in a town with no soldier left before the fight is called */
@@ -508,9 +517,25 @@ class Game implements RunGame {
 
   // ---- saving -----------------------------------------------------------------------------------------
 
+  /** the world as the atlas makes it, as plain JSON: what a save is the difference from */
+  private base: WorldSnapshot | null = null;
+  private baseWorld(): WorldSnapshot {
+    const a = this.scene.opts.atlas;
+    if (!a?.settlements) throw new Error('loop: no atlas world');
+    return (this.base ??= JSON.parse(JSON.stringify(a.settlements.wiki.snapshot)) as WorldSnapshot);
+  }
+  /** a run under way in the save: taken up once the saved list of land changes is laid */
+  private pending: NonNullable<SavedRun['run']> | null = null;
+
   async load(): Promise<void> {
     const st = await storeReady(this.scene);
-    if (st?.has(WORLD_KEY)) this.saved = JSON.parse(new TextDecoder().decode(await st.get(WORLD_KEY))) as WorldSnapshot;
+    if (st?.has(WORLD_KEY)) {
+      const rec = JSON.parse(new TextDecoder().decode(await st.get(WORLD_KEY))) as SavedRun | WorldSnapshot;
+      if ('v' in rec && rec.v === 2) {
+        this.saved = applyDelta(this.baseWorld() as never, rec.world) as unknown as WorldSnapshot;
+        this.pending = rec.run;
+      } else this.saved = rec as WorldSnapshot;
+    }
     const before = this.before();
     console.log(`[loop] world: ${this.saved ? `saved, ${before.length} things remembered` : 'new'}`);
     // (the mutators' saved list laid over the window, with the saved world bound first: its entries' fact events are in
@@ -521,18 +546,45 @@ class Game implements RunGame {
       await restoreMutators(this.mut);
       console.log(`[loop] mutators: ${mutators.record().list.length} changes of earlier runs laid over the land, ${mutators.signs().length} signs on`);
     }
+    if (this.pending && this.resume(this.pending)) return;
     this.set('leader');
   }
 
-  /** the world's record saved whole: the fact layer, the characters, the holdings */
+  /**
+   * A run under way in the save taken up where it was left (LS-8): the same season, pools, board, spells and world.
+   * The season is as it stood at the last save — the run's start, each answer given, each season's end, the fight's
+   * end. False: the save's leader is not one of this build's.
+   */
+  private resume(p: NonNullable<SavedRun['run']>): boolean {
+    const a = this.scene.opts.atlas;
+    const home = this.season.town;
+    const who = W.LEADERS.find((l) => l.id === p.state.leader);
+    if (!a?.settlements || home === null || !who || !this.saved) return false;
+    this.realm = new Realm({ world: this.saved, home, seed: a.atlas.p.seed, leader: who, ledger: p.ledger, land: () => this.season.land, seasons: p.state.seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y), resume: p.state });
+    this.runs = this.realm.history(true).filter((e) => e.kind === 'run-began').length;
+    this.notes = p.notes;
+    this.resultLines = [];
+    this.season.setLedger(this.realm.ledger);
+    console.log(`[loop] run ${this.runs} taken up again: ${who.name}, season ${this.realm.season} of ${p.state.seasons}; asking: ${this.asking().map((x) => `${x.who} (${x.title})`).join(', ')}`);
+    this.showTown();
+    this.flow();
+    return true;
+  }
+
+  /**
+   * The save (LS-29): the world as what differs from the atlas's own — a few entities, the events, the holdings — and
+   * the run under way. Before, the world whole: 2.3 MB of JSON a season. Its size and the time it took are logged.
+   */
   private async save(): Promise<void> {
     const st = this.scene.stream?.store;
     const r = this.realm;
     if (!st || !r) return;
+    const t0 = performance.now();
     this.saved = r.snapshot();
-    const bytes = new TextEncoder().encode(JSON.stringify(this.saved));
+    const rec: SavedRun = { v: 2, world: delta(this.baseWorld() as never, JSON.parse(JSON.stringify(this.saved)) as never), run: r.over ? null : { state: r.runState(), ledger: this.season.ledger, notes: this.notes } };
+    const bytes = new TextEncoder().encode(JSON.stringify(rec));
     // (the store takes the bytes: their length said first)
-    console.log(`[loop] world saved: ${bytes.length} B, ${r.history(true).length} events`);
+    console.log(`[loop] world saved: ${bytes.length} B (${JSON.stringify(rec.world).length} B the world's changes, the rest the run), ${r.history(true).length} events, ${(performance.now() - t0).toFixed(0)} ms`);
     await st.put(WORLD_KEY, bytes, { session: 'loop', hash: 0 });
   }
 
@@ -603,6 +655,8 @@ class Game implements RunGame {
       this.notes = [...this.notes, W.refusedLine(speaker.name)];
     }
     void this.cam.release();
+    // (an answer given is kept: a reload comes back to this season with it)
+    if (act === 'commit' || act === 'refuse') void this.save();
     this.set('city');
   }
 
