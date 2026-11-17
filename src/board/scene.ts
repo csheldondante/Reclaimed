@@ -8,6 +8,7 @@ import type { Scar, Sign } from './looks';
 import type { BoardState } from './model';
 import { ACT, BAKE, C, FOE, HH, HW, sprite, tileSprite, type Sprite } from './sprites';
 import { tileXY, toScreen, type Camera } from './view';
+import { goodIcon } from '../season/goods';
 
 export type Action =
   | { kind: 'offer'; id: string }
@@ -69,7 +70,11 @@ function baseSprite(key: SiteKey, built: string | null): string | null {
 }
 /** the catalog card a site's base building is built by (season/realm-rules.ts SITE_TAGS) */
 const CATALOG_SITE: Record<string, SiteKey> = { keep: 'keep', workshops: 'forge', houses: 'quarter', farms: 'fields', market: 'market', walls: 'gate', harbour: 'harbour', quarry: 'quarry', lumber: 'woods', trade: 'road' };
-const THING_SPRITE: Record<string, string> = { 'works-mine': 'mine', 'works-stalls': 'stalls', 'works-shrine': 'shrine', 'works-foundry': 'foundry', 'works-muster': 'muster', 'works-granary': 'granary', 'works-watchtower': 'watchtower', 'works-wall-walk': 'wall-walk' };
+const THING_SPRITE: Record<string, string> = {
+  'works-mine': 'mine', 'works-stalls': 'stalls', 'works-shrine': 'shrine', 'works-foundry': 'foundry', 'works-muster': 'muster', 'works-granary': 'granary', 'works-watchtower': 'watchtower', 'works-wall-walk': 'wall-walk',
+  // (step 2, docs/design/FACTORY.md: the factory's buildings, on the sprites there are — placeholder art, BD-2)
+  'factory-woodcutters': 'lumber', 'factory-fields': 'barn', 'factory-bakery': 'granary', 'factory-ovens': 'granary', 'factory-houses': 'houses', 'factory-quarry': 'quarry', 'factory-sawmill': 'mill', 'factory-mine': 'mine', 'factory-deep-mine': 'mine', 'factory-smelter': 'foundry', 'factory-smithy': 'forge', 'factory-muster': 'muster', 'factory-yard': 'hall', 'factory-stalls': 'stalls', 'factory-shrine': 'shrine', 'factory-watchtower': 'watchtower', 'factory-wall': 'wall-walk',
+};
 
 interface Placed {
   key: string;
@@ -104,6 +109,10 @@ export interface FlyText {
   t0: number;
   dur: number;
 }
+
+/** (step 2) the zoom from which card titles, and place names, are written on the map (else only on the place picked) */
+const LABEL_ZOOM = 1.0;
+const NAME_ZOOM = 1.15;
 
 /** a card's title cut to fit over a marker */
 const short = (t: string): string => (t.length > 22 ? `${t.slice(0, 20).trimEnd()}…` : t);
@@ -657,8 +666,9 @@ export class TownScene {
       }
       for (const [j, o] of offers.entries()) {
         this.badge(g, bx, by, o.card.threat ? String(o.card.left) : '!', ACT, '#06232a', { kind: 'offer', id: o.card.id }, 1, o.card.threat ? pulse : 0);
-        // (what it is, in a few words, so the map can be read without opening every marker)
-        if (cam.zoom >= 0.5) this.label(g, bx, by - 26 - (j % 2) * 19, short(o.card.title), ACT);
+        // (what it is, in a few words: step 2 — only zoomed in, or on the place picked; at normal zoom the titles
+        // covered each other and the town)
+        if (cam.zoom >= LABEL_ZOOM || this.focus === sv.key) this.label(g, bx, by - 26 - (j % 2) * 19, short(o.card.title), ACT);
         if (o.card.threat) {
           g.strokeStyle = '#f4efe2';
           g.lineWidth = 2;
@@ -668,8 +678,12 @@ export class TownScene {
         }
         bx += 36;
       }
-      // (a use that can be made now: a cyan spark on the thing)
-      if (!this.armed && works.some((x2) => x2.uses.some((u) => u.can))) {
+      // (step 2, docs/design/FACTORY.md: each building with recipes shows what it makes and its clicks this season;
+      // one that could convert right now is ringed in the action colour)
+      const machines = works.filter((x2) => x2.clicks);
+      machines.forEach((m, j) => this.machineChip(g, x + (j - (machines.length - 1) / 2) * 50, y + 16, m, cam, sv.key, now));
+      // (a use that can be made now — one with no clicks, the muster's, the houses' feast: a cyan spark on the thing)
+      if (!this.armed && works.some((x2) => !x2.clicks && x2.uses.some((u) => u.can))) {
         g.fillStyle = ACT;
         g.beginPath();
         g.arc(x + 26 * Math.max(0.6, cam.zoom), y - 30 * Math.max(0.6, cam.zoom), 6 + pulse * 0.6, 0, Math.PI * 2);
@@ -691,9 +705,10 @@ export class TownScene {
           this.badge(g, x, y - 34 * Math.max(0.7, cam.zoom), `${sl.posted}/${sl.n}`, ACT, '#06232a', { kind: 'post', work: room.id, piece: this.armed }, 0, pulse);
         }
       }
-      // (what has no look of its own: its words)
+      // (what has no look of its own: its words — below the building's chip; one at normal zoom, three zoomed in)
       const marks = [...sv.look.marks, ...(sv.key === 'keep' ? s.homeMarks : [])];
-      marks.slice(0, 3).forEach((m, i) => this.label(g, x, y + 14 + i * 19, m, '#ffe9a8'));
+      const my = y + (machines.length ? 40 : 14);
+      marks.slice(0, cam.zoom >= LABEL_ZOOM || this.focus === sv.key ? 3 : 1).forEach((m, i) => this.label(g, x, my + i * 19, m, '#ffe9a8'));
       if (this.focus === sv.key) {
         g.strokeStyle = '#ffffff';
         g.lineWidth = 2;
@@ -703,7 +718,7 @@ export class TownScene {
         g.stroke();
         g.setLineDash([]);
       }
-      if (cam.zoom > 0.75 || this.focus === sv.key) this.label(g, x, y + (marks.length ? 14 + marks.length * 19 : 14), sv.name, '#e8e2d2', 'rgba(16,18,20,0.55)');
+      if (cam.zoom >= NAME_ZOOM || this.focus === sv.key) this.label(g, x, my + Math.min(marks.length, 3) * 19, sv.name, '#e8e2d2', 'rgba(16,18,20,0.55)');
     }
     // (offers and events at the town itself: at the keep)
     const town = [...s.live.filter((o) => 'town' in o.at), ...s.offers.filter((o) => 'town' in o.at)];
@@ -725,21 +740,64 @@ export class TownScene {
     }
   }
 
+  /** (step 2, docs/design/FACTORY.md) a building's chip at its foot: the icon of what it makes, a pip for each click
+   *  (filled: left this season), ringed in the action colour when a recipe can be made now. A tap opens the place */
+  private machineChip(g: CanvasRenderingContext2D, x: number, y: number, m: BoardState['works'][number], cam: Camera, site: SiteKey, now: number): void {
+    const c = m.clicks!;
+    const icon = goodIcon(m.makes[0] ?? '');
+    const pips = Math.max(1, c.of);
+    const w = 24 + 9 * pips;
+    g.fillStyle = 'rgba(16,18,20,0.82)';
+    g.beginPath();
+    g.roundRect(x - w / 2, y - 10, w, 20, 10);
+    g.fill();
+    if (m.ready && !this.armed) {
+      g.strokeStyle = ACT;
+      g.lineWidth = 2 + Math.max(0, Math.sin(now / 260));
+      g.stroke();
+    }
+    g.font = '13px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.globalAlpha = c.of ? 1 : 0.55;
+    g.fillText(icon, x - w / 2 + 12, y + 1);
+    g.globalAlpha = 1;
+    for (let i = 0; i < pips; i++) {
+      g.beginPath();
+      g.arc(x - w / 2 + 25 + i * 9, y, 3.2, 0, Math.PI * 2);
+      if (i < c.left) {
+        g.fillStyle = ACT;
+        g.fill();
+      } else {
+        g.strokeStyle = c.of ? '#8a8f99' : '#5a5e66';
+        g.lineWidth = 1.2;
+        g.stroke();
+      }
+    }
+    this.hits.push({ x, y, r: 22, act: { kind: 'site', key: site }, pri: 4 });
+    void cam;
+  }
+
   private bubble(g: CanvasRenderingContext2D, x: number, y: number, text: string, w: number): void {
-    g.font = '600 14px system-ui, sans-serif';
+    // (step 2: smaller, so the town stays in sight behind it)
+    g.font = '600 12px system-ui, sans-serif';
     const words = text.split(' ');
     const lines: string[] = [];
     let cur = '';
     for (const wd of words) {
       const t = cur ? `${cur} ${wd}` : wd;
-      if (g.measureText(t).width > 230 && cur) {
+      if (g.measureText(t).width > 170 && cur) {
         lines.push(cur);
         cur = wd;
       } else cur = t;
     }
     if (cur) lines.push(cur);
-    const lw = Math.max(...lines.map((l) => g.measureText(l).width)) + 18;
-    const lh = lines.length * 18 + 10;
+    if (lines.length > 4) {
+      lines.length = 4;
+      lines[3] = `${lines[3]}…`;
+    }
+    const lw = Math.max(...lines.map((l) => g.measureText(l).width)) + 16;
+    const lh = lines.length * 15 + 8;
     const bx = Math.max(8, Math.min(w - lw - 8, x - lw / 2));
     const by = y - lh - 8;
     g.fillStyle = '#fbf6ea';
@@ -757,7 +815,7 @@ export class TownScene {
     g.fillStyle = '#1a1a1a';
     g.textAlign = 'left';
     g.textBaseline = 'top';
-    lines.forEach((l, i) => g.fillText(l, bx + 9, by + 6 + i * 18));
+    lines.forEach((l, i) => g.fillText(l, bx + 8, by + 5 + i * 15));
   }
 
   private flyTexts(g: CanvasRenderingContext2D, now: number): void {

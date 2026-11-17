@@ -8,8 +8,8 @@ import { RAIDERS, SITES, type SiteKey } from '../season/realm-templates';
 import { SITE_TAGS } from '../season/realm-rules';
 import { CATALOG } from '../season/catalog';
 import { raidersOf } from '../living/laws';
-import { military } from '../season/war';
 import { WORKS } from '../season/works';
+import { FACTORY } from '../season/factory';
 import type { UseNow } from '../season/realm';
 import type { EventView, OppCard, PoolView, Table } from '../table/game';
 import { farLook, signsOf, siteLook, words, type FarLook, type SiteLook, type Sign } from './looks';
@@ -27,6 +27,7 @@ export interface WorkView {
   makes: string[];
   ready: boolean;
   eats: Record<string, number> | null;
+  eatsPer: number;
 }
 
 export interface SiteView {
@@ -98,7 +99,7 @@ export interface BoardState {
 /** what each card puts in play (a pack or the works: `put`), by card id */
 function putsOf(packs: readonly Pack[]): Map<string, string> {
   const out = new Map<string, string>();
-  for (const p of [WORKS, ...packs]) for (const c of p.cards ?? []) for (const e of (c.if_taken ?? []) as Record<string, unknown>[]) if (typeof e?.put === 'string') out.set(c.id, e.put);
+  for (const p of [WORKS, FACTORY, ...packs]) for (const c of p.cards ?? []) for (const e of (c.if_taken ?? []) as Record<string, unknown>[]) if (typeof e?.put === 'string') out.set(c.id, e.put);
   return out;
 }
 
@@ -157,7 +158,7 @@ export function readBoard(t: Table, packs: readonly Pack[]): BoardState {
     const m = mine.find((q) => q.id === x.id);
     const makes = [...new Set(x.uses.flatMap((u) => Object.keys(u.use.gives).filter((k) => k !== 'unrest')))];
     const eats = workDefs.get(x.id)?.eats ?? null;
-    return { id: x.id, name: x.name, site: (m?.site ? siteOf(home, m.site) : null) ?? 'keep', slots: x.slots, uses: x.uses, text: thingDefs.get(m?.def.id ?? '')?.text ?? '', clicks: r.clicks(x.id), makes, ready: x.uses.some((u) => u.can && !!u.clicks), eats };
+    return { id: x.id, name: x.name, site: (m?.site ? siteOf(home, m.site) : null) ?? 'keep', slots: x.slots, uses: x.uses, text: thingDefs.get(m?.def.id ?? '')?.text ?? '', clicks: r.clicks(x.id), makes, ready: x.uses.some((u) => u.can && !!u.clicks), eats, eatsPer: workDefs.get(x.id)?.eatsPer ?? 0 };
   });
   const placeOf = new Map(r.offers().map((o) => [o.id, o.place]));
   const offers: OfferView[] = t.cards().map((c) => ({ card: c, at: atOf(home, placeOf.get(c.id) ?? home) }));
@@ -190,7 +191,7 @@ export function readBoard(t: Table, packs: readonly Pack[]): BoardState {
   const st = r.standingThreat();
   const nums = r.runNumbers();
   const raidCard = st && st.template === 'pay-raiders' ? st : null;
-  const meetNow = military(led) ? (ps.filter((p) => p.kind === 'soldier' && (p.where === 'free' || p.where === 'posted')).length) * 3 : 0;
+  const meetNow = r.soldiersFight() ? (ps.filter((p) => p.kind === 'soldier' && (p.where === 'free' || p.where === 'posted')).length) * 3 : 0;
   return {
     season: Math.min(r.season, r.seasons),
     seasons: r.seasons,
@@ -208,7 +209,7 @@ export function readBoard(t: Table, packs: readonly Pack[]): BoardState {
     signs,
     pieces,
     homeMarks,
-    raid: raidCard ? { title: raidCard.title, left: raidCard.left, raiders: raidersOf(RAIDERS, r.laws()), meet: nums.raid ? nums.soldiers : meetNow, military: military(led) } : null,
+    raid: raidCard ? { title: raidCard.title, left: raidCard.left, raiders: raidersOf(RAIDERS, r.laws()), meet: nums.raid ? nums.soldiers : meetNow, military: r.soldiersFight() } : null,
     built: [...led.built],
     // (draft 11: the factory's town wall stands too)
     walls: (led.built.includes('walls') && !sites.gate.look.ruined) || things.some((x) => x.tags.includes('town-wall') && !x.tags.includes('ruined')),

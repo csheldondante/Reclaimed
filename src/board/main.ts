@@ -4,6 +4,8 @@
 // Every number shown is the model's; the board animates what the model did (time-lapse between seasons, the raid).
 import type { Pack } from '../packs/check';
 import { POOL_ICON } from '../season/words';
+import { goodIcon, goodName } from '../season/goods';
+import type { UseNow } from '../season/realm';
 import { POOLS, type Pool } from '../season/ledger';
 import { Table } from '../table/game';
 import { previewLine } from '../table/words';
@@ -33,6 +35,10 @@ function fatal(msg: string): void {
 const seed = Number(params.get('seed') ?? 7);
 let leader = params.get('leader') ?? 'ysolt';
 const seasons = Number(params.get('seasons') ?? 12);
+/** (draft 11, docs/design/FACTORY.md) the factory game (default); `?works=1` plays step 1's works instead; `?cpc=`
+ *  sets the clicks a posted crew gives a season */
+const factory = params.get('works') !== '1';
+const cpc = Number(params.get('cpc') ?? 0) || undefined;
 let packs: Pack[] = [];
 let table!: Table;
 let state!: BoardState;
@@ -59,7 +65,8 @@ function resize(): void {
   canvas.height = Math.round(sizes.h * sizes.dpr);
   sizes.top = $('top').getBoundingClientRect().height;
   sizes.bottom = $('bottom').getBoundingClientRect().height;
-  $('skip').style.top = `${sizes.top + 8}px`;
+  // (step 2: Skip sits above the bottom bar, off the town's labels and the banner)
+  $('skip').style.bottom = `${sizes.bottom + 12}px`;
   $('hint').style.top = `${sizes.top + 8}px`;
   $('toast').style.top = `${sizes.top + 60}px`;
   $('spells').style.bottom = `${sizes.bottom + 10}px`;
@@ -79,7 +86,7 @@ function refresh(animate: boolean): void {
   if (sheet && sheet.kind !== 'end' && sheet.kind !== 'result') renderSheet();
 }
 
-const TOP_POOLS: Pool[] = ['magic', 'materials', 'intel', 'unrest'];
+const TOP_POOLS: Pool[] = factory ? ['magic', 'intel', 'unrest'] : ['magic', 'materials', 'intel', 'unrest'];
 function renderTop(): void {
   const p = new Map(state.pools.map((x) => [x.pool, x]));
   const pools = TOP_POOLS.map((k) => {
@@ -87,11 +94,24 @@ function renderTop(): void {
     const inc = v.income ? `${v.income > 0 ? '+' : ''}${v.income}/season` : W.poolName(k);
     return `<div class="pool ${k === 'unrest' && v.have > 0 ? 'bad' : ''}" data-pool="${k}"><b>${POOL_ICON[k]} ${v.have}</b><span>${esc(k === 'unrest' ? 'Unrest' : inc === W.poolName(k) ? inc : `${W.poolName(k)} ${inc}`)}</span></div>`;
   }).join('');
+  // (draft 11, docs/design/FACTORY.md: the stock — every good with its icon and number, scrolling sideways; an empty
+  // pile dimmed, so the player learns the whole set)
+  const stock = factory
+    ? `<div id="stock">${state.stock
+        .filter((s) => s.k !== 'magic' && s.k !== 'intel' && (s.k !== 'materials' || s.have > 0))
+        // (what you hold first, each in its fixed order; the empty piles after)
+        .sort((a, b) => Number(!a.have) - Number(!b.have))
+        .map((s) => `<div class="good ${s.have ? '' : 'none'}" data-good="${s.k}" title="${esc(goodName(s.k))}"><b>${goodIcon(s.k)} ${s.have}</b><span>${esc(goodName(s.k))}${s.income ? ` +${s.income}` : ''}</span></div>`)
+        .join('')}</div>`
+    : '';
   const needs: string[] = [];
   if (state.raid) needs.push(`<button class="need raid" data-need="raid">⚔ <b>${esc(W.raidChip(state.raid.raiders, state.raid.meet, state.raid.left))}</b></button>`);
   for (const lv of state.live) needs.push(`<button class="need ${lv.ev.groups.some((x) => x.side === 'foe') ? 'raid' : ''}" data-live="${esc(lv.ev.id)}">${lv.raid ? '⚔' : '🔥'} <b>${esc(lv.ev.title)}</b> now</button>`);
   for (const o of state.offers.filter((x) => x.card.threat)) needs.push(`<button class="need" data-offer="${esc(o.card.id)}">⏳ <b>${esc(o.card.title)}</b> · ${esc(W.leftWord(o.card.left))}</button>`);
-  $('top').innerHTML = `<div class="row"><div class="season"><b>${esc(W.seasonOf(state.season, state.seasons))}</b><span>${esc(W.seasonSub(state.season, state.seasons, state.run))}</span></div>${pools}</div>${needs.length ? `<div id="needs">${needs.join('')}</div>` : ''}`;
+  const sx = document.getElementById('stock')?.scrollLeft ?? 0;
+  $('top').innerHTML = `<div class="row"><div class="season"><b>${esc(W.seasonOf(state.season, state.seasons))}</b><span>${esc(W.seasonSub(state.season, state.seasons, state.run))}</span></div>${pools}</div>${stock}${needs.length ? `<div id="needs">${needs.join('')}</div>` : ''}`;
+  const st = document.getElementById('stock');
+  if (st) st.scrollLeft = sx;
   resize();
 }
 
@@ -113,6 +133,19 @@ function openSheet(kind: NonNullable<typeof sheet>['kind'], id: string, lines?: 
   sheet = { kind, id, ...(lines ? { lines } : {}) };
   scene.focus = kind === 'site' ? (id as never) : null;
   renderSheet();
+  // (draft 11: the place picked stands in the open space between the bar and the sheet, so a conversion's goods are
+  // seen flying between the stock and the building)
+  if (kind === 'site' && mode === 'town') {
+    const [x, y] = scene.siteXY(id as never);
+    const mid = (sizes.top + sheetTop()) / 2 + 20;
+    cam.x = x;
+    cam.y = y - (mid - sizes.h / 2) / cam.zoom;
+  }
+}
+/** the screen y of the sheet's top edge (the screen's bottom when it is shut) */
+function sheetTop(): number {
+  const el = $('sheet');
+  return el.hidden ? sizes.h - sizes.bottom : el.getBoundingClientRect().top;
 }
 function closeSheet(): void {
   sheet = null;
@@ -120,7 +153,33 @@ function closeSheet(): void {
   $('sheet').hidden = true;
 }
 
+/** (draft 11) an item's words on the board: a piece kind or a good */
+const itemName = (k: string): string => (k === 'labor' ? 'Free crews' : k === 'might' ? 'Free soldiers' : goodName(k));
+const itemIcon = (k: string): string => (k === 'labor' ? '⚒' : k === 'might' ? '⚔' : goodIcon(k));
+/** "2 ⛏ + 1 🪵", each part red when the stock is short of it */
+function goodsHtml(g: Record<string, number>, short: Record<string, number> = {}): string {
+  return Object.entries(g)
+    .filter(([, n]) => !!n)
+    .map(([k, n]) => `<span class="${short[k] ? 'short' : ''}">${k === 'unrest' ? `Unrest ${n > 0 ? '+' : ''}${n}` : `${n} ${itemIcon(k)}`}</span>`)
+    .join(' + ');
+}
+
+/** (draft 11, docs/design/FACTORY.md) the card's needs item by item: have / need, red where short; and when short,
+ *  the shortest chain of clicks that would make it this season */
+function needsHtml(o: OfferView): string {
+  const p = table.preview(o.card.id);
+  const rows = p.goods.map((g) => `<div class="nrow ${g.have < g.need ? 'short' : ''}"><span>${itemIcon(g.k)} ${esc(itemName(g.k))}</span><b>${g.have} / ${g.need}</b></div>`).join('');
+  const tied = (['crew', 'soldier'] as const).filter((k) => p.tied[k] > 0).map((k) => `<div class="who">${esc(W.tiedLine(k, p.tied[k], p.back))}</div>`).join('');
+  let chain = '';
+  if (Object.keys(o.card.short).length) {
+    const c = table.chain(o.card.id);
+    chain = c ? `<div class="chain">${esc(W.CAN_MAKE)}: ${c.map((x) => `<span>${esc(x.name)}</span>`).join(' → ')}</div>` : `<div class="chain bad">${esc(W.CANNOT_MAKE)}</div>`;
+  }
+  return `<div class="pv">${rows || '<div>Nothing.</div>'}${tied}${chain}</div>`;
+}
+
 function previewHtml(o: OfferView): string {
+  if (factory) return needsHtml(o);
   if (Object.keys(o.card.short).length) {
     const miss = POOLS.filter((k) => o.card.short[k]).map((k) => `${o.card.short[k]} ${W.poolName(k)}`).join(', ');
     return `<div class="pv bad">Short: ${esc(miss)}</div>`;
@@ -130,6 +189,15 @@ function previewHtml(o: OfferView): string {
   const tied = (['crew', 'soldier'] as const).filter((k) => p.tied[k] > 0).map((k) => `<div>${esc(W.tiedLine(k, p.tied[k], p.back))}</div>`);
   return `<div class="pv">${rows.join('') || '<div>Nothing spent.</div>'}${tied.join('')}</div>`;
   void previewLine;
+}
+
+const goodsLine = (g: Record<string, number>): string => Object.entries(g).map(([k, n]) => `${n} ${goodName(k).toLowerCase()}`).join(', ');
+/** (draft 11) a recipe as a button: inputs → outputs, red where short, and why it cannot be made now */
+function recipeHtml(thing: string, u: UseNow, clicks: { left: number; of: number } | null): string {
+  const why = u.can ? '' : clicks && clicks.of === 0 ? W.NO_CREW : clicks && clicks.left === 0 ? W.NO_CLICKS : Object.keys(u.short).length ? W.shortOf(Object.entries(u.short).map(([k, n]) => `${n} ${itemIcon(k)}`).join(' ')) : u.left <= 0 ? W.usesLeft(0) : '';
+  const ins = Object.keys(u.use.cost).length ? goodsHtml(u.use.cost as Record<string, number>, u.short) : '';
+  const outs = goodsHtml(u.gives as Record<string, number>);
+  return `<button class="use recipe" data-do="use" data-use="${esc(u.use.id)}" data-id="${esc(thing)}" ${u.can && !busy ? '' : 'disabled'}><span class="rx">${ins ? `${ins} <i>→</i> ` : ''}${outs}</span><small>${esc(u.use.name)}${why ? ` · ${esc(why)}` : ''}</small></button>`;
 }
 
 function renderSheet(): void {
@@ -144,7 +212,7 @@ function renderSheet(): void {
     html = `<h2>${esc(c.title)}</h2>
       <div class="who">${esc(c.who)}, ${esc(c.role)} · ${esc(cap(c.place))}</div>
       <div class="say">“${esc(c.line)}”</div>
-      <div class="line"><b>${W.COST}:</b> ${esc(c.cost)}</div>
+      ${factory ? `<div class="line"><b>${W.NEEDS}</b> ${esc(W.forSeasons(c.turns, c.locks.labor ?? 0, c.locks.might ?? 0))}</div>` : `<div class="line"><b>${W.COST}:</b> ${esc(c.cost)}</div>`}
       ${previewHtml(o)}
       <div class="line"><b>${W.GIVES}:</b> ${esc(c.gives)}</div>
       ${c.lapse ? `<div class="line bad"><b>${W.IF_LEFT}:</b> ${esc(c.lapse)} (${esc(W.leftWord(c.left))})</div>` : `<div class="line" style="color:var(--dim)">Stays ${esc(W.leftWord(c.left))}.</div>`}
@@ -161,8 +229,11 @@ function renderSheet(): void {
       ${works
         .map((w) => {
           const slots = w.slots.map((sl) => `<div class="slot"><span>${esc(W.slotLine(sl.kind, sl.posted, sl.n))}</span><button data-do="post" data-kind="${sl.kind}" data-id="${esc(w.id)}" ${busy || sl.posted >= sl.n || !(sl.kind === 'crew' ? s.crews.free : s.soldiers.free) ? 'disabled' : ''}>+ ${W.POST}</button><button data-do="recall" data-kind="${sl.kind}" data-id="${esc(w.id)}" ${busy || !sl.posted ? 'disabled' : ''}>− ${W.RECALL}</button></div>`).join('');
-          const uses = w.uses.map((u) => `<button class="use" data-do="use" data-use="${esc(u.use.id)}" data-id="${esc(w.id)}" ${u.can && !busy ? '' : 'disabled'}>${esc(u.use.name)}<small>${esc(u.use.text)} · ${esc(W.usesLeft(u.left))}</small></button>`).join('');
-          return `<div class="thing"><b>${esc(cap(w.name))}</b><div class="who">${esc(w.text)}</div>${slots}${uses}</div>`;
+          const uses = w.uses.map((u) => (factory ? recipeHtml(w.id, u, w.clicks) : `<button class="use" data-do="use" data-use="${esc(u.use.id)}" data-id="${esc(w.id)}" ${u.can && !busy ? '' : 'disabled'}>${esc(u.use.name)}<small>${esc(u.use.text)} · ${esc(W.usesLeft(u.left))}</small></button>`)).join('');
+          // (draft 11: the clicks this season as pips; what it eats)
+          const pips = w.clicks ? `<div class="pips">${esc(W.clicksLine(w.clicks.left, w.clicks.of))} <span>${'●'.repeat(w.clicks.left)}${'○'.repeat(Math.max(0, w.clicks.of - w.clicks.left))}</span></div>` : '';
+          const eats = w.eats ? `<div class="who">${esc(W.eatsLine(goodsLine(w.eats), w.eatsPer, s.crews.all))}</div>` : '';
+          return `<div class="thing"><b>${esc(cap(w.name))}</b>${factory ? '' : `<div class="who">${esc(w.text)}</div>`}${eats}${slots}${pips}${uses}</div>`;
         })
         .join('')}
       ${[...lives.map((l) => `<div class="row-offer"><span style="flex:1">${l.raid ? '⚔' : '🔥'} ${esc(l.ev.title)}</span><button data-open="live" data-id="${esc(l.ev.id)}">Open</button></div>`), ...offers.map((o) => `<div class="row-offer"><span style="flex:1">${o.card.threat ? '⏳' : '!'} ${esc(o.card.title)}</span><button data-open="offer" data-id="${esc(o.card.id)}">Open</button></div>`)].join('')}
@@ -210,35 +281,53 @@ function renderSheet(): void {
 // ---- moves: each changes the model, then the board shows what moved ---------------------------------------------------
 
 /** a move made: the pools before and after fly between the place it was made and the bar */
+/** (draft 11) everything held, by key: the pools (free pieces) and the stock's goods */
+function heldNow(s: BoardState = state): Map<string, number> {
+  const m = new Map<string, number>(s.pools.map((p) => [p.pool, p.have]));
+  for (const g of s.stock) if (!POOLS.includes(g.k as Pool)) m.set(g.k, g.have);
+  return m;
+}
+/** what moved between two readings fly between a point on the board and the bar: gains in (green), spending out
+ *  (orange) — inputs first, then the product, so a conversion reads as goods in and the product out */
+function flyDiff(before: Map<string, number>, after: Map<string, number>, at: [number, number], t0: number, dur = 900): number {
+  const keys = [...new Set([...before.keys(), ...after.keys()])];
+  const d = keys.map((k) => [k, (after.get(k) ?? 0) - (before.get(k) ?? 0)] as const).filter(([, n]) => n !== 0);
+  const out = d.filter(([, n]) => n < 0);
+  const inn = d.filter(([, n]) => n > 0);
+  let i = 0;
+  for (const [k, n] of out) {
+    scene.fly.push({ text: `${n} ${itemIcon(k)}`, color: '#ffb08a', from: chipOf(k), to: at, t0: t0 + i * 140, dur });
+    pulse(k, t0 + i * 140);
+    i++;
+  }
+  const gap = out.length ? dur * 0.8 : 0;
+  for (const [k, n] of inn) {
+    scene.fly.push({ text: `+${n} ${itemIcon(k)}`, color: '#c8ff9a', from: at, to: chipOf(k), t0: t0 + gap + i * 140, dur });
+    pulse(k, t0 + gap + i * 140 + dur * 0.9);
+    i++;
+  }
+  return i;
+}
 function move(fn: () => boolean, from: [number, number] | null): boolean {
-  const before = new Map(state.pools.map((p) => [p.pool, p.have]));
+  const before = heldNow();
   const ok = fn();
   refresh(true);
   if (!ok) return false;
-  const now = performance.now();
-  const src = from ?? [sizes.w / 2, sizes.h / 2];
-  let i = 0;
-  for (const p of state.pools) {
-    const d = p.have - (before.get(p.pool) ?? 0);
-    if (!d) continue;
-    const chip = poolChip(p.pool);
-    const text = `${d > 0 ? '+' : ''}${d} ${POOL_ICON[p.pool]}`;
-    if (d > 0) scene.fly.push({ text, color: '#c8ff9a', from: src, to: chip, t0: now + i * 120, dur: 900 });
-    else scene.fly.push({ text, color: '#ffb08a', from: chip, to: src, t0: now + i * 120, dur: 900 });
-    pulse(p.pool, now + i * 120 + 850);
-    i++;
-  }
+  flyDiff(before, heldNow(), from ?? [sizes.w / 2, sizes.h / 2], performance.now());
   return true;
 }
-function poolChip(k: Pool): [number, number] {
-  const el = document.querySelector<HTMLElement>(`[data-pool="${k}"]`) ?? document.querySelector<HTMLElement>(`[data-arm="${k === 'labor' ? 'crew' : 'soldier'}"]`);
+function chipOf(k: string): [number, number] {
+  const el = document.querySelector<HTMLElement>(`[data-good="${k}"]`) ?? document.querySelector<HTMLElement>(`[data-pool="${k}"]`) ?? document.querySelector<HTMLElement>(`[data-arm="${k === 'labor' ? 'crew' : 'soldier'}"]`);
   if (!el) return [sizes.w / 2, 30];
   const r = el.getBoundingClientRect();
-  return [r.left + r.width / 2, r.top + r.height / 2];
+  // (a chip scrolled out of the stock bar: its edge of the bar)
+  const bar = document.getElementById('stock')?.getBoundingClientRect();
+  const x = bar && el.closest('#stock') ? Math.max(bar.left + 16, Math.min(bar.right - 16, r.left + r.width / 2)) : r.left + r.width / 2;
+  return [x, r.top + r.height / 2];
 }
-function pulse(k: Pool, at: number): void {
+function pulse(k: string, at: number): void {
   setTimeout(() => {
-    const el = document.querySelector(`[data-pool="${k}"]`);
+    const el = document.querySelector(`[data-good="${k}"]`) ?? document.querySelector(`[data-pool="${k}"]`);
     el?.classList.add('pulse');
     setTimeout(() => el?.classList.remove('pulse'), 450);
   }, Math.max(0, at - performance.now()));
@@ -376,17 +465,23 @@ function nextSeason(): void {
   refresh(true);
   renderBottom();
   banner(table.over ? 'The run ends' : W.seasonOf(state.season, state.seasons), table.over ? '' : W.seasonSub(state.season, state.seasons, state.run));
-  // (the pools: what the season brought, flying in from the keep)
-  const from = siteScreen('keep');
-  let i = 0;
-  for (const p of state.pools) {
-    const d = p.have - (before.pools.find((q) => q.pool === p.pool)?.have ?? 0);
-    if (!d) continue;
-    const chip = poolChip(p.pool);
-    scene.fly.push({ text: `${d > 0 ? '+' : ''}${d} ${POOL_ICON[p.pool]}`, color: d > 0 ? '#c8ff9a' : '#ffb08a', from: d > 0 ? from : chip, to: d > 0 ? chip : from, t0: now + 700 + i * 160, dur: 1000 });
-    pulse(p.pool, now + 1600 + i * 160);
-    i++;
+  // (draft 11: the season's upkeep first — the houses eat, the bread flies from the bar to the houses, a hungry house
+  // says so — then the rest of what the season brought, flying in from the keep)
+  const was = heldNow(before);
+  const ate = new Map<string, number>();
+  for (const e of state.eaten) {
+    const at = siteScreen(e.site);
+    for (const [k, n] of Object.entries(e.ate)) {
+      if (!n) continue;
+      ate.set(k, (ate.get(k) ?? 0) + n);
+      scene.fly.push({ text: `-${n} ${itemIcon(k)}`, color: '#ffb08a', from: chipOf(k), to: at, t0: now + 500, dur: 1100 });
+      pulse(k, now + 500);
+    }
+    scene.fly.push({ text: e.hungry ? W.HUNGRY : W.ateLine(Object.values(e.ate).reduce((a, b) => a + b, 0), 'bread'), color: e.hungry ? '#ffb08a' : '#f4efe2', from: [at[0], at[1] - 20], to: null, t0: now + 1500, dur: 1600 });
   }
+  const mid = new Map(was);
+  for (const [k, n] of ate) mid.set(k, (mid.get(k) ?? 0) - n);
+  flyDiff(mid, heldNow(), siteScreen('keep'), now + 1900, 1000);
   // (the far places that changed: they flash on the region, and are told)
   const changed = state.far.filter((f) => farBefore.get(f.id) !== `${f.look.status}|${f.look.yours}|${f.look.holder}`);
   for (const f of changed) region.flash.set(f.id, now);
@@ -603,7 +698,7 @@ window.addEventListener('resize', resize);
 async function start(): Promise<void> {
   const names = (params.get('packs') ?? '').split(',').filter((x) => x);
   packs = await Promise.all(names.map((n) => fetch(`${import.meta.env.BASE_URL}packs/${n}.json`).then((r) => (r.ok ? (r.json() as Promise<Pack>) : Promise.reject(new Error(`pack ${n}: ${r.status}`))))));
-  table = new Table({ seed, leader, seasons, works: true, packs });
+  table = new Table({ seed, leader, seasons, ...(factory ? { factory: cpc ? { cpc } : true } : { works: true }), packs });
   resize();
   refresh(false);
   requestAnimationFrame(frame);

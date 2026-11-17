@@ -4068,3 +4068,25 @@ Cards are markers on the map only; one reserved red (foes) and one reserved cyan
 with news brought in person; the raid live on the board with the model's result. Flagged by the orchestrator: the
 board is a separate light front end; the 3D engine can later supply baked tiles and sprites to it. Defaults taken for
 open questions are in BOARD.md and BACKLOG BD-9.
+
+## 2026-11-17 — the phone board, step 2: a factory economy (`card-table`; docs/design/FACTORY.md)
+
+The owner, verbatim: "Yeah this is fantastic for prototyping! I think it makes a lot of sense to iterate until we have
+a core loop that is fun with this level of graphics and simulation and then transfer what we learn to the heavier
+project […] let's see if we can make the core loop fun and have the world data reflect things and we can use bad art as
+a placeholder for polished effects (it makes it an easier target for you as a coding agent). That said I already want
+to iterate on it. I want the locations that I build to work as a factory economy where buildings produce, consume and
+transform resources. However, I want to click the buildings to perform the conversions each season. Then I want to have
+the cards have specific requirements for pawns or resources that they need so that I have to build engines to produce
+the resources required by those cards."
+
+Earlier, on what makes it fun (kept as the yardstick): planning "against known needs or goals… will this resource be
+returned by the time I need it? Can I get another resource that I can then convert into the resource in need in time?
+It becomes a puzzle… resources constrain you to an n choose k that is fairly large but not overwhelmingly so and where
+you have lots of choices that interact"; "order dependence and assignment will make a big difference".
+
+→ The board is the ACTIVE prototype for the core loop; the 3D game takes what is learned later. Built (step 2): named
+goods, buildings as machines clicked once a posted crew a season, cards with exact needs and deadlines, a planner that
+says what chain of clicks would meet a card this season. Defaults taken by the orchestrator for questions not yet
+answered (FACTORY.md §6, easy to flip): posted soldiers always count in a raid, walls and the watchtower are bonuses;
+more early cards build; each posted crew gives one click a season (crews are the action budget).

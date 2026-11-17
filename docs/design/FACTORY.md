@@ -3,9 +3,9 @@
 The owner: "I want the locations that I build to work as a factory economy where buildings produce, consume and
 transform resources. However, I want to click the buildings to perform the conversions each season. Then I want to
 have the cards have specific requirements for pawns or resources that they need so that I have to build engines to
-produce the resources required by those cards." Data: `src/season/factory.ts` (the pack), logic:
-`src/season/stock.ts` (planner), `Realm.uses/use` (clicks), the board (`src/board/*`). Every number is a first
-guess, tuned with the bots (`node scripts/tablebots.mjs --factory --measure`).
+produce the resources required by those cards." Data: `src/season/factory.ts` (the pack), goods: `season/goods.ts`,
+the planner: `season/stock.ts`, clicks and eating: `Realm.clicks/uses/use/eat`, the board: `src/board/*`. Every
+number is a first guess, tuned with the bots (`node scripts/tablebots.mjs --factory [--cpc 1]`).
 
 ## 1. Goods
 
@@ -15,53 +15,52 @@ guess, tuned with the bots (`node scripts/tablebots.mjs --factory --measure`).
 
 One pile per good: the town's stock (`holdings.goods`, any id). **Old pools**: Magic, Intel and Unrest are unchanged.
 **Materials** stays a good of its own ("building stock"), so every old pack and base card still loads and can still
-be paid: the builder's yard makes it (1 planks + 1 stone → 3 Materials). In the factory game the leader starts with
-no Materials and no Materials income (the economy has to make it); Magic income stays (spells).
+be paid: the builder's yard makes it (1 planks + 1 stone → 3 Materials). In the factory game the leader starts with no
+Materials and no Materials income (the economy makes it); Magic income stays (spells).
 
 ## 2. Buildings are machines
 
 A building with crews posted gets **one click a season for each crew** (`clicks_per_crew`: the lever if turns
-explode). Each click performs one recipe of that building, at once, and the clicks are shared by its recipes (a
-choice per click). Recipes are the existing `uses` (cost → gives), now in any goods.
+explode; `?cpc=` on the page, `--cpc` for the bots). Each click performs one recipe of that building at once; the
+clicks are shared by its recipes (a choice per click). Recipes are the existing `uses` (cost → gives) in any goods.
 
-| Building (how it comes) | Crews | Recipes (one click each) |
+| Building (where; how it comes) | Crews | Recipes (one click each) |
 |---|---|---|
-| Woodcutters (start, the woods) | 2 | Fell: → 2 wood |
-| Fields (start) | 2 | Harvest: → 2 grain · With tools: 1 tools → 5 grain |
-| Bakery (start, the mill) | 1 | Bake: 2 grain → 3 bread |
-| Houses (start, the quarter) | — | eat 1 bread for every 2 crews each season; short: Unrest +1 |
+| Woodcutters (woods; start) | 2 | Fell: → 3 wood |
+| Fields (start) | 2 | Harvest: → 3 grain · With tools: 1 tools → 5 grain |
+| Bakery (mill street; start) | 1 | Bake: 2 grain → 4 bread |
+| Houses (weavers' street; start) | — | eat 1 bread for every 3 crews each season (short: Unrest +1) · Feast: 4 bread → Unrest −1 · Calm: 2 Magic → Unrest −1 (no clicks, once a season each) |
 | Quarry | 2 | Cut: → 2 stone |
-| Sawmill (the river) | 1 | Saw: 2 wood → 3 planks |
-| Mine (the pit) | 2 | Dig: → 1 ore · With tools: 1 tools → 3 ore |
-| Smelter (the dam) | 1 | Smelt: 2 ore + 1 wood → 1 iron |
-| Smithy (the forge) | 1 | Tools: 1 iron → 2 tools · Weapons: 1 iron + 1 planks → 1 weapons |
-| Muster ground (the keep) | — | Arm a recruit: 1 free crew + 1 weapons → 1 soldier (twice a season) |
-| Builder's yard (the wagons) | 1 | Bundle: 1 planks + 1 stone → 3 Materials |
+| Sawmill (river crossing) | 1 | Saw: 2 wood → 3 planks |
+| Mine (ore yard) | 2 | Dig: → 1 ore · With tools: 1 tools → 3 ore |
+| Smelter (wagon yard) | 1 | Smelt: 2 ore + 1 wood → 1 iron |
+| Smithy (forge) | 1 | Tools: 1 iron → 2 tools · Weapons: 1 iron + 1 planks → 1 weapons |
+| Muster ground (keep) | — | Arm a recruit: 1 free crew + 1 weapons → 1 soldier (twice a season, no clicks) |
+| Builder's yard (waterside) | 1 | 1 planks + 1 stone → 3 Materials |
 | Market stalls | 1 | Buy iron: 4 wood → 1 iron · Buy stone: 3 bread → 2 stone |
 | Shrine | 1 | Pray: 2 bread → 1 Magic |
-| Watchtower / Town wall | soldiers | stop raiders (rules) |
+| Watchtower / Town wall | soldiers | the wall stops 4 raiders, a soldier on its walk 1 more; a soldier on the watchtower 3 |
 
-Upgrades (engines): Second shaft (the mine with 3 crews and richer digs), Ovens (bakery with 2 crews, 4 bread a
-bake), the smith's apprentice (a rule: the first forging each season gives 1 iron back), cottages (+1 crew; the
-houses eat more). No caps: a snowballing engine is welcome.
+Engines: the deep mine (3 crews, digs of 2 and 4), the big bakery (2 crews, 6 bread a bake), the apprentice (a rule:
+the first tools forged each season give the iron back), cottages (+1 crew; the houses then eat more), Tools for the
+miners (+2 ore every season). No caps.
 
 ## 3. Click to convert
 
-Tap a building → its sheet: crews here (post / recall), click pips (●●○ = 2 left this season), each recipe as a
-button "2 ⛏ + 1 🪵 → 1 🔩" with what you have, red where short. One tap = one conversion now: the inputs fly from
-the stock bar to the building, the product flies back. Chains are several taps across buildings, so order matters
-(dig before you smelt, smelt before you forge, forge tools before you dig with tools).
+Tap a building (or its chip) → its sheet: crews here (Post / Recall), the clicks this season as pips (● left, ○ used),
+each recipe as a button "2 🌾 → 4 🍞", red where short, with why it cannot be made now ("post a crew here first",
+"no clicks left this season", "short 1 🔨"). One tap = one conversion now: the inputs fly from the stock bar to the
+building, then the product flies back. The place picked stands in the open space between the bar and the sheet.
 
 ## 4. Cards state exact needs and deadlines
 
-Every card says which goods and which pieces, how many, for how long, and how long it stays: "Send bread to the
-next valley: 4 🍞, 1 crew for 2 seasons · 3 seasons left". The preview lists have/need per item (red where short)
-and, when short, the shortest chain of clicks that would cover it this season ("You could make it now: Dig, Dig,
-Smelt, Weapons"), or "not this season". The raiders' card: "18 raiders in 9 seasons; you meet them with soldiers ×3
-+ the wall and the watchtower". Soldiers always fight (posted or free); walls and the watchtower stop more (default
-taken; the old rule needed a keep or walls).
+Each card's sheet lists every item with have / need ("Planks 0 / 2" in red), how long the crews are busy, and when
+short the shortest chain of clicks that would meet it this season — "You can make it this season: Fell trees → Post a
+crew at The sawmill → Saw planks" — or "You cannot make it this season with what you have." The raiders' chip: "18
+raiders · 9 seasons · you 9" (soldiers × 3; the wall and the watchtower stop more). The factory's cards are dealt
+whether or not the stock meets them now (the base dealer deals only what can be paid).
 
-| Card | Needs | Gives | If left |
+| Card (where) | Needs | Gives | If left |
 |---|---|---|---|
 | Open the quarry | 2 🪵, 1 crew · 1 season | the quarry | — |
 | Build a sawmill | 3 🪵, 1 crew · 1 | the sawmill | — |
@@ -71,36 +70,56 @@ taken; the old rule needed a keep or walls).
 | Clear a muster ground | 2 🪚, 1 crew · 1 | the muster ground | — |
 | Set up a builder's yard | 2 🪚, 1 crew · 1 | the yard | — |
 | Put up market stalls | 3 🪚, 1 crew · 1 | the stalls | — |
-| Raise a watchtower | 3 🪚 2 🪨, 1 crew · 1 | the watchtower | — |
-| Raise the town wall | 8 🪨 3 🪚, 2 crews · 2 | the wall | — |
-| Build a shrine | 2 🪨 2 🍞, 1 crew · 1 | the shrine | — |
-| Sink a second shaft | 4 🪚 2 🔩, 1 crew · 1 | the deep mine | — |
-| Build bread ovens | 3 🪨 1 🔩, 1 crew · 1 | the big bakery | — |
-| Take on an apprentice | 2 🔨 2 🍞 | first forging free each season | — |
-| Build cottages (again) | 3 🪚 2 🍞, 1 crew · 1 | +1 crew | — |
+| Raise a watchtower (S3+) | 3 🪚 2 🪨, 1 crew · 1 | the watchtower | — |
+| Raise the town wall (S4+) | 8 🪨 3 🪚, 2 crews · 2 | the wall | — |
+| Build a shrine (S3+) | 2 🪨 2 🍞, 1 crew · 1 | the shrine | — |
+| Sink a second shaft (mine) | 4 🪚 2 🔩, 1 crew · 1 | the deep mine | — |
+| Build bread ovens (S3+) | 3 🪨 1 🔩, 1 crew · 1 | the big bakery | — |
+| Take on an apprentice (smithy) | 2 🔨 2 🍞 | the first tools free each season | — |
+| Build cottages (S2+, again) | 3 🪚 2 🍞, 1 crew · 1 | +1 crew | — |
 | Hire out a crew (again) | 1 crew · 2 | +2 🔩 | — |
-| Tools for the miners | 4 🔨 | +2 ⛏ every season | — |
-| Send bread to the next valley | 4 🍞, 1 crew · 2 | Unrest −1, +2 👁 | Unrest +2 |
-| Lay in winter stores (again) | 6 🍞 2 🪵 | — | Unrest +2 |
-| Arm the watch | 3 🗡, 2 soldiers · 1 | Unrest −1, +2 👁 | Unrest +1, −3 🍞 |
-| Mend the old dam | 4 🪨 2 🪚, 2 crews · 1 | the dam holds | the mill floods (bakery lost) |
-| The road wardens (again) | 4 ▣ | — | Unrest +1, −2 🔩 |
+| Tools for the miners (S5+) | 4 🔨 | +2 ⛏ every season | — |
+| Send bread to the next valley (S2+) | 4 🍞, 1 crew · 2; 3 seasons | Unrest −1, +2 👁 | Unrest +2 |
+| Lay in winter stores (S4+, again) | 6 🍞 2 🪵; 2 seasons | — | Unrest +2 |
+| Arm the watch (S4+) | 3 🗡, 2 soldiers · 1; 3 seasons | Unrest −1, +2 👁 | Unrest +1, −3 🍞 |
+| Mend the old dam (S5+) | 4 🪨 2 🪚, 2 crews · 1; 3 seasons | the dam holds | the mill street floods (the bakery is lost) |
+| The road wardens (S7+, again) | 4 ▣; 2 seasons | — | Unrest +1, −2 🔩 |
 
-Plus the base game's world cards (the raiders' tribute in Materials, refugees, the parade, the live fire, the raid);
-the catalog's own buildings are out of the deck in the factory game (the factory cards build the town). Six offers
-and three needs at once. Several needs with deadlines stand at once from season 2.
+Plus the base game's world cards that stay (the raiders' tribute in Materials, the raid, refugees, the dead, the
+parade, the market fire, sellswords, the tower lens). Out of the factory's deck by theme: the catalog's buildings, the
+base hazards and the mining camp (`FACTORY_OUT`). Six offers and three needs at once; one card a place.
 
 ## 5. On the board
 
-Stock bar on top (icon + number for every good, scrolls sideways at 412 px), the needs as chips under it. Each
-building shows the icon of what it makes and its click pips; a building that can convert now has a cyan "ready"
-mark (cyan is only for what you can act on). The time-lapse shows the houses eating bread and deliveries flying in.
-Labels: card titles only when zoomed in or on the selected marker; Skip sits above the bottom bar; speech bubbles
-are smaller, one at a time.
+The stock bar under the season (icon, number, name; what you hold first; scrolls sideways at 412 px). Each building
+has a chip at its foot: the icon of what it makes and a pip for each click, ringed in cyan when a recipe can be made
+now. Card titles only zoomed in (≥ 1.0) or on the place picked; place names from 1.15. Skip sits above the bottom
+bar. Speech bubbles are 12 px, at most four lines, one at a time. The time-lapse: the houses eat (bread flies from the
+bar to the houses, "The houses eat 2 bread" or "The houses go hungry"), then what the season brought flies in.
 
 ## 6. Defaults taken for open questions (easy to flip)
 
-1. Each posted crew is one click a season (`clicks_per_crew: 1`; `?cpc=` on the page, `--cpc` for the bots).
-2. Posted soldiers always count in a raid; walls and the watchtower are bonuses (`Realm` runNumbers).
-3. More early cards build (the quarry, the sawmill, the mine are on offer in season 1).
+1. Each posted crew is one click a season (`clicks_per_crew: 1`, the least there is).
+2. Posted and free soldiers always fight a raid; the wall and the watchtower stop more (`RealmOptions.soldiersAlways`,
+   on in the factory game only).
+3. More early cards build (sawmill, quarry and mine are on offer in season 1).
 4. Materials is a made good (the yard), not a pool the leader starts with in the factory game.
+5. Shortfalls are red, as asked, though BOARD.md kept red for foes (BD-22).
+
+## 7. What the bots say (`tablebots --factory --seeds 2 --seasons 12`, 24 runs; DEVLOG 2026-11-17)
+
+| Measure | Result | Target |
+|---|---|---|
+| Runs held / fell (idle, solver, greedy, planner) | 0/6, 0/6, 0/6, **4/2** | can be lost and won: yes |
+| Distinct legal turns a season | median 9,440 (quartiles 1.6k to 35k) | hundreds to low thousands: **over** |
+| Distinct outcomes a season (stock, Unrest, pieces' numbers, cards taken) | median 436 (144 to 1,245) | in range |
+| Every ask satisfiable together | 0% of seasons now, 0% after a chain | < 5% |
+| Asks satisfiable now / after the season's best chain | 22% / 32% of 7.5 asks | — |
+| Cards taken that needed 0 / 1 / ≥ 2 clicks first | 166 / 34 / 4 (2%) of 226 | chains should matter more |
+| Conversions a season | median 3 | — |
+| Solver beats greedy | 67% of seasons, by 2.6 points (38% of greedy's gain) | — |
+| Best turn depends on order / placement | 62% / 53% | — |
+| Simulation against the game | no difference in any turn | — |
+
+The lever chosen: clicks per crew stays at 1 (the least); the count is high because of where crews stand and the order
+of clicks, not because of more clicks. Next levers (owner's call, BD-17): standing orders for posted crews.

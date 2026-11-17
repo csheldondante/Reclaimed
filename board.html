@@ -72,6 +72,26 @@
       #hint { position: fixed; left: 50%; transform: translateX(-50%); z-index: 4; background: rgba(16, 18, 20, 0.9); border: 1.5px solid var(--act); border-radius: 18px; padding: 6px 14px; font-size: 14px; white-space: nowrap; pointer-events: none; }
       #toast { position: fixed; left: 10px; right: 10px; z-index: 4; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
       #toast div { background: rgba(16, 18, 20, 0.9); border-radius: 12px; padding: 6px 12px; font-size: 14px; border-left: 4px solid #ffd23f; max-width: 360px; }
+      /* (step 2, docs/design/FACTORY.md: the stock bar, recipes, needs item by item; red for what is short) */
+      :root { --short: #ff6b5e; }
+      #stock { display: flex; gap: 4px; overflow-x: auto; margin-top: 5px; scrollbar-width: none; }
+      #stock::-webkit-scrollbar { display: none; }
+      .good { flex: 0 0 auto; min-width: 46px; text-align: center; background: #22252b; border-radius: 8px; padding: 2px 5px 1px; transition: background 0.25s; }
+      .good b { display: block; font: 800 15px system-ui; white-space: nowrap; }
+      .good span { display: block; font-size: 9.5px; color: var(--dim); white-space: nowrap; }
+      .good.none { opacity: 0.45; }
+      .good.pulse { background: #3c4a2c; }
+      #sheet .nrow { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px dashed #33363d; }
+      #sheet .nrow b { font-weight: 800; }
+      #sheet .nrow.short, #sheet .nrow.short b { color: var(--short); }
+      #sheet .chain { margin-top: 8px; color: var(--good); font-size: 14px; }
+      #sheet .chain span { white-space: nowrap; font-weight: 700; }
+      #sheet .chain.bad { color: var(--short); }
+      #sheet .pips { margin: 4px 0; color: var(--dim); font-size: 13.5px; }
+      #sheet .pips span { color: var(--act); letter-spacing: 2px; font-size: 15px; }
+      #sheet .recipe .rx { font: 800 17px system-ui; }
+      #sheet .recipe .rx i { color: var(--dim); font-style: normal; }
+      #sheet .recipe .short { color: var(--short); }
       #err { position: fixed; inset: 20px; z-index: 9; background: #300; color: #fff; padding: 12px; white-space: pre-wrap; font: 13px monospace; overflow: auto; }
     </style>
   </head>

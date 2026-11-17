@@ -1,4 +1,25 @@
-# Opportunity pack format (draft 10, 2026-11-17: crews and soldiers as pieces, slots, uses)
+# Opportunity pack format (draft 11, 2026-11-17: goods, buildings with clicks, what a thing eats)
+
+**Changed since draft 10 (the phone board, step 2; docs/design/FACTORY.md).** Every draft-10 pack loads unchanged:
+nothing existing changes meaning; everything below is new and optional.
+(1) **Goods.** Besides Materials, Magic and Intel, every pack may name the factory's goods: `wood`, `stone`, `ore`,
+`grain`, `planks`, `iron`, `bread`, `tools`, `weapons` — in a card's `cost`, a use's `cost` and `gives`, a slot's
+`each_season`, `upkeep`, `{ "pool": "<good>", "add": n }`, `{ "income": "<good>", "add": n }`, a rule's `{ "pool":
+"<good>", "n": n }` and `need`, a condition's `{ "pool": "<good>", "gte": n }`, a law's income, a leader's pools and
+income. A pack may declare goods of its own: top-level `"goods": [{ "id": "silk", "name": "Silk", "icon": "🧵",
+"made": true }]`. An unknown name is an error ("Unknown pool or good"). Materials stays a good of its own (old packs
+pay in it; the factory makes it at the builder's yard).
+(2) **Clicks**: a thing's `"clicks_per_crew": 1` — each crew posted on it gives so many clicks a season, shared by its
+uses (its recipes): every use of the thing then needs a click, and a use there with no `times` is capped only by the
+clicks. It needs a slot for crews.
+(3) **Eating**: a thing's `"eats": { "bread": 1 }`, `"eats_per": 3` (for every 3 crews of the town, rounded up;
+absent: once), `"if_hungry": { "unrest": 1 }` — taken from the stock as each season ends; short, what there is is
+eaten and `if_hungry` applies once; the news says "The houses went hungry: 1 of 2 Bread."
+(4) **`stock`**: top-level `{ "wood": 4, "labor": 1 }` — goods and pieces given when a run begins.
+(5) **`used:<use id>`** is accepted as a rule's event (draft 10 said so; the validator now agrees).
+(6) A thing with only `eats` (no slots, no uses) is a work too (the houses). Example: `src/season/factory.ts`.
+
+## Draft 10 (2026-11-17: crews and soldiers as pieces, slots, uses)
 
 **Changed since draft 9 (card table, docs/design/TURN_PUZZLE.md).** Every draft-9 pack loads unchanged: nothing
 existing changes meaning; everything below is new and optional.

@@ -26257,3 +26257,37 @@ with changed far places ends on the region for 2.6 s with them flashing; the reg
 Re-measured idle (`scratchpad board-perf.mjs`, 67 figures): town 1× p50 0.8 / p90 5.6 / max 8.8 ms, 4× p50 3.6 /
 p90 8.7 / p99 11.1 / max 19 ms; region 4× p50 1.7 / p90 4.1 ms. First state 1.2 s after navigation on the dev server.
 
+## 2026-11-17 — the phone board, step 2: a factory economy (`card-table`; docs/design/FACTORY.md)
+
+**Why.** The owner: buildings that produce, consume and transform goods, clicked each season; cards with exact needs
+so engines must be built to meet them; the board is now the prototype for the core loop. **What.** Named goods in the
+town's stock (Materials kept as a good, made at the builder's yard, so old packs load and can pay); a thing's clicks
+(one a posted crew a season, shared by its recipes); the houses eat bread (eats / eats_per / if_hungry); 22 factory
+cards with exact needs and deadlines; the planner (shortest chain of clicks, posting free crews, that meets a need this
+season) behind the card preview; PACK_FORMAT draft 11. On the board: the stock bar, building chips with click pips and
+a cyan ready ring, recipe buttons, goods flying in and out, the eating in the time-lapse; step 1's label clutter, Skip
+and bubbles fixed. **Found on the way:** the dealer's default (`unaffordable: 0`) deals only cards the stock can pay
+NOW — so in step 1 the "affordable" numbers were partly the dealer's doing, and in the factory no card that asked for
+a made good ever appeared (the mine never came). The factory deals unaffordable cards (its tune). One card a place:
+three factory cards at the trade road waited for each other; spread over the sites. Soldiers fought only with a keep or
+walls; the factory game lets them always fight (`soldiersAlways`).
+
+**Measured** (`node scripts/tablebots.mjs --factory --seeds 2 --seasons 12`, 24 runs, 414 s):
+
+| | idle | solver | greedy | planner (solver + raid aim) |
+|---|---|---|---|---|
+| held / fell | 0 / 6 | 0 / 6 | 0 / 6 | 4 / 2 |
+| Unrest at the end | 24 | 8 | 11 | 7 |
+
+Legal turns a season median 9,440 (quartiles 1.6k–35k; 28 of 216 searches hit the 60k budget); distinct outcomes
+(stock, Unrest, pieces' numbers, cards taken) median 436 (144–1,245). Every ask satisfiable together: 0% of seasons.
+Asks satisfiable now 22%, after the season's best chain 32% (7.5 asks). Cards taken: 166 ready, 34 after one click, 4
+after a chain of two or more. Conversions a season: median 3. Solver beats greedy in 67% of seasons by 2.6 (38% of
+greedy's gain); order matters in 62%, placement in 53%; the simulation matched the game in every turn. Planner's stock
+by season (mean): S1 wood 4 grain 4 bread 6 → S4 wood 6 stone 2 grain 6 planks 1 bread 3 → S8 wood 6 stone 2 planks 5
+materials 2 → S12 wood 6 stone 2 planks 7 iron 1 materials 4. Needs that ran out most: Arm the watch 48, Lay in winter
+stores 40, Mend the old dam 24 (24 runs). The lever (clicks per crew) is already at its least; BD-17 lists the next.
+**Played** four seasons on the page through its own taps (`scripts/boardstills.mjs`, stills in `local/board2/`): the
+Sink-a-mine chain (fell → post a crew at the sawmill → saw → commit) reads as building toward a requirement; most
+other taps a season are the same upkeep (harvest, bake, fell) — BD-18.
+

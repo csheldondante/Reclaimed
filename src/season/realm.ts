@@ -918,6 +918,10 @@ export class Realm {
     this.led = { ...this.led, holdings: next.holdings };
     return of(next) - was;
   }
+  /** soldiers fight a raid now: a keep or walls, or (the factory game) always */
+  soldiersFight(): boolean {
+    return !!this.o.soldiersAlways || military(this.led);
+  }
   /** (draft 11) what is free of a pool, or held of a good, now */
   have(k: string): number {
     return (POOLS as readonly string[]).includes(k) ? pools(this.led)[k as Pool] : (this.led.holdings.goods[k] ?? 0);
@@ -940,7 +944,7 @@ export class Realm {
     const might = p.might + this.postedSoldiers() + poolsAs(laws).filter(([, as]) => as === 'might').reduce((n, [k]) => n + (p[k as Pool] ?? 0), 0);
     // (card-table, docs/design/FACTORY.md: soldiers always fight — posted or free; a keep or walls are what the base
     // game's rules add on top. Before: none fought without a keep or walls, and a solver with 19 soldiers fell)
-    return { raid: this.raid === null ? 0 : raidersOf(this.raid, laws), soldiers: this.o.soldiersAlways || military(this.led) ? might * SQUAD : 0, watchers: 4 + 2 * Math.min(3, houses) };
+    return { raid: this.raid === null ? 0 : raidersOf(this.raid, laws), soldiers: this.soldiersFight() ? might * SQUAD : 0, watchers: 4 + 2 * Math.min(3, houses) };
   }
 
   /** where a thing is, in world units (x cells, y) */

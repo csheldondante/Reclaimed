@@ -39,3 +39,16 @@ export const NO_MUSTER = 'Your soldiers do not fight: they need a keep or town w
 export const NOTHING_HERE = 'Nothing to do here this season.';
 export const RUN_CHANGED = 'The town and the region as the last run left them.';
 export const AWAY = 'away from the town';
+// ---- (draft 11, docs/design/FACTORY.md) the factory ----
+export const NEEDS = 'Needs';
+export const forSeasons = (turns: number, crews: number, soldiers: number): string =>
+  crews || soldiers ? `(the ${[crews ? pieceWord('crew', crews) : '', soldiers ? pieceWord('soldier', soldiers) : ''].filter((x) => x).join(' and ')} busy for ${turns === 1 ? '1 season' : `${turns} seasons`})` : '';
+export const CAN_MAKE = 'You can make it this season';
+export const CANNOT_MAKE = 'You cannot make it this season with what you have.';
+export const clicksLine = (left: number, of: number): string => (of === 0 ? 'No crew here: no clicks this season' : `Clicks this season: ${left} of ${of}`);
+export const eatsLine = (what: string, per: number, crews: number): string => (per ? `Eats ${what} each season for every ${per} crews: ${Math.ceil(crews / per)} now (${crews} crews). Short: Unrest +1.` : `Eats ${what} each season. Short: Unrest +1.`);
+export const NO_CREW = 'post a crew here first';
+export const NO_CLICKS = 'no clicks left this season';
+export const shortOf = (what: string): string => `short ${what}`;
+export const ateLine = (n: number, good: string): string => `The houses eat ${n} ${good}`;
+export const HUNGRY = 'The houses go hungry';

@@ -1,5 +1,13 @@
 # The phone board, step 1 (card table, 2026-11-17)
 
+**Step 2 (the same day): the factory economy, docs/design/FACTORY.md.** The board is the active prototype for the
+core loop. It now plays the factory game by default (`?works=1` plays step 1's works; `?cpc=` sets clicks a crew):
+a stock bar of goods under the season and pools; each building a chip with what it makes and its click pips (cyan ring:
+a recipe can be made now); a building's sheet with its recipes as buttons; a card's sheet with every item as have /
+need (red where short) and the chain of clicks that would meet it this season; the time-lapse shows the houses eating
+bread. Step 1's clutter fixed: card titles only zoomed in (≥ 1.0) or on the place picked, names from 1.15; Skip above
+the bottom bar; bubbles 12 px, four lines at most. Stills: `node scripts/boardstills.mjs` (phone size, real taps).
+
 `board.html` (`src/board/*`): the season loop played on a small isometric sprite town, on the SAME model as the card
 table (`table/game.ts` → `season/realm.ts`). Canvas 2D only, no GPU, no engine imports. Portrait phone first, touch
 first; the mouse works too. A prototype of the PLAY, not of the art. The orchestrator's assumption, flagged to the
