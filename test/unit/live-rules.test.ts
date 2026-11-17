@@ -102,7 +102,9 @@ describe('tags and synergy rules (living/rules.ts)', () => {
     const pool: Record<string, number> = { materials: 0, magic: 0, unrest: 0 };
     return { pool, book: new RuleBook(rules, { things: () => list, pool: (k) => pool[k] ?? 0, gain: (k, n) => ((pool[k] = (pool[k] ?? 0) + n), n) }) };
   };
-  const field: RuleDef = { id: 'f', name: 'F', on: 'turn', a: { tags: ['field', 'worked', 'growth-active'] }, effect: { pool: 'materials', n: 2 }, why: '{a} gave {n}' };
+  // (card-table, the owner's ruling 2026-11-16: a rule fires every time its trigger occurs unless it says `perSeason`.
+  // This rule says once a season, as every base rule does: season/realm-rules.ts RULES)
+  const field: RuleDef = { id: 'f', name: 'F', on: 'turn', a: { tags: ['field', 'worked', 'growth-active'] }, effect: { pool: 'materials', n: 2 }, perSeason: 1, why: '{a} gave {n}' };
 
   it('fires on its trigger when its tags match, once a season, with its reason', () => {
     const { pool, book: b } = book([field]);

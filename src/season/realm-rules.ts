@@ -46,7 +46,7 @@ const NEXT_TO = 90;
 const PASSES = 70;
 const CLOSE = 110;
 
-export const RULES: RuleDef[] = [
+const BASE: RuleDef[] = [
   {
     // (the owner's example: "double output from the field of growth effect is active". The farms pay 2 Materials a
     // season: the rune pays them again)
@@ -178,3 +178,11 @@ export const RULES: RuleDef[] = [
     why: 'grain from {a} fed {b}: Unrest -{n}',
   },
 ];
+
+/**
+ * The base game's rules. (card-table, the owner's ruling 2026-11-16: a rule fires every time its trigger occurs;
+ * `perSeason` is an author's own word.) These were written and balanced when every rule fired at most once a season,
+ * so each keeps that as its own `perSeason: 1` — no base number changes by the ruling. Which of them should fire
+ * every time (a second parade past the shrine in one season) is a tuning question, BACKLOG CT-29.
+ */
+export const RULES: RuleDef[] = BASE.map((r) => ({ perSeason: 1, ...r }));

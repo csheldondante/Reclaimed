@@ -558,7 +558,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     const act = actOf(r);
     if (act) {
       // (a rule that does something: offers a card, starts a live card, tags the thing it matched)
-      if ((r.perSeason ?? 1) > ACT_PER_SEASON) err(w, `A rule that offers, starts or tags may fire at most ${ACT_PER_SEASON} times a season. "perSeason" is ${r.perSeason}.`);
+      if (r.perSeason !== undefined && (!Number.isInteger(r.perSeason) || r.perSeason < 1)) err(w, '"perSeason" is a whole number, 1 or more. Leave it out for a rule that fires every time.');
       if (act.kind === 'offer' || act.kind === 'start') {
         const c = cards.find((x) => x.id === act.id);
         if (!c) warn(w, `It ${act.kind}s the card "${act.id}", which is not in this pack. Fine only if a pack loaded with it has that card.`);
@@ -577,7 +577,9 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     else if (tier !== undefined && 'amount' in fx) err(w, 'A rule about a result ("tier") comes after the event\'s numbers are read: it cannot change an amount. It can change a pool, or offer, start or tag.');
     else if ('pool' in fx) {
       pool(fx.pool, `${w}.effect`);
-      if (fx.n > 0 && typeof r.cap !== 'number') err(w, 'This rule adds to a pool and has no "cap". Every rule that adds to a pool needs one.');
+      // (the owner's ruling, 2026-11-16: engines are not bounded. `cap` is the author's own word: only a rule that
+      // multiplies by a count and has none is pointed at, to be sure it is meant)
+      if (fx.n > 0 && typeof r.cap !== 'number' && r.per !== undefined) warn(w, 'This rule adds to a pool for each thing or each so-many of an amount, with no "cap". It can pay any amount. Fine if that is the engine you mean.');
     } else {
       if (on === 'turn' || !isObj(on) || typeof on.live !== 'string') err(w, 'Only a rule "on": { "live": ... } can change an event\'s amount.');
       if (!['add', 'mul'].includes(fx.op)) err(w, '"op" is "add" or "mul".');
@@ -628,9 +630,7 @@ export function eventTrigger(name: string, cards: ReadonlySet<string>): string |
   return `Unknown event "${name}". A rule can wait for: a card done ("pack-done:<card-id>") or run out ("pack-lapsed:<card-id>"); a land change to a site (${LAND_KINDS.join(', ')}); or one of the base game's events: ${BASE_EVENT_KINDS.join(', ')}.`;
 }
 
-const cycleText = (way: string[]): string => `This chain comes back to itself: ${way.join(' -> ')}. It will go round again each season for as long as its things are in play and its cards can come back ("once": false). Make sure that is meant.`;
-/** the most an acting rule may ask for as `perSeason` (living/rules.ts ACT_PER_SEASON) */
-export const ACT_PER_SEASON = 3;
+const cycleText = (way: string[]): string => `This chain comes back to itself: ${way.join(' -> ')}. A loop is allowed: each turn of it costs the player a season or an action (a card to take, an event to win). It goes on for as long as its things are in play and its cards can come back ("once": false). Check what one turn pays against what it costs.`;
 /** what an acting rule does (null: it changes a pool or an amount) */
 export function actOf(r: PackRule): { kind: 'offer' | 'start' | 'tag' | 'untag'; id: string } | null {
   const fx = r.effect as Record<string, unknown>;

@@ -60,6 +60,20 @@ export const POLICIES: Policy[] = [
   { name: 'everything but tribute', score: (c) => (c.template === TRIBUTE ? null : c.threat ? 2 : 1) },
   // (a pack being tried: its cards first, then anything)
   { name: 'pack cards first', score: (c) => (c.tags.some((x) => x.startsWith('pack:')) ? 10 : c.template === TRIBUTE ? null : c.threat ? 2 : 1) },
+  {
+    // (hunts loops: first the cards a rule waits for or asks for — what re-triggers; then live cards, whose results
+    // rules can wait for; then anything. It casts into every event to win it, and keeps little Magic back)
+    name: 'loop hunter',
+    score: (c, t) => {
+      const named = t.ruleDefs().some((r) => {
+        const on = r.on as { event?: string };
+        const fx = r.effect as { offer?: string; start?: string };
+        return on.event === `pack-done:${c.template}` || fx.offer === c.template || fx.start === c.template;
+      });
+      return c.template === TRIBUTE ? null : named ? 12 : c.live ? 9 : c.threat ? 2 : 1;
+    },
+    keep: 2,
+  },
 ];
 
 export interface RunStat {
@@ -87,6 +101,11 @@ export interface RunStat {
   /** synergy rules fired: rule name → times; and every rule's name */
   rules: Record<string, number>;
   ruleNames: string[];
+  /** the engine it built: the season with the most rule firings (and which), what the rules paid over the run by
+   *  pool, and how many times a rule acted (offered, started, tagged: a loop's turns) */
+  peak: { season: number; firings: number; rules: string[] };
+  paid: Record<string, number>;
+  acts: number;
   /** how each live event came out */
   events: { template: string; tier: string }[];
   moves: string[];
@@ -114,6 +133,20 @@ function castSeason(p: Policy, t: Table): void {
     const target = a.targets.map((id) => things.find((x) => x.id === id)).find((x) => !!x && (a.id !== 'spell:growth' || x.tags.includes('worked')));
     if (target && a.can && magic() - a.cost >= keep) t.cast(a.id, target.id);
   }
+}
+
+/** the engine a run built, read from its rule firings (upkeep and other costs are firings too: `paid` is net) */
+function engineOf(t: Table): Pick<RunStat, 'peak' | 'paid' | 'acts'> {
+  const bySeason = new Map<number, string[]>();
+  const paid: Record<string, number> = {};
+  let acts = 0;
+  for (const { season, hit } of t.hits) {
+    bySeason.set(season, [...(bySeason.get(season) ?? []), hit.name]);
+    if (hit.pool) paid[hit.pool] = (paid[hit.pool] ?? 0) + hit.delta;
+    if (hit.act) acts++;
+  }
+  const best = [...bySeason].sort((a, b) => b[1].length - a[1].length || a[0] - b[0])[0];
+  return { peak: best ? { season: best[0], firings: best[1].length, rules: best[1] } : { season: 0, firings: 0, rules: [] }, paid, acts };
 }
 
 /** one whole run by a policy */
@@ -163,6 +196,7 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
     asked: t.asked,
     took: t.took,
     rules: t.ruleCounts(),
+    ...engineOf(t),
     ruleNames: t.ruleDefs().map((x) => x.name),
     events: t.events.map((e) => ({ template: e.template, tier: e.tier })),
     moves: t.moves,
@@ -213,6 +247,15 @@ export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy
   for (const k of names) {
     const by = policies.map((p) => [p.name, runs.filter((r) => r.policy === p.name).reduce((a, r) => a + (r.rules[k] ?? 0), 0)] as const).filter(([, v]) => v > 0);
     L.push(`  ${pad(k, 28)}${by.length ? by.map(([p, v]) => `${p} ${v}`).join(', ') : 'NEVER'}`);
+  }
+  L.push('');
+  L.push('Biggest engine of each policy (its run with the most rule firings in one season; what the rules paid over that run, net of upkeep; "acts": times a rule offered, started or tagged — a loop\'s turns):');
+  for (const p of policies) {
+    const best = runs.filter((r) => r.policy === p.name).sort((a, b) => b.peak.firings - a.peak.firings || b.acts - a.acts)[0];
+    if (!best || !best.peak.firings) continue;
+    const counts = new Map<string, number>();
+    for (const x of best.peak.rules) counts.set(x, (counts.get(x) ?? 0) + 1);
+    L.push(`  ${pad(p.name, 24)}${best.leader}, S${best.peak.season}: ${best.peak.firings} firings (${[...counts].map(([k, v]) => (v > 1 ? `${k} x${v}` : k)).join(', ')}); paid ${Object.entries(best.paid).map(([k, v]) => `${k} ${v > 0 ? '+' : ''}${v}`).join(', ') || 'nothing'}; acts ${best.acts}; ${best.end}`);
   }
   L.push('');
   L.push('Live events (how they came out, over all runs):');

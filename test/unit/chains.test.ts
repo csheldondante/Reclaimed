@@ -3,7 +3,7 @@
 // win starting the next challenger, read back as a chain, saved and taken up mid-chain, the same every time.
 import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ACT_BUDGET, RuleBook, type RuleAct, type RuleDef, type RuleOccasion, type Thing } from '../../src/living/rules';
+import { CASCADE_LIMIT, RuleBook, type RuleAct, type RuleDef, type RuleOccasion, type Thing } from '../../src/living/rules';
 import { chainCycles, checkPack, checkTogether, type Pack } from '../../src/packs/check';
 import { thingEntity } from '../../src/packs/load';
 import { Table } from '../../src/table/game';
@@ -49,37 +49,55 @@ describe('the rule book: results, acts, chains', () => {
     const { book } = world([tag, reads]);
     expect(book.fire({ on: 'turn' }).map((h) => h.rule)).toEqual(['tag', 'reads']);
   });
-  it('an act that changes nothing is no firing; a chain stops at perSeason', () => {
+  it('a rule fires every time its trigger occurs; an act that changes nothing is no firing; perSeason is the author\'s own limit', () => {
     const tag: RuleDef = { id: 'tag', name: 'Tag', on: 'turn', a: { tags: ['pit'] }, effect: { tag: 'champion', on: 'a' }, why: 'x' };
-    const again: RuleDef = { ...win, perSeason: 2 };
-    const { book } = world([tag, again]);
+    const { book } = world([tag, win, { ...win, id: 'twice', perSeason: 2 }]);
     expect(book.fire({ on: 'turn' }).length).toBe(1);
     expect(book.fire({ on: 'turn' })).toEqual([]);
     const result: RuleOccasion = { on: { live: 'bout', tier: ['success'] } };
-    expect(book.fire(result).length).toBe(1);
-    expect(book.fire(result).length).toBe(1);
-    expect(book.fire(result)).toEqual([]);
+    expect(book.fire(result).map((h) => h.rule)).toEqual(['win', 'twice']);
+    expect(book.fire(result).map((h) => h.rule)).toEqual(['win', 'twice']);
+    // (no limit of its own: the third time too; the rule that asked for two a season stops)
+    expect(book.fire(result).map((h) => h.rule)).toEqual(['win']);
     book.season(2);
-    expect(book.fire(result).length).toBe(1);
+    expect(book.fire(result).map((h) => h.rule)).toEqual(['win', 'twice']);
   });
-  it('past the budget the book stops with an error that names the chain', () => {
-    const many = Array.from({ length: 9 }, (_, i): RuleDef => ({ ...win, id: `r${i}`, perSeason: 3 }));
-    const { book } = world(many);
-    const result: RuleOccasion = { on: { live: 'bout', tier: ['success'] } };
-    book.fire(result);
-    book.fire(result);
-    expect(() => book.fire(result)).toThrow(new RegExp(`more than ${ACT_BUDGET} acting rules fired in one season\\. The chain: r0 -> r1 -> `));
+  it('in one cascade a rule fires once on one occurrence of its trigger, and again on another, and again after the next action', () => {
+    const pays: RuleDef = { id: 'pays', name: 'Pays', on: { event: 'won' }, a: { tags: ['pit'] }, effect: { pool: 'magic', n: 1 }, why: '+{n}' };
+    const { book } = world([pays]);
+    book.begin();
+    expect(book.fire({ on: { event: 'won' }, id: 'e1' }).length).toBe(1);
+    expect(book.fire({ on: { event: 'won' }, id: 'e1' })).toEqual([]);
+    expect(book.fire({ on: { event: 'won' }, id: 'e2' }).length).toBe(1);
+    book.begin();
+    expect(book.fire({ on: { event: 'won' }, id: 'e1' }).length).toBe(1);
   });
-  it('refuses an acting rule that asks for too many firings, and a result rule that changes an amount', () => {
-    expect(() => world([{ ...win, perSeason: 4 }])).toThrow(/at most 3 times a season/);
+  it('multipliers stack: two rules that double one amount make it four times', () => {
+    const double = (id: string): RuleDef => ({ id, name: id, on: { live: 'parade' }, a: { tags: ['pit'] }, effect: { amount: 'crowd', op: 'mul', n: 2 }, why: '{n} more' });
+    const { book } = world([double('d1'), double('d2'), { id: 'plus', name: 'plus', on: { live: 'parade' }, a: { tags: ['pit'] }, effect: { amount: 'crowd', op: 'add', n: 3 }, why: '{n}' }]);
+    const vars = { crowd: 10 };
+    expect(book.fire({ on: { live: 'parade' }, vars }).map((h) => h.delta)).toEqual([10, 20, 3]);
+    expect(vars.crowd).toBe(43);
+  });
+  it('the defect detector: one cascade past the limit stops with an error that names the chain', () => {
+    const pays: RuleDef = { id: 'pays', name: 'Pays', on: 'turn', a: { tags: ['pit'] }, effect: { pool: 'magic', n: 1 }, why: '+{n}' };
+    const { book } = world([pays]);
+    book.begin();
+    for (let i = 0; i < CASCADE_LIMIT; i++) book.fire({ on: 'turn' });
+    expect(() => book.fire({ on: 'turn' })).toThrow(/more than 10000 firings in one cascade — an engine defect, not a rule of the game\. The chain ends: pays -> pays/);
+    // (the next action is a new cascade)
+    book.begin();
+    expect(book.fire({ on: 'turn' }).length).toBe(1);
+  });
+  it('refuses a result rule that changes an amount', () => {
     expect(() => world([{ ...amount, on: { live: 'bout', tier: ['success'] } }])).toThrow(/cannot change one/);
   });
-  it('the firings and the chain are saved and loaded', () => {
+  it('the firings are saved and loaded', () => {
     const { book } = world([{ ...win, perSeason: 2 }]);
     const result: RuleOccasion = { on: { live: 'bout', tier: ['success'] } };
     book.fire(result);
     const saved = book.save();
-    expect(saved.acted).toEqual(['win']);
+    expect(saved.fired).toEqual({ win: 1 });
     const { book: b2 } = world([{ ...win, perSeason: 2 }]);
     b2.load(saved);
     expect(b2.fire(result).length).toBe(1);
@@ -88,8 +106,12 @@ describe('the rule book: results, acts, chains', () => {
 });
 
 describe('the validator and chains', () => {
-  it('passes the arena pack; alone and with nothing else it has nothing to look at', () => {
-    expect(checkPack(ARENA)).toEqual([]);
+  it('passes the arena pack; it is told to look at its loop and at its uncapped rule, and nothing else', () => {
+    expect(errs(checkPack(ARENA))).toEqual([]);
+    const looks = checkPack(ARENA).filter((x) => x.level === 'warn').map((x) => x.text);
+    expect(looks.length).toBe(2);
+    expect(looks.some((x) => /with no "cap"\. It can pay any amount/.test(x))).toBe(true);
+    expect(looks.some((x) => /This chain comes back to itself: arena-keeps-coming -> arena-keeps-coming\. A loop is allowed: each turn of it costs the player a season or an action/.test(x))).toBe(true);
     expect(checkTogether([ARENA])).toEqual([]);
   });
   it('says what is wrong with an acting rule', () => {
@@ -98,7 +120,9 @@ describe('the validator and chains', () => {
       change(p);
       return errs(checkPack(p)).join('\n');
     };
-    expect(bad((p) => void (p.rules![0].perSeason = 5))).toMatch(/may fire at most 3 times a season/);
+    expect(bad((p) => void (p.rules![0].perSeason = 0))).toMatch(/"perSeason" is a whole number, 1 or more/);
+    // (no limit asked of an engine: a rule that adds to a pool needs no cap, and may fire any number of times)
+    expect(bad((p) => void (delete p.rules![4].cap, (p.rules![4].perSeason = 50)))).toBe('');
     expect(bad((p) => void (p.rules![0].effect = { start: 'arena-dig-the-pit' }))).toMatch(/has no "live" event/);
     expect(bad((p) => void (p.cards![1].cost = { materials: 1 }))).toMatch(/cannot cost anything/);
     expect(bad((p) => void ((p.rules![3].on as { tier: string[] }).tier = ['win']))).toMatch(/Unknown result "win"/);
@@ -115,7 +139,8 @@ describe('the validator and chains', () => {
     p.rules!.push({ id: 'arena-again', name: 'Again', on: { event: 'pack-done:arena-bout-3' }, a: { tags: ['pit'] }, effect: { start: 'arena-bout-1' }, why: 'again at {a}' });
     expect(chainCycles([p]).map((c) => c.rule)).toContain('arena-second-challenger');
     expect(checkPack(p).filter((x) => x.level === 'warn').some((x) => /This chain comes back to itself: /.test(x.text))).toBe(true);
-    expect(chainCycles([ARENA])).toEqual([]);
+    // (the arena's own loop: a won open bout starts the next)
+    expect(chainCycles([ARENA]).map((c) => c.rule)).toEqual(['arena-keeps-coming']);
   });
 });
 
@@ -135,7 +160,7 @@ describe('the fighting pit at the table: a win starts the next challenger', () =
   it('three bouts in three seasons, each started by the win before; the chain is read back in the log', () => {
     const t = new Table(OPTS);
     play(t, 9);
-    const b = bouts(t);
+    const b = bouts(t).slice(0, 3);
     expect(b.map((x) => x.split('@')[0])).toEqual(['arena-bout-1:success', 'arena-bout-2:success', 'arena-bout-3:success']);
     const at = b.map((x) => Number(x.split('@')[1]));
     expect([at[1] - at[0], at[2] - at[1]]).toEqual([1, 1]);
@@ -143,16 +168,35 @@ describe('the fighting pit at the table: a win starts the next challenger', () =
     expect(t.taken.filter((x) => x.startsWith('arena-bout'))).toEqual([]);
     const fired = t.hits.map((h) => h.hit.rule).filter((r) => r.startsWith('arena-'));
     expect(fired.filter((r) => r.endsWith('challenger'))).toEqual(['arena-first-challenger', 'arena-second-challenger', 'arena-third-challenger']);
-    expect(fired.filter((r) => r === 'arena-champion').length).toBe(3);
-    expect(fired.filter((r) => r === 'arena-purse').length).toBe(3);
+    expect(fired.filter((r) => r === 'arena-champion').length).toBeGreaterThanOrEqual(3);
+    expect(fired.filter((r) => r === 'arena-purse').length).toBe(fired.filter((r) => r === 'arena-champion').length);
     const line = t.log.find((l) => l.kind === 'rule' && /The Red Wolf hears/.test(l.text))!.text;
     expect(line).toMatch(/^A name to beat → .* → Rule: The Red Wolf hears\. Two wins at .* reached the Red Wolf\.$/);
     expect(t.log.some((l) => l.kind === 'rule' && /^Word of the pit → A drover calls out your fighter: good result → Rule: Talk of the town\./.test(l.text))).toBe(true);
     // (the last win's reward: the Red Wolf's crew)
     expect(t.realm.w.facts.entity(thingEntity('arena-fighting-pit'))).toBeTruthy();
-    // (nothing more comes: every bout was once)
-    play(t, 3);
-    expect(bouts(t).length).toBe(3);
+  });
+
+  it('a loop: after the Red Wolf an open bout comes every season for as long as it is won, and stops the season it is lost', () => {
+    const t = new Table(OPTS);
+    while (bouts(t).length < 3 && !t.over) play(t, 1);
+    // (each turn of the loop costs the player a cast and a season: four seasons, four open bouts, each won)
+    const magic = t.poolViews().find((p) => p.pool === 'magic')!;
+    const spent = t.spent;
+    play(t, 4);
+    const open = bouts(t).slice(3);
+    expect(open.map((x) => x.split('@')[0])).toEqual(Array(4).fill('arena-open-bout:success'));
+    const at = open.map((x) => Number(x.split('@')[1]));
+    expect(at.map((s, i) => s - at[0] - i)).toEqual([0, 0, 0, 0]);
+    expect(t.spent - spent).toBe(4);
+    // (and each win pays the purse rule 1 Magic: the loop's Magic comes back, the Materials are profit)
+    expect(t.poolViews().find((p) => p.pool === 'magic')!.have).toBe(magic.have + 4 * magic.income);
+    // (not cast into: the champion loses, and no hopefuls come the season after)
+    play(t, 1, false);
+    expect(bouts(t).at(-1)).toMatch(/^arena-open-bout:failure/);
+    const n = bouts(t).length;
+    play(t, 2);
+    expect(bouts(t).length).toBe(n);
   });
 
   it('a bout\'s card says what winning will set off, before anything is cast', () => {
@@ -180,7 +224,7 @@ describe('the fighting pit at the table: a win starts the next challenger', () =
     play(a, 2);
     play(b, 2);
     expect(bouts(b).at(-1)).toBe(bouts(a).at(-1));
-    expect(bouts(a).at(-1)).toMatch(/^arena-bout-3:success/);
+    expect(bouts(a).map((x) => x.split('@')[0])).toContain('arena-bout-3:success');
     const c = new Table(OPTS);
     while (bouts(c).length < 2 && !c.over) play(c, 1);
     play(c, 2);

@@ -3,6 +3,9 @@
 **Changed since draft 4.** Rules can chain (see "Chains"): (1) a rule can wait for a live event's RESULT,
 `"on": { "live": "raid", "tier": ["success"] }`; (2) a rule's effect can be an act: `offer` a card, `start` a live
 card, `tag` or `untag` the thing it matched; (3) what an act causes sets off other rules. Example: `packs/arena.json`.
+(4) **Engines are not limited** (the owner's ruling): a rule fires every time its trigger occurs — `perSeason` no
+longer defaults to 1 — and `cap` is no longer required. Loops are allowed; each turn of one costs the player an
+action or a season (see "Cascades"). (5) The base raid is 18 raiders and the tribute 15 Materials.
 
 **Changed since draft 3.** (1) Several packs load together; `packcheck` gives a TOGETHER report; shared custom tags
 take `"shared": true` (see "Several packs together"). (2) The event names a rule can wait for are a fixed, tested
@@ -217,8 +220,8 @@ want them said twice. Any number you do write in `say` or `pitch` must be a numb
 
 ## rules
 
-The engine's own format (`RuleDef`), unchanged. A rule fires once per season (unless `perSeason` says more) when its
-trigger happens and its things exist; the player is told `why`.
+The engine's own format (`RuleDef`), unchanged. A rule fires every time its trigger happens and its things exist;
+the player is told `why`.
 
 ```json
 { "id": "volcano-blessed-fields", "name": "Rune-fed fields",
@@ -247,7 +250,10 @@ trigger happens and its things exist; the player is told `why`.
 - `effect`: a pool (`{ "pool": "magic", "n": 1 }`), or one of a live event's numbers
   (`{ "amount": "crowd", "op": "add" | "mul", "n": 0.5 }`; only for a rule `on` a live event).
 - `per`: `"a"`, `"b"` (n for each thing matched) or `{ "amount": "crowd", "each": 6 }` (n per 6 of the crowd).
-- `cap`: the most one firing may add. Every rule that adds to a pool needs a `cap`; the validator refuses it without.
+- `cap` (optional): the most one firing may add ("the temple holds so many"). Leave it out for a rule that pays
+  whatever it counts; the validator only says LOOK when a rule with `per` has none.
+- `perSeason` (optional): the most firings a season. Leave it out and the rule fires every time its trigger occurs.
+  (The base game's 14 rules each say `perSeason: 1`: they were balanced that way.)
 - `why`: plain words; `{a}` `{b}` the things' names, `{n}` how much, `{count}` how many matched. Write the amount as
   `{n}`, never as a digit.
 
@@ -283,10 +289,31 @@ unless another card stands at its site. `once` still holds: a `once` card that i
   chain takes one season**: bout 1 in season 5, bout 2 in season 6, bout 3 in season 7.
 - An act that changes nothing is no firing: the card is on the table or asked for already, a `once` card is done,
   the tag is there already.
-- Every rule fires at most `perSeason` times a season (default 1). A rule that acts may ask for at most 3. Over all
-  acting rules there is a budget of 24 firings a season; past it the game stops with an error that names the chain.
-- A chain that comes back to itself (bout 3's win starts bout 1 again, with `"once": false` cards) is allowed. It
-  goes round one step a season for as long as its things are in play. The validator says to LOOK at it.
+
+**Cascades: loops cost an action or a season.** Engines are not limited. A rule fires every time its trigger
+occurs; multipliers stack (a doubling on a doubling is four times); nothing clamps a number except that a pool does
+not go below 0. `perSeason` and `cap` are the author's own words for flavour ("the temple holds so many"): nothing
+asks for them. What stops a loop from running by itself is how the game is built:
+- A CASCADE is everything set off by ONE player action (a card taken, a spell cast, the season ended) or one
+  season's turn. In a cascade a rule fires once on each occurrence of its trigger, and rules set off rules.
+- An act never takes effect inside the cascade that caused it. An offered card waits to be taken. A started event
+  waits for the player to cast into it and for the season to end. So the next turn of a loop always costs the
+  player an action or a season. A loop can go on for the whole run; it cannot go on by itself.
+- A chain that comes back to itself is allowed and is the fun: win → challenger → win → challenger, for as long as
+  the player keeps winning and paying. The validator says to LOOK at it, so you check what one turn pays against
+  what it costs.
+- The only stop in the engine is a defect detector: 10,000 firings in one cascade is reported as an engine error
+  naming the chain. It is not a rule of the game, and no pack can reach it by design.
+
+**Two engines, both in `packs/arena.json`.**
+1. *The loop.* After the Red Wolf is beaten, `arena-open-pit` starts an open bout. `arena-keeps-coming` waits for
+   `pack-done:arena-open-bout` at a `pit-champion` pit and starts the same card again (`"once": false`). One turn:
+   the player casts Fire once (1 Magic) to win; the win tags the pit `pit-champion` for the season, pays 2 Materials
+   and, by `arena-purse`, 1 Magic. Lose once (no cast) and the pit is no champion's: nothing starts the next bout.
+2. *The multiplier stack.* A parade's `crowd` is 13 with nothing else. With a champion's pit: `arena-crowd` adds 3
+   (16), `arena-drums` doubles it (32), then the result rule `arena-collection` pays 1 Materials for every 5 of the
+   crowd with no cap (6). Add another pack's doubling of `crowd` and it pays 12. Order matters for amounts: rules
+   run base first, then packs in load order, in file order; an `add` before a `mul` is doubled with it.
 
 **What the player sees.** The log reads a chain as a chain: "A name to beat → Two caravan guards call you out: good
 result → Rule: The Red Wolf hears. …". An event's card lists what each result will set off. The Rules list says

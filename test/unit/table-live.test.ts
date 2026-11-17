@@ -57,7 +57,7 @@ describe('RuleBook.check: the one thing a rule lacks', () => {
     { id: 'forge', name: 'Forge by the keep', on: { live: 'raid' }, a: { tags: ['workshop', 'worked'] }, b: { tags: ['keep', 'worked'], near: { of: 'a', cells: 90 } }, effect: { amount: 'stopped', op: 'add', n: 1 }, why: '{n}' },
     { id: 'calm', name: 'Calm', on: 'turn', a: { tags: ['keep'] }, need: { pool: 'unrest', lte: 0 }, effect: { pool: 'magic', n: 1 }, cap: 1, why: '+{n}' },
     { id: 'none', name: 'Temple', on: 'turn', a: { tags: ['temple'] }, effect: { pool: 'magic', n: 1 }, cap: 1, why: '+{n}' },
-    { id: 'ok', name: 'Keep', on: 'turn', a: { tags: ['keep', 'worked'] }, effect: { pool: 'might', n: 1 }, cap: 1, why: '+{n}' },
+    { id: 'ok', name: 'Keep', on: 'turn', a: { tags: ['keep', 'worked'] }, effect: { pool: 'might', n: 1 }, cap: 1, perSeason: 1, why: '+{n}' },
   ];
   const book = new RuleBook(rules, { things: () => things, pool: (k) => (k === 'unrest' ? 3 : 0), gain: (_k, n) => n });
   const why = (id: string) => {

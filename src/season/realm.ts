@@ -515,8 +515,9 @@ export class Realm {
       // (a card a rule had put on offer, now done or run out: the rules it fires are that rule's chain)
       const card = /^pack-(?:done|lapsed):(.+)$/.exec(e.kind)?.[1];
       const after = card ? this.asked.get(card) : undefined;
-      hits.push(...this.fireRules({ on: { event: e.kind }, ...(e.note ? { what: e.note } : {}), ...(after ? { after } : {}) }));
+      // (no longer asked for, before its rules fire: a rule may ask for the same card again — a loop's next turn)
       if (card) this.asked.delete(card);
+      hits.push(...this.fireRules({ on: { event: e.kind }, id: e.id, ...(e.note ? { what: e.note } : {}), ...(after ? { after } : {}) }));
     }
     // (the rules' own records are seen, and trigger nothing)
     this.seen = this.w.facts.events().length;
@@ -604,7 +605,7 @@ export class Realm {
     this.told.set(id, how);
     const site = this.w.facts.entity(o.place)?.attrs?.site as SiteKey | undefined;
     const vars = liveRead(def, how.state, run);
-    const hits = this.fireRules({ on: { live: def.tag }, vars, at: this.posOf(how.at ?? this.cellOf(site ?? 'market')), route: how.route ? [this.posOf(how.route[0]), this.posOf(how.route[1])] : null });
+    const hits = this.fireRules({ on: { live: def.tag }, id, vars, at: this.posOf(how.at ?? this.cellOf(site ?? 'market')), route: how.route ? [this.posOf(how.route[0]), this.posOf(how.route[1])] : null });
     const out = liveDerive(def, vars);
     const tier = liveTier(def, out);
     this.liveOut.set(id, out);
@@ -617,10 +618,10 @@ export class Realm {
     // offered or started this card — before the events its outcome wrote are read, so a tag a win sets is there for
     // the rule that waits for the card to be done
     const after = this.asked.get(o.template);
-    hits.push(...this.fireRules({ on: { live: def.tag, tier: [tier] }, vars: { ...out }, at: this.posOf(how.at ?? this.cellOf(site ?? 'market')), route: null, what: liveWhat(title, tier), ...(after ? { after } : {}) }));
+    hits.push(...this.fireRules({ on: { live: def.tag, tier: [tier] }, id: `${id}:result`, vars: { ...out }, at: this.posOf(how.at ?? this.cellOf(site ?? 'market')), route: null, what: liveWhat(title, tier), ...(after ? { after } : {}) }));
+    // (the card's own record of its end, read here, is what takes it off the asked list — and a rule waiting for that
+    // record may ask for the same card again: a loop's next turn)
     hits.push(...this.pump());
-    // (a card with no record of its own end: no longer asked for)
-    this.asked.delete(o.template);
     const lines = [...(oc ? [text(this.engine.ctx(t, o.bind, o.id), oc.text)] : []), ...hits.map((h) => `${h.text}.`)];
     console.log(`[realm] live event ${o.template}: ${tier} ${JSON.stringify(out)}${hits.length ? ` rules: ${hits.map((h) => h.rule).join(', ')}` : ''}`);
     return { id, template: o.template, title, tier, vars: out, lines, hits };
@@ -663,6 +664,8 @@ export class Realm {
   cast(spell: SpellId, site?: SiteKey): boolean {
     const cost = SPELL_COST[spell];
     if (pools(this.led).magic < cost) return false;
+    // (a player's action: a cascade of the rules begins)
+    this.rules.begin();
     this.addPool('magic', -cost);
     const at = site ? siteId(this.home, site) : this.home;
     if (spell === 'growth' && site) this.mark(at, 'growth-active', 'spell');
@@ -771,6 +774,7 @@ export class Realm {
   /** Commit to an offer: its people locked and goods spent by the contract; a town project adopted by the ledger. */
   commit(id: string): Offer {
     this.w.holdings = this.led.holdings;
+    this.rules.begin();
     const o = this.engine.commit(id);
     this.sync();
     this.said.push(...this.pump().map((h) => `${h.text}.`));
@@ -793,11 +797,13 @@ export class Realm {
    */
   endSeason(): string[] {
     this.w.holdings = this.led.holdings;
+    // (the season ended: one cascade of the rules, from the live events' results to the season's turn)
+    this.rules.begin();
     // (round 6: a live event still under way is resolved now, from the state it is in)
     const live = this.liveRunning().map((o) => this.finishLive(o.id));
     // (the season's own rules, while its states still hold — a growth rune lasts to this point: one line a firing:
     // what, how much, why)
-    const turned = this.fireRules({ on: 'turn' });
+    const turned = this.fireRules({ on: 'turn', id: `turn:${this.w.turn}` });
     this.w.holdings = this.led.holdings;
     const before = this.engine.changes.length;
     const past = this.engine.past.length;

@@ -16,15 +16,22 @@
 // Chains (card-table; the owner, 2026-11-16: "an in play thing that makes winning a fight cause a new challenger
 // opportunity and a next fight"). A rule may also ACT: put a card on offer, start a live card, set or clear a tag on
 // the thing it matched. What an act causes is a trigger like any other — a tag changed is re-read by the next rule, an
-// offered card's result fires the rules about results — so rules chain. They end because every rule fires at most
-// `perSeason` times a season (default once), and an acting rule's firings are counted against a budget a season
-// (ACT_BUDGET): past it is an error that names the chain, never a silent stop. A rule's own record ('rule-fired') is
-// never a trigger.
+// offered card's result fires the rules about results — so rules chain.
+//
+// Loops are wanted (the owner, 2026-11-16: "I think we want loops and fun engines I wouldn't limit that. I would make
+// it so the infinite loops are tied to user actions so they don't run infinitely on their own. But crazy multipliers
+// and triggers are fun."). So nothing here bounds an engine: a rule fires every time its trigger occurs, multipliers
+// stack, `perSeason` and `cap` are words an author may use ("the temple holds so many") and nothing asks for them.
+// What ends a loop is its structure. A CASCADE is everything set off by one player action (a card taken, a spell
+// cast, the season ended) or one season's turn (`begin`). In a cascade a rule fires once on each occurrence of its
+// trigger (an occurrence has an `id`: a fact event's, a live event's), and no rule fires inside another: an act
+// takes effect only through the world — an offered card waits to be taken, a started event waits for the season's
+// end — so the next turn of a loop costs the player an action or a season. A loop can go on for ever; it cannot go
+// on by itself. A rule's own record ('rule-fired') is never a trigger.
 
-/** an acting rule's firings a season, over all rules, before the book stops with an error */
-export const ACT_BUDGET = 24;
-/** the most an acting rule may ask for as `perSeason` */
-export const ACT_PER_SEASON = 3;
+/** firings in one cascade past which the book stops with an error naming the chain. A defect detector for the
+ *  engine (an act that takes effect inside its own cascade would be a bug), not a rule of the game */
+export const CASCADE_LIMIT = 10_000;
 
 export interface Thing {
   id: string;
@@ -74,7 +81,7 @@ export interface RuleDef {
   per?: 'a' | 'b' | { amount: string; each: number };
   /** the most it may add in one firing (a temple holds so many) */
   cap?: number;
-  /** firings a season (default 1) */
+  /** the most firings a season, if the author wants one (absent: it fires every time its trigger occurs) */
   perSeason?: number;
   /** why, in the player's words: {a} and {b} the things' names, {n} how much, {count} how many matched */
   why: string;
@@ -106,6 +113,9 @@ export interface RuleOccasion {
   route?: readonly [readonly [number, number], readonly [number, number]] | null;
   what?: string;
   after?: string;
+  /** which occurrence of the trigger this is (a fact event's id, a live event's): in one cascade a rule fires once
+   *  on it. Absent: every call is its own occurrence */
+  id?: string;
 }
 
 export interface RuleWorld {
@@ -118,12 +128,11 @@ export interface RuleWorld {
   act?(fx: RuleAct, things: Thing[], rule: RuleDef): boolean;
 }
 
-/** the rules' own state, saved with a run: firings by rule in the season it is in, and the acting rules fired this
- *  season in order (the chain the budget's error names) */
+/** the rules' own state, saved with a run: firings by rule in the season it is in (for a rule with `perSeason`, and
+ *  for the list that shows what fired) */
 export interface RuleState {
   season: number;
   fired: Record<string, number>;
-  acted?: string[];
 }
 
 /** (card-table) what a rule lacks to fire: its firings spent, a pool's level, no first thing (the closest and what it
@@ -191,9 +200,7 @@ export class RuleBook {
       if (ids.has(r.id)) throw new Error(`rules: the id ${r.id} is used twice`);
       ids.add(r.id);
       if ('amount' in r.effect && (typeof r.on === 'string' || !('live' in r.on))) throw new Error(`rule ${r.id}: only a live event has numbers to change`);
-      if (isAct(r.effect)) {
-        if ((r.perSeason ?? 1) > ACT_PER_SEASON) throw new Error(`rule ${r.id}: a rule that offers, starts or tags may fire at most ${ACT_PER_SEASON} times a season`);
-      } else if (r.effect.n === 0 || ('op' in r.effect && r.effect.op === 'mul' && r.effect.n < 0)) throw new Error(`rule ${r.id}: its effect changes nothing`);
+      if (!isAct(r.effect) && (r.effect.n === 0 || ('op' in r.effect && r.effect.op === 'mul' && r.effect.n < 0))) throw new Error(`rule ${r.id}: its effect changes nothing`);
       if ('amount' in r.effect && typeof r.on !== 'string' && 'live' in r.on && r.on.tier) throw new Error(`rule ${r.id}: a rule about a result comes after the event's numbers are read: it cannot change one`);
       if (r.per === 'b' && !r.b) throw new Error(`rule ${r.id}: counts a second thing it does not name`);
     }
@@ -206,9 +213,17 @@ export class RuleBook {
     this.state = structuredClone(s);
   }
 
-  /** a new season: every rule may fire again */
+  /** a new season: the counts of firings start again */
   season(n: number): void {
     if (n !== this.state.season) this.state = { season: n, fired: {} };
+  }
+
+  /** the cascade under way: its firings in order, and each rule's occurrences already fired on */
+  private cascade = { chain: [] as string[], seen: new Set<string>() };
+  /** A cascade begins: one player action (a card taken, a spell cast, the season ended) or one season's turn. Whoever
+   *  owns the world calls this before the first trigger the action sets off. */
+  begin(): void {
+    this.cascade = { chain: [], seen: new Set() };
   }
 
   /**
@@ -237,7 +252,7 @@ export class RuleBook {
    */
   check(r: RuleDef): RuleCheck {
     const base = { rule: r.id, name: r.name, on: r.on, fired: this.fired(r.id) };
-    if (base.fired >= (r.perSeason ?? 1)) return { ...base, ok: false, missing: { kind: 'spent' } };
+    if (r.perSeason !== undefined && base.fired >= r.perSeason) return { ...base, ok: false, missing: { kind: 'spent' } };
     if (r.need) {
       const have = this.w.pool(r.need.pool);
       if ((r.need.gte !== undefined && have < r.need.gte) || (r.need.lte !== undefined && have > r.need.lte)) return { ...base, ok: false, missing: { kind: 'need', pool: r.need.pool, have, ...(r.need.gte !== undefined ? { gte: r.need.gte } : {}), ...(r.need.lte !== undefined ? { lte: r.need.lte } : {}) } };
@@ -276,7 +291,10 @@ export class RuleBook {
     let things = this.w.things();
     for (const r of this.rules) {
       if (!same(r.on, o.on)) continue;
-      if ((this.state.fired[r.id] ?? 0) >= (r.perSeason ?? 1)) continue;
+      if (r.perSeason !== undefined && (this.state.fired[r.id] ?? 0) >= r.perSeason) continue;
+      // (in one cascade a rule fires once on one occurrence of its trigger)
+      const occurrence = o.id !== undefined ? `${r.id}|${o.id}` : null;
+      if (!dry && occurrence && this.cascade.seen.has(occurrence)) continue;
       if (r.need) {
         const have = this.w.pool(r.need.pool);
         if ((r.need.gte !== undefined && have < r.need.gte) || (r.need.lte !== undefined && have > r.need.lte)) continue;
@@ -307,13 +325,8 @@ export class RuleBook {
       if (isAct(fx)) {
         // (an act: done by the world's owner; nothing changed — the card stands already, the tag is there — is no firing)
         delta = dry ? (this.w.act ? 1 : 0) : this.w.act?.(fx, as, r) ? 1 : 0;
-        if (delta && !dry) {
-          const acted = (this.state.acted ??= []);
-          acted.push(r.id);
-          if (acted.length > ACT_BUDGET) throw new Error(`rules: more than ${ACT_BUDGET} acting rules fired in one season. The chain: ${acted.join(' -> ')}`);
-          // (a tag set or cleared is read by the rules that come after)
-          things = this.w.things();
-        }
+        // (a tag set or cleared is read by the rules that come after)
+        if (delta && !dry) things = this.w.things();
       } else if ('pool' in fx) {
         let n = fx.n * times;
         if (r.cap !== undefined) n = Math.sign(n) * Math.min(Math.abs(n), r.cap);
@@ -329,7 +342,13 @@ export class RuleBook {
         delta = next - was;
       }
       if (!delta) continue;
-      if (!dry) this.state.fired[r.id] = (this.state.fired[r.id] ?? 0) + 1;
+      if (!dry) {
+        this.state.fired[r.id] = (this.state.fired[r.id] ?? 0) + 1;
+        if (occurrence) this.cascade.seen.add(occurrence);
+        this.cascade.chain.push(r.id);
+        // (the defect detector: nothing in the game takes effect inside its own cascade, so this is never reached)
+        if (this.cascade.chain.length > CASCADE_LIMIT) throw new Error(`rules: more than ${CASCADE_LIMIT} firings in one cascade — an engine defect, not a rule of the game. The chain ends: ${this.cascade.chain.slice(-12).join(' -> ')}`);
+      }
       const first = as[0];
       const second = [...bs.values()][0];
       const text = r.why.replace(/\{(a|b|n|count)\}/g, (_, k: string) => (k === 'a' ? first.name : k === 'b' ? (second?.name ?? '') : k === 'n' ? String(Math.abs(delta)) : String(r.per === 'b' ? bs.size : as.length)));

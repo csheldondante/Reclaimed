@@ -24315,3 +24315,34 @@ and 1 Might for about 4 Magic of casts and 1 Materials a season of upkeep.
 **Tests.** `chains` 13 (result trigger, tag re-read, perSeason, budget error, save and load of the book; the arena
 on the Realm: three bouts in three seasons, the chain in the log, what a win will set off on the card, a lost bout
 ends it, saved after the second win and taken up, the same run from the same moves). Regression files pass alone.
+
+## 2026-11-16 — Engines are not bounded: cascades; the raid at 18 and the tribute at 15 (`card-table`)
+
+**The owner's ruling.** "I think we want loops and fun engines I wouldn't limit that. I would make it so the infinite
+loops are tied to user actions so they don't run infinitely on their own. But crazy multipliers and triggers are fun."
+
+**What changed in `living/rules.ts`.** `perSeason` no longer defaults to 1: a rule fires every time its trigger
+occurs. The per-season budget and the cap of 3 on acting rules are gone. A cascade is one player action or one
+season's turn (`RuleBook.begin`, called by the Realm in `commit`, `cast` and `endSeason`); in it a rule fires once
+on one occurrence of its trigger (`RuleOccasion.id`: the fact event's id, the live event's). No act takes effect
+inside the cascade that caused it: an offered card waits for a deal and a player, a started event for the season's
+end. So a loop costs an action or a season a turn. `CASCADE_LIMIT` (10,000 firings in one cascade) is a defect
+detector with an error that names the chain.
+
+**Base balance kept.** The 14 base rules each get `perSeason: 1` where `RULES` is exported, so nothing fires more
+often than before. Two tests said "once a season" of a rule with no `perSeason` (round 6's `live-rules`, mine in
+`table-live`): each rule now says it.
+
+**A defect found by the loop.** `finishLive` took a card off the asked list after its rules had fired, which threw
+away a rule's request for the same card again: the open bout ran one turn and stopped. The card's own done event,
+read in `pump`, takes it off now, before its rules fire.
+
+**Tuning 2** (its own commit, 428cd32c): 18 raiders, tribute 15. Bots before / after: `spells only` held 3/3 → 1/3,
+`walls, no spells` 3/3 → 1/3, `walls and might` with spells 3/3 → 3/3, the tribute bots still pay 3/3. Round 6's
+`realm-bots` bots cast nothing; with 18 raiders only the tribute holds for them, so its "two ways" assertion is one
+way there and `table-bots` asserts the two ways with spells.
+
+**Measured (loop hunter, arena + sample together, 33 runs, 127 s).** The open-bout loop: 162 wins, 3 losses — every
+casting bot takes every turn of it, because a turn pays back its Magic and 2 Materials (CT-30). The biggest engine
+was 15 rule firings in one season (greedy, pack-first and loop hunter alike); the multiplier stack took the parade
+from 13 to 32 people (triumph 34 of 37 parades). Nothing grew without end except the sample pack's Labor.

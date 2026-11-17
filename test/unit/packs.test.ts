@@ -73,7 +73,8 @@ describe('the pack validator', () => {
     ['an id of the base game', (p) => void (p.cards![1].id = 'mend-dam'), /already a card of the base game/],
     ['a number in a sentence that the data has not', (p) => void (card(p, 'sample-take-in-neighbours').if_expires![2] = { say: 'Their hungry walk to your gate. 60 people sleep in the road.' }), /says 60/],
     ['a number in a pitch that the data has not', (p) => void (card(p, 'sample-build-granary').pitch = 'Give me 5 workers.'), /pitch says 5/],
-    ['a rule that adds to a pool with no cap', (p) => void delete p.rules![0].cap, /no "cap"/],
+    // (a rule needs no cap any more: the owner's ruling, engines are not bounded — test/unit/chains.test.ts)
+    ['a rule whose effect changes nothing', (p) => void ((p.rules![0].effect as { n: number }).n = 0), /a number "n" that is not 0/],
     ['a threat with no if_expires', (p) => void delete card(p, 'sample-mill-fire').if_expires, /A threat needs "if_expires"/],
     ['a card that waits for a thing nobody puts', (p) => void (card(p, 'sample-build-granary').if_taken = [{ say: 'Done.' }]), /can never appear: it waits for the thing "sample-granary"/],
     ['cards that wait for each other', (p) => void (card(p, 'sample-build-granary').appears_when = [{ resolved: 'sample-take-in-neighbours' }]), /wait for it in turn/],
