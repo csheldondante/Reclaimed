@@ -113,6 +113,27 @@ export interface PackThing {
   art?: string;
   /** (loop round 8) a picture's URL for the thing's card (else local/art/<id>.png if there) */
   image?: string;
+  /** (draft 10) room for pieces: crews (Labor) or soldiers (Might) posted here, and what each gives every season */
+  slots?: PackSlot[];
+  /** (draft 10) instant uses: a cost, what it gives, how often a season */
+  uses?: PackUse[];
+}
+/** (draft 10, docs/design/TURN_PUZZLE.md) room on a thing for `n` pieces of a kind; each posted gives `each_season` */
+export interface PackSlot {
+  takes: 'crew' | 'soldier';
+  n: number;
+  each_season?: Record<string, number>;
+}
+/** (draft 10) a use of a thing in play: instant, at most `times` a season (default 1); `per`: what it gives is for each
+ *  piece of that kind posted on the thing */
+export interface PackUse {
+  id: string;
+  name: string;
+  cost?: Record<string, number>;
+  gives: Record<string, number>;
+  times?: number;
+  per?: 'crew' | 'soldier';
+  text: string;
 }
 export interface PackCard {
   id: string;
@@ -220,6 +241,8 @@ export interface Pack {
   /** (loop round 13) the weather of seasons of the run: `{ "season": 3, "weather": "fog" }`, `{ "from": 10, "weather":
    *  "ashfall" }`, `{ "from": 4, "to": 6, "weather": "rain" }` (src/weather/presets.ts seasonWeather) */
   weather?: SeasonWeather[];
+  /** (draft 10) things of this pack in play when a run begins in a town that has none of them yet */
+  start?: string[];
 }
 
 /** (ages) a leader a pack offers at a run's start, while the world fits (`appears_when` over the record and the far
@@ -261,6 +284,8 @@ export const KNOWN_TAGS: readonly string[] = [
   'standing', 'worked', 'growth-active', 'festival', 'sheltered',
   'burned', 'flooded', 'buried', 'melted', 'abandoned', 'destroyed', 'occupied', 'lost', 'ruined',
   'town', 'home', 'wall', 'garrison', 'unrest', 'trade-partner',
+  // (draft 10: a thing with a crew posted on it, with a soldier)
+  'crewed', 'manned',
   // (draft 7: a far town as a thing the rules read — packs/load.ts farThings)
   'far-town', 'colony', 'vassal', 'founded', 'found', 'yours',
 ];
@@ -523,8 +548,53 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       if (!GOODS.includes(k)) err(w, `Upkeep can be paid in ${GOODS.join(', ')} only. It asks for ${k}.`);
       if (!Number.isInteger(n) || n < 1) err(w, `Upkeep is a whole number, 1 or more. ${k} is ${JSON.stringify(n)}.`);
     }
-    for (const n of numbersIn(t.text ?? '')) if (!numbersOf([t.upkeep, t.capacity]).includes(n)) err(w, `The text says ${n}, but the thing's upkeep and capacity have no such number.`);
+    for (const n of numbersIn(t.text ?? '')) if (!numbersOf([t.upkeep, t.capacity, t.slots]).includes(n)) err(w, `The text says ${n}, but the thing's upkeep, capacity and slots have no such number.`);
+    // (draft 10: slots for pieces and instant uses)
+    if (t.slots !== undefined) {
+      if (!Array.isArray(t.slots)) err(w, '"slots" is a list: [{ "takes": "crew", "n": 2, "each_season": { "materials": 1 } }].');
+      else {
+        const kinds = new Set<string>();
+        t.slots.forEach((s, j) => {
+          const sw = `${w}.slots[${j}]`;
+          if (!['crew', 'soldier'].includes(s.takes)) err(sw, '"takes" is "crew" (Labor) or "soldier" (Might).');
+          if (kinds.has(s.takes)) err(sw, `Two slots for ${s.takes}s: put them in one with a bigger "n".`);
+          kinds.add(s.takes);
+          if (!Number.isInteger(s.n) || s.n < 1 || s.n > 6) err(sw, '"n" is how many pieces fit: a whole number, 1 to 6.');
+          for (const [k, n] of Object.entries(s.each_season ?? {})) {
+            if (![...GOODS, 'unrest'].includes(k)) err(sw, `"each_season" gives goods (${GOODS.join(', ')}) or Unrest. It names ${k}.`);
+            if (!Number.isInteger(n) || n === 0) err(sw, `"each_season" is a whole number, not 0. ${k} is ${JSON.stringify(n)}.`);
+          }
+        });
+      }
+    }
+    if (t.uses !== undefined) {
+      if (!Array.isArray(t.uses)) err(w, '"uses" is a list of uses: [{ "id", "name", "cost", "gives", "text" }].');
+      else
+        t.uses.forEach((u, j) => {
+          const uw = `${w}.uses[${j}] (${u.id})`;
+          if (typeof u.id !== 'string' || !u.id.startsWith(`${p.pack.id}-`)) err(uw, `A use's id starts with the pack's id: "${p.pack.id}-…".`);
+          if (!u.name || !u.text) err(uw, 'A use needs a "name" and a "text" the player reads.');
+          const allPools = [...GOODS, ...PEOPLE, 'unrest'];
+          for (const [k, n] of Object.entries(u.cost ?? {})) {
+            if (![...GOODS, ...PEOPLE].includes(k)) err(uw, `A use costs ${[...GOODS, ...PEOPLE].join(', ')}. It asks for ${k}.`);
+            if (!Number.isInteger(n) || n < 1) err(uw, `A cost is a whole number, 1 or more. ${k} is ${JSON.stringify(n)}.`);
+          }
+          if (!isObj(u.gives) || !Object.keys(u.gives).length) err(uw, '"gives" names what the use gives: { "materials": 2 }.');
+          for (const [k, n] of Object.entries(u.gives ?? {})) {
+            if (!allPools.includes(k)) err(uw, `A use gives ${allPools.join(', ')}. It names ${k}.`);
+            if (!Number.isInteger(n) || n === 0 || (k !== 'unrest' && n < 0)) err(uw, `"gives" is a whole number over 0 (Unrest may go down). ${k} is ${JSON.stringify(n)}.`);
+          }
+          if (u.times !== undefined && (!Number.isInteger(u.times) || u.times < 1)) err(uw, '"times" is how often a season: a whole number, 1 or more.');
+          if (u.per !== undefined && !(t.slots ?? []).some((s) => s.takes === u.per)) err(uw, `"per": "${u.per}" counts pieces posted here, but the thing has no slot for them.`);
+          for (const n of numbersIn(u.text ?? '')) if (!numbersOf([u.cost, u.gives, u.times]).includes(n)) err(uw, `The text says ${n}, but the use's cost, gives and times have no such number.`);
+        });
+    }
   });
+  // (draft 10: things in play from a run's start)
+  if (p.start !== undefined) {
+    if (!Array.isArray(p.start)) err('start', '"start" is a list of this pack\'s thing ids.');
+    else for (const id of p.start) if (!things.some((t) => t.id === id)) err('start', `"${id}" is no thing of this pack.`);
+  }
 
   // ---- effects ----
   /** (draft 8) what can be unlocked (locked cards and leaders, the pack if it is locked), and what is */
@@ -1001,7 +1071,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     }
     // (a rule on a live event names numbers every event of that kind must have: the engine stops on a missing one)
     if (isObj(on) && typeof on.live === 'string') {
-      const names = [...('amount' in (fx ?? {}) ? [(fx as { amount: string }).amount] : []), ...(isObj(r.per) ? [(r.per as { amount: string }).amount] : [])];
+      const names = [...('amount' in (fx ?? {}) ? [(fx as { amount: string }).amount] : []), ...(isObj(r.per) && !('posted' in (r.per as object)) ? [(r.per as { amount: string }).amount] : [])];
       for (const a of names) {
         if (LIVE_AMOUNTS[on.live] && !LIVE_AMOUNTS[on.live].includes(a)) err(w, `A "${on.live}" event of the base game has no amount "${a}". It has: ${LIVE_AMOUNTS[on.live].join(', ')}.`);
         for (const e of events) if (e.tag === on.live && !(e.amounts ?? []).includes(a)) err(w, `It reads the amount "${a}", but the event "${e.id}" of that kind does not list it in "amounts".`);
@@ -1009,6 +1079,8 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     }
     if (r.need) pool(r.need.pool, `${w}.need`);
     if (r.per === 'b' && !r.b) err(w, '"per": "b" counts a second thing the rule does not name.');
+    // (draft 10: a rule may count the pieces posted on the things it matched)
+    if (isObj(r.per) && 'posted' in (r.per as object) && !['crew', 'soldier'].includes(String((r.per as unknown as { posted: unknown }).posted))) err(w, '"per": { "posted": "crew" } or "soldier" counts the pieces posted on the first things matched.');
     if (!act && !lawAct && r.why && !/\{n\}/.test(r.why)) warn(w, 'Its "why" does not say how much. Add {n}.');
     for (const n of numbersIn((r.why ?? '').replace(/\{\w+\}/g, ''))) if (!numbersOf([r.effect, r.cap, r.per]).includes(n)) err(w, `Its "why" says ${n}, but the rule's data has no such number. Use {n} for the amount.`);
   };

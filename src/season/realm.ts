@@ -31,7 +31,8 @@ import { FactWorld } from '../living/world';
 import { OPP_TUNE, type DealerTune } from '../opps/tune';
 import { CATALOG, card } from './catalog';
 import { hasLand, type Land } from './deal';
-import { adopt, lose, grant, pools, total, POOL_ROLE, type Pool, type Pools, type SeasonLedger } from './ledger';
+import { adopt, lose, grant, pools, total, freePieces, postPiece, posts, POOL_ROLE, POOLS, POST, PEOPLE_KIND, PIECE_POOL, type PieceKind, type Pool, type Pools, type SeasonLedger } from './ledger';
+import { available } from '../api/contracts/opportunity';
 import { cardOfTemplate, projectTemplate, RAIDERS, RAIDERS_CAMP, siteId, SITES, WORLD_TEMPLATES, type SiteKey } from './realm-templates';
 import { BASE_BETWEEN, BETWEEN, LAW_ENDED, type BetweenDef } from './realm-between';
 import { addPoi, poiCell, pois, type Poi } from './pois';
@@ -173,13 +174,70 @@ export interface RealmOptions {
     deckOut?: { ids?: string[]; themes?: string[] };
     /** (draft 8) the packs' between-runs entries, applied after the base game's (realm-between.ts) */
     between?: BetweenDef[];
+    /** (draft 10, docs/design/TURN_PUZZLE.md) the things in play that have slots for pieces or uses, standing (a ruined
+     *  thing has none): each by its id as `things()` gives it */
+    works?: () => WorkThing[];
   };
+  /** (draft 10) opportunities on offer at once (default BOARD) and threats standing at once (default 1) */
+  board?: number;
+  threats?: number;
   /** (card-table, tuning) raiders in the run's last stage (default realm-templates.ts RAIDERS) */
   raiders?: number;
   /** (card-table) told each time synergy rules fire, with the firings (a front end's log of what, how much, why) */
   onRules?: (hits: RuleHit[]) => void;
   /** deal the live fire at the market in place of the instant `fire-wards` hazard (off: BACKLOG LS-63) */
   liveFire?: boolean;
+}
+
+/**
+ * (draft 10, docs/design/TURN_PUZZLE.md) An instant use of a thing in play: its cost taken and what it gives added at
+ * once, at most `times` a season. `per`: what it gives is for each piece of that kind posted on the thing. Costs in
+ * Labor or Might take free pieces away for good; gives in them are new pieces; Unrest may be given either way.
+ */
+export interface UseDef {
+  id: string;
+  name: string;
+  cost: Partial<Pools>;
+  gives: Partial<Pools>;
+  times: number;
+  per?: PieceKind;
+  text: string;
+}
+/** (draft 10) a thing in play with room for pieces (`slots`: how many of each kind) and its uses */
+export interface WorkThing {
+  id: EntityId;
+  name: string;
+  slots: Partial<Record<PieceKind, number>>;
+  uses: UseDef[];
+}
+/** (draft 10) one piece: a crew or a soldier, where it is, and whether it has moved this season */
+export interface Piece {
+  id: string;
+  kind: PieceKind;
+  /** 'free', 'strike' (kept away by Unrest), 'project' (locked by a card under way: `on` its offer) or 'posted' (`on` the thing) */
+  where: 'free' | 'strike' | 'project' | 'posted';
+  on: string | null;
+  moved: boolean;
+}
+/** (draft 10) a use as it stands now: what it would give (its `per` counted), uses left this season, and whether it can be made */
+export interface UseNow {
+  thing: EntityId;
+  thingName: string;
+  use: UseDef;
+  gives: Partial<Pools>;
+  left: number;
+  can: boolean;
+}
+/** (draft 10) what committing to an offer would do, before it is done */
+export interface CommitPreview {
+  before: Pools;
+  after: Pools;
+  /** pieces tied up, and the season (of the run) they come back in */
+  tied: Record<PieceKind, number>;
+  back: number;
+  /** goods spent */
+  spent: Partial<Pools>;
+  short: Partial<Pools>;
 }
 
 /** a run under way, as saved beside the world (BACKLOG LS-8): the realm's own small state and the engine's */
@@ -209,6 +267,8 @@ export interface RunState {
   lawSeq?: number;
   /** (endings) the run was ended by an effect, a rule or a law */
   ended?: Realm['ended'];
+  /** (draft 10) this season's moves of pieces and uses made: the turn they count in */
+  turn?: { at: number; moved: string[]; used: Record<string, number> };
 }
 
 /** the risen dead as an entity of the fact world (who holds the towns they took) */
@@ -321,6 +381,7 @@ export class Realm {
       for (const [k, v] of res.where ?? []) this.whereOf.set(k, v);
       this.partnersWere = res.partners ?? -1;
       this.ended = res.ended ?? null;
+      if (res.turn) this.turnState = structuredClone(res.turn);
     } else {
       // (draft 8: years pass between two runs of a world — the one step where the world moves on its own, never during
       // a run: realm-between.ts)
@@ -352,7 +413,8 @@ export class Realm {
     // (the owner, 2026-11-16: no separate raid mechanism — the raid is a card. No arc is timed here: the raiders'
     // standing threat is a template like any other, dealt while the world has hostile raiders. The dealer's one
     // guarantee — a card that answers the run's threat — reads the raiders' themes while they threaten the town)
-    const tune = o.tune ?? (() => ({ ...OPP_TUNE.dealer, reach: Number.MAX_VALUE, resourceMax: BOARD }));
+    const board = o.board ?? BOARD;
+    const tune = o.tune ?? (() => ({ ...OPP_TUNE.dealer, reach: Number.MAX_VALUE, resourceMax: board }));
     const realm = this;
     this.engine = new LivingEngine(this.w, templates, undefined, o.home, {
       get hooks() {
@@ -367,19 +429,19 @@ export class Realm {
       },
       economy: false,
       limitBoard: true,
-      threatMax: 1,
+      threatMax: o.threats ?? 1,
       // (round 7, LS-73: the board, the threat and the arc's card — five things asked at most, whatever the guarantee adds.
       // Loop round 10, merging card-table round 5: the raiders' standing card now stands at the town, not a site, so it
       // keeps no site's card off the board, and the dealer's guarantee answers it (hook `raiders-threat`) — CT-52 (6):
       // six. At five the cap cut the guaranteed answer (farms never dealt in table-live.test.ts) and changed which cards
       // run 1 of home.test.ts took. Six until the owner rules (LS-105))
-      boardMax: BOARD + 3,
+      boardMax: board + 2 + (o.threats ?? 1),
       rng: () => 0,
       liveNumbers: Object.keys(this.runNumbers()),
     });
     this.baseRules = [...RULES, ...(o.extra?.rules ?? [])];
     // (laws: the rule book reads the rules with the laws in force applied)
-    this.rules = new RuleBook(() => this.ruleView().rules, { things: () => this.things(), pool: (k) => pools(this.led)[k as Pool] ?? 0, gain: (k, n) => this.addPool(k as Pool, n), act: (fx, things, rule) => this.act(fx, things, rule) });
+    this.rules = new RuleBook(() => this.ruleView().rules, { things: () => this.things(), pool: (k) => pools(this.led)[k as Pool] ?? 0, gain: (k, n) => this.addPool(k as Pool, n), act: (fx, things, rule) => this.act(fx, things, rule), posted: (thing, kind) => posts(this.w.holdings).get(thing)?.[kind] ?? 0 });
     for (const [k, v] of res?.asked ?? []) this.asked.set(k, v);
     for (const [k, v] of res?.askedOn ?? []) this.askedOn.set(k, v);
     if (res?.rules) this.rules.load(res.rules);
@@ -399,7 +461,7 @@ export class Realm {
 
   /** the run as it stands, to save beside the world's snapshot (`RealmOptions.resume` takes it up) */
   runState(): RunState {
-    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, fight: this.fight, where: [...this.whereOf], engine: this.engine.state(), rules: this.rules.save(), seen: this.seen, partners: this.partnersWere, asked: [...this.asked], askedOn: [...this.askedOn], laws: structuredClone(this.active), lawSeq: this.lawSeq, ended: this.ended };
+    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, fight: this.fight, where: [...this.whereOf], engine: this.engine.state(), rules: this.rules.save(), seen: this.seen, partners: this.partnersWere, asked: [...this.asked], askedOn: [...this.askedOn], laws: structuredClone(this.active), lawSeq: this.lawSeq, ended: this.ended, turn: structuredClone(this.turnNow()) };
   }
 
   // ---- endings and the world's own tags (the owner: "Innovation does this where high tech can instantly win and lose
@@ -838,7 +900,7 @@ export class Realm {
     const houses = this.led.built.filter((c) => c === 'houses').length;
     // (laws: the raid's size; a pool that counts as Might in a fight — Unrest)
     const laws = this.laws();
-    const might = p.might + poolsAs(laws).filter(([, as]) => as === 'might').reduce((n, [k]) => n + (p[k as Pool] ?? 0), 0);
+    const might = p.might + this.postedSoldiers() + poolsAs(laws).filter(([, as]) => as === 'might').reduce((n, [k]) => n + (p[k as Pool] ?? 0), 0);
     return { raid: this.raid === null ? 0 : raidersOf(this.raid, laws), soldiers: military(this.led) ? might * SQUAD : 0, watchers: 4 + 2 * Math.min(3, houses) };
   }
 
@@ -879,7 +941,16 @@ export class Realm {
     const all = this.o.extra?.things ? this.o.extra.things(base) : base;
     // (laws: a tag that counts as another, a tag granted to every match, in the order they came into force)
     const laws = this.laws();
-    return laws.length ? applyTags(all, laws) : all;
+    // (draft 10: a thing with a crew posted on it is `crewed`, with a soldier `manned`)
+    const ps = posts(this.w.holdings);
+    const withPosts = ps.size ? all.map((t) => (ps.has(t.id) ? { ...t, tags: [...t.tags, ...(ps.get(t.id)!.crew ? ['crewed'] : []), ...(ps.get(t.id)!.soldier ? ['manned'] : [])] } : t)) : all;
+    return laws.length ? applyTags(withPosts, laws) : withPosts;
+  }
+  /** (draft 10) soldiers posted anywhere: they are not free, but they are at home and fight for it */
+  private postedSoldiers(): number {
+    let n = 0;
+    for (const p of posts(this.w.holdings).values()) n += p.soldier;
+    return n;
   }
   private baseThings(): Thing[] {
     const f = this.w.facts;
@@ -902,7 +973,7 @@ export class Realm {
     }
     const p = pools(l);
     const sacked = ruinOf(siteId(this.home, 'gate')).length > 0;
-    out.push({ id: this.home, name: this.w.name(this.home), tags: ['town', 'home', ...(l.built.includes('walls') && !sacked ? ['wall'] : []), ...(military(l) && p.might > 0 ? ['garrison'] : []), ...(p.unrest > 0 ? ['unrest'] : [])], at: [h.at[0], h.at[1]], town: this.home });
+    out.push({ id: this.home, name: this.w.name(this.home), tags: ['town', 'home', ...(l.built.includes('walls') && !sacked ? ['wall'] : []), ...(military(l) && p.might + this.postedSoldiers() > 0 ? ['garrison'] : []), ...(p.unrest > 0 ? ['unrest'] : [])], at: [h.at[0], h.at[1]], town: this.home });
     for (const x of this.partners()) {
       const s = this.w.settlement(x.id);
       out.push({ id: x.id, name: this.w.name(x.id), tags: ['town', 'trade-partner', x.standing ? 'standing' : 'ruined'], at: s ? [s.at[0], s.at[1]] : null, town: x.id });
@@ -1265,6 +1336,123 @@ export class Realm {
 
   // ---- the player's moves ---------------------------------------------------------------------------------------------
 
+  // ---- (draft 10, docs/design/TURN_PUZZLE.md) the turn: pieces, slots, uses, the preview ------------------------------
+
+  /** this season's moves of pieces and uses made (a new season starts them again) */
+  private turnState: { at: number; moved: string[]; used: Record<string, number> } = { at: -1, moved: [], used: {} };
+  private turnNow(): { at: number; moved: string[]; used: Record<string, number> } {
+    if (this.turnState.at !== this.w.turn) this.turnState = { at: this.w.turn, moved: [], used: {} };
+    return this.turnState;
+  }
+  /** the things in play with slots or uses, standing */
+  works(): WorkThing[] {
+    return this.o.extra?.works?.() ?? [];
+  }
+  /** every crew and soldier: where it is and whether it moved this season */
+  pieces(): Piece[] {
+    const h = this.w.holdings;
+    const free = new Set(available(h).map((a) => a.id));
+    const moved = new Set(this.turnNow().moved);
+    return h.agents
+      .filter((a) => a.kind === PEOPLE_KIND.labor || a.kind === PEOPLE_KIND.might)
+      .map((a) => {
+        const kind: PieceKind = a.kind === PEOPLE_KIND.might ? 'soldier' : 'crew';
+        const on = a.committed ?? null;
+        const where: Piece['where'] = on?.startsWith(POST) ? 'posted' : on ? 'project' : free.has(a.id) ? 'free' : 'strike';
+        return { id: a.id, kind, where, on: on?.startsWith(POST) ? on.slice(POST.length) : on, moved: moved.has(a.id) };
+      });
+  }
+  /** room left on a thing for pieces of a kind */
+  room(thing: EntityId, kind: PieceKind): number {
+    const w = this.works().find((x) => x.id === thing);
+    return w ? (w.slots[kind] ?? 0) - (posts(this.w.holdings).get(thing)?.[kind] ?? 0) : 0;
+  }
+  /** a player's instant action ends: its rules fired (an event recorded is a trigger), the laws, a card asked for */
+  private instant(kind: string, to: EntityId, note: string): void {
+    this.w.facts.record({ kind, by: ['player'], to: [to], note });
+    this.said.push(...this.pump().map((h) => `${h.text}.`));
+    this.refreshLaws();
+    this.dealAsked();
+  }
+  /** Post a free piece that has not moved this season on a thing with room. False: no room, or no such piece. */
+  post(kind: PieceKind, thing: EntityId): boolean {
+    if (this.over || this.room(thing, kind) <= 0) return false;
+    const t = this.turnNow();
+    const k = PEOPLE_KIND[PIECE_POOL[kind]];
+    const a = available(this.w.holdings).find((x) => x.kind === k && !t.moved.includes(x.id));
+    if (!a) return false;
+    this.rules.begin();
+    this.ledger = postPiece({ ...this.led, holdings: this.w.holdings }, a.id, thing);
+    t.moved.push(a.id);
+    this.instant('posted', thing, `a ${kind} went to ${this.w.name(thing)}`);
+    return true;
+  }
+  /** Recall a posted piece that has not moved this season: free at once. False: none there that may move. */
+  recall(kind: PieceKind, thing: EntityId): boolean {
+    if (this.over) return false;
+    const t = this.turnNow();
+    const k = PEOPLE_KIND[PIECE_POOL[kind]];
+    const a = this.w.holdings.agents.find((x) => x.kind === k && x.committed === POST + thing && !t.moved.includes(x.id));
+    if (!a) return false;
+    this.rules.begin();
+    this.ledger = freePieces({ ...this.led, holdings: this.w.holdings }, [a.id]);
+    t.moved.push(a.id);
+    this.instant('recalled', thing, `a ${kind} came back from ${this.w.name(thing)}`);
+    return true;
+  }
+  /** pieces posted on things no longer standing with slots come back (a ruined mine sends its crews home) */
+  private releaseLost(): void {
+    const standing = new Set(this.works().filter((w) => (w.slots.crew ?? 0) + (w.slots.soldier ?? 0) > 0).map((w) => w.id));
+    const lost = this.w.holdings.agents.filter((a) => a.committed?.startsWith(POST) && !standing.has(a.committed.slice(POST.length))).map((a) => a.id);
+    if (lost.length) this.ledger = freePieces({ ...this.led, holdings: this.w.holdings }, lost);
+  }
+  /** what a use would give now: for each piece posted on its thing when it says `per` */
+  private givesNow(thing: EntityId, u: UseDef): Partial<Pools> {
+    const n = u.per ? (posts(this.w.holdings).get(thing)?.[u.per] ?? 0) : 1;
+    return Object.fromEntries(Object.entries(u.gives).map(([k, v]) => [k, (v ?? 0) * n]));
+  }
+  /** every use of the things in play, as it stands now */
+  uses(): UseNow[] {
+    const have = pools(this.led);
+    const used = this.turnNow().used;
+    return this.works().flatMap((w) =>
+      w.uses.map((u) => {
+        const left = u.times - (used[`${w.id}|${u.id}`] ?? 0);
+        const pay = (Object.entries(u.cost) as [Pool, number][]).every(([k, n]) => have[k] >= n);
+        return { thing: w.id, thingName: w.name, use: u, gives: this.givesNow(w.id, u), left, can: !this.over && left > 0 && pay };
+      }),
+    );
+  }
+  /** Make a use of a thing (instant): its cost taken, what it gives added, now. False: none left, or short. */
+  use(id: string, thing: EntityId): boolean {
+    const u = this.uses().find((x) => x.use.id === id && x.thing === thing);
+    if (!u || !u.can) return false;
+    this.rules.begin();
+    for (const [k, n] of Object.entries(u.use.cost) as [Pool, number][]) if (n) this.addPool(k, -n);
+    for (const [k, n] of Object.entries(u.gives) as [Pool, number][]) if (n) this.addPool(k, n);
+    const t = this.turnNow();
+    t.used[`${thing}|${id}`] = (t.used[`${thing}|${id}`] ?? 0) + 1;
+    this.instant(`used:${id}`, thing, `you used ${u.use.name} at ${this.w.name(thing)}`);
+    return true;
+  }
+  /** What committing to an offer would do, with nothing changed: pools before and after, pieces tied up and when they
+   *  come back, goods spent */
+  preview(id: string): CommitPreview {
+    const o = this.engine.offered.find((x) => x.id === id);
+    if (!o) throw new Error(`realm: nothing offered as ${id}`);
+    const t = this.terms(o);
+    const before = pools(this.led);
+    const after = { ...before };
+    const spent: Partial<Pools> = {};
+    for (const [k, n] of Object.entries(t.locks) as [Pool, number][]) after[k] -= n;
+    for (const [k, n] of Object.entries(t.costs) as [Pool, number][]) {
+      if (!POOLS.includes(k) || POOL_ROLE[k] !== 'goods' || !n) continue;
+      after[k] -= n;
+      spent[k] = n;
+    }
+    return { before, after, tied: { crew: t.locks.labor ?? 0, soldier: t.locks.might ?? 0 }, back: this.season + t.turns, spent, short: this.short(o) };
+  }
+
   /** what is offered now (the dealer's deal), each over its site */
   offers(): Offer[] {
     return this.engine.offered;
@@ -1346,6 +1534,8 @@ export class Realm {
     const last = this.season >= this.seasons;
     this.last = this.dealt(this.engine.advance(!last));
     this.sync();
+    // (draft 10: crews and soldiers on a thing that is gone or ruined come back)
+    this.releaseLost();
     // (the record: the cards resolved or run out this season — a live card's is written when its event ends)
     for (const o of this.engine.past.slice(past)) {
       if (o.status === 'resolved' && this.liveOf(o)) continue;
@@ -1378,6 +1568,7 @@ export class Realm {
   /** after the ledger's season (income in, people back from the fight): the deal again over what is free now */
   afterSeason(l: SeasonLedger): void {
     this.ledger = l;
+    this.releaseLost();
     this.dealDue = false;
     this.refreshLaws();
     // (a run that is over deals nothing more)

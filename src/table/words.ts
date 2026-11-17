@@ -147,7 +147,7 @@ export function ruleSays(r: RuleDef, card: (id: string) => string = (id) => id, 
   const b = r.b ? ` And one that is ${query(r.b)}${r.b.near ? (r.b.near.of === 'a' ? `, ${near(r.b.near.cells)} the first` : `, ${near(r.b.near.cells)} the event`) : ''}.` : '';
   const need = r.need ? ` Needs ${pool(r.need.pool)} ${r.need.gte !== undefined ? `${r.need.gte} or more` : `${r.need.lte} or less`}.` : '';
   const fx = r.effect;
-  const each = r.per === 'a' ? ' for each such thing' : r.per === 'b' ? ' for each second thing' : r.per ? ` for every ${r.per.each} of ${r.per.amount}` : '';
+  const each = r.per === 'a' ? ' for each such thing' : r.per === 'b' ? ' for each second thing' : r.per && 'posted' in r.per ? ` for each ${r.per.posted} posted on it` : r.per ? ` for every ${r.per.each} of ${r.per.amount}` : '';
   if ('offer' in fx) return `${a}${b}${need} Then this is asked of you: "${card(fx.offer)}".`;
   if ('start' in fx) return `${a}${b}${need} Then this begins at once: "${card(fx.start)}".`;
   if ('tag' in fx) return `${a}${b}${need} Then it becomes "${fx.tag}"${fx.timed ? ' for the season' : ''}.`;
@@ -221,6 +221,30 @@ export const storyLine = (season: number, note: string): string => `Season ${sea
 export function deltaLine(before: Pools, after: Pools): string {
   const parts = POOLS.filter((k) => after[k] !== before[k]).map((k) => `${POOL_NAME[k]} ${after[k] > before[k] ? '+' : ''}${after[k] - before[k]}`);
   return parts.length ? `The season changed your pools. ${parts.join(', ')}.` : '';
+}
+
+/** (draft 10) a change of pools in a few words: "Materials -2, Intel +2" */
+export function poolChange(before: Pools, after: Pools): string {
+  return POOLS.filter((k) => after[k] !== before[k]).map((k) => `${POOL_NAME[k]} ${after[k] > before[k] ? '+' : ''}${after[k] - before[k]}`).join(', ');
+}
+// ---- (draft 10, docs/design/TURN_PUZZLE.md) pieces, slots, uses, the preview ----
+export const PIECE_NAME: Record<'crew' | 'soldier', [string, string]> = { crew: ['crew', 'crews'], soldier: ['soldier', 'soldiers'] };
+export const pieceCount = (kind: 'crew' | 'soldier', n: number): string => `${n} ${PIECE_NAME[kind][n === 1 ? 0 : 1]}`;
+export const postLine = (kind: 'crew' | 'soldier', on: string): string => `You posted a ${kind} on ${on}.`;
+export const recallLine = (kind: 'crew' | 'soldier', on: string): string => `You called a ${kind} back from ${on}.`;
+export const useLine = (use: string, on: string, change: string): string => `You used ${use} at ${on}.${change ? ` ${change}.` : ''}`;
+export const PIECES_HEAD = 'Crews and soldiers';
+export const WORKS_HEAD = 'Works: post crews and soldiers, make uses';
+export const POST = 'Post';
+export const RECALL = 'Call back';
+export const USE = 'Use';
+export const usesLeft = (n: number): string => (n <= 0 ? 'used up this season' : n === 1 ? 'once more this season' : `${n} more times this season`);
+export const pieceWhere = (where: 'free' | 'strike' | 'project' | 'posted', on: string, moved: boolean): string => `${where === 'free' ? 'free' : where === 'strike' ? 'on strike (Unrest)' : where === 'project' ? `tied up on ${on}` : `posted on ${on}`}${moved ? ', moved this season' : ''}`;
+/** a commit's preview, in one plain line */
+export function previewLine(p: { before: Pools; after: Pools; tied: Record<'crew' | 'soldier', number>; back: number }): string {
+  const pools = POOLS.filter((k) => p.after[k] !== p.before[k]).map((k) => `${POOL_NAME[k]} ${p.before[k]} → ${p.after[k]}`).join(', ');
+  const tied = (['crew', 'soldier'] as const).filter((k) => p.tied[k] > 0).map((k) => pieceCount(k, p.tied[k]));
+  return `${pools || 'Nothing spent'}.${tied.length ? ` ${tied.join(' and ')} tied up until season ${p.back}.` : ''}`;
 }
 
 export const TOWN = 'The town';

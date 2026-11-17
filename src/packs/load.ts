@@ -12,6 +12,7 @@ import type { Tier } from '../api/contracts/opportunity';
 import type { TemplateDef } from '../living/engine';
 import type { LiveCond, LiveDef, LiveWhere } from '../living/live';
 import type { RuleDef, Thing } from '../living/rules';
+import type { WorkThing } from '../season/realm';
 import type { LawDef, LawDo } from '../living/laws';
 import type { FactWorld } from '../living/world';
 import { placeState, placeStates } from '../mutate/facts';
@@ -145,6 +146,8 @@ export interface LoadedPack {
   between: BetweenDef[];
   /** (loop round 13) the weather of seasons of the run, as written (weather/presets.ts seasonWeather) */
   weather: SeasonWeather[];
+  /** (draft 10) the things in play when a run begins (`packStart`) */
+  start: string[];
 }
 
 /** what the helpers ask of whoever runs the Realm (table/game.ts): the run as it stands */
@@ -209,6 +212,37 @@ export function startThings(w: FactWorld, packs: readonly LoadedPack[], l: PackL
     const k = siteOf(t.at);
     w.facts.add({ id: thingEntity(id), kind: 'building', name: t.name, at: { region: home_.region, settlement: home, ...(k ? { site: siteOfKey(k) } : {}) }, attrs: { thing: t.id, what: t.kind }, cause: `leader:${l.id}` });
   }
+}
+
+/** (draft 10) a pack's `start`: its things in play when a run begins in a town that has none of them yet (a later run
+ *  in the same town finds them where they were, or their remains) */
+export function packStart(w: FactWorld, packs: readonly LoadedPack[], home: EntityId, siteOfKey: (k: string) => EntityId): void {
+  const home_ = w.settlement(home)!;
+  for (const p of packs)
+    for (const id of p.start) {
+      const t = p.things.find((x) => x.id === id)!;
+      if (w.facts.entity(thingEntity(id))) continue;
+      const k = siteOf(t.at);
+      w.facts.add({ id: thingEntity(id), kind: 'building', name: t.name, at: { region: home_.region, settlement: home, ...(k ? { site: siteOfKey(k) } : {}) }, attrs: { thing: t.id, what: t.kind }, cause: `pack:${p.id}` });
+    }
+}
+
+/**
+ * (draft 10, docs/design/TURN_PUZZLE.md) The pack things in play that have slots or uses, standing (not on a ruined
+ * place), from the Realm's things of the rules: each with its room for pieces and its uses (RealmOptions.extra.works).
+ */
+export function worksOf(things: readonly Thing[], packs: readonly LoadedPack[]): WorkThing[] {
+  const out: WorkThing[] = [];
+  for (const p of packs)
+    for (const def of p.things) {
+      if (!def.slots?.length && !def.uses?.length) continue;
+      const t = things.find((x) => x.id === thingEntity(def.id));
+      if (!t || t.tags.includes('ruined')) continue;
+      const slots: WorkThing['slots'] = {};
+      for (const s of def.slots ?? []) slots[s.takes] = s.n;
+      out.push({ id: t.id, name: def.name, slots, uses: (def.uses ?? []).map((u) => ({ id: u.id, name: u.name, cost: { ...(u.cost ?? {}) }, gives: { ...u.gives }, times: u.times ?? 1, ...(u.per ? { per: u.per } : {}), text: u.text })) });
+    }
+  return out;
 }
 
 // ---- (draft 7) factions, stances, far towns as things ---------------------------------------------------------------
@@ -610,6 +644,12 @@ export function loadPack(p: Pack, base: { cards?: readonly string[]; rules?: rea
   const upkeep: RuleDef[] = (p.things ?? []).flatMap((t) =>
     Object.entries(t.upkeep ?? {}).map(([pool, n]): RuleDef => ({ id: `upkeep:${t.id}:${pool}`, name: `Upkeep: ${t.name}`, on: 'turn', a: { tags: [isTag(t.id)] }, effect: { pool, n: -n }, why: `{a} cost you {n} ${POOL_WORD[pool]}` })),
   );
+  // (draft 10: what a piece posted on a thing does each season is a rule like any other — it counts the pieces there)
+  const slotRules: RuleDef[] = (p.things ?? []).flatMap((t) =>
+    (t.slots ?? []).flatMap((s) =>
+      Object.entries(s.each_season ?? {}).map(([pool, n]): RuleDef => ({ id: `slot:${t.id}:${s.takes}:${pool}`, name: `${t.name}: ${s.takes === 'crew' ? 'crews' : 'soldiers'} at work`, on: 'turn', a: { tags: [isTag(t.id)] }, effect: { pool, n }, per: { posted: s.takes }, why: `{count} ${s.takes === 'crew' ? 'crew' : 'soldier'}(s) on {a}: ${n > 0 ? '+' : '-'}{n} ${POOL_WORD[pool]}` })),
+    ),
+  );
   // (a pack's rules are the engine's RuleDef as written: the validator has checked their shape. A rule that sets a
   // timed tag is told so here: the tag's declaration says it)
   const timed = new Set(['festival', 'growth-active', ...(p.tags ?? []).filter((t) => t.timed).map((t) => t.id)]);
@@ -639,7 +679,7 @@ export function loadPack(p: Pack, base: { cards?: readonly string[]; rules?: rea
     const need = new Set<string>();
     return { id: `${p.pack.id}:${b.id}`, when: conds(b.when ?? [], b.id, need), do: effects(b.do, p, need, b.say), say: b.say };
   });
-  return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], laws, recordLaws, because, left, problems, between, weather: p.weather ?? [] };
+  return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep, ...slotRules], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], laws, recordLaws, because, left, problems, between, weather: p.weather ?? [], start: [...(p.start ?? [])] };
 }
 
 /** (trade routes) the selectors of the pack things in play, on places not ruined, that carry a trade route

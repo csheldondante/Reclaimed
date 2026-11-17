@@ -77,8 +77,9 @@ export interface RuleDef {
   need?: { pool: string; gte?: number; lte?: number };
   /** what it changes: a pool (add), or one of a live event's numbers (add, or multiply); or what it does (RuleAct) */
   effect: { pool: string; n: number } | { amount: string; op: 'add' | 'mul'; n: number } | RuleAct;
-  /** `n` counts once for each: first thing matched, second thing matched, or `each` of one of the event's numbers */
-  per?: 'a' | 'b' | { amount: string; each: number };
+  /** `n` counts once for each: first thing matched, second thing matched, `each` of one of the event's numbers, or
+   *  (draft 10, docs/design/TURN_PUZZLE.md) each piece of a kind posted on the first things matched */
+  per?: 'a' | 'b' | { amount: string; each: number } | { posted: 'crew' | 'soldier' };
   /** the most it may add in one firing (a temple holds so many) */
   cap?: number;
   /** the most firings a season, if the author wants one (absent: it fires every time its trigger occurs) */
@@ -128,6 +129,8 @@ export interface RuleWorld {
   /** an acting rule's act, on the things it matched; false: it changed nothing (the card is on offer already, done for
    *  good, or not known; the tag is there already). Absent: this world has no acts and an acting rule never fires */
   act?(fx: RuleAct, things: Thing[], rule: RuleDef): boolean;
+  /** (draft 10) the pieces of a kind posted on a thing. Absent: this world has no pieces (a rule counting them counts 0) */
+  posted?(thing: string, kind: 'crew' | 'soldier'): number;
 }
 
 /** the rules' own state, saved with a run: firings by rule in the season it is in (for a rule with `perSeason`, and
@@ -341,7 +344,10 @@ export class RuleBook {
       let times = 1;
       if (r.per === 'a') times = as.length;
       else if (r.per === 'b') times = bs.size;
-      else if (r.per) {
+      else if (r.per && 'posted' in r.per) {
+        const kind = r.per.posted;
+        times = as.reduce((n, a) => n + (this.w.posted?.(a.id, kind) ?? 0), 0);
+      } else if (r.per) {
         const v = o.vars?.[r.per.amount];
         if (typeof v !== 'number') throw new Error(`rule ${r.id}: the event has no number ${r.per.amount}`);
         times = Math.floor(v / r.per.each);
@@ -378,7 +384,7 @@ export class RuleBook {
       }
       const first = as[0];
       const second = [...bs.values()][0];
-      const text = r.why.replace(/\{(a|b|n|count)\}/g, (_, k: string) => (k === 'a' ? first.name : k === 'b' ? (second?.name ?? '') : k === 'n' ? String(Math.abs(delta)) : String(r.per === 'b' ? bs.size : as.length)));
+      const text = r.why.replace(/\{(a|b|n|count)\}/g, (_, k: string) => (k === 'a' ? first.name : k === 'b' ? (second?.name ?? '') : k === 'n' ? String(Math.abs(delta)) : String(r.per === 'b' ? bs.size : r.per && typeof r.per === 'object' && 'posted' in r.per ? times : as.length)));
       hits.push({ rule: r.id, name: r.name, things: [...as.map((t) => t.id), ...bs.keys()], ...(isAct(fx) ? { act: fx } : 'pool' in fx ? { pool: fx.pool } : { amount: fx.amount }), delta, text: text.charAt(0).toUpperCase() + text.slice(1), ...(o.what ? { what: o.what } : {}), ...(o.after ? { after: o.after } : {}) });
       }
     }

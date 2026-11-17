@@ -27,6 +27,33 @@ export const POOL_ROLE: Record<Pool, 'people' | 'goods' | 'state'> = { labor: 'p
 /** the agent kind a people pool's units are */
 export const PEOPLE_KIND: Partial<Record<Pool, AgentKind>> = { labor: 'workers', might: 'army' };
 
+/**
+ * (card-table, docs/design/TURN_PUZZLE.md) Pieces: a Labor is one crew, a Might one soldier — each an agent of the
+ * holdings. A piece POSTED on a thing in play is held by a standing commitment `post:<thing id>`: not free (no card can
+ * lock it, Unrest cannot strike it), and it stays until it is recalled or its thing is gone. Nothing resolves a post:
+ * `nextSeason` only frees the agents of a project's own commitment.
+ */
+export const POST = 'post:';
+export type PieceKind = 'crew' | 'soldier';
+export const PIECE_POOL: Record<PieceKind, Pool> = { crew: 'labor', soldier: 'might' };
+/** the pieces of a kind posted on a thing */
+export function postedOn(h: Holdings, thing: string, kind: PieceKind): number {
+  const k = PEOPLE_KIND[PIECE_POOL[kind]];
+  return h.agents.filter((a) => a.kind === k && a.committed === POST + thing).length;
+}
+/** every post: thing id → pieces of each kind */
+export function posts(h: Holdings): Map<string, Record<PieceKind, number>> {
+  const out = new Map<string, Record<PieceKind, number>>();
+  for (const a of h.agents) {
+    if (!a.committed?.startsWith(POST)) continue;
+    const t = a.committed.slice(POST.length);
+    const r = out.get(t) ?? { crew: 0, soldier: 0 };
+    r[a.kind === PEOPLE_KIND.might ? 'soldier' : 'crew']++;
+    out.set(t, r);
+  }
+  return out;
+}
+
 /** a district in parts: a card's district covers some of them (the user, 2026-11-10: partial district claims) */
 export const DISTRICT_PARTS = 6;
 
@@ -191,6 +218,26 @@ export function lose(l: SeasonLedger, g: Partial<Pools>): SeasonLedger {
       const gone = new Set(order.slice(0, v));
       h.agents = h.agents.filter((a) => !gone.has(a));
     } else h.goods[k] = Math.max(0, (h.goods[k] ?? 0) - v);
+  }
+  strike(h);
+  return { ...l, holdings: h };
+}
+
+/** (draft 10) a free piece posted on a thing (by the agent's id): held there from now. Throws if it is not free */
+export function postPiece(l: SeasonLedger, agent: string, thing: string): SeasonLedger {
+  if (!available(l.holdings).some((a) => a.id === agent)) throw new Error(`season: ${agent} is not free to post`);
+  const h = structuredClone(l.holdings);
+  h.agents.find((a) => a.id === agent)!.committed = POST + thing;
+  strike(h);
+  return { ...l, holdings: h };
+}
+/** (draft 10) posted pieces free again (by the agents' ids): with you at once (Unrest may keep a crew away) */
+export function freePieces(l: SeasonLedger, agents: readonly string[]): SeasonLedger {
+  const h = structuredClone(l.holdings);
+  for (const a of h.agents) {
+    if (!agents.includes(a.id)) continue;
+    if (!a.committed?.startsWith(POST)) throw new Error(`season: ${a.id} is not posted`);
+    delete a.committed;
   }
   strike(h);
   return { ...l, holdings: h };

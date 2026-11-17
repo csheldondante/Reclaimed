@@ -22,7 +22,10 @@ import { projectTemplate, siteId, SITES, WORLD_TEMPLATES, type SiteKey } from '.
 import { MemoryWorldState } from '../api/contracts/world-state';
 import { FactWorld } from '../living/world';
 import { checkTogether, reportText, type Pack, type PackAbility, type Problem } from '../packs/check';
-import { castAbility, farHolder, farThings, homeOf, IS, lawThings, packFactions, seedFactions, stanceOf, startThings, tradeThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
+import { castAbility, farHolder, farThings, homeOf, IS, lawThings, packFactions, packStart, seedFactions, stanceOf, startThings, tradeThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, worksOf, type LoadedPack, type PackHost } from '../packs/load';
+import { WORKS } from '../season/works';
+import type { CommitPreview, Piece, UseNow } from '../season/realm';
+import type { PieceKind } from '../season/ledger';
 import { BASIC_SPELLS, RAIDERS_ID, Realm, RUN_SEASONS, SPELL_COST, type RunState, type SpellId } from '../season/realm';
 import { keepBuilt, moveHome } from '../season/realm-home';
 import { leaderChoices, openedLines, startLines } from '../season/run-packs';
@@ -68,7 +71,14 @@ export interface TableOptions {
   /** (draft 8) the town the world's last run was played from (absent: the test world's home); a leader who starts in a
    *  far town moves the run from it */
   home?: string;
+  /** (draft 10, docs/design/TURN_PUZZLE.md) the base game's works (season/works.ts): things with slots for crews and
+   *  soldiers and instant uses, cards that send crews out, needs with a deadline; a board of WORKS_BOARD and
+   *  WORKS_THREATS needs at once. Default off here (the tests' runs are unchanged); the page and the bots turn it on */
+  works?: boolean;
 }
+/** (draft 10) with the works: opportunities on offer at once, and needs (threats) standing at once */
+export const WORKS_BOARD = 5;
+export const WORKS_THREATS = 2;
 
 /** a run under way, as saved: the world, the Realm's own state, the ledger, the casts into the events under way */
 export interface TableSave {
@@ -321,10 +331,11 @@ export class Table {
     // (a new run: the leader's pools; what earlier runs built is kept — scenes/level/loop.ts `pick` does the same)
     const ledger: SeasonLedger = o.resume ? o.resume.ledger : { ...newLedger(who.pools, who.income), built };
     const base = baseCards();
-    this.packs = (o.packs ?? []).map((p) => loadPack(p, { cards: base, boost: o.boost ?? true }));
+    // (draft 10: the base game's works are a pack of the base game, never boosted)
+    this.packs = [...(o.works ? [loadPack(WORKS, { cards: base, boost: false })] : []), ...(o.packs ?? []).map((p) => loadPack(p, { cards: base, boost: o.boost ?? true }))];
     linkPacks(this.packs);
     // (several packs: what only shows when they are loaded together — an id two share, a tag declared differently)
-    const together = checkTogether(o.packs ?? []);
+    const together = checkTogether([...(o.works ? [WORKS] : []), ...(o.packs ?? [])]);
     if (together.some((x) => x.level === 'error')) throw new Error(reportText('The packs together', together));
     this.together = together;
     const world = world0;
@@ -387,7 +398,10 @@ export class Table {
         seed: (w) => seedFactions(w, o.packs ?? []),
         // (ages: the leader's start takes cards out of the deck)
         ...(packLeader?.deck_out ? { deckOut: packLeader.deck_out } : {}),
+        // (draft 10: the things with slots and uses)
+        works: () => (made ? worksOf(made.things(), this.packs) : []),
       },
+      ...(o.works ? { board: WORKS_BOARD, threats: WORKS_THREATS } : {}),
     });
     made = this.realm;
     this.run = this.realm.history(true).filter((e) => e.kind === 'run-began').length;
@@ -402,6 +416,8 @@ export class Table {
       this.mark();
       return;
     }
+    // (draft 10: the packs' things in play from a run's start, where the town has none yet)
+    packStart(this.realm.w, this.packs, HOME_, (k) => siteId(HOME_, k as SiteKey));
     // (ages: a pack leader's start — its things in play, its laws in force for the run)
     if (packLeader) {
       startThings(this.realm.w, this.packs, packLeader, HOME_, (k) => siteId(HOME_, k as SiteKey));
@@ -809,6 +825,58 @@ export class Table {
     return true;
   }
 
+  // ---- (draft 10, docs/design/TURN_PUZZLE.md) the turn: pieces, slots, uses, the preview ------------------------------
+
+  /** every crew and soldier, where it is */
+  pieces(): Piece[] {
+    return this.realm.pieces();
+  }
+  /** the things with slots or uses: their room, what is posted, their uses as they stand */
+  works(): { id: string; name: string; slots: { kind: PieceKind; n: number; posted: number }[]; uses: UseNow[] }[] {
+    const r = this.realm;
+    const ps = r.pieces();
+    const uses = r.uses();
+    return r.works().map((w) => ({
+      id: w.id,
+      name: w.name,
+      slots: (['crew', 'soldier'] as const).filter((k) => (w.slots[k] ?? 0) > 0).map((k) => ({ kind: k, n: w.slots[k]!, posted: ps.filter((p) => p.where === 'posted' && p.on === w.id && p.kind === k).length })),
+      uses: uses.filter((u) => u.thing === w.id),
+    }));
+  }
+  /** what taking a card would do: pools before and after, pieces tied up, when they come back */
+  preview(id: string): CommitPreview {
+    return this.realm.preview(this.find(id).id);
+  }
+  /** post a free piece on a thing (instant). False: no room, or no piece free that has not moved this season */
+  post(kind: PieceKind, thing: string): boolean {
+    if (!this.realm.post(kind, thing)) return false;
+    this.moves.push(`post ${kind} ${thing}`);
+    this.say('took', W.postLine(kind, this.realm.w.name(thing)));
+    this.flushRules();
+    this.checkWin();
+    return true;
+  }
+  /** recall a posted piece (instant): free at once. False: none there that may move this season */
+  recall(kind: PieceKind, thing: string): boolean {
+    if (!this.realm.recall(kind, thing)) return false;
+    this.moves.push(`recall ${kind} ${thing}`);
+    this.say('took', W.recallLine(kind, this.realm.w.name(thing)));
+    this.flushRules();
+    this.checkWin();
+    return true;
+  }
+  /** make a use of a thing (instant). False: none left this season, or short */
+  use(id: string, thing: string): boolean {
+    const u = this.realm.uses().find((x) => x.use.id === id && x.thing === thing);
+    const before = pools(this.realm.ledger);
+    if (!u || !this.realm.use(id, thing)) return false;
+    this.moves.push(`use ${id} ${thing}`);
+    this.say('took', W.useLine(u.use.name, u.thingName, W.poolChange(before, pools(this.realm.ledger))));
+    this.flushRules();
+    this.checkWin();
+    return true;
+  }
+
   /**
    * (chains within a season) Resolve a live event under way now, with the casts made so far, instead of at the
    * season's end: one move. Its result and the rules it sets off apply at once, and an event a rule starts begins at
@@ -996,7 +1064,7 @@ export class Table {
     // (draft 8: what this town built stays its own — written on the town in the world, for a run that comes back to it)
     const r = this.realm;
     keepBuilt(r.w, this.home, this.built());
-    return new Table({ seed: this.seed, leader, seasons: r.seasons, world: r.snapshot(), built: this.built(), home: this.home, ...(this.o.packs ? { packs: this.o.packs } : {}) });
+    return new Table({ seed: this.seed, leader, seasons: r.seasons, world: r.snapshot(), built: this.built(), home: this.home, ...(this.o.packs ? { packs: this.o.packs } : {}), ...(this.o.works ? { works: true } : {}) });
   }
 
   /** what this run did to the world, for its end: the history's lines, oldest first */
@@ -1059,6 +1127,9 @@ export function replay(o: TableOptions, moves: readonly string[]): Table {
     else if (verb === 'take') t.take(id);
     else if (verb === 'pass') t.pass(id);
     else if (verb === 'resolve') t.resolveNow(id);
+    else if (verb === 'post') t.post(id as PieceKind, target);
+    else if (verb === 'recall') t.recall(id as PieceKind, target);
+    else if (verb === 'use') t.use(id, target);
     else if (verb === 'cast') t.cast(id, t.realm.liveRunning().find((o) => o.template === target)?.id ?? target);
     else throw new Error(`table: no move ${m}`);
   }
