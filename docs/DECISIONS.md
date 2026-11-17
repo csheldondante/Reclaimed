@@ -3955,3 +3955,14 @@ and what is still the owner's to decide: who decides a fight, every rule's numbe
 - The big flow (VISION §7): "A flow that fills multiple screens and comes in a sweeps over the town could be really
   cool to see and motivate building trenches to redirect it to the sea or magical shields or summoning a blizzard to
   freeze it or something."
+
+## 2026-11-17 — swaying open land (flora-sway)
+
+- "another important terrain pass is large instanced forests and varied flora fields. I would love to see the wind
+  effects or a cheaper baked stand in so swaying trees and grass cover the open land between settlements." → step 1 on
+  branch `flora-sway`: the ground's grass sways by shading (gust fronts in the wind), plants' lean computed once a plant
+  a frame, more trees on open land; varied flora fields by region and a large-forest far level written up as options
+  (docs/design/FOLIAGE_WIND.md "Swaying open land").
+- Standing rules carried into it: flora is judged in the game at play zoom at phone size, never from a viewer (the
+  treegen regression, DESIGN §15); the `treegen` look is not ported; the `forest` branch's canopy fade and understory
+  are a later track.

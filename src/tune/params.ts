@@ -255,6 +255,14 @@ const SPEC = {
       margin: { label: 'window margin', units: 'columns', min: 8, max: 96, step: 1, def: 32, help: 'the judged window: the seeds\' box and this much round it (a piece reaching its side is held there)' },
     },
   },
+  flora: {
+    title: 'Flora in the wind',
+    owner: 'floralean.wgsl, meshinst.wgsl, meshdraw.wgsl, tiles.wgsl (GPU: the plants\' lean a plant a frame, the grass\'s gust waves; flora-sway)',
+    params: {
+      sway: { label: 'plant sway ×', units: '×', min: 0, max: 3, step: 0.05, def: 1, gpu: true, url: 'florasway', help: 'the library plants\' lean and flutter in the wind; 0: they stand still (the static half of the cost pair)' },
+      grass: { label: 'grass waves ×', units: '×', min: 0, max: 3, step: 0.05, def: 1, gpu: true, url: 'grasswave', help: 'the gust fronts rolling over the ground\'s grass (its sheen, shade and bowed normal); 0: still grass' },
+    },
+  },
 } satisfies Record<string, GroupSpec>;
 
 export const TUNING = new Registry(SPEC);

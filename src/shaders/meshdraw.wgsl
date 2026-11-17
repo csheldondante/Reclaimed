@@ -337,7 +337,11 @@ fn meshShade(in: MOut) -> FOut {
     f.pick = vec2<u32>(s.ci + 1u, pickInfo(s.mat, in.wpos.z, 0u));
     return f;
   }
-  var col = lightSurf(ashDust(s.alb, in.wpos, s.nrm), in.wpos, s.nrm, s.lnrm, s.rough, 1.0);
+  // (flora-sway) the grass in the wind: gust fronts rolling over it, the player's painted wind rippling it
+  var sAlb = s.alb;
+  var sLn = s.lnrm;
+  if (s.grass > 0.0) { sAlb = grassSway(s.alb, s.lnrm, s.grass, in.wpos.xy, windField(in.wpos.xy), &sLn); }
+  var col = lightSurf(ashDust(sAlb, in.wpos, s.nrm), in.wpos, s.nrm, sLn, s.rough, 1.0);
   // (round 83: quartz cut as a gem — the hoverbike's playtest: the giant crystals didn't look faceted)
   if (s.gem) { col = gemLook(in.wpos, s.nrm); }
   col += filmSheen(in.wpos, s.nrm, s.filmN, s.film);
@@ -365,7 +369,9 @@ fn filmSheen(wpos: vec3<f32>, nrm: vec3<f32>, filmN: vec3<f32>, film: f32) -> ve
  * waves' tilt, whether it's cut as a gem, the column (the pick's). meshShade lights it; the tile cache bakes it
  * (fsTileBake) and lights it every frame.
  */
-struct Surf { alb: vec3<f32>, lnrm: vec3<f32>, nrm: vec3<f32>, filmN: vec3<f32>, film: f32, mat: u32, ci: u32, gem: bool, rough: f32 };
+// (flora-sway) grass: the share of the point that is standing grass the wind moves (0..1; common.wgsl grassSway) —
+// meshShade sways it live, the tile bake keeps it (two bits) for the tiles' draw to sway
+struct Surf { alb: vec3<f32>, lnrm: vec3<f32>, nrm: vec3<f32>, filmN: vec3<f32>, film: f32, mat: u32, ci: u32, gem: bool, rough: f32, grass: f32 };
 
 /**
  * (ground branch; the user: "texture the ground", "a sand and dirt material too") The set a ground material wears
@@ -415,7 +421,7 @@ fn meshSurf(in: MOut) -> Surf {
   let isTop = up && in.wpos.z > lk.top - 0.8;
   var alb = groundAlbedo(mat);
   // (?look=lookup: the interval's material and the lighting, none of the detail — meshShade)
-  if (MESH_LOOK == 1u) { return Surf(alb * in.tint, nrm, nrm, nrm, 0.0, mat, ci, false, 0.9); }
+  if (MESH_LOOK == 1u) { return Surf(alb * in.tint, nrm, nrm, nrm, 0.0, mat, ci, false, 0.9, 0.0); }
   // a thin top layer shows the one beneath through it (a trace of blown dust
   // doesn't flip the ground's colour — round 17)
   if (isTop && lk.below != 0u) { alb = mix(groundAlbedo(lk.below), alb, smoothstep(0.02, 0.2, lk.thick)); }
@@ -508,6 +514,7 @@ fn meshSurf(in: MOut) -> Surf {
   // the ground under it — a height blend: grass fills between the stones first, sand shows through thin turf —
   // rather than a pixel's dither
   var grassK = -1.0;
+  var grassShare = 0.0;
   var gg = GLook(vec3<f32>(1.0), nrm, 0.9);
   var gLayer = TX_GRASS;
   if (v > 0.0 && groundTexOn() && !noDetail(ND_SPECKS)) {
@@ -533,6 +540,11 @@ fn meshSurf(in: MOut) -> Surf {
       } else {
         alb = wither(toLinear(g * (0.82 + 0.3 * n2)), cf.w, n2);
       }
+      // (flora-sway: how much of this point is standing grass the wind moves — the meadow's, on tops; less on the
+      // mossy fringe and the woodland floor; none on crops. Surf.grass: meshShade and the tiles' draw sway it)
+      if (isTop && !isCrop(cf.y)) {
+        grassShare = select(1.0, grassK, grassK >= 0.0) * smoothstep(0.6, 1.4, v) * (1.0 - 0.7 * smoothstep(3.0, 4.5, v));
+      }
       // (round 117, flora) the woodland floor in fallen leaves — "lead covered forest floor": under the woods
       // (succession past 3.7) the cover is leaf litter in drifts, green between them; last year's leaves brown, this
       // fall's bright. A look only (the material stays): the baked climate's MAT_LEAFLIT is the real thing, rarely laid
@@ -545,6 +557,7 @@ fn meshSurf(in: MOut) -> Surf {
           var lc = autumnLeaf(select(0u, 2u, fc > 0.5), fract(fc * 3.7));
           lc = mix(lc, vec3<f32>(0.42, 0.31, 0.18), 0.5 - 0.35 * seasonShed());
           alb = toLinear(lc) * (0.8 + 0.25 * n1);
+          grassShare = 0.0;
         }
       }
       // (perfopt, ?tufts=0: no tuft boxes — their look painted here instead: on soil-like ground, a quarter cell
@@ -633,7 +646,7 @@ fn meshSurf(in: MOut) -> Surf {
   // (wet ground is glossier)
   rough = mix(rough, 0.25, max(film, 0.6 * smoothstep(0.3, 0.9, cf.z) * MATS[mat].eco.w));
   if (sw >= 0.5) { rough = 0.85; }
-  return Surf(alb, lnrm, nrm, filmN, film, mat, ci, mat == MAT_QUARTZ && sw < 0.5, rough);
+  return Surf(alb, lnrm, nrm, filmN, film, mat, ci, mat == MAT_QUARTZ && sw < 0.5, rough, grassShare * (1.0 - film) * select(1.0, 0.0, sw >= 0.5));
 }
 
 

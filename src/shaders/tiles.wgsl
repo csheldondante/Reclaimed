@@ -40,14 +40,15 @@ fn tileWater(dz: f32) -> vec3<f32> {
 
 /** the G-buffer's normal (meshdraw.wgsl: octahedral, 15 bits a side) */
 fn octDec(w: u32) -> vec3<f32> { return octDecB(vec2<f32>(f32(w & 32767u), f32((w >> 15u) & 32767u)) / 32767.0); }
-/** (round 108) the atlas's: 14 bits a side — bits 28-29 the top's porosity, 30 gem, 31 drawn */
+/** (round 108) the atlas's: 13 bits a side (flora-sway: was 14) — bits 26-27 the grass share in thirds (Surf.grass:
+ *  the draw sways it), 28-29 the top's porosity, 30 gem, 31 drawn */
 fn tileNrmEnc(n: vec3<f32>) -> u32 {
   var o = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
   if (n.z < 0.0) { o = (1.0 - abs(o.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), o >= vec2<f32>(0.0)); }
-  let q = vec2<u32>(round(clamp(o * 0.5 + 0.5, vec2<f32>(0.0), vec2<f32>(1.0)) * 16383.0));
-  return q.x | (q.y << 14u);
+  let q = vec2<u32>(round(clamp(o * 0.5 + 0.5, vec2<f32>(0.0), vec2<f32>(1.0)) * 8191.0));
+  return q.x | (q.y << 13u);
 }
-fn tileNrmDec(w: u32) -> vec3<f32> { return octDecB(vec2<f32>(f32(w & 16383u), f32((w >> 14u) & 16383u)) / 16383.0); }
+fn tileNrmDec(w: u32) -> vec3<f32> { return octDecB(vec2<f32>(f32(w & 8191u), f32((w >> 13u) & 8191u)) / 8191.0); }
 fn octDecB(u: vec2<f32>) -> vec3<f32> {
   let o = u * 2.0 - 1.0;
   var n = vec3<f32>(o, 1.0 - abs(o.x) - abs(o.y));
@@ -141,7 +142,9 @@ fn tileBake(px: vec2<i32>, a: vec4<u32>) -> BakeOut {
   let d = dot(-CAM.eye.xyz, m.wpos) - CAM.pos.z;
   // (what the wetness darkens it by: meshdraw.wgsl's MATS[mat].eco.w, 0..0.6 in quarters of it — none under water)
   let por = select(u32(round(clamp(MATS[s.mat].eco.w / POR_MAX, 0.0, 1.0) * 3.0)), 0u, film > 0.5 || t.crown > 0.5 || river || lavaHere);
-  o.b = vec2<u32>(tileNrmEnc(ln) | (por << 28u) | select(0u, 1u << 30u, s.gem && t.crown < 0.5) | (1u << 31u), bitcast<u32>(d));
+  // (flora-sway: the grass share, in thirds — none under a painted crown, water or lava)
+  let gq = select(u32(round(clamp(s.grass, 0.0, 1.0) * 3.0)), 0u, film > 0.5 || t.crown > 0.5 || river || lavaHere);
+  o.b = vec2<u32>(tileNrmEnc(ln) | (gq << 26u) | (por << 28u) | select(0u, 1u << 30u, s.gem && t.crown < 0.5) | (1u << 31u), bitcast<u32>(d));
   return o;
 }
 
@@ -401,6 +404,14 @@ fn fsTile(in: TOut) -> TFrag {
   if (cv.z > 0.0 && film > 0.5 && cv.z > 0.25 + 0.5 * r) {
     alb = groundAlbedo(MAT_ICE) * (0.9 + 0.15 * r);
     film = 0.3;
+  }
+  // (flora-sway: the grass the bake kept swayed as the window's is — the same fronts cross the window's edge; past the
+  // window there's no painted wind)
+  let gs = f32((b.x >> 26u) & 3u) / 3.0;
+  if (gs > 0.0 && film < 0.5 && snow < 0.03) {
+    var gn = n;
+    alb = grassSway(alb, n, gs, p.xy, vec2<f32>(0.0), &gn);
+    n = gn;
   }
   if (film < 0.5) { alb = ashDust(alb, p, n); }
   var col = alb * lighting(p, n);

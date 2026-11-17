@@ -71,3 +71,52 @@ Score visual quality **at gameplay zoom** for: coherent traveling gusts, legible
 - GDC, [*Procedural Grass in Ghost of Tsushima*](https://gdcvault.com/play/1027214/Advanced-Graphics-Summit-Procedural-Grass) — higher-complexity procedural grass, for later comparison, **not** an initial mobile implementation target.
 
 **Deliverable:** a running, GPU-only, switchable visual lab; brief per-technique mobile benchmark results; and a recommendation identifying the *first* technique that clears the visual bar within the available GPU budget.
+
+## Swaying open land, step 1 (flora-sway, 2026-11-17)
+
+The owner: "another important terrain pass is large instanced forests and varied flora fields. I would love to see the
+wind effects or a cheaper baked stand in so swaying trees and grass cover the open land between settlements." Judged in
+the game at play zoom on the phone tier, not in a lab or viewer (the treegen lesson, DESIGN §15). This step runs in the
+game itself instead of the lab above: the lab is still the place for 1B/1C comparisons.
+
+**What the game draws today at the loop's zoom** (2.5 css px a cell; the phone's low tier renders half that): the
+meadow is the ground's grass texture (meshdraw.wgsl meshSurf) — the grass meshes only appear from 5 render px a cell
+(vegprep.wgsl `fine`) — so no grass moves. Trees are the far level (20-30 triangles) and do lean, but each vertex
+recomputes the plant's wind (`plantLean`: ~20 hashes of noise plus the bend read) though every input is the plant's root.
+
+**Design, in order of risk.**
+1. *Grass that sways without geometry (row 1A).* One function, `gustWave(p)` (common.wgsl): gust fronts travelling
+   downwind in the frame that already moves with the integrated wind (`windDrift`), wavy across, grouped into gusts —
+   a few sines, no hashes, cheap enough a fragment. The ground's grass share (`Surf.grass`, the cover's on tops) takes
+   it as a lighter, yellower sheen on the crests (blades bowed, their pale sides up), a little shade in the troughs, and
+   its normal tipped downwind. The player's own painted wind (wind field rg) adds a fast ripple in its direction, so a
+   gust power is visible in the grass. Not baked: the tiles keep the grass share in two bits of their normal word
+   (13 bits a side is plenty) and apply the same function as they are drawn, so the waves cross the window's edge.
+   The far rings (far.wgsl: no time or wind in their uniforms) are left still in this step.
+2. *Per-instance sway (trees and plants).* A small compute pass a frame (`floralean.wgsl`) over the library's
+   instances: the plant's lean (the map's breeze `mapWind` + the sway spring's `bend`) and the same gust wave, written
+   once into the instance's spare words (row 3 yz; w its flutter phase). The vertex stage reads them: the noise leaves
+   the vertex stage. Its own pass, not `floraPut`, because vegprep has no storage slot left for `bend` and the lean must
+   move every frame even when the lists are kept (`?prepevery=N`). Matched pair: `?florasway=0` (lean zeroed, static).
+3. *More trees on open land.* Groves (noise-thresholded patches), tree lines along water and scattered single trees on
+   plains, from the seeded `veg` field and the ecology gate — not a second placement; citygen still clears settlements.
+4. *Sparse tall-grass clumps at play zoom* only if 1-3 are done and cheap.
+
+**Cost rule.** Each change measured as a toggle diff of frame time at idle at the loop's zoom and a closer one (desktop
+proxy; the phone bench is the owner's).
+
+**Options for later (design only, for the owner to choose).**
+- *Varied flora fields by region kind.* A GPU species table (a small uniform: region kind × wetness band × height band →
+  up to four species with weights) read by vegplan.wgsl instead of hash + one birch noise. Region kind from the atlas
+  (forms.wgsl), wetness from moisture, latitude from the world's y, height from the surface. Kinds: reeds in wet
+  lowland, crops near towns (already a band of veg), heath and scrub on dry uplands, conifers on slopes and high ground,
+  broadleaf in valleys, jungle (dense, tall, vines) in hot wet regions. Cost: one uniform read and a few compares per
+  column at placement (vegprep), nothing per frame; work: a table and its CPU mirror (flora/species.ts already has the
+  niche data), the far painters (tiles/far/bake) taught the same table so a region reads the same from afar. ~M.
+- *Large-forest far LOD.* (a) A canopy layer: the woods' crowns as one displaced, noise-lumped sheet per region,
+  meshed at tile resolution and swayed by `gustWave` — cheap, reads as a "sea of leaves", no single trees.
+  (b) Impostors: each species rendered to a few view angles once, drawn as camera-facing cards beyond the window,
+  swayed by a UV shear — reads as trees, costs atlas memory and overdraw; the rotating camera needs 4-8 angles.
+  (c) Today's painted crowns, sized to the window's trees and swaying in the tile draw by the wave (cheapest, flat).
+  Recommendation: (c) now for the seam, (a) as the forest track's canopy (it pairs with the forest branch's
+  canopy-fade), (b) only if (a) fails the play-zoom look.

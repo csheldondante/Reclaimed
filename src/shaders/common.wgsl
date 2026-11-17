@@ -72,6 +72,10 @@ struct Tune {
   sprayDrops: f32,
   spraySplash: f32,
   sprayMist: f32,
+  floraSway: f32,
+  floraGrass: f32,
+  pad54: f32,
+  pad55: f32,
 };
 
 struct Globals {
@@ -709,6 +713,67 @@ fn leanFor(w: vec2<f32>) -> vec2<f32> {
  */
 fn plantLean(b: vec4<f32>, p: vec2<f32>) -> vec2<f32> {
   return leanFor(mapWind(p)) + b.xy;
+}
+
+/** (flora-sway) the prevailing wind's direction (a unit vector; calm: a fixed one, so the waves never vanish) */
+fn windDir() -> vec2<f32> {
+  let pw = vec2<f32>(G.windX, G.windY);
+  let ws = length(pw);
+  return select(vec2<f32>(0.8, 0.6), pw / ws, ws > 1e-3);
+}
+
+/**
+ * (flora-sway; docs/design/FOLIAGE_WIND.md "Swaying open land") The gust fronts rolling over the open land at p
+ * (window units): 0..1, 1 on a front's crest. Fronts lie across the prevailing wind, about 12 cells apart, wavy along
+ * their length, and come in groups (a gust) with lulls between; they run downwind with the land's own drift frame
+ * (windDrift — the integrated wind) and a little faster (gusts outrun the mean wind). A few sines, no hashes: cheap enough
+ * for every grass fragment (meshdraw.wgsl, tiles.wgsl) and the same wave the plants lean in (floralean.wgsl), so a gust
+ * crosses meadow and wood together.
+ */
+fn gustWave(p: vec2<f32>) -> f32 {
+  let wd = windDir();
+  let ws = length(vec2<f32>(G.windX, G.windY));
+  let q = windDrift(p);
+  let along = dot(q, wd) - G.time * (0.8 + 0.6 * ws);
+  let across = dot(q, vec2<f32>(-wd.y, wd.x));
+  let a = along + 2.6 * sin(across * 0.11 + G.time * 0.05) + 1.4 * sin(across * 0.29 - G.time * 0.09);
+  let s = 0.5 + 0.5 * sin(a * 0.5);
+  let crest = s * s * s;
+  // (the gusts: patches along and across, slowly changing — a front is strong in some stretches, faint in others)
+  let group = (0.5 + 0.5 * sin(a * 0.12 + 1.3)) * (0.55 + 0.45 * sin(across * 0.07 + a * 0.04 + 0.7));
+  return crest * (0.25 + 0.75 * group);
+}
+
+/** (flora-sway) how hard the prevailing wind shakes the land's plants: 0.35 in a calm, 1 at 4 cells/s, at most 1.6 */
+fn gustStrength() -> f32 { return clamp(length(vec2<f32>(G.windX, G.windY)) / 4.0, 0.35, 1.6); }
+
+/**
+ * (flora-sway) The grass's look in the wind: albedo `alb` (linear) of a surface whose grass share is `grass` (0..1),
+ * lit by `n`, at p — a front's crest bows the blades (their paler sides up: lighter, yellower), the troughs a little
+ * darker, the normal tipped downwind; `painted` (the player's own wind there, cells/s: the wind field's rg) adds a fast
+ * ripple its way. Returns the albedo (rgb) and, through `nOut`, the normal. G.tune.floraGrass scales it (0: still).
+ */
+fn grassSway(alb: vec3<f32>, n: vec3<f32>, grass: f32, p: vec2<f32>, painted: vec2<f32>, nOut: ptr<function, vec3<f32>>) -> vec3<f32> {
+  *nOut = n;
+  let k = grass * G.tune.floraGrass;
+  if (k <= 0.0) { return alb; }
+  var wd = windDir();
+  var lift = gustWave(p) * gustStrength();
+  let pm = length(painted);
+  if (pm > 0.3) {
+    // (the player's gust: tighter, faster ripples running its way, as strong as it is)
+    let pd = painted / pm;
+    let r = 0.5 + 0.5 * sin(dot(wo(p), pd) * 0.9 - G.time * (5.0 + pm * 0.6));
+    let rk = r * r * smoothstep(0.3, 5.0, pm);
+    if (rk * 1.6 > lift) { wd = pd; }
+    lift = max(lift, rk * 1.6);
+  }
+  let l = lift * k;
+  // (the crest: bowed blades — paler, yellower; the trough: blades upright, their shade between)
+  var c = alb * (1.0 + 0.42 * l - 0.10 * k * gustStrength() * (1.0 - min(lift, 1.0)));
+  c = mix(c, c * vec3<f32>(1.10, 1.06, 0.78), clamp(l, 0.0, 1.0) * 0.6);
+  *nOut = normalize(n + vec3<f32>(wd * 0.45 * l, 0.0));
+  return c;
 }
 
 /** Wind felt at a point: the wind field + storm swirl + the cursor/tap breeze. */
