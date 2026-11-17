@@ -121,6 +121,20 @@ the construction shader read. `FieldTown.lots` hands them over.
   water_flux.wgsl), so a deck there lifted the river onto it. That showed: decks vanished under water in the first
   try. The reach walks decks as plan solid instead (`CityGen.deckSpans` → `FortressReachGpu.planSpans`). Units' own
   surfaces won't have decks until the water model allows a gap under a top (BACKLOG).
+- **(loop round 11, LS-99) Units on bridge decks.** Since CG15 a deck is claimed into the world's columns as a slab
+  (External, `DECK_CLAIM_T` 0.25 under its top) with the river running in the gap under it; the units' peel makes the
+  slab's top a surface like any ground, and its water is the top's open run (agents.ts `surfaceDepth`), none on a
+  dry deck. What refused Muru's roads 0 and 1 was the place table: both roads leave town by one long bridge (columns
+  22–66 units out are External), and every spawn candidate on it failed `standOk` — (1) it read the column's whole
+  water (`water`, the river's 2.45 under the slab) as the water on the deck, and (2) the approach 8 units back was put
+  at the raw ground's height (the riverbed, 97.7) under a deck at 101.5. Design: the table's own reading of a live
+  column decides, on the GPU, from the column and its water only — no CPU mirror, no new buffer: where the column's top
+  interval sits over a gap, the water lies on the floor below it, and only what rises past the slab's top stands on
+  it (`places.wgsl colAt`); a point on an arterial at s stands at its deck's height wherever s is on a span — the
+  approach as the spawn point already did (`spawnApp`, `candOk` through `spawnPtXY`). The agents' own fields need
+  nothing new: they walk the slab's surface; the gate routes treat a deck column as passable already
+  (`routes.wgsl` `G_WATER` only where no `DECK_BIT`). Not changed: the side map's walk (`sidemap.wgsl`) still reads
+  the column's whole water (a deck outside a wall is never one of its sides' gates).
 - **Plants:** `bare.wgsl` sets the plants' field (veg and the next tick's) to none on claimed and bare-only columns as
   they're claimed: the old towns' BARE stamp, for a town made after its land. External tops cap growth at moss.
 - **Reach:** `FortressReachGpu.markFrom` runs one solve over the window from the town's road (its point at the core's
@@ -205,6 +219,23 @@ central square now go through it. Minor and main streets keep their ribbons (lat
     wet column. A shoulder never touches a road surface.
 - **Not in this pass:** the main streets (thousands of GPU pieces, not polylines), switchbacks/stairs where the
   profile leaves the ground (the atlas grade is gentle inside a town core; measured: `maxMove`), the lab's ladder.
+- **(loop round 11) The main streets graded too** (`terrainMain`, on with `terrainRoads` for the game's towns;
+  `?city=terrainMain:0` draws them as before). The record format gains `ROAD_SEGS`: a record's points are pairs, each
+  pair a segment of its own — so the major lines' pieces (one a column along each line: `majorPiece`, shared with the
+  drawing `roadMajor`) go in as they are, no polylines made. A record a tile of 48 × 48 world units (`MT_TILE`; Muru 42
+  tiles, ≤ 512 pieces each, the pieces past it counted in `mainPieces`' last word, none at Muru), after the square's and
+  the arterials' 129 — so where a main street meets them theirs is the column's road (`roadHit` takes the first), and
+  the record count stays under the aux byte's 255 (checked at the generator's making: a grid over 126 tiles throws).
+  - **Which pieces:** those shown by now — the reveal (CG25, `revMain`) begun, not a farm track. Made again every mesh
+    run (`gradeMain` after `frontStamp`), so a district's main streets are graded as it begins and laid by the claims'
+    hook as any other record; a piece not yet shown keeps its hexagon, growing in, until the next mesh run.
+  - **The profile** (`mainZ`, a function of position, so the overlapping pieces agree): the raw ground averaged over the
+    street's width (7 samples), held 0.4 over the water within its half width + 1.5, then clamped within the atlas
+    grade (0.22) of every graded column of the square or an arterial within 10 units — no step where they meet.
+  - Banks: 2.5 units (`MT_SHOULDER`, an arterial's 4: lots stand near). The raster (`gradeRast` mode 1) marks the
+    columns no arterial took; `claimRoads` and the hexagons skip them as the arterials'.
+  - Minor lanes stay drawn ribbons; a lane's piece that runs onto a graded main street is drawn when its middle is off
+    it, so its last half cell can sit over or under the paving (LS-112's rest).
 
 ## Time-lapse and the opportunity hook (M4d's start)
 

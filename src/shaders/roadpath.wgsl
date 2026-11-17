@@ -7,6 +7,8 @@ const ROAD_GRADED: u32 = 1u;
 /** (loop-streets) laid as its surface at once; wet columns left */
 const ROAD_PAVED: u32 = 2u;
 const ROAD_DRY: u32 = 4u;
+/** (loop round 11) the points in pairs, each pair a segment of its own (a town's main-street pieces): not a polyline */
+const ROAD_SEGS: u32 = 8u;
 const ROAD_NONE: u32 = 0xffffffffu;
 
 /** record r (roadpath.ts RoadRecord): its points [first, first + count), surface (0 dirt, 1 cobble), flags, reveal
@@ -62,7 +64,8 @@ fn roadHit(wp: vec2<f32>, r0: u32, n: u32, fillS: f32, cutS: f32) -> RoadHit {
     if (rec.count < 2u || wp.x < rec.box.x || wp.y < rec.box.y || wp.x > rec.box.z || wp.y > rec.box.w) { continue; }
     var onD = 1e9;
     var onZ = 0.0;
-    for (var i = 0u; i + 1u < rec.count; i++) {
+    let step = select(1u, 2u, (rec.flags & ROAD_SEGS) != 0u);
+    for (var i = 0u; i + 1u < rec.count; i += step) {
       let a = roadPt(rec.first + i);
       let b = roadPt(rec.first + i + 1u);
       let s = roadSeg(wp, a.xy, b.xy);

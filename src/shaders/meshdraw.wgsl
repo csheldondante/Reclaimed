@@ -191,15 +191,19 @@ fn roadLook(m: u32, alb: vec3<f32>, p: vec3<f32>, n1: f32) -> vec3<f32> {
     return mix(alb * 0.45, c, smoothstep(0.015, 0.035, joint));
   }
   // (loop-streets) a town's paving: flagstones 1.6 × 1.1 in staggered rows, each a little its own shade, soft joints —
-  // calm, so the figures on it read (cobble's setts are a speckle at play zoom)
+  // calm, so the figures on it read (cobble's setts are a speckle at play zoom). (loop round 11: the orchestrator read
+  // it as a light gravel speckle — the joints a pixel wide aliasing at town zoom, and the ground's per-cell specks over
+  // it. Now the flags show only as close as a stone is many pixels across — CAM.viewport.z px a cell, from 6 to 14 —
+  // and below that the paving is its one flat tone; the specks are left off it: meshShade)
   if (m == MAT_PAVING) {
     let row = floor(q.y / 1.1);
     let u = q.x / 1.6 + 0.5 * (row % 2.0);
     let f = vec2<f32>(fract(u), fract(q.y / 1.1));
     let joint = min(min(f.x, 1.0 - f.x) * 1.6, min(f.y, 1.0 - f.y) * 1.1);
     let flag = randv(vec3<i32>(i32(floor(u)), i32(row), 7717));
-    let c = alb * (0.93 + 0.1 * flag + 0.03 * n1);
-    return mix(alb * 0.78, c, smoothstep(0.03, 0.07, joint));
+    let near = smoothstep(6.0, 14.0, CAM.viewport.z);
+    let c = alb * (1.0 + near * (0.07 * flag - 0.035));
+    return mix(c, mix(alb * 0.84, c, smoothstep(0.04, 0.08, joint)), near);
   }
   let streak = fbm2(q * vec2<f32>(0.6, 3.0));
   return alb * (0.86 + 0.24 * streak + 0.06 * n1);
@@ -434,7 +438,7 @@ fn meshSurf(in: MOut) -> Surf {
     gh = texHeight(gtx.col, layer);
     // (the textures are sRGB-coded: their variation taken in linear light; a fifth of the set's own hue kept)
     alb = mix(alb * toLinear(gtx.col) / toLinear(txMean(layer)), toLinear(gtx.col), 0.2);
-  } else if (!noDetail(ND_SPECKS)) { alb *= 1.0 + mix(1.0, 0.35, steep) * (0.12 * randv(vc) + 0.08 * n1 - 0.1); }
+  } else if (!noDetail(ND_SPECKS) && mat != MAT_PAVING) { alb *= 1.0 + mix(1.0, 0.35, steep) * (0.12 * randv(vc) + 0.08 * n1 - 0.1); }
   alb *= in.tint;
   if (mat >= 1u && mat <= 4u && !noDetail(ND_STRATA)) {
     // (round 79: strata — render.wgsl)
@@ -635,9 +639,11 @@ fn meshSurf(in: MOut) -> Surf {
 
 fn voxMatR(w: u32) -> u32 { return w & 0xffu; }
 
-/** Broken or built: rubble, trash, litter, and every solid but stone (ruins: concrete, brick, asphalt, steel). */
+/** Broken or built: rubble, trash, litter, and every solid but stone (ruins: concrete, brick, asphalt, steel).
+ *  (loop round 11: not a road's surface — its own look is roadLook's. The town's paving, a solid, was drawn as chips a
+ *  quarter cell across with dark gaps: the "light gravel speckle" the orchestrator saw on the graded streets) */
 fn jagged(m: u32) -> bool {
-  return m == 4u || m == MAT_TRASH || m == MAT_LITTER || (matState(m) == ST_SOLID && m != MAT_STONE && m != MAT_QUARTZ && !bedded(m));
+  return m == 4u || m == MAT_TRASH || m == MAT_LITTER || (matState(m) == ST_SOLID && m != MAT_STONE && m != MAT_QUARTZ && !bedded(m) && !isRoadMat(m));
 }
 
 /**

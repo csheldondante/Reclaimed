@@ -8,6 +8,7 @@
 // run's timestamps, two counts and the points (360 bytes, after a run — never a frame's). It owns its buffers; it knows
 // the world only through StreetWorld.
 import type { DistrictStage } from '../api/contracts/citygen';
+import { ROAD_MAX } from '../api/contracts/roadpath';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
@@ -64,6 +65,8 @@ export interface StreetParams {
   /** (loop-streets) 1: the arterials and the square are road records (gradeRoads) graded into the columns by their
    *  owner, not drawn — needs the arterials' heights (setArterials) */
   terrainRoads: number;
+  /** (loop round 11) 1: with terrainRoads, the main streets (the major lines) graded too, as they show */
+  terrainMain: number;
   /** index into MAJORS */
   majors: number;
   /** between the distance contours, between the rings (world units) */
@@ -221,13 +224,25 @@ const KERNELS = [
   'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'gplace', 'sctab', 'bgrow', 'ctint',
   'artSpan', 'artRast', 'artEnd', 'artMesh', 'popField', 'townBridge', 'claimRoads', 'claimLots', 'lotReach',
   'clkInit', 'clkTimelapse', 'clkClaim', 'tlProgress', 'tlRise', 'stgRank', 'frontStamp', 'wallBins', 'wallShape', 'wallMesh', 'wallClaim',
-  'gradeSq', 'gradeWater', 'gradeRecs', 'gradeRast',
+  'gradeSq', 'gradeWater', 'gradeRecs', 'gradeRast', 'gradeMain', 'gradeMainRec',
 ] as const;
 /** (loop-streets) streets.wgsl GR_RECS, GR_PTS: the town's road records (the square, then GR_ART an arterial) and the
- *  points a record — their buffer's bytes (roadpath layout: a header, three vec4s a record, a vec4 a point) */
+ *  points a record */
 export const GRADE_RECS = 1 + 8 * 16;
 const GRADE_PTS = 17;
-const GRADE_BYTES = (4 + GRADE_RECS * 12 + GRADE_RECS * GRADE_PTS * 4) * 4;
+/** (loop round 11) streets.wgsl MT_TILE, MT_PIECES: the main streets' records, one a tile of the grid, and the pieces
+ *  (two points each) a tile has room for */
+const MT_TILE = 48;
+const MT_PIECES = 512;
+/** (loop round 11) the main streets' tiles over a w × h grid (streets.wgsl mtDims) */
+export function mainTiles(w: number, h: number): number {
+  return Math.ceil(w / MT_TILE) * Math.ceil((h * ROW_H) / MT_TILE);
+}
+/** the road records' buffer's bytes (roadpath layout: a header, three vec4s a record, a vec4 a point) for n main tiles */
+function gradeBytes(tiles: number): number {
+  const recs = GRADE_RECS + tiles;
+  return (4 + recs * 12 + (GRADE_RECS * GRADE_PTS + tiles * MT_PIECES * 2) * 4) * 4;
+}
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
 const TRW = 144;
@@ -296,7 +311,8 @@ interface Uni {
   /** a boxed pass's first column */
   box?: [number, number];
 }
-type Bufs = Partial<Record<1 | 2 | 3 | 4 | 5 | 6 | 7, GPUBuffer | GPUBufferBinding>>;
+/** bindings 1–7; (loop round 11) 8 an atomic buffer of the kernel's own in place of the mesh's args */
+type Bufs = Partial<Record<1 | 2 | 3 | 4 | 5 | 6 | 7 | 8, GPUBuffer | GPUBufferBinding>>;
 
 export class CityGen {
   readonly verts: GPUBuffer;
@@ -438,7 +454,11 @@ export class CityGen {
     this.B.ARTZ = buf('arterial heights', (4 + NART * NAP) * 4);
     this.B.GSQ = buf('square radius', 16);
     this.B.GWS = buf('water by the streets', (4 + NART * NAP + 1) * 4);
-    this.B.GRADE = buf('road records', GRADE_BYTES);
+    // (loop round 11: and the main streets' records, a tile each — their pieces counted a tile, then those left out)
+    this.mainTiles = mainTiles(w, h);
+    if (GRADE_RECS + this.mainTiles > ROAD_MAX) throw new Error(`citygen: a ${w} x ${h} grid has ${this.mainTiles} main-street tiles; with the arterials' ${GRADE_RECS} records past the road records' ${ROAD_MAX}`);
+    this.B.GRADE = buf('road records', gradeBytes(this.mainTiles));
+    this.B.MTC = buf('main street pieces', (this.mainTiles + 1) * 4);
     this.boxUni = buf('box', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const gs = world.ground;
     if (gs.kind === 'window') device.queue.writeBuffer(this.boxUni, 0, new Uint32Array([gs.box[0], gs.box[1], w, h]));
@@ -549,6 +569,18 @@ export class CityGen {
    *  dry stretches), made each mesh run with terrainRoads — what the grader lays (roadlab/grader.ts GradeLayer) */
   get gradeRoads(): GPUBuffer {
     return this.B.GRADE;
+  }
+  /** (loop round 11) the main streets' tiles: a road record each after the arterials' */
+  readonly mainTiles: number;
+  /** (loop round 11) how many road records gradeRoads holds (the square's and the arterials' slots, then a main tile's
+   *  each): what a lay takes */
+  get gradeRecCount(): number {
+    return GRADE_RECS + this.mainTiles;
+  }
+  /** (loop round 11) the main streets' piece counts a tile, then the pieces left out (a tile past MT_PIECES): tests and
+   *  the probe read it once */
+  get mainPieces(): GPUBuffer {
+    return this.B.MTC;
   }
 
   /**
@@ -717,7 +749,7 @@ export class CityGen {
     [p.artWidth, p.hRatio, p.deckClear, p.maxSpan].forEach((v, j) => dv.setFloat32(240 + j * 4, v, true));
     [...(ROAD_TONES[p.roadTone] ?? [0, 0, 0]), p.roadTone].forEach((v, j) => dv.setFloat32(256 + j * 4, v, true));
     // (loop-streets: the streets as terrain — pp.z)
-    [this.town.density, this.town.purpose, p.terrainRoads ?? 0, 0].forEach((v, j) => dv.setFloat32(272 + j * 4, v, true));
+    [this.town.density, this.town.purpose, p.terrainRoads ?? 0, p.terrainMain ?? 0].forEach((v, j) => dv.setFloat32(272 + j * 4, v, true));
     [this.tl.now, BUILD_S, this.tl.t0, this.tl.span].forEach((v, j) => dv.setFloat32(288 + j * 4, v, true));
     // (the street skeleton: its reach, its margin in metres — supercells × their size — and minor streets ahead)
     [p.skelReach, p.skelMargin * p.scSize * p.blockLen, p.minorAhead, 0].forEach((v, j) => dv.setFloat32(304 + j * 4, v, true));
@@ -726,7 +758,8 @@ export class CityGen {
 
   private k(name: Kernel, u: Uni, bufs: Bufs, wx: number, wy = 1, args = false): void {
     const i = this.slot(u);
-    const entries: Record<number, GPUBuffer | GPUBufferBinding> = { 0: { buffer: this.uni, offset: i * SLOT, size: UNI_BYTES }, 8: args ? this.args : this.dummies[7] };
+    if (args && bufs[8]) throw new Error(`citygen ${name}: binding 8 is the mesh's args or the kernel's own, not both`);
+    const entries: Record<number, GPUBuffer | GPUBufferBinding> = { 0: { buffer: this.uni, offset: i * SLOT, size: UNI_BYTES }, 8: args ? this.args : (bufs[8] ?? this.dummies[7]) };
     for (let b = 1; b <= 7; b++) entries[b] = bufs[b as 1] ?? this.dummies[b - 1];
     this.cp.setPipeline(this.pipes[name]);
     this.cp.setBindGroup(0, makeBindGroup(this.device, `citygen ${name}`, this.layout, entries));
@@ -1023,6 +1056,14 @@ export class CityGen {
     // the lots that front them; 0xffffffff none)
     this.fill(B.ROADS, w * h, 0xffffffff, w * h);
     this.k('frontStamp', {}, { 1: this.lotRecords, 2: B.LSTART, 3: B.CNT, 6: B.ROADS }, Math.ceil(LOT_ROOM / 64));
+    // (loop round 11: the main streets graded too — their pieces shown by now (the front field read) as the tiles'
+    // records, pinned to the square's and the arterials' columns marked above; then every record's columns marked)
+    if (p.terrainRoads) {
+      this.fill(B.MTC, this.mainTiles + 1, 0);
+      if (p.terrainMain) this.k2('gradeMain', {}, { 1: B.LM, 2: B.SCT, 3: HH, 4: B.FD, 5: B.GRADE, 6: B.ROADS, 7: B.WS, 8: B.MTC });
+      this.k('gradeMainRec', {}, { 1: B.MTC, 5: B.GRADE }, Math.ceil(this.mainTiles / 64));
+      if (p.terrainMain) this.k2('gradeRast', { mode: 1 }, { 4: B.GRADE, 6: B.ROADS });
+    }
     this.k2('roadMajor', {}, { 5: B.VTAG, 1: B.LM, 2: B.SCT, 3: HH, 4: B.FD, 6: B.ROADS, 7: this.verts }, true);
     // (one thread a street's piece: eight a vector street, TP a trace)
     if (vector) this.k('vroad', {}, { 5: B.VTAG, 1: B.SD, 2: B.AL1, 3: HH, 4: B.SCT, 6: B.ROADS, 7: this.verts }, Math.ceil((this.nS() * 8) / 64), 1, true);

@@ -9,7 +9,7 @@ import type { Settlement } from '../api/contracts/settlement';
 import type { CityLots, CityRoutes, DistrictStage, TownBuildingsSink } from '../api/contracts/citygen';
 import type { TownLog } from './townlog';
 import { ROW_H } from '../world/lattice';
-import { BUILD_S, CityGen, DISTRICT_SPAN, GRADE_RECS, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes, type DistrictClaim } from './gpu';
+import { BUILD_S, CityGen, DISTRICT_SPAN, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes, type DistrictClaim } from './gpu';
 import { GradeLayer, type GradeWorld } from '../roadlab/grader';
 import type { StaticClaims, StaticGrid, GridPlace, OwnedSlot } from '../sim/static-claims';
 import { cellAt } from '../world/lattice';
@@ -152,8 +152,9 @@ export function townLayout(
     trial[k] = Number(v);
   }
   // (loop-streets: the arterials and the square graded into the ground when the site has its roads' heights — the
-  // game's towns; `?city=terrainRoads:0` the ribbons, for the toggle diff)
-  const terrain: Partial<StreetParams> = { terrainRoads: site.heights ? 1 : 0 };
+  // game's towns; `?city=terrainRoads:0` the ribbons, for the toggle diff; loop round 11: the main streets too,
+  // `?city=terrainMain:0` theirs drawn)
+  const terrain: Partial<StreetParams> = { terrainRoads: site.heights ? 1 : 0, terrainMain: site.heights ? 1 : 0 };
   const params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0, roadTone: TONE[site.size], ...GAME_STREETS, ...terrain, ...skel, ...trial }));
   return { box, raw, gen, params, centre, local };
 }
@@ -336,7 +337,7 @@ export class FieldTown {
    */
   private gradeOver(rects: [number, number, number, number][], p: GridPlace): void {
     if (!this.grader) return;
-    this.grader.layRects(this.gen.gradeRoads, GRADE_RECS, rects, p, [p.dx, p.dy, p.dx + this.box.w, p.dy + this.box.h]);
+    this.grader.layRects(this.gen.gradeRoads, this.gen.gradeRecCount, rects, p, [p.dx, p.dy, p.dx + this.box.w, p.dy + this.box.h]);
   }
 
   private reachBusy = false;

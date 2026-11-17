@@ -11,7 +11,7 @@
 //                          w the first point's vec4 (1 + 2 × roads)
 //   vec4 z + 3r            record r, word a: x its first point (index into the points), y its point count (≥ 2; 0 an
 //                          empty slot — a GPU-made set's unused record), z its surface kind (RoadSurface: 0 dirt, 1
-//                          cobble — what it ends as), w flags (ROAD_GRADED, ROAD_PAVED, ROAD_DRY)
+//                          cobble — what it ends as), w flags (ROAD_GRADED, ROAD_PAVED, ROAD_DRY, ROAD_SEGS)
 //   vec4 z + 3r + 1        record r, word b (f32): x reveal start, y reveal end (seconds on the owner's clock: the lab's
 //                          since it opened; a town's would be its own), z the shoulder (how far past the half width the
 //                          ground is sloped back to the land, world units), w maxDz (a road without ROAD_GRADED moves
@@ -23,7 +23,8 @@
 //                          height: the lab's window z, a town's world z), w the half width there
 //
 // A road is a polyline through its points; the profile and the half width are linear along each segment. Points are
-// never smoothed (DESIGN §12: "don't ever smooth them yet").
+// never smoothed (DESIGN §12: "don't ever smooth them yet"). With ROAD_SEGS the points are pairs instead, each pair a
+// segment of its own (points 0–1, 2–3, …): many short pieces in one record (a town's main streets, a record a tile).
 //
 // The road's surface interval in a column (what roadgrade.wgsl writes, common.wgsl ivPack's slot): x z0, y z1 (f32), z
 // the material (MAT.DirtRoad / MAT.Cobble) | (record + 1) << 8 | f16(reveal start) << 16, w f32 bits of reveal end.
@@ -42,6 +43,9 @@ export const ROAD_PAVED = 2;
 /** (loop-streets) record flag: a wet column (water over its ground) is left as it is — a ford's bed stays under its
  *  river, no fill dams it */
 export const ROAD_DRY = 4;
+/** (loop round 11) record flag: the points are pairs, each pair a segment of its own — not one polyline (a town's
+ *  main-street pieces, a column apart along their lines, GPU-made: streets.wgsl gradeMain) */
+export const ROAD_SEGS = 8;
 /** vec4s: the header, a record, a point */
 export const ROAD_HEADER_VEC4 = 1;
 export const ROAD_REC_VEC4 = 3;
@@ -71,6 +75,8 @@ export interface RoadRecord {
   /** (loop-streets) laid as its surface at once (ROAD_PAVED); wet columns left (ROAD_DRY) */
   paved?: boolean;
   dry?: boolean;
+  /** (loop round 11) the points are pairs, each its own segment (ROAD_SEGS) */
+  segments?: boolean;
   revealStart: number;
   revealEnd: number;
   /** world units past the half width the ground slopes back to the land */
@@ -92,7 +98,8 @@ export function packRoads(roads: RoadRecord[]): ArrayBuffer {
     if (r.points.length < 2) throw new Error(`road ${i}: ${r.points.length} points (a road needs 2 or more)`);
     if (!(r.revealEnd >= r.revealStart)) throw new Error(`road ${i}: reveal end ${r.revealEnd} before its start ${r.revealStart}`);
     const o = (ROAD_REC_BASE + ROAD_REC_VEC4 * i) * 4;
-    u.set([first, r.points.length, r.surface, (r.graded ? ROAD_GRADED : 0) | (r.paved ? ROAD_PAVED : 0) | (r.dry ? ROAD_DRY : 0)], o);
+    if (r.segments && r.points.length % 2) throw new Error(`road ${i}: ${r.points.length} points as segments (pairs)`);
+    u.set([first, r.points.length, r.surface, (r.graded ? ROAD_GRADED : 0) | (r.paved ? ROAD_PAVED : 0) | (r.dry ? ROAD_DRY : 0) | (r.segments ? ROAD_SEGS : 0)], o);
     f.set([r.revealStart, r.revealEnd, r.shoulder, r.maxDz], o + 4);
     let bx0 = Infinity;
     let by0 = Infinity;
@@ -125,7 +132,7 @@ export function unpackRoads(buf: ArrayBuffer): RoadRecord[] {
       const p = (ptBase + u[o] + k) * 4;
       points.push({ x: f[p], y: f[p + 1], z: f[p + 2], hw: f[p + 3] });
     }
-    out.push({ points, surface: u[o + 2] as RoadSurface, graded: (u[o + 3] & ROAD_GRADED) !== 0, paved: (u[o + 3] & ROAD_PAVED) !== 0, dry: (u[o + 3] & ROAD_DRY) !== 0, revealStart: f[o + 4], revealEnd: f[o + 5], shoulder: f[o + 6], maxDz: f[o + 7] });
+    out.push({ points, surface: u[o + 2] as RoadSurface, graded: (u[o + 3] & ROAD_GRADED) !== 0, paved: (u[o + 3] & ROAD_PAVED) !== 0, dry: (u[o + 3] & ROAD_DRY) !== 0, segments: (u[o + 3] & ROAD_SEGS) !== 0, revealStart: f[o + 4], revealEnd: f[o + 5], shoulder: f[o + 6], maxDz: f[o + 7] });
   }
   return out;
 }

@@ -25668,3 +25668,42 @@ own as the rows allow, inside the band between the top bar and the sheet. `sites
 **LS-107, not fixed: no selector for "a free town".** The format's far place selectors read a town's state, and a town
 the player holds is `standing`; only `far:where:founded-by-player` reads who holds one, and nothing subtracts it. Per
 the brief, not invented: written up in the BACKLOG with three options for the owner.
+
+## 2026-11-17 — loop round 11 (2): the main streets graded; calm paving (`loop-skeleton`, LS-112)
+
+**Why.** The streets branch graded the arterials and the square; the 6-cell main streets stayed hexagons on claimed
+paving 0.27 over the raw ground and met the graded paving with a seam of tone and height. And the orchestrator read
+the graded paving as "a noisy light speckle that reads as gravel".
+
+**Main streets as records** (docs/design/CITYGEN.md "Streets as terrain", the round 11 bullet). The major lines are a
+piece a column, not polylines, so the record format gains `ROAD_SEGS` (points in pairs, each its own segment; `roadHit`
+steps by two) and the pieces go in as they are: a record a 48-unit tile (42 at Muru) after the 129 arterial and
+square slots — the first record holding a column is its road, so an arterial wins where they meet, and the count
+stays under the aux byte's 255. `gradeMain` (one thread a column, after `frontStamp`) takes the pieces shown by now
+(the CG25 reveal, no farm tracks) — the same `majorPiece` the drawing uses, factored out of `roadMajor` — and gives
+both ends `mainZ`: the raw ground over the street's width, held 0.4 over the water near it, then clamped within the
+atlas grade of every square or arterial column marked within 10 units. `gradeRast` mode 1 marks the rest; the claims,
+the hexagons and the lay already follow the raster and the record count (`CityGen.gradeRecCount`). Made every mesh
+run, so a district's streets are graded as it begins.
+
+**The speckle, found.** Not the flagstones: `meshdraw.wgsl jagged()` counts every solid but stone as rubble — chips a
+quarter cell across, each its own tilted normal, dark gaps — and paving (a solid) was drawn so; the per-cell specks went
+over it too. Removing only the specks (first try, `local/round11/streets/paved-*.png`) changed nothing visible. Now
+road surfaces are not `jagged`, paving has no specks, and its flagstones show only as close as 6–14 px a cell (a flat
+tone at town zoom). This also takes the chips off the road lab's cobble and dirt road (their own `roadLook` stays).
+
+**Seen** (`local/round11/strip-mainstreets.png`: rows unwalled before/after, walled before/after; columns town, market,
+parade at 22 s and 40 s; before = `?city=terrainMain:0`, the merge's look). The market close-up: the pale main-street
+ribbon running up between the houses is graded paving in the after, one surface with the square's, no seam. At town
+zoom the difference is small. `local/round11/pave-after-strip.png` (z 6, 16, 32): at 16 px a cell the road is quiet
+flagstones with grey cut banks; the square's frames there missed the square (the probe's camera z), not judged.
+GPU test `streets-records.test.ts`: 2337 main pieces in 23 of 42 tiles at the synthetic town (all built), the most in a
+tile 176 of 512, none left out; raster vs CPU reading 0 mismatches (a main street's z within 0.03 where its overlapping
+pieces tie); every main point within 9 of the square within the grade of the square's z.
+
+**Measured** (`gradeprobe.mjs --toggle terrainMain --meshruns 7`, desktop D3D11, GPU shared; medians of 7, two rounds):
+mesh stage of a mesh-only run 4.61 / 3.17 ms graded vs 2.64 / 2.57 drawn (+0.6–2 ms: `gradeMain`'s pinning scan and the
+second raster pass); a run from the lots 7.83 / 4.77 vs 4.68 / 4.11. A lay of the whole box 7.9 ms wall vs 7.3 with the
+arterials' records only. In the game at Muru's start (the core shown): 665 pieces, at most 109 a tile. Nothing runs a
+frame: mesh runs come every 2 s only while a district rises, and lays only when land is claimed. First make (one run):
+mesh 11.3 ms, total 25.8 ms GPU (compile and contention inside it).

@@ -790,6 +790,50 @@ fn cMinor() -> u32 { return roadTone(0.95, C_MINOR_W); }
 fn cSteep() -> u32 { return roadTone(0.8, C_STEEP_W); }
 fn steep(a: vec2<f32>, b: vec2<f32>) -> bool { return abs(hAt(b) - hAt(a)) > u.d.w * max(distance(a, b), 1e-3); }
 
+/** a major line's piece at a column: a → b (1.7 long, centred on the line), its field's gradient (`ok` false: none) */
+struct MajorPiece { ok: bool, a: vec2<f32>, b: vec2<f32>, gr: vec2<f32> };
+/** family k's major line's piece at column (x, y), if the line passes it and it's drawn — the supercells' rule (m3i)
+ *  only; the reveal (revMain) is the caller's. roadMajor draws it; (loop round 11) gradeMain makes it a graded street's
+ *  piece. Reads b1 LM, b2 SCT, b4 the distance */
+fn majorPiece(x: i32, y: i32, k: u32) -> MajorPiece {
+  var no: MajorPiece;
+  no.ok = false;
+  let c = cpos(x, y);
+  // (the line passes the column: its field's floor differs to one of three neighbours')
+  let f0 = fieldAt(k, c);
+  var crosses = false;
+  var level = 0.0;
+  for (var j = 0; j < 3; j++) {
+    var q = cpos(x + 1, y);
+    if (j == 1) { q = cpos(x, y + 1); }
+    if (j == 2) { q = cpos(x - 1 + 2 * (y & 1), y + 1); }
+    if (k == 3u && !(spokesAt(c) && spokesAt(q))) { continue; }
+    var f1 = fieldAt(k, q);
+    if (k == 3u) { f1 = unwrap(f1, f0); }
+    if (floor(f0) != floor(f1) && !blockedAt(q)) { crosses = true; level = max(floor(f0), floor(f1)); }
+  }
+  if (!crosses) { return no; }
+  // (the column's centre onto the line: Newton on its field)
+  var p = c;
+  for (var it = 0; it < 4; it++) {
+    let gr = gradAt(k, p);
+    var f = fieldAt(k, p);
+    if (k == 3u) { f = unwrap(f, level); }
+    p -= (f - level) * gr / max(dot(gr, gr), 1e-8);
+  }
+  if (distance(p, c) > 1.2) { return no; }
+  let gr = gradAt(k, p);
+  if (length(gr) < 1e-6) { return no; }
+  let t = normalize(vec2<f32>(-gr.y, gr.x));
+  // (m3i: drawn where the blocks both sides are shown, and on through the empty supercells as they grow)
+  if (u.h2.z > 0.5) {
+    let side = normalize(gr) * 0.35 * u.a.x;
+    let cc = cityB2(p);
+    if (!((shownCity(cityB2(p + side)) && shownCity(cityB2(p - side))) || (cc.state == 1u && cc.t <= u.h2.x))) { return no; }
+  }
+  return MajorPiece(true, p - t * 0.85, p + t * 0.85, gr);
+}
+
 /** the major lines: one thread a column, a ribbon piece where a family's line passes it (r3 H, r4 the distance) */
 @compute @workgroup_size(8, 8)
 fn roadMajor(@builtin(global_invocation_id) g: vec3<u32>) {
@@ -799,40 +843,11 @@ fn roadMajor(@builtin(global_invocation_id) g: vec3<u32>) {
   if (!inTown(c) || blockedAt(c) || inLandmarkB1(c)) { return; }
   for (var k = 1u; k <= 3u; k++) {
     if (!fam(k)) { continue; }
-    // (the line passes the column: its field's floor differs to one of three neighbours')
-    let f0 = fieldAt(k, c);
-    var crosses = false;
-    var level = 0.0;
-    for (var j = 0; j < 3; j++) {
-      var q = cpos(x + 1, y);
-      if (j == 1) { q = cpos(x, y + 1); }
-      if (j == 2) { q = cpos(x - 1 + 2 * (y & 1), y + 1); }
-      if (k == 3u && !(spokesAt(c) && spokesAt(q))) { continue; }
-      var f1 = fieldAt(k, q);
-      if (k == 3u) { f1 = unwrap(f1, f0); }
-      if (floor(f0) != floor(f1) && !blockedAt(q)) { crosses = true; level = max(floor(f0), floor(f1)); }
-    }
-    if (!crosses) { continue; }
-    // (the column's centre onto the line: Newton on its field)
-    var p = c;
-    for (var it = 0; it < 4; it++) {
-      let gr = gradAt(k, p);
-      var f = fieldAt(k, p);
-      if (k == 3u) { f = unwrap(f, level); }
-      p -= (f - level) * gr / max(dot(gr, gr), 1e-8);
-    }
-    if (distance(p, c) > 1.2) { continue; }
-    let gr = gradAt(k, p);
-    if (length(gr) < 1e-6) { continue; }
-    let t = normalize(vec2<f32>(-gr.y, gr.x));
-    let a = p - t * 0.85;
-    let b = p + t * 0.85;
-    // (m3i: drawn where the blocks both sides are shown, and on through the empty supercells as they grow)
-    if (u.h2.z > 0.5) {
-      let side = normalize(gr) * 0.35 * u.a.x;
-      let c = cityB2(p);
-      if (!((shownCity(cityB2(p + side)) && shownCity(cityB2(p - side))) || (c.state == 1u && c.t <= u.h2.x))) { continue; }
-    }
+    let pc = majorPiece(x, y, k);
+    if (!pc.ok) { continue; }
+    let a = pc.a;
+    let b = pc.b;
+    let gr = pc.gr;
     // (time-lapse, CG25: shown once lots front it or it links two districts begun — mainRev — grown in ahead of them)
     if (u.h2.z > 0.5) { revMain(a, b, normalize(gr) * 0.35 * u.a.x, false); }
     // (loop round 9: a street's piece a hexagon — roadDisc; a farm track's stays a narrow ribbon)
@@ -3505,26 +3520,119 @@ fn gradeSq(@builtin(global_invocation_id) g: vec3<u32>) {
   for (var k = 0u; k < 4u; k++) { r = max(r, distance(vec2<f32>(r1(o + k * 2u), r1(o + 1u + k * 2u)), u.d.xy)); }
   atomicMax(&w6[0], u32(r * 256.0));
 }
-/** a record's words in GRADE (w5): record r's three vec4s, its points from r · GR_PTS */
-fn grRec(r: u32, n: u32, box: vec4<f32>) {
+/** a record's words in GRADE (w5): record r's three vec4s, its points from r · GR_PTS (the square's, an arterial's) */
+fn grRec(r: u32, n: u32, box: vec4<f32>) { grRecAt(r, r * GR_PTS, n, box, GR_FLAGS, GR_SHOULDER); }
+fn grRecAt(r: u32, first: u32, n: u32, box: vec4<f32>, flags: u32, shoulder: f32) {
   let o = 4u + r * 12u;
-  w5[o] = r * GR_PTS;
+  w5[o] = first;
   w5[o + 1u] = n;
   w5[o + 2u] = GR_SURFACE;
-  w5[o + 3u] = GR_FLAGS;
+  w5[o + 3u] = flags;
   for (var j = 4u; j < 8u; j++) { w5[o + j] = 0u; }
-  set5(o + 6u, GR_SHOULDER);
+  set5(o + 6u, shoulder);
   set5(o + 8u, box.x);
   set5(o + 9u, box.y);
   set5(o + 10u, box.z);
   set5(o + 11u, box.w);
 }
-fn grPt(r: u32, j: u32, p: vec2<f32>, z: f32, hw: f32) {
-  let o = 4u + GR_RECS * 12u + (r * GR_PTS + j) * 4u;
+fn grPt(r: u32, j: u32, p: vec2<f32>, z: f32, hw: f32) { grPtAt(r * GR_PTS + j, p, z, hw); }
+/** point i (its index among all the records' points) */
+fn grPtAt(i: u32, p: vec2<f32>, z: f32, hw: f32) {
+  let o = grPtBase() + i * 4u;
   set5(o, p.x);
   set5(o + 1u, p.y);
   set5(o + 2u, z);
   set5(o + 3u, hw);
+}
+// ---- (loop round 11) the main streets graded too: the major lines' pieces (majorPiece, a column apart along each line)
+// as segments (ROAD_SEGS), a record a tile of MT_TILE world units over the grid, after the square's and the arterials'
+// records (so where a main street meets them theirs is the column's road: roadHit takes the first). Made every mesh run
+// from the pieces shown by then (the reveal, CG25: a district's streets graded as it begins, not before). A piece's
+// profile (mainZ) is a function of position, so overlapping pieces agree: the raw ground averaged across the street's
+// width, held over the water beside it, and pinned within the atlas grade of the square's and the arterials' graded
+// columns near it — no step where they meet.
+const MT_TILE: f32 = 48.0;
+/** pieces a tile has room for (2 points each); more are counted (MTC's last word), not laid */
+const MT_PIECES: u32 = 512u;
+/** a main street's banks (world units past its half width) — narrower than an arterial's: lots stand near */
+const MT_SHOULDER: f32 = 2.5;
+/** how far a main street's profile looks for an arterial's or the square's graded columns to meet */
+const MT_PIN_R: f32 = 10.0;
+fn mtDims() -> vec2<u32> { return vec2<u32>(u32(ceil(f32(W()) / MT_TILE)), u32(ceil(f32(H()) * ROW_H / MT_TILE))); }
+fn mtCount() -> u32 { let d = mtDims(); return d.x * d.y; }
+/** every record: the square's and the arterials' (GR_RECS), then a tile's main streets each */
+fn grRecN() -> u32 { return GR_RECS + mtCount(); }
+/** the points' first word in GRADE */
+fn grPtBase() -> u32 { return 4u + grRecN() * 12u; }
+fn mtTile(p: vec2<f32>) -> u32 {
+  let d = mtDims();
+  let q = vec2<u32>(clamp(vec2<i32>(floor(p / MT_TILE)), vec2<i32>(0), vec2<i32>(d) - 1));
+  return q.y * d.x + q.x;
+}
+/** a main street's profile at q (world z): the raw ground (r3) over its width, held over the water near it (w7 WS), then
+ *  within the atlas grade of every graded column (w6 ROADS: the square's, the arterials') within MT_PIN_R */
+fn mainZ(q: vec2<f32>, hw: f32) -> f32 {
+  var z = hAt(q);
+  for (var k = 0u; k < 6u; k++) {
+    let an = f32(k) * 1.0471976;
+    z += hAt(q + vec2<f32>(cos(an), sin(an)) * hw * 0.8);
+  }
+  z /= 7.0;
+  z = max(z, grWater(q, hw + 1.5) + GR_FREEBOARD);
+  let y0 = max(i32(floor((q.y - MT_PIN_R) / ROW_H)), 0);
+  let y1 = min(i32(ceil((q.y + MT_PIN_R) / ROW_H)), H() - 1);
+  let x0 = max(i32(floor(q.x - MT_PIN_R)), 0);
+  let x1 = min(i32(ceil(q.x + MT_PIN_R)), W() - 1);
+  for (var y = y0; y <= y1; y++) {
+    for (var x = x0; x <= x1; x++) {
+      let m = atomicLoad(&w6[ix(x, y)]);
+      if (!graded(m)) { continue; }
+      let d = distance(cpos(x, y), q);
+      if (d > MT_PIN_R) { continue; }
+      let zg = f32(m & GRADED_Z) / 256.0;
+      z = clamp(z, zg - GR_GRADE * d, zg + GR_GRADE * d);
+    }
+  }
+  return z;
+}
+/** one thread a grid column: each major line's piece there that shows by now (its reveal begun, not a farm track) put in
+ *  its tile's record as a segment, both ends at mainZ (b1 LM, b2 SCT, r3 the heights, b4 the distance; w5 GRADE, w6
+ *  ROADS — the square's and the arterials' graded columns already marked, the front field in its tail; w7 WS; args MTC:
+ *  a count a tile, zeroed before, then the pieces left out) */
+@compute @workgroup_size(8, 8)
+fn gradeMain(@builtin(global_invocation_id) g: vec3<u32>) {
+  let x = i32(g.x); let y = i32(g.y);
+  if (x >= W() || y >= H()) { return; }
+  let c = cpos(x, y);
+  if (!inTown(c) || blockedAt(c) || inLandmarkB1(c)) { return; }
+  let hw = u.b.x * 0.5;
+  for (var k = 1u; k <= 3u; k++) {
+    if (!fam(k)) { continue; }
+    let pc = majorPiece(x, y, k);
+    if (!pc.ok) { continue; }
+    roadLive = true;
+    roadTrack = false;
+    if (u.h2.z > 0.5) { revMain(pc.a, pc.b, normalize(pc.gr) * 0.35 * u.a.x, false); }
+    if (!roadLive || roadTrack) { continue; }
+    let t = mtTile(0.5 * (pc.a + pc.b));
+    let s = atomicAdd(&args[t], 1u);
+    if (s >= MT_PIECES) { atomicAdd(&args[mtCount()], 1u); continue; }
+    let i = GR_RECS * GR_PTS + (t * MT_PIECES + s) * 2u;
+    grPtAt(i, pc.a, mainZ(pc.a, hw), hw);
+    grPtAt(i + 1u, pc.b, mainZ(pc.b, hw), hw);
+  }
+}
+/** one thread a tile: its main streets' record — its pieces (b1 MTC: the counts) as segments, its box the tile's grown by
+ *  a piece's half length, the half width and the shoulder (w5 GRADE) */
+@compute @workgroup_size(64)
+fn gradeMainRec(@builtin(global_invocation_id) g: vec3<u32>) {
+  let t = g.x;
+  if (t >= mtCount()) { return; }
+  let n = min(b1[t], MT_PIECES) * 2u;
+  let d = mtDims();
+  let lo = vec2<f32>(f32(t % d.x), f32(t / d.x)) * MT_TILE;
+  let m = 0.85 + u.b.x * 0.5 + MT_SHOULDER;
+  grRecAt(GR_RECS + t, GR_RECS * GR_PTS + t * MT_PIECES * 2u, select(0u, n, n >= 2u), vec4<f32>(lo - vec2<f32>(m), lo + vec2<f32>(MT_TILE + m)), GR_FLAGS | ROAD_SEGS, MT_SHOULDER);
 }
 /** arterial k's profile at s along it (its points' atlas z, b2 ARTZ), pinned to the square (radius rs, z zs) and to
  *  its decks' ends, each within the grade */
@@ -3562,10 +3670,11 @@ fn gradeRecs(@builtin(global_invocation_id) g: vec3<u32>) {
   // (the square at the plaza's z, held over the water beside it: gradeWater's)
   let zs = max(r2(0u), bitcast<f32>(w7[4u + NART * NAP]) + GR_FREEBOARD);
   if (k == NART) {
-    w5[0] = GR_RECS;
-    w5[1] = GR_RECS * GR_PTS;
+    // (loop round 11: the main streets' tile records after them — gradeMainRec)
+    w5[0] = grRecN();
+    w5[1] = GR_RECS * GR_PTS + mtCount() * MT_PIECES * 2u;
     w5[2] = 1u;
-    w5[3] = 1u + 3u * GR_RECS;
+    w5[3] = 1u + 3u * grRecN();
     let c = u.d.xy;
     let m = rs + GR_SHOULDER;
     grRec(0u, select(0u, 2u, rs > 0.0), vec4<f32>(c - vec2<f32>(m), c + vec2<f32>(m)));
@@ -3640,12 +3749,16 @@ fn gradeRecs(@builtin(global_invocation_id) g: vec3<u32>) {
   for (; r < r0 + GR_ART; r++) { grRec(r, 0u, vec4<f32>(0.0)); }
 }
 /** one thread a grid column: GRADED_BIT | its profile's top z × 256 in ROADS where a record holds it (roads: GRADE at
- *  binding 4; w6 ROADS — after it's cleared, before the streets mark it) */
+ *  binding 4; w6 ROADS — after it's cleared, before the streets mark it). Mode 0 the square's and the arterials' records
+ *  (what the main streets meet: gradeMain reads them); (loop round 11) mode 1 every record, the columns not yet marked
+ *  (the first record holding a column is its road, so a column mode 0 marked is already right) */
 @compute @workgroup_size(8, 8)
 fn gradeRast(@builtin(global_invocation_id) g: vec3<u32>) {
   let x = i32(g.x); let y = i32(g.y);
   if (x >= W() || y >= H()) { return; }
-  let h = roadHit(cpos(x, y), 0u, GR_RECS, 1.0, 1.5);
+  let all = u.n.w == 1u;
+  if (all && graded(atomicLoad(&w6[ix(x, y)]))) { return; }
+  let h = roadHit(cpos(x, y), 0u, select(GR_RECS, grRecN(), all), 1.0, 1.5);
   if (h.rec == ROAD_NONE) { return; }
   atomicStore(&w6[ix(x, y)], GRADED_BIT | min(u32(clamp(h.z, 0.0, 2.0e6) * 256.0), GRADED_Z));
 }

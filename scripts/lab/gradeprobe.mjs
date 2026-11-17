@@ -43,34 +43,51 @@ await run({ name: 'gradeprobe', kind: 'behaviour', size: '412x915', dpr: 1, echo
   // (the generation's cost: the mesh run N times each with the streets graded and drawn — its GPU ms by timestamps;
   // and a lay of the whole box, wall ms to the queue's end, N times)
   const n = Number(R.opt('meshruns', '0'));
+  await p.evaluate((k) => (window.__toggleKey = k), R.opt('toggle', 'terrainRoads'));
   if (n > 0) {
     const cost = await p.evaluate(async (n) => {
       const t = [...window.citygen.live.values()][0];
       const med = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
       const res = {};
-      const was = t.params.terrainRoads;
+      // (loop round 11: `--toggle terrainMain` the main streets' grading on and off; the default the arterials')
+      const key = window.__toggleKey;
+      const was = t.params[key];
       for (const tr of [1, 0, 1, 0]) {
         const ms = [];
-        for (let i = 0; i < n; i++) ms.push((await t.gen.run({ ...t.params, terrainRoads: tr }, 'mesh')).stage.mesh);
-        res[`mesh terrainRoads=${tr}`] = [...(res[`mesh terrainRoads=${tr}`] ?? []), +med(ms).toFixed(2)];
+        for (let i = 0; i < n; i++) ms.push((await t.gen.run({ ...t.params, [key]: tr }, 'mesh')).stage.mesh);
+        res[`mesh ${key}=${tr}`] = [...(res[`mesh ${key}=${tr}`] ?? []), +med(ms).toFixed(2)];
         // (from the lots: the records made again too — the mesh stage's ms)
         const ml = [];
-        for (let i = 0; i < n; i++) ml.push((await t.gen.run({ ...t.params, terrainRoads: tr }, 'lots')).stage.mesh);
-        res[`mesh after lots terrainRoads=${tr}`] = [...(res[`mesh after lots terrainRoads=${tr}`] ?? []), +med(ml).toFixed(2)];
+        for (let i = 0; i < n; i++) ml.push((await t.gen.run({ ...t.params, [key]: tr }, 'lots')).stage.mesh);
+        res[`mesh after lots ${key}=${tr}`] = [...(res[`mesh after lots ${key}=${tr}`] ?? []), +med(ml).toFixed(2)];
       }
-      await t.gen.run({ ...t.params, terrainRoads: was }, 'mesh');
+      await t.gen.run({ ...t.params, [key]: was }, 'mesh');
       if (t.grader) {
         const dev = t.io.device;
         const p = t.gridPlace();
-        const lay = [];
-        for (let i = 0; i < n; i++) {
-          await dev.queue.onSubmittedWorkDone();
-          const t0 = performance.now();
-          t.grader.layRects(t.gen.gradeRoads, 129, [[p.dx, p.dy, p.dx + t.box.w, p.dy + t.box.h]], p, [p.dx, p.dy, p.dx + t.box.w, p.dy + t.box.h]);
-          await dev.queue.onSubmittedWorkDone();
-          lay.push(performance.now() - t0);
+        // (every record — the main streets' too — and the square's and arterials' alone (129))
+        for (const [name, recs] of [['layWholeBoxWallMs', t.gen.gradeRecCount ?? 129], ['layArterialsOnlyWallMs', 129]]) {
+          const lay = [];
+          for (let i = 0; i < n; i++) {
+            await dev.queue.onSubmittedWorkDone();
+            const t0 = performance.now();
+            t.grader.layRects(t.gen.gradeRoads, recs, [[p.dx, p.dy, p.dx + t.box.w, p.dy + t.box.h]], p, [p.dx, p.dy, p.dx + t.box.w, p.dy + t.box.h]);
+            await dev.queue.onSubmittedWorkDone();
+            lay.push(performance.now() - t0);
+          }
+          res[name] = +med(lay).toFixed(2);
         }
-        res.layWholeBoxWallMs = +med(lay).toFixed(2);
+        if (t.gen.mainPieces) {
+          const src = t.gen.mainPieces;
+          const rb = dev.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+          const enc = dev.createCommandEncoder();
+          enc.copyBufferToBuffer(src, 0, rb, 0, src.size);
+          dev.queue.submit([enc.finish()]);
+          await rb.mapAsync(GPUMapMode.READ);
+          const c = new Uint32Array(rb.getMappedRange().slice(0));
+          rb.destroy();
+          res.mainPieces = c.length ? { pieces: c.slice(0, -1).reduce((a, b) => a + b, 0), most: Math.max(...c.slice(0, -1)), leftOut: c[c.length - 1], tiles: c.length - 1 } : 'not read';
+        }
       }
       return res;
     }, n);

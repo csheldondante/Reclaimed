@@ -3583,6 +3583,11 @@ the road's path is independent of both, "a guaranteed fixed path defined in curv
   again whenever its land comes back. A lay never touches a column with an External interval (another owner's). The
   town's road raster marks the records' columns `0x20000000 | z × 256` (`gradeRast`, the lay's own test); citygen
   claims no paving and draws no ribbon there, and the living town's routes read the graded z.
+- **(loop round 11) `ROAD_SEGS`**: a record's points taken in pairs, each pair a segment of its own (`roadHit` steps by
+  two). A town's main streets are records of this kind after the 129, one a 48-unit tile of its grid
+  (`CityGen.gradeRecCount` = 129 + tiles: what a lay takes); the count must stay ≤ `ROAD_MAX` (255: the aux byte),
+  checked when the generator is made. The paving's look (meshdraw.wgsl): road surfaces are no longer `jagged` (chips a
+  quarter cell across), paving has no per-cell specks, and its flagstones show only past 6–14 px a cell.
 
 ## Limits (round 128o, DA-G3; DESIGN.md §24 "Limits … are documented with what they cost us")
 

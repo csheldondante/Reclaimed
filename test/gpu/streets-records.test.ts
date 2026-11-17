@@ -32,7 +32,7 @@ function onRoad(recs: RoadRecord[], p: [number, number]): number | null {
     if (r.points.length < 2) continue;
     let best = Infinity;
     let z = 0;
-    for (let i = 0; i + 1 < r.points.length; i++) {
+    for (let i = 0; i + 1 < r.points.length; i += r.segments ? 2 : 1) {
       const a = r.points[i];
       const b = r.points[i + 1];
       const dx = b.x - a.x;
@@ -80,7 +80,17 @@ describe('a town\'s streets as road records (loop-streets)', () => {
     expect(t.lots).toBeGreaterThan(50);
     // (the records: the roadpath layout)
     const recs = unpackRoads(await g.read(L.gen.gradeRoads, L.gen.gradeRoads.size));
-    expect(recs.length).toBe(GRADE_RECS);
+    expect(recs.length).toBe(L.gen.gradeRecCount);
+    expect(recs.length).toBe(GRADE_RECS + L.gen.mainTiles);
+    // (loop round 11: the main streets — a record a tile after the arterials', its pieces as segments, none left out)
+    expect(L.params.terrainMain).toBe(1);
+    const mains = recs.slice(GRADE_RECS).filter((r) => r.points.length >= 2);
+    const pieces = mains.reduce((a, r) => a + r.points.length / 2, 0);
+    const counts = new Uint32Array(await g.read(L.gen.mainPieces, (L.gen.mainTiles + 1) * 4));
+    console.log(`[streets-records] main streets: ${pieces} pieces in ${mains.length} of ${L.gen.mainTiles} tiles, the most in one ${Math.max(...counts.slice(0, -1))}, left out ${counts[L.gen.mainTiles]}`);
+    expect(counts[L.gen.mainTiles], 'main-street pieces past a tile\'s room').toBe(0);
+    expect(pieces).toBeGreaterThan(500);
+    for (const r of mains) expect(r.segments && r.graded && r.paved && r.dry).toBe(true);
     const sq = recs[0];
     expect(sq.points.length).toBe(2);
     expect(sq.points[0].hw).toBeGreaterThanOrEqual(L.params.plazaR);
@@ -117,6 +127,17 @@ describe('a town\'s streets as road records (loop-streets)', () => {
         expect(p.z, `a point by the river at ${wx.toFixed(1)}`).toBeGreaterThanOrEqual(top(Math.min(Math.max(wx, 330), 335.5), p.y - L.local([0, 0])[1]) + 1 + 0.4 - 0.2);
       }
     expect(byRiver).toBeGreaterThan(0);
+    // (loop round 11: a main street meets the square with no step — its points near it within the grade of the square's
+    // z, measured from the square's edge, a column's slack)
+    let nearSquare = 0;
+    for (const r of mains)
+      for (const p of r.points) {
+        const s = Math.hypot(p.x - L.centre[0], p.y - L.centre[1]) - sq.points[0].hw;
+        if (s > 9) continue;
+        nearSquare++;
+        expect(Math.abs(p.z - plaza), `a main street ${s.toFixed(1)} from the square`).toBeLessThanOrEqual(0.22 * Math.max(s, 0) + 0.3);
+      }
+    expect(nearSquare).toBeGreaterThan(0);
     // (the raster: GRADED exactly where a record holds the column)
     const roadsRaster = new Uint32Array(await g.read(L.gen.B.ROADS, w * h * 4));
     const claims = new Uint32Array(await g.read(L.gen.claimGrid as GPUBuffer, w * h * 8 * 4));
@@ -135,7 +156,10 @@ describe('a town\'s streets as road records (loop-streets)', () => {
         if (isG !== (z !== null)) mismatch++;
         if (!isG) continue;
         graded++;
-        expect(Math.abs((m & 0x1fffffff) / 256 - z!), `raster z at ${x},${y}`).toBeLessThan(1 / 128);
+        // (a main street's pieces overlap, a column apart: where two are equally near, the GPU's float tie can take the
+        // other's z — a hundredth of a cell apart on a curve)
+        const slack = onRoad(recs.slice(0, GRADE_RECS), cellPos(x, y)) === null ? 0.03 : 1 / 128;
+        expect(Math.abs((m & 0x1fffffff) / 256 - z!), `raster z at ${x},${y}`).toBeLessThan(slack);
         // (the claim grid: nothing of the roads' (key 0) on it; a lot's claim counted)
         if (claims[i * 4 + 3] !== 0) {
           if (claims[N * 4 + i * 4 + 3] === 0) paved++;
