@@ -345,13 +345,15 @@ class Game implements RunGame {
     if (!run || this.phase !== 'event' || this.lineHeld > performance.now()) return;
     const line = run.entry && run.entry.step !== 'in' ? W.LIVE_WAIT : W.fill(run.def.line, this.live.numbers(run));
     // (round 8: the sheet drawn again when "Settle it now" becomes possible, too)
-    const settle = this.live.canSettle;
+    const settle = this.live.canSettle && this.live.canLeave ? 2 : this.live.canSettle ? 1 : this.live.canLeave ? 3 : 0;
     if (line === this.fightLine && settle === this.settleShown) return;
     this.settleShown = settle;
     this.fightLine = line;
     this.changed();
   }
-  private settleShown = false;
+  /** (round 8) what the sheet last showed of "Settle it now" and "Back to the town" (a key: the sheet is drawn again
+   *  when it changes — before, "Back to the town" could be allowed with the sheet not showing it) */
+  private settleShown = 0;
   /** a line said about a cast stays this long (ms since the page began) before the event's own line is back */
   private lineHeld = 0;
 

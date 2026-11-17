@@ -373,7 +373,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   // settled now, the glitter spire left to overload (the ending), run 2 in that world with the remains and the
   // salvage card. Stills `cards-*.png`.
   if (R.argv.includes('--cards')) {
-    first = false;
+    // (the first petition's stills kept: the guild's card shows the portrait slot when local/art has its picture)
     const cs = () =>
       page.evaluate(() => {
         const g = window.rungame;
@@ -420,6 +420,20 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       if (s.phase === 'event') {
         const tpl = s.focus;
         log(`cards: event ${tpl}`);
+        // (the arena's open bouts come back each time one is won — a loop the pack means: after three settled, the walk
+        // leaves the bout running and lets the season's end settle it)
+        if (settled >= 3) {
+          for (let k = 0; k < 40; k++) {
+            if (await page.evaluate(() => !!window.rungame.liveNow?.canLeave)) {
+              await tap('.run-sheet .go button', 'Back to the town');
+              break;
+            }
+            if ((await cs()).phase !== 'event') break;
+            await wait(2000);
+          }
+          await phase('city|end|season', 120000).catch(() => {});
+          continue;
+        }
         await wait(9000);
         await shot(`cards-4-bout-${++bouts}`);
         let can = false;

@@ -578,7 +578,15 @@ export class LiveRunner {
         groups[id] = { tags: g.def.tags, made: g.made, alive, dead, arrived: true };
       } else if (g.force !== null) {
         const r = forces?.report(g.force);
-        groups[id] = { tags: g.def.tags, made: r?.size ?? 0, alive: r?.alive ?? 0, dead: r?.dead ?? 0, arrived: g.arrived };
+        // (round 8: a group ordered made but not yet standing — its spawn resolves on the GPU — is all still there; a
+        // bout settled the moment its challengers were called was read as won with none of them alive)
+        const dead = r?.dead ?? 0;
+        const made = Math.max(r?.size ?? 0, g.made);
+        groups[id] = { tags: g.def.tags, made, alive: (r?.size ?? 0) < g.made ? made - dead : (r?.alive ?? 0), dead, arrived: g.arrived };
+      } else if (entering(g.def) && g.made === 0) {
+        // (round 8: still on its way in, not made yet: all of it)
+        const n = groupSize(g.def, this.h.realm()?.runNumbers() ?? {});
+        groups[id] = { tags: g.def.tags, made: n, alive: n, dead: 0, arrived: false };
       } else groups[id] = { tags: g.def.tags, made: g.made, alive: g.units.size, dead: g.dead, arrived: g.arrived };
     }
     const pts = run.hazard?.points ?? [];
