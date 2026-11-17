@@ -252,7 +252,7 @@ describe('packs/laws.json on the Realm', () => {
   it('the two engines that break the game: runes doubled by the abbot pay sixteen a season; holy ground everywhere wins the run', () => {
     const t = new Table(OPTS);
     const r = t.realm;
-    r.ledger = { ...r.ledger, built: [...r.ledger.built, 'farms', 'houses', 'market', 'workshops', 'keep'] };
+    r.ledger = { ...r.ledger, built: [...r.ledger.built, 'farms', 'houses', 'market', 'workshops', 'keep', 'quarry', 'lumber'] };
     r.enact('laws-runes-double', 'a test');
     r.enact('laws-runes-twice', 'a test');
     r.enact('laws-everything-doubles', 'the abbot');
@@ -267,13 +267,13 @@ describe('packs/laws.json on the Realm', () => {
     // (2 Materials, times 2 by the runes, times 2 by the abbot, paid twice: 16; other rules cost what they cost)
     expect(paid).toBe(16);
     expect(t.poolViews().find((p) => p.pool === 'materials')!.have).toBeGreaterThan(before);
-    // (holy ground: fields count as temples, every worked place is a temple, the pilgrims' law wins at 6)
+    // (holy ground: fields count as temples, every worked place is a temple, the pilgrims' law wins at 8)
     r.enact('laws-fields-are-temples', 'a test');
     r.enact('laws-every-hearth', 'a test');
     expect(t.over).toBe(false);
     r.enact('laws-pilgrim-victory', 'a test');
-    expect(r.things().filter((x) => x.tags.includes('temple')).length).toBeGreaterThanOrEqual(6);
-    expect(r.won()).toMatchObject({ law: 'The pilgrim road', count: 6 });
+    expect(r.things().filter((x) => x.tags.includes('temple')).length).toBeGreaterThanOrEqual(8);
+    expect(r.won()).toMatchObject({ law: 'The pilgrim road', count: 8 });
     expect(t.over).toBe(true);
   });
 });

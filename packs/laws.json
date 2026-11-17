@@ -29,7 +29,7 @@
       "does": { "add_rule": { "id": "laws-temple-prayers", "name": "Prayers at the temples", "on": "turn",
                               "a": { "tags": ["temple", "standing"] }, "effect": { "pool": "magic", "n": 1 }, "per": "a",
                               "why": "{count} temples prayed for the town: +{n} Magic" } } },
-    { "id": "laws-pilgrim-victory", "name": "The pilgrim road", "does": { "win": { "count": 6, "tags": ["temple"] } } },
+    { "id": "laws-pilgrim-victory", "name": "The pilgrim road", "does": { "win": { "count": 8, "tags": ["temple"] } } },
     { "id": "laws-runes-double", "name": "Deep runes", "does": { "rule": "blessed-fields", "times": 2 } },
     { "id": "laws-runes-twice", "name": "Runes that sing twice", "does": { "rule": "blessed-fields", "fires": 2 } },
     { "id": "laws-ash-on-furrows", "name": "Ash on the furrows", "does": { "spell": "fire", "also_tag": "growth-active", "on": { "tags": ["field"] } } },
