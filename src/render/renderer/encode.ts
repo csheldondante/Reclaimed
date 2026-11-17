@@ -6,6 +6,7 @@ import { READBACK } from '../fieldmesh';
 import { type Camera } from '../camera';
 import { MI_ARGS_WORD } from '../meshinst';
 import { record } from '../../gpu/cpustat'; // (round 100, hitchrec: timing)
+import { archTextures } from '../../archgen/textures';
 import { BGCHECK, BgCheck } from '../bgcheck';
 import { encodeTerrainCache, terrainCacheMode } from './terrain-cache';
 import { encodeGBuffer, encodeShadow, writeLight } from './gbuffer-shadow';
@@ -13,6 +14,7 @@ import { drawGrid, gridCull, gridLive } from './grid';
 import { VERTS_PER_PRISM, VERTS_PER_BOX, VERTS_PER_TOP, INST_GROW, RenderOptions, SKIP, SHADOW_STILL_BIT, cutOn } from './defs';
 import { Renderer } from '../renderer';
 import { censusEnter, censusLeave } from '../../gpu/census';
+import { ARCH_DRAWS, KIND } from '../../archgen/archgen';
 
 /** Renderer.encode (the class keeps the method, documented there) */
 export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
@@ -141,6 +143,8 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
       : { view: rd.depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: BGCHECK ? 'store' : 'discard' },
     timestampWrites: rd.profiler.timestamps('draw'),
   });
+  // (ground branch: the material textures, group 1 — the terrain's look and the buildings')
+  pass.setBindGroup(1, archTextures(rd.device).group);
   if (tcMode) {
     pass.setPipeline(rd.tcPipes!.comp);
     pass.setBindGroup(0, rd.tc!.comp);
@@ -234,6 +238,17 @@ export function encode(rd: Renderer, enc: GPUCommandEncoder, target: GPUTextureV
     pass.setBindGroup(0, v.group);
     pass.drawIndirect(v.indirect, 0);
     rd.profiler.draws++;
+  }
+  // (archgen) the building generator's parts: a draw a part kind
+  if (rd.archSources.length) pass.setBindGroup(1, archTextures(rd.device).group);
+  for (const v of SKIP.has('arch') ? [] : rd.archSources) {
+    pass.setBindGroup(0, v.group);
+    ARCH_DRAWS.forEach(([k], i) => {
+      if ((k === KIND.win && !rd.archWindows) || rd.archSkip.has(k)) return;
+      pass.setPipeline(rd.archPipes![i]);
+      pass.drawIndirect(v.args, k * 16);
+    });
+    rd.profiler.draws += ARCH_DRAWS.length;
   }
   // (watersurf) the water's surface, then the blended prisms (oil, ice and crystal; without the field mesh the water)
   const flat = SKIP.has('waterflat');

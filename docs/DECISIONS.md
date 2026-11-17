@@ -3839,3 +3839,90 @@ The owner, verbatim (relayed in the round 6 brief of `loop-skeleton`):
 
 Built on it: `docs/design/LOOP_SKELETON.md` "Round 6" and "Conformance, round 6" (what departs from the design docs,
 and what is still the owner's to decide: who decides a fight, every rule's numbers).
+
+## 2026-11-11 — the building generator (archgen; docs/design/ARCHGEN.md)
+
+- Two deliverables: a near-instant GPU building generator from the lot footprint and type, for streaming (cached on
+  the GPU is fine), and later a tiny Tiny Glade-style editor whose brushes come from procedurally generated styles.
+  Very different styles (radial node graphs, tiles, organic mounds) may use different representations behind the
+  scenes, each with its own grammar (volumetric / tile / extruded curves).
+- "Since our goal is streaming let's see what we can do quickly and cheaply and what gives the most bang for our buck.
+  My guess is just a good extrusion shape, textures and architectural ornamentation will get us most of the way there
+  and can be done very quickly for a whole batch of lots in parallel."
+- Windows painted for now; "we can add a LOD for cutaways later (in general I want to be as lazy as possible in terms
+  of our compute)".
+- A style profile per district; the districts' opportunity cards drive it. Starting styles: homes, port warehouses,
+  keep and walls.
+- The interface with citygen is agreed with Track A, then implemented here; the user switches the town to these meshes
+  once they look good.
+- "Build whatever is fastest to iterate first and get the visuals and speed where you want it then wire it in through
+  the API you establish."
+- Look: Tiny Glade ("Townscaper is also nice if a bit simple"). The phone is lo-fi and won't show fine detail; the PC
+  will.
+
+## 2026-11-11 — building styles, round 3 (archgen)
+
+- "I would add other styles. Docks and shanties for ports. Industrial warehouses, smokestacks maybe a water wheel? Then I
+  think tents would be cool, open air market stalls, courtyards, plants on the structures."
+- "Also, while a wood shanty might be irregular a stone building probably is more parallel walls and whatnot." / "the
+  lot is irregular but the structure is generally parallel walls except for intentionally curved or rotated wings.
+  Think overlapping rotated and offset rectangles for the floor plan."
+- "Also, consider some styles could use the irregular grids that are already implemented. Townscaper does an unusually
+  well with larger structures and shanties" (with Townscaper references: stacked terraces, arches, stilts and bridges,
+  narrow coloured houses packed along curving rows, harbours of piers).
+
+## 2026-11-11 — building styles, round 4 (archgen)
+
+- "I think corrugated metal looks weird for fantasy shanties. Cloth or wood would look better." → no tin anywhere;
+  shanty, docks and stilts roofs are planks or cloth tarps.
+- "The tents should be at angles or against walls." → ridge tents pitched at their own angle; lean-tos of cloth
+  against hut walls and along a market's lot lines.
+- "The rooflines look too uniform. They need to either join into larger sections or have little open patios up top."
+  → grid pieces joined into one house under one roof; flat-topped patio cells behind parapets.
+- "Also I want more variety in the manors. Walled in courtyards would be great." → a manor round a walled forecourt
+  (gateway, wings, a garden court); classic houses sometimes wall in their back gardens.
+
+## 2026-11-12 — the phone's look and cost (archgen-ground)
+
+- Zoom on the phone: "Zoom fixed steps or disabled for phone is fine." → fixed steps, so baked tiles stay sharp.
+- Time of day: "lit from the bakes layers. A single shadow render could also be worthwhile." → tiles keep albedo,
+  normal and depth; lit live each frame; one baked shadow render.
+- Ground textures: "The texture is basically pointless then at this scale." → off on the phone at play zoom.
+- One shared irregular grid across lots, quads only, lanes as cells, bridges over roads (BACKLOG AG23).
+
+## 2026-11-12 — the Townscaper bar (archgen)
+
+- The toy test's target is at least Townscaper's quality (the user's reference shot): warm light, cool shade, cast
+  shadows, occlusion, edge lines, smoothed normals across near-parallel cells, more geometry (rounded corners, set-back
+  windows, balconies, arches), quoins, brick through plaster, plants on buildings.
+- The phone gets the new geometry and detail too; if the phone must give something up, it is the curved tile roofs.
+
+
+## 2026-11-13 — towns on uneven ground, and switchable styles
+
+- The user, verbatim: "I really want towns to be insensitive to height variation below a couple of stories and to use
+  stairs, switchback roads and plinths to make the terrain normalized for walking because I think it makes cities more
+  visually interesting." → under ~2 storeys of relief a town absorbs the ground with stairs, switchbacks and plinths
+  (shown, not levelled away).
+- "I also want to be able to convert between styles easily so we can go from an irregular grid organic city to a
+  planned city with grid layouts and I want hills to have winding roads that follow contours and use switchbacks and
+  spirals to connect levels." → a town's layout style is a switch (organic irregular grid ↔ planned grid); hill roads
+  follow contours, levels joined by switchbacks and spirals. Idea logged with it: height blended into the street
+  field (BACKLOG CG-H1).
+
+## 2026-11-16 — the city readable (loop round 9)
+
+- "I think the city visuals in general need a major overhaul. The city is not that readable ... We need streets that
+  are integrated with the world and terrain not floating meshes and we want them legible and wide enough for crowds to
+  show with plazas and decorations. I would love to hit the visual quality of anno 1800 or tiny glade but I would
+  settle for planet coaster as long as it is legible." → the game's streets are lanes (main 6, minor 3.6, arterial 7
+  cells), one light paving, a central square (BACKLOG LS-96).
+- "we want the authored routes and traversability data to make units move in ways that keep them visible and legible";
+  "plenty of games use GPU crowds that are legible. They Are Billions for example." → every street is a road in the
+  units' fields; every entering column marches in by its road's route, walled or not (LS-88, LS-89).
+- The approved order: widen streets and get units onto them; grade town streets into the terrain; merge the building
+  generator and judge it; zoom detail later.
+- The building generator is merged into `loop-skeleton` behind its switch (`?arch=1`) and is **not** the default: the
+  ruling "buildings stay plain extruded lot shapes" (DESIGN §17, CITYGEN.md) stands for the default game. Its gates
+  before a default switch: AG13/CG24 (roofs above the claims), AG14 (vertices on the phone), LS-100 (no lot conditions:
+  mutators do not show on its houses). Its new light and ground textures come with the switch (LS-101).

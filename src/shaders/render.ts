@@ -8,6 +8,17 @@ import rock from './render/rock.wgsl?raw';
 import fsBox from './render/fs-box.wgsl?raw';
 import water from './render/water.wgsl?raw';
 import bodies from './render/bodies.wgsl?raw';
+import texbank from '../archgen/texbank.wgsl?raw';
+import { urlFlags } from '../flags';
+
+/** (ground branch) ?light=old: the old lighting (no specular, no texture roughness); ?groundtex=0: the terrain untextured.
+ *  (loop round 9: merged into the loop behind the building generator's switch — the new light and the ground textures
+ *  with `?arch=1`, or asked for alone with `?light=new`, `?groundtex=1`; the loop's default look is as it was) */
+const flags = urlFlags();
+const arch = flags.get('arch') === '1';
+const switches = `const LIGHT_NEW: bool = ${flags.get('light') === 'new' || (arch && flags.get('light') !== 'old')};
+const GROUND_TEX: bool = ${flags.get('groundtex') === '1' || (arch && flags.get('groundtex') !== '0')};
+`;
 
 /** the draw shader (was render.wgsl): its parts joined in order — one WGSL module, as before */
-export const renderWgsl = [common, vertex, light, rock, fsBox, water, bodies].join('');
+export const renderWgsl = [switches, texbank, common, vertex, light, rock, fsBox, water, bodies].join('');

@@ -53,6 +53,9 @@ export interface StreetParams {
   maxSpan: number;
   /** the points' markers drawn (1: the lab's; 0: the game's) */
   marks: number;
+  /** (archgen, the interface agreed with Track A) who draws the buildings: 0 the town (its extrusions), 1 the building
+   *  generator (src/archgen: lotMesh skips kind building; parks, plazas, fields, the wall, landmarks stay the town's) */
+  buildings: number;
   /** (M4b) the roads' tone: 0 the lab's white, 1 dirt, 2 stone, 3 light paving (ROAD_TONES) */
   roadTone: number;
   /** (loop round 9) the central square: lots whose middle is this near the town's centre are paved (cells; 0 none) */
@@ -973,7 +976,8 @@ export class CityGen {
     else this.k('roadMinor', {}, { 5: B.VTAG, 1: B.TR, 2: B.AL0, 3: HH, 6: B.ROADS, 7: this.verts }, this.seeds[0] * this.seeds[1], 1, true);
     this.k('groad', {}, { 5: B.VTAG, 1: B.CNT, 2: B.SCT, 3: HH, 4: B.FD, 6: B.ROADS, 7: this.verts }, (ROAD_ROOM * 8) / 64, 1, true);
     if (this.cityOn() && p.tint === 1) this.k2('ctint', {}, { 5: B.VTAG, 2: B.SCT, 3: HH, 4: B.FD, 7: this.verts }, true);
-    this.k('lotMesh', { count: LOT_ROOM }, { 5: B.VTAG, 1: this.lotRecords, 2: this.progress, 3: HH, 4: this.reachCut, 6: B.CNT, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
+    // (archgen: mode 1 — the building generator draws the building lots; lotMesh skips them)
+    this.k('lotMesh', { count: LOT_ROOM, mode: p.buildings ? 1 : 0 }, { 5: B.VTAG, 1: this.lotRecords, 2: this.progress, 3: HH, 4: this.reachCut, 6: B.CNT, 7: this.verts }, Math.ceil(LOT_ROOM / 64), 1, true);
     this.k('artMesh', {}, { 5: B.VTAG, 1: B.ART, 3: HH, 6: B.ROADS, 7: this.verts }, (NART * NAP) / 64, 1, true);
     // (season life: the town wall, once begun — at full height; tlRise sets its pieces' rise)
     this.k('wallMesh', {}, { 1: B.WALL, 3: HH, 4: B.FD, 5: B.VTAG, 7: this.verts }, 1, 1, true);

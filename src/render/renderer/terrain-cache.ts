@@ -1,5 +1,6 @@
 // The terrain cache: the field mesh drawn once to a cached G-buffer and reused while the camera holds still (or
 // refreshed). API: terrainCacheMode, tcPrepare, tcPipesMake, encodeTerrainCache.
+import { archTextures } from '../../archgen/textures';
 import { makeBindGroup, makeLayout, makeModule } from '../../gpu/pipeline';
 import tcacheWgsl from '../../shaders/tcache.wgsl?raw';
 import { type Camera } from '../camera';
@@ -119,7 +120,7 @@ export function tcPipesMake(rd: Renderer): Promise<void> {
       }),
       dev.createRenderPipelineAsync({
         label: 'tcache-resolve',
-        layout: dev.createPipelineLayout({ bindGroupLayouts: [rd.meshResolveLayout!] }),
+        layout: dev.createPipelineLayout({ bindGroupLayouts: [rd.meshResolveLayout!, archTextures(dev).layout] }),
         vertex: { module: rd.meshModule!, entryPoint: 'vsFull' },
         fragment: { module: rd.meshModule!, entryPoint: 'fsMeshResolveC', targets: [{ format: rd.colorFormat }, { format: PICK_FORMAT }, { format: 'r32float' }] },
         primitive: { topology: 'triangle-list' },
@@ -166,6 +167,7 @@ export function encodeTerrainCache(rd: Renderer, enc: GPUCommandEncoder): void {
     timestampWrites: rd.profiler.timestamps('tcache-r'),
   });
   r.setPipeline(rd.tcPipes!.resolve);
+  r.setBindGroup(1, archTextures(rd.device).group);
   r.setBindGroup(0, T.rGroups[0]);
   r.draw(3);
   if (rd.band && !SKIP.has('band') && T.rGroups[1]) {

@@ -17,7 +17,7 @@ function contentHash(): string {
     }
   };
   for (const d of ['src', 'data']) if (fs.existsSync(path.resolve(import.meta.dirname, d))) walk(path.resolve(import.meta.dirname, d));
-  for (const f of ['index.html', 'contract.html', 'flora.html', 'cardlab.html', 'table.html', 'package.json', 'vite.config.ts']) if (fs.existsSync(path.resolve(import.meta.dirname, f))) h.update(fs.readFileSync(path.resolve(import.meta.dirname, f)));
+  for (const f of ['index.html', 'contract.html', 'flora.html', 'cardlab.html', 'table.html', 'archlab.html', 'package.json', 'vite.config.ts']) if (fs.existsSync(path.resolve(import.meta.dirname, f))) h.update(fs.readFileSync(path.resolve(import.meta.dirname, f)));
   return h.digest('hex').slice(0, 16);
 }
 
@@ -58,7 +58,7 @@ function hitchSink(): Plugin {
           // (round 120: ?kind=physbench, the physics phone bench — src/perf/physbench.ts)
           // (trackA-liquids: ?kind=flowbench, the flow model's phone bench — src/perf/flowbench.ts)
           // (citygen: ?kind=citygenbench, the town layout's phone bench — src/perf/citygenbench.ts)
-          const kind = k === 'bench' || k === 'bug' || k === 'physbench' || k === 'citygenbench' || k === 'livingbench' || k === 'flowbench' || k === 'fieldbench' || k === 'idlebench' ? k : 'hitch';
+          const kind = k === 'bench' || k === 'bug' || k === 'physbench' || k === 'citygenbench' || k === 'archbench' || k === 'livingbench' || k === 'flowbench' || k === 'fieldbench' || k === 'idlebench' || k === 'archdump' ? k : 'hitch';
           const name = `${kind}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
           fs.writeFileSync(path.join(dir, name), body);
           res.end(`perf-reports/${name}`);
@@ -91,6 +91,7 @@ export default defineConfig({
   // (round 117, flora: flora.html — the flora viewer page, src/flora/viewer.ts)
   // (round 112, testspeed: contract.html — the contract tier's page, src/test/contract.ts: a system on a tiny world)
   // (round 124, opportunities: cardlab.html — the card lab, src/cardlab/main.ts)
-  build: { rolldownOptions: { input: { main: path.resolve(import.meta.dirname, 'index.html'), contract: path.resolve(import.meta.dirname, 'contract.html'), flora: path.resolve(import.meta.dirname, 'flora.html'), cardlab: path.resolve(import.meta.dirname, 'cardlab.html'), table: path.resolve(import.meta.dirname, 'table.html') } } },
+  // (archgen: archlab.html — the building lab, src/archgen/lab.ts)
+  build: { rolldownOptions: { input: { main: path.resolve(import.meta.dirname, 'index.html'), contract: path.resolve(import.meta.dirname, 'contract.html'), flora: path.resolve(import.meta.dirname, 'flora.html'), cardlab: path.resolve(import.meta.dirname, 'cardlab.html'), table: path.resolve(import.meta.dirname, 'table.html'), archlab: path.resolve(import.meta.dirname, 'archlab.html') } } },
   plugins: [hitchSink()],
 });

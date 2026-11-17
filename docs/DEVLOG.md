@@ -24827,3 +24827,554 @@ models). Roads 0 and 1 refuse every column at Muru ("water": across the river; u
 
 Nothing new at idle (the raster is stamped only when its version or place changes). The parade is the 3× sim on the
 march as before (agents 1.80 ms); its read back is the units' places observed, a little more with the march in.
+
+## The building generator's lab (archgen, 2026-11-11; docs/design/ARCHGEN.md, BACKLOG AG1–AG3)
+
+- Why parts expanded in the vertex shader: one thread a lot writes ≤ 24 parts of 64 B (bodies and roofs: a semantic
+  plan), a compact pass appends the live ones to a draw list a kind with the instance counts written on the GPU, and
+  each kind is one instanced indirect draw whose vertex shader builds the shape from vertex_index. Nothing is stored
+  but the parts (Muru: 493 lots → 757 KB of part slots), nothing read back, any lot remade alone.
+- Measured (desktop GPU, timestamp-query, median of 30): Muru's 493 lots made in 0.062 ms, compacted in 0.0095 ms.
+  The town's own extruded mesh stage is 13.9 ms on the same machine (street lab panel). Phone numbers come with the
+  toggle bench (AG7).
+- Look: Tiny Glade (the user). Walls first: the roof's rise capped by the walls' height. Materials and windows are
+  painted in the fragment shader from the lot's style (plaster, half-timber with a jetty, brick, ashlar; clay tile,
+  slate, thatch); bays fitted to each wall's length, a door on the frontage, shutters on the homes; the pattern detail
+  fades on the phone (detail 0).
+- The lab (archlab.html) loads Muru's real lot records (data/lab/lots-muru.json: captured once from the street lab with
+  a headless eval of CityGen.lotRecords) and boots in about a second; the game's lighting and shadows come with the
+  wire-in (AG6).
+
+## The building generator in the game (archgen, `?arch=1`; BACKLOG AG6)
+
+- The interface agreed with Track A, built: `TownBuildingsSink` (api/contracts/citygen.ts) — townMade / lotsChanged /
+  townDropped from FieldTown (CPU signals; the run's lot count, already known from its timestamps' read, sizes the
+  generator); citygen's `buildings` parameter (lotMesh mode 1: the town stops drawing building lots; parks, plazas,
+  fields, the wall and landmarks stay the town's). Claims unchanged.
+- One arch buffer a town (header, styles, draw lists, parts, progress, the lots' grounds) so the renderer's draw layout
+  takes it as a mesh source's `instances`: Renderer.addArch draws three part kinds in the main pass and the sun's
+  shadow pass, lit, hazed, cut away and picked as the instanced meshes are (archgen/archgame.wgsl appended to
+  renderWgsl). Pipelines only with `?arch=1` (no boot cost otherwise) until the user switches the default.
+- Construction: citygen's progress copied into the arch buffer each frame (copyBufferToBuffer, 4 bytes a lot: Muru
+  ~1.4 KB) and the vertex stages raise each lot from its ground by it — the town's old rise, until the construction
+  shader replaces it (CONSTRUCTION_SHADER.md: the vertex inputs are there — lot, local height, floor by STOREY, roof
+  flag).
+- The phone's detail: `(pointer: coarse)` → pattern detail 0.35 (the game renders the phone at a quarter of its pixels:
+  412×915 → 206×457), `?archdetail=` to try.
+- Checked headless: Muru made (344 lots, 105 built), the parts drawn with the game's shadows; no GPU errors.
+
+## archgen round 2: composed houses (2026-11-11)
+
+- Why: the user, on round 1: "These still mostly look like extruded warped rectangles with a texture slapped on them";
+  then Tiny Glade references, and: porches, uneven footprints, stairs, lot walls, round towers and roofs; "the lot is
+  irregular but the structure is generally parallel walls except for intentionally curved or rotated wings. Think
+  overlapping rotated and offset rectangles for the floor plan."
+- The grammar (arch.wgsl house/keep): a frame square to the street inscribed in the lot; a main block (gable or eaves
+  to the street), a wing a storey lower making an L (turned on purpose by the style's odds), a cross gable stepping out
+  of the facade, a lean-to behind, a round tower (cylinder + conical roof of courses) or a square one with a jettied
+  timber top, a porch or a front stair, dormers, a low lot wall with a gate on the door. Volumes smaller than the lot:
+  front gardens and yards.
+- Geometry where Tiny Glade has it: roofs as 12 chunky courses (a tread and a lip each), a sagging ridge, a concave
+  (flared) foot; built windows (frame, sill, leaded panes, mullion, transom, shutters, flower boxes) and doors (step,
+  canopy) standing proud of the wall; relief shading for stone (bevelled, dark mortar).
+- Cost, Muru in the lab (493 lots, desktop GPU, timestamps): make 0.29 ms + compact 0.11 ms a town. Drawn: 2.25 M
+  vertices with the built windows (4506 windows × 330 = 1.49 M of them), ~0.76 M without. So the built windows are a
+  detail layer: the PC's main pass only; never the shadow pass; the phone (`pointer: coarse`) keeps the painted ones,
+  which sit exactly under the built (one bay rule: baysOf, doorBayOf, winFits). `?archwin=0|1` to force; the lab
+  `?win=0` shows the phone's look.
+
+## archgen round 3: more styles (2026-11-11)
+
+- Styles are archetypes now (styles.ts ARCHETYPE): house, keep, shanty (crooked plank huts, stacked rooms, patchwork tin
+  and plank lean-tos, cloth awnings, crates and barrels), docks (a plank deck on posts, bollards, a crane with a crate on
+  its rope, crate stacks, a shed), industrial (a brick hall with a sawtooth roof of glazed lights, big doors, a banded
+  smokestack, a water wheel turning with the clock). Plazas become markets (stalls with striped canopies, counters of
+  goods, tents ridge or round, a fountain) and parks gardens (shrubs round the edge, a fountain); big house lots
+  courtyard blocks (four ranges, a court with a fountain and shrubs, a round tower). Plants: shrubs (K_BUSH, flowering
+  or not) in front gardens, courts and on the keep's roof; ivy up some lots' walls (painted).
+- New kinds: K_WHEEL (oriented boxes, 1404 vertices), K_BUSH (a lumpy subdivided octahedron, 96). Door size per style
+  (painted and built agree).
+
+## archgen: the irregular-grid family on the GPU (2026-11-11; the user: "port to gpu")
+
+- One thread a lot: a (≤6 × 6) quad grid over the lot's own outline (its warped quad, bilinear), inner vertices
+  jittered a third of a cell then relaxed three Laplacian passes — Townscaper's organic quads, in private arrays. Each
+  cell a column (K_BODY over the cell quad, S_TINT: a colour of its own from Townscaper's palette): the record's storeys
+  along the street falling away behind, yards open (a shrub sometimes), a tower cell two higher with a pyramid roof,
+  terraces behind on a stone platform, arcades on pillars along the street; a row's equal heights share a roof (a run of
+  ≤ 3, its eaves; a single cell its gable to the street). The shanty variant (style 'stilts'): planks, crooked tops,
+  stilts, tin and plank lean-tos, at most two storeys.
+- Simplification, stated: every inner vertex has four cells (Townscaper's merged triangles give threes and fives); a
+  per-block pass if the difference shows. The CPU tile builder (structures/tiles) stays for cliff cities.
+
+## The building generator's phone bench (AG7, 2026-11-11)
+
+- `?skipmenu=1&level=atlas&town=1&fresh=1&citygen=fields&arch=1&archbench=1` (perf/archbench.ts): toggle diffs at the
+  start town at play zoom — the buildings drawn against not, each part kind left out in turn (its share), the shadow
+  pass, the built windows flipped, every town made again every frame, a streamed pan; the instance counts (a bench-only
+  read). Renderer.archSkip / archShadow, TownBuildings.remakeAll / counts are the bench's switches.
+- Desktop headless (a proxy only): 1.13 M vertices at Muru's start (105 built lots: 1621 bodies, 1605 built windows,
+  356 roofs, 375 round bodies, 93 cones, 368 shrubs, 6 wheels); every diff 0 — the frame is held at 9.9 ms, the GPU not
+  the limit. The pan had one 1 s spike as a town was made (the town's own generation; to look at on the phone).
+
+## archgen: one grid for the whole town (2026-11-11; the user: "Can the irregular grid span lots so they are more
+## seamless?", "I want the irregular grid lots pretty full and continuous except at roads")
+
+- The per-lot grid replaced by one anchored in the town's frame: a triangle lattice (side 5.4) whose neighbours pair
+  into quads where both pick each other (a symmetric hash per shared edge), every piece split into quads Townscaper's
+  way (centre to edge middles: corners of 3 and 5 cells), every vertex nudged by a hash of its position — so any lot
+  computing a vertex gets the same one. Each lot's thread walks the lattice under its parcel and keeps the cells whose
+  centre is in its parcel (and its footprint grown to its lot lines): no cell twice, no gap between lots. Citygen insets
+  a lot's internal edges by only 0.35 and its street edges by half the street and the setback, so the blocks come out
+  continuous and broken only at the streets; a cell's corners past a street edge are pulled back onto it (facades on
+  the street line).
+- Order in the roofs: a street column's gable to the street, the ones behind a storey lower with their ridges along the
+  lot's street; chimneys rare. Up to 44 cells a lot (two parts each).
+
+## archgen: tarps, tents, joined roofs and patios (2026-11-11; the user: "corrugated metal looks weird for fantasy
+## shanties. Cloth or wood would look better. The tents should be at angles or against walls. The rooflines look too
+## uniform. They need to either join into larger sections or have little open patios up top.")
+
+- Roof material 3 (ROOF.patchwork: shanty, docks, stilts) is planks (two parts in three) or a faded cloth tarp (muted
+  dyes, a stripe now and then, sagging between rafters, a patch); the corrugated tin is gone.
+- Tents: ridge tents pitched at their own angle (±50°); a market lays a row of cloth lean-tos against each side that is
+  a lot line (not a street: the side nearest a footprint edge that isn't inset like a street), its stalls in what's
+  left; huts get a cloth lean-to against a side wall where there's room; a grid shanty's yards are mostly cloth
+  lean-tos against the next column. streetEdges() now runs for every lot (the market needs it as the grid does).
+- Grid roofs: a cell's edge middles now lie on the straight edge between its nudged corners, so a piece's cells
+  together are exactly the piece; a quad piece wholly in one lot is, half the time, one house — one column of one
+  colour, one roof (a gable along its length or a hip), chimneys (two parts for four cells' eight). Of the rest, about
+  a quarter of the cells behind the street (and a few on it) are patios: flat flagstone tops behind a low white
+  parapet (a crenel part with no merlons), a potted shrub. The per-lot cap is now the part slots (a cell stops when
+  fewer than its worst case are left), not 44 cells.
+
+## archgen: manors round walled courts (2026-11-11; the user: "more variety in the manors. Walled in courtyards would
+## be great.")
+
+- A new house layout, manorCourt (lots ≥ 10 × 12 m, 45%): the main range across the back, its door on the court; no
+  wing, one or both down the sides, a storey lower mostly; a tall coped wall (2.3–3 m) on the street with a gateway on
+  the court's axis (posts, a lintel, a little gabled roof), walls down the sides the wings leave open; the court a
+  garden (paved or lawn; a fountain, a well or a tree in the middle; trees and shrubs in the corners); sometimes a round
+  tower at a back corner.
+- Classic houses (35% where the back garden is over 3.5 m) wall in the back garden tall and coped behind a low street
+  wall, with trees in it; other back gardens get trees half the time. lotWall is now wallRun's low case (one wall
+  routine: segments, gate posts; a tall one coped, its gate under a lintel and a roof). New pieces: tree (a trunk and a
+  crown), well.
+- In the game (Muru, play zoom) the patios and joined houses read; walled courts show where lots are big enough — most
+  of Muru's house lots are under 10 × 12 m in their inscribed frame, so the forecourt manor is mostly on the bigger lots.
+
+## archgen: cloth sheets, bump, patio floors, smaller stone (2026-11-11; the user: "The cloth roofs … still have the
+## corrugated texture and don't look billowy or saggy"; "The rooftop patios also all have aligned flat stone texture
+## that doesn't read well. Do we have bump mapping?"; "The stones read as too big. I would make bricks half the size
+## and stone that or more")
+
+- Cloth (S_CLOTH parts, and a patchwork roof's tarps — the same per-part pick in the vertex and fragment stages) is no
+  longer built of tile courses (their lips read as corrugation): clothVert lays each face as one sheet, a 4 × 6 grid of
+  quads, bellied down the slope and dipping between its ends, its normals the surface's own (smooth), lifted by half
+  its sag to rest on its frame; no eave underside. The tarp's fake sawtooth shading is gone.
+- Bump mapping (there was none): the patterns write a relief height (gRelief: joints sunk, stones' edges rounded,
+  each a little proud or not; plank seams; roof-tile gaps), Surf carries it, and both hosts tilt the normal by its
+  screen derivatives (bumpN: the surface-gradient method, no tangents or textures). It fades out where a joint is
+  under a few pixels and with the detail level (off on the phone).
+- Flat tops' uv is in the body's own frame (along its side 0), so patios no longer all line up with the world; each
+  patio's floor is its own: flagstones of their own size, terracotta tiles, or a plank deck with staggered ends.
+- Stone scale: bricks halved (0.24 × 0.095), ashlar 0.42 × 0.2, rubble and coursed stone ~0.3 × 0.15, flagstones
+  0.5 × 0.36 (× a per-part scale), terracotta 0.24; the mortar joint and bevel now in proportion to the stone.
+
+## Ground textures for the town mesh (archgen, 2026-11-11; the user: "textures could help the ground. Cobblestone
+## streets or dirt and grass")
+
+- citygen's mesh vertices carried a flag word of 1 (a flat colour, render/bodies.wgsl vsSkin → fsBody). Now
+  streets.wgsl tags what a piece is (curSurf, the game only — the lab's white keeps 1): roads by the town's road tone
+  (dirt 3 for small towns, cobbles 4 for big — params roadTone), farm tracks dirt, plazas and junction paving the road's
+  surface, parks grass 5. fsBody textures those by where they lie in the town (the window's slide taken off: MESH_XF):
+  cobbles as cell-noise setts 0.24 m with their own shades, rounded, dark joints with moss in some; dirt mottled with
+  pebbles and grass tufts; grass mottled with blades as speckle and a flower now and then. Each fades to its mottled
+  colour where its detail is under a few pixels (tuned at play zoom: ~6 cm a pixel on the desktop shot).
+- Touches Track A's citygen (streets.wgsl: the flag only, colours and geometry unchanged) and the shared body shader.
+
+## archgen: irregular stone, terraces, window variety (2026-11-11; the user: "the stone pattern is a bit too regular
+## and the patio still looks bad especially where two are adjacent and not joined. I think the windows could use more
+## variety in shape and the sills could use more variety and color as well")
+
+- stones(): courses of their own heights (0.6–1.4 the mean) and stones of their own lengths (0.2–1.8), each course's
+  joints laid fresh, a wider spread of shades. (A stop-gap: the user's step back asked for real texture sets and a
+  stronger lighting model — BACKLOG AG18/AG19, awaiting their answer on assets and on who owns the lighting.)
+- Terraces replace the per-cell patios: a whole piece of the grid (a merged quad, or a lone triangle) flat behind one
+  parapet, one floor, a storey under its neighbours, a stair hut with a lean-to in a corner, potted shrubs — so two
+  flats side by side are one floor, not cells each walled in.
+- Windows: each lot picks a shape for its ground floor (square-headed, round-headed, segmental, pointed two-light) and
+  often a plainer one above; the head's spandrels drawn in the frame's colour (archSurface archedOut, the glass told
+  its shape in info.z bits 20–22); its dressing — sills of stone, wood or paint, heads plain, keystoned, hooded or a
+  heavy lintel — and frames in the style's trim or a paint of the lot's own (frameColour, also the parapets'); a
+  balcony on the front above the ground floor (a slab and a rail, a door-height window; its middle bay or all of
+  them); small square lights in a top storey. Shutters skip round and pointed heads and balconies.
+
+## archgen: material textures (AG19; 2026-11-11; the user: CC0 textures in the repo "Yes that's fine")
+
+- 15 CC0 sets from ambientCG (brick Bricks059, rubble Bricks075A, ashlar Bricks084, plaster Plaster001, siding
+  WoodSiding008, wood Wood049, deck WoodFloor041, clay tile RoofingTiles006, slate RoofingTiles001, thatch
+  ThatchedRoof001A, flagstones PavingStones054, cobbles PavingStones070, dirt Ground048, grass Grass004, canvas
+  Fabric028), packed by scripts/packtex.py into src/archgen/tex (<key>_c.jpg colour × its occlusion, <key>_n.jpg normal
+  xy + roughness; 1024, ~9 MB in all). textures.ts loads them into two texture arrays with mips (1024 PC, 512 phone;
+  ?archtexsize=), one anisotropic sampler, a uniform set once they're in; bind group 1 of the arch pipelines (lab and
+  game; the shadow pass needs none). ?archtex=0 loads nothing (the phone bench's toggle) and the procedural look stays.
+- draw.wgsl texPick: each surface's set, coordinates (walls along × height; flat tops in the body's frame; roofs one
+  row of tiles a course, so the drawn tiles sit on the courses' lips; a part's own offset) and the colour to tint to
+  (the set's mean moved onto the style's colour, some of its own kept — brick and tile little tinted). Sampled once
+  at the top of archSurface with explicit gradients (the branches aren't uniform); the normal map in a frame from screen
+  derivatives (no stored tangents), its roughness kept in Surf for the lighting pass (AG18). Windows, frames, timbering
+  and ivy still draw over the textured walls.
+- Fixes found on the way: a triangle terrace (a corner repeated) turned to the street could put the repeat on side 0 —
+  the top's frame and normal were NaN (black): the top's normal from its diagonals, its frame from side 1 then.
+
+## No park or plaza plates under the generator (2026-11-11; the user: "Let's just make grass and plants and get rid of
+## the park and lot ground plates")
+
+- citygen's lotMesh, in mode 1 (the building generator on), no longer lays the flat plates over parks and plazas (they
+  were lifted 12–15 cm and cut into whatever stood on uneven ground); landmarks keep theirs, roads and junction paving
+  are unchanged. Gardens are planted on the land itself: shrubs in clumps round the edge, 1–6 trees through it, low
+  flowering beds, a fountain or a great tree in the middle.
+- The land under a park in town is bare soil (the town's claimed ground), not grass: grass there wants the terrain's
+  own cover or a tuft layer, not a plate.
+
+## archgen: Synty plants, local only (2026-11-11; the user: "You can use Synty trees as long as we don't commit to a
+## public repo and they look much better")
+
+- scripts/fbx.mjs: a small binary-FBX reader (node tree, meshes with normals/uvs/materials, model transforms; zlib for
+  packed arrays) — no converter was installed. scripts/synty.mjs unpacks the user's own POLYGON Nature Pack from their
+  Unity folder and writes local/synty (gitignored: never committed, absent from any public build): plants.bin (19
+  meshes of plants.json — trees, bushes, flowers that use only the pack's colour atlas, ~17.6k vertices, 552 KB) and
+  palette.png.
+- Two part kinds, K_PLANT_S (≤ 1008 vertices) and K_PLANT_M (≤ 1896): a mesh drawn with its class's count, its
+  extra vertices gone. The meshes live in an rgba32float texture (group 1 binding 4 — a storage buffer would have made
+  the game's draw stage 9, over its limit of 8), as floats (counts exact; no raw bits a GPU could flush); the atlas at
+  binding 5, its muted colours a little more saturated under this light.
+- The generator's tree() and bushAt() place a plant mesh of their category when the header's word 7 says plants are
+  loaded (archgen.ts writes it at each generate), else their own shapes; the lab and the towns make their lots again
+  when the plants arrive (ArchTextures.whenPlants).
+
+## archgen-ground: textured terrain and a lighting model (2026-11-11; the user: "Could we not texture the ground?",
+## "I would like to see that and see what it is like … We would need a sand and dirt material too")
+
+A sub-branch of archgen (archgen-ground), to keep or drop on the look.
+- Five more CC0 sets (ambientCG: Ground054 sand, Rock030 rock, Gravel022 gravel, Snow006 snow, Ground037 mossy ground)
+  join the fifteen in the one texture array (scripts/packtex.py now takes its source and output as arguments). The
+  bindings, TX_* and the sets' means moved to src/archgen/texbank.wgsl, part of the renderer's draw shader
+  (shaders/render.ts) and put in front of the lab's.
+- The terrain mesh's look (meshdraw.wgsl meshSurf) wears a set per material (groundSet: the rocks one rock set each
+  tinted its own, soil/silt dirt, sand/ash/drift sand, rubble gravel, snow snow): the set's variation on the
+  material's own colour (a fifth of its hue kept), its normal in place of the Voronoi facets and the chips, its
+  roughness for the highlight. Projected from above where the ground is flat and biplanar on slopes (light.wgsl
+  groundTex); gradients from the camera's projection (pixStep), so the forward pass, the deferred resolve and the
+  tiles' bake (full-screen passes, no derivatives) filter it the same, anisotropic and mip-correct.
+- The plant cover is the grass set (thin cover the mossy one), blended into the ground by height — grass fills the
+  low places of the ground's texture first — not the per-pixel dither: no speckle at a distance.
+- light.wgsl: lighting() split into lightAt (ambient, own, sun) and lightSurf: the same diffuse plus a GGX sun
+  highlight as rough as the surface, Schlick's Fresnel and the sky in it at a grazing angle. The terrain and the
+  buildings (archgame.wgsl; glass glossy) light with it.
+- Toggles for the phone bench: ?groundtex=0 (the procedural look), ?light=old (no highlight).
+- Seen on the desktop proxy (town at zoom 10 and 32, the rock playground at 14): at play zoom the change is small —
+  a repeat of 2–3 cells is a few pixels, its detail averages away; zoomed in the ground reads as soil, sand and turf
+  instead of a dither. Not measured on the phone.
+
+## archgen: the generator in four passes (2026-11-11; the phone: "CreateComputePipelines failed with
+## VK_ERROR_INITIALIZATION_FAILED - While initializing [ComputePipeline "arch gen"]")
+
+- The one gen entry point had grown (grid family, manors, gardens, tents, plants) past what the phone's Vulkan driver
+  would compile: a driver inlines every call an entry point makes, so all the families were one huge shader. Now four
+  entry points (arch.wgsl genHouses, genKeeps — keeps, docks, industry —, genShanties — shanties, markets, gardens —,
+  genGrid), one pipeline each with an explicit shared layout, dispatched one after another in the same pass: each
+  reads every lot's head (genHead: its frame, nothing written) and makes only its own family's lots; houses also clear
+  the lots nothing is built on. The desktop town is unchanged. Each lot's head is read four times (cheap: a record).
+
+## 2026-11-12 — phone: roof spikes dump, ground textures off, the shared grid and baked tiles planned (archgen-ground)
+
+- The phone drew roofs as long spikes running up the screen to a few far points (the user's screenshots): a vertex
+  placed very high — a finite height, which the a6745c06 NaN guard can't catch. The desktop never does it. `?archdump=1`
+  (src/perf/archdump.ts) reads the start town's lot records and the generator's raw part slots once and posts them to
+  the dev server (perf-reports/archdump-*.json), so the phone's output can be compared word for word with the
+  desktop's. The desktop's (Intel, q=low): 344 lots, 599 roofs, no odd part (no ridge over 25 m, no corner off the
+  map, nothing non-finite). Waiting on the phone's.
+- Ground textures off in the phone's flag set (flags.ts LITE_SET groundtex=0): at play zoom a cell is ~4 px and a 2–3 m
+  repeat mips to its mean colour, which is the old colour by design — the cost with nothing to see (the user: "The
+  texture is basically pointless then at this scale"). The shared lighting stays: baked-tile lighting needs it.
+- archgen's flag reads go through urlFlags() (test/unit/flags.test.ts had four direct location.search reads, one of
+  them the ?archnan flag).
+- Planned with the user (BACKLOG AG23–AG25, DECISIONS 2026-11-12): one world-fixed irregular grid of quads shared by
+  every lot (lanes as cells, bridges over roads); the phone's static world from baked tiles lit live, fixed zoom steps,
+  one shadow render; Synty trees as pre-rendered sprites (local only).
+- (later, same day) The phone's dump (Pixel 9a, Mali Valhall): 31 lots, all of them the irregular grid's styles
+  (harbour, stilts), with 199 bodies and roofs whose one corner sat ~145 m off: its x right, its y half the others'.
+  That corner is a cell's (V[prev] + vk) / 2 with V[prev] read as V[(k + nv - 1u) % nv], an index modulo a count known
+  only at run time (3 for a lone triangle, 4 for a merged pair); the Mali came back with the y of the unused V[3] (0).
+  Now each corner's next and previous are built whole (Vn, Vp) with no run-time index arithmetic. Desktop dump after the
+  change: still no odd part. The two desktop dumps' records differ between runs (the town grows while it loads), so a
+  word-for-word diff wants the same records — not needed here, the phone's own dump shows the fault.
+- Confirmed on the phone: its dump after 524c6b08 (Pixel 9a, 667 lots, 5299 roofs) has no stretched part (was 199).
+
+## archgen: no triangles in the irregular grid (2026-11-12; the user: "Can you fix the triangles on the irregular grid
+## first? They look terrible")
+
+- The triangles were terraces: a lone triangle piece (one whose neighbours paired off elsewhere) was made one roof
+  terrace, a triangular parapet and floor (archlab, harbour, top-down: five in view). Terraces are now merged quad pieces
+  only; a lone triangle is always its three quad cells.
+- Street edges: a cell kept for its centre (in the footprint grown 0.6) could have three corners past the street; pulled
+  onto it they lie in a line and the cell stands as a triangle. Such cells are dropped (the street keeps the sliver), and
+  so is any cell with a corner pulled almost straight (its two sides within ~20° of a line).
+- Seen in archlab (harbour and stilts, top-down and at 50°): no triangular parapets or roofs left. The world-shared grid
+  (AG23) is still to do.
+
+## archlab: Townscaper's light, first step (2026-11-12; the user: "Everything just looks so flat", a Townscaper shot:
+## "Lets target at least this quality in our toy test")
+
+- The lab's light had no cast shadows, a wrapped sun (no face ever dark), a strong even sky and the sun behind the
+  camera (nearly every wall in view lit). Now: a peach key with no wrap from the side (115° off the view, 37° up), the
+  shade a cool teal sky rather than grey, a warm bounce under overhangs, the lowest 4.5 m of a wall darker toward the
+  street. `?oldlight=1` the old light. Roof slopes now read lit / shaded; still flat where it matters most: no cast
+  shadows, no occlusion, no edge lines — next, then the geometry (rounded corners, set-back windows, balconies, arches).
+
+## archlab: cast shadows (2026-11-12; AG26)
+
+- A 4096² sun shadow map in the lab (archgen.ts drawLabShadow): every lab draw but windows drawn again from the sun
+  (the same vertex stages; their view's viewProj is the sun's), depth bias 2 / slope 2.5; the map round the view (half
+  width the view's diagonal + 20 m), redrawn each frame. archlab.wgsl samples it 3×3 for the key light; `?oldlight=1`
+  draws no map. Buildings now shade each other, the streets and the ground (archlab, harbour, 50°).
+
+## archlab: screen-space occlusion (2026-11-12; AG26, the user: "Can we do sceenspace AO?")
+
+- src/archgen/ssao.wgsl: the lab's scene now draws into its own texture with its depth kept; fsAo reads the depth
+  (multisampled: sample 0), rebuilds each pixel's view-space point (the orthographic camera: a scale and an offset),
+  its normal from the nearer neighbour on each axis, and tests 16 points over the hemisphere (a spiral, denser near the
+  pixel, turned per pixel on a 4×4 pattern) against what's drawn there, a range check fading far occluders; fsComp blurs
+  it 4×4 and multiplies the scene. Radius 2.5 m, full strength (at 1.2 m it only lined the creases; at 2.5–3 the wall
+  feet, the gaps between columns and under the eaves go dark). `?ao=0..1`, `?aor=m`, `?aodbg=1` the occlusion alone.
+- It multiplies the whole lit colour, not only the ambient: a stylised choice (sunlit floors in a narrow gap darken
+  too). Not measured on the phone yet.
+
+## archgen: the grid relaxed in chunks on the GPU, seamless (2026-11-12; AG23/AG26, the user: "The angles look too sharp
+## ... spline blending along adjacent cells", "stream and relax on the GPU", "generate points further out then only
+## show the ones up to the relax limit in from the border")
+
+- The grid was never relaxed: paired triangles give 60°/120° rhombi and kites. Now the lattice is cut into chunks of
+  8 × 8 lattice cells (~43 m); a lot asks for the chunks under its parcel (tgRegisterLots: a small hash table of chunk
+  keys, sized by the lot count) and each asked-for chunk is relaxed by one workgroup (tgRelax): its pieces' cells with
+  an apron of 3 lattice cells round it, every step each cell pulling its corners toward the square that fits it
+  (Townscaper's squaring: corners turned back by their quarter turns and averaged), every vertex moving 0.6 of its
+  cells' mean pull; nothing held still. A chunk keeps only the vertices it owns (their lattice anchor in it), so every
+  vertex has one owner and neighbouring chunks never disagree — no cracks, no pinned border; a vertex near a chunk's
+  edge is at most a little less relaxed than with an endless grid, and that changes smoothly.
+- Fits the phone's 16 KB of workgroup memory: 1350 region vertices (8 bytes each) and one packed u32 of pulls each (x,
+  y 13 bits in 1/64 m biased by 512, the count 6 bits); the cells are found again each step instead of kept.
+- grid() reads every cell corner from its owner chunk (tgPos; the nudged start where no chunk was asked for). 20 steps
+  by default (`?relax=N`, 0 the old lattice); `?gridview=1` draws the cells as thin slabs with gaps (the shots).
+- Next: walls as curves along each built group's outline (the user's spline blending), then the pieces and terraces
+  on the curved outline.
+
+## archgen: whole cells; the cells a road crosses paved (2026-11-12; the user: "make streets through irregular grids
+## instead pave whole cells?", then "just where existing roads intersect make those 0 blocks but have the ground between
+## blocks pave fully")
+
+- A grid lot owns the cells whose centre is in its parcel. One is built on if its centre is in the footprint (grown
+  0.6) and no corner is past a street line; every other owned cell is paved — flagstones flush with the lot's ground
+  (pave(): a stone body 0.04 over it) — so the roads' crossings and the ground between blocks are paved whole cells.
+  Shanty yards and cells too small to stand are paved too.
+- Cells are no longer cut to the street (faceStreet pulled corners onto the line: the slivers and near-triangles). A
+  cell's front is a side whose ends are within 1.6 m of a street line.
+- The citygen roads themselves are unchanged (Track A's); the paving is the lot's own. Left: green slivers where no
+  cell's centre falls in any parcel; at a lot's outer edge (the coast) paved cells reach a little past the parcel.
+
+## archgen: a cell touching a road is no cell (2026-11-12; the user: "Any overlap with the road should erase the full
+## cell so we don't get slivers")
+
+- An owned cell with any corner past a street line is now dropped entirely (not paved): the road shows to the cells'
+  edges. Paving stays for owned cells off the footprint that don't touch a road (between blocks), yards, slivers.
+- tgRegister asked for the chunks a lattice cell round the parcel; grid() walks a cell out and a piece's corners reach
+  one more, so a corner could lie in a chunk nobody asked for (left unrelaxed while its neighbours moved: a twisted
+  cell). Now two cells out.
+- The dark irregular shapes in the cell view were shadows: the lab draws each lot's ground as a block at its own
+  height, and the higher ones shade the lower (`&oldlight=1` draws no shadows; shot pv3).
+
+## archgen: the grid alone — the grid lab; a second merge round (2026-11-12; the user: "Focus on one problem at a time.
+## A streamable infinite irregular grid with no holes and well shaped cells", "I would decouple the lot budget from
+## the irregular grid entirely")
+
+- The holes inside blocks in the cell view were not the grid: no lot owned them (gaps between parcels; a 4× part
+  budget changed nothing, and the paved cells, drawn blue, were none of them). So the grid is now judged alone:
+  `archlab.html?gridlab=1` asks for the 9 × 9 chunks round the camera (tgRegisterArea, a ring more for their
+  vertices' owners), relaxes them (tgRelax), and each chunk writes the pieces it owns (tgEmit: a piece by its first
+  triangle's chunk, a merged pair by the lower id's) as cells into their own buffer — no lots, no part budget. The lab
+  draws them flat, inset (gridlab.wgsl), coloured by the sharpest corner (green ≥ 75°, yellow 55°, red ≤ 35°; magenta
+  a folded cell). The chunks follow the camera.
+- Seen (gl1, gl2: 387 m and 70 m across): one continuous field, no holes, no folded cells, no seams between chunks.
+  The yellow is stars round corners where six cells meet (a lattice point with no merged pair round it: its cells'
+  corners average 60°; relaxing can't fix that). A second merge round now pairs the triangles the first left alone
+  (each picks its best edge to another left alone; a pair if they pick each other — local, so chunks agree): visibly
+  fewer stars (gl3). 40 steps instead of 20 changes little (gl4); 20 kept.
+- The user's next (after the grid): a cell crossed by a lot it doesn't belong to left empty so the street shows, the
+  streets paved under.
+
+## archgen: the grid's chunks cheap (2026-11-12; the user: "Are chunks fast and cheap to compute?")
+
+- archlab `archlab.gridBench(runs, R)` (gridlab): GPU time of the grid's pass for (2R+1)² chunks shown ((2R+3)²
+  relaxed), timestamps, median. Desktop (this PC), before: 81 shown, 20 steps 7.38 ms (0 steps 0.63 ms, 40 steps
+  14.4 ms; 9 shown 2.74 ms) — each step found every piece again (the merge rounds' hashing).
+- Now tgRelax finds its region's cells once and keeps them in the chunk's own scratch in TG (2 words a cell, room for
+  1176: the most a region's 392 triangles can make), storageBarrier before the steps read it. After: 81 shown, 20
+  steps 1.56 ms (19 µs a chunk); 40 steps 2.27 ms; 9 shown 0.60 ms. Same grid (gl6 = gl3).
+- TG grows by 9.4 KB a chunk slot (slots: the lot count's power of two — 1024 in the lab: 9.6 MB). Phone not measured.
+
+## archgen: the grid over the lots — no gaps (2026-11-12; the user: "show me with the overlays so we can see if there
+## are still weird gaps", "I'm ok with straddling lots ... if both use the same tiles", "They should use the same
+## irregular grid if intersecting", "Please eliminate them")
+
+- The grid lab's overlay (lots coloured, parcels outlined: cells wholly in a lot, across a lot line, into a street)
+  showed the grid itself unbroken; the lots are small (2–4 cells), so most cells straddle a lot line.
+- The rule now (grid()): every point belongs to a lot — the one it's deepest in, or in the slivers citygen's
+  four-cornered lots leave between them the nearest within 3 m (lotAt). A cell is made by its centre's lot and stands
+  if every corner's lot is built on the grid and the corner isn't in that lot's street (past a footprint edge inset
+  more than a lot line: the parcels run to the streets' middles); else no cell — the street shows. No footprint
+  setbacks, no paving yet.
+- The green patches inside blocks were cells buried in a neighbour's ground: the lab draws each lot's ground as a block
+  at its own height, and a cell straddling a lot line stood on its own lot's (lifted ½ m in ?gridview=4 they all
+  showed). Now a cell stands on the highest ground under its corners and its walls reach down to the lowest (gFloor);
+  a joined house or terrace likewise over its piece.
+- ?gridview=1 cells / dropped cells (brick) / lots not on the grid (flowers); =2 the cells round each lot not its own
+  (blue); =3 every cell near any lot; =4 =1 lifted. lotAt loops every lot (a spatial index per chunk is next for the
+  phone).
+
+## archgen: grid districts grow over lot lines and cut their own lanes (2026-11-12; the user: "districts with the same
+## type of irregular housing should grow over the lot lines and form their own streets by deleting cells along paths
+## that mostly follow the edge directions")
+
+- A grid district is one region: a cell stands if every corner is in a grid lot, the streets between grid lots
+  included; a street is kept only where it faces a lot not on the grid or nothing (outerStreet: a probe 4 m past the
+  parcel's edge across it). Houses aligned to lots keep their own rule elsewhere.
+- Its own lanes (lanePoint): a lattice point is on a lane if it lies on a lattice line of either edge family every 6
+  rows (b ≡ 0, a ≡ 3 mod 6), in segments 4 lattice cells long each on by a hash (72%): dead ends and T junctions. Every
+  cell has one lattice corner; the cells round a lane point are left out, so a lane is two cells wide (~5 m) along the
+  grid's own edges, winding with the relaxation. Local, so streaming chunks agree. Shots ln_cells, ln_50, ln_top.
+- Parameters by eye (6, 4, 72%). Lanes don't yet know the district's edge or the outer streets (a lane can end a cell
+  short of one); not paved.
+
+## archgen: recessed windows and doors, on the phone too (2026-11-12; the user: "Windows and doors are not recessed")
+
+- The grid's houses had only painted windows (gridCell's bodies aren't wallBody: no built windows), and a built window
+  per opening would spend the lots' part budget the user wants gone. So the recess is drawn by the wall's shader
+  (draw.wgsl recessAt): inside a painted window's or door's opening the view ray carries on into a box 0.24 m deep and
+  meets its back (the glass, the door's leaf) or a side (jamb, head's soffit, sill: the wall's own colour, lit by its
+  own normal); the ray from there back toward the sun tells if the wall shades it (out through the opening or not), and
+  deeper is dimmer. No geometry, no parts, same on the phone. Hosts give archToEye and archSunDir.
+- Built windows (house lots): a plain window's glass and a door's leaf are left out so the recess shows inside the
+  built frame; shaped, balcony and dormer windows keep their flat glass. Shots rc_close (harbour), rc_homes (homes).
+
+## archgen: the dense housing toward the Tiny Glade shot, first pass (2026-11-12; AG29; the user: "Go for it ... Don't
+## burn all my tokens", "the ground texture is worth swapping", "I care less about color than the items you identified")
+
+- A grid cell (and a joined house) now knows which sides are open — a lane, a street the district keeps, or off the
+  district (openAt: the nearest lattice point's lane test, else the lot rule, probed 1.4 m out from each side's
+  middle) — and turns to face the longest open side (faceOpen; replaces faceStreet for the grid: AG27's street fronts).
+- On open sides: jetties (the storeys above the first pushed out 0.8 m on a timber beam, brackets under, 70% of open
+  cells of 2+ storeys); else outside stone steps up a side to the first floor with a landing (45%) or a timber balcony
+  on brackets with a rail a storey or two up (60%); flowers or a shrub at an open wall's foot (55%). A corner cell (2+
+  open sides) is a round tower now and then (20%: roundTower — stone shaft, jettied top, tall cone). Chimneys 7% →
+  18%.
+- Walls by the cell's seed (the part tag's bits 16–23, set per cell): plaster half, exposed half-timber 3 in 10, brick 1
+  in 10 (the shader's existing patterns); a stone ground floor (2.6 m of coursed stone) on half.
+- The lab's ground: cobbles everywhere a building lot is (parks keep grass) — the texture bank's TX_COBBLE.
+- Part budget 96 → 192 a lot (the extra pieces); the grid's own pool is still AG27.
+- Seen (v4_low, v4_mid): towers, half-timber, stone bases, cobbled lanes; jetties and stairs only on the few cells on a
+  lane (most cells are interior).
+
+## archgen: grid roofs drain to drops; buildings are the cells round a lattice point; a lot index per chunk
+## (2026-11-12; the user: "A roof has to angle towards a drop and not a vertical wall or adjacent same height roof",
+## "Just check neighbors and keep it all local")
+
+- A building is the 3–6 cells round one lattice point (every cell has one lattice corner); its storeys by its place
+  alone (hAt: a blocky district base 5 lattice cells a block, its own step, +2 a tower), so a neighbour — the building
+  round an adjacent lattice point — is known without asking anyone. rosette(): its edges from the pieces round the
+  point; an edge is a drop if open (lane, street, off the district), or the neighbour across it is lower or equal (a
+  valley); against a taller neighbour it isn't. The roof surface: 0.62 × the distance to the nearest drop edge, capped
+  2.4 m; no drop: flat with a parapet on the open sides. Each cell's wall body takes its four tops from that surface
+  (K_BODY's per-corner tops), so a building's cells join; jetties push each corner out along the open edges it ends
+  (the same for every cell sharing it). Towers: a whole building a round tower (4%). The joined houses (gridPiece) and
+  terraces retired. The roof top is drawn as tiles in courses along its contours (draw.wgsl, S_TINT tops that slope).
+- First run hung the GPU (DXGI_ERROR_DEVICE_HUNG): ~30 lot lookups a cell each looped every lot. Now tgIndexLots lists
+  each chunk's lots (parcels grown 3 m, 63 a chunk) and lotAt reads its point's chunk only. Shots rf_low, rf_mid.
+
+## archgen: real wall geometry; local-only grid rules; merged, gabled roofs; courtyards (2026-11-12; the user: "Please do
+## the geometry change I've been asking for for ages", "You can merge adjacent same height cells but it looks bad if many
+## cells thick ... break that up with stairs and courtyards and alleys", "invent local only rules so that GPU passes
+## don't have to do any global lookup")
+
+- Facades (K_FACADE, draw.wgsl vsArchFacade): a grid building's open sides are built — bays (≤ 3) × storeys (≤ 4),
+  each opening cut through with real reveals (jambs, head, sill 0.28 m deep), the glass or the door's leaf at the
+  back, a sill stone proud of the face (a door: a step), and the wall above the storeys up to its sloped top (gables).
+  The body hides those sides (word 0 bits 24–27). 798 vertices a facade. Shadows and SSAO see the recesses.
+- Local rules only: one scatter pass (tgIndexLots) stamps each lattice point with the lot it lies deepest in (or within
+  3 m of): an atomicMax a point. Everything after reads a point and its six neighbours: builtAt (owner on the grid, not
+  a lane or courtyard, not in a street unless all six neighbours are grid — a street between grid lots is built over),
+  openAt (the nearest point's builtAt), the ground (owners' grounds round the point). grid() makes the buildings round
+  the lattice points its lot owns. The per-chunk lot list and every lot search are gone.
+- Courtyards: a lattice point left open now and then (13%, voidAt) beside the lanes: blocks broken up, and their open
+  sides get facades, steps, balconies.
+- Roofs: an edge to an open or lower neighbour is an eave unless it faces along the building's ridge (one of the
+  lattice's three directions by 5-cell block: then a gable end, its wall to the roof); to an equal neighbour the roof
+  runs on — merged: a building's roof surface counts the eaves of its equal neighbours' buildings too
+  (gatherMerged); to a taller one it climbs to the wall. Slope 0.9, cap 4.2 m. Double jetties on 3+ storeys.
+- Shots g_low, g_mid2, g_close.
+
+
+## 2026-11-12 — grid roofs: pairs and one ridge (AG30)
+
+The merged roofs (a distance-to-eave field over every equal neighbour) made skeleton roofs with many ridges and
+plateaus; the user: they "don't read as roofs", "A roof is almost always a single ridge line with potential ridges at
+lower heights coming off of it". Now, all local by position: each lattice point picks the neighbour across its best
+edge hash; mutual picks are a pair (one building, the taller member's storeys). A group with an equal neighbour group
+steps one storey up (by group hash), so same-height groups rarely touch. Roof = a gable on one ridge line through the
+lattice point(s) — a pair's axis; one alone points its ridge at its tallest taller neighbour, so it meets that wall
+gable-on as a lower wing. Height falls from the ridge to nothing at the group's farthest corner. Shots r_close, r_mid:
+gables and cross wings read; patchy tile facets where cells fold off the ridge (BACKLOG AG30).
+
+## 2026-11-13 — AG31 steps 1 and 2 (experiments)
+
+Step 1 (the user's growth rules on the grid): ridges along the street axis, runs of 1–5 level or stepping, corners
+taller, back-to-back ties stepped, extruded-triangle roofs per half house. Shots s1_mid2/s1_close: roofs don't fit the
+cell rosettes, floating roofs from the part budget; ~300 neighbour reads a house from recomputing. Kept as the grid's
+default for now; the fix list is in BACKLOG AG31. Step 2 (?gridview=2): rectHouse — main block + wing + jetty + bay +
+round tower + chimney from a few rectangles in the lot's frame. Shot h1: reads as houses (gables, jetties, towers).
+
+## 2026-11-16 — loop round 9 (3): the building generator merged behind its switch, and judged (`loop-skeleton`, LS-100 to LS-103)
+
+**Why.** The approved order's third step: "merge the building generator and judge it" — in the game, at phone size,
+against the round 9 baseline, not in its lab.
+
+**Merge.** `origin/archgen-ground` (48 commits; it holds `archgen`'s generator in four passes plus the ground textures,
+the new light, the grid houses and the AG30/AG31 roof work — the larger one, chosen because the smaller `archgen`
+lacks the ground and light that the in-game look was judged with on that branch, and the two share the generator).
+Conflicts: citygen's mesh passes (CG25's road growth and round 9's plates kept; archgen's `mode 1` — lotMesh leaves
+building lots and, mode 1, parks and plazas to the generator — and its surface byte `curSurf` joined to CG25's reveal
+code above it), the draw shaders (`lightSurf(ashDust(…))`: the mutators' ash on the new light), the bench kinds, the
+vite inputs (table and archlab). Found and changed: the branch made its new light (GGX) and the ground textures every
+page's default and loaded its texture arrays always — in the loop they now come with `?arch=1` (or `?light=new`,
+`?groundtex=1`), and the arrays load only then (LS-101); the default look is round 9's (`r9e-merged-off-*`).
+
+**Judged** (`local/round9/strip-job5.png`: row 1 the default after the merge, row 2 `?arch=1`, row 3 the time-lapse
+and a burn with it):
+- *Silhouettes and roofs:* at the market (zoom 16) the generator's houses read as houses — tiled orange gables, timber
+  and plaster storeys with windows, a well on the square, trees and flowers in the gardens; the extrusions read as
+  pastel boxes. In the overview (zoom ~2.5) its roofs are small orange and brown clusters; the old prisms read as
+  blocks of colour. A clear win close up; a wash at the town's zoom.
+- *Streets between them:* the lane-wide streets stay legible between the houses; the parade's column walks between
+  them on the main street (`r9e-arch-parade2`).
+- *Time-lapse:* every district not begun rose with houses and its farms (`timelapse-end`) — works.
+- *Mutators:* a `burned` mutator over Muru blackens the extrusions (`r9e-noarch-burned-town`) but leaves the
+  generator's houses untouched — it reads no lot condition (LS-100). Burned, flooded, ruined do not show with it on.
+- *Live events:* the parade ran the same (9 of 9 on screen, by the road). Pack markers: none were up in these runs
+  (no pack loaded), not checked further.
+- *Cost:* Muru's core (before any district is built) is 1.18 M vertices of parts on the desktop (1400 bodies, 400
+  roofs, 1207 built windows, 400 cylinders, 87 cones, 380 bushes, 218 facades) against the town mesh's 48 k; the
+  census's draw counts at idle 1.09 ms (1.06 off), the parade 6.82 ms (6.24 off) — the census counts passes and draws,
+  not vertices, so the vertex load is AG14's phone bench to decide. One run of four hung the GPU at the town's making
+  ("the GPU never finished: 2 frames in flight … 71.6 s"); not reproduced on the retry (LS-103).
+- *Gates still open:* AG13/CG24 (roofs above the claims), AG14 (phone vertices), LS-100. **Not the default.**

@@ -172,6 +172,10 @@ placeholder of the skeleton, to fix.
 | LS-88 | **Limit (round 8).** The units' fields prefer the town's arterials (stamped from `FieldTown.roadInWindow` into `Agents.setRoads`, ROAD_COST 0.5), not the streets inside the town: those are citygen's GPU raster, which the CPU does not have. Proper: stamp the agents' road bits from citygen's road raster on the GPU | M | **done (round 9)**: `Agents.setRoadRaster` (agents/roads.ts `RoadRaster`, `roadstamp.wgsl roadRasterStamp`: a thread a window column, its bit set where the town's road raster — citygen ROADS, `CityRoutes.roads` — is a road under it); `loop.ts feedRoads` hands it the town's raster at the grid's place each frame, version = `FieldTown.meshRuns` (a mesh run draws the roads again: the fields relax once; a slide only restamps). The arterials' shapes stay. `?streets=0` the arterials alone. FIXED-CITY: one town's raster |
 | LS-89 | **Design vs code (round 8).** The gate routes (`routeread.wgsl gateRoute`) are the wall's: an unwalled town has none, so a column marches in along its road only once walls stand; without them it goes by the field (now road-weighted, LS-88). The design read as if every arterial had a route | M | **done (round 9)**: without a wall the gate slots are the arterials' road routes (`citylife/routes.wgsl` wallWork's road mode: `artRoute(k, ROAD_IN 12)` from the central square out to the box's edge, status OK, traced once the graph settles and again when the pool's halves move on — `roadSig`); the runner marches every entering column in along its road, walled or not (a missing route is a failed order: on to its place by its field). Found on the way: an unwalled column `go` from a spawn point stood forming at its start (anchor FS_FORM, lag 44 → 131 cells in 20 s) while its ranks — no straight way to their slots — walked down the group's field: the round-8 split in another state, not fixed (LS-98) |
 | LS-98 | **A field march's anchor can stay forming while its ranks walk away** (round 9, the unwalled parade before LS-89's road routes: `liveshot --mail`: anchor state 0 at its start, lag 44 → 94 → 131 cells at 6/13/20 s). In `orders.wgsl formSlots` a rank with no straight way to its slot follows the group's field (RANK_FIELD), which leads off to the place; `formAnchor` waits in FS_FORM till every rank's lag < 2.4. Not reached by the game now (entering columns march in along a route), but any `go` in a column from cluttered ground can split this way. Needs a GPU test from a spawn point like the game's | M | open |
+| LS-100 | **The building generator ignores lot conditions** (round 9, `?arch=1` in the loop): a `burned` mutator over Muru (radius 60) blackens the town's own prisms (seen, `archcheck.mjs` without `arch`) but archgen's houses stand untouched — `src/archgen` reads no condition word (`CityLots.condition`, mutate/index.ts LOT_CONDITION). So burned, flooded, ruined, looted … do not show on its buildings. A gate on making it the default, with AG13/CG24 (roofs above the claims) and AG14 (vertices) | M | open |
+| LS-101 | **Merge note (round 9).** archgen-ground made its new light (GGX, `LIGHT_NEW`) and the ground textures (`GROUND_TEX`) every page's default and loaded its texture arrays always; in the loop they now come with `?arch=1` (or alone with `?light=new`, `?groundtex=1`), and the arrays load only then (`archgen/textures.ts`), so the default look is round 9's. Whether the new light should be everyone's is the owner's call | S | open |
+| LS-102 | **Streets as terrain (round 9, job 4): not built — stopped at a structural gap.** What the road grader (`roadlab/grader.ts`, `roadgrade.wgsl`, `api/contracts/roadpath.ts`) lacks for a town's streets: (1) **records**: a record links to its interval by one aux byte (`ROAD_MAX` 255) and its points are CPU-authored in window coordinates; a town's streets are thousands of GPU-made pieces (only the arterials are polylines the CPU has); (2) **persistence**: it lays columns once — nothing lays it again when a region arrives after a slide or a reload (the town's claims do: `StaticClaims.gpuGrid`'s `claimed(rects)` hook could carry a re-lay); (3) **ownership**: the town already claims every road column as a quarter cell of External paving at the raw ground's height on each arriving region and each mesh run (`streets.wgsl claimRoads`); a grader's cut would leave that claim floating (an invisible floor units walk on) and its fill would be cut again, so the claim must take the graded profile or leave graded columns to the grader; (4) **the profile**: the CPU has no column heights (the atlas way points carry a z for the arterials; the streets' would need a GPU pass). Even "the plazas and main streets only" needs (2) and (3). Options for the owner: (a) the grader as designed — records for the arterials and the square (z from the atlas way points), re-laid in the claims' `claimed` hook, `claimRoads` skipping their columns, their ribbons not drawn (M–L); (b) a smaller departure — the town's claimed paving drawn as terrain (`renderprep` drawing an External road span as its fallback cobble) and the ribbons dropped: coloured and persistent for free, not graded (S–M, a change to the agreed road design) | L | open (owner's call) |
+| LS-103 | **One GPU hang with `?arch=1`** (round 9): one of four headless runs of the loop with the building generator stopped at the town's making — the fatal overlay "the GPU never finished: 2 frames in flight, every frame held for 71.6 s" (`archcheck.mjs`, 412x915, D3D11); the retry passed. Not bisected: the generator's first run over 333 lots, a TDR on the desktop GPU while others used it, or a shader loop. Watch for it on the phone | M | open |
 | LS-99 | Roads 0 and 1 into Muru refuse every column ("water"): their spawn points are across the river from the market and the stores, and units do not walk bridge decks (docs/design/CITYGEN.md "Decks are not claimed"); every event comes by road 2 | M | open |
 | LS-90 | A card a pack rule starts is dealt as the arc's with its offer's place the home town: `Realm.siteOf` is null and the loop takes the site from the card's binding (`loop.ts beginLive`). The Realm should place it at its site | S | open |
 | LS-91 | Two markers at one site (a pack thing and a "Done" card) overlap: `declutter` moved them too little at 412 px (seen in cards-2) | S | open |
@@ -2528,3 +2532,247 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
 | TM8 | Town lighting moods | S | open (night lights SW-G6) |
 | TM9 | Weather: storms and fog tied to opportunities | M | open |
 | TM10 | Unit graphics push: merchant carts, market stalls, zombies and people read as distinct | M | open (Track B art) |
+
+## AG — the building generator (archgen, 2026-11-11; docs/design/ARCHGEN.md)
+
+- AG1 The lab: archlab.html over captured Muru lots; parts expanded in the vertex shader; orbit camera at play pitch.
+- AG2 Massing: body, setbacks, wings, roofs (flat/shed/gable/hip/pyramid), overhangs, corner towers.
+- AG3 Procedural materials and painted windows/doors in the fragment shader; detail fades on the phone.
+- AG4 Style profiles (homes, port warehouses, keep and walls) as data; districtStyle word (Track A's buffer).
+- AG5 Ornament parts: plinths, cornices, parapets/crenels, chimneys, spires.
+- AG6 Wire-in: TownBuildingsSink lifecycle, drawBuildings flag, generation sliced over frames, game lighting/shadows.
+- AG7 Phone toggle bench case (town generation + draw on/off).
+- AG8 Construction-shader inputs agreed (lot index, local height, floor, roof flag, eave height).
+- AG9 Later: cutaway LOD (thick walls, slabs), the gesture editor, route anchors on walkable parts, height rule moved
+  into the style table (Track A's offer), other families (node graph, SDF, irregular grid).
+- AG10 Landmark sites (round plots, records from counts[3]): the generator to make them (a ring building with a
+  central tower, DESIGN §18); citygen still draws them meanwhile (Track A asked for them to be covered).
+- AG11 Brighter albedo under the game's lighting (it reads darker and more muted than the lab), and more than one
+  style in a town's core (Muru's core hashed to one style).
+- AG12 (Track A review of 14ff29a1, approved pending the user's sign-off on the look) — the reach cut-off outline
+  sits at the record's top: move it to the generated roof later; districtStyle: `setDistrictStyle(district, word)` on
+  CityGen/FieldTown, saved in TownLog beside `purposes`, a WGSL accessor snippet like townplace.wgsl; confirm "no
+  pacing" with the phone toggle bench (towns stream back to back) before relying on it (AG7).
+- AG13 Roofs, towers, eaves and jetties go past footprint × record height (told Track A). **A gate on making archgen
+  the default** (Track A, DESIGN §3/§9/§10: the world sees buildings only through their claims). Track A leans to (a):
+  the generator's GPU pass writes each record's envelope before citygen's claim pass — eave height, a roof/tower top
+  (a new record word), the overhang as an outset — and citygen's claim reads it; (b) the generator takes building
+  lots' claims over per record. Thin features under ~0.5 (spires, chimneys, overhangs) may stay unclaimed. Propose
+  it in ARCHGEN.md with the height rule once the user has judged the look.
+- AG14 Vertex budget on the phone: ~0.76 M vertices for Muru without the built windows (roofs 0.34 M, cones 0.2 M):
+  a phone bench (AG7) decides; then fewer courses on the phone or far away (a roof kind of 6 courses), cones of 10
+  segments, dead boxes culled by splitting the window kind (frame/pane vs shutters/boxes).
+- AG15 Round 2 gaps: hip seams (courses of a slope and its hip end don't meet: dark fill under them; hip and ridge
+  caps to come), timber framing painted not in relief, lot walls doubled along shared edges, the porch/stair door not
+  moved to the stair's head, no arcades/loggias or crow-stepped gables yet (the references).
+- AG16 (built per lot on the GPU, see DEVLOG; per-block grids with 3- and 5-valent vertices, bridges and stacked terraces across lots still open) An irregular-grid family (Townscaper) for shanties and larger structures: the existing
+  structures/tiles/* grids and modules.ts kit (warped modules on irregular quads) behind the same parts/output
+  contract; stacked terraces, arches, stilts, bridges, narrow coloured houses along curving rows.
+- AG17 Lots don't know water: docks and water wheels can't check they're by water (a water bit or distance in the
+  record, or the generator sampling the town's water mask).
+- AG18 (the user, 2026-11-11: "good shading is well solved … we should be using a stronger lighting model") One
+  standard lighting model for the lab and the game: diffuse + specular with roughness per material, sky light, AO
+  (SSAO/GTAO on PC, per-part on the phone), tone mapping and exposure; today light.wgsl is Lambert + hemisphere + a
+  fake fill with no specular or tone mapping, and the lab lights with its own model. Shared by every system: who owns
+  it (here or the art_improvements session) is the user's call.
+  (archgen-ground, 2026-11-11: started — light.wgsl lightSurf: GGX sun highlight by roughness, Fresnel sky, AO on the
+  ambient; the terrain and the buildings use it, ?light=old the old. Still open: tone mapping and exposure (a global
+  post pass), SSAO, the lab's own lighting, the prisms/boxes/tiles' fsTile still on lighting().)
+- AG21 (archgen-ground) Ground textures, next steps: a height channel per set (today the colour's brightness stands in
+  for it in the grass blend); hex-tile stochastic sampling to hide the repeat when zoomed out; the town mesh's dirt,
+  cobble and grass (bodies.wgsl groundLook, Track A's growing-road dirt REV_DIRT_S) from the same sets; KTX2/BC
+  compression (20 sets × 2 arrays at 1k is ~220 MB of RGBA8 with mips); the tiles' bake keeps no roughness (fsTile
+  lights a frozen tile without a highlight); a stylized look (the user: "Dota 2 does have very pretty land and grass
+  and plants") — painted sets or a stronger palette pull on the photo sets.
+  (2026-11-12, the user on the phone: "The texture is basically pointless then at this scale" — at play zoom a cell
+  is ~4 px, the 2–3 m repeat mips to its mean. Ground textures off on the phone; maybe back for the closest fixed zoom
+  step only, or as macro variation several cells across.)
+- AG22 (2026-11-12, the phone) Roofs drawn as long spikes running up the screen to a few far points (a vertex very high:
+  a finite height, not the NaN the a6745c06 guard catches). Desktop dump clean (?archdump=1, 0 odd parts); waiting on
+  the phone's dump to compare word for word. (Found: the grid's run-time-modulo corner index on the Mali; fixed
+  the same day, 524c6b08 — see DEVLOG. Confirmed on the phone: its next dump, 667 lots, 0 stretched parts. Done.)
+- AG23a done (the user, 2026-11-12: "fix the triangles on the irregular grid first ... They look terrible"): no
+  triangle terraces (a lone triangle's three quad cells stand on their own); a cell with three corners past a street,
+  or pulled into a straight line, is dropped. The shared world grid below is still open.
+- AG23 (the user, 2026-11-12) One irregular grid shared by every lot, not one per lot: "Can't disjoint lots share the
+  same irregular grid? ... then you could even build features like bridges over the city roads." Quads only ("The
+  irregular tiles here also gave triangle tiles and do not follow the quad based design I expect"). Lanes inside a
+  cluster are grid cells; buildings never over a road at ground level ("the building seem to overlap roads ... in a
+  most displeasing way"); a road cell may carry a bridge from the first storey up. Plan: a world-fixed triangle lattice,
+  each triangle split into 3 quads (all quads, no global pairing), corners jittered by a hash of their lattice point so
+  neighbours agree; lots claim the cells inside their parcel. Covers the grid rework (shared heights, per-corner roofs).
+- AG24 (the user, 2026-11-12) The phone draws the static world from baked tiles, Age of Empires 2 style: "if we don't
+  allow camera rotation can't we essentially render the whole ground and buildings in only one frame as a static lit
+  sprite or as tiles? ... it lets us bake the anti aliasing detail at super resolution into the map. Then we need only
+  redraw animated layers". Ground and buildings baked (2× then down) as albedo, normal, depth layers into the tile
+  cache (render/tilecache.ts already bakes terrain per region and turn), lit each frame from the layers, one baked
+  shadow render; re-bake on change; animated layers drawn live. Wind: a per-pixel sway channel the lighting pass
+  offsets its lookup by ("Bending sprites with a few control points in a grid to warp fragments"). Gate: the phone
+  bench (frame, pan, memory).
+- AG27 (the user, 2026-11-12: "please log hacks to the backlog as things to fix. We can always defer them") The
+  hacks and limits of the archgen grid / look work, each to fix:
+  - Grid lots: lotAt() loops every lot of the town, five times a cell (and in tgEmit) — a per-chunk lot index; the 3 m
+    reach for the slivers between lots (lets cells reach a little past the coast); outerStreet's 4 m probe across a
+    street (a wide street or odd parcel can fool it); street fronts (doors, gables) still by nearness (1.6 m) to the
+    lot's own street line, not to the open cells; the lots' 96-part budget still holds grid cells (a per-chunk pool);
+    streets and lanes not paved (lab: bare lot ground); the ?gridview debug modes and the red marking of lots off the
+    grid left in the code.
+  - Lanes: every 6 rows, segments of 4, 72% on — by eye; they don't know the district's edge or its outer streets (a
+    lane can end a cell short of a street, or run out onto the coast); two lattice directions only (long stretches can
+    read straight).
+  - Relaxation: 0.6 of the pull a step, 20 steps — by eye; pulls rounded to 1/64 m (the phone's 16 KB of workgroup
+    memory); the apron (3 lattice cells) is shorter than 20 steps reach (a vertex at a chunk's edge a little less
+    relaxed); chunks all remade when the camera enters a new one (no cache: only the new row is needed); the chunk
+    table and its 9.4 KB-a-chunk scratch sized by the lot count (should be by the chunks round the camera); a joined
+    house or terrace uses only its piece's four corners (its walls can sit off the cells' relaxed edges); the grid lab's
+    320 cells a chunk (overflow dropped silently); phone timings not measured.
+  - Heights: a cell stands on the highest ground under its corners, walls to the lowest (on a slope a cell's walls run
+    down to the lowest neighbour's ground).
+  - Light (archlab): the sun's direction fixed to the camera (115° round, 37° up); colours of the key, shade, bounce by
+    eye; the street foot's darkening a fixed 4.5 m; the shadow map round the view redrawn every frame; windows cast no
+    shadow, plants cast solid ones; depth bias by eye (speckle on the roof tiles).
+  - SSAO: darkens the whole lit colour, not only the ambient; MSAA's depth read at sample 0 (halos at edges); a box
+    blur blind to depth; radius 2.5 m, strength 1 by eye, in world units (its look changes with zoom); not on the
+    phone, not measured there; the lab only (not the look lab, not the game).
+  - Recessed openings (draw.wgsl recessAt): drawn by the wall's shader, not geometry — the silhouette doesn't change,
+    the sun's shadow in a recess is worked out from the opening alone (not the shadow map); built plain windows' glass
+    and doors' leaves left out so the recess shows, so a built frame whose size differs from the painted opening (a
+    balcony, an attic light) keeps its own flat glass; RECESS 0.24 m.
+  - AG29 first pass (open sides, jetties, steps, balconies, round towers, plants, timber/stone walls, cobbles) — its
+    hacks to fix: openAt probes one point 1.4 m out per side (a narrow lane or a corner can be missed); the odds (jetty
+    70%, steps 45%, balcony 60%, plants 55%, tower 20%, chimney 18%, materials 5/3/1 in 10, stone base half) and sizes
+    (jetty 0.8 m, steps 0.95 m wide, balcony 0.85–0.9 m) by eye; a jetty's upper body is one quad pushed out on its
+    open sides (its other sides unchanged: on a cell open on two adjacent sides the corner pushes diagonally); the
+    steps and balcony ignore the windows (a balcony may cover none, steps may cross one); a tower replaces the whole
+    cell (its corners left empty round it); the part budget doubled to 192 a lot (the grid's own pool instead); the
+    lab ground is cobbles under every building lot (the game's ground is Track A's); interior cells (most) get
+    nothing — dormers, deep eaves, steeper varied pitches, stone arches, window boxes and climbers on the grid still
+    to do.
+  - Roofs drain to drops (buildings round lattice points, one roof surface each) — done. Hacks to fix: roof surface
+    linear across each cell from its corners (the true distance field bends inside; creases can sit off the hips);
+    no eaves overhang (the roof stops flush at the walls) and no gable-end trim; slope 0.62 and cap 2.4 m by eye; hAt
+    is position-only (ignores the lots' storeys, the street fronts no longer taller); an edge's openness probed at one
+    point 1.4 m out; a building's cells left out by the lot rules aren't known to its siblings unless that probe finds
+    them open; the chunk lot list caps at 63 (more dropped silently); the shanties' lean-tos still turn at random
+    (not to a drop); a tower's radius from the nearest edge (corners of its cells left bare round it).
+  - Real wall geometry (the user: "The features need real geometry on the walls ... stairs and recesses and gables";
+    "overhangs to stick out ... out from the rest of the wall. That breaks up the roof lines and wall lines"): walls
+    built by bay with real recesses (replaces the shader recess), projecting bays and jettied storeys that step out
+    from the wall below, gables and dormers breaking the roofline.
+  - Real facades, local rules, merged gabled roofs, courtyards — done. Hacks to fix: facades only on open sides
+    (closed sides keep the painted windows and the shader recess); ≤ 3 bays × 4 storeys a facade (more wall above);
+    every facade draws 798 vertices however small (unused ones degenerate — phone cost unmeasured); facade windows
+    from the style's sizes clipped to the bay (narrow bays lose theirs); the merged roof uses its equal neighbours'
+    eaves only (not theirs' neighbours': a step can show where two merged buildings see different eaves); the ridge
+    direction by 5-cell block (merged buildings across a block line disagree); lot ownership by deepest point (the
+    3 m reach past a parcel, 12 bits of lot id: > 4096 lots alias); a building's ground from its neighbours' owners;
+    courtyard odds 13%, roof slope 0.9 and cap 4.2 m by eye; no eaves overhang, no dormers yet; towers still big
+    (radius to the nearest edge).
+- AG28 (the user, 2026-11-12) After the organic districts look good: "With proper cobblestones between the buildings
+  and foot traffic this would read to me as an organic section of town (unplanned)" — cobbles in the lanes and
+  streets, people walking. Then "The planned sections and the structures on them need work after we get these looking
+  good." Also "the larger institution look townscraper gets with taller structures (... super tiles and some other
+  tricks)": several cells joined into one tall building (a church, a hall, a tower). Tiny Glade stays the inspiration
+  for freeform lots — maybe combined with the grid later.
+- AG29 (the user, 2026-11-12, a Tiny Glade shot: "For inspiration at improving the visual fidelity and variety of the
+  dense housing ... Note circular towers and the exposed beams in the plaster and the steps and balconies and
+  overhangs and plants etc.") The grid district's houses, in order: (1) mixed materials a building — a stone ground
+  floor, plaster or half-timber (exposed posts, rails, braces) above (the shader's half-timber exists, the grid never
+  uses it); (2) jettied upper storeys over the lanes on brackets, deep eaves; (3) round towers with tall cones at
+  corners and junctions, taller than their neighbours (cylinder and cone parts exist); (4) outside stairs to upper
+  doors, timber balconies and galleries on posts, stone arches carrying walkways; (5) plants and clutter — flowers at
+  the walls' feet, window boxes, climbers, fences, crates, barrels; (6) the roofline — steeper and varied pitches,
+  dormers, many chimneys, smoke later. Each from the cell's own hash; a cell's lane side found from its open
+  neighbours (also AG27's street fronts).
+- AG30 (the user, 2026-11-12: "the roofs also don't read as roofs. They were honestly better before the fix to merge
+  them … rarely go more than two side by side at the same height … roofs join runs aligned with neighbors"; "A roof is
+  almost always a single ridge line with potential ridges at lower heights coming off of it"; "notice how much volume
+  the arches add") Roofs — done (this commit): a building is one lattice point's cells or a mutual pair; one gable
+  roof, its single ridge through the lattice point(s) (a pair's along its axis; one alone runs at its tallest taller
+  neighbour — a lower wing off that ridge); equal neighbour groups step one up. Next: arcades (ground floors set back
+  behind arches carrying the storeys — the reference's volume); eave overhangs, ridge caps, sag (the polygonal straight
+  lines). Hacks to fix:
+  - Each cell's roof is its body's sloped top (a quad on four corner heights): where the ridge does not run along a
+    cell edge the quad folds off the ridge, and the tiles (laid by the face's normal) turn with each fold — patchy
+    facets. Fix: the roof its own mesh per group, two planes from the ridge, clipped to the footprint.
+  - Eaves are not level on irregular footprints (the roof falls to nothing at the farthest corner; nearer walls rise
+    to meet it) — reads as hand-built, but not chosen.
+  - Pairing is height-blind; a pair takes its taller member's storeys. The tie step is one pass: a stepped group can
+    tie with another — rare, not none. A pair with a taller neighbour on its long side still drains at that wall.
+  - The roof's slope eases on wide groups so the ridge stays under RF_MAX (4.2 m) — by eye.
+  - roofAt no longer goes flat: the parapet/terrace branch never fires (dead code to clear with gDA/gDB).
+- CG-H1 (idea, the user, 2026-11-13; Track A's citygen) Height blended into the street field so main streets follow
+  contours on hills: φ' = φ + w(slope)·(smoothed height above the nearest water's level), w rising only on real slopes;
+  hollows filled first (no rings in dips; knolls keep theirs); re-distanced so a field step is a fixed ground distance,
+  with a minimum line spacing; cross streets then run downhill (stairs in town, angled on very steep ground). Test in
+  the street lab with blend and slope-threshold sliders, a hill town and a flat river town before/after.
+- CG-H2 (the user, 2026-11-13) Towns insensitive to height variation under a couple of storeys: stairs, switchback
+  roads and plinths normalise the ground for walking ("it makes cities more visually interesting"); hills get winding
+  roads along contours, switchbacks and spirals between levels. Styles convertible: one town switchable between an
+  organic irregular-grid layout and a planned grid layout.
+- AG31 (the user, 2026-11-13: "The whole magic of townscraper is that it captures the mess of European towns that
+  built up in an unplanned way") Organic housing, as experiments in three parts, each shown for review:
+  1. Roof and placement rules on the irregular grid: a house's ridge along its street; beside neighbours of one height
+     line up and share the ridge (exact runs 1–3 tiles, step up/down runs to ~5, lengths 1–5); behind neighbours
+     mostly split level — the lower pitched away from the taller wall or a roof terrace; the same height (rare) one
+     shared ridge; corners turn the ridge or stand taller. Roofs extruded triangles.
+  2. Houses alone, Tiny Glade quality, one structure at a time for review: a few rectangles combined (how much they
+     interpenetrate ruled), extruded up, each storey able to shrink, grow or add a rectangle; one taller main ridge,
+     perpendicular wings pitched off it, towers above it.
+  3. Combined, after the grounds: seamless ground between and round neighbouring houses — stairs, shared plinths,
+     varying terrain heights, roads ("a big part of what makes it cohesive").
+  Step 1 tried (this commit, the grid's default view): ridges along the street axis, runs 1–5 (level or stepping),
+  corners taller, back-to-back ties stepped; roofs extruded triangles, half a house each to the run neighbours'
+  midpoints, lean-tos against a taller side. Not good: the houses are cell rosettes (lumpy hexagons), so rectangular
+  roofs don't fit them — to retry with rectangular houses (step 2). Hacks to fix:
+  - The rules recompute neighbours' derived values (builtAt → ridge → height) — ~300 neighbour reads a house. The
+    user: "Shouldn't it be like 5 neighbors we check not 300?" Fix: passes that store each lattice point's facts
+    (built, ridge axis, height) in a buffer; every rule then reads 6 stored neighbours.
+  - Roofs are separate parts now: lots overrun their 192-part budget — floating or missing roofs (a cap: page it).
+  - Roof width 2.35, overhang 0.3, pitch 1.05 by eye; ridge ties go to the block's axis; the back-to-back step is one
+    pass; no shared ridge for equal back-to-back; pair code (gatherMerged, gMate*) and the flat/parapet branch dead.
+  Step 2 started (this commit, ?gridview=2: one house a lot, in the lot's frame): a main block along the street (the
+  tallest ridge), a wing half sunk into its back at one end (lower, ridge across), a jetty, a ground-floor bay under a
+  lean-to, a round tower at a front corner, a chimney; every rectangle walls with real openings. Hacks to fix: every
+  rectangle builds facades on all four sides, inside the others too (hidden, wasted); the wing's gable end inside the
+  main block relies on the wing's ridge being lower; sizes and odds by eye; one house per lot, not packed plots;
+  storey ops beyond the jetty (setbacks, terraces, added rectangles) not yet.
+- AG25 (the user, 2026-11-12) Synty trees on the phone as pre-rendered sprites (4–8 views, colour + normal + depth),
+  baked into the tiles or drawn live to sway. Rendered from Synty, so local only, like the packs. Also: house walls on
+  the phone are "a single smeared low res window on a solid color" against detailed roofs — baking at PC detail answers
+  it on the phone.
+- AG26 (the user, 2026-11-12, a Townscaper shot: "Lets target at least this quality in our toy test") Not flat:
+  - Light: Townscaper's warm key / cool teal shade — done 7316a78e; the sun's cast shadows in archlab — done (this
+    commit); screen-space occlusion — done (archlab, ssao.wgsl); next edge lines (creases dark, edges
+    caught by the light).
+  - The grid relaxed (Townscaper's squaring) in seamless GPU chunks — done (this commit). Next: curved walls along
+    each built group's outline ("spline blending along adjacent cells that merge into walls").
+  - Whole cells, the cells a road crosses and the ground between blocks paved ("make those 0 blocks but have the
+    ground between blocks pave fully") — done (this commit).
+  - The grid alone first (the user: "A streamable infinite irregular grid with no holes and well shaped cells"; "decouple
+    the lot budget from the irregular grid entirely"): the grid lab (?gridlab=1) and a second merge round — done (this
+    commit). Then lots and roads on it (the user's first guess: a cell crossed by a lot it isn't part of left empty so
+    the street shows, the streets paved under), its parts out of the lots' budget.
+  - Lots on the grid — done (this commit): a cell stands if all its corners are in grid lots and out of the streets;
+    straddling lots fine; slivers between lots go to the nearest lot; a cell on the highest ground, walls to the lowest.
+    Next: the streets paved under; parts out of the lots' budget (a per-chunk pool); lotAt by a per-chunk lot index.
+  - Districts much bigger relative to cells (the user: "a district should be much bigger relative to cells so that we
+    get a large neighborhood of the irregular structures"); and for adjacent lots of the same type, the road between
+    them replaced by one aligned to the grid (the user's idea) — citygen is Track A's: to agree with them.
+  - Grid districts grow over lot lines, their own lanes along the grid's edges — done (this commit).
+  - Wall detail (the user, 2026-11-12: "Windows and doors are not recessed", "there are not many overhangs or porches")
+    — with the geometry list below.
+  - Smoothed normals between nearly parallel neighbouring grid cells ("Townscaper also looks like it renders with
+    smoothed normals between nearly parallel irregular grid cells"): adjacent cells' walls that meet almost flat shade
+    as one curved wall.
+  - Geometry ("there is more geometry. Rounded corners, set back windows, balconies and arches"): corners rounded or
+    bevelled, windows recessed with sills and lintels, balconies (slab, brackets, railing in the trim colour, pots),
+    arches through ground floors and arcades.
+  - Variety ("you never added the corner stone features to the architecture. Or any of the other variety like plants
+    or patches of brick showing through plaster"): quoins on plaster and brick corners, brick showing through where
+    plaster has fallen, plants on buildings (window boxes, climbers, pots; ivy exists on some lots only).
+  - The phone gets all of it ("No put that detail on phone please. I think it's less of an issue than the curved
+    rooftops"): the curved tile roofs are what the phone gives up if it must, not the new geometry.
+- AG19 ("working with better ground and building textures") Texture sets (albedo/normal/roughness/AO) for walls, roofs,
+  ground: ~12–16 CC0 sets (Poly Haven / ambientCG) in one texture array, KTX2-compressed, 512 phone / 1k PC; the
+  generator keeps per-part tint, wear and pick. Waits on the user: may CC0 textures go in the public repo?

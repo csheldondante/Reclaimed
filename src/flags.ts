@@ -14,8 +14,10 @@
 // A worker has its own `location` (the worker script's URL, no query): what it reads here is the defaults, as before.
 
 /** the render's half (?lite=1 on any tier); round 85 the hybrid (heightfield chunks, voxels where the ground needs
- *  them; the atlas level only) — the user: "Hybrid is awesome and definitely should be merged!" */
-export const LITE_SET: Readonly<Record<string, string>> = { tufts: '0', shadowcache: '4', prepevery: '2', bandh: '2', shadowsize: '512', hybrid: '1' };
+ *  them; the atlas level only) — the user: "Hybrid is awesome and definitely should be merged!"; 2026-11-12 the ground
+ *  textures off (a cell is ~4 px at play zoom, the texture mips to its mean — the user: "basically pointless then at
+ *  this scale") */
+export const LITE_SET: Readonly<Record<string, string>> = { tufts: '0', shadowcache: '4', prepevery: '2', bandh: '2', shadowsize: '512', hybrid: '1', groundtex: '0' };
 /** the simulation's half (the low tier) */
 export const SIM_SET: Readonly<Record<string, string>> = { settle: '0', sleepmore: '1' };
 

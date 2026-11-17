@@ -29,7 +29,8 @@ import { startRunLoop } from './loop';
 import { attachMutators } from './mutators';
 import { whenPipelinesReady } from '../../gpu/pipeline';
 import { censusEnter, censusLeave } from '../../gpu/census';
-import type { FrameCompute } from '../../render/renderer';
+import { ARCH, type FrameCompute } from '../../render/renderer';
+import { TownBuildings } from '../../archgen/townbuildings';
 
 /** sleep and the streamed window, with what follows its slides */
 export function attachStream(scene: LevelScene): void {
@@ -311,6 +312,9 @@ export function attachStream(scene: LevelScene): void {
           return { id, name: fs.rec.name, at: fs.rec.at, size: fs.rec.size, roads: st.approachWays(id), seed: fs.seed, purpose: fs.rec.purpose?.kind };
         });
         whenPipelinesReady(() => {
+          // (archgen, ?arch=1: the building generator draws the towns' buildings — docs/design/ARCHGEN.md)
+          const buildings = ARCH ? new TownBuildings({ device: host.gpu.device, addArch: (a, g, x) => core.renderer.addArch(a, g, x), removeArch: (g) => core.renderer.removeArch(g), frameCompute: core.renderer.frameCompute }) : undefined;
+          (globalThis as { archTowns?: TownBuildings }).archTowns = buildings;
           const towns = new FieldTowns(
             {
               device: host.gpu.device,
@@ -324,6 +328,7 @@ export function attachStream(scene: LevelScene): void {
               reachTurn: (f) => (reachChain = reachChain.then(f, f)),
               addMesh: (v, g, x) => core.renderer.addMesh(v, g, x),
               removeMesh: (g) => core.renderer.removeMesh(g),
+              buildings,
               origin: () => S.origin,
               oz: () => S.oz,
               dims: { w: dims.w, h: dims.h },

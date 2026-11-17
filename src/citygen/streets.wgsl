@@ -652,6 +652,16 @@ var<private> roadLive: bool = true;
  */
 var<private> revA: f32 = REV_UNGATED;
 var<private> revB: f32 = REV_UNGATED;
+/** (archgen, the user: "Cobblestone streets or dirt and grass") what the mesh's piece is to the renderer's texturing
+ *  (render/bodies.wgsl vsSkin's word, fsBody): 1 a flat colour; in the game (u.rc.w set) 3 dirt, 4 cobbles, 5 grass */
+var<private> curSurf: u32 = 1u;
+const SURF_DIRT: u32 = 3u;
+const SURF_COBBLE: u32 = 4u;
+const SURF_GRASS: u32 = 5u;
+/** a surface for the pieces drawn next: the game's only (the lab's white stays a flat colour) */
+fn surfOf(k: u32) -> u32 { return select(1u, k, u.rc.w > 0.5); }
+/** the road tone's surface: dirt (tone 1) or cobbles (tone 2) */
+fn roadSurf() -> u32 { return surfOf(select(SURF_DIRT, SURF_COBBLE, u.rc.w > 1.5)); }
 fn vert(at: u32, p: vec3<f32>, col: u32, n: vec3<f32>) {
   let o = at * 8u;
   w5[at * 2u] = curTag;
@@ -663,7 +673,7 @@ fn vert(at: u32, p: vec3<f32>, col: u32, n: vec3<f32>) {
   w7[o + 4u] = bitcast<u32>(n.x);
   w7[o + 5u] = bitcast<u32>(n.y);
   w7[o + 6u] = bitcast<u32>(n.z);
-  w7[o + 7u] = 1u;
+  w7[o + 7u] = curSurf;
 }
 fn tri(at: u32, a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, col: u32) {
   var n = cross(b - a, c - a);
@@ -715,8 +725,10 @@ fn ribbon(at: u32, a: vec2<f32>, b: vec2<f32>, hw0: f32, col0: u32) {
   let p1 = vec3<f32>(b - s, hAt(b - s) + lift);
   let p2 = vec3<f32>(b + s, hAt(b + s) + lift);
   let p3 = vec3<f32>(a + s, hAt(a + s) + lift);
+  curSurf = select(roadSurf(), surfOf(SURF_DIRT), roadTrack);
   tri(at, p0, p1, p2, col);
   tri(at + 3u, p0, p2, p3, col);
+  curSurf = 1u;
   // (CG25: each vertex's reveal time over the surface byte — the vertices at a, b, b, a, b, a)
   let ca = revCode(revA);
   let cb = revCode(revB);
@@ -741,10 +753,12 @@ fn roadDisc(at: u32, a: vec2<f32>, b: vec2<f32>, hw: f32, col: u32) {
     let q = p + R * vec2<f32>(cos(f32(k) * 1.0471976 + 0.5235988), sin(f32(k) * 1.0471976 + 0.5235988));
     v[k] = vec3<f32>(q, hAt(q) + 0.27);
   }
+  curSurf = roadSurf();
   tri(at, v[0], v[1], v[2], col);
   tri(at + 3u, v[0], v[2], v[3], col);
   tri(at + 6u, v[0], v[3], v[5], col);
   tri(at + 9u, v[3], v[4], v[5], col);
+  curSurf = 1u;
   if (revA < -1e29 && revB < -1e29) { return; }
   let L = max(distance(a, b), 1e-4);
   let d = (b - a) / L;
@@ -1061,6 +1075,9 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     fieldMesh(i, o, q);
     return;
   }
+  // (archgen, mode 1: parks and plazas are the building generator's — gardens and markets on the land itself; the user:
+  // "get rid of the park and lot ground plates")
+  if (u.n.w == 1u && (kind == REC_PARK || kind == REC_PLAZA)) { return; }
   if (kind != REC_BUILDING) {
     // (loop round 9: a park's or a plaza's plate in PLATE_N × PLATE_N quads, each corner on the ground (hAt) — it lies
     // on the land as one surface with its neighbours, not a tilted plane whose corners alone touch it: the central
@@ -1071,6 +1088,7 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     let lift = select(0.12, 0.15, kind == REC_PLAZA);
     let col = select(C_PARK, cPave(), kind == REC_PLAZA);
     let n = f32(PLATE_N);
+    curSurf = select(surfOf(SURF_GRASS), roadSurf(), kind == REC_PLAZA);
     for (var gy = 0u; gy < PLATE_N; gy++) {
       for (var gx = 0u; gx < PLATE_N; gx++) {
         var z: array<vec3<f32>, 4>;
@@ -1085,9 +1103,11 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
         tri(o + 3u, z[0], z[2], z[3], col);
       }
     }
+    curSurf = 1u;
     return;
   }
   // (time-lapse: made full height — tlRise sets the tops' z by the lot's progress each frame)
+  // (archgen: mode 1 — the building generator draws the building; its reach outline below is still the town's)
   let h = r1(o + 20u);
   if (h < 0.05) { return; }
   let base = r1(o + 21u);
@@ -1110,6 +1130,7 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
       }
     }
   }
+  if (u.n.w == 1u) { return; }
   let at = room(30u);
   if (at == NONE) { return; }
   let roof = roofColour(u32(hsh(hs * 7u + 3u) * 5.999));
@@ -2024,6 +2045,7 @@ fn lmMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     let at = room(3u + 6u * (PLATE_N - 1u));
     if (at == NONE) { return; }
     let n = f32(PLATE_N);
+    curSurf = roadSurf();
     let i0 = p + e0 * (rp / n);
     let i1 = p + e1 * (rp / n);
     tri(at, vec3<f32>(p, z + 0.16), vec3<f32>(i0, hAt(i0) + 0.16), vec3<f32>(i1, hAt(i1) + 0.16), cPave());
@@ -2038,6 +2060,7 @@ fn lmMesh(@builtin(global_invocation_id) g: vec3<u32>) {
       tri(o, vec3<f32>(qa0, hAt(qa0) + 0.16), vec3<f32>(qb0, hAt(qb0) + 0.16), vec3<f32>(qb1, hAt(qb1) + 0.16), cPave());
       tri(o + 3u, vec3<f32>(qa0, hAt(qa0) + 0.16), vec3<f32>(qb1, hAt(qb1) + 0.16), vec3<f32>(qa1, hAt(qa1) + 0.16), cPave());
     }
+    curSurf = 1u;
     return;
   }
   if (m >= 12u) { return; }

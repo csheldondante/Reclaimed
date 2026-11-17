@@ -269,6 +269,10 @@ of stills (`scripts/lab/streetshots.mjs`: the town, the market close up, the par
   stamped on the GPU); every entering column — parade, refugees, raiders — marches in along its road's route, walled or
   not (without a wall the route runs from the central square out), then to its place; units are coloured by side.
   Seen: columns 3 abreast down the arterial, the watchers along it, into the square.
+- **Streets as terrain: not built** — the road grader cannot yet own a town's streets (records, persistence across
+  slides, the town's paving claims; BACKLOG LS-102 has the gap and two options for the owner).
+- **The building generator** is merged behind `?arch=1` and judged on the strip: houses that read close up, a wash at
+  the town's zoom, mutators not shown on its houses (LS-100), 1.18 M vertices for Muru's core. Not the default.
 
 ## Assumptions for the owner (each is the simplest thing; say which to change)
 
