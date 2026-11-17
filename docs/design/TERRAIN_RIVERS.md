@@ -195,11 +195,21 @@ new ground and rivers), roads, Muru and other authored places looked up by world
 worlds (a world saved with rivers2 off is a different world; nothing stops loading one under the other — TR7). Step 1
 only lists what breaks in the streamed level; it does not fix town placement.
 
+Seen in step 1's run of the loop level (`level=atlas&town=1&loop=1&a.rivers2=1`): the level boots, no page or console
+error; the town's site moves (the window's origin 14400,4416 → 13120,5888: sites are chosen on the new ground and
+rivers), so Muru is not where its authored data and the loop's pinned places expect it; the lakes are gone (anything
+keyed to a lake — lake towns, the flood tool's basins found from them — has none); the old lava rivers' 40-texel
+tongues are now 160-step walks, so lava reaches places it never did. In 25 s neither world had finished "Building the
+town", so whether the town builds and plays on its new site is not yet seen.
+
 ## 7. Costs
 
 CPU at build (off the frame path): the walk is O(nodes); the BFS O(N); the clamp O(nodes × neighbours in
 CLAMP_RADIUS). GPU at build: one more JFA (12 passes) and the valley in both macro passes. Per streamed column: up to
-16 segment tests in `ground()` (the river lookup already does 8). Measured numbers: DEVLOG and the report.
+16 segment tests in `ground()` (the river lookup already does 8). Measured (seed 1, n = 2048, a machine shared with
+two other builders): rivers on the CPU 3.6–6.8 s against the default's 0.8–1.5 s (walks 0.3–0.4 s; levels and the
+clamp 1.8–3.7 s; the rest the BFS and the table — TR4), the cost JFA 0.18 s, the second macro pass +0.03 s. The
+per-column cost on the streaming path is not measured yet (a phone bench item before the flag could be a default).
 
 ## 8. Open questions for the owner
 
@@ -213,6 +223,13 @@ CLAMP_RADIUS). GPU at build: one more JFA (12 passes) and the valley in both mac
 4. **Raise shape.** `R(d)` is a plain saturating ramp — ridges between rivers are smooth. Ridged noise on R, or R
    tied to the catchment's order (bigger interfluves between bigger rivers)?
 5. **Volcano placement**: volcanic provinces only, or also hotspots in the sea (islands)?
+6. **Cliff tiers at falls.** Where a river leaves a mesa, the lower river's valley carves the cliff's lower tiers away
+   (one 171-cell drop where there were steps). Keep (a gorge cut back into the cliff), or protect a cliff's tiers
+   within some distance of the fall (VW smaller at landform borders)?
+7. **Lava's reach.** 412 lava walks of up to 160 steps (from every volcanic region's top, as before, and the vents):
+   lava now crosses whole regions. Fewer, longer flows from the volcanoes only?
+8. **Muru.** With the flag the town site moves. Pin the authored towns' sites (the walk avoids them, or a river is
+   routed past them), or let towns follow the new land?
 
 ## Later (recorded, not built in this step)
 

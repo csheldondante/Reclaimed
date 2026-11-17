@@ -25900,3 +25900,77 @@ over everything; dark — dim and brown; the storm as a card's sign — as the s
 **Tests.** `test/unit/weather-presets.test.ts` (6: the table, fair is no change, signs over the season, a season's
 weather, the validator's words, the ages pack's two uses load), `packs.test.ts`, `fronts.test.ts` pass.
 
+## 2026-11-17 — terrain: rivers first, step 1 (`terrain-rivers`, TR1; docs/design/TERRAIN_RIVERS.md)
+
+**Why.** The owner (DECISIONS 2026-11-17): rivers "more noticably in the bottom of a water shed", "more large features
+like volcanos", "walking to the coast with jitter and using SDF to raise terrain", "more flow for hot lava". The
+stock-take: the default world has no valley step at all — height is landforms + noise, rivers are found afterwards by
+a priority flood and carved as a slot (~4 half-widths), perched on levees where the ground is lower (seed 1: 3 979
+nodes whose next node is *higher*, rivers climbing out of hollows; the levee raises columns by up to 10 cells).
+
+**What (behind `a.rivers2=1`; default off).** `terrain/walks.ts`: sources on a jittered grid (highest of 6 tries, 120+
+cells from the coast, fewer where dry) plus volcano flanks and vents; each walk follows the coast SDF's gradient plus
+the downhill of the blurred ground, the guide turned by a smooth noise (±63°) with momentum, always ≥ 0.2 of a step
+toward the coast; walks join where they meet (a tree rooted in the sea); catchments = the water nodes' Voronoi on
+land (BFS); widths from it, grown in over 16 nodes from the source; levels = the running minimum of the ground beside
+each node less the incision (monotone by construction, a fall wherever the ground drops), staircased on steep
+reaches, then the lateral clamp (no river above the ground another river's valley leaves at it) to a fixed point.
+`terrain/valley.wgsl` (+ the cost JFA `valleyjfa.wgsl`): per cell, over the candidate segments of two per-texel node
+tables, h = min over c of G' − fade(e_c)·max(0, G' − Hv_c), G' = G + R(d) (raise away from rivers), Hv = level +
+valley profile (bank, floodplain, softplus wall; per tier), a river shaping only its own landform. Volcanoes: stamp
+kind 4 (lobed cone, gullies, crater; basalt), 4 a world on volcanic regions / faults, lava walks from the rim (160
+steps, 4× the old 40) and water walks off the flanks. All constants in one table (`VALLEY`, `WALK`), the WGSL's
+generated from it.
+
+**What changed on the way (each from a still or a number).**
+- The first combine, a plain `min(G + R, Hv)`, let every valley wall run forever: a volcano's cone and massif peaks
+  were cut down to the envelope of their foot rivers' valleys, and the clamp had to drop plateau and flank rivers by
+  up to 215 cells and did not settle in 8 rounds (16 s of CPU). Now each valley fades out over its reach VW (per
+  tier), and a river's valley counts only in its own landform (LF_PEN).
+- Jitter added as a vector curled walks into loops (visible on the first zoomed still); now it turns the guide.
+- With the turn bounded, walks circled in hollows (a crater's bowl) until MAX_STEPS — millions of nodes, a run that
+  never finished; now every step makes progress toward the coast (stranded: 0).
+- A source's Voronoi cell holds all the land behind it: heads came out 9 wide from nowhere; widths now grow in.
+- The raise pushed massifs into zTop's clamp; it now shrinks near the top.
+
+**Numbers (seed 1, n = 2048; local/terrain1/*-stats.json).**
+
+| | off (default) | on (a.rivers2=1) |
+|---|---|---|
+| river nodes (water / lava) | 53 975 (46 372 / 7 603) | 48 148 (40 042 / 8 106) |
+| walks / lava walks / merged / to the sea / stranded | — | 652 / 412 / 346 / 270 / 0 |
+| nodes whose next is higher | 3 979 | 0 |
+| falls ≥ 3.5 / > 12 / > 30 cells, the tallest | 2 323 / 295 / 145, 218.5 | 3 025 / 427 / 123, 207.8 |
+| lakes | 817 | 0 (not designed yet, TR2) |
+| levee probe (240 sampled river batches, 16×16 columns, `rivers=table` vs `?levee=0`): columns raised / per river column / raised > 1 / > 3 / max | 442 / 0.017 / 96 / 82 / 10.3 | 290 / 0.010 / 14 / 0 / 1.8 |
+| rivers (cpu) | 0.8–1.5 s | 3.6–6.8 s (walks 0.3–0.4 s, levels + clamp 1.8–3.7 s; the rest the BFS and the table) |
+| + the cost JFA, the valley in the second macro pass | — | +0.18 s, +0.03 s |
+| atlas build without compiles | 4.3 s | 10.0 s (this run; the machine shared with two builders) |
+| mean (ground beside − level) | 2.4 | 11.6 (gorges where walks cross high ground, and the clamp) |
+
+The levee isn't at zero: the remaining raises are ≤ 1.8 cells — the levee lifts any bank under level + 0.2, and the
+valley's bank rises only 0.5 over the first cells; 14 columns over 1 cell are real (TR5).
+
+**Seen in the stills (local/terrain1/strip.png and its parts).** Whole map: rivers meander and branch into trees;
+the lakes are gone. Plain (2.5 units a pixel): every river lies in a smooth floodplain band, the dune ripples
+smoothed out along it — they read as valley floors; heads taper to points. Cross-section on the plain: the valley
+floor 5–8 cells under the old ground for ~200 cells, with two 5-cell rectangular steps that look like candidate
+seams (TR3). The tallest fall: the river leaves a massif's snowfield and drops 171 cells; the cross-section shows the
+cliff's lower tiers carved away by the lower river's valley — one tall drop instead of steps. The long profile
+falls in clean steps with the ground right under the level (the old one runs over a hollow 16 cells deep). The
+volcano: a dark basalt disc top-down, its relief hard to read from above; the cross-section shows two rims ~100 over
+the plain with the crater between; lava runs out of it radially. Play-zoom stills (the streamed level, 30 s wait)
+caught the level still building the town — tiles missing; the fall still shows a river at a cliff foot with
+columns of rock, the volcano still lava channels in basalt; neither judges the step yet.
+
+**The default world is unchanged.** The fork point's sources (9ce45999) and this branch with the flag off give the
+same FNV-1a hashes of the macro ground (40deae46), the river nodes (40642a65) and the regions (b2bfc8b3), and the
+same still of the loop level at Muru (local/terrain1/muru-base.png, muru-off.png: origin 14400,4416). With the flag
+on, the loop level boots without errors; the town's site moves to 13120,5888 (sites chosen on the new ground) — see
+the design note §6 for what breaks.
+
+**Tests.** `src/terrain/walks.test.ts` (6): the jitter noise smooth, walk determinism by seed, torus wrap (an island
+across the seam, walks crossing it, none stranded), the tree (every node reaches the sea, no cycle, walks merge),
+levels never rise downstream and stand under the ground beside them (and falls at the island's cliff), the lateral
+clamp brings a hanging tributary down to the main valley.
+

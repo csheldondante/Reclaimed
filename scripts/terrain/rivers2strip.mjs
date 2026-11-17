@@ -77,7 +77,7 @@ try {
     plots.push(['long profile', f]);
   }
   const img = (f) => (fs.existsSync(f) ? `data:image/png;base64,${fs.readFileSync(f).toString('base64')}` : '');
-  const names = ['map', 'plain', 'plainwide', 'fall', 'fallwide', 'volcano'];
+  const names = ['map', 'plain', 'plainwide', 'fall', 'fallwide', 'volcano', 'playplain', 'playfall', 'playvolcano', 'muru'];
   const rows = names
     .filter((nm) => fs.existsSync(`${dir}/${A}-${nm}.png`))
     .map((nm) => `<div style="display:flex;gap:6px;margin:6px 0"><div><div style="font:600 14px system-ui">${nm} — before (${B})</div><img src="${img(`${dir}/${B}-${nm}.png`)}" width="480"></div><div><div style="font:600 14px system-ui">${nm} — after (${A}, a.rivers2=1)</div><img src="${img(`${dir}/${A}-${nm}.png`)}" width="480"></div></div>`)
