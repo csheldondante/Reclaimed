@@ -134,6 +134,69 @@ export interface RunStat {
   far: string[];
   /** (draft 8) the content this run unlocked for later runs (ids) */
   unlocked: string[];
+  /** (loop round 16) each season's board before a card was taken: the share of its asks the pools could pay for one at
+   *  a time, and whether they could pay for all of them together */
+  afford: number[];
+  all: boolean[];
+  /** (loop round 16) each season's decision space (decisionSpace) */
+  space: Space[];
+}
+
+/**
+ * (loop round 16) A season's board as a decision. `n` cards offered (the raiders' tribute counted: paying it is a
+ * choice); `k` the most of them the pools can pay for together, and `subsets` how many different sets of them can be
+ * paid for together (the empty one not counted) — the size of the choice; `delayed` cards that cost now and pay in a
+ * later season (more than one season's work, or an income each season); `converts` cards that spend one pool to give
+ * another; `where` cards standing at a town site that a rule of place (`near`) reads; `threat` a standing threat with
+ * its countdown on the board, and `answers` the cards offered that meet it (the tribute, or a card tagged war or
+ * raiders).
+ */
+export interface Space {
+  n: number;
+  k: number;
+  subsets: number;
+  delayed: number;
+  converts: number;
+  where: number;
+  threat: boolean;
+  answers: number;
+}
+const POOL_WORDS: Record<string, RegExp> = { magic: /Magic/, might: /Might/, labor: /Labor|workers/i, materials: /Materials/, intel: /Intel/, unrest: /Unrest/ };
+function decisionSpace(t: Table, board: OppCard[]): Space {
+  const have = Object.fromEntries(t.poolViews().map((x) => [x.pool, x.have])) as Record<string, number>;
+  const cost = board.map((c) => {
+    const m: Record<string, number> = {};
+    for (const part of [c.locks, c.costs]) for (const [k, n] of Object.entries(part)) m[k] = (m[k] ?? 0) + (n ?? 0);
+    return m;
+  });
+  const n = Math.min(board.length, 14);
+  let k = 0;
+  let subsets = 0;
+  for (let mask = 1; mask < 1 << n; mask++) {
+    const sum: Record<string, number> = {};
+    let size = 0;
+    for (let i = 0; i < n; i++) if (mask & (1 << i)) (size++, Object.entries(cost[i]).forEach(([p, v]) => (sum[p] = (sum[p] ?? 0) + v)));
+    if (Object.entries(sum).every(([p, v]) => (have[p] ?? 0) >= v)) {
+      subsets++;
+      k = Math.max(k, size);
+    }
+  }
+  const nearTags = new Set(t.ruleDefs().flatMap((r) => [r.a, r.b].filter((q) => !!q?.near).flatMap((q) => q!.tags)));
+  const sites = new Set(t.things().filter((x) => x.tags.some((g) => nearTags.has(g))).map((x) => x.name));
+  const threat = board.some((c) => c.threat && c.template === TRIBUTE) || t.realm.standingThreat() !== null;
+  return {
+    n: board.length,
+    k,
+    subsets,
+    delayed: board.filter((c) => c.turns > 1 || /each season|every season/i.test(c.gives)).length,
+    converts: board.filter((c) => {
+      const spends = Object.keys(cost[board.indexOf(c)]);
+      return Object.entries(POOL_WORDS).some(([p, re]) => !spends.includes(p) && re.test(c.gives)) && spends.length > 0;
+    }).length,
+    where: board.filter((c) => sites.has(c.place)).length,
+    threat,
+    answers: board.filter((c) => c.template === TRIBUTE || c.tags.includes('war') || c.tags.includes('raiders')).length,
+  };
 }
 
 /** the bot's settling: each event it is winning, settled now; what that starts, cast into and settled too, while it
@@ -192,9 +255,27 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
   const idle: number[] = [];
   const titles: Record<string, Set<string>> = {};
   const note = (): void => void t.cards().forEach((c) => (titles[c.template] ??= new Set()).add(c.title));
+  const afford: number[] = [];
+  const all: boolean[] = [];
+  const space: Space[] = [];
   while (!t.over) {
     idle.push(t.poolViews().find((x) => x.pool === 'labor')!.have);
     note();
+    // (loop round 16, scarcity: the season's board before anything is taken — the share of its asks (not the raiders'
+    // tribute, not a card that starts by itself) the pools could pay for one at a time, and whether they could pay for
+    // every one together)
+    const board = t.cards();
+    const asks = board.filter((c) => c.template !== TRIBUTE);
+    if (asks.length) {
+      afford.push(asks.filter((c) => !Object.keys(c.short).length).length / asks.length);
+      const have = Object.fromEntries(t.poolViews().map((x) => [x.pool, x.have])) as Record<string, number>;
+      const need: Record<string, number> = {};
+      for (const c of asks) for (const part of [c.locks, c.costs]) for (const [k, n] of Object.entries(part)) need[k] = (need[k] ?? 0) + (n ?? 0);
+      all.push(Object.entries(need).every(([k, n]) => (have[k] ?? 0) >= n));
+    }
+    // (loop round 16, the owner on Faeria: "resources constrain you to an n choose k that is fairly large but not
+    // overwhelmingly so and where you have lots of choices that interact" — the season's decision space, measured)
+    space.push(decisionSpace(t, board));
     // (the board changes as cards are taken: scored again after each)
     for (;;) {
       const best = t
@@ -259,6 +340,9 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
     ending: r.ended && r.ended.result !== 'stood' ? r.ended.name : null,
     far: t.farNews().places.map((x) => `${x.name}: ${x.line}`),
     unlocked: t.opened().filter((x) => x.turn > r.w.turn - r.season).map((x) => x.id),
+    afford,
+    all,
+    space,
   };
 }
 
@@ -292,6 +376,23 @@ export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy
   }
   L.push('');
   L.push('"trouble": mean first season a threat ran out or Unrest kept every worker away. "asked", "took": cards on the board and taken, a season. "cast": Magic spent on spells. "idle": free workers at a season\'s start / workers at the end. "left": free pools when the run ended.');
+  L.push('');
+  // (loop round 16: scarcity and synergy at the moment of choice — the owner could pay for every card and saw few rules
+  // fire; the aim is about half of what is asked affordable, with rules firing in most runs)
+  const fired = (r: RunStat) => Object.values(r.rules).reduce((a, b) => a + b, 0);
+  const pct = (x: number) => `${(100 * x).toFixed(0)}%`;
+  const allRuns = { afford: mean(runs.flatMap((r) => r.afford)), all: mean(runs.flatMap((r) => r.all.map((x) => (x ? 1 : 0)))), fired: mean(runs.map(fired)), any: runs.filter((r) => fired(r) > 0).length };
+  L.push(`Scarcity: asks affordable one at a time ${pct(allRuns.afford)} of a board; every ask affordable together in ${pct(allRuns.all)} of seasons. Synergy: ${allRuns.fired.toFixed(1)} rule firings a run; a rule fired in ${allRuns.any} of ${runs.length} runs.`);
+  for (const p of policies) {
+    const mine = runs.filter((r) => r.policy === p.name);
+    L.push(`  ${pad(p.name, 24)}affordable ${pad(pct(mean(mine.flatMap((r) => r.afford))), 5)} all ${pad(pct(mean(mine.flatMap((r) => r.all.map((x) => (x ? 1 : 0))))), 5)} firings a run ${mean(mine.map(fired)).toFixed(1)}`);
+  }
+  L.push('');
+  // (loop round 16: the season's decision space, over every season of every run — see `Space`)
+  const sp = runs.flatMap((r) => r.space);
+  const med = (a: number[]) => (a.length ? [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)] : 0);
+  const th = sp.filter((s) => s.threat);
+  L.push(`Decision space a season (${sp.length} seasons): offered n ${mean(sp.map((s) => s.n)).toFixed(1)}; most affordable together k ${mean(sp.map((s) => s.k)).toFixed(1)}; affordable sets ${mean(sp.map((s) => s.subsets)).toFixed(1)} mean, ${med(sp.map((s) => s.subsets))} median; no decision (all affordable together) ${pct(mean(sp.map((s) => (s.n > 0 && s.k === s.n ? 1 : 0))))}; delayed return ${mean(sp.map((s) => s.delayed)).toFixed(1)}; converts a pool ${mean(sp.map((s) => s.converts)).toFixed(1)}; worth depends on where ${mean(sp.map((s) => s.where)).toFixed(1)}; a standing threat with its countdown ${pct(th.length / Math.max(1, sp.length))} of seasons, an offered card meets it in ${pct(th.filter((s) => s.answers > 0).length / Math.max(1, th.length))} of those.`);
   L.push('');
   L.push('Pool curves (mean over a policy\'s runs; seasons 1, a quarter, half, three quarters, last):');
   for (const p of policies) {

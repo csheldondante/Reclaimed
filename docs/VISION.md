@@ -80,7 +80,9 @@ destroy each other instead of dethroning your rule."
 | Physics | Cliffs crumbling into the sea and taking districts with them; toppling buildings | Parked on `physics10-one`; old physics is the default |
 | 3D tile construction | Superstructures and wonders that later crumble or transform and are lived in by descendants | Not in the loop |
 | Units as compositions | Variety from permutations of parts, "with the intent that the dealer steer it toward thematic interesting visually distinct units"; a knight on a hoverbike is a pike unit with a mount found in the ruins | Designed (DECISIONS round 85); cards use authored examples for now |
-| Flow fields, formations, authored paths | Crowds that stay visible and legible | Wired into the loop in rounds 8 and 9 |
+| Flow fields, formations, authored paths | Crowds that stay visible and legible | Wired into the loop in rounds 8 and 9; round 16: a messenger brings news by a road |
+| Sleep and wake | A quiet world in play, woken by events (the owner, 2026-11-17: "frozen except in reaction to specific events like magma flows") | Round 16: `sim/quiet.ts` in the loop |
+| Living town (riders) | Towns that read as busy with trade coming and going | Round 16: ~330 riders at a run's start, 500+ as it grows, drawn 1.6×; colours by layer open (LS-151) |
 | Flora; cliffside dwellings | Overgrowth; building along or into stone | Not finished |
 
 Eventual city sites (2026-11-17): "the plan is to have underground cities, cities on water falls, cities in jungles, on

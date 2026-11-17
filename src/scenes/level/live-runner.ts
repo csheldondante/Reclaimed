@@ -216,6 +216,12 @@ export class LiveRunner {
   /** (loop round 12) lava fronts whose events are over, setting: their way kept awake, the lava's cooling quickened */
   private setting: { f: Front; left: number; awake: number; age: number }[] = [];
 
+  /** (loop round 16, sim/quiet.ts) something hot under way — a fire's stalls, a front pouring or still setting: the
+   *  quiet world keeps the fire awake while it is */
+  get hot(): boolean {
+    return this.setting.length > 0 || this.runs.some((r) => !r.over && (r.hazard !== null || r.front !== null));
+  }
+
   constructor(private h: LiveHost) {}
 
   private hook(): void {

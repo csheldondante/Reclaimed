@@ -15,6 +15,13 @@ export class WeatherSet {
   private readonly base: [number, number];
   /** what was applied last (scripts and the census read it) */
   now: WeatherNow;
+  /** (loop round 16, sim/quiet.ts) a quiet world: no natural storms but a weather's own — one with a storm held over
+   *  the town (rain, storm: a card's sign or the season's) keeps its storms; fair weather brings none */
+  private quietOn = false;
+  set quiet(on: boolean) {
+    this.quietOn = on;
+    this.apply();
+  }
 
   constructor(
     private core: WorldCore,
@@ -56,7 +63,7 @@ export class WeatherSet {
     const p = core.weather.params;
     p.baseWindX = this.base[0] * w.wind;
     p.baseWindY = this.base[1] * w.wind;
-    core.weather.setNatural(w.every);
+    core.weather.setNatural(this.quietOn && w.storm === 0 ? null : w.every);
     const c = this.centre();
     this.held = c ? core.weather.holdOver(this.held, c[0], c[1], w.storm) : core.weather.holdOver(this.held, 0, 0, 0);
     console.log(`[weather] ${w.of.join(' + ')}: wind x${w.wind.toFixed(2)}, storm ${w.storm.toFixed(2)}, sky dim ${w.skyDim.toFixed(2)}, ash ${w.ashFall.toFixed(2)}, fog ${w.fog.toFixed(2)}`);

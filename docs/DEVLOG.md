@@ -26068,3 +26068,59 @@ into (LS-145).
 **Phone links** checked from a headless Chrome on the LAN address of the worktree's HTTPS dev server (port 5455):
 both load to the leader screen, the second with its three packs (`scripts/lab/lanlinks.mjs`).
 
+## 2026-11-17 — loop round 16: a quiet world, asks on the map, news in person, a busier town (`loop-skeleton`)
+
+The owner's phone playtest (DECISIONS 2026-11-17): the simulation shows as noise in play, the sheet hides the town,
+the camera cuts to points on the map, the choices are not synergistic, the town does not read as busy.
+
+**Quiet world** (`src/sim/quiet.ts`; wired in `scenes/level/loop.ts quietNow`, `?quiet=0` off). The round-128p
+fortress ruling (seeds, petals, grow glow off in play) was never applied to the loop. Now asleep by default, by name
+(`Simulation.paused`): ecology, wilt, climate, cover, moisture, contamination, sediment, oil, the sandbox lava, structure,
+fire; and `ParticleSystem.plants` and a new `ParticleSystem.fire` flag. Natural storms off in fair weather
+(`WeatherSet.quiet`: a weather with a storm keeps its own). Wakes: the time-lapse (everything, while it plays); a live
+fire or a lava front pouring or setting (`LiveRunner.hot`: fire, structure, fire particles); any Ignite event (the same,
+90 s, in the tick it is sent — an event tap runs before the systems encode, so a fire lit is never lost); the growth
+rune (ecology, wilt, moisture, plant particles, 20 s). Water is not gated: its step makes the draw lists of land
+streamed in, and it already idles on sleeping chunks. Census idle at 412x915, q=low (`scripts/census.mjs --params
+loop=1 --pick dunstan --states idle`), same tree: `?quiet=0` 1.15 ms est. phone, 22.5 compute passes a frame →
+quiet 0.77 ms, 9.0 passes (−0.38 ms, −33%); ticks 0.53 a frame either way; read back 0.99 KB a frame either way
+(round 15's HEAD: 0.97 ms, 20.9 passes, 1.40 KB). Seen on screen: nothing a still shows — the flecks in the fields
+are ground flowers, not particles (`local/round16/before-fields.png`, `after-fields.png`).
+
+**Asks on the map only** (`season/run-ui.ts`). The town's sheet is one row: Map, Growth rune, List n, Next season
+(46 px tall buttons); the asks' list, the season's news and Laws / Rules / Remembered are a page behind "List". The town
+shows on 85% of the screen at 412x915 (was 49%: sheet 384 px, now 58). Every ask has a marker: at its site, or — bound
+to a far place or a POI, or its site off the screen — a dashed edge marker with an arrow toward it (`loop.ts
+offerPlace`, `arrowOf`); no place: at the keep. All go through `declutter` (LS-74/LS-91): 0 overlaps in the stills.
+The town is framed in the middle now (`showTown` place 0.48).
+
+**News in person** (`scenes/level/messenger.ts`). A `character` unit walks in by the road on the keep's side (a far
+place's news: the road facing it) from 14 cells out at 5 cells/s, the story camera on it at zoom 11 with a yellow ring
+and its name; its words on arrival or after 5 s, three lines a page, Skip at any time, Done at the end. The run's
+opening ("The world now" lines) is the steward's; a season's news the chronicler's (the scout captain's when a new ask
+is from a far place) with the new asks named; a season with only new asks sends the first petitioner to their site.
+Stills: `after-open-2.png` (the steward on the road, ringed), `after-news-2.png` (the rider), `after-news-4.png`
+(speaking, Done). First version walked from road 0 across a bridge and was still walking at 6 s: the road is now the
+keep's side, the walk shorter.
+
+**Decision space measured** (`table/bots.ts decisionSpace`, the bots' report "Decision space a season"; 16 seasons,
+every policy and leader, seed 1). Base: n 3.9 offered, k 2.5 most affordable together, 9.6 affordable sets (median 7),
+no decision (all affordable together) 20% of seasons, delayed return 1.9, converts a pool 1.2, worth depends on where
+3.2 (a rough count: cards at a site whose tags a `near` rule reads), a standing threat with countdown 80% of seasons,
+an offered card meets it in 98% of those; one at a time 92% affordable. With frontier, ages, arena: n 4.3, k 2.9, 11.1
+sets (median 9), no decision 20%, delayed 1.1, converts 0.8, where 3.6, threat 78% / met 85%; one at a time 90%. Rule
+firings a run 29 (base) and 55 (packs). No tuning this round (the owner: mechanics designed with them). The packs' bot
+test still fails "doing nothing loses the town" (the idle bot sees no raid in one run); the bots' play is unchanged.
+
+**Combos at the moment of choice** (`season/combos.ts`, the petition's "You get"): the thing a card makes (a building's
+site worked, a pack thing) against each rule not firing now: "With your houses: Trade at the market: +1 Materials each
+season.", "Sets off …", and a pack card's unlock "Opens "…" for later.". Unit test `test/unit/combos.test.ts`.
+
+**A busier town** (`season/life.ts`): the living-town lab runs ~950 riders by default (citylife/params.ts); the loop's
+town began with 90. Now 240 commuters + 80 a houses card + 15 a district built, 40 farmers + 40 a farms card, 20
+builders, 10 wagons before any trade route (+14 a route), a ship with a harbour: ~330 at a run's start, 500+ with a
+few districts. Riders are drawn 1.6× (`routes.wgsl FIG`): at the closer zoom (7) a townsperson is ~8-10 px tall
+(`before-close-1.png` / `after-close-1.png`, 3 frames each); at the town's framing zoom they stay 2-3 px. Census
+idle with the riders: 0.78 ms (the count model sees dispatches, not threads: more riders do not show — LS-150).
+Colours by layer not done (LS-151).
+

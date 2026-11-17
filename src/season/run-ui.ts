@@ -20,7 +20,7 @@ export interface Marker {
   /** 'raider', 'soldier': a ring round one figure of the fight (no label); 'folk' (round 7): a ring round one of the
    *  people of an event who take no part in a fight (a parade's marchers, refugees' carts); 'side': a side's name and
    *  count over it */
-  kind: 'ask' | 'threat' | 'raider' | 'soldier' | 'folk' | 'side' | 'thing' | 'done';
+  kind: 'ask' | 'threat' | 'raider' | 'soldier' | 'folk' | 'side' | 'thing' | 'done' | 'edge';
   x: number;
   y: number;
 }
@@ -174,6 +174,16 @@ const CSS = `
 .run-sheet button.fold{flex:0 0 auto;min-height:36px;font:600 13px system-ui;padding:6px 12px;border-radius:10px;border:0;background:#3a3f4a;color:#eee}
 .run-sheet .views{display:flex;gap:8px}
 .run-sheet .views button{flex:1;min-height:44px;font:600 14px system-ui;border-radius:10px;border:0;background:#3a3f4a;color:#eee}
+/* (loop round 16: the town's bar is one row of buttons — the town fills the screen; the asks are the names over it) */
+.run-sheet.slim{padding:6px 8px calc(6px + env(safe-area-inset-bottom));gap:4px;border-radius:12px 12px 0 0}
+.run-sheet.slim .go button{min-height:46px;padding:8px 6px;font-size:15px}
+.run-sheet.slim .go button.asks{flex:0 0 auto;background:#3a3f4a;color:#eee;font-weight:600}
+.run-sheet .last{font-size:12px;color:#d0d0d0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.run-marks button.edge{background:#f2e3b0;border-style:dashed;font-size:12px}
+.run-full .item{display:flex;gap:8px;align-items:center;min-height:46px;box-sizing:border-box;background:#2c3038;border-radius:10px;padding:8px;border:0;color:inherit;font:inherit;text-align:left;width:100%}
+.run-full .item span{flex:1}
+.run-full .item i{font-style:normal;font-size:12px;color:#d9c99a;white-space:nowrap}
+.run-full .note{font-size:13px;color:#d0d0d0}
 `;
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
@@ -202,11 +212,12 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
   const full = el('div', 'run-full');
   ui.append(style, marks, top, sheet, full);
 
-  let folded = false;
+  /** (loop round 16) the full list of asks open as a page over the town */
+  let listOpen = false;
   let was: Phase | null = null;
   const render = () => {
     const { phase, run } = game;
-    if (phase !== was) folded = false;
+    if (phase !== was || phase !== 'city') listOpen = false;
     was = phase;
     const l = game.ledger;
     // ---- the top: the leader, the season, the pools and what each season brings, the raiders' countdown
@@ -228,7 +239,7 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
     }
     // ---- the full screens: pick a leader, the end of the run
     const panel = game.panel;
-    full.style.display = phase === 'leader' || phase === 'end' || panel ? '' : 'none';
+    full.style.display = phase === 'leader' || phase === 'end' || panel || listOpen ? '' : 'none';
     const list = (lines: string[]): HTMLElement => {
       const ul = el('ul');
       for (const t of lines) ul.appendChild(el('li', undefined, t));
@@ -251,6 +262,31 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       const acts = el('div', 'acts');
       for (const a of panel.actions ?? []) acts.append(btn(a.label, a.on, 'big'));
       acts.append(btn(W.CLOSE, () => game.closePanel(), 'big'));
+      full.append(acts);
+    } else if (listOpen && run) {
+      // (loop round 16: the asks as a list, for those who want one — a tap opens the petition as its name over the map
+      // does; what is under way; the season's news; the laws, rules and record)
+      const asks = game.asking();
+      full.append(el('h2', undefined, asks.length ? W.ASKS_TITLE : W.ASKS_NONE));
+      const close = () => ((listOpen = false), render());
+      for (const a of asks) {
+        const item = el('button', 'item');
+        item.append(el('span', undefined, `${a.who}. ${a.title}`), el('i', undefined, W.leftText(a.left)));
+        item.onclick = () => (close(), game.open(a.id));
+        full.appendChild(item);
+      }
+      for (const t of game.working()) {
+        const item = el('div', 'item');
+        item.append(el('span', undefined, t), el('i', undefined, W.WORKING));
+        full.appendChild(item);
+      }
+      if (game.notes.length) {
+        full.append(el('h4', undefined, W.NEWS_TITLE));
+        for (const t of game.notes) full.append(el('div', 'note', t));
+      }
+      const acts = el('div', 'acts');
+      for (const v of game.views()) acts.append(btn(v.label, () => (close(), v.on()), 'big'));
+      acts.append(btn(W.CLOSE, close, 'big'));
       full.append(acts);
     } else if (phase === 'leader') {
       full.append(el('h2', undefined, W.PICK_TITLE), el('div', 'sub', W.PICK_SUB));
@@ -292,49 +328,26 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
     const go = el('div', 'go');
     // (loop round 13: the town's sheet folds down to one button, and the names over the map go with it — to look at the
     // land itself; it opens again on a tap, or at the next phase)
-    marks.style.display = folded && phase === 'city' ? 'none' : '';
-    if (phase === 'city' && run && folded) {
-      go.append(btn(W.SHEET_SHOW, () => ((folded = false), render()), 'quiet'));
-    } else if (phase === 'city' && run) {
+    // (loop round 16, the owner: "The cards take up too much screen space. I think having the opportunities selectable
+    // on the map only is fine." The town's sheet is one row — the map, the growth rune, the list as a page for those who
+    // want it, Next season; the pools, the season and the threat are the top bar's. The names over the town are the way in)
+    sheet.className = phase === 'city' ? 'run-sheet slim' : 'run-sheet';
+    if (phase === 'city' && run) {
       const asks = game.asking();
-      const head = el('div', 'head');
-      head.append(el('h3', undefined, asks.length ? W.ASKS_TITLE : W.ASKS_NONE), btn(W.SHEET_HIDE, () => ((folded = true), render()), 'fold'));
-      sheet.append(head);
-      if (asks.length) sheet.append(el('div', 'note', W.TAP_MARKER));
-      for (const t of game.notes) sheet.append(el('div', 'note', t));
-      const box = el('div', 'list');
-      for (const a of asks) {
-        const item = el('button', 'item');
-        item.append(el('span', undefined, `${a.who}. ${a.title}`), el('i', undefined, W.leftText(a.left)));
-        item.onclick = () => game.open(a.id);
-        box.appendChild(item);
-      }
-      for (const t of game.working()) {
-        const item = el('div', 'item');
-        item.append(el('span', undefined, t), el('i', undefined, W.WORKING));
-        box.appendChild(item);
-      }
-      sheet.appendChild(box);
       // (round 6: a spell every season — the growth rune over a field; what it does is said once it is pressed)
       if (game.armed) sheet.append(el('div', 'warn', W.GROWTH_HOW));
       // (the world's map: far places and what has changed at each — the mutators' badges)
       const map = btn(W.MAP, () => game.map(), 'quiet');
-      map.style.flex = '0 0 76px';
+      map.style.flex = '0 0 64px';
       go.append(map);
       for (const sp of game.citySpells) {
         const b = btn(W.SPELL_NAME[sp], () => game.arm(game.armed === sp ? null : sp), game.armed === sp ? 'on quiet' : 'quiet');
-        b.style.flex = '0 0 112px';
+        b.style.flex = '0 0 104px';
         b.style.fontSize = '14px';
         go.append(b);
       }
+      go.append(btn(W.listButton(asks.length), () => ((listOpen = true), render()), 'asks'));
       go.append(btn(W.NEXT, () => game.next()));
-      // (round 8: laws in force, the rules and what each lacks, what this world remembers)
-      const views = game.views();
-      if (views.length) {
-        const row = el('div', 'views');
-        for (const v of views) row.append(btn(v.label, v.on));
-        sheet.appendChild(row);
-      }
     } else if (phase === 'season') {
       sheet.append(el('h3', undefined, W.BUILDING));
       for (const t of game.notes) sheet.append(el('div', 'note', t));
@@ -380,7 +393,7 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       let b = made.get(key);
       if (!b) {
         b = el('button', m.kind === 'ask' ? undefined : m.kind);
-        if (m.kind === 'ask' || m.kind === 'thing' || m.kind === 'done') b.onclick = () => game.open(m.id);
+        if (m.kind === 'ask' || m.kind === 'thing' || m.kind === 'done' || m.kind === 'edge') b.onclick = () => game.open(m.id);
         if (m.kind === 'thing' && m.label.startsWith(W.remainsOf(''))) b.classList.add('ruined');
         made.set(key, b);
         marks.appendChild(b);

@@ -103,6 +103,9 @@ export class ParticleSystem implements SimSystem {
    * Leaves, dust, fire and smoke are emit's and fire's, kept.
    */
   plants = true;
+  /** (loop round 16, sim/quiet.ts) the fire's own particles (flames and smoke off burning columns) dispatched: off while
+   *  nothing burns or can (the fire system asleep), on while a fire, a front or a cast may have lit something */
+  fire = true;
   private groupPetal: GPUBindGroup;
   private groupFire: GPUBindGroup;
   /** the emitters' group for each of the brush state's two textures (DA-B8: WorldGpu.editCur picks) */
@@ -239,11 +242,12 @@ export class ParticleSystem implements SimSystem {
       for (const [name, list] of Object.entries(this.split)) {
         // (round 128p: the plants' kernels not dispatched at all while they're off)
         if (!this.plants && (name === 'petals' || name === 'plants')) continue;
+        if (!this.fire && name === 'fire') continue;
         for (const x of list) dispatchTiles(enc, this.prof, `particles-${name}`, x.k, x.g[this.world.editCur], this.world.tiles!, x.n);
       }
     } else {
       dispatch(enc, this.prof, 'particles-emit', this.emitK, this.groups[this.world.editCur], this.world.groups);
-      dispatch(enc, this.prof, 'particles-fire', this.fireK, this.groupFire, this.world.groups);
+      if (this.fire) dispatch(enc, this.prof, 'particles-fire', this.fireK, this.groupFire, this.world.groups);
       if (this.plants) {
         dispatch(enc, this.prof, 'particles-petals', this.petalK, this.groupPetal, this.world.groups);
         dispatch(enc, this.prof, 'particles-plants', this.plantK, this.groups[this.world.editCur], this.world.groups);

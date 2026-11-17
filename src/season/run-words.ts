@@ -38,9 +38,28 @@ export const lockedLine = (hint: string): string => (hint ? `Not yet found. ${hi
 export const ASKS_TITLE = 'People are asking for you';
 export const ASKS_NONE = 'Nobody is asking for you this season';
 export const TAP_MARKER = 'Tap a name on the map to hear them out.';
-/** (loop round 13) folding the town's sheet and the names away, to look at the land, and back */
-export const SHEET_HIDE = 'Hide';
-export const SHEET_SHOW = 'Show the town list';
+/** (loop round 16) the leader's advisors, who bring the news in person (scenes/level/messenger.ts): the steward tells
+ *  how the world stands as a run begins, the chronicler what a season brought, the scout captain news from far places */
+export const ADVISORS = {
+  steward: { name: 'Hal Brenner', role: 'steward' },
+  chronicler: { name: 'Ottilie Marsh', role: 'chronicler' },
+  scout: { name: 'Wynn Ashby', role: 'scout captain' },
+} as const;
+/** a new ask, as an advisor says it */
+export const newAsk = (who: string, title: string): string => `${who} is asking for you: ${title}.`;
+/** a petitioner's own words when they come in */
+export const comeToAsk = (title: string): string => `${title}. Tap my name over the town to hear me out.`;
+export const QUIET_SEASON = 'A quiet season. Nothing new to tell.';
+/** (loop round 16) what a card combines with, in its petition's "You get" */
+export const comboWith = (thing: string, what: string): string => `With your ${thing.replace(/^the /i, '')}: ${what}.`;
+export const comboAlone = (what: string): string => `Sets off ${what}.`;
+export const comboAsks = (title: string): string => `then "${title}" is asked of you`;
+export const comboStarts = (title: string): string => `then "${title}" begins`;
+export const comboLaw = (name: string): string => `the law "${name}"`;
+export const comboOpens = (name: string): string => `Opens "${name}" for later.`;
+/** (loop round 16) the town bar's button that opens the asks as a list (the names over the map are the way in) */
+export const listButton = (n: number): string => `List ${n}`;
+export const NEWS_TITLE = 'This season';
 export const NEXT = 'Next season';
 export const MAP = 'Map';
 export const SKIP = 'Skip';

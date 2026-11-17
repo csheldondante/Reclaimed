@@ -231,10 +231,10 @@ describe('season life (the living town from the ledger)', () => {
   it('houses bring commuters, a quarry card turns the quarry on from its start, builders while districts build', async () => {
     const { townLife, LIFE } = await import('../../src/season/life');
     const l0 = start();
-    expect(townLife(l0)).toMatchObject({ commuters: LIFE.commuters, farmers: 0, quarry: false, camp: false, quarrymen: 0 });
+    expect(townLife(l0)).toMatchObject({ commuters: LIFE.commuters + LIFE.perBuilt * l0.built.length, farmers: LIFE.farmers, quarry: false, camp: false, quarrymen: 0 });
     let l = commit(commit(l0, card('quarry')), card('houses'));
     expect(townLife(l)).toMatchObject({ quarry: true, quarrymen: LIFE.quarrymen, builders: LIFE.builders + LIFE.perBuild });
     l = nextSeason(nextSeason(l).ledger).ledger;
-    expect(townLife(l)).toMatchObject({ quarry: true, commuters: LIFE.commuters + LIFE.perHouses, builders: LIFE.builders });
+    expect(townLife(l)).toMatchObject({ quarry: true, commuters: LIFE.commuters + LIFE.perHouses + LIFE.perBuilt * l.built.length, builders: LIFE.builders });
   });
 });

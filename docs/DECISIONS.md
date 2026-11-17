@@ -3955,3 +3955,45 @@ and what is still the owner's to decide: who decides a fight, every rule's numbe
 - The big flow (VISION §7): "A flow that fills multiple screens and comes in a sweeps over the town could be really
   cool to see and motivate building trenches to redirect it to the sea or magical shields or summoning a blizzard to
   freeze it or something."
+
+## 2026-11-17 — loop round 16: the owner's phone playtest (`loop-skeleton`)
+
+- "This is great progress but it's still kind of bad to play."
+- "I thought we got rid of the flora growth particles and simulation during play and made it a between seasons thing
+  only?" → the quiet world (sim/quiet.ts): in `?loop=1` play the land's background systems and the plants' and fire's
+  particles sleep; the time-lapse, a live fire or front, a fire lit, and the growth rune wake what they need.
+- "The cards take up too much screen space. I think having the opportunities selectable on the map only is fine." →
+  the town's sheet is one row (Map, Growth rune, List n, Next season); every ask has a name over the town or an edge
+  marker pointing its way; the list is a page for those who want it.
+- "It would be cool to have camera zoom in and show a person arrive with news instead of a random point on the map. If
+  we do zoom to a random point on the map it would be cool if we had cutaways." → news comes with a messenger
+  (scenes/level/messenger.ts); cutaways written up (BACKLOG LS-152).
+- "The panning to show the effects of decisions just isn't very effective now and I think it is largely because of the
+  readability of the map and lack of things like building animations (there is a linked shader trick for building
+  time lapse somewhere in memory)." → written up (LS-152, docs/handoff/sessions/CONSTRUCTION_SHADER.md).
+- "I like the basic structure a lot of choosing a leader then getting a sort of narration of what is going on. Even
+  better would be an event like a rider or advisors that make the exposition more diagetic. I tried all the packs and
+  didn't yet get to the lava flows. The choices were so far not that synergistic and I usually had resources to make
+  all of them." → advisors (steward, chronicler, scout captain) and petitioners bring the news in person; a petition
+  shows what it would combine with and open (season/combos.ts).
+- "I think the terrain and simulation is cool and a strength but it often during play shows up as noise and should
+  probably be frozen except in reaction to specific events like magma flows. That should hopefully help the simulation
+  burden too. I don't think cities read as full of activity with trade coming and going yet and I think it is largely
+  art and not using the simulation which I think was fine with up to 500 GPU agents. This should be all GPU right?"
+  → yes: units (src/agents) and riders (src/citylife) step on the GPU; the CPU sets counts and orders.
+- Correction (same day): "I don't think I met the lava front just because I didn't play enough rounds not any defect.
+  But readability and controls will be the biggest improvements to the experience I think. Then better content packs
+  and more content." → no hunt for the lava front, no pack data changed to force it; readability and controls first.
+- "I think readability is number one and then tuning the card mechanics to produce more interesting decisions. What
+  makes a card game interesting is thinking through the coninatoric space and planning against known needs or goals.
+  If I have to weigh, will this resource be returned by the time I need it? Can I get another resource that I can then
+  convert into the resource in need in time? It becomes a puzzle. Faeria excelled at this. Every decision from which
+  cards to play to where to play them or where to move units to block agro, managing card and Faeria economy. It
+  worked well because resources constrain you to an n choose k that is fairly large but not overwhelmingly so and
+  where you have lots of choices that interact. […] Notice how many systems interact and lead to a fun mental puzzle
+  for the player every single turn." → this round measures the decision space only (the bots' report); the mechanics
+  are designed with the owner next. No economy tuning this round.
+- "Readability I've seen the agent demo with way more foot traffic and it reads better but partially just tuning colors
+  and brightness so certain layers reserve some colors and are more visible and increasing the number of towns people
+  will make a huge difference I think." → more townspeople and trade (season/life.ts), figures drawn 1.6× (the
+  riders' FIG); colours by layer left for a look with the owner (LS-151).

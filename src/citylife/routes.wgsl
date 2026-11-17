@@ -1638,6 +1638,12 @@ fn vox(at: vec3<f32>, mat: u32, size: u32, yaw: f32) {
   VOX[k * 2u] = vec4<u32>(bitcast<u32>(at.x), bitcast<u32>(at.y), bitcast<u32>(at.z), (mat & 0xffu) | ((size & 63u) << 24u));
   VOX[k * 2u + 1u] = vec4<u32>(0u, 0u, bitcast<u32>(sin(yaw * 0.5)), bitcast<u32>(cos(yaw * 0.5)));
 }
+/** (loop round 16, the owner: people should read) a figure drawn FIG times its size, as RTS games exaggerate units: at
+ *  the loop's closer zoom (7) a townsperson is ~8-10 px tall at 412 px wide with it (local/round16/after-close-1.png) */
+const FIG: f32 = 1.6;
+fn fig(wp: vec3<f32>, off: vec3<f32>, mat: u32, size: u32, yaw: f32) {
+  vox(wp + off * FIG, mat, u32(round(f32(size) * FIG)), yaw);
+}
 /** (a thread a rider) its voxels, placed in the window (culled to it) */
 @compute @workgroup_size(64)
 fn figures(@builtin(global_invocation_id) g: vec3<u32>) {
@@ -1662,23 +1668,23 @@ fn figures(@builtin(global_invocation_id) g: vec3<u32>) {
   let sw = select(0.0, sin(r.phase * 4.0) * 0.14, moving);
   // (working: a bob, a swing)
   let bob = select(0.0, abs(sin(u.t.y * 6.0 + f32(i))) * 0.12, r.st == S_WORK);
-  vox(wp + vec3<f32>(fw * sw + sd * 0.11, 0.19), M_BASALT, 6u, h);
-  vox(wp + vec3<f32>(-fw * sw - sd * 0.11, 0.19), M_BASALT, 6u, h);
-  vox(wp + vec3<f32>(0.0, 0.0, 0.66 - bob * 0.5), torsoOf(r.job), 9u, h);
-  vox(wp + vec3<f32>(fw * bob, 1.13 - bob), M_FLESH, 6u, h);
+  fig(wp, vec3<f32>(fw * sw + sd * 0.11, 0.19), M_BASALT, 6u, h);
+  fig(wp, vec3<f32>(-fw * sw - sd * 0.11, 0.19), M_BASALT, 6u, h);
+  fig(wp, vec3<f32>(0.0, 0.0, 0.66 - bob * 0.5), torsoOf(r.job), 9u, h);
+  fig(wp, vec3<f32>(fw * bob, 1.13 - bob), M_FLESH, 6u, h);
   let cartJob = r.job == J_STONE || r.job == J_LOGS || r.job == J_WAGON;
   if (cartJob) {
     // (a cart pushed ahead: its bed, and the load on it)
-    vox(wp + vec3<f32>(fw * 0.9, 0.35), M_WOOD, 10u, h);
-    vox(wp + vec3<f32>(fw * 1.45, 0.35), M_WOOD, 10u, h);
+    fig(wp, vec3<f32>(fw * 0.9, 0.35), M_WOOD, 10u, h);
+    fig(wp, vec3<f32>(fw * 1.45, 0.35), M_WOOD, 10u, h);
     if (r.load > 0.0) {
       let lm = select(select(M_LOG, M_RUBBLE, r.job == J_STONE), M_CANVAS, r.job == J_WAGON);
-      vox(wp + vec3<f32>(fw * 0.9, 0.8), lm, 9u, h);
-      vox(wp + vec3<f32>(fw * 1.45, 0.8), lm, 9u, h);
+      fig(wp, vec3<f32>(fw * 0.9, 0.8), lm, 9u, h);
+      fig(wp, vec3<f32>(fw * 1.45, 0.8), lm, 9u, h);
     }
   } else if (r.load > 0.0) {
     let lm = select(M_SAND, M_LOG, r.job == J_WOOD);
-    vox(wp + vec3<f32>(-fw * 0.3, 0.95), lm, 7u, h);
+    fig(wp, vec3<f32>(-fw * 0.3, 0.95), lm, 7u, h);
   }
   if (r.job == J_WOOD && r.st == S_WORK) {
     // (the tree coming down: a trunk leaning further as the cut goes on, falling over its last second)

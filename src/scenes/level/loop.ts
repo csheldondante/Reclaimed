@@ -42,10 +42,13 @@ import type { Leader } from '../../season/realm';
 import type { PackLeader } from '../../packs/check';
 import { startThings } from '../../packs/load';
 import { siteId } from '../../season/realm-templates';
+import { combosOf } from '../../season/combos';
 import * as TW from '../../table/words';
 import { packRoadShapes, type RoadRaster, type RoadShape } from '../../agents/roads';
 import * as W from '../../season/run-words';
 import { StoryCamera, type V3 } from '../../story/camera';
+import { FIRE_WAKE, GROW_WAKE, QuietWorld } from '../../sim/quiet';
+import { Messenger, type Speech } from './messenger';
 import type { LevelScene } from '../level';
 import { startSeasonLoop, storeReady } from './season';
 import { seasonWeather } from '../../weather/presets';
@@ -92,6 +95,8 @@ const HEATRAY = { radius: 5, damage: 2 };
 const FIRE = { radius: 4.5, damage: 12, light: 3 };
 /** the growth rune: how near the fields' place the tap must be (cells), how wide and how hard the plants grow */
 const GROWTH = { reach: 60, radius: 11, strength: 45 };
+/** (loop round 16) seconds the growth rune keeps the succession and the growing glow awake */
+const GROWTH_WAKE_S = 20;
 /** (round 8) half the width of an arterial stamped for the units' fields (cells; tunable) */
 const ROAD_HALF = 2;
 
@@ -121,6 +126,24 @@ class Game implements RunGame {
   private speakers = new Map<string, Speaker>();
   /** the live events (round 6): one runner plays the raid, the dead, a parade, a fire — scenes/level/live-runner.ts */
   private live: LiveRunner;
+  /** (loop round 16) the one who brings news in person (scenes/level/messenger.ts) */
+  readonly messenger: Messenger;
+  /** (loop round 16) the quiet world: the land's background processes asleep in play (null: `?quiet=0`) */
+  readonly quiet: QuietWorld | null;
+
+  /** (loop round 16) the quiet world's holds from the game's state, each frame: the between-seasons time-lapse wakes
+   *  everything; a fire's stalls or a lava front (pouring or setting) keep the fire awake */
+  private quietNow(): void {
+    const q = this.quiet;
+    if (!q) return;
+    if (this.phase === 'season' && this.season.playing) {
+      if (!q.has('timelapse')) q.hold('timelapse', 'all');
+    } else if (q.has('timelapse')) q.release('timelapse');
+    if (this.live.hot) {
+      if (!q.has('live-hot')) q.hold('live-hot', FIRE_WAKE);
+    } else if (q.has('live-hot')) q.release('live-hot');
+    q.update();
+  }
 
   constructor(
     private scene: LevelScene,
@@ -143,9 +166,15 @@ class Game implements RunGame {
       },
       check: () => true,
     });
+    // (loop round 16, sim/quiet.ts: the world asleep in play but for what wakes it; `?quiet=0` as before)
+    this.quiet = scene.host.params.get('quiet') === '0' ? null : new QuietWorld(scene.core.sim);
+    if (this.quiet && scene.weatherSet) scene.weatherSet.quiet = true;
     this.live = new LiveRunner({ scene, cam: this.cam, season, realm: () => this.realm, town: () => this.town, spot: (k) => this.spot(k), z: (x, y) => this.z(x, y), changed: () => this.changed(), ended: (run) => this.liveEnded(run) });
     // (round 7, LS-63: the runner's window points move with the land)
     scene.core.onShift.push((dx, dy, dz) => this.live.shift(dx, dy, dz));
+    // (loop round 16: news comes with a person)
+    this.messenger = new Messenger({ units: () => scene.units ?? null, cam: this.cam, z: (x, y) => this.z(x, y), ui: scene.host.ui });
+    scene.core.onShift.push((dx, dy) => this.messenger.shift(dx, dy));
     let last = performance.now();
     const tick = (now: number) => {
       requestAnimationFrame(tick);
@@ -158,6 +187,8 @@ class Game implements RunGame {
       this.live.update(dt);
       this.liveLine();
       this.poiMarks(dt);
+      this.quietNow();
+      this.messenger.update(dt);
     };
     requestAnimationFrame(tick);
     // (loop round 14, season/pois.ts: the points of interest on the atlas map — a pin each, its kind's colour, a
@@ -172,7 +203,7 @@ class Game implements RunGame {
     window.addEventListener(
       'pointerdown',
       (e) => {
-        if (!(e.target instanceof Element && e.target.closest('.run-sheet, .run-top, .run-marks button, .run-full, .dlg'))) this.cast(e);
+        if (!(e.target instanceof Element && e.target.closest('.run-sheet, .run-top, .run-marks button, .run-full, .dlg, .run-say'))) this.cast(e);
       },
       true,
     );
@@ -314,6 +345,16 @@ class Game implements RunGame {
     const r = this.realm;
     const cam = this.scene.core.camera;
     if (this.phase === 'event') return this.live.marks();
+    // (loop round 16: while a messenger comes in, a ring round them and their name over them — nothing else)
+    if (this.messenger.busy) {
+      const m = this.messenger.walker;
+      if (!m) return [];
+      const [x, y] = cam.project(m.at[0], m.at[1], m.at[2]);
+      return [
+        { id: 'folk-messenger', label: '', kind: 'folk', x, y },
+        { id: 'folk-messenger-name', label: m.name, kind: 'side', x, y },
+      ];
+    }
     if (!t || !r || (this.phase !== 'city' && this.phase !== 'petition')) return [];
     const out: Marker[] = [];
     const put = (id: string, label: string, kind: Marker['kind'], at: [number, number] | null) => {
@@ -321,10 +362,19 @@ class Game implements RunGame {
       const [x, y] = cam.project(at[0], at[1], this.z(at[0], at[1]));
       if (x > 0 && y > 0 && x < innerWidth && y < innerHeight) out.push({ id, label, kind, x, y });
     };
+    // (loop round 16: the names over the town are the only way in — every ask has one. One at a site of the town stands
+    // over it; one bound to a far place or a point of interest, or one whose site is off the screen, is a marker at the
+    // screen's edge pointing its way; one with no place at all stands at the keep)
+    const edges: { id: string; label: string; at: [number, number] }[] = [];
     for (const o of r.offers()) {
       if (o.status !== 'offered') continue;
+      const label = `${r.w.name(o.presenter)} · ${W.leftText(r.left(o))}`;
       const site = r.siteOf(o);
-      if (site) put(o.id, `${r.w.name(o.presenter)} · ${W.leftText(r.left(o))}`, 'ask', this.spot(site));
+      const at = site ? this.spot(site) : (this.offerPlace(o) ?? this.spot('keep'));
+      if (!at) continue;
+      const [x, y] = cam.project(at[0], at[1], this.z(at[0], at[1]));
+      if (x > 0 && y > 0 && x < innerWidth && y < innerHeight) out.push({ id: o.id, label, kind: 'ask', x, y });
+      else edges.push({ id: o.id, label, at });
     }
     // (the standing threat is a card like any other: its own title and countdown, shown on the road)
     const st = r.standingThreat();
@@ -339,11 +389,45 @@ class Game implements RunGame {
       if (at) put(`live:${run.id}`, W.underWay(run.def.title), 'ask', [at[0], at[1]]);
     }
     // (names kept apart and on the screen, between the top bar and the sheet: LS-3, LS-28)
-    const sheet = document.querySelector('.run-sheet')?.getBoundingClientRect().top ?? innerHeight;
+    const sheetBox = document.querySelector('.run-sheet')?.getBoundingClientRect();
+    const sheet = sheetBox && sheetBox.height > 0 ? sheetBox.top : innerHeight;
     const bar = document.querySelector('.run-top')?.getBoundingClientRect().bottom ?? 0;
+    // (the edge markers: from the middle of the band the town is shown in, toward where the place is, stopped short of
+    // the band's edge; an arrow says which way)
+    const mid: [number, number] = [innerWidth / 2, (bar + sheet) / 2];
+    for (const e of edges) {
+      const [px, py] = cam.project(e.at[0], e.at[1], this.z(e.at[0], e.at[1]));
+      let dx = px - mid[0];
+      let dy = py - mid[1];
+      if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) [dx, dy] = [0, -1];
+      const hw = innerWidth / 2 - 60;
+      const hh = (sheet - bar) / 2 - 50;
+      const k = Math.min(hw / Math.max(1e-6, Math.abs(dx)), hh / Math.max(1e-6, Math.abs(dy)));
+      out.push({ id: e.id, label: `${arrowOf(dx, dy)} ${e.label}`, kind: 'edge', x: mid[0] + dx * k, y: mid[1] + dy * k + 24 });
+    }
     const free = declutter(out.map((m) => ({ x: m.x, y: m.y, chars: m.label.length })), innerWidth, bar + 4, sheet - 4);
     out.forEach((m, i) => ([m.x, m.y] = free[i]));
     return out;
+  }
+
+  /**
+   * (loop round 16) Where an ask that stands at no site of the town is, as a window point: a point of interest's cell, a
+   * far town's place (its own, or the town the card is bound to). Null: it names no place on the map.
+   */
+  private offerPlace(o: Offer): [number, number] | null {
+    const r = this.realm;
+    const S = this.scene.stream;
+    if (!r || !S) return null;
+    const e = r.w.facts.entity(o.place) as { at?: { at?: [number, number] } } | undefined;
+    if (e?.at?.at) return [e.at.at[0] - S.origin[0], (e.at.at[1] - S.origin[1]) * ROW_H];
+    const ids = [o.place, ...Object.values(o.bind ?? {})].filter((x): x is string => typeof x === 'string');
+    for (const id of ids) {
+      const s = r.w.ws.settlements.find((x) => x.id === id);
+      if (s) return [s.at[0] - S.origin[0], s.at[1] - S.origin[1] * ROW_H];
+      const p = r.w.facts.entity(id) as { at?: { at?: [number, number] } } | undefined;
+      if (p?.at?.at) return [p.at.at[0] - S.origin[0], (p.at.at[1] - S.origin[1]) * ROW_H];
+    }
+    return null;
   }
 
   /** (scripts) where the figures of the live event the player is at are on the screen (px): the dead, the raiders */
@@ -867,10 +951,74 @@ class Game implements RunGame {
     // (loop round 10, LS-93: the run's start says what the world is now — the card table's lines, one copy: which run
     // and who leads, how earlier runs ended, a move of home, "While you were gone", the far towns, laws left, "Earlier
     // runs opened", "Not yet found")
-    this.panel = { title: W.NOW_TITLE, sections: [{ lines: startLines(this.realm, this.packs, this.played, { run: this.runs, leaderLine: who.line, movedFrom }) }] };
+    // (loop round 16: spoken by the leader's steward, who walks in to the keep — not a page over the town)
+    const lines = startLines(this.realm, this.packs, this.played, { run: this.runs, leaderLine: who.line, movedFrom });
     this.set('city');
-    // (the town framed above the sheet: its core across the screen)
-    this.showTown();
+    void this.announce({ ...W.ADVISORS.steward, lines }, null);
+  }
+
+  /**
+   * (loop round 16) News brought in person: the messenger walks in by a road — the one facing `from` (a far place's
+   * window point), else the first — to the keep (or the market, or the town's middle), the camera after them, and says
+   * the lines. Then the camera goes back over the town.
+   */
+  private async announce(speech: Speech, from: [number, number] | null, to?: [number, number] | null): Promise<void> {
+    const t = this.town;
+    if (!t) return;
+    const c = t.centreInWindow();
+    const dest = to ?? this.spot('keep') ?? this.spot('market') ?? c;
+    // (no far place: the road on the keep's side of the town, so the walk is short and does not cross the town — round
+    // 16's first stills had the steward on a bridge across the river, still walking at 6 s)
+    const k = this.roadToward(from ?? dest);
+    const road = t.roadCount ? t.roadInWindow(k) : [];
+    this.changed();
+    await this.messenger.bring(speech, road.length >= 2 ? road : null, dest);
+    this.changed();
+    if (this.phase === 'city') this.showTown();
+  }
+
+  /** (loop round 16) the town's road whose far end faces a window point (as the raid's road faces its camp) */
+  private roadToward(at: [number, number]): number {
+    const t = this.town;
+    if (!t || !t.roadCount) return 0;
+    const c = t.centreInWindow();
+    const want = Math.atan2(at[1] - c[1], at[0] - c[0]);
+    let best = 0;
+    let bd = Infinity;
+    for (let k = 0; k < t.roadCount; k++) {
+      const end = t.roadInWindow(k).at(-1);
+      if (!end) continue;
+      const a = Math.atan2(end[1] - c[1], end[0] - c[0]);
+      const d = Math.abs(Math.atan2(Math.sin(a - want), Math.cos(a - want)));
+      if (d < bd) [bd, best] = [d, k];
+    }
+    return best;
+  }
+
+  /**
+   * (loop round 16) After a season: what it brought, in person. With news, the chronicler brings it and names the new
+   * asks; with only new asks, the first one's petitioner comes in to where they stand (one bound to a far place by the
+   * road facing it, the scout captain's road); with neither, the chronicler says it was quiet.
+   */
+  private seasonNews(before: Set<string>): void {
+    const r = this.realm;
+    if (!r) return;
+    const fresh = r.offers().filter((o) => o.status === 'offered' && !before.has(o.id));
+    const asks = fresh.map((o) => W.newAsk(r.w.name(o.presenter), o.opp.title));
+    const far = fresh.map((o) => (r.siteOf(o) ? null : this.offerPlace(o))).find((p) => p !== null) ?? null;
+    if (this.notes.length) {
+      void this.announce({ ...(far ? W.ADVISORS.scout : W.ADVISORS.chronicler), lines: [...this.notes, ...asks] }, far);
+      return;
+    }
+    const o = fresh[0];
+    if (o) {
+      const site = r.siteOf(o);
+      const place = site ? null : this.offerPlace(o);
+      const { speaker } = petitionOf(r.engine, o.id);
+      void this.announce({ name: speaker.name, role: speaker.role, lines: [W.comeToAsk(o.opp.title), ...asks.slice(1)] }, place, site ? this.spot(site) : null);
+      return;
+    }
+    void this.announce({ ...W.ADVISORS.chronicler, lines: [W.QUIET_SEASON] }, null);
   }
 
   /**
@@ -878,6 +1026,7 @@ class Game implements RunGame {
    * agreeing commits its cost through the realm (the engine's commit on the ledger's holdings), refusing is remembered.
    */
   open(id: string): void {
+    this.messenger.skip();
     // (a live event going on: back to it)
     const run = id.startsWith('live:') ? this.live.runs.find((x) => `live:${x.id}` === id) : undefined;
     if (run && this.phase === 'city') {
@@ -914,7 +1063,8 @@ class Game implements RunGame {
     const printed = W.costText(locks, o.opp.costs as Partial<Record<Pool, number>>, turns);
     const t = r.terms(o);
     const now = W.costText(t.locks as Partial<Pools>, t.costs as Partial<Pools>, t.turns);
-    const brings = this.lawsBrought(o.template).map((id) => W.bringsLaw(lawLine(r, id)));
+    // (loop round 16: what it would combine with that the town has, and what it opens)
+    const brings = [...this.lawsBrought(o.template).map((id) => W.bringsLaw(lawLine(r, id))), ...this.combos(o.template)];
     const tree = petitionTree({ ...petition, needs: now === printed ? now : W.lawCost(now, printed), takes: W.takesText(t.turns), get: [petition.get, ...brings].join(' '), agree: W.AGREE, canAgree: can ? true : W.shortText(miss) }, speaker, r.leader.name);
     // (round 8, the portrait slot: art for the card if a file is there — local/art/<card id>.png or the pack card's
     // `image` — else the pixel face)
@@ -957,6 +1107,17 @@ class Game implements RunGame {
     };
     if (!this.packs.length) return { onRules };
     return { onRules, extra: realmExtra(this.packs, this.played, () => this.realm, { home, ledger, leader, ...(pack?.deck_out ? { deckOut: pack.deck_out } : {}) }) };
+  }
+
+  /**
+   * (loop round 16, the owner: "The choices were so far not that synergistic") What a card would combine with, read from
+   * the synergy rules as they stand: the thing the card makes (a building's site worked; a pack thing put in play)
+   * with its tags laid beside the things already there. A rule not firing now whose missing thing this card's thing is
+   * becomes "With your <thing>: <what it gives>"; one it would start by itself, "<what it gives>". And what taking it
+   * opens for later (a pack card's `unlock`). Plain lines for the petition's "You get".
+   */
+  private combos(template: string): string[] {
+    return this.realm ? combosOf(this.realm, template, this.packs, this.played) : [];
   }
 
   /** the laws a card's effects bring: a `law` effect, or a thing it puts in play that carries laws (any result's) */
@@ -1085,6 +1246,7 @@ class Game implements RunGame {
   next(): void {
     const r = this.realm;
     if (this.phase !== 'city' || !r || this.season.playing) return;
+    this.messenger.skip();
     // (the opportunities' season first: commitments due resolve into the fact layer, offers past their time fire their
     // expiry, the arc moves on; then the ledger's own season plays as the time-lapse)
     // (round 6: the live events still going are told to the realm as they stand and taken out of the city; the season's
@@ -1097,6 +1259,8 @@ class Game implements RunGame {
     r.ledger = this.season.ledger;
     this.recent = [];
     const turn = r.w.turn;
+    // (loop round 16: the asks there were, so the season's news can name the new ones)
+    const asked = new Set(r.offers().map((o) => o.id));
     const had = new Set(this.things.filter((t) => !t.ruined).map((t) => t.id));
     this.notes = this.chained(r.endSeason());
     this.season.setLedger(r.ledger);
@@ -1118,9 +1282,12 @@ class Game implements RunGame {
       r.afterSeason(this.season.ledger);
       this.season.setLedger(r.ledger);
       await this.save();
-      if ((this.building || first) && !r.forcedLive()) this.showTown();
       this.building = false;
       this.flow();
+      // (loop round 16: back in the town, the season's news comes in person — the camera follows the messenger in, and
+      // goes back over the town when they are done)
+      if (this.phase === 'city') this.seasonNews(asked);
+      else if (first && !r.forcedLive()) this.showTown();
     });
   }
 
@@ -1190,7 +1357,8 @@ class Game implements RunGame {
   showTown(): void {
     const t = this.town;
     // (the sites' reach across the screen: every name a card can stand at is in view)
-    if (t) void this.cam.look(this.at3(t.centreInWindow()), { zoom: innerWidth / (2 * (SITE_REACH + 0.06) * t.box.R), place: [0.5, 0.36], ease: 1.2 });
+    // (loop round 16: the bar is one row now — the town in the middle of the screen between the top bar and it)
+    if (t) void this.cam.look(this.at3(t.centreInWindow()), { zoom: innerWidth / (2 * (SITE_REACH + 0.06) * t.box.R), place: [0.5, 0.48], ease: 1.2 });
   }
 
   /** (scripts) the camera `dx`, `dy` cells off the town's centre: the window slides off the town (LS-45's bisect) */
@@ -1387,6 +1555,8 @@ class Game implements RunGame {
       api.fx.burst('splash', g[0], g[1], g[2] + 0.5, { count: 30 });
       this.tell(W.RAIN_CAST);
     } else {
+      // (loop round 16: the succession and the growing glow woken for the spell — the quiet world's only growth in play)
+      this.quiet?.wake('growth', GROW_WAKE, GROWTH_WAKE_S);
       api.plants.grow(g[0], g[1], { radius: GROWTH.radius, strength: GROWTH.strength });
       api.fx.burst('leaves', g[0], g[1], g[2] + 1, { count: 50 });
       this.tell(W.GROWTH_CAST);
@@ -1395,6 +1565,12 @@ class Game implements RunGame {
     console.log(`[loop] ${id} at ${g[0].toFixed(0)}, ${g[1].toFixed(0)}`);
     this.arm(null);
   }
+}
+
+/** (loop round 16) an arrow pointing a screen direction (y down), in eight ways */
+function arrowOf(dx: number, dy: number): string {
+  const a = Math.atan2(dy, dx);
+  return ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗'][((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8];
 }
 
 /** the history's kinds the end-of-run screen always shows (the rest: those with a weight) */
