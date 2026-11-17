@@ -40,6 +40,8 @@ await run({ name: 'shieldraid', kind: 'behaviour', size: '412x915', dpr: 1, echo
       const raiders = [];
       for (let k = 0; k < o.n; k++) raiders.push(U.spawn('raider', [c[0] + 34 + (k % 4) * 1.5, c[1] + Math.floor(k / 4) * 1.5 - 3], null, { hostile: true }));
       U.observe?.([...folk, ...raiders]);
+      // (sent at the town's middle, as a raid's order sends them at a place: they meet the rim on the way)
+      U.order(raiders, { kind: 'go', to: [c[0], c[1]] });
       window.__raid = { at: [c[0], c[1], c[2]], raiders, folk, shield: s.id };
       return { at: c, shield: { x: s.x, y: s.y, r: s.radius } };
     },

@@ -926,6 +926,7 @@ export class CityGen {
 
   private async once(p: StreetParams, from0: Stage, box0?: Box): Promise<StreetTimes> {
     if (this.dead) throw new Error('citygen: disposed');
+    const tOnce = performance.now();
     this.p = p;
     this.nPass = 0;
     this.dispatches = 0;
@@ -1101,8 +1102,13 @@ export class CityGen {
     enc.copyBufferToBuffer(B.CNT, 0, this.qRead, n * 8, 4);
     enc.copyBufferToBuffer(this.args, 0, this.qRead, n * 8 + 4, 4);
     enc.copyBufferToBuffer(B.PTS, 0, this.qRead, n * 8 + 16, NPTS * PW * 4);
+    // (loop round 14, job 5: how long the run waits on the queue — what is ahead of it, and its pipelines' first use)
+    const tq = performance.now();
+    await device.queue.onSubmittedWorkDone();
+    const tAhead = performance.now() - tq;
     device.queue.submit([enc.finish()]);
     await this.qRead.mapAsync(GPUMapMode.READ);
+    if (performance.now() - tOnce > 1000) console.log(`[citygen] a run took ${(performance.now() - tOnce).toFixed(0)} ms: ${(tq - tOnce).toFixed(0)} ms encoding (its pipelines made on first use), ${tAhead.toFixed(0)} ms for the work ahead of it on the queue, ${(performance.now() - tq - tAhead).toFixed(0)} ms for its own`);
     const raw = this.qRead.getMappedRange().slice(0);
     this.qRead.unmap();
     const t = new BigUint64Array(raw, 0, n);

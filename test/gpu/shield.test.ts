@@ -81,7 +81,7 @@ async function pour(shield: boolean): Promise<{ in: number; past: number; sides:
 async function pressed(energy: number): Promise<{ ended: string | null; lava: number; left: number }> {
   const w = await slope();
   const L = w.core.flow!.lava;
-  const shields = new Shields(w.core.flow!, () => {}, w.core.globals, { device: g.device, globals: w.core.world.globals, fire: w.core.world.fire, lava: L.open, units: null, combat: null });
+  const shields = new Shields(w.core.flow!, () => {}, w.core.globals, { device: g.device, globals: () => w.core.world.globals, fire: () => w.core.world.fire, lava: () => L.open, units: () => null, combat: () => null });
   let ended: string | null = null;
   shields.onEnd.push((_s, how) => (ended = how));
   const s = shields.raise(SHIELD.x, SHIELD.y, { radius: SHIELD.r, seconds: 1000, z: 30, energy, regen: 0 });

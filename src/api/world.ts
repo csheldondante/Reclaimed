@@ -186,11 +186,11 @@ export function attachSim(core: WorldCore, mods: SimModules = SIM_ALL, warm?: Wa
   const shields = fx
     ? new Shields(core.flow, (b) => core.sim.particles.burst(b), core.globals, {
         device: core.host.gpu.device,
-        globals: core.world.globals,
-        fire: core.world.fire,
-        lava: core.flow.lava.open,
-        units: agents?.units ?? null,
-        combat: agents?.notice.combat ?? null,
+        globals: () => core.world.globals,
+        fire: () => core.world.fire,
+        lava: () => core.flow.lava.open,
+        units: () => agents?.units ?? null,
+        combat: () => agents?.notice.combat ?? null,
       })
     : undefined;
   if (shields) {

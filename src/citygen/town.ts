@@ -245,13 +245,18 @@ export class FieldTown {
     this.roadsLocal = site.roads.map((l) => l.map(local));
     const road = this.roadsLocal.find((l) => l.length > 1) ?? [centre];
     this.seed = road.reduce((b, p) => (Math.abs(Math.hypot(p[0] - centre[0], p[1] - centre[1]) - box.core) < Math.abs(Math.hypot(b[0] - centre[0], b[1] - centre[1]) - box.core) ? p : b), road[0]);
+    // (loop round 14, job 5: the making's two waits timed — the raw ground under the box, then the generator)
+    const t0 = performance.now();
+    let tRaw = 0;
     this.made = io
       .rawGround(box.x0, box.y0, box.w, box.h, this.raw)
       .then(() => {
+        tRaw = performance.now() - t0;
         if (this.gone) throw new DOMException('citygen: the town was let go', 'AbortError');
         return this.gen.run(this.params, 'field');
       })
       .then((t) => {
+        console.log(`[citygen] ${site.name}: raw ground ${box.w}x${box.h} (${(box.w / 64) * (box.h / 64)} tiles) in ${tRaw.toFixed(0)} ms, generated in ${(performance.now() - t0 - tRaw).toFixed(0)} ms`);
         this.times = t;
         this.claim();
         if (!this.gone) io.buildings?.townMade(site.id, this.lots, t.lots);

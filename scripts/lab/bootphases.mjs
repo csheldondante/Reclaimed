@@ -17,16 +17,17 @@ await run({ name: 'bootphases', kind: 'behaviour', size: '412x915', dpr: 1, echo
   let lines = [];
   p.on('console', (m) => {
     const t = m.text();
-    if (/^\[(loop|store|warm)\]|warm|snapshot|compile/i.test(t)) lines.push([Math.round(performance.now() - t0), t.slice(0, 220)]);
+    if (/^\[(loop|store|warm|citygen|season)\]|warm|snapshot|compile/i.test(t)) lines.push([Math.round(performance.now() - t0), t.slice(0, 220)]);
   });
   const res = [];
   const base = `${R.url}/?skipmenu=1&level=atlas&loop=1&q=low${R.opt('params', '')}`;
   let far = null;
-  for (const [k, name] of [[0, 'cold'], [1, 'again'], [2, 'far']]) {
+  for (const [k, name] of [[0, 'cold'], [1, 'again'], [2, 'far'], [3, 'far again']]) {
     lines = [];
     // (the far load is fresh too: without a run under way from it, the loop sends a page on another town back to the
-    // world's last home — loop.ts openOn; its land and town are new to the browser either way)
-    const url = k === 0 ? `${base}&town=1&fresh=1` : k === 1 ? `${base}&town=1` : `${base}&town=${far}&fresh=1`;
+    // world's last home — loop.ts openOn; its land and town are new to the browser either way. Then that town again,
+    // the world's home now: what a reload of a run played from it meets)
+    const url = k === 0 ? `${base}&town=1&fresh=1` : k === 1 ? `${base}&town=1` : k === 2 ? `${base}&town=${far}&fresh=1` : `${base}&town=${far}`;
     t0 = performance.now();
     await p.goto(url, { waitUntil: 'load' });
     await p.waitForFunction(() => ['leader', 'city', 'season'].includes(window.rungame?.phase) || document.querySelector('.fatal'), { timeout: 500000, polling: 100 });
@@ -46,9 +47,8 @@ await run({ name: 'bootphases', kind: 'behaviour', size: '412x915', dpr: 1, echo
     if (k === 0) {
       // (the far town the next load opens on: the nearest standing town the town generator builds)
       far = await p.evaluate(() => {
-        const r = window.rungame.realm;
-        const can = window.reclaimed.scene.opts.atlas?.fieldTowns ?? [];
-        return r.selectTowns('far:all').find((id) => can.includes(id)) ?? null;
+        const a = window.reclaimed.scene.opts.atlas;
+        return (a?.fieldTowns ?? []).find((id) => id !== a.startTown) ?? null;
       });
       R.log(`far town: ${far}`);
       if (!far) throw new Error('no far town the generator builds');

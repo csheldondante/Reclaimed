@@ -75,7 +75,9 @@ const PRESS_BAND = 2;
  * (loop round 14) energy drained a second: per depth-cell of liquid lava standing in the band; per burning column there
  * (fire 0..1 summed); per hostile unit standing at the rim (its blows)
  */
-export const LAVA_DRAIN = 0.05;
+// (measured, loop round 14: a 700/s front round a 26-wide ward stood ~95 depth-cells in the band — the band's room
+// caps it; 0.05 drained 4.7 a second, under the ward's recharge)
+export const LAVA_DRAIN = 0.2;
 export const FIRE_DRAIN = 0.5;
 export const BLOW_DRAIN = 1;
 /** (loop round 14) a shield's store and recharge when the caster gives none */
@@ -85,20 +87,25 @@ export const DEFAULT_REGEN = 2;
 /** (loop round 14) the GPU half: the press kernel, its counters and the small read */
 export interface PressGpu {
   device: GPUDevice;
-  globals: GPUBuffer;
-  fire: GPUBuffer;
-  lava: GPUBuffer;
+  /** (getters: a world's buffers may be made again after the sim is attached — a repack, the level's tiers — so the
+   *  bind group is made again whenever one of them is another buffer) */
+  globals: () => GPUBuffer;
+  fire: () => GPUBuffer;
+  lava: () => GPUBuffer;
   /** the units' records and combat words (null: no agents) */
-  units: GPUBuffer | null;
-  combat: GPUBuffer | null;
+  units: () => GPUBuffer | null;
+  combat: () => GPUBuffer | null;
 }
 
 class ShieldPress {
   private k: ComputeKernel;
   private counts: GPUBuffer;
   private params: GPUBuffer;
-  private group: GPUBindGroup;
-  private nUnits: number;
+  private group: GPUBindGroup | null = null;
+  private bound: GPUBuffer[] = [];
+  private nUnits = 0;
+  private noUnits: GPUBuffer;
+  private noCombat: GPUBuffer;
   busy = false;
   /** reads asked (the cost report) */
   reads = 0;
@@ -108,10 +115,22 @@ class ShieldPress {
     this.k = makeCompute(d, 'shields-press', [commonWgsl, shieldsWgsl], { 0: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'uniform' }, 'press');
     this.counts = d.createBuffer({ label: 'shields press', size: 64, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     this.params = d.createBuffer({ label: 'shields press params', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    const units = g.units ?? d.createBuffer({ label: 'shields no units', size: 96, usage: GPUBufferUsage.STORAGE });
-    const combat = g.combat ?? d.createBuffer({ label: 'shields no combat', size: 16, usage: GPUBufferUsage.STORAGE });
-    this.nUnits = g.units ? Math.min(Math.floor(g.units.size / 96), Math.floor(combat.size / 16)) : 0;
-    this.group = makeBindGroup(d, 'shields-press', this.k.layout, { 0: g.globals, 3: g.fire, 4: g.lava, 5: units, 6: combat, 7: this.counts, 8: this.params });
+    this.noUnits = d.createBuffer({ label: 'shields no units', size: 96, usage: GPUBufferUsage.STORAGE });
+    this.noCombat = d.createBuffer({ label: 'shields no combat', size: 16, usage: GPUBufferUsage.STORAGE });
+  }
+
+  /** the bind group over the world's buffers as they are now (made again when one is another buffer) */
+  private groupNow(): GPUBindGroup {
+    const g = this.g;
+    const units = g.units() ?? this.noUnits;
+    const combat = g.combat() ?? this.noCombat;
+    const now = [g.globals(), g.fire(), g.lava(), units, combat];
+    if (!this.group || now.some((b, i) => b !== this.bound[i])) {
+      this.nUnits = units === this.noUnits ? 0 : Math.min(Math.floor(units.size / 96), Math.floor(combat.size / 16));
+      this.group = makeBindGroup(g.device, 'shields-press', this.k.layout, { 0: now[0], 3: now[1], 4: now[2], 5: units, 6: combat, 7: this.counts, 8: this.params });
+      this.bound = now;
+    }
+    return this.group;
   }
 
   /** what presses on the Globals' four shields now: [lava, fire, units] each (null: torn down) */
@@ -119,6 +138,7 @@ class ShieldPress {
     const d = this.g.device;
     this.busy = true;
     this.reads++;
+    const group = this.groupNow();
     const p = new ArrayBuffer(16);
     new Uint32Array(p, 0, 1)[0] = this.nUnits;
     new Float32Array(p, 4, 1)[0] = PRESS_BAND;
@@ -127,7 +147,7 @@ class ShieldPress {
     enc.clearBuffer(this.counts);
     const pass = enc.beginComputePass({ label: 'shields-press' });
     pass.setPipeline(this.k.pipeline);
-    pass.setBindGroup(0, this.group);
+    pass.setBindGroup(0, group);
     pass.dispatchWorkgroups(MAX_SHIELDS);
     pass.end();
     const tmp = d.createBuffer({ label: 'shields press read', size: 64, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });

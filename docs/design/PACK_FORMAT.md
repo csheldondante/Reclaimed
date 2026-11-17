@@ -763,7 +763,8 @@ What the player casts on a thing in play, or into a live event (`in_event`, belo
   for 75 seconds (60 if `seconds` is left out). Lava and flood water cannot flow into it and part round it; what is
   inside stays as it was. It is drawn as a dome of sparks. (Draft 9) Fire does not burn or spread inside it, and no
   one walks through its edge, in or out — your people and foes alike. It has a store of energy: `"energy": 300`
-  (over 0; 100 if left out) and `"regen": 5` (what it gets back a second, 0 or more; 2 if left out). Lava standing at
+  (over 0; 100 if left out) and `"regen": 12` (what it gets back a second, 0 or more; 2 if left out). As a guide
+  (loop round 14): lava piled all round a 26-pace shield drains about 19 a second; one foe at its edge 1. Lava standing at
   its edge, fire burning there and foes pressing on it drain the store; when the store is empty it gives way at once
   (a burst of light) and the player is told. It ends with its energy or its time. At the card table a shield cast
   into a front means the front reaches none of its points (the table has no energy yet). `seconds`, `energy` and

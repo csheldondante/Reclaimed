@@ -74,7 +74,7 @@ await run({ name: 'frontshots', kind: 'behaviour', size: '412x915', dpr: 1, echo
       // (loop round 14: the town's points as the front reads them — where, the depth first read, the depth now)
       const api = window.reclaimed.scene.worldApi;
       const pts = f ? f.points.map((q) => [Math.round(q.at[0]), Math.round(q.at[1]), q.base === null ? null : +q.base.toFixed(2), +(api.fire.flowLavaAt(q.at[0], q.at[1]) ?? -1).toFixed(2)]) : [];
-      return run && f ? { t: Math.round(run.t), pts, origin: st && [...st.origin], held: st?.holds.size ?? 0, aim: r(f.aim), src: r(f.src), target: r(f.target), frame: fr && { at: r(fr.at), span: Math.round(fr.span) }, cam: r(c.target), busy: window.rungame.cam.busy, town: f.points.filter((x) => x.reached).length, way: f.way.filter((x) => x.reached).length, zoom: +c.zoom.toFixed(1), shields: window.reclaimed.scene.worldApi.shields.list.length, line: window.rungame.fightLine } : { phase: window.rungame.phase };
+      return run && f ? { t: Math.round(run.t), pts, origin: st && [...st.origin], held: st?.holds.size ?? 0, aim: r(f.aim), src: r(f.src), target: r(f.target), frame: fr && { at: r(fr.at), span: Math.round(fr.span) }, cam: r(c.target), busy: window.rungame.cam.busy, town: f.points.filter((x) => x.reached).length, way: f.way.filter((x) => x.reached).length, zoom: +c.zoom.toFixed(1), shields: window.reclaimed.scene.worldApi.shields.list.length, ward: window.reclaimed.scene.worldApi.shields.list.map((s) => ({ energy: Math.round(s.energy), drain: +s.press.drain.toFixed(1), lava: Math.round(s.press.lava) })), line: window.rungame.fightLine } : { phase: window.rungame.phase };
     });
   let cast = false;
   let shots = 0;

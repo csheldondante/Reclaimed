@@ -20,7 +20,7 @@ describe('a front and a shield', () => {
     const got = loadRunPacks([AGES]);
     expect(got.report).toEqual([]);
     // (loop round 14: the ward's store and recharge; the vent far up the slope)
-    expect(packMech(got.packs)['ages-ward']).toEqual({ shield: 26, seconds: 75, energy: 300, regen: 5 });
+    expect(packMech(got.packs)['ages-ward']).toEqual({ shield: 26, seconds: 75, energy: 300, regen: 12 });
     const def = liveDef(EVENT);
     expect(def.hazard).toEqual({ kind: 'front', liquid: 'lava', at: { site: 'here' }, far: 160, rate: 200, pour: 60, points: 8, spread: 26, mutate: 'melted' });
     expect(checkLive('ages-lava-front', def)).toEqual([]);

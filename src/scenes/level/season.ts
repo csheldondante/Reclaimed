@@ -13,6 +13,7 @@ import type { TownLife } from '../../season/life';
 import { FIRST_WAVE, SeasonWar } from '../../season/war';
 import { LIVING_TUNING } from '../../citylife/params';
 import type { LevelScene } from '../level';
+import { bootMark } from '../../perf/boot-marks';
 import type { RegionStore } from '../../world/region-store';
 
 /** the showcase: the steps start in its first third, the last district then rises for its build's span */
@@ -153,6 +154,8 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns, opts: Seas
   (globalThis as { season?: SeasonLoop }).season = loop;
   loop.init().then(
     () => {
+      // (loop round 14, job 5: the town generated and its districts counted — the season loop's wait)
+      bootMark('town-ready');
       console.log(`[season] ${loop.town}: ${loop.left} districts free; hand ${loop.hand.map((o) => o.card.id).join(', ')}`);
       // (the camera on the town: its centre, the town across the screen at ?zoom= or the default)
       const t = loop.town !== null ? towns.live.get(loop.town) : undefined;

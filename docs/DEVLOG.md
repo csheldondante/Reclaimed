@@ -26017,3 +26017,21 @@ up near {town}", "Clear {lair}"; ages "A star falls past {town}" (crash), "The o
 **`far:free:<n>` (LS-107).** The n nearest standing towns nobody holds (no `occupies`, `vassal_of` or `controls` on
 it); frontier's `league-grows` uses `far:free:1`.
 
+## 2026-11-17 — loop round 14 (2): the shield's drain measured, the boot's two minutes found (`loop-skeleton`)
+
+**The press bound by getters.** The shield's press kernel took the world's buffers once at attach; it now takes
+getters and makes its bind group again when one is another buffer. With it, a 700/s front piled round the Fire ward
+read 21 → 95 depth-cells of lava in the band (t 8 → 38 s, `local/round14/shield-over.log`): at 0.05 a depth-cell that
+drained 4.7 a second, under the ward's recharge of 5 — the ward held to its time in every run (`local/round14/
+shield-hold/`, `shield-over/`: lava all round the ring, the houses inside untouched, the ring fading at 75 s). The band's
+room caps the sum, so a bigger flow presses only a little harder. Set: `LAVA_DRAIN` 0.2 (95 → 19 a second) and the
+ward's regen 12 — from that one run; not yet run again (stopped to save tokens, LS-141).
+
+**The far-town start (job 5, LS-140).** Boot marks per phase over four loads (`scripts/lab/bootphases.mjs`,
+`local/round14/bootphases4.json`): cold start town 100 s, again 82 s, far town cold 138 s, again 97 s. The biggest
+single wait is the town: the atlas's raw ground under its box, 25 tiles paced by the tile gate, 36-42 s. Kept in
+IndexedDB (tried), the ground came back in 40-56 ms but the town's GPU run then waited 22-23 s for the work ahead of it
+on the queue (its own 0.2-0.6 s): the wait moves, it does not go. Not kept. The warm cache never hit across these
+loads: keyed by the URL (`town=`), and `fresh=1` clears it. What is ahead of the town on the queue is the next thing
+to find. `bootMark('town-ready')` and the `[citygen]` timing lines stay.
+
