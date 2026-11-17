@@ -42,7 +42,22 @@ export class MemoryFacts implements FactStore {
   private cls = new Map<string, Claim>();
   private evs: FactEvent[] = [];
   private seq = 0;
-  private changed = new Set<EntityId>();
+  /** (card-table, draft 7) every write counted: a reader may cache what it derives from the store until this moves */
+  private ver = 0;
+  get version(): number {
+    return this.ver;
+  }
+  private changed = this.counted();
+  /** the set of changed entities, each add a write */
+  private counted(): Set<EntityId> {
+    const s = new Set<EntityId>();
+    const add = s.add.bind(s);
+    s.add = (v: EntityId) => {
+      this.ver++;
+      return add(v);
+    };
+    return s;
+  }
   // indexes
   private byKind = new Map<string, Set<EntityId>>();
   private byTag = new Map<string, Set<EntityId>>();
@@ -279,13 +294,14 @@ export class MemoryFacts implements FactStore {
     const ev: FactEvent = { ...structuredClone(e), id: e.id ?? this.id('e'), turn: e.turn ?? this.turn, run: e.run ?? this.run };
     if (e.id && this.evs.some((x) => x.id === e.id)) throw new Error(`facts: event ${e.id} already recorded`);
     this.evs.push(ev);
+    this.ver++;
     for (const p of [...ev.by, ...ev.to]) if (this.ents.has(p)) this.changed.add(p);
     return ev;
   }
 
   drainChanged(): Set<EntityId> {
     const c = this.changed;
-    this.changed = new Set();
+    this.changed = this.counted();
     return c;
   }
 

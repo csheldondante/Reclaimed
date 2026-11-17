@@ -29,6 +29,31 @@ const cards = (m: CardMatch | undefined, n: LawNames): string => {
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
+/**
+ * A law in force several times, as one law with the numbers it makes together (laws stack: the same law twice is in
+ * force twice): what adds is added (more foes, a cost, income, the raid's size, the board), what multiplies is
+ * multiplied (a rule's `times`, the raid's `times`). What sets a number (a spell's kills, a rule's `set`) is the same
+ * however many times it stands. The Laws list reads this, not the law's own number.
+ */
+export function stackedDoes(d: LawDo, times: number): LawDo {
+  if (times <= 1) return d;
+  const x = structuredClone(d) as Record<string, unknown>;
+  const scale = (m: Record<string, number>): Record<string, number> => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, v * times]));
+  if ('rule' in d && d.times !== undefined) x.times = d.times ** times;
+  if ('cost' in d) x.cost = scale(d.cost);
+  if ('build' in d) x.build = d.build * times;
+  if ('stay' in d) x.stay = d.stay * times;
+  if ('event' in d) {
+    if (d.foes) x.foes = d.foes * times;
+    if (d.shift) x.shift = d.shift * times;
+  }
+  if ('board' in d) x.board = d.board * times;
+  if ('income' in d) x.income = scale(d.income);
+  if ('raiders' in d) x.raiders = { ...(d.raiders.add !== undefined ? { add: d.raiders.add * times } : {}), ...(d.raiders.times !== undefined ? { times: d.raiders.times ** times } : {}) };
+  if ('multipliers' in d) x.multipliers = d.multipliers ** times;
+  return x as LawDo;
+}
+
 /** one law, in one or two plain sentences */
 export function lawText(d: LawDo, n: LawNames): string {
   if ('count_as' in d) return `Whatever is "${d.count_as.tag}" also counts as "${d.count_as.as}".`;

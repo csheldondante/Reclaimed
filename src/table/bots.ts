@@ -126,6 +126,12 @@ export interface RunStat {
   won: string | null;
   /** the single biggest rule firing of the run */
   biggest: { rule: string; delta: number; season: number; pool: string } | null;
+  /** (draft 7: templates) every title a card of each template was offered under (one per binding) */
+  titles: Record<string, string[]>;
+  /** the ending a card or rule named (null: none) */
+  ending: string | null;
+  /** (draft 7) the far places at the end, one line each: "Millbrook: sworn. sworn to you." */
+  far: string[];
 }
 
 /** the bot's settling: each event it is winning, settled now; what that starts, cast into and settled too, while it
@@ -182,8 +188,11 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
   const t = new Table(o);
   let trouble: number | null = null;
   const idle: number[] = [];
+  const titles: Record<string, Set<string>> = {};
+  const note = (): void => void t.cards().forEach((c) => (titles[c.template] ??= new Set()).add(c.title));
   while (!t.over) {
     idle.push(t.poolViews().find((x) => x.pool === 'labor')!.have);
+    note();
     // (the board changes as cards are taken: scored again after each)
     for (;;) {
       const best = t
@@ -242,6 +251,9 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
     ruleNames: t.ruleDefs().map((x) => x.name),
     events: t.events.map((e) => ({ template: e.template, tier: e.tier, cast: e.cast, season: e.season, now: e.now })),
     moves: t.moves,
+    titles: Object.fromEntries(Object.entries(titles).map(([k, v]) => [k, [...v]])),
+    ending: r.ended?.name ?? null,
+    far: t.farNews().places.map((x) => `${x.name}: ${x.line}`),
   };
 }
 
@@ -359,6 +371,25 @@ export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy
   const lapsed = new Map<string, number>();
   for (const r of runs) for (const x of r.lapsed) lapsed.set(x, (lapsed.get(x) ?? 0) + 1);
   L.push(`Threats that ran out (times): ${[...lapsed].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}`);
+  // (draft 7: each pack card — runs it was on a board, runs it was taken, and the distinct cards its template made:
+  // one per binding; the endings named; the far places at the end)
+  if (o.packs?.length) {
+    L.push('');
+    L.push('Pack cards (runs on a board / runs taken / distinct cards the template made, over all runs):');
+    for (const c of o.packs.flatMap((p) => p.cards ?? [])) {
+      const on = runs.filter((r) => r.seen.includes(c.id) || r.events.some((e) => e.template === c.id)).length;
+      const tk = runs.filter((r) => r.taken.includes(c.id) || r.events.some((e) => e.template === c.id)).length;
+      const ts = [...new Set(runs.flatMap((r) => r.titles[c.id] ?? []))];
+      L.push(`  ${pad(c.id, 28)}${pad(`${on} / ${tk}`, 9)}${ts.length}${ts.length > 1 ? `: ${ts.join('; ')}` : ''}`);
+    }
+    const ends = new Map<string, number>();
+    for (const r of runs) if (r.ending) ends.set(r.ending, (ends.get(r.ending) ?? 0) + 1);
+    L.push(`Endings named by a card or rule: ${[...ends].map(([k, v]) => `${k} ${v}`).join(', ') || 'none'} (of ${runs.length} runs)`);
+    const far = new Map<string, number>();
+    for (const r of runs) for (const x of r.far) far.set(x, (far.get(x) ?? 0) + 1);
+    L.push('Far places at the end of a run (runs):');
+    for (const [k, v] of [...far].sort((a, b) => b[1] - a[1]).slice(0, 14)) L.push(`  ${v}  ${k}`);
+  }
   const same = policies.filter((p) => new Set(runs.filter((r) => r.policy === p.name).map((r) => `${r.leader}:${r.moves.join('|')}`)).size === leaders.length);
   if (o.seeds.length > 1 && same.length === policies.length) L.push('Note: every seed gave the same run for a policy and leader. The seed only names the people (BACKLOG CT-3).');
   return { runs, text: L.join('\n') };

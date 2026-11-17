@@ -107,19 +107,33 @@ export function seedFactions(w: FactWorld, packs: readonly Pack[]): void {
  * on it — and every place found and not yet settled (`found` and its resource).
  */
 export function farThings(w: FactWorld, packs: readonly LoadedPack[], home: EntityId): Thing[] {
+  // (read many times a deal — every candidate of a far variable, every reading of the rules: kept until the fact
+  // store, the world's records or the turn move)
+  const key = w.facts.version === undefined ? null : `${w.facts.version}|${w.ws.version}|${w.turn}|${home}|${packs.length}`;
+  const hit = FAR_CACHE.get(w);
+  if (key && hit?.key === key) return hit.things.map((t) => ({ ...t, tags: [...t.tags] }));
+  const things = farThingsNow(w, packs, home);
+  if (key) FAR_CACHE.set(w, { key, things: things.map((t) => ({ ...t, tags: [...t.tags] })) });
+  return things;
+}
+const FAR_CACHE = new WeakMap<FactWorld, { key: string; things: Thing[] }>();
+function farThingsNow(w: FactWorld, packs: readonly LoadedPack[], home: EntityId): Thing[] {
   const f = w.facts;
   const mine = new Set(packFactions(w));
   const out: Thing[] = [];
+  const foundings = new Set(f.events({ kind: 'founding' }).flatMap((e) => e.to));
   for (const s of w.ws.settlements) {
     if (s.id === home || !f.entity(s.id)) continue;
     const st = placeState(w, s.id)?.status ?? 'standing';
     const holder = farHolder(w, s.id);
     const gone = st === 'destroyed' || st === 'abandoned';
     const standing = !gone && !(st === 'occupied' && holder !== 'player') && !f.tag(s.id, 'condition', 'lost')?.value;
-    const founded = f.events({ kind: 'founding' }).some((e) => e.to.includes(s.id));
+    const founded = foundings.has(s.id);
     const resource = f.entity(findId(s.id))?.attrs.resource;
     const who = holder === 'player' ? 'yours' : holder && mine.has(holder) ? holder : null;
-    const tags = ['town', 'far-town', st, standing ? 'standing' : 'ruined', ...(who ? [who] : []), ...(typeof resource === 'string' ? [resource] : []), ...(founded ? ['founded'] : []), ...(founded && who === 'yours' && standing ? ['colony'] : []), ...packTagsOn(w, s.id, packs)];
+    // (a colony: founded by you — you hold its `controls` — still yours and standing; a haven sworn to you is no colony)
+    const colony = founded && who === 'yours' && standing && f.relations({ type: 'controls', from: 'player', to: s.id }).length > 0;
+    const tags = ['town', 'far-town', st, standing ? 'standing' : 'ruined', ...(who ? [who] : []), ...(typeof resource === 'string' ? [resource] : []), ...(founded ? ['founded'] : []), ...(colony ? ['colony'] : []), ...packTagsOn(w, s.id, packs)];
     out.push({ id: s.id, name: s.name, tags: [...new Set(tags)], at: [s.at[0], s.at[1]], town: s.id });
   }
   for (const d of f.find({ kind: 'deposit' })) if (d.attrs.packFound && !f.tag(d.id, 'condition', 'settled')) out.push({ id: d.id, name: d.name, tags: ['found', String(d.attrs.resource)], at: null, town: d.id });
@@ -623,7 +637,7 @@ export function packHelpers(packs: readonly LoadedPack[], host: PackHost): Recor
     // (how many far towns, standing, the faction holds: gte .. lte)
     packHolds: {
       pred: (c, a) => {
-        const fac = idOf(c.b, a[0]);
+        const fac = a[0] === 'player' ? 'yours' : idOf(c.b, a[0]);
         const n = farThings(c.w, packs, host.home()).filter((t) => t.tags.includes(fac) && t.tags.includes('standing')).length;
         return n >= Number(a[1]) && n <= Number(a[2]);
       },

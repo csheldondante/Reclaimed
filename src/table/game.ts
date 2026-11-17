@@ -23,7 +23,7 @@ import { checkTogether, reportText, type Pack, type PackAbility, type Problem } 
 import { castAbility, farHolder, farThings, IS, lawThings, packFactions, seedFactions, stanceOf, tradeThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
 import { BASIC_SPELLS, Realm, RUN_SEASONS, SPELL_COST, type RunState, type SpellId } from '../season/realm';
 import { lawKind, lawIncome, winsOf, type LawKind } from '../living/laws';
-import { lawText, lawUntil } from '../season/law-words';
+import { lawText, lawUntil, stackedDoes } from '../season/law-words';
 import type { Effect } from '../living/dsl';
 import type { TemplateDef } from '../living/engine';
 import { LEADERS, leader as leaderOf, resultTitle, SPELL_NAME, threatText, costText } from '../season/run-words';
@@ -272,6 +272,7 @@ export class Table {
     // (the helpers a pack's cards name read the run through this; the Realm deals once while it is being made, before
     // there is a run to read: that deal sees the leader's pools and no tags, and the deal is made again below)
     let made: Realm | null = null;
+    let thingCache: { key: string; ledger: SeasonLedger; tags: Map<string, readonly string[]> } | null = null;
     const host: PackHost = {
       season: () => made?.season ?? 1,
       pool: (k) => pools(made?.ledger ?? ledger)[k as Pool] ?? 0,
@@ -279,7 +280,14 @@ export class Table {
       home: () => HOME,
       tags: (where) => (made ? made.things().filter((t) => t.town === HOME && (where === 'town') === (t.id === HOME)).map((t) => [...t.tags]) : []),
       began: () => (made ? made.w.turn - made.season + 1 : 0),
-      thingTags: (id) => (made ? (made.things().find((t) => t.id === id)?.tags ?? null) : null),
+      // (read for every candidate of a variable: the things of the rules kept until the facts, the world's records, the
+      // turn or the ledger move — the ledger is replaced, never changed in place)
+      thingTags: (id) => {
+        if (!made) return null;
+        const key = `${made.w.facts.version}|${made.w.ws.version}|${made.w.turn}`;
+        if (!thingCache || thingCache.key !== key || thingCache.ledger !== made.ledger) thingCache = { key, ledger: made.ledger, tags: new Map(made.things().map((t) => [t.id, t.tags])) };
+        return thingCache.tags.get(id) ?? null;
+      },
     };
     this.realm = new Realm({
       world,
@@ -435,6 +443,8 @@ export class Table {
       if (same) same.times++;
       else out.push({ id: def.id, name: def.name, kind: lawKind(def.does), text: lawText(def.does, this.lawNames), from: at.from, until, times: 1 });
     }
+    // (a stacked law says what it makes together — three of "one more foe" is three more foes — not its own number)
+    for (const x of out) if (x.times > 1) x.text = lawText(stackedDoes(this.realm.lawDef(x.id)!.does, x.times), this.lawNames);
     return out;
   }
   /**
@@ -798,6 +808,7 @@ export class Table {
       return o ? o.opp.title : null;
     };
     const FAR_EVENTS = ['captured', 'vassal', 'destroyed', 'abandoned', 'founding', 'revealed', 'stance', 'flooded', 'burned', 'melted', 'buried', 'dried', 'withered', 'greened'];
+    const facs = packFactions(w);
     const farEvents = w.facts.events().filter((e) => FAR_EVENTS.includes(e.kind) && !e.to.includes(HOME) && !e.to.some((x) => w.facts.entity(x)?.kind === 'site'));
     const places = farThings(w, this.packs, HOME).map((t) => {
       const ps = w.settlement(t.id) ? placeState(w, t.id) : null;
@@ -806,11 +817,11 @@ export class Table {
       const why = last ? cardOf(last.about?.opp) : null;
       return {
         name: t.name,
-        line: W.farLine({ tags: t.tags, holder: holder === 'player' ? 'you' : holder ? w.name(holder) : null, tribute: ps?.tribute ?? 0, partner: r.partners().some((p) => p.id === t.id) }),
+        // (the holder is said by name: its tag is not repeated)
+        line: W.farLine({ tags: t.tags.filter((x) => !facs.includes(x)), holder: holder === 'player' ? 'you' : holder ? w.name(holder) : null, tribute: ps?.tribute ?? 0, partner: r.partners().some((p) => p.id === t.id) }),
         since: last ? W.farSince(last.note, Math.max(1, last.turn - began + 1), last.turn < began, why) : null,
       };
     });
-    const facs = packFactions(w);
     const stances: string[] = [];
     for (const a of facs) {
       const s = stanceOf(w, a, 'player');

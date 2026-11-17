@@ -554,7 +554,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       } else if (key === 'leader') {
         if (!LEADER_IDS.includes(String(x.leader))) err(w, `Unknown leader "${String(x.leader)}". The leaders are ${LEADER_IDS.join(', ')}.`);
       } else if (key === 'faction_holds') {
-        faction(x.faction_holds, w);
+        faction(x.faction_holds, w, ['player']);
         if (x.gte !== undefined && (!Number.isInteger(x.gte) || Number(x.gte) < 0)) err(w, '"gte" is a whole number, 0 or more.');
         if (x.lte !== undefined && (!Number.isInteger(x.lte) || Number(x.lte) < 0)) err(w, '"lte" is a whole number, 0 or more.');
       } else if (key === 'faction_stance') {
@@ -916,6 +916,9 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       if (d.b !== undefined) query(d.b, `${w}.b`);
       if (d.on !== undefined && d.on !== 'turn' && !(isObj(d.on) && (typeof d.on.event === 'string' || typeof d.on.live === 'string'))) err(w, '"on" is "turn", { "live": "<kind>" } or { "event": "<name>" }.');
       if (!['set', 'times', 'on', 'a', 'b', 'off', 'fires'].some((x) => x in d)) err(w, 'A "rule" law needs one of set, times, on, a, b, off, fires.');
+      // (CT-37: the two shapes that pass here and break the rule book at run time, for a rule of this pack)
+      const target = rules.find((r) => r.id === d.rule);
+      if (target) lawRuleShape(d, target).forEach((x) => err(w, x));
     } else if (k === 'add_rule') {
       checkRule(d.add_rule as PackRule, `${w}.add_rule`);
       const r = d.add_rule as PackRule;
@@ -993,6 +996,21 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     if (!t.shared && !produced.has(t.id)) warn(`tags (${t.id})`, 'Nothing produces this tag: no thing carries it and no effect sets it. If another pack does, mark the tag "shared": true.');
     if (!t.shared && !read.has(t.id)) warn(`tags (${t.id})`, 'Nothing reads this tag: no rule, condition or ability looks for it. If another pack does, mark the tag "shared": true.');
   }
+  return out;
+}
+
+/**
+ * (CT-37) What a rule law would break in the rule it changes: `times` or `set` numbers on a rule that acts (an act has
+ * no number to multiply), and `on` moved to a live event's result on a rule that changes an amount (a result comes
+ * after the amounts are read). Empty: it is fine.
+ */
+export function lawRuleShape(d: Record<string, unknown>, r: PackRule): string[] {
+  const out: string[] = [];
+  const fx = (isObj(r.effect) ? r.effect : {}) as Record<string, unknown>;
+  const acts = ['offer', 'start', 'tag', 'untag', 'law', 'end_run'].some((k) => k in fx);
+  if (acts && (d.times !== undefined || (isObj(d.set) && ('n' in d.set || 'cap' in d.set)))) out.push(`The rule "${r.id}" acts (it ${Object.keys(fx)[0]}s); it has no number for "times" or "set" to change. Use "fires" to make it act more often.`);
+  const on = d.on as { tier?: unknown } | undefined;
+  if ('amount' in fx && isObj(on) && on.tier !== undefined) out.push(`The rule "${r.id}" changes the amount "${String(fx.amount)}"; a rule that waits for a result ("tier") comes after the amounts are read and cannot change one.`);
   return out;
 }
 
@@ -1096,6 +1114,9 @@ export function checkTogether(packs: readonly Pack[]): Problem[] {
     for (const l of p.laws ?? []) {
       if (!isObj(l.does)) continue;
       if (typeof l.does.rule === 'string' && !ruleIds.has(l.does.rule)) err(`${name(p)} law (${l.id})`, `It changes the rule "${l.does.rule}", which no pack of the set and not the base game has.`);
+      // (CT-37: a law on another pack's rule, in a shape that would break it)
+      const other = packs.filter((q) => q !== p).flatMap((q) => q.rules ?? []).find((r) => r.id === l.does.rule);
+      if (other) for (const x of lawRuleShape(l.does, other)) err(`${name(p)} law (${l.id})`, x);
       for (const id of ((l.does.cards as { ids?: string[] } | undefined)?.ids ?? [])) if (!cardIds.has(id)) err(`${name(p)} law (${l.id})`, `It names the card "${id}", which no pack of the set and not the base game has.`);
     }
   // (a shared custom tag: each pack that uses it declares it, and every declaration says the same)
@@ -1114,6 +1135,8 @@ export function checkTogether(packs: readonly Pack[]): Problem[] {
     if (Array.isArray(x)) return void x.forEach(walk);
     if (!isObj(x)) return;
     if (typeof x.tag === 'string' && typeof x.on === 'string') made.add(x.tag);
+    // (draft 7: a place revealed or founded for a resource carries that tag)
+    if (typeof x.far === 'string' && typeof x.resource === 'string') made.add(x.resource);
     for (const k of ['town_has', 'site_has'] as const) if (Array.isArray(x[k])) for (const t of x[k] as string[]) read.add(t);
     for (const v of Object.values(x)) walk(v);
   };

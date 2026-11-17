@@ -24481,3 +24481,32 @@ each.
 **Test** (`factions.test.ts`): the validator (unbound variable, unknown placeholder, a binding nothing feeds is a
 LOOK), one template binding each far town, swearing one (tribute rule fires, the record names the town), reveal →
 settle → colony pays → a truce → the reavers take the colony (rule stops) → the news says who holds it and why.
+
+## 2026-11-16 — Charters and Corsairs (`packs/frontier.json`), PACK_FORMAT draft 7 written up (`card-table`)
+
+**Why.** The owner's opportunities ("a far off resource … a mining colony … income per season", "vassalizing other
+places or pirates", "a deal with pirates") and "make the outside world feel big and shaped by decisions not just the
+player city. The city just shows it diegetically to the player." 20 cards, 13 of them templates over the map's real
+places; two factions (the Gull Reavers, the Tollmark League) that act whenever the player lets a card run out.
+
+**What each far card leaves out there and how it comes home** is listed in the report of this round and in the
+pack's own `say` lines (the League takes what you leave; the Reavers take the nearest port when you refuse the toll).
+
+**Bots before tuning** (`node scripts/tablebots.mjs --pack packs/frontier.json`, 36 runs): every template made one
+card per place it fits — relief 4, march 5, buy-harvest 5, league-courts 4, retake 3, league-claims 3, settle 2 (the
+League's own camps and the Reavers' cove become targets too). The pirates' road almost never ran: the toll was a
+threat and waited behind the base game's threats (on a board in 3 of 36 runs; deal 2, point 2, hire 3, betray 3,
+harbour raid 0, burn the cove 0). Buy-harvest was taken in every run that took pack cards (15 of 15). The Sea League
+ending: 2 of 36. Biggest engine: tribute + factors' letters + colonies + the mill (9 firings in one season, +49
+Materials over the run). The League ended holding Tall Pines in 19 runs and swore Millbrook in 12: the world moves
+when the player does not.
+
+**Speed.** A far variable reads the things of the rules for each candidate: a 16-season run went from about 1 s to
+9-14 s. Two caches, both keyed on the fact store's new write counter (`MemoryFacts.version`, every write and event
+counted), the world's records version, the turn and (for the table) the ledger object: `farThings` and the table's
+`thingTags`. Now about 3 s a run (deal 1.5 s, dry runs 1.3 s of it, measured by wrapping the methods).
+
+**Defects fixed in passing.** A law in force several times now reads as what it makes together in the Laws list
+(`stackedDoes`: three of "one more foe" is three more foes; a set number stays). CT-37: the validator refuses a rule
+law's `times`/`set` on a rule that acts and `on` a result on a rule that changes an amount, for the pack's own rules
+and, in TOGETHER, another pack's (`lawRuleShape`). Tests: `frontier.test.ts`, `law-shapes.test.ts`.
