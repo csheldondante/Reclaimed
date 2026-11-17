@@ -24510,3 +24510,13 @@ counted), the world's records version, the turn and (for the table) the ledger o
 (`stackedDoes`: three of "one more foe" is three more foes; a set number stays). CT-37: the validator refuses a rule
 law's `times`/`set` on a rule that acts and `on` a result on a rule that changes an amount, for the pack's own rules
 and, in TOGETHER, another pack's (`lawRuleShape`). Tests: `frontier.test.ts`, `law-shapes.test.ts`.
+
+## 2026-11-16 — TUNING frontier 1 (pure data, revert this commit to undo)
+
+From the bots (36 runs): the toll was a threat queued behind the base game's threats (on a board in 3 runs) and
+buying a town's harvest was taken in every run that took pack cards. Changes: the toll is an ordinary card of weight
+5 (it still runs out into war with the Reavers); buy-harvest costs 5 Materials and 2 Intel (was 3 and 1).
+**After** (36 runs, 142 s): toll on a board in 5 runs (was 3), deal 3, betray 5, hire 4; buy-harvest on a board in 22
+runs (was 36) and still taken whenever seen; the Sea League ending 3 of 36 (was 2). The harbour raid and the burning
+of the cove never came up: they need the Reavers hostile, and every bot that saw the toll paid it. The pirates' road is
+the thinnest part of the pack in bot play; a player who refuses the toll gets it (`frontier.test.ts` plays it by hand).
