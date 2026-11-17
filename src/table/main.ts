@@ -216,13 +216,16 @@ function end(): string {
   if (!table.over) return '';
   const r = table.result;
   const story = table.story();
+  // (draft 8: what this run opened for later runs, and by what)
+  const later = table.newForLater();
   return `<h2>${esc(r?.title ?? W.RUN_OVER)}</h2><div class="card">${(r?.lines ?? []).map((l) => `<div>${esc(l)}</div>`).join('')}<div class="dim">${W.CARRY}</div></div>
+<h2>${W.NEW_LATER}</h2><div class="card">${later.length ? later.map((l) => `<div>${esc(l)}</div>`).join('') : `<div class="dim">${W.NEW_NONE}</div>`}</div>
 <h2>${W.STORY_TITLE}</h2><div class="log">${story.map((l) => `<div>${esc(l)}</div>`).join('')}</div>`;
 }
 
 /** (ages) who the player can be: for the next run once this one is over (the world as it ended), else for a restart */
 function leaderChoices(): { id: string; name: string; line: string }[] {
-  const list = Table.leaders(table.over ? table.realm.snapshot() : undefined, packs);
+  const list = table.over ? Table.leaders(table.realm.snapshot(), packs, table.home) : Table.leaders(undefined, packs);
   if (!list.some((l) => l.id === leader)) leader = list[0].id;
   return list;
 }

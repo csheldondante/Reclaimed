@@ -25,7 +25,7 @@ function season(r: Realm): string {
   return line(r, news);
 }
 const line = (r: Realm, news: string[] = []): string =>
-  JSON.stringify({ season: r.season, offers: r.offers().map((o) => `${o.id}:${o.status}:${o.expires}`), pools: pools(r.ledger), built: r.ledger.built, spells: r.spells, raid: r.raid, averted: r.averted, events: r.history(true).length, news });
+  JSON.stringify({ season: r.season, offers: r.offers().map((o) => `${o.id}:${o.status}:${o.expires}`), pools: pools(r.ledger), built: r.ledger.built, spells: r.spells, raid: r.raid, threat: r.standingThreat(), events: r.history(true).length, news });
 
 describe('a run saved in the middle and taken up again', () => {
   it('plays on as the run that was never interrupted', () => {

@@ -13,7 +13,7 @@
 // `income`, `spell`, `raid`, `avert`; and the land's side of an outcome: `mutateAt` (the land round a site of the home
 // town, or a spot out of it) and `found` (a new camp), beside the mutators' own `mutate` and `sign` for a whole place
 // (mutate/outcomes.ts).
-import type { ArcDef, TemplateDef } from '../living/engine';
+import type { TemplateDef } from '../living/engine';
 import type { Effect, Pred } from '../living/dsl';
 import { PEOPLE_KIND, type Pool, type SeasonCard } from './ledger';
 import { LIVE_TEMPLATES } from './realm-events';
@@ -153,6 +153,11 @@ export const RAIDERS = 18;
 /** Materials the raiders take to leave (card-table tuning, CT-18: 6 → 15; at 6 it was the cheapest answer for every
  *  bot that would pay it) */
 export const TRIBUTE = 15;
+/** (tunable) how far into the run the raiders' standing threat can first be dealt: a share of the run's seasons (0.2
+ *  of 16: season 4, where the old arc's scouts came) */
+export const RAIDERS_DEALT = 0.2;
+/** the raiders' camp, as a thing of the fact world: where they come from (season/realm.ts seeds it once a world) */
+export const RAIDERS_CAMP = 'raiders-camp';
 
 /** the world's opportunities of a home-town run */
 export const WORLD_TEMPLATES: TemplateDef[] = [
@@ -322,27 +327,40 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     offerTurns: 2,
     once: true,
   },
+  // (the owner, 2026-11-16: "We should not have a separate raid mechanism it should be a card." The run's raid is no
+  // arc timed when the run begins: it is this standing threat, dealt like any card while the world has raiders who are
+  // hostile and have somewhere to come from (`raidersThreaten`: season/realm.ts). Its countdown is the run's: it runs
+  // out at the end of the season before the last, and then the raid card (realm-events.ts RAID_T) is forced in the
+  // last season. Paid, the raiders keep a truce for the rest of the run (between runs it lapses: realm-between.ts).
+  // It stands over the town itself, not a site, so it keeps no site's card off the board while it counts down)
   {
     id: 'pay-raiders',
-    title: 'Pay the raiders off',
-    pitch: 'The raiders on the road want tribute. Paid, they leave and no attack comes.',
+    title: 'Raiders on the road',
+    pitch: `Raiders camp on the road out of town. They want ${TRIBUTE} Materials to leave. Unpaid, they attack in the last season.`,
     themes: ['war', 'raiders'],
-    bind: at('gate'),
-    eligible: [{ helper: 'threatComing' }, { helper: 'threatNear' }],
+    bind: [{ as: 'town', kind: 'settlement' as const, where: [{ helper: 'isHome', args: ['$town'] }] as Pred[] }],
+    eligible: [{ helper: 'raidersThreaten' }, { helper: 'after', args: [RAIDERS_DEALT] }, { not: { helper: 'doneThisRun', args: ['pay-raiders'] } }],
     threat: 'arc',
     live: true,
     parts: { urgency: 1 },
-    at: 'site',
+    at: 'town',
+    // (the countdown: to the end of the season before the last — the raid comes in the last)
+    expiry: 'beforeLastSeason',
+    setup: [{ event: 'scouts-seen', by: [], to: ['$town'], note: "raiders' scouts were seen on the road" }],
     requires: { agents: [], goods: { materials: TRIBUTE } },
     turns: 1,
     work: 'talk',
-    outcome: [{ helper: 'avert' }, { event: 'tribute-paid', by: ['player'], to: ['$town'], note: `you paid the raiders ${TRIBUTE} Materials and they left`, weight: -0.1 }],
-    outcomeText: 'The raiders take the tribute and leave.',
+    outcome: [{ helper: 'raidersStance', args: ['truce'] }, { event: 'tribute-paid', by: ['player'], to: ['$town'], note: `you paid the raiders ${TRIBUTE} Materials and they left`, weight: -0.1 }],
+    outcomeText: 'The raiders take the tribute and leave. No attack comes this run.',
+    onExpire: [{ helper: 'raid' },{ event: 'raiders-march', by: [], to: ['$town'], note: 'the raiders broke camp and marched on the town' }],
+    expireText: 'The raiders break camp and march on the town.',
     presenter: { of: '$town', role: 'scout', own: true, verb: 'warns', line: 'I counted the raiders camped on the road. They want tribute. Pay them or get ready to fight.' },
     reward: { text: 'No attack comes this run.' },
     offerTurns: 2,
     cooldown: 1,
-    hooks: ['raiders'],
+    // (the threat itself, not an answer to it: it does not stand in for the dealer's guarantee of a card that answers
+    // the raiders — walls, a keep, sellswords — which the old arc's raid made too)
+    hooks: ['raiders-threat'],
   },
   {
     // (card-table tuning, CT-18: a way to turn Materials into soldiers, again and again. Every bot ended with 31 to
@@ -353,7 +371,7 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     themes: ['war', 'raiders'],
     hooks: ['raiders'],
     bind: at('wagons'),
-    eligible: [{ helper: 'after', args: [0.3] }, { helper: 'threatComing' }],
+    eligible: [{ helper: 'after', args: [0.3] }, { helper: 'raidersThreaten' }],
     at: 'site',
     requires: { agents: [], goods: { materials: 8 } },
     turns: 1,
@@ -376,24 +394,3 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
   ...LIVE_TEMPLATES,
   hazard({ id: 'shore-hill', site: 'mill', title: 'Shore up the hill', pitch: 'The hill above the mill is slipping. One worker with timber can pin it.', role: 'miller', line: 'The hill above my mill is slipping. One worker with timber can pin it.', workers: 1, goods: { materials: 1 }, done: 'The hill is pinned. The mill is safe.', kind: 'buried', where: 'the mill street', lapse: 'The hill slid. The mill street is buried.', offerTurns: 2, radius: 24, after: 0.78 }),
 ];
-
-/**
- * The run's one arc (FACTIONS_WORLD_STATE §6): raiders on the road, seen from the first seasons, attacking in the last.
- * `seasons` is the run's length (a knob: 16 by default, the orchestrator's number, not the user's). Its stages land at
- * a quarter, a half and the end.
- */
-// FIXED-CITY: the arc is bound to the home town; its last stage is an attack on that town's gate
-export function raidArc(home: string, seasons: number, n = RAIDERS): ArcDef {
-  const q = Math.max(1, Math.round(seasons / 4));
-  return {
-    id: 'raiders',
-    name: 'The raiders on the road',
-    themes: ['raiders', 'war'],
-    bind: { town: home },
-    stages: [
-      { name: 'Scouts on the road', turn: Math.min(q, seasons - 1), text: `Raiders' scouts are seen on the road. They will attack in season ${seasons}.`, effects: [{ event: 'scouts-seen', by: [], to: ['$town'], note: "raiders' scouts were seen on the road" }] },
-      { name: 'A farm burned', turn: Math.max(Math.min(2 * q, seasons - 1), Math.min(q, seasons - 1) + 1), text: 'The raiders burn a farm outside the town. Unrest +1.', effects: [{ helper: 'pool', args: ['unrest', 1] }, { event: 'farm-burned', by: [], to: ['$town'], note: 'raiders burned a farm outside the town' }] },
-      { name: 'The raiders attack', turn: seasons, text: `${n} raiders attack the town.`, effects: [{ helper: 'raid', args: [n] }] },
-    ],
-  };
-}

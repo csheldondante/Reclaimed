@@ -16,6 +16,8 @@ import type { LawDef, LawDo } from '../living/laws';
 import type { FactWorld } from '../living/world';
 import { placeState, placeStates } from '../mutate/facts';
 import { helper as dslHelper } from '../living/dsl';
+import { setStance, stanceOf, type Stance } from '../living/stance';
+import { LAW_ENDED, type BetweenDef } from '../season/realm-between';
 import { checkPack, reportText, siteOf, GOODS, PEOPLE, type Pack, type PackAbility, type PackCard, type PackCond, type PackEffect, type PackEvent, type PackLeader, type PackTag, type PackThing, type Problem } from './check';
 
 const POOL_WORD: Record<string, string> = { magic: 'Magic', might: 'Might', labor: 'Labor', materials: 'Materials', intel: 'Intel', unrest: 'Unrest' };
@@ -25,6 +27,8 @@ const SIGN_WORD: Record<string, string> = { ashfall: 'Ash falls on the town', da
 const SITE_NAME: Record<string, string> = { keep: 'the keep yard', forge: 'the smithy', quarter: 'the weavers\' street', fields: 'the east fields', market: 'the market', gate: 'the road gate', tower: 'the old tower', dam: 'the old dam', shrine: 'the mountain shrine', mill: 'the mill street', wall: 'the town\'s edge', watch: 'the watch post', harbour: 'the waterside', quarry: 'the quarry hill', woods: 'the woods', river: 'the river crossing', road: 'the trade road', pit: 'the ore yard', wagons: 'the wagon yard', graves: 'the old burial ground' };
 const BASE_SPELL: Record<string, string> = { 'heat-ray': 'heatray', fire: 'fire', rain: 'rain', 'growth-rune': 'growth' };
 
+/** (draft 8) a sign set for good: in the 3D game the mutators keep a sign until its season; this is far past any run */
+const FOR_GOOD_SEASONS = 10000;
 /** the tag only a pack's thing itself carries (never lent, never shown): its upkeep rule reads it */
 export const IS = 'is:';
 const isTag = (thing: string): string => `${IS}${thing}`;
@@ -34,6 +38,57 @@ export function packMech(packs: readonly LoadedPack[]): Record<string, { kills?:
 }
 /** the fact event that says a pack's ability is the player's (this run's history has it: saved with the world) */
 export const UNLOCKED = 'ability-unlocked:';
+
+// ---- (draft 8) unlocks and what the record has met ---------------------------------------------------------------------
+
+/** the fact event an unlock leaves in the record, for good: `about.thing` the content id ("pack:<id>" for a pack) */
+export const OPENED = 'unlocked';
+const isAbility = (p: Pack, id: string): boolean => id === 'heat-ray' || !!p.abilities?.some((a) => a.id === id);
+/** locked content in words: a card's title, a leader's name, a pack's name */
+export function contentName(p: Pack, id: string): string {
+  if (id === `pack:${p.pack.id}`) return `the cards of "${p.pack.name}"`;
+  const c = p.cards?.find((x) => x.id === id);
+  if (c) return `the card "${c.title.replace(/\{[a-z]+\}/gi, '…')}"`;
+  const l = p.leaders?.find((x) => x.id === id);
+  return l ? `${l.name} as a leader` : id;
+}
+/** what the world has unlocked, in any run: content id → the record's line */
+export function openedIn(w: FactWorld): Map<string, { turn: number; note: string }> {
+  return new Map(w.facts.events({ kind: OPENED }).map((e) => [e.about?.thing ?? '', { turn: e.turn, note: e.note }] as const));
+}
+/** is this content open in this world (unlocked in an earlier run or this one)? Content never locked is open */
+export function isOpen(w: FactWorld, packs: readonly Pack[], id: string): boolean {
+  const p = packs.find((x) => x.cards?.some((c) => c.id === id) || x.leaders?.some((l) => l.id === id) || `pack:${x.pack.id}` === id);
+  if (!p) return true;
+  const locked = id.startsWith('pack:') ? !!p.pack.locked : !!(p.cards?.find((c) => c.id === id)?.locked || p.leaders?.find((l) => l.id === id)?.locked);
+  return !locked || w.facts.events({ kind: OPENED }).some((e) => e.about?.thing === id);
+}
+/** locked content of these packs not yet opened in this world, each with its hint (null: none written) */
+export function notYetFound(w: FactWorld, packs: readonly Pack[]): { id: string; hint: string | null }[] {
+  const out: { id: string; hint: string | null }[] = [];
+  for (const p of packs) {
+    if (p.pack.locked && !isOpen(w, packs, `pack:${p.pack.id}`)) out.push({ id: `pack:${p.pack.id}`, hint: p.pack.hint ?? null });
+    for (const x of [...(p.cards ?? []), ...(p.leaders ?? [])]) if (x.locked && !isOpen(w, packs, x.id)) out.push({ id: x.id, hint: x.hint ?? null });
+  }
+  return out;
+}
+/**
+ * (draft 8) `met`: the record knows it. A faction (or "raiders"): it is named in the history (a stance with you, a town
+ * taken or founded by it) — the world's own first seeding is no meeting. "place:<id>": the place exists, found or
+ * founded. "ending:<word>": a run of this world ended so (its result, or the start of its ending's name).
+ */
+export function hasMet(w: FactWorld, what: string): boolean {
+  const f = w.facts;
+  if (what.startsWith('place:')) {
+    const id = what.slice(6);
+    return !!f.entity(id) || !!f.entity(findId(id));
+  }
+  if (what.startsWith('ending:')) {
+    const word = what.slice(7);
+    return f.events({ kind: 'run-ended' }).some((e) => e.about?.thing === word || e.note.startsWith(word));
+  }
+  return f.events().some((e) => e.about?.opp !== 'realm' && !e.about?.opp?.startsWith('pack:') && (e.by.includes(what) || e.to.includes(what)));
+}
 
 /** the id of a pack's thing in the fact world */
 export const thingEntity = (id: string): EntityId => `thing:${id}`;
@@ -60,6 +115,8 @@ export interface LoadedPack {
   /** cards left out, each with why (what the engine cannot play yet) */
   left: { card: string; why: string }[];
   problems: Problem[];
+  /** (draft 8) the pack's between-runs entries, compiled (season/realm-between.ts) */
+  between: BetweenDef[];
 }
 
 /** what the helpers ask of whoever runs the Realm (table/game.ts): the run as it stands */
@@ -92,6 +149,20 @@ export function leaderFits(w: FactWorld, l: PackLeader, home: EntityId): boolean
     return false;
   });
 }
+/** (draft 8) the far town a leader's run is played from: the first, nearest the current home, that fits the leader's
+ *  `home` (its state, tags, holder — the same words as a card's far variable); null: none fits, or no `home` */
+export function homeOf(w: FactWorld, l: PackLeader, current: EntityId): EntityId | null {
+  const f = l.home?.far;
+  if (!f) return null;
+  const h = w.settlement(current);
+  const who = f.holder === 'player' ? 'yours' : f.holder;
+  const fits = farThings(w, [], current).filter((t) => t.tags.includes('far-town') && t.tags.includes('standing') && !!w.settlement(t.id) && (!f.state?.length || f.state.some((s) => t.tags.includes(s))) && (f.tags ?? []).every((x) => t.tags.includes(x)) && !(f.not ?? []).some((x) => t.tags.includes(x)) && (!who || t.tags.includes(who)));
+  const d = (id: EntityId): number => {
+    const s = w.settlement(id)!;
+    return h ? Math.hypot(s.at[0] - h.at[0], s.at[1] - h.at[1]) : 0;
+  };
+  return fits.sort((a, b) => d(a.id) - d(b.id) || (a.id < b.id ? -1 : 1))[0]?.id ?? null;
+}
 /** the record's cards (card-done / card-lapsed fact events: season/realm.ts recordOf, read here without the Realm) */
 function recordEvents(w: FactWorld): { card: string; result: string }[] {
   return w.facts
@@ -112,12 +183,7 @@ export function startThings(w: FactWorld, packs: readonly LoadedPack[], l: PackL
 
 // ---- (draft 7) factions, stances, far towns as things ---------------------------------------------------------------
 
-const STANCE_REL = { hostile: 'at_war_with', truce: 'truce_with', allied: 'allied_with' } as const;
-/** the stance between two (a faction, the player, another faction): hostile, truce, allied, or none */
-export function stanceOf(w: FactWorld, a: EntityId, b: EntityId): string {
-  for (const [s, type] of Object.entries(STANCE_REL)) if (w.facts.relations({ type, from: a, to: b, historic: false }).length || w.facts.relations({ type, from: b, to: a, historic: false }).length) return s;
-  return 'none';
-}
+export { stanceOf };
 /** whose a far town is: who occupies it, else its lord, else who founded it and holds it (the stored `controls`) */
 export function farHolder(w: FactWorld, id: EntityId): EntityId | null {
   const f = w.facts;
@@ -243,10 +309,11 @@ export function effectsText(list: readonly PackEffect[], p: Pack, vars: Record<s
     else if ('untag' in e) out.push(`${cap(where(e.on))} is no longer ${e.untag}.`);
     else if ('mutate' in e) out.push(`${cap(where(e.where))} ${LAND_WORD[e.mutate]}.`);
     else if ('far' in e) out.push(e.far === 'founded' ? `${String(x.name)} is founded.` : `${cap(where(e.where))} ${FAR_WORD[e.far]}.`);
-    else if ('sign' in e) out.push(`${!x.where || x.where === 'town' ? SIGN_WORD[e.sign] : `${SIGN_OVER[e.sign]} ${where(String(x.where))}`} for ${e.seasons ?? 3} seasons.`);
+    else if ('sign' in e) out.push(`${!x.where || x.where === 'town' ? SIGN_WORD[e.sign] : `${SIGN_OVER[e.sign]} ${where(String(x.where))}`} ${x.for_good ? 'for good' : `for ${e.seasons ?? 3} seasons`}.`);
     else if ('trade' in e) out.push(x.end ? `${cap(where(e.trade))} no longer trades with you.` : `${cap(where(e.trade))} trades with you.`);
     else if ('arrive' in e) out.push('40 refugees walk in from {other}.');
-    else if ('unlock' in e) out.push(`You can cast ${p.abilities?.find((a) => a.id === e.unlock)?.name ?? e.unlock}.`);
+    else if ('unlock' in e) out.push(isAbility(p, e.unlock) ? `You can cast ${p.abilities?.find((a) => a.id === e.unlock)?.name ?? e.unlock}.` : `New for later runs: ${contentName(p, e.unlock)}.`);
+    else if ('law_ends' in e) out.push(`The law "${p.laws?.find((l) => l.id === e.law_ends)?.name ?? e.law_ends}" no longer stands.`);
     else if ('law' in e) out.push(`A new law, "${p.laws?.find((l) => l.id === e.law)?.name ?? e.law}", ${e.seasons ? `for this season and ${e.seasons} more` : 'for the rest of the run'}.`);
     else if ('far_all' in e) out.push(`Every far town ${FAR_WORD[e.far_all === 'captured' ? 'captured' : e.far_all] ?? e.far_all}${e.by && e.by !== 'raiders' ? ` by ${whoWord(e.by)}` : ''}.`);
     else if ('end_run' in e) out.push(`The run ends here: ${e.name}.`);
@@ -274,6 +341,8 @@ function conds(list: readonly PackCond[], site: string, need: Set<string> = new 
     // (draft 7: factions)
     if ('faction_holds' in c) return { helper: 'packHolds', args: [vref(c.faction_holds), c.gte ?? (c.lte === undefined ? 1 : 0), c.lte ?? 1e9] };
     if ('faction_stance' in c) return { helper: 'packStanceIs', args: [vref(c.faction_stance), vref(c.with ?? 'player'), ...c.is] };
+    // (draft 8: the record knows it)
+    if ('met' in c) return { helper: 'packMet', args: [c.met] };
     throw new Error(`pack: no condition ${JSON.stringify(c)} at ${site}`);
   });
 }
@@ -315,7 +384,9 @@ function effects(list: readonly PackEffect[], p: Pack, need: Set<string>, note: 
       out.push({ helper: 'eachTown', args: [x.where, 'mutate', x.far, '$each', 1, 1, vref(x.by ?? (x.far === 'vassal' ? 'player' : 'raiders')), ...(x.far === 'vassal' ? [x.tribute ?? 1] : [])] });
     } else if ('sign' in e && e.where && e.where !== 'town') {
       need.add(`sel:${e.where}`);
-      out.push({ helper: 'eachTown', args: [e.where === 'far:neighbour' ? 'far:neighbour' : e.where, 'sign', e.sign, '$each', e.strength ?? 0.6, e.seasons ?? 3] });
+      out.push({ helper: 'eachTown', args: [e.where === 'far:neighbour' ? 'far:neighbour' : e.where, 'sign', e.sign, '$each', e.strength ?? 0.6, e.for_good ? FOR_GOOD_SEASONS : (e.seasons ?? 3)] });
+      // (draft 8: a sign for good does not fade between runs: an ending's mark on the world)
+      if (e.for_good) out.push({ helper: 'signForGood', args: [e.sign, e.where] });
     } else if ('trade' in e) {
       need.add(`sel:${e.trade}`);
       out.push({ helper: 'trade', args: [e.trade, e.end ? 'off' : 'on'] });
@@ -339,11 +410,16 @@ function effects(list: readonly PackEffect[], p: Pack, need: Set<string>, note: 
     } else if ('stance' in e) {
       const x = e as { stance: string; to: string; with?: string };
       out.push({ helper: 'packStance', args: [vref(x.stance), vref(x.with ?? 'player'), x.to] });
-    } else if ('sign' in e) out.push({ helper: 'sign', args: [e.sign, '$town', e.strength ?? 0.6, e.seasons ?? 3] });
+    } else if ('sign' in e) {
+      out.push({ helper: 'sign', args: [e.sign, '$town', e.strength ?? 0.6, e.for_good ? FOR_GOOD_SEASONS : (e.seasons ?? 3)] });
+      if (e.for_good) out.push({ helper: 'signForGood', args: [e.sign, 'town'] });
+    }
     else if ('arrive' in e) {
       need.add('far');
       out.push({ migrate: ['$other', '$town', 0.3], note: 'refugees from {other} walked in along the road' }, { helper: 'refugeeCohort', args: ['$town', '$town'] });
-    } else if ('unlock' in e) out.push(BASE_SPELL[e.unlock] ? { helper: 'spell', args: [BASE_SPELL[e.unlock]] } : { helper: 'packUnlock', args: [e.unlock] });
+    } else if ('unlock' in e) out.push(BASE_SPELL[e.unlock] ? { helper: 'spell', args: [BASE_SPELL[e.unlock]] } : isAbility(p, e.unlock) ? { helper: 'packUnlock', args: [e.unlock] } : { helper: 'packOpenFor', args: [e.unlock, contentName(p, e.unlock)] });
+    // (draft 8, between runs: a law a card left for later runs stops standing — a line in the record)
+    else if ('law_ends' in e) out.push({ helper: 'packLawEnds', args: [e.law_ends, p.laws?.find((l) => l.id === e.law_ends)?.name ?? e.law_ends] });
     // (laws: the Realm's own `law` helper — season/realm.ts)
     else if ('law' in e) out.push({ helper: 'law', args: [e.law, e.seasons ?? 0] });
     // (endings and the world: the Realm's `endRun` and `farAll`)
@@ -414,7 +490,9 @@ function template(c: PackCard, p: Pack, after: string[], boost: boolean): Templa
   // (`once`: true — once for each binding (a card with no variables: once, as before); "run" — once a run whatever it
   // binds; false — it comes back)
   const once: Pred[] = c.once === false ? [] : [{ helper: 'packNotDone', args: [c.id, c.once === 'run' ? 'run' : 'any', '$town', ...vb.refs] }];
-  const eligible: Pred[] = [...conds(when, c.id, need), ...[...need].filter((k) => k.startsWith('sel:')).map((k): Pred => ({ helper: 'townsExist', args: [k.slice(4)] })), ...once];
+  // (draft 8: locked content is never dealt until it is unlocked — the card itself, or its whole pack)
+  const locks: Pred[] = [...(c.locked ? [{ helper: 'packOpen', args: [c.id] } as Pred] : []), ...(p.pack.locked ? [{ helper: 'packOpen', args: [`pack:${p.pack.id}`] } as Pred] : [])];
+  const eligible: Pred[] = [...locks, ...conds(when, c.id, need),...[...need].filter((k) => k.startsWith('sel:')).map((k): Pred => ({ helper: 'townsExist', args: [k.slice(4)] })), ...once];
   // (a card that names no far place needs none: one that does appears only while a neighbour stands)
   // (draft 7: its variables — factions first, then far places, then sites, so a later one may name an earlier)
   const order = { faction: 0, settlement: 1, deposit: 1, site: 2 } as Record<string, number>;
@@ -490,22 +568,29 @@ export function loadPack(p: Pack, base: { cards?: readonly string[]; rules?: rea
     const remains = when.flatMap((x) => [...((x.site_has as string[] | undefined) ?? []), ...((x.town_has as string[] | undefined) ?? [])]).filter((t) => t.startsWith('remains-of-'));
     if (resolved.length || remains.length) because[c.id] = { resolved, remains };
   }
-  return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], laws, recordLaws, because, left, problems };
+  // (draft 8: between runs — the cards' own conditions and effects, with only the home town bound)
+  VARS = {};
+  VARKIND = {};
+  const between: BetweenDef[] = (p.between_runs ?? []).map((b) => {
+    const need = new Set<string>();
+    return { id: `${p.pack.id}:${b.id}`, when: conds(b.when ?? [], b.id, need), do: effects(b.do, p, need, b.say), say: b.say };
+  });
+  return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], laws, recordLaws, because, left, problems, between };
 }
 
 /** (trade routes) the selectors of the pack things in play, on places not ruined, that carry a trade route
  *  (RealmOptions.extra.tradeThings) */
-export function tradeThings(w: FactWorld, packs: readonly LoadedPack[]): string[] {
+export function tradeThings(w: FactWorld, packs: readonly LoadedPack[], home?: EntityId): string[] {
   const ruin = ['burned', 'flooded', 'buried', 'melted', 'abandoned', 'destroyed', 'occupied', 'lost'];
-  return packThings(w, packs)
+  return packThings(w, packs, home)
     .filter((t) => !!t.def.trade && !(t.site && ruin.some((k) => !!w.facts.tag(t.site!, 'condition', k)?.value)))
     .map((t) => t.def.trade!);
 }
 
 /** (laws) the pack things in play that carry laws: each as the Realm's things name it, with its laws
  *  (RealmOptions.extra.lawThings) */
-export function lawThings(w: FactWorld, packs: readonly LoadedPack[]): { id: string; name: string; laws: string[] }[] {
-  return packThings(w, packs).filter((t) => t.def.laws?.length).map((t) => ({ id: t.id, name: t.def.name, laws: [...t.def.laws!] }));
+export function lawThings(w: FactWorld, packs: readonly LoadedPack[], home?: EntityId): { id: string; name: string; laws: string[] }[] {
+  return packThings(w, packs, home).filter((t) => t.def.laws?.length).map((t) => ({ id: t.id, name: t.def.name, laws: [...t.def.laws!] }));
 }
 
 /**
@@ -522,7 +607,7 @@ export function linkPacks(packs: readonly LoadedPack[]): void {
     const t = id ? templates.get(id) : undefined;
     if (!t) continue;
     // (its `once` test kept: once for each binding, or once a run)
-    t.eligible = [{ helper: 'ruleAsked', args: [t.id] }, ...(t.eligible ?? []).filter((p) => 'helper' in p && p.helper === 'packNotDone')];
+    t.eligible = [{ helper: 'ruleAsked', args: [t.id] }, ...(t.eligible ?? []).filter((p) => 'helper' in p && (p.helper === 'packNotDone' || p.helper === 'packOpen'))];
     if (!t.threat) t.threat = 'arc';
     t.cooldown = 0;
     if ('start' in fx && t.play?.event) t.play = { ...t.play, forced: true };
@@ -687,17 +772,7 @@ export function packHelpers(packs: readonly LoadedPack[], host: PackHost): Recor
       },
     },
     // (a stance set: the old one ends — its history edge kept — and the new one holds both ways)
-    packStance: {
-      effect: (c, a) => {
-        const [x, y] = [idOf(c.b, a[0]), idOf(c.b, a[1])];
-        const was = stanceOf(c.w, x, y);
-        const to = String(a[2]);
-        if (was === to) return;
-        for (const type of Object.values(STANCE_REL)) for (const [p, q] of [[x, y], [y, x]]) if (c.w.facts.relations({ type, from: p, to: q, historic: false }).length) c.w.facts.unrelate({ type, from: p, to: q }, c.cause);
-        if (to !== 'none') c.w.facts.relate({ type: STANCE_REL[to as keyof typeof STANCE_REL], from: x, to: y, symmetric: true, cause: c.cause });
-        c.w.facts.record({ kind: 'stance', by: [x], to: [y], about: { opp: c.cause }, note: `${c.w.name(x)} and ${y === 'player' ? 'you' : c.w.name(y)}: ${to === 'none' ? 'no longer bound' : to}` });
-      },
-    },
+    packStance: { effect: (c, a) => void setStance(c.w, idOf(c.b, a[0]), idOf(c.b, a[1]), String(a[2]) as Stance, c.cause) },
     // (a place revealed on the map, what it is good for, not yet settled: a found place of the fact world)
     packReveal: {
       effect: (c, a) => {
@@ -729,6 +804,17 @@ export function packHelpers(packs: readonly LoadedPack[], host: PackHost): Recor
         c.w.facts.setTag(d.id, 'condition', 'settled', true, c.cause);
       },
     },
+    // ---- (draft 8) unlocks, met, laws a run left ----
+    packMet: { pred: (c, a) => hasMet(c.w, String(a[0])) },
+    packOpen: { pred: (c, a) => c.w.facts.events({ kind: OPENED }).some((e) => e.about?.thing === a[0]) },
+    // (locked content opened for good: one line in the record, the first time; what opened it is the card's cause)
+    packOpenFor: {
+      effect: (c, a) => {
+        if (c.dry || c.w.facts.events({ kind: OPENED }).some((e) => e.about?.thing === a[0])) return;
+        c.w.facts.record({ kind: OPENED, by: ['player'], to: [host.home()], about: { thing: String(a[0]), opp: c.cause }, note: String(a[1]) });
+      },
+    },
+    packLawEnds: { effect: (c, a) => void (c.dry || c.w.facts.record({ kind: LAW_ENDED, by: [], to: [host.home()], about: { thing: String(a[0]) }, note: `the law "${String(a[1])}" no longer stands` })) },
     // (written in the history, so the run's save has it: Table.unlocked reads this run's events)
     packUnlock: { effect: (c, a) => void (c.w.facts.events({ kind: `${UNLOCKED}${String(a[0])}` }).some((e) => e.turn >= host.began()) || c.w.facts.record({ kind: `${UNLOCKED}${String(a[0])}`, by: ['player'], to: [host.home()], note: `you learned ${abilityName(String(a[0]))}` })) },
   };
@@ -743,8 +829,8 @@ export function packTagsOn(w: FactWorld, id: EntityId, packs: readonly LoadedPac
 }
 
 /** the tags the pack things standing at a place lend it (null: the town itself) */
-export function lentTo(w: FactWorld, packs: readonly LoadedPack[], place: EntityId | null): string[] {
-  return packThings(w, packs)
+export function lentTo(w: FactWorld, packs: readonly LoadedPack[], place: EntityId | null, home?: EntityId): string[] {
+  return packThings(w, packs, home)
     .filter((t) => t.site === place)
     .flatMap((t) => [...t.def.tags, ...packTagsOn(w, t.id, packs)]);
 }
@@ -759,7 +845,7 @@ export function lentTo(w: FactWorld, packs: readonly LoadedPack[], place: Entity
 export function withPackThings(w: FactWorld, packs: readonly LoadedPack[], base: readonly Thing[], home: EntityId): Thing[] {
   const out: Thing[] = base.map((t) => {
     if (t.tags.includes('ruined')) return { ...t };
-    const more = [...packTagsOn(w, t.id, packs), ...(t.id === home ? lentTo(w, packs, null) : lentTo(w, packs, t.id))];
+    const more = [...packTagsOn(w, t.id, packs), ...(t.id === home ? lentTo(w, packs, null, home) : lentTo(w, packs, t.id, home))];
     return { ...t, tags: [...new Set([...t.tags, ...more])] };
   });
   const town = base.find((t) => t.id === home);
@@ -772,7 +858,7 @@ export function withPackThings(w: FactWorld, packs: readonly LoadedPack[], base:
     if (i < 0) out.push(t);
     else out[i] = { ...out[i], tags: [...new Set([...out[i].tags.filter((x) => x !== 'standing' && x !== 'ruined'), ...t.tags])] };
   }
-  for (const t of packThings(w, packs)) {
+  for (const t of packThings(w, packs, home)) {
     const place = t.site ? base.find((x) => x.id === t.site) : town;
     const ruined = !!place?.tags.includes('ruined');
     // (the record: a thing on a ruined place stays a thing of the world — its remains, with what it was)
@@ -782,10 +868,11 @@ export function withPackThings(w: FactWorld, packs: readonly LoadedPack[], base:
 }
 
 /** the pack things in play: each with its tags and the site it stands at (null: the town) */
-export function packThings(w: FactWorld, packs: readonly LoadedPack[]): { id: EntityId; def: PackThing; site: EntityId | null }[] {
+export function packThings(w: FactWorld, packs: readonly LoadedPack[], home?: EntityId): { id: EntityId; def: PackThing; site: EntityId | null }[] {
+  // (draft 8: `home` — only the things of the town the run is played from; another town keeps its own in the world)
   return packs.flatMap((p) => p.things).flatMap((t) => {
     const e = w.facts.entity(thingEntity(t.id));
-    return e ? [{ id: e.id, def: t, site: e.at.site ?? null }] : [];
+    return e && (!home || !e.at.settlement || e.at.settlement === home) ? [{ id: e.id, def: t, site: e.at.site ?? null }] : [];
   });
 }
 

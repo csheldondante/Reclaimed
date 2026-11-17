@@ -21,6 +21,15 @@ export function worldState(o: { far: number; destroyed: number; yours: number; h
   return `${parts.join(', ')}. ${o.ruins ? `${o.ruins} of the town's ${o.of} places are ruins. ` : ''}${o.signs.map((s) => SIGN_LINE[s] ?? s).join(' ')}`.trim();
 }
 export const worldLaws = (names: string[]): string => `Laws from earlier runs: ${names.join(', ')}.`;
+// (draft 8: between runs, unlocks, met, the run's home)
+export const whileGone = (say: string): string => `While you were gone: ${say.charAt(0).toLowerCase()}${say.slice(1)}`;
+export const worldOpened = (lines: string[]): string => `Earlier runs opened: ${lines.join('; ')}.`;
+export const notFound = (hints: string[], more: number): string => `Not yet found: ${[...hints, ...(more ? [`${more} more`] : [])].join(' ')}`;
+export const NEW_LATER = 'New for later runs';
+export const newLater = (what: string, by: string): string => `${what}, from "${by}".`;
+export const NEW_NONE = 'Nothing new this run.';
+export const homeLine = (town: string, was: string | null): string => (was ? `You rule from ${town}. ${was} is a far town now.` : '');
+export const RAIDERS_STANCE = 'the raiders';
 // (draft 7: the far places as news)
 export const FAR_HELP = 'Who holds what out there, who is against whom, and what changed lately.';
 export const FAR_STANCES = 'Who stands with whom';
@@ -97,8 +106,8 @@ export const recordLine = (run: number, leader: string, title: string, result: s
 export const becauseCard = (run: number, leader: string, title: string): string => `"${title}" in run ${run}, under ${leader}`;
 export const becauseRemains = (name: string): string => `the remains of ${name}`;
 export const because = (parts: string[]): string => `Here because of what came before: ${parts.join(' and ')}.`;
-export const endedTitle = (result: string, name: string): string => (result === 'won' ? `You won the run: ${name}.` : result === 'fell' ? `The run is lost: ${name}.` : `The run ended: ${name}.`);
-export const endedBy = (by: string): string => `It was ended by ${by}.`;
+export const endedTitle = (result: string, name: string): string => (result === 'won' ? `You won the run: ${name}.` : result === 'fell' ? `The run is lost: ${name}.` : result === 'stood' ? `The run is over. ${name}.` : `The run ended: ${name}.`);
+export const endedBy = (by: string): string => (by === 'the last season' ? 'It reached its last season.' : `It was ended by ${by}.`);
 export const lawFrom = (from: string, until: string, times: number): string => `${times > 1 ? `In force ${times} times. ` : ''}Made by ${from}. ${until}`;
 export const tagCount = (n: number): string => `${n} thing${n === 1 ? '' : 's'}`;
 export const winLine = (count: number, tags: readonly string[]): string => `${count} things in play that are ${tags.map((t) => `"${t}"`).join(' + ')}`;

@@ -21,7 +21,18 @@ export type PackCond =
   // (draft 7: factions) how many far towns a faction holds; the stance between a faction and the player (or another)
   | { faction_holds: string; gte?: number; lte?: number }
   | { faction_stance: string; is: string[]; with?: string }
+  // (draft 8: the record knows it — a faction met, a place found, an ending reached, in any run of this world)
+  | { met: string }
 ;
+
+/** (draft 8) between runs: when the world fits, these effects are applied as the next run begins (years pass), and
+ *  the line is shown at that run's start ("While you were gone: …") */
+export interface PackBetween {
+  id: string;
+  when?: PackCond[];
+  do: PackEffect[];
+  say: string;
+}
 
 /** (draft 7) a faction the pack declares: pirates, a rival town, a mining guild. It is an entity of the world (who
  *  holds a town, who a live event's foes belong to) with a stance towards the player and towards other factions */
@@ -50,11 +61,14 @@ export type PackEffect =
   | { mutate: string; where: string }
   | { far: string; where?: string; by?: string; tribute?: number; id?: string; name?: string; purpose?: string; resource?: string }
   | { stance: string; to: string; with?: string }
-  | { sign: string; seasons?: number; strength?: number; where?: string }
+  | { sign: string; seasons?: number; strength?: number; where?: string; for_good?: boolean }
   | { trade: string; end?: boolean }
   | { arrive: string; count?: number; from?: string }
+  // (draft 8: an ability of the pack — this run; or locked content — a card, a leader, "pack:<id>" — for good)
   | { unlock: string }
   | { law: string; seasons?: number }
+  // (draft 8, between runs only: a law a card's `laws_after` left stops standing from the next run)
+  | { law_ends: string }
   | { end_run: string; name: string }
   | { far_all: string; by?: string }
   | { say: string };
@@ -117,6 +131,10 @@ export interface PackCard {
   laws_after_if?: string[];
   /** 1 to 5: how soon it comes up among the cards whose conditions hold (3: as a middling base card) */
   weight?: number;
+  /** (draft 8) never dealt until an `unlock` names it (in an earlier run of the world or this one); `hint`: the line
+   *  "Not yet found" shows */
+  locked?: boolean;
+  hint?: string;
   art?: string;
 }
 /** a rule: the engine's own RuleDef (living/rules.ts), unchanged */
@@ -167,7 +185,10 @@ export interface PackAbility {
   look?: string;
 }
 export interface Pack {
-  pack: { id: string; name: string; version: number; summary?: string; appears_when?: PackCond[]; themes?: string[] };
+  /** (draft 8) `locked`: none of the pack's cards is dealt until `{ "unlock": "pack:<id>" }`; `hint` for "Not yet found" */
+  pack: { id: string; name: string; version: number; summary?: string; appears_when?: PackCond[]; themes?: string[]; locked?: boolean; hint?: string };
+  /** (draft 8) what moves in the world between two runs (years pass) */
+  between_runs?: PackBetween[];
   tags?: PackTag[];
   things?: PackThing[];
   cards?: PackCard[];
@@ -196,9 +217,15 @@ export interface PackLeader {
   things?: string[];
   laws?: string[];
   deck_out?: { ids?: string[]; themes?: string[] };
+  /** (draft 8) the run is played FROM a far town: the first that fits (yours, sworn to you, a colony, held by a
+   *  faction …). The leader is offered only while one fits; the old home is a far town from then on */
+  home?: { far: { state?: string[]; tags?: string[]; not?: string[]; holder?: string } };
+  /** (draft 8) offered only once unlocked; `hint` for "Not yet found" */
+  locked?: boolean;
+  hint?: string;
 }
 /** (ages) the conditions a leader's `appears_when` may use: read on the world before the run, with no run to ask */
-export const LEADER_COND_KEYS: readonly string[] = ['resolved', 'far_town_is', 'faction_stance', 'faction_holds'];
+export const LEADER_COND_KEYS: readonly string[] = ['resolved', 'far_town_is', 'faction_stance', 'faction_holds', 'met'];
 
 // ---- the vocabularies (each the engine's own: test/unit/packs.test.ts holds them to it) -------------------------------
 
@@ -252,8 +279,11 @@ export const BASE_ABILITIES: readonly string[] = ['growth-rune', 'fire', 'heat-r
 export const UNIT_KINDS: readonly string[] = ['soldier', 'raider', 'worker', 'cart', 'dead'];
 /** the base game's card ids (season/realm-templates.ts): a pack's may not clash with them */
 export const BASE_CARD_IDS: readonly string[] = ['build:houses', 'build:farms', 'build:market', 'build:workshops', 'build:harbour', 'build:keep', 'build:quarry', 'build:lumber', 'build:bridge', 'build:trade', 'build:walls', 'mining-outpost', 'tower-lens', 'relieve-neighbour', 'house-refugees', 'guard-camp', 'dead-rise', 'pay-raiders', 'mend-dam', 'fire-wards', 'feed-shrine', 'shore-hill', 'raid', 'gate-parade', 'refugees-arrive', 'resettle-refugees', 'market-fire', 'hire-sellswords'];
-export const COND_KEYS: readonly string[] = ['pool', 'season_gte', 'has_thing', 'no_thing', 'town_has', 'site_has', 'far_town_is', 'resolved', 'leader', 'faction_holds', 'faction_stance'];
-export const EFFECT_KEYS: readonly string[] = ['pool', 'income', 'put', 'remove', 'tag', 'untag', 'mutate', 'far', 'sign', 'arrive', 'unlock', 'law', 'end_run', 'far_all', 'trade', 'stance', 'say'];
+export const COND_KEYS: readonly string[] = ['pool', 'season_gte', 'has_thing', 'no_thing', 'town_has', 'site_has', 'far_town_is', 'resolved', 'leader', 'faction_holds', 'faction_stance', 'met'];
+export const EFFECT_KEYS: readonly string[] = ['pool', 'income', 'put', 'remove', 'tag', 'untag', 'mutate', 'far', 'sign', 'arrive', 'unlock', 'law', 'end_run', 'far_all', 'trade', 'stance', 'law_ends', 'say'];
+/** (draft 8) what `met` can name: a faction (its id, or "raiders"), "place:<id>" (a place found or founded), "ending:<word>"
+ *  (a run ended so: won, fell, stood, or a pack's own word) */
+export const MET_PREFIXES: readonly string[] = ['place:', 'ending:'];
 /** (laws) what a law can do: its one key (living/laws.ts LawDo), by kind */
 export const LAW_KEYS: Record<string, readonly string[]> = {
   tags: ['count_as', 'grant', 'spare'],
@@ -454,7 +484,10 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   });
 
   // ---- effects ----
-  const effects = (list: PackEffect[] | undefined, where: string, o: { ability?: boolean } = {}): void => {
+  /** (draft 8) what can be unlocked (locked cards and leaders, the pack if it is locked), and what is */
+  const lockable = new Set<string>([...cards.filter((c) => c.locked).map((c) => c.id), ...(Array.isArray(p.leaders) ? p.leaders : []).filter((l) => l.locked).map((l) => l.id), ...(p.pack.locked ? [`pack:${p.pack.id}`] : [])]);
+  const unlocks = new Set<string>();
+  const effects = (list: PackEffect[] | undefined, where: string, o: { ability?: boolean; between?: boolean } = {}): void => {
     if (list === undefined) return;
     if (!Array.isArray(list)) return err(where, 'Effects must be a list.');
     list.forEach((e, i) => {
@@ -517,12 +550,24 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
         if (!SIGN_KINDS.includes(String(x.sign))) err(w, `Unknown sign "${String(x.sign)}". The signs are ${SIGN_KINDS.join(', ')}.`);
         if (x.where !== undefined) place(String(x.where), w, { town: true, far: true, world: true });
         if (x.strength !== undefined && (typeof x.strength !== 'number' || x.strength < 0 || x.strength > 1)) err(w, '"strength" is a number from 0 (off) to 1.');
+        // (draft 8: a sign fades between runs unless it is set for good)
+        if (x.for_good !== undefined && x.for_good !== true) err(w, '"for_good" is true or left out.');
+        if (x.for_good && x.seasons !== undefined) err(w, 'A sign "for_good" has no "seasons": it stays in every later run. Leave one of them out.');
+      } else if (key === 'law_ends') {
+        // (draft 8: between runs only — a law a card's laws_after left stops standing)
+        if (!o.between) err(w, '"law_ends" is for "between_runs" only: during a run a law ends with its source.');
+        if (!laws.some((l) => l.id === x.law_ends)) err(w, `"law_ends" names the law "${String(x.law_ends)}", which is not in the pack's "laws".`);
+        else if (!cards.some((c) => c.laws_after?.includes(String(x.law_ends)))) warn(w, `No card leaves the law "${String(x.law_ends)}" for later runs ("laws_after"), so there is nothing for this to end.`);
       } else if (key === 'arrive') {
         if (x.arrive !== 'refugees') err(w, `"arrive": "${String(x.arrive)}" is not supported yet. Only "refugees" arrive today.`);
         else if (x.from !== 'far:neighbour') err(w, 'Refugees can only come "from": "far:neighbour" today.');
         else if (x.count !== undefined && x.count !== 40) err(w, `The engine brings 40 refugees each time. Write "count": 40 or leave it out. It is ${JSON.stringify(x.count)}.`);
       } else if (key === 'unlock') {
-        if (x.unlock !== 'heat-ray' && !abilities.some((a) => a.id === x.unlock)) err(w, `"unlock" names the ability "${String(x.unlock)}". It can be an ability of this pack, or "heat-ray".`);
+        // (an ability: the player's for this run. Draft 8: locked content — a card, a leader, the whole pack — opened for
+        // this run and every later run of the world: a line in the record)
+        const u = String(x.unlock);
+        if (u !== 'heat-ray' && !abilities.some((a) => a.id === u) && !lockable.has(u)) err(w, `"unlock" names "${u}". It can be an ability of this pack, "heat-ray", or locked content of this pack: a card or leader with "locked": true, or "pack:${p.pack.id}" if the pack is locked.`);
+        unlocks.add(u);
       } else if (key === 'end_run') {
         // (endings: an instant win or loss, or an ending of the pack's own naming)
         if (typeof x.end_run !== 'string' || !x.end_run) err(w, '"end_run" is "won", "fell", or a word of your own for the ending.');
@@ -587,6 +632,12 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
         if (!Array.isArray(x.is) || !x.is.length) err(w, `"is" is a list of stances: ${STANCES.join(', ')}, "none".`);
         else for (const s of x.is as string[]) if (!STANCES.includes(s) && s !== 'none') err(w, `Unknown stance "${s}". The stances are ${STANCES.join(', ')}, "none".`);
         if (x.with !== undefined) faction(x.with, w, ['player']);
+      } else if (key === 'met') {
+        // (draft 8: the record knows it — a faction met, a place found or founded, an ending reached)
+        const m = String(x.met);
+        if (m.startsWith('place:') || m.startsWith('ending:')) {
+          if (m.split(':')[1] === '') err(w, `"met" needs a name after "${m}".`);
+        } else faction(m, w, ['raiders']);
       }
     });
   };
@@ -637,6 +688,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     placeholders(c.pitch, `${w}.pitch`);
     for (const list of [c.if_taken, c.if_expires, ...Object.values(c.if_tier ?? {})]) for (const e of list ?? []) if (isObj(e) && typeof (e as { say?: unknown }).say === 'string') placeholders((e as { say: string }).say, `${w} say`);
     if (c.once !== undefined && typeof c.once !== 'boolean' && c.once !== 'run') err(w, '"once" is true (once for each binding), "run" (once a run, whatever it binds) or false (it comes back).');
+    if (c.locked !== undefined && typeof c.locked !== 'boolean') err(w, '"locked" is true or left out.');
     if (!isObj(c.presenter) || !c.presenter.role) err(w, 'A card needs a "presenter" with a "role" (a trade, such as "miller") and an "at".');
     else if (c.presenter.at?.startsWith('$')) varRef(c.presenter.at, `${w}.presenter.at`, ['site']);
     else place(c.presenter.at, `${w}.presenter.at`);
@@ -1036,8 +1088,41 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       if (!k || !LEADER_COND_KEYS.includes(k)) err(w, `A leader's "appears_when" is read before the run, on the world: it may use ${LEADER_COND_KEYS.join(', ')}. It has ${JSON.stringify(c)}.`);
     }
     conds(l.appears_when, `${w}.appears_when`);
-    if (l.replaces && !l.appears_when?.length) err(w, 'A leader that replaces the base leaders needs an "appears_when": otherwise the base leaders are never offered.');
+    if (l.replaces && !l.appears_when?.length && !l.home) err(w, 'A leader that replaces the base leaders needs an "appears_when": otherwise the base leaders are never offered.');
+    // (draft 8: a leader who starts in a far town — the first that fits)
+    if (l.home !== undefined) {
+      const f = isObj(l.home) && isObj(l.home.far) ? (l.home.far as Record<string, unknown>) : null;
+      if (!f) err(w, '"home" is { "far": { "state": [...], "tags": [...], "not": [...], "holder": "player" } }: the far town the run is played from.');
+      else {
+        for (const st of (f.state as string[] | undefined) ?? []) if (!FAR_STATES.includes(st)) err(w, `Unknown state "${st}" for "home". The states are ${FAR_STATES.join(', ')}.`);
+        for (const t of [...((f.tags as string[] | undefined) ?? []), ...((f.not as string[] | undefined) ?? [])]) needTag(t, w, 'read');
+        if (f.holder !== undefined) faction(f.holder, w, ['player']);
+      }
+    }
+    if (l.locked !== undefined && typeof l.locked !== 'boolean') err(w, '"locked" is true or left out.');
   });
+
+  // ---- (draft 8) between runs ----
+  if (p.between_runs !== undefined && !Array.isArray(p.between_runs)) err('between_runs', '"between_runs" must be a list.');
+  (Array.isArray(p.between_runs) ? p.between_runs : []).forEach((b, i) => {
+    const w = `between_runs[${i}] (${b.id})`;
+    id('between', b.id, `between_runs[${i}]`);
+    if (typeof b.say !== 'string' || !b.say.trim()) err(w, 'A between-runs entry needs a "say": the line the next run reads ("While you were gone: …").');
+    if (!Array.isArray(b.do) || !b.do.length) err(w, 'A between-runs entry needs "do": its effects.');
+    conds(b.when, `${w}.when`);
+    for (const c of (b.when ?? []) as Record<string, unknown>[]) if ('season_gte' in c || 'pool' in c || 'leader' in c) err(w, `Between runs there is no season, pool or leader to read. It has ${JSON.stringify(c)}.`);
+    vars = new Map();
+    effects(b.do, `${w}.do`, { between: true });
+    for (const e of (b.do ?? []) as Record<string, unknown>[]) if (['pool', 'income', 'put', 'remove', 'tag', 'untag', 'law', 'end_run', 'arrive', 'say'].some((k) => k in e)) err(w, `Between runs there is no run to change: use the world's words (far, far_all, mutate, sign, stance, trade, unlock, law_ends). It has ${JSON.stringify(e)}.`);
+  });
+
+  // ---- (draft 8) locked content: what can be unlocked, and a hint for it ----
+  for (const c of cards) if (c.hint !== undefined && !c.locked) warn(`cards (${c.id})`, '"hint" is shown only for a locked card.');
+  for (const x of lockable) {
+    if (!unlocks.has(x)) warn(`locked (${x})`, `Nothing unlocks "${x}": no effect of this pack says { "unlock": "${x}" }. It can never be found unless another pack unlocks it.`);
+    const hint = x.startsWith('pack:') ? p.pack.hint : (cards.find((c) => c.id === x)?.hint ?? (p.leaders ?? []).find((l) => l.id === x)?.hint);
+    if (!hint) warn(`locked (${x})`, 'Give it a "hint": the line "Not yet found" shows the player.');
+  }
 
   // ---- tags nothing produces, tags nothing reads ----
   for (const t of tags) {
@@ -1067,9 +1152,10 @@ export function lawRuleShape(d: Record<string, unknown>, r: PackRule): string[] 
 }
 
 /** what the base game records in the world's history that a rule `on: { "event": name }` can wait for (the events its
- *  cards and its arc write: season/realm-templates.ts, realm-events.ts, realm.ts) */
+ *  cards write: season/realm-templates.ts, realm-events.ts, realm.ts; draft 8: the raiders are cards, no arc — the
+ *  old arc's `farm-burned` is gone, `raiders-march` is the standing threat's lapse) */
 export const BASE_EVENT_KINDS: readonly string[] = [
-  'built', 'made-safe', 'scouts-seen', 'farm-burned', 'tribute-paid', 'raid-held', 'raid-broke', 'raid-missed', 'lens-lit', 'camp-opened', 'camp-held', 'camp-lost',
+  'built', 'made-safe', 'scouts-seen', 'raiders-march', 'tribute-paid', 'raid-held', 'raid-broke', 'raid-missed', 'lens-lit', 'camp-opened', 'camp-held', 'camp-lost',
   'relieved', 'fell', 'refugees-arrived', 'refugees-housed', 'refugees-resettled', 'refugees-turned-away', 'dead-burned', 'dead-loose', 'parade-held', 'parade-thin',
   'fire-fought', 'sellswords-hired', 'spell-cast', 'ability-cast',
 ];

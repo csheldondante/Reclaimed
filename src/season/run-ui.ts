@@ -35,7 +35,7 @@ export interface RunGame {
   readonly phase: Phase;
   readonly leader: Leader | null;
   /** the run: its season, its length, which run of this world it is; null before a leader is picked */
-  readonly run: { season: number; seasons: number; n: number; threatIn: number | null; averted: boolean; spells: SpellId[]; fight: W.Fight | null } | null;
+  readonly run: { season: number; seasons: number; n: number; threat: { title: string; left: number } | null; spells: SpellId[]; fight: W.Fight | null } | null;
   readonly ledger: SeasonLedger;
   /** what is offered now, and what is under way */
   asking(): Asking[];
@@ -170,8 +170,8 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
         if (each) chip.append(el('i', undefined, incomeLine(each)));
         top.appendChild(chip);
       }
-      const threat = W.threatText(run.threatIn, run.averted);
-      if (threat && !run.fight) top.appendChild(el('span', 'r-threat', threat));
+      const threat = W.threatText(run.threat);
+      if (threat) top.appendChild(el('span', 'r-threat', threat));
     }
     // ---- the full screens: pick a leader, the end of the run
     full.style.display = phase === 'leader' || phase === 'end' ? '' : 'none';

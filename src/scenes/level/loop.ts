@@ -135,7 +135,7 @@ class Game implements RunGame {
   }
   get run() {
     const r = this.realm;
-    return r ? { season: r.season, seasons: r.seasons, n: this.runs, threatIn: r.threatIn(), averted: r.averted, spells: [...r.spells], fight: r.fight } : null;
+    return r ? { season: r.season, seasons: r.seasons, n: this.runs, threat: r.standingThreat(), spells: [...r.spells], fight: r.fight } : null;
   }
   /** runs begun in this world (the history's count) */
   private runs = 0;
@@ -235,8 +235,9 @@ class Game implements RunGame {
       const site = r.siteOf(o);
       if (site) put(o.id, `${r.w.name(o.presenter)} · ${W.leftText(r.left(o))}`, 'ask', this.spot(site));
     }
-    const n = r.threatIn();
-    if (n !== null && n > 0) put('threat', W.threatTag(n), 'threat', this.spot('road'));
+    // (the standing threat is a card like any other: its own title and countdown, shown on the road)
+    const st = r.standingThreat();
+    if (st) put('threat', W.threatTag(st.title, st.left), 'threat', this.spot('road'));
     // (a live event going on without the player: its name over where it is — a tap goes back to it)
     for (const run of this.live.runs) {
       const at = this.live.where(run);

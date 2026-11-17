@@ -91,7 +91,7 @@ export interface RunStat {
   policy: string;
   leader: string;
   seed: number;
-  /** 'held', 'fell', 'paid off' */
+  /** 'held', 'fell', 'paid off', 'won by law', 'no raid' (the run reached its end and no raid came) */
   end: string;
   /** the first season a threat ran out unanswered, or Unrest kept every free worker away (null: never) */
   trouble: number | null;
@@ -223,7 +223,9 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
     leader: o.leader,
     seed: o.seed,
     // (an ending card or rule: a loss counts as fell, any other ending as a win by law or card)
-    end: r.ended ? (r.ended.result === 'fell' ? 'fell' : 'won by law') : won ? 'won by law' : r.averted ? 'paid off' : r.fight?.held ? 'held' : 'fell',
+    // (the raid is a card: a run that reached its last season says how the raiders' card ended — paid, held, broke in —
+    // or that no raid came at all)
+    end: r.ended && r.ended.result !== 'stood' ? (r.ended.result === 'fell' ? 'fell' : 'won by law') : won ? 'won by law' : r.history().some((e) => e.kind === 'tribute-paid') ? 'paid off' : r.fight ? (r.fight.held ? 'held' : 'fell') : 'no raid',
     laws: t.laws().reduce((a, l) => {
       const x = a.find((y) => y.name === l.name);
       if (x) x.times += l.times;
@@ -252,7 +254,7 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
     events: t.events.map((e) => ({ template: e.template, tier: e.tier, cast: e.cast, season: e.season, now: e.now })),
     moves: t.moves,
     titles: Object.fromEntries(Object.entries(titles).map(([k, v]) => [k, [...v]])),
-    ending: r.ended?.name ?? null,
+    ending: r.ended && r.ended.result !== 'stood' ? r.ended.name : null,
     far: t.farNews().places.map((x) => `${x.name}: ${x.line}`),
   };
 }
@@ -277,13 +279,13 @@ export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy
   if (o.packs?.length) L.push(`Packs in play: ${o.packs.map((x) => x.pack.name).join(', ')}`);
   L.push(`Bots: ${policies.length} policies x ${leaders.length} leaders x ${o.seeds.length} seeds = ${runs.length} runs of ${o.seasons} seasons`);
   L.push('');
-  L.push(`${pad('policy', 24)}${pad('held', 5)}${pad('paid', 5)}${pad('fell', 5)}${pad('won', 4)}${pad('trouble', 8)}${pad('asked', 6)}${pad('took', 5)}${pad('built', 6)}${pad('cast', 6)}${pad('idle', 9)}left at the end: Magic Might Labor Materials Intel Unrest`);
+  L.push(`${pad('policy', 24)}${pad('held', 5)}${pad('paid', 5)}${pad('fell', 5)}${pad('won', 4)}${pad('none', 5)}${pad('trouble', 8)}${pad('asked', 6)}${pad('took', 5)}${pad('built', 6)}${pad('cast', 6)}${pad('idle', 9)}left at the end: Magic Might Labor Materials Intel Unrest`);
   for (const p of policies) {
     const mine = runs.filter((r) => r.policy === p.name);
     const n = (e: string) => mine.filter((r) => r.end === e).length;
     const tr = mine.filter((r) => r.trouble !== null).map((r) => r.trouble!);
     const last = POOLS.map((k) => mean(mine.map((r) => r.last[k])).toFixed(0)).join(' ');
-    L.push(`${pad(p.name, 24)}${pad(n('held'), 5)}${pad(n('paid off'), 5)}${pad(n('fell'), 5)}${pad(n('won by law'), 4)}${pad(tr.length ? `S${mean(tr).toFixed(1)}` : 'never', 8)}${pad(mean(mine.flatMap((r) => r.asked)).toFixed(1), 6)}${pad(mean(mine.flatMap((r) => r.took)).toFixed(1), 5)}${pad(mean(mine.map((r) => r.built.length)).toFixed(1), 6)}${pad(mean(mine.map((r) => r.cast)).toFixed(1), 6)}${pad(`${mean(mine.map((r) => r.idle)).toFixed(1)}/${mean(mine.map((r) => r.labor)).toFixed(0)}`, 9)}${last}`);
+    L.push(`${pad(p.name, 24)}${pad(n('held'), 5)}${pad(n('paid off'), 5)}${pad(n('fell'), 5)}${pad(n('won by law'), 4)}${pad(n('no raid'), 5)}${pad(tr.length ? `S${mean(tr).toFixed(1)}` : 'never', 8)}${pad(mean(mine.flatMap((r) => r.asked)).toFixed(1), 6)}${pad(mean(mine.flatMap((r) => r.took)).toFixed(1), 5)}${pad(mean(mine.map((r) => r.built.length)).toFixed(1), 6)}${pad(mean(mine.map((r) => r.cast)).toFixed(1), 6)}${pad(`${mean(mine.map((r) => r.idle)).toFixed(1)}/${mean(mine.map((r) => r.labor)).toFixed(0)}`, 9)}${last}`);
   }
   L.push('');
   L.push('"trouble": mean first season a threat ran out or Unrest kept every worker away. "asked", "took": cards on the board and taken, a season. "cast": Magic spent on spells. "idle": free workers at a season\'s start / workers at the end. "left": free pools when the run ended.');

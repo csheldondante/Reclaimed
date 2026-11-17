@@ -24552,3 +24552,37 @@ and the ash leaders' deck leaves the working out.
 Vellford, Millbrook); the crown 5 runs (it needs two sworn towns, and the base raid arc takes Millbrook in most runs);
 the wizards 5; the working stopped 4 times, left to run out once: the ash ending in 1 of 36. The ash and star cards
 need a later run, which the bots do not play (they play one run each).
+
+## 2026-11-16 — The raid is a card; between runs (`card-table`, CT-51, CT-54)
+
+**Why.** The owner: "We should not have a separate raid mechanism it should be a card … I would not have factions
+act outside of cards as it controls the pacing and keeps one gamified mutator", then "At least during the run it being
+gamified is good. Between runs is another lever for balance." The Realm timed a raid arc when a run began (scouts at a
+quarter, a farm burned at a half, the raid in the last season, the run over when it was fought or paid). It came in an
+ash world with every far town gone (CT-50).
+
+**What.** No arc. The raiders are the base game's data, seeded once a world (`raiders`, their camp, hostile). Their
+standing threat `pay-raiders` ("Raiders on the road") is a template like any other: dealt while they are hostile and
+have somewhere to come from, at the town itself (not a site, so it keeps no site's card off the board), counting down
+to the end of the season before the last; paid, a truce; left, the forced `raid` card in the last season (the live
+event, `finishLive`, forced play: unchanged). A run ends when its last season ends (`RUN_SEASONS`) or by `end_run`; the
+end with nothing else is "The town stands" (`stood`) in the record; the raid's result is a line of the end screen. The
+header is the standing threat's own countdown. Between two runs one deterministic step (`realm-between.ts`) applies
+data: the truce lapses, raiders leave a world with no far town, signs fade unless `for_good`, ruins grow over; each a
+`between-runs` record line shown as "While you were gone: …".
+
+**Measured** (`node scripts/tablebots.mjs`, 33 runs, before → after): held / paid / fell the same for every policy
+(idle 0/0/3, walls and might 3/0/0, economy and tribute 0/3/0 …); cards on the board a season up 0.7–1.0 (the standing
+card), buildings up 0.3–3.0 (a run that pays plays to its end). The dealer's guarantee of a card that answers the
+raiders is kept by giving the standing card the hook `raiders-threat` (it is the threat, not an answer): with
+`raiders` the farms card never came up for Dunstan in 16 seasons (`table-live.test.ts`); with the new hook it comes in
+season 10.
+
+**Tests changed** (intent kept): `realm.test.ts` (the arc test → the standing card counts down, the raid is forced,
+the run ends at its last season; the deal test counts the town-wide card apart; the pay-off test reads the truce; a new
+test: no raiders, no raid), `realm-bots.test.ts` (paid = the tribute card done; the tribute bot saves; the engine bot
+is "everything"), `realm-resume.test.ts` (`standingThreat` for `averted`), `table.test.ts` and `table-live.test.ts`
+(every season is played; the raid's lines are in the end), `live-rules.test.ts` (the raid holds and the run goes on;
+two stale expectations of remains tags fixed), `packs-together.test.ts` (no arc's events: `farm-burned` is gone,
+`raiders-march` is new). New: `between.test.ts` (every world change in a frontier run has a card as its cause; the
+step is deterministic, never during a run or on resume; signs fade).

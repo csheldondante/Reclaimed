@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { LIVE_TEMPLATES, FIRE_TEMPLATE } from '../../src/season/realm-events';
 import { RULES } from '../../src/season/realm-rules';
-import { raidArc, WORLD_TEMPLATES } from '../../src/season/realm-templates';
+import { WORLD_TEMPLATES } from '../../src/season/realm-templates';
 import { BASE_EVENT_KINDS, BASE_RULE_IDS, checkPack, checkTogether, LAND_KINDS, type Pack } from '../../src/packs/check';
 import { thingEntity } from '../../src/packs/load';
 import { Table } from '../../src/table/game';
@@ -26,8 +26,10 @@ const tiny = (id: string, more: Partial<Pack> = {}): Pack => ({
 describe('the validator over several packs', () => {
   it('knows the base game\'s rule ids and the events its cards record', () => {
     expect(BASE_RULE_IDS).toEqual(RULES.map((r) => r.id));
-    const written = new Set([...JSON.stringify([WORLD_TEMPLATES, LIVE_TEMPLATES, FIRE_TEMPLATE, raidArc('x', 16)]).matchAll(/"event":"([a-z-]+)"/g)].map((m) => m[1]));
+    // (draft 8: no arc — the raiders' scouts and march are the standing threat card's own events)
+    const written = new Set([...JSON.stringify([WORLD_TEMPLATES, LIVE_TEMPLATES, FIRE_TEMPLATE]).matchAll(/"event":"([a-z-]+)"/g)].map((m) => m[1]));
     for (const k of written) expect([...BASE_EVENT_KINDS, ...LAND_KINDS], k).toContain(k);
+    expect(written.has('scouts-seen') && written.has('raiders-march')).toBe(true);
   });
   it('passes the cross-pack example, each alone and together', () => {
     expect(errs(checkPack(A))).toEqual([]);

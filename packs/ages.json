@@ -81,7 +81,7 @@
       "if_expires": [ { "remove": "ages-college" }, { "mutate": "burned", "where": "site:fields" }, { "mutate": "burned", "where": "site:market" },
                       { "mutate": "burned", "where": "site:keep" }, { "mutate": "burned", "where": "site:forge" },
                       { "mutate": "burned", "where": "site:quarter" }, { "mutate": "burned", "where": "site:mill" },
-                      { "sign": "ashfall", "where": "world", "seasons": 40, "strength": 1 },
+                      { "sign": "ashfall", "where": "world", "for_good": true, "strength": 1 },
                       { "far_all": "destroyed", "by": "ages-wizards" },
                       { "end_run": "fell", "name": "Ash and flame: the wizards woke the mountain" },
                       { "say": "The mountain opens. Fire runs down to the plains and ash falls on every town in the world." } ],

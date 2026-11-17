@@ -978,8 +978,8 @@ export class LivingEngine {
   // ---- the turn ----------------------------------------------------------------------------------------------------------
 
   /** a turn passes: stores move by their rates, losses recover, cards resolve or lapse, the arc advances, claims lapse;
-   *  then the next deal */
-  advance(): EngineReport {
+   *  then the next deal (`deal` false: no deal — the run's last turn has passed) */
+  advance(deal = true): EngineReport {
     const w = this.w;
     w.facts.turn++;
     // (the turn's economy: each settlement's stores move by their rates over the turn's days — an instant step)
@@ -1007,6 +1007,7 @@ export class LivingEngine {
       w.facts.dropClaim(c.id);
       w.facts.record({ kind: 'claim-lapsed', by: [c.claimant], to: [c.target], note: `${w.name(c.claimant)}'s claim to ${w.name(c.target)} lapsed` });
     }
+    if (!deal) return { turn: this.turn, dealt: [], kept: this.offers.filter((o) => o.status === 'offered'), notProposed: [], dealer: null, evaluated: { templates: 0, of: 0, changed: 0 }, ms: 0 };
     return this.deal();
   }
 
