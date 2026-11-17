@@ -23,7 +23,7 @@ export type ForceOrder =
   | { kind: 'guard' | 'go' | 'attack'; at: PlaceRef; formation?: Formation; discipline?: number }
   | { kind: 'drill'; at: PlaceRef; formation: Formation }
   | { kind: 'man'; town: number; side?: number }
-  | { kind: 'march'; town: number; gate: number; leave?: boolean };
+  | { kind: 'march'; town: number; gate: number; leave?: boolean; inward?: boolean };
 
 /** how a group is doing (the season's report) */
 export interface GroupReport {

@@ -134,3 +134,22 @@ export const GROWTH_HOW = 'Tap the east fields to draw the growth rune. Farms th
 export const GROWTH_CAST = 'You drew a growth rune over the east fields. They grow fast until the season ends.';
 export const GROWTH_MISS = 'Tap the east fields to draw the growth rune there.';
 export const RAIN_CAST = 'Rain falls where you tapped.';
+
+/** (round 8) packs, laws, rules, the record, endings (the card table's own words are table/words.ts) */
+export const LAWS = 'Laws';
+export const RULES = 'Rules';
+export const REMEMBERED = 'Remembered';
+export const CLOSE = 'Close';
+export const SETTLE = 'Settle it now';
+export const PACKS_BAD = 'A pack could not be played. The base game plays without it.';
+export const NOW_TITLE = 'The world now';
+export const lawCost = (now: string, printed: string): string => `${now} By law. Printed: ${printed}`;
+export const bringsLaw = (line: string): string => `Brings a law: ${line}`;
+export const remainsOf = (name: string): string => `remains of ${name}`;
+export const builtThing = (name: string): string => `Built: ${name}.`;
+export const doneHere = (title: string): string => `Done: ${title}`;
+export const TAGS = 'Tags';
+export const castOn = (name: string, cost: number): string => `${name} (${cost} Magic)`;
+export const ABILITY_CAST = 'Cast';
+export const ruleWhy = (when: string, why: string): string => `${when} ${why}`;
+export const firedLine = (n: number): string => (n === 1 ? 'It paid once last season.' : `It paid ${n} times last season.`);

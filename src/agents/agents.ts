@@ -191,6 +191,8 @@ export interface OrderRecord {
   gate?: number;
   /** (round 6) march: past the window's edge the units drop out (EV_LEFT) */
   leave?: boolean;
+  /** (round 8) march: in along the gate's route, from its outer end to the gate (LS-77) */
+  inward?: boolean;
   /** (round 6) man: a field per wall run (run i the (i mod n)-th) — `field` is ignored */
   runFields?: number[];
 }
@@ -1529,7 +1531,9 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     f32[4] = r.spacing ?? 1.2;
     r.alts.forEach((a, i) => w.set([...ref(a.at), ...ref(a.also)], REF_AT + i * 2 * REF_W));
     // (round 6: the formation's words — the gate or the run, leave; the GPU's anchor and trail start over: route none)
-    w.set([r.gate ?? 0xffffffff, r.leave ? 1 : 0, 0xffffffff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, fields.length], FORM_AT);
+    // (round 8: word 1 — 0 a march that stops at its route's end, 1 one that leaves, 2 one that comes in: the route
+    // walked backward, from its outer end to the gate — orders.wgsl MARCH_IN)
+    w.set([r.gate ?? 0xffffffff, r.leave ? 1 : r.inward ? 2 : 0, 0xffffffff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, fields.length], FORM_AT);
     // (the man order's run fields: a word each, orders.wgsl RUNF_AT)
     w.set(fields, RUNF_AT);
     this.device.queue.writeBuffer(this.mail, (MAIL_GRP + g * GROUP_W) * 4, w, 0, 8);

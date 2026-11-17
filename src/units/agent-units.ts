@@ -467,6 +467,7 @@ export class AgentUnits implements Units {
     } else if (o.kind === 'march') {
       rec.gate = o.gate;
       rec.leave = !!o.leave;
+      rec.inward = !!o.inward;
     }
     g.serial = this.agents.order(slot, rec);
     this.keepTown(slot, o.kind === 'man' || o.kind === 'march' ? o.town : o.at.town);

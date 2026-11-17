@@ -152,6 +152,9 @@ export async function serveBuild(b = build(), { own = false } = {}) {
       let f = path.normalize(path.join(b.dir, decodeURIComponent(u.pathname)));
       if (!f.startsWith(b.dir)) return (res.statusCode = 403), res.end();
       if (fs.existsSync(f) && fs.statSync(f).isDirectory()) f = path.join(f, 'index.html');
+      // (loop round 8, the portrait slot: local/art/<id>.png is the owner's own, never in the build — served from the
+      // worktree as the dev server does)
+      if (!fs.existsSync(f) && u.pathname.startsWith('/local/art/')) f = path.normalize(path.join(ROOT, decodeURIComponent(u.pathname)));
       fs.readFile(f, (err, data) => {
         if (err) return (res.statusCode = 404), res.end('not found');
         res.setHeader('Content-Type', MIME[path.extname(f)] ?? 'application/octet-stream');

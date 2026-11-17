@@ -49,6 +49,12 @@ const OK_ATTACK: u32 = 4u;
 const OK_DRILL: u32 = 5u;
 const OK_MAN: u32 = 6u;
 const OK_MARCH: u32 = 7u;
+/** (round 8) a march's word FORM_AT + 1: stop at the route's end (0), leave past it (1), come in along it to the gate
+ *  (2; agents.ts writes it) */
+const MARCH_LEAVE: u32 = 1u;
+const MARCH_IN: u32 = 2u;
+/** (round 8) how far to the side of a march-in route's outer end a rank may stand and still be led in along it (cells) */
+const MARCH_IN_REACH: f32 = 8.0;
 const NO_SIDE: u32 = 0xffffffffu;
 /** anchor states: forming (waits for its ranks), moving, at its end (a march not leaving; a field march's seed),
  *  past its end (a march leaving) */
@@ -381,7 +387,7 @@ fn groupEmit(@builtin(global_invocation_id) id: vec3<u32>) {
   if (fmode != 0u && fmode != 5u) {
     if (kind == OK_MAN) { done = lag < 1.5; }
     else if (kind == OK_DRILL) { done = st != FS_FORM && lag < 2.0 + wander; }
-    else if (kind == OK_MARCH && grpWord(g, FORM_AT + 1u) != 0u) { done = false; }
+    else if (kind == OK_MARCH && grpWord(g, FORM_AT + 1u) == MARCH_LEAVE) { done = false; }
     else { done = st == FS_END && lag < 2.5 + wander; }
   }
   if (!done) { return; }
@@ -502,6 +508,20 @@ fn pathAt(g: u32, m: u32, s: f32) -> vec3<f32> {
   if (m == 1u) {
     let r = grpWord(g, FORM_AT + 2u);
     let len = formF(g, 3u);
+    if (grpWord(g, FORM_AT + 1u) == MARCH_IN) {
+      // (round 8, LS-77: in along the route — path s 0 at its outer end, len at the gate. Rows not yet on it stand
+      // straight on out past its outer end; past the gate, straight on into the town)
+      let q = len - s;
+      if (q >= 0.0 && q <= len) { return routeAt(r, q); }
+      if (q > len) {
+        let a = routeAt(r, max(len - 1.0, 0.0));
+        let b = routeAt(r, len);
+        return b + vec3<f32>(normalize(b.xy - a.xy + vec2<f32>(1e-5, 0.0)) * (q - len), 0.0);
+      }
+      let a = routeAt(r, 1.0);
+      let b = routeAt(r, 0.0);
+      return b + vec3<f32>(normalize(b.xy - a.xy + vec2<f32>(1e-5, 0.0)) * (-q), 0.0);
+    }
     if (s <= len) { return routeAt(r, max(s, 0.0)); }
     let a = routeAt(r, len - 1.0);
     let b = routeAt(r, len);
@@ -525,7 +545,10 @@ fn pathDir(g: u32, m: u32, s: f32) -> vec2<f32> {
 }
 /** the way's width and the formation's offset across it (cells) at s along: a route's routeWidth, else the clearance */
 fn wayAt(g: u32, m: u32, s: f32) -> vec2<f32> {
-  if (m == 1u && s <= formF(g, 3u)) { return vec2<f32>(routeWidthAt(grpWord(g, FORM_AT + 2u), max(s, 0.0)), 0.0); }
+  if (m == 1u && s <= formF(g, 3u)) {
+    let rs = select(max(s, 0.0), clamp(formF(g, 3u) - s, 0.0, formF(g, 3u)), grpWord(g, FORM_AT + 1u) == MARCH_IN);
+    return vec2<f32>(routeWidthAt(grpWord(g, FORM_AT + 2u), rs), 0.0);
+  }
   let lr = sideRoom(pathAt(g, m, s).xy, pathDir(g, m, s));
   // (round 6b: no obstacle as far as sideRoom looks on either side: open ground, as wide as any row)
   let open = lr.x >= 6.0 && lr.y >= 6.0;
@@ -784,7 +807,7 @@ fn formAnchor(@builtin(global_invocation_id) id: vec3<u32>) {
     if (m == 1u) {
       s += step;
       if (s >= formF(g, 3u) && st == FS_MOVE) {
-        if (grpWord(g, FORM_AT + 1u) == 0u) { s = formF(g, 3u); st = FS_END; } else { st = FS_PAST; }
+        if (grpWord(g, FORM_AT + 1u) != MARCH_LEAVE) { s = formF(g, 3u); st = FS_END; } else { st = FS_PAST; }
       }
     } else if (m == 2u) {
       // (no loop fits: in place)
@@ -799,9 +822,24 @@ fn formAnchor(@builtin(global_invocation_id) id: vec3<u32>) {
       let k = surfaceNear(i, p.z);
       if (fieldOk(f) && k < NAV_K) {
         let here = fieldDist(f, i * NAV_K + k);
+        // (round 8, LS-76: the anchor's own point not yet reached by the field — FAR, a place farther off than the
+        // field's relaxation has spread — it set off straight toward the place instead of standing at its start while
+        // the ranks the field had reached walked on down it: the column split 19 → 153 cells. Straight on until the
+        // field reaches it; then down the field)
+        var d = vec2<f32>(0.0);
+        var go = false;
         if (here <= 0.8) { st = FS_END; }
         else if (here < FAR) {
-          let d = fieldGrad(f, i * NAV_K + k, c, p.xy);
+          d = fieldGrad(f, i * NAV_K + k, c, p.xy);
+          go = true;
+        } else {
+          let to = mailV3(o + 8u).xy - p.xy;
+          if (grpWord(g, 11u) == PLACE_OK && length(to) > 0.8) {
+            d = normalize(to);
+            go = true;
+          }
+        }
+        if (go) {
           p = vec3<f32>(p.xy + d * step, p.z);
           let c2 = clampCell(cellAt(p.xy));
           let k2 = surfaceNear(colIdxI(c2), p.z);
@@ -1077,7 +1115,9 @@ fn formSlots(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
     if (m == 1u) {
       routeId = grpWord(g, FORM_AT + 2u);
       // (round 6b, U2-LEAVE: a march that leaves rides on past the route's end, along its straight extension)
-      routeS = select(clamp(sr, 0.0, formF(g, 3u)), max(sr, 0.0), grpWord(g, FORM_AT + 1u) != 0u);
+      routeS = select(clamp(sr, 0.0, formF(g, 3u)), max(sr, 0.0), grpWord(g, FORM_AT + 1u) == MARCH_LEAVE);
+      // (round 8: a march in walks the route backward — its s on the route is the length less the path's)
+      if (grpWord(g, FORM_AT + 1u) == MARCH_IN) { routeS = clamp(formF(g, 3u) - sr, 0.0, formF(g, 3u)); }
     }
   }
   mailSetV3(ro, goal);
@@ -1110,7 +1150,7 @@ fn formSlots(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
     }
     // (round 6b, U2-LEAVE: past the end of a march that leaves, its straight extension is the way on — measured to it.
     // Before, a rank there fell to the group's field, which leads back to the route's start, and the anchor waited)
-    let leaving = m == 1u && grpWord(g, FORM_AT + 1u) != 0u;
+    let leaving = m == 1u && grpWord(g, FORM_AT + 1u) == MARCH_LEAVE;
     if (leaving) {
       let key = pathKey(g, 1u, up.xy);
       if (key.x > formF(g, 3u)) { best = abs(key.y); bs = key.x; }
@@ -1118,6 +1158,20 @@ fn formSlots(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
     if (best < 3.0) {
       let ns2 = select(bs + sign(routeS - bs) * 2.0, routeS, abs(routeS - bs) < 2.0);
       mailSetV3(ro, select(routeAt(routeId, ns2), pathAt(g, 1u, ns2), leaving));
+      mode = RANK_STEER;
+    }
+  }
+  // (round 8, LS-77: a march in — a rank still out past the route's outer end, where the group was made, walks in
+  // along the route's straight extension to its slot; the group's field leads to the gate, by any way)
+  if (m == 1u && mode == RANK_FIELD && grpWord(g, FORM_AT + 1u) == MARCH_IN && routeId != ROUTE_NONE && routeValid(routeId)) {
+    let len = formF(g, 3u);
+    let b = routeAt(routeId, len);
+    let a = routeAt(routeId, max(len - 1.0, 0.0));
+    let out = normalize(b.xy - a.xy + vec2<f32>(1e-5, 0.0));
+    let along = dot(up.xy - b.xy, out);
+    let across = abs(dot(up.xy - b.xy, vec2<f32>(-out.y, out.x)));
+    if (along > -2.0 && across < MARCH_IN_REACH) {
+      mailSetV3(ro, pathAt(g, 1u, min(-max(along, 0.0) + 2.0, len - routeS)));
       mode = RANK_STEER;
     }
   }
@@ -1131,6 +1185,6 @@ fn formSlots(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
     if ((st == FS_MOVE || st == FS_PAST) && d > FORM_LAG && length(units[u * UNIT_V + 1u].xy) < STUCK_V) { lagD = 0.0; }
   }
   atomicMax(&mail[o + FORM_AT + 9u], bitcast<u32>(lagD));
-  if (m == 1u && grpWord(g, FORM_AT + 1u) != 0u) { mode |= RANK_LEAVE; }
+  if (m == 1u && grpWord(g, FORM_AT + 1u) == MARCH_LEAVE) { mode |= RANK_LEAVE; }
   atomicStore(&mail[ro + 3u], mode);
 }

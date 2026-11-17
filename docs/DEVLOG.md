@@ -24609,3 +24609,46 @@ live events' round 7 data.
 packs-together 11, laws 14, chains 17, record 2, places 2, factions 3, table 4, table-live 11, table-bots 3, opps 20,
 sites 5, mutators-facts 6, mutators-list 5. Typecheck clean. `scripts/packcheck.mjs`: laws, glitter, arena, sample no
 errors.
+
+## 2026-11-16 — loop round 8 (2): the 3D game plays the card world; columns in by the road (`loop-skeleton`, LS-76, LS-77, LS-84 to LS-92)
+
+**Why.** The owner: "the world builds general systems for showing and later playing in the world generated and
+mutated by the cards", and on parades crossing grass: "The design is flow fields and formations and authored paths
+already specifically because I anticipated this."
+
+**Packs in the 3D game** (`season/run-packs.ts`, `loop.ts`, `run-ui.ts`): the card table's loader and Realm options
+(`&packs=laws,glitter,arena` from packs/, bundled by `import.meta.glob` so a build has them; `&pack=<url>`); a pack with
+errors is left out with its report. One mapping from effect vocabulary to a showing, in docs/SYSTEMS.md 3c (instant /
+season turn / live / floor). Laws, Rules and Remembered pages from the town sheet; the petition's cost is
+`Realm.terms` with the printed cost beside it; a `kills` law widens the hand-aimed blow; rule firings in the news
+worded as chains; "Settle it now" (`Realm.resolveNow`); pack things as markers at their sites ("remains of …" when
+ruined), with a card page (picture, text, tags, pack abilities to cast on it); an ending titles the end screen and
+the run-start screen says what the world is now. The portrait slot: `local/art/<id>.png` or a pack entry's `image`
+(the dev runner serves local/art from the worktree). Seen in the walk (`loopwalk.mjs --cards`): the guild hall's law
+made "Raise the walls" cost Materials 2 + Magic 2 where Materials 3 was printed.
+
+Found on the way: a pack event's group ordered to "the event" (a site) threw in the runner — orders went only to
+places of the town's table. Now each of its people holds the site's point (LS-85). A card a rule starts is dealt at
+the town, not its site (LS-90): the loop takes the site from its binding.
+
+**March in (LS-77).** The gate routes were walked outward only. `march` takes `inward: true` (`orders.wgsl
+MARCH_IN`): the path is the route backward, rows not yet on it stand straight on out past its outer end, and a rank
+out there is led in along the extension (the group's field leads to the gate by any way). GPU test "a march in": 12
+soldiers made 6 cells past the outer end walk 66 cells in, on the road, and arrive at the gate once. The runner marches
+an entering column in by its road's gate route when the town is walled, then gives it its own order at the gate
+(`?marchin=0` off). Gate routes are the wall's: none without one (LS-89).
+
+**Roads in the fields.** `Agents.setRoads` (ROAD_COST 0.5) had no caller since the fortress went. The loop stamps the
+town's arterials into it (`feedRoads`, `?roads=0` off). Streets inside the town are a GPU raster: not stamped (LS-88).
+The road graph and `ride` were not used: they need the street graph on the CPU, which only the GPU has; march-in plus
+weighted fields were less work.
+
+**LS-76 bisected and fixed.** GPU test: a 9-strong column `go` to a place 55 cells off kept together and arrived; 72
+cells off nobody moved. The anchor's own point read FAR in its field (relaxation had not reached it), so it stood at its
+start — in the game the ranks the field had reached walked on down it: the 19 → 153 cell split. `formAnchor` now sets
+an unreached anchor off straight toward its place until the field reaches it. The parade and the refugees walk in a
+column again; the 3/4 loose-arrival rule (loose groups only) and the 90 s cutoff stay until a walled and an unwalled
+parade are seen arriving whole.
+
+**Tests.** `formations.test.ts` 15 of 15 with "a march in" (the round 7 drill-discipline timeout did not recur), then
+"LS-76" alone after the fix (it failed before it); live-rules 19, realm 16; typecheck clean.

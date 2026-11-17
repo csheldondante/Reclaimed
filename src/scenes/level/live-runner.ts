@@ -54,6 +54,8 @@ const BURN_SECONDS = 12;
 const LIGHT_AFTER = 1;
 /** (round 7) spots a stall is tried at, for each stall wanted */
 const STALL_TRIES = 2;
+/** (round 8) how far a group told to hold a site chases a foe from it (cells; tunable) */
+const SITE_GUARD = 8;
 /** an event's units' factions */
 const FACTION = { town: 'f-town', foe: 'f-raiders', folk: 'f-town' } as const;
 /** the units' kinds a group may be made of by place (season/forces.ts ForceKind) */
@@ -70,6 +72,9 @@ interface RunGroup {
   dead0: number;
   dead: number;
   arrived: boolean;
+  /** (round 8, LS-77) an entering group first marches in along its road's gate route in a column (`march` inward);
+   *  at the gate its own order is given. The order waiting, with the road's place refs */
+  leg?: { k: number; to?: PlaceRef } | null;
 }
 
 /** a group that comes in by a road */
@@ -167,8 +172,25 @@ export class LiveRunner {
       if (hit) hit[0].fighting = true;
     });
     forces.arrived.push((g) => {
-      for (const r of this.runs) for (const x of r.groups.values()) if (x.force === g) x.arrived = true;
+      for (const r of this.runs)
+        for (const x of r.groups.values()) {
+          if (x.force !== g) continue;
+          // (round 8: in at the gate by the road — now the group's own order, from the gate)
+          if (x.leg) this.onward(r, x, 'at the gate');
+          else x.arrived = true;
+        }
     });
+    forces.orderFailed.push((g, why) => {
+      for (const r of this.runs) for (const x of r.groups.values()) if (x.force === g && x.leg) this.onward(r, x, `no march in (${why})`);
+    });
+  }
+
+  /** (round 8) a group's march in along its road ended (at the gate, or it could not march): its own order now */
+  private onward(run: LiveRun, rg: RunGroup, why: string): void {
+    const leg = rg.leg!;
+    rg.leg = null;
+    console.log(`[live] ${run.template}: ${rg.def.id} ${why}; on to its place`);
+    this.order(run, rg, leg.k, leg.to);
   }
 
   /** the world's fire, particles and ground: a level without them cannot play an event (said, not skipped) */
@@ -232,6 +254,12 @@ export class LiveRunner {
         rg.made = n;
         // (people who stand where they were put are where they are going)
         rg.arrived = !g.order;
+        // (round 8: ordered to hold their own site — a pack bout's fighter: they hold it, chasing foes near it)
+        if (g.order && 'site' in g.order.at) {
+          const p = this.point(run, g.order.at) ?? at;
+          for (const id of rg.units) units.order(id, { kind: 'guard', at: p, radius: SITE_GUARD });
+          rg.arrived = true;
+        }
         run.unwatch.push(units.observe([...rg.units]));
       } else if (g.from.place === 'spawn' && g.from.road === 'entry') {
         run.entry ??= { road: -1, tried: 0, direct: false, step: 'none', calm: 0 };
@@ -274,11 +302,29 @@ export class LiveRunner {
     if (!kind) throw new Error(`live event ${run.template}: no units of kind ${rg.def.kind} can be made by place`);
     rg.force = forces.spawnAt(kind, FACTION[rg.def.side], from, n);
     rg.made = n;
-    const o = rg.def.order;
-    if (o) forces.orderGroup(rg.force, { kind: o.kind, at: to ?? this.ref(o.at, k), ...(o.formation ? { formation: o.formation } : {}), ...(o.discipline !== undefined ? { discipline: o.discipline } : {}) });
-    else rg.arrived = true;
     // (its people's places read while the event runs: the camera follows them)
     run.unwatch.push(this.h.scene.units!.observe(forces.members(rg.force)));
+    // (round 8, LS-77: a group in by a road, with a wall up (the gate routes are the wall's: none without one), marches
+    // in along the road's gate route in a column first. `?marchin=0`: straight to its place, as before)
+    if (rg.def.order && k >= 0 && entering(rg.def) && this.h.season.war?.walled && this.h.scene.host.params.get('marchin') !== '0') {
+      rg.leg = { k, to };
+      forces.orderGroup(rg.force, { kind: 'march', town: this.townIndex, gate: k, inward: true });
+      return;
+    }
+    this.order(run, rg, k, to);
+  }
+
+  /** a group's own order (its def's), or `to` */
+  private order(run: LiveRun, rg: RunGroup, k: number, to?: PlaceRef): void {
+    const forces = this.h.scene.townForces!;
+    if (rg.force === null) return;
+    const o = rg.def.order;
+    // (round 8: a pack event's group sent to a site — "the event", the card's own place — has no place of the town's
+    // table to be ordered to as a group: each of its people is told to hold that point, chasing foes near it. LS-85)
+    const point = o && !to && 'site' in o.at ? (this.point(run, o.at) ?? (this.h.town()!.centreInWindow() as [number, number])) : null;
+    if (o && point) for (const id of forces.members(rg.force)) this.h.scene.units!.order(id, { kind: 'guard', at: point, radius: SITE_GUARD });
+    else if (o) forces.orderGroup(rg.force, { kind: o.kind, at: to ?? this.ref(o.at, k), ...(o.formation ? { formation: o.formation } : {}), ...(o.discipline !== undefined ? { discipline: o.discipline } : {}) });
+    else rg.arrived = true;
   }
 
   /**
@@ -370,6 +416,12 @@ export class LiveRunner {
   }
   /** the player may leave the event they are at: not one they must stay at, and not while its people are still being
    *  brought in by a road (the window must stay on that road) */
+  /** (round 8) the event the player is at can be settled now: not one the player must stay at (the raid), and its
+   *  column, if it comes by a road, has been called down it */
+  get canSettle(): boolean {
+    const r = this.focus;
+    return !!r && !r.def.stay && (!r.entry || r.entry.step === 'called' || r.entry.step === 'in');
+  }
   get canLeave(): boolean {
     const r = this.focus;
     return !!r && !r.def.stay && (!r.entry || (r.entry.step === 'in' && r.t > ENTRY_SURE));
@@ -466,7 +518,9 @@ export class LiveRunner {
         const from: PlaceRef = paired ? { town, place: PLACE.spawn0 + k, also: PLACE.gate0 + k } : { town, place: PLACE.spawn0 + k };
         const to: PlaceRef | undefined = paired ? { town, place: PLACE.gate0 + k, also: PLACE.spawn0 + k } : toGate ? townHeart(town) : undefined;
         if (g.force !== null) forces.disband(g.force);
-        this.make(run, g, groupSize(g.def, numbers), from, k, to);
+        // (round 8, the census's experiment: `?parade=N` draws N marchers — the crowd then counts them all, LS-92)
+        const big = g.def.id === 'marchers' ? Number(this.h.scene.host.params.get('parade') ?? 0) : 0;
+        this.make(run, g, big > 0 ? Math.min(big, 64) : groupSize(g.def, numbers), from, k, to);
       }
       for (const g of run.groups.values()) if (g.def.from === 'lining') this.line(run, g, groupSize(g.def, numbers), k);
       console.log(`[live] ${run.template}: called down road ${k}${e.direct ? ' for the heart of the town' : ''}`);

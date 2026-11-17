@@ -368,6 +368,128 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
       if (await talk(t, true)) log(`agreed: ${t} → ${JSON.stringify((await state()).pools)}`);
     }
   };
+  // (round 8) `--cards`: the card world in the 3D game — run with `--query '...&packs=laws,glitter,arena'
+  // --leader ilveth --runlen 8`: a law card taken and the law in the list with a changed number, a chained arena bout
+  // settled now, the glitter spire left to overload (the ending), run 2 in that world with the remains and the
+  // salvage card. Stills `cards-*.png`.
+  if (R.argv.includes('--cards')) {
+    first = false;
+    const cs = () =>
+      page.evaluate(() => {
+        const g = window.rungame;
+        const r = g.realm;
+        return { phase: g.phase, season: r?.season, run: g.run?.n, asking: r ? r.offers().filter((o) => o.status === 'offered').map((o) => o.template) : [], laws: r ? r.lawsInForce().map((x) => x.def.id) : [], ended: r?.ended ?? null, over: r?.over, focus: g.liveDebug().focus, marks: g.markers().filter((m) => m.kind === 'thing' || m.kind === 'done').map((m) => m.label), notes: g.notes };
+      });
+    const panel = async (label, name) => {
+      await tap('.run-sheet .views button', label);
+      await wait(500);
+      await shot(name);
+      const text = await page.evaluate(() => document.querySelector('.run-full')?.innerText ?? '');
+      await tap('.run-full .acts button', 'Close');
+      await wait(300);
+      return text;
+    };
+    const want = ['laws-guild-rates', 'arena-dig-the-pit', 'glitter-raise-the-spire', 'glitter-salvage-hoverbikes', 'build:quarry'];
+    const leave = ['glitter-overload'];
+    let lawSeen = false;
+    let changed = null;
+    let bouts = 0;
+    let settled = 0;
+    let ended = null;
+    let run2 = false;
+    let remains = [];
+    let salvage = false;
+    for (let step = 0; step < 40; step++) {
+      const s = await cs();
+      log(`cards: ${JSON.stringify({ ...s, notes: s.notes.slice(-6) })}`);
+      if (s.phase === 'end') {
+        ended = await page.evaluate(() => ({ title: document.querySelector('.run-full h2')?.textContent, text: document.querySelector('.run-full')?.innerText?.slice(0, 600) }));
+        await shot(run2 ? 'cards-9-end-2' : 'cards-6-end');
+        if (run2) break;
+        await tap('.run-full button.big', 'Start a new run');
+        await phase('leader');
+        await wait(800);
+        await shot('cards-7-world-now');
+        await pickLeader(leader);
+        await phase('city|event');
+        run2 = true;
+        await wait(3000);
+        await shot('cards-8-run2-town');
+        continue;
+      }
+      if (s.phase === 'event') {
+        const tpl = s.focus;
+        log(`cards: event ${tpl}`);
+        await wait(9000);
+        await shot(`cards-4-bout-${++bouts}`);
+        let can = false;
+        for (let k = 0; k < 30 && !can; k++) {
+          can = await page.evaluate(() => !!window.rungame.liveNow?.canSettle);
+          if (!can) await wait(2000);
+        }
+        if (bouts === 1) await shot('cards-4-bout-1b');
+        if (can) {
+          await tap('.run-sheet .views button', 'Settle it now');
+          settled++;
+          await phase('city|event|end', 30000);
+          await wait(1500);
+          await shot(`cards-5-settled-${settled}`);
+        } else await phase('city|end', 200000);
+        continue;
+      }
+      if (s.phase !== 'city') {
+        if (s.phase === 'season') await page.evaluate(() => window.rungame.skip());
+        await wait(1000);
+        continue;
+      }
+      // (the city: remains and the salvage card in run 2)
+      if (run2) {
+        remains = s.marks.filter((m) => m.startsWith('remains of'));
+        if (s.asking.includes('glitter-salvage-hoverbikes')) salvage = true;
+      }
+      for (const t of want) if (s.asking.includes(t)) await talk(t, true);
+      for (const t of leave) if (s.asking.includes(t)) await talk(t, false);
+      const after = await cs();
+      if (after.phase !== 'city') continue;
+      if (!lawSeen && after.laws.includes('laws-cheap-building')) {
+        lawSeen = true;
+        await wait(1200);
+        await shot('cards-2-thing-marker');
+        const t = await panel('Laws', 'cards-3-laws');
+        log(`laws page: ${t.slice(0, 400)}`);
+        // (the changed number: a building card's cost by law and as printed)
+        changed = await page.evaluate(() => {
+          const r = window.rungame.realm;
+          return r
+            .offers()
+            .filter((o) => o.status === 'offered')
+            .map((o) => ({ t: o.template, now: r.terms(o).costs, printed: o.opp.costs }))
+            .find((x) => JSON.stringify(x.now) !== JSON.stringify(x.printed)) ?? null;
+        });
+        log(`a cost changed by law: ${JSON.stringify(changed)}`);
+      }
+      if (step === 6) {
+        const t = await panel('Rules', 'cards-3-rules');
+        log(`rules page: ${t.slice(0, 600)}`);
+      }
+      if (run2 && remains.length) {
+        await shot('cards-8-run2-remains');
+        const t = await panel('Remembered', 'cards-8-remembered');
+        log(`remembered: ${t.slice(0, 600)}`);
+        if (salvage) break;
+      }
+      await tap('.run-sheet .go button', 'Next season');
+      await phase('season|event|end', 30000).catch(() => {});
+      await shot(`cards-s${s.run ?? 1}-${s.season}-season`);
+    }
+    R.check('cards: a law card taken and its law in the list', lawSeen);
+    R.check('cards: a number changed by a law (a cost)', !!changed, changed);
+    R.check('cards: an arena bout played and settled now', settled > 0, { bouts, settled });
+    R.check('cards: the run ended by the glitter spire', !!ended && /glitter|glass/i.test(ended.title + ended.text), ended);
+    R.check('cards: run 2 shows the remains', remains.length > 0, remains);
+    R.check('cards: run 2 deals the salvage card', salvage);
+    return;
+  }
   await playSeason();
 
   // (touch) a finger on the loop's own screens must not move the map: a tap and a swipe on the sheet, a tap on the top

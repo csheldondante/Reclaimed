@@ -27,7 +27,15 @@ import { ROW_H, cellAt } from '../../world/lattice';
 import { restoreMutators } from './mutators';
 import type { SiteKey } from '../../season/realm-templates';
 import { declutter, placeSites, REACH as SITE_REACH } from '../../season/sites';
-import { mountRunUi, type Asking, type Marker, type Phase, type RunGame } from '../../season/run-ui';
+import { mountRunUi, type Asking, type Marker, type Panel, type Phase, type RunGame } from '../../season/run-ui';
+import { chainLine, fetchPacks, lawLine, lawLines, loadRunPacks, mechOf, realmExtra, recordByPlace, ruleLines, thingMarks, unlockedAbilities, worldNow, worldOf, type ThingMark } from '../../season/run-packs';
+import type { Pack, PackAbility } from '../../packs/check';
+import { castAbility, type LoadedPack } from '../../packs/load';
+import type { RuleHit } from '../../living/rules';
+import { SPELL_MECH } from '../../living/live';
+import { grant, lose } from '../../season/ledger';
+import * as TW from '../../table/words';
+import { packRoadShapes, type RoadShape } from '../../agents/roads';
 import * as W from '../../season/run-words';
 import { StoryCamera, type V3 } from '../../story/camera';
 import type { LevelScene } from '../level';
@@ -62,6 +70,8 @@ const HEATRAY = { radius: 5, damage: 2 };
 const FIRE = { radius: 4.5, damage: 12, light: 3 };
 /** the growth rune: how near the fields' place the tap must be (cells), how wide and how hard the plants grow */
 const GROWTH = { reach: 60, radius: 11, strength: 45 };
+/** (round 8) half the width of an arterial stamped for the units' fields (cells; tunable) */
+const ROAD_HALF = 2;
 
 class Game implements RunGame {
   phase: Phase = 'boot';
@@ -69,8 +79,19 @@ class Game implements RunGame {
   notes: string[] = [];
   fightLine: string | null = null;
   resultLines: string[] = [];
-  armed: SpellId | null = null;
+  armed: string | null = null;
   readonly onChange: (() => void)[] = [];
+  /** (round 8) the outside-authored packs played with the base cards (`&packs=`, `&pack=`), as JSON and loaded; what
+   *  was wrong with any left out */
+  private packs: LoadedPack[] = [];
+  private played: Pack[] = [];
+  private packReport: string[] = [];
+  /** (round 8) the synergy rules' firings since the last season's end (the rules page), and the page open */
+  private recent: RuleHit[] = [];
+  private hitsNew: RuleHit[] = [];
+  panel: Panel | null = null;
+  /** (round 8) the pack cards done last season at a site of the town: a marker there for a season (the floor) */
+  private doneMarks: { id: string; title: string; site: SiteKey; text: string }[] = [];
   private cam: StoryCamera;
   /** the world as saved (null: the atlas's own), and its history before this page's runs */
   private saved: WorldSnapshot | null = null;
@@ -110,6 +131,7 @@ class Game implements RunGame {
       last = now;
       this.cam.update(dt);
       this.keepNear();
+      this.feedRoads();
       this.watchBuild(dt);
       this.live.update(dt);
       this.liveLine();
@@ -147,8 +169,13 @@ class Game implements RunGame {
     return this.scene.host.params.get('livefire') !== '0';
   }
   private changed(): void {
+    // (round 8: the pack things standing at the town's sites, read again when anything changed — not each frame:
+    // `Realm.things` walks every far town)
+    this.things = this.realm && this.packs.length ? thingMarks(this.realm, this.packs) : [];
     for (const f of this.onChange) f();
   }
+  /** (round 8) the pack things in play and their remains, as last read */
+  private things: ThingMark[] = [];
   private set(phase: Phase): void {
     this.phase = phase;
     this.changed();
@@ -244,6 +271,10 @@ class Game implements RunGame {
     }
     const n = r.threatIn();
     if (n !== null && n > 0) put('threat', W.threatTag(n), 'threat', this.spot('road'));
+    // (round 8: a pack thing at its site — or its remains, from this run or an earlier one; one in the town itself
+    // stands by the keep. And the floor: a pack card done last season, at its site, for a season)
+    for (const t of this.things) put(`thing:${t.id}`, t.ruined ? W.remainsOf(t.name) : t.name, 'thing', this.spot(t.site ?? 'keep'));
+    for (const d of this.doneMarks) put(`done:${d.id}`, W.doneHere(d.title), 'done', this.spot(d.site));
     // (a live event going on without the player: its name over where it is — a tap goes back to it)
     for (const run of this.live.runs) {
       const at = this.live.where(run);
@@ -265,9 +296,19 @@ class Game implements RunGame {
   // ---- live events --------------------------------------------------------------------------------------
 
   /** the live event the player is at, for the sheet */
-  get liveNow(): { title: string; how: string; spells: SpellId[]; wantsSpells: boolean; canLeave: boolean } | null {
+  get liveNow(): { title: string; how: string; spells: SpellId[]; abilities: { id: string; name: string }[]; wantsSpells: boolean; canLeave: boolean; canSettle: boolean } | null {
     const run = this.live.focus;
-    return run && this.phase === 'event' ? { title: run.def.title, how: run.def.how, spells: this.allowed(), wantsSpells: !!run.def.spells?.length, canLeave: this.live.canLeave } : null;
+    // (round 8: "settle it now" for an event the player may leave — the raid is played out; a census event has no card)
+    return run && this.phase === 'event' ? { title: run.def.title, how: run.def.how, spells: this.allowed(), abilities: this.eventAbilities().map((a) => ({ id: a.id, name: W.castOn(a.name, a.cost.magic ?? 0) })), wantsSpells: !!run.def.spells?.length, canLeave: this.live.canLeave, canSettle: this.live.canSettle && !run.id.startsWith('measure:') } : null;
+  }
+
+  /** (round 8) the pack abilities the run has unlocked that may be cast into the live event the player is at: one with
+   *  `in_event` naming the event's kind */
+  private eventAbilities(): PackAbility[] {
+    const r = this.realm;
+    const run = this.live.focus;
+    if (!r || !run || this.phase !== 'event' || !this.packs.length) return [];
+    return unlockedAbilities(r, this.packs).filter((a) => a.in_event?.kinds.includes(run.def.tag));
   }
 
   /** the spells the player may cast now: at a live event the ones it allows ('known': those the run has unlocked); in
@@ -290,7 +331,10 @@ class Game implements RunGame {
     const def = r.liveOf(o);
     if (!def) throw new Error(`loop: ${o.template} has no live event`);
     this.armed = null;
-    const run = this.live.start(o, def, r.siteOf(o));
+    // (round 8: a card a rule started is dealt as the arc's, at the town; its own site is still its binding's)
+    const bound = o.bind?.site ? ((r.w.facts.entity(o.bind.site)?.attrs?.site as SiteKey | undefined) ?? null) : null;
+    const run = this.live.start(o, def, r.siteOf(o) ?? bound);
+    if (!run.site) console.warn(`[loop] live event ${o.template} has no site: played at the town's heart`);
     this.fightLine = W.fill(def.line, this.live.numbers(run));
     this.set('event');
   }
@@ -300,10 +344,14 @@ class Game implements RunGame {
     const run = this.live.focus;
     if (!run || this.phase !== 'event' || this.lineHeld > performance.now()) return;
     const line = run.entry && run.entry.step !== 'in' ? W.LIVE_WAIT : W.fill(run.def.line, this.live.numbers(run));
-    if (line === this.fightLine) return;
+    // (round 8: the sheet drawn again when "Settle it now" becomes possible, too)
+    const settle = this.live.canSettle;
+    if (line === this.fightLine && settle === this.settleShown) return;
+    this.settleShown = settle;
     this.fightLine = line;
     this.changed();
   }
+  private settleShown = false;
   /** a line said about a cast stays this long (ms since the page began) before the event's own line is back */
   private lineHeld = 0;
 
@@ -343,12 +391,61 @@ class Game implements RunGame {
     const rep = this.resolveLive(run);
     void this.save();
     if (run.def.stay && this.realm!.fight) return this.set('result');
-    this.notes = [...this.notes, ...rep.lines];
+    this.notes = [...this.notes, ...this.chained(rep.lines)];
+    this.markDone(this.realm!.w.turn, true);
     if (at) {
       this.showTown();
       // (back in the town — or straight on to another event nobody asks about: the raid behind the refugees)
       this.flow();
     } else this.changed();
+  }
+
+  /**
+   * (round 8; the card table's "settle it now") The live event the player is at resolved now, from the state it is
+   * in (the units' counts, the casts made): its result and the rules it sets off apply at once, and an event a rule
+   * starts begins at once — the next bout of a chain is played in the same season.
+   */
+  settle(): void {
+    const run = this.live.focus;
+    const r = this.realm;
+    if (!r || !run || this.phase !== 'event' || !this.live.canSettle || run.id.startsWith('measure:')) return;
+    r.tellLive(run.id, this.live.told(run));
+    r.ledger = this.season.ledger;
+    const rep = r.resolveNow(run.id);
+    this.season.setLedger(r.ledger);
+    this.live.close(run);
+    this.armed = null;
+    console.log(`[loop] settled now: ${run.template} ${rep.tier} ${JSON.stringify(rep.vars)}; ${rep.lines.join(' ')}`);
+    this.notes = [...this.notes, ...this.chained(rep.lines)];
+    this.markDone(r.w.turn, true);
+    void this.save();
+    this.showTown();
+    this.flow();
+  }
+
+  /** (round 8) a season's or an event's lines with each rule firing worded as the card table words a chain: the rule
+   *  that had set the card going → what happened → this rule */
+  private chained(lines: readonly string[]): string[] {
+    const hits = this.hitsNew.splice(0);
+    return lines.map((l) => {
+      const h = hits.find((x) => `${x.text}.` === l);
+      return h ? chainLine(h) : l;
+    });
+  }
+
+  /** (round 8, the floor) the pack cards done or run out since `since`, each marked at its site for a season */
+  private markDone(since: number, keep: boolean): void {
+    const r = this.realm;
+    if (!r || !this.packs.length) return;
+    const pack = new Set(r.engine.templates.filter((t) => t.themes.some((x) => x.startsWith('pack:'))).map((t) => t.id));
+    const fresh = r
+      .record()
+      .filter((e) => e.turn >= since && pack.has(e.card))
+      .flatMap((e) => {
+        const site = r.w.facts.entity(e.place)?.attrs?.site as SiteKey | undefined;
+        return site ? [{ id: `${e.card}:${e.turn}`, title: e.title, site, text: TW.recordLine(e.run, e.leader, e.title, e.result) }] : [];
+      });
+    this.doneMarks = keep ? [...this.doneMarks.filter((d) => !fresh.some((f) => f.id === d.id)), ...fresh] : fresh;
   }
 
   leave(): void {
@@ -465,6 +562,33 @@ class Game implements RunGame {
     cam.target[1] = c[1] + (dy / d) * HOME_REACH;
   }
 
+  /**
+   * (round 8, LS-77) The units' fields made to prefer the town's roads: its arterials (the atlas roads it was given,
+   * `FieldTown.roadInWindow`) stamped as road bands into the agents' road bits (`Agents.setRoads`, which had no caller
+   * since the fortress went), so a step along them costs ROAD_COST of one on open ground in every field. Shapes in world
+   * cells (x, y world units), placed by the window's origin each frame — a slide moves only the offset. The streets
+   * inside the town are the GPU's raster, which the CPU does not have: not stamped (LS-88). `?roads=0`: off.
+   * FIXED-CITY: one town's roads.
+   */
+  private feedRoads(): void {
+    const t = this.town;
+    const S = this.scene.stream;
+    const agents = (this.scene.units as { agents?: { setRoads(s: Float32Array, ox: number, oy: number): void } } | null)?.agents;
+    if (!t || !S || !agents || this.scene.host.params.get('roads') === '0') return;
+    if (this.roadsOf?.town !== t.site.id) {
+      const bands: RoadShape[] = [];
+      for (let k = 0; k < t.roadCount; k++) {
+        const line = t.roadInWindow(k).map(([x, y]) => [x + S.origin[0], y + S.origin[1] * ROW_H] as [number, number]);
+        for (let i = 1; i < line.length; i++) bands.push({ a: line[i - 1], b: line[i], half: ROAD_HALF });
+      }
+      if (!bands.length) return;
+      this.roadsOf = { town: t.site.id, shapes: packRoadShapes(bands) };
+      console.log(`[loop] roads for the units' fields: ${bands.length} bands on ${t.roadCount} arterials`);
+    }
+    agents.setRoads(this.roadsOf.shapes, -S.origin[0], -S.origin[1]);
+  }
+  private roadsOf: { town: string; shapes: Float32Array } | null = null;
+
   // ---- saving -----------------------------------------------------------------------------------------
 
   /** the world as the atlas makes it, as plain JSON: what a save is the difference from */
@@ -478,6 +602,15 @@ class Game implements RunGame {
   private pending: NonNullable<SavedRun['run']> | null = null;
 
   async load(): Promise<void> {
+    // (round 8: the packs first — a run taken up again needs its cards. A pack with errors is left out: its report is
+    // a page the town sheet opens, and the base game plays)
+    const asked = await fetchPacks(this.scene.host.params);
+    const got = loadRunPacks(asked.json);
+    this.packs = got.packs;
+    this.played = got.played;
+    this.packReport = [...asked.errors, ...got.report];
+    if (asked.json.length || asked.errors.length) console.log(`[loop] packs: ${this.packs.map((p) => p.id).join(', ') || 'none'} played${this.packReport.length ? `; left out:\n${this.packReport.join('\n')}` : ''}`);
+    if (this.packReport.length) this.panel = { title: W.PACKS_BAD, sections: this.packReport.map((t) => ({ lines: t.split('\n') })) };
     const st = await storeReady(this.scene);
     if (st?.has(WORLD_KEY)) {
       const rec = JSON.parse(new TextDecoder().decode(await st.get(WORLD_KEY))) as SavedRun | WorldSnapshot;
@@ -510,7 +643,8 @@ class Game implements RunGame {
     const home = this.season.town;
     const who = W.LEADERS.find((l) => l.id === p.state.leader);
     if (!a?.settlements || home === null || !who || !this.saved) return false;
-    this.realm = new Realm({ world: this.saved, home, seed: a.atlas.p.seed, leader: who, ledger: p.ledger, land: () => this.season.land, seasons: p.state.seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y), resume: p.state, liveFire: this.liveFire });
+    this.realm = null;
+    this.realm = new Realm({ world: this.saved, home, seed: a.atlas.p.seed, leader: who, ledger: p.ledger, land: () => this.season.land, seasons: p.state.seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y), resume: p.state, liveFire: this.liveFire, ...this.packOptions(home, who.id, () => p.ledger) });
     this.runs = this.realm.history(true).filter((e) => e.kind === 'run-began').length;
     this.notes = p.notes;
     this.resultLines = [];
@@ -531,6 +665,7 @@ class Game implements RunGame {
     if (!st || !r) return;
     const t0 = performance.now();
     this.saved = r.snapshot();
+    this.nowCache = null;
     const rec: SavedRun = { v: 2, world: delta(this.baseWorld() as never, JSON.parse(JSON.stringify(this.saved)) as never), run: r.over ? null : { state: r.runState(), ledger: this.season.ledger, notes: this.notes } };
     const bytes = new TextEncoder().encode(JSON.stringify(rec));
     // (the store takes the bytes: their length said first)
@@ -549,7 +684,14 @@ class Game implements RunGame {
     // reload, where the season loop restores it with the town)
     const ledger: SeasonLedger = { ...newLedger(who.pools, who.income), built: [...this.season.ledger.built] };
     const seasons = Number(this.scene.host.params.get('runlen') ?? RUN_SEASONS);
-    this.realm = new Realm({ world: this.saved ?? a.settlements.wiki.snapshot, home, seed: a.atlas.p.seed, leader: who, ledger, land: () => this.season.land, seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y), liveFire: this.liveFire });
+    this.realm = null;
+    this.realm = new Realm({ world: this.saved ?? a.settlements.wiki.snapshot, home, seed: a.atlas.p.seed, leader: who, ledger, land: () => this.season.land, seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y), liveFire: this.liveFire, ...this.packOptions(home, who.id, () => ledger) });
+    // (round 8, as the card table: with packs the deal is made again once the Realm can be read — its first deal, made
+    // while it was being built, saw no tags)
+    if (this.packs.length) this.realm.afterSeason(this.realm.ledger);
+    this.recent = [];
+    this.hitsNew = [];
+    this.doneMarks = [];
     this.runs = this.realm.history(true).filter((e) => e.kind === 'run-began').length;
     this.notes = [];
     this.resultLines = [];
@@ -572,6 +714,12 @@ class Game implements RunGame {
       this.live.goTo(run);
       return this.set('event');
     }
+    // (round 8: a pack thing's card; a card done last season — its line in the record)
+    if (id.startsWith('thing:')) return void this.thingPanel(id.slice(6));
+    if (id.startsWith('done:')) {
+      const d = this.doneMarks.find((x) => `done:${x.id}` === id);
+      return d ? this.show({ title: d.title, sections: [{ lines: [d.text] }] }) : undefined;
+    }
     void this.petition(id);
   }
   private async petition(id: string): Promise<void> {
@@ -591,8 +739,17 @@ class Game implements RunGame {
     const turns = 'turns' in o.opp.duration ? o.opp.duration.turns : 1;
     const miss = r.short(o);
     const can = !Object.keys(miss).length;
-    const tree = petitionTree({ ...petition, needs: W.costText(locks, o.opp.costs as Partial<Record<Pool, number>>, turns), takes: W.takesText(turns), agree: W.AGREE, canAgree: can ? true : W.shortText(miss) }, speaker, r.leader.name);
-    this.speakers.set(speaker.id, { name: speaker.name, title: capitalise(speaker.role), colour: speaker.persona.portrait.cloth, portrait: portraitUrl(speaker.persona.portrait) });
+    // (round 8, laws: the terms in force — `Realm.terms` — with the printed cost beside them when a law changes it; and
+    // the laws taking it brings, in "You get")
+    const printed = W.costText(locks, o.opp.costs as Partial<Record<Pool, number>>, turns);
+    const t = r.terms(o);
+    const now = W.costText(t.locks as Partial<Pools>, t.costs as Partial<Pools>, t.turns);
+    const brings = this.lawsBrought(o.template).map((id) => W.bringsLaw(lawLine(r, id)));
+    const tree = petitionTree({ ...petition, needs: now === printed ? now : W.lawCost(now, printed), takes: W.takesText(t.turns), get: [petition.get, ...brings].join(' '), agree: W.AGREE, canAgree: can ? true : W.shortText(miss) }, speaker, r.leader.name);
+    // (round 8, the portrait slot: art for the card if a file is there — local/art/<card id>.png or the pack card's
+    // `image` — else the pixel face)
+    const art = await this.artFor(o.template, this.played.flatMap((p) => p.cards ?? []).find((c) => c.id === o.template)?.image);
+    this.speakers.set(speaker.id, { name: speaker.name, title: capitalise(speaker.role), colour: speaker.persona.portrait.cloth, portrait: art ?? portraitUrl(speaker.persona.portrait) });
     const path = await this.talk.open(tree);
     const last = path.at(-1);
     const act = last ? actOf(tree, last.node, last.choice) : undefined;
@@ -615,8 +772,140 @@ class Game implements RunGame {
     void this.cam.release();
     // (an answer given is kept: a reload comes back to this season with it)
     if (act === 'commit' || act === 'refuse') void this.save();
+    // (round 8: a card that ends the run, or a law won by it, ends it now; a rule it set off may start an event)
+    if (r.over || r.forcedLive()) return this.flow();
     this.set('city');
   }
+
+  // ---- (round 8) packs, laws, rules, the record, things -----------------------------------------------------
+
+  /** the Realm's options for the packs (as the card table's), and the rule firings told to this game */
+  private packOptions(home: string, leader: string, ledger: () => SeasonLedger): Partial<ConstructorParameters<typeof Realm>[0]> {
+    const onRules = (hits: RuleHit[]) => {
+      this.hitsNew.push(...hits);
+      this.recent.push(...hits);
+    };
+    if (!this.packs.length) return { onRules };
+    return { onRules, extra: realmExtra(this.packs, this.played, () => this.realm, { home, ledger, leader }) };
+  }
+
+  /** the laws a card's effects bring: a `law` effect, or a thing it puts in play that carries laws (any result's) */
+  private lawsBrought(template: string): string[] {
+    const t = this.realm?.engine.template(template);
+    if (!t) return [];
+    const all = [...(t.outcome ?? []), ...Object.values(t.outcomes ?? {}).flatMap((o) => (o as { effects?: unknown[] }).effects ?? [])];
+    const out: string[] = [];
+    for (const e of all) {
+      const x = e as { helper?: string; args?: unknown[] };
+      if (x.helper === 'law') out.push(String(x.args?.[0]));
+      if (x.helper === 'packPut') out.push(...(this.packs.flatMap((p) => p.things).find((th) => th.id === String(x.args?.[0]))?.laws ?? []));
+    }
+    return [...new Set(out)];
+  }
+
+  /** (job 3, the portrait slot) a picture for a card or thing id: the pack entry's `image` URL, else
+   *  local/art/<id>.png if the dev server has it (asked once a page), else null */
+  private art = new Map<string, string | null>();
+  private async artFor(id: string, image?: string): Promise<string | null> {
+    if (image) return image;
+    if (this.art.has(id)) return this.art.get(id)!;
+    let url: string | null = null;
+    try {
+      const r = await fetch(`local/art/${id}.png`, { method: 'HEAD' });
+      url = r.ok && (r.headers.get('content-type') ?? '').startsWith('image/') ? `local/art/${id}.png` : null;
+    } catch {
+      url = null;
+    }
+    this.art.set(id, url);
+    return url;
+  }
+
+  /** the town sheet's pages */
+  views(): { label: string; on: () => void }[] {
+    if (!this.realm) return [];
+    return [
+      { label: W.LAWS, on: () => this.show(this.lawsPanel()) },
+      { label: W.RULES, on: () => this.show(this.rulesPanel()) },
+      { label: W.REMEMBERED, on: () => this.show(this.recordPanel()) },
+      ...(this.packReport.length ? [{ label: TW.PACK_TITLE, on: () => this.show({ title: W.PACKS_BAD, sections: this.packReport.map((t) => ({ lines: t.split('\n') })) }) }] : []),
+    ];
+  }
+  private show(p: Panel): void {
+    this.panel = p;
+    this.changed();
+  }
+  closePanel(): void {
+    this.panel = null;
+    this.changed();
+  }
+
+  /** the laws in force, in the order they came */
+  private lawsPanel(): Panel {
+    const ls = lawLines(this.realm!);
+    return { title: TW.LAWS_TITLE, sections: [{ lines: [TW.LAWS_HELP] }, { lines: ls.length ? ls.map((l) => `${l.name}. ${l.text} ${TW.lawFrom(l.from, l.until, l.times)}`) : [TW.LAWS_NONE] }] };
+  }
+  /** every rule: what it reads and gives, ready or the one thing it lacks, what it paid last season */
+  private rulesPanel(): Panel {
+    const rs = ruleLines(this.realm!, this.recent);
+    return { title: TW.RULES_TITLE, sections: [{ lines: [TW.RULES_HELP] }, ...rs.map((x) => ({ head: x.name, lines: [x.says, W.ruleWhy(x.when, x.why), ...x.fired, ...(x.laws.length && !x.off ? [`${TW.CHANGED_BY}: ${x.laws.join(', ')}.`] : [])] }))] };
+  }
+  /** every card resolved or run out in this world, by place */
+  private recordPanel(): Panel {
+    const r = this.realm!;
+    const by = recordByPlace(r.w, r.home, TW.TOWN);
+    return { title: TW.RECORD_TITLE, sections: by.length ? by.map((x) => ({ head: x.place, lines: x.lines })) : [{ lines: [TW.RECORD_NONE] }] };
+  }
+  /** a pack thing's card: its picture, its text and tags, and the pack abilities that can be cast on it now */
+  private async thingPanel(id: string): Promise<void> {
+    const r = this.realm;
+    const t = this.things.find((x) => x.id === id);
+    if (!r || !t) return;
+    const image = await this.artFor(t.def, t.image);
+    const magic = pools(this.season.ledger).magic;
+    const abilities = t.ruined ? [] : unlockedAbilities(r, this.packs).filter((a) => a.target && a.target.tags.every((x) => t.tags.includes(x)));
+    this.show({
+      title: t.ruined ? capitalise(W.remainsOf(t.name)) : t.name,
+      image,
+      sections: [{ lines: [t.text] }, { head: W.TAGS, lines: [t.tags.join(', ')] }, ...abilities.map((a) => ({ head: a.name, lines: [a.text] }))],
+      actions: abilities.filter((a) => magic >= (a.cost.magic ?? 0)).map((a) => ({ label: W.castOn(a.name, a.cost.magic ?? 0), on: () => this.castOnThing(a, t) })),
+    });
+  }
+  /** a pack ability cast on a thing in play (Table.cast's own branch): its Magic spent, its tags written, its laws */
+  private castOnThing(a: PackAbility, t: ThingMark): void {
+    const r = this.realm!;
+    r.ledger = this.season.ledger;
+    let l = lose(r.ledger, { magic: a.cost.magic ?? 0 });
+    const gains = castAbility(r.w, a, t.id, this.packs);
+    for (const [k, n] of Object.entries(gains) as [Pool, number][]) l = k === 'unrest' ? lose(l, { unrest: n }) : n > 0 ? grant(l, { [k]: n }) : lose(l, { [k]: -n });
+    r.ledger = l;
+    r.w.facts.record({ kind: 'ability-cast', by: ['player'], to: [t.id], note: TW.castNote(a.name, t.name) });
+    for (const e of a.effect ?? []) if ('law' in e) r.enact(e.law, `${a.name} (${TW.CAST_WORD})`, e.seasons);
+    r.refreshLaws();
+    this.season.setLedger(r.ledger);
+    this.notes = [...this.notes, TW.castLine(a.name, t.name, a.cost.magic ?? 0)];
+    const at = this.spot(t.site ?? 'keep');
+    if (at) this.scene.worldApi?.fx?.burst('sparks', at[0], at[1], this.z(at[0], at[1]) + 2, { count: 40 });
+    void this.save();
+    this.closePanel();
+  }
+
+  /** what ended the run: an ending a card or rule named, or a law's win (null: the raid, or not over) */
+  get endTitle(): string | null {
+    const r = this.realm;
+    if (!r) return null;
+    if (r.ended) return TW.endedTitle(r.ended.result, r.ended.name);
+    const w = r.won();
+    return w ? TW.wonTitle(w.law) : null;
+  }
+
+  /** what the world is now, before a run: how the last one ended, laws earlier runs left, far towns emptied */
+  worldNow(): string[] {
+    const a = this.scene.opts.atlas;
+    const home = this.season.town;
+    if (!this.saved || home === null || !a) return [];
+    return (this.nowCache ??= worldNow(worldOf(this.saved), this.packs, home));
+  }
+  private nowCache: string[] | null = null;
 
   /** (scripts) answer the open petition: the dialog's own buttons are the player's way */
   get talking(): boolean {
@@ -636,16 +925,30 @@ class Game implements RunGame {
     }
     this.armed = null;
     r.ledger = this.season.ledger;
-    this.notes = r.endSeason();
+    this.recent = [];
+    const turn = r.w.turn;
+    const had = new Set(this.things.filter((t) => !t.ruined).map((t) => t.id));
+    this.notes = this.chained(r.endSeason());
     this.season.setLedger(r.ledger);
+    this.markDone(turn, false);
     this.building = this.season.ledger.projects.length > 0;
     this.set('season');
+    // (round 8: the season turn shows what the packs' cards built — the camera on the new thing's site and dust there,
+    // its name in the news; a marker stands there from now on)
+    const built = this.things.filter((t) => !t.ruined && !had.has(t.id));
+    for (const t of built) {
+      this.notes = [...this.notes, W.builtThing(t.name)];
+      const at = this.spot(t.site ?? 'keep');
+      if (at) this.scene.worldApi?.fx?.burst('dust', at[0], at[1], this.z(at[0], at[1]) + 1, { count: 60 });
+    }
+    const first = built[0] && this.spot(built[0].site ?? 'keep');
+    if (first && !this.building) void this.cam.look(this.at3(first), { zoom: BUILD_ZOOM, ease: 1.2, place: [0.5, 0.36] });
     void this.season.next().then(async () => {
       while (this.season.playing) await new Promise((res) => setTimeout(res, 100));
       r.afterSeason(this.season.ledger);
       this.season.setLedger(r.ledger);
       await this.save();
-      if (this.building && !r.forcedLive()) this.showTown();
+      if ((this.building || first) && !r.forcedLive()) this.showTown();
       this.building = false;
       this.flow();
     });
@@ -671,7 +974,12 @@ class Game implements RunGame {
       return this.beginLive(o);
     }
     if (r.raid !== null) console.error('[loop] the raid is due and its card was not dealt');
-    if (r.over) return this.set('end');
+    if (r.over) {
+      // (round 8: an ending says what made it)
+      if (r.ended && !this.resultLines.length) this.resultLines = [TW.endedBy(r.ended.by)];
+      this.panel = null;
+      return this.set('end');
+    }
     this.set('city');
   }
 
@@ -768,7 +1076,7 @@ class Game implements RunGame {
   /** a tap on the map with a spell armed that may be cast now: cast there */
   private cast(e: PointerEvent): void {
     const id = this.armed;
-    if (!id || !this.allowed().includes(id)) return;
+    if (!id || !(this.allowed() as string[]).concat(this.eventAbilities().map((a) => a.id)).includes(id)) return;
     const rect = this.scene.host.canvas.getBoundingClientRect();
     // (the map's own tool and pan are not given this press: the cast is the gesture)
     e.stopPropagation();
@@ -794,14 +1102,17 @@ class Game implements RunGame {
    * burns the units there; Rain is a storm over the tap (the weather's own, which puts fire out); the growth rune grows
    * the plants there (the ecology's) and marks the field for the season. Heat ray's look is still the lightning strike.
    */
-  private castAt(id: SpellId, sx: number, sy: number, tries: number): void {
+  private castAt(id: string, sx: number, sy: number, tries: number): void {
     if (this.armed !== id) return;
     const r = this.realm!;
     const cam = this.scene.core.camera;
     const w = this.scene.worldApi;
     if (!w?.fire || !w.fx || !w.plants || !w.terrain) throw new Error('loop: this level has no world API for fire, particles, plants and ground');
     const api = { fire: w.fire, fx: w.fx, plants: w.plants, terrain: w.terrain };
-    const z = id === 'heatray' || id === 'fire' ? this.live.figuresZ() : null;
+    // (round 8: a pack ability cast into the event — what it does is its `in_event` numbers through the laws)
+    const ability = this.eventAbilities().find((a) => a.id === id);
+    const mech = this.packs.length ? mechOf(r, this.packs) : r.spellMech(SPELL_MECH);
+    const z = id === 'heatray' || id === 'fire' || (ability && mech[id]?.kills) ? this.live.figuresZ() : null;
     const g = z !== null ? cam.groundAt(sx, sy, () => z) : cam.groundAt(sx, sy, this.scene.heightAt);
     if (!g) {
       const terrain = api.terrain;
@@ -819,20 +1130,40 @@ class Game implements RunGame {
       const f = this.spot('fields');
       if (!f || Math.hypot(g[0] - f[0], g[1] - f[1]) > GROWTH.reach) return this.tell(W.GROWTH_MISS);
     }
-    if (pools(this.season.ledger).magic < SPELL_COST[id]) {
-      this.tell(W.shortText({ magic: SPELL_COST[id] }));
+    const cost = ability ? (ability.cost.magic ?? 0) : SPELL_COST[id as SpellId];
+    if (pools(this.season.ledger).magic < cost) {
+      this.tell(W.shortText({ magic: cost }));
       return this.arm(null);
     }
     r.ledger = this.season.ledger;
-    r.cast(id, id === 'growth' ? 'fields' : undefined);
-    this.season.setLedger(r.ledger);
     const run = this.live.focus;
+    if (ability) {
+      // (Table.cast's own branch: its Magic spent and the cast written; what it does in the city is below)
+      r.ledger = lose(r.ledger, { magic: cost });
+      if (run) r.w.facts.record({ kind: 'ability-cast', by: ['player'], to: [r.home], note: TW.castNote(ability.name, run.def.title) });
+    } else r.cast(id as SpellId, id === 'growth' ? 'fields' : undefined);
+    this.season.setLedger(r.ledger);
     if (run && this.phase === 'event') run.casts[id] = (run.casts[id] ?? 0) + 1;
-    if (id === 'heatray') {
-      this.scene.units?.strike?.({ at: [g[0], g[1]], radius: HEATRAY.radius, damage: HEATRAY.damage }, 'spell');
+    // (round 8, laws: a law's `kills` scales the hand-aimed blow — a law that makes Fire put down 3 where it put down 1
+    // makes its blow reach √3 as far. Tunable: the reach, not the damage, so a wider blow takes more; LS-87)
+    const reach = (base: number) => Math.sqrt(Math.max(0.25, (mech[id]?.kills ?? base) / base));
+    if (ability) {
+      const m = mech[id] ?? {};
+      if (m.kills) {
+        this.scene.units?.strike?.({ at: [g[0], g[1]], radius: FIRE.radius * Math.sqrt(m.kills), damage: FIRE.damage }, 'spell');
+        this.scene.powers.scriptStrike(g[0], g[1], g[2]);
+      }
+      if (m.douses) {
+        this.scene.core.weather.spawn(g[0], g[1]);
+        api.fx.burst('splash', g[0], g[1], g[2] + 0.5, { count: 30 });
+      }
+      api.fx.burst('sparks', g[0], g[1], g[2] + 1, { count: 40 });
+      this.tell(TW.castLine(ability.name, run?.def.title ?? '', cost));
+    } else if (id === 'heatray') {
+      this.scene.units?.strike?.({ at: [g[0], g[1]], radius: HEATRAY.radius * reach(SPELL_MECH.heatray.kills!), damage: HEATRAY.damage }, 'spell');
       this.scene.powers.scriptStrike(g[0], g[1], g[2]);
     } else if (id === 'fire') {
-      this.scene.units?.strike?.({ at: [g[0], g[1]], radius: FIRE.radius, damage: FIRE.damage }, 'spell');
+      this.scene.units?.strike?.({ at: [g[0], g[1]], radius: FIRE.radius * reach(SPELL_MECH.fire.kills!), damage: FIRE.damage }, 'spell');
       api.fire.ignite(g[0], g[1], { radius: FIRE.light, intensity: 0.9 });
       api.fx.burst('flame', g[0], g[1], g[2] + 0.5, { count: 40 });
     } else if (id === 'rain') {

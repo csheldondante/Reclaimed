@@ -236,6 +236,28 @@ Goal: on the phone a player understands an event without the sheet's text. Every
 - **Arrival is the units' own word** (`arrived`): a column's formation anchor now moves with the window (LS-72).
 - **Five asks at most** a season, whatever the dealer's guarantee adds (LS-73).
 
+## Round 8 (2026-11-16): the 3D game plays the card world; columns in by the road
+
+The owner: "the world builds general systems for showing and later playing in the world generated and mutated by
+the cards." The 3D game now loads the card table's packs (`&packs=laws,glitter,arena`, `&pack=<url>`) through the
+same loader and Realm options. One table maps every pack effect to a showing (docs/SYSTEMS.md 3c): instant (the
+mutators, signs, pools), at the season turn (a pack thing's marker with dust and the camera on it), live (pack events
+through the round 6/7 runner, pack abilities on the event's sheet, "Settle it now"), and the floor (the card's line in
+the news and a "Done" marker at its site for a season) — nothing a card does is unseen. The town sheet has Laws,
+Rules and Remembered pages; costs are the law-applied terms with the printed cost beside them; an ending names
+itself on the end screen and the next run's start screen says what the world is now.
+
+Columns: a `march` can now come in (`inward: true`: the gate route walked backward to the gate), and an entering
+column in a walled town marches in along its road and is given its own order at the gate; the town's arterials are
+road-weighted in every field; LS-76's split was a field march's anchor waiting where its field had not reached — fixed,
+and the parade and the refugees walk in a column again. Open: no gate routes without a wall (LS-89), streets inside
+the town are not weighted (LS-88).
+
+Where the loop depends on the Realm's built-in raid arc (the card table is replacing it by cards): the top bar's
+countdown (`run-ui.ts threatText(run.threatIn)`), the raiders' marker over the road (`loop.ts markers`, `threatIn`),
+`startRunLoop`'s `raid: () => realm.raid`, `flow()`'s "the raid is due and its card was not dealt" check, the
+`result` phase on `r.fight`, and `Realm.over` on the fight. The live raid event itself is data (`RAID_EVENT`).
+
 ## Assumptions for the owner (each is the simplest thing; say which to change)
 
 1. Run length: 16 seasons to the raid by default (`RUN_SEASONS`; the orchestrator's number, not the owner's).

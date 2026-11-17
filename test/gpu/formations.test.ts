@@ -161,6 +161,64 @@ test('§9d: a column narrows to single file where its route is 1.1 m wide and re
   expect(g.takeErrors()).toEqual([]);
 });
 
+test('loop round 8 (LS-77): a march in walks its gate route backward, from the outer end to the gate, on the road in a column; arrived(g) once', async () => {
+  const { units, run } = await world();
+  const y = 40;
+  // (the same straight route, gate at x 14, outer end at x 80; the group made past the outer end, at x 86)
+  const pts = Array.from({ length: 67 }, (_, i) => {
+    const [px, py] = cellPos(14 + i, y);
+    return { at: [px, py, 10] as [number, number, number], width: 3 };
+  });
+  const outside = cellPos(86, y + 3);
+  units.usePlaces(fakePlaces({ [PLACE.barracks]: [outside[0], outside[1], 10] }), null, () => fakeRoutes(pts));
+  const gid = units.spawnAt!('soldier', 'f-town', { town: 0, place: PLACE.barracks }, 12);
+  const arrived: number[] = [];
+  units.arrived.push((x) => arrived.push(x));
+  await run(30);
+  units.orderGroup!(gid, { kind: 'march', town: 0, gate: 0, inward: true });
+  const ids = units.members!(gid);
+  const lineY = cellPos(0, y)[1];
+  let offRoad = 0;
+  let onRoad = 0;
+  let minX = 1e9;
+  let gap = 0;
+  let tick = 0;
+  await run(TPS * 70, async () => {
+    if (tick++ % 5) return arrived.includes(gid);
+    const ps = await where(units, ids);
+    for (const [x, py] of ps) {
+      if (x > 20 && x < 74) {
+        onRoad++;
+        if (Math.abs(py - lineY) > 2.2) offRoad++;
+      }
+      minX = Math.min(minX, x);
+    }
+    const xs = ps.map(([x]) => x).filter((x) => x > 20 && x < 74);
+    if (xs.length === ps.length && ps.length) gap = Math.max(gap, Math.max(...xs) - Math.min(...xs));
+    return arrived.includes(gid);
+  });
+  await run(TPS * 3);
+  const end = await where(units, ids);
+  const meanX = end.reduce((a, [x]) => a + x, 0) / Math.max(end.length, 1);
+  {
+    const mail = new Uint32Array(await units.agents.readRaw('mail'));
+    const mf = new Float32Array(mail.buffer);
+    const L = units.agents.mailLayout;
+    const o = L.groups;
+    const F = o + L.formAt;
+    console.log(`march in: start ${JSON.stringify((await where(units, ids)).slice(0, 3))} minX ${minX.toFixed(1)} kind ${mail[o]} place ${mail[o + 11]} form ${[mail[F], mail[F + 1], mail[F + 2]]} len ${mf[F + 3]} s ${mf[F + 4]} state ${mail[F + 8]} lag ${mf[F + 9]} ranks ${mail[o + 18]}`);
+    const rk = mail.slice(L.ranks, L.ranks + L.rankW * 3);
+    console.log(`ranks0: ${Array.from(rk).map((x, i) => (i % L.rankW < 3 ? new Float32Array(new Uint32Array([x]).buffer)[0].toFixed(1) : x)).join(',')}`);
+  }
+  log(`march in: on the road ${onRoad} reads, off it ${offRoad}; the column's length on the road at most ${gap.toFixed(1)}; ends at mean x ${meanX.toFixed(1)}; arrived ${arrived.filter((x) => x === gid).length}`);
+  expect(onRoad).toBeGreaterThan(20);
+  expect(offRoad / onRoad).toBeLessThan(0.05);
+  expect(gap).toBeLessThan(16);
+  expect(meanX).toBeLessThan(24);
+  expect(arrived.filter((x) => x === gid).length).toBe(1);
+  expect(g.takeErrors()).toEqual([]);
+}, 240000);
+
 test('§9d: an off-road formation squeezes through a gap between two walls (the clearance on each side) and re-forms', async () => {
   // (a wall across x 46-48, a gap at rows 38-41; the squad from x 20 to x 75 in a line)
   const wall = (x: number, yy: number) => x >= 46 && x <= 48 && !(yy >= 38 && yy <= 41);
@@ -194,6 +252,40 @@ test('§9d: an off-road formation squeezes through a gap between two walls (the 
   expect(arrived.filter((x) => x === gid).length).toBe(1);
   expect(g.takeErrors()).toEqual([]);
 });
+
+test('loop round 8 (LS-76): a field march in a column over open ground keeps together on the way (its length on the ground stays short)', async () => {
+  const { units, run } = await world();
+  // (LS-76's shape: the place farther off than the field reaches at first. At 55 cells (x 20 → 75) this column kept
+  // together and arrived; at 72 (x 12 → 84) the anchor's own point read FAR in its field and it never set off)
+  const from = cellPos(12, 40);
+  const to = cellPos(84, 40);
+  units.usePlaces(fakePlaces({ [PLACE.barracks]: [from[0], from[1], 10], [PLACE.muster]: [to[0], to[1], 10] }));
+  const gid = units.spawnAt!('soldier', 'f-town', { town: 0, place: PLACE.barracks }, 9);
+  const arrived: number[] = [];
+  units.arrived.push((x) => arrived.push(x));
+  await run(30);
+  units.orderGroup!(gid, { kind: 'go', at: { town: 0, place: PLACE.muster }, formation: 'column' });
+  const ids = units.members!(gid);
+  let most = 0;
+  let tick = 0;
+  const trace: string[] = [];
+  await run(TPS * 80, async () => {
+    if (tick++ % 30) return arrived.includes(gid);
+    const ps = await where(units, ids);
+    const xs = ps.map(([x]) => x);
+    const len = Math.max(...xs) - Math.min(...xs);
+    if (Math.min(...xs) > 16) most = Math.max(most, len);
+    const mail = new Uint32Array(await units.agents.readRaw('mail'));
+    const mf = new Float32Array(mail.buffer);
+    const F = units.agents.mailLayout.groups + units.agents.mailLayout.formAt;
+    trace.push(`${(tick / TPS).toFixed(1)}s x ${Math.min(...xs).toFixed(0)}-${Math.max(...xs).toFixed(0)} st ${mail[F + 8]} s ${mf[F + 4].toFixed(1)} lag ${mf[F + 9].toFixed(1)}`);
+    return arrived.includes(gid);
+  });
+  console.log(`LS-76 column: the longest on the way ${most.toFixed(1)} cells; arrived ${arrived.includes(gid)}\n${trace.join('\n')}`);
+  expect(most).toBeLessThan(14);
+  expect(arrived.includes(gid)).toBe(true);
+  expect(g.takeErrors()).toEqual([]);
+}, 240000);
 
 test('spawnAt at a missing place, then orderGroup guard → 0 units, the failure sticking; a spawn past the groups → pool-full', async () => {
   const { units, run } = await world();

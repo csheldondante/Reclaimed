@@ -174,15 +174,18 @@ const DEAD_T: TemplateDef = {
 /** A column marches in by a road to the market (no market yet: the stores) under falling petals, with townspeople out
  *  along the way. It ends when the column stands at the market. Its result is the crowd: the marchers who arrived and
  *  the people who came out — which the rules then change (unrest, a harvest, a shrine on the way). */
+/** marchers in a parade (the model's; tunable — an order group holds 64 ranks at most) */
+export const PARADE_MARCHERS = 9;
 const PARADE_EVENT: LiveDef = {
   tag: 'parade',
   title: 'The parade',
   how: 'The marchers come in by the road and go to the market. You can leave: it goes on without you.',
   line: '{marching} marchers are on their way. {out} people are out to watch.',
   groups: [
-    // (round 7: loose, kept together, not a column — a field march in a column split for its first half minute on the
-    // road and its slots trailed 100 cells behind once the window slid; LS-72, BACKLOG LS-76)
-    { id: 'marchers', kind: 'worker', side: 'folk', n: 9, tags: ['marcher', 'crowd'], from: { place: 'spawn', road: 'entry' }, order: { kind: 'go', at: { place: 'market', else: { place: 'stores' } }, formation: 'loose' } },
+    // (round 8: a column again — LS-76 fixed (a field march's anchor no longer stands at its start while the field has
+    // not reached it) and, with walls, the column marches in along its road's gate route first (LS-77). The model's
+    // count stays 9 (its tiers and rules are tuned on it); `?parade=N` draws N for the census, LS-92)
+    { id: 'marchers', kind: 'worker', side: 'folk', n: PARADE_MARCHERS, tags: ['marcher', 'crowd'], from: { place: 'spawn', road: 'entry' }, order: { kind: 'go', at: { place: 'market', else: { place: 'stores' } }, formation: 'column' } },
     { id: 'watchers', kind: 'worker', side: 'folk', n: 'watchers', tags: ['watcher', 'crowd', 'onlooker'], from: { place: 'stores' }, order: { kind: 'go', at: { place: 'market', else: { place: 'stores' } }, formation: 'loose' } },
     // (round 7: as many again stand along the road the column comes in by — what the player sees on the way; not
     // counted in the crowd, which the rules and the tiers read as before)
@@ -310,8 +313,8 @@ const REFUGEE_EVENT: LiveDef = {
   how: 'They come in by the road with what they could carry. You can leave: they walk on without you.',
   line: '{walking} refugees and {carts} carts are on the road.',
   groups: [
-    { id: 'people', kind: 'worker', side: 'folk', n: 12, tags: ['refugee'], from: { place: 'spawn', road: 'entry' }, order: { kind: 'go', at: { place: 'stores' }, formation: 'loose' } },
-    { id: 'carts', kind: 'cart', side: 'folk', n: 3, tags: ['cart'], from: { place: 'spawn', road: 'entry' }, order: { kind: 'go', at: { place: 'stores' }, formation: 'loose' } },
+    { id: 'people', kind: 'worker', side: 'folk', n: 12, tags: ['refugee'], from: { place: 'spawn', road: 'entry' }, order: { kind: 'go', at: { place: 'stores' }, formation: 'column' } },
+    { id: 'carts', kind: 'cart', side: 'folk', n: 3, tags: ['cart'], from: { place: 'spawn', road: 'entry' }, order: { kind: 'go', at: { place: 'stores' }, formation: 'column' } },
   ],
   camera: { follow: 'refugee', zoom: 15, pitch: 55 },
   after: { go: { place: 'stores' }, seconds: 30 },

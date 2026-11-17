@@ -20,9 +20,18 @@ export interface Marker {
   /** 'raider', 'soldier': a ring round one figure of the fight (no label); 'folk' (round 7): a ring round one of the
    *  people of an event who take no part in a fight (a parade's marchers, refugees' carts); 'side': a side's name and
    *  count over it */
-  kind: 'ask' | 'threat' | 'raider' | 'soldier' | 'folk' | 'side';
+  kind: 'ask' | 'threat' | 'raider' | 'soldier' | 'folk' | 'side' | 'thing' | 'done';
   x: number;
   y: number;
+}
+
+/** (round 8) a full-screen page over the town: laws in force, the rules, the record, a thing's card, a pack's report */
+export interface Panel {
+  title: string;
+  /** a picture (a portrait or a thing's art), or none */
+  image?: string | null;
+  sections: { head?: string; lines: string[] }[];
+  actions?: { label: string; on: () => void }[];
 }
 
 /** an offer as the screens list it */
@@ -46,9 +55,20 @@ export interface RunGame {
   readonly notes: string[];
   readonly fightLine: string | null;
   readonly resultLines: string[];
-  readonly armed: SpellId | null;
-  /** the live event the player is at: its words, the spells it allows, whether the player may go back to the town */
-  readonly liveNow: { title: string; how: string; spells: SpellId[]; wantsSpells: boolean; canLeave: boolean } | null;
+  /** a spell (SpellId) or a pack ability's id armed to cast */
+  readonly armed: string | null;
+  /** the live event the player is at: its words, the spells it allows, whether the player may go back to the town;
+   *  (round 8) the pack abilities castable into it, and whether it can be settled now */
+  readonly liveNow: { title: string; how: string; spells: SpellId[]; abilities: { id: string; name: string }[]; wantsSpells: boolean; canLeave: boolean; canSettle: boolean } | null;
+  /** (round 8) settle the live event the player is at now, with what was done so far */
+  settle(): void;
+  /** (round 8) the page open over the town, or null; the town sheet's buttons that open one */
+  readonly panel: Panel | null;
+  closePanel(): void;
+  views(): { label: string; on: () => void }[];
+  /** (round 8) what ended the run (an ending, a law's win), or null; what the world is now, at a run's start */
+  readonly endTitle: string | null;
+  worldNow(): string[];
   /** the spells the player may cast in the town now (the growth rune) */
   readonly citySpells: SpellId[];
   /** (a live event) back to the town: it goes on without the player */
@@ -66,7 +86,7 @@ export interface RunGame {
   open(offer: string): void;
   next(): void;
   skip(): void;
-  arm(spell: SpellId | null): void;
+  arm(spell: string | null): void;
   proceed(): void;
   again(): void;
   /** open the world's map (far places, and what has changed at each) */
@@ -129,6 +149,14 @@ const CSS = `
 .run-full button.small{font:600 13px system-ui;padding:3px 10px;border-radius:8px;border:0;background:#e8b84a;color:#221}
 .run-full .stand{font-size:12px;color:#c9a2ff}
 .run-full h4{margin:6px 0 0;font-size:14px;color:#d9c99a}
+.run-marks button.thing{background:#2d4a3a;color:#dff5e6;border-color:#8fe0a8;border-radius:4px;font-size:12px}
+.run-marks button.thing.ruined{background:#3a3532;color:#cfc4b8;border-color:#8a7f74;border-style:dashed}
+.run-marks button.done{background:#33404f;color:#d6e7ff;border-color:#8fb8ff;border-radius:4px;font-size:11px;font-weight:600}
+.run-full img.art{width:100%;max-height:38vh;object-fit:contain;border-radius:10px;background:#222}
+.run-full .acts{display:flex;flex-wrap:wrap;gap:8px}
+.run-full .acts button{flex:1 1 140px}
+.run-sheet .views{display:flex;gap:8px}
+.run-sheet .views button{flex:1;min-height:44px;font:600 14px system-ui;border-radius:10px;border:0;background:#3a3f4a;color:#eee}
 `;
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
@@ -177,14 +205,32 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       if (threat && !run.fight) top.appendChild(el('span', 'r-threat', threat));
     }
     // ---- the full screens: pick a leader, the end of the run
-    full.style.display = phase === 'leader' || phase === 'end' ? '' : 'none';
+    const panel = game.panel;
+    full.style.display = phase === 'leader' || phase === 'end' || panel ? '' : 'none';
     const list = (lines: string[]): HTMLElement => {
       const ul = el('ul');
       for (const t of lines) ul.appendChild(el('li', undefined, t));
       return ul;
     };
     full.replaceChildren();
-    if (phase === 'leader') {
+    if (panel) {
+      // (round 8: a page over whatever screen is under it — laws, rules, the record, a thing's card)
+      full.append(el('h2', undefined, panel.title));
+      if (panel.image) {
+        const img = el('img', 'art');
+        img.src = panel.image;
+        img.alt = panel.title;
+        full.append(img);
+      }
+      for (const s of panel.sections) {
+        if (s.head) full.append(el('h4', undefined, s.head));
+        if (s.lines.length) full.append(list(s.lines));
+      }
+      const acts = el('div', 'acts');
+      for (const a of panel.actions ?? []) acts.append(btn(a.label, a.on, 'big'));
+      acts.append(btn(W.CLOSE, () => game.closePanel(), 'big'));
+      full.append(acts);
+    } else if (phase === 'leader') {
       full.append(el('h2', undefined, W.PICK_TITLE), el('div', 'sub', W.PICK_SUB));
       for (const who of W.LEADERS) {
         const box = el('div', 'leader');
@@ -193,11 +239,12 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
         box.append(el('div', 'portrait', W.PORTRAIT), body);
         full.appendChild(box);
       }
+      const now = game.worldNow();
+      if (now.length) full.append(el('h4', undefined, W.NOW_TITLE), list(now));
       const old = game.before();
       if (old.length) full.append(el('h4', undefined, W.WORLD_KEPT), list(old));
-    }
-    if (phase === 'end' && run) {
-      full.append(el('h2', undefined, W.END_TITLE), el('div', 'sub', W.runLine(run.n)));
+    } else if (phase === 'end' && run) {
+      full.append(el('h2', undefined, game.endTitle ?? W.END_TITLE), el('div', 'sub', W.runLine(run.n)));
       if (game.resultLines.length) full.append(el('div', undefined, game.resultLines.join(' ')));
       full.append(el('h4', undefined, W.END_LIST));
       const mine = game.history();
@@ -210,7 +257,7 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       full.append(btn(W.NEW_RUN, () => game.again(), 'big'));
     }
     // ---- the sheet
-    sheet.style.display = phase === 'boot' || phase === 'leader' || phase === 'end' || phase === 'petition' ? 'none' : '';
+    sheet.style.display = phase === 'boot' || phase === 'leader' || phase === 'end' || phase === 'petition' || panel ? 'none' : '';
     sheet.replaceChildren();
     const go = el('div', 'go');
     if (phase === 'city' && run) {
@@ -244,6 +291,13 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
         go.append(b);
       }
       go.append(btn(W.NEXT, () => game.next()));
+      // (round 8: laws in force, the rules and what each lacks, what this world remembers)
+      const views = game.views();
+      if (views.length) {
+        const row = el('div', 'views');
+        for (const v of views) row.append(btn(v.label, v.on));
+        sheet.appendChild(row);
+      }
     } else if (phase === 'season') {
       sheet.append(el('h3', undefined, W.BUILDING));
       for (const t of game.notes) sheet.append(el('div', 'note', t));
@@ -254,7 +308,13 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       const ev = game.liveNow;
       sheet.append(el('h3', undefined, ev.title), el('div', undefined, game.fightLine ?? ''), el('div', game.armed ? 'warn' : 'note', game.armed ? W.SPELL_AIM : ev.spells.length || !ev.wantsSpells ? ev.how : `${ev.how} ${W.SPELL_NONE}`));
       for (const sp of ev.spells) go.append(btn(W.SPELL_NAME[sp], () => game.arm(game.armed === sp ? null : sp), game.armed === sp ? 'on' : undefined));
+      for (const a of ev.abilities) go.append(btn(a.name, () => game.arm(game.armed === a.id ? null : a.id), game.armed === a.id ? 'on' : undefined));
       if (ev.canLeave) go.append(btn(W.LIVE_LEAVE, () => game.leave(), 'quiet'));
+      if (ev.canSettle) {
+        const row = el('div', 'views');
+        row.append(btn(W.SETTLE, () => game.settle()));
+        sheet.appendChild(row);
+      }
       if (game.armed === 'heatray') sheet.append(el('div', 'stand', W.SPELL_STANDIN));
     } else if (phase === 'result' && run?.fight) {
       sheet.append(el('h3', undefined, W.resultTitle(run.fight)));
@@ -277,7 +337,8 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       let b = made.get(key);
       if (!b) {
         b = el('button', m.kind === 'ask' ? undefined : m.kind);
-        if (m.kind === 'ask') b.onclick = () => game.open(m.id);
+        if (m.kind === 'ask' || m.kind === 'thing' || m.kind === 'done') b.onclick = () => game.open(m.id);
+        if (m.kind === 'thing' && m.label.startsWith(W.remainsOf(''))) b.classList.add('ruined');
         made.set(key, b);
         marks.appendChild(b);
       }

@@ -90,6 +90,8 @@ export interface PackThing {
   /** (trade routes) a place selector: those towns trade with the home town while the thing stands */
   trade?: string;
   art?: string;
+  /** (loop round 8) a picture's URL for the thing's card (else local/art/<id>.png if there) */
+  image?: string;
 }
 export interface PackCard {
   id: string;
@@ -116,6 +118,8 @@ export interface PackCard {
   /** 1 to 5: how soon it comes up among the cards whose conditions hold (3: as a middling base card) */
   weight?: number;
   art?: string;
+  /** (loop round 8) a picture's URL for the card's presenter (else local/art/<id>.png if there, else a pixel face) */
+  image?: string;
 }
 /** a rule: the engine's own RuleDef (living/rules.ts), unchanged */
 export interface PackRule {

@@ -191,7 +191,7 @@ export type SquadOrder =
   | (PlaceOrder & { formation?: Formation } & Drill)
   | ({ kind: 'drill'; at: PlaceRef; formation: Formation } & Drill)
   | { kind: 'man'; town: number; side?: number }
-  | ({ kind: 'march'; town: number; gate: number; leave?: boolean } & Drill);
+  | ({ kind: 'march'; town: number; gate: number; leave?: boolean; inward?: boolean } & Drill);
 
 /**
  * (U2 round 6, Track A's ask) What a spawn by place carries per unit: its sight (cells), its health (the contract's), its
