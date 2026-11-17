@@ -15,7 +15,7 @@ import { cellAt } from '../world/lattice';
 import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import bareWgsl from './bare.wgsl?raw';
-import { cityParams, scaled } from './params';
+import { CITY_PARAMS, cityParams, scaled } from './params';
 import { urlFlags } from '../flags';
 
 /** a town's radius (cells) by its size — a town the lab's Muru the user approved (radius 120, 400+ lots) */
@@ -29,6 +29,16 @@ export function hasGrid(size: Settlement['size']): boolean {
   return DENSITY[size] >= GRID_DENSITY;
 }
 const TONE: Record<Settlement['size'], number> = { camp: 1, hamlet: 1, village: 1, town: 2, city: 2 };
+/**
+ * (loop round 9) The game's streets over the lab's defaults: lanes wide enough for crowds (the owner: "legible and wide
+ * enough for crowds to show with plazas"). A main street (a major line) fits a column 3 abreast (agent-units
+ * FORM_SPACING 1.2 + orders.wgsl FORM_MARGIN 0.6 = 4.2 cells) with a watcher each side; a minor one 2 abreast (3.0)
+ * with a little room; an arterial (the main street from each road into the centre) wider than either. The lots stay
+ * (their footprints inset by the wider streets: Muru 344 → 333 lots); the city's `scale` was tried and left at 1 —
+ * at 1.15 and 1.3 the supercells moved and Muru lost most of its east bank (210 lots), a different town. One light
+ * paving colour the figures read against, and a central square where the arterials meet.
+ */
+const GAME_STREETS: Partial<StreetParams> = { majorWidth: 6, minorWidth: 3.6, artWidth: 7, roadTone: 3, plazaR: 14 };
 /** the box's half side (× the radius): the lab's sites, 320 columns round a town of 120 — the supercells' limit
  *  (0.9 radii ± 35%) inside it */
 const BOX = 4 / 3;
@@ -124,7 +134,14 @@ export function townLayout(
   if (q.get('skel') !== null) skel.skelReach = Number(q.get('skel'));
   if (q.get('skelmargin') !== null) skel.skelMargin = Number(q.get('skelmargin'));
   if (q.get('minorahead') !== null) skel.minorAhead = Number(q.get('minorahead'));
-  const params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0, roadTone: TONE[site.size], ...skel }));
+  // (loop round 9: `?city=majorWidth:6,scale:1.3` — any parameter of citygen/params.ts over the game's, for trials)
+  const trial: Record<string, number> = {};
+  for (const kv of (q.get('city') ?? '').split(',').filter(Boolean)) {
+    const [k, v] = kv.split(':');
+    if (!(k in CITY_PARAMS) || !Number.isFinite(Number(v))) throw new Error(`?city=: no parameter ${kv}`);
+    trial[k] = Number(v);
+  }
+  const params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0, roadTone: TONE[site.size], ...GAME_STREETS, ...skel, ...trial }));
   return { box, raw, gen, params, centre, local };
 }
 

@@ -24757,3 +24757,30 @@ Idle is as round 7 (1.03 ms); the parade as round 7's 9-strong one (6.34): its c
 (agents 1.82 ms, particles 0.87, water 0.68, lava 0.48), not the marchers. Not confirmed in this run that all 60 were
 made inside the measured 20 s (the census does not echo the runner's lines), and no still of a 60-strong column was
 taken (LS-92).
+
+## 2026-11-16 — loop round 9 (1): the strip, and streets wide enough to be lanes (`loop-skeleton`, LS-96, LS-97)
+
+**Why.** The owner: "The city is not that readable ... we want them legible and wide enough for crowds to show with
+plazas and decorations"; the approved order: widen streets and get units onto them, grade town streets into the terrain,
+merge the building generator and judge it.
+
+**The strip** (`scripts/lab/streetshots.mjs --out local/round9 --tag <step> [--walls]`): the same town (Muru), the same
+cameras, 412x915: the town over the sheet (`showTown`, 60°), the market at the parade's zoom 16 and 55°, and the parade
+(`measureEvent`) 22 s and 40 s in, with the figures counted on screen. `scripts/lab/strip.mjs` puts steps side by side.
+Baseline (`r9a-before`): one flat pastel prism a lot, streets 1.5-2.4 cells (2-3 px at town zoom); the unwalled parade
+shows grass and a white ribbon with no figure in it; the walled one shows its column on the arterial by the gate.
+Found: roads 0 and 1 refuse the parade ("water": the market is across the river from their spawn points; units do not
+walk decks), so every parade comes by road 2.
+
+**Streets** (`citygen/town.ts GAME_STREETS`, the game's towns only; the lab keeps its defaults): main 6 cells, minor
+3.6, arterial 7, `roadTone` 3 (one light paving, [0.76, 0.72, 0.64]), `plazaR` 14 (a central square: lots whose middle
+is within 14 cells of the centre are paved, `streets.wgsl lotRec`). The market (`places.wgsl` pick 3) is an open lot of
+a market district, else an open lot within 20 cells of the centre (the square), else a market district's building.
+Muru: 344 → 333 lots (the wider streets inset the footprints; 11 became paving), 32.7k → 48.1k vertices. The city's
+`scale` was tried with them (blocks and lots × 1.15, 1.3): the supercells move with it and Muru lost most of its east
+bank (210 lots) — a different town, dropped. `?city=key:value,…` tries any parameter of `citygen/params.ts`.
+At 6 cells the major lines' quads (1.7 long, one a column) fanned into shards on every bend: drawn as one hexagon a
+column now (`roadDisc`, 12 vertices); the street and arterial pieces run on past their ends by half their width; park
+and plaza plates and the landmark plazas in 4 x 4 pieces each on the ground (they were tilted planes touching the land
+only at their corners). Seen after: wide pale streets in the overview; the close-up at the market (the bridgehead) still
+shows big slanted planes — the arterial and its deck at 7 cells over the bank (LS-97, job 4's).

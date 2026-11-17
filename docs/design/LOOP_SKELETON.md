@@ -258,6 +258,14 @@ countdown (`run-ui.ts threatText(run.threatIn)`), the raiders' marker over the r
 `startRunLoop`'s `raid: () => realm.raid`, `flow()`'s "the raid is due and its card was not dealt" check, the
 `result` phase on `r.fight`, and `Realm.over` on the fight. The live raid event itself is data (`RAID_EVENT`).
 
+## Round 9 (2026-11-16): the city readable — lanes, units on the streets
+
+The owner: "the city visuals in general need a major overhaul"; the approved order: widen streets and get units onto
+them; grade town streets into the terrain; merge the building generator and judge it. Each step is judged on one strip
+of stills (`scripts/lab/streetshots.mjs`: the town, the market close up, the parade; with and without a wall).
+- **Lanes** (LS-96): main streets 6 cells, minor 3.6, arterials 7, one light paving, a central square that is the
+  market where no market district has an open lot (docs/design/CITYGEN.md "The game's streets").
+
 ## Assumptions for the owner (each is the simplest thing; say which to change)
 
 1. Run length: 16 seasons to the raid by default (`RUN_SEASONS`; the orchestrator's number, not the owner's).

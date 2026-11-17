@@ -152,6 +152,17 @@ appears but we can ignore it where there is no population or low enough not to n
   ~26; the records 3.1 MB; the mesh room 160 000 vertices = 5.1 MB; the raw ground 1.6 MB.
 - **Saving (later, if needed):** a per-town edit log keyed by world position, laid over the regenerated town.
 
+## The game's streets (loop round 9)
+
+The owner (2026-11-16): streets "legible and wide enough for crowds to show with plazas"; "Roads probably need to be
+wider to make it more legible. Look at … anno series". The game's towns take `town.ts GAME_STREETS` over the
+parameters' defaults (the street lab keeps its own): main street 6 cells (a column 3 abreast with a watcher each
+side), minor 3.6 (2 abreast), arterial 7; one light paving (`roadTone` 3); a central square — every lot whose middle
+lies within `plazaR` (14) of the centre is paving, where the arterials meet. The lots are the same (their footprints
+inset by the wider streets; Muru 344 → 333). Drawing at lane width: a major line is one hexagon a column
+(`roadDisc`), street pieces run on half their width past their ends, plates and landmark plazas lie on the ground in
+4 × 4 pieces. The city's `scale` with them changed the town (the supercells moved), so it stays 1.
+
 ## Time-lapse and the opportunity hook (M4d's start)
 
 - **A clock per district:** SCT word 8, a supercell's start on the town's clock (−1e30 built, 1e30 not begun). It is

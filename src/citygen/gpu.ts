@@ -53,8 +53,10 @@ export interface StreetParams {
   maxSpan: number;
   /** the points' markers drawn (1: the lab's; 0: the game's) */
   marks: number;
-  /** (M4b) the roads' tone: 0 the lab's white, 1 dirt, 2 stone (ROAD_TONES) */
+  /** (M4b) the roads' tone: 0 the lab's white, 1 dirt, 2 stone, 3 light paving (ROAD_TONES) */
   roadTone: number;
+  /** (loop round 9) the central square: lots whose middle is this near the town's centre are paved (cells; 0 none) */
+  plazaR: number;
   /** index into MAJORS */
   majors: number;
   /** between the distance contours, between the rings (world units) */
@@ -141,7 +143,7 @@ export type Box = [number, number, number, number];
 
 /** (M4b) the roads' colours by tone (rgb 0–1): dirt and stone, a little lighter than the ground's (world/materials.ts
  *  soil 0.45 0.36 0.27, stone 0.4 0.39 0.37) — the sun lights them as it lights the ground */
-const ROAD_TONES: Record<number, [number, number, number]> = { 1: [0.62, 0.53, 0.42], 2: [0.6, 0.58, 0.54] };
+const ROAD_TONES: Record<number, [number, number, number]> = { 1: [0.62, 0.53, 0.42], 2: [0.6, 0.58, 0.54], 3: [0.76, 0.72, 0.64] };
 
 /** (M4b) the town's own inputs to its population field: its peak density (by its size; 0 the field off — the lab's
  *  default: 0.5 everywhere) and its purpose (POP_PURPOSE; −1 none) */
@@ -670,7 +672,8 @@ export class CityGen {
     [p.growth, p.tint, this.cityOn() ? 1 : 0, p.limit].forEach((v, j) => dv.setFloat32(208 + j * 4, v, true));
     // (m3i: with supercells the town circle is only a bound, out past any limit)
     // (farms: the farm belt (× the budget; 0 none) and a field's size (× a lot))
-    [this.cityOn() ? CITY_REACH : 1, p.farmBelt, p.farmLot, 0].forEach((v, j) => dv.setFloat32(224 + j * 4, v, true));
+    // (loop round 9: the central square's radius in the 4th word)
+    [this.cityOn() ? CITY_REACH : 1, p.farmBelt, p.farmLot, p.plazaR ?? 0].forEach((v, j) => dv.setFloat32(224 + j * 4, v, true));
     [p.artWidth, p.hRatio, p.deckClear, p.maxSpan].forEach((v, j) => dv.setFloat32(240 + j * 4, v, true));
     [...(ROAD_TONES[p.roadTone] ?? [0, 0, 0]), p.roadTone].forEach((v, j) => dv.setFloat32(256 + j * 4, v, true));
     [this.town.density, this.town.purpose, 0, 0].forEach((v, j) => dv.setFloat32(272 + j * 4, v, true));

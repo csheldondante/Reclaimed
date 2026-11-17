@@ -375,6 +375,9 @@ fn spawnOk(k: u32, s: f32) -> bool { return candOk(k, s, artAt(k, s), artAt(k, m
 fn spawnLive(k: u32) -> bool { return k < artCount() && artPts(k) >= 2u; }
 
 // ---- picks: a key per lot (smaller better; NONE not a candidate), ties by seed ----
+/** (loop round 9) how near the town's centre an open lot is its square, the market where no market district has one
+ *  (cells: citygen's central square, town.ts GAME_STREETS plazaR 14, and its lots' reach past it) */
+const MARKET_SQUARE: f32 = 20.0;
 fn pickKey(p: u32, r: u32) -> u32 {
   if (PROG[r] <= 0.0) { return NONE; }
   let m = lotMid(r);
@@ -388,7 +391,10 @@ fn pickKey(p: u32, r: u32) -> u32 {
       return dq + select(2048u, 0u, pu == P_MARKET);
     }
     case 3u: {
-      if (pu != P_MARKET || (k != K_BUILDING && !lotOpen(r))) { return NONE; }
+      // (loop round 9: an open lot of a market district first; then the town's square — an open lot within
+      // MARKET_SQUARE of its centre, citygen's central square (params plazaR) — then a market district's building)
+      if (k != K_BUILDING && !lotOpen(r)) { return NONE; }
+      if (pu != P_MARKET) { return select(NONE, 2048u + dq, lotOpen(r) && dq < u32(MARKET_SQUARE * 2.0)); }
       return dq + select(4096u, 0u, lotOpen(r));
     }
     case 4u: {

@@ -31,7 +31,7 @@ struct U {
   r: vec4<f32>, // (m3g) the field (0 the distance smoothed, 1 the mask smoothed), the mask's smoothing, grown streets (1), the landmarks kept (top K)
   h: vec4<f32>, // (m3h) a supercell's size (block lengths), the limit's noise (supercells), the empty fraction, the seed
   h2: vec4<f32>, // (m3h) the growth (0–1), the district tint (1), supercells on (1), the limit (× the town's radius)
-  x: vec4<f32>, // (m3i) the town circle's reach (× its radius: with supercells, far enough never to show); (farms) the farm belt (× the budget, 0 none), a field's size (× a lot), 0
+  x: vec4<f32>, // (m3i) the town circle's reach (× its radius: with supercells, far enough never to show); (farms) the farm belt (× the budget, 0 none), a field's size (× a lot); (loop round 9) the central square's radius (cells, 0 none)
   t: vec4<f32>, // (citygen M4a) an arterial's width, the height-to-plot ratio (0: storeys × a random 0.7–1.3), a deck's clearance over its banks, the longest bridge
   rc: vec4<f32>, // (M4b) the roads' colour (rgb 0–1), its tone (0 the lab's white, 1 dirt, 2 stone)
   pp: vec4<f32>, // (M4b) the population field: its peak density (0 the field off: 0.5 everywhere), the settlement's purpose (0–5; −1 none), 0, 0
@@ -728,6 +728,34 @@ fn ribbon(at: u32, a: vec2<f32>, b: vec2<f32>, hw0: f32, col0: u32) {
     }
   }
 }
+/** (loop round 9) a major line's piece as a flat hexagon round the middle of a → b, its inner radius hw (four
+ *  triangles, 12 vertices): the line is drawn a piece a column, 1.7 long, so at a lane's width (6) the old quads fanned
+ *  into shards on every bend; a run of hexagons a column apart is one band whatever the bend. Claims mark the same
+ *  piece as before (markRoad a → b); each vertex's reveal time along a → b (CG25) */
+fn roadDisc(at: u32, a: vec2<f32>, b: vec2<f32>, hw: f32, col: u32) {
+  if (roadLive) { markRoad(a, b, hw, 0.0, 0.0, false); }
+  let p = 0.5 * (a + b);
+  let R = hw * 1.1547;
+  var v: array<vec3<f32>, 6>;
+  for (var k = 0u; k < 6u; k++) {
+    let q = p + R * vec2<f32>(cos(f32(k) * 1.0471976 + 0.5235988), sin(f32(k) * 1.0471976 + 0.5235988));
+    v[k] = vec3<f32>(q, hAt(q) + 0.27);
+  }
+  tri(at, v[0], v[1], v[2], col);
+  tri(at + 3u, v[0], v[2], v[3], col);
+  tri(at + 6u, v[0], v[3], v[5], col);
+  tri(at + 9u, v[3], v[4], v[5], col);
+  if (revA < -1e29 && revB < -1e29) { return; }
+  let L = max(distance(a, b), 1e-4);
+  let d = (b - a) / L;
+  for (var j = 0u; j < 12u; j++) {
+    let o = (at + j) * 8u;
+    let q = vec2<f32>(bitcast<f32>(w7[o]), bitcast<f32>(w7[o + 1u]));
+    let t = clamp(dot(q - a, d) / L, 0.0, 1.0);
+    let c = select(revCode(mix(revA, revB, t)), revCode(max(revA, revB)), revA < -1e29 || revB < -1e29);
+    w7[o + 7u] = (w7[o + 7u] & 0xffu) | (c << 8u);
+  }
+}
 const C_MAJOR_W: u32 = 0xfbf7eeu;
 const C_MINOR_W: u32 = 0xeee8dau;
 const C_STEEP_W: u32 = 0xf08c33u;
@@ -783,11 +811,13 @@ fn roadMajor(@builtin(global_invocation_id) g: vec3<u32>) {
       let c = cityB2(p);
       if (!((shownCity(cityB2(p + side)) && shownCity(cityB2(p - side))) || (c.state == 1u && c.t <= u.h2.x))) { continue; }
     }
-    let at = room(6u);
-    if (at == NONE) { return; }
     // (time-lapse, CG25: shown once lots front it or it links two districts begun — mainRev — grown in ahead of them)
     if (u.h2.z > 0.5) { revMain(a, b, normalize(gr) * 0.35 * u.a.x, false); }
-    ribbon(at, a, b, u.b.x * 0.5, select(cMajor(), cSteep(), steep(a, b)));
+    // (loop round 9: a street's piece a hexagon — roadDisc; a farm track's stays a narrow ribbon)
+    let at = room(select(12u, 6u, roadTrack));
+    if (at == NONE) { return; }
+    if (roadTrack) { ribbon(at, a, b, u.b.x * 0.5, select(cMajor(), cSteep(), steep(a, b))); }
+    else { roadDisc(at, a, b, u.b.x * 0.5, select(cMajor(), cSteep(), steep(a, b))); }
   }
 }
 /** the cross streets: one thread a trace's segment (TP a trace), a ribbon piece (r1 the traces, r2 kept, r3 H) */
@@ -805,7 +835,9 @@ fn roadMinor(@builtin(global_invocation_id) g: vec3<u32>) {
   if (at == NONE) { return; }
   let a = vec2<f32>(r1(b + 16u + k * 2u), r1(b + 17u + k * 2u));
   let c = vec2<f32>(r1(b + 18u + k * 2u), r1(b + 19u + k * 2u));
-  let d = normalize(c - a) * 0.3;
+  // (loop round 9: each piece runs on past its ends by half the street's width, so a lane-wide street's pieces meet at
+  // a bend without a wedge between them)
+  let d = normalize(c - a) * max(0.3, u.b.y * 0.25);
   ribbon(at, a - d, c + d, u.b.y * 0.5, select(cMinor(), cSteep(), steep(a, c)));
 }
 const C_WALL: u32 = 0xf3eee6u;
@@ -950,6 +982,9 @@ fn lotRec(@builtin(global_invocation_id) g: vec3<u32>) {
   for (var k = 0u; k < 4u; k++) { pv[k] = mix(v[k], mid, 0.04); }
   let paveOk = u.q.x < 1.5;
   if ((hs & PAVED) != 0u || (paveOk && badQuad(v, 0.0))) { putRec(i, v, pv, front, REC_PLAZA, sc, 0u, 0.0, hAt(mid), hs); return; }
+  // (loop round 9: the central square — every lot whose middle lies within u.x.w of the town's centre is paving, so
+  // the main streets (the arterials, which start at the centre) meet at one open square the town's crowd fits in)
+  if (u.x.w > 0.0 && distance(mid, u.d.xy) < u.x.w) { putRec(i, v, pv, front, REC_PLAZA, sc, 0u, 0.0, hAt(mid), hs); return; }
   // (farms: a farm district's lot is a field — inset from its tracks, a hedge round it, now and then a farmhouse)
   if (u.h2.z > 0.5 && sc.purpose == P_FARMS) {
     var fd: array<f32, 4>;
@@ -1009,6 +1044,8 @@ fn lotRec(@builtin(global_invocation_id) g: vec3<u32>) {
   let base = zlo - 0.5;
   putRec(i, v, q, front, REC_BUILDING, sc, u32(max(1.0, round(rise / 3.0))), zhi + rise - base, base, hs);
 }
+/** (loop round 9) a park's or a plaza's plate: this many quads a side, on the ground */
+const PLATE_N: u32 = 4u;
 /** one thread a lot's record: a building extruded to its height × its construction progress (r2: 0–1), a park or a
  *  plaza flat; a landmark's is drawn by lmMesh (r1 the records, r2 the progress, r3 H, w6 the counts) */
 @compute @workgroup_size(64)
@@ -1025,15 +1062,29 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     return;
   }
   if (kind != REC_BUILDING) {
-    let at = room(6u);
+    // (loop round 9: a park's or a plaza's plate in PLATE_N × PLATE_N quads, each corner on the ground (hAt) — it lies
+    // on the land as one surface with its neighbours, not a tilted plane whose corners alone touch it: the central
+    // square's lots read as shards on Muru's bank before)
+    let at = room(6u * PLATE_N * PLATE_N);
     if (at == NONE) { return; }
     curTag = TG_LOT | ((i + 1u) << 8u);
     let lift = select(0.12, 0.15, kind == REC_PLAZA);
     let col = select(C_PARK, cPave(), kind == REC_PLAZA);
-    var z: array<vec3<f32>, 4>;
-    for (var k = 0u; k < 4u; k++) { z[k] = vec3<f32>(q[k], hAt(q[k]) + lift); }
-    tri(at, z[0], z[1], z[2], col);
-    tri(at + 3u, z[0], z[2], z[3], col);
+    let n = f32(PLATE_N);
+    for (var gy = 0u; gy < PLATE_N; gy++) {
+      for (var gx = 0u; gx < PLATE_N; gx++) {
+        var z: array<vec3<f32>, 4>;
+        for (var k = 0u; k < 4u; k++) {
+          let u0 = (f32(gx) + select(0.0, 1.0, k == 1u || k == 2u)) / n;
+          let v0 = (f32(gy) + select(0.0, 1.0, k >= 2u)) / n;
+          let pq = mix(mix(q[0], q[1], u0), mix(q[3], q[2], u0), v0);
+          z[k] = vec3<f32>(pq, hAt(pq) + lift);
+        }
+        let o = at + 6u * (gy * PLATE_N + gx);
+        tri(o, z[0], z[1], z[2], col);
+        tri(o + 3u, z[0], z[2], z[3], col);
+      }
+    }
     return;
   }
   // (time-lapse: made full height — tlRise sets the tops' z by the lot's progress each frame)
@@ -1494,7 +1545,8 @@ fn vroad(@builtin(global_invocation_id) g: vec3<u32>) {
   }
   let at = room(6u);
   if (at == NONE) { return; }
-  let d = normalize(b - a) * 0.3;
+  // (loop round 9: past its ends by half the street's width — roadMinor's)
+  let d = normalize(b - a) * max(0.3, u.b.y * 0.25);
   if (u.h2.z > 0.5) {
     let side = normalize(vec2<f32>(a.y - b.y, b.x - a.x)) * 0.5 * u.a.w;
     // (an arterial is the skeleton's: shown with the main roads; a minor street with its lots (CG25), or ahead with u.sk.z)
@@ -1965,11 +2017,27 @@ fn lmMesh(@builtin(global_invocation_id) g: vec3<u32>) {
     let rp = r - u.b.y * 0.5;
     let a0 = f32(m) * TAU / 24.0;
     let a1 = f32(m + 1u) * TAU / 24.0;
-    let q0 = p + rp * vec2<f32>(cos(a0), sin(a0));
-    let q1 = p + rp * vec2<f32>(cos(a1), sin(a1));
-    let at = room(3u);
+    // (loop round 9: the wedge in PLATE_N bands out from the middle, each corner on the ground — a fan of 24 long
+    // triangles touched the land only at the middle and the rim and read as shards on a slope)
+    let e0 = vec2<f32>(cos(a0), sin(a0));
+    let e1 = vec2<f32>(cos(a1), sin(a1));
+    let at = room(3u + 6u * (PLATE_N - 1u));
     if (at == NONE) { return; }
-    tri(at, vec3<f32>(p, z + 0.16), vec3<f32>(q0, hAt(q0) + 0.16), vec3<f32>(q1, hAt(q1) + 0.16), cPave());
+    let n = f32(PLATE_N);
+    let i0 = p + e0 * (rp / n);
+    let i1 = p + e1 * (rp / n);
+    tri(at, vec3<f32>(p, z + 0.16), vec3<f32>(i0, hAt(i0) + 0.16), vec3<f32>(i1, hAt(i1) + 0.16), cPave());
+    for (var s = 1u; s < PLATE_N; s++) {
+      let ra = rp * f32(s) / n;
+      let rb = rp * f32(s + 1u) / n;
+      let qa0 = p + e0 * ra;
+      let qa1 = p + e1 * ra;
+      let qb0 = p + e0 * rb;
+      let qb1 = p + e1 * rb;
+      let o = at + 3u + 6u * (s - 1u);
+      tri(o, vec3<f32>(qa0, hAt(qa0) + 0.16), vec3<f32>(qb0, hAt(qb0) + 0.16), vec3<f32>(qb1, hAt(qb1) + 0.16), cPave());
+      tri(o + 3u, vec3<f32>(qa0, hAt(qa0) + 0.16), vec3<f32>(qb1, hAt(qb1) + 0.16), vec3<f32>(qa1, hAt(qa1) + 0.16), cPave());
+    }
     return;
   }
   if (m >= 12u) { return; }
@@ -3068,7 +3136,9 @@ fn artMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   if (deck < -1e8) {
     let at = room(6u);
     if (at == NONE) { return; }
-    ribbon(at, a - d * 0.3, b + d * 0.3, hw, select(cArt(), cSteep(), steep(a, b)));
+    // (loop round 9: past its ends by half its width, as the streets' — no wedge at a bend of a lane-wide arterial)
+    let ext = max(0.3, hw * 0.5);
+    ribbon(at, a - d * ext, b + d * ext, hw, select(cArt(), cSteep(), steep(a, b)));
     return;
   }
   // (a pillar where a multiple of PIER_EVERY falls in this piece, the ground well under the deck)
