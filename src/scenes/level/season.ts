@@ -99,8 +99,11 @@ export function startSeasonLoop(scene: LevelScene, towns: FieldTowns, opts: Seas
     restore: async () => {
       const st = await storeReady(scene);
       if (!st) return null;
-      // (the town the level opens on: its key, before it's made — the season's record is the town's)
-      for (const site of towns.sites) {
+      // (the town the level opens on: its key, before it's made — the season's record is the town's. Loop round 10,
+      // LS-93: with `?town=` only that town's — a world played from two towns has two season records, and the first
+      // found was taken whatever town the page opened on)
+      const start = scene.opts.atlas?.startTown;
+      for (const site of towns.sites.filter((s) => start === undefined || s.id === start)) {
         const k = seasonKey(site.at);
         if (!st.has(k)) continue;
         const s = JSON.parse(new TextDecoder().decode(await st.get(k)));

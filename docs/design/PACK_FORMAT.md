@@ -639,6 +639,11 @@ What the player casts on a thing in play. (Into an event only the three existing
   `"in_event": { "kinds": ["raid"], "kills": 3 }` or `{ "kinds": ["fire"], "douses": 3 }`. Each cast puts down that
   many foes, or puts out that many burning lots, in any live event of one of those kinds, the base game's too.
   Exactly one of `kills` and `douses`. Fire does 1, Heat ray 2, Rain 2: above 3 the validator says to look.
+  (Loop round 10, the owner's toy spells.) Or `{ "kinds": ["bout"], "berserk": 8 }`: the foes within 8 cells of the
+  tap turn on anyone near them, one another too, and anyone takes them on — or `{ "kinds": ["bout"], "hides": 6 }`:
+  your people within 6 cells are hidden: no foe goes for them, and they are not drawn. Exactly one of the four. In
+  the 3D game these act on the units themselves (the card table has no units: there they do nothing yet). Example:
+  `packs/arena.json` Red mist and Veil.
 - A pack ability must be unlocked by a card (`{ "unlock": "id" }`). It is the player's for that run; it is written
   in the run's history, so a saved run keeps it.
 - Existing abilities, which must not be declared again: `growth-rune` (on a field: it is `growth-active` this

@@ -34,7 +34,13 @@ import { castAbility, type LoadedPack } from '../../packs/load';
 import type { RuleHit } from '../../living/rules';
 import { SPELL_MECH } from '../../living/live';
 import { grant, lose } from '../../season/ledger';
-import { keepBuilt } from '../../season/realm-home';
+import { keepBuilt, lastHome, moveHome } from '../../season/realm-home';
+import { leaderChoices, startLines, type LeaderChoice } from '../../season/run-packs';
+import type { LeaderView } from '../../season/run-ui';
+import type { Leader } from '../../season/realm';
+import type { PackLeader } from '../../packs/check';
+import { startThings } from '../../packs/load';
+import { siteId } from '../../season/realm-templates';
 import * as TW from '../../table/words';
 import { packRoadShapes, type RoadRaster, type RoadShape } from '../../agents/roads';
 import * as W from '../../season/run-words';
@@ -52,7 +58,16 @@ const WORLD_KEY = 'realm:world';
 interface SavedRun {
   v: 2;
   world: Delta | null;
-  run: { state: RunState; ledger: SeasonLedger; notes: string[] } | null;
+  /** (loop round 10) `home`: the town the run is played from — the page opens on it to take the run up (absent in an
+   *  older save: the town the page opened on) */
+  run: { state: RunState; ledger: SeasonLedger; notes: string[]; home?: string } | null;
+}
+/** (loop round 10, LS-93) a run asked for from another town than the page's: the leader, kept while the page opens on
+ *  that town (`?town=<id>`), then begun there */
+const START_KEY = 'realm:start';
+interface PendingStart {
+  leader: string;
+  home: string;
 }
 /** the zoom on a district being built while a season passes: its lots and the people working on them read */
 const BUILD_ZOOM = 9;
@@ -298,10 +313,10 @@ class Game implements RunGame {
   // ---- live events --------------------------------------------------------------------------------------
 
   /** the live event the player is at, for the sheet */
-  get liveNow(): { title: string; how: string; spells: SpellId[]; abilities: { id: string; name: string }[]; wantsSpells: boolean; canLeave: boolean; canSettle: boolean } | null {
+  get liveNow(): { id: string; title: string; how: string; spells: SpellId[]; abilities: { id: string; name: string }[]; wantsSpells: boolean; canLeave: boolean; canSettle: boolean } | null {
     const run = this.live.focus;
     // (round 8: "settle it now" for an event the player may leave — the raid is played out; a census event has no card)
-    return run && this.phase === 'event' ? { title: run.def.title, how: run.def.how, spells: this.allowed(), abilities: this.eventAbilities().map((a) => ({ id: a.id, name: W.castOn(a.name, a.cost.magic ?? 0) })), wantsSpells: !!run.def.spells?.length, canLeave: this.live.canLeave, canSettle: this.live.canSettle && !run.id.startsWith('measure:') } : null;
+    return run && this.phase === 'event' ? { id: run.id, title: run.def.title, how: run.def.how, spells: this.allowed(), abilities: this.eventAbilities().map((a) => ({ id: a.id, name: W.castOn(a.name, a.cost.magic ?? 0) })), wantsSpells: !!run.def.spells?.length, canLeave: this.live.canLeave, canSettle: this.live.canSettle && !run.id.startsWith('measure:') } : null;
   }
 
   /** (round 8) the pack abilities the run has unlocked that may be cast into the live event the player is at: one with
@@ -409,10 +424,12 @@ class Game implements RunGame {
    * in (the units' counts, the casts made): its result and the rules it sets off apply at once, and an event a rule
    * starts begins at once — the next bout of a chain is played in the same season.
    */
-  settle(): void {
+  settle(id: string): void {
     const run = this.live.focus;
     const r = this.realm;
-    if (!r || !run || this.phase !== 'event' || !this.live.canSettle || run.id.startsWith('measure:')) return;
+    // (loop round 10, job 5: one press settles the event it was pressed for — not one begun since; the chain of bouts
+    // goes on without limit, a press each, as the owner wants the engines unbounded and paced by the player's actions)
+    if (!r || !run || run.id !== id || this.phase !== 'event' || !this.live.canSettle || run.id.startsWith('measure:')) return;
     r.tellLive(run.id, this.live.told(run));
     r.ledger = this.season.ledger;
     const rep = r.resolveNow(run.id);
@@ -643,8 +660,67 @@ class Game implements RunGame {
       await restoreMutators(this.mut);
       console.log(`[loop] mutators: ${mutators.record().list.length} changes of earlier runs laid over the land, ${mutators.signs().length} signs on`);
     }
-    if (this.pending && this.resume(this.pending)) return;
+    // (loop round 10, LS-93: the page plays from the run's home. A run under way is taken up at its own town; a run
+    // asked for from another town begins once the page has opened there; with no run, a new one continues from where
+    // the world's last run was played (the card table's rule, CT-56 (8)). The page is opened again on that town —
+    // `?town=<id>`, which the level opens on and the town generator builds as the window nears it)
+    const home = this.season.town;
+    const startBytes = st?.has(START_KEY) ? await st.get(START_KEY) : null;
+    const start = startBytes ? (JSON.parse(new TextDecoder().decode(startBytes)) as PendingStart) : null;
+    if (this.pending) {
+      if (this.pending.home && this.pending.home !== home) return this.openOn(this.pending.home);
+      if (this.resume(this.pending)) return;
+    } else if (start) {
+      if (start.home !== home) return this.openOn(start.home);
+      await st!.delete(START_KEY);
+      this.set('leader');
+      return this.begin(start.leader);
+    } else if (this.saved && home !== null) {
+      const last = lastHome(worldOf(this.saved));
+      if (last && last !== home) return this.openOn(last);
+    }
     this.set('leader');
+  }
+
+  /**
+   * (loop round 10, LS-93) The page opened again on another town of the world (`?town=<id>`, without `fresh`): the
+   * level opens there and the town generator builds it, as it does the start town. The saved world goes with it (the
+   * store is the world's). A town the page already asked for and did not open on is an error, not a loop.
+   */
+  private openOn(town: string): void {
+    const u = new URL(location.href);
+    if (u.searchParams.get('town') === town) throw new Error(`loop: the page asked for ${town} and opened on ${this.season.town}`);
+    u.searchParams.set('town', town);
+    u.searchParams.delete('fresh');
+    console.log(`[loop] the run is played from ${town}: the page opens there`);
+    this.set('boot');
+    location.assign(u.toString());
+  }
+
+  /** (loop round 10, LS-93) the towns this page can play from: those the town generator builds (a village and up) */
+  private canHome = (id: string): boolean => !!this.scene.opts.atlas?.fieldTowns?.includes(id);
+
+  /** (loop round 10, LS-93) the leaders the start screen shows, read from the saved world (cached until it changes) */
+  private choices: { w: FactWorld; list: LeaderChoice[] } | null = null;
+  leaders(): LeaderView[] {
+    const home = this.season.town;
+    const a = this.scene.opts.atlas;
+    if (home === null || !a?.settlements) return [];
+    if (!this.choices) {
+      const w = worldOf(this.saved ?? this.baseWorld());
+      this.choices = { w, list: leaderChoices(w, this.played, W.LEADERS, home, this.canHome) };
+    }
+    const w = this.choices.w;
+    return this.choices.list.map((c) => ({ id: c.id, name: c.name, line: c.line, pools: c.pools, locked: c.locked, note: c.home && c.home !== home ? W.playsFrom(w.name(c.home)) : null }));
+  }
+
+  /** a leader by id: a base leader, or a pack leader as the Realm takes one (pools, income) */
+  private leaderOf(id: string): { who: Leader; pack: PackLeader | null } | null {
+    const base = W.LEADERS.find((l) => l.id === id);
+    if (base) return { who: base, pack: null };
+    const p = this.played.flatMap((x) => x.leaders ?? []).find((l) => l.id === id);
+    if (!p) return null;
+    return { who: { id: p.id, name: p.name, line: p.line, pools: { magic: 0, might: 0, labor: 0, materials: 0, intel: 0, unrest: 0, ...p.pools }, income: { ...(p.income ?? {}) } }, pack: p };
   }
 
   /**
@@ -655,10 +731,11 @@ class Game implements RunGame {
   private resume(p: NonNullable<SavedRun['run']>): boolean {
     const a = this.scene.opts.atlas;
     const home = this.season.town;
-    const who = W.LEADERS.find((l) => l.id === p.state.leader);
-    if (!a?.settlements || home === null || !who || !this.saved) return false;
+    const got = this.leaderOf(p.state.leader);
+    if (!a?.settlements || home === null || !got || !this.saved) return false;
+    const who = got.who;
     this.realm = null;
-    this.realm = new Realm({ world: this.saved, home, seed: a.atlas.p.seed, leader: who, ledger: p.ledger, land: () => this.season.land, seasons: p.state.seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y), resume: p.state, liveFire: this.liveFire, ...this.packOptions(home, who.id, () => p.ledger) });
+    this.realm = new Realm({ world: this.saved, home, seed: a.atlas.p.seed, leader: who, ledger: p.ledger, land: () => this.season.land, seasons: p.state.seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y), resume: p.state, liveFire: this.liveFire, ...this.packOptions(home, who.id, () => p.ledger, got.pack) });
     this.runs = this.realm.history(true).filter((e) => e.kind === 'run-began').length;
     this.notes = p.notes;
     this.resultLines = [];
@@ -680,7 +757,8 @@ class Game implements RunGame {
     const t0 = performance.now();
     this.saved = r.snapshot();
     this.nowCache = null;
-    const rec: SavedRun = { v: 2, world: delta(this.baseWorld() as never, JSON.parse(JSON.stringify(this.saved)) as never), run: r.over ? null : { state: r.runState(), ledger: this.season.ledger, notes: this.notes } };
+    this.choices = null;
+    const rec: SavedRun = { v: 2, world: delta(this.baseWorld() as never, JSON.parse(JSON.stringify(this.saved)) as never), run: r.over ? null : { state: r.runState(), ledger: this.season.ledger, notes: this.notes, home: r.home } };
     const bytes = new TextEncoder().encode(JSON.stringify(rec));
     // (the store takes the bytes: their length said first)
     console.log(`[loop] world saved: ${bytes.length} B (${JSON.stringify(rec.world).length} B the world's changes, the rest the run), ${r.history(true).length} events, ${(performance.now() - t0).toFixed(0)} ms`);
@@ -690,16 +768,50 @@ class Game implements RunGame {
   // ---- the player's moves -----------------------------------------------------------------------------
 
   pick(id: string): void {
-    const who = W.leader(id);
     const a = this.scene.opts.atlas;
     const home = this.season.town;
     if (!a?.settlements || home === null) throw new Error('loop: no atlas world or no home town');
+    const choice = this.leaders().find((l) => l.id === id);
+    if (!choice || choice.locked !== null) return;
+    // (loop round 10, LS-93: a pack leader who plays from a far town — the page opens on it, and the run begins there)
+    const far = this.choices?.list.find((c) => c.id === id)?.home ?? null;
+    if (far && far !== home) {
+      const st = this.scene.stream?.store;
+      if (!st) throw new Error('loop: no world store to keep the run asked for');
+      const rec: PendingStart = { leader: id, home: far };
+      void st.put(START_KEY, new TextEncoder().encode(JSON.stringify(rec)), { session: 'loop', hash: 0 }).then(() => this.openOn(far));
+      return;
+    }
+    this.begin(id);
+  }
+
+  /** a run begun with this leader at the town the page is on (picked here, or picked on the page before it opened on
+   *  this town: then the choice was read from the town it was made at) */
+  private begin(id: string): void {
+    const a = this.scene.opts.atlas;
+    const home = this.season.town;
+    if (!a?.settlements || home === null) throw new Error('loop: no atlas world or no home town');
+    const got = this.leaderOf(id);
+    if (!got) throw new Error(`loop: no leader ${id}`);
+    const who = got.who;
+    // (a run played from another town than the world's last run: the old home becomes a far town — the card table's
+    // one path, season/realm-home.ts)
+    let world = this.saved ?? a.settlements.wiki.snapshot;
+    const was = this.saved ? lastHome(worldOf(this.saved)) : null;
+    const movedFrom = was && was !== home ? was : null;
+    if (movedFrom) world = moveHome(world, movedFrom, home).world;
     // (a new run: the leader's pools; what earlier runs built is kept — the season's own ledger holds it, also after a
-    // reload, where the season loop restores it with the town)
+    // reload, where the season loop restores it with the town. FIXED-CITY (CT-56 (2)): the 3D town's districts are its
+    // season save's; the record's built:<card> tags say the same for a town played here)
     const ledger: SeasonLedger = { ...newLedger(who.pools, who.income), built: [...this.season.ledger.built] };
     const seasons = Number(this.scene.host.params.get('runlen') ?? RUN_SEASONS);
     this.realm = null;
-    this.realm = new Realm({ world: this.saved ?? a.settlements.wiki.snapshot, home, seed: a.atlas.p.seed, leader: who, ledger, land: () => this.season.land, seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y), liveFire: this.liveFire, ...this.packOptions(home, who.id, () => ledger) });
+    this.realm = new Realm({ world, home, seed: a.atlas.p.seed, leader: who, ledger, land: () => this.season.land, seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y), liveFire: this.liveFire, ...this.packOptions(home, who.id, () => ledger, got.pack) });
+    // (ages, as the card table: a pack leader's start — its things in play, its laws in force for the run)
+    if (got.pack) {
+      startThings(this.realm.w, this.packs, got.pack, home, (k) => siteId(home, k as SiteKey));
+      for (const l of got.pack.laws ?? []) this.realm.enact(l, TW.leaderStart(who.name));
+    }
     // (round 8, as the card table: with packs the deal is made again once the Realm can be read — its first deal, made
     // while it was being built, saw no tags)
     if (this.packs.length) this.realm.afterSeason(this.realm.ledger);
@@ -711,7 +823,11 @@ class Game implements RunGame {
     this.resultLines = [];
     this.season.setLedger(this.realm.ledger);
     void this.save();
-    console.log(`[loop] run ${this.runs}: ${who.name}, ${seasons} seasons; asking: ${this.asking().map((x) => `${x.who} (${x.title})`).join(', ')}`);
+    console.log(`[loop] run ${this.runs}: ${who.name} at ${home}${movedFrom ? ` (moved from ${movedFrom})` : ''}, ${seasons} seasons; asking: ${this.asking().map((x) => `${x.who} (${x.title})`).join(', ')}`);
+    // (loop round 10, LS-93: the run's start says what the world is now — the card table's lines, one copy: which run
+    // and who leads, how earlier runs ended, a move of home, "While you were gone", the far towns, laws left, "Earlier
+    // runs opened", "Not yet found")
+    this.panel = { title: W.NOW_TITLE, sections: [{ lines: startLines(this.realm, this.packs, this.played, { run: this.runs, leaderLine: who.line, movedFrom }) }] };
     this.set('city');
     // (the town framed above the sheet: its core across the screen)
     this.showTown();
@@ -794,13 +910,13 @@ class Game implements RunGame {
   // ---- (round 8) packs, laws, rules, the record, things -----------------------------------------------------
 
   /** the Realm's options for the packs (as the card table's), and the rule firings told to this game */
-  private packOptions(home: string, leader: string, ledger: () => SeasonLedger): Partial<ConstructorParameters<typeof Realm>[0]> {
+  private packOptions(home: string, leader: string, ledger: () => SeasonLedger, pack: PackLeader | null = null): Partial<ConstructorParameters<typeof Realm>[0]> {
     const onRules = (hits: RuleHit[]) => {
       this.hitsNew.push(...hits);
       this.recent.push(...hits);
     };
     if (!this.packs.length) return { onRules };
-    return { onRules, extra: realmExtra(this.packs, this.played, () => this.realm, { home, ledger, leader }) };
+    return { onRules, extra: realmExtra(this.packs, this.played, () => this.realm, { home, ledger, leader, ...(pack?.deck_out ? { deckOut: pack.deck_out } : {}) }) };
   }
 
   /** the laws a card's effects bring: a `law` effect, or a thing it puts in play that carries laws (any result's) */
@@ -1004,7 +1120,11 @@ class Game implements RunGame {
   }
 
   proceed(): void {
-    if (this.phase === 'result') this.flow();
+    if (this.phase !== 'result') return;
+    // (loop round 10: the raid is the last season's card and the season goes on after it — its result is the town's
+    // news now; before, the season's old line "The raiders break camp and march on the town" stood under a raid held)
+    this.notes = [...this.resultLines];
+    this.flow();
   }
 
   again(): void {
@@ -1132,7 +1252,7 @@ class Game implements RunGame {
     // (round 8: a pack ability cast into the event — what it does is its `in_event` numbers through the laws)
     const ability = this.eventAbilities().find((a) => a.id === id);
     const mech = this.packs.length ? mechOf(r, this.packs) : r.spellMech(SPELL_MECH);
-    const z = id === 'heatray' || id === 'fire' || (ability && mech[id]?.kills) ? this.live.figuresZ() : null;
+    const z = id === 'heatray' || id === 'fire' || (ability && (mech[id]?.kills || mech[id]?.berserk || mech[id]?.hides)) ? this.live.figuresZ() : null;
     const g = z !== null ? cam.groundAt(sx, sy, () => z) : cam.groundAt(sx, sy, this.scene.heightAt);
     if (!g) {
       const terrain = api.terrain;
@@ -1177,6 +1297,12 @@ class Game implements RunGame {
         this.scene.core.weather.spawn(g[0], g[1]);
         api.fx.burst('splash', g[0], g[1], g[2] + 0.5, { count: 30 });
       }
+      // (loop round 10, LS-94: spells on the units themselves, on the GPU — the foes within reach turn on anyone near,
+      // one another too; your people within reach are hidden from the foes and from sight)
+      const units = this.scene.units;
+      if ((m.berserk || m.hides) && !units?.spell) throw new Error('loop: these units take no spells (Units.spell)');
+      if (m.berserk) units!.spell!({ at: [g[0], g[1]], radius: m.berserk, who: 'foes', berserk: true });
+      if (m.hides) units!.spell!({ at: [g[0], g[1]], radius: m.hides, who: 'friends', hidden: true });
       api.fx.burst('sparks', g[0], g[1], g[2] + 1, { count: 40 });
       this.tell(TW.castLine(ability.name, run?.def.title ?? '', cost));
     } else if (id === 'heatray') {

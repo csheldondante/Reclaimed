@@ -7,20 +7,23 @@
 import type { WorldSnapshot } from '../api/contracts/world';
 import { MemoryWorldState } from '../api/contracts/world-state';
 import type { EntityId } from '../api/contracts/facts';
-import { lawKind, type LawKind } from '../living/laws';
+import { lawKind, type LawKind, type Mech } from '../living/laws';
 import { SPELL_MECH } from '../living/live';
 import type { RuleHit, RuleMissing } from '../living/rules';
 import { FactWorld } from '../living/world';
 import { placeStates } from '../mutate/facts';
 import { checkTogether, reportText, type Pack, type PackAbility } from '../packs/check';
-import { lawThings, linkPacks, loadPack, packHelpers, packMech, packThings, seedFactions, tradeThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
+import { farThings, homeOf, isOpen, lawThings, leaderFits, linkPacks, loadPack, notYetFound, OPENED, packHelpers, packMech, packThings, seedFactions, tradeThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
+import type { PackLeader } from '../packs/check';
+import { BETWEEN } from './realm-between';
+import type { Pools } from './ledger';
 import * as TW from '../table/words';
 import { lawText, lawUntil } from './law-words';
 import { pools, type Pool, type SeasonLedger } from './ledger';
 import { CATALOG } from './catalog';
 import { FIRE_TEMPLATE } from './realm-events';
-import { projectTemplate, WORLD_TEMPLATES, type SiteKey } from './realm-templates';
-import { recordOf, type Realm, type RealmOptions } from './realm';
+import { projectTemplate, siteId, SITES, WORLD_TEMPLATES, type SiteKey } from './realm-templates';
+import { CARD_DONE, CARD_LAPSED, recordOf, type Realm, type RealmOptions } from './realm';
 
 /** the ids of the base game's cards (a pack's may not clash with them; table/game.ts baseCards) */
 const baseCards = (): string[] => [...CATALOG.map(projectTemplate).filter((t) => t !== null).map((t) => t!.id), ...WORLD_TEMPLATES.map((t) => t.id), FIRE_TEMPLATE.id];
@@ -84,7 +87,7 @@ export function loadRunPacks(json: readonly Pack[]): { packs: LoadedPack[]; play
  * The Realm's options for the packs (RealmOptions.extra): the same the card table gives (table/game.ts), over this
  * game's home town. `realm` is the Realm once made (it deals once while it is made, before it can be read).
  */
-export function realmExtra(packs: readonly LoadedPack[], played: readonly Pack[], realm: () => Realm | null, o: { home: EntityId; ledger: () => SeasonLedger; leader: string }): NonNullable<RealmOptions['extra']> {
+export function realmExtra(packs: readonly LoadedPack[], played: readonly Pack[], realm: () => Realm | null, o: { home: EntityId; ledger: () => SeasonLedger; leader: string; deckOut?: PackLeader['deck_out'] }): NonNullable<RealmOptions['extra']> {
   const host: PackHost = {
     season: () => realm()?.season ?? 1,
     pool: (k) => pools(realm()?.ledger ?? o.ledger())[k as Pool] ?? 0,
@@ -111,14 +114,18 @@ export function realmExtra(packs: readonly LoadedPack[], played: readonly Pack[]
     laws: packs.flatMap((p) => p.laws),
     lawThings: () => {
       const r = realm();
-      return r ? lawThings(r.w, packs) : [];
+      return r ? lawThings(r.w, packs, o.home) : [];
     },
     recordLaws: packs.flatMap((p) => p.recordLaws),
     tradeThings: () => {
       const r = realm();
-      return r ? tradeThings(r.w, packs) : [];
+      return r ? tradeThings(r.w, packs, o.home) : [];
     },
+    // (loop round 10, card-table round 5: the packs' between-runs entries, after the base game's)
+    between: packs.flatMap((p) => p.between),
     seed: (w) => seedFactions(w, [...played]),
+    // (ages: a pack leader's start takes cards out of the deck)
+    ...(o.deckOut ? { deckOut: o.deckOut } : {}),
   };
 }
 
@@ -228,6 +235,81 @@ export function worldNow(w: FactWorld, packs: readonly LoadedPack[], home: Entit
   return out;
 }
 
+// ---- (loop round 10) a run's start, one copy for both front ends (BACKLOG LS-84) ---------------------------------------
+
+/** a leader the start screen shows: one the player can pick, or a locked one with its hint (`locked`), or a pack leader
+ *  who plays from a far town (`home`: the town, null when they play from the town the run would start in) */
+export interface LeaderChoice {
+  id: string;
+  name: string;
+  line: string;
+  pools: Partial<Pools>;
+  income: Partial<Pools>;
+  /** locked: the hint of how to open it (`""`: no hint written); null: open */
+  locked: string | null;
+  home: EntityId | null;
+  pack: PackLeader | null;
+}
+
+/**
+ * (ages, draft 8; Table.leaders) Who the player can be in this world: the base leaders and each pack leader whose
+ * `appears_when` the world fits and, for one who plays from a far town, while one fits (`can`: a town this front end
+ * can play from). A fitting pack leader that `replaces` hides the base leaders. Locked pack leaders are listed with
+ * their hint and cannot be picked (the unlock model: never offered until a run of the world opened them).
+ */
+export function leaderChoices(w: FactWorld, played: readonly Pack[], base: readonly { id: string; name: string; line: string; pools: Partial<Pools>; income: Partial<Pools> }[], home: EntityId, can: (id: EntityId) => boolean = () => true): LeaderChoice[] {
+  const all = played.flatMap((p) => p.leaders ?? []);
+  const fitting = all.filter((l) => leaderFits(w, l, home));
+  const open = fitting.filter((l) => isOpen(w, played, l.id) && (!l.home || homeOf(w, l, home, can) !== null));
+  const asChoice = (l: PackLeader, locked: string | null): LeaderChoice => ({ id: l.id, name: l.name, line: l.line, pools: { ...l.pools } as Partial<Pools>, income: { ...(l.income ?? {}) } as Partial<Pools>, locked, home: l.home && !locked ? homeOf(w, l, home, can) : null, pack: l });
+  const baseList = open.some((l) => l.replaces) ? [] : base.map((l) => ({ ...l, locked: null, home: null, pack: null }));
+  const locked = all.filter((l) => !isOpen(w, played, l.id)).map((l) => asChoice(l, l.hint ?? ''));
+  return [...baseList, ...open.map((l) => asChoice(l, null)), ...locked];
+}
+
+/** (draft 8; Table.opened) what this world has unlocked, oldest first: the content, the card that opened it (read from
+ *  the record: the card's own record event names the offer), and the turn */
+export function openedLines(r: Realm): { id: string; turn: number; line: string }[] {
+  const f = r.w.facts;
+  const done = f.events().filter((e) => (e.kind.startsWith(CARD_DONE) || e.kind === CARD_LAPSED) && !!e.about?.opp);
+  return f.events({ kind: OPENED }).map((e) => {
+    const cause = e.about?.opp ?? '';
+    const by = done.find((d) => cause === d.about!.opp || cause.startsWith(`${d.about!.opp}:`))?.note ?? cause;
+    return { id: e.about?.thing ?? '', turn: e.turn, line: TW.newLater(e.note, by) };
+  });
+}
+
+/**
+ * (ages, draft 8; Table.worldNow) The world as this run finds it, for the run's start: which run and who leads; how
+ * each earlier run ended; a run played from another town; what moved while nobody played ("While you were gone"); the
+ * far towns and the town; the laws earlier runs left; what earlier runs opened; what is still to find.
+ */
+export function startLines(r: Realm, packs: readonly LoadedPack[], played: readonly Pack[], o: { run: number; leaderLine: string; movedFrom: EntityId | null }): string[] {
+  const w = r.w;
+  const home = r.home;
+  const out = [TW.worldRun(o.run, r.leader.name, o.leaderLine)];
+  const runs = w.facts.events({ kind: 'run-began' });
+  for (const e of w.facts.events({ kind: 'run-ended' })) {
+    const n = runs.filter((x) => x.turn <= e.turn).length;
+    if (n < o.run) out.push(TW.worldEnded(n, e.note));
+  }
+  if (o.movedFrom) out.push(TW.homeLine(w.name(home), w.name(o.movedFrom)));
+  const t0 = w.turn - r.season;
+  for (const e of w.facts.events({ kind: BETWEEN })) if (e.turn === t0) out.push(TW.whileGone(e.note));
+  const far = farThings(w, packs, home).filter((t) => t.tags.includes('far-town'));
+  const count = (s: string) => far.filter((t) => t.tags.includes(s)).length;
+  const ruins = SITES.filter((s) => r.things().find((t) => t.id === siteId(home, s.key))?.tags.includes('ruined')).length;
+  const signs = ['ashfall', 'darkness', 'deadrise', 'crime'].filter((k) => !!w.facts.tag(home, 'condition', k)?.value);
+  out.push(TW.worldState({ far: far.length, destroyed: count('destroyed') + count('abandoned'), yours: far.filter((t) => t.tags.includes('yours') && t.tags.includes('standing')).length, held: far.filter((t) => !t.tags.includes('yours') && t.tags.includes('standing')).length, ruins, of: SITES.length, signs }));
+  const after = lawLines(r).filter((l) => l.until === TW.LAW_AFTER).map((l) => l.name);
+  if (after.length) out.push(TW.worldLaws([...new Set(after)]));
+  const opened = openedLines(r).filter((x) => x.turn <= t0);
+  if (opened.length) out.push(TW.worldOpened(opened.map((x) => x.line)));
+  const missing = notYetFound(w, played);
+  if (missing.length) out.push(TW.notFound(missing.flatMap((x) => (x.hint ? [x.hint] : [])), missing.filter((x) => !x.hint).length));
+  return out;
+}
+
 export interface ThingMark {
   id: EntityId;
   /** the pack thing's own id (its art, its card) */
@@ -243,7 +325,7 @@ export interface ThingMark {
 /** the pack things in play and their remains, each at the site of the home town it stands at (null: the town) */
 export function thingMarks(r: Realm, packs: readonly LoadedPack[]): ThingMark[] {
   const things = new Map(r.things().map((t) => [t.id, t]));
-  return packThings(r.w, packs).map((t) => {
+  return packThings(r.w, packs, r.home).map((t) => {
     const site = t.site ? ((r.w.facts.entity(t.site)?.attrs?.site as SiteKey | undefined) ?? null) : null;
     const now = things.get(t.id);
     const tags = (now?.tags ?? t.def.tags).filter((x) => !x.startsWith('is:'));
@@ -259,6 +341,6 @@ export function unlockedAbilities(r: Realm, packs: readonly LoadedPack[]): PackA
 }
 
 /** what one cast of each spell and pack ability does in an event, with the laws in force */
-export function mechOf(r: Realm, packs: readonly LoadedPack[]): Record<string, { kills?: number; douses?: number }> {
+export function mechOf(r: Realm, packs: readonly LoadedPack[]): Mech {
   return r.spellMech({ ...SPELL_MECH, ...packMech(packs) });
 }

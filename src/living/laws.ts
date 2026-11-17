@@ -220,7 +220,9 @@ export function poolsAs(laws: readonly LawDef[]): [string, string][] {
 
 // ---- 4. spells and events -------------------------------------------------------------------------------------------
 
-export type Mech = Record<string, { kills?: number; douses?: number }>;
+/** (loop round 10, LS-94) `berserk`, `hides`: a pack ability's reach (cells) — the foes there turn on anyone near; your
+ *  people there are hidden. No law changes them yet */
+export type Mech = Record<string, { kills?: number; douses?: number; berserk?: number; hides?: number }>;
 
 /** what one cast of each spell does in an event, with the spell laws applied in order (a law sets the number) */
 export function spellMech(base: Mech, laws: readonly LawDef[]): Mech {

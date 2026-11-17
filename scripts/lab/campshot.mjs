@@ -31,7 +31,7 @@ await run({ name: 'campshot', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
       return { at: s.at, window: [Math.round(x), Math.round(y)] };
     });
   await boot(true);
-  await p.evaluate(() => window.rungame.pick('ysolt'));
+  await p.evaluate(() => (window.rungame.pick('ysolt'), window.rungame.closePanel()));
   await p.waitForFunction(() => window.rungame.phase === 'city', { timeout: 60000, polling: 250 });
   await R.sleep(3000);
   // (--site: the site the camp is cast by; default the realm's own choice for a camp)

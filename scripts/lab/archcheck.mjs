@@ -19,7 +19,7 @@ await run({ name: 'archcheck', kind: 'behaviour', size: '412x915', dpr: 1, echo:
   await p.goto(`${R.url}/?skipmenu=1&level=atlas&town=1&loop=1&fresh=1&q=low&warmcache=0${R.opt('params', '')}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.rungame?.phase === 'leader' || document.querySelector('.fatal'), { timeout: 300000, polling: 250 });
   await R.fatal(p);
-  await p.evaluate(() => window.rungame.pick('ysolt'));
+  await p.evaluate(() => (window.rungame.pick('ysolt'), window.rungame.closePanel()));
   await p.waitForFunction(() => window.rungame.phase === 'city', { timeout: 60000, polling: 250 });
   await R.sleep(3000);
   // (the generator's instances and vertices, a debugging read: TownBuildings.counts)

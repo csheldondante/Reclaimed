@@ -22,10 +22,10 @@ import { projectTemplate, siteId, SITES, WORLD_TEMPLATES, type SiteKey } from '.
 import { MemoryWorldState } from '../api/contracts/world-state';
 import { FactWorld } from '../living/world';
 import { checkTogether, reportText, type Pack, type PackAbility, type Problem } from '../packs/check';
-import { castAbility, farHolder, farThings, homeOf, IS, isOpen, lawThings, leaderFits, notYetFound, OPENED, packFactions, seedFactions, stanceOf, startThings, tradeThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
-import { BASIC_SPELLS, CARD_DONE, CARD_LAPSED, RAIDERS_ID, Realm, RUN_SEASONS, SPELL_COST, type RunState, type SpellId } from '../season/realm';
-import { BETWEEN } from '../season/realm-between';
+import { castAbility, farHolder, farThings, homeOf, IS, lawThings, packFactions, seedFactions, stanceOf, startThings, tradeThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
+import { BASIC_SPELLS, RAIDERS_ID, Realm, RUN_SEASONS, SPELL_COST, type RunState, type SpellId } from '../season/realm';
 import { keepBuilt, moveHome } from '../season/realm-home';
+import { leaderChoices, openedLines, startLines } from '../season/run-packs';
 import { lawKind, lawIncome, winsOf, type LawKind } from '../living/laws';
 import { lawText, lawUntil, stackedDoes } from '../season/law-words';
 import type { Effect } from '../living/dsl';
@@ -278,10 +278,11 @@ export class Table {
    */
   static leaders(world: WorldSnapshot | undefined, packs: readonly Pack[], home = HOME): { id: string; name: string; line: string }[] {
     const w = new FactWorld(MemoryWorldState.restore(structuredClone(world ?? briarWorld().ws.snapshot())));
-    // (draft 8: a locked leader is offered once unlocked; a leader who starts in a far town, while one fits)
-    const fit = packs.flatMap((p) => p.leaders ?? []).filter((l) => leaderFits(w, l, home) && isOpen(w, packs, l.id) && (!l.home || homeOf(w, l, home) !== null));
-    const base = fit.some((l) => l.replaces) ? [] : LEADERS.map((l) => ({ id: l.id, name: l.name, line: l.line }));
-    return [...base, ...fit.map((l) => ({ id: l.id, name: l.name, line: l.line }))];
+    // (draft 8: a locked leader is offered once unlocked; a leader who starts in a far town, while one fits — one copy
+    // for both front ends since loop round 10: season/run-packs.ts leaderChoices; the table lists the open ones)
+    return leaderChoices(w, packs, LEADERS, home)
+      .filter((l) => l.locked === null)
+      .map((l) => ({ id: l.id, name: l.name, line: l.line }));
   }
 
   /** (draft 8) the town the run is played from: FIXED-CITY lifted for the table — the home a run starts in */
@@ -909,32 +910,8 @@ export class Table {
    * earlier run ended and by what; what the far places and the town are now; the laws earlier runs left.
    */
   worldNow(): string[] {
-    const r = this.realm;
-    const w = r.w;
-    const out = [W.worldRun(this.run, r.leader.name, this.leaderLine)];
-    const runs = w.facts.events({ kind: 'run-began' });
-    for (const e of w.facts.events({ kind: 'run-ended' })) {
-      const n = runs.filter((x) => x.turn <= e.turn).length;
-      if (n < this.run) out.push(W.worldEnded(n, e.note));
-    }
-    // (draft 8: a run played from a far town)
-    if (this.movedFrom) out.push(W.homeLine(w.name(this.home), w.name(this.movedFrom)));
-    // (draft 8: what moved while nobody played — the between-runs step's lines, this gap's)
-    const t0 = w.turn - r.season;
-    for (const e of w.facts.events({ kind: BETWEEN })) if (e.turn === t0) out.push(W.whileGone(e.note));
-    const far = farThings(w, this.packs, this.home).filter((t) => t.tags.includes('far-town'));
-    const count = (s: string) => far.filter((t) => t.tags.includes(s)).length;
-    const ruins = SITES.filter((s) => r.things().find((t) => t.id === siteId(this.home, s.key))?.tags.includes('ruined')).length;
-    const signs = ['ashfall', 'darkness', 'deadrise', 'crime'].filter((k) => !!w.facts.tag(this.home, 'condition', k)?.value);
-    out.push(W.worldState({ far: far.length, destroyed: count('destroyed') + count('abandoned'), yours: far.filter((t) => t.tags.includes('yours') && t.tags.includes('standing')).length, held: far.filter((t) => !t.tags.includes('yours') && t.tags.includes('standing')).length, ruins, of: SITES.length, signs }));
-    const after = this.laws().filter((l) => l.until === W.LAW_AFTER).map((l) => l.name);
-    if (after.length) out.push(W.worldLaws(after));
-    // (draft 8: what earlier runs opened, and what is still to find)
-    const opened = this.opened().filter((x) => x.turn <= t0);
-    if (opened.length) out.push(W.worldOpened(opened.map((x) => x.line)));
-    const missing = notYetFound(w, this.o.packs ?? []);
-    if (missing.length) out.push(W.notFound(missing.flatMap((x) => (x.hint ? [x.hint] : [])), missing.filter((x) => !x.hint).length));
-    return out;
+    // (loop round 10: one copy for both front ends — season/run-packs.ts startLines)
+    return startLines(this.realm, this.packs, this.o.packs ?? [], { run: this.run, leaderLine: this.leaderLine, movedFrom: this.movedFrom });
   }
 
   /**
@@ -942,13 +919,7 @@ export class Table {
    * the card's own record event names the offer), and the turn. "New for later runs" is this run's part of it.
    */
   opened(): { id: string; turn: number; line: string }[] {
-    const f = this.realm.w.facts;
-    const done = f.events().filter((e) => (e.kind.startsWith(CARD_DONE) || e.kind === CARD_LAPSED) && !!e.about?.opp);
-    return f.events({ kind: OPENED }).map((e) => {
-      const cause = e.about?.opp ?? '';
-      const by = done.find((d) => cause === d.about!.opp || cause.startsWith(`${d.about!.opp}:`))?.note ?? cause;
-      return { id: e.about?.thing ?? '', turn: e.turn, line: W.newLater(e.note, by) };
-    });
+    return openedLines(this.realm);
   }
   /** (draft 8) the end screen's "New for later runs": what this run unlocked, and by what */
   newForLater(): string[] {

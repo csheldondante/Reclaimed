@@ -89,7 +89,7 @@ await run({ name: 'census', kind: 'behaviour' }, async (R) => {
   // over the map and not the leader screen)
   if (R.opt('pick', '')) {
     await p.waitForFunction(() => window.rungame?.phase === 'leader', { timeout: 180000, polling: 250 });
-    await p.evaluate((who) => window.rungame.pick(who), R.opt('pick', ''));
+    await p.evaluate((who) => (window.rungame.pick(who), window.rungame.closePanel()), R.opt('pick', ''));
     R.log(`the loop's leader picked: ${R.opt('pick', '')}`);
   }
   await R.sleep(Number(R.opt('settle', 25)) * 1000);

@@ -33,8 +33,16 @@ const FOR_GOOD_SEASONS = 10000;
 export const IS = 'is:';
 const isTag = (thing: string): string => `${IS}${thing}`;
 /** what a cast of each pack ability does to a live event (as living/live.ts SPELL_MECH for the spells) */
-export function packMech(packs: readonly LoadedPack[]): Record<string, { kills?: number; douses?: number }> {
-  return Object.fromEntries(packs.flatMap((p) => p.abilities).filter((a) => !!a.in_event).map((a) => [a.id, { ...(a.in_event!.kills ? { kills: a.in_event!.kills } : {}), ...(a.in_event!.douses ? { douses: a.in_event!.douses } : {}) }]));
+export function packMech(packs: readonly LoadedPack[]): Record<string, { kills?: number; douses?: number; berserk?: number; hides?: number }> {
+  return Object.fromEntries(
+    packs
+      .flatMap((p) => p.abilities)
+      .filter((a) => !!a.in_event)
+      .map((a) => {
+        const e = a.in_event!;
+        return [a.id, { ...(e.kills ? { kills: e.kills } : {}), ...(e.douses ? { douses: e.douses } : {}), ...(e.berserk ? { berserk: e.berserk } : {}), ...(e.hides ? { hides: e.hides } : {}) }];
+      }),
+  );
 }
 /** the fact event that says a pack's ability is the player's (this run's history has it: saved with the world) */
 export const UNLOCKED = 'ability-unlocked:';
@@ -151,12 +159,14 @@ export function leaderFits(w: FactWorld, l: PackLeader, home: EntityId): boolean
 }
 /** (draft 8) the far town a leader's run is played from: the first, nearest the current home, that fits the leader's
  *  `home` (its state, tags, holder — the same words as a card's far variable); null: none fits, or no `home` */
-export function homeOf(w: FactWorld, l: PackLeader, current: EntityId): EntityId | null {
+export function homeOf(w: FactWorld, l: PackLeader, current: EntityId, can: (id: EntityId) => boolean = () => true): EntityId | null {
   const f = l.home?.far;
   if (!f) return null;
   const h = w.settlement(current);
   const who = f.holder === 'player' ? 'yours' : f.holder;
-  const fits = farThings(w, [], current).filter((t) => t.tags.includes('far-town') && t.tags.includes('standing') && !!w.settlement(t.id) && (!f.state?.length || f.state.some((s) => t.tags.includes(s))) && (f.tags ?? []).every((x) => t.tags.includes(x)) && !(f.not ?? []).some((x) => t.tags.includes(x)) && (!who || t.tags.includes(who)));
+  // (`can`, loop round 10: the 3D game can open only on a town the town generator builds — a village and up; the table
+  // can play from any)
+  const fits = farThings(w, [], current).filter((t) => t.tags.includes('far-town') && t.tags.includes('standing') && !!w.settlement(t.id) && can(t.id) && (!f.state?.length || f.state.some((s) => t.tags.includes(s))) && (f.tags ?? []).every((x) => t.tags.includes(x)) && !(f.not ?? []).some((x) => t.tags.includes(x)) && (!who || t.tags.includes(who)));
   const d = (id: EntityId): number => {
     const s = w.settlement(id)!;
     return h ? Math.hypot(s.at[0] - h.at[0], s.at[1] - h.at[1]) : 0;

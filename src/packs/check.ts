@@ -184,7 +184,9 @@ export interface PackAbility {
   target?: { tags: string[] };
   effect?: PackEffect[];
   /** cast into a live event of one of these kinds: each cast puts down so many foes, or puts out so many burning lots */
-  in_event?: { kinds: string[]; kills?: number; douses?: number };
+  /** (loop round 10, LS-94) or turns the foes within `berserk` paces of the tap on anyone near, one another too; or
+   *  hides your people within `hides` paces (no foe goes for them; they are not seen) */
+  in_event?: { kinds: string[]; kills?: number; douses?: number; berserk?: number; hides?: number };
   text: string;
   look?: string;
 }
@@ -839,9 +841,10 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     if (ie) {
       if (!Array.isArray(ie.kinds) || !ie.kinds.length) err(w, '"in_event" needs "kinds": the kinds of event it can be cast into.');
       for (const k of ie.kinds ?? []) if (!liveTags.has(k)) warn(w, `"in_event" names the event kind "${k}", which no event of this pack or the base game has.`);
-      const n = [ie.kills, ie.douses].filter((x) => x !== undefined);
-      if (n.length !== 1 || !Number.isInteger(n[0]) || n[0]! < 1) err(w, '"in_event" needs exactly one of "kills" (foes put down by a cast) or "douses" (burning lots put out), a whole number, 1 or more.');
+      const n = [ie.kills, ie.douses, ie.berserk, ie.hides].filter((x) => x !== undefined);
+      if (n.length !== 1 || !Number.isInteger(n[0]) || n[0]! < 1) err(w, '"in_event" needs exactly one of "kills" (foes put down by a cast), "douses" (burning lots put out), "berserk" (the foes within so many paces of the tap turn on anyone near, one another too) or "hides" (your people within so many paces are hidden: no foe goes for them), a whole number, 1 or more.');
       if ((ie.kills ?? 0) > 3 || (ie.douses ?? 0) > 3) warn(w, 'One cast does more than 3. Heat ray, the strongest spell of the base game, does 2.');
+      if ((ie.berserk ?? 0) > 20 || (ie.hides ?? 0) > 20) warn(w, 'One cast reaches more than 20 paces: the whole fight at once.');
     }
     for (const t of a.target?.tags ?? []) needTag(t, w, 'read');
     effects(a.effect, `${w}.effect`, { ability: true });

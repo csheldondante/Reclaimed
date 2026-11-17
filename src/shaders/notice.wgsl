@@ -91,6 +91,24 @@ fn relHostile(a: u32, b: u32) -> bool {
   return ((NP.rel[w / 4u][w % 4u] >> (i % 32u)) & 1u) != 0u;
 }
 
+// (loop round 10, LS-94: spells on units) per slot a spell word after the combat words — combat[MAX_SLOTS + slot / 4]
+// [slot % 4] — written on the GPU only (unitspell.wgsl; the CPU writes a slot's own 16 bytes, and clears the word when
+// the slot is spawned again: agents/notice.ts). SP_HIDDEN: no one may take it on, and it is not drawn (units.wgsl
+// unitDraw). SP_SIDE: its side is bits 8-15 and it hunts (hostile), whatever its combat word says. SP_ALL: it takes on
+// anyone and anyone takes it on — its own side too (berserk: it turns on its neighbours). Bits 16-23: the least sight it
+// looks over (cells), so one that never looked (a worker) looks for someone to fight.
+const SP_HIDDEN: u32 = 1u;
+const SP_SIDE: u32 = 2u;
+const SP_ALL: u32 = 4u;
+fn spellOf(s: u32) -> u32 { return combat[MAX_SLOTS + s / 4u][s % 4u]; }
+/** a slot's combat word as its spell makes it: a side the spell gave it, hostile, no longer a guard at a post */
+fn wordOf(s: u32) -> u32 {
+  let w = combat[s].x;
+  let sp = spellOf(s);
+  if ((sp & SP_SIDE) == 0u) { return w; }
+  return (w & ~(0xffu | CW_GUARD | CW_POSTED | CW_HOME | CW_NOFIGHT)) | ((sp >> 8u) & 0xffu) | CW_HOSTILE;
+}
+
 fn alive(u: u32) -> bool { return ((bitcast<u32>(units[u * UNIT_V].w) >> 8u) & 1u) != 0u; }
 fn idOf(u: u32) -> u32 { return (bitcast<u32>(units[u * UNIT_V].w) >> 16u) * MAX_SLOTS + u; }
 fn posOf(u: u32) -> vec3<f32> { return units[u * UNIT_V].xyz; }
@@ -109,8 +127,12 @@ fn sideOf(p: vec2<f32>) -> u32 {
 /** whether `h` (slot, flags) may take on unit `x` (the game's rules: the fortress raid's mayFight, as data) */
 fn mayFight(h: u32, hw: u32, x: u32) -> bool {
   if (x == h || !alive(x)) { return false; }
-  let xw = combat[x].x;
+  let xw = wordOf(x);
   if ((xw & CW_BOUND) != 0u) { return false; }
+  // (loop round 10, LS-94: a hidden one is no one's target; a berserker takes on anyone, and anyone takes it on)
+  let xs = spellOf(x);
+  if ((xs & SP_HIDDEN) != 0u) { return false; }
+  if (((spellOf(h) | xs) & SP_ALL) != 0u) { return true; }
   // (who's whose enemy: the side relation matrix when the game set one; else a hostile hunts the peaceful of another
   // faction, and the peaceful take on hostiles)
   if ((NP.n.w & NR_MATRIX) != 0u) {
@@ -227,7 +249,8 @@ fn notice(@builtin(global_invocation_id) id: vec3<u32>) {
   let u = id.x;
   if (u >= NP.n.x || !alive(u)) { return; }
   let cw = combat[u];
-  let hw = cw.x;
+  // (loop round 10, LS-94: as its spell makes it — a side, hostile, a sight)
+  let hw = wordOf(u);
   // (round 128p, DA-B22 (c)(4): its side of the wall, told when it changes — the game asks who's out, not where all are;
   // unit word f.w: its side + 1, 0 not yet told)
   if ((NP.n.w & NR_SIDES) != 0u) {
@@ -242,7 +265,7 @@ fn notice(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   if ((hw & CW_BOUND) != 0u) { return; }
   let hostile = (hw & CW_HOSTILE) != 0u;
-  let sight = bitcast<f32>(cw.y);
+  let sight = max(bitcast<f32>(cw.y), f32((spellOf(u) >> 16u) & 0xffu));
   var rec = units[u * UNIT_V + 5u];
   let was = bitcast<u32>(rec.y);
   var t = was;

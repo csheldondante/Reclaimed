@@ -42,9 +42,22 @@ export interface Asking {
   left: number;
 }
 
+/** (loop round 10, LS-93) a leader on the start screen: `locked` the hint of how to open it ("" none written; null:
+ *  open); `note` a plain line when they play from another town */
+export interface LeaderView {
+  id: string;
+  name: string;
+  line: string;
+  pools: Partial<Record<string, number>>;
+  locked: string | null;
+  note: string | null;
+}
+
 export interface RunGame {
   readonly phase: Phase;
   readonly leader: Leader | null;
+  /** (loop round 10) the leaders the start screen shows: the base game's and the packs' */
+  leaders(): LeaderView[];
   /** the run: its season, its length, which run of this world it is; null before a leader is picked */
   readonly run: { season: number; seasons: number; n: number; threat: { title: string; left: number } | null; spells: SpellId[]; fight: W.Fight | null } | null;
   readonly ledger: SeasonLedger;
@@ -59,9 +72,9 @@ export interface RunGame {
   readonly armed: string | null;
   /** the live event the player is at: its words, the spells it allows, whether the player may go back to the town;
    *  (round 8) the pack abilities castable into it, and whether it can be settled now */
-  readonly liveNow: { title: string; how: string; spells: SpellId[]; abilities: { id: string; name: string }[]; wantsSpells: boolean; canLeave: boolean; canSettle: boolean } | null;
+  readonly liveNow: { id: string; title: string; how: string; spells: SpellId[]; abilities: { id: string; name: string }[]; wantsSpells: boolean; canLeave: boolean; canSettle: boolean } | null;
   /** (round 8) settle the live event the player is at now, with what was done so far */
-  settle(): void;
+  settle(id: string): void;
   /** (round 8) the page open over the town, or null; the town sheet's buttons that open one */
   readonly panel: Panel | null;
   closePanel(): void;
@@ -144,6 +157,7 @@ const CSS = `
 .run-full .leader .body{flex:1;display:flex;flex-direction:column;gap:5px}
 .run-full .leader b{font-size:16px}
 .run-full .leader .starts{font-size:12px;color:#d9c99a}
+.run-full .leader.locked{opacity:.6}
 .run-full button.big{min-height:44px;font:700 15px system-ui;padding:10px;border-radius:10px;border:0;background:#e8b84a;color:#221}
 .run-full ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px}
 .run-full button.small{font:600 13px system-ui;padding:3px 10px;border-radius:8px;border:0;background:#e8b84a;color:#221}
@@ -192,7 +206,8 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
     top.style.display = run && phase !== 'leader' && phase !== 'end' ? '' : 'none';
     top.replaceChildren();
     if (run && game.leader) {
-      top.append(el('span', 'r-title', W.leaderTitle(game.leader.name, run.season, run.seasons, run.n)));
+      // (a run past its last season reads as its last: the Realm's season counts on to seasons + 1 once it is over)
+      top.append(el('span', 'r-title', W.leaderTitle(game.leader.name, Math.min(run.season, run.seasons), run.seasons, run.n)));
       const free = pools(l);
       for (const k of POOLS) {
         const chip = el('span', `r-pool ${k}`);
@@ -232,10 +247,18 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       full.append(acts);
     } else if (phase === 'leader') {
       full.append(el('h2', undefined, W.PICK_TITLE), el('div', 'sub', W.PICK_SUB));
-      for (const who of W.LEADERS) {
-        const box = el('div', 'leader');
+      // (loop round 10, LS-93: the base leaders and the packs' — one who plays from another town says so; a locked one
+      // shows how to open it and cannot be picked)
+      for (const who of game.leaders()) {
+        const box = el('div', who.locked !== null ? 'leader locked' : 'leader');
         const body = el('div', 'body');
-        body.append(el('b', undefined, who.name), el('div', undefined, who.line), el('div', 'starts', startsLine(who.pools)), btn(W.PICK_BUTTON, () => game.pick(who.id), 'big'));
+        body.append(el('b', undefined, who.name));
+        if (who.locked !== null) body.append(el('div', 'starts', W.lockedLine(who.locked)));
+        else {
+          body.append(el('div', undefined, who.line), el('div', 'starts', startsLine(who.pools)));
+          if (who.note) body.append(el('div', 'starts', who.note));
+          body.append(btn(W.PICK_BUTTON, () => game.pick(who.id), 'big'));
+        }
         box.append(el('div', 'portrait', W.PORTRAIT), body);
         full.appendChild(box);
       }
@@ -312,7 +335,10 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       if (ev.canLeave) go.append(btn(W.LIVE_LEAVE, () => game.leave(), 'quiet'));
       if (ev.canSettle) {
         const row = el('div', 'views');
-        row.append(btn(W.SETTLE, () => game.settle()));
+        // (loop round 10, job 5: the press settles the event this button was drawn for — a second tap landing on the
+        // next bout's button, drawn in its place, is a press of its own)
+        const id = ev.id;
+        row.append(btn(W.SETTLE, () => game.settle(id)));
         sheet.appendChild(row);
       }
       if (game.armed === 'heatray') sheet.append(el('div', 'stand', W.SPELL_STANDIN));

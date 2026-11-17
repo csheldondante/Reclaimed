@@ -965,6 +965,9 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   let look = bitcast<u32>(units[u * UNIT_V + 4u].y);
   let corpse = ((info >> 8u) & 1u) == 0u;
   if (corpse && (look & LOOK_CORPSE) == 0u) { return; }
+  // (loop round 10, LS-94) hidden by a spell (notice.wgsl SP_HIDDEN, the word after the combat words): not drawn while
+  // it lives — it is still there, walks and fights; no foe takes it on
+  if (!corpse && (unitCombat[MAX_SLOTS + u / 4u][u % 4u] & 1u) != 0u) { return; }
   let b = units[u * UNIT_V + 1u];
   let cc = units[u * UNIT_V + 2u];
   let dd = units[u * UNIT_V + 3u];

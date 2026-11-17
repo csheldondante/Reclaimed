@@ -25488,3 +25488,57 @@ condition is now "no far town stands in any state but destroyed or abandoned" (`
 runs opened" doubled its full stops. "Far places" reads, but its "Lately" list repeats "In an earlier run:" on every
 line, and a place line reads "a new camp. held by the Gull Reavers." (a lower-case word after a full stop, from
 `farLine`: older than this round).
+
+## 2026-11-17 — loop round 10: the raid as a card in 3D, runs from far towns, built tags, spells on units (`loop-skeleton`)
+
+**Why.** The card table moved a round ahead (card-table round 5) on the owner's rulings: "We should not have a separate
+raid mechanism it should be a card so I would take it out. Leaders should be able to start in far cities and it would
+be cool to have a meta progression from encountering or exploring to unlock new content for the next run. I would not
+have factions act outside of cards as it controls the pacing and keeps one gamified mutator." The 3D loop shares the
+model and had only been made to compile. And the owner's toy spells (LS-94): "Watch your invisibility spell make your
+units vanish… Beserk the protesters to make them destroy each other instead of dethroning your rule."
+
+**Job 1, the merge** (`origin/card-table` 8136e084). Conflicts: the loop's markers (the standing threat's own marker,
+`Realm.standingThreat`, kept with the pack things and the floor), a test comment, the DEVLOG. Found by the model tests
+after the merge: `home.test.ts` and `table-live.test.ts` failed here and passed on card-table — the loop's board cap
+(LS-73, `boardMax` 5) now cut the dealer's guaranteed answer to the raiders' standing card (which stands at the town and
+keeps no site's card off the board). Set to 6, the table's own new limit (LS-105, a question for the owner). After the
+raid (the last season's forced card) the season goes on: its result is the town's news (before: "The raiders break camp
+and march on the town" under a raid held); the header's season reads "16 of 16", not 17, on the end. **Measured**: the
+16-season walk (`loopwalk --runlen 16 --gif 0`, 412x915, passed, 15 seasons in 151 s): the header read "Raiders on the
+road: 12 … 9 seasons left", the raid came in season 16 (18 raiders, 12 soldiers; heat ray 15 → 9; held: all dead, 11
+soldiers lost), then one more Next season: "The run is over. The town stands." Decisions a season at most 5. Run 2 in the
+same world began.
+
+**Job 2, a run's start from packs (LS-93).** One copy for both front ends: `run-packs.ts leaderChoices` (the table's
+`Table.leaders` calls it), `startLines` (`Table.worldNow`), `openedLines`. The 3D leader screen lists pack leaders,
+locked ones with their hint (greyed, no button) and, for one who plays from a far town, "Rules from <town>. The game
+opens there." A run begins with "The world now" over the town. A far home: the page opens again on that town
+(`?town=<id>`; the level builds the town of any settlement it opens on — the general system), the leader kept in the
+store (`realm:start`) and the run begun there; the old home is made a far town by the table's own path (now
+`season/realm-home.ts moveHome`). A run under way is saved with its home and a page opened elsewhere goes there; with no
+run, a new run continues from the world's last home (CT-56 (8)). The season record restored is the start town's only
+(it took the first town found). **Measured** (`scripts/lab/farhome.mjs`, frontier pack, 2-season run 1 at Muru, then a
+fixture made Vagug yours): the leader screen showed Steward Hal Brook "Rules from Vagug" and Captain Merrow locked with
+"Find out where the black sails come from."; picking the steward opened the page on s7, run 2 began there with "You rule
+from Vagug. Muru is a far town now.", "While you were gone: years passed …", "Not yet found: …"; Vagug was made and its
+asks stood over it; the old URL (`town=1`) went back to s7 and took run 2 up in season 1. Each page open is a full boot
+(about 2 min here). Limits: LS-106.
+
+**Job 3, built tags.** At a run's end the 3D loop writes `built:<card>` on its home (`keepBuilt`, the path the table
+uses — moved from `Table.next` to `season/realm-home.ts`, so there is one). `test/unit/run-start.test.ts`.
+
+**Job 4, spells on units (LS-94).** The general pieces, GPU side: a spell word a unit slot after the combat words —
+GPU-owned (the CPU writes a slot's own 16 bytes and clears the word on a spawn) — written by one dispatch over the slots
+within a radius that a filter takes (`unitspell.wgsl`, `UnitNotice.spellArea`, `Units.spell`): setSide (a side, hunting),
+berserk (`SP_ALL`: takes on anyone, its own side too, and anyone takes it on), hidden (no one may take it on — a hunter
+lets it go; `unitDraw` skips it), a least sight. No readback: who was in the area is the GPU's. Targeting reads it in
+`notice.wgsl` (`wordOf`, `mayFight`); the draw binds the combat words (its eighth storage binding). Pack abilities name
+them: `in_event.berserk` / `in_event.hides` (reach in cells; PACK_FORMAT updated); `packs/arena.json` adds Red mist and
+Veil, each with a hedge witch's card that unlocks it. GPU test `test/gpu/unitspell.test.ts` (real Dawn): a hunter lets a
+hidden target go and takes the other; the filter; shown again; two raiders of one side turn on each other only inside
+the area; a worker made side 3 hunts its old fellow. `notice.test.ts` and `huntreact.test.ts` still pass. Limits: LS-108
+(a worker crowd has no blow: "protesters" need a kind that strikes).
+
+**Job 5.** "Settle it now" settles the event its button was drawn for (`settle(id)`), so a second tap on the next bout's
+button is a press of its own; chains stay unbounded (LS-109).

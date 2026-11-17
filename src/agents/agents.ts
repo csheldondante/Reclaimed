@@ -913,7 +913,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     this.readBuf = world.buf('agentScopeRead', 32, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.scope = SCOPE && world.tiles ? new AgentScope(world.w / 16, world.h / 16) : null;
     const unitSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'uniform', 13: 'rw', 14: 'read', 15: 'tex', 16: 'rw', 19: 'tex', 25: 'read' };
-    const drawSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 7: 'rw', 9: 'rw', 10: 'uniform', 16: 'rw', 22: 'rw', 23: 'read', 24: 'uniform', 26: 'read', 27: 'read' };
+    // (loop round 10, LS-94: 41 the combat words, for the hidden bit after them — the eighth storage binding)
+    const drawSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 7: 'rw', 9: 'rw', 10: 'uniform', 16: 'rw', 22: 'rw', 23: 'read', 24: 'uniform', 26: 'read', 27: 'read', 41: 'read' };
     this.k = {
       surfaces: mk('surfaces', peelSpec),
       links: mk('links', fieldSpec),
@@ -1033,6 +1034,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
       26: this.carryBuf,
       27: this.flyBuf,
       16: this.mail,
+      41: this.notice.combat,
     });
     DEFAULT_KINDS.forEach((k, i) => this.defineKind(i, k));
     // the surfaces now, not at the first tick: a game reading them before

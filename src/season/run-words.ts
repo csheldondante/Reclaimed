@@ -30,6 +30,10 @@ export const PICK_SUB = 'Each leader starts with different pools.';
 export const PICK_BUTTON = 'Lead the town';
 export const PORTRAIT = 'Portrait to come';
 export const WORLD_KEPT = 'This world remembers your earlier runs.';
+/** (loop round 10) a pack leader who plays from another town of the world */
+export const playsFrom = (town: string): string => `Rules from ${town}. The game opens there.`;
+/** (loop round 10) a locked leader: how to open them */
+export const lockedLine = (hint: string): string => (hint ? `Not yet found. ${hint}` : 'Not yet found.');
 
 export const ASKS_TITLE = 'People are asking for you';
 export const ASKS_NONE = 'Nobody is asking for you this season';

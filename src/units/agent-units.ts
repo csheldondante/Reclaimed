@@ -23,7 +23,7 @@
 //    again (a 'raised' event: the same GPU id) in the raiser's group. It's alive again here, keeps its role, and is
 //    `bound`: the raiser's, not this layer's to order — it neither takes jobs nor hunts until the game orders it.
 // Window coordinates (x cells, y world units, z the ground) as the world API's.
-import type { Actor, AreaHit, OrderFailure, PlaceRef, SpawnAtOpts, SquadOrder, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
+import type { Actor, AreaHit, UnitSpell, OrderFailure, PlaceRef, SpawnAtOpts, SquadOrder, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
 import type { GroupId } from '../api/contracts/inhabitants';
 import { ORDER_ALTS, ORDER_COLOURS, ORDER_GROUP_BASE, type Agents, type OrderPlace, type AgentEvent, type AgentState, type HuntCandidate, type OrderRecord, type Target } from '../agents/agents';
@@ -31,7 +31,9 @@ import type { PickAsk } from '../agents/pick';
 import { MAT } from '../world/materials';
 import { timed } from '../gpu/cpustat';
 import { OrderFields } from '../agents/fieldseam';
-import { ACTOR, NO_FACTION, type CombatSpec } from '../agents/notice';
+import { ACTOR, BERSERK_SIDE, NO_FACTION, type CombatSpec } from '../agents/notice';
+/** (loop round 10, LS-94) how far a unit a spell turns looks for someone to fight (cells; a worker never looked) */
+const SPELL_SIGHT = 24;
 import { urlFlags } from '../flags';
 
 /** GPU hit points per contract health point */
@@ -626,6 +628,37 @@ export class AgentUnits implements Units {
 
   /** (round 117, play) the agents hold this many at once (agents.ts MAX_HOLDS) */
   readonly maxHeld = 8;
+
+  /**
+   * (loop round 10, LS-94) A spell on the units in an area: their spell words written on the GPU (agents/notice.ts
+   * spellArea) — berserk (BERSERK_SIDE, takes on anyone, looks SPELL_SIGHT far), a side to join, hidden. The CPU's own
+   * records of them do not change: their faction for the game is still theirs.
+   */
+  spell(s: UnitSpell): void {
+    let side: number | null | undefined;
+    if (s.side !== undefined) {
+      if (s.side === null) side = null;
+      else {
+        const n = this.factionNo.get(s.side);
+        if (n === undefined) throw new Error(`units.spell: no unit has ever been of faction ${s.side}`);
+        side = n;
+      }
+    }
+    if (s.berserk) side = BERSERK_SIDE;
+    this.agents.notice.spellArea(
+      {
+        x: s.at[0],
+        y: s.at[1],
+        radius: s.radius,
+        who: s.who,
+        ...(side !== undefined ? { side } : {}),
+        ...(s.berserk !== undefined ? { all: s.berserk } : {}),
+        ...(s.hidden !== undefined ? { hidden: s.hidden } : {}),
+        ...(s.berserk || (side !== undefined && side !== null) ? { sight: SPELL_SIGHT } : {}),
+      },
+      this.agents.size,
+    );
+  }
 
   /** (round 117, play) a blow over an area with a shove and a throw: Agents.hit, its id remembered for `by` */
   strike(h: AreaHit, by: UnitId | string | null): void {

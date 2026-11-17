@@ -118,6 +118,17 @@ export interface Actor {
  * force push and slam. Beyond `hit`'s damage it shoves (cells/s, the implementation divides by a unit's mass) and
  * throws (lift). Coordinates as the rest (window x, y; z the height of its centre, absent: any height).
  */
+/** (loop round 10, LS-94) a spell on the units in an area (Units.spell) */
+export interface UnitSpell {
+  at: readonly [number, number];
+  radius: number;
+  who: 'foes' | 'friends' | 'any';
+  berserk?: boolean;
+  /** a faction's id they join (setSide); null: back to their own */
+  side?: string | null;
+  hidden?: boolean;
+}
+
 export interface AreaHit {
   at: V2;
   z?: number;
@@ -236,6 +247,14 @@ export interface Units {
    * and `hurt` name `by` as `hit` does. The play layer's heroes need it (src/play); AgentUnits implements it.
    */
   strike?(h: AreaHit, by: UnitId | string | null): void;
+  /**
+   * (loop round 10, BACKLOG LS-94 — optional; AgentUnits implements it on the GPU) a spell on the units within `radius`
+   * of `at` (window cells, as a strike's) that `who` takes: 'foes' (hostile ones), 'friends' (the rest), or 'any'.
+   * `berserk`: they take on anyone near, one another too, and anyone takes them on; `side` (a faction's id): they join
+   * it and hunt (setSide); `hidden`: no foe takes them on and they are not drawn (`false` shows them again). Nothing is
+   * read back: who was in the area is the GPU's.
+   */
+  spell?(s: UnitSpell): void;
   /**
    * (round 117, play — optional) hold a unit with its feet at `at` (telekinesis: a lich floating it), each frame
    * while held; false: it's gone or can't be held. At most `maxHeld` at once.

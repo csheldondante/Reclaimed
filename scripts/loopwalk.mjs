@@ -132,7 +132,18 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     if (k < 0) throw new Error(`no leader ${who}`);
     await page.evaluate((i) => document.querySelectorAll('.run-full .leader')[i].querySelector('button').setAttribute('data-walk', 'pick'), k);
     await tap('.run-full .leader button[data-walk=pick]');
+    // (loop round 10, LS-93: a run starts with "The world now" over the town — read, kept as a still, closed)
+    await phase('city|event', 60000);
+    await wait(600);
+    const start = await page.evaluate(() => (document.querySelector('.run-full h2')?.textContent === 'The world now' ? document.querySelector('.run-full').innerText : null));
+    if (start) {
+      startScreens.push(start);
+      await shot(`loop-start-run${startScreens.length}`);
+      log(`the world now (run ${startScreens.length}): ${JSON.stringify(start)}`);
+      await tap('.run-full button', 'Close');
+    }
   };
+  const startScreens = [];
   await pickLeader(leader);
   await phase('city');
   await wait(2500);
@@ -785,6 +796,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   const again = await page.evaluate(() => ({ run: window.rungame.run.n, before: window.rungame.before().length }));
   log(`new run: ${JSON.stringify(again)} ${JSON.stringify(await state())}`);
   R.check('the new run is run 2 of the same world', again.run === 2 && again.before >= ended.history.length, again);
+  R.check('each run began with "The world now"; run 2 says how run 1 ended', startScreens.length === 2 && /Run 1 ended/.test(startScreens[1]), startScreens.map((s) => s.slice(0, 300)));
   if (touch) R.check(`touch: every control pressed was on the screen, not covered, and at least ${THUMB} px tall`, unreachable.length === 0, [...new Set(unreachable)]);
   // (round 6) what this walk met: `--need gate-parade,market-fire,rune,rule` fails unless it met each
   log(`live events met: ${[...met].join(', ') || 'none'}; growth runes drawn: ${runes}; rules that fired: ${JSON.stringify(fired)}`);

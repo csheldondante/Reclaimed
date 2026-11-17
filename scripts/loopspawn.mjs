@@ -64,7 +64,7 @@ await run({ name: 'loopspawn', kind: 'behaviour', size: '412x915', dpr: 1, echo:
   await wait(3000);
   const ok = [];
   ok.push(show(await read('leader screen')));
-  await page.evaluate(() => window.rungame.pick('ysolt'));
+  await page.evaluate(() => (window.rungame.pick('ysolt'), window.rungame.closePanel()));
   await phase('city');
   await wait(5000);
   ok.push(show(await read('town framed')));

@@ -10,6 +10,7 @@ import { makeBindGroup, makeCompute, type BindSpec, type ComputeKernel } from '.
 import type { WorldGpu } from '../sim/world-gpu';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import noticeWgsl from '../shaders/notice.wgsl?raw';
+import spellWgsl from '../shaders/unitspell.wgsl?raw';
 
 /** combat flags (notice.wgsl CW_*); bits 0-7 the faction (NO_FACTION none) */
 export const CW = {
@@ -22,6 +23,13 @@ export const CW = {
   home: 0x4000,
 } as const;
 export const NO_FACTION = 255;
+/** (loop round 10, LS-94) the spell word's flags (notice.wgsl SP_*, unitspell.wgsl) */
+export const SP = { hidden: 1, side: 2, all: 4 } as const;
+/** the side a berserk spell gives (notice.wgsl: SP_ALL takes on anyone; the side keeps them apart from every faction's
+ *  own fields) */
+export const BERSERK_SIDE = 254;
+/** the unit slots the spell words follow (notice.wgsl and unitspell.wgsl MAX_SLOTS) */
+const SPELL_SLOTS = 8192;
 /** a target code that names the i-th actor of the frame (notice.wgsl ACTOR) */
 export const ACTOR = 0x80000000;
 const BUCKET = 16;
@@ -105,7 +113,10 @@ export class UnitNotice {
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
     this.bw = Math.ceil(world.w / BUCKET);
     this.bh = Math.ceil(world.h / BUCKET);
-    this.combat = world.buf('agentCombat', maxUnits * 16, S);
+    // (loop round 10, LS-94: and after the combat words, a spell word a slot — the GPU's, notice.wgsl SP_*)
+    if (maxUnits !== SPELL_SLOTS) throw new Error(`notice: ${maxUnits} unit slots; the spell words sit after ${SPELL_SLOTS} (notice.wgsl MAX_SLOTS)`);
+    this.maxUnits = maxUnits;
+    this.combat = world.buf('agentCombat', maxUnits * 16 + maxUnits * 4, S);
     this.sides = world.buf('agentSides', world.w * world.h * 4, S);
     this.head = world.buf('agentBuckets', this.bw * this.bh * 4, S);
     this.next = world.buf('agentBucketNext', maxUnits * 4, S);
@@ -116,6 +127,58 @@ export class UnitNotice {
     const mk = (e: string) => makeCompute(device, `agents-${e}`, [commonWgsl, noticeWgsl], spec, e);
     this.k = { bucketClear: mk('bucketClear'), bucketFill: mk('bucketFill'), huntClear: mk('huntClear'), notice: mk('notice'), huntWrite: mk('huntWrite'), huntTop: mk('huntTop') };
     this.group = makeBindGroup(device, 'agents-notice', this.k.notice.layout, { 0: world.globals, 7: units, 13: events, 41: this.combat, 42: this.sides, 43: this.head, 44: this.next, 45: this.params, 46: this.hunted, 47: this.top });
+    this.spellParams = world.buf('agentSpell', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.spellK = makeCompute(device, 'agents-spell', [spellWgsl], { 1: 'rw', 3: 'uniform', 7: 'read' }, 'spellArea');
+    this.spellGroup = makeBindGroup(device, 'agents-spell', this.spellK.layout, { 1: this.combat, 3: this.spellParams, 7: units });
+  }
+
+  private maxUnits: number;
+  private spellParams: GPUBuffer;
+  private spellK: ComputeKernel;
+  private spellGroup: GPUBindGroup;
+
+  /**
+   * (loop round 10, BACKLOG LS-94) A spell on the units within `radius` of (x, y) (window cells, as a strike's): each
+   * that `who` takes — 'any', 'foes' (hostile by their combat word), 'friends' (the rest) — has its spell word set
+   * (unitspell.wgsl). `side` (0..254): it takes that side and hunts — setSide; `all`: it takes on anyone and anyone
+   * takes it on, its own side too (berserk); `hidden`: no one takes it on and it is not drawn; `sight`: the least it
+   * looks over (cells, ≤ 255). Each given field is written, the rest of the word kept; `false` clears a flag. One
+   * dispatch now, over `count` slots: nothing is read back.
+   */
+  spellArea(a: { x: number; y: number; radius: number; who: 'any' | 'foes' | 'friends'; side?: number | null; all?: boolean; hidden?: boolean; sight?: number }, count: number): void {
+    let value = 0;
+    let mask = 0;
+    if (a.hidden !== undefined) {
+      mask |= SP.hidden;
+      if (a.hidden) value |= SP.hidden;
+    }
+    if (a.all !== undefined) {
+      mask |= SP.all;
+      if (a.all) value |= SP.all;
+    }
+    if (a.side !== undefined) {
+      mask |= SP.side | 0xff00;
+      if (a.side !== null) {
+        if (!Number.isInteger(a.side) || a.side < 0 || a.side > 254) throw new Error(`agents.spellArea: side ${a.side} out of 0..254`);
+        value |= SP.side | (a.side << 8);
+      }
+    }
+    if (a.sight !== undefined) {
+      mask |= 0xff0000;
+      value |= Math.max(0, Math.min(255, Math.round(a.sight))) << 16;
+    }
+    if (!count || !mask) return;
+    const p = new ArrayBuffer(32);
+    new Float32Array(p, 0, 4).set([a.x, a.y, a.radius, 0]);
+    new Uint32Array(p, 16, 4).set([value >>> 0, mask >>> 0, a.who === 'foes' ? 1 : a.who === 'friends' ? 2 : 0, count]);
+    this.device.queue.writeBuffer(this.spellParams, 0, p);
+    const enc = this.device.createCommandEncoder({ label: 'agents spell' });
+    const pass = enc.beginComputePass({ label: 'agents spell' });
+    pass.setPipeline(this.spellK.pipeline);
+    pass.setBindGroup(0, this.spellGroup);
+    pass.dispatchWorkgroups(Math.ceil(count / 64));
+    pass.end();
+    this.device.queue.submit([enc.finish()]);
   }
 
   /** a unit slot's part in the fighting (written at once: a spawn, a change of side, post or job) */
@@ -135,6 +198,8 @@ export class UnitNotice {
   /** a slot out of the fighting: as a unit is spawned, until the game gives it a part (`set`) */
   out(slot: number): void {
     this.set(slot, { faction: NO_FACTION, hostile: false, bound: true, sight: 0 });
+    // (loop round 10, LS-94: a slot spawned again carries no spell of the unit that had it)
+    this.device.queue.writeBuffer(this.combat, this.maxUnits * 16 + slot * 4, new Uint32Array([0]));
   }
 
   setRules(r: FightRules): void {
