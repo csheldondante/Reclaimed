@@ -4044,3 +4044,27 @@ cards are templates; the world's memory is the record of resolved cards; plain c
 soldier) resolve at once; committed actions (taking a card) take pools and pieces at once and resolve after their
 seasons; no undo; a preview before each commit; the works as a draft-10 pack (`src/season/works.ts`). Open questions
 are in TURN_PUZZLE.md §7.
+
+## 2026-11-17 — the phone board (`card-table`; docs/design/BOARD.md)
+
+The owner, after the 3D game ran very badly on the phone, verbatim:
+- "This just doesn't work on phone. […] can we take a step back and imagine this as a phone game? Could we keep the
+  interval representation but bake surface only sprites for terrain and layer them with building and unit sprites?
+  […] I want to be able to see the city and scroll around and zoom in and see workers working on things. I want to be
+  able to see time lapse of construction between seasons and interact with realtime battles. What can we do with baked
+  sprites? I want the fast cheap paths to better art and performance when possible nothing is off the table.
+  Simulation does not need to be realistic just visually plausible and spectacular."
+- "I want to see: 1. can we rapid prototype to get to a fun playable season structure with a very mutable world that
+  shows the changes 2. Can we make some variant that works and plays nicely on phone. Controls and readability are top
+  priorities of this effort as is a fun core gameplay loop."
+- Earlier: "The cards take up too much screen space. I think having the opportunities selectable on the map only is
+  fine." "It would be cool to have camera zoom in and show a person arrive with news". "tuning colors and brightness so
+  certain layers reserve some colors and are more visible and increasing the number of towns people will make a huge
+  difference". "I want the world to change in crazy dramatic interesting ways that both build on each other and
+  completely shatter the world."
+
+→ Built (step 1): `board.html`, a Canvas 2D isometric sprite board on the card table's model (no GPU, no engine).
+Cards are markers on the map only; one reserved red (foes) and one reserved cyan (what you can act on); the time-lapse
+with news brought in person; the raid live on the board with the model's result. Flagged by the orchestrator: the
+board is a separate light front end; the 3D engine can later supply baked tiles and sprites to it. Defaults taken for
+open questions are in BOARD.md and BACKLOG BD-9.

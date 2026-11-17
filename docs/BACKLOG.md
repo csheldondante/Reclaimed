@@ -81,6 +81,28 @@ The same run as the 3D loop, as a plain card page (`table.html`) and Node bots. 
 | CT-61 | **Limits of the turn, step 1.** (1) The works are off by default in `Table` (every existing test's run unchanged) and on in the page and `tablebots --works`; the 3D loop does not load them yet. (2) Named people are not pieces. (3) The raiders' card states no number (TURN_PUZZLE Q6); soldiers fight only once the keep or walls are built (`war.ts military`) — a solver with 19 soldiers fell. (4) The decision space overshoots after the first seasons (tens of thousands of legal turns; TURN_PUZZLE "what the bots say"); the knobs are data (fewer slots, uses bound to pieces, sinks that grow) and are the owner's call. (5) A use's `cost` in Labor or Might takes free pieces for good (the levy); a cost that only borrows a piece for the season is not built. (6) `Realm.preview` does not show what rules the commit would set off | M | open |
 | CT-48 | **Perf hack.** Far variables and far things are cached on `MemoryFacts.version` (a write counter added to the shared fact store) + `ws.version` + turn (+ the ledger object at the table). A write that bypasses the store would leave them stale. A 16-season run with the frontier pack is about 3 s (1 s without packs); the dealer's dry runs are half of it | S | open |
 
+## Phone board (2026-11-17, `card-table`; docs/design/BOARD.md, DECISIONS "phone board")
+
+The owner: "This just doesn't work on phone […] can we take a step back and imagine this as a phone game?" A 2D sprite
+front end (`board.html`, `src/board/*`) on the card table's model. Canvas 2D, no GPU.
+
+| id | item | size | status |
+|---|---|---|---|
+| BD-0 | Step 1: the town board (hand-laid tile map round the 20 sites, buildings by state, project scaffolds, townspeople and pieces on the roads), the turn on the board (hold a piece → lit slots → post; tap a place for its uses; card markers → preview → Commit; pools fly), the time-lapse with messengers, scars and signs as tiles and overlays, the region view, the live raid, packs by `?packs=` | L | done (step 1) |
+| BD-1 | **Limit / FIXED-CITY.** The town map is laid out by hand (`board/layout.ts`), the same for every home town; no town plan exists at the table (CT-2, CT-17). A site's place on the board says nothing about the model's ring positions | M | open |
+| BD-2 | **Placeholder art.** Every sprite is drawn in code (`board/sprites.ts`), flat iso boxes. The 3D engine (or an artist) should bake tiles and sprites into the same named slots | L | open |
+| BD-3 | **Hack.** The raid on the board is illustrative: raiders' paths jitter by `Math.random`, kills are paced so the visible count reaches the model's predicted survivors by ~60% of the fight, one soldier figure falls per 3 soldiers the model loses, raiders that reach the keep only flash. The result is always `Table.resolveNow`'s. Walls and towers do nothing visible beyond where raiders stop | M | open |
+| BD-4 | **Looks missing or shared.** `withered`/`dried` share a look; `abandoned`/`destroyed`/`occupied`/`lost` share the grey ruin; the `camp` sign has no look (no tents yet); far kinds `tower` and `crash` are guessed tag names (only `camp` and `lair` were seen); signs at the table never expire (no mutators engine runs there, so "for 3 seasons" stays) — the board shows them as long as the model keeps them | M | open |
+| BD-5 | **Hack.** A live lava front's reach on the board is `(0.35 + 0.65 × burned / points)` of a line from the map's corner to the event's site (`board/main.ts frame`), not a flow | S | open |
+| BD-6 | **Hack.** The news messenger's mount (foot, rider, cart, ship) is picked from words in the news line (`mountOf`); the model has no "where the news comes from" | S | open |
+| BD-7 | **Limit.** No save: the run lives in the page; a reload starts a new run (the table has `Table.save`/`resume`, not wired here) | S | open |
+| BD-8 | **Limit.** A site has its own cell and up to 8 neighbouring free cells for more things; a site with many things (packs) crowds; tap targets of near sites can overlap at low zoom (the nearest wins) | S | open |
+| BD-9 | **Owner's calls (defaults taken, BOARD.md):** uses once a season and `needs` a posted piece; recall free at once; the raiders' chip states numbers ("18 raiders · 9 seasons · you 0"); markers carry a short title at normal zoom | S | asked |
+| BD-10 | **Missing.** The log, rules, laws and the record (the card table's drawers) are not on the board; the news shows at most three lines a season; leader choice for the next run is automatic (the same leader if offered, else the first) | M | open |
+| BD-11 | **Hack (stills).** The lava/flood/ash still was made by the script setting condition tags on the fact world (no pack card reaches lava in a short run); the fire, the raid and the region stills come from real runs (greedy moves through `Table`, then the board reads the model) | S | open |
+| BD-12 | **Limit.** Live events other than the raid are settled from their sheet (spells, "Settle it now"); only fire (flames) and a lava front have a look while under way; a parade or a bout shows only its marker | M | open |
+| BD-13 | **Found, not mine.** `npm run typecheck` fails on `test/unit/packs.test.ts(42)` (`amount` on the slot union, draft 10) at HEAD 531b7e92 before this work | S | open |
+
 ## Loop skeleton (2026-11-15, `loop-skeleton`, DECISIONS round 129; docs/design/LOOP_SKELETON.md)
 
 The main loop as one walk-through (`?skipmenu=1&level=atlas&town=1&loop=1&fresh=1`). Every row is a hack, a limit or a

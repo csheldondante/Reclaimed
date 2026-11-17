@@ -26220,3 +26220,34 @@ dearer works cards brought it to 5,824 and made where a crew goes decide which u
 posted crew a season), fewer slots, sinks that grow. Found on the way: soldiers fight a raid only once the keep or
 the walls are built (`war.ts military`) — a solver that armed 19 soldiers and never built walls fell.
 
+## 2026-11-17 — the phone board, step 1 (`card-table`; docs/design/BOARD.md)
+
+**Why.** The 3D game ran very badly on the owner's phone; the owner asked to imagine Reclaimed as a phone game with
+baked sprites, a scrollable, zoomable town where workers are seen working, a time-lapse between seasons and real-time
+battles, controls and readability first (DECISIONS "the phone board"). The card table already plays the whole season
+loop on the model with no GPU, so the board is a second front end on `Table`: nothing of the model is copied, every
+number is read (`board/model.ts readBoard`).
+
+**How.** Canvas 2D, no engine imports (the page pulls the model's TS: living, season, packs). The ground is baked
+once into one canvas (26×26 tiles); scars are tiles drawn over it with a per-tile arrival time (flood: low ground
+first; lava: a tongue from the mountain side; ash: rings out from the site), so a mutation arrives as a short
+animation without any simulation. Buildings, trees and figures are baked sprites sorted by depth each frame. Figures
+are reconciled from the model's pieces: a new posted or busy piece walks out from the keep to its place, a freed one
+walks back and vanishes — so posting, recalling, committing and the end of a project all animate with one rule.
+Markers, labels and speech are drawn in screen space; the sheet and bars are DOM (legible text, ≥ 44 px buttons).
+
+**The raid** is played on the board but decided by the model: the visible fall of raiders is paced to reach the
+survivors `Table.liveEvents` predicts (recomputed after each spell); the end is `Table.resolveNow`.
+
+**Measured** (desktop Chrome headless, 412×915 at DPR 2, 4× CPU throttle): a frame's own work p50 3.4 ms, p90 7.9 ms,
+max 17.9 ms (one spike); the display rate held (8.3 ms frames at 120 Hz). 48 figures (40 townspeople at the start,
+up to 180 with houses, the market and partners), 53 baked sprites. The phone itself is not measured yet (the owner's
+bench: BD backlog).
+
+**Seen in the stills** (`local/board1/`, one headless run): the turn reads — a held crew lights only the places with
+room ("0/2" over the mine), the preview says "Magic 1 → 0, Free crews 4 → 3, 1 crew busy until season 2"; cards are
+cyan markers with short titles. In the first three seasons the town barely changes (errands, not buildings; the
+greedy order took no catalog building); from season 7 the market burns to ash and rubble, the dead walk out of the
+burial ground in red, ash falls; the raid (18 raiders, no keep or walls: "you 0") files down the east road past the
+posted soldiers and breaks through, the gate burns; run 2 opens on the same scarred town.
+
