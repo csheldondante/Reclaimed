@@ -9,7 +9,8 @@ import type { Settlement } from '../api/contracts/settlement';
 import type { CityLots, CityRoutes, DistrictStage, TownBuildingsSink } from '../api/contracts/citygen';
 import type { TownLog } from './townlog';
 import { ROW_H } from '../world/lattice';
-import { BUILD_S, CityGen, DISTRICT_SPAN, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes, type DistrictClaim } from './gpu';
+import { BUILD_S, CityGen, DISTRICT_SPAN, GRADE_RECS, LM_ROOM, NAP, NART, POP_PURPOSE, REC_LM, TOWN_VERT_ROOM, type StreetParams, type StreetTimes, type DistrictClaim } from './gpu';
+import { GradeLayer, type GradeWorld } from '../roadlab/grader';
 import type { StaticClaims, StaticGrid, GridPlace, OwnedSlot } from '../sim/static-claims';
 import { cellAt } from '../world/lattice';
 import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
@@ -58,6 +59,9 @@ export interface FieldTownSite {
   at: readonly [number, number];
   size: Settlement['size'];
   roads: readonly (readonly (readonly [number, number])[])[];
+  /** (loop-streets) the roads' points' heights (world z, aligned with `roads`) and the plaza's: Settlements.approachHeights
+   *  — the profile its streets are graded to (none: no streets as terrain) */
+  heights?: { z: readonly (readonly number[])[]; plaza: number };
   seed: number;
   /** what it's for (Settlement.purpose.kind): its population field weights that district purpose up */
   purpose?: string;
@@ -112,20 +116,26 @@ export function townLayout(
   // (each atlas road from the town's centre out: its points every 4 units, from the one nearest the centre, as far as
   // the box — the GPU cuts it at the box's edge and the town's limit)
   const R2 = Math.hypot(box.w, box.h * ROW_H);
+  // (loop-streets: and each point's height — the atlas way's graded z, the centre's the plaza's)
+  const zs: number[][] = [];
   gen.setArterials(
     box.core,
-    site.roads.map((line) => {
+    site.roads.map((line, li) => {
       let k0 = 0;
       line.forEach((p, k) => {
         if (Math.hypot(p[0] - site.at[0], p[1] - site.at[1]) < Math.hypot(line[k0][0] - site.at[0], line[k0][1] - site.at[1])) k0 = k;
       });
       const out: [number, number][] = [centre];
+      const z: number[] = [site.heights?.plaza ?? 0];
       for (let k = k0; k < line.length && out.length < NAP; k += 2) {
         out.push(local(line[k]));
+        z.push(site.heights?.z[li][k] ?? 0);
         if (Math.hypot(line[k][0] - site.at[0], line[k][1] - site.at[1]) > R2) break;
       }
+      zs.push(z);
       return out;
     }),
+    site.heights ? { z: zs, plaza: site.heights.plaza } : undefined,
   );
   // (the town's own inputs over the generator's defaults: its radius and seed)
   // (the street skeleton from the address: ?skel=0|1|2 &skelmargin= &minorahead=0|1 — citygen/params.ts)
@@ -141,7 +151,10 @@ export function townLayout(
     if (!(k in CITY_PARAMS) || !Number.isFinite(Number(v))) throw new Error(`?city=: no parameter ${kv}`);
     trial[k] = Number(v);
   }
-  const params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0, roadTone: TONE[site.size], ...GAME_STREETS, ...skel, ...trial }));
+  // (loop-streets: the arterials and the square graded into the ground when the site has its roads' heights — the
+  // game's towns; `?city=terrainRoads:0` the ribbons, for the toggle diff)
+  const terrain: Partial<StreetParams> = { terrainRoads: site.heights ? 1 : 0 };
+  const params = scaled(cityParams({ townR: box.R, citySeed: site.seed % 9973, marks: 0, roadTone: TONE[site.size], ...GAME_STREETS, ...terrain, ...skel, ...trial }));
   return { box, raw, gen, params, centre, local };
 }
 
@@ -152,6 +165,8 @@ export interface FieldTownIO {
    *  and a reach over the window (build/reachgpu.ts FortressReachGpu: markFrom, marks) */
   statics(): StaticClaims | null;
   plants: { globals: GPUBuffer; veg: GPUBuffer; vegNext: GPUBuffer };
+  /** (loop-streets) the world's buffers the road grader lays the town's streets into (GradeLayer) */
+  grade?: GradeWorld;
   reach(): { markFrom(stores: [number, number]): Promise<number>; marks: GPUBuffer; planSpans: GPUBuffer; w: number; h: number };
   /** the reach's turn: one town's solve at a time */
   reachTurn(f: () => Promise<void>): Promise<void>;
@@ -215,6 +230,11 @@ export class FieldTown {
     this.params = L.params;
     // (archgen: the building generator draws the buildings when there is one)
     if (io.buildings) this.params.buildings = 1;
+    // (loop-streets: its arterials and square laid into the columns as their land is claimed)
+    if (this.params.terrainRoads) {
+      if (!io.grade) throw new Error(`citygen: ${site.id}'s streets are terrain but the town has no world to grade (FieldTownIO.grade)`);
+      this.grader = new GradeLayer(io.device, io.grade);
+    }
     this.xform = io.device.createBuffer({ label: `citygen ${site.id} place`, size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.place();
     io.addMesh(this.gen.verts, this.gen.args, this.xform);
@@ -264,7 +284,10 @@ export class FieldTown {
       w: this.box.w,
       h: this.box.h,
       maxKey: REC_LM + LM_ROOM + 1,
-      claimed: (rects, p) => this.bareOver(rects, p),
+      claimed: (rects, p) => {
+        this.bareOver(rects, p);
+        this.gradeOver(rects, p);
+      },
       damaged: (keys) => {
         for (const k of keys) if (k > 0) this.damaged.add(k - 1);
         console.log(`[citygen] ${this.site.name}: an edit damaged ${keys.filter((k) => k > 0).length} building(s)${keys.includes(0) ? ' and its roads' : ''} — records ${keys.filter((k) => k > 0).map((k) => k - 1).join(', ')}`);
@@ -301,6 +324,19 @@ export class FieldTown {
       cp.end();
       d.queue.submit([enc.finish()]);
     }
+  }
+
+  /** (loop-streets) the road grader of its streets as terrain (null: ribbons) */
+  readonly grader: GradeLayer | null = null;
+  /**
+   * (loop-streets) Its road records (the square, the arterials: CityGen.gradeRoads, made each mesh run) laid into the
+   * window's columns in these rectangles, the box's place now — after the claims there, so a building, the wall or a
+   * deck's slab is another owner's column the lay leaves (docs/design/CITYGEN.md "Streets as terrain"). Idempotent:
+   * every arriving region, every reclaim lays again.
+   */
+  private gradeOver(rects: [number, number, number, number][], p: GridPlace): void {
+    if (!this.grader) return;
+    this.grader.layRects(this.gen.gradeRoads, GRADE_RECS, rects, p, [p.dx, p.dy, p.dx + this.box.w, p.dy + this.box.h]);
   }
 
   private reachBusy = false;
@@ -535,6 +571,7 @@ export class FieldTown {
     this.gone = true;
     this.io.statics()?.freeSlot(this.slot);
     this.bareU.destroy();
+    this.grader?.dispose();
     this.io.removeMesh(this.gen.args);
     this.gen.dispose();
     this.xform.destroy();

@@ -15,6 +15,13 @@ import { buildWiki, type WorldWiki } from '../gm/wiki';
 import { recordsFrom, type SettlementSeed } from './records';
 import { waysWithout } from '../atlas/ways';
 
+/** a settlement's atlas roads (each from its end at the settlement), their points' graded z, its plaza's z */
+interface ApproachWays {
+  lines: [number, number][][];
+  z: number[][];
+  plaza: number;
+}
+
 export class Settlements {
   readonly wiki: WorldWiki;
   readonly seeds: SettlementSeed[];
@@ -24,7 +31,7 @@ export class Settlements {
   /** the ms the records took */
   stats = { recordsMs: 0 };
   /** (citygen M4a) the field towns' atlas roads as they were before their cores were cleared */
-  private fieldRoads = new Map<string, [number, number][][]>();
+  private fieldRoads = new Map<string, ApproachWays>();
 
   constructor(private atlas: Atlas) {
     const t0 = performance.now();
@@ -76,14 +83,27 @@ export class Settlements {
    * the field generator takes for its arterials, so the town's main roads are the roads that come in.
    */
   approachWays(id: string): [number, number][][] {
+    return this.approach(id).lines;
+  }
+
+  /**
+   * (loop-streets) The same roads' heights: each point's graded z (world z: atlas/ways.ts — the macro ground smoothed
+   * along the road and held to its grade), aligned with approachWays' points, and the settlement's plaza's z (the
+   * atlas's plaza disc: its ground at the centre, over the sea). Authored data: a town grades its arterials and square
+   * to them (docs/design/CITYGEN.md "Streets as terrain").
+   */
+  approachHeights(id: string): { z: number[][]; plaza: number } {
+    const a = this.approach(id);
+    return { z: a.z, plaza: a.plaza };
+  }
+
+  private approach(id: string): ApproachWays {
     // (a field town's: as they were before its core was cleared)
-    const kept = this.fieldRoads.get(id);
-    if (kept) return kept;
-    return this.waysOf([id]).get(id)!;
+    return this.fieldRoads.get(id) ?? this.waysOf([id]).get(id)!;
   }
 
   /** the atlas roads into each of these settlements (approachWays), the ways' points walked once */
-  private waysOf(ids: string[]): Map<string, [number, number][][]> {
+  private waysOf(ids: string[]): Map<string, ApproachWays> {
     const roads = this.atlas.settlement.roads;
     const W = this.atlas.worldW;
     const H = this.atlas.worldH;
@@ -97,30 +117,32 @@ export class Settlements {
       if (!site || Math.hypot(site.x - at[0], site.y - at[1]) > 1) throw new Error(`settlements: ${id} isn't atlas site ${i}`);
       idx.set(i, id);
     }
-    // (site → way → its points, round the site's centre)
-    const by = new Map<number, Map<number, { i: number; x: number; y: number }[]>>();
+    // (site → way → its points, round the site's centre; (loop-streets) each site's plaza z — its disc's points, way
+    // −1 − site)
+    const by = new Map<number, Map<number, { i: number; x: number; y: number; z: number }[]>>();
+    const plaza = new Map<number, number>();
     for (const p of this.atlas.ways.points) {
+      if (p.way < 0 && idx.has(-1 - p.way)) plaza.set(-1 - p.way, p.z);
       const r = roads[p.way];
       if (!r) continue;
       for (const si of [r.a, r.b]) {
         if (!idx.has(si)) continue;
         const at = this.seeds[si].rec.at;
         const m = by.get(si) ?? by.set(si, new Map()).get(si)!;
-        (m.get(p.way) ?? m.set(p.way, []).get(p.way)!).push({ i: p.i, x: at[0] + wrap(p.x - at[0], W), y: at[1] + wrap(p.y - at[1], H) });
+        (m.get(p.way) ?? m.set(p.way, []).get(p.way)!).push({ i: p.i, x: at[0] + wrap(p.x - at[0], W), y: at[1] + wrap(p.y - at[1], H), z: p.z });
       }
     }
-    const out = new Map<string, [number, number][][]>();
+    const out = new Map<string, ApproachWays>();
     for (const [si, id] of idx) {
       const at = this.seeds[si].rec.at;
-      const d = (p: [number, number]) => Math.hypot(p[0] - at[0], p[1] - at[1]);
-      out.set(
-        id,
-        [...(by.get(si)?.values() ?? [])].map((ps) => {
-          ps.sort((a, b) => a.i - b.i);
-          const line = ps.map((q): [number, number] => [q.x, q.y]);
-          return d(line[0]) <= d(line[line.length - 1]) ? line : line.reverse();
-        }),
-      );
+      const d = (p: { x: number; y: number }) => Math.hypot(p.x - at[0], p.y - at[1]);
+      const ways = [...(by.get(si)?.values() ?? [])].map((ps) => {
+        ps.sort((a, b) => a.i - b.i);
+        return d(ps[0]) <= d(ps[ps.length - 1]) ? ps : ps.reverse();
+      });
+      const pz = plaza.get(si);
+      if (pz === undefined) throw new Error(`settlements: ${id} has no plaza in the atlas's ways`);
+      out.set(id, { lines: ways.map((ps) => ps.map((q): [number, number] => [q.x, q.y])), z: ways.map((ps) => ps.map((q) => q.z)), plaza: pz });
     }
     return out;
   }

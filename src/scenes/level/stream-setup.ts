@@ -309,7 +309,7 @@ export function attachStream(scene: LevelScene): void {
         let reachChain: Promise<void> = Promise.resolve();
         const sites = fids.map((id) => {
           const fs = st.seeds.find((x) => x.rec.id === id)!;
-          return { id, name: fs.rec.name, at: fs.rec.at, size: fs.rec.size, roads: st.approachWays(id), seed: fs.seed, purpose: fs.rec.purpose?.kind };
+          return { id, name: fs.rec.name, at: fs.rec.at, size: fs.rec.size, roads: st.approachWays(id), heights: st.approachHeights(id), seed: fs.seed, purpose: fs.rec.purpose?.kind };
         });
         whenPipelinesReady(() => {
           // (archgen, ?arch=1: the building generator draws the towns' buildings — docs/design/ARCHGEN.md)
@@ -324,6 +324,7 @@ export function attachStream(scene: LevelScene): void {
               freeSlots: () => staticsFor(scene)?.freeSlots() ?? 0,
               landIn: () => !S.busy && !S.unwritten.length,
               plants: { globals: core.world.globals, veg: core.world.veg, vegNext: core.world.vegNext },
+              grade: core.world,
               reach: () => (fieldReach ??= new FortressReachGpu(host.gpu.device, core.world, dims.w, dims.h, () => [0, 0])),
               reachTurn: (f) => (reachChain = reachChain.then(f, f)),
               addMesh: (v, g, x) => core.renderer.addMesh(v, g, x),

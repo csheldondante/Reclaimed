@@ -14,6 +14,7 @@ import materialsWgsl from '../shaders/materials.wgsl?raw';
 import heightWgsl from './height.wgsl?raw';
 import rawHeightWgsl from './rawheight.wgsl?raw';
 import streetsWgsl from './streets.wgsl?raw';
+import roadpathWgsl from '../shaders/roadpath.wgsl?raw';
 import { makeBindGroup, makeCompute, makeLayout, makeModule, type ComputeKernel } from '../gpu/pipeline';
 import { ROW_H } from '../world/lattice';
 
@@ -60,6 +61,9 @@ export interface StreetParams {
   roadTone: number;
   /** (loop round 9) the central square: lots whose middle is this near the town's centre are paved (cells; 0 none) */
   plazaR: number;
+  /** (loop-streets) 1: the arterials and the square are road records (gradeRoads) graded into the columns by their
+   *  owner, not drawn — needs the arterials' heights (setArterials) */
+  terrainRoads: number;
   /** index into MAJORS */
   majors: number;
   /** between the distance contours, between the rings (world units) */
@@ -217,7 +221,13 @@ const KERNELS = [
   'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'gplace', 'sctab', 'bgrow', 'ctint',
   'artSpan', 'artRast', 'artEnd', 'artMesh', 'popField', 'townBridge', 'claimRoads', 'claimLots', 'lotReach',
   'clkInit', 'clkTimelapse', 'clkClaim', 'tlProgress', 'tlRise', 'stgRank', 'frontStamp', 'wallBins', 'wallShape', 'wallMesh', 'wallClaim',
+  'gradeSq', 'gradeRecs', 'gradeRast',
 ] as const;
+/** (loop-streets) streets.wgsl GR_RECS, GR_PTS: the town's road records (the square, then GR_ART an arterial) and the
+ *  points a record — their buffer's bytes (roadpath layout: a header, three vec4s a record, a vec4 a point) */
+export const GRADE_RECS = 1 + 8 * 16;
+const GRADE_PTS = 17;
+const GRADE_BYTES = (4 + GRADE_RECS * 12 + GRADE_RECS * GRADE_PTS * 4) * 4;
 type Kernel = (typeof KERNELS)[number];
 /** streets.wgsl TRW, BQW, LW, SDW (words a trace, a block, a lot, a seed) */
 const TRW = 144;
@@ -423,6 +433,11 @@ export class CityGen {
     this.B.POP = buf('population', N * 16);
     // (M4a: the arterials — a count, then each one's direction (the CPU's), length and bridge spans (the GPU's))
     this.B.ART = buf('arterials', (4 + NART * AW) * 4);
+    // (loop-streets: the arterials' points' heights and the plaza's — streets.wgsl ARTZ; the square's radius, GSQ; the
+    // road records the grader lays, GRADE)
+    this.B.ARTZ = buf('arterial heights', (4 + NART * NAP) * 4);
+    this.B.GSQ = buf('square radius', 16);
+    this.B.GRADE = buf('road records', GRADE_BYTES);
     this.boxUni = buf('box', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const gs = world.ground;
     if (gs.kind === 'window') device.queue.writeBuffer(this.boxUni, 0, new Uint32Array([gs.box[0], gs.box[1], w, h]));
@@ -439,7 +454,7 @@ export class CityGen {
     device.queue.writeBuffer(this.args, 0, new Uint32Array([0, 1, 0, 0]));
     this.dummies = [1, 2, 3, 4, 5, 6, 7, 8].map((k) => buf(`dummy ${k}`, 16));
     this.layout = makeLayout(device, 'citygen', { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' }, GPUShaderStage.COMPUTE);
-    const module = makeModule(device, 'citygen', [streetsWgsl]);
+    const module = makeModule(device, 'citygen', [streetsWgsl, roadpathWgsl]);
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     this.pipes = Object.fromEntries(KERNELS.map((k) => [k, device.createComputePipeline({ label: `citygen ${k}`, layout: pl, compute: { module, entryPoint: k } })])) as Record<Kernel, GPUComputePipeline>;
     if (gs.kind === 'window' && gs.box[1] % 2) throw new Error(`citygen: the box's first row (${gs.box[1]}) must be even`);
@@ -484,8 +499,20 @@ export class CityGen {
    *  units; at most NART of NAP points) — the game's the atlas roads into the town, the lab's test spokes — and the core
    *  they're drawn to at least (the game's: where the atlas's stamps were cleared). Their length in the grid, bridges and
    *  end at the town's limit are made on the GPU; the next run from 'field' */
-  setArterials(core: number, lines: readonly (readonly (readonly [number, number])[])[]): void {
+  setArterials(core: number, lines: readonly (readonly (readonly [number, number])[])[], heights?: { z: readonly (readonly number[])[]; plaza: number }): void {
     if (lines.length > NART) throw new Error(`citygen: ${lines.length} approach roads, room for ${NART}`);
+    // (loop-streets: each point's height (world z) and the square's — the profile the grader lays them to)
+    if (heights) {
+      const z = new Float32Array(4 + NART * NAP);
+      z[0] = heights.plaza;
+      z[1] = 1;
+      lines.forEach((pts, k) => {
+        if (heights.z[k]?.length !== pts.length) throw new Error(`citygen: approach road ${k} has ${pts.length} points and ${heights.z[k]?.length} heights`);
+        z.set(heights.z[k], 4 + k * NAP);
+      });
+      this.device.queue.writeBuffer(this.B.ARTZ, 0, z);
+      this.hasHeights = true;
+    }
     const a = new ArrayBuffer((4 + NART * AW) * 4);
     const u = new Uint32Array(a);
     const f = new Float32Array(a);
@@ -513,6 +540,13 @@ export class CityGen {
     return this.run(this.p, 'mesh');
   }
   private reachJob: { marks: GPUBuffer; gx: number; gy: number; winW: number; winH: number } | null = null;
+  /** (loop-streets) the arterials' heights given (setArterials): what terrainRoads needs */
+  private hasHeights = false;
+  /** (loop-streets) the town's road records (roadpath layout, the grid's frame, world z: the square and the arterials'
+   *  dry stretches), made each mesh run with terrainRoads — what the grader lays (roadlab/grader.ts GradeLayer) */
+  get gradeRoads(): GPUBuffer {
+    return this.B.GRADE;
+  }
 
   /**
    * (time-lapse) The town's clock now (s): each lot's progress from its district's start, the buildings risen, the roads
@@ -679,7 +713,8 @@ export class CityGen {
     [this.cityOn() ? CITY_REACH : 1, p.farmBelt, p.farmLot, p.plazaR ?? 0].forEach((v, j) => dv.setFloat32(224 + j * 4, v, true));
     [p.artWidth, p.hRatio, p.deckClear, p.maxSpan].forEach((v, j) => dv.setFloat32(240 + j * 4, v, true));
     [...(ROAD_TONES[p.roadTone] ?? [0, 0, 0]), p.roadTone].forEach((v, j) => dv.setFloat32(256 + j * 4, v, true));
-    [this.town.density, this.town.purpose, 0, 0].forEach((v, j) => dv.setFloat32(272 + j * 4, v, true));
+    // (loop-streets: the streets as terrain — pp.z)
+    [this.town.density, this.town.purpose, p.terrainRoads ?? 0, 0].forEach((v, j) => dv.setFloat32(272 + j * 4, v, true));
     [this.tl.now, BUILD_S, this.tl.t0, this.tl.span].forEach((v, j) => dv.setFloat32(288 + j * 4, v, true));
     // (the street skeleton: its reach, its margin in metres — supercells × their size — and minor streets ahead)
     [p.skelReach, p.skelMargin * p.scSize * p.blockLen, p.minorAhead, 0].forEach((v, j) => dv.setFloat32(304 + j * 4, v, true));
@@ -966,6 +1001,15 @@ export class CityGen {
     // (season loop: each lot's rank in its district's growth order, before its progress)
     if (this.cityOn()) this.k('stgRank', {}, { 1: this.lotRecords, 4: B.SCT, 5: B.KEY, 6: B.CNT }, Math.ceil(LOT_ROOM / 64));
     this.k('tlProgress', {}, { 1: this.lotRecords, 2: B.STG, 3: B.KEY, 4: B.SCT, 5: this.progress, 6: B.CNT, 7: B.LSTART }, Math.ceil((LOT_ROOM + LM_ROOM) / 64));
+    // (loop-streets: the square's radius from its lots, the road records, their columns marked graded in the raster —
+    // before the streets mark it and draw, and the claims read it)
+    if (p.terrainRoads) {
+      if (!this.hasHeights) throw new Error('citygen: streets as terrain need the arterials’ heights (setArterials)');
+      this.fill(B.GSQ, 4, 0);
+      this.k('gradeSq', { count: LOT_ROOM }, { 1: this.lotRecords, 4: B.CNT, 6: B.GSQ }, Math.ceil(LOT_ROOM / 64));
+      this.k('gradeRecs', {}, { 1: B.ART, 2: B.ARTZ, 3: B.M, 4: B.GSQ, 5: B.GRADE }, 1);
+      this.k2('gradeRast', {}, { 4: B.GRADE, 6: B.ROADS });
+    }
     // (CG25: each lot's start stamped round its parcel — the front field the roads read, before the roads: they show with
     // the lots that front them; 0xffffffff none)
     this.fill(B.ROADS, w * h, 0xffffffff, w * h);

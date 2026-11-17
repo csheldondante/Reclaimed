@@ -57,6 +57,9 @@ const NONE: u32 = 0xffffffffu;
 const DECK_BIT: u32 = 0x80000000u;
 /** (season life) a town wall's column in citygen's road raster (streets.wgsl WALL_MARK) */
 const WALL_MARK: u32 = 0x40000000u;
+/** (loop-streets) a graded street's column in the raster: its profile's top z × 256 under it (streets.wgsl GRADED_BIT) */
+const GRADED_BIT: u32 = 0x20000000u;
+const GRADED_Z: u32 = 0x1fffffffu;
 
 /** hubs */
 const HUBS: u32 = 8u;
@@ -949,6 +952,8 @@ fn rEndCol(r: u32) -> u32 {
 fn pointZ(c: u32) -> f32 {
   let m = ROADS[c];
   if ((m & DECK_BIT) != 0u) { return f32(m & ~DECK_BIT) / 256.0; }
+  // (loop-streets: a graded street's column — its profile's top, the ground the grader laid: citygen GRADED_BIT)
+  if ((m & (WALL_MARK | GRADED_BIT)) == GRADED_BIT) { return f32(m & GRADED_Z) / 256.0; }
   return HT[c] + select(0.05, 0.27, m != 0u);
 }
 
