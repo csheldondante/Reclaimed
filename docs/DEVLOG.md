@@ -25396,3 +25396,38 @@ in its claim grid. Land arriving region by region is claimed then graded where i
 the profile (window z) with nothing over it; the 15 claimed columns are as claimed, their ground untouched; laid twice
 is unchanged; land arriving again raw comes back the same bit for bit; one lay over all equals region by region; a
 slide (the frame placed 2 columns and rows over) grades where it lies.
+
+## 2026-11-17 — streets as terrain (2, 3): Muru's arterials and square graded (`loop-streets`, LS-102 option a)
+
+**The town's half** (docs/design/CITYGEN.md "Streets as terrain"). citygen makes the records on the GPU after each
+field/lots run: `gradeSq` (the square's radius: its plaza lots' farthest corner), `gradeWater` (the highest water near
+each arterial point, in parallel), `gradeRecs` (one thread an arterial: its dry, deck-free stretches in pieces of ≤ 17
+points, the atlas way's z — `Settlements.approachHeights`, uploaded with the points — pinned to the square inside its
+disc and to the decks' ends within the atlas grade 0.22, held 0.4 over the water beside it). Each mesh run `gradeRast`
+marks their columns `0x20000000 | z × 256` in the road raster with the lay's own test; `claimRoads` claims no paving
+there, ribbons/hexagons whose middle is graded are left empty, the square's plaza plates are not drawn, the routes'
+`pointZ` reads the graded z. `FieldTown`'s claims hook lays them (`GradeLayer`). 129 record slots: the aux byte's 255
+does not bite. GPU test `test/gpu/streets-records.test.ts` (synthetic raw ground, a river): record 0 the square at the
+plaza's z, radius 16.9 ≥ `plazaR` 14; arterials start at the centre at its z and keep the grade; no point in the river,
+points beside it ≥ water + 0.4; 4213 graded columns, raster vs CPU reading of the records 0 mismatches, road paving
+claimed on a graded column 0 (27 lot claims fall in graded footprint: left to their owner, LS-106).
+
+**Found on the way (fixed).** (1) The first try's square cut its bank below the river: wet columns within 18 of
+Muru's centre 878 of 1177 graded against 354 with ribbons (same water volume, spread thin over the square) → the
+freeboard (363 after). (2) Cobble's grey setts read as speckle beside the light ribbons → a light paving material
+(MAT 43 `paving`, the town's tone [0.76, 0.72, 0.64], flagstones in `roadLook`). (3) `gradeRecs` walked the arterial
+from its start at every half unit and scanned the water serially: +13 ms a mesh run on the desktop → incremental walk,
+`gradeWater` in parallel, records only on field/lots runs.
+
+**Measured** (`scripts/lab/gradeprobe.mjs --meshruns 7`, desktop D3D11, GPU shared with another builder; medians of
+7, two rounds each): mesh stage, mesh-only run graded 4.12 / 2.56 ms vs ribbons 3.58 / 2.43 (noise); a run from the
+lots (records made again) 4.60 / 4.22 vs 2.45 / 2.77 (+~1.8 ms). A lay of the whole 320 × 320 box 4.4 ms wall to the
+queue's end (29 lays over 95 k columns at Muru's making). Grader stats at Muru: 2000 road columns, 68 shoulder, ground
+moved at most 4.0 cells, most intervals a column 6, none folded.
+
+**Seen** (`local/streets1/strip-streets1.png`: rows before / after unwalled, before / after walled, `?parade=30`; columns
+town, market close-up, parade at 22/30 s and 40/55 s). The market's bridgehead: before, big pale slanted ribbon and plate
+planes; after, flat light paving on the ground running into the deck. The arterial outside town: a light paved band
+with cut banks, the column of 9 (and of 30) on it, figures clear against it. At the town's zoom the difference is
+small (the town is a few pixels a street). Not better everywhere: the main streets are still ribbons and meet the
+graded paving with a slight seam of tone and height (LS-105).
