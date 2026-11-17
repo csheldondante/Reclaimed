@@ -1,5 +1,9 @@
 # Opportunity pack format (draft 8, 2026-11-16: the raid as a card, homes, unlocks, between runs)
 
+**Added in loop round 12 (2026-11-17), no change to anything existing:** an event's `hazard` may be a front, `lava` or
+`flood`, with the amount `reached`; an ability's `in_event` may raise a `shield` (with `seconds`). See events and
+abilities. Example: `packs/ages.json`.
+
 **Changed since draft 7.** (1) **The raid is a card** (see "The raiders and the end of a run"): no arc is timed when
 a run begins. The raiders are the base game's faction (`"raiders"`); their standing threat "Raiders on the road" is
 dealt while they are hostile and have somewhere to come from, counts down to the last season and, left to run out,
@@ -604,15 +608,28 @@ A `why` of an acting rule has no amount: do not write `{n}` in it.
   with the order `go` arrives; foes (`raider`, `dead`) stay up; every lot of a fire burns. Each cast then changes
   that: `fire` puts down 1 foe, `heat-ray` 2 foes, `rain` puts out 2 burning lots. Each cast costs 1 Magic. Then the
   rules `on: { "live": tag }` change the amounts, and the first `tiers` row that holds is the result.
-- `abilities`: which of `fire`, `heat-ray`, `rain` may be cast into it. Nothing else can be cast into an event yet.
+- `abilities`: which of `fire`, `heat-ray`, `rain` may be cast into it, and this pack's abilities with `in_event`
+  (see abilities).
 - An event needs at least one group or a hazard. A group needs a whole-number `count` and at least one tag.
 - `groups`: `who` is `soldier`, `raider`, `worker`, `cart`, `dead`; `order` is `go`, `guard`, `attack`;
   `formation` is `column`, `line`, `loose`; `from` and `to` are sites, `"gate"`, `"road"` (off the map edge) or
   `"event"`.
-- `hazard`: only `fire`.
+- `hazard`: `fire` (stalls at the event's place set alight), or (loop round 12) a **front**: `lava` or `flood`. A
+  front is poured `far` paces uphill of the event's place — the highest ground on a ring that far out — at `rate`
+  for `pour` seconds, and runs down the ground as it lies. Its `points` are spots within `spread` paces of the
+  event's place; its result is how many it reached. What it reached is changed for good, whatever the result: lava
+  leaves black rock (the houses there are destroyed), a flood drowns them; the land it crossed on its way too.
+  Defaults: `far` 36, `rate` 220, `pour` 45. `far` must be more than `spread`. Lava is thick: on flat land it piles
+  round its vent and goes only some 25-40 paces however long it pours, so keep `far` near the town (on a slope it
+  goes farther). If the land falls away from the place on every side, nothing reaches it: that is the land's truth.
+
+  ```json
+  "hazard": { "kind": "lava", "points": 8, "spread": 26, "far": 36, "rate": 220, "pour": 45 }
+  ```
 - `amounts`: numbers the event ends with, which rules can change and tiers read: `crowd` (the people of groups
   tagged `crowd` who arrived; give such a group the order `go`), `stopped` (starts at 0; only rules add to it),
-  `burned` (lots burned; needs a fire hazard), `alive:<group tag>`, `dead:<group tag>` for a tag one of the
+  `burned` (lots burned; needs a fire hazard), `reached` (a front's points it reached; needs a `lava` or `flood`
+  hazard. Nobody there: all of them; a shield cast: none, at the card table), `alive:<group tag>`, `dead:<group tag>` for a tag one of the
   event's groups has. A rule may only change an amount the event lists. The base game's rules change `burned` in
   every `fire` event, `stopped` in every `raid` and `crowd` in every `parade`, so an event of one of those kinds
   must list that amount. A pack rule on a base kind may name only that kind's numbers: raid `raiders`, `alive`,
@@ -623,7 +640,7 @@ A `why` of an acting rule has no amount: do not write `{n}` in it.
 
 ## abilities
 
-What the player casts on a thing in play. (Into an event only the three existing spells can be cast: see events.)
+What the player casts on a thing in play, or into a live event (`in_event`, below).
 
 ```json
 { "id": "volcano-ash-ward", "name": "Ash ward", "cost": { "magic": 1 },
@@ -643,9 +660,15 @@ What the player casts on a thing in play. (Into an event only the three existing
   Exactly one of `kills` and `douses`. Fire does 1, Heat ray 2, Rain 2: above 3 the validator says to look.
   (Loop round 10, the owner's toy spells.) Or `{ "kinds": ["bout"], "berserk": 8 }`: the foes within 8 cells of the
   tap turn on anyone near them, one another too, and anyone takes them on — or `{ "kinds": ["bout"], "hides": 6 }`:
-  your people within 6 cells are hidden: no foe goes for them, and they are not drawn. Exactly one of the four. In
+  your people within 6 cells are hidden: no foe goes for them, and they are not drawn. Exactly one of the five. In
   the 3D game these act on the units themselves (the card table has no units: there they do nothing yet). Example:
   `packs/arena.json` Red mist and Veil.
+  (Loop round 12.) Or `{ "kinds": ["eruption"], "shield": 26, "seconds": 75 }`: a shield 26 paces round the tap
+  for 75 seconds (60 if `seconds` is left out). Lava and flood water cannot flow into it and part round it; what is
+  inside stays as it was. It is drawn as a dome of sparks. It does not stop people. At the card table a shield cast
+  into a front means the front reaches none of its points. `seconds` goes with `shield` only. Rain does nothing to a
+  front. Example: `packs/ages.json` the Fire ward, its card "Learn the court's fire ward", and the eruption "The
+  mountain spits fire" that the wizards' first working starts.
 - A pack ability must be unlocked by a card (`{ "unlock": "id" }`). It is the player's for that run; it is written
   in the run's history, so a saved run keeps it.
 - Existing abilities, which must not be declared again: `growth-rune` (on a field: it is `growth-active` this

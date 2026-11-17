@@ -62,11 +62,29 @@ export type LiveEnd =
   /** the hazard has nothing alight any more, `after` seconds in at the earliest (the runner's own small read) */
   | { when: 'out'; after: number };
 
+/**
+ * (loop round 12, docs/design/FRONTS.md) A front: a liquid poured at a source `far` cells uphill of `at` (the highest
+ * point on a ring round it), `rate` cells³ a second for `pour` seconds, running down the ground as it lies. Its points
+ * are `points` spots within `spread` cells of `at`; its result (`burned`, read as `reached`) is how many it reached.
+ * What it reached takes the land change `mutate` (the town's lots under it: their condition).
+ */
+export interface LiveFront {
+  kind: 'front';
+  liquid: 'lava' | 'water';
+  at: LiveWhere;
+  far: number;
+  rate: number;
+  pour: number;
+  points: number;
+  spread: number;
+  mutate: 'melted' | 'flooded' | 'buried' | 'burned';
+}
+
 export type LiveRead =
   /** units of a tag: made, alive now, dead, or members of groups that stand at their place */
   | { as: string; count: 'made' | 'alive' | 'dead' | 'arrived'; tag: string }
   /** the hazard's points (lots) that burned; how many it had; how many are alight now; the casts of a spell (or all) */
-  | { as: string; read: 'burned' | 'points' | 'alight' | 'casts'; spell?: string }
+  | { as: string; read: 'burned' | 'reached' | 'points' | 'alight' | 'casts'; spell?: string }
   /** a number that starts at this (one the rules add to: 'stopped') */
   | { as: string; value: number };
 
@@ -91,7 +109,7 @@ export interface LiveDef {
   groups: LiveGroup[];
   /** a hazard set going when the event starts: the real fire system lit at `points` spots within `spread` cells of
    *  `at` (each `radius` wide). Its result is how many of those spots burned */
-  hazard?: { kind: 'fire'; at: LiveWhere; points: number; spread: number; radius: number; intensity: number };
+  hazard?: { kind: 'fire'; at: LiveWhere; points: number; spread: number; radius: number; intensity: number } | LiveFront;
   /** particles over a group as it goes (petals over a parade): a burst every `every` seconds */
   fx?: { burst: string; over: string; every: number; count: number };
   /** what the camera follows (a tag's living units), else where it looks; its zoom (px a cell), and closer once a
@@ -186,7 +204,8 @@ export function liveRead(def: LiveDef, s: LiveState, run: LiveVars = {}): LiveVa
       const gs = withTag(s, r.tag);
       v[r.as] = r.count === 'arrived' ? sum(gs.filter((g) => g.arrived), 'alive') : sum(gs, r.count);
     } else if ('value' in r) v[r.as] = r.value;
-    else if (r.read === 'burned') v[r.as] = s.burned;
+    // (a front's points reached are counted where a fire's burned lots are: the hazard's points lost)
+    else if (r.read === 'burned' || r.read === 'reached') v[r.as] = s.burned;
     else if (r.read === 'points') v[r.as] = s.points;
     else if (r.read === 'alight') v[r.as] = s.alight;
     else v[r.as] = r.spell ? (s.casts[r.spell] ?? 0) : Object.values(s.casts).reduce((a, b) => a + b, 0);
@@ -269,6 +288,12 @@ export function checkLive(id: string, def: LiveDef, run: readonly string[] = [])
   for (const g of def.groups) if (g.from === 'lining' && g.order) p.push(`${id}: group ${g.id} lines a road and stands there: it has no order`);
   if (def.finale && !def.camera.follow) p.push(`${id}: its finale bursts over the figures the camera follows, and it follows none`);
   if (def.after && 'site' in def.after.go) p.push(`${id}: its people walk off to a place of the town, not a site`);
+  const hz = def.hazard;
+  if (hz?.kind === 'front') {
+    if (!(hz.far > hz.spread)) p.push(`${id}: its front's source (${hz.far} cells out) must lie past its points (${hz.spread})`);
+    if (!(hz.rate > 0) || !(hz.pour > 0)) p.push(`${id}: its front pours nothing (rate ${hz.rate}, for ${hz.pour} s)`);
+    if (!(hz.points >= 1)) p.push(`${id}: its front has no points to reach`);
+  }
   return p;
 }
 
@@ -277,7 +302,7 @@ export function checkLive(id: string, def: LiveDef, run: readonly string[] = [])
  * points of a fire put out. First numbers, to tune (BACKLOG CT-16): the 3D game's casts are aimed by hand and these
  * stand in for "a cast that lands". A spell not listed does nothing to an event.
  */
-export const SPELL_MECH: Record<string, { kills?: number; douses?: number }> = {
+export const SPELL_MECH: Record<string, { kills?: number; douses?: number; shield?: number }> = {
   fire: { kills: 1 },
   heatray: { kills: 2 },
   rain: { douses: 2 },
@@ -290,16 +315,21 @@ export const SPELL_MECH: Record<string, { kills?: number; douses?: number }> = {
  * foes put down in the groups' order, fire points put out. Pure: the same casts give the same state. The card table
  * and the bots resolve events from this (`Realm.tellLive` then `finishLive`); the 3D game tells its own counts.
  */
-export function mechState(def: LiveDef, run: LiveVars, casts: Record<string, number> = {}, mech: Record<string, { kills?: number; douses?: number }> = SPELL_MECH): LiveState {
+export function mechState(def: LiveDef, run: LiveVars, casts: Record<string, number> = {}, mech: Record<string, { kills?: number; douses?: number; shield?: number }> = SPELL_MECH): LiveState {
   const s = idleState(def, run);
   for (const g of def.groups) if (g.order?.kind === 'go') s.groups[g.id].arrived = true;
   s.casts = { ...casts };
   let kills = 0;
   let douses = 0;
+  let shielded = false;
   for (const [spell, n] of Object.entries(casts)) {
     kills += (mech[spell]?.kills ?? 0) * n;
     douses += (mech[spell]?.douses ?? 0) * n;
+    shielded ||= n > 0 && (mech[spell]?.shield ?? 0) > 0;
   }
+  // (loop round 12) a shield cast into a front is taken as raised over the town: the front reaches none of its points.
+  // A first rule for the card table, which has no liquid (the 3D game reads what the lava really reached)
+  if (shielded && def.hazard?.kind === 'front') s.burned = 0;
   for (const g of def.groups) {
     if (g.side !== 'foe' || kills <= 0) continue;
     const st = s.groups[g.id];
@@ -308,6 +338,7 @@ export function mechState(def: LiveDef, run: LiveVars, casts: Record<string, num
     st.dead += k;
     kills -= k;
   }
-  s.burned = Math.max(0, s.burned - douses);
+  // (rain puts out a fire's lots; it does not stop a front)
+  if (def.hazard?.kind === 'fire') s.burned = Math.max(0, s.burned - douses);
   return s;
 }

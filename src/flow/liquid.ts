@@ -82,12 +82,22 @@ const READ_EVERY_MAX = 64;
 /** (the reference, ?lqall=1) lqList's tickets: no limit */
 const NO_CAP = 0x3fffffff;
 /** the uniform's parts (bytes): the step's words, the springs, the rescale table, the extra — each uploaded when it changed */
+const UNI_EXTRA = 16 + 16 * 8 + 16 * 512;
+/** (loop round 12) shields the liquid knows at once (liquid.wgsl MAX_SHIELDS) */
+export const MAX_SHIELDS = 4;
 const UNI_PARTS: [number, number][] = [
   [0, 16],
   [16, 16 + 16 * 8],
-  [16 + 16 * 8, 16 + 16 * 8 + 16 * 512],
-  [16 + 16 * 8 + 16 * 512, 16 + 16 * 8 + 16 * 512 + 16],
+  [16 + 16 * 8, UNI_EXTRA],
+  [UNI_EXTRA, UNI_EXTRA + 16],
+  [UNI_EXTRA + 16, UNI_EXTRA + 16 + 16 * MAX_SHIELDS],
 ];
+/** (loop round 12) a raised shield as the liquid reads it: a disc (window world units) nothing flows into */
+export interface ShieldDisc {
+  x: number;
+  y: number;
+  r: number;
+}
 export interface Spring {
   x: number;
   y: number;
@@ -130,6 +140,11 @@ export class LiquidSystem implements SimSystem {
   readonly name: string;
   readonly period = 1;
   readonly springs: Spring[] = [];
+  /** (loop round 12) the shields raised: discs no liquid flows into (the first MAX_SHIELDS; src/api/shields.ts owns them) */
+  shields: ShieldDisc[] = [];
+  /** (loop round 12) the cooling's factor (1: as the liquid's own numbers say): a front's lava is set this many times
+   *  faster once its event is over (live-runner.ts) — the season goes on, and a deep pool would glow for minutes */
+  quench = 1;
   /** the water pipeline's list (runs under rock, streams) and the opaque one's (open lava) */
   readonly inst: GPUBuffer;
   readonly indirect: GPUBuffer;
@@ -147,7 +162,7 @@ export class LiquidSystem implements SimSystem {
   /** (one a substep: ?simhz=30|15 runs FLOW_SUB 60 Hz steps a tick, sim/flow.ts) */
   private unis: GPUBuffer[];
   private runs: GPUBuffer[];
-  private uniData = new ArrayBuffer(16 + 16 * MAX_SPRINGS + 16 * 512 + 16);
+  private uniData = new ArrayBuffer(UNI_EXTRA + 16 + 16 * MAX_SHIELDS);
   /** what each substep's uniform holds (null: nothing written yet) */
   private uniSent: (Uint8Array | null)[];
   /** (phone-idle) a `known` liquid's sleep: awake until a read of the wet list's count says none (null: never sleeps) */
@@ -468,7 +483,10 @@ export class LiquidSystem implements SimSystem {
     u[3] = ((LQ_ALL ? 1 : 0) | (cap << 1)) >>> 0;
     const fv = new Float32Array(this.uniData, 16);
     this.springs.forEach((s, i) => fv.set([s.x, s.y, s.z, s.rate], i * 4));
-    new Float32Array(this.uniData, 16 + 16 * MAX_SPRINGS + 16 * 512, 4)[0] = this.prepTicks;
+    new Float32Array(this.uniData, UNI_EXTRA, 4).set([this.prepTicks, this.quench]);
+    const sh = new Float32Array(this.uniData, UNI_EXTRA + 16, 4 * MAX_SHIELDS);
+    sh.fill(0);
+    this.shields.slice(0, MAX_SHIELDS).forEach((s, i) => sh.set([s.x, s.y, s.r, 0], i * 4));
     const sc = new Float32Array(this.uniData, 16 + 16 * MAX_SPRINGS, 4 * 512);
     sc.fill(1);
     if (sub === 0) for (const [k, r] of this.rescale) if (k < sc.length) sc[k] = r;

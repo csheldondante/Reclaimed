@@ -21,6 +21,10 @@ export function worldState(o: { far: number; destroyed: number; yours: number; h
   return `${parts.join(', ')}. ${o.ruins ? `${o.ruins} of the town's ${o.of} places are ruins. ` : ''}${o.signs.map((s) => SIGN_LINE[s] ?? s).join(' ')}`.trim();
 }
 export const worldLaws = (names: string[]): string => `Laws from earlier runs: ${names.join(', ')}.`;
+/** (loop round 12) what a front left on the town in an earlier run: "Run 1: lava ran into the town and set. Black rock
+ *  covers 2 of its streets." */
+export const frontLeft = (run: number, liquid: string, reached: number, path: boolean): string =>
+  `Run ${run}: ${liquid === 'lava' ? 'lava came down on the town' : 'a flood came down on the town'}. ${reached ? `It took ${reached} of its streets.` : 'A shield kept it out of the town.'}${path ? ` ${liquid === 'lava' ? 'Black rock' : 'Mud'} lies where it ran.` : ''}`;
 // (draft 8: between runs, unlocks, met, the run's home)
 export const whileGone = (say: string): string => `While you were gone: ${say.charAt(0).toLowerCase()}${say.slice(1)}`;
 export const worldOpened = (lines: string[]): string => `Earlier runs opened: ${lines.map((l) => l.replace(/\.$/, '')).join('; ')}.`;

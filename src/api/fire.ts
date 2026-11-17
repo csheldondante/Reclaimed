@@ -25,6 +25,18 @@ export class Fire {
   ) {
     mirror.addColumns('fire', () => core.world.fire, COLUMN_BUFS.fire[0]);
     mirror.addColumns('lava', () => core.world.lava, COLUMN_BUFS.lava[0]);
+    // (loop round 12) the flow model's lava (flow/liquid.ts): its open runs' depth, a f32 a column laid out as the water
+    mirror.addColumns('flowLava', () => core.flow.lava.open, COLUMN_BUFS.water[0]);
+  }
+
+  /** (loop round 12) the flow model's lava standing open at (x, y): its depth (cells; 0 none), null before it is read
+   *  (the page is asked for now and read a frame or two later) */
+  flowLavaAt(x: number, y: number): number | null {
+    const [cx, cy] = cellAt(x, y);
+    const l = this.mirror.f32('flowLava', cx, cy);
+    const i = this.col(x, y);
+    if (!l || i < 0) return null;
+    return l[i];
   }
 
   get readAt(): number {

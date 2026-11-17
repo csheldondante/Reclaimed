@@ -590,7 +590,7 @@ export class Table {
     return mechState(this.realm.liveOf(o)!, this.realm.runNumbers(), this.casts.get(o.id) ?? {}, this.mech);
   }
   /** what a cast of each spell and each pack ability does to a live event */
-  private get mech(): Record<string, { kills?: number; douses?: number }> {
+  private get mech(): Record<string, { kills?: number; douses?: number; shield?: number }> {
     // (laws: what a cast does is the law's number)
     return this.realm.spellMech({ ...SPELL_MECH, ...packMech(this.packs) });
   }
@@ -632,7 +632,7 @@ export class Table {
     const s = this.stateOf(o);
     const def = this.realm.liveOf(o)!;
     const foes = def.groups.filter((g) => g.side === 'foe').reduce((n, g) => n + s.groups[g.id].alive, 0);
-    return (!!m.kills && foes > 0) || (!!m.douses && s.burned > 0);
+    return (!!m.kills && foes > 0) || (!!m.douses && s.burned > 0) || (!!m.shield && def.hazard?.kind === 'front' && s.burned > 0);
   }
 
   /** the live events under way, each as it would come out now */
@@ -1033,9 +1033,10 @@ function diffReadout(a: Map<string, { label: string; text: string }>, b: Map<str
 const allows = (list: readonly string[], spell: string): boolean => list.includes(spell) || list.includes('known');
 /** a spell is allowed in a live event and has something there to act on: foes to put down, or a fire to put out */
 const fitsMech = (def: LiveDef, spell: string, mech: Record<string, { kills?: number; douses?: number }>): boolean => fits(def, spell, mech);
-function fits(def: LiveDef, spell: string, mech: Record<string, { kills?: number; douses?: number }> = SPELL_MECH): boolean {
+function fits(def: LiveDef, spell: string, mech: Record<string, { kills?: number; douses?: number; shield?: number }> = SPELL_MECH): boolean {
   const m = mech[spell];
-  return !!m && allows(def.spells ?? [], spell) && ((!!m.kills && def.groups.some((g) => g.side === 'foe')) || (!!m.douses && !!def.hazard));
+  // (loop round 12: rain puts out a fire, not a front; a shield is for a front)
+  return !!m && allows(def.spells ?? [], spell) && ((!!m.kills && def.groups.some((g) => g.side === 'foe')) || (!!m.douses && def.hazard?.kind === 'fire') || (!!m.shield && def.hazard?.kind === 'front'));
 }
 /** the site of the home town an entity is (null: none) */
 function siteKey(r: Realm, id: string): SiteKey | null {

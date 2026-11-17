@@ -329,7 +329,7 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       go.append(s);
     } else if (phase === 'event' && run && game.liveNow) {
       const ev = game.liveNow;
-      sheet.append(el('h3', undefined, ev.title), el('div', undefined, game.fightLine ?? ''), el('div', game.armed ? 'warn' : 'note', game.armed ? W.SPELL_AIM : ev.spells.length || !ev.wantsSpells ? ev.how : `${ev.how} ${W.SPELL_NONE}`));
+      sheet.append(el('h3', undefined, ev.title), el('div', undefined, game.fightLine ?? ''), el('div', game.armed ? 'warn' : 'note', game.armed ? W.SPELL_AIM : ev.spells.length || ev.abilities.length || !ev.wantsSpells ? ev.how : `${ev.how} ${W.SPELL_NONE}`));
       for (const sp of ev.spells) go.append(btn(W.SPELL_NAME[sp], () => game.arm(game.armed === sp ? null : sp), game.armed === sp ? 'on' : undefined));
       for (const a of ev.abilities) go.append(btn(a.name, () => game.arm(game.armed === a.id ? null : a.id), game.armed === a.id ? 'on' : undefined));
       if (ev.canLeave) go.append(btn(W.LIVE_LEAVE, () => game.leave(), 'quiet'));

@@ -21,7 +21,7 @@ import type { WorldSnapshot } from '../api/contracts/world';
 import { MemoryWorldState } from '../api/contracts/world-state';
 import { HELPERS, text, type Ctx, type Helper, type Stage } from '../living/dsl';
 import { LivingEngine, outcomesOf, type EngineReport, type Offer, type TemplateDef, type EngineState } from '../living/engine';
-import { idleState, liveDerive, liveNames, liveRead, liveTier, type LiveDef, type LiveState, type LiveVars } from '../living/live';
+import { idleState, liveDerive, liveNames, liveRead, liveTier, type LiveDef, type LiveFront, type LiveState, type LiveVars } from '../living/live';
 import { RuleBook, type RuleAct, type RuleDef, type RuleHit, type RuleOccasion, type RuleState, type Thing } from '../living/rules';
 import { applyTags, boardDelta, cardTerms, deriveRules, lawIncome, liveLaw, poolsAs, raidersOf, resultAlso, shiftTier, spared, spellAlso, spellMech, stayOf, wonBy, type ActiveLaw, type CardTerms, type DerivedRules, type LawDef, type LawSource, type Mech } from '../living/laws';
 import { liveWhat } from './live-words';
@@ -74,6 +74,10 @@ export const PARTNERS = 3;
 export const campId = (home: string): string => `camp:${home}`;
 /** (loop round 7, LS-67) how far out from its site the refugees' tents stand (world units): a first guess, tunable */
 const CAMP_OUT = 20;
+/** (loop round 12) the land changed round each point a front reached on its way to the town (cells) */
+const FRONT_WAY_R = 5;
+/** (loop round 12) the fact event a front's end records on the home town (its note: liquid, points reached, a path) */
+export const FRONT_EVENT = 'front-ended';
 /** (loop round 7, LS-67) the site the refugees camp by: the east fields (open, dry; the reeve puts them to work there) */
 const CAMP_SITE: SiteKey = 'fields';
 
@@ -84,6 +88,8 @@ export interface LiveTold {
   at?: readonly [number, number];
   route?: readonly [readonly [number, number], readonly [number, number]];
   burned?: readonly (readonly [number, number])[];
+  /** (loop round 12) a front's points reached along its way, outside the town (world cells) */
+  path?: readonly (readonly [number, number])[];
 }
 /** how a live event came out: its tier, its numbers, and what to tell the player (the outcome's line, then a line a
  *  rule that fired: what, how much, why) */
@@ -1033,6 +1039,8 @@ export class Realm {
     // (the record: this card, at this tier, here — before its outcome, so a rule or a card reading the record sees it)
     this.remember(o, tier);
     this.engine.resolve(id, tier);
+    // (loop round 12) what a front reached is changed whatever the tier: the land under it is the liquid's
+    if (def.hazard?.kind === 'front') this.frontLand(def.hazard, o, how);
     this.sync();
     const oc = outcomesOf(t)[tier] ?? outcomesOf(t).success;
     const title = text(this.engine.ctx(t, o.bind, o.id), t.title);
@@ -1129,6 +1137,24 @@ export class Realm {
    * so — the latest one `cause` recorded (a template records its event before it names this). The mutators write the
    * land and the lots there at once, or when that land next arrives. Nothing bound (a test): the facts stand alone.
    */
+  /**
+   * (loop round 12, docs/design/FRONTS.md) A front's land: its kind (`melted`, `flooded` …) at every point it reached —
+   * in the town, a lot's width round each (the lots there take the kind's condition); on its way, a narrower one. Told
+   * nothing (nothing ran: a test, the bots, a reload), one change round the card's site as wide as the share of points
+   * reached.
+   */
+  private frontLand(hz: LiveFront, o: Offer, how: LiveTold): void {
+    const town = how.burned ?? [];
+    const way = how.path ?? [];
+    const lot = Math.max(4, Math.round(hz.spread / Math.sqrt(hz.points)));
+    for (const cell of town) this.landAt(hz.mutate, o.place, lot, 1, o.id, undefined, cell);
+    for (const cell of way) this.landAt(hz.mutate, o.place, FRONT_WAY_R, 1, o.id, undefined, cell);
+    const n = how.state.burned / Math.max(1, hz.points);
+    if (!town.length && !way.length && n > 0) this.landAt(hz.mutate, o.place, Math.round(hz.spread * Math.sqrt(n)), 1, o.id);
+    // (the record of what it did to the town: the next run's "The world now" tells it — run-packs.ts startLines)
+    this.w.facts.record({ kind: FRONT_EVENT, by: [], to: [this.home], about: { opp: o.id }, note: JSON.stringify({ liquid: hz.liquid, reached: how.state.burned, path: way.length > 0 || how.state.burned > 0 }) });
+  }
+
   private landAt(kind: PhysicalKind, site: EntityId, radius: number, strength: number, cause: string, spot?: Spot, cell?: readonly [number, number]): void {
     if (!mutators.ready) return;
     const ev = this.w.facts.events().filter((e) => e.about?.opp === cause || e.id === cause).at(-1);

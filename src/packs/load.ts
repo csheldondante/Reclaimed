@@ -18,7 +18,7 @@ import { placeState, placeStates } from '../mutate/facts';
 import { helper as dslHelper } from '../living/dsl';
 import { setStance, stanceOf, type Stance } from '../living/stance';
 import { LAW_ENDED, type BetweenDef } from '../season/realm-between';
-import { checkPack, reportText, siteOf, GOODS, PEOPLE, type Pack, type PackAbility, type PackCard, type PackCond, type PackEffect, type PackEvent, type PackLeader, type PackTag, type PackThing, type Problem } from './check';
+import { checkPack, reportText, siteOf, FRONT_DEFAULTS, GOODS, PEOPLE, type Pack, type PackAbility, type PackCard, type PackCond, type PackEffect, type PackEvent, type PackLeader, type PackTag, type PackThing, type Problem } from './check';
 
 const POOL_WORD: Record<string, string> = { magic: 'Magic', might: 'Might', labor: 'Labor', materials: 'Materials', intel: 'Intel', unrest: 'Unrest' };
 const LAND_WORD: Record<string, string> = { flooded: 'is flooded', burned: 'burns', melted: 'goes under lava', buried: 'is buried', dried: 'dries up', withered: 'withers', greened: 'grows over, thick and green' };
@@ -32,15 +32,27 @@ const FOR_GOOD_SEASONS = 10000;
 /** the tag only a pack's thing itself carries (never lent, never shown): its upkeep rule reads it */
 export const IS = 'is:';
 const isTag = (thing: string): string => `${IS}${thing}`;
+/** (loop round 12) how long a shield stands when its ability says no `seconds` */
+export const SHIELD_SECONDS = 60;
+/** what a cast of a pack ability does to a live event */
+export interface PackMech {
+  kills?: number;
+  douses?: number;
+  berserk?: number;
+  hides?: number;
+  /** (loop round 12) a shield's radius (paces) and its seconds */
+  shield?: number;
+  seconds?: number;
+}
 /** what a cast of each pack ability does to a live event (as living/live.ts SPELL_MECH for the spells) */
-export function packMech(packs: readonly LoadedPack[]): Record<string, { kills?: number; douses?: number; berserk?: number; hides?: number }> {
+export function packMech(packs: readonly LoadedPack[]): Record<string, PackMech> {
   return Object.fromEntries(
     packs
       .flatMap((p) => p.abilities)
       .filter((a) => !!a.in_event)
       .map((a) => {
         const e = a.in_event!;
-        return [a.id, { ...(e.kills ? { kills: e.kills } : {}), ...(e.douses ? { douses: e.douses } : {}), ...(e.berserk ? { berserk: e.berserk } : {}), ...(e.hides ? { hides: e.hides } : {}) }];
+        return [a.id, { ...(e.kills ? { kills: e.kills } : {}), ...(e.douses ? { douses: e.douses } : {}), ...(e.berserk ? { berserk: e.berserk } : {}), ...(e.hides ? { hides: e.hides } : {}), ...(e.shield ? { shield: e.shield, seconds: e.seconds ?? SHIELD_SECONDS } : {}) }];
       }),
   );
 }
@@ -639,6 +651,17 @@ const UNIT_KIND: Record<string, { kind: string; side: 'town' | 'foe' | 'folk' }>
  *  Seen at 18: figures ~25 px, a person had to look for them */
 const PACK_EVENT_ZOOM = 24;
 const PACK_FIGHT_ZOOM = 34;
+/** (loop round 12) a front's camera (px a cell): the town's width (~70 cells) across a 412 px phone */
+const FRONT_ZOOM = 6;
+const isFront = (e: PackEvent): boolean => e.hazard?.kind === 'lava' || e.hazard?.kind === 'flood';
+/** a pack's hazard as the engine's: a fire at the event's place, or (loop round 12) a front poured uphill of it */
+function hazardOf(h: NonNullable<PackEvent['hazard']>): NonNullable<LiveDef['hazard']> {
+  if (h.kind === 'fire') return { kind: 'fire', at: { site: 'here' }, points: h.points, spread: h.spread, radius: 2.5, intensity: 0.9 };
+  if (h.kind !== 'lava' && h.kind !== 'flood') throw new Error(`pack: no hazard "${h.kind}"`);
+  const lava = h.kind === 'lava';
+  return { kind: 'front', liquid: lava ? 'lava' : 'water', at: { site: 'here' }, far: h.far ?? FRONT_DEFAULTS.far, rate: h.rate ?? FRONT_DEFAULTS.rate, pour: h.pour ?? FRONT_DEFAULTS.pour, points: h.points, spread: h.spread, mutate: lava ? 'melted' : 'flooded' };
+}
+
 /** a pack's event as the engine's LiveDef (living/live.ts): played at the site of the card that starts it */
 export function liveDef(e: PackEvent): LiveDef {
   const groups: LiveDef['groups'] = (e.groups ?? []).map((g, i) => ({
@@ -660,11 +683,11 @@ export function liveDef(e: PackEvent): LiveDef {
     how: e.how,
     line: e.how,
     groups,
-    ...(e.hazard ? { hazard: { kind: 'fire' as const, at: { site: 'here' }, points: e.hazard.points, spread: e.hazard.spread, radius: 2.5, intensity: 0.9 } } : {}),
+    ...(e.hazard ? { hazard: hazardOf(e.hazard) } : {}),
     // (loop round 11, LS-104: the camera after the event's people — its foes, else whoever goes somewhere — close enough
     // that a figure reads at phone size, closer still once they fight; its site until they are there. A hazard alone
     // stays on its site)
-    camera: { at: { site: 'here' }, ...(foe ?? goer ? { follow: (foe ?? goer)!.tags[0] } : {}), ...(foe && mine ? { with: mine.tags[0] } : {}), zoom: foe ?? goer ? PACK_EVENT_ZOOM : 10, ...(foe ? { fightZoom: PACK_FIGHT_ZOOM } : {}) },
+    camera: { at: { site: 'here' }, ...(foe ?? goer ? { follow: (foe ?? goer)!.tags[0] } : {}), ...(foe && mine ? { with: mine.tags[0] } : {}), zoom: foe ?? goer ? PACK_EVENT_ZOOM : isFront(e) ? FRONT_ZOOM : 10, ...(foe ? { fightZoom: PACK_FIGHT_ZOOM } : {}) },
     ...(e.seconds !== undefined ? { seconds: e.seconds } : {}),
     spells: (e.abilities ?? []).map((a) => BASE_SPELL[a] ?? a),
     ends: e.hazard ? [{ when: 'out', after: 20 }] : foe ? [{ when: 'none', tag: foe.tags[0] }] : goer ? [{ when: 'arrived', group: goer.id }] : [],
@@ -672,6 +695,7 @@ export function liveDef(e: PackEvent): LiveDef {
       const m = /^(alive|dead):(.+)$/.exec(a);
       if (m) return { as: a, count: m[1] as 'alive' | 'dead', tag: m[2] };
       if (a === 'burned') return { as: a, read: 'burned' as const };
+      if (a === 'reached') return { as: a, read: 'reached' as const };
       if (a === 'crowd') return { as: a, count: 'arrived' as const, tag: 'crowd' };
       return { as: a, value: 0 };
     }),

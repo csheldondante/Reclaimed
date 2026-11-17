@@ -83,10 +83,27 @@ struct LiquidU {
   springs: array<vec4<f32>, 8>,
   // per chunk, this step only: a frozen chunk's flux rescaled by its supply (src/flow/steady.ts; 1 none, 0 dried up)
   scale: array<vec4<f32>, 512>,
-  // x the ticks prep's spray stands for (1; PREP_IDLE while idle: src/flow/liquid.ts encode)
+  // x the ticks prep's spray stands for (1; PREP_IDLE while idle: src/flow/liquid.ts encode); y (loop round 12) the
+  // cooling's factor (1: as it cools; more: `quench`)
   extra: vec4<f32>,
+  // (loop round 12) shields: x, y (window world units), radius (a radius of 0: none). A column whose centre lies within
+  // one is a wall to the liquid — nothing flows into it (flux, falling streams), from outside or within — so a front
+  // parts round it (src/flow/liquid.ts
+  // LiquidSystem.shields; the spell's owner: src/api/shields.ts)
+  shields: array<vec4<f32>, 4>,
 };
 @group(0) @binding(33) var<uniform> LQ: LiquidU;
+const MAX_SHIELDS: u32 = 4u;
+
+/** (loop round 12) column q stands inside a raised shield: no liquid flows into it */
+fn shielded(q: vec2<i32>) -> bool {
+  let c = cellPos(q);
+  for (var k = 0u; k < MAX_SHIELDS; k++) {
+    let s = LQ.shields[k];
+    if (s.z > 0.0 && distance(c, s.xy) < s.z) { return true; }
+  }
+  return false;
+}
 
 const MAXG: u32 = 6u;
 const NSLOT: u32 = 4u;
@@ -344,6 +361,9 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
           if (rh.on && rh.depth > 0.0) { Hn = max(Hn, g.nat + rh.depth); }
           else if (G.ocean.x <= fz) { code = C_WALL; Hn = H; }
         }
+      } else if (shielded(q)) {
+        // (loop round 12: a shield — no gap open into it, from outside or within: what was inside when it was raised
+        // stays where it lies or drains out, and spreads no further in)
       } else {
         let gq = gapsAt(q);
         // the neighbour's gap open across the run's height: the highest floor under its level
@@ -540,7 +560,7 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
     let q = nbr(p, kx);
     if (!inMap(q)) { way = 7u; }
     // (a wall in the way: it runs down the face, landing here)
-    else if (gapAtZ(gapsAt(q), zx) < 0) { way = 6u; zx = zL; t = tl; }
+    else if (gapAtZ(gapsAt(q), zx) < 0 || shielded(q)) { way = 6u; zx = zL; t = tl; }
   }
   // what crosses this step: none before the front has, then V dt / t (all of it if it crosses within a step)
   var out = 0.0;
@@ -825,7 +845,9 @@ fn publishLava(@builtin(global_invocation_id) id: vec3<u32>) {
     var v = runsOut[i * NSLOT + s];
     var d = v.y;
     if (d <= EPS) { if (s == 0u) { open[i] = 0.0; } continue; }
-    var T = v.z * exp(-DTQ * lqCool() / max(d, 0.15));
+    // (loop round 12: LQ.extra.y, the cooling's factor — 1; more while a front's lava is set after its event: the
+    // season goes on, src/flow/liquid.ts `quench`)
+    var T = v.z * exp(-DTQ * lqCool() * max(LQ.extra.y, 1.0) / max(d, 0.15));
     if (s == 0u) {
       let w = waterB[i];
       if (w > 1e-4 && T > 100.0) {
@@ -838,6 +860,9 @@ fn publishLava(@builtin(global_invocation_id) id: vec3<u32>) {
         }
       }
     }
+    // (loop round 12: lava still to set keeps its chunk from sleeping — counted as change for the steady state, which
+    // otherwise let a still, hot pool sleep and it stayed molten for good: a sleeping chunk does not cool)
+    if (T >= LQ_SET) { atomicAdd(&act[ch * 4u], u32(min(d * 1e4, 1e8))); }
     if (T < LQ_SET) {
       let dz = select(min(d, LAVA_SET_RATE * DTQ), d, d < 0.03);
       d -= dz;

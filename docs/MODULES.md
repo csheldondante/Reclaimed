@@ -52,6 +52,7 @@ The engine's public APIs over a live world (the Sim facade `world.ts`, terrain, 
 - `cutaway.ts` (290) — ---- api/cutaway.ts ----------------------------------------------------------- Keeping what matters in … API: `LayersSource`, `Slice`, `Orbit`, `Dither` +2.
 - `fire.ts` (83) — world.fire (docs/WORLD_API.md): fire, lava and the ground's heat from a CPU mirror; API: `LavaAt`, `Fire`.
 - `fx.ts` (76) — world.fx (docs/WORLD_API.md): particle bursts by name. API: `FxName`, `FxOpts`, `Fx`.
+- `shields.ts` — (loop round 12) world.shields: discs the liquids part round, timed on the sim's clock, drawn as a dome of glows and sparks. API: `Shield`, `Shields`.
 - `map-labels.ts` (28) — ---- api/map-labels.ts -------------------------------------------------------- (round 91, the user: "the … API: `LabelKind`, `MapLabel`, `LabelSource`.
 - `mirror.ts` (448) — A CPU mirror of some world buffers and textures (docs/WORLD_API.md): the world modules answer their … API: `RingPages`, `SourceKind`, `PageAsk`, `PageReader` +3.
 - `plants.ts` (200) — world.plants (docs/WORLD_API.md; API: `TreeSpecies`, `Tree`, `birchWood`, `planTree` +1.

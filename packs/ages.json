@@ -73,6 +73,29 @@
                       { "say": "The wizards go to another court." } ],
       "art": "Robed wizards carrying books up an old tower stair, painterly." },
 
+    { "id": "ages-ward-lesson", "title": "Learn the court's fire ward",
+      "presenter": { "name": "Keeper Ansel", "role": "tower keeper", "at": "site:tower" },
+      "pitch": "The old kings kept a ward against the mountain's fire. I can teach it to you. Cast it over the houses and lava runs round them. 2 Materials.",
+      "appears_when": [ { "has_thing": "ages-court" } ], "weight": 5,
+      "once": true, "offer_seasons": 3,
+      "cost": { "materials": 2 },
+      "if_taken": [ { "unlock": "ages-ward" }, { "say": "You can raise the Fire ward when lava comes." } ],
+      "if_expires": [ { "say": "The keeper locks his book away again." } ],
+      "art": "An old keeper tracing a glowing circle on a tower floor, painterly." },
+
+    { "id": "ages-mountain-stirs", "title": "The mountain spits fire",
+      "presenter": { "name": "Mother Sorrel", "role": "priest", "at": "site:market" },
+      "pitch": "The wizards' first working has cracked the mountain. Lava is coming down toward the town. Ward the houses if you can.",
+      "once": true, "offer_seasons": 1,
+      "live": "ages-lava-front",
+      "if_tier": {
+        "success": [ { "say": "The lava ran round the town and set black in the fields. Every house stands." } ],
+        "cost": [ { "pool": "unrest", "add": 1 }, { "say": "The lava took a few streets before it set." } ],
+        "failure": [ { "pool": "unrest", "add": 2 }, { "say": "The lava ran through the town. Whole streets are under black rock." } ]
+      },
+      "if_expires": [ { "say": "The mountain goes quiet again." } ],
+      "art": "A tongue of lava coming down a hillside toward a walled town at dusk, painterly." },
+
     { "id": "ages-fire-mountain", "title": "The wizards' great working", "threat": true,
       "presenter": { "name": "Mother Sorrel", "role": "priest", "at": "site:shrine" },
       "pitch": "The wizards are waking the mountain to make the kingdom a god. The ground shakes. Break their circle now, whatever it costs.",
@@ -150,7 +173,27 @@
                       { "say": "The diggers say the iron hums at night. Nobody goes." } ],
       "art": "Diggers cutting plates from a giant iron hull, pale figures watching, painterly." }
   ],
+  "abilities": [
+    { "id": "ages-ward", "name": "Fire ward", "cost": { "magic": 1 },
+      "in_event": { "kinds": ["eruption"], "shield": 26, "seconds": 75 },
+      "text": "Cast it over the town. For 75 seconds lava runs round everything within 26 paces of where you cast it.",
+      "look": "a dome of sparks over the houses, and lava parting round it" }
+  ],
+  "events": [
+    { "id": "ages-lava-front", "tag": "eruption", "title": "Lava comes down the mountain",
+      "how": "Lava is running down toward the town. Raise the Fire ward over the houses.",
+      "hazard": { "kind": "lava", "points": 8, "spread": 26, "far": 36, "rate": 220, "pour": 45 },
+      "seconds": 90,
+      "abilities": ["ages-ward"],
+      "amounts": ["reached"],
+      "tiers": [ { "tier": "success", "when": [ { "amount": "reached", "lte": 0 } ] },
+                 { "tier": "cost", "when": [ { "amount": "reached", "lte": 3 } ] },
+                 { "tier": "failure" } ] }
+  ],
   "rules": [
+    { "id": "ages-first-working", "name": "The wizards' first working", "on": "turn",
+      "a": { "tags": ["tower", "ages-wizardry"] }, "effect": { "start": "ages-mountain-stirs" },
+      "why": "the wizards at {a} tried their first working on the mountain" },
     { "id": "ages-royal-tribute", "name": "Tribute to the crown", "on": "turn",
       "a": { "tags": ["vassal", "yours"] }, "b": { "tags": ["ages-royal-seat"] }, "effect": { "pool": "materials", "n": 2 }, "per": "a", "cap": 8,
       "why": "{count} towns of the kingdom send tribute to the court: +{n} Materials" },

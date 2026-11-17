@@ -23,7 +23,7 @@ import { pools, type Pool, type SeasonLedger } from './ledger';
 import { CATALOG } from './catalog';
 import { FIRE_TEMPLATE } from './realm-events';
 import { projectTemplate, siteId, SITES, WORLD_TEMPLATES, type SiteKey } from './realm-templates';
-import { CARD_DONE, CARD_LAPSED, recordOf, type Realm, type RealmOptions } from './realm';
+import { CARD_DONE, CARD_LAPSED, FRONT_EVENT, recordOf, type Realm, type RealmOptions } from './realm';
 
 /** the ids of the base game's cards (a pack's may not clash with them; table/game.ts baseCards) */
 const baseCards = (): string[] => [...CATALOG.map(projectTemplate).filter((t) => t !== null).map((t) => t!.id), ...WORLD_TEMPLATES.map((t) => t.id), FIRE_TEMPLATE.id];
@@ -301,6 +301,13 @@ export function startLines(r: Realm, packs: readonly LoadedPack[], played: reado
   const ruins = SITES.filter((s) => r.things().find((t) => t.id === siteId(home, s.key))?.tags.includes('ruined')).length;
   const signs = ['ashfall', 'darkness', 'deadrise', 'crime'].filter((k) => !!w.facts.tag(home, 'condition', k)?.value);
   out.push(TW.worldState({ far: far.length, destroyed: count('destroyed') + count('abandoned'), yours: far.filter((t) => t.tags.includes('yours') && t.tags.includes('standing')).length, held: far.filter((t) => !t.tags.includes('yours') && t.tags.includes('standing')).length, ruins, of: SITES.length, signs }));
+  // (loop round 12: what fronts of earlier runs left on this town)
+  for (const e of w.facts.events({ kind: FRONT_EVENT })) {
+    if (e.turn > t0 || !e.to.includes(home)) continue;
+    const n = runs.filter((x) => x.turn <= e.turn).length;
+    const f = JSON.parse(e.note) as { liquid: string; reached: number; path: boolean };
+    out.push(TW.frontLeft(n, f.liquid, f.reached, f.path));
+  }
   const after = lawLines(r).filter((l) => l.until === TW.LAW_AFTER).map((l) => l.name);
   if (after.length) out.push(TW.worldLaws([...new Set(after)]));
   const opened = openedLines(r).filter((x) => x.turn <= t0);

@@ -26,6 +26,9 @@ import { cellAt } from '../../world/lattice';
 import { MAT } from '../../world/materials';
 import type { LevelScene } from '../level';
 import { REGION } from '../streamer/defs';
+import type { Spring } from '../../flow/liquid';
+import { EventKind } from '../../sim/globals';
+import type { LiveFront } from '../../living/live';
 
 /** the window slides when the camera comes within this many regions of its edge (scenes/streamer.ts update): the
  *  cells round the camera's target the window is sure to hold are half the window less that; and the margin kept
@@ -107,6 +110,8 @@ export interface LiveRun {
   entry: { road: number; tried: number; direct: boolean; step: 'look' | 'settle' | 'called' | 'in' | 'none'; calm: number } | null;
   /** the fire's stalls (before they are lit: every spot tried; `picking` while the ground under them is read) */
   hazard: { points: { at: [number, number]; alightFor: number; alight: boolean; burned: boolean }[]; lit: boolean; picking: boolean; read: number; told?: boolean } | null;
+  /** (loop round 12) a front: its source, its points in the town and along its way, its spring while it pours */
+  front: Front | null;
   casts: Record<string, number>;
   absent: Record<string, number>;
   fighting: boolean;
@@ -120,6 +125,43 @@ export interface LiveRun {
   /** (round 7) seconds into its finale (LiveDef.finale); undefined: not begun */
   finale?: number;
 }
+
+/** (loop round 12, docs/design/FRONTS.md) a point a front may reach: its window point, the depth read there first (a
+ *  river's water is not a flood), and whether the front has reached it */
+interface FrontPoint {
+  at: [number, number];
+  base: number | null;
+  reached: boolean;
+}
+interface Front {
+  /** the target's window point, and the source's (null until the ground round the target has been read) */
+  target: [number, number];
+  src: [number, number, number] | null;
+  picking: boolean;
+  /** the town's points (the result), and points along the way from the source (the camera's head, the land changed) */
+  points: FrontPoint[];
+  way: FrontPoint[];
+  /** the spring poured into the liquid (removed when the pour is over or the event closes) */
+  spring: Spring | null;
+  read: number;
+  awake: number;
+}
+
+/** (loop round 12) a front's reads: seconds between them; the depth over a point's first that is the front there; the
+ *  points along its way; the seconds it keeps running after the pour stops (the event's `out` waits for them); the
+ *  chunks kept awake round its way (cells), and how long each touch keeps them (s) */
+const FRONT_READ = 2;
+const FRONT_DEPTH = { lava: 0.15, water: 0.3 };
+const FRONT_WAY = 10;
+const FRONT_SETTLE = 15;
+const FRONT_AWAKE_R = 18;
+const FRONT_AWAKE_S = 3;
+/** the ways round the target the source is looked for on */
+const FRONT_WAYS = 16;
+/** (loop round 12) once a lava front's event is over: its way kept awake this many seconds more while its lava cools
+ *  this many times faster and sets (a pool 4 cells deep otherwise glows ~100 s, and in a sleeping chunk for good) */
+const FRONT_SET_S = 20;
+const FRONT_QUENCH = 25;
 
 /** (round 7) an event's people walking off after it is over: let go when the seconds are up */
 interface Leaving {
@@ -155,6 +197,8 @@ export class LiveRunner {
   private ofUnit = new Map<number, [LiveRun, RunGroup]>();
   /** (round 7) people of events that are over, walking off */
   private leaving: Leaving[] = [];
+  /** (loop round 12) lava fronts whose events are over, setting: their way kept awake, the lava's cooling quickened */
+  private setting: { f: Front; left: number; awake: number }[] = [];
 
   constructor(private h: LiveHost) {}
 
@@ -232,7 +276,7 @@ export class LiveRunner {
    *  going, the player taken there */
   start(o: Offer, def: LiveDef, site: SiteKey | null): LiveRun {
     this.hook();
-    const run: LiveRun = { id: o.id, template: o.template, def, site, t: 0, groups: new Map(), entry: null, hazard: null, casts: {}, absent: {}, fighting: false, unwatch: [], from: null, last: null, fx: 0, over: false };
+    const run: LiveRun = { id: o.id, template: o.template, def, site, t: 0, groups: new Map(), entry: null, hazard: null, front: null, casts: {}, absent: {}, fighting: false, unwatch: [], from: null, last: null, fx: 0, over: false };
     const numbers = this.h.realm()!.runNumbers();
     const units = this.h.scene.units!;
     const forces = this.h.scene.townForces!;
@@ -272,7 +316,8 @@ export class LiveRunner {
         run.entry ??= { road: -1, tried: 0, direct: false, step: 'none', calm: 0 };
       } else this.make(run, rg, n, this.ref(g.from, 0), 0);
     }
-    if (def.hazard) {
+    if (def.hazard?.kind === 'front') this.startFront(run, def.hazard);
+    else if (def.hazard) {
       const c = this.point(run, def.hazard.at) ?? this.h.town()!.centreInWindow();
       const hz = def.hazard;
       const terrain = this.api.terrain;
@@ -298,8 +343,152 @@ export class LiveRunner {
     // (the road that took the last column is tried first: a road whose spawn point is in water stays so)
     if (run.entry && this.roadTaken > 0) run.entry.road = this.roadTaken - 1;
     if (run.entry) this.nextRoad(run);
-    console.log(`[live] ${run.template} begun: ${[...run.groups.values()].map((g) => `${g.def.id} ${g.made}`).join(', ')}${run.hazard ? `, fire at ${run.hazard.points.length} spots` : ''}`);
+    console.log(`[live] ${run.template} begun: ${[...run.groups.values()].map((g) => `${g.def.id} ${g.made}`).join(', ')}${run.hazard ? `, fire at ${run.hazard.points.length} spots` : ''}${run.front ? `, a ${run.def.hazard!.kind === 'front' ? (run.def.hazard as LiveFront).liquid : ''} front on ${run.front.points.length} points` : ''}`);
     return run;
+  }
+
+  // ---- a front (loop round 12, docs/design/FRONTS.md) ------------------------------------------------------------------
+
+  /**
+   * A front set going: its points round the target (the town's, as a fire's stalls are placed) and the ground round the
+   * target read once — the highest of FRONT_WAYS points `far` cells out is the source, uphill of the town (FIXED-CITY: the
+   * target is a place of the live town; BACKLOG LS-121: a CPU read of 16 heights, not a GPU pass). The spring is poured
+   * there; the liquid runs down the ground as it lies.
+   */
+  private startFront(run: LiveRun, hz: LiveFront): void {
+    const c = this.point(run, hz.at) ?? this.h.town()!.centreInWindow();
+    const target: [number, number] = [c[0], c[1]];
+    const points: FrontPoint[] = Array.from({ length: hz.points }, (_, k) => {
+      const a = (k / hz.points) * Math.PI * 2 + 0.4;
+      // (within 0.9 of the spread: a shield as wide as the spread, cast on the target, covers every point)
+      const r = hz.spread * (0.3 + (0.6 * ((k * 7) % 4)) / 3);
+      return { at: [c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r], base: null, reached: false };
+    });
+    const f: Front = { target, src: null, picking: true, points, way: [], spring: null, read: 0, awake: 0 };
+    run.front = f;
+    const terrain = this.api.terrain;
+    const R = hz.far + 4;
+    void terrain.load(c[0] - R, c[1] - R, c[0] + R, c[1] + R).then(
+      () => {
+        if (run.over) return;
+        let best: [number, number, number] | null = null;
+        for (let k = 0; k < FRONT_WAYS; k++) {
+          const a = (k / FRONT_WAYS) * Math.PI * 2;
+          const x = f.target[0] + Math.cos(a) * hz.far;
+          const y = f.target[1] + Math.sin(a) * hz.far;
+          if (!terrain.inWindow(x, y)) continue;
+          const z = terrain.surfaceAt(x, y)?.z;
+          if (z !== undefined && (!best || z > best[2])) best = [x, y, z];
+        }
+        f.picking = false;
+        if (!best) {
+          console.error(`[live] ${run.template}: no ground ${hz.far} cells round the target was read; the front has no source`);
+          return;
+        }
+        f.src = best;
+        for (let k = 1; k <= FRONT_WAY; k++) {
+          const t = k / (FRONT_WAY + 1);
+          f.way.push({ at: [best[0] + (f.target[0] - best[0]) * t, best[1] + (f.target[1] - best[1]) * t], base: null, reached: false });
+        }
+        const L = this.h.scene.core.flow[hz.liquid];
+        L.addSpring(best[0], best[1], best[2] + 1, hz.rate);
+        f.spring = L.springs[L.springs.length - 1];
+        this.wakeFront(f);
+        console.log(`[live] ${run.template}: ${hz.liquid} poured at ${best.map((v) => v.toFixed(0)).join(', ')} (${hz.far} cells from the target, the highest of ${FRONT_WAYS} ways; the target's ground ${(terrain.surfaceAt(f.target[0], f.target[1])?.z ?? NaN).toFixed(1)}), ${hz.rate} a second for ${hz.pour} s`);
+        if (this.focus === run) this.lookFront(run);
+      },
+      (e) => console.error(`[live] ${run.template}: the ground round its target could not be read: ${e}`),
+    );
+  }
+
+  /** the chunks between the front's source and its target kept awake (sleeping chunks freeze liquid, and the hybrid
+   *  wakes only chunks an event has touched: hybrid.edit) */
+  private wakeFront(f: Front): void {
+    if (!f.src) return;
+    const scene = this.h.scene;
+    const now = performance.now() / 1000;
+    const along = [[f.src[0], f.src[1]] as [number, number], ...f.way.map((p) => p.at), f.target];
+    for (const [x, y] of along) {
+      scene.hybrid?.edit(x, y, FRONT_AWAKE_R, EventKind.Ripple);
+      scene.sleep?.wake(x, y, FRONT_AWAKE_R, FRONT_AWAKE_S, now);
+    }
+  }
+
+  /** where a front is: its head (the farthest point along its way it has reached), the source before it reaches any */
+  private frontAt(f: Front): [number, number] | null {
+    if (!f.src) return null;
+    const head = [...f.way].reverse().find((p) => p.reached);
+    const at: [number, number] = head ? head.at : [f.src[0], f.src[1]];
+    // (a shield raised, or the town reached: the town as the front meets it — halfway between the head and the target)
+    if (f.points.some((p) => p.reached) || this.h.scene.worldApi?.shields?.list.length) return [(at[0] + f.target[0]) / 2, (at[1] + f.target[1]) / 2];
+    return at;
+  }
+
+  /** the camera on the front: its source as it opens, its head as it comes, the town once it is there */
+  private lookFront(run: LiveRun): void {
+    const at = run.front && this.frontAt(run.front);
+    if (!at) return;
+    void this.h.cam.look([at[0], at[1], this.h.z(at[0], at[1])], { zoom: run.def.camera.zoom, ease: 1.2, place: [0.5, 0.4] }).then(() => {
+      if (this.focus !== run || run.over) return;
+      this.h.cam.follow(() => {
+        const p = run.front && this.frontAt(run.front);
+        return p ? [p[0], p[1], this.h.z(p[0], p[1])] : null;
+      });
+    });
+  }
+
+  /** a front each frame: the pour stopped when its seconds are up, its way kept awake, its points read */
+  private front(run: LiveRun, dt: number): void {
+    const f = run.front;
+    const hz = run.def.hazard;
+    if (!f || !f.src || hz?.kind !== 'front') return;
+    if (f.spring && run.t >= hz.pour) this.stopPour(run);
+    if ((f.awake -= dt) <= 0 && run.t < hz.pour + FRONT_SETTLE) {
+      f.awake = 1;
+      this.wakeFront(f);
+    }
+    if ((f.read += dt) < FRONT_READ) return;
+    f.read = 0;
+    const api = this.h.scene.worldApi;
+    const depthAt = hz.liquid === 'lava' ? (x: number, y: number) => api?.fire?.flowLavaAt(x, y) ?? null : (x: number, y: number) => api?.water?.depthAt(x, y) ?? null;
+    let fresh = 0;
+    for (const p of [...f.points, ...f.way]) {
+      // (the page holding the point is asked for and read a frame later: this is the value of the read before)
+      const d = depthAt(p.at[0], p.at[1]);
+      if (d === null) continue;
+      if (p.base === null) p.base = d;
+      if (!p.reached && d - p.base > FRONT_DEPTH[hz.liquid]) {
+        p.reached = true;
+        fresh++;
+      }
+    }
+    if (fresh) console.log(`[live] ${run.template}: the front reached ${f.points.filter((p) => p.reached).length} of ${f.points.length} points in the town, ${f.way.filter((p) => p.reached).length} of ${f.way.length} on its way (t ${run.t.toFixed(0)} s)`);
+  }
+
+  /** (loop round 12) lava fronts over: their way kept awake while their lava sets, quickly (FRONT_SET_S, FRONT_QUENCH) */
+  private setFronts(dt: number): void {
+    for (const s of [...this.setting]) {
+      if ((s.left -= dt) <= 0) {
+        this.setting.splice(this.setting.indexOf(s), 1);
+        continue;
+      }
+      if ((s.awake -= dt) <= 0) {
+        s.awake = 1;
+        this.wakeFront(s.f);
+      }
+    }
+    this.h.scene.core.flow.lava.quench = this.setting.length ? FRONT_QUENCH : 1;
+  }
+
+  private stopPour(run: LiveRun): void {
+    const f = run.front;
+    const hz = run.def.hazard;
+    if (!f?.spring || hz?.kind !== 'front') return;
+    const L = this.h.scene.core.flow[hz.liquid];
+    const k = L.springs.indexOf(f.spring);
+    if (k >= 0) L.springs.splice(k, 1);
+    f.spring = null;
+    console.log(`[live] ${run.template}: the pour is over (${run.t.toFixed(0)} s)`);
   }
 
   /** a group made at a place of the town and sent on its order */
@@ -387,8 +576,26 @@ export class LiveRunner {
    * its reading on other ground), and where its marchers started and were last seen.
    */
   shift(dx: number, dy: number, dz: number): void {
+    for (const s of this.setting) {
+      const f = s.f;
+      for (const p of f.way) p.at = [p.at[0] - dx, p.at[1] - dy];
+      f.target = [f.target[0] - dx, f.target[1] - dy];
+      if (f.src) f.src = [f.src[0] - dx, f.src[1] - dy, f.src[2] - dz];
+    }
     for (const run of this.runs) {
       for (const p of run.hazard?.points ?? []) p.at = [p.at[0] - dx, p.at[1] - dy];
+      const f = run.front;
+      if (f) {
+        for (const p of [...f.points, ...f.way]) p.at = [p.at[0] - dx, p.at[1] - dy];
+        f.target = [f.target[0] - dx, f.target[1] - dy];
+        if (f.src) f.src = [f.src[0] - dx, f.src[1] - dy, f.src[2] - dz];
+        // (the spring is the liquid's, in window points too)
+        if (f.spring) {
+          f.spring.x -= dx;
+          f.spring.y -= dy;
+          f.spring.z -= dz;
+        }
+      }
       if (run.from) run.from = [run.from[0] - dx, run.from[1] - dy, run.from[2] - dz];
       if (run.last) run.last = [run.last[0] - dx, run.last[1] - dy, run.last[2] - dz];
     }
@@ -400,7 +607,8 @@ export class LiveRunner {
     if (!this.focus) this.pitch0 = this.h.scene.core.camera.elevation;
     this.focus = run;
     const at = this.where(run);
-    if (at && (!run.entry || run.entry.step === 'in')) void this.h.cam.look(at, { zoom: run.def.camera.zoom, ease: 1.2, place: [0.5, 0.36] }).then(() => this.follow(run));
+    if (run.front) this.lookFront(run);
+    else if (at && (!run.entry || run.entry.step === 'in')) void this.h.cam.look(at, { zoom: run.def.camera.zoom, ease: 1.2, place: [0.5, 0.36] }).then(() => this.follow(run));
     void this.h.cam.release(0.2);
     this.h.changed();
   }
@@ -452,6 +660,8 @@ export class LiveRunner {
 
   /** where an event is (a window point): the middle of what its camera follows, else its place */
   where(run: LiveRun): V3 | null {
+    const fa = run.front && this.frontAt(run.front);
+    if (fa) return [fa[0], fa[1], this.h.z(fa[0], fa[1])];
     const m = this.framed(run);
     if (m) return m;
     const p = (run.def.camera.at ? this.point(run, run.def.camera.at) : null) ?? (run.site ? this.h.spot(run.site) : null);
@@ -612,6 +822,12 @@ export class LiveRunner {
         groups[id] = { tags: g.def.tags, made: n, alive: n, dead: 0, arrived: false };
       } else groups[id] = { tags: g.def.tags, made: g.made, alive: g.units.size, dead: g.dead, arrived: g.arrived };
     }
+    const f = run.front;
+    if (f) {
+      // (a front: its town points reached are what it took; it is "alight" while it pours and settles after — LiveEnd 'out')
+      const hz = run.def.hazard as LiveFront;
+      return { t: run.t, groups, points: f.points.length, burned: f.points.filter((p) => p.reached).length, alight: f.picking || run.t < hz.pour + FRONT_SETTLE ? 1 : 0, casts: { ...run.casts }, absent: { ...run.absent }, fighting: run.fighting };
+    }
     const pts = run.hazard?.points ?? [];
     return { t: run.t, groups, points: pts.length, burned: pts.filter((p) => p.burned).length, alight: pts.filter((p) => p.alight && !p.burned).length, casts: { ...run.casts }, absent: { ...run.absent }, fighting: run.fighting };
   }
@@ -634,6 +850,8 @@ export class LiveRunner {
       ...(at ? { at: cell(at) } : {}),
       ...(run.from && run.last ? { route: [cell(run.from), cell(run.last)] as const } : {}),
       ...(run.hazard ? { burned: run.hazard.points.filter((p) => p.burned).map((p) => cell(p.at)) } : {}),
+      // (loop round 12: a front's reached points — in the town, and along its way — as world cells: the land it changed)
+      ...(run.front ? { burned: run.front.points.filter((p) => p.reached).map((p) => cell(p.at)), path: run.front.way.filter((p) => p.reached).map((p) => cell(p.at)) } : {}),
     };
   }
 
@@ -655,6 +873,7 @@ export class LiveRunner {
         run.absent[e.tag] = !there || Object.values(s.groups).some((g) => g.tags.includes(e.tag) && g.alive > 0) ? 0 : (run.absent[e.tag] ?? 0) + dt;
       }
       this.hazard(run, dt);
+      this.front(run, dt);
       const f = run.def.camera.follow;
       const m = f ? this.mid(run, f) : null;
       if (m) run.last = m;
@@ -688,6 +907,7 @@ export class LiveRunner {
       }
     }
     this.walkOff(dt);
+    this.setFronts(dt);
     const run = this.focus;
     if (run && !run.over && !this.h.cam.busy && (!run.entry || run.entry.step === 'in')) {
       const cam = scene.core.camera;
@@ -721,7 +941,7 @@ export class LiveRunner {
   private hazard(run: LiveRun, dt: number): void {
     const hz = run.hazard;
     const def = run.def.hazard;
-    if (!hz || !def) return;
+    if (!hz || !def || def.kind !== 'fire') return;
     const fire = this.api.fire;
     const terrain = this.api.terrain;
     if (!hz.lit && !hz.picking && run.t >= LIGHT_AFTER) {
@@ -781,6 +1001,8 @@ export class LiveRunner {
    */
   close(run: LiveRun): V3 | null {
     const at = this.where(run);
+    this.stopPour(run);
+    if (run.front && run.def.hazard?.kind === 'front' && run.def.hazard.liquid === 'lava') this.setting.push({ f: run.front, left: FRONT_SET_S, awake: 0 });
     run.over = true;
     const forces = this.h.scene.townForces;
     const units = this.h.scene.units;

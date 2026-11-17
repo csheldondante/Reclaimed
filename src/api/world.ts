@@ -20,6 +20,7 @@ import { Fire } from './fire';
 import { Agents, type KindSpec } from '../agents/agents';
 import { installAgents } from '../agents/install';
 import { Fx } from './fx';
+import { Shields } from './shields';
 import { Plants } from './plants';
 import { FloraWorld } from '../flora';
 import type { Flora } from './contracts/flora';
@@ -109,6 +110,8 @@ export interface Sim {
   readonly fire?: Fire;
   readonly wind?: Wind;
   readonly fx?: Fx;
+  /** (loop round 12) shields the liquids part round (api/shields.ts; with the fx module) */
+  readonly shields?: Shields;
   readonly agents?: Agents;
   /**
    * The town (round 65, build/town.ts): blocks on Townscaper's irregular
@@ -176,6 +179,14 @@ export function attachSim(core: WorldCore, mods: SimModules = SIM_ALL, warm?: Wa
   const plants = mods.plants && terrain ? new Plants(core, mirror, terrain) : undefined;
   const agents = mods.agents ? (core.sim.systems.find((s): s is Agents => s instanceof Agents) ?? installAgents(core)) : undefined;
   let town: Town | undefined;
+  const fx = mods.fx ? new Fx(core) : undefined;
+  // (loop round 12) shields run on the sim's clock — a tick's update before its systems encode, so the liquids step with
+  // this tick's discs — and move with the window's slides
+  const shields = fx ? new Shields(core.flow, fx, (b) => core.sim.particles.burst(b)) : undefined;
+  if (shields) {
+    core.sim.eventTaps.push(() => shields.update(core.globals.dt));
+    core.onShift.push((dx, dy, dz) => shields.shift(dx, dy, dz));
+  }
   const sim = {
     warmup: (opts: WarmupOpts) => warmup(core, mirror, opts),
     ready: warm ? warmup(core, mirror, warm) : Promise.resolve(),
@@ -186,7 +197,8 @@ export function attachSim(core: WorldCore, mods: SimModules = SIM_ALL, warm?: Wa
     water: mods.water ? new Water(core, mirror) : undefined,
     fire: mods.fire ? new Fire(core, mirror) : undefined,
     wind: mods.wind ? new Wind(core, mirror) : undefined,
-    fx: mods.fx ? new Fx(core) : undefined,
+    fx,
+    shields,
     // (a scene may have installed them already: the level does)
     agents,
     /** A work crew (round 63, docs/AGENTS.md "Crews"): workers dig or fell and carry it to a pile. Call `update(units)` each frame after a sync. */

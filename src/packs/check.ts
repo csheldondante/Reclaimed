@@ -171,7 +171,8 @@ export interface PackEvent {
   /** not used: an event plays at the place of the card that starts it */
   where?: string;
   groups?: { who: string; count: number | string; tags: string[]; from: string; order?: string; formation?: string; to?: string }[];
-  hazard?: { kind: string; points: number; spread: number };
+  /** (loop round 12) a front's `far` (how far uphill its source is), `rate` and `pour` (seconds) */
+  hazard?: { kind: string; points: number; spread: number; far?: number; rate?: number; pour?: number };
   seconds?: number;
   abilities?: string[];
   amounts: string[];
@@ -186,7 +187,9 @@ export interface PackAbility {
   /** cast into a live event of one of these kinds: each cast puts down so many foes, or puts out so many burning lots */
   /** (loop round 10, LS-94) or turns the foes within `berserk` paces of the tap on anyone near, one another too; or
    *  hides your people within `hides` paces (no foe goes for them; they are not seen) */
-  in_event?: { kinds: string[]; kills?: number; douses?: number; berserk?: number; hides?: number };
+  /** (loop round 12) or raises a shield `shield` paces wide round the tap for `seconds`: lava and flood water flow
+   *  round it */
+  in_event?: { kinds: string[]; kills?: number; douses?: number; berserk?: number; hides?: number; shield?: number; seconds?: number };
   text: string;
   look?: string;
 }
@@ -270,7 +273,13 @@ export const FAR_STATES: readonly string[] = ['standing', 'destroyed', 'abandone
 export const LIVE_KINDS: readonly string[] = ['raid', 'parade', 'fire', 'rising', 'refugees'];
 /** abilities that do something when cast into a live event (living/live.ts SPELL_MECH) */
 export const EVENT_ABILITIES: readonly string[] = ['fire', 'heat-ray', 'rain'];
-export const AMOUNTS: readonly string[] = ['crowd', 'stopped', 'burned'];
+export const AMOUNTS: readonly string[] = ['crowd', 'stopped', 'burned', 'reached'];
+/** (loop round 12, docs/design/FRONTS.md) the hazards an event may set going: a fire at the event's place, or a front —
+ *  lava or flood water poured uphill of the event's place, running down the ground to it */
+export const HAZARD_KINDS: readonly string[] = ['fire', 'lava', 'flood'];
+/** a front's defaults (cells, cells³ a second, seconds): what reached Muru's market across its flat valley in round 12
+ *  (lava has a yield: 90 cells out at 40 a second it piled by its vent; 45 out at 300 a second it went ~27 cells) */
+export const FRONT_DEFAULTS = { far: 36, rate: 220, pour: 45 };
 /** the numbers each of the base game's live events has (season/realm-events.ts), which a rule on that kind may name */
 export const LIVE_AMOUNTS: Record<string, readonly string[]> = {
   raid: ['raiders', 'alive', 'soldiers', 'fallen', 'stopped'],
@@ -781,7 +790,8 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     for (const a of amounts) {
       const m = /^(alive|dead):(.+)$/.exec(a);
       if (m ? !groupTags.has(m[2]) : !AMOUNTS.includes(a)) err(w, `Unknown amount "${a}". The amounts are ${AMOUNTS.join(', ')}, "alive:<group tag>" and "dead:<group tag>" for a tag one of its groups has.`);
-      if (a === 'burned' && !e.hazard) err(w, 'The amount "burned" needs a "hazard" of kind "fire".');
+      if (a === 'burned' && e.hazard?.kind !== 'fire') err(w, 'The amount "burned" needs a "hazard" of kind "fire".');
+      if (a === 'reached' && !['lava', 'flood'].includes(e.hazard?.kind ?? '')) err(w, 'The amount "reached" needs a "hazard" of kind "lava" or "flood".');
       if (a === 'crowd' && !groupTags.has('crowd')) err(w, 'The amount "crowd" counts the people of groups tagged "crowd" who arrive. Give a group the tag "crowd" and the order "go".');
     }
     for (const g of e.groups ?? []) {
@@ -792,7 +802,14 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       if (g.formation !== undefined && !['column', 'line', 'loose'].includes(g.formation)) err(w, `Unknown formation "${g.formation}". The formations are column, line, loose.`);
       for (const k of ['from', 'to'] as const) if (g[k] !== undefined && !['gate', 'road', 'event'].includes(g[k]!) && !siteOf(g[k])) err(w, `A group's "${k}" is a site ("site:<name>"), "gate", "road" or "event". It is ${JSON.stringify(g[k])}.`);
     }
-    if (e.hazard && e.hazard.kind !== 'fire') err(w, `The hazard "${e.hazard.kind}" is not supported yet. Only "fire" exists.`);
+    if (e.hazard && !HAZARD_KINDS.includes(e.hazard.kind)) err(w, `The hazard "${e.hazard.kind}" is not supported yet. The hazards are ${HAZARD_KINDS.join(', ')}.`);
+    if (e.hazard && (!Number.isInteger(e.hazard.points) || e.hazard.points < 1)) err(w, 'A hazard\'s "points" is a whole number, 1 or more.');
+    if (e.hazard && (e.hazard.kind === 'lava' || e.hazard.kind === 'flood')) {
+      const far = e.hazard.far ?? FRONT_DEFAULTS.far;
+      if (!(far > e.hazard.spread)) err(w, `The ${e.hazard.kind}'s source ("far", ${far} paces out) must lie past its points ("spread", ${e.hazard.spread}).`);
+      for (const k of ['rate', 'pour'] as const) if (e.hazard[k] !== undefined && !(e.hazard[k]! > 0)) err(w, `A hazard's "${k}" is a number above 0.`);
+      if (!amounts.has('reached')) warn(w, `A ${e.hazard.kind} event's result is how many of its points it reached: list the amount "reached".`);
+    }
     for (const a of e.abilities ?? []) {
       if (EVENT_ABILITIES.includes(a)) continue;
       const mine = abilities.find((x) => x.id === a);
@@ -841,8 +858,10 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     if (ie) {
       if (!Array.isArray(ie.kinds) || !ie.kinds.length) err(w, '"in_event" needs "kinds": the kinds of event it can be cast into.');
       for (const k of ie.kinds ?? []) if (!liveTags.has(k)) warn(w, `"in_event" names the event kind "${k}", which no event of this pack or the base game has.`);
-      const n = [ie.kills, ie.douses, ie.berserk, ie.hides].filter((x) => x !== undefined);
-      if (n.length !== 1 || !Number.isInteger(n[0]) || n[0]! < 1) err(w, '"in_event" needs exactly one of "kills" (foes put down by a cast), "douses" (burning lots put out), "berserk" (the foes within so many paces of the tap turn on anyone near, one another too) or "hides" (your people within so many paces are hidden: no foe goes for them), a whole number, 1 or more.');
+      const n = [ie.kills, ie.douses, ie.berserk, ie.hides, ie.shield].filter((x) => x !== undefined);
+      if (n.length !== 1 || !Number.isInteger(n[0]) || n[0]! < 1) err(w, '"in_event" needs exactly one of "kills" (foes put down by a cast), "douses" (burning lots put out), "berserk" (the foes within so many paces of the tap turn on anyone near, one another too), "hides" (your people within so many paces are hidden: no foe goes for them) or "shield" (a shield so many paces wide round the tap: lava and flood water flow round it), a whole number, 1 or more.');
+      if (ie.seconds !== undefined && (ie.shield === undefined || !Number.isInteger(ie.seconds) || ie.seconds < 1)) err(w, '"seconds" goes with "shield" only: how long the shield stands, a whole number, 1 or more.');
+      if ((ie.shield ?? 0) > 60) warn(w, 'A shield more than 60 paces wide covers the whole town and more.');
       if ((ie.kills ?? 0) > 3 || (ie.douses ?? 0) > 3) warn(w, 'One cast does more than 3. Heat ray, the strongest spell of the base game, does 2.');
       if ((ie.berserk ?? 0) > 20 || (ie.hides ?? 0) > 20) warn(w, 'One cast reaches more than 20 paces: the whole fight at once.');
     }

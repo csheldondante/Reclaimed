@@ -158,6 +158,11 @@ await run({ name: 'census', kind: 'behaviour' }, async (R) => {
     const tpl = R.opt('event', 'market-fire');
     const ok = await p.evaluate((t) => window.rungame?.measureEvent(t) ?? false, tpl);
     R.check(`event: ${tpl} begun`, ok);
+    // (loop round 12: `--during "<js>"` run in the page 3 s in — a shield raised over the town, for its cost)
+    if (R.opt('during', '')) {
+      await R.sleep(3000);
+      R.log(`during: ${JSON.stringify(await p.evaluate(R.opt('during', '')))}`);
+    }
     await R.sleep(6000);
     await take();
     await R.sleep(idleS * 1000);

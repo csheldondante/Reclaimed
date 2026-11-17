@@ -25763,3 +25763,46 @@ And through the particles, where the CPU knows the point: a ring of 16 spark bur
 orange-red mist cutting down the last of his crew, two bodies by him: "the crew turned on each other" reads. veil-2-after
 — your fighter a see-through checker of himself with white points round him, the crew standing three cells off not
 going for him: "he is hidden from them" reads, but less loudly (the fighter is small and pale on pale paving).
+
+## 2026-11-17 — loop round 12 (1): a lava front on the town, and a shield it parts round (`loop-skeleton`; docs/design/FRONTS.md)
+
+**Why.** The owner: "Watch the shield you raise divert a pyroclastic flow around your city and preserve it for the
+ashen world"; "we don't have a great way to make a magma river head toward a town". VISION §8 had it "Not started".
+
+**What carries it.** The flow model's lava (`LiquidSystem` LAVA) is installed in every world since trackA-liquids —
+the town level too (SYSTEMS had it as sandbox-only; corrected). A live event's hazard may now be a front
+(`LiveFront`): a spring poured uphill of the card's place (the highest of 16 points on a ring `far` out, read once from
+the terrain pages), running down the ground as it lies, setting into basalt in the columns. The runner keeps the
+chunks between source and target awake and touched, reads 8 points in the town and 10 along the way every 2 s
+(`Fire.flowLavaAt`, a mirror of the lava's open depth), frames the front's head, and at the end the realm lays `melted`
+at every reached point (lots `destroyed`) and records `front-ended`, which the next run's "The world now" tells.
+A shield is 4 discs in the liquid's uniform (`liquid.wgsl shielded`): no flux into a shielded column, from outside or
+within, and a falling stream stops at it. `Shields` (world API) times them on the sim's clock, moves them with slides,
+and draws a dome of blue glows (PK.Glow) and sparks. A pack ability raises one: `in_event.shield` + `seconds`.
+
+**Found by probe (`scripts/lab/frontprobe.mjs`).** A spring 80 cells out of Muru poured nothing: its chunk was asleep
+(a sleeping chunk freezes liquid) and the hybrid's sleep filter lets only voxel or touched chunks wake, so
+`sleep.wake` alone did nothing (`chunkAwake: false` for 8 s after it). With `?sleep=0` it poured (365 cells³ in 10 s).
+Fix: the front touches its corridor through `hybrid.edit` and wakes it, each second (LS-125).
+
+**Measured reach (lava has a yield, 0.12 a cell; LS-122).** Muru's valley is flat (ground 95-109 within 120 cells of
+the market at 100.5). 90 cells out at 40/s for 45 s: 1 of 10 way points; 50 out at 200/s: 5; 45 out at 300/s for 60 s:
+6 and 1 of 8 town points. The example pack's numbers: 36 out, 220/s, 45 s — no shield: 1-2 of 8 town points reached
+(cost), 8 of 10 way points; the ward cast at 12 s: 0 reached (success). The flow model's rheology is not changed: a
+far-running "magma river" needs a heat-dependent yield — the owner's call.
+
+**Lava that stayed molten.** A still, hot pool counted as steady and slept; a sleeping chunk does not cool, so run 2
+opened on glowing lava. Now lava above its setting heat counts as change (stays awake), and once a front's event is
+over its way is kept awake 20 s with cooling x25 (`LiquidSystem.quench`, LQ.extra.y) so it sets as the season goes on.
+
+**Shield first rule.** The first version let lava already inside the disc spread on inside it (`shielded(q) &&
+!shielded(p)`); cast late (t 32 s, 1 point already reached) the lava went on over the market. Now nothing flows into a
+shielded column at all. Its first look (sparks) was invisible at zoom 6; glows 3 cells up (over the piled lava) read as
+a blue ring (`local/round12/final/shield-5-t40.png`).
+
+**The card table.** A shield cast into a front: no point reached (`mechState`); rain does nothing to a front.
+`test/unit/fronts.test.ts` plays the ages pack: the wizards' first working starts the eruption, the ward gives
+success and "Run 2: lava came down on the town. A shield kept it out of the town."; no ward, failure and "It took 8 of
+its streets. Black rock lies where it ran." GPU: `test/gpu/shield.test.ts` (lava parts round the disc, both sides,
+none inside; the same lava with no shield runs over it).
+

@@ -30,7 +30,7 @@ import { declutter, placeSites, REACH as SITE_REACH } from '../../season/sites';
 import { mountRunUi, type Asking, type Marker, type Panel, type Phase, type RunGame } from '../../season/run-ui';
 import { chainLine, fetchPacks, lawLine, lawLines, loadRunPacks, mechOf, realmExtra, recordByPlace, ruleLines, thingMarks, unlockedAbilities, worldNow, worldOf, type ThingMark } from '../../season/run-packs';
 import type { Pack, PackAbility } from '../../packs/check';
-import { castAbility, type LoadedPack } from '../../packs/load';
+import { castAbility, SHIELD_SECONDS, type LoadedPack } from '../../packs/load';
 import type { RuleHit } from '../../living/rules';
 import { SPELL_MECH } from '../../living/live';
 import { grant, lose } from '../../season/ledger';
@@ -519,9 +519,8 @@ class Game implements RunGame {
   land(): string[] {
     const r = this.realm;
     if (!r) return [];
-    const evs = new Map(r.history().map((e) => [e.id, e]));
-    void evs;
-    return r.changes().map((m) => W.landLine(m.kind, r.placeName(m)));
+    // (loop round 12: a front lays an entry at each point it reached, all named by the card's place — one line each)
+    return [...new Set(r.changes().map((m) => W.landLine(m.kind, r.placeName(m))))];
   }
 
   /**
@@ -1306,6 +1305,13 @@ class Game implements RunGame {
       if (m.berserk) units!.spell!({ at: [g[0], g[1]], radius: m.berserk, who: 'foes', berserk: true });
       // (loop round 11: your hidden people are drawn faint to you — the foes still do not see them)
       if (m.hides) units!.spell!({ at: [g[0], g[1]], radius: m.hides, who: 'friends', hidden: true, faint: true });
+      // (loop round 12, docs/design/FRONTS.md: a shield round the tap — the liquids flow round it; its dome and rim are
+      // the shields' own sparks)
+      if (m.shield) {
+        const shields = this.scene.worldApi?.shields;
+        if (!shields) throw new Error('loop: this level has no shields (world API fx)');
+        shields.raise(g[0], g[1], { radius: m.shield, seconds: m.seconds ?? SHIELD_SECONDS, z: g[2] });
+      }
       api.fx.burst('sparks', g[0], g[1], g[2] + 1, { count: 40 });
       // (loop round 11: the spell's reach marked on the ground as it is cast — a ring of sparks at its edge; the units
       // it took carry their own mark, drawn on the GPU: units.wgsl unitDraw)
