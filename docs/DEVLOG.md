@@ -24586,3 +24586,22 @@ is "everything"), `realm-resume.test.ts` (`standingThreat` for `averted`), `tabl
 two stale expectations of remains tags fixed), `packs-together.test.ts` (no arc's events: `farm-burned` is gone,
 `raiders-march` is new). New: `between.test.ts` (every world change in a frontier run has a card as its cause; the
 step is deterministic, never during a run or on resume; signs fade).
+
+## 2026-11-16 — A run played from a far town (`card-table`, CT-53, CT-56)
+
+**Why.** The owner: "Leaders should be able to start in far cities." The Realm already took the home as a parameter;
+the table hard-wired Briar Hollow.
+
+**What.** A pack leader's `home` names a far town by what it is, in a card's far-variable words; the nearest that fits
+is home for the run (`Table.home`, `Realm.home`). Simplest honest version: the same 20 sites, re-labelled per town
+(`site:<town>:<key>`, made the first time a run is played there); each town keeps its own things (a pack thing belongs
+to the town it was put in) and its ruins; the old home becomes a far town (yours, unless someone else holds it), with
+a `home-moved` record line. The ledger is one town's: a town's buildings are kept on it as `built:<card>` tags when a
+run there ends, so a run that comes back finds them. Every remaining one-city assumption is listed in CT-56 for the
+loop track. `packs/frontier.json` adds Steward Hal Brook (home: a far town that is yours).
+
+**Test** (`home.test.ts`): run 1 swears Millbrook to you (the base relief card, then the frontier envoy keeps it from
+the League); the steward is offered only then; run 2 is played from Millbrook with its own sites; the sea charter stays
+Briar Hollow's; Briar Hollow's quarry is written on it and Millbrook starts with nothing built; Briar Hollow is a far
+town (`far-town`, `standing`, `yours`) in "Far places" and "The world now"; the record keeps run 1's cards at Briar
+Hollow by name; a run-2 card was bound to Briar Hollow as a far place.
