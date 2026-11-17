@@ -115,6 +115,8 @@ export interface PackCard {
   /** (the record) laws of this pack in force from the first season of every later run of the world this card was
    *  done in: an ending that changed the world */
   laws_after?: string[];
+  /** (ages) only when the card ended so: results (`success` …) or "lapsed" (a world-ending left to run out) */
+  laws_after_if?: string[];
   /** 1 to 5: how soon it comes up among the cards whose conditions hold (3: as a middling base card) */
   weight?: number;
   art?: string;
@@ -178,8 +180,29 @@ export interface Pack {
   abilities?: PackAbility[];
   laws?: PackLaw[];
   factions?: PackFaction[];
+  /** (ages) who the player can be: offered at a run's start while the world fits */
+  leaders?: PackLeader[];
   wants?: string[];
 }
+
+/** (ages) a leader a pack offers at a run's start, while the world fits (`appears_when` over the record and the far
+ *  places), with a start of their own: pools, income, things in play, laws in force, cards out of the deck.
+ *  `replaces`: while this leader can be chosen, the base game's leaders cannot (the world has moved past them) */
+export interface PackLeader {
+  id: string;
+  name: string;
+  /** who they are, one plain line ("Chief of the ash tribe. Few hands, little to build with.") */
+  line: string;
+  appears_when?: PackCond[];
+  replaces?: boolean;
+  pools: Record<string, number>;
+  income?: Record<string, number>;
+  things?: string[];
+  laws?: string[];
+  deck_out?: { ids?: string[]; themes?: string[] };
+}
+/** (ages) the conditions a leader's `appears_when` may use: read on the world before the run, with no run to ask */
+export const LEADER_COND_KEYS: readonly string[] = ['resolved', 'far_town_is', 'faction_stance', 'faction_holds'];
 
 // ---- the vocabularies (each the engine's own: test/unit/packs.test.ts holds them to it) -------------------------------
 
@@ -294,7 +317,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     err('pack', 'The file needs a "pack" block with an "id" and a "name".');
     return out;
   }
-  for (const k of ['tags', 'things', 'cards', 'rules', 'events', 'abilities', 'laws', 'factions', 'wants'] as const) if (p[k] !== undefined && !Array.isArray(p[k])) err(k, `"${k}" must be a list.`);
+  for (const k of ['tags', 'things', 'cards', 'rules', 'events', 'abilities', 'laws', 'factions', 'leaders', 'wants'] as const) if (p[k] !== undefined && !Array.isArray(p[k])) err(k, `"${k}" must be a list.`);
   if (out.length) return out;
   const tags = p.tags ?? [];
   const things = p.things ?? [];
@@ -373,6 +396,8 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   const produced = new Set<string>();
   const read = new Set<string>();
   const put = new Set<string>();
+  // (ages: a leader's start puts things in play too)
+  for (const l of Array.isArray(p.leaders) ? p.leaders : []) for (const t of l.things ?? []) put.add(t);
   const needTag = (t: string, where: string, how: 'read' | 'made') => {
     // (the record: a ruined thing or place carries what it was as "remains-of-<tag>"; only read, never set)
     const remains = /^remains-of-(.+)$/.exec(t)?.[1];
@@ -558,7 +583,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       } else if (key === 'leader') {
         if (!LEADER_IDS.includes(String(x.leader))) err(w, `Unknown leader "${String(x.leader)}". The leaders are ${LEADER_IDS.join(', ')}.`);
       } else if (key === 'faction_holds') {
-        faction(x.faction_holds, w);
+        faction(x.faction_holds, w, ['player']);
         if (x.gte !== undefined && (!Number.isInteger(x.gte) || Number(x.gte) < 0)) err(w, '"gte" is a whole number, 0 or more.');
         if (x.lte !== undefined && (!Number.isInteger(x.lte) || Number(x.lte) < 0)) err(w, '"lte" is a whole number, 0 or more.');
       } else if (key === 'faction_stance') {
@@ -879,6 +904,10 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   };
   // (the record: a card's `laws_after` stand in every later run of the world it was done in)
   for (const c of cards) for (const l of c.laws_after ?? []) needLaw(l, `cards (${c.id}).laws_after`);
+  for (const c of cards) {
+    for (const t of c.laws_after_if ?? []) if (!TIERS.includes(t) && t !== 'lapsed') err(`cards (${c.id}).laws_after_if`, `"laws_after_if" lists results (${TIERS.join(', ')}) or "lapsed". It has "${t}".`);
+    if (c.laws_after_if?.length && !c.laws_after?.length) err(`cards (${c.id}).laws_after_if`, '"laws_after_if" goes with "laws_after".');
+  }
   laws.forEach((l, i) => {
     const w = `laws[${i}] (${l.id})`;
     if (!l.name) err(w, 'A law needs a "name" the player reads in the list of laws.');
@@ -920,6 +949,9 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       if (d.b !== undefined) query(d.b, `${w}.b`);
       if (d.on !== undefined && d.on !== 'turn' && !(isObj(d.on) && (typeof d.on.event === 'string' || typeof d.on.live === 'string'))) err(w, '"on" is "turn", { "live": "<kind>" } or { "event": "<name>" }.');
       if (!['set', 'times', 'on', 'a', 'b', 'off', 'fires'].some((x) => x in d)) err(w, 'A "rule" law needs one of set, times, on, a, b, off, fires.');
+      // (CT-37: the two shapes that pass here and break the rule book at run time, for a rule of this pack)
+      const target = rules.find((r) => r.id === d.rule);
+      if (target) lawRuleShape(d, target).forEach((x) => err(w, x));
     } else if (k === 'add_rule') {
       checkRule(d.add_rule as PackRule, `${w}.add_rule`);
       const r = d.add_rule as PackRule;
@@ -988,6 +1020,29 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   // ---- chains that come back to themselves (to look at: each step is bounded, one firing a season) ----
   for (const c of chainCycles([p])) warn(`rules (${c.rule})`, cycleText(c.way));
 
+  // ---- (ages) leaders ----
+  (p.leaders ?? []).forEach((l, i) => {
+    const w = `leaders[${i}] (${l.id})`;
+    id('leader', l.id, `leaders[${i}]`);
+    if (LEADER_IDS.includes(l.id)) err(w, `"${l.id}" is a leader of the base game already.`);
+    if (!l.name || !l.line) err(w, 'A leader needs a "name" and a "line": who they are, in one plain sentence.');
+    for (const [k, n] of Object.entries(l.pools ?? {})) (pool(k, w), (!Number.isInteger(n) || n < 0) && err(w, `A starting pool is a whole number, 0 or more. ${k} is ${JSON.stringify(n)}.`));
+    if (!isObj(l.pools)) err(w, 'A leader needs "pools": what the run starts with.');
+    for (const [k, n] of Object.entries(l.income ?? {})) (GOODS.includes(k) || err(w, `Income is of ${GOODS.join(', ')}.`), (!Number.isInteger(n) || n < 0) && err(w, `Income is a whole number. ${k} is ${JSON.stringify(n)}.`));
+    for (const t of l.things ?? []) {
+      if (!thingIds.has(t)) err(w, `"things" names "${t}", which is not in the pack's "things".`);
+      put.add(t);
+    }
+    for (const x of l.laws ?? []) needLaw(x, w);
+    if (l.deck_out !== undefined && (!isObj(l.deck_out) || (!Array.isArray(l.deck_out.ids) && !Array.isArray(l.deck_out.themes)))) err(w, '"deck_out" is { "themes": ["build"] } or { "ids": [...] }: cards out of the deck for this leader\'s runs.');
+    for (const c of (l.appears_when ?? []) as Record<string, unknown>[]) {
+      const k = Object.keys(c).find((x) => COND_KEYS.includes(x));
+      if (!k || !LEADER_COND_KEYS.includes(k)) err(w, `A leader's "appears_when" is read before the run, on the world: it may use ${LEADER_COND_KEYS.join(', ')}. It has ${JSON.stringify(c)}.`);
+    }
+    conds(l.appears_when, `${w}.appears_when`);
+    if (l.replaces && !l.appears_when?.length) err(w, 'A leader that replaces the base leaders needs an "appears_when": otherwise the base leaders are never offered.');
+  });
+
   // ---- tags nothing produces, tags nothing reads ----
   for (const t of tags) {
     if (!['site', 'town', 'far-town', 'unit', 'effect'].includes(t.on)) err(`tags (${t.id})`, `"on" is site, town, far-town, unit or effect. It is ${JSON.stringify(t.on)}.`);
@@ -997,6 +1052,21 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     if (!t.shared && !produced.has(t.id)) warn(`tags (${t.id})`, 'Nothing produces this tag: no thing carries it and no effect sets it. If another pack does, mark the tag "shared": true.');
     if (!t.shared && !read.has(t.id)) warn(`tags (${t.id})`, 'Nothing reads this tag: no rule, condition or ability looks for it. If another pack does, mark the tag "shared": true.');
   }
+  return out;
+}
+
+/**
+ * (CT-37) What a rule law would break in the rule it changes: `times` or `set` numbers on a rule that acts (an act has
+ * no number to multiply), and `on` moved to a live event's result on a rule that changes an amount (a result comes
+ * after the amounts are read). Empty: it is fine.
+ */
+export function lawRuleShape(d: Record<string, unknown>, r: PackRule): string[] {
+  const out: string[] = [];
+  const fx = (isObj(r.effect) ? r.effect : {}) as Record<string, unknown>;
+  const acts = ['offer', 'start', 'tag', 'untag', 'law', 'end_run'].some((k) => k in fx);
+  if (acts && (d.times !== undefined || (isObj(d.set) && ('n' in d.set || 'cap' in d.set)))) out.push(`The rule "${r.id}" acts (it ${Object.keys(fx)[0]}s); it has no number for "times" or "set" to change. Use "fires" to make it act more often.`);
+  const on = d.on as { tier?: unknown } | undefined;
+  if ('amount' in fx && isObj(on) && on.tier !== undefined) out.push(`The rule "${r.id}" changes the amount "${String(fx.amount)}"; a rule that waits for a result ("tier") comes after the amounts are read and cannot change one.`);
   return out;
 }
 
@@ -1100,6 +1170,9 @@ export function checkTogether(packs: readonly Pack[]): Problem[] {
     for (const l of p.laws ?? []) {
       if (!isObj(l.does)) continue;
       if (typeof l.does.rule === 'string' && !ruleIds.has(l.does.rule)) err(`${name(p)} law (${l.id})`, `It changes the rule "${l.does.rule}", which no pack of the set and not the base game has.`);
+      // (CT-37: a law on another pack's rule, in a shape that would break it)
+      const other = packs.filter((q) => q !== p).flatMap((q) => q.rules ?? []).find((r) => r.id === l.does.rule);
+      if (other) for (const x of lawRuleShape(l.does, other)) err(`${name(p)} law (${l.id})`, x);
       for (const id of ((l.does.cards as { ids?: string[] } | undefined)?.ids ?? [])) if (!cardIds.has(id)) err(`${name(p)} law (${l.id})`, `It names the card "${id}", which no pack of the set and not the base game has.`);
     }
   // (a shared custom tag: each pack that uses it declares it, and every declaration says the same)
@@ -1118,6 +1191,8 @@ export function checkTogether(packs: readonly Pack[]): Problem[] {
     if (Array.isArray(x)) return void x.forEach(walk);
     if (!isObj(x)) return;
     if (typeof x.tag === 'string' && typeof x.on === 'string') made.add(x.tag);
+    // (draft 7: a place revealed or founded for a resource carries that tag)
+    if (typeof x.far === 'string' && typeof x.resource === 'string') made.add(x.resource);
     for (const k of ['town_has', 'site_has'] as const) if (Array.isArray(x[k])) for (const t of x[k] as string[]) read.add(t);
     for (const v of Object.values(x)) walk(v);
   };

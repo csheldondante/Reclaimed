@@ -18,12 +18,14 @@ import type { RuleDef, RuleHit, RuleMissing } from '../living/rules';
 import { grant, lose, newLedger, nextSeason, pools, total, POOLS, POOL_ROLE, type Pool, type Pools, type SeasonLedger } from '../season/ledger';
 import { CATALOG } from '../season/catalog';
 import { FIRE_TEMPLATE } from '../season/realm-events';
-import { projectTemplate, SITES, WORLD_TEMPLATES, type SiteKey } from '../season/realm-templates';
+import { projectTemplate, siteId, SITES, WORLD_TEMPLATES, type SiteKey } from '../season/realm-templates';
+import { MemoryWorldState } from '../api/contracts/world-state';
+import { FactWorld } from '../living/world';
 import { checkTogether, reportText, type Pack, type PackAbility, type Problem } from '../packs/check';
-import { castAbility, farHolder, farThings, IS, lawThings, packFactions, seedFactions, stanceOf, tradeThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
+import { castAbility, farHolder, farThings, IS, lawThings, leaderFits, packFactions, seedFactions, stanceOf, startThings, tradeThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
 import { BASIC_SPELLS, Realm, RUN_SEASONS, SPELL_COST, type RunState, type SpellId } from '../season/realm';
 import { lawKind, lawIncome, winsOf, type LawKind } from '../living/laws';
-import { lawText, lawUntil } from '../season/law-words';
+import { lawText, lawUntil, stackedDoes } from '../season/law-words';
 import type { Effect } from '../living/dsl';
 import type { TemplateDef } from '../living/engine';
 import { LEADERS, leader as leaderOf, resultTitle, SPELL_NAME, threatText, costText } from '../season/run-words';
@@ -245,6 +247,8 @@ export class Table {
   result: { title: string; lines: string[] } | null = null;
   /** the run's number in this world (1 the first) */
   run = 1;
+  /** (ages) who the leader is, in one line */
+  readonly leaderLine: string;
   readonly packs: LoadedPack[];
   /** what the validator says to look at over the loaded packs together */
   readonly together: Problem[];
@@ -255,9 +259,24 @@ export class Table {
     return [...new Set(this.realm.history().filter((e) => e.kind.startsWith(UNLOCKED)).map((e) => e.kind.slice(UNLOCKED.length)))].filter((id) => known.has(id));
   }
 
+  /**
+   * (ages) Who the player can be in a world: the base game's leaders, and each pack leader whose `appears_when` the
+   * world fits (read on the world before the run: the record, the far places, the factions); a fitting pack leader
+   * that `replaces` hides the base leaders — the world has moved past them.
+   */
+  static leaders(world: WorldSnapshot | undefined, packs: readonly Pack[]): { id: string; name: string; line: string }[] {
+    const w = new FactWorld(MemoryWorldState.restore(structuredClone(world ?? briarWorld().ws.snapshot())));
+    const fit = packs.flatMap((p) => p.leaders ?? []).filter((l) => leaderFits(w, l, HOME));
+    const base = fit.some((l) => l.replaces) ? [] : LEADERS.map((l) => ({ id: l.id, name: l.name, line: l.line }));
+    return [...base, ...fit.map((l) => ({ id: l.id, name: l.name, line: l.line }))];
+  }
+
   constructor(readonly o: TableOptions) {
     this.seed = o.seed;
-    const who = leaderOf(o.leader);
+    // (ages: a pack's leader, with its own start)
+    const packLeader = (o.packs ?? []).flatMap((p) => p.leaders ?? []).find((l) => l.id === o.leader) ?? null;
+    const who = packLeader ? { id: packLeader.id, name: packLeader.name, line: packLeader.line, pools: { magic: 0, might: 0, labor: 0, materials: 0, intel: 0, unrest: 0, ...packLeader.pools }, income: { ...(packLeader.income ?? {}) } } : leaderOf(o.leader);
+    this.leaderLine = who.line;
     // (a new run: the leader's pools; what earlier runs built is kept — scenes/level/loop.ts `pick` does the same)
     const ledger: SeasonLedger = o.resume ? o.resume.ledger : { ...newLedger(who.pools, who.income), built: [...(o.built ?? [])] };
     const base = baseCards();
@@ -272,6 +291,7 @@ export class Table {
     // (the helpers a pack's cards name read the run through this; the Realm deals once while it is being made, before
     // there is a run to read: that deal sees the leader's pools and no tags, and the deal is made again below)
     let made: Realm | null = null;
+    let thingCache: { key: string; ledger: SeasonLedger; tags: Map<string, readonly string[]> } | null = null;
     const host: PackHost = {
       season: () => made?.season ?? 1,
       pool: (k) => pools(made?.ledger ?? ledger)[k as Pool] ?? 0,
@@ -279,7 +299,14 @@ export class Table {
       home: () => HOME,
       tags: (where) => (made ? made.things().filter((t) => t.town === HOME && (where === 'town') === (t.id === HOME)).map((t) => [...t.tags]) : []),
       began: () => (made ? made.w.turn - made.season + 1 : 0),
-      thingTags: (id) => (made ? (made.things().find((t) => t.id === id)?.tags ?? null) : null),
+      // (read for every candidate of a variable: the things of the rules kept until the facts, the world's records, the
+      // turn or the ledger move — the ledger is replaced, never changed in place)
+      thingTags: (id) => {
+        if (!made) return null;
+        const key = `${made.w.facts.version}|${made.w.ws.version}|${made.w.turn}`;
+        if (!thingCache || thingCache.key !== key || thingCache.ledger !== made.ledger) thingCache = { key, ledger: made.ledger, tags: new Map(made.things().map((t) => [t.id, t.tags])) };
+        return thingCache.tags.get(id) ?? null;
+      },
     };
     this.realm = new Realm({
       world,
@@ -315,6 +342,8 @@ export class Table {
         tradeThings: () => (made ? tradeThings(made.w, this.packs) : []),
         // (draft 7: the packs' factions are entities of the world — made once, kept run after run)
         seed: (w) => seedFactions(w, o.packs ?? []),
+        // (ages: the leader's start takes cards out of the deck)
+        ...(packLeader?.deck_out ? { deckOut: packLeader.deck_out } : {}),
       },
     });
     made = this.realm;
@@ -329,6 +358,11 @@ export class Table {
       }
       this.mark();
       return;
+    }
+    // (ages: a pack leader's start — its things in play, its laws in force for the run)
+    if (packLeader) {
+      startThings(this.realm.w, this.packs, packLeader, HOME, (k) => siteId(HOME, k as SiteKey));
+      for (const l of packLeader.laws ?? []) this.realm.enact(l, W.leaderStart(who.name));
     }
     if (this.packs.length) this.realm.afterSeason(this.realm.ledger);
     this.say('run', W.runBegan(who.name, this.run, this.realm.seasons));
@@ -435,6 +469,8 @@ export class Table {
       if (same) same.times++;
       else out.push({ id: def.id, name: def.name, kind: lawKind(def.does), text: lawText(def.does, this.lawNames), from: at.from, until, times: 1 });
     }
+    // (a stacked law says what it makes together — three of "one more foe" is three more foes — not its own number)
+    for (const x of out) if (x.times > 1) x.text = lawText(stackedDoes(this.realm.lawDef(x.id)!.does, x.times), this.lawNames);
     return out;
   }
   /**
@@ -798,6 +834,7 @@ export class Table {
       return o ? o.opp.title : null;
     };
     const FAR_EVENTS = ['captured', 'vassal', 'destroyed', 'abandoned', 'founding', 'revealed', 'stance', 'flooded', 'burned', 'melted', 'buried', 'dried', 'withered', 'greened'];
+    const facs = packFactions(w);
     const farEvents = w.facts.events().filter((e) => FAR_EVENTS.includes(e.kind) && !e.to.includes(HOME) && !e.to.some((x) => w.facts.entity(x)?.kind === 'site'));
     const places = farThings(w, this.packs, HOME).map((t) => {
       const ps = w.settlement(t.id) ? placeState(w, t.id) : null;
@@ -806,11 +843,11 @@ export class Table {
       const why = last ? cardOf(last.about?.opp) : null;
       return {
         name: t.name,
-        line: W.farLine({ tags: t.tags, holder: holder === 'player' ? 'you' : holder ? w.name(holder) : null, tribute: ps?.tribute ?? 0, partner: r.partners().some((p) => p.id === t.id) }),
+        // (the holder is said by name: its tag is not repeated)
+        line: W.farLine({ tags: t.tags.filter((x) => !facs.includes(x)), holder: holder === 'player' ? 'you' : holder ? w.name(holder) : null, tribute: ps?.tribute ?? 0, partner: r.partners().some((p) => p.id === t.id) }),
         since: last ? W.farSince(last.note, Math.max(1, last.turn - began + 1), last.turn < began, why) : null,
       };
     });
-    const facs = packFactions(w);
     const stances: string[] = [];
     for (const a of facs) {
       const s = stanceOf(w, a, 'player');
@@ -819,6 +856,29 @@ export class Table {
     }
     const changes = farEvents.slice(-8).reverse().map((e) => W.farChange(e.note, e.turn - began + 1, e.turn < began, cardOf(e.about?.opp)));
     return { places, stances, changes };
+  }
+
+  /**
+   * (ages) The world as this run finds it, in a few plain lines for the run's start: which run and who leads; how each
+   * earlier run ended and by what; what the far places and the town are now; the laws earlier runs left.
+   */
+  worldNow(): string[] {
+    const r = this.realm;
+    const w = r.w;
+    const out = [W.worldRun(this.run, r.leader.name, this.leaderLine)];
+    const runs = w.facts.events({ kind: 'run-began' });
+    for (const e of w.facts.events({ kind: 'run-ended' })) {
+      const n = runs.filter((x) => x.turn <= e.turn).length;
+      if (n < this.run) out.push(W.worldEnded(n, e.note));
+    }
+    const far = farThings(w, this.packs, HOME).filter((t) => t.tags.includes('far-town'));
+    const count = (s: string) => far.filter((t) => t.tags.includes(s)).length;
+    const ruins = SITES.filter((s) => r.things().find((t) => t.id === siteId(HOME, s.key))?.tags.includes('ruined')).length;
+    const signs = ['ashfall', 'darkness', 'deadrise', 'crime'].filter((k) => !!w.facts.tag(HOME, 'condition', k)?.value);
+    out.push(W.worldState({ far: far.length, destroyed: count('destroyed') + count('abandoned'), yours: far.filter((t) => t.tags.includes('yours') && t.tags.includes('standing')).length, held: far.filter((t) => !t.tags.includes('yours') && t.tags.includes('standing')).length, ruins, of: SITES.length, signs }));
+    const after = this.laws().filter((l) => l.until === W.LAW_AFTER).map((l) => l.name);
+    if (after.length) out.push(W.worldLaws(after));
+    return out;
   }
 
   /** (the record) why a card is on the table because of earlier runs, in one plain line (null: it is not) */

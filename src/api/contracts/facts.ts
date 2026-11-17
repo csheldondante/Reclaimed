@@ -263,6 +263,8 @@ export interface Violation {
 export interface FactStore {
   turn: number;
   run: number;
+  /** (card-table) a count of writes: what is derived from the store may be cached until it moves (absent: never cache) */
+  readonly version?: number;
   entity(id: EntityId): Entity | undefined;
   find(q: FactQuery): Entity[];
   tag(id: EntityId, scope: TagScope, key: string): ScopedTag | undefined;

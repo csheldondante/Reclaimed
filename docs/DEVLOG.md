@@ -24652,3 +24652,74 @@ parade are seen arriving whole.
 
 **Tests.** `formations.test.ts` 15 of 15 with "a march in" (the round 7 drill-discipline timeout did not recur), then
 "LS-76" alone after the fix (it failed before it); live-rules 19, realm 16; typecheck clean.
+
+## 2026-11-16 — Charters and Corsairs (`packs/frontier.json`), PACK_FORMAT draft 7 written up (`card-table`)
+
+**Why.** The owner's opportunities ("a far off resource … a mining colony … income per season", "vassalizing other
+places or pirates", "a deal with pirates") and "make the outside world feel big and shaped by decisions not just the
+player city. The city just shows it diegetically to the player." 20 cards, 13 of them templates over the map's real
+places; two factions (the Gull Reavers, the Tollmark League) that act whenever the player lets a card run out.
+
+**What each far card leaves out there and how it comes home** is listed in the report of this round and in the
+pack's own `say` lines (the League takes what you leave; the Reavers take the nearest port when you refuse the toll).
+
+**Bots before tuning** (`node scripts/tablebots.mjs --pack packs/frontier.json`, 36 runs): every template made one
+card per place it fits — relief 4, march 5, buy-harvest 5, league-courts 4, retake 3, league-claims 3, settle 2 (the
+League's own camps and the Reavers' cove become targets too). The pirates' road almost never ran: the toll was a
+threat and waited behind the base game's threats (on a board in 3 of 36 runs; deal 2, point 2, hire 3, betray 3,
+harbour raid 0, burn the cove 0). Buy-harvest was taken in every run that took pack cards (15 of 15). The Sea League
+ending: 2 of 36. Biggest engine: tribute + factors' letters + colonies + the mill (9 firings in one season, +49
+Materials over the run). The League ended holding Tall Pines in 19 runs and swore Millbrook in 12: the world moves
+when the player does not.
+
+**Speed.** A far variable reads the things of the rules for each candidate: a 16-season run went from about 1 s to
+9-14 s. Two caches, both keyed on the fact store's new write counter (`MemoryFacts.version`, every write and event
+counted), the world's records version, the turn and (for the table) the ledger object: `farThings` and the table's
+`thingTags`. Now about 3 s a run (deal 1.5 s, dry runs 1.3 s of it, measured by wrapping the methods).
+
+**Defects fixed in passing.** A law in force several times now reads as what it makes together in the Laws list
+(`stackedDoes`: three of "one more foe" is three more foes; a set number stays). CT-37: the validator refuses a rule
+law's `times`/`set` on a rule that acts and `on` a result on a rule that changes an amount, for the pack's own rules
+and, in TOGETHER, another pack's (`lawRuleShape`). Tests: `frontier.test.ts`, `law-shapes.test.ts`.
+
+## 2026-11-16 — TUNING frontier 1 (pure data, revert this commit to undo)
+
+From the bots (36 runs): the toll was a threat queued behind the base game's threats (on a board in 3 runs) and
+buying a town's harvest was taken in every run that took pack cards. Changes: the toll is an ordinary card of weight
+5 (it still runs out into war with the Reavers); buy-harvest costs 5 Materials and 2 Intel (was 3 and 1).
+**After** (36 runs, 142 s): toll on a board in 5 runs (was 3), deal 3, betray 5, hire 4; buy-harvest on a board in 22
+runs (was 36) and still taken whenever seen; the Sea League ending 3 of 36 (was 2). The harbour raid and the burning
+of the cove never came up: they need the Reavers hostile, and every bot that saw the toll paid it. The pirates' road is
+the thinnest part of the pack in bot play; a player who refuses the toll gets it (`frontier.test.ts` plays it by hand).
+
+## 2026-11-16 — Ages: leaders the world offers, an ending for good, `packs/ages.json` (`card-table`)
+
+**Why.** The owner: "I want to see all the mutated places and diegetic representations of my choices … When my
+decisions turn the war torn plains into a peaceful kingdom with scheming wizards or when those wizards destroy the
+planet with volcanos that cover the world in ash and flame and the next run is as an ash tribe rebuilding civilization
+or when the Ash hordes encounter a fallen ship they deem an angel and the visitors from it establish a new strange
+city at the crash site around their ship etc." CT-40 had the leader list fixed.
+
+**What changed.** A pack's `leaders` are offered while the world fits (`Table.leaders(world, packs)`, read on the
+world before the run: the record, far places, factions); `replaces` hides the base three. A leader's start: pools,
+income, things put in play (`startThings`), laws for the run, `deck_out` (the Realm filters its templates; the raid
+stays). `laws_after_if` lets an ending's laws stand only if the card ended so (the world burns only when the working
+is left to run out; stopping it leaves no ash laws). The table's "The world now" opens at a run's start: run and
+leader, how earlier runs ended and by what, the far places and the town now, the laws earlier runs left.
+
+**The arc, played** (`ages.test.ts`, four runs in one world): run 1 relieves Millbrook (the base card), makes peace
+with Vellford and is crowned; run 2 invites the wizards (their gifts stack each season: the Laws list says "+N Magic
+each season" as one line), leaves the great working to run out: six sites burn, ash on every town, every far town
+destroyed, "Ash and flame". Run 3: the only leader offered is Chief Cinder; no building cards; the ash camp in play;
+"The world now": run 2's ending, 2 far places gone, 9 of 20 places ruins, ash over the town, the two ash laws; the
+dig-the-ruins template makes one card per ruin; a star falls, the tribe kneels: the Star-Folk found a city at the
+crash site. Run 4: Speaker Oru is offered (the Star-Folk are allies) with the angel's gifts in force.
+
+**A defect found by the test and fixed in the pack:** the wizards' college stood through the ending, so the working
+came again in run 3 and ended the world a second time (destroying the Star City). The ending now removes the college,
+and the ash leaders' deck leaves the working out.
+
+**Bots** (`--pack packs/ages.json`, 36 single runs): peace taken in every run that took pack cards (2 distinct cards:
+Vellford, Millbrook); the crown 5 runs (it needs two sworn towns, and the base raid arc takes Millbrook in most runs);
+the wizards 5; the working stopped 4 times, left to run out once: the ash ending in 1 of 36. The ash and star cards
+need a later run, which the bots do not play (they play one run each).

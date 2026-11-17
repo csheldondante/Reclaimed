@@ -147,11 +147,13 @@ export interface RealmOptions {
     lawThings?: () => { id: string; name: string; laws: string[] }[];
     /** (the record) the laws a card leaves: in force from the first season of every later run of the world it was done
      *  in (a pack card's `laws_after`) */
-    recordLaws?: { card: string; laws: string[] }[];
+    recordLaws?: { card: string; laws: string[]; results?: string[] }[];
     /** (trade routes) place selectors of things in play that carry a trade route: those towns are trade partners */
     tradeThings?: () => string[];
     /** (draft 7) entities the packs add to the world before the first deal (their factions) */
     seed?: (w: FactWorld) => void;
+    /** (ages) cards out of this run's deck: by id, or every card with one of these themes (the raid stays) */
+    deckOut?: { ids?: string[]; themes?: string[] };
   };
   /** (card-table, tuning) raiders in the run's last stage (default realm-templates.ts RAIDERS) */
   raiders?: number;
@@ -306,7 +308,11 @@ export class Realm {
     this.lawSeq = res?.lawSeq ?? 0;
     // (the live fire is dealt only when asked for: realm-events.ts FIRE_TEMPLATE, BACKLOG LS-63)
     const world = o.liveFire ? [...WORLD_TEMPLATES.filter((t) => t.id !== 'fire-wards'), FIRE_TEMPLATE] : WORLD_TEMPLATES;
-    const templates: TemplateDef[] = [...CATALOG.map(projectTemplate).filter((t): t is TemplateDef => t !== null), ...world, ...(o.extra?.templates ?? [])];
+    // (card-table, ages: a leader's start may take cards out of the deck — by id or theme — for the new age; the raid
+    // that ends a run stays)
+    const out = o.extra?.deckOut;
+    const keep = (t: TemplateDef): boolean => !out || t.id === 'raid' || !(out.ids?.includes(t.id) || t.themes.some((x) => out.themes?.includes(x)));
+    const templates: TemplateDef[] = [...CATALOG.map(projectTemplate).filter((t): t is TemplateDef => t !== null), ...world, ...(o.extra?.templates ?? [])].filter(keep);
     // (the arc's turns are the history's: this run's seasons after the turn it began at)
     const rel = raidArc(o.home, this.seasons, ...(o.raiders !== undefined ? [o.raiders] : []));
     const arc = { ...rel, stages: rel.stages.map((s) => ({ ...s, turn: this.t0 + s.turn })) };
@@ -462,8 +468,10 @@ export class Realm {
     const run = this.runNumber();
     // (done or run out: a threat left to run out is in the record too)
     const earlier = recordLaws.length ? recordOf(this.w).filter((e) => e.run < run) : [];
-    const world = recordLaws.filter((x) => earlier.some((e) => e.card === x.card)).map((x) => {
-      const e = earlier.find((y) => y.card === x.card)!;
+    // (ages: `results` — only when the card ended so: a world-ending left to run out, not one that was stopped)
+    const fits = (x: { card: string; results?: string[] }, e: RecordEntry): boolean => e.card === x.card && (!x.results?.length || x.results.includes(e.result));
+    const world = recordLaws.filter((x) => earlier.some((e) => fits(x, e))).map((x) => {
+      const e = earlier.find((y) => fits(x, y))!;
       return { id: `record:${x.card}`, name: `"${e.title}" (run ${e.run})`, laws: x.laws };
     });
     const src = [...world, ...(this.o.extra?.lawThings?.() ?? [])];

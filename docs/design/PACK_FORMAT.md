@@ -1,4 +1,28 @@
-# Opportunity pack format (draft 6, 2026-11-16: laws)
+# Opportunity pack format (draft 7, 2026-11-16: templates and factions)
+
+**Write templates about kinds of places, not places.** The owner: "The dealer can always generate cards from
+parameterized templates to fit the actual world." A card may name variables in `bind` instead of fixed places: "a far
+town that stands and is not yours", "a found place", "a faction you have a truce with", "a site with a workshop". The
+dealer offers one card for each binding it finds worth offering, in the world as it is: on another map, or in a world
+changed by earlier runs, the same pack deals different cards. A fixed place is still allowed (it is a binding with one
+candidate) and every draft-6 pack loads unchanged. Full example: `packs/frontier.json`.
+
+**Changed since draft 6.** (1) **Templates** (see "Templates"): a card's `bind` declares variables (`site`, `far`,
+`faction`), used as `"$town"` in places and `by`, and as `{town}` in the title, pitch and `say`; the presenter may sit
+at a bound site (`"at": "$place"`); `"set_off": true` binds a variable to what the rule that offered the card matched;
+`once` is once for each binding (`"once": "run"`: once a run whatever it binds). (2) **Factions** (see "Factions"): a
+top-level `factions` list; a faction can take, swear, destroy and found towns (`by`), hold them, have a stance with
+you and with other factions (`{ "stance": ..., "to": "truce" }`), and be read by conditions (`faction_holds`,
+`faction_stance`) and rules (its id is the tag of what it holds). (3) **Found places**: `{ "far": "revealed", "id",
+"name", "resource" }` marks a place on the map that nobody has settled; `{ "far": "founded", "where": "$find" }`
+settles it; the camp carries the resource tag. (4) **Far towns are things of the rules**: `far-town`, its state,
+`standing`/`ruined`, `yours` or the faction's id, its resource, `founded`, `colony` — so a colony's income is a rule
+and stops when the colony is lost. The home town carries `<faction>:<stance>`. (5) The record names what a card was
+bound to: `{ "resolved": "card", "about": "$town" }`. (6) The table's "Far places" reads as news: who holds what,
+who stands with whom, what changed and which card did it. (7) **Leaders and ages** (see "Leaders and ages"): a pack's
+`leaders`, offered while the world fits (the record, far places, factions), with their own start (pools, things,
+laws, cards out of the deck); `replaces` hides the base leaders; `laws_after_if` on a card; the table's "The world
+now" at a run's start. Example: `packs/ages.json`.
 
 **Changed since draft 5.** (1) **Laws** (see "laws"; design: `docs/design/LAWS.md`): a new top-level block `laws`,
 each one thing that changes the rules of the game for the rest of the run — tags, rules, card costs, spells and
@@ -89,9 +113,110 @@ of being invented inline. The validator rejects invented fields.
   "events":    [ ... ],
   "abilities": [ ... ],
   "laws":      [ ... ],
+  "factions":  [ ... ],
+  "leaders":   [ ... ],
   "wants":     [ "plain-word requests for effects, tags or looks the vocabularies lack" ]
 }
 ```
+
+## Templates (draft 7)
+
+A card's `bind` names its variables. Each is one of:
+
+```json
+"bind": {
+  "place": { "site": { "tags": ["workshop"], "not": ["ruined"] } },
+  "town":  { "far": { "state": ["standing"], "tags": ["trade-partner"], "not": ["yours"], "holder": "frontier-reavers" } },
+  "find":  { "far": { "state": ["found"] } },
+  "foe":   { "faction": { "stance": ["hostile"] } },
+  "cove":  { "far": { "tags": ["frontier-reavers"] }, "set_off": true }
+}
+```
+
+- `site`: a site of the home town whose thing carries every tag in `tags` and none in `not` (the same words a rule
+  reads, lent tags included).
+- `far`: a far town (or, with the state `found`, a place found and not settled) in one of the `state`s (`standing`,
+  `destroyed`, `abandoned`, `occupied`, `vassal`, `founded`, `found`), carrying every tag and none of the `not` tags,
+  held by `holder` (`"player"` or a faction, or a faction variable `"$foe"`). Far towns carry the tags in "Far towns
+  as things".
+- `faction`: a faction of a loaded pack, at one of these stances with the player (or with `with`).
+- `"set_off": true`: for a card a rule offers or starts: one of the things the rule's `a` matched.
+- Use a variable as `"$town"` wherever a place goes (`where`, `on`, `at`, `trade` is not yet), as `by` (`"$foe"`), and
+  in `faction_holds`, `faction_stance` and `resolved` … `about`. Write `{town}` in the title, the pitch and `say`: the
+  player reads the real name. The words written from the effects name it too.
+- The presenter may sit at a bound site: `"presenter": { "role": "smith", "at": "$place" }`.
+- **One card per binding.** The dealer scores each binding like any card; a site holds one card at a time, so a
+  template at a fixed site offers its bindings one after another. `once` (default true) is once for each binding: the
+  card about Millbrook done, the same card about Vellford can still come. `"once": "run"`: once a run, whatever it
+  binds. `false`: it comes back.
+- The record keeps what a card was bound to: `{ "resolved": "frontier-relief", "about": "$town" }` holds when that
+  card was done about this town (in any run).
+- The validator refuses a variable used but not bound and a `{name}` that is not a variable; a variable nothing in the
+  pack can feed (a holder that never holds a town, a `found` place nothing reveals) is a LOOK: another pack or an
+  earlier run may feed it.
+- Name a variable one lowercase word other than `other` (`{other}` is the neighbour).
+
+## Factions (draft 7)
+
+```json
+"factions": [ { "id": "frontier-reavers", "name": "the Gull Reavers", "kind": "pirates", "text": "Sea raiders …" } ]
+```
+
+- A faction is a thing of the world, made once and kept run after run. `kind` is a note (pirates, rival towns, a
+  guild). Its id is prefixed with the pack's.
+- **What it does** (always by a card: a faction acts when the player takes a card or lets one run out — write what it
+  does when the player does nothing in `if_expires`): `by` in `far` (`captured`, `vassal`, `destroyed`, `abandoned`,
+  `founded`) and `far_all`.
+- **What it holds**: a town it occupies, a town sworn to it, a camp it founded. That town carries the faction's id as
+  a tag (`"a": { "tags": ["far-town", "frontier-reavers"] }`); a town you hold carries `yours`.
+- **Stance**: `{ "stance": "frontier-reavers", "to": "truce" }` (`hostile`, `truce`, `allied`, or `none` to end it);
+  `"with": "frontier-league"` for a stance between two factions. The home town carries `frontier-reavers:truce`.
+- **Conditions**: `{ "faction_holds": "frontier-reavers", "gte": 2 }` (towns it holds that stand; `"player"`: towns
+  you hold), `{ "faction_stance": "frontier-reavers", "is": ["truce", "allied"] }` (`"with"` optional; `none`: no
+  stance).
+- **A live event's foes**: tag a group with the faction's id (`"tags": ["frontier-reavers", "boat-crew"]`).
+- A deal is a card that sets a stance and usually puts a policy thing in play with an upkeep (tribute paid) or a rule
+  that pays (a cut of their takings); breaking it is another card, or the card that runs out.
+- The world's own factions (the Millbrook Council …) cannot be named by a pack yet.
+
+## Leaders and ages (draft 7)
+
+Who the player is in the next run depends on the world. A pack may declare `leaders`:
+
+```json
+"leaders": [ { "id": "ages-ash-chief", "name": "Chief Cinder", "line": "Chief of the ash tribe. Few hands, little to build with.",
+               "appears_when": [ { "resolved": "ages-fire-mountain", "tier": ["lapsed"] } ], "replaces": true,
+               "pools": { "magic": 0, "might": 1, "labor": 3, "materials": 2, "intel": 1, "unrest": 0 }, "income": { "materials": 1 },
+               "things": ["ages-ash-camp"], "laws": [], "deck_out": { "themes": ["build"], "ids": ["ages-peace"] } } ]
+```
+
+- A leader is offered at a run's start while the world fits its `appears_when`, read on the world before the run:
+  `resolved` (the record, any earlier run), `far_town_is`, `faction_stance`, `faction_holds`. Nothing else.
+- `replaces`: while this leader can be chosen, the base game's three leaders cannot (the world has moved past them).
+- The start: `pools` (what the run starts with), `income`, `things` of the pack put in play, `laws` of the pack in force
+  for the run, `deck_out` (cards out of this run's deck, by id or theme; the base building cards have the theme
+  `build`; the raid stays).
+- The table's "The world now" says, at a run's start: which run and who leads; how each earlier run ended and by what;
+  the far places and the town now (gone, yours, ruins, signs); the laws earlier runs left.
+- **An ending for good**: an `if_expires` (or result) that burns the town's sites, puts `ashfall` on `"world"`,
+  `far_all` destroys every far town and `end_run` ends the run; its `laws_after` stand in every later run.
+  `"laws_after_if": ["lapsed"]` (results or `lapsed`): only when the card ended so — the world burns only if nobody
+  stopped it. Example: `packs/ages.json`.
+
+## Far towns as things (draft 7)
+
+Every far town is a thing the rules read: `town`, `far-town`, its state (`standing`, `destroyed`, `abandoned`,
+`occupied`, `vassal`, `founded`), `standing` or `ruined` (taken by someone else is `ruined` for you), `yours` or the
+holding faction's id, its resource tag, `founded` if it was founded, `colony` if it was founded, is yours and stands,
+`trade-partner` if it trades with you, and the pack tags set on it (`{ "tag": "frontier-burned-out", "on": "$town" }`).
+A found place not settled is a thing with `found` and its resource.
+
+- **Discover, then settle**: `{ "far": "revealed", "id": "frontier-redscar", "name": "Redscar", "resource": "ore" }`
+  marks it; a card bound to `{ "far": { "state": ["found"] } }` settles it with `{ "far": "founded", "where": "$find" }`
+  (who: `by`, default you; `purpose` optional). Income while it stands is a rule:
+  `"a": { "tags": ["colony", "ore", "standing"] }, "effect": { "pool": "materials", "n": 2 }, "per": "a"`.
+- A resource is any tag: an existing one (`ore`) or the pack's (declare `timber` with `"on": "far-town"`, shared if
+  other packs read it).
 
 Ids are lowercase words joined by hyphens, unique in the whole pack (a card and a thing may not share one), and
 prefixed with the pack id (`volcano-ash-sweepers`). A card id may not be one of the base game's. The pack's
@@ -231,6 +356,8 @@ want them said twice. Any number you do write in `say` or `pitch` must be a numb
   `abandoned`, `occupied`, `vassal`, `founded`.
 - `{ "resolved": "card-id" }`: that card of this pack was taken and is done.
 - `{ "leader": "ysolt" }`: the run's leader. Ids: `ysolt` (soldier), `dunstan` (builder), `ilveth` (tower keeper).
+- (draft 7) `{ "faction_holds": "frontier-reavers", "gte": 1 }`, `{ "faction_stance": "frontier-reavers", "is":
+  ["truce"] }`, and `"about": "$town"` on `resolved` (see "Templates" and "Factions").
 - Not supported yet: `{ "sign": ... }`. Use `resolved` of the card that set the sign.
 
 **Effects** (`if_taken`, `if_expires`, `if_tier`; in order):
@@ -243,9 +370,12 @@ want them said twice. Any number you do write in `say` or `pitch` must be a numb
   `buried`, `dried`, `withered`, `greened`. `where`: a site, `"town"`, `"far:neighbour"`, a far place selector or
   `"world"` (see "Places"). The first four ruin a site: it shows `ruined` and things on it lose their tags.
 - `{ "far": "captured", "where": "far:neighbour", "by": "raiders" }`: kinds `captured`, `vassal`, `destroyed`,
-  `abandoned`. `where`: the neighbour or a far place selector. `by`: `raiders`, `player` or `dead`. A vassal's `"tribute": n` is recorded on the map only; add an `income`
-  effect for what it pays. `{ "far": "founded", "id": "copper-ford", "name": "Copper Ford", "purpose": "mining" }`
-  founds a new camp in the hills (`purpose` optional).
+  `abandoned`. `where`: the neighbour, a far place selector or a far variable (`"$town"`). `by`: `raiders`, `player`,
+  `dead`, a faction of the pack or a faction variable. A vassal's `"tribute": n` is recorded on the map only; add a
+  rule on `["vassal", "yours"]` for what it pays. `{ "far": "founded", "id": "copper-ford", "name": "Copper Ford",
+  "purpose": "mining" }` founds a new camp in the hills (`purpose`, `by`, `resource` optional); `{ "far": "founded",
+  "where": "$find" }` settles a found place; `{ "far": "revealed", "id", "name", "resource" }` marks one (draft 7).
+- `{ "stance": "frontier-reavers", "to": "truce", "with": "player" }` (draft 7; see "Factions").
 - `{ "sign": "ashfall", "seasons": 3, "strength": 0.7, "where": "far:all" }`: kinds `ashfall`, `darkness`,
   `deadrise`, `crime`. Strength 0 to 1. `where`: absent or `"town"` (the home town), a far place selector, `"world"`.
 - `{ "trade": "far:nearest:2" }` (`"end": true` to end it): those towns trade with the home town.
