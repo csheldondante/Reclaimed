@@ -561,6 +561,67 @@ meander through the gaps, as the owner described. Shown: local/terrain2 (the tow
 
 ### 10.3 The restructure: fields, masks and blends (the plan; 10.1–10.2 and §9 are its first two layers)
 
+**The model (the owner, verbatim):** "I would not define it as special. I would keep heightfields and borders distinct
+and use SDF with masks for the latter. Heightfields can be independent, additive, subtractive or multiplicative but
+generally we want details to be signed additive for lower requencies and independent and lerpwe by SDF for higher
+frequency. This approximates fractal nested processes in nature where larger scale features are modified by local
+processes."
+
+*The orchestrator's reading (not the owner's words), checked against the code:* two separate concepts. (1) **Height
+fields** — a list of functions (noise, a tilted plane, a river-relative profile, a cone, a stamp …), each with a combine
+mode: independent, additive, subtractive or multiplicative; none is a special case. (2) **Borders** — where each field
+applies and how it meets its neighbours: SDF (JFA distance to thresholded region / mask borders) with masks choosing
+the treatment (the EDGE_* kinds: smooth, cliff, ravine, terrace, wall, mesa; beaches at the coast). Composition by
+scale: low-frequency fields combine by **signed addition** onto the larger shape (large features modified, not
+replaced); high-frequency detail is **independent per region and lerped across borders by SDF**.
+
+The flagged world's fields as (field, band, combine, border), and where each already is in the code:
+
+| field | band | combine | mask / border (SDF) | in the code today |
+|---|---|---|---|---|
+| continents | lowest (whole land) | signed add: `lift · smoothstep(0, liftReach, coast)` | coast SDF (JFA) | `regionHeight` l. 406 — fits |
+| region base levels | low (a region) | independent per region (`sea + r.base`), lerped at borders | region SDF `s`; EDGE_* by mask (kind pair) | `regionHeight` l. 402 + `ground()`'s border switch (`mix(hB, hA, w)`, mesaEdge, cliff, terrace) — fits |
+| massif ridges | low–mid | signed add, faded in from the landform border | landform SDF `dl` | `regionHeight` l. 408–411 — fits |
+| sea floor | low | signed subtract below the coast | coast SDF | `regionHeight` l. 415–416 — fits |
+| raise away from rivers | low | signed add `R(D)` | river SDF D (two-scale) | `valley.wgsl` — fits |
+| valley / river profile | low–mid | today **min** after blending: `smin(G', E)` | river SDF D, landform `dl` ramp | **differs**: a min pass, not a signed field with a border. In the model: a signed subtractive field `−max(0, G' − (L + V(e)))` whose border (where it applies, how it ends) is a mask on D with an SDF blend — §"The valley under the owner's rule" above; replaces the fade / Φ. Next pass |
+| plains sub-regions (hills, ridges, terraces, hummocks, wet flats) | mid | signed add (wet flats: signed subtract) | sub-region Voronoi border distance (exact) fades each to 0; tier, coast, `dl` masks | `plains.wgsl` — fits (fading every additive field to 0 at a border is the lerp between neighbours for additive fields) |
+| tilted plains cells | mid | signed add (a plane per cell) | the bisector distance (exact) is the border; a mask (gap noise) picks scarp or ramp | `plains.wgsl` — fits; the border uses `min` of the two cells at the bisector — a border treatment, not a combine |
+| coastal tilted cells | low–mid | signed add | coast SDF band; bisector borders; isles: a masked drop (signed subtract) with its own border | designed (§10.4) |
+| volcano cone | low | signed add (stamp) | radial SDF | `stampsAt` kind 4 — fits |
+| craters, oddities | mid | signed add (rim) and subtract (bowl) | radial SDF | `stampsAt` — fits |
+| fissures, pits, mesa channels | mid–high | signed subtract, with their own masked borders | a thresholded noise / SDF mask, JFA border distance | planned (TR-L8). Existing pieces that differ: `gorgeAt` (plateau gorges) and `riverCut` (the channel) are **min** cuts after blending; mesaEdge's ravines (`rav`, `rise`) are a border treatment — fits |
+| region detail noise, ridged detail, patterns | high | independent per region, lerped by the border SDF | region SDF | `regionHeight` l. 420–428 — fits |
+| region terraces | — | multiplicative-like (a quantisation of the region's own field) | region | `regionHeight` l. 429–432 — fits (a modifier inside the region's independent field) |
+| landform rule for rivers | — | a border treatment: a foreign river's field climbs `4·dl` | landform SDF `dl` | `valley.wgsl` — fits (an SDF-chosen border), though encoded as a penalty on E |
+
+**Requirement: a field's source is interchangeable.** The owner ("Yes!" to the reading above): "the nice thing is we
+can generate fields from functions or store them. Which is what makes blocking out traversable regions for room based
+level design possible later. It also means the we can mix instant generation with edited fields with simulated
+mutations pretty trivially later when we want to. You could run erosion or any simulation in the background over many
+frames then play back an interpolated time lapse for the player." So every row above is sampled through one interface
+— `field_k(p) → (value, its border SDF)` — whose source is one of:
+- (a) a **function** evaluated on the GPU at p (today: everything in `regionHeight`, the plains, the valley profile,
+  the stamps' shapes);
+- (b) a **stored texture**, authored or edited (room / passage masks later; the valley block's E and D are already a
+  stored field, built once and sampled);
+- (c) a **simulation's output** (erosion, lava, flood), written as a texture or a delta.
+A stored field may hold **two states and a blend factor** t: `field = mix(state0, state1, t)` — a time-lapse is t
+animated 0 → 1 after a simulation ran in the background over many frames; an instant change is t = 1 at once.
+Already (b) or (c): the coarse world's rock delta (`coarseAt`'s `dr`, per cell, persisted — (c), written by the sims
+and the mutators' land ops in `src/mutate/`), the lakes' table and `Atlas.addBasin` (a flood's level stored as data —
+(c)), the craters / oddities / volcanoes (stored parameter lists evaluated as functions — (b)-like), the valley block
+(E, D — (b)). How the mutators' showings (docs/VISION.md §5) ride on it: **instant change** = a mutator writes state1
+and t = 1 (what it does today through the coarse world); **time-lapse** = the season turn runs the simulation into
+state1 off screen and plays t 0 → 1 over the time-lapse — the ground interpolates under the camera. Not built; step 2
+does not close the door: the plains and the valley are separate functions called from one place in `ground()`
+(`plainRelief`, `valleyGround`), each replaceable by a sampled source read the way `valleyGround` already reads E.
+
+What I wrote under the earlier wording: nothing for a separate subtractive kind (no code). The rows marked **differs**
+are the valley's `smin` and the `min` cuts of `riverCut` and `gorgeAt` — the restructure's next pass turns the valley
+into a signed field with a masked border; riverCut stays the channel's own detail (high frequency, inside the river's
+border); gorges become masked drops.
+
 `ground()` with the flag on is now a stack of height fields, each with its own masks and border distances, combined
 by mask-chosen operators — the owner's method. What exists and what is planned:
 
@@ -574,7 +635,7 @@ by mask-chosen operators — the owner's method. What exists and what is planned
 | valley | envelope E (§9) | river reach, landform | D (two-scale), dl | smin(G', E) | **built (flag)** |
 | raise | R(D) | tier | D | add | step 1 |
 | combine by mask | — | EDGE kind near, tier, height | dl, D | smin / max on a cliff's side / G wins above Hcut | planned (§9.9) |
-| drops (fissures, pits, mesa channels, ravines — TR-L1) | an ordinary masked region whose *inner* field is relative to the base it sits in: `H_inside = H_base − drop(d, noise)` | a thresholded noise / SDF mask (dual-threshold simplex, ridged \|n\| < t) | distance to the mask's border (JFA) | the same mask-chosen border blends as every region (a crisp cliff edge, a ledge, a ramp); no separate subtractive min / carve pass — the owner's correction (DECISIONS) | planned (TR-L8) |
+| drops (fissures, pits, mesa channels, ravines — TR-L1) | a signed subtractive field, `−drop(d, noise)`, nothing special (the model above) | a thresholded noise / SDF mask (dual-threshold simplex, ridged \|n\| < t) | distance to the mask's border (JFA) | the same mask-chosen border blends as every region (a crisp cliff edge, a ledge, a ramp); no separate subtractive min / carve pass — the owner's correction (DECISIONS) | planned (TR-L8) |
 | **material on top** | an interval over the height: ice sheets and glaciers filling valleys from high ground (thickness from the snowline down the valley envelope); later dune sand, ash | climate, tier, height masks | D (down-valley), height over the snowline | an interval on the column, not height: the ground stays, the ice lies in it | planned (TR-L9) — glacial melt is one of the owner's river sources: glacier tongues are natural walk heads |
 
 Next (not in this step): (a) the valley's combine as a mask switch (§9.9), so a mesa's tiers stand at a fall; (b) the

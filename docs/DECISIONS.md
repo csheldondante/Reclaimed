@@ -4017,6 +4017,19 @@ The owner, on restructuring the terrain function (verbatim):
   subtraction from the base that way borders are well defined but you get relative drops in height" → a fissure, pit,
   mesa channel or ravine is an ordinary masked region (threshold, JFA border distance, the usual mask-chosen blend at
   its border); only its inner field is relative: H_inside = H_base − drop. No separate subtractive min / carve pass.
+  (Superseded in wording by the next line: nothing is "special".)
+- The rule, verbatim (typos as written: "frequencies", "lerped"): "I would not define it as special. I would keep
+  heightfields and borders distinct and use SDF with masks for the latter. Heightfields can be independent, additive,
+  subtractive or multiplicative but generally we want details to be signed additive for lower requencies and
+  independent and lerpwe by SDF for higher frequency. This approximates fractal nested processes in nature where
+  larger scale features are modified by local processes."
+- On the reading (fields vs borders), verbatim: "Yes!" — and: "the nice thing is we can generate fields from functions
+  or store them. Which is what makes blocking out traversable regions for room based level design possible later. It
+  also means the we can mix instant generation with edited fields with simulated mutations pretty trivially later when
+  we want to. You could run erosion or any simulation in the background over many frames then play back an
+  interpolated time lapse for the player." → a requirement: a field's source is interchangeable behind one sampling
+  interface (a GPU function, a stored texture, a simulation's output), a stored field may hold two states and a blend
+  factor (a time-lapse is the interpolation) — TERRAIN_RIVERS.md §10.3.
 - Later, verbatim: "I think if the dither or fade accompanies a slight zoom it will feel like looking under the storm"
   (the unmerged `forest` branch's understory already pairs a canopy dither/fade with a camera zoom-in driven by a cover
   weight — `src/forest/driver.ts`, `understory.wgsl`; the owner wants the same for underground layers, so storm,

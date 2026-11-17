@@ -26041,3 +26041,16 @@ seam where riverAt changes river — TR21); 12–30 cells 20.4, 98; past 30 cell
 canyon walls of slope ~10). Still seen at one place: local/terrain2/dbg/dbg2-seamw.png — straight-edged steps in a
 snowfield by a flooded river mouth (TR21).
 
+**Cross-sections (the same rows as step 1; local/terrain2/plot-cross-*.png, strip.png).** Plain: step 1's flats and
+5-cell jumps are gone; the floor runs smooth into the valley wall; the only step left is the channel's own bank. Fall:
+as step 1 — the cliff's tiers still cut to one 170-cell drop (designed, not built). Volcano: the crater floor is now
+cut to ~207 (step 1's bowl ~320) by a river the clamp dropped (TR18).
+
+**Play zoom (scripts/terrain/playstills.mjs, waited for the level's own signal and the tile coverage).** Fall and
+volcano passed the gate in 36–46 s; plain, upland and town did not reach ≤ 1 % undrawn in 240 s (TR24) and are
+labelled NOT READY. Seen: the upland river lies in a trough with banks rising both sides (a hole in the tiles at the
+bottom right); the fall's cliff is dramatic (spires, snow, the river below); the volcano top-down is a crater with a
+site's paved plaza in it, from low a flat-topped grey cone (TR25). With the flag the loop's town moves to the plain spot
+(13248,6144) and builds and plays there — so the plain still at play zoom shows the town, not the relief (TR23). The
+plains' tilted cells, a bluffed river and the per-column cost were not shot / measured: the step was stopped (TR23).
+
