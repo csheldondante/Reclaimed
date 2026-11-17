@@ -126,7 +126,7 @@ fn surfaceAt(p: vec2<f32>) -> Surf {
     c = lodAlbedo[mat].rgb;
   }
   // (round 117, terrain/sea.wgsl: the sea only where it reaches)
-  let sea = h < AP.sea && seaOpen(g.a, g.coast);
+  let sea = h < AP.sea && seaOpen(g.a, g.coast, g.isl);
   var veg = select(startVeg(p, ra, g, h, snowy, wet), 0.0, sea || (g.lkw && g.lk > h) || (river && g.rl > h));
   let wd = wayDist(p);
   if (wd < WAY_HALF + 0.5) { veg = 0.0; }

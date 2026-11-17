@@ -4039,3 +4039,22 @@ The owner, on restructuring the terrain function (verbatim):
 threshold masks, JFA distances, mask-chosen blends), behind `a.rivers2`, the default world byte-identical, cliffs and
 mesa edges unchanged in character. Plains with the flag on gain mask-selected sub-regions (hills, ridges, terraces,
 hummocks, wet flats) with some areas left truly flat (TERRAIN_RIVERS.md §10).
+
+## 2026-11-17 — terrain: rivers first, step 3 (`terrain-rivers`; docs/design/TERRAIN_RIVERS.md §10.4–§10.6)
+
+The owner's model (the rule for the flagged terrain), verbatim: "I would keep heightfields and borders distinct and use
+SDF with masks for the latter. Heightfields can be independent, additive, subtractive or multiplicative but generally
+we want details to be signed additive for lower frequencies and independent and lerped by SDF for higher frequency.
+This approximates fractal nested processes in nature where larger scale features are modified by local processes."
+
+- Rivers at a raised coast, verbatim: "Partial notch and fall into the sea".
+- "Aisles", verbatim: "I was thinking Islands but both sound cool!" → islands and sea stacks first; sea lanes between
+  cliffs welcome.
+- Lakes found by the walks, plus placed ones, verbatim: "Yeah that sounds good. Use the GPU flood fill I think?" → the
+  basins are the depressions of the macro ground's filled surface from the existing GPU fill (`terrain/flood.ts`,
+  Planchon–Darboux), run over the whole torus.
+- Verbatim: "I would love to see some more terrain work because I enjoy the images and it's the most fun for me to
+  develop even if it is lower priority right now."
+- Earlier, restated for this step: keep the existing cliffs (liked); river plains were boring (disliked); wanted hills,
+  visually distinct regions, tilted Voronoi cells on plains, large tilted atlas cells for coastal cliffs with masks
+  carving off cliff-lined islands; craters and stamped features kept.

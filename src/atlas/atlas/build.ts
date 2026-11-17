@@ -8,8 +8,10 @@ import formsW from '../forms.wgsl?raw';
 import { settle } from '../sites';
 import { buildWays } from '../ways';
 import { RegionFinish } from '../finish';
-import { findRivers, LAKE_WORDS, NODE_WORDS } from '../rivers';
+import { findRivers, LAKE_IN, LAKE_WORDS, NODE_WORDS } from '../rivers';
 import { walkRivers } from '../../terrain/walks';
+import { basinsOf, rimOfBasin } from '../../terrain/lakes';
+import { FloodGpu } from '../../terrain/flood';
 import valleyJfaW from '../../terrain/valleyjfa.wgsl?raw';
 import { patterns, regionsCpu } from './regions';
 import { STAMP, CRATER_WORDS, MAX_CRATERS, CRATER_BLOCK, GIANT_FLOATS, FLOOD_SPARE } from './defs';
@@ -208,6 +210,16 @@ export async function run(atl: Atlas): Promise<void> {
   async function riversFirst(): Promise<{ nodeAt: Uint32Array; lakeAt: Uint16Array }> {
     atl.hmac0 = Float32Array.from(atl.hmac);
     const distA = new Float32Array(await atl.time('readback coast', () => atl.read(atl.dist)));
+    // (step 3, terrain/lakes.ts — the owner: "Use the GPU flood fill I think?") the macro ground's filled surface over
+    // the whole torus, the standing sea its outlets (the same sea as the walks' below): its basins are where lakes can be
+    const seaOut = new Uint8Array(N);
+    const Gf = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      seaOut[i] = !atl.defs[atl.regionOf[i]].stat.land || (atl.hmac[i] < p.sea && distA[i * 4 + 1] < 250) ? 1 : 0;
+      Gf[i] = seaOut[i] ? Math.max(atl.hmac[i], p.sea) : atl.hmac[i];
+    }
+    const filled = await atl.time('lakes fill (gpu)', () => new FloodGpu(dev).fillTorus({ m: n, h: Gf, outlet: seaOut }));
+    const basins = await atl.time('lakes basins (cpu)', () => basinsOf(n, atl.hmac, filled, seaOut));
     const rv = await atl.time('rivers (cpu)', () => {
       const coast = new Float32Array(N);
       const water = new Uint8Array(N);
@@ -219,7 +231,10 @@ export async function run(atl: Atlas): Promise<void> {
         coast[i] = distA[i * 4 + 1];
         const r = atl.regionOf[i];
         const d = atl.defs[r];
-        water[i] = d.stat.land ? 0 : 1;
+        // (step 3: the isles' channels — land under the sea's level within the coast band — are sea to the walks, so a
+        // river ends at a channel instead of cutting an isle down to the sea. The game's own rule is Ground.isl
+        // (terrain/sea.wgsl); this is its stand-in on the macro ground — BACKLOG TR30)
+        water[i] = seaOut[i];
         const lf = atl.landformOf[r];
         tier[i] = lf >= 0 && atl.landforms[lf] ? atl.landforms[lf].tier : 0;
         landform[i] = d.stat.land ? lf : -1;
@@ -249,25 +264,68 @@ export async function run(atl: Atlas): Promise<void> {
         const t = topOf.get(r);
         if (t === undefined || atl.hmac[i] > atl.hmac[t]) topOf.set(r, i);
       }
-      const inp = { n, seed: p.seed, sea: p.sea, worldW: atl.worldW, worldH: atl.worldH, G: atl.hmac, coast, water, tier, landform, extra, lavaTops: [...topOf.values()] };
+      // (step 3) placed lakes: each impact crater's bowl — its lowest texel within half its radius (a big crater's middle
+      // is its central peak), the basin there if it holds one
+      const lakeSeeds: number[] = [];
+      for (let o = 0; o < atl.craters.length; o += CRATER_WORDS) {
+        if (ku[o + 6] !== 0) continue;
+        const tx = Math.floor((atl.craters[o] / atl.worldW) * n);
+        const ty = Math.floor((atl.craters[o + 1] / atl.worldH) * n);
+        const rt = Math.ceil(((atl.craters[o + 2] * 0.5) / atl.worldW) * n);
+        let best = -1;
+        for (let dy = -rt; dy <= rt; dy++)
+          for (let dx = -rt; dx <= rt; dx++) {
+            if (dx * dx + dy * dy > rt * rt) continue;
+            const t = ((((ty + dy) % n) + n) % n) * n + ((((tx + dx) % n) + n) % n);
+            if (best < 0 || atl.hmac[t] < atl.hmac[best]) best = t;
+          }
+        lakeSeeds.push(best);
+      }
+      const inp = { n, seed: p.seed, sea: p.sea, worldW: atl.worldW, worldH: atl.worldH, G: atl.hmac, coast, water, tier, landform, extra, lavaTops: [...topOf.values()], basins, lakeSeeds };
       // (step 2: ?walkdump=1 keeps the input for scripts/terrain/walkdump.mjs — the CPU profile and tests in Node)
       if (urlFlags().get('walkdump') === '1') atl.walkInput = inp;
       return walkRivers(inp);
     });
     atl.walkStats = rv.stats;
     atl.riverUp = rv.up;
-    atl.riverStats = { nodes: rv.count, lava: rv.lava, waterfalls: rv.waterfalls, lakes: 0, ms: rv.stats.ms, speed: rv.speed, discharge: rv.discharge, pipeSlope: 0, shaped: rv.shaped };
+    atl.riverStats = { nodes: rv.count, lava: rv.lava, waterfalls: rv.waterfalls, lakes: rv.lakes.length, ms: rv.stats.ms, speed: rv.speed, discharge: rv.discharge, pipeSlope: 0, shaped: rv.shaped };
     atl.riverNodes = rv.nodes;
     atl.riverCatchments = rv.catchments;
+    // (step 3) the lakes in the default world's table format (rivers.ts: LAKE_WORDS a lake, its level; per texel its id
+    // + 1, LAKE_IN inside, without it on the rim): compose.wgsl lakeAt, the held water and the flood tool read them as
+    // they read the default's
     const lakeAt = new Uint16Array(N);
-    atl.lakes = [];
+    if (rv.lakes.length + FLOOD_SPARE >= LAKE_IN - 1) throw new Error(`atlas: ${rv.lakes.length} lakes — more than the table holds`);
+    const nf = new Float32Array(rv.nodes.buffer);
+    atl.lakes = rv.lakes.map((L, id) => {
+      const b = basins.basins[L.basin];
+      for (const c of rimOfBasin(n, b, basins.basinOf)) if (!(lakeAt[c] & LAKE_IN)) lakeAt[c] = id + 1;
+      let sx = 0;
+      let sy = 0;
+      const x0 = b.texels[0] % n;
+      const y0 = Math.floor(b.texels[0] / n);
+      const regs = new Set<number>();
+      for (const c of b.texels) {
+        lakeAt[c] = (id + 1) | LAKE_IN;
+        const x = c % n;
+        const y = (c - x) / n;
+        sx += x0 + ((((x - x0 + n / 2) % n) + n) % n) - n / 2;
+        sy += y0 + ((((y - y0 + n / 2) % n) + n) % n) - n / 2;
+        regs.add(atl.regionOf[c]);
+      }
+      const wx = (t: number) => ((((t + 0.5) / n) * atl.worldW) % atl.worldW + atl.worldW) % atl.worldW;
+      const wy = (t: number) => ((((t + 0.5) / n) * atl.worldH) % atl.worldH + atl.worldH) % atl.worldH;
+      const o = L.node * NODE_WORDS;
+      return { id, level: +L.level.toFixed(2), texels: b.texels.length, depth: +(L.level - b.floor).toFixed(1), at: [Math.round(wx(sx / b.texels.length)), Math.round(wy(sy / b.texels.length))] as [number, number], outlet: [Math.round(nf[o]), Math.round(nf[o + 1])] as [number, number], catchment: 0, inflow: 0, outflow: L.node, regions: [...regs].sort((a, c) => a - c) };
+    });
     atl.lakeAt = lakeAt;
     const nodeBytes = Math.max(rv.nodes.byteLength, NODE_WORDS * 4);
-    const lakeTab = new Float32Array(FLOOD_SPARE * LAKE_WORDS);
+    const lakeTab = new Float32Array((rv.lakes.length + FLOOD_SPARE) * LAKE_WORDS);
+    for (const lk of atl.lakes) lakeTab[lk.id * LAKE_WORDS] = lk.level;
     const tabOff = N + CRATER_BLOCK + nodeBytes / 4;
     const idsOff = tabOff + lakeTab.length;
     lakeOff = [tabOff, idsOff];
-    atl.basinTab = { tabOff, idsOff, used: 0, cap: FLOOD_SPARE, on: true };
+    atl.basinTab = { tabOff, idsOff, used: atl.lakes.length, cap: atl.lakes.length + FLOOD_SPARE, on: true };
     valOff = idsOff + lakeAt.byteLength / 4;
     // (step 2, §9.3: the valley block — 2 words a texel, the field; then 2 words a node, its main upstream node and its
     // head's far level: terrain/valley.wgsl riverUp, riverHead)

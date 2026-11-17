@@ -26,7 +26,8 @@ export interface Extra {
 export const PARAM_BYTES = 160;
 /** forms.wgsl ColOut, and the runs a column holds (MR) */
 export const COL_WORDS = 16;
-export const COLG_BYTES = 96;
+/** columns.wgsl ColG (step 3: + isl, the isles' channel — 25 words) */
+export const COLG_BYTES = 100;
 export const MR = 24;
 export const INST_BYTES = 64;
 export const MAX_INST = 8192;

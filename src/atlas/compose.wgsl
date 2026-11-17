@@ -394,16 +394,21 @@ struct RH {
   h: f32,
   /** its pattern's value here */
   pv: f32,
+  /** (step 3) the isles' channel cut's weight here (0 off the raised coasts and in the default world) */
+  isl: f32,
 }
 
 /** a region's own ground at p (as if it went on past its borders); dl: the distance into its landform */
-fn regionHeight(r: Region, p: vec2<f32>, coast: f32, dl: f32) -> RH {
+fn regionHeight(r: Region, p: vec2<f32>, coast: f32, dl: f32, cr: f32) -> RH {
   let u = torusU(p);
   var h = AP.sea + r.base;
   if (isLand(r)) {
     // the continent slopes down to the sea all the way across (round 78: the coast's SDF; rivers, found
     // on this ground by a priority flood, run down it)
     h += AP.lift * smoothstep(0.0, AP.liftReach, coast);
+    // (terrain-rivers step 3, a.rivers2 only — terrain/plains.wgsl coastRaise: 0 in the default world) the coasts'
+    // tilted cells: a signed addition onto the land's field
+    if (cr > 0.0) { h += cr; }
     // a massif rises from its edge to its peaks (round 78), along ridges
     if (r.tier == TIER_MASSIF) {
       let rd = pridged(u, perOf(r.rise * 0.9), 4u, AP.seed + 303u);
@@ -430,7 +435,14 @@ fn regionHeight(r: Region, p: vec2<f32>, coast: f32, dl: f32) -> RH {
     let k = h / r.terrace;
     h = (floor(k) + smoothstep(0.62, 1.0, k - floor(k))) * r.terrace;
   }
-  return RH(h, pv);
+  // (step 3: the isles — a masked drop inside the raised coast, cut from the land's own field and blended at its border)
+  var isl = 0.0;
+  if (cr > 0.0 && isLand(r)) {
+    let ic = isleCut(p, h, cr, coast);
+    h = ic.x;
+    isl = ic.y;
+  }
+  return RH(h, pv, isl);
 }
 
 struct Ground {
@@ -470,6 +482,8 @@ struct Ground {
   /** an overhang at a mesa's edge (round 78): the lip's top (0: none — an undercut), the open under it
    *  (floor, roof; none when roof ≤ floor) */
   ov: vec3<f32>,
+  /** (terrain-rivers step 3) the isles' channel here: the sea stands in it (terrain/sea.wgsl seaOpen) */
+  isl: f32,
 }
 
 struct Mesa {
@@ -664,6 +678,11 @@ fn ground(p: vec2<f32>) -> Ground {
   var hiA = true;
   var hiRock = 0u;
   var talus = 0.0;
+  // (terrain-rivers step 3, a.rivers2 only: the coasts' raise here, and how far the coast's border is the cliff's)
+  var cr = 0.0;
+  if (AP.terrain2 != 0u) { cr = coastRaise(p, m.coast); }
+  var cliffMix = 1.0;
+  var ewCoast = 0.0;
   if (isLand(A) != isLand(B)) {
     var L = B;
     if (isLand(A)) {
@@ -672,6 +691,15 @@ fn ground(p: vec2<f32>) -> Ground {
     kind = L.coastEdge;
     ew = L.edgeW;
     ed = L.edgeD;
+    // (a raised coast: the mesa's cliff — tiers, ledges, sea caves — mixed with the coast's own profile by the raise)
+    let cw = coastCliffW(cr);
+    if (cw > 0.0) {
+      cliffMix = cw;
+      ewCoast = ew;
+      kind = EDGE_MESA;
+      ew = MESA_REACH;
+      hiA = isLand(A);
+    }
   } else if (A.lf != B.lf) {
     // two landforms meet (round 78): the higher one's edge — a plateau's a cliff, a massif's a wide rise
     var H = B;
@@ -713,9 +741,12 @@ fn ground(p: vec2<f32>) -> Ground {
   for (var k = 0u; k < nr; k++) {
     let rk = regs[select(m.b, m.a, k == 0u)];
     // (the distance into B's landform: A's own where they're one landform; at another's edge, ~0)
-    let rh = regionHeight(rk, p, m.coast, select(0.0, m.dl, rk.lf == A.lf));
+    let rh = regionHeight(rk, p, m.coast, select(0.0, m.dl, rk.lf == A.lf), cr);
     hs[k] = rh.h;
-    if (k == 0u) { g.pv = rh.pv; }
+    if (k == 0u) {
+      g.pv = rh.pv;
+      g.isl = rh.isl;
+    }
   }
   let hA = hs[0];
   g.s = s;
@@ -766,8 +797,14 @@ fn ground(p: vec2<f32>) -> Ground {
         w = select(1.0 - me.w, me.w, hiA);
         extra = (1.0 - me.w) * me.rise;
         talus = me.tal;
+        // (step 3: a raised coast — the cliff mixed with the coast's own profile by the raise; 1 everywhere else)
+        if (cliffMix < 1.0) {
+          w = mix(smoothstep(-ewCoast, ewCoast, s), w, cliffMix);
+          extra *= cliffMix;
+          talus *= cliffMix;
+        }
         // (round 117, terrain/cave.wgsl) a cave opening at the cliff's foot, its mouth's pile of talus
-        if (me.rav < 0.05 && me.ramp < 0.05) {
+        if (me.rav < 0.05 && me.ramp < 0.05 && cliffMix > 0.5) {
           // (a cliff into water: the foot a cell over the sea, TG3 — a cave's gap under the water would stand dry, TG16)
           // (and over the talus heaped against the wall: a mouth behind the heap would be buried)
           let cfoot = max(hLo + 0.3 + me.talFoot * 0.85, AP.sea + 1.0);
@@ -854,7 +891,10 @@ fn ground(p: vec2<f32>) -> Ground {
   let haveRv = valleyBase() != 0u;
   if (haveRv) {
     rvV = riverAt(p);
-    let vg = valleyGround(p, g.h, g.a, g.b, g.w, g.coast, g.dl, rvV);
+    // (step 3: the coasts' raise as it stands in g.h — the land side's share of it at a coast's border)
+    var landW = select(0.0, 1.0, isLand(A));
+    if (isLand(A) != isLand(B)) { landW = select(1.0 - g.w, g.w, isLand(A)); }
+    let vg = valleyGround(p, g.h, g.a, g.b, g.w, g.coast, g.dl, rvV, cr * landW);
     let h0 = g.h;
     g.h = vg.x;
     g.hlo = min(g.hlo + vg.y, g.h);

@@ -112,6 +112,20 @@ fn fs(v: VOut) -> @location(0) vec4<f32> {
       // (a mesa's overhangs, round 78: lips cyan, undercuts magenta)
       if (g.ov.z > g.ov.y) { c = select(vec3<f32>(0.9, 0.3, 0.8), vec3<f32>(0.3, 0.9, 1.0), g.ov.x > 0.0); }
     }
+    case 9u: {
+      // (terrain-rivers step 3) the plains' sub-regions by kind (a.rivers2 only; terrain/plains.wgsl): flat grey, hills
+      // green, ridges olive, terraces tan, hummocks teal, wet flats blue, tilted cells red; faded by the plains' weight
+      var kc = array<vec3<f32>, 7>(vec3<f32>(0.6, 0.6, 0.6), vec3<f32>(0.35, 0.7, 0.3), vec3<f32>(0.6, 0.62, 0.25), vec3<f32>(0.8, 0.65, 0.4), vec3<f32>(0.3, 0.65, 0.65), vec3<f32>(0.3, 0.45, 0.85), vec3<f32>(0.85, 0.3, 0.25));
+      c = terrainColourAt(g.h, p) * sh;
+      if (AP.terrain2 != 0u && isLand(regs[g.a])) {
+        let sb = plSubAt(p);
+        let wt = plWeight(regs[g.a], regs[g.b], g.w, g.coast, g.dl);
+        c = mix(c, kc[sb.kind] * sh, 0.75 * clamp(wt, 0.0, 1.0) * (0.4 + 0.6 * sb.edge));
+        // (the coasts' raise, step 3: magenta by its height; the isles' channels cyan)
+        c = mix(c, vec3<f32>(0.85, 0.2, 0.8) * sh, 0.8 * clamp(coastRaise(p, g.coast) / 100.0, 0.0, 1.0));
+        if (g.isl > 0.5) { c = vec3<f32>(0.2, 0.9, 0.95); }
+      }
+    }
     default: {
       let A = regs[g.a];
       if (!isLand(A)) {

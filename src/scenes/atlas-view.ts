@@ -30,7 +30,7 @@ const siteNear = (a: Atlas, x: number, y: number, r: number) => {
 site: a ${SITE_NAMES[s.size]}, ${SETTING_NAMES[s.setting]}, ground ${s.h.toFixed(0)}` : '';
 };
 const CROSS_COLOUR = ['#5c5', '#ec3', '#e33', '#111', '#39f'];
-const MODES = ['ground', 'regions', 'kinds', 'borders', 'coast', 'climate', 'pattern', 'caves', 'landforms'];
+const MODES = ['ground', 'regions', 'kinds', 'borders', 'coast', 'climate', 'pattern', 'caves', 'landforms', 'plains'];
 
 /** the sliders: key, label, min, max, step */
 const SLIDERS: [keyof AtlasParams, string, number, number, number][] = [

@@ -1,4 +1,4 @@
-# Terrain: rivers first (TR) — steps 1 and 2
+# Terrain: rivers first (TR) — steps 1 to 3
 
 Step 2 (§9) replaces §4's per-cell candidate lookup and fade with a two-scale field; §1–§3 and §5 stand.
 
@@ -532,7 +532,8 @@ round its hills and the valleys cut through them):
 
 ### 10.2 Tilted cells (the owner's trick)
 
-A Voronoi of TL_CELL (150) cells inside a tilted sub-region; each cell c a plane rising across it:
+A Voronoi of TL_CELL (150) cells inside a tilted sub-region; each cell c a plane rising across it (*step 3 tuned once,
+after the region stills showed only thin lines: TL_CELL = TL_RUN 130, H 5–14, TL_SCARP 2*):
 
     h_c(x) = H_c · clamp(0.5 + (x − c)·d_c / TL_RUN, 0, 1)            H_c 3–9 cells, TL_RUN 150 (≤ 0.06 a cell)
     at the border with the nearest other cell b, δ the exact distance to their bisector (positive inside c):
@@ -668,7 +669,43 @@ Rivers reaching a raised coast: the walk's levels end at the mouth at `sea − 0
 through the raised cell to the sea (a gorge mouth) — that is what the current machinery does. A fall into the sea
 (the level held at the cliff top to the edge, then dropping) is the more dramatic option: it needs the mouth's level
 to stay at the raised ground (a "hanging mouth" flag: the running minimum stops at the coast band's top) — an option
-for the owner to choose; not built.
+for the owner to choose; not built. *(Step 3: the owner chose "Partial notch and fall into the sea" — built as §10.5.)*
+
+### 10.5 Step 3: coastal cliffs and isles (built, flag on; `terrain/plains.wgsl` coastRaise / isleCut)
+
+Fields and borders as the owner's model says: one field, two borders, one drop.
+- **Field** — `tiltField(coastTilt())`: §10.2's tilted cells at CC_CELL 1200; CC_RAISED 45 % of the cells raised (40–140
+  at their raised edge), each a plane rising toward the sea along −∇coast at its feature; the rest 0. Masked by the
+  coast band `1 − smoothstep(0, 600, coast)`, **signed additive onto the land region's own field** (`regionHeight`, so
+  the coast border blends the raised land, and the walks see it).
+- **Border 1, the coast** — where the raise passes CC_CLIFF0..1 (6..18) the coast's profile becomes the mesa's cliff
+  (`ground()`: EDGE_MESA — tiers, ledges, sea caves, talus), mixed with the coast's own profile by that weight, so a cliff
+  stretch gives way to a beach without a seam. The existing cliff forms give the faces their look.
+- **Border 2, the river** — the valley shapes the land as if unraised and the raise stands on top, except within a notch
+  round the river (`valleyGround`: `mix(V(G), V(G − r) + r, smoothstep(NOTCH_W, NOTCH_W + 0.15 r, D))`): a gorge through
+  the cliff. Without it the lowland's wide gentle valleys ate the raised coast to sea-level flats (c3-cA.png).
+- **Drop, the isles** — a masked drop inside raised ground near the coast (coast < 250): `|n| < 0.08` of a period-300
+  noise; inside, the land's field cut to `sea − 6`, blended at the mask's border by its distance (`(t − |n|)/|∇n|`,
+  over 2 cells). The sea stands in it: `seaOpen` takes `Ground.isl` (ColG carries it, 100 bytes). The walks count those
+  channels as sea (a stand-in, TR30).
+- **Falls** — a river's level at its last land node no longer counts the sea floor beside it (the 3 × 3 least ground
+  now skips water): it falls into the sea by its own height (150 of 297 mouths over 3 cells, 110 over 10; before: 7).
+  The notch is full depth wherever the river came from lower ground — it cannot climb onto the block (TR29).
+
+### 10.6 Step 3: lakes found by the walks (built, flag on; `terrain/lakes.ts`, `walks.ts`)
+
+    fill     the macro ground's filled surface over the whole torus on the GPU (flood.ts fillTorus: the Planchon–Darboux
+             passes, neighbours wrapped, the sea the outlets) — 1.3–2.3 s at build (TR27)
+    basins   components of W − G > 0.25 (8 neighbours, wrapped), kept when ≥ 1.5 deep and ≥ 12 texels; level = W, the
+             outlet = the rim's lowest ground
+    walk     a water walk stepping into a basin whose level is ≤ the least ground it crossed ends there: the basin's
+             lake node is made at the outlet (or joined) and a new walk leaves from it at once (an outlet walk ignores
+             its own lake). Joins that would close a cycle, or make a river rise to a lake downstream, are refused
+    placed   each impact crater's bowl (its lowest texel within R/2) seeds a lake if a walk did not reach it
+    levels   a lake node's level is fixed at the spill level; every node upstream of a lake is floored to it; the clamp
+             skips lake nodes — levels never rise (test: lakes.test.ts), the tree has no cycle, the catchments cover the land
+    table    the default world's lakes' table (LAKE_IN ids per texel, level): compose.wgsl lakeAt draws them unchanged
+Seed 1: 201 lakes (8 in craters; by tier 69 / 74 / 36 / 22), 292 walks joined a lake, 29 joins refused, 0 rises.
 
 **Later: caves (the next terrain track; design sketch only).** The owner: water-level cave openings from a
 thresholded noise layer for the 2D layout; SDF plus blended fields enveloped by the ground height above for the cave

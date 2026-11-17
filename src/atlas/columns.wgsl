@@ -39,6 +39,8 @@ struct ColG {
   /** (round 90) a lake's level here (0: none) and 1 where its water may stand (compose.wgsl Ground.lk, lkw) */
   lk: f32,
   lkw: f32,
+  /** (terrain-rivers step 3) the isles' channel: the sea stands in it (compose.wgsl Ground.isl; defs.ts COLG_BYTES) */
+  isl: f32,
 }
 
 @group(0) @binding(30) var<storage, read_write> colG: array<ColG>;
@@ -77,7 +79,7 @@ fn colHeight(@builtin(global_invocation_id) id: vec3<u32>) {
   if (RIVER_TABLE && g.rflags == 0u && g.rl > 0.0 && g.rx >= 0.95 && g.rx < 1.9 && h < g.rl + 0.2 && h > g.rl - RIVER_LEVEE && !g.lkw) {
     h = g.rl + 0.2 * smoothstep(1.9, 1.3, g.rx);
   }
-  colG[id.y * mw + id.x] = ColG(h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, g.lmat, loose, g.cw, g.clava, g.cap, cav.x, cav.y, g.smat, g.rvel.x, g.rvel.y, g.rd, g.lk, select(0.0, 1.0, g.lkw));
+  colG[id.y * mw + id.x] = ColG(h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, g.lmat, loose, g.cw, g.clava, g.cap, cav.x, cav.y, g.smat, g.rvel.x, g.rvel.y, g.rd, g.lk, select(0.0, 1.0, g.lkw), g.isl);
 }
 
 // (round 84) RIVER_LEVEE: the deepest hollow beside a river its bank is raised over (columns more below it are left: a

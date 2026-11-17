@@ -149,7 +149,7 @@ fn valNodeS(id: u32, x: vec2<f32>, pr: ValProf) -> vec2<f32> {
  * into A's landform (compose Ground.dl); rv: riverAt(p0)
  * (the fine profile's segment). Returns (h, raise).
  */
-fn valleyGround(p0: vec2<f32>, G: f32, a: u32, b: u32, w: f32, coast: f32, dl: f32, rv: River) -> vec2<f32> {
+fn valleyGround(p0: vec2<f32>, G: f32, a: u32, b: u32, w: f32, coast: f32, dl: f32, rv: River, crl: f32) -> vec2<f32> {
   let A = regs[a];
   let B = regs[b];
   let ta = valTier(A);
@@ -198,5 +198,21 @@ fn valleyGround(p0: vec2<f32>, G: f32, a: u32, b: u32, w: f32, coast: f32, dl: f
   let room = clamp((AP.zTop - 20.0 - G) / max(raiseMax, 1.0), 0.0, 1.0);
   let raise = raiseMax * (1.0 - exp(-Dh / reach)) * smoothstep(0.0, 300.0, coast) * room;
   let Gr = G + raise;
-  return vec2<f32>(valSmin(Gr, Ec, VAL_SMIN_K), raise);
+  let hr = valSmin(Gr, Ec, VAL_SMIN_K);
+  if (crl <= 0.0) { return vec2<f32>(hr, raise); }
+  // (step 3, terrain/plains.wgsl coastRaise: a raised coast is a field over the valleyed land, its border the river
+  // distance — the valley shapes the land under it as if it were not raised, the raise stands on top, and only within
+  // a notch round the river (NOTCH_W, walls ~1/NOTCH_SLOPE) is it cut down to the river: a gorge through the cliff, the
+  // river falling at the coast by its own level over the sea. Without this the lowland's wide, gentle valleys ate the
+  // raised coast into sea-level flats — local/terrain3/c3-cA.png)
+  let hu = valSmin(Gr - crl, Ec, VAL_SMIN_K) + crl;
+  let n = smoothstep(NOTCH_W, NOTCH_W + crl * NOTCH_SLOPE, Dh);
+  return vec2<f32>(mix(hr, hu, n), raise);
 }
+
+/** (step 3) the notch a river cuts through a raised coast: its half-width (cells of the coarse river distance) and how
+ *  wide its walls are a cell of the raise */
+// (first 10 and 0.3: round a source's head on the raised ground the notch was a bowl ~100 cells across —
+// local/terrain3/on-mouth-1.png; the river distance is a capsule's, radial at a segment's end)
+const NOTCH_W: f32 = 8.0;
+const NOTCH_SLOPE: f32 = 0.15;

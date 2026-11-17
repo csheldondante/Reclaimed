@@ -14,7 +14,8 @@ struct FloodP {
   m: u32,
   seed: u32,
   level: f32,
-  _p: u32,
+  /** (terrain-rivers step 3) 1: the window is the whole torus — neighbours wrap, no edge is an outlet */
+  wrap: u32,
 }
 @group(0) @binding(0) var<uniform> FP: FloodP;
 @group(0) @binding(1) var<storage, read> hgt: array<f32>;
@@ -24,6 +25,7 @@ struct FloodP {
 
 fn nbW(x: i32, y: i32) -> f32 {
   let m = i32(FP.m);
+  if (FP.wrap != 0u) { return wIn[u32((y + m) % m) * FP.m + u32((x + m) % m)]; }
   if (x < 0 || y < 0 || x >= m || y >= m) { return 1e30; }
   return wIn[u32(y) * FP.m + u32(x)];
 }

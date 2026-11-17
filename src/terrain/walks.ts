@@ -12,6 +12,7 @@
 
 import { riverChannelDepth, riverSpeed } from '../world/rivertable';
 import { incisionFor, upstreamFirst, CASCADE_STEP, CASCADE_SLOPE } from './rivershape';
+import type { Basin } from './lakes';
 
 // ---- the constants the owner will want to change (the design note's names) --------------------------------------
 /** the walk: downhill weight (at full slope), the slope (cells a cell) that counts as full, the jitter's turn of the
@@ -159,6 +160,11 @@ export interface WalkInput {
   spacing?: number;
   /** (step 2) creeks feeding the heads on high ground (default on) */
   creeks?: boolean;
+  /** (step 3, terrain/lakes.ts) the basins of the filled ground: a water walk that reaches one (no lower on its way than
+   *  the basin's level) ends in it as a lake and a new walk leaves from its outlet */
+  basins?: { basinOf: Int32Array; basins: Basin[] };
+  /** (step 3) texels of placed lakes (a crater's middle): the basin there is a lake whether a walk reaches it or not */
+  lakeSeeds?: number[];
 }
 
 export interface WalkStats {
@@ -186,6 +192,14 @@ export interface WalkStats {
   creeks?: number;
   /** the clamp hit its round limit before settling (rivers may stand over another's valley wall there) */
   clampUnsettled?: boolean;
+  /** (step 3) lakes: found by walks, placed (craters), walks that joined a lake, joins refused (they would have made a
+   *  cycle through a lake's outlet, or the river would have had to rise to a lake downstream), nodes the lakes' floor
+   *  raised over their own ground less the incision */
+  lakesFound?: number;
+  lakesPlaced?: number;
+  lakeJoins?: number;
+  cyclesRefused?: number;
+  lakeFloated?: number;
 }
 
 /** the raw tree: positions in texel units (a texel's centre at its integer index) */
@@ -197,6 +211,8 @@ export interface Tree {
   still: Uint8Array;
   walk: Int32Array;
   count: number;
+  /** (step 3) per node: the basin it is the lake of (−1: none) — the lake's node stands at its outlet */
+  lakeOf: Int32Array;
 }
 
 const dryness = (cy: number) => 0.5 - 0.5 * Math.cos((1 - (0.5 - 0.5 * Math.cos(2 * Math.PI * cy))) * 3 * Math.PI);
@@ -349,6 +365,7 @@ export function walkTree(inp: WalkInput, stats: WalkStats): Tree {
   const fl: number[] = [];
   const st: number[] = [];
   const wk: number[] = [];
+  const lk: number[] = [];
   const ownW = new Int32Array(N).fill(-1);
   const ownL = new Int32Array(N).fill(-1);
   const add = (x: number, y: number, f: number, still: number, walk: number): number => {
@@ -359,6 +376,7 @@ export function walkTree(inp: WalkInput, stats: WalkStats): Tree {
     fl.push(f);
     st.push(still);
     wk.push(walk);
+    lk.push(-1);
     const t = wi(Math.round(y), n) * n + wi(Math.round(x), n);
     (f & RIVER_LAVA ? ownL : ownW)[t] = k;
     return k;
@@ -385,13 +403,57 @@ export function walkTree(inp: WalkInput, stats: WalkStats): Tree {
   const MAX_STEPS = 4 * n;
   /** each water walk's first node (its head): the creeks' targets */
   const heads: number[] = [];
-  const walkOne = (s: { tx: number; ty: number }, lava: boolean, id: number) => {
+  // (step 3) the lakes: each basin's node once a walk reached it (−1: not a lake yet)
+  const bs = inp.basins;
+  const lakeNode = new Int32Array(bs ? bs.basins.length : 0).fill(-1);
+  /** joining j would close a cycle: j's chain runs into `head`, the walk still being laid (a lake's outlet walk
+   *  meeting a river that flows into that lake) */
+  const cycles = (j: number, head: number): boolean => {
+    let c = j;
+    for (;;) {
+      if (c === head) return true;
+      const d = nx[c];
+      if (d === c) return false;
+      c = d;
+    }
+  };
+  /** the level of the first lake downstream of j (−∞ none): a walk that crossed lower ground may not join above it — its
+   *  river would have to rise to the lake (the one rise of the first build: an outlet walk joined a river into a higher
+   *  lake) */
+  const lakeBelow = (j: number): number => {
+    let c = j;
+    for (;;) {
+      if (lk[c] >= 0) return bs!.basins[lk[c]].level;
+      const d = nx[c];
+      if (d === c) return -Infinity;
+      c = d;
+    }
+  };
+  /** a basin becomes a lake: its node at the outlet, the walk on from there (an outlet walk) */
+  const makeLake = (b: number): number => {
+    const o = bs!.basins[b].outlet;
+    const k = add(o % n, Math.floor(o / n), 0, 0, id++);
+    lk[k] = b;
+    lakeNode[b] = k;
+    walkOne({ tx: o % n, ty: Math.floor(o / n) }, false, wk[k], { node: k, lake: b });
+    return k;
+  };
+  function walkOne(s: { tx: number; ty: number }, lava: boolean, id: number, from?: { node: number; lake: number }) {
     let x = s.tx;
     let y = s.ty;
-    if (water[tex(x, y)]) return;
-    if (!lava && near(ownW, x, y, -2) >= 0) return;
-    if (lava && near(ownL, x, y, -2) >= 0) return;
-    let prev = add(x, y, lava ? RIVER_LAVA : 0, 0, id);
+    let prev: number;
+    if (from) {
+      prev = from.node;
+    } else {
+      if (water[tex(x, y)]) return;
+      if (!lava && near(ownW, x, y, -2) >= 0) return;
+      if (lava && near(ownL, x, y, -2) >= 0) return;
+      prev = add(x, y, lava ? RIVER_LAVA : 0, 0, id);
+    }
+    // (step 3) the least ground the walk has crossed: it can fill a basin no higher than that
+    // (an outlet walk starts at its lake's level: its rim's lowest texel can stand a little over it, and a basin between
+    // the two would have been a lake higher than the one it drains)
+    let runMin = from ? Math.min(G[tex(x, y)], bs!.basins[from.lake].level) : G[tex(x, y)];
     let dx = 0;
     let dy = 0;
     let arc = 0;
@@ -461,19 +523,47 @@ export function walkTree(inp: WalkInput, stats: WalkStats): Tree {
         if (!lava) stats.toSea++;
         return;
       }
+      // (step 3) a basin no higher than the least ground on the way: the walk ends in it, a lake (made now, its outlet
+      // walk laid at once, or joined) — unless that would close a cycle; past its own lake an outlet walk walks on
+      if (!lava && bs) {
+        const b = bs.basinOf[t];
+        if (b >= 0 && (!from || b !== from.lake) && bs.basins[b].level <= runMin) {
+          if (lakeNode[b] >= 0) {
+            if (!cycles(lakeNode[b], prev)) {
+              nx[prev] = lakeNode[b];
+              stats.lakeJoins = (stats.lakeJoins ?? 0) + 1;
+              return;
+            }
+            stats.cyclesRefused = (stats.cyclesRefused ?? 0) + 1;
+          } else {
+            stats.lakesFound = (stats.lakesFound ?? 0) + 1;
+            stats.lakeJoins = (stats.lakeJoins ?? 0) + 1;
+            // (linked before the outlet walk is laid, so that walk sees this one's chain as its own: cycles())
+            const before = xs.length;
+            nx[prev] = before;
+            makeLake(b);
+            return;
+          }
+        }
+        runMin = Math.min(runMin, G[t]);
+      }
       // lava stops at a water river; water joins another walk's water node; lava joins lava
       if (lava && near(ownW, x, y, -2) >= 0) return;
       const j = near(lava ? ownL : ownW, x, y, id);
       if (j >= 0) {
-        nx[prev] = j;
-        if (!lava) stats.merged++;
-        return;
+        if (!lava && (cycles(j, prev) || (bs && lakeBelow(j) > runMin))) {
+          stats.cyclesRefused = (stats.cyclesRefused ?? 0) + 1;
+        } else {
+          nx[prev] = j;
+          if (!lava) stats.merged++;
+          return;
+        }
       }
       const k = add(x, y, lava ? RIVER_LAVA : 0, 0, id);
       nx[prev] = k;
       prev = k;
     }
-  };
+  }
   let id = 0;
   for (const s of waterSrc) {
     const before = xs.length;
@@ -481,6 +571,14 @@ export function walkTree(inp: WalkInput, stats: WalkStats): Tree {
     stats.walks++;
     if (xs.length > before) heads.push(before);
   }
+  // (step 3) placed lakes: a crater's basin is a lake whether a walk reached it or not (its outlet walk laid now)
+  if (bs && inp.lakeSeeds)
+    for (const t of inp.lakeSeeds) {
+      const b = bs.basinOf[t];
+      if (b < 0 || lakeNode[b] >= 0) continue;
+      makeLake(b);
+      stats.lakesPlaced = (stats.lakesPlaced ?? 0) + 1;
+    }
   // (step 2, §9.5 — the owner: "mountains with either cloud runoff or glacial melt that sends many little creaks down to
   // feed the head of the river") creeks: on high ground, short steep walks from higher points round each head, toward
   // it and downhill, kept only if they reach a river (they join the head's first nodes or a neighbour's)
@@ -567,7 +665,7 @@ export function walkTree(inp: WalkInput, stats: WalkStats): Tree {
     stats.lavaWalks++;
   }
   const count = xs.length;
-  return { x: Float32Array.from(xs), y: Float32Array.from(ys), next: Int32Array.from(nx), flags: Uint8Array.from(fl), still: Uint8Array.from(st), walk: Int32Array.from(wk), count };
+  return { x: Float32Array.from(xs), y: Float32Array.from(ys), next: Int32Array.from(nx), flags: Uint8Array.from(fl), still: Uint8Array.from(st), walk: Int32Array.from(wk), count, lakeOf: Int32Array.from(lk) };
 }
 
 /** each node's main upstream node (the one draining most into it; itself: a source) */
@@ -608,17 +706,31 @@ export function designLevels(o: {
   radius: number;
   level: Float32Array;
   stats: WalkStats;
+  /** (step 3) per node: a fixed level (a lake's: its spill level), NaN none — never lowered; every node upstream of it
+   *  stands at least at it (the river into a lake comes down to its water, not under it) */
+  fixed?: Float32Array;
 }): { cascaded: number } {
   const { x, y, next, still, lava, width, gmin, level } = o;
   const n = next.length;
   const order = upstreamFirst(next);
   const floorL = o.sea - 0.3;
-  for (let k = 0; k < n; k++) level[k] = still[k] ? o.sea - 0.4 : Math.max(floorL, gmin[k] - (lava[k] ? LAVA_INC : incisionFor(width[k])));
+  const fixed = o.fixed;
+  const isFixed = (k: number) => !!fixed && !Number.isNaN(fixed[k]);
+  for (let k = 0; k < n; k++) level[k] = still[k] ? o.sea - 0.4 : isFixed(k) ? fixed![k] : Math.max(floorL, gmin[k] - (lava[k] ? LAVA_INC : incisionFor(width[k])));
+  // (step 3) each node's floor: the level of the first lake downstream of it (−∞ none) — non-increasing downstream
+  const floorAt = new Float32Array(n).fill(-Infinity);
+  if (fixed)
+    for (let i = n - 1; i >= 0; i--) {
+      const k = order[i];
+      const j = next[k];
+      floorAt[k] = isFixed(k) ? fixed[k] : j !== k ? floorAt[j] : -Infinity;
+    }
   const monotone = () => {
     for (const k of order) {
       const j = next[k];
-      if (j !== k && !still[j] && level[j] > level[k]) level[j] = level[k];
+      if (j !== k && !still[j] && !isFixed(j) && level[j] > level[k]) level[j] = level[k];
     }
+    if (fixed) for (let k = 0; k < n; k++) if (level[k] < floorAt[k]) level[k] = floorAt[k];
   };
   monotone();
   // staircases on steep reaches (the existing rule: floored to whole steps; still monotone, still under the ground)
@@ -667,7 +779,7 @@ export function designLevels(o: {
     let changed = 0;
     const before = Float32Array.from(level);
     for (let i = 0; i < n; i++) {
-      if (still[i]) continue;
+      if (still[i] || isFixed(i)) continue;
       const bx = Math.floor(x[i] / B);
       const by = Math.floor(y[i] / B);
       if (rounds > 0) {
@@ -744,6 +856,11 @@ export function designLevels(o: {
   let rises = 0;
   for (let k = 0; k < n; k++) if (next[k] !== k && !still[next[k]] && level[next[k]] > level[k] + 1e-4) rises++;
   o.stats.rises = rises;
+  if (fixed) {
+    let fl = 0;
+    for (let k = 0; k < n; k++) if (!isFixed(k) && floorAt[k] > -Infinity && level[k] > gmin[k] - 0.5 && level[k] <= floorAt[k] + 1e-4) fl++;
+    o.stats.lakeFloated = fl;
+  }
   return { cascaded };
 }
 
@@ -770,6 +887,8 @@ export interface Rivers2 {
   speed: [number, number, number];
   discharge: number;
   stats: WalkStats;
+  /** (step 3) the lakes: the basin (terrain/lakes.ts), its node (at the outlet), its level */
+  lakes: { basin: number; node: number; level: number }[];
 }
 
 /** The whole of §1–§3: the tree, catchments, widths, levels, the node table (rivers.ts NODE_WORDS layout). */
@@ -841,8 +960,14 @@ export function walkRivers(inp: WalkInput): Rivers2 {
     const cx = Math.round(tr.x[k]);
     const cy = Math.round(tr.y[k]);
     let m = Infinity;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) m = Math.min(m, G[wi(cy + dy, n) * n + wi(cx + dx, n)]);
-    gmin[k] = m;
+    // (step 3: the land beside it — the sea's floor beside a river's last node held every river at the sea's level up
+    // to its mouth, so none could fall into the sea from a raised coast: 7 mouths of 297 stood over the sea by 3)
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) {
+        const t = wi(cy + dy, n) * n + wi(cx + dx, n);
+        if (!water[t]) m = Math.min(m, G[t]);
+      }
+    gmin[k] = m === Infinity ? G[wi(cy, n) * n + wi(cx, n)] : m;
   }
   const wx = new Float32Array(count);
   const wy = new Float32Array(count);
@@ -858,13 +983,22 @@ export function walkRivers(inp: WalkInput): Rivers2 {
   const lfN = new Int32Array(count);
   if (inp.landform) for (let k = 0; k < count; k++) lfN[k] = inp.landform[tex(k)];
   const tl = performance.now();
-  const { cascaded } = designLevels({ x: wx, y: wy, next: tr.next, still: tr.still, lava, width, gmin, tier: tierN, lf: lfN, up, sea: inp.sea, worldW: inp.worldW, worldH: inp.worldH, radius: CLAMP_RADIUS * texW, level, stats });
+  // (step 3) the lakes' nodes stand at their basins' spill levels
+  const fixed = new Float32Array(count).fill(NaN);
+  const lakes: { basin: number; node: number; level: number }[] = [];
+  for (let k = 0; k < count; k++) {
+    const b = tr.lakeOf[k];
+    if (b < 0) continue;
+    fixed[k] = inp.basins!.basins[b].level;
+    lakes.push({ basin: b, node: k, level: fixed[k] });
+  }
+  const { cascaded } = designLevels({ x: wx, y: wy, next: tr.next, still: tr.still, lava, width, gmin, tier: tierN, lf: lfN, up, sea: inp.sea, worldW: inp.worldW, worldH: inp.worldH, radius: CLAMP_RADIUS * texW, level, stats, fixed: lakes.length ? fixed : undefined });
   stats.msLevels = +(performance.now() - tl).toFixed(0);
   // (step 2, §9.5) each water source's valley head: the land's level HEAD.LEN cells on, straight up the valley
   const head = new Float32Array(Math.max(count, 1)).fill(NO_HEAD);
   for (let k = 0; k < count; k++) {
     const j = tr.next[k];
-    if (lava[k] || tr.still[k] || up[k] !== k || j === k) continue;
+    if (lava[k] || tr.still[k] || up[k] !== k || j === k || tr.lakeOf[k] >= 0) continue;
     const dx = wrapD(wx[k] - wx[j], inp.worldW);
     const dy = wrapD(wy[k] - wy[j], inp.worldH);
     const l = Math.hypot(dx, dy);
@@ -947,5 +1081,6 @@ export function walkRivers(inp: WalkInput): Rivers2 {
     speed: [r3(sp[0] ?? 0), r3(med(sp)), r3(sp[sp.length - 1] ?? 0)],
     discharge: r3(med(qs)),
     stats,
+    lakes,
   };
 }

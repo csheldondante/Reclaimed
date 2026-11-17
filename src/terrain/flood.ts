@@ -193,6 +193,68 @@ export class FloodGpu {
     return this.kernels;
   }
 
+  /**
+   * (terrain-rivers step 3) The depression-filled surface of the whole torus (the atlas's macro ground): neighbours wrap,
+   * the outlets are G.outlet only (the standing sea). The lakes the walks find are its basins (terrain/lakes.ts).
+   */
+  async fillTorus(G: FloodGrid): Promise<Float32Array> {
+    const dev = this.device;
+    const K = await this.k();
+    const { m } = G;
+    const N = m * m;
+    const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+    const uni = dev.createBuffer({ label: 'fill params', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const hB = dev.createBuffer({ label: 'fill h', size: N * 4, usage: S });
+    const A = dev.createBuffer({ label: 'fill a', size: N * 4, usage: S });
+    const B = dev.createBuffer({ label: 'fill b', size: N * 4, usage: S });
+    const ch = dev.createBuffer({ label: 'fill changed', size: 4, usage: S });
+    const rd = dev.createBuffer({ label: 'fill read', size: N * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const chR = dev.createBuffer({ label: 'fill changed read', size: 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    try {
+      dev.queue.writeBuffer(uni, 0, new Uint32Array([m, 0, 0, 1]));
+      dev.queue.writeBuffer(hB, 0, G.h);
+      const W0 = new Float32Array(N).fill(1e30);
+      if (!G.outlet) throw new Error('fillTorus: a torus needs outlets (the sea)');
+      for (let i = 0; i < N; i++) if (G.outlet[i]) W0[i] = G.h[i];
+      dev.queue.writeBuffer(A, 0, W0);
+      const groups = Math.ceil(m / 8);
+      const g1 = makeBindGroup(dev, 'fill', K.fill.layout, { 0: uni, 1: hB, 2: A, 3: B, 4: ch });
+      const g2 = makeBindGroup(dev, 'fill', K.fill.layout, { 0: uni, 1: hB, 2: B, 3: A, 4: ch });
+      let n = 0;
+      // (batches of 64 passes between readbacks of the change count; a pass moves the front a texel at least)
+      for (;;) {
+        dev.queue.writeBuffer(ch, 0, new Uint32Array([0]));
+        const enc = dev.createCommandEncoder({ label: 'fill passes' });
+        for (let b = 0; b < 64; b++) {
+          const cp = enc.beginComputePass();
+          cp.setPipeline(K.fill.pipeline);
+          cp.setBindGroup(0, n % 2 === 0 ? g1 : g2);
+          cp.dispatchWorkgroups(groups, groups);
+          cp.end();
+          n++;
+        }
+        enc.copyBufferToBuffer(ch, 0, chR, 0, 4);
+        dev.queue.submit([enc.finish()]);
+        await chR.mapAsync(GPUMapMode.READ);
+        const c = new Uint32Array(chR.getMappedRange().slice(0))[0];
+        chR.unmap();
+        if (c === 0) break;
+        if (n >= 8 * m) throw new Error(`fillTorus: not settled after ${n} passes`);
+      }
+      this.passes[0] = n;
+      const out = n % 2 === 0 ? A : B;
+      const enc = dev.createCommandEncoder();
+      enc.copyBufferToBuffer(out, 0, rd, 0, N * 4);
+      dev.queue.submit([enc.finish()]);
+      await rd.mapAsync(GPUMapMode.READ);
+      const W = new Float32Array(rd.getMappedRange().slice(0));
+      rd.unmap();
+      return W;
+    } finally {
+      for (const b of [uni, hB, A, B, ch, rd, chR]) b.destroy();
+    }
+  }
+
   /** the flood of grid G from `seed` (a texel): to `level`, or to the basin's spill height */
   async flood(G: FloodGrid, seed: number, level?: number): Promise<FloodMask & { filled?: Float32Array }> {
     const dev = this.device;

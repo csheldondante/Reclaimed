@@ -26054,3 +26054,56 @@ site's paved plaza in it, from low a flat-topped grey cone (TR25). With the flag
 (13248,6144) and builds and plays there — so the plain still at play zoom shows the town, not the relief (TR23). The
 plains' tilted cells, a bluffed river and the per-column cost were not shot / measured: the step was stopped (TR23).
 
+## 2026-11-17 — terrain: rivers first, step 3 (`terrain-rivers`, TR20/TR22/TR23; TERRAIN_RIVERS.md §10.5–§10.6)
+
+**Why.** The owner enjoys the terrain images; answers (DECISIONS): rivers at a raised coast "Partial notch and fall
+into the sea", islands first, lakes found by the walks with "the GPU flood fill". Step 2's tilted cells had never been
+looked at.
+
+**Stills first (TR23).** A viewer mode `plains` (sub-region kinds coloured; the coasts' raise magenta, isle channels
+cyan) found the tilted sub-regions. At region zoom the step-2 cells (9 over 150, 1.5-cell scarps) read only as thin dark
+lines, the tilt lost under the dune ripples (local/terrain3/on-t2.png) → tuned once: 5–14 over 130-cell cells, 2-cell
+scarps. After: polygonal scarp lines read in the hillshade; the planes' tilt still barely shows top-down (on-tilt-0/1).
+Play zoom at the step-2 tilted spot showed a riverside town, no relief (play0-on-tilted2.png). Note: the atlas viewer
+renders at half the page's pixels — a shot's `scale` spans 500 × scale world units (the coordinates of the first picks
+were off by 2×).
+
+**Coastal cliffs and isles (TR22, §10.5).** The tilted cells at atlas scale behind a coast band, added to the land
+region's own field; the coast's border becomes the mesa cliff where the raise stands over 6–18 (mixed by that
+weight); isles as a masked drop with the sea in it (`Ground.isl` → `seaOpen`; ColG 96 → 100 bytes). First look: the
+lowland valleys (σ 0.12, wide floodplains) ate every raised coast into sea-level flats → the raise is now a field over
+the valleyed land with the river distance as its border (a notch, §10.5). The notch was a 100-cell bowl round sources
+on the block → narrowed (NOTCH_W 8 + 0.15 · raise). Mouths: the 3 × 3 least ground beside a river's last node counted
+the sea floor, so every river came to the sea at its level (7 of 297 mouths over 3) → land only: 150 over 3, 110 over
+10, 37 with a fall over 3 and a notch over 10.
+
+**Lakes (TR20, §10.6).** The GPU fill (flood.ts, now `fillTorus`: wrapped, the sea the outlets) over the 2048² macro
+ground, basins ≥ 1.5 deep and ≥ 12 texels; a walk entering a basin no higher than the least ground it crossed ends in
+it, the lake node at the outlet, a new walk from there at once. Craters seed lakes. First build: 1 rise (an outlet walk
+joined a river into a higher lake) → joins that would rise to a lake are refused; the outlet walk starts at its lake's
+level. Test: src/terrain/lakes.test.ts (a bowl on the walks' way, a crater: lakes made, node at the outlet at the spill
+level, basin under it, every upstream node over it, no cycle, no rise, the outlet reaches the sea, catchments whole).
+
+**Numbers (seed 1, n 2048, flag on).**
+
+| | step 2 | step 3 |
+|---|---|---|
+| lakes (default world: 817) | 0 | 201 (8 in craters; lowland 69, upland 74, plateau 36, massif 22; median 154 texels) |
+| walks joined a lake / joins refused / rises / stranded | — | 292 / 29 / 0 / 0 |
+| nodes floored by a lake over their least ground − 0.5 | — | 964 (TR28) |
+| mouths over the sea by > 3 / > 10 (of 297) | 7 / 3 | 150 / 110 |
+| lakes fill (GPU) / basins (CPU) / rivers (CPU) | — | 1.3–2.3 s / 0.07 s / 1.0–1.2 s |
+| default world hashes (macro ground / nodes / regions) | 40deae46 / 40642a65 / b2bfc8b3 | the same (off-step3.json) |
+
+**Seen (region zoom, local/terrain3).** coastB / coastE / mouth: raised brown blocks along the coast with tiered cliff
+faces, narrow river gorges through them, sea channels cutting off isles — fjord-like lanes more than stacks (TR33);
+where a notch meets a channel both flood into wide bays. craterlake: a round crater lake with its central peak as
+islands — the best lake still. lake: lake shores are 8-cell texel staircases (TR32), as the default world's.
+
+**Seen (play zoom, local/terrain3/play-*.png; every spot NOT READY by the step-2 gate in 120 s, 3–31 % undrawn, labelled
+so — TR24).** coast: sea stacks and towers of red rock with sandy tops, a river at their feet — the most dramatic
+frame of the step. mouth: a cliff edge with the river below and white water at the face; a town's bridge beside it.
+craterlake: open water with a snowy island and a sand shelf. lake: a frozen lake among crystal giants with a staircase
+shore — not a good lake still. tilt: a river through grass, faint diagonal light bands, no scarp visible — the tilted
+cells are still too subtle at play zoom after the one tune (owner question).
+
