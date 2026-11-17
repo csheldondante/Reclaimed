@@ -101,6 +101,8 @@ class Game implements RunGame {
       check: () => true,
     });
     this.live = new LiveRunner({ scene, cam: this.cam, season, realm: () => this.realm, town: () => this.town, spot: (k) => this.spot(k), z: (x, y) => this.z(x, y), changed: () => this.changed(), ended: (run) => this.liveEnded(run) });
+    // (round 7, LS-63: the runner's window points move with the land)
+    scene.core.onShift.push((dx, dy, dz) => this.live.shift(dx, dy, dz));
     let last = performance.now();
     const tick = (now: number) => {
       requestAnimationFrame(tick);
@@ -139,6 +141,11 @@ class Game implements RunGame {
   }
   /** runs begun in this world (the history's count) */
   private runs = 0;
+  /** (round 7, LS-63) the live fire at the market dealt instead of the instant fire-wards hazard (it burns in the town
+   *  now); `?livefire=0`: the old hazard */
+  private get liveFire(): boolean {
+    return this.scene.host.params.get('livefire') !== '0';
+  }
   private changed(): void {
     for (const f of this.onChange) f();
   }
@@ -503,7 +510,7 @@ class Game implements RunGame {
     const home = this.season.town;
     const who = W.LEADERS.find((l) => l.id === p.state.leader);
     if (!a?.settlements || home === null || !who || !this.saved) return false;
-    this.realm = new Realm({ world: this.saved, home, seed: a.atlas.p.seed, leader: who, ledger: p.ledger, land: () => this.season.land, seasons: p.state.seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y), resume: p.state });
+    this.realm = new Realm({ world: this.saved, home, seed: a.atlas.p.seed, leader: who, ledger: p.ledger, land: () => this.season.land, seasons: p.state.seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y), resume: p.state, liveFire: this.liveFire });
     this.runs = this.realm.history(true).filter((e) => e.kind === 'run-began').length;
     this.notes = p.notes;
     this.resultLines = [];
@@ -542,7 +549,7 @@ class Game implements RunGame {
     // reload, where the season loop restores it with the town)
     const ledger: SeasonLedger = { ...newLedger(who.pools, who.income), built: [...this.season.ledger.built] };
     const seasons = Number(this.scene.host.params.get('runlen') ?? RUN_SEASONS);
-    this.realm = new Realm({ world: this.saved ?? a.settlements.wiki.snapshot, home, seed: a.atlas.p.seed, leader: who, ledger, land: () => this.season.land, seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y) });
+    this.realm = new Realm({ world: this.saved ?? a.settlements.wiki.snapshot, home, seed: a.atlas.p.seed, leader: who, ledger, land: () => this.season.land, seasons, where: (spot) => this.where(spot), regionAt: (x, y) => a.settlements!.regionAt(x, y), liveFire: this.liveFire });
     this.runs = this.realm.history(true).filter((e) => e.kind === 'run-began').length;
     this.notes = [];
     this.resultLines = [];

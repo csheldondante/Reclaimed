@@ -38,7 +38,8 @@ export function mountMutLab(parent: HTMLElement, act: MutLabActions): HTMLElemen
     el.appendChild(b);
   };
   for (const m of MUTATORS) btn(m.name, m.description, () => act.apply(m.kind));
-  for (const g of SIGNS) btn(g.name, g.description, () => act.sign(g.kind));
+  // (a camp needs its cell: the loop's realm casts it — not a button here)
+  for (const g of SIGNS.filter((x) => x.kind !== 'camp')) btn(g.name, g.description, () => act.sign(g.kind));
   btn('Far eruption', 'Melt a place that is not loaded: ash and darkness fall here', () => act.erupt());
   btn('Far place', 'Flood and capture a place that is not loaded', () => act.far());
   btn('Go there', 'Travel to the far place', () => act.go());

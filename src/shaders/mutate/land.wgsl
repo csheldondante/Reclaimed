@@ -146,6 +146,26 @@ fn mutLand(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     veg[j] = 0.0;
     vegNext[j] = 0.0;
+  } else if (kind == MUT_TENTS) {
+    // (loop round 7, BACKLOG LS-67: where refugees camp — the ground trodden bare (a skin of dirt road) and tents of
+    // canvas standing in loose rows on a world lattice, each a ridge falling to its sides. Only on open soil or sand,
+    // never in water; the trodden skin is the mark that the column is done. Canvas is fuel: a camp can burn)
+    if (tm == MAT_DIRTROAD_U || tm == MAT_CANVAS_U || (tm != MAT_SOIL_U && tm != MAT_SAND_U && tm != MAT_SILT_U) || water[j] > 0.05) { return; }
+    if (d + 0.25 * (mnoise(w * 0.35, MP.k.y + 61u) - 0.5) > 0.9 || top + 3.0 >= f32(G.zMax)) { return; }
+    let cell = vec2<f32>(5.0, 4.2);
+    let g = vec2<i32>(floor(w / cell));
+    let u = fract(w / cell) - vec2<f32>(0.5);
+    let tent = mhash(g.x, g.y, MP.k.y + 63u) < 0.62 && abs(u.x) < 0.3 && abs(u.y) < 0.26;
+    o[n] = ivPack(top, top + 0.1, MAT_DIRTROAD_U, 0u);
+    n += 1u;
+    if (tent) {
+      // (the ridge along x: 1.5 cells high at its middle line, falling to 0.5 at its sides)
+      let h = 0.5 + 1.0 * (1.0 - abs(u.y) / 0.26);
+      o[n] = ivPack(top + 0.1, top + 0.1 + h, MAT_CANVAS_U, 0u);
+      n += 1u;
+    }
+    veg[j] = 0.0;
+    vegNext[j] = 0.0;
   } else if (kind == MUT_UNGRAVES) {
     // (round 6, MU-43: the sign ended — the burial ground closed again: a stone on top taken off, then the black skin
     // (basalt no thicker than the mark lays). Bare ground is left: what grew there does not come back at once)

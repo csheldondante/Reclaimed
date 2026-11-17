@@ -61,8 +61,10 @@ describe('a live event as data (living/live.ts)', () => {
     const s = idleState(d, {});
     expect(liveRead(d, s)).toMatchObject({ lots: 6, burned: 6 });
     expect(liveTier(d, liveRead(d, s))).toBe('failure');
-    expect(liveTier(d, liveRead(d, { ...s, burned: 2 }))).toBe('success');
-    expect(liveTier(d, liveRead(d, { ...s, burned: 0 }))).toBe('triumph');
+    // (round 7: the outcome is the player's — rain brought or not; a stall that went out by itself is no win)
+    expect(liveTier(d, liveRead(d, { ...s, burned: 0 }))).toBe('failure');
+    expect(liveTier(d, liveRead(d, { ...s, burned: 2, casts: { rain: 1 } }))).toBe('success');
+    expect(liveTier(d, liveRead(d, { ...s, burned: 0, casts: { rain: 2 } }))).toBe('triumph');
     expect(liveEnded(d, { ...s, t: 10, alight: 0 })).toBe(false);
     expect(liveEnded(d, { ...s, t: 21, alight: 0 })).toBe(true);
     expect(liveEnded(d, { ...s, t: 21, alight: 2 })).toBe(false);

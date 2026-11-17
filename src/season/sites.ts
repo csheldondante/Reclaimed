@@ -160,20 +160,29 @@ export interface Label {
 export function declutter(labels: readonly Label[], width: number, top = 0, bottom = Infinity): P2[] {
   // (a name's row: 42 px, so each name keeps at least a thumb's 40 px of its own when names stack — round 4's touch
   // walk measured 38 with rows of 32)
-  const H = 42;
+  // (loop round 7, BACKLOG LS-74: what takes a press is the name and 9 px above and below it (run-ui.ts `::after`), 46
+  // px — rows 48 apart, so a name stacked under another never covers its press; its width a little over the text's,
+  // so names side by side do not cover each other's ends; a row to either side tried when none above or below is
+  // free. Seen: a press of 31 px where two names lay close)
+  const H = 48;
+  const SLOP = 9;
   const placed: { x0: number; x1: number; y0: number; y1: number }[] = [];
+  const free = (b: { x0: number; x1: number; y0: number; y1: number }) => !placed.some((q) => b.x0 < q.x1 && q.x0 < b.x1 && b.y0 < q.y1 && q.y0 < b.y1);
   return labels.map((l) => {
-    const w = Math.min(width - 8, 8.2 * l.chars + 26);
-    const x = Math.max(w / 2 + 4, Math.min(width - w / 2 - 4, l.x));
-    for (const dy of [0, -H, H, -2 * H, 2 * H, -3 * H, 3 * H, -4 * H, 4 * H]) {
-      const y = l.y + dy;
-      if (y - H < top || y > bottom) continue;
-      const b = { x0: x - w / 2, x1: x + w / 2, y0: y - H, y1: y };
-      if (placed.some((q) => b.x0 < q.x1 && q.x0 < b.x1 && b.y0 < q.y1 && q.y0 < b.y1)) continue;
-      placed.push(b);
-      return [x, y] as P2;
-    }
-    placed.push({ x0: x - w / 2, x1: x + w / 2, y0: l.y - H, y1: l.y });
+    const w = Math.min(width - 8, 8.6 * l.chars + 34);
+    const clampX = (x: number) => Math.max(w / 2 + 4, Math.min(width - w / 2 - 4, x));
+    for (const dx of [0, -w - 4, w + 4])
+      for (const dy of [0, -H, H, -2 * H, 2 * H, -3 * H, 3 * H, -4 * H, 4 * H]) {
+        const x = clampX(l.x + dx);
+        const y = l.y + dy;
+        if (y - H + SLOP < top || y + SLOP > bottom) continue;
+        const b = { x0: x - w / 2, x1: x + w / 2, y0: y - H + SLOP, y1: y + SLOP };
+        if (!free(b)) continue;
+        placed.push(b);
+        return [x, y] as P2;
+      }
+    const x = clampX(l.x);
+    placed.push({ x0: x - w / 2, x1: x + w / 2, y0: l.y - H + SLOP, y1: l.y + SLOP });
     return [x, l.y] as P2;
   });
 }

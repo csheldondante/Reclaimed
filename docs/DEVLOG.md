@@ -24200,3 +24200,35 @@ gold rings over the road, "The parade 9"), on the grass outside the houses, and 
 petals (season 1: no market yet); the refugees on the road (12 rings and the carts' darker figures ringed) and among
 the houses. Not seen: the watchers along the road next to the parade — the column took the grass beside the road and
 then a way between houses (LS-77).
+
+## 2026-11-16 — loop skeleton round 7 (2): the fire burns in the town; tents for the refugees; five asks at most; presses a thumb can take (`loop-skeleton`, LS-63, LS-67, LS-73, LS-74, LS-80, LS-81)
+
+**LS-63, the cheapest test first.** `scripts/lab/fireprobe.mjs` lights the fire system in the loop's own scene (leader
+picked, the town made) and reads the fire mirror for 12 s. The fire pass is scheduled there (`fire` in the sim's
+systems). Woods and the east fields: 0.88-1.0 alight. Bare grass (plants 0.9) and a brick-paved square: 0 — no fuel.
+The first run also showed the cause of round 6's "nothing catches": every spot's window point was taken before the
+camera went there, and the window slid on the way — the canvas, the light and the read landed on other ground. With the
+point asked for after the move, the market's own ground (woods, season 1) caught at once, canvas or not. The runner kept
+the same stale points (stalls placed, then lit and read seconds later, across the camera's move): `LiveRunner.shift`
+now moves its window points with the land (`WorldCore.onShift`). Stalls: canvas put at 12 spots, and once a second the
+first six whose surface took it with no water standing are lit (one read of those pages).
+
+Seen in the stills (`loop/r7/f2`, `f3`): smoke columns and orange flames among the market's houses by the water. 1-2 of 6
+stalls stay alight long enough to burn down; the rest read out within ~18 s by themselves (LS-80, cause not found). So
+the card is dealt again (the instant `fire-wards` hazard is `?livefire=0`) with its outcome on the player's act: rain
+brought and nothing lost, rain brought, or nobody brought rain and the market burns (the old hazard's 22-cell burn).
+
+**LS-67, tents.** A fifth sign, `camp`, with its cell: its ground mark is the mutators' land kernel's `MUT_TENTS` —
+trodden ground (a skin of dirt road) with canvas tents in loose rows on a world lattice, ridged, on soil, sand or silt
+with no water. The realm's `camp` helper casts it when refugees arrive, 20 cells out from the east fields. By the watch
+post (the first choice) the camp's cell lay in the river's silt and nothing was written: the texts now say the east
+fields. GPU test "landMark, the refugees' camp" (trodden ground, tents, nothing outside, idempotent). Lab
+`scripts/lab/campshot.mjs`: cast, a still, the page loaded again without `fresh`: the sign and the tents are there —
+looked at both stills (a brown patch with a dozen white tents beside the river and the fields).
+
+**LS-73.** The engine's `boardMax` (the realm: BOARD + 2 = 5) caps what stands after a deal; past it the lowest-scored
+non-threat cards of that deal are left out. Tried first, dropped: the conflict guarantee swapped inside the resource limit
+— with nothing answered the same three projects stood all run (`realm.test.ts` "houses was not offered in 16 seasons").
+
+**LS-74.** `declutter` keeps each name's whole press area apart (46 px: the text and 9 px above and below): rows 48 px,
+widths over the text's, a row to either side tried when none above or below is free.

@@ -23,6 +23,7 @@ import type { SeasonLoop } from '../../season/loop';
 import { townHeart } from '../../season/war';
 import type { StoryCamera, V3 } from '../../story/camera';
 import { cellAt } from '../../world/lattice';
+import { MAT } from '../../world/materials';
 import type { LevelScene } from '../level';
 import { REGION } from '../streamer/defs';
 
@@ -48,8 +49,11 @@ const AFTER_ZOOM = 5;
 /** seconds between reads of a hazard's points, and the seconds alight after which a point's lot has burned down */
 const HAZARD_READ = 2;
 const BURN_SECONDS = 12;
-/** seconds after a hazard's stalls are put down that they are lit (the edit lands at the next tick) */
-const LIGHT_AFTER = 0.6;
+/** seconds after a hazard's stalls are put down that they are lit (the edit lands at the next tick, its chunk's surface
+ *  word a tick or two after) */
+const LIGHT_AFTER = 1;
+/** (round 7) spots a stall is tried at, for each stall wanted */
+const STALL_TRIES = 2;
 /** an event's units' factions */
 const FACTION = { town: 'f-town', foe: 'f-raiders', folk: 'f-town' } as const;
 /** the units' kinds a group may be made of by place (season/forces.ts ForceKind) */
@@ -89,7 +93,8 @@ export interface LiveRun {
   groups: Map<string, RunGroup>;
   /** the group that comes in by a road: the road being tried, straight for the heart (no gate standing), and how far */
   entry: { road: number; tried: number; direct: boolean; step: 'look' | 'settle' | 'called' | 'in' | 'none'; calm: number } | null;
-  hazard: { points: { at: [number, number]; alightFor: number; alight: boolean; burned: boolean }[]; lit: boolean; read: number } | null;
+  /** the fire's stalls (before they are lit: every spot tried; `picking` while the ground under them is read) */
+  hazard: { points: { at: [number, number]; alightFor: number; alight: boolean; burned: boolean }[]; lit: boolean; picking: boolean; read: number; told?: boolean } | null;
   casts: Record<string, number>;
   absent: Record<string, number>;
   fighting: boolean;
@@ -236,16 +241,18 @@ export class LiveRunner {
       const c = this.point(run, def.hazard.at) ?? this.h.town()!.centreInWindow();
       const hz = def.hazard;
       const terrain = this.api.terrain;
-      const points = Array.from({ length: hz.points }, (_, k) => {
-        const a = (k / hz.points) * Math.PI * 2 + 0.4;
-        const r = hz.spread * (0.45 + 0.55 * ((k * 7) % 3) / 2);
+      // (round 7: twice as many spots as stalls; once the canvas is down, the stalls are the first spots whose ground
+      // took it — water, a building's lot or a paved square does not, and a stall there never caught: LS-63)
+      const points = Array.from({ length: hz.points * STALL_TRIES }, (_, k) => {
+        const a = (k / hz.points) * Math.PI * 2 + 0.4 + (k >= hz.points ? Math.PI / hz.points : 0);
+        const r = hz.spread * (k >= hz.points ? 1.25 : 0.45 + (0.55 * ((k * 7) % 3)) / 2);
         const at: [number, number] = [c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r];
         // (what burns: a stall's canvas at each spot — the fire system burns canvas, timber and plants, and the
-        // generated buildings are meshes it does not know; BACKLOG LS-63)
+        // generated buildings are meshes it does not know)
         terrain.build(at[0], at[1], 'canvas', { radius: 1.6, layers: 2 });
         return { at, alightFor: 0, alight: false, burned: false };
       });
-      run.hazard = { points, lit: false, read: 0 };
+      run.hazard = { points, lit: false, picking: false, read: 0 };
     }
     this.runs.push(run);
     // (round 7: played by day, and the day held while it runs — the sim's speed on the march ran a parade into night)
@@ -317,6 +324,19 @@ export class LiveRunner {
     }
     rg.units.clear();
     rg.made = 0;
+  }
+
+  /**
+   * (round 7, LS-63) The window slid (WorldCore.onShift: −d, the land's move): what the runner keeps in window points
+   * moves with it — a hazard's points (lit, then read, seconds after they were placed: a slide between put the fire and
+   * its reading on other ground), and where its marchers started and were last seen.
+   */
+  shift(dx: number, dy: number, dz: number): void {
+    for (const run of this.runs) {
+      for (const p of run.hazard?.points ?? []) p.at = [p.at[0] - dx, p.at[1] - dy];
+      if (run.from) run.from = [run.from[0] - dx, run.from[1] - dy, run.from[2] - dz];
+      if (run.last) run.last = [run.last[0] - dx, run.last[1] - dy, run.last[2] - dz];
+    }
   }
 
   /** the player taken to an event (its camera, its spells) */
@@ -611,9 +631,32 @@ export class LiveRunner {
     const def = run.def.hazard;
     if (!hz || !def) return;
     const fire = this.api.fire;
-    if (!hz.lit && run.t >= LIGHT_AFTER) {
-      hz.lit = true;
-      for (const p of hz.points) fire.ignite(p.at[0], p.at[1], { radius: def.radius, intensity: def.intensity });
+    const terrain = this.api.terrain;
+    if (!hz.lit && !hz.picking && run.t >= LIGHT_AFTER) {
+      // (round 7, LS-63: the ground under every spot read once — its surface word's pages, 1 KB each — and the first
+      // `points` whose top is the canvas put down are the stalls, lit; the rest let go. Read in window points that a
+      // slide meanwhile moves: `shift`)
+      hz.picking = true;
+      const xs = hz.points.map((p) => p.at[0]);
+      const ys = hz.points.map((p) => p.at[1]);
+      void terrain.load(Math.min(...xs) - 2, Math.min(...ys) - 2, Math.max(...xs) + 2, Math.max(...ys) + 2).then(
+        () => {
+          if (run.over) return;
+          // (and no water standing on it: wet ground puts a fire out at once — fire.wgsl `damp`. The water's pages are
+          // asked for here and read a frame or two later)
+          const water = this.h.scene.worldApi?.water;
+          for (const p of hz.points) water?.depthAt(p.at[0], p.at[1]);
+          setTimeout(() => {
+            if (run.over) return;
+            const took = hz.points.filter((p) => terrain.surfaceAt(p.at[0], p.at[1])?.mat === MAT.Canvas && (water?.depthAt(p.at[0], p.at[1]) ?? 0) < 0.05);
+            hz.points = took.slice(0, def.points);
+            hz.lit = true;
+            for (const p of hz.points) fire.ignite(p.at[0], p.at[1], { radius: def.radius, intensity: def.intensity });
+            console.log(`[live] ${run.template}: ${took.length} of ${xs.length} spots took the canvas on dry ground; ${hz.points.length} stalls lit`);
+          }, 300);
+        },
+        (e) => console.error(`[live] ${run.template}: the ground under its stalls could not be read: ${e}`),
+      );
     }
     if (!hz.lit || (hz.read += dt) < HAZARD_READ) return;
     for (const p of hz.points) {
@@ -623,6 +666,11 @@ export class LiveRunner {
       p.alight = hot > 0.05;
       if (p.alight) p.alightFor += hz.read;
       if (p.alightFor >= BURN_SECONDS) p.burned = true;
+    }
+    // (once, the first read after they were lit: how each stall stands, for the log)
+    if (!hz.told) {
+      hz.told = true;
+      console.log(`[live] ${run.template}: stalls ${hz.points.map((p) => `${p.at.map((v) => v.toFixed(0))} ${(fire.fireAt(p.at[0], p.at[1]) ?? -1).toFixed(2)}`).join('; ')}`);
     }
     hz.read = 0;
   }

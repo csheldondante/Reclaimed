@@ -161,12 +161,14 @@ export interface MutationRecord {
  *
  * A `melted` mutation applied away from the home town casts ash fall and darkness on it for three seasons, by distance.
  */
-export type SignKind = 'ashfall' | 'darkness' | 'deadrise' | 'crime';
+export type SignKind = 'ashfall' | 'darkness' | 'deadrise' | 'crime' | 'camp';
 
 export interface SignSpec {
   kind: SignKind;
   /** the place it is cast on (an atlas place id); left out: wherever the player is */
   place?: string;
+  /** (loop round 7) where its ground mark stands (world cells [x, row]): a 'camp' sign's tents (required for it) */
+  at?: [number, number];
   /** 0..1; 0 switches it off. Default 1 */
   strength?: number;
   /** the last season it lasts through (the loop's season number); left out: until switched off */
@@ -183,6 +185,8 @@ export interface Sign {
   cause: string | null;
   /** 'crime', 'deadrise': the Unrest it adds while on (the loop reads it) */
   unrest: number;
+  /** (loop round 7) its ground mark's cell (SignSpec.at) */
+  at?: [number, number];
 }
 
 export interface SignInfo {
@@ -196,6 +200,7 @@ export const SIGNS: readonly SignInfo[] = [
   { kind: 'darkness', name: 'Darkness', description: 'The sky goes dim and brown, as under smoke.' },
   { kind: 'deadrise', name: 'The dead rise', description: 'A few of the dead get up and wander the streets.' },
   { kind: 'crime', name: 'Crime', description: 'Some houses are looted and boarded up. Unrest grows.' },
+  { kind: 'camp', name: 'A camp', description: 'Tents stand on trodden ground where people camp.' },
 ];
 
 /**

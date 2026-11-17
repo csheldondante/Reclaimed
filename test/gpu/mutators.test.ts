@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { LOT_CONDITION, type MutatorKind } from '../../src/mutate';
 import { MutateEngine, type MutTown } from '../../src/mutate/engine';
 import { MutateGpu, type Origin } from '../../src/mutate/gpu';
-import { GPU_GRAVES, type ListWorld } from '../../src/mutate/list';
+import { GPU_GRAVES, GPU_TENTS, type ListWorld } from '../../src/mutate/list';
 import { unpackColumns } from '../../src/world/mapfile';
 import { ROW_H } from '../../src/world/lattice';
 import { RIVER_WET_PAD } from '../../src/sim/world-gpu';
@@ -614,6 +614,45 @@ test('landMark, the burial ground: black ground with pale stones inside its radi
   expect(stones).toBeGreaterThan(3);
   expect(stones).toBeLessThan(black / 3);
   r.gpu.landMark(GPU_GRAVES, at, 8, 77, [0, 0, 0]);
+  const again = await snap(r);
+  expect(Array.from(again.layers)).toEqual(Array.from(after.layers));
+  expect(g.takeErrors()).toEqual([]);
+});
+
+// ---- (loop round 7, BACKLOG LS-67) the 'camp' sign's tents ------------------------------------------------------
+test('landMark, the refugees\' camp: trodden ground with canvas tents inside its radius, nothing outside; written again it is the same', async () => {
+  const r = await rig();
+  const before = await snap(r);
+  const at: [number, number] = [20.5, 20.5 * ROW_H];
+  const box = r.gpu.landMark(GPU_TENTS, at, 9, 91, [0, 0, 0]);
+  expect(box).not.toBeNull();
+  const after = await snap(r);
+  const ca = cols(r, before);
+  const cb = cols(r, after);
+  let trodden = 0;
+  let tents = 0;
+  let outside = 0;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const d = Math.hypot(x + 0.5 + 0.5 * (y & 1) - at[0], (y + 0.5) * ROW_H - at[1]);
+      const top = cb[i][cb[i].length - 1];
+      if (d > 9) {
+        if (JSON.stringify(ca[i]) !== JSON.stringify(cb[i])) outside++;
+        continue;
+      }
+      if (top.mat === MAT.DirtRoad) trodden++;
+      if (top.mat === MAT.Canvas) {
+        tents++;
+        // (a tent stands on the trodden skin, half a cell to a cell and a half tall)
+        expect(cb[i][cb[i].length - 2].mat).toBe(MAT.DirtRoad);
+        expect(top.z1 - top.z0).toBeGreaterThan(0.45);
+      }
+    }
+  expect(outside).toBe(0);
+  expect(trodden).toBeGreaterThan(60);
+  expect(tents).toBeGreaterThan(8);
+  r.gpu.landMark(GPU_TENTS, at, 9, 91, [0, 0, 0]);
   const again = await snap(r);
   expect(Array.from(again.layers)).toEqual(Array.from(after.layers));
   expect(g.takeErrors()).toEqual([]);

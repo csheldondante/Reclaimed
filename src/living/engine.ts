@@ -177,6 +177,10 @@ export interface EngineOptions {
    *  dealt when there is room, the rest wait for a later deal. A card of the run's arc (`threat: 'arc'`: the tribute)
    *  is neither counted nor held back. Default: no cap */
   threatMax?: number;
+  /** (loop round 7, BACKLOG LS-73) things asked of the player standing at once, at most, whatever dealt them (the
+   *  limits, the guarantees): past it the lowest-scored cards of this deal that are not threats are left out. A threat
+   *  (the arc's included) is never left out. Default: no cap */
+  boardMax?: number;
   /** (living/live.ts) the run's numbers a live event's groups may be sized by ('raid', 'soldiers') */
   liveNumbers?: readonly string[];
 }
@@ -712,6 +716,17 @@ export class LivingEngine {
     // counts those too, or a standing card and the guarantee's own make one more choice than the limit)
     const conflictOnBoard = !!this.opts.limitBoard && this.offers.some((o) => o.status === 'offered' && (this.template(o.template).hooks ?? this.template(o.template).themes).some((h) => conflictHooks.includes(h)));
     const dealer = props.length ? deal(props, { holdings: this.w.holdings, turn, at: pAt, dist: this.opts.dist ?? (() => 0), conflictHooks, conflictOnBoard, recent: this.recent, tune, onePerPlace }) : null;
+    // (boardMax: the whole board within its cap — the dealer's guarantee may add a card past its limits; seen: six
+    // things asked in one season against five)
+    if (dealer && this.opts.boardMax !== undefined) {
+      let over = this.offers.filter((o) => o.status === 'offered').length + dealer.dealt.length - this.opts.boardMax;
+      const cut = dealer.dealt.filter((d) => !this.template(d.opp.template).threat).sort((a, b) => a.score - b.score);
+      while (over-- > 0 && cut.length) {
+        const d = cut.shift()!;
+        dealer.dealt.splice(dealer.dealt.indexOf(d), 1);
+        dealer.rejected.push({ template: d.opp.template, offer: d.opp.offer, place: d.opp.location.name, title: d.opp.title, step: 'limits', why: `the board holds ${this.opts.boardMax}: scored ${d.score.toFixed(2)}`, score: +d.score.toFixed(3) });
+      }
+    }
     const dealt: Offer[] = [];
     for (const d of dealer?.dealt ?? []) {
       const m = meta.get(`${d.opp.template}|${d.opp.offer}`);

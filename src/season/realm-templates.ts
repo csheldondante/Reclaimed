@@ -241,7 +241,7 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     // RES: "resettlement")
     id: 'house-refugees',
     title: 'House the refugees',
-    pitch: 'The refugees sleep under carts by the watch post. Timber and one worker would raise them huts.',
+    pitch: 'The refugees sleep in tents by the east fields. Timber and one worker would raise them huts.',
     themes: ['town', 'refugees'],
     // (at the watch post, where their rider stood: the road gate is the tribute's place, one card a place)
     bind: at('watch'),
@@ -250,8 +250,8 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     requires: { agents: [{ kind: 'workers', count: 1 }], goods: { materials: 2 } },
     turns: 1,
     work: 'labour',
-    outcome: [{ helper: 'pool', args: ['labor', 2] }, { helper: 'pool', args: ['unrest', -1] }, { helper: 'camp', args: ['$site', 'sheltered'] }, { event: 'refugees-housed', by: ['player'], to: ['$town'], note: 'you housed the refugees by the watch post. Two of them work for you now', weight: 0.4 }],
-    outcomeText: 'The refugees have huts by the watch post. Two of them join your workers. Unrest -1.',
+    outcome: [{ helper: 'pool', args: ['labor', 2] }, { helper: 'pool', args: ['unrest', -1] }, { helper: 'camp', args: ['$site', 'sheltered'] }, { event: 'refugees-housed', by: ['player'], to: ['$town'], note: 'you housed the refugees by the east fields. Two of them work for you now', weight: 0.4 }],
+    outcomeText: 'The refugees have huts by the east fields. Two of them join your workers. Unrest -1.',
     onExpire: [
       { helper: 'pool', args: ['unrest', 1] },
       { helper: 'sign', args: ['crime', '$town', 0.5, 3] },
@@ -280,7 +280,7 @@ export const WORLD_TEMPLATES: TemplateDef[] = [
     work: 'talk',
     outcome: [{ helper: 'income', args: ['materials', 1] }, { helper: 'camp', args: ['$site', 'abandoned'] }, { event: 'refugees-resettled', by: ['player'], to: ['$town'], note: 'you settled the refugees on the farms. They pay you a share of the crop', weight: 0.3 }],
     outcomeText: 'The refugees leave the camp for the farms. +1 Materials each season.',
-    presenter: { of: '$town', role: 'reeve', own: true, verb: 'offers', line: 'Those people by the watch post know how to farm. Give me seed for them and I will put them on the east fields.', gain: 'One more Materials every season.' },
+    presenter: { of: '$town', role: 'reeve', own: true, verb: 'offers', line: 'Those people in the tents know how to farm. Give me seed for them and I will put them on the east fields.', gain: 'One more Materials every season.' },
     reward: { text: '+1 Materials each season.' },
     offerTurns: 3,
     once: true,

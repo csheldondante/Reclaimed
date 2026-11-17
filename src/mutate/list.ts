@@ -41,6 +41,10 @@ export const landOp = (m: Pick<Mutation, 'kind' | 'purpose'> & { op?: number }):
 export const GPU_UNGRAVES = 15;
 /** the burial ground's radius (cells) */
 export const GRAVES_RADIUS = 15;
+/** (loop round 7, BACKLOG LS-67) the land kernel's code for the 'camp' sign's tents (masks.wgsl MUT_TENTS), and the
+ *  camp's radius (cells): a first guess, tunable */
+export const GPU_TENTS = 16;
+export const TENTS_RADIUS = 13;
 /**
  * (round 6, BACKLOG MU-43) A sign's ground mark as the land kernel takes it: entry-shaped, DERIVED from the sign (which
  * the record keeps) and never kept in the list itself — while the sign is on it is written wherever the list's
@@ -87,7 +91,8 @@ export class WorldList {
     this.on = this.on.filter((s) => !(s.kind === spec.kind && s.place === place));
     const strength = Math.min(1, Math.max(0, spec.strength ?? 1));
     if (strength <= 0) return null;
-    const s: Sign = { kind: spec.kind, place, strength, until: spec.until ?? null, cause: spec.cause ?? null, unrest: spec.kind === 'crime' ? Math.ceil(strength * 2) : spec.kind === 'deadrise' ? 1 : 0 };
+    const s: Sign = { kind: spec.kind, place, strength, until: spec.until ?? null, cause: spec.cause ?? null, unrest: spec.kind === 'crime' ? Math.ceil(strength * 2) : spec.kind === 'deadrise' ? 1 : 0, ...(spec.at ? { at: [Math.round(spec.at[0]), Math.round(spec.at[1])] as [number, number] } : {}) };
+    if (s.kind === 'camp' && !s.at) throw new Error('mutators: a camp sign needs its cell (`at`)');
     this.on.push(s);
     return s;
   }
@@ -106,6 +111,15 @@ export class WorldList {
   marks(home: string | null): LandMark[] {
     const out: LandMark[] = [];
     for (const s of this.on) {
+      if (s.kind === 'camp') {
+        // (loop round 7, LS-67: the refugees' tents where the sign says — the camp's own cell)
+        const id = s.place ?? home;
+        if (!id || !s.at) continue;
+        let h = 2166136261;
+        for (const ch of `${id}:camp`) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+        out.push({ id: `tents:${id}:${s.at[0]}:${s.at[1]}`, kind: 'founded', op: GPU_TENTS, place: id, cell: [s.at[0], s.at[1]], radius: TENTS_RADIUS, strength: 1, seed: h, params: [0, 0, 0, 0, 0, 0], seq: -1 });
+        continue;
+      }
       if (s.kind !== 'deadrise') continue;
       const id = s.place ?? home;
       const p = id ? this.place0(id) : null;

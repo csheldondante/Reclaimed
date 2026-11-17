@@ -58,8 +58,12 @@ export const BASIC_SPELLS: readonly SpellId[] = ['fire', 'rain', 'growth'];
 export const SPELL_COST: Record<SpellId, number> = { heatray: 1, fire: 1, rain: 1, growth: 1 };
 /** far towns that count as trade partners once the trade route is built: the nearest so many */
 export const PARTNERS = 3;
-/** the refugees' camp by the watch post, as a thing of the fact world */
+/** the refugees' camp (by the east fields since round 7), as a thing of the fact world */
 export const campId = (home: string): string => `camp:${home}`;
+/** (loop round 7, LS-67) how far out from its site the refugees' tents stand (world units): a first guess, tunable */
+const CAMP_OUT = 20;
+/** (loop round 7, LS-67) the site the refugees camp by: the east fields (open, dry; the reeve puts them to work there) */
+const CAMP_SITE: SiteKey = 'fields';
 
 /** a live event as the scene tells it: its state, where it was (world cells [x, row]), the way its marchers took, and
  *  the hazard's points that burned */
@@ -236,6 +240,8 @@ export class Realm {
       economy: false,
       limitBoard: true,
       threatMax: 1,
+      // (round 7, LS-73: the board, the threat and the arc's card — five things asked at most, whatever the guarantee adds)
+      boardMax: BOARD + 2,
       rng: () => 0,
       liveNumbers: Object.keys(this.runNumbers()),
     });
@@ -353,6 +359,9 @@ export class Realm {
           if (!c.w.facts.entity(id)) c.w.facts.add({ id, kind: 'site', name: 'the refugee camp', at: { region: this.w.settlement(this.home)!.region, settlement: this.home }, attrs: { camp: true, by: site }, cause: c.cause });
           // (camp $site state: what became of it — 'sheltered' (huts raised), 'abandoned' (its people moved on or sent away))
           if (a[1]) c.w.facts.setTag(id, 'condition', String(a[1]), true, c.cause);
+          // (loop round 7, LS-67: its tents on the ground — the mutators' 'camp' sign, which the save keeps — by the east
+          // fields, out from the town's middle: open, dry ground (by the watch post they stood in the river's silt))
+          if (!c.dry && mutators.ready && !a[1]) mutators.sign({ kind: 'camp', place: this.home, at: this.campCell(), cause: c.cause });
         },
       },
 
@@ -471,7 +480,7 @@ export class Realm {
       out.push({ id: x.id, name: this.w.name(x.id), tags: ['town', 'trade-partner', x.standing ? 'standing' : 'ruined'], at: s ? [s.at[0], s.at[1]] : null, town: x.id });
     }
     const camp = campId(this.home);
-    if (f.entity(camp)) out.push({ id: camp, name: 'the refugee camp', tags: ['camp', ...(f.tag(camp, 'condition', 'sheltered')?.value ? ['sheltered'] : []), ...(f.tag(camp, 'condition', 'abandoned')?.value ? ['ruined'] : ['standing'])], at: this.posOf(this.cellOf('watch')), town: this.home });
+    if (f.entity(camp)) out.push({ id: camp, name: 'the refugee camp', tags: ['camp', ...(f.tag(camp, 'condition', 'sheltered')?.value ? ['sheltered'] : []), ...(f.tag(camp, 'condition', 'abandoned')?.value ? ['ruined'] : ['standing'])], at: this.posOf(this.campCell()), town: this.home });
     return out;
   }
 
@@ -569,7 +578,18 @@ export class Realm {
     return true;
   }
 
+  /** (loop round 7, LS-67) a camp's cell by a site: CAMP_OUT world units out from it, away from the home town's middle */
+  campCell(key: SiteKey = CAMP_SITE): [number, number] {
+    const [x, r] = this.cellOf(key);
+    const h = this.w.settlement(this.home)!.at;
+    const dx = x - h[0];
+    const dy = r * ROW_H - h[1];
+    const d = Math.hypot(dx, dy) || 1;
+    return [Math.round(x + (dx / d) * CAMP_OUT), Math.round((r * ROW_H + (dy / d) * CAMP_OUT) / ROW_H)];
+  }
+
   /** where a spot is in world cells [x, row]: the scene's answer, else a fixed way off the town's centre */
+
   cellOf(spot: Spot): [number, number] {
     const at = this.o.where?.(spot);
     if (at) return [Math.round(at[0]), Math.round(at[1])];

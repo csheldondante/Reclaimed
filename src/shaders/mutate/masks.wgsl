@@ -51,6 +51,11 @@ const MUT_GRAVES: u32 = 14u;
 // (the sign ended: the mark taken off again — mutate/list.ts GPU_UNGRAVES)
 const MUT_UNGRAVES: u32 = 15u;
 const MAT_BONE_U: u32 = 16u;
+// (loop round 7, BACKLOG LS-67: the 'camp' sign's ground mark: refugees' tents on trodden ground — mutate/list.ts
+// GPU_TENTS)
+const MUT_TENTS: u32 = 16u;
+const MAT_CANVAS_U: u32 = 21u;
+const MAT_DIRTROAD_U: u32 = 40u;
 
 // (mutate/index.ts LOT_CONDITION)
 const LC_DROWNED: u32 = 1u;

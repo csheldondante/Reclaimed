@@ -256,8 +256,11 @@ const FIRE_EVENT: LiveDef = {
     { as: 'lots', read: 'points' },
     { as: 'burned', read: 'burned' },
     { as: 'alight', read: 'alight' },
+    { as: 'rain', read: 'casts', spell: 'rain' },
   ],
-  tiers: [{ tier: 'triumph', when: [['burned', '=', 0]] }, { tier: 'success', when: [['burned', '<=', 2]] }, { tier: 'failure' }],
+  // (round 7: the stalls catch and burn in the town now (LS-63), and most go out by themselves within 20 s — so the
+  // outcome is the player's: rain brought and nothing lost, rain brought, or nobody came and the market burned)
+  tiers: [{ tier: 'triumph', when: [['rain', '>=', 1], ['burned', '=', 0]] }, { tier: 'success', when: [['rain', '>=', 1]] }, { tier: 'failure' }],
 };
 
 const marketLost: Effect[] = [{ setTag: ['$site', 'condition', 'burned', true] }, { helper: 'pool', args: ['unrest', 1] }, { event: 'burned', by: [], to: ['$site', '$town'], note: 'The fire got loose. The market burned.', weight: -0.4 }];
@@ -281,7 +284,8 @@ const FIRE_T: TemplateDef = {
   outcomes: {
     triumph: { text: 'The fire is out. Nothing burned down.', effects: [{ event: 'made-safe', by: ['player'], to: ['$site'], note: 'you put the market fire out before a stall was lost', weight: 0.3 }] },
     success: { text: 'The fire is out. {burned} of {lots} stalls burned down.', effects: [{ event: 'fire-fought', by: ['player'], to: ['$site', '$town'], note: 'you fought the market fire; {burned} stalls burned down', weight: 0.1 }, { helper: 'burnPoints', args: ['$site', 7] }] },
-    failure: { text: '{burned} of {lots} stalls burned down. The market is lost. Unrest +1.', effects: [...marketLost, { helper: 'burnPoints', args: ['$site', 9] }] },
+    // (round 7: no rain brought — the fire spread from the stalls and the market burned, as when nobody went)
+    failure: { text: 'Nobody brought rain. The fire spread and the market burned. Unrest +1.', effects: [...marketLost, { helper: 'mutateAt', args: ['burned', '$site', 22, 1] }] },
   },
   // (nobody went: all of it burns, as the instant hazard did)
   onExpire: [...marketLost, { helper: 'mutateAt', args: ['burned', '$site', 22, 1] }],
@@ -339,7 +343,7 @@ const REFUGEE_T: TemplateDef = {
   play: { area: '$site', forced: true, event: REFUGEE_EVENT },
   vars: 'live',
   outcomes: {
-    success: { text: 'The refugees have camped by the watch post.', effects: [{ helper: 'camp', args: ['$site'] }, { event: 'refugees-arrived', by: [], to: ['$site', '$town'], note: 'refugees walked in along the road and camped by the watch post' }] },
+    success: { text: 'The refugees have put up tents by the east fields.', effects: [{ helper: 'camp', args: ['$site'] }, { event: 'refugees-arrived', by: [], to: ['$site', '$town'], note: 'refugees walked in along the road and camped by the east fields' }] },
   },
   presenter: { of: '$town', role: 'gate guard', own: true, verb: 'warns', line: 'There is a column on the road. Not raiders. Families, with carts.' },
   reward: { text: 'They will ask you for shelter.' },
