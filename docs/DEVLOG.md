@@ -26170,3 +26170,53 @@ the draw at their progress through the roads' reveal code, walls ragged a course
 fresh edge, a rafters' deck before the roof. The headless run could not frame a rising district (the season camera
 left it); off until seen.
 
+## 2026-11-17 — card table: the turn as a puzzle, step 1 — pieces, slots, uses, the preview (`card-table`)
+
+Why: the owner played and "usually had resources to make all of them"; he asked for "things on the board you can
+assign" and "abilities you can activate that make instant changes to strategic resources so optimal play is order
+dependent" (DECISIONS 2026-11-17; design note docs/design/TURN_PUZZLE.md). The bots measured the old turn as a choice
+of a subset of cards: 3.9 offered, 2.5 affordable together, a median of 7 affordable sets, 20% of seasons with no
+choice at all, 92% of cards affordable singly — and no action could change what another action did, so order never
+mattered.
+
+What: Labor and Might are pieces (the agents the ledger already had): a crew or soldier POSTED on a thing is held by a
+standing commitment `post:<thing>` (ledger.ts), so it is not free and Unrest cannot strike it, and nothing else in the
+model needed to learn a new state. Things get `slots` (what each piece there gives a season: a generated rule, like
+upkeep, with the rule book counting pieces — `per: { posted }`) and instant `uses` (cost → gives, once a season,
+`per` a piece there, `needs` a piece there). Uses and moves are player actions: one cascade of the rules each, a fact
+event each (`used:<id>`, `posted`, `recalled`), so the existing rules can wait for them. Each piece moves once a season
+(a recall-and-repost loop is impossible); a use that would give nothing cannot be made. `Realm.preview` says what a
+commit takes and when its pieces come back. There is no undo (the owner). The base game's new content is written in
+the pack format (draft 10) and loaded like any pack (`src/season/works.ts`), so the 3D loop gets it through the loader
+it already has. The works are off by default in `Table` so no existing test's run changed; on in the page and in
+`tablebots --works` (board 5, two needs at once).
+
+The measure: `table/turn-search.ts` reads the table into a small turn model; the SOLVER searches every position a turn
+can reach (breadth first, exact up to 60,000 positions), the GREEDY player takes the action that raises the score most
+until none does; both share one score. Every turn a bot plays is replayed on the real table and the pools and posts
+compared: no difference in 96 turns.
+
+Numbers (`node scripts/tablebots.mjs` before, `--works` after; 3 leaders, 1 seed, 16 seasons):
+
+| | before | after |
+|---|---|---|
+| offered a season | 3.9 | 6.3 |
+| most affordable together | 2.5 | 3.3 |
+| affordable card sets (median) | 7 | 23 |
+| seasons with everything affordable | 20% | 3% |
+| cards affordable singly | 92% | 85% |
+| delayed return / converts a pool (cards a season) | 1.9 / 1.2 | 2.7 / 2.3 |
+| distinct legal turns a season (cards, uses, posts, in any order) | = card sets + 1 | median 5,824 (quartiles 2,368–24,576; 21 of 96 searches hit the budget) |
+| solver's turn beats the greedy turn | — | 72% of seasons, by 17% of what greedy gains |
+| best turn depends on order | never | 78% (another order illegal 76%, worse 41%) |
+| placement matters (the piece elsewhere ends worse) | — | 23% |
+
+A first data pass (three starting things with 5 slots, nine uses, the market twice a season) gave a median of 34,451
+legal turns and 0% placement: the uses multiplied with every Materials point. `needs` (the stalls, the shrine's
+prayer and the foundry's arming want a piece there), two starting things, every use once, a levy that costs a crew and
+dearer works cards brought it to 5,824 and made where a crew goes decide which uses exist. Still over the owner's
+"fairly large but not overwhelmingly so": season 1 has 333 turns, but wealth grows (the turn players end runs with
+90–110 Materials) and every affordable use doubles the count. Knobs, for the owner: uses bound to pieces (one use per
+posted crew a season), fewer slots, sinks that grow. Found on the way: soldiers fight a raid only once the keep or
+the walls are built (`war.ts military`) — a solver that armed 19 soldiers and never built walls fell.
+

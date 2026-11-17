@@ -240,7 +240,7 @@ export function worksOf(things: readonly Thing[], packs: readonly LoadedPack[]):
       if (!t || t.tags.includes('ruined')) continue;
       const slots: WorkThing['slots'] = {};
       for (const s of def.slots ?? []) slots[s.takes] = s.n;
-      out.push({ id: t.id, name: def.name, slots, uses: (def.uses ?? []).map((u) => ({ id: u.id, name: u.name, cost: { ...(u.cost ?? {}) }, gives: { ...u.gives }, times: u.times ?? 1, ...(u.per ? { per: u.per } : {}), text: u.text })) });
+      out.push({ id: t.id, name: def.name, slots, uses: (def.uses ?? []).map((u) => ({ id: u.id, name: u.name, cost: { ...(u.cost ?? {}) }, gives: { ...u.gives }, times: u.times ?? 1, ...(u.per ? { per: u.per } : {}), ...(u.needs ? { needs: u.needs } : {}), text: u.text })) });
     }
   return out;
 }

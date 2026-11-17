@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { CATALOG } from '../../src/season/catalog';
 import { projectTemplate, WORLD_TEMPLATES } from '../../src/season/realm-templates';
 import { runBots } from '../../src/table/bots';
+import { WORKS } from '../../src/season/works';
 
 const N = Number(process.env.TABLE_SEEDS ?? 1);
 const SEASONS = Number(process.env.TABLE_SEASONS ?? 16);
@@ -16,7 +17,12 @@ describe('bots play the card table', () => {
   const packs = process.env.TABLE_PACK ? process.env.TABLE_PACK.split(',').map((f) => JSON.parse(fs.readFileSync(f.trim(), 'utf8'))) : undefined;
   for (const p of packs ?? []) templates.push(...(p.cards ?? []).map((c: { id: string }) => c.id));
   const raiders = process.env.TABLE_RAIDERS ? { raiders: Number(process.env.TABLE_RAIDERS) } : {};
-  const rep = runBots({ seeds: Array.from({ length: N }, (_, i) => 7 + i), seasons: SEASONS, templates, ...(packs ? { packs } : {}), ...raiders });
+  // (draft 10: TABLE_WORKS — the base game's works on, the solver and greedy turn players added; TABLE_MEASURE — every
+  // season of every run searched as a whole turn)
+  const works = process.env.TABLE_WORKS ? { works: true } : {};
+  if (process.env.TABLE_WORKS) templates.push(...(WORKS.cards ?? []).map((c) => c.id));
+  const measure = process.env.TABLE_MEASURE ? { measure: true } : {};
+  const rep = runBots({ seeds: Array.from({ length: N }, (_, i) => 7 + i), seasons: SEASONS, templates, ...(packs ? { packs } : {}), ...raiders, ...works, ...measure });
   const timed = `${rep.text}\n(${rep.runs.length} runs in ${Date.now() - t0} ms)\n`;
   if (process.env.TABLE_OUT) fs.writeFileSync(process.env.TABLE_OUT, timed);
   console.log(`\n${timed}`);

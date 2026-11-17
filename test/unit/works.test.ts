@@ -16,9 +16,9 @@ describe('the works (draft 10)', () => {
     expect(errs, JSON.stringify(errs)).toEqual([]);
   });
 
-  it('starts with the mine, the stalls and the shrine in play, and a bigger board', () => {
+  it('starts with the mine and the shrine in play, and a bigger board', () => {
     const t = mk();
-    expect(t.works().map((w) => w.id).sort()).toEqual(['thing:works-mine', 'thing:works-shrine', 'thing:works-stalls']);
+    expect(t.works().map((w) => w.id).sort()).toEqual(['thing:works-mine', 'thing:works-shrine']);
     expect(t.cards().length).toBeGreaterThanOrEqual(5);
   });
 
@@ -42,27 +42,29 @@ describe('the works (draft 10)', () => {
     const a = mk();
     const b = mk();
     const m0 = pool(a).materials;
-    // (a: post two crews, then dig; b: dig, then post)
+    // (a: post two crews, then dig; b: dig first — with no crew on the mine there is nothing to dig: it cannot be made)
     expect(a.post('crew', mine) && a.post('crew', mine) && a.use('works-dig-deep', mine)).toBe(true);
-    expect(b.use('works-dig-deep', mine) && b.post('crew', mine) && b.post('crew', mine)).toBe(true);
+    expect(b.use('works-dig-deep', mine)).toBe(false);
+    expect(b.post('crew', mine) && b.use('works-dig-deep', mine) && b.post('crew', mine)).toBe(true);
     expect(pool(a).materials).toBe(m0 + 2);
-    expect(pool(b).materials).toBe(m0);
+    expect(pool(b).materials).toBe(m0 + 1);
     // (once a season)
     expect(a.use('works-dig-deep', mine)).toBe(false);
   });
 
-  it('a use is instant and counts its times; the market sells twice, then no more', () => {
+  it('a use is instant and counts its times: the shrine takes one offering a season', () => {
     const t = mk();
-    const stalls = 'thing:works-stalls';
+    const shrine = 'thing:works-shrine';
+    // (it needs its keeper: a crew posted there)
+    expect(t.use('works-pray', shrine)).toBe(false);
+    expect(t.post('crew', shrine)).toBe(true);
     const p0 = pool(t);
-    expect(t.use('works-sell-stone', stalls)).toBe(true);
-    expect(pool(t).materials).toBe(p0.materials - 2);
-    expect(pool(t).intel).toBe(p0.intel + 2);
-    t.realm.ledger = { ...t.realm.ledger, holdings: { ...t.realm.ledger.holdings, goods: { ...t.realm.ledger.holdings.goods, materials: 10 } } };
-    expect(t.use('works-sell-stone', stalls)).toBe(true);
-    expect(t.use('works-sell-stone', stalls)).toBe(false);
+    expect(t.use('works-pray', shrine)).toBe(true);
+    expect(pool(t).materials).toBe(p0.materials - 1);
+    expect(pool(t).magic).toBe(p0.magic + 1);
+    expect(t.use('works-pray', shrine)).toBe(false);
     t.endSeason();
-    expect(t.use('works-sell-stone', stalls)).toBe(true);
+    expect(t.use('works-pray', shrine)).toBe(true);
   });
 
   it('the preview says what a card ties up and when it comes back, and changes nothing', () => {

@@ -201,6 +201,8 @@ export interface UseDef {
   gives: Partial<Pools>;
   times: number;
   per?: PieceKind;
+  /** it can be made only while a piece of this kind is posted on the thing (the stalls need a trader) */
+  needs?: PieceKind;
   text: string;
 }
 /** (draft 10) a thing in play with room for pieces (`slots`: how many of each kind) and its uses */
@@ -1419,7 +1421,11 @@ export class Realm {
       w.uses.map((u) => {
         const left = u.times - (used[`${w.id}|${u.id}`] ?? 0);
         const pay = (Object.entries(u.cost) as [Pool, number][]).every(([k, n]) => have[k] >= n);
-        return { thing: w.id, thingName: w.name, use: u, gives: this.givesNow(w.id, u), left, can: !this.over && left > 0 && pay };
+        const gives = this.givesNow(w.id, u);
+        const manned = !u.needs || (posts(this.w.holdings).get(w.id)?.[u.needs] ?? 0) > 0;
+        // (a use that would give nothing — "Dig deep" with no crew on the mine — cannot be made; nor one whose thing
+        // lacks the piece it needs)
+        return { thing: w.id, thingName: w.name, use: u, gives, left, can: !this.over && left > 0 && pay && manned && Object.values(gives).some((n) => !!n) };
       }),
     );
   }

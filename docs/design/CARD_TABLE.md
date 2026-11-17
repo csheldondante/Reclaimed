@@ -47,6 +47,21 @@ Pure functions this track adds to the model (each with a unit test), for both fr
 3. Until round 6 lands: the raid's result at the table comes from a small stand-in in `table/game.ts`
    (soldiers against raiders, `war.ts: settle`), removed at the merge. Tagged `CT-TEMP`.
 
+## The turn as a puzzle (draft 10, 2026-11-17; docs/design/TURN_PUZZLE.md)
+
+The works (`src/season/works.ts`, a pack of the base game) are on in the page (`?works=0` turns them off) and with
+`tablebots --works`; `new Table({ works: true })` in code. The page's "Works" section lists the crews and soldiers
+(free, posted, on a project, on strike, moved this season) and each thing with slots ("Post", "Call back") and uses
+("Use", with what is left this season). Each card that can be taken shows its preview ("Taking it": pools before →
+after, what is tied up until when). Moves: `post <crew|soldier> <thing>`, `recall …`, `use <use> <thing>`, replayed by
+`replay`. The Realm API both front ends use: `pieces()`, `works()`, `room()`, `post()`, `recall()`, `uses()`, `use()`,
+`preview()`; options `board`, `threats`, `extra.works`.
+
+Bots: `table/turn-search.ts` reads the table into a small turn model, searches every legal turn (SOLVER), takes the
+best next action until none helps (GREEDY), and measures order and placement; `tablebots --works` adds both players and
+the whole-turn table; `--measure` searches every season of every policy (slow). Every turn a bot plays is checked
+against the game.
+
 ## Determinism
 
 Same seed, same leader, same taps: the same run. The page has no randomness and no clock. The Realm's dealer is

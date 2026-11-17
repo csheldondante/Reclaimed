@@ -21,20 +21,56 @@ let packError = '';
 let armed: string | null = null;
 /** the drawers left open (a redraw keeps them) */
 const open = new Set<string>(params.get('open')?.split(',') ?? []);
-let table = new Table({ seed, leader, seasons });
+/** (draft 10, docs/design/TURN_PUZZLE.md) the base game's works: on unless ?works=0 */
+let works = params.get('works') !== '0';
+let table = new Table({ seed, leader, seasons, works });
 
 /** the run started again. `added`: packs being added to the set — refused with their report, the set stays as it was */
 function restart(added: Pack[] = []): void {
   armed = null;
   try {
-    table = new Table({ seed, leader, seasons, packs: [...packs, ...added] });
+    table = new Table({ seed, leader, seasons, works, packs: [...packs, ...added] });
     packs = [...packs, ...added];
     packError = '';
   } catch (e) {
     // (a pack with errors, or packs that clash: the report shown, the run played with the packs there were)
     packError = (e as Error).message;
-    table = new Table({ seed, leader, seasons, packs });
+    table = new Table({ seed, leader, seasons, works, packs });
   }
+}
+
+/** (draft 10) the crews and soldiers, and the things they can be posted on, with their uses: every action here is
+ *  instant and final (no undo) */
+function workSection(): string {
+  if (table.over || !works) return '';
+  const ps = table.pieces();
+  const names = new Map(table.works().map((w) => [w.id, w.name]));
+  const projects = new Map(table.working().map((w) => [w.id, w.title]));
+  const where = (['crew', 'soldier'] as const)
+    .map((k) => {
+      const mine = ps.filter((p) => p.kind === k);
+      const by = new Map<string, number>();
+      for (const p of mine) {
+        const on = p.where === 'posted' ? (names.get(p.on ?? '') ?? p.on ?? '') : p.where === 'project' ? (projects.get(p.on ?? '') ?? p.on ?? '') : '';
+        const line = W.pieceWhere(p.where, on, p.moved);
+        by.set(line, (by.get(line) ?? 0) + 1);
+      }
+      return `<div class="row"><b>${esc(cap(W.pieceCount(k, mine.length)))}.</b> ${[...by].map(([l, n]) => esc(`${n} ${l}`)).join('; ')}</div>`;
+    })
+    .join('');
+  const things = table
+    .works()
+    .map((w) => {
+      const slots = w.slots
+        .map((s) => `<div class="row">${esc(cap(W.PIECE_NAME[s.kind][1]))}: ${s.posted} of ${s.n}<span class="acts" style="display:inline-flex;margin-left:6px"><button data-act="post" data-kind="${s.kind}" data-id="${esc(w.id)}" ${s.posted >= s.n ? 'disabled' : ''}>${W.POST}</button><button data-act="recall" data-kind="${s.kind}" data-id="${esc(w.id)}" ${s.posted ? '' : 'disabled'}>${W.RECALL}</button></span></div>`)
+        .join('');
+      const uses = w.uses
+        .map((u) => `<div class="row"><button data-act="use" data-use="${esc(u.use.id)}" data-id="${esc(w.id)}" ${u.can ? '' : 'disabled'}>${esc(u.use.name)}</button> ${esc(u.use.text)} <span class="dim">${esc(W.usesLeft(u.left))}</span></div>`)
+        .join('');
+      return `<div class="thing"><b>${esc(cap(w.name))}</b>${slots}${uses}</div>`;
+    })
+    .join('');
+  return `<h2>${W.WORKS_HEAD}</h2>${where}<div class="small">${things}</div>`;
 }
 
 const drawer = (id: string, title: string, body: string, force = false): string => `<details data-drawer="${id}" ${force || open.has(id) ? 'open' : ''}><summary>${esc(title)}</summary>${body}</details>`;
@@ -66,6 +102,7 @@ function opps(): string {
   ${c.because ? `<div class="row law-row">${esc(c.because)}</div>` : ''}
   <div class="say">"${esc(c.line)}"</div>
   <div class="row"><b>${W.COST}.</b> ${esc(c.cost)}${c.printed ? `<s class="printed" title="${W.PRINTED}">${esc(c.printed)}</s>` : ''}</div>
+  ${miss ? '' : `<div class="row dim"><b>${W.PREVIEW}.</b> ${esc(W.previewLine(table.preview(c.id)))}</div>`}
   <div class="row"><b>${W.IF_TAKEN}.</b> ${esc(c.gives)}${c.live ? ` ${W.LIVE_NOTE}` : ''}</div>
   ${c.laws.brings.map((l) => `<div class="row law-row"><b>${W.LAW_BRINGS}.</b> ${esc(l)}</div>`).join('')}
   ${c.laws.changes.length ? `<div class="row law-row"><b>${W.LAW_CHANGES}.</b> ${c.laws.changes.map(esc).join(' ')}</div>` : ''}
@@ -246,7 +283,7 @@ function draw(): void {
   const y = window.scrollY;
   const built = table.built();
   const builtRow = built.length ? `<h2>${W.BUILT_TITLE}</h2>${tags(built, 'state')}` : '';
-  app.innerHTML = header() + worldNow() + end() + lawsList() + events() + opps() + abilities() + rules() + inPlay() + farPlaces() + working() + builtRow + log() + recordList() + packDrawer() + footer();
+  app.innerHTML = header() + worldNow() + end() + lawsList() + events() + opps() + workSection() + abilities() + rules() + inPlay() + farPlaces() + working() + builtRow + log() + recordList() + packDrawer() + footer();
   window.scrollTo(0, y);
 }
 
@@ -264,6 +301,9 @@ app.addEventListener('click', (e) => {
   const id = b.dataset.id ?? '';
   if (act === 'take') table.take(id);
   else if (act === 'pass') table.pass(id);
+  else if (act === 'post') table.post(b.dataset.kind as 'crew' | 'soldier', id);
+  else if (act === 'recall') table.recall(b.dataset.kind as 'crew' | 'soldier', id);
+  else if (act === 'use') table.use(b.dataset.use ?? '', id);
   else if (act === 'resolve') {
     armed = null;
     table.resolveNow(id);
@@ -278,6 +318,8 @@ app.addEventListener('click', (e) => {
     const a = table.abilities().find((x) => x.id === armed);
     if (!a || !a.can || !a.targets.length) armed = null;
   } else if (act === 'unpack') {
+    // (draft 10: the works are the base game's: taking them out plays the base game as it was)
+    if (id === 'works') works = false;
     packs = packs.filter((p) => p.pack.id !== id);
     restart();
   } else if (act === 'next') table = table.next(leader);
@@ -285,7 +327,7 @@ app.addEventListener('click', (e) => {
     seed = Number((document.getElementById('seed') as HTMLInputElement).value) || 0;
     seasons = Math.max(4, Number((document.getElementById('seasons') as HTMLInputElement).value) || 16);
     leader = (document.getElementById('leader') as HTMLSelectElement).value;
-    history.replaceState(null, '', `?seed=${seed}&leader=${leader}&seasons=${seasons}`);
+    history.replaceState(null, '', `?seed=${seed}&leader=${leader}&seasons=${seasons}${works ? '' : '&works=0'}`);
     restart();
   }
   draw();

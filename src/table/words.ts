@@ -236,6 +236,7 @@ export const useLine = (use: string, on: string, change: string): string => `You
 export const PIECES_HEAD = 'Crews and soldiers';
 export const WORKS_HEAD = 'Works: post crews and soldiers, make uses';
 export const POST = 'Post';
+export const PREVIEW = 'Taking it';
 export const RECALL = 'Call back';
 export const USE = 'Use';
 export const usesLeft = (n: number): string => (n <= 0 ? 'used up this season' : n === 1 ? 'once more this season' : `${n} more times this season`);

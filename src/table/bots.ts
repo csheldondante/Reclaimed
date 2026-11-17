@@ -6,6 +6,7 @@
 import { POOLS, total, type Pools } from '../season/ledger';
 import type { Pack } from '../packs/check';
 import { LEADERS, Table, TIER_RANK, type OppCard } from './game';
+import { dependence, greedy, modelOf, playTurn, solve, value, type Act } from './turn-search';
 
 export interface Policy {
   name: string;
@@ -18,6 +19,36 @@ export interface Policy {
   keep?: number;
   /** it settles an event it is winning at once ("Settle it now"), and plays what that starts in the same season */
   settle?: boolean;
+  /** (draft 10, docs/design/TURN_PUZZLE.md) it plays the whole turn — cards, uses, pieces — as the solver's best turn
+   *  or the greedy turn (table/turn-search.ts), in place of scoring cards */
+  turn?: 'solver' | 'greedy';
+}
+
+/** (draft 10) the two turn players: they need the works (uses and slots) to differ from a card scorer */
+export const TURN_POLICIES: Policy[] = [
+  { name: 'SOLVER (best turn)', score: () => null, turn: 'solver', spells: 'events' },
+  { name: 'GREEDY (best next action)', score: () => null, turn: 'greedy', spells: 'events' },
+];
+
+/** (draft 10) one season's turn, measured: the search's counts, the solver's and the greedy turn's scores, whether the
+ *  best turn depends on order and on placement, and any difference between the simulation and the game */
+export interface TurnStat {
+  turns: number;
+  ends: number;
+  withPieces: number;
+  withUses: number;
+  capped: boolean;
+  solver: number;
+  greedy: number;
+  start: number;
+  order: boolean;
+  orderIllegal: boolean;
+  orderWorse: boolean;
+  placement: boolean;
+  posts: boolean;
+  /** actions in the solver's best turn */
+  length: number;
+  mismatch: string[];
 }
 
 const has = (c: OppCard, ...tags: string[]) => tags.some((x) => c.tags.includes(x));
@@ -140,6 +171,8 @@ export interface RunStat {
   all: boolean[];
   /** (loop round 16) each season's decision space (decisionSpace) */
   space: Space[];
+  /** (draft 10) each season's whole turn, measured (when asked for) */
+  turn: TurnStat[];
 }
 
 /**
@@ -249,8 +282,9 @@ function engineOf(t: Table): Pick<RunStat, 'peak' | 'paid' | 'acts'> {
 }
 
 /** one whole run by a policy */
-export function playRun(p: Policy, o: { seed: number; leader: string; seasons: number; packs?: Pack[]; raiders?: number }): RunStat {
+export function playRun(p: Policy, o: { seed: number; leader: string; seasons: number; packs?: Pack[]; raiders?: number; works?: boolean; measure?: boolean }): RunStat {
   const t = new Table(o);
+  const turn: TurnStat[] = [];
   let trouble: number | null = null;
   const idle: number[] = [];
   const titles: Record<string, Set<string>> = {};
@@ -276,8 +310,19 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
     // (loop round 16, the owner on Faeria: "resources constrain you to an n choose k that is fairly large but not
     // overwhelmingly so and where you have lots of choices that interact" — the season's decision space, measured)
     space.push(decisionSpace(t, board));
+    // (draft 10: the whole turn searched — every legal turn, the best, the greedy one, order and placement)
+    let planned: Act[] | null = null;
+    if (p.turn || o.measure) {
+      const m = modelOf(t);
+      const sr = solve(m);
+      const g = greedy(m);
+      const dep = dependence(m, sr.best, sr.value);
+      planned = p.turn === 'solver' ? sr.best : p.turn === 'greedy' ? g.seq : null;
+      const mismatch = planned ? playTurn(t, m, planned) : [];
+      turn.push({ turns: sr.turns, ends: sr.ends, withPieces: sr.withPieces, withUses: sr.withUses, capped: sr.capped, solver: sr.value, greedy: g.value, start: value(m, m.start), order: dep.order, orderIllegal: dep.orderIllegal, orderWorse: dep.orderWorse, placement: dep.placement, posts: dep.posts, length: sr.best.length, mismatch });
+    }
     // (the board changes as cards are taken: scored again after each)
-    for (;;) {
+    for (; !planned; ) {
       const best = t
         .cards()
         .filter((c) => !Object.keys(c.short).length)
@@ -343,6 +388,7 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
     afford,
     all,
     space,
+    turn,
   };
 }
 
@@ -356,12 +402,14 @@ const mean = (a: number[]): number => (a.length ? a.reduce((x, y) => x + y, 0) /
 const pad = (s: string | number, n: number): string => String(s).padEnd(n);
 
 /** every policy plays every leader on each seed; the table of what happened */
-export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy[]; leaders?: string[]; templates: string[]; packs?: Pack[]; raiders?: number }): BotReport {
-  const policies = (o.policies ?? POLICIES).filter((p) => p.name !== 'pack cards first' || !!o.packs?.length);
+export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy[]; leaders?: string[]; templates: string[]; packs?: Pack[]; raiders?: number; works?: boolean; measure?: boolean }): BotReport {
+  // (draft 10: with the works, the solver and the greedy turn player play too)
+  const policies = (o.policies ?? [...POLICIES, ...(o.works ? TURN_POLICIES : [])]).filter((p) => p.name !== 'pack cards first' || !!o.packs?.length);
   const leaders = o.leaders ?? LEADERS.map((l) => l.id);
   const runs: RunStat[] = [];
-  for (const p of policies) for (const leader of leaders) for (const seed of o.seeds) runs.push(playRun(p, { seed, leader, seasons: o.seasons, ...(o.packs ? { packs: o.packs } : {}), ...(o.raiders !== undefined ? { raiders: o.raiders } : {}) }));
+  for (const p of policies) for (const leader of leaders) for (const seed of o.seeds) runs.push(playRun(p, { seed, leader, seasons: o.seasons, ...(o.packs ? { packs: o.packs } : {}), ...(o.raiders !== undefined ? { raiders: o.raiders } : {}), ...(o.works ? { works: true } : {}), ...(o.measure ? { measure: true } : {}) }));
   const L: string[] = [];
+  if (o.works) L.push('The works are on (season/works.ts, draft 10): things with slots for crews and soldiers and instant uses; a board of 5, two needs at once.');
   if (o.raiders !== undefined) L.push(`Raiders in the last season: ${o.raiders}`);
   if (o.packs?.length) L.push(`Packs in play: ${o.packs.map((x) => x.pack.name).join(', ')}`);
   L.push(`Bots: ${policies.length} policies x ${leaders.length} leaders x ${o.seeds.length} seeds = ${runs.length} runs of ${o.seasons} seasons`);
@@ -394,6 +442,22 @@ export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy
   const th = sp.filter((s) => s.threat);
   L.push(`Decision space a season (${sp.length} seasons): offered n ${mean(sp.map((s) => s.n)).toFixed(1)}; most affordable together k ${mean(sp.map((s) => s.k)).toFixed(1)}; affordable sets ${mean(sp.map((s) => s.subsets)).toFixed(1)} mean, ${med(sp.map((s) => s.subsets))} median; no decision (all affordable together) ${pct(mean(sp.map((s) => (s.n > 0 && s.k === s.n ? 1 : 0))))}; delayed return ${mean(sp.map((s) => s.delayed)).toFixed(1)}; converts a pool ${mean(sp.map((s) => s.converts)).toFixed(1)}; worth depends on where ${mean(sp.map((s) => s.where)).toFixed(1)}; a standing threat with its countdown ${pct(th.length / Math.max(1, sp.length))} of seasons, an offered card meets it in ${pct(th.filter((s) => s.answers > 0).length / Math.max(1, th.length))} of those.`);
   L.push('');
+  // (draft 10, docs/design/TURN_PUZZLE.md: the whole turn as a puzzle — table/turn-search.ts)
+  const ts = runs.flatMap((r) => r.turn);
+  if (ts.length) {
+    const medN = (a: number[]) => med(a);
+    const q = (a: number[], f: number) => (a.length ? [...a].sort((x, y) => x - y)[Math.floor(f * (a.length - 1))] : 0);
+    const gap = ts.map((s) => s.solver - s.greedy);
+    const better = ts.filter((s) => s.solver > s.greedy + 1e-9).length;
+    const mis = runs.flatMap((r) => r.turn.flatMap((s) => s.mismatch.map((x) => `${r.policy}/${r.leader}: ${x}`)));
+    L.push(`The whole turn (${ts.length} seasons searched; cards, uses, posts and recalls, in any order):`);
+    L.push(`  distinct legal turns a season: median ${medN(ts.map((s) => s.turns))} (quartiles ${q(ts.map((s) => s.turns), 0.25)} to ${q(ts.map((s) => s.turns), 0.75)}, most ${Math.max(...ts.map((s) => s.turns))}); distinct end positions median ${medN(ts.map((s) => s.ends))}; ${ts.filter((s) => s.capped).length} searches stopped at the node budget`);
+    L.push(`  of a season's turns, median share that post or recall a piece ${pct(medN(ts.map((s) => s.withPieces / Math.max(1, s.turns))))}, that make a use ${pct(medN(ts.map((s) => s.withUses / Math.max(1, s.turns))))}`);
+    L.push(`  the solver's turn beats the greedy turn in ${better} of ${ts.length} seasons (${pct(better / ts.length)}); by ${mean(gap).toFixed(2)} points on average (${(mean(ts.map((s) => s.greedy - s.start)) > 0 ? (100 * mean(gap)) / mean(ts.map((s) => s.greedy - s.start)) : 0).toFixed(0)}% of what the greedy turn gains), most ${Math.max(...gap).toFixed(1)}`);
+    L.push(`  the best turn depends on ORDER in ${pct(ts.filter((s) => s.order).length / ts.length)} of seasons (another order of its actions is not legal ${pct(ts.filter((s) => s.orderIllegal).length / ts.length)}, ends worse ${pct(ts.filter((s) => s.orderWorse).length / ts.length)}); it posts a piece in ${pct(ts.filter((s) => s.posts).length / ts.length)}, and PLACEMENT matters (the piece elsewhere ends worse) in ${pct(ts.filter((s) => s.placement).length / ts.length)}; actions in the best turn: median ${medN(ts.map((s) => s.length))}`);
+    L.push(`  the simulation against the game: ${mis.length ? `${mis.length} differences — ${mis.slice(0, 5).join('; ')}` : 'no difference in any turn played'}`);
+    L.push('');
+  }
   L.push('Pool curves (mean over a policy\'s runs; seasons 1, a quarter, half, three quarters, last):');
   for (const p of policies) {
     const mine = runs.filter((r) => r.policy === p.name);

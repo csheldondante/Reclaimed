@@ -43,29 +43,43 @@ mine (from season 5)".
 Data on a thing (draft 10, `uses`): a cost, what it gives, how often a season, and optionally "for each crew (or
 soldier) posted here". Instant. Examples (base game):
 
-| Thing | Use (once a season unless said) | Slots |
+| Thing (how it comes) | Use (once a season) | Slots |
 |---|---|---|
-| Mine | Dig deep: 1 Magic → +1 Materials for each crew here | 3 crews: +1 Materials each a season |
-| Market stalls | Sell stone: 2 Materials → +2 Intel (twice); Buy stone: 2 Intel → +3 Materials | 1 crew: +1 Intel a season |
-| Shrine | Pray: 1 Materials → +1 Magic; Calm the town: 2 Magic → Unrest −1 | 1 crew: +1 Magic a season |
-| Foundry | Arm a recruit: 2 Materials + 1 Magic → +1 soldier | 2 crews: +1 Materials each a season |
-| Muster ground | Call the levy: Unrest +1 → +1 soldier; Stand down: −1 soldier → +1 crew | — |
-| Granary | Open the granary: 2 Materials → Unrest −1 | 1 crew: +1 Materials a season |
-| Watchtower | — | 1 soldier: +1 Intel a season; 3 raiders down if the raid passes it |
-| Wall works | Shore up: 2 Materials → the wall holds 2 more raiders this season | 3 soldiers: each puts 1 raider down |
+| Mine (in play at the start) | Dig deep: 1 Magic → +1 Materials for each crew here | 2 crews: +1 Materials each a season |
+| Shrine (at the start) | Pray (needs its keeper): 1 Materials → +1 Magic; Calm the town: 2 Magic → Unrest −1 | 1 crew: +1 Magic a season |
+| Market stalls (card) | Sell stone (needs a crew): 2 Materials → +2 Intel; Buy stone (needs a crew): 2 Intel → +3 Materials | 1 crew: +1 Intel a season |
+| Foundry (card) | Arm a recruit (needs a crew): 2 Materials + 1 Magic → +1 soldier | 2 crews: +1 Materials each a season |
+| Muster ground (card) | Call the levy: −1 free crew → +1 soldier, Unrest +1 | — |
+| Granary (card) | Open the granary: 2 Materials → Unrest −1 | 1 crew: +1 Materials a season |
+| Watchtower (card) | — | 1 soldier: +1 Intel a season; 3 raiders stopped on the road |
+| Wall walk (card) | — | 3 soldiers: each stops 1 more raider |
+
+`needs`: a use that needs a piece posted on its thing — the trader at the stalls, the keeper at the shrine — so where
+you put a crew decides which uses you have this season. A use that would give nothing ("Dig deep" with nobody on the
+mine) cannot be made.
 
 Order matters because uses read the board as it stands: post two crews on the mine before "Dig deep" and it gives +2,
-after it +0; sell stone before you take a card and you cannot afford it; call the levy and a crew goes on strike
-before you can send it to a project. A use is recorded as a fact event (`used:<id>`), so the existing rules can
-trigger on it ("the first time you use the shrine this season…" is a rule with `perSeason: 1`).
+after it nothing; post the keeper before you can pray; sell stone before you take a card or you cannot afford it; call
+the levy and Unrest keeps a crew away before you can send it to a project. A use is recorded as a fact event
+(`used:<id>`), so the existing rules can trigger on it ("the first time you use the shrine this season…" is a rule
+with `perSeason: 1`; the works have none yet).
+
+Cards of the works: things to build (stalls, foundry, muster ground, granary, watchtower, wall walk: 1–2 crews for
+1–2 seasons, 2–4 Materials); crews sent out for a later return (hire out 2 crews for 2 seasons → +5 Materials; a crew
+and 1 Magic for ore → +4 Materials; train a recruit: a crew and 3 Materials → +1 soldier; pilgrims: 2 Intel → +2
+Magic; a feast: 3 Materials → Unrest −2).
 
 ## 4. Known needs with deadlines and numbers
 
 Needs are threat cards with a stated demand and a countdown (cards stay the only thing that changes the world). Two
 may stand at once (was one), beside the raiders' standing threat:
-- "Lay in winter stores" (every few seasons): 4 Materials and 1 crew for a season, within 2 seasons, or Unrest +2.
-- "Mend the old dam": 2 crews, 2 Materials for a season, within 3 seasons, or the mill street floods.
-- The raiders (existing): the header states the requirement: "Season 16: 18 raiders. You would meet them with 9."
+- "Lay in winter stores" (from season 3, again and again): 5 Materials and 1 crew for a season, within 2 seasons, or
+  Unrest +2.
+- "Mend the old dam" (from season 5): 2 crews, 2 Materials for a season, within 3 seasons, or the mill street floods.
+- "The road wardens want their due" (from season 6, again): 2 Intel, 2 Materials, within 2 seasons, or Unrest +1 and
+  −2 Materials.
+- The raiders (existing): their standing card counts down to the raid. Not built: a stated number on it ("18 raiders;
+  you would meet them with 9") — question 6.
 
 ## 5. More opportunities, fewer of them affordable
 
@@ -90,10 +104,20 @@ riders/builders already walk to sites), a tap on a thing to post or recall a pie
 card with "left this season", the preview line before a commit, and the needs' countdowns beside the raiders'. All of
 it is Realm API (section 6), so both front ends read the same state.
 
-## 7. Open questions for the owner
+## 7. What the bots say (step 1, `tablebots --works`; DEVLOG 2026-11-17)
+
+Everything affordable: 20% of seasons → 3%. Offered 3.9 → 6.3, affordable together 2.5 → 3.3. Legal turns a season:
+median 5,824 (season 1: about 330; later seasons grow with wealth into the tens of thousands). The searched best turn
+beats the greedy one in 72% of seasons; the best turn depends on order in 78%, on where a piece goes in 23%. Over the
+target ("hundreds to low thousands") after the first seasons — see question 2.
+
+## 8. Open questions for the owner
 
 1. Should a recalled piece be free at once (now) or next season (moving costs a season)?
-2. Uses "mostly once a season": is "twice" on the market right, or should every use be once?
+2. Uses "mostly once a season": every base use is once now (the format allows `times`). Should a use instead be
+   bound to a piece — each posted crew may do one use a season — so crews are the action budget?
 3. Two needs at once plus the raiders: too many? (The bots say how often needs lapse.)
 4. Named people as special pieces (the reeve counts as 2 crews; a captain makes posted soldiers count double)?
 5. Should the 3D loop turn the works on now, or after you have played them at the table?
+6. The raid's stated number: should the raiders' card say how many come and how many you would meet them with?
+   (Found by the bots: soldiers fight only once the keep or the walls are built — a solver with 19 soldiers fell.)

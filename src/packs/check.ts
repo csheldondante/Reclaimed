@@ -133,6 +133,8 @@ export interface PackUse {
   gives: Record<string, number>;
   times?: number;
   per?: 'crew' | 'soldier';
+  /** it can be made only while a piece of this kind is posted on the thing */
+  needs?: 'crew' | 'soldier';
   text: string;
 }
 export interface PackCard {
@@ -586,6 +588,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
           }
           if (u.times !== undefined && (!Number.isInteger(u.times) || u.times < 1)) err(uw, '"times" is how often a season: a whole number, 1 or more.');
           if (u.per !== undefined && !(t.slots ?? []).some((s) => s.takes === u.per)) err(uw, `"per": "${u.per}" counts pieces posted here, but the thing has no slot for them.`);
+          if (u.needs !== undefined && !(t.slots ?? []).some((s) => s.takes === u.needs)) err(uw, `"needs": "${u.needs}" asks for a piece posted here, but the thing has no slot for one.`);
           for (const n of numbersIn(u.text ?? '')) if (!numbersOf([u.cost, u.gives, u.times]).includes(n)) err(uw, `The text says ${n}, but the use's cost, gives and times have no such number.`);
         });
     }

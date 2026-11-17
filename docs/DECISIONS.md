@@ -4012,3 +4012,35 @@ and what is still the owner's to decide: who decides a fight, every rule's numbe
   it runs (a fire held while it burns, not 90 s; a mid-season change to the land wakes the structure pass).
 - Earlier, restated: "tuning colors and brightness so certain layers reserve some colors and are more visible and
   increasing the number of towns people will make a huge difference".
+
+## 2026-11-17 — card mechanics: order and assignment, step 1 (`card-table`; docs/design/TURN_PUZZLE.md)
+
+The owner's words, verbatim:
+- "The choices were so far not that synergistic and I usually had resources to make all of them."
+- "What makes a card game interesting is thinking through the co[mb]inatoric space and planning against known needs or
+  goals. If I have to weigh, will this resource be returned by the time I need it? Can I get another resource that I
+  can then convert into the resource in need in time? It becomes a puzzle. Faeria excelled at this. Every decision from
+  which cards to play to where to play them or where to move units to block agro, managing card and Faeria economy. It
+  worked well because resources constrain you to an n choose k that is fairly large but not overwhelmingly so and where
+  you have lots of choices that interact. […] Notice how many systems interact and lead to a fun mental puzzle for the
+  player every single turn."
+- "I also have a bunch of thoughts for the card design to make the runs more fun and challenging. More opportunities.
+  Things on the board you can assign. Abilities you can activate that make instant changes to strategic resources so
+  optimal play is order dependent and involves thinking through which choices and what order."
+- "I think just the order dependence and assignment will make a big difference to the fun of each round because it
+  increases the size of the search space to something where you have to make decisions to optimize the turn"
+- "No not every action should resolve but resources should commit and some should resolve. I like the idea of stuff you
+  can activate or spend on the board resolves immediately. It just won't make sense to have a resource allocation to a
+  project like building a mining town or rescuing a town resolve immediately."
+- On undo within a turn: "I wouldn't make them undoable most card games don't allow this."
+
+Agreed with the orchestrator: Labour and Might become assignable PIECES (work crews, soldiers); Materials, Magic and
+Intel stay numeric pools. A season stays ONE open-ended turn (no action counter), bounded by scarcity and
+once-a-season uses. Standing rulings that still hold: only cards change the world during a run; no balance caps on
+engines ("crazy multipliers and triggers are fun") — scarcity is the starting condition engines escape from; pack
+cards are templates; the world's memory is the record of resolved cards; plain concrete player text.
+
+→ Built at the card table (step 1): instant actions (a use of a thing in play; posting or recalling a crew or a
+soldier) resolve at once; committed actions (taking a card) take pools and pieces at once and resolve after their
+seasons; no undo; a preview before each commit; the works as a draft-10 pack (`src/season/works.ts`). Open questions
+are in TURN_PUZZLE.md §7.

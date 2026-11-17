@@ -1,4 +1,28 @@
-# Opportunity pack format (draft 9, 2026-11-17: points of interest, free towns, the shield's energy)
+# Opportunity pack format (draft 10, 2026-11-17: crews and soldiers as pieces, slots, uses)
+
+**Changed since draft 9 (card table, docs/design/TURN_PUZZLE.md).** Every draft-9 pack loads unchanged: nothing
+existing changes meaning; everything below is new and optional.
+(1) **Pieces.** Labor is counted in crews and Might in soldiers, one piece each. A card's `"labor": 2` ties up 2 crews
+until it is built (as before); `{ "pool": "labor", "add": 1 }` is a new crew, `-1` takes one away (free ones first).
+(2) **Slots** on a thing: `"slots": [{ "takes": "crew" | "soldier", "n": 1..6, "each_season": { "materials": 1 } }]`
+— room for `n` pieces of that kind; the player posts free pieces there and calls them back (each piece moves at most
+once a season). A posted piece is not free for cards. `each_season` is what EACH piece there gives when a season ends
+(goods or Unrest; a rule like upkeep, shown in the Rules list). A thing with a crew posted on it carries the tag
+`crewed`, with a soldier `manned`; pieces on a ruined thing come back. Posted soldiers still fight a raid at home.
+(3) **Uses** on a thing: `"uses": [{ "id": "<pack>-…", "name", "cost": { … }, "gives": { … }, "times": 1, "per":
+"crew" | "soldier", "needs": "crew" | "soldier", "text" }]` — the player makes a use at once (INSTANT): its cost is
+taken and what it gives is added now, at most `times` a season (default 1). `cost`: goods, or `labor` / `might` (free
+pieces given up for good). `gives`: any pool, over 0 (Unrest may go down). `per`: what it gives is for each piece of
+that kind posted on the thing now. `needs`: it can be made only while a piece of that kind is posted there. A use that
+would give nothing cannot be made. Each use is a fact event `used:<id>`, so a rule may wait for it (`"on": { "event":
+"used:<id>" }`).
+(4) **Rules count pieces**: `"per": { "posted": "crew" }` — `n` for each crew posted on the first things matched.
+(5) **`start`**: a top-level list of the pack's thing ids in play when a run begins in a town that has none of them yet.
+Example: the base game's works, `src/season/works.ts` (mine, shrine, market stalls, foundry, muster ground, granary,
+watchtower, wall walk; crews hired out, ore from the hills, recruits trained; three needs with deadlines). At the card
+table they are on by default (the board then takes 5 opportunities and 2 needs at once).
+
+## Draft 9 (2026-11-17: points of interest, free towns, the shield's energy)
 
 **Changed since draft 8 (loop round 14, 2026-11-17).** Every draft-8 pack loads unchanged.
 (1) **Points of interest** (see "Points of interest"): places on the map that are not towns — `camp`, `lair`,
@@ -439,6 +463,8 @@ What a card puts in play. Shown to the player as a small card with its tags.
   of its upkeep or capacity.
 - `"laws": ["law-id", ...]`: laws of this pack in force while the thing is in play and its place is not ruined.
   They leave with it, and come back if it stands again.
+- (Draft 10) `"slots"` and `"uses"`: room for crews and soldiers, and instant uses. See the change list at the top.
+  A number in the thing's `text` may be a slot's `n`; a number in a use's `text` must be one of its cost, gives or times.
 
 ## cards
 
