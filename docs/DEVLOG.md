@@ -25431,3 +25431,22 @@ planes; after, flat light paving on the ground running into the deck. The arteri
 with cut banks, the column of 9 (and of 30) on it, figures clear against it. At the town's zoom the difference is
 small (the town is a few pixels a street). Not better everywhere: the main streets are still ribbons and meet the
 graded paving with a slight seam of tone and height (LS-105).
+
+**Persistence in the game** (`scripts/lab/gradepersist.mjs`: 69 sample points in Muru's grid frame — the square and each
+road 22–60 units out — their top material from the world API's surface pages): paving at 26 when made (road 2's 19 and
+7 of the square's 12; roads 0 and 1 are on their decks there — External — and 3 square points in the river, 2 under a
+building); 26 again after the window slid 6 regions east and back (19 slides in all), and 26 after a reload of the
+saved world. (The slide back may thaw regions from the pool rather than make them again; the reload makes them from
+the atlas, and `test/gpu/streets-grade.test.ts` covers raw land arriving again.)
+
+**Census** (`scripts/census.mjs --params 'loop=1&parade=60&city=terrainRoads:1|0' --pick ysolt --states idle,event
+--event gate-parade`; counts → est. phone ms a frame):
+
+| State | graded | ribbons |
+|---|---|---|
+| idle | 1.15 ms, 0.70 ticks, 1.40 KB read | 1.34 ms, 0.89 ticks, 1.34 KB |
+| the parade `?parade=60` | 6.70 ms, 3.78 ticks, 13.1 KB | 7.35 ms, 4.09 ticks, 22.3 KB |
+
+Nothing new a frame (the lays run only when land is claimed); the differences are the runs' tick counts, not the
+streets. Town generation (first make, timestamps, GPU shared): 21–52 ms graded vs 24–109 ms ribbons across runs —
+compile and contention dominate; the mesh-stage toggle above is the cleaner number.
