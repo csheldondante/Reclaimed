@@ -74,7 +74,7 @@ interface PendingStart {
 /** the zoom on a district being built while a season passes: its lots and the people working on them read */
 const BUILD_ZOOM = 9;
 /** (loop round 14) seconds between a point of interest's marks in 3D */
-const POI_MARK_S = 1.2;
+const POI_MARK_S = 0.6;
 /** (loop round 11) bursts round a unit spell's reach as it is cast */
 const SPELL_RING = 16;
 /** how far from the home town's centre the camera may go (cells): past the mountain an outcome can name (640), short
@@ -247,8 +247,10 @@ class Game implements RunGame {
       const y = (p.cell[1] - S.origin[1]) * ROW_H;
       if (!terrain.inWindow(x, y)) continue;
       const z = this.z(x, y);
-      if (p.state === 'standing') fx.burst('sparks', x, y, z + 1, { count: 14, speed: 4, vel: [0, 0, 9] });
-      fx.burst('smoke', x, y, z + 1, { count: 6 });
+      // (loop round 15: round 14's 14 sparks and 6 smoke a 1.2 s were not seen at phone size — a tight column now, twice
+      // as often, three times the sparks)
+      if (p.state === 'standing') fx.burst('sparks', x, y, z + 1, { count: 36, speed: 1.5, spread: 0.4, vel: [0, 0, 12] });
+      fx.burst('smoke', x, y, z + 1, { count: 12 });
     }
   }
 

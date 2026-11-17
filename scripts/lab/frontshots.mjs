@@ -74,7 +74,7 @@ await run({ name: 'frontshots', kind: 'behaviour', size: '412x915', dpr: 1, echo
       // (loop round 14: the town's points as the front reads them — where, the depth first read, the depth now)
       const api = window.reclaimed.scene.worldApi;
       const pts = f ? f.points.map((q) => [Math.round(q.at[0]), Math.round(q.at[1]), q.base === null ? null : +q.base.toFixed(2), +(api.fire.flowLavaAt(q.at[0], q.at[1]) ?? -1).toFixed(2)]) : [];
-      return run && f ? { t: Math.round(run.t), pts, origin: st && [...st.origin], held: st?.holds.size ?? 0, aim: r(f.aim), src: r(f.src), target: r(f.target), frame: fr && { at: r(fr.at), span: Math.round(fr.span) }, cam: r(c.target), busy: window.rungame.cam.busy, town: f.points.filter((x) => x.reached).length, way: f.way.filter((x) => x.reached).length, zoom: +c.zoom.toFixed(1), shields: window.reclaimed.scene.worldApi.shields.list.length, ward: window.reclaimed.scene.worldApi.shields.list.map((s) => ({ energy: Math.round(s.energy), drain: +s.press.drain.toFixed(1), lava: Math.round(s.press.lava) })), line: window.rungame.fightLine } : { phase: window.rungame.phase };
+      return run && f ? { t: Math.round(run.t), pts, origin: st && [...st.origin], held: st?.holds.size ?? 0, aim: r(f.aim), src: r(f.src), target: r(f.target), frame: fr && { at: r(fr.at), span: Math.round(fr.span) }, cam: r(c.target), busy: window.rungame.cam.busy, town: f.points.filter((x) => x.reached).length, way: f.way.filter((x) => x.reached).length, zoom: +c.zoom.toFixed(1), shields: window.reclaimed.scene.worldApi.shields.list.length, ward: window.reclaimed.scene.worldApi.shields.list.map((s) => ({ energy: Math.round(s.energy), max: s.max, left: Math.round(s.left), drain: +s.press.drain.toFixed(1), lava: Math.round(s.press.lava) })), line: window.rungame.fightLine } : { phase: window.rungame.phase };
     });
   let cast = false;
   let shots = 0;
@@ -122,6 +122,21 @@ await run({ name: 'frontshots', kind: 'behaviour', size: '412x915', dpr: 1, echo
       R.log(`cast at ${at.map((v) => Math.round(v))}: ${JSON.stringify(await state())}`);
     }
     if (!shotAt.has('meets') && s.town + s.way >= 9 && s.t > 20) (shotAt.add('meets'), await shot('4-meets'));
+    // (loop round 15, LS-141: the ward's life under the press — holding with lava at its rim, flickering below a quarter,
+    // the collapse the moment it goes while the event runs, the told line)
+    if (cast) {
+      const w = s.ward?.[0];
+      if (w && !shotAt.has('hold') && w.lava > 20) (shotAt.add('hold'), await shot('w1-holding'), R.log(`holding: ${JSON.stringify(w)}`));
+      if (w && !shotAt.has('flicker') && w.energy < w.max / 4) (shotAt.add('flicker'), await shot('w2-flicker'), R.log(`flicker: ${JSON.stringify(w)}`));
+      if (!w && shotAt.has('hold') && !shotAt.has('collapse')) {
+        shotAt.add('collapse');
+        await R.sleep(150);
+        await shot('w3-collapse');
+        R.log(`gone at t ${s.t}: line ${JSON.stringify(s.line)} notes ${JSON.stringify(await p.evaluate(() => window.rungame.notes))}`);
+        await R.sleep(4000);
+        await shot('w4-after');
+      }
+    }
     // (loop round 14: --every n, a still each n seconds from the pour's start — the front coming from afar)
     const every = Number(R.opt('every', '0'));
     if (every > 0 && s.src && s.t >= 4 + shots * every && shots < 12) await shot(`5-t${String(s.t).padStart(2, '0')}`), shots++;

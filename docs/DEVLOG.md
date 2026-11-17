@@ -26035,3 +26035,36 @@ on the queue (its own 0.2-0.6 s): the wait moves, it does not go. Not kept. The 
 loads: keyed by the URL (`town=`), and `fresh=1` clears it. What is ahead of the town on the queue is the next thing
 to find. `bootMark('town-ready')` and the `[citygen]` timing lines stay.
 
+## 2026-11-17 — loop round 15: the ward seen holding and giving way, raiders at the rim, the POIs seen (`loop-skeleton`)
+
+**Why.** Round 14 set `LAVA_DRAIN` 0.2 and the Fire ward's regen 12 from one run and stopped before seeing them (LS-141).
+A short round: see it, fix nothing that is not off.
+
+**The ward, two cases** (`scripts/lab/frontshots.mjs`, now with stills when lava presses, below a quarter, at the
+collapse and 4 s after; `local/round15/shield-strip.png`). A 200/s front from 70 out (`--far 70 --rate 200`): 17
+depth-cells at most in the band, drain 3.4 a second against the regen of 12, the store never left 300; "Every house
+stands". A 700/s front (`--rate 700`): 87-133 depth-cells, drain 17-27, the store 300 → 65 at t 37 (the flicker), empty
+at t 42: the burst, "The Fire ward gave way under the weight on it." on the sheet, lava into the disc 4 s later; the
+event a failure (4 of 8 points). The numbers do what was meant: no change to the pack data.
+Seen in the held case: lava between the outer houses beyond the 26-cell disc while the event says every house stands
+(LS-142).
+
+**Raiders at the rim** (`scripts/lab/shieldraid.mjs --regen 12`): 12 raiders ordered at the middle stopped at 16.0, the
+radius, for 55 s; their press 12 a second equals the regen, so the store hovered 297-300 (LS-143). Still
+`local/round15/shield-raid/raid-12.png` (the band a small dark knot at the ring's lower left).
+
+**Points of interest** (`scripts/lab/poishots.mjs`, new: a lair put as a card's `poi` effect writes it). The atlas map's
+pins and names read at its second zoom step (`local/round15/poi/poi-map-near.png`); the 3D marker (14 sparks and 6
+smoke every 1.2 s) was not seen at all at 412 px. Now 36 sparks in a tight rising column and 12 smoke every 0.6 s
+(`loop.ts poiMarks`): a thin column with a puff, seen (`local/round15/poi-near/poi-3d-a.png`); still no name (LS-144).
+
+**The loop end to end.** `loopwalk.mjs --runlen 16 --gif 0` passed into run 2 ("The world now" says how run 1 ended);
+the cards walk with `frontier,ages,arena` played 13 seasons with no page error (the mountain broke, the raiders' camp
+broken, 3 arena bouts settled) and then failed its own checks, which are written for `laws,glitter,arena` (a law
+taken, the glitter spire's ending, run 2's salvage card): a walk check bound to one pack set, not a game fault. Seen in
+its season 13 still: "Raiders on the road: 3 seasons left" stands after "Done: Break the raiders' camp" — not looked
+into (LS-145).
+
+**Phone links** checked from a headless Chrome on the LAN address of the worktree's HTTPS dev server (port 5455):
+both load to the leader screen, the second with its three packs (`scripts/lab/lanlinks.mjs`).
+
