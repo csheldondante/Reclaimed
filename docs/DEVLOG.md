@@ -24232,3 +24232,46 @@ non-threat cards of that deal are left out. Tried first, dropped: the conflict g
 
 **LS-74.** `declutter` keeps each name's whole press area apart (46 px: the text and 9 px above and below): rows 48 px,
 widths over the text's, a row to either side tried when none above or below is free.
+
+## 2026-11-16 — loop skeleton round 7 (3, 4): a crowd at a gate; the walks and the census (`loop-skeleton`, LS-58, LS-82, LS-83)
+
+**A crowd at a gate (commit 3).** The first prepared walk failed in season 8: with walls built, the parade's loose
+crowd went through a one-cell gate, some stayed behind the gate tower, the group never arrived and the event never
+ended (twice, the same). A loose group now arrives when 3/4 of its living members stand at its place
+(`orders.wgsl LOOSE_ARRIVE`); that alone did not end it, so the parade and the refugees end where they stand after 90 s
+(LS-82, a stand-in: the march in along the gate route is LS-77). The crowd is who arrived: in season 8 "Only 3 people
+came out". The cause underneath — a crowd does not squeeze to single file at a gate as a column does — is open.
+
+**Walks** (412x915, `q=low`, by a finger, one browser at a time; stills in the session scratch `loop/r7/w1c`, `w2`,
+`w3`):
+- *Prepared, 16 seasons, reload in season 9* (`--agree build:walls,tower-lens,mining-outpost,build:houses,dead-rise,
+  build:quarry,market-fire,gate-parade`): **passed**, 22 checks. Refugees (tents by the east fields, "The refugees have
+  put up tents by the east fields."); two parades (crowd 7 and 3, failure: unrest halves the crowd, the walled one
+  ended by its 90 s); the dead burned with 3 Fire casts; the fire at the market, Rain cast 3 times, triumph; the reload
+  identical; decisions a season 2-5 (never over 5); the raid held (6 raiders, walls stopped 2, 6 soldiers fell).
+- *Unprepared, 16 seasons, `--agree none`*: **passed**, 12 checks. Refugees; decisions 1-5; the raid: "6 of 6 raiders
+  got into the town".
+- *`--fast --touch`, prepared, 16 with a reload*: 24 checks passed, **one failed**: a name over the map took a press of
+  39 px (LS-74, 31 last round). Every live event met; a walled parade arrived this time (crowd 8, success); the fire
+  triumph; the raid held.
+
+Looked at: the parade on the road at noon (gold rings, name); the parade at the stores among the houses; refugees
+on the road and in town; the town after the refugees with the camp's tents beside the fields; the fire at the market
+in season 12 (smoke columns over the houses by the water, ash in the air from the mountain); the season-8 parade
+split at the gate towers.
+
+**Census** (`scripts/census.mjs --params loop=1 --pick ysolt`, `--event gate-parade` / `market-fire`; the phone's ms
+from the model):
+
+| State | est. phone ms a frame | ticks a frame | read back a frame |
+|---|---|---|---|
+| idle, the town | 1.03 | 0.58 | 1.50 KB |
+| the parade running (6-26 s in) | 6.34 | 3.55 (the 3× march) | 9.39 KB (6.2 the units' places) |
+| the fire at the market running | 1.01 | 0.57 | 1.12 KB |
+
+The parade's cost is the sim at 3× on the march (agents 1.8 ms, particles 0.9, water 0.7, lava 0.5) and the places of
+~25 observed people (LS-83). Idle is as before.
+
+**Tests.** `formations.test.ts` 13 of 14 (the drill-discipline test times out at 60 s on the old code too);
+`mutators.test.ts` camp and sign tests; `live-rules`, `realm`, `realm-resume`, `realm-bots`, `opps`, `sites` pass;
+typecheck clean; `writing-sources` fails on `src/roadlab/control.ts` as before.
