@@ -3781,3 +3781,24 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
   spirals to connect levels." → a town's layout style is a switch (organic irregular grid ↔ planned grid); hill roads
   follow contours, levels joined by switchbacks and spirals. Idea logged with it: height blended into the street
   field (BACKLOG CG-H1).
+
+## 2026-11-17 — tile kit, step 1's questions (branch `tilekit`, docs/design/TILEKIT.md §12)
+
+- Walls and plots, verbatim: "I was imaging they are parallel and possibly set back from the irregular grid walls and
+  that we claim and potential merge the plans lots (is this what you mean by rectangles?) into single large plots
+  filled with the irregular tiles. I think either could work and look good though and if we generate better looking
+  plans with plausible roads we can instead follow their lots and fill those for dense structures." → walls run
+  parallel to the grid's own lines, set back by a metric offset; a plot is cells claimed from one or several merged
+  lots, its massing built from the grid's own strips (TILEKIT §13); following better plans' lots is the alternative.
+- Roofs, verbatim: "I'm not sure I would love to see what looks best. It looks to me like tinyglade uses a gable or
+  hip per rectangle and more or less ensures that roof pitch never leads into a wall but I think with control grids
+  that can bend verts field and the other options may not be that different so ideally we can choose with your best
+  guess and then test other variants if visuals or perf are insufficient." → best guess built (one gable/hip a strip,
+  a slope never runs into a wall), step 1's height field kept as a switchable variant for comparison.
+- Windows, verbatim: "I would do by the themes bay width but this may require merging adjacent cell walls." → straight
+  joints merge into runs; a run is laid out in bays of the theme's width.
+- Sharp corners, verbatim: "Maybe add a corner feature or special rules to set back from the stric grid edge? Maybe add
+  a little arch?" → turrets, chamfers, and an arch (a bridge room) over an alley.
+- Also from the owner: occupancy on cells and walls swept along edges (step 1) not objected to; CPU generation
+  "Acceptable for now and if we find approaches we really like maybe I can help port them to GPU."; "I liked the
+  screenspace AO […] and feel it really helped."

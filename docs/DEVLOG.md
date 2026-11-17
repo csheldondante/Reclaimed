@@ -23578,3 +23578,47 @@ median for both themes. Stills: local/tilekit1/ (strip.png), `node scripts/tilek
 Seen and not good (BACKLOG TKIT2–TKIT5): the rectangle staircase crinkles every facade and merges the massing into one
 blob; the roofs are many-faceted hips with notches, no gables, and one region's eave runs into the next region; windows
 on every long panel read as an apartment block; the vertex count is too high for a phone district.
+
+## 2026-11-17 — tile kit step 2: a district of grid strips, runs and bays, strip roofs, corner features, LOD (`tilekit`)
+
+Why: the owner answered step 1's questions (DECISIONS 2026-11-17): walls parallel to the grid's lines and set back,
+plots from merged lots, a best-guess roof with the height field kept for comparison, windows by bay width over merged
+walls, corner features and an arch. Design: TILEKIT.md §13–§19.
+
+- **Measured the grid before building on it** (strips.ts `lineStats`, real-grid fixture): a grid line (straight on
+  through 4-valent vertices) is 4 edges / 9.9 m median, 10 / 24.7 m p90; it turns 5.6° median (19° p90) at 4-valent
+  passes; carried straight through an irregular vertex a wall bends 37° (5-valent) or 60° (3- and 6-valent). Most
+  lattice points are irregular. So "walls follow a smooth grid line" holds for ~10 m, then kinks — structural (the
+  quad-mesh Gauss–Bonnet count), written up as TILEKIT Q7 with options; a district grain (regular rhombus pairing
+  inside lots) is the proposed next experiment.
+- **Strips**: a × b patches the grid's own steps agree on (interior vertices 4-valent). Plots (lots within 24 m merged
+  to ≥ 18 cells, alleys cut between some) are covered greedily by strips scored `cells − 0.08 · worst side bend°`: 0.12
+  shattered the district into 1 × 1 strips, ~0.05 kept 1-wide strips that snaked round irregular vertices into worm
+  roofs (first look). Roles: main range, wings, an occasional tower, yards, annexes.
+- **Facades**: wall loops offset in by the setback (exact on both lines at any corner; jogs where a jetty ends), merged
+  into runs that break only at corners, jogs and house/eave changes; bays of the theme's width along each run. The
+  district: 474 cell-edge panels → 356 runs → 482 bays (step 1's block: 68 panels, 35 convex joints). Quoins only under
+  125° — before that rule the near level was 589k vertices, quoins over half.
+- **Roofs**: one a strip (gable, hip on free ends, lean-to rising to a taller wall, pyramid on a tower, flat between two
+  taller walls), chosen so no slope runs down into a wall and checked on every roof. The first check failed (0.3–0.5
+  m/m) because each column's own width set its rise, and a short end column with corners pulled about by unequal
+  offsets sat lower than its neighbour; the profile now depends on the across index alone (arc length averaged over the
+  columns), so the rule holds exactly in strip coordinates. A gable across a long strip between two taller walls
+  climbed to half its length (a giant roof in the first look): that case is now a flat terrace.
+- **Corner features**: a turret on each main range's sharpest corner < 72° (an oriel on a corbel in timber), chamfers
+  < 80° (plaster), a bridge room over an alley with an arch under it (occupancy lo ≤ s < tops).
+- **LOD**: three module sets from the same theme data, the same instances.
+- **Determinism**: the GPU writes grid cells in atomic order, so decomposition and hashes varied run to run (the first
+  looks' stats differed between two loads); weldCells now sorts cells by centroid and renumbers vertices.
+
+Measured (desktop, 960 × 540, MSAA 4, shared GPU): district 15 plots, 112 strips, 145 built cells, 2 arches, 4
+turrets; instanced vertices plaster 408,570 / 115,614 / 16,998 (LOD 0/1/2), timber 327,468 / 116,658 / 24,846, plus
+22k (strip roofs) or 14k (height field) roof and ground; GPU frame 1.6–1.7 / 1.4–1.7 / 1.3–1.4 ms median; CPU build
+17–50 ms the district. Unit tests (one file at a time): strips 5, facade 8, roof 5, district 2 (every strip a patch,
+disjoint cover, slope-into-wall ≤ 1e-9 on every roof, no degenerate bay, no fold over 1254 offset segments).
+Stills: local/tilekit2/ (strip.png), `node scripts/tilekit2-shots.mjs --server <dev url>`.
+
+Seen and not good: walls still kink at irregular vertices; the district reads busy (many small strips, turrets and
+towers close together); strip roofs that meet overlap as a union (a hip or pyramid pokes through a neighbour); plaster's
+shade side is a flat blue-grey; near-LOD windows and quoins are still heavy. Strip roofs judged better than the height
+field (single ridges, gable ends, lean-tos; clearest in timber), the height field calmer in hipped plaster.

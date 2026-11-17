@@ -38,7 +38,8 @@ interface Pt {
 
 export class ModuleBuilder {
   v: number[] = [];
-  constructor(readonly bevel: number) {}
+  /** (step 2) lod ≥ 1: no chamfers anywhere (a box is its 5–6 faces) */
+  constructor(readonly bevel: number, readonly lod = 0) {}
 
   private put(p: Pt, n: V3, col: RGB, mat: number) {
     this.v.push(p.x.v, p.w, p.z, p.x.a, n[0], n[1], n[2], 1, col[0], col[1], col[2], mat);
@@ -59,7 +60,7 @@ export class ModuleBuilder {
   /** a box [x0,x1]×[w0,w1]×[z0,z1] with every edge chamfered by the bevel (a chamfered box: 6 faces, 12 edge strips,
    *  8 corner triangles) */
   box(x0: X, x1: X, w0: number, w1: number, z0: number, z1: number, col: RGB, mat: number, bevel = this.bevel) {
-    const b = Math.min(bevel, (w1 - w0) / 2.01, (z1 - z0) / 2.01);
+    const b = this.lod > 0 ? 0 : Math.min(bevel, (w1 - w0) / 2.01, (z1 - z0) / 2.01);
     const xo = [x0, x1];
     const xi = [addX(x0, b), addX(x1, -b)];
     const wo = [w0, w1];
@@ -131,15 +132,23 @@ export interface Opening {
 
 /** a wall panel of height H: the face at w = 0 with the opening's hole, reveals, glass or leaf, frame, sill, shutters;
  *  timber rails, braces */
-function wallModule(t: Theme, kind: 'window' | 'door' | 'blank', ground: boolean): ModuleBuilder {
+function wallModule(t: Theme, kind: 'window' | 'door' | 'blank', ground: boolean, lod = 0): ModuleBuilder {
   const H = ground ? t.groundH : t.storeyH;
-  const mb = new ModuleBuilder(t.bevel);
+  const mb = new ModuleBuilder(t.bevel, lod);
   const wallCol: RGB = ground && t.wall.ground ? t.wall.ground : [1, 1, 1];
   const wallMat = ground && t.wall.ground ? MAT.trim : MAT.wall;
   const s0 = S(0);
   const e0 = E(0);
   if (kind === 'blank') {
     mb.wallRect(s0, e0, 0, H, 0, wallCol, wallMat);
+  } else if (lod >= 2) {
+    // far: the wall in one sheet, the opening painted on it a hair proud (no hole, no reveals, no frame)
+    const door = kind === 'door';
+    const ow = door ? t.door.w : t.window.w;
+    const z0 = door ? 0 : t.window.sill;
+    const z1 = door ? t.door.h : t.window.sill + t.window.h;
+    mb.wallRect(s0, e0, 0, H, 0, wallCol, wallMat);
+    mb.wallRect(M(-ow / 2), M(ow / 2), z0, z1, 0.012, door ? t.door.col : t.window.glass, door ? MAT.wood : MAT.glass);
   } else {
     const door = kind === 'door';
     const ow = door ? t.door.w : t.window.w;
@@ -162,7 +171,7 @@ function wallModule(t: Theme, kind: 'window' | 'door' | 'blank', ground: boolean
     // the back: glass with a cross, or the door's leaf with planks
     if (door) {
       mb.wallRect(L, R, z0, z1, -r, t.door.col, MAT.wood);
-      for (let i = 1; i < 4; i++) mb.box(M(-ow / 2 + (ow * i) / 4 - 0.015), M(-ow / 2 + (ow * i) / 4 + 0.015), -r, -r + 0.02, 0.05, z1 - 0.05, t.door.col, MAT.wood, 0);
+      for (let i = 1; i < 4 && lod === 0; i++) mb.box(M(-ow / 2 + (ow * i) / 4 - 0.015), M(-ow / 2 + (ow * i) / 4 + 0.015), -r, -r + 0.02, 0.05, z1 - 0.05, t.door.col, MAT.wood, 0);
       const f = t.door.frame;
       mb.box(M(-ow / 2 - f), L, 0, 0.06, 0, z1 + f, t.door.frameCol, MAT.trim);
       mb.box(R, M(ow / 2 + f), 0, 0.06, 0, z1 + f, t.door.frameCol, MAT.trim);
@@ -171,7 +180,7 @@ function wallModule(t: Theme, kind: 'window' | 'door' | 'blank', ground: boolean
       mb.box(M(-ow / 2 - 0.12), M(ow / 2 + 0.12), -r, 0.3, 0, 0.14, [0.72, 0.68, 0.6], MAT.trim);
     } else {
       mb.wallRect(L, R, z0, z1, -r, t.window.glass, MAT.glass);
-      if (t.window.cross) {
+      if (t.window.cross && lod === 0) {
         mb.box(M(-0.025), M(0.025), -r, -r + 0.05, z0, z1, t.window.frameCol, MAT.trim, 0.01);
         mb.box(L, R, -r, -r + 0.05, z0 + t.window.h * 0.62 - 0.025, z0 + t.window.h * 0.62 + 0.025, t.window.frameCol, MAT.trim, 0.01);
       }
@@ -191,7 +200,16 @@ function wallModule(t: Theme, kind: 'window' | 'door' | 'blank', ground: boolean
   }
   // the timber frame over the wall: rails at the floor and the head, braces on blank panels
   const tb = t.timber;
-  if (tb && (!ground || tb.groundToo)) {
+  if (tb && (!ground || tb.groundToo) && lod >= 2) {
+    // far: the frame painted flat on the wall (rails, and studs either side of a window)
+    mb.wallRect(s0, e0, 0, tb.rail, 0.01, tb.col, MAT.wood);
+    mb.wallRect(s0, e0, H - tb.rail, H, 0.01, tb.col, MAT.wood);
+    if (kind === 'window') {
+      const ow = t.window.w / 2 + 0.05;
+      mb.wallRect(M(-ow - 0.16), M(-ow), tb.rail, H - tb.rail, 0.01, tb.col, MAT.wood);
+      mb.wallRect(M(ow), M(ow + 0.16), tb.rail, H - tb.rail, 0.01, tb.col, MAT.wood);
+    }
+  } else if (tb && (!ground || tb.groundToo)) {
     mb.box(s0, e0, 0, tb.depth, 0, tb.rail, tb.col, MAT.wood, 0.02);
     mb.box(s0, e0, 0, tb.depth, H - tb.rail, H, tb.col, MAT.wood, 0.02);
     if (kind === 'window') {
@@ -215,16 +233,26 @@ function wallModule(t: Theme, kind: 'window' | 'door' | 'blank', ground: boolean
 
 /** the corner stack at a panel's end (mirrored by the instance for its start, `phase` 1 there so the two faces of a
  *  corner alternate long and short): quoins, or half a timber post (the two halves make one post on the joint) */
-function cornerModule(t: Theme, ground: boolean, phase: number): ModuleBuilder | null {
+function cornerModule(t: Theme, ground: boolean, phase: number, lod = 0): ModuleBuilder | null {
   const H = ground ? t.groundH : t.storeyH;
-  const mb = new ModuleBuilder(t.bevel);
+  const mb = new ModuleBuilder(t.bevel, lod);
+  if (lod >= 2) {
+    // far: no quoins; a timber post as a flat strip
+    if (t.timber && !t.quoins && (!ground || t.timber.groundToo)) mb.wallRect(E(t.timber.post / 2), E(0), 0, H, 0.01, t.timber.col, MAT.wood);
+    return mb;
+  }
   if (t.quoins) {
     const q = t.quoins;
     let z = ground ? t.plinth.pts[t.plinth.pts.length - 1][1] : 0;
     let i = (ground ? 0 : 1) + phase;
     while (z + q.h <= H + 1e-3) {
       const len = i % 2 ? q.short : q.long;
-      mb.box(E(len), E(0), 0, q.depth, z + 0.015, z + q.h - 0.015, q.col, MAT.trim);
+      if (lod >= 1) {
+        // mid: a block as the two faces that show — its front and its inner side (the end at the corner lies in the
+        // mitre plane, hidden by the other face's block): 12 vertices, not a box's 30 (or ~130 chamfered)
+        mb.quad({ x: E(len), w: q.depth, z: z + 0.015 }, { x: E(0), w: q.depth, z: z + 0.015 }, { x: E(0), w: q.depth, z: z + q.h - 0.015 }, { x: E(len), w: q.depth, z: z + q.h - 0.015 }, [0, 1, 0], q.col, MAT.trim);
+        mb.quad({ x: E(len), w: 0, z: z + 0.015 }, { x: E(len), w: q.depth, z: z + 0.015 }, { x: E(len), w: q.depth, z: z + q.h - 0.015 }, { x: E(len), w: 0, z: z + q.h - 0.015 }, [-1, 0, 0], q.col, MAT.trim);
+      } else mb.box(E(len), E(0), 0, q.depth, z + 0.015, z + q.h - 0.015, q.col, MAT.trim);
       z += q.h;
       i++;
     }
@@ -238,32 +266,40 @@ function cornerModule(t: Theme, ground: boolean, phase: number): ModuleBuilder |
 }
 
 /** the module set of a theme: name → mesh (occlusion baked) */
-export function buildKit(t: Theme, bake = true): ModuleMesh[] {
+export function buildKit(t: Theme, bake = true, lod = 0): ModuleMesh[] {
   const out: ModuleMesh[] = [];
   const add = (name: string, mb: ModuleBuilder | null, ground: boolean) => {
-    if (!mb || !mb.v.length) return;
-    const verts = new Float32Array(mb.v);
-    if (bake) bakeAO(verts, ground);
+    // (an empty module is still listed: the far kit has no quoins, and instances asking for them draw nothing)
+    const verts = new Float32Array(mb?.v ?? []);
+    if (bake && verts.length) bakeAO(verts, ground);
     out.push({ name, verts, ground });
   };
   for (const g of [true, false]) {
     const tag = g ? 'ground' : 'upper';
-    add(`wall-window-${tag}`, wallModule(t, 'window', g), g);
-    add(`wall-blank-${tag}`, wallModule(t, 'blank', g), g);
-    add(`corner-${tag}`, cornerModule(t, g, 0), g);
-    add(`corner-${tag}-alt`, cornerModule(t, g, 1), g);
+    add(`wall-window-${tag}`, wallModule(t, 'window', g, lod), g);
+    add(`wall-blank-${tag}`, wallModule(t, 'blank', g, lod), g);
+    add(`corner-${tag}`, cornerModule(t, g, 0, lod), g);
+    add(`corner-${tag}-alt`, cornerModule(t, g, 1, lod), g);
   }
-  add('wall-door', wallModule(t, 'door', true), true);
-  const p = new ModuleBuilder(t.bevel);
-  p.sweep(t.plinth, S(0), E(0), 0);
+  add('wall-door', wallModule(t, 'door', true, lod), true);
+  // (far: each profile reduced to its bounding step — out, up, in)
+  const prof = (pr: Profile): Profile => {
+    if (lod < 2) return pr;
+    const ws = pr.pts.map((p) => p[0]);
+    const zs = pr.pts.map((p) => p[1]);
+    const w = Math.max(...ws);
+    const z0 = Math.min(...zs);
+    const z1 = Math.max(...zs);
+    return { pts: [[0, z0], [w, z0], [w, z1], [0, z1]], col: pr.col };
+  };
+  const p = new ModuleBuilder(t.bevel, lod);
+  p.sweep(prof(t.plinth), S(0), E(0), 0);
   add('plinth', p, true);
-  if (t.band) {
-    const b = new ModuleBuilder(t.bevel);
-    b.sweep(t.band, S(0), E(0), 0);
-    add('band', b, false);
-  }
-  const c = new ModuleBuilder(t.bevel);
-  c.sweep(t.cornice, S(0), E(0), 0);
+  const b = new ModuleBuilder(t.bevel, lod);
+  if (t.band) b.sweep(prof(t.band), S(0), E(0), 0);
+  add('band', b, false);
+  const c = new ModuleBuilder(t.bevel, lod);
+  c.sweep(prof(t.cornice), S(0), E(0), 0);
   add('cornice', c, false);
   return out;
 }

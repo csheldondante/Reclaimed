@@ -13,7 +13,8 @@ import aoWgsl from '../archgen/ssao.wgsl?raw';
 import kitWgsl from './tilekit.wgsl?raw';
 import { cellOwners, cellTops, valences, weldCells, type GridMesh, type Rect } from './grid';
 import { buildKit, VF, type ModuleMesh } from './kit';
-import { buildBlock, IF, type Block } from './block';
+import { buildBlock, controlGrid, IF, type Block } from './block';
+import { buildDistrict, planDistrict, planMesh } from './district';
 import { THEMES, type Theme } from './theme';
 
 const q = urlFlags();
@@ -153,16 +154,22 @@ async function main() {
   const aoU = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
   // ---- the kit and the block (remade on a theme or dial change) ----
-  const look = { theme: Math.max(0, THEMES.findIndex((t) => t.name === q.get('theme'))), sag: num('sag', -1), wonk: num('wonk', -1), ao: num('ao', 1), aoR: num('aor', 2.0), shadow: num('shadow', 1), bake: num('bake', 1), dbg: num('dbg', 0), sunTurn: num('sunturn', 55), sunUp: num('sunup', 37) };
-  const kits = new Map<number, ModuleMesh[]>();
+  const look = {
+    theme: Math.max(0, THEMES.findIndex((t) => t.name === q.get('theme'))), sag: num('sag', -1), wonk: num('wonk', -1), ao: num('ao', 1), aoR: num('aor', 2.0), shadow: num('shadow', 1), bake: num('bake', 1), dbg: num('dbg', 0), sunTurn: num('sunturn', 55), sunUp: num('sunup', 37),
+    // (step 2) ?mode=district|block (step 1's block), ?roof=strip|field, ?lod=0|1|2 (-1 by zoom), ?straight=0..1,
+    // ?setback=m, ?radius=m (the district's lots), ?seed=n, ?plan=1 (the strips, top-down, no houses)
+    mode: q.get('mode') ?? 'district', roof: (q.get('roof') ?? 'strip') as 'strip' | 'field', lod: num('lod', 0), straight: num('straight', 0), setback: num('setback', -1), radius: num('radius', 24), seed: num('seed', 1), plan: num('plan', 0),
+  };
+  const kits = new Map<string, ModuleMesh[]>();
   let kitMs = 0;
-  const kitOf = (i: number) => {
-    let k = kits.get(i);
+  const lodNow = () => (look.lod >= 0 ? look.lod : cam.zoom < 22 ? 0 : cam.zoom < 70 ? 1 : 2);
+  const kitOf = (i: number, lod: number) => {
+    let k = kits.get(i + ':' + lod);
     if (!k) {
       const t0 = performance.now();
-      k = buildKit(THEMES[i], true);
+      k = buildKit(THEMES[i], true, lod);
       kitMs = performance.now() - t0;
-      kits.set(i, k);
+      kits.set(i + ':' + lod, k);
     }
     return k;
   };
@@ -174,17 +181,81 @@ async function main() {
     world: { first: number; count: number };
     group: GPUBindGroup;
     shadowGroup: GPUBindGroup;
-    block: Block;
+    block: { inst: Map<string, number[]>; world: number[]; ctl: Block['ctl']; centre: [number, number] };
     theme: Theme;
+    lod: number;
+    info: Record<string, unknown>;
     counts: { modules: number; moduleVerts: Record<string, number>; instances: number; vertices: number; worldVerts: number };
   }
   let scene: Scene | null = null;
+  let buildMs = 0;
+  /** where the district's features stand (the shots aim at them) */
+  const where: { arches: { x: number; y: number; along: number; blocked: number }[]; turrets: [number, number][] } = { arches: [], turrets: [] };
+  const centroidOf = (c: number): [number, number] => {
+    let x = 0;
+    let y = 0;
+    for (let k = 0; k < 4; k++) {
+      x += mesh.xy[mesh.cells[c * 4 + k] * 2] / 4;
+      y += mesh.xy[mesh.cells[c * 4 + k] * 2 + 1] / 4;
+    }
+    return [x, y];
+  };
   const remake = () => {
     const t = THEMES[look.theme];
     const sag = look.sag >= 0 ? look.sag : t.warp.sag;
     const wonk = look.wonk >= 0 ? look.wonk : t.warp.wonk;
-    const block = buildBlock(mesh, tops, t, { street: [Math.cos((cam.yaw * Math.PI) / 180), Math.sin((cam.yaw * Math.PI) / 180)], sag, wonk, groundR: 26, owners });
-    const kit = kitOf(look.theme);
+    const t0 = performance.now();
+    let block: Scene['block'];
+    let info: Record<string, unknown>;
+    if (look.mode === 'block') {
+      const b = buildBlock(mesh, tops, t, { street: [Math.cos((cam.yaw * Math.PI) / 180), Math.sin((cam.yaw * Math.PI) / 180)], sag, wonk, groundR: 26, owners });
+      block = b;
+      info = { ...b.stats, joints: { convex: b.walls.joints[0], straight: b.walls.joints[1], concave: b.walls.joints[2] }, pinches: b.walls.pinches };
+    } else {
+      const plan = planDistrict(mesh, t, { anchor, radius: look.radius, seed: look.seed, plotCells: 18, alleyOdds: 0.45 });
+      if (look.plan) {
+        block = { inst: new Map(), world: planMesh(mesh, plan, anchor, look.radius + 10), ctl: controlGrid(mesh, plan.tops, anchor, 10, t, { street: [1, 0], sag: 0, wonk: 0, groundR: 0 }, []), centre: anchor };
+        info = { plots: plan.plots, strips: plan.strips.length, sizes: plan.strips.map((s, i) => `${s.a}x${s.b}${plan.role[i][0]}`).join(' ') };
+      } else {
+        const d = buildDistrict(mesh, t, plan, { roof: look.roof, straighten: look.straight, sag, wonk, groundR: look.radius + 14, setback: look.setback >= 0 ? look.setback : undefined });
+        block = d;
+        where.arches = plan.arches.map((a) => {
+          const [x, y] = centroidOf(a.c);
+          // the alley's direction: across the cell from its edge k + 1 to k + 3
+          const p = (k: number) => [mesh.xy[mesh.cells[a.c * 4 + (k % 4)] * 2], mesh.xy[mesh.cells[a.c * 4 + (k % 4)] * 2 + 1]];
+          // (the passage runs from the middle of edge k + 3 to the middle of edge k + 1; edges k and k + 2 are the houses')
+          const m3 = [(p(a.k + 3)[0] + p(a.k + 4)[0]) / 2, (p(a.k + 3)[1] + p(a.k + 4)[1]) / 2];
+          const m1 = [(p(a.k + 1)[0] + p(a.k + 2)[0]) / 2, (p(a.k + 1)[1] + p(a.k + 2)[1]) / 2];
+          const along = (Math.atan2(m1[1] - m3[1], m1[0] - m3[0]) * 180) / Math.PI;
+          // which end of the alley is open (fewest built cells on the camera's side within 14 m): the view from there
+          const blocked = (deg: number) => {
+            let n = 0;
+            for (let s = 2; s <= 14; s += 1.5) {
+              const qx = x + Math.cos((deg * Math.PI) / 180) * s;
+              const qy = y + Math.sin((deg * Math.PI) / 180) * s;
+              let best = -1;
+              let bd = Infinity;
+              for (let c = 0; c < mesh.nc; c++) {
+                const [cx2, cy2] = centroidOf(c);
+                const dd = (cx2 - qx) ** 2 + (cy2 - qy) ** 2;
+                if (dd < bd) {
+                  bd = dd;
+                  best = c;
+                }
+              }
+              n += plan.tops[best];
+            }
+            return n;
+          };
+          return { x, y, along: blocked(along) <= blocked(along + 180) ? along : along + 180, blocked: Math.min(blocked(along), blocked(along + 180)) };
+        });
+        where.turrets = d.turrets;
+        info = { ...d.stats, roofRule: +d.roofRule.toFixed(4) };
+      }
+    }
+    buildMs = performance.now() - t0;
+    const lod = lodNow();
+    const kit = kitOf(look.theme, lod);
     const verts: number[] = [];
     const insts: number[] = new Array(IF).fill(0);
     const draws: Scene['draws'] = [];
@@ -196,7 +267,7 @@ async function main() {
       const list = block.inst.get(mm.name);
       const first = verts.length / VF;
       for (const x of mm.verts) verts.push(x);
-      if (!list?.length) continue;
+      if (!list?.length || !mm.verts.length) continue;
       const k = list.length / IF;
       draws.push({ first, count: mm.verts.length / VF, firstInst: insts.length / IF, insts: k, name: mm.name });
       for (const x of list) insts.push(x);
@@ -228,7 +299,7 @@ async function main() {
     scene?.ib.destroy();
     scene?.ctl.destroy();
     scene = {
-      vb, ib, ctl, draws, world: { first: wfirst, count: wcount }, group: groupOf(viewU, shadowMap), shadowGroup: groupOf(sunU, noShadow), block, theme: t,
+      vb, ib, ctl, draws, world: { first: wfirst, count: wcount }, group: groupOf(viewU, shadowMap), shadowGroup: groupOf(sunU, noShadow), block, theme: t, lod, info,
       counts: { modules: kit.length, moduleVerts, instances, vertices, worldVerts: wcount },
     };
     showStats();
@@ -294,7 +365,7 @@ async function main() {
     const sy = ((cam.yaw - look.sunTurn) * Math.PI) / 180;
     const su = (look.sunUp * Math.PI) / 180;
     const sun = norm([Math.cos(sy) * Math.cos(su), Math.sin(sy) * Math.cos(su), Math.sin(su)]);
-    const half = 30;
+    const half = look.mode === 'block' ? 30 : 48;
     const sunVP = ortho(sun, [sc.block.centre[0], sc.block.centre[1], 4], half, half);
     const c = sc.block.ctl;
     const u = new Float32Array(52);
@@ -390,26 +461,30 @@ async function main() {
   const stats = document.getElementById('stats')!;
   const statsOf = () => {
     const sc = scene!;
-    const b = sc.block;
     return {
       theme: sc.theme.name,
+      mode: look.mode,
+      roof: look.roof,
+      lod: sc.lod,
       gridCells: mesh.nc,
       gridVerts: mesh.nv,
       valence: Object.fromEntries([...vh.entries()].sort((a, b) => a[0] - b[0])),
-      block: { ...b.stats, joints: { convex: b.walls.joints[0], straight: b.walls.joints[1], concave: b.walls.joints[2] }, pinches: b.walls.pinches },
+      block: sc.info,
       modules: sc.counts.modules,
       moduleVerts: sc.counts.moduleVerts,
       instances: sc.counts.instances,
       instancedVertices: sc.counts.vertices,
-      roofAndGroundVertices: sc.counts.worldVerts,
-      roofVertices: b.stats.roofTris * 3,
+      /** instanced vertices a module (its vertices × its instances) */
+      perModule: Object.fromEntries(sc.draws.map((d) => [d.name, d.count * d.insts])),
+      worldVertices: sc.counts.worldVerts,
       kitBuildMs: +kitMs.toFixed(1),
+      buildMs: +buildMs.toFixed(1),
       draws: sc.draws.length + 1,
     };
   };
   const showStats = () => {
     const s = statsOf();
-    stats.textContent = `${s.theme}: ${s.block.cells} cells, ${s.block.panels} panels (${s.block.windows} windows, ${s.block.doors} doors, ${s.block.blanks} blank), ${s.block.pinches} pinches\n${s.modules} modules, ${s.instances} instances, ${s.instancedVertices} + ${s.roofAndGroundVertices} vertices`;
+    stats.textContent = `${s.theme} · ${s.mode} · roof ${s.roof} · lod ${s.lod}\n${JSON.stringify(s.block)}\n${s.instances} instances, ${s.instancedVertices} + ${s.worldVertices} vertices, build ${s.buildMs} ms`;
   };
   const sel = document.getElementById('theme') as HTMLSelectElement;
   sel.innerHTML = THEMES.map((t, i) => `<option value="${i}">${t.name}</option>`).join('');
@@ -480,7 +555,7 @@ async function main() {
     },
     set(o: Partial<typeof look>) {
       Object.assign(look, o);
-      if ('sag' in o || 'wonk' in o) remake();
+      if (['sag', 'wonk', 'mode', 'roof', 'lod', 'straight', 'setback', 'radius', 'seed', 'plan'].some((k) => k in o)) remake();
     },
     caption(text: string) {
       capEl.textContent = text;
@@ -488,6 +563,11 @@ async function main() {
     },
     bench,
     stats: statsOf,
+    where,
+    /** the welded grid as plain arrays (scripts/tilekit-dump.mjs writes it as the unit tests' fixture) */
+    grid() {
+      return { anchor, xy: [...mesh.xy].map((v) => Math.round(v * 1000) / 1000), cells: [...mesh.cells], lot: [...(mesh.lot ?? [])], cls: [...(mesh.cls ?? [])] };
+    },
     anchor,
     cam,
     look,

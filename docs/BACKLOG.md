@@ -2519,22 +2519,30 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   grid's staircase or the rectangles (snap a rectangle's edges to chains of cell edges and relax those vertices onto
   the line); Q3 roofs — half-grid height field (built: hips, lean-tos) vs gables per rectangle vs a skeleton, and how
   a gable end is chosen; Q4 sharp convex joints (mitre clamp or forbid); Q5 pinches allowed?; Q6 one window a cell
-  edge or by bay width.
-- TKIT2 The outline crinkles: rectangles rasterised by cell centroid give a staircase; the block has 35 convex and 17
-  concave joints in 68 panels, every facade bends every ~2.7 m and the massing reads as one blob, not range + wing +
-  tower. Depends on Q2.
-- TKIT3 Roofs: no gables or single long ridge (hips over the cell outline: many facets, a notch where the outline
-  jogs); one region's eave overhang runs into a neighbouring taller region's wall or roof (the tower's eave on the
-  main roof, the main roof's overhang through the tower's wall); thin dark seams between some roof facets; no ridge
-  caps, no tiles in geometry (courses painted by z), no dormers or chimneys; a region with no eave panel would be
-  flat at the eave (no parapet).
-- TKIT4 Vertex budget: 93k instanced vertices for one 18-cell block (plaster), quoin stacks ~45%: too heavy for a phone
-  district. LOD module sets (§9: frames and bevels dropped, quoins as one flat-faced stack), merging a building's
-  static instances into one mesh at far zoom, the AG24 baked tiles on the phone.
-- TKIT5 Window rhythm: a window on every long panel reads as an apartment block, not Tiny Glade's few deep openings;
-  rhythm and odds from the theme by role (front, side, back, gable).
-- TKIT6 Theme modules not yet in the kit: jetties (an upper storey stepping out — needs non-monotone occupancy or a
-  per-panel offset), dormers, chimneys, balconies, window boxes and climbers, arches and arcades, eave brackets.
+  edge or by bay width. — Answered 2026-11-17 (DECISIONS): walls parallel to the grid, set back; plots from merged
+  lots; best-guess roofs with the height field as a variant; bays by the theme's width; corner features and an arch.
+  Step 2 built them (TILEKIT §13–§19, tile kit step 2 commit). Q5 (pinches) unanswered: the setback now separates a
+  pinch's two corners by 2d.
+- TKIT2 The outline crinkles — step 2: massing is now the grid's own strips and walls follow grid lines, merged into
+  runs (482 bays in 356 runs over the district vs 68 panels with 35 convex joints for step 1's one block). Still open:
+  every irregular vertex on a side bends a wall 37–60° and most lattice points are irregular (lines ~10 m median) —
+  structural, TILEKIT §13.1, options in TKIT10.
+- TKIT3 Roofs — step 2: one gable/hip/lean-to/pyramid a strip with a single ridge, a slope never into a wall
+  (guaranteed by the choice, checked on every roof, unit-tested); height field switchable (`?roof=field`). Still open:
+  joined strip roofs overlap as a union (a hip or pyramid pokes through a neighbour, TKIT11); no ridge caps, no tiles
+  in geometry, no dormers or chimneys; a side mixing eave and join edges gets no overhang at all.
+- TKIT4 Vertex budget — step 2: LOD module sets (0 near, 1 mid without chamfers and quoins as two faces a block, 2 far
+  with openings painted and no quoins): the 145-cell district 408,570 / 115,614 / 16,998 instanced vertices (plaster),
+  327,468 / 116,658 / 24,846 (timber), + 22k roof and ground. Still open: near windows (155k plaster, 232k timber) and
+  quoins (224k) are heavy for close-ups; non-indexed triangle lists (indexing would roughly halve); no merged far mesh
+  a building, no automatic LOD switch by zoom in the stills (lab `?lod=-1` does it by view height); not measured on a
+  phone.
+- TKIT5 Window rhythm — step 2: bays by the theme's width over merged runs, larger openings, end bays of 3+ bay runs
+  blank at theme odds. Still open: rhythm by role (front/back/gable) and storey (smaller upper windows), symmetric
+  facades, no shop fronts on the ground storey.
+- TKIT6 Theme modules not yet in the kit: dormers, chimneys, balconies, window boxes and climbers, arcades, eave
+  brackets. (Jetties — step 2, a per-storey setback with jogs where they end; arches — step 2, a bridge room over an
+  alley.)
 - TKIT7 Quays, ground skirts and stairs with the same sweep (§8): quay panels to the water, skirt panels pushed to the
   terrain in the vertex shader, stairs on open edges, paved cells taking terrain corner heights.
 - TKIT8 Hacks and limits of step 1, each to fix:
@@ -2559,3 +2567,41 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   - Quoin stacks stop at the last whole block under the storey's top (a small plain gap at the top of a storey).
   - Glass lit with a fixed sky tone; roof tiles by world z in the shader.
   - The shadow map covers a fixed 30 m round the block.
+- TKIT9 Step 2 (2026-11-17, TILEKIT §13–§19): the owner judges the step-2 stills (local/tilekit2/strip.png) and answers
+  Q7–Q10. Built: strips.ts (grid lines, strips, decomposition), facade.ts (setback, jogs, runs, bays, chamfers,
+  straighten), roof.ts (strip roofs and the rule), district.ts (plots, alleys, roles, turrets, arch, ground, plan view),
+  LOD kits; unit tests on squares and on the real grid (fixture src/tilekit/fixtures/grid-muru.json).
+- TKIT10 The structural bend (TILEKIT Q7): walls kink 37–60° at irregular vertices and most lattice points are
+  irregular. Next experiment proposed: a district grain — in built lots, pair lattice triangles across one edge family
+  so the rhombi tile regularly and every interior lattice point is 4-valent (arch.wgsl's pairing); alternatives:
+  straighten runs (dial built), re-mesh plots as structured grids, follow better plans' lots.
+- TKIT11 Roof unions: joined strip roofs are drawn as overlapping solids; a hip or pyramid that meets a neighbour's roof
+  pokes through it, a lean-to's ends can show slivers. Clip each strip's roof to its own cells plus its extension, or
+  CSG the roof solids.
+- TKIT12 Massing reads busy: many small strips (112 for 145 built cells), turrets and towers close together; the plaster
+  shade side is a flat blue-grey. Rules to try: merge leftovers into neighbours' heights instead of yards/annexes,
+  limit towers and turrets a district, a minimum footprint a house, the archlab light and palette.
+- TKIT13 Hacks and limits of step 2, each to fix:
+  - The lab still reads the GPU grid back once; weldCells now also sorts cells by centroid and renumbers vertices so a
+    run is deterministic (the GPU writes cells in atomic order) — in the game the grid's cells need a stable order or
+    ids from the GPU instead.
+  - Plots and roles: hashed lot merging to ≥ 18 cells, alley odds 0.45, role thresholds, bend cost 0.08, tower odds —
+    all by eye on one district at one anchor and one seed.
+  - Arch views in the shots pick the alley end with the fewest built cells by a brute-force nearest-cell search (lab
+    only).
+  - Strip roof heights use the arc length averaged over the columns (exact rule, slightly uneven pitch where a strip's
+    width varies); boundary samples where nearly-parallel edges have different offsets take the mean of the two moved
+    points (a smeared jog under the roof edge).
+  - A joined gable end runs on into a crossing roof by rise / that roof's pitch, at most 2.7 m — not intersected.
+  - Lean-to pitch ≤ 0.6 × theme pitch and ≤ 2.4 m rise, 0.35 m under the taller eave — by eye.
+  - Turret: on the main range's sharpest ground corner < 72°, centre pushed out 0.25 r; quoins and chamfers suppressed
+    within 0.6 m (+ jetty) of it; its slit windows and bands are world geometry, not kit modules (no LOD).
+  - Arch: up to two, alley cells between houses ≥ 2 storeys; faces and intrados are world geometry; the bridge room is
+    a 1 × 1 strip with lo = 1.
+  - Jetty: a storey with a facade below steps out (up to 2 storeys); where the facade below ends along a straight wall a
+    0.28 m jog appears (real, but unrefined: no corbel or bracket); the jetty band is a 0.34 m-deep beam everywhere, also
+    where no storey steps out above.
+  - Quoins only under 125°; chamfers under 80° (plaster), timber none.
+  - The far LOD keeps the instance count (only module meshes shrink); timber braces stay prisms at far.
+  - Fair comparison: tilekit and archlab with archlab's sun (115° from the view, 37° up) and yaw/pitch, but the two
+    labs' `zoom` and camera targets differ, so the framing is not identical (r_fair_archlab shows a wider, denser area).

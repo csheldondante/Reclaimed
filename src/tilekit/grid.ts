@@ -14,15 +14,26 @@ export interface GridMesh {
   across: Int32Array;
   nv: number;
   nc: number;
+  /** (step 2) the town lot a cell's centre lies in (0xffffffff none) and how it sits on it (arch.wgsl tgEmit: 0 no lot,
+   *  1 wholly in its lot, 2 a corner in another lot, 3 a corner in a street); absent on hand-made test meshes */
+  lot?: Uint32Array;
+  cls?: Uint8Array;
 }
 
-/** cells from the GPU grid lab's buffer (float view; `stride` words a cell, corners x y in the first 8) welded */
+/** cells from the GPU grid lab's buffer (float view; `stride` words a cell, corners x y in the first 8, then the lot and
+ *  the class) welded */
 export function weldCells(raw: Float32Array, count: number, stride = 10): GridMesh {
   const bits = new Uint32Array(raw.buffer, raw.byteOffset, raw.length);
   const ids = new Map<string, number>();
   const xy: number[] = [];
   const cells = new Int32Array(count * 4);
+  const lot = new Uint32Array(count);
+  const cls = new Uint8Array(count);
   for (let c = 0; c < count; c++) {
+    if (stride >= 10) {
+      lot[c] = bits[c * stride + 8];
+      cls[c] = bits[c * stride + 9];
+    }
     const q: number[] = [];
     for (let j = 0; j < 4; j++) {
       const o = c * stride + j * 2;
@@ -45,7 +56,40 @@ export function weldCells(raw: Float32Array, count: number, stride = 10): GridMe
     if (area < 0) q.reverse();
     cells.set(q, c * 4);
   }
-  return finish(new Float64Array(xy), cells);
+  // (step 2: the GPU writes cells in atomic order, which varies run to run; everything downstream that breaks ties by
+  // index — strip decomposition, hashes of cell ids — then varied too. Cells sorted by centroid, vertices renumbered
+  // by first use: the same grid welds to the same mesh every run)
+  const cen = (c: number) => {
+    let x = 0;
+    let y = 0;
+    for (let k = 0; k < 4; k++) {
+      x += xy[cells[c * 4 + k] * 2];
+      y += xy[cells[c * 4 + k] * 2 + 1];
+    }
+    return [Math.round(y * 25), Math.round(x * 25)];
+  };
+  const keys = Array.from({ length: count }, (_, c) => cen(c));
+  const order = Array.from({ length: count }, (_, c) => c).sort((a, b) => keys[a][0] - keys[b][0] || keys[a][1] - keys[b][1]);
+  const renum = new Int32Array(xy.length / 2).fill(-1);
+  const xy2: number[] = [];
+  const cells2 = new Int32Array(count * 4);
+  const lot2 = new Uint32Array(count);
+  const cls2 = new Uint8Array(count);
+  order.forEach((c, i) => {
+    for (let k = 0; k < 4; k++) {
+      const v = cells[c * 4 + k];
+      if (renum[v] < 0) {
+        renum[v] = xy2.length / 2;
+        xy2.push(xy[v * 2], xy[v * 2 + 1]);
+      }
+      cells2[i * 4 + k] = renum[v];
+    }
+    lot2[i] = lot[c];
+    cls2[i] = cls[c];
+  });
+  const m = finish(new Float64Array(xy2), cells2);
+  if (stride >= 10) Object.assign(m, { lot: lot2, cls: cls2 });
+  return m;
 }
 
 /** a mesh from positions and CCW quads (tests build small ones by hand) */
@@ -218,6 +262,8 @@ export interface Panel {
   /** the next panel along the outline (from b) */
   next: number;
   prev: number;
+  /** the cell outside the wall (-1 off the grid) */
+  across: number;
 }
 
 /** the mitre's length cap: a sharp convex corner (~60°) needs ×2; past 2.5 its cornice would shoot out (TILEKIT Q4) */
@@ -243,13 +289,14 @@ export interface Walls {
   joints: [number, number, number];
 }
 
-/** the wall panels of every storey and their joints */
-export function walls(m: GridMesh, tops: Uint8Array): Walls {
+/** the wall panels of every storey and their joints. A cell is occupied at storey s when lo[c] ≤ s < tops[c] (`lo`
+ *  absent: from the ground; step 2's bridge room over an arch starts at storey 1) */
+export function walls(m: GridMesh, tops: Uint8Array, lo?: Uint8Array): Walls {
   const panels: Panel[] = [];
   const at = new Map<string, number>();
   let maxTop = 0;
   for (let c = 0; c < m.nc; c++) maxTop = Math.max(maxTop, tops[c]);
-  const occ = (c: number, s: number) => c >= 0 && tops[c] > s;
+  const occ = (c: number, s: number) => c >= 0 && tops[c] > s && (!lo || lo[c] <= s);
   for (let s = 0; s < maxTop; s++) {
     for (let c = 0; c < m.nc; c++) {
       if (!occ(c, s)) continue;
@@ -262,7 +309,7 @@ export function walls(m: GridMesh, tops: Uint8Array): Walls {
         const len = Math.hypot(bx - ax, by - ay);
         const z: Joint = { kind: 1, angle: 180, mx: 0, my: 0 };
         at.set(`${s}:${c}:${k}`, panels.length);
-        panels.push({ cell: c, k, a, b, s, top: tops[c] === s + 1, len, nx: (by - ay) / len, ny: -(bx - ax) / len, start: z, end: z, next: -1, prev: -1 });
+        panels.push({ cell: c, k, a, b, s, top: tops[c] === s + 1, len, nx: (by - ay) / len, ny: -(bx - ax) / len, start: z, end: z, next: -1, prev: -1, across: m.across[c * 4 + k] });
       }
     }
   }

@@ -164,10 +164,10 @@ export function hull(pts: [number, number][]): [number, number][] {
 }
 
 /** a world-space vertex */
-function wv(out: number[], p: [number, number, number], n: [number, number, number], col: RGB, mat: number) {
+export function wv(out: number[], p: [number, number, number], n: [number, number, number], col: RGB, mat: number) {
   out.push(p[0], p[1], p[2], A.world, n[0], n[1], n[2], 1, col[0], col[1], col[2], mat);
 }
-function wtri(out: number[], a: [number, number, number], b: [number, number, number], c: [number, number, number], col: RGB, mat: number, up: boolean) {
+export function wtri(out: number[], a: [number, number, number], b: [number, number, number], c: [number, number, number], col: RGB, mat: number, up: boolean) {
   const ux = b[0] - a[0];
   const uy = b[1] - a[1];
   const uz = b[2] - a[2];
@@ -192,7 +192,7 @@ function segDist(px: number, py: number, ax: number, ay: number, bx: number, by:
 /** the roofs: a surface a top region (cells whose top storey is k, joined by edges), h = eave + thickness +
  *  min(cap, pitch · distance to the region's eave panels); sampled on each cell's 4 sub-quads, each split on the
  *  diagonal that fits h better; an overhang swept out of each eave panel with its mitres (top, fascia, soffit) */
-function roofs(m: GridMesh, tops: Uint8Array, panels: Panel[], t: Theme, bid: Int32Array, out: number[]) {
+export function roofs(m: GridMesh, tops: Uint8Array, panels: Panel[], t: Theme, bid: Int32Array, out: number[]) {
   const R = t.roof;
   let maxTop = 0;
   for (let c = 0; c < m.nc; c++) maxTop = Math.max(maxTop, tops[c]);
