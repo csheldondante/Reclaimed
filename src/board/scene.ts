@@ -366,9 +366,9 @@ export class TownScene {
     }
     // (townspeople: more with houses and with the market; fewer under plague, darkness and in a sacked town)
     const houses = s.built.filter((b) => b === 'houses').length;
-    let folk = 34 + 30 * houses + (s.built.includes('market') ? 16 : 0) + 6 * s.far.filter((x) => x.partner).length;
+    let folk = 60 + 30 * houses + (s.built.includes('market') ? 20 : 0) + 8 * s.far.filter((x) => x.partner).length;
     if (s.signs.includes('deadrise') || s.signs.includes('darkness')) folk = Math.round(folk * 0.6);
-    folk = Math.min(180, folk);
+    folk = Math.min(200, folk);
     this.folkCount = folk;
     const have = this.figs.filter((f) => f.key.startsWith('folk'));
     for (let i = have.length; i < folk; i++) {

@@ -41,7 +41,7 @@ uses, buttons). Your banner on the region is gold; a faction's colour is a hue f
 | `deadrise`, `crime` | the dead (red, pale heads) out of the burial ground; hooded thieves in the market streets |
 | Live fire / lava front | flames on the site / glowing lava tiles reaching toward it as the model's `burned` grows |
 | Walls built | a stone ring round the core |
-| Houses built, market, partners | more houses on the plots, more people on the roads (34 to 180) |
+| Houses built, market, partners | more houses on the plots, more people on the roads (60 to 200; fewer under the dead or darkness) |
 | **Any other tag** | **a label with its plain words at the site (or at the keep for the town)** |
 | Far place (region) | its kind (town, camp, lair, tower, crash, POI), status ground (ash, water, lava, green, rubble, faded), a banner (yours gold, a faction's hue, raiders red), "new", unknown tags as words, a flash when it changed this season |
 | Trade partners, what is yours | roads to them with carts going back and forth; dashed when fallen |
@@ -53,7 +53,8 @@ walks there. Commit takes the card (its cost leaves at once; crews walk to the s
 **Next season** plays the time-lapse (2–9 s, Skip or tap to cut it): the season banner, the pools flying in, finished
 buildings rising, new scars arriving, pieces walking home, then up to three pieces of news brought by a messenger (on
 foot; a rider when it names a far place or the raiders; a cart for goods; a ship on the river for the sea), each with a
-speech bubble. Far places that changed flash on the region and are told in a toast.
+speech bubble. When far places changed, the time-lapse ends on the region for a moment with those places flashing,
+and a toast names them.
 
 **The raid** (live event `raid`): Defend (or Next season while it stands) plays it on the board for about 24 s. Raiders in
 red file in down the east road; they stop and fight where your soldiers stand (posted on the watchtower or the wall

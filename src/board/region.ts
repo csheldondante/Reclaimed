@@ -25,9 +25,11 @@ export class RegionScene {
   private hits: { x: number; y: number; r: number; act: RegionAction }[] = [];
   /** places that changed in the last season: they flash */
   flash = new Map<string, number>();
+  private w = 0;
 
   draw(g: CanvasRenderingContext2D, s: BoardState, w: number, h: number, dpr: number, now: number, top: number, bottom: number): void {
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.w = w;
     g.fillStyle = '#2e3527';
     g.fillRect(0, 0, w, h);
     // (a faint grid of land)
@@ -46,11 +48,14 @@ export class RegionScene {
       g.stroke();
     }
     this.hits = [];
-    const span = Math.max(120, ...s.far.map((f) => Math.max(Math.abs(f.dx), Math.abs(f.dy))));
+    // (each axis fills the screen: a portrait phone spreads the places out up and down — the map is a diagram, not to scale)
+    const sx = Math.max(120, ...s.far.map((f) => Math.abs(f.dx)));
+    const sy = Math.max(120, ...s.far.map((f) => Math.abs(f.dy)));
     const cx = w / 2;
     const cy = (top + h - bottom) / 2;
-    const k = Math.min((w / 2 - 50) / span, ((h - top - bottom) / 2 - 60) / span);
-    const at = (f: FarView): [number, number] => [cx + f.dx * k, cy + f.dy * k];
+    const kx = (w / 2 - 70) / sx;
+    const ky = Math.min(kx * 2.2, ((h - top - bottom) / 2 - 80) / sy);
+    const at = (f: FarView): [number, number] => [cx + f.dx * kx, cy + f.dy * ky];
     // (routes: to partners and to what is yours, carts going back and forth)
     for (const f of s.far) {
       if (!f.partner && !f.look.yours) continue;
@@ -181,6 +186,8 @@ export class RegionScene {
   private label(g: CanvasRenderingContext2D, x: number, y: number, text: string, color: string, bold: boolean): void {
     g.font = `${bold ? 700 : 600} ${bold ? 13 : 12}px system-ui, sans-serif`;
     const tw = g.measureText(text).width;
+    // (kept on screen)
+    x = Math.max(tw / 2 + 8, Math.min(this.w - tw / 2 - 8, x));
     g.fillStyle = 'rgba(16,18,20,0.8)';
     g.beginPath();
     g.roundRect(x - tw / 2 - 5, y - 9, tw + 10, 18, 6);

@@ -7,6 +7,7 @@ import { POOL_ICON } from '../season/words';
 import { POOLS, type Pool } from '../season/ledger';
 import { Table } from '../table/game';
 import { previewLine } from '../table/words';
+import { FAR_WORD } from './looks';
 import { readBoard, type BoardState, type LiveView, type OfferView } from './model';
 import { RaidPlay } from './raid';
 import { RegionScene } from './region';
@@ -395,6 +396,7 @@ function nextSeason(): void {
   const timers: number[] = [];
   const end = (): void => {
     for (const t of timers) clearTimeout(t);
+    mode = 'town';
     scene.figs = scene.figs.filter((f) => !f.key.startsWith('news'));
     $('banner').hidden = true;
     $('skip').hidden = true;
@@ -402,7 +404,7 @@ function nextSeason(): void {
     busy = null;
     renderBottom();
     renderTop();
-    if (changed.length) toast(changed.slice(0, 3).map((f) => `${cap(f.name)}: ${f.look.yours ? 'yours' : ''} ${f.look.status}`.replace(/\s+/g, ' ')));
+    if (changed.length) toast(changed.slice(0, 3).map((f) => `${cap(f.name)}: ${farBefore.has(f.id) ? [FAR_WORD[f.look.status], f.look.yours ? 'yours' : ''].filter((q) => q).join(', ') : 'new on the map'}`));
     if (table.over) openSheet('end', '');
     else if (state.live.some((x) => x.raid)) {
       const r2 = state.live.find((x) => x.raid)!;
@@ -421,7 +423,23 @@ function nextSeason(): void {
       }, 1200 + k * 2700),
     );
   });
-  timers.push(window.setTimeout(end, Math.max(2600, 1200 + pick.length * 2700)));
+  // (far places that changed: the region is shown for a moment, the changed ones flashing)
+  const town = Math.max(2600, 1200 + pick.length * 2700);
+  if (changed.length)
+    timers.push(
+      window.setTimeout(() => {
+        scene.figs = scene.figs.filter((f) => !f.key.startsWith('news'));
+        for (const f of changed) region.flash.set(f.id, performance.now());
+        mode = 'region';
+        renderBottom();
+      }, town),
+    );
+  timers.push(
+    window.setTimeout(() => {
+      if (changed.length) mode = 'town';
+      end();
+    }, town + (changed.length ? 2600 : 0)),
+  );
   skipLapse = end;
   $('skip').hidden = false;
 }

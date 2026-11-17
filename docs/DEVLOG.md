@@ -26251,3 +26251,9 @@ greedy order took no catalog building); from season 7 the market burns to ash an
 burial ground in red, ash falls; the raid (18 raiders, no keep or walls: "you 0") files down the east road past the
 posted soldiers and breaks through, the gate burns; run 2 opens on the same scarred town.
 
+**Then** (same day): the townspeople start at 60 (the owner: "increasing the number of towns people will make a huge
+difference"), soft colours so the player's yellow crews and white soldiers (on a dark disc) stand out; a time-lapse
+with changed far places ends on the region for 2.6 s with them flashing; the region spreads each axis to the screen.
+Re-measured idle (`scratchpad board-perf.mjs`, 67 figures): town 1× p50 0.8 / p90 5.6 / max 8.8 ms, 4× p50 3.6 /
+p90 8.7 / p99 11.1 / max 19 ms; region 4× p50 1.7 / p90 4.1 ms. First state 1.2 s after navigation on the dev server.
+
