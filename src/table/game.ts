@@ -20,7 +20,7 @@ import { CATALOG } from '../season/catalog';
 import { FIRE_TEMPLATE } from '../season/realm-events';
 import { projectTemplate, SITES, WORLD_TEMPLATES, type SiteKey } from '../season/realm-templates';
 import { checkTogether, reportText, type Pack, type PackAbility, type Problem } from '../packs/check';
-import { castAbility, IS, lawThings, tradeThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
+import { castAbility, farHolder, farThings, IS, lawThings, packFactions, seedFactions, stanceOf, tradeThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
 import { BASIC_SPELLS, Realm, RUN_SEASONS, SPELL_COST, type RunState, type SpellId } from '../season/realm';
 import { lawKind, lawIncome, winsOf, type LawKind } from '../living/laws';
 import { lawText, lawUntil } from '../season/law-words';
@@ -28,6 +28,7 @@ import type { Effect } from '../living/dsl';
 import type { TemplateDef } from '../living/engine';
 import { LEADERS, leader as leaderOf, resultTitle, SPELL_NAME, threatText, costText } from '../season/run-words';
 import { ROW_H } from '../world/lattice';
+import { placeState } from '../mutate/facts';
 import * as W from './words';
 
 /** the test world every table run starts from (living/briar.ts), and its home town.
@@ -278,6 +279,7 @@ export class Table {
       home: () => HOME,
       tags: (where) => (made ? made.things().filter((t) => t.town === HOME && (where === 'town') === (t.id === HOME)).map((t) => [...t.tags]) : []),
       began: () => (made ? made.w.turn - made.season + 1 : 0),
+      thingTags: (id) => (made ? (made.things().find((t) => t.id === id)?.tags ?? null) : null),
     };
     this.realm = new Realm({
       world,
@@ -311,6 +313,8 @@ export class Table {
         lawThings: () => (made ? lawThings(made.w, this.packs) : []),
         recordLaws: this.packs.flatMap((p) => p.recordLaws),
         tradeThings: () => (made ? tradeThings(made.w, this.packs) : []),
+        // (draft 7: the packs' factions are entities of the world — made once, kept run after run)
+        seed: (w) => seedFactions(w, o.packs ?? []),
       },
     });
     made = this.realm;
@@ -779,6 +783,44 @@ export class Table {
     }
     return [...by].map(([place, lines]) => ({ place, lines }));
   }
+  /**
+   * (draft 7) The far places as news of a living world: each far town with who holds it, what it is and since which
+   * card; the stances between the factions and you and between factions; and what changed out there lately, each with
+   * the card that did it. Read from the fact world (placeState, the holders, the stances, the history).
+   */
+  farNews(): { places: { name: string; line: string; since: string | null }[]; stances: string[]; changes: string[] } {
+    const r = this.realm;
+    const w = r.w;
+    const began = w.turn - r.season + 1;
+    const cardOf = (cause: string | undefined): string | null => {
+      if (!cause) return null;
+      const o = [...r.engine.offers, ...r.engine.past].find((x) => cause === x.id || cause.startsWith(`${x.id}:`));
+      return o ? o.opp.title : null;
+    };
+    const FAR_EVENTS = ['captured', 'vassal', 'destroyed', 'abandoned', 'founding', 'revealed', 'stance', 'flooded', 'burned', 'melted', 'buried', 'dried', 'withered', 'greened'];
+    const farEvents = w.facts.events().filter((e) => FAR_EVENTS.includes(e.kind) && !e.to.includes(HOME) && !e.to.some((x) => w.facts.entity(x)?.kind === 'site'));
+    const places = farThings(w, this.packs, HOME).map((t) => {
+      const ps = w.settlement(t.id) ? placeState(w, t.id) : null;
+      const holder = w.settlement(t.id) ? (farHolder(w, t.id) ?? w.controllerOf(t.id) ?? null) : null;
+      const last = farEvents.filter((e) => e.to.includes(t.id) && e.kind !== 'stance').at(-1);
+      const why = last ? cardOf(last.about?.opp) : null;
+      return {
+        name: t.name,
+        line: W.farLine({ tags: t.tags, holder: holder === 'player' ? 'you' : holder ? w.name(holder) : null, tribute: ps?.tribute ?? 0, partner: r.partners().some((p) => p.id === t.id) }),
+        since: last ? W.farSince(last.note, Math.max(1, last.turn - began + 1), last.turn < began, why) : null,
+      };
+    });
+    const facs = packFactions(w);
+    const stances: string[] = [];
+    for (const a of facs) {
+      const s = stanceOf(w, a, 'player');
+      if (s !== 'none') stances.push(W.stanceLine(w.name(a), 'you', s));
+      for (const b of facs) if (a < b && stanceOf(w, a, b) !== 'none') stances.push(W.stanceLine(w.name(a), w.name(b), stanceOf(w, a, b)));
+    }
+    const changes = farEvents.slice(-8).reverse().map((e) => W.farChange(e.note, e.turn - began + 1, e.turn < began, cardOf(e.about?.opp)));
+    return { places, stances, changes };
+  }
+
   /** (the record) why a card is on the table because of earlier runs, in one plain line (null: it is not) */
   private because(template: string): string | null {
     const b = this.packs.map((p) => p.because[template]).find((x) => !!x);

@@ -14,7 +14,8 @@ import type { LiveCond, LiveDef, LiveWhere } from '../living/live';
 import type { RuleDef, Thing } from '../living/rules';
 import type { LawDef, LawDo } from '../living/laws';
 import type { FactWorld } from '../living/world';
-import { placeStates } from '../mutate/facts';
+import { placeState, placeStates } from '../mutate/facts';
+import { helper as dslHelper } from '../living/dsl';
 import { checkPack, reportText, siteOf, GOODS, PEOPLE, type Pack, type PackAbility, type PackCard, type PackCond, type PackEffect, type PackEvent, type PackTag, type PackThing, type Problem } from './check';
 
 const POOL_WORD: Record<string, string> = { magic: 'Magic', might: 'Might', labor: 'Labor', materials: 'Materials', intel: 'Intel', unrest: 'Unrest' };
@@ -71,6 +72,58 @@ export interface PackHost {
   tags(where: 'town' | 'site'): string[][];
   /** the history's turn of the run's first season (an ability unlocked in an earlier run is not this run's) */
   began(): number;
+  /** (draft 7) the tags of the thing of the rules with this id now (a site, a far town, a found place); null: none */
+  thingTags(id: EntityId): readonly string[] | null;
+}
+
+// ---- (draft 7) factions, stances, far towns as things ---------------------------------------------------------------
+
+const STANCE_REL = { hostile: 'at_war_with', truce: 'truce_with', allied: 'allied_with' } as const;
+/** the stance between two (a faction, the player, another faction): hostile, truce, allied, or none */
+export function stanceOf(w: FactWorld, a: EntityId, b: EntityId): string {
+  for (const [s, type] of Object.entries(STANCE_REL)) if (w.facts.relations({ type, from: a, to: b, historic: false }).length || w.facts.relations({ type, from: b, to: a, historic: false }).length) return s;
+  return 'none';
+}
+/** whose a far town is: who occupies it, else its lord, else who founded it and holds it (the stored `controls`) */
+export function farHolder(w: FactWorld, id: EntityId): EntityId | null {
+  const f = w.facts;
+  return f.relations({ type: 'occupies', to: id })[0]?.from ?? f.relations({ type: 'vassal_of', from: id, historic: false })[0]?.to ?? f.relations({ type: 'controls', to: id })[0]?.from ?? null;
+}
+/** the found place of a far town (where a card revealed what it is for): `<id>:find` */
+export const findId = (place: string): EntityId => `${place}:find`;
+/** the pack factions of the world (entities the packs declared) */
+export function packFactions(w: FactWorld): EntityId[] {
+  return w.facts.find({ kind: 'faction' }).filter((e) => !!e.attrs.packFaction).map((e) => e.id);
+}
+/** the packs' factions made entities of the world, once (a world that has them keeps them, run after run) */
+export function seedFactions(w: FactWorld, packs: readonly Pack[]): void {
+  for (const p of packs) for (const x of p.factions ?? []) if (!w.facts.entity(x.id)) w.facts.add({ id: x.id, kind: 'faction', name: x.name, attrs: { packFaction: x.kind, text: x.text }, cause: `pack:${p.pack.id}` });
+}
+
+/**
+ * (draft 7) The far places as things the rules read: every far town with what it is now — `far-town`, its state
+ * (standing, destroyed, abandoned, occupied, vassal, founded), `standing` or `ruined`, whose it is (`yours`, or a
+ * pack faction's id), what it was founded for (its resource tag), `colony` (founded, yours, standing), the pack tags set
+ * on it — and every place found and not yet settled (`found` and its resource).
+ */
+export function farThings(w: FactWorld, packs: readonly LoadedPack[], home: EntityId): Thing[] {
+  const f = w.facts;
+  const mine = new Set(packFactions(w));
+  const out: Thing[] = [];
+  for (const s of w.ws.settlements) {
+    if (s.id === home || !f.entity(s.id)) continue;
+    const st = placeState(w, s.id)?.status ?? 'standing';
+    const holder = farHolder(w, s.id);
+    const gone = st === 'destroyed' || st === 'abandoned';
+    const standing = !gone && !(st === 'occupied' && holder !== 'player') && !f.tag(s.id, 'condition', 'lost')?.value;
+    const founded = f.events({ kind: 'founding' }).some((e) => e.to.includes(s.id));
+    const resource = f.entity(findId(s.id))?.attrs.resource;
+    const who = holder === 'player' ? 'yours' : holder && mine.has(holder) ? holder : null;
+    const tags = ['town', 'far-town', st, standing ? 'standing' : 'ruined', ...(who ? [who] : []), ...(typeof resource === 'string' ? [resource] : []), ...(founded ? ['founded'] : []), ...(founded && who === 'yours' && standing ? ['colony'] : []), ...packTagsOn(w, s.id, packs)];
+    out.push({ id: s.id, name: s.name, tags: [...new Set(tags)], at: [s.at[0], s.at[1]], town: s.id });
+  }
+  for (const d of f.find({ kind: 'deposit' })) if (d.attrs.packFound && !f.tag(d.id, 'condition', 'settled')) out.push({ id: d.id, name: d.name, tags: ['found', String(d.attrs.resource)], at: null, town: d.id });
+  return out;
 }
 
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
@@ -79,7 +132,7 @@ export function foundedOf(p: Pack): Record<string, string> {
   const out: Record<string, string> = {};
   for (const c of p.cards ?? [])
     for (const e of [...(c.if_taken ?? []), ...(c.if_expires ?? []), ...Object.values(c.if_tier ?? {}).flat()] as Record<string, unknown>[])
-      if (e && e.far === 'founded' && typeof e.id === 'string') out[e.id] = String(e.name ?? e.id);
+      if (e && (e.far === 'founded' || e.far === 'revealed') && typeof e.id === 'string') out[e.id] = String(e.name ?? e.id);
   return out;
 }
 /** (places) a far place selector other than the neighbour: every far town, the n nearest, those in a state, a place
@@ -98,17 +151,42 @@ function selectorWord(ref: string, founded: Record<string, string> = {}): string
   return founded[id] ?? id;
 }
 let FOUNDED: Record<string, string> = {};
-const where = (ref: string | undefined): string => (ref === 'town' || !ref ? 'the town' : ref === 'far:neighbour' ? '{other}' : isSelector(ref) ? selectorWord(ref, FOUNDED) : (SITE_NAME[siteOf(ref) ?? ''] ?? ref));
+/** (draft 7) the card being written: its variables' bound names (`$port` → `v_port`, the presenter's → `site`) and
+ *  the pack's factions by id */
+let VARS: Record<string, string> = {};
+let FACTIONS: Record<string, string> = {};
+/** bound name → what it binds */
+let VARKIND: Record<string, 'site' | 'far' | 'faction'> = {};
+/** a variable's bound name in the template (the presenter's site variable is the card's own `site`) */
+export function varName(c: Pick<PackCard, 'presenter'>, v: string): string {
+  return c.presenter?.at === `$${v}` ? 'site' : `v_${v}`;
+}
+/** a reference with its variable renamed: '$port' → '$v_port' (anything else as it is) */
+const vref = (ref: string): string => (ref.startsWith('$') ? `$${VARS[ref.slice(1)] ?? `v_${ref.slice(1)}`}` : ref);
+/** text with its `{var}` placeholders renamed to the bound names the engine fills */
+export const vtext = (s: string, vars: Record<string, string>): string => s.replace(/\{([a-z][\w-]*)\}/gi, (m, k: string) => (vars[k] ? `{${vars[k]}}` : m));
+const where = (ref: string | undefined): string => (ref === 'town' || !ref ? 'the town' : ref.startsWith('$') ? `{${vref(ref).slice(1)}}` : ref === 'far:neighbour' ? '{other}' : isSelector(ref) ? selectorWord(ref, FOUNDED) : (SITE_NAME[siteOf(ref) ?? ''] ?? ref));
+/** a faction (or the player, the raiders, the dead) in words */
+const whoWord = (by: string | undefined): string => (!by || by === 'raiders' ? 'raiders' : by === 'player' ? 'you' : by === 'dead' ? 'the dead' : by.startsWith('$') ? `{${vref(by).slice(1)}}` : (FACTIONS[by] ?? by));
+const STANCE_WORD: Record<string, string> = { hostile: 'are enemies now', truce: 'keep a truce', allied: 'are allies', none: 'owe each other nothing now' };
 const SIGN_OVER: Record<string, string> = { ashfall: 'Ash falls on', darkness: 'Darkness falls over', deadrise: 'The dead walk in', crime: 'Thieves work the streets of' };
 
 /** what a list of effects does, in plain sentences written from the data (the numbers are the engine's) */
-export function effectsText(list: readonly PackEffect[], p: Pack): string {
+export function effectsText(list: readonly PackEffect[], p: Pack, vars: Record<string, string> = {}): string {
   FOUNDED = foundedOf(p);
+  VARS = vars;
+  FACTIONS = Object.fromEntries((p.factions ?? []).map((f) => [f.id, f.name]));
   const out: string[] = [];
   const says: string[] = [];
   for (const e of list) {
     const x = e as Record<string, unknown>;
-    if ('say' in e) says.push(String(e.say).trim());
+    if ('say' in e) says.push(vtext(String(e.say).trim(), vars));
+    // (draft 7: a place found, a camp founded at it or by a faction, a town taken or sworn to a faction, a stance)
+    else if ('far' in e && e.far === 'revealed') out.push(`${String(x.name)} is marked on the map: ${String(x.resource)}, not yet settled.`);
+    else if ('far' in e && e.far === 'founded' && typeof x.where === 'string') out.push(`A camp is settled at ${where(x.where)}${x.by && x.by !== 'player' ? ` by ${whoWord(String(x.by))}` : ''}.`);
+    else if ('far' in e && e.far === 'founded' && x.by && x.by !== 'player') out.push(`${String(x.name)} is founded by ${whoWord(String(x.by))}.`);
+    else if ('far' in e && (e.far === 'captured' || e.far === 'vassal') && x.by && x.by !== 'player' && x.by !== 'raiders') out.push(`${cap(where(e.where))} ${e.far === 'captured' ? 'is taken by' : 'swears to'} ${whoWord(String(x.by))}.`);
+    else if ('stance' in e) out.push(`${cap(whoWord(e.stance))} and ${x.with && x.with !== 'player' ? whoWord(String(x.with)) : 'you'} ${STANCE_WORD[e.to]}.`);
     else if ('pool' in e) out.push(e.pool === 'unrest' ? `Unrest ${e.add > 0 ? '+' : ''}${e.add}.` : `${e.add > 0 ? '+' : ''}${e.add} ${POOL_WORD[e.pool]}.`);
     else if ('income' in e) out.push(`${e.add > 0 ? '+' : ''}${e.add} ${POOL_WORD[e.income]} each season.`);
     else if ('put' in e) out.push(`In play: ${p.things?.find((t) => t.id === e.put)?.name ?? e.put}.`);
@@ -122,7 +200,7 @@ export function effectsText(list: readonly PackEffect[], p: Pack): string {
     else if ('arrive' in e) out.push('40 refugees walk in from {other}.');
     else if ('unlock' in e) out.push(`You can cast ${p.abilities?.find((a) => a.id === e.unlock)?.name ?? e.unlock}.`);
     else if ('law' in e) out.push(`A new law, "${p.laws?.find((l) => l.id === e.law)?.name ?? e.law}", ${e.seasons ? `for this season and ${e.seasons} more` : 'for the rest of the run'}.`);
-    else if ('far_all' in e) out.push(`Every far town ${FAR_WORD[e.far_all === 'captured' ? 'captured' : e.far_all] ?? e.far_all}${e.by === 'dead' ? ' by the dead' : ''}.`);
+    else if ('far_all' in e) out.push(`Every far town ${FAR_WORD[e.far_all === 'captured' ? 'captured' : e.far_all] ?? e.far_all}${e.by && e.by !== 'raiders' ? ` by ${whoWord(e.by)}` : ''}.`);
     else if ('end_run' in e) out.push(`The run ends here: ${e.name}.`);
   }
   return [...says, ...out].join(' ');
@@ -139,10 +217,15 @@ function conds(list: readonly PackCond[], site: string, need: Set<string> = new 
     if ('far_town_is' in c) return { helper: 'packFar', args: [...c.far_town_is] };
     // (the record: with a result, a place or "earlier", the Realm's record of resolved cards over every run)
     if ('resolved' in c) {
-      if (!c.tier && !c.at && !c.run) return { event: { kind: doneKind(c.resolved), involving: '$town' } };
-      return { helper: 'recordHas', args: [c.resolved, (c.tier ?? []).join('|'), c.at ? (c.at === 'town' ? '$town' : refOf(c.at, need)) : '', c.run ?? 'any'] };
+      // (draft 7: `about` — done about this place or faction: the card's record names what it was bound to)
+      const about = c.about ? (c.about.startsWith('$') ? vref(c.about) : c.about.replace(/^far:/, '')) : '';
+      if (!c.tier && !c.at && !c.run && !about) return { event: { kind: doneKind(c.resolved), involving: '$town' } };
+      return { helper: 'recordHas', args: [c.resolved, (c.tier ?? []).join('|'), c.at ? (c.at === 'town' ? '$town' : refOf(c.at, need)) : '', c.run ?? 'any', about] };
     }
     if ('leader' in c) return { helper: 'packLeader', args: [c.leader] };
+    // (draft 7: factions)
+    if ('faction_holds' in c) return { helper: 'packHolds', args: [vref(c.faction_holds), c.gte ?? (c.lte === undefined ? 1 : 0), c.lte ?? 1e9] };
+    if ('faction_stance' in c) return { helper: 'packStanceIs', args: [vref(c.faction_stance), vref(c.with ?? 'player'), ...c.is] };
     throw new Error(`pack: no condition ${JSON.stringify(c)} at ${site}`);
   });
 }
@@ -150,6 +233,8 @@ function conds(list: readonly PackCond[], site: string, need: Set<string> = new 
 /** a place reference as a template's bound name; the sites and far places it needs bound are collected in `need` */
 function refOf(ref: string | undefined, need: Set<string>): string {
   if (!ref || ref === 'town') return '$town';
+  // (draft 7: a variable of the card: bound by its own spec)
+  if (ref.startsWith('$')) return vref(ref);
   if (ref === 'far:neighbour') {
     need.add('far');
     return '$other';
@@ -179,7 +264,7 @@ function effects(list: readonly PackEffect[], p: Pack, need: Set<string>, note: 
     } else if ('far' in e && e.far !== 'founded' && isSelector(e.where)) {
       const x = e as { far: string; where: string; by?: string; tribute?: number };
       need.add(`sel:${x.where}`);
-      out.push({ helper: 'eachTown', args: [x.where, 'mutate', x.far, '$each', 1, 1, x.far === 'vassal' ? 'player' : (x.by ?? 'raiders'), ...(x.far === 'vassal' ? [x.tribute ?? 1] : [])] });
+      out.push({ helper: 'eachTown', args: [x.where, 'mutate', x.far, '$each', 1, 1, vref(x.by ?? (x.far === 'vassal' ? 'player' : 'raiders')), ...(x.far === 'vassal' ? [x.tribute ?? 1] : [])] });
     } else if ('sign' in e && e.where && e.where !== 'town') {
       need.add(`sel:${e.where}`);
       out.push({ helper: 'eachTown', args: [e.where === 'far:neighbour' ? 'far:neighbour' : e.where, 'sign', e.sign, '$each', e.strength ?? 0.6, e.seasons ?? 3] });
@@ -189,16 +274,23 @@ function effects(list: readonly PackEffect[], p: Pack, need: Set<string>, note: 
     } else if ('mutate' in e) {
       const r = refOf(e.where, need);
       // (a site: the fact first, then its physical side, as the base game's hazards do — season/realm-templates.ts)
-      if (r === '$site' || r.startsWith('$s_')) out.push({ setTag: [r, 'condition', e.mutate, true] }, { event: e.mutate, by: [], to: [r, '$town'], note, weight: -0.4 }, { helper: 'mutateAt', args: [e.mutate, r, 24, 1] });
+      if (r === '$site' || r.startsWith('$s_') || VARKIND[r.slice(1)] === 'site') out.push({ setTag: [r, 'condition', e.mutate, true] }, { event: e.mutate, by: [], to: [r, '$town'], note, weight: -0.4 }, { helper: 'mutateAt', args: [e.mutate, r, 24, 1] });
       else out.push({ helper: 'mutate', args: [e.mutate, r] });
     } else if ('far' in e) {
-      const x = e as { far: string; where?: string; by?: string; tribute?: number; id?: string; name?: string; purpose?: string };
-      if (x.far === 'founded') out.push({ helper: 'found', args: [x.id!, x.name!, ...(x.purpose ? [x.purpose] : [])] }, { relate: ['player', 'controls', x.id!] });
+      const x = e as { far: string; where?: string; by?: string; tribute?: number; id?: string; name?: string; purpose?: string; resource?: string };
+      // (draft 7: who does it — the player, the raiders, the dead, a faction of the pack or a faction variable)
+      const by = vref(x.by ?? (x.far === 'vassal' || x.far === 'founded' ? 'player' : 'raiders'));
+      if (x.far === 'revealed') out.push({ helper: 'packReveal', args: [x.id!, x.name!, x.resource!] });
+      else if (x.far === 'founded' && x.where) out.push({ helper: 'packFoundAt', args: [refOf(x.where, need), x.purpose ?? '', by] });
+      else if (x.far === 'founded') out.push({ helper: 'packFound', args: [x.id!, x.name!, x.purpose ?? '', by, x.resource ?? ''] });
       else {
         const r = refOf(x.where, need);
         if (x.far === 'captured') out.push({ setTag: [r, 'condition', 'occupied', true] });
-        out.push({ helper: 'mutate', args: [x.far, r, 1, 1, x.far === 'vassal' ? 'player' : (x.by ?? 'raiders'), ...(x.far === 'vassal' ? [x.tribute ?? 1] : [])] });
+        out.push({ helper: 'mutate', args: [x.far, r, 1, 1, by, ...(x.far === 'vassal' ? [x.tribute ?? 1] : [])] });
       }
+    } else if ('stance' in e) {
+      const x = e as { stance: string; to: string; with?: string };
+      out.push({ helper: 'packStance', args: [vref(x.stance), vref(x.with ?? 'player'), x.to] });
     } else if ('sign' in e) out.push({ helper: 'sign', args: [e.sign, '$town', e.strength ?? 0.6, e.seasons ?? 3] });
     else if ('arrive' in e) {
       need.add('far');
@@ -208,28 +300,59 @@ function effects(list: readonly PackEffect[], p: Pack, need: Set<string>, note: 
     else if ('law' in e) out.push({ helper: 'law', args: [e.law, e.seasons ?? 0] });
     // (endings and the world: the Realm's `endRun` and `farAll`)
     else if ('end_run' in e) out.push({ helper: 'endRun', args: [e.end_run, e.name] });
-    else if ('far_all' in e) out.push({ helper: 'eachTown', args: ['far:all', 'mutate', e.far_all, '$each', 1, 1, e.by ?? 'raiders'] });
+    else if ('far_all' in e) out.push({ helper: 'eachTown', args: ['far:all', 'mutate', e.far_all, '$each', 1, 1, vref(e.by ?? 'raiders')] });
   }
   return out;
 }
 
+/** (draft 7) a card's variables as the engine's bindings: a site of the home town, a far place (or a found one), a
+ *  faction of a pack — each tested by what the rules read (the place's tags, its holder, the faction's stance) */
+function varBinds(c: PackCard): { binds: BindSpec[]; site: BindSpec | null; refs: string[] } {
+  const binds: BindSpec[] = [];
+  let site: BindSpec | null = null;
+  const refs: string[] = [];
+  for (const [v, s] of Object.entries(c.bind ?? {})) {
+    const as = varName(c, v);
+    const asked: Pred[] = s.set_off ? [{ helper: 'askedOn', args: [`$${as}`, c.id] }] : [];
+    if ('site' in s) {
+      const spec: BindSpec = { as, kind: 'site', ...(as === 'site' ? {} : { shared: true }), where: [{ helper: 'packSite', args: [`$${as}`] }, { helper: 'packIs', args: [`$${as}`, (s.site.tags ?? []).join('|'), (s.site.not ?? []).join('|')] }, ...asked] };
+      if (as === 'site') site = spec;
+      else binds.push(spec);
+    } else if ('far' in s) {
+      const st = s.far.state ?? [];
+      binds.push({ as, kind: st.includes('found') ? ['settlement', 'deposit'] : 'settlement', shared: true, where: [{ helper: 'packFarIs', args: [`$${as}`, st.join('|'), (s.far.tags ?? []).join('|'), (s.far.not ?? []).join('|'), s.far.holder ? vref(s.far.holder) : ''] }, ...asked] });
+    } else binds.push({ as, kind: 'faction', shared: true, where: [{ helper: 'packFactionIs', args: [`$${as}`, (s.faction.stance ?? []).join('|'), vref(s.faction.with ?? 'player')] }, ...asked] });
+    refs.push(`$${as}`);
+  }
+  return { binds, site, refs };
+}
+
 function template(c: PackCard, p: Pack, after: string[], boost: boolean): TemplateDef {
-  const site = siteOf(c.presenter.at)!;
-  const need = new Set<string>([`own:${site}`]);
+  // (draft 7: the card's variables, renamed for the engine; the presenter may sit at a bound site)
+  VARS = Object.fromEntries(Object.keys(c.bind ?? {}).map((v) => [v, varName(c, v)]));
+  VARKIND = Object.fromEntries(Object.entries(c.bind ?? {}).map(([v, s]) => [varName(c, v), 'site' in s ? 'site' : 'far' in s ? 'far' : 'faction']));
+  const vars = VARS;
+  const vb = varBinds(c);
+  const site = vb.site ? '' : siteOf(c.presenter.at)!;
+  const need = new Set<string>(site ? [`own:${site}`] : []);
   const event = c.live ? p.events!.find((e) => e.id === c.live)! : null;
   const taken = c.if_taken ?? [];
   const left = c.if_expires ?? [];
   // (a live card: what the player reads for "if taken" is what there is to do at the event)
-  const takenText = event ? event.how : effectsText(taken, p);
-  const leftText = effectsText(left, p);
+  const takenText = event ? vtext(event.how, vars) : effectsText(taken, p, vars);
+  const leftText = effectsText(left, p, vars);
+  VARS = vars;
   const outcome = effects(taken, p, need, takenText);
   const onExpire = effects(left, p, need, leftText);
-  const done = (note: string): Effect => ({ event: doneKind(c.id), by: ['player'], to: ['$site', '$town'], note, weight: 0.2 });
+  // (the record and `once` read what the card was bound to: its site, the town, and each variable)
+  const about = [...new Set(['$site', '$town', ...vb.refs])];
+  const done = (note: string): Effect => ({ event: doneKind(c.id), by: ['player'], to: about, note, weight: 0.2 });
   // (each result of its event: its effects, and its words written from them)
   const outcomes = event
     ? Object.fromEntries(
         (Object.entries(c.if_tier ?? {}) as [Tier, PackEffect[]][]).map(([tier, list]) => {
-          const words = effectsText(list, p);
+          const words = effectsText(list, p, vars);
+          VARS = vars;
           return [tier, { text: words, effects: [...effects(list, p, need, words), done(words)] }];
         }),
       )
@@ -240,18 +363,26 @@ function template(c: PackCard, p: Pack, after: string[], boost: boolean): Templa
   const when: PackCond[] = [...(p.pack.appears_when ?? []), ...(c.appears_when ?? []), ...after.map((id) => ({ resolved: id }))];
   // (its conditions first: one may name a place to bind; then one test a selector its effects name — it appears only
   // while that names a town)
-  const eligible: Pred[] = [...conds(when, c.id, need), ...[...need].filter((k) => k.startsWith('sel:')).map((k): Pred => ({ helper: 'townsExist', args: [k.slice(4)] })), ...(c.once === false ? [] : [{ not: { event: { kind: doneKind(c.id), involving: '$town' } } } as Pred])];
+  // (`once`: true — once for each binding (a card with no variables: once, as before); "run" — once a run whatever it
+  // binds; false — it comes back)
+  const once: Pred[] = c.once === false ? [] : [{ helper: 'packNotDone', args: [c.id, c.once === 'run' ? 'run' : 'any', '$town', ...vb.refs] }];
+  const eligible: Pred[] = [...conds(when, c.id, need), ...[...need].filter((k) => k.startsWith('sel:')).map((k): Pred => ({ helper: 'townsExist', args: [k.slice(4)] })), ...once];
   // (a card that names no far place needs none: one that does appears only while a neighbour stands)
+  // (draft 7: its variables — factions first, then far places, then sites, so a later one may name an earlier)
+  const order = { faction: 0, settlement: 1, deposit: 1, site: 2 } as Record<string, number>;
+  const varSpecs = [...vb.binds].sort((a, b) => order[[a.kind].flat()[0]] - order[[b.kind].flat()[0]]);
   const bind: BindSpec[] = [
     { as: 'town', kind: 'settlement', where: [{ helper: 'isHome', args: ['$town'] }] },
-    { as: 'site', kind: 'site', where: [{ helper: 'siteIs', args: ['$site', site] }] },
+    ...varSpecs.filter((s) => [s.kind].flat()[0] !== 'site'),
+    vb.site ?? { as: 'site', kind: 'site', where: [{ helper: 'siteIs', args: ['$site', site] }] },
+    ...varSpecs.filter((s) => [s.kind].flat()[0] === 'site'),
     ...[...need].filter((k) => k !== 'far' && !k.startsWith('own:') && !k.startsWith('sel:')).map((k): BindSpec => ({ as: `s_${k}`, kind: 'site', shared: true, where: [{ helper: 'siteIs', args: [`$s_${k}`, k] }] })),
     ...(need.has('far') ? [{ as: 'other', kind: 'settlement' as const, shared: true, where: [{ helper: 'neighbour', args: ['$other'] }] as Pred[] }] : []),
   ];
   return {
     id: c.id,
-    title: c.title,
-    pitch: c.pitch,
+    title: vtext(c.title, vars),
+    pitch: vtext(c.pitch, vars),
     themes: [...(p.pack.themes ?? []), `pack:${p.pack.id}`],
     bind,
     eligible,
@@ -265,8 +396,8 @@ function template(c: PackCard, p: Pack, after: string[], boost: boolean): Templa
     turns: c.build_seasons ?? 1,
     work: 'labour',
     ...(event && outcomes ? { play: { area: '$site', event: liveDef(event) }, vars: 'live', outcomes } : { outcome: [...outcome, done(takenText)], outcomeText: takenText }),
-    ...(left.length ? { onExpire: [...onExpire, { event: lapsedKind(c.id), by: [], to: ['$site', '$town'], note: leftText, weight: -0.3 }], expireText: leftText } : {}),
-    presenter: { of: '$town', role: c.presenter.role, own: true, verb: c.threat ? 'warns' : 'asks', line: c.pitch },
+    ...(left.length ? { onExpire: [...onExpire, { event: lapsedKind(c.id), by: [], to: about, note: leftText, weight: -0.3 }], expireText: leftText } : {}),
+    presenter: { of: '$town', role: c.presenter.role, own: true, verb: c.threat ? 'warns' : 'asks', line: vtext(c.pitch, vars) },
     reward: { text: takenText },
     offerTurns: c.offer_seasons ?? 3,
     cooldown: 3,
@@ -342,7 +473,8 @@ export function linkPacks(packs: readonly LoadedPack[]): void {
     const id = 'offer' in fx ? fx.offer : 'start' in fx ? fx.start : null;
     const t = id ? templates.get(id) : undefined;
     if (!t) continue;
-    t.eligible = [{ helper: 'ruleAsked', args: [t.id] }, ...(t.once ? [{ not: { event: { kind: doneKind(t.id), involving: '$town' } } } as Pred] : [])];
+    // (its `once` test kept: once for each binding, or once a run)
+    t.eligible = [{ helper: 'ruleAsked', args: [t.id] }, ...(t.eligible ?? []).filter((p) => 'helper' in p && p.helper === 'packNotDone')];
     if (!t.threat) t.threat = 'arc';
     t.cooldown = 0;
     if ('start' in fx && t.play?.event) t.play = { ...t.play, forced: true };
@@ -405,6 +537,15 @@ const idOf = (b: Record<string, EntityId>, r: unknown): EntityId => {
 const tagValue = (w: FactWorld, timed: boolean): true | string => (timed ? String(w.turn) : true);
 const inForce = (w: FactWorld, v: unknown): boolean => v === true || (typeof v === 'string' && Number(v) >= w.turn);
 
+/** a camp founded through the Realm's own `found` (its record, its place on the map, its fact event), held by `by` */
+function foundIt(c: Parameters<NonNullable<Helper['effect']>>[0], id: string, name: string, purpose: string, by: EntityId): void {
+  if (c.w.settlement(id)) return;
+  const h = dslHelper(c, 'found');
+  if (!h?.effect) throw new Error('pack: the Realm has no found helper');
+  h.effect(c, [id, name, purpose, by]);
+  if (!c.w.facts.relations({ type: 'controls', from: by, to: id }).length) c.w.facts.relate({ type: 'controls', from: by, to: id, cause: c.cause });
+}
+
 export function packHelpers(packs: readonly LoadedPack[], host: PackHost): Record<string, Helper> {
   const things = new Map(packs.flatMap((p) => p.things.map((t) => [t.id, t] as const)));
   const abilityName = (id: string): string => packs.flatMap((p) => p.abilities).find((a) => a.id === id)?.name ?? id;
@@ -444,6 +585,102 @@ export function packHelpers(packs: readonly LoadedPack[], host: PackHost): Recor
       },
     },
     packUntag: { effect: (c, a) => void c.w.facts.dropTag(idOf(c.b, a[0]), 'condition', String(a[1])) },
+
+    // ---- (draft 7) variables, factions, found places ----
+    // (a site of the home town)
+    packSite: { pred: (c, a) => { const e = c.w.facts.entity(idOf(c.b, a[0])); return e?.kind === 'site' && !!e.attrs.site && e.at.settlement === host.home(); } },
+    // (its thing of the rules carries every tag of the first list and none of the second: '|'-joined)
+    packIs: {
+      pred: (c, a) => {
+        const t = host.thingTags(idOf(c.b, a[0]));
+        const all = String(a[1] ?? '').split('|').filter(Boolean);
+        const not = String(a[2] ?? '').split('|').filter(Boolean);
+        return !!t && all.every((x) => t.includes(x)) && !not.some((x) => t.includes(x));
+      },
+    },
+    // (a far place: one of the states, every tag, none of the not-tags, held by the holder — 'player' or a faction)
+    packFarIs: {
+      pred: (c, a) => {
+        const id = idOf(c.b, a[0]);
+        if (id === host.home()) return false;
+        const t = host.thingTags(id);
+        if (!t) return false;
+        const [states, all, not] = [a[1], a[2], a[3]].map((x) => String(x ?? '').split('|').filter(Boolean));
+        const holder = String(a[4] ?? '');
+        const who = holder === 'player' ? 'yours' : holder ? idOf(c.b, holder) : '';
+        return (!states.length || states.some((s) => t.includes(s))) && all.every((x) => t.includes(x)) && !not.some((x) => t.includes(x)) && (!who || t.includes(who));
+      },
+    },
+    // (a faction a pack declared, at one of these stances with the player or another: '' any)
+    packFactionIs: {
+      pred: (c, a) => {
+        const id = idOf(c.b, a[0]);
+        if (!c.w.facts.entity(id)?.attrs.packFaction) return false;
+        const st = String(a[1] ?? '').split('|').filter(Boolean);
+        return !st.length || st.includes(stanceOf(c.w, id, idOf(c.b, a[2] ?? 'player')));
+      },
+    },
+    // (how many far towns, standing, the faction holds: gte .. lte)
+    packHolds: {
+      pred: (c, a) => {
+        const fac = idOf(c.b, a[0]);
+        const n = farThings(c.w, packs, host.home()).filter((t) => t.tags.includes(fac) && t.tags.includes('standing')).length;
+        return n >= Number(a[1]) && n <= Number(a[2]);
+      },
+    },
+    packStanceIs: { pred: (c, a) => a.slice(2).map(String).includes(stanceOf(c.w, idOf(c.b, a[0]), idOf(c.b, a[1]))) },
+    // (once: no record of this card done about all of these — in any run ('any'), or this run ('run'))
+    packNotDone: {
+      pred: (c, a) => {
+        const evs = c.w.facts.events({ kind: doneKind(String(a[0])) });
+        if (a[1] === 'run') return !evs.some((e) => e.turn >= host.began());
+        const about = a.slice(2).map((r) => idOf(c.b, r));
+        return !evs.some((e) => about.every((x) => e.to.includes(x)));
+      },
+    },
+    // (a stance set: the old one ends — its history edge kept — and the new one holds both ways)
+    packStance: {
+      effect: (c, a) => {
+        const [x, y] = [idOf(c.b, a[0]), idOf(c.b, a[1])];
+        const was = stanceOf(c.w, x, y);
+        const to = String(a[2]);
+        if (was === to) return;
+        for (const type of Object.values(STANCE_REL)) for (const [p, q] of [[x, y], [y, x]]) if (c.w.facts.relations({ type, from: p, to: q, historic: false }).length) c.w.facts.unrelate({ type, from: p, to: q }, c.cause);
+        if (to !== 'none') c.w.facts.relate({ type: STANCE_REL[to as keyof typeof STANCE_REL], from: x, to: y, symmetric: true, cause: c.cause });
+        c.w.facts.record({ kind: 'stance', by: [x], to: [y], about: { opp: c.cause }, note: `${c.w.name(x)} and ${y === 'player' ? 'you' : c.w.name(y)}: ${to === 'none' ? 'no longer bound' : to}` });
+      },
+    },
+    // (a place revealed on the map, what it is good for, not yet settled: a found place of the fact world)
+    packReveal: {
+      effect: (c, a) => {
+        const [id, name, resource] = a.map(String);
+        if (c.w.facts.entity(findId(id)) || c.w.facts.entity(id)) return;
+        const home = c.w.settlement(host.home())!;
+        c.w.facts.add({ id: findId(id), kind: 'deposit', name, at: { region: home.region }, attrs: { place: id, resource, packFound: true }, cause: c.cause });
+        c.w.facts.record({ kind: 'revealed', by: ['player'], to: [findId(id)], about: { opp: c.cause }, note: `${name} found: ${resource}, not settled` });
+      },
+    },
+    // (a camp founded: the Realm's `found`, then whoever founded it holds it — the player or a faction — and what it
+    // was founded for is kept as its found place, settled)
+    packFound: {
+      effect: (c, a) => {
+        const [id, name, purpose, by, resource] = a.map(String);
+        foundIt(c, id, name, purpose, idOf(c.b, by));
+        if (resource && !c.w.facts.entity(findId(id))) {
+          c.w.facts.add({ id: findId(id), kind: 'deposit', name, at: { region: c.w.settlement(host.home())!.region }, attrs: { place: id, resource, packFound: true }, cause: c.cause });
+          c.w.facts.setTag(findId(id), 'condition', 'settled', true, c.cause);
+        }
+      },
+    },
+    // (a camp founded at a found place: its id and name are the place's)
+    packFoundAt: {
+      effect: (c, a) => {
+        const d = c.w.facts.entity(idOf(c.b, a[0]));
+        if (!d || d.kind !== 'deposit') throw new Error(`pack: ${String(a[0])} is no found place to settle`);
+        foundIt(c, String(d.attrs.place), d.name, String(a[1] ?? ''), idOf(c.b, a[2] ?? 'player'));
+        c.w.facts.setTag(d.id, 'condition', 'settled', true, c.cause);
+      },
+    },
     // (written in the history, so the run's save has it: Table.unlocked reads this run's events)
     packUnlock: { effect: (c, a) => void (c.w.facts.events({ kind: `${UNLOCKED}${String(a[0])}` }).some((e) => e.turn >= host.began()) || c.w.facts.record({ kind: `${UNLOCKED}${String(a[0])}`, by: ['player'], to: [host.home()], note: `you learned ${abilityName(String(a[0]))}` })) },
   };
@@ -478,6 +715,15 @@ export function withPackThings(w: FactWorld, packs: readonly LoadedPack[], base:
     return { ...t, tags: [...new Set([...t.tags, ...more])] };
   });
   const town = base.find((t) => t.id === home);
+  // (draft 7: the home town carries "<faction>:<stance>" for each faction it has a stance with)
+  const homeAt = out.findIndex((t) => t.id === home);
+  if (homeAt >= 0) out[homeAt] = { ...out[homeAt], tags: [...out[homeAt].tags, ...packFactions(w).flatMap((x) => (stanceOf(w, x, 'player') === 'none' ? [] : [`${x}:${stanceOf(w, x, 'player')}`]))] };
+  // (draft 7: the far places as things; a trade partner the Realm lists already gets the far town's tags too)
+  for (const t of farThings(w, packs, home)) {
+    const i = out.findIndex((x) => x.id === t.id);
+    if (i < 0) out.push(t);
+    else out[i] = { ...out[i], tags: [...new Set([...out[i].tags.filter((x) => x !== 'standing' && x !== 'ruined'), ...t.tags])] };
+  }
   for (const t of packThings(w, packs)) {
     const place = t.site ? base.find((x) => x.id === t.site) : town;
     const ruined = !!place?.tags.includes('ruined');

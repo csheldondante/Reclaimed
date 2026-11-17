@@ -119,11 +119,29 @@ function inPlay(): string {
     return `<div class="thing ${t.ruined ? 'ruined' : ''} ${target ? 'target' : ''}" ${target ? `data-act="target" data-id="${esc(t.id)}"` : ''}><b>${esc(cap(t.name))}</b>${t.text ? `<div class="dim">${esc(t.text)}</div>` : ''}${tags(t.tags, t.ruined ? 'ruin' : 'state')}</div>`;
   };
   // (a place with nothing on it yet goes in a drawer, unless the armed ability can be cast on it)
-  const shown = things.filter((t) => !t.plain || (!!ab && ab.targets.includes(t.id)));
+  // (draft 7: the far places have their own section, as news — farPlaces)
+  const shown = things.filter((t) => t.place !== W.FAR && (!t.plain || (!!ab && ab.targets.includes(t.id))));
   const plain = things.filter((t) => !shown.includes(t));
   const places = [...new Set(shown.map((t) => t.place))];
   const body = places.map((pl) => `<div class="place">${esc(pl)}</div><div class="small">${shown.filter((t) => t.place === pl).map(card).join('')}</div>`).join('');
   return `<h2>${W.PLAY_TITLE}</h2>${body}${plain.length ? drawer('plain', `${W.PLAIN_PLACES} (${plain.length})`, `<div class="small">${plain.map(card).join('')}</div>`) : ''}`;
+}
+
+/** (draft 7) the far places as news of a living world: who holds what, who stands with whom, what changed and why */
+function farPlaces(): string {
+  const n = table.farNews();
+  const ab = table.abilities().find((a) => a.id === armed);
+  const farThings = table.things().filter((t) => t.place === W.FAR);
+  const places = n.places
+    .map((p) => {
+      const t = farThings.find((x) => x.name === p.name);
+      const target = !!t && !!ab && ab.targets.includes(t.id);
+      return `<div class="thing ${t?.ruined ? 'ruined' : ''} ${target ? 'target' : ''}" ${target ? `data-act="target" data-id="${esc(t!.id)}"` : ''}><b>${esc(cap(p.name))}</b><div>${esc(p.line)}</div>${p.since ? `<div class="dim">${esc(p.since)}</div>` : ''}${t ? tags(t.tags, t.ruined ? 'ruin' : 'state') : ''}</div>`;
+    })
+    .join('');
+  const stances = n.stances.length ? `<div class="place">${W.FAR_STANCES}</div>${n.stances.map((s) => `<div class="why">${esc(s)}</div>`).join('')}` : '';
+  const changes = `<div class="place">${W.FAR_CHANGES}</div>${n.changes.length ? n.changes.map((s) => `<div class="why">${esc(s)}</div>`).join('') : `<div class="dim">${W.FAR_NONE}</div>`}`;
+  return `<h2>${W.FAR}</h2><div class="dim">${W.FAR_HELP}</div><div class="small">${places}</div>${stances}${changes}`;
 }
 
 function abilities(): string {
@@ -213,7 +231,7 @@ function draw(): void {
   const y = window.scrollY;
   const built = table.built();
   const builtRow = built.length ? `<h2>${W.BUILT_TITLE}</h2>${tags(built, 'state')}` : '';
-  app.innerHTML = header() + end() + lawsList() + events() + opps() + abilities() + rules() + inPlay() + working() + builtRow + log() + recordList() + packDrawer() + footer();
+  app.innerHTML = header() + end() + lawsList() + events() + opps() + abilities() + rules() + inPlay() + farPlaces() + working() + builtRow + log() + recordList() + packDrawer() + footer();
   window.scrollTo(0, y);
 }
 

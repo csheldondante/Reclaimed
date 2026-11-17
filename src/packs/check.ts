@@ -16,9 +16,29 @@ export type PackCond =
   | { town_has: string[] }
   | { site_has: string[] }
   | { far_town_is: string[] }
-  | { resolved: string; tier?: string[]; at?: string; run?: 'earlier' | 'any' }
+  | { resolved: string; tier?: string[]; at?: string; run?: 'earlier' | 'any'; about?: string }
   | { leader: string }
+  // (draft 7: factions) how many far towns a faction holds; the stance between a faction and the player (or another)
+  | { faction_holds: string; gte?: number; lte?: number }
+  | { faction_stance: string; is: string[]; with?: string }
 ;
+
+/** (draft 7) a faction the pack declares: pirates, a rival town, a mining guild. It is an entity of the world (who
+ *  holds a town, who a live event's foes belong to) with a stance towards the player and towards other factions */
+export interface PackFaction {
+  id: string;
+  name: string;
+  /** a note for the reader: pirates, town, guild, band … */
+  kind: string;
+  text: string;
+}
+
+/** (draft 7: templates) a card's variable: what kind of place or faction it binds to. The dealer offers one card for
+ *  each binding it finds worth offering. `set_off`: it binds to what the rule that offered or started the card matched */
+export type PackBind =
+  | { site: { tags?: string[]; not?: string[] }; set_off?: boolean }
+  | { far: { state?: string[]; tags?: string[]; not?: string[]; holder?: string }; set_off?: boolean }
+  | { faction: { stance?: string[]; with?: string }; set_off?: boolean };
 
 export type PackEffect =
   | { pool: string; add: number }
@@ -28,7 +48,8 @@ export type PackEffect =
   | { tag: string; on: string }
   | { untag: string; on: string }
   | { mutate: string; where: string }
-  | { far: string; where?: string; by?: string; tribute?: number; id?: string; name?: string; purpose?: string }
+  | { far: string; where?: string; by?: string; tribute?: number; id?: string; name?: string; purpose?: string; resource?: string }
+  | { stance: string; to: string; with?: string }
   | { sign: string; seasons?: number; strength?: number; where?: string }
   | { trade: string; end?: boolean }
   | { arrive: string; count?: number; from?: string }
@@ -75,9 +96,12 @@ export interface PackCard {
   title: string;
   presenter: { name?: string; role: string; at: string };
   pitch: string;
+  /** (draft 7) the card's variables: `$name` in places and `{name}` in text */
+  bind?: Record<string, PackBind>;
   appears_when?: PackCond[];
   threat?: boolean;
-  once?: boolean;
+  /** true (default): once for each binding; "run": once a run whatever it binds; false: comes back */
+  once?: boolean | 'run';
   offer_seasons?: number;
   cost?: Record<string, number>;
   build_seasons?: number;
@@ -149,6 +173,7 @@ export interface Pack {
   events?: PackEvent[];
   abilities?: PackAbility[];
   laws?: PackLaw[];
+  factions?: PackFaction[];
   wants?: string[];
 }
 
@@ -166,7 +191,19 @@ export const KNOWN_TAGS: readonly string[] = [
   'standing', 'worked', 'growth-active', 'festival', 'sheltered',
   'burned', 'flooded', 'buried', 'melted', 'abandoned', 'destroyed', 'occupied', 'lost', 'ruined',
   'town', 'home', 'wall', 'garrison', 'unrest', 'trade-partner',
+  // (draft 7: a far town as a thing the rules read — packs/load.ts farThings)
+  'far-town', 'colony', 'vassal', 'founded', 'found', 'yours',
 ];
+/** (draft 7) what a far town carries, set by the game: its state, whose it is (`yours`, or a faction's id) and what
+ *  it was founded for (its resource tag) */
+export const FAR_TAGS: readonly string[] = ['far-town', 'colony', 'vassal', 'founded', 'found', 'yours', 'occupied', 'destroyed', 'abandoned', 'standing', 'ruined', 'trade-partner'];
+/** (draft 7) the stances between the player and a faction, or two factions (the fact layer's relations: hostile is
+ *  `at_war_with`, truce `truce_with`, allied `allied_with`); "none" ends one */
+export const STANCES: readonly string[] = ['hostile', 'truce', 'allied'];
+/** (draft 7) a pack's far change kinds: the mutators' (FAR_KINDS) and "revealed" (a place found, not settled) */
+export const PACK_FAR_KINDS: readonly string[] = ['captured', 'vassal', 'destroyed', 'abandoned', 'founded', 'revealed'];
+/** (draft 7) the states a far variable may ask for: a far town's, and "found" (revealed, not settled) */
+export const BIND_FAR_STATES: readonly string[] = ['standing', 'destroyed', 'abandoned', 'occupied', 'vassal', 'founded', 'found'];
 export const LAND_KINDS: readonly string[] = ['flooded', 'burned', 'melted', 'buried', 'dried', 'withered', 'greened'];
 export const FAR_KINDS: readonly string[] = ['captured', 'vassal', 'destroyed', 'abandoned', 'founded'];
 export const SIGN_KINDS: readonly string[] = ['ashfall', 'darkness', 'deadrise', 'crime'];
@@ -192,8 +229,8 @@ export const BASE_ABILITIES: readonly string[] = ['growth-rune', 'fire', 'heat-r
 export const UNIT_KINDS: readonly string[] = ['soldier', 'raider', 'worker', 'cart', 'dead'];
 /** the base game's card ids (season/realm-templates.ts): a pack's may not clash with them */
 export const BASE_CARD_IDS: readonly string[] = ['build:houses', 'build:farms', 'build:market', 'build:workshops', 'build:harbour', 'build:keep', 'build:quarry', 'build:lumber', 'build:bridge', 'build:trade', 'build:walls', 'mining-outpost', 'tower-lens', 'relieve-neighbour', 'house-refugees', 'guard-camp', 'dead-rise', 'pay-raiders', 'mend-dam', 'fire-wards', 'feed-shrine', 'shore-hill', 'raid', 'gate-parade', 'refugees-arrive', 'resettle-refugees', 'market-fire', 'hire-sellswords'];
-export const COND_KEYS: readonly string[] = ['pool', 'season_gte', 'has_thing', 'no_thing', 'town_has', 'site_has', 'far_town_is', 'resolved', 'leader', ];
-export const EFFECT_KEYS: readonly string[] = ['pool', 'income', 'put', 'remove', 'tag', 'untag', 'mutate', 'far', 'sign', 'arrive', 'unlock', 'law', 'end_run', 'far_all', 'trade', 'say'];
+export const COND_KEYS: readonly string[] = ['pool', 'season_gte', 'has_thing', 'no_thing', 'town_has', 'site_has', 'far_town_is', 'resolved', 'leader', 'faction_holds', 'faction_stance'];
+export const EFFECT_KEYS: readonly string[] = ['pool', 'income', 'put', 'remove', 'tag', 'untag', 'mutate', 'far', 'sign', 'arrive', 'unlock', 'law', 'end_run', 'far_all', 'trade', 'stance', 'say'];
 /** (laws) what a law can do: its one key (living/laws.ts LawDo), by kind */
 export const LAW_KEYS: Record<string, readonly string[]> = {
   tags: ['count_as', 'grant', 'spare'],
@@ -253,7 +290,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     err('pack', 'The file needs a "pack" block with an "id" and a "name".');
     return out;
   }
-  for (const k of ['tags', 'things', 'cards', 'rules', 'events', 'abilities', 'laws', 'wants'] as const) if (p[k] !== undefined && !Array.isArray(p[k])) err(k, `"${k}" must be a list.`);
+  for (const k of ['tags', 'things', 'cards', 'rules', 'events', 'abilities', 'laws', 'factions', 'wants'] as const) if (p[k] !== undefined && !Array.isArray(p[k])) err(k, `"${k}" must be a list.`);
   if (out.length) return out;
   const tags = p.tags ?? [];
   const things = p.things ?? [];
@@ -281,6 +318,43 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   events.forEach((e, i) => id('event', e.id, `events[${i}]`));
   abilities.forEach((a, i) => id('ability', a.id, `abilities[${i}]`));
   laws.forEach((l, i) => id('law', l.id, `laws[${i}]`));
+  // (draft 7: factions — entities of the world; their ids are also tags: a far town a faction holds carries it, a
+  // live event's foes tagged with it are its people; the home town carries "<faction>:<stance>")
+  const factions = p.factions ?? [];
+  factions.forEach((f, i) => {
+    const w = `factions[${i}] (${f.id})`;
+    id('faction', f.id, `factions[${i}]`);
+    if (!f.name || !f.text) err(w, 'A faction needs a "name" and a "text" the player reads.');
+    if (typeof f.kind !== 'string' || !f.kind) err(w, 'A faction needs a "kind": pirates, town, guild, band … (a note for the reader).');
+  });
+  const factionIds = new Set(factions.map((f) => f.id));
+  /** (draft 7) the variables of the card being checked: name → what it binds (site, far, faction) */
+  let vars = new Map<string, 'site' | 'far' | 'faction'>();
+  const usedVars = new Set<string>();
+  /** a `$name` reference: bound by the card, of a kind allowed here */
+  const varRef = (ref: string, where: string, kinds: ('site' | 'far' | 'faction')[]): boolean => {
+    if (!ref.startsWith('$')) return false;
+    const k = vars.get(ref.slice(1));
+    usedVars.add(ref.slice(1));
+    if (!k) err(where, `"${ref}" is a variable the card does not bind. Add it to the card's "bind", or name a place.`);
+    else if (!kinds.includes(k)) err(where, `"${ref}" binds a ${k}; a ${kinds.join(' or ')} is wanted here.`);
+    return true;
+  };
+  /** a faction named in `by`, a stance, a condition: a faction of this pack or a faction variable */
+  const faction = (x: unknown, where: string, also: string[] = []): void => {
+    const s = String(x);
+    if (also.includes(s) || factionIds.has(s)) return;
+    if (varRef(s, where, ['faction'])) return;
+    err(where, `"${s}" is not a faction of this pack${also.length ? ` or one of ${also.join(', ')}` : ''}. Declare it in "factions".`);
+  };
+  /** `{name}` in text: a variable of the card (or {other}, the neighbour) */
+  const placeholders = (s: string | undefined, where: string): void => {
+    for (const m of (s ?? '').matchAll(/\{([a-z][\w-]*)\}/gi)) {
+      if (m[1] === 'other') continue;
+      usedVars.add(m[1]);
+      if (!vars.has(m[1])) err(where, `The text names {${m[1]}}, which the card does not bind. Add it to "bind" or write the name.`);
+    }
+  };
   const lawIds = new Set(laws.map((l) => l.id));
   const needLaw = (x: unknown, where: string) => {
     if (!lawIds.has(String(x))) err(where, `It names the law "${String(x)}", which is not in the pack's "laws".`);
@@ -303,6 +377,12 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       read.add(remains);
       return;
     }
+    // (draft 7: a faction's id is the tag of what it holds and of its people; "<faction>:<stance>" is on the home town)
+    const fs = /^(.+):(hostile|truce|allied)$/.exec(t);
+    if (factionIds.has(t) || (fs && factionIds.has(fs[1]))) {
+      if (how === 'made' && fs) err(where, `"${t}" is set by the game from the stance. Use { "stance": "${fs[1]}", "to": "${fs[2]}" }.`);
+      return;
+    }
     if (!tagIds.has(t)) err(where, `Unknown tag "${t}". Use an existing tag or add it to the pack's "tags" list.`);
     (how === 'read' ? read : produced).add(t);
   };
@@ -310,11 +390,13 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     if (typeof k !== 'string' || !POOL_NAMES.includes(k)) err(where, `Unknown pool ${JSON.stringify(k)}. The pools are ${POOL_NAMES.join(', ')}.`);
   };
   // (places: the far places this pack founds can be named by its cards, "far:<id>")
-  const founded = new Set(cards.flatMap((c) => [...(c.if_taken ?? []), ...(c.if_expires ?? []), ...Object.values(c.if_tier ?? {}).flat()] as Record<string, unknown>[]).filter((e) => e && e.far === 'founded' && typeof e.id === 'string').map((e) => String(e.id)));
-  const place = (ref: string | undefined, where: string, allow: { town?: boolean; far?: boolean; target?: boolean; world?: boolean } = {}) => {
+  const founded = new Set(cards.flatMap((c) => [...(c.if_taken ?? []), ...(c.if_expires ?? []), ...Object.values(c.if_tier ?? {}).flat()] as Record<string, unknown>[]).filter((e) => e && (e.far === 'founded' || e.far === 'revealed') && typeof e.id === 'string').map((e) => String(e.id)));
+  const place = (ref: string | undefined, where: string, allow: { town?: boolean; far?: boolean; target?: boolean; world?: boolean; site?: boolean } = {}) => {
     if (ref === 'town' && allow.town) return;
     if (ref === 'far:neighbour' && allow.far) return;
     if (ref === 'target' && allow.target) return;
+    // (draft 7: a variable of the card — a site where a site goes, a far place where a far place goes)
+    if (ref?.startsWith('$')) return void varRef(ref, where, [...(allow.site === false ? [] : ['site' as const]), ...(allow.far ? ['far' as const] : [])]);
     if (ref === 'world') return allow.world ? undefined : err(where, '"world" (every town) is allowed for "mutate" and "sign" only.');
     if (ref?.startsWith('far:')) {
       if (!allow.far) return err(where, `A far place is not allowed here. It is ${JSON.stringify(ref)}.`);
@@ -372,20 +454,38 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
         const t = String(x[key]);
         needTag(t, w, 'made');
         if (KNOWN_TAGS.includes(t) && !['festival', 'growth-active'].includes(t)) err(w, `The tag "${t}" is set by the game itself (what a site is, or what happened to it). To ruin a site use "mutate"; to add your own state, declare a tag in "tags".`);
-        place(String(x.on), w, { town: true, target: o.ability });
+        // (draft 7: a far town bound to a variable can carry the pack's own tags too)
+        if (String(x.on).startsWith('$')) varRef(String(x.on), w, ['site', 'far']);
+        else place(String(x.on), w, { town: true, target: o.ability });
       } else if (key === 'mutate') {
         if (!LAND_KINDS.includes(String(x.mutate))) err(w, `Unknown land change "${String(x.mutate)}". The kinds are ${LAND_KINDS.join(', ')}. For a far town use "far".`);
         place(String(x.where), w, { town: true, far: true, world: true });
         produced.add(String(x.mutate));
       } else if (key === 'far') {
-        if (!FAR_KINDS.includes(String(x.far))) err(w, `Unknown change to a far place "${String(x.far)}". The kinds are ${FAR_KINDS.join(', ')}.`);
-        if (x.far === 'founded') {
-          if (typeof x.id !== 'string' || typeof x.name !== 'string') err(w, 'A founded place needs an "id" and a "name".');
-        } else place(String(x.where), w, { far: true });
-        if (x.by !== undefined && !['raiders', 'player', 'dead'].includes(String(x.by))) err(w, `"by" can be "raiders", "player" or "dead". It is ${JSON.stringify(x.by)}.`);
+        if (!PACK_FAR_KINDS.includes(String(x.far))) err(w, `Unknown change to a far place "${String(x.far)}". The kinds are ${PACK_FAR_KINDS.join(', ')}.`);
+        if (x.far === 'founded' || x.far === 'revealed') {
+          // (draft 7: founded at a place a card revealed — `where` a far variable bound to a "found" place — or new)
+          if (x.far === 'founded' && typeof x.where === 'string') {
+            place(x.where, w, { far: true, site: false });
+            if (x.id !== undefined || x.name !== undefined) err(w, 'A place founded "where" a found place is takes that place\'s id and name: leave out "id" and "name".');
+          } else if (typeof x.id !== 'string' || typeof x.name !== 'string') err(w, `A ${x.far} place needs an "id" and a "name"${x.far === 'founded' ? ', or "where": a variable bound to a found place' : ''}.`);
+          else if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(x.id)) err(w, `A place's id is lowercase words joined by hyphens. It is ${JSON.stringify(x.id)}.`);
+          else if (!x.id.startsWith(`${p.pack.id}-`)) warn(w, `Start the place's id with the pack's id ("${p.pack.id}-…") so two packs never found the same place.`);
+          if (x.far === 'revealed' && typeof x.resource !== 'string') err(w, 'A revealed place needs a "resource": a tag (ore, or one of the pack\'s: timber, salt …) that the colony founded there will carry.');
+          if (typeof x.resource === 'string') needTag(x.resource, w, 'made');
+          if (x.purpose !== undefined && x.purpose !== 'mining') warn(w, `"purpose" is "mining" (a pit is cut beside the camp) or left out. "${String(x.purpose)}" is kept on the map only.`);
+        } else place(String(x.where), w, { far: true, site: false });
+        if (x.by !== undefined) faction(x.by, w, ['raiders', 'player', 'dead']);
+        if (x.far === 'revealed' && x.by !== undefined) err(w, 'Nobody holds a revealed place: leave out "by".');
+      } else if (key === 'stance') {
+        // (draft 7: a stance between a faction and the player, or another faction)
+        faction(x.stance, w);
+        if (!STANCES.includes(String(x.to)) && x.to !== 'none') err(w, `"to" is ${STANCES.join(', ')} or "none". It is ${JSON.stringify(x.to)}.`);
+        if (x.with !== undefined) faction(x.with, w, ['player']);
+        if (x.with !== undefined && x.with === x.stance) err(w, 'A faction has no stance towards itself.');
       } else if (key === 'trade') {
         // (trade routes: those towns trade with you, or no longer do)
-        place(String(x.trade), w, { far: true });
+        place(String(x.trade), w, { far: true, site: false });
         if (x.trade === 'far:where:trade-partner' && !x.end) err(w, 'Every trade partner already trades with you. Name other towns, or add "end": true.');
         if (x.end !== undefined && typeof x.end !== 'boolean') err(w, '"end" is true or left out.');
       } else if (key === 'sign') {
@@ -404,7 +504,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
         if (typeof x.name !== 'string' || !x.name.trim()) err(w, 'An ending needs a "name": what the run-end screen says ended it.');
       } else if (key === 'far_all') {
         if (!['captured', 'destroyed', 'abandoned'].includes(String(x.far_all))) err(w, '"far_all" is captured, destroyed or abandoned: what happens to every far town.');
-        if (x.by !== undefined && !['raiders', 'player', 'dead'].includes(String(x.by))) err(w, '"by" is raiders, player or dead.');
+        if (x.by !== undefined) faction(x.by, w, ['raiders', 'player', 'dead']);
       } else if (key === 'law') {
         needLaw(x.law, w);
         if (x.seasons !== undefined && (!Number.isInteger(x.seasons) || Number(x.seasons) < 1)) err(w, '"seasons" is a whole number, 1 or more: the law stands the rest of this season and so many more. Leave it out for the rest of the run.');
@@ -449,18 +549,71 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
         for (const t of (x.tier as string[] | undefined) ?? []) if (!TIERS.includes(t) && t !== 'lapsed') err(w, `"tier" lists results (${TIERS.join(', ')}) or "lapsed". It has "${t}".`);
         if (x.at !== undefined) place(String(x.at), w, { town: true });
         if (x.run !== undefined && x.run !== 'earlier' && x.run !== 'any') err(w, '"run" is "earlier" (a run before this one) or "any".');
+        // (draft 7: done about this place or faction — a variable of the card, or a place the pack founds)
+        if (x.about !== undefined && !varRef(String(x.about), w, ['site', 'far', 'faction']) && !founded.has(String(x.about).replace(/^far:/, ''))) err(w, '"about" is a variable of the card ("$town") or "far:<id>" of a place this pack founds or reveals.');
       } else if (key === 'leader') {
         if (!LEADER_IDS.includes(String(x.leader))) err(w, `Unknown leader "${String(x.leader)}". The leaders are ${LEADER_IDS.join(', ')}.`);
+      } else if (key === 'faction_holds') {
+        faction(x.faction_holds, w);
+        if (x.gte !== undefined && (!Number.isInteger(x.gte) || Number(x.gte) < 0)) err(w, '"gte" is a whole number, 0 or more.');
+        if (x.lte !== undefined && (!Number.isInteger(x.lte) || Number(x.lte) < 0)) err(w, '"lte" is a whole number, 0 or more.');
+      } else if (key === 'faction_stance') {
+        faction(x.faction_stance, w);
+        if (!Array.isArray(x.is) || !x.is.length) err(w, `"is" is a list of stances: ${STANCES.join(', ')}, "none".`);
+        else for (const s of x.is as string[]) if (!STANCES.includes(s) && s !== 'none') err(w, `Unknown stance "${s}". The stances are ${STANCES.join(', ')}, "none".`);
+        if (x.with !== undefined) faction(x.with, w, ['player']);
       }
     });
   };
   conds(p.pack.appears_when, 'pack.appears_when');
 
   // ---- cards ----
+  // (draft 7: what the pack's effects make — a faction that comes to hold a town, a place revealed — so a variable
+  // that waits for one can be told apart from one that can never match)
+  const allFx = JSON.stringify([cards.map((c) => [c.if_taken, c.if_expires, c.if_tier]), abilities.map((a) => a.effect)]);
   cards.forEach((c, i) => {
     const w = `cards[${i}] (${c.id})`;
-    if (!c.title || !c.pitch) err(w, 'A card needs a "title" and a "pitch".');
+    vars = new Map();
+    usedVars.clear();
+    if (c.bind !== undefined) {
+      if (!isObj(c.bind)) err(`${w}.bind`, '"bind" is { "name": { "site": … } | { "far": … } | { "faction": … } }.');
+      else
+        for (const [v, spec] of Object.entries(c.bind)) {
+          const bw = `${w}.bind.${v}`;
+          if (!/^[a-z][a-z0-9]*$/.test(v) || v === 'other') err(bw, `A variable's name is one lowercase word other than "other" ("place", "town", "port", "foe"). It is "${v}".`);
+          const s = spec as Record<string, unknown>;
+          const kind = (['site', 'far', 'faction'] as const).find((k) => isObj(s?.[k]));
+          if (!kind) {
+            err(bw, 'A variable binds { "site": { "tags": [...] } }, { "far": { "state": [...], "tags": [...], "holder": "<faction>" } } or { "faction": { "stance": [...] } }.');
+            continue;
+          }
+          vars.set(v, kind);
+          const q = s[kind] as Record<string, unknown>;
+          if (s.set_off !== undefined && s.set_off !== true) err(bw, '"set_off" is true or left out.');
+          for (const t of [...((q.tags as string[] | undefined) ?? []), ...((q.not as string[] | undefined) ?? [])]) needTag(t, bw, 'read');
+          if (kind === 'site') {
+            const all = (q.tags as string[] | undefined) ?? [];
+            if (!all.length) warn(bw, 'A site variable with no tags binds any of the 20 sites.');
+          } else if (kind === 'far') {
+            for (const st of (q.state as string[] | undefined) ?? []) if (!BIND_FAR_STATES.includes(st)) err(bw, `Unknown state "${st}". The states are ${BIND_FAR_STATES.join(', ')}.`);
+            if (q.holder !== undefined) faction(q.holder, bw, ['player']);
+            // (never matches in a world this pack alone makes: a holder nothing makes hold a town, a found place
+            // nothing reveals — a LOOK: another pack, or an earlier run, may)
+            if (typeof q.holder === 'string' && factionIds.has(q.holder) && !allFx.includes(`"by":"${q.holder}"`)) warn(bw, `No effect of this pack makes ${q.holder} hold a town, so this binds nothing unless another pack or an earlier run does.`);
+            if (((q.state as string[] | undefined) ?? []).includes('found') && !allFx.includes('"far":"revealed"')) warn(bw, 'No effect of this pack reveals a place, so a "found" place binds nothing unless another pack or an earlier run reveals one.');
+          } else {
+            for (const st of (q.stance as string[] | undefined) ?? []) if (!STANCES.includes(st) && st !== 'none') err(bw, `Unknown stance "${st}". The stances are ${STANCES.join(', ')}, "none".`);
+            if (q.with !== undefined) faction(q.with, bw, ['player']);
+            if (!factions.length) err(bw, 'The pack declares no factions for this variable to bind.');
+          }
+        }
+    }
+    placeholders(c.title, `${w}.title`);
+    placeholders(c.pitch, `${w}.pitch`);
+    for (const list of [c.if_taken, c.if_expires, ...Object.values(c.if_tier ?? {})]) for (const e of list ?? []) if (isObj(e) && typeof (e as { say?: unknown }).say === 'string') placeholders((e as { say: string }).say, `${w} say`);
+    if (c.once !== undefined && typeof c.once !== 'boolean' && c.once !== 'run') err(w, '"once" is true (once for each binding), "run" (once a run, whatever it binds) or false (it comes back).');
     if (!isObj(c.presenter) || !c.presenter.role) err(w, 'A card needs a "presenter" with a "role" (a trade, such as "miller") and an "at".');
+    else if (c.presenter.at?.startsWith('$')) varRef(c.presenter.at, `${w}.presenter.at`, ['site']);
     else place(c.presenter.at, `${w}.presenter.at`);
     conds(c.appears_when, `${w}.appears_when`);
     const cost = c.cost ?? {};
@@ -499,7 +652,9 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     const all = [...mine, ...numbersOf(c.if_taken), ...numbersOf(c.if_expires), ...numbersOf(c.if_tier)];
     for (const n of numbersIn(c.pitch ?? '')) if (!all.includes(n)) err(w, `The pitch says ${n}, but no cost or effect of the card has that number.`);
     for (const l of c.leads_to ?? []) if (!cardIds.has(l)) err(w, `"leads_to" names the card "${l}", which is not in this pack.`);
+    for (const v of vars.keys()) if (!usedVars.has(v) && !(c.presenter?.at === `$${v}`)) warn(`${w}.bind.${v}`, `The variable "${v}" is bound but nothing uses it: the card would be offered once for each place it fits, all alike.`);
   });
+  vars = new Map();
 
   // ---- cards that can never appear ----
   cards.forEach((c, i) => {
@@ -698,6 +853,10 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     for (const n of numbersIn((r.why ?? '').replace(/\{\w+\}/g, ''))) if (!numbersOf([r.effect, r.cap, r.per]).includes(n)) err(w, `Its "why" says ${n}, but the rule's data has no such number. Use {n} for the amount.`);
   };
   rules.forEach((r, i) => checkRule(r, `rules[${i}] (${r.id})`));
+  // (draft 7: a variable bound to what set the card off needs a rule that offers or starts the card)
+  for (const c of cards)
+    for (const [v, s] of Object.entries(c.bind ?? {}))
+      if (isObj(s) && s.set_off === true && !rules.some((r) => { const a = actOf(r); return !!a && (a.kind === 'offer' || a.kind === 'start') && a.id === c.id; })) warn(`cards (${c.id}).bind.${v}`, '"set_off": no rule of this pack offers or starts this card, so nothing sets it off. Fine only if a pack loaded with it does.');
 
   // ---- laws (docs/design/LAWS.md) ----
   const ruleIds = new Set([...(base.rules ?? []), ...rules.map((r) => r.id), ...laws.flatMap((l) => (isObj(l.does) && isObj(l.does.add_rule) ? [String((l.does.add_rule as { id?: unknown }).id)] : []))]);

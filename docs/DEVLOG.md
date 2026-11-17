@@ -24446,3 +24446,38 @@ nothing; `trade` relates towns to the home town (`supplies`, which `partners()` 
 of the last commit removed). **Test** (`places.test.ts`, the test world's two far towns): selectors and their order,
 the vassal card never on a board, the nearest town abandoned and only it, every far town a trade partner by the
 charter with the caravan rule firing, the generated words, an unknown selector refused.
+
+## 2026-11-16 — Factions, stances, found places and cards as templates (`card-table`, PACK_FORMAT draft 7)
+
+**Why.** The owner: "I wanted opportunities like discovering a far off resource that you can make a mining colony at
+to get income per season. Or vassalizing other places or pirates! Or making a deal with pirates", "make the outside
+world feel big and shaped by decisions not just the player city", and "The dealer can always generate cards from
+parameterized templates to fit the actual world." The engine already binds a template to every set of entities that
+fits; the pack format had thrown that away (one fixed site, one fixed far place).
+
+**What is reused, not added.** Factions are fact-layer entities (`kind: 'faction'`, `attrs.packFaction`), made once
+per world by `RealmOptions.extra.seed` before the first deal. A stance is the fact layer's own relations
+(`at_war_with`, `truce_with`, `allied_with`, symmetric; the old edge goes to history by `unrelate`), with a `stance`
+fact event for the news. A faction holds a town through the mutators' own `occupies` / `vassal_of` and the stored
+`controls` (founding). A found place is a fact entity of kind `deposit` (`<id>:find`, `attrs.resource`); settling it
+runs the Realm's own `found` helper (now with `by`, and each later camp a step round the hills so two camps are two
+places). No new store: the record event of a card now also names what its variables were bound to (`to`), and
+`resolved` takes `about`.
+
+**Templates.** A card's `bind` declares variables (`site` by tags, `far` by state / tags / holder, `faction` by
+stance; `set_off`: one of the things the rule that offered it matched, `Realm.askedOn`). The loader turns each into a
+`BindSpec` whose `where` reads the thing of the rules (`PackHost.thingTags`), so a variable is written in the same
+words as a rule. `once` is now once for each binding (`packNotDone` over the record event's `to`), or `"run"`.
+
+**Far towns as things.** `farThings` lists every far town with `far-town`, its state, `standing`/`ruined`, `yours` or
+a pack faction's id, its resource, `founded`, `colony`; found places with `found` and the resource. The home town
+carries `<faction>:<stance>`. A colony's income is then an ordinary rule (`a: colony, ore, standing`): it stops when
+the colony is taken, with no new mechanism.
+
+**News.** `Table.farNews` and the page's "Far places" section: each place with who holds it and since which card,
+the stances between factions and you and between factions, and the last eight far changes with the card that made
+each.
+
+**Test** (`factions.test.ts`): the validator (unbound variable, unknown placeholder, a binding nothing feeds is a
+LOOK), one template binding each far town, swearing one (tribute rule fires, the record names the town), reveal →
+settle → colony pays → a truce → the reavers take the colony (rule stops) → the news says who holds it and why.

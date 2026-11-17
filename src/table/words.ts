@@ -7,6 +7,31 @@ import { POOLS, type Pool, type Pools } from '../season/ledger';
 import { POOL_NAME } from '../season/words';
 
 export const FAR = 'Far places';
+// (draft 7: the far places as news)
+export const FAR_HELP = 'Who holds what out there, who is against whom, and what changed lately.';
+export const FAR_STANCES = 'Who stands with whom';
+export const FAR_CHANGES = 'Lately';
+export const FAR_NONE = 'Nothing has changed out there yet.';
+const STATE_SAYS: Record<string, string> = { standing: 'standing', destroyed: 'destroyed', abandoned: 'abandoned', occupied: 'taken', vassal: 'sworn', founded: 'a new camp', found: 'found, not settled' };
+/** one far place in a line: its state, whose it is, what it is for, what it pays and trades */
+export function farLine(o: { tags: readonly string[]; holder: string | null; tribute: number; partner: boolean }): string {
+  const t = o.tags;
+  const state = ['found', 'destroyed', 'abandoned', 'occupied', 'vassal', 'founded', 'standing'].find((s) => t.includes(s)) ?? 'standing';
+  const known = new Set(['town', 'far-town', 'standing', 'ruined', 'yours', 'colony', 'founded', 'trade-partner', 'found', state]);
+  const what = t.filter((x) => !known.has(x) && !x.includes(':'));
+  const parts = [t.includes('colony') ? 'your colony' : (STATE_SAYS[state] ?? state)];
+  if (o.holder && !t.includes('colony')) parts.push(state === 'vassal' ? `sworn to ${o.holder}` : `held by ${o.holder}`);
+  if (what.length) parts.push(what.join(', '));
+  if (o.tribute > 0 && state === 'vassal') parts.push(`pays ${o.tribute} a season`);
+  if (o.partner) parts.push('trades with you');
+  return `${parts.join('. ')}.`;
+}
+const capW = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+const whenW = (season: number, earlier: boolean): string => (earlier ? 'in an earlier run' : `season ${season}`);
+export const farSince = (note: string, season: number, earlier: boolean, card: string | null): string => `${capW(note)}, ${whenW(season, earlier)}${card ? `, by "${card}"` : ''}.`;
+export const farChange = (note: string, season: number, earlier: boolean, card: string | null): string => `${capW(whenW(season, earlier))}: ${note}.${card ? ` Because of "${card}".` : ''}`;
+const STANCE_SAYS: Record<string, string> = { hostile: 'enemies', truce: 'keep a truce', allied: 'allies' };
+export const stanceLine = (a: string, b: string, s: string): string => `${capW(a)} and ${b}: ${STANCE_SAYS[s] ?? s}.`;
 export const PACK_REMOVE = 'Take out';
 export const rulesCount = (paid: number, ready: number, of: number): string => `${paid} paid, ${ready} ready, of ${of}`;
 export const PLAIN_PLACES = 'Places with nothing on them yet';

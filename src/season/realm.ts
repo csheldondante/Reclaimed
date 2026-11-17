@@ -146,6 +146,8 @@ export interface RealmOptions {
     recordLaws?: { card: string; laws: string[] }[];
     /** (trade routes) place selectors of things in play that carry a trade route: those towns are trade partners */
     tradeThings?: () => string[];
+    /** (draft 7) entities the packs add to the world before the first deal (their factions) */
+    seed?: (w: FactWorld) => void;
   };
   /** (card-table, tuning) raiders in the run's last stage (default realm-templates.ts RAIDERS) */
   raiders?: number;
@@ -176,6 +178,8 @@ export interface RunState {
   partners?: number;
   /** (chains) the cards a rule has asked for that are not yet done: card → the rule's name */
   asked?: [string, string][];
+  /** (draft 7) what each asking rule matched */
+  askedOn?: [string, string[]][];
   /** (laws) the laws in force, in the order they came into force, and the last order number given */
   laws?: ActiveLaw[];
   lawSeq?: number;
@@ -201,6 +205,8 @@ export interface RecordEntry {
   /** a tier, or 'lapsed' */
   result: string;
   place: string;
+  /** (draft 7) the home town and what the card's variables were bound to */
+  about: string[];
   turn: number;
   run: number;
   leader: string;
@@ -213,7 +219,7 @@ export function recordOf(w: FactWorld): RecordEntry[] {
     .filter((e) => (e.kind.startsWith(CARD_DONE) || e.kind === CARD_LAPSED) && !!e.about?.thing)
     .map((e) => {
       const began = runs.filter((r) => r.turn <= e.turn);
-      return { card: e.about!.thing!, title: e.note, result: e.kind === CARD_LAPSED ? 'lapsed' : e.kind.slice(CARD_DONE.length), place: e.to[0] ?? '', turn: e.turn, run: began.length, leader: (began.at(-1)?.note ?? '').replace(/ took the town$/, '') };
+      return { card: e.about!.thing!, title: e.note, result: e.kind === CARD_LAPSED ? 'lapsed' : e.kind.slice(CARD_DONE.length), place: e.to[0] ?? '', about: e.to.slice(1), turn: e.turn, run: began.length, leader: (began.at(-1)?.note ?? '').replace(/ took the town$/, '') };
     });
 }
 
@@ -263,6 +269,8 @@ export class Realm {
     // (the home town's sites: named buildings and districts a card stands at — once a world)
     const region = this.w.settlement(o.home)!.region;
     for (const s of SITES) if (!f.entity(siteId(o.home, s.key))) f.add({ id: siteId(o.home, s.key), kind: 'site', name: s.name, at: { region, settlement: o.home }, attrs: { site: s.key, what: s.kind }, cause: 'realm' });
+    // (card-table, draft 7: what the packs add to the world before the first deal — their factions)
+    o.extra?.seed?.(this.w);
     const res = o.resume;
     if (res) {
       // (a run under way: its turn is the saved world's, its own state as saved)
@@ -320,6 +328,7 @@ export class Realm {
     // (laws: the rule book reads the rules with the laws in force applied)
     this.rules = new RuleBook(() => this.ruleView().rules, { things: () => this.things(), pool: (k) => pools(this.led)[k as Pool] ?? 0, gain: (k, n) => this.addPool(k as Pool, n), act: (fx, things, rule) => this.act(fx, things, rule) });
     for (const [k, v] of res?.asked ?? []) this.asked.set(k, v);
+    for (const [k, v] of res?.askedOn ?? []) this.askedOn.set(k, v);
     if (res?.rules) this.rules.load(res.rules);
     else this.rules.season(this.w.turn);
     this.seen = res?.seen ?? this.w.facts.events().length;
@@ -337,7 +346,7 @@ export class Realm {
 
   /** the run as it stands, to save beside the world's snapshot (`RealmOptions.resume` takes it up) */
   runState(): RunState {
-    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, averted: this.averted, fight: this.fight, where: [...this.whereOf], engine: this.engine.state(), rules: this.rules.save(), seen: this.seen, partners: this.partnersWere, asked: [...this.asked], laws: structuredClone(this.active), lawSeq: this.lawSeq, ended: this.ended };
+    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, averted: this.averted, fight: this.fight, where: [...this.whereOf], engine: this.engine.state(), rules: this.rules.save(), seen: this.seen, partners: this.partnersWere, asked: [...this.asked], askedOn: [...this.askedOn], laws: structuredClone(this.active), lawSeq: this.lawSeq, ended: this.ended };
   }
 
   // ---- endings and the world's own tags (the owner: "Innovation does this where high tech can instantly win and lose
@@ -362,7 +371,10 @@ export class Realm {
   }
   /** a card's resolution written to the record (an offer resolved at this tier, or run out) */
   private remember(o: Offer, result: string): void {
-    this.w.facts.record({ kind: result === 'lapsed' ? CARD_LAPSED : `${CARD_DONE}${result}`, by: ['player'], to: [o.place, ...(o.place === this.home ? [] : [this.home])], about: { opp: o.id, thing: o.template }, note: o.opp.title });
+    // (draft 7: and what its variables were bound to — a far town, a found place, a faction — so the record can be
+    // asked "this card done about this town")
+    const bound = Object.entries(o.bind).filter(([k, v]) => (k.startsWith('v_') || k === 'other') && !!this.w.facts.entity(v)).map(([, v]) => v);
+    this.w.facts.record({ kind: result === 'lapsed' ? CARD_LAPSED : `${CARD_DONE}${result}`, by: ['player'], to: [...new Set([o.place, ...(o.place === this.home ? [] : [this.home]), ...bound])], about: { opp: o.id, thing: o.template }, note: o.opp.title });
   }
 
 
@@ -551,6 +563,8 @@ export class Realm {
       hasSpell: { pred: (_c, a) => this.spells.includes(a[0] as SpellId) },
       // (chains) a rule has put this card on offer, or started it, and it is not yet done
       ruleAsked: { pred: (_c, a) => this.asked.has(String(a[0])) },
+      // (draft 7: askedOn $var card — the variable is one of the things the rule that asked for the card matched)
+      askedOn: { pred: (c, a) => (this.askedOn.get(String(a[1])) ?? []).includes(refOf(c.b, a[0])) },
       // (laws: law id seasons? — a law comes into force, made by the card that names it; seasons 0: the rest of the run)
       law: {
         effect: (c, a) => {
@@ -574,7 +588,8 @@ export class Realm {
           const [sel, name, ...args] = a.map(String);
           const h = HELPERS[name]?.effect;
           if (!h) throw new Error(`realm: no helper ${name} for eachTown`);
-          const by = args[4] === 'dead' ? DEAD_ID : args[4] === 'player' ? 'player' : args[4] === 'raiders' ? RAIDERS_ID : args[4];
+          // (a faction: its id, or a card's variable bound to one)
+          const by = args[4] === 'dead' ? DEAD_ID : args[4] === 'player' ? 'player' : args[4] === 'raiders' ? RAIDERS_ID : args[4]?.startsWith('$') ? refOf(c.b, args[4]) : args[4];
           if (by === DEAD_ID && !c.w.facts.entity(DEAD_ID)) c.w.facts.add({ id: DEAD_ID, kind: 'army', name: 'the risen dead', cause: c.cause });
           for (const id of this.selectTowns(sel)) {
             if (name === 'mutate' && args[0] === 'captured') c.w.facts.setTag(id, 'condition', 'occupied', true, c.cause);
@@ -599,10 +614,12 @@ export class Realm {
       // out), at this place ('' anywhere; a bound entity), in an earlier run ('earlier') or any ('any'))
       recordHas: {
         pred: (c, a) => {
-          const [card, tiers, where, when] = [String(a[0]), String(a[1] ?? ''), String(a[2] ?? ''), String(a[3] ?? 'any')];
+          const [card, tiers, where, when, of] = [String(a[0]), String(a[1] ?? ''), String(a[2] ?? ''), String(a[3] ?? 'any'), String(a[4] ?? '')];
           const place = where ? refOf(c.b, where) : '';
+          // (draft 7: about — what the card was bound to, a variable or a place's id)
+          const about = of ? refOf(c.b, of) : '';
           const run = this.runNumber();
-          return recordOf(c.w).some((e) => e.card === card && (tiers ? tiers.split('|').includes(e.result) : e.result !== 'lapsed') && (!place || e.place === place) && (when !== 'earlier' || e.run < run));
+          return recordOf(c.w).some((e) => e.card === card && (tiers ? tiers.split('|').includes(e.result) : e.result !== 'lapsed') && (!place || e.place === place) && (!about || e.about.includes(about)) && (when !== 'earlier' || e.run < run));
         },
       },
       // (built card: the town has built it)
@@ -685,11 +702,16 @@ export class Realm {
       found: {
         effect: (c, a) => {
           const id = String(a[0]);
-          const cell = this.cellOf('hills');
+          // (draft 7: each later camp a step round the hills from the last, so two camps are two places on the map;
+          // founded by the player, or a faction of a pack — `by`)
+          const hills = this.cellOf('hills');
+          const k = c.w.facts.events({ kind: 'founding' }).length;
+          const cell: [number, number] = k ? [Math.round(hills[0] + 90 * Math.cos(k * 1.3)), Math.round(hills[1] + (90 * Math.sin(k * 1.3)) / ROW_H)] : hills;
           const purpose = a[2] === 'mining' ? ('mining' as const) : undefined;
-          const spec = { kind: 'founded' as const, place: id, cell, radius: 30, strength: 1, by: 'player', name: String(a[1]), size: 'camp' as const, ...(purpose ? { purpose } : {}) };
+          const by = a[3] ? refOf(c.b, a[3]) : 'player';
+          const spec = { kind: 'founded' as const, place: id, cell, radius: 30, strength: 1, by, name: String(a[1]), size: 'camp' as const, ...(purpose ? { purpose } : {}) };
           const fact = recordMutation(c.w, spec, { cause: c.cause, regionAt: this.o.regionAt ?? (() => this.w.settlement(this.home)!.region) });
-          if (!c.dry && mutators.ready) mutators.apply({ kind: 'founded', place: id, at: cell, radius: 30, by: 'player', name: spec.name, size: 'camp', ...(purpose ? { purpose } : {}), cause: c.cause, fact });
+          if (!c.dry && mutators.ready) mutators.apply({ kind: 'founded', place: id, at: cell, radius: 30, by, name: spec.name, size: 'camp', ...(purpose ? { purpose } : {}), cause: c.cause, fact });
         },
       },
     };
@@ -826,6 +848,8 @@ export class Realm {
 
   /** the cards a rule has put on offer or started and that are not yet done or run out: card → the rule's name */
   private asked = new Map<string, string>();
+  /** (draft 7) what the rule that asked for a card matched: card → thing ids */
+  private askedOn = new Map<string, EntityId[]>();
   /** a card was asked for since the last deal */
   private dealDue = false;
 
@@ -856,6 +880,8 @@ export class Realm {
       if (this.engine.offers.some((o) => o.template === id && (o.status === 'offered' || o.status === 'committed'))) return false;
       if (t.once && this.engine.past.some((o) => o.template === id && o.status === 'resolved' && o.dealt > this.t0)) return false;
       this.asked.set(id, rule.name);
+      // (draft 7: what the rule matched — the card's `set_off` variable binds to one of them)
+      this.askedOn.set(id, things.map((t) => t.id));
       this.dealDue = true;
       return true;
     }
