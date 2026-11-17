@@ -9,7 +9,7 @@ names its section). `.claude/docs/design/Reclaimed_Overview.md` is the original 
 
 ## Start here
 
-`docs/BACKLOG.md` (every open suggestion) → `docs/HANDOFF.md` (current state, known issues, next steps) →
+`docs/VISION.md` (what the game is for, the owner's words) → `docs/BACKLOG.md` (every open suggestion) → `docs/HANDOFF.md` (current state, known issues, next steps) →
 `docs/DECISIONS.md` (the user's answers — check before changing controls,
 economy or look) → `docs/ARCHITECTURE.md` (contracts) → `docs/DEVLOG.md` (why
 each change was made, with measurements). `docs/BRANCHES.md` says which game each branch is (check which branch you're on). `docs/STATUS.md` is the user-facing

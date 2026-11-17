@@ -3,6 +3,8 @@
 Read this before building anything. Every row was read from the code, not from the design docs. Nothing was run for
 this sheet (no game, no tests, no browser): "wired" means the call path exists in the source.
 
+**Start here:** `docs/VISION.md` — why these systems exist, and the three ways a card's effect is shown.
+
 **The game:** `?skipmenu=1&level=atlas&town=1&loop=1&fresh=1` (`&q=low` on the phone, `&runlen=N`). Wiring:
 `src/scenes/level/stream-setup.ts` (towns, living towns, town contracts, mutators) → `src/scenes/level/loop.ts
 startRunLoop` → `src/scenes/level/season.ts startSeasonLoop`. Script handles: `window.rungame`, `season`, `war`,

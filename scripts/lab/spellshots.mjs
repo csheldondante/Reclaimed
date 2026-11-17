@@ -41,20 +41,31 @@ await run({ name: 'spellshots', kind: 'behaviour', size: '412x915', dpr: 1, echo
     R.check(`${mode}: the bout begun`, await p.evaluate(() => window.rungame.measureEvent('arena-bout-3')));
     // (the challengers in, near the fighter and on the screen — they march in down a road first)
     let v = null;
+    // (by where the units stand in the world, not on the screen: the bout's camera does not follow the fight — LS-104 —
+    // so once the challengers are within 24 cells of the fighter the script puts the camera over them, a fixture)
     const near = () =>
       p.evaluate(() => {
-        const c = window.rungame.live.figures('challenger');
-        const f = window.rungame.live.figures('pit-fighter');
+        const g = window.rungame;
+        const run = g.live.focus;
+        const at = (tag) => g.live.ids(run, tag).map((id) => window.reclaimed.units.get(id)?.at).filter(Boolean);
+        const c = at('challenger');
+        const f = at('pit-fighter');
         if (c.length < 3 || !f.length) return null;
-        const m = [c.reduce((s, q) => s + q[0], 0) / c.length, c.reduce((s, q) => s + q[1], 0) / c.length];
-        const on = m[0] > 30 && m[0] < innerWidth - 30 && m[1] > 120 && m[1] < innerHeight - 260;
-        return { on, d: Math.hypot(m[0] - f[0][0], m[1] - f[0][1]) };
+        const m = [c.reduce((s, q) => s + q[0], 0) / c.length, c.reduce((s, q) => s + q[1], 0) / c.length, c[0][2]];
+        return { m, f: f[0], d: Math.hypot(m[0] - f[0][0], m[1] - f[0][1]) };
       });
-    for (let k = 0; k < 240; k++) {
+    let n = null;
+    for (let k = 0; k < 300; k++) {
       v = await view();
-      const n = await near();
-      if (n?.on && n.d < 140) break;
-      await R.sleep(1000);
+      n = await near();
+      if (n && n.d < 24) break;
+      await R.sleep(500);
+    }
+    R.log(`${mode}: challengers ${n ? n.d.toFixed(1) : '?'} cells from the fighter`);
+    if (n) {
+      await p.evaluate((q) => window.rungame.cam.look([(q.m[0] + q.f[0]) / 2, (q.m[1] + q.f[1]) / 2, q.m[2]], { zoom: 14, ease: 0.3, place: [0.5, 0.4] }), n);
+      await R.sleep(1200);
+      v = await view();
     }
     R.log(`${mode} before: ${JSON.stringify(v)}`);
     const abilities = await p.evaluate(() => window.rungame.liveNow?.abilities ?? []);

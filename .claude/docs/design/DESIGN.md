@@ -2,6 +2,8 @@
 
 The design authority, agreed system by system with the user on 2026-11-05. The user's verbatim answers are in `docs/DECISIONS.md` (round 128o). The long research draft (design of record) is https://claude.ai/artifact/B6JhsBFZrWGQtfn78TkJ7T; this document wins where they differ.
 
+Showing and playing the world the cards make is described in `docs/VISION.md` and in `docs/SYSTEMS.md` §3c (the table from each card effect to how the game shows it).
+
 ## How to read this
 
 The concise design for Reclaimed. It's written system by system with the user, and each section records the intent in the user's words, the design, the rules every implementation must keep, and what's still open. The long "design of record" (https://claude.ai/artifact/B6JhsBFZrWGQtfn78TkJ7T) is the research draft. Other agents compare it to this, section by section, to find gaps and discrepancies.
