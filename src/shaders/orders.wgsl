@@ -89,6 +89,8 @@ const RELAX_R: f32 = 2.5;
 const FORM_REACH: f32 = 8.0;
 /** (round 6b) the order fails: no ground at the formation's place for even one file */
 const FAIL_NO_ROOM: u32 = 0x20u;
+/** (loop round 7) the share of a loose group's living members at its place that counts as its arrival: a first guess */
+const LOOSE_ARRIVE: f32 = 0.75;
 /** a wall-walk's stairs (routeread: 1.1 m) as against its walk (2 m) */
 const STAIR_W: f32 = 1.4;
 
@@ -372,6 +374,10 @@ fn groupEmit(@builtin(global_invocation_id) id: vec3<u32>) {
   // (round 6b: a ragged formation's arrival tolerance grows by its wander; a loose group arrives as a crowd)
   let wander = JITTER_AMP * f32((grpWord(g, 3u) >> 8u) & 0xffu) / 255.0;
   let fmode = formMode(g);
+  // (loop round 7, BACKLOG LS-82: a loose crowd has arrived when most of it stands at the place — LOOSE_ARRIVE of its
+  // living members. Seen: a parade's crowd through a wall's one-cell gate left some behind the gate tower, and the
+  // group never arrived)
+  if (fmode == 5u) { done = f32(there) >= ceil(LOOSE_ARRIVE * f32(alive)); }
   if (fmode != 0u && fmode != 5u) {
     if (kind == OK_MAN) { done = lag < 1.5; }
     else if (kind == OK_DRILL) { done = st != FS_FORM && lag < 2.0 + wander; }

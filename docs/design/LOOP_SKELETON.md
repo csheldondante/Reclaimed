@@ -221,6 +221,21 @@ fields: +2 Materials.") and a `rule-fired` event in the history.
 plants there grow (the ecology's own call), 1 Magic, the field `growth-active`. Fire now lights the fire system where
 it lands (and still burns units); Rain is a storm over the tap.
 
+## Round 7 (2026-11-16): live events that read
+
+Goal: on the phone a player understands an event without the sheet's text. Everything is data on the one runner.
+- **Seen, not told.** The camera closer (zoom 15-16) and steeper (55°) on people; a gold ring round each marcher,
+  refugee and cart, their name over them; the time of day held while an event runs, and one begun at night is played
+  from morning (BACKLOG LS-78).
+- **A parade.** Marchers walk in by a road as a loose crowd under petals; as many people as the town sends stand
+  along that road ("Watching"); at the end place a 6 s finale (petals, the watchers come to it); then everyone walks
+  off to the muster. The way is still the shortest walkable one, not the street (LS-77).
+- **Refugees** walk in with their carts to the stores and put up tents by the east fields — the tents stay on the
+  ground (the mutators' `camp` sign).
+- **The fire at the market burns** in the town and is dealt again; its outcome is whether Rain was brought (LS-80).
+- **Arrival is the units' own word** (`arrived`): a column's formation anchor now moves with the window (LS-72).
+- **Five asks at most** a season, whatever the dealer's guarantee adds (LS-73).
+
 ## Assumptions for the owner (each is the simplest thing; say which to change)
 
 1. Run length: 16 seasons to the raid by default (`RUN_SEASONS`; the orchestrator's number, not the owner's).

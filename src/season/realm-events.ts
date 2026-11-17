@@ -195,6 +195,9 @@ const PARADE_EVENT: LiveDef = {
   finale: { seconds: 6, burst: 'petals', count: 40 },
   after: { go: { place: 'muster', else: { place: 'stores' } }, seconds: 25 },
   marchSpeed: 3,
+  // (round 7, LS-82: with walls a loose crowd can jam at a one-cell gate and never stand at the market — it ends where it
+  // stands after 90 s; its crowd is who has arrived)
+  seconds: 90,
   ends: [{ when: 'arrived', group: 'marchers' }],
   result: [
     { as: 'crowd', count: 'arrived', tag: 'crowd' },
@@ -313,6 +316,8 @@ const REFUGEE_EVENT: LiveDef = {
   camera: { follow: 'refugee', zoom: 15, pitch: 55 },
   after: { go: { place: 'stores' }, seconds: 30 },
   marchSpeed: 3,
+  // (round 7, LS-82: as the parade — a crowd jammed at a gate ends where it stands after 90 s)
+  seconds: 90,
   ends: [{ when: 'arrived', group: 'people' }],
   result: [
     { as: 'walking', count: 'alive', tag: 'refugee' },
