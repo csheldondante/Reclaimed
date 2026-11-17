@@ -82,12 +82,27 @@ export function roadBitsCpu(shapes: Float32Array, ox: number, oy: number, w: num
   return bits;
 }
 
-const RP_BYTES = 32;
+const RP_BYTES = 48;
+
+/**
+ * (loop round 9, LS-88) An owner's road raster on the GPU: a word a column of its grid (gw × gh, non-zero a road),
+ * its first column at window (ox, oy) — whole columns, oy even — and a version the owner moves when it draws the raster
+ * again. Stamped into the bits beside the shapes; nothing read back.
+ */
+export interface RoadRaster {
+  buf: GPUBuffer;
+  gw: number;
+  gh: number;
+  ox: number;
+  oy: number;
+  version: number;
+}
 
 /** The stamp on the GPU: `set` the shapes and their offset; `encode` makes the bits again when either changed. */
 export class RoadStamp {
   private clearK: ComputeKernel;
   private stampK: ComputeKernel;
+  private rasterK: ComputeKernel;
   private shapesBuf: GPUBuffer;
   private cap = 0;
   private params: GPUBuffer;
@@ -95,6 +110,10 @@ export class RoadStamp {
   private shapes: Float32Array = new Float32Array(0);
   private off: [number, number] = [0, 0];
   private dirty = true;
+  /** (LS-88) the raster stamped too (null none), and a stand-in bound when there is none */
+  private raster: RoadRaster | null = null;
+  private noRaster: GPUBuffer;
+  private groupRaster: GPUBuffer | null = null;
   readonly words: number;
 
   constructor(
@@ -104,10 +123,12 @@ export class RoadStamp {
     private h: number,
   ) {
     this.words = Math.ceil((w * h) / 32);
-    const spec = { 40: 'rw', 41: 'read', 42: 'uniform' } as const;
+    const spec = { 40: 'rw', 41: 'read', 42: 'uniform', 43: 'read' } as const;
     this.clearK = makeCompute(device, 'agents-roadClear', [roadstampWgsl], spec, 'roadClear');
     this.stampK = makeCompute(device, 'agents-roadStamp', [roadstampWgsl], spec, 'roadStamp');
+    this.rasterK = makeCompute(device, 'agents-roadRaster', [roadstampWgsl], spec, 'roadRasterStamp');
     this.params = device.createBuffer({ label: 'agents road params', size: RP_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.noRaster = device.createBuffer({ label: 'agents road raster (none)', size: 16, usage: GPUBufferUsage.STORAGE });
     this.shapesBuf = this.grow(256);
   }
 
@@ -115,8 +136,29 @@ export class RoadStamp {
     this.shapesBuf?.destroy();
     this.cap = n;
     this.shapesBuf = this.device.createBuffer({ label: 'agents road shapes', size: n * ROAD_SHAPE_FLOATS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    this.group = makeBindGroup(this.device, 'agents-roads', this.clearK.layout, { 40: this.bits, 41: this.shapesBuf, 42: this.params });
+    this.bind();
     return this.shapesBuf;
+  }
+
+  private bind(): void {
+    const r = this.raster?.buf ?? this.noRaster;
+    this.groupRaster = r;
+    this.group = makeBindGroup(this.device, 'agents-roads', this.clearK.layout, { 40: this.bits, 41: this.shapesBuf, 42: this.params, 43: r });
+  }
+
+  /**
+   * (LS-88) The owner's road raster (null: none) — true if the roads changed (a new buffer or version: the fields
+   * relax again); a move of its offset alone (a slide) restamps it where the window put it
+   */
+  setRaster(r: RoadRaster | null): boolean {
+    const o = this.raster;
+    if (o === r || (o && r && o.buf === r.buf && o.version === r.version && o.ox === r.ox && o.oy === r.oy && o.gw === r.gw && o.gh === r.gh)) return false;
+    if (r && r.oy % 2) throw new Error(`roads: the raster's row offset ${r.oy} must be even (the rows' stagger)`);
+    const changed = !o || !r || o.buf !== r.buf || o.version !== r.version;
+    this.raster = r ? { ...r } : null;
+    if ((this.raster?.buf ?? this.noRaster) !== this.groupRaster) this.bind();
+    this.dirty = true;
+    return changed;
   }
 
   /**
@@ -147,11 +189,18 @@ export class RoadStamp {
     const u = new ArrayBuffer(RP_BYTES);
     new Uint32Array(u, 0, 4).set([n, this.w, this.h, this.words]);
     new Int32Array(u, 16, 2).set(this.off);
+    const r = this.raster;
+    new Uint32Array(u, 32, 2).set(r ? [r.gw, r.gh] : [0, 0]);
+    new Int32Array(u, 40, 2).set(r ? [r.ox, r.oy] : [0, 0]);
     this.device.queue.writeBuffer(this.params, 0, u);
     const pass = enc.beginComputePass({ label: 'agents roads' });
     pass.setBindGroup(0, this.group!);
     pass.setPipeline(this.clearK.pipeline);
     pass.dispatchWorkgroups(Math.ceil(this.words / 64));
+    if (r) {
+      pass.setPipeline(this.rasterK.pipeline);
+      pass.dispatchWorkgroups(Math.ceil(this.w / 8), Math.ceil(this.h / 8));
+    }
     if (n) {
       pass.setPipeline(this.stampK.pipeline);
       pass.dispatchWorkgroups(Math.ceil(n / 64));

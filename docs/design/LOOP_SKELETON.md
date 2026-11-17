@@ -265,6 +265,10 @@ them; grade town streets into the terrain; merge the building generator and judg
 of stills (`scripts/lab/streetshots.mjs`: the town, the market close up, the parade; with and without a wall).
 - **Lanes** (LS-96): main streets 6 cells, minor 3.6, arterials 7, one light paving, a central square that is the
   market where no market district has an open lot (docs/design/CITYGEN.md "The game's streets").
+- **Units on the streets** (LS-88, LS-89, LS-95): every street is a road in the units' fields (the town's raster
+  stamped on the GPU); every entering column — parade, refugees, raiders — marches in along its road's route, walled or
+  not (without a wall the route runs from the central square out), then to its place; units are coloured by side.
+  Seen: columns 3 abreast down the arterial, the watchers along it, into the square.
 
 ## Assumptions for the owner (each is the simplest thing; say which to change)
 

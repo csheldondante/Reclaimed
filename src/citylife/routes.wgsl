@@ -2101,6 +2101,15 @@ fn wallSig() -> u32 {
   for (var b = 0u; b < WNB; b++) { hs = hash(hs ^ WALLW[WB_KIND2 + b] ^ WALLW[WB_V2 + 2u * b]); }
   return hs | 1u;
 }
+/** (loop round 9, LS-89) an unwalled town's road routes' signature: the pool's halves' generations (even, never 2 — a
+ *  wall's is odd, 2 the empty table) */
+fn roadSig() -> u32 {
+  let h = (hash(RB[0] * 65599u + RB[1] + 0x51u) & ~3u) | 2u;
+  return select(h, 6u, h == 2u);
+}
+/** (loop round 9, LS-89) where an unwalled town's road route starts along its arterial (cells from the centre): on
+ *  citygen's central square (town.ts GAME_STREETS plazaR 14), so a column marched in along it stands on the square */
+const ROAD_IN: f32 = 12.0;
 /** the pieces risen at the town's clock (a bit a piece) */
 fn wallRisenNow() -> array<u32, 3> {
   var m = array<u32, 3>(0u, 0u, 0u);
@@ -2110,7 +2119,11 @@ fn wallRisenNow() -> array<u32, 3> {
 /** (gate's watch, a frame the graph's kernels aren't encoded) whether wallWatch would dispatch the wall's work; nothing
  *  written. The graph not settled: the gate says so itself */
 fn wallWants(ph: u32) -> bool {
-  if (WALLW[0] != 1u) { return lt(L_WALL + WL_FULL) != 2u; }
+  if (WALLW[0] != 1u) {
+    let f = lt(L_WALL + WL_FULL);
+    if (ph != 4u) { return f == 0u || (f & 1u) == 1u; }
+    return f != roadSig();
+  }
   if (ph != 4u) { return false; }
   if (wallSig() != lt(L_WALL + WL_FULL)) { return true; }
   let m = wallRisenNow();
@@ -2121,8 +2134,21 @@ fn wallWants(ph: u32) -> bool {
 fn wallWatch(ph: u32) -> bool {
   IND[30] = 0u; IND[31] = 1u; IND[32] = 1u;
   if (WALLW[0] != 1u) {
-    // (no wall: its empty table written once)
-    if (lt(L_WALL + WL_FULL) != 2u) { setLt(L_WALL + WL_FULL, 2u); IND[30] = 1u; return true; }
+    // (no wall: its empty table written once — a wall's table not kept past its wall; loop round 9, LS-89: then, once
+    // the graph has settled and again whenever the pool's halves move on, each arterial's road route traced into the
+    // gate slots — wallWork's road mode)
+    let f = lt(L_WALL + WL_FULL);
+    if (ph != 4u) {
+      if (f == 0u || (f & 1u) == 1u) { setLt(L_WALL + WL_FULL, 2u); IND[30] = 1u; return true; }
+      return false;
+    }
+    let rs = roadSig();
+    if (f != rs) {
+      setLt(L_WALL + WL_FULL, rs);
+      for (var k = 0u; k < GATE_SLOTS; k++) { setLt(L_WALL + WL_GSEG + k, 0u); setLt(L_WALL + WL_GID + k, NONE); }
+      IND[30] = 1u;
+      return true;
+    }
     return false;
   }
   // (the graph not settled: the table kept as it is; everything again once it settles)
@@ -2318,6 +2344,28 @@ fn wallWork(@builtin(local_invocation_index) li: u32) {
       for (var j = 0u; j < 3u; j++) { setLt(L_WALL + WL_RISEN + j, 0u); setLt(L_WALL + WL_REACH + j, 0u); }
       RB[RB_WW_COUNT] = 0u;
       for (var k = 0u; k < GATE_SLOTS; k++) { RB[RB[RB_GATE_AT] + 2u * k] = NONE; RB[RB[RB_GATE_AT] + 2u * k + 1u] = G_NONE; }
+      RB[RB_TABLE_VER] = RB[RB_TABLE_VER] + 1u;
+    }
+    return;
+  }
+  if ((full & 3u) == 2u) {
+    // (loop round 9, LS-89: no wall — the road mode. Gate slot k is arterial k's road route: from ROAD_IN along it out
+    // to the box's edge (artRoute, as a wall's gate route from where the ring crosses), status OK; no wall-walks. A
+    // column marches in along it as through a gate. A thread an arterial, each traced once)
+    let arts = min(min(ART[0], NART), GATE_SLOTS);
+    if (li < arts && lt(L_WALL + WL_GID + li) == NONE) { setLt(L_WALL + WL_GID + li, artRoute(li, ROAD_IN)); }
+    workgroupBarrier();
+    storageBarrier();
+    if (li == 0u) {
+      setLt(L_WALL + WL_MADE, 0u);
+      RB[RB_WW_COUNT] = 0u;
+      let gAt = RB[RB_GATE_AT];
+      for (var k = 0u; k < GATE_SLOTS; k++) {
+        let id = lt(L_WALL + WL_GID + k);
+        let st = select(select(G_NONE, G_FAILED, k < arts), G_OK, k < arts && id != NONE);
+        RB[gAt + 2u * k] = select(NONE, id, st == G_OK);
+        RB[gAt + 2u * k + 1u] = st;
+      }
       RB[RB_TABLE_VER] = RB[RB_TABLE_VER] + 1u;
     }
     return;

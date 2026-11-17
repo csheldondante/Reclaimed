@@ -304,9 +304,11 @@ export class LiveRunner {
     rg.made = n;
     // (its people's places read while the event runs: the camera follows them)
     run.unwatch.push(this.h.scene.units!.observe(forces.members(rg.force)));
-    // (round 8, LS-77: a group in by a road, with a wall up (the gate routes are the wall's: none without one), marches
-    // in along the road's gate route in a column first. `?marchin=0`: straight to its place, as before)
-    if (rg.def.order && k >= 0 && entering(rg.def) && this.h.season.war?.walled && this.h.scene.host.params.get('marchin') !== '0') {
+    // (round 8, LS-77: a group in by a road marches in along the road's gate route in a column first; round 9, LS-89:
+    // walled or not — without a wall gate slot k is the arterial's road route, from the central square out, so the
+    // column comes down the main street to the square. No route (not traced yet, the pool full): told as a failed
+    // order, and it goes on to its place by its field. `?marchin=0`: straight to its place, as before)
+    if (rg.def.order && k >= 0 && entering(rg.def) && this.h.scene.host.params.get('marchin') !== '0') {
       rg.leg = { k, to };
       forces.orderGroup(rg.force, { kind: 'march', town: this.townIndex, gate: k, inward: true });
       return;
@@ -519,7 +521,8 @@ export class LiveRunner {
         const to: PlaceRef | undefined = paired ? { town, place: PLACE.gate0 + k, also: PLACE.spawn0 + k } : toGate ? townHeart(town) : undefined;
         if (g.force !== null) forces.disband(g.force);
         // (round 8, the census's experiment: `?parade=N` draws N marchers — the crowd then counts them all, LS-92)
-        const big = g.def.id === 'marchers' ? Number(this.h.scene.host.params.get('parade') ?? 0) : 0;
+        // (round 9, the same experiment for a raid: `?raid=N` raiders — LS-92)
+        const big = g.def.id === 'marchers' ? Number(this.h.scene.host.params.get('parade') ?? 0) : g.def.id === 'raiders' ? Number(this.h.scene.host.params.get('raid') ?? 0) : 0;
         this.make(run, g, big > 0 ? Math.min(big, 64) : groupSize(g.def, numbers), from, k, to);
       }
       for (const g of run.groups.values()) if (g.def.from === 'lining') this.line(run, g, groupSize(g.def, numbers), k);

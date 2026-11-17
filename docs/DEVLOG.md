@@ -24784,3 +24784,46 @@ column now (`roadDisc`, 12 vertices); the street and arterial pieces run on past
 and plaza plates and the landmark plazas in 4 x 4 pieces each on the ground (they were tilted planes touching the land
 only at their corners). Seen after: wide pale streets in the overview; the close-up at the market (the bridgehead) still
 shows big slanted planes — the arterial and its deck at 7 cells over the bank (LS-97, job 4's).
+
+## 2026-11-16 — loop round 9 (2): units on the streets, seen (`loop-skeleton`, LS-88, LS-89, LS-95, LS-98, LS-99)
+
+**Why.** The owner: "we want the authored routes and traversability data to make units move in ways that keep them
+visible and legible"; "The design is flow fields and formations and authored paths already specifically because I
+anticipated this."
+
+**Every street in the fields (LS-88).** `Agents.setRoadRaster`: the town's road raster (citygen's ROADS, the routes'
+contract buffer) stamped into the agents' road bits on the GPU beside the arterials' shapes — a thread a window column
+(`roadstamp.wgsl roadRasterStamp`). Its version is `FieldTown.meshRuns`: a mesh run (roads grown in) relaxes the fields
+once; a slide only restamps. Nothing read back, nothing at idle.
+
+**Road routes without a wall (LS-89).** Gate slot k of an unwalled town is now arterial k's road route
+(`routes.wgsl` wallWork's road mode: `artRoute(k, 12)`, from the central square out to the box's edge, status OK), traced
+when the graph settles and again when the pool's halves move on (`roadSig`). The runner marches every entering column
+in along its road, walled or not. What it showed: before, the unwalled parade's column never left its spawn point as a
+column — `liveshot --mail`: the anchor stood forming (state 0) at its start while its ranks, with no straight way to
+their slots, walked down the group's field (lag 44 → 94 → 131 cells at 6/13/20 s). That is LS-76's split in another
+state, still in `formSlots`/`formAnchor` (LS-98); the road route keeps the game's columns off it.
+
+**Seen (the strip, `local/round9/strip-job3.png`).** Unwalled: 9 marchers 3 abreast on the arterial at 22 s with the
+watchers along it (9 of 9 on screen; before: 0 of 9 on screen, spread over 90 cells), on the main street between the
+houses at 40 s. Walled: in by the gate route, "at the gate" at 31 s, the finale at the market at 62 s (arrived whole by
+the units' word). `?parade=30`: a column 3 abreast ten ranks long on the road (30 of 30 on screen), at 66 s still
+squeezing through the streets to the square (26 of 30 on screen) — the 90 s end stays for crowds that big. `?raid=24`
+(new, the same experiment as `?parade`): a red band 3 abreast down the road, then onto the square toward the keep.
+Units are coloured by side (LS-95: foes tile red, soldiers steel, folk flower yellow; raiders and carts keep their
+models). Roads 0 and 1 refuse every column at Muru ("water": across the river; units do not walk decks, LS-99).
+
+**Kept.** The 3/4 rule for loose groups (the watchers are loose) and the 90 s end for the parade and the refugees: a
+9-strong parade now arrives whole in 62 s walled, but a 30-strong one had not by 66 s.
+
+**Census** (`scripts/census.mjs --params 'loop=1&parade=60' --pick ysolt --states idle,event --event gate-parade`):
+
+| State | est. phone ms a frame | ticks a frame | read back a frame |
+|---|---|---|---|
+| idle, round 8 | 1.05 | 0.60 | 1.76 KB |
+| idle, round 9 (lanes, the street raster, road routes) | 1.06 | 0.61 | 1.67 KB |
+| the parade `?parade=60`, round 8 | 6.13 | 3.47 | 9.88 KB |
+| the parade `?parade=60`, round 9 (marching in by the road) | 6.24 | 3.47 | 11.3 KB |
+
+Nothing new at idle (the raster is stamped only when its version or place changes). The parade is the 3× sim on the
+march as before (agents 1.80 ms); its read back is the units' places observed, a little more with the march in.

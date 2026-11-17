@@ -31,6 +31,9 @@
 //     out along that arterial to the town's box edge. Slots past the arterials' room are the filler gates (added only
 //     to make two), in ring order. An entry is ROUTE_NONE with its status saying why: no gate there, the wall not risen
 //     there, the gate over water, or no route.
+//   - (loop round 9, LS-89) a town with no wall: gate slot k is arterial k's road route — from 12 cells out of the
+//     centre (on the central square) along the arterial to the box's edge, status GATE_OK, segment 0 — so a column
+//     marches in by its road as through a gate; GATE_FAILED while not traced; no wall-walks.
 //
 // A route id handed out to a rider is packed `id | generation << 16` (id < 65536, the generation's low 16 bits). The
 // pool is recycled in two halves: when a half is reused its generation moves on, so an id from before is stale and

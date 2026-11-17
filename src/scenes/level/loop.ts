@@ -35,7 +35,7 @@ import type { RuleHit } from '../../living/rules';
 import { SPELL_MECH } from '../../living/live';
 import { grant, lose } from '../../season/ledger';
 import * as TW from '../../table/words';
-import { packRoadShapes, type RoadShape } from '../../agents/roads';
+import { packRoadShapes, type RoadRaster, type RoadShape } from '../../agents/roads';
 import * as W from '../../season/run-words';
 import { StoryCamera, type V3 } from '../../story/camera';
 import type { LevelScene } from '../level';
@@ -476,10 +476,14 @@ class Game implements RunGame {
     const r = this.realm;
     if (!r) return [];
     const t0 = r.w.turn - r.season;
+    // (round 9: one line for one thing — a bout's result was told twice on the end screen in round 8's cards walk, two
+    // records of one season with the same words; the second is left out here. Which two records they were is not found)
+    const seen = new Set<string>();
     return r
       .history()
       .filter((e) => SHOWN.has(e.kind) || (e.weight ?? 0) !== 0)
-      .map((e) => ({ season: e.turn - t0, text: W.sentence(e.note ?? e.kind) }));
+      .map((e) => ({ season: e.turn - t0, text: W.sentence(e.note ?? e.kind) }))
+      .filter((l) => !seen.has(`${l.season}|${l.text}`) && !!seen.add(`${l.season}|${l.text}`));
   }
 
   before(): string[] {
@@ -575,8 +579,14 @@ class Game implements RunGame {
   private feedRoads(): void {
     const t = this.town;
     const S = this.scene.stream;
-    const agents = (this.scene.units as { agents?: { setRoads(s: Float32Array, ox: number, oy: number): void } } | null)?.agents;
+    const agents = (this.scene.units as { agents?: { setRoads(s: Float32Array, ox: number, oy: number): void; setRoadRaster(r: RoadRaster | null): void } } | null)?.agents;
     if (!t || !S || !agents || this.scene.host.params.get('roads') === '0') return;
+    // (round 9, LS-88: every street of the town, from its road raster on the GPU — citygen's ROADS, drawn again on each
+    // mesh run (meshRuns its version) — at the grid's place in the window now; `?streets=0`: the arterials alone)
+    if (t.times && this.scene.host.params.get('streets') !== '0') {
+      const p = t.gridPlace();
+      agents.setRoadRaster({ buf: t.routes.roads, gw: t.box.w, gh: t.box.h, ox: p.dx, oy: p.dy, version: t.meshRuns });
+    }
     if (this.roadsOf?.town !== t.site.id) {
       const bands: RoadShape[] = [];
       for (let k = 0; k < t.roadCount; k++) {

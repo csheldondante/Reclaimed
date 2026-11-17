@@ -33,7 +33,7 @@ import { materialId, materialName, materialState, type MaterialName } from '../a
 import type { Terrain } from '../api/terrain';
 import { FieldReader } from './fieldreader';
 import { AgentScope } from './scope';
-import { RoadStamp } from './roads';
+import { RoadStamp, type RoadRaster } from './roads';
 import { RoadRide } from './ride';
 import type { RoadGraph } from './roadgraph';
 import { CHUNK_CLASS, CHUNK_COLUMNS, CHUNK_DEPTH, CUSTOM, ChangedTiles, TILES_BINDING, cullKernel } from '../sim/cull';
@@ -661,6 +661,8 @@ export class Agents implements SimSystem {
   private groupField = new Uint32Array(MAX_GROUPS).fill(0xffffffff);
   /** per group: drawn at work (round 88: bent to a tool, a tool in hand) */
   private groupPose = new Uint32Array(MAX_GROUPS);
+  /** (loop round 9, LS-95) per group: its torso's material set by its owner (−1: GROUP_MATS by its index) */
+  private groupMatOver = new Int32Array(MAX_GROUPS).fill(-1);
   private kinds: (KindSpec | undefined)[] = [];
   /**
    * (round 128o, DA-B22) Where the tick lies in its frame: the simulation's (installAgents: Simulation.frameTicks,
@@ -1298,6 +1300,13 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     this.groupField[g] = f < 0 ? FIELD_NONE : f;
   }
 
+  /** (loop round 9, LS-95) Group `g`'s units drawn with this torso material (a kind's own colour or model wins; null:
+   *  the group's colour by its index again) — what side a crowd is on, read at a glance */
+  colourGroup(g: number, mat: number | null): void {
+    if (g < 0 || g >= MAX_GROUPS) throw new Error(`agents.colourGroup: group ${g} out of 0..${MAX_GROUPS - 1}`);
+    this.groupMatOver[g] = mat ?? -1;
+  }
+
   /** Group `g`'s units are drawn at work (round 88): bending to a tool in their hands, while they stand. */
   workPose(g: number, on: boolean): void {
     if (g < 0 || g >= MAX_GROUPS) throw new Error(`agents.workPose: group ${g} out of 0..${MAX_GROUPS - 1}`);
@@ -1314,6 +1323,16 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   setRoads(shapes: Float32Array, ox = 0, oy = 0): void {
     // (the fields' costs changed everywhere a road came or went: every chunk of the scope relaxed again)
     if (this.roadStamp.set(shapes, ox, oy) && this.scope) this.scope.markAll = true;
+  }
+
+  /**
+   * (loop round 9, LS-88) An owner's road raster on the GPU (agents/roads.ts RoadRaster: a word a column of its grid,
+   * non-zero a road — citygen's street raster) stamped into the same road bits as the shapes: every street of a town
+   * is a road in every field. Call it every frame with the raster's place now; a new version (the owner drew its roads
+   * again) relaxes the fields; a slide only restamps. null: none.
+   */
+  setRoadRaster(r: RoadRaster | null): void {
+    if (this.roadStamp.setRaster(r) && this.scope) this.scope.markAll = true;
   }
 
   /**
@@ -1556,11 +1575,12 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
    * `n` units of a kind made at order group `g`'s place: its approach point, round it in a spiral — placed on the GPU
    * at the next step (the place is the GPU's to know). Order the group first (`order`, kind 1 to stand). Returns ids.
    */
-  spawnAt(n: number, g: number, opts: { kind?: number | string; hp?: number } = {}): number[] {
+  spawnAt(n: number, g: number, opts: { kind?: number | string; hp?: number; colour?: number } = {}): number[] {
     if (!this.ok) throw new Error('agents.spawnAt: no place table (usePlaces)');
     if (g < 0 || g >= this.orderGroups) throw new Error(`agents.spawnAt: group ${g} out of 0..${this.orderGroups - 1}`);
     if (this.orderQ.length / 3 + n > ORDER_Q) throw new Error(`agents.spawnAt: more than ${ORDER_Q} joins a step`);
-    const ids = this.spawn(n, 0, 0, { group: orderColourGroup(g), kind: opts.kind, hp: opts.hp, spread: 0, atPlace: true });
+    // (loop round 9, LS-95: `colour` — the agents group they are drawn in, its owner's; else the order group's own)
+    const ids = this.spawn(n, 0, 0, { group: opts.colour ?? orderColourGroup(g), kind: opts.kind, hp: opts.hp, spread: 0, atPlace: true });
     ids.forEach((id, k) => this.orderQ.push(id % MAX_UNITS, g, (k | SPAWN_BIT) >>> 0));
     return ids;
   }
@@ -2318,7 +2338,7 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     for (let g = 0; g < MAX_GROUPS; g++) {
       // (a group following nothing: FIELD_NONE — it stands)
       u[P_GFIELD + g] = this.groupField[g];
-      u[P_GMAT + g] = GROUP_MATS[g % GROUP_MATS.length] | (this.groupPose[g] << 8);
+      u[P_GMAT + g] = (this.groupMatOver[g] >= 0 ? this.groupMatOver[g] : GROUP_MATS[g % GROUP_MATS.length]) | (this.groupPose[g] << 8);
     }
     // (round 128i, V128-14: the road field is seeded on the network's columns while a group rides: the nodes' chunks
     // marked as riding starts — markChunks asks for their pages; the rest of the network as the field reaches it)

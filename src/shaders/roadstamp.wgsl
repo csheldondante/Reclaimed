@@ -17,11 +17,33 @@ struct RoadParams {
   oy: i32,
   _a: u32,
   _b: u32,
+  /** (loop round 9, LS-88) a road raster's grid (columns, rows; 0 none) and its first column in the window (whole
+   *  columns, rows — even) */
+  rw: u32,
+  rh: u32,
+  rx: i32,
+  ry: i32,
 };
 
 @group(0) @binding(40) var<storage, read_write> roadBits: array<atomic<u32>>;
 @group(0) @binding(41) var<storage, read> roadShapes: array<vec4<f32>>;
 @group(0) @binding(42) var<uniform> RP: RoadParams;
+/** (loop round 9, LS-88) an owner's road raster: a word a grid column, non-zero a road (citygen's ROADS: 1 a road,
+ *  DECK_BIT | z a deck — api/contracts/citygen.ts CityRoutes.roads) */
+@group(0) @binding(43) var<storage, read> roadRaster: array<u32>;
+
+/** (loop round 9, LS-88) a thread a window column: its bit set where the raster under it is a road. The raster's rows
+ *  share the window's stagger (its first row even), so a column maps to one raster column */
+@compute @workgroup_size(8, 8)
+fn roadRasterStamp(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= RP.w || id.y >= RP.h || RP.rw == 0u) { return; }
+  let gx = i32(id.x) - RP.rx;
+  let gy = i32(id.y) - RP.ry;
+  if (gx < 0 || gy < 0 || gx >= i32(RP.rw) || gy >= i32(RP.rh)) { return; }
+  if (roadRaster[u32(gy) * RP.rw + u32(gx)] == 0u) { return; }
+  let w = id.y * RP.w + id.x;
+  atomicOr(&roadBits[w >> 5u], 1u << (w & 31u));
+}
 
 @compute @workgroup_size(64)
 fn roadClear(@builtin(global_invocation_id) id: vec3<u32>) {

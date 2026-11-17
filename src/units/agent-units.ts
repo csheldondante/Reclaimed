@@ -26,7 +26,7 @@
 import type { Actor, AreaHit, OrderFailure, PlaceRef, SpawnAtOpts, SquadOrder, SeenUnit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
 import type { GroupId } from '../api/contracts/inhabitants';
-import { ORDER_ALTS, orderColourGroup, type Agents, type OrderPlace, type AgentEvent, type AgentState, type HuntCandidate, type OrderRecord, type Target } from '../agents/agents';
+import { ORDER_ALTS, ORDER_COLOURS, ORDER_GROUP_BASE, type Agents, type OrderPlace, type AgentEvent, type AgentState, type HuntCandidate, type OrderRecord, type Target } from '../agents/agents';
 import type { PickAsk } from '../agents/pick';
 import { MAT } from '../world/materials';
 import { timed } from '../gpu/cpustat';
@@ -106,6 +106,10 @@ const WHY: Record<number, OrderFailure> = { 1: 'none', 2: 'rising', 3: 'water', 
 /** (round 6) formations' spacing (cells), a man's post spacing, a man order's most run fields */
 const FORM_SPACING = 1.2;
 const POST_SPACING = 3;
+/** (loop round 9, LS-95) the agents groups place groups are drawn in by side (past the order groups' 8 colours), and
+ *  their torsos: foes, soldiers and guards, folk */
+const SIDE_GROUP_BASE = ORDER_GROUP_BASE + ORDER_COLOURS;
+const SIDE_MATS = [MAT.Tile, MAT.Steel, MAT.Flower] as const;
 /** (round 6b) a man order's run fields: one a wall run (orders.wgsl RUNS), as many as are free */
 const MAN_FIELDS = 8;
 
@@ -362,6 +366,22 @@ export class AgentUnits implements Units {
     this.routesFor = routesFor;
   }
 
+  /**
+   * (loop round 9, LS-95) The agents group a place group's members are drawn in: one colour a side, not one an order
+   * group (8 colours by slot told nobody which side a crowd was on): foes red (tile), soldiers and guards steel, the
+   * town's folk yellow (flower). Membership is the order group's (mail), so the drawing group is the colour only. A
+   * kind with its own model (raiders, carts) keeps it
+   */
+  private sideColour(kind: string, hostile: boolean): number {
+    const k = hostile ? 0 : kind === 'soldier' || kind === 'guard' ? 1 : 2;
+    if (!this.sideColoured) {
+      this.sideColoured = true;
+      SIDE_MATS.forEach((m, i) => this.agents.colourGroup(SIDE_GROUP_BASE + i, m));
+    }
+    return SIDE_GROUP_BASE + k;
+  }
+  private sideColoured = false;
+
   spawnAt(kind: string, faction: FactionId | null, at: PlaceRef, n: number, opts: SpawnAtOpts = {}): GroupId {
     if (!this.agents.placesIn) throw new Error('units.spawnAt: no town place table yet (usePlaces)');
     const chain = placeChain(at);
@@ -397,10 +417,10 @@ export class AgentUnits implements Units {
         state: 'idle',
         colour: this.colourOf(faction),
       };
-      recs.push({ v, gpu: -1, sight: opts.sight ?? 10, damage: opts.damage ?? 1, group: orderColourGroup(slot), target: null, cool: 0, goal: null, order: slot });
+      recs.push({ v, gpu: -1, sight: opts.sight ?? 10, damage: opts.damage ?? 1, group: this.sideColour(kind, hostile), target: null, cool: 0, goal: null, order: slot });
     }
     const slow = kind === 'shambler' || (opts.speed !== undefined && opts.speed < 2.2);
-    const gpu = this.agents.spawnAt(n, slot, { kind: this.kindOf(recs[0] ?? ({ v: { hostile, role: kind } } as UnitRec), slow), hp: Math.max(health, 0.1) * HPK });
+    const gpu = this.agents.spawnAt(n, slot, { kind: this.kindOf(recs[0] ?? ({ v: { hostile, role: kind } } as UnitRec), slow), hp: Math.max(health, 0.1) * HPK, colour: this.sideColour(kind, hostile) });
     recs.forEach((u, i) => {
       u.gpu = gpu[i];
       this.byGpu.set(u.gpu, u.v.id);
