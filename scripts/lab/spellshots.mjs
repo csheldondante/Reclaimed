@@ -63,7 +63,9 @@ await run({ name: 'spellshots', kind: 'behaviour', size: '412x915', dpr: 1, echo
     }
     R.log(`${mode}: challengers ${n ? n.d.toFixed(1) : '?'} cells from the fighter`);
     if (n) {
-      await p.evaluate((q) => window.rungame.cam.look([(q.m[0] + q.f[0]) / 2, (q.m[1] + q.f[1]) / 2, q.m[2]], { zoom: 14, ease: 0.3, place: [0.5, 0.4] }), n);
+      // (berserk: between the crew and the fighter; the veil: on the fighter, who is to vanish)
+      const look = mode === 'veil' ? [n.f[0], n.f[1], n.f[2]] : [(n.m[0] + n.f[0]) / 2, (n.m[1] + n.f[1]) / 2, n.m[2]];
+      await p.evaluate((q) => window.rungame.cam.look(q, { zoom: 14, ease: 0.3, place: [0.5, 0.4] }), look);
       await R.sleep(1200);
       v = await view();
     }

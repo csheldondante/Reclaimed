@@ -682,7 +682,18 @@ export class Realm {
       // ---- (draft 8) the between-runs step's own words (realm-between.ts) ----
       // (a sign stands on some town and was not set for good)
       signsLinger: { pred: () => this.lingering().length > 0 },
-      fadeSigns: { effect: (c) => void (c.dry || this.lingering().forEach(([id, k]) => recordSign(c.w, k, id, false, c.cause))) },
+      // (loop round 10: in the 3D game the mutators keep the signs too, and laid them again on the new run's world as it
+      // was bound — run 2's "The world now" said the thieves were gone and then "Thieves work the streets". The sign is
+      // ended in their list as well)
+      fadeSigns: {
+        effect: (c) => {
+          if (c.dry) return;
+          for (const [id, k] of this.lingering()) {
+            recordSign(c.w, k, id, false, c.cause);
+            if (mutators.ready) mutators.sign({ kind: k, place: id, strength: 0, cause: c.cause });
+          }
+        },
+      },
       // (some far town is still there — in any state but destroyed or abandoned: standing, sworn, taken, founded)
       farStands: { pred: () => { const gone = new Set([...this.selectTowns('far:where:destroyed'), ...this.selectTowns('far:where:abandoned')]); return this.selectTowns('far:all').some((id) => !gone.has(id)); } },
       // (a far town lies in ruins, destroyed or abandoned, and nothing has grown over it yet)

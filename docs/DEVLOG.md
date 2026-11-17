@@ -25542,3 +25542,21 @@ the area; a worker made side 3 hunts its old fellow. `notice.test.ts` and `huntr
 
 **Job 5.** "Settle it now" settles the event its button was drawn for (`settle(id)`), so a second tap on the next bout's
 button is a press of its own; chains stay unbounded (LS-109).
+
+**The spells seen in the game** (`scripts/lab/spellshots.mjs`, arena pack, the Red Wolf's bout played by
+`measureEvent`, the abilities unlocked by a fixture, the camera put over the fight by the script — the bout's camera
+stays on the road, LS-104). First run: Red mist cast, the four crew kept walking at the pit fighter. The lab's read of
+the words (`readRaw('combat')`, which first gave zeros: the buffer had no COPY_SRC) showed their spell word set
+(0x18fe06: berserk, side 254, sight 24) and every target still the fighter — a fighter keeps its target while the rules
+allow it, and a berserker's old target is still allowed. Fixed in `notice.wgsl`: a berserker looks again every frame and
+takes the nearest (GPU test: two raiders who had both taken a peaceful unit 10 cells off turn on each other). After: 2 s
+after the cast each of the crew targets another of the crew, one is down; at 4 s all four lie dead and the bout is over
+(stills `local/round10/berserk-strip.png`). Veil cast on the fighter: his spell word 1, every challenger's target 0, he
+lives on through 14 s with all four crew standing; in the stills the steel figure in the bushes is there before and gone
+after (`local/round10/veil-crop-strip.png`, 3x crop; `veil-strip.png` whole).
+
+**The 16-season walk on the final tree** (`loopwalk --runlen 16 --gif 0`, passed, 15 seasons in 190 s): the same
+run as before plus "The world now" at both runs' starts (run 2: "Run 1 ended: The town stands (the last season).",
+"While you were gone: years passed. The ash, the dark and the thieves of the last run are gone."). It also read
+"Thieves work the streets." on the next line — the mutators had laid the faded crime sign again on the new world
+(LS-110, fixed: the fade ends the sign in the mutators' list too).
