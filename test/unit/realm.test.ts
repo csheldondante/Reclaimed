@@ -8,6 +8,7 @@ import { briarWorld } from '../../src/living/briar';
 import { grant, newLedger, nextSeason, pools, total, type SeasonLedger } from '../../src/season/ledger';
 import { Realm, roadLook, type Leader } from '../../src/season/realm';
 import { projectId } from '../../src/season/realm-templates';
+import { setStance } from '../../src/living/stance';
 import type { WorldSnapshot } from '../../src/api/contracts/world';
 import { lint } from '../support/writing';
 
@@ -69,7 +70,10 @@ afterEach(() => mutators.bind(null));
 describe('the realm (season/realm.ts)', () => {
   it('deals few, each over its own site of the home town, each brought by someone of its role', () => {
     const r = realm();
-    const offs = r.offers().filter((o) => o.status === 'offered');
+    // (the raiders' standing threat stands over the whole town, not a site: it is counted apart — the raid is a card)
+    const all = r.offers().filter((o) => o.status === 'offered');
+    const offs = all.filter((o) => o.template !== 'pay-raiders');
+    expect(all.find((o) => o.template === 'pay-raiders')?.place).toBe(r.home);
     expect(offs.length).toBeGreaterThan(1);
     // (the board, the dealer's one guarantee, one threatening card)
     expect(offs.length).toBeLessThanOrEqual(r.engine.dealerTune().resourceMax + 2);
@@ -96,10 +100,12 @@ describe('the realm (season/realm.ts)', () => {
     const r = realm({ seasons: 16 });
     const counts: number[] = [];
     for (let k = 0; k < 15; k++) {
-      counts.push(r.offers().filter((o) => o.status === 'offered').length);
+      // (a forced live card asks nothing: it begins — counted apart since draft 8 lets it past a card at its place)
+      counts.push(r.offers().filter((o) => o.status === 'offered' && !r.engine.template(o.template).play?.forced).length);
       season(r);
     }
-    expect(Math.max(...counts), counts.join(',')).toBeLessThanOrEqual(5);
+    // (draft 8: + the raiders' standing threat, on the board from a fifth of the run to its end — CT-52)
+    expect(Math.max(...counts), counts.join(',')).toBeLessThanOrEqual(6);
   });
 
   it('committing a project locks the ledger\'s own people and spends its goods; the ledger builds it and its people come back', () => {
@@ -197,23 +203,32 @@ describe('the realm (season/realm.ts)', () => {
     expect(m.applied.find((p) => p.kind === 'vassal')).toMatchObject({ place: o.bind.other, by: 'player', tribute: 1 });
   });
 
-  it('the arc: scouts, a farm burned, then the raid in the run\'s last season; fought, the run is over and the history says how', () => {
+  it('the raid is a card: the raiders\' standing threat counts down to the last season, then the raid is forced; fought, the run goes on to its end and the history says how', () => {
     const m = recorder();
     const r = realm({ seasons: 4 });
     expect(r.raid).toBeNull();
+    // (the standing threat is on the board from the first season of a 4-season run, its countdown the header's)
+    expect(r.standingThreat()).toMatchObject({ template: 'pay-raiders', left: 3 });
+    expect(r.history().some((e) => e.kind === 'scouts-seen')).toBe(true);
     const news: string[] = [];
     for (let k = 0; k < 3; k++) news.push(...season(r));
     expect(r.season).toBe(4);
     expect(r.raid).toBe(18);
-    expect(news.join(' ')).toContain('scouts are seen on the road');
+    expect(news.join(' ')).toContain('The raiders break camp and march on the town');
     expect(r.over).toBe(false);
     // (round 6: the raid is a live event's card, forced; resolved here as nobody played it — Might 3 and nowhere for
     // soldiers to gather: all 18 get in — card-table tuning, CT-18)
     expect(r.forcedLive()?.template).toBe('raid');
     const rep = r.playForced().find((x) => x.template === 'raid')!;
     expect(rep).toMatchObject({ template: 'raid', tier: 'failure', vars: { raiders: 18, left: 18 } });
-    expect(r.over).toBe(true);
     expect(r.fight?.held).toBe(false);
+    expect(m.signs.find((s) => s.kind === 'crime')).toMatchObject({ place: r.home, until: r.w.turn + 3 });
+    // (the raid no longer ends the run: its last season does, with a plain ending in the record)
+    expect(r.over).toBe(false);
+    season(r);
+    expect(r.over).toBe(true);
+    expect(r.ended).toMatchObject({ result: 'stood', by: 'the last season' });
+    expect(r.history().some((e) => e.kind === 'run-ended')).toBe(true);
     expect(r.history().some((e) => e.kind === 'raid-broke')).toBe(true);
     // (sacked: the district by the gate burned — an area of the home town, the raid's own event its fact — and thieves
     // in the town for three seasons)
@@ -221,7 +236,6 @@ describe('the realm (season/realm.ts)', () => {
     const burn = m.applied.find((p) => p.kind === 'burned' && p.radius === 30)!;
     expect(burn).toMatchObject({ fact: broke.id, radius: 30 });
     expect(burn.at).toEqual(r.cellOf('gate'));
-    expect(m.signs.find((s) => s.kind === 'crime')).toMatchObject({ place: r.home, until: r.w.turn + 3 });
   });
 
   it('a hazard left alone changes the land round its site: one event, and the mutators\' entry carries its id', () => {
@@ -260,7 +274,7 @@ describe('the realm (season/realm.ts)', () => {
     expect(offer(r, 'mining-outpost')).toBeUndefined();
   });
 
-  it('the raiders can be paid off in the last seasons: no raid comes', () => {
+  it('the raiders can be paid off: a truce for the run, and no raid comes', () => {
     const r = realm({ seasons: 4, ledger: grant(newLedger(YSOLT.pools, YSOLT.income), { materials: 10 }) });
     let pay = offer(r, 'pay-raiders');
     for (let k = 0; k < 3 && !pay; k++) {
@@ -270,10 +284,30 @@ describe('the realm (season/realm.ts)', () => {
     expect(pay).toBeTruthy();
     r.commit(pay!.id);
     while (r.season < 4) season(r);
+    expect(r.raidersThreaten()).toBe(false);
+    expect(r.forcedLive()).toBeNull();
     season(r);
-    expect(r.averted).toBe(true);
     expect(r.raid).toBeNull();
+    expect(r.fight).toBeNull();
     expect(r.over).toBe(true);
+  });
+
+  it('in a world with no raiders on the road (their camp abandoned, no quarrel with you), no raid comes and the run ends at its last season', () => {
+    const w = briarWorld();
+    const r0 = new Realm({ world: w.ws.snapshot(), home: 'briar-hollow', seed: 7, leader: YSOLT, ledger: newLedger(YSOLT.pools, YSOLT.income), land: () => LAND, seasons: 4 });
+    // (their camp abandoned and no quarrel with you: a town they take later is no road to yours)
+    r0.w.facts.setTag('raiders-camp', 'condition', 'abandoned', true);
+    setStance(r0.w, 'raiders', 'player', 'none', 'test');
+    const r = realm({ world: r0.snapshot(), seasons: 4 });
+    expect(r.raidersThreaten()).toBe(false);
+    for (let k = 0; k < 4; k++) {
+      expect(offer(r, 'pay-raiders')).toBeUndefined();
+      expect(r.forcedLive()?.template).not.toBe('raid');
+      season(r);
+    }
+    expect(r.over).toBe(true);
+    expect(r.fight).toBeNull();
+    expect(r.ended?.result).toBe('stood');
   });
 
   it('the fact layer saved is the next run\'s world: its people, its places and its history are there', () => {

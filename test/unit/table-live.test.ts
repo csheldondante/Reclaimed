@@ -97,7 +97,9 @@ describe('the card table: live events and rules on the Realm', () => {
     t.endSeason();
     expect(t.over).toBe(true);
     expect(t.realm.fight).toMatchObject({ raiders: 6, held: false });
-    expect(t.result!.title).toBe('The raiders broke through');
+    // (draft 8: the raid is a card — its result is a line of the run's end, which the last season makes)
+    expect(t.raidResult!.title).toBe('The raiders broke through');
+    expect(t.result!.lines).toContain('The raiders broke through');
     expect(t.events.at(-1)).toMatchObject({ template: 'raid', tier: 'failure' });
   });
 

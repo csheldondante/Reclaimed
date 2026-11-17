@@ -25,7 +25,10 @@ const BOTS: Bot[] = [
   { name: 'walls first', want: ['build:walls', 'hire-sellswords', 'build:quarry', 'build:lumber', 'mining-outpost', 'mend-dam', 'shore-hill'] },
   { name: 'keep engine', want: ['build:houses', 'build:workshops', 'build:keep', 'build:quarry', 'build:lumber', 'house-refugees', 'build:farms', 'mend-dam'] },
   // (card-table tuning, CT-18: the tribute is 15 Materials now, so the bot that means to pay it pays it first)
-  { name: 'trade and tribute', want: ['pay-raiders', 'build:quarry', 'build:lumber', 'mining-outpost', 'build:houses', 'build:market', 'build:trade', 'guard-camp', 'build:farms'] },
+  // (draft 8: the raid is a card on the board from the run's fifth of the way: the tribute can be paid from then, and a
+  // bot that builds everything first never saves 15. This bot builds only what pays income until it has paid)
+  { name: 'trade and tribute', want: ['pay-raiders', 'build:quarry', 'build:lumber', 'mining-outpost'] },
+  { name: 'save for the tribute', want: ['pay-raiders'] },
   { name: 'answer every threat', want: ['relieve-neighbour', 'mend-dam', 'fire-wards', 'feed-shrine', 'shore-hill', 'guard-camp', 'house-refugees', 'build:walls', 'build:quarry'] },
   { name: 'everything', want: ['*'] },
 ];
@@ -48,7 +51,9 @@ function play(bot: Bot, seasons: number, seed = 7): Played {
   const took: number[] = [];
   const lapsed: string[] = [];
   while (r.raid === null && !r.over && r.season <= seasons) {
-    const offered = () => r.offers().filter((o) => o.status === 'offered');
+    // (a forced live card — refugees on the road, the raid — asks nothing: it begins. Draft 8: it is no longer kept off
+    // the board by a card at its place, so it is counted apart)
+    const offered = () => r.offers().filter((o) => o.status === 'offered' && !r.engine.template(o.template).play?.forced);
     asked.push(offered().length);
     let n = 0;
     const order = bot.want.includes('*') ? offered().sort((a, b) => Number(!!r.engine.template(b.template).threat) - Number(!!r.engine.template(a.template).threat)).map((o) => o.template) : bot.want;
@@ -70,8 +75,10 @@ function play(bot: Bot, seasons: number, seed = 7): Played {
   // (round 6: the raid is a live event resolved here as nobody played it — each soldier standing holds a raider, the
   // rules add what the town's tags earn: season/realm-events.ts, realm-rules.ts)
   r.playForced();
-  const holds = r.averted || !!r.fight?.held;
-  return { bot: bot.name, holds, how: r.averted ? 'tribute paid' : fort ? `${r.ledger.built.includes('walls') ? 'walls' : 'keep'}, Might ${might}` : `nowhere to gather, Might ${might}`, might, built: r.ledger.built, lapsed, asked, took, income: Object.values(r.ledger.income).reduce((a, b) => a + (b ?? 0), 0) + 0 * pools(r.ledger).materials };
+  // (the raid is a card: paid off is the tribute card done this run)
+  const paid = r.history().some((e) => e.kind === 'tribute-paid');
+  const holds = paid || !!r.fight?.held;
+  return { bot: bot.name, holds, how: paid ? 'tribute paid' : fort ? `${r.ledger.built.includes('walls') ? 'walls' : 'keep'}, Might ${might}` : `nowhere to gather, Might ${might}`, might, built: r.ledger.built, lapsed, asked, took, income: Object.values(r.ledger.income).reduce((a, b) => a + (b ?? 0), 0) + 0 * pools(r.ledger).materials };
 }
 
 describe('a whole run played by bots (the season\'s cards on the realm)', () => {
@@ -89,20 +96,24 @@ describe('a whole run played by bots (the season\'s cards on the realm)', () => 
     // by the card table's bots, which cast: test/unit/table-bots.test.ts. Was: two ways here, at 6 raiders)
     expect(new Set(ways).size).toBeGreaterThanOrEqual(1);
   });
-  it('a season never asks more than five things, late in the run as early', () => {
+  // (draft 8: six — the raiders' standing threat stands on the board from a fifth of the run to its end, CT-52)
+  it('a season never asks more than six things, late in the run as early', () => {
     for (const p of runs) {
-      expect(Math.max(...p.asked), `${p.bot}: ${p.asked.join(',')}`).toBeLessThanOrEqual(5);
+      expect(Math.max(...p.asked), `${p.bot}: ${p.asked.join(',')}`).toBeLessThanOrEqual(6);
       const half = Math.floor(p.asked.length / 2);
       const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
       expect(mean(p.asked.slice(half)), `${p.bot} late`).toBeLessThanOrEqual(mean(p.asked.slice(0, half)) + 1);
     }
   });
   it('an engine can be built: a bot that builds ends with more income than it began with', () => {
-    expect(runs.find((p) => p.bot === 'trade and tribute')!.income).toBeGreaterThan(3 + 2);
+    // (draft 8: the tribute bot now saves instead of building its market and trade road; the bot that takes everything
+    // is the builder here)
+    expect(runs.find((p) => p.bot === 'everything')!.income).toBeGreaterThan(3 + 2);
   });
   it('a four-season run is too short for any of them (why the run is long)', () => {
     const short = BOTS.map((b) => play(b, 4));
     console.log(`[bots 4] ${short.map((p) => `${p.bot}: ${p.holds ? 'HOLDS' : 'falls'} (${p.how})`).join('; ')}`);
     expect(short.filter((p) => p.holds).length).toBeLessThan(runs.filter((p) => p.holds).length);
-  });
+    // (seven bots, one more than before draft 8: about 5 s here)
+  }, 30000);
 });

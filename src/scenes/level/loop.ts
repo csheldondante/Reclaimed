@@ -34,6 +34,7 @@ import { castAbility, type LoadedPack } from '../../packs/load';
 import type { RuleHit } from '../../living/rules';
 import { SPELL_MECH } from '../../living/live';
 import { grant, lose } from '../../season/ledger';
+import { keepBuilt } from '../../season/realm-home';
 import * as TW from '../../table/words';
 import { packRoadShapes, type RoadRaster, type RoadShape } from '../../agents/roads';
 import * as W from '../../season/run-words';
@@ -159,7 +160,7 @@ class Game implements RunGame {
   }
   get run() {
     const r = this.realm;
-    return r ? { season: r.season, seasons: r.seasons, n: this.runs, threatIn: r.threatIn(), averted: r.averted, spells: [...r.spells], fight: r.fight } : null;
+    return r ? { season: r.season, seasons: r.seasons, n: this.runs, threat: r.standingThreat(), spells: [...r.spells], fight: r.fight } : null;
   }
   /** runs begun in this world (the history's count) */
   private runs = 0;
@@ -269,8 +270,9 @@ class Game implements RunGame {
       const site = r.siteOf(o);
       if (site) put(o.id, `${r.w.name(o.presenter)} · ${W.leftText(r.left(o))}`, 'ask', this.spot(site));
     }
-    const n = r.threatIn();
-    if (n !== null && n > 0) put('threat', W.threatTag(n), 'threat', this.spot('road'));
+    // (the standing threat is a card like any other: its own title and countdown, shown on the road)
+    const st = r.standingThreat();
+    if (st) put('threat', W.threatTag(st.title, st.left), 'threat', this.spot('road'));
     // (round 8: a pack thing at its site — or its remains, from this run or an earlier one; one in the town itself
     // stands by the keep. And the floor: a pack card done last season, at its site, for a season)
     for (const t of this.things) put(`thing:${t.id}`, t.ruined ? W.remainsOf(t.name) : t.name, 'thing', this.spot(t.site ?? 'keep'));
@@ -970,7 +972,8 @@ class Game implements RunGame {
     this.season.skip();
   }
 
-  /** what comes next: the attack if the arc brought it, the end if the threat is past */
+  /** what comes next: a live event nobody asks about (the raid card in the last season), the end once the run is over
+   *  (its last season ended, an ending card, a law's win), else the town */
   private flow(): void {
     const r = this.realm!;
     // (a live event nobody asks about — the raid in the run's last season, refugees on the road: it begins. One left
@@ -990,6 +993,11 @@ class Game implements RunGame {
       // (round 8: an ending says what made it)
       if (r.ended && !this.resultLines.length) this.resultLines = [TW.endedBy(r.ended.by)];
       this.panel = null;
+      // (loop round 10, job 3: what this town built written on it in the world's record — `built:<card>`, the card
+      // table's one path (season/realm-home.ts) — so a later run's world, here or played from another town, shows what
+      // stood; then saved)
+      keepBuilt(r.w, r.home, this.season.ledger.built);
+      void this.save();
       return this.set('end');
     }
     this.set('city');
@@ -1201,8 +1209,9 @@ export function startRunLoop(scene: LevelScene, towns: FieldTowns, mut: MutateEn
   const season = startSeasonLoop(scene, towns, {
     ui: false,
     dealer: false,
-    // (the raid is the arc's last stage — the realm's — not the fixed schedule; LS-16: the attack screen calls it, with
-    // the camera down the road it comes by)
+    // (the raid is a card — card-table round 5, CT-51: the raiders' standing threat run out sets it, and the forced
+    // `raid` card's live event plays it in the last season — not the fixed schedule; LS-16: the attack screen calls it,
+    // with the camera down the road it comes by)
     raid: () => game?.realm?.raid ?? null,
     calls: true,
     // (consequences come home: refugees in the streets, a camp's ore wagons — the fact layer's, through the realm)

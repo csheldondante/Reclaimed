@@ -643,7 +643,10 @@ export class LivingEngine {
         continue;
       }
       const place = b[t.at];
-      const held = onePerPlace ? placesHeld.get(place) : undefined;
+      // (a forced live event — the raid, refugees on the road — begins whatever card stands at its place: nobody is
+      // asked, so it keeps no card off the board and no card keeps it off. Found with the raid as a card: a pack card at
+      // the gate kept the raid from ever being dealt)
+      const held = onePerPlace && !t.play?.forced ? placesHeld.get(place) : undefined;
       if (held) {
         np('place', `one card a location: "${held.opp.title}" is offered at ${this.w.name(place)}`);
         continue;
@@ -993,8 +996,8 @@ export class LivingEngine {
   // ---- the turn ----------------------------------------------------------------------------------------------------------
 
   /** a turn passes: stores move by their rates, losses recover, cards resolve or lapse, the arc advances, claims lapse;
-   *  then the next deal */
-  advance(): EngineReport {
+   *  then the next deal (`deal` false: no deal — the run's last turn has passed) */
+  advance(deal = true): EngineReport {
     const w = this.w;
     w.facts.turn++;
     // (the turn's economy: each settlement's stores move by their rates over the turn's days — an instant step)
@@ -1022,6 +1025,7 @@ export class LivingEngine {
       w.facts.dropClaim(c.id);
       w.facts.record({ kind: 'claim-lapsed', by: [c.claimant], to: [c.target], note: `${w.name(c.claimant)}'s claim to ${w.name(c.target)} lapsed` });
     }
+    if (!deal) return { turn: this.turn, dealt: [], kept: this.offers.filter((o) => o.status === 'offered'), notProposed: [], dealer: null, evaluated: { templates: 0, of: 0, changed: 0 }, ms: 0 };
     return this.deal();
   }
 

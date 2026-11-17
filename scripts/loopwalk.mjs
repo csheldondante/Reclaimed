@@ -559,9 +559,11 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
   let n = 0;
   let mapped = false;
   const decisions = [];
+  const headers = [];
   const t0 = Date.now();
   for (;;) {
     decisions.push((await state()).asking.length);
+    headers.push(await page.evaluate(() => document.querySelector('.run-top .r-threat')?.textContent ?? ''));
     await wait(400);
     await tap('.run-sheet .go button', 'Next season');
     await phase('season', 10000);
@@ -591,7 +593,7 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     // (--reload N: the tab closed in season N and opened again without fresh=1 — the same season, pools, board, cards
     // under way and land changes; LS-8)
     if (s.phase === 'city' && String(s.season) === opt('reload', '')) {
-      const snap = () => page.evaluate(() => ({ land: window.rungame.land(), list: window.mutators.record().list.length, spells: window.rungame.run.spells, threatIn: window.rungame.run.threatIn, history: window.rungame.history().length }));
+      const snap = () => page.evaluate(() => ({ land: window.rungame.land(), list: window.mutators.record().list.length, spells: window.rungame.run.spells, threat: window.rungame.run.threat, history: window.rungame.history().length }));
       await wait(1500);
       const before = { ...(await state()), ...(await snap()) };
       const u = new URL(page.url());
@@ -653,7 +655,10 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     R.check('fast: petitions were answered with their camera frame still waiting behind camera moves, and begun after one (LS-54)', found.includes('waiting') && found.includes('held'), found.join(' '));
   }
   log(`${n} seasons in ${((Date.now() - t0) / 1000).toFixed(0)} s of wall time, the time-lapse skipped after 1.5 s: ${((Date.now() - t0) / 1000 / n).toFixed(1)} s a season with its petitions`);
-  R.check('the decisions a season stay few', Math.max(...decisions) <= 5, decisions);
+  // (card-table round 5, CT-52 (6): the board's 3, the dealer's guarantee, one threat and the standing threat — 6)
+  R.check('the decisions a season stay few', Math.max(...decisions) <= 6, decisions);
+  // (loop round 10: the raid is a card — the header showed the standing threat's own countdown in some season)
+  R.check('the header showed the standing threat', headers.some((h) => /: (\d+ seasons left|last season to answer it)\./.test(h)), [...new Set(headers)].slice(0, 6));
 
   // 7: the attack: the camera down the road, the raid called, the march, the fight, a spell cast, the result
   if ((await state()).phase === 'result' || (await page.evaluate(() => window.rungame.liveDebug().focus)) === 'raid') {
@@ -739,8 +744,16 @@ await run({ name: 'loopwalk', kind: 'behaviour', size: '412x915', dpr: 1, echo: 
     log(`war: ${JSON.stringify(await page.evaluate(() => window.rungame.resultLines))}`);
     fired.push(...(await page.evaluate(() => window.rungame.resultLines)).filter((t) => RULE_LINE.test(t)));
     await tap('.run-sheet .go button', 'Continue');
+    // (loop round 10: the raid is the last season's card, not the run's end — the run ends when that season does)
+    await phase('city|end', 60000);
+    if ((await state()).phase === 'city') {
+      await shot('loop-7-after-raid-city');
+      await tap('.run-sheet .go button', 'Next season');
+      await phase('season', 10000);
+      await page.evaluate(() => window.rungame.canSkip && window.rungame.skip());
+    }
   }
-  await phase('end', 60000);
+  await phase('end', 120000);
   await wait(800);
   await shot('loop-8-end');
   const ended = await page.evaluate(() => ({ history: window.rungame.history(), land: window.rungame.land() }));

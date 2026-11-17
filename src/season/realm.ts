@@ -32,7 +32,13 @@ import { OPP_TUNE, type DealerTune } from '../opps/tune';
 import { CATALOG, card } from './catalog';
 import { hasLand, type Land } from './deal';
 import { adopt, lose, grant, pools, total, POOL_ROLE, type Pool, type Pools, type SeasonLedger } from './ledger';
-import { cardOfTemplate, projectTemplate, raidArc, siteId, SITES, WORLD_TEMPLATES, type SiteKey } from './realm-templates';
+import { cardOfTemplate, projectTemplate, RAIDERS, RAIDERS_CAMP, siteId, SITES, WORLD_TEMPLATES, type SiteKey } from './realm-templates';
+import { BASE_BETWEEN, BETWEEN, LAW_ENDED, type BetweenDef } from './realm-between';
+import { holds } from '../living/dsl';
+import { applyBatch } from '../living/engine';
+import { setStance, stanceOf, type Stance } from '../living/stance';
+import { recordSign } from '../mutate/facts';
+import { SIGNS } from '../mutate';
 import { RUIN, RULES, SITE_TAGS, TIMED } from './realm-rules';
 import { FIRE_TEMPLATE } from './realm-events';
 import { placeState } from '../mutate/facts';
@@ -42,14 +48,14 @@ import { recordMutation } from '../mutate/facts';
 import '../mutate/outcomes';
 import { ROW_H } from '../world/lattice';
 
-/** seasons to the run's major threat (a knob; 16 is the orchestrator's number, not the user's) */
+/** the run's length in seasons: the run ends when its last season ends (or at once, by an `end_run`). A knob, in this
+ *  one place; 16 is the orchestrator's number, not the user's */
 export const RUN_SEASONS = 16;
 /** the projects and ventures on offer at once (the dealer's resource limit, counted over what still stands). With the
  *  dealer's one guarantee (a card that answers the run's threat) and the one threatening card a season's schedule lets
- *  stand, a season asks at most BOARD + 2 things of the player, however long the run or large the holdings */
+ *  stand, a season asks at most BOARD + 2 things of the player, however long the run or large the holdings — and the
+ *  raiders' standing threat (draft 8, a card over the whole town from a fifth of the run on): BOARD + 3 */
 export const BOARD = 3;
-/** seasons before the attack from which the raiders can be paid off */
-export const TRIBUTE_SEASONS = 3;
 
 /** 'heatray': unlocked by the tower's lens, cast in a fight. The three every leader has: 'fire' (cast in a live event:
  *  it sets what will burn alight and burns the dead), 'rain' (a storm over the tap: it puts a fire out), 'growth' (a
@@ -58,6 +64,10 @@ export type SpellId = 'heatray' | 'fire' | 'rain' | 'growth';
 export const BASIC_SPELLS: readonly SpellId[] = ['fire', 'rain', 'growth'];
 /** what a cast costs in Magic (a tunable: BACKLOG LS-66) */
 export const SPELL_COST: Record<SpellId, number> = { heatray: 1, fire: 1, rain: 1, growth: 1 };
+/** (draft 8) a sign set for good carries this tag beside it (`ashfall:for-good`): it does not fade between runs */
+export const FOR_GOOD = ':for-good';
+/** the ending of a run that reached its last season with nothing else ending it */
+export const STOOD = 'The town stands';
 /** far towns that count as trade partners once the trade route is built: the nearest so many */
 export const PARTNERS = 3;
 /** the refugees' camp (by the east fields since round 7), as a thing of the fact world */
@@ -154,6 +164,8 @@ export interface RealmOptions {
     seed?: (w: FactWorld) => void;
     /** (ages) cards out of this run's deck: by id, or every card with one of these themes (the raid stays) */
     deckOut?: { ids?: string[]; themes?: string[] };
+    /** (draft 8) the packs' between-runs entries, applied after the base game's (realm-between.ts) */
+    between?: BetweenDef[];
   };
   /** (card-table, tuning) raiders in the run's last stage (default realm-templates.ts RAIDERS) */
   raiders?: number;
@@ -172,7 +184,6 @@ export interface RunState {
   t0: number;
   spells: SpellId[];
   raid: number | null;
-  averted: boolean;
   fight: Realm['fight'];
   /** each land change's place in the player's words (a mutation's id → "the old dam") */
   where: [string, string][];
@@ -239,11 +250,11 @@ export class Realm {
   /** the season ledger: its holdings are the fact world's (one record) */
   private led: SeasonLedger;
   readonly spells: SpellId[] = [];
-  /** the attack due now (its size), once the arc's last stage lands */
+  /** the attack due now (its size), once the raiders' standing threat has run out: the raid card is forced while it is
+   *  set */
   raid: number | null = null;
-  /** the threat is over: fought, or paid off */
+  /** how the raid came out, once it is fought (the end screen's lines; it no longer ends the run) */
   fight: { raiders: number; left: number; fallen: number; held: boolean } | null = null;
-  averted = false;
   /** what happened this season, in the player's words (resolved, lapsed, the arc) */
   news: string[] = [];
   last: EngineReport;
@@ -271,7 +282,14 @@ export class Realm {
     if (!this.w.settlement(o.home)) throw new Error(`realm: no settlement ${o.home} in the world`);
     seedLocus(this.w, o.home, o.seed);
     this.w.diplomacy.idOf({ player: true });
+    // (the raiders as the base game's data, once a world: who they are, their camp on the road, and their stance —
+    // hostile. The standing threat of a run (`pay-raiders`) is dealt only while they are hostile and have somewhere to
+    // come from; a world that has lost them has no raid)
     if (!f.entity(RAIDERS_ID)) f.add({ id: RAIDERS_ID, kind: 'army', name: 'the raiders', cause: 'realm' });
+    if (!f.entity(RAIDERS_CAMP)) {
+      f.add({ id: RAIDERS_CAMP, kind: 'site', name: "the raiders' camp", at: { region: this.w.settlement(o.home)!.region }, attrs: { camp: RAIDERS_ID }, cause: 'realm' });
+      if (stanceOf(this.w, RAIDERS_ID, 'player') === 'none') setStance(this.w, RAIDERS_ID, 'player', 'hostile', 'realm');
+    }
     // (the home town's sites: named buildings and districts a card stands at — once a world)
     const region = this.w.settlement(o.home)!.region;
     for (const s of SITES) if (!f.entity(siteId(o.home, s.key))) f.add({ id: siteId(o.home, s.key), kind: 'site', name: s.name, at: { region, settlement: o.home }, attrs: { site: s.key, what: s.kind }, cause: 'realm' });
@@ -283,12 +301,14 @@ export class Realm {
       this.t0 = res.t0;
       this.spells.push(...res.spells);
       this.raid = res.raid;
-      this.averted = res.averted;
       this.fight = res.fight;
       for (const [k, v] of res.where ?? []) this.whereOf.set(k, v);
       this.partnersWere = res.partners ?? -1;
       this.ended = res.ended ?? null;
     } else {
+      // (draft 8: years pass between two runs of a world — the one step where the world moves on its own, never during
+      // a run: realm-between.ts)
+      if (f.events({ kind: 'run-began' }).length) this.betweenRuns([...BASE_BETWEEN, ...(o.extra?.between ?? [])]);
       // (a run's turn is its season; the history's turns run on across runs)
       const start = Math.max(f.turn, 0) + 1;
       f.turn = start;
@@ -313,14 +333,15 @@ export class Realm {
     const out = o.extra?.deckOut;
     const keep = (t: TemplateDef): boolean => !out || t.id === 'raid' || !(out.ids?.includes(t.id) || t.themes.some((x) => out.themes?.includes(x)));
     const templates: TemplateDef[] = [...CATALOG.map(projectTemplate).filter((t): t is TemplateDef => t !== null), ...world, ...(o.extra?.templates ?? [])].filter(keep);
-    // (the arc's turns are the history's: this run's seasons after the turn it began at)
-    const rel = raidArc(o.home, this.seasons, ...(o.raiders !== undefined ? [o.raiders] : []));
-    const arc = { ...rel, stages: rel.stages.map((s) => ({ ...s, turn: this.t0 + s.turn })) };
-    // (the arc's entity is the world's: a new run's arc starts from its first stage)
-    const old = f.entity(`arc:${arc.id}`);
-    if (old && !res) old.attrs.stage = -1;
+    // (the owner, 2026-11-16: no separate raid mechanism — the raid is a card. No arc is timed here: the raiders'
+    // standing threat is a template like any other, dealt while the world has hostile raiders. The dealer's one
+    // guarantee — a card that answers the run's threat — reads the raiders' themes while they threaten the town)
     const tune = o.tune ?? (() => ({ ...OPP_TUNE.dealer, reach: Number.MAX_VALUE, resourceMax: BOARD }));
-    this.engine = new LivingEngine(this.w, templates, arc, o.home, {
+    const realm = this;
+    this.engine = new LivingEngine(this.w, templates, undefined, o.home, {
+      get hooks() {
+        return realm.raidersThreaten() ? ['raiders', 'war'] : [];
+      },
       stage: this.stage(),
       // (laws: cards on offer at once, more or fewer)
       tune: () => {
@@ -331,8 +352,12 @@ export class Realm {
       economy: false,
       limitBoard: true,
       threatMax: 1,
-      // (round 7, LS-73: the board, the threat and the arc's card — five things asked at most, whatever the guarantee adds)
-      boardMax: BOARD + 2,
+      // (round 7, LS-73: the board, the threat and the arc's card — five things asked at most, whatever the guarantee adds.
+      // Loop round 10, merging card-table round 5: the raiders' standing card now stands at the town, not a site, so it
+      // keeps no site's card off the board, and the dealer's guarantee answers it (hook `raiders-threat`) — CT-52 (6):
+      // six. At five the cap cut the guaranteed answer (farms never dealt in table-live.test.ts) and changed which cards
+      // run 1 of home.test.ts took. Six until the owner rules (LS-105))
+      boardMax: BOARD + 3,
       rng: () => 0,
       liveNumbers: Object.keys(this.runNumbers()),
     });
@@ -358,7 +383,7 @@ export class Realm {
 
   /** the run as it stands, to save beside the world's snapshot (`RealmOptions.resume` takes it up) */
   runState(): RunState {
-    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, averted: this.averted, fight: this.fight, where: [...this.whereOf], engine: this.engine.state(), rules: this.rules.save(), seen: this.seen, partners: this.partnersWere, asked: [...this.asked], askedOn: [...this.askedOn], laws: structuredClone(this.active), lawSeq: this.lawSeq, ended: this.ended };
+    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, fight: this.fight, where: [...this.whereOf], engine: this.engine.state(), rules: this.rules.save(), seen: this.seen, partners: this.partnersWere, asked: [...this.asked], askedOn: [...this.askedOn], laws: structuredClone(this.active), lawSeq: this.lawSeq, ended: this.ended };
   }
 
   // ---- endings and the world's own tags (the owner: "Innovation does this where high tech can instantly win and lose
@@ -369,9 +394,10 @@ export class Realm {
   ended: { result: string; name: string; by: string } | null = null;
   /** End the run now (the first ending stands). Instant win and instant loss are both allowed. */
   endRun(result: string, name: string, by: string): void {
-    if (this.ended || this.fight) return;
+    if (this.ended) return;
     this.ended = { result, name, by };
-    this.w.facts.record({ kind: 'run-ended', by: ['player'], to: [this.home], note: `${name} (${by})` });
+    // (about.thing: the ending's word, for `met: "ending:<word>"`)
+    this.w.facts.record({ kind: 'run-ended', by: ['player'], to: [this.home], about: { thing: result }, note: `${name} (${by})` });
   }
   /** this run's number in its world (1 the first) */
   runNumber(): number {
@@ -470,9 +496,11 @@ export class Realm {
     const earlier = recordLaws.length ? recordOf(this.w).filter((e) => e.run < run) : [];
     // (ages: `results` — only when the card ended so: a world-ending left to run out, not one that was stopped)
     const fits = (x: { card: string; results?: string[] }, e: RecordEntry): boolean => e.card === x.card && (!x.results?.length || x.results.includes(e.result));
+    // (draft 8: a law ended between runs — `law_ends` — stands no more, unless the card is done again after that)
+    const ended = recordLaws.length ? this.w.facts.events({ kind: LAW_ENDED }) : [];
     const world = recordLaws.filter((x) => earlier.some((e) => fits(x, e))).map((x) => {
-      const e = earlier.find((y) => fits(x, y))!;
-      return { id: `record:${x.card}`, name: `"${e.title}" (run ${e.run})`, laws: x.laws };
+      const e = earlier.filter((y) => fits(x, y)).at(-1)!;
+      return { id: `record:${x.card}`, name: `"${e.title}" (run ${e.run})`, laws: x.laws.filter((l) => !ended.some((v) => v.about?.thing === l && v.turn >= e.turn)) };
     });
     const src = [...world, ...(this.o.extra?.lawThings?.() ?? [])];
     this.active = this.active.filter((a) => !('until' in a.source) || a.source.until >= this.w.turn);
@@ -638,8 +666,29 @@ export class Realm {
       },
       // (built card: the town has built it)
       built: { pred: (_c, a) => this.led.built.includes(String(a[0])) },
-      threatComing: { pred: () => !this.averted && !this.fight && this.raid === null },
-      threatNear: { pred: () => this.seasons - this.season < TRIBUTE_SEASONS },
+      // (the raiders as cards: they are hostile to you and have somewhere to come from — their camp, or a town they hold)
+      raidersThreaten: { pred: () => this.raidersThreaten() },
+      // (raidersAre stance: the raiders' stance with you is this one)
+      raidersAre: { pred: (_c, a) => !!this.w.facts.entity(RAIDERS_ID) && stanceOf(this.w, RAIDERS_ID, 'player') === a[0] },
+      // (their camp stands)
+      raidersCamp: { pred: () => this.campStands() },
+      // (raidersStance stance: the raiders' stance with you becomes this one — paid off: a truce)
+      raidersStance: { effect: (c, a) => void setStance(c.w, RAIDERS_ID, 'player', String(a[0]) as Stance, c.cause) },
+      // (doneThisRun template: a card of it was answered or ran out in this run — "once a run" for a base card)
+      doneThisRun: { pred: (_c, a) => this.engine.past.some((o) => o.template === a[0] && o.dealt > this.t0 && (o.status === 'resolved' || o.status === 'expired')) },
+      // (a countdown to the end of the season before the run's last: the raiders' standing threat lapses then, and the
+      // raid it brings is in the last season)
+      beforeLastSeason: { expiry: () => ({ turn: Math.max(this.w.turn, this.t0 + this.seasons - 1) }) },
+      // ---- (draft 8) the between-runs step's own words (realm-between.ts) ----
+      // (a sign stands on some town and was not set for good)
+      signsLinger: { pred: () => this.lingering().length > 0 },
+      fadeSigns: { effect: (c) => void (c.dry || this.lingering().forEach(([id, k]) => recordSign(c.w, k, id, false, c.cause))) },
+      // (some far town is still there — in any state but destroyed or abandoned: standing, sworn, taken, founded)
+      farStands: { pred: () => { const gone = new Set([...this.selectTowns('far:where:destroyed'), ...this.selectTowns('far:where:abandoned')]); return this.selectTowns('far:all').some((id) => !gone.has(id)); } },
+      // (a far town lies in ruins, destroyed or abandoned, and nothing has grown over it yet)
+      ruinsBare: { pred: () => [...this.selectTowns('far:where:destroyed'), ...this.selectTowns('far:where:abandoned')].some((id) => !this.w.facts.tag(id, 'condition', 'greened')?.value) },
+      // (signForGood kind selector: the sign on these towns does not fade between runs — an ending's mark on the world)
+      signForGood: { effect: (c, a) => void (String(a[1]) === 'town' ? [this.home] : this.selectTowns(String(a[1]))).forEach((id) => c.w.facts.setTag(id, 'condition', `${String(a[0])}${FOR_GOOD}`, true, c.cause)) },
       // (after share: the run is at least that far along — the smaller threats come one at a time, spread over the run)
       after: { pred: (_c, a) => this.season >= Math.max(1, Math.ceil(Number(a[0]) * this.seasons)) },
 
@@ -702,8 +751,8 @@ export class Realm {
         },
       },
       spell: { effect: (c, a) => void (c.dry || this.spells.includes(a[0] as SpellId) || this.spells.push(a[0] as SpellId)) },
-      raid: { effect: (c, a) => void (c.dry || this.averted || (this.raid = Number(a[0]))) },
-      avert: { effect: (c) => void (c.dry || (this.averted = true)) },
+      // (raid n?: the raid is due — n raiders, by default the run's own number; the raid card is forced while it is due)
+      raid: { effect: (c, a) => void (c.dry || (this.raid = a[0] !== undefined ? Number(a[0]) : (this.o.raiders ?? RAIDERS))) },
       // (mutateAt kind $site radius strength? spot?: the land round a site of the home town changed — or round a spot
       // out of it, when one is named: the mountain. The physical side of the event the template has just recorded)
       // (round 6: spot 'live' — where the live event the card played was when it ended, as the scene told)
@@ -888,7 +937,7 @@ export class Realm {
     }
     // (endings: a rule ends the run)
     if ('end_run' in fx) {
-      if (this.ended || this.fight) return false;
+      if (this.ended) return false;
       this.endRun(fx.end_run, fx.name ?? fx.end_run, `the rule "${rule.name}"`);
       return true;
     }
@@ -1239,7 +1288,9 @@ export class Realm {
     this.w.holdings = this.led.holdings;
     const before = this.engine.changes.length;
     const past = this.engine.past.length;
-    this.last = this.dealt(this.engine.advance());
+    // (the run's last season ends: commitments due resolve and cards run out, and nothing more is dealt)
+    const last = this.season >= this.seasons;
+    this.last = this.dealt(this.engine.advance(!last));
     this.sync();
     // (the record: the cards resolved or run out this season — a live card's is written when its event ends)
     for (const o of this.engine.past.slice(past)) {
@@ -1265,6 +1316,8 @@ export class Realm {
     const fewer = this.partnersWere >= 0 && standing < this.partnersWere && ps.length ? [`Fewer wagons come by the trade road: ${standing} of ${ps.length} towns on it still stand.`] : [];
     this.partnersWere = ps.length ? standing : -1;
     this.news = [...live.flatMap((r) => r.lines), ...told, ...arc, ...this.said.splice(0), ...hits.map((h) => `${h.text}.`), ...byLaw, ...fewer];
+    // (the run reached its end with nothing else ending it: a plain ending, in the record like any other)
+    if (last && !this.ended && !this.won()) this.endRun('stood', STOOD, 'the last season');
     return this.news;
   }
 
@@ -1273,6 +1326,8 @@ export class Realm {
     this.ledger = l;
     this.dealDue = false;
     this.refreshLaws();
+    // (a run that is over deals nothing more)
+    if (this.over) return this.sync();
     this.last = this.dealt(this.engine.redeal());
     this.sync();
   }
@@ -1292,15 +1347,58 @@ export class Realm {
     return rep;
   }
 
-  /** seasons until the raiders attack (0: this season); null: paid off, or fought */
-  threatIn(): number | null {
-    return this.averted || this.fight || this.ended ? null : Math.max(0, this.seasons - this.season);
+  /**
+   * The threat that stands longest on the board now, with its own countdown — the header's line ("Raiders on the road:
+   * 12 seasons left"). Any threat counts: the raiders' standing card, a pack's final threat; the one with the most
+   * seasons left is shown. Null: none stands.
+   */
+  standingThreat(): { id: string; template: string; title: string; left: number } | null {
+    const all = this.engine.offered.filter((o) => {
+      const t = this.engine.template(o.template);
+      return t.threat === true || !!t.expiry;
+    });
+    const o = all.sort((a, b) => this.left(b) - this.left(a) || (a.id < b.id ? -1 : 1))[0];
+    return o ? { id: o.id, template: o.template, title: o.opp.title, left: this.left(o) } : null;
   }
 
-  /** the run is over: the threat fought or paid off */
+  /** the raiders threaten the town: they are hostile to you and have somewhere to come from (their camp, or a town
+   *  they hold that stands) */
+  raidersThreaten(): boolean {
+    const f = this.w.facts;
+    if (!f.entity(RAIDERS_ID) || stanceOf(this.w, RAIDERS_ID, 'player') !== 'hostile') return false;
+    if (this.campStands()) return true;
+    return f.relations({ type: 'occupies', from: RAIDERS_ID }).some((r) => this.selectTowns('far:where:occupied').includes(r.to));
+  }
+  private campStands(): boolean {
+    const f = this.w.facts;
+    return !!f.entity(RAIDERS_CAMP) && !['abandoned', 'destroyed', 'burned'].some((k) => !!f.tag(RAIDERS_CAMP, 'condition', k)?.value);
+  }
+  /** the signs standing on the towns that were not set for good: [town, sign] */
+  private lingering(): [EntityId, (typeof SIGNS)[number]['kind']][] {
+    const f = this.w.facts;
+    return this.selectTowns('world').flatMap((id) => SIGNS.filter((s) => !!f.tag(id, 'condition', s.kind)?.value && !f.tag(id, 'condition', `${s.kind}${FOR_GOOD}`)?.value).map((s) => [id, s.kind] as [EntityId, (typeof SIGNS)[number]['kind']]));
+  }
+
+  /**
+   * (draft 8) Between runs: each entry whose conditions hold now is applied, in order, and written to the record as a
+   * `between-runs` event (its line the note). Called once, as a new run of a world begins — never during a run, never
+   * when a saved run is taken up again. Deterministic: the entries in order, the towns nearest first.
+   */
+  private betweenRuns(defs: readonly BetweenDef[]): void {
+    const stage = this.stage();
+    const b = { town: this.home };
+    for (const d of defs) {
+      const cause = `between:${d.id}`;
+      if (!d.when.every((p) => holds({ w: this.w, b, cause, stage }, p))) continue;
+      applyBatch(this.w, d.do, b, cause, undefined, { stage });
+      this.w.facts.record({ kind: BETWEEN, by: [], to: [this.home], about: { thing: d.id }, note: d.say });
+    }
+  }
+
+  /** the run is over: its last season has ended, or an effect, a rule or a law ended it */
   get over(): boolean {
     // (laws: a run won by an achievement is over too)
-    return this.fight !== null || (this.averted && this.season >= this.seasons) || this.ended !== null || this.won() !== null;
+    return this.season > this.seasons || this.ended !== null || this.won() !== null;
   }
 
   // ---- the record -----------------------------------------------------------------------------------------------------

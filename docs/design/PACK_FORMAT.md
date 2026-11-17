@@ -1,4 +1,17 @@
-# Opportunity pack format (draft 7, 2026-11-16: templates and factions)
+# Opportunity pack format (draft 8, 2026-11-16: the raid as a card, homes, unlocks, between runs)
+
+**Changed since draft 7.** (1) **The raid is a card** (see "The raiders and the end of a run"): no arc is timed when
+a run begins. The raiders are the base game's faction (`"raiders"`); their standing threat "Raiders on the road" is
+dealt while they are hostile and have somewhere to come from, counts down to the last season and, left to run out,
+brings the raid. A world with no raiders has no raid. A pack brings its own final threat the same way: a `threat`
+card with a long `offer_seasons` and an `end_run` or a ruin in `if_expires`. (2) **A run ends** when its last season
+ends (16) or by `end_run`; reaching the end is the ending "The town stands". (3) **A leader can start in a far town**:
+a leader's `home` (see "Leaders and ages"). (4) **Unlocks** (see "Unlocks"): `{ "unlock": "<id>" }` opens locked
+content — a card, a leader, or the pack — for this run and every later run of the world; `"locked": true` and
+`"hint"` on cards, leaders and the `pack` block; the condition `{ "met": ... }`. (5) **Between runs** (see "Between
+runs"): a top-level `between_runs` list — what moves in the world while nobody plays — and its effect `law_ends`.
+(6) A sign can be set `"for_good": true`; every other sign fades between runs. (7) The base event `farm-burned` is gone;
+`raiders-march` is new. (8) A forced live card (a raid, refugees) begins whatever card stands at its place.
 
 **Write templates about kinds of places, not places.** The owner: "The dealer can always generate cards from
 parameterized templates to fit the actual world." A card may name variables in `bind` instead of fixed places: "a far
@@ -86,8 +99,9 @@ of being invented inline. The validator rejects invented fields.
 
 ## The game in five lines (for the author)
 
-- A run is 16 seasons in one town. The attack comes in the last, so there are 15 seasons of choices. Each season the
-  player sees 3 to 5 opportunities, each presented by a named person at a place in the town, and takes a few.
+- A run is 16 seasons in one town (a leader may start in a far town). It ends when the last season ends, or at once by
+  an ending. The raiders, while they threaten, are a card counting down to an attack in the last season. Each season
+  the player sees 3 to 6 opportunities, each presented by a named person at a place in the town, and takes a few.
 - Six pools: `magic`, `might`, `labor`, `materials`, `intel`, `unrest`. Unrest is bad: each point keeps one free
   worker away. Labor and Might are people: a cost LOCKS them while the card is built, then they come back. Materials,
   Magic and Intel are goods: a cost SPENDS them. Each Might is 3 soldiers.
@@ -115,6 +129,7 @@ of being invented inline. The validator rejects invented fields.
   "laws":      [ ... ],
   "factions":  [ ... ],
   "leaders":   [ ... ],
+  "between_runs": [ ... ],
   "wants":     [ "plain-word requests for effects, tags or looks the vocabularies lack" ]
 }
 ```
@@ -201,7 +216,70 @@ Who the player is in the next run depends on the world. A pack may declare `lead
 - **An ending for good**: an `if_expires` (or result) that burns the town's sites, puts `ashfall` on `"world"`,
   `far_all` destroys every far town and `end_run` ends the run; its `laws_after` stand in every later run.
   `"laws_after_if": ["lapsed"]` (results or `lapsed`): only when the card ended so — the world burns only if nobody
-  stopped it. Example: `packs/ages.json`.
+  stopped it. Put the ash on the world `"for_good": true`, or it fades before the next run. Example: `packs/ages.json`.
+- **(draft 8) A home of their own**: `"home": { "far": { "state": [...], "tags": ["yours"], "not": [...], "holder":
+  "player" } }` (the words of a card's far variable). The run is played FROM the nearest far town that fits; the leader
+  is offered only while one does. That town is home: its own 20 sites (the same names as any town's), its own things
+  and ruins. The old home becomes a far town (yours, if nobody else holds it); what a town built is kept on it for a
+  run that comes back. Examples: frontier's Steward Hal Brook (`"tags": ["yours"]`), Captain Merrow (the Reavers'
+  haven), ages' Speaker Oru (the Star City).
+- **(draft 8)** `"locked": true` and `"hint"`: offered only once unlocked (see "Unlocks"). A leader's `appears_when`
+  may use `met`.
+
+## The raiders and the end of a run (draft 8)
+
+The owner: "We should not have a separate raid mechanism it should be a card." The raiders are the base game's
+faction: a pack names them `"raiders"` in `by`, `far_all` and `met`. They start hostile, with a camp on the road.
+While they are hostile and their camp stands (or they hold a far town), the base card "Raiders on the road" is dealt
+from a fifth of the run on, over the whole town (it keeps no site busy). Its countdown runs to the end of the season
+before the last; paid (15 Materials) the raiders keep a truce for the run; left, they march, and the raid (the live
+event) begins in the last season. The run then goes on to its end. Between runs the truce lapses, and raiders leave a
+world with no far town standing. The header shows the standing threat's own countdown: the threat on the board with
+the most seasons left.
+
+**A pack's own final threat**: a `"threat": true` card with a long `offer_seasons` whose `if_expires` ends the run or
+ruins the town (it waits its turn in the one-threat slot like any threat). Nothing else ends a run early: factions act
+only through cards (taken or left to run out).
+
+## Unlocks (draft 8)
+
+The owner: "a meta progression from encountering or exploring to unlock new content for the next run." No store of its
+own: an unlock is a line in the world's record.
+
+- `{ "unlock": "<id>" }` in any effect list: an ability of the pack (this run only, as before), or locked content of
+  the pack — a card's id, a leader's id, or `"pack:<pack id>"` — open from now on in this world, this run included.
+  The card that did it is kept with the line.
+- `"locked": true` on a card, a leader or the `pack` block: never dealt or offered until unlocked. `"hint"`: one plain
+  line the player reads in "Not yet found" ("Find out where the black sails come from."). The validator says to LOOK
+  at locked content nothing unlocks, and at locked content with no hint.
+- `{ "met": "frontier-reavers" }` (a faction named in the record, `"raiders"` too), `{ "met": "place:frontier-redscar" }`
+  (a place found or founded), `{ "met": "ending:won" }` (a run of this world ended so: `won`, `fell`, `stood`, or a
+  pack's own word, or the start of an ending's name). In cards' and leaders' `appears_when`.
+- Shown: at a run's end, "New for later runs" (what, and from which card); at a run's start, "The world now": "Earlier
+  runs opened: …" and "Not yet found: <hints>" (and how many have no hint).
+- Examples: frontier (meeting the Reavers opens Captain Merrow and the Reaver pilot; scouting opens the old survey
+  maps), ages (each age's ending opens the next age's leader and cards), glitter (the glass ending opens the salvage).
+
+## Between runs (draft 8)
+
+The owner: "At least during the run it being gamified is good. Between runs is another lever for balance." During a
+run only cards change the world. When a new run of a world begins, years have passed: one step applies the base
+game's entries (the raiders' truce lapses; raiders leave a world with no far town; signs not set `for_good` fade;
+ruined far towns grow over), then each pack's:
+
+```json
+"between_runs": [
+  { "id": "league-grows", "when": [ { "faction_holds": "frontier-league", "gte": 2 } ],
+    "do": [ { "far": "vassal", "where": "far:nearest:1", "by": "frontier-league" } ],
+    "say": "The Tollmark League bought the nearest free town. It swears to the League now." } ]
+```
+
+- `when`: conditions on the world and the record (no season, pool or leader: there is no run). `do`: the world's
+  words only — `far`, `far_all`, `mutate`, `sign`, `stance`, `trade`, `unlock`, and `{ "law_ends": "<law id>" }` (a law
+  a card's `laws_after` left stops standing). `say`: the line the next run reads, "While you were gone: …".
+- It runs once, in order (the base game's first), the same way every time. Each entry that applies is a line in the
+  record. Use it for balance: a faction that ended strong takes a town; a colony with no support is abandoned; a
+  runaway law ends.
 
 ## Far towns as things (draft 7)
 
@@ -358,6 +436,7 @@ want them said twice. Any number you do write in `say` or `pitch` must be a numb
 - `{ "leader": "ysolt" }`: the run's leader. Ids: `ysolt` (soldier), `dunstan` (builder), `ilveth` (tower keeper).
 - (draft 7) `{ "faction_holds": "frontier-reavers", "gte": 1 }`, `{ "faction_stance": "frontier-reavers", "is":
   ["truce"] }`, and `"about": "$town"` on `resolved` (see "Templates" and "Factions").
+- (draft 8) `{ "met": "frontier-reavers" }`, `"place:<id>"`, `"ending:<word>"` (see "Unlocks").
 - Not supported yet: `{ "sign": ... }`. Use `resolved` of the card that set the sign.
 
 **Effects** (`if_taken`, `if_expires`, `if_tier`; in order):
@@ -381,7 +460,8 @@ want them said twice. Any number you do write in `say` or `pitch` must be a numb
 - `{ "trade": "far:nearest:2" }` (`"end": true` to end it): those towns trade with the home town.
 - `{ "arrive": "refugees", "count": 40, "from": "far:neighbour" }`: people walk in by road. Only refugees, only
   from the neighbour, always 40.
-- `{ "unlock": "ability-id" }`: an ability of this pack, or `heat-ray`.
+- `{ "unlock": "ability-id" }`: an ability of this pack, or `heat-ray`. (Draft 8) Or locked content: see "Unlocks".
+- (Draft 8) `"for_good": true` on a `sign` (no `seasons`): it does not fade between runs.
 - `{ "law": "law-id" }`: a law of this pack comes into force for the rest of the run; `"seasons": 2`: for the rest
   of this season and 2 more. See "laws".
 - `{ "say": "One plain sentence the player reads." }`: at least one per branch.
@@ -408,7 +488,7 @@ the player is told `why`.
   - `"pack-done:<card-id>"`: a card of a loaded pack was taken and is done. `"pack-lapsed:<card-id>"`: it ran out.
   - a land change to a SITE by any card, base or pack: `burned`, `flooded`, `melted`, `buried`, `dried`, `withered`,
     `greened`.
-  - the base game's events: `built`, `made-safe`, `scouts-seen`, `farm-burned`, `tribute-paid`, `raid-held`,
+  - the base game's events: `built`, `made-safe`, `scouts-seen`, `raiders-march`, `tribute-paid`, `raid-held`,
     `raid-broke`, `raid-missed`, `lens-lit`, `camp-opened`, `camp-held`, `camp-lost`, `relieved`, `fell`,
     `refugees-arrived`, `refugees-housed`, `refugees-resettled`, `refugees-turned-away`, `dead-burned`, `dead-loose`,
     `parade-held`, `parade-thin`, `fire-fought`, `sellswords-hired`, `spell-cast`, `ability-cast`.
@@ -633,8 +713,8 @@ The base game's building cards have the theme `build`):
 - `{ "next_law": "run" }`: the next law to come into force lasts the rest of the run, whatever its source; then
   this law is used up.
 
-**Not built yet** (put them in `wants`): a law that changes the run's length or the raid's season (the arc is timed
-when the run begins); the number of threats at once; a law that outlives the run.
+**Not built yet** (put them in `wants`): a law that changes the run's length (fixed when the run begins); the number
+of threats at once. A law outlives the run only through a card's `laws_after`, and `law_ends` between runs ends it.
 
 ## Endings and the record
 

@@ -248,7 +248,7 @@ describe('the run\'s rules and live events on the realm', () => {
     const b = realm(built('farms'));
     b.w.facts.setTag(siteId(b.home, 'fields'), 'condition', 'burned', true, 'test');
     b.cast('growth', 'fields');
-    // (card-table: a ruined thing also carries remains-of-<what it was>, for the record across runs)
+    // (the record, CT-39: a ruin keeps what it was as remains)
     expect(b.things().find((t) => t.id === siteId(b.home, 'fields'))!.tags).toEqual(['ruined', 'burned', 'remains-of-field']);
     expect(b.endSeason().join(' ')).not.toContain('growth rune');
   });
@@ -273,7 +273,8 @@ describe('the run\'s rules and live events on the realm', () => {
     const b = two.playForced().find((x) => x.template === RAID)!;
     expect(b).toMatchObject({ tier: 'success', vars: { left: 0 } });
     expect(two.fight?.held).toBe(true);
-    expect(two.over).toBe(true);
+    // (draft 8: the raid is a card — the run is over when its last season ends, not when the raid does)
+    expect(two.over).toBe(false);
     expect(total(two.ledger, 'might')).toBe(might);
     expect(two.history().some((e) => e.kind === 'raid-held')).toBe(true);
   });

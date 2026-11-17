@@ -58,14 +58,14 @@ const seasons = (n: number): string => (n === 1 ? '1 season' : `${n} seasons`);
 /** the countdown on a card over the map */
 export const leftText = (left: number): string => (left <= 1 ? 'last season' : `${seasons(left)} left`);
 
-/** the raiders' countdown on the top bar */
-export function threatText(n: number | null, averted: boolean): string {
-  if (averted) return 'The raiders were paid off.';
-  if (n === null) return '';
-  return n === 0 ? 'The raiders attack this season.' : n === 1 ? 'The raiders attack next season.' : `The raiders attack in ${seasons(n)}.`;
+/** the standing threat's countdown on the top bar (Realm.standingThreat: the threat card on the board with the most
+ *  seasons left — the raiders' "Raiders on the road", or a pack's final threat): its own title and its own countdown */
+export function threatText(t: { title: string; left: number } | null): string {
+  if (!t) return '';
+  return `${t.title}: ${t.left <= 1 ? 'last season to answer it' : `${seasons(t.left)} left`}.`;
 }
-/** the raiders' marker over the road gate */
-export const threatTag = (n: number): string => (n <= 1 ? 'Raiders: next season' : `Raiders: ${seasons(n)}`);
+/** the standing threat's marker over the road */
+export const threatTag = (title: string, n: number): string => `${title}: ${n <= 1 ? 'last season' : seasons(n)}`;
 
 /** what a card costs, in the pools' words: "Lock 2 Labor for 2 seasons. Spend 3 Materials." */
 export function costText(locks: Partial<Pools>, costs: Partial<Pools>, turns: number): string {

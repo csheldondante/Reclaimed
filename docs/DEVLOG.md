@@ -25378,3 +25378,113 @@ and a burn with it):
   not vertices, so the vertex load is AG14's phone bench to decide. One run of four hung the GPU at the town's making
   ("the GPU never finished: 2 frames in flight … 71.6 s"); not reproduced on the retry (LS-103).
 - *Gates still open:* AG13/CG24 (roofs above the claims), AG14 (phone vertices), LS-100. **Not the default.**
+
+## 2026-11-16 — The raid is a card; between runs (`card-table`, CT-51, CT-54)
+
+**Why.** The owner: "We should not have a separate raid mechanism it should be a card … I would not have factions
+act outside of cards as it controls the pacing and keeps one gamified mutator", then "At least during the run it being
+gamified is good. Between runs is another lever for balance." The Realm timed a raid arc when a run began (scouts at a
+quarter, a farm burned at a half, the raid in the last season, the run over when it was fought or paid). It came in an
+ash world with every far town gone (CT-50).
+
+**What.** No arc. The raiders are the base game's data, seeded once a world (`raiders`, their camp, hostile). Their
+standing threat `pay-raiders` ("Raiders on the road") is a template like any other: dealt while they are hostile and
+have somewhere to come from, at the town itself (not a site, so it keeps no site's card off the board), counting down
+to the end of the season before the last; paid, a truce; left, the forced `raid` card in the last season (the live
+event, `finishLive`, forced play: unchanged). A run ends when its last season ends (`RUN_SEASONS`) or by `end_run`; the
+end with nothing else is "The town stands" (`stood`) in the record; the raid's result is a line of the end screen. The
+header is the standing threat's own countdown. Between two runs one deterministic step (`realm-between.ts`) applies
+data: the truce lapses, raiders leave a world with no far town, signs fade unless `for_good`, ruins grow over; each a
+`between-runs` record line shown as "While you were gone: …".
+
+**Measured** (`node scripts/tablebots.mjs`, 33 runs, before → after): held / paid / fell the same for every policy
+(idle 0/0/3, walls and might 3/0/0, economy and tribute 0/3/0 …); cards on the board a season up 0.7–1.0 (the standing
+card), buildings up 0.3–3.0 (a run that pays plays to its end). The dealer's guarantee of a card that answers the
+raiders is kept by giving the standing card the hook `raiders-threat` (it is the threat, not an answer): with
+`raiders` the farms card never came up for Dunstan in 16 seasons (`table-live.test.ts`); with the new hook it comes in
+season 10.
+
+**Tests changed** (intent kept): `realm.test.ts` (the arc test → the standing card counts down, the raid is forced,
+the run ends at its last season; the deal test counts the town-wide card apart; the pay-off test reads the truce; a new
+test: no raiders, no raid), `realm-bots.test.ts` (paid = the tribute card done; the tribute bot saves; the engine bot
+is "everything"), `realm-resume.test.ts` (`standingThreat` for `averted`), `table.test.ts` and `table-live.test.ts`
+(every season is played; the raid's lines are in the end), `live-rules.test.ts` (the raid holds and the run goes on;
+two stale expectations of remains tags fixed), `packs-together.test.ts` (no arc's events: `farm-burned` is gone,
+`raiders-march` is new). New: `between.test.ts` (every world change in a frontier run has a card as its cause; the
+step is deterministic, never during a run or on resume; signs fade).
+
+## 2026-11-16 — A run played from a far town (`card-table`, CT-53, CT-56)
+
+**Why.** The owner: "Leaders should be able to start in far cities." The Realm already took the home as a parameter;
+the table hard-wired Briar Hollow.
+
+**What.** A pack leader's `home` names a far town by what it is, in a card's far-variable words; the nearest that fits
+is home for the run (`Table.home`, `Realm.home`). Simplest honest version: the same 20 sites, re-labelled per town
+(`site:<town>:<key>`, made the first time a run is played there); each town keeps its own things (a pack thing belongs
+to the town it was put in) and its ruins; the old home becomes a far town (yours, unless someone else holds it), with
+a `home-moved` record line. The ledger is one town's: a town's buildings are kept on it as `built:<card>` tags when a
+run there ends, so a run that comes back finds them. Every remaining one-city assumption is listed in CT-56 for the
+loop track. `packs/frontier.json` adds Steward Hal Brook (home: a far town that is yours).
+
+**Test** (`home.test.ts`): run 1 swears Millbrook to you (the base relief card, then the frontier envoy keeps it from
+the League); the steward is offered only then; run 2 is played from Millbrook with its own sites; the sea charter stays
+Briar Hollow's; Briar Hollow's quarry is written on it and Millbrook starts with nothing built; Briar Hollow is a far
+town (`far-town`, `standing`, `yours`) in "Far places" and "The world now"; the record keeps run 1's cards at Briar
+Hollow by name; a run-2 card was bound to Briar Hollow as a far place.
+
+## 2026-11-16 — Unlocks from meeting and exploring; packs use between runs (`card-table`, CT-57, CT-58)
+
+**Why.** The owner: "it would be cool to have a meta progression from encountering or exploring to unlock new content
+for the next run." Standing rule: the world's memory is the record — no new store.
+
+**What.** `{ "unlock": "<id>" }` writes one `unlocked` line in the record (the id; the card that did it is the line's
+cause, read back through the card's own record event). Locked content — a card, a leader, a whole pack (`pack:<id>`)
+— is gated by `packOpen` and offered by `Table.leaders` only once a run of the world has unlocked it (this run counts).
+`met` reads the record: a faction named in it, a place found, an ending reached. The end screen lists "New for later
+runs"; "The world now" lists what earlier runs opened and the hints of what is still to find. The packs use it:
+frontier (the Reavers met → Captain Merrow, who plays from Gull Cove, and the Reaver pilot; ore or timber found → the
+old survey maps, which mark both places in a later run without scouting), ages (each age's ending opens the next age's
+leader and cards; the Star City's speaker now plays FROM the Star City), glitter (the glass ending opens the saddle
+salvage). Packs' `between_runs`: frontier's League buys the nearest free town when it holds two; colonies with no
+ships and a hostile League are abandoned; the Sea League's tithe ends once you hold two towns or fewer.
+
+**Defect found by the bots, fixed:** with the three packs, 3 of 36 runs ended with no raid at all: a pack card standing
+at the gate kept the forced raid card off the board (one card a place). A forced live card now ignores one-card-a-place
+(`LivingEngine.deal`). After: 0 of 36.
+
+**Measured** (`tablebots --pack frontier,ages,glitter`, 36 runs): 1.6 unlocks a run, 17 of 36 runs unlocked something
+(old maps, wizards, corsair, pilot 14 runs each; the saddle salvage 3, in the runs the glitter spire burned); no bot
+unlocked the ash chief, the hunt, the falling star or the speaker (they need the wizards' working left to run out and a
+later run: the bots play one run each); nothing locked is unreachable by the packs' own effects.
+
+## 2026-11-16 — TUNING frontier 2 (pure data in `packs/frontier.json`, revert this commit to undo)
+
+**Why.** The pirate road almost never ran: the toll was always paid, so the harbour raid and the Reavers' cove were
+never dealt; "buy the harvest" was the only way to win a town by trade.
+
+**What.** The toll is cheaper now (2 Materials) but carries a thing, "The Reavers' toll", with an upkeep of 1 Materials
+a season: paying is a lasting cost, refusing a fight that pays loot. Betraying the Reavers to the League pays 1
+Materials a season on top of the 6. Buying a harvest also costs Unrest +1 (the town's own bread dearer); its rival,
+"Open your market to {town}" (the weaver, 1 Materials and 1 Intel: +1 Materials a season, Unrest -1, the town stays
+free and can no longer be bought up), binds the same towns.
+
+**Measured** (`tablebots --pack packs/frontier.json`, 36 runs, before → after; runs on a board / taken): buy the
+harvest 22/14 → 21/13; the new free market 33/14; the toll 5/5 → 5/5; harbour raid 0/0 → 0/0; burn the cove 0/0 →
+0/0. **The pirate road is unchanged in the bots:** every policy takes any card it can pay for, so a lasting upkeep or
+a better fight never makes a bot refuse. Whether refusing is now tempting is a judgement for a player (or a bot that
+weighs upkeep: not built). The harvest now has a rival taken as often as it is.
+
+## 2026-11-16 — PACK_FORMAT draft 8; the run-start screens looked at (`card-table`)
+
+**Draft 8** writes up CT-51..CT-58 for an outside author: "Changed since draft 7", "The raiders and the end of a run",
+"Unlocks", "Between runs", a leader's `home`, `for_good`, `met`, `raiders-march`.
+
+**Screens** (phone size 412x915, headless; run 2 of a frontier world after a scripted run 1: `scripts/shot.mjs --dev
+--url "/table.html?seed=7&leader=ysolt&seasons=16&pack=/packs/frontier.json"`). "The world now" reads in order: the
+run and leader, how run 1 ended, what happened while nobody played, the far places, what earlier runs opened, what is
+still to find. Two defects it showed, fixed here: (1) "No far town was left to rob. The raiders broke camp" appeared in
+a world of three far towns — `far:nearest:1` names only towns nobody holds, and every town was sworn or held; the
+condition is now "no far town stands in any state but destroyed or abandoned" (`farStands`), with a test; (2) "Earlier
+runs opened" doubled its full stops. "Far places" reads, but its "Lately" list repeats "In an earlier run:" on every
+line, and a place line reads "a new camp. held by the Gull Reavers." (a lower-case word after a full stop, from
+`farLine`: older than this round).

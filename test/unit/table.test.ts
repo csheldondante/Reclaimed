@@ -29,13 +29,16 @@ describe('the card table plays a run on the Realm', () => {
     expect(t.working().some((x) => x.id === c.id)).toBe(true);
   });
 
-  it('a whole run ends: the threat comes in the last season and the run is over', () => {
+  it('a whole run ends: the raiders\' card is fought or paid, and the run is over when its last season ends', () => {
     const t = new Table(OPTS);
     greedy(t);
     expect(t.over).toBe(true);
-    expect(t.realm.fight !== null || t.realm.averted).toBe(true);
-    // (paid off, the run ends as the last season begins; fought, the last season is played with the raid on the table)
-    expect(t.curve.length).toBe(t.realm.averted ? OPTS.seasons - 1 : OPTS.seasons);
+    const paid = t.realm.history().some((e) => e.kind === 'tribute-paid');
+    expect(t.realm.fight !== null || paid).toBe(true);
+    // (the raid is a card: paid or fought, every season of the run is played, and the end says how it went)
+    expect(t.curve.length).toBe(OPTS.seasons);
+    expect(t.realm.ended?.result).toBe('stood');
+    expect(t.result?.title).toContain('The town stands');
     expect(t.story().length).toBeGreaterThan(0);
   });
 
