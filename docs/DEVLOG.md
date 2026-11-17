@@ -26124,3 +26124,49 @@ few districts. Riders are drawn 1.6× (`routes.wgsl FIG`): at the closer zoom (7
 idle with the riders: 0.78 ms (the count model sees dispatches, not threads: more riders do not show — LS-150).
 Colours by layer not done (LS-151).
 
+## 2026-11-17 — loop round 17: colours by layer, mounts, the quiet world by the owner's rule (`loop-skeleton`)
+
+The owner's answers (DECISIONS 2026-11-17, round 17). Stills `local/round17/` (412x915, q=low).
+
+**Colours by layer** (`src/render/palette.ts`, the one table). The town was pastel boxes on pale paving, brighter than
+the people on it. Figures now draw from paints of their own — material bytes 224+, past the material table, so every
+figure path (the living town's riders, the units' kinds and models) writes them as it wrote materials; `fsBody`
+colours them from FIG_PAINT and lights them ×1.15 plus 0.3 of their albedo, so they stay the brightest thing in shade.
+Folk a warm cloth each (saffron, orange, rose, violet by the person), soldiers steel, foes red (raiders, shamblers, the
+foes' side colour — nothing else uses it), named people and the messenger cyan, carts and wagons a bright bed, ships a
+hull and white sail. The town's walls 0xf3eee6 → 0xbdb3a3, roofs muted earths and slates, parks darker, the road tones
+and the paving material 0.76 0.72 0.64 → 0.58 0.55 0.49 (`TOWN`, generated into citygen's module). Before/after, the
+same view: `local/round16/after-close-1.png` / `local/round17/after-close-1.png` (zoom 7: figures ~8-10 px, colours
+read against darker roofs). At the town framing (zoom 2.5) figures stay 2-3 px (as round 16 measured with FIG 1.6) —
+under the 4 px asked; the size factor not pushed further.
+
+**No messenger for nothing new**: a season with no news and no new ask sends nobody; the asks stay on the map.
+
+**Mounts** (`messenger.ts Mount`): a far place's news on a horse (the agents' unused default kind 2 is now the rider: a
+composed voxel horse with the rider in the mark, 0.375-cell voxels, pace 6), trade news or a trade card's petitioner by
+the units' cart, by ship ashore at the quay when a harbour is built (no ship unit: the units cannot sail; the town's
+ships moor at the same quay). The playmodes branch's horse is a CPU-posed hero rig (`draw/rigpose.ts`), not a unit
+model — not reused. The messenger's ring is now 46 px and hollow: the 20 px tinted ring hid the figure
+(`mount-horse-2.png`: the horse and rider seen inside it). Found: **the messenger does not walk** — state `walk`, its
+goal held, the same position at 1.8 s and 3.6 s (foot, horse, cart; `shots5.log`); open (LS-149).
+
+**Quiet world by the rule** ("wake and run during events triggered by cards or player actions but not in the
+background"). Card effects and live events: a raid, the dead, a parade (units: not gated); a fire event or a lava front
+(LiveRunner.hot: fire, structure, fire particles while it runs); fronts' end and other mid-season mutators (now:
+structure 15 s — was asleep till the next time-lapse); weather from a card (its storms keep their own). Player
+actions: Fire spell (Ignite: now held while it burns where it was lit — a look at the fire field round each lit point
+every 3 s, a few KB; was 90 s); Rain (the weather's own storm); Growth rune (ecology, wilt, moisture, plant particles
+20 s); Heat ray, shield, red mist, veil (units and fx only). Next season: everything, while the time-lapse plays.
+Census idle (`scripts/census.mjs --params loop=1 --pick dunstan --states idle`): 0.777 → 0.619 ms est. phone; read
+back 1.49 → 1.47 KB a frame; `living` 1 dispatch 0.17 ms this run (round 16: 2, 0.33 — LS-150 not explained: no
+change to that path; a run-to-run difference).
+
+**Cutaway** (LS-152 ii): `startRunLoop` builds `scene.storyCut`; the loop's story camera takes the dither only — with
+the slice the hills round the town were cut to dark sections at the town framing (seen in a run, removed). A followed
+point is kept seen; `fsBody` cuts the town's meshes too. Not yet seen with a building in front of a speaker.
+
+**Construction clip** (LS-152 i) behind `?rise=1`, not seen in a still: buildings going up at full height, clipped in
+the draw at their progress through the roads' reveal code, walls ragged a course at a time, the reveal's dirt as the
+fresh edge, a rafters' deck before the roof. The headless run could not frame a rising district (the season camera
+left it); off until seen.
+

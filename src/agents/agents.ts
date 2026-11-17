@@ -15,6 +15,7 @@ import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import unitsWgsl from '../shaders/units.wgsl?raw';
+import { figureWgsl } from '../render/palette';
 import townplaceWgsl from '../shaders/townplace.wgsl?raw';
 import ordersWgsl from '../shaders/orders.wgsl?raw';
 import routereadWgsl from '../shaders/routeread.wgsl?raw';
@@ -877,7 +878,8 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
     // (the measurement toggles' constants: ?frontcap, ?blockrelax, ?relaxk — and the field bench's variants, made at
     // its start: partsFor)
     if (!unitsWgsl.includes('const ORDER_GROUPS: u32 = 8u;')) throw new Error('agents: ORDER_GROUPS not found in units.wgsl');
-    const unitsSrc = unitsWgsl.replace('const ORDER_GROUPS: u32 = 8u;', `const ORDER_GROUPS: u32 = ${this.orderGroups}u;`).replace('const JFA_LOS: u32 = 0u;', `const JFA_LOS: u32 = ${JFA_LOS_BISECT ? 1 : 0}u;`).replace('const AIM_TICK_S: f32 = 1.0 / 60.0;', `const AIM_TICK_S: f32 = ${TICK_DT};`);
+    // (loop round 17: the figures' paints, render/palette.ts, in front)
+    const unitsSrc = figureWgsl() + unitsWgsl.replace('const ORDER_GROUPS: u32 = 8u;', `const ORDER_GROUPS: u32 = ${this.orderGroups}u;`).replace('const JFA_LOS: u32 = 0u;', `const JFA_LOS: u32 = ${JFA_LOS_BISECT ? 1 : 0}u;`).replace('const AIM_TICK_S: f32 = 1.0 / 60.0;', `const AIM_TICK_S: f32 = ${TICK_DT};`);
     if (!unitsWgsl.includes('const AIM_TICK_S: f32 = 1.0 / 60.0;')) throw new Error('agents: AIM_TICK_S not found in units.wgsl');
     if (!unitsWgsl.includes('const JFA_LOS: u32 = 0u;')) throw new Error('agents: JFA_LOS not found in units.wgsl');
     if (!fieldseamWgsl.includes('const SEED_LIST: u32 = 16384u;')) throw new Error('agents: SEED_LIST not found in fieldseam.wgsl');

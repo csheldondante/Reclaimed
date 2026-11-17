@@ -29,6 +29,7 @@ import type { GroupId } from '../api/contracts/inhabitants';
 import { ORDER_ALTS, ORDER_COLOURS, ORDER_GROUP_BASE, type Agents, type OrderPlace, type AgentEvent, type AgentState, type HuntCandidate, type OrderRecord, type Target } from '../agents/agents';
 import type { PickAsk } from '../agents/pick';
 import { MAT } from '../world/materials';
+import { FIG } from '../render/palette';
 import { timed } from '../gpu/cpustat';
 import { OrderFields } from '../agents/fieldseam';
 import { ACTOR, BERSERK_SIDE, NO_FACTION, type CombatSpec } from '../agents/notice';
@@ -57,7 +58,8 @@ export const R4 = { toSmith: 16, toBarracks: 17, toPost: 18, cart0: 19 } as cons
  *  bound to their raiser until the game orders them (the play hero's: follow it) */
 export const RAISED_GROUP = G.stand;
 /** agents' kinds (0 worker, 1 raider, 2 ogre are the defaults the others use) */
-const K = { worker: 0, soldier: 1, guard: 3, character: 4, raider: 5, shambler: 6, cart: 7 } as const;
+// (loop round 17: 2 — the agents' default ogre, unused by any game — is the rider on a horse)
+const K = { worker: 0, soldier: 1, rider: 2, guard: 3, character: 4, raider: 5, shambler: 6, cart: 7 } as const;
 
 /**
  * (round 128l, m4) A cart's look: a wooden bed on four dark wheels with a driver's seat at the front (voxels of 0.25 cells
@@ -67,11 +69,37 @@ function cartModel(): [number, number, number, number][] {
   const v: [number, number, number, number][] = [];
   for (let x = -4; x <= 3; x++)
     for (let y = -2; y <= 2; y++) {
-      v.push([x, y, 2, MAT.Wood]);
-      if (x === -4 || x === 3 || y === -2 || y === 2) v.push([x, y, 3, MAT.Wood]);
+      v.push([x, y, 2, FIG.CART]);
+      if (x === -4 || x === 3 || y === -2 || y === 2) v.push([x, y, 3, FIG.CART]);
     }
-  for (const [x, y] of [[-3, -3], [-3, 3], [2, -3], [2, 3]]) for (const z of [0, 1, 2]) v.push([x, y, z, MAT.Basalt]);
-  for (let z = 3; z <= 5; z++) v.push([4, 0, z, MAT.Flower]);
+  for (const [x, y] of [[-3, -3], [-3, 3], [2, -3], [2, 3]]) for (const z of [0, 1, 2]) v.push([x, y, z, FIG.DARK]);
+  // (loop round 17: the carter in the figure paints — a cloth, a head; a canvas load behind)
+  for (let z = 3; z <= 5; z++) v.push([4, 0, z, FIG.CLOTH1]);
+  v.push([4, 0, 6, FIG.SKIN]);
+  for (let x = -3; x <= 1; x++) for (let y = -1; y <= 1; y++) v.push([x, y, 3, FIG.LOAD]);
+  return v;
+}
+/**
+ * (loop round 17; the owner 2026-11-17: "Horses and carts would be really cool") A rider on a horse: a horse's body on
+ * four legs with its neck and head forward, a dark mane and tail, the rider astride in the messenger's mark with a
+ * head. Voxels of 0.25 cells round its feet, x forward — the same scale and build as the cart and the raider.
+ */
+function riderModel(): [number, number, number, number][] {
+  const v: [number, number, number, number][] = [];
+  // legs
+  for (const [x, y] of [[-2, -1], [-2, 1], [2, -1], [2, 1]]) for (const z of [0, 1, 2]) v.push([x, y, z, FIG.HORSE]);
+  // body
+  for (let x = -3; x <= 3; x++) for (let y = -1; y <= 1; y++) for (const z of [3, 4]) v.push([x, y, z, FIG.HORSE]);
+  // neck and head forward
+  for (const [x, z] of [[4, 5], [4, 6], [5, 6], [5, 7]]) v.push([x, 0, z, FIG.HORSE]);
+  v.push([6, 0, 7, FIG.HORSE]);
+  // mane, tail
+  for (const [x, z] of [[3, 5], [4, 7]]) v.push([x, 0, z, FIG.DARK]);
+  for (const z of [3, 4]) v.push([-4, 0, z, FIG.DARK]);
+  // the rider astride: legs either side, body, head
+  for (const y of [-2, 2]) v.push([0, y, 4, FIG.DARK]);
+  for (let z = 5; z <= 7; z++) for (const x of [-1, 0]) v.push([x, 0, z, FIG.MARK]);
+  v.push([0, 0, 8, FIG.SKIN]);
   return v;
 }
 /**
@@ -81,11 +109,12 @@ function cartModel(): [number, number, number, number][] {
  */
 function raiderModel(): [number, number, number, number][] {
   const v: [number, number, number, number][] = [];
-  for (const y of [-1, 1]) for (let z = 0; z <= 2; z++) v.push([0, y, z, MAT.Basalt]);
-  for (let x = -1; x <= 0; x++) for (let y = -1; y <= 1; y++) for (let z = 3; z <= 5; z++) v.push([x, y, z, MAT.Tile]);
+  // (loop round 17, LS-151: the foes' red is the figure paint FOE, used by nothing else — was the roofs' tile)
+  for (const y of [-1, 1]) for (let z = 0; z <= 2; z++) v.push([0, y, z, FIG.DARK]);
+  for (let x = -1; x <= 0; x++) for (let y = -1; y <= 1; y++) for (let z = 3; z <= 5; z++) v.push([x, y, z, FIG.FOE]);
   for (const [x, y] of [[-1, 0], [0, 0], [-1, -1], [0, -1]]) for (const z of [6, 7]) v.push([x, y, z, MAT.Obsidian]);
   // the torch arm: up on the right, a stick, the flame
-  for (const z of [4, 5]) v.push([1, 2, z, MAT.Tile]);
+  for (const z of [4, 5]) v.push([1, 2, z, FIG.FOE]);
   for (const z of [6, 7, 8]) v.push([1, 2, z, MAT.Log]);
   for (const z of [9, 10]) v.push([1, 2, z, MAT.Lava]);
   return v;
@@ -111,7 +140,7 @@ const POST_SPACING = 3;
 /** (loop round 9, LS-95) the agents groups place groups are drawn in by side (past the order groups' 8 colours), and
  *  their torsos: foes, soldiers and guards, folk */
 const SIDE_GROUP_BASE = ORDER_GROUP_BASE + ORDER_COLOURS;
-const SIDE_MATS = [MAT.Tile, MAT.Steel, MAT.Flower] as const;
+const SIDE_MATS = [FIG.FOE, FIG.STEEL, FIG.CLOTH0] as const;
 /** (round 6b) a man order's run fields: one a wall run (orders.wgsl RUNS), as many as are free */
 const MAN_FIELDS = 8;
 
@@ -292,14 +321,18 @@ export class AgentUnits implements Units {
     // (DA-B32: every kind that may fight back has a blow of its own on the GPU — MELEE; the hostile kinds' damage in GPU
     // hp, a contract health point a blow, as the CPU's swing turned into a hit was)
     // (round 6, Track A's ask: a soldier's pace 3.2 — a kind of its own, the slot the agents' default raider had)
-    agents.defineKind(K.soldier, { name: 'soldier', height: 1.45, mass: 1.2, hp: 10, speed: 3.2, ...MELEE, colours: { torso: MAT.Steel, head: MAT.Steel } });
-    agents.defineKind(K.guard, { name: 'guard', height: 1.45, mass: 1.2, hp: 10, speed: 2.7, ...MELEE, colours: { torso: MAT.Steel, head: MAT.Steel } });
-    agents.defineKind(K.character, { name: 'character', height: 1.4, mass: 1, hp: 10, speed: 2.5, ...MELEE, colours: { torso: MAT.Brick, legs: MAT.Wood } });
-    agents.defineKind(K.raider, { name: 'raider', height: 1.6, mass: 1, hp: 10, speed: 3.4, reach: 1.35, damage: HPK, swingPeriod: 1.1, notice: 160, colours: { torso: MAT.Tile, legs: MAT.Basalt, head: MAT.Obsidian }, model: { voxels: raiderModel(), voxel: 0.25 } });
-    agents.defineKind(K.shambler, { name: 'shambler', height: 1.4, mass: 1, hp: 10, speed: 1.5, reach: 1.1, damage: HPK, swingPeriod: 1.6, notice: 50, colours: { torso: MAT.Grass, legs: MAT.Ash, head: MAT.Bone } });
+    // (loop round 17, LS-151: every kind in the figure paints, render/palette.ts — soldiers and guards steel, foes red,
+    // named people (the messenger, a petitioner) the mark, the folk a warm cloth each)
+    agents.defineKind(K.soldier, { name: 'soldier', height: 1.45, mass: 1.2, hp: 10, speed: 3.2, ...MELEE, colours: { torso: FIG.STEEL, head: FIG.STEEL, legs: FIG.DARK } });
+    agents.defineKind(K.guard, { name: 'guard', height: 1.45, mass: 1.2, hp: 10, speed: 2.7, ...MELEE, colours: { torso: FIG.STEEL, head: FIG.STEEL, legs: FIG.DARK } });
+    agents.defineKind(K.character, { name: 'character', height: 1.4, mass: 1, hp: 10, speed: 2.5, ...MELEE, colours: { torso: FIG.MARK, legs: FIG.DARK, head: FIG.SKIN } });
+    agents.defineKind(K.raider, { name: 'raider', height: 1.6, mass: 1, hp: 10, speed: 3.4, reach: 1.35, damage: HPK, swingPeriod: 1.1, notice: 160, colours: { torso: FIG.FOE, legs: FIG.DARK, head: MAT.Obsidian }, model: { voxels: raiderModel(), voxel: 0.25 } });
+    agents.defineKind(K.shambler, { name: 'shambler', height: 1.4, mass: 1, hp: 10, speed: 1.5, reach: 1.1, damage: HPK, swingPeriod: 1.6, notice: 50, colours: { torso: FIG.FOE, legs: MAT.Ash, head: MAT.Bone } });
     // (round 88: people a third of a storey tall, in a yellow tunic — at the phone's half resolution a 1-cell figure
     // in canvas was lost against plaster and grass)
-    agents.defineKind(K.worker, { name: 'worker', height: 1.4, mass: 1, hp: 10, speed: 2.4, ...MELEE, colours: { torso: MAT.Flower, legs: MAT.Wood, head: MAT.Sand } });
+    agents.defineKind(K.worker, { name: 'worker', height: 1.4, mass: 1, hp: 10, speed: 2.4, ...MELEE, colours: { torso: FIG.CLOTH0, legs: FIG.DARK, head: FIG.SKIN } });
+    // (loop round 17) a rider from a far place: a horse's pace, its own model
+    agents.defineKind(K.rider, { name: 'rider', height: 1.6, mass: 3, hp: 10, speed: 6, ...MELEE, model: { voxels: riderModel(), voxel: 0.375 } });
     // (round 128l, m4) the fortress's carts: slower than a walker, heavier, a load of CART_LOAD
     // (loop round 14, LS-108: "I would let any units brawl" — every kind has a blow; a cart's carter a weak one)
     agents.defineKind(K.cart, { name: 'cart', height: 1.2, mass: 4, hp: 20, speed: 1.7, reach: 1.35, damage: HPK * 0.5, swingPeriod: 1.6, model: { voxels: cartModel(), voxel: 0.25 } });
@@ -892,6 +925,7 @@ export class AgentUnits implements Units {
     if (u.v.role === 'soldier') return K.soldier;
     if (u.v.role === 'guard') return K.guard;
     if (u.v.role === 'cart') return K.cart;
+    if (u.v.role === 'rider') return K.rider;
     if (u.v.name || u.v.character) return K.character;
     return K.worker;
   }

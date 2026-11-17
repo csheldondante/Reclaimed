@@ -172,7 +172,14 @@ fn fsBody(in: VOut) -> FOut {
   let word = in.info.x;
   let mat = word & 0xffu;
   // (CG25: a town road growing in — nothing ahead of the growth: its time here, vsSkin's tint, past the town's clock)
-  let revAge = MESH_XF.w - in.tint;
+  var revAge = MESH_XF.w - in.tint;
+  // (loop round 17, LS-152 i: a building going up — citygen streets.wgsl riseCode — its walls' clip ragged a course
+  // (0.45 high, blocks 0.7 long, a course's joints half a block on) at a time: a wall face, a colour word, revealed)
+  if (in.tint > -1e29 && (in.info.y & 0xffu) == 1u && abs(in.nrm.z) < 0.5) {
+    let cz = floor(in.wpos.z / 0.45);
+    let cx = floor((in.wpos.x + in.wpos.y) / 0.7 + cz * 0.5);
+    revAge -= randv(vec3<i32>(i32(cx), i32(cz), 41)) * 0.9;
+  }
   if (revAge < 0.0) { discard; }
   // (loop round 11: a faint voxel — a hidden unit of the player's — shows through every other pixel)
   if ((in.info.y & GHOST_INFO) != 0u && bayer4(in.pos.xy) < 0.55) { discard; }
@@ -184,6 +191,13 @@ fn fsBody(in: VOut) -> FOut {
   // (round 117, inhabitants.wgsl meshIt: a creature's vertex carries its own colour — vsSkin's info.y 1)
   // (CG25: vsSkin passes only the surface byte; masked here too, so a reader never compares the whole word)
   if ((in.info.y & 0xffu) == 1u) { alb = toLinear(vec3<f32>(f32((word >> 16u) & 255u), f32((word >> 8u) & 255u), f32(word & 255u)) / 255.0) * (0.94 + 0.12 * r); }
+  // (loop round 17, LS-151: a figure's paint — render/palette.ts: a material byte past the table, its own colour, lit
+  // brighter than the town round it below)
+  let figure = (in.info.y & 0xffu) == 0u && mat >= FIG_BASE && mat < FIG_BASE + FIG_N && (word >> 31u) == 0u;
+  if (figure) { alb = toLinear(FIG_PAINT[mat - FIG_BASE]) * (0.95 + 0.1 * r); }
+  // (loop round 17, LS-152 ii: the story camera's cutaway reaches the town's meshes and bodies — a building in front of
+  // a site or a speaker held in view is dithered away as the terrain is (fs-box.wgsl); never a figure, never a creature)
+  if (!figure && (in.info.y & 0xffu) != 1u && cutAway(in.wpos, in.pos.xy)) { discard; }
   // (archgen: a town mesh's ground — dirt, cobbles, grass — textured where it lies)
   // (the flag word's low byte is the surface; citygen packs its own data above it — Track A, roadgrow)
   let gsurf = in.info.y & 0xffu;
@@ -217,6 +231,7 @@ fn fsBody(in: VOut) -> FOut {
   // (CG25: laid as dirt first, the road's own surface coming through after REV_DIRT_S)
   if (in.tint > -1e29) { alb = mix(toLinear(REV_DIRT), alb, smoothstep(0.4 * REV_DIRT_S, REV_DIRT_S, revAge)); }
   var col = ashDust(alb, in.wpos, nrm) * lighting(in.wpos, nrm);
+  if (figure) { col = col * FIG_GAIN + alb * FIG_LIFT; }
   if (physV) {
     // heat (bits 16..23, a share of its melting point): dull red, orange, then white
     let heat = f32((word >> 16u) & 0xffu) / 255.0;

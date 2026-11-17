@@ -16,6 +16,7 @@ import heightWgsl from './height.wgsl?raw';
 import rawHeightWgsl from './rawheight.wgsl?raw';
 import streetsWgsl from './streets.wgsl?raw';
 import roadpathWgsl from '../shaders/roadpath.wgsl?raw';
+import { TOWN, townWgsl } from '../render/palette';
 import { makeBindGroup, makeCompute, makeLayout, makeModule, type ComputeKernel } from '../gpu/pipeline';
 import { ROW_H } from '../world/lattice';
 
@@ -153,7 +154,9 @@ export type Box = [number, number, number, number];
 
 /** (M4b) the roads' colours by tone (rgb 0–1): dirt and stone, a little lighter than the ground's (world/materials.ts
  *  soil 0.45 0.36 0.27, stone 0.4 0.39 0.37) — the sun lights them as it lights the ground */
-const ROAD_TONES: Record<number, [number, number, number]> = { 1: [0.62, 0.53, 0.42], 2: [0.6, 0.58, 0.54], 3: [0.76, 0.72, 0.64] };
+// (loop round 17, LS-151: the town's tones are render/palette.ts TOWN — were 1 [0.62, 0.53, 0.42], 2 [0.6, 0.58, 0.54],
+// 3 [0.76, 0.72, 0.64]: the pale paving was brighter than the townsfolk on it)
+const ROAD_TONES = TOWN.roadTones;
 
 /** (M4b) the town's own inputs to its population field: its peak density (by its size; 0 the field off — the lab's
  *  default: 0.5 everywhere) and its purpose (POP_PURPOSE; −1 none) */
@@ -475,7 +478,10 @@ export class CityGen {
     device.queue.writeBuffer(this.args, 0, new Uint32Array([0, 1, 0, 0]));
     this.dummies = [1, 2, 3, 4, 5, 6, 7, 8].map((k) => buf(`dummy ${k}`, 16));
     this.layout = makeLayout(device, 'citygen', { 0: 'uniform', 1: 'read', 2: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' }, GPUShaderStage.COMPUTE);
-    const module = makeModule(device, 'citygen', [streetsWgsl, roadpathWgsl]);
+    // (loop round 17, LS-152 i: ?rise=1 the construction clip — streets.wgsl riseCode; not yet seen in a still, so off)
+    const rise = typeof location !== 'undefined' && new URLSearchParams(location.search).get('rise') === '1';
+    if (!streetsWgsl.includes('const RISE_CLIP: bool = false;')) throw new Error('citygen: RISE_CLIP not found in streets.wgsl');
+    const module = makeModule(device, 'citygen', [townWgsl(), streetsWgsl.replace('const RISE_CLIP: bool = false;', `const RISE_CLIP: bool = ${rise};`), roadpathWgsl]);
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     this.pipes = Object.fromEntries(KERNELS.map((k) => [k, device.createComputePipeline({ label: `citygen ${k}`, layout: pl, compute: { module, entryPoint: k } })])) as Record<Kernel, GPUComputePipeline>;
     if (gs.kind === 'window' && gs.box[1] % 2) throw new Error(`citygen: the box's first row (${gs.box[1]}) must be even`);

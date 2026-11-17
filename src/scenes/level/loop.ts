@@ -7,6 +7,8 @@
 // templates season/realm-templates.ts, the pools the season ledger, the building and the fight the season loop and its
 // war, the screens season/run-ui.ts, the dialog dialog/petition.ts. `window.rungame` for scripts.
 import type { WorldSnapshot } from '../../api/contracts/world';
+import { Dither, Slice } from '../../api/cutaway';
+import { worldApiOf } from './world-api';
 import type { FieldTowns } from '../../citygen/towns';
 import { DialogBox, type Speaker } from '../../dialog/dialog';
 import { actOf, petitionTree } from '../../dialog/petition';
@@ -41,14 +43,17 @@ import type { LeaderView } from '../../season/run-ui';
 import type { Leader } from '../../season/realm';
 import type { PackLeader } from '../../packs/check';
 import { startThings } from '../../packs/load';
-import { siteId } from '../../season/realm-templates';
+import { cardOfTemplate, siteId } from '../../season/realm-templates';
 import { combosOf } from '../../season/combos';
 import * as TW from '../../table/words';
 import { packRoadShapes, type RoadRaster, type RoadShape } from '../../agents/roads';
 import * as W from '../../season/run-words';
 import { StoryCamera, type V3 } from '../../story/camera';
 import { FIRE_WAKE, GROW_WAKE, QuietWorld } from '../../sim/quiet';
-import { Messenger, type Speech } from './messenger';
+import { Messenger, type Mount, type Speech } from './messenger';
+
+/** (loop round 17) the cards whose news is trade's: it comes by cart, or by ship with a harbour (realm-templates KIND) */
+const TRADE_CARDS = new Set(['market', 'trade', 'harbour']);
 import type { LevelScene } from '../level';
 import { startSeasonLoop, storeReady } from './season';
 import { seasonWeather } from '../../weather/presets';
@@ -97,6 +102,12 @@ const FIRE = { radius: 4.5, damage: 12, light: 3 };
 const GROWTH = { reach: 60, radius: 11, strength: 45 };
 /** (loop round 16) seconds the growth rune keeps the succession and the growing glow awake */
 const GROWTH_WAKE_S = 20;
+/** (loop round 17) cells round a lit point the quiet world looks for fire in (a cast's fire spreads that far and more
+ *  only over a minute or two; a look every few seconds follows it while any of it burns) */
+const FIRE_LOOK = 24;
+/** (loop round 17) seconds the structure pass is woken after a mid-season change to the land (its loose material
+ *  falls within it — no GPU count of moving cells to hold it by) */
+const MUTATED_S = 15;
 /** (round 8) half the width of an arterial stamped for the units' fields (cells; tunable) */
 const ROAD_HALF = 2;
 
@@ -145,13 +156,29 @@ class Game implements RunGame {
     q.update();
   }
 
+  /** (loop round 17, sim/quiet.ts BurningNear) anything alight within FIRE_LOOK cells of these points: the fire field's
+   *  pages there read (a few KB, every few seconds while a fire is held), then looked at every other column */
+  private async burningNear(at: readonly (readonly [number, number])[]): Promise<boolean> {
+    const fire = worldApiOf(this.scene).fire;
+    if (!fire) throw new Error('loop: no fire API to watch a fire with');
+    const pts: [number, number][] = [];
+    for (const [x, y] of at) for (let dy = -FIRE_LOOK; dy <= FIRE_LOOK; dy += 16) for (let dx = -FIRE_LOOK; dx <= FIRE_LOOK; dx += 16) pts.push([x + dx, y + dy]);
+    await fire.loadFire(pts);
+    for (const [x, y] of at)
+      for (let dy = -FIRE_LOOK; dy <= FIRE_LOOK; dy += 2)
+        for (let dx = -FIRE_LOOK; dx <= FIRE_LOOK; dx += 2) if ((fire.fireAt(x + dx, y + dy) ?? 0) > 0.02) return true;
+    return false;
+  }
+
   constructor(
     private scene: LevelScene,
     private towns: FieldTowns,
     private season: SeasonLoop,
     private mut: MutateEngine | null,
   ) {
-    this.cam = new StoryCamera(scene.core.camera, scene.storyCut ?? {});
+    // (loop round 17: the dither only — the slice, cutting the land over a held point it takes for "under a roof", cut
+    // the hills round the town to dark sections at the town's framing: local/round17/shots2's after-town)
+    this.cam = new StoryCamera(scene.core.camera, scene.storyCut ? { dither: scene.storyCut.dither } : {});
     scene.cardsOnly = true;
     // (a shot's points are window coordinates: they slide with the window)
     scene.core.onShift.push((dx, dy, dz) => this.cam.shift(dx, dy, dz));
@@ -167,8 +194,19 @@ class Game implements RunGame {
       check: () => true,
     });
     // (loop round 16, sim/quiet.ts: the world asleep in play but for what wakes it; `?quiet=0` as before)
-    this.quiet = scene.host.params.get('quiet') === '0' ? null : new QuietWorld(scene.core.sim);
+    this.quiet = scene.host.params.get('quiet') === '0' ? null : new QuietWorld(scene.core.sim, (at) => this.burningNear(at));
     if (this.quiet && scene.weatherSet) scene.weatherSet.quiet = true;
+    // (loop round 17: the watched fires' points slide with the land; a change to the land mid-season (a front's end, a
+    // card's mutator) wakes the structure pass so what it left loose falls now, not at the next time-lapse — LS-147)
+    if (this.quiet) {
+      const q = this.quiet;
+      scene.core.onShift.push((dx, dy) => q.shift(dx, dy));
+      mutators.applied.push((spec) => {
+        if (this.phase === 'season' && this.season.playing) return;
+        q.wake('mutated', { systems: ['structure'] }, MUTATED_S);
+        console.log(`[quiet] ${spec.kind}: the structure woken ${MUTATED_S} s`);
+      });
+    }
     this.live = new LiveRunner({ scene, cam: this.cam, season, realm: () => this.realm, town: () => this.town, spot: (k) => this.spot(k), z: (x, y) => this.z(x, y), changed: () => this.changed(), ended: (run) => this.liveEnded(run) });
     // (round 7, LS-63: the runner's window points move with the land)
     scene.core.onShift.push((dx, dy, dz) => this.live.shift(dx, dy, dz));
@@ -962,7 +1000,7 @@ class Game implements RunGame {
    * window point), else the first — to the keep (or the market, or the town's middle), the camera after them, and says
    * the lines. Then the camera goes back over the town.
    */
-  private async announce(speech: Speech, from: [number, number] | null, to?: [number, number] | null): Promise<void> {
+  private async announce(speech: Speech, from: [number, number] | null, to?: [number, number] | null, how: Mount = 'foot'): Promise<void> {
     const t = this.town;
     if (!t) return;
     const c = t.centreInWindow();
@@ -971,8 +1009,11 @@ class Game implements RunGame {
     // 16's first stills had the steward on a bridge across the river, still walking at 6 s)
     const k = this.roadToward(from ?? dest);
     const road = t.roadCount ? t.roadInWindow(k) : [];
+    // (loop round 17: by ship only where the town has a harbour built — to its quay; else by cart on the road)
+    const quay = how === 'ship' && this.realm?.ledger.built.includes('harbour') ? this.spot('harbour') : null;
+    if (how === 'ship' && !quay) how = 'cart';
     this.changed();
-    await this.messenger.bring(speech, road.length >= 2 ? road : null, dest);
+    await this.messenger.bring(speech, road.length >= 2 ? road : null, dest, how, quay);
     this.changed();
     if (this.phase === 'city') this.showTown();
   }
@@ -998,7 +1039,7 @@ class Game implements RunGame {
   /**
    * (loop round 16) After a season: what it brought, in person. With news, the chronicler brings it and names the new
    * asks; with only new asks, the first one's petitioner comes in to where they stand (one bound to a far place by the
-   * road facing it, the scout captain's road); with neither, the chronicler says it was quiet.
+   * road facing it, the scout captain's road); with neither, nobody comes (loop round 17).
    */
   private seasonNews(before: Set<string>): void {
     const r = this.realm;
@@ -1006,8 +1047,14 @@ class Game implements RunGame {
     const fresh = r.offers().filter((o) => o.status === 'offered' && !before.has(o.id));
     const asks = fresh.map((o) => W.newAsk(r.w.name(o.presenter), o.opp.title));
     const far = fresh.map((o) => (r.siteOf(o) ? null : this.offerPlace(o))).find((p) => p !== null) ?? null;
+    // (loop round 17: how they come — a far place's news on a horse; trade's by cart, or by ship to the quay with a
+    // harbour built; the leader's own people on foot)
+    const harbour = r.ledger.built.includes('harbour');
+    const trade = (o: Offer) => TRADE_CARDS.has(cardOfTemplate(o.template) ?? '');
+    const byTrade: Mount = harbour ? 'ship' : 'cart';
     if (this.notes.length) {
-      void this.announce({ ...(far ? W.ADVISORS.scout : W.ADVISORS.chronicler), lines: [...this.notes, ...asks] }, far);
+      const how: Mount = far ? 'horse' : fresh.some(trade) ? byTrade : 'foot';
+      void this.announce({ ...(far ? W.ADVISORS.scout : W.ADVISORS.chronicler), lines: [...this.notes, ...asks] }, far, null, how);
       return;
     }
     const o = fresh[0];
@@ -1015,10 +1062,13 @@ class Game implements RunGame {
       const site = r.siteOf(o);
       const place = site ? null : this.offerPlace(o);
       const { speaker } = petitionOf(r.engine, o.id);
-      void this.announce({ name: speaker.name, role: speaker.role, lines: [W.comeToAsk(o.opp.title), ...asks.slice(1)] }, place, site ? this.spot(site) : null);
+      const how: Mount = place ? 'horse' : trade(o) ? byTrade : 'foot';
+      void this.announce({ name: speaker.name, role: speaker.role, lines: [W.comeToAsk(o.opp.title), ...asks.slice(1)] }, place, site ? this.spot(site) : null, how);
       return;
     }
-    void this.announce({ ...W.ADVISORS.chronicler, lines: [W.QUIET_SEASON] }, null);
+    // (loop round 17; the owner 2026-11-17: "I would just leave them visible on the map" — nothing new, nobody comes: the
+    // asks stay on the map)
+    console.log('[loop] a quiet season: no news, no new ask — no messenger');
   }
 
   /**
@@ -1594,6 +1644,10 @@ export function startRunLoop(scene: LevelScene, towns: FieldTowns, mut: MutateEn
     },
     ready: () => void game!.load(),
   });
+  // (loop round 17, LS-152 ii: the story camera's cutaway — what hides the site or the speaker it holds or follows is
+  // dithered, as the hero runs' story does (runs.ts startStory); the loop's story camera takes the dither only (Game))
+  const t = worldApiOf(scene).terrain;
+  if (t && !scene.storyCut) scene.storyCut = { dither: new Dither(t, scene.core.camera), slice: new Slice(t, scene.core.camera) };
   game = new Game(scene, towns, season, mut);
   scene.seasonUi = mountRunUi(scene.host.ui, game);
   (globalThis as { rungame?: Game }).rungame = game;

@@ -3997,3 +3997,18 @@ and what is still the owner's to decide: who decides a fight, every rule's numbe
   and brightness so certain layers reserve some colors and are more visible and increasing the number of towns people
   will make a huge difference I think." → more townspeople and trade (season/life.ts), figures drawn 1.6× (the
   riders' FIG); colours by layer left for a look with the owner (LS-151).
+
+## 2026-11-17 — loop round 17: the owner's answers (`loop-skeleton`)
+
+- Reserved colours for figures and a calmer town palette: "I think a quick pass makes sense" → one table
+  (`src/render/palette.ts`): the town's walls, roofs, parks and paving calmer and darker; figures in paints of their own
+  (warm cloths a person, steel soldiers, red foes only, the mark for the messenger and named people), lifted in shade.
+- A season with nothing new: "I would just leave them visible on the map" → no messenger when there is no news and no
+  new ask; the asks stay on the map.
+- Mounts for riders from far places: "Horses and carts would be really cool. (Ships too)." → a rider from a far place
+  on a horse, trade news by cart, by ship to the quay where the town has a harbour.
+- The quiet world: "I think we want systems to still wake and run during events triggered by cards or player actions
+  but not in the background or passively." → each card effect, live event and player action wakes what it needs while
+  it runs (a fire held while it burns, not 90 s; a mid-season change to the land wakes the structure pass).
+- Earlier, restated: "tuning colors and brightness so certain layers reserve some colors and are more visible and
+  increasing the number of towns people will make a huge difference".

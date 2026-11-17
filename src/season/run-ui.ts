@@ -127,6 +127,7 @@ const CSS = `
 .run-marks button.folk:not(.side){width:20px;height:20px;padding:0;border-radius:50%;background:rgba(255,200,60,.25);border:3px solid #ffc83c;transform:translate(-50%,-62%);pointer-events:none;box-shadow:0 0 0 1px #000}
 .run-marks button.side{pointer-events:none;font-size:12px;padding:3px 8px;border-radius:10px;background:#e2573f;color:#fff;transform:translate(-50%,-260%)}
 .run-marks button.side.ours{background:#2f7fd6;transform:translate(-50%,90%)}
+.run-marks button.folk.wide:not(.side){width:46px;height:46px;background:transparent;transform:translate(-50%,-58%)}
 .run-marks button.side.folk{background:#ffc83c;color:#221}
 .run-marks button.change{background:#3b3340;color:#f0d9ff;border-color:#c9a2ff;border-radius:4px;font-weight:600;font-size:12px}
 .run-sheet{position:absolute;left:0;right:0;bottom:0;z-index:30;background:rgba(22,24,28,.94);color:#f2efe8;font:14px system-ui,sans-serif;border-radius:14px 14px 0 0;padding:10px 12px calc(12px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:7px;max-height:60vh;overflow-y:auto}
@@ -403,6 +404,8 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
         b.classList.toggle('ours', m.id === 'ours');
         b.classList.toggle('folk', m.id.startsWith('folk'));
       }
+      // (loop round 17: the messenger's ring wide and hollow — the 20 px tinted one hid the figure and its horse or cart)
+      b.classList.toggle('wide', m.id === 'folk-messenger');
       b.style.left = `${m.x.toFixed(1)}px`;
       b.style.top = `${m.y.toFixed(1)}px`;
     }

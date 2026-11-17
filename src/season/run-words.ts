@@ -49,7 +49,6 @@ export const ADVISORS = {
 export const newAsk = (who: string, title: string): string => `${who} is asking for you: ${title}.`;
 /** a petitioner's own words when they come in */
 export const comeToAsk = (title: string): string => `${title}. Tap my name over the town to hear me out.`;
-export const QUIET_SEASON = 'A quiet season. Nothing new to tell.';
 /** (loop round 16) what a card combines with, in its petition's "You get" */
 export const comboWith = (thing: string, what: string): string => `With your ${thing.replace(/^the /i, '')}: ${what}.`;
 export const comboAlone = (what: string): string => `Sets off ${what}.`;

@@ -193,8 +193,11 @@ export class StoryCamera {
     }
     if (!this.busy && this.idlers.length) for (const f of this.idlers.splice(0)) f();
     const { dither, slice } = this.cut;
-    const f = this.focus;
+    // (loop round 17, LS-152: a point followed — the messenger walking in — is kept seen as a held one is)
+    const f = this.focus ?? (!this.busy && this.following ? this.following() : null);
     if (f) {
+      // (a followed point's slice is let back up once the follow ends)
+      if (!this.focus) this.lifting = !!slice;
       dither?.see(StoryCamera.SEEN, f[0], f[1], f[2]);
       slice?.update(f[0], f[1], f[2], dt);
     } else {

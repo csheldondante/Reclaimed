@@ -1614,16 +1614,13 @@ const M_BASALT: u32 = 23u;
 const M_LOG: u32 = 29u;
 const M_FLESH: u32 = 33u;
 const M_SAND: u32 = 3u;
-fn torsoOf(j: u32) -> u32 {
-  switch j {
-    case 0u: { return M_CANVAS; }
-    case 1u: { return M_FLOWER; }
-    case 2u: { return M_RUST; }
-    case 3u: { return M_STEEL; }
-    case 4u: { return M_LEAVES; }
-    case 5u: { return M_WOOD; }
-    default: { return M_BRICK; }
-  }
+/** (loop round 17, LS-151: a townsperson's cloth is their own — one of the figure paints' warm cloths by who they are,
+ *  render/palette.ts; was one material a job: canvas, flower, rust, steel, leaves, wood, brick, the town's own colours) */
+fn torsoOf(i: u32) -> u32 { return FP_CLOTH0 + (pcgR(i * 7u + 3u) % CLOTHS); }
+fn pcgR(v: u32) -> u32 {
+  let s = v * 747796405u + 2891336453u;
+  let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+  return (w >> 22u) ^ w;
 }
 @compute @workgroup_size(1)
 fn figuresClear() {
@@ -1668,17 +1665,17 @@ fn figures(@builtin(global_invocation_id) g: vec3<u32>) {
   let sw = select(0.0, sin(r.phase * 4.0) * 0.14, moving);
   // (working: a bob, a swing)
   let bob = select(0.0, abs(sin(u.t.y * 6.0 + f32(i))) * 0.12, r.st == S_WORK);
-  fig(wp, vec3<f32>(fw * sw + sd * 0.11, 0.19), M_BASALT, 6u, h);
-  fig(wp, vec3<f32>(-fw * sw - sd * 0.11, 0.19), M_BASALT, 6u, h);
-  fig(wp, vec3<f32>(0.0, 0.0, 0.66 - bob * 0.5), torsoOf(r.job), 9u, h);
-  fig(wp, vec3<f32>(fw * bob, 1.13 - bob), M_FLESH, 6u, h);
+  fig(wp, vec3<f32>(fw * sw + sd * 0.11, 0.19), FP_DARK, 6u, h);
+  fig(wp, vec3<f32>(-fw * sw - sd * 0.11, 0.19), FP_DARK, 6u, h);
+  fig(wp, vec3<f32>(0.0, 0.0, 0.66 - bob * 0.5), torsoOf(i), 9u, h);
+  fig(wp, vec3<f32>(fw * bob, 1.13 - bob), FP_SKIN, 6u, h);
   let cartJob = r.job == J_STONE || r.job == J_LOGS || r.job == J_WAGON;
   if (cartJob) {
-    // (a cart pushed ahead: its bed, and the load on it)
-    fig(wp, vec3<f32>(fw * 0.9, 0.35), M_WOOD, 10u, h);
-    fig(wp, vec3<f32>(fw * 1.45, 0.35), M_WOOD, 10u, h);
+    // (a cart pushed ahead: its bed, and the load on it — loop round 17: the bed and a wagon's canvas figure paints)
+    fig(wp, vec3<f32>(fw * 0.9, 0.35), FP_CART, 10u, h);
+    fig(wp, vec3<f32>(fw * 1.45, 0.35), FP_CART, 10u, h);
     if (r.load > 0.0) {
-      let lm = select(select(M_LOG, M_RUBBLE, r.job == J_STONE), M_CANVAS, r.job == J_WAGON);
+      let lm = select(select(M_LOG, M_RUBBLE, r.job == J_STONE), FP_LOAD, r.job == J_WAGON);
       fig(wp, vec3<f32>(fw * 0.9, 0.8), lm, 9u, h);
       fig(wp, vec3<f32>(fw * 1.45, 0.8), lm, 9u, h);
     }
@@ -1931,11 +1928,11 @@ fn shipVox(wp: vec3<f32>, h: f32, i: u32) {
   // a square sail across it)
   for (var k = 0; k < 5; k++) {
     let a = f32(k - 2) * 1.8;
-    vox(wp + vec3<f32>(fw * a, 0.0), M_WOOD, select(30u, 22u, k == 0 || k == 4), h);
+    vox(wp + vec3<f32>(fw * a, 0.0), FP_HULL, select(30u, 22u, k == 0 || k == 4), h);
   }
-  vox(wp + vec3<f32>(-fw * 2.6, 1.4), M_WOOD, 18u, h);
-  for (var k = 0; k < 4; k++) { vox(wp + vec3<f32>(fw * 0.4, 1.4 + f32(k) * 1.3), M_WOOD, 7u, h); }
-  vox(wp + vec3<f32>(fw * 0.6, 3.6), M_CANVAS, 44u, h + 1.5708);
+  vox(wp + vec3<f32>(-fw * 2.6, 1.4), FP_CART, 18u, h);
+  for (var k = 0; k < 4; k++) { vox(wp + vec3<f32>(fw * 0.4, 1.4 + f32(k) * 1.3), FP_HULL, 7u, h); }
+  vox(wp + vec3<f32>(fw * 0.6, 3.6), FP_SAIL, 44u, h + 1.5708);
 }
 
 /** (SL18) a route made along arterial k from `s0` (world units along it from its centre end) out to its last point in

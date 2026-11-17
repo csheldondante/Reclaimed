@@ -1,5 +1,6 @@
 // Shared material table (design doc §12). Cells store only a material id;
 // every property lives here and is uploaded once as a uniform array.
+import { TOWN } from '../render/palette';
 
 export const enum MatState {
   Empty = 0,
@@ -252,7 +253,8 @@ export const MATERIALS: MaterialDef[] = [
   // (loop-streets) a town's graded streets and square: light flagstones in the town's paving tone (citygen ROAD_TONES 3,
   // the drawn lanes' — loop round 9's one light paving the figures read against), so a graded street and a lane are one
   // colour; a road surface like cobble (meshdraw.wgsl roadLook: flags, no plants)
-  { ...NONE, name: 'paving', albedo: [0.76, 0.72, 0.64], state: MatState.Solid, bear: 1, porosity: 0.15, specular: 0.1, smooth: 2 },
+  // (loop round 17, LS-151: render/palette.ts TOWN.roadTones[3], calmer — was 0.76 0.72 0.64, brighter than the figures)
+  { ...NONE, name: 'paving', albedo: [...TOWN.roadTones[3]], state: MatState.Solid, bear: 1, porosity: 0.15, specular: 0.1, smooth: 2 },
 ];
 
 /** (road lab, RD1: 40 → 48 for the road surfaces; the uniform's MATS, phys.wgsl PM and solver.wgsl SM sized by it) */

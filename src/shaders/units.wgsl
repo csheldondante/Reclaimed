@@ -955,9 +955,10 @@ fn qrotv(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   return v + q.w * t + cross(q.xyz, t);
 }
 
-// the default figure's legs (dark: asphalt) and head (pale: canvas)
-const MAT_LEGS: u32 = 6u;
-const MAT_HEAD: u32 = 21u;
+// the default figure's legs and head (loop round 17, LS-151: the figure paints, render/palette.ts — were asphalt and
+// canvas)
+const MAT_LEGS: u32 = FP_DARK;
+const MAT_HEAD: u32 = FP_SKIN;
 const PHYS_BIT: u32 = 0x40000000u;
 /** (loop round 11) a voxel drawn faint (render/bodies.wgsl vsBody → fsBody's dither): a hidden unit of the player's */
 const GHOST_BIT: u32 = 0x8000u;
@@ -1100,6 +1101,8 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   var torso = kind.c.z;
   if (torso == 0u) { torso = gm & 0xffu; }
   if ((look & 0xffu) != 0u) { torso = look & 0xffu; }
+  // (loop round 17, LS-151: the folk's cloth is their own — one of the warm cloths by the unit)
+  if (torso == FP_CLOTH0) { torso = FP_CLOTH0 + ((u * 2654435761u) >> 16u) % CLOTHS; }
   let headMat = select(select(MAT_HEAD, kind.c.y, kind.c.y != 0u), (look >> 8u) & 0xffu, ((look >> 8u) & 0xffu) != 0u);
   let lg = h * 0.27;
   let ts = h * 0.4;

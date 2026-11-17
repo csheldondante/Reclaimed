@@ -14,8 +14,10 @@
 //   - hold(key, 'all')         every system and particle (the between-seasons time-lapse)
 //   - hold(key, what)          those named (a live fire, a lava front: fire, structure and fire's particles)
 //   - wake(key, what, seconds) the same, let go after a time (a spell cast: the growth rune, a fire cast)
-//   - an Ignite event in a tick wakes fire and its particles for FIRE_S at once, in that tick (Simulation.eventTaps run
-//     before the systems encode): a fire lit by anything is never lost to a sleeping fire pass.
+//   - an Ignite event in a tick wakes fire and its particles at once, in that tick (Simulation.eventTaps run before the
+//     systems encode): a fire lit by anything is never lost to a sleeping fire pass. (loop round 17) It is held while
+//     the fire burns: where it was lit is looked at every few seconds (BurningNear: a small async read of the fire
+//     field), and let go when nothing burns there — was 90 s from the last Ignite.
 // Where they run is still the chunks' sleep (sim/sleep.ts): a woken system runs only on awake chunks, which events wake.
 //
 // The water is not put to sleep here: its draw lists for land streamed in are made by its own step, which already idles
@@ -36,23 +38,49 @@ export interface QuietWhat {
 export const FIRE_WAKE: QuietWhat = { systems: ['fire', 'structure'], fireParticles: true };
 /** what growth needs: the succession and the wilting, and (it is the spell's own sign) the growing glow */
 export const GROW_WAKE: QuietWhat = { systems: ['ecology', 'wilt', 'moisture'], plants: true };
-/** seconds an Ignite event keeps the fire awake (a fire set burns out within it; a live fire holds it longer) */
-const FIRE_S = 90;
+/** (loop round 17: "while burning", not 90 s) every CHECK_S after the first FIRST_S an Ignite's fire is looked at
+ *  where it was lit (`burning`: a small async read of the fire field round those points); the hold goes when none burns */
+const FIRST_S = 4;
+const CHECK_S = 3;
+/** the most points watched (the latest kept), and how near a new one must be to count as the same fire (cells) */
+const MAX_FIRES = 8;
+const SAME_FIRE = 12;
+
+/** whether anything burns round these window points (the fire field read there, a few chunks round each) */
+export type BurningNear = (at: readonly (readonly [number, number])[]) => Promise<boolean>;
 
 export class QuietWorld {
   private holds = new Map<string, { what: QuietWhat | 'all'; until: number | null }>();
   /** what is awake now (scripts, the census) */
   awake: { systems: string[]; plants: boolean; fireParticles: boolean } = { systems: [], plants: false, fireParticles: false };
   private key = '';
+  /** (loop round 17) the points fires were lit at while the ignite hold is on, when the last was, the last look */
+  private fires: [number, number][] = [];
+  private litAt = 0;
+  private lookedAt = 0;
+  private looking = false;
 
-  constructor(private sim: Simulation) {
+  constructor(
+    private sim: Simulation,
+    private burning: BurningNear,
+  ) {
     sim.eventTaps.push((sent) => {
-      if (sent.some((e) => e.kind === EventKind.Ignite)) {
-        this.wake('ignite', FIRE_WAKE, FIRE_S);
-        this.apply();
+      const lit = sent.filter((e) => e.kind === EventKind.Ignite);
+      if (!lit.length) return;
+      for (const e of lit) {
+        if (this.fires.some(([x, y]) => Math.hypot(x - e.x, y - e.y) < SAME_FIRE)) continue;
+        this.fires.push([e.x, e.y]);
+        if (this.fires.length > MAX_FIRES) this.fires.shift();
       }
+      this.litAt = performance.now() / 1000;
+      this.hold('ignite', FIRE_WAKE);
     });
     this.apply();
+  }
+
+  /** the window slid: the watched fires' points move with the land */
+  shift(dx: number, dy: number): void {
+    this.fires = this.fires.map(([x, y]) => [x - dx, y - dy]);
   }
 
   /** woken until released */
@@ -84,6 +112,25 @@ export class QuietWorld {
         gone = true;
       }
     if (gone) this.apply();
+    // (a fire lit: looked at every CHECK_S once it has had FIRST_S to catch; let go when nothing burns where it was lit)
+    if (this.holds.has('ignite') && !this.looking && now - this.litAt > FIRST_S && now - this.lookedAt > CHECK_S) {
+      this.looking = true;
+      this.lookedAt = now;
+      const asked = this.litAt;
+      void this.burning(this.fires).then(
+        (b) => {
+          this.looking = false;
+          if (b || this.litAt !== asked) return;
+          console.log(`[quiet] the fire is out (${this.fires.length} place(s) looked at)`);
+          this.fires = [];
+          this.release('ignite');
+        },
+        (e) => {
+          this.looking = false;
+          throw e;
+        },
+      );
+    }
   }
 
   private apply(): void {

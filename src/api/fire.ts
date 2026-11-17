@@ -41,6 +41,11 @@ export class Fire {
     return this.mirror.refreshCells(points.map(([x, y]) => cellAt(x, y)), ['flowLava']);
   }
 
+  /** (loop round 17, sim/quiet.ts) the fire field read fresh round these points (their chunks' pages only) */
+  loadFire(points: readonly (readonly [number, number])[]): Promise<void> {
+    return this.mirror.refreshCells(points.map(([x, y]) => cellAt(x, y)), ['fire']);
+  }
+
   flowLavaAt(x: number, y: number): number | null {
     const [cx, cy] = cellAt(x, y);
     const l = this.mirror.f32('flowLava', cx, cy);

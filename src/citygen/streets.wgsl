@@ -877,20 +877,10 @@ fn roadMinor(@builtin(global_invocation_id) g: vec3<u32>) {
   let d = normalize(c - a) * max(0.3, u.b.y * 0.25);
   ribbon(at, a - d, c + d, u.b.y * 0.5, select(cMinor(), cSteep(), steep(a, c)));
 }
-const C_WALL: u32 = 0xf3eee6u;
+// (loop round 17, LS-151: C_WALL, C_PARK, C_LANDMARK and roofColour are the town's tones — render/palette.ts TOWN, put in
+// front of this module by citygen/gpu.ts)
 /** (M4b) the cut-off outline (the fortress's warning red) */
 const C_CUTOFF: u32 = 0xe0322du;
-const C_PARK: u32 = 0x9fcf86u;
-fn roofColour(k: u32) -> u32 {
-  switch (k) {
-    case 0u: { return 0xf6c6a8u; }
-    case 1u: { return 0xf2dfa7u; }
-    case 2u: { return 0xc9d9f0u; }
-    case 3u: { return 0xe9c2d9u; }
-    case 4u: { return 0xcfe3c0u; }
-    default: { return 0xd9d2f2u; }
-  }
-}
 /** corner k of the quad inset by d[] (its edges' insets): the crossing of edges k − 1 and k moved in */
 fn insetCorner(v: array<vec2<f32>, 4>, d: array<f32, 4>, k: u32) -> vec2<f32> {
   let km = (k + 3u) % 4u;
@@ -1894,7 +1884,6 @@ fn bapply(@builtin(global_invocation_id) g: vec3<u32>) {
 // structure), its score (streets + π − its sharpest angle). Later systems claim them from this buffer.
 const LM_ROOM: u32 = 64u;
 const LMW: u32 = 5u;
-const C_LANDMARK: u32 = 0xc9b3e6u;
 /** one thread a seed: the next seed along its line (ahead, the tangent's way: the same-parity flood looked up a block
  *  length ahead), and its street's start before any clipping (w5 the seeds: words 7–10; b2 b3 the floods, b4 φ) */
 @compute @workgroup_size(64)
@@ -4081,10 +4070,31 @@ fn stgRank(@builtin(global_invocation_id) g: vec3<u32>) {
 const C_PLANK: u32 = 0xb48853u;
 const C_SCAFFOLD: u32 = 0xc9a46au;
 const C_FOOT: u32 = 0x8c857bu;
+/** (loop round 17, LS-152 i: the construction clip — docs/handoff/sessions/CONSTRUCTION_SHADER.md, its smallest step)
+ *  A building going up stands at its full height and is clipped in the draw at the height its progress has reached:
+ *  the walls rise in courses to the eaves by WALLS_UP, then the roof shows as a deck of rafters (C_SCAFFOLD) till
+ *  ROOF_AT, then its own colour. The clip is the roads' reveal (CG25): each vertex a time on the town's clock,
+ *  RISE_K s a unit of height from the clip line, so the draw (render/bodies.wgsl fsBody) discards what is over the line
+ *  every frame, the fresh course edge laid in the reveal's dirt tone (the mortar), ragged a course at a time */
+const WALLS_UP: f32 = 0.85;
+const ROOF_AT: f32 = 0.95;
+const RISE_K: f32 = 2.0;
+/** the clip's vertex reveal code: vertex final height `z` against lot `id`'s clip line now; 0 (none) when it is up */
+/** (?rise=1, citygen/gpu.ts: not yet seen in a still — off, the round-16 look: the box scaled by progress) */
+const RISE_CLIP: bool = false;
+fn riseCode(id: u32, z: f32) -> u32 {
+  let p = r2(id);
+  if (!RISE_CLIP || p <= 0.0 || p >= 1.0) { return 0u; }
+  let o = id * RECW;
+  let zv = r1(o + 21u) + condHeight(r1(o + 20u), w5[id]) * clamp(p / WALLS_UP, 0.0, 1.0);
+  return revCode(max(u.tl.x + (z - zv) * RISE_K, 0.0));
+}
 fn riseColour(v: u32, id: u32, top: bool) -> u32 {
   let p = r2(id);
   let up = bitcast<f32>(w7[v * 8u + 6u]) > 0.5;
-  if (p > 0.0 && p < 1.0) {
+  // (going up: the walls their own colour as the courses rise; the roof a rafters' deck till ROOF_AT)
+  if (RISE_CLIP && p > 0.0 && p < ROOF_AT && top && up) { return C_SCAFFOLD; }
+  if (!RISE_CLIP && p > 0.0 && p < 1.0) {
     if (!top) { return C_FOOT; }
     return select(C_PLANK, C_SCAFFOLD, up);
   }
@@ -4154,11 +4164,14 @@ fn tlRise(@builtin(global_invocation_id) g: vec3<u32>) {
   var z = z0;
   if (kind == TG_TOP) {
     let o = id * RECW;
-    z = r1(o + 21u) + condHeight(r1(o + 20u) * r2(id), w5[id]) + select(0.0, 0.06, (tag & OUTLINE_BIT) != 0u);
+    // (loop round 17: at its full height while going up — the draw clips it at its progress, riseCode — not scaled)
+    z = r1(o + 21u) + condHeight(r1(o + 20u) * select(r2(id), 1.0, RISE_CLIP), w5[id]) + select(0.0, 0.06, (tag & OUTLINE_BIT) != 0u);
+    w7[v * 8u + 7u] = (w7[v * 8u + 7u] & 0xffu) | (riseCode(id, z) << 8u);
     // (a lot not begun: its roof and outline sunk out of sight — its walls' bases with them: TG_BASE)
     if (r2(id) <= 0.0) { z = z0 - 1000.0; }
     if ((tag & OUTLINE_BIT) == 0u) { w7[v * 8u + 3u] = riseColour(v, id, true); }
   } else if (kind == TG_BASE) {
+    w7[v * 8u + 7u] = (w7[v * 8u + 7u] & 0xffu) | (riseCode(id, z0) << 8u);
     if (r2(id) <= 0.0) { z = z0 - 1000.0; }
     w7[v * 8u + 3u] = riseColour(v, id, false);
   } else if (kind == TG_ROAD) {

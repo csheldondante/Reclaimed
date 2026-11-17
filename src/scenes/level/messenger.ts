@@ -15,9 +15,22 @@
 import type { Units, UnitId } from '../../api/contracts/units';
 import type { StoryCamera, V3 } from '../../story/camera';
 
-/** cells out along the road the messenger starts from (beyond where they are going) */
-const WALK = 14;
-/** a runner's pace, cells a second */
+/**
+ * (loop round 17; the owner 2026-11-17: "Horses and carts would be really cool. (Ships too).") How the messenger comes:
+ * on foot (the leader's own people), on a horse (a rider from a far place), by cart (trade news, a merchant), or by ship
+ * (to the quay, the town has a harbour: they come ashore there and walk up — no ship unit is drawn for them; the
+ * town's own ships moor at the same quay). `role`: the units' kind (agent-units.ts kindOf: 'rider' the horse, 'cart');
+ * `out`: cells out along the road they start, so the arrival takes under WALK_MAX s at the kind's pace (rider 6,
+ * character 2.5, cart 1.7 cells/s).
+ */
+export type Mount = 'foot' | 'horse' | 'cart' | 'ship';
+const MOUNTS: Record<Mount, { role?: string; out: number }> = {
+  foot: { out: 14 },
+  horse: { role: 'rider', out: 26 },
+  cart: { role: 'cart', out: 8 },
+  ship: { out: 6 },
+};
+/** a runner's pace, cells a second (the kind's pace class only: units.ts SpawnOpts.speed) */
 const PACE = 5;
 /** seconds the walk may take before the words show anyway */
 const WALK_MAX = 5;
@@ -75,7 +88,7 @@ export class Messenger {
    * A messenger along `road` (window points from the town outward) to `to`, saying `speech`. Resolves once their words
    * are done or skipped. With no road (or no units) they are already there: the words show at once over `to`.
    */
-  bring(speech: Speech, road: [number, number][] | null, to: [number, number]): Promise<void> {
+  bring(speech: Speech, road: [number, number][] | null, to: [number, number], how: Mount = 'foot', quay: [number, number] | null = null): Promise<void> {
     this.end();
     this.speech = speech;
     this.to = to;
@@ -83,15 +96,19 @@ export class Messenger {
     this.page = -1;
     this.mount();
     const units = this.h.units();
-    const from = road ? startOn(road, to) : null;
+    const m = MOUNTS[how];
+    // (by ship: ashore at the quay, a few cells toward where they are going)
+    const from = how === 'ship' && quay ? toward(quay, to, 1) : road ? startOn(road, to, m.out) : null;
     if (units && from) {
-      this.unit = units.spawn('character', from, null, { name: speech.name, speed: PACE, colour: '#ffd23c', job: { kind: 'go', to } });
+      this.unit = units.spawn('character', from, null, { name: speech.name, role: m.role, speed: PACE, colour: '#ffd23c', job: { kind: 'go', to } });
       this.unwatch = units.observe(this.unit);
       this.state = 'walking';
-      void this.h.cam.look(this.at3(from), { zoom: MESSENGER_ZOOM, ease: 0.7, place: [0.5, 0.42] }).then(() => {
+      // (by ship: the camera first over the quay, the water behind)
+      const look = how === 'ship' && quay ? quay : from;
+      void this.h.cam.look(this.at3(look), { zoom: MESSENGER_ZOOM, ease: 0.7, place: [0.5, 0.42] }).then(() => {
         if (this.state === 'walking') this.h.cam.follow(() => this.where());
       });
-      console.log(`[messenger] ${speech.name} (${speech.role}) from ${from.map(Math.round).join(', ')} to ${to.map(Math.round).join(', ')}: ${speech.lines.length} lines`);
+      console.log(`[messenger] ${speech.name} (${speech.role}, ${how}) from ${from.map(Math.round).join(', ')} to ${to.map(Math.round).join(', ')}: ${speech.lines.length} lines`);
     } else {
       void this.h.cam.look(this.at3(to), { zoom: MESSENGER_ZOOM, ease: 0.7, place: [0.5, 0.42] });
       console.log(`[messenger] ${speech.name} (${speech.role}) at ${to.map(Math.round).join(', ')} (no road): ${speech.lines.length} lines`);
@@ -219,12 +236,18 @@ export class Messenger {
 /** what the panel says while they walk in */
 const comingLine = (role: string): string => `The ${role} is coming with news.`;
 
-/** where on a road (window points, the town outward) a messenger starts: WALK cells farther out than `to`, or the road's
- *  last point */
-function startOn(road: [number, number][], to: [number, number]): [number, number] | null {
+/** `d` cells from `a` toward `b` */
+const toward = (a: [number, number], b: [number, number], d: number): [number, number] => {
+  const L = Math.max(Math.hypot(b[0] - a[0], b[1] - a[1]), 1e-3);
+  return [a[0] + ((b[0] - a[0]) / L) * d, a[1] + ((b[1] - a[1]) / L) * d];
+};
+
+/** where on a road (window points, the town outward) a messenger starts: `out` cells farther out than `to`, or the
+ *  road's last point */
+function startOn(road: [number, number][], to: [number, number], out: number): [number, number] | null {
   if (road.length < 2) return null;
   const c = road[0];
-  const want = Math.hypot(to[0] - c[0], to[1] - c[1]) + WALK;
+  const want = Math.hypot(to[0] - c[0], to[1] - c[1]) + out;
   for (const p of road) if (Math.hypot(p[0] - c[0], p[1] - c[1]) >= want) return [p[0], p[1]];
   const last = road[road.length - 1];
   return [last[0], last[1]];

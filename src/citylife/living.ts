@@ -14,6 +14,7 @@
 // read, taken every WATCH_EVERY frames while such a wake can happen, hears it.
 // Nothing else is read back but the debug panel's counters (`counters`, only while someone looks).
 import routesWgsl from './routes.wgsl?raw';
+import { figureWgsl } from '../render/palette';
 import { makeBindGroup, makeCompute, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
 import { SettledRead } from '../gpu/settled';
 import { LIVING_TUNING, type LivingValues } from './params';
@@ -267,7 +268,8 @@ export class LivingTown {
     this.k = {} as Record<K, ComputeKernel>;
     this.g = {} as Record<K, GPUBindGroup>;
     for (const [name, spec] of Object.entries(SPECS) as [K, BindSpec][]) {
-      const k = makeCompute(device, `living ${name}`, [routesWgsl], spec, name);
+      // (loop round 17: the figures' paints, render/palette.ts, in front)
+      const k = makeCompute(device, `living ${name}`, [figureWgsl(), routesWgsl], spec, name);
       this.k[name] = k;
       this.g[name] = makeBindGroup(device, `living ${name}`, k.layout, Object.fromEntries(Object.keys(spec).map((b) => [Number(b), R[Number(b)]])));
     }

@@ -281,13 +281,19 @@ const need = (): Mutators => {
 };
 
 /** The one entry point. `bind(null)` when the world is torn down. */
-export const mutators: Mutators & { bind(impl: Mutators | null): void; readonly ready: boolean } = {
+export const mutators: Mutators & { bind(impl: Mutators | null): void; readonly ready: boolean; applied: ((spec: MutationSpec) => void)[] } = {
   bind: (impl) => void (bound = impl),
   get ready() {
     return bound !== null;
   },
+  /** (loop round 17) told after each apply — the quiet world wakes what a change to the land needs (sim/quiet.ts) */
+  applied: [],
   list: () => MUTATORS,
-  apply: (spec) => need().apply(spec),
+  apply: (spec) => {
+    const a = need().apply(spec);
+    for (const f of mutators.applied) f(spec);
+    return a;
+  },
   play: (m, opts) => need().play(m, opts),
   places: () => (bound ? bound.places() : []),
   place: (id) => (bound ? bound.place(id) : null),
