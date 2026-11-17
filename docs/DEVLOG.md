@@ -25378,3 +25378,21 @@ and a burn with it):
   not vertices, so the vertex load is AG14's phone bench to decide. One run of four hung the GPU at the town's making
   ("the GPU never finished: 2 frames in flight … 71.6 s"); not reproduced on the retry (LS-103).
 - *Gates still open:* AG13/CG24 (roofs above the claims), AG14 (phone vertices), LS-100. **Not the default.**
+
+## 2026-11-16 — streets as terrain (1): the grader lays a town's records on arriving land (`loop-streets`, LS-102 option a)
+
+The owner: "We need streets that are integrated with the world and terrain not floating meshes". Design note:
+docs/design/CITYGEN.md "Streets as terrain". This step is its riskiest proof, before the game: the road lab's grader
+lays GPU-made records over window rectangles from the claims' `claimed` hook (`GradeLayer`), the records in their
+own frame placed in the window (gx, gy, gz), all of them in one dispatch (`roadpath.wgsl roadHit`: the first record
+whose half width holds a column is its road; banks over every shoulder). A record gains a box (a third vec4) so a
+column tests only the records near it. Two flags: `ROAD_PAVED` (laid as cobble at once), `ROAD_DRY` (a wet column is
+left: a ford is never dammed). Every column holding an External interval is left (another owner's: a building, a
+wall, a deck's slab) — the lab's lay could cut through one before.
+
+Test (`test/gpu/streets-grade.test.ts`, tiny world on Dawn, 2 tests pass in 26 s): a town frame placed at (6, 4,
+-0.5) with a square and two streets on a slope, buildings in a street's way and shoulder and a crossing street's paving
+in its claim grid. Land arriving region by region is claimed then graded where it lies; every road column is cobble at
+the profile (window z) with nothing over it; the 15 claimed columns are as claimed, their ground untouched; laid twice
+is unchanged; land arriving again raw comes back the same bit for bit; one lay over all equals region by region; a
+slide (the frame placed 2 columns and rows over) grades where it lies.

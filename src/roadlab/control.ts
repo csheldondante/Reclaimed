@@ -57,7 +57,7 @@ export class RoadLabControl {
   constructor(
     device: GPUDevice,
     ui: HTMLElement,
-    world: Pick<WorldGpu, 'globals' | 'chunks' | 'materials' | 'layers' | 'veg' | 'vegNext'>,
+    world: Pick<WorldGpu, 'globals' | 'chunks' | 'materials' | 'layers' | 'veg' | 'vegNext' | 'water'>,
     private readonly dims: { w: number; h: number },
     private readonly io: RoadLabIo,
     params: URLSearchParams,
