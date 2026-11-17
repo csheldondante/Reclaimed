@@ -39,7 +39,10 @@ export const BASE_BETWEEN: readonly BetweenDef[] = [
   },
   {
     id: 'raiders-leave',
-    when: [{ helper: 'raidersCamp' }, { not: { helper: 'townsExist', args: ['far:nearest:1'] } }],
+    // (a far town stands: any state but destroyed or abandoned — sworn, taken or founded towns are still there to rob.
+    // Found by the run-start screenshot: `far:nearest:1` names only towns nobody holds, so a world of sworn towns read as
+    // empty and the raiders left it)
+    when: [{ helper: 'raidersCamp' }, { not: { helper: 'farStands' } }],
     do: [{ setTag: [RAIDERS_CAMP, 'condition', 'abandoned', true] }],
     say: 'No far town was left to rob. The raiders broke camp and went away.',
   },

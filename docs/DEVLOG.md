@@ -24647,3 +24647,18 @@ harvest 22/14 → 21/13; the new free market 33/14; the toll 5/5 → 5/5; harbou
 0/0. **The pirate road is unchanged in the bots:** every policy takes any card it can pay for, so a lasting upkeep or
 a better fight never makes a bot refuse. Whether refusing is now tempting is a judgement for a player (or a bot that
 weighs upkeep: not built). The harvest now has a rival taken as often as it is.
+
+## 2026-11-16 — PACK_FORMAT draft 8; the run-start screens looked at (`card-table`)
+
+**Draft 8** writes up CT-51..CT-58 for an outside author: "Changed since draft 7", "The raiders and the end of a run",
+"Unlocks", "Between runs", a leader's `home`, `for_good`, `met`, `raiders-march`.
+
+**Screens** (phone size 412x915, headless; run 2 of a frontier world after a scripted run 1: `scripts/shot.mjs --dev
+--url "/table.html?seed=7&leader=ysolt&seasons=16&pack=/packs/frontier.json"`). "The world now" reads in order: the
+run and leader, how run 1 ended, what happened while nobody played, the far places, what earlier runs opened, what is
+still to find. Two defects it showed, fixed here: (1) "No far town was left to rob. The raiders broke camp" appeared in
+a world of three far towns — `far:nearest:1` names only towns nobody holds, and every town was sworn or held; the
+condition is now "no far town stands in any state but destroyed or abandoned" (`farStands`), with a test; (2) "Earlier
+runs opened" doubled its full stops. "Far places" reads, but its "Lately" list repeats "In an earlier run:" on every
+line, and a place line reads "a new camp. held by the Gull Reavers." (a lower-case word after a full stop, from
+`farLine`: older than this round).

@@ -59,6 +59,9 @@ describe('between runs: the one step where the world moves on its own', () => {
     expect(lines(a2)).toEqual(lines(b2));
     // (the truce lapsed while nobody played: the raiders are on the road again, and the run's start says so)
     expect(lines(a2).some((l) => l.includes('raiders-truce-ends'))).toBe(true);
+    // (far towns still stand — sworn, taken or free: the raiders stay. A defect the run-start screenshot showed: towns
+    // that were all held by someone read as "no town left to rob")
+    expect(lines(a2).some((l) => l.includes('raiders-leave'))).toBe(false);
     expect(stanceOf(a2.realm.w, RAIDERS_ID, 'player')).toBe('hostile');
     expect(a2.worldNow().some((l) => /^While you were gone: the raiders spent your tribute/.test(l))).toBe(true);
     // (written before the run began: at the turn the last run ended)

@@ -673,6 +673,8 @@ export class Realm {
       // (a sign stands on some town and was not set for good)
       signsLinger: { pred: () => this.lingering().length > 0 },
       fadeSigns: { effect: (c) => void (c.dry || this.lingering().forEach(([id, k]) => recordSign(c.w, k, id, false, c.cause))) },
+      // (some far town is still there — in any state but destroyed or abandoned: standing, sworn, taken, founded)
+      farStands: { pred: () => { const gone = new Set([...this.selectTowns('far:where:destroyed'), ...this.selectTowns('far:where:abandoned')]); return this.selectTowns('far:all').some((id) => !gone.has(id)); } },
       // (a far town lies in ruins, destroyed or abandoned, and nothing has grown over it yet)
       ruinsBare: { pred: () => [...this.selectTowns('far:where:destroyed'), ...this.selectTowns('far:where:abandoned')].some((id) => !this.w.facts.tag(id, 'condition', 'greened')?.value) },
       // (signForGood kind selector: the sign on these towns does not fade between runs — an ending's mark on the world)

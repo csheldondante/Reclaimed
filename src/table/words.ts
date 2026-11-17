@@ -23,7 +23,7 @@ export function worldState(o: { far: number; destroyed: number; yours: number; h
 export const worldLaws = (names: string[]): string => `Laws from earlier runs: ${names.join(', ')}.`;
 // (draft 8: between runs, unlocks, met, the run's home)
 export const whileGone = (say: string): string => `While you were gone: ${say.charAt(0).toLowerCase()}${say.slice(1)}`;
-export const worldOpened = (lines: string[]): string => `Earlier runs opened: ${lines.join('; ')}.`;
+export const worldOpened = (lines: string[]): string => `Earlier runs opened: ${lines.map((l) => l.replace(/\.$/, '')).join('; ')}.`;
 export const notFound = (hints: string[], more: number): string => `Not yet found: ${[...hints, ...(more ? [`${more} more`] : [])].join(' ')}`;
 export const NEW_LATER = 'New for later runs';
 export const newLater = (what: string, by: string): string => `${what.charAt(0).toUpperCase()}${what.slice(1)}, from "${by}".`;
