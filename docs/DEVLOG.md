@@ -25806,3 +25806,26 @@ success and "Run 2: lava came down on the town. A shield kept it out of the town
 its streets. Black rock lies where it ran." GPU: `test/gpu/shield.test.ts` (lava parts round the disc, both sides,
 none inside; the same lava with no shield runs over it).
 
+**Seen** (each a full 412 x 915 frame, uncropped; `local/round12/final/`, strips `local/round12/shield-strip.png`,
+`noshield-strip.png`; `node scripts/lab/frontshots.mjs --mode shield|none --run2`): none-2-coming and none-5-t40 — a
+bright pool of lava welling up among the western houses, its orange crust edge running toward the market, houses
+half under it; shield-5-t25 — a ring of soft blue light round the market, the lava's edge pressed against its west
+side, the houses inside it standing; shield-7-after-wide — the lava set dark and crusted west of the ring, the town
+inside whole; none-9-run2-land-wide and shield-8-run2-worldnow — run 2 opens on black rock where it ran and "Run 1: lava
+came down on the town. It took 1 of its streets. Black rock lies where it ran." / "A shield kept it out of the town."
+The run-1 stills after the event and in run 2 are half covered by the town sheet and the names over it (the frame is
+on the market in the top third).
+
+**Census** (`scripts/census.mjs --params 'loop=1&packs=ages' --pick ysolt --states idle,event --event
+ages-mountain-stirs`, and `--during` raising a 26-cell shield on the target 3 s in; counts, not a phone timing):
+
+| State | est. phone ms a frame | ticks a frame | read back a frame | liquid-lava |
+|---|---|---|---|---|
+| idle | 1.03 | 0.58 | 1.44 KB | asleep (no row) |
+| the front running | 1.49 | 0.71 | 2.03 KB | 0.13 ms |
+| the front with a shield up | 1.34 | 0.61 | 1.57 KB | 0.12 ms |
+
+The front's cost is the lava's passes over its awake chunks and the water's over the chunks it wakes, plus the 2 s point
+reads; the shield adds ~45 glow and spark bursts a second (particles 0.15 ms either way). Not a toggle-diff on the
+phone: the owner's bench is the measure (BACKLOG LS-126).
+
