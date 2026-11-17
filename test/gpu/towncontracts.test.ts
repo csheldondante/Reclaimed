@@ -719,16 +719,27 @@ fn main() {
   // (UC-13) a spawn point stands on dry, walkable ground in the window: Muru's spawn point 0 had its approach in the
   // river, and raiders drowned on arrival. One arterial east from (20, row 30) to the window's edge, its limit 10 along:
   // the nominal spawn point at x 46, its approach at x 38
-  async function spawnSetup(band: [number, number] | null) {
+  // (loop round 11, LS-99: `deck` — a bridge over the whole river along the road, rows 26–34: a slab 12.75–13 claimed in
+  // the columns over the riverbed's top 10 and its 2 of water, the arterial's span at 13)
+  async function spawnSetup(band: [number, number] | null, deck = false) {
     const W2 = 128;
     const H2 = 64;
-    const map = tinyMap(W2, H2);
-    if (band) for (let y = 0; y < H2; y++) for (let x = band[0]; x <= band[1]; x++) map.water[y * W2 + x] = 2;
+    const onDeck = (x: number, y: number) => deck && !!band && x >= band[0] && x <= band[1] && y >= 26 && y <= 34;
+    const map = tinyMap(W2, H2, 32, (x, y) => [{ z0: 0, z1: 10, mat: MAT.Stone }, ...(onDeck(x, y) ? [{ z0: 12.75, z1: 13, mat: MAT.External }] : [])]);
+    // (under a deck the river is an enclosed run, not the column's open water: as the game reads it — deckprobe)
+    if (band) for (let y = 0; y < H2; y++) for (let x = band[0]; x <= band[1]; x++) map.water[y * W2 + x] = onDeck(x, y) ? 0 : 2;
     const w = await tinyWorld(g, map, ['surface']);
     const cy = 30 * ROW_H + 0.5 * ROW_H;
     const ring = ringWords(20, cy, 8, []);
     ring.words[0] = 0;
-    const t = fakeTown('S', { w: W2, h: H2, centre: [20, cy], R: 20, wall: ring.words, art: artWords(20, cy, [[127, cy]], 10), heights: 10 });
+    const art = artWords(20, cy, [[127, cy]], 10);
+    if (deck && band) {
+      // (one span: s from the river's near bank to its far one, its ends at the deck's top)
+      const af = new Float32Array(art.buffer);
+      art[4 + 2] = 1;
+      af.set([band[0] - 20, band[1] - 20, 13, 13], 4 + 4);
+    }
+    const t = fakeTown('S', { w: W2, h: H2, centre: [20, cy], R: 20, wall: ring.words, art, heights: 10 });
     const tc = new TownContracts(g.device, { globals: w.core.world.globals, chunks: w.core.world.chunks, layers: w.core.world.layers, water: w.core.world.water, w: W2, h: H2 }, w.core.world.buf('agentSides', W2 * H2 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST));
     return { w, t, tc, cy };
   }
@@ -761,6 +772,21 @@ fn main() {
     } finally {
       b.tc.dispose();
       b.w.destroy();
+    }
+    // (loop round 11, LS-99: the same river with a bridge over it the whole way: the nominal spawn point stands on the
+    // deck — its approach too, at the deck's height; the river under the slab is not water on it. Muru's roads 0 and 1)
+    const d = await spawnSetup([36, 100], true);
+    try {
+      expect(await frames(d.tc, d.t, 0, 2)).toBe(1);
+      const s0 = (await readTable(d.tc)).named(PLACE.spawn0);
+      expect(s0.status).toBe(PLACE_STATUS.ok);
+      expect(s0.at[0]).toBeCloseTo(46, 0);
+      // (the approach's height is not read back here: it stood — on the deck — or the point would not be ok)
+      expect(s0.at[2]).toBeCloseTo(13, 3);
+      expect(g.takeErrors()).toEqual([]);
+    } finally {
+      d.tc.dispose();
+      d.w.destroy();
     }
   }, 120_000);
 

@@ -124,17 +124,28 @@ the construction shader read. `FieldTown.lots` hands them over.
 - **(loop round 11, LS-99) Units on bridge decks.** Since CG15 a deck is claimed into the world's columns as a slab
   (External, `DECK_CLAIM_T` 0.25 under its top) with the river running in the gap under it; the units' peel makes the
   slab's top a surface like any ground, and its water is the top's open run (agents.ts `surfaceDepth`), none on a
-  dry deck. What refused Muru's roads 0 and 1 was the place table: both roads leave town by one long bridge (columns
-  22–66 units out are External), and every spawn candidate on it failed `standOk` — (1) it read the column's whole
-  water (`water`, the river's 2.45 under the slab) as the water on the deck, and (2) the approach 8 units back was put
-  at the raw ground's height (the riverbed, 97.7) under a deck at 101.5. Design: the table's own reading of a live
-  column decides, on the GPU, from the column and its water only — no CPU mirror, no new buffer: where the column's top
-  interval sits over a gap, the water lies on the floor below it, and only what rises past the slab's top stands on
-  it (`places.wgsl colAt`); a point on an arterial at s stands at its deck's height wherever s is on a span — the
-  approach as the spawn point already did (`spawnApp`, `candOk` through `spawnPtXY`). The agents' own fields need
-  nothing new: they walk the slab's surface; the gate routes treat a deck column as passable already
-  (`routes.wgsl` `G_WATER` only where no `DECK_BIT`). Not changed: the side map's walk (`sidemap.wgsl`) still reads
-  the column's whole water (a deck outside a wall is never one of its sides' gates).
+  dry deck. Read in the game (`scripts/lab/deckprobe.mjs`, Muru's road 0): the deck's columns, 52–66 units out, are
+  External with no open water (the river under them is an enclosed run, `waterGaps` y–w; `water` is the top's open
+  run). So units can stand and walk on a deck as on ground. Two things refuse roads 0 and 1:
+  1. (fixed) the place table put a spawn point's approach, 8 units back, at the raw ground's height even on a span (the
+     riverbed under the deck), so a candidate on a bridge never stood. Now a point on an arterial at s stands at its
+     deck's height wherever s is on a span — the approach as the spawn point already did (`spawnApp`, `candOk` through
+     `spawnPtXY`), on the GPU from the arterial's own words; GPU test `towncontracts.test.ts` (a bridge over a river
+     the whole search long: WATER before, the nominal point on the deck after).
+  2. past the bridge's far end the road (the atlas's stamped road, brick) ran under 1.3–3.1 of open water: every spawn
+     candidate (16–48 past the limit) was in it. Why (deckprobe's second run, the arterial's words): roads 0 and 1 cross
+     the river on two bridges, spans 6.3–66.3 and 70.3–123.3 with a 4-unit island between. `artEnd` carries an
+     arterial's end to the far bank of the bridge it is on (66.3) — so the second bridge, past the end, was never drawn
+     or claimed, and the place table still gave its spawn points the second span's deck height over the riverbed.
+     Tried: `artEnd` carrying the end on across the next bridge when the dry ground between is under 8 units (one
+     crossing). The second bridge was then built and claimed, the spawn points stood at the road's end on its deck —
+     and the units made there did not move: a parade's column stood at the deck's far end from 22 s to 40 s
+     (`local/round11/bridge-strip.png`), a bout's crew stayed 136 cells off for 150 s. So a column on a deck is placed
+     and stands, but does not walk the deck into town — the gap the backlog named, now seen. Reverted (every event
+     would have come down road 0 and stalled; they come by road 2 as before). Next: why a group on a deck does not
+     walk — its field over the slab's surfaces (links, the deck's ends meeting the bank), or the march-in route along
+     a deck road (`routes.wgsl artRoute`) — a GPU test of a column on a deck, before the game (BACKLOG LS-99).
+  The gate routes already treat a deck column as passable (`routes.wgsl` `G_WATER` only where no `DECK_BIT`).
 - **Plants:** `bare.wgsl` sets the plants' field (veg and the next tick's) to none on claimed and bare-only columns as
   they're claimed: the old towns' BARE stamp, for a town made after its land. External tops cap growth at moss.
 - **Reach:** `FortressReachGpu.markFrom` runs one solve over the window from the town's road (its point at the core's

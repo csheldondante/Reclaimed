@@ -320,7 +320,9 @@ fn artDeck(k: u32, s: f32) -> f32 {
 }
 
 // ---- the spawn points (UC-13): on dry, walkable ground in the window ----
-/** the window column under grid point p: its top (window z; -1e9 none, or the window doesn't hold it) and its water */
+/** the window column under grid point p: its top (window z; -1e9 none, or the window doesn't hold it) and its water
+ *  (the water's open run, on the top: a river under a bridge's deck slab is an enclosed run, not counted — read in the
+ *  game, loop round 11's deckprobe) */
 fn colAt(p: vec2<f32>) -> vec2<f32> {
   let c = cellAt(p + TP.place.xy);
   if (!inMap(c)) { return vec2<f32>(-1e9, 0.0); }
@@ -364,11 +366,12 @@ fn spawnPtXY(k: u32, s: f32, xy: vec2<f32>) -> vec3<f32> {
   return p;
 }
 fn spawnPt(k: u32, s: f32) -> vec3<f32> { return spawnPtXY(k, s, artAt(k, s)); }
-fn spawnApp(k: u32, s: f32) -> vec3<f32> { return at3(artAt(k, max(s - APPROACH, 0.0))); }
+/** (loop round 11, LS-99: the approach on the deck too where it is on a span — it was the riverbed's height under it) */
+fn spawnApp(k: u32, s: f32) -> vec3<f32> { let sa = max(s - APPROACH, 0.0); return spawnPtXY(k, sa, artAt(k, sa)); }
 /** the spawn point (s along arterial k, at sp) and its approach (at ap) stand on dry, walkable ground, and so does the
  *  crowd round the approach */
 fn candOk(k: u32, s: f32, sp: vec2<f32>, ap: vec2<f32>) -> bool {
-  let a = at3(ap);
+  let a = spawnPtXY(k, max(s - APPROACH, 0.0), ap);
   return standOk(spawnPtXY(k, s, sp)) && standOk(a) && crowdOk(a);
 }
 fn spawnOk(k: u32, s: f32) -> bool { return candOk(k, s, artAt(k, s), artAt(k, max(s - APPROACH, 0.0))); }
