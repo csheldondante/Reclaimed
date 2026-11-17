@@ -22,6 +22,41 @@ export const SPELL_TEXT: Record<string, string> = {
   heatray: 'Cast it into an event. It puts down 2 foes.',
   rain: 'Cast it into a fire. It puts out 2 burning lots.',
 };
+/** a spell's line from what one cast does now (laws change the numbers) */
+export function spellText(s: string, m?: { kills?: number; douses?: number }): string {
+  if (s === 'growth' || !m) return SPELL_TEXT[s] ?? '';
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const parts = [...(m.kills ? [`It puts down ${plural(m.kills, 'foe', 'foes')}`] : []), ...(m.douses ? [`It puts out ${plural(m.douses, 'burning lot', 'burning lots')}`] : [])];
+  return `Cast it into ${m.kills ? 'an event' : 'a fire'}. ${parts.length ? parts.join('. ') : 'It does nothing there now'}.`;
+}
+
+// ---- laws (docs/design/LAWS.md) ----
+export const LAWS_TITLE = 'Laws in force';
+export const LAWS_NONE = 'No law changes the rules yet. Some cards and things bring laws.';
+export const LAWS_HELP = 'A law changes the rules of the game for this run. Laws apply in the order they came.';
+export const LAW_BRINGS = 'Brings a law';
+export const LAW_ON_LAPSE = 'If you leave it, a law';
+export const LAW_CHANGES = 'What would change';
+export const LAW_READY = 'ready';
+export const LAW_NOT_READY = 'not ready';
+export const LAW_OFF = 'off';
+export const LAW_GONE = 'gone';
+export const BY_LAW = 'By law';
+export const WIN_LABEL = 'A way to win';
+export const CAST_WORD = 'cast';
+export const PRINTED = 'Printed';
+export const CHANGED_BY = 'Changed by law';
+export const RESOLVE_NOW = 'Settle it now';
+export const RESOLVE_HELP = 'Settle it now with the spells cast so far. What it sets off happens at once.';
+export const lawLine = (name: string, text: string): string => `${name}. ${text}`;
+export const lawFrom = (from: string, until: string, times: number): string => `${times > 1 ? `In force ${times} times. ` : ''}Made by ${from}. ${until}`;
+export const tagCount = (n: number): string => `${n} thing${n === 1 ? '' : 's'}`;
+export const winLine = (count: number, tags: readonly string[]): string => `${count} things in play that are ${tags.map((t) => `"${t}"`).join(' + ')}`;
+export const wonTitle = (law: string): string => `You won the run by law: ${law}.`;
+export const ruleOff = (law: string): string => `Off, by the law "${law}".`;
+export const becomes = (label: string, was: string, now: string): string => (was || now ? `${label}: ${was || 'nothing'} would become ${now || 'nothing'}.` : '');
+export const becomesNew = (label: string, now: string): string => (now ? `${label}: new. ${now}` : '');
+
 export const UNIT_NAME: Record<string, string> = { raider: 'raiders', guard: 'soldiers', soldier: 'soldiers', worker: 'townsfolk', cart: 'carts', shambler: 'risen dead' };
 export const TIER_NAME: Record<string, string> = { triumph: 'Best result', success: 'Good result', cost: 'Mixed result', failure: 'Bad result', disaster: 'Worst result' };
 export const eventBegan = (title: string): string => `It begins: ${title}.`;
@@ -43,7 +78,7 @@ export function ruleWhen(on: RuleTrigger): string {
   return `When "${typeof on === 'string' ? on : on.event}" happens`;
 }
 /** what a rule reads and gives: "One thing that is "field" + "worked" + "growth-active". +2 Materials." */
-export function ruleSays(r: RuleDef, card: (id: string) => string = (id) => id): string {
+export function ruleSays(r: RuleDef, card: (id: string) => string = (id) => id, law: (id: string) => string = (id) => id): string {
   const a = `One thing that is ${query(r.a)}${r.a.near && r.a.near.of !== 'a' ? `, ${near(r.a.near.cells)} the event` : ''}.`;
   const b = r.b ? ` And one that is ${query(r.b)}${r.b.near ? (r.b.near.of === 'a' ? `, ${near(r.b.near.cells)} the first` : `, ${near(r.b.near.cells)} the event`) : ''}.` : '';
   const need = r.need ? ` Needs ${pool(r.need.pool)} ${r.need.gte !== undefined ? `${r.need.gte} or more` : `${r.need.lte} or less`}.` : '';
@@ -53,8 +88,10 @@ export function ruleSays(r: RuleDef, card: (id: string) => string = (id) => id):
   if ('start' in fx) return `${a}${b}${need} Then this begins at once: "${card(fx.start)}".`;
   if ('tag' in fx) return `${a}${b}${need} Then it becomes "${fx.tag}"${fx.timed ? ' for the season' : ''}.`;
   if ('untag' in fx) return `${a}${b}${need} Then it is no longer "${fx.untag}".`;
+  if ('law' in fx) return `${a}${b}${need} Then a new law: "${law(fx.law)}"${fx.seasons ? ` for ${fx.seasons} more seasons` : ' for the rest of the run'}.`;
+  const times = r.fires !== undefined && r.fires !== 1 ? ` It pays ${r.fires} times each time it fires.` : '';
   const gives = 'pool' in fx ? `${fx.n > 0 ? '+' : ''}${fx.n} ${pool(fx.pool)}${each}` : fx.op === 'mul' ? `"${fx.amount}" times ${fx.n}${each}` : `${fx.n > 0 ? '+' : ''}${fx.n} "${fx.amount}"${each}`;
-  return `${a}${b}${need} Gives ${gives}${r.cap !== undefined ? `, at most ${r.cap}` : ''}.`;
+  return `${a}${b}${need} Gives ${gives}${r.cap !== undefined ? `, at most ${r.cap}` : ''}.${times}`;
 }
 /** a chain's links before a rule's line: the rule that had set it going, and what happened */
 export const chainLine = (after: string | undefined, what: string | undefined, line: string): string => `${after ? `${after} → ` : ''}${what ? `${what} → ` : ''}${line}`;

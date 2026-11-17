@@ -24346,3 +24346,35 @@ way there and `table-bots` asserts the two ways with spells.
 casting bot takes every turn of it, because a turn pays back its Magic and 2 Materials (CT-30). The biggest engine
 was 15 rule firings in one season (greedy, pack-first and loop hunter alike); the multiplier stack took the parade
 from 13 to 32 people (triumph 34 of 37 parades). Nothing grew without end except the sample pack's Labor.
+
+## 2026-11-16 — Laws: things that change the rules of the game (`card-table`; docs/design/LAWS.md)
+
+**Why.** The owner: "Since it is a roguelite with runs that end we can break things. Look at games like innovation and
+allow mechanics that mutate mechanics in potentially major world changing ways." Engines are data (tags and rules);
+laws make the data itself something a card, a thing, a rule or an ability can change for the rest of the run.
+
+**The mechanism.** One ordered list of laws in force in the `Realm` (`active`, saved in `RunState.laws` with its
+order number), layered over the base definitions: nothing base is edited. Every reader goes through the Realm's
+law-applied view: `things()` (tag laws, and `spare` in the ruin test), the rule book (now built over a function:
+`RuleBook(() => list)`, the list derived by `living/laws.ts: deriveRules` and cached by the laws in force, checked
+when a new list is first seen), `terms(offer)` (costs, a part paid from another pool, build time; `short` and
+`commit` use it, so what is shown is what is paid), `liveOf` (spells allowed, foes added), `finishLive` /
+`predictLive` (results shifted, a result that counts as another kind's), `spellMech`, `runNumbers` (raiders, a pool
+that counts as Might), the dealer's tune (cards on offer at once), `endSeason` (income by law), `over` (a way to win).
+A law's source: a thing (`lawThings`, followed by `refreshLaws` after every action: gone or ruined, its laws go), a
+timed grant (`until` a turn) or the run. The meta law `next_law` turns the next law into a run law and is used up;
+`multipliers` multiplies every `times` and every rule's `mul` whenever it came. Laws stack: the same law twice is
+in force twice.
+
+**Order.** Laws apply in the order they came into force; a test pins that set-then-times and times-then-set give
+different numbers, and that a count-as chain depends on its order.
+
+**Riskiest part first, measured.** The derived rule list and save/load: 14 tests in `test/unit/laws.test.ts`, every
+kind pure, then on the Realm with `packs/laws.json` — a thing's laws leave when its site burns and come back (after
+the law that spares the burn) when a law spares it; a saved run taken up has the same list in the same order; a new
+run has none. Regression files pass alone (packs 35, packs-more 3, packs-together 11, chains 16, table-live 11,
+realm-resume 5, realm 16, runplay-rules 17); `writing-sources` fails only on `src/roadlab/control.ts`, as before.
+
+**The absurd ones (in `laws.json`, tested).** Rune stones (`blessed-fields` times 2, fires twice) with the abbot's
+madness (multipliers 2): the growth rune's 2 Materials become 16 a season. Holy furrows (fields count as temples),
+every hearth a temple (worked places are temples) and the pilgrim road (6 temples win the run): the run ends won.

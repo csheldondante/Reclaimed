@@ -12,6 +12,7 @@ import type { Tier } from '../api/contracts/opportunity';
 import type { TemplateDef } from '../living/engine';
 import type { LiveCond, LiveDef, LiveWhere } from '../living/live';
 import type { RuleDef, Thing } from '../living/rules';
+import type { LawDef, LawDo } from '../living/laws';
 import type { FactWorld } from '../living/world';
 import { placeStates } from '../mutate/facts';
 import { checkPack, reportText, siteOf, GOODS, PEOPLE, type Pack, type PackAbility, type PackCard, type PackCond, type PackEffect, type PackEvent, type PackTag, type PackThing, type Problem } from './check';
@@ -49,6 +50,8 @@ export interface LoadedPack {
   things: PackThing[];
   events: PackEvent[];
   abilities: PackAbility[];
+  /** (laws) the pack's laws as the engine's LawDef (spells by the engine's ids) */
+  laws: LawDef[];
   /** cards left out, each with why (what the engine cannot play yet) */
   left: { card: string; why: string }[];
   problems: Problem[];
@@ -87,6 +90,7 @@ export function effectsText(list: readonly PackEffect[], p: Pack): string {
     else if ('sign' in e) out.push(`${SIGN_WORD[e.sign]} for ${e.seasons ?? 3} seasons.`);
     else if ('arrive' in e) out.push('40 refugees walk in from {other}.');
     else if ('unlock' in e) out.push(`You can cast ${p.abilities?.find((a) => a.id === e.unlock)?.name ?? e.unlock}.`);
+    else if ('law' in e) out.push(`A new law, "${p.laws?.find((l) => l.id === e.law)?.name ?? e.law}", ${e.seasons ? `for this season and ${e.seasons} more` : 'for the rest of the run'}.`);
   }
   return [...says, ...out].join(' ');
 }
@@ -148,6 +152,8 @@ function effects(list: readonly PackEffect[], p: Pack, need: Set<string>, note: 
       need.add('far');
       out.push({ migrate: ['$other', '$town', 0.3], note: 'refugees from {other} walked in along the road' }, { helper: 'refugeeCohort', args: ['$town', '$town'] });
     } else if ('unlock' in e) out.push(BASE_SPELL[e.unlock] ? { helper: 'spell', args: [BASE_SPELL[e.unlock]] } : { helper: 'packUnlock', args: [e.unlock] });
+    // (laws: the Realm's own `law` helper — season/realm.ts)
+    else if ('law' in e) out.push({ helper: 'law', args: [e.law, e.seasons ?? 0] });
   }
   return out;
 }
@@ -228,8 +234,24 @@ export function loadPack(p: Pack, base: { cards?: readonly string[]; rules?: rea
   // (a pack's rules are the engine's RuleDef as written: the validator has checked their shape. A rule that sets a
   // timed tag is told so here: the tag's declaration says it)
   const timed = new Set(['festival', 'growth-active', ...(p.tags ?? []).filter((t) => t.timed).map((t) => t.id)]);
-  const own = ((p.rules ?? []) as unknown as RuleDef[]).map((r): RuleDef => ('tag' in r.effect && timed.has(r.effect.tag) ? { ...r, effect: { ...r.effect, timed: true } } : r));
-  return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], left, problems };
+  const asRule = (r: RuleDef): RuleDef => ('tag' in r.effect && timed.has(r.effect.tag) ? { ...r, effect: { ...r.effect, timed: true } } : r);
+  const own = ((p.rules ?? []) as unknown as RuleDef[]).map(asRule);
+  // (laws: as written, but spells by the engine's ids and a rule a law adds told of its timed tags)
+  const spellId = (s: string): string => BASE_SPELL[s] ?? s;
+  const laws = (p.laws ?? []).map((l): LawDef => {
+    const d = structuredClone(l.does) as Record<string, unknown>;
+    if (typeof d.spell === 'string') d.spell = spellId(d.spell);
+    if (Array.isArray(d.allow)) d.allow = (d.allow as string[]).map(spellId);
+    if (d.add_rule) d.add_rule = asRule(d.add_rule as RuleDef);
+    return { id: l.id, name: l.name, does: d as unknown as LawDo };
+  });
+  return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], laws, left, problems };
+}
+
+/** (laws) the pack things in play that carry laws: each as the Realm's things name it, with its laws
+ *  (RealmOptions.extra.lawThings) */
+export function lawThings(w: FactWorld, packs: readonly LoadedPack[]): { id: string; name: string; laws: string[] }[] {
+  return packThings(w, packs).filter((t) => t.def.laws?.length).map((t) => ({ id: t.id, name: t.def.name, laws: [...t.def.laws!] }));
 }
 
 /**

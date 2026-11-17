@@ -61,8 +61,8 @@ export type RuleTrigger = 'turn' | { event: string } | { live: string; tier?: st
 
 /** what an acting rule does: a card put on offer now, a live card's event begun now, a tag set or cleared on the
  *  first thing matched (`timed`: it lasts to the end of the season) */
-export type RuleAct = { offer: string } | { start: string } | { tag: string; on: 'a'; timed?: boolean } | { untag: string; on: 'a' };
-export const isAct = (fx: RuleDef['effect']): fx is RuleAct => 'offer' in fx || 'start' in fx || 'tag' in fx || 'untag' in fx;
+export type RuleAct = { offer: string } | { start: string } | { tag: string; on: 'a'; timed?: boolean } | { untag: string; on: 'a' } | { law: string; seasons?: number };
+export const isAct = (fx: RuleDef['effect']): fx is RuleAct => 'offer' in fx || 'start' in fx || 'tag' in fx || 'untag' in fx || 'law' in fx;
 
 export interface RuleDef {
   id: string;
@@ -83,6 +83,8 @@ export interface RuleDef {
   cap?: number;
   /** the most firings a season, if the author wants one (absent: it fires every time its trigger occurs) */
   perSeason?: number;
+  /** (laws) it fires this many times on one trigger (default 1): each time is a firing of its own */
+  fires?: number;
   /** why, in the player's words: {a} and {b} the things' names, {n} how much, {count} how many matched */
   why: string;
 }
@@ -188,13 +190,9 @@ function matches(t: Thing, q: TagQuery, o: RuleOccasion, a?: Thing): boolean {
   return true;
 }
 
-export class RuleBook {
-  private state: RuleState = { season: -1, fired: {} };
-
-  constructor(
-    readonly rules: readonly RuleDef[],
-    private w: RuleWorld,
-  ) {
+/** problems that make a rule list unplayable (thrown: never patched) */
+export function validateRules(rules: readonly RuleDef[]): void {
+  {
     const ids = new Set<string>();
     for (const r of rules) {
       if (ids.has(r.id)) throw new Error(`rules: the id ${r.id} is used twice`);
@@ -203,7 +201,34 @@ export class RuleBook {
       if (!isAct(r.effect) && (r.effect.n === 0 || ('op' in r.effect && r.effect.op === 'mul' && r.effect.n < 0))) throw new Error(`rule ${r.id}: its effect changes nothing`);
       if ('amount' in r.effect && typeof r.on !== 'string' && 'live' in r.on && r.on.tier) throw new Error(`rule ${r.id}: a rule about a result comes after the event's numbers are read: it cannot change one`);
       if (r.per === 'b' && !r.b) throw new Error(`rule ${r.id}: counts a second thing it does not name`);
+      if (r.fires !== undefined && (!Number.isInteger(r.fires) || r.fires < 0)) throw new Error(`rule ${r.id}: fires ${r.fires} times`);
     }
+  }
+}
+
+export class RuleBook {
+  private state: RuleState = { season: -1, fired: {} };
+  private source: () => readonly RuleDef[];
+  private checked = new WeakSet<readonly RuleDef[]>();
+
+  /** `rules`: the list, or (laws: living/laws.ts) a function that gives the list in force now — a new list is checked
+   *  when it is first seen, so the giver should return the same array while nothing changed */
+  constructor(
+    rules: readonly RuleDef[] | (() => readonly RuleDef[]),
+    private w: RuleWorld,
+  ) {
+    this.source = typeof rules === 'function' ? rules : () => rules;
+    void this.rules;
+  }
+
+  /** the rules in force now, in order */
+  get rules(): readonly RuleDef[] {
+    const list = this.source();
+    if (!this.checked.has(list)) {
+      validateRules(list);
+      this.checked.add(list);
+    }
+    return list;
   }
 
   save(): RuleState {
@@ -321,6 +346,8 @@ export class RuleBook {
         if (typeof v !== 'number') throw new Error(`rule ${r.id}: the event has no number ${r.per.amount}`);
         times = Math.floor(v / r.per.each);
       }
+      // (laws: a rule may fire several times on one trigger; each time is a firing, read by the next)
+      for (let k = 0; k < (r.fires ?? 1); k++) {
       let delta: number;
       if (isAct(fx)) {
         // (an act: done by the world's owner; nothing changed — the card stands already, the tag is there — is no firing)
@@ -341,7 +368,7 @@ export class RuleBook {
         v[fx.amount] = next;
         delta = next - was;
       }
-      if (!delta) continue;
+      if (!delta) break;
       if (!dry) {
         this.state.fired[r.id] = (this.state.fired[r.id] ?? 0) + 1;
         if (occurrence) this.cascade.seen.add(occurrence);
@@ -353,6 +380,7 @@ export class RuleBook {
       const second = [...bs.values()][0];
       const text = r.why.replace(/\{(a|b|n|count)\}/g, (_, k: string) => (k === 'a' ? first.name : k === 'b' ? (second?.name ?? '') : k === 'n' ? String(Math.abs(delta)) : String(r.per === 'b' ? bs.size : as.length)));
       hits.push({ rule: r.id, name: r.name, things: [...as.map((t) => t.id), ...bs.keys()], ...(isAct(fx) ? { act: fx } : 'pool' in fx ? { pool: fx.pool } : { amount: fx.amount }), delta, text: text.charAt(0).toUpperCase() + text.slice(1), ...(o.what ? { what: o.what } : {}), ...(o.after ? { after: o.after } : {}) });
+      }
     }
     return hits;
   }

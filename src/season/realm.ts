@@ -23,6 +23,7 @@ import { text, type Ctx, type Helper, type Stage } from '../living/dsl';
 import { LivingEngine, outcomesOf, type EngineReport, type Offer, type TemplateDef, type EngineState } from '../living/engine';
 import { idleState, liveDerive, liveNames, liveRead, liveTier, type LiveDef, type LiveState, type LiveVars } from '../living/live';
 import { RuleBook, type RuleAct, type RuleDef, type RuleHit, type RuleOccasion, type RuleState, type Thing } from '../living/rules';
+import { applyTags, boardDelta, cardTerms, deriveRules, lawIncome, liveLaw, poolsAs, raidersOf, resultAlso, shiftTier, spared, spellAlso, spellMech, stayOf, wonBy, type ActiveLaw, type CardTerms, type DerivedRules, type LawDef, type LawSource, type Mech } from '../living/laws';
 import { liveWhat } from './live-words';
 import type { Tier } from '../api/contracts/opportunity';
 import { seedLocus } from '../living/seed';
@@ -131,7 +132,16 @@ export interface RealmOptions {
    *  name, more synergy rules, and more things in play (with their tags) for the rules to read: an outside-authored
    *  pack, loaded. A helper here never replaces one of the realm's own. `things` is given the realm's own list and
    *  returns the whole list (a pack's things added, their tags lent to the place they stand at) */
-  extra?: { templates?: TemplateDef[]; helpers?: Record<string, Helper>; rules?: RuleDef[]; things?: (base: Thing[]) => Thing[] };
+  extra?: {
+    templates?: TemplateDef[];
+    helpers?: Record<string, Helper>;
+    rules?: RuleDef[];
+    things?: (base: Thing[]) => Thing[];
+    /** (laws: docs/design/LAWS.md) the laws that can come into force, and the things in play that carry laws (each
+     *  thing's id as `things()` gives it, its name, the laws it carries) */
+    laws?: LawDef[];
+    lawThings?: () => { id: string; name: string; laws: string[] }[];
+  };
   /** (card-table, tuning) raiders in the run's last stage (default realm-templates.ts RAIDERS) */
   raiders?: number;
   /** (card-table) told each time synergy rules fire, with the firings (a front end's log of what, how much, why) */
@@ -161,6 +171,9 @@ export interface RunState {
   partners?: number;
   /** (chains) the cards a rule has asked for that are not yet done: card → the rule's name */
   asked?: [string, string][];
+  /** (laws) the laws in force, in the order they came into force, and the last order number given */
+  laws?: ActiveLaw[];
+  lawSeq?: number;
 }
 
 export class Realm {
@@ -233,6 +246,10 @@ export class Realm {
       mutators.season(f.turn);
     }
     f.drainChanged();
+    // (laws: the ones that can come into force; a run taken up again has its list as saved)
+    for (const l of o.extra?.laws ?? []) this.lawDefs.set(l.id, l);
+    this.active = structuredClone(res?.laws ?? []);
+    this.lawSeq = res?.lawSeq ?? 0;
     // (the live fire is dealt only when asked for: realm-events.ts FIRE_TEMPLATE, BACKLOG LS-63)
     const world = o.liveFire ? [...WORLD_TEMPLATES.filter((t) => t.id !== 'fire-wards'), FIRE_TEMPLATE] : WORLD_TEMPLATES;
     const templates: TemplateDef[] = [...CATALOG.map(projectTemplate).filter((t): t is TemplateDef => t !== null), ...world, ...(o.extra?.templates ?? [])];
@@ -242,16 +259,24 @@ export class Realm {
     // (the arc's entity is the world's: a new run's arc starts from its first stage)
     const old = f.entity(`arc:${arc.id}`);
     if (old && !res) old.attrs.stage = -1;
+    const tune = o.tune ?? (() => ({ ...OPP_TUNE.dealer, reach: Number.MAX_VALUE, resourceMax: BOARD }));
     this.engine = new LivingEngine(this.w, templates, arc, o.home, {
       stage: this.stage(),
-      tune: o.tune ?? (() => ({ ...OPP_TUNE.dealer, reach: Number.MAX_VALUE, resourceMax: BOARD })),
+      // (laws: cards on offer at once, more or fewer)
+      tune: () => {
+        const t = tune();
+        const d = boardDelta(this.laws());
+        return d ? { ...t, resourceMax: Math.max(0, t.resourceMax + d) } : t;
+      },
       economy: false,
       limitBoard: true,
       threatMax: 1,
       rng: () => 0,
       liveNumbers: Object.keys(this.runNumbers()),
     });
-    this.rules = new RuleBook([...RULES, ...(o.extra?.rules ?? [])], { things: () => this.things(), pool: (k) => pools(this.led)[k as Pool] ?? 0, gain: (k, n) => this.addPool(k as Pool, n), act: (fx, things, rule) => this.act(fx, things, rule) });
+    this.baseRules = [...RULES, ...(o.extra?.rules ?? [])];
+    // (laws: the rule book reads the rules with the laws in force applied)
+    this.rules = new RuleBook(() => this.ruleView().rules, { things: () => this.things(), pool: (k) => pools(this.led)[k as Pool] ?? 0, gain: (k, n) => this.addPool(k as Pool, n), act: (fx, things, rule) => this.act(fx, things, rule) });
     for (const [k, v] of res?.asked ?? []) this.asked.set(k, v);
     if (res?.rules) this.rules.load(res.rules);
     else this.rules.season(this.w.turn);
@@ -259,13 +284,139 @@ export class Realm {
     if (res) {
       this.engine.load(res.engine);
       this.last = { turn: this.w.turn, dealt: [], kept: this.engine.offers, notProposed: [], dealer: null, evaluated: { templates: 0, of: 0, changed: 0 }, ms: 0 };
-    } else this.last = this.engine.deal();
+    } else this.last = this.dealt(this.engine.deal());
     this.sync();
+    this.refreshLaws();
   }
 
   /** the run as it stands, to save beside the world's snapshot (`RealmOptions.resume` takes it up) */
   runState(): RunState {
-    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, averted: this.averted, fight: this.fight, where: [...this.whereOf], engine: this.engine.state(), rules: this.rules.save(), seen: this.seen, partners: this.partnersWere, asked: [...this.asked] };
+    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, averted: this.averted, fight: this.fight, where: [...this.whereOf], engine: this.engine.state(), rules: this.rules.save(), seen: this.seen, partners: this.partnersWere, asked: [...this.asked], laws: structuredClone(this.active), lawSeq: this.lawSeq };
+  }
+
+  // ---- laws (living/laws.ts; docs/design/LAWS.md) ---------------------------------------------------------------------
+
+  /** the laws that can come into force, by id */
+  private lawDefs = new Map<string, LawDef>();
+  /** the laws in force, in the order they came into force (a timed one past its turn is dropped at the next refresh) */
+  private active: ActiveLaw[] = [];
+  private lawSeq = 0;
+  /** the base rules: the run's and the packs' (laws are applied over them) */
+  private baseRules: RuleDef[] = [];
+  private ruleCache: { key: string; view: DerivedRules } | null = null;
+
+  /** a law that can come into force, by id */
+  lawDef(id: string): LawDef | undefined {
+    return this.lawDefs.get(id);
+  }
+  /** every law that can come into force */
+  allLaws(): LawDef[] {
+    return [...this.lawDefs.values()];
+  }
+  /** the laws in force now, in the order they came into force, each with its entry (who made it, how long) */
+  lawsInForce(): { def: LawDef; at: ActiveLaw }[] {
+    return this.active.filter((a) => !('until' in a.source) || a.source.until >= this.w.turn).flatMap((a) => {
+      const def = this.lawDefs.get(a.law);
+      return def ? [{ def, at: a }] : [];
+    });
+  }
+  /** the laws in force, as defs, in order */
+  laws(): LawDef[] {
+    return this.lawsInForce().map((x) => x.def);
+  }
+  /** the rules with the laws in force applied (the same list while the laws do not change), what each law changed,
+   *  and the rules turned off */
+  ruleView(): DerivedRules {
+    const key = this.lawsInForce().map((x) => x.at.seq).join(',');
+    if (this.ruleCache?.key !== key) this.ruleCache = { key, view: deriveRules(this.baseRules, this.laws()) };
+    return this.ruleCache.view;
+  }
+  /** the base rules, before any law */
+  rulesBefore(): readonly RuleDef[] {
+    return this.baseRules;
+  }
+
+  /**
+   * A law comes into force from an effect, a rule or an ability: for `seasons` (the rest of this season and so many
+   * more) or, with none, the rest of the run. `from`: who or what made it, in the player's words. Laws stack: the same
+   * law twice is in force twice.
+   */
+  enact(id: string, from: string, seasons?: number): void {
+    if (!this.lawDefs.has(id)) throw new Error(`realm: no law ${id}`);
+    this.push(id, from, seasons ? { until: this.w.turn + seasons } : { run: true });
+  }
+  private push(law: string, from: string, source: LawSource, via?: string): void {
+    const def = this.lawDefs.get(law)!;
+    // (meta: the next law to come into force lasts the rest of the run, whatever its source; that law is used up)
+    if (!('next_law' in def.does)) {
+      const next = this.lawsInForce().find((x) => 'next_law' in x.def.does);
+      if (next) {
+        this.active = this.active.filter((a) => a !== next.at);
+        source = { run: true };
+        from = `${from} (${next.def.name})`;
+      }
+    }
+    this.active.push({ law, from, source, seq: ++this.lawSeq, ...(via ? { via } : {}) });
+    this.w.facts.record({ kind: 'law-made', by: ['player'], to: [this.home], note: `a new law: ${def.name}` });
+  }
+  /**
+   * The laws whose source is a thing follow the things: a thing that left play or is ruined takes its laws with it, a
+   * thing newly standing brings its laws (they come into force now, after the laws already in force). A timed law past
+   * its turn leaves. Called after every player action and at the season's end.
+   */
+  refreshLaws(): void {
+    const src = this.o.extra?.lawThings?.() ?? [];
+    this.active = this.active.filter((a) => !('until' in a.source) || a.source.until >= this.w.turn);
+    if (!src.length && !this.active.some((a) => 'thing' in a.source)) return;
+    const standing = new Set(this.things().filter((t) => !t.tags.includes('ruined')).map((t) => t.id));
+    const carries = (thing: string, law: string) => standing.has(thing) && src.some((s) => s.id === thing && s.laws.includes(law));
+    this.active = this.active.filter((a) => !('thing' in a.source) || carries(a.source.thing, a.law));
+    for (const s of src) {
+      if (!standing.has(s.id)) continue;
+      for (const law of s.laws) if (!this.active.some((a) => a.law === law && (('thing' in a.source && a.source.thing === s.id) || a.via === s.id))) this.push(law, s.name, { thing: s.id }, s.id);
+    }
+  }
+  /**
+   * (the table's previews) What `fn` reads with these laws in force as well, the newest last; nothing is kept. A law
+   * a thing would bring is read as in force for the run.
+   */
+  withLaws<T>(ids: readonly string[], fn: () => T): T {
+    const [active, seq, cache] = [this.active, this.lawSeq, this.ruleCache];
+    this.active = [...active, ...ids.filter((id) => this.lawDefs.has(id)).map((law, i) => ({ law, from: 'preview', source: { run: true } as LawSource, seq: seq + i + 1 }))];
+    try {
+      return fn();
+    } finally {
+      [this.active, this.lawSeq, this.ruleCache] = [active, seq, cache];
+    }
+  }
+
+  /** an offer's terms with the card laws in force: people locked, goods spent, seasons to build */
+  terms(o: Offer): CardTerms {
+    const t = this.engine.template(o.template);
+    const locks: Record<string, number> = {};
+    for (const q of o.opp.requires) if (q.kind === 'workers' || q.kind === 'army') locks[q.kind === 'workers' ? 'labor' : 'might'] = (locks[q.kind === 'workers' ? 'labor' : 'might'] ?? 0) + q.count;
+    const turns = 'turns' in o.opp.duration ? o.opp.duration.turns : 1;
+    return cardTerms({ id: t.id, themes: t.themes }, { locks, costs: { ...(o.opp.costs ?? {}) } as Record<string, number>, turns }, this.laws());
+  }
+  /** what one cast of each spell (and ability) in `base` does in an event, with the laws in force */
+  spellMech(base: Mech): Mech {
+    return spellMech(base, this.laws());
+  }
+  /** the run is won by a law (an achievement): which, or null */
+  won(): { law: string; count: number; tags: string[] } | null {
+    const laws = this.laws();
+    return laws.some((l) => 'win' in l.does) ? wonBy(this.things(), laws) : null;
+  }
+  /** offers just dealt stay on offer longer or shorter by the laws in force (`stay`) */
+  private dealt(r: EngineReport): EngineReport {
+    const laws = this.laws();
+    if (laws.some((l) => 'stay' in l.does))
+      for (const o of r.dealt) {
+        const t = this.engine.template(o.template);
+        const n = stayOf({ id: t.id, themes: t.themes }, laws);
+        if (n) o.expires = Math.max(this.w.turn, o.expires + n);
+      }
+    return r;
   }
   /** the history's turn before this run's first season */
   private t0: number;
@@ -317,6 +468,14 @@ export class Realm {
       hasSpell: { pred: (_c, a) => this.spells.includes(a[0] as SpellId) },
       // (chains) a rule has put this card on offer, or started it, and it is not yet done
       ruleAsked: { pred: (_c, a) => this.asked.has(String(a[0])) },
+      // (laws: law id seasons? — a law comes into force, made by the card that names it; seasons 0: the rest of the run)
+      law: {
+        effect: (c, a) => {
+          if (c.dry) return;
+          const o = [...this.engine.offers, ...this.engine.past].find((x) => c.cause === x.id || c.cause.startsWith(`${x.id}:`));
+          this.enact(String(a[0]), o ? `"${o.opp.title}"` : c.cause, Number(a[1] ?? 0) || undefined);
+        },
+      },
       // (built card: the town has built it)
       built: { pred: (_c, a) => this.led.built.includes(String(a[0])) },
       threatComing: { pred: () => !this.averted && !this.fight && this.raid === null },
@@ -431,7 +590,10 @@ export class Realm {
   runNumbers(): LiveVars {
     const p = pools(this.led);
     const houses = this.led.built.filter((c) => c === 'houses').length;
-    return { raid: this.raid ?? 0, soldiers: military(this.led) ? p.might * SQUAD : 0, watchers: 4 + 2 * Math.min(3, houses) };
+    // (laws: the raid's size; a pool that counts as Might in a fight — Unrest)
+    const laws = this.laws();
+    const might = p.might + poolsAs(laws).filter(([, as]) => as === 'might').reduce((n, [k]) => n + (p[k as Pool] ?? 0), 0);
+    return { raid: this.raid === null ? 0 : raidersOf(this.raid, laws), soldiers: military(this.led) ? might * SQUAD : 0, watchers: 4 + 2 * Math.min(3, houses) };
   }
 
   /** where a thing is, in world units (x cells, y) */
@@ -466,21 +628,27 @@ export class Realm {
   things(): Thing[] {
     const base = this.baseThings();
     // (card-table: a pack's things added, their tags lent to their place — packs/load.ts; LS-75 asks for the same here)
-    return this.o.extra?.things ? this.o.extra.things(base) : base;
+    const all = this.o.extra?.things ? this.o.extra.things(base) : base;
+    // (laws: a tag that counts as another, a tag granted to every match, in the order they came into force)
+    const laws = this.laws();
+    return laws.length ? applyTags(all, laws) : all;
   }
   private baseThings(): Thing[] {
     const f = this.w.facts;
     const l = this.led;
     const out: Thing[] = [];
     const h = this.w.settlement(this.home)!;
-    const ruinOf = (id: EntityId) => RUIN.filter((k) => !!f.tag(id, 'condition', k)?.value);
+    // (laws: a ruin word a law spares no longer ruins — the thing keeps its working tags and carries the word too)
+    const spare = spared(this.laws());
+    const ruinOf = (id: EntityId) => RUIN.filter((k) => !spare.has(k) && !!f.tag(id, 'condition', k)?.value);
+    const sparedOn = (id: EntityId) => RUIN.filter((k) => spare.has(k) && !!f.tag(id, 'condition', k)?.value);
     const timed = (id: EntityId) => TIMED.filter((k) => Number(f.tag(id, 'condition', k)?.value ?? -1) >= this.w.turn);
     for (const s of SITES) {
       const id = siteId(this.home, s.key);
       if (!f.entity(id)) continue;
       const ruin = ruinOf(id);
       const meta = SITE_TAGS[s.key];
-      const tags = ruin.length ? ['ruined', ...ruin] : [...meta.is, 'standing', ...(meta.built && l.built.includes(meta.built) ? ['worked'] : []), ...timed(id)];
+      const tags = ruin.length ? ['ruined', ...ruin] : [...meta.is, 'standing', ...(meta.built && l.built.includes(meta.built) ? ['worked'] : []), ...timed(id), ...sparedOn(id)];
       out.push({ id, name: s.name, tags, at: this.posOf(this.cellOf(s.key)), town: this.home });
     }
     const p = pools(l);
@@ -537,6 +705,12 @@ export class Realm {
    */
   private act(fx: RuleAct, things: Thing[], rule: RuleDef): boolean {
     const f = this.w.facts;
+    // (laws: a rule makes a law; it is in force from now — the rules after it in this cascade read it)
+    if ('law' in fx) {
+      if (!this.lawDefs.has(fx.law)) return false;
+      this.enact(fx.law, `the rule "${rule.name}"`, fx.seasons);
+      return true;
+    }
     if ('offer' in fx || 'start' in fx) {
       const id = 'offer' in fx ? fx.offer : fx.start;
       const t = this.engine.templates.find((x) => x.id === id);
@@ -567,7 +741,7 @@ export class Realm {
   private dealAsked(): void {
     if (!this.dealDue) return;
     this.dealDue = false;
-    this.last = this.engine.redeal();
+    this.last = this.dealt(this.engine.redeal());
     this.sync();
   }
 
@@ -575,7 +749,9 @@ export class Realm {
 
   /** a template's live event, or null */
   liveOf(o: Offer): LiveDef | null {
-    return this.engine.template(o.template).play?.event ?? null;
+    const def = this.engine.template(o.template).play?.event ?? null;
+    // (laws: spells allowed, foes added)
+    return def ? liveLaw(def, this.laws()) : null;
   }
   /** the live events under way: agreed (or forced) and not yet resolved */
   liveRunning(): Offer[] {
@@ -607,7 +783,8 @@ export class Realm {
     const vars = liveRead(def, how.state, run);
     const hits = this.fireRules({ on: { live: def.tag }, id, vars, at: this.posOf(how.at ?? this.cellOf(site ?? 'market')), route: how.route ? [this.posOf(how.route[0]), this.posOf(how.route[1])] : null });
     const out = liveDerive(def, vars);
-    const tier = liveTier(def, out);
+    // (laws: a result moved up or down a step)
+    const tier = shiftTier(def, liveTier(def, out), this.laws());
     this.liveOut.set(id, out);
     this.w.holdings = this.led.holdings;
     this.engine.resolve(id, tier);
@@ -619,6 +796,9 @@ export class Realm {
     // the rule that waits for the card to be done
     const after = this.asked.get(o.template);
     hits.push(...this.fireRules({ on: { live: def.tag, tier: [tier] }, id: `${id}:result`, vars: { ...out }, at: this.posOf(how.at ?? this.cellOf(site ?? 'market')), route: null, what: liveWhat(title, tier), ...(after ? { after } : {}) }));
+    // (laws: the result also counts as another kind's result, for the rules that wait for that)
+    for (const also of resultAlso(def.tag, tier, this.laws())) hits.push(...this.fireRules({ on: { live: also.live, tier: also.tier }, id: `${id}:as:${also.live}`, vars: { ...out }, at: this.posOf(how.at ?? this.cellOf(site ?? 'market')), route: null, what: liveWhat(title, tier), ...(after ? { after } : {}) }));
+    this.refreshLaws();
     // (the card's own record of its end, read here, is what takes it off the asked list — and a rule waiting for that
     // record may ask for the same card again: a loop's next turn)
     hits.push(...this.pump());
@@ -641,7 +821,8 @@ export class Realm {
     const vars = liveRead(def, state, this.runNumbers());
     const hits = this.rules.preview({ on: { live: def.tag }, vars, at: this.posOf(this.cellOf(site ?? 'market')), route: null });
     const out = liveDerive(def, vars);
-    const tier = liveTier(def, out);
+    // (laws: a result moved up or down a step)
+    const tier = shiftTier(def, liveTier(def, out), this.laws());
     const oc = outcomesOf(t)[tier] ?? outcomesOf(t).success;
     const line = (oc?.text ?? '').replace(/\{(\w+)\}/g, (m, k: string) => (typeof out[k] === 'number' ? String(out[k]) : m));
     return { tier, vars: out, hits, text: text(this.engine.ctx(t, o.bind, o.id), line) };
@@ -669,8 +850,11 @@ export class Realm {
     this.addPool('magic', -cost);
     const at = site ? siteId(this.home, site) : this.home;
     if (spell === 'growth' && site) this.mark(at, 'growth-active', 'spell');
+    // (laws: a cast also sets a tag for the season on every thing that matches — Rain grows the fields)
+    for (const also of spellAlso(spell, this.laws())) for (const t of this.things()) if (this.w.facts.entity(t.id) && !t.tags.includes('ruined') && also.on.tags.every((x) => t.tags.includes(x)) && !(also.on.not ?? []).some((x) => t.tags.includes(x))) this.mark(t.id, also.tag, `law:${also.law}`);
     this.w.facts.record({ kind: 'spell-cast', by: ['player'], to: [at], note: spell === 'growth' ? `you drew a growth rune over ${this.w.name(at)}` : `you cast ${spell} at ${this.w.name(at)}` });
     this.said.push(...this.pump().map((h) => `${h.text}.`));
+    this.refreshLaws();
     this.dealAsked();
     return true;
   }
@@ -763,11 +947,10 @@ export class Realm {
   short(o: Offer): Partial<Pools> {
     const have = pools(this.led);
     const out: Partial<Pools> = {};
-    for (const r of o.opp.requires) {
-      const k: Pool | null = r.kind === 'workers' ? 'labor' : r.kind === 'army' ? 'might' : null;
-      if (k && have[k] < r.count) out[k] = r.count - have[k];
-    }
-    for (const [g, n] of Object.entries(o.opp.costs ?? {})) if (POOL_ROLE[g as Pool] === 'goods' && have[g as Pool] < n) out[g as Pool] = n - have[g as Pool];
+    // (laws: the terms in force, not the printed ones)
+    const t = this.terms(o);
+    for (const [k, n] of Object.entries(t.locks) as [Pool, number][]) if (have[k] < n) out[k] = n - have[k];
+    for (const [g, n] of Object.entries(t.costs)) if (POOL_ROLE[g as Pool] === 'goods' && have[g as Pool] < n) out[g as Pool] = n - have[g as Pool];
     return out;
   }
 
@@ -775,12 +958,24 @@ export class Realm {
   commit(id: string): Offer {
     this.w.holdings = this.led.holdings;
     this.rules.begin();
+    // (laws: the offer is committed on the terms in force — people locked, goods spent, seasons to build)
+    const was = this.engine.offered.find((x) => x.id === id);
+    if (was && this.laws().length) {
+      const t = this.terms(was);
+      was.opp = {
+        ...was.opp,
+        requires: [...was.opp.requires.filter((q) => q.kind !== 'workers' && q.kind !== 'army'), ...(t.locks.labor ? [{ kind: 'workers' as const, count: t.locks.labor }] : []), ...(t.locks.might ? [{ kind: 'army' as const, count: t.locks.might }] : [])],
+        costs: t.costs as Offer['opp']['costs'],
+        duration: 'turns' in was.opp.duration ? { turns: t.turns } : was.opp.duration,
+      };
+    }
     const o = this.engine.commit(id);
     this.sync();
     this.said.push(...this.pump().map((h) => `${h.text}.`));
     const c = cardOfTemplate(o.template);
     if (c) this.led = adopt(this.led, card(c), o.commitment!, o.id, this.season + (o.resolvesTurn! - this.w.turn));
     this.w.holdings = this.led.holdings;
+    this.refreshLaws();
     this.dealAsked();
     return o;
   }
@@ -804,11 +999,17 @@ export class Realm {
     // (the season's own rules, while its states still hold — a growth rune lasts to this point: one line a firing:
     // what, how much, why)
     const turned = this.fireRules({ on: 'turn', id: `turn:${this.w.turn}` });
+    // (laws: goods each season by law)
+    const byLaw = Object.entries(lawIncome(this.laws())).flatMap(([k, n]) => {
+      const got = n ? this.addPool(k as Pool, n) : 0;
+      return got ? [`By law: ${got > 0 ? '+' : ''}${got} ${k.charAt(0).toUpperCase()}${k.slice(1)}.`] : [];
+    });
     this.w.holdings = this.led.holdings;
     const before = this.engine.changes.length;
     const past = this.engine.past.length;
-    this.last = this.engine.advance();
+    this.last = this.dealt(this.engine.advance());
     this.sync();
+    this.refreshLaws();
     if (mutators.ready) mutators.season(this.w.turn);
     // (the season's news in the cards' own words: what was done, what was left too long; then the arc's stage)
     const told = this.engine.past.slice(past).flatMap((o) => {
@@ -825,7 +1026,7 @@ export class Realm {
     const standing = ps.filter((x) => x.standing).length;
     const fewer = this.partnersWere >= 0 && standing < this.partnersWere && ps.length ? [`Fewer wagons come by the trade road: ${standing} of ${ps.length} towns on it still stand.`] : [];
     this.partnersWere = ps.length ? standing : -1;
-    this.news = [...live.flatMap((r) => r.lines), ...told, ...arc, ...this.said.splice(0), ...hits.map((h) => `${h.text}.`), ...fewer];
+    this.news = [...live.flatMap((r) => r.lines), ...told, ...arc, ...this.said.splice(0), ...hits.map((h) => `${h.text}.`), ...byLaw, ...fewer];
     return this.news;
   }
 
@@ -833,8 +1034,24 @@ export class Realm {
   afterSeason(l: SeasonLedger): void {
     this.ledger = l;
     this.dealDue = false;
-    this.last = this.engine.redeal();
+    this.refreshLaws();
+    this.last = this.dealt(this.engine.redeal());
     this.sync();
+  }
+
+  /**
+   * (card-table) The player resolves a live event under way now, with the casts made so far, in place of waiting for
+   * the season's end: one player action (a cascade). Its result rules fire, and a card a rule starts or offers is
+   * dealt at once — a chain's next step is on the table this season.
+   */
+  resolveNow(id: string): LiveReport {
+    this.w.holdings = this.led.holdings;
+    this.rules.begin();
+    const rep = this.finishLive(id);
+    this.sync();
+    this.refreshLaws();
+    this.dealAsked();
+    return rep;
   }
 
   /** seasons until the raiders attack (0: this season); null: paid off, or fought */
@@ -844,7 +1061,8 @@ export class Realm {
 
   /** the run is over: the threat fought or paid off */
   get over(): boolean {
-    return this.fight !== null || (this.averted && this.season >= this.seasons);
+    // (laws: a run won by an achievement is over too)
+    return this.fight !== null || (this.averted && this.season >= this.seasons) || this.won() !== null;
   }
 
   // ---- the record -----------------------------------------------------------------------------------------------------

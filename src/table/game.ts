@@ -20,8 +20,12 @@ import { CATALOG } from '../season/catalog';
 import { FIRE_TEMPLATE } from '../season/realm-events';
 import { projectTemplate, SITES, WORLD_TEMPLATES, type SiteKey } from '../season/realm-templates';
 import { checkTogether, reportText, type Pack, type PackAbility, type Problem } from '../packs/check';
-import { castAbility, IS, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
+import { castAbility, IS, lawThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
 import { BASIC_SPELLS, Realm, RUN_SEASONS, SPELL_COST, type RunState, type SpellId } from '../season/realm';
+import { lawKind, lawIncome, winsOf, type LawKind } from '../living/laws';
+import { lawText, lawUntil } from '../season/law-words';
+import type { Effect } from '../living/dsl';
+import type { TemplateDef } from '../living/engine';
 import { LEADERS, leader as leaderOf, resultTitle, SPELL_NAME, threatText, costText } from '../season/run-words';
 import { ROW_H } from '../world/lattice';
 import * as W from './words';
@@ -128,6 +132,10 @@ export interface RuleView {
   ready: boolean;
   /** what it is about, or the one thing it lacks */
   why: string;
+  /** (laws) the laws that changed it, added it or turned it off (empty: it is as printed) */
+  laws: string[];
+  /** a law turned it off */
+  off: boolean;
 }
 
 /** an opportunity as a card: every number is the model's */
@@ -158,6 +166,25 @@ export interface OppCard {
   tags: string[];
   /** what is short (empty: it can be taken) */
   short: Partial<Pools>;
+  /** (laws) the cost as printed, when a law changes it (null: no law does) */
+  printed: string | null;
+  /** (laws) the laws taking it brings (and passing it, `onLapse`), each in words, and every line the player reads
+   *  that would change: "Rune-fed fields: gives +2 Materials would become gives +4 Materials" */
+  laws: { brings: string[]; onLapse: string[]; changes: string[] };
+}
+
+/** (laws) a law in force, for the "Laws in force" list */
+export interface LawView {
+  id: string;
+  name: string;
+  kind: LawKind;
+  text: string;
+  /** who or what made it */
+  from: string;
+  /** how long it stands */
+  until: string;
+  /** the same law in force more than once (laws stack) */
+  times: number;
 }
 
 /** a thing under way: a project being built, a crew sent */
@@ -278,6 +305,8 @@ export class Table {
         helpers: packHelpers(this.packs, host),
         rules: this.packs.flatMap((p) => p.rules),
         things: (things) => (made ? withPackThings(made.w, this.packs, things, HOME) : things),
+        laws: this.packs.flatMap((p) => p.laws),
+        lawThings: () => (made ? lawThings(made.w, this.packs) : []),
       },
     });
     made = this.realm;
@@ -327,7 +356,9 @@ export class Table {
   poolViews(): PoolView[] {
     const l = this.realm.ledger;
     const p = pools(l);
-    return POOLS.map((k) => ({ pool: k, have: p[k], of: POOL_ROLE[k] === 'people' ? total(l, k) : null, income: l.income[k] ?? 0 }));
+    // (laws: income by law is income)
+    const byLaw = lawIncome(this.realm.laws());
+    return POOLS.map((k) => ({ pool: k, have: p[k], of: POOL_ROLE[k] === 'people' ? total(l, k) : null, income: (l.income[k] ?? 0) + (byLaw[k] ?? 0) }));
   }
 
   private offered(): Offer[] {
@@ -336,13 +367,21 @@ export class Table {
 
   cards(): OppCard[] {
     const r = this.realm;
+    const before = this.readout();
     return this.offered().map((o) => {
       const t = r.engine.template(o.template);
-      const locks: Partial<Pools> = {};
-      for (const q of o.opp.requires) if (q.kind === 'workers' || q.kind === 'army') locks[q.kind === 'workers' ? 'labor' : 'might'] = q.count;
-      const costs = { ...(o.opp.costs ?? {}) } as Partial<Pools>;
-      const turns = 'turns' in o.opp.duration ? o.opp.duration.turns : 1;
+      // (laws: the terms in force; the printed cost is shown beside them when a law changes it)
+      const printedLocks: Partial<Pools> = {};
+      for (const q of o.opp.requires) if (q.kind === 'workers' || q.kind === 'army') printedLocks[q.kind === 'workers' ? 'labor' : 'might'] = q.count;
+      const printed = costText(printedLocks, { ...(o.opp.costs ?? {}) } as Partial<Pools>, 'turns' in o.opp.duration ? o.opp.duration.turns : 1);
+      const terms = r.terms(o);
+      const locks = terms.locks as Partial<Pools>;
+      const costs = terms.costs as Partial<Pools>;
+      const turns = terms.turns;
+      const cost = costText(locks, costs, turns);
       const person = r.w.facts.entity(o.presenter);
+      const brings = lawsIn(t.outcome ?? [], t.outcomes, this.packs);
+      const onLapse = lawsIn(t.onExpire ?? [], undefined, this.packs);
       return {
         id: o.id,
         template: o.template,
@@ -351,19 +390,76 @@ export class Table {
         role: t.presenter.role,
         line: o.line,
         place: r.w.name(o.place),
-        cost: costText(locks, costs, turns),
+        cost,
         locks,
         costs,
         turns,
         gives: o.reward,
         lapse: t.expireText ? text(r.engine.ctx(t, o.bind, o.id), t.expireText) : null,
         left: r.left(o),
-        threat: !!t.threat,
+        // (CT-28: a card a rule offers or starts is dealt as the arc's (`threat: 'arc'`) but is no threat)
+        threat: t.threat === true,
         live: !!r.liveOf(o),
         tags: [...t.themes],
         short: r.short(o),
+        printed: printed !== cost ? printed : null,
+        laws: { brings: brings.map((id) => this.lawLine(id)), onLapse: onLapse.map((id) => this.lawLine(id)), changes: brings.length ? diffReadout(before, r.withLaws(brings, () => this.readout())) : [] },
       };
     });
+  }
+
+  // ---- laws (living/laws.ts; docs/design/LAWS.md) -------------------------------------------------------------------
+
+  private lawNames = { rule: (id: string) => this.realm.ruleView().rules.find((r) => r.id === id)?.name ?? this.realm.rulesBefore().find((r) => r.id === id)?.name ?? id, card: (id: string) => this.cardTitle(id) };
+  /** a law by id, in one line: its name and what it does */
+  private lawLine(id: string): string {
+    const d = this.realm.lawDef(id);
+    return d ? W.lawLine(d.name, lawText(d.does, this.lawNames)) : id;
+  }
+  /** the laws in force, in the order they came into force; the same law from the same maker shown once, with a count */
+  laws(): LawView[] {
+    const r = this.realm;
+    const out: LawView[] = [];
+    for (const { def, at } of r.lawsInForce()) {
+      const until = lawUntil(at.source, r.w.turn, (id) => r.things().find((t) => t.id === id)?.name ?? id);
+      const same = out.find((x) => x.id === def.id && x.from === at.from && x.until === until);
+      if (same) same.times++;
+      else out.push({ id: def.id, name: def.name, kind: lawKind(def.does), text: lawText(def.does, this.lawNames), from: at.from, until, times: 1 });
+    }
+    return out;
+  }
+  /**
+   * Every line the player reads that a law can change, by a key: each rule's reading and what it gives, whether it is
+   * ready, the cost of each card on offer, each spell's line, the tags in play, income and the ways to win. A card's
+   * preview is this read with and without its laws (`diffReadout`).
+   */
+  private readout(): Map<string, { label: string; text: string }> {
+    const r = this.realm;
+    const m = new Map<string, { label: string; text: string }>();
+    const view = r.ruleView();
+    for (const x of view.rules) {
+      const says = W.ruleSays(x, (id) => this.cardTitle(id), (id) => r.lawDef(id)?.name ?? id);
+      const cut = Math.max(says.lastIndexOf(' Gives '), says.lastIndexOf(' Then '));
+      m.set(`rule:${x.id}:reads`, { label: x.name, text: cut > 0 ? says.slice(0, cut).trim() : says });
+      m.set(`rule:${x.id}:gives`, { label: x.name, text: cut > 0 ? says.slice(cut).trim() : '' });
+      m.set(`rule:${x.id}:ready`, { label: x.name, text: r.rules.check(x).ok ? W.LAW_READY : W.LAW_NOT_READY });
+    }
+    for (const id of Object.keys(view.off)) m.set(`rule:${id}:gives`, { label: this.lawNames.rule(id), text: W.LAW_OFF });
+    for (const o of this.offered()) {
+      const t = r.terms(o);
+      m.set(`card:${o.id}`, { label: `"${o.opp.title}"`, text: costText(t.locks as Partial<Pools>, t.costs as Partial<Pools>, t.turns) });
+    }
+    const mech = this.mech;
+    for (const s of this.spells()) m.set(`spell:${s}`, { label: SPELL_NAME[s], text: W.spellText(s, mech[s]) });
+    for (const x of this.tagsInPlay()) m.set(`tag:${x.tag}`, { label: `"${x.tag}"`, text: W.tagCount(x.n) });
+    const inc = lawIncome(r.laws());
+    for (const k of Object.keys(inc)) m.set(`income:${k}`, { label: W.BY_LAW, text: W.incomeText(inc[k]) });
+    for (const w of winsOf(r.laws())) m.set(`win:${w.tags.join('+')}:${w.count}`, { label: W.WIN_LABEL, text: W.winLine(w.count, w.tags) });
+    return m;
+  }
+  /** a pack ability's laws come into force when it is cast */
+  private abilityLaws(id: string, name: string): void {
+    for (const e of this.ability(id).effect ?? []) if ('law' in e) this.realm.enact(e.law, `${name} (${W.CAST_WORD})`, e.seasons);
   }
 
   working(): Working[] {
@@ -406,7 +502,8 @@ export class Table {
   }
   /** what a cast of each spell and each pack ability does to a live event */
   private get mech(): Record<string, { kills?: number; douses?: number }> {
-    return { ...SPELL_MECH, ...packMech(this.packs) };
+    // (laws: what a cast does is the law's number)
+    return this.realm.spellMech({ ...SPELL_MECH, ...packMech(this.packs) });
   }
   private tell(o: Offer): void {
     this.realm.tellLive(o.id, { state: this.stateOf(o) });
@@ -420,11 +517,11 @@ export class Table {
     const magic = pools(r.ledger).magic;
     const live = r.liveRunning();
     const known = this.spells();
-    const base = known.map((s): AbilityView => {
-      const targets = s === 'growth' ? things.filter((t) => !t.ruined && t.tags.includes('field') && !t.tags.includes('growth-active') && !!siteKey(r, t.id)).map((t) => t.id) : live.filter((o) => fits(r.liveOf(o)!, s)).map((o) => o.id);
-      return { id: SPELL_ID + s, name: SPELL_NAME[s], cost: SPELL_COST[s], text: W.SPELL_TEXT[s], targets, can: magic >= SPELL_COST[s] };
-    });
     const mech = this.mech;
+    const base = known.map((s): AbilityView => {
+      const targets = s === 'growth' ? things.filter((t) => !t.ruined && t.tags.includes('field') && !t.tags.includes('growth-active') && !!siteKey(r, t.id)).map((t) => t.id) : live.filter((o) => fits(r.liveOf(o)!, s, mech)).map((o) => o.id);
+      return { id: SPELL_ID + s, name: SPELL_NAME[s], cost: SPELL_COST[s], text: W.spellText(s, mech[s]), targets, can: magic >= SPELL_COST[s] };
+    });
     const mine = this.unlocked.map((id): AbilityView => {
       const a = this.ability(id);
       const cost = a.cost.magic ?? 0;
@@ -458,6 +555,8 @@ export class Table {
       const p = r.predictLive(o.id, s);
       const casts = this.casts.get(o.id) ?? {};
       const known = this.spells();
+      const mech = this.mech;
+      const fits = (d: LiveDef, x: string) => fitsMech(d, x, mech);
       return {
         id: o.id,
         template: o.template,
@@ -480,12 +579,17 @@ export class Table {
   /** every synergy rule: what fired at the last season's end, what is ready, and for the rest the one thing missing */
   rules(): RuleView[] {
     const book = this.realm.rules;
-    return book.rules.map((r) => {
+    // (laws: the rules in force — changed ones marked with the laws' names — then the ones a law turned off)
+    const view = this.realm.ruleView();
+    const lawName = (id: string) => this.realm.lawDef(id)?.name ?? id;
+    const live = book.rules.map((r): RuleView => {
       const c = book.check(r);
       const fired = this.recent.filter((h) => h.rule === r.id).map((h) => `${h.text}.`);
       const ready = c.ok || (c.missing?.kind === 'spent' && fired.length > 0);
-      return { id: r.id, name: r.name, says: W.ruleSays(r, (id) => this.cardTitle(id)), when: W.ruleWhen(r.on), fired, ready: c.ok, why: c.ok ? W.ruleReady(r.on, c.things ?? []) : ready ? W.RULE_SPENT : W.whyNot(c.missing as RuleMissing) };
+      return { id: r.id, name: r.name, says: W.ruleSays(r, (id) => this.cardTitle(id), lawName), when: W.ruleWhen(r.on), fired, ready: c.ok, why: c.ok ? W.ruleReady(r.on, c.things ?? []) : ready ? W.RULE_SPENT : W.whyNot(c.missing as RuleMissing), laws: [...new Set(view.changed[r.id] ?? [])], off: false };
     });
+    const off = this.realm.rulesBefore().filter((r) => view.off[r.id]).map((r): RuleView => ({ id: r.id, name: r.name, says: W.ruleSays(r, (id) => this.cardTitle(id), lawName), when: W.ruleWhen(r.on), fired: [], ready: false, why: W.ruleOff(view.off[r.id]), laws: [view.off[r.id]], off: true }));
+    return [...live, ...off];
   }
   /** a card's title by its id (a rule's words name the card it offers) */
   private cardTitle(id: string): string {
@@ -550,6 +654,7 @@ export class Table {
       this.say('event', W.eventBegan(this.realm.liveOf(o)!.title));
     }
     this.flushRules();
+    this.checkWin();
     return true;
   }
 
@@ -603,12 +708,51 @@ export class Table {
       for (const [k, n] of Object.entries(gains) as [Pool, number][]) l = k === 'unrest' ? lose(l, { unrest: n }) : n > 0 ? grant(l, { [k]: n }) : lose(l, { [k]: -n });
       r.ledger = l;
       r.w.facts.record({ kind: 'ability-cast', by: ['player'], to: [target], note: W.castNote(v.name, on) });
+      // (laws: an ability may make a law)
+      this.abilityLaws(id, v.name);
+      r.refreshLaws();
     }
     this.spent += v.cost;
     this.moves.push(`cast ${id} ${event ? event.template : target}`);
     this.say('took', W.castLine(v.name, on, v.cost));
     this.flushRules();
+    this.checkWin();
     return true;
+  }
+
+  /**
+   * (chains within a season) Resolve a live event under way now, with the casts made so far, instead of at the
+   * season's end: one move. Its result and the rules it sets off apply at once, and an event a rule starts begins at
+   * once — so win, a challenger, win again are each a move in the same season. False: no such event.
+   */
+  resolveNow(id: string): boolean {
+    const r = this.realm;
+    const o = r.liveRunning().find((x) => x.id === id || x.template === id);
+    if (!o || r.over) return false;
+    this.tell(o);
+    const before = pools(r.ledger);
+    this.moves.push(`resolve ${o.template}`);
+    const rep = r.resolveNow(o.id);
+    this.casts.delete(o.id);
+    this.events.push({ season: r.season, template: rep.template, tier: rep.tier });
+    const own = rep.lines.filter((l) => !rep.hits.some((h) => `${h.text}.` === l));
+    this.say(rep.template === 'raid' ? 'fight' : 'event', W.eventEnded(rep.title, own.join(' ')));
+    if (rep.template === 'raid' && r.fight) this.result = { title: resultTitle(r.fight), lines: [...own, ...rep.hits.map((h) => `${h.text}.`)] };
+    this.flushRules();
+    const d = W.deltaLine(before, pools(r.ledger));
+    if (d) this.say('pools', d);
+    // (what a rule started begins now)
+    this.begin();
+    this.checkWin();
+    return true;
+  }
+
+  /** (laws) a run won by an achievement ends here */
+  private checkWin(): void {
+    const w = this.realm.won();
+    if (!w || this.result) return;
+    this.result = { title: W.wonTitle(w.law), lines: [W.winLine(w.count, w.tags)] };
+    this.say('run', W.wonTitle(w.law));
   }
 
   /** the season ends: the live events under way resolve from the state they are in (the Realm's reading), then the
@@ -639,7 +783,8 @@ export class Table {
     }
     const mark = this.hits.length;
     const news = r.endSeason();
-    this.lapsed.push(...r.engine.past.slice(past).filter((o) => o.status === 'expired' && r.engine.template(o.template).threat).map((o) => o.template));
+    // (CT-28: a card a rule offered is no threat, though it is dealt as one)
+    this.lapsed.push(...r.engine.past.slice(past).filter((o) => o.status === 'expired' && r.engine.template(o.template).threat === true).map((o) => o.template));
     const res = nextSeason(r.ledger);
     r.afterSeason(res.ledger);
     // (the Realm's news carries each rule's reason too: the log has them as rule lines)
@@ -650,6 +795,7 @@ export class Table {
     const d = W.deltaLine(before, pools(r.ledger));
     if (d) this.say('pools', d);
     this.begin();
+    this.checkWin();
     if (!r.over) this.mark();
     else this.say('run', W.RUN_OVER);
   }
@@ -666,9 +812,33 @@ export class Table {
 }
 
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** (laws) the laws a card's effects bring: a `law` effect, or a thing put in play that carries laws (any result's) */
+function lawsIn(effects: readonly Effect[], outcomes: TemplateDef['outcomes'], packs: readonly LoadedPack[]): string[] {
+  const all = [...effects, ...Object.values(outcomes ?? {}).flatMap((o) => (o as { effects?: Effect[] }).effects ?? [])];
+  const out: string[] = [];
+  for (const e of all) {
+    const x = e as { helper?: string; args?: unknown[] };
+    if (x.helper === 'law') out.push(String(x.args?.[0]));
+    if (x.helper === 'packPut') out.push(...(packs.flatMap((p) => p.things).find((t) => t.id === String(x.args?.[0]))?.laws ?? []));
+  }
+  return [...new Set(out)];
+}
+/** (laws) the lines that differ between two readouts: "Rune-fed fields: gives +2 Materials would become gives +4" */
+function diffReadout(a: Map<string, { label: string; text: string }>, b: Map<string, { label: string; text: string }>): string[] {
+  const out: string[] = [];
+  for (const [k, v] of b) {
+    const was = a.get(k);
+    if (!was) out.push(W.becomesNew(v.label, v.text));
+    else if (was.text !== v.text) out.push(W.becomes(v.label, was.text, v.text));
+  }
+  for (const [k, v] of a) if (!b.has(k)) out.push(W.becomes(v.label, v.text, W.LAW_GONE));
+  return out.filter((x) => !!x);
+}
 /** a live event's spell list allows a spell ('known': every spell the run has) */
 const allows = (list: readonly string[], spell: string): boolean => list.includes(spell) || list.includes('known');
 /** a spell is allowed in a live event and has something there to act on: foes to put down, or a fire to put out */
+const fitsMech = (def: LiveDef, spell: string, mech: Record<string, { kills?: number; douses?: number }>): boolean => fits(def, spell, mech);
 function fits(def: LiveDef, spell: string, mech: Record<string, { kills?: number; douses?: number }> = SPELL_MECH): boolean {
   const m = mech[spell];
   return !!m && allows(def.spells ?? [], spell) && ((!!m.kills && def.groups.some((g) => g.side === 'foe')) || (!!m.douses && !!def.hazard));
@@ -693,6 +863,7 @@ export function replay(o: TableOptions, moves: readonly string[]): Table {
     if (verb === 'end') t.endSeason();
     else if (verb === 'take') t.take(id);
     else if (verb === 'pass') t.pass(id);
+    else if (verb === 'resolve') t.resolveNow(id);
     else if (verb === 'cast') t.cast(id, t.realm.liveRunning().find((o) => o.template === target)?.id ?? target);
     else throw new Error(`table: no move ${m}`);
   }

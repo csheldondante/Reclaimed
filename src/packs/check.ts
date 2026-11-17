@@ -31,7 +31,15 @@ export type PackEffect =
   | { sign: string; seasons?: number; strength?: number }
   | { arrive: string; count?: number; from?: string }
   | { unlock: string }
+  | { law: string; seasons?: number }
   | { say: string };
+
+/** (laws: docs/design/LAWS.md) a law as written: its id, its name, and what it does (one key of LAW_KEYS) */
+export interface PackLaw {
+  id: string;
+  name: string;
+  does: Record<string, unknown>;
+}
 
 export interface PackTag {
   id: string;
@@ -52,6 +60,8 @@ export interface PackThing {
   capacity?: number;
   /** goods taken each season while it is in play (materials, magic, intel) */
   upkeep?: Record<string, number>;
+  /** (laws) laws of this pack in force while the thing is in play and not ruined */
+  laws?: string[];
   art?: string;
 }
 export interface PackCard {
@@ -82,7 +92,9 @@ export interface PackRule {
   a: PackQuery;
   b?: PackQuery;
   need?: { pool: string; gte?: number; lte?: number };
-  effect: { pool: string; n: number } | { amount: string; op: 'add' | 'mul'; n: number } | { offer: string } | { start: string } | { tag: string; on: 'a'; timed?: boolean } | { untag: string; on: 'a' };
+  effect: { pool: string; n: number } | { amount: string; op: 'add' | 'mul'; n: number } | { offer: string } | { start: string } | { tag: string; on: 'a'; timed?: boolean } | { untag: string; on: 'a' } | { law: string; seasons?: number };
+  /** (laws) it fires this many times on one trigger (set by a law; an author may write it too) */
+  fires?: number;
   per?: 'a' | 'b' | { amount: string; each: number };
   cap?: number;
   perSeason?: number;
@@ -127,6 +139,7 @@ export interface Pack {
   rules?: PackRule[];
   events?: PackEvent[];
   abilities?: PackAbility[];
+  laws?: PackLaw[];
   wants?: string[];
 }
 
@@ -171,7 +184,20 @@ export const UNIT_KINDS: readonly string[] = ['soldier', 'raider', 'worker', 'ca
 /** the base game's card ids (season/realm-templates.ts): a pack's may not clash with them */
 export const BASE_CARD_IDS: readonly string[] = ['build:houses', 'build:farms', 'build:market', 'build:workshops', 'build:harbour', 'build:keep', 'build:quarry', 'build:lumber', 'build:bridge', 'build:trade', 'build:walls', 'mining-outpost', 'tower-lens', 'relieve-neighbour', 'house-refugees', 'guard-camp', 'dead-rise', 'pay-raiders', 'mend-dam', 'fire-wards', 'feed-shrine', 'shore-hill', 'raid', 'gate-parade', 'refugees-arrive', 'resettle-refugees', 'market-fire', 'hire-sellswords'];
 export const COND_KEYS: readonly string[] = ['pool', 'season_gte', 'has_thing', 'no_thing', 'town_has', 'site_has', 'far_town_is', 'resolved', 'leader'];
-export const EFFECT_KEYS: readonly string[] = ['pool', 'income', 'put', 'remove', 'tag', 'untag', 'mutate', 'far', 'sign', 'arrive', 'unlock', 'say'];
+export const EFFECT_KEYS: readonly string[] = ['pool', 'income', 'put', 'remove', 'tag', 'untag', 'mutate', 'far', 'sign', 'arrive', 'unlock', 'law', 'say'];
+/** (laws) what a law can do: its one key (living/laws.ts LawDo), by kind */
+export const LAW_KEYS: Record<string, readonly string[]> = {
+  tags: ['count_as', 'grant', 'spare'],
+  rules: ['rule', 'add_rule'],
+  cards: ['cost', 'pay', 'build', 'stay', 'pool_as'],
+  spells: ['spell', 'event'],
+  run: ['board', 'income', 'raiders', 'win'],
+  meta: ['multipliers', 'next_law'],
+};
+/** the ruin words (a law may spare one) */
+export const RUIN_WORDS: readonly string[] = ['burned', 'flooded', 'buried', 'melted', 'abandoned', 'destroyed', 'occupied', 'lost'];
+/** spells a law may name: the base game's, as a pack writes them */
+export const LAW_SPELLS: readonly string[] = ['fire', 'heat-ray', 'rain', 'growth-rune'];
 /** written in the first draft of the format, not built: each with what to write instead (BACKLOG CT-10..) */
 export const NOT_YET: Record<string, string> = {
   units: 'not supported yet. Add soldiers with { "pool": "might", "add": 1 }: each Might is 3 soldiers',
@@ -216,7 +242,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     err('pack', 'The file needs a "pack" block with an "id" and a "name".');
     return out;
   }
-  for (const k of ['tags', 'things', 'cards', 'rules', 'events', 'abilities', 'wants'] as const) if (p[k] !== undefined && !Array.isArray(p[k])) err(k, `"${k}" must be a list.`);
+  for (const k of ['tags', 'things', 'cards', 'rules', 'events', 'abilities', 'laws', 'wants'] as const) if (p[k] !== undefined && !Array.isArray(p[k])) err(k, `"${k}" must be a list.`);
   if (out.length) return out;
   const tags = p.tags ?? [];
   const things = p.things ?? [];
@@ -224,6 +250,9 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   const rules = p.rules ?? [];
   const events = p.events ?? [];
   const abilities = p.abilities ?? [];
+  const laws = p.laws ?? [];
+  /** (laws) the laws something brings into force: an effect, a thing, a rule */
+  const brought = new Set<string>();
 
   // ---- ids ----
   const seen = new Map<string, string>();
@@ -240,6 +269,12 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   rules.forEach((r, i) => id('rule', r.id, `rules[${i}]`));
   events.forEach((e, i) => id('event', e.id, `events[${i}]`));
   abilities.forEach((a, i) => id('ability', a.id, `abilities[${i}]`));
+  laws.forEach((l, i) => id('law', l.id, `laws[${i}]`));
+  const lawIds = new Set(laws.map((l) => l.id));
+  const needLaw = (x: unknown, where: string) => {
+    if (!lawIds.has(String(x))) err(where, `It names the law "${String(x)}", which is not in the pack's "laws".`);
+    brought.add(String(x));
+  };
 
   const tagIds = new Set([...KNOWN_TAGS, ...tags.map((t) => t.id)]);
   const thingIds = new Set(things.map((t) => t.id));
@@ -272,6 +307,8 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     place(t.at, w, { town: true });
     if (!Array.isArray(t.tags) || !t.tags.length) err(w, 'A thing needs at least one tag, or no rule can read it.');
     for (const x of t.tags ?? []) needTag(x, w, 'made');
+    if (t.laws !== undefined && !Array.isArray(t.laws)) err(w, '"laws" is a list of law ids of this pack.');
+    for (const l of t.laws ?? []) needLaw(l, w);
     for (const [k, n] of Object.entries(t.upkeep ?? {})) {
       if (!GOODS.includes(k)) err(w, `Upkeep can be paid in ${GOODS.join(', ')} only. It asks for ${k}.`);
       if (!Number.isInteger(n) || n < 1) err(w, `Upkeep is a whole number, 1 or more. ${k} is ${JSON.stringify(n)}.`);
@@ -325,6 +362,9 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
         else if (x.count !== undefined && x.count !== 40) err(w, `The engine brings 40 refugees each time. Write "count": 40 or leave it out. It is ${JSON.stringify(x.count)}.`);
       } else if (key === 'unlock') {
         if (x.unlock !== 'heat-ray' && !abilities.some((a) => a.id === x.unlock)) err(w, `"unlock" names the ability "${String(x.unlock)}". It can be an ability of this pack, or "heat-ray".`);
+      } else if (key === 'law') {
+        needLaw(x.law, w);
+        if (x.seasons !== undefined && (!Number.isInteger(x.seasons) || Number(x.seasons) < 1)) err(w, '"seasons" is a whole number, 1 or more: the law stands the rest of this season and so many more. Leave it out for the rest of the run.');
       } else if (key === 'say') {
         if (typeof x.say !== 'string' || !x.say.trim()) err(w, '"say" needs one plain sentence.');
       }
@@ -522,15 +562,17 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     }
     for (const t of a.target?.tags ?? []) needTag(t, w, 'read');
     effects(a.effect, `${w}.effect`, { ability: true });
-    for (const e of a.effect ?? []) if (!('tag' in e) && !('untag' in e) && !('pool' in e) && !('say' in e)) err(w, `An ability's effect can set or clear a tag on its target, or change a pool. ${JSON.stringify(e)} is not supported yet.`);
+    for (const e of a.effect ?? []) if (!('tag' in e) && !('untag' in e) && !('pool' in e) && !('law' in e) && !('say' in e)) err(w, `An ability's effect can set or clear a tag on its target, change a pool, or make a law. ${JSON.stringify(e)} is not supported yet.`);
     for (const n of numbersIn(a.text ?? '')) if (![...numbersOf(a.cost), ...numbersOf(a.effect), ...numbersOf(a.in_event)].includes(n)) err(w, `The text says ${n}, but the ability's cost and effects have no such number.`);
     if (!cards.some((c) => JSON.stringify([c.if_taken, c.if_tier]).includes(`"unlock":"${a.id}"`))) warn(w, 'No card unlocks this ability.');
   });
 
   // ---- rules ----
-  rules.forEach((r, i) => {
-    const w = `rules[${i}] (${r.id})`;
+  // (one rule: the pack's own, or a whole rule a law adds)
+  const checkRule = (r: PackRule, w: string): void => {
+    if (!isObj(r)) return err(w, 'A rule must be an object.');
     if (!r.name || !r.why) err(w, 'A rule needs a "name" and a "why" in plain words.');
+    if (r.fires !== undefined && (!Number.isInteger(r.fires) || r.fires < 0)) err(w, '"fires" is a whole number: how many times it pays each time it fires.');
     const on = r.on as 'turn' | { event?: string; live?: string };
     if (on !== 'turn' && !(isObj(on) && (typeof on.event === 'string' || typeof on.live === 'string'))) err(w, '"on" is "turn", { "live": "<kind>" } or { "event": "<name>" }.');
     if (isObj(on) && typeof on.event === 'string') {
@@ -555,8 +597,15 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       if (!Array.isArray(tier) || !tier.length) err(w, '"tier" is a list of results.');
       else for (const t of tier) if (!TIERS.includes(t)) err(w, `Unknown result "${t}". The results are ${TIERS.join(', ')}.`);
     }
-    const act = actOf(r);
-    if (act) {
+    const lawAct = isObj(r.effect) && 'law' in (r.effect as object);
+    const act = lawAct ? null : actOf(r);
+    if (lawAct) {
+      // (laws: a rule that makes a law)
+      const x = r.effect as { law: unknown; seasons?: unknown };
+      needLaw(x.law, w);
+      if (x.seasons !== undefined && (!Number.isInteger(x.seasons) || Number(x.seasons) < 1)) err(w, '"seasons" is a whole number, 1 or more. Leave it out for the rest of the run.');
+      if (on === 'turn') warn(w, 'Each season it makes the law again, and laws stack: the same law twice is in force twice. Fine if that is the engine you mean.');
+    } else if (act) {
       // (a rule that does something: offers a card, starts a live card, tags the thing it matched)
       if (r.perSeason !== undefined && (!Number.isInteger(r.perSeason) || r.perSeason < 1)) err(w, '"perSeason" is a whole number, 1 or more. Leave it out for a rule that fires every time.');
       if (act.kind === 'offer' || act.kind === 'start') {
@@ -594,9 +643,130 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     }
     if (r.need) pool(r.need.pool, `${w}.need`);
     if (r.per === 'b' && !r.b) err(w, '"per": "b" counts a second thing the rule does not name.');
-    if (!act && r.why && !/\{n\}/.test(r.why)) warn(w, 'Its "why" does not say how much. Add {n}.');
+    if (!act && !lawAct && r.why && !/\{n\}/.test(r.why)) warn(w, 'Its "why" does not say how much. Add {n}.');
     for (const n of numbersIn((r.why ?? '').replace(/\{\w+\}/g, ''))) if (!numbersOf([r.effect, r.cap, r.per]).includes(n)) err(w, `Its "why" says ${n}, but the rule's data has no such number. Use {n} for the amount.`);
+  };
+  rules.forEach((r, i) => checkRule(r, `rules[${i}] (${r.id})`));
+
+  // ---- laws (docs/design/LAWS.md) ----
+  const ruleIds = new Set([...(base.rules ?? []), ...rules.map((r) => r.id), ...laws.flatMap((l) => (isObj(l.does) && isObj(l.does.add_rule) ? [String((l.does.add_rule as { id?: unknown }).id)] : []))]);
+  const allKeys = Object.values(LAW_KEYS).flat();
+  const whole = (n: unknown, where: string, what: string, o: { min?: number; zero?: boolean } = {}) => {
+    if (typeof n !== 'number' || !Number.isInteger(n) || (o.min !== undefined && n < o.min) || (!o.zero && n === 0)) err(where, `${what} is a whole number${o.min !== undefined ? `, ${o.min} or more` : ''}${o.zero ? '' : ', not 0'}. It is ${JSON.stringify(n)}.`);
+  };
+  const query = (q: unknown, where: string, how: 'read' | 'made' = 'read') => {
+    if (!isObj(q) || !Array.isArray(q.tags)) return err(where, 'A query is { "tags": [...], "not": [...] }.');
+    for (const t of [...(q.tags as string[]), ...((q.not as string[] | undefined) ?? [])]) needTag(t, where, how);
+  };
+  const cardsOf = (m: unknown, where: string) => {
+    if (m === undefined) return;
+    if (!isObj(m) || (!Array.isArray(m.themes) && !Array.isArray(m.ids))) return err(where, '"cards" is { "themes": [...] } or { "ids": [...] }; leave it out for every card.');
+    for (const id of (m.ids as string[] | undefined) ?? []) if (!cardIds.has(id) && !base.cards?.includes(id)) warn(where, `"cards" names the card "${id}", which is not in this pack or the base game. Fine only if a pack loaded with it has that card.`);
+  };
+  laws.forEach((l, i) => {
+    const w = `laws[${i}] (${l.id})`;
+    if (!l.name) err(w, 'A law needs a "name" the player reads in the list of laws.');
+    if (!isObj(l.does)) return err(w, `A law needs "does": one of ${allKeys.join(', ')}.`);
+    const d = l.does;
+    const keys = Object.keys(d).filter((k) => allKeys.includes(k));
+    if (keys.length !== 1) return err(w, `"does" needs exactly one of ${allKeys.join(', ')}. It has ${keys.length ? keys.join(', ') : 'none'}.`);
+    const k = keys[0];
+    const known = new Set([k, ...(k === 'rule' ? ['set', 'times', 'on', 'a', 'b', 'off', 'fires'] : k === 'spell' ? ['kills', 'douses', 'also_tag', 'on'] : k === 'event' ? ['allow', 'shift', 'foes', 'tier', 'counts_as'] : k === 'grant' ? ['to'] : ['cost', 'pay', 'build', 'stay'].includes(k) ? ['cards'] : [])]);
+    for (const x of Object.keys(d)) if (!known.has(x)) err(w, `"does" has "${x}", which a "${k}" law does not read.`);
+    if (k === 'count_as') {
+      const c = d.count_as as { tag?: unknown; as?: unknown };
+      if (!isObj(c) || typeof c.tag !== 'string' || typeof c.as !== 'string') return err(w, '"count_as" is { "tag": "field", "as": "temple" }.');
+      needTag(c.tag, w, 'read');
+      needTag(c.as, w, 'made');
+    } else if (k === 'grant') {
+      if (typeof d.grant !== 'string') return err(w, '"grant" is a tag.');
+      needTag(d.grant, w, 'made');
+      query(d.to ?? { tags: [] }, `${w}.to`);
+    } else if (k === 'spare') {
+      if (!RUIN_WORDS.includes(String(d.spare))) err(w, `"spare" is a ruin word: ${RUIN_WORDS.join(', ')}.`);
+    } else if (k === 'rule') {
+      if (!ruleIds.has(String(d.rule))) warn(w, `It changes the rule "${String(d.rule)}", which is not a base rule or a rule of this pack. Fine only if a pack loaded with it has that rule.`);
+      const set = d.set as Record<string, unknown> | undefined;
+      if (set !== undefined) {
+        if (!isObj(set)) err(w, '"set" is { "n": 4, "cap": 4, "each": 3, "perSeason": 2 }; null removes "cap" or "perSeason".');
+        else
+          for (const [x, v] of Object.entries(set)) {
+            if (!['n', 'cap', 'each', 'perSeason'].includes(x)) err(w, `"set" can change n, cap, each and perSeason. It has "${x}".`);
+            if (v !== null && typeof v !== 'number') err(w, `"set" gives numbers (or null to remove). ${x} is ${JSON.stringify(v)}.`);
+            if (v === null && (x === 'n' || x === 'each')) err(w, `"${x}" cannot be removed.`);
+          }
+      }
+      if (d.times !== undefined && (typeof d.times !== 'number' || d.times <= 0)) err(w, '"times" is a number above 0: the rule gives so many times as much.');
+      if (d.fires !== undefined) whole(d.fires, w, '"fires"', { min: 0, zero: true });
+      if (d.off !== undefined && d.off !== true) err(w, '"off" is true or left out.');
+      if (d.a !== undefined) query(d.a, `${w}.a`);
+      if (d.b !== undefined) query(d.b, `${w}.b`);
+      if (d.on !== undefined && d.on !== 'turn' && !(isObj(d.on) && (typeof d.on.event === 'string' || typeof d.on.live === 'string'))) err(w, '"on" is "turn", { "live": "<kind>" } or { "event": "<name>" }.');
+      if (!['set', 'times', 'on', 'a', 'b', 'off', 'fires'].some((x) => x in d)) err(w, 'A "rule" law needs one of set, times, on, a, b, off, fires.');
+    } else if (k === 'add_rule') {
+      checkRule(d.add_rule as PackRule, `${w}.add_rule`);
+      const r = d.add_rule as PackRule;
+      if (isObj(r) && (base.rules?.includes(r.id) || rules.some((x) => x.id === r.id))) err(w, `The rule it adds has the id "${r.id}", which a rule already has.`);
+      else if (isObj(r)) id('rule', r.id, `${w}.add_rule`);
+    } else if (k === 'cost') {
+      if (!isObj(d.cost) || !Object.keys(d.cost).length) err(w, '"cost" is { "materials": -1 }: so much more or less of each pool.');
+      else for (const [x, n] of Object.entries(d.cost)) (pool(x, w), whole(n, w, `"cost" ${x}`), x === 'unrest' && err(w, 'Unrest is never a cost.'));
+      cardsOf(d.cards, w);
+    } else if (k === 'pay') {
+      if (!isObj(d.pay) || !Object.keys(d.pay).length) err(w, '"pay" is { "labor": "magic" }: that part of a cost is paid from the other pool.');
+      else for (const [x, v] of Object.entries(d.pay)) (pool(x, w), pool(v, w), (x === 'unrest' || v === 'unrest') && err(w, 'Unrest is never a cost.'));
+      cardsOf(d.cards, w);
+    } else if (k === 'build' || k === 'stay') {
+      whole(d[k], w, `"${k}"`);
+      cardsOf(d.cards, w);
+    } else if (k === 'pool_as') {
+      if (!isObj(d.pool_as)) err(w, '"pool_as" is { "unrest": "might" }.');
+      else for (const [x, v] of Object.entries(d.pool_as)) (pool(x, w), v !== 'might' && err(w, '"pool_as" can only count a pool as "might" today (soldiers in a fight).'));
+    } else if (k === 'spell') {
+      const s = String(d.spell);
+      const mine = abilities.find((a) => a.id === s);
+      if (!LAW_SPELLS.includes(s) && !mine) err(w, `"spell" is one of ${LAW_SPELLS.join(', ')}, or an ability of this pack.`);
+      if (d.kills !== undefined) whole(d.kills, w, '"kills"', { min: 0, zero: true });
+      if (d.douses !== undefined) whole(d.douses, w, '"douses"', { min: 0, zero: true });
+      if (d.also_tag !== undefined) {
+        needTag(String(d.also_tag), w, 'made');
+        if (KNOWN_TAGS.includes(String(d.also_tag)) && !['festival', 'growth-active'].includes(String(d.also_tag))) err(w, `A law may set the pack's own tags, "festival" and "growth-active". "${String(d.also_tag)}" is set by the game itself.`);
+        query(d.on ?? { tags: [] }, `${w}.on`);
+        if (s !== 'growth-rune' && s !== 'rain' && s !== 'fire' && s !== 'heat-ray') err(w, '"also_tag" works on the base spells only.');
+      }
+      if (d.kills === undefined && d.douses === undefined && d.also_tag === undefined) err(w, 'A "spell" law needs "kills", "douses" or "also_tag".');
+    } else if (k === 'event') {
+      if (!liveTags.has(String(d.event))) warn(w, `It is about the event kind "${String(d.event)}", which no event of this pack or the base game has. Fine only if a pack loaded with it has one.`);
+      for (const s of (d.allow as string[] | undefined) ?? []) if (!EVENT_ABILITIES.includes(s)) err(w, `"allow" lists spells that can be cast into an event: ${EVENT_ABILITIES.join(', ')}.`);
+      if (d.shift !== undefined) whole(d.shift, w, '"shift"');
+      if (d.foes !== undefined) whole(d.foes, w, '"foes"');
+      for (const t of (d.tier as string[] | undefined) ?? []) if (!TIERS.includes(t)) err(w, `Unknown result "${t}".`);
+      const ca = d.counts_as as { live?: unknown; tier?: unknown } | undefined;
+      if (ca !== undefined && (!isObj(ca) || typeof ca.live !== 'string' || !Array.isArray(ca.tier) || !(ca.tier as string[]).every((t) => TIERS.includes(t)))) err(w, '"counts_as" is { "live": "raid", "tier": ["failure"] }.');
+      if (!['allow', 'shift', 'foes', 'counts_as'].some((x) => x in d)) err(w, 'An "event" law needs one of allow, shift, foes, counts_as.');
+    } else if (k === 'board') whole(d.board, w, '"board"');
+    else if (k === 'income') {
+      if (!isObj(d.income)) err(w, '"income" is { "materials": 2 }.');
+      else for (const [x, n] of Object.entries(d.income)) (GOODS.includes(x) || err(w, `Income by law is of ${GOODS.join(', ')}.`), whole(n, w, `"income" ${x}`));
+    } else if (k === 'raiders') {
+      const r = d.raiders as { add?: unknown; times?: unknown };
+      if (!isObj(r) || (r.add === undefined && r.times === undefined)) err(w, '"raiders" is { "add": -6 } or { "times": 0.5 }.');
+      else {
+        if (r.add !== undefined) whole(r.add, w, '"add"');
+        if (r.times !== undefined && (typeof r.times !== 'number' || r.times < 0)) err(w, '"times" is a number, 0 or more.');
+      }
+    } else if (k === 'win') {
+      const x = d.win as { count?: unknown; tags?: unknown };
+      if (!isObj(x) || !Array.isArray(x.tags) || !x.tags.length) err(w, '"win" is { "count": 5, "tags": ["temple"] }.');
+      else {
+        whole(x.count, w, '"count"', { min: 1 });
+        for (const t of x.tags as string[]) needTag(t, w, 'read');
+      }
+    } else if (k === 'multipliers') {
+      if (typeof d.multipliers !== 'number' || d.multipliers <= 0) err(w, '"multipliers" is a number above 0.');
+    } else if (k === 'next_law' && d.next_law !== 'run') err(w, '"next_law" is "run".');
   });
+  for (const l of laws) if (!brought.has(l.id)) warn(`laws (${l.id})`, 'Nothing brings this law into force: no effect, thing, rule or ability names it.');
 
   // ---- chains that come back to themselves (to look at: each step is bounded, one firing a season) ----
   for (const c of chainCycles([p])) warn(`rules (${c.rule})`, cycleText(c.way));
