@@ -25900,3 +25900,33 @@ over everything; dark — dim and brown; the storm as a card's sign — as the s
 **Tests.** `test/unit/weather-presets.test.ts` (6: the table, fair is no change, signs over the season, a season's
 weather, the validator's words, the ages pack's two uses load), `packs.test.ts`, `fronts.test.ts` pass.
 
+## 2026-11-17 — loop round 13 (3): columns cross Muru's bridges (`loop-skeleton`, LS-99 done)
+
+**Why.** Roads 0 and 1 into Muru brought nobody; round 11 built their second bridge and saw the column stand at its
+far end, and reverted it. Its next step: a GPU test of a column on a deck walking across.
+
+**The test** (`test/gpu/deckwalk.test.ts`): a river cut 5 under the banks (deeper than the units' DROP, so the deck
+is the only way), a deck claimed as the game claims it (an External slab 0.25 thick, no open water on its columns).
+A column of 9 made on the deck's far end, sent `go` to the market across (its field) and, from a fresh world,
+`march` inward along a route over the deck. One deck with its ends 1.0 over the banks; ends 1.6 over (the water's top
+setting them, over the units' step of 1.1 — the column still walks off, a drop); two decks with a dry island between;
+the route 0.5 wide on the deck. Every case arrives (go ~37 s, march ~80 s: a march in made inside its route walks out
+to the route's outer end first). So decks walk, in fields and on routes: the stall was not in the units.
+
+**In the game** (`scripts/lab/deckwalkprobe.mjs`, with round 11's `artEnd` change put back): the parade's column on
+the second deck at z 101.45, its group in FS_FORM for good (s 4.8 of 164.3, lag 55.6, every rank mode 1 toward a slot
+2 rows past the deck's end). Those rows: ground 98.3 under 1.6 of open water. `artRoute` runs a road's way out to the
+arterial's last point in the box; past the town's last bridge the atlas's road runs on over the river, and a march in
+forms its first ranks at the route's outer end — on the water. Nobody can stand there, so the formation never forms.
+
+**Fixed.** `artRoute` stops the way before the first wet column with no deck over it (past its first two points);
+`freeWidth` reads a deck's column as dry (a deck's points were 0.5 wide, one file); `artEnd` carries the end across a
+dry stretch under SPAN_JOIN (8 units) to the next bridge's far bank (round 11's change, re-applied). The probe after:
+state 1 from the start, s 8.7 → 108.5 of 112.3 in 20 s, lag 0.3, off the deck by 17 s.
+
+**Seen** (`node scripts/lab/streetshots.mjs --at 12 --at2 30`, `local/round13/bridge2/`; strip
+`local/round13/bridge-strip.png`, top row the stall with the bridge built and the route as it was, bottom now):
+road0-parade — the column of nine in ranks of three halfway along the deck, the river both sides, its watchers ahead;
+road0-parade2 — the column in the town's paved street by the market, figures round it. Log: "called down road 0",
+"marchers at the gate; on to its place" at 27 s. Road 0 is no longer refused.
+

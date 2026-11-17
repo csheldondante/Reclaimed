@@ -145,6 +145,17 @@ the construction shader read. `FieldTown.lots` hands them over.
      would have come down road 0 and stalled; they come by road 2 as before). Next: why a group on a deck does not
      walk — its field over the slab's surfaces (links, the deck's ends meeting the bank), or the march-in route along
      a deck road (`routes.wgsl artRoute`) — a GPU test of a column on a deck, before the game (BACKLOG LS-99).
+  3. (loop round 13, fixed) The units walk decks: `test/gpu/deckwalk.test.ts` — a column made on a deck's far end,
+     sent to a place across (its field) and marched in along a route over it, one deck and two with a dry island
+     between, ends a step (1.0) or 1.6 over the banks, the route 3 or 0.5 wide on the deck — every case arrives. Read
+     in the game (`scripts/lab/deckwalkprobe.mjs`): the column stood on the deck in the formation's FS_FORM for good,
+     lag 55.6, every rank's slot 2 rows past the deck's end over open water (ground 98.3, 1.6 of water). `artRoute`
+     ran the road's way out to the arterial's last point in the box, ignoring that past the town's last bridge the
+     atlas's road runs on over the river; a march in forms its first ranks at the route's outer end, so on the water.
+     Now the way stops before the first wet column with no deck over it (`artRoute`), and `freeWidth` no longer reads
+     a deck's column as water (its points were 0.5 wide: one file). With `artEnd` carrying the end across a dry
+     stretch under SPAN_JOIN (8 units) to the next bridge's far bank, Muru's roads 0 and 1 bring columns in over both
+     bridges (`local/round13/bridge2/road0-parade.png`, `road0-parade2.png`).
   The gate routes already treat a deck column as passable (`routes.wgsl` `G_WATER` only where no `DECK_BIT`).
 - **Plants:** `bare.wgsl` sets the plants' field (veg and the next tick's) to none on claimed and bare-only columns as
   they're claimed: the old towns' BARE stamp, for a town made after its land. External tops cap growth at moss.

@@ -3113,13 +3113,22 @@ fn artEnd(@builtin(global_invocation_id) g: vec3<u32>) {
     }
     acc += L;
   }
+  // (loop round 13, LS-99: carried on across a dry stretch under SPAN_JOIN to the far bank of the next bridge — a small
+  // island between two bridges, as Muru's roads 0 and 1 cross: the second bridge was never built and the road's way in
+  // ended on the island)
+  var on = false;
   for (var s = 0u; s < min(w5[o + 2u], NSPAN); s++) {
     let sa = bitcast<f32>(w5[o + 4u + s * 4u]);
     let sb = bitcast<f32>(w5[o + 5u + s * 4u]);
-    if (lim > sa && lim < sb) { lim = sb; }
+    if ((lim > sa || (on && sa - lim < SPAN_JOIN)) && lim < sb) {
+      lim = sb;
+      on = true;
+    }
   }
   set5(o + 3u, lim);
 }
+/** (loop round 13, LS-99) the most dry ground between two bridges an arterial's end is carried across (units) */
+const SPAN_JOIN: f32 = 8.0;
 /** whether a quad meets an arterial's corridor (its half width and a cell): its middle, or a point every unit round
  *  its edges, that near an arterial (b2 the arterials' distance) */
 fn artHitB2(v: array<vec2<f32>, 4>) -> bool {

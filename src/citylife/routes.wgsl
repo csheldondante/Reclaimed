@@ -1019,7 +1019,8 @@ fn freeWidth(p: vec2<f32>, z: f32) -> f32 {
         let c = cat(p + d * 0.5 * f32(k));
         if (!inBox(c)) { break; }
         let i = ix(c);
-        if ((atomicLoad(&WALK[i]) & W_BLOCK) != 0u || WET[i] != 0u || abs(pointZ(i) - z) > 1.1) { break; }
+        // (loop round 13, LS-99: a deck over the water is not water — a deck's points were 0.5 m wide, one file)
+        if ((atomicLoad(&WALK[i]) & W_BLOCK) != 0u || (WET[i] != 0u && (ROADS[i] & DECK_BIT) == 0u) || abs(pointZ(i) - z) > 1.1) { break; }
       }
       span += 0.5 * f32(k - 1u);
     }
@@ -1970,7 +1971,11 @@ fn artRoute(k: u32, s0: f32) -> u32 {
   let c0 = ix(clamp(cat(start), vec2<i32>(0), vec2<i32>(W() - 1, Hh() - 1)));
   setPtW(first, vec4<f32>(start, pointZ(c0), 0.0), freeWidth(start, pointZ(c0)));
   var w = 1u;
-  for (var j = j0; j < n && w < np; j++) {
+  // (loop round 13, LS-99: the way stops before open water — a point on a wet column with no deck over it. Past the
+  // town's last bridge the atlas's road runs on over the river, and a march in formed its first ranks at the route's
+  // outer end, on the water: the column stood at the deck's end for good, FS_FORM. scripts/lab/deckwalkprobe.mjs)
+  var wet = false;
+  for (var j = j0; j < n && w < np && !wet; j++) {
     let b = vec2<f32>(bitcast<f32>(ART[o + AP + 2u * j]), bitcast<f32>(ART[o + AP + 2u * j + 1u]));
     if (!inBox(cat(b))) { break; }
     let m = max(u32(ceil(distance(prev, b) / ART_STEP)), 1u);
@@ -1978,6 +1983,7 @@ fn artRoute(k: u32, s0: f32) -> u32 {
     for (var t = 1u; t <= m && w < np; t++) {
       let p = mix(a, b, f32(t) / f32(m));
       let c = ix(cat(p));
+      if (w >= 2u && WET[c] != 0u && (ROADS[c] & DECK_BIT) == 0u) { wet = true; break; }
       len += distance(prev, p);
       setPtW(first + w, vec4<f32>(p, pointZ(c), len), freeWidth(p, pointZ(c)));
       prev = p;
