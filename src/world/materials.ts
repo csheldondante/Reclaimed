@@ -144,6 +144,8 @@ export const MAT = {
   /** (mutators round 5, BACKLOG MU-45) burned ground: black char and dark ash, what the `burned` mutator leaves on
    *  soil. Loose like ash but heavy: it lies where it is (the wind does not lift it), and plants come back through it */
   Char: 42,
+  /** (loop-streets) a town's graded street or square: light flagstones (the town's paving tone), laid paved at once */
+  Paving: 43,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -247,6 +249,10 @@ export const MATERIALS: MaterialDef[] = [
   // (mutators round 5, MU-45) burned ground. Ash (above) is the old game's reddish dust: over a burned town's fields
   // it read as salmon paving. Char is near black with a cold grey cast, for value against soil (0.36) and plaster
   { ...NONE, name: 'char', albedo: [0.17, 0.165, 0.16], state: MatState.Granular, bear: 0.2, reposeDry: 1.2, reposeWet: 1, strength: 0.15, growthCap: 3, suitability: 0.6, porosity: 0.4, smooth: 2 },
+  // (loop-streets) a town's graded streets and square: light flagstones in the town's paving tone (citygen ROAD_TONES 3,
+  // the drawn lanes' — loop round 9's one light paving the figures read against), so a graded street and a lane are one
+  // colour; a road surface like cobble (meshdraw.wgsl roadLook: flags, no plants)
+  { ...NONE, name: 'paving', albedo: [0.76, 0.72, 0.64], state: MatState.Solid, bear: 1, porosity: 0.15, specular: 0.1, smooth: 2 },
 ];
 
 /** (road lab, RD1: 40 → 48 for the road surfaces; the uniform's MATS, phys.wgsl PM and solver.wgsl SM sized by it) */
@@ -260,7 +266,7 @@ export const MATERIAL_STRIDE_FLOATS = 20;
  * The other solids -- what's built: concrete, brick, metal, wood, plaster ... -- are drawn as prisms (renderprep.wgsl).
  */
 export function fieldMeshed(m: number): boolean {
-  return MATERIALS[m]?.state !== MatState.Solid || m === MAT.Stone || m === MAT.Trash || m === MAT.Basalt || m === MAT.Sandstone || (m >= MAT.Flesh && m <= MAT.Quartz) || m === MAT.Bedrock || m === MAT.DirtRoad || m === MAT.Cobble;
+  return MATERIALS[m]?.state !== MatState.Solid || m === MAT.Stone || m === MAT.Trash || m === MAT.Basalt || m === MAT.Sandstone || (m >= MAT.Flesh && m <= MAT.Quartz) || m === MAT.Bedrock || m === MAT.DirtRoad || m === MAT.Cobble || m === MAT.Paving;
 }
 
 /**

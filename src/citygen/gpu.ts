@@ -221,7 +221,7 @@ const KERNELS = [
   'shape', 'roadShape', 'ground', 'bqual', 'bclaim', 'bapply', 'vnext', 'jstat', 'lmlist', 'lmprune', 'vclip', 'lmMesh', 'gcov', 'gmask', 'glabel', 'gacc', 'gnode', 'gsplit', 'gleaf', 'groad', 'mseed', 'ginit', 'gmarch', 'gclaim', 'gkeep', 'gplace', 'sctab', 'bgrow', 'ctint',
   'artSpan', 'artRast', 'artEnd', 'artMesh', 'popField', 'townBridge', 'claimRoads', 'claimLots', 'lotReach',
   'clkInit', 'clkTimelapse', 'clkClaim', 'tlProgress', 'tlRise', 'stgRank', 'frontStamp', 'wallBins', 'wallShape', 'wallMesh', 'wallClaim',
-  'gradeSq', 'gradeRecs', 'gradeRast',
+  'gradeSq', 'gradeWater', 'gradeRecs', 'gradeRast',
 ] as const;
 /** (loop-streets) streets.wgsl GR_RECS, GR_PTS: the town's road records (the square, then GR_ART an arterial) and the
  *  points a record — their buffer's bytes (roadpath layout: a header, three vec4s a record, a vec4 a point) */
@@ -437,6 +437,7 @@ export class CityGen {
     // road records the grader lays, GRADE)
     this.B.ARTZ = buf('arterial heights', (4 + NART * NAP) * 4);
     this.B.GSQ = buf('square radius', 16);
+    this.B.GWS = buf('water by the streets', (4 + NART * NAP + 1) * 4);
     this.B.GRADE = buf('road records', GRADE_BYTES);
     this.boxUni = buf('box', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const gs = world.ground;
@@ -542,6 +543,8 @@ export class CityGen {
   private reachJob: { marks: GPUBuffer; gx: number; gy: number; winW: number; winH: number } | null = null;
   /** (loop-streets) the arterials' heights given (setArterials): what terrainRoads needs */
   private hasHeights = false;
+  /** (loop-streets) the road records made since the last field or lots run */
+  private gradeMade = false;
   /** (loop-streets) the town's road records (roadpath layout, the grid's frame, world z: the square and the arterials'
    *  dry stretches), made each mesh run with terrainRoads — what the grader lays (roadlab/grader.ts GradeLayer) */
   get gradeRoads(): GPUBuffer {
@@ -1005,9 +1008,15 @@ export class CityGen {
     // before the streets mark it and draw, and the claims read it)
     if (p.terrainRoads) {
       if (!this.hasHeights) throw new Error('citygen: streets as terrain need the arterials’ heights (setArterials)');
-      this.fill(B.GSQ, 4, 0);
-      this.k('gradeSq', { count: LOT_ROOM }, { 1: this.lotRecords, 4: B.CNT, 6: B.GSQ }, Math.ceil(LOT_ROOM / 64));
-      this.k('gradeRecs', {}, { 1: B.ART, 2: B.ARTZ, 3: B.M, 4: B.GSQ, 5: B.GRADE }, 1);
+      // (the records only when what they're made of changed — the arterials (field), the square's lots (lots) — or
+      // they were never made; every mesh run marks the raster again, as it clears it)
+      if (runs('lots') || !this.gradeMade) {
+        this.fill(B.GSQ, 4, 0);
+        this.k('gradeSq', { count: LOT_ROOM }, { 1: this.lotRecords, 4: B.CNT, 6: B.GSQ }, Math.ceil(LOT_ROOM / 64));
+        this.k('gradeWater', {}, { 1: B.ART, 4: B.GSQ, 5: B.GWS, 7: B.WS }, Math.ceil((NART * NAP + 1) / 64));
+        this.k('gradeRecs', {}, { 1: B.ART, 2: B.ARTZ, 3: B.M, 4: B.GSQ, 5: B.GRADE, 7: B.GWS }, 1);
+        this.gradeMade = true;
+      }
       this.k2('gradeRast', {}, { 4: B.GRADE, 6: B.ROADS });
     }
     // (CG25: each lot's start stamped round its parcel — the front field the roads read, before the roads: they show with

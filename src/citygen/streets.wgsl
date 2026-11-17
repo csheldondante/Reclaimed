@@ -3446,9 +3446,46 @@ const GR_RECS: u32 = 1u + NART * GR_ART;
 const GR_PTS: u32 = 17u;
 /** the atlas's steepest grade (atlas/ways.ts GRADE): a pinned point's neighbours within it */
 const GR_GRADE: f32 = 0.22;
-/** a record's shoulder (world units), its flags (ROAD_GRADED | ROAD_PAVED | ROAD_DRY) and surface (cobble) */
+/** a graded street's least height over the water beside it (world units): a cut never opens a river onto the street
+ *  (Muru's square, the first try: 878 of 1177 columns within 18 of the centre wet, against 354 with the ribbons) */
+const GR_FREEBOARD: f32 = 0.4;
+/** one thread an arterial's point (k · NAP + j) or the square (NART · NAP): the highest water surface within reach of
+ *  it — a street's half width and shoulder, and half a point's spacing more (points are 4 units apart) — into GWS
+ *  (from word 4; the square's last). In parallel: gradeRecs reads them, one thread an arterial (b1 ART, b4 GSQ; w5 GWS,
+ *  w7 WS) */
+@compute @workgroup_size(64)
+fn gradeWater(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i > NART * NAP) { return; }
+  if (i == NART * NAP) {
+    set5(4u + i, grWater(u.d.xy, max(f32(b4[0]) / 256.0, u.x.w) + GR_SHOULDER));
+    return;
+  }
+  let k = i / NAP;
+  let j = i % NAP;
+  if (k >= artCountCpu(1u) || j >= artPts(1u, k)) { return; }
+  set5(4u + i, grWater(artPt(1u, k, j), max(u.t.x * 0.5, WAY_HALF) + GR_SHOULDER + 2.5));
+}
+/** the highest water surface (w7 WS, world z; −1e9 dry) within r of p — what a street there is held above */
+fn grWater(p: vec2<f32>, r: f32) -> f32 {
+  var m = -1e9;
+  let y0 = max(i32(floor((p.y - r) / ROW_H)), 0);
+  let y1 = min(i32(ceil((p.y + r) / ROW_H)), H() - 1);
+  let x0 = max(i32(floor(p.x - r)), 0);
+  let x1 = min(i32(ceil(p.x + r)), W() - 1);
+  for (var y = y0; y <= y1; y++) {
+    for (var x = x0; x <= x1; x++) {
+      if (distance(cpos(x, y), p) > r) { continue; }
+      m = max(m, bitcast<f32>(w7[ix(x, y)]));
+    }
+  }
+  return m;
+}
+/** a record's shoulder (world units), its flags (ROAD_GRADED | ROAD_PAVED | ROAD_DRY) and surface (RoadSurface.Paving:
+ *  the town's light flagstones, MAT.Paving) */
 const GR_SHOULDER: f32 = 4.0;
 const GR_FLAGS: u32 = 7u;
+const GR_SURFACE: u32 = 2u;
 /** is lot record o one of the central square's (lotRec's rule: a plaza whose parcel's middle is within u.x.w) */
 fn squareLot(o: u32) -> bool {
   if (u.x.w <= 0.0 || b1[o + 17u] != REC_PLAZA) { return false; }
@@ -3473,7 +3510,7 @@ fn grRec(r: u32, n: u32, box: vec4<f32>) {
   let o = 4u + r * 12u;
   w5[o] = r * GR_PTS;
   w5[o + 1u] = n;
-  w5[o + 2u] = 1u;
+  w5[o + 2u] = GR_SURFACE;
   w5[o + 3u] = GR_FLAGS;
   for (var j = 4u; j < 8u; j++) { w5[o + j] = 0u; }
   set5(o + 6u, GR_SHOULDER);
@@ -3491,19 +3528,10 @@ fn grPt(r: u32, j: u32, p: vec2<f32>, z: f32, hw: f32) {
 }
 /** arterial k's profile at s along it (its points' atlas z, b2 ARTZ), pinned to the square (radius rs, z zs) and to
  *  its decks' ends, each within the grade */
-fn grZ(k: u32, s: f32, rs: f32, zs: f32) -> f32 {
+fn grZ(k: u32, j: u32, t: f32, s: f32, rs: f32, zs: f32) -> f32 {
   let o = artBase(k);
-  let n = artPts(1u, k);
-  var acc = 0.0;
-  var z = r2(4u + k * NAP + n - 1u);
-  for (var j = 0u; j + 1u < n; j++) {
-    let L = distance(artPt(1u, k, j), artPt(1u, k, j + 1u));
-    if (s <= acc + L) {
-      z = mix(r2(4u + k * NAP + j), r2(4u + k * NAP + j + 1u), clamp((s - acc) / max(L, 1e-4), 0.0, 1.0));
-      break;
-    }
-    acc += L;
-  }
+  // (on segment j, t along it)
+  var z = mix(r2(4u + k * NAP + j), r2(4u + k * NAP + min(j + 1u, artPts(1u, k) - 1u)), t);
   let ds = max(s - rs, 0.0);
   z = clamp(z, zs - GR_GRADE * ds, zs + GR_GRADE * ds);
   for (var sp = 0u; sp < min(b1[o + 2u], NSPAN); sp++) {
@@ -3515,37 +3543,24 @@ fn grZ(k: u32, s: f32, rs: f32, zs: f32) -> f32 {
   }
   return z;
 }
-/** the point s along arterial k */
-fn grAt(k: u32, s: f32) -> vec2<f32> {
-  let n = artPts(1u, k);
-  var acc = 0.0;
-  for (var j = 0u; j + 1u < n; j++) {
-    let a = artPt(1u, k, j);
-    let b = artPt(1u, k, j + 1u);
-    let L = distance(a, b);
-    if (s <= acc + L) { return mix(a, b, clamp((s - acc) / max(L, 1e-4), 0.0, 1.0)); }
-    acc += L;
-  }
-  return artPt(1u, k, n - 1u);
-}
-/** is s along arterial k off the grader's: over a deck's span, or wet (b3 the wet mask), or out of the grid */
-fn grOff(k: u32, s: f32) -> bool {
+/** is s along arterial k (at p) off the grader's: over a deck's span, or wet (b3 the wet mask), or out of the grid */
+fn grOff(k: u32, s: f32, p: vec2<f32>) -> bool {
   let o = artBase(k);
   for (var sp = 0u; sp < min(b1[o + 2u], NSPAN); sp++) {
     let q = o + 4u + sp * 4u;
     if (s >= r1(q) && s <= r1(q + 1u)) { return true; }
   }
-  let p = grAt(k, s);
   return !inb(p) || bitcast<f32>(b3[ixp(p)]) > 0.5;
 }
 /** one thread an arterial (k < NART) or the square (k = NART, with the header): its records in GRADE (b1 ART, b2 ARTZ,
- *  b3 the wet mask, b4 GSQ; w5 GRADE) */
+ *  b3 the wet mask, b4 GSQ; w5 GRADE; w7 GWS, the water's highest surface near each point — read only) */
 @compute @workgroup_size(16)
 fn gradeRecs(@builtin(global_invocation_id) g: vec3<u32>) {
   let k = g.x;
   if (k > NART) { return; }
-  let zs = r2(0u);
   let rs = select(0.0, max(f32(b4[0]) / 256.0, u.x.w), u.x.w > 0.0);
+  // (the square at the plaza's z, held over the water beside it: gradeWater's)
+  let zs = max(r2(0u), bitcast<f32>(w7[4u + NART * NAP]) + GR_FREEBOARD);
   if (k == NART) {
     w5[0] = GR_RECS;
     w5[1] = GR_RECS * GR_PTS;
@@ -3572,22 +3587,31 @@ fn gradeRecs(@builtin(global_invocation_id) g: vec3<u32>) {
     var j = 0u;
     var acc = 0.0;
     // (march in half units; a point is laid at each of the arterial's own points and at a stretch's ends)
+    // (walked a segment at a time: j the segment s is on, acc where it starts, L its length)
+    var L = select(0.0, distance(artPt(1u, k, 0u), artPt(1u, k, 1u)), n > 1u);
     loop {
       if (s > lim || r >= r0 + GR_ART) { break; }
-      let off = grOff(k, s);
       // (the arterial's next own point passed: a point there)
       var mark = false;
-      if (j + 1u < n) {
-        let L = distance(artPt(1u, k, j), artPt(1u, k, j + 1u));
-        if (s >= acc + L) { acc += L; j++; mark = true; }
+      loop {
+        if (j + 2u >= n || s < acc + L) { break; }
+        acc += L;
+        j++;
+        L = distance(artPt(1u, k, j), artPt(1u, k, j + 1u));
+        mark = true;
       }
+      let t = clamp((s - acc) / max(L, 1e-4), 0.0, 1.0);
+      let p = mix(artPt(1u, k, j), artPt(1u, k, min(j + 1u, n - 1u)), t);
+      let off = grOff(k, s, p);
       let last = s + 0.5 > lim;
       if (!off && !on) { on = true; cnt = 0u; lo = vec2<f32>(1e9); hi = vec2<f32>(-1e9); mark = true; }
       if (on && (off || last)) { mark = true; }
       if (on && mark) {
-        let p = grAt(k, s);
         let hw = mix(WAY_HALF, u.t.x * 0.5, clamp((lim - s) / ART_TAPER, 0.0, 1.0));
-        grPt(r, cnt, p, grZ(k, s, rs, zs), hw);
+        // (held over the water beside it: the most of gradeWater's at the segment's two ends)
+        let wz = max(bitcast<f32>(w7[4u + k * NAP + j]), bitcast<f32>(w7[4u + k * NAP + min(j + 1u, n - 1u)]));
+        let zp = max(grZ(k, j, t, s, rs, zs), wz + GR_FREEBOARD);
+        grPt(r, cnt, p, zp, hw);
         lo = min(lo, p - vec2<f32>(hw + GR_SHOULDER));
         hi = max(hi, p + vec2<f32>(hw + GR_SHOULDER));
         cnt++;
@@ -3599,7 +3623,7 @@ fn gradeRecs(@builtin(global_invocation_id) g: vec3<u32>) {
           // (a full piece: the next starts at its last point)
           if (full && !off && !last && r < r0 + GR_ART) {
             on = true;
-            grPt(r, 0u, p, grZ(k, s, rs, zs), hw);
+            grPt(r, 0u, p, zp, hw);
             cnt = 1u;
             lo = p - vec2<f32>(hw + GR_SHOULDER);
             hi = p + vec2<f32>(hw + GR_SHOULDER);

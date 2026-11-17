@@ -32,7 +32,7 @@
 // run over it, not it). The record is the authority: read the times from it.
 
 /** the surface a road ends as (record word a.z) */
-export const RoadSurface = { Dirt: 0, Cobble: 1 } as const;
+export const RoadSurface = { Dirt: 0, Cobble: 1, /** (loop-streets) a town's light flagstones (MAT.Paving), laid paved */ Paving: 2 } as const;
 export type RoadSurface = (typeof RoadSurface)[keyof typeof RoadSurface];
 
 /** record flag: cut and fill all the way to the profile (else at most maxDz, the rest left to a structure) */

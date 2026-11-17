@@ -105,6 +105,18 @@ describe('a town\'s streets as road records (loop-streets)', () => {
     const ox = L.local([0, 0])[0];
     for (const r of art(0)) for (const p of r.points.slice(1, -1)) expect(wet(p.x - ox), `a point in the river at ${p.x - ox}`).toBe(false);
     expect(art(0).some((r) => r.points.some((p) => p.x - ox > 340)), 'the east arterial goes on past the river').toBe(true);
+    // (held over the river beside it: a point within its half width and shoulder of the water stands 0.4 over the
+    // water's surface — the river's top is the ground + 1 there)
+    let byRiver = 0;
+    for (const r of art(0))
+      for (const p of r.points) {
+        const wx = p.x - ox;
+        const d = Math.max(330 - wx, wx - 336, 0);
+        if (d > p.hw + 4 - 1) continue;
+        byRiver++;
+        expect(p.z, `a point by the river at ${wx.toFixed(1)}`).toBeGreaterThanOrEqual(top(Math.min(Math.max(wx, 330), 335.5), p.y - L.local([0, 0])[1]) + 1 + 0.4 - 0.2);
+      }
+    expect(byRiver).toBeGreaterThan(0);
     // (the raster: GRADED exactly where a record holds the column)
     const roadsRaster = new Uint32Array(await g.read(L.gen.B.ROADS, w * h * 4));
     const claims = new Uint32Array(await g.read(L.gen.claimGrid as GPUBuffer, w * h * 8 * 4));

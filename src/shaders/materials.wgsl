@@ -37,7 +37,9 @@ const MAT_EXTERNAL: u32 = 39u;
 /** (road lab, RD1) a road's surface interval: dirt, then paved (shaders/roadgrade.wgsl, api/contracts/roadpath.ts) */
 const MAT_DIRTROAD: u32 = 40u;
 const MAT_COBBLE: u32 = 41u;
-fn isRoadMat(m: u32) -> bool { return m == MAT_DIRTROAD || m == MAT_COBBLE; }
+/** (loop-streets) a town's graded street: light flagstones (record surface 2, laid paved) */
+const MAT_PAVING: u32 = 43u;
+fn isRoadMat(m: u32) -> bool { return m == MAT_DIRTROAD || m == MAT_COBBLE || m == MAT_PAVING; }
 
 fn matState(m: u32) -> u32 { return u32(MATS[m].sim.x); }
 

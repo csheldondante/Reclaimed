@@ -81,7 +81,8 @@ fn roadLay(@builtin(global_invocation_id) id: vec3<u32>) {
   var cnt = 0u;
   var owned = false;
   // (this road's own surface already here: laid again, it keeps its paving; ROAD_PAVED: laid as its surface)
-  var surf = select(MAT_DIRTROAD, select(MAT_DIRTROAD, MAT_COBBLE, rec.surface == 1u), (rec.flags & ROAD_PAVED) != 0u);
+  var surf = MAT_DIRTROAD;
+  if ((rec.flags & ROAD_PAVED) != 0u) { surf = select(select(MAT_DIRTROAD, MAT_COBBLE, rec.surface == 1u), MAT_PAVING, rec.surface == 2u); }
   for (var k = 0u; k < cs.y; k++) {
     let v = layers[cs.x + k];
     if (ivEmpty(v)) { break; }
