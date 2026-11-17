@@ -46,7 +46,7 @@ describe('upkeep, weight, an ability cast into an event, unlocks kept', () => {
   });
 
   it('in play: the thing costs its upkeep each season, the unlock is in the history, the ability is cast into the raid', () => {
-    const t = new Table({ seed: 7, leader: 'ilveth', seasons: 8, packs: [PACK] });
+    const t = new Table({ seed: 7, leader: 'ilveth', seasons: 8, packs: [PACK], raiders: 6 });
     // (weight 5 against 1: the heavy card is dealt in the first season, the light one is not)
     expect(t.cards().map((c) => c.template)).toContain('more-raise-butts');
     expect(t.cards().map((c) => c.template)).not.toContain('more-late');

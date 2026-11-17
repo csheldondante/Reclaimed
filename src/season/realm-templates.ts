@@ -146,12 +146,13 @@ function hazard(o: { id: string; site: SiteKey; title: string; pitch: string; ro
 }
 
 export { DEAD_RISE } from './realm-events';
-/** raiders in the run's last stage. (card-table, BACKLOG CT-18: proposed 18, not applied — three of round 6's test
- *  files pin 6. With 6, the bots held the raid with walls alone and no spell, or with 6 casts of Fire and no card
- *  taken. `RealmOptions.raiders` tries another number: `node scripts/tablebots.mjs --raiders 18`) */
-export const RAIDERS = 6;
-/** Materials the raiders take to leave (CT-18: proposed 15, not applied; every bot ended a run with 31 or more) */
-export const TRIBUTE = 6;
+/** raiders in the run's last stage. (card-table tuning, BACKLOG CT-18: 6 → 18. With 6, the bots held the raid with
+ *  walls alone and no spell, or with 6 casts of Fire and no card taken. `RealmOptions.raiders` tries another number:
+ *  `node scripts/tablebots.mjs --raiders 6`) */
+export const RAIDERS = 18;
+/** Materials the raiders take to leave (card-table tuning, CT-18: 6 → 15; at 6 it was the cheapest answer for every
+ *  bot that would pay it) */
+export const TRIBUTE = 15;
 
 /** the world's opportunities of a home-town run */
 export const WORLD_TEMPLATES: TemplateDef[] = [

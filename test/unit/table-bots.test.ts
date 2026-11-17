@@ -25,6 +25,11 @@ describe('bots play the card table', () => {
     expect(rep.runs.filter((r) => r.policy === 'idle').every((r) => r.end === 'fell')).toBe(true);
     expect(rep.runs.some((r) => r.end !== 'fell')).toBe(true);
   });
+  it('more than one way of playing holds the raid: soldiers with spells hold it, and the tribute buys it off', () => {
+    const ends = new Set(rep.runs.map((r) => r.end));
+    expect(ends.has('held'), [...ends].join(', ')).toBe(true);
+    expect(ends.has('paid off'), [...ends].join(', ')).toBe(true);
+  });
   it('a season asks few things', () => {
     for (const r of rep.runs) expect(Math.max(...r.asked), r.policy).toBeLessThanOrEqual(6);
   });

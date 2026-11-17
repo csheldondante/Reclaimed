@@ -88,7 +88,8 @@ describe('RuleBook.check: the one thing a rule lacks', () => {
 
 describe('the card table: live events and rules on the Realm', () => {
   it('the raid begins by itself in the last season and resolves from the model; doing nothing loses', () => {
-    const t = new Table({ seed: 7, leader: 'ysolt', seasons: 8 });
+    // (a raid of 6, whatever the game's own number: these two tests are about how a raid is read, not how hard it is)
+    const t = new Table({ seed: 7, leader: 'ysolt', seasons: 8, raiders: 6 });
     while (!t.over && !t.liveEvents().some((e) => e.template === 'raid')) t.endSeason();
     const raid = t.liveEvents().find((e) => e.template === 'raid')!;
     expect(raid.groups.find((g) => g.side === 'foe')).toMatchObject({ n: 6, alive: 6 });
@@ -101,7 +102,7 @@ describe('the card table: live events and rules on the Realm', () => {
   });
 
   it('casts into the raid change how it ends, cost Magic, and the prediction is the result', () => {
-    const t = new Table({ seed: 7, leader: 'ilveth', seasons: 8 });
+    const t = new Table({ seed: 7, leader: 'ilveth', seasons: 8, raiders: 6 });
     while (!t.over && !t.liveEvents().some((e) => e.template === 'raid')) t.endSeason();
     const magic = pools(t.realm.ledger).magic;
     expect(magic).toBeGreaterThanOrEqual(6);

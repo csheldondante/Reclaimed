@@ -243,19 +243,20 @@ describe('the run\'s rules and live events on the realm', () => {
   });
 
   it('the raid through its template: walls with a garrison stop 2 raiders, and the town holds', () => {
-    // (Might 1 behind walls: 3 soldiers hold 3 of 6; the rule stops 2; 1 gets in — and with Might 2 none does)
+    // (card-table tuning, CT-18: 18 raiders. Might 1 behind walls: 3 soldiers hold 3 of 18; the rule stops 2; 13 get
+    // in — and with Might 6, 18 soldiers, none does)
     const one = realm(grant(built('walls'), {}), 4);
     one.ledger = { ...one.ledger, holdings: { ...one.ledger.holdings, agents: one.ledger.holdings.agents.filter((a) => a.kind !== 'army').concat(one.ledger.holdings.agents.filter((a) => a.kind === 'army').slice(0, 1)) } };
     for (let k = 0; k < 3; k++) season(one);
     const a = one.playForced().find((x) => x.template === RAID)!;
-    expect(a.vars).toMatchObject({ raiders: 6, soldiers: 3, stopped: 2, left: 1 });
+    expect(a.vars).toMatchObject({ raiders: 18, soldiers: 3, stopped: 2, left: 13 });
     expect(a.tier).toBe('failure');
     expect(a.lines.join(' ')).toContain('Your walls and their garrison stopped 2 raiders at the gate.');
-    expect(one.fight).toMatchObject({ raiders: 6, left: 1, held: false });
+    expect(one.fight).toMatchObject({ raiders: 18, left: 13, held: false });
     expect(one.w.facts.tag(siteId(one.home, 'gate'), 'condition', 'burned')?.value).toBe(true);
     expect(pools(one.ledger).unrest).toBeGreaterThanOrEqual(1);
 
-    const two = realm(built('walls'), 4);
+    const two = realm(grant(built('walls'), { might: 3 }), 4);
     for (let k = 0; k < 3; k++) season(two);
     const might = total(two.ledger, 'might');
     const b = two.playForced().find((x) => x.template === RAID)!;
