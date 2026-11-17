@@ -25560,3 +25560,12 @@ run as before plus "The world now" at both runs' starts (run 2: "Run 1 ended: Th
 "While you were gone: years passed. The ash, the dark and the thieves of the last run are gone."). It also read
 "Thieves work the streets." on the next line — the mutators had laid the faded crime sign again on the new world
 (LS-110, fixed: the fade ends the sign in the mutators' list too).
+
+**The cards walk on the final tree** (`loopwalk --cards --leader ilveth --runlen 16 --gif 0`, packs laws, glitter,
+arena; passed, 412x915): run 1 ended in season 10 by the glitter ending ("The run is lost: The glitter spire burned the
+valley to glass", by "The spire hums too loud") — an ending card, so not all 16 seasons; a law taken and its changed
+cost (walls: Materials 2 + Magic 2 where 3 was printed); two bouts, one settled now. Run 2's "The world now": how run 1
+ended, three "While you were gone" lines (the raiders left a world with no far town; signs faded; ruins grew over — and
+no "Thieves work the streets" after it this time, LS-110), "Laws from earlier runs: The glass sky.", "Earlier runs
+opened: The card "Salvage the glass saddles" …". Seen there and not fixed: the spire's threat dealt again in run 2 with
+the spire in remains (LS-111); the hedge witch offered with the pit in ruins (fixed: `site_has` the pit's tag).
