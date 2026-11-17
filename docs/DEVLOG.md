@@ -25974,3 +25974,70 @@ across the seam, walks crossing it, none stranded), the tree (every node reaches
 levels never rise downstream and stand under the ground beside them (and falls at the island's cliff), the lateral
 clamp brings a hanging tributary down to the main valley.
 
+## 2026-11-17 — terrain: rivers first, step 2 (`terrain-rivers`, TR3/TR4/TR9/TR11/TR12; TERRAIN_RIVERS.md §9–§10)
+
+**Why.** Step 1's valley took, per cell, the minimum over the segments of the nodes held by the 4 texels round it in two
+tables; crossing a texel line swaps the candidates, and the fade (`G' − fade·(G' − Hv)`) needs G, so nothing could be
+interpolated — the plain's cross-section had 5-cell flats-and-jumps and valley sides showed contour-like bands. The owner:
+"an atlas scale JFA for the river distance then interpolate that and add a finer JFA to the actual detailed river";
+then creeks feeding heads, lakes at flat areas, his masked-blend method, plains that are less boring, and tilted Voronoi
+cells (DECISIONS, verbatim).
+
+**What (flag `a.rivers2=1`; default world unchanged).**
+- *The two-scale field* (§9): each river segment a G-independent surface `S = L(s) + V(e) + Φ(e)` (Φ: a bound past
+  half the reach, `m + 0.01 m²`); the envelope `E = min S` is continuous, so it can be sampled. Coarse: a two-slot JFA
+  over the nodes (nearest by exact segment distance, lowest by S) and a field pass (the 3 × 3 neighbourhood's slots and
+  their downstream nodes, exactly at the texel centre) store E, the river distance D and the winner's landform per
+  texel, in the rivers' warped space; sampled per cell by a quadratic B-spline (C1). Fine: riverAt's exact segment
+  within ~6 cells of the bank. `h = smin(G + R(D̂), min(Ê, h_f); 4)`.
+- *Landform rule made continuous*: another landform's river climbs `min(400, 4·dl)` (dl: the landforms' JFA distance).
+- *Heads*: creeks (up to 4 a head on ground ≥ 40 over the sea, from the highest of 8 points 10 texels round it, walked
+  toward the head and downhill, kept if they reach a river: 569 of 652), a valley head hollow per source (56 cells, the
+  floor near the spring then up to the land, `t^2.5`), a spring pool, a concave width curve from 1.2.
+- *Plains* (`terrain/plains.wgsl`, `AtlasP.terrain2`): sub-regions by a warped Voronoi of 520 cells — flat 18 %, rolling
+  hills 20 %, low ridges 10 %, terraces 10 %, hummocks 10 %, wet flats 7 %, tilted cells 25 % — each faded to 0 at its
+  border by the Voronoi's border distance; lowland ×1, upland ×0.6, plateau / massif ×0, and nothing within ~120 cells
+  of a landform border (cliffs and mesas untouched). Tilted cells: planes rising 3–9 cells across 150-cell cells, a
+  1.5-cell scarp where a raised edge meets a lower neighbour, a ramp in the border's gaps (~1/4 of its length), tilted
+  toward the river (65 %, bluffs) or away near rivers.
+- *CPU*: `wrap` did two float remainders a call and was 40 % of the profile → one integer remainder; dryness per row;
+  the clamp's bound is a plain min (smin made two rivers at one level lower each other forever: 41 rounds, unsettled)
+  and skips a node's own reach 4 nodes up and down (a creek beside its parent crept down every round).
+
+**What changed on the way (each from a number or a still).** Φ was first `600·((e − VW/2)/(VW/2))²` — 9–34 cells a
+cell at the rim; between texel samples that crossed the land in single-cell steps of up to 26 (the probe). A fixed
+LF_PEN made a 25-cell wall where two landforms meet at one height (the probe's largest seam after the switch). Bilinear
+sampling showed every texel line as a straight streak in the hillshade (C0 only) → B-spline.
+
+**Numbers (seed 1, n 2048).**
+
+| | step 1 | step 2 |
+|---|---|---|
+| river nodes (water / lava) | 48 148 (40 042 / 8 106) | 51 826 (43 859 / 7 967) |
+| walks / creeks kept / stranded / rises downstream | 652 / — / 0 / 0 | 649 / 569 of 652 / 0 / 0 |
+| clamp: nodes lowered / rounds / largest drop | 6 122 / 7 / 215 | 8 483 / 8 / 280.7 |
+| falls ≥ 3.5 / > 12 / > 30, tallest | 3 025 / 427 / 123, 207.8 | 4 448 / 622 / 149, 207.8 |
+| rivers (cpu), browser | 3.6–6.8 s | 1.0–1.4 s |
+| rivers (cpu), Node, the same input (walkprof.mjs) | 1.37–2.4 s | 0.73–0.82 s (same nodes, before creeks); 1.0–1.1 s with creeks and plains |
+| valley JFA + field (GPU, build) | 0.18 s | 0.44–0.84 s (TR19) |
+| second macro pass | +0.03 s | 0.07–0.09 s |
+| default world hashes (macro ground / nodes / regions) | 40deae46 / 40642a65 / b2bfc8b3 | the same |
+
+**Continuity of the valley field** (scripts/terrain/continuity.mjs + valleydiff.mjs: 40 windows of 128 × 64 cells
+round river nodes; D = ground with the valley off (`?valleyoff=1`, the same rivers) − with it; neighbour pairs where
+the valley-off ground is smooth (≤ 0.5 over 4 cells), the channel ± 3 cells and standing water out; an *isolated step*
+is |ΔD| ≥ 1 between flats ≤ 0.3):
+
+| | pairs | max | p99 | p99.9 | > 1 | isolated steps |
+|---|---|---|---|---|---|---|
+| step 1 | 258 903 | 89.1 | 2.51 | 12.3 | 6 118 | 1 590 |
+| step 2 (first envelope, quadratic Φ, no creeks) | 280 211 | 25.8 | 0.82 | 6.3 | 1 964 | 163 |
+| step 2 final (creeks, plains, tilted cells) | 275 714 | 23.5 | 1.36 | 5.29 | 3 982 | 274 |
+
+The final row's windows are other rivers (creeks moved the picks) and its ground has the plains' scarps (the tilted
+cells' 1.5-cell scarps are steps by design), so it is not lower than the row above it; the big seams are gone (89 →
+23.5). What is left, by band: within 12 cells of a channel max 23.5, 145 isolated (riverCut and the fine profile: a
+seam where riverAt changes river — TR21); 12–30 cells 20.4, 98; past 30 cells 19.2, 31 (mesa block fields, plateau
+canyon walls of slope ~10). Still seen at one place: local/terrain2/dbg/dbg2-seamw.png — straight-edged steps in a
+snowfield by a flooded river mouth (TR21).
+

@@ -4000,6 +4000,28 @@ The owner, on restructuring the terrain function (verbatim):
   always traverse. It can look nice alongside rolling hills or flatter terrain and can work for making river coasts
   more dramatic and interesting. It's also a nice way to break up a town so roads have to meander."
 
+- On coasts, stamps and caves, verbatim: "consider the cool cliffs along coasts. I would use the tilted voronoi cell
+  but for large atlas cells so that some coast is raised into high cliffs and use the masks to carve off cliff lined
+  aisles. I would also probably keep the craters and stamped features in the heightmap. Consider adding water level
+  based cave openings using a thresholded noise layer to define the 2d layout and SDF plus blended fields enveloped by
+  the ground height above to make cave networks under the surface. We can create nodes with SDF that draw them to the
+  surface and create skylights and entrances and then add springs and magma flows to add visual interest and lighting
+  to caves. It's also a great place to introduce the larger faceted surfaces and crystal volumes. Underground lakes,
+  forests and cities will be a sight to behold."
+  ("aisles" read as *isles* — sea stacks and cliff-lined islets cut off the raised coast; it could also mean narrow
+  sea lanes ("aisles") between cliffs — the same carve makes both; to confirm with the owner.)
+- Later, verbatim: "consider subtractive height masks for fissures or pits. Glaciers and ice layers. Deserts with
+  dunes and eventually storm walls that roll over regions and use a dither effect so the camera underneath can actually
+  see what's under the storm but gets particle and lighting effects that make it clear you are in one."
+- Correction, verbatim: "I would still use blends for subtractive terrain but compute the height field inside with
+  subtraction from the base that way borders are well defined but you get relative drops in height" → a fissure, pit,
+  mesa channel or ravine is an ordinary masked region (threshold, JFA border distance, the usual mask-chosen blend at
+  its border); only its inner field is relative: H_inside = H_base − drop. No separate subtractive min / carve pass.
+- Later, verbatim: "I think if the dither or fade accompanies a slight zoom it will feel like looking under the storm"
+  (the unmerged `forest` branch's understory already pairs a canopy dither/fade with a camera zoom-in driven by a cover
+  weight — `src/forest/driver.ts`, `understory.wgsl`; the owner wants the same for underground layers, so storm,
+  canopy and underground should share one "look under a cover layer" mechanism).
+
 → Cleared to restructure the flagged terrain function to the owner's masked-blend method (region-tied height fields,
 threshold masks, JFA distances, mask-chosen blends), behind `a.rivers2`, the default world byte-identical, cliffs and
 mesa edges unchanged in character. Plains with the flag on gain mask-selected sub-regions (hills, ridges, terraces,

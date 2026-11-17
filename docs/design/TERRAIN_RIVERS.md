@@ -574,10 +574,84 @@ by mask-chosen operators — the owner's method. What exists and what is planned
 | valley | envelope E (§9) | river reach, landform | D (two-scale), dl | smin(G', E) | **built (flag)** |
 | raise | R(D) | tier | D | add | step 1 |
 | combine by mask | — | EDGE kind near, tier, height | dl, D | smin / max on a cliff's side / G wins above Hcut | planned (§9.9) |
+| drops (fissures, pits, mesa channels, ravines — TR-L1) | an ordinary masked region whose *inner* field is relative to the base it sits in: `H_inside = H_base − drop(d, noise)` | a thresholded noise / SDF mask (dual-threshold simplex, ridged \|n\| < t) | distance to the mask's border (JFA) | the same mask-chosen border blends as every region (a crisp cliff edge, a ledge, a ramp); no separate subtractive min / carve pass — the owner's correction (DECISIONS) | planned (TR-L8) |
+| **material on top** | an interval over the height: ice sheets and glaciers filling valleys from high ground (thickness from the snowline down the valley envelope); later dune sand, ash | climate, tier, height masks | D (down-valley), height over the snowline | an interval on the column, not height: the ground stays, the ice lies in it | planned (TR-L9) — glacial melt is one of the owner's river sources: glacier tongues are natural walk heads |
 
 Next (not in this step): (a) the valley's combine as a mask switch (§9.9), so a mesa's tiers stand at a fall; (b) the
 per-tier constant table (`VALLEY`) replaced by per-region-kind profiles — each region kind its own valley profile and
 plains mix, as the region's other height functions already are; (c) lakes as one more surface (§9.8).
+
+**Stamps stay.** Craters, oddities (facets, bulbs, crystal fields), volcanoes and the crystal giants are layers of
+their own (`stampsAt`, `makeGiants`) after the plains and before the valley — unchanged with the flag (seen: the
+craters top left of local/terrain2/on-plainwide.png).
+
+### 10.4 Coastal cliffs (designed, next step): the tilted cell at atlas scale
+
+The owner: "use the tilted voronoi cell but for large atlas cells so that some coast is raised into high cliffs and
+use the masks to carve off cliff lined aisles". The same field as §10.2 at another scale, with a coast mask:
+
+    cells     a Voronoi of CC_CELL ≈ 1200 cells along the coasts
+    mask      coast band: wc = (1 − smoothstep(0, CC_REACH ≈ 600, coast)) on land (coast > 0), × the land's weight
+    tilt      per cell by hash: 45 % rise toward the sea, d = −∇coast (a raised coast), 55 % none (beaches, low coasts)
+    plane     h_c = H_c · clamp(0.5 + (x − c)·d / CC_RUN, 0, 1),  H_c 40–140 cells, CC_RUN ≈ 1200
+    borders   §10.2's rule: mix(min(h_c, h_b), h_c, smoothstep(0, w_δ, δ)), w_δ a scarp of ~4 cells (a headland's
+              flank) or, in gaps, a ramp — so a raised stretch of coast ends in a cliffed headland, not a wall inland
+    relief    wc · h (added in ground() with the plains layer)
+    isles     a thresholded ridged noise inside raised cells only (|n| < t, period ≈ 300, t ≈ 0.08, faded in by
+              coast < 250): the ground there is cut to sea − 6, so channels of sea cut off cliff-lined stacks and isles
+              (or, read as "aisles", narrow sea lanes between cliffs — the same carve)
+    look      the raised edge meets the sea at compose's coast border; with the coast kinds' blend that is a steep face —
+              the existing cliff caves (`cliffCave`) and sea caves already open in such faces
+
+Rivers reaching a raised coast: the walk's levels end at the mouth at `sea − 0.4` (§3), so the valley cuts a **notch**
+through the raised cell to the sea (a gorge mouth) — that is what the current machinery does. A fall into the sea
+(the level held at the cliff top to the edge, then dropping) is the more dramatic option: it needs the mouth's level
+to stay at the raised ground (a "hanging mouth" flag: the running minimum stops at the coast band's top) — an option
+for the owner to choose; not built.
+
+**Later: caves (the next terrain track; design sketch only).** The owner: water-level cave openings from a
+thresholded noise layer for the 2D layout; SDF plus blended fields enveloped by the ground height above for the cave
+volume; SDF nodes that draw the network to the surface as skylights and entrances; springs and magma flows inside for
+light and interest; larger faceted surfaces and crystal volumes; underground lakes, forests and cities.
+
+    layout     a thresholded noise at a water-level datum z_w (sea or a region's water table): open where |n(x)| < t
+               (tunnels) or n2(x) > t2 (chambers) — 2D masks, as the region masks are
+    volume     floor  z_f(x) = z_w − depth(x),  roof  z_r(x) = z_f + height(x); both blended fields (noise, SDF to the
+               layout's border so passages are round, chambers domed), and enveloped: z_r ≤ G(x) − ROOF_MIN (rock kept
+               over them) — an interval [z_f, z_r] per column
+    nodes      SDF nodes (points with a radius) that lift the envelope: near a node the roof rises through G — a
+               skylight (small radius) or an entrance (a ramp to the ground: the floor rises too)
+    life       springs (water from the roof at a node, a pool on the floor), magma flows (lava channels on the floor,
+               light), faceted surfaces and crystal volumes (the facet / giant stamps placed inside the volume)
+    places     underground lakes (the floor under the water table), forests and cities (intervals: a town's tiles on
+               the cave floor)
+What exists: `cavernAt` (great caverns under a column: floor and roof), `caveVoids` (up to three layers of tunnels and
+chambers from 2D noises, shafts between layers — the layout above, already 2D-noise driven), `cliffCave` / mesaEdge's
+grottos and overhangs (openings in cliff faces), and the columns' intervals (`colRuns`, layers.wgsl), which already
+carry open spans under the ground. The new parts: the water-level datum, the SDF nodes to the surface, and the life.
+
+**The valley under the owner's rule for drops.** "I would still use blends for subtractive terrain but compute the
+height field inside with subtraction from the base that way borders are well defined but you get relative drops in
+height." Today the valley is applied as `smin(G', E)` after the regions are blended — a min pass, which this rule
+says to avoid. Read as a region instead: the valley region is a mask by a threshold on the river distance
+(`e < reach_τ`, the reach per tier); its inner field is relative to the river and the base, `H_inside = min(G',
+L + V(e))` (the floor follows the river, the walls the profile, never above the base); and it is blended into the
+ground round it at its border by the border distance (`reach_τ − e`, from the same two-scale field) with the
+mask-chosen blend for the place — a soft shoulder in lowland, a crisp rim into a plateau (a canyon's edge), none on a
+cliff's side. That removes step 1's per-tier fade *and* step 2's Φ bound: the valley ends where its mask ends, by the
+blend, not by a surface climbing out of the land. It needs E's winner's edge distance carried with E (the field pass
+computes it). Not built in this step; the leading form for the restructure's next pass (§9.9's masks pick the blend).
+
+**Later: subtractive masks, glaciers, deserts and storm walls** (the owner, DECISIONS verbatim). The table above gives
+subtractive layers and a material-on-top layer their place. What exists already: dune ripples on the plains (the
+region detail — the parallel ripples in the plain stills of both steps); ice and snow as column materials from
+`src/shaders/climate.wgsl` (cold storms lay snow, water freezes under ice — a simulation, not a generated ice sheet);
+storms with rain, particles and the sky dimming under them (`src/weather/`), the base a rolling storm wall with a
+dithered see-through layer would build on. The owner: "I think if the dither or fade accompanies a slight zoom it will
+feel like looking under the storm" — the unmerged `forest` branch's understory already does this pairing (a canopy
+dither/fade plus a camera zoom-in driven by a cover weight: `src/forest/driver.ts`, `understory.wgsl`), and the owner
+wants the same for underground layers. So storm, canopy and underground should share one *look under a cover layer*
+mechanism: a cover weight → dither/fade of the cover → a slight zoom → the inside's particles and lighting.
 
 **Later: rooms and passages as masks.** The owner's game-design-aware generation (BACKLOG TR-L5) plugs in as one more
 mask source: an authored SDF of rooms, passages and doors (from the level kit) with its JFA border distance. Inside a
