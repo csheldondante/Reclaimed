@@ -132,7 +132,9 @@ fn valleyGround(p0: vec2<f32>, G: f32, a: u32, b: u32, w: f32, coast: f32) -> ve
     let nc = riverBuf[vb + j];
     if (nc != 0u && nc != na) { valleyNode(&acc, nc - 1u, p, vb); }
   }
-  let raise = raiseMax * (1.0 - exp(-acc.d / reach)) * smoothstep(0.0, 300.0, coast);
+  // (less raise near the world's top: the first stills had massifs raised into zTop's clamp — flat-topped at 480)
+  let room = clamp((AP.zTop - 20.0 - G) / max(raiseMax, 1.0), 0.0, 1.0);
+  let raise = raiseMax * (1.0 - exp(-acc.d / reach)) * smoothstep(0.0, 300.0, coast) * room;
   let Gr = G + raise;
   var h = Gr;
   for (var k = 0u; k < acc.k; k++) {

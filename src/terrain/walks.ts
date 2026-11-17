@@ -65,6 +65,8 @@ const VAL_LF_PEN: f32 = ${VALLEY.LF_PEN.toFixed(4)};
 }
 /** texels round a node whose segments the lateral clamp checks */
 export const CLAMP_RADIUS = 36;
+/** nodes from its farthest source over which a river's width grows in */
+const WIDTH_TAPER = 16;
 /** cells a river may stand over another's valley wall (the clamp's tolerance: under the levee's 0.2) */
 const CLAMP_TOL = 0.05;
 /** a lava channel's incision (rivers.ts: lava depth) */
@@ -647,7 +649,14 @@ export function walkRivers(inp: WalkInput): Rivers2 {
     if (j !== k && !lava[k]) acc[j] += acc[k];
   }
   const width = new Float32Array(count);
-  for (let k = 0; k < count; k++) width[k] = lava[k] ? 3 : Math.min(12, 2 + Math.sqrt(acc[k]) * 0.3);
+  // (a source's Voronoi cell holds all the land behind it, so a head came out 9 wide from nowhere — the first stills:
+  // the width grows in over WIDTH_TAPER nodes from the farthest source)
+  const hopsUp = new Int32Array(count);
+  for (const k of order) {
+    const j = tr.next[k];
+    if (j !== k) hopsUp[j] = Math.max(hopsUp[j], hopsUp[k] + 1);
+  }
+  for (let k = 0; k < count; k++) width[k] = lava[k] ? 3 : Math.min(12, 2 + Math.sqrt(acc[k]) * 0.3 * Math.min(1, hopsUp[k] / WIDTH_TAPER));
   const up = mainUp(tr.next, acc);
   // (the lava walks' own upstream: by order along the walk — acc is 0 on lava)
   for (let k = 0; k < count; k++) {

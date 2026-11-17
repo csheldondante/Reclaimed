@@ -42,7 +42,15 @@ await run({ name: 'terrain-rivers2', kind: 'behaviour', size: '1000x1000' }, asy
     const cu = new Uint32Array(a.craters.buffer);
     const volcanoes = [];
     for (let o = 0; o < a.craters.length; o += 8) if (cu[o + 6] === 4) volcanoes.push([Math.round(a.craters[o]), Math.round(a.craters[o + 1]), Math.round(a.craters[o + 2]), Math.round(a.craters[o + 3])]);
-    return { walk: a.walkStats ?? null, volcanoes, timings: a.timings, riverStats: a.riverStats, nodes: n, water, lava, risesDownstream: up, falls: { over3_5: f35, over12: f12, over30: f30, max: +maxFall.toFixed(1), meanOver3_5: +(sumFall / Math.max(1, f35)).toFixed(1) }, lakes: a.lakes.length, sites: a.settlement.sites.length, worldW: a.worldW, worldH: a.worldH, n: a.p.n };
+    // (FNV-1a of the macro ground and the river nodes: the default world byte-identical before and after the change)
+    const fnv = (arr) => {
+      const b = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+      let h = 0x811c9dc5;
+      for (let i = 0; i < b.length; i++) h = Math.imul(h ^ b[i], 0x01000193) >>> 0;
+      return h.toString(16);
+    };
+    const hashes = { hmac: fnv(a.hmac), nodes: fnv(a.riverNodes), regionOf: fnv(a.regionOf) };
+    return { hashes, walk: a.walkStats ?? null, volcanoes, timings: a.timings, riverStats: a.riverStats, nodes: n, water, lava, risesDownstream: up, falls: { over3_5: f35, over12: f12, over30: f30, max: +maxFall.toFixed(1), meanOver3_5: +(sumFall / Math.max(1, f35)).toFixed(1) }, lakes: a.lakes.length, sites: a.settlement.sites.length, worldW: a.worldW, worldH: a.worldH, n: a.p.n };
   });
   R.log(JSON.stringify(stats));
   // --pick: places to look at, from this world's rivers (a lowland river, the tallest temperate fall, a volcano)
@@ -61,7 +69,10 @@ await run({ name: 'terrain-rivers2', kind: 'behaviour', size: '1000x1000' }, asy
       };
       const warmAt = (y) => 0.5 - 0.5 * Math.cos((2 * Math.PI * y) / a.worldH);
       let plain = null, fall = null;
+      const ups = new Int32Array(n);
+      for (let k = 0; k < n; k++) if (u[k * W + 4] !== k) ups[u[k * W + 4]]++;
       for (let k = 0; k < n; k++) {
+        if (!ups[k]) continue;
         const o = k * W;
         if (u[o + 5] & 1) continue;
         const nx = u[o + 4];

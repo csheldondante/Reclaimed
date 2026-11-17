@@ -26,8 +26,18 @@ function plot(title, series, xl, yl, W = 900, H = 340) {
   const L = 60, R = 20, T = 34, Bm = 40;
   const sx = (x) => L + ((x - x0) / Math.max(x1 - x0, 1e-6)) * (W - L - R);
   const sy = (y) => H - Bm - ((y - y0) / Math.max(y1 - y0, 1e-6)) * (H - T - Bm);
+  // (a series' gaps — x steps over 1.5 — break its line: the water is only where there is water)
+  const runs = (pts) => {
+    const out = [[]];
+    for (let i = 0; i < pts.length; i++) {
+      if (i && pts[i][0] - pts[i - 1][0] > 1.5 && pts.gappy) out.push([]);
+      out[out.length - 1].push(pts[i]);
+    }
+    return out;
+  };
+  series = series.flatMap((s) => runs(s.pts).map((pts, i) => ({ ...s, pts, label: i ? '' : s.label })));
   const lines = series.map((s) => `<polyline fill="none" stroke="${s.colour}" stroke-width="${s.width ?? 1.6}" ${s.dash ? `stroke-dasharray="${s.dash}"` : ''} points="${s.pts.map((p) => `${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join(' ')}"/>`).join('');
-  const legend = series.map((s, i) => `<text x="${L + 10 + i * 260}" y="22" fill="${s.colour}" font-size="13">■ ${s.label}</text>`).join('');
+  const legend = series.filter((s) => s.label).map((s, i) => `<text x="${L + 10 + i * 205}" y="30" fill="${s.colour}" font-size="13">■ ${s.label}</text>`).join('');
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => {
     const y = y0 + t * (y1 - y0);
     return `<text x="${L - 6}" y="${sy(y) + 4}" text-anchor="end" font-size="11" fill="#555">${y.toFixed(0)}</text><line x1="${L}" x2="${W - R}" y1="${sy(y)}" y2="${sy(y)}" stroke="#eee"/>`;
@@ -52,6 +62,7 @@ try {
     if (b) ser.push({ label: `before (${B}): ground`, colour: '#999', pts: b.ground.map((g, i) => [i, g]) });
     ser.push({ label: `after (${A}): ground`, colour: '#b5651d', pts: a.ground.map((g, i) => [i, g]) });
     const water = a.ground.map((g, i) => [i, a.water[i] > 0.05 ? g + a.water[i] : null]).filter((p) => p[1] !== null);
+    water.gappy = true;
     if (water.length) ser.push({ label: 'after: water surface', colour: '#1f6fd6', width: 3, pts: water });
     const f = `${dir}/plot-cross-${name}.png`;
     await shoot(plot(`Cross-section "${name}": row ${a.row}, x ${a.x0}–${a.x0 + a.ground.length} (world cells)`, ser, 'cells along the row', 'height (cells)'), f, 900, 340);
