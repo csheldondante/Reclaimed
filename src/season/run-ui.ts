@@ -169,6 +169,9 @@ const CSS = `
 .run-full img.art{width:100%;max-height:38vh;object-fit:contain;border-radius:10px;background:#222}
 .run-full .acts{display:flex;flex-wrap:wrap;gap:8px}
 .run-full .acts button{flex:1 1 140px}
+.run-sheet .head{display:flex;align-items:center;gap:8px}
+.run-sheet .head h3{flex:1}
+.run-sheet button.fold{flex:0 0 auto;min-height:36px;font:600 13px system-ui;padding:6px 12px;border-radius:10px;border:0;background:#3a3f4a;color:#eee}
 .run-sheet .views{display:flex;gap:8px}
 .run-sheet .views button{flex:1;min-height:44px;font:600 14px system-ui;border-radius:10px;border:0;background:#3a3f4a;color:#eee}
 `;
@@ -199,8 +202,12 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
   const full = el('div', 'run-full');
   ui.append(style, marks, top, sheet, full);
 
+  let folded = false;
+  let was: Phase | null = null;
   const render = () => {
     const { phase, run } = game;
+    if (phase !== was) folded = false;
+    was = phase;
     const l = game.ledger;
     // ---- the top: the leader, the season, the pools and what each season brings, the raiders' countdown
     top.style.display = run && phase !== 'leader' && phase !== 'end' ? '' : 'none';
@@ -283,9 +290,16 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
     sheet.style.display = phase === 'boot' || phase === 'leader' || phase === 'end' || phase === 'petition' || panel ? 'none' : '';
     sheet.replaceChildren();
     const go = el('div', 'go');
-    if (phase === 'city' && run) {
+    // (loop round 13: the town's sheet folds down to one button, and the names over the map go with it — to look at the
+    // land itself; it opens again on a tap, or at the next phase)
+    marks.style.display = folded && phase === 'city' ? 'none' : '';
+    if (phase === 'city' && run && folded) {
+      go.append(btn(W.SHEET_SHOW, () => ((folded = false), render()), 'quiet'));
+    } else if (phase === 'city' && run) {
       const asks = game.asking();
-      sheet.append(el('h3', undefined, asks.length ? W.ASKS_TITLE : W.ASKS_NONE));
+      const head = el('div', 'head');
+      head.append(el('h3', undefined, asks.length ? W.ASKS_TITLE : W.ASKS_NONE), btn(W.SHEET_HIDE, () => ((folded = true), render()), 'fold'));
+      sheet.append(head);
       if (asks.length) sheet.append(el('div', 'note', W.TAP_MARKER));
       for (const t of game.notes) sheet.append(el('div', 'note', t));
       const box = el('div', 'list');
@@ -329,7 +343,10 @@ export function mountRunUi(ui: HTMLElement, game: RunGame): () => void {
       go.append(s);
     } else if (phase === 'event' && run && game.liveNow) {
       const ev = game.liveNow;
-      sheet.append(el('h3', undefined, ev.title), el('div', undefined, game.fightLine ?? ''), el('div', game.armed ? 'warn' : 'note', game.armed ? W.SPELL_AIM : ev.spells.length || ev.abilities.length || !ev.wantsSpells ? ev.how : `${ev.how} ${W.SPELL_NONE}`));
+      sheet.append(el('h3', undefined, ev.title));
+      // (loop round 13: an event with no running line — a pack's — shows none; what a cast did shows here a while)
+      if (game.fightLine) sheet.append(el('div', undefined, game.fightLine));
+      sheet.append(el('div', game.armed ? 'warn' : 'note',game.armed ? W.SPELL_AIM : ev.spells.length || ev.abilities.length || !ev.wantsSpells ? ev.how : `${ev.how} ${W.SPELL_NONE}`));
       for (const sp of ev.spells) go.append(btn(W.SPELL_NAME[sp], () => game.arm(game.armed === sp ? null : sp), game.armed === sp ? 'on' : undefined));
       for (const a of ev.abilities) go.append(btn(a.name, () => game.arm(game.armed === a.id ? null : a.id), game.armed === a.id ? 'on' : undefined));
       if (ev.canLeave) go.append(btn(W.LIVE_LEAVE, () => game.leave(), 'quiet'));

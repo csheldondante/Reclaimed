@@ -79,6 +79,7 @@ import { labStationKit } from './level/labs';
 import type { StationKit } from '../levels/playground';
 import type { TownLab } from '../lab/lab';
 import { urlFlags } from '../flags';
+import type { WeatherSet } from './level/weather-set';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -253,6 +254,9 @@ export class LevelScene implements Scene {
   statics?: StaticClaims;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   worldApi?: Sim;
+  /** (loop round 13) the weather: the season's with the town's weather signs over it (scenes/level/weather-set.ts;
+   *  made with the mutators, which tell it the signs; the loop tells it the season's) */
+  weatherSet?: WeatherSet;
   /** round 83, V21: ?cutaway (api/puck.ts, api/cutaway.ts) */
   cutaway?: { puck: Puck; slice: Slice; orbit: Orbit; dither: Dither };
   /** a stand-in character's feet kept seen (Dither) for ?cutaway (scripts/cutshot.mjs); none when unset */

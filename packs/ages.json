@@ -90,8 +90,8 @@
       "live": "ages-lava-front",
       "if_tier": {
         "success": [ { "say": "The lava ran round the town and set black in the fields. Every house stands." } ],
-        "cost": [ { "pool": "unrest", "add": 1 }, { "say": "The lava took a few streets before it set." } ],
-        "failure": [ { "pool": "unrest", "add": 2 }, { "say": "The lava ran through the town. Whole streets are under black rock." } ]
+        "cost": [ { "pool": "unrest", "add": 1 }, { "sign": "storm", "seasons": 1, "strength": 0.7 }, { "say": "The lava took a few streets before it set. Steam off the rock brings a storm down on the town." } ],
+        "failure": [ { "pool": "unrest", "add": 2 }, { "sign": "storm", "seasons": 1, "strength": 1 }, { "say": "The lava ran through the town. Whole streets are under black rock. Steam off it brings a storm down on the town." } ]
       },
       "if_expires": [ { "say": "The mountain goes quiet again." } ],
       "art": "A tongue of lava coming down a hillside toward a walled town at dusk, painterly." },
@@ -213,6 +213,10 @@
     { "id": "ages-ash-fields", "name": "Fields under ash", "does": { "rule": "harvest-home", "off": true } },
     { "id": "ages-ash-glass", "name": "Ash-glass in the ruins", "does": { "add_rule": { "id": "ages-glass-rule", "name": "Ash-glass", "on": "turn", "a": { "tags": ["ruined"] }, "effect": { "pool": "magic", "n": 1 }, "per": "a", "cap": 2, "why": "ash-glass dug from {count} ruins: +{n} Magic" } } },
     { "id": "ages-angel-gifts", "name": "The angel's gifts", "does": { "income": { "magic": 2 } } }
+  ],
+  "weather": [
+    { "from": 8, "to": 9, "weather": "rain" },
+    { "from": 14, "weather": "ashfall" }
   ],
   "wants": [
     "The Star City as a home with sites of its own (draft 8 gives it the same 20 sites as any town: a keep yard, a harbour)."

@@ -53,6 +53,10 @@ const AFTER_ZOOM = 5;
  *  pulls back past for them (px a cell) */
 const FIT_SHARE = 0.6;
 const FIT_FLOOR = 16;
+/** (loop round 13) the share of the screen's width a front's frame (a shield and the front's head) spans at most */
+const FRONT_FIT = 0.85;
+/** (loop round 13) cells round the front's head and its target kept in the frame before a shield is up */
+const FRONT_MARGIN = 12;
 /** (loop round 11) how near an event's two framed sides come (cells) before the camera frames both; until then it is
  *  on the ones it follows (seen: a crew still crossing the river framed with the fighter pulled the camera out to 10) */
 const FRAME_NEAR = 20;
@@ -416,12 +420,33 @@ export class LiveRunner {
 
   /** where a front is: its head (the farthest point along its way it has reached), the source before it reaches any */
   private frontAt(f: Front): [number, number] | null {
+    return this.frontFrame(f)?.at ?? null;
+  }
+
+  /**
+   * (loop round 13) what the camera frames of a front: its head (the source before it has reached anything) and the
+   * town it runs at; once a shield is up, the shield's disc and the head together. The middle of the span they make
+   * along the line between them, and that span's length in cells, which the zoom fits (FRONT_FIT).
+   */
+  private frontFrame(f: Front): { at: [number, number]; span: number } | null {
     if (!f.src) return null;
     const head = [...f.way].reverse().find((p) => p.reached);
     const at: [number, number] = head ? head.at : [f.src[0], f.src[1]];
-    // (a shield raised, or the town reached: the town as the front meets it — halfway between the head and the target)
-    if (f.points.some((p) => p.reached) || this.h.scene.worldApi?.shields?.list.length) return [(at[0] + f.target[0]) / 2, (at[1] + f.target[1]) / 2];
-    return at;
+    // (the shield nearest the target: the one cast over the town)
+    const shields = this.h.scene.worldApi?.shields?.list ?? [];
+    const s = shields.reduce<(typeof shields)[number] | null>((b, x) => (!b || Math.hypot(x.x - f.target[0], x.y - f.target[1]) < Math.hypot(b.x - f.target[0], b.y - f.target[1]) ? x : b), null);
+    if (s) {
+      const d = Math.hypot(at[0] - s.x, at[1] - s.y);
+      const u = d > 1e-3 ? [(at[0] - s.x) / d, (at[1] - s.y) / d] : [1, 0];
+      // (from the far side of the disc to the head, or to the near rim if the head is inside it)
+      const a = -s.radius;
+      const b = Math.max(d, s.radius);
+      const m = (a + b) / 2;
+      return { at: [s.x + u[0] * m, s.y + u[1] * m], span: b - a };
+    }
+    // (no shield: the head and the town it runs at, both in the frame — the player casts the ward on the town from the
+    // event's own view; round 13 found the town under the sheet with the camera on the head alone)
+    return { at: [(at[0] + f.target[0]) / 2, (at[1] + f.target[1]) / 2], span: Math.hypot(at[0] - f.target[0], at[1] - f.target[1]) + FRONT_MARGIN * 2 };
   }
 
   /** the camera on the front: its source as it opens, its head as it comes, the town once it is there */
@@ -923,6 +948,13 @@ export class LiveRunner {
         cam.zoom *= Math.exp(Math.log(want / cam.zoom) * Math.min(1, dt * 1.2));
         const pitch = run.def.camera.pitch !== undefined ? (run.def.camera.pitch * Math.PI) / 180 : EVENT_PITCH;
         cam.elevation += (pitch - cam.elevation) * Math.min(1, dt * 1.2);
+      }
+      // (loop round 13: a front's camera no closer than the shield and the front's head fit in FRONT_FIT of the screen's
+      // width — the dome was cut off at the event's zoom with the head beside it)
+      const fr = run.front && this.frontFrame(run.front);
+      if (fr) {
+        const want = Math.min(run.def.camera.zoom, (FRONT_FIT * cam.viewportW) / Math.max(fr.span, 1));
+        cam.zoom *= Math.exp(Math.log(want / cam.zoom) * Math.min(1, dt * 1.2));
       }
     }
   }

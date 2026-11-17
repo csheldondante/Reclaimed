@@ -118,6 +118,8 @@ const FLAG_RUN_Q: u32 = 2048u;
 const FLAG_DETAIL_Q: u32 = 128u;
 const K_SPLASH_Q: u32 = 7u;
 const K_SMOKE_Q: u32 = 8u;
+// (loop round 13) particles.wgsl K_GLOW: state 4 is lava's flash against a shield
+const K_GLOW_Q: u32 = 19u;
 
 fn stepNow() -> u32 { return LQ.step.x & 0x3ffffu; }
 fn stepPrev() -> u32 { return (LQ.step.x - 1u) & 0x3ffffu; }
@@ -858,6 +860,19 @@ fn publishLava(@builtin(global_invocation_id) id: vec3<u32>) {
         if (chanceQ(i, 0x55u) < min(boil * 40.0, 0.3)) {
           spawnQ(vec3<f32>(cellPos(p), v.x + d + 0.2), vec3<f32>(0.0, 0.0, 2.0), 7.0, K_SMOKE_Q, hash3(i, G.tick, 0x56u), 2u);
         }
+      }
+    }
+    // (loop round 13: hot lava against a shield — a neighbour inside one — makes the wall flare white where it presses,
+    // a spark thrown up: particles.wgsl K_GLOW state 4, src/api/shields.ts)
+    if (s == 0u && T >= LQ_SET && d > 0.08 && LQ.shields[0].z > 0.0 && !shielded(p) && chanceQ(i, 0x5au) < 0.12) {
+      for (var k = 0u; k < NDIR; k++) {
+        let q = nbr(p, k);
+        if (!shielded(q)) { continue; }
+        let c = (cellPos(p) + cellPos(q)) * 0.5;
+        let h = hash3(i, G.tick, 0x5bu);
+        let j = vec2<f32>(f32(h & 255u), f32((h >> 8u) & 255u)) / 255.0 - 0.5;
+        spawnQ(vec3<f32>(c, v.x + d + 0.3), vec3<f32>(j * 2.0, 2.5 + f32((h >> 16u) & 255u) / 64.0), 0.7, K_GLOW_Q, h, 4u);
+        break;
       }
     }
     // (loop round 12: lava still to set keeps its chunk from sleeping — counted as change for the steady state, which

@@ -299,7 +299,7 @@ export function startLines(r: Realm, packs: readonly LoadedPack[], played: reado
   const far = farThings(w, packs, home).filter((t) => t.tags.includes('far-town'));
   const count = (s: string) => far.filter((t) => t.tags.includes(s)).length;
   const ruins = SITES.filter((s) => r.things().find((t) => t.id === siteId(home, s.key))?.tags.includes('ruined')).length;
-  const signs = ['ashfall', 'darkness', 'deadrise', 'crime'].filter((k) => !!w.facts.tag(home, 'condition', k)?.value);
+  const signs = ['ashfall', 'darkness', 'deadrise', 'crime', 'rain', 'storm', 'fog'].filter((k) => !!w.facts.tag(home, 'condition', k)?.value);
   out.push(TW.worldState({ far: far.length, destroyed: count('destroyed') + count('abandoned'), yours: far.filter((t) => t.tags.includes('yours') && t.tags.includes('standing')).length, held: far.filter((t) => !t.tags.includes('yours') && t.tags.includes('standing')).length, ruins, of: SITES.length, signs }));
   // (loop round 12: what fronts of earlier runs left on this town)
   for (const e of w.facts.events({ kind: FRONT_EVENT })) {

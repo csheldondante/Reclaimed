@@ -47,6 +47,7 @@ import * as W from '../../season/run-words';
 import { StoryCamera, type V3 } from '../../story/camera';
 import type { LevelScene } from '../level';
 import { startSeasonLoop, storeReady } from './season';
+import { seasonWeather } from '../../weather/presets';
 
 /** the world's record in the world store: the fact layer, the characters, the holdings (WorldState's snapshot).
  *  FIXED-CITY (BACKLOG LS-40): one record a page, with one town's ledger in it; a run that follows a moving group needs
@@ -190,6 +191,8 @@ class Game implements RunGame {
     // (round 8: the pack things standing at the town's sites, read again when anything changed — not each frame:
     // `Realm.things` walks every far town)
     this.things = this.realm && this.packs.length ? thingMarks(this.realm, this.packs) : [];
+    // (loop round 13: the season's weather — the packs' `weather` lists, in their order; the signs are laid over it)
+    if (this.realm) this.scene.weatherSet?.setSeason(seasonWeather(this.packs.flatMap((p) => p.weather), Math.min(this.realm.season, this.realm.seasons)));
     for (const f of this.onChange) f();
   }
   /** (round 8) the pack things in play and their remains, as last read */

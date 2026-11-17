@@ -68,8 +68,13 @@ const K_SPARK: u32 = 17u;
 // petals torn off flowers by the wind (round 10); seed = colour
 const K_PETAL: u32 = 18u;
 // a brief soft light where something happens (round 11): state 0 growth
-// (green-gold), 1 wind (pale blue)
+// (green-gold), 1 wind (pale blue). (Loop round 13, src/api/shields.ts) A shield's light: 2 its rim (a wall of light
+// round the disc, placed on the GPU from one request), 3 the dome's haze, 4 a hot flash where lava presses on it
+// (liquid.wgsl publishLava), 5 a streak thrown off it (as it is cast and as it ends). 4 and 5 keep their velocity.
 const K_GLOW: u32 = 19u;
+const GLOW_RIM: u32 = 2u;
+const GLOW_DOME: u32 = 3u;
+const GLOW_STREAK: u32 = 5u;
 // a grain of material poured by the sandbox brush (edit.wgsl), falling to
 // where it lands; m.w carries the material (dustTag) for its colour
 const K_GRAIN: u32 = 21u;
@@ -587,7 +592,40 @@ fn bursts(@builtin(global_invocation_id) id: vec3<u32>) {
     if (kind == K_LEAF) { life = 10.0; }
     if (kind == K_DEER || kind == K_RABBIT) { life = 90.0 + r.x * 60.0; }
     if (kind == K_GLOW) {
-      spawnFull(a.xyz, carry, 1.3, kind, 0.0, h, 0u, u32(b.z));
+      let gs = u32(b.z);
+      // (loop round 13, src/api/shields.ts) a shield's light, placed here on the GPU so one request draws a whole ring
+      // or dome: the CPU sends its middle (a.xyz: the ground there), its radius (b.w) and a height (b.y)
+      if (gs == GLOW_RIM) {
+        // a wall of light round the rim, standing on the ground where each point is: `count` points round the circle,
+        // each a little way up the wall (0.3 .. b.y over the ground)
+        let ang = (f32(k) + fract(r.x + 0.5)) / f32(max(count, 1u)) * 6.2831853;
+        let at = a.xy + vec2<f32>(cos(ang), sin(ang)) * b.w;
+        let gc = cellAt(at);
+        var gz = a.z;
+        if (inMap(gc)) { let gi = colIdxI(gc); gz = groundZ(gc, f32(sfZ(surface[gi]))) + water[gi]; }
+        spawnFull(vec3<f32>(at, gz + 0.3 + fract(r.y + 0.5) * max(b.y - 0.3, 0.0)), carry, 0.9 + r.z * 0.3, kind, 0.0, h, 0u, gs);
+        continue;
+      }
+      if (gs == GLOW_DOME) {
+        // a haze of light over the dome: a hemisphere half as high as it is wide over the middle's ground
+        let hh = fract(r.x + 0.5);
+        let ang = fract(r.y + 0.5) * 6.2831853;
+        let ring = sqrt(max(1.0 - hh * hh, 0.0)) * b.w;
+        spawnFull(a.xyz + vec3<f32>(cos(ang) * ring, sin(ang) * ring, b.y + hh * b.w * 0.5), carry, 1.1 + r.z * 0.4, kind, 0.0, h, 0u, gs);
+        continue;
+      }
+      if (gs == GLOW_STREAK) {
+        // streaks of light thrown off the rim (a cast, an end): from a point on the circle, out at carry.x and up at
+        // carry.z (cells/s)
+        let ang = (f32(k) + fract(r.x + 0.5)) / f32(max(count, 1u)) * 6.2831853;
+        let out = vec2<f32>(cos(ang), sin(ang));
+        let gc = cellAt(a.xy + out * b.w);
+        var gz = a.z;
+        if (inMap(gc)) { let gi = colIdxI(gc); gz = groundZ(gc, f32(sfZ(surface[gi]))) + water[gi]; }
+        spawnFull(vec3<f32>(a.xy + out * b.w, gz + 0.5 + fract(r.y + 0.5) * b.y), vec3<f32>(out * carry.x, carry.z) * (0.7 + 0.6 * fract(r.z + 0.5)), 0.8 + r.z * 0.4, kind, 0.0, h, 0u, gs);
+        continue;
+      }
+      spawnFull(a.xyz, carry, 1.3, kind, 0.0, h, 0u, gs);
       continue;
     }
     if (kind == K_HAZE) {
@@ -833,7 +871,9 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     vel.x += sin(G.time * 6.0 + sr * 40.0) * 2.5 * DT;
     vel.y += cos(G.time * 5.0 + sr * 31.0) * 2.5 * DT;
   } else if (kind == K_GLOW) {
-    drag = 0.0; grav = 0.0; vel = vec3<f32>(0.0);
+    // (loop round 13: a shield's hot flashes and streaks fly on, slowing; the other glows stand where they are)
+    drag = select(0.0, 1.6, state >= 4u); grav = 0.0;
+    if (state < 4u) { vel = vec3<f32>(0.0); }
   } else if (kind == K_SPARK) {
     drag = 0.5; grav = select(-0.6, 1.2, state == 1u);
   } else if (kind == K_HAZE) {

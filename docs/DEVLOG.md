@@ -25829,3 +25829,74 @@ The front's cost is the lava's passes over its awake chunks and the water's over
 reads; the shield adds ~45 glow and spark bursts a second (particles 0.15 ms either way). Not a toggle-diff on the
 phone: the owner's bench is the measure (BACKLOG LS-126).
 
+## 2026-11-17 — loop round 13 (1): the shield reads at phone size (`loop-skeleton`; docs/design/FRONTS.md)
+
+**Why.** Round 12's shield (`local/round12/shield-strip.png`) was a few faint blue arcs; the orchestrator could barely
+find it, and one still showed a dark patch instead of the event.
+
+**The dark patch, found.** The round-12 script looked at the town with the ground's height read as 0
+(`scene.heightAt` is null until its page is read; the script wrote `?? 0`): the view sat ~300 px off the town, on the
+burial ground of the "dead rise" sign (black earth, pale shamblers). The game was right; the script was not. Its tap
+landed on the town all the same (the projection and the pick shared the error). The script now falls back to the
+view's own height, as `loop.ts z` does.
+
+**The look.** 32 soft glows (alpha 0.32, puffs) a fifth of a second were too faint. A glow burst can now be a whole
+ring or dome placed on the GPU from one request (`particles.wgsl bursts`, K_GLOW states): 2, a wall of round bright
+beads round the rim, each on the ground where it stands (0.3–3 cells up; 1.5 beads a cell of rim, ~245 a ring at 26),
+4 rings standing at once; 3, a faint haze over a dome half as high as wide (90 points a quarter second); 5, streaks
+thrown out and up. The cast: a ring spreading from the middle to the rim in 0.8 s, streaks thrown up as it closes. The
+end: the wall flickers its last 3 s, then throws streaks off the rim. Where hot lava presses on it the wall flares
+white: the lava kernel spawns the flash itself (`liquid.wgsl publishLava`, a lava column with a shielded neighbour,
+12 % a tick) — the CPU does not know where the lava is. (Orange-white was tried first: lost on the lava's own glow.)
+Live glows with a shield up: ~1 500 of the low tier's 16 384 particles.
+
+**The camera.** It followed the head alone at zoom 6: the town was under the sheet (projected at y 796 of 915), so a
+player could not tap it to cast. Now a front's frame (`frontFrame`) is the head and the town together; once a shield
+is up, the shield's disc and the head; the zoom no closer than that span fits in 0.85 of the screen's width. The
+script casts from the event's own view now (round 12 moved the camera off the event to cast).
+
+**The sheet.** A pack event's `line` was its `how`, so the sheet showed it twice; a pack event has no running line now
+(the slot shows what a cast did, a few seconds). The town's sheet folds down to one button ("Show the town list"),
+the names over the map with it — the aftermath and run-2 stills are taken folded, framed on the front's way.
+
+**Seen** (each a full 412 x 915 frame, uncropped, `local/round13/final/`; strip `local/round13/shield-strip.png`, top
+row round 12, bottom row now; `node scripts/lab/frontshots.mjs --mode shield --run2`): shield-1-source — the lava
+welling among the western houses, the market and the river in frame; shield-3-cast-a — a small bright ring at the tap
+on the market 0.35 s after it; shield-3-cast-b — concentric bright blue rings filling the disc as it spreads, the
+houses inside showing through; shield-5-t40 — a bright blue wall round the market, the lava's orange edge pressed
+against its west side, the houses inside standing; shield-6-shield-last — the wall still whole over the town with
+black rock west of it; shield-6-shield-end (taken 2.2 s later; the shield still had ~1.4 s) — the wall broken into
+arcs as it flickers; shield-7-after-wide, shield-9-run2-land — black rock west of the town, no sheet or names over it;
+shield-8-run2-worldnow — "Run 1: lava came down on the town. A shield kept it out of the town." The event: success, 0
+of 8 town points reached. Not seen yet: the end's streaks themselves (the script now waits for the shield to be gone;
+not re-run).
+
+## 2026-11-17 — loop round 13 (2): weathers as data (`loop-skeleton`, LS-126; docs/design/PACK_FORMAT.md "Weather")
+
+**Why.** VISION §8 "Weather as packaged presets: not started"; the owner: "Darkness and ash raining down are a great
+way to indicate a distant eruption."
+
+**What.** `src/weather/presets.ts`: seven named weathers (fair — the default, the weather as it always was — clear,
+rain, storm, ashfall, fog, dark), each a bundle of what already exists: the prevailing wind (a factor on
+`Weather.params.baseWind`), a storm held over the town (`Weather.holdOver`, new: a storm spawned over the point with
+`hold` until let go), how often natural storms come (`Weather.setNatural`; `naturalEvery` may be null), the sky dim
+(`core.skyDim`), ash (`core.ashFall`) and — new — fog (`core.fog`: `light.wgsl haze` mixes a pale veil in slow banks;
+Globals ring.z, LS-128). Where they come from: a sign on the town (`rain`, `storm`, `fog` new sign kinds; `ashfall` and
+`darkness` were weathers in all but name) and the season (a pack's top-level `weather` list, the last entry covering the
+season wins). `weatherNow` lays the signs over the season's at their strength, the stronger number winning. The level:
+`scenes/level/weather-set.ts` (`scene.weatherSet`), told the signs by the mutators (in place of `showSigns` setting
+skyDim and ashFall) and the season by the loop. A held storm's place now moves with the window's slides (it drifted
+off). Two uses in `packs/ages.json`: the eruption's card brings a storm when the lava took streets (cost 0.7, failure
+1), and the pack rains in seasons 8–9 and lays ash from 14.
+
+**Found.** A storm sign right after a storm season brought two storms: the natural timer, last set while storms were
+on, was long past, so one formed at once. `setNatural` now starts a new wait when storms come back.
+
+**Seen** (`node scripts/lab/weathershots.mjs`, `local/round13/weather/`, strip `local/round13/weather-strip.png`, the
+market at zoom 5, time of day held): clear — bright; rain — the town darker and wet, the river dull (streaks faint:
+LS-129); storm — dark, the deck and streets puddled, wind 8.3 cells/s; ashfall — washed pale grey; fog — a pale veil
+over everything; dark — dim and brown; the storm as a card's sign — as the storm. Each with the numbers applied logged.
+
+**Tests.** `test/unit/weather-presets.test.ts` (6: the table, fair is no change, signs over the season, a season's
+weather, the validator's words, the ages pack's two uses load), `packs.test.ts`, `fronts.test.ts` pass.
+

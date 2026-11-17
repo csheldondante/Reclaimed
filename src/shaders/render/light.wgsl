@@ -348,6 +348,12 @@ fn haze(c: vec3<f32>, wpos: vec3<f32>) -> vec3<f32> {
   let h = mix(clean, dirty, G.pollution) * mix(1.0, 0.15, G.sky.w);
   let lowFog = smoothstep(24.0, 0.0, wpos.z) * 0.06;
   var o = mix(c, toLinear(h), 0.03 + 0.1 * G.pollution + lowFog);
+  // (loop round 13: a weather's fog — a pale veil over the land, thicker in slow drifting banks; it darkens at night)
+  let fg = fogNow();
+  if (fg > 0.0) {
+    let bank = 0.8 + 0.2 * sin(wpos.x * 0.045 + G.time * 0.03) * sin(wpos.y * 0.037 - G.time * 0.02);
+    o = mix(o, toLinear(vec3<f32>(0.74, 0.77, 0.8) * mix(1.0, 0.2, G.sky.w)), clamp(fg * 0.7 * bank, 0.0, 0.85));
+  }
   // beyond the reach: a dim, colourless fog (the land not yet reached)
   let fog = 1.0 - smoothstep(0.05, 0.5, reachAt(wpos.xy));
   if (fog > 0.0) {

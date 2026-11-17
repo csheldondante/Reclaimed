@@ -65,8 +65,12 @@ await run({ name: 'frontshots', kind: 'behaviour', size: '412x915', dpr: 1, echo
       const run = window.rungame.live.focus;
       const f = run?.front;
       const c = window.reclaimed.camera;
-      if (f) window.__frontTarget = f.target;
-      return run && f ? { t: Math.round(run.t), src: f.src?.map((v) => Math.round(v)), town: f.points.filter((x) => x.reached).length, way: f.way.filter((x) => x.reached).length, zoom: +c.zoom.toFixed(1), shields: window.reclaimed.scene.worldApi.shields.list.length, line: window.rungame.fightLine } : { phase: window.rungame.phase };
+      // (where the front ran, with the window's origin it was read in: the aftermath frames it after slides)
+      if (f?.src) window.__front = { src: [f.src[0], f.src[1]], target: [f.target[0], f.target[1]], origin: [...(window.reclaimed.scene.stream?.origin ?? [0, 0])] };
+      const L = window.rungame.live;
+      const fr = f ? L.frontFrame(f) : null;
+      const r = (v) => v?.map((x) => Math.round(x));
+      return run && f ? { t: Math.round(run.t), src: r(f.src), target: r(f.target), frame: fr && { at: r(fr.at), span: Math.round(fr.span) }, cam: r(c.target), busy: window.rungame.cam.busy, town: f.points.filter((x) => x.reached).length, way: f.way.filter((x) => x.reached).length, zoom: +c.zoom.toFixed(1), shields: window.reclaimed.scene.worldApi.shields.list.length, line: window.rungame.fightLine } : { phase: window.rungame.phase };
     });
   let cast = false;
   let shots = 0;
@@ -79,31 +83,39 @@ await run({ name: 'frontshots', kind: 'behaviour', size: '412x915', dpr: 1, echo
     if (s.phase) break;
     if (!shotAt.has('source') && s.src && s.t >= 4) (shotAt.add('source'), await shot('1-source'));
     if (!shotAt.has('coming') && s.way >= 4) (shotAt.add('coming'), await shot('2-coming'));
-    // (the ward over the town as the front comes: the camera to the market, the ward's button, a tap on the market)
+    // (the ward over the town as the front comes, from the event's own camera as a player sees it: the ward's button,
+    // then a tap on the town's middle (the front's target) where it shows on the screen — loop round 13; round 12 moved
+    // the camera off the event to cast)
     if (mode === 'shield' && !cast && (s.way >= Number(R.opt('castway', '3')) || s.t >= 20)) {
       cast = true;
-      await p.evaluate(() => {
-        const f = window.rungame.live.focus.front;
-        window.rungame.cam.follow(null);
-        return window.rungame.cam.look([f.target[0], f.target[1], window.reclaimed.scene.heightAt(f.target[0], f.target[1]) ?? 0], { zoom: 6, ease: 0.4, place: [0.5, 0.45] });
-      });
-      await R.sleep(1500);
-      const at = await p.evaluate(() => {
-        const f = window.rungame.live.focus.front;
-        return window.reclaimed.camera.project(f.target[0], f.target[1], window.reclaimed.scene.heightAt(f.target[0], f.target[1]) ?? 0);
-      });
+      const target = () =>
+        p.evaluate(() => {
+          const f = window.rungame.live.focus.front;
+          // (the ground's height there, as the game reads it: null until its page is read — then the view's own, as
+          // loop.ts z does. Round 12 put 0 there: the tap landed 55 cells off the town and its shield stood in a field)
+          return window.reclaimed.camera.project(f.target[0], f.target[1], window.reclaimed.scene.heightAt(f.target[0], f.target[1]) ?? window.reclaimed.camera.target[2]);
+        });
+      let at = await target();
+      // (the sheet's top: a tap under it is the sheet's)
+      const sheetTop = await p.evaluate(() => document.querySelector('.run-sheet')?.getBoundingClientRect().top ?? 915);
+      const onScreen = (q) => q && q[0] > 20 && q[0] < 392 && q[1] > 110 && q[1] < sheetTop - 10;
+      R.log(`the town's middle on the event's screen at ${at?.map((v) => Math.round(v))} (the sheet from ${Math.round(sheetTop)})`);
+      R.check("the town's middle is on the event's screen to cast at", onScreen(at), at);
+      if (!onScreen(at)) return;
       await p.evaluate(() => {
         const b = [...document.querySelectorAll('.run-sheet .go button')].find((e) => e.textContent.startsWith('Fire ward'));
         if (!b) throw new Error(`no Fire ward button: ${[...document.querySelectorAll('.run-sheet button')].map((e) => e.textContent).join(' | ')}`);
         b.click();
       });
       await R.sleep(300);
+      at = await target();
       await p.mouse.click(at[0], at[1]);
-      await R.sleep(1200);
+      // (the cast as it happens: the ring spreading out, then the wall standing)
+      await R.sleep(350);
+      await shot('3-cast-a');
+      await R.sleep(700);
+      await shot('3-cast-b');
       R.log(`cast at ${at.map((v) => Math.round(v))}: ${JSON.stringify(await state())}`);
-      await shot('3-ward');
-      // (the camera back on the front)
-      await p.evaluate(() => window.rungame.live.goTo && (window.rungame.live.focus = null, window.rungame.live.goTo(window.rungame.live.runs[0])));
     }
     if (!shotAt.has('meets') && s.town + s.way >= 9 && s.t > 20) (shotAt.add('meets'), await shot('4-meets'));
     if (s.t >= 25 + shots * 15 && shots < 4) await shot(`5-t${s.t}`), shots++;
@@ -120,16 +132,43 @@ await run({ name: 'frontshots', kind: 'behaviour', size: '412x915', dpr: 1, echo
     if (ph === 'city') break;
     await R.sleep(1000);
   }
-  const lookTarget = (zoom) =>
+  // (loop round 13: the town's sheet and the names folded away — the land itself in the frame)
+  const fold = async () => {
+    await p.evaluate(() => document.querySelector('.run-sheet button.fold')?.click());
+    await R.sleep(300);
+  };
+  await fold();
+  // (the front's way as a window point now: its middle, from where it was read, moved by the slides since)
+  const lookWay = (zoom) =>
     p.evaluate((z) => {
-      const t = window.rungame.spot('market');
+      const F = window.__front;
+      const o = window.reclaimed.scene.stream?.origin ?? [0, 0];
+      const RH = Math.sqrt(3) / 2;
+      const dx = F.origin[0] - o[0];
+      const dy = (F.origin[1] - o[1]) * RH;
+      const m = [(F.src[0] + F.target[0]) / 2 + dx, (F.src[1] + F.target[1]) / 2 + dy];
       window.rungame.cam.follow(null);
-      return window.rungame.cam.look([t[0], t[1], window.reclaimed.scene.heightAt(t[0], t[1]) ?? 100], { zoom: z, ease: 0.3, place: [0.5, 0.3] });
+      return window.rungame.cam.look([m[0], m[1], window.reclaimed.scene.heightAt(m[0], m[1]) ?? window.reclaimed.camera.target[2]], { zoom: z, ease: 0.3, place: [0.5, 0.5] });
     }, zoom);
-  await lookTarget(6);
+  // (the shield, if it is still up: its last seconds and its end)
+  const left = await p.evaluate(() => window.reclaimed.scene.worldApi.shields.list.map((s) => s.left));
+  R.log(`after the event: shields ${JSON.stringify(left)}`);
+  if (left.length && left[0] < 60) {
+    // (the view put on the way only shortly before: the window may slide meanwhile, and the way's point with it)
+    await R.sleep(Math.max(0, left[0] - 4.5) * 1000);
+    await lookWay(6);
+    await R.sleep(2500);
+    R.log(`shield before its end: ${JSON.stringify(await p.evaluate(() => window.reclaimed.scene.worldApi.shields.list.map((s) => s.left)))}`);
+    await shot('6-shield-last');
+    // (its end on the sim's clock: the frame 0.3 s after it is gone — the streaks thrown off the rim)
+    await until(() => window.reclaimed.scene.worldApi.shields.list.length === 0, 30000);
+    await R.sleep(300);
+    await shot('6-shield-end');
+  }
+  await lookWay(6);
   await R.sleep(2500);
   await shot('6-after');
-  await lookTarget(3.5);
+  await lookWay(3.5);
   await R.sleep(2500);
   await shot('7-after-wide');
   R.log(`after: notes ${JSON.stringify(await p.evaluate(() => window.rungame.notes))}`);
@@ -157,11 +196,10 @@ await run({ name: 'frontshots', kind: 'behaviour', size: '412x915', dpr: 1, echo
   R.log(`run 2 world now: ${JSON.stringify(await p.evaluate(() => window.rungame.worldNow()))}`);
   await shot('8-run2-worldnow');
   await p.evaluate(() => window.rungame.closePanel());
+  await R.sleep(500);
+  await fold();
   for (const [name, zoom] of [['9-run2-land', 6], ['9-run2-land-wide', 3.5]]) {
-    await p.evaluate((z) => {
-      const m = window.rungame.spot('market');
-      return window.rungame.cam.look([m[0], m[1], window.reclaimed.scene.heightAt(m[0], m[1]) ?? 100], { zoom: z, ease: 0.3, place: [0.5, 0.3] });
-    }, zoom);
+    await lookWay(zoom);
     await R.sleep(3000);
     await shot(name);
   }

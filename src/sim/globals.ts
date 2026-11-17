@@ -172,6 +172,8 @@ export interface GlobalsState {
   /** (mutators' 'ashfall' sign) ash falling over the view: its strength 0..1 and the ground point the screen's centre
    *  shows (window units) — common.wgsl Globals.gustDir's four w words. Absent: none */
   ashFall?: [number, number, number, number];
+  /** (loop round 13, a weather) fog 0..1 — common.wgsl Globals.ring.z (as the f32's bits; fogNow()). Absent: none */
+  fog?: number;
   /** (round 107, pages) the page table, window chunk -> its page's place px | py << 8 (sim/pages.ts Pages.entries) — absent: left as it was */
   pages?: Uint16Array;
   /** (P2.2) the table backwards: slot -> window chunk, cx | cy << 8 (Pages.inv) — with `pages` */
@@ -272,6 +274,8 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer, pageVec4 = 512):
   else sh.fill(0);
   const sr = new Uint32Array(f.buffer, f.byteOffset + 476 * 4, 4);
   sr.set([s.ring?.[0] ?? 0, s.ring?.[1] ?? 0, 0, 0]);
+  // (loop round 13: the ring's spare z word carries the fog, an f32's bits — common.wgsl fogNow)
+  f[478] = s.fog ?? 0;
   // (round 108, AR5) the tuning panel's live values: every tick, so a slider takes at once
   TUNING.packGpu(f, TUNE_WORD);
   // (round 107, pages) the page table: two u16 a u32, little-endian — a Uint16Array over the words is the packing

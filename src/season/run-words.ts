@@ -38,6 +38,9 @@ export const lockedLine = (hint: string): string => (hint ? `Not yet found. ${hi
 export const ASKS_TITLE = 'People are asking for you';
 export const ASKS_NONE = 'Nobody is asking for you this season';
 export const TAP_MARKER = 'Tap a name on the map to hear them out.';
+/** (loop round 13) folding the town's sheet and the names away, to look at the land, and back */
+export const SHEET_HIDE = 'Hide';
+export const SHEET_SHOW = 'Show the town list';
 export const NEXT = 'Next season';
 export const MAP = 'Map';
 export const SKIP = 'Skip';

@@ -137,8 +137,9 @@ struct Globals {
   hfield: array<vec4<u32>, 16>,
   // (round 105, `ringwin`) the window on a ring: every per-column buffer and texture holds window column (x, y) at
   // ((x + ring.x) mod W, (y + ring.y) mod H) — the world cell's place mod the window's size — so a slide moves
-  // nothing; xy the offset (cells), zw unused. Window coordinates stay what every caller uses: index only through
-  // colIdx / colIdxI / texCol / texCol2 / texColK, and back through colXY.
+  // nothing; xy the offset (cells), w unused. Window coordinates stay what every caller uses: index only through
+  // colIdx / colIdxI / texCol / texCol2 / texColK, and back through colXY. (Loop round 13) z: the fog, an f32's bits
+  // (sim/globals.ts fog; fogNow below)
   ring: vec4<u32>,
   // (round 108, AR5) the tuning registry's GPU parameters (struct Tune above; sim/globals.ts writes them at TUNE_WORD)
   tune: Tune,
@@ -521,6 +522,8 @@ fn hash3(x: u32, y: u32, z: u32) -> u32 { return pcg((x + bitcast<u32>(i32(G.org
 fn wo(p: vec2<f32>) -> vec2<f32> { return p + G.org.xy; }
 /** the ash fall (Globals.gustDir's w words): xyz the ground point the view is centred on, w its strength (0: none) */
 fn ashFall() -> vec4<f32> { return vec4<f32>(G.gustDir[1].w, G.gustDir[2].w, G.gustDir[3].w, G.gustDir[0].w); }
+/** (loop round 13, a weather: src/weather/presets.ts) fog over the land, 0..1 (render/light.wgsl haze) */
+fn fogNow() -> f32 { return bitcast<f32>(G.ring.z); }
 /** ash flakes drawn at strength 1 (rain.wgsl; scenes/world-core.ts adds them to the rain draw's instances) */
 const ASH_FLAKES: f32 = 2200.0;
 fn rand3(x: u32, y: u32, z: u32) -> f32 { return f32(hash3(x, y, z) >> 8u) / 16777216.0; }

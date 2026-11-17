@@ -18,12 +18,13 @@ import { placeState, placeStates } from '../mutate/facts';
 import { helper as dslHelper } from '../living/dsl';
 import { setStance, stanceOf, type Stance } from '../living/stance';
 import { LAW_ENDED, type BetweenDef } from '../season/realm-between';
+import type { SeasonWeather } from '../weather/presets';
 import { checkPack, reportText, siteOf, FRONT_DEFAULTS, GOODS, PEOPLE, type Pack, type PackAbility, type PackCard, type PackCond, type PackEffect, type PackEvent, type PackLeader, type PackTag, type PackThing, type Problem } from './check';
 
 const POOL_WORD: Record<string, string> = { magic: 'Magic', might: 'Might', labor: 'Labor', materials: 'Materials', intel: 'Intel', unrest: 'Unrest' };
 const LAND_WORD: Record<string, string> = { flooded: 'is flooded', burned: 'burns', melted: 'goes under lava', buried: 'is buried', dried: 'dries up', withered: 'withers', greened: 'grows over, thick and green' };
 const FAR_WORD: Record<string, string> = { captured: 'is taken', vassal: 'swears to you', destroyed: 'is destroyed', abandoned: 'is abandoned' };
-const SIGN_WORD: Record<string, string> = { ashfall: 'Ash falls on the town', darkness: 'The sky goes dark over the town', deadrise: 'The dead walk the streets', crime: 'Thieves work the streets' };
+const SIGN_WORD: Record<string, string> = { ashfall: 'Ash falls on the town', darkness: 'The sky goes dark over the town', deadrise: 'The dead walk the streets', crime: 'Thieves work the streets', rain: 'Rain falls on the town', storm: 'A storm sits over the town', fog: 'Fog lies over the town' };
 const SITE_NAME: Record<string, string> = { keep: 'the keep yard', forge: 'the smithy', quarter: 'the weavers\' street', fields: 'the east fields', market: 'the market', gate: 'the road gate', tower: 'the old tower', dam: 'the old dam', shrine: 'the mountain shrine', mill: 'the mill street', wall: 'the town\'s edge', watch: 'the watch post', harbour: 'the waterside', quarry: 'the quarry hill', woods: 'the woods', river: 'the river crossing', road: 'the trade road', pit: 'the ore yard', wagons: 'the wagon yard', graves: 'the old burial ground' };
 const BASE_SPELL: Record<string, string> = { 'heat-ray': 'heatray', fire: 'fire', rain: 'rain', 'growth-rune': 'growth' };
 
@@ -137,6 +138,8 @@ export interface LoadedPack {
   problems: Problem[];
   /** (draft 8) the pack's between-runs entries, compiled (season/realm-between.ts) */
   between: BetweenDef[];
+  /** (loop round 13) the weather of seasons of the run, as written (weather/presets.ts seasonWeather) */
+  weather: SeasonWeather[];
 }
 
 /** what the helpers ask of whoever runs the Realm (table/game.ts): the run as it stands */
@@ -305,7 +308,7 @@ const where = (ref: string | undefined): string => (ref === 'town' || !ref ? 'th
 /** a faction (or the player, the raiders, the dead) in words */
 const whoWord = (by: string | undefined): string => (!by || by === 'raiders' ? 'raiders' : by === 'player' ? 'you' : by === 'dead' ? 'the dead' : by.startsWith('$') ? `{${vref(by).slice(1)}}` : (FACTIONS[by] ?? by));
 const STANCE_WORD: Record<string, string> = { hostile: 'are enemies now', truce: 'keep a truce', allied: 'are allies', none: 'owe each other nothing now' };
-const SIGN_OVER: Record<string, string> = { ashfall: 'Ash falls on', darkness: 'Darkness falls over', deadrise: 'The dead walk in', crime: 'Thieves work the streets of' };
+const SIGN_OVER: Record<string, string> = { ashfall: 'Ash falls on', darkness: 'Darkness falls over', deadrise: 'The dead walk in', crime: 'Thieves work the streets of', rain: 'Rain falls on', storm: 'A storm sits over', fog: 'Fog lies over' };
 
 /** what a list of effects does, in plain sentences written from the data (the numbers are the engine's) */
 export function effectsText(list: readonly PackEffect[], p: Pack, vars: Record<string, string> = {}): string {
@@ -597,7 +600,7 @@ export function loadPack(p: Pack, base: { cards?: readonly string[]; rules?: rea
     const need = new Set<string>();
     return { id: `${p.pack.id}:${b.id}`, when: conds(b.when ?? [], b.id, need), do: effects(b.do, p, need, b.say), say: b.say };
   });
-  return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], laws, recordLaws, because, left, problems, between };
+  return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], laws, recordLaws, because, left, problems, between, weather: p.weather ?? [] };
 }
 
 /** (trade routes) the selectors of the pack things in play, on places not ruined, that carry a trade route
@@ -681,7 +684,9 @@ export function liveDef(e: PackEvent): LiveDef {
     tag: e.tag,
     title: e.title,
     how: e.how,
-    line: e.how,
+    // (loop round 13: a pack event has no running line of its own — the sheet showed its `how` twice; the line's slot
+    // carries what a cast did, for a few seconds)
+    line: '',
     groups,
     ...(e.hazard ? { hazard: hazardOf(e.hazard) } : {}),
     // (loop round 11, LS-104: the camera after the event's people — its foes, else whoever goes somewhere — close enough

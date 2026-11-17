@@ -161,7 +161,9 @@ export interface MutationRecord {
  *
  * A `melted` mutation applied away from the home town casts ash fall and darkness on it for three seasons, by distance.
  */
-export type SignKind = 'ashfall' | 'darkness' | 'deadrise' | 'crime' | 'camp';
+// (loop round 13) `rain`, `storm`, `fog` are weathers (src/weather/presets.ts), as `ashfall` and `darkness` are: the
+// level lays every weather sign on the town over the season's weather (scenes/level/weather-set.ts)
+export type SignKind = 'ashfall' | 'darkness' | 'deadrise' | 'crime' | 'camp' | 'rain' | 'storm' | 'fog';
 
 export interface SignSpec {
   kind: SignKind;
@@ -201,6 +203,9 @@ export const SIGNS: readonly SignInfo[] = [
   { kind: 'deadrise', name: 'The dead rise', description: 'A few of the dead get up and wander the streets.' },
   { kind: 'crime', name: 'Crime', description: 'Some houses are looted and boarded up. Unrest grows.' },
   { kind: 'camp', name: 'A camp', description: 'Tents stand on trodden ground where people camp.' },
+  { kind: 'rain', name: 'Rain', description: 'A rain cloud hangs over the town.' },
+  { kind: 'storm', name: 'Storm', description: 'A storm sits over the town: hard rain, strong wind, a dark sky.' },
+  { kind: 'fog', name: 'Fog', description: 'Fog lies over the land and the wind drops.' },
 ];
 
 /**

@@ -4,6 +4,10 @@
 `flood`, with the amount `reached`; an ability's `in_event` may raise a `shield` (with `seconds`). See events and
 abilities. Example: `packs/ages.json`.
 
+**Added in loop round 13 (2026-11-17), no change to anything existing:** weathers (see "Weather"): three more signs,
+`rain`, `storm` and `fog`, and a top-level `weather` list naming the weather of seasons of the run. Example:
+`packs/ages.json`.
+
 **Changed since draft 7.** (1) **The raid is a card** (see "The raiders and the end of a run"): no arc is timed when
 a run begins. The raiders are the base game's faction (`"raiders"`); their standing threat "Raiders on the road" is
 dealt while they are hostile and have somewhere to come from, counts down to the last season and, left to run out,
@@ -462,7 +466,8 @@ want them said twice. Any number you do write in `say` or `pitch` must be a numb
   "where": "$find" }` settles a found place; `{ "far": "revealed", "id", "name", "resource" }` marks one (draft 7).
 - `{ "stance": "frontier-reavers", "to": "truce", "with": "player" }` (draft 7; see "Factions").
 - `{ "sign": "ashfall", "seasons": 3, "strength": 0.7, "where": "far:all" }`: kinds `ashfall`, `darkness`,
-  `deadrise`, `crime`. Strength 0 to 1. `where`: absent or `"town"` (the home town), a far place selector, `"world"`.
+  `deadrise`, `crime`, and (loop round 13) the weathers `rain`, `storm`, `fog` (see "Weather"). Strength 0 to 1.
+  `where`: absent or `"town"` (the home town), a far place selector, `"world"`.
 - `{ "trade": "far:nearest:2" }` (`"end": true` to end it): those towns trade with the home town.
 - `{ "arrive": "refugees", "count": 40, "from": "far:neighbour" }`: people walk in by road. Only refugees, only
   from the neighbour, always 40.
@@ -473,6 +478,42 @@ want them said twice. Any number you do write in `say` or `pitch` must be a numb
 - `{ "say": "One plain sentence the player reads." }`: at least one per branch.
 - Not supported yet (the validator says what to write instead): `units` (use `pool` `might`), `offer` (use
   `resolved` on the later card), `arrive` of wagons or soldiers, `arrive` from anywhere but the neighbour.
+
+## Weather (loop round 13)
+
+A weather is a named bundle of what the world already does: the prevailing wind, a storm held over the town (rain on
+the ground, puddles, fires put out), how often storms pass, the sky dimmed, ash falling, fog. The weathers:
+
+| Weather | What the player sees |
+|---|---|
+| `fair` | The weather as it always was: a light wind, a storm passing now and then. The default. |
+| `clear` | No storms; a light wind. |
+| `rain` | A rain cloud over the town; more wind; storms pass more often; the sky a little dim. |
+| `storm` | A storm over the town: hard rain, strong wind, a dark sky; more storms come. |
+| `ashfall` | Grey ash falling and settling; the sky dim and brown; little wind. |
+| `fog` | A pale fog over the land; the wind drops. |
+| `dark` | The sky goes dark and brown, as under smoke. |
+
+**By a card:** a sign on the town. `{ "sign": "storm", "seasons": 1, "strength": 0.7 }`; the signs `rain`, `storm`,
+`fog`, `ashfall` and `darkness` (the weather `dark`) are weathers. Strength scales the weather (0.5: half the storm).
+
+**By season:** a top-level `weather` list. Each entry names seasons of the run and their weather:
+`{ "season": 3, "weather": "fog" }` (season 3), `{ "from": 10, "weather": "ashfall" }` (season 10 on),
+`{ "from": 4, "to": 6, "weather": "rain" }`. The last entry that covers a season wins; seasons no entry covers are
+`fair`. With several packs, their lists are read in the packs' order.
+
+**Together:** a card's weather sign is laid over the season's weather. Where both set the same thing, the stronger
+wins: the darker sky, the more ash, the stronger storm.
+
+Example (`packs/ages.json`): the eruption's card brings a storm on the town when the lava took streets
+(`{ "sign": "storm", "seasons": 1, "strength": 0.7 }` in `cost`, strength 1 in `failure`), and the pack's list rains in
+seasons 8 and 9 and lays ash from season 14:
+
+```json
+"weather": [ { "from": 8, "to": 9, "weather": "rain" }, { "from": 14, "weather": "ashfall" } ]
+```
+
+At the card table a weather sign shows as a sign on the town; the season's weather shows only in the 3D game.
 
 ## rules
 

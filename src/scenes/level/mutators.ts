@@ -18,6 +18,8 @@ import { MemoryWorldState } from '../../api/contracts/world-state';
 import { FactWorld } from '../../living/world';
 import { registerMutatorOutcomes } from '../../mutate/outcomes';
 import { useRiverWorld } from './runs';
+import { WeatherSet } from './weather-set';
+import { SIGN_WEATHER } from '../../weather/presets';
 
 const KEY = 'mutators:list';
 /** `restore: false`: the caller lays the saved list over the window itself (`restoreMutators`), once it has bound its
@@ -60,11 +62,20 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns, opts: { res
   // FIXED-CITY (BACKLOG MU-27): a sign shows only while its place's FieldTown is live in the window (or it names no
   // place); a sign on a camp, an army or a column of refugees has nothing to show on
   const strongest = (signs: readonly Sign[], kind: SignKind) => signs.filter((s) => s.kind === kind && (s.place === null || towns.live.has(s.place))).reduce((m, s) => Math.max(m, s.strength), 0);
+  // (loop round 13: the weathers — ash fall, darkness, rain, storm, fog — are signs the weather lays over the season's:
+  // scenes/level/weather-set.ts. A held storm stands over the home town's middle)
+  const weatherSet = (scene.weatherSet ??= new WeatherSet(core, () => {
+    // FIXED-CITY (BACKLOG MU-27): the atlas's start town, else the first live town
+    const t = (homeId && towns.live.has(homeId) ? made.get(homeId) : undefined) ?? liveTowns()[0];
+    if (!t) return null;
+    const c = t.centre();
+    return [c[0], c[1]];
+  }));
   const showSigns = (signs: readonly Sign[]) => {
-    core.skyDim = strongest(signs, 'darkness');
     // (ash fall: one number in the Globals — the weather's own rain draw makes the flakes of it, the lit surfaces
-    // their grey dusting (rain.wgsl, render/light.wgsl ashDust). Nothing runs on the CPU while it is on)
-    core.ashFall = strongest(signs, 'ashfall');
+    // their grey dusting (rain.wgsl, render/light.wgsl ashDust); darkness: the sky dimmed. Nothing runs on the CPU
+    // while they are on)
+    weatherSet.setSigns(Object.keys(SIGN_WEATHER).map((k) => ({ kind: k, strength: strongest(signs, k as SignKind) })).filter((s) => s.strength > 0));
     // (crime: a share of each live town's lots looted while its sign is on, put right when it ends)
     for (const t of liveTowns()) {
       const s = signs.find((q) => q.kind === 'crime' && (q.place === t.id || q.place === null));
@@ -226,6 +237,7 @@ export function attachMutators(scene: LevelScene, towns: FieldTowns, opts: { res
     shown.crime.delete(t.site.id);
     eng.townMade(mt);
     showSigns(eng.signs());
+    weatherSet.refresh();
   };
   towns.onMade.push(add);
   for (const t of towns.live.values()) void t.made.then(() => made.has(t.site.id) || add(t), () => {});

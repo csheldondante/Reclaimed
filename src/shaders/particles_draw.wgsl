@@ -147,6 +147,25 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     let thin = smoothstep(3.5, 1.2, rm) * 0.7 + 0.3;
     col = vec4<f32>(mix(vec3<f32>(0.28, 0.25, 0.21), vec3<f32>(0.44, 0.4, 0.34), sr2), 0.95 * thin * clamp(1.0 - tt, 0.3, 1.0) * clamp(tt * 30.0 + 0.4, 0.0, 1.0));
   }
+  else if (kind == 19u && P.m.w == 2u) { // (loop round 13) a shield's rim: a bright bead of the wall of light
+    size = 0.55 + sr * 0.25;
+    col = vec4<f32>(mix(vec3<f32>(0.55, 0.9, 1.0), vec3<f32>(0.92, 0.98, 1.0), sr2), 0.95 * clamp(P.p.w / 0.35, 0.0, 1.0));
+  }
+  else if (kind == 19u && P.m.w == 3u) { // (loop round 13) a shield's dome: a faint haze of blue light
+    let age = clamp(1.0 - P.p.w / 1.5, 0.0, 1.0);
+    size = 1.6 + age * 1.2;
+    soft = 1.0;
+    col = vec4<f32>(0.5, 0.8, 1.0, 0.2 * clamp(P.p.w / 0.5, 0.0, 1.0) * clamp(age * 6.0, 0.0, 1.0));
+  }
+  else if (kind == 19u && P.m.w == 4u) { // (loop round 13) lava pressing on a shield: the wall flaring white where it
+    // is struck (white to the wall's blue as it fades: an orange spark was lost on the lava's own glow)
+    size = 0.7 + (1.0 - clamp(P.p.w / 0.7, 0.0, 1.0)) * 0.8;
+    col = vec4<f32>(mix(vec3<f32>(0.55, 0.88, 1.0), vec3<f32>(1.0, 1.0, 1.0), clamp(P.p.w / 0.7, 0.0, 1.0)), clamp(P.p.w / 0.25, 0.0, 1.0));
+  }
+  else if (kind == 19u && P.m.w == 5u) { // (loop round 13) a streak of light off a shield
+    size = 0.4 + sr * 0.2;
+    col = vec4<f32>(0.85, 0.97, 1.0, clamp(P.p.w / 0.4, 0.0, 1.0));
+  }
   else if (kind == 19u) { // glow: a soft light that swells and fades
     let age = clamp(1.0 - P.p.w / 1.4, 0.0, 1.0);
     size = 1.2 + age * 1.6;
@@ -181,7 +200,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     size = 0.17;
     col = vec4<f32>(mix(vec3<f32>(0.5, 0.38, 0.26), vec3<f32>(0.6, 0.5, 0.38), sr), 1.0);
   }
-  if (soft == 0.0) { col.a *= fade; }
+  if (soft == 0.0 && kind != 19u) { col.a *= fade; }
   if (kind != 9u && kind != 11u && kind != 12u && kind != 17u && kind != 19u) { col = vec4<f32>(col.rgb * mix(1.0, 0.22, G.sky.w) + vec3<f32>(0.5, 0.55, 0.65) * G.misc.z, col.a); }
   // caught in the cyclone: same size and dust colour as loose debris, a touch
   // more transparent (the swirl reads by motion, not by bigger motes); the
@@ -220,7 +239,8 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   o.col = col;
   o.uv = c;
   o.soft = soft;
-  let mote = kind == 1u || kind == 21u || kind == 22u || kind == 23u || kind == 24u;
+  // (loop round 13: a shield's rim, flashes and streaks are round beads of light too)
+  let mote = kind == 1u || kind == 21u || kind == 22u || kind == 23u || kind == 24u || (kind == 19u && P.m.w >= 2u && P.m.w != 3u);
   o.shapeInfo = vec2<f32>(select(select(0.0, 2.0, mote), 1.0, kind == 10u), select(sin(G.time * 12.0 + sr * 60.0), 0.35, perched));
   return o;
 }

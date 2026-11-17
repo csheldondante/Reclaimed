@@ -3,6 +3,8 @@
 // (packs/load.ts) refuses a pack with errors. This file imports nothing at run time, so `node scripts/packcheck.mjs
 // <file>` runs it as it is; its vocabularies are checked against the engine's own by test/unit/packs.test.ts.
 
+import type { SeasonWeather } from '../weather/presets';
+
 // ---- the pack as written (PACK_FORMAT.md) ----------------------------------------------------------------------------
 
 export type PoolName = 'magic' | 'might' | 'labor' | 'materials' | 'intel' | 'unrest';
@@ -209,6 +211,9 @@ export interface Pack {
   /** (ages) who the player can be: offered at a run's start while the world fits */
   leaders?: PackLeader[];
   wants?: string[];
+  /** (loop round 13) the weather of seasons of the run: `{ "season": 3, "weather": "fog" }`, `{ "from": 10, "weather":
+   *  "ashfall" }`, `{ "from": 4, "to": 6, "weather": "rain" }` (src/weather/presets.ts seasonWeather) */
+  weather?: SeasonWeather[];
 }
 
 /** (ages) a leader a pack offers at a run's start, while the world fits (`appears_when` over the record and the far
@@ -265,7 +270,10 @@ export const PACK_FAR_KINDS: readonly string[] = ['captured', 'vassal', 'destroy
 export const BIND_FAR_STATES: readonly string[] = ['standing', 'destroyed', 'abandoned', 'occupied', 'vassal', 'founded', 'found'];
 export const LAND_KINDS: readonly string[] = ['flooded', 'burned', 'melted', 'buried', 'dried', 'withered', 'greened'];
 export const FAR_KINDS: readonly string[] = ['captured', 'vassal', 'destroyed', 'abandoned', 'founded'];
-export const SIGN_KINDS: readonly string[] = ['ashfall', 'darkness', 'deadrise', 'crime'];
+/** (loop round 13) the weathers a pack's season list may name (src/weather/presets.ts WEATHER_IDS) */
+export const WEATHER_NAMES: readonly string[] = ['fair', 'clear', 'rain', 'storm', 'ashfall', 'fog', 'dark'];
+/** (loop round 13: `rain`, `storm`, `fog` are weathers, as `ashfall` and `darkness` are — src/weather/presets.ts) */
+export const SIGN_KINDS: readonly string[] = ['ashfall', 'darkness', 'deadrise', 'crime', 'rain', 'storm', 'fog'];
 export const TIERS: readonly string[] = ['triumph', 'success', 'cost', 'failure', 'disaster'];
 export const THING_KINDS: readonly string[] = ['building', 'garrison', 'policy', 'effect', 'relic', 'people'];
 export const LEADER_IDS: readonly string[] = ['ysolt', 'dunstan', 'ilveth'];
@@ -1140,6 +1148,20 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     vars = new Map();
     effects(b.do, `${w}.do`, { between: true });
     for (const e of (b.do ?? []) as Record<string, unknown>[]) if (['pool', 'income', 'put', 'remove', 'tag', 'untag', 'law', 'end_run', 'arrive', 'say'].some((k) => k in e)) err(w, `Between runs there is no run to change: use the world's words (far, far_all, mutate, sign, stance, trade, unlock, law_ends). It has ${JSON.stringify(e)}.`);
+  });
+
+  // ---- (loop round 13) the weather of seasons of the run ----
+  if (p.weather !== undefined && !Array.isArray(p.weather)) err('weather', '"weather" must be a list, like [ { "from": 10, "weather": "ashfall" } ].');
+  (Array.isArray(p.weather) ? p.weather : []).forEach((x, i) => {
+    const w = `weather[${i}]`;
+    const o = x as unknown as Record<string, unknown>;
+    for (const k of Object.keys(o)) if (!['season', 'from', 'to', 'weather'].includes(k)) err(w, `"${k}" is not a word of a weather entry. Use "season", or "from" and "to", and "weather".`);
+    if (!WEATHER_NAMES.includes(String(o.weather))) err(w, `Unknown weather "${String(o.weather)}". The weathers are ${WEATHER_NAMES.join(', ')}.`);
+    const num = (k: string) => o[k] === undefined || (Number.isInteger(o[k]) && (o[k] as number) >= 1 && (o[k] as number) <= 16);
+    for (const k of ['season', 'from', 'to']) if (!num(k)) err(w, `"${k}" is a season of the run, 1 to 16.`);
+    if (o.season !== undefined && (o.from !== undefined || o.to !== undefined)) err(w, 'Give "season" (one season) or "from" and "to", not both.');
+    if (o.season === undefined && o.from === undefined && o.to === undefined) err(w, 'Say which seasons: "season", or "from" (and "to").');
+    if (typeof o.from === 'number' && typeof o.to === 'number' && o.to < o.from) err(w, '"to" comes before "from".');
   });
 
   // ---- (draft 8) locked content: what can be unlocked, and a hint for it ----

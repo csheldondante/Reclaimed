@@ -19,7 +19,7 @@ start a front; any pack ability may raise a shield); neither is a set piece.
 | What it reached | Points in the town (`points` within `spread` of the target) and along the way, read every 2 s through the world API's mirror (a few KB of pages; the fire hazard's pattern) | `api/fire.ts flowLavaAt`, `api/water.ts depthAt` |
 | What it leaves | The realm's land mutators at every reached point (`melted` for lava: lots `destroyed`; `flooded` for water: lots `drowned`), saved and drawn on the map like any other; with nothing played, one change round the target as wide as the share reached | `season/realm.ts finishLive` (`frontLand`) |
 | Its result | The live event's `burned` count (read as `reached`): points reached, out of `points` | `living/live.ts` |
-| The camera | The live event's camera: on the source as it opens, then following the front's head (the farthest reached point along the way), framed with the town once the head is near | `live-runner.ts` |
+| The camera | The live event's camera: (round 13) the front's head (the source before it reaches anything) and the town it runs at, both in the frame, so the player casts the ward from the event's own view; once a shield is up, the shield's disc and the head; the zoom no closer than that span fits in 0.85 of the screen's width (`frontFrame`, FRONT_FIT) | `live-runner.ts` |
 
 ## What is new
 
@@ -27,8 +27,13 @@ start a front; any pack ability may raise a shield); neither is a set piece.
    A column whose centre lies inside one is a wall to flux and to falling streams from outside. Liquid already inside
    drains out. Tested on Dawn: `test/gpu/shield.test.ts` (lava parts round the disc, both sides, none inside).
 2. **`Shields`** (`src/api/shields.ts`): raise (x, y, radius, seconds), expire, move with the window's slides, give the
-   discs to both liquids, and show the dome through the effects system (sparks round the rim, a haze over it, bursts at
-   the rim where the liquid presses — a ring and a cap of particles each quarter second).
+   discs to both liquids, and show the dome through the effects system. (Round 13: round 12's look — 32 soft glows a
+   fifth of a second — was a few faint arcs at phone size.) Now the particles' glows place a whole ring from one burst
+   request on the GPU: a wall of bright beads round the rim, each on the ground where it stands, 0.3–3 cells up, and a
+   faint haze over a dome half as high as wide; the cast is a ring spreading from the middle to the rim in 0.8 s and
+   streaks of light thrown up as it closes; the last 3 s flicker and the end throws streaks off the rim; where hot lava
+   presses on it the wall flares white (the lava kernel's own particles, `liquid.wgsl publishLava`: the CPU does not
+   know where the lava is).
 3. **A front hazard** in `LiveDef.hazard`: `{ kind: 'front', liquid: 'lava' | 'water', at, far, rate, pour, points,
    spread, mutate }`. The pack word: an event's `hazard: { "kind": "lava" | "flood", ... }`.
 4. **The shield spell** as a pack ability: `in_event: { kinds: [...], shield: <radius>, seconds?: <n> }`.
@@ -47,7 +52,8 @@ start a front; any pack ability may raise a shield); neither is a set piece.
 - **The source is read on the CPU once** (16 heights from the terrain mirror's pages at the event's start, the fire
   hazard's pattern). The rule is world queries on the GPU; a GPU pass for 16 samples was judged not worth it this
   round. Tagged in code; BACKLOG.
-- **The shield is a disc on the ground, drawn as particles**, not a mesh dome. Units are not stopped by it.
+- **The shield is a disc on the ground, drawn as particles**, not a mesh dome. Units are not stopped by it. Its 75 s
+  outlast the event (~60 s), so it ends in the town after.
 - **FIXED-CITY**: the target is a place of the home town; the runner's points are window points of the live town.
 - **Pyroclastic ash cloud**: not built — the particles have no GPU emitter a front could drive and the wind is painted
   for ~45 s. The lava front stands in for the pyroclastic flow; the ash fall sign covers the town as a separate card

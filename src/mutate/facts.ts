@@ -157,7 +157,7 @@ export function recordSign(w: FactWorld, kind: SignKind, place: string | null, o
   }
   f.setTag(place, 'condition', kind, true, cause ?? 'mutators');
   if (had) return null;
-  const note: Record<SignKind, string> = { ashfall: 'ash falls on', darkness: 'the sky darkens over', deadrise: 'the dead rise in', crime: 'thieves are at work in', camp: 'people camp outside' };
+  const note: Record<SignKind, string> = { ashfall: 'ash falls on', darkness: 'the sky darkens over', deadrise: 'the dead rise in', crime: 'thieves are at work in', camp: 'people camp outside', rain: 'rain sets in over', storm: 'a storm sits over', fog: 'fog lies over' };
   return f.record({ kind, by: [], to: [place], about: cause ? { opp: cause } : {}, note: `${note[kind]} ${w.name(place)}` }).id;
 }
 

@@ -91,8 +91,8 @@ export interface WeatherParams {
   /** base prevailing wind (direction it blows toward), cells/s */
   baseWindX: number;
   baseWindY: number;
-  /** natural storm interval range (s) */
-  naturalEvery: [number, number];
+  /** natural storm interval range (s); (loop round 13, a weather's) null: none come */
+  naturalEvery: readonly [number, number] | null;
 }
 
 export class Weather {
@@ -142,6 +142,11 @@ export class Weather {
     for (const s of this.storms) {
       s.x -= dx;
       s.y -= dy;
+      // (loop round 13: a held storm's place is a window point too — it drifted off its town at each slide)
+      if (s.hold) {
+        s.hold.x -= dx;
+        s.hold.y -= dy;
+      }
     }
     for (const d of this.dusts) {
       d.x -= dx;
@@ -155,6 +160,36 @@ export class Weather {
         n.y -= dy;
       }
     }
+  }
+
+  /** (loop round 13, a weather) how often natural storms come now (null: none); the next within the new range */
+  setNatural(every: readonly [number, number] | null): void {
+    const was = this.params.naturalEvery;
+    if (was === every || (was && every && was[0] === every[0] && was[1] === every[1])) return;
+    this.params.naturalEvery = every;
+    if (!every) return;
+    // (the next within the new range — sooner than the old one, if that was still to come; a time from when storms were
+    // off is long past, and would bring one at once)
+    const due = this.t + every[0] + Math.random() * (every[1] - every[0]);
+    this.nextNatural = was && this.nextNatural > this.t ? Math.min(this.nextNatural, due) : due;
+  }
+
+  /**
+   * (loop round 13, a weather) A storm held over (x, y) at `strength` (0..1) until let go: it gathers there over ~6 s
+   * and stays. `strength` 0 lets it go (it thins over 4 s, weather.ts update). The storm, or null when none could form.
+   */
+  holdOver(held: Storm | null, x: number, y: number, strength: number): Storm | null {
+    if (held && !this.storms.includes(held)) held = null;
+    if (strength <= 0) {
+      if (held?.hold) held.hold.until = Math.min(held.hold.until, held.age);
+      return null;
+    }
+    if (!held) {
+      held = this.spawn(x, y);
+      if (!held) return null;
+    }
+    held.hold = { x, y, until: Infinity, strength: Math.min(1, strength) };
+    return held;
   }
 
   /** Keep natural weather (storms, dust storms) away for `seconds` (the intro). */
@@ -328,7 +363,7 @@ export class Weather {
     this.windY = Math.sin(ang) * mag * this.windScale;
 
     // weather arrives on its own now and then
-    if (this.t > this.nextNatural) {
+    if (this.params.naturalEvery && this.t > this.nextNatural) {
       const [a, b] = this.params.naturalEvery;
       this.nextNatural = this.t + a + Math.random() * (b - a);
       this.spawnToward(this.w * (0.3 + Math.random() * 0.4), this.h * (0.3 + Math.random() * 0.4));
