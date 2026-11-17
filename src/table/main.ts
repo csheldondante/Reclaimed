@@ -64,9 +64,12 @@ function opps(): string {
   <h3>${esc(c.title)}</h3>
   <div class="who">${esc(c.who)}, ${esc(c.role)}. ${esc(cap(c.place))}.</div>
   <div class="say">"${esc(c.line)}"</div>
-  <div class="row"><b>${W.COST}.</b> ${esc(c.cost)}</div>
+  <div class="row"><b>${W.COST}.</b> ${esc(c.cost)}${c.printed ? `<s class="printed" title="${W.PRINTED}">${esc(c.printed)}</s>` : ''}</div>
   <div class="row"><b>${W.IF_TAKEN}.</b> ${esc(c.gives)}${c.live ? ` ${W.LIVE_NOTE}` : ''}</div>
+  ${c.laws.brings.map((l) => `<div class="row law-row"><b>${W.LAW_BRINGS}.</b> ${esc(l)}</div>`).join('')}
+  ${c.laws.changes.length ? `<div class="row law-row"><b>${W.LAW_CHANGES}.</b> ${c.laws.changes.map(esc).join(' ')}</div>` : ''}
   <div class="row ${c.lapse ? 'bad' : ''}"><b>${W.IF_LEFT}.</b> ${esc(c.lapse ?? W.NO_LAPSE)} ${esc(W.leftLine(c.left))}</div>
+  ${c.laws.onLapse.map((l) => `<div class="row law-row"><b>${W.LAW_ON_LAPSE}.</b> ${esc(l)}</div>`).join('')}
   ${tags(c.tags, '')}
   ${miss ? `<div class="need">${esc(W.needLine(miss))}</div>` : ''}
   <div class="acts"><button class="main" data-act="take" data-id="${esc(c.id)}" ${miss ? 'disabled' : ''}>${W.TAKE}</button><button data-act="pass" data-id="${esc(c.id)}">${W.PASS}</button></div>
@@ -95,6 +98,7 @@ function events(): string {
   ${e.rules.length ? e.rules.map((r) => `<div class="row rule">${esc(r)}</div>`).join('') : `<div class="row dim">${W.NO_RULES_APPLY}</div>`}
   <div class="row predict tier-${esc(e.tier)}"><b>${W.PREDICT}. ${esc(W.TIER_NAME[e.tier] ?? e.tier)}.</b> ${esc(e.outcome)}</div>
   ${e.after.map((a) => `<div class="row chain">${esc(a)}</div>`).join('')}
+  ${table.over ? '' : `<div class="acts"><button data-act="resolve" data-id="${esc(e.id)}" title="${esc(W.RESOLVE_HELP)}">${W.RESOLVE_NOW}</button></div>`}
 </div>`;
     })
     .join('');
@@ -139,8 +143,9 @@ function rules(): string {
   const body = [...list]
     .sort((a, b) => order(a) - order(b))
     .map((r) => {
-      const state = r.fired.length ? 'paid' : r.ready ? 'ready' : 'not';
-      return `<div class="rulecard ${state}" data-rule="${esc(r.id)}"><b>${esc(r.name)}</b> <span class="dim">${esc(r.when)}</span><div class="says">${esc(r.says)}</div>${r.fired.map((f) => `<div class="why ok">${esc(f)}</div>`).join('')}<div class="why ${state === 'not' ? 'no' : ''}">${esc(r.why)}</div></div>`;
+      const state = r.off ? 'not off' : r.fired.length ? 'paid' : r.ready ? 'ready' : 'not';
+      const lawed = r.laws.length && !r.off ? `<div class="lawed">${W.CHANGED_BY}: ${r.laws.map(esc).join(', ')}.</div>` : '';
+      return `<div class="rulecard ${state}" data-rule="${esc(r.id)}"><b>${esc(r.name)}</b> <span class="dim">${esc(r.when)}</span><div class="says">${esc(r.says)}</div>${lawed}${r.fired.map((f) => `<div class="why ok">${esc(f)}</div>`).join('')}<div class="why ${state.startsWith('not') ? 'no' : ''}">${esc(r.why)}</div></div>`;
     })
     .join('');
   const tagList = table.tagsInPlay();
@@ -148,6 +153,20 @@ function rules(): string {
   const ready = list.filter((r) => !r.fired.length && r.ready).length;
   return drawer('rules', `${W.RULES_TITLE} (${W.rulesCount(paid, ready, list.length)})`, `<div class="why">${W.RULES_HELP}</div>${body}<div class="place">${W.TAGS_TITLE}</div><div class="tags">${tagList.map((t) => `<span class="tag state">${esc(t.tag)}${t.n > 1 ? ` ×${t.n}` : ''}</span>`).join('')}</div>`);
 }
+
+/** (laws) the laws in force, in the order they came: what each does, who or what made it, how long it stands. Open
+ *  while any is in force */
+function lawsList(): string {
+  const list = table.laws();
+  const body = list.length ? list.map((l) => `<div class="law" data-law="${esc(l.id)}"><b>${esc(l.name)}</b><div>${esc(l.text)}</div><div class="why">${esc(W.lawFrom(l.from, l.until, l.times))}</div></div>`).join('') : `<div class="dim">${W.LAWS_NONE}</div>`;
+  // (opened once, when the first law comes into force; the player may close it)
+  if (list.length && !lawsShown) {
+    lawsShown = true;
+    open.add('laws');
+  }
+  return drawer('laws', `${W.LAWS_TITLE} (${list.length})`, `<div class="why">${W.LAWS_HELP}</div>${body}`);
+}
+let lawsShown = false;
 
 /** the packs in play: each with a button to take it out, what the validator says to look at, and a picker that adds
  *  one or several files (the run starts again with the new set) */
@@ -186,7 +205,7 @@ function draw(): void {
   const y = window.scrollY;
   const built = table.built();
   const builtRow = built.length ? `<h2>${W.BUILT_TITLE}</h2>${tags(built, 'state')}` : '';
-  app.innerHTML = header() + end() + events() + opps() + abilities() + rules() + inPlay() + working() + builtRow + log() + packDrawer() + footer();
+  app.innerHTML = header() + end() + lawsList() + events() + opps() + abilities() + rules() + inPlay() + working() + builtRow + log() + packDrawer() + footer();
   window.scrollTo(0, y);
 }
 
@@ -204,6 +223,10 @@ app.addEventListener('click', (e) => {
   const id = b.dataset.id ?? '';
   if (act === 'take') table.take(id);
   else if (act === 'pass') table.pass(id);
+  else if (act === 'resolve') {
+    armed = null;
+    table.resolveNow(id);
+  }
   else if (act === 'end') {
     armed = null;
     table.endSeason();

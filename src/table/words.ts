@@ -54,8 +54,9 @@ export const tagCount = (n: number): string => `${n} thing${n === 1 ? '' : 's'}`
 export const winLine = (count: number, tags: readonly string[]): string => `${count} things in play that are ${tags.map((t) => `"${t}"`).join(' + ')}`;
 export const wonTitle = (law: string): string => `You won the run by law: ${law}.`;
 export const ruleOff = (law: string): string => `Off, by the law "${law}".`;
-export const becomes = (label: string, was: string, now: string): string => (was || now ? `${label}: ${was || 'nothing'} would become ${now || 'nothing'}.` : '');
-export const becomesNew = (label: string, now: string): string => (now ? `${label}: new. ${now}` : '');
+const stop = (s: string): string => (/[.!?]$/.test(s) ? s : `${s}.`);
+export const becomes = (label: string, was: string, now: string): string => (was || now ? `${label}. Now: ${stop(was || 'nothing')} With it: ${stop(now || 'nothing')}` : '');
+export const becomesNew = (label: string, now: string): string => (now ? `${label}. New: ${stop(now)}` : '');
 
 export const UNIT_NAME: Record<string, string> = { raider: 'raiders', guard: 'soldiers', soldier: 'soldiers', worker: 'townsfolk', cart: 'carts', shambler: 'risen dead' };
 export const TIER_NAME: Record<string, string> = { triumph: 'Best result', success: 'Good result', cost: 'Mixed result', failure: 'Bad result', disaster: 'Worst result' };

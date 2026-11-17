@@ -233,7 +233,7 @@ export class Table {
   /** the firings since the last season's end began (the rules list shows them) */
   private recent: RuleHit[] = [];
   /** how each live event came out: its template and tier */
-  readonly events: { season: number; template: string; tier: string }[] = [];
+  readonly events: { season: number; template: string; tier: string; cast: number; now: boolean }[] = [];
   /** the casts made into each live event under way: spell → times */
   private casts = new Map<string, Record<string, number>>();
   /** the Magic spent on casts this run */
@@ -732,9 +732,10 @@ export class Table {
     this.tell(o);
     const before = pools(r.ledger);
     this.moves.push(`resolve ${o.template}`);
+    const cast = Object.values(this.casts.get(o.id) ?? {}).reduce((a, b) => a + b, 0);
     const rep = r.resolveNow(o.id);
     this.casts.delete(o.id);
-    this.events.push({ season: r.season, template: rep.template, tier: rep.tier });
+    this.events.push({ season: r.season, template: rep.template, tier: rep.tier, cast, now: true });
     const own = rep.lines.filter((l) => !rep.hits.some((h) => `${h.text}.` === l));
     this.say(rep.template === 'raid' ? 'fight' : 'event', W.eventEnded(rep.title, own.join(' ')));
     if (rep.template === 'raid' && r.fight) this.result = { title: resultTitle(r.fight), lines: [...own, ...rep.hits.map((h) => `${h.text}.`)] };
@@ -767,9 +768,10 @@ export class Table {
     const before = pools(r.ledger);
     for (const o of r.liveRunning()) {
       this.tell(o);
+      const cast = Object.values(this.casts.get(o.id) ?? {}).reduce((a, b) => a + b, 0);
       const rep = r.finishLive(o.id);
       this.casts.delete(o.id);
-      this.events.push({ season: r.season, template: rep.template, tier: rep.tier });
+      this.events.push({ season: r.season, template: rep.template, tier: rep.tier, cast, now: false });
       const own = rep.lines.filter((l) => !rep.hits.some((h) => `${h.text}.` === l));
       this.say(rep.template === 'raid' ? 'fight' : 'event', W.eventEnded(rep.title, own.join(' ')));
       if (rep.template === 'raid' && r.fight) this.result = { title: resultTitle(r.fight), lines: [...own, ...rep.hits.map((h) => `${h.text}.`)] };

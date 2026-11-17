@@ -24378,3 +24378,32 @@ realm-resume 5, realm 16, runplay-rules 17); `writing-sources` fails only on `sr
 **The absurd ones (in `laws.json`, tested).** Rune stones (`blessed-fields` times 2, fires twice) with the abbot's
 madness (multipliers 2): the growth rune's 2 Materials become 16 a season. Holy furrows (fields count as temples),
 every hearth a temple (worked places are temples) and the pilgrim road (6 temples win the run): the run ends won.
+
+## 2026-11-16 — Laws at the table; "Settle it now"; the arena's loop tamed by a law (`card-table`)
+
+**The page.** "Laws in force" (opens when the first law comes): each law's words written from its data, who or what
+made it, how long it stands, "in force 3 times" for a stacked one. A card that brings laws says which, and every line
+that would change, read from the view with and without them (`Table.readout`, `diffReadout`): rule readings and
+gifts, whether a rule is ready, the cost of each card on offer, each spell's line, the tags in play, income, the ways
+to win — "Rune-fed fields. Now: Gives +2 Materials, at most 2. With it: Gives +4 Materials, at most 4." A card's cost
+in force is shown with the printed one struck beside it. The Rules list marks a rule a law changed ("Changed by
+law: Deep runes") and shows one a law turned off, struck through.
+
+**Settle it now** (the owner's chain, "win → challenger → win", in one season). `Realm.resolveNow` is one player
+action: a new cascade, `finishLive` with the casts made so far, then the asked card dealt at once; `Table.resolveNow`
+logs it, and what a rule started begins (`begin`). A move `resolve <template>` replays. Events not settled by hand
+still end at the season's end. Test: bouts 1, 2 and 3 won and settled in one season, the open bout on the table the
+same season, left alone it is lost at the season's end. **There is no action budget at the table**: a settle costs a
+move and the casts it needed, nothing more (owner question).
+
+**CT-30: the open bout was strictly dominant** (1 Magic in, 1 Magic and 2 Materials out, 162 wins to 3 losses). By
+data: rule `arena-word-spreads` makes the law `arena-rising-hopefuls` (one more foe in every bout) on each open-bout
+win; laws stack. Test: three turns cost 1, 2, 3 casts. **CT-28**: a card a rule offers is no longer drawn as a threat
+(`threat === true`), nor counted as a threat that ran out.
+
+**Bots** (`law hunter`: law cards first, settles what it wins; `loop hunter` settles too). The report adds the
+biggest single firing, laws made and runs won by a law, and loops' casts turn by turn. **Measured (laws + arena, 36
+runs, 134 s):** laws made in 19 of 36 runs; **11 runs won by the pilgrim road** (6 temples) — every bot that takes
+pack cards wins it: that is the strictly dominant thing found (tuned in its own commit). Biggest single firing:
+`Rune-fed fields` +8 Materials (paid twice: 16 a season, the runes and the abbot); the biggest season was 23 firings
+(law hunter). The open bout now costs 1.0, 1.8, 2.0, 3.0, 3.3 … casts a turn (won 30 of 39): no longer free money.

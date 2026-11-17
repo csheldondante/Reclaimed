@@ -1,4 +1,14 @@
-# Opportunity pack format (draft 5, 2026-11-16: rules that chain)
+# Opportunity pack format (draft 6, 2026-11-16: laws)
+
+**Changed since draft 5.** (1) **Laws** (see "laws"; design: `docs/design/LAWS.md`): a new top-level block `laws`,
+each one thing that changes the rules of the game for the rest of the run — tags, rules, card costs, spells and
+events, the run, other laws. (2) A law comes into force from a new effect `{ "law": "id" }` (rest of the run) or
+`{ "law": "id", "seasons": 2 }` in any effect list (cards, results, an ability's effect), from a thing's new
+`"laws": [...]` (while it is in play and not ruined), or from a rule's new act `{ "law": "id" }`. (3) A rule may say
+`"fires": 2`: it pays twice each time it fires. (4) **Settle it now**: the player may end a live event at once with
+the casts made so far; its result and what it sets off happen at once, so a chain's next step can come the same
+season (see "Chains"). (5) `packs/arena.json`'s open bout gets harder with each win, by a law. Example of every law
+kind: `packs/laws.json`.
 
 **Changed since draft 4.** Rules can chain (see "Chains"): (1) a rule can wait for a live event's RESULT,
 `"on": { "live": "raid", "tier": ["success"] }`; (2) a rule's effect can be an act: `offer` a card, `start` a live
@@ -38,7 +48,8 @@ A new run starts with the pack's cards mixed into the base cards.
 | `things`, `tags` | Played: shown in play with their tags; a thing on a ruined site shows `ruined` instead. |
 | `abilities` | Played: unlocked by a card, cast on a thing in play for Magic. |
 | `rules` | Played: they fire with the base game's rules, and the Rules list says what each lacks. |
-| `events`, cards with `live` | Played without real time: the event card shows who is in it, the rules that apply and the result it would have now; the player casts spells into it; it resolves when the season ends. |
+| `events`, cards with `live` | Played without real time: the event card shows who is in it, the rules that apply and the result it would have now; the player casts spells into it; it resolves when the season ends, or at once when the player settles it. |
+| `laws` | Played: in force while their source stands, in their own list; every number shown follows them. |
 
 Anything a pack needs that is not in the vocabularies below goes in the pack's `wants` list, in plain words, instead
 of being invented inline. The validator rejects invented fields.
@@ -71,6 +82,7 @@ of being invented inline. The validator rejects invented fields.
   "rules":     [ ... ],
   "events":    [ ... ],
   "abilities": [ ... ],
+  "laws":      [ ... ],
   "wants":     [ "plain-word requests for effects, tags or looks the vocabularies lack" ]
 }
 ```
@@ -137,6 +149,8 @@ What a card puts in play. Shown to the player as a small card with its tags.
   people). It shows in the Rules list as "Upkeep: <name>" and in the log each season. If the pool is empty nothing
   is taken and nothing else happens: an unpaid thing still stands. A number in the thing's `text` must be a number
   of its upkeep or capacity.
+- `"laws": ["law-id", ...]`: laws of this pack in force while the thing is in play and its place is not ruined.
+  They leave with it, and come back if it stands again.
 
 ## cards
 
@@ -214,6 +228,8 @@ want them said twice. Any number you do write in `say` or `pitch` must be a numb
 - `{ "arrive": "refugees", "count": 40, "from": "far:neighbour" }`: people walk in by road. Only refugees, only
   from the neighbour, always 40.
 - `{ "unlock": "ability-id" }`: an ability of this pack, or `heat-ray`.
+- `{ "law": "law-id" }`: a law of this pack comes into force for the rest of the run; `"seasons": 2`: for the rest
+  of this season and 2 more. See "laws".
 - `{ "say": "One plain sentence the player reads." }`: at least one per branch.
 - Not supported yet (the validator says what to write instead): `units` (use `pool` `might`), `offer` (use
   `resolved` on the later card), `arrive` of wagons or soldiers, far places other than the neighbour.
@@ -254,6 +270,7 @@ the player is told `why`.
   whatever it counts; the validator only says LOOK when a rule with `per` has none.
 - `perSeason` (optional): the most firings a season. Leave it out and the rule fires every time its trigger occurs.
   (The base game's 14 rules each say `perSeason: 1`: they were balanced that way.)
+- `fires` (optional, default 1): it pays so many times each time it fires; each time is a firing of its own.
 - `why`: plain words; `{a}` `{b}` the things' names, `{n}` how much, `{count}` how many matched. Write the amount as
   `{n}`, never as a digit.
 
@@ -276,6 +293,8 @@ Waiting for a card: `{ "event": "pack-done:<card-id>" }`, `{ "event": "pack-laps
   no `cost`. The player casts into it that season and it resolves at the season's end.
 - `{ "tag": "tag-id", "on": "a" }` · `{ "untag": "tag-id", "on": "a" }`: on every thing the rule's `a` matched. The
   pack's own tags, `festival` or `growth-active`. A tag declared `timed` lasts to the end of the season.
+- `{ "law": "law-id" }` (optional `"seasons": n`): a law of this pack comes into force. Laws stack: a rule that
+  makes the same law each time it fires puts it in force once more each time.
 
 **A card that a rule offers or starts comes up ONLY that way.** Its own `appears_when` is not used (the validator
 says to remove it). It is not counted against the board's three cards, so it is there the season it is asked for,
@@ -285,8 +304,11 @@ unless another card stands at its site. `once` still holds: a `once` card that i
 - When an event's result is picked: the result rules fire in order (a tag one sets is seen by the next), then the
   rules that wait for the card's `pack-done`. So "the win makes the pit `pit-champion`" can be followed, in the same
   moment, by "a done bout at a `pit-champion` pit starts the next bout".
-- A started or offered card is dealt at the next deal. Results are picked at a season's end, so **each step of a
-  chain takes one season**: bout 1 in season 5, bout 2 in season 6, bout 3 in season 7.
+- A started or offered card is dealt at the next deal. Results are picked at a season's end, so left alone **each
+  step of a chain takes one season**: bout 1 in season 5, bout 2 in season 6, bout 3 in season 7.
+- **Settle it now.** The player may end a live event at once with the casts made so far (one move). Its result,
+  the rules it sets off and the card a rule starts or offers come at once: win, settle, the next challenger, win
+  again, all in one season, each step a move and its casts. An event not settled by hand ends at the season's end.
 - An act that changes nothing is no firing: the card is on the table or asked for already, a `once` card is done,
   the tag is there already.
 
@@ -308,8 +330,10 @@ asks for them. What stops a loop from running by itself is how the game is built
 **Two engines, both in `packs/arena.json`.**
 1. *The loop.* After the Red Wolf is beaten, `arena-open-pit` starts an open bout. `arena-keeps-coming` waits for
    `pack-done:arena-open-bout` at a `pit-champion` pit and starts the same card again (`"once": false`). One turn:
-   the player casts Fire once (1 Magic) to win; the win tags the pit `pit-champion` for the season, pays 2 Materials
-   and, by `arena-purse`, 1 Magic. Lose once (no cast) and the pit is no champion's: nothing starts the next bout.
+   the player casts Fire (1 Magic a hopeful past the first) to win; the win tags the pit `pit-champion` for the
+   season, pays 2 Materials and, by `arena-purse`, 1 Magic. Each win also makes the law `arena-rising-hopefuls`
+   (rule `arena-word-spreads`): one more hopeful in every bout, so turn 1 costs 1 cast, turn 2 costs 2, turn 3 costs
+   3. Lose once (no cast) and the pit is no champion's: nothing starts the next bout.
 2. *The multiplier stack.* A parade's `crowd` is 13 with nothing else. With a champion's pit: `arena-crowd` adds 3
    (16), `arena-drums` doubles it (32), then the result rule `arena-collection` pays 1 Materials for every 5 of the
    crowd with no cap (6). Add another pack's doubling of `crowd` and it pays 12. Order matters for amounts: rules
@@ -386,6 +410,77 @@ What the player casts on a thing in play. (Into an event only the three existing
 - Existing abilities, which must not be declared again: `growth-rune` (on a field: it is `growth-active` this
   season), `fire`, `rain` (every leader has these three), `heat-ray` (unlocked by a card). Each costs 1 Magic.
   Not built: `gust`, `telekinesis`. Say what should be seen in `look`.
+
+## laws
+
+A law changes the rules of the game for the rest of the run: what a tag means, what a rule gives, what a card
+costs, what a spell does, how the run is won. The player reads every law in force in the "Laws in force" list, with
+who or what made it and how long it stands; a card that brings a law says so, and says every line that would change
+("Rune-fed fields. Now: Gives +2 Materials, at most 2. With it: Gives +4 Materials, at most 4."). There are no limits
+on power: broken combinations are wanted. Full example of every kind: `packs/laws.json`.
+
+```json
+{ "id": "volcano-ash-feeds", "name": "Ash feeds the soil", "does": { "spare": "burned" } }
+```
+
+- `name`: what the player reads in the list. The words of what it does are written by the game from `does`.
+- `does`: exactly one of the words below.
+- **How it comes into force** (nothing else does it): an effect `{ "law": "id" }` or `{ "law": "id", "seasons": 2 }`
+  in `if_taken`, `if_expires`, `if_tier` or an ability's `effect`; a thing's `"laws": [...]`; a rule's act
+  `{ "law": "id" }`. A law nothing brings is a LOOK. A law names only laws of its own pack.
+- **How long.** From a thing: while it is in play and its place is not ruined. With `seasons`: the rest of this
+  season and so many more. Otherwise: the rest of the run. No law outlives the run; a thing that stands into the next
+  run brings its law back.
+- **Order.** Laws apply in the order they came into force; two laws on one number give a different number in the
+  other order. Laws stack: the same law twice is in force twice.
+
+**Tags.**
+- `{ "count_as": { "tag": "field", "as": "temple" } }`: whatever carries the first tag also carries the second.
+- `{ "grant": "temple", "to": { "tags": ["worked"], "not": [] } }`: every thing that matches carries the tag
+  (`"tags": []`: every thing in play). A ruined thing is given nothing.
+- `{ "spare": "burned" }`: that ruin word no longer ruins: the place keeps its working tags and carries the word.
+
+**Rules** (a base rule's id, or a rule of a loaded pack):
+- `{ "rule": "blessed-fields", "set": { "n": 4, "cap": null, "each": 3, "perSeason": 2 } }`: numbers set; `null`
+  removes `cap` or `perSeason`.
+- `{ "rule": "blessed-fields", "times": 2 }`: `n` and `cap` multiplied.
+- `{ "rule": "...", "on": ... }`, `"a": { ... }`, `"b": { ... }`: its trigger or its queries replaced.
+- `{ "rule": "...", "off": true }`: it is off; the Rules list shows it struck through.
+- `{ "rule": "...", "fires": 2 }`: it pays twice each time it fires.
+- `{ "add_rule": { a whole rule, as in "rules" } }`: a rule that exists only while the law stands. A thing that
+  carries rules is a thing that carries this law.
+
+**Cards** (`"cards": { "themes": ["build"] }` or `{ "ids": [...] }` picks the cards; leave it out for every card.
+The base game's building cards have the theme `build`):
+- `{ "cost": { "materials": -1 }, "cards": ... }`: so much more or less of each pool; no cost below 0.
+- `{ "pay": { "labor": "magic" }, "cards": ... }`: that part of the cost is paid from the other pool.
+- `{ "build": -1, "cards": ... }`: seasons to build; 1 at least.
+- `{ "stay": 1, "cards": ... }`: seasons a card dealt from now stays on offer.
+- `{ "pool_as": { "unrest": "might" } }`: in a fight each point of the pool counts as 1 Might (3 soldiers).
+
+**Spells and events** (spells: `fire`, `heat-ray`, `rain`, `growth-rune`):
+- `{ "spell": "fire", "kills": 3 }` / `"douses": 3`: what one cast does in a live event.
+- `{ "spell": "fire", "also_tag": "growth-active", "on": { "tags": ["field"] } }`: each cast also gives every
+  match the tag for the season (the pack's own tags, `festival`, `growth-active`).
+- `{ "event": "parade", "allow": ["fire"] }`: spells that may be cast into that kind of event.
+- `{ "event": "bout", "shift": 1 }`: its results move one step better (`-1`: worse), among the results it can give.
+- `{ "event": "bout", "foes": 1 }`: one more foe in each group of foes.
+- `{ "event": "parade", "tier": ["failure"], "counts_as": { "live": "raid", "tier": ["failure"] } }`: that result
+  also sets off the rules that wait for the other kind's result.
+
+**The run:**
+- `{ "board": 1 }`: cards on offer at once. `{ "income": { "materials": 2 } }`: goods each season.
+- `{ "raiders": { "add": -4 } }` or `{ "raiders": { "times": 0.5 } }`: the raid's size.
+- `{ "win": { "count": 6, "tags": ["temple"] } }`: a new way to win: the run ends won when that many things carry
+  the tags.
+
+**Laws about laws:**
+- `{ "multipliers": 2 }`: every multiplier is twice as big — a rule's `mul`, a law's `times` — whenever it came.
+- `{ "next_law": "run" }`: the next law to come into force lasts the rest of the run, whatever its source; then
+  this law is used up.
+
+**Not built yet** (put them in `wants`): a law that changes the run's length or the raid's season (the arc is timed
+when the run begins); the number of threats at once; a law that outlives the run.
 
 ## Several packs together
 

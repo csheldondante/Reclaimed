@@ -16,6 +16,8 @@ export interface Policy {
   spells?: 'none' | 'events' | 'all';
   /** Magic it keeps back from growth runes and pack abilities for the events to come (default 3) */
   keep?: number;
+  /** it settles an event it is winning at once ("Settle it now"), and plays what that starts in the same season */
+  settle?: boolean;
 }
 
 const has = (c: OppCard, ...tags: string[]) => tags.some((x) => c.tags.includes(x));
@@ -73,6 +75,15 @@ export const POLICIES: Policy[] = [
       return c.template === TRIBUTE ? null : named ? 12 : c.live ? 9 : c.threat ? 2 : 1;
     },
     keep: 2,
+    // (a chain's next step this season: win, settle, the next challenger, win again — each a move)
+    settle: true,
+  },
+  {
+    // (hunts laws: a card that brings a law first, then the packs' cards, then anything; settles events it wins)
+    name: 'law hunter',
+    score: (c) => (c.template === TRIBUTE ? null : c.laws.brings.length ? 15 : c.tags.some((x) => x.startsWith('pack:')) ? 8 : c.threat ? 2 : 1),
+    keep: 2,
+    settle: true,
   },
 ];
 
@@ -106,9 +117,26 @@ export interface RunStat {
   peak: { season: number; firings: number; rules: string[] };
   paid: Record<string, number>;
   acts: number;
-  /** how each live event came out */
-  events: { template: string; tier: string }[];
+  /** how each live event came out, and the casts made into it (settled now, or at the season's end) */
+  events: { template: string; tier: string; cast: number; season: number; now: boolean }[];
   moves: string[];
+  /** (laws) the laws in force at the end (name, times), how many came into force over the run, the run won by a law */
+  laws: { name: string; times: number }[];
+  lawsMade: number;
+  won: string | null;
+  /** the single biggest rule firing of the run */
+  biggest: { rule: string; delta: number; season: number; pool: string } | null;
+}
+
+/** the bot's settling: each event it is winning, settled now; what that starts, cast into and settled too, while it
+ *  wins (a bot's guard of 30 settles a season, not a rule of the game) */
+function settleSeason(p: Policy, t: Table): void {
+  if (!p.settle) return;
+  for (let guard = 0; guard < 30 && !t.over; guard++) {
+    castSeason({ ...p, spells: 'events' }, t);
+    const e = t.liveEvents().find((x) => x.template !== 'raid' && TIER_RANK.indexOf(x.tier) >= TIER_RANK.indexOf('success'));
+    if (!e || !t.resolveNow(e.id)) break;
+  }
 }
 
 /** the bot's casts for the season: into live events while a cast still changes them and the result is not yet the
@@ -167,6 +195,8 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
       if (!best || !t.take(best.c.id)) break;
     }
     castSeason(p, t);
+    settleSeason(p, t);
+    if (t.over) break;
     const lapsed = t.lapsed.length;
     const season = t.season;
     t.endSeason();
@@ -177,11 +207,22 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
   }
   const r = t.realm;
   const last = Object.fromEntries(t.poolViews().map((x) => [x.pool, x.have])) as Pools;
+  const won = r.won();
+  const big = t.hits.filter((h) => !!h.hit.pool).sort((a, b) => b.hit.delta - a.hit.delta)[0];
   return {
     policy: p.name,
     leader: o.leader,
     seed: o.seed,
-    end: r.averted ? 'paid off' : r.fight?.held ? 'held' : 'fell',
+    end: won ? 'won by law' : r.averted ? 'paid off' : r.fight?.held ? 'held' : 'fell',
+    laws: t.laws().reduce((a, l) => {
+      const x = a.find((y) => y.name === l.name);
+      if (x) x.times += l.times;
+      else a.push({ name: l.name, times: l.times });
+      return a;
+    }, [] as { name: string; times: number }[]),
+    lawsMade: r.history().filter((e) => e.kind === 'law-made').length,
+    won: won?.law ?? null,
+    biggest: big ? { rule: big.hit.name, delta: big.hit.delta, season: big.season, pool: big.hit.pool! } : null,
     trouble,
     curve: t.curve,
     last,
@@ -198,7 +239,7 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
     rules: t.ruleCounts(),
     ...engineOf(t),
     ruleNames: t.ruleDefs().map((x) => x.name),
-    events: t.events.map((e) => ({ template: e.template, tier: e.tier })),
+    events: t.events.map((e) => ({ template: e.template, tier: e.tier, cast: e.cast, season: e.season, now: e.now })),
     moves: t.moves,
   };
 }
@@ -223,13 +264,13 @@ export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy
   if (o.packs?.length) L.push(`Packs in play: ${o.packs.map((x) => x.pack.name).join(', ')}`);
   L.push(`Bots: ${policies.length} policies x ${leaders.length} leaders x ${o.seeds.length} seeds = ${runs.length} runs of ${o.seasons} seasons`);
   L.push('');
-  L.push(`${pad('policy', 24)}${pad('held', 5)}${pad('paid', 5)}${pad('fell', 5)}${pad('trouble', 8)}${pad('asked', 6)}${pad('took', 5)}${pad('built', 6)}${pad('cast', 6)}${pad('idle', 9)}left at the end: Magic Might Labor Materials Intel Unrest`);
+  L.push(`${pad('policy', 24)}${pad('held', 5)}${pad('paid', 5)}${pad('fell', 5)}${pad('won', 4)}${pad('trouble', 8)}${pad('asked', 6)}${pad('took', 5)}${pad('built', 6)}${pad('cast', 6)}${pad('idle', 9)}left at the end: Magic Might Labor Materials Intel Unrest`);
   for (const p of policies) {
     const mine = runs.filter((r) => r.policy === p.name);
     const n = (e: string) => mine.filter((r) => r.end === e).length;
     const tr = mine.filter((r) => r.trouble !== null).map((r) => r.trouble!);
     const last = POOLS.map((k) => mean(mine.map((r) => r.last[k])).toFixed(0)).join(' ');
-    L.push(`${pad(p.name, 24)}${pad(n('held'), 5)}${pad(n('paid off'), 5)}${pad(n('fell'), 5)}${pad(tr.length ? `S${mean(tr).toFixed(1)}` : 'never', 8)}${pad(mean(mine.flatMap((r) => r.asked)).toFixed(1), 6)}${pad(mean(mine.flatMap((r) => r.took)).toFixed(1), 5)}${pad(mean(mine.map((r) => r.built.length)).toFixed(1), 6)}${pad(mean(mine.map((r) => r.cast)).toFixed(1), 6)}${pad(`${mean(mine.map((r) => r.idle)).toFixed(1)}/${mean(mine.map((r) => r.labor)).toFixed(0)}`, 9)}${last}`);
+    L.push(`${pad(p.name, 24)}${pad(n('held'), 5)}${pad(n('paid off'), 5)}${pad(n('fell'), 5)}${pad(n('won by law'), 4)}${pad(tr.length ? `S${mean(tr).toFixed(1)}` : 'never', 8)}${pad(mean(mine.flatMap((r) => r.asked)).toFixed(1), 6)}${pad(mean(mine.flatMap((r) => r.took)).toFixed(1), 5)}${pad(mean(mine.map((r) => r.built.length)).toFixed(1), 6)}${pad(mean(mine.map((r) => r.cast)).toFixed(1), 6)}${pad(`${mean(mine.map((r) => r.idle)).toFixed(1)}/${mean(mine.map((r) => r.labor)).toFixed(0)}`, 9)}${last}`);
   }
   L.push('');
   L.push('"trouble": mean first season a threat ran out or Unrest kept every worker away. "asked", "took": cards on the board and taken, a season. "cast": Magic spent on spells. "idle": free workers at a season\'s start / workers at the end. "left": free pools when the run ended.');
@@ -256,6 +297,47 @@ export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy
     const counts = new Map<string, number>();
     for (const x of best.peak.rules) counts.set(x, (counts.get(x) ?? 0) + 1);
     L.push(`  ${pad(p.name, 24)}${best.leader}, S${best.peak.season}: ${best.peak.firings} firings (${[...counts].map(([k, v]) => (v > 1 ? `${k} x${v}` : k)).join(', ')}); paid ${Object.entries(best.paid).map(([k, v]) => `${k} ${v > 0 ? '+' : ''}${v}`).join(', ') || 'nothing'}; acts ${best.acts}; ${best.end}`);
+  }
+  L.push('');
+  L.push('Biggest single firing of each policy (one rule, one trigger):');
+  for (const p of policies) {
+    const best = runs.filter((r) => r.policy === p.name && r.biggest).sort((a, b) => b.biggest!.delta - a.biggest!.delta)[0];
+    if (best) L.push(`  ${pad(p.name, 24)}${best.biggest!.rule}: ${best.biggest!.pool} ${best.biggest!.delta > 0 ? '+' : ''}${best.biggest!.delta} (${best.leader}, S${best.biggest!.season})`);
+  }
+  L.push('');
+  // (laws: how many came into force, which stood at the end, runs won by a law)
+  const lawRuns = runs.filter((r) => r.lawsMade > 0);
+  L.push(`Laws: made in ${lawRuns.length} of ${runs.length} runs; ${runs.filter((r) => r.won).length} runs won by a law.`);
+  for (const p of policies) {
+    const mine = runs.filter((r) => r.policy === p.name && r.lawsMade > 0);
+    if (!mine.length) continue;
+    const at = new Map<string, number>();
+    for (const r of mine) for (const l of r.laws) at.set(l.name, (at.get(l.name) ?? 0) + l.times);
+    const won = mine.filter((r) => r.won).map((r) => `${r.leader} by ${r.won}`);
+    L.push(`  ${pad(p.name, 24)}made ${mean(mine.map((r) => r.lawsMade)).toFixed(1)} a run; at the end: ${[...at].map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}${won.length ? `; won: ${won.join(', ')}` : ''}`);
+  }
+  L.push('');
+  // (loops: an event that came 3 or more times in one run, its casts turn by turn — a cost that does not rise while
+  // the pay stays is a loop that may be strictly better than leaving it)
+  L.push('Loops (live events 3 or more times in one run): casts a turn, mean, turn 1, 2, 3, …; settled now / at the season\'s end:');
+  const loops = new Map<string, { casts: number[][]; now: number; end: number; won: number; of: number }>();
+  for (const r of runs) {
+    const by = new Map<string, RunStat['events']>();
+    for (const e of r.events) by.set(e.template, [...(by.get(e.template) ?? []), e]);
+    for (const [k, list] of by) {
+      if (list.length < 3) continue;
+      const x = loops.get(k) ?? { casts: [], now: 0, end: 0, won: 0, of: 0 };
+      list.forEach((e, i) => ((x.casts[i] ??= []).push(e.cast), e.now ? x.now++ : x.end++, TIER_RANK.indexOf(e.tier) >= TIER_RANK.indexOf('success') && x.won++, x.of++));
+      loops.set(k, x);
+    }
+  }
+  if (!loops.size) L.push('  none');
+  for (const [k, x] of loops) {
+    const series = x.casts.slice(0, 8).map((c) => mean(c).toFixed(1));
+    const rising = x.casts.length > 1 && mean(x.casts[Math.min(3, x.casts.length - 1)]) > mean(x.casts[0]);
+    // (an event nobody casts into — a parade the player pays for as a card — is no loop of casts)
+    const free = x.casts.every((c) => mean(c) === 0);
+    L.push(`  ${pad(k, 28)}${series.join(', ')}; ${x.now} / ${x.end}; won ${x.won} of ${x.of}${free ? '  (no casts: its cost is the card\'s)' : rising ? '' : '  <- cost does not rise: look for a strictly better choice'}`);
   }
   L.push('');
   L.push('Live events (how they came out, over all runs):');

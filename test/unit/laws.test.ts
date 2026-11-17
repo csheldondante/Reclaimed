@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { applyTags, cardTerms, deriveRules, liveLaw, raidersOf, resultAlso, shiftTier, spellMech, wonBy, type LawDef, type LawDo } from '../../src/living/laws';
 import type { LiveDef } from '../../src/living/live';
 import { RuleBook, type RuleDef, type Thing } from '../../src/living/rules';
-import { checkPack, type Pack } from '../../src/packs/check';
+import { checkPack, checkTogether, type Pack } from '../../src/packs/check';
 import { thingEntity } from '../../src/packs/load';
 import { grant } from '../../src/season/ledger';
 import { siteId } from '../../src/season/realm-templates';
@@ -122,6 +122,12 @@ describe('packs/laws.json on the Realm', () => {
     expect(checkPack(bad).some((x) => x.level === 'error' && /laws-none/.test(x.text))).toBe(true);
     const shape = { ...LAWS, laws: [...LAWS.laws!, { id: 'laws-two', name: 'Two', does: { board: 1, income: { materials: 1 } } }] };
     expect(checkPack(shape).some((x) => x.level === 'error' && /exactly one/.test(x.text))).toBe(true);
+    // (a rule law on a rule nobody has: a LOOK alone, refused in the set)
+    const other = { ...LAWS, laws: [...LAWS.laws!, { id: 'laws-ghost', name: 'Ghost', does: { rule: 'nobody-rule', times: 2 } }] };
+    expect(checkPack(other).some((x) => x.level === 'warn' && /nobody-rule/.test(x.text))).toBe(true);
+    expect(checkTogether([other]).some((x) => x.level === 'error' && /nobody-rule/.test(x.text))).toBe(true);
+    const zero = { ...LAWS, laws: [...LAWS.laws!, { id: 'laws-zero', name: 'Zero', does: { rule: 'blessed-fields', set: { n: 0 } } }] };
+    expect(checkPack(zero).some((x) => x.level === 'error' && /cannot be 0/.test(x.text))).toBe(true);
   });
 
   it('a tag law from a card: the fields count as temples, the Laws list says who made it; the card preview said so first', () => {
@@ -135,7 +141,7 @@ describe('packs/laws.json on the Realm', () => {
     }
     expect(card).toBeDefined();
     expect(card!.laws.brings[0]).toMatch(/^Holy furrows\. Whatever is "field" also counts as "temple"\./);
-    expect(card!.laws.changes.some((x) => /^"temple": 1 thing would become 2 things\.$/.test(x))).toBe(true);
+    expect(card!.laws.changes).toContain('"temple". Now: 1 thing. With it: 2 things.');
     t.take(card!.id);
     // (a card's effects apply when its build is done: at the season's end)
     expect(t.laws()).toEqual([]);
@@ -148,6 +154,11 @@ describe('packs/laws.json on the Realm', () => {
 
   it('a thing carries laws: rule laws in force while it stands, the Rules list marks the rule, gone when the place is ruined, back when a law spares the ruin', () => {
     const t = new Table(OPTS);
+    for (let i = 0; i < 8 && !t.cards().some((c) => c.template === 'laws-rune-charter'); i++) t.endSeason();
+    // (the card's preview: the laws its thing brings, and the rule's numbers before and after)
+    const card = t.cards().find((c) => c.template === 'laws-rune-charter')!;
+    expect(card.laws.brings.map((l) => l.split('.')[0])).toEqual(['Deep runes', 'Runes that sing twice', 'Ash on the furrows']);
+    expect(card.laws.changes).toContain('Rune-fed fields. Now: Gives +2 Materials, at most 2. With it: Gives +4 Materials, at most 4. It pays 2 times each time it fires.');
     expect(takeWhenOffered(t, 'laws-rune-charter')).toBe(true);
     // (the stones are put when the build is done: a season later)
     for (let i = 0; i < 3 && !t.realm.w.facts.entity(thingEntity('laws-rune-stones')); i++) t.endSeason();

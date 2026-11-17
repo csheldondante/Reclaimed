@@ -55,7 +55,7 @@
       "art": "A scarred man in a red cloak with three fighters behind him, painterly." },
     { "id": "arena-open-bout", "title": "An open bout at the pit",
       "presenter": { "name": "Bram Cotter", "role": "pit master", "at": "site:dam" },
-      "pitch": "Since the Red Wolf fell, a pair of hopefuls turns up every season.",
+      "pitch": "Since the Red Wolf fell, hopefuls turn up every season. Each time your champion wins, more of them come.",
       "once": false, "offer_seasons": 1,
       "live": "arena-open-bout-event",
       "if_tier": {
@@ -90,6 +90,9 @@
     { "id": "arena-keeps-coming", "name": "Win and they come again", "on": { "event": "pack-done:arena-open-bout" },
       "a": { "tags": ["pit", "pit-champion"] }, "effect": { "start": "arena-open-bout" },
       "why": "another win at {a}, another pair of hopefuls" },
+    { "id": "arena-word-spreads", "name": "Word spreads", "on": { "event": "pack-done:arena-open-bout" },
+      "a": { "tags": ["pit", "pit-champion"] }, "effect": { "law": "arena-rising-hopefuls" },
+      "why": "another win at {a}: the next hopefuls bring a friend" },
     { "id": "arena-drums", "name": "Pit drums in the parade", "on": { "live": "parade" },
       "a": { "tags": ["pit", "pit-champion"] }, "effect": { "amount": "crowd", "op": "mul", "n": 2 },
       "why": "the drums of {a} led the parade and {n} more people came out" },
@@ -98,7 +101,7 @@
       "why": "the pit's hat went round the parade crowd: +{n} Materials" }
   ],
   "events": [
-    { "id": "arena-open-bout-event", "tag": "bout", "title": "An open bout", "how": "Your champion meets two hopefuls. He can beat one. Cast a spell to put the other down.",
+    { "id": "arena-open-bout-event", "tag": "bout", "title": "An open bout", "how": "Your champion meets the hopefuls. He can beat one. Cast spells to put the others down.",
       "groups": [ { "who": "raider", "count": 2, "tags": ["challenger"], "from": "road", "order": "attack", "to": "event" },
                   { "who": "soldier", "count": 1, "tags": ["pit-fighter"], "from": "event", "order": "guard", "to": "event" } ],
       "abilities": ["fire", "heat-ray"],
@@ -122,6 +125,9 @@
       "abilities": ["fire", "heat-ray"],
       "amounts": ["alive:challenger", "alive:pit-fighter"],
       "tiers": [ { "tier": "success", "when": [ { "amount": "alive:challenger", "lte": 1 } ] }, { "tier": "failure" } ] }
+  ],
+  "laws": [
+    { "id": "arena-rising-hopefuls", "name": "The hopefuls bring a friend", "does": { "event": "bout", "foes": 1 } }
   ],
   "wants": [ "A fighter as a thing with strength a rule can raise, so wins make later bouts easier without spells." ]
 }

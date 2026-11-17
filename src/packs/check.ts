@@ -694,6 +694,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
             if (!['n', 'cap', 'each', 'perSeason'].includes(x)) err(w, `"set" can change n, cap, each and perSeason. It has "${x}".`);
             if (v !== null && typeof v !== 'number') err(w, `"set" gives numbers (or null to remove). ${x} is ${JSON.stringify(v)}.`);
             if (v === null && (x === 'n' || x === 'each')) err(w, `"${x}" cannot be removed.`);
+            if (v === 0 && (x === 'n' || x === 'each')) err(w, `"${x}" cannot be 0: a rule that gives nothing is turned off with "off": true.`);
           }
       }
       if (d.times !== undefined && (typeof d.times !== 'number' || d.times <= 0)) err(w, '"times" is a number above 0: the rule gives so many times as much.');
@@ -869,13 +870,22 @@ export function checkTogether(packs: readonly Pack[]): Problem[] {
   for (const p of packs) {
     if (packs.filter((q) => name(q) === name(p)).length > 1 && !owner.has(`pack:${name(p)}`)) err(name(p), `Two packs have the id "${name(p)}". Each pack needs its own id.`);
     owner.set(`pack:${name(p)}`, name(p));
-    for (const [kind, list] of [['card', p.cards], ['thing', p.things], ['rule', p.rules], ['event', p.events], ['ability', p.abilities]] as const)
+    for (const [kind, list] of [['card', p.cards], ['thing', p.things], ['rule', p.rules], ['event', p.events], ['ability', p.abilities], ['law', p.laws]] as const)
       for (const x of list ?? []) {
         const first = owner.get(x.id);
         if (first && first !== name(p)) err(`${name(p)} ${kind} (${x.id})`, `The id "${x.id}" is also used in the pack "${first}". Put each pack's id in front of its ids: "${name(p)}-…".`);
         else owner.set(x.id, name(p));
       }
   }
+  // (laws: a law about a rule or a card names one some pack of the set or the base game has)
+  const ruleIds = new Set([...BASE_RULE_IDS, ...packs.flatMap((p) => (p.rules ?? []).map((r) => r.id)), ...packs.flatMap((p) => (p.laws ?? []).flatMap((l) => (isObj(l.does) && isObj(l.does.add_rule) ? [String((l.does.add_rule as { id?: unknown }).id)] : [])))]);
+  const cardIds = new Set([...BASE_CARD_IDS, ...packs.flatMap((p) => (p.cards ?? []).map((c) => c.id))]);
+  for (const p of packs)
+    for (const l of p.laws ?? []) {
+      if (!isObj(l.does)) continue;
+      if (typeof l.does.rule === 'string' && !ruleIds.has(l.does.rule)) err(`${name(p)} law (${l.id})`, `It changes the rule "${l.does.rule}", which no pack of the set and not the base game has.`);
+      for (const id of ((l.does.cards as { ids?: string[] } | undefined)?.ids ?? [])) if (!cardIds.has(id)) err(`${name(p)} law (${l.id})`, `It names the card "${id}", which no pack of the set and not the base game has.`);
+    }
   // (a shared custom tag: each pack that uses it declares it, and every declaration says the same)
   const tags = new Map<string, { pack: string; on: string; timed: boolean }>();
   for (const p of packs)

@@ -7,6 +7,7 @@ import { CASCADE_LIMIT, RuleBook, type RuleAct, type RuleDef, type RuleOccasion,
 import { chainCycles, checkPack, checkTogether, type Pack } from '../../src/packs/check';
 import { thingEntity } from '../../src/packs/load';
 import { Table } from '../../src/table/game';
+import { grant } from '../../src/season/ledger';
 
 const ARENA = JSON.parse(fs.readFileSync('packs/arena.json', 'utf8')) as Pack;
 const errs = (ps: { level: string; text: string }[]) => ps.filter((x) => x.level === 'error').map((x) => x.text);
@@ -177,26 +178,54 @@ describe('the fighting pit at the table: a win starts the next challenger', () =
     expect(t.realm.w.facts.entity(thingEntity('arena-fighting-pit'))).toBeTruthy();
   });
 
-  it('a loop: after the Red Wolf an open bout comes every season for as long as it is won, and stops the season it is lost', () => {
+  it('a loop: after the Red Wolf an open bout comes every season for as long as it is won, each win harder (a law), and stops the season it is lost', () => {
     const t = new Table(OPTS);
     while (bouts(t).length < 3 && !t.over) play(t, 1);
-    // (each turn of the loop costs the player a cast and a season: four seasons, four open bouts, each won)
-    const magic = t.poolViews().find((p) => p.pool === 'magic')!;
-    const spent = t.spent;
-    play(t, 4);
+    // (each turn of the loop costs the player casts and a season; each win brings a law: one more hopeful)
+    const spent: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const s = t.spent;
+      play(t, 1);
+      spent.push(t.spent - s);
+    }
     const open = bouts(t).slice(3);
-    expect(open.map((x) => x.split('@')[0])).toEqual(Array(4).fill('arena-open-bout:success'));
+    expect(open.map((x) => x.split('@')[0])).toEqual(Array(3).fill('arena-open-bout:success'));
     const at = open.map((x) => Number(x.split('@')[1]));
-    expect(at.map((s, i) => s - at[0] - i)).toEqual([0, 0, 0, 0]);
-    expect(t.spent - spent).toBe(4);
-    // (and each win pays the purse rule 1 Magic: the loop's Magic comes back, the Materials are profit)
-    expect(t.poolViews().find((p) => p.pool === 'magic')!.have).toBe(magic.have + 4 * magic.income);
+    expect(at.map((s, i) => s - at[0] - i)).toEqual([0, 0, 0]);
+    // (CT-30: the open bout was strictly better than leaving it — 1 Magic in, 1 Magic and 2 Materials out. Now a turn
+    // costs one cast more each win: 1, 2, 3)
+    expect(spent).toEqual([1, 2, 3]);
+    expect(t.laws()).toEqual([expect.objectContaining({ name: 'The hopefuls bring a friend', times: 3, until: 'For the rest of the run.' })]);
     // (not cast into: the champion loses, and no hopefuls come the season after)
     play(t, 1, false);
     expect(bouts(t).at(-1)).toMatch(/^arena-open-bout:failure/);
     const n = bouts(t).length;
     play(t, 2);
     expect(bouts(t).length).toBe(n);
+  });
+
+  it('settled now: win, the next challenger, win again — each a move in the same season', () => {
+    const t = new Table(OPTS);
+    for (let s = 0; s < 8 && !t.liveEvents().some((e) => e.template === 'arena-bout-1'); s++) play(t, 1, false);
+    const season = t.season;
+    t.realm.ledger = grant(t.realm.ledger, { magic: 10 });
+    // (bout 1: the fighter beats the drover alone; settled now, bout 2 begins at once)
+    expect(t.resolveNow(t.liveEvents().find((e) => e.template === 'arena-bout-1')!.id)).toBe(true);
+    expect(t.liveEvents().map((e) => e.template)).toEqual(['arena-bout-2']);
+    const b2 = t.liveEvents()[0];
+    t.cast('spell:fire', b2.id);
+    expect(t.resolveNow(b2.id)).toBe(true);
+    const b3 = t.liveEvents().find((e) => e.template === 'arena-bout-3')!;
+    for (let i = 0; i < 3; i++) t.cast('spell:fire', b3.id);
+    t.resolveNow(b3.id);
+    expect(t.season).toBe(season);
+    expect(bouts(t).map((x) => x.split('@')[0])).toEqual(['arena-bout-1:success', 'arena-bout-2:success', 'arena-bout-3:success']);
+    // (and the open bout after the Red Wolf is on the table this season too; a move, replayed, gives the same run)
+    expect(t.liveEvents().map((e) => e.template)).toEqual(['arena-open-bout']);
+    expect(t.moves.filter((m) => m.startsWith('resolve'))).toEqual(['resolve arena-bout-1', 'resolve arena-bout-2', 'resolve arena-bout-3']);
+    // (left alone, an event still waits for the season's end)
+    t.endSeason();
+    expect(bouts(t).at(-1)).toMatch(/^arena-open-bout:failure/);
   });
 
   it('a bout\'s card says what winning will set off, before anything is cast', () => {
