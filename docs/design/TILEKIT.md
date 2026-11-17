@@ -1,6 +1,7 @@
-# TILEKIT — a tile kit for the irregular grid (design note, steps 1 and 2)
+# TILEKIT — a tile kit for the irregular grid (design note, steps 1–3)
 
-(Step 2 — the owner's answers to §12 and what follows from them — is §13–§19 at the end; DECISIONS 2026-11-17.)
+(Step 2 — the owner's answers to §12 and what follows from them — is §13–§19; step 3 — the district grain, traced
+roads and plazas, the roof union, light — is §20–§27 at the end; DECISIONS 2026-11-17.)
 
 Branch `tilekit` (from `archgen-ground`). A sandbox track: nothing here is wired into the game; the owner judges
 sandbox renders (`tilekit.html`). Read with ARCHGEN.md (the parts generator this would sit beside) and BACKLOG
@@ -438,3 +439,180 @@ timber the windows (studs and rails) are 232k of 327k. The near level is for clo
   strip plus its extension (a 2D clip against the neighbours' cells), or proper CSG of the roof solids?
 - **Q10**: a lean-to's pitch is capped to stay under the taller eave; a flat terrace where a long strip lies between
   two taller walls — or prefer a different decomposition there?
+
+---
+
+# Step 3 — the district grain, traced roads and plazas, the roof union, light
+
+The owner (DECISIONS 2026-11-17, step 2's questions): "C sounds good. I might also deliberately trace some irregular
+grid roads through it and mini plazas". Q8–Q10 not answered yet; best guesses used (§25). Code: `grain.ts` (the grid
+on the CPU), `grainplan.ts` (the lab's road plan, step 3's settings), `district.ts` (frontage plots), `roofunion.ts`,
+`tilekit.wgsl` (light, contact shadow), `kit.ts` (slim near level). Stills: `local/tilekit3/` (strip.png, strip.txt).
+
+## 20. The grain: one pairing family per block
+
+The lattice's edges come in three families: 0 along (1, 0) (0°), 1 along (0, 1) (60°), 2 along (−1, 1) (120°); every
+triangle has one edge of each (`FAM`). **Grain g**: every triangle of a region pairs with its neighbour across its
+family-g edge. The rhombi then tile the region regularly; their sides lie on lattice lines of the other two families,
+so those lines (and the rhombi's midlines, after Townscaper's split) are the grid lines, straight across the region.
+
+**Valence rule** (exact, used for every count below): a lattice point has 6 edges; each merged edge at it removes one
+cell, so **valence = 6 − (merged edges at the point)**; edge midpoints and rhombus centres are always 4-valent; a
+lone triangle's centre is 3-valent. Inside one grain region every lattice point has exactly its two family-g edges
+merged: **4-valent**. A region bounded only by lattice lines of families ≠ g is an exact union of g-rhombi (a rhombus
+is cut only by family-g lines), so the pairing is perfect there.
+
+**Where the grain comes from.** The district's triangles (centre within the radius, every corner on a lot) are split
+into **blocks** by the road plan's lines (roads, alleys, seams, §21); a block takes a grain g that **no line bounding
+it runs along** (fewest such edges if it can't), so every bounding road is a grid line on both of its sides. When two
+families qualify (a block bounded by one family, or none), a **direction field** decides: the grain whose axes lie
+closest to the field at the block's middle (the field is a parameter: the town's street direction, a contour, a
+designer's stroke; the lab passes none). A town plan would give each block its streets, so the field matters only
+for blocks with one street or none.
+
+**Seams.** Where two blocks of different grain meet along a lattice line of family r (r different from both grains),
+each side merges one edge at each point of the line: 2 merges, **4-valent — a seam along a line is regular**.
+Irregular vertices appear only where seams **meet or end**, and their valence is set by which sectors round the
+point merge what (§21). **The district's edge**: a district triangle whose grain partner lies outside is left over
+and paired by the hashed rule with its neighbours there; the irregular vertices the grid had everywhere now sit in
+that seam ring (and in the streets).
+
+**The squaring (structural finding).** A grain region's cells are 60°/120° parallelograms, and a regular patch of
+equal parallelograms is a **fixed point** of Townscaper's squaring (each vertex's pulls from its four identical cells
+cancel). Only the boundary moves, and the squaring diffuses inwards: measured on the lab district, 20 steps (the
+GPU's chunk-local setting) leave the grain cells **23.5° median off square** (p90 29°); 1000 steps on the whole window
+(CPU, 0.17 s in the browser) bring them to **5° median** (p90 15°, the p90 from cells round the held plaza); with no
+roads (one grain over the whole district) 1000 steps still leave **9.8°** — one grain shears the whole district one
+way and the town round it holds it back; blocks of different grains square up better (each shears its own way). The
+consequence for the GPU (chunk-local, 20 steps): **the grain alone does not give square cells there**. Options: (a)
+accept 60°/120° houses where the GPU builds; (b) a closed-form pre-map per block — the affine map that squares a
+grain-g rhombus (a shear along the block's main road plus a scale across it), blended out at the block's edge; local,
+GPU-friendly, exact inside a block; (c) a multigrid relaxation. I lean to (b) (Q11).
+
+## 21. Traced roads, alleys, plazas, seams — controlled singularities
+
+The plan is lattice geometry (`RoadPlan`, `grainplan.ts`): **roads** are lattice polylines (each segment along one
+family, any length), open two cells wide (the cells on both sides that have an edge on the line); **alleys** are the
+same, open one cell wide on one side; **plazas** are lattice polygons (the triangles inside, paired by the hashed rule
+among themselves: irregular paving on purpose); **seams** are lattice polylines with no open ground — they only split
+blocks, which is how a singularity is placed away from a road. A road is therefore **a line of the grid by
+construction** (unit test: consecutive chain vertices share a mesh edge, and the chain runs straight on through every
+vertex but its bends).
+
+**Where singularities go** (the valence rule at a lattice point P where lines meet; the sectors between the lines
+round P are blocks with their grains):
+- road straight through, no seam: 4 (nothing happens);
+- crossing of two roads (families r1, r2): all four sectors take grain r3: **4**, after squaring a right-angle cross;
+- T junction (through road r1, branch r2): both sides grain r3: **4**;
+- a road that **bends** by 60° (r → r'): both sides can take the third grain: **4**, and the squaring turns the bend
+  into a right angle. To **keep** the bend's angle the outside needs a different grain from the inside — a seam from
+  P into one side (as in the lab: the east road bends 60° and a seam runs from the bend to the district edge along
+  240°): **5** at P, cells there ≈ 72°, the bend after relaxing ≈ 36° — a bend's angle after relaxing is set by
+  (cells on its inside) × 360°/valence, not by the lattice;
+- three roads meeting at 120° (a Y), or a hexagonal plaza with roads leaving three alternate corners: the three
+  sectors take the three grains; the singular point is the plaza's centre (**3**), its corners stay **4**;
+- a block bounded by all three families has no perfect grain: its leftover triangles along one road pair by hash
+  (a row of 5s and 6s along that road). That is Gauss–Bonnet asking for a singular point; the plan should place it
+  with a seam (the lab's no-seam variant shows the difference).
+
+**The lab plan** (`labPlan`): a hexagonal mini plaza (radius one lattice edge, ~10 m across, ~79 m²); three roads
+leave it from alternate corners (east, north-west, south-west), the east one bending 60° four steps out with a seam
+from the bend; an alley off the east road into the north-east block along that block's other axis. Measured (window
+3 × 3 chunks, 1000 steps): **interior vertices of the district's built ground: 198, all 4-valent**; on its open
+ground 1 × 3 (the plaza centre), 1 × 5 (the kept bend), 89 × 4; on the district's edge ring 3: 1, 5: 15; outside (the
+town grid as it is) 3: 215, 4: 1631, 5: 143, 6: 11. Before the grain the same district had 36 × 3, 23 × 5, 3 × 6 among
+331 interior vertices (19% irregular). Blocks: grains 2, 0, 0, 1, each with zero edges of its own family on its
+boundary. Without the seam: the south block has all three families on its boundary (unit test).
+
+**Relaxation after** (`relax`): Townscaper's squaring over the whole window (its rim pinned); roads **faired** (each
+road vertex pulled half way to the middle of its neighbours along the road each step, junctions and seam points held
+by the squaring alone) so a road is a smooth curve through its bends; **plazas held** where the lattice put them
+(relaxed freely, the plaza's small lone-triangle cells were squeezed to 42% of its area by the larger cells round it;
+held, the cells next to its corners take the strain: squareness p90 7.5° → 15°). Positions are the only thing the
+relaxation changes; the valences are fixed by the pairing.
+
+**Irregularity, softly.** The town still wobbles: the nudge and the squaring bend long grid lines by a few degrees
+(main ranges' worst side bend 2–15°, up to 26° and 58° next to the plaza and the kept bend), the roads curve with the
+fairing, and the irregular vertices are all where a person would expect a change — at the plaza, at a kept bend, at
+the district's edge.
+
+**A town plan as input (later).** Streets become roads and alleys traced on the lattice (a plan's polyline snapped to
+the lattice line of the nearest family, with a seam at each bend whose angle should survive); squares become plazas;
+the plan's lots become plots (frontage along those streets, §22). Snapping a free polyline to lattice lines is the
+missing piece (a staircase where a street runs between families: it needs either a seam pair per step or the
+pre-map of §20 to rotate a block's grain onto the street).
+
+## 22. Plots along the streets (a departure from step 2's agreed "merged lots" — owner to weigh in, Q12)
+
+With the grain, the town's lots (from the old plan, which the traced roads cut through) were the limit: merged lots
+are staircases in the regular grid, so the strips were short (main ranges 10–17 m) and 50 of 87 strips were 1 × 1
+leftovers. Step 3 adds `plots: 'frontage'` (the default in step 3, `'lots'` still there): repeatedly the longest
+a × b strip (b = 3 cells, else 2; a drawn 6–11 cells a seed) whose whole front row faces a street (a traced road,
+plaza, alley or the town's street), over the built ground not yet taken; every other cell joins the nearest main
+range's plot (breadth first) as its back ground: wings behind (odds 0.45, a storey or two lower), yards otherwise. The
+old lots still say which ground is built. Result: 12 plots, 47 strips (step 2: 15 and 112); main ranges 23, 20, 19,
+17 m and eight of 6–11 m; small leftovers are yards.
+
+## 23. The roof union (Q9, best guess: a proper union of solids)
+
+Each strip's roof stands for a solid: under its top over the strip's own cells, the house down to the ground; under
+its overhang ring (and a gable end run on into a crossing roof), a slab as thick as the roof. Every roof's surfaces
+(top, ring, soffit, fascia) lose what lies inside another roof's solid (`unionRoofs`: the solid is a union of convex
+prisms, one per lid triangle; a convex polygon minus a prism is ≤ 5 convex pieces by Sutherland–Hodgman on its five
+half-spaces; a plan hash finds the prisms near a piece). Ties (two surfaces in one plane) go to the roof listed first.
+Rings are now **per sample**: overhang wherever an eave is (so an eave runs on along a side that is only partly
+joined), a joined edge's run-on elsewhere, none against a taller wall. Joined sides get their wall filled up to the
+roof too (set in 2 cm): inside the neighbour it is hidden, where the neighbour's roof is lower it is the step wall
+step 2 left open. The "no slope into a wall" rule and its check are unchanged (≤ 1e-9 on every strip, both themes).
+
+Tests (`roofunion.test.ts`, the cases also drawn in the lab, `?mode=roofs`): crossing gables with a 2 m run-on, a low
+pyramid whose overhang lies over a gable, a narrow strip joined to a wider taller one, two gables on one ridge line —
+for each: nothing kept lies inside another solid (≤ 0.1 mm), the highest kept top equals the highest original top at
+4,000 random plan points (no hole), no two kept tops coincide (no z-fight); without the union the same cases
+interpenetrate (the check fails). In the district: 12 of the roofs cut, nothing inside another (0.1 mm), 8–30 ms CPU.
+
+## 24. Light (the lab; shapes and light are the bar)
+
+`?light=1` (step 3; `?light=0` step 2's): the shade is lit by three terms so it is not one tone — a sky that is bluer
+overhead and on sides facing away from the sun and a warm grey at the horizon on sides facing it; the **sunlit ground**
+bouncing warm light up and sideways (strongest low on a wall, half at 10 m, none on roofs); the **sunlit facades across
+the street** bouncing warm light onto sides facing away from the sun. Baked occlusion weighted 0.85, SSAO unchanged
+(radius 2 m, full strength). A **contact shadow**: a strip 0.75 m out from every ground bay's wall line, mitred like the
+bay, multiplied onto the ground (dark 0.5 at the wall, fading out). A house's colour nudged ±7% in value and a little in
+warmth a plot (`tintJitter`), so two houses with one palette entry still read as two.
+
+## 25. Best guesses for the open questions (step 3)
+
+- **Q8 corner features**: fewer — turrets only at the two sharpest convex main-range corners in the whole district
+  (< 72°), no towers (a 1-cell tower read as a chimney stack), chamfers as before. The grain leaves few sharp corners
+  (2 turrets, 4 chamfers in plaster).
+- **Q9 roofs where strips meet**: the union of solids (§23); `?join=overlap` is step 2's.
+- **Q10 a flat terrace between two taller walls**: kept as an occasional feature (the step-3 district has none in
+  plaster, none in timber).
+
+## 26. Cost (desktop, 960 × 540, MSAA 4, shadow 2048², SSAO; median of 40, shared GPU)
+
+| level | plaster vertices (instanced + world) | GPU ms | timber | GPU ms |
+|---|---|---|---|---|
+| 0 near as step 2 | 348,336 + 21,306 | 1.62 | 312,594 + 23,835 | 1.64 |
+| 0 near slim (step 3) | **150,048** + 21,306 | 1.47 | **209,214** + 23,835 | 1.63 |
+| 1 mid | 108,432 + 21,306 | 1.42 | 112,254 + 23,835 | 1.71 |
+| 2 far | 15,510 + 21,306 | 1.29 | 23,568 + 23,835 | 1.69 |
+
+Slim near (`buildKit(…, slim)`): quoins as their four showing faces unchamfered (24 vertices a block, not ~90),
+window frames, the cross, shutters and timber studs unchamfered — the stepped silhouettes stay, the sub-pixel bevels
+go. Grid (CPU, 1000 relaxation steps): 0.17 s in the browser, 0.4–0.5 s in Node; district build 30–50 ms; union
+8–30 ms. The frame times are dominated by the fixed passes (shadow, SSAO); the vertex cuts barely move them on this
+desktop — the phone is where they matter (not measured here).
+
+## 27. Open (owner)
+
+- **Q11 the squaring on the GPU** (§20): 60°/120° grain cells where only 20 local steps run. (a) accept, (b) a
+  closed-form per-block pre-map (shear + scale that squares the block's rhombi, blended at its edge), (c) multigrid.
+- **Q12 plots**: frontage plots along the traced streets (built, default here) instead of the agreed merged lots —
+  the lots, made by an older plan, cut the regular grain into staircases. Keep frontage when a plan supplies streets?
+- **Q13 the road plan's angles**: roads on lattice lines only (0°, 60°, 120° before squaring; bends kept with a seam
+  and a 5-valent point, or squared to 90° without one). Is that grammar enough for the plans you want, or should a free
+  polyline be snapped with seams (or the §20 pre-map rotating a block's grain onto it)?
+- **Q14 the plaza**: held as the lattice made it (a hexagon of six triangles, irregular paving, a 3-valent centre).
+  Larger plazas, other shapes (a trapezoid on one side of a road keeps the opposite block 2-family), paving pattern?

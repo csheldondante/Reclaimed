@@ -132,7 +132,10 @@ export interface Opening {
 
 /** a wall panel of height H: the face at w = 0 with the opening's hole, reveals, glass or leaf, frame, sill, shutters;
  *  timber rails, braces */
-function wallModule(t: Theme, kind: 'window' | 'door' | 'blank', ground: boolean, lod = 0): ModuleBuilder {
+function wallModule(t: Theme, kind: 'window' | 'door' | 'blank', ground: boolean, lod = 0, slim = false): ModuleBuilder {
+  // (step 3, slim: the near level's small parts — window frames, the cross, shutters, timber studs — unchamfered; a
+  // chamfer on a 6 cm frame is under a pixel at play zoom and was ~2/3 of the box's vertices)
+  const fine = (b: number) => (slim ? 0 : b);
   const H = ground ? t.groundH : t.storeyH;
   const mb = new ModuleBuilder(t.bevel, lod);
   const wallCol: RGB = ground && t.wall.ground ? t.wall.ground : [1, 1, 1];
@@ -181,20 +184,20 @@ function wallModule(t: Theme, kind: 'window' | 'door' | 'blank', ground: boolean
     } else {
       mb.wallRect(L, R, z0, z1, -r, t.window.glass, MAT.glass);
       if (t.window.cross && lod === 0) {
-        mb.box(M(-0.025), M(0.025), -r, -r + 0.05, z0, z1, t.window.frameCol, MAT.trim, 0.01);
-        mb.box(L, R, -r, -r + 0.05, z0 + t.window.h * 0.62 - 0.025, z0 + t.window.h * 0.62 + 0.025, t.window.frameCol, MAT.trim, 0.01);
+        mb.box(M(-0.025), M(0.025), -r, -r + 0.05, z0, z1, t.window.frameCol, MAT.trim, fine(0.01));
+        mb.box(L, R, -r, -r + 0.05, z0 + t.window.h * 0.62 - 0.025, z0 + t.window.h * 0.62 + 0.025, t.window.frameCol, MAT.trim, fine(0.01));
       }
       const f = t.window.frame;
       const fd = t.window.frameDepth;
-      mb.box(M(-ow / 2 - f), L, -0.02, fd, z0, z1 + f, t.window.frameCol, MAT.trim);
-      mb.box(R, M(ow / 2 + f), -0.02, fd, z0, z1 + f, t.window.frameCol, MAT.trim);
-      mb.box(L, R, -0.02, fd, z1, z1 + f, t.window.frameCol, MAT.trim);
+      mb.box(M(-ow / 2 - f), L, -0.02, fd, z0, z1 + f, t.window.frameCol, MAT.trim, fine(t.bevel));
+      mb.box(R, M(ow / 2 + f), -0.02, fd, z0, z1 + f, t.window.frameCol, MAT.trim, fine(t.bevel));
+      mb.box(L, R, -0.02, fd, z1, z1 + f, t.window.frameCol, MAT.trim, fine(t.bevel));
       mb.box(M(-ow / 2 - f - 0.06), M(ow / 2 + f + 0.06), -0.04, t.window.sillDepth, z0 - 0.09, z0 + 0.01, t.window.frameCol, MAT.trim);
       if (t.window.shutters) {
         const sw = ow * 0.5;
         const g = 0.03;
-        mb.box(M(-ow / 2 - f - g - sw), M(-ow / 2 - f - g), 0, 0.045, z0 + 0.02, z1 - 0.02, t.window.shutters, MAT.trim, 0.015);
-        mb.box(M(ow / 2 + f + g), M(ow / 2 + f + g + sw), 0, 0.045, z0 + 0.02, z1 - 0.02, t.window.shutters, MAT.trim, 0.015);
+        mb.box(M(-ow / 2 - f - g - sw), M(-ow / 2 - f - g), 0, 0.045, z0 + 0.02, z1 - 0.02, t.window.shutters, MAT.trim, fine(0.015));
+        mb.box(M(ow / 2 + f + g), M(ow / 2 + f + g + sw), 0, 0.045, z0 + 0.02, z1 - 0.02, t.window.shutters, MAT.trim, fine(0.015));
       }
     }
   }
@@ -215,10 +218,10 @@ function wallModule(t: Theme, kind: 'window' | 'door' | 'blank', ground: boolean
     if (kind === 'window') {
       // a rail under the windows, studs either side of the frame
       const ow = t.window.w + t.window.frame * 2;
-      mb.box(s0, M(-ow / 2), 0, tb.depth, t.window.sill - 0.2, t.window.sill - 0.05, tb.col, MAT.wood, 0.02);
-      mb.box(M(ow / 2), e0, 0, tb.depth, t.window.sill - 0.2, t.window.sill - 0.05, tb.col, MAT.wood, 0.02);
-      mb.box(M(-ow / 2 - 0.16), M(-ow / 2), 0, tb.depth, tb.rail, H - tb.rail, tb.col, MAT.wood, 0.02);
-      mb.box(M(ow / 2), M(ow / 2 + 0.16), 0, tb.depth, tb.rail, H - tb.rail, tb.col, MAT.wood, 0.02);
+      mb.box(s0, M(-ow / 2), 0, tb.depth, t.window.sill - 0.2, t.window.sill - 0.05, tb.col, MAT.wood, fine(0.02));
+      mb.box(M(ow / 2), e0, 0, tb.depth, t.window.sill - 0.2, t.window.sill - 0.05, tb.col, MAT.wood, fine(0.02));
+      mb.box(M(-ow / 2 - 0.16), M(-ow / 2), 0, tb.depth, tb.rail, H - tb.rail, tb.col, MAT.wood, fine(0.02));
+      mb.box(M(ow / 2), M(ow / 2 + 0.16), 0, tb.depth, tb.rail, H - tb.rail, tb.col, MAT.wood, fine(0.02));
     }
     if (kind === 'blank' && tb.braces) {
       // two braces leaning in from the ends (end-anchored and start-anchored: metric whatever the panel's length)
@@ -233,7 +236,7 @@ function wallModule(t: Theme, kind: 'window' | 'door' | 'blank', ground: boolean
 
 /** the corner stack at a panel's end (mirrored by the instance for its start, `phase` 1 there so the two faces of a
  *  corner alternate long and short): quoins, or half a timber post (the two halves make one post on the joint) */
-function cornerModule(t: Theme, ground: boolean, phase: number, lod = 0): ModuleBuilder | null {
+function cornerModule(t: Theme, ground: boolean, phase: number, lod = 0, slim = false): ModuleBuilder | null {
   const H = ground ? t.groundH : t.storeyH;
   const mb = new ModuleBuilder(t.bevel, lod);
   if (lod >= 2) {
@@ -247,7 +250,16 @@ function cornerModule(t: Theme, ground: boolean, phase: number, lod = 0): Module
     let i = (ground ? 0 : 1) + phase;
     while (z + q.h <= H + 1e-3) {
       const len = i % 2 ? q.short : q.long;
-      if (lod >= 1) {
+      if (slim && lod === 0) {
+        // (step 3, slim near: a block's front, inner side, top and bottom unchamfered — its stepped silhouette, not its
+        // bevels, is what reads at play zoom; 24 vertices, not ~90)
+        const za = z + 0.015;
+        const zb = z + q.h - 0.015;
+        mb.quad({ x: E(len), w: q.depth, z: za }, { x: E(0), w: q.depth, z: za }, { x: E(0), w: q.depth, z: zb }, { x: E(len), w: q.depth, z: zb }, [0, 1, 0], q.col, MAT.trim);
+        mb.quad({ x: E(len), w: 0, z: za }, { x: E(len), w: q.depth, z: za }, { x: E(len), w: q.depth, z: zb }, { x: E(len), w: 0, z: zb }, [-1, 0, 0], q.col, MAT.trim);
+        mb.quad({ x: E(len), w: 0, z: zb }, { x: E(len), w: q.depth, z: zb }, { x: E(0), w: q.depth, z: zb }, { x: E(0), w: 0, z: zb }, [0, 0, 1], q.col, MAT.trim);
+        mb.quad({ x: E(0), w: 0, z: za }, { x: E(0), w: q.depth, z: za }, { x: E(len), w: q.depth, z: za }, { x: E(len), w: 0, z: za }, [0, 0, -1], q.col, MAT.trim);
+      } else if (lod >= 1) {
         // mid: a block as the two faces that show — its front and its inner side (the end at the corner lies in the
         // mitre plane, hidden by the other face's block): 12 vertices, not a box's 30 (or ~130 chamfered)
         mb.quad({ x: E(len), w: q.depth, z: z + 0.015 }, { x: E(0), w: q.depth, z: z + 0.015 }, { x: E(0), w: q.depth, z: z + q.h - 0.015 }, { x: E(len), w: q.depth, z: z + q.h - 0.015 }, [0, 1, 0], q.col, MAT.trim);
@@ -266,7 +278,7 @@ function cornerModule(t: Theme, ground: boolean, phase: number, lod = 0): Module
 }
 
 /** the module set of a theme: name → mesh (occlusion baked) */
-export function buildKit(t: Theme, bake = true, lod = 0): ModuleMesh[] {
+export function buildKit(t: Theme, bake = true, lod = 0, slim = false): ModuleMesh[] {
   const out: ModuleMesh[] = [];
   const add = (name: string, mb: ModuleBuilder | null, ground: boolean) => {
     // (an empty module is still listed: the far kit has no quoins, and instances asking for them draw nothing)
@@ -276,12 +288,12 @@ export function buildKit(t: Theme, bake = true, lod = 0): ModuleMesh[] {
   };
   for (const g of [true, false]) {
     const tag = g ? 'ground' : 'upper';
-    add(`wall-window-${tag}`, wallModule(t, 'window', g, lod), g);
-    add(`wall-blank-${tag}`, wallModule(t, 'blank', g, lod), g);
-    add(`corner-${tag}`, cornerModule(t, g, 0, lod), g);
-    add(`corner-${tag}-alt`, cornerModule(t, g, 1, lod), g);
+    add(`wall-window-${tag}`, wallModule(t, 'window', g, lod, slim), g);
+    add(`wall-blank-${tag}`, wallModule(t, 'blank', g, lod, slim), g);
+    add(`corner-${tag}`, cornerModule(t, g, 0, lod, slim), g);
+    add(`corner-${tag}-alt`, cornerModule(t, g, 1, lod, slim), g);
   }
-  add('wall-door', wallModule(t, 'door', true, lod), true);
+  add('wall-door', wallModule(t, 'door', true, lod, slim), true);
   // (far: each profile reduced to its bounding step — out, up, in)
   const prof = (pr: Profile): Profile => {
     if (lod < 2) return pr;

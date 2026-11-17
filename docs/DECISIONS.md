@@ -3802,3 +3802,13 @@ How they answer the draft's open points (`docs/handoff/DESIGN_18_21_DRAFT.md`):
 - Also from the owner: occupancy on cells and walls swept along edges (step 1) not objected to; CPU generation
   "Acceptable for now and if we find approaches we really like maybe I can help port them to GPU."; "I liked the
   screenspace AO […] and feel it really helped."
+
+## 2026-11-17 — tile kit, step 2's questions (branch `tilekit`, docs/design/TILEKIT.md §19, §20–§27)
+
+- Q7, the district grain (option c: inside built lots pair lattice triangles across one edge family so every lattice
+  point there is 4-valent), verbatim: "C sounds good. I might also deliberately trace some irregular grid roads
+  through it and mini plazas" → step 3: a grain per block, roads/alleys/plazas traced as lattice geometry the grid
+  conforms to, singularities placed by the plan (TILEKIT §20–§21).
+- Q8 (corner features), Q9 (roofs where strips meet), Q10 (a flat terrace between two taller walls): not answered yet.
+  Orchestrator's best guesses used in step 3, switchable: Q8 fewer (at most two turrets in a district, no towers); Q9 a
+  proper union of roof solids (`?join=overlap` is step 2's); Q10 kept as an occasional feature.

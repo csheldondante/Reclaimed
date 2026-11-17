@@ -17,6 +17,9 @@ struct View {
   ctlD: vec4<f32>,
   /** x shadows on, y baked occlusion on, z ground z, w debug (1 normals, 2 baked occlusion alone) */
   misc: vec4<f32>,
+  /** (step 3) x the light: 0 step 2's, 1 step 3's (sky by direction, warm ground and facade bounce); y bounce strength,
+   *  z sky strength, w the baked occlusion's weight */
+  light: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> V: View;
@@ -129,6 +132,14 @@ fn vsMain(v: VIn, @builtin(instance_index) ii: u32) -> VO {
   return o;
 }
 
+/** (step 3) the contact shadow: a strip on the ground along each ground-floor wall, multiplied onto what is drawn
+ *  (blend dst × src), dark at the wall (its vertices' occlusion) fading out */
+@fragment
+fn fsDecal(in: VO) -> @location(0) vec4<f32> {
+  let k = smoothstep(0.0, 1.0, in.ao);
+  return vec4<f32>(vec3<f32>(mix(0.5, 1.0, k)), 1.0);
+}
+
 @vertex
 fn vsShadow(v: VIn, @builtin(instance_index) ii: u32) -> @builtin(position) vec4<f32> {
   return V.sunVP * vec4<f32>(place(v, ii).pos, 1.0);
@@ -171,11 +182,31 @@ fn fsMain(in: VO, @builtin(front_facing) ff: bool) -> @location(0) vec4<f32> {
   let L = normalize(V.sun.xyz);
   let ndl = max(dot(n, L), 0.0) * shadowAt(in.wpos, n);
   let sunC = vec3<f32>(1.0, 0.78, 0.62) * V.sun.w * 1.25;
-  let sky = mix(vec3<f32>(0.2, 0.3, 0.36), vec3<f32>(0.34, 0.48, 0.6), n.z * 0.5 + 0.5);
-  let bounce = vec3<f32>(0.16, 0.11, 0.08) * max(-n.z, 0.0);
   let above = max(in.wpos.z - V.misc.z, 0.0);
-  let foot = mix(0.6, 1.0, smoothstep(0.0, 4.0, above));
-  var lit = col * (sunC * ndl + (sky * foot + bounce) * 0.9 * in.ao);
+  var lit: vec3<f32>;
+  if (V.light.x < 0.5) {
+    let sky = mix(vec3<f32>(0.2, 0.3, 0.36), vec3<f32>(0.34, 0.48, 0.6), n.z * 0.5 + 0.5);
+    let bounce = vec3<f32>(0.16, 0.11, 0.08) * max(-n.z, 0.0);
+    let foot = mix(0.6, 1.0, smoothstep(0.0, 4.0, above));
+    lit = col * (sunC * ndl + (sky * foot + bounce) * 0.9 * in.ao);
+  } else {
+    // (step 3) the shade is lit by three things, so it is not one tone: the sky (bluer overhead and on sides facing
+    // away from the sun, a warmer grey at the horizon on sides facing it), the sunlit ground below (warm, strongest
+    // low on a wall, nothing on a roof), and the sunlit facades across the street (warm, on sides facing away)
+    let side = 1.0 - abs(n.z);
+    let away = (0.5 - 0.5 * dot(normalize(n.xy + vec2<f32>(1e-4)), normalize(L.xy + vec2<f32>(1e-4)))) * side;
+    let skyUp = vec3<f32>(0.33, 0.45, 0.58);
+    let skyHor = vec3<f32>(0.45, 0.45, 0.45);
+    var sky = mix(skyHor, skyUp, clamp(n.z * 0.6 + 0.4, 0.0, 1.0));
+    sky = mix(sky, sky * vec3<f32>(0.88, 0.97, 1.1), away);
+    let ground = vec3<f32>(0.62, 0.5, 0.38);
+    let low = mix(1.0, 0.5, smoothstep(0.0, 10.0, above));
+    let bounce = ground * sunC * max(L.z, 0.0) * V.light.y * clamp(0.5 - 0.5 * n.z, 0.0, 1.0) * low;
+    let facade = vec3<f32>(0.62, 0.5, 0.4) * sunC * V.light.y * 0.3 * away;
+    let foot = mix(0.72, 1.0, smoothstep(0.0, 3.0, above));
+    let ao = mix(1.0, in.ao, V.light.w);
+    lit = col * (sunC * ndl + (sky * V.light.z * foot + bounce + facade) * ao);
+  }
   if (in.mat == 2u) {
     // glass: dark, the sky in it by the view's fresnel (a fixed sky tone)
     let fr = 0.25 + 0.5 * pow(1.0 - abs(n.z), 3.0);

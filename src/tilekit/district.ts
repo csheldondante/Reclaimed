@@ -7,10 +7,11 @@
 import { centroid, cornerOf, P, walls, type GridMesh, type Panel } from './grid';
 import { bays, chamfer, interiorAt, loopsOf, offsetLoop, straighten, type Bay, type LoopPt, type V2 } from './facade';
 import { planRoof, roofGrid, sideEdges, slopeIntoWall, type RoofGrid, type RoofParams, type SideClass, type StripSides } from './roof';
-import { decompose, stripCells, type Strip } from './strips';
+import { decompose, patch, stripCells, type Strip } from './strips';
 import { controlGrid, hull, roofs as fieldRoofs, storeyH, storeyZ, wtri, wv, type ControlGrid } from './block';
 import { MAT } from './kit';
 import { packSeg } from './sweep';
+import { unionRoofs, worstInside, type Lid, type RoofSolidIn } from './roofunion';
 import type { RGB, Theme } from './theme';
 
 const NONE = 0xffffffff;
@@ -53,7 +54,85 @@ export interface DistrictOpts {
   plotCells: number;
   /** odds an adjacent pair of plots gets an alley between */
   alleyOdds: number;
+  /** (step 3) the strips' longest and widest (cells); step 2: 7 × 2 */
+  maxA?: number;
+  maxB?: number;
+  /** (step 3) towers in the whole district at most (step 2: one a plot, no cap) */
+  towers?: number;
+  /** (step 3) arches at most (step 2: 2); with a traced alley they stand where it meets a road */
+  arches?: number;
+  /** (step 3) odds a small leftover strip (≤ 2 cells) is a one-storey annex rather than a yard (step 2: 0.25) */
+  annexOdds?: number;
+  /** (step 3) odds a strip of ≥ 3 cells behind the main range is a wing rather than a yard (step 2: 1) */
+  wingOdds?: number;
+  /** (step 3) 'lots' (step 2: the town's lots merged into plots) or 'frontage' (plots laid along the streets: a main
+   *  range `depth` cells deep and `minA`–`maxA` long fronting a street, the ground behind it its yard and wings) */
+  plots?: 'lots' | 'frontage';
+  depth?: number;
+  minA?: number;
 }
+
+/** (step 3) plots along the streets: repeatedly the longest a × b strip (b = depth, else less; a up to a length drawn
+ *  between minA and maxA for its seed) whose bottom row fronts a street all along (`front`), over the cells `ok` not
+ *  yet taken; then every other cell joins the plot of the nearest main range (through cells, breadth first) */
+export function frontagePlots(m: GridMesh, ok: Uint8Array, front: (c: number, k: number) => boolean, seed: number, depth: number, minA: number, maxA: number) {
+  const plotOf = new Int32Array(m.nc).fill(-1);
+  const mains: Strip[] = [];
+  for (;;) {
+    let best: Strip | null = null;
+    let bestScore = 0;
+    for (let c = 0; c < m.nc; c++) {
+      if (!ok[c] || plotOf[c] >= 0) continue;
+      for (let k = 0; k < 4; k++) {
+        if (!front(c, k)) continue;
+        const L = minA + Math.floor(hash(c * 7 + k * 3 + seed * 11) * (maxA - minA + 1));
+        for (let b = depth; b >= 2; b--) {
+          let got: Strip | null = null;
+          for (let a = L; a >= 3; a--) {
+            const s = patch(m, { c, k }, a, b, (x) => ok[x] === 1 && plotOf[x] < 0);
+            if (s && s.at[0].every((f) => front(f.c, f.k))) {
+              got = s;
+              break;
+            }
+          }
+          if (got) {
+            const score = got.a * got.b + 0.5 * got.b;
+            if (score > bestScore) {
+              bestScore = score;
+              best = got;
+            }
+            break;
+          }
+        }
+      }
+    }
+    if (!best) break;
+    const id = mains.length;
+    mains.push(best);
+    for (const c of stripCells(best)) plotOf[c] = id;
+  }
+  // the rest: breadth first from the main ranges
+  let frontier: number[] = [];
+  for (let c = 0; c < m.nc; c++) if (plotOf[c] >= 0) frontier.push(c);
+  while (frontier.length) {
+    const next: number[] = [];
+    for (const c of frontier) {
+      for (let k = 0; k < 4; k++) {
+        const x = m.across[c * 4 + k];
+        if (x < 0 || !ok[x] || plotOf[x] >= 0) continue;
+        plotOf[x] = plotOf[c];
+        next.push(x);
+      }
+    }
+    frontier = next;
+  }
+  return { mains, plotOf };
+}
+
+/** a cell of open ground the road plan made (grain.ts): 1 road, 2 plaza, 3 alley */
+const openOf = (m: GridMesh, c: number) => (m.open ? m.open[c] : 0);
+/** a street for doors and the ground: no lot, a corner in no lot, or a traced road or plaza */
+export const isStreet = (m: GridMesh, c: number) => m.lot![c] === NONE || m.cls![c] === 3 || openOf(m, c) === 1 || openOf(m, c) === 2;
 
 /** lots → plots → alleys → strips → storeys */
 export function planDistrict(m: GridMesh, t: Theme, o: DistrictOpts): DistrictPlan {
@@ -64,7 +143,7 @@ export function planDistrict(m: GridMesh, t: Theme, o: DistrictOpts): DistrictPl
   for (let c = 0; c < m.nc; c++) {
     const [x, y] = centroid(m, c);
     if (Math.hypot(x - o.anchor[0], y - o.anchor[1]) > o.radius) continue;
-    if (lotOf[c] === NONE || (m.cls[c] !== 1 && m.cls[c] !== 2)) continue;
+    if (lotOf[c] === NONE || (m.cls[c] !== 1 && m.cls[c] !== 2) || openOf(m, c)) continue;
     near[c] = 1;
     const l = lotOf[c];
     if (!lotCells.has(l)) lotCells.set(l, []);
@@ -104,6 +183,12 @@ export function planDistrict(m: GridMesh, t: Theme, o: DistrictOpts): DistrictPl
   for (const [l, cs] of lotCells) for (const c of cs) plot[c] = plotOfLot.get(l)!;
   // alleys: for some adjacent pairs, the cells of one plot along the other become an alley
   const alley = new Uint8Array(m.nc);
+  // (step 3) the traced alleys of the road plan
+  for (let c = 0; c < m.nc; c++) {
+    if (openOf(m, c) !== 3) continue;
+    const [x, y] = centroid(m, c);
+    if (Math.hypot(x - o.anchor[0], y - o.anchor[1]) <= o.radius + 6) alley[c] = 1;
+  }
   const pairs = new Set<string>();
   for (let c = 0; c < m.nc; c++) {
     if (plot[c] < 0) continue;
@@ -137,6 +222,22 @@ export function planDistrict(m: GridMesh, t: Theme, o: DistrictOpts): DistrictPl
     }
     size.set(cut, (size.get(cut) ?? 0) - take.length);
   }
+  // (step 3, ?plots=frontage) plots laid along the streets instead of merged lots: each a main range fronting a road,
+  // plaza, alley or town street (an a × depth strip whose whole front faces it), then the ground behind it
+  let mains: Strip[] | null = null;
+  if (o.plots === 'frontage') {
+    const ok = new Uint8Array(m.nc);
+    for (let c = 0; c < m.nc; c++) ok[c] = plot[c] >= 0 ? 1 : 0;
+    const front = (c: number, k: number) => {
+      const x = m.across[c * 4 + k];
+      return x < 0 || (!ok[x] && (isStreet(m, x) || alley[x] === 1 || openOf(m, x) > 0));
+    };
+    const fp = frontagePlots(m, ok, front, o.seed, o.depth ?? 3, o.minA ?? 5, o.maxA ?? 10);
+    plot.fill(-1);
+    for (let c = 0; c < m.nc; c++) if (ok[c]) plot[c] = fp.plotOf[c];
+    plots = fp.mains.length;
+    mains = fp.mains;
+  }
   // strips and roles a plot
   const tops = new Uint8Array(m.nc);
   const lo = new Uint8Array(m.nc);
@@ -144,13 +245,19 @@ export function planDistrict(m: GridMesh, t: Theme, o: DistrictOpts): DistrictPl
   const strips: Strip[] = [];
   const stripPlot: number[] = [];
   const role: Role[] = [];
+  let towers = 0;
   for (let p = 0; p < plots; p++) {
     const cs: number[] = [];
     for (let c = 0; c < m.nc; c++) if (plot[c] === p) cs.push(c);
     if (!cs.length) continue;
     // (bendCost: a strip whose sides bend 40° at an irregular vertex costs ~5 cells — long 1-wide strips that snake
     // round irregular vertices made worm roofs in the first look, DEVLOG)
-    const ss = decompose(m, cs, { maxA: 7, maxB: 2, bendCost: 0.08 });
+    let ss: Strip[];
+    if (mains) {
+      const main = mains[p];
+      const inMain = new Set(stripCells(main));
+      ss = [main, ...decompose(m, cs.filter((c) => !inMain.has(c)), { maxA: o.maxA ?? 7, maxB: o.maxB ?? 2, bendCost: 0.08 })];
+    } else ss = decompose(m, cs, { maxA: o.maxA ?? 7, maxB: o.maxB ?? 2, bendCost: 0.08 });
     const H = t.storeys.lo + Math.floor(hash(p * 97 + o.seed) * (t.storeys.hi - t.storeys.lo + 1));
     let tower = false;
     ss.forEach((s, i) => {
@@ -162,14 +269,15 @@ export function planDistrict(m: GridMesh, t: Theme, o: DistrictOpts): DistrictPl
         r = 'main';
         // (a plot whose biggest strip is one or two cells is a cottage, not a tower)
         st = n <= 2 ? Math.min(H, 2) : H;
-      } else if (n <= 2 && !tower && cs.length >= 20 && h < 0.3) {
+      } else if (n <= 2 && !tower && cs.length >= 20 && h < 0.3 && towers < (o.towers ?? Infinity)) {
         r = 'tower';
         st = H + 1 + (h < 0.25 ? 1 : 0);
         tower = true;
-      } else if (n >= 3) {
+        towers++;
+      } else if (n >= 3 && h < (o.wingOdds ?? 1)) {
         r = 'wing';
         st = h < 0.2 ? H : Math.max(1, H - 1 - (h > 0.75 ? 1 : 0));
-      } else if (h < 0.75) {
+      } else if (h >= (o.annexOdds ?? 0.25)) {
         // (small leftovers mostly stay open: yards and gardens between the masses, so a house reads as range + wing)
         r = 'yard';
         st = 0;
@@ -197,12 +305,25 @@ export function planDistrict(m: GridMesh, t: Theme, o: DistrictOpts): DistrictPl
       const a = m.across[c * 4 + k];
       const b = m.across[c * 4 + k + 2];
       if (a < 0 || b < 0 || tops[a] < 2 || tops[b] < 2 || lo[a] || lo[b]) continue;
-      cand.push({ c, k, h: hash(c * 13 + k + o.seed) });
+      // (step 3: a traced alley's arch stands as near its mouth as two houses allow — ordered by the distance to the
+      // nearest road or plaza cell; the cell right at the mouth often has a yard on one side)
+      let h = hash(c * 13 + k + o.seed);
+      if (m.open && openOf(m, c) === 3) {
+        const [x0, y0] = centroid(m, c);
+        let d = Infinity;
+        for (let x = 0; x < m.nc; x++) {
+          if (openOf(m, x) !== 1 && openOf(m, x) !== 2) continue;
+          const [x1, y1] = centroid(m, x);
+          d = Math.min(d, Math.hypot(x1 - x0, y1 - y0));
+        }
+        h = d;
+      }
+      cand.push({ c, k, h });
     }
   }
   cand.sort((x, y) => x.h - y.h);
   for (const a of cand) {
-    if (arches.length >= 2) break;
+    if (arches.length >= (o.arches ?? 2)) break;
     // not next to another arch
     if (arches.some((b) => [0, 1, 2, 3].some((k) => m.across[b.c * 4 + k] === a.c))) continue;
     arches.push({ c: a.c, k: a.k });
@@ -220,6 +341,10 @@ export function planDistrict(m: GridMesh, t: Theme, o: DistrictOpts): DistrictPl
 export interface DistrictBuild {
   inst: Map<string, number[]>;
   world: number[];
+  /** (step 3) contact-shadow strips (world vertices, multiplied onto the ground) */
+  decal: number[];
+  /** (step 3) where the roof union cut a roof (for the lab's shots) */
+  cuts: [number, number, number][];
   ctl: ControlGrid;
   centre: [number, number];
   height: number;
@@ -242,6 +367,17 @@ export interface BuildOpts {
   groundR: number;
   /** override the theme's setback (metres) */
   setback?: number;
+  /** (step 3) corner turrets in the whole district at most (step 2: one a plot's main range, no cap) */
+  turrets?: number;
+  /** (step 3) roofs where strips meet: 'union' (each roof clipped to what is not inside another's solid) or
+   *  'overlap' (step 2: drawn whole, overlapping) */
+  roofJoin?: 'union' | 'overlap';
+  /** (step 3) a contact shadow strip on the ground along every ground-floor wall */
+  contact?: boolean;
+  /** (step 3) a house's colour nudged by up to this fraction in value (and 0.6 of it in warmth) */
+  tintJitter?: number;
+  /** (tests) measure the union: stats.unionInside */
+  checkUnion?: boolean;
 }
 
 /** a joint is a corner feature's (no quoins, no chamfer) when within this of a turret's centre */
@@ -263,7 +399,16 @@ export function buildDistrict(m: GridMesh, t: Theme, plan: DistrictPlan, o: Buil
     return setback - t.facade.jetty * Math.min(steps, 2);
   };
   const plotAt = (c: number) => plot[c] >= 0 ? plot[c] : plan.stripOf[c] >= 0 ? plan.stripPlot[plan.stripOf[c]] : -1;
-  const tintOf = (p: number): RGB => t.wall.palette[Math.floor(hash(p * 7 + 3) * t.wall.palette.length)];
+  // (step 3: a house's colour from the theme's palette, nudged a little in value and warmth by `tintJitter`, so
+  // neighbours with the same palette entry still read as two houses)
+  const tintOf = (p: number): RGB => {
+    const c = t.wall.palette[Math.floor(hash(p * 7 + 3) * t.wall.palette.length)];
+    const j = o.tintJitter ?? 0;
+    if (!j) return c;
+    const v = 1 + (hash(p * 31 + 11) - 0.5) * 2 * j;
+    const w = (hash(p * 53 + 17) - 0.5) * 2 * j * 0.6;
+    return [Math.min(1, c[0] * v * (1 + w)), Math.min(1, c[1] * v), Math.min(1, c[2] * v * (1 - w))];
+  };
   const roofCol = (p: number): RGB => t.roof.palette[Math.floor(hash(p * 13 + 5) * t.roof.palette.length)];
   const inst = new Map<string, number[]>();
   const put = (name: string) => {
@@ -308,6 +453,9 @@ export function buildDistrict(m: GridMesh, t: Theme, plan: DistrictPlan, o: Buil
       }
     });
     for (const [pl, b] of best) turrets.push({ ...b, plot: pl });
+    // (step 3, Q8 best guess: a turret is an event, not a pattern — the sharpest few in the whole district)
+    turrets.sort((a, b) => a.ang - b.ang);
+    if (o.turrets !== undefined) turrets.length = Math.min(turrets.length, o.turrets);
   }
   const nearTurret = (p: V2) => turrets.some((tu) => Math.hypot(p[0] - tu.p[0], p[1] - tu.p[1]) < NEAR_TURRET + t.facade.jetty * 2);
 
@@ -324,6 +472,25 @@ export function buildDistrict(m: GridMesh, t: Theme, plan: DistrictPlan, o: Buil
     st.runs = (st.runs as number) + new Set(bs.map((b) => b.run)).size;
     for (const b of bs) allBays.push({ bay: b, panel: panels[b.seg] });
   });
+  // (step 3) contact shadows: a strip 0.75 m out from every ground bay's wall line, mitred like the bay so the strips
+  // close round corners; occlusion 0 at the wall, 1 at its outer edge (drawn multiplied onto the ground)
+  const decal: number[] = [];
+  if (o.contact) {
+    const W = 0.75;
+    const z = 0.012;
+    const dv = (p: V2, ao: number) => decal.push(p[0], p[1], z, 4, 0, 0, 1, ao, 1, 1, 1, MAT.ground);
+    for (const { bay, panel } of allBays) {
+      if (panel.s !== 0) continue;
+      const a2: V2 = [bay.a[0] + bay.ma[0] * W, bay.a[1] + bay.ma[1] * W];
+      const b2: V2 = [bay.b[0] + bay.mb[0] * W, bay.b[1] + bay.mb[1] * W];
+      dv(bay.a, 0);
+      dv(bay.b, 0);
+      dv(b2, 1);
+      dv(bay.a, 0);
+      dv(b2, 1);
+      dv(a2, 1);
+    }
+  }
   // a door a plot: its ground bay facing the street most (a street cell: no lot, or one touching a street; an alley)
   const door = new Map<number, { i: number; score: number }>();
   const minDoor = t.door.w + 2 * t.door.frame + 0.4;
@@ -331,7 +498,7 @@ export function buildDistrict(m: GridMesh, t: Theme, plan: DistrictPlan, o: Buil
     if (panel.s !== 0 || bay.len < minDoor) return;
     const pl = plotAt(panel.cell);
     const x = panel.across;
-    const street = x < 0 || m.lot![x] === NONE || m.cls![x] === 3 ? 2 : plan.alley[x] ? 1.5 : 0;
+    const street = x < 0 || isStreet(m, x) ? 2 : plan.alley[x] ? 1.5 : 0;
     const main = plan.stripOf[panel.cell] >= 0 && plan.role[plan.stripOf[panel.cell]] === 'main' ? 1 : 0;
     const score = street + main + (bay.i === Math.floor(bay.n / 2) ? 0.5 : 0) + hash(i) * 0.1;
     const cur = door.get(pl);
@@ -380,6 +547,7 @@ export function buildDistrict(m: GridMesh, t: Theme, plan: DistrictPlan, o: Buil
   st.bays = allBays.length;
 
   // ---- roofs ----
+  const cuts: [number, number, number][] = [];
   const R: RoofParams = { pitch: t.roof.pitch, towerPitch: t.roof.towerPitch, overhang: t.roof.overhang, thickness: t.roof.thickness, hip: t.roof.hip, clearance: 0.35 };
   let roofRule = -Infinity;
   const kinds: Record<string, number> = {};
@@ -458,9 +626,27 @@ export function buildDistrict(m: GridMesh, t: Theme, plan: DistrictPlan, o: Buil
         sides.extend[sd] = Math.min(2.7, rise / Math.max(ny.g.plan.pitch, 0.2));
       }
     }
+    const union = o.roofJoin === 'union';
+    const solids: RoofSolidIn[] = [];
     for (const x of grids) {
       const pl = plan.stripPlot[x.si];
-      meshRoof(x.g, x.sides, x.eave, R, roofCol(pl), t.roof.fascia, tintOf(pl), world);
+      if (!union) {
+        meshRoof(x.g, x.sides, x.eave, R, roofCol(pl), t.roof.fascia, tintOf(pl), world);
+        continue;
+      }
+      const own: number[] = [];
+      const lids: Lid[] = [];
+      meshRoof(x.g, x.sides, x.eave, R, roofCol(pl), t.roof.fascia, tintOf(pl), own, true, world, lids);
+      solids.push({ verts: own, lids });
+    }
+    if (union) {
+      const t0 = performance.now();
+      const u = unionRoofs(solids, world);
+      st.unionMs = +(performance.now() - t0).toFixed(1);
+      st.unionTris = `${u.trisIn} → ${u.trisOut}, ${u.clipped} roofs cut`;
+      cuts.push(...u.cuts);
+      // (tests: the deepest any kept roof surface lies inside another roof's solid, metres; ≤ ~0 when the union holds)
+      if (o.checkUnion) st.unionInside = +worstInside(solids, world, u.ranges).toFixed(5);
     }
   }
   st.roofs = Object.entries(kinds).map(([k, v]) => `${k} ${v}`).join(', ');
@@ -499,7 +685,7 @@ export function buildDistrict(m: GridMesh, t: Theme, plan: DistrictPlan, o: Buil
   for (const pts of byPlot.values()) supports.push(...hull(pts));
   const height = storeyZ(t, maxTop) + t.roof.cap + 2;
   const ctl = controlGrid(m, tops, [cx, cy], height, t, { street: [1, 0], sag: o.sag, wonk: o.wonk, groundR: o.groundR }, supports);
-  return { inst, world, ctl, centre: [cx, cy], height, stats: st, roofRule, plan, bays: allBays, turrets: turrets.map((tu) => [tu.p[0], tu.p[1]]) };
+  return { cuts, inst, world, decal, ctl, centre: [cx, cy], height, stats: st, roofRule, plan, bays: allBays, turrets: turrets.map((tu) => [tu.p[0], tu.p[1]]) };
 }
 
 type V3 = [number, number, number];
@@ -507,18 +693,22 @@ type V3 = [number, number, number];
 /** a strip roof's mesh: the sampled surface plus an overhang ring (eave sides: the overhang; a joined gable end: its
  *  extension; else none), fascia and soffit under the ring, and the wall filled up to the roof on free sides (gable
  *  ends, a lean-to's ends) */
-export function meshRoof(g: RoofGrid, sides: StripSides, eave: number, R: RoofParams, col: RGB, fascia: RGB, wallCol: RGB, out: number[]) {
+export function meshRoof(g: RoofGrid, sides: StripSides, eave: number, R: RoofParams, col: RGB, fascia: RGB, wallCol: RGB, out: number[], union = false, fillOut: number[] = out, lids?: Lid[]) {
   const { I, J } = g;
   const idx = (i: number, j: number) => j * (I + 1) + i;
   const sideJ0 = g.side[idx(Math.min(1, I), 0)];
   const sideJJ = g.side[idx(Math.min(1, I), J)];
   const sideI0 = g.side[idx(0, Math.min(1, J))];
   const sideII = g.side[idx(I, Math.min(1, J))];
-  const ring = (sd: number) => (sides.cls[sd].every((c) => c === 'eave') ? R.overhang : sides.extend[sd]);
-  const oJ0 = ring(sideJ0);
-  const oJJ = ring(sideJJ);
-  const oI0 = ring(sideI0);
-  const oII = ring(sideII);
+  // (step 2: one ring a side — the overhang only where the whole side is eave; step 3 with the union: a ring a sample —
+  // the overhang wherever an eave is, a joined edge's extension elsewhere, none against a taller wall — the union
+  // removes what runs into a neighbour)
+  const ringSide = (sd: number) => (sides.cls[sd].every((c) => c === 'eave') ? R.overhang : sides.extend[sd]);
+  const ringAt = (sd: number, bi: number, bj: number) => {
+    if (!union) return ringSide(sd);
+    const e = g.edge[idx(bi, bj)];
+    return e === 'eave' ? R.overhang : e === 'join' ? sides.extend[sd] : 0;
+  };
   const ci = (i: number) => Math.max(0, Math.min(I, i));
   const cj = (j: number) => Math.max(0, Math.min(J, j));
   const P2 = (i: number, j: number) => g.p[idx(ci(i), cj(j))];
@@ -561,7 +751,7 @@ export function meshRoof(g: RoofGrid, sides: StripSides, eave: number, R: RoofPa
       const hs: number[] = [];
       if (j < 0 || j > J) {
         const dj = j < 0 ? -1 : 1;
-        const o = j < 0 ? oJ0 : oJJ;
+        const o = ringAt(j < 0 ? sideJ0 : sideJJ, bi, bj);
         const n = outDir(bi, bj, 0, dj);
         x += n[0] * o;
         y += n[1] * o;
@@ -569,7 +759,7 @@ export function meshRoof(g: RoofGrid, sides: StripSides, eave: number, R: RoofPa
       }
       if (i < 0 || i > I) {
         const di = i < 0 ? -1 : 1;
-        const o = i < 0 ? oI0 : oII;
+        const o = ringAt(i < 0 ? sideI0 : sideII, bi, bj);
         const n = outDir(bi, bj, di, 0);
         x += n[0] * o;
         y += n[1] * o;
@@ -597,7 +787,11 @@ export function meshRoof(g: RoofGrid, sides: StripSides, eave: number, R: RoofPa
       // (a min-of-planes roof is concave: the diagonal whose ends average higher is the closer fit — ridges and hips)
       const diagAC = hgt[a] + hgt[c] >= hgt[b] + hgt[d];
       const q = diagAC ? [[a, b, c], [a, c, d]] : [[b, c, d], [b, d, a]];
-      for (const [x, y, z] of q) tri(v3(x), v3(y), v3(z), col, MAT.roof, true);
+      for (const [x, y, z] of q) {
+        tri(v3(x), v3(y), v3(z), col, MAT.roof, true);
+        // (the union's solid: the house under the roof over its own cells, a slab under the ring)
+        if (lids && area(v3(x), v3(y), v3(z)) >= 1e-5) lids.push({ t: [v3(x), v3(y), v3(z)], depth: isRing(i, j) ? R.thickness : Infinity });
+      }
       if (isRing(i, j) && (i < 0 || j < 0 || i + 1 > I || j + 1 > J)) {
         // the soffit: the ring's underside
         for (const [x, y, z] of q) {
@@ -631,24 +825,30 @@ export function meshRoof(g: RoofGrid, sides: StripSides, eave: number, R: RoofPa
     for (const p of [A, B, B2, A, B2, A2]) wv(out, p, n, fascia, MAT.trim);
   }
   // the wall up to the roof on free sides (gable ends, a lean-to's ends): from the eave to the roof's underside
+  // (step 3 with the union: on joined sides too, set in 2 cm — inside the neighbour's roof it is hidden; where the
+  // neighbour's roof is lower it is the step wall between the two, which step 2 left open)
   const fill = (pts: [number, number][], sd: number) => {
-    if (!sides.cls[sd].every((c) => c === 'eave')) return;
+    if (!union && !sides.cls[sd].every((c) => c === 'eave')) return;
     for (let k = 0; k + 1 < pts.length; k++) {
       const [ia, ja] = pts[k];
       const [ib, jb] = pts[k + 1];
+      const ea = g.edge[idx(ia, ja)];
+      const eb = g.edge[idx(ib, jb)];
+      if (union && (ea === 'abut' || eb === 'abut')) continue;
       const ha = H2(ia, ja);
       const hb = H2(ib, jb);
       if (ha < 0.02 && hb < 0.02) continue;
-      const pa = P2(ia, ja);
-      const pb = P2(ib, jb);
-      const A: V3 = [pa[0], pa[1], eave];
-      const B: V3 = [pb[0], pb[1], eave];
-      const C: V3 = [pb[0], pb[1], eave + hb];
-      const D: V3 = [pa[0], pa[1], eave + ha];
       const di = ia === ib ? (ia === 0 ? -1 : 1) : 0;
       const dj = ja === jb ? (ja === 0 ? -1 : 1) : 0;
       const n = outDir(ia, ja, di, dj);
-      for (const p of [A, B, C, A, C, D]) wv(out, p, [n[0], n[1], 0], wallCol, MAT.wall);
+      const inset = union && (ea === 'join' || eb === 'join') ? 0.02 : 0;
+      const pa = P2(ia, ja);
+      const pb = P2(ib, jb);
+      const A: V3 = [pa[0] - n[0] * inset, pa[1] - n[1] * inset, eave];
+      const B: V3 = [pb[0] - n[0] * inset, pb[1] - n[1] * inset, eave];
+      const C: V3 = [B[0], B[1], eave + hb];
+      const D: V3 = [A[0], A[1], eave + ha];
+      for (const p of [A, B, C, A, C, D]) wv(fillOut, p, [n[0], n[1], 0], wallCol, MAT.wall);
     }
   };
   const row = (j: number) => Array.from({ length: I + 1 }, (_, i) => [i, j] as [number, number]);
@@ -814,6 +1014,8 @@ export function planMesh(m: GridMesh, plan: DistrictPlan, c: V2, R: number): num
       const k = r === 'main' ? 1 : r === 'tower' ? 0.55 : r === 'wing' ? 0.85 : r === 'yard' ? 0.35 : 0.7;
       col = [(0.35 + 0.65 * hash(s * 3 + 11)) * k, (0.35 + 0.65 * h) * k, (0.35 + 0.65 * hash(s * 5 + 7)) * k];
     } else if (plan.alley[i]) col = [0.95, 0.95, 0.95];
+    else if (openOf(m, i) === 2) col = [0.85, 0.6, 0.45];
+    else if (openOf(m, i) === 1) col = [0.12, 0.12, 0.14];
     else if (m.lot![i] === NONE || m.cls![i] === 3) col = [0.25, 0.25, 0.28];
     else col = [0.6, 0.6, 0.6];
     for (const p of [q[0], q[1], q[2], q[0], q[2], q[3]]) wv(out, p, up, col, MAT.ground);
@@ -827,14 +1029,32 @@ function ground(m: GridMesh, t: Theme, plan: DistrictPlan, c: [number, number], 
   for (let i = 0; i < m.nc; i++) {
     const [x, y] = centroid(m, i);
     if (Math.hypot(x - c[0], y - c[1]) > R) continue;
+    const street = isStreet(m, i);
+    const yard = plan.plot[i] >= 0 && !plan.tops[i];
+    const op = openOf(m, i);
+    const P3 = (k: number): RGB => [t.ground.paving[0] * k, t.ground.paving[1] * k, t.ground.paving[2] * k];
+    let base: RGB;
+    let inset = 0.035;
+    let jit = 0.1;
+    if (m.open) {
+      // (step 3: the road plan reads — traced roads a darker cooler cobble, the plaza a light warm stone, alleys paving,
+      // the town's own streets as before; lot ground and yards plain (no joints, little jitter): the grid's pattern
+      // only where it is paving)
+      if (op === 1) base = [t.ground.paving[0] * 0.74, t.ground.paving[1] * 0.75, t.ground.paving[2] * 0.8];
+      else if (op === 2) base = [t.ground.paving[0] * 1.16, t.ground.paving[1] * 1.1, t.ground.paving[2] * 1.0];
+      else if (op === 3 || plan.alley[i]) base = P3(0.92);
+      else if (street) base = P3(0.88);
+      else {
+        base = yard ? [0.5, 0.57, 0.38] : t.ground.col;
+        inset = 0;
+        jit = 0.04;
+      }
+    } else base = street ? P3(0.88) : yard ? [0.52, 0.58, 0.4] : plan.alley[i] ? t.ground.paving : t.ground.col;
     const q = [0, 1, 2, 3].map((k) => {
       const [px, py] = P(m, m.cells[i * 4 + k]);
-      return [px + (x - px) * 0.035, py + (y - py) * 0.035, 0] as V3;
+      return [px + (x - px) * inset, py + (y - py) * inset, 0] as V3;
     });
-    const j = 0.94 + hash(i * 3 + 1) * 0.1;
-    const street = m.lot![i] === NONE || m.cls![i] === 3;
-    const yard = plan.plot[i] >= 0 && !plan.tops[i];
-    const base: RGB = street ? [t.ground.paving[0] * 0.88, t.ground.paving[1] * 0.88, t.ground.paving[2] * 0.88] : yard ? [0.52, 0.58, 0.4] : plan.alley[i] ? t.ground.paving : t.ground.col;
+    const j = 1 - jit * 0.6 + hash(i * 3 + 1) * jit;
     const col: RGB = [base[0] * j, base[1] * j, base[2] * j];
     for (const p of [q[0], q[1], q[2], q[0], q[2], q[3]]) wv(out, p, up, col, MAT.ground);
   }

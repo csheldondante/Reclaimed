@@ -2605,3 +2605,41 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
   - The far LOD keeps the instance count (only module meshes shrink); timber braces stay prisms at far.
   - Fair comparison: tilekit and archlab with archlab's sun (115° from the view, 37° up) and yaw/pitch, but the two
     labs' `zoom` and camera targets differ, so the framing is not identical (r_fair_archlab shows a wider, denser area).
+- TKIT14 Step 3 (2026-11-17, TILEKIT §20–§27, DECISIONS: the owner's "C sounds good … trace some irregular grid roads
+  through it and mini plazas"): the owner judges local/tilekit3/strip.png (strip.txt lists it) and answers Q8–Q14.
+  Built: grain.ts (the grid on the CPU, the grain per block, traced roads/alleys/plazas/seams, long relaxation, road
+  fairing, valence zones), grainplan.ts (the lab's plan), frontage plots, roofunion.ts (+ roofcases.ts, `?mode=roofs`),
+  light and contact shadows, slim near LOD. TKIT10 (the structural bend) and TKIT11 (roof unions) done by this step,
+  TKIT12 (busy massing) partly (fewer, longer masses; see TKIT16).
+- TKIT15 The squaring on the GPU (Q11): grain cells stay 60°/120° parallelograms under 20 chunk-local steps (23.5°
+  median off square); 1000 whole-window CPU steps square them (5°). Try a closed-form per-block pre-map (the shear and
+  scale that square a grain-g rhombus, blended at the block's edge) before porting anything.
+- TKIT16 Still not calm enough: four main ranges of 17–23 m, eight of 6–11 m (the old plan's built ground is patchy and
+  plots stop at the district's edge); roofs on strips that bend near the plaza and the kept bend read as melted (a hip
+  roof following a 26–58° side bend); the mini plaza is small (~10 m) and mostly hidden by three-storey houses at play
+  zoom; the arch view in the shots does not frame the arch.
+- TKIT17 A town plan as input: snap a plan's free polylines to lattice lines (seams at kept bends) and its lots to
+  frontage plots; the road grammar is lattice families only (Q13).
+- TKIT18 Hacks and limits of step 3, each to fix:
+  - The lab's road plan is hand-placed in lattice steps from the anchor's nearest lattice point (labPlan), for one
+    anchor; the district is lots within 30 m whose lattice corners all have a lot.
+  - The grid is built on the CPU over the GPU grid lab's 3 × 3 chunks with its own port of the pairing, nudge and
+    lotAt (bit-equal hashes; WGSL rounds halves to even, JS up); the window's rim is pinned, so cells near it relax
+    less; 1000 relaxation steps by measurement, not convergence; road fairing weight 0.5.
+  - Plazas held where the lattice put them (freely relaxed they shrank to 42%); squareness p90 15° next to its corners.
+  - A block bounded by all three families takes the family with the fewest edges; its leftover triangles pair by hash
+    (the no-seam variant) — the plan, not the code, is expected to avoid it.
+  - Frontage plots: a front row must face a street all along; strip length drawn 6–11 cells by a hash; depth 3 else 2;
+    the rest joins the nearest main range breadth first; wing odds 0.45; all by eye on one district.
+  - Arch at the traced alley: the candidate nearest a road cell (brute force over cells).
+  - Roof union: tie epsilon 0.1 mm; a roof's solid under its own cells reaches the ground (houses are prisms), its ring
+    is a slab as thick as the roof; join-side fills set in 2 cm and left unclipped (hidden inside the neighbour); case
+    roofs for tests are sampled 8 × 8.
+  - Light: sky/horizon/bounce/facade weights by eye (bounce 0.5, sky 0.95, baked occlusion 0.85); contact strip 0.75 m
+    multiplied 0.5 → 1; the bounce assumes a uniformly sunlit ground (no occlusion of the bounce); tint jitter ±7%.
+  - Slim near: quoins lose their chamfers and their back faces, frames/cross/shutters/studs their chamfers (all
+    themes); the step-2 look is `?slim=0`.
+  - Ground colours for roads/plaza/alleys are multiples of the theme's paving, not theme data.
+  - Node-only plan diagrams (test/support/raster.ts, tilediagram.ts) carry no labels; captions are in strip.txt.
+- TKIT19 Q14 plazas: larger and other shapes (a trapezoid on one side of a road keeps the far block 2-family), paving
+  patterns, a fountain or tree as the 3-valent centre's feature.

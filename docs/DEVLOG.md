@@ -23622,3 +23622,40 @@ Seen and not good: walls still kink at irregular vertices; the district reads bu
 towers close together); strip roofs that meet overlap as a union (a hip or pyramid pokes through a neighbour); plaster's
 shade side is a flat blue-grey; near-LOD windows and quoins are still heavy. Strip roofs judged better than the height
 field (single ridges, gable ends, lean-tos; clearest in timber), the height field calmer in hipped plaster.
+
+## 2026-11-17 — tile kit step 3: the district grain, traced roads and a plaza, frontage plots, roof union, light (`tilekit`)
+
+Why: the owner chose the district grain (TILEKIT Q7 option c) and wants irregular roads and mini plazas traced through
+it (DECISIONS). Design and numbers: TILEKIT §20–§27.
+
+- **The grid on the CPU** (grain.ts): archgen's lattice, nudge and two hashed pairing rounds ported (no grain: 245 / 1957
+  / 169 / 20 vertices of valence 3/4/5/6 vs the GPU grid's 230 / 1963 / 169 / 21 over the same chunks), then a grain
+  per block: pair across one edge family. Exact valence rule: 6 − merged edges at a lattice point. The lab district:
+  198 interior vertices of built ground, all 4-valent (before: 19% irregular); irregular only at the plaza's centre (3),
+  the kept bend (5) and the district's edge ring.
+- **The squaring finding**: a regular grain patch is a fixed point of Townscaper's squaring; with the GPU's 20 steps the
+  cells stay 23.5° off square (median), 1000 whole-window steps reach 5° (one grain over the whole district: 9.8° —
+  blocks of different grains square up better). The GPU's chunk-local relaxation cannot do this: Q11, TKIT15.
+- **Roads, alleys, plazas, seams** as lattice geometry; blocks between them take a grain none of their lines runs
+  along, so roads are grid lines on both sides (tested); a bend keeps its angle only with a seam (5-valent point),
+  else it squares to 90°. Plazas held where the lattice put them: relaxed freely the plaza shrank to 42% of its area.
+- **Frontage plots** (a departure from merged lots, Q12): with the grain, the old plan's lots cut the regular grid into
+  staircases (main ranges 10–17 m, 50 of 87 strips 1 × 1). Plots laid along the streets: 12 plots, 47 strips, mains of
+  17–23 m (four) and 6–11 m (eight). No towers (a 1-cell tower read as a chimney stack), at most two turrets.
+- **Roof union** (Q9 best guess): solids = houses under their own roofs plus thin ring slabs; each roof minus the others'
+  solids (convex prisms, Sutherland–Hodgman), ties to the first. Unit cases: nothing left inside another solid, the
+  top intact at 4,000 plan points, no doubled surface; the same checks fail without the union. Rings per sample (eaves
+  run on along part-joined sides), joined sides filled (the step wall). District: 12 roofs cut, 8–30 ms.
+- **Light**: sky by direction, warm ground and facade bounce, contact shadows multiplied onto the ground, ±7% colour
+  per house. The shade sides go from one blue-grey to a warm cream that varies with height and facing (stills i/j).
+- **Cost**: the near level slimmed (quoins as four faces, small parts unchamfered): plaster 348k → 150k instanced
+  vertices, timber 313k → 209k; mid 108k / 112k, far 16k / 24k; world 21–24k. GPU frame 1.3–1.7 ms, mostly fixed
+  passes. Grid build 0.17 s (browser), district 30–50 ms.
+
+Measured with `TILEKIT_VIZ=1 npx vitest run --project unit test/unit/tilekit-viz.test.ts` (grid diagrams, numbers) and
+`node scripts/tilekit3-shots.mjs` (stills, local/tilekit3/numbers.json). Unit tests: grain 5, roofunion 5, district3 2.
+
+Seen and not good: only four main ranges reach 15–30 m; strips that bend near the plaza and the kept bend give curved,
+melted-looking hip roofs; the plaza is small and hidden among three-storey houses at play zoom; the arch shot misses
+the arch; roof faceting (the sampled roof's triangles catch light differently) shows on long roofs; the step-2 union vs
+overlap difference is subtle in these views.

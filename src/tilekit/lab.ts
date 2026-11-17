@@ -16,6 +16,11 @@ import { buildKit, VF, type ModuleMesh } from './kit';
 import { buildBlock, controlGrid, IF, type Block } from './block';
 import { buildDistrict, planDistrict, planMesh } from './district';
 import { THEMES, type Theme } from './theme';
+import { grainGrid, lotsOf, valenceZones, type GrainInfo } from './grain';
+import { labPlan, STEP3_BUILD, STEP3_GRID, STEP3_PLAN, windowAt } from './grainplan';
+import { roofCases } from './roofcases';
+import { unionRoofs, type Lid, type RoofSolidIn } from './roofunion';
+import { MAT } from './kit';
 
 const q = urlFlags();
 const num = (k: string, d: number) => (q.has(k) ? Number(q.get(k)) : d);
@@ -50,7 +55,6 @@ async function main() {
   const ctx = canvas.getContext('webgpu')!;
   const format = navigator.gpu.getPreferredCanvasFormat();
   ctx.configure({ device, format, alphaMode: 'opaque' });
-  const samples = 4;
 
   // ---- the grid: archgen's grid lab round the block, read back once ----
   const lots = new Uint32Array((lotsMuru as { lots: number[] }).lots);
@@ -67,6 +71,32 @@ async function main() {
     }
   }
   const anchor: [number, number] = q.has('at') ? (q.get('at')!.split(',').map(Number) as [number, number]) : [cx / nb, cy / nb];
+  // (step 3) ?grid=grain (default): the grid built on the CPU with the district grain and the traced roads (grain.ts);
+  // ?grid=gpu: the GPU grid lab's, read back (step 2); ?grain=0 the CPU grid without the grain; ?roads=0 no road plan
+  const gridSrc = q.get('grid') ?? 'grain';
+  let grainInfo: GrainInfo | null = null;
+  let gridMs = 0;
+  let mesh: GridMesh;
+  if (gridSrc !== 'gpu') {
+    const t0 = performance.now();
+    const g = grainGrid(lotsOf(lots), { ...windowAt(anchor), anchor, ...STEP3_GRID, relax: num('relax', STEP3_GRID.relax), grain: num('grain', 1) > 0, plan: labPlan(anchor, num('roads', 1) > 0 ? num('variant', 0) : 1) });
+    gridMs = performance.now() - t0;
+    grainInfo = g.info;
+    mesh = g.mesh;
+  } else mesh = await gpuGrid(device, lots, n, anchor);
+  const vh = valences(mesh);
+  const step = num('step', gridSrc === 'gpu' ? 2 : 3);
+
+  // the massing, turned and placed at the anchor
+  const rot = (num('rot', 0) * Math.PI) / 180;
+  const rects: Rect[] = MASSING.map((r) => ({ ...r, x: anchor[0] + r.x * Math.cos(rot) - r.y * Math.sin(rot), y: anchor[1] + r.x * Math.sin(rot) + r.y * Math.cos(rot), rot: r.rot + rot }));
+  const tops = cellTops(mesh, rects);
+  const owners = cellOwners(mesh, rects, tops);
+  return run(device, canvas, ctx, format, ts, mesh, vh, anchor, tops, owners, step, grainInfo, gridMs);
+}
+
+/** (step 2's grid) archgen's GPU grid lab round the anchor, read back once — a lab-only readback */
+async function gpuGrid(device: GPUDevice, lots: Uint32Array, n: number, anchor: [number, number]): Promise<GridMesh> {
   const rec = device.createBuffer({ size: lots.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
   device.queue.writeBuffer(rec, 0, lots);
   const cnt = device.createBuffer({ size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
@@ -94,14 +124,25 @@ async function main() {
   const cap = (words.length - 4) / 10;
   const ncells = Math.min(words[0], cap);
   if (words[0] > cap) fatal(`tilekit: the grid lab wrote ${words[0]} cells, room for ${cap}`);
-  const mesh: GridMesh = weldCells(new Float32Array(words.buffer, 16, ncells * 10), ncells);
-  const vh = valences(mesh);
+  return weldCells(new Float32Array(words.buffer, 16, ncells * 10), ncells);
+}
 
-  // the massing, turned and placed at the anchor
-  const rot = (num('rot', 0) * Math.PI) / 180;
-  const rects: Rect[] = MASSING.map((r) => ({ ...r, x: anchor[0] + r.x * Math.cos(rot) - r.y * Math.sin(rot), y: anchor[1] + r.x * Math.sin(rot) + r.y * Math.cos(rot), rot: r.rot + rot }));
-  const tops = cellTops(mesh, rects);
-  const owners = cellOwners(mesh, rects, tops);
+async function run(
+  device: GPUDevice,
+  canvas: HTMLCanvasElement,
+  ctx: GPUCanvasContext,
+  format: GPUTextureFormat,
+  ts: boolean,
+  mesh: GridMesh,
+  vh: Map<number, number>,
+  anchor: [number, number],
+  tops: Uint8Array,
+  owners: Int8Array,
+  step: number,
+  grainInfo: GrainInfo | null,
+  gridMs: number,
+) {
+  const samples = 4;
 
   // ---- pipelines ----
   const depthFormat: GPUTextureFormat = 'depth24plus';
@@ -134,6 +175,16 @@ async function main() {
     depthStencil: { format: depthFormat, depthWriteEnabled: true, depthCompare: 'less' },
     multisample: { count: samples },
   });
+  // (step 3) contact shadows: multiplied onto what is drawn, depth tested, not written
+  const decalPipe = device.createRenderPipeline({
+    label: 'tilekit contact',
+    layout,
+    vertex: { module: mod, entryPoint: 'vsMain', buffers: [vbuf] },
+    fragment: { module: mod, entryPoint: 'fsDecal', targets: [{ format, blend: { color: { srcFactor: 'dst', dstFactor: 'zero', operation: 'add' }, alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' } } }] },
+    primitive: { topology: 'triangle-list', cullMode: 'none' },
+    depthStencil: { format: depthFormat, depthWriteEnabled: false, depthCompare: 'less-equal' },
+    multisample: { count: samples },
+  });
   const SHADOW = 2048;
   const shadowPipe = device.createRenderPipeline({
     label: 'tilekit shadow',
@@ -145,8 +196,8 @@ async function main() {
   const shadowMap = device.createTexture({ size: [SHADOW, SHADOW], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
   const noShadow = device.createTexture({ size: [1, 1], format: 'depth32float', usage: GPUTextureUsage.TEXTURE_BINDING });
   const cmp = device.createSampler({ compare: 'less', magFilter: 'linear', minFilter: 'linear' });
-  const viewU = device.createBuffer({ size: 208, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  const sunU = device.createBuffer({ size: 208, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const viewU = device.createBuffer({ size: 224, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const sunU = device.createBuffer({ size: 224, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
   const aoMod = device.createShaderModule({ label: 'tilekit ssao', code: aoWgsl.replaceAll('DEPTH_T', 'texture_depth_multisampled_2d') });
   const aoPipe = device.createRenderPipeline({ label: 'tilekit ssao', layout: 'auto', vertex: { module: aoMod, entryPoint: 'vsFull' }, fragment: { module: aoMod, entryPoint: 'fsAo', targets: [{ format: 'r8unorm' }] } });
@@ -158,18 +209,23 @@ async function main() {
     theme: Math.max(0, THEMES.findIndex((t) => t.name === q.get('theme'))), sag: num('sag', -1), wonk: num('wonk', -1), ao: num('ao', 1), aoR: num('aor', 2.0), shadow: num('shadow', 1), bake: num('bake', 1), dbg: num('dbg', 0), sunTurn: num('sunturn', 55), sunUp: num('sunup', 37),
     // (step 2) ?mode=district|block (step 1's block), ?roof=strip|field, ?lod=0|1|2 (-1 by zoom), ?straight=0..1,
     // ?setback=m, ?radius=m (the district's lots), ?seed=n, ?plan=1 (the strips, top-down, no houses)
-    mode: q.get('mode') ?? 'district', roof: (q.get('roof') ?? 'strip') as 'strip' | 'field', lod: num('lod', 0), straight: num('straight', 0), setback: num('setback', -1), radius: num('radius', 24), seed: num('seed', 1), plan: num('plan', 0),
+    mode: q.get('mode') ?? 'district', roof: (q.get('roof') ?? 'strip') as 'strip' | 'field', lod: num('lod', 0), straight: num('straight', 0), setback: num('setback', -1), radius: num('radius', step === 2 ? 24 : STEP3_PLAN.radius), seed: num('seed', 1), plan: num('plan', 0),
+    // (step 3) ?join=union|overlap (roofs where strips meet), ?light=1|0 (step 3's light or step 2's), ?contact=1|0
+    // (contact shadows), ?bakew=0..1 (the baked occlusion's weight); ?step=2 all of step 2's settings
+    join: (q.get('join') ?? (step === 2 ? 'overlap' : 'union')) as 'union' | 'overlap', light: num('light', step === 2 ? 0 : 1), contact: num('contact', step === 2 ? 0 : 1), bounce: num('bounce', 0.5), skyK: num('skyk', 0.95), bakeW: num('bakew', 0.85), slim: num('slim', step === 2 ? 0 : 1),
   };
   const kits = new Map<string, ModuleMesh[]>();
   let kitMs = 0;
   const lodNow = () => (look.lod >= 0 ? look.lod : cam.zoom < 22 ? 0 : cam.zoom < 70 ? 1 : 2);
   const kitOf = (i: number, lod: number) => {
-    let k = kits.get(i + ':' + lod);
+    // (step 3: ?slim=1|0 the near level's small parts unchamfered and quoins as their four showing faces; step 2: 0)
+    const slim = look.slim > 0;
+    let k = kits.get(i + ':' + lod + ':' + slim);
     if (!k) {
       const t0 = performance.now();
-      k = buildKit(THEMES[i], true, lod);
+      k = buildKit(THEMES[i], true, lod, slim);
       kitMs = performance.now() - t0;
-      kits.set(i + ':' + lod, k);
+      kits.set(i + ':' + lod + ':' + slim, k);
     }
     return k;
   };
@@ -179,9 +235,10 @@ async function main() {
     ctl: GPUBuffer;
     draws: { first: number; count: number; firstInst: number; insts: number; name: string }[];
     world: { first: number; count: number };
+    decal: { first: number; count: number };
     group: GPUBindGroup;
     shadowGroup: GPUBindGroup;
-    block: { inst: Map<string, number[]>; world: number[]; ctl: Block['ctl']; centre: [number, number] };
+    block: { inst: Map<string, number[]>; world: number[]; decal?: number[]; ctl: Block['ctl']; centre: [number, number] };
     theme: Theme;
     lod: number;
     info: Record<string, unknown>;
@@ -190,7 +247,28 @@ async function main() {
   let scene: Scene | null = null;
   let buildMs = 0;
   /** where the district's features stand (the shots aim at them) */
-  const where: { arches: { x: number; y: number; along: number; blocked: number }[]; turrets: [number, number][] } = { arches: [], turrets: [] };
+  const where: { arches: { x: number; y: number; along: number; blocked: number }[]; turrets: [number, number][]; roads: { kind: string; pts: [number, number][] }[]; plaza: [number, number] | null; cuts: [number, number, number][] } = {
+    cuts: [],
+    arches: [],
+    turrets: [],
+    // (step 3) the traced roads' lines and the plaza's middle
+    roads: grainInfo ? grainInfo.chains.map((ch, i) => ({ kind: grainInfo.kinds[i], pts: ch.map((v) => [mesh.xy[v * 2], mesh.xy[v * 2 + 1]] as [number, number]) })) : [],
+    plaza: null,
+  };
+  if (mesh.open) {
+    let x = 0;
+    let y = 0;
+    let k = 0;
+    for (let c = 0; c < mesh.nc; c++) {
+      if (mesh.open[c] !== 2) continue;
+      for (let j = 0; j < 4; j++) {
+        x += mesh.xy[mesh.cells[c * 4 + j] * 2];
+        y += mesh.xy[mesh.cells[c * 4 + j] * 2 + 1];
+        k++;
+      }
+    }
+    if (k) where.plaza = [x / k, y / k];
+  }
   const centroidOf = (c: number): [number, number] => {
     let x = 0;
     let y = 0;
@@ -207,17 +285,38 @@ async function main() {
     const t0 = performance.now();
     let block: Scene['block'];
     let info: Record<string, unknown>;
-    if (look.mode === 'block') {
+    if (look.mode === 'roofs') {
+      // (step 3) the roof union's unit-test cases in a row, the houses under them, union or overlap (?join)
+      const world: number[] = [];
+      const roofs: RoofSolidIn[] = [];
+      roofCases().forEach(([, rs], i) => {
+        const ox = anchor[0] - 30 + i * 18;
+        const oy = anchor[1] - 6;
+        for (const r of rs) {
+          const mv = (v: number[]) => v.map((x, j) => (j % VF === 0 ? x + ox : j % VF === 1 ? x + oy : x));
+          roofs.push({ verts: mv(r.verts), lids: r.lids.map((l) => ({ depth: l.depth, t: l.t.map((p) => [p[0] + ox, p[1] + oy, p[2]]) as Lid['t'] })) });
+          world.push(...mv(r.walls));
+        }
+      });
+      if (look.join === 'union') unionRoofs(roofs, world);
+      else for (const r of roofs) world.push(...r.verts);
+      const g: [number, number, number] = [0.72, 0.68, 0.6];
+      for (const [x, y] of [[-40, -20], [40, -20], [40, 20], [-40, -20], [40, 20], [-40, 20]]) world.push(anchor[0] + x, anchor[1] + y, 0, 4, 0, 0, 1, 1, ...g, MAT.ground);
+      // (the control grid is off here: sag and wonk 0 over step 1's block's cells, any non-empty set will do)
+      block = { inst: new Map(), world, ctl: controlGrid(mesh, tops, anchor, 10, t, { street: [1, 0], sag: 0, wonk: 0, groundR: 0 }, []), centre: anchor };
+      info = { roofs: roofs.length, join: look.join };
+    } else if (look.mode === 'block') {
       const b = buildBlock(mesh, tops, t, { street: [Math.cos((cam.yaw * Math.PI) / 180), Math.sin((cam.yaw * Math.PI) / 180)], sag, wonk, groundR: 26, owners });
       block = b;
       info = { ...b.stats, joints: { convex: b.walls.joints[0], straight: b.walls.joints[1], concave: b.walls.joints[2] }, pinches: b.walls.pinches };
     } else {
-      const plan = planDistrict(mesh, t, { anchor, radius: look.radius, seed: look.seed, plotCells: 18, alleyOdds: 0.45 });
+      const plan = planDistrict(mesh, t, step === 2 ? { anchor, radius: look.radius, seed: look.seed, plotCells: 18, alleyOdds: 0.45 } : { anchor, seed: look.seed, ...STEP3_PLAN, radius: look.radius });
       if (look.plan) {
         block = { inst: new Map(), world: planMesh(mesh, plan, anchor, look.radius + 10), ctl: controlGrid(mesh, plan.tops, anchor, 10, t, { street: [1, 0], sag: 0, wonk: 0, groundR: 0 }, []), centre: anchor };
         info = { plots: plan.plots, strips: plan.strips.length, sizes: plan.strips.map((s, i) => `${s.a}x${s.b}${plan.role[i][0]}`).join(' ') };
       } else {
-        const d = buildDistrict(mesh, t, plan, { roof: look.roof, straighten: look.straight, sag, wonk, groundR: look.radius + 14, setback: look.setback >= 0 ? look.setback : undefined });
+        const s3 = step === 2 ? {} : STEP3_BUILD;
+        const d = buildDistrict(mesh, t, plan, { roof: look.roof, straighten: look.straight, sag, wonk, groundR: look.radius + 14, setback: look.setback >= 0 ? look.setback : undefined, ...s3, roofJoin: look.join, contact: look.contact > 0 });
         block = d;
         where.arches = plan.arches.map((a) => {
           const [x, y] = centroidOf(a.c);
@@ -250,6 +349,7 @@ async function main() {
           return { x, y, along: blocked(along) <= blocked(along + 180) ? along : along + 180, blocked: Math.min(blocked(along), blocked(along + 180)) };
         });
         where.turrets = d.turrets;
+        if (d.cuts.length) where.cuts = d.cuts;
         info = { ...d.stats, roofRule: +d.roofRule.toFixed(4) };
       }
     }
@@ -278,6 +378,9 @@ async function main() {
     const wfirst = verts.length / VF;
     for (const x of block.world) verts.push(x);
     const wcount = block.world.length / VF;
+    const dfirst = verts.length / VF;
+    for (const x of block.decal ?? []) verts.push(x);
+    const dcount = (block.decal ?? []).length / VF;
     const vb = device.createBuffer({ size: verts.length * 4, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(vb, 0, new Float32Array(verts));
     const ib = device.createBuffer({ size: insts.length * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
@@ -299,7 +402,7 @@ async function main() {
     scene?.ib.destroy();
     scene?.ctl.destroy();
     scene = {
-      vb, ib, ctl, draws, world: { first: wfirst, count: wcount }, group: groupOf(viewU, shadowMap), shadowGroup: groupOf(sunU, noShadow), block, theme: t, lod, info,
+      vb, ib, ctl, draws, world: { first: wfirst, count: wcount }, decal: { first: dfirst, count: dcount }, group: groupOf(viewU, shadowMap), shadowGroup: groupOf(sunU, noShadow), block, theme: t, lod, info,
       counts: { modules: kit.length, moduleVerts, instances, vertices, worldVerts: wcount },
     };
     showStats();
@@ -368,7 +471,7 @@ async function main() {
     const half = look.mode === 'block' ? 30 : 48;
     const sunVP = ortho(sun, [sc.block.centre[0], sc.block.centre[1], 4], half, half);
     const c = sc.block.ctl;
-    const u = new Float32Array(52);
+    const u = new Float32Array(56);
     u.set(vp, 0);
     u.set(sunVP, 16);
     u.set([...sun, 1.15], 32);
@@ -376,6 +479,7 @@ async function main() {
     u.set([...c.step, 0], 40);
     u.set([...c.dims, 0], 44);
     u.set([look.shadow, look.bake, 0, look.dbg], 48);
+    u.set([look.light, look.bounce, look.skyK, look.bakeW], 52);
     device.queue.writeBuffer(viewU, 0, u);
     const us = u.slice();
     us.set(sunVP, 0);
@@ -406,6 +510,10 @@ async function main() {
     pass.setPipeline(pipe);
     pass.setBindGroup(0, sc.group);
     drawAll(pass);
+    if (sc.decal.count) {
+      pass.setPipeline(decalPipe);
+      pass.draw(sc.decal.count, 1, sc.decal.first, 0);
+    }
     pass.end();
     const ap = e.beginRenderPass({ colorAttachments: [{ view: aoT!.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [1, 1, 1, 1] }] });
     if (look.ao > 0) {
@@ -479,6 +587,9 @@ async function main() {
       worldVertices: sc.counts.worldVerts,
       kitBuildMs: +kitMs.toFixed(1),
       buildMs: +buildMs.toFixed(1),
+      gridMs: +gridMs.toFixed(1),
+      step,
+      grain: grainInfo ? { blocks: grainInfo.blocks, zones: valenceZones(mesh, grainInfo).zones } : null,
       draws: sc.draws.length + 1,
     };
   };
@@ -555,7 +666,7 @@ async function main() {
     },
     set(o: Partial<typeof look>) {
       Object.assign(look, o);
-      if (['sag', 'wonk', 'mode', 'roof', 'lod', 'straight', 'setback', 'radius', 'seed', 'plan'].some((k) => k in o)) remake();
+      if (['sag', 'wonk', 'mode', 'roof', 'lod', 'straight', 'setback', 'radius', 'seed', 'plan', 'join', 'contact', 'slim'].some((k) => k in o)) remake();
     },
     caption(text: string) {
       capEl.textContent = text;

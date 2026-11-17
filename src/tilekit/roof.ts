@@ -113,6 +113,9 @@ export interface RoofGrid {
   h: number[];
   /** each boundary point's side (0..3, -1 inner) — in the strip's own side numbering */
   side: number[];
+  /** (step 3) each boundary point's edge class: eave if any cell edge at it is an eave (so an eave's overhang runs on
+   *  along a side that is only partly joined), else join, else abut; null inner */
+  edge: (SideClass | null)[];
   plan: RoofPlan;
 }
 
@@ -164,6 +167,7 @@ export function roofGrid(m: GridMesh, s: Strip, sides: StripSides, plan: RoofPla
     return [g[gi(0, B - 2 * e)], g[gi(0, B - 2 * e - 2)]];
   };
   const wall: V2[] = g.slice();
+  const ecls: (SideClass | null)[] = new Array(g.length).fill(null);
   for (let y = 0; y <= B; y++) {
     for (let x = 0; x <= A; x++) {
       const sds = sideOf(x, y);
@@ -171,6 +175,7 @@ export function roofGrid(m: GridMesh, s: Strip, sides: StripSides, plan: RoofPla
       const v = g[gi(x, y)];
       // the edges meeting at this sample: on a side's interior even sample, the two consecutive edges of that side
       const lines: { n: V2; d: number }[] = [];
+      const here: SideClass[] = [];
       for (const sd of sds) {
         const t = sd === 0 ? x : sd === 1 ? y : sd === 2 ? A - x : B - y;
         const n = sd === 0 || sd === 2 ? s.a : s.b;
@@ -178,8 +183,10 @@ export function roofGrid(m: GridMesh, s: Strip, sides: StripSides, plan: RoofPla
         for (const e of es) {
           const [a, b] = edgePts(sd, e);
           lines.push({ n: nOf(a, b), d: sides.off[sd][e] });
+          here.push(sides.cls[sd][e]);
         }
       }
+      ecls[gi(x, y)] = here.includes('eave') ? 'eave' : here.includes('join') ? 'join' : 'abut';
       wall[gi(x, y)] = crossLines(v, lines);
     }
   }
@@ -195,9 +202,11 @@ export function roofGrid(m: GridMesh, s: Strip, sides: StripSides, plan: RoofPla
   const siI = plan.alongA ? 1 : 2;
   const p: V2[] = [];
   const side: number[] = [];
+  const edge: (SideClass | null)[] = [];
   for (let j = 0; j <= J; j++) {
     for (let i = 0; i <= I; i++) {
       p.push(wall[at(i, j)]);
+      edge.push(ecls[at(i, j)]);
       side.push(j === 0 ? sj0 : j === J ? sjJ : i === 0 ? si0 : i === I ? siI : -1);
     }
   }
@@ -252,7 +261,7 @@ export function roofGrid(m: GridMesh, s: Strip, sides: StripSides, plan: RoofPla
       }
     }
   }
-  return { I, J, p, h, side, plan };
+  return { I, J, p, h, side, edge, plan };
 }
 
 /** the point where lines {x : x·n = v·n − d} cross (two or more; nearly parallel ones averaged) */

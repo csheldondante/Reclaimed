@@ -18,6 +18,8 @@ export interface GridMesh {
    *  1 wholly in its lot, 2 a corner in another lot, 3 a corner in a street); absent on hand-made test meshes */
   lot?: Uint32Array;
   cls?: Uint8Array;
+  /** (step 3, grain.ts) open ground the road plan made: 0 none, 1 a road, 2 a plaza, 3 an alley */
+  open?: Uint8Array;
 }
 
 /** cells from the GPU grid lab's buffer (float view; `stride` words a cell, corners x y in the first 8, then the lot and
