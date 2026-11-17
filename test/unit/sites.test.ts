@@ -80,4 +80,23 @@ describe('names over the map kept apart (declutter)', () => {
     }
     for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) expect(bs[i].x0 < bs[j].x1 && bs[j].x0 < bs[i].x1 && bs[i].y0 < bs[j].y1 && bs[j].y0 < bs[i].y1, `${i}/${j}`).toBe(false);
   });
+
+  it('LS-91: five names over a town (round 10\'s far-4-town still) — the threat placed last finds no row, so all are stacked; none covers another', () => {
+    const ls = [
+      { x: 220, y: 195, chars: 28 },
+      { x: 130, y: 288, chars: 25 },
+      { x: 270, y: 358, chars: 29 },
+      { x: 300, y: 445, chars: 29 },
+      { x: 160, y: 445, chars: 32 },
+    ];
+    const [top, bottom] = [104, 497];
+    const out = declutter(ls, 412, top, bottom);
+    const box = (p: P2, chars: number) => ({ x0: p[0] - Math.min(404, 8.6 * chars + 34) / 2, x1: p[0] + Math.min(404, 8.6 * chars + 34) / 2, y0: p[1] - 48 + 9, y1: p[1] + 9 });
+    const bs = out.map((p, i) => box(p, ls[i].chars));
+    for (const b of bs) {
+      expect(b.y0).toBeGreaterThanOrEqual(top);
+      expect(b.y1).toBeLessThanOrEqual(bottom);
+    }
+    for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) expect(bs[i].x0 < bs[j].x1 && bs[j].x0 < bs[i].x1 && bs[i].y0 < bs[j].y1 && bs[j].y0 < bs[i].y1, `${i}/${j}`).toBe(false);
+  });
 });

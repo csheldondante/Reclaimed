@@ -30,7 +30,7 @@
     { "id": "glitter-overload", "title": "The spire hums too loud",
       "presenter": { "name": "Vey Tallow", "role": "tinker", "at": "site:tower" },
       "pitch": "The spire is drinking too much light. Vent it now or it will burn the valley to glass.",
-      "appears_when": [ { "has_thing": "glitter-spire" } ], "weight": 5,
+      "appears_when": [ { "site_has": ["glitter-tech"] } ], "weight": 5,
       "threat": true, "offer_seasons": 2,
       "cost": { "magic": 3 },
       "if_taken": [ { "say": "The spire is vented. It hums softly again." } ],

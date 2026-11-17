@@ -427,7 +427,9 @@ want them said twice. Any number you do write in `say` or `pitch` must be a numb
 **Conditions** (`appears_when`; each object is one test; all must hold):
 - `{ "pool": "unrest", "gte": 3 }` or `"lte"`: a pool's free amount now.
 - `{ "season_gte": 4 }`: 1 to 15.
-- `{ "has_thing": "id" }` · `{ "no_thing": "id" }`: a thing of this pack is, or is not, in play.
+- `{ "has_thing": "id" }` · `{ "no_thing": "id" }`: a thing of this pack is, or is not, in play — a ruined thing
+  is still in play, as remains. For a thing that still stands, ask for its own tag: `{ "site_has": ["glitter-tech"] }`
+  (a ruin carries `remains-of-glitter-tech` instead).
 - `{ "town_has": ["tag", ...] }`: the home town carries all of them.
 - `{ "site_has": ["tag", ...] }`: some one site, or thing on a site, carries all of them.
 - `{ "far_town_is": ["destroyed"] }`: some far town is in one of these states: `standing`, `destroyed`,

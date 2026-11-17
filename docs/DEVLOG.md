@@ -25643,3 +25643,28 @@ the atlas, and `test/gpu/streets-grade.test.ts` covers raw land arriving again.)
 Nothing new a frame (the lays run only when land is claimed); the differences are the runs' tick counts, not the
 streets. Town generation (first make, timestamps, GPU shared): 21–52 ms graded vs 24–109 ms ribbons across runs —
 compile and contention dominate; the mesh-stage toggle above is the cleaner number.
+
+## 2026-11-17 — loop round 11 (1): the streets merged; three small defects (`loop-skeleton`, LS-111, LS-91, LS-107)
+
+**The merge.** `origin/loop-streets` (f0346bc1) merged: only DEVLOG conflicted (two appended sections, both kept). Both
+branches had used LS-105…108; the streets branch's are LS-112…115 here. Checked after it: the unit tests the merge
+touches one file at a time (roadlab-ladder, materials-tables, external, region-record, buried, judge-shapes,
+boundaries, home, table-live — all pass), `test/gpu/streets-records.test.ts` and `streets-grade.test.ts` pass, one
+`loopwalk` passed (489 s: the raid arrived, refugees in and ended, run 2 in the same world), and the town and market
+stills at 412 × 915 (`local/round11/streets/before-*.png`, which is the merge's look: `?city=terrainMain:0`).
+
+**LS-111, why the spire's overload came back.** The card asked `has_thing: glitter-spire` — the `exists` helper on the
+thing's entity — and a ruined thing stays an entity, its tags turned to `ruined` + `remains-of-glitter-tech`. Not
+meant: its pitch is a spire "drinking too much light". Fixed in the pack data, as round 10 fixed the hedge witch: it
+asks `site_has: ["glitter-tech"]`, the standing spire's own tag. `record.test.ts` plays run 2 on from the save for 12
+seasons: the overload was dealt there before the fix, never after. PACK_FORMAT.md now says `has_thing` holds for remains.
+
+**LS-91, names over names.** In round 10's `far-4-town.png` the red threat lay over "Quill Abney". `declutter` places
+names one at a time; the threat came last and every row its search tries was taken, so it fell back onto its anchor.
+Now, when any name finds no row, every name is stacked a row apart in the order of its anchor's height, as near its
+own as the rows allow, inside the band between the top bar and the sheet. `sites.test.ts` has the still's five names
+(it failed before: names 3 and 4 overlapped).
+
+**LS-107, not fixed: no selector for "a free town".** The format's far place selectors read a town's state, and a town
+the player holds is `standing`; only `far:where:founded-by-player` reads who holds one, and nothing subtracts it. Per
+the brief, not invented: written up in the BACKLOG with three options for the owner.

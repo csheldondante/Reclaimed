@@ -168,8 +168,10 @@ export function declutter(labels: readonly Label[], width: number, top = 0, bott
   const SLOP = 9;
   const placed: { x0: number; x1: number; y0: number; y1: number }[] = [];
   const free = (b: { x0: number; x1: number; y0: number; y1: number }) => !placed.some((q) => b.x0 < q.x1 && q.x0 < b.x1 && b.y0 < q.y1 && q.y0 < b.y1);
-  return labels.map((l) => {
-    const w = Math.min(width - 8, 8.6 * l.chars + 34);
+  const widthOf = (l: Label) => Math.min(width - 8, 8.6 * l.chars + 34);
+  let stuck = false;
+  const out = labels.map((l) => {
+    const w = widthOf(l);
     const clampX = (x: number) => Math.max(w / 2 + 4, Math.min(width - w / 2 - 4, x));
     for (const dx of [0, -w - 4, w + 4])
       for (const dy of [0, -H, H, -2 * H, 2 * H, -3 * H, 3 * H, -4 * H, 4 * H]) {
@@ -181,8 +183,25 @@ export function declutter(labels: readonly Label[], width: number, top = 0, bott
         placed.push(b);
         return [x, y] as P2;
       }
+    stuck = true;
     const x = clampX(l.x);
     placed.push({ x0: x - w / 2, x1: x + w / 2, y0: l.y - H + SLOP, y1: l.y + SLOP });
     return [x, l.y] as P2;
   });
+  if (!stuck) return out;
+  // (loop round 11, LS-91: the names placed first can leave no row free for a later one — seen with five names over a
+  // town, the red threat's laid over an ask. Then all of them stacked a row apart in the order of their anchors' height,
+  // each as near its own as the rows above and below allow, the stack kept inside the band: none covers another
+  // whenever the band holds a row each)
+  const order = labels.map((l, i) => i).sort((a, b) => labels[a].y - labels[b].y || a - b);
+  const ys = order.map((i) => labels[i].y);
+  for (let k = 1; k < ys.length; k++) ys[k] = Math.max(ys[k], ys[k - 1] + H);
+  ys[ys.length - 1] = Math.min(ys[ys.length - 1], bottom - SLOP);
+  for (let k = ys.length - 2; k >= 0; k--) ys[k] = Math.min(ys[k], ys[k + 1] - H);
+  if (ys[0] - H + SLOP < top) for (let k = 0; k < ys.length; k++) ys[k] = Math.max(ys[k], k === 0 ? top + H - SLOP : ys[k - 1] + H);
+  order.forEach((i, k) => {
+    const w = widthOf(labels[i]);
+    out[i] = [Math.max(w / 2 + 4, Math.min(width - w / 2 - 4, labels[i].x)), ys[k]];
+  });
+  return out;
 }

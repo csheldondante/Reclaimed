@@ -15,14 +15,17 @@ const OPTS = { seed: 7, leader: 'ilveth', seasons: 16, packs: [GLITTER] };
 const rich = (t: Table) => (t.realm.ledger = grant(t.realm.ledger, { magic: 10, materials: 20 }));
 
 describe('the record of resolved cards, across runs', () => {
-  // (run 1: raise the spire, then leave the overload to run out)
+  // (run 1: raise the spire, then leave the overload to run out; `raised` the same run stopped once the spire stands)
   const t = new Table(OPTS);
-  for (let i = 0; i < 15 && !t.over; i++) {
-    rich(t);
-    const spire = t.cards().find((c) => c.template === 'glitter-raise-the-spire');
-    if (spire && !Object.keys(spire.short).length) t.take(spire.id);
-    t.endSeason();
-  }
+  const raised = new Table(OPTS);
+  for (const x of [t, raised])
+    for (let i = 0; i < 15 && !x.over; i++) {
+      rich(x);
+      const spire = x.cards().find((c) => c.template === 'glitter-raise-the-spire');
+      if (spire && !Object.keys(spire.short).length) x.take(spire.id);
+      x.endSeason();
+      if (x === raised && x.realm.things().some((s) => s.id === thingEntity('glitter-spire'))) break;
+    }
 
   it('run 1 ends by the ending card: an instant loss, said on the end screen', () => {
     expect(t.over).toBe(true);
@@ -57,6 +60,16 @@ describe('the record of resolved cards, across runs', () => {
     expect(salvage?.because).toBe('Here because of what came before: the remains of Glitter spire.');
     const seekers = [...u.cards(), ...v.cards()].find((c) => c.template === 'glitter-glass-seekers');
     if (seekers) expect(seekers.because).toBe('Here because of what came before: "Raise the glitter spire" in run 1, under Sister Ilveth.');
+    // (LS-111: the spire stands only as remains — its overload can't be dealt again: `has_thing` was true for remains,
+    // the card now asks for the spire's own tag, which a ruin carries only as remains-of-glitter-tech)
+    // (run 1 dealt it once the spire stood; run 2 played on from the same save for 12 seasons never does)
+    expect(raised.seen.has('glitter-overload') || t.seen.has('glitter-overload')).toBe(true);
+    const later = new Table({ ...OPTS, leader: 'dunstan', resume: u.save() });
+    for (let i = 0; i < 12 && !later.over; i++) {
+      rich(later);
+      later.endSeason();
+    }
+    expect(later.seen.has('glitter-overload'), 'the overload dealt over the remains (run 2)').toBe(false);
     rich(u);
     expect(u.take(salvage!.id)).toBe(true);
     u.endSeason();
