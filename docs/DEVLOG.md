@@ -24723,3 +24723,37 @@ and the ash leaders' deck leaves the working out.
 Vellford, Millbrook); the crown 5 runs (it needs two sworn towns, and the base raid arc takes Millbrook in most runs);
 the wizards 5; the working stopped 4 times, left to run out once: the ash ending in 1 of 36. The ash and star cards
 need a later run, which the bots do not play (they play one run each).
+
+## 2026-11-16 — loop round 8 (3): the cards walk and the census (`loop-skeleton`)
+
+**The walk** (`node scripts/loopwalk.mjs --cards --leader ilveth --runlen 10 --query '…&packs=laws,glitter,arena'`,
+412x915, passed, 237 s): the guild's card taken (its petition shows the portrait slot's picture from local/art and
+"Brings a law: Guild rates … Hands of light …"); the Laws page lists both; "Build town walls" then cost Materials 2 +
+Magic 2 where Materials 3 was printed; the pit dug, the drover's bout started by the pack's rule at the season turn,
+settled now, which started the guards' bout at once, settled, then the Red Wolf's (lost: the dam burns); the spire
+raised and its overload left to run out: "The run is lost: The glitter spire burned the valley to glass. It was ended
+by "The spire hums too loud""; run 2's leader screen: "The world now: … A law since "The spire hums too loud" (run 1):
+The glass sky. 139 of 139 far towns are empty or ruined."; run 2's town shows "remains of Glitter spire" and
+"remains of Fighting pit" and deals the salvage card; the Remembered page lists the record by place.
+
+Found by the walk and fixed: a bout settled the instant its challengers were called read as won with none alive (a
+group ordered made but not yet standing now counts whole, and units held to a site count as made less dead); the
+sheet did not show "Settle it now" or "Back to the town" when they became possible (it is drawn again when they
+change); settling the arena's open bouts loops within a season by the pack's design (each turn is an action) — the
+walk leaves the fourth.
+
+Seen and not fixed: two history lines for one bout result on the end screen ("The crew wreck the pit…" twice);
+markers at one site overlap the asks' names (LS-91); the bouts' camera looks down the road at nothing — the pack
+event's camera has no figures to follow until the column is in.
+
+**Census** (`scripts/census.mjs --params 'loop=1&parade=60' --pick ysolt --states idle,event --event gate-parade`):
+
+| State | est. phone ms a frame | ticks a frame | read back a frame |
+|---|---|---|---|
+| idle, the town (arterials stamped as roads) | 1.05 | 0.60 | 1.76 KB |
+| the parade, `?parade=60`, 6-26 s in | 6.13 | 3.47 (the 3× march) | 9.88 KB |
+
+Idle is as round 7 (1.03 ms); the parade as round 7's 9-strong one (6.34): its cost is the 3× sim on the march
+(agents 1.82 ms, particles 0.87, water 0.68, lava 0.48), not the marchers. Not confirmed in this run that all 60 were
+made inside the measured 20 s (the census does not echo the runner's lines), and no still of a 60-strong column was
+taken (LS-92).
