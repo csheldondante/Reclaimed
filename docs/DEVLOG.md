@@ -25706,7 +25706,9 @@ mesh stage of a mesh-only run 4.61 / 3.17 ms graded vs 2.64 / 2.57 drawn (+0.6�
 second raster pass); a run from the lots 7.83 / 4.77 vs 4.68 / 4.11. A lay of the whole box 7.9 ms wall vs 7.3 with the
 arterials' records only. In the game at Muru's start (the core shown): 665 pieces, at most 109 a tile. Nothing runs a
 frame: mesh runs come every 2 s only while a district rises, and lays only when land is claimed. First make (one run):
-mesh 11.3 ms, total 25.8 ms GPU (compile and contention inside it).
+mesh 11.3 ms, total 25.8 ms GPU (compile and contention inside it). Frame census, idle 20 s (`census.mjs --params
+loop=1&city=terrainMain:1|0 --states idle`, two runs): est. phone 1.074 ms a frame graded vs 1.082 drawn, 0.63 ticks,
+1.44 vs 1.42 KB read — the same.
 
 ## 2026-11-17 — loop round 11 (3): roads 0 and 1 into Muru — a second bridge never built (`loop-skeleton`, LS-99)
 
@@ -25746,7 +25748,10 @@ ground (LS-104: a pack event's camera was `{ at: site, zoom: 10 }`, never follow
 point halfway between the two groups' middles, each side counted once), zoom 24 as they come and 34 once blows land,
 but never closer than both middles fit in 0.6 of the screen's width (floor 10). Seen at 18 first
 (`local/round11/veil2-strip.png`): figures ~25 px, the crew at one edge. At 24 (`berserk3-strip.png`,
-`veil3-strip.png`) figures read, but the crew sat half off the left edge; hence the fit.
+`veil3-strip.png`) figures read, but the crew sat half off the left edge; hence the fit. The fit first framed a crew
+still crossing the river with the fighter and pulled out to 10 (`berserk4-strip.png`): it now frames both only within
+20 cells, never wider than 16. Final: `local/round11/berserk5-strip.png`, `veil5-strip.png` — crew and fighter both in
+frame as they meet, the camera closer once blows land.
 
 **The marks.** On the GPU, from each unit's spell word (`units.wgsl unitDraw`; nothing on the CPU knows who a spell
 took): a berserk unit (`SP_ALL`) turns in a red mist — three glowing motes at its chest; your hidden people
