@@ -141,7 +141,12 @@ export class Atlas {
 const RIVER_FALL: f32 = ${RIVER_FALL.toFixed(2)};
 const RIVER_SHEET: f32 = ${RIVER_SHEET.toFixed(2)};
 const RIVER_LEVEE: f32 = ${(urlFlags().get('levee') === '0' ? 0 : RIVER_LEVEE).toFixed(2)};
+const TR2_OFF: u32 = ${Number(urlFlags().get('tr2off') ?? 0) >>> 0}u;
 `;
+    // (terrain perf, TR34: ?tr2off=<bits> — a measuring switch, a constant the compiler folds; 0 the world as designed:
+    // 1 valleyGround, 2 its coarse field's taps, 4 the plains' sub-regions, 8 their tilted cells, 16 the coasts' raise,
+    // 32 the isles, 64 the tilted cells' river gradient, 128 the coastal cells' directions by the function, not the
+    // build's table — scripts/terrain/colcost.mjs, hdiff.mjs)
     // (terrain-rivers: ?levee=0 — the levee off, a probe's before: scripts/terrain/rivers2.mjs counts the columns it
     // raises by comparing the two)
     // (round 117: terrain/river.wgsl — the rivers' course and cross-section, the terrain track's)

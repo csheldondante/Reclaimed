@@ -26107,3 +26107,62 @@ craterlake: open water with a snowy island and a sand shelf. lake: a frozen lake
 shore — not a good lake still. tilt: a river through grass, faint diagonal light bands, no scarp visible — the tilted
 cells are still too subtle at play zoom after the one tune (owner question).
 
+## 2026-11-17 — terrain perf: why the flag's world is slow (`terrain-rivers`, TR34; TR24 fixed)
+
+**Why.** The owner on the phone with `a.rivers2=1`: tiles do not load, everything lags — "Combining noise maps like
+that on the GPU should be dirt cheap". Measure first.
+
+**The bench was shared.** Another agent's headless Chrome ran on the same GPU the whole time: the same flag-off build
+measured 23 and 93 ns a column on two runs, GPU timestamps included. Only an in-page A/B is trusted below:
+scripts/terrain/colcost.mjs now lends the atlas its own timestamp query set and, in a flag world, times each batch with
+the flag's ground on and then off at run time (AP.terrain2 0 and the valley block's offset word 0 — the default
+world's state, the same compiled shader), 16 pairs a spot, the least of each; `?tr2off=<bits>` (a WGSL constant,
+folded) switches parts off for attribution.
+
+**Per column (desktop, 256² batch, the ground pass `atlas-colHeight`; on/off).** Plain river ×1.18, river mouth ×1.63,
+raised coast ×2.15 (7.4 vs 3.4 ms). The finish pass (4.5 ms) is the same either way, so a whole column batch is +6 %
+/ +19 % / +55 %; a 64² region's ground ~0.14 ms with the flag at a coast. One ground() a column in every pass (columns,
+forms' seeds, lod, the macro pass, the viewer) — no repeats. Parts off one at a time (the least-time ratios; ±0.2 noise):
+
+| off | plain | mouth | coast |
+|---|---|---|---|
+| nothing (flag on) | 1.18 | 1.63 | 2.15 |
+| coasts' raise (tilted cells at atlas scale: 25-cell Voronoi, 2 planes × 4 macroAt for each cell's direction) | 1.26 | 1.13 | 1.30 |
+| valleyGround (9 taps × 2 words, the fine profile's node + exp/softplus, a second riverWarp) | 1.28 | 1.38 | 1.80 |
+| its 9-tap loop only | 1.11 | 1.71 | 1.90 |
+| plains' sub-regions | 1.15 | 1.81 | 2.39 |
+| their tilted cells / their river gradient | 1.28 / 1.30 | 1.61 / 1.86 | 2.08 / 2.13 |
+| isles | 1.22 | 1.52 | (noisy) |
+
+**Fixed (waste).** (1) The coasts' cells' directions (−∇coast at each cell's feature: 4 macroAt a plane, ~14 buffer
+reads each, 2 planes a column in the 600-cell coast band) are constant per cell: the build stores them (196 cells,
+terrain/valleyjfa.wgsl coastDirs, just before the valley block) and the streaming path reads 2 words — the same
+function behind one sampling interface (plains.wgsl coastDir: the table, or the function before it exists). Macro
+ground vs the function (scripts/terrain/hdiff.mjs): byte-identical outside 300 texels of the torus's seams; 4,715
+texels differ at the y seam, up to 97 cells, where the old per-column path placed a seam cell's feature 22 cells off
+(worldW ≠ worldH — TR38): the table holds the wrapped cell's, so the coast now agrees across the seam. (2) riverWarp
+once a column (riverAt's warped point kept in River.q for valleyGround). After, two runs each: function plain ×1.21 /
+×1.23, mouth ×2.09 / ×1.77, coast ×2.33 / ×3.50 → table ×1.13 / ×1.17, ×1.35 / ×1.42, ×1.92 / ×1.85. Hashes: default
+world 40deae46 / 40642a65 / b2bfc8b3 (the same); flag world macro ground 94600f2e → f7480203 (the seam), nodes 21407c7
+(the same).
+
+**Why tiles never finished (TR24) — not the flag, not cost.** scripts/terrain/stalldiag.mjs polls the coverage check's
+undrawn pieces and the tile cache's why. At the plain spot, flag off and on alike: everything made by 20 s (84 made, 42
+baked — the same), then two window chunks undrawn for good (c8,6 / c8,7: the window draws nothing there, no tile, the
+region never asked for); at the mouth 6–7 regions `why: none` — never asked for. `wanted()` picks regions from screen
+points on the plane at the focus's height; the check boxes each region and chunk at its real heights, so a tall
+region (a raised coast, a cliff) or the window's corner chunk showed undrawn and was never requested. `wanted()` now
+also asks for what the check sees undrawn (after the screen's own). After: plain 0 % undrawn at 20 s (was 2.8 % for
+good), mouth regions 0 (was 6–7). The step-3 play gate (≤ 1 % over 8 polls, 120 s, flag on): coast, lake, craterlake
+and tilt ready in 18–20 s (all NOT READY before, 3–31 %); mouth still reports 26 % — four central window chunks the
+CPU's mirror doesn't know built, while its still (local/perf/play-on-mouth.png) shows no hole: the gate's, not the
+screen's. The check costs 0.08 ms a call (desktop) and now runs every frame in `wanted()` — ~0.4 ms on a phone's CPU;
+every few frames would do (TR35's list).
+
+**What the flag costs elsewhere (desktop).** Atlas build: lakes fill 1.25 s, rivers (CPU) 1.08 s, valley JFA 0.87 s,
+compile 0.24 s — ~3.4 s more at boot, before anything draws; GPU memory +33 MB (the valley block). Boot otherwise is
+compile-bound in both worlds: atlas compile 13.5 s, the level's pipelines 11–16 s, warm-up 10–32 s (TR37). Panning (the
+phone proxy, 412 × 915 at dpr 2.6): flag on p50 8.3 ms, p95 10.3 ms, no stalls — one earlier run at p95 82 ms was the
+shared GPU (not reproduced); after the changes p50 8.3, p95 21 / 11 ms (zoom 14 / 5), no stalls. Not measured: the phone itself (the owner's bench) — a phone's GPU is 10–20× slower and
+pays the long valley-JFA dispatches and private-array spills more than a desktop does (TR35, TR36).
+

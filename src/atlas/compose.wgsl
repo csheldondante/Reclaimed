@@ -437,7 +437,7 @@ fn regionHeight(r: Region, p: vec2<f32>, coast: f32, dl: f32, cr: f32) -> RH {
   }
   // (step 3: the isles — a masked drop inside the raised coast, cut from the land's own field and blended at its border)
   var isl = 0.0;
-  if (cr > 0.0 && isLand(r)) {
+  if (cr > 0.0 && isLand(r) && (TR2_OFF & 32u) == 0u) {
     let ic = isleCut(p, h, cr, coast);
     h = ic.x;
     isl = ic.y;
@@ -680,7 +680,7 @@ fn ground(p: vec2<f32>) -> Ground {
   var talus = 0.0;
   // (terrain-rivers step 3, a.rivers2 only: the coasts' raise here, and how far the coast's border is the cliff's)
   var cr = 0.0;
-  if (AP.terrain2 != 0u) { cr = coastRaise(p, m.coast); }
+  if (AP.terrain2 != 0u && (TR2_OFF & 16u) == 0u) { cr = coastRaise(p, m.coast); }
   var cliffMix = 1.0;
   var ewCoast = 0.0;
   if (isLand(A) != isLand(B)) {
@@ -873,7 +873,7 @@ fn ground(p: vec2<f32>) -> Ground {
   }
   // (terrain-rivers step 2, terrain/plains.wgsl — a.rivers2 only: AP.terrain2 is 0 in the default world) the plains'
   // sub-regions: hills, ridges, terraces, hummocks, wet flats and flats, chosen by a mask, blended by border distance
-  if (AP.terrain2 != 0u) {
+  if (AP.terrain2 != 0u && (TR2_OFF & 4u) == 0u) {
     let pr = plainRelief(p, regs[g.a], regs[g.b], g.w, g.coast, g.dl);
     g.h += pr;
     g.hlo += pr;
@@ -891,6 +891,8 @@ fn ground(p: vec2<f32>) -> Ground {
   let haveRv = valleyBase() != 0u;
   if (haveRv) {
     rvV = riverAt(p);
+  }
+  if (haveRv && (TR2_OFF & 1u) == 0u) {
     // (step 3: the coasts' raise as it stands in g.h — the land side's share of it at a coast's border)
     var landW = select(0.0, 1.0, isLand(A));
     if (isLand(A) != isLand(B)) { landW = select(1.0 - g.w, g.w, isLand(A)); }

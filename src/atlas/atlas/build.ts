@@ -76,6 +76,7 @@ export async function run(atl: Atlas): Promise<void> {
           K('jfaSeedVal', { 2: 'rw', 7: 'rw' }),
           K('jfaStepVal', { 7: 'rw', 8: 'rw', 20: 'read', 21: 'read', 22: 'read', 25: 'read' }),
           K('valleyField', { 7: 'rw', 8: 'rw', 20: 'read', 21: 'read', 22: 'read', 25: 'read' }),
+          K('coastDirs', { 7: 'rw', 8: 'rw', 20: 'read', 21: 'read', 22: 'read', 25: 'read' }),
         ]),
       )
     : null;
@@ -326,7 +327,11 @@ export async function run(atl: Atlas): Promise<void> {
     const idsOff = tabOff + lakeTab.length;
     lakeOff = [tabOff, idsOff];
     atl.basinTab = { tabOff, idsOff, used: atl.lakes.length, cap: atl.lakes.length + FLOOD_SPARE, on: true };
-    valOff = idsOff + lakeAt.byteLength / 4;
+    // (terrain perf, TR34: the coastal cells' directions, 2 words a cell, just before the valley block — terrain/plains.wgsl
+    // coastTabBase; its cell count perOf(CC_CELL)² mirrored here: CC_CELL 1200, common.wgsl perOf)
+    const pcC = Math.max(1, Math.round(atl.worldW / 1200));
+    const coastTab = idsOff + lakeAt.byteLength / 4;
+    valOff = coastTab + 2 * pcC * pcC;
     // (step 2, §9.3: the valley block — 2 words a texel, the field; then 2 words a node, its main upstream node and its
     // head's far level: terrain/valley.wgsl riverUp, riverHead)
     const nodeTab = new Uint32Array(2 * Math.max(rv.count, 1));
@@ -351,7 +356,7 @@ export async function run(atl: Atlas): Promise<void> {
     });
     // (step 2, §9.3) the coarse valley field: a two-slot JFA (nearest, lowest) seeded by the nodes, then each texel's
     // E, D and landform from its 3 × 3 neighbourhood's slots — into the valley block
-    const [kSeedVal, kStepVal, kField] = valK!;
+    const [kSeedVal, kStepVal, kField, kCoastDirs] = valK!;
     dev.queue.writeBuffer(key, 0, rv.nodeAt);
     await atl.time('jfa valley', async () => {
       atl.writeParams();
@@ -371,6 +376,12 @@ export async function run(atl: Atlas): Promise<void> {
       const enc = dev.createCommandEncoder();
       enc.copyBufferToBuffer(dst, 0, atl.riverBuf, valOff * 4, 2 * N * 4);
       dev.queue.submit([enc.finish()]);
+      // (TR34) the coastal cells' directions, computed by the function (the table's still zeros: coastDirs never reads
+      // it) into the scratch slot, then into their place before the valley block
+      await one(kCoastDirs, bg(kCoastDirs, { 7: dst, 8: src, 20: atl.region, 21: atl.dist, 22: atl.regs, 25: atl.riverBuf }));
+      const e2 = dev.createCommandEncoder();
+      e2.copyBufferToBuffer(src, 0, atl.riverBuf, coastTab * 4, 2 * pcC * pcC * 4);
+      dev.queue.submit([e2.finish()]);
     });
     // (?valleyoff=1 — a measuring tool only: the same rivers and landforms with the valley not applied, for
     // scripts/terrain/continuity.mjs's valley field; the default world never has a valley block)

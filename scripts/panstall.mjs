@@ -66,7 +66,10 @@ await run({ name: 'panstall', kind: 'behaviour', size: '412x915', dpr: 2.6 }, as
             if (ratio < 0.8) stalls++;
           }
           const last = samples[samples.length - 1];
-          return { zoom: z, speed: v, moved: Math.round(last[1]), asked: Math.round(last[2]), worstSpan: +worst.toFixed(3), stalledSpans: stalls, geoMax: +geoMax.toFixed(4), bgMax: bt ? +(bt.bg.max / bt.samples).toFixed(4) : null, farMax: bt ? +(bt.far.max / bt.samples).toFixed(4) : null, slides: S.stats.slides };
+          // (the frame times over the pan: p50, p95, max)
+          const dt = samples.slice(1).map((s, i) => s[0] - samples[i][0]).sort((a, b) => a - b);
+          const q = (f) => +dt[Math.min(dt.length - 1, Math.floor(f * dt.length))].toFixed(1);
+          return { zoom: z, speed: v, frameP50: q(0.5), frameP95: q(0.95), frameMax: q(1), moved: Math.round(last[1]), asked: Math.round(last[2]), worstSpan: +worst.toFixed(3), stalledSpans: stalls, geoMax: +geoMax.toFixed(4), bgMax: bt ? +(bt.bg.max / bt.samples).toFixed(4) : null, farMax: bt ? +(bt.far.max / bt.samples).toFixed(4) : null, slides: S.stats.slides };
         },
         z,
         v,
@@ -75,6 +78,17 @@ await run({ name: 'panstall', kind: 'behaviour', size: '412x915', dpr: 2.6 }, as
       out.push(r);
       R.check(`zoom ${z} at ${v} c/s for ${secs} s: the camera never stalls`, r.stalledSpans === 0, r);
     }
+  // (terrain perf: the hitch recorder's worst frames and causes, the CPU steps' and GPU passes' worst — ?hitch=1)
+  const hr = await p.evaluate(() => {
+    const H = window.reclaimedHitch;
+    if (!H) return null;
+    const r = H.report();
+    const ex = H.extra();
+    const passes = ex.gpuPasses?.passes ? Object.entries(ex.gpuPasses.passes).sort((a, b) => b[1].max - a[1].max).slice(0, 10) : null;
+    const hitches = (r.hitches ?? H.rec.hitches ?? []).slice().sort((a, b) => b.ms - a.ms).slice(0, 8).map((h) => ({ ms: Math.round(h.ms), cpu: Math.round(h.cpu), cause: h.cause, gpu: h.gpu, gpuTop: h.gpuTop, steps: h.steps, async: h.async }));
+    return { cpuSteps: Object.entries(ex.cpuSteps).slice(0, 10), passes, hitches };
+  });
+  if (hr) R.log(`hitches: ${JSON.stringify(hr)}`);
   const jf = R.opt('json', null);
   if (jf) fs.writeFileSync(jf, JSON.stringify(out, null, 1));
 });

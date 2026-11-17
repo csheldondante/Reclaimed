@@ -947,6 +947,26 @@ export class TileCache {
           const o = best.get(key);
           if (!o || k < o.k) best.set(key, { rx, ry, k });
         }
+    // (terrain perf, TR34 — TR24's 'none': the points above are the screen's on the plane at the focus's height, so a
+    // region standing well over or under it — a raised coast, a cliff, a valley's floor — that shows on the screen at
+    // its real heights fell between them: never asked for, an undrawn hole for good. The coverage check boxes each
+    // region by its heights (zRange) and each window chunk by its own; what it sees undrawn — a region past the window,
+    // or a window chunk the window doesn't draw (its region's tile, as the screen's points ask for one) — is asked for
+    // too, after the screen's own)
+    const cov = this.coverCheck(cam);
+    if (cov)
+      for (const u of cov.undrawn) {
+        const c = u.indexOf(',');
+        const a = Number(u.slice(1, c));
+        const b = Number(u.slice(c + 1));
+        // (coverage.ts: 'c<i>,<j>' a window chunk — its region as coverage finds it; 'r<rx>,<ry>' a region)
+        const rx = u[0] === 'c' ? Math.floor(ox / R) + Math.floor((a * mside) / R) : a;
+        const ry = u[0] === 'c' ? Math.floor(oy / R) + Math.floor((b * mside) / R) : b;
+        const key = `${rx},${ry}`;
+        if (best.has(key) || Math.abs(rx - crx) >= MASK_N / 2 || Math.abs(ry - cry) >= MASK_N / 2) continue;
+        if (this.tiles.has(this.key(rx, ry, cam.azimuth)) || skip(key)) continue;
+        best.set(key, { rx, ry, k: 3e6 + Math.hypot(rx - crx, ry - cry) * R });
+      }
     const out: { rx: number; ry: number; remake?: boolean }[] = [...best.values()].sort((a, b) => a.k - b.k).slice(0, n);
     // (round 112, TC21: the atlas full — every slot's tile drawn — and some drawn bigger than the view now needs, the
     // whole slots a closer zoom baked, nearest first: each made again at the view's size, into where it was — its

@@ -49,6 +49,8 @@ struct River {
    *  0 always in the default world — no valley block) */
   id: u32,
   src: f32,
+  /** (terrain perf, TR34) the warped point the lookup was made at (p + riverWarp(p)): valleyGround's too, not warped twice */
+  q: vec2<f32>,
 }
 
 fn riverWarp(p: vec2<f32>) -> vec2<f32> {
@@ -104,6 +106,7 @@ fn riverAt(p0: vec2<f32>) -> River {
   r.x = 1e9;
   r.id = 0u;
   r.src = 0.0;
+  r.q = p;
   let t = torusU(p) * f32(AP.n) - 0.5;
   let i0 = vec2<i32>(floor(t));
   // (terrain-rivers step 2: whether a node is a source — only with the valley block; the default world has none)

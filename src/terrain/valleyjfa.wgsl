@@ -61,6 +61,23 @@ fn jfaStepVal(@builtin(global_invocation_id) id: vec3<u32>) {
   jfaDst[i] = best;
 }
 
+/** (terrain perf, TR34) the coastal cells' directions (terrain/plains.wgsl coastDirOf) → jfaDst[cell] as (dx, dy) f32
+ *  bits: each cell's feature as pworley2 places it (the same hash, jitter 0.8), at its wrapped lattice index */
+@compute @workgroup_size(8, 8)
+fn coastDirs(@builtin(global_invocation_id) id: vec3<u32>) {
+  let pc = perOf(CC_CELL);
+  let i = id.y * AP.n + id.x;
+  if (id.x >= AP.n || i >= u32(pc * pc)) { return; }
+  let k = coastTilt();
+  let w = vec2<i32>(i32(i) % pc, i32(i) / pc);
+  let h = hash2u(w.x, w.y, k.seed);
+  let jit = 0.8;
+  let fp = vec2<f32>(w) + vec2<f32>(hf(h), hf(pcg(h))) * jit + (1.0 - jit) * 0.5;
+  let hh = pcg(i * 2246822519u + k.seed * 31u + 5u);
+  let d = coastDirOf(hh, fp * (AP.worldW / f32(pc)));
+  jfaDst[i] = vec2<u32>(bitcast<u32>(d.x), bitcast<u32>(d.y));
+}
+
 /** (no river within reach: E far over any ground, D far, no landform) */
 const VAL_NONE_E: f32 = 1e4;
 

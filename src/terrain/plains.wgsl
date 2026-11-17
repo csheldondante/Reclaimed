@@ -125,15 +125,12 @@ fn tlPlane(k: TiltK, id: u32, c: vec2<f32>, x: vec2<f32>) -> f32 {
   if (k.coastal != 0u) {
     // (the coasts': CC_RAISED of the cells rise toward the sea along the coast distance's gradient at their feature;
     // the rest stay low — beaches and low coasts)
-    if (hf(pcg(hh + 2u)) >= CC_RAISED) { return 0.0; }
-    let e = 40.0;
-    let g = vec2<f32>(macroAt(c + vec2<f32>(e, 0.0)).coast - macroAt(c - vec2<f32>(e, 0.0)).coast, macroAt(c + vec2<f32>(0.0, e)).coast - macroAt(c - vec2<f32>(0.0, e)).coast);
-    if (length(g) < 1e-3) { return 0.0; }
-    d = -normalize(g);
-    return H * clamp(0.5 + dot(x - c, d) / k.run, 0.0, 1.0);
+    let cd = coastDir(id, hh, c);
+    if (cd.x == 0.0 && cd.y == 0.0) { return 0.0; }
+    return H * clamp(0.5 + dot(x - c, cd) / k.run, 0.0, 1.0);
   }
   // (near a river: along the river distance's gradient — mostly rising toward the river, a bluff over its floodplain)
-  if (valleyBase() != 0u) {
+  if (valleyBase() != 0u && (TR2_OFF & 64u) == 0u) {
     // (c is a world point: the lattice's frame is the world's, cells)
     let cw = c;
     let D = valleyDAt(cw);
@@ -204,6 +201,35 @@ const CC_ISLE_EDGE: f32 = 2.0;
 const CC_ISLE_COAST: f32 = 250.0;
 
 fn coastTilt() -> TiltK { return TiltK(CC_CELL, CC_RUN, CC_H_MIN, CC_H_MAX, CC_SCARP, CC_GAP, AP.seed + 941u, 1u); }
+
+/** (terrain perf, TR34) a coastal cell's plane direction, the function: −∇coast at its feature c (cells; hh its hash),
+ *  or (0, 0) — a cell not raised, or no gradient there. Constant per cell: the build stores it (valleyjfa.wgsl
+ *  coastDirs) and the streaming path reads the table — 4 macroAt a plane, 2 planes a column, were the coast band's
+ *  largest cost (DEVLOG, terrain perf) */
+fn coastDirOf(hh: u32, c: vec2<f32>) -> vec2<f32> {
+  if (hf(pcg(hh + 2u)) >= CC_RAISED) { return vec2<f32>(0.0); }
+  let e = 40.0;
+  let g = vec2<f32>(macroAt(c + vec2<f32>(e, 0.0)).coast - macroAt(c - vec2<f32>(e, 0.0)).coast, macroAt(c + vec2<f32>(0.0, e)).coast - macroAt(c - vec2<f32>(0.0, e)).coast);
+  if (length(g) < 1e-3) { return vec2<f32>(0.0); }
+  return -normalize(g);
+}
+
+/** the coastal cells' table in the rivers buffer (words): 2 a cell, (dx, dy) as f32, just before the valley block
+ *  (atlas/atlas/build.ts riversFirst — its count, perOf(CC_CELL)², mirrored there); 0 where there's no valley block
+ *  (before the rivers are walked, ?valleyoff=1) */
+fn coastTabBase() -> u32 {
+  let vb = valleyBase();
+  if (vb == 0u) { return 0u; }
+  let pc = u32(perOf(CC_CELL));
+  return vb - 2u * pc * pc;
+}
+
+/** a coastal cell's direction (id: its wrapped lattice index): the stored table, or the function where there's none */
+fn coastDir(id: u32, hh: u32, c: vec2<f32>) -> vec2<f32> {
+  let tb = coastTabBase();
+  if (tb == 0u || (TR2_OFF & 128u) != 0u) { return coastDirOf(hh, c); }
+  return vec2<f32>(bitcast<f32>(riverBuf[tb + 2u * id]), bitcast<f32>(riverBuf[tb + 2u * id + 1u]));
+}
 
 /** the coasts' raise at p (cells, ≥ 0; 0 off the coast band and in the default world) */
 fn coastRaise(p: vec2<f32>, coast: f32) -> f32 {
@@ -304,7 +330,7 @@ fn plainRelief(p: vec2<f32>, A: Region, B: Region, w: f32, coast: f32, dl: f32) 
     }
     case 6u: {
       // tilted cells (the owner's): planes rising to a raised edge, small scarps, ramps in the gaps
-      h = amp * tiltedCells(p, u);
+      if ((TR2_OFF & 8u) == 0u) { h = amp * tiltedCells(p, u); }
     }
     default: {
       h = 0.0;

@@ -161,7 +161,8 @@ fn valleyGround(p0: vec2<f32>, G: f32, a: u32, b: u32, w: f32, coast: f32, dl: f
   let raiseMax = mix(ra[tb], ra[ta], w);
   let reach = max(mix(re[tb], re[ta], w), 1.0);
   let vb = valleyBase();
-  let p = p0 + riverWarp(p0);
+  // (rv was looked up at p0: its warped point is this one's — riverWarp once a column, TR34)
+  let p = rv.q;
   // the coarse field: a quadratic B-spline over the 3 × 3 texel centres round q (C1: bilinear's kinks at the texel
   // lines showed in the hillshade as straight streaks), the landform penalty per cell
   let t = torusU(p) * f32(AP.n) - 0.5;
@@ -176,7 +177,7 @@ fn valleyGround(p0: vec2<f32>, G: f32, a: u32, b: u32, w: f32, coast: f32, dl: f
   // ends in a wall of a valley's slope, not a step: §9.2)
   let pen = min(VAL_LF_PEN, VAL_LF_SLOPE * max(dl, 0.0));
   let lfA = i32(A.lf);
-  for (var k = 0; k < 9; k++) {
+  for (var k = 0; k < select(9, 0, (TR2_OFF & 2u) != 0u); k++) {
     let o = vec2<i32>(k % 3 - 1, k / 3 - 1);
     let j = texIdxW(ic + o);
     let bw = wx[o.x + 1] * wy[o.y + 1];
