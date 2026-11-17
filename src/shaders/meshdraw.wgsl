@@ -190,6 +190,17 @@ fn roadLook(m: u32, alb: vec3<f32>, p: vec3<f32>, n1: f32) -> vec3<f32> {
     let c = alb * (0.8 + 0.35 * sett);
     return mix(alb * 0.45, c, smoothstep(0.015, 0.035, joint));
   }
+  // (loop-streets) a town's paving: flagstones 1.6 × 1.1 in staggered rows, each a little its own shade, soft joints —
+  // calm, so the figures on it read (cobble's setts are a speckle at play zoom)
+  if (m == MAT_PAVING) {
+    let row = floor(q.y / 1.1);
+    let u = q.x / 1.6 + 0.5 * (row % 2.0);
+    let f = vec2<f32>(fract(u), fract(q.y / 1.1));
+    let joint = min(min(f.x, 1.0 - f.x) * 1.6, min(f.y, 1.0 - f.y) * 1.1);
+    let flag = randv(vec3<i32>(i32(floor(u)), i32(row), 7717));
+    let c = alb * (0.93 + 0.1 * flag + 0.03 * n1);
+    return mix(alb * 0.78, c, smoothstep(0.03, 0.07, joint));
+  }
   let streak = fbm2(q * vec2<f32>(0.6, 3.0));
   return alb * (0.86 + 0.24 * streak + 0.06 * n1);
 }

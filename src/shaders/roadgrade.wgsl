@@ -20,7 +20,13 @@
 // changed, 3 the most intervals a written column holds, 4 columns folded to fit K, 5 columns left (beyond maxDz),
 // 6 the most K seen, 7 the most ground moved (1/16 cells).
 
-struct GradeParams { road: u32, mode: u32, x0: u32, y0: u32, x1: u32, y1: u32, _a: u32, _b: u32 };
+// (loop-streets) A lay takes records [road, road + n) at once (roadpath.wgsl roadHit: the first whose half width holds a
+// column is its road; the banks over every shoulder that holds it), in their own frame placed in the window: window
+// column p is the frame's column p − (gx, gy) (gy even: the rows' stagger is the window's), window z = the records' z +
+// gz. The lab: one record a dispatch, its frame the window (0, 0, 0). A town: all its records over a rectangle that
+// just got its land (citygen/town.ts, the claims' `claimed` hook). Every column holding an External interval (another
+// owner's — a building, a wall, a deck's slab) is left as it is; with ROAD_DRY, every wet one.
+struct GradeParams { road: u32, n: u32, x0: u32, y0: u32, x1: u32, y1: u32, gx: i32, gy: i32, gz: f32, _a: u32, _b: u32, _c: u32 };
 
 @group(0) @binding(3) var<storage, read_write> layers: array<vec4<u32>>;
 @group(0) @binding(4) var<storage, read> roads: array<vec4<u32>>;
@@ -29,6 +35,10 @@ struct GradeParams { road: u32, mode: u32, x0: u32, y0: u32, x1: u32, y1: u32, _
 /** the plants' field (WorldGpu veg) and the next tick's: fresh earthworks and the road are bare (citygen bare.wgsl's way) */
 @group(0) @binding(7) var<storage, read_write> veg: array<f32>;
 @group(0) @binding(8) var<storage, read_write> vegNext: array<f32>;
+/** (loop-streets) the water's depth a column (WorldGpu water): ROAD_DRY leaves a wet column */
+@group(0) @binding(9) var<storage, read> water: array<f32>;
+/** water deeper than this (cells) makes a column wet (citygen height.wgsl WET_DEPTH's order) */
+const RG_WET: f32 = 0.05;
 
 /** the road's surface interval's thickness (cells) */
 const RG_THICK: f32 = 0.3;
@@ -40,11 +50,11 @@ const RG_CUT_SLOPE: f32 = 1.5;
 const RG_FILL_MAT: u32 = 2u;
 const RG_OUT: u32 = 24u;
 
-/** the road's surface interval [z0, z1) as laid (dirt road, or what it was paved as when it's laid again), the record
+/** the road's surface interval [z0, z1) as laid (dirt road, or what it was paved as when it's laid again), record `r`
  *  linked, its reveal times */
-fn roadIv(z0: f32, z1: f32, rec: RoadRec, mat: u32) -> vec4<u32> {
+fn roadIv(z0: f32, z1: f32, rec: RoadRec, r: u32, mat: u32) -> vec4<u32> {
   let start16 = pack2x16float(vec2<f32>(rec.revealStart, 0.0)) & 0xffffu;
-  return vec4<u32>(bitcast<u32>(z0), bitcast<u32>(z1), mat | (((GP.road + 1u) & 0xffu) << 8u) | (start16 << 16u), bitcast<u32>(rec.revealEnd));
+  return vec4<u32>(bitcast<u32>(z0), bitcast<u32>(z1), mat | (((r + 1u) & 0xffu) << 8u) | (start16 << 16u), bitcast<u32>(rec.revealEnd));
 }
 
 @compute @workgroup_size(8, 8)
@@ -54,55 +64,46 @@ fn roadLay(@builtin(global_invocation_id) id: vec3<u32>) {
   if (x >= GP.x1 || y >= GP.y1) { return; }
   let p = vec2<i32>(i32(x), i32(y));
   if (!inMap(p)) { return; }
-  let rec = roadRec(GP.road);
-  let wp = cellPos(p);
-  // the nearest segment the column lies on, and the banks of the ones whose shoulder it lies in
-  var onD = 1e9;
-  var onZ = 0.0;
-  var fillT = -1e9;
-  var cutT = 1e9;
-  var near = false;
-  for (var i = 0u; i + 1u < rec.count; i++) {
-    let a = roadPt(rec.first + i);
-    let b = roadPt(rec.first + i + 1u);
-    let s = roadSeg(wp, a.xy, b.xy);
-    let z = mix(a.z, b.z, s.y);
-    let hw = mix(a.hw, b.hw, s.y);
-    if (s.x <= hw) {
-      if (s.x < onD) { onD = s.x; onZ = z; }
-    } else if (s.x <= hw + rec.shoulder) {
-      let e = s.x - hw;
-      fillT = max(fillT, z - e * RG_FILL_SLOPE);
-      cutT = min(cutT, z + e * RG_CUT_SLOPE);
-      near = true;
-    }
-  }
-  let on = onD < 1e8;
-  if (!on && !near) { return; }
-  atomicAdd(&rstats[0], 1u);
+  // (the records' frame: the column's own position there — cellPos of the frame's column, as the town's raster takes it,
+  // so the town's gradeRast and this lay agree to the bit)
+  let wp = cellPos(p - vec2<i32>(GP.gx, GP.gy));
+  // the record the column lies on (the first), and the banks of the ones whose shoulder it lies in
+  let hit = roadHit(wp, GP.road, GP.n, RG_FILL_SLOPE, RG_CUT_SLOPE);
+  let on = hit.rec != ROAD_NONE;
+  if (!on && !hit.near) { return; }
+  // (a shoulder's flags: the first record's of the lay — a town's records share theirs)
+  let r = select(GP.road, hit.rec, on);
+  let rec = roadRec(r);
   let cs = colSlots(x, y);
-  atomicMax(&rstats[6], cs.y);
-  // the column's ground top and its top material
+  // the column's ground top and its top material; another owner's interval in it, and the water over it
   var g = 0.0;
   var topMat = 0u;
   var cnt = 0u;
-  // (this road's own surface already here: laid again, it keeps its paving)
+  var owned = false;
+  // (this road's own surface already here: laid again, it keeps its paving; ROAD_PAVED: laid as its surface)
   var surf = MAT_DIRTROAD;
+  if ((rec.flags & ROAD_PAVED) != 0u) { surf = select(select(MAT_DIRTROAD, MAT_COBBLE, rec.surface == 1u), MAT_PAVING, rec.surface == 2u); }
   for (var k = 0u; k < cs.y; k++) {
     let v = layers[cs.x + k];
     if (ivEmpty(v)) { break; }
     g = ivZ1(v);
     topMat = ivMat(v);
     cnt = k + 1u;
-    if (isRoadMat(topMat) && ivAux(v) == ((GP.road + 1u) & 0xffu)) { surf = topMat; }
+    if (topMat == MAT_EXTERNAL) { owned = true; }
+    if (isRoadMat(topMat) && ivAux(v) == ((r + 1u) & 0xffu)) { surf = topMat; }
   }
+  // (loop-streets: another owner's column — a claim — is never cut or buried; with ROAD_DRY a wet one is left too)
+  if (owned) { return; }
+  if ((rec.flags & ROAD_DRY) != 0u && (water[colIdx(x, y)] > RG_WET || g < G.ocean.x)) { return; }
+  atomicAdd(&rstats[0], 1u);
+  atomicMax(&rstats[6], cs.y);
   let graded = (rec.flags & ROAD_GRADED) != 0u;
-  // where the ground goes: the profile on the road, the banks on the shoulder
-  var T = onZ;
+  // where the ground goes: the profile on the road, the banks on the shoulder (window z)
+  var T = hit.z + GP.gz;
   if (!on) {
     // (a shoulder never cuts or buries another road's surface)
     if (isRoadMat(topMat)) { return; }
-    T = max(min(g, cutT), fillT);
+    T = max(min(g, hit.cutT + GP.gz), hit.fillT + GP.gz);
     if (abs(T - g) < 0.02) { return; }
   }
   if (!graded && abs(T - g) > rec.maxDz) {
@@ -127,7 +128,7 @@ fn roadLay(@builtin(global_invocation_id) id: vec3<u32>) {
     n += 1u;
   }
   if (on) {
-    o[n] = roadIv(keepTo, T, rec, surf);
+    o[n] = roadIv(keepTo, T, rec, r, surf);
     n += 1u;
     atomicAdd(&rstats[1], 1u);
   } else {

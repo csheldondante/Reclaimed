@@ -166,7 +166,9 @@ export interface CityDistricts {
  * word (or f32) a grid column (w × h, row-major) unless said:
  *   roads   the road raster: 0 none, 1 a road, 0x80000000 | z × 256 a bridge deck at world z (citygen streets.wgsl
  *           markRoad — every road the town draws once its growth has begun: contours, cross, gap, grown streets,
- *           arterials, decks). Its first w × h words; the buffer's tail is the generator's own (CG25's front field)
+ *           arterials, decks), 0x40000000 a wall's column (wallClaim), (loop-streets) 0x20000000 | z × 256 a graded
+ *           street's column — an arterial's or the square's, its ground laid to its profile's top at world z (gradeRast).
+ *           Its first w × h words; the buffer's tail is the generator's own (CG25's front field)
  *   heights the ground's world z (f32)
  *   wet     1.0 where water is (f32)
  *   pop     the population field, 4 f32 a column: density, wealth, purpose (streets.wgsl P_*), the arterials' distance

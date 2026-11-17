@@ -163,6 +163,49 @@ inset by the wider streets; Muru 344 → 333). Drawing at lane width: a major li
 (`roadDisc`), street pieces run on half their width past their ends, plates and landmark plazas lie on the ground in
 4 × 4 pieces. The city's `scale` with them changed the town (the supercells moved), so it stays 1.
 
+## Streets as terrain (loop-streets, LS-102 option a)
+
+The owner (2026-11-16): "We need streets that are integrated with the world and terrain not floating meshes and we
+want them legible and wide enough for crowds to show with plazas and decorations." The agreed road design
+(2026-11-12): a road path (curves + width) is the authority; roads flatten and colour the terrain; bridges, ramps and
+stairs are meshes only where a road leaves the ground. The road lab's grader (`roadlab/grader.ts`,
+`shaders/roadgrade.wgsl`, `api/contracts/roadpath.ts`) does that once for authored roads; a town's arterials and its
+central square now go through it. Minor and main streets keep their ribbons (later, if this reads well).
+
+- **Records (GPU-made, per mesh run).** `streets.wgsl gradeSq` + `gradeRecs` write the town's road records in the
+  roadpath layout into `CityGen.gradeRoads` (the grid's frame: world x, y of the grid, world z). Record 0 is the
+  square: a disc (two equal points) at the atlas plaza's height, its radius the farthest corner of the square's plaza
+  lots (`plazaR`'s lots). Then each atlas arterial (the CPU's, not the town's own bridges) from the centre to its end
+  (`artEnd`), cut where it is wet (the wet mask: fords) and at its deck spans: a record for each dry stretch. 41
+  records at most (1 + 8 arterials × 5 stretches) — far under the aux byte's 255, so the one-byte link stays.
+  - **The profile** is the atlas way's own (`atlas/ways.ts`: the macro ground smoothed along the road and graded to
+    0.22): its z uploaded with the arterial's points (`setArterials`, authored data), the square's z the atlas plaza's.
+    On the GPU each point is pinned to the square inside its disc and to a deck's end height at a deck, each within
+    the atlas's grade (0.22 × the distance along). Past the core the land already carries the atlas's stamped road at
+    the same z, so the graded street runs into it with no step. No column height is read by the CPU.
+  - Half width: the arterial's (`artWidth` / 2, tapering to the atlas road's over its last 12 units, as drawn before);
+    a 4-unit shoulder cut at 1.5 : 1 and filled at 1 : 1 into the banks; cut and fill all the way (`ROAD_GRADED`);
+    laid as cobble at once (`ROAD_PAVED`); wet columns left (`ROAD_DRY`).
+  - The record gains a third vec4, its box (points ± half width + shoulder), so a column tests only the records near
+    it (the town's 41 × 130 points would be 5 000 segments a column otherwise).
+- **Which columns are the grader's (ownership).** `gradeRast` marks the road raster (`ROADS`) on every column a
+  record covers with `GRADED_BIT | z × 256` (the profile's top, world z), using the same test as the lay
+  (`roadpath.wgsl roadHit`, the grid column's `cellPos`, so the two agree bit for bit). Then:
+  - `claimRoads` claims no paving there (the grader's column: nothing floats over a cut, no fill is cut again). A
+    deck still wins the raster (its bit is higher).
+  - The ribbons and hexagons whose middle is on a graded column are not drawn; the square's plaza plates are not
+    drawn. Decks and pillars are, as before.
+  - The living town's routes (`routes.wgsl pointZ`) read the graded z, so riders walk on the visible ground.
+- **The lay (persistence).** `GradeLayer` (roadlab/grader.ts) runs `roadLay` over a window rectangle with all the
+  town's records and the grid's place (dx, dy, dz). `FieldTown`'s `claimed` hook (`StaticClaims.gpuGrid`) calls it
+  after the claims and the plants, for each rectangle just claimed: every arriving region (a slide, a pool thaw, a
+  reload's land), the first claim over the window, and each reclaim after a mesh run. The lay is idempotent (the
+  profile is fixed; a column already graded is rebuilt the same), so laying a column twice is harmless.
+  - It never touches a column holding an External interval (a building, a wall, a deck's slab: another owner's), nor a
+    wet column. A shoulder never touches a road surface.
+- **Not in this pass:** the main streets (thousands of GPU pieces, not polylines), switchbacks/stairs where the
+  profile leaves the ground (the atlas grade is gentle inside a town core; measured: `maxMove`), the lab's ladder.
+
 ## Time-lapse and the opportunity hook (M4d's start)
 
 - **A clock per district:** SCT word 8, a supercell's start on the town's clock (−1e30 built, 1e30 not begun). It is

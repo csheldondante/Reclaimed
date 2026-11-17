@@ -25569,3 +25569,77 @@ ended, three "While you were gone" lines (the raiders left a world with no far t
 no "Thieves work the streets" after it this time, LS-110), "Laws from earlier runs: The glass sky.", "Earlier runs
 opened: The card "Salvage the glass saddles" …". Seen there and not fixed: the spire's threat dealt again in run 2 with
 the spire in remains (LS-111); the hedge witch offered with the pit in ruins (fixed: `site_has` the pit's tag).
+
+*(Merged from `loop-streets` in loop round 11; that branch's LS-105…108 are LS-112…115 here.)*
+
+## 2026-11-16 — streets as terrain (1): the grader lays a town's records on arriving land (`loop-streets`, LS-102 option a)
+
+The owner: "We need streets that are integrated with the world and terrain not floating meshes". Design note:
+docs/design/CITYGEN.md "Streets as terrain". This step is its riskiest proof, before the game: the road lab's grader
+lays GPU-made records over window rectangles from the claims' `claimed` hook (`GradeLayer`), the records in their
+own frame placed in the window (gx, gy, gz), all of them in one dispatch (`roadpath.wgsl roadHit`: the first record
+whose half width holds a column is its road; banks over every shoulder). A record gains a box (a third vec4) so a
+column tests only the records near it. Two flags: `ROAD_PAVED` (laid as cobble at once), `ROAD_DRY` (a wet column is
+left: a ford is never dammed). Every column holding an External interval is left (another owner's: a building, a
+wall, a deck's slab) — the lab's lay could cut through one before.
+
+Test (`test/gpu/streets-grade.test.ts`, tiny world on Dawn, 2 tests pass in 26 s): a town frame placed at (6, 4,
+-0.5) with a square and two streets on a slope, buildings in a street's way and shoulder and a crossing street's paving
+in its claim grid. Land arriving region by region is claimed then graded where it lies; every road column is cobble at
+the profile (window z) with nothing over it; the 15 claimed columns are as claimed, their ground untouched; laid twice
+is unchanged; land arriving again raw comes back the same bit for bit; one lay over all equals region by region; a
+slide (the frame placed 2 columns and rows over) grades where it lies.
+
+## 2026-11-17 — streets as terrain (2, 3): Muru's arterials and square graded (`loop-streets`, LS-102 option a)
+
+**The town's half** (docs/design/CITYGEN.md "Streets as terrain"). citygen makes the records on the GPU after each
+field/lots run: `gradeSq` (the square's radius: its plaza lots' farthest corner), `gradeWater` (the highest water near
+each arterial point, in parallel), `gradeRecs` (one thread an arterial: its dry, deck-free stretches in pieces of ≤ 17
+points, the atlas way's z — `Settlements.approachHeights`, uploaded with the points — pinned to the square inside its
+disc and to the decks' ends within the atlas grade 0.22, held 0.4 over the water beside it). Each mesh run `gradeRast`
+marks their columns `0x20000000 | z × 256` in the road raster with the lay's own test; `claimRoads` claims no paving
+there, ribbons/hexagons whose middle is graded are left empty, the square's plaza plates are not drawn, the routes'
+`pointZ` reads the graded z. `FieldTown`'s claims hook lays them (`GradeLayer`). 129 record slots: the aux byte's 255
+does not bite. GPU test `test/gpu/streets-records.test.ts` (synthetic raw ground, a river): record 0 the square at the
+plaza's z, radius 16.9 ≥ `plazaR` 14; arterials start at the centre at its z and keep the grade; no point in the river,
+points beside it ≥ water + 0.4; 4213 graded columns, raster vs CPU reading of the records 0 mismatches, road paving
+claimed on a graded column 0 (27 lot claims fall in graded footprint: left to their owner, LS-113).
+
+**Found on the way (fixed).** (1) The first try's square cut its bank below the river: wet columns within 18 of
+Muru's centre 878 of 1177 graded against 354 with ribbons (same water volume, spread thin over the square) → the
+freeboard (363 after). (2) Cobble's grey setts read as speckle beside the light ribbons → a light paving material
+(MAT 43 `paving`, the town's tone [0.76, 0.72, 0.64], flagstones in `roadLook`). (3) `gradeRecs` walked the arterial
+from its start at every half unit and scanned the water serially: +13 ms a mesh run on the desktop → incremental walk,
+`gradeWater` in parallel, records only on field/lots runs.
+
+**Measured** (`scripts/lab/gradeprobe.mjs --meshruns 7`, desktop D3D11, GPU shared with another builder; medians of
+7, two rounds each): mesh stage, mesh-only run graded 4.12 / 2.56 ms vs ribbons 3.58 / 2.43 (noise); a run from the
+lots (records made again) 4.60 / 4.22 vs 2.45 / 2.77 (+~1.8 ms). A lay of the whole 320 × 320 box 4.4 ms wall to the
+queue's end (29 lays over 95 k columns at Muru's making). Grader stats at Muru: 2000 road columns, 68 shoulder, ground
+moved at most 4.0 cells, most intervals a column 6, none folded.
+
+**Seen** (`local/streets1/strip-streets1.png`: rows before / after unwalled, before / after walled, `?parade=30`; columns
+town, market close-up, parade at 22/30 s and 40/55 s). The market's bridgehead: before, big pale slanted ribbon and plate
+planes; after, flat light paving on the ground running into the deck. The arterial outside town: a light paved band
+with cut banks, the column of 9 (and of 30) on it, figures clear against it. At the town's zoom the difference is
+small (the town is a few pixels a street). Not better everywhere: the main streets are still ribbons and meet the
+graded paving with a slight seam of tone and height (LS-112).
+
+**Persistence in the game** (`scripts/lab/gradepersist.mjs`: 69 sample points in Muru's grid frame — the square and each
+road 22–60 units out — their top material from the world API's surface pages): paving at 26 when made (road 2's 19 and
+7 of the square's 12; roads 0 and 1 are on their decks there — External — and 3 square points in the river, 2 under a
+building); 26 again after the window slid 6 regions east and back (19 slides in all), and 26 after a reload of the
+saved world. (The slide back may thaw regions from the pool rather than make them again; the reload makes them from
+the atlas, and `test/gpu/streets-grade.test.ts` covers raw land arriving again.)
+
+**Census** (`scripts/census.mjs --params 'loop=1&parade=60&city=terrainRoads:1|0' --pick ysolt --states idle,event
+--event gate-parade`; counts → est. phone ms a frame):
+
+| State | graded | ribbons |
+|---|---|---|
+| idle | 1.15 ms, 0.70 ticks, 1.40 KB read | 1.34 ms, 0.89 ticks, 1.34 KB |
+| the parade `?parade=60` | 6.70 ms, 3.78 ticks, 13.1 KB | 7.35 ms, 4.09 ticks, 22.3 KB |
+
+Nothing new a frame (the lays run only when land is claimed); the differences are the runs' tick counts, not the
+streets. Town generation (first make, timestamps, GPU shared): 21–52 ms graded vs 24–109 ms ribbons across runs —
+compile and contention dominate; the mesh-stage toggle above is the cleaner number.

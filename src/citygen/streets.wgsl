@@ -92,6 +92,9 @@ fn cross2(a: vec2<f32>, b: vec2<f32>) -> f32 { return a.x * b.y - a.y * b.x; }
 @group(0) @binding(2) var<storage, read> b2: array<u32>;
 @group(0) @binding(3) var<storage, read> b3: array<u32>;
 @group(0) @binding(4) var<storage, read> b4: array<u32>;
+/** (loop-streets) binding 4 as road path records (roadpath.wgsl, appended to this module): gradeRast's alone — no entry
+ *  point uses both it and b4 */
+@group(0) @binding(4) var<storage, read> roads: array<vec4<u32>>;
 @group(0) @binding(5) var<storage, read_write> w5: array<u32>;
 @group(0) @binding(6) var<storage, read_write> w6: array<atomic<u32>>;
 @group(0) @binding(7) var<storage, read_write> w7: array<u32>;
@@ -722,9 +725,11 @@ fn ribbon(at: u32, a: vec2<f32>, b: vec2<f32>, hw0: f32, col0: u32) {
   // (M4b: on the town's paving — the claimed quarter cell over the ground, claimSpans; a track a little lower)
   let lift = select(0.27, 0.12, roadTrack);
   let p0 = vec3<f32>(a - s, hAt(a - s) + lift);
-  let p1 = vec3<f32>(b - s, hAt(b - s) + lift);
-  let p2 = vec3<f32>(b + s, hAt(b + s) + lift);
-  let p3 = vec3<f32>(a + s, hAt(a + s) + lift);
+  var p1 = vec3<f32>(b - s, hAt(b - s) + lift);
+  var p2 = vec3<f32>(b + s, hAt(b + s) + lift);
+  var p3 = vec3<f32>(a + s, hAt(a + s) + lift);
+  // (loop-streets: on a graded street the terrain shows the road — the piece's room left empty, its triangles a point)
+  if (!roadTrack && gradedAt(0.5 * (a + b))) { p1 = p0; p2 = p0; p3 = p0; }
   curSurf = select(roadSurf(), surfOf(SURF_DIRT), roadTrack);
   tri(at, p0, p1, p2, col);
   tri(at + 3u, p0, p2, p3, col);
@@ -749,9 +754,12 @@ fn roadDisc(at: u32, a: vec2<f32>, b: vec2<f32>, hw: f32, col: u32) {
   let p = 0.5 * (a + b);
   let R = hw * 1.1547;
   var v: array<vec3<f32>, 6>;
+  // (loop-streets: on a graded street the terrain shows the road — the room's triangles a point)
+  let flat = gradedAt(p);
   for (var k = 0u; k < 6u; k++) {
     let q = p + R * vec2<f32>(cos(f32(k) * 1.0471976 + 0.5235988), sin(f32(k) * 1.0471976 + 0.5235988));
     v[k] = vec3<f32>(q, hAt(q) + 0.27);
+    if (flat) { v[k] = vec3<f32>(p, hAt(p)); }
   }
   curSurf = roadSurf();
   tri(at, v[0], v[1], v[2], col);
@@ -1078,6 +1086,8 @@ fn lotMesh(@builtin(global_invocation_id) g: vec3<u32>) {
   // (archgen, mode 1: parks and plazas are the building generator's — gardens and markets on the land itself; the user:
   // "get rid of the park and lot ground plates")
   if (u.n.w == 1u && (kind == REC_PARK || kind == REC_PLAZA)) { return; }
+  // (loop-streets: the central square is graded — the terrain shows it)
+  if (u.pp.z > 0.5 && squareLot(o)) { return; }
   if (kind != REC_BUILDING) {
     // (loop round 9: a park's or a plaza's plate in PLATE_N × PLATE_N quads, each corner on the ground (hAt) — it lies
     // on the land as one surface with its neighbours, not a tilted plane whose corners alone touch it: the central
@@ -3416,6 +3426,229 @@ fn claimField(r: u32, o: u32) {
 }
 const M_RUBBLE: u32 = 4u;
 const M_WOOD: u32 = 10u;
+
+// ==== loop-streets: streets as terrain — the town's road records for the grader (docs/design/CITYGEN.md) ==========
+// The square and the arterials as road path records (roadpath.wgsl's layout: api/contracts/roadpath.ts) in GRADE, the
+// grid's frame (world x, y; world z), made each mesh run; the columns they cover marked GRADED_BIT | z × 256 in ROADS
+// (the same test as the lay: roadpath.wgsl roadHit at the column's cpos). Record 0 the square (a disc: two equal
+// points); then each arterial's dry, deck-free stretches in pieces of at most GR_PTS points (tight boxes), GR_ART
+// records an arterial. ARTZ (f32): 0 the plaza's z (the atlas's), 1 1 when given; from 4, arterial k's point j's z at
+// 4 + k · NAP + j (the atlas way's graded profile). GSQ (u32): 0 the square's radius × 256 (gradeSq).
+/** (ROADS) a graded street's column: its profile's top z × 256 in the low bits (under DECK_BIT and WALL_MARK) */
+const GRADED_BIT: u32 = 0x20000000u;
+const GRADED_Z: u32 = 0x1fffffffu;
+fn graded(m: u32) -> bool { return (m & (DECK_BIT | WALL_MARK | GRADED_BIT)) == GRADED_BIT; }
+/** is the column at p a graded street's (w6 ROADS) — a piece drawn there is the terrain's to show */
+fn gradedAt(p: vec2<f32>) -> bool { return u.pp.z > 0.5 && inb(p) && graded(atomicLoad(&w6[ixp(p)])); }
+/** records: 1 + NART × GR_ART; points a record */
+const GR_ART: u32 = 16u;
+const GR_RECS: u32 = 1u + NART * GR_ART;
+const GR_PTS: u32 = 17u;
+/** the atlas's steepest grade (atlas/ways.ts GRADE): a pinned point's neighbours within it */
+const GR_GRADE: f32 = 0.22;
+/** a graded street's least height over the water beside it (world units): a cut never opens a river onto the street
+ *  (Muru's square, the first try: 878 of 1177 columns within 18 of the centre wet, against 354 with the ribbons) */
+const GR_FREEBOARD: f32 = 0.4;
+/** one thread an arterial's point (k · NAP + j) or the square (NART · NAP): the highest water surface within reach of
+ *  it — a street's half width and shoulder, and half a point's spacing more (points are 4 units apart) — into GWS
+ *  (from word 4; the square's last). In parallel: gradeRecs reads them, one thread an arterial (b1 ART, b4 GSQ; w5 GWS,
+ *  w7 WS) */
+@compute @workgroup_size(64)
+fn gradeWater(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i > NART * NAP) { return; }
+  if (i == NART * NAP) {
+    set5(4u + i, grWater(u.d.xy, max(f32(b4[0]) / 256.0, u.x.w) + GR_SHOULDER));
+    return;
+  }
+  let k = i / NAP;
+  let j = i % NAP;
+  if (k >= artCountCpu(1u) || j >= artPts(1u, k)) { return; }
+  set5(4u + i, grWater(artPt(1u, k, j), max(u.t.x * 0.5, WAY_HALF) + GR_SHOULDER + 2.5));
+}
+/** the highest water surface (w7 WS, world z; −1e9 dry) within r of p — what a street there is held above */
+fn grWater(p: vec2<f32>, r: f32) -> f32 {
+  var m = -1e9;
+  let y0 = max(i32(floor((p.y - r) / ROW_H)), 0);
+  let y1 = min(i32(ceil((p.y + r) / ROW_H)), H() - 1);
+  let x0 = max(i32(floor(p.x - r)), 0);
+  let x1 = min(i32(ceil(p.x + r)), W() - 1);
+  for (var y = y0; y <= y1; y++) {
+    for (var x = x0; x <= x1; x++) {
+      if (distance(cpos(x, y), p) > r) { continue; }
+      m = max(m, bitcast<f32>(w7[ix(x, y)]));
+    }
+  }
+  return m;
+}
+/** a record's shoulder (world units), its flags (ROAD_GRADED | ROAD_PAVED | ROAD_DRY) and surface (RoadSurface.Paving:
+ *  the town's light flagstones, MAT.Paving) */
+const GR_SHOULDER: f32 = 4.0;
+const GR_FLAGS: u32 = 7u;
+const GR_SURFACE: u32 = 2u;
+/** is lot record o one of the central square's (lotRec's rule: a plaza whose parcel's middle is within u.x.w) */
+fn squareLot(o: u32) -> bool {
+  if (u.x.w <= 0.0 || b1[o + 17u] != REC_PLAZA) { return false; }
+  var mid = vec2<f32>(0.0);
+  for (var k = 0u; k < 4u; k++) { mid += 0.25 * vec2<f32>(r1(o + k * 2u), r1(o + 1u + k * 2u)); }
+  return distance(mid, u.d.xy) < u.x.w;
+}
+/** one thread a lot record: the square's radius — its lots' farthest parcel corner (b1 the records, b4 the counts;
+ *  w6 GSQ, zeroed before) */
+@compute @workgroup_size(64)
+fn gradeSq(@builtin(global_invocation_id) g: vec3<u32>) {
+  let i = g.x;
+  if (i >= min(b4[0], u.m.x)) { return; }
+  let o = i * RECW;
+  if (!squareLot(o)) { return; }
+  var r = 0.0;
+  for (var k = 0u; k < 4u; k++) { r = max(r, distance(vec2<f32>(r1(o + k * 2u), r1(o + 1u + k * 2u)), u.d.xy)); }
+  atomicMax(&w6[0], u32(r * 256.0));
+}
+/** a record's words in GRADE (w5): record r's three vec4s, its points from r · GR_PTS */
+fn grRec(r: u32, n: u32, box: vec4<f32>) {
+  let o = 4u + r * 12u;
+  w5[o] = r * GR_PTS;
+  w5[o + 1u] = n;
+  w5[o + 2u] = GR_SURFACE;
+  w5[o + 3u] = GR_FLAGS;
+  for (var j = 4u; j < 8u; j++) { w5[o + j] = 0u; }
+  set5(o + 6u, GR_SHOULDER);
+  set5(o + 8u, box.x);
+  set5(o + 9u, box.y);
+  set5(o + 10u, box.z);
+  set5(o + 11u, box.w);
+}
+fn grPt(r: u32, j: u32, p: vec2<f32>, z: f32, hw: f32) {
+  let o = 4u + GR_RECS * 12u + (r * GR_PTS + j) * 4u;
+  set5(o, p.x);
+  set5(o + 1u, p.y);
+  set5(o + 2u, z);
+  set5(o + 3u, hw);
+}
+/** arterial k's profile at s along it (its points' atlas z, b2 ARTZ), pinned to the square (radius rs, z zs) and to
+ *  its decks' ends, each within the grade */
+fn grZ(k: u32, j: u32, t: f32, s: f32, rs: f32, zs: f32) -> f32 {
+  let o = artBase(k);
+  // (on segment j, t along it)
+  var z = mix(r2(4u + k * NAP + j), r2(4u + k * NAP + min(j + 1u, artPts(1u, k) - 1u)), t);
+  let ds = max(s - rs, 0.0);
+  z = clamp(z, zs - GR_GRADE * ds, zs + GR_GRADE * ds);
+  for (var sp = 0u; sp < min(b1[o + 2u], NSPAN); sp++) {
+    let q = o + 4u + sp * 4u;
+    let sa = r1(q);
+    let sb = r1(q + 1u);
+    if (s <= sa) { z = clamp(z, r1(q + 2u) - GR_GRADE * (sa - s), r1(q + 2u) + GR_GRADE * (sa - s)); }
+    if (s >= sb) { z = clamp(z, r1(q + 3u) - GR_GRADE * (s - sb), r1(q + 3u) + GR_GRADE * (s - sb)); }
+  }
+  return z;
+}
+/** is s along arterial k (at p) off the grader's: over a deck's span, or wet (b3 the wet mask), or out of the grid */
+fn grOff(k: u32, s: f32, p: vec2<f32>) -> bool {
+  let o = artBase(k);
+  for (var sp = 0u; sp < min(b1[o + 2u], NSPAN); sp++) {
+    let q = o + 4u + sp * 4u;
+    if (s >= r1(q) && s <= r1(q + 1u)) { return true; }
+  }
+  return !inb(p) || bitcast<f32>(b3[ixp(p)]) > 0.5;
+}
+/** one thread an arterial (k < NART) or the square (k = NART, with the header): its records in GRADE (b1 ART, b2 ARTZ,
+ *  b3 the wet mask, b4 GSQ; w5 GRADE; w7 GWS, the water's highest surface near each point — read only) */
+@compute @workgroup_size(16)
+fn gradeRecs(@builtin(global_invocation_id) g: vec3<u32>) {
+  let k = g.x;
+  if (k > NART) { return; }
+  let rs = select(0.0, max(f32(b4[0]) / 256.0, u.x.w), u.x.w > 0.0);
+  // (the square at the plaza's z, held over the water beside it: gradeWater's)
+  let zs = max(r2(0u), bitcast<f32>(w7[4u + NART * NAP]) + GR_FREEBOARD);
+  if (k == NART) {
+    w5[0] = GR_RECS;
+    w5[1] = GR_RECS * GR_PTS;
+    w5[2] = 1u;
+    w5[3] = 1u + 3u * GR_RECS;
+    let c = u.d.xy;
+    let m = rs + GR_SHOULDER;
+    grRec(0u, select(0u, 2u, rs > 0.0), vec4<f32>(c - vec2<f32>(m), c + vec2<f32>(m)));
+    grPt(0u, 0u, c, zs, rs);
+    grPt(0u, 1u, c, zs, rs);
+    return;
+  }
+  let r0 = 1u + k * GR_ART;
+  var r = r0;
+  if (k < artCountCpu(1u)) {
+    let lim = r1(artBase(k) + 3u);
+    let n = artPts(1u, k);
+    // (the points' distances along it; a stretch runs while it's dry and off the decks, cut into pieces of GR_PTS)
+    var s = 0.0;
+    var on = false;
+    var cnt = 0u;
+    var lo = vec2<f32>(1e9);
+    var hi = vec2<f32>(-1e9);
+    var j = 0u;
+    var acc = 0.0;
+    // (march in half units; a point is laid at each of the arterial's own points and at a stretch's ends)
+    // (walked a segment at a time: j the segment s is on, acc where it starts, L its length)
+    var L = select(0.0, distance(artPt(1u, k, 0u), artPt(1u, k, 1u)), n > 1u);
+    loop {
+      if (s > lim || r >= r0 + GR_ART) { break; }
+      // (the arterial's next own point passed: a point there)
+      var mark = false;
+      loop {
+        if (j + 2u >= n || s < acc + L) { break; }
+        acc += L;
+        j++;
+        L = distance(artPt(1u, k, j), artPt(1u, k, j + 1u));
+        mark = true;
+      }
+      let t = clamp((s - acc) / max(L, 1e-4), 0.0, 1.0);
+      let p = mix(artPt(1u, k, j), artPt(1u, k, min(j + 1u, n - 1u)), t);
+      let off = grOff(k, s, p);
+      let last = s + 0.5 > lim;
+      if (!off && !on) { on = true; cnt = 0u; lo = vec2<f32>(1e9); hi = vec2<f32>(-1e9); mark = true; }
+      if (on && (off || last)) { mark = true; }
+      if (on && mark) {
+        let hw = mix(WAY_HALF, u.t.x * 0.5, clamp((lim - s) / ART_TAPER, 0.0, 1.0));
+        // (held over the water beside it: the most of gradeWater's at the segment's two ends)
+        let wz = max(bitcast<f32>(w7[4u + k * NAP + j]), bitcast<f32>(w7[4u + k * NAP + min(j + 1u, n - 1u)]));
+        let zp = max(grZ(k, j, t, s, rs, zs), wz + GR_FREEBOARD);
+        grPt(r, cnt, p, zp, hw);
+        lo = min(lo, p - vec2<f32>(hw + GR_SHOULDER));
+        hi = max(hi, p + vec2<f32>(hw + GR_SHOULDER));
+        cnt++;
+        let full = cnt == GR_PTS;
+        if (off || last || full) {
+          grRec(r, select(0u, cnt, cnt >= 2u), vec4<f32>(lo, hi));
+          r++;
+          on = false;
+          // (a full piece: the next starts at its last point)
+          if (full && !off && !last && r < r0 + GR_ART) {
+            on = true;
+            grPt(r, 0u, p, zp, hw);
+            cnt = 1u;
+            lo = p - vec2<f32>(hw + GR_SHOULDER);
+            hi = p + vec2<f32>(hw + GR_SHOULDER);
+          }
+        }
+      }
+      s += 0.5;
+    }
+    if (on && r < r0 + GR_ART) {
+      grRec(r, select(0u, cnt, cnt >= 2u), vec4<f32>(lo, hi));
+      r++;
+    }
+  }
+  for (; r < r0 + GR_ART; r++) { grRec(r, 0u, vec4<f32>(0.0)); }
+}
+/** one thread a grid column: GRADED_BIT | its profile's top z × 256 in ROADS where a record holds it (roads: GRADE at
+ *  binding 4; w6 ROADS — after it's cleared, before the streets mark it) */
+@compute @workgroup_size(8, 8)
+fn gradeRast(@builtin(global_invocation_id) g: vec3<u32>) {
+  let x = i32(g.x); let y = i32(g.y);
+  if (x >= W() || y >= H()) { return; }
+  let h = roadHit(cpos(x, y), 0u, GR_RECS, 1.0, 1.5);
+  if (h.rec == ROAD_NONE) { return; }
+  atomicStore(&w6[ix(x, y)], GRADED_BIT | min(u32(clamp(h.z, 0.0, 2.0e6) * 256.0), GRADED_Z));
+}
 /** one thread a grid column: its road or deck span from ROADS, or none (b1 ROADS, b2 the wet mask, r3 the heights; w7 CG)
  *  (trackA-liquids, LQ7: a road's paving isn't claimed on a wet column — a ford's bed stays bare under the water; a
  *  deck over water is) */
@@ -3435,6 +3668,9 @@ fn claimRoads(@builtin(global_invocation_id) g: vec3<u32>) {
   // a road's paving isn't claimed on a wet column: a ford's bed stays bare under the water — LQ7)
   if (m == 0u) { w7[i * 4u + 3u] = 0u; return; }
   if ((m & DECK_BIT) == 0u && r2(i) > 0.5) { w7[i * 4u + 3u] = 0u; return; }
+  // (loop-streets: a graded street's column is the grader's — its paving is the column's own top at the profile, laid as
+  // its land arrives; a claim here would float over a cut or be buried by a fill)
+  if (graded(m)) { w7[i * 4u + 3u] = 0u; return; }
   w7[i * 4u + 3u] = 1u;
   if ((m & DECK_BIT) != 0u) {
     let dz = f32(m & ~DECK_BIT) / 256.0;

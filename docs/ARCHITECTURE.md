@@ -3557,8 +3557,8 @@ The user (2026-11-12): roads flatten and colour the terrain; bridges, ramps and 
 the road's path is independent of both, "a guaranteed fixed path defined in curves and width".
 
 - **The record is the authority.** One read-only storage buffer of road records (`array<vec4<u32>>`): a header, two
-  vec4 a road (its points' range, surface kind dirt/cobble, flags — `ROAD_GRADED` —, reveal start and end, shoulder,
-  maxDz), a vec4 a point (world x, y; the profile z; the half width). The layout is in roadpath.ts; the WGSL mirror,
+  vec4 a road (three since loop-streets: its points' range, surface kind dirt/cobble/paving, flags — `ROAD_GRADED` —,
+  reveal start and end, shoulder, maxDz; its box), a vec4 a point (world x, y; the profile z; the half width). The layout is in roadpath.ts; the WGSL mirror,
   shaders/roadpath.wgsl (`RoadRec`, `RoadPt`, `roadRec`, `roadPt`, `roadSeg`), declares no binding (the includer binds
   `roads`). Archgen's grow-in decal reads it from a draw pass later.
 - **Cut and fill are real column edits** (shaders/roadgrade.wgsl `roadLay`, roadlab/grader.ts): a dispatch a road,
@@ -3573,6 +3573,16 @@ the road's path is independent of both, "a guaranteed fixed path defined in curv
   sees all four words; meshdraw.wgsl `roadLook` uses only the material (cobble setts, dirt streaks, no plants).
 - **K**: a road column holds 3 intervals at most in the lab (stone, soil, road): far under K 16. It needs a new
   interval only where the road sits on something it doesn't join (the fill joins soil).
+- **(loop-streets) A town's streets as terrain** (docs/design/CITYGEN.md "Streets as terrain"). A record is three vec4
+  now (word c: its box — points ± half width + shoulder — so a column tests only the records near it), flags
+  `ROAD_PAVED` (laid as its surface at once) and `ROAD_DRY` (a wet column left), surface 2 Paving (MAT 43, light
+  flagstones). Records may be GPU-made in their own frame: citygen writes a town's (`CityGen.gradeRoads`, the grid's
+  frame, world z: the square and the arterials' dry stretches, 129 slots, empty ones count 0); `GradeLayer`
+  (roadlab/grader.ts) lays all of them over a window rectangle with the frame's place (dx, dy even, dz). The town's
+  claims' `claimed` hook calls it for every rectangle just claimed (arriving land, reclaims), so the street is laid
+  again whenever its land comes back. A lay never touches a column with an External interval (another owner's). The
+  town's road raster marks the records' columns `0x20000000 | z × 256` (`gradeRast`, the lay's own test); citygen
+  claims no paving and draws no ribbon there, and the living town's routes read the graded z.
 
 ## Limits (round 128o, DA-G3; DESIGN.md §24 "Limits … are documented with what they cost us")
 

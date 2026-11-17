@@ -9,14 +9,18 @@
 //
 //   vec4 0                 header: x the roads, y the points, z the first record's vec4 (ROAD_REC_BASE = 1),
 //                          w the first point's vec4 (1 + 2 × roads)
-//   vec4 z + 2r            record r, word a: x its first point (index into the points), y its point count (≥ 2),
-//                          z its surface kind (RoadSurface: 0 dirt, 1 cobble — what it ends as), w flags (ROAD_GRADED)
-//   vec4 z + 2r + 1        record r, word b (f32): x reveal start, y reveal end (seconds on the owner's clock: the lab's
+//   vec4 z + 3r            record r, word a: x its first point (index into the points), y its point count (≥ 2; 0 an
+//                          empty slot — a GPU-made set's unused record), z its surface kind (RoadSurface: 0 dirt, 1
+//                          cobble — what it ends as), w flags (ROAD_GRADED, ROAD_PAVED, ROAD_DRY)
+//   vec4 z + 3r + 1        record r, word b (f32): x reveal start, y reveal end (seconds on the owner's clock: the lab's
 //                          since it opened; a town's would be its own), z the shoulder (how far past the half width the
 //                          ground is sloped back to the land, world units), w maxDz (a road without ROAD_GRADED moves
 //                          the ground at most this much: where the profile leaves the ground a structure carries it)
-//   vec4 w + i             point i (f32): x, y world units (the window's frame: common.wgsl cellPos), z the profile (the
-//                          road's surface height, window z), w the half width there
+//   vec4 z + 3r + 2        record r, word c (f32): its box — x0, y0, x1, y1 of its points ± (half width + shoulder), the
+//                          points' frame (loop-streets: a column tests only the records whose box holds it)
+//   vec4 w + i             point i (f32): x, y world units (the frame's — the lab's: the window's, common.wgsl cellPos;
+//                          a town's: its grid's, placed in the window by the lay), z the profile (the road's surface
+//                          height: the lab's window z, a town's world z), w the half width there
 //
 // A road is a polyline through its points; the profile and the half width are linear along each segment. Points are
 // never smoothed (DESIGN §12: "don't ever smooth them yet").
@@ -28,14 +32,19 @@
 // run over it, not it). The record is the authority: read the times from it.
 
 /** the surface a road ends as (record word a.z) */
-export const RoadSurface = { Dirt: 0, Cobble: 1 } as const;
+export const RoadSurface = { Dirt: 0, Cobble: 1, /** (loop-streets) a town's light flagstones (MAT.Paving), laid paved */ Paving: 2 } as const;
 export type RoadSurface = (typeof RoadSurface)[keyof typeof RoadSurface];
 
 /** record flag: cut and fill all the way to the profile (else at most maxDz, the rest left to a structure) */
 export const ROAD_GRADED = 1;
+/** (loop-streets) record flag: laid as its surface at once (the lab lays dirt and paves at the reveal's end) */
+export const ROAD_PAVED = 2;
+/** (loop-streets) record flag: a wet column (water over its ground) is left as it is — a ford's bed stays under its
+ *  river, no fill dams it */
+export const ROAD_DRY = 4;
 /** vec4s: the header, a record, a point */
 export const ROAD_HEADER_VEC4 = 1;
-export const ROAD_REC_VEC4 = 2;
+export const ROAD_REC_VEC4 = 3;
 export const ROAD_PT_VEC4 = 1;
 /** the first record's vec4 */
 export const ROAD_REC_BASE = ROAD_HEADER_VEC4;
@@ -59,6 +68,9 @@ export interface RoadRecord {
   surface: RoadSurface;
   /** cut and fill all the way (ROAD_GRADED), else at most maxDz */
   graded: boolean;
+  /** (loop-streets) laid as its surface at once (ROAD_PAVED); wet columns left (ROAD_DRY) */
+  paved?: boolean;
+  dry?: boolean;
   revealStart: number;
   revealEnd: number;
   /** world units past the half width the ground slopes back to the land */
@@ -80,8 +92,20 @@ export function packRoads(roads: RoadRecord[]): ArrayBuffer {
     if (r.points.length < 2) throw new Error(`road ${i}: ${r.points.length} points (a road needs 2 or more)`);
     if (!(r.revealEnd >= r.revealStart)) throw new Error(`road ${i}: reveal end ${r.revealEnd} before its start ${r.revealStart}`);
     const o = (ROAD_REC_BASE + ROAD_REC_VEC4 * i) * 4;
-    u.set([first, r.points.length, r.surface, r.graded ? ROAD_GRADED : 0], o);
+    u.set([first, r.points.length, r.surface, (r.graded ? ROAD_GRADED : 0) | (r.paved ? ROAD_PAVED : 0) | (r.dry ? ROAD_DRY : 0)], o);
     f.set([r.revealStart, r.revealEnd, r.shoulder, r.maxDz], o + 4);
+    let bx0 = Infinity;
+    let by0 = Infinity;
+    let bx1 = -Infinity;
+    let by1 = -Infinity;
+    for (const p of r.points) {
+      const m = p.hw + r.shoulder;
+      bx0 = Math.min(bx0, p.x - m);
+      by0 = Math.min(by0, p.y - m);
+      bx1 = Math.max(bx1, p.x + m);
+      by1 = Math.max(by1, p.y + m);
+    }
+    f.set([bx0, by0, bx1, by1], o + 8);
     r.points.forEach((p, k) => f.set([p.x, p.y, p.z, p.hw], (ptBase + first + k) * 4));
     first += r.points.length;
   });
@@ -101,7 +125,7 @@ export function unpackRoads(buf: ArrayBuffer): RoadRecord[] {
       const p = (ptBase + u[o] + k) * 4;
       points.push({ x: f[p], y: f[p + 1], z: f[p + 2], hw: f[p + 3] });
     }
-    out.push({ points, surface: u[o + 2] as RoadSurface, graded: (u[o + 3] & ROAD_GRADED) !== 0, revealStart: f[o + 4], revealEnd: f[o + 5], shoulder: f[o + 6], maxDz: f[o + 7] });
+    out.push({ points, surface: u[o + 2] as RoadSurface, graded: (u[o + 3] & ROAD_GRADED) !== 0, paved: (u[o + 3] & ROAD_PAVED) !== 0, dry: (u[o + 3] & ROAD_DRY) !== 0, revealStart: f[o + 4], revealEnd: f[o + 5], shoulder: f[o + 6], maxDz: f[o + 7] });
   }
   return out;
 }
