@@ -29,7 +29,8 @@ export type PackEffect =
   | { untag: string; on: string }
   | { mutate: string; where: string }
   | { far: string; where?: string; by?: string; tribute?: number; id?: string; name?: string; purpose?: string }
-  | { sign: string; seasons?: number; strength?: number }
+  | { sign: string; seasons?: number; strength?: number; where?: string }
+  | { trade: string; end?: boolean }
   | { arrive: string; count?: number; from?: string }
   | { unlock: string }
   | { law: string; seasons?: number }
@@ -65,6 +66,8 @@ export interface PackThing {
   upkeep?: Record<string, number>;
   /** (laws) laws of this pack in force while the thing is in play and not ruined */
   laws?: string[];
+  /** (trade routes) a place selector: those towns trade with the home town while the thing stands */
+  trade?: string;
   art?: string;
 }
 export interface PackCard {
@@ -190,7 +193,7 @@ export const UNIT_KINDS: readonly string[] = ['soldier', 'raider', 'worker', 'ca
 /** the base game's card ids (season/realm-templates.ts): a pack's may not clash with them */
 export const BASE_CARD_IDS: readonly string[] = ['build:houses', 'build:farms', 'build:market', 'build:workshops', 'build:harbour', 'build:keep', 'build:quarry', 'build:lumber', 'build:bridge', 'build:trade', 'build:walls', 'mining-outpost', 'tower-lens', 'relieve-neighbour', 'house-refugees', 'guard-camp', 'dead-rise', 'pay-raiders', 'mend-dam', 'fire-wards', 'feed-shrine', 'shore-hill', 'raid', 'gate-parade', 'refugees-arrive', 'resettle-refugees', 'market-fire', 'hire-sellswords'];
 export const COND_KEYS: readonly string[] = ['pool', 'season_gte', 'has_thing', 'no_thing', 'town_has', 'site_has', 'far_town_is', 'resolved', 'leader', ];
-export const EFFECT_KEYS: readonly string[] = ['pool', 'income', 'put', 'remove', 'tag', 'untag', 'mutate', 'far', 'sign', 'arrive', 'unlock', 'law', 'end_run', 'far_all', 'say'];
+export const EFFECT_KEYS: readonly string[] = ['pool', 'income', 'put', 'remove', 'tag', 'untag', 'mutate', 'far', 'sign', 'arrive', 'unlock', 'law', 'end_run', 'far_all', 'trade', 'say'];
 /** (laws) what a law can do: its one key (living/laws.ts LawDo), by kind */
 export const LAW_KEYS: Record<string, readonly string[]> = {
   tags: ['count_as', 'grant', 'spare'],
@@ -200,6 +203,8 @@ export const LAW_KEYS: Record<string, readonly string[]> = {
   run: ['board', 'income', 'raiders', 'win'],
   meta: ['multipliers', 'next_law'],
 };
+/** (places) the states a far place selector `far:where:<state>` may name */
+export const FAR_SELECT_STATES: readonly string[] = ['standing', 'destroyed', 'abandoned', 'occupied', 'vassal', 'founded', 'trade-partner', 'founded-by-player'];
 /** the ruin words (a law may spare one) */
 export const RUIN_WORDS: readonly string[] = ['burned', 'flooded', 'buried', 'melted', 'abandoned', 'destroyed', 'occupied', 'lost'];
 /** spells a law may name: the base game's, as a pack writes them */
@@ -304,11 +309,19 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   const pool = (k: unknown, where: string) => {
     if (typeof k !== 'string' || !POOL_NAMES.includes(k)) err(where, `Unknown pool ${JSON.stringify(k)}. The pools are ${POOL_NAMES.join(', ')}.`);
   };
-  const place = (ref: string | undefined, where: string, allow: { town?: boolean; far?: boolean; target?: boolean } = {}) => {
+  // (places: the far places this pack founds can be named by its cards, "far:<id>")
+  const founded = new Set(cards.flatMap((c) => [...(c.if_taken ?? []), ...(c.if_expires ?? []), ...Object.values(c.if_tier ?? {}).flat()] as Record<string, unknown>[]).filter((e) => e && e.far === 'founded' && typeof e.id === 'string').map((e) => String(e.id)));
+  const place = (ref: string | undefined, where: string, allow: { town?: boolean; far?: boolean; target?: boolean; world?: boolean } = {}) => {
     if (ref === 'town' && allow.town) return;
     if (ref === 'far:neighbour' && allow.far) return;
     if (ref === 'target' && allow.target) return;
-    if (ref?.startsWith('far:')) return err(where, `"${ref}" is not supported yet. The only far place a card can name is "far:neighbour", the nearest standing town.`);
+    if (ref === 'world') return allow.world ? undefined : err(where, '"world" (every town) is allowed for "mutate" and "sign" only.');
+    if (ref?.startsWith('far:')) {
+      if (!allow.far) return err(where, `A far place is not allowed here. It is ${JSON.stringify(ref)}.`);
+      const st = /^far:where:(.+)$/.exec(ref)?.[1];
+      if (ref === 'far:all' || /^far:nearest:[1-9]\d*$/.test(ref) || (st && FAR_SELECT_STATES.includes(st)) || founded.has(ref.slice(4))) return;
+      return err(where, `Unknown far place "${ref}". Write "far:neighbour", "far:all", "far:nearest:2", "far:where:<state>" (${FAR_SELECT_STATES.join(', ')}) or "far:<id>" of a place this pack founds.`);
+    }
     if (!siteOf(ref)) err(where, `Unknown place ${JSON.stringify(ref)}. A site is written "site:<name>" with one of: ${SITE_KEYS.join(', ')}.${allow.town ? ' Or "town".' : ''}`);
   };
 
@@ -322,6 +335,10 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     for (const x of t.tags ?? []) needTag(x, w, 'made');
     if (t.laws !== undefined && !Array.isArray(t.laws)) err(w, '"laws" is a list of law ids of this pack.');
     for (const l of t.laws ?? []) needLaw(l, w);
+    if (t.trade !== undefined) {
+      place(t.trade, w, { far: true });
+      if (t.trade === 'far:where:trade-partner') err(w, 'A thing\'s trade route names other towns than the trade partners.');
+    }
     for (const [k, n] of Object.entries(t.upkeep ?? {})) {
       if (!GOODS.includes(k)) err(w, `Upkeep can be paid in ${GOODS.join(', ')} only. It asks for ${k}.`);
       if (!Number.isInteger(n) || n < 1) err(w, `Upkeep is a whole number, 1 or more. ${k} is ${JSON.stringify(n)}.`);
@@ -358,16 +375,22 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
         place(String(x.on), w, { town: true, target: o.ability });
       } else if (key === 'mutate') {
         if (!LAND_KINDS.includes(String(x.mutate))) err(w, `Unknown land change "${String(x.mutate)}". The kinds are ${LAND_KINDS.join(', ')}. For a far town use "far".`);
-        place(String(x.where), w, { town: true, far: true });
+        place(String(x.where), w, { town: true, far: true, world: true });
         produced.add(String(x.mutate));
       } else if (key === 'far') {
         if (!FAR_KINDS.includes(String(x.far))) err(w, `Unknown change to a far place "${String(x.far)}". The kinds are ${FAR_KINDS.join(', ')}.`);
         if (x.far === 'founded') {
           if (typeof x.id !== 'string' || typeof x.name !== 'string') err(w, 'A founded place needs an "id" and a "name".');
         } else place(String(x.where), w, { far: true });
-        if (x.by !== undefined && x.by !== 'raiders' && x.by !== 'player') err(w, `"by" can be "raiders" or "player". It is ${JSON.stringify(x.by)}.`);
+        if (x.by !== undefined && !['raiders', 'player', 'dead'].includes(String(x.by))) err(w, `"by" can be "raiders", "player" or "dead". It is ${JSON.stringify(x.by)}.`);
+      } else if (key === 'trade') {
+        // (trade routes: those towns trade with you, or no longer do)
+        place(String(x.trade), w, { far: true });
+        if (x.trade === 'far:where:trade-partner' && !x.end) err(w, 'Every trade partner already trades with you. Name other towns, or add "end": true.');
+        if (x.end !== undefined && typeof x.end !== 'boolean') err(w, '"end" is true or left out.');
       } else if (key === 'sign') {
         if (!SIGN_KINDS.includes(String(x.sign))) err(w, `Unknown sign "${String(x.sign)}". The signs are ${SIGN_KINDS.join(', ')}.`);
+        if (x.where !== undefined) place(String(x.where), w, { town: true, far: true, world: true });
         if (x.strength !== undefined && (typeof x.strength !== 'number' || x.strength < 0 || x.strength > 1)) err(w, '"strength" is a number from 0 (off) to 1.');
       } else if (key === 'arrive') {
         if (x.arrive !== 'refugees') err(w, `"arrive": "${String(x.arrive)}" is not supported yet. Only "refugees" arrive today.`);

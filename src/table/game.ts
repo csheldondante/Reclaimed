@@ -20,7 +20,7 @@ import { CATALOG } from '../season/catalog';
 import { FIRE_TEMPLATE } from '../season/realm-events';
 import { projectTemplate, SITES, WORLD_TEMPLATES, type SiteKey } from '../season/realm-templates';
 import { checkTogether, reportText, type Pack, type PackAbility, type Problem } from '../packs/check';
-import { castAbility, IS, lawThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
+import { castAbility, IS, lawThings, tradeThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
 import { BASIC_SPELLS, Realm, RUN_SEASONS, SPELL_COST, type RunState, type SpellId } from '../season/realm';
 import { lawKind, lawIncome, winsOf, type LawKind } from '../living/laws';
 import { lawText, lawUntil } from '../season/law-words';
@@ -310,6 +310,7 @@ export class Table {
         laws: this.packs.flatMap((p) => p.laws),
         lawThings: () => (made ? lawThings(made.w, this.packs) : []),
         recordLaws: this.packs.flatMap((p) => p.recordLaws),
+        tradeThings: () => (made ? tradeThings(made.w, this.packs) : []),
       },
     });
     made = this.realm;

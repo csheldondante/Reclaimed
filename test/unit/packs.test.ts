@@ -83,7 +83,7 @@ describe('the pack validator', () => {
     ['an event tier after an open one', (p) => void p.events![0].tiers.push({ tier: 'failure' }), /every result after it can never be reached/],
     ['an effect not built yet', (p) => void card(p, 'sample-build-granary').if_taken!.push({ units: 'soldier', add: 4 } as never), /not supported yet. Add soldiers with/],
     ['a land change that does not exist', (p) => void (card(p, 'sample-mill-fire').if_expires![0] = { mutate: 'overgrown', where: 'site:mill' }), /Unknown land change "overgrown"/],
-    ['a far place other than the neighbour', (p) => void (card(p, 'sample-take-in-neighbours').if_taken![0] = { far: 'vassal', where: 'far:capital' }), /"far:capital" is not supported yet/],
+    ['a far place that is no selector', (p) => void (card(p, 'sample-take-in-neighbours').if_taken![0] = { far: 'vassal', where: 'far:capital' }), /Unknown far place "far:capital"/],
     ['a cost in Unrest', (p) => void ((card(p, 'sample-build-granary').cost as Record<string, number>).unrest = 1), /Unrest cannot be paid/],
     ['a live card with no if_tier', (p) => void delete card(p, 'sample-thresh-fire').if_tier, /needs "if_tier"/],
   ];

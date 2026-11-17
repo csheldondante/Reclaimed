@@ -74,10 +74,36 @@ export interface PackHost {
 }
 
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
-const where = (ref: string | undefined): string => (ref === 'town' || !ref ? 'the town' : ref === 'far:neighbour' ? '{other}' : (SITE_NAME[siteOf(ref) ?? ''] ?? ref));
+/** (places) the places a pack founds: id → name */
+export function foundedOf(p: Pack): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const c of p.cards ?? [])
+    for (const e of [...(c.if_taken ?? []), ...(c.if_expires ?? []), ...Object.values(c.if_tier ?? {}).flat()] as Record<string, unknown>[])
+      if (e && e.far === 'founded' && typeof e.id === 'string') out[e.id] = String(e.name ?? e.id);
+  return out;
+}
+/** (places) a far place selector other than the neighbour: every far town, the n nearest, those in a state, a place
+ *  the pack founded, or the whole world */
+export const isSelector = (ref: string | undefined): boolean => !!ref && (ref === 'world' || (ref.startsWith('far:') && ref !== 'far:neighbour'));
+const STATE_WORD: Record<string, string> = { standing: 'standing town', destroyed: 'destroyed town', abandoned: 'abandoned town', occupied: 'occupied town', vassal: 'town sworn to you', founded: 'new town', 'trade-partner': 'town that trades with you', 'founded-by-player': 'town you founded' };
+/** a selector in words, read as one ("every far town is flooded"); `founded`: the names of places the pack founds */
+function selectorWord(ref: string, founded: Record<string, string> = {}): string {
+  if (ref === 'world') return 'every town, yours too';
+  if (ref === 'far:all') return 'every far town';
+  const n = /^far:nearest:(\d+)$/.exec(ref)?.[1];
+  if (n) return n === '1' ? 'the nearest standing town' : `each of the ${n} nearest standing towns`;
+  const st = /^far:where:(.+)$/.exec(ref)?.[1];
+  if (st) return `every ${STATE_WORD[st] ?? `${st} town`}`;
+  const id = ref.slice(4);
+  return founded[id] ?? id;
+}
+let FOUNDED: Record<string, string> = {};
+const where = (ref: string | undefined): string => (ref === 'town' || !ref ? 'the town' : ref === 'far:neighbour' ? '{other}' : isSelector(ref) ? selectorWord(ref, FOUNDED) : (SITE_NAME[siteOf(ref) ?? ''] ?? ref));
+const SIGN_OVER: Record<string, string> = { ashfall: 'Ash falls on', darkness: 'Darkness falls over', deadrise: 'The dead walk in', crime: 'Thieves work the streets of' };
 
 /** what a list of effects does, in plain sentences written from the data (the numbers are the engine's) */
 export function effectsText(list: readonly PackEffect[], p: Pack): string {
+  FOUNDED = foundedOf(p);
   const out: string[] = [];
   const says: string[] = [];
   for (const e of list) {
@@ -91,7 +117,8 @@ export function effectsText(list: readonly PackEffect[], p: Pack): string {
     else if ('untag' in e) out.push(`${cap(where(e.on))} is no longer ${e.untag}.`);
     else if ('mutate' in e) out.push(`${cap(where(e.where))} ${LAND_WORD[e.mutate]}.`);
     else if ('far' in e) out.push(e.far === 'founded' ? `${String(x.name)} is founded.` : `${cap(where(e.where))} ${FAR_WORD[e.far]}.`);
-    else if ('sign' in e) out.push(`${SIGN_WORD[e.sign]} for ${e.seasons ?? 3} seasons.`);
+    else if ('sign' in e) out.push(`${!x.where || x.where === 'town' ? SIGN_WORD[e.sign] : `${SIGN_OVER[e.sign]} ${where(String(x.where))}`} for ${e.seasons ?? 3} seasons.`);
+    else if ('trade' in e) out.push(x.end ? `${cap(where(e.trade))} no longer trades with you.` : `${cap(where(e.trade))} trades with you.`);
     else if ('arrive' in e) out.push('40 refugees walk in from {other}.');
     else if ('unlock' in e) out.push(`You can cast ${p.abilities?.find((a) => a.id === e.unlock)?.name ?? e.unlock}.`);
     else if ('law' in e) out.push(`A new law, "${p.laws?.find((l) => l.id === e.law)?.name ?? e.law}", ${e.seasons ? `for this season and ${e.seasons} more` : 'for the rest of the run'}.`);
@@ -144,7 +171,22 @@ function effects(list: readonly PackEffect[], p: Pack, need: Set<string>, note: 
     else if ('remove' in e) out.push({ helper: 'packRemove', args: [e.remove] });
     else if ('tag' in e) out.push({ helper: 'packTag', args: [refOf(e.on, need), e.tag, p.tags?.find((t) => t.id === e.tag)?.timed || ['festival', 'growth-active'].includes(e.tag) ? 1 : 0] });
     else if ('untag' in e) out.push({ helper: 'packUntag', args: [refOf(e.on, need), e.untag] });
-    else if ('mutate' in e) {
+    // (places: a selector — every far town, the n nearest, those in a state, a place the pack founded, the world —
+    // through the Realm's `eachTown`; the card appears only while the selector names a town)
+    else if ('mutate' in e && isSelector(e.where)) {
+      need.add(`sel:${e.where}`);
+      out.push({ helper: 'eachTown', args: [e.where, 'mutate', e.mutate, '$each'] });
+    } else if ('far' in e && e.far !== 'founded' && isSelector(e.where)) {
+      const x = e as { far: string; where: string; by?: string; tribute?: number };
+      need.add(`sel:${x.where}`);
+      out.push({ helper: 'eachTown', args: [x.where, 'mutate', x.far, '$each', 1, 1, x.far === 'vassal' ? 'player' : (x.by ?? 'raiders'), ...(x.far === 'vassal' ? [x.tribute ?? 1] : [])] });
+    } else if ('sign' in e && e.where && e.where !== 'town') {
+      need.add(`sel:${e.where}`);
+      out.push({ helper: 'eachTown', args: [e.where === 'far:neighbour' ? 'far:neighbour' : e.where, 'sign', e.sign, '$each', e.strength ?? 0.6, e.seasons ?? 3] });
+    } else if ('trade' in e) {
+      need.add(`sel:${e.trade}`);
+      out.push({ helper: 'trade', args: [e.trade, e.end ? 'off' : 'on'] });
+    } else if ('mutate' in e) {
       const r = refOf(e.where, need);
       // (a site: the fact first, then its physical side, as the base game's hazards do — season/realm-templates.ts)
       if (r === '$site' || r.startsWith('$s_')) out.push({ setTag: [r, 'condition', e.mutate, true] }, { event: e.mutate, by: [], to: [r, '$town'], note, weight: -0.4 }, { helper: 'mutateAt', args: [e.mutate, r, 24, 1] });
@@ -166,7 +208,7 @@ function effects(list: readonly PackEffect[], p: Pack, need: Set<string>, note: 
     else if ('law' in e) out.push({ helper: 'law', args: [e.law, e.seasons ?? 0] });
     // (endings and the world: the Realm's `endRun` and `farAll`)
     else if ('end_run' in e) out.push({ helper: 'endRun', args: [e.end_run, e.name] });
-    else if ('far_all' in e) out.push({ helper: 'farAll', args: [e.far_all, e.by ?? 'raiders'] });
+    else if ('far_all' in e) out.push({ helper: 'eachTown', args: ['far:all', 'mutate', e.far_all, '$each', 1, 1, e.by ?? 'raiders'] });
   }
   return out;
 }
@@ -196,11 +238,14 @@ function template(c: PackCard, p: Pack, after: string[], boost: boolean): Templa
   const agents = PEOPLE.filter((k) => cost[k] > 0).map((k) => ({ kind: k === 'labor' ? ('workers' as const) : ('army' as const), count: cost[k] }));
   const goods = Object.fromEntries(GOODS.filter((k) => cost[k] > 0).map((k) => [k, cost[k]]));
   const when: PackCond[] = [...(p.pack.appears_when ?? []), ...(c.appears_when ?? []), ...after.map((id) => ({ resolved: id }))];
+  // (its conditions first: one may name a place to bind; then one test a selector its effects name — it appears only
+  // while that names a town)
+  const eligible: Pred[] = [...conds(when, c.id, need), ...[...need].filter((k) => k.startsWith('sel:')).map((k): Pred => ({ helper: 'townsExist', args: [k.slice(4)] })), ...(c.once === false ? [] : [{ not: { event: { kind: doneKind(c.id), involving: '$town' } } } as Pred])];
   // (a card that names no far place needs none: one that does appears only while a neighbour stands)
   const bind: BindSpec[] = [
     { as: 'town', kind: 'settlement', where: [{ helper: 'isHome', args: ['$town'] }] },
     { as: 'site', kind: 'site', where: [{ helper: 'siteIs', args: ['$site', site] }] },
-    ...[...need].filter((k) => k !== 'far' && !k.startsWith('own:')).map((k): BindSpec => ({ as: `s_${k}`, kind: 'site', shared: true, where: [{ helper: 'siteIs', args: [`$s_${k}`, k] }] })),
+    ...[...need].filter((k) => k !== 'far' && !k.startsWith('own:') && !k.startsWith('sel:')).map((k): BindSpec => ({ as: `s_${k}`, kind: 'site', shared: true, where: [{ helper: 'siteIs', args: [`$s_${k}`, k] }] })),
     ...(need.has('far') ? [{ as: 'other', kind: 'settlement' as const, shared: true, where: [{ helper: 'neighbour', args: ['$other'] }] as Pred[] }] : []),
   ];
   return {
@@ -209,7 +254,7 @@ function template(c: PackCard, p: Pack, after: string[], boost: boolean): Templa
     pitch: c.pitch,
     themes: [...(p.pack.themes ?? []), `pack:${p.pack.id}`],
     bind,
-    eligible: [...conds(when, c.id), ...(c.once === false ? [] : [{ not: { event: { kind: doneKind(c.id), involving: '$town' } } } as Pred])],
+    eligible,
     at: 'site',
     // (the dealer's score parts: as the base game's hazards and mid-value projects; `boost`: above them, so a pack
     // being tried comes up early)
@@ -267,6 +312,15 @@ export function loadPack(p: Pack, base: { cards?: readonly string[]; rules?: rea
     if (resolved.length || remains.length) because[c.id] = { resolved, remains };
   }
   return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], laws, recordLaws, because, left, problems };
+}
+
+/** (trade routes) the selectors of the pack things in play, on places not ruined, that carry a trade route
+ *  (RealmOptions.extra.tradeThings) */
+export function tradeThings(w: FactWorld, packs: readonly LoadedPack[]): string[] {
+  const ruin = ['burned', 'flooded', 'buried', 'melted', 'abandoned', 'destroyed', 'occupied', 'lost'];
+  return packThings(w, packs)
+    .filter((t) => !!t.def.trade && !(t.site && ruin.some((k) => !!w.facts.tag(t.site!, 'condition', k)?.value)))
+    .map((t) => t.def.trade!);
 }
 
 /** (laws) the pack things in play that carry laws: each as the Realm's things name it, with its laws

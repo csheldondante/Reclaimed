@@ -144,6 +144,8 @@ export interface RealmOptions {
     /** (the record) the laws a card leaves: in force from the first season of every later run of the world it was done
      *  in (a pack card's `laws_after`) */
     recordLaws?: { card: string; laws: string[] }[];
+    /** (trade routes) place selectors of things in play that carry a trade route: those towns are trade partners */
+    tradeThings?: () => string[];
   };
   /** (card-table, tuning) raiders in the run's last stage (default realm-templates.ts RAIDERS) */
   raiders?: number;
@@ -565,18 +567,31 @@ export class Realm {
           this.endRun(String(a[0]), String(a[1] ?? a[0]), o ? `"${o.opp.title}"` : c.cause);
         },
       },
-      // (farAll kind by: every far town of the world taken, destroyed or abandoned at once — by the raiders, the
-      // player or the dead)
-      farAll: {
+      // (places: eachTown selector helper args… — the helper (`mutate`, `sign`) applied to every town the selector
+      // names, nearest first; '$each' in the args is the town. A capture also marks each town occupied)
+      eachTown: {
         effect: (c, a) => {
-          const f = c.w.facts;
-          const by = a[1] === 'dead' ? DEAD_ID : a[1] === 'player' ? 'player' : RAIDERS_ID;
-          if (by === DEAD_ID && !f.entity(DEAD_ID)) f.add({ id: DEAD_ID, kind: 'army', name: 'the risen dead', cause: c.cause });
-          const mutate = HELPERS.mutate?.effect;
-          for (const s of this.ws.settlements) {
-            if (s.id === this.home || !f.entity(s.id)) continue;
-            if (a[0] === 'captured') f.setTag(s.id, 'condition', 'occupied', true, c.cause);
-            mutate?.({ ...c, b: { ...c.b, far_each: s.id, far_by: by } }, [String(a[0]), '$far_each', 1, 1, '$far_by']);
+          const [sel, name, ...args] = a.map(String);
+          const h = HELPERS[name]?.effect;
+          if (!h) throw new Error(`realm: no helper ${name} for eachTown`);
+          const by = args[4] === 'dead' ? DEAD_ID : args[4] === 'player' ? 'player' : args[4] === 'raiders' ? RAIDERS_ID : args[4];
+          if (by === DEAD_ID && !c.w.facts.entity(DEAD_ID)) c.w.facts.add({ id: DEAD_ID, kind: 'army', name: 'the risen dead', cause: c.cause });
+          for (const id of this.selectTowns(sel)) {
+            if (name === 'mutate' && args[0] === 'captured') c.w.facts.setTag(id, 'condition', 'occupied', true, c.cause);
+            const xs: (string | number)[] = args.map((x, i) => (x === '$each' ? '$each' : i === 4 && by !== undefined ? '$each_by' : Number.isNaN(Number(x)) || x === '' ? x : Number(x)));
+            h({ ...c, b: { ...c.b, each: id, ...(by !== undefined ? { each_by: by } : {}) } }, xs);
+          }
+        },
+      },
+      // (places: townsExist selector — the selector names at least one town)
+      townsExist: { pred: (_c, a) => this.selectTowns(String(a[0])).length > 0 },
+      // (trade routes: trade selector on|off — the towns supply the home town (a trade partner), or no longer do)
+      trade: {
+        effect: (c, a) => {
+          for (const id of this.selectTowns(String(a[0]))) {
+            const has = c.w.facts.relations({ type: 'supplies', from: id, to: this.home }).length > 0;
+            if (a[1] === 'off' && has) c.w.facts.unrelate({ type: 'supplies', from: id, to: this.home }, c.cause);
+            else if (a[1] !== 'off' && !has) c.w.facts.relate({ type: 'supplies', from: id, to: this.home });
           }
         },
       },
@@ -722,6 +737,8 @@ export class Realm {
     const f = this.w.facts;
     const h = this.w.settlement(this.home)!;
     const ids = new Set<EntityId>(f.relations({ type: 'supplies', to: this.home }).map((r) => r.from));
+    // (trade routes: a policy thing in play makes the towns its selector names partners, on top of the default)
+    for (const sel of this.o.extra?.tradeThings?.() ?? []) for (const id of this.selectTowns(sel)) ids.add(id);
     if (this.led.built.includes('trade')) {
       const near = this.ws.settlements.filter((s) => s.id !== this.home && s.size !== 'camp' && f.entity(s.id)).sort((a, b) => Math.hypot(a.at[0] - h.at[0], a.at[1] - h.at[1]) - Math.hypot(b.at[0] - h.at[0], b.at[1] - h.at[1]));
       for (const s of near.slice(0, PARTNERS)) ids.add(s.id);
@@ -1035,6 +1052,42 @@ export class Realm {
   changes(): Mutation[] {
     const mine = new Set(this.history().map((e) => e.id));
     return mutators.record().list.filter((m) => m.fact !== undefined && mine.has(m.fact));
+  }
+
+  /**
+   * (places) The towns a place selector names, nearest the home town first (deterministic: by distance, then id):
+   * `far:neighbour` (the nearest standing), `far:nearest:<n>` (the n nearest standing), `far:all` (every far town),
+   * `far:where:<state>` (a far town in that state: standing, destroyed, abandoned, occupied, vassal, founded,
+   * trade-partner, founded-by-player), `far:<id>` (that place, if it exists), `world` (every town, the home town
+   * first). Empty: nothing matches (a card naming it does not appear).
+   */
+  selectTowns(sel: string): EntityId[] {
+    const f = this.w.facts;
+    const h = this.w.settlement(this.home)!;
+    const far = this.ws.settlements
+      .filter((s) => s.id !== this.home && !!f.entity(s.id))
+      .sort((a, b) => Math.hypot(a.at[0] - h.at[0], a.at[1] - h.at[1]) - Math.hypot(b.at[0] - h.at[0], b.at[1] - h.at[1]) || (a.id < b.id ? -1 : 1));
+    const state = (id: EntityId): string => {
+      const s = this.w.settlement(id);
+      const st = placeState(this.w, id)?.status as string | undefined;
+      if (st && st !== 'standing') return st;
+      if (f.tag(id, 'condition', 'occupied')?.value) return 'occupied';
+      return s?.condition === 'ruined' ? 'destroyed' : s?.condition === 'abandoned' ? 'abandoned' : 'standing';
+    };
+    if (sel === 'world') return [this.home, ...far.map((s) => s.id)];
+    if (sel === 'far:all') return far.map((s) => s.id);
+    if (sel === 'far:neighbour') {
+      const n = this.neighbour();
+      return n ? [n] : [];
+    }
+    const nearest = /^far:nearest:(\d+)$/.exec(sel);
+    if (nearest) return far.filter((s) => state(s.id) === 'standing' && s.size !== 'camp').slice(0, Number(nearest[1])).map((s) => s.id);
+    const where = /^far:where:(.+)$/.exec(sel)?.[1];
+    if (where === 'trade-partner') return far.filter((s) => this.partners().some((p) => p.id === s.id)).map((s) => s.id);
+    if (where === 'founded-by-player') return far.filter((s) => f.relations({ type: 'controls', from: 'player', to: s.id }).length > 0).map((s) => s.id);
+    if (where) return far.filter((s) => state(s.id) === where).map((s) => s.id);
+    const id = /^far:(.+)$/.exec(sel)?.[1];
+    return id && f.entity(id) && this.w.settlement(id) ? [id] : [];
   }
 
   /** the standing settlement nearest the home town (the neighbour its cards are about); null: none.

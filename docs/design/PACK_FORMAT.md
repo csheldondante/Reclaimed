@@ -12,7 +12,9 @@ kind: `packs/laws.json`. (6) **Endings and the world's record** (see "Endings an
 act `end_run` ends the run at once (won, fell, or an ending of your own); `far_all` changes every far town at once;
 the record of every card resolved or run out is kept from run to run, and `resolved` can ask it for a result, a place
 and an earlier run; a ruined thing keeps what it was as `remains-of-<tag>`; a card's `laws_after` stand in every later
-run. Example: `packs/glitter.json`.
+run. Example: `packs/glitter.json`. (7) **The whole world map** (see "Places"): far place selectors (`far:all`,
+`far:nearest:<n>`, `far:where:<state>`, `far:<id>` of a place the pack founds, `world`) in `mutate`, `far`, `sign`
+and `trade`; signs anywhere; trade routes by an effect or a policy thing.
 
 **Changed since draft 4.** Rules can chain (see "Chains"): (1) a rule can wait for a live event's RESULT,
 `"on": { "live": "raid", "tier": ["success"] }`; (2) a rule's effect can be an act: `offer` a card, `start` a live
@@ -98,7 +100,7 @@ events, 2 to 4 abilities. A full example that passes the validator: `packs/sampl
 
 ## Places
 
-A place is written one of three ways. Nothing else is accepted.
+A place is the home town, one of its sites, or places on the whole world map. Nothing else is accepted.
 
 - `"town"`: the home town.
 - `"site:<name>"`: one of the town's 20 named sites. The names, with what each is (its tags):
@@ -107,8 +109,25 @@ A place is written one of three ways. Nothing else is accepted.
   `watch` (gate, watch), `harbour` (water, quay), `quarry` (quarry), `woods` (woods), `river` (water, river),
   `road` (road), `pit` (workshop, ore), `wagons` (yard), `graves` (graves).
   A site is named by its NAME, not by a tag: `site:fields`, not `site:field`.
-- `"far:neighbour"`: the nearest standing town. It is the only far place a card can name. A card that names it
-  appears only while such a town stands.
+- `"far:neighbour"`: the nearest standing town. A card that names it appears only while such a town stands.
+- **Far place selectors** (draft 6), in `mutate`, `far` (not `founded`), `sign` (`"where"`), `trade`, a thing's
+  `trade`. Each names every town it matches, nearest the home town first:
+  - `"far:all"`: every far town, whatever its state.
+  - `"far:nearest:2"`: the 2 nearest standing towns.
+  - `"far:where:<state>"`: every far town that is `standing`, `destroyed`, `abandoned`, `occupied`, `vassal`,
+    `founded`, `trade-partner`, or `founded-by-player`.
+  - `"far:<id>"`: a place this pack founds (`{ "far": "founded", "id": "copper-ford", ... }`), once it exists.
+  - `"world"`: every town, the home town too (`mutate` and `sign` only).
+  A card whose effects name a selector appears only while it names at least one town. The words are written for you:
+  "Darkness falls over every far town for 3 seasons.", "Each of the 2 nearest standing towns is abandoned."
+- **Signs anywhere**: `{ "sign": "darkness", "where": "far:all", "seasons": 3 }` (`where` absent or `"town"`: the
+  home town, as before).
+- **Trade routes**: `{ "trade": "far:nearest:2" }` makes those towns trade partners for good; `"end": true` ends
+  it. A thing's `"trade": "far:all"` makes them partners while the thing stands (a policy, a caravan charter). A
+  partner carries `trade-partner` (and `standing` or `ruined`), so rules read it; the trade road's wagons and ships
+  scale with the partners still standing.
+- Not built: `arrive` from a selector (refugees come only from the neighbour); a selector in a condition (use
+  `far_town_is`).
 
 ## tags
 
@@ -221,14 +240,15 @@ want them said twice. Any number you do write in `say` or `pitch` must be a numb
 - `{ "tag": "ash-covered", "on": "site:fields" }` · `{ "untag": "ash-covered", "on": "site:fields" }`. `on`: a
   site or `"town"`. Only the pack's own tags and `festival`, `growth-active`.
 - `{ "mutate": "flooded", "where": "site:dam" }`: a real change to the land. Kinds: `flooded`, `burned`, `melted`,
-  `buried`, `dried`, `withered`, `greened`. `where`: a site, `"town"` or `"far:neighbour"`. The first four ruin a
-  site: it shows `ruined` and things on it lose their tags.
+  `buried`, `dried`, `withered`, `greened`. `where`: a site, `"town"`, `"far:neighbour"`, a far place selector or
+  `"world"` (see "Places"). The first four ruin a site: it shows `ruined` and things on it lose their tags.
 - `{ "far": "captured", "where": "far:neighbour", "by": "raiders" }`: kinds `captured`, `vassal`, `destroyed`,
-  `abandoned`. `by`: `raiders` or `player`. A vassal's `"tribute": n` is recorded on the map only; add an `income`
+  `abandoned`. `where`: the neighbour or a far place selector. `by`: `raiders`, `player` or `dead`. A vassal's `"tribute": n` is recorded on the map only; add an `income`
   effect for what it pays. `{ "far": "founded", "id": "copper-ford", "name": "Copper Ford", "purpose": "mining" }`
   founds a new camp in the hills (`purpose` optional).
-- `{ "sign": "ashfall", "seasons": 3, "strength": 0.7 }`: seen in the home town. Kinds: `ashfall`, `darkness`,
-  `deadrise`, `crime`. Strength 0 to 1.
+- `{ "sign": "ashfall", "seasons": 3, "strength": 0.7, "where": "far:all" }`: kinds `ashfall`, `darkness`,
+  `deadrise`, `crime`. Strength 0 to 1. `where`: absent or `"town"` (the home town), a far place selector, `"world"`.
+- `{ "trade": "far:nearest:2" }` (`"end": true` to end it): those towns trade with the home town.
 - `{ "arrive": "refugees", "count": 40, "from": "far:neighbour" }`: people walk in by road. Only refugees, only
   from the neighbour, always 40.
 - `{ "unlock": "ability-id" }`: an ability of this pack, or `heat-ray`.
@@ -236,7 +256,7 @@ want them said twice. Any number you do write in `say` or `pitch` must be a numb
   of this season and 2 more. See "laws".
 - `{ "say": "One plain sentence the player reads." }`: at least one per branch.
 - Not supported yet (the validator says what to write instead): `units` (use `pool` `might`), `offer` (use
-  `resolved` on the later card), `arrive` of wagons or soldiers, far places other than the neighbour.
+  `resolved` on the later card), `arrive` of wagons or soldiers, `arrive` from anywhere but the neighbour.
 
 ## rules
 

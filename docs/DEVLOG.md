@@ -24433,3 +24433,16 @@ the ending card, the tower burns, every far town is abandoned; run 2 under anoth
 glass sky" from season 1, gets the salvage card only because of the spire's remains (and says so), puts hoverbikes
 (`mount`, `power`) in play, and with a garrison the rule "Knights on glass saddles" fires; saved and taken up in run
 2, the same laws and record.
+
+## 2026-11-16 — Places on the whole world map (`card-table`)
+
+**Why.** The owner: "We have a whole world map. Can't we just add effects like darkness or add or delete towns or
+make trade routes via policies?" The engine already applies mutators and signs anywhere; only the pack words were
+narrow. **What changed (words, not engine).** `Realm.selectTowns(selector)` names towns nearest first (`far:all`,
+`far:nearest:<n>`, `far:where:<state>`, `far:<id>`, `world`, `far:neighbour`); the helper `eachTown` runs the
+mutators' own `mutate` / `sign` helpers over each; `townsExist` keeps a card off the board while its selector names
+nothing; `trade` relates towns to the home town (`supplies`, which `partners()` already reads); a policy thing's
+`trade` adds partners while it stands (`extra.tradeThings`). `far_all` is now `eachTown` over `far:all` (the helper
+of the last commit removed). **Test** (`places.test.ts`, the test world's two far towns): selectors and their order,
+the vassal card never on a board, the nearest town abandoned and only it, every far town a trade partner by the
+charter with the caravan rule firing, the generated words, an unknown selector refused.
