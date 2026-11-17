@@ -51,7 +51,9 @@ function play(bot: Bot, seasons: number, seed = 7): Played {
   const took: number[] = [];
   const lapsed: string[] = [];
   while (r.raid === null && !r.over && r.season <= seasons) {
-    const offered = () => r.offers().filter((o) => o.status === 'offered');
+    // (a forced live card — refugees on the road, the raid — asks nothing: it begins. Draft 8: it is no longer kept off
+    // the board by a card at its place, so it is counted apart)
+    const offered = () => r.offers().filter((o) => o.status === 'offered' && !r.engine.template(o.template).play?.forced);
     asked.push(offered().length);
     let n = 0;
     const order = bot.want.includes('*') ? offered().sort((a, b) => Number(!!r.engine.template(b.template).threat) - Number(!!r.engine.template(a.template).threat)).map((o) => o.template) : bot.want;
@@ -94,9 +96,10 @@ describe('a whole run played by bots (the season\'s cards on the realm)', () => 
     // by the card table's bots, which cast: test/unit/table-bots.test.ts. Was: two ways here, at 6 raiders)
     expect(new Set(ways).size).toBeGreaterThanOrEqual(1);
   });
-  it('a season never asks more than five things, late in the run as early', () => {
+  // (draft 8: six — the raiders' standing threat stands on the board from a fifth of the run to its end, CT-52)
+  it('a season never asks more than six things, late in the run as early', () => {
     for (const p of runs) {
-      expect(Math.max(...p.asked), `${p.bot}: ${p.asked.join(',')}`).toBeLessThanOrEqual(5);
+      expect(Math.max(...p.asked), `${p.bot}: ${p.asked.join(',')}`).toBeLessThanOrEqual(6);
       const half = Math.floor(p.asked.length / 2);
       const mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
       expect(mean(p.asked.slice(half)), `${p.bot} late`).toBeLessThanOrEqual(mean(p.asked.slice(0, half)) + 1);
@@ -111,5 +114,6 @@ describe('a whole run played by bots (the season\'s cards on the realm)', () => 
     const short = BOTS.map((b) => play(b, 4));
     console.log(`[bots 4] ${short.map((p) => `${p.bot}: ${p.holds ? 'HOLDS' : 'falls'} (${p.how})`).join('; ')}`);
     expect(short.filter((p) => p.holds).length).toBeLessThan(runs.filter((p) => p.holds).length);
-  });
+    // (seven bots, one more than before draft 8: about 5 s here)
+  }, 30000);
 });

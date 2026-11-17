@@ -13,11 +13,13 @@
   "leaders": [
     { "id": "ages-ash-chief", "name": "Chief Cinder", "line": "Chief of the ash tribe. Few hands, little to build with, a grey world to dig.",
       "appears_when": [ { "resolved": "ages-fire-mountain", "tier": ["lapsed"] } ], "replaces": true,
+      "locked": true, "hint": "A people who live in the ashes of a fire nobody stopped.",
       "pools": { "magic": 0, "might": 1, "labor": 3, "materials": 2, "intel": 1, "unrest": 0 }, "income": { "materials": 1 },
       "things": ["ages-ash-camp"],
       "deck_out": { "themes": ["build"], "ids": ["ages-peace", "ages-crown", "ages-invite-wizards", "ages-fire-mountain"] } },
-    { "id": "ages-star-speaker", "name": "Speaker Oru", "line": "The one who learned the Star-Folk's tongue. Their city trades with yours.",
-      "appears_when": [ { "faction_stance": "ages-visitors", "is": ["allied"] } ],
+    { "id": "ages-star-speaker", "name": "Speaker Oru", "line": "The one who learned the Star-Folk's tongue. The run is played from their city.",
+      "locked": true, "hint": "Someone has to kneel to whatever falls from the sky.",
+      "home": { "far": { "tags": ["star-iron", "ages-visitors"] } },
       "pools": { "magic": 3, "might": 1, "labor": 4, "materials": 4, "intel": 2, "unrest": 0 }, "income": { "materials": 1, "magic": 1 },
       "laws": ["ages-angel-gifts"],
       "deck_out": { "ids": ["ages-peace", "ages-crown", "ages-invite-wizards", "ages-fire-mountain"] } }
@@ -53,7 +55,7 @@
       "pitch": "Two towns swear to you already. Put on a crown, and every town on the plains will know whose peace this is.",
       "appears_when": [ { "faction_holds": "player", "gte": 2 } ], "weight": 5,
       "cost": { "materials": 4, "intel": 2 },
-      "if_taken": [ { "put": "ages-court" }, { "law": "ages-kings-peace" }, { "tag": "festival", "on": "town" },
+      "if_taken": [ { "put": "ages-court" }, { "law": "ages-kings-peace" }, { "tag": "festival", "on": "town" }, { "unlock": "ages-invite-wizards" },
                     { "say": "You are crowned in the market. The plains are a kingdom." } ],
       "if_expires": [ { "pool": "unrest", "add": 2 },
                       { "say": "The towns go back to their own lords and their old feuds." } ],
@@ -63,6 +65,7 @@
       "presenter": { "name": "Keeper Ansel", "role": "tower keeper", "at": "site:tower" },
       "pitch": "A kingdom needs wizards. Give them the old tower and they will give you Magic every season.",
       "appears_when": [ { "has_thing": "ages-court" } ], "weight": 5,
+      "locked": true, "hint": "A crowned court draws wizards.",
       "cost": { "materials": 2, "magic": 1 },
       "if_taken": [ { "put": "ages-college" }, { "stance": "ages-wizards", "to": "allied" },
                     { "say": "Robed wizards move into the tower. Lights burn there all night." } ],
@@ -83,6 +86,7 @@
                       { "mutate": "burned", "where": "site:quarter" }, { "mutate": "burned", "where": "site:mill" },
                       { "sign": "ashfall", "where": "world", "for_good": true, "strength": 1 },
                       { "far_all": "destroyed", "by": "ages-wizards" },
+                      { "unlock": "ages-ash-chief" }, { "unlock": "ages-hunt" }, { "unlock": "ages-falling-star" },
                       { "end_run": "fell", "name": "Ash and flame: the wizards woke the mountain" },
                       { "say": "The mountain opens. Fire runs down to the plains and ash falls on every town in the world." } ],
       "art": "A volcano erupting over a walled kingdom, wizards in a ring of fire, painterly." },
@@ -102,7 +106,7 @@
     { "id": "ages-hunt", "title": "Hunt in the grey woods", "once": false,
       "presenter": { "name": "Tor Ashfoot", "role": "hunter", "at": "site:woods" },
       "pitch": "Some beasts lived through the fire. A hunting party brings meat, and maybe a lost family with it.",
-      "appears_when": [ { "resolved": "ages-fire-mountain", "tier": ["lapsed"], "run": "earlier" } ], "weight": 3,
+      "locked": true, "hint": "Hunters who know burned woods.", "weight": 3,
       "cost": { "might": 1 },
       "if_taken": [ { "pool": "materials", "add": 2 }, { "pool": "labor", "add": 1 },
                     { "say": "The hunters come back with meat and a family that lived in the woods." } ],
@@ -113,7 +117,8 @@
     { "id": "ages-falling-star", "title": "A fire falls from the sky",
       "presenter": { "name": "Wren", "role": "lookout", "at": "site:watch" },
       "pitch": "A star fell past the ash hills last night, burning. It did not break. Let me find where it came down.",
-      "appears_when": [ { "resolved": "ages-fire-mountain", "tier": ["lapsed"], "run": "earlier" }, { "season_gte": 2 } ], "weight": 5,
+      "appears_when": [ { "season_gte": 2 } ], "weight": 5,
+      "locked": true, "hint": "Something falls from a sky full of ash.",
       "cost": { "intel": 1 },
       "if_taken": [ { "far": "revealed", "id": "ages-starfall", "name": "the Fallen Star", "resource": "star-iron" },
                     { "say": "Wren finds a great ship of iron in a crater, still warm. Something moves inside." } ],
@@ -127,7 +132,7 @@
       "bind": { "star": { "far": { "state": ["found"], "tags": ["star-iron"] } } }, "weight": 4,
       "cost": { "labor": 2 },
       "if_taken": [ { "far": "founded", "where": "$star", "by": "ages-visitors" }, { "stance": "ages-visitors", "to": "allied" },
-                    { "law": "ages-angel-gifts" },
+                    { "law": "ages-angel-gifts" }, { "unlock": "ages-star-speaker" },
                     { "say": "The Star-Folk step out and take the tribe's gifts. They build a strange city round their ship and send you light." } ],
       "if_expires": [ { "far": "founded", "where": "$star", "by": "ages-visitors" },
                       { "say": "The Star-Folk build a strange city round their ship. They do not know you." } ],
@@ -167,8 +172,6 @@
     { "id": "ages-angel-gifts", "name": "The angel's gifts", "does": { "income": { "magic": 2 } } }
   ],
   "wants": [
-    "A world-wide sign for good: ash over every town with no end (today a sign of 40 seasons, never switched off at the table).",
-    "A leader who starts in a far town (the Star City) rather than in Briar Hollow.",
-    "The base raid arc for an ash world: raiders from nowhere make little sense when every far town is destroyed."
+    "The Star City as a home with sites of its own (draft 8 gives it the same 20 sites as any town: a keep yard, a harbour)."
   ]
 }

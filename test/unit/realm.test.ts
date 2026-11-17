@@ -8,6 +8,7 @@ import { briarWorld } from '../../src/living/briar';
 import { grant, newLedger, nextSeason, pools, total, type SeasonLedger } from '../../src/season/ledger';
 import { Realm, roadLook, type Leader } from '../../src/season/realm';
 import { projectId } from '../../src/season/realm-templates';
+import { setStance } from '../../src/living/stance';
 import type { WorldSnapshot } from '../../src/api/contracts/world';
 import { lint } from '../support/writing';
 
@@ -99,10 +100,12 @@ describe('the realm (season/realm.ts)', () => {
     const r = realm({ seasons: 16 });
     const counts: number[] = [];
     for (let k = 0; k < 15; k++) {
-      counts.push(r.offers().filter((o) => o.status === 'offered').length);
+      // (a forced live card asks nothing: it begins — counted apart since draft 8 lets it past a card at its place)
+      counts.push(r.offers().filter((o) => o.status === 'offered' && !r.engine.template(o.template).play?.forced).length);
       season(r);
     }
-    expect(Math.max(...counts), counts.join(',')).toBeLessThanOrEqual(5);
+    // (draft 8: + the raiders' standing threat, on the board from a fifth of the run to its end — CT-52)
+    expect(Math.max(...counts), counts.join(',')).toBeLessThanOrEqual(6);
   });
 
   it('committing a project locks the ledger\'s own people and spends its goods; the ledger builds it and its people come back', () => {
@@ -289,10 +292,12 @@ describe('the realm (season/realm.ts)', () => {
     expect(r.over).toBe(true);
   });
 
-  it('in a world with no raiders on the road (their camp abandoned, nothing they hold), no raid comes and the run ends at its last season', () => {
+  it('in a world with no raiders on the road (their camp abandoned, no quarrel with you), no raid comes and the run ends at its last season', () => {
     const w = briarWorld();
     const r0 = new Realm({ world: w.ws.snapshot(), home: 'briar-hollow', seed: 7, leader: YSOLT, ledger: newLedger(YSOLT.pools, YSOLT.income), land: () => LAND, seasons: 4 });
+    // (their camp abandoned and no quarrel with you: a town they take later is no road to yours)
     r0.w.facts.setTag('raiders-camp', 'condition', 'abandoned', true);
+    setStance(r0.w, 'raiders', 'player', 'none', 'test');
     const r = realm({ world: r0.snapshot(), seasons: 4 });
     expect(r.raidersThreaten()).toBe(false);
     for (let k = 0; k < 4; k++) {

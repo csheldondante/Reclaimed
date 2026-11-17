@@ -26,7 +26,7 @@ export const whileGone = (say: string): string => `While you were gone: ${say.ch
 export const worldOpened = (lines: string[]): string => `Earlier runs opened: ${lines.join('; ')}.`;
 export const notFound = (hints: string[], more: number): string => `Not yet found: ${[...hints, ...(more ? [`${more} more`] : [])].join(' ')}`;
 export const NEW_LATER = 'New for later runs';
-export const newLater = (what: string, by: string): string => `${what}, from "${by}".`;
+export const newLater = (what: string, by: string): string => `${what.charAt(0).toUpperCase()}${what.slice(1)}, from "${by}".`;
 export const NEW_NONE = 'Nothing new this run.';
 export const homeLine = (town: string, was: string | null): string => (was ? `You rule from ${town}. ${was} is a far town now.` : '');
 export const RAIDERS_STANCE = 'the raiders';

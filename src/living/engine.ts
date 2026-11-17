@@ -639,7 +639,10 @@ export class LivingEngine {
         continue;
       }
       const place = b[t.at];
-      const held = onePerPlace ? placesHeld.get(place) : undefined;
+      // (a forced live event — the raid, refugees on the road — begins whatever card stands at its place: nobody is
+      // asked, so it keeps no card off the board and no card keeps it off. Found with the raid as a card: a pack card at
+      // the gate kept the raid from ever being dealt)
+      const held = onePerPlace && !t.play?.forced ? placesHeld.get(place) : undefined;
       if (held) {
         np('place', `one card a location: "${held.opp.title}" is offered at ${this.w.name(place)}`);
         continue;

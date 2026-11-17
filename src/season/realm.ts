@@ -53,7 +53,8 @@ import { ROW_H } from '../world/lattice';
 export const RUN_SEASONS = 16;
 /** the projects and ventures on offer at once (the dealer's resource limit, counted over what still stands). With the
  *  dealer's one guarantee (a card that answers the run's threat) and the one threatening card a season's schedule lets
- *  stand, a season asks at most BOARD + 2 things of the player, however long the run or large the holdings */
+ *  stand, a season asks at most BOARD + 2 things of the player, however long the run or large the holdings — and the
+ *  raiders' standing threat (draft 8, a card over the whole town from a fifth of the run on): BOARD + 3 */
 export const BOARD = 3;
 
 /** 'heatray': unlocked by the tower's lens, cast in a fight. The three every leader has: 'fire' (cast in a live event:

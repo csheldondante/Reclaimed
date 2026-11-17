@@ -132,6 +132,8 @@ export interface RunStat {
   ending: string | null;
   /** (draft 7) the far places at the end, one line each: "Millbrook: sworn. sworn to you." */
   far: string[];
+  /** (draft 8) the content this run unlocked for later runs (ids) */
+  unlocked: string[];
 }
 
 /** the bot's settling: each event it is winning, settled now; what that starts, cast into and settled too, while it
@@ -256,6 +258,7 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
     titles: Object.fromEntries(Object.entries(titles).map(([k, v]) => [k, [...v]])),
     ending: r.ended && r.ended.result !== 'stood' ? r.ended.name : null,
     far: t.farNews().places.map((x) => `${x.name}: ${x.line}`),
+    unlocked: t.opened().filter((x) => x.turn > r.w.turn - r.season).map((x) => x.id),
   };
 }
 
@@ -391,6 +394,14 @@ export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy
     for (const r of runs) for (const x of r.far) far.set(x, (far.get(x) ?? 0) + 1);
     L.push('Far places at the end of a run (runs):');
     for (const [k, v] of [...far].sort((a, b) => b[1] - a[1]).slice(0, 14)) L.push(`  ${v}  ${k}`);
+    // (draft 8: unlocks — how many a run earns, what no bot unlocked, and what nothing in the packs can unlock)
+    const locked = o.packs.flatMap((p) => [...(p.pack.locked ? [`pack:${p.pack.id}`] : []), ...[...(p.cards ?? []), ...(p.leaders ?? [])].filter((x) => x.locked).map((x) => x.id)]);
+    const named = JSON.stringify(o.packs);
+    const never = locked.filter((id) => !named.includes(`"unlock":"${id}"`));
+    const got = new Map<string, number>();
+    for (const r of runs) for (const x of r.unlocked) got.set(x, (got.get(x) ?? 0) + 1);
+    L.push(`Unlocks: ${mean(runs.map((r) => r.unlocked.length)).toFixed(1)} a run (${runs.filter((r) => r.unlocked.length).length} of ${runs.length} runs unlocked something); by content: ${[...got].map(([k, v]) => `${k} ${v}`).join(', ') || 'none'}`);
+    L.push(`Locked content no bot unlocked: ${locked.filter((x) => !got.has(x)).join(', ') || 'none'}. Nothing in the packs can unlock: ${never.join(', ') || 'none'}`);
   }
   const same = policies.filter((p) => new Set(runs.filter((r) => r.policy === p.name).map((r) => `${r.leader}:${r.moves.join('|')}`)).size === leaders.length);
   if (o.seeds.length > 1 && same.length === policies.length) L.push('Note: every seed gave the same run for a policy and leader. The seed only names the people (BACKLOG CT-3).');

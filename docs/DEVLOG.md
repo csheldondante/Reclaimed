@@ -24605,3 +24605,28 @@ the League); the steward is offered only then; run 2 is played from Millbrook wi
 Briar Hollow's; Briar Hollow's quarry is written on it and Millbrook starts with nothing built; Briar Hollow is a far
 town (`far-town`, `standing`, `yours`) in "Far places" and "The world now"; the record keeps run 1's cards at Briar
 Hollow by name; a run-2 card was bound to Briar Hollow as a far place.
+
+## 2026-11-16 — Unlocks from meeting and exploring; packs use between runs (`card-table`, CT-57, CT-58)
+
+**Why.** The owner: "it would be cool to have a meta progression from encountering or exploring to unlock new content
+for the next run." Standing rule: the world's memory is the record — no new store.
+
+**What.** `{ "unlock": "<id>" }` writes one `unlocked` line in the record (the id; the card that did it is the line's
+cause, read back through the card's own record event). Locked content — a card, a leader, a whole pack (`pack:<id>`)
+— is gated by `packOpen` and offered by `Table.leaders` only once a run of the world has unlocked it (this run counts).
+`met` reads the record: a faction named in it, a place found, an ending reached. The end screen lists "New for later
+runs"; "The world now" lists what earlier runs opened and the hints of what is still to find. The packs use it:
+frontier (the Reavers met → Captain Merrow, who plays from Gull Cove, and the Reaver pilot; ore or timber found → the
+old survey maps, which mark both places in a later run without scouting), ages (each age's ending opens the next age's
+leader and cards; the Star City's speaker now plays FROM the Star City), glitter (the glass ending opens the saddle
+salvage). Packs' `between_runs`: frontier's League buys the nearest free town when it holds two; colonies with no
+ships and a hostile League are abandoned; the Sea League's tithe ends once you hold two towns or fewer.
+
+**Defect found by the bots, fixed:** with the three packs, 3 of 36 runs ended with no raid at all: a pack card standing
+at the gate kept the forced raid card off the board (one card a place). A forced live card now ignores one-card-a-place
+(`LivingEngine.deal`). After: 0 of 36.
+
+**Measured** (`tablebots --pack frontier,ages,glitter`, 36 runs): 1.6 unlocks a run, 17 of 36 runs unlocked something
+(old maps, wizards, corsair, pilot 14 runs each; the saddle salvage 3, in the runs the glitter spire burned); no bot
+unlocked the ash chief, the hunt, the falling star or the speaker (they need the wizards' working left to run out and a
+later run: the bots play one run each); nothing locked is unreachable by the packs' own effects.

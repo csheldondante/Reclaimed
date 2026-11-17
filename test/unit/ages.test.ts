@@ -82,7 +82,12 @@ describe('the ages of one world', () => {
     expect(t4.worldNow()[0]).toMatch(/^Run 4 of this world\. Speaker Oru leads\./);
     // (the world ended once: run 3 was the ash tribe's own, and the Star City stands)
     expect(t4.worldNow().filter((l) => /ended: Ash and flame/.test(l)).length).toBe(1);
-    expect(t4.farNews().places.find((p) => p.name === 'the Fallen Star')!.line).toMatch(/held by the Star-Folk/);
+    // (draft 8: the speaker's run is played FROM the Star City — the fallen star is home, the ash tribe's town far)
+    expect(t4.home).toBe('ages-starfall');
+    expect(t4.worldNow().some((l) => /^You rule from the Fallen Star\. Briar Hollow is a far town now\.$/.test(l))).toBe(true);
+    expect(t4.farNews().places.some((p) => p.name === 'Briar Hollow')).toBe(true);
+    // (draft 8: the ash chief, the hunt, the fallen star and the speaker were unlocked by the cards that opened them)
+    expect(t4.opened().map((x) => x.id)).toEqual(expect.arrayContaining(['ages-invite-wizards', 'ages-ash-chief', 'ages-hunt', 'ages-falling-star', 'ages-star-speaker']));
     expect(t4.laws().map((l) => l.name)).toEqual(expect.arrayContaining(["The angel's gifts", 'Fields under ash']));
     expect(t4.poolViews().find((p) => p.pool === 'magic')!.income).toBeGreaterThanOrEqual(3);
   }, 120000);
