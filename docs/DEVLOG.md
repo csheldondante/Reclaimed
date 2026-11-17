@@ -24630,3 +24630,20 @@ at the gate kept the forced raid card off the board (one card a place). A forced
 (old maps, wizards, corsair, pilot 14 runs each; the saddle salvage 3, in the runs the glitter spire burned); no bot
 unlocked the ash chief, the hunt, the falling star or the speaker (they need the wizards' working left to run out and a
 later run: the bots play one run each); nothing locked is unreachable by the packs' own effects.
+
+## 2026-11-16 — TUNING frontier 2 (pure data in `packs/frontier.json`, revert this commit to undo)
+
+**Why.** The pirate road almost never ran: the toll was always paid, so the harbour raid and the Reavers' cove were
+never dealt; "buy the harvest" was the only way to win a town by trade.
+
+**What.** The toll is cheaper now (2 Materials) but carries a thing, "The Reavers' toll", with an upkeep of 1 Materials
+a season: paying is a lasting cost, refusing a fight that pays loot. Betraying the Reavers to the League pays 1
+Materials a season on top of the 6. Buying a harvest also costs Unrest +1 (the town's own bread dearer); its rival,
+"Open your market to {town}" (the weaver, 1 Materials and 1 Intel: +1 Materials a season, Unrest -1, the town stays
+free and can no longer be bought up), binds the same towns.
+
+**Measured** (`tablebots --pack packs/frontier.json`, 36 runs, before → after; runs on a board / taken): buy the
+harvest 22/14 → 21/13; the new free market 33/14; the toll 5/5 → 5/5; harbour raid 0/0 → 0/0; burn the cove 0/0 →
+0/0. **The pirate road is unchanged in the bots:** every policy takes any card it can pay for, so a lasting upkeep or
+a better fight never makes a bot refuse. Whether refusing is now tempting is a judgement for a player (or a bot that
+weighs upkeep: not built). The harvest now has a rival taken as often as it is.
