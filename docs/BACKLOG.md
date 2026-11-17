@@ -2498,3 +2498,64 @@ expressive." Pointer: docs/design/SEASON_LOOP.md "Town moods".
 - AG19 ("working with better ground and building textures") Texture sets (albedo/normal/roughness/AO) for walls, roofs,
   ground: ~12–16 CC0 sets (Poly Haven / ambientCG) in one texture array, KTX2-compressed, 512 phone / 1k PC; the
   generator keeps per-part tint, wear and pick. Waits on the user: may CC0 textures go in the public repo?
+
+## TKIT — the tile kit for the irregular grid (2026-11-17, branch `tilekit`; docs/design/TILEKIT.md)
+
+(TK1–TK12 are the test kit's; these are TKIT.)
+
+- TKIT0 The owner's direction (2026-11-17, verbatim): "I had previous agents […] build in test branches and show
+  sandbox renders because I'm pretty unsatisfied with the generation." "I want procedural designs that take in an
+  architectural theme as data so we can vary the look. I think there are good examples in the literature using
+  geometry grammar and extrusions from floor plan for course shape and I'm interested in making the land and foot
+  paths around the structure feel natural and handle changes in elevation gracefully." "I do like the look of the
+  structures produced in tiny glade very much […] I'm ok with lofi (resolution and detail but I want good shapes and
+  lighting) and my preference would be stylized like dota 2 with some decent lod for zooming in closer to the
+  action." "We already have an irregular townscraper grid and I think tiles for that would be a good target […] I
+  agree with your rectangle booleans. We could apply warping with a control grid which could also be useful for
+  simulation ware by making things sag. I do think lighting is part of it and I liked the sceenspace AO in the
+  prototype branch and feel it really helped." Step 1 (design note + sandbox proof) — done (this commit); waits on
+  the owner's answers (TKIT1).
+- TKIT1 The owner's calls (TILEKIT.md §12): Q1 occupancy on cells (built) or vertices (Townscaper); Q2 walls follow the
+  grid's staircase or the rectangles (snap a rectangle's edges to chains of cell edges and relax those vertices onto
+  the line); Q3 roofs — half-grid height field (built: hips, lean-tos) vs gables per rectangle vs a skeleton, and how
+  a gable end is chosen; Q4 sharp convex joints (mitre clamp or forbid); Q5 pinches allowed?; Q6 one window a cell
+  edge or by bay width.
+- TKIT2 The outline crinkles: rectangles rasterised by cell centroid give a staircase; the block has 35 convex and 17
+  concave joints in 68 panels, every facade bends every ~2.7 m and the massing reads as one blob, not range + wing +
+  tower. Depends on Q2.
+- TKIT3 Roofs: no gables or single long ridge (hips over the cell outline: many facets, a notch where the outline
+  jogs); one region's eave overhang runs into a neighbouring taller region's wall or roof (the tower's eave on the
+  main roof, the main roof's overhang through the tower's wall); thin dark seams between some roof facets; no ridge
+  caps, no tiles in geometry (courses painted by z), no dormers or chimneys; a region with no eave panel would be
+  flat at the eave (no parapet).
+- TKIT4 Vertex budget: 93k instanced vertices for one 18-cell block (plaster), quoin stacks ~45%: too heavy for a phone
+  district. LOD module sets (§9: frames and bevels dropped, quoins as one flat-faced stack), merging a building's
+  static instances into one mesh at far zoom, the AG24 baked tiles on the phone.
+- TKIT5 Window rhythm: a window on every long panel reads as an apartment block, not Tiny Glade's few deep openings;
+  rhythm and odds from the theme by role (front, side, back, gable).
+- TKIT6 Theme modules not yet in the kit: jetties (an upper storey stepping out — needs non-monotone occupancy or a
+  per-panel offset), dormers, chimneys, balconies, window boxes and climbers, arches and arcades, eave brackets.
+- TKIT7 Quays, ground skirts and stairs with the same sweep (§8): quay panels to the water, skirt panels pushed to the
+  terrain in the vertex shader, stairs on open edges, paved cells taking terrain corner heights.
+- TKIT8 Hacks and limits of step 1, each to fix:
+  - The lab reads the GPU grid back once (lab only) — archgen's `gridCells` gained COPY_SRC for it; in the game the kit
+    would build from the GPU cells without a readback (CPU authoring of plans is allowed, the cells are not CPU data).
+  - The block's massing is hard-coded in lab.ts (MASSING), not data; one block, alone on a plaza; no neighbours.
+  - The lab's sun turns 55° from the view (archlab 115°): the faces towards the camera lit — the two labs' light
+    differ.
+  - Panels are one-sided sheets drawn with culling off; no wall thickness (a cutaway would show paper walls).
+  - Occlusion bake: per module, at LREF 2.7 m (shorter and longer panels get a stretched bake), blind to neighbouring
+    modules (bands over walls, quoins over walls: SSAO covers those).
+  - Normals: the panel's frame (exact except within |w| of a mitre); the control grid's correction first order;
+    straight joints between panels a few degrees apart show a shading seam (no smoothing across panels yet).
+  - Mitre length clamped at 2.5 (a cornice at a sharper joint stops short); joint thresholds 160°/200° by eye.
+  - Door: one a building, on the ground panel facing the camera's side (stands in for "the street").
+  - Sag: supports = the footprint's convex-hull corners, a 6 m smoothstep span, z only; wonk a hashed vector a control
+    point growing with height; both by eye.
+  - Ground flat at z 0, cells within 26 m drawn; no terrain, no skirts.
+  - Roof: Euclidean distance to the eave panels (cones at reflex corners), each sub-quad's diagonal by the midpoint
+    error, cap by theme; roof colour a building, wall colour a massing rectangle (cellOwners).
+  - Occupancy stacks monotone by construction (no overhangs).
+  - Quoin stacks stop at the last whole block under the storey's top (a small plain gap at the top of a storey).
+  - Glass lit with a fixed sky tone; roof tiles by world z in the shader.
+  - The shadow map covers a fixed 30 m round the block.

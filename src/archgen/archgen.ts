@@ -179,7 +179,8 @@ export class ArchGen {
     this.tgSlots = slots;
     this.tg = d.createBuffer({ label: 'arch grid chunks', size: (8 + slots + slots * 384 * 2 + slots * 1176 * 2 + slots * 64) * 4, usage: S | GPUBufferUsage.COPY_DST });
     // (gridlab) the grid's cells out: room for o.gridChunks chunks (a chunk ~300 cells)
-    this.gridCells = d.createBuffer({ label: 'arch grid cells', size: (4 + Math.max(1, (o.gridChunks ?? 0) * 320) * 10) * 4, usage: S | GPUBufferUsage.COPY_DST });
+    // (COPY_SRC: the tile kit lab reads the cells back once — src/tilekit/lab.ts)
+    this.gridCells = d.createBuffer({ label: 'arch grid cells', size: (4 + Math.max(1, (o.gridChunks ?? 0) * 320) * 10) * 4, usage: S | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     this.tgPipes = ['tgRegisterLots', 'tgRelax', 'tgRegisterArea', 'tgEmit', 'tgIndexLots'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
     this.genPipes = ['genHouses', 'genKeeps', 'genShanties', 'genGrid'].map((entryPoint) => d.createComputePipeline({ label: `arch ${entryPoint}`, layout: gpl, compute: { module: gm, entryPoint } }));
     this.genGroup = d.createBindGroup({

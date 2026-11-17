@@ -23540,3 +23540,41 @@ taller, back-to-back ties stepped, extruded-triangle roofs per half house. Shots
 cell rosettes, floating roofs from the part budget; ~300 neighbour reads a house from recomputing. Kept as the grid's
 default for now; the fix list is in BACKLOG AG31. Step 2 (?gridview=2): rectHouse — main block + wing + jetty + bay +
 round tower + chimney from a few rectangles in the lot's frame. Shot h1: reads as houses (gables, jetties, towers).
+
+## 2026-11-17 — tile kit step 1: modules swept along the irregular grid's edges (branch `tilekit`; TILEKIT.md)
+
+Why: the owner is unsatisfied with the generation and wants a theme-as-data kit on the irregular grid (BACKLOG TKIT0).
+The riskiest part was whether modules with real relief survive the irregular cells (3- to 6-valent vertices, edges
+1.6–2.7 m, any angle at a corner). Design note first (docs/design/TILEKIT.md), then a sandbox (`tilekit.html`).
+
+- **Occupancy on cells, not vertices** (a departure from Townscaper, flagged as Q1): walls on cell edges are straight
+  panels a window can centre on; Townscaper's vertex voxels would give rosette footprints and a bend in every wall at
+  every edge midpoint.
+- **Walls are swept, not warped**: a module vertex is (x with an anchor — start, end, middle, fraction — w out, z up)
+  in metres; the vertex shader places it on the edge a → b with mitre vectors at both ends
+  (m = (n₁ + n₂)/(1 + n₁·n₂)). Relief depth stays metric, a window keeps its width, and two panels close at any joint
+  angle; quoins and cornices wrap corners by themselves. sweep.test.ts checks the seams (every depth, an irregular
+  grid), metric depth, anchored widths and mirroring. So the 31 vertex classes (valence 3–6, bracelets — cases.test.ts
+  checks Burnside's counts) collapse to three joint kinds by angle; valence changes the angle, not the module.
+- **Roofs**: one height-field surface a top region, eave + pitch · distance to that region's top-storey panels, sampled
+  on each cell's 4 sub-quads (ridges of 1- and 2-cell strips land on sample vertices), overhangs swept out of the eave
+  panels with the walls' own mitres. Edges against a taller neighbour are not eaves: lean-tos fall out.
+- **Control grid**: a coarse lattice of displacements (wonk: hashed lean growing with height; sag: z falling between
+  the footprint's hull corners), trilinear in the vertex shader for walls and roofs, normals corrected by the field's
+  gradient. Supports at every convex joint (the first try) left no span to sag (35 convex joints in 68 panels); the
+  hull's corners do (shots e/f, i/i2).
+- **Light**: archlab's Townscaper light, a 2048² sun shadow map, ssao.wgsl unchanged, plus per-vertex occlusion baked
+  into each module by 16 rays against itself (shot l: recesses, sills, quoin joints dark). The sun turns 55° from the
+  view here (archlab's 115° put the faces towards the camera in shade at this yaw).
+- Two themes (plaster, timber) differ only in theme.ts data: storey heights, openings, profiles, quoins vs timber posts,
+  rails and braces, a stone ground storey, roof pitch/overhang/palette, wonk.
+
+Measured (desktop, 960 × 540, MSAA 4): grid valences 3: 230, 4: 1963, 5: 169, 6: 21; the block 18 cells, 68 panels,
+joints 35/16/17 (convex/straight/concave), 0 pinches; plaster 12 modules, 232 instances, 93,492 instanced vertices
+(quoin stacks ~45%; 131,730 before boxes set into the wall dropped their backs), timber 9 modules, 209 instances, 60,048;
+roofs 990 vertices; kit generation 50 ms / 19 ms CPU once a theme; GPU frame (shadow + scene + SSAO + compose) 1.22 ms
+median for both themes. Stills: local/tilekit1/ (strip.png), `node scripts/tilekit-shots.mjs --server <dev url>`.
+
+Seen and not good (BACKLOG TKIT2–TKIT5): the rectangle staircase crinkles every facade and merges the massing into one
+blob; the roofs are many-faceted hips with notches, no gables, and one region's eave runs into the next region; windows
+on every long panel read as an apartment block; the vertex count is too high for a phone district.
