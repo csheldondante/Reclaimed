@@ -879,8 +879,8 @@ fn roadMinor(@builtin(global_invocation_id) g: vec3<u32>) {
 }
 // (loop round 17, LS-151: C_WALL, C_PARK, C_LANDMARK and roofColour are the town's tones — render/palette.ts TOWN, put in
 // front of this module by citygen/gpu.ts)
-/** (M4b) the cut-off outline (the fortress's warning red) */
-const C_CUTOFF: u32 = 0xe0322du;
+/** (M4b) the cut-off outline — (loop round 18, LS-151) amber: red is the foes' alone */
+const C_CUTOFF: u32 = 0xe8962au;
 /** corner k of the quad inset by d[] (its edges' insets): the crossing of edges k − 1 and k moved in */
 fn insetCorner(v: array<vec2<f32>, 4>, d: array<f32, 4>, k: u32) -> vec2<f32> {
   let km = (k + 3u) % 4u;
@@ -4134,8 +4134,9 @@ fn condColour(c: u32, word: u32, roof: bool) -> u32 {
     case 5u: { return cmix(c, select(0x8f8b80u, 0x6f6a5eu, roof), 0.7); }
     case 6u: { return select(cmix(c, 0x6a665fu, 0.25), holderColour((word >> 8u) & 255u), roof); }
     // (looted — the mutators' 'crime' sign, BACKLOG MU-44: brown among white read as "some houses changed"; now the
-    // walls smoke-dark and the roof a raw dark red, a marked house that shows among plaster at the default zoom)
-    case 10u: { return select(0x2e2624u, 0x8e1410u, roof); }
+    // walls smoke-dark and the roof a raw dark red, a marked house that shows among plaster at the default zoom;
+    // loop round 18, LS-151: the roof a dark scorched brown — red is the foes' alone)
+    case 10u: { return select(0x2e2624u, 0x4a2c1au, roof); }
     default: { return c; }
   }
 }

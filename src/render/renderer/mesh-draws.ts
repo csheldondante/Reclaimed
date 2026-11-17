@@ -256,7 +256,12 @@ export function buildMeshDraws(rd: Renderer, ctx: { format: GPUTextureFormat; tu
     renderPipe(device, { label, layout, vertex: { module, entryPoint }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth }, set);
   shadowPipe('shadow-opaque', pl, drawModule, 'vsBox', (p) => (rd.shadowOpaquePipe = p));
   shadowPipe('shadow-bodies', pl, drawModule, 'vsBody', (p) => (rd.shadowBodyPipe = p));
-  shadowPipe('shadow-skins', pl, drawModule, 'vsSkin', (p) => (rd.shadowSkinPipe = p));
+  // (loop round 18, LS-152 i: a town mesh's shadow clipped where its draw is — a building going up, a road growing in)
+  renderPipe(
+    device,
+    { label: 'shadow-skins', layout: pl, vertex: { module: drawModule, entryPoint: 'vsSkin' }, fragment: { module: drawModule, entryPoint: 'fsSkinShadow', targets: [] }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth },
+    (p) => (rd.shadowSkinPipe = p),
+  );
   shadowPipe('shadow-mesh', device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }), meshModule, 'vsMeshG', (p) => (rd.shadowMeshPipe = p));
   renderPipe(device, {
     label: 'shadow-mesh-cull',

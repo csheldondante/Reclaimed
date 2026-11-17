@@ -165,21 +165,34 @@ fn groundLook(base: vec3<f32>, kind: u32, p: vec2<f32>, px: f32) -> vec3<f32> {
   return mix(col, select(vec3<f32>(0.95, 0.9, 0.5), vec3<f32>(0.92, 0.6, 0.7), blade > 0.5), fl);
 }
 
+/** (CG25) how long ago the growth reached this fragment of a town mesh (s; < 0: not yet — clipped). A road growing in:
+ *  its time here, vsSkin's tint, past the town's clock. (Loop round 17, LS-152 i) a building going up — citygen
+ *  streets.wgsl riseCode — its walls' clip ragged a course (0.45 high, blocks 0.7 long, a course's joints half a block
+ *  on) at a time: a wall face, a colour word, revealed */
+fn revealAge(in: VOut) -> f32 {
+  var revAge = MESH_XF.w - in.tint;
+  if (in.tint > -1e29 && (in.info.y & 0xffu) == 1u && abs(in.nrm.z) < 0.5) {
+    let cz = floor(in.wpos.z / 0.45);
+    let cx = floor((in.wpos.x + in.wpos.y) / 0.7 + cz * 0.5);
+    revAge -= randv(vec3<i32>(i32(cx), i32(cz), 41)) * 0.9;
+  }
+  return revAge;
+}
+
+/** (loop round 18, LS-152 i) the sun's shadow of a town mesh clipped as its draw is: a building going up casts the
+ *  shadow of what has risen, not of the whole building */
+@fragment
+fn fsSkinShadow(in: VOut) {
+  if (revealAge(in) < 0.0) { discard; }
+}
+
 @fragment
 fn fsBody(in: VOut) -> FOut {
   // (derivatives first: the town mesh's ground textures fade by them)
   let gpx = max(length(fwidth(in.wpos.xy)), 1e-4);
   let word = in.info.x;
   let mat = word & 0xffu;
-  // (CG25: a town road growing in — nothing ahead of the growth: its time here, vsSkin's tint, past the town's clock)
-  var revAge = MESH_XF.w - in.tint;
-  // (loop round 17, LS-152 i: a building going up — citygen streets.wgsl riseCode — its walls' clip ragged a course
-  // (0.45 high, blocks 0.7 long, a course's joints half a block on) at a time: a wall face, a colour word, revealed)
-  if (in.tint > -1e29 && (in.info.y & 0xffu) == 1u && abs(in.nrm.z) < 0.5) {
-    let cz = floor(in.wpos.z / 0.45);
-    let cx = floor((in.wpos.x + in.wpos.y) / 0.7 + cz * 0.5);
-    revAge -= randv(vec3<i32>(i32(cx), i32(cz), 41)) * 0.9;
-  }
+  let revAge = revealAge(in);
   if (revAge < 0.0) { discard; }
   // (loop round 11: a faint voxel — a hidden unit of the player's — shows through every other pixel)
   if ((in.info.y & GHOST_INFO) != 0u && bayer4(in.pos.xy) < 0.55) { discard; }

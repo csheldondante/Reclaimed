@@ -25,15 +25,17 @@ import type { StoryCamera, V3 } from '../../story/camera';
  */
 export type Mount = 'foot' | 'horse' | 'cart' | 'ship';
 const MOUNTS: Record<Mount, { role?: string; out: number }> = {
-  foot: { out: 14 },
-  horse: { role: 'rider', out: 26 },
-  cart: { role: 'cart', out: 8 },
+  // (loop round 18: measured in sim time — foot 2.5, horse 5.5, cart 1.7 cells/s once the field reaches them — so the
+  // walk is ~4.5 s at each pace)
+  foot: { out: 11 },
+  horse: { role: 'rider', out: 24 },
+  cart: { role: 'cart', out: 7 },
   ship: { out: 6 },
 };
 /** a runner's pace, cells a second (the kind's pace class only: units.ts SpawnOpts.speed) */
 const PACE = 5;
 /** seconds the walk may take before the words show anyway */
-const WALK_MAX = 5;
+const WALK_MAX = 6;
 /** close enough to have arrived (cells) */
 const THERE = 3;
 /** the camera's zoom on the messenger: the figure a few storeys of pixels tall at phone size */

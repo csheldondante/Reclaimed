@@ -1012,8 +1012,12 @@ class Game implements RunGame {
     // (loop round 17: by ship only where the town has a harbour built — to its quay; else by cart on the road)
     const quay = how === 'ship' && this.realm?.ledger.built.includes('harbour') ? this.spot('harbour') : null;
     if (how === 'ship' && !quay) how = 'cart';
+    // (loop round 18, LS-149: the place itself — the keep's spot, a site's — can stand on a lot no street links to (the
+    // keep's own goal field reached 17 surfaces and never the road: the messenger stood at the road's end). They walk up
+    // the road they came by to the point of it nearest that place, and speak there)
+    const stand = road.length >= 2 ? nearestOn(road, dest) : dest;
     this.changed();
-    await this.messenger.bring(speech, road.length >= 2 ? road : null, dest, how, quay);
+    await this.messenger.bring(speech, road.length >= 2 ? road : null, stand, how, quay);
     this.changed();
     if (this.phase === 'city') this.showTown();
   }
@@ -1615,6 +1619,24 @@ class Game implements RunGame {
     console.log(`[loop] ${id} at ${g[0].toFixed(0)}, ${g[1].toFixed(0)}`);
     this.arm(null);
   }
+}
+
+/** (loop round 18) the point of a polyline nearest `p` */
+function nearestOn(line: readonly (readonly [number, number])[], p: readonly [number, number]): [number, number] {
+  let best: [number, number] = [line[0][0], line[0][1]];
+  let bd = Infinity;
+  for (let i = 0; i + 1 < line.length; i++) {
+    const [ax, ay] = line[i];
+    const [bx, by] = line[i + 1];
+    const dx = bx - ax;
+    const dy = by - ay;
+    const L = dx * dx + dy * dy;
+    const t = L > 0 ? Math.min(1, Math.max(0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L)) : 0;
+    const q: [number, number] = [ax + dx * t, ay + dy * t];
+    const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (d < bd) [bd, best] = [d, q];
+  }
+  return best;
 }
 
 /** (loop round 16) an arrow pointing a screen direction (y down), in eight ways */

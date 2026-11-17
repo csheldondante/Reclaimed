@@ -26170,3 +26170,30 @@ the draw at their progress through the roads' reveal code, walls ragged a course
 fresh edge, a rafters' deck before the roof. The headless run could not frame a rising district (the season camera
 left it); off until seen.
 
+## 2026-11-17 — loop round 18: the messenger walks, a district seen rising (`loop-skeleton`)
+
+Stills `local/round18/` (412x915, q=low, `?rise=1`).
+
+**The messenger stood still** (LS-149). A probe (`scripts/lab/round18probe.mjs`) read the messenger's goal field back
+where it stood: the field reached 17 surfaces and never grew (`probe3.log`) — the keep's spot, its destination, is on a
+lot no street links to, so the field never reached the road and the walker had no way down it. Units sent to the
+town's middle walked (the same code). Now they walk up the road they came by to its point nearest the place
+(`loop.ts announce`, `nearestOn`); the field then reaches 8-29 k surfaces and they walk at their kinds' paces in sim
+time (foot 2.5, horse 5.5, cart 1.7 cells/s, `probe4.log`). Outs 11/24/7 cells and WALK_MAX 6 s so a walk is ~4.5 s.
+Seen with the camera following: `foot-1..4`, `horse-1..4`, `cart-1..4` (the cart on screen, news by cart). Also seen:
+the window slides ±64 back and forth as the camera goes from the town to the messenger, ~1 s of stalled ticks each.
+
+**By ship: not built.** Every unit kind slot is used (8, a 3-bit field in the unit's info word, the next bits the state
+and the burning flag); a drawn ship needs that field widened or a slot freed — the owner's call (BACKLOG LS-149).
+
+**Construction clip seen** (LS-152 i): a homes district claimed in the city phase, the camera held on it (re-read
+each frame: a held window point drifts when the window slides) — `rise-1..4`: lots, walls part-way up under brown
+decks, then painted and roofed. Its shadow is clipped as the draw is (`fsSkinShadow`: the skins' shadow pipe has a
+fragment stage now, `revealAge` shared with `fsBody`). Reads as building at zoom 6; the courses do not show there.
+Still behind `?rise=1`; I would switch it on.
+
+**Reds**: the looted roof dark brown (0x4a2c1a), the cut-off outline amber (0xe8962a): red is the foes' alone.
+
+Not shown: the cutaway with a building in front of a speaker (`cutaway.png` has nothing in front); the petitions'
+"With your" lines (no offer had a combo in seasons 1-2, LS-153).
+
