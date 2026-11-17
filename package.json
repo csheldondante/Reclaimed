@@ -12,7 +12,8 @@
     "test:unit": "vitest run --project unit",
     "test:gpu": "vitest run --project gpu",
     "test:watch": "vitest --project unit",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "perfgate": "node scripts/perfgate.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

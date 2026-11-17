@@ -33,6 +33,9 @@ first (perf toggle-diff, a play-zoom shot, edge cases as tests), no patches, gat
 - **Player-facing text follows docs/WRITING.md** (plain words, one idea a sentence, concrete costs and
   rewards, no code words, no parentheses). Code comments keep their own style; player text never uses it.
   `test/unit/writing.test.ts` checks it.
+- **Perf gate.** Run `npm run perfgate` before every commit that touches shaders, the sim scheduler, streaming,
+  rendering or instance counts, and before every merge; updating its baseline needs a why in the DEVLOG
+  (docs/TESTING.md "The perf gate").
 - **Simplest implementation first, behind a clean interface.** Measure (perf
   overlay, probes) before optimising; record the measurement in the DEVLOG.
 - **One concern per structure.** The user's standing principles: encapsulation,

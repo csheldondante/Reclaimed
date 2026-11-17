@@ -1,0 +1,2603 @@
+{
+ "at": "2026-11-17T22:08:22.734Z",
+ "scenarios": {
+  "tall-desk": {
+   "counters": {},
+   "timings": {
+    "levelMs": 42943,
+    "firstFrameMs": 42945,
+    "coverMs": 11613
+   },
+   "awake": [],
+   "cover": {
+    "tall-land cover": {
+     "reached": true,
+     "ms": 11613,
+     "best": 1,
+     "frames": 50,
+     "trace": [
+      [
+       10,
+       0.059,
+       1
+      ],
+      [
+       10,
+       0.156,
+       2
+      ],
+      [
+       10,
+       0.18,
+       4
+      ],
+      [
+       10,
+       0.18,
+       5
+      ],
+      [
+       10,
+       0.18,
+       6
+      ],
+      [
+       10,
+       0.245,
+       9
+      ],
+      [
+       10,
+       0.245,
+       9
+      ],
+      [
+       10,
+       0.342,
+       10
+      ],
+      [
+       11,
+       0.416,
+       13
+      ],
+      [
+       11,
+       0.476,
+       17
+      ],
+      [
+       11,
+       0.476,
+       19
+      ],
+      [
+       11,
+       0.821,
+       29
+      ]
+     ]
+    }
+   },
+   "left": {
+    "share": 0,
+    "undrawn": []
+   },
+   "loose": true
+  },
+  "loop-phone": {
+   "counters": {
+    "computePasses": 11.559954314720812,
+    "renderPasses": 3.289,
+    "dispatches": 46.08041624365482,
+    "indirectDispatches": 1,
+    "draws": 218.281,
+    "instances": 13260.7,
+    "vertices": 265146,
+    "readKB": 1.95,
+    "uploads": 25.47669543147208,
+    "uploadKB": 18.6,
+    "copyKB": 12.79,
+    "estPhoneMs": 0.78
+   },
+   "ticksPerFrame": 0.788,
+   "awake": [
+    "fieldmesh",
+    "liquid-water",
+    "living",
+    "particles",
+    "renderfields",
+    "renderprep",
+    "shore",
+    "surface",
+    "tiles",
+    "windfield"
+   ],
+   "bySystem": {
+    "living": {
+     "phoneMs": 0.167,
+     "passes": 1,
+     "disp": 18.39,
+     "readKB": 0
+    },
+    "liquid-water": {
+     "phoneMs": 0.154,
+     "passes": 1.57,
+     "disp": 6.3,
+     "readKB": 0
+    },
+    "fieldmesh": {
+     "phoneMs": 0.1,
+     "passes": 1,
+     "disp": 10,
+     "readKB": 0
+    },
+    "particles": {
+     "phoneMs": 0.066,
+     "passes": 2.36,
+     "disp": 2.36,
+     "readKB": 0
+    },
+    "renderprep": {
+     "phoneMs": 0.044,
+     "passes": 1,
+     "disp": 3,
+     "readKB": 0
+    },
+    "draw": {
+     "phoneMs": 0.04,
+     "passes": 2,
+     "disp": 0,
+     "readKB": 0
+    },
+    "tiles": {
+     "phoneMs": 0.029,
+     "passes": 1.04,
+     "disp": 1,
+     "readKB": 0
+    },
+    "shadow": {
+     "phoneMs": 0.025,
+     "passes": 1.25,
+     "disp": 0,
+     "readKB": 0
+    },
+    "windfield": {
+     "phoneMs": 0.022,
+     "passes": 0.79,
+     "disp": 0.79,
+     "readKB": 0
+    },
+    "surface": {
+     "phoneMs": 0.022,
+     "passes": 0.79,
+     "disp": 0.79,
+     "readKB": 0
+    },
+    "renderfields": {
+     "phoneMs": 0.011,
+     "passes": 0.39,
+     "disp": 0.39,
+     "readKB": 0
+    },
+    "agents": {
+     "phoneMs": 0.009,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0.7
+    },
+    "(mirror pages)": {
+     "phoneMs": 0.006,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0.5
+    },
+    "render": {
+     "phoneMs": 0.004,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0.33
+    },
+    "flow-steady": {
+     "phoneMs": 0.002,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0.16
+    },
+    "stats": {
+     "phoneMs": 0.001,
+     "passes": 0.04,
+     "disp": 0.04,
+     "readKB": 0
+    },
+    "shore": {
+     "phoneMs": 0.001,
+     "passes": 0.01,
+     "disp": 0.14,
+     "readKB": 0
+    },
+    "sim-tick": {
+     "phoneMs": 0,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0
+    },
+    "citygen": {
+     "phoneMs": 0,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0
+    },
+    "integrity": {
+     "phoneMs": 0,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0
+    }
+   },
+   "gpuPasses": {
+    "draw": 4.55,
+    "liquid-water-step": 1.22,
+    "fieldmesh": 1.14,
+    "gbuffer": 1.06,
+    "living-people": 0.62,
+    "renderprep": 0.53,
+    "shadow-static": 0.28,
+    "shadow": 0.22,
+    "particles-emit": 0.19,
+    "renderfields": 0.18
+   },
+   "timings": {
+    "levelMs": 43865,
+    "firstFrameMs": 43867,
+    "coverMs": 28552,
+    "cpuMedMs": 1,
+    "cpuP90Ms": 1.2,
+    "gpuMedMs": 11.4,
+    "gpuP90Ms": 15.77
+   },
+   "fps": 96.1,
+   "cover": {
+    "load cover": {
+     "reached": true,
+     "ms": 28552,
+     "best": 0.9969224956535474,
+     "frames": 14,
+     "trace": [
+      [
+       28,
+       0.798,
+       2
+      ],
+      [
+       28,
+       0.843,
+       5
+      ],
+      [
+       28,
+       0.843,
+       6
+      ],
+      [
+       28,
+       0.946,
+       11
+      ],
+      [
+       29,
+       0.997,
+       14
+      ]
+     ]
+    }
+   },
+   "mustSleep": [
+    "ecology",
+    "wilt",
+    "climate",
+    "cover",
+    "moisture",
+    "contamination",
+    "sediment",
+    "oil",
+    "lava",
+    "structure",
+    "fire"
+   ],
+   "units": null
+  },
+  "pan-loop-phone": {
+   "counters": {
+    "perSlide.uploads": 720.92,
+    "perSlide.uploadKB": 557.46,
+    "perSlide.copyKB": 13866.75,
+    "perSlide.reads": 0,
+    "perSlide.readKB": 716.37,
+    "perSlide.bindGroups": 185.84,
+    "perSlide.pipelines": 0,
+    "perSlide.buffers": 363.4,
+    "perSlide.textures": 0,
+    "perSlide.computePasses": 288.7
+   },
+   "pan": {
+    "std.undrawnMeanPct": 0,
+    "std.undrawnMaxPct": 0,
+    "std.over33": 1,
+    "close.over33": 6,
+    "fling.over33": 4,
+    "fling.undrawnMeanPct": 0.034
+   },
+   "timings": {
+    "stdWorstMs": 39.7,
+    "stdSettleMs": 11,
+    "closeSettleMs": 7,
+    "flingSettleMs": 11,
+    "slideSpikeMs": 20
+   },
+   "cover": {
+    "std pan settle": {
+     "reached": true,
+     "ms": 11,
+     "best": 1
+    },
+    "fling settle": {
+     "reached": true,
+     "ms": 11,
+     "best": 0.9927
+    }
+   },
+   "std": {
+    "who": {
+     "readBytes": {
+      "(finish read)": 720.2,
+      "agents": 99.6,
+      "(mirror pages)": 57.8,
+      "render": 51.2,
+      "flow-steady": 23.8,
+      "(coarse snapshot)": 16.4
+     },
+     "buffers": {
+      "tiles": 112.8,
+      "(atlas col params tile)": 95.2,
+      "(finish read)": 23.8,
+      "(finish aux)": 23.8,
+      "(finish params)": 23.8,
+      "(finish md)": 23.8
+     },
+     "uploadBytes": {
+      "agents": 842.6,
+      "tiles": 726.6,
+      "render": 466.2,
+      "sim-tick": 294.4,
+      "traits": 268,
+      "(riverWet)": 73.3
+     },
+     "computePasses": {
+      "particles": 353.6,
+      "liquid-water": 235.5,
+      "tiles": 225.7,
+      "renderprep": 151.2,
+      "living": 150.6,
+      "fieldmesh": 148.8
+     },
+     "bindGroups": {
+      "(colF)": 95.2,
+      "tiles": 40.1,
+      "(finish)": 23.8,
+      "(regionCopy)": 10.4,
+      "(colH)": 5,
+      "(formSeed)": 5
+     }
+    },
+    "zoom": 2.52,
+    "v": 30,
+    "secs": 10,
+    "frames": 994,
+    "slides": 5,
+    "tilesPerS": 9.4,
+    "ft": {
+     "med": 10,
+     "p90": 10.1,
+     "worst": 39.7,
+     "over16": 13,
+     "over33": 1
+    },
+    "gpu": {
+     "med": 9.79,
+     "p90": 15.04,
+     "worst": 50.38
+    },
+    "slideSpikeMs": 20,
+    "slideSpikeOverMedMs": 2,
+    "undrawn": {
+     "maxPct": 0,
+     "meanPct": 0,
+     "framesAny": 0
+    },
+    "settleMs": 11,
+    "settled": true,
+    "perSlide": {
+     "uploads": 720.92,
+     "uploadKB": 557.46,
+     "copyKB": 13866.75,
+     "reads": 0,
+     "readKB": 716.37,
+     "bindGroups": 185.84,
+     "pipelines": 0,
+     "buffers": 363.4,
+     "textures": 0,
+     "computePasses": 288.7
+    }
+   },
+   "close": {
+    "who": {
+     "readBytes": {
+      "(finish read)": 864.2,
+      "agents": 92.3,
+      "render": 48.9,
+      "flow-steady": 25.1,
+      "(mirror pages)": 21.3,
+      "(coarse snapshot)": 16.7
+     },
+     "buffers": {
+      "tiles": 380,
+      "(atlas col params tile)": 357.3,
+      "citygen": 124,
+      "(finish read)": 89.6,
+      "(finish aux)": 89.6,
+      "(finish params)": 89.6
+     },
+     "uploadBytes": {
+      "tiles": 1412,
+      "agents": 859.2,
+      "render": 459.4,
+      "traits": 273.3,
+      "sim-tick": 271.2,
+      "(finish aux)": 175.3
+     },
+     "computePasses": {
+      "tiles": 419,
+      "(unlabeled)": 365.9,
+      "particles": 255,
+      "living": 149.7,
+      "renderprep": 148.6,
+      "fieldmesh": 146.7
+     },
+     "bindGroups": {
+      "(colF)": 357.3,
+      "tiles": 134.7,
+      "(finish)": 89.6,
+      "citygen": 33.4,
+      "living": 20,
+      "(citygen fill)": 9.3
+     }
+    },
+    "zoom": 1.51,
+    "v": 30,
+    "secs": 6,
+    "frames": 573,
+    "slides": 3,
+    "tilesPerS": 33.7,
+    "ft": {
+     "med": 10,
+     "p90": 10.1,
+     "worst": 69.2,
+     "over16": 12,
+     "over33": 6
+    },
+    "gpu": {
+     "med": 9.13,
+     "p90": 12.49,
+     "worst": 104.09
+    },
+    "slideSpikeMs": 60,
+    "slideSpikeOverMedMs": 16.7,
+    "undrawn": {
+     "maxPct": 7.85,
+     "meanPct": 0.151,
+     "framesAny": 19
+    },
+    "settleMs": 7,
+    "settled": true,
+    "perSlide": {
+     "uploads": 1012.52,
+     "uploadKB": 1486.84,
+     "copyKB": 32141.79,
+     "reads": 0,
+     "readKB": 819.77,
+     "bindGroups": 708.29,
+     "pipelines": 45.69,
+     "buffers": 1349.69,
+     "textures": 0,
+     "computePasses": 458.94
+    }
+   },
+   "fling": {
+    "who": {
+     "readBytes": {
+      "(finish read)": 1584.3,
+      "agents": 34.9,
+      "(coarse snapshot)": 24,
+      "render": 23.9,
+      "(mirror pages)": 14,
+      "flow-steady": 9.4
+     },
+     "buffers": {
+      "tiles": 300,
+      "(atlas col params tile)": 243,
+      "(finish read)": 61,
+      "(finish aux)": 61,
+      "(finish params)": 61,
+      "(finish md)": 61
+     },
+     "uploadBytes": {
+      "tiles": 466.6,
+      "agents": 370.6,
+      "render": 180.1,
+      "sim-tick": 130.2,
+      "(finish aux)": 123.5,
+      "traits": 117.9
+     },
+     "computePasses": {
+      "tiles": 288,
+      "(unlabeled)": 260,
+      "living": 136.5,
+      "particles": 115.5,
+      "(atlas finish)": 61,
+      "renderprep": 58
+     },
+     "bindGroups": {
+      "(colF)": 243,
+      "tiles": 100,
+      "(finish)": 61,
+      "(colH)": 8.5,
+      "(formSeed)": 8.5,
+      "(colapply claimGrid)": 2.5
+     }
+    },
+    "zoom": 2.52,
+    "v": 160,
+    "secs": 2,
+    "frames": 175,
+    "slides": 2,
+    "tilesPerS": 50,
+    "ft": {
+     "med": 10,
+     "p90": 10.1,
+     "worst": 49.5,
+     "over16": 14,
+     "over33": 4
+    },
+    "gpu": {
+     "med": 10.5,
+     "p90": 23.95,
+     "worst": 47
+    },
+    "slideSpikeMs": 49.5,
+    "slideSpikeOverMedMs": 29.8,
+    "undrawn": {
+     "maxPct": 0.73,
+     "meanPct": 0.034,
+     "framesAny": 13
+    },
+    "settleMs": 11,
+    "settled": true,
+    "perSlide": {
+     "uploads": 1153.1,
+     "uploadKB": 732.64,
+     "copyKB": 29054.36,
+     "reads": 8.41,
+     "readKB": 1599.04,
+     "bindGroups": 427.52,
+     "pipelines": 0,
+     "buffers": 910.48,
+     "textures": 0,
+     "computePasses": 562.95
+    }
+   },
+   "loose": true
+  },
+  "sandbox-phone": {
+   "counters": {
+    "computePasses": 36.08089413118526,
+    "renderPasses": 3.287,
+    "dispatches": 70.61619562715767,
+    "indirectDispatches": 1,
+    "draws": 218.363,
+    "instances": 16172.8,
+    "vertices": 427943,
+    "readKB": 1.69,
+    "uploads": 27.157228998849252,
+    "uploadKB": 17.99,
+    "copyKB": 12.55,
+    "estPhoneMs": 1.465
+   },
+   "ticksPerFrame": 0.869,
+   "awake": [
+    "climate",
+    "contamination",
+    "cover",
+    "ecology",
+    "fieldmesh",
+    "fire",
+    "lava",
+    "liquid-water",
+    "living",
+    "moisture",
+    "oil",
+    "particles",
+    "renderfields",
+    "renderprep",
+    "sediment",
+    "shore",
+    "structure",
+    "surface",
+    "tiles",
+    "wilt",
+    "windfield"
+   ],
+   "bySystem": {
+    "particles": {
+     "phoneMs": 0.219,
+     "passes": 7.83,
+     "disp": 7.83,
+     "readKB": 0
+    },
+    "liquid-water": {
+     "phoneMs": 0.17,
+     "passes": 1.74,
+     "disp": 6.95,
+     "readKB": 0
+    },
+    "living": {
+     "phoneMs": 0.167,
+     "passes": 1,
+     "disp": 18.39,
+     "readKB": 0
+    },
+    "lava": {
+     "phoneMs": 0.122,
+     "passes": 4.35,
+     "disp": 4.35,
+     "readKB": 0
+    },
+    "fieldmesh": {
+     "phoneMs": 0.1,
+     "passes": 1,
+     "disp": 10,
+     "readKB": 0
+    },
+    "oil": {
+     "phoneMs": 0.073,
+     "passes": 2.61,
+     "disp": 2.61,
+     "readKB": 0
+    },
+    "structure": {
+     "phoneMs": 0.049,
+     "passes": 1.74,
+     "disp": 1.74,
+     "readKB": 0
+    },
+    "contamination": {
+     "phoneMs": 0.049,
+     "passes": 1.74,
+     "disp": 1.74,
+     "readKB": 0
+    },
+    "moisture": {
+     "phoneMs": 0.049,
+     "passes": 1.74,
+     "disp": 1.74,
+     "readKB": 0
+    },
+    "fire": {
+     "phoneMs": 0.049,
+     "passes": 1.74,
+     "disp": 1.74,
+     "readKB": 0
+    },
+    "renderprep": {
+     "phoneMs": 0.044,
+     "passes": 1,
+     "disp": 2.99,
+     "readKB": 0
+    },
+    "draw": {
+     "phoneMs": 0.04,
+     "passes": 2,
+     "disp": 0,
+     "readKB": 0
+    },
+    "tiles": {
+     "phoneMs": 0.029,
+     "passes": 1.04,
+     "disp": 1,
+     "readKB": 0
+    },
+    "shadow": {
+     "phoneMs": 0.025,
+     "passes": 1.25,
+     "disp": 0,
+     "readKB": 0
+    },
+    "windfield": {
+     "phoneMs": 0.024,
+     "passes": 0.87,
+     "disp": 0.87,
+     "readKB": 0
+    },
+    "surface": {
+     "phoneMs": 0.024,
+     "passes": 0.87,
+     "disp": 0.87,
+     "readKB": 0
+    },
+    "sediment": {
+     "phoneMs": 0.024,
+     "passes": 0.87,
+     "disp": 0.87,
+     "readKB": 0
+    },
+    "wilt": {
+     "phoneMs": 0.024,
+     "passes": 0.87,
+     "disp": 0.87,
+     "readKB": 0
+    },
+    "renderfields": {
+     "phoneMs": 0.012,
+     "passes": 0.43,
+     "disp": 0.43,
+     "readKB": 0
+    },
+    "agents": {
+     "phoneMs": 0.009,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0.69
+    }
+   },
+   "gpuPasses": {
+    "draw": 3.49,
+    "fieldmesh": 2.57,
+    "liquid-water-step": 1.16,
+    "gbuffer": 0.82,
+    "living-people": 0.76,
+    "renderprep": 0.45,
+    "structure": 0.38,
+    "sediment-out": 0.21,
+    "shadow": 0.2,
+    "shadow-static": 0.2
+   },
+   "timings": {
+    "levelMs": 43661,
+    "firstFrameMs": 43663,
+    "coverMs": 28357,
+    "cpuMedMs": 1.1,
+    "cpuP90Ms": 1.7,
+    "gpuMedMs": 12.29,
+    "gpuP90Ms": 20.2
+   },
+   "fps": 70,
+   "cover": {
+    "load cover": {
+     "reached": true,
+     "ms": 28357,
+     "best": 0.9969224956535474,
+     "frames": 12,
+     "trace": [
+      [
+       28,
+       0.798,
+       1
+      ],
+      [
+       28,
+       0.843,
+       4
+      ],
+      [
+       28,
+       0.843,
+       4
+      ],
+      [
+       28,
+       0.843,
+       4
+      ],
+      [
+       28,
+       0.898,
+       5
+      ],
+      [
+       28,
+       0.946,
+       8
+      ],
+      [
+       28,
+       0.946,
+       8
+      ],
+      [
+       28,
+       0.997,
+       12
+      ]
+     ]
+    }
+   },
+   "loose": true
+  },
+  "pan-sandbox-phone": {
+   "counters": {
+    "perSlide.uploads": 741.1,
+    "perSlide.uploadKB": 626.71,
+    "perSlide.copyKB": 14692.74,
+    "perSlide.reads": 23.66,
+    "perSlide.readKB": 755.6,
+    "perSlide.bindGroups": 202.54,
+    "perSlide.pipelines": 0,
+    "perSlide.buffers": 399.64,
+    "perSlide.textures": 0,
+    "perSlide.computePasses": 328.93
+   },
+   "pan": {
+    "std.undrawnMeanPct": 0,
+    "std.undrawnMaxPct": 0,
+    "std.over33": 2,
+    "close.over33": 3,
+    "fling.over33": 4,
+    "fling.undrawnMeanPct": 0
+   },
+   "timings": {
+    "stdWorstMs": 48.8,
+    "stdSettleMs": 10,
+    "closeSettleMs": 11,
+    "flingSettleMs": 10,
+    "slideSpikeMs": 10.6
+   },
+   "cover": {
+    "std pan settle": {
+     "reached": true,
+     "ms": 10,
+     "best": 1
+    },
+    "fling settle": {
+     "reached": true,
+     "ms": 10,
+     "best": 1
+    }
+   },
+   "std": {
+    "who": {
+     "readBytes": {
+      "(finish read)": 720.2,
+      "agents": 92.5,
+      "render": 92.4,
+      "flow-steady": 25.1,
+      "(coarse snapshot)": 16.8,
+      "(mirror pages)": 15.2
+     },
+     "buffers": {
+      "tiles": 127.2,
+      "(atlas col params tile)": 104.8,
+      "(finish read)": 26.2,
+      "(finish aux)": 26.2,
+      "(finish params)": 26.2,
+      "(finish md)": 26.2
+     },
+     "uploadBytes": {
+      "agents": 807.1,
+      "tiles": 742,
+      "render": 430.8,
+      "sim-tick": 289.2,
+      "traits": 256.8,
+      "(riverWet)": 73.3
+     },
+     "computePasses": {
+      "particles": 1035.2,
+      "lava": 575,
+      "oil": 344.9,
+      "liquid-water": 230,
+      "structure": 230,
+      "contamination": 230
+     },
+     "bindGroups": {
+      "(colF)": 104.8,
+      "tiles": 44.8,
+      "(finish)": 26.2,
+      "(regionCopy)": 10.4,
+      "(colH)": 5,
+      "(formSeed)": 5
+     }
+    },
+    "zoom": 2.61,
+    "v": 30,
+    "secs": 10,
+    "frames": 988,
+    "slides": 5,
+    "tilesPerS": 10.6,
+    "ft": {
+     "med": 10,
+     "p90": 10.1,
+     "worst": 48.8,
+     "over16": 14,
+     "over33": 2
+    },
+    "gpu": {
+     "med": 10.25,
+     "p90": 18.56,
+     "worst": 62.18
+    },
+    "slideSpikeMs": 10.6,
+    "slideSpikeOverMedMs": 0.2,
+    "undrawn": {
+     "maxPct": 0,
+     "meanPct": 0,
+     "framesAny": 0
+    },
+    "settleMs": 10,
+    "settled": true,
+    "perSlide": {
+     "uploads": 741.1,
+     "uploadKB": 626.71,
+     "copyKB": 14692.74,
+     "reads": 23.66,
+     "readKB": 755.6,
+     "bindGroups": 202.54,
+     "pipelines": 0,
+     "buffers": 399.64,
+     "textures": 0,
+     "computePasses": 328.93
+    }
+   },
+   "close": {
+    "who": {
+     "readBytes": {
+      "(finish read)": 720.2,
+      "agents": 105.5,
+      "render": 64.7,
+      "flow-steady": 23,
+      "(coarse snapshot)": 14,
+      "(mirror pages)": 9
+     },
+     "buffers": {
+      "tiles": 328,
+      "(atlas col params tile)": 314.3,
+      "citygen": 124.1,
+      "(finish read)": 78.7,
+      "(finish aux)": 78.7,
+      "(finish params)": 78.7
+     },
+     "uploadBytes": {
+      "tiles": 1384.1,
+      "agents": 829.6,
+      "render": 491.3,
+      "sim-tick": 267,
+      "traits": 263.9,
+      "(finish aux)": 150.5
+     },
+     "computePasses": {
+      "particles": 652.3,
+      "tiles": 393.3,
+      "(unlabeled)": 321,
+      "living": 162.6,
+      "renderprep": 159.3,
+      "fieldmesh": 157.7
+     },
+     "bindGroups": {
+      "(colF)": 314.3,
+      "tiles": 117.3,
+      "(finish)": 78.7,
+      "citygen": 33.3,
+      "living": 20,
+      "(citygen fill)": 9.4
+     }
+    },
+    "zoom": 1.57,
+    "v": 30,
+    "secs": 6,
+    "frames": 588,
+    "slides": 3,
+    "tilesPerS": 28.7,
+    "ft": {
+     "med": 10,
+     "p90": 10.1,
+     "worst": 49.9,
+     "over16": 12,
+     "over33": 3
+    },
+    "gpu": {
+     "med": 8.38,
+     "p90": 11.24,
+     "worst": 91.52
+    },
+    "slideSpikeMs": 10.1,
+    "slideSpikeOverMedMs": 0,
+    "undrawn": {
+     "maxPct": 6.19,
+     "meanPct": 0.131,
+     "framesAny": 14
+    },
+    "settleMs": 11,
+    "settled": true,
+    "perSlide": {
+     "uploads": 627.21,
+     "uploadKB": 1218.39,
+     "copyKB": 28616.24,
+     "reads": 16.18,
+     "readKB": 701.64,
+     "bindGroups": 634.98,
+     "pipelines": 45.7,
+     "buffers": 1193.65,
+     "textures": 0,
+     "computePasses": 0
+    }
+   },
+   "fling": {
+    "who": {
+     "readBytes": {
+      "(finish read)": 864.2,
+      "(coarse snapshot)": 17.9,
+      "render": 13.8,
+      "agents": 9.5,
+      "(mirror pages)": 8.2,
+      "flow-steady": 5
+     },
+     "buffers": {
+      "tiles": 159.6,
+      "(atlas col params tile)": 130.4,
+      "(finish read)": 32.6,
+      "(finish aux)": 32.6,
+      "(finish params)": 32.6,
+      "(finish md)": 32.6
+     },
+     "uploadBytes": {
+      "tiles": 327.3,
+      "agents": 114.4,
+      "(riverWet)": 73.3,
+      "(finish aux)": 61.9,
+      "render": 57.1,
+      "(regionCopy params)": 55
+     },
+     "computePasses": {
+      "particles": 156.2,
+      "(unlabeled)": 140.4,
+      "tiles": 133,
+      "lava": 64,
+      "living": 38.8,
+      "oil": 38.4
+     },
+     "bindGroups": {
+      "(colF)": 130.4,
+      "tiles": 56.8,
+      "(finish)": 32.6,
+      "(colH)": 5,
+      "(formSeed)": 5,
+      "(colapply claimGrid)": 4
+     }
+    },
+    "zoom": 2.61,
+    "v": 160,
+    "secs": 2,
+    "frames": 180,
+    "slides": 5,
+    "tilesPerS": 66.5,
+    "ft": {
+     "med": 10,
+     "p90": 10.1,
+     "worst": 49.5,
+     "over16": 12,
+     "over33": 4
+    },
+    "gpu": {
+     "med": 15.55,
+     "p90": 27.31,
+     "worst": 49.75
+    },
+    "slideSpikeMs": 39.5,
+    "slideSpikeOverMedMs": 7.9,
+    "undrawn": {
+     "maxPct": 0,
+     "meanPct": 0,
+     "framesAny": 0
+    },
+    "settleMs": 10,
+    "settled": true,
+    "perSlide": {
+     "uploads": 872.45,
+     "uploadKB": 552.98,
+     "copyKB": 20151.34,
+     "reads": 25.66,
+     "readKB": 896.57,
+     "bindGroups": 242.01,
+     "pipelines": 0,
+     "buffers": 491.6,
+     "textures": 0,
+     "computePasses": 359.94
+    }
+   },
+   "loose": true
+  },
+  "jump-phone": {
+   "counters": {
+    "computePasses": 36.06475498241501,
+    "renderPasses": 3.286,
+    "dispatches": 70.59541031652991,
+    "indirectDispatches": 1,
+    "draws": 218.32700000000003,
+    "instances": 16437.8,
+    "vertices": 385031,
+    "readKB": 1.7,
+    "uploads": 27.291547479484173,
+    "uploadKB": 18.07,
+    "copyKB": 12.55,
+    "estPhoneMs": 1.467
+   },
+   "ticksPerFrame": 0.853,
+   "awake": [
+    "climate",
+    "contamination",
+    "cover",
+    "ecology",
+    "fieldmesh",
+    "fire",
+    "lava",
+    "liquid-water",
+    "living",
+    "moisture",
+    "oil",
+    "particles",
+    "renderfields",
+    "renderprep",
+    "sediment",
+    "shore",
+    "structure",
+    "surface",
+    "tiles",
+    "wilt",
+    "windfield"
+   ],
+   "bySystem": {
+    "particles": {
+     "phoneMs": 0.215,
+     "passes": 7.67,
+     "disp": 7.67,
+     "readKB": 0
+    },
+    "liquid-water": {
+     "phoneMs": 0.167,
+     "passes": 1.71,
+     "disp": 6.82,
+     "readKB": 0
+    },
+    "living": {
+     "phoneMs": 0.167,
+     "passes": 1,
+     "disp": 18.39,
+     "readKB": 0
+    },
+    "lava": {
+     "phoneMs": 0.119,
+     "passes": 4.26,
+     "disp": 4.26,
+     "readKB": 0
+    },
+    "fieldmesh": {
+     "phoneMs": 0.1,
+     "passes": 1,
+     "disp": 10,
+     "readKB": 0
+    },
+    "oil": {
+     "phoneMs": 0.072,
+     "passes": 2.56,
+     "disp": 2.56,
+     "readKB": 0
+    },
+    "structure": {
+     "phoneMs": 0.048,
+     "passes": 1.71,
+     "disp": 1.71,
+     "readKB": 0
+    },
+    "contamination": {
+     "phoneMs": 0.048,
+     "passes": 1.71,
+     "disp": 1.71,
+     "readKB": 0
+    },
+    "moisture": {
+     "phoneMs": 0.048,
+     "passes": 1.71,
+     "disp": 1.71,
+     "readKB": 0
+    },
+    "fire": {
+     "phoneMs": 0.048,
+     "passes": 1.71,
+     "disp": 1.71,
+     "readKB": 0
+    },
+    "renderprep": {
+     "phoneMs": 0.044,
+     "passes": 1,
+     "disp": 3,
+     "readKB": 0
+    },
+    "draw": {
+     "phoneMs": 0.04,
+     "passes": 2,
+     "disp": 0,
+     "readKB": 0
+    },
+    "tiles": {
+     "phoneMs": 0.029,
+     "passes": 1.04,
+     "disp": 1,
+     "readKB": 0
+    },
+    "shadow": {
+     "phoneMs": 0.025,
+     "passes": 1.25,
+     "disp": 0,
+     "readKB": 0
+    },
+    "windfield": {
+     "phoneMs": 0.024,
+     "passes": 0.85,
+     "disp": 0.85,
+     "readKB": 0
+    },
+    "surface": {
+     "phoneMs": 0.024,
+     "passes": 0.85,
+     "disp": 0.85,
+     "readKB": 0
+    },
+    "wilt": {
+     "phoneMs": 0.024,
+     "passes": 0.85,
+     "disp": 0.85,
+     "readKB": 0
+    },
+    "sediment": {
+     "phoneMs": 0.024,
+     "passes": 0.85,
+     "disp": 0.85,
+     "readKB": 0
+    },
+    "renderfields": {
+     "phoneMs": 0.012,
+     "passes": 0.43,
+     "disp": 0.43,
+     "readKB": 0
+    },
+    "agents": {
+     "phoneMs": 0.009,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0.7
+    }
+   },
+   "gpuPasses": {
+    "draw": 3.39,
+    "fieldmesh": 3.14,
+    "gbuffer": 1.21,
+    "renderprep": 0.59,
+    "living-people": 0.59,
+    "liquid-water-step": 0.53,
+    "shadow-static": 0.3,
+    "shadow": 0.28,
+    "sediment-out": 0.16,
+    "particles-emit": 0.16
+   },
+   "timings": {
+    "jumpCoverMs": 123,
+    "backCoverMs": 12,
+    "cpuMedMs": 1.2,
+    "cpuP90Ms": 1.4,
+    "gpuMedMs": 11.87,
+    "gpuP90Ms": 21.26
+   },
+   "fps": 71.4,
+   "cover": {
+    "jump cover": {
+     "reached": true,
+     "ms": 123,
+     "best": 1,
+     "frames": 8,
+     "trace": [
+      [
+       0,
+       0.987,
+       2
+      ]
+     ]
+    },
+    "back cover": {
+     "reached": true,
+     "ms": 12,
+     "best": 1,
+     "frames": 1,
+     "trace": [
+      [
+       0,
+       1,
+       1
+      ]
+     ]
+    }
+   },
+   "stream": {
+    "tilesMade": 33,
+    "tilesPerS": 7.9,
+    "readKBDuring": 8373,
+    "estPhoneMsDuring": 2.082
+   },
+   "loose": true
+  },
+  "loop-desk": {
+   "counters": {
+    "computePasses": 11.561479484173505,
+    "renderPasses": 3.286,
+    "dispatches": 46.091134818288396,
+    "indirectDispatches": 1,
+    "draws": 192.26800000000003,
+    "instances": 11832.1,
+    "vertices": 227516,
+    "readKB": 1.9,
+    "uploads": 25.25606916764361,
+    "uploadKB": 16.8,
+    "copyKB": 12.75,
+    "estPhoneMs": 0.782
+   },
+   "ticksPerFrame": 0.853,
+   "awake": [
+    "fieldmesh",
+    "liquid-water",
+    "living",
+    "particles",
+    "renderfields",
+    "renderprep",
+    "shore",
+    "surface",
+    "tiles",
+    "windfield"
+   ],
+   "bySystem": {
+    "liquid-water": {
+     "phoneMs": 0.167,
+     "passes": 1.71,
+     "disp": 6.82,
+     "readKB": 0
+    },
+    "living": {
+     "phoneMs": 0.167,
+     "passes": 1,
+     "disp": 18.39,
+     "readKB": 0
+    },
+    "fieldmesh": {
+     "phoneMs": 0.1,
+     "passes": 1,
+     "disp": 10,
+     "readKB": 0
+    },
+    "particles": {
+     "phoneMs": 0.072,
+     "passes": 2.56,
+     "disp": 2.56,
+     "readKB": 0
+    },
+    "renderprep": {
+     "phoneMs": 0.044,
+     "passes": 1,
+     "disp": 3,
+     "readKB": 0
+    },
+    "draw": {
+     "phoneMs": 0.04,
+     "passes": 2,
+     "disp": 0,
+     "readKB": 0
+    },
+    "tiles": {
+     "phoneMs": 0.029,
+     "passes": 1.04,
+     "disp": 1,
+     "readKB": 0
+    },
+    "shadow": {
+     "phoneMs": 0.025,
+     "passes": 1.25,
+     "disp": 0,
+     "readKB": 0
+    },
+    "windfield": {
+     "phoneMs": 0.024,
+     "passes": 0.85,
+     "disp": 0.85,
+     "readKB": 0
+    },
+    "surface": {
+     "phoneMs": 0.024,
+     "passes": 0.85,
+     "disp": 0.85,
+     "readKB": 0
+    },
+    "renderfields": {
+     "phoneMs": 0.012,
+     "passes": 0.43,
+     "disp": 0.43,
+     "readKB": 0
+    },
+    "agents": {
+     "phoneMs": 0.009,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0.71
+    },
+    "(mirror pages)": {
+     "phoneMs": 0.006,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0.5
+    },
+    "render": {
+     "phoneMs": 0.004,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0.34
+    },
+    "flow-steady": {
+     "phoneMs": 0.002,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0.18
+    },
+    "shore": {
+     "phoneMs": 0.002,
+     "passes": 0.01,
+     "disp": 0.16,
+     "readKB": 0
+    },
+    "stats": {
+     "phoneMs": 0.001,
+     "passes": 0.04,
+     "disp": 0.04,
+     "readKB": 0
+    },
+    "sim-tick": {
+     "phoneMs": 0,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0
+    },
+    "citygen": {
+     "phoneMs": 0,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0
+    },
+    "integrity": {
+     "phoneMs": 0,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0
+    }
+   },
+   "gpuPasses": {
+    "draw": 5.74,
+    "liquid-water-step": 1.44,
+    "fieldmesh": 1.07,
+    "gbuffer": 0.85,
+    "living-people": 0.68,
+    "renderprep": 0.45,
+    "shadow-static": 0.26,
+    "renderfields": 0.21,
+    "particles-emit": 0.21,
+    "shadow": 0.2
+   },
+   "timings": {
+    "levelMs": 45119,
+    "firstFrameMs": 45121,
+    "coverMs": 28569,
+    "cpuMedMs": 1,
+    "cpuP90Ms": 1.5,
+    "gpuMedMs": 10.39,
+    "gpuP90Ms": 21.4
+   },
+   "fps": 97.8,
+   "cover": {
+    "load cover": {
+     "reached": true,
+     "ms": 28569,
+     "best": 0.9992847030702846,
+     "frames": 15,
+     "trace": [
+      [
+       28,
+       0.831,
+       2
+      ],
+      [
+       28,
+       0.844,
+       5
+      ],
+      [
+       28,
+       0.844,
+       5
+      ],
+      [
+       28,
+       0.933,
+       8
+      ],
+      [
+       29,
+       0.999,
+       15
+      ]
+     ]
+    }
+   },
+   "mustSleep": [
+    "ecology",
+    "wilt",
+    "climate",
+    "cover",
+    "moisture",
+    "contamination",
+    "sediment",
+    "oil",
+    "lava",
+    "structure",
+    "fire"
+   ],
+   "units": null
+  },
+  "pan-loop-desk": {
+   "counters": {
+    "perSlide.uploads": 665.83,
+    "perSlide.uploadKB": 466.67,
+    "perSlide.copyKB": 10513.65,
+    "perSlide.reads": 0,
+    "perSlide.readKB": 688.8,
+    "perSlide.bindGroups": 107.15,
+    "perSlide.pipelines": 0,
+    "perSlide.buffers": 210.74,
+    "perSlide.textures": 0,
+    "perSlide.computePasses": 222.41
+   },
+   "pan": {
+    "std.undrawnMeanPct": 0,
+    "std.undrawnMaxPct": 0,
+    "std.over33": 8,
+    "close.over33": 2,
+    "fling.over33": 2,
+    "fling.undrawnMeanPct": 0
+   },
+   "timings": {
+    "stdWorstMs": 86.3,
+    "stdSettleMs": 10,
+    "closeSettleMs": 22,
+    "flingSettleMs": 8,
+    "slideSpikeMs": 10.6
+   },
+   "cover": {
+    "std pan settle": {
+     "reached": true,
+     "ms": 10,
+     "best": 1
+    },
+    "fling settle": {
+     "reached": true,
+     "ms": 8,
+     "best": 1
+    }
+   },
+   "std": {
+    "who": {
+     "readBytes": {
+      "(finish read)": 691.4,
+      "agents": 84.5,
+      "render": 44.3,
+      "(mirror pages)": 44.2,
+      "flow-steady": 23.8,
+      "(coarse snapshot)": 19.2
+     },
+     "buffers": {
+      "(atlas col params tile)": 54.4,
+      "tiles": 52.7,
+      "(finish read)": 13.6,
+      "(finish aux)": 13.6,
+      "(finish params)": 13.6,
+      "(finish md)": 13.6
+     },
+     "uploadBytes": {
+      "agents": 773.3,
+      "tiles": 406.6,
+      "render": 392.7,
+      "sim-tick": 281.9,
+      "traits": 246,
+      "(riverWet)": 73.3
+     },
+     "computePasses": {
+      "particles": 341.6,
+      "liquid-water": 227.6,
+      "tiles": 162.1,
+      "renderprep": 127.6,
+      "living": 126.8,
+      "fieldmesh": 125.4
+     },
+     "bindGroups": {
+      "(colF)": 54.4,
+      "tiles": 18.3,
+      "(finish)": 13.6,
+      "(regionCopy)": 5.2,
+      "(colH)": 4.8,
+      "(formSeed)": 4.8
+     }
+    },
+    "zoom": 7.84,
+    "v": 30,
+    "secs": 10,
+    "frames": 949,
+    "slides": 5,
+    "tilesPerS": 4.4,
+    "ft": {
+     "med": 10,
+     "p90": 10.1,
+     "worst": 86.3,
+     "over16": 24,
+     "over33": 8
+    },
+    "gpu": {
+     "med": 12.02,
+     "p90": 18.08,
+     "worst": 105.93
+    },
+    "slideSpikeMs": 10.6,
+    "slideSpikeOverMedMs": 0.2,
+    "undrawn": {
+     "maxPct": 0,
+     "meanPct": 0,
+     "framesAny": 0
+    },
+    "settleMs": 10,
+    "settled": true,
+    "perSlide": {
+     "uploads": 665.83,
+     "uploadKB": 466.67,
+     "copyKB": 10513.65,
+     "reads": 0,
+     "readKB": 688.8,
+     "bindGroups": 107.15,
+     "pipelines": 0,
+     "buffers": 210.74,
+     "textures": 0,
+     "computePasses": 222.41
+    }
+   },
+   "close": {
+    "who": {
+     "readBytes": {
+      "(finish read)": 864.2,
+      "agents": 78.8,
+      "render": 38.8,
+      "flow-steady": 23,
+      "(mirror pages)": 19.7,
+      "(coarse snapshot)": 16.7
+     },
+     "buffers": {
+      "(atlas col params tile)": 179.9,
+      "tiles": 134,
+      "citygen": 124,
+      "(finish read)": 45,
+      "(finish aux)": 45,
+      "(finish params)": 45
+     },
+     "uploadBytes": {
+      "agents": 749.1,
+      "tiles": 616.3,
+      "render": 376.7,
+      "sim-tick": 253.3,
+      "traits": 238.3,
+      "(finish aux)": 73.7
+     },
+     "computePasses": {
+      "particles": 228.6,
+      "tiles": 218.4,
+      "(unlabeled)": 188.7,
+      "living": 125,
+      "renderprep": 122,
+      "fieldmesh": 120.7
+     },
+     "bindGroups": {
+      "(colF)": 179.9,
+      "tiles": 55.7,
+      "(finish)": 45,
+      "citygen": 33.3,
+      "living": 20,
+      "(citygen fill)": 9.4
+     }
+    },
+    "zoom": 4.71,
+    "v": 30,
+    "secs": 6,
+    "frames": 573,
+    "slides": 3,
+    "tilesPerS": 11.3,
+    "ft": {
+     "med": 10,
+     "p90": 10.1,
+     "worst": 79.1,
+     "over16": 18,
+     "over33": 2
+    },
+    "gpu": {
+     "med": 12.52,
+     "p90": 17.07,
+     "worst": 112.68
+    },
+    "slideSpikeMs": 10.1,
+    "slideSpikeOverMedMs": 0.1,
+    "undrawn": {
+     "maxPct": 1.48,
+     "meanPct": 0.013,
+     "framesAny": 5
+    },
+    "settleMs": 22,
+    "settled": true,
+    "perSlide": {
+     "uploads": 591.54,
+     "uploadKB": 779.88,
+     "copyKB": 16786.75,
+     "reads": 0,
+     "readKB": 834.19,
+     "bindGroups": 407.34,
+     "pipelines": 45.63,
+     "buffers": 703.72,
+     "textures": 0,
+     "computePasses": 65.21
+    }
+   },
+   "fling": {
+    "who": {
+     "readBytes": {
+      "(finish read)": 1584.3,
+      "agents": 31.2,
+      "(coarse snapshot)": 26.7,
+      "render": 20.4,
+      "(mirror pages)": 16.5,
+      "flow-steady": 12.5
+     },
+     "buffers": {
+      "tiles": 147,
+      "(atlas col params tile)": 142,
+      "(finish read)": 35.5,
+      "(finish aux)": 35.5,
+      "(finish params)": 35.5,
+      "(finish md)": 35.5
+     },
+     "uploadBytes": {
+      "agents": 318.2,
+      "tiles": 287.8,
+      "render": 155.7,
+      "sim-tick": 130.1,
+      "traits": 101.2,
+      "(riverWet)": 73.3
+     },
+     "computePasses": {
+      "(unlabeled)": 164,
+      "tiles": 155,
+      "living": 119,
+      "particles": 118.5,
+      "windfield": 54.5,
+      "renderprep": 51
+     },
+     "bindGroups": {
+      "(colF)": 142,
+      "tiles": 49,
+      "(finish)": 35.5,
+      "(colH)": 11,
+      "(formSeed)": 11,
+      "(colapply claimGrid)": 2.5
+     }
+    },
+    "zoom": 7.84,
+    "v": 160,
+    "secs": 2,
+    "frames": 175,
+    "slides": 2,
+    "tilesPerS": 24.5,
+    "ft": {
+     "med": 10,
+     "p90": 10.1,
+     "worst": 60,
+     "over16": 14,
+     "over33": 2
+    },
+    "gpu": {
+     "med": 14,
+     "p90": 31.19,
+     "worst": 61.78
+    },
+    "slideSpikeMs": 30.5,
+    "slideSpikeOverMedMs": 15.6,
+    "undrawn": {
+     "maxPct": 0,
+     "meanPct": 0,
+     "framesAny": 0
+    },
+    "settleMs": 8,
+    "settled": true,
+    "perSlide": {
+     "uploads": 873.85,
+     "uploadKB": 527.65,
+     "copyKB": 17491.68,
+     "reads": 14.15,
+     "readKB": 1611.76,
+     "bindGroups": 255,
+     "pipelines": 0,
+     "buffers": 545.5,
+     "textures": 0,
+     "computePasses": 334.8
+    }
+   },
+   "loose": true
+  },
+  "sandbox-desk": {
+   "counters": {
+    "computePasses": 36.06998281786941,
+    "renderPasses": 3.289,
+    "dispatches": 70.60983734249714,
+    "indirectDispatches": 1,
+    "draws": 191.19299999999998,
+    "instances": 16259.2,
+    "vertices": 312562,
+    "readKB": 2.21,
+    "uploads": 27.1231156930126,
+    "uploadKB": 16.73,
+    "copyKB": 13.07,
+    "estPhoneMs": 1.469
+   },
+   "ticksPerFrame": 0.873,
+   "awake": [
+    "climate",
+    "contamination",
+    "cover",
+    "ecology",
+    "fieldmesh",
+    "fire",
+    "lava",
+    "liquid-water",
+    "living",
+    "moisture",
+    "oil",
+    "particles",
+    "renderfields",
+    "renderprep",
+    "sediment",
+    "shore",
+    "structure",
+    "surface",
+    "tiles",
+    "wilt",
+    "windfield"
+   ],
+   "bySystem": {
+    "particles": {
+     "phoneMs": 0.22,
+     "passes": 7.86,
+     "disp": 7.86,
+     "readKB": 0
+    },
+    "liquid-water": {
+     "phoneMs": 0.171,
+     "passes": 1.75,
+     "disp": 6.98,
+     "readKB": 0
+    },
+    "living": {
+     "phoneMs": 0.167,
+     "passes": 1,
+     "disp": 18.4,
+     "readKB": 0
+    },
+    "lava": {
+     "phoneMs": 0.122,
+     "passes": 4.36,
+     "disp": 4.36,
+     "readKB": 0
+    },
+    "fieldmesh": {
+     "phoneMs": 0.1,
+     "passes": 1,
+     "disp": 10,
+     "readKB": 0
+    },
+    "oil": {
+     "phoneMs": 0.073,
+     "passes": 2.62,
+     "disp": 2.62,
+     "readKB": 0
+    },
+    "structure": {
+     "phoneMs": 0.049,
+     "passes": 1.75,
+     "disp": 1.75,
+     "readKB": 0
+    },
+    "contamination": {
+     "phoneMs": 0.049,
+     "passes": 1.75,
+     "disp": 1.75,
+     "readKB": 0
+    },
+    "moisture": {
+     "phoneMs": 0.049,
+     "passes": 1.75,
+     "disp": 1.75,
+     "readKB": 0
+    },
+    "fire": {
+     "phoneMs": 0.049,
+     "passes": 1.75,
+     "disp": 1.75,
+     "readKB": 0
+    },
+    "renderprep": {
+     "phoneMs": 0.044,
+     "passes": 1,
+     "disp": 3,
+     "readKB": 0
+    },
+    "draw": {
+     "phoneMs": 0.04,
+     "passes": 2,
+     "disp": 0,
+     "readKB": 0
+    },
+    "tiles": {
+     "phoneMs": 0.029,
+     "passes": 1.04,
+     "disp": 1,
+     "readKB": 0
+    },
+    "shadow": {
+     "phoneMs": 0.025,
+     "passes": 1.25,
+     "disp": 0,
+     "readKB": 0
+    },
+    "windfield": {
+     "phoneMs": 0.024,
+     "passes": 0.87,
+     "disp": 0.87,
+     "readKB": 0
+    },
+    "surface": {
+     "phoneMs": 0.024,
+     "passes": 0.87,
+     "disp": 0.87,
+     "readKB": 0
+    },
+    "sediment": {
+     "phoneMs": 0.024,
+     "passes": 0.87,
+     "disp": 0.87,
+     "readKB": 0
+    },
+    "wilt": {
+     "phoneMs": 0.024,
+     "passes": 0.87,
+     "disp": 0.87,
+     "readKB": 0
+    },
+    "renderfields": {
+     "phoneMs": 0.012,
+     "passes": 0.44,
+     "disp": 0.44,
+     "readKB": 0
+    },
+    "agents": {
+     "phoneMs": 0.009,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0.71
+    }
+   },
+   "gpuPasses": {
+    "draw": 4.99,
+    "liquid-water-step": 1.2,
+    "fieldmesh": 1.06,
+    "gbuffer": 0.75,
+    "living-people": 0.54,
+    "structure": 0.41,
+    "renderprep": 0.39,
+    "shadow-static": 0.23,
+    "sediment-out": 0.2,
+    "particles-emit": 0.18
+   },
+   "timings": {
+    "levelMs": 43484,
+    "firstFrameMs": 43486,
+    "coverMs": 28999,
+    "cpuMedMs": 1.1,
+    "cpuP90Ms": 1.3,
+    "gpuMedMs": 11.28,
+    "gpuP90Ms": 23.21
+   },
+   "fps": 70.4,
+   "cover": {
+    "load cover": {
+     "reached": true,
+     "ms": 28999,
+     "best": 0.9992847030702846,
+     "frames": 13,
+     "trace": [
+      [
+       28,
+       0.831,
+       1
+      ],
+      [
+       28,
+       0.892,
+       3
+      ],
+      [
+       28,
+       0.892,
+       4
+      ],
+      [
+       29,
+       0.892,
+       4
+      ],
+      [
+       29,
+       0.933,
+       4
+      ],
+      [
+       29,
+       0.933,
+       7
+      ],
+      [
+       29,
+       0.988,
+       8
+      ],
+      [
+       29,
+       0.999,
+       13
+      ]
+     ]
+    }
+   },
+   "loose": true
+  },
+  "pan-sandbox-desk": {
+   "counters": {
+    "perSlide.uploads": 647.17,
+    "perSlide.uploadKB": 433.53,
+    "perSlide.copyKB": 13669.53,
+    "perSlide.reads": 0,
+    "perSlide.readKB": 575.19,
+    "perSlide.bindGroups": 129.98,
+    "perSlide.pipelines": 0,
+    "perSlide.buffers": 240.36,
+    "perSlide.textures": 0,
+    "perSlide.computePasses": 292.35
+   },
+   "pan": {
+    "std.undrawnMeanPct": 0,
+    "std.undrawnMaxPct": 0,
+    "std.over33": 4,
+    "close.over33": 3,
+    "fling.over33": 7,
+    "fling.undrawnMeanPct": 0
+   },
+   "timings": {
+    "stdWorstMs": 110.1,
+    "stdSettleMs": 9,
+    "closeSettleMs": 5,
+    "flingSettleMs": 15,
+    "slideSpikeMs": 19.9
+   },
+   "cover": {
+    "std pan settle": {
+     "reached": true,
+     "ms": 9,
+     "best": 1
+    },
+    "fling settle": {
+     "reached": true,
+     "ms": 15,
+     "best": 1
+    }
+   },
+   "std": {
+    "who": {
+     "readBytes": {
+      "(finish read)": 604.9,
+      "render": 86.7,
+      "agents": 80.9,
+      "flow-steady": 23.8,
+      "(coarse snapshot)": 14.6,
+      "(mirror pages)": 12.2
+     },
+     "buffers": {
+      "tiles": 68.4,
+      "(atlas col params tile)": 62.3,
+      "(finish read)": 15.6,
+      "(finish aux)": 15.6,
+      "(finish params)": 15.6,
+      "(finish md)": 15.6
+     },
+     "uploadBytes": {
+      "agents": 720.1,
+      "tiles": 445.8,
+      "render": 381.3,
+      "sim-tick": 279.4,
+      "traits": 229.1,
+      "(riverWet)": 73.3
+     },
+     "computePasses": {
+      "particles": 1006.5,
+      "lava": 559,
+      "oil": 335.4,
+      "liquid-water": 223.6,
+      "structure": 223.6,
+      "contamination": 223.6
+     },
+     "bindGroups": {
+      "(colF)": 62.3,
+      "tiles": 26.4,
+      "(finish)": 15.6,
+      "(regionCopy)": 7.8,
+      "(colH)": 4.2,
+      "(formSeed)": 4.2
+     }
+    },
+    "zoom": 7.62,
+    "v": 30,
+    "secs": 10,
+    "frames": 976,
+    "slides": 5,
+    "tilesPerS": 5.7,
+    "ft": {
+     "med": 10,
+     "p90": 10.1,
+     "worst": 110.1,
+     "over16": 15,
+     "over33": 4
+    },
+    "gpu": {
+     "med": 10.53,
+     "p90": 22.57,
+     "worst": 98.94
+    },
+    "slideSpikeMs": 19.9,
+    "slideSpikeOverMedMs": 2,
+    "undrawn": {
+     "maxPct": 0,
+     "meanPct": 0,
+     "framesAny": 0
+    },
+    "settleMs": 9,
+    "settled": true,
+    "perSlide": {
+     "uploads": 647.17,
+     "uploadKB": 433.53,
+     "copyKB": 13669.53,
+     "reads": 0,
+     "readKB": 575.19,
+     "bindGroups": 129.98,
+     "pipelines": 0,
+     "buffers": 240.36,
+     "textures": 0,
+     "computePasses": 292.35
+    }
+   },
+   "close": {
+    "who": {
+     "readBytes": {
+      "(finish read)": 720.2,
+      "agents": 79.8,
+      "render": 53.3,
+      "flow-steady": 23,
+      "(coarse snapshot)": 16.3,
+      "(mirror pages)": 9
+     },
+     "buffers": {
+      "(atlas col params tile)": 191.7,
+      "tiles": 140,
+      "citygen": 124,
+      "(finish read)": 48.7,
+      "(finish aux)": 48.7,
+      "(finish params)": 48.7
+     },
+     "uploadBytes": {
+      "agents": 808.2,
+      "tiles": 687.1,
+      "render": 383.1,
+      "sim-tick": 272.3,
+      "traits": 257.1,
+      "(finish aux)": 79.3
+     },
+     "computePasses": {
+      "particles": 664,
+      "tiles": 229,
+      "(unlabeled)": 198.4,
+      "living": 127.6,
+      "renderprep": 124,
+      "fieldmesh": 122.7
+     },
+     "bindGroups": {
+      "(colF)": 191.7,
+      "tiles": 55.7,
+      "(finish)": 48.7,
+      "citygen": 33.4,
+      "living": 20,
+      "(citygen fill)": 9.3
+     }
+    },
+    "zoom": 4.57,
+    "v": 30,
+    "secs": 6,
+    "frames": 588,
+    "slides": 3,
+    "tilesPerS": 13.7,
+    "ft": {
+     "med": 10,
+     "p90": 10.1,
+     "worst": 40,
+     "over16": 9,
+     "over33": 3
+    },
+    "gpu": {
+     "med": 13.37,
+     "p90": 17.14,
+     "worst": 72.45
+    },
+    "slideSpikeMs": 10.2,
+    "slideSpikeOverMedMs": 0.1,
+    "undrawn": {
+     "maxPct": 3,
+     "meanPct": 0.031,
+     "framesAny": 13
+    },
+    "settleMs": 5,
+    "settled": true,
+    "perSlide": {
+     "uploads": 594.47,
+     "uploadKB": 896.51,
+     "copyKB": 17839.81,
+     "reads": 0,
+     "readKB": 651.07,
+     "bindGroups": 420.71,
+     "pipelines": 45.63,
+     "buffers": 732.35,
+     "textures": 0,
+     "computePasses": 0
+    }
+   },
+   "fling": {
+    "who": {
+     "readBytes": {
+      "(finish read)": 864.2,
+      "(coarse snapshot)": 19.6,
+      "render": 12.9,
+      "agents": 9.8,
+      "(mirror pages)": 7.8,
+      "flow-steady": 3.8
+     },
+     "buffers": {
+      "tiles": 91.2,
+      "(atlas col params tile)": 84.2,
+      "(finish read)": 21,
+      "(finish aux)": 21,
+      "(finish params)": 21,
+      "(finish md)": 21
+     },
+     "uploadBytes": {
+      "tiles": 223.2,
+      "agents": 101.5,
+      "(riverWet)": 73.3,
+      "(regionCopy params)": 55,
+      "render": 52.1,
+      "sim-tick": 47.3
+     },
+     "computePasses": {
+      "particles": 136.8,
+      "(unlabeled)": 96.2,
+      "tiles": 79.8,
+      "lava": 52,
+      "living": 35.6,
+      "oil": 31.2
+     },
+     "bindGroups": {
+      "(colF)": 84.2,
+      "tiles": 30.4,
+      "(finish)": 21,
+      "(colH)": 6,
+      "(formSeed)": 6,
+      "(colapply claimGrid)": 4
+     }
+    },
+    "zoom": 7.62,
+    "v": 160,
+    "secs": 2,
+    "frames": 162,
+    "slides": 5,
+    "tilesPerS": 37.5,
+    "ft": {
+     "med": 10,
+     "p90": 10.5,
+     "worst": 79.4,
+     "over16": 15,
+     "over33": 7
+    },
+    "gpu": {
+     "med": 17.57,
+     "p90": 35.24,
+     "worst": 67.4
+    },
+    "slideSpikeMs": 69.6,
+    "slideSpikeOverMedMs": 19.8,
+    "undrawn": {
+     "maxPct": 0,
+     "meanPct": 0,
+     "framesAny": 0
+    },
+    "settleMs": 15,
+    "settled": true,
+    "perSlide": {
+     "uploads": 722.73,
+     "uploadKB": 422.83,
+     "copyKB": 13102.05,
+     "reads": 18.03,
+     "readKB": 888.61,
+     "bindGroups": 161.8,
+     "pipelines": 0,
+     "buffers": 324.6,
+     "textures": 0,
+     "computePasses": 190.27
+    }
+   },
+   "loose": true
+  },
+  "jump-desk": {
+   "counters": {
+    "computePasses": 36.096271147161076,
+    "renderPasses": 3.293,
+    "dispatches": 70.63342989571267,
+    "indirectDispatches": 1,
+    "draws": 185.344,
+    "instances": 16441,
+    "vertices": 343674,
+    "readKB": 1.73,
+    "uploads": 27.183720741599075,
+    "uploadKB": 16.77,
+    "copyKB": 12.59,
+    "estPhoneMs": 1.465
+   },
+   "ticksPerFrame": 0.863,
+   "awake": [
+    "climate",
+    "contamination",
+    "cover",
+    "ecology",
+    "fieldmesh",
+    "fire",
+    "lava",
+    "liquid-water",
+    "living",
+    "moisture",
+    "oil",
+    "particles",
+    "renderfields",
+    "renderprep",
+    "sediment",
+    "shore",
+    "structure",
+    "surface",
+    "tiles",
+    "wilt",
+    "windfield"
+   ],
+   "bySystem": {
+    "particles": {
+     "phoneMs": 0.218,
+     "passes": 7.77,
+     "disp": 7.77,
+     "readKB": 0
+    },
+    "liquid-water": {
+     "phoneMs": 0.169,
+     "passes": 1.73,
+     "disp": 6.91,
+     "readKB": 0
+    },
+    "living": {
+     "phoneMs": 0.167,
+     "passes": 1,
+     "disp": 18.39,
+     "readKB": 0
+    },
+    "lava": {
+     "phoneMs": 0.121,
+     "passes": 4.32,
+     "disp": 4.32,
+     "readKB": 0
+    },
+    "fieldmesh": {
+     "phoneMs": 0.1,
+     "passes": 1,
+     "disp": 10,
+     "readKB": 0
+    },
+    "oil": {
+     "phoneMs": 0.073,
+     "passes": 2.59,
+     "disp": 2.59,
+     "readKB": 0
+    },
+    "structure": {
+     "phoneMs": 0.048,
+     "passes": 1.73,
+     "disp": 1.73,
+     "readKB": 0
+    },
+    "contamination": {
+     "phoneMs": 0.048,
+     "passes": 1.73,
+     "disp": 1.73,
+     "readKB": 0
+    },
+    "moisture": {
+     "phoneMs": 0.048,
+     "passes": 1.73,
+     "disp": 1.73,
+     "readKB": 0
+    },
+    "fire": {
+     "phoneMs": 0.048,
+     "passes": 1.73,
+     "disp": 1.73,
+     "readKB": 0
+    },
+    "renderprep": {
+     "phoneMs": 0.044,
+     "passes": 1,
+     "disp": 3,
+     "readKB": 0
+    },
+    "draw": {
+     "phoneMs": 0.04,
+     "passes": 2,
+     "disp": 0,
+     "readKB": 0
+    },
+    "tiles": {
+     "phoneMs": 0.029,
+     "passes": 1.04,
+     "disp": 1,
+     "readKB": 0
+    },
+    "shadow": {
+     "phoneMs": 0.025,
+     "passes": 1.25,
+     "disp": 0,
+     "readKB": 0
+    },
+    "windfield": {
+     "phoneMs": 0.024,
+     "passes": 0.86,
+     "disp": 0.86,
+     "readKB": 0
+    },
+    "surface": {
+     "phoneMs": 0.024,
+     "passes": 0.86,
+     "disp": 0.86,
+     "readKB": 0
+    },
+    "sediment": {
+     "phoneMs": 0.024,
+     "passes": 0.86,
+     "disp": 0.86,
+     "readKB": 0
+    },
+    "wilt": {
+     "phoneMs": 0.024,
+     "passes": 0.86,
+     "disp": 0.86,
+     "readKB": 0
+    },
+    "renderfields": {
+     "phoneMs": 0.012,
+     "passes": 0.43,
+     "disp": 0.43,
+     "readKB": 0
+    },
+    "agents": {
+     "phoneMs": 0.009,
+     "passes": 0,
+     "disp": 0,
+     "readKB": 0.72
+    }
+   },
+   "gpuPasses": {
+    "draw": 3.85,
+    "fieldmesh": 3.23,
+    "liquid-water-step": 1.04,
+    "gbuffer": 0.79,
+    "living-people": 0.5,
+    "renderprep": 0.34,
+    "shadow": 0.25,
+    "shadow-static": 0.21,
+    "structure": 0.2,
+    "sediment-out": 0.2
+   },
+   "timings": {
+    "jumpCoverMs": 47,
+    "backCoverMs": 13,
+    "cpuMedMs": 1.1,
+    "cpuP90Ms": 1.3,
+    "gpuMedMs": 11.52,
+    "gpuP90Ms": 20.97
+   },
+   "fps": 70.4,
+   "cover": {
+    "jump cover": {
+     "reached": true,
+     "ms": 47,
+     "best": 0.9903382318831022,
+     "frames": 2,
+     "trace": [
+      [
+       0,
+       0.99,
+       2
+      ]
+     ]
+    },
+    "back cover": {
+     "reached": true,
+     "ms": 13,
+     "best": 1,
+     "frames": 1,
+     "trace": [
+      [
+       0,
+       1,
+       1
+      ]
+     ]
+    }
+   },
+   "stream": {
+    "tilesMade": 27,
+    "tilesPerS": 6.6,
+    "readKBDuring": 8327,
+    "estPhoneMsDuring": 2.16
+   },
+   "loose": true
+  }
+ }
+}

@@ -49,6 +49,8 @@ export interface LandMaker {
 const R = 64;
 /** the mask's side (regions): tiles within half of it of the camera are drawn */
 const MASK_N = 64;
+/** (TR34 brought over, 2026-11-17) wanted() looks at the coverage check's undrawn pieces every this many frames */
+const COVER_WANT_EVERY = 4;
 /** frames between a window region's bakes, at least (its look changes slowly: plants, stains, water) */
 const REBAKE = Number(urlFlags().get('tilerebake') ?? 600);
 /** bakes a frame */
@@ -765,6 +767,8 @@ export class TileCache {
 
   /** (round 112, TC21) the frame the atlas last had no place for a tile, and the view's scale (texels a unit) now */
   private starvedAt = -1e9;
+  /** (TR34) the coverage check wanted() last took, refreshed every COVER_WANT_EVERY frames */
+  private wantCover: Coverage | null = null;
   private rpNow = 1;
 
   /** (round 112) a tile let go: its quarters free */
@@ -947,6 +951,27 @@ export class TileCache {
           const o = best.get(key);
           if (!o || k < o.k) best.set(key, { rx, ry, k });
         }
+    // (2026-11-17, the perf gate; the terrain branch's TR34 fix for TR24, a561e1f3, brought over: the points above are
+    // the screen's on the plane at the focus's height, so a region standing well over or under it — a raised coast, a
+    // cliff, a valley's floor — that shows on the screen at its real heights fell between them: never asked for, an
+    // undrawn hole for good. The coverage check boxes each region by its heights (zRange) and each window chunk by its
+    // own; what it sees undrawn is asked for too, after the screen's own. Checked every COVER_WANT_EVERY frames: ~0.08 ms
+    // a check on the desktop)
+    if (!this.wantCover || this.frame % COVER_WANT_EVERY === 0) this.wantCover = this.coverCheck(cam);
+    const cov = this.wantCover;
+    if (cov)
+      for (const u of cov.undrawn) {
+        const c = u.indexOf(',');
+        const a = Number(u.slice(1, c));
+        const b = Number(u.slice(c + 1));
+        // (coverage.ts: 'c<i>,<j>' a window chunk — its region as coverage finds it; 'r<rx>,<ry>' a region)
+        const rx = u[0] === 'c' ? Math.floor(ox / R) + Math.floor((a * mside) / R) : a;
+        const ry = u[0] === 'c' ? Math.floor(oy / R) + Math.floor((b * mside) / R) : b;
+        const key = `${rx},${ry}`;
+        if (best.has(key) || Math.abs(rx - crx) >= MASK_N / 2 || Math.abs(ry - cry) >= MASK_N / 2) continue;
+        if (this.tiles.has(this.key(rx, ry, cam.azimuth)) || skip(key)) continue;
+        best.set(key, { rx, ry, k: 3e6 + Math.hypot(rx - crx, ry - cry) * R });
+      }
     const out: { rx: number; ry: number; remake?: boolean }[] = [...best.values()].sort((a, b) => a.k - b.k).slice(0, n);
     // (round 112, TC21: the atlas full — every slot's tile drawn — and some drawn bigger than the view now needs, the
     // whole slots a closer zoom baked, nearest first: each made again at the view's size, into where it was — its

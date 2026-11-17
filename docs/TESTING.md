@@ -154,6 +154,43 @@ and checks what each runs with (the shadow cache, prepEvery, the shadow maps, in
 town game, more than 4 KB read back a frame, anything made in a frame (pipelines, bind groups, buffers, textures). Add
 a gate there with each cut. `test/unit/census.test.ts` covers the counter itself.
 
+## The perf gate (scripts/perfgate.mjs, 2026-11-17)
+
+The owner: "make a quick unit test to flag that if it ever happens again so we know right away what change caused it".
+`npm run perfgate` (~10 min; `-- --quick` phone size only, ~5 min) opens the built game headless at q=low, fresh, at
+412x915 and 1280x720, and measures:
+
+| scenario | what | key |
+|---|---|---|
+| loop | `?level=atlas&town=1&loop=1`, the first leader picked, idle | `loop-<size>` |
+| sandbox | the same town without the loop, idle | `sandbox-<size>` |
+| jump | the sandbox camera 600 cells east in one frame, then back | `jump-<size>` |
+| pan | in the loop and the sandbox: 30 cells/s for 10 s at the game's zoom, 6 s at 0.6x the zoom, a 160 c/s fling for 2 s | `pan-loop-<size>`, `pan-sandbox-<size>` |
+
+It compares with `data/perf/gate-baseline.json` (scripts/lib/perfgate-compare.mjs; its unit test
+test/unit/perfgate.test.ts) and fails, naming the scenario, the metric, the baseline and the new value, when:
+- a **counter** at idle rises past baseline x 1.1 + 1: compute/render passes, dispatches (indirect too), draws,
+  direct-draw instances and vertices, KB read back, uploads and KB, KB copied, ticks a frame, est. phone ms (the census,
+  src/gpu/census.ts, plus the page hook's instances). These don't depend on the GPU's load;
+- a **pan's per-slide work** rises the same way (uploads, KB uploaded and copied, reads, bind groups, pipelines,
+  buffers, textures, compute passes, each over the pan divided by the window's slides);
+- a pan **pops in or hitches** clearly more: mean undrawn share 1.5x + 0.5 points, the worst frame's 1.25x + 5 points,
+  frames over 33 ms 1.5x + 3 (PAN_TOL);
+- a system that wasn't awake at idle is (any system with dispatches), or a quiet system (src/sim/quiet.ts) is awake in
+  the loop;
+- the screen never reaches 99 % coverage (render/coverage.ts) after load, after the jump, or after a pan stops;
+- a **timing** (boot, time to a full screen, frame GPU/CPU ms) is past 3x + 5 ms; past 1.5x + 2 ms it only warns.
+  The GPU is shared with other worktrees' browsers (and on this laptop, the OLED screensaver, ~35-50 % of the iGPU):
+  read timings as advisory, the counters as the gate.
+
+**Rule:** run it before every commit that touches shaders, the sim scheduler, streaming, rendering or instance counts,
+and before every merge. `npm run perfgate -- --update` rewrites the baseline on purpose; the diff of that file in the
+commit is the record of an accepted cost, and the builder says why in the DEVLOG. Other flags: `--scenarios
+loop,sandbox,jump,pan`, `--sizes`, `--idle 8`, `--settle 12`, `--jump 600`, `--nocompare` (measure only: the bisect copies
+the script into an older checkout), `--server https://localhost:5455 --chromeargs ignore-certificate-errors
+--no-daemon` (the owner's dev server). The report (every pan's frame times, slide spikes, undrawn trace, GPU ms by
+pass) is `perf-reports/perfgate.json`.
+
 ## When to use the browser
 
 Use it only for what Node can't show: the page's boot (the build, the menu, the streamer, IndexedDB), drawing and

@@ -26197,3 +26197,74 @@ Still behind `?rise=1`; I would switch it on.
 Not shown: the cutaway with a building in front of a speaker (`cutaway.png` has nothing in front); the petitions'
 "With your" lines (no offer had a combo in seasons 1-2, LS-153).
 
+## 2026-11-17 — the perf regression hunt and the perf gate (`loop-skeleton`)
+
+The owner (DECISIONS 2026-11-17): "tiles don't load and the whole thing lags badly now"; "investigate the desktop
+regressions and make a quick unit test"; "I would also test panning and streaming".
+
+**The tool.** `scripts/perfgate.mjs` (`npm run perfgate`, docs/TESTING.md "The perf gate"): headless Chrome on this
+laptop's Intel Arc 140T (D3D11), the production build, q=low, fresh world. Scenarios: loop idle at the town, sandbox
+idle, a 600-cell jump and back, steady pans (30 c/s at the game's zoom, 30 c/s at 0.6x, a 160 c/s fling) in the loop
+and the sandbox, and a tall-land spot (13629,6487 at q=high, the terrain branch's TR24 spot). Counters from the frame
+census (normalised to one sim tick a frame: the sim's systems run per tick, so a slowed GPU carried more of them a
+frame) plus the page's own pass/dispatch/draw/instance counts (so commits without the census measure too); per-slide
+work over a pan less the idle rate; pop-in from render/coverage.ts every frame; GPU ms by pass from the timestamps.
+For older commits the script was copied into a detached worktree (`--nocompare`).
+
+**The machine was not quiet.** During the runs the iGPU was shared with the OLED Care screensaver (35-50 % of the 3D
+engine), the terrain builder's headless Chrome (~28 %) and another puppeteer Chrome (~15 %). The same commit's loop
+idle GPU median went 6.0 → 7.3 → 40 ms between runs, the sandbox's 7.3 → 88 ms; a pan's frames over 33 ms 0 → 51.
+Timings below are context, not evidence; the counters are.
+
+**Bisect (phone 412x915, loop idle and pans; HEAD from the baseline run, the most contended):**
+
+| commit | loop idle: compute passes / dispatches / indirect a frame | est. phone ms | read KB / upload KB a frame | GPU med ms (load!) | std pan: frames >16.7 / >33 ms, undrawn mean / worst % | close pan undrawn mean / worst % | per slide: KB up / KB read / buffers made / bind groups |
+|---|---|---|---|---|---|---|---|
+| 555bdca3 fork from fortress (sandbox only) | 96.7 / 171.5 / 75.5 (sandbox) | — | — | 45 | — | — | — |
+| 583dc6d1 round 6 | 41.4 / 77.1 / 1.17 (raw, 1.17 ticks) | 1.65 | 2.63 / 18.0 | 12.1 | 77 / 32, 0 / 0 | 0.43 / 15.2 | (raw) 1587 / 793 / 286 / 148 |
+| c8b21b0b round 8 | 23.4 / 55.6 / 0.60 (raw, 0.6 ticks) | 1.06 | 2.28 / 13.4 | 5.1 | 0 / 0, 0 / 0 | 0.09 / 8.5 | 593 / 604 / 253 / 131 |
+| ed119efb archgen merge | 36.1 / 70.7 / 1.00 | 1.48 | 2.29 / 16.9 | 17.0 | 41 / 9, 0 / 0 | 0.06 / 4.8 | 403 / 702 / 295 / 142 |
+| b121903d card-table merge | 36.1 / 70.8 / 1.00 | 1.47 | 1.79 / 16.5 | 11.5 | 53 / 9, 0 / 0 | 0.04 / 4.2 | 669 / 958 / 370 / 177 |
+| 3a785ba5 loop-streets merge | 36.1 / 70.6 / 1.00 | 1.48 | 2.28 / 18.8 | 5.1 | 38 / 30, 0 / 0 | 0.04 / 4.2 | 413 / 750 / 264 / 133 |
+| a97753ed round 14 | 10.5 / 39.0 / 0.25 | 0.63 | 1.48 / 18.6 | 11.2 | 3 / 1, 0 / 0 | 0.05 / 4.2 | 644 / 763 / 305 / 147 |
+| 85bfd004 round 16 | 11.6 / 46.1 / 1.00 | 0.78 | 1.96 / 18.3 | 10.0 | 13 / 1, 0 / 0 | 0.18 / 7.8 | 646 / 723 / 376 / 192 |
+| ca12682a round 18 (HEAD) | 18.8 / 59.4 / 1.96 (raw, 1.96 ticks: contended) | 1.12 | 1.88 / 21.8 | 40.2 | 85 / 51, 0 / 0 | 0.10 / 5.9 | 575 / 740 / 361 / 184 |
+
+(r6 and r8 ran before the one-tick normalisation and r6's pans before the idle subtraction: their raw rows read high.
+Earlier HEAD runs on a quieter GPU: loop idle 8.4 compute passes, 40.3 dispatches, 0.58 ticks, GPU 6.0 / 12.3 ms.)
+
+**What the numbers say.** No commit from round 6 to HEAD made a counter clearly worse. The idle frame got cheaper: the
+fork point's sandbox ran 96.7 compute passes and 75 indirect dispatches a frame, round 6's loop 41, HEAD's 8.4-11 (the
+quiet world, round 16; round 14's 10.5). A slide's work is the same at every commit (~400-950 KB uploaded, ~600-960 KB
+read back, ~250-380 buffers and ~130-190 bind groups made a slide) — a standing cost from before the loop branch
+(LS-157, DA-P8: `(finish read)` alone ~720 KB a slide). Pans pop in only at the closer zoom, a few % of the screen for
+a frame or two, at every commit (round 6 worst 15 %, HEAD 6 %). The hitches follow the GPU's load, not the commit:
+round 8 on a quiet GPU 0 frames over 33 ms; HEAD in the contended baseline run 51.
+
+**Where "tiles don't load" comes from.** Three things, none a loop-round regression:
+1. The boot: 55-95 s to the level here (atlas shader compile 12-19 s, pipelines 10-16 s, warm-up 8-39 s), then the
+   first frames hold the GPU 23-35 s (BACKLOG PI-9, D3D11/FXC) — the screen is not drawn for ~1.5-2 min after the link
+   opens. Same at round 6 and at the fork point. The terrain branch measured the same shape (compile 13.5 s,
+   pipelines 11-16 s, warm-up 10-32 s): boot is shader compiling.
+2. TR24 (found on terrain-rivers a561e1f3, same code here): `TileCache.wanted()` sampled the screen on the plane at
+   the focus's height, so regions standing well above or below it were never requested (an undrawn hole for good, at
+   tall land). Present since the tiles' wanted()/coverage pair (rounds 112-113), long before the loop branch. Brought
+   over by hand: wanted() also requests what the coverage check sees undrawn, the check refreshed every 4 frames
+   (COVER_WANT_EVERY). At the tall spot (13629,6487, q=high, 1280x720): before (HEAD ca12682a) the screen never
+   reached 99 % in 120 s — 97.7 % at best, two window chunks (c8,6 and c8,7) undrawn for good, 2.3 % of the screen;
+   after, 100 % in 11.7 s and nothing left 20 s on. At q=low the same spot filled either way (11 s): the hole needs the
+   wider q=high view.
+3. The shared GPU: four other GPU clients on one laptop iGPU slowed the same build 6x between runs. The owner's lag on
+   the desktop while agents run headless checks is this, at least in part — not something a commit did.
+
+**Design costs for the owner (not changed):** round 16's ~330-500 townspeople drawn 1.6x: in the loop's GPU passes
+`living-people` 0.35-0.43 ms a frame and the units' share of `draw` (2.3-2.8 ms total) on this desktop; the census
+prices neither (draws and fragments are unpriced). The slide cost above (DA-P8).
+
+**The gate's allowances** (scripts/lib/perfgate-compare.mjs): loop counters 30 % + 1 (the same commit's loop varied up
+to 26 %); sandbox, jump and pan counters a doubling + 5 (the sandbox's own storms: 24-59 compute passes a frame at one
+commit — LS-155 is the fix: a fixed-weather measuring flag); pop-in mean 1.5x + 0.5 points, worst frame 1.25x + 5
+points, hitches 2x + 10; coverage 99 % within its limit after load, the jump, each pan and at the tall spot; a system
+awake at idle that wasn't, or a quiet system awake in the loop; timings warn past 1.5x + 2 ms and fail past 3x + 5 ms.
+Baseline: `data/perf/gate-baseline.json` at this commit.
+

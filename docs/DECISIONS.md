@@ -4012,3 +4012,18 @@ and what is still the owner's to decide: who decides a fight, every rule's numbe
   it runs (a fire held while it burns, not 90 s; a mid-season change to the land wakes the structure pass).
 - Earlier, restated: "tuning colors and brightness so certain layers reserve some colors and are more visible and
   increasing the number of towns people will make a huge difference".
+
+## 2026-11-17 — the perf regression report and the perf gate (`loop-skeleton`)
+
+- "The performance is very bad again even though we had streaming working and simulation blocks sleeping and fast
+  tiles streaming before. I don't understand the significant regression but tiles don't load and the whole thing lags
+  badly now."
+- "investigate the desktop regressions and make a quick unit test to flag that if it ever happens again so we know
+  right away what change caused it"
+- "As far as I know most systems sleep unless woken by player interactions and flows and animations use cheap steady
+  states when idle which are recomputed only during interactions."
+- "I would also test panning and streaming. My hope was to have that be fast enough to be lag free."
+- → `npm run perfgate` (scripts/perfgate.mjs, docs/TESTING.md "The perf gate"): loop idle, sandbox idle, a jump, and
+  steady pans, against `data/perf/gate-baseline.json`; run before every commit touching shaders, the sim scheduler,
+  streaming, rendering or instance counts, and before every merge. Standing goal restated: steady 60 fps on the phone,
+  no hiccups, no pop-in; every world draw pan-tested.
