@@ -3960,3 +3960,47 @@ walks to the coast with jitter, levels designed along them, the land shaped roun
 raise away from the rivers), volcanoes as a large landform with lava walks. The terrain function's constants live in
 one table (terrain/walks.ts VALLEY) for the owner to iterate. Ravine channels between mesas, underground rivers and
 lakes, and the city sites listed are recorded (BACKLOG TR-L1..TR-L3), not built in step 1.
+
+## 2026-11-17 — terrain: rivers first, step 2 (`terrain-rivers`; docs/design/TERRAIN_RIVERS.md §9)
+
+The owner, verbatim:
+- "Could you do an atlas scale JFA for the river distance then interpolate that and add a finer JFA to the actual
+  detailed river? Just a thought"
+- "I think for a real river typically there are mountains with either cloud runoff or glacial melt that sends many
+  little creaks down to feed the head of the river then it does the walk and joins other tributaries and creates lakes
+  at flat areas. I think this all can work with JFA based SDF which is super cheap on the GPU and we could easily run
+  some actual erosion passes between runs to keep things looking plausible. I typically like to have multiple height
+  fields tied to regions that are shaped by noise or other functions then I like to use thresholds to define discrete
+  regions, JFA to find distance to the borders, then blend the heightmaps. A mix of discrete masks that change how
+  layers are blended often looks better than any single straight blend."
+
+→ Step 2: the valley is a G-independent envelope of per-river surfaces, built at atlas scale by a two-slot JFA over
+the river nodes (sampled bilinearly in the rivers' warped space) and refined at the channel by riverAt's exact segment
+distance (the "finer JFA"); heads are fed by creeks walked down high ground into them, with a valley head (a hollow)
+and a spring pool; a river's valley climbs out of another landform at a slope by the landforms' JFA distance (no step
+wall). Lakes where a walk reaches flat ground (pool and spill), the owner's masked-blend combine as the leading answer
+to the combine question, and erosion passes between runs are designed in the note (§9.8–§9.10), not built.
+
+The owner, on restructuring the terrain function (verbatim):
+- "I think we should build it right and if it makes sense to restructure do so. I was pretty happy with how cliffs
+  looked already but rivers planes felt a little boring. I do expect that forests will improve that signficantly but
+  land is just more interesting when there are hills and visually distinct regions."
+- "I do think terrain generation is one of the strengths here."
+- Later, not to build now — forests: "a really cool but ultimately incomplete experiment where canopy faded to show a
+  more detailed terrain underneath so that moving into them was almost like entering a different world. I love that
+  concept (similar to how moving underground should filter to those layers) but I think it was underdeveloped with
+  forest floors lacking the sort of interest and variety I want."
+- Later, not to build now — game-design-aware generation: "Blocking out rooms and passages and doors as masks that we
+  can use to create flatter open terrain and then filling in the barriers with terrain that is too steep, stepped,
+  jagged or filled with dense growth to traverse. I do think ultimately that would be a good functionality but it
+  matters more for when we add an explore mode to run around the world and less for the fortress shaped seasons play."
+
+- On plains, verbatim: "For plains a cool truck is voronoi cells that are tilted with a gradient height towards one or
+  more edges. This creates natural barriers (the raised edge is a small steep cliff) but the lower edges mean you can
+  always traverse. It can look nice alongside rolling hills or flatter terrain and can work for making river coasts
+  more dramatic and interesting. It's also a nice way to break up a town so roads have to meander."
+
+→ Cleared to restructure the flagged terrain function to the owner's masked-blend method (region-tied height fields,
+threshold masks, JFA distances, mask-chosen blends), behind `a.rivers2`, the default world byte-identical, cliffs and
+mesa edges unchanged in character. Plains with the flag on gain mask-selected sub-regions (hills, ridges, terraces,
+hummocks, wet flats) with some areas left truly flat (TERRAIN_RIVERS.md §10).

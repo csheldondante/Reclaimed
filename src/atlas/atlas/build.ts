@@ -68,7 +68,15 @@ export async function run(atl: Atlas): Promise<void> {
     ]),
   );
   // (terrain-rivers: the cost JFA's step and its output — terrain/valleyjfa.wgsl)
-  const valK = rivers2 ? await atl.time('compile valley', () => Promise.all([K('jfaStepVal', { 7: 'rw', 8: 'rw', 20: 'read', 22: 'read', 25: 'read' }), K('jfaOutVal', { 2: 'rw', 7: 'rw' })])) : null;
+  const valK = rivers2
+    ? await atl.time('compile valley', () =>
+        Promise.all([
+          K('jfaSeedVal', { 2: 'rw', 7: 'rw' }),
+          K('jfaStepVal', { 7: 'rw', 8: 'rw', 20: 'read', 21: 'read', 22: 'read', 25: 'read' }),
+          K('valleyField', { 7: 'rw', 8: 'rw', 20: 'read', 21: 'read', 22: 'read', 25: 'read' }),
+        ]),
+      )
+    : null;
   atl.colH = colH;
   atl.colF = colF;
   // (round 102) the GPU's finishing of a region (atlas/finish.ts); the tile pacer's device (its GPU budget)
@@ -241,7 +249,10 @@ export async function run(atl: Atlas): Promise<void> {
         const t = topOf.get(r);
         if (t === undefined || atl.hmac[i] > atl.hmac[t]) topOf.set(r, i);
       }
-      return walkRivers({ n, seed: p.seed, sea: p.sea, worldW: atl.worldW, worldH: atl.worldH, G: atl.hmac, coast, water, tier, landform, extra, lavaTops: [...topOf.values()] });
+      const inp = { n, seed: p.seed, sea: p.sea, worldW: atl.worldW, worldH: atl.worldH, G: atl.hmac, coast, water, tier, landform, extra, lavaTops: [...topOf.values()] };
+      // (step 2: ?walkdump=1 keeps the input for scripts/terrain/walkdump.mjs — the CPU profile and tests in Node)
+      if (urlFlags().get('walkdump') === '1') atl.walkInput = inp;
+      return walkRivers(inp);
     });
     atl.walkStats = rv.stats;
     atl.riverUp = rv.up;
@@ -258,13 +269,21 @@ export async function run(atl: Atlas): Promise<void> {
     lakeOff = [tabOff, idsOff];
     atl.basinTab = { tabOff, idsOff, used: 0, cap: FLOOD_SPARE, on: true };
     valOff = idsOff + lakeAt.byteLength / 4;
+    // (step 2, §9.3: the valley block — 2 words a texel, the field; then 2 words a node, its main upstream node and its
+    // head's far level: terrain/valley.wgsl riverUp, riverHead)
+    const nodeTab = new Uint32Array(2 * Math.max(rv.count, 1));
+    const nodeTabF = new Float32Array(nodeTab.buffer);
+    for (let k = 0; k < rv.count; k++) {
+      nodeTab[2 * k] = rv.up[k];
+      nodeTabF[2 * k + 1] = rv.head[k];
+    }
     atl.riverBuf.destroy();
-    atl.riverBuf = dev.createBuffer({ label: 'atlas rivers', size: (valOff + N) * 4 + rv.up.byteLength, usage: S });
+    atl.riverBuf = dev.createBuffer({ label: 'atlas rivers', size: (valOff + 2 * N) * 4 + nodeTab.byteLength, usage: S });
     writeCraters();
     dev.queue.writeBuffer(atl.riverBuf, (N + CRATER_BLOCK) * 4, rv.nodes);
     dev.queue.writeBuffer(atl.riverBuf, tabOff * 4, lakeTab);
     dev.queue.writeBuffer(atl.riverBuf, idsOff * 4, lakeAt);
-    dev.queue.writeBuffer(atl.riverBuf, (valOff + N) * 4, rv.up);
+    dev.queue.writeBuffer(atl.riverBuf, (valOff + 2 * N) * 4, nodeTab);
     dev.queue.writeBuffer(key, 0, rv.nodeAt);
     await atl.time('jfa rivers', async () => {
       await jfa(kSeedV, { 2: key }, kOutV, { 2: key });
@@ -272,12 +291,13 @@ export async function run(atl: Atlas): Promise<void> {
       enc.copyBufferToBuffer(key, 0, atl.riverBuf, 0, N * 4);
       dev.queue.submit([enc.finish()]);
     });
-    // the cost JFA: seeded the same, stepped by cost (level + VAL_VJ · distance), no distance cap
-    const [kStepVal, kOutVal] = valK!;
+    // (step 2, §9.3) the coarse valley field: a two-slot JFA (nearest, lowest) seeded by the nodes, then each texel's
+    // E, D and landform from its 3 × 3 neighbourhood's slots — into the valley block
+    const [kSeedVal, kStepVal, kField] = valK!;
     dev.queue.writeBuffer(key, 0, rv.nodeAt);
     await atl.time('jfa valley', async () => {
       atl.writeParams();
-      await one(kSeedV, bg(kSeedV, { 2: key, 7: jfaA }));
+      await one(kSeedVal, bg(kSeedVal, { 2: key, 7: jfaA }));
       let src = jfaA;
       let dst = jfaB;
       const steps: number[] = [];
@@ -285,15 +305,21 @@ export async function run(atl: Atlas): Promise<void> {
       steps.push(1);
       for (const k of steps) {
         atl.writeParams({ step: k });
-        await one(kStepVal, bg(kStepVal, { 7: src, 8: dst, 20: atl.region, 22: atl.regs, 25: atl.riverBuf }));
+        await one(kStepVal, bg(kStepVal, { 7: src, 8: dst, 20: atl.region, 21: atl.dist, 22: atl.regs, 25: atl.riverBuf }));
         [src, dst] = [dst, src];
       }
       atl.writeParams();
-      await one(kOutVal, bg(kOutVal, { 2: key, 7: src }));
+      await one(kField, bg(kField, { 7: src, 8: dst, 20: atl.region, 21: atl.dist, 22: atl.regs, 25: atl.riverBuf }));
       const enc = dev.createCommandEncoder();
-      enc.copyBufferToBuffer(key, 0, atl.riverBuf, valOff * 4, N * 4);
+      enc.copyBufferToBuffer(dst, 0, atl.riverBuf, valOff * 4, 2 * N * 4);
       dev.queue.submit([enc.finish()]);
     });
+    // (?valleyoff=1 — a measuring tool only: the same rivers and landforms with the valley not applied, for
+    // scripts/terrain/continuity.mjs's valley field; the default world never has a valley block)
+    if (urlFlags().get('valleyoff') === '1') {
+      valOff = 0;
+      writeCraters();
+    }
     return { nodeAt: rv.nodeAt, lakeAt };
   }
 

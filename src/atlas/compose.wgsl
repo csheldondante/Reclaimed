@@ -834,6 +834,13 @@ fn ground(p: vec2<f32>) -> Ground {
     if (g.ov.y < 0.0) { g.ov.y = g.h; }
     if (g.ov.z - g.ov.y < 3.0) { g.ov = vec3<f32>(0.0); }
   }
+  // (terrain-rivers step 2, terrain/plains.wgsl — a.rivers2 only: AP.terrain2 is 0 in the default world) the plains'
+  // sub-regions: hills, ridges, terraces, hummocks, wet flats and flats, chosen by a mask, blended by border distance
+  if (AP.terrain2 != 0u) {
+    let pr = plainRelief(p, regs[g.a], regs[g.b], g.w, g.coast, g.dl);
+    g.h += pr;
+    g.hlo += pr;
+  }
   // the impact craters and the oddities (round 78)
   let st = stampsAt(p);
   g.h += st.dh;
@@ -842,8 +849,12 @@ fn ground(p: vec2<f32>) -> Ground {
   // (terrain-rivers step 1, a.rivers2 — terrain/valley.wgsl, docs/design/TERRAIN_RIVERS.md §4: the land shaped round the
   // rivers, each valley's profile faded in over its reach; off — the default world — the block's offset is 0 and this
   // is skipped)
-  if (valleyBase() != 0u) {
-    let vg = valleyGround(p, g.h, g.a, g.b, g.w, g.coast);
+  // (step 2, §9: the fine profile is riverAt's segment — looked up here once and used for the channel below too)
+  var rvV: River;
+  let haveRv = valleyBase() != 0u;
+  if (haveRv) {
+    rvV = riverAt(p);
+    let vg = valleyGround(p, g.h, g.a, g.b, g.w, g.coast, g.dl, rvV);
     let h0 = g.h;
     g.h = vg.x;
     g.hlo = min(g.hlo + vg.y, g.h);
@@ -896,7 +907,12 @@ fn ground(p: vec2<f32>) -> Ground {
   g.rl = -1.0;
   g.rx = 9.0;
   g.rflags = 0u;
-  let rv = riverAt(p);
+  var rv: River;
+  if (haveRv) {
+    rv = rvV;
+  } else {
+    rv = riverAt(p);
+  }
   // (round 90: a river lower than a lake beside it — past its outlet, to the sea — doesn't cut the lake's bank where
   // the lake's water is near: no channel or valley side lies under the water standing beside it)
   let lowR = lh.level > 0.0 && !g.lkw && lh.m > 0.2 && rv.level < lh.level - 1.0;

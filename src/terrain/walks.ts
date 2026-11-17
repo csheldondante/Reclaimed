@@ -20,6 +20,10 @@ import { incisionFor, upstreamFirst, CASCADE_STEP, CASCADE_SLOPE } from './river
 export const WALK = { ALPHA: 1.4, SLOPE_FULL: 0.25, TURN: 1.1, JITTER_PER: 24, MOMENTUM: 0.55, GUIDE_BLUR: 3, PROGRESS: 0.2 };
 /** sources: a jittered grid this many texels a side, tries a cell (the highest wins), cells from the coast at least */
 export const SOURCES = { SPACING: 36, TRIES: 6, COAST: 120 };
+/** (step 2) creeks feeding a head on high ground: heads at least MIN_H over the sea; PER creeks a head, each from the
+ *  highest of TRIES points R texels round it standing RISE over it; a creek steps toward the head and downhill (DOWN
+ *  its weight) for at most MAX steps, and is kept only if it meets a river */
+export const CREEK = { MIN_H: 40, PER: 4, R: 10, TRIES: 8, RISE: 6, MAX: 30, DOWN: 1.0 };
 /** steps a lava walk runs at most (the old lava rivers: 40) */
 export const LAVA_RUN2 = 160;
 /**
@@ -39,12 +43,29 @@ export const VALLEY = {
   /** the valley's reach (cells from the river's edge): its profile fades out between VW/2 and VW; beyond it the
    *  landforms stand as they were (peaks, cliffs, stamps keep their height) */
   VW: [260, 180, 70, 150],
-  /** the cost JFA's slope (cost = level + VJ · distance): which river's valley a texel looks up */
-  VJ: 0.15,
   /** cells a river's valley stands higher where its landform has none of the ground (a river shapes only its own
    *  landform: a lowland river under a mesa leaves the cliff alone) */
   LF_PEN: 400,
+  /** (step 2) …reached at LF_SLOPE cells a cell into the other landform from its border (the landforms' JFA distance):
+   *  a fixed LF_PEN made a step wall where two landforms meet at one height (the continuity probe's largest seams) */
+  LF_SLOPE: 4,
+  /** (step 2, §9.2) the valley's bound: past half its reach (m = e − VW/2 cells) its surface climbs
+   *  PHI_SLOPE · m + PHI_CURV · m² — steepening, but never so fast that a texel (8 cells) can't hold it: a quadratic
+   *  reaching 600 at VW was 9–34 cells a cell at the rim, and its bilinear samples crossed the land as steps (§9.7) */
+  PHI_SLOPE: 1,
+  PHI_CURV: 0.01,
+  /** (§9.5) the smooth minimum's width (cells) where a valley's wall meets the land: the valley's shoulder */
+  SMIN_K: 4,
+  /** (§9.4) the fine profile at the channel: exact for FINE_E cells past the bank, then climbing FINE_K · (e − FINE_E)² */
+  FINE_E: 6,
+  FINE_K: 1,
 };
+/** (step 2, §9.5) a source's valley head: its length (cells), the floor's curve, its least rise over the spring */
+export const HEAD = { LEN: 56, POW: 2.5, MIN: 4 };
+/** (§9.5) the spring pool at a source: its radius (half-widths) and how much deeper (cells) */
+export const SPRING = { R: 1.3, D: 1.2 };
+/** a head level meaning "no head" (not a source) */
+export const NO_HEAD = -1e30;
 /** the gentlest row (lowland) */
 export const VMIN = { BANK: VALLEY.BANK, FLOOD_SLOPE: VALLEY.FLOOD_SLOPE, FP_K: VALLEY.FP_K[0], SIGMA: VALLEY.SIGMA[0], TAU: VALLEY.TAU };
 
@@ -59,14 +80,48 @@ const VAL_SIGMA = ${arr(VALLEY.SIGMA)};
 const VAL_VW = ${arr(VALLEY.VW)};
 const VAL_RAISE = ${arr(VALLEY.RAISE)};
 const VAL_REACH = ${arr(VALLEY.REACH)};
-const VAL_VJ: f32 = ${VALLEY.VJ.toFixed(4)};
 const VAL_LF_PEN: f32 = ${VALLEY.LF_PEN.toFixed(4)};
+const VAL_LF_SLOPE: f32 = ${VALLEY.LF_SLOPE.toFixed(4)};
+const VAL_PHI_SLOPE: f32 = ${VALLEY.PHI_SLOPE.toFixed(4)};
+const VAL_PHI_CURV: f32 = ${VALLEY.PHI_CURV.toFixed(4)};
+const VAL_SMIN_K: f32 = ${VALLEY.SMIN_K.toFixed(4)};
+const VAL_FINE_E: f32 = ${VALLEY.FINE_E.toFixed(4)};
+const VAL_FINE_K: f32 = ${VALLEY.FINE_K.toFixed(4)};
+const VAL_HEAD_LEN: f32 = ${HEAD.LEN.toFixed(4)};
+const VAL_HEAD_POW: f32 = ${HEAD.POW.toFixed(4)};
+const VAL_SPRING_R: f32 = ${SPRING.R.toFixed(4)};
+const VAL_SPRING_D: f32 = ${SPRING.D.toFixed(4)};
 `;
+}
+
+/** (§9.2) the valley's bound past half its reach (cells over the profile) */
+export function phi(e: number, tier: number): number {
+  const m = Math.max(0, e - VALLEY.VW[tier] * 0.5);
+  return VALLEY.PHI_SLOPE * m + VALLEY.PHI_CURV * m * m;
+}
+
+/** (§9.5) the polynomial smooth minimum: ≤ min(a, b), equal to it once |a − b| ≥ k */
+export function smin(a: number, b: number, k: number): number {
+  const m = Math.max(0, 1 - Math.abs(a - b) / k);
+  return Math.min(a, b) - (k / 4) * m * m;
+}
+
+/** (§9.5) a source's head floor at t (0 the spring .. 1 the head's end): near the spring's level, then up to the land */
+export function headLevel(ls: number, lh: number, t: number): number {
+  return ls + (lh - ls) * Math.pow(Math.min(1, Math.max(0, t)), HEAD.POW);
+}
+
+/** (§9.5) the channel's half-width: a 1.2-wide spring, widening fast, then with the catchment (hops: nodes from the
+ *  farthest source) */
+export function riverWidth(acc: number, hops: number): number {
+  return Math.min(12, 1.2 + (0.8 + 0.3 * Math.sqrt(acc)) * Math.sqrt(Math.min(1, hops / WIDTH_TAPER)));
 }
 /** texels round a node whose segments the lateral clamp checks */
 export const CLAMP_RADIUS = 36;
 /** nodes from its farthest source over which a river's width grows in */
 const WIDTH_TAPER = 16;
+/** (step 2) the clamp leaves a node's own reach this many nodes up and down alone */
+const CHAIN_HOPS = 4;
 /** cells a river may stand over another's valley wall (the clamp's tolerance: under the levee's 0.2) */
 const CLAMP_TOL = 0.05;
 /** a lava channel's incision (rivers.ts: lava depth) */
@@ -102,6 +157,8 @@ export interface WalkInput {
   landform?: Int32Array;
   /** fewer sources for tests (default SOURCES.SPACING) */
   spacing?: number;
+  /** (step 2) creeks feeding the heads on high ground (default on) */
+  creeks?: boolean;
 }
 
 export interface WalkStats {
@@ -120,6 +177,13 @@ export interface WalkStats {
   /** ms in the walks, the levels (with the clamp) */
   msWalk?: number;
   msLevels?: number;
+  /** (step 2) ms in the catchments' BFS, the widths and the ground beside each node */
+  msBfs?: number;
+  /** (step 2) nodes the clamp moved each round */
+  clampMoved?: number[];
+  /** (step 2) creeks tried and kept (they met a river) */
+  creeksTried?: number;
+  creeks?: number;
   /** the clamp hit its round limit before settling (rivers may stand over another's valley wall there) */
   clampUnsettled?: boolean;
 }
@@ -138,6 +202,11 @@ export interface Tree {
 const dryness = (cy: number) => 0.5 - 0.5 * Math.cos((1 - (0.5 - 0.5 * Math.cos(2 * Math.PI * cy))) * 3 * Math.PI);
 
 const wrap = (v: number, n: number) => ((v % n) + n) % n;
+/** (step 2) an integer wrapped (the hot loops': one remainder, not two — `wrap` was 40% of the build's CPU) */
+const wi = (v: number, n: number) => {
+  const r = v % n;
+  return r < 0 ? r + n : r;
+};
 const wrapD = (d: number, n: number) => d - Math.round(d / n) * n;
 
 /** a 32-bit hash to [0, 1) */
@@ -176,7 +245,7 @@ export function bilinear(f: Float32Array, n: number, x: number, y: number): numb
   const y0 = Math.floor(y);
   const fx = x - x0;
   const fy = y - y0;
-  const i = (yy: number, xx: number) => f[wrap(yy, n) * n + wrap(xx, n)];
+  const i = (yy: number, xx: number) => f[wi(yy, n) * n + wi(xx, n)];
   return (i(y0, x0) * (1 - fx) + i(y0, x0 + 1) * fx) * (1 - fy) + (i(y0 + 1, x0) * (1 - fx) + i(y0 + 1, x0 + 1) * fx) * fy;
 }
 
@@ -188,18 +257,18 @@ export function boxBlur(f: Float32Array, n: number, r: number): Float32Array {
   const k = 2 * r + 1;
   for (let y = 0; y < n; y++) {
     let s = 0;
-    for (let d = -r; d <= r; d++) s += f[y * n + wrap(d, n)];
+    for (let d = -r; d <= r; d++) s += f[y * n + wi(d, n)];
     for (let x = 0; x < n; x++) {
       tmp[y * n + x] = s / k;
-      s += f[y * n + wrap(x + r + 1, n)] - f[y * n + wrap(x - r, n)];
+      s += f[y * n + wi(x + r + 1, n)] - f[y * n + wi(x - r, n)];
     }
   }
   for (let x = 0; x < n; x++) {
     let s = 0;
-    for (let d = -r; d <= r; d++) s += tmp[wrap(d, n) * n + x];
+    for (let d = -r; d <= r; d++) s += tmp[wi(d, n) * n + x];
     for (let y = 0; y < n; y++) {
       out[y * n + x] = s / k;
-      s += tmp[wrap(y + r + 1, n) * n + x] - tmp[wrap(y - r, n) * n + x];
+      s += tmp[wi(y + r + 1, n) * n + x] - tmp[wi(y - r, n) * n + x];
     }
   }
   return out;
@@ -269,7 +338,7 @@ export function walkTree(inp: WalkInput, stats: WalkStats): Tree {
       if (keep > 1 - 0.85 * dryness((by + 0.5) / n)) continue;
       src.push({ tx: best % n, ty: by, c: coast[best], lava: false });
     }
-  for (const e of inp.extra ?? []) src.push({ tx: e.tx, ty: e.ty, c: coast[wrap(Math.round(e.ty), n) * n + wrap(Math.round(e.tx), n)], lava: e.lava });
+  for (const e of inp.extra ?? []) src.push({ tx: e.tx, ty: e.ty, c: coast[wi(Math.round(e.ty), n) * n + wi(Math.round(e.tx), n)], lava: e.lava });
   for (const t of inp.lavaTops ?? []) src.push({ tx: t % n, ty: Math.floor(t / n), c: coast[t], lava: true });
   const waterSrc = src.filter((s) => !s.lava).sort((a, b) => b.c - a.c);
   const lavaSrc = src.filter((s) => s.lava);
@@ -290,11 +359,11 @@ export function walkTree(inp: WalkInput, stats: WalkStats): Tree {
     fl.push(f);
     st.push(still);
     wk.push(walk);
-    const t = wrap(Math.round(y), n) * n + wrap(Math.round(x), n);
+    const t = wi(Math.round(y), n) * n + wi(Math.round(x), n);
     (f & RIVER_LAVA ? ownL : ownW)[t] = k;
     return k;
   };
-  const tex = (x: number, y: number) => wrap(Math.round(y), n) * n + wrap(Math.round(x), n);
+  const tex = (x: number, y: number) => wi(Math.round(y), n) * n + wi(Math.round(x), n);
   /** another walk's node within a texel (8 neighbours) of (x, y): the nearest; −1 none */
   const near = (own: Int32Array, x: number, y: number, walk: number): number => {
     const cx = Math.round(x);
@@ -303,7 +372,7 @@ export function walkTree(inp: WalkInput, stats: WalkStats): Tree {
     let bd = Infinity;
     for (let dy = -1; dy <= 1; dy++)
       for (let dx = -1; dx <= 1; dx++) {
-        const k = own[wrap(cy + dy, n) * n + wrap(cx + dx, n)];
+        const k = own[wi(cy + dy, n) * n + wi(cx + dx, n)];
         if (k < 0 || wk[k] === walk) continue;
         const d = Math.hypot(wrapD(xs[k] - x, n), wrapD(ys[k] - y, n));
         if (d < bd) {
@@ -314,6 +383,8 @@ export function walkTree(inp: WalkInput, stats: WalkStats): Tree {
     return best;
   };
   const MAX_STEPS = 4 * n;
+  /** each water walk's first node (its head): the creeks' targets */
+  const heads: number[] = [];
   const walkOne = (s: { tx: number; ty: number }, lava: boolean, id: number) => {
     let x = s.tx;
     let y = s.ty;
@@ -405,9 +476,92 @@ export function walkTree(inp: WalkInput, stats: WalkStats): Tree {
   };
   let id = 0;
   for (const s of waterSrc) {
+    const before = xs.length;
     walkOne(s, false, id++);
     stats.walks++;
+    if (xs.length > before) heads.push(before);
   }
+  // (step 2, §9.5 — the owner: "mountains with either cloud runoff or glacial melt that sends many little creaks down to
+  // feed the head of the river") creeks: on high ground, short steep walks from higher points round each head, toward
+  // it and downhill, kept only if they reach a river (they join the head's first nodes or a neighbour's)
+  if (inp.creeks !== false)
+    for (const h of heads) {
+      const hx = xs[h];
+      const hy = ys[h];
+      const gH = G[tex(hx, hy)];
+      if (gH - inp.sea < CREEK.MIN_H) continue;
+      for (let c = 0; c < CREEK.PER; c++) {
+        let best = -1;
+        let bx = 0;
+        let by = 0;
+        for (let k = 0; k < CREEK.TRIES; k++) {
+          const a = r() * 2 * Math.PI;
+          const rr = CREEK.R * (0.4 + 0.6 * Math.sqrt(r()));
+          const tx = wrap(hx + Math.cos(a) * rr, n);
+          const ty = wrap(hy + Math.sin(a) * rr, n);
+          const t = tex(tx, ty);
+          if (water[t] || G[t] < gH + CREEK.RISE || near(ownW, tx, ty, -2) >= 0) continue;
+          if (best < 0 || G[t] > G[best]) {
+            best = t;
+            bx = tx;
+            by = ty;
+          }
+        }
+        if (best < 0) continue;
+        stats.creeksTried = (stats.creeksTried ?? 0) + 1;
+        const cid = id++;
+        const seedC = inp.seed * 7919 + cid * 104729;
+        const px: number[] = [bx];
+        const py: number[] = [by];
+        let x = bx;
+        let y = by;
+        let dx = 0;
+        let dy = 0;
+        let join = -1;
+        for (let step = 0; step < CREEK.MAX && join < 0; step++) {
+          const tox = wrapD(hx - x, n);
+          const toy = wrapD(hy - y, n);
+          const tl = Math.hypot(tox, toy) || 1;
+          const gx = bilinear(Gs, n, x + 1, y) - bilinear(Gs, n, x - 1, y);
+          const gy = bilinear(Gs, n, x, y + 1) - bilinear(Gs, n, x, y - 1);
+          const gl = Math.hypot(gx, gy) || 1;
+          let ax = tox / tl - (CREEK.DOWN * gx) / gl;
+          let ay = toy / tl - (CREEK.DOWN * gy) / gl;
+          const th = 0.5 * WALK.TURN * noise1(seedC, step / 8);
+          const al = Math.hypot(ax, ay) || 1;
+          const cx = Math.cos(th);
+          const sx = Math.sin(th);
+          [ax, ay] = [(ax * cx - ay * sx) / al, (ax * sx + ay * cx) / al];
+          if (step > 0) {
+            ax = 0.5 * dx + 0.5 * ax;
+            ay = 0.5 * dy + 0.5 * ay;
+            const l2 = Math.hypot(ax, ay) || 1;
+            ax /= l2;
+            ay /= l2;
+          }
+          dx = ax;
+          dy = ay;
+          x = wrap(x + dx, n);
+          y = wrap(y + dy, n);
+          if (water[tex(x, y)]) break;
+          join = near(ownW, x, y, cid);
+          if (join < 0) {
+            px.push(x);
+            py.push(y);
+          }
+        }
+        if (join < 0) continue;
+        // (kept: its nodes, each to the next, the last into the river it met)
+        let prev = -1;
+        for (let i = 0; i < px.length; i++) {
+          const k = add(px[i], py[i], 0, 0, cid);
+          if (prev >= 0) nx[prev] = k;
+          prev = k;
+        }
+        nx[prev] = join;
+        stats.creeks = (stats.creeks ?? 0) + 1;
+      }
+    }
   for (const s of lavaSrc) {
     walkOne(s, true, id++);
     stats.lavaWalks++;
@@ -492,6 +646,17 @@ export function designLevels(o: {
   }
   const R = Math.ceil(o.radius / B);
   const dropped = new Uint8Array(n);
+  /** b is within CHAIN_HOPS nodes downstream of a */
+  const nearChain = (a: number, b: number) => {
+    let c = a;
+    for (let h = 0; h < CHAIN_HOPS; h++) {
+      const nx = next[c];
+      if (nx === c) return false;
+      c = nx;
+      if (c === b) return true;
+    }
+    return false;
+  };
   let rounds = 0;
   let maxDrop = 0;
   // (after the first round only nodes near a node that moved: a bucket is dirty when a node in it was lowered)
@@ -507,12 +672,12 @@ export function designLevels(o: {
       const by = Math.floor(y[i] / B);
       if (rounds > 0) {
         let near = false;
-        for (let dy = -R; dy <= R && !near; dy++) for (let dx = -R; dx <= R && !near; dx++) near = dirty[wrap(by + dy, bh) * bw + wrap(bx + dx, bw)] === 1;
+        for (let dy = -R; dy <= R && !near; dy++) for (let dx = -R; dx <= R && !near; dx++) near = dirty[wi(by + dy, bh) * bw + wi(bx + dx, bw)] === 1;
         if (!near) continue;
       }
       for (let dy = -R; dy <= R; dy++)
         for (let dx = -R; dx <= R; dx++) {
-          const list = buckets[wrap(by + dy, bh) * bw + wrap(bx + dx, bw)];
+          const list = buckets[wi(by + dy, bh) * bw + wi(bx + dx, bw)];
           for (const j of list) {
             const k = next[j];
             if (j === i || k === i) continue;
@@ -529,11 +694,10 @@ export function designLevels(o: {
             const l2 = abx * abx + aby * aby;
             const ti = o.tier ? o.tier[i] : 0;
             const eLo = Math.sqrt(px * px + py * py) - Math.sqrt(l2) - Math.max(width[j], width[k]);
-            // (beyond the valley's reach it doesn't touch this river's ground)
-            if (eLo >= VALLEY.VW[ti]) continue;
+            // (step 2: no cut-off at VW — the surface's own bound Φ, in the lower bound below, says when it can't reach)
             if (eLo > 0) {
               const F = VALLEY.FP_K[ti] * Math.max(width[j], width[k]);
-              if (lo + VALLEY.FLOOD_SLOPE * eLo + VALLEY.SIGMA[ti] * Math.max(0, eLo - F - VALLEY.TAU * 0.7) >= level[i]) continue;
+              if (lo + VALLEY.FLOOD_SLOPE * eLo + VALLEY.SIGMA[ti] * Math.max(0, eLo - F - VALLEY.TAU * 0.7) + phi(eLo, ti) >= level[i]) continue;
             }
             const t = l2 > 1e-9 ? (px * abx + py * aby) / l2 : 0;
             // (no cap behind a segment's upstream end, but at a source: the segment above covers it)
@@ -541,16 +705,17 @@ export function designLevels(o: {
             const s = Math.min(1, Math.max(0, t));
             const d = Math.hypot(px - abx * s, py - aby * s);
             if (d > o.radius) continue;
+            // (step 2: nor its own reach a few nodes up or down — a creek running beside the node it joins lowered it to
+            // its interpolated level and back, a cycle of 13 nodes creeping down every round; 41 rounds, unsettled)
+            if (nearChain(i, j) || nearChain(j, i)) continue;
             const w = width[j] + (width[k] - width[j]) * s;
             const e = Math.max(d - w, 0);
             const len = Math.sqrt(l2);
-            // (the ground river j's valley leaves here — valley.wgsl's h with this node's least ground for G, a lower
-            // bound of the GPU's: G' − fade (G' − Hv) grows with G'): this river may not stand over it
-            const hv = segLevel(level[j], level[k], !!(lava[j] && lava[k]), s, len) + vprof(e, w, ti);
-            const vw = VALLEY.VW[ti];
-            const u = Math.min(1, Math.max(0, (e - vw * 0.5) / (vw * 0.5)));
-            const fade = 1 - u * u * (3 - 2 * u);
-            const bound = Math.max(floorL, gmin[i] - fade * Math.max(0, gmin[i] - hv));
+            // (the ground river j's valley leaves here — valley.wgsl's h = smin(G', S_j) (§9.5) with this node's least
+            // ground for G': this river may not stand over it. A plain min, not the smin: smin(a, a) = a − k/4, so two
+            // rivers at one level lowered each other by a cell a round and the clamp never settled)
+            const sj = segLevel(level[j], level[k], !!(lava[j] && lava[k]), s, len) + vprof(e, w, ti) + phi(e, ti);
+            const bound = Math.max(floorL, Math.min(gmin[i], sj));
             // (a tolerance: rivers lowering each other through their segments' interpolation creep down by ever less)
             if (bound < level[i] - CLAMP_TOL) {
               maxDrop = Math.max(maxDrop, level[i] - bound);
@@ -569,6 +734,7 @@ export function designLevels(o: {
         dirty[bucketOf(k)] = 1;
         moved++;
       }
+    (o.stats.clampMoved ??= []).push(moved);
     if (!changed || !moved) break;
   }
   if (rounds >= MAX_ROUNDS) o.stats.clampUnsettled = true;
@@ -586,6 +752,8 @@ export interface Rivers2 {
   nodeAt: Uint32Array;
   /** per node: its main upstream node (itself: a source) — valley.wgsl's segments a node */
   up: Uint32Array;
+  /** (step 2) per node: its valley head's far level (a water source's; NO_HEAD otherwise) — valley.wgsl's head segment */
+  head: Float32Array;
   count: number;
   lava: number;
   waterfalls: number;
@@ -612,10 +780,11 @@ export function walkRivers(inp: WalkInput): Rivers2 {
   const stats: WalkStats = { walks: 0, lavaWalks: 0, merged: 0, toSea: 0, stranded: 0, clamped: 0, clampRounds: 0, clampMax: 0, rises: 0, ms: 0 };
   const tr = walkTree(inp, stats);
   stats.msWalk = +(performance.now() - t0).toFixed(0);
+  const tb = performance.now();
   const count = tr.count;
   const lava = new Uint8Array(count);
   for (let k = 0; k < count; k++) lava[k] = tr.flags[k] & RIVER_LAVA;
-  const tex = (k: number) => wrap(Math.round(tr.y[k]), n) * n + wrap(Math.round(tr.x[k]), n);
+  const tex = (k: number) => wi(Math.round(tr.y[k]), n) * n + wi(Math.round(tr.x[k]), n);
   // catchments: the water nodes' Voronoi on land (a BFS, 8 neighbours)
   const owner = new Int32Array(N).fill(-1);
   const queue = new Int32Array(N);
@@ -635,14 +804,16 @@ export function walkRivers(inp: WalkInput): Rivers2 {
     const ty = (t - tx) / n;
     for (let dy = -1; dy <= 1; dy++)
       for (let dx = -1; dx <= 1; dx++) {
-        const u = wrap(ty + dy, n) * n + wrap(tx + dx, n);
+        const u = wi(ty + dy, n) * n + wi(tx + dx, n);
         if (owner[u] >= 0 || water[u]) continue;
         owner[u] = owner[t];
         queue[qt++] = u;
       }
   }
   const acc = new Float32Array(count);
-  for (let t = 0; t < N; t++) if (owner[t] >= 0 && !water[t]) acc[owner[t]] += 1 - 0.85 * dryness((Math.floor(t / n) + 0.5) / n);
+  const rowRun = new Float64Array(n);
+  for (let y = 0; y < n; y++) rowRun[y] = 1 - 0.85 * dryness((y + 0.5) / n);
+  for (let y = 0, t = 0; y < n; y++) for (let x = 0; x < n; x++, t++) if (owner[t] >= 0 && !water[t]) acc[owner[t]] += rowRun[y];
   const order = upstreamFirst(tr.next);
   for (const k of order) {
     const j = tr.next[k];
@@ -656,7 +827,8 @@ export function walkRivers(inp: WalkInput): Rivers2 {
     const j = tr.next[k];
     if (j !== k) hopsUp[j] = Math.max(hopsUp[j], hopsUp[k] + 1);
   }
-  for (let k = 0; k < count; k++) width[k] = lava[k] ? 3 : Math.min(12, 2 + Math.sqrt(acc[k]) * 0.3 * Math.min(1, hopsUp[k] / WIDTH_TAPER));
+  // (step 2: a spring, not a blade — §9.5 riverWidth)
+  for (let k = 0; k < count; k++) width[k] = lava[k] ? 3 : riverWidth(acc[k], hopsUp[k]);
   const up = mainUp(tr.next, acc);
   // (the lava walks' own upstream: by order along the walk — acc is 0 on lava)
   for (let k = 0; k < count; k++) {
@@ -669,7 +841,7 @@ export function walkRivers(inp: WalkInput): Rivers2 {
     const cx = Math.round(tr.x[k]);
     const cy = Math.round(tr.y[k]);
     let m = Infinity;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) m = Math.min(m, G[wrap(cy + dy, n) * n + wrap(cx + dx, n)]);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) m = Math.min(m, G[wi(cy + dy, n) * n + wi(cx + dx, n)]);
     gmin[k] = m;
   }
   const wx = new Float32Array(count);
@@ -679,6 +851,7 @@ export function walkRivers(inp: WalkInput): Rivers2 {
     wy[k] = ((tr.y[k] + 0.5) / n) * inp.worldH;
   }
   const level = new Float32Array(count);
+  stats.msBfs = +(performance.now() - tb).toFixed(0);
   const texW = 0.5 * (inp.worldW + inp.worldH) / n;
   const tierN = new Uint8Array(count);
   if (inp.tier) for (let k = 0; k < count; k++) tierN[k] = Math.min(3, inp.tier[tex(k)]);
@@ -687,6 +860,20 @@ export function walkRivers(inp: WalkInput): Rivers2 {
   const tl = performance.now();
   const { cascaded } = designLevels({ x: wx, y: wy, next: tr.next, still: tr.still, lava, width, gmin, tier: tierN, lf: lfN, up, sea: inp.sea, worldW: inp.worldW, worldH: inp.worldH, radius: CLAMP_RADIUS * texW, level, stats });
   stats.msLevels = +(performance.now() - tl).toFixed(0);
+  // (step 2, §9.5) each water source's valley head: the land's level HEAD.LEN cells on, straight up the valley
+  const head = new Float32Array(Math.max(count, 1)).fill(NO_HEAD);
+  for (let k = 0; k < count; k++) {
+    const j = tr.next[k];
+    if (lava[k] || tr.still[k] || up[k] !== k || j === k) continue;
+    const dx = wrapD(wx[k] - wx[j], inp.worldW);
+    const dy = wrapD(wy[k] - wy[j], inp.worldH);
+    const l = Math.hypot(dx, dy);
+    if (l < 1e-6) continue;
+    const hx = wx[k] + (dx / l) * HEAD.LEN;
+    const hy = wy[k] + (dy / l) * HEAD.LEN;
+    const gH = bilinear(G, n, (hx / inp.worldW) * n - 0.5, (hy / inp.worldH) * n - 0.5);
+    head[k] = Math.max(gH, level[k] + HEAD.MIN);
+  }
   // the node table
   const nodes = new Uint32Array(Math.max(count, 1) * NODE_WORDS);
   const f = new Float32Array(nodes.buffer);
@@ -751,6 +938,7 @@ export function walkRivers(inp: WalkInput): Rivers2 {
     nodes,
     nodeAt,
     up: upU,
+    head,
     count,
     lava: lava.reduce((a, b) => a + b, 0),
     waterfalls,

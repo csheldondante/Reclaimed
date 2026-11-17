@@ -15,6 +15,11 @@ const B = opt('before', 'off');
 const A = opt('after', 'on');
 const sb = JSON.parse(fs.readFileSync(`${dir}/${B}-stats.json`, 'utf8'));
 const sa = JSON.parse(fs.readFileSync(`${dir}/${A}-stats.json`, 'utf8'));
+// (step 2: --also <tag> — a third world's ground on the same rows, e.g. the default world under step 1 vs step 2;
+// --title the strip's heading)
+const C = opt('also', null);
+const sc = C ? JSON.parse(fs.readFileSync(`${dir}/${C}-stats.json`, 'utf8')) : null;
+const TITLE = opt('title', 'Terrain rivers, step 1');
 
 /** an SVG line plot: series [{label, colour, pts: [[x, y]…]}] */
 function plot(title, series, xl, yl, W = 900, H = 340) {
@@ -59,6 +64,8 @@ try {
     const a = sa.rows[name];
     const b = sb.rows?.[name];
     const ser = [];
+    const c = sc?.rows?.[name];
+    if (c) ser.push({ label: `${C}: ground`, colour: '#cfcfcf', dash: '5 3', pts: c.ground.map((g, i) => [i, g]) });
     if (b) ser.push({ label: `before (${B}): ground`, colour: '#999', pts: b.ground.map((g, i) => [i, g]) });
     ser.push({ label: `after (${A}): ground`, colour: '#b5651d', pts: a.ground.map((g, i) => [i, g]) });
     const water = a.ground.map((g, i) => [i, a.water[i] > 0.05 ? g + a.water[i] : null]).filter((p) => p[1] !== null);
@@ -83,7 +90,7 @@ try {
     .map((nm) => `<div style="display:flex;gap:6px;margin:6px 0"><div><div style="font:600 14px system-ui">${nm} — before (${B})</div><img src="${img(`${dir}/${B}-${nm}.png`)}" width="480"></div><div><div style="font:600 14px system-ui">${nm} — after (${A}, a.rivers2=1)</div><img src="${img(`${dir}/${A}-${nm}.png`)}" width="480"></div></div>`)
     .join('');
   const pl = plots.map(([t, f]) => `<div style="font:600 14px system-ui;margin-top:8px">${t}</div><img src="${img(f)}" width="966">`).join('');
-  await shoot(`<div style="padding:8px;width:972px"><div style="font:700 18px system-ui">Terrain rivers, step 1 — seed 1, same views before / after</div>${rows}${pl}</div>`, `${dir}/strip.png`, 990, 800);
+  await shoot(`<div style="padding:8px;width:972px"><div style="font:700 18px system-ui">${TITLE} — seed 1, same views before / after</div>${rows}${pl}</div>`, `${dir}/strip.png`, 990, 800);
   console.log('wrote', `${dir}/strip.png`, plots.map((p) => p[1]).join(' '));
 } finally {
   await browser.close();

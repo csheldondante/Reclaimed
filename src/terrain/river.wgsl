@@ -45,6 +45,10 @@ struct River {
   s: f32,
   fallUp: f32,
   side: f32,
+  /** (terrain-rivers step 2) the segment's upstream node, and 1 where that node is a source (a spring: riverCut's pool;
+   *  0 always in the default world — no valley block) */
+  id: u32,
+  src: f32,
 }
 
 fn riverWarp(p: vec2<f32>) -> vec2<f32> {
@@ -62,7 +66,7 @@ fn segLevel(a: RiverNode, b: RiverNode, s: f32, len: f32) -> f32 {
   return mix(a.level, b.level, s);
 }
 
-fn segTest(r: ptr<function, River>, a: RiverNode, b: RiverNode, p: vec2<f32>, fallUp: f32) {
+fn segTest(r: ptr<function, River>, a: RiverNode, b: RiverNode, p: vec2<f32>, fallUp: f32, ida: u32, srcA: f32) {
   let pa = nearTo(vec2<f32>(a.x, a.y), p);
   let pb = nearTo(vec2<f32>(b.x, b.y), pa);
   let ab = pb - pa;
@@ -87,6 +91,8 @@ fn segTest(r: ptr<function, River>, a: RiverNode, b: RiverNode, p: vec2<f32>, fa
     (*r).fallUp = fallUp;
     let d = p - pa;
     (*r).side = select(-1.0, 1.0, ab.x * d.y - ab.y * d.x >= 0.0);
+    (*r).id = ida;
+    (*r).src = srcA;
   }
 }
 
@@ -96,16 +102,22 @@ fn riverAt(p0: vec2<f32>) -> River {
   var r: River;
   r.on = false;
   r.x = 1e9;
+  r.id = 0u;
+  r.src = 0.0;
   let t = torusU(p) * f32(AP.n) - 0.5;
   let i0 = vec2<i32>(floor(t));
+  // (terrain-rivers step 2: whether a node is a source — only with the valley block; the default world has none)
+  let vb = valleyBase() != 0u;
   for (var k = 0; k < 4; k++) {
     let id = riverBuf[texIdxW(i0 + vec2<i32>(k & 1, k >> 1))];
     if (id == 0u) { continue; }
     let a = riverNode(id - 1u);
     let b = riverNode(a.next);
-    segTest(&r, a, b, p, 0.0);
+    var srcA = 0.0;
+    if (vb && riverUp(id - 1u) == id - 1u && (a.flags & 1u) == 0u) { srcA = 1.0; }
+    segTest(&r, a, b, p, 0.0, id - 1u, srcA);
     if (b.next != a.next) {
-      segTest(&r, b, riverNode(b.next), p, max(a.level - b.level, 0.0));
+      segTest(&r, b, riverNode(b.next), p, max(a.level - b.level, 0.0), a.next, 0.0);
     }
   }
   return r;
@@ -168,6 +180,12 @@ fn riverCut(p: vec2<f32>, rv: River) -> RiverCut {
   if (rv.fallUp > 4.0 && rv.s < 0.6) {
     let along = rv.s * rv.len;
     pool = max(pool, smoothstep(rv.w * 1.6, 0.0, length(vec2<f32>(along - rv.w * 0.5, x * rv.w))) * min(0.3 * rv.fallUp, 4.0));
+  }
+  // (terrain-rivers step 2, §9.5) a spring: the water rises in a pool round a source, not out of a blade's tip (rv.src is
+  // 0 in the default world)
+  if (rv.src > 0.5) {
+    let along = rv.s * rv.len;
+    pool = max(pool, smoothstep(rv.w * VAL_SPRING_R, 0.0, length(vec2<f32>(along, x * rv.w))) * VAL_SPRING_D);
   }
   if (x < 1.35) { o.cut = min(o.cut, ch) - pool; }
   // gravel bars: on one side where a slow noise along the river says (an inside bend, as far as this field knows), the

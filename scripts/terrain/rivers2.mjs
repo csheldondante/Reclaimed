@@ -68,7 +68,7 @@ await run({ name: 'terrain-rivers2', kind: 'behaviour', size: '1000x1000' }, asy
         return lf >= 0 ? a.landforms[lf].tier : -1;
       };
       const warmAt = (y) => 0.5 - 0.5 * Math.cos((2 * Math.PI * y) / a.worldH);
-      let plain = null, fall = null;
+      let plain = null, fall = null, upland = null;
       const ups = new Int32Array(n);
       for (let k = 0; k < n; k++) if (u[k * W + 4] !== k) ups[u[k * W + 4]]++;
       for (let k = 0; k < n; k++) {
@@ -81,15 +81,17 @@ await run({ name: 'terrain-rivers2', kind: 'behaviour', size: '1000x1000' }, asy
         if (warm < 0.45 || warm > 0.85) continue;
         const drop = f[o + 2] - f[nx * W + 2];
         if (!plain && tierAt(x, y) === 0 && f[o + 3] > 7 && f[o + 3] < 10 && f[o + 2] > a.p.sea + 12 && drop < 0.5) plain = { x: Math.round(x), y: Math.round(y), w: f[o + 3] };
+        // (step 2: a river in an upland valley — upland tier, a middling river, well over the sea, not falling)
+        if (!upland && tierAt(x, y) === 1 && f[o + 3] > 4 && f[o + 3] < 9 && f[o + 2] > a.p.sea + 30 && drop < 0.5) upland = { x: Math.round(x), y: Math.round(y), w: f[o + 3] };
         if (f[nx * W + 2] > a.p.sea + 5 && (!fall || drop > fall.drop)) fall = { x: Math.round(x), y: Math.round(y), drop: +drop.toFixed(1), level: +f[o + 2].toFixed(1) };
       }
       const cu = new Uint32Array(a.craters.buffer);
       let volcano = null;
       for (let o = 0; o < a.craters.length && !volcano; o += 8) if (cu[o + 6] === 4) volcano = { x: Math.round(a.craters[o]), y: Math.round(a.craters[o + 1]), R: Math.round(a.craters[o + 2]) };
-      return { plain, fall, volcano };
+      return { plain, fall, volcano, upland };
     });
     R.log('spots', JSON.stringify(spots));
-    fs.writeFileSync(`${dir}/spots.json`, JSON.stringify(spots, null, 1));
+    fs.writeFileSync(`${dir}/${R.opt('pickout', 'spots.json')}`, JSON.stringify(spots, null, 1));
   }
   // --levee: the ground of 16×16 columns round sampled water nodes (compare a ?levee=0 run with a levee run: the
   // columns the levee raised; the page needs &rivers=table)

@@ -53,7 +53,8 @@ struct AtlasP {
   tileY: f32,
   /** (round 117, terrain) 1 in the macro ground's pass (the hydrology's ground: no gorges — compose.wgsl ground()) */
   macroPass: u32,
-  _p0: u32,
+  /** (terrain-rivers step 2) 1 with a.rivers2: the plains' sub-regions (terrain/plains.wgsl); 0 the default world */
+  terrain2: u32,
   _p1: u32,
   _p2: u32,
 }

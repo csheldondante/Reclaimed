@@ -26,7 +26,8 @@ import terrainCaveW from '../terrain/cave.wgsl?raw';
 import terrainGorgeW from '../terrain/gorge.wgsl?raw';
 import terrainSeaW from '../terrain/sea.wgsl?raw';
 import terrainValleyW from '../terrain/valley.wgsl?raw';
-import { valleyWgslConsts, type WalkStats } from '../terrain/walks';
+import terrainPlainsW from '../terrain/plains.wgsl?raw';
+import { valleyWgslConsts, type WalkStats, type WalkInput } from '../terrain/walks';
 import { urlFlags } from '../flags';
 import noiseW from './noise.wgsl?raw';
 import patternsW from './patterns.wgsl?raw';
@@ -92,6 +93,9 @@ export class Atlas {
   riverUp?: Uint32Array;
   /** (terrain-rivers) the first macro ground (before the rivers shaped it), for before/after tools */
   hmac0?: Float32Array;
+  /** (terrain-rivers step 2, `?walkdump=1` only) the walks' input as built, for the Node profile and tests
+   *  (scripts/terrain/walkdump.mjs); undefined otherwise */
+  walkInput?: WalkInput;
   /** (round 117, terrain track) where the lakes' table and ids sit in riverBuf (words), rows used and room for more */
   basinTab = { tabOff: 0, idsOff: 0, used: 0, cap: 0, on: false };
   /** (round 109, rivers.ts) what drains into each node: weather/catchwet.ts's per-watershed wetness */
@@ -143,7 +147,7 @@ const RIVER_LEVEE: f32 = ${(urlFlags().get('levee') === '0' ? 0 : RIVER_LEVEE).t
     // (round 117: terrain/river.wgsl — the rivers' course and cross-section, the terrain track's)
     // (terrain-rivers step 1: terrain/valley.wgsl and its table's constants — dead code unless a.rivers2 set the valley
     // block's offset, compose.wgsl ground())
-    return [noiseW, commonW, patternsW, composeW, terrainRiverW, terrainCaveW, terrainGorgeW, terrainSeaW, valleyWgslConsts(), terrainValleyW, rivers, ...own];
+    return [noiseW, commonW, patternsW, composeW, terrainRiverW, terrainCaveW, terrainGorgeW, terrainSeaW, valleyWgslConsts(), terrainValleyW, terrainPlainsW, rivers, ...own];
   }
 
   writeParams(e: Extra = {}, into = this.paramBuf): void {
@@ -189,6 +193,8 @@ const RIVER_LEVEE: f32 = ${(urlFlags().get('levee') === '0' ? 0 : RIVER_LEVEE).t
     f[34] = e.tile?.[0] ?? 0;
     f[35] = e.tile?.[1] ?? 0;
     u[36] = e.macro ? 1 : 0;
+    // (terrain-rivers step 2: AtlasP.terrain2 — the plains' sub-regions, terrain/plains.wgsl)
+    u[37] = p.rivers2 === 1 ? 1 : 0;
     this.device.queue.writeBuffer(into, 0, ab);
   }
 
