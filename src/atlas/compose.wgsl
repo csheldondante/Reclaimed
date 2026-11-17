@@ -189,6 +189,20 @@ fn oddityAt(o: u32, p: vec2<f32>, kind: u32) -> f32 {
   let H = bitcast<f32>(riverBuf[o + 3u]);
   let d = p - c;
   if (dot(d, d) > R * R * 1.5) { return 0.0; }
+  if (kind == 4u) {
+    // (terrain-rivers, a.rivers2: a volcano — docs/design/TERRAIN_RIVERS.md §5) a cone, its outline lobed, its flanks
+    // gullied by radial ridges, a crater at the top (a: the lobes' phase)
+    let lob = bitcast<f32>(riverBuf[o + 4u]);
+    let ang = atan2(d.y, d.x);
+    let rr = length(d) / (R * (1.0 + 0.12 * sin(ang * 3.0 + lob * 6.0) + 0.06 * sin(ang * 7.0 + lob * 11.0)));
+    if (rr >= 1.0) { return 0.0; }
+    let C = 0.16;
+    var h = H * pow(1.0 - rr, 1.6);
+    let gul = abs(sin(ang * 14.0 + 3.0 * sin(rr * 5.0 + lob)));
+    h *= 1.0 - 0.06 * (1.0 - gul) * smoothstep(C, 0.5, rr);
+    if (rr < C) { h = H * pow(1.0 - C, 1.6) - 0.45 * H * (1.0 - (rr / C) * (rr / C)); }
+    return max(h, 0.0);
+  }
   if (kind == 3u) {
     // a field of facets (the user: "large voronoi facets raised slightly deeper in"): the ground broken into
     // cells, each a tilted plane, higher toward the field's middle, a crack between each two
@@ -825,6 +839,17 @@ fn ground(p: vec2<f32>) -> Ground {
   g.h += st.dh;
   g.hlo += st.dh;
   g.smat = st.mat;
+  // (terrain-rivers step 1, a.rivers2 — terrain/valley.wgsl, docs/design/TERRAIN_RIVERS.md §4: the land shaped round the
+  // rivers, each valley's profile faded in over its reach; off — the default world — the block's offset is 0 and this
+  // is skipped)
+  if (valleyBase() != 0u) {
+    let vg = valleyGround(p, g.h, g.a, g.b, g.w, g.coast);
+    let h0 = g.h;
+    g.h = vg.x;
+    g.hlo = min(g.hlo + vg.y, g.h);
+    // (a lip or a cave the valley cut under is gone with the ground it hung from)
+    if (g.h < h0 - 0.5) { g.ov = vec3<f32>(0.0); }
+  }
   // the coarse world: rock taken or added (a crater, a cone, set lava), what lies on top
   let co = coarseAt(p);
   g.h += co.dr;

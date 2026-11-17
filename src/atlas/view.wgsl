@@ -65,6 +65,8 @@ fn fs(v: VOut) -> @location(0) vec4<f32> {
       if (g.smat == 1u) { c = vec3<f32>(0.62, 0.6, 0.58) * sh; }
       if (g.smat == 34u) { c = vec3<f32>(0.9, 0.55, 0.6) * sh; }
       if (g.smat == 33u) { c = vec3<f32>(0.75, 0.32, 0.3) * sh; }
+      // (terrain-rivers: a volcano's basalt — only a.rivers2 places them)
+      if (g.smat == 23u) { c = vec3<f32>(0.3, 0.27, 0.26) * sh; }
       // (rivers: blue, lava: orange)
       // (round 90: a lake, deeper bluer)
       if (g.lkw && g.lk > g.h) { c = mix(vec3<f32>(0.24, 0.46, 0.62), vec3<f32>(0.1, 0.25, 0.45), clamp((g.lk - g.h) / 12.0, 0.0, 1.0)); }

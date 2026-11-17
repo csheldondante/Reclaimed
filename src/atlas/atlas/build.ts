@@ -9,6 +9,8 @@ import { settle } from '../sites';
 import { buildWays } from '../ways';
 import { RegionFinish } from '../finish';
 import { findRivers, LAKE_WORDS, NODE_WORDS } from '../rivers';
+import { walkRivers } from '../../terrain/walks';
+import valleyJfaW from '../../terrain/valleyjfa.wgsl?raw';
 import { patterns, regionsCpu } from './regions';
 import { STAMP, CRATER_WORDS, MAX_CRATERS, CRATER_BLOCK, GIANT_FLOATS, FLOOD_SPARE } from './defs';
 import type { Atlas } from '../atlas';
@@ -32,8 +34,10 @@ export async function run(atl: Atlas): Promise<void> {
   const jfaA = mk('jfaA', N * 8);
   const jfaB = mk('jfaB', N * 8);
   const hmacB = mk('hmac', N * 4);
+  // (terrain-rivers step 1: docs/design/TERRAIN_RIVERS.md — rivers first; off, the build below is the default's)
+  const rivers2 = p.rivers2 === 1;
   // every pipeline at once, off the main thread (D3D compiles are the slow part of making the atlas)
-  const bm = makeModule(dev, 'atlas build', atl.parts(buildW));
+  const bm = makeModule(dev, 'atlas build', atl.parts(buildW, ...(rivers2 ? [valleyJfaW] : [])));
   // (perfopt, ?caves=mouths: only the caves that can open to the air — forms.wgsl LAZY_CAVES)
   const lazyCaves = urlFlags().get('caves') === 'mouths';
   const cm = makeModule(dev, 'atlas columns', atl.parts(columnsW, `const LAZY_CAVES: bool = ${lazyCaves};
@@ -63,6 +67,8 @@ export async function run(atl: Atlas): Promise<void> {
       K('jfaOutL', { 6: 'rw', 7: 'rw', 9: 'rw', 22: 'read' }),
     ]),
   );
+  // (terrain-rivers: the cost JFA's step and its output — terrain/valleyjfa.wgsl)
+  const valK = rivers2 ? await atl.time('compile valley', () => Promise.all([K('jfaStepVal', { 7: 'rw', 8: 'rw', 20: 'read', 22: 'read', 25: 'read' }), K('jfaOutVal', { 2: 'rw', 7: 'rw' })])) : null;
   atl.colH = colH;
   atl.colF = colF;
   // (round 102) the GPU's finishing of a region (atlas/finish.ts); the tile pacer's device (its GPU budget)
@@ -112,6 +118,8 @@ export async function run(atl: Atlas): Promise<void> {
   // the craters first (round 78): the continents' noise takes them
   makeCraters(atl);
   let lakeOff = [0, 0];
+  // (terrain-rivers: word 3 — where the valley block starts, words; 0 none: terrain/valley.wgsl valleyBase)
+  let valOff = 0;
   const writeCraters = () => {
     const blk = new Float32Array(CRATER_BLOCK);
     new Uint32Array(blk.buffer)[0] = atl.craters.length / CRATER_WORDS;
@@ -119,6 +127,7 @@ export async function run(atl: Atlas): Promise<void> {
     // (round 90: words 1 and 2 of the block — where the lakes' table and the per-texel lake ids start in the
     // buffer, words; 0 none: compose.wgsl lakeAt)
     new Uint32Array(blk.buffer).set(lakeOff, 1);
+    new Uint32Array(blk.buffer)[3] = valOff;
     dev.queue.writeBuffer(atl.riverBuf, N * 4, blk);
   };
   writeCraters();
@@ -143,6 +152,8 @@ export async function run(atl: Atlas): Promise<void> {
   // ---- the CPU: dense ids, stats, tiny regions merged, the table -------------
   const [L, I, C] = await atl.time('readback', async () => [new Uint32Array(await atl.read(label)), new Uint32Array(await atl.read(info)), new Uint32Array(await atl.read(cont))]);
   await atl.time('regions (cpu)', () => regionsCpu(atl, L, I, C));
+  // (terrain-rivers: volcanoes first — they take their room in the stamps' block before the oddities)
+  if (rivers2) makeVolcanoes(atl);
   // the oddities (round 78): on land, now that the land's known; in the ground from here on
   makeOddities(atl);
   writeCraters();
@@ -179,7 +190,122 @@ export async function run(atl: Atlas): Promise<void> {
   await atl.time('ground', macro);
   atl.hmac = new Float32Array(await atl.time('readback ground', () => atl.read(hmacB)));
 
+  /**
+   * (terrain-rivers step 1, a.rivers2 — docs/design/TERRAIN_RIVERS.md) The rivers first: walks to the coast over the
+   * first macro ground (terrain/walks.ts), then the buffer as the default's (the nearest node within 6 texels, the
+   * craters, the nodes, an empty lakes' table with the flood tool's spare rows, no lake ids) and after it the valley
+   * block: the lowest-cost node per texel (a second JFA, terrain/valleyjfa.wgsl) and each node's main upstream node.
+   * The crater block's word 3 says where it starts: from then on ground() shapes the land round the rivers.
+   */
+  async function riversFirst(): Promise<{ nodeAt: Uint32Array; lakeAt: Uint16Array }> {
+    atl.hmac0 = Float32Array.from(atl.hmac);
+    const distA = new Float32Array(await atl.time('readback coast', () => atl.read(atl.dist)));
+    const rv = await atl.time('rivers (cpu)', () => {
+      const coast = new Float32Array(N);
+      const water = new Uint8Array(N);
+      const tier = new Uint8Array(N);
+      const landform = new Int32Array(N);
+      const volcanic = new Uint8Array(N);
+      const lavaKinds = new Set(['lavafield', 'basalt', 'rift']);
+      for (let i = 0; i < N; i++) {
+        coast[i] = distA[i * 4 + 1];
+        const r = atl.regionOf[i];
+        const d = atl.defs[r];
+        water[i] = d.stat.land ? 0 : 1;
+        const lf = atl.landformOf[r];
+        tier[i] = lf >= 0 && atl.landforms[lf] ? atl.landforms[lf].tier : 0;
+        landform[i] = d.stat.land ? lf : -1;
+        volcanic[i] = lavaKinds.has(d.kind) ? 1 : 0;
+      }
+      // lava from each volcanic region's top (as the default's), and from the volcanoes' vents; water off their flanks
+      const ku = new Uint32Array(atl.craters.buffer);
+      const extra: { tx: number; ty: number; lava: boolean }[] = [];
+      for (let o = 0; o < atl.craters.length; o += CRATER_WORDS) {
+        if (ku[o + 6] === 0) continue;
+        const R = atl.craters[o + 2];
+        const tx = (atl.craters[o] / atl.worldW) * n - 0.5;
+        const ty = (atl.craters[o + 1] / atl.worldH) * n - 0.5;
+        const rt = Math.ceil(((R * 1.25) / atl.worldW) * n);
+        for (let dy = -rt; dy <= rt; dy++)
+          for (let dx = -rt; dx <= rt; dx++) if (dx * dx + dy * dy <= rt * rt) volcanic[(((Math.round(ty) + dy) % n) + n) % n * n + ((((Math.round(tx) + dx) % n) + n) % n)] = 0;
+        if (ku[o + 6] !== STAMP.volcano) continue;
+        const rT = (R / atl.worldW) * n;
+        const ph = atl.craters[o + 4] * 6.2831853;
+        for (let k = 0; k < 4; k++) extra.push({ tx: tx + Math.cos(ph + (k * Math.PI) / 2) * rT * 0.2, ty: ty + Math.sin(ph + (k * Math.PI) / 2) * rT * 0.2, lava: true });
+        for (let k = 0; k < 5; k++) extra.push({ tx: tx + Math.cos(ph + 0.6 + (k * 2 * Math.PI) / 5) * rT * 0.55, ty: ty + Math.sin(ph + 0.6 + (k * 2 * Math.PI) / 5) * rT * 0.55, lava: false });
+      }
+      const topOf = new Map<number, number>();
+      for (let i = 0; i < N; i++) {
+        if (!volcanic[i]) continue;
+        const r = atl.regionOf[i];
+        const t = topOf.get(r);
+        if (t === undefined || atl.hmac[i] > atl.hmac[t]) topOf.set(r, i);
+      }
+      return walkRivers({ n, seed: p.seed, sea: p.sea, worldW: atl.worldW, worldH: atl.worldH, G: atl.hmac, coast, water, tier, landform, extra, lavaTops: [...topOf.values()] });
+    });
+    atl.walkStats = rv.stats;
+    atl.riverUp = rv.up;
+    atl.riverStats = { nodes: rv.count, lava: rv.lava, waterfalls: rv.waterfalls, lakes: 0, ms: rv.stats.ms, speed: rv.speed, discharge: rv.discharge, pipeSlope: 0, shaped: rv.shaped };
+    atl.riverNodes = rv.nodes;
+    atl.riverCatchments = rv.catchments;
+    const lakeAt = new Uint16Array(N);
+    atl.lakes = [];
+    atl.lakeAt = lakeAt;
+    const nodeBytes = Math.max(rv.nodes.byteLength, NODE_WORDS * 4);
+    const lakeTab = new Float32Array(FLOOD_SPARE * LAKE_WORDS);
+    const tabOff = N + CRATER_BLOCK + nodeBytes / 4;
+    const idsOff = tabOff + lakeTab.length;
+    lakeOff = [tabOff, idsOff];
+    atl.basinTab = { tabOff, idsOff, used: 0, cap: FLOOD_SPARE, on: true };
+    valOff = idsOff + lakeAt.byteLength / 4;
+    atl.riverBuf.destroy();
+    atl.riverBuf = dev.createBuffer({ label: 'atlas rivers', size: (valOff + N) * 4 + rv.up.byteLength, usage: S });
+    writeCraters();
+    dev.queue.writeBuffer(atl.riverBuf, (N + CRATER_BLOCK) * 4, rv.nodes);
+    dev.queue.writeBuffer(atl.riverBuf, tabOff * 4, lakeTab);
+    dev.queue.writeBuffer(atl.riverBuf, idsOff * 4, lakeAt);
+    dev.queue.writeBuffer(atl.riverBuf, (valOff + N) * 4, rv.up);
+    dev.queue.writeBuffer(key, 0, rv.nodeAt);
+    await atl.time('jfa rivers', async () => {
+      await jfa(kSeedV, { 2: key }, kOutV, { 2: key });
+      const enc = dev.createCommandEncoder();
+      enc.copyBufferToBuffer(key, 0, atl.riverBuf, 0, N * 4);
+      dev.queue.submit([enc.finish()]);
+    });
+    // the cost JFA: seeded the same, stepped by cost (level + VAL_VJ · distance), no distance cap
+    const [kStepVal, kOutVal] = valK!;
+    dev.queue.writeBuffer(key, 0, rv.nodeAt);
+    await atl.time('jfa valley', async () => {
+      atl.writeParams();
+      await one(kSeedV, bg(kSeedV, { 2: key, 7: jfaA }));
+      let src = jfaA;
+      let dst = jfaB;
+      const steps: number[] = [];
+      for (let k = n / 2; k >= 1; k /= 2) steps.push(k);
+      steps.push(1);
+      for (const k of steps) {
+        atl.writeParams({ step: k });
+        await one(kStepVal, bg(kStepVal, { 7: src, 8: dst, 20: atl.region, 22: atl.regs, 25: atl.riverBuf }));
+        [src, dst] = [dst, src];
+      }
+      atl.writeParams();
+      await one(kOutVal, bg(kOutVal, { 2: key, 7: src }));
+      const enc = dev.createCommandEncoder();
+      enc.copyBufferToBuffer(key, 0, atl.riverBuf, valOff * 4, N * 4);
+      dev.queue.submit([enc.finish()]);
+    });
+    return { nodeAt: rv.nodeAt, lakeAt };
+  }
+
   // ---- the rivers: found on the ground, spread to every texel (JFA), the ground again with them ----
+  let siteRiver: Uint32Array;
+  let siteLake: Uint16Array;
+  if (rivers2) {
+    // (terrain-rivers step 1: the rivers first — walked, levelled, the land shaped round them by the macro pass below)
+    const r2 = await riversFirst();
+    siteRiver = r2.nodeAt;
+    siteLake = r2.lakeAt;
+  } else {
   const rv = await atl.time('rivers (cpu)', () => {
     const water = new Uint8Array(N);
     const volcanic = new Uint8Array(N);
@@ -231,6 +357,9 @@ export async function run(atl: Atlas): Promise<void> {
     enc.copyBufferToBuffer(key, 0, atl.riverBuf, 0, N * 4);
     dev.queue.submit([enc.finish()]);
   });
+  siteRiver = rv.nodeAt;
+  siteLake = rv.lakeAt;
+  }
   await atl.time('ground with rivers', macro);
   atl.hmac = new Float32Array(await atl.read(hmacB));
   // sites and roads (round 78): on the ground with its rivers
@@ -242,7 +371,7 @@ export async function run(atl: Atlas): Promise<void> {
     }
     const lfOf = new Int32Array(N);
     for (let i = 0; i < N; i++) lfOf[i] = atl.landformOf[atl.regionOf[i]];
-    atl.settlement = settle({ n, seed: p.seed, hmac: atl.hmac, landformOf: lfOf, forms: atl.landforms, contOf, river: rv.nodeAt, lake: rv.lakeAt, craters: atl.craters, craterWords: CRATER_WORDS, worldW: atl.worldW, worldH: atl.worldH, sea: p.sea, count: p.sites });
+    atl.settlement = settle({ n, seed: p.seed, hmac: atl.hmac, landformOf: lfOf, forms: atl.landforms, contOf, river: siteRiver, lake: siteLake, craters: atl.craters, craterWords: CRATER_WORDS, worldW: atl.worldW, worldH: atl.worldH, sea: p.sea, count: p.sites });
   });
   await atl.time('ways (cpu)', () => {
     atl.ways = buildWays({ settlement: atl.settlement, ground: (x, y) => atl.macroAt(x, y), worldW: atl.worldW, worldH: atl.worldH, sea: p.sea });
@@ -316,6 +445,45 @@ export function makeOddities(atl: Atlas): void {
   all.set(atl.craters);
   all.set(out, atl.craters.length);
   // (the kind and material words are u32s)
+  const u = new Uint32Array(all.buffer);
+  for (let i = atl.craters.length; i < all.length; i += CRATER_WORDS) {
+    u[i + 6] = all[i + 6];
+    u[i + 7] = all[i + 7];
+  }
+  atl.craters = all;
+}
+
+/** (terrain-rivers) volcanoes a world at most */
+export const VOLCANOES = 4;
+
+/**
+ * Volcanoes (terrain-rivers step 1, a.rivers2 — the owner: "more large features like volcanos"; TERRAIN_RIVERS.md §5):
+ * in the largest volcanic regions (lavafield, basalt, rift), then on fault strips, up to VOLCANOES, each a stamp
+ * (STAMP.volcano, compose.wgsl oddityAt kind 4) of basalt: radius 380–620 cells, 140–230 tall, a crater at its top.
+ * The rivers' build walks lava from their vents and water off their flanks.
+ */
+export function makeVolcanoes(atl: Atlas): void {
+  const r = rng(atl.p.seed * 9173 + 57);
+  const room = MAX_CRATERS - atl.craters.length / CRATER_WORDS;
+  const kinds = new Set(['lavafield', 'basalt', 'rift']);
+  const land = atl.defs.filter((d) => d.stat.land && d.stat.contArea > 2000);
+  const volc = land.filter((d) => kinds.has(d.kind)).sort((a, b) => b.stat.area - a.stat.area);
+  const fault = land.filter((d) => !kinds.has(d.kind) && d.stat.fault).sort((a, b) => b.stat.area - a.stat.area);
+  const picks = [...volc, ...fault];
+  const out: number[] = [];
+  for (const d of picks) {
+    if (out.length / CRATER_WORDS >= Math.min(VOLCANOES, room)) break;
+    const x = d.stat.cx * atl.worldW;
+    const y = d.stat.cy * atl.worldH;
+    // (not two on top of each other)
+    let close = false;
+    for (let o = 0; o < out.length; o += CRATER_WORDS) close ||= Math.hypot(out[o] - x, out[o + 1] - y) < 1600;
+    if (close) continue;
+    out.push(x, y, 380 + 240 * r(), 140 + 90 * r(), r(), 0, STAMP.volcano, 23);
+  }
+  const all = new Float32Array(atl.craters.length + out.length);
+  all.set(atl.craters);
+  all.set(out, atl.craters.length);
   const u = new Uint32Array(all.buffer);
   for (let i = atl.craters.length; i < all.length; i += CRATER_WORDS) {
     u[i + 6] = all[i + 6];

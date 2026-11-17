@@ -47,6 +47,10 @@ export interface AtlasParams {
   sites: number;
   /** atlas-scale oddities (round 78): clusters of faceted crystal mountains and bulbous domes */
   oddities: number;
+  /** (terrain-rivers, step 1: docs/design/TERRAIN_RIVERS.md) 1: rivers first — walks to the coast, designed levels,
+   *  the land shaped round them, volcanoes. 0 (the default): the world as before. A different world: sites, towns and
+   *  saved worlds are tied to the atlas */
+  rivers2: number;
 }
 
 export const DEFAULT_ATLAS: AtlasParams = {
@@ -84,6 +88,7 @@ export const DEFAULT_ATLAS: AtlasParams = {
   craters: 18,
   sites: 140,
   oddities: 16,
+  rivers2: 0,
 };
 
 /** what `?a.<key>=` may set (the viewer's sliders write the same) */

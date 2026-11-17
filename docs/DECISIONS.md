@@ -3926,3 +3926,37 @@ and what is still the owner's to decide: who decides a fight, every rule's numbe
   ruling "buildings stay plain extruded lot shapes" (DESIGN §17, CITYGEN.md) stands for the default game. Its gates
   before a default switch: AG13/CG24 (roofs above the claims), AG14 (vertices on the phone), LS-100 (no lot conditions:
   mutators do not show on its houses). Its new light and ground textures come with the switch (LS-101).
+
+## 2026-11-17 — terrain: rivers first, larger features (`terrain-rivers`; docs/design/TERRAIN_RIVERS.md)
+
+The owner, verbatim:
+- "I think one thing we can do is tweak the terrain generation further (something I've been wanting to come back to)
+  so that rivers are more noticably in the bottom of a water shed and we have more large features like volcanos. […]
+  A flow that fills multiple screens and comes in a sweeps over the town could be really cool to see and motivate
+  building trenches to redirect it to the sea or magical shields or summoning a blizzard to freeze it or something."
+- On a valley profile from the river graph: "Yes and I might go further and raise the terrain based on SDF away from
+  rivers too. I think more terrain height variety looks interesting. As long as mountains and cliffs are still dramatic
+  and rise up and some areas still look flat."
+- On erosion: "I do think this could help or just use a cheaper trick like walking to the coast with jitter and using
+  SDF to raise terrain. I like the walks plus raising give more control over paths since it lets us build dramatic
+  water falls and other cool features for water and magma rivers (which I want)"
+- On building height from drainage: "This seems straightforward with just SDF and the terrain function is something I
+  want to keep iterating on because I'm only really happy with cliffs and even there want better ravines and larger
+  features."
+- "I like more flow for hot lava and map generation tweaks with the larger flows."
+- (later, recorded for after this step) "for ravines and mesas we could tilt large voronoi regions to make cliffs and
+  uses the blended noise rules which blend using SDF, voronoi and fractal ridge noise to make cliffs have dramatic
+  spires, stepped drops, and sometimes ravines that can have sediment slope up toward their top. I mostly want some of
+  the masks (likely ridged noise or dual threshold fractal simplex) to carve deeper into the mesa region so that there
+  are narrow channels between mesas. This makes fun bridges across or cliffside cities in ravine possible but will
+  require camera work since isometric doesn't do well with large height changes."
+- (later) "For underground rivers and lakes I want to take another pass as the cave layer and how the openings show and
+  camera works around that. But as long as the vision and ideas are recorded it can wait for cities since that's more
+  impactful for now. (Although the plan is to have underground cities, cities on water falls, cities in jungles, on
+  cliffs and maybe floating islands (supported by the interval system) eventually"
+
+→ A sandbox track behind the atlas parameter `a.rivers2=1` (default off: the default world unchanged): rivers are
+walks to the coast with jitter, levels designed along them, the land shaped round them by SDF (a valley profile and a
+raise away from the rivers), volcanoes as a large landform with lava walks. The terrain function's constants live in
+one table (terrain/walks.ts VALLEY) for the owner to iterate. Ravine channels between mesas, underground rivers and
+lakes, and the city sites listed are recorded (BACKLOG TR-L1..TR-L3), not built in step 1.

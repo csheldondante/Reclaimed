@@ -25,6 +25,9 @@ import terrainRiverW from '../terrain/river.wgsl?raw';
 import terrainCaveW from '../terrain/cave.wgsl?raw';
 import terrainGorgeW from '../terrain/gorge.wgsl?raw';
 import terrainSeaW from '../terrain/sea.wgsl?raw';
+import terrainValleyW from '../terrain/valley.wgsl?raw';
+import { valleyWgslConsts, type WalkStats } from '../terrain/walks';
+import { urlFlags } from '../flags';
 import noiseW from './noise.wgsl?raw';
 import patternsW from './patterns.wgsl?raw';
 import { KIND_IDS, KINDS, warmth, type RegionDef } from './regions';
@@ -84,6 +87,11 @@ export class Atlas {
   riverStats = { nodes: 0, lava: 0, waterfalls: 0, lakes: 0, ms: 0, speed: [0, 0, 0] as [number, number, number], discharge: 0, pipeSlope: 0, shaped: { cascaded: 0, falls: 0, incision: 0 } };
   /** the nodes (rivers.ts NODE_WORDS each), for tools */
   riverNodes: Uint32Array = new Uint32Array(0);
+  /** (terrain-rivers, a.rivers2) the walks' numbers, each node's main upstream node; undefined with the flag off */
+  walkStats?: WalkStats;
+  riverUp?: Uint32Array;
+  /** (terrain-rivers) the first macro ground (before the rivers shaped it), for before/after tools */
+  hmac0?: Float32Array;
   /** (round 117, terrain track) where the lakes' table and ids sit in riverBuf (words), rows used and room for more */
   basinTab = { tabOff: 0, idsOff: 0, used: 0, cap: 0, on: false };
   /** (round 109, rivers.ts) what drains into each node: weather/catchwet.ts's per-watershed wetness */
@@ -128,10 +136,14 @@ export class Atlas {
     const rivers = `const RIVER_TABLE: bool = ${riverMode() === 'table'};
 const RIVER_FALL: f32 = ${RIVER_FALL.toFixed(2)};
 const RIVER_SHEET: f32 = ${RIVER_SHEET.toFixed(2)};
-const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};
+const RIVER_LEVEE: f32 = ${(urlFlags().get('levee') === '0' ? 0 : RIVER_LEVEE).toFixed(2)};
 `;
+    // (terrain-rivers: ?levee=0 — the levee off, a probe's before: scripts/terrain/rivers2.mjs counts the columns it
+    // raises by comparing the two)
     // (round 117: terrain/river.wgsl — the rivers' course and cross-section, the terrain track's)
-    return [noiseW, commonW, patternsW, composeW, terrainRiverW, terrainCaveW, terrainGorgeW, terrainSeaW, rivers, ...own];
+    // (terrain-rivers step 1: terrain/valley.wgsl and its table's constants — dead code unless a.rivers2 set the valley
+    // block's offset, compose.wgsl ground())
+    return [noiseW, commonW, patternsW, composeW, terrainRiverW, terrainCaveW, terrainGorgeW, terrainSeaW, valleyWgslConsts(), terrainValleyW, rivers, ...own];
   }
 
   writeParams(e: Extra = {}, into = this.paramBuf): void {

@@ -116,7 +116,8 @@ export const GEYSER_STENCIL = (() => {
  *  bulb   (kind 2)  a bulbous dome: height its top's; a: how lobed
  * Craters go first (the continents' noise takes only them); oddities are placed on land after the regions.
  */
-export const STAMP = { crater: 0, facet: 1, bulb: 2, field: 3 } as const;
+// (terrain-rivers, a.rivers2: volcano (kind 4) — x, y, radius, height, a: its outline's phase; compose.wgsl oddityAt)
+export const STAMP = { crater: 0, facet: 1, bulb: 2, field: 3, volcano: 4 } as const;
 export const CRATER_WORDS = 8;
 export const MAX_CRATERS = 64;
 export const CRATER_BLOCK = 4 + MAX_CRATERS * CRATER_WORDS;

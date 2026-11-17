@@ -12,6 +12,24 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Terrain: rivers first (2026-11-17, `terrain-rivers`; docs/design/TERRAIN_RIVERS.md, DECISIONS 2026-11-17)
+
+A sandbox behind `a.rivers2=1` (default off). Relates to V1, Q36, Q58, P12, TG2, RWS1, LS-122.
+
+| id | item | size | status |
+|---|---|---|---|
+| TR1 | Step 1: rivers as walks to the coast (coast SDF + downhill + turned jitter), a tree, designed monotone levels (falls where the ground drops), the lateral clamp, the land shaped round them (valley profile faded over its reach, raise away from rivers, per tier), volcanoes (stamp kind 4) with lava and water walks; numbers and stills in local/terrain1 | L | wip (this branch) |
+| TR2 | Lakes in rivers2 worlds: none yet (designed basins where a walk stalls under a rim, crater lakes, or the priority-flood lakes as a pass) — owner's call (note §8 Q3) | M | open (question) |
+| TR3 | Candidate seams: the valley's minimum is over the nodes of 4 texels in two tables; where a candidate leaves the neighbourhood the field can step. Fix: a third table or a wider neighbourhood, measured by a gradient probe | M | open (hack) |
+| TR4 | The rivers' CPU build is ~3.5 s at n = 2048 (the default's 0.8 s): the lateral clamp and the BFS. Move the catchments' BFS to the GPU (a JFA does it) and the clamp to a priority order | M | open (cost) |
+| TR5 | The lateral clamp checks node i against segments using i's tier and the least ground of its 3×3 texels, not the GPU's blended tier at the warped point: rivers may still stand a little over another's valley wall at landform borders — measured by the levee probe | S | open (hack) |
+| TR6 | Volcano placement: region centres (a large region's centre can be far from its land, or in a snowfield); no sea hotspots; cone stamps don't take part in landforms (tier stays the ground's) | S | open |
+| TR7 | Saved worlds and the flag: a world saved with rivers2 off loads under rivers2 on with nothing to say it is a different atlas — key the world store by the atlas params before the flag goes near players | S | open |
+| TR8 | With the flag on, sites, towns (Muru), roads and authored places sit where the default world put them: list in the DEVLOG (step 1); re-placement is later work | M | open |
+| TR-L1 | (owner, later) Ravines and mesas: tilted large Voronoi regions for cliffs; blended SDF + Voronoi + fractal ridge for spires, stepped drops, ravines with sediment sloping toward the top; masks (ridged / dual-threshold simplex) carving deep narrow channels between mesas (bridges, cliffside cities; camera work for big height changes). Note "Later" says how the walk + profile machinery could serve it | L | deferred |
+| TR-L2 | (owner, later) Underground rivers and lakes with the cave layer, how openings show, the camera round them | L | deferred |
+| TR-L3 | (owner, later) City sites: underground cities, cities on waterfalls, in jungles, on cliffs, floating islands (intervals) | L | deferred |
+
 ## Card table (2026-11-16, `card-table`; docs/design/CARD_TABLE.md)
 
 The same run as the 3D loop, as a plain card page (`table.html`) and Node bots. One model, two front ends.
