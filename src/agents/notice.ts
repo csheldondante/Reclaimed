@@ -24,7 +24,8 @@ export const CW = {
 } as const;
 export const NO_FACTION = 255;
 /** (loop round 10, LS-94) the spell word's flags (notice.wgsl SP_*, unitspell.wgsl) */
-export const SP = { hidden: 1, side: 2, all: 4 } as const;
+/** (loop round 11) faint: a hidden unit drawn faint (the player's own — the foes still do not see it) */
+export const SP = { hidden: 1, side: 2, all: 4, faint: 8 } as const;
 /** the side a berserk spell gives (notice.wgsl: SP_ALL takes on anyone; the side keeps them apart from every faction's
  *  own fields) */
 export const BERSERK_SIDE = 254;
@@ -146,12 +147,16 @@ export class UnitNotice {
    * looks over (cells, ≤ 255). Each given field is written, the rest of the word kept; `false` clears a flag. One
    * dispatch now, over `count` slots: nothing is read back.
    */
-  spellArea(a: { x: number; y: number; radius: number; who: 'any' | 'foes' | 'friends'; side?: number | null; all?: boolean; hidden?: boolean; sight?: number }, count: number): void {
+  spellArea(a: { x: number; y: number; radius: number; who: 'any' | 'foes' | 'friends'; side?: number | null; all?: boolean; hidden?: boolean; faint?: boolean; sight?: number }, count: number): void {
     let value = 0;
     let mask = 0;
     if (a.hidden !== undefined) {
       mask |= SP.hidden;
       if (a.hidden) value |= SP.hidden;
+    }
+    if (a.faint !== undefined) {
+      mask |= SP.faint;
+      if (a.faint) value |= SP.faint;
     }
     if (a.all !== undefined) {
       mask |= SP.all;

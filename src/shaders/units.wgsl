@@ -953,6 +953,13 @@ fn qrotv(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
 const MAT_LEGS: u32 = 6u;
 const MAT_HEAD: u32 = 21u;
 const PHYS_BIT: u32 = 0x40000000u;
+/** (loop round 11) a voxel drawn faint (render/bodies.wgsl vsBody → fsBody's dither): a hidden unit of the player's */
+const GHOST_BIT: u32 = 0x8000u;
+/** (loop round 11) the red mist's motes round a berserk unit, the veil's glints round a hidden one, and the mist's
+ *  material (tile: the raiders' red) */
+const MIST_MOTES: u32 = 3u;
+const GHOST_GLINTS: u32 = 2u;
+const MAT_TILE: u32 = 32u;
 
 /** Each live unit's voxels (after unitStep), appended. */
 @compute @workgroup_size(64)
@@ -967,7 +974,14 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   if (corpse && (look & LOOK_CORPSE) == 0u) { return; }
   // (loop round 10, LS-94) hidden by a spell (notice.wgsl SP_HIDDEN, the word after the combat words): not drawn while
   // it lives — it is still there, walks and fights; no foe takes it on
-  if (!corpse && (unitCombat[MAX_SLOTS + u / 4u][u % 4u] & 1u) != 0u) { return; }
+  // (loop round 11: the player's own hidden people (SP_FAINT 8) drawn faint — every voxel GHOST_BIT, which the body
+  // draw dithers half away — with two glints about them; a berserk one (SP_ALL 4) in a red mist: three glowing motes
+  // turning round it at its chest. Read off the spell word here: nothing on the CPU knows who the spell took)
+  let sw = unitCombat[MAX_SLOTS + u / 4u][u % 4u];
+  let veiled = !corpse && (sw & 1u) != 0u;
+  if (veiled && (sw & 8u) == 0u) { return; }
+  let ghost = select(0u, GHOST_BIT, veiled);
+  let mist = !corpse && (sw & 4u) != 0u;
   let b = units[u * UNIT_V + 1u];
   let cc = units[u * UNIT_V + 2u];
   let dd = units[u * UNIT_V + 3u];
@@ -1006,7 +1020,7 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   var heat = 0.0;
   if (alight && !corpse) { heat = 0.45 + 0.25 * rand3(u, G.tick / 3u, 11u); }
   if (dd.x > 0.0 && !corpse) { heat = 1.0; }
-  let glow = select(0u, PHYS_BIT | (u32(heat * 255.0) << 16u), heat > 0.0);
+  let glow = select(0u, PHYS_BIT | (u32(heat * 255.0) << 16u), heat > 0.0) | ghost;
   let n = select(3u, km.y, km.y > 0u);
   let cv = carried[u];
   let holds = cv.x > 0.5 && state < ST_TUMBLE;
@@ -1014,8 +1028,30 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   let halo = (look & LOOK_HALO) != 0u && !corpse;
   let sparks = (look & LOOK_SPARKS) != 0u && !corpse;
   let extra = select(0u, 1u, holds) + select(0u, 1u, working);
-  let base = atomicAdd(&drawArgs[1], n + extra + select(0u, 1u, halo) + select(0u, 2u, sparks));
+  let fx = select(0u, MIST_MOTES, mist) + select(0u, GHOST_GLINTS, veiled);
+  let base = atomicAdd(&drawArgs[1], n + extra + select(0u, 1u, halo) + select(0u, 2u, sparks) + fx);
   let centre = select(a.xyz + mid + vec3<f32>(0.0, 0.0, bob), a.xyz + vec3<f32>(0.0, 0.0, h * 0.14), corpse);
+  {
+    var o = base + n + extra + select(0u, 1u, halo) + select(0u, 2u, sparks);
+    if (mist) {
+      // (the red mist: motes glowing red-orange, turning round its chest)
+      for (var j = 0u; j < MIST_MOTES; j++) {
+        let an = f32(G.tick) * 0.06 + f32(j) * 2.0944 + f32(u) * 0.7;
+        let p = a.xyz + vec3<f32>(cos(an) * 0.6, sin(an) * 0.6, h * (0.45 + 0.2 * f32(j)));
+        putVoxel(o, p, MAT_TILE | (6u << 24u) | PHYS_BIT | (170u << 16u), vec4<f32>(0.0, 0.0, 0.0, 1.0));
+        o++;
+      }
+    }
+    if (veiled) {
+      // (the veil's glints: two white points about it, new places every few ticks)
+      for (var j = 0u; j < GHOST_GLINTS; j++) {
+        let t = G.tick / 5u;
+        let r = vec3<f32>(rand3(u, t, 60u + j) - 0.5, rand3(u, t, 70u + j) - 0.5, rand3(u, t, 80u + j));
+        putVoxel(o, a.xyz + vec3<f32>(r.xy * 1.1, 0.2 + r.z * h), 36u | (3u << 24u) | PHYS_BIT | (235u << 16u), vec4<f32>(0.0, 0.0, 0.0, 1.0));
+        o++;
+      }
+    }
+  }
   if (halo) {
     // a small glowing light over its head (a share of its melting point: the heat glow's white end)
     let hm = (look >> 16u) & 0xffu;

@@ -108,8 +108,8 @@ already built.
 | The loop playable end to end in 3D on the phone | Works (16-season walks) |
 | Packs, laws, rules, endings, the record | Works at the card table and in 3D |
 | Raid as a card, far-city starts, unlocks, between runs | Works at the card table and in 3D (loop round 10: the 16-season walk; a far home opens the game on that town; locked leaders show their hint) |
-| Units on wide streets, coloured by side | Works; streets are still flat strips, not terrain (in progress) |
-| Toy spells on agents (berserk, invisible) | Built on the GPU (loop round 10: setSide, berserk, hidden; the arena pack's Red mist and Veil, GPU-tested); a worker crowd has no blow yet, so "protesters" need a kind that strikes (BACKLOG LS-108) |
+| Units on wide streets, coloured by side | Works; (loop round 11) the arterials, the square and the main streets are graded into the ground as light, calm paving; minor lanes are still drawn strips. Roads 0 and 1 into Muru still bring nobody: their second bridge is not built, and units placed on a deck do not walk in (LS-99) |
+| Toy spells on agents (berserk, invisible) | Built on the GPU (loop round 10); (loop round 11) seen at phone size: a pack bout's camera follows the fight close (both sides in frame), berserk units glow in a red mist, your hidden people are drawn faint with glints (foes' stay unseen), a ring of sparks marks the spell's reach. A worker crowd has no blow yet (LS-108) |
 | A hazard front that advances on a town, and a shield that diverts it | Not started |
 | Weather as packaged presets | Not started |
 | The next run shown in the changed world in 3D | Started: "The world now" at each run's start (how runs ended, a move of home, what changed while nobody played, what is still to find), remains of things, the land's changes laid again; a town's buildings kept on it (`built:<card>`) |

@@ -654,6 +654,7 @@ export class AgentUnits implements Units {
         ...(side !== undefined ? { side } : {}),
         ...(s.berserk !== undefined ? { all: s.berserk } : {}),
         ...(s.hidden !== undefined ? { hidden: s.hidden } : {}),
+        ...(s.faint !== undefined ? { faint: s.faint } : {}),
         ...(s.berserk || (side !== undefined && side !== null) ? { sight: SPELL_SIGHT } : {}),
       },
       this.agents.size,

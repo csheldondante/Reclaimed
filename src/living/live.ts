@@ -95,8 +95,9 @@ export interface LiveDef {
   /** particles over a group as it goes (petals over a parade): a burst every `every` seconds */
   fx?: { burst: string; over: string; every: number; count: number };
   /** what the camera follows (a tag's living units), else where it looks; its zoom (px a cell), and closer once a
-   *  blow has landed */
-  camera: { follow?: string; at?: LiveWhere; zoom: number; fightZoom?: number; pitch?: number };
+   *  blow has landed. (loop round 11) `with`: a second tag kept in the frame — the camera on the middle of both (a
+   *  bout's challengers and your fighter) */
+  camera: { follow?: string; at?: LiveWhere; zoom: number; fightZoom?: number; pitch?: number; with?: string };
   /** (round 7) once it ends by itself: the camera stays on it this many seconds more, with a burst over its followed
    *  figures every second (a parade's cheer at the market), before it is resolved */
   finale?: { seconds: number; burst: string; count: number };
@@ -260,6 +261,8 @@ export function checkLive(id: string, def: LiveDef, run: readonly string[] = [])
   for (const t of def.tiers) for (const [a, , b] of t.when ?? []) (known(a, `tier ${t.tier}`), known(b, `tier ${t.tier}`));
   if (!def.tiers.length || def.tiers[def.tiers.length - 1].when?.length) p.push(`${id}: its last tier row must have no conditions`);
   if (def.camera.follow && !tags.has(def.camera.follow)) p.push(`${id}: the camera follows tag ${def.camera.follow}, which no group has`);
+  if (def.camera.with && !tags.has(def.camera.with)) p.push(`${id}: the camera keeps tag ${def.camera.with} in frame, which no group has`);
+  if (def.camera.with && !def.camera.follow) p.push(`${id}: the camera keeps ${def.camera.with} in frame with what it follows, and it follows none`);
   if (def.fx && !groups.has(def.fx.over)) p.push(`${id}: its particles are over group ${def.fx.over}, which it has not`);
   const entering = def.groups.some((g) => typeof g.from === 'object' && 'road' in g.from && g.from.road === 'entry');
   if (def.groups.some((g) => g.from === 'lining') && !entering) p.push(`${id}: a group lines the road of an entering group, and none comes in by a road`);

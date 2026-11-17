@@ -8,6 +8,9 @@
 // cell; n: n/16 of a cell, so 4 is a quarter: a game model's fine voxels,
 // round 49), 30 a physics voxel, 31 a structure grid's.
 
+/** (loop round 11) VOut.info.y's flag for a faint voxel (vsSkin's info.y is a surface byte: never this) */
+const GHOST_INFO: u32 = 0x100u;
+
 /** a body voxel's edge in cells (material word bits 24-29) */
 fn bodySize(word: u32) -> f32 {
   let code = (word >> 24u) & 63u;
@@ -42,7 +45,10 @@ fn vsBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   o.pos = CAM.viewProj * vec4<f32>(wp, 1.0);
   o.wpos = wp;
   o.nrm = quatRotate(q, n);
-  o.info = vec2<u32>(a.w, 0u);
+  // (loop round 11: a game model's voxel drawn faint — units.wgsl GHOST_BIT, bit 15 of a word that is neither a physics
+  // voxel's (bits 8-15 its speckle) nor a structure's — told to fsBody as GHOST_INFO, apart from the word's own bits)
+  let ghost = (a.w & (0xc0000000u | 0x8000u)) == 0x8000u;
+  o.info = vec2<u32>(a.w, select(0u, GHOST_INFO, ghost));
   // (no reveal time: fsBody's CG25 clip and dirt pass it by)
   o.tint = REV_NONE;
   o.zr = vec2<f32>(wp.z - 0.5 * s, wp.z + 0.5 * s);
@@ -168,6 +174,8 @@ fn fsBody(in: VOut) -> FOut {
   // (CG25: a town road growing in — nothing ahead of the growth: its time here, vsSkin's tint, past the town's clock)
   let revAge = MESH_XF.w - in.tint;
   if (revAge < 0.0) { discard; }
+  // (loop round 11: a faint voxel — a hidden unit of the player's — shows through every other pixel)
+  if ((in.info.y & GHOST_INFO) != 0u && bayer4(in.pos.xy) < 0.55) { discard; }
   // a little per-voxel variation so a tumbling slab doesn't read as one block
   // (a physics voxel, bit 30, carries its own speckle: it bends and moves)
   let physV = ((word >> 30u) & 1u) != 0u;

@@ -634,6 +634,11 @@ function liveWhere(ref: string | undefined): LiveWhere {
 }
 const UNIT_KIND: Record<string, { kind: string; side: 'town' | 'foe' | 'folk' }> = { soldier: { kind: 'guard', side: 'town' }, raider: { kind: 'raider', side: 'foe' }, dead: { kind: 'shambler', side: 'foe' }, worker: { kind: 'worker', side: 'folk' }, cart: { kind: 'cart', side: 'folk' } };
 
+/** (loop round 11) a pack event's camera (px a cell): on its people as they come, and on the fight — a figure (1.5
+ *  cells) 35–50 px tall on a 412 px phone, both sides of a bout (~12 cells apart as they meet) within the frame.
+ *  Seen at 18: figures ~25 px, a person had to look for them */
+const PACK_EVENT_ZOOM = 24;
+const PACK_FIGHT_ZOOM = 34;
 /** a pack's event as the engine's LiveDef (living/live.ts): played at the site of the card that starts it */
 export function liveDef(e: PackEvent): LiveDef {
   const groups: LiveDef['groups'] = (e.groups ?? []).map((g, i) => ({
@@ -647,6 +652,8 @@ export function liveDef(e: PackEvent): LiveDef {
   }));
   const foe = groups.find((g) => g.side === 'foe');
   const goer = groups.find((g) => g.order?.kind === 'go');
+  // (loop round 11: your side's people in a fight with the foes — the camera keeps them in the frame too)
+  const mine = groups.find((g) => g.side === 'town');
   return {
     tag: e.tag,
     title: e.title,
@@ -654,7 +661,10 @@ export function liveDef(e: PackEvent): LiveDef {
     line: e.how,
     groups,
     ...(e.hazard ? { hazard: { kind: 'fire' as const, at: { site: 'here' }, points: e.hazard.points, spread: e.hazard.spread, radius: 2.5, intensity: 0.9 } } : {}),
-    camera: { at: { site: 'here' }, zoom: 10 },
+    // (loop round 11, LS-104: the camera after the event's people — its foes, else whoever goes somewhere — close enough
+    // that a figure reads at phone size, closer still once they fight; its site until they are there. A hazard alone
+    // stays on its site)
+    camera: { at: { site: 'here' }, ...(foe ?? goer ? { follow: (foe ?? goer)!.tags[0] } : {}), ...(foe && mine ? { with: mine.tags[0] } : {}), zoom: foe ?? goer ? PACK_EVENT_ZOOM : 10, ...(foe ? { fightZoom: PACK_FIGHT_ZOOM } : {}) },
     ...(e.seconds !== undefined ? { seconds: e.seconds } : {}),
     spells: (e.abilities ?? []).map((a) => BASE_SPELL[a] ?? a),
     ends: e.hazard ? [{ when: 'out', after: 20 }] : foe ? [{ when: 'none', tag: foe.tags[0] }] : goer ? [{ when: 'arrived', group: goer.id }] : [],

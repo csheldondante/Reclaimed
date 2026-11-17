@@ -25707,3 +25707,54 @@ second raster pass); a run from the lots 7.83 / 4.77 vs 4.68 / 4.11. A lay of th
 arterials' records only. In the game at Muru's start (the core shown): 665 pieces, at most 109 a tile. Nothing runs a
 frame: mesh runs come every 2 s only while a district rises, and lays only when land is claimed. First make (one run):
 mesh 11.3 ms, total 25.8 ms GPU (compile and contention inside it).
+
+## 2026-11-17 — loop round 11 (3): roads 0 and 1 into Muru — a second bridge never built (`loop-skeleton`, LS-99)
+
+**What the backlog said and what was so.** LS-99 said units do not walk bridge decks. Read in the game
+(`scripts/lab/deckprobe.mjs`, road 0 from the town out): the deck's columns 52–66 units out are External with no open
+water — the river under them is an enclosed run (`waterGaps` y–w; `water` is the top's open run) — so a unit stands
+on a deck as on ground. The spawn candidates (16–48 units past the limit) were past the deck, where the road (the
+atlas's brick stamp) lay under 1.3–3.1 of open water. The arterial's words: three spans, 0–5.3, 6.3–66.3 and
+70.3–123.3; its end (`lim`) 66.3. `artEnd` carries an end to the far bank of the bridge it is on, and stopped there; the
+second bridge, 4 units on across an island, was never drawn or claimed, while the place table gave the spawn points on
+it the second span's deck height (101.5) over a riverbed at 97.
+
+**Fixed.** The place table set a spawn point's approach (8 units back) at the raw ground's height even on a span — on
+a bridge it read the riverbed under the deck, so no candidate on a bridge stood; it now takes the deck's height as the
+spawn point did (`spawnApp`, `candOk` via `spawnPtXY`). GPU test (`towncontracts.test.ts`): a river the whole search
+long with a bridge over it — WATER before, the nominal point on the deck at its height after.
+
+**Tried and reverted: the second bridge.** `artEnd` carried on across the next bridge when the dry ground between was
+under 8 units. The second deck was built and claimed and the spawn points stood on it — and the units did not walk in:
+the parade's column stood at the deck's far end from 22 s to 40 s (`local/round11/bridge-strip.png`; its watchers stood
+on the deck too), and in the spell stills the bout's crew, now coming by road 0, was still 136 cells off after 150 s
+(`local/round11/berserk4-strip.png`: nothing to see). So placing and standing on a deck work; walking one into town
+does not — the gap LS-99 named, now seen with data. Shipping it would have sent every event down road 0 into a stall,
+so it is reverted: roads 0 and 1 refuse as before and events come by road 2. Not done: why a group on a deck does not
+walk (its field over the slab's surfaces — links, where the deck meets the bank — or the march-in route on a deck road).
+
+**Tried and dropped (on the way).** Reading `waterGaps` x in the place table: the tiny test world never publishes it for
+settled water (only running chunks publish), so a parked river would read dry. Then a "water in the gap under a slab"
+rule in `colAt`: wrong once the probe showed `water` is already the top's open run. Both reverted.
+
+## 2026-11-17 — loop round 11 (4): live events read at phone size (`loop-skeleton`, LS-104, LS-94)
+
+**Why.** Round 10's stills: the arena fight and the berserk spell were a few tiny figures, the bout's camera at empty
+ground (LS-104: a pack event's camera was `{ at: site, zoom: 10 }`, never following anyone).
+
+**The camera.** A pack event follows its foes, with your side's group kept in the frame (`LiveDef.camera.with`: the
+point halfway between the two groups' middles, each side counted once), zoom 24 as they come and 34 once blows land,
+but never closer than both middles fit in 0.6 of the screen's width (floor 10). Seen at 18 first
+(`local/round11/veil2-strip.png`): figures ~25 px, the crew at one edge. At 24 (`berserk3-strip.png`,
+`veil3-strip.png`) figures read, but the crew sat half off the left edge; hence the fit.
+
+**The marks.** On the GPU, from each unit's spell word (`units.wgsl unitDraw`; nothing on the CPU knows who a spell
+took): a berserk unit (`SP_ALL`) turns in a red mist — three glowing motes at its chest; your hidden people
+(`SP_FAINT` 8, new: `Units.spell({ …, hidden: true, faint: true })`, the loop's Veil passes it) are drawn faint — every
+voxel `GHOST_BIT`, which the body draw dithers half away — with two white glints; a foe's hidden unit stays undrawn.
+And through the particles, where the CPU knows the point: a ring of 16 spark bursts at the spell's reach as it is cast.
+
+**Seen** (each one full 412 × 915 frame, uncropped; `local/round11/spells3/`): berserk-3-after — one raider in an
+orange-red mist cutting down the last of his crew, two bodies by him: "the crew turned on each other" reads. veil-2-after
+— your fighter a see-through checker of himself with white points round him, the crew standing three cells off not
+going for him: "he is hidden from them" reads, but less loudly (the fighter is small and pale on pale paving).

@@ -46,6 +46,13 @@ const ROAD_ZOOM = 4;
 const EVENT_PITCH = (40 * Math.PI) / 180;
 /** the zoom the camera pulls back to when an event the player must stay at is over */
 const AFTER_ZOOM = 5;
+/** (loop round 11) the share of the screen's width an event's two framed sides span at most, and the zoom it never
+ *  pulls back past for them (px a cell) */
+const FIT_SHARE = 0.6;
+const FIT_FLOOR = 16;
+/** (loop round 11) how near an event's two framed sides come (cells) before the camera frames both; until then it is
+ *  on the ones it follows (seen: a crew still crossing the river framed with the fighter pulled the camera out to 10) */
+const FRAME_NEAR = 20;
 /** seconds between reads of a hazard's points, and the seconds alight after which a point's lot has burned down */
 const HAZARD_READ = 2;
 const BURN_SECONDS = 12;
@@ -401,7 +408,21 @@ export class LiveRunner {
   /** the camera after an event's figures (the tag it follows), once it is on them */
   private follow(run: LiveRun): void {
     if (this.focus !== run || run.over || !run.def.camera.follow) return;
-    this.h.cam.follow(() => this.mid(run, run.def.camera.follow!));
+    this.h.cam.follow(() => this.framed(run));
+  }
+
+  /** (loop round 11, LS-104) what the camera keeps on: the middle of the tag it follows, or with `camera.with` the
+   *  point halfway between that middle and the other tag's (each side counted once: four challengers do not pull the
+   *  frame off your one fighter); null when neither's places are read */
+  private framed(run: LiveRun): V3 | null {
+    const f = run.def.camera.follow;
+    const a = f ? this.mid(run, f) : null;
+    const w = run.def.camera.with;
+    const b = w ? this.mid(run, w) : null;
+    if (!a || !b) return a ?? b;
+    // (only once they are near each other: on the way in, the camera stays on the ones coming)
+    if (Math.hypot(a[0] - b[0], a[1] - b[1]) > FRAME_NEAR) return a;
+    return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
   }
 
   /** the player leaves an event: it goes on without them */
@@ -431,8 +452,7 @@ export class LiveRunner {
 
   /** where an event is (a window point): the middle of what its camera follows, else its place */
   where(run: LiveRun): V3 | null {
-    const f = run.def.camera.follow;
-    const m = f ? this.mid(run, f) : null;
+    const m = this.framed(run);
     if (m) return m;
     const p = (run.def.camera.at ? this.point(run, run.def.camera.at) : null) ?? (run.site ? this.h.spot(run.site) : null);
     return p ? [p[0], p[1], this.h.z(p[0], p[1])] : null;
@@ -672,7 +692,14 @@ export class LiveRunner {
     if (run && !run.over && !this.h.cam.busy && (!run.entry || run.entry.step === 'in')) {
       const cam = scene.core.camera;
       if (run.def.camera.follow) {
-        const want = run.fighting && run.def.camera.fightZoom ? run.def.camera.fightZoom : run.def.camera.zoom;
+        let want = run.fighting && run.def.camera.fightZoom ? run.def.camera.fightZoom : run.def.camera.zoom;
+        // (loop round 11: with a second tag in frame, no closer than both sides' middles fit in FIT_SHARE of the
+        // screen's width — the bout's crew at its edge was half cut off at 24)
+        const w = run.def.camera.with;
+        const a = w ? this.mid(run, run.def.camera.follow) : null;
+        const b = w ? this.mid(run, w) : null;
+        const ab = a && b ? Math.hypot(a[0] - b[0], a[1] - b[1]) : Infinity;
+        if (ab <= FRAME_NEAR) want = Math.max(FIT_FLOOR, Math.min(want, (FIT_SHARE * cam.viewportW) / Math.max(ab, 1)));
         cam.zoom *= Math.exp(Math.log(want / cam.zoom) * Math.min(1, dt * 1.2));
         const pitch = run.def.camera.pitch !== undefined ? (run.def.camera.pitch * Math.PI) / 180 : EVENT_PITCH;
         cam.elevation += (pitch - cam.elevation) * Math.min(1, dt * 1.2);

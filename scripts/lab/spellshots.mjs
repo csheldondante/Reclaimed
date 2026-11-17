@@ -62,7 +62,12 @@ await run({ name: 'spellshots', kind: 'behaviour', size: '412x915', dpr: 1, echo
       await R.sleep(500);
     }
     R.log(`${mode}: challengers ${n ? n.d.toFixed(1) : '?'} cells from the fighter`);
-    if (n) {
+    // (loop round 11: the bout's camera follows the fight (LS-104) — the fixture only with `--fixture-camera`, as round
+    // 10's stills were made; otherwise a moment for the game's own camera to close in)
+    if (n && !R.flag('fixture-camera')) {
+      await R.sleep(2500);
+      v = await view();
+    } else if (n) {
       // (berserk: between the crew and the fighter; the veil: on the fighter, who is to vanish)
       const look = mode === 'veil' ? [n.f[0], n.f[1], n.f[2]] : [(n.m[0] + n.f[0]) / 2, (n.m[1] + n.f[1]) / 2, n.m[2]];
       await p.evaluate((q) => window.rungame.cam.look(q, { zoom: 14, ease: 0.3, place: [0.5, 0.4] }), look);

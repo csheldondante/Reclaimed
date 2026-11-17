@@ -127,6 +127,9 @@ export interface UnitSpell {
   /** a faction's id they join (setSide); null: back to their own */
   side?: string | null;
   hidden?: boolean;
+  /** (loop round 11) a hidden unit drawn faint, not undrawn: the player's own people under a spell of theirs (no foe
+   *  takes them on either way); foes' hidden units stay undrawn */
+  faint?: boolean;
 }
 
 export interface AreaHit {

@@ -5,7 +5,8 @@
 // to choose who is in the area.
 //   SP_HIDDEN 1   no one may take it on; not drawn (units.wgsl unitDraw)
 //   SP_SIDE   2   its side is bits 8-15, and it hunts (hostile) — setSide
-//   SP_ALL    4   it takes on anyone, its own side too, and anyone takes it on (berserk)
+//   SP_ALL    4   it takes on anyone, its own side too, and anyone takes it on (berserk) — drawn in a red mist
+//   SP_FAINT  8   (loop round 11) hidden but drawn faint, glinting: the player's own (units.wgsl unitDraw)
 //   bits 16-23    the least sight it looks over (cells)
 
 @group(0) @binding(7) var<storage, read> units: array<vec4<f32>>;

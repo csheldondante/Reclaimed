@@ -71,6 +71,8 @@ interface PendingStart {
 }
 /** the zoom on a district being built while a season passes: its lots and the people working on them read */
 const BUILD_ZOOM = 9;
+/** (loop round 11) bursts round a unit spell's reach as it is cast */
+const SPELL_RING = 16;
 /** how far from the home town's centre the camera may go (cells): past the mountain an outcome can name (640), short
  *  of where the town would be let go (its box 448 columns from a 320-column window: about 680) */
 const HOME_REACH = 650;
@@ -1302,8 +1304,19 @@ class Game implements RunGame {
       const units = this.scene.units;
       if ((m.berserk || m.hides) && !units?.spell) throw new Error('loop: these units take no spells (Units.spell)');
       if (m.berserk) units!.spell!({ at: [g[0], g[1]], radius: m.berserk, who: 'foes', berserk: true });
-      if (m.hides) units!.spell!({ at: [g[0], g[1]], radius: m.hides, who: 'friends', hidden: true });
+      // (loop round 11: your hidden people are drawn faint to you — the foes still do not see them)
+      if (m.hides) units!.spell!({ at: [g[0], g[1]], radius: m.hides, who: 'friends', hidden: true, faint: true });
       api.fx.burst('sparks', g[0], g[1], g[2] + 1, { count: 40 });
+      // (loop round 11: the spell's reach marked on the ground as it is cast — a ring of sparks at its edge; the units
+      // it took carry their own mark, drawn on the GPU: units.wgsl unitDraw)
+      const ring = m.berserk || m.hides;
+      if (ring) {
+        for (let k = 0; k < SPELL_RING; k++) {
+          const a = (k / SPELL_RING) * Math.PI * 2;
+          const [x, y] = [g[0] + Math.cos(a) * ring, g[1] + Math.sin(a) * ring];
+          api.fx.burst('sparks', x, y, this.z(x, y) + 0.6, { count: 6, speed: 3 });
+        }
+      }
       this.tell(TW.castLine(ability.name, run?.def.title ?? '', cost));
     } else if (id === 'heatray') {
       this.scene.units?.strike?.({ at: [g[0], g[1]], radius: HEATRAY.radius * reach(SPELL_MECH.heatray.kills!), damage: HEATRAY.damage }, 'spell');
