@@ -8,7 +8,11 @@ events, the run, other laws. (2) A law comes into force from a new effect `{ "la
 `"fires": 2`: it pays twice each time it fires. (4) **Settle it now**: the player may end a live event at once with
 the casts made so far; its result and what it sets off happen at once, so a chain's next step can come the same
 season (see "Chains"). (5) `packs/arena.json`'s open bout gets harder with each win, by a law. Example of every law
-kind: `packs/laws.json`.
+kind: `packs/laws.json`. (6) **Endings and the world's record** (see "Endings and the record"): an effect or a rule
+act `end_run` ends the run at once (won, fell, or an ending of your own); `far_all` changes every far town at once;
+the record of every card resolved or run out is kept from run to run, and `resolved` can ask it for a result, a place
+and an earlier run; a ruined thing keeps what it was as `remains-of-<tag>`; a card's `laws_after` stand in every later
+run. Example: `packs/glitter.json`.
 
 **Changed since draft 4.** Rules can chain (see "Chains"): (1) a rule can wait for a live event's RESULT,
 `"on": { "live": "raid", "tier": ["success"] }`; (2) a rule's effect can be an act: `offer` a card, `start` a live
@@ -481,6 +485,38 @@ The base game's building cards have the theme `build`):
 
 **Not built yet** (put them in `wants`): a law that changes the run's length or the raid's season (the arc is timed
 when the run begins); the number of threats at once; a law that outlives the run.
+
+## Endings and the record
+
+The owner: "cards and engines can get crazy … Since we allow perspective to shift and civilizations to fall between
+runs we can allow broken mechanics." and "Just keep the history of resolved cards." Full example:
+`packs/glitter.json` (a spire raised in one run burns the valley to glass; the next run salvages its ruins).
+
+- **End the run.** `{ "end_run": "won", "name": "The dead rule the valley, and you rule the dead" }` in any effect
+  list (a card taken or left, an event's result), or as a rule's act. `"won"`, `"fell"`, or a word of your own. The
+  run ends at once; the end screen says what ended it and who.
+- **Change every far town.** `{ "far_all": "abandoned", "by": "dead" }`: `captured`, `destroyed` or `abandoned`;
+  `by` is `raiders`, `player` or `dead`. It stays changed in every later run, like any change to the world.
+- **The record.** Every card resolved (with its result) or left to run out is kept with its place, its run and its
+  leader, run after run; the table lists it by place ("Run 1, Sister Ilveth: Raise the glitter spire. Done.").
+  What a card put in play stays in the world: standing, or, if its place was ruined, as remains that carry what it
+  was: a ruined spire tagged `glitter-tech` carries `ruined` and `remains-of-glitter-tech`. A burned field carries
+  `remains-of-field`.
+- **Ask the record.** `{ "resolved": "card-id", "tier": ["success"], "at": "site:tower", "run": "earlier" }`:
+  `tier` (results, or `"lapsed"`), `at` (a place) and `run` (`"earlier"`: a run before this one; `"any"`) are all
+  optional. Ask for remains with `site_has` / `town_has`: `{ "site_has": ["ruined", "remains-of-glitter-tech"] }`.
+  A card that is on the table because of earlier runs says so in one line.
+- **Laws that outlive the run.** A card's `"laws_after": ["law-id"]`: once the card is in the record (done or run
+  out), these laws stand from the first season of every later run of that world. This is how an ending changes the
+  world for good: the undead dominion, the glass sky.
+
+**Units as recipes** (designed, not built: docs/DECISIONS.md round 85, "Recipe-driven civilizations"). Today a pack
+writes a unit's parts as things with plain shared tags — `mount`, `armour`, `training`, `power` — and a rule that
+combines them with `garrison`: hoverbikes (`mount`, `power`) and a garrison make "knights on glass saddles". Declare
+these tags `"shared": true` so packs combine. When the recipe system comes, it reads the same tags as ingredients: a
+live event's groups are made from the composed unit (a knight is a person, training, armour and a mount; the mount a
+horse or a hoverbike), and the unit's numbers come from its ingredients instead of a rule. Packs written today keep
+working.
 
 ## Several packs together
 

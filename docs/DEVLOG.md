@@ -24407,3 +24407,29 @@ runs, 134 s):** laws made in 19 of 36 runs; **11 runs won by the pilgrim road** 
 pack cards wins it: that is the strictly dominant thing found (tuned in its own commit). Biggest single firing:
 `Rune-fed fields` +8 Materials (paid twice: 16 a season, the runes and the abbot); the biggest season was 23 firings
 (law hunter). The open bout now costs 1.0, 1.8, 2.0, 3.0, 3.3 … casts a turn (won 30 of 39): no longer free money.
+
+**After TUNING 3** (8 temples, 36 runs): 10 runs won by a law — still every bot that rushes pack cards wins (the
+laws pack's cards are boosted at the table, CT-8, and the law hunter takes every one). Left as the owner's "broken is
+fine" for now; it is the first thing to tune if the run should be harder.
+
+## 2026-11-16 — Endings and the world's record (`card-table`)
+
+**Why.** The owner: "Innovation does this where high tech can instantly win and lose the game … we can allow broken
+mechanics", then: "I don't think you need to make this a separate system … Just keep the history of resolved cards."
+A first cut wrote historic tags as their own events; it was deleted before commit in favour of the record below.
+
+**What the record is in code.** One fact event per card when it resolves (`card-done:<tier>`, written in
+`Realm.finishLive` for a live card and after `engine.advance` for the rest) or runs out (`card-lapsed`), `to: [its
+place, the home town]`, `about.thing`: the template. The fact layer's events are saved with the world, so the record
+outlives the run; `recordOf` reads run and leader from the `run-began` events. The things a card put in play are
+entities of the world and stay; on a ruined place they carry `ruined` and `remains-of-<tag>` (base sites too).
+Readers: `resolved` with `tier`, `at`, `run: "earlier"` (helper `recordHas`); `site_has` on remains; a card's
+`laws_after` (a source `record:<card>` in the law list, in force from season 1 of every later run). Endings:
+`end_run` (effect or rule act) sets `Realm.ended`, saved in `RunState`; `over` reads it. `far_all` runs the mutators'
+`mutate` helper over every far town.
+
+**Test** (`record.test.ts`): run 1 raises the glitter spire and leaves its overload to run out — the run is lost by
+the ending card, the tower burns, every far town is abandoned; run 2 under another leader lists the record, has "The
+glass sky" from season 1, gets the salvage card only because of the spire's remains (and says so), puts hoverbikes
+(`mount`, `power`) in play, and with a garrison the rule "Knights on glass saddles" fires; saved and taken up in run
+2, the same laws and record.

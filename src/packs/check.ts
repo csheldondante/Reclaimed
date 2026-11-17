@@ -16,8 +16,9 @@ export type PackCond =
   | { town_has: string[] }
   | { site_has: string[] }
   | { far_town_is: string[] }
-  | { resolved: string }
-  | { leader: string };
+  | { resolved: string; tier?: string[]; at?: string; run?: 'earlier' | 'any' }
+  | { leader: string }
+;
 
 export type PackEffect =
   | { pool: string; add: number }
@@ -32,6 +33,8 @@ export type PackEffect =
   | { arrive: string; count?: number; from?: string }
   | { unlock: string }
   | { law: string; seasons?: number }
+  | { end_run: string; name: string }
+  | { far_all: string; by?: string }
   | { say: string };
 
 /** (laws: docs/design/LAWS.md) a law as written: its id, its name, and what it does (one key of LAW_KEYS) */
@@ -80,6 +83,9 @@ export interface PackCard {
   if_tier?: Partial<Record<TierName, PackEffect[]>>;
   live?: string | null;
   leads_to?: string[];
+  /** (the record) laws of this pack in force from the first season of every later run of the world this card was
+   *  done in: an ending that changed the world */
+  laws_after?: string[];
   /** 1 to 5: how soon it comes up among the cards whose conditions hold (3: as a middling base card) */
   weight?: number;
   art?: string;
@@ -92,7 +98,7 @@ export interface PackRule {
   a: PackQuery;
   b?: PackQuery;
   need?: { pool: string; gte?: number; lte?: number };
-  effect: { pool: string; n: number } | { amount: string; op: 'add' | 'mul'; n: number } | { offer: string } | { start: string } | { tag: string; on: 'a'; timed?: boolean } | { untag: string; on: 'a' } | { law: string; seasons?: number };
+  effect: { pool: string; n: number } | { amount: string; op: 'add' | 'mul'; n: number } | { offer: string } | { start: string } | { tag: string; on: 'a'; timed?: boolean } | { untag: string; on: 'a' } | { law: string; seasons?: number } | { end_run: string; name?: string };
   /** (laws) it fires this many times on one trigger (set by a law; an author may write it too) */
   fires?: number;
   per?: 'a' | 'b' | { amount: string; each: number };
@@ -183,8 +189,8 @@ export const BASE_ABILITIES: readonly string[] = ['growth-rune', 'fire', 'heat-r
 export const UNIT_KINDS: readonly string[] = ['soldier', 'raider', 'worker', 'cart', 'dead'];
 /** the base game's card ids (season/realm-templates.ts): a pack's may not clash with them */
 export const BASE_CARD_IDS: readonly string[] = ['build:houses', 'build:farms', 'build:market', 'build:workshops', 'build:harbour', 'build:keep', 'build:quarry', 'build:lumber', 'build:bridge', 'build:trade', 'build:walls', 'mining-outpost', 'tower-lens', 'relieve-neighbour', 'house-refugees', 'guard-camp', 'dead-rise', 'pay-raiders', 'mend-dam', 'fire-wards', 'feed-shrine', 'shore-hill', 'raid', 'gate-parade', 'refugees-arrive', 'resettle-refugees', 'market-fire', 'hire-sellswords'];
-export const COND_KEYS: readonly string[] = ['pool', 'season_gte', 'has_thing', 'no_thing', 'town_has', 'site_has', 'far_town_is', 'resolved', 'leader'];
-export const EFFECT_KEYS: readonly string[] = ['pool', 'income', 'put', 'remove', 'tag', 'untag', 'mutate', 'far', 'sign', 'arrive', 'unlock', 'law', 'say'];
+export const COND_KEYS: readonly string[] = ['pool', 'season_gte', 'has_thing', 'no_thing', 'town_has', 'site_has', 'far_town_is', 'resolved', 'leader', ];
+export const EFFECT_KEYS: readonly string[] = ['pool', 'income', 'put', 'remove', 'tag', 'untag', 'mutate', 'far', 'sign', 'arrive', 'unlock', 'law', 'end_run', 'far_all', 'say'];
 /** (laws) what a law can do: its one key (living/laws.ts LawDo), by kind */
 export const LAW_KEYS: Record<string, readonly string[]> = {
   tags: ['count_as', 'grant', 'spare'],
@@ -285,6 +291,13 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   const read = new Set<string>();
   const put = new Set<string>();
   const needTag = (t: string, where: string, how: 'read' | 'made') => {
+    // (the record: a ruined thing or place carries what it was as "remains-of-<tag>"; only read, never set)
+    const remains = /^remains-of-(.+)$/.exec(t)?.[1];
+    if (remains && how === 'read') {
+      if (!tagIds.has(remains)) err(where, `"${t}" reads the remains of the tag "${remains}", which is not an existing tag or one of the pack's.`);
+      read.add(remains);
+      return;
+    }
     if (!tagIds.has(t)) err(where, `Unknown tag "${t}". Use an existing tag or add it to the pack's "tags" list.`);
     (how === 'read' ? read : produced).add(t);
   };
@@ -362,6 +375,13 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
         else if (x.count !== undefined && x.count !== 40) err(w, `The engine brings 40 refugees each time. Write "count": 40 or leave it out. It is ${JSON.stringify(x.count)}.`);
       } else if (key === 'unlock') {
         if (x.unlock !== 'heat-ray' && !abilities.some((a) => a.id === x.unlock)) err(w, `"unlock" names the ability "${String(x.unlock)}". It can be an ability of this pack, or "heat-ray".`);
+      } else if (key === 'end_run') {
+        // (endings: an instant win or loss, or an ending of the pack's own naming)
+        if (typeof x.end_run !== 'string' || !x.end_run) err(w, '"end_run" is "won", "fell", or a word of your own for the ending.');
+        if (typeof x.name !== 'string' || !x.name.trim()) err(w, 'An ending needs a "name": what the run-end screen says ended it.');
+      } else if (key === 'far_all') {
+        if (!['captured', 'destroyed', 'abandoned'].includes(String(x.far_all))) err(w, '"far_all" is captured, destroyed or abandoned: what happens to every far town.');
+        if (x.by !== undefined && !['raiders', 'player', 'dead'].includes(String(x.by))) err(w, '"by" is raiders, player or dead.');
       } else if (key === 'law') {
         needLaw(x.law, w);
         if (x.seasons !== undefined && (!Number.isInteger(x.seasons) || Number(x.seasons) < 1)) err(w, '"seasons" is a whole number, 1 or more: the law stands the rest of this season and so many more. Leave it out for the rest of the run.');
@@ -402,6 +422,10 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
         for (const s of (Array.isArray(x.far_town_is) ? x.far_town_is : [x.far_town_is]) as string[]) if (!FAR_STATES.includes(s)) err(w, `Unknown state "${s}" of a far town. The states are ${FAR_STATES.join(', ')}.`);
       } else if (key === 'resolved') {
         if (!cardIds.has(String(x.resolved))) err(w, `"resolved" names the card "${String(x.resolved)}", which is not in this pack.`);
+        // (the record: a result, a place, an earlier run)
+        for (const t of (x.tier as string[] | undefined) ?? []) if (!TIERS.includes(t) && t !== 'lapsed') err(w, `"tier" lists results (${TIERS.join(', ')}) or "lapsed". It has "${t}".`);
+        if (x.at !== undefined) place(String(x.at), w, { town: true });
+        if (x.run !== undefined && x.run !== 'earlier' && x.run !== 'any') err(w, '"run" is "earlier" (a run before this one) or "any".');
       } else if (key === 'leader') {
         if (!LEADER_IDS.includes(String(x.leader))) err(w, `Unknown leader "${String(x.leader)}". The leaders are ${LEADER_IDS.join(', ')}.`);
       }
@@ -597,9 +621,13 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       if (!Array.isArray(tier) || !tier.length) err(w, '"tier" is a list of results.');
       else for (const t of tier) if (!TIERS.includes(t)) err(w, `Unknown result "${t}". The results are ${TIERS.join(', ')}.`);
     }
-    const lawAct = isObj(r.effect) && 'law' in (r.effect as object);
+    const ending = isObj(r.effect) && 'end_run' in (r.effect as object);
+    const lawAct = (isObj(r.effect) && 'law' in (r.effect as object)) || ending;
     const act = lawAct ? null : actOf(r);
-    if (lawAct) {
+    if (ending) {
+      const x = r.effect as { end_run: unknown; name?: unknown };
+      if (typeof x.end_run !== 'string' || typeof x.name !== 'string') err(w, 'A rule that ends the run: { "end_run": "won", "name": "what ended it" }.');
+    } else if (lawAct) {
       // (laws: a rule that makes a law)
       const x = r.effect as { law: unknown; seasons?: unknown };
       needLaw(x.law, w);
@@ -663,6 +691,8 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     if (!isObj(m) || (!Array.isArray(m.themes) && !Array.isArray(m.ids))) return err(where, '"cards" is { "themes": [...] } or { "ids": [...] }; leave it out for every card.');
     for (const id of (m.ids as string[] | undefined) ?? []) if (!cardIds.has(id) && !base.cards?.includes(id)) warn(where, `"cards" names the card "${id}", which is not in this pack or the base game. Fine only if a pack loaded with it has that card.`);
   };
+  // (the record: a card's `laws_after` stand in every later run of the world it was done in)
+  for (const c of cards) for (const l of c.laws_after ?? []) needLaw(l, `cards (${c.id}).laws_after`);
   laws.forEach((l, i) => {
     const w = `laws[${i}] (${l.id})`;
     if (!l.name) err(w, 'A law needs a "name" the player reads in the list of laws.');

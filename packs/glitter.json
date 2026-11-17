@@ -1,0 +1,65 @@
+{
+  "pack": { "id": "glitter", "name": "The Glitter Spire", "version": 1,
+            "summary": "The record example. One run raises a glitter-tech spire; left to overload, it burns the valley to glass and ends the run. The next run builds on its ruins: hoverbikes salvaged from the spire carry your knights.",
+            "themes": ["magic", "ruins"] },
+  "tags": [
+    { "id": "glitter-tech", "on": "site", "meaning": "Strange bright machines of glass and wire stand here.", "timed": false },
+    { "id": "mount", "on": "site", "meaning": "Something here can carry a rider. An ingredient of a unit: a knight is a soldier with a mount.", "timed": false, "shared": true },
+    { "id": "power", "on": "site", "meaning": "It runs on glitter power. An ingredient of a unit.", "timed": false, "shared": true }
+  ],
+  "things": [
+    { "id": "glitter-spire", "name": "Glitter spire", "kind": "building", "at": "site:tower", "tags": ["glitter-tech"],
+      "text": "A spire of glass and wire that hums day and night.",
+      "art": "A tall spire of glass and copper wire humming over an old stone tower, painterly." },
+    { "id": "glitter-hoverbikes", "name": "Hoverbikes", "kind": "garrison", "at": "site:wagons", "tags": ["mount", "power"],
+      "text": "Saddles of glass that float a hand above the ground. Your knights ride them.",
+      "art": "Knights in old plate riding floating glass saddles across a yard, painterly." }
+  ],
+  "laws": [
+    { "id": "glitter-glass-sky", "name": "The glass sky", "does": { "income": { "magic": 1 } } }
+  ],
+  "cards": [
+    { "id": "glitter-raise-the-spire", "title": "Raise the glitter spire",
+      "presenter": { "name": "Vey Tallow", "role": "tinker", "at": "site:tower" },
+      "pitch": "I found plans for a spire of glass and wire in the tower cellar. Let me build it.",
+      "appears_when": [ { "season_gte": 2 } ], "weight": 5,
+      "cost": { "materials": 3, "magic": 1 },
+      "if_taken": [ { "put": "glitter-spire", "at": "site:tower" }, { "say": "The spire rises over the old tower, humming." } ],
+      "if_expires": [ { "say": "The tinker burns the plans." } ],
+      "art": "A tinker unrolling glowing plans on a cellar table, painterly." },
+    { "id": "glitter-overload", "title": "The spire hums too loud",
+      "presenter": { "name": "Vey Tallow", "role": "tinker", "at": "site:tower" },
+      "pitch": "The spire is drinking too much light. Vent it now or it will burn the valley to glass.",
+      "appears_when": [ { "has_thing": "glitter-spire" } ], "weight": 5,
+      "threat": true, "offer_seasons": 2,
+      "cost": { "magic": 3 },
+      "if_taken": [ { "say": "The spire is vented. It hums softly again." } ],
+      "if_expires": [ { "mutate": "burned", "where": "site:tower" }, { "far_all": "abandoned" },
+                     { "end_run": "fell", "name": "The glitter spire burned the valley to glass" },
+                     { "say": "White light. The tower is glass, and every far town is empty." } ],
+      "laws_after": ["glitter-glass-sky"],
+      "art": "A spire of glass blazing white over a town at night, painterly." },
+    { "id": "glitter-salvage-hoverbikes", "title": "Salvage the glass saddles",
+      "presenter": { "name": "Odd Bram", "role": "scavenger", "at": "site:wagons" },
+      "pitch": "There are glass saddles in the ruins of the spire. They float. Give me a worker and I will drag them out.",
+      "appears_when": [ { "site_has": ["ruined", "remains-of-glitter-tech"] } ], "weight": 5,
+      "cost": { "labor": 1 },
+      "if_taken": [ { "put": "glitter-hoverbikes", "at": "site:wagons" }, { "say": "Three glass saddles hang in the wagon yard, a hand above the ground." } ],
+      "if_expires": [ { "say": "The scavenger sells the saddles down the river." } ],
+      "art": "A scavenger hauling a floating glass saddle out of blackened ruins, painterly." },
+    { "id": "glitter-glass-seekers", "title": "Glass-seekers at the gate",
+      "presenter": { "name": "Ama Reed", "role": "gatekeeper", "at": "site:gate" },
+      "pitch": "Pilgrims have come to see where the glitter spire stood. They will pay to camp here.",
+      "appears_when": [ { "resolved": "glitter-raise-the-spire", "run": "earlier" } ], "weight": 4,
+      "cost": { "labor": 1 },
+      "if_taken": [ { "pool": "materials", "add": 3 }, { "say": "The pilgrims pay in copper and glass." } ],
+      "if_expires": [ { "say": "The pilgrims move on." } ],
+      "art": "Travellers with glass beads at a town gate, painterly." }
+  ],
+  "rules": [
+    { "id": "glitter-sky-knights", "name": "Knights on glass saddles", "on": "turn",
+      "a": { "tags": ["home", "garrison"] }, "b": { "tags": ["mount"] },
+      "effect": { "pool": "might", "n": 1 },
+      "why": "{b} carry your soldiers over the walls: +{n} Might" }
+  ]
+}

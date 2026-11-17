@@ -63,6 +63,7 @@ function opps(): string {
           return `<div class="card ${c.threat ? 'threat-card' : ''}" data-card="${esc(c.template)}">
   <h3>${esc(c.title)}</h3>
   <div class="who">${esc(c.who)}, ${esc(c.role)}. ${esc(cap(c.place))}.</div>
+  ${c.because ? `<div class="row law-row">${esc(c.because)}</div>` : ''}
   <div class="say">"${esc(c.line)}"</div>
   <div class="row"><b>${W.COST}.</b> ${esc(c.cost)}${c.printed ? `<s class="printed" title="${W.PRINTED}">${esc(c.printed)}</s>` : ''}</div>
   <div class="row"><b>${W.IF_TAKEN}.</b> ${esc(c.gives)}${c.live ? ` ${W.LIVE_NOTE}` : ''}</div>
@@ -168,6 +169,13 @@ function lawsList(): string {
 }
 let lawsShown = false;
 
+/** (the record) every card resolved or run out in this world, by place, then by run */
+function recordList(): string {
+  const list = table.record();
+  const body = list.length ? list.map((p) => `<div class="place">${esc(p.place)}</div>${p.lines.map((l) => `<div class="why">${esc(l)}</div>`).join('')}`).join('') : `<div class="dim">${W.RECORD_NONE}</div>`;
+  return drawer('record', `${W.RECORD_TITLE} (${list.reduce((n, p) => n + p.lines.length, 0)})`, body);
+}
+
 /** the packs in play: each with a button to take it out, what the validator says to look at, and a picker that adds
  *  one or several files (the run starts again with the new set) */
 function packDrawer(): string {
@@ -205,7 +213,7 @@ function draw(): void {
   const y = window.scrollY;
   const built = table.built();
   const builtRow = built.length ? `<h2>${W.BUILT_TITLE}</h2>${tags(built, 'state')}` : '';
-  app.innerHTML = header() + end() + lawsList() + events() + opps() + abilities() + rules() + inPlay() + working() + builtRow + log() + packDrawer() + footer();
+  app.innerHTML = header() + end() + lawsList() + events() + opps() + abilities() + rules() + inPlay() + working() + builtRow + log() + recordList() + packDrawer() + footer();
   window.scrollTo(0, y);
 }
 

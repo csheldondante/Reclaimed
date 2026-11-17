@@ -19,7 +19,7 @@
 import type { EntityId, FactEvent } from '../api/contracts/facts';
 import type { WorldSnapshot } from '../api/contracts/world';
 import { MemoryWorldState } from '../api/contracts/world-state';
-import { text, type Ctx, type Helper, type Stage } from '../living/dsl';
+import { HELPERS, text, type Ctx, type Helper, type Stage } from '../living/dsl';
 import { LivingEngine, outcomesOf, type EngineReport, type Offer, type TemplateDef, type EngineState } from '../living/engine';
 import { idleState, liveDerive, liveNames, liveRead, liveTier, type LiveDef, type LiveState, type LiveVars } from '../living/live';
 import { RuleBook, type RuleAct, type RuleDef, type RuleHit, type RuleOccasion, type RuleState, type Thing } from '../living/rules';
@@ -141,6 +141,9 @@ export interface RealmOptions {
      *  thing's id as `things()` gives it, its name, the laws it carries) */
     laws?: LawDef[];
     lawThings?: () => { id: string; name: string; laws: string[] }[];
+    /** (the record) the laws a card leaves: in force from the first season of every later run of the world it was done
+     *  in (a pack card's `laws_after`) */
+    recordLaws?: { card: string; laws: string[] }[];
   };
   /** (card-table, tuning) raiders in the run's last stage (default realm-templates.ts RAIDERS) */
   raiders?: number;
@@ -174,6 +177,42 @@ export interface RunState {
   /** (laws) the laws in force, in the order they came into force, and the last order number given */
   laws?: ActiveLaw[];
   lawSeq?: number;
+  /** (endings) the run was ended by an effect, a rule or a law */
+  ended?: Realm['ended'];
+}
+
+/** the risen dead as an entity of the fact world (who holds the towns they took) */
+export const DEAD_ID = 'the-dead';
+
+/**
+ * (the world's memory; the owner: "Just keep the history of resolved cards.") The record of every card that resolved
+ * or ran out, in every run: one fact event a card, `card-done:<tier>` or `card-lapsed`, `to: [its place, the home
+ * town]`, `about.thing`: the card's template, the note its title. The fact layer's events are saved with the world, so
+ * the record outlives the run; a run's number and leader are read from the `run-began` events before it. What a card
+ * put in play stays as a thing of the world (standing, or ruined with its old tags as `remains-of-<tag>`).
+ */
+export const CARD_DONE = 'card-done:';
+export const CARD_LAPSED = 'card-lapsed';
+export interface RecordEntry {
+  card: string;
+  title: string;
+  /** a tier, or 'lapsed' */
+  result: string;
+  place: string;
+  turn: number;
+  run: number;
+  leader: string;
+}
+/** the record of resolved and lapsed cards, oldest first */
+export function recordOf(w: FactWorld): RecordEntry[] {
+  const runs = w.facts.events({ kind: 'run-began' });
+  return w.facts
+    .events()
+    .filter((e) => (e.kind.startsWith(CARD_DONE) || e.kind === CARD_LAPSED) && !!e.about?.thing)
+    .map((e) => {
+      const began = runs.filter((r) => r.turn <= e.turn);
+      return { card: e.about!.thing!, title: e.note, result: e.kind === CARD_LAPSED ? 'lapsed' : e.kind.slice(CARD_DONE.length), place: e.to[0] ?? '', turn: e.turn, run: began.length, leader: (began.at(-1)?.note ?? '').replace(/ took the town$/, '') };
+    });
 }
 
 export class Realm {
@@ -232,6 +271,7 @@ export class Realm {
       this.fight = res.fight;
       for (const [k, v] of res.where ?? []) this.whereOf.set(k, v);
       this.partnersWere = res.partners ?? -1;
+      this.ended = res.ended ?? null;
     } else {
       // (a run's turn is its season; the history's turns run on across runs)
       const start = Math.max(f.turn, 0) + 1;
@@ -284,15 +324,45 @@ export class Realm {
     if (res) {
       this.engine.load(res.engine);
       this.last = { turn: this.w.turn, dealt: [], kept: this.engine.offers, notProposed: [], dealer: null, evaluated: { templates: 0, of: 0, changed: 0 }, ms: 0 };
-    } else this.last = this.dealt(this.engine.deal());
+    } else {
+      // (a new run: the laws a world tag carries are in force from its first deal)
+      this.refreshLaws();
+      this.last = this.dealt(this.engine.deal());
+    }
     this.sync();
     this.refreshLaws();
   }
 
   /** the run as it stands, to save beside the world's snapshot (`RealmOptions.resume` takes it up) */
   runState(): RunState {
-    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, averted: this.averted, fight: this.fight, where: [...this.whereOf], engine: this.engine.state(), rules: this.rules.save(), seen: this.seen, partners: this.partnersWere, asked: [...this.asked], laws: structuredClone(this.active), lawSeq: this.lawSeq };
+    return { v: 1, leader: this.leader.id, seasons: this.seasons, t0: this.t0, spells: [...this.spells], raid: this.raid, averted: this.averted, fight: this.fight, where: [...this.whereOf], engine: this.engine.state(), rules: this.rules.save(), seen: this.seen, partners: this.partnersWere, asked: [...this.asked], laws: structuredClone(this.active), lawSeq: this.lawSeq, ended: this.ended };
   }
+
+  // ---- endings and the world's own tags (the owner: "Innovation does this where high tech can instantly win and lose
+  // the game … A faction winning and essentially making the whole world undead doesn't really break future play
+  // sessions if you are an undead leader in the new world order.") ---------------------------------------------------
+
+  /** the run ended by an effect, a rule or a law: 'won', 'fell' or an ending's own word; its name; who made it */
+  ended: { result: string; name: string; by: string } | null = null;
+  /** End the run now (the first ending stands). Instant win and instant loss are both allowed. */
+  endRun(result: string, name: string, by: string): void {
+    if (this.ended || this.fight) return;
+    this.ended = { result, name, by };
+    this.w.facts.record({ kind: 'run-ended', by: ['player'], to: [this.home], note: `${name} (${by})` });
+  }
+  /** this run's number in its world (1 the first) */
+  runNumber(): number {
+    return this.w.facts.events({ kind: 'run-began' }).length;
+  }
+  /** the record of resolved and lapsed cards over every run of this world, oldest first (`recordOf`) */
+  record(): RecordEntry[] {
+    return recordOf(this.w);
+  }
+  /** a card's resolution written to the record (an offer resolved at this tier, or run out) */
+  private remember(o: Offer, result: string): void {
+    this.w.facts.record({ kind: result === 'lapsed' ? CARD_LAPSED : `${CARD_DONE}${result}`, by: ['player'], to: [o.place, ...(o.place === this.home ? [] : [this.home])], about: { opp: o.id, thing: o.template }, note: o.opp.title });
+  }
+
 
   // ---- laws (living/laws.ts; docs/design/LAWS.md) ---------------------------------------------------------------------
 
@@ -365,10 +435,21 @@ export class Realm {
    * its turn leaves. Called after every player action and at the season's end.
    */
   refreshLaws(): void {
-    const src = this.o.extra?.lawThings?.() ?? [];
+    // (a world tag that carries laws is a source like a thing: `world:<tag>`, standing while the world has the tag)
+    // (the record: a card done in an earlier run of this world whose laws stand in every later run — an ending that
+    // changed the world)
+    const recordLaws = this.o.extra?.recordLaws ?? [];
+    const run = this.runNumber();
+    // (done or run out: a threat left to run out is in the record too)
+    const earlier = recordLaws.length ? recordOf(this.w).filter((e) => e.run < run) : [];
+    const world = recordLaws.filter((x) => earlier.some((e) => e.card === x.card)).map((x) => {
+      const e = earlier.find((y) => y.card === x.card)!;
+      return { id: `record:${x.card}`, name: `"${e.title}" (run ${e.run})`, laws: x.laws };
+    });
+    const src = [...world, ...(this.o.extra?.lawThings?.() ?? [])];
     this.active = this.active.filter((a) => !('until' in a.source) || a.source.until >= this.w.turn);
     if (!src.length && !this.active.some((a) => 'thing' in a.source)) return;
-    const standing = new Set(this.things().filter((t) => !t.tags.includes('ruined')).map((t) => t.id));
+    const standing = new Set([...this.things().filter((t) => !t.tags.includes('ruined')).map((t) => t.id), ...world.map((x) => x.id)]);
     const carries = (thing: string, law: string) => standing.has(thing) && src.some((s) => s.id === thing && s.laws.includes(law));
     this.active = this.active.filter((a) => !('thing' in a.source) || carries(a.source.thing, a.law));
     for (const s of src) {
@@ -474,6 +555,39 @@ export class Realm {
           if (c.dry) return;
           const o = [...this.engine.offers, ...this.engine.past].find((x) => c.cause === x.id || c.cause.startsWith(`${x.id}:`));
           this.enact(String(a[0]), o ? `"${o.opp.title}"` : c.cause, Number(a[1] ?? 0) || undefined);
+        },
+      },
+      // (endings: endRun result name — the run ends now, made by the card that names it)
+      endRun: {
+        effect: (c, a) => {
+          if (c.dry) return;
+          const o = [...this.engine.offers, ...this.engine.past].find((x) => c.cause === x.id || c.cause.startsWith(`${x.id}:`));
+          this.endRun(String(a[0]), String(a[1] ?? a[0]), o ? `"${o.opp.title}"` : c.cause);
+        },
+      },
+      // (farAll kind by: every far town of the world taken, destroyed or abandoned at once — by the raiders, the
+      // player or the dead)
+      farAll: {
+        effect: (c, a) => {
+          const f = c.w.facts;
+          const by = a[1] === 'dead' ? DEAD_ID : a[1] === 'player' ? 'player' : RAIDERS_ID;
+          if (by === DEAD_ID && !f.entity(DEAD_ID)) f.add({ id: DEAD_ID, kind: 'army', name: 'the risen dead', cause: c.cause });
+          const mutate = HELPERS.mutate?.effect;
+          for (const s of this.ws.settlements) {
+            if (s.id === this.home || !f.entity(s.id)) continue;
+            if (a[0] === 'captured') f.setTag(s.id, 'condition', 'occupied', true, c.cause);
+            mutate?.({ ...c, b: { ...c.b, far_each: s.id, far_by: by } }, [String(a[0]), '$far_each', 1, 1, '$far_by']);
+          }
+        },
+      },
+      // (recordHas card tiers place when: the record has the card done — at one of these tiers ('' any; 'lapsed' for run
+      // out), at this place ('' anywhere; a bound entity), in an earlier run ('earlier') or any ('any'))
+      recordHas: {
+        pred: (c, a) => {
+          const [card, tiers, where, when] = [String(a[0]), String(a[1] ?? ''), String(a[2] ?? ''), String(a[3] ?? 'any')];
+          const place = where ? refOf(c.b, where) : '';
+          const run = this.runNumber();
+          return recordOf(c.w).some((e) => e.card === card && (tiers ? tiers.split('|').includes(e.result) : e.result !== 'lapsed') && (!place || e.place === place) && (when !== 'earlier' || e.run < run));
         },
       },
       // (built card: the town has built it)
@@ -648,7 +762,8 @@ export class Realm {
       if (!f.entity(id)) continue;
       const ruin = ruinOf(id);
       const meta = SITE_TAGS[s.key];
-      const tags = ruin.length ? ['ruined', ...ruin] : [...meta.is, 'standing', ...(meta.built && l.built.includes(meta.built) ? ['worked'] : []), ...timed(id), ...sparedOn(id)];
+      // (a ruined place keeps what it was as remains: a later card can ask for "remains-of-field")
+      const tags = ruin.length ? ['ruined', ...ruin, ...meta.is.map((x) => `remains-of-${x}`)] : [...meta.is, 'standing', ...(meta.built && l.built.includes(meta.built) ? ['worked'] : []), ...timed(id), ...sparedOn(id)];
       out.push({ id, name: s.name, tags, at: this.posOf(this.cellOf(s.key)), town: this.home });
     }
     const p = pools(l);
@@ -709,6 +824,12 @@ export class Realm {
     if ('law' in fx) {
       if (!this.lawDefs.has(fx.law)) return false;
       this.enact(fx.law, `the rule "${rule.name}"`, fx.seasons);
+      return true;
+    }
+    // (endings: a rule ends the run)
+    if ('end_run' in fx) {
+      if (this.ended || this.fight) return false;
+      this.endRun(fx.end_run, fx.name ?? fx.end_run, `the rule "${rule.name}"`);
       return true;
     }
     if ('offer' in fx || 'start' in fx) {
@@ -787,6 +908,8 @@ export class Realm {
     const tier = shiftTier(def, liveTier(def, out), this.laws());
     this.liveOut.set(id, out);
     this.w.holdings = this.led.holdings;
+    // (the record: this card, at this tier, here — before its outcome, so a rule or a card reading the record sees it)
+    this.remember(o, tier);
     this.engine.resolve(id, tier);
     this.sync();
     const oc = outcomesOf(t)[tier] ?? outcomesOf(t).success;
@@ -1009,6 +1132,12 @@ export class Realm {
     const past = this.engine.past.length;
     this.last = this.dealt(this.engine.advance());
     this.sync();
+    // (the record: the cards resolved or run out this season — a live card's is written when its event ends)
+    for (const o of this.engine.past.slice(past)) {
+      if (o.status === 'resolved' && this.liveOf(o)) continue;
+      if (o.status === 'resolved') this.remember(o, o.commitment?.rolled ?? 'success');
+      else if (o.status === 'expired') this.remember(o, 'lapsed');
+    }
     this.refreshLaws();
     if (mutators.ready) mutators.season(this.w.turn);
     // (the season's news in the cards' own words: what was done, what was left too long; then the arc's stage)
@@ -1056,13 +1185,13 @@ export class Realm {
 
   /** seasons until the raiders attack (0: this season); null: paid off, or fought */
   threatIn(): number | null {
-    return this.averted || this.fight ? null : Math.max(0, this.seasons - this.season);
+    return this.averted || this.fight || this.ended ? null : Math.max(0, this.seasons - this.season);
   }
 
   /** the run is over: the threat fought or paid off */
   get over(): boolean {
     // (laws: a run won by an achievement is over too)
-    return this.fight !== null || (this.averted && this.season >= this.seasons) || this.won() !== null;
+    return this.fight !== null || (this.averted && this.season >= this.seasons) || this.ended !== null || this.won() !== null;
   }
 
   // ---- the record -----------------------------------------------------------------------------------------------------

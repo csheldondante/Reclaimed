@@ -213,7 +213,8 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
     policy: p.name,
     leader: o.leader,
     seed: o.seed,
-    end: won ? 'won by law' : r.averted ? 'paid off' : r.fight?.held ? 'held' : 'fell',
+    // (an ending card or rule: a loss counts as fell, any other ending as a win by law or card)
+    end: r.ended ? (r.ended.result === 'fell' ? 'fell' : 'won by law') : won ? 'won by law' : r.averted ? 'paid off' : r.fight?.held ? 'held' : 'fell',
     laws: t.laws().reduce((a, l) => {
       const x = a.find((y) => y.name === l.name);
       if (x) x.times += l.times;

@@ -168,6 +168,8 @@ export interface OppCard {
   short: Partial<Pools>;
   /** (laws) the cost as printed, when a law changes it (null: no law does) */
   printed: string | null;
+  /** (the record) why it is here because of earlier runs, in one line (null: it is not) */
+  because: string | null;
   /** (laws) the laws taking it brings (and passing it, `onLapse`), each in words, and every line the player reads
    *  that would change: "Rune-fed fields: gives +2 Materials would become gives +4 Materials" */
   laws: { brings: string[]; onLapse: string[]; changes: string[] };
@@ -307,6 +309,7 @@ export class Table {
         things: (things) => (made ? withPackThings(made.w, this.packs, things, HOME) : things),
         laws: this.packs.flatMap((p) => p.laws),
         lawThings: () => (made ? lawThings(made.w, this.packs) : []),
+        recordLaws: this.packs.flatMap((p) => p.recordLaws),
       },
     });
     made = this.realm;
@@ -403,6 +406,7 @@ export class Table {
         tags: [...t.themes],
         short: r.short(o),
         printed: printed !== cost ? printed : null,
+        because: this.because(o.template),
         laws: { brings: brings.map((id) => this.lawLine(id)), onLapse: onLapse.map((id) => this.lawLine(id)), changes: brings.length ? diffReadout(before, r.withLaws(brings, () => this.readout())) : [] },
       };
     });
@@ -421,7 +425,7 @@ export class Table {
     const r = this.realm;
     const out: LawView[] = [];
     for (const { def, at } of r.lawsInForce()) {
-      const until = lawUntil(at.source, r.w.turn, (id) => r.things().find((t) => t.id === id)?.name ?? id);
+      const until = 'thing' in at.source && at.source.thing.startsWith('record:') ? W.LAW_AFTER : lawUntil(at.source, r.w.turn, (id) => r.things().find((t) => t.id === id)?.name ?? id);
       const same = out.find((x) => x.id === def.id && x.from === at.from && x.until === until);
       if (same) same.times++;
       else out.push({ id: def.id, name: def.name, kind: lawKind(def.does), text: lawText(def.does, this.lawNames), from: at.from, until, times: 1 });
@@ -748,12 +752,48 @@ export class Table {
     return true;
   }
 
-  /** (laws) a run won by an achievement ends here */
+  /** (laws, endings) a run won by an achievement, or ended by a card or a rule, ends here */
   private checkWin(): void {
+    if (this.result) return;
+    const e = this.realm.ended;
+    if (e) {
+      this.result = { title: W.endedTitle(e.result, e.name), lines: [W.endedBy(e.by)] };
+      this.say('run', W.endedTitle(e.result, e.name));
+      return;
+    }
     const w = this.realm.won();
-    if (!w || this.result) return;
+    if (!w) return;
     this.result = { title: W.wonTitle(w.law), lines: [W.winLine(w.count, w.tags)] };
     this.say('run', W.wonTitle(w.law));
+  }
+
+  /** (the record) every card resolved or run out in this world, by place, then by run: "Run 1, Sister Ilveth: Raise
+   *  the glitter spire. Good result." */
+  record(): { place: string; lines: string[] }[] {
+    const r = this.realm;
+    const by = new Map<string, string[]>();
+    for (const e of r.record()) {
+      const place = e.place === HOME ? W.TOWN : r.w.name(e.place);
+      by.set(place, [...(by.get(place) ?? []), W.recordLine(e.run, e.leader, e.title, e.result)]);
+    }
+    return [...by].map(([place, lines]) => ({ place, lines }));
+  }
+  /** (the record) why a card is on the table because of earlier runs, in one plain line (null: it is not) */
+  private because(template: string): string | null {
+    const b = this.packs.map((p) => p.because[template]).find((x) => !!x);
+    if (!b) return null;
+    const r = this.realm;
+    const run = r.runNumber();
+    const parts: string[] = [];
+    for (const id of b.resolved) {
+      const e = r.record().filter((x) => x.card === id && x.run < run && x.result !== 'lapsed').at(-1);
+      if (e) parts.push(W.becauseCard(e.run, e.leader, e.title));
+    }
+    for (const tag of b.remains) {
+      const t = r.things().find((x) => x.tags.includes(tag));
+      if (t) parts.push(W.becauseRemains(t.name));
+    }
+    return parts.length ? W.because(parts) : null;
   }
 
   /** the season ends: the live events under way resolve from the state they are in (the Realm's reading), then the

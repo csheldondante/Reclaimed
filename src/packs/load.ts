@@ -52,6 +52,10 @@ export interface LoadedPack {
   abilities: PackAbility[];
   /** (laws) the pack's laws as the engine's LawDef (spells by the engine's ids) */
   laws: LawDef[];
+  /** (the record) the laws each card leaves for every later run (`laws_after`), and what each card's conditions ask of
+   *  earlier cards: cards resolved, remains of things */
+  recordLaws: { card: string; laws: string[] }[];
+  because: Record<string, { resolved: string[]; remains: string[] }>;
   /** cards left out, each with why (what the engine cannot play yet) */
   left: { card: string; why: string }[];
   problems: Problem[];
@@ -91,11 +95,13 @@ export function effectsText(list: readonly PackEffect[], p: Pack): string {
     else if ('arrive' in e) out.push('40 refugees walk in from {other}.');
     else if ('unlock' in e) out.push(`You can cast ${p.abilities?.find((a) => a.id === e.unlock)?.name ?? e.unlock}.`);
     else if ('law' in e) out.push(`A new law, "${p.laws?.find((l) => l.id === e.law)?.name ?? e.law}", ${e.seasons ? `for this season and ${e.seasons} more` : 'for the rest of the run'}.`);
+    else if ('far_all' in e) out.push(`Every far town ${FAR_WORD[e.far_all === 'captured' ? 'captured' : e.far_all] ?? e.far_all}${e.by === 'dead' ? ' by the dead' : ''}.`);
+    else if ('end_run' in e) out.push(`The run ends here: ${e.name}.`);
   }
   return [...says, ...out].join(' ');
 }
 
-function conds(list: readonly PackCond[], site: string): Pred[] {
+function conds(list: readonly PackCond[], site: string, need: Set<string> = new Set()): Pred[] {
   return list.map((c): Pred => {
     if ('pool' in c) return { helper: 'packPool', args: [c.pool, c.gte ?? -1e9, c.lte ?? 1e9] };
     if ('season_gte' in c) return { helper: 'packSeason', args: [c.season_gte] };
@@ -104,7 +110,11 @@ function conds(list: readonly PackCond[], site: string): Pred[] {
     if ('town_has' in c) return { helper: 'packTags', args: ['town', ...c.town_has] };
     if ('site_has' in c) return { helper: 'packTags', args: ['site', ...c.site_has] };
     if ('far_town_is' in c) return { helper: 'packFar', args: [...c.far_town_is] };
-    if ('resolved' in c) return { event: { kind: doneKind(c.resolved), involving: '$town' } };
+    // (the record: with a result, a place or "earlier", the Realm's record of resolved cards over every run)
+    if ('resolved' in c) {
+      if (!c.tier && !c.at && !c.run) return { event: { kind: doneKind(c.resolved), involving: '$town' } };
+      return { helper: 'recordHas', args: [c.resolved, (c.tier ?? []).join('|'), c.at ? (c.at === 'town' ? '$town' : refOf(c.at, need)) : '', c.run ?? 'any'] };
+    }
     if ('leader' in c) return { helper: 'packLeader', args: [c.leader] };
     throw new Error(`pack: no condition ${JSON.stringify(c)} at ${site}`);
   });
@@ -154,6 +164,9 @@ function effects(list: readonly PackEffect[], p: Pack, need: Set<string>, note: 
     } else if ('unlock' in e) out.push(BASE_SPELL[e.unlock] ? { helper: 'spell', args: [BASE_SPELL[e.unlock]] } : { helper: 'packUnlock', args: [e.unlock] });
     // (laws: the Realm's own `law` helper — season/realm.ts)
     else if ('law' in e) out.push({ helper: 'law', args: [e.law, e.seasons ?? 0] });
+    // (endings and the world: the Realm's `endRun` and `farAll`)
+    else if ('end_run' in e) out.push({ helper: 'endRun', args: [e.end_run, e.name] });
+    else if ('far_all' in e) out.push({ helper: 'farAll', args: [e.far_all, e.by ?? 'raiders'] });
   }
   return out;
 }
@@ -245,7 +258,15 @@ export function loadPack(p: Pack, base: { cards?: readonly string[]; rules?: rea
     if (d.add_rule) d.add_rule = asRule(d.add_rule as RuleDef);
     return { id: l.id, name: l.name, does: d as unknown as LawDo };
   });
-  return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], laws, left, problems };
+  const recordLaws = (p.cards ?? []).filter((c) => c.laws_after?.length).map((c) => ({ card: c.id, laws: [...c.laws_after!] }));
+  const because: LoadedPack['because'] = {};
+  for (const c of p.cards ?? []) {
+    const when = (c.appears_when ?? []) as Record<string, unknown>[];
+    const resolved = when.filter((x) => typeof x.resolved === 'string' && x.run === 'earlier').map((x) => String(x.resolved));
+    const remains = when.flatMap((x) => [...((x.site_has as string[] | undefined) ?? []), ...((x.town_has as string[] | undefined) ?? [])]).filter((t) => t.startsWith('remains-of-'));
+    if (resolved.length || remains.length) because[c.id] = { resolved, remains };
+  }
+  return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], laws, recordLaws, because, left, problems };
 }
 
 /** (laws) the pack things in play that carry laws: each as the Realm's things name it, with its laws
@@ -406,7 +427,8 @@ export function withPackThings(w: FactWorld, packs: readonly LoadedPack[], base:
   for (const t of packThings(w, packs)) {
     const place = t.site ? base.find((x) => x.id === t.site) : town;
     const ruined = !!place?.tags.includes('ruined');
-    out.push({ id: t.id, name: t.def.name, tags: [...(ruined ? ['ruined'] : [...t.def.tags, ...packTagsOn(w, t.id, packs)]), isTag(t.def.id)], at: place?.at ?? null, town: home });
+    // (the record: a thing on a ruined place stays a thing of the world — its remains, with what it was)
+    out.push({ id: t.id, name: t.def.name, tags: [...(ruined ? ['ruined', ...t.def.tags.map((x) => `remains-of-${x}`)] : [...t.def.tags, ...packTagsOn(w, t.id, packs)]), isTag(t.def.id)], at: place?.at ?? null, town: home });
   }
   return out;
 }

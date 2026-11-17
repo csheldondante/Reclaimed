@@ -13,8 +13,10 @@ edited: every reader asks the Realm for the law-applied view (`things()`, `rules
 A law is in force while its **source** stands:
 - a thing in play that carries it (`"laws": [...]` on a pack thing) and is not ruined: it leaves with the thing;
 - a timed grant (`{ "law": "id", "seasons": 2 }` in any effect list, rule act or ability effect);
-- the rest of the run (`{ "law": "id" }`). No law outlives the run (owner question: should one?). A thing that stands
-  into the next run brings its law back, because the thing is physical.
+- the rest of the run (`{ "law": "id" }`). A thing that stands into the next run brings its law back, because the
+  thing is physical;
+- the record (added on the owner's ruling that endings may change the world for good): a card's `laws_after` stand
+  in every later run of the world once the card is in the record of resolved cards.
 
 **Order.** Laws apply in the order they came into force (a thing's law: when the Realm first sees the thing
 standing, after each player action and at the season's end). Two laws on one number apply in that order: `set`

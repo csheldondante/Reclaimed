@@ -61,8 +61,8 @@ export type RuleTrigger = 'turn' | { event: string } | { live: string; tier?: st
 
 /** what an acting rule does: a card put on offer now, a live card's event begun now, a tag set or cleared on the
  *  first thing matched (`timed`: it lasts to the end of the season) */
-export type RuleAct = { offer: string } | { start: string } | { tag: string; on: 'a'; timed?: boolean } | { untag: string; on: 'a' } | { law: string; seasons?: number };
-export const isAct = (fx: RuleDef['effect']): fx is RuleAct => 'offer' in fx || 'start' in fx || 'tag' in fx || 'untag' in fx || 'law' in fx;
+export type RuleAct = { offer: string } | { start: string } | { tag: string; on: 'a'; timed?: boolean } | { untag: string; on: 'a' } | { law: string; seasons?: number } | { end_run: string; name?: string };
+export const isAct = (fx: RuleDef['effect']): fx is RuleAct => 'offer' in fx || 'start' in fx || 'tag' in fx || 'untag' in fx || 'law' in fx || 'end_run' in fx;
 
 export interface RuleDef {
   id: string;

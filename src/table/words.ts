@@ -49,6 +49,17 @@ export const CHANGED_BY = 'Changed by law';
 export const RESOLVE_NOW = 'Settle it now';
 export const RESOLVE_HELP = 'Settle it now with the spells cast so far. What it sets off happens at once.';
 export const lawLine = (name: string, text: string): string => `${name}. ${text}`;
+export const LAW_AFTER = 'In every run after the one that made it.';
+// ---- the record and endings ----
+export const RECORD_TITLE = 'What this world remembers';
+export const RECORD_NONE = 'Nothing yet. Every card you finish or let run out is kept here, run after run.';
+const RESULT_WORD: Record<string, string> = { triumph: 'Best result', success: 'Done', cost: 'Mixed result', failure: 'Bad result', disaster: 'Worst result', lapsed: 'Left to run out' };
+export const recordLine = (run: number, leader: string, title: string, result: string): string => `Run ${run}, ${leader}: ${title}. ${RESULT_WORD[result] ?? result}.`;
+export const becauseCard = (run: number, leader: string, title: string): string => `"${title}" in run ${run}, under ${leader}`;
+export const becauseRemains = (name: string): string => `the remains of ${name}`;
+export const because = (parts: string[]): string => `Here because of what came before: ${parts.join(' and ')}.`;
+export const endedTitle = (result: string, name: string): string => (result === 'won' ? `You won the run: ${name}.` : result === 'fell' ? `The run is lost: ${name}.` : `The run ended: ${name}.`);
+export const endedBy = (by: string): string => `It was ended by ${by}.`;
 export const lawFrom = (from: string, until: string, times: number): string => `${times > 1 ? `In force ${times} times. ` : ''}Made by ${from}. ${until}`;
 export const tagCount = (n: number): string => `${n} thing${n === 1 ? '' : 's'}`;
 export const winLine = (count: number, tags: readonly string[]): string => `${count} things in play that are ${tags.map((t) => `"${t}"`).join(' + ')}`;
@@ -90,6 +101,7 @@ export function ruleSays(r: RuleDef, card: (id: string) => string = (id) => id, 
   if ('tag' in fx) return `${a}${b}${need} Then it becomes "${fx.tag}"${fx.timed ? ' for the season' : ''}.`;
   if ('untag' in fx) return `${a}${b}${need} Then it is no longer "${fx.untag}".`;
   if ('law' in fx) return `${a}${b}${need} Then a new law: "${law(fx.law)}"${fx.seasons ? ` for ${fx.seasons} more seasons` : ' for the rest of the run'}.`;
+  if ('end_run' in fx) return `${a}${b}${need} Then the run ends: ${fx.name ?? fx.end_run}.`;
   const times = r.fires !== undefined && r.fires !== 1 ? ` It pays ${r.fires} times each time it fires.` : '';
   const gives = 'pool' in fx ? `${fx.n > 0 ? '+' : ''}${fx.n} ${pool(fx.pool)}${each}` : fx.op === 'mul' ? `"${fx.amount}" times ${fx.n}${each}` : `${fx.n > 0 ? '+' : ''}${fx.n} "${fx.amount}"${each}`;
   return `${a}${b}${need} Gives ${gives}${r.cap !== undefined ? `, at most ${r.cap}` : ''}.${times}`;
