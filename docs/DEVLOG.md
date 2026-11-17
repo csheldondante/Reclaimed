@@ -25868,8 +25868,10 @@ against its west side, the houses inside standing; shield-6-shield-last — the 
 black rock west of it; shield-6-shield-end (taken 2.2 s later; the shield still had ~1.4 s) — the wall broken into
 arcs as it flickers; shield-7-after-wide, shield-9-run2-land — black rock west of the town, no sheet or names over it;
 shield-8-run2-worldnow — "Run 1: lava came down on the town. A shield kept it out of the town." The event: success, 0
-of 8 town points reached. Not seen yet: the end's streaks themselves (the script now waits for the shield to be gone;
-not re-run).
+of 8 town points reached. The end, re-run with the script waiting for the shield to be gone
+(`local/round13/end/shield-6-shield-end.png`, 0.3 s after): the last ring's beads dissolving round the town, a few
+thin streaks off it — it reads as the ring fading out more than as a burst. Two small orange patches north of the
+ring in that run were not examined.
 
 ## 2026-11-17 — loop round 13 (2): weathers as data (`loop-skeleton`, LS-126; docs/design/PACK_FORMAT.md "Weather")
 
