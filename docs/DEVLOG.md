@@ -24520,3 +24520,35 @@ buying a town's harvest was taken in every run that took pack cards. Changes: th
 runs (was 36) and still taken whenever seen; the Sea League ending 3 of 36 (was 2). The harbour raid and the burning
 of the cove never came up: they need the Reavers hostile, and every bot that saw the toll paid it. The pirates' road is
 the thinnest part of the pack in bot play; a player who refuses the toll gets it (`frontier.test.ts` plays it by hand).
+
+## 2026-11-16 — Ages: leaders the world offers, an ending for good, `packs/ages.json` (`card-table`)
+
+**Why.** The owner: "I want to see all the mutated places and diegetic representations of my choices … When my
+decisions turn the war torn plains into a peaceful kingdom with scheming wizards or when those wizards destroy the
+planet with volcanos that cover the world in ash and flame and the next run is as an ash tribe rebuilding civilization
+or when the Ash hordes encounter a fallen ship they deem an angel and the visitors from it establish a new strange
+city at the crash site around their ship etc." CT-40 had the leader list fixed.
+
+**What changed.** A pack's `leaders` are offered while the world fits (`Table.leaders(world, packs)`, read on the
+world before the run: the record, far places, factions); `replaces` hides the base three. A leader's start: pools,
+income, things put in play (`startThings`), laws for the run, `deck_out` (the Realm filters its templates; the raid
+stays). `laws_after_if` lets an ending's laws stand only if the card ended so (the world burns only when the working
+is left to run out; stopping it leaves no ash laws). The table's "The world now" opens at a run's start: run and
+leader, how earlier runs ended and by what, the far places and the town now, the laws earlier runs left.
+
+**The arc, played** (`ages.test.ts`, four runs in one world): run 1 relieves Millbrook (the base card), makes peace
+with Vellford and is crowned; run 2 invites the wizards (their gifts stack each season: the Laws list says "+N Magic
+each season" as one line), leaves the great working to run out: six sites burn, ash on every town, every far town
+destroyed, "Ash and flame". Run 3: the only leader offered is Chief Cinder; no building cards; the ash camp in play;
+"The world now": run 2's ending, 2 far places gone, 9 of 20 places ruins, ash over the town, the two ash laws; the
+dig-the-ruins template makes one card per ruin; a star falls, the tribe kneels: the Star-Folk found a city at the
+crash site. Run 4: Speaker Oru is offered (the Star-Folk are allies) with the angel's gifts in force.
+
+**A defect found by the test and fixed in the pack:** the wizards' college stood through the ending, so the working
+came again in run 3 and ended the world a second time (destroying the Star City). The ending now removes the college,
+and the ash leaders' deck leaves the working out.
+
+**Bots** (`--pack packs/ages.json`, 36 single runs): peace taken in every run that took pack cards (2 distinct cards:
+Vellford, Millbrook); the crown 5 runs (it needs two sworn towns, and the base raid arc takes Millbrook in most runs);
+the wizards 5; the working stopped 4 times, left to run out once: the ash ending in 1 of 36. The ash and star cards
+need a later run, which the bots do not play (they play one run each).

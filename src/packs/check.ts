@@ -113,6 +113,8 @@ export interface PackCard {
   /** (the record) laws of this pack in force from the first season of every later run of the world this card was
    *  done in: an ending that changed the world */
   laws_after?: string[];
+  /** (ages) only when the card ended so: results (`success` …) or "lapsed" (a world-ending left to run out) */
+  laws_after_if?: string[];
   /** 1 to 5: how soon it comes up among the cards whose conditions hold (3: as a middling base card) */
   weight?: number;
   art?: string;
@@ -174,8 +176,29 @@ export interface Pack {
   abilities?: PackAbility[];
   laws?: PackLaw[];
   factions?: PackFaction[];
+  /** (ages) who the player can be: offered at a run's start while the world fits */
+  leaders?: PackLeader[];
   wants?: string[];
 }
+
+/** (ages) a leader a pack offers at a run's start, while the world fits (`appears_when` over the record and the far
+ *  places), with a start of their own: pools, income, things in play, laws in force, cards out of the deck.
+ *  `replaces`: while this leader can be chosen, the base game's leaders cannot (the world has moved past them) */
+export interface PackLeader {
+  id: string;
+  name: string;
+  /** who they are, one plain line ("Chief of the ash tribe. Few hands, little to build with.") */
+  line: string;
+  appears_when?: PackCond[];
+  replaces?: boolean;
+  pools: Record<string, number>;
+  income?: Record<string, number>;
+  things?: string[];
+  laws?: string[];
+  deck_out?: { ids?: string[]; themes?: string[] };
+}
+/** (ages) the conditions a leader's `appears_when` may use: read on the world before the run, with no run to ask */
+export const LEADER_COND_KEYS: readonly string[] = ['resolved', 'far_town_is', 'faction_stance', 'faction_holds'];
 
 // ---- the vocabularies (each the engine's own: test/unit/packs.test.ts holds them to it) -------------------------------
 
@@ -290,7 +313,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     err('pack', 'The file needs a "pack" block with an "id" and a "name".');
     return out;
   }
-  for (const k of ['tags', 'things', 'cards', 'rules', 'events', 'abilities', 'laws', 'factions', 'wants'] as const) if (p[k] !== undefined && !Array.isArray(p[k])) err(k, `"${k}" must be a list.`);
+  for (const k of ['tags', 'things', 'cards', 'rules', 'events', 'abilities', 'laws', 'factions', 'leaders', 'wants'] as const) if (p[k] !== undefined && !Array.isArray(p[k])) err(k, `"${k}" must be a list.`);
   if (out.length) return out;
   const tags = p.tags ?? [];
   const things = p.things ?? [];
@@ -369,6 +392,8 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   const produced = new Set<string>();
   const read = new Set<string>();
   const put = new Set<string>();
+  // (ages: a leader's start puts things in play too)
+  for (const l of Array.isArray(p.leaders) ? p.leaders : []) for (const t of l.things ?? []) put.add(t);
   const needTag = (t: string, where: string, how: 'read' | 'made') => {
     // (the record: a ruined thing or place carries what it was as "remains-of-<tag>"; only read, never set)
     const remains = /^remains-of-(.+)$/.exec(t)?.[1];
@@ -875,6 +900,10 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   };
   // (the record: a card's `laws_after` stand in every later run of the world it was done in)
   for (const c of cards) for (const l of c.laws_after ?? []) needLaw(l, `cards (${c.id}).laws_after`);
+  for (const c of cards) {
+    for (const t of c.laws_after_if ?? []) if (!TIERS.includes(t) && t !== 'lapsed') err(`cards (${c.id}).laws_after_if`, `"laws_after_if" lists results (${TIERS.join(', ')}) or "lapsed". It has "${t}".`);
+    if (c.laws_after_if?.length && !c.laws_after?.length) err(`cards (${c.id}).laws_after_if`, '"laws_after_if" goes with "laws_after".');
+  }
   laws.forEach((l, i) => {
     const w = `laws[${i}] (${l.id})`;
     if (!l.name) err(w, 'A law needs a "name" the player reads in the list of laws.');
@@ -986,6 +1015,29 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
 
   // ---- chains that come back to themselves (to look at: each step is bounded, one firing a season) ----
   for (const c of chainCycles([p])) warn(`rules (${c.rule})`, cycleText(c.way));
+
+  // ---- (ages) leaders ----
+  (p.leaders ?? []).forEach((l, i) => {
+    const w = `leaders[${i}] (${l.id})`;
+    id('leader', l.id, `leaders[${i}]`);
+    if (LEADER_IDS.includes(l.id)) err(w, `"${l.id}" is a leader of the base game already.`);
+    if (!l.name || !l.line) err(w, 'A leader needs a "name" and a "line": who they are, in one plain sentence.');
+    for (const [k, n] of Object.entries(l.pools ?? {})) (pool(k, w), (!Number.isInteger(n) || n < 0) && err(w, `A starting pool is a whole number, 0 or more. ${k} is ${JSON.stringify(n)}.`));
+    if (!isObj(l.pools)) err(w, 'A leader needs "pools": what the run starts with.');
+    for (const [k, n] of Object.entries(l.income ?? {})) (GOODS.includes(k) || err(w, `Income is of ${GOODS.join(', ')}.`), (!Number.isInteger(n) || n < 0) && err(w, `Income is a whole number. ${k} is ${JSON.stringify(n)}.`));
+    for (const t of l.things ?? []) {
+      if (!thingIds.has(t)) err(w, `"things" names "${t}", which is not in the pack's "things".`);
+      put.add(t);
+    }
+    for (const x of l.laws ?? []) needLaw(x, w);
+    if (l.deck_out !== undefined && (!isObj(l.deck_out) || (!Array.isArray(l.deck_out.ids) && !Array.isArray(l.deck_out.themes)))) err(w, '"deck_out" is { "themes": ["build"] } or { "ids": [...] }: cards out of the deck for this leader\'s runs.');
+    for (const c of (l.appears_when ?? []) as Record<string, unknown>[]) {
+      const k = Object.keys(c).find((x) => COND_KEYS.includes(x));
+      if (!k || !LEADER_COND_KEYS.includes(k)) err(w, `A leader's "appears_when" is read before the run, on the world: it may use ${LEADER_COND_KEYS.join(', ')}. It has ${JSON.stringify(c)}.`);
+    }
+    conds(l.appears_when, `${w}.appears_when`);
+    if (l.replaces && !l.appears_when?.length) err(w, 'A leader that replaces the base leaders needs an "appears_when": otherwise the base leaders are never offered.');
+  });
 
   // ---- tags nothing produces, tags nothing reads ----
   for (const t of tags) {

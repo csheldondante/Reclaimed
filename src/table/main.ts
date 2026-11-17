@@ -220,8 +220,20 @@ function end(): string {
 <h2>${W.STORY_TITLE}</h2><div class="log">${story.map((l) => `<div>${esc(l)}</div>`).join('')}</div>`;
 }
 
+/** (ages) who the player can be: for the next run once this one is over (the world as it ended), else for a restart */
+function leaderChoices(): { id: string; name: string; line: string }[] {
+  const list = Table.leaders(table.over ? table.realm.snapshot() : undefined, packs);
+  if (!list.some((l) => l.id === leader)) leader = list[0].id;
+  return list;
+}
+
+/** (ages) the world as the run finds it: open in the run's first season */
+function worldNow(): string {
+  return drawer('world', W.WORLD_TITLE, table.worldNow().map((l) => `<div class="why">${esc(l)}</div>`).join(''), table.season === 1 && !table.over);
+}
+
 function footer(): string {
-  const leaders = LEADERS.map((l) => `<option value="${l.id}" ${l.id === leader ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
+  const leaders = leaderChoices().map((l) => `<option value="${l.id}" ${l.id === leader ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
   const main = table.over ? `<button class="main" data-act="next">${W.NEW_RUN}</button>` : `<button class="main" data-act="end">${W.END_SEASON}</button>`;
   const setup = drawer('setup', W.SETUP, `<div class="bar" style="margin-top:6px"><label>${W.SEED} <input id="seed" type="number" value="${seed}"></label><label>${W.LENGTH} <input id="seasons" type="number" min="4" max="40" value="${seasons}"></label><select id="leader" title="${W.LEADER}">${leaders}</select><button data-act="restart">${W.RESTART}</button></div>`);
   return `${setup}<footer><div class="bar">${main}</div></footer>`;
@@ -231,7 +243,7 @@ function draw(): void {
   const y = window.scrollY;
   const built = table.built();
   const builtRow = built.length ? `<h2>${W.BUILT_TITLE}</h2>${tags(built, 'state')}` : '';
-  app.innerHTML = header() + end() + lawsList() + events() + opps() + abilities() + rules() + inPlay() + farPlaces() + working() + builtRow + log() + recordList() + packDrawer() + footer();
+  app.innerHTML = header() + worldNow() + end() + lawsList() + events() + opps() + abilities() + rules() + inPlay() + farPlaces() + working() + builtRow + log() + recordList() + packDrawer() + footer();
   window.scrollTo(0, y);
 }
 

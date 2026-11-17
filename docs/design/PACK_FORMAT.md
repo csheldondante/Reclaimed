@@ -19,7 +19,10 @@ settles it; the camp carries the resource tag. (4) **Far towns are things of the
 `standing`/`ruined`, `yours` or the faction's id, its resource, `founded`, `colony` — so a colony's income is a rule
 and stops when the colony is lost. The home town carries `<faction>:<stance>`. (5) The record names what a card was
 bound to: `{ "resolved": "card", "about": "$town" }`. (6) The table's "Far places" reads as news: who holds what,
-who stands with whom, what changed and which card did it.
+who stands with whom, what changed and which card did it. (7) **Leaders and ages** (see "Leaders and ages"): a pack's
+`leaders`, offered while the world fits (the record, far places, factions), with their own start (pools, things,
+laws, cards out of the deck); `replaces` hides the base leaders; `laws_after_if` on a card; the table's "The world
+now" at a run's start. Example: `packs/ages.json`.
 
 **Changed since draft 5.** (1) **Laws** (see "laws"; design: `docs/design/LAWS.md`): a new top-level block `laws`,
 each one thing that changes the rules of the game for the rest of the run — tags, rules, card costs, spells and
@@ -111,6 +114,7 @@ of being invented inline. The validator rejects invented fields.
   "abilities": [ ... ],
   "laws":      [ ... ],
   "factions":  [ ... ],
+  "leaders":   [ ... ],
   "wants":     [ "plain-word requests for effects, tags or looks the vocabularies lack" ]
 }
 ```
@@ -174,6 +178,30 @@ A card's `bind` names its variables. Each is one of:
 - A deal is a card that sets a stance and usually puts a policy thing in play with an upkeep (tribute paid) or a rule
   that pays (a cut of their takings); breaking it is another card, or the card that runs out.
 - The world's own factions (the Millbrook Council …) cannot be named by a pack yet.
+
+## Leaders and ages (draft 7)
+
+Who the player is in the next run depends on the world. A pack may declare `leaders`:
+
+```json
+"leaders": [ { "id": "ages-ash-chief", "name": "Chief Cinder", "line": "Chief of the ash tribe. Few hands, little to build with.",
+               "appears_when": [ { "resolved": "ages-fire-mountain", "tier": ["lapsed"] } ], "replaces": true,
+               "pools": { "magic": 0, "might": 1, "labor": 3, "materials": 2, "intel": 1, "unrest": 0 }, "income": { "materials": 1 },
+               "things": ["ages-ash-camp"], "laws": [], "deck_out": { "themes": ["build"], "ids": ["ages-peace"] } } ]
+```
+
+- A leader is offered at a run's start while the world fits its `appears_when`, read on the world before the run:
+  `resolved` (the record, any earlier run), `far_town_is`, `faction_stance`, `faction_holds`. Nothing else.
+- `replaces`: while this leader can be chosen, the base game's three leaders cannot (the world has moved past them).
+- The start: `pools` (what the run starts with), `income`, `things` of the pack put in play, `laws` of the pack in force
+  for the run, `deck_out` (cards out of this run's deck, by id or theme; the base building cards have the theme
+  `build`; the raid stays).
+- The table's "The world now" says, at a run's start: which run and who leads; how each earlier run ended and by what;
+  the far places and the town now (gone, yours, ruins, signs); the laws earlier runs left.
+- **An ending for good**: an `if_expires` (or result) that burns the town's sites, puts `ashfall` on `"world"`,
+  `far_all` destroys every far town and `end_run` ends the run; its `laws_after` stand in every later run.
+  `"laws_after_if": ["lapsed"]` (results or `lapsed`): only when the card ended so — the world burns only if nobody
+  stopped it. Example: `packs/ages.json`.
 
 ## Far towns as things (draft 7)
 

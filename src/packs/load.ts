@@ -16,7 +16,7 @@ import type { LawDef, LawDo } from '../living/laws';
 import type { FactWorld } from '../living/world';
 import { placeState, placeStates } from '../mutate/facts';
 import { helper as dslHelper } from '../living/dsl';
-import { checkPack, reportText, siteOf, GOODS, PEOPLE, type Pack, type PackAbility, type PackCard, type PackCond, type PackEffect, type PackEvent, type PackTag, type PackThing, type Problem } from './check';
+import { checkPack, reportText, siteOf, GOODS, PEOPLE, type Pack, type PackAbility, type PackCard, type PackCond, type PackEffect, type PackEvent, type PackLeader, type PackTag, type PackThing, type Problem } from './check';
 
 const POOL_WORD: Record<string, string> = { magic: 'Magic', might: 'Might', labor: 'Labor', materials: 'Materials', intel: 'Intel', unrest: 'Unrest' };
 const LAND_WORD: Record<string, string> = { flooded: 'is flooded', burned: 'burns', melted: 'goes under lava', buried: 'is buried', dried: 'dries up', withered: 'withers', greened: 'grows over, thick and green' };
@@ -55,7 +55,7 @@ export interface LoadedPack {
   laws: LawDef[];
   /** (the record) the laws each card leaves for every later run (`laws_after`), and what each card's conditions ask of
    *  earlier cards: cards resolved, remains of things */
-  recordLaws: { card: string; laws: string[] }[];
+  recordLaws: { card: string; laws: string[]; results?: string[] }[];
   because: Record<string, { resolved: string[]; remains: string[] }>;
   /** cards left out, each with why (what the engine cannot play yet) */
   left: { card: string; why: string }[];
@@ -74,6 +74,40 @@ export interface PackHost {
   began(): number;
   /** (draft 7) the tags of the thing of the rules with this id now (a site, a far town, a found place); null: none */
   thingTags(id: EntityId): readonly string[] | null;
+}
+
+// ---- (ages) leaders the world offers ---------------------------------------------------------------------------------
+
+/** whether the world fits a pack leader's `appears_when` (read before the run: the record, the far places, factions) */
+export function leaderFits(w: FactWorld, l: PackLeader, home: EntityId): boolean {
+  return (l.appears_when ?? []).every((c) => {
+    if ('resolved' in c) return recordEvents(w).some((e) => e.card === c.resolved && (c.tier?.length ? c.tier.includes(e.result) : e.result !== 'lapsed'));
+    if ('far_town_is' in c) return farThings(w, [], home).some((t) => t.tags.includes('far-town') && c.far_town_is.some((s) => t.tags.includes(s)));
+    if ('faction_stance' in c) return c.is.includes(stanceOf(w, c.faction_stance, c.with ?? 'player'));
+    if ('faction_holds' in c) {
+      const fac = c.faction_holds === 'player' ? 'yours' : c.faction_holds;
+      const n = farThings(w, [], home).filter((t) => t.tags.includes(fac) && t.tags.includes('standing')).length;
+      return n >= (c.gte ?? (c.lte === undefined ? 1 : 0)) && n <= (c.lte ?? 1e9);
+    }
+    return false;
+  });
+}
+/** the record's cards (card-done / card-lapsed fact events: season/realm.ts recordOf, read here without the Realm) */
+function recordEvents(w: FactWorld): { card: string; result: string }[] {
+  return w.facts
+    .events()
+    .filter((e) => (e.kind.startsWith('card-done:') || e.kind === 'card-lapsed') && !!e.about?.thing)
+    .map((e) => ({ card: e.about!.thing!, result: e.kind === 'card-lapsed' ? 'lapsed' : e.kind.slice('card-done:'.length) }));
+}
+/** a pack leader's start on the run's world: its things put in play (at their own places) */
+export function startThings(w: FactWorld, packs: readonly LoadedPack[], l: PackLeader, home: EntityId, siteOfKey: (k: string) => EntityId): void {
+  const home_ = w.settlement(home)!;
+  for (const id of l.things ?? []) {
+    const t = packs.flatMap((p) => p.things).find((x) => x.id === id);
+    if (!t || w.facts.entity(thingEntity(id))) continue;
+    const k = siteOf(t.at);
+    w.facts.add({ id: thingEntity(id), kind: 'building', name: t.name, at: { region: home_.region, settlement: home, ...(k ? { site: siteOfKey(k) } : {}) }, attrs: { thing: t.id, what: t.kind }, cause: `leader:${l.id}` });
+  }
 }
 
 // ---- (draft 7) factions, stances, far towns as things ---------------------------------------------------------------
@@ -448,7 +482,7 @@ export function loadPack(p: Pack, base: { cards?: readonly string[]; rules?: rea
     if (d.add_rule) d.add_rule = asRule(d.add_rule as RuleDef);
     return { id: l.id, name: l.name, does: d as unknown as LawDo };
   });
-  const recordLaws = (p.cards ?? []).filter((c) => c.laws_after?.length).map((c) => ({ card: c.id, laws: [...c.laws_after!] }));
+  const recordLaws = (p.cards ?? []).filter((c) => c.laws_after?.length).map((c) => ({ card: c.id, laws: [...c.laws_after!], ...(c.laws_after_if?.length ? { results: [...c.laws_after_if] } : {}) }));
   const because: LoadedPack['because'] = {};
   for (const c of p.cards ?? []) {
     const when = (c.appears_when ?? []) as Record<string, unknown>[];

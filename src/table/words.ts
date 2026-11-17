@@ -7,6 +7,20 @@ import { POOLS, type Pool, type Pools } from '../season/ledger';
 import { POOL_NAME } from '../season/words';
 
 export const FAR = 'Far places';
+// (ages: the world at a run's start)
+export const WORLD_TITLE = 'The world now';
+export const leaderStart = (name: string): string => `${name}'s people`;
+export const worldRun = (run: number, name: string, line: string): string => `Run ${run} of this world. ${name} leads. ${line}`;
+export const worldEnded = (run: number, note: string): string => `Run ${run} ended: ${note}.`;
+const SIGN_LINE: Record<string, string> = { ashfall: 'Ash lies over the town.', darkness: 'The sky over the town is dark.', deadrise: 'The dead walk the town.', crime: 'Thieves work the streets.' };
+export function worldState(o: { far: number; destroyed: number; yours: number; held: number; ruins: number; of: number; signs: string[] }): string {
+  const parts = [`Out there: ${o.far} far place${o.far === 1 ? '' : 's'}`];
+  if (o.destroyed) parts.push(`${o.destroyed} gone`);
+  if (o.yours) parts.push(`${o.yours} yours`);
+  if (o.held) parts.push(`${o.held} standing, not yours`);
+  return `${parts.join(', ')}. ${o.ruins ? `${o.ruins} of the town's ${o.of} places are ruins. ` : ''}${o.signs.map((s) => SIGN_LINE[s] ?? s).join(' ')}`.trim();
+}
+export const worldLaws = (names: string[]): string => `Laws from earlier runs: ${names.join(', ')}.`;
 // (draft 7: the far places as news)
 export const FAR_HELP = 'Who holds what out there, who is against whom, and what changed lately.';
 export const FAR_STANCES = 'Who stands with whom';
@@ -20,7 +34,7 @@ export function farLine(o: { tags: readonly string[]; holder: string | null; tri
   const known = new Set(['town', 'far-town', 'standing', 'ruined', 'yours', 'colony', 'founded', 'trade-partner', 'found', state]);
   const what = t.filter((x) => !known.has(x) && !x.includes(':'));
   const parts = [t.includes('colony') ? 'your colony' : (STATE_SAYS[state] ?? state)];
-  if (o.holder && !t.includes('colony')) parts.push(state === 'vassal' ? `sworn to ${o.holder}` : `held by ${o.holder}`);
+  if (o.holder && !t.includes('colony') && state !== 'destroyed' && state !== 'abandoned') parts.push(state === 'vassal' ? `sworn to ${o.holder}` : `held by ${o.holder}`);
   if (what.length) parts.push(what.join(', '));
   if (o.tribute > 0 && state === 'vassal') parts.push(`pays ${o.tribute} a season`);
   if (o.partner) parts.push('trades with you');
