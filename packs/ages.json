@@ -39,6 +39,27 @@
       "text": "Tents of grey cloth among the ruins. The tribe lives on what it digs up." }
   ],
   "cards": [
+    { "id": "ages-star-falls", "title": "A star falls past {town}",
+      "presenter": { "name": "Mother Ide", "role": "star-gazer", "at": "site:tower" },
+      "pitch": "Something burning came down in the hills past {town} last night. It did not fall like a stone. Send riders to find it. 1 Intel.",
+      "bind": { "town": { "far": { "state": ["standing"] } } }, "weight": 1, "once": "run",
+      "cost": { "intel": 1 },
+      "if_taken": [ { "poi": "crash", "id": "ages-fallen-ship", "name": "the Fallen Ship", "near": "$town" },
+                    { "say": "The riders found a ship of bright metal, split open in a burned crater past {town}. It is on your map." } ],
+      "if_expires": [ { "poi": "crash", "id": "ages-fallen-ship", "name": "the Fallen Ship", "near": "$town" },
+                      { "say": "Nobody went. The burned crater past {town} is on the travellers' maps anyway." } ],
+      "art": "A cracked silver hull in a smoking crater among dark hills at night, painterly." },
+
+    { "id": "ages-node-temple", "title": "The old temple on the node",
+      "presenter": { "name": "Brother Senn", "role": "priest", "at": "site:shrine" },
+      "pitch": "There is a ruined temple out on the moor where the old power comes up through the ground. Rebuild its altar and it will feed our wizards. 2 Materials.",
+      "appears_when": [ { "has_thing": "ages-college" } ], "weight": 2,
+      "cost": { "materials": 2 },
+      "if_taken": [ { "poi": "temple", "id": "ages-node-temple", "name": "the Temple of the Node" }, { "income": "magic", "add": 1 },
+                    { "say": "The altar is raised again on the moor. Its power comes to your wizards each season." } ],
+      "if_expires": [ { "say": "The temple on the moor stays a ruin." } ],
+      "art": "A ring of broken pillars on a moor, blue light rising from the stones, painterly." },
+
     { "id": "ages-peace", "title": "Make peace with {town}",
       "presenter": { "name": "Chancellor Wend", "role": "chancellor", "at": "site:keep" },
       "pitch": "The plains have burned for ten years. {town} is tired of it. Send gifts and a treaty and it will swear to us.",
@@ -175,14 +196,14 @@
   ],
   "abilities": [
     { "id": "ages-ward", "name": "Fire ward", "cost": { "magic": 1 },
-      "in_event": { "kinds": ["eruption"], "shield": 26, "seconds": 75 },
-      "text": "Cast it over the town. For 75 seconds lava runs round everything within 26 paces of where you cast it.",
+      "in_event": { "kinds": ["eruption"], "shield": 26, "seconds": 75, "energy": 300, "regen": 5 },
+      "text": "Cast it over the town. For 75 seconds lava, fire and raiders stop at its edge, 26 paces from where you cast it. Lava piling against it wears it down. If it wears down too fast, it gives way.",
       "look": "a dome of sparks over the houses, and lava parting round it" }
   ],
   "events": [
     { "id": "ages-lava-front", "tag": "eruption", "title": "Lava comes down the mountain",
       "how": "Lava is running down toward the town. Raise the Fire ward over the houses.",
-      "hazard": { "kind": "lava", "points": 8, "spread": 26, "far": 36, "rate": 220, "pour": 45 },
+      "hazard": { "kind": "lava", "points": 8, "spread": 26, "far": 160, "rate": 200, "pour": 60 },
       "seconds": 90,
       "abilities": ["ages-ward"],
       "amounts": ["reached"],

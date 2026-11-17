@@ -1,4 +1,21 @@
-# Opportunity pack format (draft 8, 2026-11-16: the raid as a card, homes, unlocks, between runs)
+# Opportunity pack format (draft 9, 2026-11-17: points of interest, free towns, the shield's energy)
+
+**Changed since draft 8 (loop round 14, 2026-11-17).** Every draft-8 pack loads unchanged.
+(1) **Points of interest** (see "Points of interest"): places on the map that are not towns — `camp`, `lair`,
+`tower`, `crash`, `battlefield`, `vault`, `temple`, `bridge`, `dungeon`, `giant`. A new effect puts one on the map,
+`{ "poi": "<kind>", "id": "<pack>-…", "name": "…", "near": "town" | "$var" | "poi:<id>", "holder": "<faction>" }`;
+a new effect changes one, `{ "poi_state": "cleared" | "gone" | "standing", "where": "$var" | "poi:<id>" }`; a new
+variable binds one, `{ "poi": { "kind": [...], "state": ["standing" | "cleared"], "tags": [...], "not": [...],
+"holder": "<faction>" } }`. The raiders' camp is one: `poi:raiders-camp` (kind `camp`, holder `raiders`); cleared
+or gone, the raiders have no camp (no "Raiders on the road" unless they hold a town). The rules read a POI as a thing:
+`poi`, its kind, `standing` or `cleared`, its holder's id, the pack tags set on it. (2) **`far:free:<n>`**: the `n`
+nearest standing towns nobody holds (not yours, no faction's) — in `far`, `mutate`, `sign`, `trade`. (3) **A
+shield's energy**: an ability's `in_event` with `shield` may say `"energy"` (its store, over 0) and `"regen"` (what
+it gets back a second, 0 or more); a shield also stops fire and units now, and gives way when what presses on it
+drains its store (lava at its rim, fire there, foes there). Without them: energy 100, regen 2. (4) **Berserk** (an
+ability's `in_event.berserk`) now takes anyone within its reach, your own people too (every unit has a blow). Examples:
+`packs/frontier.json` (break the raiders' camp, a wolf lair and its clearing; `league-grows` now `far:free:1`),
+`packs/ages.json` (a crash site, a temple; the Fire ward's energy; the lava front's vent 160 cells up the slope).
 
 **Added in loop round 12 (2026-11-17), no change to anything existing:** an event's `hazard` may be a front, `lava` or
 `flood`, with the amount `reached`; an ability's `in_event` may raise a `shield` (with `seconds`). See events and
@@ -309,6 +326,41 @@ prefixed with the pack id (`volcano-ash-sweepers`). A card id may not be one of 
 `appears_when` is added to every card's. Target size: 12 to 20 cards, 6 to 10 rules, 1 or 2 threats, 1 to 3 live
 events, 2 to 4 abilities. A full example that passes the validator: `packs/sample.json`.
 
+## Points of interest (draft 9)
+
+The owner: "make any interesting poi like this. Bandit camps, monster lairs, wizard towers, giants bound to the land,
+crash sites of star ships, ancient battlefields, bridges, dungeons, vaults, temples to channel magical nodes etc."
+
+A point of interest (POI) is a place on the world map that is not a town. Only a card makes, changes or removes one;
+nothing happens to it on a timer.
+
+```json
+{ "poi": "lair", "id": "frontier-greyden", "name": "the Grey Den", "near": "$town" }
+{ "poi_state": "cleared", "where": "$lair" }
+"bind": { "lair": { "poi": { "kind": ["lair"], "state": ["standing"] } } }
+```
+
+- **Kinds**: `camp`, `lair`, `tower`, `crash`, `battlefield`, `vault`, `temple`, `bridge`, `dungeon`, `giant`. The
+  kind sets how far from `near` it goes and its colour on the map; it does not yet change what is built there (a
+  plain marker: a thread of smoke and a column of sparks, until each kind has its own look).
+- **Where it goes**: near `near` — `"town"` (the default: the home town), a far or POI variable, or `"poi:<id>"` —
+  at the kind's distance (a camp 90-160 cells, a crash site 120-240), on the side farthest from every town and every
+  other POI. The same card in the same world puts it in the same place. You do not give coordinates.
+- **States**: `standing` (the default), `cleared` (taken out: a lair emptied, a camp broken), `gone` (off the map;
+  the record keeps it). `{ "poi_state": "standing" }` puts a cleared one back.
+- **Holder**: `"holder": "<faction>"` (or `"raiders"`): who keeps it. A holder's POI is no town it holds
+  (`faction_holds` counts towns only).
+- **The rules read it as a thing**: `poi`, its kind, `standing` or `cleared`, its holder's id, and the pack tags set on
+  it (`{ "tag": "frontier-haunted", "on": "$lair" }`).
+- **The raiders' camp** is a POI from the start of every world: `poi:raiders-camp`, kind `camp`, holder `raiders`.
+  Clearing it (`{ "poi_state": "cleared", "where": "poi:raiders-camp" }` or a `camp` variable) leaves the raiders
+  nowhere to ride out from: "Raiders on the road" is no longer dealt (unless they hold a far town). Allying with them
+  is a `stance`, as before. In 3D a raid comes down the road that points nearest their camp.
+- A card that names `poi:<id>` comes up only while that POI is on the map. A POI variable binds a POI that is on the
+  map (not `gone`).
+- Shown: a pin on the atlas map in the kind's colour (a cleared one says so); in 3D, when the window holds it, the
+  plain marker. The card table lists POIs with the far places.
+
 ## Places
 
 A place is the home town, one of its sites, or places on the whole world map. Nothing else is accepted.
@@ -325,6 +377,8 @@ A place is the home town, one of its sites, or places on the whole world map. No
   `trade`. Each names every town it matches, nearest the home town first:
   - `"far:all"`: every far town, whatever its state.
   - `"far:nearest:2"`: the 2 nearest standing towns.
+  - (draft 9) `"far:free:1"`: the nearest standing town nobody holds — not yours, not sworn, taken or founded by
+    anyone.
   - `"far:where:<state>"`: every far town that is `standing`, `destroyed`, `abandoned`, `occupied`, `vassal`,
     `founded`, `trade-partner`, or `founded-by-player`.
   - `"far:<id>"`: a place this pack founds (`{ "far": "founded", "id": "copper-ford", ... }`), once it exists.
@@ -699,16 +753,21 @@ What the player casts on a thing in play, or into a live event (`in_event`, belo
   `"in_event": { "kinds": ["raid"], "kills": 3 }` or `{ "kinds": ["fire"], "douses": 3 }`. Each cast puts down that
   many foes, or puts out that many burning lots, in any live event of one of those kinds, the base game's too.
   Exactly one of `kills` and `douses`. Fire does 1, Heat ray 2, Rain 2: above 3 the validator says to look.
-  (Loop round 10, the owner's toy spells.) Or `{ "kinds": ["bout"], "berserk": 8 }`: the foes within 8 cells of the
-  tap turn on anyone near them, one another too, and anyone takes them on — or `{ "kinds": ["bout"], "hides": 6 }`:
+  (Loop round 10, the owner's toy spells.) Or `{ "kinds": ["bout"], "berserk": 8 }`: (draft 9) everyone within 8
+  cells of the tap — foes and your own people alike, a crowd of townsfolk too: every unit has a blow — turns on anyone
+  near them, one another too, and anyone takes them on — or `{ "kinds": ["bout"], "hides": 6 }`:
   your people within 6 cells are hidden: no foe goes for them, and they are not drawn. Exactly one of the five. In
   the 3D game these act on the units themselves (the card table has no units: there they do nothing yet). Example:
   `packs/arena.json` Red mist and Veil.
   (Loop round 12.) Or `{ "kinds": ["eruption"], "shield": 26, "seconds": 75 }`: a shield 26 paces round the tap
   for 75 seconds (60 if `seconds` is left out). Lava and flood water cannot flow into it and part round it; what is
-  inside stays as it was. It is drawn as a dome of sparks. It does not stop people. At the card table a shield cast
-  into a front means the front reaches none of its points. `seconds` goes with `shield` only. Rain does nothing to a
-  front. Example: `packs/ages.json` the Fire ward, its card "Learn the court's fire ward", and the eruption "The
+  inside stays as it was. It is drawn as a dome of sparks. (Draft 9) Fire does not burn or spread inside it, and no
+  one walks through its edge, in or out — your people and foes alike. It has a store of energy: `"energy": 300`
+  (over 0; 100 if left out) and `"regen": 5` (what it gets back a second, 0 or more; 2 if left out). Lava standing at
+  its edge, fire burning there and foes pressing on it drain the store; when the store is empty it gives way at once
+  (a burst of light) and the player is told. It ends with its energy or its time. At the card table a shield cast
+  into a front means the front reaches none of its points (the table has no energy yet). `seconds`, `energy` and
+  `regen` go with `shield` only. Rain does nothing to a front. Example: `packs/ages.json` the Fire ward, its card "Learn the court's fire ward", and the eruption "The
   mountain spits fire" that the wizards' first working starts.
 - A pack ability must be unlocked by a card (`{ "unlock": "id" }`). It is the player's for that run; it is written
   in the run's history, so a saved run keeps it.

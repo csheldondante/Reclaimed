@@ -46,6 +46,11 @@ export class Water {
     return columnAt(this.core.dims.w, this.core.dims.h, x, y, this.core.ring);
   }
 
+  /** (loop round 14) Read the water at these points (world units) now, in one read — fresh, as Fire.loadFlowLava */
+  loadDepth(points: readonly (readonly [number, number])[]): Promise<void> {
+    return this.mirror.refreshCells(points.map(([x, y]) => cellAt(x, y)), ['water']);
+  }
+
   /** Water depth (cells) on the ground at (x, y). */
   depthAt(x: number, y: number): number | null {
     const [cx, cy] = cellAt(x, y);

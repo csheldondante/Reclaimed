@@ -24,6 +24,7 @@ import { FactWorld } from '../../living/world';
 import { mutators } from '../../mutate';
 import type { MutateEngine } from '../../mutate/engine';
 import { ROW_H, cellAt } from '../../world/lattice';
+import { POI_COLOUR } from '../../season/pois';
 import { restoreMutators } from './mutators';
 import type { SiteKey } from '../../season/realm-templates';
 import { declutter, placeSites, REACH as SITE_REACH } from '../../season/sites';
@@ -72,6 +73,8 @@ interface PendingStart {
 }
 /** the zoom on a district being built while a season passes: its lots and the people working on them read */
 const BUILD_ZOOM = 9;
+/** (loop round 14) seconds between a point of interest's marks in 3D */
+const POI_MARK_S = 1.2;
 /** (loop round 11) bursts round a unit spell's reach as it is cast */
 const SPELL_RING = 16;
 /** how far from the home town's centre the camera may go (cells): past the mountain an outcome can name (640), short
@@ -154,8 +157,16 @@ class Game implements RunGame {
       this.watchBuild(dt);
       this.live.update(dt);
       this.liveLine();
+      this.poiMarks(dt);
     };
     requestAnimationFrame(tick);
+    // (loop round 14, season/pois.ts: the points of interest on the atlas map — a pin each, its kind's colour, a
+    // cleared one says so; the map's own pins kept)
+    const map = scene.atlasMap;
+    if (map) {
+      const prev = map.marks;
+      map.marks = () => [...(prev?.() ?? []), ...(this.realm?.pois() ?? []).map((p) => ({ at: p.cell, name: p.state === 'cleared' ? `${p.name} (cleared)` : p.name, colour: POI_COLOUR[p.kind] }))];
+    }
     // (on the window, before the map's own input: the level's input layer lies over the canvas, so a listener on the
     // canvas never heard the tap — round 1's cast was never seen. A tap on the loop's own screens is not a cast)
     window.addEventListener(
@@ -216,6 +227,29 @@ class Game implements RunGame {
 
   private at3(p: [number, number]): V3 {
     return [p[0], p[1], this.z(p[0], p[1])];
+  }
+
+  /**
+   * (loop round 14, season/pois.ts) The points of interest the window holds, marked in 3D with the plain marker (VISION
+   * §5: "a plain marker is the floor"): a standing one a column of sparks and a thread of smoke every POI_MARK_S, a
+   * cleared one smoke only. Nothing is built there yet (BACKLOG LS-134: each kind its own look).
+   */
+  private poiT = 0;
+  private poiMarks(dt: number): void {
+    if ((this.poiT += dt) < POI_MARK_S) return;
+    this.poiT = 0;
+    const S = this.scene.stream;
+    const fx = this.scene.worldApi?.fx;
+    const terrain = this.scene.worldApi?.terrain;
+    if (!S || !fx || !terrain || !this.realm) return;
+    for (const p of this.realm.pois()) {
+      const x = p.cell[0] - S.origin[0];
+      const y = (p.cell[1] - S.origin[1]) * ROW_H;
+      if (!terrain.inWindow(x, y)) continue;
+      const z = this.z(x, y);
+      if (p.state === 'standing') fx.burst('sparks', x, y, z + 1, { count: 14, speed: 4, vel: [0, 0, 9] });
+      fx.burst('smoke', x, y, z + 1, { count: 6 });
+    }
   }
 
   /** the home town's sites, each as an offset from the town's centre (x cells, y world units): placed once a town
@@ -1305,7 +1339,9 @@ class Game implements RunGame {
       // one another too; your people within reach are hidden from the foes and from sight)
       const units = this.scene.units;
       if ((m.berserk || m.hides) && !units?.spell) throw new Error('loop: these units take no spells (Units.spell)');
-      if (m.berserk) units!.spell!({ at: [g[0], g[1]], radius: m.berserk, who: 'foes', berserk: true });
+      // (loop round 14, LS-108: "I would let any units brawl" — anyone within reach, a protest crowd of your own people
+      // too: every kind has a blow; the caster aims it)
+      if (m.berserk) units!.spell!({ at: [g[0], g[1]], radius: m.berserk, who: 'any', berserk: true });
       // (loop round 11: your hidden people are drawn faint to you — the foes still do not see them)
       if (m.hides) units!.spell!({ at: [g[0], g[1]], radius: m.hides, who: 'friends', hidden: true, faint: true });
       // (loop round 12, docs/design/FRONTS.md: a shield round the tap — the liquids flow round it; its dome and rim are
@@ -1313,7 +1349,17 @@ class Game implements RunGame {
       if (m.shield) {
         const shields = this.scene.worldApi?.shields;
         if (!shields) throw new Error('loop: this level has no shields (world API fx)');
-        shields.raise(g[0], g[1], { radius: m.shield, seconds: m.seconds ?? SHIELD_SECONDS, z: g[2] });
+        // (loop round 14: its store and recharge are the ability's — the shields' defaults when it gives none)
+        const s = shields.raise(g[0], g[1], { radius: m.shield, seconds: m.seconds ?? SHIELD_SECONDS, z: g[2], energy: m.energy, regen: m.regen });
+        // (its end told, whichever way it comes — never silently after its event)
+        const name = ability.name;
+        const told = (x: { id: number }, how: 'drained' | 'time' | 'dropped') => {
+          if (x.id !== s.id) return;
+          shields.onEnd.splice(shields.onEnd.indexOf(told), 1);
+          console.log(`[loop] ${name} ended: ${how}`);
+          this.tell(TW.shieldEndLine(name, how));
+        };
+        shields.onEnd.push(told);
       }
       api.fx.burst('sparks', g[0], g[1], g[2] + 1, { count: 40 });
       // (loop round 11: the spell's reach marked on the ground as it is cast — a ring of sparks at its edge; the units

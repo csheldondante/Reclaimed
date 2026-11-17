@@ -924,6 +924,12 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     units[u * UNIT_V] = vec4<f32>(pos, bitcast<f32>(info & ~(1u << 8u)));
     return;
   }
+  // (loop round 14, docs/design/FRONTS.md: a shield's rim is a wall to every unit, in or out — the step that would
+  // cross it is refused and its push along the ground stopped; it stands at the rim)
+  if (shieldAt(np.xy) != shieldAt(pos.xy)) {
+    np = vec3<f32>(pos.xy, np.z);
+    vel = vec3<f32>(0.0, 0.0, vel.z);
+  }
   let fi = colIdxI(clampCell(cellAt(np.xy)));
   if (alight) { shoveAdd(wr + fi, 3u, 1); }
   let phase = fract(b.w + dt * length(vel.xy) * 0.9);

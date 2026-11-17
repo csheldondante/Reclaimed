@@ -117,5 +117,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let chance = heat * min(fuel, 1.5) * select(dry, 1.0, oil[i] > 0.004) * (1.0 - rainStop) * rate;
     if (r < perTick(chance)) { f = 0.5; }
   }
+  // (loop round 14, docs/design/FRONTS.md: inside a shield nothing burns or catches — the barrier keeps fire out, and a
+  // fire it was raised over goes out)
+  if (shieldAt(cellPos(p)) >= 0) { f = 0.0; }
   fireOut[i] = clamp(f, 0.0, 1.0);
 }

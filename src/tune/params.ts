@@ -132,7 +132,7 @@ const SPEC = {
       lavaFriction: { label: 'lava flux kept', units: 'share', min: 0.3, max: 0.999, step: 0.005, def: 0.9, gpu: true },
       lavaYield: { label: 'lava yield', units: 'cells', min: 0, max: 1, step: 0.01, def: 0.12, gpu: true, help: 'it won\'t move down a step smaller than this' },
       lavaThick: { label: 'lava thickness', units: 'cells', min: 0, max: 2, step: 0.05, def: 0.4, gpu: true, help: 'thinner than this it barely flows, as (d / this)²' },
-      lavaCool: { label: 'lava cooling', units: 'e-folds/s/cell', min: 0, max: 0.2, step: 0.005, def: 0.02, gpu: true },
+      lavaCool: { label: 'lava cooling', units: 'e-folds/s/cell', min: 0, max: 0.2, step: 0.005, def: 0.01, gpu: true, help: '(loop round 14: 0.02 before) a run deeper than 1.5 cools as one 1.5 deep (liquid.wgsl LAVA_COOL_DEPTH)' },
       lavaDrop: { label: 'lava fall drop', units: 'cells', min: 0.25, max: 6, step: 0.05, def: 1.25, gpu: true },
       riverRelax: { label: 'river relax', units: 'share/step', min: 0.001, max: 0.5, step: 0.001, def: 0.02, gpu: true, help: 'how fast a held river comes to its table\'s depth' },
     },

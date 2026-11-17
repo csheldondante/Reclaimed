@@ -36,6 +36,11 @@ export interface LiquidKind {
   thick: Tuned;
   /** heat: fresh (springs), where it stops flowing and sets, where it runs freely (0: no heat) */
   hot: number;
+  /**
+   * (loop round 14, LS-122: hot lava runs, cooling lava stalls) fresh liquid's gain as a multiple of `gain`, falling to
+   * 1 as it cools to `set` (liquid.wgsl `stiffness`; its yield and thickness grow from nothing the same way). 1: off
+   */
+  hotGain: number;
   set: number;
   runny: number;
   /** a drop past this under the run's floor is a fall (a stream) */
@@ -55,8 +60,8 @@ export interface LiquidKind {
 /** a Tune struct field (common.wgsl, `G.tune.<field>`) or a fixed number */
 export type Tuned = { tune: string } | number;
 
-export const WATER: LiquidKind = { name: 'water', mat: 8, gain: { tune: 'flowWaterGain' }, friction: { tune: 'flowWaterFriction' }, yieldZ: 0, thick: 0, hot: 0, set: 0, runny: 1, drop: { tune: 'flowWaterDrop' }, cool: 0, known: false };
-export const LAVA: LiquidKind = { name: 'lava', mat: 24, gain: { tune: 'flowLavaGain' }, friction: { tune: 'flowLavaFriction' }, yieldZ: { tune: 'flowLavaYield' }, thick: { tune: 'flowLavaThick' }, hot: 1250, set: 750, runny: 1150, drop: { tune: 'flowLavaDrop' }, cool: { tune: 'flowLavaCool' }, known: true };
+export const WATER: LiquidKind = { name: 'water', mat: 8, gain: { tune: 'flowWaterGain' }, friction: { tune: 'flowWaterFriction' }, yieldZ: 0, thick: 0, hot: 0, hotGain: 1, set: 0, runny: 1, drop: { tune: 'flowWaterDrop' }, cool: 0, known: false };
+export const LAVA: LiquidKind = { name: 'lava', mat: 24, gain: { tune: 'flowLavaGain' }, friction: { tune: 'flowLavaFriction' }, yieldZ: { tune: 'flowLavaYield' }, thick: { tune: 'flowLavaThick' }, hot: 1250, hotGain: 8, set: 750, runny: 1150, drop: { tune: 'flowLavaDrop' }, cool: { tune: 'flowLavaCool' }, known: true };
 
 export const MAX_SPRINGS = 8;
 /** ticks between the idle scans (encode) */
@@ -122,6 +127,7 @@ function prelude(k: LiquidKind, runW: number): string {
     `fn lqYield() -> f32 { return ${t(k.yieldZ)}; }`,
     `fn lqThick() -> f32 { return ${t(k.thick)}; }`,
     `const LQ_HOT: f32 = ${f(k.hot)};`,
+    `const LQ_HOT_GAIN: f32 = ${f(k.hotGain)};`,
     `const LQ_SET: f32 = ${f(k.set)};`,
     `const LQ_RUNNY: f32 = ${f(k.runny)};`,
     `fn lqDrop() -> f32 { return ${t(k.drop)}; }`,
@@ -142,9 +148,6 @@ export class LiquidSystem implements SimSystem {
   readonly springs: Spring[] = [];
   /** (loop round 12) the shields raised: discs no liquid flows into (the first MAX_SHIELDS; src/api/shields.ts owns them) */
   shields: ShieldDisc[] = [];
-  /** (loop round 12) the cooling's factor (1: as the liquid's own numbers say): a front's lava is set this many times
-   *  faster once its event is over (live-runner.ts) — the season goes on, and a deep pool would glow for minutes */
-  quench = 1;
   /** the water pipeline's list (runs under rock, streams) and the opaque one's (open lava) */
   readonly inst: GPUBuffer;
   readonly indirect: GPUBuffer;
@@ -483,7 +486,7 @@ export class LiquidSystem implements SimSystem {
     u[3] = ((LQ_ALL ? 1 : 0) | (cap << 1)) >>> 0;
     const fv = new Float32Array(this.uniData, 16);
     this.springs.forEach((s, i) => fv.set([s.x, s.y, s.z, s.rate], i * 4));
-    new Float32Array(this.uniData, UNI_EXTRA, 4).set([this.prepTicks, this.quench]);
+    new Float32Array(this.uniData, UNI_EXTRA, 4).set([this.prepTicks]);
     const sh = new Float32Array(this.uniData, UNI_EXTRA + 16, 4 * MAX_SHIELDS);
     sh.fill(0);
     this.shields.slice(0, MAX_SHIELDS).forEach((s, i) => sh.set([s.x, s.y, s.r, 0], i * 4));

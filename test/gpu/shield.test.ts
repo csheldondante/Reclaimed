@@ -2,6 +2,7 @@
 // round it — none flows in, it runs on past both sides — and with no shield the same lava runs over the disc's ground.
 // The liquids' kernels on Dawn in Node (liquid.wgsl `shielded`; LiquidSystem.shields).
 import { afterAll, beforeAll, expect, test } from 'vitest';
+import { Shields } from '../../src/api/shields';
 import { cellPos } from '../../src/world/lattice';
 import { MAT } from '../../src/world/materials';
 import { tinyMap } from '../support/tinymap';
@@ -74,6 +75,38 @@ async function pour(shield: boolean): Promise<{ in: number; past: number; sides:
   }
   return { in: inn, past, sides };
 }
+
+// (loop round 14, docs/design/FRONTS.md "The shield as an energy barrier") The press read on the GPU (shields.wgsl):
+// lava standing at the rim drains the store; a big store holds, a small one gives way — told as 'drained'.
+async function pressed(energy: number): Promise<{ ended: string | null; lava: number; left: number }> {
+  const w = await slope();
+  const L = w.core.flow!.lava;
+  const shields = new Shields(w.core.flow!, () => {}, w.core.globals, { device: g.device, globals: w.core.world.globals, fire: w.core.world.fire, lava: L.open, units: null, combat: null });
+  let ended: string | null = null;
+  shields.onEnd.push((_s, how) => (ended = how));
+  const s = shields.raise(SHIELD.x, SHIELD.y, { radius: SHIELD.r, seconds: 1000, z: 30, energy, regen: 0 });
+  L.addSpring(10, SHIELD.y, 31, 40);
+  let lava = 0;
+  for (let i = 0; i < 120 && !ended; i++) {
+    await w.step(15);
+    shields.update(0.25);
+    // (the read is async: let it land before the next quarter second)
+    await g.device.queue.onSubmittedWorkDone();
+    await new Promise((r) => setTimeout(r, 5));
+    lava = Math.max(lava, s.press.lava);
+  }
+  expect(g.takeErrors()).toEqual([]);
+  return { ended, lava, left: s.energy };
+}
+
+test('a shield drains under the lava pressing on it: a big store holds, a small one gives way', async () => {
+  const big = await pressed(1e6);
+  expect(big.lava, 'lava measured at the rim').toBeGreaterThan(1);
+  expect(big.ended, 'a big store holds').toBe(null);
+  expect(big.left).toBeLessThan(1e6);
+  const small = await pressed(5);
+  expect(small.ended, 'a small store gives way').toBe('drained');
+}, 300000);
 
 test('a shield is a wall to lava: it parts round the disc and runs on past both sides', async () => {
   const open = await pour(false);

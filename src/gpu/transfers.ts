@@ -154,6 +154,9 @@ export const TRANSFERS: TransferSite[] = [
   { file: 'api/world.ts', fn: 'createSim', via: 'api/mirror.ts#GpuPageReader.read', what: 'every page', why: 'a Sim over a world of its own (pages, tests): no level frame, so refreshed whole', rate: 'timed', every: '250 ms', play: 'no' },
   { file: 'scenes/level/world-api.ts', fn: 'worldApiOf', via: 'api/mirror.ts#GpuPageReader.read', what: 'the pages asked: ~1 KB/s after Build, 40-65 KB a sim second where miners dig (desktop proxy)', why: "the level's world API, one attach: the fortress (trees, the quarry's tops, dropped loads, the pit view), the settlements, runs, tools, the test API", rate: 'edit', play: 'yes' },
   { file: 'api/terrain.ts', fn: 'Terrain.poll', what: 'the edit result texture, ~1 KB', why: 'what a take or put moved (the answer to an exact edit)', rate: 'edit', play: 'yes' },
+  // ---- (loop round 14, docs/design/FRONTS.md) what presses on the shields, measured on the GPU: 64 B back ----
+  { file: 'api/shields.ts', fn: 'ShieldPress.read', what: 'the press counters: 4 shields x (lava, fire, units, spare), 64 B', why: "a shield's energy: what presses on it drains it, and it collapses when its store is empty", rate: 'timed', every: '250 ms, only while a shield stands', play: 'yes', violates: T24, backlog: 'LS-135' },
+  { kind: 'upload', file: 'api/shields.ts', fn: 'ShieldPress.read', size: 'small', what: 'the press kernel\'s params, 16 B', why: 'the units counted and the band measured', rate: 'timed', every: '250 ms, only while a shield stands', play: 'yes' },
 
   // ---- agents ----
   { file: 'agents/agents.ts', fn: 'Agents.read', wrapper: /\.reader\(/, what: 'nav (w×h×64 B) and one field\'s page-table row (4 B a window chunk), then that field\'s pages (4 KB each, only the chunks it reaches)', why: 'a CPU copy of a field for walkers the CPU moves (FieldReader); U2 round 7: the field is pages, read through its row', rate: 'via', play: 'yes' },

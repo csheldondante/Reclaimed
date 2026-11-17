@@ -83,6 +83,9 @@ destroy each other instead of dethroning your rule."
 | Flow fields, formations, authored paths | Crowds that stay visible and legible | Wired into the loop in rounds 8 and 9 |
 | Flora; cliffside dwellings | Overgrowth; building along or into stone | Not finished |
 
+Eventual city sites (2026-11-17): "the plan is to have underground cities, cities on water falls, cities in jungles, on
+cliffs and maybe floating islands (supported by the interval system) eventually".
+
 ## 7. Look and sound
 
 - **City legibility.** "We need streets that are integrated with the world and terrain not floating meshes and we want
@@ -95,6 +98,9 @@ destroy each other instead of dethroning your rule."
 - **Close-up identity** comes from generated portraits of characters and places, and from "a lot of sound design and
   ambient sounds".
 - Effects are considered good already.
+- **The big flow** (2026-11-17): "A flow that fills multiple screens and comes in a sweeps over the town could be
+  really cool to see and motivate building trenches to redirect it to the sea or magical shields or summoning a
+  blizzard to freeze it or something."
 
 Design: `docs/design/CITYGEN.md`, `ARCHGEN.md`; DESIGN.md roads and buildings sections.
 

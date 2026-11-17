@@ -226,6 +226,8 @@ export function deltaLine(before: Pools, after: Pools): string {
 export const TOWN = 'The town';
 export const castNote = (ability: string, on: string): string => `you cast ${ability} on ${on}`;
 export const castLine = (ability: string, on: string, cost: number): string => `You cast ${ability} on ${on}. It cost ${cost} Magic.`;
+/** (loop round 14) a shield's end: its energy gone under what pressed on it, or its time up */
+export const shieldEndLine = (ability: string, how: 'drained' | 'time' | 'dropped'): string => (how === 'drained' ? `The ${ability} gave way under the weight on it.` : `The ${ability} faded.`);
 export const castCost = (cost: number): string => `${cost} Magic`;
 export const PICK_TARGET = 'Tap a lit card to cast it there.';
 export const NO_TARGET = 'Nothing in play can take it now.';

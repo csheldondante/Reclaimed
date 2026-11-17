@@ -55,6 +55,8 @@ export function update(S: Streamer): Promise<void> | null {
     if (Math.abs(S.vel[0]) > MOVING) for (let k = 2, n = strips(S.vel[0], rc?.dir[0] ?? 0); k <= n; k++) S.prefetch(Math.sign(S.vel[0]) * k * R, 0);
     if (Math.abs(S.vel[1]) > MOVING) for (let k = 2, n = strips(S.vel[1], rc?.dir[1] ?? 0); k <= n; k++) S.prefetch(0, Math.sign(S.vel[1]) * k * R);
   }
+  // (loop round 14: held — a lava front — no slide of its own; the strips ahead are still asked for)
+  if (S.holds.size) return null;
   // in z: the ground under the camera near the window's top or bottom
   const h = S.source.height;
   if (h) {

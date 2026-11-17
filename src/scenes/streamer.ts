@@ -143,6 +143,12 @@ export class Streamer {
   busyWhy = '';
   /** slide on its own as the camera nears the edge (tests turn it off to slide by hand) */
   auto = true;
+  /**
+   * (loop round 14, LS-130) while any reason is held the window does not slide on its own (along x, y or z) — the land
+   * stays where it is and the camera is free (beyond the window are the far tiles). A lava front holds it while it runs
+   * and sets: its source, its way and the town must stay in the simulated land (docs/design/FRONTS.md)
+   */
+  readonly holds = new Set<string>();
   readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0, settled: 0, evicted: 0, touched: 0, checked: 0, saved: 0, loaded: 0, restored: 0, mismatched: 0, loadFailed: 0, storeMiss: 0, uploads: 0, gpuMade: 0, precached: 0, warpReady: 0 };
   /** called after each slide with the shift in columns (the window moved by dx, dy: content moved by −dx, −dy), and in z */
   readonly onSlide: ((dx: number, dy: number, dz: number) => void)[] = [];

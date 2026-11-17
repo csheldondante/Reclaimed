@@ -70,7 +70,11 @@ await run({ name: 'frontshots', kind: 'behaviour', size: '412x915', dpr: 1, echo
       const L = window.rungame.live;
       const fr = f ? L.frontFrame(f) : null;
       const r = (v) => v?.map((x) => Math.round(x));
-      return run && f ? { t: Math.round(run.t), src: r(f.src), target: r(f.target), frame: fr && { at: r(fr.at), span: Math.round(fr.span) }, cam: r(c.target), busy: window.rungame.cam.busy, town: f.points.filter((x) => x.reached).length, way: f.way.filter((x) => x.reached).length, zoom: +c.zoom.toFixed(1), shields: window.reclaimed.scene.worldApi.shields.list.length, line: window.rungame.fightLine } : { phase: window.rungame.phase };
+      const st = window.reclaimed.scene.stream;
+      // (loop round 14: the town's points as the front reads them — where, the depth first read, the depth now)
+      const api = window.reclaimed.scene.worldApi;
+      const pts = f ? f.points.map((q) => [Math.round(q.at[0]), Math.round(q.at[1]), q.base === null ? null : +q.base.toFixed(2), +(api.fire.flowLavaAt(q.at[0], q.at[1]) ?? -1).toFixed(2)]) : [];
+      return run && f ? { t: Math.round(run.t), pts, origin: st && [...st.origin], held: st?.holds.size ?? 0, aim: r(f.aim), src: r(f.src), target: r(f.target), frame: fr && { at: r(fr.at), span: Math.round(fr.span) }, cam: r(c.target), busy: window.rungame.cam.busy, town: f.points.filter((x) => x.reached).length, way: f.way.filter((x) => x.reached).length, zoom: +c.zoom.toFixed(1), shields: window.reclaimed.scene.worldApi.shields.list.length, line: window.rungame.fightLine } : { phase: window.rungame.phase };
     });
   let cast = false;
   let shots = 0;
@@ -118,7 +122,10 @@ await run({ name: 'frontshots', kind: 'behaviour', size: '412x915', dpr: 1, echo
       R.log(`cast at ${at.map((v) => Math.round(v))}: ${JSON.stringify(await state())}`);
     }
     if (!shotAt.has('meets') && s.town + s.way >= 9 && s.t > 20) (shotAt.add('meets'), await shot('4-meets'));
-    if (s.t >= 25 + shots * 15 && shots < 4) await shot(`5-t${s.t}`), shots++;
+    // (loop round 14: --every n, a still each n seconds from the pour's start — the front coming from afar)
+    const every = Number(R.opt('every', '0'));
+    if (every > 0 && s.src && s.t >= 4 + shots * every && shots < 12) await shot(`5-t${String(s.t).padStart(2, '0')}`), shots++;
+    else if (!every && s.t >= 25 + shots * 15 && shots < 4) await shot(`5-t${s.t}`), shots++;
   }
   // (the event over: the town as it stands, from above its target — in the top of the screen, over the sheet — before
   // the next event takes the camera; the window points as they stand now)

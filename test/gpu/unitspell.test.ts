@@ -28,7 +28,7 @@ async function world() {
   const frame = (n = 1) => {
     for (let i = 0; i < n; i++) w.core.sim.step(w.core.globals, (s) => s.name === 'surface' || s.name === 'agents');
   };
-  return { agents, frame };
+  return { agents, frame, core: w.core };
 }
 
 const slotOf = (id: number) => id % 8192;
@@ -108,5 +108,62 @@ test('berserk: two of one side turn on each other; setSide: one who never looked
   frame(1);
   t = await targets(agents);
   expect(t(walker)).toBe(other + 1);
+  expect(g.takeErrors()).toEqual([]);
+});
+
+// (loop round 14, docs/design/FRONTS.md: a shield's rim is a wall to units — units.wgsl reads Globals.shields) a hunter
+// after someone inside a shield stops at its rim; with no shield it reaches them
+test("a shield's rim stops a unit: the hunter waits outside", async () => {
+  const run = async (shield: boolean) => {
+    const { agents, frame, core } = await world();
+    const [hunter] = agents.spawn(1, 40, 50, { spread: 0, kind: 'raider' });
+    const [prey] = agents.spawn(1, 60, 50, { spread: 0 });
+    frame(30);
+    agents.notice.set(slotOf(hunter), { faction: 1, hostile: true, sight: 60 });
+    agents.notice.set(slotOf(prey), { faction: 2, hostile: false, sight: 0 });
+    // (spawn takes window world units: the prey stands at (60, 50))
+    if (shield) core.globals.shields = [[60, 50, 6]];
+    frame(600);
+    const f = new Float32Array(await agents.readRaw('units'));
+    const s = slotOf(hunter);
+    return Math.hypot(f[s * UF] - 60, f[s * UF + 1] - 50);
+  };
+  const open = await run(false);
+  expect(open, 'no shield: it reaches its prey').toBeLessThan(3);
+  const held = await run(true);
+  expect(held, 'a shield: it stands at the rim').toBeGreaterThan(5);
+  expect(g.takeErrors()).toEqual([]);
+});
+
+// (loop round 14, LS-108: "I would let any units brawl") a crowd of workers — the agents' plain kind, no foes, never
+// looked for anyone — turned berserk by a spell on anyone in its reach: they take one another on and their blows land
+test('berserk on a worker crowd: they brawl, the blows land', async () => {
+  const { agents, frame } = await world();
+  const crowd: number[] = [];
+  // (kind 0: the agents' own worker — loop round 14 gave it a weak blow)
+  for (let k = 0; k < 6; k++) crowd.push(...agents.spawn(1, 60 + (k % 3) * 1.6, 60 + Math.floor(k / 3) * 1.6, { spread: 0, kind: 'worker' }));
+  const [outside] = agents.spawn(1, 100, 100, { spread: 0, kind: 'worker' });
+  frame(30);
+  for (const id of [...crowd, outside]) agents.notice.set(slotOf(id), { faction: 2, hostile: false, sight: 0 });
+  frame(1);
+  const hp = async () => {
+    const f = new Float32Array(await agents.readRaw('units'));
+    return (id: number) => f[slotOf(id) * UF + 8];
+  };
+  const hp0 = await hp();
+  const before = crowd.map((id) => hp0(id));
+  let t = await targets(agents);
+  expect(crowd.map((id) => t(id)), 'a calm crowd: no one taken on').toEqual(crowd.map(() => 0));
+  agents.notice.spellArea({ x: 61.6, y: 60.8, radius: 6, who: 'any', side: BERSERK_SIDE, all: true, sight: 24 }, agents.size);
+  frame(1);
+  t = await targets(agents);
+  const took = crowd.filter((id) => crowd.map((x) => x + 1).includes(t(id)));
+  expect(took.length, 'every berserk worker takes on another of the crowd').toBe(crowd.length);
+  expect(t(outside), "out of the spell's reach").toBe(0);
+  frame(300);
+  const hp1 = await hp();
+  const hurt = crowd.filter((id, k) => hp1(id) < before[k]);
+  expect(hurt.length, 'their blows land: some of the crowd hurt').toBeGreaterThan(1);
+  expect(hp1(outside)).toBe(hp0(outside));
   expect(g.takeErrors()).toEqual([]);
 });

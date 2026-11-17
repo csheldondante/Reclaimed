@@ -3926,3 +3926,32 @@ and what is still the owner's to decide: who decides a fight, every rule's numbe
   ruling "buildings stay plain extruded lot shapes" (DESIGN §17, CITYGEN.md) stands for the default game. Its gates
   before a default switch: AG13/CG24 (roofs above the claims), AG14 (vertices on the phone), LS-100 (no lot conditions:
   mutators do not show on its houses). Its new light and ground textures come with the switch (LS-101).
+
+## 2026-11-17 — fronts, shields, brawls, places on the map (loop round 14)
+
+- Lava: "I like more flow for hot lava and map generation tweaks with the larger flows." → the flow model's lava runs
+  while hot and stalls as it cools (gain, yield and thickness by heat; liquid.wgsl `stiffness`); the example front's
+  vent far up the slope (docs/design/FRONTS.md "Hot lava runs"). Map generation for larger flows is another builder's
+  track. The design of record stands: lava "flows only while hot, sets into basalt".
+- Shield: "I think a shield should possibly be a barrier that can block units and fire too but collapses if it loses
+  energy too fast." → a shield stops liquids, fire and units; it has a store of energy and a recharge (pack numbers on
+  the ability); what presses on it drains it; empty, it collapses (FRONTS.md "The shield as an energy barrier").
+- Berserk on crowds: "I would let any units brawl." → every unit kind has a blow; berserk takes anyone in its reach
+  (LS-108).
+- Far-town start reload (~2 minutes): "Yes for now. That is extremely slow and we should ideally cache whatever it is
+  that takes so long as long as we can afford the storage and or memory." → kept for now; the time is measured by phase
+  and what is safely cacheable is cached (DEVLOG loop round 14).
+- A pack selector for "a town nobody holds": "Sure" → `far:free:<n>` (PACK_FORMAT draft 9; LS-107).
+- Unlocks: "Per world is fine but we may add profiles later" → unlocks stay per world.
+- The raiders' camp as a real place on the map: "Yes make any interesting poi like this. Bandit camps, monster lairs,
+  wizard towers, giants bound to the land, crash sites of star ships, ancient battlefields, bridges, dungeons, vaults,
+  temples to channel magical nodes etc." → points of interest are places of the world made, changed and removed by
+  cards (season/pois.ts; PACK_FORMAT draft 9).
+- A street beside a river standing as a raised quay: "Yeah that sounds good! I would like natural variation eventually.
+  Maybe large streets can become quays but variation like beaches or eroded soil are all good for visual variety" →
+  the quay stays; natural variation of river banks (beaches, eroded soil) is a BACKLOG item (LS-136), not this round.
+- Eventual city sites (VISION §6): "the plan is to have underground cities, cities on water falls, cities in jungles,
+  on cliffs and maybe floating islands (supported by the interval system) eventually".
+- The big flow (VISION §7): "A flow that fills multiple screens and comes in a sweeps over the town could be really
+  cool to see and motivate building trenches to redirect it to the sea or magical shields or summoning a blizzard to
+  freeze it or something."

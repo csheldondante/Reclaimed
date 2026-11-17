@@ -25932,3 +25932,88 @@ road0-parade — the column of nine in ranks of three halfway along the deck, th
 road0-parade2 — the column in the town's paved street by the market, figures round it. Log: "called down road 0",
 "marchers at the gate; on to its place" at 27 s. Road 0 is no longer refused.
 
+## 2026-11-17 — loop round 14 (1): hot lava runs, a shield of energy, any unit brawls, places on the map (`loop-skeleton`; FRONTS.md, PACK_FORMAT draft 9)
+
+**Why.** The owner's rulings of 2026-11-17 (DECISIONS): "I like more flow for hot lava"; a shield "a barrier that can
+block units and fire too but collapses if it loses energy too fast"; "I would let any units brawl"; points of interest
+— "Bandit camps, monster lairs, wizard towers, … crash sites of star ships, … temples" — as real places; a selector for
+"a town nobody holds" ("Sure").
+
+**Hot lava runs (LS-122).** The flow model's lava flowed like cold lava everywhere: gain 0.02 with 0.9 of the flux kept
+is ~27x stiffer than water, and a 0.12 yield; thin sheets cooled in seconds. Now a run's stiffness is how far it has
+cooled from fresh (1250) to setting (750), squared (`liquid.wgsl stiffness`): its gain is 8x the liquid's own when fresh
+(`LiquidKind.hotGain`), its yield and the thickness under which it barely flows grow from nothing (15 % floor) to their
+full numbers as it cools. Cooling: a run deeper than 1.5 cools as one 1.5 deep (`LAVA_COOL_DEPTH`; a pool sets in tens
+of seconds, not minutes), and the cooling number is halved (0.02 → 0.01). Measured on a 256-column ramp 30 wide, a
+spring of 120/s for 60 s then 120 s with none (`test/gpu/lavareach.test.ts`, `local/round14/reach-*.txt`):
+
+| slope | before: reach, still molten after 120 s | after: reach, still molten |
+|---|---|---|
+| 0.05 | 39 columns, 4671 cells³ | 130 columns, 0 |
+| 0.1 | 41, 4266 | 218, 0 |
+| 0.2 | 35, 5401 | 254, 0 |
+
+Mass kept: 7200 poured, 7199 lying (molten + rock grown). Steps on the way: yield by heat alone 27 / 36 / 55 (cooling
+was the limit); a hot gain of 4 then 49 / 78 / 116; 8, 71 / 103 / 134; with the cooling halved and the depth cap 130 /
+218 / 254. Stable: no oscillation seen, mass kept to 0.02 %. **The quench (LS-127) is gone**: the 25x cooling after a
+front's event is not needed (the uniform's extra.y unused).
+
+**The far front.** The ages pack's vent moved from 36 cells out to `far` 160, 200 a second for 60 s. The window (256
+columns; 320 on the phone tier) holds a far source only if it stands between source and town and stays there. Tried
+first, as the design note said: the way chosen on the atlas's macro ground — its highest point 160 out lay across a
+river valley and the lava ran into the river (replaced; FRONTS.md records it). Built: the way walked from the town on
+the terrain pages, 16 ways stepped 4 cells to `far` or the window's edge, a dip of 3 cells ending a way; when the
+window's edge cut the best way short the window is slid a region that way by hand (up to 2), the walk made again.
+Muru: one run found 160 cells after one slide; another (the window elsewhere) 64. From 160 out the lava ran some 100
+cells down and stopped at a stream short of the town, cooling orange (`local/round14/front-none-strip.png`: t 4, 16,
+28, 40, 52, 70 s — the flow comes in from the left over the frames, the steam where it meets the stream). From 64 out
+it ran through the town (`local/round14/front-none/` of the earlier run: sheets of lava between the houses).
+
+**The window held (LS-130).** Cause from rounds 12-13's logs: the camera follows the front's frame (head and town;
+after a cast, the shield's far rim and the head), which moves past the slide threshold (0.75 of a region off the
+window's middle) as the head advances or a shield is raised; each slide re-streams land, and a source that slides out
+stops pouring. `Streamer.holds`: while held, no slide of its own (x, y or z). The front holds it from its start until
+its lava is all set (the lava's own sleep read says no lava is liquid) or 150 s after its event. Round 14's runs: one
+origin from the pour to the end.
+
+**A defect found and fixed: a front's points read 0 under lava (LS-138).** The earlier 64-cell run's stills show the
+lava between the houses while every town point read 0 and the result was "Every house stands". The mirror counts a
+page stale only once its chunk ran a tick; the liquids flow on through sleeping chunks (their flux carried on), so the
+pages were never asked again. The front's points are now read fresh each 2 s (their own pages, one read:
+`Mirror.refreshCells`, `Fire.loadFlowLava`, `Water.loadDepth`; at most 18 pages of 1 KB).
+
+**The shield as an energy barrier (LS-123, LS-131).** Its discs are in the Globals (`shields`, words 480-495; the
+tuning moves to word 496). `fire.wgsl`: nothing burns or catches inside one. `units.wgsl`: a step that would cross a
+rim, in or out, is refused (both sides — decided here; a question for the owner). Energy: a store and a recharge from
+the ability (`energy`, `regen`; the Fire ward 300 and 5); a press kernel (`shields.wgsl`, one workgroup a shield) sums
+the liquid lava in a band 2 cells outside the rim, the fire there and the hostile units there; read back every 0.25 s
+while a shield stands (64 B; `transfers.ts` lists it as a §24 timed read, LS-135); drain a second = 0.05 a depth-cell
+of lava + 0.5 a burning column + 1 a hostile unit. Empty, it collapses at once: the rim's streaks thrown out hard (twice
+as many), a second ring and the dome's haze at once, a flash at its middle; below a quarter it flickers. Its end is
+told: "The Fire ward gave way under the weight on it." / "The Fire ward faded." GPU tests: `shield.test.ts` (lava at
+the rim measured; a store of 1e6 holds, a store of 5 gives way, `drained`), `unitspell.test.ts` (a hunter after
+someone inside a shield waits at the rim: over 5 cells off the middle of a 6-cell shield; without one it reaches its
+prey, under 3).
+
+**Any unit brawls (LS-108 (2)).** The loop's workers already had a blow (U2 round 5's MELEE); the agents' own worker
+kind had none, nor the carts. Now every kind strikes (the agents' worker 1 hp a blow at 1.1 cells, the carts half the
+town's blow), and the loop's berserk takes anyone within its reach (`who: 'any'`), the player's own people too. GPU
+test: six calm workers turned berserk take one another on and their blows land. Seen
+(`node scripts/lab/crowdshots.mjs`, `local/round14/crowd-strip.png`): 12 of the town's workers in a field by the river
+(the fixture spawns them at the camera's ground point), calm and yellow; at the cast; +2 s a knot of red mist, 9
+standing; +4 s 3; +8 s 1, bodies lying.
+
+**Points of interest (PACK_FORMAT draft 9; `season/pois.ts`).** A POI is a fact entity with a world cell, a kind
+(camp, lair, tower, crash, battlefield, vault, temple, bridge, dungeon, giant), a state (standing, cleared, gone) and a
+holder. Only cards make, change or remove one: effects `poi`, `poi_state`, a `poi` variable. Placed near a place at
+the kind's distance, the point of 4 rings x 16 ways farthest from every town and POI (no ground read: LS-133). The
+raiders' camp is one from the start (90-160 cells out; a saved world's camp is made one, its conditions kept); cleared
+or gone, the raiders have no camp and "Raiders on the road" is not dealt; in 3D a raid comes down the road pointing
+nearest it. Rules read a POI as a thing (`poi`, kind, state, holder). Shown: atlas-map pins in the kind's colour; in 3D
+where the window holds one, a plain marker (sparks and smoke). Examples: frontier "Break the raiders' camp", "Wolves den
+up near {town}", "Clear {lair}"; ages "A star falls past {town}" (crash), "The old temple on the node". Unit tests
+`test/unit/pois.test.ts`.
+
+**`far:free:<n>` (LS-107).** The n nearest standing towns nobody holds (no `occupies`, `vassal_of` or `controls` on
+it); frontier's `league-grows` uses `far:free:1`.
+

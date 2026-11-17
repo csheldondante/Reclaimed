@@ -182,7 +182,17 @@ export function attachSim(core: WorldCore, mods: SimModules = SIM_ALL, warm?: Wa
   const fx = mods.fx ? new Fx(core) : undefined;
   // (loop round 12) shields run on the sim's clock — a tick's update before its systems encode, so the liquids step with
   // this tick's discs — and move with the window's slides
-  const shields = fx ? new Shields(core.flow, (b) => core.sim.particles.burst(b)) : undefined;
+  // (loop round 14: their discs in the Globals — fire and units stop at them — and what presses on them read on the GPU)
+  const shields = fx
+    ? new Shields(core.flow, (b) => core.sim.particles.burst(b), core.globals, {
+        device: core.host.gpu.device,
+        globals: core.world.globals,
+        fire: core.world.fire,
+        lava: core.flow.lava.open,
+        units: agents?.units ?? null,
+        combat: agents?.notice.combat ?? null,
+      })
+    : undefined;
   if (shields) {
     core.sim.eventTaps.push(() => shields.update(core.globals.dt));
     core.onShift.push((dx, dy, dz) => shields.shift(dx, dy, dz));

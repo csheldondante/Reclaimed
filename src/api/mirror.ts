@@ -315,6 +315,19 @@ export class Mirror {
     await this.launch();
   }
 
+  /** (loop round 14) Read now the pages of `names` holding these window columns, in one read; resolves once they're in. */
+  async refreshCells(cells: readonly (readonly [number, number])[], names: string[]): Promise<void> {
+    while (this.inFlight) await this.inFlight;
+    const { w, h } = this.io.dims;
+    for (const s of this.sources.values()) {
+      if (!names.includes(s.name)) continue;
+      if (s.layout.kind === 'whole') this.want(s, 0, 0);
+      else for (const [x, y] of cells) if (x >= 0 && y >= 0 && x < w && y < h) this.want(s, Math.floor(x) >> 4, Math.floor(y) >> 4);
+    }
+    if (!this.wanted.size) return;
+    await this.launch();
+  }
+
   private async read(): Promise<void> {
     this.wantKept();
     // (a repack grew a buffer: its copy made again, its pages unread — and asked again below if they were wanted)

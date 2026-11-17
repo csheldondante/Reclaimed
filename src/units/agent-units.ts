@@ -301,7 +301,8 @@ export class AgentUnits implements Units {
     // in canvas was lost against plaster and grass)
     agents.defineKind(K.worker, { name: 'worker', height: 1.4, mass: 1, hp: 10, speed: 2.4, ...MELEE, colours: { torso: MAT.Flower, legs: MAT.Wood, head: MAT.Sand } });
     // (round 128l, m4) the fortress's carts: slower than a walker, heavier, a load of CART_LOAD
-    agents.defineKind(K.cart, { name: 'cart', height: 1.2, mass: 4, hp: 20, speed: 1.7, model: { voxels: cartModel(), voxel: 0.25 } });
+    // (loop round 14, LS-108: "I would let any units brawl" — every kind has a blow; a cart's carter a weak one)
+    agents.defineKind(K.cart, { name: 'cart', height: 1.2, mass: 4, hp: 20, speed: 1.7, reach: 1.35, damage: HPK * 0.5, swingPeriod: 1.6, model: { voxels: cartModel(), voxel: 0.25 } });
     agents.follow(G.stand, -1);
     agents.follow(G.strike, -1);
     agents.workPose(G.strike, true);

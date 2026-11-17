@@ -31,6 +31,16 @@ export class Fire {
 
   /** (loop round 12) the flow model's lava standing open at (x, y): its depth (cells; 0 none), null before it is read
    *  (the page is asked for now and read a frame or two later) */
+  /**
+   * (loop round 14) Read the flow model's lava at these points (world units) now, in one read: resolves once their
+   * pages are in. The mirror counts a page stale only once its chunk ran a tick, and lava flows on through sleeping chunks
+   * (their flux carried on): a front's reads of its points (live-runner) saw 0 under lava that had come — so it reads
+   * them fresh.
+   */
+  loadFlowLava(points: readonly (readonly [number, number])[]): Promise<void> {
+    return this.mirror.refreshCells(points.map(([x, y]) => cellAt(x, y)), ['flowLava']);
+  }
+
   flowLavaAt(x: number, y: number): number | null {
     const [cx, cy] = cellAt(x, y);
     const l = this.mirror.f32('flowLava', cx, cy);

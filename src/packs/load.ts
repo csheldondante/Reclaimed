@@ -19,6 +19,8 @@ import { helper as dslHelper } from '../living/dsl';
 import { setStance, stanceOf, type Stance } from '../living/stance';
 import { LAW_ENDED, type BetweenDef } from '../season/realm-between';
 import type { SeasonWeather } from '../weather/presets';
+import { addPoi, isPoiKind, poi, poiCell, pois, poiTags, setPoiState, POI_WORD } from '../season/pois';
+import { ROW_H } from '../world/lattice';
 import { checkPack, reportText, siteOf, FRONT_DEFAULTS, GOODS, PEOPLE, type Pack, type PackAbility, type PackCard, type PackCond, type PackEffect, type PackEvent, type PackLeader, type PackTag, type PackThing, type Problem } from './check';
 
 const POOL_WORD: Record<string, string> = { magic: 'Magic', might: 'Might', labor: 'Labor', materials: 'Materials', intel: 'Intel', unrest: 'Unrest' };
@@ -44,6 +46,9 @@ export interface PackMech {
   /** (loop round 12) a shield's radius (paces) and its seconds */
   shield?: number;
   seconds?: number;
+  /** (loop round 14) a shield's store of energy and its recharge a second (src/api/shields.ts: their defaults if not given) */
+  energy?: number;
+  regen?: number;
 }
 /** what a cast of each pack ability does to a live event (as living/live.ts SPELL_MECH for the spells) */
 export function packMech(packs: readonly LoadedPack[]): Record<string, PackMech> {
@@ -53,7 +58,7 @@ export function packMech(packs: readonly LoadedPack[]): Record<string, PackMech>
       .filter((a) => !!a.in_event)
       .map((a) => {
         const e = a.in_event!;
-        return [a.id, { ...(e.kills ? { kills: e.kills } : {}), ...(e.douses ? { douses: e.douses } : {}), ...(e.berserk ? { berserk: e.berserk } : {}), ...(e.hides ? { hides: e.hides } : {}), ...(e.shield ? { shield: e.shield, seconds: e.seconds ?? SHIELD_SECONDS } : {}) }];
+        return [a.id, { ...(e.kills ? { kills: e.kills } : {}), ...(e.douses ? { douses: e.douses } : {}), ...(e.berserk ? { berserk: e.berserk } : {}), ...(e.hides ? { hides: e.hides } : {}), ...(e.shield ? { shield: e.shield, seconds: e.seconds ?? SHIELD_SECONDS, ...(e.energy !== undefined ? { energy: e.energy } : {}), ...(e.regen !== undefined ? { regen: e.regen } : {}) } : {}) }];
       }),
   );
 }
@@ -262,6 +267,8 @@ function farThingsNow(w: FactWorld, packs: readonly LoadedPack[], home: EntityId
     out.push({ id: s.id, name: s.name, tags: [...new Set(tags)], at: [s.at[0], s.at[1]], town: s.id });
   }
   for (const d of f.find({ kind: 'deposit' })) if (d.attrs.packFound && !f.tag(d.id, 'condition', 'settled')) out.push({ id: d.id, name: d.name, tags: ['found', String(d.attrs.resource)], at: null, town: d.id });
+  // (loop round 14, draft 9: the points of interest on the map — `poi`, its kind, `standing` or `cleared`, its holder)
+  for (const q of pois(w)) if (q.state !== 'gone') out.push({ id: q.id, name: q.name, tags: [...new Set([...poiTags(q), ...packTagsOn(w, q.id, packs)])], at: [q.cell[0], q.cell[1] * ROW_H], town: q.id });
   return out;
 }
 
@@ -284,6 +291,9 @@ function selectorWord(ref: string, founded: Record<string, string> = {}): string
   if (ref === 'far:all') return 'every far town';
   const n = /^far:nearest:(\d+)$/.exec(ref)?.[1];
   if (n) return n === '1' ? 'the nearest standing town' : `each of the ${n} nearest standing towns`;
+  // (loop round 14, draft 9)
+  const fr = /^far:free:(\d+)$/.exec(ref)?.[1];
+  if (fr) return fr === '1' ? 'the nearest town nobody holds' : `each of the ${fr} nearest towns nobody holds`;
   const st = /^far:where:(.+)$/.exec(ref)?.[1];
   if (st) return `every ${STATE_WORD[st] ?? `${st} town`}`;
   const id = ref.slice(4);
@@ -295,7 +305,7 @@ let FOUNDED: Record<string, string> = {};
 let VARS: Record<string, string> = {};
 let FACTIONS: Record<string, string> = {};
 /** bound name → what it binds */
-let VARKIND: Record<string, 'site' | 'far' | 'faction'> = {};
+let VARKIND: Record<string, 'site' | 'far' | 'faction' | 'poi'> = {};
 /** a variable's bound name in the template (the presenter's site variable is the card's own `site`) */
 export function varName(c: Pick<PackCard, 'presenter'>, v: string): string {
   return c.presenter?.at === `$${v}` ? 'site' : `v_${v}`;
@@ -310,6 +320,15 @@ const whoWord = (by: string | undefined): string => (!by || by === 'raiders' ? '
 const STANCE_WORD: Record<string, string> = { hostile: 'are enemies now', truce: 'keep a truce', allied: 'are allies', none: 'owe each other nothing now' };
 const SIGN_OVER: Record<string, string> = { ashfall: 'Ash falls on', darkness: 'Darkness falls over', deadrise: 'The dead walk in', crime: 'Thieves work the streets of', rain: 'Rain falls on', storm: 'A storm sits over', fog: 'Fog lies over' };
 
+/** (loop round 14) a point of interest in words: a variable's bound name, the raiders' camp, or one a pack makes */
+function poiWhere(ref: string, p: Pack): string {
+  if (ref.startsWith('$')) return `{${vref(ref).slice(1)}}`;
+  const id = ref.replace(/^poi:/, '');
+  if (id === 'raiders-camp') return "the raiders' camp";
+  for (const c of p.cards ?? []) for (const e of [...(c.if_taken ?? []), ...(c.if_expires ?? []), ...Object.values(c.if_tier ?? {}).flat()] as PackEffect[]) if (e && 'poi' in e && e.id === id) return e.name;
+  return id;
+}
+
 /** what a list of effects does, in plain sentences written from the data (the numbers are the engine's) */
 export function effectsText(list: readonly PackEffect[], p: Pack, vars: Record<string, string> = {}): string {
   FOUNDED = foundedOf(p);
@@ -320,6 +339,9 @@ export function effectsText(list: readonly PackEffect[], p: Pack, vars: Record<s
   for (const e of list) {
     const x = e as Record<string, unknown>;
     if ('say' in e) says.push(vtext(String(e.say).trim(), vars));
+    // (loop round 14, draft 9: points of interest)
+    else if ('poi' in e) out.push(`${e.name}, ${isPoiKind(e.poi) ? `a ${POI_WORD[e.poi]}` : e.poi}, is marked on the map near ${where(e.near)}.`);
+    else if ('poi_state' in e) out.push(`${cap(poiWhere(e.where, p))} ${e.poi_state === 'cleared' ? 'is cleared' : e.poi_state === 'gone' ? 'is gone from the map' : 'stands again'}.`);
     // (draft 7: a place found, a camp founded at it or by a faction, a town taken or sworn to a faction, a stance)
     else if ('far' in e && e.far === 'revealed') out.push(`${String(x.name)} is marked on the map: ${String(x.resource)}, not yet settled.`);
     else if ('far' in e && e.far === 'founded' && typeof x.where === 'string') out.push(`A camp is settled at ${where(x.where)}${x.by && x.by !== 'player' ? ` by ${whoWord(String(x.by))}` : ''}.`);
@@ -388,11 +410,24 @@ function refOf(ref: string | undefined, need: Set<string>): string {
   return `$s_${k}`;
 }
 
+/** (loop round 14) a point of interest named by a card: `poi:<id>` (it must be on the map for the card to come), a
+ *  variable, or any other place reference (`town`, a site, a far variable) */
+function poiRef(ref: string, need: Set<string>): string {
+  if (ref.startsWith('poi:')) {
+    need.add(ref);
+    return ref.slice(4);
+  }
+  return refOf(ref, need);
+}
+
 function effects(list: readonly PackEffect[], p: Pack, need: Set<string>, note: string): Effect[] {
   const out: Effect[] = [];
   for (const e of list) {
     if ('say' in e) continue;
-    if ('pool' in e) out.push({ helper: 'pool', args: [e.pool, e.add] });
+    // (loop round 14, draft 9: a point of interest put on the map near a place, or one's state changed by the card)
+    if ('poi' in e) out.push({ helper: 'packPoiAdd', args: [e.id, e.name, e.poi, poiRef(e.near ?? 'town', need), e.holder ? vref(e.holder) : ''] });
+    else if ('poi_state' in e) out.push({ helper: 'packPoiState', args: [poiRef(e.where, need), e.poi_state] });
+    else if ('pool' in e) out.push({ helper: 'pool', args: [e.pool, e.add] });
     else if ('income' in e) out.push({ helper: 'income', args: [e.income, e.add] });
     else if ('put' in e) out.push({ helper: 'packPut', args: [e.put, refOf(e.at ?? p.things!.find((t) => t.id === e.put)!.at, need)] });
     else if ('remove' in e) out.push({ helper: 'packRemove', args: [e.remove] });
@@ -470,6 +505,9 @@ function varBinds(c: PackCard): { binds: BindSpec[]; site: BindSpec | null; refs
     } else if ('far' in s) {
       const st = s.far.state ?? [];
       binds.push({ as, kind: st.includes('found') ? ['settlement', 'deposit'] : 'settlement', shared: true, where: [{ helper: 'packFarIs', args: [`$${as}`, st.join('|'), (s.far.tags ?? []).join('|'), (s.far.not ?? []).join('|'), s.far.holder ? vref(s.far.holder) : ''] }, ...asked] });
+    } else if ('poi' in s) {
+      // (loop round 14, draft 9: a point of interest on the map — season/pois.ts)
+      binds.push({ as, kind: 'site', shared: true, where: [{ helper: 'packPoiIs', args: [`$${as}`, (s.poi.kind ?? []).join('|'), (s.poi.state ?? []).join('|'), (s.poi.tags ?? []).join('|'), (s.poi.not ?? []).join('|'), s.poi.holder ? vref(s.poi.holder) : ''] }, ...asked] });
     } else binds.push({ as, kind: 'faction', shared: true, where: [{ helper: 'packFactionIs', args: [`$${as}`, (s.faction.stance ?? []).join('|'), vref(s.faction.with ?? 'player')] }, ...asked] });
     refs.push(`$${as}`);
   }
@@ -479,7 +517,7 @@ function varBinds(c: PackCard): { binds: BindSpec[]; site: BindSpec | null; refs
 function template(c: PackCard, p: Pack, after: string[], boost: boolean): TemplateDef {
   // (draft 7: the card's variables, renamed for the engine; the presenter may sit at a bound site)
   VARS = Object.fromEntries(Object.keys(c.bind ?? {}).map((v) => [v, varName(c, v)]));
-  VARKIND = Object.fromEntries(Object.entries(c.bind ?? {}).map(([v, s]) => [varName(c, v), 'site' in s ? 'site' : 'far' in s ? 'far' : 'faction']));
+  VARKIND = Object.fromEntries(Object.entries(c.bind ?? {}).map(([v, s]) => [varName(c, v), 'site' in s ? 'site' : 'far' in s ? 'far' : 'poi' in s ? 'poi' : 'faction']));
   const vars = VARS;
   const vb = varBinds(c);
   const site = vb.site ? '' : siteOf(c.presenter.at)!;
@@ -517,7 +555,8 @@ function template(c: PackCard, p: Pack, after: string[], boost: boolean): Templa
   const once: Pred[] = c.once === false ? [] : [{ helper: 'packNotDone', args: [c.id, c.once === 'run' ? 'run' : 'any', '$town', ...vb.refs] }];
   // (draft 8: locked content is never dealt until it is unlocked — the card itself, or its whole pack)
   const locks: Pred[] = [...(c.locked ? [{ helper: 'packOpen', args: [c.id] } as Pred] : []), ...(p.pack.locked ? [{ helper: 'packOpen', args: [`pack:${p.pack.id}`] } as Pred] : [])];
-  const eligible: Pred[] = [...locks, ...conds(when, c.id, need),...[...need].filter((k) => k.startsWith('sel:')).map((k): Pred => ({ helper: 'townsExist', args: [k.slice(4)] })), ...once];
+  // (loop round 14, draft 9: a card naming a point of interest by its id appears only while it is on the map)
+  const eligible: Pred[] = [...locks, ...conds(when, c.id, need), ...[...need].filter((k) => k.startsWith('sel:')).map((k): Pred => ({ helper: 'townsExist', args: [k.slice(4)] })), ...[...need].filter((k) => k.startsWith('poi:')).map((k): Pred => ({ helper: 'packPoiOn', args: [k.slice(4)] })), ...once];
   // (a card that names no far place needs none: one that does appears only while a neighbour stands)
   // (draft 7: its variables — factions first, then far places, then sites, so a later one may name an earlier)
   const order = { faction: 0, settlement: 1, deposit: 1, site: 2 } as Record<string, number>;
@@ -527,7 +566,7 @@ function template(c: PackCard, p: Pack, after: string[], boost: boolean): Templa
     ...varSpecs.filter((s) => [s.kind].flat()[0] !== 'site'),
     vb.site ?? { as: 'site', kind: 'site', where: [{ helper: 'siteIs', args: ['$site', site] }] },
     ...varSpecs.filter((s) => [s.kind].flat()[0] === 'site'),
-    ...[...need].filter((k) => k !== 'far' && !k.startsWith('own:') && !k.startsWith('sel:')).map((k): BindSpec => ({ as: `s_${k}`, kind: 'site', shared: true, where: [{ helper: 'siteIs', args: [`$s_${k}`, k] }] })),
+    ...[...need].filter((k) => k !== 'far' && !k.startsWith('own:') && !k.startsWith('sel:') && !k.startsWith('poi:')).map((k): BindSpec => ({ as: `s_${k}`, kind: 'site', shared: true, where: [{ helper: 'siteIs', args: [`$s_${k}`, k] }] })),
     ...(need.has('far') ? [{ as: 'other', kind: 'settlement' as const, shared: true, where: [{ helper: 'neighbour', args: ['$other'] }] as Pred[] }] : []),
   ];
   return {
@@ -806,7 +845,8 @@ export function packHelpers(packs: readonly LoadedPack[], host: PackHost): Recor
     packHolds: {
       pred: (c, a) => {
         const fac = a[0] === 'player' ? 'yours' : idOf(c.b, a[0]);
-        const n = farThings(c.w, packs, host.home()).filter((t) => t.tags.includes(fac) && t.tags.includes('standing')).length;
+        // (towns only: a point of interest a faction keeps is no town it holds)
+        const n = farThings(c.w, packs, host.home()).filter((t) => t.tags.includes(fac) && t.tags.includes('standing') && !t.tags.includes('poi')).length;
         return n >= Number(a[1]) && n <= Number(a[2]);
       },
     },
@@ -853,6 +893,33 @@ export function packHelpers(packs: readonly LoadedPack[], host: PackHost): Recor
         c.w.facts.setTag(d.id, 'condition', 'settled', true, c.cause);
       },
     },
+    // ---- (loop round 14, draft 9) points of interest: season/pois.ts ----
+    // (one on the map: of these kinds and states, every tag, none of the not-tags, held by the holder)
+    packPoiIs: {
+      pred: (c, a) => {
+        const q = poi(c.w, idOf(c.b, a[0]));
+        if (!q || q.state === 'gone') return false;
+        const [kinds, states, all, not] = [a[1], a[2], a[3], a[4]].map((x) => String(x ?? '').split('|').filter(Boolean));
+        const tags = [...poiTags(q), ...packTagsOn(c.w, q.id, packs)];
+        const holder = String(a[5] ?? '');
+        return (!kinds.length || kinds.includes(q.kind)) && (!states.length || states.includes(q.state)) && all.every((x) => tags.includes(x)) && !not.some((x) => tags.includes(x)) && (!holder || q.holder === idOf(c.b, holder));
+      },
+    },
+    // (a point of interest of this id on the map, not gone)
+    packPoiOn: { pred: (c, a) => { const q = poi(c.w, String(a[0])); return !!q && q.state !== 'gone'; } },
+    // (a new one near a place — the home town, a far town, another point — where season/pois.ts puts it: the dealer's
+    // fitting place, the same every time)
+    packPoiAdd: {
+      effect: (c, a) => {
+        const [id, name, kind] = [a[0], a[1], a[2]].map(String);
+        if (!isPoiKind(kind)) throw new Error(`pack: no kind of point of interest "${kind}"`);
+        if (c.w.facts.entity(id)) return;
+        const near = idOf(c.b, a[3]);
+        const holder = a[4] ? idOf(c.b, a[4]) : null;
+        addPoi(c.w, { id, name, kind, cell: poiCell(c.w, kind, near, id), holder, region: c.w.settlement(host.home())!.region, cause: c.cause });
+      },
+    },
+    packPoiState: { effect: (c, a) => setPoiState(c.w, idOf(c.b, a[0]), String(a[1]) as 'standing' | 'cleared' | 'gone', c.cause) },
     // ---- (draft 8) unlocks, met, laws a run left ----
     packMet: { pred: (c, a) => hasMet(c.w, String(a[0])) },
     packOpen: { pred: (c, a) => c.w.facts.events({ kind: OPENED }).some((e) => e.about?.thing === a[0]) },

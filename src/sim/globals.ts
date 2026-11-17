@@ -4,7 +4,7 @@ import { ROW_H } from '../world/lattice';
 import { TUNING } from '../tune/params';
 
 /** (round 108, AR5) the word the tuning registry's GPU parameters start at (common.wgsl Globals.tune, struct Tune) */
-export const TUNE_WORD = 480;
+export const TUNE_WORD = 496;
 /** (round 107, pages) the Globals before the page table (words 0-479, then the tuning's struct), and the whole with it (Globals.pages and pageInv: 512 vec4 each) */
 export const GLOBALS_HEAD_BYTES = (TUNE_WORD + TUNING.gpuFloats) * 4;
 export const GLOBALS_BYTES = GLOBALS_HEAD_BYTES + 16384;
@@ -174,6 +174,9 @@ export interface GlobalsState {
   ashFall?: [number, number, number, number];
   /** (loop round 13, a weather) fog 0..1 — common.wgsl Globals.ring.z (as the f32's bits; fogNow()). Absent: none */
   fog?: number;
+  /** (loop round 14) the shields up: x, y (window world units), radius — common.wgsl Globals.shields (src/api/shields.ts
+   *  writes it). Absent or short: none */
+  shields?: [number, number, number][];
   /** (round 107, pages) the page table, window chunk -> its page's place px | py << 8 (sim/pages.ts Pages.entries) — absent: left as it was */
   pages?: Uint16Array;
   /** (P2.2) the table backwards: slot -> window chunk, cx | cy << 8 (Pages.inv) — with `pages` */
@@ -276,6 +279,11 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer, pageVec4 = 512):
   sr.set([s.ring?.[0] ?? 0, s.ring?.[1] ?? 0, 0, 0]);
   // (loop round 13: the ring's spare z word carries the fog, an f32's bits — common.wgsl fogNow)
   f[478] = s.fog ?? 0;
+  // (loop round 14: the shields, words 480-495 — common.wgsl Globals.shields)
+  for (let k = 0; k < 4; k++) {
+    const d = s.shields?.[k];
+    f.set(d ? [d[0], d[1], d[2], 0] : [0, 0, 0, 0], 480 + k * 4);
+  }
   // (round 108, AR5) the tuning panel's live values: every tick, so a slider takes at once
   TUNING.packGpu(f, TUNE_WORD);
   // (round 107, pages) the page table: two u16 a u32, little-endian — a Uint16Array over the words is the packing

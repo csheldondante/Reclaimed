@@ -141,6 +141,9 @@ struct Globals {
   // colIdx / colIdxI / texCol / texCol2 / texColK, and back through colXY. (Loop round 13) z: the fog, an f32's bits
   // (sim/globals.ts fog; fogNow below)
   ring: vec4<u32>,
+  // (loop round 14, docs/design/FRONTS.md) the shields up (src/api/shields.ts): x, y (window world units), radius, 0 —
+  // a radius of 0: none. Fire and units do not cross a shield's rim (shieldAt); the liquids read their own copy
+  shields: array<vec4<f32>, 4>,
   // (round 108, AR5) the tuning registry's GPU parameters (struct Tune above; sim/globals.ts writes them at TUNE_WORD)
   tune: Tune,
   // (round 107, `pages`: docs/PAGES.md P2.1) the page table: window chunk (cy * chunks across + cx) -> the page its
@@ -524,6 +527,14 @@ fn wo(p: vec2<f32>) -> vec2<f32> { return p + G.org.xy; }
 fn ashFall() -> vec4<f32> { return vec4<f32>(G.gustDir[1].w, G.gustDir[2].w, G.gustDir[3].w, G.gustDir[0].w); }
 /** (loop round 13, a weather: src/weather/presets.ts) fog over the land, 0..1 (render/light.wgsl haze) */
 fn fogNow() -> f32 { return bitcast<f32>(G.ring.z); }
+/** (loop round 14) the shield whose disc holds window point p (world units), or -1 */
+fn shieldAt(p: vec2<f32>) -> i32 {
+  for (var k = 0; k < 4; k++) {
+    let s = G.shields[k];
+    if (s.z > 0.0 && distance(p, s.xy) < s.z) { return k; }
+  }
+  return -1;
+}
 /** ash flakes drawn at strength 1 (rain.wgsl; scenes/world-core.ts adds them to the rain draw's instances) */
 const ASH_FLAKES: f32 = 2200.0;
 fn rand3(x: u32, y: u32, z: u32) -> f32 { return f32(hash3(x, y, z) >> 8u) / 16777216.0; }

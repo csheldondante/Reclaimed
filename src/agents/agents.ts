@@ -444,7 +444,9 @@ export interface AgentState {
 }
 
 const DEFAULT_KINDS: KindSpec[] = [
-  { name: 'worker', height: 1.0, mass: 1, hp: 10, speed: 2.4 },
+  // (loop round 14, LS-108: "I would let any units brawl" — a weak blow: it never seeks a fight (no notice), but one
+  // turned on someone — a berserk crowd — lands its fists)
+  { name: 'worker', height: 1.0, mass: 1, hp: 10, speed: 2.4, reach: 1.1, damage: 1, swingPeriod: 1.4 },
   { name: 'raider', height: 1.2, mass: 1, hp: 10, speed: 3.2, reach: 1.2, damage: 2, swingPeriod: 1.0, notice: 30 },
   { name: 'ogre', height: 2, mass: 3, hp: 22, speed: 1.8, reach: 1.8, damage: 5, swingPeriod: 1.6, notice: 25 },
 ];

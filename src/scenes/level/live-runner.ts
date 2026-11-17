@@ -22,7 +22,7 @@ import type { Marker } from '../../season/run-ui';
 import type { SeasonLoop } from '../../season/loop';
 import { townHeart } from '../../season/war';
 import type { StoryCamera, V3 } from '../../story/camera';
-import { cellAt } from '../../world/lattice';
+import { cellAt, ROW_H } from '../../world/lattice';
 import { MAT } from '../../world/materials';
 import type { LevelScene } from '../level';
 import { REGION } from '../streamer/defs';
@@ -149,6 +149,12 @@ interface Front {
   spring: Spring | null;
   read: number;
   awake: number;
+  /** (loop round 14) the window's hold (its key; null: not held) */
+  hold: string | null;
+  /** the event's seconds when the pour began */
+  pourT: number;
+  /** (loop round 14) a fresh read of its points under way */
+  reading: boolean;
 }
 
 /** (loop round 12) a front's reads: seconds between them; the depth over a point's first that is the front there; the
@@ -162,10 +168,16 @@ const FRONT_AWAKE_R = 18;
 const FRONT_AWAKE_S = 3;
 /** the ways round the target the source is looked for on */
 const FRONT_WAYS = 16;
-/** (loop round 12) once a lava front's event is over: its way kept awake this many seconds more while its lava cools
- *  this many times faster and sets (a pool 4 cells deep otherwise glows ~100 s, and in a sleeping chunk for good) */
-const FRONT_SET_S = 20;
-const FRONT_QUENCH = 25;
+/** (loop round 12; round 14: no quench) once a lava front's event is over: its way kept awake and the window held while
+ *  its lava sets — until the lava is all set (the liquid asleep) or this many seconds */
+const FRONT_SET_S = 150;
+/** (loop round 14) a far source: cells inside the window's edge it must lie; the walk's step out from the town (cells);
+ *  a dip under the highest ground nearer the town that ends a way's walk (cells) */
+const FRONT_EDGE = 12;
+const FRONT_STEP = 4;
+const FRONT_DIP = 3;
+/** (loop round 14) slides of the window a front's source may ask for, to walk its way further */
+const FRONT_SLIDES = 2;
 
 /** (round 7) an event's people walking off after it is over: let go when the seconds are up */
 interface Leaving {
@@ -202,7 +214,7 @@ export class LiveRunner {
   /** (round 7) people of events that are over, walking off */
   private leaving: Leaving[] = [];
   /** (loop round 12) lava fronts whose events are over, setting: their way kept awake, the lava's cooling quickened */
-  private setting: { f: Front; left: number; awake: number }[] = [];
+  private setting: { f: Front; left: number; awake: number; age: number }[] = [];
 
   constructor(private h: LiveHost) {}
 
@@ -346,6 +358,13 @@ export class LiveRunner {
     this.goTo(run);
     // (the road that took the last column is tried first: a road whose spawn point is in water stays so)
     if (run.entry && this.roadTaken > 0) run.entry.road = this.roadTaken - 1;
+    // (loop round 14, season/pois.ts: raiders come from their camp — the road whose way out points nearest the camp
+    // is tried first)
+    const camp = run.entry && [...run.groups.values()].some((g) => g.def.side === 'foe' && g.def.kind === 'raider') ? this.campRoad() : null;
+    if (run.entry && camp !== null) {
+      run.entry.road = camp - 1;
+      console.log(`[live] ${run.template}: the raiders come from their camp, down road ${camp}`);
+    }
     if (run.entry) this.nextRoad(run);
     console.log(`[live] ${run.template} begun: ${[...run.groups.values()].map((g) => `${g.def.id} ${g.made}`).join(', ')}${run.hazard ? `, fire at ${run.hazard.points.length} spots` : ''}${run.front ? `, a ${run.def.hazard!.kind === 'front' ? (run.def.hazard as LiveFront).liquid : ''} front on ${run.front.points.length} points` : ''}`);
     return run;
@@ -368,41 +387,119 @@ export class LiveRunner {
       const r = hz.spread * (0.3 + (0.6 * ((k * 7) % 4)) / 3);
       return { at: [c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r], base: null, reached: false };
     });
-    const f: Front = { target, src: null, picking: true, points, way: [], spring: null, read: 0, awake: 0 };
+    const f: Front = { target, src: null, picking: true, points, way: [], spring: null, read: 0, awake: 0, hold: null, pourT: 0, reading: false };
     run.front = f;
+    // (loop round 14: the window held from now — no slide of its own moves the land under the front, LS-130)
+    this.holdWindow(f, run.id);
+    this.pick(run, f, hz, 0);
+  }
+
+  /**
+   * (loop round 14, docs/design/FRONTS.md "A far source") The front's source: the way the land rises steadily from the
+   * town, walked out up to `far` cells or the window's edge — a dip on the way (a river's bed) ends that way's walk. If
+   * the best way's walk was stopped by the window's edge short of `far`, the window is slid a region that way (the town
+   * kept FRONT_EDGE + spread inside it) and the walk made again, at most FRONT_SLIDES times. LS-121: read on the CPU from
+   * the terrain mirror's pages, the window's box.
+   */
+  private pick(run: LiveRun, f: Front, hz: LiveFront, slides: number): void {
     const terrain = this.api.terrain;
+    const c = f.target;
     const R = hz.far + 4;
     void terrain.load(c[0] - R, c[1] - R, c[0] + R, c[1] + R).then(
       () => {
         if (run.over) return;
-        let best: [number, number, number] | null = null;
-        for (let k = 0; k < FRONT_WAYS; k++) {
-          const a = (k / FRONT_WAYS) * Math.PI * 2;
-          const x = f.target[0] + Math.cos(a) * hz.far;
-          const y = f.target[1] + Math.sin(a) * hz.far;
-          if (!terrain.inWindow(x, y)) continue;
-          const z = terrain.surfaceAt(x, y)?.z;
-          if (z !== undefined && (!best || z > best[2])) best = [x, y, z];
-        }
-        f.picking = false;
-        if (!best) {
-          console.error(`[live] ${run.template}: no ground ${hz.far} cells round the target was read; the front has no source`);
+        const c = f.target;
+        const z0 = terrain.surfaceAt(c[0], c[1])?.z;
+        if (z0 === undefined) {
+          f.picking = false;
+          console.error(`[live] ${run.template}: the ground at its target was not read; the front has no source`);
           return;
         }
-        f.src = best;
-        for (let k = 1; k <= FRONT_WAY; k++) {
-          const t = k / (FRONT_WAY + 1);
-          f.way.push({ at: [best[0] + (f.target[0] - best[0]) * t, best[1] + (f.target[1] - best[1]) * t], base: null, reached: false });
+        const holds = (x: number, y: number, m = FRONT_EDGE) => [[0, 0], [m, 0], [-m, 0], [0, m], [0, -m]].every(([dx, dy]) => terrain.inWindow(x + dx, y + dy));
+        let best: { at: [number, number, number]; r: number; edge: boolean; a: number } | null = null;
+        for (let k = 0; k < FRONT_WAYS; k++) {
+          const a = (k / FRONT_WAYS) * Math.PI * 2;
+          let top = z0;
+          let end: { at: [number, number, number]; r: number; edge: boolean; a: number } | null = null;
+          let edge = false;
+          for (let r = FRONT_STEP * 4; r <= hz.far; r += FRONT_STEP) {
+            const x = c[0] + Math.cos(a) * r;
+            const y = c[1] + Math.sin(a) * r;
+            if (!holds(x, y)) {
+              edge = true;
+              break;
+            }
+            const z = terrain.surfaceAt(x, y)?.z;
+            // (a dip deeper than FRONT_DIP under the highest ground nearer the town: lava would pool or turn there)
+            if (z === undefined || z < top - FRONT_DIP) break;
+            top = Math.max(top, z);
+            if (z > z0 + 1) end = { at: [x, y, z], r, edge: false, a };
+          }
+          if (end) end.edge = edge;
+          // (the farthest rise; among as far, the highest)
+          if (end && (!best || end.r > best.r || (end.r === best.r && end.at[2] > best.at[2]))) best = end;
         }
-        const L = this.h.scene.core.flow[hz.liquid];
-        L.addSpring(best[0], best[1], best[2] + 1, hz.rate);
-        f.spring = L.springs[L.springs.length - 1];
-        this.wakeFront(f);
-        console.log(`[live] ${run.template}: ${hz.liquid} poured at ${best.map((v) => v.toFixed(0)).join(', ')} (${hz.far} cells from the target, the highest of ${FRONT_WAYS} ways; the target's ground ${(terrain.surfaceAt(f.target[0], f.target[1])?.z ?? NaN).toFixed(1)}), ${hz.rate} a second for ${hz.pour} s`);
-        if (this.focus === run) this.lookFront(run);
+        if (!best) {
+          f.picking = false;
+          console.error(`[live] ${run.template}: no way rises from the target within the window; the front has no source`);
+          return;
+        }
+        // (cut short by the window's edge: slide it a region that way, if the town stays well inside, and walk again)
+        const S = this.h.scene.stream;
+        if (best.edge && best.r < hz.far && slides < FRONT_SLIDES && S) {
+          const ax = Math.cos(best.a);
+          const ay = Math.sin(best.a) / ROW_H;
+          const d: [number, number] = Math.abs(ax) >= Math.abs(ay) ? [Math.sign(ax) * S.R, 0] : [0, Math.sign(ay) * S.R];
+          const after: [number, number] = [c[0] - d[0], c[1] - d[1] * ROW_H];
+          const m = FRONT_EDGE + hz.spread;
+          const inside = after[0] > m && after[1] > m && after[0] < S.W - m && after[1] < S.H * ROW_H - m;
+          if (inside && !S.busy) {
+            console.log(`[live] ${run.template}: the way rises to the window's edge ${best.r.toFixed(0)} cells out; the window slid (${d.join(', ')}) to walk it further`);
+            void S.slide(d[0], d[1]).then(
+              () => this.pick(run, f, hz, slides + 1),
+              (e) => console.error(`[live] ${run.template}: the window could not slide for the front: ${e}`),
+            );
+            return;
+          }
+        }
+        f.picking = false;
+        this.pour(run, f, hz, best.at, `the farthest of ${FRONT_WAYS} ways the land rises steadily from the town, ${hz.far} asked${slides ? `, the window slid ${slides} time(s)` : ''}`);
       },
       (e) => console.error(`[live] ${run.template}: the ground round its target could not be read: ${e}`),
     );
+  }
+
+  /** the front's source found: its way's points, the spring, the window held (loop round 14) */
+  private pour(run: LiveRun, f: Front, hz: LiveFront, best: [number, number, number], how: string): void {
+    const terrain = this.api.terrain;
+    f.src = best;
+    f.pourT = run.t;
+    for (let k = 1; k <= FRONT_WAY; k++) {
+      const t = k / (FRONT_WAY + 1);
+      f.way.push({ at: [best[0] + (f.target[0] - best[0]) * t, best[1] + (f.target[1] - best[1]) * t], base: null, reached: false });
+    }
+    const L = this.h.scene.core.flow[hz.liquid];
+    L.addSpring(best[0], best[1], best[2] + 1, hz.rate);
+    f.spring = L.springs[L.springs.length - 1];
+    this.holdWindow(f, run.id);
+    this.wakeFront(f);
+    const far = Math.hypot(best[0] - f.target[0], best[1] - f.target[1]);
+    console.log(`[live] ${run.template}: ${hz.liquid} poured at ${best.map((v) => v.toFixed(0)).join(', ')} (${far.toFixed(0)} cells from the target, ${how}; the target's ground ${(terrain.surfaceAt(f.target[0], f.target[1])?.z ?? NaN).toFixed(1)}), ${hz.rate} a second for ${hz.pour} s`);
+    if (this.focus === run) this.lookFront(run);
+  }
+
+  /** (loop round 14, LS-130) the window held still while the front runs and sets: no slide moves its land */
+  private holdWindow(f: Front, id: string): void {
+    const S = this.h.scene.stream;
+    if (!S || f.hold) return;
+    f.hold = `front:${id}`;
+    S.holds.add(f.hold);
+  }
+  private releaseWindow(f: Front): void {
+    if (!f.hold) return;
+    this.h.scene.stream?.holds.delete(f.hold);
+    console.log(`[live] the window let go (${f.hold})`);
+    f.hold = null;
   }
 
   /** the chunks between the front's source and its target kept awake (sleeping chunks freeze liquid, and the hybrid
@@ -429,9 +526,10 @@ export class LiveRunner {
    * along the line between them, and that span's length in cells, which the zoom fits (FRONT_FIT).
    */
   private frontFrame(f: Front): { at: [number, number]; span: number } | null {
-    if (!f.src) return null;
+    const src = f.src;
+    if (!src) return null;
     const head = [...f.way].reverse().find((p) => p.reached);
-    const at: [number, number] = head ? head.at : [f.src[0], f.src[1]];
+    const at: [number, number] = head ? head.at : [src[0], src[1]];
     // (the shield nearest the target: the one cast over the town)
     const shields = this.h.scene.worldApi?.shields?.list ?? [];
     const s = shields.reduce<(typeof shields)[number] | null>((b, x) => (!b || Math.hypot(x.x - f.target[0], x.y - f.target[1]) < Math.hypot(b.x - f.target[0], b.y - f.target[1]) ? x : b), null);
@@ -466,35 +564,62 @@ export class LiveRunner {
   private front(run: LiveRun, dt: number): void {
     const f = run.front;
     const hz = run.def.hazard;
-    if (!f || !f.src || hz?.kind !== 'front') return;
-    if (f.spring && run.t >= hz.pour) this.stopPour(run);
-    if ((f.awake -= dt) <= 0 && run.t < hz.pour + FRONT_SETTLE) {
+    if (!f || hz?.kind !== 'front') return;
+    if (!f.src) return;
+    if (f.spring && run.t - f.pourT >= hz.pour) this.stopPour(run);
+    if ((f.awake -= dt) <= 0 && run.t - f.pourT < hz.pour + FRONT_SETTLE) {
       f.awake = 1;
       this.wakeFront(f);
     }
-    if ((f.read += dt) < FRONT_READ) return;
+    if (f.reading || (f.read += dt) < FRONT_READ) return;
     f.read = 0;
     const api = this.h.scene.worldApi;
     const depthAt = hz.liquid === 'lava' ? (x: number, y: number) => api?.fire?.flowLavaAt(x, y) ?? null : (x: number, y: number) => api?.water?.depthAt(x, y) ?? null;
-    let fresh = 0;
-    for (const p of [...f.points, ...f.way]) {
-      // (the page holding the point is asked for and read a frame later: this is the value of the read before)
-      const d = depthAt(p.at[0], p.at[1]);
-      if (d === null) continue;
-      if (p.base === null) p.base = d;
-      if (!p.reached && d - p.base > FRONT_DEPTH[hz.liquid]) {
-        p.reached = true;
-        fresh++;
-      }
-    }
-    if (fresh) console.log(`[live] ${run.template}: the front reached ${f.points.filter((p) => p.reached).length} of ${f.points.length} points in the town, ${f.way.filter((p) => p.reached).length} of ${f.way.length} on its way (t ${run.t.toFixed(0)} s)`);
+    // (loop round 14: the points' pages read fresh each time — the mirror counts a page stale only once its chunk ran,
+    // and liquid flows on through sleeping chunks: round 13's reads saw 0 under lava that had come into the town)
+    // (each point's own page only, in one read: at most 18 pages of 1 KB every FRONT_READ s, not the box from source to town)
+    const all = [...f.points, ...f.way];
+    const at = all.map((p) => p.at);
+    const load = hz.liquid === 'lava' ? api?.fire?.loadFlowLava(at) : api?.water?.loadDepth(at);
+    if (!load) return;
+    f.reading = true;
+    void load.then(
+      () => {
+        f.reading = false;
+        if (run.over) return;
+        let fresh = 0;
+        for (const p of all) {
+          const d = depthAt(p.at[0], p.at[1]);
+          if (d === null) continue;
+          if (p.base === null) p.base = d;
+          if (!p.reached && d - p.base > FRONT_DEPTH[hz.liquid]) {
+            p.reached = true;
+            fresh++;
+          }
+        }
+        if (fresh) console.log(`[live] ${run.template}: the front reached ${f.points.filter((p) => p.reached).length} of ${f.points.length} points in the town, ${f.way.filter((p) => p.reached).length} of ${f.way.length} on its way (t ${run.t.toFixed(0)} s)`);
+      },
+      (e) => {
+        f.reading = false;
+        console.error(`[live] ${run.template}: the front's points could not be read: ${e}`);
+      },
+    );
   }
 
-  /** (loop round 12) lava fronts over: their way kept awake while their lava sets, quickly (FRONT_SET_S, FRONT_QUENCH) */
+  /**
+   * (loop round 12; round 14: no quench, LS-127) lava fronts over: their way kept awake and the window held while their
+   * lava sets — until no lava is left liquid (the lava's own sleep read: its wet list empty) or FRONT_SET_S
+   */
   private setFronts(dt: number): void {
+    const lava = this.h.scene.core.flow.lava;
     for (const s of [...this.setting]) {
-      if ((s.left -= dt) <= 0) {
+      s.age += dt;
+      // (a few seconds first: the sleep read is asked at doubling gaps after a wake)
+      const set = s.age > 5 && lava.settle !== null && !lava.settle.awake;
+      if ((s.left -= dt) <= 0 || set) {
         this.setting.splice(this.setting.indexOf(s), 1);
+        console.log(`[live] a front's lava ${set ? 'all set' : `not all set after ${FRONT_SET_S} s`} (${s.age.toFixed(0)} s after its event)`);
+        this.releaseWindow(s.f);
         continue;
       }
       if ((s.awake -= dt) <= 0) {
@@ -502,7 +627,6 @@ export class LiveRunner {
         this.wakeFront(s.f);
       }
     }
-    this.h.scene.core.flow.lava.quench = this.setting.length ? FRONT_QUENCH : 1;
   }
 
   private stopPour(run: LiveRun): void {
@@ -727,6 +851,30 @@ export class LiveRunner {
    * the window is where the camera is. With walls and no road's gate standing, each road again straight for the
    * town's heart. None left: the event has nobody — it ends as it stands (the raid: "no raider reached the town").
    */
+  /** (loop round 14) the road of the home town whose way out points nearest the raiders' camp (null: no camp standing,
+   *  no roads). The camp is a world cell; the road's look point a window point — compared as bearings from the town */
+  private campRoad(): number | null {
+    const camp = this.h.realm()?.pois().find((p) => p.kind === 'camp' && p.holder === 'raiders' && p.state === 'standing');
+    const t = this.h.town();
+    const S = this.h.scene.stream;
+    if (!camp || !t || !S || !t.roadCount) return null;
+    const c = t.centreInWindow();
+    const cx = camp.cell[0] - S.origin[0];
+    const cy = (camp.cell[1] - S.origin[1]) * ROW_H;
+    const want = Math.atan2(cy - c[1], cx - c[0]);
+    let best: number | null = null;
+    let bd = Infinity;
+    for (let k = 0; k < t.roadCount; k++) {
+      const r = t.roadInWindow(k);
+      const end = r?.[r.length - 1];
+      if (!end) continue;
+      const a = Math.atan2(end[1] - c[1], end[0] - c[0]);
+      const d = Math.abs(Math.atan2(Math.sin(a - want), Math.cos(a - want)));
+      if (d < bd) [bd, best] = [d, k];
+    }
+    return best;
+  }
+
   private nextRoad(run: LiveRun): void {
     const e = run.entry!;
     const t = this.h.town();
@@ -851,7 +999,9 @@ export class LiveRunner {
     if (f) {
       // (a front: its town points reached are what it took; it is "alight" while it pours and settles after — LiveEnd 'out')
       const hz = run.def.hazard as LiveFront;
-      return { t: run.t, groups, points: f.points.length, burned: f.points.filter((p) => p.reached).length, alight: f.picking || run.t < hz.pour + FRONT_SETTLE ? 1 : 0, casts: { ...run.casts }, absent: { ...run.absent }, fighting: run.fighting };
+      // (loop round 14: its pour's seconds from when it began — a far source waits for the window first)
+      const poured = f.src ? run.t - f.pourT : 0;
+      return { t: run.t, groups, points: f.points.length, burned: f.points.filter((p) => p.reached).length, alight: f.picking || (!!f.src && poured < hz.pour + FRONT_SETTLE) ? 1 : 0, casts: { ...run.casts }, absent: { ...run.absent }, fighting: run.fighting };
     }
     const pts = run.hazard?.points ?? [];
     return { t: run.t, groups, points: pts.length, burned: pts.filter((p) => p.burned).length, alight: pts.filter((p) => p.alight && !p.burned).length, casts: { ...run.casts }, absent: { ...run.absent }, fighting: run.fighting };
@@ -1034,7 +1184,11 @@ export class LiveRunner {
   close(run: LiveRun): V3 | null {
     const at = this.where(run);
     this.stopPour(run);
-    if (run.front && run.def.hazard?.kind === 'front' && run.def.hazard.liquid === 'lava') this.setting.push({ f: run.front, left: FRONT_SET_S, awake: 0 });
+    if (run.front) {
+      // (a lava front sets with the window held; water, and a front that never poured, let the window go now)
+      if (run.front.src && run.def.hazard?.kind === 'front' && run.def.hazard.liquid === 'lava') this.setting.push({ f: run.front, left: FRONT_SET_S, awake: 0, age: 0 });
+      else this.releaseWindow(run.front);
+    }
     run.over = true;
     const forces = this.h.scene.townForces;
     const units = this.h.scene.units;

@@ -34,6 +34,7 @@ import { hasLand, type Land } from './deal';
 import { adopt, lose, grant, pools, total, POOL_ROLE, type Pool, type Pools, type SeasonLedger } from './ledger';
 import { cardOfTemplate, projectTemplate, RAIDERS, RAIDERS_CAMP, siteId, SITES, WORLD_TEMPLATES, type SiteKey } from './realm-templates';
 import { BASE_BETWEEN, BETWEEN, LAW_ENDED, type BetweenDef } from './realm-between';
+import { addPoi, poiCell, pois, type Poi } from './pois';
 import { holds } from '../living/dsl';
 import { applyBatch } from '../living/engine';
 import { setStance, stanceOf, type Stance } from '../living/stance';
@@ -292,8 +293,17 @@ export class Realm {
     // hostile. The standing threat of a run (`pay-raiders`) is dealt only while they are hostile and have somewhere to
     // come from; a world that has lost them has no raid)
     if (!f.entity(RAIDERS_ID)) f.add({ id: RAIDERS_ID, kind: 'army', name: 'the raiders', cause: 'realm' });
+    // (loop round 14: the camp is a point of interest — a real place on the map, season/pois.ts — out in the wilds a
+    // ride from the home town; a world saved before keeps its camp, made a place on the map with its conditions)
+    const old = f.entity(RAIDERS_CAMP);
+    if (old && !old.attrs.poi) {
+      const tags = old.tags.filter((t) => t.scope === 'condition');
+      f.remove(RAIDERS_CAMP, 'realm');
+      addPoi(this.w, { id: RAIDERS_CAMP, name: "the raiders' camp", kind: 'camp', cell: poiCell(this.w, 'camp', o.home, RAIDERS_CAMP), holder: RAIDERS_ID, region: this.w.settlement(o.home)!.region, cause: 'realm' });
+      for (const t of tags) f.setTag(RAIDERS_CAMP, 'condition', t.key, t.value, 'realm');
+    }
     if (!f.entity(RAIDERS_CAMP)) {
-      f.add({ id: RAIDERS_CAMP, kind: 'site', name: "the raiders' camp", at: { region: this.w.settlement(o.home)!.region }, attrs: { camp: RAIDERS_ID }, cause: 'realm' });
+      addPoi(this.w, { id: RAIDERS_CAMP, name: "the raiders' camp", kind: 'camp', cell: poiCell(this.w, 'camp', o.home, RAIDERS_CAMP), holder: RAIDERS_ID, region: this.w.settlement(o.home)!.region, cause: 'realm' });
       if (stanceOf(this.w, RAIDERS_ID, 'player') === 'none') setStance(this.w, RAIDERS_ID, 'player', 'hostile', 'realm');
     }
     // (the home town's sites: named buildings and districts a card stands at — once a world)
@@ -1224,6 +1234,13 @@ export class Realm {
     }
     const nearest = /^far:nearest:(\d+)$/.exec(sel);
     if (nearest) return far.filter((s) => state(s.id) === 'standing' && s.size !== 'camp').slice(0, Number(nearest[1])).map((s) => s.id);
+    // (loop round 14, draft 9, LS-107: the n nearest standing towns nobody holds — not yours, no faction's: no one
+    // occupies it, it is sworn to no one, nobody founded and keeps it)
+    const free = /^far:free:(\d+)$/.exec(sel);
+    if (free) {
+      const held = (id: EntityId) => f.relations({ type: 'occupies', to: id }).length > 0 || f.relations({ type: 'vassal_of', from: id, historic: false }).length > 0 || f.relations({ type: 'controls', to: id }).length > 0;
+      return far.filter((s) => state(s.id) === 'standing' && s.size !== 'camp' && !held(s.id)).slice(0, Number(free[1])).map((s) => s.id);
+    }
     const where = /^far:where:(.+)$/.exec(sel)?.[1];
     if (where === 'trade-partner') return far.filter((s) => this.partners().some((p) => p.id === s.id)).map((s) => s.id);
     if (where === 'founded-by-player') return far.filter((s) => f.relations({ type: 'controls', from: 'player', to: s.id }).length > 0).map((s) => s.id);
@@ -1406,9 +1423,15 @@ export class Realm {
     if (this.campStands()) return true;
     return f.relations({ type: 'occupies', from: RAIDERS_ID }).some((r) => this.selectTowns('far:where:occupied').includes(r.to));
   }
+  /** (loop round 14) the points of interest on the map — the raiders' camp, the packs' lairs and towers… — gone ones left
+   *  out (season/pois.ts) */
+  pois(): Poi[] {
+    return pois(this.w).filter((p) => p.state !== 'gone');
+  }
   private campStands(): boolean {
     const f = this.w.facts;
-    return !!f.entity(RAIDERS_CAMP) && !['abandoned', 'destroyed', 'burned'].some((k) => !!f.tag(RAIDERS_CAMP, 'condition', k)?.value);
+    // (loop round 14: cleared or gone from the map — a card's outcome — it stands no more)
+    return !!f.entity(RAIDERS_CAMP) && !['abandoned', 'destroyed', 'burned', 'cleared', 'gone'].some((k) => !!f.tag(RAIDERS_CAMP, 'condition', k)?.value);
   }
   /** the signs standing on the towns that were not set for good: [town, sign] */
   private lingering(): [EntityId, (typeof SIGNS)[number]['kind']][] {

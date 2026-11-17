@@ -51,9 +51,14 @@ export interface PackFaction {
 export type PackBind =
   | { site: { tags?: string[]; not?: string[] }; set_off?: boolean }
   | { far: { state?: string[]; tags?: string[]; not?: string[]; holder?: string }; set_off?: boolean }
-  | { faction: { stance?: string[]; with?: string }; set_off?: boolean };
+  | { faction: { stance?: string[]; with?: string }; set_off?: boolean }
+  // (loop round 14, draft 9) a point of interest on the map: its kind, its state, every tag, none of `not`, its holder
+  | { poi: { kind?: string[]; state?: string[]; tags?: string[]; not?: string[]; holder?: string }; set_off?: boolean };
 
 export type PackEffect =
+  // (loop round 14, draft 9) a point of interest put on the map near a place, and a card changing one's state
+  | { poi: string; id: string; name: string; near?: string; holder?: string }
+  | { poi_state: string; where: string }
   | { pool: string; add: number }
   | { income: string; add: number }
   | { put: string; at?: string }
@@ -190,8 +195,9 @@ export interface PackAbility {
   /** (loop round 10, LS-94) or turns the foes within `berserk` paces of the tap on anyone near, one another too; or
    *  hides your people within `hides` paces (no foe goes for them; they are not seen) */
   /** (loop round 12) or raises a shield `shield` paces wide round the tap for `seconds`: lava and flood water flow
-   *  round it */
-  in_event?: { kinds: string[]; kills?: number; douses?: number; berserk?: number; hides?: number; shield?: number; seconds?: number };
+   *  round it; (loop round 14) fire and units stop at it too, and it gives way when what presses on it drains its
+   *  `energy` faster than its `regen` (a second) fills it */
+  in_event?: { kinds: string[]; kills?: number; douses?: number; berserk?: number; hides?: number; shield?: number; seconds?: number; energy?: number; regen?: number };
   text: string;
   look?: string;
 }
@@ -303,7 +309,15 @@ export const UNIT_KINDS: readonly string[] = ['soldier', 'raider', 'worker', 'ca
 /** the base game's card ids (season/realm-templates.ts): a pack's may not clash with them */
 export const BASE_CARD_IDS: readonly string[] = ['build:houses', 'build:farms', 'build:market', 'build:workshops', 'build:harbour', 'build:keep', 'build:quarry', 'build:lumber', 'build:bridge', 'build:trade', 'build:walls', 'mining-outpost', 'tower-lens', 'relieve-neighbour', 'house-refugees', 'guard-camp', 'dead-rise', 'pay-raiders', 'mend-dam', 'fire-wards', 'feed-shrine', 'shore-hill', 'raid', 'gate-parade', 'refugees-arrive', 'resettle-refugees', 'market-fire', 'hire-sellswords'];
 export const COND_KEYS: readonly string[] = ['pool', 'season_gte', 'has_thing', 'no_thing', 'town_has', 'site_has', 'far_town_is', 'resolved', 'leader', 'faction_holds', 'faction_stance', 'met'];
-export const EFFECT_KEYS: readonly string[] = ['pool', 'income', 'put', 'remove', 'tag', 'untag', 'mutate', 'far', 'sign', 'arrive', 'unlock', 'law', 'end_run', 'far_all', 'trade', 'stance', 'law_ends', 'say'];
+export const EFFECT_KEYS: readonly string[] = ['pool', 'income', 'put', 'remove', 'tag', 'untag', 'mutate', 'far', 'sign', 'arrive', 'unlock', 'law', 'end_run', 'far_all', 'trade', 'stance', 'law_ends', 'poi', 'poi_state', 'say'];
+/** (loop round 14, draft 9) the kinds of point of interest (season/pois.ts; the validator imports nothing at run time,
+ *  so the vocabulary is here) */
+export const POI_KINDS = ['camp', 'lair', 'tower', 'crash', 'battlefield', 'vault', 'temple', 'bridge', 'dungeon', 'giant'] as const;
+export type PoiKind = (typeof POI_KINDS)[number];
+export const isPoiKind = (k: unknown): k is PoiKind => typeof k === 'string' && (POI_KINDS as readonly string[]).includes(k);
+/** (loop round 14, draft 9) a point of interest's states: a card binds to these and sets them (gone: off the map) */
+export const POI_BIND_STATES: readonly string[] = ['standing', 'cleared'];
+export const POI_SET_STATES: readonly string[] = ['standing', 'cleared', 'gone'];
 /** (draft 8) what `met` can name: a faction (its id, or "raiders"), "place:<id>" (a place found or founded), "ending:<word>"
  *  (a run ended so: won, fell, stood, or a pack's own word) */
 export const MET_PREFIXES: readonly string[] = ['place:', 'ending:'];
@@ -405,10 +419,10 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   });
   const factionIds = new Set(factions.map((f) => f.id));
   /** (draft 7) the variables of the card being checked: name → what it binds (site, far, faction) */
-  let vars = new Map<string, 'site' | 'far' | 'faction'>();
+  let vars = new Map<string, 'site' | 'far' | 'faction' | 'poi'>();
   const usedVars = new Set<string>();
   /** a `$name` reference: bound by the card, of a kind allowed here */
-  const varRef = (ref: string, where: string, kinds: ('site' | 'far' | 'faction')[]): boolean => {
+  const varRef = (ref: string, where: string, kinds: ('site' | 'far' | 'faction' | 'poi')[]): boolean => {
     if (!ref.startsWith('$')) return false;
     const k = vars.get(ref.slice(1));
     usedVars.add(ref.slice(1));
@@ -479,10 +493,16 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     if (ref?.startsWith('far:')) {
       if (!allow.far) return err(where, `A far place is not allowed here. It is ${JSON.stringify(ref)}.`);
       const st = /^far:where:(.+)$/.exec(ref)?.[1];
-      if (ref === 'far:all' || /^far:nearest:[1-9]\d*$/.test(ref) || (st && FAR_SELECT_STATES.includes(st)) || founded.has(ref.slice(4))) return;
-      return err(where, `Unknown far place "${ref}". Write "far:neighbour", "far:all", "far:nearest:2", "far:where:<state>" (${FAR_SELECT_STATES.join(', ')}) or "far:<id>" of a place this pack founds.`);
+      if (ref === 'far:all' || /^far:(nearest|free):[1-9]\d*$/.test(ref) || (st && FAR_SELECT_STATES.includes(st)) || founded.has(ref.slice(4))) return;
+      return err(where, `Unknown far place "${ref}". Write "far:neighbour", "far:all", "far:nearest:2", "far:free:1" (the nearest standing towns nobody holds), "far:where:<state>" (${FAR_SELECT_STATES.join(', ')}) or "far:<id>" of a place this pack founds.`);
     }
     if (!siteOf(ref)) err(where, `Unknown place ${JSON.stringify(ref)}. A site is written "site:<name>" with one of: ${SITE_KEYS.join(', ')}.${allow.town ? ' Or "town".' : ''}`);
+  };
+
+  // (loop round 14, draft 9: the points of interest a card may name by id — the raiders' camp, and those the pack makes)
+  const poiIds = new Set(['raiders-camp', ...cards.flatMap((c) => [...(c.if_taken ?? []), ...(c.if_expires ?? []), ...Object.values(c.if_tier ?? {}).flat()] as Record<string, unknown>[]).filter((e) => e && typeof e.poi === 'string' && typeof e.id === 'string').map((e) => String(e.id))]);
+  const poiId = (ref: string, where: string): void => {
+    if (!poiIds.has(ref.slice(4))) err(where, `"${ref}" is no point of interest: poi:raiders-camp, or one this pack puts on the map ({ "poi": "<kind>", "id": … }).`);
   };
 
   // ---- things ----
@@ -558,6 +578,25 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
         } else place(String(x.where), w, { far: true, site: false });
         if (x.by !== undefined) faction(x.by, w, ['raiders', 'player', 'dead']);
         if (x.far === 'revealed' && x.by !== undefined) err(w, 'Nobody holds a revealed place: leave out "by".');
+      } else if (key === 'poi') {
+        // (loop round 14, draft 9: a point of interest put on the map near a place)
+        if (!isPoiKind(x.poi)) err(w, `Unknown kind of point of interest "${String(x.poi)}". The kinds are ${POI_KINDS.join(', ')}.`);
+        if (typeof x.id !== 'string' || typeof x.name !== 'string' || !x.name.trim()) err(w, 'A point of interest needs an "id" and a "name" the player reads on the map.');
+        else if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(x.id)) err(w, `Its id is lowercase words joined by hyphens. It is ${JSON.stringify(x.id)}.`);
+        else if (!x.id.startsWith(`${p.pack.id}-`)) warn(w, `Start its id with the pack's id ("${p.pack.id}-…") so two packs never make the same place.`);
+        if (x.near !== undefined) {
+          const n = String(x.near);
+          if (n.startsWith('poi:')) poiId(n, w);
+          else if (n.startsWith('$')) varRef(n, w, ['far', 'poi']);
+          else if (n !== 'town') err(w, '"near" is "town" (the default), a far or point-of-interest variable ("$town"), or "poi:<id>".');
+        }
+        if (x.holder !== undefined) faction(x.holder, w, ['raiders']);
+      } else if (key === 'poi_state') {
+        if (!POI_SET_STATES.includes(String(x.poi_state))) err(w, `"poi_state" is ${POI_SET_STATES.join(', ')}. It is ${JSON.stringify(x.poi_state)}.`);
+        const r = String(x.where ?? '');
+        if (r.startsWith('$')) varRef(r, w, ['poi']);
+        else if (r.startsWith('poi:')) poiId(r, w);
+        else err(w, '"where" is a point-of-interest variable ("$lair") or "poi:<id>" (poi:raiders-camp, or one this pack makes).');
       } else if (key === 'stance') {
         // (draft 7: a stance between a faction and the player, or another faction)
         faction(x.stance, w);
@@ -681,9 +720,9 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
           const bw = `${w}.bind.${v}`;
           if (!/^[a-z][a-z0-9]*$/.test(v) || v === 'other') err(bw, `A variable's name is one lowercase word other than "other" ("place", "town", "port", "foe"). It is "${v}".`);
           const s = spec as Record<string, unknown>;
-          const kind = (['site', 'far', 'faction'] as const).find((k) => isObj(s?.[k]));
+          const kind = (['site', 'far', 'faction', 'poi'] as const).find((k) => isObj(s?.[k]));
           if (!kind) {
-            err(bw, 'A variable binds { "site": { "tags": [...] } }, { "far": { "state": [...], "tags": [...], "holder": "<faction>" } } or { "faction": { "stance": [...] } }.');
+            err(bw, 'A variable binds { "site": { "tags": [...] } }, { "far": { "state": [...], "tags": [...], "holder": "<faction>" } }, { "faction": { "stance": [...] } } or { "poi": { "kind": [...], "state": [...] } }.');
             continue;
           }
           vars.set(v, kind);
@@ -700,6 +739,13 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
             // nothing reveals — a LOOK: another pack, or an earlier run, may)
             if (typeof q.holder === 'string' && factionIds.has(q.holder) && !allFx.includes(`"by":"${q.holder}"`)) warn(bw, `No effect of this pack makes ${q.holder} hold a town, so this binds nothing unless another pack or an earlier run does.`);
             if (((q.state as string[] | undefined) ?? []).includes('found') && !allFx.includes('"far":"revealed"')) warn(bw, 'No effect of this pack reveals a place, so a "found" place binds nothing unless another pack or an earlier run reveals one.');
+          } else if (kind === 'poi') {
+            // (loop round 14, draft 9: a point of interest on the map)
+            for (const k of (q.kind as string[] | undefined) ?? []) if (!isPoiKind(k)) err(bw, `Unknown kind of point of interest "${k}". The kinds are ${POI_KINDS.join(', ')}.`);
+            for (const st of (q.state as string[] | undefined) ?? []) if (!POI_BIND_STATES.includes(st)) err(bw, `Unknown state "${st}". A point of interest is ${POI_BIND_STATES.join(' or ')}.`);
+            if (q.holder !== undefined) faction(q.holder, bw, ['raiders']);
+            const kinds = (q.kind as string[] | undefined) ?? [];
+            if (kinds.length && !kinds.includes('camp') && !kinds.some((k) => allFx.includes(`"poi":"${k}"`))) warn(bw, `No effect of this pack puts a ${kinds.join(' or ')} on the map, so this binds nothing unless another pack or an earlier run does.`);
           } else {
             for (const st of (q.stance as string[] | undefined) ?? []) if (!STANCES.includes(st) && st !== 'none') err(bw, `Unknown stance "${st}". The stances are ${STANCES.join(', ')}, "none".`);
             if (q.with !== undefined) faction(q.with, bw, ['player']);
@@ -870,6 +916,9 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       if (n.length !== 1 || !Number.isInteger(n[0]) || n[0]! < 1) err(w, '"in_event" needs exactly one of "kills" (foes put down by a cast), "douses" (burning lots put out), "berserk" (the foes within so many paces of the tap turn on anyone near, one another too), "hides" (your people within so many paces are hidden: no foe goes for them) or "shield" (a shield so many paces wide round the tap: lava and flood water flow round it), a whole number, 1 or more.');
       if (ie.seconds !== undefined && (ie.shield === undefined || !Number.isInteger(ie.seconds) || ie.seconds < 1)) err(w, '"seconds" goes with "shield" only: how long the shield stands, a whole number, 1 or more.');
       if ((ie.shield ?? 0) > 60) warn(w, 'A shield more than 60 paces wide covers the whole town and more.');
+      // (loop round 14: the shield's energy and recharge)
+      if (ie.energy !== undefined && (ie.shield === undefined || typeof ie.energy !== 'number' || !(ie.energy > 0))) err(w, '"energy" goes with "shield" only: the shield\'s store, a number over 0. What presses on it (lava, fire, foes at its rim) drains it; empty, it gives way.');
+      if (ie.regen !== undefined && (ie.shield === undefined || typeof ie.regen !== 'number' || !(ie.regen >= 0))) err(w, '"regen" goes with "shield" only: the energy it gets back a second, 0 or more.');
       if ((ie.kills ?? 0) > 3 || (ie.douses ?? 0) > 3) warn(w, 'One cast does more than 3. Heat ray, the strongest spell of the base game, does 2.');
       if ((ie.berserk ?? 0) > 20 || (ie.hides ?? 0) > 20) warn(w, 'One cast reaches more than 20 paces: the whole fight at once.');
     }

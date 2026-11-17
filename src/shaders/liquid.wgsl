@@ -83,8 +83,8 @@ struct LiquidU {
   springs: array<vec4<f32>, 8>,
   // per chunk, this step only: a frozen chunk's flux rescaled by its supply (src/flow/steady.ts; 1 none, 0 dried up)
   scale: array<vec4<f32>, 512>,
-  // x the ticks prep's spray stands for (1; PREP_IDLE while idle: src/flow/liquid.ts encode); y (loop round 12) the
-  // cooling's factor (1: as it cools; more: `quench`)
+  // x the ticks prep's spray stands for (1; PREP_IDLE while idle: src/flow/liquid.ts encode); yzw unused (round 12's
+  // quench, the cooling's factor, removed in loop round 14: the heat rule sets a front's lava in time)
   extra: vec4<f32>,
   // (loop round 12) shields: x, y (window world units), radius (a radius of 0: none). A column whose centre lies within
   // one is a wall to the liquid — nothing flows into it (flux, falling streams), from outside or within — so a front
@@ -278,10 +278,29 @@ fn fluxDir(i: u32, s: u32, k: u32) -> f32 {
   return bitcast<f32>(v[k % 4u]);
 }
 
-/** How freely the run flows (0..1): lava by its heat, and thin runs barely (lqThick()). */
+/**
+ * (loop round 14, LS-122) How stiff a run is by its heat (0: fresh from the vent, 1: at its setting point): hot lava runs,
+ * cooling lava stalls. The yield and the thickness below which it barely flows grow from nothing to their full
+ * numbers as it cools (`stiff^2`): fresh lava runs down any slope as a thin sheet; lava near setting needs a steep
+ * step and a deep run. A liquid with no heat (water) is never stiff.
+ */
+/** fresh lava's thickness, as a share of lqThick(): even the hottest thin film barely flows (keeps a sheet's edge) */
+const LQ_MIN_THICK: f32 = 0.15;
+fn stiffness(h: f32) -> f32 {
+  if (LQ_SET <= 0.0) { return 0.0; }
+  let s = clamp((LQ_HOT - h) / (LQ_HOT - LQ_SET), 0.0, 1.0);
+  return s * s;
+}
+/** a run's gain by its heat: LQ_HOT_GAIN times the liquid's own fresh, its own at setting */
+fn gainAt(h: f32) -> f32 { return lqGain() * mix(LQ_HOT_GAIN, 1.0, stiffness(h)); }
+/** a run's yield (cells): the step it won't move down, by its heat */
+fn yieldAt(h: f32) -> f32 { return lqYield() * select(1.0, stiffness(h), LQ_SET > 0.0); }
+
+/** How freely the run flows (0..1): lava by its heat, and thin runs barely (lqThick(), by its heat). */
 fn fluidity(d: f32, h: f32) -> f32 {
   var f = 1.0;
-  if (lqThick() > 0.0) { let t = min(d / lqThick(), 1.0); f = t * t; }
+  let th = lqThick() * select(1.0, max(stiffness(h), LQ_MIN_THICK), LQ_SET > 0.0);
+  if (th > 0.0) { let t = min(d / th, 1.0); f = t * t; }
   if (LQ_SET > 0.0) { f *= smoothstep(LQ_SET, LQ_RUNNY, h); }
   return f;
 }
@@ -386,7 +405,9 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
         }
       }
       if (code != C_WALL) {
-        f[k] = select(max(0.0, prev[k] * lqFric() + lqGain() * fluid * (H - Hn - lqYield())), max(0.0, lqGain() * fluid * (H - Hn - lqYield()) / max(1.0 - lqFric(), 0.02)), seed);
+        let yz = yieldAt(r.h[s]);
+        let gn = gainAt(r.h[s]);
+        f[k] = select(max(0.0, prev[k] * lqFric() + gn * fluid * (H - Hn - yz)), max(0.0, gn * fluid * (H - Hn - yz) / max(1.0 - lqFric(), 0.02)), seed);
         if (fluid <= 0.0) { f[k] = 0.0; }
         // (round 86) over a lip no more than the critical flow carries, sqrt(g) d^(3/2) a unit of edge: the pipe's
         // momentum otherwise poured the whole depth off each tick (17x it for a 2.6 deep pool) - with the water
@@ -793,6 +814,8 @@ fn publishWater(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 const LAVA_SET_RATE: f32 = 0.6;
+/** (loop round 14) deeper than this a run cools as if this deep (cells) */
+const LAVA_COOL_DEPTH: f32 = 1.5;
 const LAVA_BOIL: f32 = 0.8;
 const LAVA_QUENCH: f32 = 2500.0;
 const MAT_BASALT_Q: u32 = 23u;
@@ -847,9 +870,9 @@ fn publishLava(@builtin(global_invocation_id) id: vec3<u32>) {
     var v = runsOut[i * NSLOT + s];
     var d = v.y;
     if (d <= EPS) { if (s == 0u) { open[i] = 0.0; } continue; }
-    // (loop round 12: LQ.extra.y, the cooling's factor — 1; more while a front's lava is set after its event: the
-    // season goes on, src/flow/liquid.ts `quench`)
-    var T = v.z * exp(-DTQ * lqCool() * max(LQ.extra.y, 1.0) / max(d, 0.15));
+    // (loop round 14, LS-127: a run deeper than LAVA_COOL_DEPTH cools as one that deep — a pool sets in tens of
+    // seconds, not minutes; what stays hot is what fresh lava keeps feeding)
+    var T = v.z * exp(-DTQ * lqCool() / clamp(d, 0.15, LAVA_COOL_DEPTH));
     if (s == 0u) {
       let w = waterB[i];
       if (w > 1e-4 && T > 100.0) {
