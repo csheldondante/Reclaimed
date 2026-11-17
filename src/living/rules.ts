@@ -13,8 +13,25 @@
 // standing, garrison, growth-active, festival, burned, flooded); a ruined or burned thing has lost its working tags
 // there, so every rule about it stops by itself.
 //
-// No loops: a rule changes a pool or a number, never a fact a rule listens to; a rule's own record ('rule-fired') is
-// never a trigger; each rule fires at most `perSeason` times a season (default once).
+// Chains (card-table; the owner, 2026-11-16: "an in play thing that makes winning a fight cause a new challenger
+// opportunity and a next fight"). A rule may also ACT: put a card on offer, start a live card, set or clear a tag on
+// the thing it matched. What an act causes is a trigger like any other — a tag changed is re-read by the next rule, an
+// offered card's result fires the rules about results — so rules chain.
+//
+// Loops are wanted (the owner, 2026-11-16: "I think we want loops and fun engines I wouldn't limit that. I would make
+// it so the infinite loops are tied to user actions so they don't run infinitely on their own. But crazy multipliers
+// and triggers are fun."). So nothing here bounds an engine: a rule fires every time its trigger occurs, multipliers
+// stack, `perSeason` and `cap` are words an author may use ("the temple holds so many") and nothing asks for them.
+// What ends a loop is its structure. A CASCADE is everything set off by one player action (a card taken, a spell
+// cast, the season ended) or one season's turn (`begin`). In a cascade a rule fires once on each occurrence of its
+// trigger (an occurrence has an `id`: a fact event's, a live event's), and no rule fires inside another: an act
+// takes effect only through the world — an offered card waits to be taken, a started event waits for the season's
+// end — so the next turn of a loop costs the player an action or a season. A loop can go on for ever; it cannot go
+// on by itself. A rule's own record ('rule-fired') is never a trigger.
+
+/** firings in one cascade past which the book stops with an error naming the chain. A defect detector for the
+ *  engine (an act that takes effect inside its own cascade would be a bug), not a rule of the game */
+export const CASCADE_LIMIT = 10_000;
 
 export interface Thing {
   id: string;
@@ -38,7 +55,14 @@ export interface TagQuery {
   sameTown?: boolean;
 }
 
-export type RuleTrigger = 'turn' | { event: string } | { live: string };
+/** `live` with no `tier`: when a live event of that kind is read, BEFORE its result is picked (to change its
+ *  numbers). With `tier`: AFTER, when its result is one of these (to act on a win or a loss) */
+export type RuleTrigger = 'turn' | { event: string } | { live: string; tier?: string[] };
+
+/** what an acting rule does: a card put on offer now, a live card's event begun now, a tag set or cleared on the
+ *  first thing matched (`timed`: it lasts to the end of the season) */
+export type RuleAct = { offer: string } | { start: string } | { tag: string; on: 'a'; timed?: boolean } | { untag: string; on: 'a' } | { law: string; seasons?: number } | { end_run: string; name?: string };
+export const isAct = (fx: RuleDef['effect']): fx is RuleAct => 'offer' in fx || 'start' in fx || 'tag' in fx || 'untag' in fx || 'law' in fx || 'end_run' in fx;
 
 export interface RuleDef {
   id: string;
@@ -51,14 +75,16 @@ export interface RuleDef {
   b?: TagQuery;
   /** a pool's level it needs */
   need?: { pool: string; gte?: number; lte?: number };
-  /** what it changes: a pool (add), or one of a live event's numbers (add, or multiply) */
-  effect: { pool: string; n: number } | { amount: string; op: 'add' | 'mul'; n: number };
+  /** what it changes: a pool (add), or one of a live event's numbers (add, or multiply); or what it does (RuleAct) */
+  effect: { pool: string; n: number } | { amount: string; op: 'add' | 'mul'; n: number } | RuleAct;
   /** `n` counts once for each: first thing matched, second thing matched, or `each` of one of the event's numbers */
   per?: 'a' | 'b' | { amount: string; each: number };
   /** the most it may add in one firing (a temple holds so many) */
   cap?: number;
-  /** firings a season (default 1) */
+  /** the most firings a season, if the author wants one (absent: it fires every time its trigger occurs) */
   perSeason?: number;
+  /** (laws) it fires this many times on one trigger (default 1): each time is a firing of its own */
+  fires?: number;
   /** why, in the player's words: {a} and {b} the things' names, {n} how much, {count} how many matched */
   why: string;
 }
@@ -69,17 +95,29 @@ export interface RuleHit {
   things: string[];
   pool?: string;
   amount?: string;
-  /** what it added (a multiply: the difference it made) */
+  /** what it added (a multiply: the difference it made); an act: 1 */
   delta: number;
   text: string;
+  /** an acting rule: what it did */
+  act?: RuleAct;
+  /** what set it off, in the player's words (the occasion's `what`), and the rule that had offered or started the
+   *  card this is the result of (the occasion's `after`): a chain is read back from these */
+  what?: string;
+  after?: string;
 }
 
-/** what a trigger carries: a live event's numbers (changed in place), its place and its route */
+/** what a trigger carries: a live event's numbers (changed in place), its place and its route; and, for the log,
+ *  what happened in words and the rule that caused it (a chain's link) */
 export interface RuleOccasion {
   on: RuleTrigger;
   vars?: Record<string, number>;
   at?: readonly [number, number] | null;
   route?: readonly [readonly [number, number], readonly [number, number]] | null;
+  what?: string;
+  after?: string;
+  /** which occurrence of the trigger this is (a fact event's id, a live event's): in one cascade a rule fires once
+   *  on it. Absent: every call is its own occurrence */
+  id?: string;
 }
 
 export interface RuleWorld {
@@ -87,15 +125,47 @@ export interface RuleWorld {
   pool(k: string): number;
   /** add to a pool (negative: take); returns what was really added */
   gain(k: string, n: number): number;
+  /** an acting rule's act, on the things it matched; false: it changed nothing (the card is on offer already, done for
+   *  good, or not known; the tag is there already). Absent: this world has no acts and an acting rule never fires */
+  act?(fx: RuleAct, things: Thing[], rule: RuleDef): boolean;
 }
 
-/** the rules' own state, saved with a run: firings by rule in the season it is in */
+/** the rules' own state, saved with a run: firings by rule in the season it is in (for a rule with `perSeason`, and
+ *  for the list that shows what fired) */
 export interface RuleState {
   season: number;
   fired: Record<string, number>;
 }
 
-const same = (a: RuleTrigger, b: RuleTrigger): boolean => (typeof a === 'string' || typeof b === 'string' ? a === b : 'event' in a ? 'event' in b && a.event === b.event : 'live' in b && a.live === b.live);
+/** (card-table) what a rule lacks to fire: its firings spent, a pool's level, no first thing (the closest and what it
+ *  lacks or has too much of), no second thing, or a second thing too far away */
+export type RuleMissing =
+  | { kind: 'spent' }
+  | { kind: 'need'; pool: string; have: number; gte?: number; lte?: number }
+  | { kind: 'a'; tags: string[]; closest: { name: string; lacks: string[]; has: string[] } | null }
+  | { kind: 'b'; a: string; tags: string[]; closest: { name: string; lacks: string[]; has: string[] } | null }
+  | { kind: 'far'; a: string; b: string; cells: number };
+
+export interface RuleCheck {
+  rule: string;
+  name: string;
+  on: RuleTrigger;
+  /** times it has fired this season */
+  fired: number;
+  ok: boolean;
+  missing?: RuleMissing;
+  /** the things it would be about (their names) */
+  things?: string[];
+}
+
+/** a rule's trigger against an occasion's. A rule about results (`tier`) fires on an occasion that carries a result,
+ *  one of its own; a rule about a live event's numbers on one that carries none */
+const same = (a: RuleTrigger, b: RuleTrigger): boolean => {
+  if (typeof a === 'string' || typeof b === 'string') return a === b;
+  if ('event' in a) return 'event' in b && a.event === b.event;
+  if (!('live' in b) || a.live !== b.live) return false;
+  return a.tier ? !!b.tier && b.tier.some((t) => a.tier!.includes(t)) : !b.tier;
+};
 
 const dist = (a: readonly [number, number], b: readonly [number, number]) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 /** a point's distance from a segment */
@@ -120,21 +190,45 @@ function matches(t: Thing, q: TagQuery, o: RuleOccasion, a?: Thing): boolean {
   return true;
 }
 
-export class RuleBook {
-  private state: RuleState = { season: -1, fired: {} };
-
-  constructor(
-    readonly rules: readonly RuleDef[],
-    private w: RuleWorld,
-  ) {
+/** problems that make a rule list unplayable (thrown: never patched) */
+export function validateRules(rules: readonly RuleDef[]): void {
+  {
     const ids = new Set<string>();
     for (const r of rules) {
       if (ids.has(r.id)) throw new Error(`rules: the id ${r.id} is used twice`);
       ids.add(r.id);
       if ('amount' in r.effect && (typeof r.on === 'string' || !('live' in r.on))) throw new Error(`rule ${r.id}: only a live event has numbers to change`);
-      if (r.effect.n === 0 || ('op' in r.effect && r.effect.op === 'mul' && r.effect.n < 0)) throw new Error(`rule ${r.id}: its effect changes nothing`);
+      if (!isAct(r.effect) && (r.effect.n === 0 || ('op' in r.effect && r.effect.op === 'mul' && r.effect.n < 0))) throw new Error(`rule ${r.id}: its effect changes nothing`);
+      if ('amount' in r.effect && typeof r.on !== 'string' && 'live' in r.on && r.on.tier) throw new Error(`rule ${r.id}: a rule about a result comes after the event's numbers are read: it cannot change one`);
       if (r.per === 'b' && !r.b) throw new Error(`rule ${r.id}: counts a second thing it does not name`);
+      if (r.fires !== undefined && (!Number.isInteger(r.fires) || r.fires < 0)) throw new Error(`rule ${r.id}: fires ${r.fires} times`);
     }
+  }
+}
+
+export class RuleBook {
+  private state: RuleState = { season: -1, fired: {} };
+  private source: () => readonly RuleDef[];
+  private checked = new WeakSet<readonly RuleDef[]>();
+
+  /** `rules`: the list, or (laws: living/laws.ts) a function that gives the list in force now — a new list is checked
+   *  when it is first seen, so the giver should return the same array while nothing changed */
+  constructor(
+    rules: readonly RuleDef[] | (() => readonly RuleDef[]),
+    private w: RuleWorld,
+  ) {
+    this.source = typeof rules === 'function' ? rules : () => rules;
+    void this.rules;
+  }
+
+  /** the rules in force now, in order */
+  get rules(): readonly RuleDef[] {
+    const list = this.source();
+    if (!this.checked.has(list)) {
+      validateRules(list);
+      this.checked.add(list);
+    }
+    return list;
   }
 
   save(): RuleState {
@@ -144,9 +238,17 @@ export class RuleBook {
     this.state = structuredClone(s);
   }
 
-  /** a new season: every rule may fire again */
+  /** a new season: the counts of firings start again */
   season(n: number): void {
     if (n !== this.state.season) this.state = { season: n, fired: {} };
+  }
+
+  /** the cascade under way: its firings in order, and each rule's occurrences already fired on */
+  private cascade = { chain: [] as string[], seen: new Set<string>() };
+  /** A cascade begins: one player action (a card taken, a spell cast, the season ended) or one season's turn. Whoever
+   *  owns the world calls this before the first trigger the action sets off. */
+  begin(): void {
+    this.cascade = { chain: [], seen: new Set() };
   }
 
   /**
@@ -154,11 +256,70 @@ export class RuleBook {
    * that would change nothing (no match, its capacity 0, the pool already empty) does not fire and is not counted.
    */
   fire(o: RuleOccasion): RuleHit[] {
-    const hits: RuleHit[] = [];
+    return this.run(o, false);
+  }
+
+  /** (card-table) What would fire on an occasion now, with nothing changed: no pool moves, no firing is counted. The
+   *  occasion's numbers ARE changed (give a copy): a live event's result can be predicted from them */
+  preview(o: RuleOccasion): RuleHit[] {
+    return this.run(o, true);
+  }
+
+  /** times a rule has fired this season */
+  fired(id: string): number {
+    return this.state.fired[id] ?? 0;
+  }
+
+  /**
+   * (card-table) Why a rule would not fire now, apart from its trigger: the first thing missing, as data (the front
+   * end words it). `ok`: its pool level, its things and their places all hold — it fires when its trigger next happens.
+   * A place test against a live event (`near` of 'event' or 'route') is not checked here: there is no event to measure.
+   */
+  check(r: RuleDef): RuleCheck {
+    const base = { rule: r.id, name: r.name, on: r.on, fired: this.fired(r.id) };
+    if (r.perSeason !== undefined && base.fired >= r.perSeason) return { ...base, ok: false, missing: { kind: 'spent' } };
+    if (r.need) {
+      const have = this.w.pool(r.need.pool);
+      if ((r.need.gte !== undefined && have < r.need.gte) || (r.need.lte !== undefined && have > r.need.lte)) return { ...base, ok: false, missing: { kind: 'need', pool: r.need.pool, have, ...(r.need.gte !== undefined ? { gte: r.need.gte } : {}), ...(r.need.lte !== undefined ? { lte: r.need.lte } : {}) } };
+    }
     const things = this.w.things();
+    const loose = (q: TagQuery): TagQuery => (q.near && q.near.of !== 'a' ? { ...q, near: undefined } : q);
+    const o: RuleOccasion = { on: r.on };
+    /** the thing that carries most of a query's tags, and what it lacks or has too much of */
+    const closest = (q: TagQuery, pool: Thing[]): { name: string; lacks: string[]; has: string[] } | null => {
+      let best: { name: string; lacks: string[]; has: string[] } | null = null;
+      for (const t of pool) {
+        const lacks = q.tags.filter((x) => !t.tags.includes(x));
+        const has = (q.not ?? []).filter((x) => t.tags.includes(x));
+        if (lacks.length === q.tags.length) continue;
+        if (!best || lacks.length + has.length < best.lacks.length + best.has.length) best = { name: t.name, lacks, has };
+      }
+      return best;
+    };
+    const as = things.filter((t) => matches(t, loose(r.a), o));
+    if (!as.length) return { ...base, ok: false, missing: { kind: 'a', tags: r.a.tags, closest: closest(r.a, things) } };
+    if (r.b) {
+      const b = loose(r.b);
+      const withB = as.filter((a) => things.some((t) => t.id !== a.id && matches(t, b, o, a)));
+      if (!withB.length) {
+        // (a second thing with the tags exists, but not in the rule's relation of place: say that, not "missing")
+        const anywhere = things.filter((t) => matches(t, { tags: b.tags, ...(b.not ? { not: b.not } : {}) }, o) && !as.every((a) => a.id === t.id));
+        return { ...base, ok: false, missing: anywhere.length && b.near ? { kind: 'far', a: as[0].name, b: anywhere[0].name, cells: b.near.cells } : { kind: 'b', a: as[0].name, tags: b.tags, closest: closest(b, things.filter((t) => !as.some((a) => a.id === t.id) || as.length > 1)) } };
+      }
+      return { ...base, ok: true, things: [withB[0].name, things.find((t) => t.id !== withB[0].id && matches(t, b, o, withB[0]))!.name] };
+    }
+    return { ...base, ok: true, things: [as[0].name] };
+  }
+
+  private run(o: RuleOccasion, dry: boolean): RuleHit[] {
+    const hits: RuleHit[] = [];
+    let things = this.w.things();
     for (const r of this.rules) {
       if (!same(r.on, o.on)) continue;
-      if ((this.state.fired[r.id] ?? 0) >= (r.perSeason ?? 1)) continue;
+      if (r.perSeason !== undefined && (this.state.fired[r.id] ?? 0) >= r.perSeason) continue;
+      // (in one cascade a rule fires once on one occurrence of its trigger)
+      const occurrence = o.id !== undefined ? `${r.id}|${o.id}` : null;
+      if (!dry && occurrence && this.cascade.seen.has(occurrence)) continue;
       if (r.need) {
         const have = this.w.pool(r.need.pool);
         if ((r.need.gte !== undefined && have < r.need.gte) || (r.need.lte !== undefined && have > r.need.lte)) continue;
@@ -185,11 +346,18 @@ export class RuleBook {
         if (typeof v !== 'number') throw new Error(`rule ${r.id}: the event has no number ${r.per.amount}`);
         times = Math.floor(v / r.per.each);
       }
+      // (laws: a rule may fire several times on one trigger; each time is a firing, read by the next)
+      for (let k = 0; k < (r.fires ?? 1); k++) {
       let delta: number;
-      if ('pool' in fx) {
+      if (isAct(fx)) {
+        // (an act: done by the world's owner; nothing changed — the card stands already, the tag is there — is no firing)
+        delta = dry ? (this.w.act ? 1 : 0) : this.w.act?.(fx, as, r) ? 1 : 0;
+        // (a tag set or cleared is read by the rules that come after)
+        if (delta && !dry) things = this.w.things();
+      } else if ('pool' in fx) {
         let n = fx.n * times;
         if (r.cap !== undefined) n = Math.sign(n) * Math.min(Math.abs(n), r.cap);
-        delta = n ? this.w.gain(fx.pool, n) : 0;
+        delta = !n ? 0 : dry ? n : this.w.gain(fx.pool, n);
       } else {
         const v = o.vars;
         if (!v || typeof v[fx.amount] !== 'number') throw new Error(`rule ${r.id}: the event has no number ${fx.amount}`);
@@ -200,12 +368,19 @@ export class RuleBook {
         v[fx.amount] = next;
         delta = next - was;
       }
-      if (!delta) continue;
-      this.state.fired[r.id] = (this.state.fired[r.id] ?? 0) + 1;
+      if (!delta) break;
+      if (!dry) {
+        this.state.fired[r.id] = (this.state.fired[r.id] ?? 0) + 1;
+        if (occurrence) this.cascade.seen.add(occurrence);
+        this.cascade.chain.push(r.id);
+        // (the defect detector: nothing in the game takes effect inside its own cascade, so this is never reached)
+        if (this.cascade.chain.length > CASCADE_LIMIT) throw new Error(`rules: more than ${CASCADE_LIMIT} firings in one cascade — an engine defect, not a rule of the game. The chain ends: ${this.cascade.chain.slice(-12).join(' -> ')}`);
+      }
       const first = as[0];
       const second = [...bs.values()][0];
       const text = r.why.replace(/\{(a|b|n|count)\}/g, (_, k: string) => (k === 'a' ? first.name : k === 'b' ? (second?.name ?? '') : k === 'n' ? String(Math.abs(delta)) : String(r.per === 'b' ? bs.size : as.length)));
-      hits.push({ rule: r.id, name: r.name, things: [...as.map((t) => t.id), ...bs.keys()], ...('pool' in fx ? { pool: fx.pool } : { amount: fx.amount }), delta, text: text.charAt(0).toUpperCase() + text.slice(1) });
+      hits.push({ rule: r.id, name: r.name, things: [...as.map((t) => t.id), ...bs.keys()], ...(isAct(fx) ? { act: fx } : 'pool' in fx ? { pool: fx.pool } : { amount: fx.amount }), delta, text: text.charAt(0).toUpperCase() + text.slice(1), ...(o.what ? { what: o.what } : {}), ...(o.after ? { after: o.after } : {}) });
+      }
     }
     return hits;
   }

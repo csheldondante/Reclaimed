@@ -1,0 +1,27 @@
+{
+  "pack": { "id": "cross-b", "name": "Cross-pack example B: the spring rite", "version": 1,
+            "summary": "The other half of the cross-pack example. Its rule and its card read the tag that cross-a.json puts in play, together with a base tag.",
+            "themes": ["festival"] },
+  "tags": [
+    { "id": "seed-stored", "on": "site", "meaning": "Seed corn is kept here over winter.", "timed": false, "shared": true }
+  ],
+  "things": [],
+  "cards": [
+    { "id": "cross-b-spring-rite", "title": "Hold the spring rite",
+      "presenter": { "name": "Wenna Ashby", "role": "shrine keeper", "at": "site:shrine" },
+      "pitch": "There is seed in store this year. Give me 1 Materials for the rite and the town will take heart.",
+      "appears_when": [ { "site_has": ["field", "seed-stored"] } ],
+      "once": true, "offer_seasons": 3,
+      "cost": { "materials": 1 },
+      "if_taken": [ { "pool": "unrest", "add": -1 }, { "say": "The first seed is blessed at the shrine." } ],
+      "if_expires": [ { "say": "The rite is not held this year." } ],
+      "art": "A keeper scattering seed before a small shrine, painterly." }
+  ],
+  "rules": [
+    { "id": "cross-b-blessed-seed", "name": "Seed for the shrine", "on": "turn",
+      "a": { "tags": ["field", "seed-stored"] },
+      "effect": { "pool": "magic", "n": 1 }, "cap": 1,
+      "why": "a share of the seed kept at {a} went to the shrine: +{n} Magic" }
+  ],
+  "wants": []
+}

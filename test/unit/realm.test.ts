@@ -204,14 +204,14 @@ describe('the realm (season/realm.ts)', () => {
     const news: string[] = [];
     for (let k = 0; k < 3; k++) news.push(...season(r));
     expect(r.season).toBe(4);
-    expect(r.raid).toBe(6);
+    expect(r.raid).toBe(18);
     expect(news.join(' ')).toContain('scouts are seen on the road');
     expect(r.over).toBe(false);
     // (round 6: the raid is a live event's card, forced; resolved here as nobody played it — Might 3 and nowhere for
-    // soldiers to gather: all 6 get in)
+    // soldiers to gather: all 18 get in — card-table tuning, CT-18)
     expect(r.forcedLive()?.template).toBe('raid');
     const rep = r.playForced().find((x) => x.template === 'raid')!;
-    expect(rep).toMatchObject({ template: 'raid', tier: 'failure', vars: { raiders: 6, left: 6 } });
+    expect(rep).toMatchObject({ template: 'raid', tier: 'failure', vars: { raiders: 18, left: 18 } });
     expect(r.over).toBe(true);
     expect(r.fight?.held).toBe(false);
     expect(r.history().some((e) => e.kind === 'raid-broke')).toBe(true);

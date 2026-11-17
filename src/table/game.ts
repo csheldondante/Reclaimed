@@ -1,0 +1,958 @@
+// (card-table; docs/design/CARD_TABLE.md) The card table's driver: a home-town run played with no world, no GPU and no
+// DOM. It does what scenes/level/loop.ts does without a scene — makes the Realm (season/realm.ts: the same living
+// engine, templates, dealer, fact layer, ledger, synergy rules and live events the 3D loop plays), takes and passes
+// offers, casts spells, ends a season, and starts the next run on the saved world — and gives plain view records to
+// the page (table/main.ts) and the bots (table/bots.ts). Nothing of the model is copied here: every number a view
+// carries is read from the Realm. Deterministic: same seed, leader and moves, the same run (no clock, no random number).
+//
+// A live event (a raid, a parade, the dead, a fire) is not played in real time here. When it begins the Realm is told
+// the state it would end in with nobody playing (living/live.ts mechState: groups do what they were ordered to, every
+// logged cast does its SPELL_MECH), and told again after each cast; the season's end resolves it from that state by
+// the Realm's own reading (Realm.finishLive: count, rules, derive, tier, the template's outcome).
+import type { WorldSnapshot } from '../api/contracts/world';
+import { briarWorld } from '../living/briar';
+import { text } from '../living/dsl';
+import type { Offer } from '../living/engine';
+import { mechState, SPELL_MECH, type LiveDef, type LiveState } from '../living/live';
+import type { RuleDef, RuleHit, RuleMissing } from '../living/rules';
+import { grant, lose, newLedger, nextSeason, pools, total, POOLS, POOL_ROLE, type Pool, type Pools, type SeasonLedger } from '../season/ledger';
+import { CATALOG } from '../season/catalog';
+import { FIRE_TEMPLATE } from '../season/realm-events';
+import { projectTemplate, SITES, WORLD_TEMPLATES, type SiteKey } from '../season/realm-templates';
+import { checkTogether, reportText, type Pack, type PackAbility, type Problem } from '../packs/check';
+import { castAbility, farHolder, farThings, IS, lawThings, packFactions, seedFactions, stanceOf, tradeThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, type LoadedPack, type PackHost } from '../packs/load';
+import { BASIC_SPELLS, Realm, RUN_SEASONS, SPELL_COST, type RunState, type SpellId } from '../season/realm';
+import { lawKind, lawIncome, winsOf, type LawKind } from '../living/laws';
+import { lawText, lawUntil } from '../season/law-words';
+import type { Effect } from '../living/dsl';
+import type { TemplateDef } from '../living/engine';
+import { LEADERS, leader as leaderOf, resultTitle, SPELL_NAME, threatText, costText } from '../season/run-words';
+import { ROW_H } from '../world/lattice';
+import { placeState } from '../mutate/facts';
+import * as W from './words';
+
+/** the test world every table run starts from (living/briar.ts), and its home town.
+ *  FIXED-CITY: one home town for the whole run (the Realm's own assumption, BACKLOG LS-40) */
+export const HOME = 'briar-hollow';
+/** (BACKLOG CT-17) The table has no town plan, so it lays the town's sites on a ring this many cells from its centre,
+ *  in the order of SITES: two sites two places apart on the list are "next to" each other (74 cells), three apart are
+ *  "close" (109). The 3D game gives the real places. */
+export const SITE_RING = 120;
+
+export interface TableOptions {
+  seed: number;
+  leader: string;
+  seasons?: number;
+  /** the world an earlier run left (absent: the test world) and what it built */
+  world?: WorldSnapshot;
+  built?: string[];
+  /** outside-authored packs played with the base cards (packs/load.ts); a pack with errors throws its report */
+  packs?: Pack[];
+  /** a pack's cards score above the base game's with the dealer, so a pack being tried comes up early (default true) */
+  boost?: boolean;
+  /** the market's fire as a live event the player casts Rain into, in place of the instant "pay for fire wards"
+   *  hazard (season/realm.ts liveFire). Default true at the table: nothing here needs the 3D fire (off in the 3D game:
+   *  BACKLOG LS-63) */
+  liveFire?: boolean;
+  /** raiders in the last season, to try another number than the game's (BACKLOG CT-18) */
+  raiders?: number;
+  /** a run under way taken up again (`Table.save`), with the same seed, leader and packs */
+  resume?: TableSave;
+}
+
+/** a run under way, as saved: the world, the Realm's own state, the ledger, the casts into the events under way */
+export interface TableSave {
+  world: WorldSnapshot;
+  run: RunState;
+  ledger: SeasonLedger;
+  casts: [string, Record<string, number>][];
+}
+
+/** the ids of the base game's cards (a pack's may not clash with them) */
+export const baseCards = (): string[] => [...CATALOG.map(projectTemplate).filter((t) => t !== null).map((t) => t!.id), ...WORLD_TEMPLATES.map((t) => t.id), FIRE_TEMPLATE.id];
+
+/** a thing in play, as a small card */
+export interface ThingView {
+  id: string;
+  name: string;
+  /** the place it is grouped under */
+  place: string;
+  tags: string[];
+  /** tags a thing standing on it lends it (in `tags` too): an ability is aimed at the thing itself, not at these */
+  lent: string[];
+  /** it has lost its working tags */
+  ruined: boolean;
+  /** a place of the town with nothing built or changed on it yet */
+  plain: boolean;
+  text: string;
+}
+export interface AbilityView {
+  id: string;
+  name: string;
+  /** Magic a cast costs */
+  cost: number;
+  text: string;
+  /** the things in play and the live events it can be cast on now */
+  targets: string[];
+  /** there is Magic enough */
+  can: boolean;
+}
+/** a live event under way, as a card */
+export interface EventView {
+  id: string;
+  template: string;
+  title: string;
+  how: string;
+  place: string;
+  /** who takes part: how many of what, as it would end now */
+  groups: { who: string; n: number; alive: number; side: 'town' | 'foe' | 'folk' }[];
+  /** a fire: its points, and how many would burn now */
+  hazard: { points: number; burned: number } | null;
+  /** the spells that can be cast into it, and the casts made */
+  spells: string[];
+  casts: { name: string; n: number }[];
+  /** the rules that would apply if it ended now, each with its reason */
+  rules: string[];
+  /** what one of its results will set off: the rules that wait for it and are ready */
+  after: string[];
+  /** how it would come out if it ended now */
+  tier: string;
+  outcome: string;
+}
+/** a synergy rule, for the rules list: fired, ready, or what it lacks */
+export interface RuleView {
+  id: string;
+  name: string;
+  /** what it reads and gives, in words */
+  says: string;
+  /** when it is looked at */
+  when: string;
+  /** its reasons from the last season's end (and since) */
+  fired: string[];
+  /** everything it needs is there: it fires when its trigger next happens */
+  ready: boolean;
+  /** what it is about, or the one thing it lacks */
+  why: string;
+  /** (laws) the laws that changed it, added it or turned it off (empty: it is as printed) */
+  laws: string[];
+  /** a law turned it off */
+  off: boolean;
+}
+
+/** an opportunity as a card: every number is the model's */
+export interface OppCard {
+  id: string;
+  template: string;
+  title: string;
+  /** who asks: their name and what they are */
+  who: string;
+  role: string;
+  line: string;
+  /** the place it stands at */
+  place: string;
+  /** what it costs, in the pools' words; and each pool's part (locked people, goods spent) */
+  cost: string;
+  locks: Partial<Pools>;
+  costs: Partial<Pools>;
+  turns: number;
+  /** what the player gets if it is taken */
+  gives: string;
+  /** what happens if it runs out (null: nothing, it goes away) */
+  lapse: string | null;
+  /** seasons it stays (1: this is the last) */
+  left: number;
+  threat: boolean;
+  /** taking it starts a live event */
+  live: boolean;
+  tags: string[];
+  /** what is short (empty: it can be taken) */
+  short: Partial<Pools>;
+  /** (laws) the cost as printed, when a law changes it (null: no law does) */
+  printed: string | null;
+  /** (the record) why it is here because of earlier runs, in one line (null: it is not) */
+  because: string | null;
+  /** (laws) the laws taking it brings (and passing it, `onLapse`), each in words, and every line the player reads
+   *  that would change: "Rune-fed fields: gives +2 Materials would become gives +4 Materials" */
+  laws: { brings: string[]; onLapse: string[]; changes: string[] };
+}
+
+/** (laws) a law in force, for the "Laws in force" list */
+export interface LawView {
+  id: string;
+  name: string;
+  kind: LawKind;
+  text: string;
+  /** who or what made it */
+  from: string;
+  /** how long it stands */
+  until: string;
+  /** the same law in force more than once (laws stack) */
+  times: number;
+}
+
+/** a thing under way: a project being built, a crew sent */
+export interface Working {
+  id: string;
+  title: string;
+  /** seasons until it is done */
+  left: number;
+}
+
+export interface LogLine {
+  season: number;
+  kind: 'took' | 'passed' | 'news' | 'pools' | 'built' | 'fight' | 'run' | 'rule' | 'event';
+  text: string;
+}
+
+export interface PoolView {
+  pool: Pool;
+  /** free now; people: of how many */
+  have: number;
+  of: number | null;
+  income: number;
+}
+
+const SPELL_ID = 'spell:';
+const TIER_RANK = ['disaster', 'failure', 'cost', 'success', 'triumph'];
+
+export class Table {
+  realm: Realm;
+  readonly seed: number;
+  /** every move made, in order: 'take <template>', 'pass <template>', 'cast <ability> <target>', 'end' */
+  readonly moves: string[] = [];
+  readonly log: LogLine[] = [];
+  /** the pools at the start of each season (index 0: season 1) */
+  readonly curve: Pools[] = [];
+  /** offers on the board at the start of each season, and how many were taken in it */
+  readonly asked: number[] = [];
+  readonly took: number[] = [];
+  /** threatening offers that ran out (template ids) */
+  readonly lapsed: string[] = [];
+  /** every template that was on the board at a season's start, and those taken, in order */
+  readonly seen = new Set<string>();
+  readonly taken: string[] = [];
+  /** every synergy rule firing of the run, with the season it was in */
+  readonly hits: { season: number; hit: RuleHit }[] = [];
+  /** the firings since the last season's end began (the rules list shows them) */
+  private recent: RuleHit[] = [];
+  /** how each live event came out: its template and tier */
+  readonly events: { season: number; template: string; tier: string; cast: number; now: boolean }[] = [];
+  /** the casts made into each live event under way: spell → times */
+  private casts = new Map<string, Record<string, number>>();
+  /** the Magic spent on casts this run */
+  spent = 0;
+  /** the fight's lines once it is fought */
+  result: { title: string; lines: string[] } | null = null;
+  /** the run's number in this world (1 the first) */
+  run = 1;
+  readonly packs: LoadedPack[];
+  /** what the validator says to look at over the loaded packs together */
+  readonly together: Problem[];
+  /** pack abilities the run has unlocked: read from this run's history (an `ability-unlocked:<id>` event), so they are
+   *  saved with the world and the run */
+  get unlocked(): string[] {
+    const known = new Set(this.packs.flatMap((p) => p.abilities.map((a) => a.id)));
+    return [...new Set(this.realm.history().filter((e) => e.kind.startsWith(UNLOCKED)).map((e) => e.kind.slice(UNLOCKED.length)))].filter((id) => known.has(id));
+  }
+
+  constructor(readonly o: TableOptions) {
+    this.seed = o.seed;
+    const who = leaderOf(o.leader);
+    // (a new run: the leader's pools; what earlier runs built is kept — scenes/level/loop.ts `pick` does the same)
+    const ledger: SeasonLedger = o.resume ? o.resume.ledger : { ...newLedger(who.pools, who.income), built: [...(o.built ?? [])] };
+    const base = baseCards();
+    this.packs = (o.packs ?? []).map((p) => loadPack(p, { cards: base, boost: o.boost ?? true }));
+    linkPacks(this.packs);
+    // (several packs: what only shows when they are loaded together — an id two share, a tag declared differently)
+    const together = checkTogether(o.packs ?? []);
+    if (together.some((x) => x.level === 'error')) throw new Error(reportText('The packs together', together));
+    this.together = together;
+    const world = o.resume?.world ?? o.world ?? briarWorld().ws.snapshot();
+    const centre = world.settlements.find((s) => s.id === HOME)!.at;
+    // (the helpers a pack's cards name read the run through this; the Realm deals once while it is being made, before
+    // there is a run to read: that deal sees the leader's pools and no tags, and the deal is made again below)
+    let made: Realm | null = null;
+    const host: PackHost = {
+      season: () => made?.season ?? 1,
+      pool: (k) => pools(made?.ledger ?? ledger)[k as Pool] ?? 0,
+      leader: () => who.id,
+      home: () => HOME,
+      tags: (where) => (made ? made.things().filter((t) => t.town === HOME && (where === 'town') === (t.id === HOME)).map((t) => [...t.tags]) : []),
+      began: () => (made ? made.w.turn - made.season + 1 : 0),
+      thingTags: (id) => (made ? (made.things().find((t) => t.id === id)?.tags ?? null) : null),
+    };
+    this.realm = new Realm({
+      world,
+      home: HOME,
+      seed: o.seed,
+      leader: who,
+      ledger,
+      // (the land for district cards: the table has no town plan — every district has room, BACKLOG CT-2)
+      land: () => ({ left: 14, open: [] }),
+      seasons: o.seasons ?? RUN_SEASONS,
+      liveFire: o.liveFire ?? true,
+      ...(o.raiders !== undefined ? { raiders: o.raiders } : {}),
+      ...(o.resume ? { resume: o.resume.run } : {}),
+      // (CT-17: the sites on a ring round the town's centre, so "next to" and "close" mean something here)
+      where: (spot) => {
+        const i = SITES.findIndex((s) => s.key === spot);
+        if (i < 0) return null;
+        const a = (2 * Math.PI * i) / SITES.length;
+        return [centre[0] + SITE_RING * Math.cos(a), (centre[1] + SITE_RING * Math.sin(a)) / ROW_H];
+      },
+      onRules: (hits) => {
+        for (const hit of hits) this.hits.push({ season: made?.season ?? 1, hit });
+        this.recent.push(...hits);
+      },
+      extra: {
+        templates: this.packs.flatMap((p) => p.templates),
+        helpers: packHelpers(this.packs, host),
+        rules: this.packs.flatMap((p) => p.rules),
+        things: (things) => (made ? withPackThings(made.w, this.packs, things, HOME) : things),
+        laws: this.packs.flatMap((p) => p.laws),
+        lawThings: () => (made ? lawThings(made.w, this.packs) : []),
+        recordLaws: this.packs.flatMap((p) => p.recordLaws),
+        tradeThings: () => (made ? tradeThings(made.w, this.packs) : []),
+        // (draft 7: the packs' factions are entities of the world — made once, kept run after run)
+        seed: (w) => seedFactions(w, o.packs ?? []),
+      },
+    });
+    made = this.realm;
+    this.run = this.realm.history(true).filter((e) => e.kind === 'run-began').length;
+    if (o.resume) {
+      // (a run taken up again: nothing is dealt and nothing begins; the casts made into what is under way are told again)
+      for (const [template, casts] of o.resume.casts) {
+        const live = this.realm.liveRunning().find((x) => x.template === template);
+        if (!live) continue;
+        this.casts.set(live.id, { ...casts });
+        this.tell(live);
+      }
+      this.mark();
+      return;
+    }
+    if (this.packs.length) this.realm.afterSeason(this.realm.ledger);
+    this.say('run', W.runBegan(who.name, this.run, this.realm.seasons));
+    this.begin();
+    this.mark();
+  }
+
+  private say(kind: LogLine['kind'], t: string): void {
+    this.log.push({ season: this.realm.season, kind, text: t });
+  }
+  /** the season's start, for the curves */
+  private mark(): void {
+    this.curve.push(pools(this.realm.ledger));
+    this.asked.push(this.offered().length);
+    for (const o of this.offered()) this.seen.add(o.template);
+    this.took.push(0);
+  }
+
+  // ---- what the page shows ---------------------------------------------------------------------------------------------
+
+  get season(): number {
+    return this.realm.season;
+  }
+  get over(): boolean {
+    return this.realm.over;
+  }
+  title(): string {
+    return W.header(this.realm.leader.name, Math.min(this.realm.season, this.realm.seasons), this.realm.seasons, this.run);
+  }
+  threat(): string {
+    return threatText(this.realm.threatIn(), this.realm.averted);
+  }
+  poolViews(): PoolView[] {
+    const l = this.realm.ledger;
+    const p = pools(l);
+    // (laws: income by law is income)
+    const byLaw = lawIncome(this.realm.laws());
+    return POOLS.map((k) => ({ pool: k, have: p[k], of: POOL_ROLE[k] === 'people' ? total(l, k) : null, income: (l.income[k] ?? 0) + (byLaw[k] ?? 0) }));
+  }
+
+  private offered(): Offer[] {
+    return this.realm.offers().filter((o) => o.status === 'offered');
+  }
+
+  cards(): OppCard[] {
+    const r = this.realm;
+    const before = this.readout();
+    return this.offered().map((o) => {
+      const t = r.engine.template(o.template);
+      // (laws: the terms in force; the printed cost is shown beside them when a law changes it)
+      const printedLocks: Partial<Pools> = {};
+      for (const q of o.opp.requires) if (q.kind === 'workers' || q.kind === 'army') printedLocks[q.kind === 'workers' ? 'labor' : 'might'] = q.count;
+      const printed = costText(printedLocks, { ...(o.opp.costs ?? {}) } as Partial<Pools>, 'turns' in o.opp.duration ? o.opp.duration.turns : 1);
+      const terms = r.terms(o);
+      const locks = terms.locks as Partial<Pools>;
+      const costs = terms.costs as Partial<Pools>;
+      const turns = terms.turns;
+      const cost = costText(locks, costs, turns);
+      const person = r.w.facts.entity(o.presenter);
+      const brings = lawsIn(t.outcome ?? [], t.outcomes, this.packs);
+      const onLapse = lawsIn(t.onExpire ?? [], undefined, this.packs);
+      return {
+        id: o.id,
+        template: o.template,
+        title: o.opp.title,
+        who: person?.name ?? r.w.name(o.presenter),
+        role: t.presenter.role,
+        line: o.line,
+        place: r.w.name(o.place),
+        cost,
+        locks,
+        costs,
+        turns,
+        gives: o.reward,
+        lapse: t.expireText ? text(r.engine.ctx(t, o.bind, o.id), t.expireText) : null,
+        left: r.left(o),
+        // (CT-28: a card a rule offers or starts is dealt as the arc's (`threat: 'arc'`) but is no threat)
+        threat: t.threat === true,
+        live: !!r.liveOf(o),
+        tags: [...t.themes],
+        short: r.short(o),
+        printed: printed !== cost ? printed : null,
+        because: this.because(o.template),
+        laws: { brings: brings.map((id) => this.lawLine(id)), onLapse: onLapse.map((id) => this.lawLine(id)), changes: brings.length ? diffReadout(before, r.withLaws(brings, () => this.readout())) : [] },
+      };
+    });
+  }
+
+  // ---- laws (living/laws.ts; docs/design/LAWS.md) -------------------------------------------------------------------
+
+  private lawNames = { rule: (id: string) => this.realm.ruleView().rules.find((r) => r.id === id)?.name ?? this.realm.rulesBefore().find((r) => r.id === id)?.name ?? id, card: (id: string) => this.cardTitle(id) };
+  /** a law by id, in one line: its name and what it does */
+  private lawLine(id: string): string {
+    const d = this.realm.lawDef(id);
+    return d ? W.lawLine(d.name, lawText(d.does, this.lawNames)) : id;
+  }
+  /** the laws in force, in the order they came into force; the same law from the same maker shown once, with a count */
+  laws(): LawView[] {
+    const r = this.realm;
+    const out: LawView[] = [];
+    for (const { def, at } of r.lawsInForce()) {
+      const until = 'thing' in at.source && at.source.thing.startsWith('record:') ? W.LAW_AFTER : lawUntil(at.source, r.w.turn, (id) => r.things().find((t) => t.id === id)?.name ?? id);
+      const same = out.find((x) => x.id === def.id && x.from === at.from && x.until === until);
+      if (same) same.times++;
+      else out.push({ id: def.id, name: def.name, kind: lawKind(def.does), text: lawText(def.does, this.lawNames), from: at.from, until, times: 1 });
+    }
+    return out;
+  }
+  /**
+   * Every line the player reads that a law can change, by a key: each rule's reading and what it gives, whether it is
+   * ready, the cost of each card on offer, each spell's line, the tags in play, income and the ways to win. A card's
+   * preview is this read with and without its laws (`diffReadout`).
+   */
+  private readout(): Map<string, { label: string; text: string }> {
+    const r = this.realm;
+    const m = new Map<string, { label: string; text: string }>();
+    const view = r.ruleView();
+    for (const x of view.rules) {
+      const says = W.ruleSays(x, (id) => this.cardTitle(id), (id) => r.lawDef(id)?.name ?? id);
+      const cut = Math.max(says.lastIndexOf(' Gives '), says.lastIndexOf(' Then '));
+      m.set(`rule:${x.id}:reads`, { label: x.name, text: cut > 0 ? says.slice(0, cut).trim() : says });
+      m.set(`rule:${x.id}:gives`, { label: x.name, text: cut > 0 ? says.slice(cut).trim() : '' });
+      m.set(`rule:${x.id}:ready`, { label: x.name, text: r.rules.check(x).ok ? W.LAW_READY : W.LAW_NOT_READY });
+    }
+    for (const id of Object.keys(view.off)) m.set(`rule:${id}:gives`, { label: this.lawNames.rule(id), text: W.LAW_OFF });
+    for (const o of this.offered()) {
+      const t = r.terms(o);
+      m.set(`card:${o.id}`, { label: `"${o.opp.title}"`, text: costText(t.locks as Partial<Pools>, t.costs as Partial<Pools>, t.turns) });
+    }
+    const mech = this.mech;
+    for (const s of this.spells()) m.set(`spell:${s}`, { label: SPELL_NAME[s], text: W.spellText(s, mech[s]) });
+    for (const x of this.tagsInPlay()) m.set(`tag:${x.tag}`, { label: `"${x.tag}"`, text: W.tagCount(x.n) });
+    const inc = lawIncome(r.laws());
+    for (const k of Object.keys(inc)) m.set(`income:${k}`, { label: W.BY_LAW, text: W.incomeText(inc[k]) });
+    for (const w of winsOf(r.laws())) m.set(`win:${w.tags.join('+')}:${w.count}`, { label: W.WIN_LABEL, text: W.winLine(w.count, w.tags) });
+    return m;
+  }
+  /** a pack ability's laws come into force when it is cast */
+  private abilityLaws(id: string, name: string): void {
+    for (const e of this.ability(id).effect ?? []) if ('law' in e) this.realm.enact(e.law, `${name} (${W.CAST_WORD})`, e.seasons);
+  }
+
+  working(): Working[] {
+    const r = this.realm;
+    const projects = r.ledger.projects.map((p) => ({ id: p.id, title: p.card.title, left: p.commitment.resolvesTurn! - r.ledger.season }));
+    const mine = new Set(r.ledger.projects.map((p) => p.id));
+    const sent = r.engine.running().filter((o) => !mine.has(o.id) && !r.liveOf(o)).map((o) => ({ id: o.id, title: o.opp.title, left: Math.max(1, (o.resolvesTurn ?? r.w.turn + 1) - r.w.turn) }));
+    return [...projects, ...sent];
+  }
+
+  /** the persistent things of the run with their tags (the Realm's own list: `Realm.things`, the packs' things added),
+   *  each under the place it is grouped by */
+  // FIXED-CITY: a thing is the home town's (grouped under its sites) or a far place
+  things(): ThingView[] {
+    const r = this.realm;
+    const mine = new Map(packThings(r.w, this.packs).map((t) => [t.id, t]));
+    return r.things().map((t) => {
+      const pack = mine.get(t.id);
+      const lent = t.tags.includes('ruined') ? [] : lentTo(r.w, this.packs, t.id === HOME ? null : t.id);
+      const site = SITES.find((s) => t.id.endsWith(`:${s.key}`) && r.w.facts.entity(t.id)?.kind === 'site');
+      const place = t.id === HOME ? W.TOWN : t.town !== HOME ? W.FAR : pack ? (pack.site ? r.w.name(pack.site) : W.TOWN) : t.name;
+      // (a place with nothing on it: what it is, and standing)
+      const plain = !!site && !pack && !t.tags.some((x) => !['standing', ...(site ? siteIs(r, t.id) : [])].includes(x));
+      return { id: t.id, name: t.name, place, tags: t.tags.filter((x) => !x.startsWith(IS)), lent, ruined: t.tags.includes('ruined'), plain, text: pack?.def.text ?? '' };
+    });
+  }
+
+  private ability(id: string): PackAbility {
+    const a = this.packs.flatMap((p) => p.abilities).find((x) => x.id === id);
+    if (!a) throw new Error(`table: no ability ${id}`);
+    return a;
+  }
+  /** the spells the run has: the three every leader has, and those unlocked */
+  private spells(): SpellId[] {
+    return [...new Set([...BASIC_SPELLS, ...this.realm.spells])];
+  }
+  /** a live event's state as it would end now: what the Realm was last told */
+  private stateOf(o: Offer): LiveState {
+    return mechState(this.realm.liveOf(o)!, this.realm.runNumbers(), this.casts.get(o.id) ?? {}, this.mech);
+  }
+  /** what a cast of each spell and each pack ability does to a live event */
+  private get mech(): Record<string, { kills?: number; douses?: number }> {
+    // (laws: what a cast does is the law's number)
+    return this.realm.spellMech({ ...SPELL_MECH, ...packMech(this.packs) });
+  }
+  private tell(o: Offer): void {
+    this.realm.tellLive(o.id, { state: this.stateOf(o) });
+  }
+
+  /** the abilities the player has now, each with what it can be cast on: the run's spells (a growth rune on a field,
+   *  the others into a live event that allows them) and the packs' abilities (on things in play) */
+  abilities(): AbilityView[] {
+    const things = this.things();
+    const r = this.realm;
+    const magic = pools(r.ledger).magic;
+    const live = r.liveRunning();
+    const known = this.spells();
+    const mech = this.mech;
+    const base = known.map((s): AbilityView => {
+      const targets = s === 'growth' ? things.filter((t) => !t.ruined && t.tags.includes('field') && !t.tags.includes('growth-active') && !!siteKey(r, t.id)).map((t) => t.id) : live.filter((o) => fits(r.liveOf(o)!, s, mech)).map((o) => o.id);
+      return { id: SPELL_ID + s, name: SPELL_NAME[s], cost: SPELL_COST[s], text: W.spellText(s, mech[s]), targets, can: magic >= SPELL_COST[s] };
+    });
+    const mine = this.unlocked.map((id): AbilityView => {
+      const a = this.ability(id);
+      const cost = a.cost.magic ?? 0;
+      const onThings = a.target ? things.filter((t) => !t.ruined && a.target!.tags.every((x) => t.tags.includes(x) && !t.lent.includes(x))).map((t) => t.id) : [];
+      // (a pack ability with `in_event`: into a live event of one of its kinds that lists it)
+      // (its own `kinds` are its leave: it need not be on the event's list of spells)
+      const onEvents = a.in_event ? live.filter((o) => a.in_event!.kinds.includes(r.liveOf(o)!.tag) && fits({ ...r.liveOf(o)!, spells: ['known'] }, id, mech)).map((o) => o.id) : [];
+      return { id, name: a.name, cost, text: a.text, targets: [...onThings, ...onEvents], can: magic >= cost };
+    });
+    return [...base, ...mine];
+  }
+
+  /** a cast into this live event would change how it stands (a foe still up for a spell that puts foes down, a point
+   *  still burning for one that puts fire out) */
+  useful(ability: string, event: string): boolean {
+    const o = this.realm.liveRunning().find((x) => x.id === event);
+    const m = this.mech[ability.startsWith(SPELL_ID) ? ability.slice(SPELL_ID.length) : ability];
+    if (!o || !m) return false;
+    const s = this.stateOf(o);
+    const def = this.realm.liveOf(o)!;
+    const foes = def.groups.filter((g) => g.side === 'foe').reduce((n, g) => n + s.groups[g.id].alive, 0);
+    return (!!m.kills && foes > 0) || (!!m.douses && s.burned > 0);
+  }
+
+  /** the live events under way, each as it would come out now */
+  liveEvents(): EventView[] {
+    const r = this.realm;
+    return r.liveRunning().map((o) => {
+      const def = r.liveOf(o)!;
+      const s = this.stateOf(o);
+      const p = r.predictLive(o.id, s);
+      const casts = this.casts.get(o.id) ?? {};
+      const known = this.spells();
+      const mech = this.mech;
+      const fits = (d: LiveDef, x: string) => fitsMech(d, x, mech);
+      return {
+        id: o.id,
+        template: o.template,
+        title: def.title,
+        how: W.eventHow(known.filter((x) => fits(def, x)).map((x) => SPELL_NAME[x])),
+        place: r.w.name(o.place),
+        groups: def.groups.map((g) => ({ who: W.UNIT_NAME[g.kind] ?? g.kind, n: s.groups[g.id].made, alive: s.groups[g.id].alive, side: g.side })),
+        hazard: def.hazard ? { points: s.points, burned: s.burned } : null,
+        spells: known.filter((x) => fits(def, x)).map((x) => SPELL_NAME[x]),
+        casts: Object.entries(casts).map(([k, n]) => ({ name: SPELL_NAME[k as SpellId] ?? this.packs.flatMap((x) => x.abilities).find((a) => a.id === k)?.name ?? k, n })),
+        rules: p.hits.map((h) => `${h.name}. ${h.text}.`),
+        // (chains: the rules that wait for one of this event's results, each with what it will set off)
+        after: r.rules.rules.filter((x) => typeof x.on !== 'string' && 'live' in x.on && x.on.live === def.tag && !!x.on.tier && r.rules.check(x).ok).map((x) => W.setsOff((x.on as { tier: string[] }).tier, x.name, W.ruleSays(x, (id) => this.cardTitle(id)))),
+        tier: p.tier,
+        outcome: p.text,
+      };
+    });
+  }
+
+  /** every synergy rule: what fired at the last season's end, what is ready, and for the rest the one thing missing */
+  rules(): RuleView[] {
+    const book = this.realm.rules;
+    // (laws: the rules in force — changed ones marked with the laws' names — then the ones a law turned off)
+    const view = this.realm.ruleView();
+    const lawName = (id: string) => this.realm.lawDef(id)?.name ?? id;
+    const live = book.rules.map((r): RuleView => {
+      const c = book.check(r);
+      const fired = this.recent.filter((h) => h.rule === r.id).map((h) => `${h.text}.`);
+      const ready = c.ok || (c.missing?.kind === 'spent' && fired.length > 0);
+      return { id: r.id, name: r.name, says: W.ruleSays(r, (id) => this.cardTitle(id), lawName), when: W.ruleWhen(r.on), fired, ready: c.ok, why: c.ok ? W.ruleReady(r.on, c.things ?? []) : ready ? W.RULE_SPENT : W.whyNot(c.missing as RuleMissing), laws: [...new Set(view.changed[r.id] ?? [])], off: false };
+    });
+    const off = this.realm.rulesBefore().filter((r) => view.off[r.id]).map((r): RuleView => ({ id: r.id, name: r.name, says: W.ruleSays(r, (id) => this.cardTitle(id), lawName), when: W.ruleWhen(r.on), fired: [], ready: false, why: W.ruleOff(view.off[r.id]), laws: [view.off[r.id]], off: true }));
+    return [...live, ...off];
+  }
+  /** a card's title by its id (a rule's words name the card it offers) */
+  private cardTitle(id: string): string {
+    return this.realm.engine.templates.find((t) => t.id === id)?.title ?? id;
+  }
+  /** the run as it stands, to take up again (`TableOptions.resume`): the world, the Realm's run, the ledger, and the
+   *  casts made into the live events under way (by template) */
+  save(): TableSave {
+    const r = this.realm;
+    return structuredClone({ world: r.snapshot(), run: r.runState(), ledger: r.ledger, casts: r.liveRunning().map((o) => [o.template, this.casts.get(o.id) ?? {}] as [string, Record<string, number>]) });
+  }
+  /** the tags on things in play now, each with how many things carry it */
+  tagsInPlay(): { tag: string; n: number }[] {
+    const count = new Map<string, number>();
+    for (const t of this.realm.things()) for (const x of t.tags) if (!x.startsWith(IS)) count.set(x, (count.get(x) ?? 0) + 1);
+    return [...count].map(([tag, n]) => ({ tag, n })).sort((a, b) => (a.tag < b.tag ? -1 : 1));
+  }
+  /** synergy rules fired this run: a rule's name → times */
+  ruleCounts(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const { hit } of this.hits) out[hit.name] = (out[hit.name] ?? 0) + 1;
+    return out;
+  }
+  ruleDefs(): readonly RuleDef[] {
+    return this.realm.rules.rules;
+  }
+
+  built(): string[] {
+    return [...this.realm.ledger.built];
+  }
+
+  // ---- the player's moves ----------------------------------------------------------------------------------------------
+
+  private find(id: string): Offer {
+    const o = this.offered().find((x) => x.id === id || x.template === id);
+    if (!o) throw new Error(`table: nothing offered as ${id}`);
+    return o;
+  }
+
+  /** the live events nobody asks about (the raid, refugees on the road) begin; each is told to the Realm as it stands */
+  private begin(): void {
+    const r = this.realm;
+    for (let o = r.forcedLive(); o; o = r.forcedLive()) {
+      r.commit(o.id);
+      this.seen.add(o.template);
+      this.tell(o);
+      this.say('event', W.eventBegan(r.liveOf(o)!.title));
+    }
+  }
+
+  /** take an offer (by its id or its template's): its cost paid through the Realm. False: something is short */
+  take(id: string): boolean {
+    const o = this.find(id);
+    if (Object.keys(this.realm.short(o)).length) return false;
+    this.realm.commit(o.id);
+    this.moves.push(`take ${o.template}`);
+    this.took[this.took.length - 1]++;
+    this.taken.push(o.template);
+    this.say('took', W.took(o.opp.title));
+    if (this.realm.liveOf(o)) {
+      this.tell(o);
+      this.say('event', W.eventBegan(this.realm.liveOf(o)!.title));
+    }
+    this.flushRules();
+    this.checkWin();
+    return true;
+  }
+
+  pass(id: string): void {
+    const o = this.find(id);
+    this.realm.refuse(o.id);
+    this.moves.push(`pass ${o.template}`);
+    this.say('passed', W.passed(o.opp.title));
+  }
+
+  /** rule firings not yet in the log, as lines */
+  private logged = 0;
+  private flushRules(): void {
+    // (a chain reads as a chain: the rule that had set the card going → what happened → this rule)
+    for (const { hit } of this.hits.slice(this.logged)) this.say('rule', W.chainLine(hit.after, hit.act || hit.after ? cap(hit.what ?? '') || undefined : undefined, W.ruleLine(hit.name, hit.text)));
+    this.logged = this.hits.length;
+  }
+
+  /**
+   * Cast an ability on a thing in play or into a live event: its Magic spent, its effect applied. A run's spell goes
+   * through the Realm (`Realm.cast`: the Magic, the record, a growth rune's mark); into a live event the cast is logged
+   * and the Realm is told how the event stands now. False: not a target, or no Magic.
+   */
+  cast(id: string, target: string): boolean {
+    const v = this.abilities().find((a) => a.id === id);
+    if (!v || !v.can || !v.targets.includes(target)) return false;
+    const r = this.realm;
+    const event = r.liveRunning().find((o) => o.id === target);
+    const on = event ? r.liveOf(event)!.title : (this.things().find((t) => t.id === target)?.name ?? target);
+    if (id.startsWith(SPELL_ID)) {
+      const spell = id.slice(SPELL_ID.length) as SpellId;
+      const site = siteKey(r, event ? event.place : target);
+      if (!r.cast(spell, site ?? undefined)) return false;
+      if (event) {
+        const c = this.casts.get(event.id) ?? {};
+        c[spell] = (c[spell] ?? 0) + 1;
+        this.casts.set(event.id, c);
+        this.tell(event);
+      }
+    } else if (event) {
+      // (a pack ability cast into a live event: its Magic spent, the cast logged, the Realm told how the event stands)
+      r.ledger = lose(r.ledger, { magic: v.cost });
+      r.w.facts.record({ kind: 'ability-cast', by: ['player'], to: [event.place], note: W.castNote(v.name, on) });
+      const c = this.casts.get(event.id) ?? {};
+      c[id] = (c[id] ?? 0) + 1;
+      this.casts.set(event.id, c);
+      this.tell(event);
+    } else {
+      let l = lose(r.ledger, { magic: v.cost });
+      const gains = castAbility(r.w, this.ability(id), target, this.packs);
+      for (const [k, n] of Object.entries(gains) as [Pool, number][]) l = k === 'unrest' ? lose(l, { unrest: n }) : n > 0 ? grant(l, { [k]: n }) : lose(l, { [k]: -n });
+      r.ledger = l;
+      r.w.facts.record({ kind: 'ability-cast', by: ['player'], to: [target], note: W.castNote(v.name, on) });
+      // (laws: an ability may make a law)
+      this.abilityLaws(id, v.name);
+      r.refreshLaws();
+    }
+    this.spent += v.cost;
+    this.moves.push(`cast ${id} ${event ? event.template : target}`);
+    this.say('took', W.castLine(v.name, on, v.cost));
+    this.flushRules();
+    this.checkWin();
+    return true;
+  }
+
+  /**
+   * (chains within a season) Resolve a live event under way now, with the casts made so far, instead of at the
+   * season's end: one move. Its result and the rules it sets off apply at once, and an event a rule starts begins at
+   * once — so win, a challenger, win again are each a move in the same season. False: no such event.
+   */
+  resolveNow(id: string): boolean {
+    const r = this.realm;
+    const o = r.liveRunning().find((x) => x.id === id || x.template === id);
+    if (!o || r.over) return false;
+    this.tell(o);
+    const before = pools(r.ledger);
+    this.moves.push(`resolve ${o.template}`);
+    const cast = Object.values(this.casts.get(o.id) ?? {}).reduce((a, b) => a + b, 0);
+    const rep = r.resolveNow(o.id);
+    this.casts.delete(o.id);
+    this.events.push({ season: r.season, template: rep.template, tier: rep.tier, cast, now: true });
+    const own = rep.lines.filter((l) => !rep.hits.some((h) => `${h.text}.` === l));
+    this.say(rep.template === 'raid' ? 'fight' : 'event', W.eventEnded(rep.title, own.join(' ')));
+    if (rep.template === 'raid' && r.fight) this.result = { title: resultTitle(r.fight), lines: [...own, ...rep.hits.map((h) => `${h.text}.`)] };
+    this.flushRules();
+    const d = W.deltaLine(before, pools(r.ledger));
+    if (d) this.say('pools', d);
+    // (what a rule started begins now)
+    this.begin();
+    this.checkWin();
+    return true;
+  }
+
+  /** (laws, endings) a run won by an achievement, or ended by a card or a rule, ends here */
+  private checkWin(): void {
+    if (this.result) return;
+    const e = this.realm.ended;
+    if (e) {
+      this.result = { title: W.endedTitle(e.result, e.name), lines: [W.endedBy(e.by)] };
+      this.say('run', W.endedTitle(e.result, e.name));
+      return;
+    }
+    const w = this.realm.won();
+    if (!w) return;
+    this.result = { title: W.wonTitle(w.law), lines: [W.winLine(w.count, w.tags)] };
+    this.say('run', W.wonTitle(w.law));
+  }
+
+  /** (the record) every card resolved or run out in this world, by place, then by run: "Run 1, Sister Ilveth: Raise
+   *  the glitter spire. Good result." */
+  record(): { place: string; lines: string[] }[] {
+    const r = this.realm;
+    const by = new Map<string, string[]>();
+    for (const e of r.record()) {
+      const place = e.place === HOME ? W.TOWN : r.w.name(e.place);
+      by.set(place, [...(by.get(place) ?? []), W.recordLine(e.run, e.leader, e.title, e.result)]);
+    }
+    return [...by].map(([place, lines]) => ({ place, lines }));
+  }
+  /**
+   * (draft 7) The far places as news of a living world: each far town with who holds it, what it is and since which
+   * card; the stances between the factions and you and between factions; and what changed out there lately, each with
+   * the card that did it. Read from the fact world (placeState, the holders, the stances, the history).
+   */
+  farNews(): { places: { name: string; line: string; since: string | null }[]; stances: string[]; changes: string[] } {
+    const r = this.realm;
+    const w = r.w;
+    const began = w.turn - r.season + 1;
+    const cardOf = (cause: string | undefined): string | null => {
+      if (!cause) return null;
+      const o = [...r.engine.offers, ...r.engine.past].find((x) => cause === x.id || cause.startsWith(`${x.id}:`));
+      return o ? o.opp.title : null;
+    };
+    const FAR_EVENTS = ['captured', 'vassal', 'destroyed', 'abandoned', 'founding', 'revealed', 'stance', 'flooded', 'burned', 'melted', 'buried', 'dried', 'withered', 'greened'];
+    const farEvents = w.facts.events().filter((e) => FAR_EVENTS.includes(e.kind) && !e.to.includes(HOME) && !e.to.some((x) => w.facts.entity(x)?.kind === 'site'));
+    const places = farThings(w, this.packs, HOME).map((t) => {
+      const ps = w.settlement(t.id) ? placeState(w, t.id) : null;
+      const holder = w.settlement(t.id) ? (farHolder(w, t.id) ?? w.controllerOf(t.id) ?? null) : null;
+      const last = farEvents.filter((e) => e.to.includes(t.id) && e.kind !== 'stance').at(-1);
+      const why = last ? cardOf(last.about?.opp) : null;
+      return {
+        name: t.name,
+        line: W.farLine({ tags: t.tags, holder: holder === 'player' ? 'you' : holder ? w.name(holder) : null, tribute: ps?.tribute ?? 0, partner: r.partners().some((p) => p.id === t.id) }),
+        since: last ? W.farSince(last.note, Math.max(1, last.turn - began + 1), last.turn < began, why) : null,
+      };
+    });
+    const facs = packFactions(w);
+    const stances: string[] = [];
+    for (const a of facs) {
+      const s = stanceOf(w, a, 'player');
+      if (s !== 'none') stances.push(W.stanceLine(w.name(a), 'you', s));
+      for (const b of facs) if (a < b && stanceOf(w, a, b) !== 'none') stances.push(W.stanceLine(w.name(a), w.name(b), stanceOf(w, a, b)));
+    }
+    const changes = farEvents.slice(-8).reverse().map((e) => W.farChange(e.note, e.turn - began + 1, e.turn < began, cardOf(e.about?.opp)));
+    return { places, stances, changes };
+  }
+
+  /** (the record) why a card is on the table because of earlier runs, in one plain line (null: it is not) */
+  private because(template: string): string | null {
+    const b = this.packs.map((p) => p.because[template]).find((x) => !!x);
+    if (!b) return null;
+    const r = this.realm;
+    const run = r.runNumber();
+    const parts: string[] = [];
+    for (const id of b.resolved) {
+      const e = r.record().filter((x) => x.card === id && x.run < run && x.result !== 'lapsed').at(-1);
+      if (e) parts.push(W.becauseCard(e.run, e.leader, e.title));
+    }
+    for (const tag of b.remains) {
+      const t = r.things().find((x) => x.tags.includes(tag));
+      if (t) parts.push(W.becauseRemains(t.name));
+    }
+    return parts.length ? W.because(parts) : null;
+  }
+
+  /** the season ends: the live events under way resolve from the state they are in (the Realm's reading), then the
+   *  Realm's season (commitments resolve, offers run out, the arc, the rules), the ledger's (income, building), the
+   *  deal again; and what begins by itself begins */
+  endSeason(): void {
+    const r = this.realm;
+    if (r.over) return;
+    this.moves.push('end');
+    this.recent = [];
+    const past = r.engine.past.length;
+    const before = pools(r.ledger);
+    for (const o of r.liveRunning()) {
+      this.tell(o);
+      const cast = Object.values(this.casts.get(o.id) ?? {}).reduce((a, b) => a + b, 0);
+      const rep = r.finishLive(o.id);
+      this.casts.delete(o.id);
+      this.events.push({ season: r.season, template: rep.template, tier: rep.tier, cast, now: false });
+      const own = rep.lines.filter((l) => !rep.hits.some((h) => `${h.text}.` === l));
+      this.say(rep.template === 'raid' ? 'fight' : 'event', W.eventEnded(rep.title, own.join(' ')));
+      if (rep.template === 'raid' && r.fight) this.result = { title: resultTitle(r.fight), lines: [...own, ...rep.hits.map((h) => `${h.text}.`)] };
+      this.flushRules();
+    }
+    if (r.over) {
+      const d = W.deltaLine(before, pools(r.ledger));
+      if (d) this.say('pools', d);
+      this.say('run', W.RUN_OVER);
+      return;
+    }
+    const mark = this.hits.length;
+    const news = r.endSeason();
+    // (CT-28: a card a rule offered is no threat, though it is dealt as one)
+    this.lapsed.push(...r.engine.past.slice(past).filter((o) => o.status === 'expired' && r.engine.template(o.template).threat === true).map((o) => o.template));
+    const res = nextSeason(r.ledger);
+    r.afterSeason(res.ledger);
+    // (the Realm's news carries each rule's reason too: the log has them as rule lines)
+    const ruled = new Set(this.hits.slice(mark).map((h) => `${h.hit.text}.`));
+    for (const n of news) if (!ruled.has(n)) this.say('news', n);
+    this.flushRules();
+    for (const c of res.finished) this.say('built', W.builtLine(CATALOG.find((x) => x.id === c)?.name ?? c));
+    const d = W.deltaLine(before, pools(r.ledger));
+    if (d) this.say('pools', d);
+    this.begin();
+    this.checkWin();
+    if (!r.over) this.mark();
+    else this.say('run', W.RUN_OVER);
+  }
+
+  /** the next run in the world this one left: what was built stays, the history stays */
+  next(leader: string): Table {
+    return new Table({ seed: this.seed, leader, seasons: this.realm.seasons, world: this.realm.snapshot(), built: this.built(), ...(this.o.packs ? { packs: this.o.packs } : {}) });
+  }
+
+  /** what this run did to the world, for its end: the history's lines, oldest first */
+  story(): string[] {
+    return this.realm.history().filter((e) => e.note && e.kind !== 'run-began' && e.kind !== 'rule-fired').map((e) => W.storyLine(e.turn - (this.realm.w.turn - this.realm.season), e.note!));
+  }
+}
+
+const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** (laws) the laws a card's effects bring: a `law` effect, or a thing put in play that carries laws (any result's) */
+function lawsIn(effects: readonly Effect[], outcomes: TemplateDef['outcomes'], packs: readonly LoadedPack[]): string[] {
+  const all = [...effects, ...Object.values(outcomes ?? {}).flatMap((o) => (o as { effects?: Effect[] }).effects ?? [])];
+  const out: string[] = [];
+  for (const e of all) {
+    const x = e as { helper?: string; args?: unknown[] };
+    if (x.helper === 'law') out.push(String(x.args?.[0]));
+    if (x.helper === 'packPut') out.push(...(packs.flatMap((p) => p.things).find((t) => t.id === String(x.args?.[0]))?.laws ?? []));
+  }
+  return [...new Set(out)];
+}
+/** (laws) the lines that differ between two readouts: "Rune-fed fields: gives +2 Materials would become gives +4" */
+function diffReadout(a: Map<string, { label: string; text: string }>, b: Map<string, { label: string; text: string }>): string[] {
+  const out: string[] = [];
+  for (const [k, v] of b) {
+    const was = a.get(k);
+    if (!was) out.push(W.becomesNew(v.label, v.text));
+    else if (was.text !== v.text) out.push(W.becomes(v.label, was.text, v.text));
+  }
+  for (const [k, v] of a) if (!b.has(k)) out.push(W.becomes(v.label, v.text, W.LAW_GONE));
+  return out.filter((x) => !!x);
+}
+/** a live event's spell list allows a spell ('known': every spell the run has) */
+const allows = (list: readonly string[], spell: string): boolean => list.includes(spell) || list.includes('known');
+/** a spell is allowed in a live event and has something there to act on: foes to put down, or a fire to put out */
+const fitsMech = (def: LiveDef, spell: string, mech: Record<string, { kills?: number; douses?: number }>): boolean => fits(def, spell, mech);
+function fits(def: LiveDef, spell: string, mech: Record<string, { kills?: number; douses?: number }> = SPELL_MECH): boolean {
+  const m = mech[spell];
+  return !!m && allows(def.spells ?? [], spell) && ((!!m.kills && def.groups.some((g) => g.side === 'foe')) || (!!m.douses && !!def.hazard));
+}
+/** the site of the home town an entity is (null: none) */
+function siteKey(r: Realm, id: string): SiteKey | null {
+  const e = r.w.facts.entity(id);
+  return e?.kind === 'site' && e.at?.settlement === HOME ? ((e.attrs?.site as SiteKey | undefined) ?? null) : null;
+}
+/** the tags that say what a site is (they are the first of its tags, before 'standing') */
+function siteIs(r: Realm, id: string): string[] {
+  const t = r.things().find((x) => x.id === id);
+  const i = t ? t.tags.indexOf('standing') : -1;
+  return t && i > 0 ? t.tags.slice(0, i) : [];
+}
+
+/** a run replayed from its moves (a test; the page's seed box makes the same run when the same cards are tapped) */
+export function replay(o: TableOptions, moves: readonly string[]): Table {
+  const t = new Table(o);
+  for (const m of moves) {
+    const [verb, id, target] = m.split(' ');
+    if (verb === 'end') t.endSeason();
+    else if (verb === 'take') t.take(id);
+    else if (verb === 'pass') t.pass(id);
+    else if (verb === 'resolve') t.resolveNow(id);
+    else if (verb === 'cast') t.cast(id, t.realm.liveRunning().find((o) => o.template === target)?.id ?? target);
+    else throw new Error(`table: no move ${m}`);
+  }
+  return t;
+}
+
+export { LEADERS, TIER_RANK };

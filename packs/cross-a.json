@@ -1,0 +1,23 @@
+{
+  "pack": { "id": "cross-a", "name": "Cross-pack example A: the seed store", "version": 1,
+            "summary": "Half of the cross-pack example. It puts a thing with a shared tag on the east fields. Load it with cross-b.json.",
+            "themes": ["food"] },
+  "tags": [
+    { "id": "seed-stored", "on": "site", "meaning": "Seed corn is kept here over winter.", "timed": false, "shared": true }
+  ],
+  "things": [
+    { "id": "cross-a-seed-store", "name": "Seed store", "kind": "building", "at": "site:fields", "tags": ["seed-stored"],
+      "text": "Seed corn kept dry for the spring.", "art": "A low timber store on stilts at the edge of a field, painterly." }
+  ],
+  "cards": [
+    { "id": "cross-a-build-seed-store", "title": "Build a seed store",
+      "presenter": { "name": "Hal Brenning", "role": "reeve", "at": "site:fields" },
+      "pitch": "We eat the seed corn every hard winter. Give me 1 worker and 2 Materials and I will build a store for it.",
+      "once": true, "offer_seasons": 3,
+      "cost": { "labor": 1, "materials": 2 },
+      "if_taken": [ { "put": "cross-a-seed-store", "at": "site:fields" }, { "say": "The seed store stands by the east fields." } ],
+      "if_expires": [ { "pool": "unrest", "add": 1 }, { "say": "The seed corn is eaten again." } ],
+      "art": "Carpenters raising a small store on stilts, painterly." }
+  ],
+  "wants": []
+}

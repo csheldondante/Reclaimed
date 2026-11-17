@@ -110,7 +110,9 @@ describe('tags and synergy rules (living/rules.ts)', () => {
     const pool: Record<string, number> = { materials: 0, magic: 0, unrest: 0 };
     return { pool, book: new RuleBook(rules, { things: () => list, pool: (k) => pool[k] ?? 0, gain: (k, n) => ((pool[k] = (pool[k] ?? 0) + n), n) }) };
   };
-  const field: RuleDef = { id: 'f', name: 'F', on: 'turn', a: { tags: ['field', 'worked', 'growth-active'] }, effect: { pool: 'materials', n: 2 }, why: '{a} gave {n}' };
+  // (card-table, the owner's ruling 2026-11-16: a rule fires every time its trigger occurs unless it says `perSeason`.
+  // This rule says once a season, as every base rule does: season/realm-rules.ts RULES)
+  const field: RuleDef = { id: 'f', name: 'F', on: 'turn', a: { tags: ['field', 'worked', 'growth-active'] }, effect: { pool: 'materials', n: 2 }, perSeason: 1, why: '{a} gave {n}' };
 
   it('fires on its trigger when its tags match, once a season, with its reason', () => {
     const { pool, book: b } = book([field]);
@@ -246,24 +248,26 @@ describe('the run\'s rules and live events on the realm', () => {
     const b = realm(built('farms'));
     b.w.facts.setTag(siteId(b.home, 'fields'), 'condition', 'burned', true, 'test');
     b.cast('growth', 'fields');
-    expect(b.things().find((t) => t.id === siteId(b.home, 'fields'))!.tags).toEqual(['ruined', 'burned']);
+    // (card-table: a ruined thing also carries remains-of-<what it was>, for the record across runs)
+    expect(b.things().find((t) => t.id === siteId(b.home, 'fields'))!.tags).toEqual(['ruined', 'burned', 'remains-of-field']);
     expect(b.endSeason().join(' ')).not.toContain('growth rune');
   });
 
   it('the raid through its template: walls with a garrison stop 2 raiders, and the town holds', () => {
-    // (Might 1 behind walls: 3 soldiers hold 3 of 6; the rule stops 2; 1 gets in — and with Might 2 none does)
+    // (card-table tuning, CT-18: 18 raiders. Might 1 behind walls: 3 soldiers hold 3 of 18; the rule stops 2; 13 get
+    // in — and with Might 6, 18 soldiers, none does)
     const one = realm(grant(built('walls'), {}), 4);
     one.ledger = { ...one.ledger, holdings: { ...one.ledger.holdings, agents: one.ledger.holdings.agents.filter((a) => a.kind !== 'army').concat(one.ledger.holdings.agents.filter((a) => a.kind === 'army').slice(0, 1)) } };
     for (let k = 0; k < 3; k++) season(one);
     const a = one.playForced().find((x) => x.template === RAID)!;
-    expect(a.vars).toMatchObject({ raiders: 6, soldiers: 3, stopped: 2, left: 1 });
+    expect(a.vars).toMatchObject({ raiders: 18, soldiers: 3, stopped: 2, left: 13 });
     expect(a.tier).toBe('failure');
     expect(a.lines.join(' ')).toContain('Your walls and their garrison stopped 2 raiders at the gate.');
-    expect(one.fight).toMatchObject({ raiders: 6, left: 1, held: false });
+    expect(one.fight).toMatchObject({ raiders: 18, left: 13, held: false });
     expect(one.w.facts.tag(siteId(one.home, 'gate'), 'condition', 'burned')?.value).toBe(true);
     expect(pools(one.ledger).unrest).toBeGreaterThanOrEqual(1);
 
-    const two = realm(built('walls'), 4);
+    const two = realm(grant(built('walls'), { might: 3 }), 4);
     for (let k = 0; k < 3; k++) season(two);
     const might = total(two.ledger, 'might');
     const b = two.playForced().find((x) => x.template === RAID)!;
@@ -316,6 +320,6 @@ describe('the run\'s rules and live events on the realm', () => {
     expect(rep.lines.join(' ')).toContain('The river crossing is close: bucket lines saved 3 of the burning lots.');
     expect(r.w.facts.tag(siteId(r.home, 'market'), 'condition', 'burned')?.value).toBe(true);
     // (the market burned: a later rule about it finds only a ruin)
-    expect(r.things().find((t) => t.id === siteId(r.home, 'market'))!.tags).toEqual(['ruined', 'burned']);
+    expect(r.things().find((t) => t.id === siteId(r.home, 'market'))!.tags).toEqual(['ruined', 'burned', 'remains-of-market']);
   });
 });

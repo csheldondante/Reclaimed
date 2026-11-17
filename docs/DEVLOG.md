@@ -24052,6 +24052,60 @@ event the camera goes back over the town (the event's look left the view at the 
 change too. `realm-resume` and `realm` failed once each while a walk was running beside them and pass alone
 (timing under load). Typecheck clean.
 
+## 2026-11-16 — Card table, steps a and b (`card-table`; docs/design/CARD_TABLE.md)
+
+**Why.** The owner asked for a parallel card-game front end on the same world model, with no graphics, to test
+engine synergies and whether the decisions are fun in seconds instead of minutes of 3D play.
+
+**What.** `table.html` + `src/table/`: `game.ts` is a driver with no DOM that does what `scenes/level/loop.ts` does
+without a scene (makes the `Realm`, takes and passes offers, `Realm.endSeason` then `ledger.nextSeason` then
+`Realm.afterSeason`, the next run on the saved world). `main.ts` draws it: header with the six pools and income, the
+threat's countdown, each offer as a card (who asks, cost, what it gives, what happens if left and when, tags), what
+is under way, the log, end season, run end, next run. Nothing of the model is copied; every number on a card is read
+from the offer.
+
+**Measured.** `test/unit/table.test.ts` (4 tests, 1.7 s): a card's shown cost equals the pools' change when taken;
+a greedy 8-season run ends with the fight; replaying the recorded moves gives the same log and pool curves; run 2
+keeps what was built and the history. One phone-size shot (412x915) looked at: header, pools and two cards fit.
+
+**Found.** The attack comes on entering the last season, so a 16-season run has 15 seasons of choices. The raid's
+result is a stand-in until round 6's live events merge (BACKLOG CT-1).
+
+## 2026-11-16 — Card table: bots, things in play, abilities, outside-authored packs (`card-table`)
+
+**Why.** The owner will have another model draft themed content packs (docs/design/PACK_FORMAT.md) and wants to try
+one within a minute of it being written; and wants bots to test engines in seconds.
+
+**Bots** (`src/table/bots.ts`, `node scripts/tablebots.mjs`). Eight policies x three leaders, 16 seasons, 24 runs in
+32 s. First findings from the base cards: every policy that will pay the tribute pays it and none holds by force;
+Materials pile up unspent (35 to 64 at the end) and Magic reaches about 20 with nothing to spend it on; the
+neighbour's siege runs out in 20 of 24 runs (it asks for a soldier in season 2); a second seed gives the same run
+(the seed only names people: CT-3).
+
+**Packs** (`src/packs/check.ts`, `src/packs/load.ts`, `packs/sample.json`). A card becomes a `TemplateDef` built
+from the template language and the Realm's and mutators' existing helpers (`pool`, `income`, `mutateAt`, `mutate`,
+`sign`, `found`, `spell`, `neighbour`, `refugeeCohort`); eight small helpers cover the rest (`packPool`, `packSeason`,
+`packLeader`, `packTags`, `packFar`, `packPut`, `packRemove`, `packTag` / `packUntag`, `packUnlock`). The Realm
+gained one option, `extra: { templates, helpers }`. The words a card shows for "if taken" and "if left" are written
+from its effects, so the numbers shown are the numbers applied. The validator has no run-time imports, so
+`node scripts/packcheck.mjs` runs it directly; a test holds its word lists to the engine's (pools, sites, land
+changes, signs, leaders, base card ids).
+
+**Format doc.** Draft 1 promised things the engine cannot do; draft 2 says what is true (sites by name, people
+locked and goods spent, the land-change kinds, one far place, refugees only, no upkeep, events and rules checked but
+not yet played). Each change is listed in the hand-over report.
+
+**Found.** An entity cannot be bound twice in one template: a card whose effect names its own site must use the
+card's site binding. A fact tag's value cannot be a turn number (`tagRefusal`: a number is an intensity 0..1) and
+the `custom` scope is not allowed on a site, so timed tags here are a `condition` tag plus an `until:<tag>`
+attribute. A thing's tags are lent to the place it stands at, or a rule asking one thing for `home` and
+`night-watch` could never match.
+
+**Measured.** `test/unit/packs.test.ts` 28 tests, 0.4 s: 22 kinds of mistake each reported in words; the sample
+pack played on the Realm (granary built in two seasons and its income added, blessing unlocked and cast for 1 Magic,
+its timed tag gone next season, the unanswered mill fire leaving the mill street `ruined, burned`). Two phone-size
+shots looked at (412x915): the armed ability lights its legal target; ruined things show red tags.
+
 ## 2026-11-16 — loop skeleton round 6: one live-event system; tags and synergy rules; a spell every season (`loop-skeleton`, LS-61 to LS-71)
 
 **Why.** The owner (DECISIONS 2026-11-16): "I do think this may be a mistake to differentiate combat from other
@@ -24275,3 +24329,283 @@ The parade's cost is the sim at 3× on the march (agents 1.8 ms, particles 0.9, 
 **Tests.** `formations.test.ts` 13 of 14 (the drill-discipline test times out at 60 s on the old code too);
 `mutators.test.ts` camp and sign tests; `live-rules`, `realm`, `realm-resume`, `realm-bots`, `opps`, `sites` pass;
 typecheck clean; `writing-sources` fails on `src/roadlab/control.ts` as before.
+
+## 2026-11-16 — Card table on round 6: live events, rules log, pack rules and events, bots and a first tuning (`card-table`)
+
+**Merge.** `origin/loop-skeleton` 583dc6d1 merged. `realm.ts RealmOptions` keeps both `liveFire` and the table's
+`extra` (now also `rules` and `things`). A thing's tags lent to its place is not in round 6 (LS-75): kept here, in
+`packs/load.ts: withPackThings`, through `extra.things`.
+
+**Stand-ins deleted.** The table's fight (CT-1) and its own things list (CT-6). The raid is round 6's template,
+begun as a forced live event and resolved by `Realm.finishLive`.
+
+**Added to the model, for both front ends.** `living/live.ts: mechState, SPELL_MECH` (an event's end with nobody
+playing it: groups told to go arrive, each logged cast does a fixed thing). `living/rules.ts: RuleBook.preview`
+(what would fire, nothing changed), `check` (the first thing a rule lacks, as data), `fired`. `season/realm.ts:
+predictLive` (tier and line if it ended now), options `onRules`, `raiders`, `extra.rules`, `extra.things`.
+
+**Why mechState.** With round 6's `idleState` nothing arrives, so in Node a parade always fails and a cast changes
+nothing. The table tells the Realm `mechState` when an event begins and after each cast; the Realm's own four steps
+then read it.
+
+**Rules list.** Every rule: paid (with its reason), ready, or the one thing missing with the closest thing and the
+tags it lacks ("Missing: nothing in play is "field" + "worked" + "growth-active". Closest: the east fields lacks
+"growth-active".").
+
+**Packs.** Rules fire; events play (`liveDef`). The validator now also holds a pack to the numbers the engine has: a
+rule that names an amount an event of its kind lacks would stop the Realm ("the event has no number"), so a `fire`
+event must list `burned`, and a rule on a base kind may name only that kind's numbers. Format doc: draft 3.
+
+**Measured (bots, base cards, 27 runs, 6 raiders).** Before the tuning: `spells only` (no card taken, 6 casts of
+Fire) held 3 of 3; `walls, no spells` held 3 of 3; Materials left 31 to 105; Magic left 7 to 22; 1.8 to 4.8 workers
+free at a season's start; Unrest 5 to 7 with nothing lost by it; `Procession past the shrine` and `Watch from the
+tower` never fired; the neighbour's siege ran out in 19 of 27. After the tuning commit (four rules, one card):
+Materials left 4 to 29 (86 for the bot that builds no garrison and pays the tribute). With `--raiders 18`: `spells
+only` 1 of 3, `walls, no spells` 1 of 3, `walls and might` with spells 3 of 3, tribute still 3 of 3 with 86 left.
+
+**Found.** Round 6's tests pin 6 raiders, the tribute and the season the neighbour falls (four tests in three files
+failed when those were changed), so those three are proposals with a switch (`tablebots --raiders`), not applied.
+Vitest files time out at 5 s when two run at once on this machine; each passes alone.
+
+**Tests.** One file at a time: `table` 4, `table-live` 11 (mechState, RuleBook.check, the raid from the model,
+casts, the growth rune's rule, replay with casts), `packs` 35, `realm` 16, `realm-resume` 5, `realm-bots` 5,
+`live-rules` 19, `writing` 8. Typecheck clean. Whole suite not run. Two phone shots looked at (event card with its
+rule and prediction; the rules list).
+
+## 2026-11-16 — Packs together, and four more words in the format (`card-table`)
+
+**Why.** Four outside-authored packs are coming, meant to be loaded together and to read each other.
+
+**Together.** `check.ts: checkTogether` (ids two packs share, a shared tag declared differently, rules on an event
+kind or a card nobody has, crowded sites, too many threats); the page, the bots and `packcheck` take several files.
+Shared custom tags: each pack declares the tag the same and marks it `"shared": true`; at run time tags are plain
+strings, so nothing else was needed — proved by `packs/cross-a.json` + `cross-b.json` in a test (A's seed store on
+the east fields, B's rule on `field` + `seed-stored` pays +1 Magic, B's card gated on the same two tags appears
+only then).
+
+**Event triggers.** Verified by test, each firing once when it happens: `pack-done:<card>`, `pack-lapsed:<card>`,
+and `burned` from a pack card's `mutate` on a site. The validator now refuses any other name than those, the land
+changes and the base game's 26 event kinds (a test holds the list to what the base templates write).
+
+**New words.** `upkeep` on a thing is a generated turn rule on a tag only that thing carries (so it shows in the
+rules list and the log like any rule). `weight` 1..5 on a card is the dealer's score part (0.2 a step). `in_event`
+on an ability gives it kills or douses through the same table as the spells (`mechState`'s fourth argument).
+Unlocked abilities are `ability-unlocked:<id>` events of the run, read back from its history.
+
+**Not done, and why.** `arrive` with a count: the Realm counts 40 people a migration event. Seeds that change the
+deal: the dealer is deterministic by score and round 6's tests rest on that (CT-24).
+
+**Tests.** One file at a time: `packs-together` 11, `packs-more` 3, `packs` 35, `table` 4, `table-live` 11.
+
+## 2026-11-16 — Rules that chain (`card-table`)
+
+**Why.** The owner: "an in play thing that makes winning a fight cause a new challenger opportunity and a next
+fight … it could build surprising engines." The rule book's no-loops ban was stricter than needed: `perSeason`
+already bounds every rule.
+
+**What.** `living/rules.ts`: a trigger on a live event's result (`{ live, tier }`, fired after the tier is picked;
+`{ live }` alone still fires before and is the only kind that changes an amount); effects that act (`offer`, `start`,
+`tag`, `untag`) through `RuleWorld.act`; the things are read again after an act, so the next rule sees a tag just
+set; acting rules capped at 3 a season each and 24 a season together, past which the book throws with the chain's
+rule ids. `season/realm.ts`: `act` (a card asked for is kept in `asked`, saved with the run; the template's
+`ruleAsked` condition lets the next deal put it on the board), result rules fired in `finishLive` before the
+outcome's own events are read, `what` / `after` on each firing so a chain can be read back. `packs/load.ts:
+linkPacks` rewrites the conditions of a card that a rule offers or starts.
+
+**Order that mattered.** First version read the outcome's events (`pack-done`) before the result rules: "a done
+bout at a champion's pit starts the next bout" then ran before "a win makes the pit a champion's" and the chain
+never went on. Result rules now come first.
+
+**Measured (`packs/arena.json`, bots, 30 runs).** It does not run away: 18 runs dug the pit; bout 1 won 18 of 18,
+bout 2 15 of 18, bout 3 14 of 15; at most three bouts a run, one a season. A whole chain pays 12 Materials, 3 Magic
+and 1 Might for about 4 Magic of casts and 1 Materials a season of upkeep.
+
+**Tests.** `chains` 13 (result trigger, tag re-read, perSeason, budget error, save and load of the book; the arena
+on the Realm: three bouts in three seasons, the chain in the log, what a win will set off on the card, a lost bout
+ends it, saved after the second win and taken up, the same run from the same moves). Regression files pass alone.
+
+## 2026-11-16 — Engines are not bounded: cascades; the raid at 18 and the tribute at 15 (`card-table`)
+
+**The owner's ruling.** "I think we want loops and fun engines I wouldn't limit that. I would make it so the infinite
+loops are tied to user actions so they don't run infinitely on their own. But crazy multipliers and triggers are fun."
+
+**What changed in `living/rules.ts`.** `perSeason` no longer defaults to 1: a rule fires every time its trigger
+occurs. The per-season budget and the cap of 3 on acting rules are gone. A cascade is one player action or one
+season's turn (`RuleBook.begin`, called by the Realm in `commit`, `cast` and `endSeason`); in it a rule fires once
+on one occurrence of its trigger (`RuleOccasion.id`: the fact event's id, the live event's). No act takes effect
+inside the cascade that caused it: an offered card waits for a deal and a player, a started event for the season's
+end. So a loop costs an action or a season a turn. `CASCADE_LIMIT` (10,000 firings in one cascade) is a defect
+detector with an error that names the chain.
+
+**Base balance kept.** The 14 base rules each get `perSeason: 1` where `RULES` is exported, so nothing fires more
+often than before. Two tests said "once a season" of a rule with no `perSeason` (round 6's `live-rules`, mine in
+`table-live`): each rule now says it.
+
+**A defect found by the loop.** `finishLive` took a card off the asked list after its rules had fired, which threw
+away a rule's request for the same card again: the open bout ran one turn and stopped. The card's own done event,
+read in `pump`, takes it off now, before its rules fire.
+
+**Tuning 2** (its own commit, 428cd32c): 18 raiders, tribute 15. Bots before / after: `spells only` held 3/3 → 1/3,
+`walls, no spells` 3/3 → 1/3, `walls and might` with spells 3/3 → 3/3, the tribute bots still pay 3/3. Round 6's
+`realm-bots` bots cast nothing; with 18 raiders only the tribute holds for them, so its "two ways" assertion is one
+way there and `table-bots` asserts the two ways with spells.
+
+**Measured (loop hunter, arena + sample together, 33 runs, 127 s).** The open-bout loop: 162 wins, 3 losses — every
+casting bot takes every turn of it, because a turn pays back its Magic and 2 Materials (CT-30). The biggest engine
+was 15 rule firings in one season (greedy, pack-first and loop hunter alike); the multiplier stack took the parade
+from 13 to 32 people (triumph 34 of 37 parades). Nothing grew without end except the sample pack's Labor.
+
+## 2026-11-16 — Laws: things that change the rules of the game (`card-table`; docs/design/LAWS.md)
+
+**Why.** The owner: "Since it is a roguelite with runs that end we can break things. Look at games like innovation and
+allow mechanics that mutate mechanics in potentially major world changing ways." Engines are data (tags and rules);
+laws make the data itself something a card, a thing, a rule or an ability can change for the rest of the run.
+
+**The mechanism.** One ordered list of laws in force in the `Realm` (`active`, saved in `RunState.laws` with its
+order number), layered over the base definitions: nothing base is edited. Every reader goes through the Realm's
+law-applied view: `things()` (tag laws, and `spare` in the ruin test), the rule book (now built over a function:
+`RuleBook(() => list)`, the list derived by `living/laws.ts: deriveRules` and cached by the laws in force, checked
+when a new list is first seen), `terms(offer)` (costs, a part paid from another pool, build time; `short` and
+`commit` use it, so what is shown is what is paid), `liveOf` (spells allowed, foes added), `finishLive` /
+`predictLive` (results shifted, a result that counts as another kind's), `spellMech`, `runNumbers` (raiders, a pool
+that counts as Might), the dealer's tune (cards on offer at once), `endSeason` (income by law), `over` (a way to win).
+A law's source: a thing (`lawThings`, followed by `refreshLaws` after every action: gone or ruined, its laws go), a
+timed grant (`until` a turn) or the run. The meta law `next_law` turns the next law into a run law and is used up;
+`multipliers` multiplies every `times` and every rule's `mul` whenever it came. Laws stack: the same law twice is
+in force twice.
+
+**Order.** Laws apply in the order they came into force; a test pins that set-then-times and times-then-set give
+different numbers, and that a count-as chain depends on its order.
+
+**Riskiest part first, measured.** The derived rule list and save/load: 14 tests in `test/unit/laws.test.ts`, every
+kind pure, then on the Realm with `packs/laws.json` — a thing's laws leave when its site burns and come back (after
+the law that spares the burn) when a law spares it; a saved run taken up has the same list in the same order; a new
+run has none. Regression files pass alone (packs 35, packs-more 3, packs-together 11, chains 16, table-live 11,
+realm-resume 5, realm 16, runplay-rules 17); `writing-sources` fails only on `src/roadlab/control.ts`, as before.
+
+**The absurd ones (in `laws.json`, tested).** Rune stones (`blessed-fields` times 2, fires twice) with the abbot's
+madness (multipliers 2): the growth rune's 2 Materials become 16 a season. Holy furrows (fields count as temples),
+every hearth a temple (worked places are temples) and the pilgrim road (6 temples win the run): the run ends won.
+
+## 2026-11-16 — Laws at the table; "Settle it now"; the arena's loop tamed by a law (`card-table`)
+
+**The page.** "Laws in force" (opens when the first law comes): each law's words written from its data, who or what
+made it, how long it stands, "in force 3 times" for a stacked one. A card that brings laws says which, and every line
+that would change, read from the view with and without them (`Table.readout`, `diffReadout`): rule readings and
+gifts, whether a rule is ready, the cost of each card on offer, each spell's line, the tags in play, income, the ways
+to win — "Rune-fed fields. Now: Gives +2 Materials, at most 2. With it: Gives +4 Materials, at most 4." A card's cost
+in force is shown with the printed one struck beside it. The Rules list marks a rule a law changed ("Changed by
+law: Deep runes") and shows one a law turned off, struck through.
+
+**Settle it now** (the owner's chain, "win → challenger → win", in one season). `Realm.resolveNow` is one player
+action: a new cascade, `finishLive` with the casts made so far, then the asked card dealt at once; `Table.resolveNow`
+logs it, and what a rule started begins (`begin`). A move `resolve <template>` replays. Events not settled by hand
+still end at the season's end. Test: bouts 1, 2 and 3 won and settled in one season, the open bout on the table the
+same season, left alone it is lost at the season's end. **There is no action budget at the table**: a settle costs a
+move and the casts it needed, nothing more (owner question).
+
+**CT-30: the open bout was strictly dominant** (1 Magic in, 1 Magic and 2 Materials out, 162 wins to 3 losses). By
+data: rule `arena-word-spreads` makes the law `arena-rising-hopefuls` (one more foe in every bout) on each open-bout
+win; laws stack. Test: three turns cost 1, 2, 3 casts. **CT-28**: a card a rule offers is no longer drawn as a threat
+(`threat === true`), nor counted as a threat that ran out.
+
+**Bots** (`law hunter`: law cards first, settles what it wins; `loop hunter` settles too). The report adds the
+biggest single firing, laws made and runs won by a law, and loops' casts turn by turn. **Measured (laws + arena, 36
+runs, 134 s):** laws made in 19 of 36 runs; **11 runs won by the pilgrim road** (6 temples) — every bot that takes
+pack cards wins it: that is the strictly dominant thing found (tuned in its own commit). Biggest single firing:
+`Rune-fed fields` +8 Materials (paid twice: 16 a season, the runes and the abbot); the biggest season was 23 firings
+(law hunter). The open bout now costs 1.0, 1.8, 2.0, 3.0, 3.3 … casts a turn (won 30 of 39): no longer free money.
+
+**After TUNING 3** (8 temples, 36 runs): 10 runs won by a law — still every bot that rushes pack cards wins (the
+laws pack's cards are boosted at the table, CT-8, and the law hunter takes every one). Left as the owner's "broken is
+fine" for now; it is the first thing to tune if the run should be harder.
+
+## 2026-11-16 — Endings and the world's record (`card-table`)
+
+**Why.** The owner: "Innovation does this where high tech can instantly win and lose the game … we can allow broken
+mechanics", then: "I don't think you need to make this a separate system … Just keep the history of resolved cards."
+A first cut wrote historic tags as their own events; it was deleted before commit in favour of the record below.
+
+**What the record is in code.** One fact event per card when it resolves (`card-done:<tier>`, written in
+`Realm.finishLive` for a live card and after `engine.advance` for the rest) or runs out (`card-lapsed`), `to: [its
+place, the home town]`, `about.thing`: the template. The fact layer's events are saved with the world, so the record
+outlives the run; `recordOf` reads run and leader from the `run-began` events. The things a card put in play are
+entities of the world and stay; on a ruined place they carry `ruined` and `remains-of-<tag>` (base sites too).
+Readers: `resolved` with `tier`, `at`, `run: "earlier"` (helper `recordHas`); `site_has` on remains; a card's
+`laws_after` (a source `record:<card>` in the law list, in force from season 1 of every later run). Endings:
+`end_run` (effect or rule act) sets `Realm.ended`, saved in `RunState`; `over` reads it. `far_all` runs the mutators'
+`mutate` helper over every far town.
+
+**Test** (`record.test.ts`): run 1 raises the glitter spire and leaves its overload to run out — the run is lost by
+the ending card, the tower burns, every far town is abandoned; run 2 under another leader lists the record, has "The
+glass sky" from season 1, gets the salvage card only because of the spire's remains (and says so), puts hoverbikes
+(`mount`, `power`) in play, and with a garrison the rule "Knights on glass saddles" fires; saved and taken up in run
+2, the same laws and record.
+
+## 2026-11-16 — Places on the whole world map (`card-table`)
+
+**Why.** The owner: "We have a whole world map. Can't we just add effects like darkness or add or delete towns or
+make trade routes via policies?" The engine already applies mutators and signs anywhere; only the pack words were
+narrow. **What changed (words, not engine).** `Realm.selectTowns(selector)` names towns nearest first (`far:all`,
+`far:nearest:<n>`, `far:where:<state>`, `far:<id>`, `world`, `far:neighbour`); the helper `eachTown` runs the
+mutators' own `mutate` / `sign` helpers over each; `townsExist` keeps a card off the board while its selector names
+nothing; `trade` relates towns to the home town (`supplies`, which `partners()` already reads); a policy thing's
+`trade` adds partners while it stands (`extra.tradeThings`). `far_all` is now `eachTown` over `far:all` (the helper
+of the last commit removed). **Test** (`places.test.ts`, the test world's two far towns): selectors and their order,
+the vassal card never on a board, the nearest town abandoned and only it, every far town a trade partner by the
+charter with the caravan rule firing, the generated words, an unknown selector refused.
+
+## 2026-11-16 — Factions, stances, found places and cards as templates (`card-table`, PACK_FORMAT draft 7)
+
+**Why.** The owner: "I wanted opportunities like discovering a far off resource that you can make a mining colony at
+to get income per season. Or vassalizing other places or pirates! Or making a deal with pirates", "make the outside
+world feel big and shaped by decisions not just the player city", and "The dealer can always generate cards from
+parameterized templates to fit the actual world." The engine already binds a template to every set of entities that
+fits; the pack format had thrown that away (one fixed site, one fixed far place).
+
+**What is reused, not added.** Factions are fact-layer entities (`kind: 'faction'`, `attrs.packFaction`), made once
+per world by `RealmOptions.extra.seed` before the first deal. A stance is the fact layer's own relations
+(`at_war_with`, `truce_with`, `allied_with`, symmetric; the old edge goes to history by `unrelate`), with a `stance`
+fact event for the news. A faction holds a town through the mutators' own `occupies` / `vassal_of` and the stored
+`controls` (founding). A found place is a fact entity of kind `deposit` (`<id>:find`, `attrs.resource`); settling it
+runs the Realm's own `found` helper (now with `by`, and each later camp a step round the hills so two camps are two
+places). No new store: the record event of a card now also names what its variables were bound to (`to`), and
+`resolved` takes `about`.
+
+**Templates.** A card's `bind` declares variables (`site` by tags, `far` by state / tags / holder, `faction` by
+stance; `set_off`: one of the things the rule that offered it matched, `Realm.askedOn`). The loader turns each into a
+`BindSpec` whose `where` reads the thing of the rules (`PackHost.thingTags`), so a variable is written in the same
+words as a rule. `once` is now once for each binding (`packNotDone` over the record event's `to`), or `"run"`.
+
+**Far towns as things.** `farThings` lists every far town with `far-town`, its state, `standing`/`ruined`, `yours` or
+a pack faction's id, its resource, `founded`, `colony`; found places with `found` and the resource. The home town
+carries `<faction>:<stance>`. A colony's income is then an ordinary rule (`a: colony, ore, standing`): it stops when
+the colony is taken, with no new mechanism.
+
+**News.** `Table.farNews` and the page's "Far places" section: each place with who holds it and since which card,
+the stances between factions and you and between factions, and the last eight far changes with the card that made
+each.
+
+**Test** (`factions.test.ts`): the validator (unbound variable, unknown placeholder, a binding nothing feeds is a
+LOOK), one template binding each far town, swearing one (tribute rule fires, the record names the town), reveal →
+settle → colony pays → a truce → the reavers take the colony (rule stops) → the news says who holds it and why.
+
+## 2026-11-16 — loop round 8 (1): card-table merged into loop-skeleton (`loop-skeleton`)
+
+`origin/card-table` (b567bfc5, PACK_FORMAT draft 7: packs, laws, chains, endings, the record, far selectors,
+factions) merged. The only textual conflict was this file (both appended; both kept, ours first). The code merged by
+itself; three places where round 7 and the card table met needed a choice, each keeping both behaviours:
+- `packs/check.ts LIVE_AMOUNTS.fire` gains `rain` (round 7 reads whether Rain was brought to the market fire).
+- `packs/check.ts SIGN_KINDS` stays without round 7's `camp` sign: it needs a cell a pack's `sign` cannot give; the
+  test says so.
+- `realm.ts found`: the card table's "each later camp a step round the hills" counted every `founding` event, and the
+  atlas's own settlement histories are `founding` events, so the first camp was put 100 cells off the hills. It now
+  counts only foundings a mutation made (those carry `about.atlas`).
+- `live-rules.test.ts`: a ruined field or market also carries `remains-of-<tag>` (the record, card table).
+Kept from the card table: the raid 18, tribute 15, base rules `perSeason: 1`. Kept from round 7: `boardMax` 5, the
+live events' round 7 data.
+
+**Tests, one file at a time:** realm 16, realm-resume 5, realm-bots 5, live-rules 19, packs 35, packs-more 3,
+packs-together 11, laws 14, chains 17, record 2, places 2, factions 3, table 4, table-live 11, table-bots 3, opps 20,
+sites 5, mutators-facts 6, mutators-list 5. Typecheck clean. `scripts/packcheck.mjs`: laws, glitter, arena, sample no
+errors.

@@ -268,3 +268,43 @@ export function checkLive(id: string, def: LiveDef, run: readonly string[] = [])
   if (def.after && 'site' in def.after.go) p.push(`${id}: its people walk off to a place of the town, not a site`);
   return p;
 }
+
+/**
+ * (card-table) What one cast of a spell does to a live event when nothing is played in real time: foes put down, and
+ * points of a fire put out. First numbers, to tune (BACKLOG CT-16): the 3D game's casts are aimed by hand and these
+ * stand in for "a cast that lands". A spell not listed does nothing to an event.
+ */
+export const SPELL_MECH: Record<string, { kills?: number; douses?: number }> = {
+  fire: { kills: 1 },
+  heatray: { kills: 2 },
+  rain: { douses: 2 },
+};
+
+/**
+ * (card-table) A live event as it ends when nobody plays it in real time but the player made strategic choices: every
+ * group does what it was ordered to (a group told to go somewhere arrives; a fight is left as it was sent, for the
+ * event's own `derive` to settle), the hazard burns every point, and each logged cast does what SPELL_MECH says —
+ * foes put down in the groups' order, fire points put out. Pure: the same casts give the same state. The card table
+ * and the bots resolve events from this (`Realm.tellLive` then `finishLive`); the 3D game tells its own counts.
+ */
+export function mechState(def: LiveDef, run: LiveVars, casts: Record<string, number> = {}, mech: Record<string, { kills?: number; douses?: number }> = SPELL_MECH): LiveState {
+  const s = idleState(def, run);
+  for (const g of def.groups) if (g.order?.kind === 'go') s.groups[g.id].arrived = true;
+  s.casts = { ...casts };
+  let kills = 0;
+  let douses = 0;
+  for (const [spell, n] of Object.entries(casts)) {
+    kills += (mech[spell]?.kills ?? 0) * n;
+    douses += (mech[spell]?.douses ?? 0) * n;
+  }
+  for (const g of def.groups) {
+    if (g.side !== 'foe' || kills <= 0) continue;
+    const st = s.groups[g.id];
+    const k = Math.min(st.alive, kills);
+    st.alive -= k;
+    st.dead += k;
+    kills -= k;
+  }
+  s.burned = Math.max(0, s.burned - douses);
+  return s;
+}
