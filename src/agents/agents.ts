@@ -2314,10 +2314,10 @@ fn surfaceDepth(i: u32, z: f32, top: bool) -> f32 {
   }
 
   /** A raw readback of one of its buffers (tests). */
-  async readRaw(which: 'nav' | 'fields' | 'units' | 'jfa' | 'mail'): Promise<ArrayBuffer> {
+  async readRaw(which: 'nav' | 'fields' | 'units' | 'jfa' | 'mail' | 'combat'): Promise<ArrayBuffer> {
     // (tests: 'jfa' — units.wgsl's JFA planes, ?jfa=1/2; 'mail' — the aim, the hits landing, the arrows; 'fields' —
-    // the fields' page pool)
-    const src = which === 'jfa' ? this.jfaBuf : which === 'mail' ? this.mail : which === 'fields' ? this.fields.buffer : this[which];
+    // the fields' page pool; 'combat' — the combat words and, after them, the spell words, loop round 10)
+    const src = which === 'jfa' ? this.jfaBuf : which === 'mail' ? this.mail : which === 'fields' ? this.fields.buffer : which === 'combat' ? this.notice.combat : this[which];
     const tmp = this.device.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const enc = this.device.createCommandEncoder();
     enc.copyBufferToBuffer(src, 0, tmp, 0, src.size);

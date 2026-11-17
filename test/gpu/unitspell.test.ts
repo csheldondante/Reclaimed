@@ -51,6 +51,12 @@ test('hidden: a hunter lets its target go and takes no hidden one; the spell is 
   frame(1);
   let t = await targets(agents);
   expect(t(hunter), 'the nearer one').toBe(a + 1);
+  {
+    // (the lab's read of the words: the combat word, then the spell word after every slot's)
+    const c = new Uint32Array(await agents.readRaw('combat'));
+    expect(c[slotOf(hunter) * 4]).toBe(0x101);
+    expect(c[8192 * 4 + slotOf(a)]).toBe(0);
+  }
   // (a hidden round a: the hunter lets it go and takes b, out of the spell's reach)
   agents.notice.spellArea({ x: 46, y: 50, radius: 3, who: 'friends', hidden: true }, agents.size);
   frame(1);
@@ -76,6 +82,8 @@ test('berserk: two of one side turn on each other; setSide: one who never looked
   const [x] = agents.spawn(1, 40, 60, { spread: 0 });
   const [y] = agents.spawn(1, 44, 60, { spread: 0 });
   const [far] = agents.spawn(1, 100, 60, { spread: 0 });
+  // (a peaceful one 10 cells off: both raiders take it first — a berserker must leave it for its neighbour)
+  const [bait] = agents.spawn(1, 52, 60, { spread: 0 });
   const [walker] = agents.spawn(1, 100, 20, { spread: 0 });
   const [other] = agents.spawn(1, 106, 20, { spread: 0 });
   frame(30);
@@ -85,9 +93,10 @@ test('berserk: two of one side turn on each other; setSide: one who never looked
   agents.notice.set(slotOf(far), raider);
   agents.notice.set(slotOf(walker), { faction: 2, hostile: false, sight: 0 });
   agents.notice.set(slotOf(other), { faction: 2, hostile: false, sight: 0 });
+  agents.notice.set(slotOf(bait), { faction: 2, hostile: false, sight: 0 });
   frame(1);
   let t = await targets(agents);
-  expect([t(x), t(y)], 'one side: nobody to fight').toEqual([0, 0]);
+  expect([t(x), t(y)], 'one side: the peaceful one, not each other').toEqual([bait + 1, bait + 1]);
   agents.notice.spellArea({ x: 42, y: 60, radius: 6, who: 'foes', side: BERSERK_SIDE, all: true, sight: 24 }, agents.size);
   frame(1);
   t = await targets(agents);

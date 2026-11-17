@@ -89,6 +89,27 @@ await run({ name: 'spellshots', kind: 'behaviour', size: '412x915', dpr: 1, echo
     await p.mouse.click(at[0], at[1]);
     await R.sleep(400);
     await shot(`${mode}-1-cast`);
+    // (what the GPU holds for the bout's units: combat word, spell word, target, alive — one read, for this lab only)
+    await R.sleep(1500);
+    R.log(
+      `${mode} words: ${JSON.stringify(
+        await p.evaluate(async () => {
+          const g = window.rungame;
+          const run = g.live.focus;
+          const U = window.reclaimed.units;
+          const ag = U.agents;
+          const units = new Uint32Array(await ag.readRaw('units'));
+          const combat = new Uint32Array(await ag.readRaw('combat'));
+          const mail = new Uint32Array(await ag.readRaw('mail'));
+          return ['challenger', 'pit-fighter'].flatMap((tag) =>
+            g.live.ids(run, tag).map((id) => {
+              const s = U.recs.get(id).gpu % 8192;
+              return { tag, s, combat: combat[s * 4].toString(16), spell: combat[8192 * 4 + s].toString(16), target: units[s * 24 + 21], alive: (units[s * 24 + 3] >> 8) & 1, kind: (units[s * 24 + 3] >> 9) & 7, state: (units[s * 24 + 3] >> 12) & 7, at: U.get(id)?.at?.map((v) => Math.round(v)) };
+            }),
+          );
+        }),
+      )}`,
+    );
     for (const [k, s] of [[2, 2], [3, 4], [4, 8]]) {
       await R.sleep(s * 1000);
       R.log(`${mode} +${s}s: ${JSON.stringify(await view())}`);

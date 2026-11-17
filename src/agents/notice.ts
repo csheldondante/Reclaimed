@@ -116,7 +116,8 @@ export class UnitNotice {
     // (loop round 10, LS-94: and after the combat words, a spell word a slot — the GPU's, notice.wgsl SP_*)
     if (maxUnits !== SPELL_SLOTS) throw new Error(`notice: ${maxUnits} unit slots; the spell words sit after ${SPELL_SLOTS} (notice.wgsl MAX_SLOTS)`);
     this.maxUnits = maxUnits;
-    this.combat = world.buf('agentCombat', maxUnits * 16 + maxUnits * 4, S);
+    // (COPY_SRC: the lab and tests read the words back — Agents.readRaw('combat'))
+    this.combat = world.buf('agentCombat', maxUnits * 16 + maxUnits * 4, S | GPUBufferUsage.COPY_SRC);
     this.sides = world.buf('agentSides', world.w * world.h * 4, S);
     this.head = world.buf('agentBuckets', this.bw * this.bh * 4, S);
     this.next = world.buf('agentBucketNext', maxUnits * 4, S);

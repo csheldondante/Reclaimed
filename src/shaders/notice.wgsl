@@ -294,7 +294,10 @@ fn notice(@builtin(global_invocation_id) id: vec3<u32>) {
   // (none: the nearest it may fight within its sight — hostiles and guards look; the rest wait to be given one. A
   // hostile looks over its whole sight, marking the hunt's candidates; a guard stops once a ring lies past its best)
   let looks = sight > 0.0 && (hostile || (hw & CW_GUARD) != 0u);
-  let seek = t == 0u && looks;
+  // (loop round 10, LS-94: a berserker looks again every frame and takes the nearest — it turns on its neighbours, it
+  // does not keep chasing the one it had; seen in the game: the Red Wolf's crew kept on at the pit fighter)
+  let berserk = (spellOf(u) & SP_ALL) != 0u;
+  let seek = (t == 0u || berserk) && looks;
   if (looks && (seek || hostile)) {
     var best = sight;
     var found = 0u;
@@ -339,7 +342,7 @@ fn notice(@builtin(global_invocation_id) id: vec3<u32>) {
         }
       }
     }
-    if (seek) { t = found; }
+    if (seek && (found != 0u || !berserk)) { t = found; }
   }
   // (a hunter's own target is a candidate however far)
   if (hostile && t != 0u && (t & ACTOR) == 0u) {
