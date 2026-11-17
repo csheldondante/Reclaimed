@@ -39,7 +39,7 @@ describe('the pack validator', () => {
     for (const t of [...LIVE_TEMPLATES, FIRE_TEMPLATE]) expect(LIVE_AMOUNTS[t.play!.event!.tag], t.id).toEqual(t.play!.event!.result.map((r) => r.as));
     for (const r of RULES) {
       if (typeof r.on === 'string' || !('live' in r.on)) continue;
-      const names = [...('amount' in r.effect ? [r.effect.amount] : []), ...(typeof r.per === 'object' ? [r.per.amount] : [])];
+      const names = [...('amount' in r.effect ? [r.effect.amount] : []), ...(typeof r.per === 'object' && 'amount' in r.per ? [r.per.amount] : [])];
       for (const a of names) expect(LIVE_NEEDS[r.on.live], `${r.id} changes ${a}`).toContain(a);
     }
   });
@@ -66,7 +66,7 @@ describe('the pack validator', () => {
 
   const cases: [string, (p: Pack) => void, RegExp][] = [
     ['an unknown tag', (p) => void p.rules![0].a.tags.push('silo'), /Unknown tag "silo"/],
-    ['an unknown pool', (p) => void ((card(p, 'sample-build-granary').cost as Record<string, number>).gold = 2), /Unknown pool "gold"/],
+    ['an unknown pool', (p) => void ((card(p, 'sample-build-granary').cost as Record<string, number>).gold = 2), /Unknown pool or good "gold"/],
     ['an unknown site', (p) => void (card(p, 'sample-build-granary').presenter.at = 'site:barn'), /Unknown place "site:barn"/],
     ['an unknown effect', (p) => void card(p, 'sample-build-granary').if_taken!.push({ teleport: 'home' } as never), /Unknown effect/],
     ['an unknown condition', (p) => void (card(p, 'sample-build-granary').appears_when = [{ weather: 'rain' } as never]), /Unknown condition/],

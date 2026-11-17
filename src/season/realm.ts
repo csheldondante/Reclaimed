@@ -49,6 +49,9 @@ import { mutators, type Mutation, type PhysicalKind } from '../mutate';
 import { recordMutation } from '../mutate/facts';
 import '../mutate/outcomes';
 import { ROW_H } from '../world/lattice';
+import { goodName } from './goods';
+
+const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** the run's length in seasons: the run ends when its last season ends (or at once, by an `end_run`). A knob, in this
  *  one place; 16 is the orchestrator's number, not the user's */
@@ -187,6 +190,8 @@ export interface RealmOptions {
   onRules?: (hits: RuleHit[]) => void;
   /** deal the live fire at the market in place of the instant `fire-wards` hazard (off: BACKLOG LS-63) */
   liveFire?: boolean;
+  /** (card-table, docs/design/FACTORY.md) soldiers fight a raid without a keep or walls (the factory game: on) */
+  soldiersAlways?: boolean;
 }
 
 /**
@@ -211,6 +216,14 @@ export interface WorkThing {
   name: string;
   slots: Partial<Record<PieceKind, number>>;
   uses: UseDef[];
+  /** (draft 11, docs/design/FACTORY.md) each crew posted here gives so many clicks a season, shared by its uses: a
+   *  use here then needs a click (absent: its uses need none) */
+  clicksPerCrew?: number;
+  /** (draft 11) goods eaten each season (for every `eatsPer` crews of the town, rounded up, when over 0); short, what
+   *  there is is eaten and `ifHungry` applies once */
+  eats?: Record<string, number>;
+  eatsPer?: number;
+  ifHungry?: Record<string, number>;
 }
 /** (draft 10) one piece: a crew or a soldier, where it is, and whether it has moved this season */
 export interface Piece {
@@ -229,6 +242,18 @@ export interface UseNow {
   gives: Partial<Pools>;
   left: number;
   can: boolean;
+  /** (draft 11) the thing's clicks this season, when it has them: left now, and all it has (crews × clicks a crew) */
+  clicks?: { left: number; of: number };
+  /** (draft 11) what is short for one more (empty: nothing) */
+  short: Record<string, number>;
+}
+/** (draft 11) what a season's eating did at one thing: eaten, wanted, and whether hunger struck */
+export interface Eaten {
+  thing: EntityId;
+  name: string;
+  ate: Record<string, number>;
+  wanted: Record<string, number>;
+  hungry: boolean;
 }
 /** (draft 10) what committing to an offer would do, before it is done */
 export interface CommitPreview {
@@ -240,7 +265,11 @@ export interface CommitPreview {
   /** goods spent */
   spent: Partial<Pools>;
   short: Partial<Pools>;
+  /** (draft 11) every item it asks for — pieces and goods — with what is free or held now */
+  goods: { k: string; need: number; have: number }[];
 }
+/** (draft 11) the key a thing's clicks are counted under in the turn's uses */
+const CLICKS = '*clicks';
 
 /** a run under way, as saved beside the world (BACKLOG LS-8): the realm's own small state and the engine's */
 export interface RunState {
@@ -443,7 +472,7 @@ export class Realm {
     });
     this.baseRules = [...RULES, ...(o.extra?.rules ?? [])];
     // (laws: the rule book reads the rules with the laws in force applied)
-    this.rules = new RuleBook(() => this.ruleView().rules, { things: () => this.things(), pool: (k) => pools(this.led)[k as Pool] ?? 0, gain: (k, n) => this.addPool(k as Pool, n), act: (fx, things, rule) => this.act(fx, things, rule), posted: (thing, kind) => posts(this.w.holdings).get(thing)?.[kind] ?? 0 });
+    this.rules = new RuleBook(() => this.ruleView().rules, { things: () => this.things(), pool: (k) => this.have(k), gain: (k, n) => this.addPool(k as Pool, n), act: (fx, things, rule) => this.act(fx, things, rule), posted: (thing, kind) => posts(this.w.holdings).get(thing)?.[kind] ?? 0 });
     for (const [k, v] of res?.asked ?? []) this.asked.set(k, v);
     for (const [k, v] of res?.askedOn ?? []) this.askedOn.set(k, v);
     if (res?.rules) this.rules.load(res.rules);
@@ -881,11 +910,17 @@ export class Realm {
    *  ways). Returns what was really added */
   private addPool(k: Pool, n: number): number {
     const l = { ...this.led, holdings: this.w.holdings };
-    const was = k === 'might' || k === 'labor' ? total(l, k) : pools(l)[k];
+    // (draft 11: a good of the factory is a pile of the stock like Materials)
+    const of = (x: SeasonLedger): number => (k === 'might' || k === 'labor' ? total(x, k) : (x.holdings.goods[k] ?? 0));
+    const was = of(l);
     const next = k === 'unrest' ? lose(l, { unrest: n }) : n >= 0 ? grant(l, { [k]: n }) : lose(l, { [k]: -n });
     this.w.holdings = next.holdings;
     this.led = { ...this.led, holdings: next.holdings };
-    return (k === 'might' || k === 'labor' ? total(next, k) : pools(next)[k]) - was;
+    return of(next) - was;
+  }
+  /** (draft 11) what is free of a pool, or held of a good, now */
+  have(k: string): number {
+    return (POOLS as readonly string[]).includes(k) ? pools(this.led)[k as Pool] : (this.led.holdings.goods[k] ?? 0);
   }
 
   /** a state on a thing that lasts to the end of this season: a condition whose value is the turn it ends with (as
@@ -903,7 +938,9 @@ export class Realm {
     // (laws: the raid's size; a pool that counts as Might in a fight — Unrest)
     const laws = this.laws();
     const might = p.might + this.postedSoldiers() + poolsAs(laws).filter(([, as]) => as === 'might').reduce((n, [k]) => n + (p[k as Pool] ?? 0), 0);
-    return { raid: this.raid === null ? 0 : raidersOf(this.raid, laws), soldiers: military(this.led) ? might * SQUAD : 0, watchers: 4 + 2 * Math.min(3, houses) };
+    // (card-table, docs/design/FACTORY.md: soldiers always fight — posted or free; a keep or walls are what the base
+    // game's rules add on top. Before: none fought without a keep or walls, and a solver with 19 soldiers fell)
+    return { raid: this.raid === null ? 0 : raidersOf(this.raid, laws), soldiers: this.o.soldiersAlways || military(this.led) ? might * SQUAD : 0, watchers: 4 + 2 * Math.min(3, houses) };
   }
 
   /** where a thing is, in world units (x cells, y) */
@@ -1413,23 +1450,33 @@ export class Realm {
     const n = u.per ? (posts(this.w.holdings).get(thing)?.[u.per] ?? 0) : 1;
     return Object.fromEntries(Object.entries(u.gives).map(([k, v]) => [k, (v ?? 0) * n]));
   }
+  /** (draft 11) a thing's clicks this season: all it has (crews posted × clicks a crew) and those left; null: it needs none */
+  clicks(thing: EntityId): { left: number; of: number } | null {
+    const w = this.works().find((x) => x.id === thing);
+    if (!w?.clicksPerCrew) return null;
+    const of = w.clicksPerCrew * (posts(this.w.holdings).get(thing)?.crew ?? 0);
+    return { of, left: Math.max(0, of - (this.turnNow().used[`${thing}|${CLICKS}`] ?? 0)) };
+  }
   /** every use of the things in play, as it stands now */
   uses(): UseNow[] {
-    const have = pools(this.led);
     const used = this.turnNow().used;
-    return this.works().flatMap((w) =>
-      w.uses.map((u) => {
+    return this.works().flatMap((w) => {
+      const clicks = this.clicks(w.id);
+      return w.uses.map((u) => {
         const left = u.times - (used[`${w.id}|${u.id}`] ?? 0);
-        const pay = (Object.entries(u.cost) as [Pool, number][]).every(([k, n]) => have[k] >= n);
+        const short: Record<string, number> = {};
+        for (const [k, n] of Object.entries(u.cost)) if (n && this.have(k) < n) short[k] = n - this.have(k);
         const gives = this.givesNow(w.id, u);
         const manned = !u.needs || (posts(this.w.holdings).get(w.id)?.[u.needs] ?? 0) > 0;
         // (a use that would give nothing — "Dig deep" with no crew on the mine — cannot be made; nor one whose thing
-        // lacks the piece it needs)
-        return { thing: w.id, thingName: w.name, use: u, gives, left, can: !this.over && left > 0 && pay && manned && Object.values(gives).some((n) => !!n) };
-      }),
-    );
+        // lacks the piece it needs; draft 11: nor one whose thing has no click left)
+        const clicked = !clicks || clicks.left > 0;
+        return { thing: w.id, thingName: w.name, use: u, gives, left, can: !this.over && left > 0 && !Object.keys(short).length && manned && clicked && Object.values(gives).some((n) => !!n), ...(clicks ? { clicks } : {}), short };
+      });
+    });
   }
-  /** Make a use of a thing (instant): its cost taken, what it gives added, now. False: none left, or short. */
+  /** Make a use of a thing (instant): its cost taken, what it gives added, now (a click spent where the thing has
+   *  clicks). False: none left, or short. */
   use(id: string, thing: EntityId): boolean {
     const u = this.uses().find((x) => x.use.id === id && x.thing === thing);
     if (!u || !u.can) return false;
@@ -1438,9 +1485,41 @@ export class Realm {
     for (const [k, n] of Object.entries(u.gives) as [Pool, number][]) if (n) this.addPool(k, n);
     const t = this.turnNow();
     t.used[`${thing}|${id}`] = (t.used[`${thing}|${id}`] ?? 0) + 1;
+    if (u.clicks) t.used[`${thing}|${CLICKS}`] = (t.used[`${thing}|${CLICKS}`] ?? 0) + 1;
     this.instant(`used:${id}`, thing, `you used ${u.use.name} at ${this.w.name(thing)}`);
     return true;
   }
+  /**
+   * (draft 11, docs/design/FACTORY.md) The season's eating: each thing that eats takes its goods from the stock (for
+   * every `eatsPer` crews of the town, rounded up); what is short is eaten as far as it goes and its `ifHungry` applies
+   * once. Called as the season ends, before the rules of the turn.
+   */
+  private eat(): Eaten[] {
+    const crews = total(this.led, 'labor');
+    const out: Eaten[] = [];
+    for (const w of this.works()) {
+      if (!w.eats) continue;
+      const times = w.eatsPer ? Math.ceil(crews / w.eatsPer) : 1;
+      const ate: Record<string, number> = {};
+      const wanted: Record<string, number> = {};
+      let hungry = false;
+      for (const [k, n] of Object.entries(w.eats)) {
+        const want = n * times;
+        if (!want) continue;
+        wanted[k] = want;
+        const got = Math.min(want, this.have(k));
+        if (got) this.addPool(k as Pool, -got);
+        ate[k] = got;
+        if (got < want) hungry = true;
+      }
+      if (hungry) for (const [k, n] of Object.entries(w.ifHungry ?? {})) this.addPool(k as Pool, n);
+      out.push({ thing: w.id, name: w.name, ate, wanted, hungry });
+    }
+    this.lastEaten = out;
+    return out;
+  }
+  /** (draft 11) what the last season's eating did (the board's time-lapse shows it) */
+  lastEaten: Eaten[] = [];
   /** What committing to an offer would do, with nothing changed: pools before and after, pieces tied up and when they
    *  come back, goods spent */
   preview(id: string): CommitPreview {
@@ -1451,12 +1530,15 @@ export class Realm {
     const after = { ...before };
     const spent: Partial<Pools> = {};
     for (const [k, n] of Object.entries(t.locks) as [Pool, number][]) after[k] -= n;
+    const goods: CommitPreview['goods'] = [];
     for (const [k, n] of Object.entries(t.costs) as [Pool, number][]) {
-      if (!POOLS.includes(k) || POOL_ROLE[k] !== 'goods' || !n) continue;
-      after[k] -= n;
+      if (!n || (POOLS.includes(k) && POOL_ROLE[k] !== 'goods')) continue;
+      // (draft 11: a good of the factory is listed with the pools' goods)
+      if (POOLS.includes(k)) after[k] -= n;
       spent[k] = n;
     }
-    return { before, after, tied: { crew: t.locks.labor ?? 0, soldier: t.locks.might ?? 0 }, back: this.season + t.turns, spent, short: this.short(o) };
+    for (const [k, n] of [...Object.entries(t.locks), ...Object.entries(t.costs)]) if (n) goods.push({ k, need: n, have: this.have(k) });
+    return { before, after, tied: { crew: t.locks.labor ?? 0, soldier: t.locks.might ?? 0 }, back: this.season + t.turns, spent, short: this.short(o), goods };
   }
 
   /** what is offered now (the dealer's deal), each over its site */
@@ -1474,12 +1556,12 @@ export class Realm {
 
   /** what an offer needs that isn't free now (empty: it can be committed) */
   short(o: Offer): Partial<Pools> {
-    const have = pools(this.led);
     const out: Partial<Pools> = {};
     // (laws: the terms in force, not the printed ones)
     const t = this.terms(o);
-    for (const [k, n] of Object.entries(t.locks) as [Pool, number][]) if (have[k] < n) out[k] = n - have[k];
-    for (const [g, n] of Object.entries(t.costs)) if (POOL_ROLE[g as Pool] === 'goods' && have[g as Pool] < n) out[g as Pool] = n - have[g as Pool];
+    for (const [k, n] of Object.entries(t.locks) as [Pool, number][]) if (this.have(k) < n) out[k] = n - this.have(k);
+    // (draft 11: a good of the factory counts as goods)
+    for (const [g, n] of Object.entries(t.costs)) if ((POOL_ROLE[g as Pool] ?? 'goods') === 'goods' && this.have(g) < n) (out as Record<string, number>)[g] = n - this.have(g);
     return out;
   }
 
@@ -1525,6 +1607,9 @@ export class Realm {
     this.rules.begin();
     // (round 6: a live event still under way is resolved now, from the state it is in)
     const live = this.liveRunning().map((o) => this.finishLive(o.id));
+    // (draft 11, docs/design/FACTORY.md: the town eats; hunger is told in the news)
+    const hunger = this.eat().filter((e) => e.hungry).map((e) => `${cap(e.name)} went hungry: ${Object.entries(e.wanted).map(([k, n]) => `${e.ate[k] ?? 0} of ${n} ${goodName(k)}`).join(', ')}.`);
+    this.w.holdings = this.led.holdings;
     // (the season's own rules, while its states still hold — a growth rune lasts to this point: one line a firing:
     // what, how much, why)
     const turned = this.fireRules({ on: 'turn', id: `turn:${this.w.turn}` });
@@ -1565,7 +1650,7 @@ export class Realm {
     const standing = ps.filter((x) => x.standing).length;
     const fewer = this.partnersWere >= 0 && standing < this.partnersWere && ps.length ? [`Fewer wagons come by the trade road: ${standing} of ${ps.length} towns on it still stand.`] : [];
     this.partnersWere = ps.length ? standing : -1;
-    this.news = [...live.flatMap((r) => r.lines), ...told, ...arc, ...this.said.splice(0), ...hits.map((h) => `${h.text}.`), ...byLaw, ...fewer];
+    this.news = [...live.flatMap((r) => r.lines), ...hunger, ...told, ...arc, ...this.said.splice(0), ...hits.map((h) => `${h.text}.`), ...byLaw, ...fewer];
     // (the run reached its end with nothing else ending it: a plain ending, in the record like any other)
     if (last && !this.ended && !this.won()) this.endRun('stood', STOOD, 'the last season');
     return this.news;

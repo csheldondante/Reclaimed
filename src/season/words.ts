@@ -2,6 +2,7 @@
 // idea a sentence, concrete numbers; no "commit", "stage" or "tier" on screen). Linted whole as a words module
 // (test/unit/writing-sources.test.ts) and as produced (test/unit/season.test.ts).
 import { POOLS, type Pool, type Pools, type SeasonCard, type SeasonResult } from './ledger';
+import { goodName } from './goods';
 
 export const POOL_NAME: Record<Pool, string> = { magic: 'Magic', might: 'Might', labor: 'Labor', materials: 'Materials', intel: 'Intel', unrest: 'Unrest' };
 export const POOL_ICON: Record<Pool, string> = { magic: '✦', might: '⚔', labor: '⚒', materials: '▣', intel: '👁', unrest: '✊' };
@@ -22,6 +23,9 @@ export function seasonTitle(n: number): string {
 /** "2 Labor, 1 Materials" (the pools in their order) */
 export function poolsLine(p: Partial<Pools>, sign = false): string {
   const parts = POOLS.filter((k) => (p[k] ?? 0) !== 0).map((k) => `${sign && p[k]! > 0 ? '+' : ''}${p[k]} ${POOL_NAME[k]}`);
+  // (card-table, docs/design/FACTORY.md: the factory's goods after the pools — "2 Labor, 3 Planks")
+  const more = Object.entries(p as Record<string, number>).filter(([k, n]) => !(POOLS as readonly string[]).includes(k) && (n ?? 0) !== 0);
+  for (const [k, n] of more) parts.push(`${sign && n > 0 ? '+' : ''}${n} ${goodName(k)}`);
   return parts.join(', ');
 }
 

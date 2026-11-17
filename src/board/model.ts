@@ -21,6 +21,12 @@ export interface WorkView {
   slots: { kind: 'crew' | 'soldier'; n: number; posted: number }[];
   uses: UseNow[];
   text: string;
+  /** (draft 11, docs/design/FACTORY.md) its clicks this season (null: it needs none); the goods its recipes make (the
+   *  first is its mark on the board); a recipe can be made now; what it eats each season */
+  clicks: { left: number; of: number } | null;
+  makes: string[];
+  ready: boolean;
+  eats: Record<string, number> | null;
 }
 
 export interface SiteView {
@@ -83,6 +89,10 @@ export interface BoardState {
   built: string[];
   /** walls built and standing */
   walls: boolean;
+  /** (draft 11) the town's stock: each good with what is held and comes in each season */
+  stock: { k: string; have: number; income: number }[];
+  /** (draft 11) what the houses ate as the last season ended */
+  eaten: { site: SiteKey; ate: Record<string, number>; hungry: boolean }[];
 }
 
 /** what each card puts in play (a pack or the works: `put`), by card id */
@@ -142,9 +152,12 @@ export function readBoard(t: Table, packs: readonly Pack[]): BoardState {
     const cur = sites[key].raising;
     if (!cur || (builds && !cur.builds)) sites[key].raising = { offer: o.id, title: o.opp.title, builds, done: Math.max(0, Math.min(1, (total - left) / Math.max(1, total))), left };
   }
+  const workDefs = new Map(r.works().map((w) => [w.id, w]));
   const works: WorkView[] = t.works().map((x) => {
     const m = mine.find((q) => q.id === x.id);
-    return { id: x.id, name: x.name, site: (m?.site ? siteOf(home, m.site) : null) ?? 'keep', slots: x.slots, uses: x.uses, text: thingDefs.get(m?.def.id ?? '')?.text ?? '' };
+    const makes = [...new Set(x.uses.flatMap((u) => Object.keys(u.use.gives).filter((k) => k !== 'unrest')))];
+    const eats = workDefs.get(x.id)?.eats ?? null;
+    return { id: x.id, name: x.name, site: (m?.site ? siteOf(home, m.site) : null) ?? 'keep', slots: x.slots, uses: x.uses, text: thingDefs.get(m?.def.id ?? '')?.text ?? '', clicks: r.clicks(x.id), makes, ready: x.uses.some((u) => u.can && !!u.clicks), eats };
   });
   const placeOf = new Map(r.offers().map((o) => [o.id, o.place]));
   const offers: OfferView[] = t.cards().map((c) => ({ card: c, at: atOf(home, placeOf.get(c.id) ?? home) }));
@@ -197,6 +210,9 @@ export function readBoard(t: Table, packs: readonly Pack[]): BoardState {
     homeMarks,
     raid: raidCard ? { title: raidCard.title, left: raidCard.left, raiders: raidersOf(RAIDERS, r.laws()), meet: nums.raid ? nums.soldiers : meetNow, military: military(led) } : null,
     built: [...led.built],
-    walls: led.built.includes('walls') && !sites.gate.look.ruined,
+    // (draft 11: the factory's town wall stands too)
+    walls: (led.built.includes('walls') && !sites.gate.look.ruined) || things.some((x) => x.tags.includes('town-wall') && !x.tags.includes('ruined')),
+    stock: t.stock(),
+    eaten: r.lastEaten.map((e) => ({ site: works.find((w) => w.id === e.thing)?.site ?? 'quarter', ate: e.ate, hungry: e.hungry })),
   };
 }

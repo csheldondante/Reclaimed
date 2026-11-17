@@ -6,7 +6,8 @@
 import { POOLS, total, type Pools } from '../season/ledger';
 import type { Pack } from '../packs/check';
 import { LEADERS, Table, TIER_RANK, type OppCard } from './game';
-import { dependence, greedy, modelOf, playTurn, solve, value, type Act } from './turn-search';
+import { dependence, greedy, modelOf, playTurn, solve, value, type Act, type Aim } from './turn-search';
+import { plan } from '../season/stock';
 
 export interface Policy {
   name: string;
@@ -22,7 +23,17 @@ export interface Policy {
   /** (draft 10, docs/design/TURN_PUZZLE.md) it plays the whole turn — cards, uses, pieces — as the solver's best turn
    *  or the greedy turn (table/turn-search.ts), in place of scoring cards */
   turn?: 'solver' | 'greedy';
+  /** (draft 11) the solver with an aim of its own on top of the shared yardstick (turn-search.ts Aim) */
+  aim?: Aim;
 }
+/** (draft 11, docs/design/FACTORY.md) a planner: the solver, aiming at the raid — the military chain's buildings,
+ *  iron and weapons, and every raider met worth more. A stand-in for a player who plans past this season */
+export const RAID_AIM: Aim = {
+  cards: { 'factory-sink-mine': 6, 'factory-build-smelter': 6, 'factory-build-smithy': 6, 'factory-clear-muster': 6, 'factory-raise-wall': 8, 'factory-raise-watchtower': 5, 'factory-open-quarry': 3, 'factory-build-sawmill': 3 },
+  goods: { ore: 0.4, iron: 1, weapons: 1.5 },
+  raid: 1.5,
+};
+export const PLANNER: Policy = { name: 'PLANNER (solver + raid aim)', score: () => null, turn: 'solver', spells: 'events', aim: RAID_AIM };
 
 /** (draft 10) the two turn players: they need the works (uses and slots) to differ from a card scorer */
 export const TURN_POLICIES: Policy[] = [
@@ -49,6 +60,16 @@ export interface TurnStat {
   /** actions in the solver's best turn */
   length: number;
   mismatch: string[];
+  /** (draft 11, docs/design/FACTORY.md) the stock at the season's start; conversions (uses) in the turn played; the
+   *  asks satisfiable now, and after the shortest chain of clicks this season, of how many; all asks together, now and
+   *  after a chain; for each card the turn took, the clicks its chain needed at the season's start (0: ready) */
+  stock: Record<string, number>;
+  outcomes: number;
+  conversions: number;
+  sat: { now: number; chain: number; of: number };
+  allNow: boolean;
+  allChain: boolean;
+  takenChain: number[];
 }
 
 const has = (c: OppCard, ...tags: string[]) => tags.some((x) => c.tags.includes(x));
@@ -282,7 +303,7 @@ function engineOf(t: Table): Pick<RunStat, 'peak' | 'paid' | 'acts'> {
 }
 
 /** one whole run by a policy */
-export function playRun(p: Policy, o: { seed: number; leader: string; seasons: number; packs?: Pack[]; raiders?: number; works?: boolean; measure?: boolean }): RunStat {
+export function playRun(p: Policy, o: { seed: number; leader: string; seasons: number; packs?: Pack[]; raiders?: number; works?: boolean; measure?: boolean; factory?: boolean | { cpc?: number } }): RunStat {
   const t = new Table(o);
   const turn: TurnStat[] = [];
   let trouble: number | null = null;
@@ -313,13 +334,27 @@ export function playRun(p: Policy, o: { seed: number; leader: string; seasons: n
     // (draft 10: the whole turn searched — every legal turn, the best, the greedy one, order and placement)
     let planned: Act[] | null = null;
     if (p.turn || o.measure) {
-      const m = modelOf(t);
+      const m = modelOf(t, p.aim);
       const sr = solve(m);
       const g = greedy(m);
       const dep = dependence(m, sr.best, sr.value);
       planned = p.turn === 'solver' ? sr.best : p.turn === 'greedy' ? g.seq : null;
+      // (draft 11: what the asks need, and the chains of clicks that would meet them, before anything is played)
+      const chains = new Map(asks.map((c) => [c.id, Object.keys(c.short).length ? t.chain(c.id) : []]));
+      const holding = t.holding();
+      const sum: Record<string, number> = {};
+      for (const c of asks) for (const [k, n] of Object.entries(t.needOf(c.id))) sum[k] = (sum[k] ?? 0) + n;
+      const allChain = !!plan(holding, t.machines(), sum, { budget: 4000 });
+      const stock = Object.fromEntries(t.stock().filter((x) => x.have).map((x) => [x.k, x.have]));
       const mismatch = planned ? playTurn(t, m, planned) : [];
-      turn.push({ turns: sr.turns, ends: sr.ends, withPieces: sr.withPieces, withUses: sr.withUses, capped: sr.capped, solver: sr.value, greedy: g.value, start: value(m, m.start), order: dep.order, orderIllegal: dep.orderIllegal, orderWorse: dep.orderWorse, placement: dep.placement, posts: dep.posts, length: sr.best.length, mismatch });
+      const takenChain = (planned ?? []).filter((a): a is Extract<Act, { k: 'take' }> => a.k === 'take').map((a) => {
+        const c = chains.get(a.card);
+        return c ? c.filter((x) => x.use).length : -1;
+      });
+      turn.push({
+        turns: sr.turns, ends: sr.ends, withPieces: sr.withPieces, withUses: sr.withUses, capped: sr.capped, solver: sr.value, greedy: g.value, start: value(m, m.start), order: dep.order, orderIllegal: dep.orderIllegal, orderWorse: dep.orderWorse, placement: dep.placement, posts: dep.posts, length: sr.best.length, mismatch,
+        stock, outcomes: sr.outcomes, conversions: (planned ?? sr.best).filter((a) => a.k === 'use').length, sat: { now: asks.filter((c) => !Object.keys(c.short).length).length, chain: asks.filter((c) => chains.get(c.id) !== null).length, of: asks.length }, allNow: Object.entries(sum).every(([k, n]) => (holding[k] ?? 0) >= n), allChain, takenChain,
+      });
     }
     // (the board changes as cards are taken: scored again after each)
     for (; !planned; ) {
@@ -402,14 +437,16 @@ const mean = (a: number[]): number => (a.length ? a.reduce((x, y) => x + y, 0) /
 const pad = (s: string | number, n: number): string => String(s).padEnd(n);
 
 /** every policy plays every leader on each seed; the table of what happened */
-export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy[]; leaders?: string[]; templates: string[]; packs?: Pack[]; raiders?: number; works?: boolean; measure?: boolean }): BotReport {
-  // (draft 10: with the works, the solver and the greedy turn player play too)
-  const policies = (o.policies ?? [...POLICIES, ...(o.works ? TURN_POLICIES : [])]).filter((p) => p.name !== 'pack cards first' || !!o.packs?.length);
+export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy[]; leaders?: string[]; templates: string[]; packs?: Pack[]; raiders?: number; works?: boolean; measure?: boolean; factory?: boolean | { cpc?: number } }): BotReport {
+  // (draft 10: with the works, the solver and the greedy turn player play too; draft 11: the factory is played only by
+  // them and by the idle bot — a card scorer never clicks a building, so it starves by design)
+  const policies = (o.policies ?? (o.factory ? [POLICIES[0], ...TURN_POLICIES, PLANNER] : [...POLICIES, ...(o.works ? TURN_POLICIES : [])])).filter((p) => p.name !== 'pack cards first' || !!o.packs?.length);
   const leaders = o.leaders ?? LEADERS.map((l) => l.id);
   const runs: RunStat[] = [];
-  for (const p of policies) for (const leader of leaders) for (const seed of o.seeds) runs.push(playRun(p, { seed, leader, seasons: o.seasons, ...(o.packs ? { packs: o.packs } : {}), ...(o.raiders !== undefined ? { raiders: o.raiders } : {}), ...(o.works ? { works: true } : {}), ...(o.measure ? { measure: true } : {}) }));
+  for (const p of policies) for (const leader of leaders) for (const seed of o.seeds) runs.push(playRun(p, { seed, leader, seasons: o.seasons, ...(o.packs ? { packs: o.packs } : {}), ...(o.raiders !== undefined ? { raiders: o.raiders } : {}), ...(o.works ? { works: true } : {}), ...(o.measure ? { measure: true } : {}), ...(o.factory ? { factory: o.factory } : {}) }));
   const L: string[] = [];
   if (o.works) L.push('The works are on (season/works.ts, draft 10): things with slots for crews and soldiers and instant uses; a board of 5, two needs at once.');
+  if (o.factory) L.push(`The factory is on (season/factory.ts, draft 11): goods, buildings with recipes, ${typeof o.factory === 'object' && o.factory.cpc ? o.factory.cpc : 1} click a posted crew a season; a board of 6, three needs at once.`);
   if (o.raiders !== undefined) L.push(`Raiders in the last season: ${o.raiders}`);
   if (o.packs?.length) L.push(`Packs in play: ${o.packs.map((x) => x.pack.name).join(', ')}`);
   L.push(`Bots: ${policies.length} policies x ${leaders.length} leaders x ${o.seeds.length} seeds = ${runs.length} runs of ${o.seasons} seasons`);
@@ -457,6 +494,31 @@ export function runBots(o: { seeds: number[]; seasons: number; policies?: Policy
     L.push(`  the best turn depends on ORDER in ${pct(ts.filter((s) => s.order).length / ts.length)} of seasons (another order of its actions is not legal ${pct(ts.filter((s) => s.orderIllegal).length / ts.length)}, ends worse ${pct(ts.filter((s) => s.orderWorse).length / ts.length)}); it posts a piece in ${pct(ts.filter((s) => s.posts).length / ts.length)}, and PLACEMENT matters (the piece elsewhere ends worse) in ${pct(ts.filter((s) => s.placement).length / ts.length)}; actions in the best turn: median ${medN(ts.map((s) => s.length))}`);
     L.push(`  the simulation against the game: ${mis.length ? `${mis.length} differences — ${mis.slice(0, 5).join('; ')}` : 'no difference in any turn played'}`);
     L.push('');
+    // (draft 11, docs/design/FACTORY.md: the factory, season by season — the turn players' own runs)
+    if (o.factory) {
+      const tp = runs.filter((r) => [...TURN_POLICIES, PLANNER].some((x) => x.name === r.policy));
+      const fs = tp.flatMap((r) => r.turn);
+      const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
+      const of = sum(fs.map((s) => s.sat.of));
+      const taken = fs.flatMap((s) => s.takenChain);
+      L.push(`The factory (${fs.length} seasons of the turn players: solver, greedy, planner):`);
+      L.push(`  asks satisfiable now ${pct(sum(fs.map((s) => s.sat.now)) / Math.max(1, of))}, after the shortest chain of clicks this season ${pct(sum(fs.map((s) => s.sat.chain)) / Math.max(1, of))} (of ${(of / Math.max(1, fs.length)).toFixed(1)} asks a season)`);
+      L.push(`  every ask satisfiable together: now ${pct(fs.filter((s) => s.allNow).length / Math.max(1, fs.length))} of seasons, after a chain ${pct(fs.filter((s) => s.allChain).length / Math.max(1, fs.length))}`);
+      L.push(`  cards taken ${taken.length}: ready at the season's start ${taken.filter((n) => n === 0).length}, after 1 click ${taken.filter((n) => n === 1).length}, after a chain of 2 or more ${taken.filter((n) => n >= 2).length} (${pct(taken.filter((n) => n >= 2).length / Math.max(1, taken.length))}), not makeable at the start ${taken.filter((n) => n < 0).length}`);
+      L.push(`  conversions a season: median ${med(fs.map((s) => s.conversions))}, mean ${mean(fs.map((s) => s.conversions)).toFixed(1)}`);
+      L.push(`  distinct outcomes a turn can end in (stock, Unrest, pieces' numbers, cards taken; not where the pieces stand): median ${med(fs.map((s) => s.outcomes))} (quartiles ${q(fs.map((s) => s.outcomes), 0.25)} to ${q(fs.map((s) => s.outcomes), 0.75)})`);
+      for (const p of [...TURN_POLICIES, PLANNER]) {
+        const mine = runs.filter((r) => r.policy === p.name);
+        const len = Math.min(...mine.map((r) => r.turn.length));
+        if (!len || !Number.isFinite(len)) continue;
+        L.push(`  ${p.name}: stock at a season's start (mean over its runs; goods with any):`);
+        for (let i = 0; i < len; i++) {
+          const keys = [...new Set(mine.flatMap((r) => Object.keys(r.turn[i].stock)))];
+          L.push(`    S${i + 1}: ${keys.map((k) => `${k} ${mean(mine.map((r) => r.turn[i].stock[k] ?? 0)).toFixed(0)}`).join(', ')}; conversions ${mean(mine.map((r) => r.turn[i].conversions)).toFixed(1)}; legal turns ${med(mine.map((r) => r.turn[i].turns))}; asks now/chain/of ${mean(mine.map((r) => r.turn[i].sat.now)).toFixed(1)}/${mean(mine.map((r) => r.turn[i].sat.chain)).toFixed(1)}/${mean(mine.map((r) => r.turn[i].sat.of)).toFixed(1)}`);
+        }
+      }
+      L.push('');
+    }
   }
   L.push('Pool curves (mean over a policy\'s runs; seasons 1, a quarter, half, three quarters, last):');
   for (const p of policies) {

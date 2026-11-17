@@ -24,6 +24,10 @@ import { FactWorld } from '../living/world';
 import { checkTogether, reportText, type Pack, type PackAbility, type Problem } from '../packs/check';
 import { castAbility, farHolder, farThings, homeOf, IS, lawThings, packFactions, packStart, seedFactions, stanceOf, startThings, tradeThings, lentTo, linkPacks, loadPack, packHelpers, packMech, packThings, UNLOCKED, withPackThings, worksOf, type LoadedPack, type PackHost } from '../packs/load';
 import { WORKS } from '../season/works';
+import { factoryPack } from '../season/factory';
+import { OPP_TUNE } from '../opps/tune';
+import { goodIds } from '../season/goods';
+import { machinesOf, plan, type Click, type Machine } from '../season/stock';
 import type { CommitPreview, Piece, UseNow } from '../season/realm';
 import type { PieceKind } from '../season/ledger';
 import { BASIC_SPELLS, RAIDERS_ID, Realm, RUN_SEASONS, SPELL_COST, type RunState, type SpellId } from '../season/realm';
@@ -75,10 +79,22 @@ export interface TableOptions {
    *  soldiers and instant uses, cards that send crews out, needs with a deadline; a board of WORKS_BOARD and
    *  WORKS_THREATS needs at once. Default off here (the tests' runs are unchanged); the page and the bots turn it on */
   works?: boolean;
+  /** (draft 11, docs/design/FACTORY.md) the factory game (season/factory.ts) in place of the works: buildings with
+   *  crews and recipes, goods, cards with exact needs; the catalog's own buildings out of the deck; soldiers always
+   *  fight; the leader's Materials start and income set to 0 (the yard makes Materials). `cpc`: clicks a posted crew
+   *  gives a season (default CLICKS_PER_CREW) */
+  factory?: boolean | { cpc?: number };
 }
 /** (draft 10) with the works: opportunities on offer at once, and needs (threats) standing at once */
 export const WORKS_BOARD = 5;
 export const WORKS_THREATS = 2;
+/** (draft 11) with the factory: offers and needs standing at once */
+export const FACTORY_BOARD = 6;
+export const FACTORY_THREATS = 3;
+/** (draft 11) the base cards out of the factory game's deck, by theme: the catalog's buildings (its cards build the
+ *  town), the base hazards that ask for Materials at the factory's sites (its own needs take their place: the dam, the
+ *  hill) and the mining camp (its mine is the factory's) */
+export const FACTORY_OUT = ['build', 'hazard', 'expansion'];
 
 /** a run under way, as saved: the world, the Realm's own state, the ledger, the casts into the events under way */
 export interface TableSave {
@@ -326,16 +342,21 @@ export class Table {
     }
     this.home = home;
     const HOME_ = home;
-    const who = packLeader ? { id: packLeader.id, name: packLeader.name, line: packLeader.line, pools: { magic: 0, might: 0, labor: 0, materials: 0, intel: 0, unrest: 0, ...packLeader.pools }, income: { ...(packLeader.income ?? {}) } } : leaderOf(o.leader);
+    const who0 = packLeader ? { id: packLeader.id, name: packLeader.name, line: packLeader.line, pools: { magic: 0, might: 0, labor: 0, materials: 0, intel: 0, unrest: 0, ...packLeader.pools }, income: { ...(packLeader.income ?? {}) } } : leaderOf(o.leader);
+    // (draft 11, docs/design/FACTORY.md: in the factory game Materials is made at the builder's yard — the leader starts
+    // with none and gets none each season)
+    const fac = o.factory ? factoryPack(typeof o.factory === 'object' ? o.factory.cpc : undefined) : null;
+    const who = fac ? { ...who0, pools: { ...who0.pools, materials: 0 }, income: Object.fromEntries(Object.entries(who0.income).filter(([k]) => k !== 'materials')) } : who0;
     this.leaderLine = who.line;
     // (a new run: the leader's pools; what earlier runs built is kept — scenes/level/loop.ts `pick` does the same)
     const ledger: SeasonLedger = o.resume ? o.resume.ledger : { ...newLedger(who.pools, who.income), built };
     const base = baseCards();
-    // (draft 10: the base game's works are a pack of the base game, never boosted)
-    this.packs = [...(o.works ? [loadPack(WORKS, { cards: base, boost: false })] : []), ...(o.packs ?? []).map((p) => loadPack(p, { cards: base, boost: o.boost ?? true }))];
+    // (draft 10: the base game's works are a pack of the base game, never boosted; draft 11: the factory in their place)
+    const own = fac ? [fac] : o.works ? [WORKS] : [];
+    this.packs = [...own.map((p) => loadPack(p, { cards: base, boost: false })), ...(o.packs ?? []).map((p) => loadPack(p, { cards: base, boost: o.boost ?? true }))];
     linkPacks(this.packs);
     // (several packs: what only shows when they are loaded together — an id two share, a tag declared differently)
-    const together = checkTogether([...(o.works ? [WORKS] : []), ...(o.packs ?? [])]);
+    const together = checkTogether([...own, ...(o.packs ?? [])]);
     if (together.some((x) => x.level === 'error')) throw new Error(reportText('The packs together', together));
     this.together = together;
     const world = world0;
@@ -346,7 +367,7 @@ export class Table {
     let thingCache: { key: string; ledger: SeasonLedger; tags: Map<string, readonly string[]> } | null = null;
     const host: PackHost = {
       season: () => made?.season ?? 1,
-      pool: (k) => pools(made?.ledger ?? ledger)[k as Pool] ?? 0,
+      pool: (k) => (made ? made.have(k) : (pools(ledger)[k as Pool] ?? ledger.holdings.goods[k] ?? 0)),
       leader: () => who.id,
       home: () => HOME_,
       tags: (where) => (made ? made.things().filter((t) => t.town === HOME_ && (where === 'town') === (t.id === HOME_)).map((t) => [...t.tags]) : []),
@@ -396,12 +417,15 @@ export class Table {
         between: this.packs.flatMap((p) => p.between),
         // (draft 7: the packs' factions are entities of the world — made once, kept run after run)
         seed: (w) => seedFactions(w, o.packs ?? []),
-        // (ages: the leader's start takes cards out of the deck)
-        ...(packLeader?.deck_out ? { deckOut: packLeader.deck_out } : {}),
+        // (ages: the leader's start takes cards out of the deck; draft 11: the factory game takes the catalog's own
+        // buildings out — its cards build the town)
+        ...(packLeader?.deck_out || fac ? { deckOut: { ids: [...(packLeader?.deck_out?.ids ?? [])], themes: [...(packLeader?.deck_out?.themes ?? []), ...(fac ? FACTORY_OUT : [])] } } : {}),
         // (draft 10: the things with slots and uses)
         works: () => (made ? worksOf(made.things(), this.packs) : []),
       },
-      ...(o.works ? { board: WORKS_BOARD, threats: WORKS_THREATS } : {}),
+      // (draft 11: the factory's cards are dealt whether or not the stock meets them now — making what they ask is the
+      // game; the dealer's default deals only what can be paid at once)
+      ...(fac ? { board: FACTORY_BOARD, threats: FACTORY_THREATS, soldiersAlways: true, tune: () => ({ ...OPP_TUNE.dealer, reach: Number.MAX_VALUE, resourceMax: FACTORY_BOARD, unaffordable: FACTORY_BOARD }) } : o.works ? { board: WORKS_BOARD, threats: WORKS_THREATS } : {}),
     });
     made = this.realm;
     this.run = this.realm.history(true).filter((e) => e.kind === 'run-began').length;
@@ -418,6 +442,8 @@ export class Table {
     }
     // (draft 10: the packs' things in play from a run's start, where the town has none yet)
     packStart(this.realm.w, this.packs, HOME_, (k) => siteId(HOME_, k as SiteKey));
+    // (draft 11: the packs' first stock — goods and pieces)
+    for (const p of this.packs) if (Object.keys(p.stock).length) this.realm.ledger = grant(this.realm.ledger, p.stock as Partial<Pools>);
     // (ages: a pack leader's start — its things in play, its laws in force for the run)
     if (packLeader) {
       startThings(this.realm.w, this.packs, packLeader, HOME_, (k) => siteId(HOME_, k as SiteKey));
@@ -1064,7 +1090,39 @@ export class Table {
     // (draft 8: what this town built stays its own — written on the town in the world, for a run that comes back to it)
     const r = this.realm;
     keepBuilt(r.w, this.home, this.built());
-    return new Table({ seed: this.seed, leader, seasons: r.seasons, world: r.snapshot(), built: this.built(), home: this.home, ...(this.o.packs ? { packs: this.o.packs } : {}), ...(this.o.works ? { works: true } : {}) });
+    return new Table({ seed: this.seed, leader, seasons: r.seasons, world: r.snapshot(), built: this.built(), home: this.home, ...(this.o.packs ? { packs: this.o.packs } : {}), ...(this.o.works ? { works: true } : {}), ...(this.o.factory ? { factory: this.o.factory } : {}) });
+  }
+
+  /** (draft 11) everything held or free now, by key: goods, and free crews (labor) and soldiers (might) */
+  holding(): Record<string, number> {
+    const r = this.realm;
+    return { ...r.ledger.holdings.goods, labor: r.have('labor'), might: r.have('might'), unrest: r.have('unrest') };
+  }
+  /** (draft 11) what a card asks for, every item: crews, soldiers and goods */
+  needOf(id: string): Record<string, number> {
+    const t = this.realm.terms(this.find(id));
+    return { ...t.locks, ...t.costs };
+  }
+  /** (draft 11) the shortest chain of clicks this season after which a card can be taken ([]: it can now; null: not
+   *  this season) */
+  chain(id: string): Click[] | null {
+    return plan(this.holding(), this.machines(), this.needOf(id));
+  }
+  /** (draft 11) the buildings as machines for the planner: clicks left, recipes, room for more crews (a free crew that
+   *  has not moved this season can still be posted) */
+  machines(): Machine[] {
+    const r = this.realm;
+    const movable = r.pieces().filter((p) => p.kind === 'crew' && p.where === 'free' && !p.moved).length;
+    const works = new Map(r.works().map((w) => [w.id, w]));
+    return machinesOf(r.uses(), (thing) => ({ room: Math.min(movable, r.room(thing, 'crew')), cpc: works.get(thing)?.clicksPerCrew ?? 0 }));
+  }
+
+  /** (draft 11, docs/design/FACTORY.md) the town's stock: every good of the factory and the old goods, with what is
+   *  held now and what comes in each season */
+  stock(): { k: string; have: number; income: number }[] {
+    const l = this.realm.ledger;
+    const ids = [...goodIds(), 'materials', 'magic', 'intel'];
+    return ids.map((k) => ({ k, have: l.holdings.goods[k] ?? 0, income: (l.income as Record<string, number>)[k] ?? 0 }));
   }
 
   /** what this run did to the world, for its end: the history's lines, oldest first */

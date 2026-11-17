@@ -22,9 +22,11 @@ import { LAW_ENDED, type BetweenDef } from '../season/realm-between';
 import type { SeasonWeather } from '../weather/presets';
 import { addPoi, isPoiKind, poi, poiCell, pois, poiTags, setPoiState, POI_WORD } from '../season/pois';
 import { ROW_H } from '../world/lattice';
-import { checkPack, reportText, siteOf, FRONT_DEFAULTS, GOODS, PEOPLE, type Pack, type PackAbility, type PackCard, type PackCond, type PackEffect, type PackEvent, type PackLeader, type PackTag, type PackThing, type Problem } from './check';
+import { checkPack, reportText, siteOf, FRONT_DEFAULTS, PEOPLE, type Pack, type PackAbility, type PackCard, type PackCond, type PackEffect, type PackEvent, type PackLeader, type PackTag, type PackThing, type Problem } from './check';
+import { declareGoods, goodName } from '../season/goods';
 
-const POOL_WORD: Record<string, string> = { magic: 'Magic', might: 'Might', labor: 'Labor', materials: 'Materials', intel: 'Intel', unrest: 'Unrest' };
+/** a pool's or a good's word (draft 11: the factory's goods too) */
+const POOL_WORD: Record<string, string> = new Proxy({} as Record<string, string>, { get: (_t, k) => goodName(String(k)) });
 const LAND_WORD: Record<string, string> = { flooded: 'is flooded', burned: 'burns', melted: 'goes under lava', buried: 'is buried', dried: 'dries up', withered: 'withers', greened: 'grows over, thick and green' };
 const FAR_WORD: Record<string, string> = { captured: 'is taken', vassal: 'swears to you', destroyed: 'is destroyed', abandoned: 'is abandoned' };
 const SIGN_WORD: Record<string, string> = { ashfall: 'Ash falls on the town', darkness: 'The sky goes dark over the town', deadrise: 'The dead walk the streets', crime: 'Thieves work the streets', rain: 'Rain falls on the town', storm: 'A storm sits over the town', fog: 'Fog lies over the town' };
@@ -148,6 +150,8 @@ export interface LoadedPack {
   weather: SeasonWeather[];
   /** (draft 10) the things in play when a run begins (`packStart`) */
   start: string[];
+  /** (draft 11) the goods and pieces a run begins with (`stock`) */
+  stock: Record<string, number>;
 }
 
 /** what the helpers ask of whoever runs the Realm (table/game.ts): the run as it stands */
@@ -235,12 +239,22 @@ export function worksOf(things: readonly Thing[], packs: readonly LoadedPack[]):
   const out: WorkThing[] = [];
   for (const p of packs)
     for (const def of p.things) {
-      if (!def.slots?.length && !def.uses?.length) continue;
+      if (!def.slots?.length && !def.uses?.length && !def.eats) continue;
       const t = things.find((x) => x.id === thingEntity(def.id));
       if (!t || t.tags.includes('ruined')) continue;
       const slots: WorkThing['slots'] = {};
       for (const s of def.slots ?? []) slots[s.takes] = s.n;
-      out.push({ id: t.id, name: def.name, slots, uses: (def.uses ?? []).map((u) => ({ id: u.id, name: u.name, cost: { ...(u.cost ?? {}) }, gives: { ...u.gives }, times: u.times ?? 1, ...(u.per ? { per: u.per } : {}), ...(u.needs ? { needs: u.needs } : {}), text: u.text })) });
+      // (draft 11: a thing with clicks — each posted crew gives `clicks_per_crew` a season, shared by its uses, and a
+      // use there is capped only by its own `times` when it says one)
+      const clicks = def.clicks_per_crew;
+      out.push({
+        id: t.id,
+        name: def.name,
+        slots,
+        uses: (def.uses ?? []).map((u) => ({ id: u.id, name: u.name, cost: { ...(u.cost ?? {}) }, gives: { ...u.gives }, times: u.times ?? (clicks ? 99 : 1), ...(u.per ? { per: u.per } : {}), ...(u.needs ? { needs: u.needs } : {}), text: u.text })),
+        ...(clicks ? { clicksPerCrew: clicks } : {}),
+        ...(def.eats ? { eats: { ...def.eats }, eatsPer: def.eats_per ?? 0, ifHungry: { ...(def.if_hungry ?? {}) } } : {}),
+      });
     }
   return out;
 }
@@ -580,7 +594,8 @@ function template(c: PackCard, p: Pack, after: string[], boost: boolean): Templa
     : null;
   const cost = c.cost ?? {};
   const agents = PEOPLE.filter((k) => cost[k] > 0).map((k) => ({ kind: k === 'labor' ? ('workers' as const) : ('army' as const), count: cost[k] }));
-  const goods = Object.fromEntries(GOODS.filter((k) => cost[k] > 0).map((k) => [k, cost[k]]));
+  // (draft 11: any good the pack may name — the old three, the factory's, its own)
+  const goods = Object.fromEntries(Object.keys(cost).filter((k) => !PEOPLE.includes(k) && cost[k] > 0).map((k) => [k, cost[k]]));
   const when: PackCond[] = [...(p.pack.appears_when ?? []), ...(c.appears_when ?? []), ...after.map((id) => ({ resolved: id }))];
   // (its conditions first: one may name a place to bind; then one test a selector its effects name — it appears only
   // while that names a town)
@@ -633,6 +648,8 @@ function template(c: PackCard, p: Pack, after: string[], boost: boolean): Templa
 export function loadPack(p: Pack, base: { cards?: readonly string[]; rules?: readonly string[]; boost?: boolean } = {}): LoadedPack {
   const problems = checkPack(p, base);
   if (problems.some((x) => x.level === 'error')) throw new Error(reportText(`Pack ${p?.pack?.id ?? '?'}`, problems));
+  // (draft 11: the pack's own goods have words from now on)
+  declareGoods(p.goods ?? []);
   const left: LoadedPack['left'] = [];
   const templates: TemplateDef[] = [];
   for (const c of p.cards ?? []) {
@@ -679,7 +696,7 @@ export function loadPack(p: Pack, base: { cards?: readonly string[]; rules?: rea
     const need = new Set<string>();
     return { id: `${p.pack.id}:${b.id}`, when: conds(b.when ?? [], b.id, need), do: effects(b.do, p, need, b.say), say: b.say };
   });
-  return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep, ...slotRules], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], laws, recordLaws, because, left, problems, between, weather: p.weather ?? [], start: [...(p.start ?? [])] };
+  return { id: p.pack.id, name: p.pack.name, templates, rules: [...own, ...upkeep, ...slotRules], tags: p.tags ?? [], things: p.things ?? [], events: p.events ?? [], abilities: p.abilities ?? [], laws, recordLaws, because, left, problems, between, weather: p.weather ?? [], start: [...(p.start ?? [])], stock: { ...(p.stock ?? {}) } };
 }
 
 /** (trade routes) the selectors of the pack things in play, on places not ruined, that carry a trade route

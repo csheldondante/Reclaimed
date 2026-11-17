@@ -117,6 +117,14 @@ export interface PackThing {
   slots?: PackSlot[];
   /** (draft 10) instant uses: a cost, what it gives, how often a season */
   uses?: PackUse[];
+  /** (draft 11, docs/design/FACTORY.md) each crew posted here gives this many clicks a season, shared by its uses (its
+   *  recipes): every use of the thing then needs a click */
+  clicks_per_crew?: number;
+  /** (draft 11) goods eaten each season while it stands — for every `eats_per` crews of the town when given (rounded
+   *  up); what is short is eaten as far as it goes and `if_hungry` (pool changes) applies once */
+  eats?: Record<string, number>;
+  eats_per?: number;
+  if_hungry?: Record<string, number>;
 }
 /** (draft 10, docs/design/TURN_PUZZLE.md) room on a thing for `n` pieces of a kind; each posted gives `each_season` */
 export interface PackSlot {
@@ -245,6 +253,10 @@ export interface Pack {
   weather?: SeasonWeather[];
   /** (draft 10) things of this pack in play when a run begins in a town that has none of them yet */
   start?: string[];
+  /** (draft 11, docs/design/FACTORY.md) the pack's own goods (the base goods need no entry) */
+  goods?: { id: string; name: string; icon?: string; made?: boolean }[];
+  /** (draft 11) goods and pieces given when a run begins (a factory's first stock) */
+  stock?: Record<string, number>;
 }
 
 /** (ages) a leader a pack offers at a run's start, while the world fits (`appears_when` over the record and the far
@@ -278,6 +290,8 @@ export const POOL_NAMES: readonly string[] = ['magic', 'might', 'labor', 'materi
 /** people are locked while a card is built and come back; goods are spent */
 export const PEOPLE: readonly string[] = ['labor', 'might'];
 export const GOODS: readonly string[] = ['materials', 'magic', 'intel'];
+/** (draft 11, docs/design/FACTORY.md) the factory game's goods, known to every pack (season/goods.ts FACTORY_GOODS) */
+export const BASE_GOODS: readonly string[] = ['wood', 'stone', 'ore', 'grain', 'planks', 'iron', 'bread', 'tools', 'weapons'];
 /** the home town's sites a card can stand at (season/realm-templates.ts SITES) */
 export const SITE_KEYS: readonly string[] = ['keep', 'forge', 'quarter', 'fields', 'market', 'gate', 'tower', 'dam', 'shrine', 'mill', 'wall', 'watch', 'harbour', 'quarry', 'woods', 'river', 'road', 'pit', 'wagons', 'graves'];
 /** the tags the game has already (PACK_FORMAT.md "Existing tags") */
@@ -416,6 +430,17 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   const events = p.events ?? [];
   const abilities = p.abilities ?? [];
   const laws = p.laws ?? [];
+  // (draft 11, docs/design/FACTORY.md: the goods this pack may name — the old three, the factory's, its own; the pools
+  // are the old six and those goods)
+  if (p.goods !== undefined && !Array.isArray(p.goods)) err('goods', '"goods" is a list: [{ "id", "name", "icon" }].');
+  const ownGoods = Array.isArray(p.goods) ? p.goods : [];
+  ownGoods.forEach((g, i) => {
+    if (typeof g?.id !== 'string' || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(g.id)) err(`goods[${i}]`, `A good's id is lowercase words joined by hyphens. It is ${JSON.stringify(g?.id)}.`);
+    else if ([...POOL_NAMES, ...BASE_GOODS].includes(g.id)) err(`goods[${i}]`, `"${g.id}" is a good already. Remove this entry.`);
+    if (!g?.name) err(`goods[${i}]`, 'A good needs a "name" the player reads.');
+  });
+  const G: readonly string[] = [...GOODS, ...BASE_GOODS, ...ownGoods.map((g) => g.id)];
+  const P: readonly string[] = [...POOL_NAMES, ...BASE_GOODS, ...ownGoods.map((g) => g.id)];
   /** (laws) the laws something brings into force: an effect, a thing, a rule */
   const brought = new Set<string>();
 
@@ -488,6 +513,8 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
   const put = new Set<string>();
   // (ages: a leader's start puts things in play too)
   for (const l of Array.isArray(p.leaders) ? p.leaders : []) for (const t of l.things ?? []) put.add(t);
+  // (draft 11: and the pack's start)
+  for (const t of Array.isArray(p.start) ? p.start : []) put.add(t);
   const needTag = (t: string, where: string, how: 'read' | 'made') => {
     // (the record: a ruined thing or place carries what it was as "remains-of-<tag>"; only read, never set)
     const remains = /^remains-of-(.+)$/.exec(t)?.[1];
@@ -506,7 +533,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     (how === 'read' ? read : produced).add(t);
   };
   const pool = (k: unknown, where: string) => {
-    if (typeof k !== 'string' || !POOL_NAMES.includes(k)) err(where, `Unknown pool ${JSON.stringify(k)}. The pools are ${POOL_NAMES.join(', ')}.`);
+    if (typeof k !== 'string' || !P.includes(k)) err(where, `Unknown pool or good ${JSON.stringify(k)}. They are ${P.join(', ')}.`);
   };
   // (places: the far places this pack founds can be named by its cards, "far:<id>")
   const founded = new Set(cards.flatMap((c) => [...(c.if_taken ?? []), ...(c.if_expires ?? []), ...Object.values(c.if_tier ?? {}).flat()] as Record<string, unknown>[]).filter((e) => e && (e.far === 'founded' || e.far === 'revealed') && typeof e.id === 'string').map((e) => String(e.id)));
@@ -547,10 +574,22 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       if (t.trade === 'far:where:trade-partner') err(w, 'A thing\'s trade route names other towns than the trade partners.');
     }
     for (const [k, n] of Object.entries(t.upkeep ?? {})) {
-      if (!GOODS.includes(k)) err(w, `Upkeep can be paid in ${GOODS.join(', ')} only. It asks for ${k}.`);
+      if (!G.includes(k)) err(w, `Upkeep can be paid in ${G.join(', ')} only. It asks for ${k}.`);
       if (!Number.isInteger(n) || n < 1) err(w, `Upkeep is a whole number, 1 or more. ${k} is ${JSON.stringify(n)}.`);
     }
-    for (const n of numbersIn(t.text ?? '')) if (!numbersOf([t.upkeep, t.capacity, t.slots]).includes(n)) err(w, `The text says ${n}, but the thing's upkeep, capacity and slots have no such number.`);
+    // (draft 11: clicks for its recipes; what it eats each season, and what hunger does)
+    if (t.clicks_per_crew !== undefined) {
+      if (!Number.isInteger(t.clicks_per_crew) || t.clicks_per_crew < 1) err(w, '"clicks_per_crew" is a whole number, 1 or more.');
+      if (!(t.slots ?? []).some((s) => s.takes === 'crew')) err(w, '"clicks_per_crew" needs a slot for crews: the clicks come from the crews posted here.');
+    }
+    for (const [k, n] of Object.entries(t.eats ?? {})) {
+      if (!G.includes(k)) err(w, `A thing eats goods (${G.join(', ')}). It names ${k}.`);
+      if (!Number.isInteger(n) || n < 1) err(w, `"eats" is a whole number, 1 or more. ${k} is ${JSON.stringify(n)}.`);
+    }
+    if (t.eats_per !== undefined && (!Number.isInteger(t.eats_per) || t.eats_per < 1)) err(w, '"eats_per" is how many crews eat that much: a whole number, 1 or more.');
+    if ((t.eats_per !== undefined || t.if_hungry !== undefined) && !t.eats) err(w, '"eats_per" and "if_hungry" go with "eats".');
+    for (const [k, n] of Object.entries(t.if_hungry ?? {})) (pool(k, `${w}.if_hungry`), (!Number.isInteger(n) || n === 0) && err(w, `"if_hungry" is a whole number, not 0. ${k} is ${JSON.stringify(n)}.`));
+    for (const n of numbersIn(t.text ?? '')) if (!numbersOf([t.upkeep, t.capacity, t.slots, t.eats, t.eats_per, t.if_hungry, t.clicks_per_crew]).includes(n)) err(w, `The text says ${n}, but the thing's upkeep, capacity, slots and what it eats have no such number.`);
     // (draft 10: slots for pieces and instant uses)
     if (t.slots !== undefined) {
       if (!Array.isArray(t.slots)) err(w, '"slots" is a list: [{ "takes": "crew", "n": 2, "each_season": { "materials": 1 } }].');
@@ -563,7 +602,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
           kinds.add(s.takes);
           if (!Number.isInteger(s.n) || s.n < 1 || s.n > 6) err(sw, '"n" is how many pieces fit: a whole number, 1 to 6.');
           for (const [k, n] of Object.entries(s.each_season ?? {})) {
-            if (![...GOODS, 'unrest'].includes(k)) err(sw, `"each_season" gives goods (${GOODS.join(', ')}) or Unrest. It names ${k}.`);
+            if (![...G, 'unrest'].includes(k)) err(sw, `"each_season" gives goods (${G.join(', ')}) or Unrest. It names ${k}.`);
             if (!Number.isInteger(n) || n === 0) err(sw, `"each_season" is a whole number, not 0. ${k} is ${JSON.stringify(n)}.`);
           }
         });
@@ -576,9 +615,9 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
           const uw = `${w}.uses[${j}] (${u.id})`;
           if (typeof u.id !== 'string' || !u.id.startsWith(`${p.pack.id}-`)) err(uw, `A use's id starts with the pack's id: "${p.pack.id}-…".`);
           if (!u.name || !u.text) err(uw, 'A use needs a "name" and a "text" the player reads.');
-          const allPools = [...GOODS, ...PEOPLE, 'unrest'];
+          const allPools = [...G, ...PEOPLE, 'unrest'];
           for (const [k, n] of Object.entries(u.cost ?? {})) {
-            if (![...GOODS, ...PEOPLE].includes(k)) err(uw, `A use costs ${[...GOODS, ...PEOPLE].join(', ')}. It asks for ${k}.`);
+            if (![...G, ...PEOPLE].includes(k)) err(uw, `A use costs ${[...G, ...PEOPLE].join(', ')}. It asks for ${k}.`);
             if (!Number.isInteger(n) || n < 1) err(uw, `A cost is a whole number, 1 or more. ${k} is ${JSON.stringify(n)}.`);
           }
           if (!isObj(u.gives) || !Object.keys(u.gives).length) err(uw, '"gives" names what the use gives: { "materials": 2 }.');
@@ -598,6 +637,11 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     if (!Array.isArray(p.start)) err('start', '"start" is a list of this pack\'s thing ids.');
     else for (const id of p.start) if (!things.some((t) => t.id === id)) err('start', `"${id}" is no thing of this pack.`);
   }
+  // (draft 11: the first stock of a run — goods and pieces)
+  if (p.stock !== undefined) {
+    if (!isObj(p.stock)) err('stock', '"stock" is { "wood": 4, "labor": 1 }.');
+    else for (const [k, n] of Object.entries(p.stock)) (pool(k, 'stock'), k === 'unrest' && err('stock', 'Unrest is not stock.'), (!Number.isInteger(n) || n < 1) && err('stock', `Stock is a whole number, 1 or more. ${k} is ${JSON.stringify(n)}.`));
+  }
 
   // ---- effects ----
   /** (draft 8) what can be unlocked (locked cards and leaders, the pack if it is locked), and what is */
@@ -616,7 +660,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
       if (key === 'pool' || key === 'income') {
         pool(x[key], w);
         if (typeof x.add !== 'number' || !Number.isInteger(x.add) || x.add === 0) err(w, `"add" must be a whole number that is not 0. It is ${JSON.stringify(x.add)}.`);
-        if (key === 'income' && !GOODS.includes(String(x.income))) err(w, `Income can only be of ${GOODS.join(', ')}. For people, use { "pool": "labor", "add": 1 } once.`);
+        if (key === 'income' && !G.includes(String(x.income))) err(w, `Income can only be of ${G.join(', ')}. For people, use { "pool": "labor", "add": 1 } once.`);
         if (key === 'pool' && PEOPLE.includes(String(x.pool)) && Number(x.add) < 0 && String(x.pool) === 'labor') warn(w, 'This takes workers away for good. A cost in Labor only locks them while the card is built.');
       } else if (key === 'put') {
         if (!thingIds.has(String(x.put))) err(w, `"put" names the thing "${String(x.put)}", which is not in the pack's "things".`);
@@ -1202,7 +1246,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     } else if (k === 'board') whole(d.board, w, '"board"');
     else if (k === 'income') {
       if (!isObj(d.income)) err(w, '"income" is { "materials": 2 }.');
-      else for (const [x, n] of Object.entries(d.income)) (GOODS.includes(x) || err(w, `Income by law is of ${GOODS.join(', ')}.`), whole(n, w, `"income" ${x}`));
+      else for (const [x, n] of Object.entries(d.income)) (G.includes(x) || err(w, `Income by law is of ${G.join(', ')}.`), whole(n, w, `"income" ${x}`));
     } else if (k === 'raiders') {
       const r = d.raiders as { add?: unknown; times?: unknown };
       if (!isObj(r) || (r.add === undefined && r.times === undefined)) err(w, '"raiders" is { "add": -6 } or { "times": 0.5 }.');
@@ -1234,7 +1278,7 @@ export function checkPack(p: Pack, base: { cards?: readonly string[]; rules?: re
     if (!l.name || !l.line) err(w, 'A leader needs a "name" and a "line": who they are, in one plain sentence.');
     for (const [k, n] of Object.entries(l.pools ?? {})) (pool(k, w), (!Number.isInteger(n) || n < 0) && err(w, `A starting pool is a whole number, 0 or more. ${k} is ${JSON.stringify(n)}.`));
     if (!isObj(l.pools)) err(w, 'A leader needs "pools": what the run starts with.');
-    for (const [k, n] of Object.entries(l.income ?? {})) (GOODS.includes(k) || err(w, `Income is of ${GOODS.join(', ')}.`), (!Number.isInteger(n) || n < 0) && err(w, `Income is a whole number. ${k} is ${JSON.stringify(n)}.`));
+    for (const [k, n] of Object.entries(l.income ?? {})) (G.includes(k) || err(w, `Income is of ${G.join(', ')}.`), (!Number.isInteger(n) || n < 0) && err(w, `Income is a whole number. ${k} is ${JSON.stringify(n)}.`));
     for (const t of l.things ?? []) {
       if (!thingIds.has(t)) err(w, `"things" names "${t}", which is not in the pack's "things".`);
       put.add(t);
@@ -1336,6 +1380,8 @@ export const BASE_EVENT_KINDS: readonly string[] = [
  *  (`pack-done:<card-id>`) or run out (`pack-lapsed:<card-id>`). */
 export function eventTrigger(name: string, cards: ReadonlySet<string>): string | 'other' | null {
   if (BASE_EVENT_KINDS.includes(name) || LAND_KINDS.includes(name)) return null;
+  // (draft 10, as PACK_FORMAT says: a use made — `used:<use id>`; draft 11 recipes are uses)
+  if (/^used:[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) return null;
   const m = /^pack-(done|lapsed):(.+)$/.exec(name);
   if (m) return cards.has(m[2]) ? null : 'other';
   return `Unknown event "${name}". A rule can wait for: a card done ("pack-done:<card-id>") or run out ("pack-lapsed:<card-id>"); a land change to a site (${LAND_KINDS.join(', ')}); or one of the base game's events: ${BASE_EVENT_KINDS.join(', ')}.`;
