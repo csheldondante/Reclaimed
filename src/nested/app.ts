@@ -9,6 +9,8 @@ import { holePixels, lastImage, manifold } from './watertight';
 /** a root column, in metres (the info line) */
 const ROOT_COLUMN_M = 3.2;
 const FOVY = (50 * Math.PI) / 180;
+/** a number with two significant decimals at most */
+const A2 = (v: number) => (v >= 10 ? v.toFixed(0) : v.toFixed(2));
 
 type Mode = Op | 'move' | 'orbit';
 
@@ -61,6 +63,24 @@ export class App {
   brushFrac = 0.25;
   /** the Fwd (1) or Back (-1) button held */
   aimHold = 0;
+  /** cruise: on, its speed (finest live window widths a second) */
+  cruiseOn = false;
+  cruiseWps = 1;
+  private cruiseKeep = false;
+  private speedText: HTMLSpanElement | null = null;
+  private cruiseSent = false;
+  /** when ops were refused whole (the pool growing ahead: they retry) */
+  readonly refusedAt: number[] = [];
+  setCruise(on: boolean): void {
+    this.cruiseOn = on;
+    this.cruiseKeep = on;
+    this.buttons.get('cruise')?.classList.toggle('on', on);
+    (document.getElementById('cruise') as HTMLElement).style.display = on ? 'block' : 'none';
+  }
+  /** the cruise's speed in world units a second */
+  cruiseSpeed(): number {
+    return this.cruiseWps * this.width(this.nest.live - 1);
+  }
   /** (the benchmark) the levels left as they are */
   frozen = false;
   private limitsText = '';
@@ -131,6 +151,10 @@ export class App {
     // the brush's size: a fraction of the distance to the nearest surface (log scale, 2 % to 100 %), its radius in world
     // units beside it
     this.sizeText = this.slider(bar, 'Size', 65, (v) => (this.brushFrac = 0.02 * 50 ** (v / 100)));
+    // cruise: fly along the heading over the ground at the height kept when it was switched on; the speed in widths of
+    // the finest live window a second (scale-free: the same feel at every depth), log scale 0.05 to 4
+    add('cruise', 'Cruise', () => this.setCruise(!this.cruiseOn));
+    this.speedText = this.slider(bar, 'Speed', 68, (v) => (this.cruiseWps = 0.05 * 80 ** (v / 100)));
     // move along the aim: two hold buttons at the right edge (R and V on a keyboard; WASD stay the flight over the ground)
     const aim = document.getElementById('aim')!;
     for (const [label, dir] of [['Fwd', 1], ['Back', -1]] as const) {
@@ -192,7 +216,8 @@ export class App {
         if (this.strokeOn) this.strokeMoved = true;
         return;
       }
-      if (this.mode === 'orbit' || e.buttons === 2) this.orbit(dx, dy);
+      // (while cruising a drag turns: the cruise moves the eye)
+      if (this.mode === 'orbit' || e.buttons === 2 || this.cruiseOn) this.orbit(dx, dy);
       else this.pan(dx, dy);
     });
     const up = (e: PointerEvent) => {
@@ -347,13 +372,38 @@ export class App {
   width(m: number): number {
     return this.n / this.k ** m;
   }
-  /** where level m's window centres (world x, y): the eye, pushed along the view toward what it looks at by up to a
-   *  quarter of the window, so a level holds both the eye's surroundings and the surface in front of it */
+  /** the eye's velocity over the ground (world units a second; smoothed over ~0.25 s from the reported eye) */
+  vx = 0;
+  vy = 0;
+  private lastEye: [number, number] | null = null;
+  /** where level m's window centres (world x, y), round 7's streaming policy: the eye, led ahead along the view (toward
+   *  what it looks at, up to 0.2 of the window) and along the eye's velocity (0.6 s of travel), the lead at most 0.4 of
+   *  the window, so the strips that enter are far ahead of the eye (where the view sees them small, or not at all). The
+   *  window is a level of one grid's chain, in that grid's frame (one root grid today). */
   focus(m: number): [number, number] {
+    const W = this.width(m);
     const c = Math.cos(this.pitch);
-    const reach = Math.min((this.dHit > 0 ? this.dHit : 4 * this.dNear) * Math.abs(c), 0.25 * this.width(m));
-    return [this.ex - Math.cos(this.yaw) * Math.sign(c) * reach, this.ey - Math.sin(this.yaw) * Math.sign(c) * reach];
+    const reach = Math.min((this.dHit > 0 ? this.dHit : 4 * this.dNear) * Math.abs(c), 0.2 * W);
+    let lx = -Math.cos(this.yaw) * Math.sign(c) * reach + this.vx * App.LEAD_S;
+    let ly = -Math.sin(this.yaw) * Math.sign(c) * reach + this.vy * App.LEAD_S;
+    const len = Math.hypot(lx, ly);
+    if (len > App.LEAD_MAX * W) {
+      lx *= (App.LEAD_MAX * W) / len;
+      ly *= (App.LEAD_MAX * W) / len;
+    }
+    return [this.ex + lx, this.ey + ly];
   }
+  /** the lead at most (of the window's width): the eye stays 0.1 W inside the window's rear edge */
+  static readonly LEAD_MAX = 0.4;
+  /** the window leads the eye by this much travel time */
+  static readonly LEAD_S = 0.6;
+  /** a window slides toward its target when the target is this many columns away along the travel (eager), or this
+   *  many against it or with no travel (the hysteresis band: no slide back and forth on a jittering focus) */
+  static readonly SLIDE_AHEAD = 32;
+  static readonly SLIDE_BACK = 64;
+  /** a level is demoted only when the eye has been past the band for this long */
+  static readonly DEMOTE_HOLD_S = 0.5;
+  private farSince: (number | undefined)[] = [];
   private desired(m: number): Win {
     const s = this.k ** (m - 1);
     const [fx, fy] = this.focus(m);
@@ -365,16 +415,29 @@ export class App {
       const live = this.nest.live;
       const W = this.width(m);
       if (m < live) {
+        // the zoom band: promote under 0.45 W, demote over 0.6 W held for DEMOTE_HOLD_S (round 7: a fast cruise over
+        // a drop crossed 0.6 W for a moment and demoted and promoted again)
         if (this.dNear > 0.6 * W) {
-          this.timed('demote', m, () => this.nest.demote(m));
-          return;
-        }
+          this.farSince[m] ??= now;
+          if (now - this.farSince[m]! >= App.DEMOTE_HOLD_S) {
+            this.farSince[m] = undefined;
+            this.timed('demote', m, () => this.nest.demote(m));
+            return;
+          }
+        } else this.farSince[m] = undefined;
         const want = this.desired(m);
         const cur = this.nest.wins[m]!;
-        // follow the focus by whole chunks (whole parent cells), with a chunk of slack
-        if (Math.abs(want.gx - cur.gx) >= 32 || Math.abs(want.gy - cur.gy) >= 32 || !this.nest.fits(m, cur)) {
-          // (refused while the pool grows ahead: tried again next frame)
-          this.timed('slide', m, () => this.nest.slide(m, want));
+        // follow the led focus by whole chunks (whole parent cells): eagerly along the travel, lazily against it (round 7)
+        const s = this.k ** m;
+        const go = (d: number, v: number) => Math.abs(d) >= App.SLIDE_BACK || (Math.abs(d) >= App.SLIDE_AHEAD && Math.sign(d) === Math.sign(v) && Math.abs(v * s) > 0.02 * this.n);
+        const gx = go(want.gx - cur.gx, this.vx);
+        const gy = go(want.gy - cur.gy, this.vy);
+        if (gx || gy || !this.nest.fits(m, cur)) {
+          let to = { gx: gx ? want.gx : cur.gx, gy: gy ? want.gy : cur.gy, n: cur.n };
+          if (!this.nest.fits(m, to)) to = want;
+          // (refused while the pool grows ahead: tried again next frame). One level op a frame: the next waits.
+          this.timed('slide', m, () => this.nest.slide(m, to));
+          return;
         }
         continue;
       }
@@ -392,6 +455,8 @@ export class App {
     const t = performance.now();
     const ok = fn() !== false;
     if (ok) this.opLog.push({ what, depth, at: t, ms: performance.now() - t });
+    else this.refusedAt.push(t);
+    if (this.refusedAt.length > 400) this.refusedAt.shift();
     if (this.opLog.length > 400) this.opLog.shift();
     return ok;
   }
@@ -399,23 +464,9 @@ export class App {
   private drawList(): DrawLevel[] {
     const live = this.nest.live;
     const out: DrawLevel[] = [];
-    for (let m = 0; m < live; m++) {
-      const w = this.nest.wins[m]!;
-      const c = this.nest.wins[m + 1];
-      const k = this.k;
-      const inset = 0.75 / k;
-      // (metrics) where the child should be now: the window the level logic keeps (its current one while within the
-      // slack) or would move to
-      let want: DrawLevel['want'] = null;
-      if (m + 1 <= this.maxDepth && (c || this.dNear < 0.45 * this.width(m + 1))) {
-        const s = this.k ** m;
-        const [fx, fy] = this.focus(m + 1);
-        let g = this.nest.windowAt(m + 1, fx * s, fy * s, this.n);
-        if (c && Math.abs(g.gx - c.gx) < 32 && Math.abs(g.gy - c.gy) < 32) g = c;
-        want = [g.gx / k - w.gx + inset, g.gy / k - w.gy + inset, (g.gx + g.n) / k - w.gx - inset, (g.gy + g.n) / k - w.gy - inset];
-      }
-      out.push({ depth: m, want });
-    }
+    // (metrics) the child is wanted nearer the eye than the band's promote distance, 0.45 of the child's window width:
+    // in this level's units 0.45 n / k
+    for (let m = 0; m < live; m++) out.push({ depth: m, want: m + 1 <= this.maxDepth ? (0.45 * this.n) / this.k : 0 });
     return out;
   }
 
@@ -444,6 +495,16 @@ export class App {
       this.dHit = rep[29];
       this.lifts = rep[27];
     }
+    // the eye's velocity over the ground (the streaming lead), smoothed; a placement starts it again
+    if (this.placeReq || rep[1] !== 1) {
+      this.lastEye = null;
+      this.vx = this.vy = 0;
+    } else if (this.lastEye && dt > 0) {
+      const a = 1 - Math.exp(-dt / 0.25);
+      this.vx += a * ((this.ex - this.lastEye[0]) / dt - this.vx);
+      this.vy += a * ((this.ey - this.lastEye[1]) / dt - this.vy);
+    }
+    if (!this.placeReq && rep[1] === 1) this.lastEye = [this.ex, this.ey];
     this.hook?.(dt);
     // fly: WASD or arrows over the ground in the view's heading, Q and E down and up; speed scales with the nearest solid
     const kx = (this.keys.has('d') || this.keys.has('arrowright') ? 1 : 0) - (this.keys.has('a') || this.keys.has('arrowleft') ? 1 : 0);
@@ -474,7 +535,17 @@ export class App {
     const qd = this.nest.settled ? this.queue.shift() : undefined;
     if (qd) ndc.splice(0, 2, qd.nx, qd.ny);
     if (this.placeReq) this.nest.placeEye(this.placeReq.x, this.placeReq.y, this.placeReq.d, this.placeReq.z);
-    this.nest.camIn.set([this.move[0], this.move[1], this.move[2], this.placeReq ? 1 : 0, this.yaw, this.pitch, W / H, this.speed, FOVY, ndc[0], ndc[1], dt]);
+    // cruise: the camera pass moves the eye along the heading and follows the ground (no readback); the speed limit is
+    // raised to let the cruise's speed through (the per-frame limit, the nearest solid less the margin, still holds)
+    let speed = this.speed;
+    if (this.cruiseOn || this.cruiseSent) {
+      const cs = this.cruiseSpeed();
+      this.nest.cruise(this.cruiseOn, cs, this.cruiseKeep || !!this.placeReq);
+      this.cruiseKeep = false;
+      this.cruiseSent = this.cruiseOn;
+      if (this.cruiseOn) speed = Math.max(speed, (1.5 * cs) / Math.max(1e-9, this.dNear));
+    }
+    this.nest.camIn.set([this.move[0], this.move[1], this.move[2], this.placeReq ? 1 : 0, this.yaw, this.pitch, W / H, speed, FOVY, ndc[0], ndc[1], dt]);
     this.placeReq = null;
     this.move = [0, 0, 0];
     this.nest.camera();
@@ -523,6 +594,28 @@ export class App {
     if (st.refused || st.mismatch || st.tableFull) lines.push(`Error: ${st.refused} pages refused, ${st.mismatch} blocks mismatched, table full ${st.tableFull} times.`);
     if (st.error) lines.push(`Memory: ${st.error}`);
     this.info.textContent = lines.join('\n');
+    if (this.speedText) this.speedText.textContent = `${this.cruiseWps.toFixed(2)} w/s`;
+    if (this.cruiseOn) document.getElementById('cruise')!.textContent = this.cruiseText();
+  }
+  /** the cruise readout (the owner judges panning and loading on the phone): the last 2 s */
+  cruiseText(): string {
+    const now = performance.now();
+    const ops = this.opLog.filter((o) => now - o.at < 2000);
+    const n = (w: string) => ops.filter((o) => o.what === w).length / 2;
+    let worst = 0;
+    for (let i = this.frames.length - 1, acc = 0; i >= 0 && acc < 2000; i--) {
+      acc += this.frames[i];
+      worst = Math.max(worst, this.frames[i]);
+    }
+    const st = this.nest.stats;
+    const refused = this.refusedAt.filter((t) => now - t < 2000).length;
+    return [
+      `Cruise ${A2(this.cruiseSpeed() * ROOT_COLUMN_M)} m/s (${this.cruiseWps.toFixed(2)} w/s)`,
+      `slides ${n('slide').toFixed(1)}/s  promotes ${n('promote').toFixed(1)}/s  demotes ${n('demote').toFixed(1)}/s`,
+      `ops waiting ${refused} (2 s)${this.nest.settled ? '' : ', one in flight'}${st.refused ? `  PAGES REFUSED ${st.refused}` : ''}`,
+      `pool ${st.used} used / ${st.cap} reserved (${(st.cap / Math.max(1, st.used)).toFixed(1)}x)`,
+      `worst frame ${worst.toFixed(1)} ms (2 s)`,
+    ].join('\n');
   }
 
   private api() {
@@ -542,6 +635,11 @@ export class App {
         this.move[2] += z;
       },
       zoom: (logRatio: number) => (this.zoomLog += logRatio),
+      /** cruise on or off; wps: its speed in finest live window widths a second */
+      cruise: (on: boolean, wps?: number) => {
+        if (wps !== undefined) this.cruiseWps = wps;
+        this.setCruise(on);
+      },
       eye: () => ({ x: this.ex, y: this.ey, z: this.ez, dNear: this.dNear, dHit: this.dHit, lifts: this.lifts, level: this.nest.camOut[30], margin: this.nest.camOut[31] }),
       /** queue `times` edits at a screen point (ndc), one a frame */
       /** px: the brush's radius in css px (default: the brush button's) */

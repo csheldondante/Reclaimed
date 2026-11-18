@@ -13,8 +13,8 @@ const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 
 
 export interface DrawLevel {
   depth: number;
-  /** (metrics) where the focus wants this level's child, in this level's local units (none: null) */
-  want: [number, number, number, number] | null;
+  /** (metrics) the distance from the eye, in this level's units, within which its child is wanted (0: none) */
+  want: number;
 }
 
 export class Renderer {
@@ -45,7 +45,9 @@ export class Renderer {
       label: 'nest draw',
       entries: [
         { binding: 0, visibility: V | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: DU_SIZE } },
-        ...[1, 3, 4, 5, ...Array.from({ length: nest.S }, (_, j) => SEG_BASE + j)].map((binding) => ({ binding, visibility: V, buffer: ro })),
+        // (the camera words in the fragment stage too: the metrics' info target measures the distance to the eye)
+        { binding: 3, visibility: V | GPUShaderStage.FRAGMENT, buffer: ro },
+        ...[1, 4, 5, ...Array.from({ length: nest.S }, (_, j) => SEG_BASE + j)].map((binding) => ({ binding, visibility: V, buffer: ro })),
       ],
     });
     const module = (this.module = device.createShaderModule({ label: 'nest draw', code: `const TCAP: u32 = ${TCAP}u;\n${segWgsl(nest.S, nest.segP, true)}\n${storeWgsl}\n${drawWgsl}` }));
@@ -120,7 +122,7 @@ export class Renderer {
       new Int32Array(st, lv.depth * DU, 4).set([w.gx, w.gy, w.n, lv.depth]);
       const f = new Float32Array(st, lv.depth * DU + 16, 12);
       f.set([this.diag, 0, this.tint ? 1 : 0, this.nest.k], 0);
-      f.set(lv.want ?? [1, 1, 0, 0], 4);
+      f.set([lv.want, 0, 0, 0], 4);
       f.set([0.45, -0.35, 0.82, 0], 8);
       new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, 0, 0, pages[lv.depth] ?? 0]);
       new Float32Array(st, lv.depth * DU + 80, 16).set(IDENTITY);

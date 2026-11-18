@@ -1433,7 +1433,8 @@ fn ground(xh: f32, yh: f32, xl: f32, yl: f32) -> f32 {
 // 27 times the eye was lifted out of solid, 28 the nearest solid after the move (world, a lower bound), 29 the centre
 // ray's first solid (world; -1 none), 30 the level that measured the nearest solid, 31 the margin (world). Words 0-31 are
 // the report the CPU reads back (asynchronously, never awaited). Level m at 32 + m * 24: view-projection (16), eye (3),
-// near (1) in its units. 256-258: a placement's target x, y and distance (CPU-written).
+// near (1) in its units. 256-258: a placement's target x, y and distance (CPU-written). 260-262: cruise (CPU-written
+// on, speed; 262 the kept height, set by this pass when the CPU writes it negative).
 const CAM_R: i32 = 24;
 var<workgroup> wEye: array<vec4<f32>, 8>;
 var<workgroup> wD: array<atomic<u32>, 8>;
@@ -1568,6 +1569,21 @@ fn camera(@builtin(local_invocation_index) li: u32) {
   }
   // the move, limited by the nearest solid
   var mv = u.cA.xyz;
+  // cruise (cam 260 on, 261 speed in world units a second, 262 the height kept over the ground: < 0 takes the eye's
+  // height now): along the heading over the ground, the height eased toward the ground ahead plus the kept height
+  if (cam[260] > 0.5) {
+    let ez = hi.z + lo.z;
+    if (cam[262] < 0.0) { cam[262] = max(ez - ground(hi.x, hi.y, lo.x, lo.y), 4.0 * margin); }
+    let hd = vec2<f32>(-cos(yaw), -sin(yaw));
+    let st = cam[261] * dt;
+    let nx = add2(hi.x, lo.x, hd.x * st);
+    let ny = add2(hi.y, lo.y, hd.y * st);
+    // (and 0.3 s further on: the eye rises before a slope, not into it)
+    let ax = add2(hi.x, lo.x, hd.x * cam[261] * 0.3);
+    let ay = add2(hi.y, lo.y, hd.y * cam[261] * 0.3);
+    let want = max(ground(nx.x, ny.x, nx.y, ny.y), ground(ax.x, ay.x, ax.y, ay.y)) + cam[262];
+    mv += vec3<f32>(hd * st, (want - ez) * min(1.0, 10.0 * dt));
+  }
   let len = length(mv);
   // (half the nearest distance can never reach a surface: an eye nearer than the margin can still move away)
   let allow = max(0.0, min(max(d - margin, 0.5 * d), speed * d * dt));

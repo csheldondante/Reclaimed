@@ -26648,3 +26648,58 @@ nearest distances a second), collided by the camera pass.
 centre ray's first solid 2.49 -> 3.00 -> 3.53 -> 4.07 (each tap deeper by about the radius, 0.53); add, three taps back
 to 2.51. scripts/nested-controls.mjs (412 x 915): Fwd 1.5 s moved the eye 6.74 along the aim (nearest 6.3 -> 1.1, no
 lift), Back 6.42 back.
+
+## 2026-11-19 — Nested scales lab, round 7 steps 3-4: cruise, the hysteresis measured, the streaming policy
+
+**Why.** The owner: "the enhancement does not seem to quite get histerisis right so I wonder if it either doesn't have a
+band or if it is built against one level of detail then transitions to the other when it loads?" And a way to judge
+panning and loading on the phone.
+
+**Cruise (step 3).** A toggle flies the eye along its heading; the camera pass (nest.wgsl, cam words 260-262) keeps the
+eye's height over the ground as it was when cruise began (ground() at the next position and 0.3 s further on, eased 10/s;
+no readback; the speed limit raised to let the cruise through, the per-frame nearest-solid limit kept). Speed slider in
+finest-live-window widths a second, 0.05 to 4 (log). Drag turns while cruising. A readout (monospace 15 px): slides,
+promotes, demotes a second, ops waiting (refused whole, retried) in the last 2 s, pool used / reserved, worst frame in 2 s.
+
+**The measurement** (src/nested/stream.ts, scripts/nested-stream.mjs; tests only, it reads back the info target). The
+info target's "not sharp" flag is now policy-free: a parent's pixel nearer the eye than its child's promote distance
+(0.45 of the child's window, the band's own rule). Counted in the central half of the view, every frame with a read free
+(~every frame at 100 Hz headless). A "pop" read: over 0.5 % of the central half became finer since the last read.
+
+**Found, before any change (960 x 640, 100 Hz vsync headless):**
+- The zoom band works: a slow zoom 30 -> 0.12 -> 30 over 24 s promoted levels 1, 2, 3 at dNear 14.3, 1.79, 0.225 (0.45 W)
+  and demoted at 0.300, 2.42, 19.3 (0.6 W): 3 promotes, 3 demotes, 0 flips. 3 of 2,468 reads coarse (the promote's lag;
+  2 % of the central half at most). A promote is a whole-view pop (expected: the whole window arrives at once).
+- Sideways there is no band: a window follows the focus with 32 columns of slack and then snaps to it (the slack is
+  gone ahead after every slide); the focus leads only along the view (at most 0.25 W) and not along the travel. Cruise at
+  1 w/s at depth 2 (pitch 1.0): level 2 slid 7.7 times a second; 0 coarse reads, but 54 of 1,141 reads popped (max 14 % of
+  the central half): the window's front rim stays in the upper central half on rising ground, and each slide's strip
+  pops from parent to child detail there. Pitch 0.35: 3 slide reversals in 10 s (the focus jitters with the centre ray's
+  hit distance). Turning 0.5 rad/s: 56 reversals (mostly the turn itself), 99 pop reads.
+- A child is derived from its parent's current content: ops are queued parent first and run in queue order, and no frame
+  in these runs submitted more than one level op. But a child's window is clamped inside its parent's current window,
+  so a lagging parent limits the child's lead.
+- The pool grows with travel and never shrinks (NS-67): 2,752 -> 3,648 pages reserved for ~1,600 in use over the runs.
+
+**The policy (step 4, app.ts focus / levels).** Each level's window centres on the eye led along the view (up to 0.2 W)
+and along the eye's smoothed velocity (0.6 s of travel), the lead at most 0.4 W (the eye 0.1 W inside the rear edge).
+A window slides when its target is 32 columns away along the travel (eager) or 64 against it or with no travel (the
+band: no back and forth on a jittering focus); a slide goes all the way to the target. One level op a frame. Demote
+needs dNear past 0.6 W for 0.5 s (fast cruises over a drop flipped a level otherwise); promote stays at 0.45 W at once.
+
+**After (10 s cruises at depth 2, pitch 1.0 unless said):**
+
+| run | slides L1/L2 /s | coarse reads | pop reads | reversals | flips | worst frame |
+|---|---|---|---|---|---|---|
+| 1 w/s | 1.3 / 10 | 0 of 1,045 | 62 (max 9 %) | 0 | 0 | 12.4 ms |
+| 1 w/s, pitch 0.75 | 1.5 / 10 | 0 | 75 | 0 | 0 | 11.5 ms |
+| 1 w/s, pitch 0.35 | 1.6 / 10 | 0 | 28 | 0 (was 3) | 0 | 12.6 ms |
+| 1 w/s, turning | 2.2 / 11 | 0 | 87 | 37 (was 56) | 0 | 13.7 ms |
+| depth 3, 1 w/s | 0.1 / 1.5 / 10 (L3) | 0 | 0 | 0 | 0 | 13.5 ms |
+| 2 w/s | 2.8 / 20 | 1 (after a demote and promote over a drop) | 85 | 0 | 1 | 11.4 ms |
+| 4 w/s | 4.4 / 32 | 185 | 109 | 0 | 1 | 12.3 ms |
+| 8 w/s | | 390 (the eye made only 17 world/s) | 141 | 0 | 0 | 13.1 ms |
+
+Pops remain (the front rim is in view on rising ground; a window cannot be built off screen ahead of a forward view
+that sees to the horizon; the owner allowed pop-in). Every pop read is within 4 frames of a level op. Coarse stays 0 up
+to 1 w/s; at 2 w/s one read (a flip), from 4 w/s the windows fall behind.

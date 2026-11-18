@@ -745,6 +745,11 @@ export class GpuNest {
     // (d < 0: the eye at (x, y, z) itself)
     this.device.queue.writeBuffer(this.cam, 256 * 4, new Float32Array([x, y, d, z]));
   }
+  /** cruise for the next camera passes: on, the speed (world units a second); `keep` true takes the eye's height over the
+   *  ground now as the height to keep (the camera pass measures it) */
+  cruise(on: boolean, speed: number, keep = false): void {
+    this.device.queue.writeBuffer(this.cam, 260 * 4, new Float32Array(keep ? [on ? 1 : 0, speed, -1] : [on ? 1 : 0, speed]));
+  }
   /** the camera's last report (cam words 0-31): 20-22 eye hi, 24-26 eye lo, 27 lifts, 28 nearest solid, 29 centre hit
    *  distance (-1 none), 30 the measuring level, 31 the margin */
   readonly camOut = new Float32Array(32);

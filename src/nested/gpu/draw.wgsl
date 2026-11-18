@@ -180,9 +180,12 @@ fn fs(v: VOut) -> FOut {
   if (d.misc.z > 0.5) { col = mix(col, TINTS[u32(d.lvl.w) % 6u] * lit * 0.8, 0.55); }
   var o: FOut;
   o.color = vec4<f32>(col, 1.0);
-  // info: r a surface was drawn, g the level, b not yet sharp (a parent where the focus wants its child)
-  let wa = d.want;
-  let coarse = wa.x < wa.z && v.local.x > wa.x && v.local.y > wa.y && v.local.x < wa.z && v.local.y < wa.w;
+  // info: r a surface was drawn, g the level, b not yet sharp: a parent where its child is wanted, i.e. nearer the eye
+  // than the zoom band's promote distance for the child (want.x, this level's units; 0: no child level allowed). The
+  // same rule as the band, so it does not depend on where the streaming policy put the child's window (round 7).
+  let eb = 32u + u32(d.lvl.w) * 24u;
+  let eye = vec3<f32>(cam[eb + 16u], cam[eb + 17u], cam[eb + 18u]);
+  let coarse = d.want.x > 0.0 && length(vec3<f32>(v.local, v.lz) - eye) < d.want.x;
   o.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, select(0.0, 1.0, coarse), 1.0);
   return o;
 }
