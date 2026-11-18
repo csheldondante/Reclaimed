@@ -170,6 +170,23 @@ self-test).
   level; it can enter a tunnel or go under an overhang; its speed is limited by the distance to the nearest solid in
   any direction, and promotion and demotion use that distance.
 
+## Decisions with the owner (2026-11-18, round 3)
+
+- **The draw is baked, nothing per frame.** Owner: "it should be deforming vertices and baking the seam mesh nothing
+  per frame". The solid/air faces (B) and the top sheet's split are baked on the GPU when columns change, per changed
+  chunk; a frame with no change only draws. Sheets stay vertex-pulled grids deformed by the stored heights; the rim
+  morph and fade are per-vertex deformations driven by a uniform (time), never a re-bake. See "The baked draw".
+- **Streaming ahead.** Owner: "it seems like it can happen ahead of time with hysteresis so that we never have to
+  wait. If we stream detail ahead of what is currently in view it doesn't need to interpolate while off screen and can
+  pop in."
+- **Page shape 32 x 32 x 4** (columns x columns x intervals a page, stacked pages where the intervals justify it) is the
+  agreed direction (owner: "I think that's fine"; BACKLOG NS-37), not built yet.
+- **Verticality later, not now.** For places with much verticality and many stacked intervals the owner expects one of
+  two later routes: "a. Have materials with function driven internal boundaries b. Introduce an orthogonal column grid
+  for the vertical surface (like the baked seam joiners)". "Neither makes sense to do prematurely and both could slot in
+  I believe." Nothing here may block either: (a) is the pattern materials of design point 9; (b) a second, sideways
+  column grid owning a cliff face, in the spirit of DESIGN.md section 3's many grids.
+
 ## Column correspondence (round 2; the Storage section's rules extended)
 
 - **Structure** = a column's interval count and material sequence. Gaps (air between intervals) are not part of it:
@@ -245,6 +262,43 @@ self-test).
   A triplanar pattern in world units on every face. Gaps under a quarter column are drawn as solid (a finer tunnel's
   mean air). Each window centres ahead of the eye along the view by up to a quarter window. Open: spires from the
   block-mean bump (NS-34), slow frames beside carved blobs at depth 2 (NS-32), repeated lifts at one mouth (NS-36).
+
+- Round 3 step 1 (2026-11-18): the baked draw (below). The three blob views went from 270-335 ms of uncapped draw to
+  6-7.5 ms (vsync everywhere); a frame with no change runs no compute for the draw.
+
+## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
+
+- **What is baked, when.** Every op that changes a level's live columns (root, promote, slide, edit: the edited,
+  restricted and derived regions) bakes that region grown by one chunk (a column's normals and its quads reach its
+  neighbours), parents before children, then rebuilds the draw's page list. Nothing is baked per frame; the camera and
+  the draw only read.
+- **The gap table** (GAP pages, level id 16 + depth, same keys and page shape as the columns): for each column its air
+  regions (gaps) as three records each: floor, ceiling, materials; the solid run's bottom and the floor and ceiling
+  normals; the links (the corresponding gap of the neighbour at +x, +y, +x+y, -x, -y, -x-y, mutual nearest floor, 16
+  bits each). Allocated only for chunks where some column, or a neighbour of one, has more than one gap; elsewhere a
+  column's one gap is read from its intervals. Normals are central differences of the linked neighbours' floors
+  (ceilings), so floors and ceilings shade smoothly across quads (NS-33), and the top sheet beside an overhang takes
+  the floor its neighbours' matching gaps continue, not the step up to the overhang's top.
+- **The mesh items** (MESH pages, level id 24 + depth, only for chunks that have items; 432 items of 29 words a page,
+  stacked pages as needed): for each triangle of a quad with a corner of more than one gap, one item per region (the
+  air connected across the triangle's corners by the links, each region seeded at its first corner, so every corner's
+  gap is in exactly one region). An item holds, per corner, the gap's bounds, normals and materials, and the parent's
+  matching bounds and presence there (the rim morph's targets). A triangle is the top sheet's when its three corners
+  have one gap each, else B's: the two never overlap or leave a gap between them.
+- **The draw.** A: the indexed grid, vertices deformed by the stored heights (unchanged), its triangles beside B's
+  discarded by a per-vertex flag. B: one indirect draw a level over the page list (an instance per item slot; empty
+  slots cost one read). The vertex stage cuts each item (marching triangles on a presence field) and walls the cut
+  (an enclosed region from floor to ceiling, the sky down its solid run). The rim morph and the fade are per-vertex
+  blends driven by the uniform's time: heights toward the parent's baked targets, and for enclosed regions the presence
+  itself (child's own 0/1 toward the parent's interpolated presence), meant to slide a tunnel's wall to where the
+  parent's wall stands at the rim. Not enough yet: the lip ring still shows where a tunnel crosses the level-2 rim
+  (NS-21 open).
+- **Sizes and overflow.** Gap and mesh pages come from the one pool like column pages (reserved with the op, the pool
+  grows; a kernel that cannot get a page counts a refusal, shown on the page). The page list is sized to the pool
+  (rebuilt by every op, so a grow needs no copy). Nothing is capped or dropped.
+- **Cost.** Tunnel scene at depth 2: a carve's bake adds ~2-6 ms of GPU time to the edit (7-12 ms without it); the
+  bakes read their chunk's and the parent's pages through a per-workgroup cache of the 3 x 3 chunks' page ids.
+  Pages: the tunnel scene with three levels holds ~1370-1420 pages (was ~800): the tables round the tunnels at depth 2.
 
 ## Open questions
 

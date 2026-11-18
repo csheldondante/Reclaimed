@@ -72,7 +72,8 @@ user) · `deferred` (agreed for later).
 - NS-22 `done` (round 2b step 1) The camera's eye collision marches the finest level only, and promotion still uses
   the orbit distance, not the distance to the nearest solid. Now: a free eye, the nearest solid measured on every
   level holding it, moves limited by it, promotion by it.
-- NS-23 (perf) Draw B's vertices recompute gap matching for all four corners of the quad (several page walks each);
+- NS-23 `done` (round 3 step 1: the baked draw, gap table and mesh items baked per changed chunk; NESTED_SCALES.md
+  "The baked draw") (perf) Draw B's vertices recompute gap matching for all four corners of the quad (several page walks each);
   fine for a few hundred carved quads, not for a level full of caves. A per-column gap list made once per change
   would cut it.
 - NS-24 (limit) The camera's solid test dilates each column to the 2 x 2 columns between neighbouring centres. It
@@ -92,11 +93,12 @@ user) · `deferred` (agreed for later).
   about a root column does not show from the root at all; a darkening by enclosed air would be the honest proxy.
 - NS-31 (perf) The first frames stall 5.5-8 s after load on the desktop (frames flow after ~8 s; shader compile most
   likely). Startup is not optimised yet (owner, CG28); a phone will be slower.
-- NS-32 (perf, serious) Views beside a carved blob at depth 2: 120-193 ms a frame (vsync 10 ms elsewhere). In the rim
+- NS-32 `done` (round 3 step 1: uncapped draw 6-7.5 ms in the three views, was 270-335; vsync) (perf, serious) Views beside a carved blob at depth 2: 120-193 ms a frame (vsync 10 ms elsewhere). In the rim
   crossing B alone costs it (sheets only: 10 ms): the rim morph's parent matching per vertex. Inside the tunnel
   looking back, sheets alone cost it too (the scan's per-quad matching over many multi-gap columns). The root fix is
   NS-23's per-column gap table, made once per change.
-- NS-33 (limit) B's normals are the gap's gradient over its quad (smooth across the diagonal, not across quads), so
+- NS-33 `done` (round 3 step 1: normals from the linked neighbours' floors and ceilings, baked; the top sheet beside an
+  overhang too) (limit) B's normals are the gap's gradient over its quad (smooth across the diagonal, not across quads), so
   floors and ceilings shade in quad facets. Smooth across quads needs NS-23's gap table.
 - NS-34 (serious, enhance) NS-16 shows as spires: a step of a few columns at level L (a carve's floor edge, an add)
   makes one spire per parent block at L + 1 (the sin² bump that restores the block mean). Seen inside a carved tunnel
@@ -110,6 +112,27 @@ user) · `deferred` (agreed for later).
   only fire on a promote or an edit.
 - NS-29 (limit) The pick's ray march steps by 0.4 x the vertical gap (the old camera's flaw): near a vertical wall it
   can step past a thin feature and pick a surface behind it. Step by the camera's 3D distance (dilated boxes).
+- NS-37 (asked, owner; agreed direction) Page shape. Owner: "I wonder if 4x128x128 is a better shape than 16x64x64
+  given we likely only see through one hole or so at a time? ... the fewer chunks and more area they take up the better
+  and with the way the model pages can have depth we can stream more only when the intervals justify it." Clarified: "I
+  meant 32x32x4 I just meant fewer depth channels per piece since they are not used as much as the other dimensions."
+  Then: "I think that's fine". So the candidate is 32 x 32 columns with K = 4 intervals a page (stacked pages where the
+  intervals justify it) against today's 16 x 16 x 16. To do: K and the page's xy size as build/URL parameters, and a
+  sweep on the tunnel scene and an unedited one (pages and bytes in use, stacked pages and their fill, slide time and
+  worst burst, promote time, bytes dirtied by one small carve).
+- NS-38 (perf) The bake kernels compile slowly on the desktop's D3D11 compiler (FXC inlines every call): frames now flow
+  after ~10-11 s (was ~7-8 s; NS-31). The first version hung the GPU process; the kernels were rewritten with few call
+  sites. Measure on the phone (Vulkan) before more work; split meshBake if it matters.
+- NS-39 (bug, open) A hairline crack (sky colour) shows at a few points where the added ball's top meets its side walls
+  (local/nested/dash-top-d.png, near the ball's rim). Not diagnosed.
+- NS-40 (limit) Gap links are 16 bits (a column with 65535 or more air gaps would not link); the items' fade uses the
+  birth of the quad's base chunk while the top sheet uses each column's own, so a seam between chunks born at different
+  times can open by the fade's difference for 0.4 s.
+- NS-41 (perf, memory) The gap and mesh pages roughly double the pages held where there are tunnels (tunnel scene,
+  three levels: ~1400 pages, was ~800). A page is 49 KB, mostly empty for these tables; NS-37's smaller pages would cut
+  it, or a table page of its own shape.
+- NS-42 (hack, measurement only) GpuNest.bakeOff and Renderer.noMorphB / diagB are measurement switches (the bench and
+  the stills script); not used by the sandbox.
 
 ## Terrain: rivers first (2026-11-17, `terrain-rivers`; docs/design/TERRAIN_RIVERS.md, DECISIONS 2026-11-17)
 

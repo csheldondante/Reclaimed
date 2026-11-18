@@ -87,6 +87,57 @@ fn layerVal(lid: u32, X: i32, Y: i32, v: u32) -> f32 {
   return a.z0 - ivlAt(lid, X, Y, i - 1u).z1;
 }
 
+// ---- the baked draw (docs/design/NESTED_SCALES.md "The baked draw") ---------------------------------------------------
+// GAP pages (level id GAP_ID + depth): a chunk's per-column air regions (gaps), only for chunks where some column has
+// more than one; elsewhere a column's one gap (the sky) is read from its intervals. A column's gap g is three records:
+// (floor, ceiling, fm | cm << 8), (the bottom of the solid run under the floor, floor normal, ceiling normal; the
+// normals' xy packed snorm16) and its links: the corresponding gap of the neighbour at +x, +y, +x+y (-1: none). MESH pages (MESH_ID + depth): the chunk's baked items (draw B), word 0 the item count
+// of that page, items of ITEM_W words from MESH_HDR; only for chunks that have items.
+const GAP_ID: u32 = 16u;
+const GREC: u32 = 3u;
+const MESH_ID: u32 = 24u;
+const MESH_HDR: u32 = 4u;
+const ITEM_W: u32 = 29u;
+const IPP: u32 = 432u; // (PW - MESH_HDR) / ITEM_W
+/** an air gap thinner than this (local units: a quarter column) is below the level's resolution (a finer level's tunnel
+ *  restricted to its mean air) and is drawn as solid (NS-30) */
+const GAP_MIN: f32 = 0.25;
+struct Gap {
+  f: f32, // floor
+  c: f32, // ceiling (1e30: the sky)
+  fm: u32,
+  cm: u32,
+  rb: f32, // the bottom of the solid run under the floor
+  nF: vec2<f32>,
+  nC: vec2<f32>,
+  ok: bool,
+}
+fn recW(lid: u32, X: i32, Y: i32, i: u32, w: u32) -> u32 {
+  let p = pageOf(lid, X >> 4, Y >> 4, i / K);
+  if (p >= NOT_LOADED) { return 0u; }
+  return pgLoad(p * PW + 256u + (colIn(X, Y) * K + (i % K)) * 3u + w);
+}
+/** whether the column's chunk has gap pages */
+fn hasGapPages(L: u32, X: i32, Y: i32) -> bool { return pageOf(GAP_ID + L, X >> 4, Y >> 4, 0u) < NOT_LOADED; }
+/** a column's gap count (the baked table; a chunk without one: 1, or 0 for no column) */
+fn gCount(L: u32, X: i32, Y: i32) -> u32 {
+  if (hasGapPages(L, X, Y)) { return colCount(GAP_ID + L, X, Y) / GREC; }
+  return select(0u, 1u, colCount(L, X, Y) > 0u);
+}
+/** a column's gap g from the baked table (only for columns of chunks with gap pages) */
+fn gRec(L: u32, X: i32, Y: i32, g: u32) -> Gap {
+  let lid = GAP_ID + L;
+  let r = GREC * g;
+  let m = recW(lid, X, Y, r, 2u);
+  return Gap(bitcast<f32>(recW(lid, X, Y, r, 0u)), bitcast<f32>(recW(lid, X, Y, r, 1u)), m & 0xffu, (m >> 8u) & 0xffu, bitcast<f32>(recW(lid, X, Y, r + 1u, 0u)), unpack2x16snorm(recW(lid, X, Y, r + 1u, 1u)), unpack2x16snorm(recW(lid, X, Y, r + 1u, 2u)), true);
+}
+/** the baked link of gap g to the corresponding gap of the neighbour in direction d (+x, +y, +x+y, -x, -y, -x-y: 16
+ *  bits each, two a word); -1: none */
+fn gLink(L: u32, X: i32, Y: i32, g: u32, d: u32) -> i32 {
+  let v = (recW(GAP_ID + L, X, Y, GREC * g + 2u, d / 2u) >> (16u * (d % 2u))) & 0xffffu;
+  return select(i32(v), -1, v == 0xffffu);
+}
+
 // ---- hashing and detail (the oracle's hash3 / valueNoise / detail, src/nested/oracle.ts) -------------------------------
 fn hash3(x: i32, y: i32, z: i32, seed: u32) -> f32 {
   var h = (bitcast<u32>(x) * 0x27d4eb2du) ^ (bitcast<u32>(y) * 0x165667b1u) ^ (bitcast<u32>(z) * 0x9e3779b1u) ^ (seed * 0x85ebca6bu);

@@ -1,8 +1,9 @@
-// Nested scales lab: the draw (gpu/draw.wgsl). Every level draws the boundary of solid against air from its pages:
-// A, the top sheet (one quad, six vertices, pulled from the columns); B, everything else (tunnel floors and ceilings,
-// overhang undersides, the walls where an air region ends between columns) for the quads a GPU scan lists, as an
-// indirect draw. Finest first, composed by depth (reverse Z, each level's view-projection in its own units). A second
-// target carries per-pixel info for the measurements (surface drawn, level, not yet sharp).
+// Nested scales lab: the draw (gpu/draw.wgsl). Every level draws the boundary of solid against air: A, the top sheet
+// (an indexed grid pulled from the columns and deformed by their heights); B, everything else (tunnel floors and
+// ceilings, overhang undersides, the walls where an air region ends between columns), as one indirect draw over the
+// items the GPU baked when the columns changed (nest.wgsl meshBake; the arguments and the page list are the nest's).
+// A frame runs no compute here: it only draws. Finest first, composed by depth (reverse Z, each level's
+// view-projection in its own units). A second target carries per-pixel info for the measurements.
 import storeWgsl from './gpu/store.wgsl?raw';
 import drawWgsl from './gpu/draw.wgsl?raw';
 import { MAX_LEVELS, TCAP, type GpuNest } from './gpu/nest';
@@ -20,31 +21,26 @@ export interface DrawLevel {
 export class Renderer {
   private pipeA: GPURenderPipeline;
   private pipeB: GPURenderPipeline;
-  private scanP: GPUComputePipeline;
-  private finishP: GPUComputePipeline;
   private layout: GPUBindGroupLayout;
-  private clayout: GPUBindGroupLayout;
   private ubuf: GPUBuffer;
-  private qlist: GPUBuffer;
-  private dinfo: GPUBuffer;
-  private dargs: GPUBuffer;
-  private qPer: number;
   private bg: GPUBindGroup | null = null;
-  private cbg: GPUBindGroup | null = null;
-  private bgFor: GPUBuffer | null = null;
+  private bgFor: GPUBuffer[] = [];
   private depth: GPUTexture | null = null;
   info: GPUTexture | null = null;
   readonly format: GPUTextureFormat;
   tint = false;
   fadeSeconds = 0.4;
-  /** (the report) draw B off: only the top sheets, as before this round */
+  /** (the report) draw B off: only the top sheets */
   sheetsOnly = false;
+  /** (measurement) B without its rim morph */
+  noMorphB = false;
+  /** (diagnostics) B's floors, ceilings and walls in flat blue, green and red */
+  diagB = false;
 
   constructor(
     private device: GPUDevice,
     private ctx: GPUCanvasContext,
     private nest: GpuNest,
-    maxN: number,
   ) {
     this.format = navigator.gpu.getPreferredCanvasFormat();
     ctx.configure({ device, format: this.format, alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
@@ -54,18 +50,7 @@ export class Renderer {
       label: 'nest draw',
       entries: [
         { binding: 0, visibility: V | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: DU_SIZE } },
-        ...[1, 2, 3, 4, 5, 6].map((binding) => ({ binding, visibility: V, buffer: ro })),
-        { binding: 10, visibility: GPUShaderStage.FRAGMENT, buffer: ro },
-      ],
-    });
-    const C = GPUShaderStage.COMPUTE;
-    this.clayout = device.createBindGroupLayout({
-      label: 'nest draw scan',
-      entries: [
-        { binding: 0, visibility: C, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: DU_SIZE } },
-        { binding: 1, visibility: C, buffer: ro },
-        { binding: 2, visibility: C, buffer: ro },
-        ...[7, 8, 9, 11].map((binding) => ({ binding, visibility: C, buffer: { type: 'storage' as const } })),
+        ...[1, 2, 3, 4, 5].map((binding) => ({ binding, visibility: V, buffer: ro })),
       ],
     });
     const module = device.createShaderModule({ label: 'nest draw', code: `const TCAP: u32 = ${TCAP}u;\n${storeWgsl}\n${drawWgsl}` });
@@ -81,19 +66,8 @@ export class Renderer {
       });
     this.pipeA = mk('vs', 'fsA');
     this.pipeB = mk('vsB', 'fs');
-    const cpl = device.createPipelineLayout({ bindGroupLayouts: [this.clayout] });
-    this.scanP = device.createComputePipeline({ label: 'nest draw scan', layout: cpl, compute: { module, entryPoint: 'scan' } });
-    this.finishP = device.createComputePipeline({ label: 'nest draw finish', layout: cpl, compute: { module, entryPoint: 'finish' } });
     this.ubuf = device.createBuffer({ label: 'nest draw uniforms', size: DU * MAX_LEVELS, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    // the quad list: one slot a quad of each level's window (its size, not a cap on what is drawn)
-    this.qPer = (maxN - 1) * (maxN - 1);
-    const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
-    this.qlist = device.createBuffer({ label: 'nest draw quads', size: this.qPer * MAX_LEVELS * 4, usage: S });
-    this.dinfo = device.createBuffer({ label: 'nest draw info', size: MAX_LEVELS * 16, usage: S });
-    this.dargs = device.createBuffer({ label: 'nest draw args', size: MAX_LEVELS * 16, usage: S | GPUBufferUsage.INDIRECT });
-    this.amask = device.createBuffer({ label: 'nest draw sheet mask', size: this.qPer * MAX_LEVELS * 4, usage: S });
   }
-  private amask: GPUBuffer;
   private grids = new Map<number, GPUBuffer>();
   /** the top sheet's index buffer for an n x n grid of vertices (two triangles a quad, diagonal (i, j)-(i + 1, j + 1)) */
   private grid(n: number): GPUBuffer {
@@ -124,7 +98,7 @@ export class Renderer {
   draw(levels: DrawLevel[]): void {
     const tex = this.ctx.getCurrentTexture();
     this.targets(tex.width, tex.height);
-    if (this.bgFor !== this.nest.pg) {
+    if (this.bgFor[0] !== this.nest.pg || this.bgFor[1] !== this.nest.dir) {
       this.bg = this.device.createBindGroup({
         label: 'nest draw',
         layout: this.layout,
@@ -134,25 +108,10 @@ export class Renderer {
           { binding: 2, resource: { buffer: this.nest.pg } },
           { binding: 3, resource: { buffer: this.nest.cam } },
           { binding: 4, resource: { buffer: this.nest.reg } },
-          { binding: 5, resource: { buffer: this.qlist } },
-          { binding: 6, resource: { buffer: this.dinfo } },
-          { binding: 10, resource: { buffer: this.amask } },
+          { binding: 5, resource: { buffer: this.nest.dir } },
         ],
       });
-      this.cbg = this.device.createBindGroup({
-        label: 'nest draw scan',
-        layout: this.clayout,
-        entries: [
-          { binding: 0, resource: { buffer: this.ubuf, size: DU_SIZE } },
-          { binding: 1, resource: { buffer: this.nest.tab } },
-          { binding: 2, resource: { buffer: this.nest.pg } },
-          { binding: 7, resource: { buffer: this.qlist } },
-          { binding: 8, resource: { buffer: this.dinfo } },
-          { binding: 9, resource: { buffer: this.dargs } },
-          { binding: 11, resource: { buffer: this.amask } },
-        ],
-      });
-      this.bgFor = this.nest.pg;
+      this.bgFor = [this.nest.pg, this.nest.dir];
     }
     const st = new ArrayBuffer(DU * MAX_LEVELS);
     const now = this.nest.now();
@@ -166,21 +125,10 @@ export class Renderer {
       f.set([now, this.fadeSeconds, this.tint ? 1 : 0, this.nest.k], 4);
       f.set(lv.want ?? [1, 1, 0, 0], 8);
       f.set([0.45, -0.35, 0.82, 0], 12);
-      new Uint32Array(st, lv.depth * DU + 96, 4).set([lv.depth * this.qPer, 0, 0, 0]);
+      new Uint32Array(st, lv.depth * DU + 96, 4).set([this.nest.cap, this.noMorphB ? 1 : 0, this.diagB ? 1 : 0, 0]);
     }
     this.device.queue.writeBuffer(this.ubuf, 0, st);
-    this.device.queue.writeBuffer(this.dinfo, 0, new Uint32Array(MAX_LEVELS * 4));
     const enc = this.device.createCommandEncoder({ label: 'nest draw' });
-    const cp = enc.beginComputePass({ label: 'nest draw scan' });
-    for (const lv of levels) {
-      const n = this.nest.wins[lv.depth]!.n;
-      cp.setBindGroup(0, this.cbg!, [lv.depth * DU]);
-      cp.setPipeline(this.scanP);
-      cp.dispatchWorkgroups(Math.ceil(((n - 1) * (n - 1)) / 64));
-      cp.setPipeline(this.finishP);
-      cp.dispatchWorkgroups(1);
-    }
-    cp.end();
     const pass = enc.beginRenderPass({
       colorAttachments: [
         { view: tex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: { r: 0.62, g: 0.71, b: 0.78, a: 1 } },
@@ -197,7 +145,7 @@ export class Renderer {
       pass.drawIndexed(6 * (n - 1) * (n - 1));
       if (!this.sheetsOnly) {
         pass.setPipeline(this.pipeB);
-        pass.drawIndirect(this.dargs, lv.depth * 16);
+        pass.drawIndirect(this.nest.drawArgs, lv.depth * 16);
       }
     }
     pass.end();

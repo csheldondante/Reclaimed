@@ -91,7 +91,7 @@ export class App {
     const ctx = this.canvas.getContext('webgpu');
     if (!ctx) throw new Error('This browser has WebGPU but would not give the page a WebGPU canvas.');
     this.nest = new GpuNest(device, this.k, Number(q.get('seed') ?? 7), 1536);
-    this.render = new Renderer(device, ctx, this.nest, Math.max(this.rootN, this.n));
+    this.render = new Renderer(device, ctx, this.nest);
     this.render.tint = q.get('tint') === '1';
     if (q.has('detail')) this.nest.detailAmp = Number(q.get('detail'));
     if (q.has('yaw')) this.yaw = Number(q.get('yaw'));
@@ -432,6 +432,44 @@ export class App {
           out.push({ m, eye: e.map((v) => +v.toFixed(3)), inWin, top: col ? col.z1[col.z1.length - 1] : null, inside, near: cam[b + 19] });
         }
         return { eyeZ: cam[2], dNear: cam[28], dHit: cam[29], lifts: cam[27], level: cam[30], levels: out };
+      },
+      /** (measurement) the draw alone, uncapped: n draws of the current levels back to back, ms each (GPU done) */
+      benchDraw: async (n = 20) => {
+        const list = this.drawList();
+        this.render.draw(list);
+        await this.device.queue.onSubmittedWorkDone();
+        const t = performance.now();
+        for (let i = 0; i < n; i++) this.render.draw(list);
+        await this.device.queue.onSubmittedWorkDone();
+        return (performance.now() - t) / n;
+      },
+      /** (measurement) one frame's GPU work with nothing changing: the camera pass and the draw, n times, ms each */
+      benchFrame: async (n = 20) => {
+        const list = this.drawList();
+        await this.device.queue.onSubmittedWorkDone();
+        const t = performance.now();
+        for (let i = 0; i < n; i++) {
+          this.nest.camera();
+          this.render.draw(list);
+        }
+        await this.device.queue.onSubmittedWorkDone();
+        return (performance.now() - t) / n;
+      },
+      /** (measurement) an edit's GPU time with and without the bakes (ms; the edit is applied twice) */
+      benchEdit: async (spec: Parameters<GpuNest['edit']>[0]) => {
+        const run = async (off: boolean | 'mesh') => {
+          await this.device.queue.onSubmittedWorkDone();
+          this.nest.bakeOff = off;
+          const t = performance.now();
+          this.nest.edit(spec);
+          await this.device.queue.onSubmittedWorkDone();
+          this.nest.bakeOff = false;
+          return performance.now() - t;
+        };
+        const without = await run(true);
+        const gapsOnly = await run('mesh');
+        const withBake = await run(false);
+        return { withBake, gapsOnly, without };
       },
       tint: (on: boolean) => {
         this.render.tint = on;

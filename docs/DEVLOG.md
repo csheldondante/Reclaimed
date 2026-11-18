@@ -26365,6 +26365,43 @@ in level 1 for the same reason. The GIF run: flying out through the far mouth at
 solid 7 times while barely moving (NS-36: the distance measure misses something there; the lift keeps the drawn eye
 outside, but it should not fire).
 
+## 2026-11-18 — Nested scales lab, round 3 step 1: the baked draw (nothing per frame), smooth normals, no shards
+
+**Why.** Views beside the carved blob at depth 2 ran 120-193 ms a frame (NS-32), and the top sheet met the shapes' undersides
+in a sawtooth of green shards. Measured first (scripts/nested-stills.mjs: `benchDraw` = n draws back to back, GPU done;
+parts toggled): uncapped draw 270-335 ms in the three blob views; top sheets alone 3.6-4.3 ms; the scan alone 1.4-1.8 ms;
+B without its rim morph 274-348 ms. So the cost was B's per-vertex gap matching (several hashed page walks per call,
+for every instance of every listed quad, every frame), not the morph. The owner then ruled: "it should be deforming
+vertices and baking the seam mesh nothing per frame".
+
+**What.** The draw is baked on the GPU when columns change (NESTED_SCALES.md "The baked draw"): a gap table per column
+(bounds, normals, links to the six neighbours a triangle uses) and mesh items per triangle region, on pages, baked over
+each op's changed regions grown by a chunk, then a page list for one indirect draw a level. A frame runs no scan and no
+matching: the vertex stage places the items (cuts, walls, rim morph and fade as per-vertex blends). A triangle is the
+top sheet's when all three corners have one gap, else B's (the shards were A and B disagreeing per triangle: the old
+regions came from pairwise matches that are not transitive). Normals are the linked neighbours' central differences
+(NS-33), the top sheet's too beside an overhang (its old normal saw the step to the overhang's top: a dark outline round
+every overhang). Two compile-time fixes on the way: the first bake kernels hung Chrome's GPU process under FXC (every
+call inlined; the region search was O(G^5) on the self-test's 40-interval column); the region search now reads baked
+links (O(G^2)), each kernel has few call sites, and the bakes read pages through a per-workgroup cache of the 3 x 3
+chunks' (and the parent's) page ids (a carve's bake went from ~50 ms to ~2-6 ms).
+
+**Measured** (desktop iGPU, D3D11, 960 x 640; vsync 10 ms):
+
+| view | uncapped draw before | after | GPU per frame (camera pass + draw) | frame |
+|---|---|---|---|---|
+| tunnel-inside-out (depth 2) | 304 ms | 7.4 ms | 6.5 ms | 10.0 ms |
+| tunnel-inside-back | 335 ms | 7.1 ms | 6.5 ms | 10.0 ms (was 192) |
+| rim-crossing | 310 ms | 7.0 ms | 5.8 ms | 10.0 ms (was 182) |
+| tunnel-mouth-d2 | 269 ms | 6.5 ms | 5.3 ms | 10.0 ms |
+| tunnel-outside (depth 1) | 9.6 ms | 4.4 ms | 2.1 ms | 10.0 ms |
+
+A small carve at level 1 with three levels open: 9-12 ms GPU with the bakes, 6-10 ms without. Frames flow ~10-11 s after
+load (was ~7-8 s: the bake kernels' compile, NS-38). Pages: ~1400 with three levels in the tunnel scene (was ~800; NS-41).
+Self-test 23/23, unit tests 11/11. Stills: local/nested/tunnel-outside-d.png (no shards, no dark outline; the half-way
+walls' staircase stays until SDF footprints), dash-top-d.png (was dash-top.png: the dark outline), rim-crossing-plain-c.png
+(the lip ring is still there: NS-21), tunnel-inside-out-a.png (the spires: NS-34, next step).
+
 
 
 

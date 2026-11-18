@@ -16,9 +16,15 @@ export const RES_ID = 8;
 export const MAX_LEVELS = 8;
 const UB = 256;
 const USLOTS = 256;
-/** reg: 16 header words, 40 slots of 12 (0-31 the plan's, 32-39 the CPU's) */
-const REG_WORDS = 16 + 40 * 12;
+/** reg: 16 header words, 64 slots of 12 (0-31 the plan's, 32-39 the CPU's, 40-63 the bakes') */
+const SLOTS = 64;
+const REG_WORDS = 16 + SLOTS * 12;
 const CPU_SLOT = 32;
+const BAKE_SLOT = 40;
+/** level ids of the baked draw (store.wgsl GAP_ID, MESH_ID) and a mesh page's item slots (IPP) */
+export const GAP_ID = 16;
+export const MESH_ID = 24;
+export const IPP = 432;
 const CTL_STACK = 16;
 /** a brush's radius at most, in the edited level's columns (nest.wgsl MAX_R; the melt scratch is sized by it: NS-9) */
 const MAX_BRUSH = 76;
@@ -68,6 +74,12 @@ export class GpuNest {
   private planLayout: GPUBindGroupLayout;
   private planBg!: GPUBindGroup;
   readonly args: GPUBuffer;
+  /** draw B's indirect arguments a level (written by dirFinish) and the list of mesh pages it instances over */
+  readonly drawArgs: GPUBuffer;
+  dir!: GPUBuffer;
+  private bakeNext = BAKE_SLOT;
+  /** (measurement only) skip the bakes: an op's cost without them */
+  bakeOff: boolean | 'mesh' = false;
   private pipes: Record<string, GPUComputePipeline> = {};
   private enc: GPUCommandEncoder | null = null;
   private pass: GPUComputePassEncoder | null = null;
@@ -96,7 +108,9 @@ export class GpuNest {
     this.allocPool(pages);
     this.scr = device.createBuffer({ label: 'nest scratch', size: 160 * 160 * 8 * 4, usage: S });
     this.reg = device.createBuffer({ label: 'nest regions', size: REG_WORDS * 4, usage: S });
-    this.args = device.createBuffer({ label: 'nest dispatch args', size: 40 * 16, usage: S | GPUBufferUsage.INDIRECT });
+    this.args = device.createBuffer({ label: 'nest dispatch args', size: SLOTS * 16, usage: S | GPUBufferUsage.INDIRECT });
+    this.drawArgs = device.createBuffer({ label: 'nest draw B args', size: MAX_LEVELS * 16, usage: S | GPUBufferUsage.INDIRECT });
+    device.queue.writeBuffer(this.drawArgs, 0, new Uint32Array(MAX_LEVELS * 4));
     this.cam = device.createBuffer({ label: 'nest camera', size: 1024 * 4, usage: S });
     this.ubuf = device.createBuffer({ label: 'nest uniforms', size: UB * USLOTS, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     // the table starts empty (key1 = EMPTY)
@@ -107,7 +121,7 @@ export class GpuNest {
       label: 'nest',
       entries: [
         { binding: 0, visibility: st, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: UB } },
-        ...[1, 2, 3, 4, 5, 6].map((binding) => ({ binding, visibility: st, buffer: { type: 'storage' as const } })),
+        ...[1, 2, 3, 4, 5, 6, 8, 9].map((binding) => ({ binding, visibility: st, buffer: { type: 'storage' as const } })),
       ],
     });
     const module = device.createShaderModule({ label: 'nest', code: `const TCAP: u32 = ${TCAP}u;\n${storeWgsl}\n${nestWgsl}` });
@@ -120,9 +134,9 @@ export class GpuNest {
     });
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     const ppl = device.createPipelineLayout({ bindGroupLayouts: [this.planLayout] });
-    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball'])
+    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'gapsBake', 'meshBake', 'dirClear', 'dirBuild', 'dirFinish'])
       this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: pl, compute: { module, entryPoint: e } });
-    this.pipes.plan = device.createComputePipeline({ label: 'nest plan', layout: ppl, compute: { module, entryPoint: 'plan' } });
+    for (const e of ['plan', 'dilate']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: ppl, compute: { module, entryPoint: e } });
     this.rebind();
   }
 
@@ -131,6 +145,9 @@ export class GpuNest {
     if (pages * PW * 4 > this.maxBinding) throw new Error(`the page pool would need ${((pages * PW * 4) / 2 ** 20).toFixed(0)} MB, past this device's largest storage binding (${(this.maxBinding / 2 ** 20).toFixed(0)} MB): NS-4`);
     this.pg = this.device.createBuffer({ label: 'nest pages', size: pages * PW * 4, usage: S });
     this.ctl = this.device.createBuffer({ label: 'nest pool control', size: (CTL_STACK + 2 * pages) * 4, usage: S });
+    // the draw's list of mesh pages: up to the pool's pages a level (rebuilt by every op, so a grow needs no copy)
+    this.dir?.destroy();
+    this.dir = this.device.createBuffer({ label: 'nest mesh directory', size: (16 + MAX_LEVELS * pages * 2) * 4, usage: S });
   }
   private rebind(): void {
     const entries: GPUBindGroupEntry[] = [
@@ -142,7 +159,11 @@ export class GpuNest {
       { binding: 5, resource: { buffer: this.reg } },
       { binding: 6, resource: { buffer: this.cam } },
     ];
-    this.bg = this.device.createBindGroup({ label: 'nest', layout: this.layout, entries });
+    this.bg = this.device.createBindGroup({
+      label: 'nest',
+      layout: this.layout,
+      entries: [...entries, { binding: 8, resource: { buffer: this.dir } }, { binding: 9, resource: { buffer: this.drawArgs } }],
+    });
     this.planBg = this.device.createBindGroup({ label: 'nest plan', layout: this.planLayout, entries: [...entries, { binding: 7, resource: { buffer: this.args } }] });
   }
 
@@ -192,7 +213,7 @@ export class GpuNest {
     if (x <= 0 || y <= 0) return;
     const p = this.begin();
     p.setPipeline(this.pipes[entry]);
-    p.setBindGroup(0, entry === 'plan' ? this.planBg : this.bg, [off]);
+    p.setBindGroup(0, entry === 'plan' || entry === 'dilate' ? this.planBg : this.bg, [off]);
     p.dispatchWorkgroups(x, y);
   }
   private runIndirect(entry: string, off: number, slot: number): void {
@@ -210,6 +231,7 @@ export class GpuNest {
     this.pass = null;
     this.enc = null;
     this.uUsed = 0;
+    this.bakeNext = BAKE_SLOT;
     this.readStats();
   }
   /** a CPU slot: a chunk rect to dispatch over (written before this op's submit) */
@@ -275,13 +297,41 @@ export class GpuNest {
     return 1 + this.stats.maxCz;
   }
 
+  // ---- the baked draw ---------------------------------------------------------------------------------------------------
+  /** bake level L's draw over region slots (their chunks grown by one: a column's normals and its quads reach its
+   *  neighbours): every gap table first, then the mesh items, which read the neighbours' tables */
+  private bake(L: number, slots: number[]): void {
+    if (this.bakeOff === true) return;
+    const dil = slots.map((s) => {
+      if (this.bakeNext >= SLOTS) throw new Error('nest: more bake regions in one submit than slots');
+      const t = this.bakeNext++;
+      this.run('dilate', this.uni(({ a, e }) => ((a[3] = L), e.set([s, t, 0, 0]))), 1);
+      return t;
+    });
+    for (const t of dil) this.runIndirect('gapsBake', this.uni(({ a, r }) => ((a[3] = L), (r[0] = t))), t);
+    if (this.bakeOff === 'mesh') return;
+    for (const t of dil) this.runIndirect('meshBake', this.uni(({ a, r }) => ((a[3] = L), (r[0] = t))), t);
+  }
+  /** the draw's list of mesh pages, rebuilt from the table (after an op's bakes and releases) */
+  private directory(): void {
+    this.run('dirClear', this.uni(), 1);
+    this.run('dirBuild', this.uni(), TCAP / 64);
+    this.run('dirFinish', this.uni(), 1);
+  }
+  /** pages a bake may take over `chunks` chunks: a gap page and a mesh page each, plus overflow */
+  private bakeBound(chunks: number): number {
+    return chunks * 2 * this.overflowPages();
+  }
+
   // ---- operations -----------------------------------------------------------------------------------------------------
   /** the root: n x n columns (n a multiple of 16); a stripe column (self-test) of `stripe.count` intervals */
   root(n: number, stripe?: { x: number; y: number; count: number }): void {
     this.wins[0] = { gx: 0, gy: 0, n };
-    this.reserve((n / 16) ** 2 * (stripe ? 4 : 1));
+    this.reserve((n / 16) ** 2 * (stripe ? 4 : 1) + this.bakeBound((n / 16) ** 2));
     const off = this.uni(({ e }) => e.set(stripe ? [stripe.x, stripe.y, stripe.count, 0] : [-1, -1, 0, 0]));
     this.run('rootGen', off, n / 16, n / 16);
+    this.bake(0, [this.cpuSlot(0, { x0: 0, y0: 0, x1: n / 16, y1: n / 16 })]);
+    this.directory();
     this.mergeFrees();
     this.submit();
   }
@@ -293,7 +343,7 @@ export class GpuNest {
     if (L !== this.live) throw new Error(`promote depth ${L}: ${this.live} levels live`);
     this.checkWin(L, w);
     this.wins[L] = { ...w };
-    this.reserve((w.n / 16) ** 2 * this.overflowPages());
+    this.reserve((w.n / 16) ** 2 * this.overflowPages() + this.bakeBound((w.n / 16) ** 2));
     // the z origin is picked where a level is promoted somewhere new; a window overlapping the last one at this depth
     // keeps it, so demote then promote is bit-identical (NS-11: a long slide keeps it too)
     const lw = this.lastWin[L];
@@ -302,6 +352,8 @@ export class GpuNest {
     this.lastWin[L] = { ...w };
     const s = this.cpuSlot(0, { x0: w.gx / 16, y0: w.gy / 16, x1: (w.gx + w.n) / 16, y1: (w.gy + w.n) / 16 });
     this.runIndirect('derive', this.uni(({ a, r }) => ((a[2] = 0), (a[3] = L), (r[0] = s))), s);
+    this.bake(L, [s]);
+    this.directory();
     this.mergeFrees();
     this.submit();
   }
@@ -311,6 +363,7 @@ export class GpuNest {
       this.run('release', this.uni(({ a, e }) => ((a[3] = m), e.set([0, 0, 0, 0]))), TCAP / 64);
       this.wins[m] = null;
     }
+    this.directory();
     this.mergeFrees();
     this.submit();
   }
@@ -339,11 +392,15 @@ export class GpuNest {
       if (nc.x0 < ix0) parts.push({ x0: nc.x0, x1: ix0, y0: iy0, y1: iy1 });
       if (nc.x1 > ix1) parts.push({ x0: ix1, x1: nc.x1, y0: iy0, y1: iy1 });
     }
-    this.reserve(parts.reduce((s, p) => s + (p.x1 - p.x0) * (p.y1 - p.y0), 0) * this.overflowPages());
-    parts.forEach((p, i) => {
+    const chunks = parts.reduce((s, p) => s + (p.x1 - p.x0 + 2) * (p.y1 - p.y0 + 2), 0);
+    this.reserve(chunks * this.overflowPages() + this.bakeBound(chunks));
+    const slots = parts.map((p, i) => {
       const s = this.cpuSlot(i, p);
       this.runIndirect('derive', this.uni(({ a, r }) => ((a[2] = 0), (a[3] = L), (r[0] = s))), s);
+      return s;
     });
+    this.bake(L, slots);
+    this.directory();
     this.mergeFrees();
     this.submit();
   }
@@ -359,7 +416,7 @@ export class GpuNest {
     }
     // (carve and add can add intervals: one more overflow page; whole-column residuals take two records an interval)
     const ball = spec.op === 'carve' || spec.op === 'add';
-    this.reserve(bound * (this.overflowPages() + (ball ? 1 : 0)));
+    this.reserve(bound * (this.overflowPages() + (ball ? 1 : 0)) + this.bakeBound(bound));
     const opId = { raise: 1, dig: 2, melt: 3, carve: 4, add: 5 }[spec.op];
     const base = ({ a, r, c, d }: { a: Uint32Array; r: Uint32Array; c: Float32Array; d: Float32Array }) => {
       a[2] = opId;
@@ -383,6 +440,10 @@ export class GpuNest {
       this.runIndirect('derive', this.uni(({ a, r }) => ((a[2] = 1), (a[3] = m), (r[0] = m * 4 + 1))), m * 4 + 1);
       this.runIndirect('derive', this.uni(({ a, r }) => ((a[2] = 0), (a[3] = m), (r[0] = m * 4 + 2))), m * 4 + 2);
     }
+    // the baked draw where live columns changed: the edit on m, its derive, and the restrict into it from m + 1
+    // (parents first: a child's items read its parent's table for the rim morph)
+    for (let m = 0; m < live; m++) this.bake(m, [m * 4 + 3, m * 4 + 2, ...(m + 1 < live ? [(m + 1) * 4] : [])]);
+    this.directory();
     this.mergeFrees();
     this.submit();
   }

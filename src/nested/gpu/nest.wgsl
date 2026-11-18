@@ -624,7 +624,9 @@ fn release(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (s >= TCAP) { return; }
   let k1 = atomicLoad(&tab[s * 4u + 1u]);
   if (k1 >= BUSY) { return; }
-  if ((k1 & 0xffu) != u.a.w) { return; }
+  // the level's columns and its baked draw (gap table, mesh items)
+  let lid = k1 & 0xffu;
+  if (lid != u.a.w && lid != GAP_ID + u.a.w && lid != MESH_ID + u.a.w) { return; }
   let k0 = atomicLoad(&tab[s * 4u]);
   let cx = i32(k0 & 0xffffu);
   let cy = i32(k0 >> 16u);
@@ -1364,4 +1366,602 @@ fn pick() {
   reg[9] = bitcast<i32>(h.p.x);
   reg[10] = bitcast<i32>(h.p.y);
   reg[13] = bitcast<i32>(h.p.z);
+}
+
+// ---- the baked draw: the gap table and the mesh items, baked where columns changed ------------------------------------
+// (docs/design/NESTED_SCALES.md "The baked draw"; store.wgsl holds the page layouts.) The owner's rule: "deforming
+// vertices and baking the seam mesh, nothing per frame". Each op that changes a level's columns (root, promote, slide,
+// edit: the edited, restricted and derived regions) bakes that region grown by one chunk: gapsBake writes each
+// column's air regions with their normals, meshBake the draw-B items of the quads there, dirBuild the list of mesh pages
+// the draw instances over. A frame with no change draws the baked buffers and reads nothing else of them.
+@group(0) @binding(8) var<storage, read_write> dir: array<atomic<u32>>;
+@group(0) @binding(9) var<storage, read_write> dargs: array<u32>;
+
+fn setRec(lid: u32, X: i32, Y: i32, i: u32, a: u32, b: u32, c: u32) {
+  let p = pageOf(lid, X >> 4, Y >> 4, i / K);
+  if (p >= NOT_LOADED) { return; }
+  let o = p * PW + 256u + (colIn(X, Y) * K + (i % K)) * 3u;
+  pg[o] = a;
+  pg[o + 1u] = b;
+  pg[o + 2u] = c;
+}
+// The bakes read the columns of their chunk and its eight neighbours over and over: the cz 0 pages of those nine
+// chunks (the level's and its gap table's) are looked up once a workgroup, not a hashed table probe a read.
+// (and the parent's: the chunk under this one's centre and its neighbours, for the rim morph's targets)
+var<workgroup> wCache: array<u32, 36>;
+var<private> cOrg: vec2<i32>;
+var<private> pOrg: vec2<i32>;
+var<private> cOn: bool;
+/** (every thread of the workgroup, uniform control flow) the cache over chunk (cx, cy) and its neighbours */
+fn cacheFill(L: u32, cx: i32, cy: i32, li: u32) {
+  let k = i32(u.a.x);
+  let pc = vec2<i32>(((cx * 16 + 8) / k) >> 4, ((cy * 16 + 8) / k) >> 4);
+  if (li < 36u) {
+    let j = li % 9u;
+    let q = li / 9u; // 0 the level, 1 its gap table, 2 the parent, 3 the parent's gap table
+    var o = vec2<i32>(cx, cy);
+    if (q >= 2u) { o = pc; }
+    var lid = L + select(0u, GAP_ID, (q & 1u) == 1u);
+    if (q >= 2u) { lid = lid - 1u; }
+    wCache[li] = NONE;
+    if (q < 2u || L > 0u) { wCache[li] = pageOf(lid, o.x - 1 + i32(j % 3u), o.y - 1 + i32(j / 3u), 0u); }
+  }
+  workgroupBarrier();
+  cOrg = vec2<i32>(cx - 1, cy - 1);
+  pOrg = pc - 1;
+  cOn = true;
+}
+/** a column's cz 0 page of level id lid (the cache where it holds it) */
+fn cPage(lid: u32, X: i32, Y: i32) -> u32 {
+  let L = u.a.w;
+  if (cOn) {
+    var q = 4u;
+    if (lid == L) { q = 0u; } else if (lid == GAP_ID + L) { q = 1u; } else if (L > 0u && lid == L - 1u) { q = 2u; } else if (L > 0u && lid == GAP_ID + L - 1u) { q = 3u; }
+    if (q < 4u) {
+      let c = vec2<i32>(X >> 4, Y >> 4) - select(cOrg, pOrg, q >= 2u);
+      if (c.x >= 0 && c.y >= 0 && c.x < 3 && c.y < 3) { return wCache[q * 9u + u32(c.y * 3 + c.x)]; }
+    }
+  }
+  return pageOf(lid, X >> 4, Y >> 4, 0u);
+}
+fn cCount(lid: u32, X: i32, Y: i32) -> u32 {
+  let p = cPage(lid, X, Y);
+  if (p >= NOT_LOADED) { return 0u; }
+  let m = pg[p * PW + colIn(X, Y)];
+  if (m < K) { return m; }
+  return colCount(lid, X, Y);
+}
+fn cIvl(lid: u32, X: i32, Y: i32, i: u32) -> Ivl {
+  if (i >= K) { return ivlAt(lid, X, Y, i); }
+  let p = cPage(lid, X, Y);
+  if (p >= NOT_LOADED) { return Ivl(OPEN_BOTTOM, OPEN_BOTTOM, 0u); }
+  return pgIvl(p, colIn(X, Y), i);
+}
+
+/** a column's gap g from its intervals (gap 0 the sky above the top, then the air between solid runs; gaps under
+ *  GAP_MIN merged into the solid), normals not set */
+fn gapAtI(L: u32, X: i32, Y: i32, g: u32) -> Gap {
+  let n = cCount(L, X, Y);
+  var out = Gap(0.0, 0.0, 0u, 0u, 0.0, vec2<f32>(0.0), vec2<f32>(0.0), false);
+  if (n == 0u) { return out; }
+  var cur = 0u;
+  var ceil = 1e30;
+  var cm = 0u;
+  var i = i32(n) - 1;
+  loop {
+    let top = cIvl(L, X, Y, u32(i));
+    var j = i;
+    loop {
+      if (j == 0) { break; }
+      if (cIvl(L, X, Y, u32(j)).z0 > cIvl(L, X, Y, u32(j - 1)).z1 + GAP_MIN) { break; }
+      j--;
+    }
+    let bot = cIvl(L, X, Y, u32(j));
+    if (cur == g) { return Gap(top.z1, ceil, top.m, cm, max(bot.z0, top.z1 - 1000.0), vec2<f32>(0.0), vec2<f32>(0.0), true); }
+    if (j == 0) { return out; }
+    ceil = bot.z0;
+    cm = bot.m;
+    cur++;
+    i = j - 1;
+  }
+}
+fn gapCountI(L: u32, X: i32, Y: i32) -> u32 {
+  let n = cCount(L, X, Y);
+  var c = select(0u, 1u, n > 0u);
+  for (var i = 1u; i < n; i++) {
+    if (cIvl(L, X, Y, i).z0 > cIvl(L, X, Y, i - 1u).z1 + GAP_MIN) { c++; }
+  }
+  return c;
+}
+fn sAtC(L: u32, X: i32, Y: i32) -> f32 {
+  let q = clampTo(L, X, Y);
+  let n = cCount(L, q.x, q.y);
+  if (n == 0u) { return 0.0; }
+  return cIvl(L, q.x, q.y, n - 1u).z1;
+}
+/** the top sheet's normal (the draw's nrmAt: central differences of the top surface, clamped to the window) */
+fn sheetN(L: u32, X: i32, Y: i32) -> vec3<f32> {
+  return normalize(vec3<f32>(-(sAtC(L, X + 1, Y) - sAtC(L, X - 1, Y)) * 0.5, -(sAtC(L, X, Y + 1) - sAtC(L, X, Y - 1)) * 0.5, 1.0));
+}
+/** a column's gap g: the baked table where its chunk has one, else (one gap) the sky from its intervals */
+fn gapOf(L: u32, X: i32, Y: i32, g: u32) -> Gap {
+  if (cPage(GAP_ID + L, X, Y) < NOT_LOADED) { return gRecC(L, X, Y, g); }
+  // one gap: the sky over the column's whole solid run (no gap inside it by GAP_MIN, so its bottom is the first
+  // interval's)
+  let n = cCount(L, X, Y);
+  if (n == 0u) { return Gap(0.0, 0.0, 0u, 0u, 0.0, vec2<f32>(0.0), vec2<f32>(0.0), false); }
+  let top = cIvl(L, X, Y, n - 1u);
+  return Gap(top.z1, 1e30, top.m, 0u, max(cIvl(L, X, Y, 0u).z0, top.z1 - 1000.0), sheetN(L, X, Y).xy, vec2<f32>(0.0), true);
+}
+fn gCountW(L: u32, X: i32, Y: i32) -> u32 {
+  if (!inWin(L, X, Y)) { return 0u; }
+  if (cPage(GAP_ID + L, X, Y) < NOT_LOADED) { return cCount(GAP_ID + L, X, Y) / GREC; }
+  return select(0u, 1u, cCount(L, X, Y) > 0u);
+}
+/** gap g's records from the cached page (store.wgsl gRec when they reach past it) */
+fn gRecC(L: u32, X: i32, Y: i32, g: u32) -> Gap {
+  let i = GREC * g;
+  if (i + 2u >= K) { return gRec(L, X, Y, g); }
+  let p = cPage(GAP_ID + L, X, Y);
+  let b = p * PW + 256u + (colIn(X, Y) * K + i) * 3u;
+  let m = pg[b + 2u];
+  return Gap(bitcast<f32>(pg[b]), bitcast<f32>(pg[b + 1u]), m & 0xffu, (m >> 8u) & 0xffu, bitcast<f32>(pg[b + 3u]), unpack2x16snorm(pg[b + 4u]), unpack2x16snorm(pg[b + 5u]), true);
+}
+// Neighbouring columns' gaps correspond when each is the other's nearest-floor gap among those overlapping it in z
+// (mutual nearest): the ground outside an overhang meets the floor under it, not its roof; a tunnel's air meets no air
+// in a solid neighbour. The I forms read intervals (the gap bake), the R forms the baked table (the mesh bake).
+/** the gap of column (X, Y) nearest by floor among those overlapping (f, c), and its floor and ceiling: one walk down
+ *  the intervals (few call sites: the D3D11 compiler inlines every call) */
+struct Near {
+  g: i32,
+  f: f32,
+  c: f32,
+}
+fn nearestGapI(L: u32, X: i32, Y: i32, f: f32, c: f32) -> Near {
+  var out = Near(-1, 0.0, 0.0);
+  var bd = 1e30;
+  let n = cCount(L, X, Y);
+  if (n == 0u) { return out; }
+  var g = 0;
+  var ceil = 1e30;
+  var i = i32(n) - 1;
+  loop {
+    let fl = cIvl(L, X, Y, u32(i)).z1;
+    var j = i;
+    loop {
+      if (j == 0) { break; }
+      if (cIvl(L, X, Y, u32(j)).z0 > cIvl(L, X, Y, u32(j - 1)).z1 + GAP_MIN) { break; }
+      j--;
+    }
+    if (fl < c && f < ceil && abs(fl - f) < bd) {
+      bd = abs(fl - f);
+      out = Near(g, fl, ceil);
+    }
+    if (j == 0) { break; }
+    ceil = cIvl(L, X, Y, u32(j)).z0;
+    g++;
+    i = j - 1;
+  }
+  return out;
+}
+/** gap g of column a (floor f, ceiling c): the corresponding gap of column b (mutual nearest floor), and its bounds */
+fn mutualI(L: u32, a: vec2<i32>, g: u32, f: f32, c: f32, b: vec2<i32>) -> Near {
+  let none = Near(-1, 0.0, 0.0);
+  if (!inWin(L, b.x, b.y)) { return none; }
+  let H = nearestGapI(L, b.x, b.y, f, c);
+  if (H.g < 0) { return none; }
+  if (nearestGapI(L, a.x, a.y, H.f, H.c).g != i32(g)) { return none; }
+  return H;
+}
+fn nearestGapR(L: u32, X: i32, Y: i32, f: f32, c: f32) -> i32 {
+  var best = -1;
+  var bd = 1e30;
+  let gc = gCountW(L, X, Y);
+  for (var g = 0u; g < gc; g++) {
+    let h = gapOf(L, X, Y, g);
+    if (h.f < c && f < h.c && abs(h.f - f) < bd) {
+      bd = abs(h.f - f);
+      best = i32(g);
+    }
+  }
+  return best;
+}
+/** the six neighbour offsets a triangle's edges use: +x, +y, +x+y, -x, -y, -x-y (direction d + 3 is d's opposite) */
+fn dirOff(d: u32) -> vec2<i32> {
+  var t = array<vec2<i32>, 3>(vec2<i32>(1, 0), vec2<i32>(0, 1), vec2<i32>(1, 1));
+  let o = t[d % 3u];
+  return select(o, -o, d >= 3u);
+}
+fn dirOf(o: vec2<i32>) -> u32 {
+  let s = select(0u, 3u, o.x < 0 || o.y < 0);
+  let a = abs(o);
+  return s + select(select(2u, 1u, a.x == 0), 0u, a.y == 0);
+}
+/** a one-sided or central difference */
+fn diff1(own: f32, lo: f32, hasLo: bool, hi: f32, hasHi: bool) -> f32 {
+  if (hasLo && hasHi) { return 0.5 * (hi - lo); }
+  if (hasHi) { return hi - own; }
+  if (hasLo) { return own - lo; }
+  return 0.0;
+}
+
+/** (over a slot's chunks) a chunk's gap table: written where some column has more than one gap, let go elsewhere */
+@compute @workgroup_size(16, 16)
+fn gapsBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let L = u.a.w;
+  let o = slotOrigin(u.r.x, li);
+  let cx = o.x + i32(wid.x);
+  let cy = o.y + i32(wid.y);
+  if (!inWin(L, cx * 16, cy * 16)) { return; }
+  cacheFill(L, cx, cy, li);
+  let X = cx * 16 + i32(lid.x);
+  let Y = cy * 16 + i32(lid.y);
+  if (li == 0u) {
+    atomicStore(&wmax, 0u);
+    atomicStore(&wany, 0u);
+  }
+  workgroupBarrier();
+  let G = gapCountI(L, X, Y);
+  atomicMax(&wmax, G);
+  // a table where some column, or a neighbour of one, has more than one gap: the top sheet beside an overhang takes
+  // its normal from the table (the floor its neighbours' matching gaps continue), not from the top surface's steps
+  var near = G > 1u;
+  for (var d = 0u; d < 6u; d++) {
+    let b = vec2<i32>(X, Y) + dirOff(d);
+    if (d % 3u != 2u && inWin(L, b.x, b.y) && gapCountI(L, b.x, b.y) > 1u) { near = true; }
+  }
+  if (near) { atomicOr(&wany, 1u); }
+  let mg = workgroupUniformLoad(&wmax);
+  let anyNear = workgroupUniformLoad(&wany);
+  let need = select(0u, (GREC * mg + K - 1u) / K, anyNear != 0u);
+  if (li == 0u) { ensurePages(GAP_ID + L, cx, cy, need, u.d.x); }
+  storageBarrier();
+  workgroupBarrier();
+  if (need == 0u) { return; }
+  setCount(GAP_ID + L, X, Y, GREC * G, need);
+  let C = vec2<i32>(X, Y);
+  let sn = sheetN(L, X, Y).xy;
+  for (var g = 0u; g < G; g++) {
+    let a = gapAtI(L, X, Y, g);
+    // the six links (the normals' neighbours among them: +-x, +-y), one matching call site
+    var lk = array<u32, 3>(0u, 0u, 0u);
+    var zf = array<f32, 6>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    var zc = array<f32, 6>(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    var hf = array<bool, 6>(false, false, false, false, false, false);
+    var hc = array<bool, 6>(false, false, false, false, false, false);
+    for (var d = 0u; d < 6u; d++) {
+      let H = mutualI(L, C, g, a.f, a.c, C + dirOff(d));
+      lk[d / 2u] |= (select(0xffffu, u32(H.g), H.g >= 0) & 0xffffu) << (16u * (d % 2u));
+      hf[d] = H.g >= 0;
+      hc[d] = H.g >= 0 && H.c < 1e29;
+      zf[d] = H.f;
+      zc[d] = H.c;
+    }
+    var nF = sn;
+    if (G > 1u || near) { nF = normalize(vec3<f32>(-diff1(a.f, zf[3], hf[3], zf[0], hf[0]), -diff1(a.f, zf[4], hf[4], zf[1], hf[1]), 1.0)).xy; }
+    var nC = vec2<f32>(0.0, 0.0);
+    if (a.c < 1e29) { nC = normalize(vec3<f32>(diff1(a.c, zc[3], hc[3], zc[0], hc[0]), diff1(a.c, zc[4], hc[4], zc[1], hc[1]), -1.0)).xy; }
+    setRec(GAP_ID + L, X, Y, GREC * g, bitcast<u32>(a.f), bitcast<u32>(a.c), a.fm | (a.cm << 8u));
+    setRec(GAP_ID + L, X, Y, GREC * g + 1u, bitcast<u32>(a.rb), pack2x16snorm(nF), pack2x16snorm(nC));
+    setRec(GAP_ID + L, X, Y, GREC * g + 2u, lk[0], lk[1], lk[2]);
+  }
+}
+
+// ---- mesh items: per triangle of a quad with a corner of more than one gap, per region (connected air across the
+// triangle's corners), one item: each corner's gap (or none), its bounds and normals, and the parent's matching bounds
+// and presence at that corner for the rim morph. The draw cuts and walls it in the vertex stage (draw.wgsl vsB).
+var<private> mC: array<vec2<i32>, 3>;
+var<private> mG: array<u32, 3>;
+/** per corner of the triangle: its chunk's gap page (cz 0, or NONE) */
+var<private> mPg: array<u32, 3>;
+/** corner r's gap g: its baked link in direction d */
+fn linkAt(r: u32, g: u32, d: u32) -> i32 {
+  let i = GREC * g + 2u;
+  var p = mPg[r];
+  if (i >= K) { p = pageOf(GAP_ID + u.a.w, mC[r].x >> 4, mC[r].y >> 4, i / K); }
+  if (p >= NOT_LOADED) { return -1; }
+  let v = (pg[p * PW + 256u + (colIn(mC[r].x, mC[r].y) * K + (i % K)) * 3u + d / 2u] >> (16u * (d % 2u))) & 0xffffu;
+  return select(i32(v), -1, v == 0xffffu);
+}
+/** corner r's gap g: the corresponding gap at corner s, from the baked links: r's own link where its chunk has a gap
+ *  table; else (one gap at r) s's gap whose link back is gap 0; else (one gap each) the skies meet */
+fn mm(r: u32, s: u32, g: i32) -> i32 {
+  if (g < 0 || mG[s] == 0u) { return -1; }
+  let d = dirOf(mC[s] - mC[r]);
+  if (mPg[r] < NOT_LOADED) { return linkAt(r, u32(g), d); }
+  if (mPg[s] >= NOT_LOADED) { return 0; }
+  let back = (d + 3u) % 6u;
+  for (var h = 0u; h < mG[s]; h++) {
+    if (linkAt(s, h, back) == 0) { return i32(h); }
+  }
+  return -1;
+}
+/** the region seeded by corner 0's gap g: its gap at corners 1 and 2 (direct, else through the third corner when that
+ *  gap is no other corner-0 gap's) */
+fn comp0(g: i32) -> vec3<i32> {
+  var a1 = mm(0u, 1u, g);
+  var a2 = mm(0u, 2u, g);
+  if (a2 < 0 && a1 >= 0) {
+    let b = mm(1u, 2u, a1);
+    if (b >= 0 && mm(2u, 0u, b) < 0) { a2 = b; }
+  }
+  if (a1 < 0 && a2 >= 0) {
+    let b = mm(2u, 1u, a2);
+    if (b >= 0 && mm(1u, 0u, b) < 0) { a1 = b; }
+  }
+  return vec3<i32>(g, a1, a2);
+}
+/** whether corner r's gap x belongs to a region seeded at corner 0 (directly, or through the third corner as comp0
+ *  takes it) */
+fn in0(r: u32, x: i32) -> bool {
+  let o = 3u - r; // the third corner
+  if (mm(r, 0u, x) >= 0) { return true; }
+  let b = mm(r, o, x);
+  if (b < 0) { return false; }
+  let g = mm(o, 0u, b);
+  return g >= 0 && mm(0u, r, g) < 0;
+}
+fn comp1(h: i32) -> vec3<i32> {
+  var a2 = mm(1u, 2u, h);
+  if (a2 >= 0 && in0(2u, a2)) { a2 = -1; }
+  return vec3<i32>(-1, h, a2);
+}
+/** whether corner 2's gap x (in no corner-0 region) belongs to a region seeded at corner 1 */
+fn in1(x: i32) -> bool {
+  let h = mm(2u, 1u, x);
+  return h >= 0 && !in0(1u, h);
+}
+/** the parent's triangle at a child column's centre (the top sheet's morph): corner (i0, j0) and the weights */
+struct PTri {
+  i0: i32,
+  j0: i32,
+  w: vec4<f32>,
+}
+fn parentTri(X: i32, Y: i32) -> PTri {
+  let k = f32(u.a.x);
+  let ux = (f32(X) + 0.5) / k - 0.5;
+  let uy = (f32(Y) + 0.5) / k - 0.5;
+  let i0 = i32(floor(ux));
+  let j0 = i32(floor(uy));
+  let fu = ux - f32(i0);
+  let fv = uy - f32(j0);
+  var wts = vec4<f32>(0.0);
+  if (fu >= fv) { wts = vec4<f32>(1.0 - fu, fu - fv, 0.0, fv); } else { wts = vec4<f32>(1.0 - fv, 0.0, fv - fu, fu); }
+  return PTri(i0, j0, wts);
+}
+/** the parent's bound matching a child gap (child units): over the parent triangle, each corner's gap overlapping the
+ *  child's, its floor or ceiling; a corner with none takes `own` */
+/** the parent's bounds matching a child gap (floor gf, ceiling gc; child units) over the parent triangle: each corner's
+ *  gap overlapping the child's gives its floor and ceiling (a corner with none, or no finite ceiling: the child's
+ *  own); z the parent's presence of the gap (its corners' indicator interpolated) */
+fn parentQ(L: u32, T: PTri, gf: f32, gc: f32) -> vec3<f32> {
+  let k = f32(u.a.x);
+  let P = L - 1u;
+  let z0 = zOrigin(L);
+  let pf = gf / k + z0;
+  let pc = select(gc / k + z0, 1e30, gc > 1e29);
+  var out = vec3<f32>(0.0);
+  for (var q = 0u; q < 4u; q++) {
+    if (T.w[q] <= 0.0) { continue; }
+    let C = clampTo(P, T.i0 + i32(q & 1u), T.j0 + i32(q >> 1u));
+    let g = nearestGapR(P, C.x, C.y, pf, pc);
+    var v = vec3<f32>(gf, gc, 0.0);
+    if (g >= 0) {
+      let G = gapOf(P, C.x, C.y, u32(g));
+      v = vec3<f32>((G.f - z0) * k, select(gc, (G.c - z0) * k, G.c < 1e29), 1.0);
+    }
+    out += T.w[q] * v;
+  }
+  return out;
+}
+/** the parent's top sheet under a child column, child units (the top sheet's morph target, draw.wgsl vs) */
+fn parentSheet(L: u32, T: PTri) -> f32 {
+  let P = L - 1u;
+  let ph = T.w.x * sAtC(P, T.i0, T.j0) + T.w.y * sAtC(P, T.i0 + 1, T.j0) + T.w.z * sAtC(P, T.i0, T.j0 + 1) + T.w.w * sAtC(P, T.i0 + 1, T.j0 + 1);
+  return (ph - zOrigin(L)) * f32(u.a.x);
+}
+var<private> mChunk: vec2<i32>;
+/** one region's item, written at slot i of the chunk's mesh pages */
+fn writeItem(L: u32, cmp: vec3<i32>, i: u32, lx: u32, ly: u32, t: u32, birth: u32) {
+  let p = pageOf(MESH_ID + L, mChunk.x, mChunk.y, i / IPP);
+  if (p >= NOT_LOADED) { return; }
+  let b = p * PW + MESH_HDR + (i % IPP) * ITEM_W;
+  var r0 = 0u;
+  if (cmp.x < 0) { r0 = select(2u, 1u, cmp.y >= 0); }
+  var gs: array<Gap, 3>;
+  var enclosed = true;
+  for (var r = 0u; r < 3u; r++) {
+    gs[r] = gapOf(L, mC[r].x, mC[r].y, u32(max(cmp[r], 0)));
+    if (cmp[r] >= 0 && gs[r].c > 1e29) { enclosed = false; }
+  }
+  let rep = gs[r0];
+  pg[b] = lx | (ly << 4u) | (t << 8u) | (select(0u, 1u, enclosed) << 9u);
+  pg[b + 1u] = birth;
+  for (var r = 0u; r < 3u; r++) {
+    let pres = cmp[r] >= 0;
+    var G = rep;
+    if (pres) { G = gs[r]; }
+    var pf = G.f;
+    var pc = G.c;
+    var x8 = select(0.0, 1.0, pres);
+    if (!enclosed) { x8 = G.rb; }
+    if (L > 0u) {
+      let T = parentTri(mC[r].x, mC[r].y);
+      // query 0: this gap's bounds; query 1: (enclosed) the region's presence, or (the sky) the parent's ceiling of
+      // the gap below, which the sky's wall bottom (its solid run's) follows
+      var below = false;
+      var Gb = G;
+      if (!enclosed && pres && u32(cmp[r]) + 1u < gCount(L, mC[r].x, mC[r].y)) {
+        Gb = gapOf(L, mC[r].x, mC[r].y, u32(cmp[r]) + 1u);
+        below = true;
+      }
+      x8 = G.rb;
+      for (var qi = 0u; qi < 2u; qi++) {
+        var qf = G.f;
+        var qc = G.c;
+        if (qi == 1u) {
+          if (enclosed) {
+            qf = rep.f;
+            qc = rep.c;
+          } else {
+            qf = Gb.f;
+            qc = Gb.c;
+          }
+        }
+        let Q = parentQ(L, T, qf, qc);
+        if (qi == 0u) {
+          pf = Q.x;
+          pc = Q.y;
+        } else if (enclosed) {
+          x8 = Q.z;
+        } else if (below) {
+          x8 = Q.y;
+        }
+      }
+      if (pres && cmp[r] == 0) { pf = parentSheet(L, T); }
+      if (!enclosed && !below) { x8 = G.rb + (pf - G.f); }
+    }
+    let o = b + 2u + r * 9u;
+    pg[o] = bitcast<u32>(G.f);
+    pg[o + 1u] = bitcast<u32>(G.c);
+    pg[o + 2u] = bitcast<u32>(G.rb);
+    pg[o + 3u] = G.fm | (G.cm << 8u) | (select(0u, 1u, pres) << 16u);
+    pg[o + 4u] = pack2x16snorm(G.nF);
+    pg[o + 5u] = pack2x16snorm(G.nC);
+    pg[o + 6u] = bitcast<u32>(pf);
+    pg[o + 7u] = bitcast<u32>(pc);
+    pg[o + 8u] = bitcast<u32>(x8);
+  }
+}
+/** a quad's regions, both triangles: counted, or written from slot `at` (returns the count). Every region is seeded at
+ *  the first corner (0, 1, 2) that has it; one loop and one write site (the D3D11 compiler inlines every call). */
+fn quadItems(L: u32, base: vec2<i32>, write: bool, at: u32, lx: u32, ly: u32, birth: u32) -> u32 {
+  var n = 0u;
+  for (var t = 0u; t < 2u; t++) {
+    // (the diagonal from (i, j) to (i + 1, j + 1), as the top sheet's index buffer)
+    var tc = array<u32, 3>(0u, 1u, 3u);
+    if (t == 1u) { tc = array<u32, 3>(0u, 3u, 2u); }
+    var multi = false;
+    for (var r = 0u; r < 3u; r++) {
+      mC[r] = base + vec2<i32>(i32(tc[r] & 1u), i32(tc[r] >> 1u));
+      mPg[r] = cPage(GAP_ID + L, mC[r].x, mC[r].y);
+      var c = 0u;
+      if (inWin(L, mC[r].x, mC[r].y)) {
+        if (mPg[r] < NOT_LOADED) { c = cCount(GAP_ID + L, mC[r].x, mC[r].y) / GREC; } else { c = 1u; }
+      }
+      mG[r] = c;
+      if (c > 1u) { multi = true; }
+    }
+    if (!multi) { continue; }
+    for (var r = 0u; r < 3u; r++) {
+      for (var x = 0; x < i32(mG[r]); x++) {
+        var cmp = vec3<i32>(-1, -1, x);
+        if (r == 0u) {
+          cmp = comp0(x);
+        } else {
+          if (in0(r, x)) { continue; }
+          if (r == 1u) { cmp = comp1(x); } else if (in1(x)) { continue; }
+        }
+        if (write) { writeItem(L, cmp, at + n, lx, ly, t, birth); }
+        n++;
+      }
+    }
+  }
+  return n;
+}
+
+/** (over a slot's chunks) a chunk's mesh items: the quads whose (i, j) corner is in it */
+@compute @workgroup_size(16, 16)
+fn meshBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let L = u.a.w;
+  let o = slotOrigin(u.r.x, li);
+  let cx = o.x + i32(wid.x);
+  let cy = o.y + i32(wid.y);
+  if (!inWin(L, cx * 16, cy * 16)) { return; }
+  cacheFill(L, cx, cy, li);
+  let base = vec2<i32>(cx * 16 + i32(lid.x), cy * 16 + i32(lid.y));
+  let ok = inWin(L, base.x + 1, base.y + 1);
+  if (li == 0u) {
+    atomicStore(&wmax, 0u);
+    atomicStore(&wany, 0u);
+  }
+  workgroupBarrier();
+  mChunk = vec2<i32>(cx, cy);
+  let s = tFind(tKey0(cx, cy), tKey1(L, 0u));
+  var birth = 0u;
+  if (s != NONE) { birth = atomicLoad(&tab[s * 4u + 3u]); }
+  // pass 0 counts the quad's items; then the chunk's pages are sized; pass 1 writes them (one call site)
+  var n = 0u;
+  var at = 0u;
+  for (var ps = 0u; ps < 2u; ps++) {
+    if (ps == 1u) {
+      atomicAdd(&wmax, n);
+      let total = workgroupUniformLoad(&wmax);
+      let need = (total + IPP - 1u) / IPP;
+      if (li == 0u) {
+        ensurePages(MESH_ID + L, cx, cy, need, u.d.x);
+        for (var cz = 0u; cz < need; cz++) {
+          let p = pageOf(MESH_ID + L, cx, cy, cz);
+          if (p < NOT_LOADED) { pg[p * PW] = min(IPP, total - cz * IPP); }
+        }
+      }
+      storageBarrier();
+      workgroupBarrier();
+      at = atomicAdd(&wany, n);
+    }
+    if (ok && (ps == 0u || n > 0u)) { n = quadItems(L, base, ps == 1u, at, lid.x, lid.y, birth); }
+  }
+}
+
+/** the draw's list of mesh pages: dir[L] their count, entries (page, chunk key) from 16 + (L * cap + i) * 2 */
+@compute @workgroup_size(1)
+fn dirClear() {
+  for (var L = 0u; L < 8u; L++) { atomicStore(&dir[L], 0u); }
+}
+@compute @workgroup_size(64)
+fn dirBuild(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let s = gid.x;
+  if (s >= TCAP) { return; }
+  let k1 = atomicLoad(&tab[s * 4u + 1u]);
+  if (k1 >= BUSY) { return; }
+  let lid = k1 & 0xffu;
+  if (lid < MESH_ID || lid >= MESH_ID + 8u) { return; }
+  let L = lid - MESH_ID;
+  let p = atomicLoad(&tab[s * 4u + 2u]);
+  if (p >= NOT_LOADED || pg[p * PW] == 0u) { return; }
+  let i = atomicAdd(&dir[L], 1u);
+  let e = 16u + (L * u.r.y + i) * 2u;
+  atomicStore(&dir[e], p);
+  atomicStore(&dir[e + 1u], atomicLoad(&tab[s * 4u]));
+}
+/** draw B's indirect arguments a level: 18 vertices, an instance per item slot of its mesh pages */
+@compute @workgroup_size(1)
+fn dirFinish() {
+  for (var L = 0u; L < 8u; L++) {
+    dargs[L * 4u] = 18u;
+    dargs[L * 4u + 1u] = atomicLoad(&dir[L]) * IPP;
+    dargs[L * 4u + 2u] = 0u;
+    dargs[L * 4u + 3u] = 0u;
+  }
+}
+/** a bake slot (u.e.y) from a region slot (u.e.x): its chunks grown by one each way, within level u.a.w's window */
+@compute @workgroup_size(1)
+fn dilate() {
+  let L = u.a.w;
+  let s = u32(u.e.x);
+  let t = u32(u.e.y);
+  let nx = i32(args[s * 4u]);
+  let ny = i32(args[s * 4u + 1u]);
+  let w = u.lv[L];
+  if (nx <= 0 || ny <= 0 || w.z == 0) {
+    setSlot(t, vec4<i32>(0), 0, 0, 0, 0);
+    return;
+  }
+  let ox = slotW(s, 4u);
+  let oy = slotW(s, 5u);
+  let x0 = max(ox - 1, w.x / 16);
+  let y0 = max(oy - 1, w.y / 16);
+  let x1 = min(ox + nx + 1, (w.x + w.z) / 16);
+  let y1 = min(oy + ny + 1, (w.y + w.z) / 16);
+  setSlot(t, vec4<i32>(-(1 << 30), -(1 << 30), 1 << 30, 1 << 30), x0, y0, x1 - x0, y1 - y0);
 }
