@@ -1868,7 +1868,7 @@ fn depthElsewhere(L: u32, X: i32, Y: i32, NX: i32, NY: i32) -> f32 {
 }
 /** a drawn column's bottom from its own first record's top and its four neighbours' depths: a column under them, on a
  *  lattice of ZB_STEP units so that neighbouring bottoms mostly agree (no walls between them under the ground) */
-const ZB_STEP: f32 = 8.0;
+const ZB_STEP: f32 = 32.0;
 fn zbOf(t0: f32, n0: f32, n1: f32, n2: f32, n3: f32) -> f32 {
   return floor((min(min(t0, min(n0, n1)), min(n2, n3)) - 1.0) / ZB_STEP) * ZB_STEP;
 }
@@ -1927,7 +1927,32 @@ fn bFill(L: u32, cx: i32, cy: i32, li: u32) {
     if (sN[q] > 0u) { sB[q] = zbOf(sT[q * SC], nbDepthC(L, X, Y, X + 1, Y), nbDepthC(L, X, Y, X - 1, Y), nbDepthC(L, X, Y, X, Y + 1), nbDepthC(L, X, Y, X, Y - 1)); }
   }
   workgroupBarrier();
+  // (round 9, NS-83) which 4 x 4 blocks of the chunk, and whether the whole chunk, have one down cap: every column drawn,
+  // its first record solid, the same bottom (one writer a word: thread b for block b, then thread 0 for the chunk)
+  if (li < 16u) {
+    let bx = sOrg.x + 1 + i32(li % 4u) * 4;
+    let by = sOrg.y + 1 + i32(li / 4u) * 4;
+    let z = sB[u32(sIdx(bx, by))];
+    var ok = 1u;
+    for (var q = 0; q < 16; q++) {
+      let i = u32(sIdx(bx + q % 4, by + q / 4));
+      if (sN[i] == 0u || !matSolid(sM[i] & 255u) || sB[i] != z) { ok = 0u; }
+    }
+    sBlk[li] = ok;
+  }
+  workgroupBarrier();
+  if (li == 0u) {
+    var ok = 1u;
+    let z = sB[u32(sIdx(sOrg.x + 1, sOrg.y + 1))];
+    for (var b = 0; b < 16; b++) {
+      if (sBlk[b] == 0u || sB[u32(sIdx(sOrg.x + 1 + (b % 4) * 4, sOrg.y + 1 + (b / 4) * 4))] != z) { ok = 0u; }
+    }
+    sBlk[16] = ok;
+  }
+  workgroupBarrier();
 }
+/** (round 9, NS-83) 1 where a 4 x 4 block of the chunk (0-15) or the whole chunk (16) shares one down cap */
+var<workgroup> sBlk: array<u32, 17>;
 /** nbDepthG through the workgroup's copy where it holds the neighbour's records */
 fn nbDepthC(L: u32, X: i32, Y: i32, NX: i32, NY: i32) -> f32 {
   let i = sIdx(NX, NY);
@@ -2005,6 +2030,37 @@ fn putTri(t: u32, w0: u32, z0: f32, z1: f32, z2: f32) {
   pgStore(b + 2u, bitcast<u32>(z1));
   pgStore(b + 3u, bitcast<u32>(z2));
 }
+/** a triangle's four words as given (a down-cap fan: kind 6) */
+fn putTriRaw(t: u32, w0: u32, w1: u32, w2: u32, w3: u32) {
+  var p = NONE;
+  let cz = t / TPP;
+  if (cz < 8u) { p = wFp[cz]; } else { p = pageOf(FACE_ID + u.a.w, bChunk.x, bChunk.y, cz); }
+  if (p >= NOT_LOADED) { return; }
+  let b = p * PW + FHDR + (t % TPP) * 4u;
+  pgStore(b, w0);
+  pgStore(b + 1u, w1);
+  pgStore(b + 2u, w2);
+  pgStore(b + 3u, w3);
+}
+/** point i of the rim of the s x s square at chunk column (ox, oy), anticlockwise from its corner, as x | y << 5 (chunk
+ *  units, 0..16) */
+fn fanPt(ox: u32, oy: u32, s: u32, i: u32) -> u32 {
+  let e = i / s;
+  let k = i % s;
+  var x = ox + k;
+  var y = oy;
+  if (e == 1u) {
+    x = ox + s;
+    y = oy + k;
+  } else if (e == 2u) {
+    x = ox + s - k;
+    y = oy + s;
+  } else if (e == 3u) {
+    x = ox;
+    y = oy + s - k;
+  }
+  return x | (y << 5u);
+}
 /** a column's faces: counted, or written from index `at` (returns the count). Caps where a solid record meets air above
  *  or below; for each side, each solid record's height range less the neighbour's solid, as strips between the two
  *  corner lines' breakpoints. */
@@ -2032,12 +2088,35 @@ fn emitCol(L: u32, X: i32, Y: i32, write: bool, at: u32) -> u32 {
   }
   let r0 = bRec(L, X, Y, 0u);
   if (matSolid(r0.y)) {
-    let w = lxy | (5u << 8u) | ((r0.y & 255u) << 11u);
-    if (write) {
-      putTri(at + t, w | (0u << 19u) | (1u << 21u) | (3u << 23u), zb, zb, zb);
-      putTri(at + t + 1u, w | (0u << 19u) | (3u << 21u) | (2u << 23u), zb, zb, zb);
+    // (round 9, NS-83) the down cap: never seen (under it the ground is solid on every side), there only to close the
+    // box. Where the whole chunk, or the column's 4 x 4 block, shares one bottom, its first column bakes one fan for it:
+    // a centre and every column corner along its rim (so each rim edge is one column long, as the walls and the
+    // neighbouring caps there have it: no T-junction), 64 triangles a chunk instead of 512, 16 a block instead of 32
+    let lx = u32(X & 15);
+    let ly = u32(Y & 15);
+    var s = 0u;
+    if (sBlk[16] != 0u) {
+      if (lx == 0u && ly == 0u) { s = 16u; } else { s = 99u; }
+    } else if (sBlk[(ly / 4u) * 4u + lx / 4u] != 0u) {
+      if ((lx & 3u) == 0u && (ly & 3u) == 0u) { s = 4u; } else { s = 99u; }
     }
-    t += 2u;
+    if (s == 0u) {
+      let w = lxy | (5u << 8u) | ((r0.y & 255u) << 11u);
+      if (write) {
+        putTri(at + t, w | (0u << 19u) | (1u << 21u) | (3u << 23u), zb, zb, zb);
+        putTri(at + t + 1u, w | (0u << 19u) | (3u << 21u) | (2u << 23u), zb, zb, zb);
+      }
+      t += 2u;
+    } else if (s != 99u) {
+      if (write) {
+        let w = lxy | (6u << 8u) | ((r0.y & 255u) << 11u);
+        let c = (lx + s / 2u) | ((ly + s / 2u) << 5u);
+        for (var i = 0u; i < 4u * s; i++) {
+          putTriRaw(at + t + i, w, bitcast<u32>(zb), c | (fanPt(lx, ly, s, i) << 10u), fanPt(lx, ly, s, (i + 1u) % (4u * s)));
+        }
+      }
+      t += 4u * s;
+    }
   }
   // walls: +x, -x, +y, -y; corner codes (bit 0: x + 1, bit 1: y + 1) of the face's two vertical edges
   for (var d = 0u; d < 4u; d++) {

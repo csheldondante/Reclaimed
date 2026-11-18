@@ -26838,3 +26838,28 @@ no empty column in any live window, and coverage; also inside the selftest after
 | carve at level 1 with bakes | median 10.9 ms (8.1-16.7); without 6.0-13.6 (a first run 12.1 before derive's two reductions became one) |
 | uncapped draw | 4.9-6.8 ms (unchanged; NS-83 next) |
 | `?maxbuf=128` cruise loop (nested-stress.mjs) | 0 refusals; 1,772 used of 2,944 held after |
+
+## 2026-11-19 — Nested scales lab, round 9 job 2: fewer down caps (NS-83)
+
+**Why.** The owner on the phone with the round 8 build: "definitely a bit slower than before at closer to 30fps" (round 7:
+16.7 ms). Round 8 gave every drawn column a down cap: +18 % triangles (root 0.74 M -> 0.87 M).
+
+**Built** (NESTED_SCALES.md "The box draw", round 9 bullet). A down cap is never seen; it only closes the box. Where a
+whole chunk, or a 4 x 4 block, has every column drawn with a solid first record and one bottom, its first column bakes one
+fan (face kind 6: one z, three points in chunk units; draw.wgsl decodes it): a centre and every column corner along the
+rim, so each rim edge stays one column long, as the walls and the neighbouring caps have it. 64 triangles a chunk instead
+of 512, 16 a block instead of 32. The bottom lattice went from 8 to 32 units so most chunks share one bottom.
+
+**Measured (desktop, nested-perf.mjs, the seven views):**
+
+| | round 8 | lattice 8 + fans | lattice 32 + fans (kept) |
+|---|---|---|---|
+| root triangles | 873,836-889,522 | 808,300-823,298 | 755,984-768,870 (round 7 ~740 k) |
+| level 1 | 683,020-703,458 | 634,652-655,010 | 586,112-604,164 |
+| level 2 | 1,129,308-1,401,966 | 1,101,884-1,374,222 | 1,039,000-1,309,772 |
+| uncapped draw | 4.89-6.76 ms | 4.34-6.52 ms | 4.47-6.05 ms (a run right after a full selftest: 7.6-19.8 ms in every view, the GPU itself slow then) |
+| carve at level 1 with bakes, median | 10.9-12.1 ms | 11.6 ms | 12.0 / 13.0 ms (two runs) |
+
+Checks with the fans: `?selftest=1` 32 of 32 (0 hole pixels in all pose sets, 0 odd edges, coverage 0), watertight
+script 0 odd edges and coverage 0, store stress at `?maxbuf=128` clean, unit tests 13 of 13. The phone frame time is the
+owner's to check (the triangle count is back near round 7's; level 2 is still above round 7's).

@@ -84,13 +84,25 @@ fn corner(inst: u32, tri: u32, v: u32) -> Corner {
   if (tri >= pgLoad(page * PW)) { return c; }
   let b = page * PW + FHDR + tri * 4u;
   let w0 = pgLoad(b);
+  c.ok = true;
+  c.kind = (w0 >> 8u) & 7u;
+  c.mat = (w0 >> 11u) & 255u;
+  if (c.kind == 6u) {
+    // (round 9, NS-83) a down-cap fan: one z (word 1), the three points as chunk x | y << 5 (word 2: v0, v1 << 10;
+    // word 3: v2)
+    let w2 = pgLoad(b + 2u);
+    var q = w2 & 1023u;
+    if (v == 1u) { q = (w2 >> 10u) & 1023u; } else if (v == 2u) { q = pgLoad(b + 3u) & 1023u; }
+    let X = i32(key & 0xffffu) * 16 + i32(q & 31u);
+    let Y = i32(key >> 16u) * 16 + i32(q >> 5u);
+    c.lp = vec3<f32>(f32(X - w.x), f32(Y - w.y), bitcast<f32>(pgLoad(b + 1u)));
+    c.kind = 5u;
+    return c;
+  }
   let cc = (w0 >> (19u + 2u * v)) & 3u;
   let X = i32(key & 0xffffu) * 16 + i32(w0 & 15u) + i32(cc & 1u);
   let Y = i32(key >> 16u) * 16 + i32((w0 >> 4u) & 15u) + i32(cc >> 1u);
-  c.ok = true;
   c.lp = vec3<f32>(f32(X - w.x), f32(Y - w.y), bitcast<f32>(pgLoad(b + 1u + v)));
-  c.kind = (w0 >> 8u) & 7u;
-  c.mat = (w0 >> 11u) & 255u;
   return c;
 }
 

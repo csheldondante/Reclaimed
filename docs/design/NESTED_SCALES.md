@@ -487,6 +487,14 @@ History (rounds 1-4; superseded where the above differs):
   bottoms are round 6's; round 7's size slider only made digging that deep easy. The owner's hint ("it filled in when I
   got close") fits: closer, a finer level opens or slides over the spot, and its bottom was deeper in world units (a
   child's -2 x 256 of its own columns).
+- **Round 9 (NS-83): fewer down caps.** A down cap is never seen (under it the ground is solid on every side); it only
+  closes the box. Where a whole chunk, or a 4 x 4 block of it, has every column drawn with a solid first record and one
+  bottom, its first column bakes one fan for it (face kind 6: one z, three points in chunk units): a centre and every
+  column corner along the rim, so each rim edge is one column long as the walls and neighbouring caps there have it (no
+  T-junction; the manifold check holds with nothing exempt): 64 triangles a chunk instead of 512, 16 a block instead of
+  32. Other columns keep their own two triangles. The bottom lattice went from 8 to 32 units so that most chunks share one
+  bottom (walls under the ground between different bottoms cost the same triangles at any depth). The flags are the
+  chunk's own (bFill), and a bake is whole chunks, so no other chunk depends on them.
 - **Baked, nothing per frame** (the owner's round 3 ruling stands). An op bakes the columns it changed grown by one
   column, as whole chunks (nest.wgsl faceBake via dilate): edit, restrict and derive regions; promote the child's window
   and, in the same submit, the parent round the footprint; demote the parent round the old footprint; slide the entering

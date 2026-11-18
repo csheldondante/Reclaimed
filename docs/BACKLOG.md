@@ -258,9 +258,10 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   report): each level's boxes ended at a fixed bottom plane (root -8, a child -2 x its window), so a pit or shaft dug
   below it showed the sky under its neighbours and across a level's rim. Now a column's box ends at its own depth from
   its and its neighbours' first records, across rims from the level that draws there (NESTED_SCALES.md "The box draw").
-- NS-83 (limit, round 8) The column bottom sits on an 8-unit lattice (fewer underside walls); every drawn column now has
-  a down cap (2 triangles; never seen from the air, still rasterised). A bake that knows which columns can be seen from
-  air could leave the underside out, but then the manifold check would need an exemption again.
+- NS-83 (limit, round 8; DONE round 9) Every drawn column had a down cap (+18 % triangles; the owner's phone went from
+  16.7 ms to ~30 fps on the round 8 build). Now one fan a chunk or a 4 x 4 block where the bottom is shared, bottom
+  lattice 32 units: root 874 k -> 756 k triangles (round 7: ~740 k), level 1 ~700 k -> ~590-604 k. Still rasterised
+  where kept (never seen); the phone frame time is the owner's to check.
 - NS-84 (hack, round 8, tests only) The pit check's "ground expected" for a hole pixel marches the pixel's ray over the
   root's tops (CPU, from a readback) and needs it 1 root column under them inside the world, so rays that leave the world
   over its edge from a high eye are not holes. A finer level's surface more than a root column under the root's (a
