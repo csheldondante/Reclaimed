@@ -26918,3 +26918,16 @@ the desktop's GPU timing varies run to run by 2-3 ms):
 
 Tests: oracle unit tests 15 (two new: a coarse carve clears the fine blob and cave residuals; a thin roof keeps to its
 parent); `?selftest=1` gains three checks from the scenarios.
+
+**Gate (desktop, 960 x 640): NOT fully met.**
+
+| check | result |
+|---|---|
+| `?selftest=1`, three runs | 35 of 35; 34 of 35; 34 of 35. The three carve checks pass in all three. Runs 2 and 3: 1 hole pixel, the same screen pixel (201, 305), in a shaft pose ("shaft inside at -10 level 0", then "post-shrink shaft inside level 0" at -20; eye 74.5, 108.5, yaw 0.30, pitch 0.25, three levels), seen twice in its pose each time (BACKLOG NS-97). Round 9 had 0 in this pose in three runs, so the round 10 enhance (the shaft's walls at levels 1-2 now differ) likely exposes it. Not investigated (context). |
+| manifold, 8 eyes | 0 odd edges, all three runs |
+| unit tests | 15 of 15 |
+| store stress, default / `--maxbuf 128` | clean: books 0, empty columns 0, coverage 0, refused 0 |
+| carve at level 1 with bakes, median | round 10 rules 14.0, 10.1, 12.55; round 9 rules in the same build 11.0, 12.7, 12.25 (noise 2-3 ms) |
+| uncapped draw | 5.9-6.5 ms worst view (unchanged) |
+
+NS-91 (job 2) not started.

@@ -311,6 +311,11 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   neighbours of another structure, so a thin cave roof beside the column where the ball broke through stepped down to
   the floor, one floating piece a child column. Fixes: nest.wgsl resClear (the oracle's edit), the same-structure top
   (NS-93). Self-test: src/nested/carves.ts (scenarios i-v).
+- NS-97 (bug?, round 10) Two of three full selftests after the round 10 rules showed 1 hole pixel at screen (201, 305)
+  in the shaft pose "shaft inside at -10 level 0" / "post-shrink shaft inside level 0" (eye 74.5, 108.5, z -10 / -20,
+  yaw 0.30, pitch 0.25, three levels), stable within the pose. Round 9: 0 there. Same family as NS-91; likely a seam or
+  down-cap fan rim pinhole the new shaft-wall geometry reaches, or the pit check's ground guess (NS-84). Next: reproduce
+  with scripts/nested-pit.mjs at that pose, dump the faces round the pixel's ray.
 - NS-95 (hack, round 10, tests only) GpuNest.oldTop (derive's u.e.x) brings back round 9's top rule, and `skip`
   'resClear' the round 9 residuals, for the before stills and counts (scripts/nested-carves.mjs, `?skip=` on
   `?selftest=1&carves=only`, nested-perf.mjs `--old 1`).
