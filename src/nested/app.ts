@@ -35,7 +35,7 @@ export class App {
   zoomLog = 0;
   /** the camera's speed limit: nearest-solid distances a second */
   speed = 4;
-  private placeReq: { x: number; y: number; d: number } | null = null;
+  private placeReq: { x: number; y: number; d: number; z: number } | null = null;
   mode: Mode = 'move';
   private bornAt: number[] = [];
   private pointers = new Map<number, { x: number; y: number }>();
@@ -229,12 +229,13 @@ export class App {
     return [-c * Math.cos(this.yaw), -c * Math.sin(this.yaw), -Math.sin(this.pitch)];
   }
   /** put the eye back from the ground under (x, y) by d along the view (the GPU places it; then it is collided) */
-  place(x: number, y: number, d: number): void {
-    this.placeReq = { x, y, d };
+  place(x: number, y: number, d: number, z = 0): void {
+    // (d < 0: the eye at (x, y, z) itself)
+    this.placeReq = { x, y, d, z };
     this.ex = x;
     this.ey = y;
-    this.dNear = d;
-    this.dHit = d;
+    this.dNear = Math.abs(d);
+    this.dHit = Math.abs(d);
   }
 
   // ---- levels ----------------------------------------------------------------------------------------------------------
@@ -242,9 +243,17 @@ export class App {
   width(m: number): number {
     return this.n / this.k ** m;
   }
+  /** where level m's window centres (world x, y): the eye, pushed along the view toward what it looks at by up to a
+   *  quarter of the window, so a level holds both the eye's surroundings and the surface in front of it */
+  focus(m: number): [number, number] {
+    const c = Math.cos(this.pitch);
+    const reach = Math.min((this.dHit > 0 ? this.dHit : 4 * this.dNear) * Math.abs(c), 0.25 * this.width(m));
+    return [this.ex - Math.cos(this.yaw) * Math.sign(c) * reach, this.ey - Math.sin(this.yaw) * Math.sign(c) * reach];
+  }
   private desired(m: number): Win {
     const s = this.k ** (m - 1);
-    return this.nest.windowAt(m, this.ex * s, this.ey * s, this.n);
+    const [fx, fy] = this.focus(m);
+    return this.nest.windowAt(m, fx * s, fy * s, this.n);
   }
   private levels(): void {
     const now = this.nest.now();
@@ -294,7 +303,8 @@ export class App {
       let want: DrawLevel['want'] = null;
       if (m + 1 <= this.maxDepth && (c || this.dNear < 0.45 * this.width(m + 1))) {
         const s = this.k ** m;
-        let g = this.nest.windowAt(m + 1, this.ex * s, this.ey * s, this.n);
+        const [fx, fy] = this.focus(m + 1);
+        let g = this.nest.windowAt(m + 1, fx * s, fy * s, this.n);
         if (c && Math.abs(g.gx - c.gx) < 32 && Math.abs(g.gy - c.gy) < 32) g = c;
         want = [g.gx / k - w.gx + inset, g.gy / k - w.gy + inset, (g.gx + g.n) / k - w.gx - inset, (g.gy + g.n) / k - w.gy - inset];
       }
@@ -347,7 +357,7 @@ export class App {
     const ndc = this.sculptAt ? [(this.sculptAt.x / this.canvas.clientWidth) * 2 - 1, 1 - (this.sculptAt.y / this.canvas.clientHeight) * 2] : [0, 0];
     const qd = this.queue.shift();
     if (qd) ndc.splice(0, 2, qd.nx, qd.ny);
-    if (this.placeReq) this.nest.placeEye(this.placeReq.x, this.placeReq.y, this.placeReq.d);
+    if (this.placeReq) this.nest.placeEye(this.placeReq.x, this.placeReq.y, this.placeReq.d, this.placeReq.z);
     this.nest.camIn.set([this.move[0], this.move[1], this.move[2], this.placeReq ? 1 : 0, this.yaw, this.pitch, W / H, this.speed, FOVY, ndc[0], ndc[1], dt]);
     this.placeReq = null;
     this.move = [0, 0, 0];
@@ -385,9 +395,10 @@ export class App {
     return {
       app: this,
       /** turn the view; with tx, ty or d, place the eye back from the ground under (tx, ty) by d */
-      setView: (v: { tx?: number; ty?: number; d?: number; yaw?: number; pitch?: number }) => {
+      setView: (v: { tx?: number; ty?: number; d?: number; yaw?: number; pitch?: number; eye?: [number, number, number] }) => {
         if (v.yaw !== undefined) this.yaw = v.yaw;
         if (v.pitch !== undefined) this.pitch = v.pitch;
+        if (v.eye) return this.place(v.eye[0], v.eye[1], -1, v.eye[2]);
         if (v.tx !== undefined || v.ty !== undefined || v.d !== undefined) this.place(v.tx ?? this.ex, v.ty ?? this.ey, v.d ?? this.dRef());
       },
       /** a wished move of the eye (world), limited by the GPU like any input */

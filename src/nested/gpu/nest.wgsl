@@ -1146,8 +1146,10 @@ fn camera(@builtin(local_invocation_index) li: u32) {
     for (var m = 0u; m < 8u; m++) { atomicStore(&wD[m], bitcast<u32>(FAR)); }
     if (cam[1] == 0.0 || u.cA.w > 0.5) {
       // placed: the ground under the target, then back along the view by the distance
+      // (a negative distance: the eye at (x, y, word 259) itself)
       let t = vec3<f32>(cam[256], cam[257], ground(cam[256], cam[257], 0.0, 0.0));
-      let e = t - cam[258] * viewDir(u.cB.x, u.cB.y);
+      var e = t - cam[258] * viewDir(u.cB.x, u.cB.y);
+      if (cam[258] < 0.0) { e = vec3<f32>(cam[256], cam[257], cam[259]); }
       for (var i = 0u; i < 3u; i++) {
         cam[20u + i] = e[i];
         cam[24u + i] = 0.0;
@@ -1241,12 +1243,14 @@ fn camera(@builtin(local_invocation_index) li: u32) {
     hi.z = zOrig(m) + p.z / s;
     lo.z = 0.0;
     cam[27] += 1.0;
-    d = margin;
+    // (not measured at the lifted point: no move this frame; the next frame measures it)
+    d = 0.0;
   }
   // the move, limited by the nearest solid
   var mv = u.cA.xyz;
   let len = length(mv);
-  let allow = max(0.0, min(d - margin, speed * d * dt));
+  // (half the nearest distance can never reach a surface: an eye nearer than the margin can still move away)
+  let allow = max(0.0, min(max(d - margin, 0.5 * d), speed * d * dt));
   if (len > allow) { mv *= allow / max(len, 1e-30); }
   for (var i = 0u; i < 3u; i++) {
     let r2 = add2(hi[i], lo[i], mv[i]);
@@ -1296,7 +1300,8 @@ fn camera(@builtin(local_invocation_index) li: u32) {
     cam[b + 19u] = near * s;
   }
   // the centre ray's first solid (the pan's and the zoom's scale)
-  let h = rayFirst(f);
+  // (every frame, one thread: a short march, steps growing 3 % of the distance; a scale, not a pick)
+  let h = rayFirst(f, 160, 0.03);
   cam[29] = select(-1.0, h.t / kpow(u32(max(h.lvl, 0))), h.lvl >= 0);
 }
 
@@ -1307,7 +1312,7 @@ struct Hit {
 }
 /** a ray from the eye (this frame's camera words): marched over each level, finest first, kept on the first level whose
  *  interior (away from its rim band) it lands in; lvl -1: none */
-fn rayFirst(dir: vec3<f32>) -> Hit {
+fn rayFirst(dir: vec3<f32>, steps: i32, grow: f32) -> Hit {
   let k = f32(u.a.x);
   let live = u.r.w;
   for (var mi = i32(live) - 1; mi >= 0; mi--) {
@@ -1321,7 +1326,7 @@ fn rayFirst(dir: vec3<f32>) -> Hit {
     var tp = t;
     var hit = false;
     let tmax = 4.0 * n;
-    for (var it = 0; it < 1200; it++) {
+    for (var it = 0; it < steps; it++) {
       let p = e + dir * t;
       let dz = solidDist(m, p);
       if (dz < 0.0) {
@@ -1329,7 +1334,7 @@ fn rayFirst(dir: vec3<f32>) -> Hit {
         break;
       }
       tp = t;
-      t += max(min(0.4 * dz, 0.5 * n), max(0.001 * t, 0.01));
+      t += max(min(0.4 * dz, 0.5 * n), max(grow * t, 0.01));
       if (t > tmax) { break; }
     }
     if (!hit) { continue; }
@@ -1353,7 +1358,7 @@ fn pick() {
   let r = vec3<f32>(cam[4], cam[5], cam[6]);
   let up = vec3<f32>(cam[8], cam[9], cam[10]);
   let f = vec3<f32>(cam[12], cam[13], cam[14]);
-  let h = rayFirst(normalize(f + r * u.cC.y * th * u.cB.z + up * u.cC.z * th));
+  let h = rayFirst(normalize(f + r * u.cC.y * th * u.cB.z + up * u.cC.z * th), 1200, 0.001);
   reg[8] = h.lvl;
   if (h.lvl < 0) { return; }
   reg[9] = bitcast<i32>(h.p.x);

@@ -26337,6 +26337,34 @@ and 0 lifts in flight. Unit tests 11/11 (new: drawn floors and roofs inside the 
 as expected, when a layer steps by more than its thickness between columns: NS-24). Self-test 23/23. Stills:
 local/nested/lowpitch-after-a.png, lowpitch-after-b.png (ground to the bottom edge).
 
+## 2026-11-18 — Nested scales lab, round 2b step 2: tunnels drawn, the rim morph on B, an indexed sheet
+
+**Why.** Tunnels had to look right across levels (the owner's concern: seams and stretching) and show from the root.
+
+**What.** (1) The top sheet is an indexed grid: one vertex a column, 65,536 vertex shader runs a 256² level (was
+390,150: six a quad); the scan writes a per-quad triangle mask and the sheet's fragment stage discards the masked
+triangles (an overhang's roof beside the ground, drawn by B). (2) B's floors, ceilings and wall ends morph in z toward
+the parent's matching bound in the rim band and fade in with the level (NS-21 partly; the wall's place does not morph).
+(3) A triplanar value-noise pattern in world units (the same coordinates on every level, so the rim shows no change
+of pattern), the three finest octaves still coarser than a pixel, blended by the normal: steep faces and strips are
+not stretched. (4) B's normals are the gap's gradient over its quad (NS-33). (5) Why a tunnel did not show from the
+root: a finer level's tunnel restricts to a sliver gap (its mean air), drawn as shards; gaps under a quarter column
+are now drawn as solid (NS-30), so a tunnel narrower than about a root column is not shown at the root at all.
+(6) Windows centre ahead of the eye along the view (NS-35): with windows on the eye, a carve at the centre landed on a
+coarser level (the hit was 192 depth-2 columns away) and removed almost nothing. (7) The camera: half the nearest
+distance is always allowed (an eye nearer than the margin could not move), and no move on the frame of a lift.
+
+**Measured.** Self-test 23/23, unit tests 11/11. Stills (local/nested/, level-1 scene: a mound with a tunnel, a blob):
+tunnel-outside (the far end's daylight through it), tunnel-inside-out, tunnel-inside-back, arch-side, tunnel-mouth-d2,
+rim-crossing-tint / -plain (the tunnel crosses the level-2 rim: a thin lip ring, no crack), rim-far-tint / -plain,
+blob-stalk (the stalk, 2.4 columns thick, did not survive: the blob floats), from-root (the mound shows; the tunnel,
+under a root column, does not), tunnel-fly.gif. Frame times, vsync 10 ms: most views 10 ms; three views at depth 2
+beside the carved blob 120-193 ms (NS-32: the rim morph's per-vertex matching; the scan's per-quad matching). Spires
+inside the tunnel at depth 2 (NS-34: the block-mean bump). A root-scale add (2.6 root columns) made metre-high spires
+in level 1 for the same reason. The GIF run: flying out through the far mouth at depth 3 the eye was lifted out of
+solid 7 times while barely moving (NS-36: the distance measure misses something there; the lift keeps the drawn eye
+outside, but it should not fire).
+
 
 
 

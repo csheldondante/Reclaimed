@@ -65,7 +65,9 @@ user) · `deferred` (agreed for later).
   residual when the parent's structure changes.
 - NS-20 (limit) The mixed-block restrict places materials by the template child; a material the template lacks is
   dropped from the parent. Not met by carve and add in the lab (add makes soil, which every template has).
-- NS-21 (limit) The extra faces (draw B: tunnel floors, ceilings, walls) take no part in the rim morph or the fade;
+- NS-21 `partly done` (round 2b step 2: B's floors, ceilings and wall ends now morph in z toward the parent's matching
+  bound in the rim band and fade with the level; the layer's width, where its half-way wall stands, does not morph, so
+  a tunnel crossing a rim shows a thin lip ring where the child's and parent's walls stand at different places) The extra faces (draw B: tunnel floors, ceilings, walls) take no part in the rim morph or the fade;
   a tunnel crossing a level's rim can show a step there. B is flat-shaded (a normal per face).
 - NS-22 `done` (round 2b step 1) The camera's eye collision marches the finest level only, and promotion still uses
   the orbit distance, not the distance to the nearest solid. Now: a free eye, the nearest solid measured on every
@@ -85,6 +87,27 @@ user) · `deferred` (agreed for later).
   an orbit camera round a target (with the same collision).
 - NS-28 (asked, owner: fine for now) Mixed blocks restrict to the most-structured child. Judge it in zoom-in and
   zoom-out stills over carved tunnels and added blobs, and reconsider if it shows.
+- NS-30 (limit) An air gap thinner than a quarter column is drawn as solid (draw.wgsl GAP_MIN): a finer level's tunnel
+  restricted to its mean air is below the coarse level's resolution and showed as shards. So a tunnel narrower than
+  about a root column does not show from the root at all; a darkening by enclosed air would be the honest proxy.
+- NS-31 (perf) The first frames stall 5.5-8 s after load on the desktop (frames flow after ~8 s; shader compile most
+  likely). Startup is not optimised yet (owner, CG28); a phone will be slower.
+- NS-32 (perf, serious) Views beside a carved blob at depth 2: 120-193 ms a frame (vsync 10 ms elsewhere). In the rim
+  crossing B alone costs it (sheets only: 10 ms): the rim morph's parent matching per vertex. Inside the tunnel
+  looking back, sheets alone cost it too (the scan's per-quad matching over many multi-gap columns). The root fix is
+  NS-23's per-column gap table, made once per change.
+- NS-33 (limit) B's normals are the gap's gradient over its quad (smooth across the diagonal, not across quads), so
+  floors and ceilings shade in quad facets. Smooth across quads needs NS-23's gap table.
+- NS-34 (serious, enhance) NS-16 shows as spires: a step of a few columns at level L (a carve's floor edge, an add)
+  makes one spire per parent block at L + 1 (the sin² bump that restores the block mean). Seen inside a carved tunnel
+  at depth 2 and under a root-scale add. Fix the block-mean correction before the owner judges tunnels.
+- NS-35 (decided here, provisional) Each level's window centres ahead of the eye along the view, by up to a quarter of
+  the window (so the surface being looked at, and carved, is on the finest level). Step 3 replaces it with the
+  streaming policy.
+- NS-36 (bug, open) Flying out of a tunnel's far mouth at depth 3 the eye was lifted out of solid 7 times while
+  barely moving: the nearest-solid distance overestimated there. Not found: suspects are a level promoted or faded
+  under the eye, or the dilated test against a spire (NS-34). The lift keeps the drawn eye outside, but it should
+  only fire on a promote or an edit.
 - NS-29 (limit) The pick's ray march steps by 0.4 x the vertical gap (the old camera's flaw): near a vertical wall it
   can step past a thin feature and pick a surface behind it. Step by the camera's 3D distance (dilated boxes).
 

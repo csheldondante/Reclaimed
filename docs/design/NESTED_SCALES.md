@@ -239,6 +239,12 @@ self-test).
   placement or edit that leaves the eye in solid lifts it to the air above (counted). Near plane: half the nearest
   distance. A 128-byte report (eye, nearest, the centre ray's hit) is read back asynchronously, never awaited; the
   CPU's windows follow the reported eye and open or close levels by the nearest distance.
+- Round 2b step 2 (2026-11-18): the top sheet is an indexed grid (one vertex a column; a per-quad triangle mask from
+  the scan, discarded in the fragment stage). B's floors, ceilings and wall ends morph in z toward the parent's
+  matching bound in the rim band and fade in (the wall's place does not morph: a thin lip ring at a rim crossing).
+  A triplanar pattern in world units on every face. Gaps under a quarter column are drawn as solid (a finer tunnel's
+  mean air). Each window centres ahead of the eye along the view by up to a quarter window. Open: spires from the
+  block-mean bump (NS-34), slow frames beside carved blobs at depth 2 (NS-32), repeated lifts at one mouth (NS-36).
 
 ## Open questions
 

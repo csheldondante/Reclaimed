@@ -55,6 +55,7 @@ export class Renderer {
       entries: [
         { binding: 0, visibility: V | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: DU_SIZE } },
         ...[1, 2, 3, 4, 5, 6].map((binding) => ({ binding, visibility: V, buffer: ro })),
+        { binding: 10, visibility: GPUShaderStage.FRAGMENT, buffer: ro },
       ],
     });
     const C = GPUShaderStage.COMPUTE;
@@ -64,22 +65,22 @@ export class Renderer {
         { binding: 0, visibility: C, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: DU_SIZE } },
         { binding: 1, visibility: C, buffer: ro },
         { binding: 2, visibility: C, buffer: ro },
-        ...[7, 8, 9].map((binding) => ({ binding, visibility: C, buffer: { type: 'storage' as const } })),
+        ...[7, 8, 9, 11].map((binding) => ({ binding, visibility: C, buffer: { type: 'storage' as const } })),
       ],
     });
     const module = device.createShaderModule({ label: 'nest draw', code: `const TCAP: u32 = ${TCAP}u;\n${storeWgsl}\n${drawWgsl}` });
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
-    const mk = (entryPoint: string) =>
+    const mk = (entryPoint: string, fs: string) =>
       device.createRenderPipeline({
         label: `nest draw ${entryPoint}`,
         layout: pl,
         vertex: { module, entryPoint },
-        fragment: { module, entryPoint: 'fs', targets: [{ format: this.format }, { format: 'rgba8unorm' }] },
+        fragment: { module, entryPoint: fs, targets: [{ format: this.format }, { format: 'rgba8unorm' }] },
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'greater' },
       });
-    this.pipeA = mk('vs');
-    this.pipeB = mk('vsB');
+    this.pipeA = mk('vs', 'fsA');
+    this.pipeB = mk('vsB', 'fs');
     const cpl = device.createPipelineLayout({ bindGroupLayouts: [this.clayout] });
     this.scanP = device.createComputePipeline({ label: 'nest draw scan', layout: cpl, compute: { module, entryPoint: 'scan' } });
     this.finishP = device.createComputePipeline({ label: 'nest draw finish', layout: cpl, compute: { module, entryPoint: 'finish' } });
@@ -90,6 +91,26 @@ export class Renderer {
     this.qlist = device.createBuffer({ label: 'nest draw quads', size: this.qPer * MAX_LEVELS * 4, usage: S });
     this.dinfo = device.createBuffer({ label: 'nest draw info', size: MAX_LEVELS * 16, usage: S });
     this.dargs = device.createBuffer({ label: 'nest draw args', size: MAX_LEVELS * 16, usage: S | GPUBufferUsage.INDIRECT });
+    this.amask = device.createBuffer({ label: 'nest draw sheet mask', size: this.qPer * MAX_LEVELS * 4, usage: S });
+  }
+  private amask: GPUBuffer;
+  private grids = new Map<number, GPUBuffer>();
+  /** the top sheet's index buffer for an n x n grid of vertices (two triangles a quad, diagonal (i, j)-(i + 1, j + 1)) */
+  private grid(n: number): GPUBuffer {
+    let b = this.grids.get(n);
+    if (b) return b;
+    const idx = new Uint32Array(6 * (n - 1) * (n - 1));
+    let o = 0;
+    for (let j = 0; j < n - 1; j++)
+      for (let i = 0; i < n - 1; i++) {
+        const v = j * n + i;
+        idx.set([v, v + 1, v + n + 1, v, v + n + 1, v + n], o);
+        o += 6;
+      }
+    b = this.device.createBuffer({ label: `nest grid ${n}`, size: idx.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
+    this.device.queue.writeBuffer(b, 0, idx);
+    this.grids.set(n, b);
+    return b;
   }
 
   private targets(w: number, h: number): void {
@@ -115,6 +136,7 @@ export class Renderer {
           { binding: 4, resource: { buffer: this.nest.reg } },
           { binding: 5, resource: { buffer: this.qlist } },
           { binding: 6, resource: { buffer: this.dinfo } },
+          { binding: 10, resource: { buffer: this.amask } },
         ],
       });
       this.cbg = this.device.createBindGroup({
@@ -127,6 +149,7 @@ export class Renderer {
           { binding: 7, resource: { buffer: this.qlist } },
           { binding: 8, resource: { buffer: this.dinfo } },
           { binding: 9, resource: { buffer: this.dargs } },
+          { binding: 11, resource: { buffer: this.amask } },
         ],
       });
       this.bgFor = this.nest.pg;
@@ -170,7 +193,8 @@ export class Renderer {
       const n = this.nest.wins[lv.depth]!.n;
       pass.setBindGroup(0, this.bg!, [lv.depth * DU]);
       pass.setPipeline(this.pipeA);
-      pass.draw(6 * (n - 1) * (n - 1));
+      pass.setIndexBuffer(this.grid(n), 'uint32');
+      pass.drawIndexed(6 * (n - 1) * (n - 1));
       if (!this.sheetsOnly) {
         pass.setPipeline(this.pipeB);
         pass.drawIndirect(this.dargs, lv.depth * 16);

@@ -413,8 +413,9 @@ export class GpuNest {
   }
   /** place the eye: back from the ground under (x, y) by distance d along the view (applied by the next camera pass
    *  whose camIn[3] is 1) */
-  placeEye(x: number, y: number, d: number): void {
-    this.device.queue.writeBuffer(this.cam, 256 * 4, new Float32Array([x, y, d]));
+  placeEye(x: number, y: number, d: number, z = 0): void {
+    // (d < 0: the eye at (x, y, z) itself)
+    this.device.queue.writeBuffer(this.cam, 256 * 4, new Float32Array([x, y, d, z]));
   }
   /** the camera's last report (cam words 0-31): 20-22 eye hi, 24-26 eye lo, 27 lifts, 28 nearest solid, 29 centre hit
    *  distance (-1 none), 30 the measuring level, 31 the margin */
