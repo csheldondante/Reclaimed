@@ -109,6 +109,12 @@ export interface EditSpec {
   rate?: number;
 }
 
+let traceNew: ((nest: GpuNest, what: string) => void) | null = null;
+/** (tests only) the trace given to pools made from now on (GpuNest.trace) */
+export function setTraceNew(fn: ((nest: GpuNest, what: string) => void) | null): void {
+  traceNew = fn;
+}
+
 export class GpuNest {
   readonly wins: (Win | null)[] = new Array(MAX_LEVELS).fill(null);
   private lastWin: (Win | null)[] = new Array(MAX_LEVELS).fill(null);
@@ -149,12 +155,16 @@ export class GpuNest {
   private pass: GPUComputePassEncoder | null = null;
   readonly stats: PoolStats;
   private reading = false;
+  /** the device said no to more memory for pages: no grow is asked again */
+  private memoryRefused = false;
   private pendingBound = 0;
   /** the camera's inputs for the pick pass (set by the page) */
   camIn = new Float32Array(12);
   epoch = performance.now();
   /** the seeded detail's amplitude per wavelength (oracle DETAIL_AMP) */
   detailAmp = DETAIL_AMP;
+  /** (tests only) told after each op, grow and shrink step was submitted */
+  trace: ((nest: GpuNest, what: string) => void) | null = traceNew;
 
   constructor(
     readonly device: GPUDevice,
@@ -246,6 +256,7 @@ export class GpuNest {
       this.directory();
       this.submit();
     }
+    this.trace?.(this,`grow ${old.cap} -> ${cap}${made ? ' (ahead)' : ''}`);
   }
   private rebind(): void {
     const entries: GPUBindGroupEntry[] = [
@@ -321,8 +332,9 @@ export class GpuNest {
     p.setBindGroup(0, this.bg, [off]);
     p.dispatchWorkgroupsIndirect(this.args, slot * 16);
   }
-  /** the encoded passes submitted (the uniforms written first) */
-  submit(): void {
+  /** the encoded passes submitted (the uniforms written first); `read` false: work that takes no pages (the camera), so
+   *  no read of the pool's header is needed after it */
+  submit(read = true): void {
     if (!this.pass) return;
     this.pass.end();
     this.device.queue.writeBuffer(this.ubuf, 0, this.ustage, 0, this.uUsed * UB);
@@ -331,7 +343,7 @@ export class GpuNest {
     this.enc = null;
     this.uUsed = 0;
     this.bakeNext = BAKE_SLOT;
-    this.readStats();
+    if (read) this.readStats();
   }
   /** a CPU slot: a chunk rect to dispatch over (written before this op's submit) */
   private cpuSlot(i: number, chunks: { x0: number; y0: number; x1: number; y1: number }): number {
@@ -380,7 +392,6 @@ export class GpuNest {
    *  is applied first. When it does not fit the op is refused whole (it changed nothing) and a grow to what is needed
    *  is made ahead; the caller retries (a held brush: next frame). The self-test grows at once (syncGrow). */
   reserve(pages: number): boolean {
-    this.lastBound = Math.max(pages, this.lastBound * 0.9);
     if (this.ahead?.ok) {
       this.submit();
       const a = this.ahead;
@@ -392,8 +403,12 @@ export class GpuNest {
       if (need > this.stats.maxPages) {
         this.stats.error = `This device can hold ${this.stats.maxPages} pages (${this.S} buffers of ${Math.round((this.segP * PW * 4) / 2 ** 20)} MB); this change needs ${need} (${this.stats.used} in use, ${this.pendingBound} held for changes in flight, ${pages} for its worst case). It was not made.`;
         this.stats.waits++;
+        // (not taken as the last op's size: the grow ahead would aim at the device's limit)
         return false;
       }
+    }
+    this.lastBound = Math.max(pages, this.lastBound * 0.9);
+    if (need > this.cap) {
       if (this.syncGrow) {
         this.submit();
         this.applyGrow(Math.min(this.stats.maxPages, need + GROW_SLACK), null);
@@ -405,6 +420,8 @@ export class GpuNest {
         return false;
       }
     }
+    // (an op too big for the device said so in words; the next op that fits clears it, unless the device refused memory)
+    if (!this.memoryRefused) this.stats.error = '';
     this.pendingBound += pages;
     this.settled = false;
     return true;
@@ -419,7 +436,8 @@ export class GpuNest {
    *  rebound) at the next op's reserve, in queue order. */
   private requestGrow(target: number): void {
     const cap = Math.min(this.stats.maxPages, Math.ceil(target / GROW_SLACK) * GROW_SLACK);
-    if (cap <= this.cap || (this.ahead && this.ahead.cap >= cap) || this.stats.error) return;
+    // (only the device's refusal stops grows; an op too big for the device is refused alone, round 9)
+    if (cap <= this.cap || (this.ahead && this.ahead.cap >= cap) || this.memoryRefused) return;
     // (measurement: why the pool grew)
     this.growLog.push({ to: cap, used: this.stats.used, pending: this.pendingBound, last: Math.round(this.lastBound) });
     if (this.ahead) {
@@ -447,6 +465,7 @@ export class GpuNest {
       if (e) {
         for (const b of a.segs) b?.destroy();
         this.ahead = null;
+        this.memoryRefused = true;
         this.stats.error = `The device refused ${Math.round(bytes / 2 ** 20)} MB more memory for pages (${this.stats.mb} MB held). Changes that need more were not made.`;
       } else a.ok = true;
     });
@@ -487,6 +506,7 @@ export class GpuNest {
       this.submit();
       this.stats.cap = C;
       this.stats.shrinks++;
+      this.trace?.(this,`shrink ${from} -> ${C}`);
       return true;
     }
     if (this.physical > this.cap) {
@@ -529,6 +549,7 @@ export class GpuNest {
     this.rebind();
     this.directory();
     this.submit();
+    this.trace?.(this,`realloc to ${cap}`);
   }
   private overflowPages(): number {
     return 1 + this.stats.maxCz;
@@ -563,14 +584,17 @@ export class GpuNest {
    *  `first` (8 a submit; each is written before the submit, so one submit cannot reuse one) */
   private bakeRects(L: number, rects: { x0: number; y0: number; x1: number; y1: number }[], first: number): void {
     if (first + rects.length > 8) throw new Error('nest: more than 8 CPU slots in one submit');
+    this.bake(L, rects.map((r, i) => this.cpuSlot(first + i, this.clipChunks(L, r))), false);
+  }
+  /** a chunk rect clipped to level L's window (empty when outside) */
+  private clipChunks(L: number, r: { x0: number; y0: number; x1: number; y1: number }): { x0: number; y0: number; x1: number; y1: number } {
     const w = this.wins[L]!;
-    const clip = (r: { x0: number; y0: number; x1: number; y1: number }) => ({
-      x0: Math.max(r.x0, w.gx / 16),
-      y0: Math.max(r.y0, w.gy / 16),
-      x1: Math.max(Math.max(r.x0, w.gx / 16), Math.min(r.x1, (w.gx + w.n) / 16)),
-      y1: Math.max(Math.max(r.y0, w.gy / 16), Math.min(r.y1, (w.gy + w.n) / 16)),
-    });
-    this.bake(L, rects.map((r, i) => this.cpuSlot(first + i, clip(r))), false);
+    const x0 = Math.max(r.x0, w.gx / 16);
+    const y0 = Math.max(r.y0, w.gy / 16);
+    return { x0, y0, x1: Math.max(x0, Math.min(r.x1, (w.gx + w.n) / 16)), y1: Math.max(y0, Math.min(r.y1, (w.gy + w.n) / 16)) };
+  }
+  private static area(r: { x0: number; y0: number; x1: number; y1: number }): number {
+    return (r.x1 - r.x0) * (r.y1 - r.y0);
   }
   /** the ring of chunks along a window's edge (re-baked after a slide: its walls now face the outside) */
   private ring(w: Win): { x0: number; y0: number; x1: number; y1: number }[] {
@@ -618,12 +642,21 @@ export class GpuNest {
     this.wins[0] = { gx: 0, gy: 0, n };
     const off = this.uni(({ e }) => e.set(stripe ? [stripe.x, stripe.y, stripe.count, 0] : [-1, -1, 0, 0]));
     this.run('rootGen', off, n / 16, n / 16);
+    if (this.trace) {
+      this.submit(false);
+      this.trace(this, 'root: rootGen');
+    }
     const s = this.cpuSlot(0, { x0: 0, y0: 0, x1: n / 16, y1: n / 16 });
     this.pack(0, s);
+    if (this.trace) {
+      this.submit(false);
+      this.trace(this, 'root: pack');
+    }
     this.bake(0, [s]);
     this.directory();
     this.mergeFrees();
     this.submit();
+    this.trace?.(this,'root');
   }
   private mergeFrees(): void {
     this.run('merge', this.uni(), 1);
@@ -653,6 +686,7 @@ export class GpuNest {
     this.directory();
     this.mergeFrees();
     this.submit();
+    this.trace?.(this,`promote ${L} ${JSON.stringify(w)}`);
     return true;
   }
   /** drop the level at depth L and every deeper one; their residual pages stay */
@@ -669,6 +703,7 @@ export class GpuNest {
     this.directory();
     this.mergeFrees();
     this.submit();
+    this.trace?.(this,`demote ${L}`);
   }
   /** move the level at depth L to window w (same size): only the table changes for chunks that stay; the leaving
    *  chunks' pages are let go and the entering chunks derived */
@@ -695,7 +730,10 @@ export class GpuNest {
     const ringN = (4 * w.n) / 16;
     const fp = L > 0 ? this.footChunks(L, o) : null;
     const fn = L > 0 ? this.footChunks(L, w) : null;
-    const footN = fp && fn ? (Math.max(fp.x1, fn.x1) - Math.min(fp.x0, fn.x0)) * (Math.max(fp.y1, fn.y1) - Math.min(fp.y0, fn.y0)) : 0;
+    // (round 9) the parent round the old and the new footprint, as two rects clipped to the parent's window: a long slide
+    // of a deep level once took the box round both (up to 128 x 128 chunks of level 1's grid, or 1024 x 1024 at level 2)
+    // as its worst case, past the device's limit, and the error that left stopped every later grow (NS-88)
+    const footN = fp && fn ? GpuNest.area(this.clipChunks(L - 1, fp)) + GpuNest.area(this.clipChunks(L - 1, fn)) : 0;
     // (the entering chunks' column pages and TMP twins, their faces, the edge ring's and the parent's round the footprint)
     if (!this.reserve(chunks * (this.overflowPages() + this.tmpPages()) + this.bakeBound(chunks + ringN + footN))) return false;
     this.run('release', this.uni(({ a, e }) => ((a[3] = L), e.set([nc.x0, nc.y0, nc.x1, nc.y1]))), TCAP / 64);
@@ -709,15 +747,17 @@ export class GpuNest {
       return s;
     });
     this.bake(L, slots);
-    // (the CPU slots are taken by the entering parts: the edge ring and the parent's footprint in a second submit)
+    // (the CPU slots are taken by the entering parts: the edge ring and the parent's footprint in a second submit; the
+    // pool's header is read after the second one only, so the read that settles this op sees all of it, round 9)
     this.directory();
     this.mergeFrees();
-    this.submit();
+    this.submit(false);
     this.bakeRects(L, this.ring(w), 0);
-    if (fp && fn) this.bakeRects(L - 1, [{ x0: Math.min(fp.x0, fn.x0), y0: Math.min(fp.y0, fn.y0), x1: Math.max(fp.x1, fn.x1), y1: Math.max(fp.y1, fn.y1) }], 4);
+    if (fp && fn) this.bakeRects(L - 1, [fp, fn], 4);
     this.directory();
     this.mergeFrees();
     this.submit();
+    this.trace?.(this,`slide ${L} ${JSON.stringify(w)}`);
     return true;
   }
   /** an edit: the hit (forced or picked), the regions planned on the GPU, the brush on the hit level, restrict up every
@@ -782,6 +822,7 @@ export class GpuNest {
     this.directory();
     this.mergeFrees();
     this.submit();
+    this.trace?.(this,`edit ${spec.op}`);
     return true;
   }
 
@@ -805,7 +846,7 @@ export class GpuNest {
    *  from camIn; then its report (cam words 0-31) copied out and read when ready (never awaited) */
   camera(): void {
     this.run('camera', this.uni(), 1);
-    this.submit();
+    this.submit(false);
     const buf = this.camRing.find((b) => !b.busy);
     if (!buf) return;
     buf.busy = true;
@@ -901,20 +942,30 @@ export class GpuNest {
   }
   async readAll(): Promise<Snapshot> {
     this.submit();
-    const read = async (b: GPUBuffer, size = b.size) => {
+    // (every copy in one submit, then awaited: the store as it stands now, even if an op, grow or shrink runs in a frame
+    // while the maps are awaited; round 9: segment sizes read between awaits had changed under the reader)
+    const enc = this.device.createCommandEncoder();
+    const copy = (b: GPUBuffer, size = b.size) => {
       const tmp = this.device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-      const enc = this.device.createCommandEncoder();
       enc.copyBufferToBuffer(b, 0, tmp, 0, size);
-      this.device.queue.submit([enc.finish()]);
+      return tmp;
+    };
+    const take = async (tmp: GPUBuffer) => {
       await tmp.mapAsync(GPUMapMode.READ);
       const out = new Uint32Array(tmp.getMappedRange().slice(0));
       tmp.destroy();
       return out;
     };
     // the segments end to end: page p at p * PW (segments fill in order, so the ids are contiguous)
+    const segCap = this.segCap.slice();
     const pg = new Uint32Array(Math.max(this.cap, this.physical) * PW);
-    for (let j = 0; j < this.S; j++) if (this.segCap[j]) pg.set(await read(this.segs[j], this.segCap[j] * PW * 4), j * this.segP * PW);
-    return new Snapshot(await read(this.tab), await read(this.ctl), pg, await read(this.reg));
+    const segT = segCap.map((c, j) => (c ? copy(this.segs[j], c * PW * 4) : null));
+    const tT = copy(this.tab);
+    const cT = copy(this.ctl);
+    const rT = copy(this.reg);
+    this.device.queue.submit([enc.finish()]);
+    for (let j = 0; j < segT.length; j++) if (segT[j]) pg.set(await take(segT[j]!), j * this.segP * PW);
+    return new Snapshot(await take(tT), await take(cT), pg, await take(rT));
   }
 }
 
@@ -1014,5 +1065,44 @@ export class Snapshot {
   }
   zOrigin(L: number): number {
     return new Float32Array(this.reg.buffer, this.reg.byteOffset, 8)[L];
+  }
+  /** (tests, NS-86) the pool's books: every page id held by a live table entry is under the cap and held once, every
+   *  id on the free stack is under the bump end, held by no entry and listed once, and no frees are pending */
+  audit(cap: number): { held: number; free: number; overCap: number; shared: number; freeHeld: number; freeTwice: number; pending: number; where: string[] } {
+    const owner = new Map<number, string>();
+    const where: string[] = [];
+    let overCap = 0;
+    let shared = 0;
+    for (let s = 0; s < TCAP; s++) {
+      const k1 = this.tab[s * 4 + 1];
+      if (k1 >= 0xfffffffc) continue;
+      const p = this.tab[s * 4 + 2];
+      if (p >= 0xfffffffe) continue;
+      const name = `lid ${k1 & 0xff} cz ${k1 >>> 8} chunk ${this.tab[s * 4] & 0xffff},${this.tab[s * 4] >>> 16}`;
+      if (p >= cap) {
+        overCap++;
+        if (where.length < 8) where.push(`page ${p} >= cap ${cap} (${name})`);
+      }
+      const o = owner.get(p);
+      if (o !== undefined) {
+        shared++;
+        if (where.length < 8) where.push(`page ${p} held by ${o} and ${name}`);
+      } else owner.set(p, name);
+    }
+    const n = this.ctl[2];
+    const end = this.ctl[0];
+    const seen = new Set<number>();
+    let freeHeld = 0;
+    let freeTwice = 0;
+    for (let i = 0; i < n; i++) {
+      const p = this.ctl[16 + i];
+      if (seen.has(p)) freeTwice++;
+      seen.add(p);
+      if (owner.has(p) || p >= end) {
+        freeHeld++;
+        if (where.length < 8) where.push(`free page ${p} ${owner.has(p) ? `held by ${owner.get(p)}` : `at or past the bump end ${end}`}`);
+      }
+    }
+    return { held: owner.size, free: n, overCap, shared, freeHeld, freeTwice, pending: this.ctl[3], where };
   }
 }

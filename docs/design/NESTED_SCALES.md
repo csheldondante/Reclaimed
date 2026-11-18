@@ -146,6 +146,17 @@ BACKLOG NS-2: hex storage, or hex-style rendering over square storage, later.
   shown on the page. Data is never dropped silently. Before round 4: one buffer grown by doubling a summed worst case
   (12,288 pages reserved for 585 used); on a device whose largest buffer is 256 MB the grow threw inside the frame and
   the sandbox froze.
+- **No workgroup-memory atomics (round 9, NS-86).** A workgroup's shared values (a chunk's longest column, whether a
+  page exists, the face bake's triangle offsets, the camera's nearest solid) are reductions or scans over a plain
+  workgroup array with one writer per word and barriers (nest.wgsl wgMax, wgMin, wgOr, wgScan), or a plain word written
+  by one thread and read with workgroupUniformLoad. On the desktop's Intel Arc (D3D12) the atomic forms gave stale values
+  to a share of the threads after some GPU work, and a wave that read a chunk's page count as 0 wrote nothing: root
+  columns with no records, drawn by no level. Atomics on storage (the pool's counters, the table) are unchanged; the
+  pool's books (Snapshot.audit) and the store stress check them. The self-test probes both forms (src/nested/hazard.ts).
+- **An op's too-big refusal is the op's alone (round 9, NS-88).** Past the device's limit an op is refused and said in
+  words; later grows still happen (only the device refusing memory stops them), and the line clears at the next op
+  that fits. A slide reserves and bakes the parent round its old and its new footprint, each clipped to the parent's
+  window. The pool's header is read after an op's last submit only (the camera's submits read nothing).
 - Departures from PAGES.md (DESIGN.md wins where they differ): no 64² regions or toroidal 1024 window (a level's
   window is its own rectangle of chunks, keyed globally, so a slide needs no ring); pages are handed out on the GPU
   as in the shared pagepool, not by a CPU free list; growing the pool copies the pool buffer once (a reallocation, not

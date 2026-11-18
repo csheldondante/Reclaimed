@@ -26779,3 +26779,62 @@ check any more (the old draw now shows 46,560 odd edges under it; the new one 0)
 | carve at level 1 with bakes | median 10.1 ms (9.0-16.0), without 5.9-12.0 |
 | uncapped draw | 4.84-6.62 ms (round 7: 4.0-5.9): the down caps add a triangle pair a column (root 0.74 M -> 0.87 M); over the 6 ms target in the three tunnel views (NS-83) |
 | stress ?maxbuf=128 with the cruise loop | 0 refusals; 1,258 used of 2,240 held after |
+
+## 2026-11-19 — Nested scales lab, round 9: columns with no records (NS-86) were workgroup atomics going wrong
+
+**Why.** Round 8 found 4-128 root columns with no records, drawn by no level, in `?selftest=1`'s sandbox. A data-loss
+candidate for the owner's "open sky through the ground ... filled in when I got close enough".
+
+**Bisected** (src/nested/trace.ts, `?trace=1`: after every op, grow and shrink step a copy of the table and every page's
+count words, read back later). A quick variant of the selftest (`?wtscreen=0&pit=0`, ~2 min) reproduced it in most runs.
+- The columns were empty right after the root's FIRST pass (rootGen), before any grow, shrink, slide or demote. The pool
+  was ruled out with the books check (Snapshot.audit: no page held twice, none over the cap, the free stack clean) and the
+  header (bump end 256, nothing free).
+- The table lookups did not miss (a counter in rootGen: 0). A marker written instead of 0 when a fresh page's counts are
+  cleared was still there in the empty columns: the threads never wrote them.
+- A counter of threads whose workgroup max (atomicMax into a `var<workgroup> atomic<u32>`, read by workgroupUniformLoad)
+  came back below their own count matched the empty columns exactly (163 of 163): those waves computed 0 pages needed and
+  wrote nothing. The empty runs were whole waves (64, 128 columns from a multiple of 64) or single columns.
+- In isolation (src/nested/hazard.ts, 4,096 workgroups x 6 dispatches, 6.3 M reads): every workgroup-memory atomic form
+  fails on this desktop (Intel Arc 140T, D3D12, driver 32.0.101.6104) AFTER the oracle checks have run, and none before:
+  atomicMax + workgroupUniformLoad ~930,000 misses, atomicMax + barrier + atomicLoad ~500,000, atomicAdd ~680,000, even one
+  thread's atomicStore read with workgroupUniformLoad ~260,000. A tree over a plain workgroup array and a plain one-writer
+  word read with workgroupUniformLoad: 0, before and after. A fresh sandbox never reached that driver state, hence "only
+  after the oracle checks". What in the oracle checks triggers it was not found (NS-90).
+
+**Fix (the rule, NESTED_SCALES.md "No workgroup-memory atomics").** No atomics in workgroup memory anywhere in the store:
+wgMax / wgMin / wgOr (tree reductions) and wgScan (the face bake's triangle offsets) over a plain array, flags as plain
+one-writer words. Every pass that used them changed: pack, derive (page count, residual flags), restrict, edit, ball,
+melt, rootGen, snap, the camera's nearest solid, faceBake. The face bake's offsets from a stale atomicAdd could overlap
+(triangles overwriting each other) and its total come out short (too few face pages): a likely cause of round 8's one
+flaky "2,104 hole pixels in the 40 poses" (it ran in the selftest, after the oracle checks). Not proven by re-running the
+old code; since the fix, 0 in the 40 poses in three full selftests.
+
+**Also fixed on the way.**
+- NS-88: a slide of a deep level reserved the unclipped box round its old and new footprints in the parent (up to 128 x
+  128 chunks at level 1's grid): 200,000-700,000 pages, refused as past the device, and that error stopped every later
+  grow, so the sandbox waited forever (1,938 waits in a 300-op stress). Now two rects clipped to the parent's window;
+  only the device refusing memory stops grows; a refused op's size no longer feeds the grow ahead; the line clears at
+  the next op that fits.
+- The pool's header is read after an op's last submit (a slide's first submit used to start the read, so the read that
+  settled the slide missed its second submit's pages); the camera's per-frame submit reads nothing.
+- readAll (tests) copies everything in one submit: segment sizes read between awaits had changed under it.
+
+**Tests added.** The selftest's first new check: the reduction forms the store uses hold before and after the oracle
+checks (the atomic forms' misses printed: the reproduction). `scripts/nested-storestress.mjs` (src/nested/stress.ts):
+300 seeded random ops (jumps, pans, carves and adds on any level, forced grows, forced shrinks), every 25 ops the books,
+no empty column in any live window, and coverage; also inside the selftest after the oracle checks (`?stress=300`).
+`?selftest=1` takes `?oracle=0`, `?wtscreen=0`, `?pit=0`, `?trace=1` for bisecting.
+
+**Gate (desktop, 960 x 640):**
+
+| check | result |
+|---|---|
+| `?selftest=1` | 32 of 32 (was 29 of 31) in runs 1 and 3; run 2: 31 of 32, one pit pose ("pit tap 4 level 2", pitch 0.25) showed 1 hole pixel, the same pixel again after the cruise (NS-91, not investigated) |
+| unit tests (oracle) | 13 of 13 |
+| store stress, 300 ops, default / `?maxbuf=128` / inside the selftest after the oracle checks | 0 book faults, 0 empty columns, 0 coverage faults, 0 refused at 13 checks each; waits 26 / 15 / - |
+| screen checks (40 poses, cruises, 162 pit/cave/shaft poses) | 40 poses and cruises: 0 in all three runs; pit/cave/shaft: 0, 2 (one pixel, one pose, twice), 0 |
+| manifold, 8 eyes | 0 odd edges |
+| carve at level 1 with bakes | median 10.9 ms (8.1-16.7); without 6.0-13.6 (a first run 12.1 before derive's two reductions became one) |
+| uncapped draw | 4.9-6.8 ms (unchanged; NS-83 next) |
+| `?maxbuf=128` cruise loop (nested-stress.mjs) | 0 refusals; 1,772 used of 2,944 held after |

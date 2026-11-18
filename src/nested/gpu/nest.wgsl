@@ -223,19 +223,15 @@ fn pack(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   let cx = o.x + i32(wid.x);
   let cy = o.y + i32(wid.y);
   if (!inWin(L, cx * 16, cy * 16)) { return; }
-  if (li == 0u) {
-    atomicStore(&wany, select(0u, 1u, pageOf(T, cx, cy, 0u) < NOT_LOADED));
-    atomicStore(&wmax, 0u);
-  }
-  if (workgroupUniformLoad(&wany) == 0u) { return; }
+  if (li == 0u) { wflag = select(0u, 1u, pageOf(T, cx, cy, 0u) < NOT_LOADED); }
+  if (workgroupUniformLoad(&wflag) == 0u) { return; }
   let X = cx * 16 + i32(lid.x);
   let Y = cy * 16 + i32(lid.y);
   let p0 = pageOf(T, cx, cy, 0u);
   let touched = (pgLoad(p0 * PW + colIn(X, Y)) & TOUCHED) != 0u;
   var r = 0u;
   if (touched) { r = packCol(T, L, X, Y, false); } else { r = recCount(L, X, Y); }
-  atomicMax(&wmax, r);
-  let need = (workgroupUniformLoad(&wmax) + KR - 1u) / KR;
+  let need = (wgMax(li, r) + KR - 1u) / KR;
   if (li == 0u) { ensurePages(L, cx, cy, need, u.d.x); }
   storageBarrier();
   workgroupBarrier();
@@ -324,10 +320,66 @@ fn bumpW(a: i32, k: i32) -> f32 {
 
 // ---- derive (mode 0: live = enhance(parent) + residual) and residual (mode 1: residual = live - enhance(parent)) ------
 var<workgroup> shv: array<f32, 256>;
-var<workgroup> wmax: atomic<u32>;
-var<workgroup> wany: atomic<u32>;
-var<workgroup> wlive: atomic<u32>;
 var<workgroup> wKeep: u32;
+
+// ---- workgroup reductions (round 9, NS-86): NO atomics in workgroup memory. On the desktop's Intel Arc (D3D12), after
+// some GPU work, workgroup-memory atomics went wrong (src/nested/hazard.ts: an atomicMax, an atomicAdd, even one
+// thread's atomicStore read back with workgroupUniformLoad, gave stale values to 5-15 % of threads), so a workgroup's
+// page count came out 0 for some waves and their columns were never written: root columns with no records. Plain
+// workgroup words with one writer each and barriers held in the same state. So every reduction is a tree over a plain
+// array, every flag a plain word written by one thread and read with workgroupUniformLoad. Each helper is called by all
+// 256 threads of a 256-thread workgroup in uniform control flow, with li the local invocation index.
+var<workgroup> wred: array<u32, 256>;
+/** one thread's flag (a plain word, one writer) */
+var<workgroup> wflag: u32;
+/** the workgroup's max of v (uniform) */
+fn wgMax(li: u32, v: u32) -> u32 {
+  workgroupBarrier();
+  wred[li] = v;
+  workgroupBarrier();
+  for (var s = 128u; s > 0u; s >>= 1u) {
+    if (li < s) { wred[li] = max(wred[li], wred[li + s]); }
+    workgroupBarrier();
+  }
+  return workgroupUniformLoad(&wred[0]);
+}
+/** the workgroup's bitwise or of v (uniform) */
+fn wgOr(li: u32, v: u32) -> u32 {
+  workgroupBarrier();
+  wred[li] = v;
+  workgroupBarrier();
+  for (var s = 128u; s > 0u; s >>= 1u) {
+    if (li < s) { wred[li] = wred[li] | wred[li + s]; }
+    workgroupBarrier();
+  }
+  return workgroupUniformLoad(&wred[0]);
+}
+/** the workgroup's min of v (uniform) */
+fn wgMin(li: u32, v: u32) -> u32 {
+  workgroupBarrier();
+  wred[li] = v;
+  workgroupBarrier();
+  for (var s = 128u; s > 0u; s >>= 1u) {
+    if (li < s) { wred[li] = min(wred[li], wred[li + s]); }
+    workgroupBarrier();
+  }
+  return workgroupUniformLoad(&wred[0]);
+}
+/** v's exclusive prefix over the threads in li order (x) and the workgroup's total (y, uniform) */
+fn wgScan(li: u32, v: u32) -> vec2<u32> {
+  workgroupBarrier();
+  wred[li] = v;
+  workgroupBarrier();
+  for (var off = 1u; off < 256u; off <<= 1u) {
+    var a = 0u;
+    if (li >= off) { a = wred[li - off]; }
+    workgroupBarrier();
+    wred[li] = wred[li] + a;
+    workgroupBarrier();
+  }
+  let incl = wred[li];
+  return vec2<u32>(incl - v, workgroupUniformLoad(&wred[255]));
+}
 
 var<workgroup> wOrigin: vec2<i32>;
 /** derive: the parent's tops round the chunk ((16 / k + 4)^2, k >= 2) */
@@ -461,11 +513,13 @@ fn addRes(e: f32, L: u32, i: u32, which: u32) -> f32 {
   return (e + resAt(L, rec, 0u)) + resAt(L, rec, 1u);
 }
 fn putRes(live: f32, e: f32, L: u32, i: u32, which: u32, write: bool) { putResW(live, e, L, i, which, write, 0u); }
+/** (this thread) some residual word of its column is not zero (derive mode 1 reduces it over the workgroup) */
+var<private> gAnyRes: bool;
 /** word2: 0 for a per-bound record; WHOLE | material for a whole column's */
 fn putResW(live: f32, e: f32, L: u32, i: u32, which: u32, write: bool, word2: u32) {
   let hi = live - e;
   let lo = live - (e + hi);
-  if (hi != 0.0 || lo != 0.0 || word2 != 0u) { atomicOr(&wany, 1u); }
+  if (hi != 0.0 || lo != 0.0 || word2 != 0u) { gAnyRes = true; }
   if (!write) { return; }
   if ((e + hi) + lo != live) { atomicAdd(&ctl[6], 1u); }
   let p = pageOf(RES_ID + L, gX >> 4, gY >> 4, (2u * i + which) / K);
@@ -564,12 +618,7 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
   }
   let blk = vec4<i32>(slotW(u.r.x, 0u), slotW(u.r.x, 1u), slotW(u.r.x, 2u), slotW(u.r.x, 3u));
   gAct = inBox(gX, gY, blk);
-  if (li == 0u) {
-    atomicStore(&wmax, 0u);
-    atomicStore(&wany, 0u);
-    atomicStore(&wlive, 0u);
-  }
-  workgroupBarrier();
+  gAnyRes = false;
   // the residual's kind: mode 0 reads it (a whole column, a per-bound one that fits, or none); mode 1 decides it
   let liveN = colCount(L, gX, gY);
   var finalN = gN;
@@ -584,10 +633,7 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
     finalN = max(liveN, gN);
   }
   // pages: as many as the chunk's longest column needs, the columns left alone included
-  atomicMax(&wmax, select(liveN, finalN, gAct));
-  if (!gAct) { atomicAdd(&wlive, 1u); }
-  if (mode == 1u && gAct && gWhole) { atomicOr(&wany, 1u); }
-  let maxN = workgroupUniformLoad(&wmax);
+  let maxN = wgMax(li, select(liveN, finalN, gAct));
   let need = (maxN + K - 1u) / K;
   // a residual column holds two records an interval
   let needR = (2u * maxN + K - 1u) / K;
@@ -601,8 +647,10 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
     if (gAct && gWhole) { writeWhole(L, finalN, need); }
   } else {
     layers(lid.x, lid.y, li, maxN, 1u, false);
-    let any = workgroupUniformLoad(&wany);
-    let others = workgroupUniformLoad(&wlive);
+    // (bit 0: some residual of the chunk is not zero; bit 1: some column of the chunk lies outside the rect, left alone)
+    let flags = wgOr(li,select(0u, 1u, gAnyRes || (gAct && gWhole)) | select(2u, 0u, gAct));
+    let any = flags & 1u;
+    let others = flags & 2u;
     // no page where nothing differs; a chunk with columns left alone keeps the pages it has (and its columns in the
     // rect are written, zero or not)
     if (li == 0u) {
@@ -657,10 +705,7 @@ fn restrictK(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
     }
     n = tn;
   }
-  if (li == 0u) { atomicStore(&wmax, 0u); }
-  workgroupBarrier();
-  atomicMax(&wmax, n);
-  let maxN = workgroupUniformLoad(&wmax);
+  let maxN = wgMax(li, n);
   let need = (maxN + K - 1u) / K;
   // (written to TMP in the solid view; pack makes the partition)
   let T = TMP_ID + P;
@@ -767,10 +812,7 @@ fn rootGen(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) 
   let stripe = X == u.e.x && Y == u.e.y && u.e.z > 2;
   var n = 2u;
   if (stripe) { n = u32(u.e.z); }
-  if (li == 0u) { atomicStore(&wmax, 0u); }
-  workgroupBarrier();
-  atomicMax(&wmax, n);
-  let maxN = workgroupUniformLoad(&wmax);
+  let maxN = wgMax(li, n);
   let need = (maxN + K - 1u) / K;
   // (the solid view into TMP; pack makes the partition)
   let T = TMP_ID;
@@ -838,17 +880,16 @@ fn snap(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) 
   let cy = o.y + i32(wid.y);
   if (!inWin(L, cx * 16, cy * 16)) { return; }
   if (li == 0u) {
-    atomicStore(&wany, select(0u, 1u, pageOf(SNAP_ID + L, cx, cy, 0u) < NOT_LOADED));
+    // (one word, one writer: 0 when the snapshot exists already, else the chunk's page stack's depth)
     var n = 0u;
     loop {
       if (pageOf(L, cx, cy, n) >= NOT_LOADED) { break; }
       n++;
     }
-    atomicStore(&wmax, n);
+    wflag = select(n, 0u, pageOf(SNAP_ID + L, cx, cy, 0u) < NOT_LOADED);
   }
-  let have = workgroupUniformLoad(&wany);
-  let n = workgroupUniformLoad(&wmax);
-  if (have != 0u || n == 0u) { return; }
+  let n = workgroupUniformLoad(&wflag);
+  if (n == 0u) { return; }
   if (li == 0u) { ensurePages(SNAP_ID + L, cx, cy, n, u.d.x); }
   storageBarrier();
   workgroupBarrier();
@@ -1095,10 +1136,7 @@ fn edit(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   let p = brushW(X, Y, L);
   let n = colCount(L, X, Y);
   let act = inBox(X, Y, box) && p > 0.0 && n > 0u;
-  if (li == 0u) { atomicStore(&wmax, 0u); }
-  workgroupBarrier();
-  if (act) { atomicMax(&wmax, n); }
-  let need = (workgroupUniformLoad(&wmax) + K - 1u) / K;
+  let need = (wgMax(li, select(0u, n, act)) + K - 1u) / K;
   if (li == 0u && need > 0u) { ensurePages(T, cx, cy, need, u.d.x); }
   storageBarrier();
   workgroupBarrier();
@@ -1182,10 +1220,7 @@ fn ball(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
   let hit = inBox(X, Y, box) && sp.z > 0.0 && n > 0u;
   var nn = n;
   if (hit) { nn = ballCount(L, X, Y, n, sp.x, sp.y, add); }
-  if (li == 0u) { atomicStore(&wmax, 0u); }
-  workgroupBarrier();
-  if (hit) { atomicMax(&wmax, max(n, nn)); }
-  let maxN = workgroupUniformLoad(&wmax);
+  let maxN = wgMax(li, select(0u, max(n, nn), hit));
   let need = (maxN + K - 1u) / K;
   // the ball works on the column's solid view copied into TMP (in place there, as before the partition); pack then
   // writes the partition: Carve leaves air over the span, Add soil, and soil touching soil merges
@@ -1340,10 +1375,7 @@ fn meltApply(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
   let inside = inBox(X, Y, box);
   var n = 0u;
   if (inside) { n = u32(scr[snapIdx(X, Y, box) + 6u]); }
-  if (li == 0u) { atomicStore(&wmax, 0u); }
-  workgroupBarrier();
-  atomicMax(&wmax, n);
-  let need = (workgroupUniformLoad(&wmax) + K - 1u) / K;
+  let need = (wgMax(li, n) + K - 1u) / K;
   if (li == 0u && need > 0u) { ensurePages(TMP_ID + L0, cx, cy, need, u.d.x); }
   storageBarrier();
   workgroupBarrier();
@@ -1484,7 +1516,6 @@ fn ground(xh: f32, yh: f32, xl: f32, yl: f32) -> f32 {
 // on, speed; 262 the kept height, set by this pass when the CPU writes it negative).
 const CAM_R: i32 = 24;
 var<workgroup> wEye: array<vec4<f32>, 8>;
-var<workgroup> wD: array<atomic<u32>, 8>;
 
 fn eyeHi() -> vec3<f32> { return vec3<f32>(cam[20], cam[21], cam[22]); }
 fn eyeLo() -> vec3<f32> { return vec3<f32>(cam[24], cam[25], cam[26]); }
@@ -1511,7 +1542,6 @@ fn viewDir(yaw: f32, pitch: f32) -> vec3<f32> { return -vec3<f32>(cos(pitch) * c
 fn camera(@builtin(local_invocation_index) li: u32) {
   let live = u.r.w;
   if (li == 0u) {
-    for (var m = 0u; m < 8u; m++) { atomicStore(&wD[m], bitcast<u32>(FAR)); }
     if (cam[1] == 0.0 || u.cA.w > 0.5) {
       // placed: the ground under the target, then back along the view by the distance
       // (a negative distance: the eye at (x, y, word 259) itself)
@@ -1533,21 +1563,26 @@ fn camera(@builtin(local_invocation_index) li: u32) {
   workgroupBarrier();
   // the nearest solid on each level holding the eye, CAM_R of its columns each way
   let side = u32(2 * CAM_R + 1);
-  for (var m = 0u; m < live; m++) {
+  // (each thread's nearest per level, then a min over the workgroup: NS-86, no workgroup atomics; distances are
+  // non-negative, so their bits order as the floats do)
+  var wD: array<f32, 8>;
+  for (var m = 0u; m < 8u; m++) {
+    var dmin = FAR;
     let e = wEye[m];
-    if (e.w < 0.5) { continue; }
-    let w = u.lv[m];
-    let ex = w.x + i32(floor(e.x)) - CAM_R;
-    let ey = w.y + i32(floor(e.y)) - CAM_R;
-    for (var idx = li; idx < side * side; idx += 256u) {
-      let X = ex + i32(idx % side);
-      let Y = ey + i32(idx / side);
-      if (X < w.x || Y < w.y || X >= w.x + w.z || Y >= w.y + w.z) { continue; }
-      let dd = colDist(m, X, Y, w, e.xyz);
-      if (dd < FAR) { atomicMin(&wD[m], bitcast<u32>(dd)); }
+    if (m < live && e.w >= 0.5) {
+      let w = u.lv[m];
+      let ex = w.x + i32(floor(e.x)) - CAM_R;
+      let ey = w.y + i32(floor(e.y)) - CAM_R;
+      for (var idx = li; idx < side * side; idx += 256u) {
+        let X = ex + i32(idx % side);
+        let Y = ey + i32(idx / side);
+        if (X < w.x || Y < w.y || X >= w.x + w.z || Y >= w.y + w.z) { continue; }
+        let dd = colDist(m, X, Y, w, e.xyz);
+        if (dd < dmin) { dmin = dd; }
+      }
     }
+    wD[m] = bitcast<f32>(wgMin(li, bitcast<u32>(dmin)));
   }
-  workgroupBarrier();
   if (li != 0u) { return; }
   let yaw = u.cB.x;
   let pitch = u.cB.y;
@@ -1575,7 +1610,7 @@ fn camera(@builtin(local_invocation_index) li: u32) {
     let e = wEye[m];
     if (e.w < 0.5) { continue; }
     let s = kpow(m);
-    raw = bitcast<f32>(atomicLoad(&wD[m]));
+    raw = wD[m];
     if (raw < 1e29) {
       d = max(lb, (raw - select(1.0, 0.0, m == fin)) / s);
       used = mi;
@@ -2098,7 +2133,6 @@ fn faceBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
   let cy = o.y + i32(wid.y);
   if (!inWin(L, cx * 16, cy * 16)) { return; }
   if (li < 9u) { wPg[li] = pageOf(L, cx - 1 + i32(li % 3u), cy - 1 + i32(li / 3u), 0u); }
-  if (li == 0u) { atomicStore(&wmax, 0u); }
   workgroupBarrier();
   bOrg = vec2<i32>(cx - 1, cy - 1);
   bChunk = vec2<i32>(cx, cy);
@@ -2109,8 +2143,10 @@ fn faceBake(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id)
   var at = 0u;
   for (var ps = 0u; ps < 2u; ps++) {
     if (ps == 1u) {
-      at = atomicAdd(&wmax, n);
-      let total = workgroupUniformLoad(&wmax);
+      // (each column's first triangle: an exclusive scan over the workgroup, NS-86: no workgroup atomics)
+      let sc = wgScan(li, n);
+      at = sc.x;
+      let total = sc.y;
       let need = (total + TPP - 1u) / TPP;
       if (li == 0u) {
         ensurePages(FACE_ID + L, cx, cy, need, u.d.x);

@@ -268,11 +268,30 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-85 (perf, seen round 8) Forced shafts of radius 2.2 world carved 30 world deep at level 1 (with level 2 open) took
   the pool to ~19,000 pages held (916 MB; 1,270 used after zooming out) and one chunk to 31 face pages; the shrink caught
   up only slowly. Not changed this round; measure which op's reserve asks for that much.
-- NS-86 (bug, found round 8, NOT fixed; predates it) In `?selftest=1`'s sandbox (started after the oracle checks) 4 to
-  128 root columns read back with no records at all (e.g. 176-191 x 200-207, or 236,183 / 196-197,205) and are drawn by
-  no level; the fresh sandbox (scripts/nested-cov.mjs) shows none. The old draw shows it too. Suspects: the pool's
-  shrink moving or copying pages while the oracle checks' pools still hold device memory, or a refused grow. The
-  coverage checks in `?selftest=1` fail on it.
+- NS-86 (bug, found round 8; DONE round 9) In `?selftest=1`'s sandbox 4 to 224 root columns had no records and were
+  drawn by no level. Not the pool: the root's very first pass (rootGen) wrote them so. Cause: workgroup-memory atomics
+  (atomicMax / atomicAdd / atomicStore on a `var<workgroup> atomic<u32>`, read with workgroupUniformLoad or a barrier and
+  atomicLoad) gave stale values to 5-15 % of threads on the desktop's Intel Arc 140T (D3D12, driver 32.0.101.6104) once
+  the oracle checks had run (src/nested/hazard.ts reproduces it in isolation: 0 misses before, ~0.5-0.9 M of 6.3 M after);
+  a wave that read the chunk's max record count as 0 wrote no count words. Fix: no workgroup atomics anywhere in the
+  store (tree reductions and a scan over a plain array, one-writer flags; nest.wgsl wgMax / wgMin / wgOr / wgScan).
+  Also hit: every derive, pack, edit, ball, melt, restrict, snapshot, the camera's nearest solid and the face bake's
+  triangle offsets (overlapping offsets: lost triangles, the round 8 "2,104 hole pixels" candidate).
+- NS-88 (bug, found round 9; DONE) A slide of a deep level reserved the box round its old and new footprints in the
+  parent (unclipped: up to 128 x 128 chunks at level 1's grid, 1024 x 1024 at level 2), so a long slide asked for
+  200,000-700,000 pages, was refused as past the device, and the error it left stopped every later grow (the sandbox
+  then waited forever: 1,938 waits in a 300-op run). Now the two footprints are reserved and baked as two rects clipped
+  to the parent's window; only the device refusing memory stops grows; a refused op's size no longer feeds the grow
+  ahead; the error line clears at the next op that fits.
+- NS-89 (limit, seen round 9) `?selftest=1&maxbuf=128` stops in the oracle checks: their back-to-back ops (syncGrow)
+  hold ~10,500 pages of worst cases "in flight" before a header read settles them, past 128 MB x 4. The selftest runs at
+  the default limits; the store stress runs at `?maxbuf=128` (scripts/nested-storestress.mjs).
+- NS-91 (bug?, seen round 9, once) One full selftest of three showed 1 hole pixel in one pit pose ("pit tap 4 level 2",
+  eye 67.18, 119.13, 17.99, yaw 3.44, pitch 0.25, three levels; screen 59,378), the same pixel after the cruise: a
+  pinhole at a seam or the pit check's ground guess (NS-84). Not investigated; the other two runs 0.
+- NS-90 (unknown, round 9) What in the oracle checks puts the Intel driver into the state where workgroup atomics go
+  wrong was not found (the fresh sandbox never showed it). Whether a phone's driver does the same: run
+  `?selftest=1&wt=0` there; its first line after the oracle checks reports the atomic forms' misses.
 - NS-87 (hack, round 8, tests only) `?selftest=1`'s pit poses take ~3 minutes; the selftest script now waits up to 20
   minutes.
 - NS-68 (perf) A carve's GPU time is data dependent: 8-13 ms for most carves at level 1 in the tunnel scene, 14-16 ms
