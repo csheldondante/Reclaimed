@@ -36,13 +36,15 @@ export class App {
   /** frame times (ms), the last 600 */
   readonly frames: number[] = [];
   /** scripted edits (window.nested.sculpt) */
-  private queue: { op: Op; nx: number; ny: number }[] = [];
+  private queue: { op: Op; nx: number; ny: number; px?: number }[] = [];
   /** per level, when its last promote or slide was submitted, and that op's CPU time (encode + submit) */
   readonly opLog: { what: string; depth: number; at: number; ms: number }[] = [];
   hook: ((dt: number) => void) | null = null;
   /** after the frame's draw was submitted (the measurements) */
   post: (() => void) | null = null;
   private keys = new Set<string>();
+  /** the brush's radius on screen (css px) */
+  brushPx = 60;
   /** (the benchmark) the levels left as they are */
   frozen = false;
 
@@ -77,7 +79,7 @@ export class App {
     const ctx = this.canvas.getContext('webgpu');
     if (!ctx) throw new Error('This browser has WebGPU but would not give the page a WebGPU canvas.');
     this.nest = new GpuNest(device, this.k, Number(q.get('seed') ?? 7), 1536);
-    this.render = new Renderer(device, ctx, this.nest);
+    this.render = new Renderer(device, ctx, this.nest, Math.max(this.rootN, this.n));
     this.render.tint = q.get('tint') === '1';
     if (q.has('detail')) this.nest.detailAmp = Number(q.get('detail'));
     if (q.has('tx')) this.tx = Number(q.get('tx'));
@@ -100,10 +102,16 @@ export class App {
       bar.appendChild(b);
       this.buttons.set(id, b);
     };
+    add('carve', 'Carve', () => this.setMode('carve'));
+    add('add', 'Add', () => this.setMode('add'));
     add('raise', 'Raise', () => this.setMode('raise'));
     add('dig', 'Dig', () => this.setMode('dig'));
     add('melt', 'Melt', () => this.setMode('melt'));
     add('move', 'Move', () => this.setMode('move'));
+    add('size', 'Brush: medium', () => {
+      this.brushPx = this.brushPx === 60 ? 110 : this.brushPx === 110 ? 30 : 60;
+      this.buttons.get('size')!.textContent = `Brush: ${this.brushPx === 30 ? 'small' : this.brushPx === 60 ? 'medium' : 'large'}`;
+    });
     add('orbit', 'Turn', () => this.setMode('orbit'));
     add('tint', 'Colour levels', () => {
       this.render.tint = !this.render.tint;
@@ -115,7 +123,7 @@ export class App {
     c.addEventListener('pointerdown', (e) => {
       c.setPointerCapture(e.pointerId);
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (this.pointers.size === 1 && (this.mode === 'raise' || this.mode === 'dig' || this.mode === 'melt') && e.button === 0) this.sculptAt = { x: e.clientX, y: e.clientY };
+      if (this.pointers.size === 1 && this.mode !== 'move' && this.mode !== 'orbit' && e.button === 0) this.sculptAt = { x: e.clientX, y: e.clientY };
       if (this.pointers.size === 2) {
         this.sculptAt = null;
         this.pinch = this.pinchOf();
@@ -160,13 +168,13 @@ export class App {
     window.addEventListener('blur', () => this.keys.clear());
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.key.toLowerCase());
-      const m: Record<string, () => void> = { '1': () => this.setMode('raise'), '2': () => this.setMode('dig'), '3': () => this.setMode('melt'), '4': () => this.setMode('move'), '5': () => this.setMode('orbit'), t: () => this.buttons.get('tint')!.click() };
+      const m: Record<string, () => void> = { c: () => this.setMode('carve'), f: () => this.setMode('add'), '1': () => this.setMode('raise'), '2': () => this.setMode('dig'), '3': () => this.setMode('melt'), '4': () => this.setMode('move'), '5': () => this.setMode('orbit'), t: () => this.buttons.get('tint')!.click() };
       m[e.key.toLowerCase()]?.();
     });
   }
   private setMode(m: Mode): void {
     this.mode = m;
-    for (const id of ['raise', 'dig', 'melt', 'move', 'orbit']) this.buttons.get(id)!.classList.toggle('on', id === m);
+    for (const id of ['carve', 'add', 'raise', 'dig', 'melt', 'move', 'orbit']) this.buttons.get(id)!.classList.toggle('on', id === m);
   }
   private pinchOf(): { d: number; cx: number; cy: number } | null {
     const p = [...this.pointers.values()];
@@ -303,7 +311,7 @@ export class App {
     this.nest.camera();
     const op = qd?.op ?? (this.sculptAt ? (this.mode as Op) : null);
     if (op) {
-      const radius = 60 * this.perPx();
+      const radius = (qd?.px ?? this.brushPx) * this.perPx() * (op === 'carve' || op === 'add' ? 0.5 : 1);
       this.timed('edit', -1, () => this.nest.edit({ op, radius, amount: (op === 'melt' ? 0 : 0.04) * radius, rate: 0.1 }));
     }
     this.render.draw(this.drawList());
@@ -340,8 +348,9 @@ export class App {
         if (v.pitch !== undefined) this.pitch = v.pitch;
       },
       /** queue `times` edits at a screen point (ndc), one a frame */
-      sculpt: (op: Op, nx: number, ny: number, times = 1) => {
-        for (let i = 0; i < times; i++) this.queue.push({ op, nx, ny });
+      /** px: the brush's radius in css px (default: the brush button's) */
+      sculpt: (op: Op, nx: number, ny: number, times = 1, px?: number) => {
+        for (let i = 0; i < times; i++) this.queue.push({ op, nx, ny, px });
       },
       state: () => ({ live: this.nest.live, wins: this.nest.wins.slice(0, this.nest.live), D: this.D, tx: this.tx, ty: this.ty, stats: { ...this.nest.stats }, queue: this.queue.length }),
       tint: (on: boolean) => {

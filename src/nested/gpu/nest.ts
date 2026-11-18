@@ -28,7 +28,7 @@ export interface Win {
   gy: number;
   n: number;
 }
-export type Op = 'raise' | 'dig' | 'melt';
+export type Op = 'raise' | 'dig' | 'melt' | 'carve' | 'add';
 export interface PoolStats {
   cap: number;
   used: number;
@@ -45,7 +45,7 @@ export interface EditSpec {
   radius: number;
   amount: number;
   /** a forced hit (window columns of `level`); absent: the pick pass's (the pointer) */
-  at?: { level: number; x: number; y: number };
+  at?: { level: number; x: number; y: number; z?: number };
   /** melt rate a step (0..0.12) */
   rate?: number;
 }
@@ -120,7 +120,7 @@ export class GpuNest {
     });
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     const ppl = device.createPipelineLayout({ bindGroupLayouts: [this.planLayout] });
-    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick'])
+    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball'])
       this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: pl, compute: { module, entryPoint: e } });
     this.pipes.plan = device.createComputePipeline({ label: 'nest plan', layout: ppl, compute: { module, entryPoint: 'plan' } });
     this.rebind();
@@ -357,12 +357,15 @@ export class GpuNest {
       const r = Math.min(MAX_BRUSH, spec.radius * this.k ** m);
       bound += Math.ceil((2 * r + 4 * this.k + 4) / 16 + 2) ** 2;
     }
-    this.reserve(bound * this.overflowPages());
-    const opId = spec.op === 'raise' ? 1 : spec.op === 'dig' ? 2 : 3;
+    // (carve and add can add intervals: one more overflow page; whole-column residuals take two records an interval)
+    const ball = spec.op === 'carve' || spec.op === 'add';
+    this.reserve(bound * (this.overflowPages() + (ball ? 1 : 0)));
+    const opId = { raise: 1, dig: 2, melt: 3, carve: 4, add: 5 }[spec.op];
     const base = ({ a, r, c, d }: { a: Uint32Array; r: Uint32Array; c: Float32Array; d: Float32Array }) => {
       a[2] = opId;
       c.set([spec.at?.x ?? 0, spec.at?.y ?? 0, spec.radius, spec.amount]);
-      d[1] = Math.min(0.12, spec.rate ?? 0.1);
+      // d.y: the melt's rate, or (carve, add) the forced hit's height
+      d[1] = ball ? (spec.at?.z ?? 0) : Math.min(0.12, spec.rate ?? 0.1);
       d[2] = spec.at?.level ?? 0;
       r[2] = spec.at ? 1 : 0;
     };
@@ -373,7 +376,7 @@ export class GpuNest {
       if (spec.op === 'melt') {
         this.runIndirect('meltSnap', this.uni((u) => (base(u), (u.a[3] = m))), slot);
         this.runIndirect('meltApply', this.uni((u) => (base(u), (u.a[3] = m))), slot);
-      } else this.runIndirect('edit', this.uni((u) => (base(u), (u.a[3] = m))), slot);
+      } else this.runIndirect(ball ? 'ball' : 'edit', this.uni((u) => (base(u), (u.a[3] = m))), slot);
     }
     for (let m = live - 1; m >= 1; m--) this.runIndirect('restrictK', this.uni(({ a, r }) => ((a[3] = m), (r[0] = m * 4))), m * 4);
     for (let m = 1; m < live; m++) {

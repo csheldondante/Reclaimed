@@ -178,6 +178,60 @@ export async function selftest(device: GPUDevice, log: (c: Check) => void): Prom
   const id2 = identical(levelCols(s, 2, F2), ch[2]);
   check('(c) both promoted again: bit-identical', id1.same && id2.same, `${id1.diff} + ${id2.diff} columns differ`);
 
+  // tunnels: a row of carved balls through the ground at depth 1 and at depth 2, and a blob added in mid-air
+  {
+    const solidSum = (cs: Cols) => {
+      let v = 0;
+      for (const c of cs.values()) for (let i = 0; i < c.mat.length; i++) v += c.z1[i] - Math.max(c.z0[i], -500);
+      return v;
+    };
+    const res: string[] = [];
+    let ok = true;
+    for (const [L, F] of [
+      [1, F1],
+      [2, F2],
+    ] as const) {
+      const before = solidSum(levelCols(s, L, F));
+      const mid = o.levels[L].at(F.gx + 32, F.gy + 32)!;
+      const cz = mid.z1[mid.z1.length - 1] - 4;
+      const t0 = performance.now();
+      for (let i = 0; i < 9; i++) {
+        g.edit({ op: 'carve', radius: 3 / K ** L, amount: 0, at: { level: L, x: 16 + i * 4 + 0.5, y: 32.5, z: cz } });
+        o.edit(L, 'carve', F.gx + 16 + i * 4 + 0.5, F.gy + 32.5, 3, 0, cz);
+      }
+      await device.queue.onSubmittedWorkDone();
+      const ms = (performance.now() - t0) / 9;
+      s = await g.readAll();
+      const removed = before - solidSum(levelCols(s, L, F));
+      const worst = Math.max(...[0, 1, 2].map((m) => against(levelCols(s, m, m === 0 ? { gx: 0, gy: 0, n: ROOT } : m === 1 ? F1 : F2), o.levels[m]) * K ** (L - m)));
+      const t = s.column(L, F.gx + 32, F.gy + 32);
+      const gap = Math.max(...t.mat.map((_m, i) => (i ? t.z0[i] - t.z1[i - 1] : 0)));
+      ok &&= worst >= 0 && worst < TOL * 4 && removed > 9 * 50 && removed < 9 * 113 * 1.1 && gap > 4;
+      res.push(`depth ${L}: ${removed.toFixed(0)} cells³ removed (9 balls r 3, overlapping; one alone 113), gap ${gap.toFixed(2)}, max |gpu - oracle| ${worst.toExponential(2)}, ${ms.toFixed(1)} ms a carve with sync`);
+    }
+    check('carve a tunnel at depth 1 and depth 2: the GPU matches the oracle on every level, the volume removed fits the balls', ok, res.join('; '));
+    const mid = o.levels[1].at(F1.gx + 50, F1.gy + 50)!;
+    const az = mid.z1[mid.z1.length - 1] + 10;
+    g.edit({ op: 'add', radius: 4 / K, amount: 0, at: { level: 1, x: 50.5, y: 50.5, z: az } });
+    o.edit(1, 'add', F1.gx + 50.5, F1.gy + 50.5, 4, 0, az);
+    s = await g.readAll();
+    const blob = s.column(1, F1.gx + 50, F1.gy + 50);
+    e = against(levelCols(s, 1, F1), o.levels[1]);
+    check('add a blob in mid-air: its own interval above an air gap, the GPU matches the oracle', blob.mat.length === 3 && blob.z0[2] - blob.z1[1] > 5 && e >= 0 && e < TOL * 4, `${blob.mat.length} intervals, gap under the blob ${(blob.z0[2] - blob.z1[1]).toFixed(2)}, max diff ${e.toExponential(2)}`);
+    const t1 = levelCols(s, 1, F1);
+    const t2 = levelCols(s, 2, F2);
+    for (let i = 0; i < 20; i++) {
+      g.demote(1);
+      g.promote(1, F1);
+      g.promote(2, F2);
+      if (i % 5 === 4) await new Promise((r) => setTimeout(r, 30));
+    }
+    s = await g.readAll();
+    const i1 = identical(levelCols(s, 1, F1), t1);
+    const i2 = identical(levelCols(s, 2, F2), t2);
+    check('tunnels and the blob: 20 demote/promote cycles of both levels, bit-identical', i1.same && i2.same, `${i1.diff} + ${i2.diff} columns differ; residual pages ${s.pagesOf(RES_ID + 1)} + ${s.pagesOf(RES_ID + 2)}`);
+  }
+
   // (d) a parent edit while the child is demoted
   const keep = levelCols(s, 1, F1);
   g.demote(1);

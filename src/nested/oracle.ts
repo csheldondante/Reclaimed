@@ -151,12 +151,18 @@ const clip = (r: Rect, f: Frame): Rect | null => {
   return c.x0 < c.x1 && c.y0 < c.y1 ? c : null;
 };
 
-export type EditOp = 'raise' | 'dig';
+export type EditOp = 'raise' | 'dig' | 'carve' | 'add';
+/** a column's residual: per bound (whole false) or the column itself relative to the enhanced surface (whole) */
+export interface Res {
+  whole: boolean;
+  mat?: number[];
+  r: number[];
+}
 
-/** the chain of live levels over one root, with each depth's sparse residual (global column key -> layer vector) */
+/** the chain of live levels over one root, with each depth's sparse residual (global column key -> residual) */
 export class Nest {
   readonly levels: Level[];
-  readonly res: Map<number, number[]>[] = [];
+  readonly res: Map<number, Res>[] = [];
   constructor(
     root: Level,
     readonly k: number,
@@ -221,25 +227,62 @@ export class Nest {
     return out;
   }
 
-  /** restrict: the parent column over the block of child columns at parent (px, py); null when they disagree */
-  restrictCell(child: Level, px: number, py: number): Col | null {
+  /** restrict: the parent column over the block of child columns at parent (px, py). Children of one structure: the
+   *  mean of each bound in layer form. Children of different structures (a carve or an add): the TEMPLATE (the child
+   *  with the most intervals, the first on a tie) with its thicknesses scaled per material, and its gaps scaled, so
+   *  that the parent holds the block's mean volume of each material and of enclosed air; the top is the block's mean
+   *  surface. A material the template lacks cannot be placed: counted (mismatch). */
+  restrictCell(child: Level, px: number, py: number): Col {
     const k = this.k;
-    let first: Layers | null = null;
-    let acc: number[] = [];
+    const kk = k * k;
+    const cols: Col[] = [];
     for (let b = 0; b < k; b++)
       for (let a = 0; a < k; a++) {
         const c = child.at(px * k + a, py * k + b);
         if (!c) throw new Error('restrict outside the child');
-        const l = toLayers(c);
-        if (!first) {
-          first = l;
-          acc = l.v.map(() => 0);
-        } else if (!sameStructure(first, l)) return null;
-        for (let i = 0; i < l.v.length; i++) acc[i] += l.v[i];
+        cols.push(c);
       }
-    const kk = k * k;
-    const v = acc.map((s, i) => (i === 0 ? child.f.z0 + s / kk / k : s / kk / k));
-    return fromLayers({ mat: first!.mat, v });
+    let t = cols[0];
+    for (const c of cols) if (c.mat.length > t.mat.length) t = c;
+    const z0 = child.f.z0;
+    if (cols.every((c) => sameStructure(c, t))) {
+      const acc = toLayers(t).v.map(() => 0);
+      for (const c of cols) toLayers(c).v.forEach((v, i) => (acc[i] += v));
+      return fromLayers({ mat: t.mat.slice(), v: acc.map((s, i) => (i === 0 ? z0 + s / kk / k : s / kk / k)) });
+    }
+    const vol = (c: Col) => {
+      const m = new Map<number, number>();
+      let air = 0;
+      for (let i = 1; i < c.mat.length; i++) {
+        m.set(c.mat[i], (m.get(c.mat[i]) ?? 0) + (c.z1[i] - c.z0[i]));
+        air += c.z0[i] - c.z1[i - 1];
+      }
+      return { m, air };
+    };
+    const mean = new Map<number, number>();
+    let air = 0;
+    let S = 0;
+    for (const c of cols) {
+      const v = vol(c);
+      for (const [m, x] of v.m) mean.set(m, (mean.get(m) ?? 0) + x / kk);
+      air += v.air / kk;
+      S += c.z1[c.mat.length - 1] / kk;
+    }
+    const tv = vol(t);
+    const n = t.mat.length;
+    const out: Col = { mat: t.mat.slice(), z0: new Array(n), z1: new Array(n) };
+    let z = z0 + S / k;
+    for (let i = n - 1; i >= 1; i--) {
+      const m = t.mat[i];
+      const tm = tv.m.get(m)!;
+      const th = tm > 0 ? ((t.z1[i] - t.z0[i]) * (mean.get(m)! / tm)) / k : 0;
+      out.z1[i] = z;
+      out.z0[i] = z - th;
+      z = out.z0[i] - (tv.air > 0 ? ((t.z0[i] - t.z1[i - 1]) * (air / tv.air)) / k : 0);
+    }
+    out.z1[0] = z;
+    out.z0[0] = OPEN_BOTTOM;
+    return out;
   }
 
   /** the window's parent cells: global parent columns the child level covers */
@@ -259,7 +302,23 @@ export class Nest {
         for (let b = 0; b < k; b++)
           for (let a = 0; a < k; a++) {
             const e = fromLayers(E[b * k + a]);
-            const r = res.get(this.key(depth, px * k + a, py * k + b));
+            const rr = res.get(this.key(depth, px * k + a, py * k + b));
+            if (rr?.whole) {
+              // a column whose structure differs from its enhanced parent: carried whole, its bounds relative to the
+              // enhanced surface (so it rides on parent changes under it)
+              const S = e.z1[e.mat.length - 1];
+              const n = rr.mat!.length;
+              const c: Col = { mat: rr.mat!.slice(), z0: new Array(n), z1: new Array(n) };
+              for (let i = n - 1; i >= 0; i--) {
+                const at = 4 * (n - 1 - i);
+                c.z1[i] = S + rr.r[at] + rr.r[at + 1];
+                c.z0[i] = i > 0 ? S + rr.r[at + 2] + rr.r[at + 3] : OPEN_BOTTOM;
+              }
+              child.set(px * k + a, py * k + b, c);
+              continue;
+            }
+            // (a per-bound residual of another length: the structure changed under it; it no longer applies: NS-19)
+            const r = rr && rr.r.length === 4 * e.mat.length - 2 ? rr.r : undefined;
             // the residual per bound; the bounds kept in order (a no-op when nothing changed under them)
             let prev = Infinity;
             const n = e.mat.length;
@@ -288,14 +347,17 @@ export class Nest {
             const key = this.key(depth, px * k + a, py * k + b);
             const live = child.at(px * k + a, py * k + b)!;
             const e = fromLayers(E[b * k + a]);
-            // per bound, top down: [z1, z0] of each interval (interval 0: z1 only, its z0 is open)
-            // per bound, top down, two floats each: z1 then z0 of each interval (interval 0: z1 only, its z0 is open)
+            // per bound, top down, two floats each: z1 then z0 of each interval (interval 0: z1 only, its z0 is open).
+            // A live column of another structure than its enhanced parent is kept whole, relative to the enhanced
+            // surface.
+            const whole = !sameStructure(live, e);
+            const S = e.z1[e.mat.length - 1];
             const r: number[] = [];
-            for (let i = e.mat.length - 1; i >= 0; i--) {
-              r.push(...resPair(live.z1[i], e.z1[i]));
-              if (i > 0) r.push(...resPair(live.z0[i], e.z0[i]));
+            for (let i = live.mat.length - 1; i >= 0; i--) {
+              r.push(...resPair(live.z1[i], whole ? S : e.z1[i]));
+              if (i > 0) r.push(...resPair(live.z0[i], whole ? S : e.z0[i]));
             }
-            if (r.some((x) => x !== 0)) res.set(key, r);
+            if (whole || r.some((x) => x !== 0)) res.set(key, { whole, mat: whole ? live.mat.slice() : undefined, r });
             else res.delete(key);
           }
       }
@@ -321,14 +383,21 @@ export class Nest {
 
   /** an edit at a depth: a brush over global columns of that depth, then restrict up every ancestor, residuals and
    *  derive down */
-  edit(depth: number, op: EditOp, cx: number, cy: number, r: number, amount: number): void {
+  /** cz: the ball's centre height (local units of that depth; carve and add) */
+  edit(depth: number, op: EditOp, cx: number, cy: number, r: number, amount: number, cz = 0): void {
     const lv = this.levels[depth];
     const box = clip({ x0: Math.floor(cx - r), y0: Math.floor(cy - r), x1: Math.ceil(cx + r) + 1, y1: Math.ceil(cy + r) + 1 }, lv.f);
     if (!box) return;
     for (let y = box.y0; y < box.y1; y++)
       for (let x = box.x0; x < box.x1; x++) {
-        const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy) / r;
+        const dd = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
+        const d = dd / r;
         if (d >= 1) continue;
+        if (op === 'carve' || op === 'add') {
+          const h = Math.sqrt(r * r - dd * dd);
+          lv.set(x, y, applyBall(lv.at(x, y)!, op, cz - h, cz + h));
+          continue;
+        }
         const p = (1 - d * d) * (1 - d * d);
         lv.set(x, y, applyOp(lv.at(x, y)!, op, amount * p));
       }
@@ -349,11 +418,7 @@ export class Nest {
       const c = changed[m]!;
       const pr = { x0: Math.floor(c.x0 / k), y0: Math.floor(c.y0 / k), x1: Math.ceil(c.x1 / k), y1: Math.ceil(c.y1 / k) };
       for (let py = pr.y0; py < pr.y1; py++)
-        for (let px = pr.x0; px < pr.x1; px++) {
-          const col = this.restrictCell(this.levels[m], px, py);
-          if (!col) throw new Error(`restrict: the block at ${px},${py} (depth ${m}) has columns of different structure`);
-          this.levels[m - 1].set(px, py, col);
-        }
+        for (let px = pr.x0; px < pr.x1; px++) this.levels[m - 1].set(px, py, this.restrictCell(this.levels[m], px, py));
       changed[m - 1] = union(changed[m - 1], pr);
     }
     // top down: each level's residual against its (final) parent, then derived again from it
@@ -431,6 +496,37 @@ export function makeRoot(n: number, seed: number): Level {
 
 /** the lab's materials */
 export const MAT = { stone: 1, soil: 2, sand: 3, clay: 4 } as const;
+
+/** a ball's z-span [lo, hi] on one column: carve removes solid there (an interval it lies inside splits in two;
+ *  ones inside it go; interval 0 stays open below), add fills the air there with soil (each air piece a new
+ *  interval; touching solid is not merged) (gpu: nest.wgsl ball) */
+export function applyBall(c: Col, op: 'carve' | 'add', lo: number, hi: number): Col {
+  const out: Col = { mat: [], z0: [], z1: [] };
+  const push = (m: number, a: number, b: number) => {
+    out.mat.push(m);
+    out.z0.push(a);
+    out.z1.push(b);
+  };
+  const n = c.mat.length;
+  for (let i = 0; i < n; i++) {
+    if (op === 'add' && i > 0) {
+      const a = Math.max(c.z1[i - 1], lo);
+      const b = Math.min(c.z0[i], hi);
+      if (a < b) push(MAT.soil, a, b);
+    }
+    if (op === 'carve' && c.z1[i] > lo && c.z0[i] < hi) {
+      if (c.z0[i] < lo) push(c.mat[i], c.z0[i], lo);
+      if (c.z1[i] > hi) push(c.mat[i], out.mat.length ? hi : OPEN_BOTTOM, c.z1[i]);
+    } else push(c.mat[i], c.z0[i], c.z1[i]);
+  }
+  if (op === 'add') {
+    const a = Math.max(c.z1[n - 1], lo);
+    if (a < hi) push(MAT.soil, a, hi);
+  }
+  if (!out.mat.length) throw new Error('carve removed the whole column');
+  out.z0[0] = OPEN_BOTTOM;
+  return out;
+}
 
 /** a brush step on one column: raise adds to the top interval; dig removes from the top down (emptied intervals stay,
  *  with zero thickness, at the new surface; interval 0 is open below and never runs out) */

@@ -58,6 +58,20 @@ user) · `deferred` (agreed for later).
   per block) would remove it.
 - NS-17 (limit) The test runner's server answers "not found" for a bare /nested.html (any query works). Vite's dev
   server serves it either way.
+- NS-18 (next, decided) SDF footprint masks for crisp layer edges: today a layer ends half way between two columns
+  (marching triangles), a straight cut, flat-shaded.
+- NS-19 (limit) A demoted child's per-bound residual stops applying when the structure under it changes (a carve in
+  the parent splits an interval): that child's edits there are lost on re-promote. Re-express it as a whole-column
+  residual when the parent's structure changes.
+- NS-20 (limit) The mixed-block restrict places materials by the template child; a material the template lacks is
+  dropped from the parent. Not met by carve and add in the lab (add makes soil, which every template has).
+- NS-21 (limit) The extra faces (draw B: tunnel floors, ceilings, walls) take no part in the rim morph or the fade;
+  a tunnel crossing a level's rim can show a step there. B is flat-shaded (a normal per face).
+- NS-22 (hack) The camera's eye collision marches the finest level only, and promotion still uses the orbit
+  distance, not the distance to the nearest solid.
+- NS-23 (perf) Draw B's vertices recompute gap matching for all four corners of the quad (several page walks each);
+  fine for a few hundred carved quads, not for a level full of caves. A per-column gap list made once per change
+  would cut it.
 
 ## Terrain: rivers first (2026-11-17, `terrain-rivers`; docs/design/TERRAIN_RIVERS.md, DECISIONS 2026-11-17)
 

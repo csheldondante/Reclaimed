@@ -152,6 +152,38 @@ self-test).
   of different structure).
 - Zero-thickness intervals are kept, so neighbouring columns keep matching structures after a dig (BACKLOG NS-6).
 
+## Decisions with the owner (2026-11-18, round 2)
+
+- The lab must not behave like a heightmap: carve tunnels, add overhangs and blobs, see and sculpt them.
+- **Draw = layered sheets, not surface nets.** Owner: "I think surface nets kill some of the cheapness of columns."
+  Each solid layer has a top and a bottom sheet; owner: "I think sheets will not usually touch and we will need to
+  mesh the boundary of solid against air but I think that's fairly easy." So the solid/air boundary is closed with
+  vertical strips where a layer ends between columns. All on the GPU.
+- Stretching on steep faces and strips: owner: "triplanar mapping may resolve those". Not this round: SDF
+  footprint masks for crisp layer edges (BACKLOG NS-18), surface nets, strata, flow, hex.
+
+## Column correspondence (round 2; the Storage section's rules extended)
+
+- **Structure** = a column's interval count and material sequence. Gaps (air between intervals) are not part of it:
+  a tunnel cut inside one layer, or a dig, keeps the structure, so per-bound residuals and the bound-mean restrict
+  handle it.
+- **Same structure** (neighbours, or a block's children): intervals correspond by index. Enhance interpolates
+  between same-structure neighbours only; restrict averages each bound.
+- **A block of mixed structures** (a carve split an interval, an add made a new one): restrict takes the TEMPLATE,
+  the child with the most intervals (the first on a tie), and scales its thicknesses per material and its gaps so
+  the parent holds the block's mean surface, mean volume of every material and mean enclosed air. A material the
+  template lacks has nowhere to go (NS-20). This replaces NS-5's "mismatch, left alone".
+- **A child whose structure differs from its enhanced parent** carries a WHOLE-COLUMN residual: its own intervals
+  and materials, each bound as two floats relative to the enhanced top surface. It rides on parent changes under
+  it, but its layers do not follow the parent's thickness changes. A per-bound residual whose length no longer fits
+  the enhanced structure no longer applies (NS-19).
+- **Tunnels merging or splitting a layer** need no special rule in storage: they change some columns' structures;
+  those columns carry whole residuals and their blocks restrict by the template rule.
+- **For the draw** a column is its air regions (gaps) from the top: the sky above the top, then the air between
+  solid runs. Two neighbours' gaps correspond when each is the other's nearest-floor gap among those overlapping it
+  in z (mutual nearest). The ground outside an overhang meets the floor under it, not its roof; a tunnel's air meets
+  no air in a solid neighbour.
+
 ## Built so far (branch `nested-scales`, page nested.html)
 
 - Step 1 (2026-11-18): the oracle (src/nested/oracle.ts, 8 Node tests) and the GPU store and passes
@@ -179,6 +211,18 @@ self-test).
   - **At and above the edited level, live columns stay; only residuals are recomputed** (design point 3, as
     written). Below, live columns follow their parent over the enhance support. Re-deriving the levels above too
     made the next level's region its whole window (an edit at depth 2: 104 ms; now 6.8 ms).
+- Round 2 (2026-11-18): Carve and Add (a ball at the pointer's 3D hit, on any level; nest.wgsl `ball`), the mixed
+  restrict and whole-column residuals (oracle and GPU, "Column correspondence" above), and the draw of the
+  solid/air boundary:
+  - A: the top sheet, a quad of six pulled vertices, dropped where the corners' skies do not mutually correspond.
+  - B: for quads a GPU scan lists (a corner with more than one gap), an indirect draw: per anchor corner and gap,
+    floors and ceilings where the triangle's corners share the gap, cut half way to a corner that lacks it
+    (marching triangles), and a wall along the cut (an enclosed gap: floor to ceiling, facing the air; the sky:
+    down the solid run, facing out). Flat-shaded faces; colour by material.
+  - The pick is the first solid along the ray (every interval). The camera's target follows the floor nearest it
+    (into a tunnel's floor); the eye stops short of the first solid between target and eye.
+  - Not yet: the rim morph and fade for B's faces (only the top sheet morphs: NS-21); triplanar texture (colours
+    are flat per material, so nothing stretches, but nothing shows texture either).
 
 ## Open questions
 

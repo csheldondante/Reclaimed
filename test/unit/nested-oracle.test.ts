@@ -159,6 +159,73 @@ describe('nested scales oracle', () => {
     expect(n.origin(3).s).toBe(512);
   });
 
+  it('a tunnel carved through a hill at depth 1 and depth 2: demote/promote identical, volume removed ~ the balls, restrict conserves soil, air and surface', () => {
+    const n = nest();
+    n.promote(withZ0(n, F1));
+    n.promote(withZ0(n, F2));
+    const solid = (c: Col, ref: number) => c.mat.reduce((s, _m, i) => s + c.z1[i] - Math.max(c.z0[i], ref), 0);
+    const total = (lv: Level, ref: number) => lv.cols.reduce((s, c) => s + solid(c, ref), 0);
+    for (const [depth, F] of [
+      [1, F1],
+      [2, F2],
+    ] as const) {
+      const lv = n.levels[depth];
+      const before = total(lv, -500);
+      const mid = lv.at(F.gx + 32, F.gy + 32)!;
+      const cz = mid.z1[mid.z1.length - 1] - 4;
+      const r = 3;
+      for (let i = 0; i < 9; i++) n.edit(depth, 'carve', F.gx + 16 + i * 4 + 0.5, F.gy + 32.5, r, 0, cz);
+      const removed = before - total(n.levels[depth], -500);
+      // nine balls of radius 3 spaced 4 apart (they overlap); one alone is 113 cells³
+      expect(removed).toBeGreaterThan(9 * 50);
+      expect(removed).toBeLessThan(9 * ((4 / 3) * Math.PI * r ** 3) * 1.1);
+      // the tunnel: the column in its middle has an air gap of about the ball's height
+      const t = n.levels[depth].at(F.gx + 32, F.gy + 32)!;
+      expect(Math.max(...t.mat.map((_m, i) => (i ? t.z0[i] - t.z1[i - 1] : 0)))).toBeGreaterThan(4);
+    }
+    // restrict over a mixed block: the parent holds the block's mean surface, soil and enclosed air
+    const px = (F2.gx + 32) / K;
+    const py = (F2.gy + 32) / K;
+    const kids: Col[] = [];
+    for (let b = 0; b < K; b++) for (let a = 0; a < K; a++) kids.push(n.levels[2].at(px * K + a, py * K + b)!);
+    const parentCol = n.levels[1].at(px, py)!;
+    const soilOf = (c: Col) => c.mat.reduce((s, m, i) => s + (i > 0 && m === MAT.soil ? c.z1[i] - c.z0[i] : 0), 0);
+    const airOf = (c: Col) => c.mat.reduce((s, _m, i) => s + (i > 0 ? c.z0[i] - c.z1[i - 1] : 0), 0);
+    const z0 = n.levels[2].f.z0;
+    expect(new Set(kids.map((c) => c.mat.length)).size).toBeGreaterThan(1);
+    const kidS = kids.reduce((s, c) => s + c.z1[c.z1.length - 1], 0) / K ** 3 + z0;
+    expect(Math.abs(kidS - parentCol.z1[parentCol.z1.length - 1])).toBeLessThan(1e-9);
+    expect(Math.abs(kids.reduce((s, c) => s + soilOf(c), 0) / K ** 3 - soilOf(parentCol))).toBeLessThan(1e-9);
+    expect(Math.abs(kids.reduce((s, c) => s + airOf(c), 0) / K ** 3 - airOf(parentCol))).toBeLessThan(1e-9);
+    // demote both, promote both, 20 times: identical
+    const s1 = snap(n.levels[1]);
+    const s2 = snap(n.levels[2]);
+    const f1 = n.levels[1].f;
+    const f2 = n.levels[2].f;
+    for (let i = 0; i < 20; i++) {
+      n.demote(1);
+      n.promote(f1);
+      n.promote(f2);
+    }
+    expect(snap(n.levels[1])).toEqual(s1);
+    expect(snap(n.levels[2])).toEqual(s2);
+  });
+
+  it('add: a blob in mid-air becomes its own interval and survives demote/promote', () => {
+    const n = nest();
+    const f = withZ0(n, F1);
+    n.promote(f);
+    const mid = n.levels[1].at(F1.gx + 30, F1.gy + 30)!;
+    n.edit(1, 'add', F1.gx + 30.5, F1.gy + 30.5, 4, 0, mid.z1[mid.z1.length - 1] + 10);
+    const c = n.levels[1].at(F1.gx + 30, F1.gy + 30)!;
+    expect(c.mat.length).toBe(3);
+    expect(c.z0[2] - c.z1[1]).toBeGreaterThan(5);
+    const a = snap(n.levels[1]);
+    n.demote(1);
+    n.promote(f);
+    expect(snap(n.levels[1])).toEqual(a);
+  });
+
   it('a column with 40 intervals (more than two pages hold) round-trips promote, edit, demote, promote', () => {
     const n = nest();
     const px = F1.gx / K + 4;
