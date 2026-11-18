@@ -26284,6 +26284,28 @@ and sharpens over 0.4 s. But at a fast traverse (two camera distances a second) 
 is still fading at any moment (up to 39 %), because the windows slide in two-chunk steps and each step fades. The
 fade length, the slack, and the speed limit trade sharpness against pop; the phone will need its own numbers.
 
+## 2026-11-18 — Nested scales lab, round 2a: carve and add, columns of different structure across levels, the solid/air draw
+
+**Why.** The owner tried the link: "It looks like it switched to a heightmap". Storage was intervals, but the draw
+showed only each column's top and the brushes worked from the top. Decisions recorded in NESTED_SCALES.md (layered
+sheets plus strips, not surface nets; triplanar later; SDF footprints next).
+
+**What.** Carve and Add: a ball at the pointer's 3D hit (the pick now marches to the first solid, any interval) cut
+from or added to each column's intervals on the GPU, splitting and merging intervals in place, pages ensured per
+chunk. Nesting columns of different structure: restrict of a mixed block scales the template child (most
+intervals) to the block's mean surface, per-material volume and enclosed air; a child whose structure differs from
+its enhanced parent keeps a whole-column residual relative to the enhanced surface (oracle and GPU). The draw is now
+the solid/air boundary: the top sheet (A) plus, for quads where a corner has more than one air region, floors,
+ceilings and walls (B, an indirect draw a GPU scan sizes). The camera's target follows the floor nearest it and the
+eye stops short of solid.
+
+**Measured.** Unit tests 10/10 (new: a tunnel of nine balls at depth 1 and at depth 2, 20 demote/promote cycles
+identical, the mixed restrict holds the block's mean surface, soil and enclosed air to 1e-9; an added blob).
+Self-test 23/23 (new: the GPU carves the same tunnels, matching the oracle on every level to 2.7e-4 (depth 1) and
+2.2e-3 local units (depth 2, f32 at ~100 local units); 683 and 506 cells³ removed by nine overlapping balls of 113
+each; a blob added in mid-air; 20 cycles bit-identical with whole-column residual pages). Carve with a sync: 23 ms
+at depth 1, 43 ms at depth 2.
+
 
 
 
