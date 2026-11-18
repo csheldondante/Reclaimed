@@ -116,6 +116,25 @@ await run({ name: 'stills', kind: 'behaviour', size: '960x640', dpr: 1, echo: fa
   await shot('rim-far-plain', { yaw: 0, pitch: 0.12, eye: [hx + 20, hy, hz + 3] }, 1500, false);
   await shot('blob-stalk', { yaw: 0, pitch: 0.1, eye: [hx + 6, hy + 5, hz + 2.5] });
   await shot('from-root', { yaw: 0, pitch: 0.35, eye: [hx + 60, hy, hz + 25] }, 4000);
+  if (want('root-add')) {
+    // a root-scale add (radius 2.6 root columns) away from the tunnel, then seen at level 1's distance
+    // look straight down from high above a spot 20 units off, add at the screen's centre (the pick), at the root
+    await page.evaluate((s) => nested.setView({ yaw: 0, pitch: 1.45, eye: [s.h[0] - 20, s.h[1], s.h[2] + 40] }), scene);
+    await sleep(3000);
+    const g = await page.evaluate(async () => {
+      const e = nested.eye();
+      const f = nested.app.forward();
+      const hit = [e.x + f[0] * e.dHit, e.y + f[1] * e.dHit, e.z + f[2] * e.dHit];
+      const perPx = (2 * e.dHit * Math.tan((25 * Math.PI) / 180)) / 640;
+      nested.sculpt('add', 0, 0, 1, 2.6 / perPx / 0.5);
+      await new Promise((r) => setTimeout(r, 1500));
+      return { hit, live: nested.state().live };
+    });
+    console.log('root-add at', JSON.stringify(g));
+    const [ax, ay, az] = g.hit;
+    await shot('root-add', { yaw: 0, pitch: 0.25, eye: [ax + 9, ay + 1, az + 5] }, 4500);
+    await shot('root-add-side', { yaw: -Math.PI / 2, pitch: 0.2, eye: [ax, ay - 9, az + 4.5] }, 4500);
+  }
   if (want('gif')) {
     await page.evaluate((v) => nested.setView(v), { yaw: 0, pitch: 0.0, eye: [hx + 7, hy, tz] });
     await sleep(3500);

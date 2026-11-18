@@ -1,7 +1,7 @@
 // Nested scales lab (docs/design/NESTED_SCALES.md): the oracle's invariants. The page self-test (?selftest=1) runs the
 // same invariants on the GPU passes and compares them with this oracle.
 import { describe, expect, it } from 'vitest';
-import { MAT, Nest, OPEN_BOTTOM, colDist, makeRoot, toLayers, type Col, type Frame, type Level } from '../../src/nested/oracle';
+import { MAT, Nest, OPEN_BOTTOM, colDist, makeRoot, ppm2, ppmSub, toLayers, type Col, type Frame, type Level } from '../../src/nested/oracle';
 
 const K = 8;
 const SEED = 7;
@@ -289,5 +289,47 @@ describe('nested scales oracle', () => {
     const one: Col = { mat: [MAT.stone], z0: [OPEN_BOTTOM], z1: [2] };
     expect(colDist(one, 0, 0, [3.5, 0.5, 2])).toBeCloseTo(2, 12);
     expect(colDist(one, 0, 0, [0.5, 0.5, 5])).toBeCloseTo(3, 12);
+  });
+
+  it('enhance (PPM): block means exact, no overshoot at a step, smooth hilltops kept (NS-34)', () => {
+    // a step of height 10 along x, a few cells wide in y: every child within the step's range, every block mean exact
+    const step = (x: number, y: number) => (x >= 0 && Math.abs(y) < 3 ? 10 : 0);
+    for (let py = -4; py <= 4; py++)
+      for (let px = -3; px <= 3; px++) {
+        let sum = 0;
+        for (let b = 0; b < K; b++)
+          for (let a = 0; a < K; a++) {
+            const v = step(px, py) + ppm2(step, px, py, a, b, K);
+            expect(v).toBeGreaterThanOrEqual(-1e-9);
+            expect(v).toBeLessThanOrEqual(10 + 1e-9);
+            sum += v;
+          }
+        expect(sum / (K * K)).toBeCloseTo(step(px, py), 9);
+      }
+    // random cell averages: the K sub-averages of every cell sum to K times the cell
+    let r = 12345;
+    const rnd = () => ((r = (r * 1103515245 + 12345) % 2147483648) / 2147483648) * 20 - 10;
+    for (let t = 0; t < 200; t++) {
+      const q = [rnd(), rnd(), rnd(), rnd(), rnd()];
+      let s = 0;
+      for (let a = 0; a < K; a++) s += ppmSub(q, a, K);
+      expect(s / K).toBeCloseTo(q[2], 9);
+    }
+    // a smooth hilltop (cell averages of -x^2): the peak cell is not flattened, and stays under its curvature's bound
+    const hill = [-4, -1, 0, -1, -4].map((v) => v - 1 / 12);
+    const sub = Array.from({ length: K }, (_, a) => ppmSub(hill, a, K));
+    expect(Math.max(...sub) - Math.min(...sub)).toBeGreaterThan(0.1);
+    expect(Math.max(...sub)).toBeLessThan(0.01);
+    // the oracle's promote with no detail: a root with a cliff gives no child surface above or below the cliff's range
+    const n = nest();
+    n.detailAmp = 0;
+    const root = n.levels[0];
+    for (let y = 0; y < 48; y++) for (let x = 0; x < 48; x++) root.set(x, y, { mat: [MAT.stone], z0: [OPEN_BOTTOM], z1: [x >= 24 ? 20 : 4] });
+    const ch = n.promote({ ...F1, z0: 0 });
+    for (const c of ch.cols) {
+      const s = c.z1[c.z1.length - 1] / K;
+      expect(s).toBeGreaterThanOrEqual(4 - 1e-6);
+      expect(s).toBeLessThanOrEqual(20 + 1e-6);
+    }
   });
 });

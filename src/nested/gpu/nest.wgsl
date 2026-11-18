@@ -149,6 +149,49 @@ fn crW(t: f32) -> vec4<f32> {
   let t3 = t2 * t;
   return vec4<f32>((-t3 + 2.0 * t2 - t) / 2.0, (3.0 * t3 - 5.0 * t2 + 2.0) / 2.0, (-3.0 * t3 + 4.0 * t2 + t) / 2.0, (t3 - t2) / 2.0);
 }
+/** PPM (Colella-Woodward): the edge value between cells c0 and c1, limited to lie between them */
+fn ppmEdge(m1: f32, c0: f32, c1: f32, p2: f32) -> f32 {
+  let e = (7.0 / 12.0) * (c0 + c1) - (1.0 / 12.0) * (m1 + p2);
+  return clamp(e, min(c0, c1), max(c0, c1));
+}
+/** the average over sub-cell a (of k) of the middle cell's limited parabola, from five cell averages q (q[2] the cell).
+ *  Mean-preserving: the k sub-averages sum to k q[2]. A monotone cell keeps its parabola inside its edges; at an
+ *  extremum the curvature is kept only where the neighbours curve the same way (Colella-Sekora), so a smooth hilltop is
+ *  not flattened and a step makes no spike. The oracle's ppmSub is the same maths. */
+fn ppmSub(q: array<f32, 5>, a: f32, k: f32) -> f32 {
+  let c = q[2];
+  var aL = ppmEdge(q[0], q[1], q[2], q[3]);
+  var aR = ppmEdge(q[1], q[2], q[3], q[4]);
+  if ((aR - c) * (c - aL) <= 0.0) {
+    let d2 = 6.0 * (aL - 2.0 * c + aR);
+    let d2c = q[1] - 2.0 * c + q[3];
+    let d2l = q[0] - 2.0 * q[1] + c;
+    let d2r = c - 2.0 * q[3] + q[4];
+    var lim = 0.0;
+    let s = sign(d2);
+    if (s != 0.0 && sign(d2c) == s && sign(d2l) == s && sign(d2r) == s) {
+      lim = s * min(min(abs(d2), 1.25 * abs(d2c)), min(1.25 * abs(d2l), 1.25 * abs(d2r)));
+    }
+    if (d2 != 0.0) {
+      aL = c + (aL - c) * lim / d2;
+      aR = c + (aR - c) * lim / d2;
+    } else {
+      aL = c;
+      aR = c;
+    }
+  } else {
+    let da = aR - aL;
+    let m = c - 0.5 * (aL + aR);
+    if (da * m > da * da / 6.0) { aL = 3.0 * c - 2.0 * aR; } else if (-da * da / 6.0 > da * m) { aR = 3.0 * c - 2.0 * aL; }
+  }
+  let da = aR - aL;
+  let a6 = 6.0 * (c - 0.5 * (aL + aR));
+  let x0 = a / k;
+  let x1 = (a + 1.0) / k;
+  let F0 = aL * x0 + da * x0 * x0 * 0.5 + a6 * (x0 * x0 * 0.5 - x0 * x0 * x0 / 3.0);
+  let F1 = aL * x1 + da * x1 * x1 * 0.5 + a6 * (x1 * x1 * 0.5 - x1 * x1 * x1 / 3.0);
+  return (F1 - F0) * k;
+}
 fn bumpW(a: i32, k: i32) -> f32 {
   let s = sin(3.14159265358979 * (f32(a) + 0.5) / f32(k));
   return s * s;
@@ -353,21 +396,24 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
   gB = gY - py * k;
   gP = clampTo(P, px, py);
   gN = colCount(P, gP.x, gP.y);
-  // the Catmull-Rom surface
+  // (the bilinear position the layer pass uses)
   let ux = (f32(gA) + 0.5) / kf - 0.5;
   let uy = (f32(gB) + 0.5) / kf - 0.5;
   gOff = vec2<i32>(select(0, -1, ux < 0.0), select(0, -1, uy < 0.0));
   gT = vec2<f32>(ux - f32(gOff.x), uy - f32(gOff.y));
-  let wx = crW(gT.x);
-  let wy = crW(gT.y);
+  // the top surface: parent values are cell averages; a limited PPM along x for the five rows round the block, then
+  // along y (the oracle's ppmSub): mean-preserving per block, no new extremum at a step (NS-34)
   let pref = topS(P, gP.x, gP.y, gN);
-  var fsum = 0.0;
-  for (var j = 0; j < 4; j++) {
-    for (var i = 0; i < 4; i++) {
-      let q = clampTo(P, px + gOff.x - 1 + i, py + gOff.y - 1 + j);
-      fsum += wx[i] * wy[j] * (topS(P, q.x, q.y, colCount(P, q.x, q.y)) - pref);
+  var rows = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
+  for (var j = 0; j < 5; j++) {
+    var q = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
+    for (var i = 0; i < 5; i++) {
+      let c = clampTo(P, px - 2 + i, py - 2 + j);
+      q[i] = topS(P, c.x, c.y, colCount(P, c.x, c.y)) - pref;
     }
+    rows[j] = ppmSub(q, f32(gA), kf);
   }
+  let fsum = ppmSub(rows, f32(gB), kf);
   let z0 = zOrigin(L);
   var s = (pref - z0) * kf + fsum * kf + detail(gX, gY, i32(L), k, u.a.y, u.d.w);
   shv[li] = s;

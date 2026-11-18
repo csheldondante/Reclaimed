@@ -97,6 +97,58 @@ export function blockPos(a: number, k: number): { off: number; t: number } {
   const off = u < 0 ? -1 : 0;
   return { off, t: u - off };
 }
+/** PPM (Colella-Woodward): the edge value between cells c0 and c1, limited to lie between them */
+function ppmEdge(m1: number, c0: number, c1: number, p2: number): number {
+  const e = (7 / 12) * (c0 + c1) - (1 / 12) * (m1 + p2);
+  return Math.min(Math.max(e, Math.min(c0, c1)), Math.max(c0, c1));
+}
+/** The average over sub-cell a (of k) of the middle cell's limited parabola, from five cell averages q (q[2] the cell).
+ *  Parent values are cell averages: the k sub-averages sum to k q[2] (mean-preserving by construction). A monotone
+ *  cell keeps its parabola inside its edges (no overshoot past its neighbours); at an extremum the curvature is kept
+ *  only where the neighbours curve the same way (Colella-Sekora), so a smooth hilltop is not flattened. nest.wgsl
+ *  ppmSub is the same maths. */
+export function ppmSub(q: number[], a: number, k: number): number {
+  const c = q[2];
+  let aL = ppmEdge(q[0], q[1], q[2], q[3]);
+  let aR = ppmEdge(q[1], q[2], q[3], q[4]);
+  if ((aR - c) * (c - aL) <= 0) {
+    const d2 = 6 * (aL - 2 * c + aR);
+    const d2c = q[1] - 2 * c + q[3];
+    const d2l = q[0] - 2 * q[1] + c;
+    const d2r = c - 2 * q[3] + q[4];
+    let lim = 0;
+    const s = Math.sign(d2);
+    if (s !== 0 && Math.sign(d2c) === s && Math.sign(d2l) === s && Math.sign(d2r) === s) lim = s * Math.min(Math.abs(d2), 1.25 * Math.abs(d2c), 1.25 * Math.abs(d2l), 1.25 * Math.abs(d2r));
+    if (d2 !== 0) {
+      aL = c + ((aL - c) * lim) / d2;
+      aR = c + ((aR - c) * lim) / d2;
+    } else {
+      aL = c;
+      aR = c;
+    }
+  } else {
+    const da = aR - aL;
+    const m = c - 0.5 * (aL + aR);
+    if (da * m > (da * da) / 6) aL = 3 * c - 2 * aR;
+    else if (-(da * da) / 6 > da * m) aR = 3 * c - 2 * aL;
+  }
+  const da = aR - aL;
+  const a6 = 6 * (c - 0.5 * (aL + aR));
+  const F = (x: number) => aL * x + (da * x * x) / 2 + a6 * ((x * x) / 2 - (x * x * x) / 3);
+  return (F((a + 1) / k) - F(a / k)) * k;
+}
+/** the top surface of child (a, b) of the block of parent column (px, py), relative to S(px, py): PPM along x on the five
+ *  rows round the block, then along y */
+export function ppm2(S: (x: number, y: number) => number, px: number, py: number, a: number, b: number, k: number): number {
+  const ref = S(px, py);
+  const rows: number[] = [];
+  for (let j = 0; j < 5; j++) {
+    const q: number[] = [];
+    for (let i = 0; i < 5; i++) q.push(S(px - 2 + i, py - 2 + j) - ref);
+    rows.push(ppmSub(q, a, k));
+  }
+  return ppmSub(rows, b, k);
+}
 export function bump(a: number, k: number): number {
   const s = Math.sin((Math.PI * (a + 0.5)) / k);
   return s * s;
@@ -163,6 +215,8 @@ export interface Res {
 export class Nest {
   readonly levels: Level[];
   readonly res: Map<number, Res>[] = [];
+  /** the seeded detail's amplitude per wavelength (0: none, the tests' no-overshoot check) */
+  detailAmp = DETAIL_AMP;
   constructor(
     root: Level,
     readonly k: number,
@@ -187,14 +241,12 @@ export class Nest {
     const out: Layers[] = [];
     let sum = 0;
     for (let b = 0; b < k; b++) {
-      const by = blockPos(b, k);
-      const wy = crWeights(by.t);
       for (let a = 0; a < k; a++) {
-        const bx = blockPos(a, k);
-        const wx = crWeights(bx.t);
-        let fsum = 0;
-        for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) fsum += wx[i] * wy[j] * (S(px + bx.off - 1 + i, py + by.off - 1 + j) - pref);
-        const s = (pref - f.z0) * k + fsum * k + detail(px * k + a, py * k + b, f.depth, k, this.seed);
+        // the top surface: a limited, mean-preserving PPM of the parent's cell averages (NS-34; was Catmull-Rom with a
+        // per-block bump restoring the mean, which made a spire per block at a step); the bump below now carries only
+        // the detail's block mean and rounding
+        const fsum = ppm2(S, px, py, a, b, k);
+        const s = (pref - f.z0) * k + fsum * k + detail(px * k + a, py * k + b, f.depth, k, this.seed, this.detailAmp);
         sum += s;
         out.push({ mat: own.mat.slice(), v: [s] });
       }

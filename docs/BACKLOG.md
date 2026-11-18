@@ -100,7 +100,8 @@ user) · `deferred` (agreed for later).
 - NS-33 `done` (round 3 step 1: normals from the linked neighbours' floors and ceilings, baked; the top sheet beside an
   overhang too) (limit) B's normals are the gap's gradient over its quad (smooth across the diagonal, not across quads), so
   floors and ceilings shade in quad facets. Smooth across quads needs NS-23's gap table.
-- NS-34 (serious, enhance) NS-16 shows as spires: a step of a few columns at level L (a carve's floor edge, an add)
+- NS-34 `done` (round 3 step 3: the top surface's enhance is a limited mean-preserving PPM, provisional; per-bound
+  reconstruction of floors and ceilings is NS-43) (serious, enhance) NS-16 shows as spires: a step of a few columns at level L (a carve's floor edge, an add)
   makes one spire per parent block at L + 1 (the sin² bump that restores the block mean). Seen inside a carved tunnel
   at depth 2 and under a root-scale add. Fix the block-mean correction before the owner judges tunnels.
 - NS-35 (decided here, provisional) Each level's window centres ahead of the eye along the view, by up to a quarter of
@@ -131,6 +132,13 @@ user) · `deferred` (agreed for later).
 - NS-41 (perf, memory) The gap and mesh pages roughly double the pages held where there are tunnels (tunnel scene,
   three levels: ~1400 pages, was ~800). A page is 49 KB, mostly empty for these tables; NS-37's smaller pages would cut
   it, or a table page of its own shape.
+- NS-43 (deferred, departure from the step-3 brief) Tunnel floors and ceilings are not yet reconstructed from their
+  own neighbours: thicknesses and gaps are still bilinear, scaled per block, and hang from the top surface, so the top
+  surface's shape reaches every bound below it. With the PPM top the spires are gone, but a floor still follows the
+  top's large-scale shape. Do it per bound with the same PPM where the neighbours' structure matches (oracle first).
+- NS-44 (look) The depth-2 tunnel's walls still show ragged teeth and hanging strips where the carve's cross-section
+  changes structure between columns (the half-way walls, until SDF footprints: NS-18), and a thin seam line runs along
+  the floor (local/nested/tunnel-inside-out-ppm.png).
 - NS-42 (hack, measurement only) GpuNest.bakeOff and Renderer.noMorphB / diagB are measurement switches (the bench and
   the stills script); not used by the sandbox.
 

@@ -26402,6 +26402,26 @@ Self-test 23/23, unit tests 11/11. Stills: local/nested/tunnel-outside-d.png (no
 walls' staircase stays until SDF footprints), dash-top-d.png (was dash-top.png: the dark outline), rim-crossing-plain-c.png
 (the lip ring is still there: NS-21), tunnel-inside-out-a.png (the spires: NS-34, next step).
 
+## 2026-11-18 — Nested scales lab, round 3 step 3: a limited, mean-preserving enhance (no spires)
+
+**Why.** A step of a few columns at one level made one spire per parent block at the next (NS-34): the Catmull-Rom
+surface's block mean misses the parent's by a lot at a step, and the sin²·sin² bump that restored it peaks at 4 x the
+deficit. Tunnel floors carried the spikes because layers hang from the top surface.
+
+**What** (the coordinator's provisional instruction, the owner asked): parent values are cell averages; the top surface
+is a limited PPM reconstruction (Colella-Woodward edges and limiter, the Colella-Sekora extremum rule so smooth hilltops
+are not flattened), dimension by dimension over five parent rows, each child the average of the parabola over its
+sub-cell. The block mean is exact by construction; the bump now carries only the detail's block mean and rounding.
+Oracle and GPU share the maths (oracle.ts ppmSub / ppm2, nest.wgsl ppmSub). Not done: floors and ceilings from their own
+neighbours (NS-43).
+
+**Measured.** Unit tests 12/12 (new: no child outside the step's range over a 7 x 9 block patch, block means exact to
+1e-9, 200 random stencils mean-exact, a smooth hilltop keeps its curvature, a cliff in the oracle's root promotes with no
+child surface past the cliff's range). Self-test 23/23 (GPU against the oracle). Stills: local/nested/tunnel-inside-out-ppm.png
+(the row of spires on the depth-2 tunnel floor is gone; before: tunnel-inside-out-a.png), root-add-ppm.png and
+root-add-side-ppm.png (a root-scale add seen at levels 1 and 2: a smooth mesa, no spires; no before still was kept, the
+last round described metre-high spires). Draw unchanged (6.7-7.4 ms uncapped in the tunnel views).
+
 
 
 

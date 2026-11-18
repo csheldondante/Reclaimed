@@ -141,9 +141,15 @@ self-test).
 - A column is read in layer form: S (top surface) and, for each interval i >= 1, gap_i = z0_i - z1_(i-1) and
   thick_i = z1_i - z0_i. Interval 0 is open below. The column is rebuilt from the top down.
 - Enhance, per child block (the k × k child columns of one parent column): the block takes its parent column's
-  intervals (count and materials). S: bicubic Hermite with central-difference gradients per parent sample
-  (Catmull-Rom), plus seeded detail (value noise in global child columns, wavelengths 2..k child columns,
-  amplitude 0.06 x wavelength), then a bump correction sin²·sin² so the block mean equals the parent exactly. Gaps
+  intervals (count and materials). S (round 3, PROVISIONAL, replaces the Catmull-Rom-plus-bump enhance): parent values
+  are cell averages; S is a limited PPM reconstruction, dimension by dimension (along x on the five parent rows round
+  the block, then along y), each child the average of the parabola over its sub-cell: mean-preserving per block by
+  construction, no overshoot past the neighbouring cells at a step (Colella-Woodward edges and limiter), smooth
+  hilltops kept (Colella-Sekora extremum rule, 1.25 x the neighbours' curvature). Why: the old bump restored each
+  block's mean with a sin²·sin² hump of 4 x the block's deficit at its peak; at a step the deficit is large, so every
+  block along a step grew a spire (NS-34). Then seeded detail (value noise in global child columns, wavelengths
+  2..k/2, amplitude 0.08 x wavelength); the sin²·sin² bump now carries only the detail's block mean and rounding
+  (small: the faint egg-crate of NS-16). Gaps
   and thicknesses: bilinear from the 2 × 2 nearest parent samples that have the same intervals (else the block's
   own value), then scaled per block so their mean equals the parent's (non-negative, mean exact).
 - Restrict: the parent column's S is the mean of its block's S, its gaps and thicknesses the block means (in parent
@@ -265,6 +271,8 @@ self-test).
 
 - Round 3 step 1 (2026-11-18): the baked draw (below). The three blob views went from 270-335 ms of uncapped draw to
   6-7.5 ms (vsync everywhere); a frame with no change runs no compute for the draw.
+- Round 3 step 3 (2026-11-18): the top surface's enhance is a limited, mean-preserving PPM (provisional; "The column
+  maths"). The regular spires on the depth-2 tunnel floor and under a root-scale add are gone.
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
@@ -306,3 +314,6 @@ self-test).
 - Which lab: the terrain branch's sandbox, or a new bare page with only terrain?
 - How large is a child, in parent cells, on the phone and on the PC?
 - Camera: the free eye with collision (provisional), or an orbit camera round a target (with the same collision)?
+- Enhance (provisional, round 3): the limited PPM of the top surface (above). Is a mesa-like edge at a step (no
+  overshoot, but a cliff that stays a cliff) the look wanted? Not done yet: tunnel floors and ceilings reconstructed
+  from their own neighbours (they still hang from the top surface through bilinear thicknesses and gaps: NS-43).
