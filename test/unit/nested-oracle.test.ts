@@ -211,6 +211,65 @@ describe('nested scales oracle', () => {
     expect(snap(n.levels[2])).toEqual(s2);
   });
 
+  it('(round 10) a coarse carve clears what finer levels kept under it: a fine blob and a fine cave do not come back at promote', () => {
+    const n = nest();
+    const f = withZ0(n, F1);
+    n.promote(f);
+    const cx = F1.gx + 32;
+    const cy = F1.gy + 32;
+    const mid = n.levels[1].at(cx, cy)!;
+    const top = mid.z1[mid.z1.length - 1];
+    n.edit(1, 'add', cx + 0.5, cy + 0.5, 3, 0, top + 10);
+    n.edit(1, 'carve', cx - 7.5, cy + 0.5, 3, 0, top - 6);
+    expect(n.res[1].size).toBeGreaterThan(0);
+    n.demote(1);
+    // the root carve: 2.5 root columns round the parent cell of (cx, cy), from above the surface
+    const P = n.levels[0].at(cx / K, cy / K)!;
+    n.edit(0, 'carve', cx / K, cy / K, 2.5, 0, P.z1[P.z1.length - 1] + 0.5);
+    // no residual is left under the columns the ball covered
+    for (const key of n.res[1].keys()) {
+      const x = Math.floor((key % n.rowWidth(1)) / K);
+      const y = Math.floor(Math.floor(key / n.rowWidth(1)) / K);
+      expect(Math.hypot(x + 0.5 - cx / K, y + 0.5 - cy / K)).toBeGreaterThanOrEqual(2.5);
+    }
+    n.promote(f);
+    // so no child column under the ball holds solid above its parent's top (beyond the enhance's reach: the detail)
+    for (let y = cy - 12; y < cy + 12; y++)
+      for (let x = cx - 12; x < cx + 12; x++) {
+        const p = n.levels[0].at(Math.floor(x / K), Math.floor(y / K))!;
+        const c = n.levels[1].at(x, y)!;
+        expect(c.mat.length).toBe(p.mat.length);
+        expect(f.z0 + surf(c) / K).toBeLessThan(surf(p) + 0.5);
+      }
+  });
+
+  it('(round 10) enhance: a thin roof beside the column where a ball broke through keeps to its parent (no staircase of floating pieces)', () => {
+    const n = nest();
+    const f = withZ0(n, F1);
+    // a root cave just under the surface, its top breaking through on one side
+    const px = (F1.gx + 32) / K;
+    const py = (F1.gy + 32) / K;
+    const P = n.levels[0].at(px, py)!;
+    n.edit(0, 'carve', px + 0.5, py + 0.5, 2.6, 0, surf(P) - 2.4);
+    n.promote(f);
+    let roofs = 0;
+    for (let qy = py - 3; qy <= py + 3; qy++)
+      for (let qx = px - 3; qx <= px + 3; qx++) {
+        const p = n.levels[0].at(qx, qy)!;
+        if (p.mat.length < 2 || p.z0[1] - p.z1[0] < 0.5) continue;
+        roofs++;
+        // every child of a roofed parent cell has the roof, overlapping the parent's own roof in z
+        for (let b = 0; b < K; b++)
+          for (let a = 0; a < K; a++) {
+            const c = n.levels[1].at(qx * K + a, qy * K + b)!;
+            const lo = f.z0 + c.z0[1] / K;
+            const hi = f.z0 + c.z1[c.mat.length - 1] / K;
+            expect(Math.min(hi, surf(p)) - Math.max(lo, p.z0[1])).toBeGreaterThan(0);
+          }
+      }
+    expect(roofs).toBeGreaterThan(0);
+  });
+
   it('add: a blob in mid-air becomes its own interval and survives demote/promote', () => {
     const n = nest();
     const f = withZ0(n, F1);

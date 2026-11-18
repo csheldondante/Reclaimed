@@ -46,9 +46,26 @@ async function main(): Promise<void> {
     // (bisecting: ?oracle=0 skips the oracle checks, ?wtscreen=0 the suite's screen checks, ?pit=0 the pit poses)
     // (NS-86, round 9) the workgroup reduction forms probed before and after the oracle checks: on the desktop's Intel Arc
     // the atomic forms go wrong after them (the reproduction); the forms the store uses must hold in both
+    // (round 10) the carves across levels; ?carves=only runs them alone, ?carves=0 skips them
+    if (q.get('carves') === 'only') {
+      const { carveChecks } = await import('./carves');
+      const res = await carveChecks(device, (s) => console.log(`[carves] ${s}`), (q.get('skip') ?? '').split(',').filter(Boolean));
+      for (const c of res) say(c);
+      const failed = res.filter((c) => !c.pass).length;
+      log.textContent += `\n${res.length - failed} of ${res.length} passed.\n`;
+      (window as unknown as { __selftest: unknown }).__selftest = { done: true, failed, results: res };
+      return;
+    }
     const { reductionHazard } = await import('./hazard');
     const h0 = await reductionHazard(device);
     const res = q.get('oracle') === '0' ? [] : await selftest(device, say);
+    if (q.get('carves') !== '0') {
+      const { carveChecks } = await import('./carves');
+      for (const c of await carveChecks(device, (s) => console.log(`[carves] ${s}`))) {
+        res.push(c);
+        say(c);
+      }
+    }
     {
       const h1 = await reductionHazard(device);
       const used = ['tree + uniform load', 'one writer + uniform load'];

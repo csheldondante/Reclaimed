@@ -290,6 +290,30 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-91 (bug?, seen round 9, once) One full selftest of three showed 1 hole pixel in one pit pose ("pit tap 4 level 2",
   eye 67.18, 119.13, 17.99, yaw 3.44, pitch 0.25, three levels; screen 59,378), the same pixel after the cruise: a
   pinhole at a seam or the pit check's ground guess (NS-84). Not investigated; the other two runs 0.
+- NS-92 (limit, round 10) Thin contacts part at finer levels. A carve can leave a skin whose only hold on its neighbours
+  is a z-overlap thinner than the enhance's seeded detail moves a bound (DETAIL_AMP x (2 + 4) child units = 0.06 parent
+  units each side); its children can then float as a whole block (scenario i: a 0.03-thick soil skin, 64 child records).
+  The carve self-test reports these apart ("held by a hair") and does not judge them. Routes: no detail on a bound whose
+  record touches its neighbour by less than the amplitude, or a support rule (DESIGN.md sections 7-10) that drops what
+  floats.
+- NS-93 (departure, round 10) Derive's top surface now interpolates only between parent cells of the same structure (a
+  neighbour of another structure counts at the block's own top), as the gaps and thicknesses always did. Trade-off: at a
+  structure boundary (a crater rim where the soil is gone, a cave's edge) the finer level's top is flat per block on
+  that side, a step of one parent cell instead of a slope (stills r10-cave-*-after). For the owner to judge in the
+  stills; smoothing it back needs a rule that keeps a roof on its own interval.
+- NS-94 (limit, round 10) A ball carve at any level can leave pieces floating at that level itself (a cave roof's rim
+  column whose cap does not overlap its neighbours on a slope: scenario i, a 0.18-thick root piece). Allowed by the
+  owner's rule (the edit left it); its children float with it. A support or "no skin thinner than x" rule would remove
+  them: a design question.
+- NS-96 (bug, the owner's phone report, round 10; DONE) "floating columns at higher resolutions when I zoom in". Two
+  causes: (a) a carve or add at a level left finer levels' residuals (live and dropped) under it, so a fine blob, cave
+  roof or soil layer came back over the carved parent at the next derive or promote; (b) derive's top surface followed
+  neighbours of another structure, so a thin cave roof beside the column where the ball broke through stepped down to
+  the floor, one floating piece a child column. Fixes: nest.wgsl resClear (the oracle's edit), the same-structure top
+  (NS-93). Self-test: src/nested/carves.ts (scenarios i-v).
+- NS-95 (hack, round 10, tests only) GpuNest.oldTop (derive's u.e.x) brings back round 9's top rule, and `skip`
+  'resClear' the round 9 residuals, for the before stills and counts (scripts/nested-carves.mjs, `?skip=` on
+  `?selftest=1&carves=only`, nested-perf.mjs `--old 1`).
 - NS-90 (unknown, round 9) What in the oracle checks puts the Intel driver into the state where workgroup atomics go
   wrong was not found (the fresh sandbox never showed it). Whether a phone's driver does the same: run
   `?selftest=1&wt=0` there; its first line after the oracle checks reports the atomic forms' misses.

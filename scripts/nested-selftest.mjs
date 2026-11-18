@@ -6,7 +6,7 @@ await run({ name: 'nested-selftest', kind: 'behaviour', size: '960x640', dpr: 1,
   const port = R.opt('port', '5461');
   const page = await R.page();
   page.on('console', (m) => {
-    if (m.type() === 'error' || m.type() === 'warning' || (m.text().startsWith('[suite]') && /hole|odd|pit|shaft|cave|coverage|trace|hazard/.test(m.text()))) console.log(`[page ${m.type()}] ${m.text()}`);
+    if (m.type() === 'error' || m.type() === 'warning' || (m.text().startsWith('[suite]') && /hole|odd|pit|shaft|cave|coverage|trace|hazard/.test(m.text())) || m.text().startsWith('[carves]')) console.log(`[page ${m.type()}] ${m.text()}`);
   });
   // (--q: extra query, e.g. "oracle=0&wtscreen=0&pit=0" while bisecting)
   const extra = R.opt('q', '');

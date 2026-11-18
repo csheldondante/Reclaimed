@@ -62,6 +62,13 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
   await page.evaluate((v) => nested.setView(v), views['tunnel mouth']);
   await sleep(2500);
   if (R.opt('profile', '0') === '1') await page.evaluate(() => (window.__profile = true));
+  // (--old 1, round 10: the carves with round 9's rules, derive's top from every neighbour and no residual cleared, to
+  // measure what the round 10 rules add to an edit)
+  if (R.opt('old', '0') === '1')
+    await page.evaluate(() => {
+      nested.app.nest.oldTop = 1;
+      nested.app.nest.skip.add('resClear');
+    });
   const carve = await page.evaluate(async (h) => {
     const a = nested.app;
     const s = await a.nest.readAll();

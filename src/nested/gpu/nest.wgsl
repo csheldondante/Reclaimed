@@ -384,6 +384,8 @@ fn wgScan(li: u32, v: u32) -> vec2<u32> {
 var<workgroup> wOrigin: vec2<i32>;
 /** derive: the parent's tops round the chunk ((16 / k + 4)^2, k >= 2) */
 var<workgroup> wPTop: array<f32, 144>;
+/** derive (round 10): for each own cell (up to 64) and each cell of its 5 x 5 stencil, 1 where they share a structure */
+var<workgroup> wPSame: array<u32, 1600>;
 /** a slot's dispatch origin, uniform across the workgroup (it is read from a storage buffer) */
 fn slotOrigin(slot: u32, li: u32) -> vec2<i32> {
   if (li == 0u) { wOrigin = vec2<i32>(slotW(slot, 4u), slotW(slot, 5u)); }
@@ -591,12 +593,32 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
     let c = clampTo(P, p0.x + i32(q) % ps, p0.y + i32(q) / ps);
     wPTop[q] = topS(P, c.x, c.y, colCount(P, c.x, c.y));
   }
+  // (round 10) which of those cells share the structure of each parent cell the chunk's blocks hang from (the nb x nb
+  // "own" cells, each against its 5 x 5 stencil). The top surface interpolates between same-structure cells
+  // only, as the gaps and thicknesses always did ("Column correspondence"): a neighbour of another structure is taken
+  // at the block's own top. Before, a cave's thin roof beside the column where the ball broke through followed the top
+  // down to the cave's floor (each child a step lower than its neighbour, more than the roof is thick): a staircase of
+  // roof pieces, each floating (the owner's "floating columns").
+  // (one pair a thread: each own cell against each cell of its 5 x 5 stencil, nb x nb x 25 pairs, at most 1,600)
+  let nb = 16 / k;
+  for (var t = li; t < u32(nb * nb * 25) && u.e.x != 1; t += 256u) {
+    let o = i32(t / 25u);
+    let sI = i32(t % 25u);
+    let own = clampTo(P, p0.x + 2 + o % nb, p0.y + 2 + o / nb);
+    let c = clampTo(P, p0.x + 2 + o % nb + sI % 5 - 2, p0.y + 2 + o / nb + sI / 5 - 2);
+    wPSame[t] = select(0u, 1u, sameMats(P, c, own, colCount(P, own.x, own.y)));
+  }
   workgroupBarrier();
   let pref = wPTop[(py - p0.y) * ps + (px - p0.x)];
+  let ownI = (py - p0.y - 2) * nb + (px - p0.x - 2);
   var rows = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
   for (var j = 0; j < 5; j++) {
     var q = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
-    for (var i = 0; i < 5; i++) { q[i] = wPTop[(py - 2 + j - p0.y) * ps + (px - 2 + i - p0.x)] - pref; }
+    for (var i = 0; i < 5; i++) {
+      let cq = (py - 2 + j - p0.y) * ps + (px - 2 + i - p0.x);
+      // (u.e.x = 1, tests only: round 9's rule, every neighbour's top, for the before stills)
+      if (u.e.x == 1 || wPSame[u32(ownI * 25 + j * 5 + i)] != 0u) { q[i] = wPTop[cq] - pref; }
+    }
     rows[j] = ppmSub(q, f32(gA), kf);
   }
   let fsum = ppmSub(rows, f32(gB), kf);
@@ -1289,6 +1311,46 @@ fn ball(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid
     }
   }
   setCount(T, X, Y, nn, need);
+}
+
+// ---- (round 10) a material write clears what finer levels kept under it. The owner: "I expect boolean deletion to
+// delete parents and all children in those sub cells". A carve or add at level d rewrites the columns its ball covers;
+// every finer level's kept residual (live or dropped) under those columns is let go, so there the finer level is
+// enhance(parent) again: what a finer edit had made (a tunnel's roof, a blob) cannot come back over the new parent, at a
+// promote or at the derive that follows this edit. One thread a table entry: residual pages of depths below d.
+@compute @workgroup_size(64)
+fn resClear(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let s = gid.x;
+  if (s >= TCAP) { return; }
+  let d = reg[8];
+  if (d < 0) { return; }
+  let k1 = atomicLoad(&tab[s * 4u + 1u]);
+  if (k1 >= BUSY) { return; }
+  let lid = k1 & 0xffu;
+  if (lid <= RES_ID + u32(d) || lid >= RES_ID + 8u) { return; }
+  let p = atomicLoad(&tab[s * 4u + 2u]);
+  if (p >= NOT_LOADED) { return; }
+  let k0 = atomicLoad(&tab[s * 4u]);
+  let cx = i32(k0 & 0xffffu);
+  let cy = i32(k0 >> 16u);
+  // the chunk's columns on level d: global column / k^(m - d)
+  var sc = 1;
+  for (var m = u32(d); m < lid - RES_ID; m++) { sc *= i32(u.a.x); }
+  let slot = slotOf(d, 3);
+  let box = vec4<i32>(slotW(slot, 0u), slotW(slot, 1u), slotW(slot, 2u), slotW(slot, 3u));
+  if (fdiv(cx * 16 + 15, sc) < box.x || fdiv(cy * 16 + 15, sc) < box.y || fdiv(cx * 16, sc) >= box.z || fdiv(cy * 16, sc) >= box.w) { return; }
+  var left = 0u;
+  for (var c = 0u; c < 256u; c++) {
+    if ((pgLoad(p * PW + c) & 0xffffu) == 0u) { continue; }
+    let ax = fdiv(cx * 16 + i32(c & 15u), sc);
+    let ay = fdiv(cy * 16 + i32(c >> 4u), sc);
+    if (inBox(ax, ay, box) && ballSpan(ax, ay, u32(d)).z > 0.0) { pgStore(p * PW + c, 0u); } else { left++; }
+  }
+  // (a page left with no column is let go, as a residual pass leaves no page where nothing differs)
+  if (left == 0u) {
+    freePage(p);
+    atomicStore(&tab[s * 4u + 1u], TOMB);
+  }
 }
 
 // ---- melt: a slump of the top four intervals between same-structure neighbours, mass kept exactly in reals ------------

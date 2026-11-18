@@ -26863,3 +26863,58 @@ of 512, 16 a block instead of 32. The bottom lattice went from 8 to 32 units so 
 Checks with the fans: `?selftest=1` 32 of 32 (0 hole pixels in all pose sets, 0 odd edges, coverage 0), watertight
 script 0 odd edges and coverage 0, store stress at `?maxbuf=128` clean, unit tests 13 of 13. The phone frame time is the
 owner's to check (the triangle count is back near round 7's; level 2 is still above round 7's).
+
+## 2026-11-19 — Nested scales lab, round 10: floating columns (a write clears finer residuals; enhance's top between same-structure cells)
+
+**Why.** The owner on the phone: "I am seeing some artifact like floating columns at higher resolutions when I zoom in
+which I would not expect since I expect boolean deletion to delete parents and all children in those sub cells".
+
+**Reproduced first** (src/nested/carves.ts, `?selftest=1&carves=only`; its own pool, root 256, windows of 128). Five
+scenarios: (i) a crater and a thin-roofed cave carved at the root, levels 1 and 2 opened over the rims; (ii) a fine crater
+and cave, level 1 dropped, root carves containing and partly overlapping them, promoted again; (iii) a fine blob in mid-air
+and one on the ground, dropped, carved away at the root, promoted; (iv) a tunnel through a mound at the root, levels over
+its mouth and its middle; (v) the same as (ii) with levels 1 and 2 live. Measured per level: records lying wholly in the
+air of their parent column and its 8 neighbours (or outside the hull of a same-structure neighbour's matching record),
+columns with solid inside a carved ball shrunk by 1.5 carving-level columns, solid intervals in components reaching
+neither a first record nor the window rim (union-find over z-overlaps), split into new / inherited from a floating parent
+/ "held by a hair" (parent piece touching its neighbours by less than 2 x the detail's reach).
+
+| rules | records in parent air | solid in a carved ball | floating on finer levels, all |
+|---|---|---|---|
+| round 9 | 258 | 9 columns (557 with the first, smaller balls: the fine blob back at level 2) | i 83, iii 19 / 51, iv 7, v 390 |
+| (a) only | 393 (ii's level 2: 157 more, the next cause seen once the residual is gone) | 9 | i 83, iv 7 |
+| (b) only | 20 (iii 4, v 6) | 0 | iii 19 / 1,235, v 390 |
+| round 10, both | 0 | 0 | i 64 held by a hair (NS-92); 0 new |
+
+- **(a) reproduced:** a carve or add left every finer level's residual under it. A fine blob (a whole-column residual)
+  came back over the carved parent at promote, riding its new surface, and floated (iii); with levels live, the derive
+  after the root carve put it back at once (v). A fine cave's roof came back the same way.
+- **(b) reproduced:** derive's top surface (the limited PPM) read every neighbour's top, also of another structure, while
+  the gaps and thicknesses hang from that top with the block's own values. A thin cave roof beside the column where the
+  ball broke through followed the top down toward the cave's floor, each child 0.65 parent units lower than its
+  neighbour, the roof 0.26 thick: one floating piece a child column (i, iv; the stills). The owner's floating columns.
+- **(c) not reproduced** (a thin carve restricted to a parent air record that later enhances differently): 0 in (ii) and
+  (v) once (a) and (b) were fixed.
+
+**Fixes (NESTED_SCALES.md "A write clears what finer levels kept under it").**
+- nest.wgsl resClear: after a carve or add, one thread a table entry; for residual pages of depths below the hit, each
+  column whose ancestor column on the hit level the ball covered gets count 0; a page left with none is freed. Same in the
+  oracle's edit. Raise, Dig and Melt keep the residuals riding.
+- Derive's top: a stencil cell of another structure than the block's parent cell is taken at the block's own top (the
+  oracle's enhanceBlock likewise). Structure pairs are computed once a workgroup, one pair a thread (each own parent cell
+  against its 5 x 5 stencil). Trade-off: a step of one parent cell, flat per block, at a structure boundary (NS-93).
+
+**Stills** (scripts/nested-carves.mjs, local/nested/r10-*-before/after.png): cave-L1-yaw3.7 before shows the staircase
+of hovering roof boxes along the rim, after flat roof plates; blob-3-zoomed-in before shows the old fine blob and soil
+pieces in the root's crater, after a clean crater.
+
+**Cost** (nested-perf.mjs, carve at level 1 with bakes, median of 10; `--old 1` runs round 9's rules in the same build;
+the desktop's GPU timing varies run to run by 2-3 ms):
+
+| run | round 9 rules | round 10 rules |
+|---|---|---|
+| first pair (one pair a thread before parallel pairs) | 11.0, 12.7 | 14.0, 10.1 |
+| after parallel pairs | 12.25, 11.05 | 12.55, (a run with the whole GPU slow: draw 12 ms too, discarded) |
+
+Tests: oracle unit tests 15 (two new: a coarse carve clears the fine blob and cave residuals; a thin roof keeps to its
+parent); `?selftest=1` gains three checks from the scenarios.

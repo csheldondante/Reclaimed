@@ -279,6 +279,26 @@ So:
   level ids would be per grid), the camera pass and the pick assume one chain of levels over one root at the origin, and
   promotion is per depth, not per (grid, depth).
 
+## A write clears what finer levels kept under it (round 10)
+
+The owner (phone, round 9 build): "I am seeing some artifact like floating columns at higher resolutions when I zoom in
+which I would not expect since I expect boolean deletion to delete parents and all children in those sub cells".
+
+- **The rule.** A carve or add at level d rewrites the columns its ball covers; every finer level's residual under those
+  columns, live or dropped, is let go (nest.wgsl resClear, the oracle's edit), so there each finer level is enhance(its
+  parent) again. A finer edit's blob, roof or layer cannot come back over the new parent, at the derive that follows the
+  edit (live levels) or at a later promote (dropped ones). The model stands: child = enhance(parent) + residual; the
+  residual is cleared, not re-applied. Raise, Dig and Melt (moves, not material writes) keep the residuals riding.
+- **Enhance's top between same-structure cells only.** Derive's top surface (the limited PPM) takes a neighbour of
+  another structure at the block's own top, as the gaps and thicknesses always did ("Column correspondence": enhance
+  interpolates between same-structure neighbours only). Before, a thin cave roof beside the column where the ball broke
+  through followed the top down to the cave's floor, each child a step lower than its neighbour by more than the roof was
+  thick: a staircase of floating pieces. Trade-off: a step of one parent cell, flat per block, at a structure boundary
+  (BACKLOG NS-93).
+- Checked by `?selftest=1` (src/nested/carves.ts): no finer record wholly in its parent's air, no solid in a carved ball
+  at any finer level, no new floater on a finer level; a skin held by less than the enhance's detail reach is reported
+  apart (NS-92).
+
 ## Decisions with the owner (round 7)
 
 After round 6 on the phone (16.7 ms frames, dig fast, promotes at most a frame), verbatim:

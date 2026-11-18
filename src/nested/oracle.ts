@@ -291,7 +291,13 @@ export class Nest {
     const k = this.k;
     const own = toLayers(parent.clamped(px, py));
     const pref = own.v[0];
-    const S = (x: number, y: number) => toLayers(parent.clamped(x, y)).v[0];
+    // (round 10) between same-structure cells only, as the gaps and thicknesses: a neighbour of another structure counts
+    // at the block's own top (else a cave's thin roof followed the top down to the floor where the ball broke through:
+    // a staircase of floating roof pieces)
+    const S = (x: number, y: number) => {
+      const c = parent.clamped(x, y);
+      return sameStructure(c, own) ? toLayers(c).v[0] : pref;
+    };
     const out: Layers[] = [];
     let sum = 0;
     for (let b = 0; b < k; b++) {
@@ -506,6 +512,20 @@ export class Nest {
         }
         const p = (1 - d * d) * (1 - d * d);
         lv.set(x, y, applyOp(lv.at(x, y)!, op, amount * p));
+      }
+    // (round 10) a material write clears every finer depth's residual under the columns its ball covers, live or
+    // dropped (the owner: "I expect boolean deletion to delete parents and all children in those sub cells"); there the
+    // finer levels are enhance(parent) again (nest.wgsl resClear)
+    if (op === 'carve' || op === 'add')
+      for (let m = depth + 1; m < this.res.length; m++) {
+        const s = this.k ** (m - depth);
+        const w = this.rowWidth(m);
+        for (const key of [...this.res[m].keys()]) {
+          const ax = Math.floor((key % w) / s);
+          const ay = Math.floor(Math.floor(key / w) / s);
+          if (ax < box.x0 || ay < box.y0 || ax >= box.x1 || ay >= box.y1) continue;
+          if (Math.hypot(ax + 0.5 - cx, ay + 0.5 - cy) < r) this.res[m].delete(key);
+        }
       }
     this.propagate(depth, box);
   }

@@ -150,6 +150,8 @@ export class GpuNest {
   bakeOff = false;
   /** (measurement only, NS-42) an edit's passes left out: 'restrict', 'residual', 'derive' (the result is then wrong) */
   readonly skip = new Set<string>();
+  /** (tests only, round 10) 1: derive's top surface interpolates every neighbour as round 9 did (the before stills) */
+  oldTop = 0;
   private pipes: Record<string, GPUComputePipeline> = {};
   private enc: GPUCommandEncoder | null = null;
   private pass: GPUComputePassEncoder | null = null;
@@ -206,7 +208,7 @@ export class GpuNest {
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     const ppl = device.createPipelineLayout({ bindGroupLayouts: [this.planLayout] });
     const dpl = device.createPipelineLayout({ bindGroupLayouts: [this.dirLayout] });
-    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'pack', 'faceBake', 'snap', 'tabOut', 'tabIn', 'shrinkFree', 'shrinkMove', 'shrinkCopy'])
+    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'resClear', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'pack', 'faceBake', 'snap', 'tabOut', 'tabIn', 'shrinkFree', 'shrinkMove', 'shrinkCopy'])
       this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: pl, compute: { module, entryPoint: e } });
     for (const e of ['plan', 'dilate']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: ppl, compute: { module, entryPoint: e } });
     for (const e of ['dirClear', 'dirBuild', 'dirFinish']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: dpl, compute: { module, entryPoint: e } });
@@ -677,7 +679,7 @@ export class GpuNest {
     if (!overlap) this.run('zPick', this.uni(({ a }) => (a[3] = L)), 1);
     this.lastWin[L] = { ...w };
     const s = this.cpuSlot(0, { x0: w.gx / 16, y0: w.gy / 16, x1: (w.gx + w.n) / 16, y1: (w.gy + w.n) / 16 });
-    this.runIndirect('derive', this.uni(({ a, r }) => ((a[2] = 0), (a[3] = L), (r[0] = s))), s);
+    this.runIndirect('derive', this.uni(({ a, r, e }) => ((a[2] = 0), (a[3] = L), (r[0] = s), (e[0] = this.oldTop))), s);
     this.pack(L, s);
     // the child's faces, and in the same submit the parent's round the footprint (it stops drawing there, its walls
     // face the child): the parent's surface is never missing for a frame
@@ -742,7 +744,7 @@ export class GpuNest {
     this.lastWin[L] = { ...w };
     const slots = parts.map((p, i) => {
       const s = this.cpuSlot(i, p);
-      this.runIndirect('derive', this.uni(({ a, r }) => ((a[2] = 0), (a[3] = L), (r[0] = s))), s);
+      this.runIndirect('derive', this.uni(({ a, r, e }) => ((a[2] = 0), (a[3] = L), (r[0] = s), (e[0] = this.oldTop))), s);
       this.pack(L, s);
       return s;
     });
@@ -803,6 +805,12 @@ export class GpuNest {
       this.pack(m, slot);
       this.mergeFrees();
     }
+    // (round 10) a carve or add clears the residuals every finer level kept under the columns its ball covers (live and
+    // dropped levels), so they are enhance(parent) there again (nest.wgsl resClear; the owner's rule)
+    if (ball && !this.skip.has('resClear')) {
+      this.run('resClear', this.uni(base), TCAP / 64);
+      this.mergeFrees();
+    }
     for (let m = live - 1; m >= 1; m--) {
       if (this.skip.has('restrict')) continue;
       this.runIndirect('restrictK', this.uni(({ a, r }) => ((a[3] = m), (r[0] = m * 4))), m * 4);
@@ -810,9 +818,9 @@ export class GpuNest {
       this.mergeFrees();
     }
     for (let m = 1; m < live; m++) {
-      if (!this.skip.has('residual')) this.runIndirect('derive', this.uni(({ a, r }) => ((a[2] = 1), (a[3] = m), (r[0] = m * 4 + 1))), m * 4 + 1);
+      if (!this.skip.has('residual')) this.runIndirect('derive', this.uni(({ a, r, e }) => ((a[2] = 1), (a[3] = m), (r[0] = m * 4 + 1), (e[0] = this.oldTop))), m * 4 + 1);
       if (this.skip.has('derive')) continue;
-      this.runIndirect('derive', this.uni(({ a, r }) => ((a[2] = 0), (a[3] = m), (r[0] = m * 4 + 2))), m * 4 + 2);
+      this.runIndirect('derive', this.uni(({ a, r, e }) => ((a[2] = 0), (a[3] = m), (r[0] = m * 4 + 2), (e[0] = this.oldTop))), m * 4 + 2);
       this.pack(m, m * 4 + 2);
       this.mergeFrees();
     }
