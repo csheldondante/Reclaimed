@@ -42,8 +42,12 @@ The concise design for Reclaimed. It's written system by system with the user, a
 **Intent.** The world is columns of intervals: compact in memory and on disc. Structural analysis and the angle of repose of soft material are done in column space, never in voxels.
 
 **Design.**
-- A hex lattice of columns. Each column is an ordered list of intervals `[z0, z1)`, with free f32 heights, a material, and aux data.
-- Air is the gap between intervals, so empty space costs nothing.
+- A hex lattice of columns. Each column is an ordered list of intervals of any material, with free f32 heights, a
+  material, and aux data. Intervals share boundaries: a record stores its top (an absolute height), its bottom is the
+  top of the record below, so solid on solid costs no extra float. (corrected 2026-11-18, the user)
+- Air is a material like any other and can be stored as an interval (like water or any transparent interval). It is
+  also the DEFAULT: where a column stores nothing (above its last interval, and anywhere no interval is stored) the
+  space is air, so empty space still costs nothing. (corrected 2026-11-18, the user)
 - Caves, overhangs and arches are just intervals with gaps between them.
 - The material table gives each material its behaviour: density, strength, how much it bears, its angle of repose, tensile bond, growth cap, fallback, and so on.
 

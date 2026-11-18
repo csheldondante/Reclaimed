@@ -3,6 +3,32 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-11-18 — air is a material and the default (`nested-scales`)
+
+The user, verbatim: "had originally envisioned air as just another material with intervals like water or any other
+transparent interval" and "I think that's design doc miscaptured my description then. Air is meant to be the default but
+also an interval. That was my original idea." Of switching the lab's layout now: "I guess it doesn't make much
+difference."
+
+Consequence: DESIGN.md section 1 corrected (air is a material that can be stored as an interval, and the default where
+nothing is stored). Code may keep reading gaps as implied air for now. When a column record layout is next reworked (e.g.
+with the 32 x 32 x 4 page shape, NS-37), air becomes an explicit material interval with one edge distance per interval,
+replacing the two-distance (eS / eG) packing of the footprints (BACKLOG NS-51).
+
+The target column record, agreed by the user ("Ok yeah that sounds good to me"; "I was confused why there was a gap
+since they should use the same z value in my head canon"), to be built with the 32 x 32 x 4 page shape (NS-37) in a
+later round:
+- A column is an ordered list of intervals of any material, AIR INCLUDED, with SHARED boundaries: each record stores one
+  bound (its top, an ABSOLUTE f32 height in the level's local units), its material and one plan edge distance; its
+  bottom is the top of the record below. No stored gap; solid on solid costs no extra float.
+- Open-ended as in DESIGN.md section 2: implicit stone below the first record, implicit air above the last. Air is the
+  default wherever nothing is stored.
+- Thickness / relative (layer) form is used only inside the promote (enhance) and restrict passes, converted at the pass
+  boundary (per-use representations converted at boundaries). Storage stays absolute, so access needs no sweep from a
+  base height.
+- Per-interface data (gradient, edge distance) is stored once per boundary; the eS / eG pair collapses to one distance
+  per interval.
+
 ## 2026-11-15 — round 129b: the skeleton against the opportunity design (`loop-skeleton`, round 2)
 
 The user's words, as passed on by the coordinator, verbatim:

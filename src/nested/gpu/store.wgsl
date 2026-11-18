@@ -4,10 +4,17 @@
 //
 // Table entry (4 words): key0 = cx | cy << 16 (global chunk of the level's depth), key1 = level | cz << 8, page, birth
 // (f32 bits: when the page was handed out, for the draw's fade). Level ids: 0-7 a live level of that depth, 8-15 the
-// residual of depth (id - 8). Page: K intervals x 256 columns, three words each (z0, z1, material), after 256 counts.
+// residual of depth (id - 8). Page: K intervals x 256 columns, four words each (z0, z1, material, footprints), after
+// 256 counts.
+//
+// Footprints (docs/design/NESTED_SCALES.md "Footprints"): the fourth word holds two f16 signed distances in plan (column
+// units, positive inside): eS to the edge of the interval's own footprint, eG to the edge of the gap below it. A
+// negative one is a ghost: it keeps its place in the structure but is not solid (not air). present() is the one test.
 
 const K: u32 = 16u;
-const PW: u32 = 12544u; // 256 + 256 * 16 * 3
+/** words a record */
+const RW: u32 = 4u;
+const PW: u32 = 16640u; // 256 + 256 * 16 * 4
 const NONE: u32 = 0xffffffffu;
 const EMPTY: u32 = 0xffffffffu;
 const NOT_LOADED: u32 = 0xfffffffeu;
@@ -15,12 +22,23 @@ const TOMB: u32 = 0xfffffffdu;
 const BUSY: u32 = 0xfffffffcu;
 const OPEN_BOTTOM: f32 = -1e30;
 const RES_ID: u32 = 8u;
+/** "present, far from any edge" (the oracle's E_FAR), both halves: f16 1024 = 0x6400 */
+const E_FAR: f32 = 1024.0;
+const E_FAR_W: u32 = 0x64006400u;
 
 struct Ivl {
   z0: f32,
   z1: f32,
   m: u32,
+  e: u32,
 }
+fn eS(iv: Ivl) -> f32 { return unpack2x16float(iv.e).x; }
+fn eG(iv: Ivl) -> f32 { return unpack2x16float(iv.e).y; }
+fn present(e: f32) -> bool { return e > 0.0; }
+/** interval i is solid (interval 0 always is) */
+fn solidIv(iv: Ivl, i: u32) -> bool { return i == 0u || present(eS(iv)); }
+/** the two distances as stored (f16, no negative zero: a residual gives the stored bits back) */
+fn packE(s: f32, g: f32) -> u32 { return pack2x16float(vec2<f32>(select(s, 0.0, s == 0.0), select(g, 0.0, g == 0.0))); }
 
 fn tKey0(cx: i32, cy: i32) -> u32 { return u32(cx) | (u32(cy) << 16u); }
 fn tKey1(lid: u32, cz: u32) -> u32 { return lid | (cz << 8u); }
@@ -50,8 +68,8 @@ fn pageOf(lid: u32, cx: i32, cy: i32, cz: u32) -> u32 {
 }
 fn colIn(X: i32, Y: i32) -> u32 { return u32((Y & 15) * 16 + (X & 15)); }
 fn pgIvl(page: u32, c: u32, i: u32) -> Ivl {
-  let b = page * PW + 256u + (c * K + i) * 3u;
-  return Ivl(bitcast<f32>(pgLoad(b)), bitcast<f32>(pgLoad(b + 1u)), pgLoad(b + 2u));
+  let b = page * PW + 256u + (c * K + i) * RW;
+  return Ivl(bitcast<f32>(pgLoad(b)), bitcast<f32>(pgLoad(b + 1u)), pgLoad(b + 2u), pgLoad(b + 3u));
 }
 /** a column's interval count over its stacked pages (0: no page; a page not loaded ends the run, its open interval
  *  extrapolated) */
@@ -71,13 +89,23 @@ fn colCount(lid: u32, X: i32, Y: i32) -> u32 {
 }
 fn ivlAt(lid: u32, X: i32, Y: i32, i: u32) -> Ivl {
   let p = pageOf(lid, X >> 4, Y >> 4, i / K);
-  if (p == NONE || p == NOT_LOADED) { return Ivl(OPEN_BOTTOM, OPEN_BOTTOM, 0u); }
+  if (p == NONE || p == NOT_LOADED) { return Ivl(OPEN_BOTTOM, OPEN_BOTTOM, 0u, E_FAR_W); }
   return pgIvl(p, colIn(X, Y), i % K);
 }
-/** the top surface of a column of n intervals */
+/** the top surface of a column of n intervals in layer form (the last interval's z1, ghost or not: enhance's S) */
 fn topS(lid: u32, X: i32, Y: i32, n: u32) -> f32 {
   if (n == 0u) { return 0.0; }
   return ivlAt(lid, X, Y, n - 1u).z1;
+}
+/** the top PRESENT surface (the draw's top sheet, the camera's ground): the highest solid interval's z1 */
+fn topPresent(lid: u32, X: i32, Y: i32, n: u32) -> f32 {
+  if (n == 0u) { return 0.0; }
+  var i = n - 1u;
+  loop {
+    let iv = ivlAt(lid, X, Y, i);
+    if (i == 0u || present(eS(iv))) { return iv.z1; }
+    i--;
+  }
 }
 /** layer form: v = 2i - 1 the gap below interval i, v = 2i its thickness (i >= 1) */
 fn layerVal(lid: u32, X: i32, Y: i32, v: u32) -> f32 {
@@ -98,7 +126,7 @@ const GREC: u32 = 3u;
 const MESH_ID: u32 = 24u;
 const MESH_HDR: u32 = 4u;
 const ITEM_W: u32 = 29u;
-const IPP: u32 = 432u; // (PW - MESH_HDR) / ITEM_W
+const IPP: u32 = 573u; // (PW - MESH_HDR) / ITEM_W
 /** an air gap thinner than this (local units: a quarter column) is below the level's resolution (a finer level's tunnel
  *  restricted to its mean air) and is drawn as solid (NS-30) */
 const GAP_MIN: f32 = 0.25;
@@ -115,7 +143,7 @@ struct Gap {
 fn recW(lid: u32, X: i32, Y: i32, i: u32, w: u32) -> u32 {
   let p = pageOf(lid, X >> 4, Y >> 4, i / K);
   if (p >= NOT_LOADED) { return 0u; }
-  return pgLoad(p * PW + 256u + (colIn(X, Y) * K + (i % K)) * 3u + w);
+  return pgLoad(p * PW + 256u + (colIn(X, Y) * K + (i % K)) * RW + w);
 }
 /** whether the column's chunk has gap pages */
 fn hasGapPages(L: u32, X: i32, Y: i32) -> bool { return pageOf(GAP_ID + L, X >> 4, Y >> 4, 0u) < NOT_LOADED; }

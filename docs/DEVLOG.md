@@ -26483,3 +26483,30 @@ every other frame: each waits for the last), 173 over the stroke; refused 0. Sti
 
 
 
+
+## 2026-11-18 — Nested scales lab, round 4 step 3, F1-F3: footprints in the columns (oracle, the GPU store's fourth word, the ball brushes)
+
+**Why.** The owner asked to "verify water tight"; the half-way walls cannot be watertight or smooth (NESTED_SCALES.md
+"Footprints"). F1-F3 put the data the new draw needs into the columns: two plan distances an interval (eS for its solid,
+eG for the gap below it), and ghosts that keep a column's structure (its interval count) constant across a footprint's
+edge, so the draw can match columns by index. The draw itself is unchanged in this commit (F4 next).
+
+**What.** Oracle (src/nested/oracle.ts): eS / eG per interval (default E_FAR = 1024, "present, far"); `present(e) = e > 0`;
+enhance interpolates them over the compatible 2 x 2 stencil times k (kept within +-E_FAR, f16-rounded as stored);
+restrict takes the mean of the children's clamped to +-E_SAT k (E_SAT = 2), a saturated block giving back E_FAR; the
+residual keeps them exact (stored minus enhanced, both f16 values). The GPU (store.wgsl, nest.wgsl): a fourth record word
+(two f16), a page 16,640 words (65 KB, was 49 KB, +33 %); every reader ghost-aware (restrict's volumes, the camera's
+distance and lift, the pick, melt, the gap walk of the bake, the top sheet's height). The brushes (oracle applyBall, GPU
+`ball`): nothing is removed (a cut-away interval stays as a ghost); a ring of RING = 1.5 columns past the radius gets
+ghosts; the analytic distances of the design. Changes to the design, recorded in "Footprints": the brush's one
+structural decision (reuse a gap a brush made within the ball's radius in z, else split the highest solid interval at or
+below the centre; add: insert into the air holding the centre, revive the ghost holding it, or lay on the solid within
+reach) - without it a stroke's balls split again at every ball and neighbouring columns differed in count.
+
+**Measured.** Unit tests 14/14 (new: a tunnel ball, a row of seven balls and a mid-air blob keep one interval count across
+every edge from a column with something present; promote/demote/promote bit-identical with e; a contour placed by
+enhance within a child column of the parent's, kept by restrict within a parent column). Self-test 26/26, new: the
+footprints match the oracle within f16 rounding (worst relative 1.95e-3; GPU f32 division is not exact). Two GPU facts
+found: f32 division is not correctly rounded (624 / 39 came out under 16, so the saturation test compares sums), and
+`from` is a reserved word in WGSL. Carve with sync 82 ms at depth 1 and 43 ms at depth 2 in the self-test's small pool
+(was 84 / 40).

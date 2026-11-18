@@ -61,7 +61,7 @@ user) · `deferred` (agreed for later).
   per block) would remove it.
 - NS-17 (limit) The test runner's server answers "not found" for a bare /nested.html (any query works). Vite's dev
   server serves it either way.
-- NS-18 (next, decided; designed round 4: NESTED_SCALES.md "Footprints", not built) SDF footprint masks for crisp layer edges: today a layer ends half way between two columns
+- NS-18 `partly done` (F1-F3: footprints in the columns and brushes; the draw's cut on them is F4) (next, decided; designed round 4: NESTED_SCALES.md "Footprints") SDF footprint masks for crisp layer edges: today a layer ends half way between two columns
   (marching triangles), a straight cut, flat-shaded.
 - NS-19 (limit) A demoted child's per-bound residual stops applying when the structure under it changes (a carve in
   the parent splits an interval): that child's edits there are lost on re-promote. Re-express it as a whole-column
@@ -162,6 +162,23 @@ user) · `deferred` (agreed for later).
   Snapshot a promoted level from its parent's snapshot instead.
 - NS-50 (limit, round 4 step 2) The ring is drawn at the finger with the radius scaled at the distance of the screen's
   centre (NS-25), not at the hit; on a steep view the ring and the ball differ in size.
+- NS-51 (decided 2026-11-18, docs/DECISIONS.md; with NS-37) Air as an explicit material interval: at the next column
+  record-layout rework (the 32 x 32 x 4 pages), air becomes an interval like water, with one edge distance per interval,
+  replacing the footprints' two-distance eS / eG packing. Until then gaps read as implied air. Target record (agreed,
+  DECISIONS 2026-11-18): intervals of any material with shared boundaries, each record its absolute top (f32), material
+  and one edge distance; bottom = the top of the record below; implicit stone below, implicit air above; layer form only
+  inside enhance / restrict, converted at the pass boundary; per-interface data once per boundary.
+- NS-52 (limit, footprints F3) Ghosts are never dropped (a ghost changes a column's interval count beside its
+  neighbours, so it can only go when its whole ring goes): a brush leaves a ring of zero-thickness ghost intervals and
+  gaps that stays. Many strokes over one place grow the columns (records, and pages past K). A sweep that removes a
+  ghost together with every neighbour's matching one, where none is present nearby, would bound it.
+- NS-53 (limit, footprints F3) The brush's structural decision is made from the column under the centre; columns of
+  another interval count decide alone (reuse a near gap, else split). Where a ball spans columns of different structure
+  (an old tunnel's edge, a material boundary at the centre's height) neighbouring columns can still end with different
+  counts, or the same count with the gap in different intervals; the draw then falls back (F4) for those triangles.
+- NS-54 (limit, footprints F3) Add with no new interval (a ball within reach of the ground at its centre) is laid on the
+  ground: a span floating in air at the footprint's edge is filled from the solid below it, so such a ball is a mound,
+  not an overhang. A ball whose centre is in the air beyond its radius makes an overhang as before.
 
 ## Terrain: rivers first (2026-11-17, `terrain-rivers`; docs/design/TERRAIN_RIVERS.md, DECISIONS 2026-11-17)
 

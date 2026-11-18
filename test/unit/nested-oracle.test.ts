@@ -1,7 +1,7 @@
 // Nested scales lab (docs/design/NESTED_SCALES.md): the oracle's invariants. The page self-test (?selftest=1) runs the
 // same invariants on the GPU passes and compares them with this oracle.
 import { describe, expect, it } from 'vitest';
-import { MAT, Nest, OPEN_BOTTOM, colDist, makeRoot, ppm2, ppmSub, toLayers, type Col, type Frame, type Level } from '../../src/nested/oracle';
+import { E_FAR, MAT, Nest, OPEN_BOTTOM, RING, colDist, egOf, esOf, makeRoot, ppm2, ppmSub, present, q16, toLayers, type Col, type Frame, type Level } from '../../src/nested/oracle';
 
 const K = 8;
 const SEED = 7;
@@ -19,7 +19,7 @@ function withZ0(n: Nest, f: Frame): Frame {
   const c = p.at((f.gx + f.n / 2) / K, (f.gy + f.n / 2) / K)!;
   return { ...f, z0: Math.round(c.z1[c.z1.length - 1]) };
 }
-const snap = (lv: Level) => lv.cols.map((c) => ({ mat: c.mat.slice(), z0: c.z0.slice(), z1: c.z1.slice() }));
+const snap = (lv: Level) => lv.cols.map((c) => ({ mat: c.mat.slice(), z0: c.z0.slice(), z1: c.z1.slice(), eS: c.mat.map((_m, i) => esOf(c, i)), eG: c.mat.map((_m, i) => egOf(c, i)) }));
 function maxDiff(a: Col[], b: Col[]): number {
   let m = 0;
   for (let i = 0; i < a.length; i++) for (let j = 0; j < a[i].z1.length; j++) m = Math.max(m, Math.abs(a[i].z1[j] - b[i].z1[j]), j > 0 ? Math.abs(a[i].z0[j] - b[i].z0[j]) : 0);
@@ -163,7 +163,8 @@ describe('nested scales oracle', () => {
     const n = nest();
     n.promote(withZ0(n, F1));
     n.promote(withZ0(n, F2));
-    const solid = (c: Col, ref: number) => c.mat.reduce((s, _m, i) => s + c.z1[i] - Math.max(c.z0[i], ref), 0);
+    // (footprints: a ghost interval is air, a ghost gap solid)
+    const solid = (c: Col, ref: number) => c.mat.reduce((s, _m, i) => s + (i === 0 || present(esOf(c, i)) ? c.z1[i] - Math.max(c.z0[i], ref) : 0) + (i > 0 && !present(egOf(c, i)) ? c.z0[i] - c.z1[i - 1] : 0), 0);
     const total = (lv: Level, ref: number) => lv.cols.reduce((s, c) => s + solid(c, ref), 0);
     for (const [depth, F] of [
       [1, F1],
@@ -181,7 +182,8 @@ describe('nested scales oracle', () => {
       expect(removed).toBeLessThan(9 * ((4 / 3) * Math.PI * r ** 3) * 1.1);
       // the tunnel: the column in its middle has an air gap of about the ball's height
       const t = n.levels[depth].at(F.gx + 32, F.gy + 32)!;
-      expect(Math.max(...t.mat.map((_m, i) => (i ? t.z0[i] - t.z1[i - 1] : 0)))).toBeGreaterThan(4);
+      // (its air: the present gaps and the ghost intervals between them)
+      expect(t.mat.reduce((s, _m, i) => s + (i ? (present(egOf(t, i)) ? t.z0[i] - t.z1[i - 1] : 0) + (present(esOf(t, i)) ? 0 : t.z1[i] - t.z0[i]) : 0), 0)).toBeGreaterThan(4);
     }
     // restrict over a mixed block: the parent holds the block's mean surface, soil and enclosed air
     const px = (F2.gx + 32) / K;
@@ -189,8 +191,9 @@ describe('nested scales oracle', () => {
     const kids: Col[] = [];
     for (let b = 0; b < K; b++) for (let a = 0; a < K; a++) kids.push(n.levels[2].at(px * K + a, py * K + b)!);
     const parentCol = n.levels[1].at(px, py)!;
-    const soilOf = (c: Col) => c.mat.reduce((s, m, i) => s + (i > 0 && m === MAT.soil ? c.z1[i] - c.z0[i] : 0), 0);
-    const airOf = (c: Col) => c.mat.reduce((s, _m, i) => s + (i > 0 ? c.z0[i] - c.z1[i - 1] : 0), 0);
+    // (footprints: a ghost interval's thickness is air, a ghost gap's is solid of the interval above it)
+    const soilOf = (c: Col) => c.mat.reduce((s, m, i) => s + (i > 0 && m === MAT.soil ? (present(esOf(c, i)) ? c.z1[i] - c.z0[i] : 0) + (present(egOf(c, i)) ? 0 : c.z0[i] - c.z1[i - 1]) : 0), 0);
+    const airOf = (c: Col) => c.mat.reduce((s, _m, i) => s + (i > 0 ? (present(egOf(c, i)) ? c.z0[i] - c.z1[i - 1] : 0) + (present(esOf(c, i)) ? 0 : c.z1[i] - c.z0[i]) : 0), 0);
     const z0 = n.levels[2].f.z0;
     expect(new Set(kids.map((c) => c.mat.length)).size).toBeGreaterThan(1);
     const kidS = kids.reduce((s, c) => s + c.z1[c.z1.length - 1], 0) / K ** 3 + z0;
@@ -289,6 +292,106 @@ describe('nested scales oracle', () => {
     const one: Col = { mat: [MAT.stone], z0: [OPEN_BOTTOM], z1: [2] };
     expect(colDist(one, 0, 0, [3.5, 0.5, 2])).toBeCloseTo(2, 12);
     expect(colDist(one, 0, 0, [0.5, 0.5, 5])).toBeCloseTo(3, 12);
+  });
+
+  it('footprints: a tunnel ball and a mid-air blob write e and a ring of ghosts; the structure is constant across every edge that has a present column; promote, demote, promote bit-identical with e', () => {
+    const n = nest();
+    const f = withZ0(n, F1);
+    n.promote(f);
+    const lv = n.levels[1];
+    const mid = lv.at(F1.gx + 32, F1.gy + 32)!;
+    const cz = mid.z1[mid.z1.length - 1] - 6;
+    const cx = F1.gx + 32.3;
+    const cy = F1.gy + 31.8;
+    const r = 4.2;
+    const centre = lv.at(F1.gx + 32, F1.gy + 32)!;
+    const before = centre.mat.length;
+    // the interval holding the centre splits: the new gap is the one above it
+    const gi = centre.mat.findIndex((_m, i) => (i === 0 || centre.z0[i] <= cz) && cz <= centre.z1[i]) + 1;
+    n.edit(1, 'carve', cx, cy, r, 0, cz);
+    // inside: a new gap, present, its footprint r - d; the ring: a zero-thickness ghost gap at the same index
+    for (let y = F1.gy + 24; y < F1.gy + 40; y++)
+      for (let x = F1.gx + 24; x < F1.gx + 40; x++) {
+        const c = lv.at(x, y)!;
+        const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
+        if (d < r + RING - 1e-9) {
+          expect(c.mat.length).toBe(before + 1);
+          const g = egOf(c, gi);
+          expect(Math.abs(g - (r - d))).toBeLessThan(0.01);
+          if (d >= r) expect(c.z0[gi] - c.z1[gi - 1]).toBe(0);
+          else expect(c.z0[gi] - c.z1[gi - 1]).toBeGreaterThan(0);
+        } else expect(c.mat.length).toBe(before);
+      }
+    // every edge (8 neighbours) from a column with a present tunnel gap reaches a column of the same interval count
+    const rim = (lvl: Level, has: (c: Col) => boolean) => {
+      let bad = 0;
+      for (let y = lvl.f.gy + 1; y < lvl.f.gy + lvl.f.n - 1; y++)
+        for (let x = lvl.f.gx + 1; x < lvl.f.gx + lvl.f.n - 1; x++) {
+          const c = lvl.at(x, y)!;
+          if (!has(c)) continue;
+          for (let j = -1; j <= 1; j++)
+            for (let i = -1; i <= 1; i++)
+              if (lvl.at(x + i, y + j)!.mat.length !== c.mat.length) {
+                if (bad < 2) console.log('rim', x - lvl.f.gx, y - lvl.f.gy, JSON.stringify(c), JSON.stringify(lvl.at(x + i, y + j)));
+                bad++;
+              }
+        }
+      return bad;
+    };
+    // a column with something a brush made present and the draw must cut: an air gap, or a solid it laid in the air
+    // (not a ring ghost, nor a solid piece a carve trimmed)
+    const anyPresentExtra = (c: Col) =>
+      c.mat.some((_m, i) => i >= 1 && ((present(egOf(c, i)) && egOf(c, i) < E_FAR && c.z0[i] - c.z1[i - 1] >= 0.25) || (present(esOf(c, i)) && esOf(c, i) < E_FAR && c.z0[i] - c.z1[i - 1] >= 0.25 && c.mat[i] === MAT.soil && i === c.mat.length - 1)));
+    expect(rim(lv, anyPresentExtra)).toBe(0);
+    // a row of balls (a tunnel, as a stroke lays it) reuses the first gap: still one structure across every edge
+    for (let i = 1; i < 7; i++) n.edit(1, 'carve', cx + i * 3.1, cy + i * 0.4, r, 0, cz + i * 0.3);
+    expect(rim(lv, anyPresentExtra)).toBe(0);
+    expect(lv.at(F1.gx + 45, F1.gy + 34)!.mat.length).toBe(before + 1);
+    // a blob in mid-air: a new interval (present inside, a zero-thickness ghost in the ring), the same rule
+    const under = lv.at(F1.gx + 20, F1.gy + 44)!;
+    const bz = under.z1[under.z1.length - 1] + 12;
+    n.edit(1, 'add', F1.gx + 20.5, F1.gy + 44.5, 3, 0, bz);
+    const b = lv.at(F1.gx + 20, F1.gy + 44)!;
+    expect(present(esOf(b, b.mat.length - 1))).toBe(true);
+    expect(b.z0[b.mat.length - 1] - b.z1[b.mat.length - 2]).toBeGreaterThan(5);
+    const ringCol = lv.at(F1.gx + 24, F1.gy + 44)!;
+    expect(ringCol.mat.length).toBe(b.mat.length);
+    expect(present(esOf(ringCol, ringCol.mat.length - 1))).toBe(false);
+    expect(rim(lv, anyPresentExtra)).toBe(0);
+    // promote, demote, promote: identical, footprints included; and with a child below it, the child's ring holds too
+    n.promote(withZ0(n, F2));
+    const s1 = snap(n.levels[1]);
+    const s2 = snap(n.levels[2]);
+    expect(rim(n.levels[2], anyPresentExtra)).toBe(0);
+    const f2 = n.levels[2].f;
+    for (let i = 0; i < 3; i++) {
+      n.demote(1);
+      n.promote(f);
+      n.promote(f2);
+    }
+    expect(snap(n.levels[1])).toEqual(s1);
+    expect(snap(n.levels[2])).toEqual(s2);
+  });
+
+  it('footprints: a contour crossing a block — enhance places the children\'s contour between the parents, restrict keeps its sign and place', () => {
+    const n = nest();
+    n.detailAmp = 0;
+    const root = n.levels[0];
+    // a tunnel layer everywhere (stone, soil, gap, soil); its gap present for x < 22.6 (eG = 22.6 - (x + 0.5)), ghost past
+    for (let y = 0; y < 48; y++)
+      for (let x = 0; x < 48; x++)
+        root.set(x, y, { mat: [MAT.stone, MAT.soil, MAT.soil], z0: [OPEN_BOTTOM, 6, 8], z1: [5, 6, 10], eS: [E_FAR, E_FAR, E_FAR], eG: [E_FAR, E_FAR, q16(22.6 - (x + 0.5))] });
+    const ch = n.promote({ depth: 1, gx: 128, gy: 128, n: 64, z0: 0 });
+    // children of parent columns 16..23: the contour at parent x 22.6 is child x 180.8
+    let lastIn = -1;
+    for (let x = ch.f.gx; x < ch.f.gx + ch.f.n; x++) if (present(egOf(ch.at(x, ch.f.gy + 20)!, 2))) lastIn = x;
+    expect(Math.abs(lastIn + 0.5 - 22.6 * K)).toBeLessThan(1);
+    // restrict straight back (an edit with no change: raise by 0): the parent's contour stays within a column of 22.6
+    n.edit(1, 'raise', ch.f.gx + 52.5, ch.f.gy + 20.5, 30, 0);
+    let pIn = -1;
+    for (let x = 16; x < 24; x++) if (present(egOf(root.at(x, 18)!, 2))) pIn = x;
+    expect(pIn).toBeGreaterThanOrEqual(21);
+    expect(pIn).toBeLessThanOrEqual(22);
   });
 
   it('enhance (PPM): block means exact, no overshoot at a step, smooth hilltops kept (NS-34)', () => {

@@ -312,6 +312,10 @@ self-test).
   the last centre is carried into that level's units and the capsule is swept there (at that level's resolution; the
   coarser level's part of the stroke is a coarser layer). Raise, Dig and Melt keep their per-frame edits, now one op in
   flight.
+- Round 4 step 3, F1-F3 (2026-11-18): footprints in the columns ("Footprints"): eS / eG per interval in the oracle and
+  in the GPU record's fourth word (two f16; pages 65 KB), through enhance, restrict and the residual; ghosts; every
+  reader ghost-aware; the ball brushes write the analytic distances and a ring of ghosts, one structural decision a
+  brush. The draw still cuts half way (F4 next).
 
 ## The baked draw (round 3; the owner's ruling "deforming vertices and baking the seam mesh nothing per frame")
 
@@ -347,7 +351,7 @@ self-test).
   bakes read their chunk's and the parent's pages through a per-workgroup cache of the 3 x 3 chunks' page ids.
   Pages: the tunnel scene with three levels holds ~1370-1420 pages (was ~800): the tables round the tunnels at depth 2.
 
-## Footprints (round 4 step 3: the design, written before any code; NOT built yet)
+## Footprints (round 4 step 3: the design, written before any code; F1-F3 built, see the changes below)
 
 The owner: "I would keep heightfields and borders distinct and use SDF with masks for the latter", and for layer edges
 "let's wait for SDF and then we can have nicer material boundaries at zoom". Today the draw knows only whether an air
@@ -362,7 +366,9 @@ fourth word of the interval record (page 256 + 256 x 16 x 4 words = 65 KB, +33 %
 +33 %). Change from the coordinator's proposal (one value an interval): a tunnel's footprint is the gap's, a blob's the
 solid's, and in layer form these are different boundaries of the same interval; one value cannot place both. Packing
 both into the material word's spare 16 bits (8 bits each, 1/64 column) was considered: too coarse to scale by k = 8
-through enhance and keep the residual exact.
+through enhance and keep the residual exact. (Decision 2026-11-18, docs/DECISIONS.md: air is a material and the default;
+at the next record-layout rework, NS-37, air becomes an explicit interval with one edge distance an interval, replacing
+the eS / eG pair: BACKLOG NS-51.)
 
 **Ghosts (the coordinator's, kept): the structure stays constant across the edge.** The ring of columns just outside a
 footprint keeps the interval (or the gap) with a negative distance and ghost bounds: where its top and bottom (floor and
@@ -403,6 +409,27 @@ bit-identical; oracle and self-test cases: a ball's footprint through promote, d
 **Rims.** In a child's rim band its e morphs toward the parent's e interpolated at the child's corners (times k), as heights
 do now; the contour then slides continuously onto the parent's, which should remove the lip ring (NS-21). Checked in the
 rim-crossing still, tint on and off.
+
+**Changes made while building (F1-F3, 2026-11-18).**
+- *The brush's one structural decision (the site), made once a brush from the column under its centre, in the plan
+  pass.* Carve: if a gap a brush made (a ghost, or one with some thickness or a footprint nearer than E_FAR; not the
+  zero-thickness boundary between two materials) lies within the ball's radius of its centre in z, no new structure: that
+  gap is reused (grown to the span where the span misses it, as a swept capsule would); else the highest solid interval
+  starting at or below the centre is split (at a tunnel's mouth the top interval splits and its upper piece is a
+  zero-thickness ghost, so the mouth keeps the hill's structure). Columns of the centre column's interval count split at
+  the site's index; others decide the same way locally. Add: the ghost interval holding the centre is revived; else an
+  interval within the ball's reach makes no new structure (the ball is laid on it; a span floating in air above it is
+  filled from the solid below); else a new interval is inserted into the air holding the centre. Why: the design's "eG =
+  max(eG, eBall) for the gap it opens" did not say which gap; splitting at every ball made a stroke's columns differ in
+  count every few columns, which the draw cannot match by index.
+- *Nothing is removed.* An interval a ball covers keeps its bounds as a ghost (eS = min(eS, dd - r_slice) at its bounds:
+  negative), so the structure stays constant; a ghost's thickness is air for every consumer (restrict counts it as
+  enclosed air, a ghost gap's thickness as solid of the interval above it).
+- *Restrict's footprints:* the mean of the children's clamped to +-E_SAT k (E_SAT = 2) over the children of the
+  template's count, divided by k; a block saturated everywhere gives back E_FAR (so restricting an unedited block is the
+  identity on e). The GPU compares the sums, not the quotient (its f32 division is not exact).
+- *Ghosts are never dropped* (the design's "e < -1.5 is dropped when next rewritten"): dropping one changes a column's
+  count beside its neighbours. They accumulate (NS-52).
 
 **Build order** (each step shown; the manifold and screen checks run at every step): F1 the oracle (e in the columns,
 enhance, restrict, residual; unit tests). F2 the GPU store's fourth word and readers; self-test parity. F3 the ball

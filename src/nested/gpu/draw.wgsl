@@ -67,27 +67,27 @@ fn matColor(m: u32, slope: f32) -> vec3<f32> {
     default: { return vec3<f32>(1.0, 0.0, 1.0); }
   }
 }
-/** a column's surface and the material showing there (the top interval with any thickness) */
+/** a column's top present surface and the material showing there (the top present interval with any thickness) */
 fn surfMat(lid: u32, X: i32, Y: i32) -> vec2<f32> {
   let n = colCount(lid, X, Y);
   if (n == 0u) { return vec2<f32>(0.0, 0.0); }
-  let top = ivlAt(lid, X, Y, n - 1u);
-  var m = top.m;
+  let top = topPresent(lid, X, Y, n);
+  var m = 0u;
   var i = n - 1u;
   loop {
     let a = ivlAt(lid, X, Y, i);
-    if (a.z1 - a.z0 > 1e-4 || i == 0u) {
+    if (i == 0u || (present(eS(a)) && a.z1 - a.z0 > 1e-4)) {
       m = a.m;
       break;
     }
     i--;
   }
-  return vec2<f32>(top.z1, f32(m));
+  return vec2<f32>(top, f32(m));
 }
 fn clampW(w: vec4<i32>, X: i32, Y: i32) -> vec2<i32> { return vec2<i32>(clamp(X, w.x, w.x + w.z - 1), clamp(Y, w.y, w.y + w.z - 1)); }
 fn sAt(lid: u32, w: vec4<i32>, X: i32, Y: i32) -> f32 {
   let q = clampW(w, X, Y);
-  return topS(lid, q.x, q.y, colCount(lid, q.x, q.y));
+  return topPresent(lid, q.x, q.y, colCount(lid, q.x, q.y));
 }
 fn nrmAt(lid: u32, w: vec4<i32>, X: i32, Y: i32) -> vec3<f32> {
   return normalize(vec3<f32>(-(sAt(lid, w, X + 1, Y) - sAt(lid, w, X - 1, Y)) * 0.5, -(sAt(lid, w, X, Y + 1) - sAt(lid, w, X, Y - 1)) * 0.5, 1.0));

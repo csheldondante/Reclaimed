@@ -9,8 +9,9 @@ import { DETAIL_AMP } from '../oracle';
 
 /** table entries (a power of two; NS-3) */
 export const TCAP = 1 << 15;
-/** words a page: 256 counts + 256 columns x K x 3 */
-export const PW = 12544;
+/** words a record (z0, z1, material, footprints: store.wgsl RW) and a page: 256 counts + 256 columns x K x RW */
+export const RW = 4;
+export const PW = 16640;
 export const K = 16;
 export const RES_ID = 8;
 export const MAX_LEVELS = 8;
@@ -24,7 +25,7 @@ const BAKE_SLOT = 40;
 /** level ids of the baked draw (store.wgsl GAP_ID, MESH_ID) and a mesh page's item slots (IPP) */
 export const GAP_ID = 16;
 export const MESH_ID = 24;
-export const IPP = 432;
+export const IPP = 573;
 const CTL_STACK = 16;
 /** a brush's radius at most, in the edited level's columns (nest.wgsl MAX_R; the melt scratch is sized by it: NS-9) */
 const MAX_BRUSH = 76;
@@ -718,6 +719,16 @@ export class GpuNest {
   }
 }
 
+/** an f16's bits as a number */
+export function f16(h: number): number {
+  const s = h & 0x8000 ? -1 : 1;
+  const e = (h >> 10) & 31;
+  const m = h & 1023;
+  if (e === 0) return s * m * 2 ** -24;
+  if (e === 31) return m ? NaN : s * Infinity;
+  return s * (1 + m / 1024) * 2 ** (e - 15);
+}
+
 /** a read-back of the store: the WGSL readers on the CPU (tests) */
 export class Snapshot {
   private f: Float32Array;
@@ -766,19 +777,22 @@ export class Snapshot {
     }
     return out;
   }
-  /** a column's intervals (z0, z1 as f32, material) */
-  column(lid: number, X: number, Y: number): { mat: number[]; z0: number[]; z1: number[] } {
+  /** a column's intervals (z0, z1 as f32, material, footprints eS / eG; for a residual id the fourth word as f32 in
+   *  eS) */
+  column(lid: number, X: number, Y: number): { mat: number[]; z0: number[]; z1: number[]; eS: number[]; eG: number[] } {
     const c = (Y & 15) * 16 + (X & 15);
-    const out = { mat: [] as number[], z0: [] as number[], z1: [] as number[] };
+    const out = { mat: [] as number[], z0: [] as number[], z1: [] as number[], eS: [] as number[], eG: [] as number[] };
     for (let cz = 0; ; cz++) {
       const p = this.page(lid, X >> 4, Y >> 4, cz);
       if (p < 0 || p >= 0xfffffffe) break;
       const m = this.pg[p * PW + c];
       for (let i = 0; i < m; i++) {
-        const b = p * PW + 256 + (c * K + i) * 3;
+        const b = p * PW + 256 + (c * K + i) * RW;
         out.z0.push(this.f[b]);
         out.z1.push(this.f[b + 1]);
         out.mat.push(this.pg[b + 2]);
+        out.eS.push(f16(this.pg[b + 3] & 0xffff));
+        out.eG.push(f16(this.pg[b + 3] >>> 16));
       }
       if (m < K) break;
     }
