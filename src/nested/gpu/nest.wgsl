@@ -7,7 +7,7 @@ struct U {
   a: vec4<u32>, // k, seed, mode or op, level L
   r: vec4<u32>, // reg slot, pool pages, flags (1: the hit is forced, not picked), live levels
   c: vec4<f32>, // brush: x, y (window columns of the forced level), radius, amount (world units)
-  d: vec4<f32>, // now, melt rate, forced level, 0
+  d: vec4<f32>, // now, melt rate, forced level, detail amplitude
   e: vec4<i32>, // the stripe column (self-test): X, Y, interval count, 0
   lv: array<vec4<i32>, 8>, // per depth: window gx0, gy0, n (columns), live
   cA: vec4<f32>, // camera: target x hi, y hi, x lo, y lo (world)
@@ -304,7 +304,7 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
     }
   }
   let z0 = zOrigin(L);
-  var s = (pref - z0) * kf + fsum * kf + detail(gX, gY, i32(L), k, u.a.y);
+  var s = (pref - z0) * kf + fsum * kf + detail(gX, gY, i32(L), k, u.a.y, u.d.w);
   shv[li] = s;
   workgroupBarrier();
   let sum = blockSum(lid.x, lid.y, u32(k));
@@ -753,5 +753,153 @@ fn meltApply(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id
     let z0 = base + gap;
     setIvl(L, X, Y, i, z0, z0 + th, t.m);
     base = z0 + th;
+  }
+}
+
+// ---- the camera: per level view-projections in that level's own units (the owner's nested scenes) ---------------------
+// cam: 0 target z (eased), 1 started, 2 eye z, 3 near (world), 4-6 right, 8-10 up, 12-14 forward, 16-18 the eye's
+// offset from the target (world); level m at 32 + m * 24: the view-projection (16), the eye (3), near (1) in its units.
+// The target's x, y come from the CPU as hi + lo floats; z is the ground there, found on the finest level holding it.
+fn kpow(m: u32) -> f32 { return pow(f32(u.a.x), f32(m)); }
+fn zOrig(m: u32) -> f32 {
+  var z = 0.0;
+  for (var j = 1u; j <= m; j++) { z += bitcast<f32>(reg[j]) / kpow(j - 1u); }
+  return z;
+}
+/** a level's surface at local (x, y) (window columns), bilinear over the column centres */
+fn surfLocal(m: u32, x: f32, y: f32) -> f32 {
+  let w = u.lv[m];
+  let fx = x - 0.5;
+  let fy = y - 0.5;
+  let i0 = i32(floor(fx));
+  let j0 = i32(floor(fy));
+  let tx = fx - f32(i0);
+  let ty = fy - f32(j0);
+  var h = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
+  for (var q = 0; q < 4; q++) {
+    let X = clamp(w.x + i0 + (q & 1), w.x, w.x + w.z - 1);
+    let Y = clamp(w.y + j0 + (q >> 1), w.y, w.y + w.z - 1);
+    h[q] = topS(m, X, Y, colCount(m, X, Y));
+  }
+  return mix(mix(h[0], h[1], tx), mix(h[2], h[3], tx), ty);
+}
+/** the ground (world z) under world (hi + lo) x, y: the finest live level holding it */
+fn ground(xh: f32, yh: f32, xl: f32, yl: f32) -> f32 {
+  let live = u.r.w;
+  for (var mi = i32(live) - 1; mi >= 0; mi--) {
+    let m = u32(mi);
+    let s = kpow(m);
+    let w = u.lv[m];
+    let lx = (xh * s - f32(w.x)) + xl * s;
+    let ly = (yh * s - f32(w.y)) + yl * s;
+    if (lx >= 1.0 && ly >= 1.0 && lx <= f32(w.z) - 1.0 && ly <= f32(w.z) - 1.0) { return zOrig(m) + surfLocal(m, lx, ly) / s; }
+  }
+  let w0 = u.lv[0];
+  return surfLocal(0u, clamp(xh + xl, 1.0, f32(w0.z) - 1.0), clamp(yh + yl, 1.0, f32(w0.z) - 1.0));
+}
+
+@compute @workgroup_size(1)
+fn camera() {
+  let k = f32(u.a.x);
+  let live = u.r.w;
+  let D = u.cB.x;
+  let yaw = u.cB.y;
+  let pitch = u.cB.z;
+  let aspect = u.cB.w;
+  let fovy = u.cC.x;
+  let dt = u.cC.w;
+  let g = ground(u.cA.x, u.cA.y, u.cA.z, u.cA.w);
+  var tz = cam[0];
+  if (cam[1] == 0.0 || dt <= 0.0) {
+    tz = g;
+    cam[1] = 1.0;
+  } else {
+    tz = mix(tz, g, 1.0 - exp(-dt * 12.0));
+  }
+  cam[0] = tz;
+  var off = D * vec3<f32>(cos(pitch) * cos(yaw), cos(pitch) * sin(yaw), sin(pitch));
+  // the eye stays above the ground under it (the camera cannot pass through a surface)
+  let ge = ground(u.cA.x + off.x, u.cA.y + off.y, u.cA.z, u.cA.w);
+  off.z = max(tz + off.z, ge + 0.08 * D) - tz;
+  let f = normalize(-off);
+  let r = normalize(cross(f, vec3<f32>(0.0, 0.0, 1.0)));
+  let up = cross(r, f);
+  let near = 0.01 * D;
+  cam[2] = tz + off.z;
+  cam[3] = near;
+  for (var i = 0u; i < 3u; i++) {
+    cam[4u + i] = r[i];
+    cam[8u + i] = up[i];
+    cam[12u + i] = f[i];
+    cam[16u + i] = off[i];
+  }
+  let fy = 1.0 / tan(fovy * 0.5);
+  for (var m = 0u; m < live; m++) {
+    let s = kpow(m);
+    let w = u.lv[m];
+    let e = vec3<f32>((u.cA.x * s - f32(w.x)) + (off.x + u.cA.z) * s, (u.cA.y * s - f32(w.y)) + (off.y + u.cA.w) * s, (tz + off.z - zOrig(m)) * s);
+    let view = mat4x4<f32>(vec4<f32>(r.x, up.x, -f.x, 0.0), vec4<f32>(r.y, up.y, -f.y, 0.0), vec4<f32>(r.z, up.z, -f.z, 0.0), vec4<f32>(-dot(r, e), -dot(up, e), dot(f, e), 1.0));
+    let proj = mat4x4<f32>(vec4<f32>(fy / aspect, 0.0, 0.0, 0.0), vec4<f32>(0.0, fy, 0.0, 0.0), vec4<f32>(0.0, 0.0, 0.0, -1.0), vec4<f32>(0.0, 0.0, near * s, 0.0));
+    let vp = proj * view;
+    let b = 32u + m * 24u;
+    for (var c = 0u; c < 4u; c++) {
+      for (var rr = 0u; rr < 4u; rr++) { cam[b + c * 4u + rr] = vp[c][rr]; }
+    }
+    cam[b + 16u] = e.x;
+    cam[b + 17u] = e.y;
+    cam[b + 18u] = e.z;
+    cam[b + 19u] = near * s;
+  }
+}
+
+/** the pointer's hit (reg 8-10): the ray marched over each level, finest first, kept on the first level whose interior
+ *  (away from its rim band) it lands in */
+@compute @workgroup_size(1)
+fn pick() {
+  let k = f32(u.a.x);
+  let live = u.r.w;
+  let th = tan(u.cC.x * 0.5);
+  let r = vec3<f32>(cam[4], cam[5], cam[6]);
+  let up = vec3<f32>(cam[8], cam[9], cam[10]);
+  let f = vec3<f32>(cam[12], cam[13], cam[14]);
+  let dir = normalize(f + r * u.cC.y * th * u.cB.w + up * u.cC.z * th);
+  reg[8] = -1;
+  for (var mi = i32(live) - 1; mi >= 0; mi--) {
+    let m = u32(mi);
+    let b = 32u + m * 24u;
+    let e = vec3<f32>(cam[b + 16u], cam[b + 17u], cam[b + 18u]);
+    let n = f32(u.lv[m].z);
+    let margin = select(k, 0.0, m == 0u);
+    var t = cam[b + 19u];
+    var tp = t;
+    var hit = false;
+    let tmax = 4.0 * n + 4.0 * u.cB.x * kpow(m);
+    for (var it = 0; it < 800; it++) {
+      let p = e + dir * t;
+      let inside = p.x >= 0.5 && p.y >= 0.5 && p.x <= n - 0.5 && p.y <= n - 0.5;
+      var dz = 1e9;
+      if (inside) { dz = p.z - surfLocal(m, p.x, p.y); }
+      if (dz < 0.0) {
+        hit = true;
+        break;
+      }
+      tp = t;
+      t += max(min(0.4 * dz, 0.5 * n), max(0.002 * t, 0.01));
+      if (t > tmax) { break; }
+    }
+    if (!hit) { continue; }
+    var lo = tp;
+    var hi = t;
+    for (var q = 0; q < 20; q++) {
+      let mid = 0.5 * (lo + hi);
+      let p = e + dir * mid;
+      if (p.z - surfLocal(m, p.x, p.y) < 0.0) { hi = mid; } else { lo = mid; }
+    }
+    let p = e + dir * hi;
+    if (p.x < margin || p.y < margin || p.x > n - margin || p.y > n - margin) { continue; }
+    reg[8] = mi;
+    reg[9] = bitcast<i32>(p.x);
+    reg[10] = bitcast<i32>(p.y);
+    return;
   }
 }

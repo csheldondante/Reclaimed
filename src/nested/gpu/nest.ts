@@ -5,6 +5,7 @@
 // self-test only, everything (readAll).
 import storeWgsl from './store.wgsl?raw';
 import nestWgsl from './nest.wgsl?raw';
+import { DETAIL_AMP } from '../oracle';
 
 /** table entries (a power of two; NS-3) */
 export const TCAP = 1 << 15;
@@ -77,6 +78,8 @@ export class GpuNest {
   /** the camera's inputs for the pick pass (set by the page) */
   camIn = new Float32Array(12);
   epoch = performance.now();
+  /** the seeded detail's amplitude per wavelength (oracle DETAIL_AMP) */
+  detailAmp = DETAIL_AMP;
 
   constructor(
     readonly device: GPUDevice,
@@ -117,10 +120,9 @@ export class GpuNest {
     });
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     const ppl = device.createPipelineLayout({ bindGroupLayouts: [this.planLayout] });
-    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'merge', 'edit', 'meltSnap', 'meltApply'])
+    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick'])
       this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: pl, compute: { module, entryPoint: e } });
-    for (const e of ['plan', ...(nestWgsl.includes('fn pick(') ? ['pick'] : [])])
-      this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: ppl, compute: { module, entryPoint: e } });
+    this.pipes.plan = device.createComputePipeline({ label: 'nest plan', layout: ppl, compute: { module, entryPoint: 'plan' } });
     this.rebind();
   }
 
@@ -176,7 +178,7 @@ export class GpuNest {
     a.set([this.k, this.seed, 0, 0]);
     r.set([0, this.cap, 0, this.live]);
     c.fill(0);
-    d.set([this.now(), 0, 0, 0]);
+    d.set([this.now(), 0, 0, this.detailAmp]);
     e.fill(0);
     for (let m = 0; m < MAX_LEVELS; m++) {
       const w = this.wins[m];
@@ -190,7 +192,7 @@ export class GpuNest {
     if (x <= 0 || y <= 0) return;
     const p = this.begin();
     p.setPipeline(this.pipes[entry]);
-    p.setBindGroup(0, entry === 'plan' || entry === 'pick' ? this.planBg : this.bg, [off]);
+    p.setBindGroup(0, entry === 'plan' ? this.planBg : this.bg, [off]);
     p.dispatchWorkgroups(x, y);
   }
   private runIndirect(entry: string, off: number, slot: number): void {
@@ -379,6 +381,22 @@ export class GpuNest {
     }
     this.mergeFrees();
     this.submit();
+  }
+
+  /** this frame's camera: the per-level view-projections (cam buffer) from camIn */
+  camera(): void {
+    this.run('camera', this.uni(), 1);
+    this.submit();
+  }
+
+  /** whether window w can sit at depth L inside the current parent */
+  fits(L: number, w: Win): boolean {
+    try {
+      this.checkWin(L, w);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private checkWin(L: number, w: Win): void {

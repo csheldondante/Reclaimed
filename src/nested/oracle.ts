@@ -9,7 +9,7 @@
 
 export const OPEN_BOTTOM = -1e30;
 /** detail amplitude per wavelength (child columns) */
-export const DETAIL_AMP = 0.06;
+export const DETAIL_AMP = 0.08;
 
 export interface Col {
   mat: number[];
@@ -75,9 +75,11 @@ export function valueNoise(x: number, y: number, layer: number, seed: number): n
 }
 
 /** the seeded detail at a child column (global coordinates of its depth), in child units */
-export function detail(gx: number, gy: number, depth: number, k: number, seed: number): number {
+export function detail(gx: number, gy: number, depth: number, k: number, seed: number, amp = DETAIL_AMP): number {
   let v = 0;
-  for (let lam = 2, o = 0; lam <= k; lam *= 2, o++) v += DETAIL_AMP * lam * valueNoise((gx + 0.5) / lam, (gy + 0.5) / lam, depth * 16 + o, seed);
+  // wavelengths 2 .. k/2: a block holds two periods or more, so its mean is small and the block correction (a sin²
+  // bump, 4x the mean at its peak) stays faint; with k as well it showed as a regular pitting (DEVLOG 2026-11-18)
+  for (let lam = 2, o = 0; lam * 2 <= k; lam *= 2, o++) v += amp * lam * valueNoise((gx + 0.5) / lam, (gy + 0.5) / lam, depth * 16 + o, seed);
   return v;
 }
 

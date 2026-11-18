@@ -158,6 +158,17 @@ self-test).
   (src/nested/gpu/: store.wgsl readers, nest.wgsl root, derive, residual, restrict, plan, raise, dig, melt, release,
   merge; nest.ts the driver). `nested.html?selftest=1` runs 20 checks on the GPU against the oracle: all pass
   (DEVLOG 2026-11-18). The z origin of a level is picked where it is promoted somewhere new and kept otherwise.
+- Steps 2-3 (2026-11-18): the sandbox (src/nested/app.ts, render.ts, gpu/draw.wgsl). A camera pass on the GPU makes
+  each level's view-projection in its own units (target x, y as hi + lo floats from the CPU; the ground under the
+  target and the eye found on the finest level holding it; the eye kept above the ground). Each level is one grid
+  whose vertex shader pulls its columns from the pages. Finest first, reverse-Z depth; a parent discards fragments
+  inside its child's footprint inset by 0.75 child columns; a child's rim band (one parent cell) and its fade-in
+  (0.4 s from the page's birth, kept in the table entry) blend toward the parent's own triangles and normals. A
+  pick pass marches the pointer's ray over each level, finest first; the plan pass takes it from there. Levels open
+  by distance (promote under 0.45 of the child window's width, close over 0.6) and follow the focus by whole
+  chunks with a chunk of slack. Depth 2 and 3 are the same code (0.63 cm columns at depth 3, k = 8).
+- Detail: wavelengths 2..k/2 child columns, amplitude 0.08 x wavelength. With wavelength k the block-mean
+  correction showed as regular pits (it peaks at 4x a block's mean).
 
 ## Open questions
 

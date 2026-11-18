@@ -1,6 +1,323 @@
-// Nested scales lab: the sandbox (step 2 onward).
-export const App = {
-  async start(_device: GPUDevice, _q: URLSearchParams): Promise<void> {
-    document.getElementById('info')!.textContent = 'The sandbox is not built yet. Open this page with ?selftest=1.';
-  },
-};
+// Nested scales lab: the sandbox (docs/design/NESTED_SCALES.md). One root terrain; zoom in near the ground and a finer
+// level is promoted round the focus (and a finer one inside it), each drawn in its own units; sculpt on whichever
+// level is under the pointer. Everything that touches the columns runs on the GPU (gpu/nest.ts); this file holds the
+// camera's inputs, which levels are wanted where, the buttons and the measurements.
+import { GpuNest, type Op, type Win } from './gpu/nest';
+import { Renderer, type DrawLevel } from './render';
+
+/** a root column, in metres (the info line) */
+const ROOT_COLUMN_M = 3.2;
+const FOVY = (50 * Math.PI) / 180;
+
+type Mode = Op | 'move' | 'orbit';
+
+export class App {
+  readonly nest: GpuNest;
+  readonly render: Renderer;
+  readonly k: number;
+  readonly n: number;
+  readonly maxDepth: number;
+  readonly rootN = 256;
+  tx = 128;
+  ty = 128;
+  D = 260;
+  Dgoal = 260;
+  yaw = -Math.PI / 2;
+  pitch = 0.75;
+  mode: Mode = 'move';
+  private bornAt: number[] = [];
+  private pointers = new Map<number, { x: number; y: number }>();
+  private pinch: { d: number; cx: number; cy: number } | null = null;
+  private sculptAt: { x: number; y: number } | null = null;
+  private last = performance.now();
+  private canvas: HTMLCanvasElement;
+  private info: HTMLElement;
+  private buttons = new Map<string, HTMLButtonElement>();
+  /** frame times (ms), the last 600 */
+  readonly frames: number[] = [];
+  /** scripted edits (window.nested.sculpt) */
+  private queue: { op: Op; nx: number; ny: number }[] = [];
+  /** per level, when its last promote or slide was submitted, and that op's CPU time (encode + submit) */
+  readonly opLog: { what: string; depth: number; at: number; ms: number }[] = [];
+  hook: ((dt: number) => void) | null = null;
+
+  static async start(device: GPUDevice, q: URLSearchParams): Promise<App> {
+    const app = new App(device, q);
+    (window as unknown as { nested: unknown }).nested = app.api();
+    requestAnimationFrame(() => app.frame());
+    return app;
+  }
+
+  constructor(
+    readonly device: GPUDevice,
+    q: URLSearchParams,
+  ) {
+    this.k = Number(q.get('k') ?? 8);
+    this.n = Number(q.get('n') ?? 256);
+    this.maxDepth = Number(q.get('depth') ?? 3);
+    this.canvas = document.getElementById('view') as HTMLCanvasElement;
+    this.info = document.getElementById('info')!;
+    const ctx = this.canvas.getContext('webgpu');
+    if (!ctx) throw new Error('This browser has WebGPU but would not give the page a WebGPU canvas.');
+    this.nest = new GpuNest(device, this.k, Number(q.get('seed') ?? 7), 1536);
+    this.render = new Renderer(device, ctx, this.nest);
+    this.render.tint = q.get('tint') === '1';
+    if (q.has('detail')) this.nest.detailAmp = Number(q.get('detail'));
+    if (q.has('tx')) this.tx = Number(q.get('tx'));
+    if (q.has('ty')) this.ty = Number(q.get('ty'));
+    if (q.has('d')) this.D = this.Dgoal = Number(q.get('d'));
+    if (q.has('yaw')) this.yaw = Number(q.get('yaw'));
+    if (q.has('pitch')) this.pitch = Number(q.get('pitch'));
+    this.nest.root(this.rootN);
+    this.bornAt[0] = this.nest.now();
+    this.ui();
+  }
+
+  // ---- input -----------------------------------------------------------------------------------------------------------
+  private ui(): void {
+    const bar = document.getElementById('bar')!;
+    const add = (id: string, label: string, fn: () => void) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.onclick = fn;
+      bar.appendChild(b);
+      this.buttons.set(id, b);
+    };
+    add('raise', 'Raise', () => this.setMode('raise'));
+    add('dig', 'Dig', () => this.setMode('dig'));
+    add('melt', 'Melt', () => this.setMode('melt'));
+    add('move', 'Move', () => this.setMode('move'));
+    add('orbit', 'Turn', () => this.setMode('orbit'));
+    add('tint', 'Colour levels', () => {
+      this.render.tint = !this.render.tint;
+      this.buttons.get('tint')!.classList.toggle('on', this.render.tint);
+    });
+    this.buttons.get('tint')!.classList.toggle('on', this.render.tint);
+    this.setMode(this.mode);
+    const c = this.canvas;
+    c.addEventListener('pointerdown', (e) => {
+      c.setPointerCapture(e.pointerId);
+      this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.pointers.size === 1 && (this.mode === 'raise' || this.mode === 'dig' || this.mode === 'melt') && e.button === 0) this.sculptAt = { x: e.clientX, y: e.clientY };
+      if (this.pointers.size === 2) {
+        this.sculptAt = null;
+        this.pinch = this.pinchOf();
+      }
+    });
+    c.addEventListener('pointermove', (e) => {
+      const p = this.pointers.get(e.pointerId);
+      if (!p) return;
+      const dx = e.clientX - p.x;
+      const dy = e.clientY - p.y;
+      p.x = e.clientX;
+      p.y = e.clientY;
+      if (this.pointers.size === 2) {
+        const now = this.pinchOf();
+        if (this.pinch && now) {
+          this.Dgoal = this.clampD(this.Dgoal * (this.pinch.d / now.d));
+          this.pan(now.cx - this.pinch.cx, now.cy - this.pinch.cy);
+        }
+        this.pinch = now;
+        return;
+      }
+      if (this.sculptAt) {
+        this.sculptAt = { x: e.clientX, y: e.clientY };
+        return;
+      }
+      if (this.mode === 'orbit' || e.buttons === 2) this.orbit(dx, dy);
+      else this.pan(dx, dy);
+    });
+    const up = (e: PointerEvent) => {
+      this.pointers.delete(e.pointerId);
+      if (this.pointers.size < 2) this.pinch = null;
+      if (this.pointers.size === 0) this.sculptAt = null;
+    };
+    c.addEventListener('pointerup', up);
+    c.addEventListener('pointercancel', up);
+    c.addEventListener('contextmenu', (e) => e.preventDefault());
+    c.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      this.Dgoal = this.clampD(this.Dgoal * Math.exp(e.deltaY * 0.0012));
+    }, { passive: false });
+    window.addEventListener('keydown', (e) => {
+      const m: Record<string, () => void> = { '1': () => this.setMode('raise'), '2': () => this.setMode('dig'), '3': () => this.setMode('melt'), '4': () => this.setMode('move'), '5': () => this.setMode('orbit'), t: () => this.buttons.get('tint')!.click() };
+      m[e.key.toLowerCase()]?.();
+    });
+  }
+  private setMode(m: Mode): void {
+    this.mode = m;
+    for (const id of ['raise', 'dig', 'melt', 'move', 'orbit']) this.buttons.get(id)!.classList.toggle('on', id === m);
+  }
+  private pinchOf(): { d: number; cx: number; cy: number } | null {
+    const p = [...this.pointers.values()];
+    if (p.length < 2) return null;
+    return { d: Math.max(1, Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y)), cx: (p[0].x + p[1].x) / 2, cy: (p[0].y + p[1].y) / 2 };
+  }
+  /** world units a CSS pixel at the focus */
+  private perPx(): number {
+    return (2 * this.D * Math.tan(FOVY / 2)) / Math.max(1, this.canvas.clientHeight);
+  }
+  private clampD(d: number): number {
+    return Math.min(400, Math.max(8 / this.k ** this.maxDepth, d));
+  }
+  /** the ground under the finger moves with it; the step is limited by the distance to the ground (speed limit) */
+  pan(dx: number, dy: number): void {
+    const s = this.perPx();
+    const rx = -Math.sin(this.yaw);
+    const ry = Math.cos(this.yaw);
+    const fx = -Math.cos(this.yaw);
+    const fy = -Math.sin(this.yaw);
+    let mx = (-rx * dx + (fx * dy) / Math.max(0.3, Math.sin(this.pitch))) * s;
+    let my = (-ry * dx + (fy * dy) / Math.max(0.3, Math.sin(this.pitch))) * s;
+    const len = Math.hypot(mx, my);
+    const max = 0.25 * this.D;
+    if (len > max) {
+      mx *= max / len;
+      my *= max / len;
+    }
+    this.tx = Math.min(this.rootN - 2, Math.max(2, this.tx + mx));
+    this.ty = Math.min(this.rootN - 2, Math.max(2, this.ty + my));
+  }
+  orbit(dx: number, dy: number): void {
+    this.yaw -= dx * 0.006;
+    this.pitch = Math.min(1.5, Math.max(0.12, this.pitch + dy * 0.005));
+  }
+
+  // ---- levels ----------------------------------------------------------------------------------------------------------
+  /** world width of a level's window */
+  width(m: number): number {
+    return this.n / this.k ** m;
+  }
+  private desired(m: number): Win {
+    const s = this.k ** (m - 1);
+    return this.nest.windowAt(m, this.tx * s, this.ty * s, this.n);
+  }
+  private levels(): void {
+    const now = this.nest.now();
+    for (let m = 1; m <= this.maxDepth; m++) {
+      const live = this.nest.live;
+      const W = this.width(m);
+      if (m < live) {
+        if (this.D > 0.6 * W) {
+          this.timed('demote', m, () => this.nest.demote(m));
+          return;
+        }
+        const want = this.desired(m);
+        const cur = this.nest.wins[m]!;
+        // follow the focus by whole chunks (whole parent cells), with a chunk of slack
+        if (Math.abs(want.gx - cur.gx) >= 32 || Math.abs(want.gy - cur.gy) >= 32 || !this.nest.fits(m, cur)) {
+          this.timed('slide', m, () => this.nest.slide(m, want));
+          this.bornAt[m] = Math.max(this.bornAt[m] ?? 0, now - this.render.fadeSeconds + 0.05);
+        }
+        continue;
+      }
+      if (m === live && this.D < 0.45 * W && now - (this.bornAt[m - 1] ?? 0) > this.render.fadeSeconds + 0.05) {
+        const w = this.desired(m);
+        this.timed('promote', m, () => this.nest.promote(m, w));
+        this.bornAt[m] = now;
+      }
+      return;
+    }
+  }
+  private timed(what: string, depth: number, fn: () => void): void {
+    const t = performance.now();
+    fn();
+    this.opLog.push({ what, depth, at: t, ms: performance.now() - t });
+    if (this.opLog.length > 400) this.opLog.shift();
+  }
+
+  private drawList(): DrawLevel[] {
+    const live = this.nest.live;
+    const out: DrawLevel[] = [];
+    for (let m = 0; m < live; m++) {
+      const w = this.nest.wins[m]!;
+      const c = this.nest.wins[m + 1];
+      const k = this.k;
+      const inset = 0.75 / k;
+      const cut: DrawLevel['cut'] = c ? [c.gx / k - w.gx + inset, c.gy / k - w.gy + inset, (c.gx + c.n) / k - w.gx - inset, (c.gy + c.n) / k - w.gy - inset] : null;
+      let want: DrawLevel['want'] = null;
+      if (m + 1 <= this.maxDepth && this.D < 0.45 * this.width(m + 1)) {
+        const s = this.k ** m;
+        const g = this.nest.windowAt(m + 1, this.tx * s, this.ty * s, this.n);
+        want = [g.gx / k - w.gx, g.gy / k - w.gy, (g.gx + g.n) / k - w.gx, (g.gy + g.n) / k - w.gy];
+      }
+      out.push({ depth: m, cut, want });
+    }
+    return out;
+  }
+
+  // ---- the frame -------------------------------------------------------------------------------------------------------
+  private frame(): void {
+    const t = performance.now();
+    const dt = Math.min(0.1, (t - this.last) / 1000);
+    this.frames.push(t - this.last);
+    if (this.frames.length > 600) this.frames.shift();
+    this.last = t;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const W = Math.max(1, Math.round(this.canvas.clientWidth * dpr));
+    const H = Math.max(1, Math.round(this.canvas.clientHeight * dpr));
+    if (this.canvas.width !== W || this.canvas.height !== H) {
+      this.canvas.width = W;
+      this.canvas.height = H;
+    }
+    this.hook?.(dt);
+    // zoom eases toward its goal, at most 15 % a frame (the camera cannot outrun a promotion)
+    const ratio = Math.min(1.15, Math.max(1 / 1.15, this.Dgoal / this.D));
+    this.D = this.clampD(this.D * ratio);
+    this.levels();
+    const hx = Math.fround(this.tx);
+    const hy = Math.fround(this.ty);
+    const ndc = this.sculptAt ? [(this.sculptAt.x / this.canvas.clientWidth) * 2 - 1, 1 - (this.sculptAt.y / this.canvas.clientHeight) * 2] : [0, 0];
+    const qd = this.queue.shift();
+    if (qd) ndc.splice(0, 2, qd.nx, qd.ny);
+    this.nest.camIn.set([hx, hy, this.tx - hx, this.ty - hy, this.D, this.yaw, this.pitch, W / H, FOVY, ndc[0], ndc[1], dt]);
+    this.nest.camera();
+    const op = qd?.op ?? (this.sculptAt ? (this.mode as Op) : null);
+    if (op) {
+      const radius = 60 * this.perPx();
+      this.timed('edit', -1, () => this.nest.edit({ op, radius, amount: (op === 'melt' ? 0 : 0.04) * radius, rate: 0.1 }));
+    }
+    this.render.draw(this.drawList());
+    this.text();
+    requestAnimationFrame(() => this.frame());
+  }
+
+  private text(): void {
+    const live = this.nest.live;
+    const col = (ROOT_COLUMN_M / this.k ** (live - 1)) * 100;
+    const st = this.nest.stats;
+    const ft = this.frames.slice(-60);
+    const avg = ft.reduce((a, b) => a + b, 0) / Math.max(1, ft.length);
+    const lines = [
+      `Levels open: ${live}. Finest column: ${col >= 100 ? `${(col / 100).toFixed(1)} m` : `${col.toFixed(col < 1 ? 2 : 1)} cm`}.`,
+      `Camera ${(this.D * ROOT_COLUMN_M).toFixed(this.D * ROOT_COLUMN_M < 10 ? 2 : 0)} m from the ground. Frame ${avg.toFixed(1)} ms.`,
+      `Pages: ${st.used} used of ${st.cap}.`,
+      live < this.maxDepth + 1 ? 'Zoom in close to the ground to open a finer level.' : 'This is the finest level.',
+      this.mode === 'move' ? 'Drag to move. Pinch or scroll to zoom.' : this.mode === 'orbit' ? 'Drag to turn the view.' : `Drag on the ground to ${this.mode}.`,
+    ];
+    if (st.refused || st.mismatch || st.tableFull) lines.push(`Error: ${st.refused} pages refused, ${st.mismatch} blocks mismatched, table full ${st.tableFull} times.`);
+    this.info.textContent = lines.join('\n');
+  }
+
+  private api() {
+    return {
+      app: this,
+      setView: (v: { tx?: number; ty?: number; d?: number; yaw?: number; pitch?: number }) => {
+        if (v.tx !== undefined) this.tx = v.tx;
+        if (v.ty !== undefined) this.ty = v.ty;
+        if (v.d !== undefined) this.D = this.Dgoal = v.d;
+        if (v.yaw !== undefined) this.yaw = v.yaw;
+        if (v.pitch !== undefined) this.pitch = v.pitch;
+      },
+      /** queue `times` edits at a screen point (ndc), one a frame */
+      sculpt: (op: Op, nx: number, ny: number, times = 1) => {
+        for (let i = 0; i < times; i++) this.queue.push({ op, nx, ny });
+      },
+      state: () => ({ live: this.nest.live, wins: this.nest.wins.slice(0, this.nest.live), D: this.D, tx: this.tx, ty: this.ty, stats: { ...this.nest.stats }, queue: this.queue.length }),
+      tint: (on: boolean) => {
+        this.render.tint = on;
+        this.buttons.get('tint')!.classList.toggle('on', on);
+      },
+    };
+  }
+}

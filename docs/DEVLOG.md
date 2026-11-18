@@ -26221,4 +26221,28 @@ sit exactly on the oracle's non-zero chunks; the pool started at 16 pages and gr
 refused, no structure mismatches, the table never full. Times with a sync each (not frame-time): promote of a 64²
 child 6.6 ms, first edit 31 ms (includes first use), slide 53 ms (to measure properly in the page, step 4).
 
+## 2026-11-18 — Nested scales lab, steps 2-3: the sandbox page, composed levels, sculpt on any level
+
+**What.** nested.html: one 256² root (hills and a winding valley, the root's column 3.2 m), up to three finer
+levels of 256² at k = 8 (40 cm, 5 cm, 0.63 cm). The camera, the pick, the composition and the draw are on the GPU
+(see NESTED_SCALES.md "Built so far"); the CPU only says where the target is, how far the camera is, which windows
+are wanted, and the brush. Buttons: Raise, Dig, Melt, Move, Turn, Colour levels (also keys 1-5, T); one finger
+sculpts or moves by the mode, two fingers pinch-zoom and pan, the wheel zooms. Zoom eases at most 15 % a frame and a
+pan step is at most a quarter of the distance to the ground, so the camera cannot outrun a promotion.
+
+**Why the detail band changed.** The first mid-zoom still showed regular round pits on the child. With the detail
+off (`?detail=0`) the child was smooth with no pits or terraces, so the pits were the block-mean correction (a
+sin²·sin² bump peaking at 4x the block's mean) amplifying the top octave (wavelength k: one period a block, a large
+block mean). Wavelengths now stop at k/2 (two or more periods a block) with amplitude 0.08 x wavelength: the pits
+are gone in the same view (local/nested/mid-plain.png). Oracle and GPU changed together; 8 unit tests and the 20
+self-test checks pass again.
+
+**Looked at (local/nested/).** whole-map.png; mid-tint / mid-plain (depth 1 over the root); above-tint /
+above-plain (the child's footprint from above, the root beyond its rim); rimclose-*; d1-before / d1-after /
+d1-raise-low (raise, dig into stone, melt at depth 1); d2-before / d2-after (depth 2, three levels open);
+d1-edit-from-root (zoomed out to the root only) and d1-edit-back-in (zoomed in again: the edits come back from the
+residual); finest-depth3.png (four levels, 0.63 cm columns); zoom-map-to-finest.gif. Frame time in the headless
+desktop runs: 9.8-10 ms with two to four levels (vsync-bound at 100 Hz; measured properly in step 4).
+
+
 

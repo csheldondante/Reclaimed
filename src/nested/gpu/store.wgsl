@@ -109,15 +109,15 @@ fn valueNoise(x: f32, y: f32, layer: i32, seed: u32) -> f32 {
   let d = hash3(i + 1, j + 1, layer, seed);
   return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
 }
-const DETAIL_AMP: f32 = 0.06;
-fn detail(gx: i32, gy: i32, depth: i32, k: i32, seed: u32) -> f32 {
+/** amp: per wavelength (the oracle's DETAIL_AMP by default; nest.ts detailAmp) */
+fn detail(gx: i32, gy: i32, depth: i32, k: i32, seed: u32, amp: f32) -> f32 {
   var v = 0.0;
   var lam = 2;
   var o = 0;
   loop {
-    if (lam > k) { break; }
+    if (lam * 2 > k) { break; }
     let l = f32(lam);
-    v += DETAIL_AMP * l * valueNoise((f32(gx) + 0.5) / l, (f32(gy) + 0.5) / l, depth * 16 + o, seed);
+    v += amp * l * valueNoise((f32(gx) + 0.5) / l, (f32(gy) + 0.5) / l, depth * 16 + o, seed);
     lam *= 2;
     o++;
   }
