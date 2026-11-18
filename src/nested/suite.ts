@@ -21,12 +21,259 @@ interface Api {
     forward(): [number, number, number];
     frameCount: number;
   };
-  eye(): { x: number; y: number; z: number; dHit: number };
+  eye(): { x: number; y: number; z: number; dHit: number; dNear: number };
   setView(v: { yaw: number; pitch: number; eye?: [number, number, number]; tx?: number; ty?: number; d?: number }): void;
   manifold(): Promise<EdgeReport[]>;
-  holes(): Promise<{ rows: number[]; h: number; at: [number, number][] }>;
+  holes(): Promise<{ rows: number[]; h: number; w: number; mask: Uint8Array; at: [number, number][] }>;
   state(): { live: number; stats: Record<string, unknown> };
   cruise?(on: boolean, wps?: number): void;
+  sculpt?(op: string, nx: number, ny: number, times?: number, px?: number): void;
+  coverage?(): Promise<{ stale: number; missing: number; where: string[] }>;
+  fly?(x: number, y: number, z: number): void;
+}
+
+/** the hole pixels (no surface) on rays at least 0.1 rad below the horizon, where ground must be, at a pitch (the
+ *  screen check's rule, shared by every pose list) */
+export async function groundHoles(api: Api, pitch: number, world?: Ground): Promise<{ n: number; at: [number, number][] }> {
+  const hl = await api.holes();
+  const tn = Math.tan((50 * Math.PI) / 360);
+  let n = 0;
+  if (!world) {
+    for (let y = 0; y < hl.h; y++) {
+      const ny = 1 - ((y + 0.5) / hl.h) * 2;
+      const dz = -Math.sin(pitch) + ny * tn * Math.cos(pitch);
+      if (dz / Math.hypot(1, ny * tn) < -0.1) n += hl.rows[y];
+    }
+    return { n, at: hl.at };
+  }
+  // (round 8) a ray below the horizon from a high eye can leave the world over its edge (the root's 256 columns): ground
+  // is expected only where the ray, marched over the root's tops, goes under them inside the world (or starts under
+  // them: an eye in a pit or a cave)
+  const { mask, w, h } = hl;
+  const at: [number, number][] = [];
+  const e = api.eye();
+  const yaw = world.yaw;
+  const f = [-Math.cos(pitch) * Math.cos(yaw), -Math.cos(pitch) * Math.sin(yaw), -Math.sin(pitch)];
+  const rl = Math.hypot(f[1], f[0]);
+  // (as the camera pass: right = normalize(cross(forward, z)), up = cross(right, forward))
+  const r = [f[1] / rl, -f[0] / rl, 0];
+  const up = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
+  const aspect = w / h;
+  const under = e.z < world.top(e.x, e.y);
+  for (let y = 0; y < h; y++) {
+    if (!hl.rows[y]) continue;
+    const ny = 1 - ((y + 0.5) / h) * 2;
+    for (let x = 0; x < w; x++) {
+      if (!mask[y * w + x]) continue;
+      const nx = ((x + 0.5) / w) * 2 - 1;
+      const d = [0, 1, 2].map((i) => f[i] + r[i] * nx * tn * aspect + up[i] * ny * tn);
+      const dl = Math.hypot(d[0], d[1], d[2]);
+      if (d[2] / dl >= -0.1) continue;
+      let hit = under;
+      for (let t = 0; !hit && t < 2000; t += 0.25) {
+        const px = e.x + (d[0] / dl) * t;
+        const py = e.y + (d[1] / dl) * t;
+        if (px < 0 || py < 0 || px >= world.n0 || py >= world.n0) break;
+        // (a root column under the root's top: the finer levels' detail stays within about a root column of it)
+        if (e.z + (d[2] / dl) * t < world.top(px, py) - 1.0) hit = true;
+      }
+      if (!hit) continue;
+      n++;
+      if (at.length < 8) at.push([x, y]);
+    }
+  }
+  return { n, at };
+}
+/** the root's tops for groundHoles (world units = root columns) */
+export interface Ground {
+  yaw: number;
+  n0: number;
+  top(x: number, y: number): number;
+}
+async function rootGround(api: Api): Promise<(yaw: number) => Ground> {
+  const s = await api.app.nest.readAll();
+  const n0 = 256;
+  const tops = new Float32Array(n0 * n0);
+  for (let Y = 0; Y < n0; Y++)
+    for (let X = 0; X < n0; X++) {
+      const c = s.column(0, X, Y);
+      tops[Y * n0 + X] = c.z1.length ? c.z1[c.z1.length - 1] : -1e9;
+    }
+  return (yaw: number) => ({ yaw, n0, top: (x, y) => tops[Math.floor(y) * n0 + Math.floor(x)] });
+}
+
+type View = { yaw: number; pitch: number; eye: [number, number, number] };
+/** (round 8, the owner's sky-through-ground report) a pit dug by repeated carve taps at the screen's centre at a large
+ *  size (frac of the nearest distance), followed down along the aim; at each depth the view down, level all round and
+ *  back up and out; then a cave carved sideways from the pit's floor and the view back out of its mouth; then the same
+ *  poses again after a cruise away and back, and after a zoom out (demotes) and back. Hole pixels below the horizon. */
+export async function pitAndCave(api: Api, opt: { frac?: number; taps?: number; d0?: number; tx?: number; ty?: number; images?: boolean; log?: (s: string) => void } = {}): Promise<{ total: number; lines: string[]; poses: number; worstViews: { name: string; n: number; view: View; img?: unknown }[]; coverage: number }> {
+  const a = api.app as unknown as Api['app'] & { brushFrac: number; queue: unknown[]; opLog: { what: string }[]; nest: { live: number; stats: Record<string, number> } };
+  const lines: string[] = [];
+  const say = (s: string) => {
+    lines.push(s);
+    opt.log?.(s);
+  };
+  const frac = opt.frac ?? 1;
+  const taps = opt.taps ?? 8;
+  const views: { name: string; n: number; view: View; img?: unknown }[] = [];
+  let total = 0;
+  let poses = 0;
+  const look = async (name: string, view: View) => {
+    api.setView(view);
+    await frames(api, 4);
+    let worst = 0;
+    let at: [number, number][] = [];
+    const per: number[] = [];
+    let img: unknown = null;
+    for (const n of [1, 30]) {
+      await frames(api, n);
+      const h = await groundHoles(api, view.pitch, ground?.(view.yaw));
+      per.push(h.n);
+      if (h.n > worst) {
+        worst = h.n;
+        at = h.at;
+        img = opt.images && views.length < 6 ? (api as unknown as { holeImage(): unknown }).holeImage() : null;
+      }
+    }
+    poses++;
+    total += worst;
+    if (worst > 0) {
+      say(`${name}: ${per.join(' then ')} hole pixels (live ${api.state().live}, wins ${JSON.stringify((api.state() as unknown as { wins: unknown }).wins)}, eye ${view.eye.map((v) => v.toFixed(3)).join(', ')}, yaw ${view.yaw.toFixed(2)}, pitch ${view.pitch.toFixed(2)}) first at ${JSON.stringify(at.slice(0, 3))}`);
+      views.push({ name, n: worst, view, img });
+    }
+  };
+  const here = (): [number, number, number] => {
+    const e = api.eye();
+    return [e.x, e.y, e.z];
+  };
+  const edits = () => a.opLog.filter((o) => o.what === 'edit').length;
+  const tap = async () => {
+    const e0 = edits();
+    api.sculpt!('carve', 0, 0);
+    for (let i = 0; i < 400 && edits() === e0; i++) await frames(api, 1);
+    await frames(api, 20);
+  };
+  // along the aim by most of the way to the surface at the centre (Fwd), limited by the GPU as any move
+  const fwd = async (part: number) => {
+    for (let i = 0; i < 40; i++) {
+      const f = a.forward();
+      const d = api.eye().dHit;
+      if (d <= 0) break;
+      const s = (part * d) / 40;
+      api.fly!(f[0] * s, f[1] * s, f[2] * s);
+      await frames(api, 1);
+    }
+    await frames(api, 30);
+  };
+  let ground: ((yaw: number) => Ground) | null = null;
+  // every column in view drawn by exactly one level (after the pit, the cave, the shafts, a cruise, a demote)
+  let covBad = 0;
+  const cover = async (when: string) => {
+    if (!api.coverage) return;
+    const c = await api.coverage();
+    covBad += c.stale + c.missing;
+    say(`coverage ${when}: ${api.state().live} levels, stale caps ${c.stale}, columns with no cap ${c.missing}${c.where.length ? ` (${c.where.join('; ')})` : ''}`);
+  };
+  const around = async (name: string, eye: [number, number, number], yaw0: number) => {
+    ground = await rootGround(api);
+    await look(`${name} down`, { yaw: yaw0, pitch: 1.45, eye });
+    for (let i = 0; i < 4; i++) await look(`${name} level ${i}`, { yaw: yaw0 + (i * Math.PI) / 2, pitch: 0.25, eye });
+    for (let i = 0; i < 4; i++) await look(`${name} out ${i}`, { yaw: yaw0 + (i * Math.PI) / 2, pitch: -0.35, eye });
+  };
+  const tx = opt.tx ?? 70;
+  const ty = opt.ty ?? 120;
+  api.setView({ tx, ty, d: opt.d0 ?? 8, yaw: 0.3, pitch: 1.35 });
+  await frames(api, 240);
+  say(`pit at ${tx}, ${ty}: ${api.state().live} levels open, dNear ${api.eye().dNear.toFixed(3)}; brush ${frac} of the nearest distance`);
+  a.brushFrac = frac;
+  const pitEyes: [number, number, number][] = [];
+  for (let t = 0; t < taps; t++) {
+    api.setView({ yaw: 0.3, pitch: 1.35 });
+    await frames(api, 3);
+    await tap();
+    await fwd(0.7);
+    const eye = here();
+    pitEyes.push(eye);
+    say(`tap ${t + 1}: eye ${eye.map((v) => v.toFixed(3)).join(', ')}, dNear ${api.eye().dNear.toFixed(3)}, ${api.state().live} levels`);
+    await around(`pit tap ${t + 1}`, eye, 0.3);
+  }
+  // a cave: carve sideways from the pit's floor (level aim), following it in, then look back out of its mouth
+  const floor = pitEyes[pitEyes.length - 1];
+  api.setView({ yaw: 1.2, pitch: 0.05, eye: floor });
+  await frames(api, 30);
+  for (let t = 0; t < 4; t++) {
+    api.setView({ yaw: 1.2, pitch: 0.05 });
+    await frames(api, 3);
+    await tap();
+    await fwd(0.6);
+  }
+  const cave = here();
+  say(`cave: eye ${cave.map((v) => v.toFixed(3)).join(', ')}, ${api.state().live} levels`);
+  await around('cave', cave, 1.2 + Math.PI);
+  await cover('in the cave');
+  // shafts: forced carves straight down far below any level's old bottom (the root's was -8), one inside level 1's
+  // window and one across its rim; the eye at the bottom, deep in the ground, looks down, level round and out
+  const shafts: { name: string; eye: [number, number, number] }[] = [];
+  {
+    const snap = await a.nest.readAll();
+    const zo = snap.zOrigin(1);
+    const w1 = a.nest.wins[1]!;
+    const k = 8;
+    const ed = async (x: number, y: number, z: number, r: number, level: number) => {
+      const w = a.nest.wins[level]!;
+      const s = k ** level;
+      const zz = level === 0 ? z : (z - zo) * k;
+      while (!a.nest.edit({ op: 'carve', radius: r, amount: 0, at: { level, x: x * s - w.gx, y: y * s - w.gy, z: zz } })) await W(30);
+    };
+    const top = (x: number, y: number) => {
+      const c = snap.column(0, Math.floor(x), Math.floor(y));
+      return c.z1[c.z1.length - 1];
+    };
+    const sites: [string, number, number, number][] = [
+      ['shaft inside', w1.gx / k + w1.n / k / 2 + 6, w1.gy / k + w1.n / k / 2 - 6, 1],
+      ['shaft across the rim', w1.gx / k + 0.3, w1.gy / k + w1.n / k / 2 + 4, 1],
+    ];
+    for (const [name, x, y, level] of sites) {
+      const z0 = top(x, y) + 1;
+      for (let z = z0; z > -24; z -= 1.5) await ed(x, y, z, 2.2, level);
+      shafts.push({ name, eye: [x + 0.5, y + 0.5, -20] });
+      say(`${name}: carved at ${x.toFixed(2)}, ${y.toFixed(2)} from ${z0.toFixed(2)} down to -24 (world), level 1 z origin ${zo.toFixed(2)}`);
+    }
+    await frames(api, 30);
+    for (const s of shafts) {
+      for (const z of [-20, -10]) await around(`${s.name} at ${z}`, [s.eye[0], s.eye[1], z], 0.3);
+    }
+    await cover('in the rim shaft');
+  }
+  const shrinks = () => (api.state().stats as Record<string, number>).shrinks ?? 0;
+  // after a cruise away and back
+  if (api.cruise) {
+    api.setView({ yaw: 0.3, pitch: 1.0, tx, ty, d: 1.5 });
+    await frames(api, 120);
+    api.cruise(true, 2);
+    await W(4000);
+    api.cruise(false);
+    await frames(api, 60);
+    await cover('after the cruise (slides)');
+    say(`after a cruise: pool ${JSON.stringify(api.state().stats)}`);
+    for (const [i, e] of pitEyes.entries()) if (i % 3 === 2 || i === pitEyes.length - 1) await around(`post-cruise pit ${i + 1}`, e, 0.3);
+    await around('post-cruise cave', cave, 1.2 + Math.PI);
+    for (const s of shafts) await around(`post-cruise ${s.name}`, [s.eye[0], s.eye[1], -20], 0.3);
+  }
+  // after a zoom out (demotes), the pool's shrinks, and back
+  const s0 = shrinks();
+  api.setView({ yaw: 0.3, pitch: 1.0, tx, ty, d: 80 });
+  await frames(api, 240);
+  for (let i = 0; i < 40 && shrinks() === s0; i++) await frames(api, 30);
+  await cover('zoomed out (demoted)');
+  say(`zoomed out: ${api.state().live} levels; ${shrinks() - s0} shrink steps since; pool ${JSON.stringify(api.state().stats)}`);
+  for (const [i, e] of pitEyes.entries()) if (i % 3 === 2 || i === pitEyes.length - 1) await around(`post-demote pit ${i + 1}`, e, 0.3);
+  for (const s of shafts) await around(`post-shrink ${s.name}`, [s.eye[0], s.eye[1], -20], 0.3);
+  await cover('back in the shaft after the demote and shrinks');
+  views.sort((x, y) => y.n - x.n);
+  say(`pit and cave: ${total} hole pixels below the horizon over ${poses} poses; coverage faults ${covBad}`);
+  return { total, lines, poses, worstViews: views, coverage: covBad };
 }
 
 const W = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -105,6 +352,7 @@ export async function watertightSuite(api: Api, opt: { manifold?: boolean; scree
       'the map': { yaw: 0.6, pitch: 0.7, eye: [hx + 60, hy + 40, hz + 70] },
     };
     let openAll = 0;
+    let covAll = 0;
     for (const [name, v] of Object.entries(eyes)) {
       api.setView(v);
       await frames(api, 3);
@@ -113,10 +361,16 @@ export async function watertightSuite(api: Api, opt: { manifold?: boolean; scree
         const rep = await api.manifold();
         const open = rep.reduce((s, r) => s + r.open, 0);
         openAll += open;
+        if (when === 'settled' && api.coverage) {
+          const c = await api.coverage();
+          covAll += c.stale + c.missing;
+          if (c.stale + c.missing) say(`coverage ${name}: stale caps ${c.stale}, columns with no cap ${c.missing} (${c.where.join('; ')})`);
+        }
         say(`manifold ${name} (${when}): ${rep.map((r) => `L${r.depth} ${r.tris} tris, ${r.edges} edges, odd ${r.open}, shared by 4+ ${r.over}, degenerate ${r.degenerate}${r.open ? ` at ${JSON.stringify(r.where.slice(0, 3))}` : ''}`).join('; ')}`);
       }
     }
-    checks.push({ name: 'manifold: every edge of every level\'s faces shared by an even number of triangles (open world bottom aside), 8 eyes, just after the move and settled', pass: openAll === 0, detail: `${openAll} odd edges in total` });
+    checks.push({ name: 'manifold: every edge of every level\'s faces shared by an even number of triangles (no exemption: round 8 has no world bottom), 8 eyes, just after the move and settled', pass: openAll === 0, detail: `${openAll} odd edges in total` });
+    if (api.coverage) checks.push({ name: 'coverage: every column in view drawn by exactly one level at the 8 eyes, settled', pass: covAll === 0, detail: `${covAll} faults` });
   }
   let worst = { n: 0, pose: -1, view: null as unknown };
   if (opt.screen !== false) {

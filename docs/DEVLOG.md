@@ -26736,3 +26736,46 @@ the distance now comes from the vertex stage (NS-79).
 
 Pops in the central half (a slide's strip seen turning finer): 74 of 1,694 reads in the 20 s cruise, all within 4 frames
 of a slide (NS-74).
+
+## 2026-11-19 — Nested scales lab, round 8: no world bottom (sky through the ground from a deep pit)
+
+**Why.** The owner, on the phone with the round 7 build, digging with the size slider: "when I looked back out I saw only
+the sky and not the lower detail terrain ... I did see this when digging down and I would expect to never see open sky
+that direction", and later "I think that filled in when I got close enough".
+
+**Reproduced first** (scripts/nested-pit.mjs, src/nested/suite.ts pitAndCave; stills local/nested/r8-*.png). Pits dug by
+repeated taps at 100 % size and followed down with Fwd (30 taps, to -1 world), a cave off the pit's floor, then two
+shafts forced down to -24 world (one inside level 1's window, one across its rim), each looked at down, level all round
+and out; again after a 4 s cruise and after a zoom out (demotes and the pool's shrinks). Hole pixels counted only where
+the ray goes under the root's tops inside the world (a high eye's rays over the world's edge are not holes; NS-84).
+- Taps-and-follow pits: 0 holes at every depth reached (they never got under a level's bottom).
+- Shaft across level 1's rim, eye at -20 looking down: 494,068 hole pixels (37,135 after 30 frames), a rectangle of sky
+  under the root's neighbouring columns, which ended at the root's bottom plane (-8). Inside level 1 at -10: 994 (under
+  level 2's bottom, -8 world under its z origin). Over the selftest's pit, cave and shaft poses the old draw shows
+  1,354,260 hole pixels; the new one 0 (162 poses).
+- Cause: the draw's finite bottom (round 6), not the round 7 streaming: every column's box ended at a fixed plane per
+  level, so neighbours of anything dug below it were open underneath, and across a rim the two levels' walls stopped at
+  different depths. It predates round 7; the size slider made digging that deep easy. The owner's "filled in when close"
+  fits: a finer level opening or sliding over the spot had a deeper bottom in world units.
+- The coordinator's streaming hypotheses checked with a new coverage check (every column drawn by exactly one level:
+  no cap from a column a level should not draw, every drawn column capped): 0 stale caps after slides, demotes and
+  shrinks at every check point.
+
+**Fixed by design** (NESTED_SCALES.md "The box draw", round 8): a column's box ends at its own depth, zb = floor((min of
+its first record's top and its four neighbours' depths - 1) / 8) x 8, with a down cap; across a rim a neighbour's depth
+comes from the level drawing there (the parent's column outside a child's window, the k child columns along the side
+under a child's footprint). Bakes grow by two columns (bottoms depend on neighbours). No edge is exempt from the manifold
+check any more (the old draw now shows 46,560 odd edges under it; the new one 0).
+
+**Gate (desktop, 960 x 640):**
+
+| check | result |
+|---|---|
+| pit, cave and shaft poses incl. post-cruise, post-demote/shrink | 0 hole pixels over 162 poses (selftest), 99 (nested-pit) |
+| old screen check (40 poses x 4 samples) and cruise samples | 0 and 0 (one earlier selftest run showed 2,104 in the 40 poses; the next two runs 0) |
+| manifold, 8 eyes | 0 odd edges, nothing exempt |
+| coverage (exactly one level per column) | 0 stale; but in the selftest's sandbox (after the oracle checks) 4-128 root columns have no records at all (readback empty) and are drawn by no level, with the old draw too: NS-86, not fixed |
+| unit tests (oracle) | 13 of 13 |
+| carve at level 1 with bakes | median 10.1 ms (9.0-16.0), without 5.9-12.0 |
+| uncapped draw | 4.84-6.62 ms (round 7: 4.0-5.9): the down caps add a triangle pair a column (root 0.74 M -> 0.87 M); over the 6 ms target in the three tunnel views (NS-83) |
+| stress ?maxbuf=128 with the cruise loop | 0 refusals; 1,258 used of 2,240 held after |

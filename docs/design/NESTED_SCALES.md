@@ -452,9 +452,30 @@ History (rounds 1-4; superseded where the above differs):
 - **No T-junctions.** Each wall is a strip between its two vertical edges; each vertical edge is split at every record
   top (and bottom) of the four columns round that corner line, the same set for every face touching the line, so every
   edge of the face set is shared by an even number of triangles (a box union can share an edge among four).
-- **The world's bottom.** A column's first record is open below; the draw ends it at the level's open bottom (root -8,
+- **The world's bottom (rounds 6-7; SUPERSEDED in round 8, next bullet).** A column's first record is open below; the draw ends it at the level's open bottom (root -8,
   a child -2 x its window width, local units) or 1 under its top where that is lower (then with a down cap). No cap is
   drawn on the bottom plane; its edges are the one boundary a level has.
+- **Round 8: no world bottom; each column's own depth (replaces the bullet above).** The bug (owner, round 7 build,
+  digging with the size slider): "when I looked back out I saw only the sky and not the lower detail terrain ... I did see
+  this when digging down and I would expect to never see open sky that direction." The rule: the world is stone below
+  and open-ended, so no ray from air may reach clear colour through the ground. A face exists only where solid touches
+  air, and below the lowest air a column's neighbours can show it, all four sides are solid, so nothing there needs
+  drawing. A drawn column's box therefore ends at its own depth, `zb = min(its first record's top, the depth of each
+  of its four neighbours as seen from it) - 1`, closed by a down cap there (no fixed plane, no exempt edges: the
+  manifold check counts every edge). A neighbour's depth is its first record's top; across a level's rim it comes from
+  the level that draws there: outside a child's window, the parent's column ((top - z origin) x k); under a child's
+  footprint, the k child columns along the shared side (the lowest, / k + z origin). So at a rim the two levels' walls
+  reach as deep as the air on either side, at any dig depth. Since a column's bottom depends on its neighbours (and the
+  corner lines' splits on the bottoms round them), a bake covers the changed columns grown by two, and a rim's bake
+  reads the other level's columns. The bottom is put on a lattice of 8 units (floor((min - 1) / 8) x 8) so that
+  neighbouring columns mostly share it: no walls between them under the ground, two triangles a column for the down cap.
+  Cause, measured (round 8, scripts/nested-pit.mjs): a shaft carved at level 1 down to -24 world across level 1's rim
+  showed 494,068 sky pixels looking down (37,135 after it settled) through the slot under the root's neighbouring columns,
+  which ended at -8; one inside level 1's window, under level 2 (whose bottom was -8 world under its z origin), 994. Pits
+  dug by taps and followed with Fwd to -1 world never got under a bottom and showed none. It predates round 7: the
+  bottoms are round 6's; round 7's size slider only made digging that deep easy. The owner's hint ("it filled in when I
+  got close") fits: closer, a finer level opens or slides over the spot, and its bottom was deeper in world units (a
+  child's -2 x 256 of its own columns).
 - **Baked, nothing per frame** (the owner's round 3 ruling stands). An op bakes the columns it changed grown by one
   column, as whole chunks (nest.wgsl faceBake via dilate): edit, restrict and derive regions; promote the child's window
   and, in the same submit, the parent round the footprint; demote the parent round the old footprint; slide the entering
@@ -641,6 +662,15 @@ arch, blob on a stalk, a zoom-out/zoom-in pair on a mixed block for NS-28).
 - **Many grids.** "keep the multi grid representation so I can make islands in their own reference frame floating by.
   The enhancement only need to happen for nearby objects so we can do this for whatever the active reference frame(s)
   grids are only."
+- **(round 8) Roadmap order.** Streaming, smooth rendering and terrain functions; then simulation and fluids; then
+  multiple grids with animated floating islands in their own reference frames; then animated creatures you can carve
+  cities into.
+- **(round 8) A phone bench with dials** such as columns per level (next round).
+- **(round 8) A level's base as a variable surface** instead of a constant, and columns defined relative to bones with
+  normal skinning at joints.
+- **(round 8) Fine edits seen from afar.** "splat the edit into a bump map on the parent zoom or if it is big enough
+  promote it into actual geometry"; partial raises as "a small instanced mesh or bump of the residual"; tunnels "shade
+  them completely dark and then fade in as we load geometry".
 
 ## Open questions
 

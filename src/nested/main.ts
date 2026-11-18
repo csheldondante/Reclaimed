@@ -58,6 +58,16 @@ async function main(): Promise<void> {
         res.push(c);
         say(c);
       }
+      // (round 8) the deep pit, the cave, the shafts below the old world bottom, after a cruise, a demote and shrinks
+      const { pitAndCave } = await import('./suite');
+      const pit = await pitAndCave(api, { taps: 4, log: (s) => console.log(`[suite] ${s}`) });
+      for (const c of [
+        { name: 'screen: no hole pixels where ground is expected in the pit, cave and shaft poses (round 8), also after a cruise, a demote and the pool\'s shrinks', pass: pit.total === 0, detail: `${pit.total} hole pixels over ${pit.poses} poses` },
+        { name: 'coverage: every column in view drawn by exactly one level (no stale caps, none missing) after the pit, cave, shafts, a cruise, a demote and shrinks', pass: pit.coverage === 0, detail: `${pit.coverage} faults` },
+      ]) {
+        res.push(c);
+        say(c);
+      }
     }
     const failed = res.filter((c) => !c.pass).length;
     log.textContent += `\n${res.length - failed} of ${res.length} passed.\n`;

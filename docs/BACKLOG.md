@@ -254,6 +254,27 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
 - NS-81 (perf, round 7) Every slide re-bakes the window's whole edge ring (64 chunks at n = 256) and the parent round
   the footprints, besides its entering strip; at ~10 slides a second in rough terrain the 20 s cruise's second half has
   frames of 30-60 ms, also between slides (the GPU's backlog). Re-bake only the ring's changed sides.
+- NS-82 (bug, round 8; DONE in the round 8 commit) Sky seen through the ground from a deep pit (the owner's phone
+  report): each level's boxes ended at a fixed bottom plane (root -8, a child -2 x its window), so a pit or shaft dug
+  below it showed the sky under its neighbours and across a level's rim. Now a column's box ends at its own depth from
+  its and its neighbours' first records, across rims from the level that draws there (NESTED_SCALES.md "The box draw").
+- NS-83 (limit, round 8) The column bottom sits on an 8-unit lattice (fewer underside walls); every drawn column now has
+  a down cap (2 triangles; never seen from the air, still rasterised). A bake that knows which columns can be seen from
+  air could leave the underside out, but then the manifold check would need an exemption again.
+- NS-84 (hack, round 8, tests only) The pit check's "ground expected" for a hole pixel marches the pixel's ray over the
+  root's tops (CPU, from a readback) and needs it 1 root column under them inside the world, so rays that leave the world
+  over its edge from a high eye are not holes. A finer level's surface more than a root column under the root's (a
+  restricted pit's mean) could still be judged wrongly.
+- NS-85 (perf, seen round 8) Forced shafts of radius 2.2 world carved 30 world deep at level 1 (with level 2 open) took
+  the pool to ~19,000 pages held (916 MB; 1,270 used after zooming out) and one chunk to 31 face pages; the shrink caught
+  up only slowly. Not changed this round; measure which op's reserve asks for that much.
+- NS-86 (bug, found round 8, NOT fixed; predates it) In `?selftest=1`'s sandbox (started after the oracle checks) 4 to
+  128 root columns read back with no records at all (e.g. 176-191 x 200-207, or 236,183 / 196-197,205) and are drawn by
+  no level; the fresh sandbox (scripts/nested-cov.mjs) shows none. The old draw shows it too. Suspects: the pool's
+  shrink moving or copying pages while the oracle checks' pools still hold device memory, or a refused grow. The
+  coverage checks in `?selftest=1` fail on it.
+- NS-87 (hack, round 8, tests only) `?selftest=1`'s pit poses take ~3 minutes; the selftest script now waits up to 20
+  minutes.
 - NS-68 (perf) A carve's GPU time is data dependent: 8-13 ms for most carves at level 1 in the tunnel scene, 14-16 ms
   where the ball sits in the mound (more intervals; larger derive regions at levels 2-3, whose bakes add ~5 ms). The
   derive's parent tops are cached a workgroup now; next: bake only chunks whose columns pack actually changed.

@@ -1,7 +1,7 @@
 // Nested scales lab: the watertight checks (test only; readbacks). (i) The manifold check: every triangle the draw
 // places for a level (Renderer.capture: the vertex code run in a compute pass), welded by EXACT position (x, y are whole
 // columns, z the stored f32); every edge of the level's face set must be shared by an EVEN number of triangles (a box
-// union can share an edge among four), with one exception: edges on the level's open world bottom plane. Each level is
+// union can share an edge among four), with no exception (round 8: no open world bottom any more). Each level is
 // checked whole, its window edge and its child's footprint included: a level walls its own rim (the outside is air to
 // it), so where two levels meet each one's surface is closed by itself and the union has no gap. (ii) The screen check:
 // pixels with no surface (the info target's red channel 0) where ground must be.
@@ -21,14 +21,10 @@ export interface EdgeReport {
   where: [number, number, number][];
 }
 
-/** the open world bottom of level depth (nest.wgsl botOf) */
-export function botOf(depth: number, n: number): number {
-  return Math.fround(depth === 0 ? -8 : -2 * n);
-}
-
+// (round 8) no edge is exempt: a level's boxes end at each column's own depth with a down cap (nest.wgsl zbOf), so the
+// face set is closed everywhere; before, the edges on a fixed bottom plane were the one boundary allowed.
 export function manifold(cap: { depth: number; n: number; tris: Float32Array }): EdgeReport {
   const t = cap.tris;
-  const bot = botOf(cap.depth, cap.n);
   const vk = (o: number) => `${t[o]},${t[o + 1]},${t[o + 2]}`;
   const edges = new Map<string, number>();
   let tris = 0;
@@ -56,8 +52,6 @@ export function manifold(cap: { depth: number; n: number; tris: Float32Array }):
   const where: [number, number, number][] = [];
   for (const [key, c] of edges) {
     const [s, e] = key.split('|').map((v) => v.split(',').map(Number));
-    // (the open world bottom: edges on the bottom plane are the one boundary a level has)
-    if (s[2] === bot && e[2] === bot) continue;
     count++;
     if (c % 2 === 1) {
       open++;
@@ -67,10 +61,48 @@ export function manifold(cap: { depth: number; n: number; tris: Float32Array }):
   return { depth: cap.depth, tris, edges: count, open, over, degenerate, where };
 }
 
+/** (round 8, test only) every column in view drawn by exactly one level: from the captured faces, each level's caps (the
+ *  horizontal triangles, which lie on their own column's square) must belong to columns that level draws now (in its
+ *  window, not under its child's footprint: no stale faces after a slide, demote or shrink), and every column it draws
+ *  must have its top cap (no column left undrawn by both). wins: each level's window (global columns of its depth). */
+export function coverage(caps: { depth: number; tris: Float32Array }[], wins: { gx: number; gy: number; n: number }[], k: number): { stale: number; missing: number; where: string[] } {
+  let stale = 0;
+  let missing = 0;
+  const where: string[] = [];
+  for (const cap of caps) {
+    const L = cap.depth;
+    const w = wins[L];
+    const c = wins[L + 1];
+    const under = (X: number, Y: number) => !!c && X * k >= c.gx && Y * k >= c.gy && X * k < c.gx + c.n && Y * k < c.gy + c.n;
+    const capsAt = new Uint16Array(w.n * w.n);
+    const t = cap.tris;
+    for (let o = 0; o + 12 <= t.length; o += 12) {
+      if (t[o + 3] === 0 || t[o + 2] !== t[o + 6] || t[o + 2] !== t[o + 10]) continue;
+      const x = Math.min(t[o], t[o + 4], t[o + 8]);
+      const y = Math.min(t[o + 1], t[o + 5], t[o + 9]);
+      const X = w.gx + x;
+      const Y = w.gy + y;
+      if (x < 0 || y < 0 || x >= w.n || y >= w.n || under(X, Y)) {
+        stale++;
+        if (where.length < 6) where.push(`L${L} stale cap at ${X},${Y}`);
+        continue;
+      }
+      capsAt[y * w.n + x]++;
+    }
+    for (let y = 0; y < w.n; y++)
+      for (let x = 0; x < w.n; x++)
+        if (!under(w.gx + x, w.gy + y) && capsAt[y * w.n + x] < 2) {
+          missing++;
+          if (where.length < 6) where.push(`L${L} column ${w.gx + x},${w.gy + y} has no cap`);
+        }
+  }
+  return { stale, missing, where };
+}
+
 /** the last holePixels call's frame at half resolution, holes magenta */
 export let lastImage: { w: number; h: number; rgb: number[] } | null = null;
 /** the info target's pixels with no surface (red 0), whole frame */
-export async function holePixels(device: GPUDevice, render: Renderer, redraw: () => GPUTexture): Promise<{ holes: number; px: number; at: [number, number][]; rows: number[]; h: number }> {
+export async function holePixels(device: GPUDevice, render: Renderer, redraw: () => GPUTexture): Promise<{ holes: number; px: number; at: [number, number][]; rows: number[]; h: number; w: number; mask: Uint8Array }> {
   // a draw of our own, so the colour and the info targets read back are the same frame
   const colour = redraw();
   const tex = render.info!;
@@ -101,14 +133,16 @@ export async function holePixels(device: GPUDevice, render: Renderer, redraw: ()
   let holes = 0;
   const at: [number, number][] = [];
   const rows = new Array<number>(h).fill(0);
+  const mask = new Uint8Array(w * h);
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++)
       if (px[y * bpr + x * 4] === 0) {
         holes++;
         rows[y]++;
+        mask[y * w + x] = 1;
         if (at.length < 8 && (at.length === 0 || Math.abs(at[at.length - 1][1] - y) > 20)) at.push([x, y]);
       }
   buf.unmap();
   buf.destroy();
-  return { holes, px: w * h, at, rows, h };
+  return { holes, px: w * h, at, rows, h, w, mask };
 }

@@ -6,11 +6,12 @@ await run({ name: 'nested-selftest', kind: 'behaviour', size: '960x640', dpr: 1,
   const port = R.opt('port', '5461');
   const page = await R.page();
   page.on('console', (m) => {
-    if (m.type() === 'error' || m.type() === 'warning') console.log(`[page ${m.type()}] ${m.text()}`);
+    if (m.type() === 'error' || m.type() === 'warning' || (m.text().startsWith('[suite]') && /hole|odd|pit|shaft|cave|coverage/.test(m.text()))) console.log(`[page ${m.type()}] ${m.text()}`);
   });
   await page.goto(`https://localhost:${port}/nested.html?selftest=1`, { waitUntil: 'load' });
   let seen = 0;
-  for (let i = 0; i < 120; i++) {
+  // (up to 20 minutes: round 8 added the pit, cave and shaft poses)
+  for (let i = 0; i < 480; i++) {
     const s = await page.evaluate(() => ({ done: !!(window.__selftest && window.__selftest.done), log: document.getElementById('log')?.textContent ?? '' }));
     if (s.log.length > seen) {
       process.stdout.write(s.log.slice(seen));

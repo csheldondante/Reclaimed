@@ -585,10 +585,11 @@ export class GpuNest {
       { x0: x1 - 1, y0, x1, y1 },
     ];
   }
-  /** the chunk rect of level L-1 holding the footprint of child window w, grown by one column */
+  /** the chunk rect of level L-1 holding the footprint of child window w, grown by two columns (round 8: a column's
+   *  bottom depends on its neighbours' depths, and the splits of its walls on the bottoms round its corner lines) */
   private footChunks(L: number, w: Win): { x0: number; y0: number; x1: number; y1: number } {
     const k = this.k;
-    return { x0: Math.floor((w.gx / k - 1) / 16), y0: Math.floor((w.gy / k - 1) / 16), x1: Math.ceil(((w.gx + w.n) / k + 1) / 16), y1: Math.ceil(((w.gy + w.n) / k + 1) / 16) };
+    return { x0: Math.floor((w.gx / k - 2) / 16), y0: Math.floor((w.gy / k - 2) / 16), x1: Math.ceil(((w.gx + w.n) / k + 2) / 16), y1: Math.ceil(((w.gy + w.n) / k + 2) / 16) };
   }
   /** the draw's list of face pages, rebuilt from the table (after an op's bakes and releases) */
   private directory(): void {

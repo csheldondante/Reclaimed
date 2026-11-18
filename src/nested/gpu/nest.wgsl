@@ -1759,8 +1759,8 @@ fn pick() {
 // window, or under its child's footprint (the child draws there), is air to its neighbours, so walls stand at the window
 // edge and round the footprint and every level's faces close by themselves. Each vertical edge of a wall is split at
 // every record top of the four columns round that corner line (and their bottoms), the same set for every face that
-// touches the line, so no T-junction is left. The world below a level is open: a column's first record ends at
-// botOf(L) (or 1 under its top when that is lower), and no cap is drawn on the bottom plane itself.
+// touches the line, so no T-junction is left. There is no world bottom (round 8): a column's box ends at its own depth
+// (zbOf, below), closed by a down cap, so every level's face set is closed.
 // The owner's rule stands: "nothing per frame": an op bakes its changed chunks (grown by one), a frame only draws.
 @group(0) @binding(8) var<storage, read_write> dir: array<atomic<u32>>;
 @group(0) @binding(9) var<storage, read_write> dargs: array<u32>;
@@ -1771,12 +1771,6 @@ var<workgroup> wFp: array<u32, 8>;
 var<private> bOrg: vec2<i32>;
 var<private> bChunk: vec2<i32>;
 
-/** the open world bottom of a level (local units): the root's terrain stands above 0; a child's surface lies within
- *  about its window's width of its z origin */
-fn botOf(L: u32) -> f32 {
-  if (L == 0u) { return -8.0; }
-  return -2.0 * f32(u.lv[L].z);
-}
 /** whether column (X, Y) is drawn on level L (in the window and not under a live child's footprint) */
 fn colOn(L: u32, X: i32, Y: i32) -> bool {
   if (!inWin(L, X, Y)) { return false; }
@@ -1786,6 +1780,71 @@ fn colOn(L: u32, X: i32, Y: i32) -> bool {
     if (X * k >= c.x && Y * k >= c.y && X * k < c.x + c.z && Y * k < c.y + c.z) { return false; }
   }
   return true;
+}
+// ---- (round 8) no world bottom: a drawn column's box ends at its own depth -------------------------------------------
+// The world is stone below and open-ended (the owner: "I would expect to never see open sky that direction"). A face
+// exists only where solid touches air, and under the lowest air its four neighbours can show it a column is solid on
+// every side, so its box ends there: zb = min(its first record's top, each neighbour's depth as seen from it) - 1, closed
+// by a down cap. A neighbour's depth is its first record's top, taken from the level that draws there: outside a child's
+// window the parent's column, under a child's footprint the k child columns along the shared side. So the two levels'
+// walls at a rim reach as deep as the air on either side, at any dig depth (round 7 and before: a fixed bottom plane per
+// level, root -8, a child -2 x its window; a pit dug below it showed the sky under its neighbours).
+const NO_DEPTH: f32 = 3e38;
+/** the top of the first record of column (X, Y) of level `lv`, from its pages (its own units; NO_DEPTH: none) */
+fn rec0Of(lv: u32, X: i32, Y: i32) -> f32 {
+  let p = pageOf(lv, X >> 4, Y >> 4, 0u);
+  if (p >= NOT_LOADED) { return NO_DEPTH; }
+  if ((pgLoad(p * PW + colIn(X, Y)) & 0xffffu) == 0u) { return NO_DEPTH; }
+  return bitcast<f32>(pgLoad(p * PW + 256u + colIn(X, Y) * KR * 2u));
+}
+fn fdiv(a: i32, b: i32) -> i32 { return i32(floor(f32(a) / f32(b))); }
+/** the depth of what is drawn at (NX, NY), a neighbour of drawn column (X, Y) of level L that L does not draw, in L's
+ *  units: outside L's window, the parent's column there; under L's child's footprint, the lowest of the child's k
+ *  columns along the side facing (X, Y) (a child's window lies k + 2 cells inside a non-root parent, so those child
+ *  columns are drawn by the child itself) */
+fn depthElsewhere(L: u32, X: i32, Y: i32, NX: i32, NY: i32) -> f32 {
+  let k = i32(u.a.x);
+  let kf = f32(u.a.x);
+  if (!inWin(L, NX, NY)) {
+    if (L == 0u) { return NO_DEPTH; }
+    let t = rec0Of(L - 1u, fdiv(NX, k), fdiv(NY, k));
+    if (t >= NO_DEPTH) { return NO_DEPTH; }
+    return (t - zOrigin(L)) * kf;
+  }
+  var cx = NX * k;
+  var cy = NY * k;
+  var dx = 0;
+  var dy = 0;
+  if (X > NX) {
+    cx = NX * k + k - 1;
+    dy = 1;
+  } else if (X < NX) {
+    dy = 1;
+  } else if (Y > NY) {
+    cy = NY * k + k - 1;
+    dx = 1;
+  } else {
+    dx = 1;
+  }
+  var m = NO_DEPTH;
+  for (var i = 0; i < k; i++) { m = min(m, rec0Of(L + 1u, cx + i * dx, cy + i * dy)); }
+  if (m >= NO_DEPTH) { return NO_DEPTH; }
+  return zOrigin(L + 1u) + m / kf;
+}
+/** a drawn column's bottom from its own first record's top and its four neighbours' depths: a column under them, on a
+ *  lattice of ZB_STEP units so that neighbouring bottoms mostly agree (no walls between them under the ground) */
+const ZB_STEP: f32 = 8.0;
+fn zbOf(t0: f32, n0: f32, n1: f32, n2: f32, n3: f32) -> f32 {
+  return floor((min(min(t0, min(n0, n1)), min(n2, n3)) - 1.0) / ZB_STEP) * ZB_STEP;
+}
+/** a neighbour's depth as seen from drawn column (X, Y) of level L, from the pages */
+fn nbDepthG(L: u32, X: i32, Y: i32, NX: i32, NY: i32) -> f32 {
+  if (colOn(L, NX, NY)) { return rec0Of(L, NX, NY); }
+  return depthElsewhere(L, X, Y, NX, NY);
+}
+/** a drawn column's bottom, from the pages (the workgroup's copy computes the same values: bFill) */
+fn zbG(L: u32, X: i32, Y: i32) -> f32 {
+  return zbOf(rec0Of(L, X, Y), nbDepthG(L, X, Y, X + 1, Y), nbDepthG(L, X, Y, X - 1, Y), nbDepthG(L, X, Y, X, Y + 1), nbDepthG(L, X, Y, X, Y - 1));
 }
 /** a column's cz page (the workgroup's cache for cz 0) */
 fn bPage(L: u32, X: i32, Y: i32, cz: u32) -> u32 {
@@ -1823,10 +1882,22 @@ fn bFill(L: u32, cx: i32, cy: i32, li: u32) {
       mats |= (r.y & 255u) << (8u * j);
     }
     sM[q] = mats;
-    sB[q] = 0.0;
-    if (n > 0u) { sB[q] = min(botOf(L), sT[q * SC] - 1.0); }
   }
   workgroupBarrier();
+  // (round 8) each drawn column's bottom from its own and its neighbours' depths (zbG's values, from the copy)
+  for (var q = li; q < 324u; q += 256u) {
+    let X = sOrg.x + i32(q % 18u);
+    let Y = sOrg.y + i32(q / 18u);
+    sB[q] = 0.0;
+    if (sN[q] > 0u) { sB[q] = zbOf(sT[q * SC], nbDepthC(L, X, Y, X + 1, Y), nbDepthC(L, X, Y, X - 1, Y), nbDepthC(L, X, Y, X, Y + 1), nbDepthC(L, X, Y, X, Y - 1)); }
+  }
+  workgroupBarrier();
+}
+/** nbDepthG through the workgroup's copy where it holds the neighbour's records */
+fn nbDepthC(L: u32, X: i32, Y: i32, NX: i32, NY: i32) -> f32 {
+  let i = sIdx(NX, NY);
+  if (i >= 0 && sN[i] > 0u) { return sT[u32(i) * SC]; }
+  return nbDepthG(L, X, Y, NX, NY);
 }
 fn bCount(L: u32, X: i32, Y: i32) -> u32 {
   let i = sIdx(X, Y);
@@ -1860,11 +1931,11 @@ fn bRecG(L: u32, X: i32, Y: i32, j: u32) -> vec2<u32> {
   let b = p * PW + 256u + (colIn(X, Y) * KR + j % KR) * 2u;
   return vec2<u32>(pgLoad(b), pgLoad(b + 1u));
 }
-/** a drawn column's bottom: the first record ends at the level's open bottom, or 1 under its top when that is lower */
+/** a drawn column's bottom (round 8: its own depth, zbG) */
 fn bBot(L: u32, X: i32, Y: i32) -> f32 {
   let i = sIdx(X, Y);
   if (i >= 0) { return sB[i]; }
-  return min(botOf(L), bitcast<f32>(bRecG(L, X, Y, 0u).x) - 1.0);
+  return zbG(L, X, Y);
 }
 /** the lowest breakpoint above z on the corner line (CX, CY): a record top or a bottom of one of its four columns
  *  (3e38: none) */
@@ -1907,9 +1978,8 @@ fn emitCol(L: u32, X: i32, Y: i32, write: bool, at: u32) -> u32 {
   if (n == 0u) { return 0u; }
   let lxy = u32(X & 15) | (u32(Y & 15) << 4u);
   let zb = bBot(L, X, Y);
-  let bot = botOf(L);
   var t = 0u;
-  // caps: (j, j + 1) for j < n (above the last record: air); and the bottom where the column ends above the open bottom
+  // caps: (j, j + 1) for j < n (above the last record: air); and the down cap where the column's box ends (round 8)
   for (var j = 0u; j < n; j++) {
     let r = bRec(L, X, Y, j);
     var up = MAT_AIR;
@@ -1926,7 +1996,7 @@ fn emitCol(L: u32, X: i32, Y: i32, write: bool, at: u32) -> u32 {
     t += 2u;
   }
   let r0 = bRec(L, X, Y, 0u);
-  if (matSolid(r0.y) && zb != bot) {
+  if (matSolid(r0.y)) {
     let w = lxy | (5u << 8u) | ((r0.y & 255u) << 11u);
     if (write) {
       putTri(at + t, w | (0u << 19u) | (1u << 21u) | (3u << 23u), zb, zb, zb);
@@ -2108,12 +2178,13 @@ fn dilate() {
   }
   let ox = slotW(s, 4u);
   let oy = slotW(s, 5u);
-  // the columns the slot's pass changes (its box) grown by one column, in chunks: a column's faces depend on its four
-  // neighbours only (a CPU slot's box is everything: its chunks grown by one)
-  let bx0 = (max(slotW(s, 0u), -(1 << 28)) - 1) >> 4;
-  let by0 = (max(slotW(s, 1u), -(1 << 28)) - 1) >> 4;
-  let bx1 = (min(slotW(s, 2u), 1 << 28) >> 4) + 1;
-  let by1 = (min(slotW(s, 3u), 1 << 28) >> 4) + 1;
+  // the columns the slot's pass changes (its box) grown by two columns, in chunks: a column's bottom depends on its four
+  // neighbours' depths, and its walls' splits on the bottoms of the columns round its corner lines (round 8; one before)
+  // (a CPU slot's box is everything: its chunks grown by one)
+  let bx0 = (max(slotW(s, 0u), -(1 << 28)) - 2) >> 4;
+  let by0 = (max(slotW(s, 1u), -(1 << 28)) - 2) >> 4;
+  let bx1 = ((min(slotW(s, 2u), 1 << 28) + 1) >> 4) + 1;
+  let by1 = ((min(slotW(s, 3u), 1 << 28) + 1) >> 4) + 1;
   let x0 = max(max(ox - 1, bx0), w.x / 16);
   let y0 = max(max(oy - 1, by0), w.y / 16);
   let x1 = min(min(ox + nx + 1, bx1), (w.x + w.z) / 16);

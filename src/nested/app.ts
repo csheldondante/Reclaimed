@@ -4,7 +4,7 @@
 // camera's inputs, which levels are wanted where, the buttons and the measurements.
 import { GpuNest, type Op, type Win } from './gpu/nest';
 import { Renderer, type DrawLevel } from './render';
-import { holePixels, lastImage, manifold } from './watertight';
+import { coverage, holePixels, lastImage, manifold } from './watertight';
 
 /** a root column, in metres (the info line) */
 const ROOT_COLUMN_M = 3.2;
@@ -744,6 +744,26 @@ export class App {
         try {
           const caps = await this.render.capture(this.drawList());
           return caps.map((c) => manifold(c));
+        } finally {
+          this.frozen = was;
+        }
+      },
+      /** (test only, readbacks) every column drawn by exactly one level (watertight.ts coverage) */
+      coverage: async () => {
+        const was = this.frozen;
+        this.frozen = true;
+        try {
+          const caps = await this.render.capture(this.drawList());
+          const c = coverage(caps, this.nest.wins.slice(0, this.nest.live) as { gx: number; gy: number; n: number }[], this.k);
+          // (a flagged column's records, for the report)
+          if (c.where.length) {
+            const s = await this.nest.readAll();
+            c.where = c.where.map((w) => {
+              const m = /L(\d+) (?:column|stale cap at) (-?\d+),(-?\d+)/.exec(w);
+              return m ? `${w} ${JSON.stringify(s.column(+m[1], +m[2], +m[3]))}` : w;
+            });
+          }
+          return c;
         } finally {
           this.frozen = was;
         }
