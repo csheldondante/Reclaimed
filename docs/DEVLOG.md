@@ -26194,3 +26194,31 @@ bit-identical; (e) a slide by 2 and -4 parent cells keeps the 48 x 32 overlappin
 range (|z| < 1000, neighbour steps > 0.01, column = 1 local unit at 1/512 of the root's); a 40-interval column
 (three pages' worth) round-trips promote, dig, demote, promote with zero difference.
 
+## 2026-11-18 — Nested scales lab, step 1b: the GPU store and passes on pages, the page self-test
+
+**What.** src/nested/gpu/: the lab's own page pool and sparse table (the engine's PagePool is bound to the terrain
+ring's Globals and slot table, and gpu/pipeline.ts pulls in sim code, so neither stands alone; the lab's follows the
+same documented design: GPU hands out pages from a free stack then a bump end, frees go to a pending list merged in
+their own pass). One open-addressed table (key cx | cy << 16, level | cz << 8), pages of 16 x 16 columns x K = 16
+intervals, cz pages only where a column overflows. Passes: rootGen, zPick, derive (mode 0 live = enhance + residual,
+mode 1 residual = live - enhance, a workgroup a chunk with block sums in workgroup memory), restrictK, plan (an
+edit's chunk rects on every level, written as indirect dispatch arguments, so an edit goes from the hit to the last
+level with no readback), edit (raise, dig), meltSnap/meltApply (a gather-only slump of the top four intervals),
+release (a level's pages, or those outside a slid window), merge. The CPU reads only the pool header (64 bytes,
+async) to grow the pool before it can fill.
+
+**Two fixes found by the self-test's first run.** Region origins read from a storage buffer are not uniform for
+WGSL's analysis: the chunk origin goes through workgroupUniformLoad. The dispatch arguments cannot live in the
+buffer the passes write in the same dispatch: they moved to their own buffer, bound writable only to the plan.
+
+**Measured** (`nested.html?selftest=1`, desktop iGPU, D3D11): 20 of 20 pass. GPU against the oracle: promote max
+1.8e-5 local units, edits 1.8e-5 (child) and 1.7e-6 (root), depth 2 2.2e-5, a depth-2 edit on every level 7.4e-5
+(in depth-2 units); restrict's volume per layer within 5.3e-7 parent units a block; melt keeps the surface sum and
+soil volume of 4096 columns to the printed 3 decimals; bit-identical: demote/promote with and without edits, the
+three-level chain, a slide against a fresh promote (1536 overlapping columns untouched), 100 cycles; a parent edit
+under a demoted child reaches it (41 child units) while the child's own raise stays bit-identical; residual pages
+sit exactly on the oracle's non-zero chunks; the pool started at 16 pages and grew 6 times to 2048 with nothing
+refused, no structure mismatches, the table never full. Times with a sync each (not frame-time): promote of a 64²
+child 6.6 ms, first edit 31 ms (includes first use), slide 53 ms (to measure properly in the page, step 4).
+
+

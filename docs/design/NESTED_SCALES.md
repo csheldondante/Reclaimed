@@ -152,6 +152,13 @@ self-test).
   of different structure).
 - Zero-thickness intervals are kept, so neighbouring columns keep matching structures after a dig (BACKLOG NS-6).
 
+## Built so far (branch `nested-scales`, page nested.html)
+
+- Step 1 (2026-11-18): the oracle (src/nested/oracle.ts, 8 Node tests) and the GPU store and passes
+  (src/nested/gpu/: store.wgsl readers, nest.wgsl root, derive, residual, restrict, plan, raise, dig, melt, release,
+  merge; nest.ts the driver). `nested.html?selftest=1` runs 20 checks on the GPU against the oracle: all pass
+  (DEVLOG 2026-11-18). The z origin of a level is picked where it is promoted somewhere new and kept otherwise.
+
 ## Open questions
 
 - Scale factor per level: 8, or smaller (4) for gentler steps?

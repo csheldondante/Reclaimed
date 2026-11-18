@@ -35,6 +35,13 @@ user) · `deferred` (agreed for later).
 - NS-8 (limit) Residuals are additive in layer form. A thickness whose enhanced value shrinks under an edit made in
   the parent (while the child's residual removed it) is clamped at zero, which loses that volume. Multiplicative or
   bounded residuals for thicknesses.
+- NS-9 (hack) A brush is capped at 76 columns of the level it edits (the melt's scratch is a fixed 160 x 160 box).
+  Zoomed out past that, the brush is smaller than drawn. Page the scratch or split big brushes.
+- NS-10 (limit) Melt has no oracle; the self-test checks that it moves material and conserves the level's surface
+  sum and soil volume, then continues the oracle from the GPU's result.
+- NS-11 (limit) A level's z origin is picked when it is promoted somewhere new and kept across slides, so a long
+  slide at depth >= 2 over steep ground can carry its local heights past the 1000-unit range. Re-pick on a
+  slide that leaves the range (a full re-promote, faded).
 
 ## Terrain: rivers first (2026-11-17, `terrain-rivers`; docs/design/TERRAIN_RIVERS.md, DECISIONS 2026-11-17)
 

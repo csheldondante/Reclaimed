@@ -17,7 +17,7 @@ function contentHash(): string {
     }
   };
   for (const d of ['src', 'data']) if (fs.existsSync(path.resolve(import.meta.dirname, d))) walk(path.resolve(import.meta.dirname, d));
-  for (const f of ['index.html', 'contract.html', 'flora.html', 'cardlab.html', 'table.html', 'archlab.html', 'package.json', 'vite.config.ts']) if (fs.existsSync(path.resolve(import.meta.dirname, f))) h.update(fs.readFileSync(path.resolve(import.meta.dirname, f)));
+  for (const f of ['index.html', 'contract.html', 'flora.html', 'cardlab.html', 'table.html', 'archlab.html', 'nested.html', 'package.json', 'vite.config.ts']) if (fs.existsSync(path.resolve(import.meta.dirname, f))) h.update(fs.readFileSync(path.resolve(import.meta.dirname, f)));
   return h.digest('hex').slice(0, 16);
 }
 
@@ -92,6 +92,7 @@ export default defineConfig({
   // (round 112, testspeed: contract.html — the contract tier's page, src/test/contract.ts: a system on a tiny world)
   // (round 124, opportunities: cardlab.html — the card lab, src/cardlab/main.ts)
   // (archgen: archlab.html — the building lab, src/archgen/lab.ts)
-  build: { rolldownOptions: { input: { main: path.resolve(import.meta.dirname, 'index.html'), contract: path.resolve(import.meta.dirname, 'contract.html'), flora: path.resolve(import.meta.dirname, 'flora.html'), cardlab: path.resolve(import.meta.dirname, 'cardlab.html'), table: path.resolve(import.meta.dirname, 'table.html'), archlab: path.resolve(import.meta.dirname, 'archlab.html') } } },
+  // (nested-scales: nested.html — the nested scales lab, src/nested/main.ts)
+  build: { rolldownOptions: { input: { main: path.resolve(import.meta.dirname, 'index.html'), contract: path.resolve(import.meta.dirname, 'contract.html'), flora: path.resolve(import.meta.dirname, 'flora.html'), cardlab: path.resolve(import.meta.dirname, 'cardlab.html'), table: path.resolve(import.meta.dirname, 'table.html'), archlab: path.resolve(import.meta.dirname, 'archlab.html'), nested: path.resolve(import.meta.dirname, 'nested.html') } } },
   plugins: [hitchSink()],
 });
