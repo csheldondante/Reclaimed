@@ -12,6 +12,12 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Nested scales sandbox (2026-11-18; docs/design/NESTED_SCALES.md) — DRAFT, awaiting the user's mark-up
+
+- NS-1 The user's idea: zoom in and sculpt inside a larger live scene (nested normalized scenes on interval columns,
+  residual per level, depth-composed levels, flux exchanged at the rim, pattern materials such as strata). Design note
+  drafted; nothing built; no builder until the note is agreed. Lab steps 1-7 are listed in the note.
+
 ## Terrain: rivers first (2026-11-17, `terrain-rivers`; docs/design/TERRAIN_RIVERS.md, DECISIONS 2026-11-17)
 
 A sandbox behind `a.rivers2=1` (default off). Relates to V1, Q36, Q58, P12, TG2, RWS1, LS-122.
