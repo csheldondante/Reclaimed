@@ -33,6 +33,7 @@ struct VOut {
   @location(2) @interpolate(flat) col: vec3<f32>,
   @location(3) wp: vec3<f32>, // world position (the pattern's coordinates, the same on every level)
   @location(4) lz: f32, // the local height (the watertight capture; 3e38: a vertex not drawn)
+  @location(5) dEye: f32, // (metrics) the distance to the eye, local units
 }
 
 /** a level's z origin in world units (reg words 1..L: each level's origin in its parent's units) */
@@ -111,6 +112,8 @@ fn vs(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOu
   if (d.misc.x == 2.0) { o.col = abs(n) * 0.8 + select(vec3<f32>(0.0), vec3<f32>(0.2), n.x + n.y + n.z < 0.0); }
   o.wp = worldOf(L, c.lp);
   o.lz = c.lp.z;
+  let eb = 32u + L * 24u;
+  o.dEye = length(c.lp - vec3<f32>(cam[eb + 16u], cam[eb + 17u], cam[eb + 18u]));
   return o;
 }
 
@@ -183,9 +186,8 @@ fn fs(v: VOut) -> FOut {
   // info: r a surface was drawn, g the level, b not yet sharp: a parent where its child is wanted, i.e. nearer the eye
   // than the zoom band's promote distance for the child (want.x, this level's units; 0: no child level allowed). The
   // same rule as the band, so it does not depend on where the streaming policy put the child's window (round 7).
-  let eb = 32u + u32(d.lvl.w) * 24u;
-  let eye = vec3<f32>(cam[eb + 16u], cam[eb + 17u], cam[eb + 18u]);
-  let coarse = d.want.x > 0.0 && length(vec3<f32>(v.local, v.lz) - eye) < d.want.x;
+  // (the distance comes from the vertex stage: reading the camera words here doubled the draw's time)
+  let coarse = d.want.x > 0.0 && v.dEye < d.want.x;
   o.info = vec4<f32>(1.0, f32(d.lvl.w) / 8.0, select(0.0, 1.0, coarse), 1.0);
   return o;
 }

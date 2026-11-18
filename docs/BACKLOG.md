@@ -231,6 +231,29 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   over 2e-3): more blocks restrict by the template now that dug intervals are dropped.
 - NS-67 (limit) The pool never shrinks: after the screen check's 40 poses it held 5,120 pages for 1,781 in use (the
   gate's 2x holds in the tunnel scene and after the stress run). Shrink the last segment when its tail is free.
+  DONE (round 7): GpuNest.shrink moves pages in use above a lower cap under it on the GPU (shrinkFree, shrinkMove,
+  shrinkCopy; at most 256 pages a step, 4 steps a second, between ops) and then makes the buffers again at the cap's
+  size. Stress at ?maxbuf=128 after a cruise loop: 1,640 used of 2,688 held (1.6x), 0 refusals.
+- NS-74 (limit, round 7) Pops remain: the front strip of a slide pops from parent to child detail inside the central half
+  of the view in ~3-6 % of frames at 1 w/s (up to 9-22 % of the central half). A forward view sees past any window; the
+  lead (0.4 W) pushes the rim far, not out of view. Options: a bigger window ahead only, or slides of 16 columns.
+- NS-75 (hack, round 7) The streaming lead uses the eye's velocity estimated on the CPU from the asynchronous camera
+  report (1-3 frames old), smoothed over 0.25 s; a placement resets it. A GPU-side velocity would be exact.
+- NS-76 (limit, round 7) Cruise speed is held in world units from the finest live window when the cruise began or the
+  slider moved (else a demote made it 8 x faster). Cruising off the root's edge stops at the edge and looks into the void.
+  Cruise climbs before slopes (ground 0.3 s ahead) and eases down at 10/s: over a drop dNear can pass the band (a demote
+  and promote at 2 and 4 w/s).
+- NS-77 (limit, round 7) A shrink's last step makes the page buffers again and copies the kept pages (as a grow does):
+  one heavy frame (the kept pool, ~130 MB at 2,700 pages). Segments would let only the last one shrink (no copy).
+- NS-78 (hack, round 7) shrinkMove parks the page ids of its move list as u32 bits in the f32 scratch buffer (as NS-64).
+- NS-79 (limit, round 7) The streaming metric's "child wanted" flag (draw.wgsl info.b, tests only) uses the distance to
+  the eye interpolated from the vertices (reading the camera words in the fragment stage doubled the draw's time); inside
+  a triangle it over-estimates the distance a little, so it flags slightly fewer pixels.
+- NS-80 (departure, round 7) Demote waits until the eye has been past 0.6 W for 0.5 s (a time band added to the zoom
+  band) instead of widening the band; a level stays open (its pages held) up to 0.5 s longer.
+- NS-81 (perf, round 7) Every slide re-bakes the window's whole edge ring (64 chunks at n = 256) and the parent round
+  the footprints, besides its entering strip; at ~10 slides a second in rough terrain the 20 s cruise's second half has
+  frames of 30-60 ms, also between slides (the GPU's backlog). Re-bake only the ring's changed sides.
 - NS-68 (perf) A carve's GPU time is data dependent: 8-13 ms for most carves at level 1 in the tunnel scene, 14-16 ms
   where the ball sits in the mound (more intervals; larger derive regions at levels 2-3, whose bakes add ~5 ms). The
   derive's parent tops are cached a workgroup now; next: bake only chunks whose columns pack actually changed.

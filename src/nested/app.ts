@@ -69,18 +69,28 @@ export class App {
   private cruiseKeep = false;
   private speedText: HTMLSpanElement | null = null;
   private cruiseSent = false;
+  /** a pool shrink under way, and when its last step ran */
+  private shrinking = false;
+  private shrinkAt = 0;
+  /** (?shrink=0: off, for comparison) */
+  shrinkOn = true;
   /** when ops were refused whole (the pool growing ahead: they retry) */
   readonly refusedAt: number[] = [];
   setCruise(on: boolean): void {
     this.cruiseOn = on;
     this.cruiseKeep = on;
+    this.cruiseFor = null;
     this.buttons.get('cruise')?.classList.toggle('on', on);
     (document.getElementById('cruise') as HTMLElement).style.display = on ? 'block' : 'none';
   }
-  /** the cruise's speed in world units a second */
+  /** the cruise's speed in world units a second: the slider's widths of the finest live window as it was when the cruise
+   *  began or the slider last moved (held through promotes and demotes: a demote mid-cruise would otherwise make it 8 x
+   *  faster, higher, and demote again) */
   cruiseSpeed(): number {
-    return this.cruiseWps * this.width(this.nest.live - 1);
+    if (this.cruiseFor?.wps !== this.cruiseWps) this.cruiseFor = { wps: this.cruiseWps, w: this.width(this.nest.live - 1) };
+    return this.cruiseWps * this.cruiseFor.w;
   }
+  private cruiseFor: { wps: number; w: number } | null = null;
   /** (the benchmark) the levels left as they are */
   frozen = false;
   private limitsText = '';
@@ -123,6 +133,7 @@ export class App {
     this.render = new Renderer(device, ctx, this.nest);
     this.render.tint = q.get('tint') === '1';
     if (q.has('detail')) this.nest.detailAmp = Number(q.get('detail'));
+    this.shrinkOn = q.get('shrink') !== '0';
     if (q.has('yaw')) this.yaw = Number(q.get('yaw'));
     if (q.has('pitch')) this.pitch = Number(q.get('pitch'));
     this.nest.root(this.rootN);
@@ -531,6 +542,16 @@ export class App {
     // known exactly, so the next reserve is exact and no op piles up behind another)
     // (levels hold still during a stroke: its snapshot is of the levels open when it began)
     if (!this.frozen && this.nest.settled && !this.strokeOn) this.levels();
+    // give pool pages back (NS-67): when the pool holds a good margin more than a shrink would leave, a step a frame
+    // (at most 4 a second) between ops, never in a frame that started another op or during a stroke
+    if (this.shrinkOn && !this.frozen && this.nest.settled && !this.strokeOn && !this.sculptAt && t - this.shrinkAt > 250) {
+      if (!this.shrinking && this.nest.cap > this.nest.shrinkTarget() + 256) this.shrinking = true;
+      if (this.shrinking) {
+        this.shrinking = this.nest.shrink();
+        if (this.shrinking) this.opLog.push({ what: 'shrink', depth: -1, at: t, ms: performance.now() - t });
+        this.shrinkAt = t;
+      }
+    }
     const ndc = this.sculptAt ? [(this.sculptAt.x / this.canvas.clientWidth) * 2 - 1, 1 - (this.sculptAt.y / this.canvas.clientHeight) * 2] : [0, 0];
     const qd = this.nest.settled ? this.queue.shift() : undefined;
     if (qd) ndc.splice(0, 2, qd.nx, qd.ny);
@@ -582,7 +603,7 @@ export class App {
     const lines = [
       `Levels open: ${live}. Finest column: ${col >= 100 ? `${(col / 100).toFixed(1)} m` : `${col.toFixed(col < 1 ? 2 : 1)} cm`}.`,
       `Camera ${(this.dNear * ROOT_COLUMN_M).toFixed(this.dNear * ROOT_COLUMN_M < 10 ? 2 : 0)} m from the nearest surface. Frame ${avg.toFixed(1)} ms.`,
-      `Pages: ${st.used} used of ${st.cap} reserved (${st.mb} MB in ${st.segs} of ${st.segSlots} buffers; the device's largest buffer ${this.limitsText}).`,
+      `Pages: ${st.used} used of ${st.held} reserved (${st.mb} MB in ${st.segs} of ${st.segSlots} buffers; the device's largest buffer ${this.limitsText}).`,
       live < this.maxDepth + 1 ? 'Zoom in close to the ground to open a finer level.' : 'This is the finest level.',
       this.mode === 'move' ? 'Drag to move. Pinch or scroll to zoom. Fwd and Back move along the aim. Keys: WASD to fly, Q and E down and up, R and V along the aim.' : this.mode === 'orbit' ? 'Drag to look around.' : `Drag on the ground to ${this.mode}.`,
     ];
@@ -613,7 +634,7 @@ export class App {
       `Cruise ${A2(this.cruiseSpeed() * ROOT_COLUMN_M)} m/s (${this.cruiseWps.toFixed(2)} w/s)`,
       `slides ${n('slide').toFixed(1)}/s  promotes ${n('promote').toFixed(1)}/s  demotes ${n('demote').toFixed(1)}/s`,
       `ops waiting ${refused} (2 s)${this.nest.settled ? '' : ', one in flight'}${st.refused ? `  PAGES REFUSED ${st.refused}` : ''}`,
-      `pool ${st.used} used / ${st.cap} reserved (${(st.cap / Math.max(1, st.used)).toFixed(1)}x)`,
+      `pool ${st.used} used / ${st.held} reserved (${(st.held / Math.max(1, st.used)).toFixed(1)}x)`,
       `worst frame ${worst.toFixed(1)} ms (2 s)`,
     ].join('\n');
   }

@@ -45,9 +45,7 @@ export class Renderer {
       label: 'nest draw',
       entries: [
         { binding: 0, visibility: V | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: DU_SIZE } },
-        // (the camera words in the fragment stage too: the metrics' info target measures the distance to the eye)
-        { binding: 3, visibility: V | GPUShaderStage.FRAGMENT, buffer: ro },
-        ...[1, 4, 5, ...Array.from({ length: nest.S }, (_, j) => SEG_BASE + j)].map((binding) => ({ binding, visibility: V, buffer: ro })),
+        ...[1, 3, 4, 5, ...Array.from({ length: nest.S }, (_, j) => SEG_BASE + j)].map((binding) => ({ binding, visibility: V, buffer: ro })),
       ],
     });
     const module = (this.module = device.createShaderModule({ label: 'nest draw', code: `const TCAP: u32 = ${TCAP}u;\n${segWgsl(nest.S, nest.segP, true)}\n${storeWgsl}\n${drawWgsl}` }));

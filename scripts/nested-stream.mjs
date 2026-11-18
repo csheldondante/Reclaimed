@@ -33,7 +33,7 @@ await run({ name: 'nested-stream', kind: 'behaviour', size: '960x640', dpr: 1, e
   page.on('console', (m) => {
     if (m.type() === 'error' || m.type() === 'warning') console.log(`[page ${m.type()}] ${m.text()}`);
   });
-  await page.goto(`https://localhost:${port}/nested.html?k=8&d=30&pitch=1.0&yaw=-1.5708&tx=70&ty=120${maxbuf !== '0' ? `&maxbuf=${maxbuf}` : ''}`, { waitUntil: 'load' });
+  await page.goto(`https://localhost:${port}/nested.html?k=8&d=30&pitch=1.0&yaw=-1.5708&tx=70&ty=120${maxbuf !== '0' ? `&maxbuf=${maxbuf}` : ''}${R.opt('shrink', '1') === '0' ? '&shrink=0' : ''}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.nested && nested.app.frameCount > 60, { timeout: 120000, polling: 100 });
   await sleep(1500);
   const all = {};

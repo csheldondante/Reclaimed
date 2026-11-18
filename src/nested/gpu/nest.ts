@@ -40,6 +40,8 @@ const STROKE = 2;
 export const SEG_BASE = 10;
 /** the pool grows in steps of this many pages beyond what is needed */
 const GROW_SLACK = 64;
+/** a shrink step lowers the cap by at most this many pages (the most pages it copies: ~12 MB) */
+const SHRINK_STEP = 256;
 
 /** the page segments' declarations and accessors (WGSL), for S segments of segP pages each: page p lives in segment
  *  p / segP. One buffer per segment; only the last one in use grows (by a copy), full ones never move. */
@@ -80,6 +82,10 @@ export interface PoolStats {
   /** the deepest face page stack */
   maxCzFace: number;
   grows: number;
+  /** shrink steps (round 7, NS-67) */
+  shrinks: number;
+  /** pages the buffers hold (cap, the pages that may be handed out, is lower while a shrink is under way) */
+  held: number;
   /** ops refused whole because the pool could not hold their worst case yet (it grows ahead; the op retries) */
   waits: number;
   /** segments in use, pages a segment, segment bindings, pages the device can hold at most */
@@ -163,7 +169,7 @@ export class GpuNest {
     // bindings: the compute layouts use at most 6 other storage buffers (tab, ctl, scr, reg, cam, args), the draw 4
     this.S = opts.segments ?? Math.max(1, Math.min(4, lim.maxStorageBuffersPerShaderStage - 6));
     this.syncGrow = opts.syncGrow ?? false;
-    this.stats = { cap: 0, used: 0, free: 0, refused: 0, mismatch: 0, tableFull: 0, maxCz: 0, maxCzTmp: 0, maxCzFace: 0, grows: 0, waits: 0, segs: 0, segPages: this.segP, segSlots: this.S, maxPages: this.S * this.segP, mb: 0, error: '' };
+    this.stats = { cap: 0, used: 0, free: 0, refused: 0, mismatch: 0, tableFull: 0, maxCz: 0, maxCzTmp: 0, maxCzFace: 0, grows: 0, shrinks: 0, held: 0, waits: 0, segs: 0, segPages: this.segP, segSlots: this.S, maxPages: this.S * this.segP, mb: 0, error: '' };
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
     this.tab = device.createBuffer({ label: 'nest table', size: TCAP * 16, usage: S });
     this.applyGrow(Math.min(pages, this.S * this.segP), null);
@@ -190,7 +196,7 @@ export class GpuNest {
     const pl = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     const ppl = device.createPipelineLayout({ bindGroupLayouts: [this.planLayout] });
     const dpl = device.createPipelineLayout({ bindGroupLayouts: [this.dirLayout] });
-    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'pack', 'faceBake', 'snap', 'tabOut', 'tabIn'])
+    for (const e of ['derive', 'restrictK', 'rootGen', 'zPick', 'release', 'merge', 'edit', 'meltSnap', 'meltApply', 'camera', 'pick', 'ball', 'pack', 'faceBake', 'snap', 'tabOut', 'tabIn', 'shrinkFree', 'shrinkMove', 'shrinkCopy'])
       this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: pl, compute: { module, entryPoint: e } });
     for (const e of ['plan', 'dilate']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: ppl, compute: { module, entryPoint: e } });
     for (const e of ['dirClear', 'dirBuild', 'dirFinish']) this.pipes[e] = device.createComputePipeline({ label: `nest ${e}`, layout: dpl, compute: { module, entryPoint: e } });
@@ -231,7 +237,7 @@ export class GpuNest {
     this.dir?.destroy();
     this.dir = this.device.createBuffer({ label: 'nest face directory', size: (16 + MAX_LEVELS * cap * 2) * 4, usage: U });
     this.cap = cap;
-    Object.assign(this.stats, { cap, segs: this.segCap.filter((c) => c > 0).length, mb: Math.round((cap * PW * 4) / 2 ** 20), free: cap - this.stats.used });
+    Object.assign(this.stats, { cap, held: this.physical, segs: this.segCap.filter((c) => c > 0).length, mb: Math.round((this.physical * PW * 4) / 2 ** 20), free: cap - this.stats.used });
     if (old.cap > 0) this.stats.grows++;
     if (this.layout) {
       this.rebind();
@@ -444,6 +450,85 @@ export class GpuNest {
         this.stats.error = `The device refused ${Math.round(bytes / 2 ** 20)} MB more memory for pages (${this.stats.mb} MB held). Changes that need more were not made.`;
       } else a.ok = true;
     });
+  }
+  /** pages the pool's buffers hold (above `cap` while a shrink is under way) */
+  get physical(): number {
+    return this.segCap.reduce((a, b) => a + b, 0);
+  }
+  /** where a shrink aims: the pages in use and a quarter more, room for one more op like the last, rounded up */
+  shrinkTarget(): number {
+    return Math.ceil((this.stats.used * 1.25 + this.lastBound + GROW_SLACK) / GROW_SLACK) * GROW_SLACK;
+  }
+  /** (round 7, NS-67) give pages back, one step a call, only between ops (the caller: once the pool's header came back,
+   *  no stroke, no level op this frame). A step lowers the cap by at most SHRINK_STEP pages: the pages in use at or above
+   *  the new cap move under it on the GPU (nest.wgsl shrinkFree, shrinkMove, shrinkCopy; at most SHRINK_STEP pages copied).
+   *  When the cap has reached the target the buffers are made again at the cap's size (a copy of the pages kept, as a
+   *  grow does). true: a step was submitted. */
+  shrink(): boolean {
+    if (!this.settled || this.stroke || this.syncGrow || this.reading) return false;
+    const target = this.shrinkTarget();
+    if (this.cap > target) {
+      const C = Math.max(target, this.cap - SHRINK_STEP);
+      if (this.ahead) {
+        for (const b of this.ahead.segs) b?.destroy();
+        this.ahead = null;
+      }
+      this.submit();
+      const from = this.cap;
+      this.cap = C;
+      this.run('shrinkFree', this.uni(), 1);
+      this.run('shrinkMove', this.uni(), TCAP / 64);
+      this.run('shrinkCopy', this.uni(), from - C);
+      this.directory();
+      this.mergeFrees();
+      // (held unsettled until the pool's header after this step came back: the next op's reserve sees it)
+      this.pendingBound += 1;
+      this.settled = false;
+      this.submit();
+      this.stats.cap = C;
+      this.stats.shrinks++;
+      return true;
+    }
+    if (this.physical > this.cap) {
+      this.realloc();
+      return true;
+    }
+    return false;
+  }
+  /** the page buffers and ctl made again at the cap's size (after shrink's moves: nothing in use above the cap) */
+  private realloc(): void {
+    const cap = this.cap;
+    this.submit();
+    const U = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+    const enc = this.device.createCommandEncoder({ label: 'nest shrink' });
+    const drop: GPUBuffer[] = [];
+    const segs = this.segs as (GPUBuffer | undefined)[];
+    for (let j = 0; j < this.S; j++) {
+      const want = Math.max(0, Math.min(this.segP, cap - j * this.segP));
+      const have = this.segCap[j] ?? 0;
+      if (want >= have) continue;
+      if (segs[j]) drop.push(segs[j]!);
+      if (want === 0) segs[j] = undefined;
+      else {
+        const b = this.device.createBuffer({ label: `nest pages ${j}`, size: want * PW * 4, usage: U });
+        enc.copyBufferToBuffer(drop[drop.length - 1], 0, b, 0, want * PW * 4);
+        segs[j] = b;
+      }
+      this.segCap[j] = want;
+    }
+    const ctl = this.device.createBuffer({ label: 'nest pool control', size: (CTL_STACK + 2 * cap) * 4, usage: U });
+    // (the free stack holds only ids under the cap after shrinkFree; pending frees are empty between ops)
+    enc.copyBufferToBuffer(this.ctl, 0, ctl, 0, (CTL_STACK + cap) * 4);
+    drop.push(this.ctl);
+    this.ctl = ctl;
+    this.device.queue.submit([enc.finish()]);
+    for (const b of drop) b.destroy();
+    this.dir.destroy();
+    this.dir = this.device.createBuffer({ label: 'nest face directory', size: (16 + MAX_LEVELS * cap * 2) * 4, usage: U });
+    Object.assign(this.stats, { held: this.physical, segs: this.segCap.filter((c) => c > 0).length, mb: Math.round((this.physical * PW * 4) / 2 ** 20) });
+    this.rebind();
+    this.directory();
+    this.submit();
   }
   private overflowPages(): number {
     return 1 + this.stats.maxCz;
@@ -826,7 +911,7 @@ export class GpuNest {
       return out;
     };
     // the segments end to end: page p at p * PW (segments fill in order, so the ids are contiguous)
-    const pg = new Uint32Array(this.cap * PW);
+    const pg = new Uint32Array(Math.max(this.cap, this.physical) * PW);
     for (let j = 0; j < this.S; j++) if (this.segCap[j]) pg.set(await read(this.segs[j], this.segCap[j] * PW * 4), j * this.segP * PW);
     return new Snapshot(await read(this.tab), await read(this.ctl), pg, await read(this.reg));
   }

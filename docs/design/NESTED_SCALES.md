@@ -1,6 +1,7 @@
 # Nested scales: zoom in and sculpt inside a larger live scene
 
-Status: a lab on branch `nested-scales` (round 6: boxes and the partition record; "Built so far" has the current truth).
+Status: a lab on branch `nested-scales` (round 7: size slider, cruise, the streaming policy, the pool shrinks; round 6:
+boxes and the partition record; "Built so far" has the current truth, "Streaming" the policy).
 Lower priority than the board gameplay loop.
 
 ## What this is for
@@ -267,6 +268,45 @@ So:
   level ids would be per grid), the camera pass and the pick assume one chain of levels over one root at the origin, and
   promotion is per depth, not per (grid, depth).
 
+## Decisions with the owner (round 7)
+
+After round 6 on the phone (16.7 ms frames, dig fast, promotes at most a frame), verbatim:
+- "a dig tool size slider that is relative to the current camera distance from the nearest surface so click is instant
+  and so I can dig deeper by clicking repeatedly". Built: hold-to-grow is gone; Size (2 % to 100 % of dNear, log) sets
+  the radius, shown in metres; a tap is the whole ball at once on the surface under the finger; the radius is fixed at
+  the stroke's start; a drag still sweeps the pre-stroke snapshot; Raise, Dig, Melt take the same radius; under one
+  column of the finest live level the page says so.
+- Move along the aim: Fwd and Back hold buttons (R and V), speed by the nearest distance, collided as any move.
+- Cruise: flies the heading over the ground at the height it had when switched on (on the GPU, no readback); speed in
+  finest-live-window widths a second (0.05 to 4), held in world units through promotes and demotes; drag turns; a readout
+  for the phone (slides, promotes, demotes a second; ops waiting; pool used / reserved; worst frame in 2 s).
+- "the enhancement does not seem to quite get histerisis right so I wonder if it either doesn't have a band or if it is
+  built against one level of detail then transitions to the other when it loads?" Measured (DEVLOG round 7): the zoom
+  band was sound (0 flips); sideways there was none (a window snapped to a focus led only along the view, so each
+  slide's strip popped inside the central view); a child is derived from its parent's current content, but clamped
+  inside a lagging parent. The agreed policy: windows lead the travel with hysteresis, new strips built off screen where
+  possible and may pop in (no fade), ops spread over frames, the zoom band kept or widened if it flips.
+
+## Streaming (round 7, as built)
+
+- **Levels belong to a grid.** A level's window is a rectangle of whole chunks of its grid (one root grid today); the
+  policy works per level of a grid's chain on the eye in that grid's frame, so a second grid's chain would run it too.
+- **Lead.** Level m's window centres on the eye plus a lead: toward what the view looks at (up to 0.2 W) plus the eye's
+  velocity over the ground x 0.6 s, at most 0.4 W in all (the eye 0.1 W inside the rear edge). W: the window's width.
+- **Slide band.** A window slides when its target is 32 columns away along the travel, or 64 against it or with no
+  travel; a slide goes all the way to the target (whole chunks). A jittering focus (low pitch, the centre ray's hit
+  jumping) makes no back-and-forth.
+- **Zoom band.** Promote under 0.45 W at once; demote over 0.6 W held for 0.5 s (a fast cruise over a drop flipped a
+  level otherwise).
+- **One level op a frame**, and only once the pool's header came back from the last op (as before). A child's window is
+  clamped inside its parent's; the parent leads by the same rule at 8 x the scale, so it does not hold the child back.
+- **Pop-in, no fade.** Strips enter at the window's front rim, 0.6-0.9 W ahead of the eye; a forward view sees them
+  there (NS-74). Coarse (a parent drawn nearer the eye than its child's promote distance, in the central half of the view)
+  stayed 0 in cruises up to 4 w/s.
+- **The pool gives pages back** (NS-67): when it holds over 256 pages more than a shrink would leave (1.25 x used, room for
+  one more op like the last, 64 rounded), pages in use above a lower cap move under it on the GPU, 256 a step, 4 steps a
+  second between ops; then the buffers are made again at the cap's size.
+
 ## Column correspondence (round 2; the Storage section's rules extended)
 
 PARKED for the draw (round 6): the draw no longer matches anything between columns; the rules below are kept only for
@@ -294,6 +334,10 @@ last bullet ("For the draw") is obsolete.
   no air in a solid neighbour.
 
 ## Built so far (branch `nested-scales`, page nested.html)
+
+Round 7 (2026-11-19): the controls and streaming in "Decisions with the owner (round 7)" and "Streaming"; checks added:
+scripts/nested-brush.mjs (taps), nested-controls.mjs (phone size), nested-stream.mjs with src/nested/stream.ts (cruises
+and zooms: coarse, pops, flips, slides), a cruise pass in the screen check, a cruise loop in nested-stress.mjs.
 
 The current truth (round 6, 2026-11-18):
 - **Storage:** paged columns on the GPU, the full-partition record ("Storage"); the oracle (src/nested/oracle.ts) stores

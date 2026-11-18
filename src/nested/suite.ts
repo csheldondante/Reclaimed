@@ -22,10 +22,11 @@ interface Api {
     frameCount: number;
   };
   eye(): { x: number; y: number; z: number; dHit: number };
-  setView(v: { yaw: number; pitch: number; eye: [number, number, number] }): void;
+  setView(v: { yaw: number; pitch: number; eye?: [number, number, number]; tx?: number; ty?: number; d?: number }): void;
   manifold(): Promise<EdgeReport[]>;
   holes(): Promise<{ rows: number[]; h: number; at: [number, number][] }>;
   state(): { live: number; stats: Record<string, unknown> };
+  cruise?(on: boolean, wps?: number): void;
 }
 
 const W = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -41,7 +42,7 @@ export interface SuiteResult {
   worst: { n: number; pose: number; view: unknown };
 }
 
-export async function watertightSuite(api: Api, opt: { manifold?: boolean; screen?: boolean; log?: (s: string) => void } = {}): Promise<SuiteResult> {
+export async function watertightSuite(api: Api, opt: { manifold?: boolean; screen?: boolean; cruise?: boolean; log?: (s: string) => void } = {}): Promise<SuiteResult> {
   const log = opt.log ?? (() => {});
   const lines: string[] = [];
   const say = (s: string) => {
@@ -150,6 +151,36 @@ export async function watertightSuite(api: Api, opt: { manifold?: boolean; scree
       }
     }
     checks.push({ name: 'screen: no hole pixels below the horizon over 40 poses, 1, 2, 6 and 60 frames after each move (promotes and slides in between)', pass: all === 0, detail: `${all} hole pixels${worst.pose >= 0 ? `; worst pose ${worst.pose} with ${worst.n}` : ''}` });
+  }
+  // (round 7) poses sampled during a cruise at 1 and 4 finest-window widths a second (slides, shrinks in between)
+  if (opt.screen !== false && opt.cruise !== false && api.cruise) {
+    let all = 0;
+    let n = 0;
+    const tn = Math.tan((50 * Math.PI) / 360);
+    for (const wps of [1, 4]) {
+      // (1.2 back from the ground along the view: depth 2 open, under its promote distance of 1.8)
+      api.setView({ yaw: Math.PI / 2 + 0.4, pitch: 1.0, tx: hx - 3, ty: hy - 6, d: 1.2 });
+      // (settled first: every wanted level open, so the speed is in widths of the depth-2 window)
+      await frames(api, 240);
+      say(`cruise ${wps} w/s from ${api.state().live} levels open`);
+      api.cruise(true, wps);
+      const t0 = performance.now();
+      while (performance.now() - t0 < 4000) {
+        await frames(api, 7);
+        const hl = await api.holes();
+        let c = 0;
+        for (let y = 0; y < hl.h; y++) {
+          const ny = 1 - ((y + 0.5) / hl.h) * 2;
+          const dz = -Math.sin(1.0) + ny * tn * Math.cos(1.0);
+          if (dz / Math.hypot(1, ny * tn) < -0.1) c += hl.rows[y];
+        }
+        n++;
+        all += c;
+        if (c > 0) say(`cruise ${wps} w/s sample ${n}: ${c} hole pixels, first at ${JSON.stringify(hl.at)}; live ${api.state().live}`);
+      }
+      api.cruise(false);
+    }
+    checks.push({ name: 'screen: no hole pixels below the horizon in poses sampled during cruises at 1 and 4 w/s', pass: all === 0, detail: `${all} hole pixels over ${n} samples` });
   }
   return { checks, lines, worst };
 }

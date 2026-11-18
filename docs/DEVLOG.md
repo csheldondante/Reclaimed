@@ -26703,3 +26703,36 @@ needs dNear past 0.6 W for 0.5 s (fast cruises over a drop flipped a level other
 Pops remain (the front rim is in view on rising ground; a window cannot be built off screen ahead of a forward view
 that sees to the horizon; the owner allowed pop-in). Every pop read is within 4 frames of a level op. Coarse stays 0 up
 to 1 w/s; at 2 w/s one read (a flip), from 4 w/s the windows fall behind.
+
+## 2026-11-19 — Nested scales lab, round 7 step 5 and the gate: the pool gives pages back
+
+**Why.** NS-67: after flying the pool held 3-3.7 x the pages in use (cruises above: 2,752 -> 8,448 held for ~1,600).
+
+**Built.** GpuNest.shrink: between ops (the pool's header back, no stroke, no other op that frame, at most 4 steps a
+second) when the pool holds 256 pages more than the target (1.25 x used + one more op like the last + 64): shrinkFree
+keeps the free stack's ids under the new cap and holds the bump end there; shrinkMove gives each table entry whose page
+is at or above it a page under it (allocPage) and lists the move; shrinkCopy copies the pages (at most 256 a step). The
+draw's page list is rebuilt in the same submit. When the cap reaches the target the page buffers and ctl are made again at
+its size (a copy of the kept pages, as a grow). The page shows the pages held (stats.held). `?shrink=0` turns it off.
+
+**Also fixed on the way.** (1) The cruise's speed now holds in world units from the finest window when the cruise began:
+in the cruise screen check a 4 w/s cruise that began with two levels open ran at 128 world units a second, off the
+root's edge, into the void (500,000 "hole" pixels a sample). (2) The streaming metric first read the camera words in the
+fragment stage: the uncapped draw went 4-6 -> 8-16.5 ms and the carve's median 11 -> 29 ms (measured by turning it off);
+the distance now comes from the vertex stage (NS-79).
+
+**The gate (desktop, 960 x 640 unless said):**
+
+| check | result |
+|---|---|
+| `?selftest=1` | 28 of 28 (the 27 before and the new cruise screen check) |
+| unit tests (oracle) | 13 of 13 |
+| watertight (scripts/nested-watertight.mjs) | 0 odd edges at 8 eyes; 0 hole pixels over 40 poses; 0 over 66 poses sampled in cruises at 1 and 4 w/s |
+| carve at level 1 with bakes | median 11.1 ms (8.8-14.1; round 6: 12.7), without bakes 5.3-10.0 |
+| uncapped draw | 4.0-5.9 ms in the seven views |
+| stress ?maxbuf=128 with a cruise loop (8 s at 1 w/s turning, 5 s at 4 w/s) | 0 refusals; held at most 3,456; after: 1,626 used of 2,688 held (1.65 x), 9 shrinks, 16 waits |
+| 20 s cruise at 1 w/s, depth 2, pitch 1.0 | coarse 0 of 1,694 reads; worst frame 49-59 ms (p95 16-21 ms) in the path's second half, on frames with and without a slide (NS-81); first 10 s worst 13.7 ms; 9.4 slides/s at level 2, 1.2 at level 1; 0 refusals |
+| speed where coarse stops being 0 | not reached: 0 at 0.5, 1, 2 and 4 w/s (the slider's top) after the speed fix |
+
+Pops in the central half (a slide's strip seen turning finer): 74 of 1,694 reads in the 20 s cruise, all within 4 frames
+of a slide (NS-74).

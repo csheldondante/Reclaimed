@@ -899,6 +899,53 @@ fn merge(@builtin(local_invocation_index) li: u32) {
   }
 }
 
+// ---- the pool given back (round 7, NS-67): pages in use at or above a new cap C (u.r.y) move under it, between ops ------
+// shrinkFree (one thread): the free stack keeps its ids under C (in order), the bump end is held at C, the move count
+// (ctl 10) starts at 0. shrinkMove (over the table): each entry whose page is at or above C takes a page under C
+// (allocPage, which pops the filtered stack, then the bump end up to C) and records the move in the scratch buffer.
+// shrinkCopy (a workgroup a move): the page's words copied. Nothing else holds a page id between ops (TMP and pending
+// frees are empty, a stroke is off); the draw's page list is rebuilt after.
+@compute @workgroup_size(1)
+fn shrinkFree() {
+  let C = u.r.y;
+  let n = atomicLoad(&ctl[2]);
+  var j = 0u;
+  for (var i = 0u; i < n; i++) {
+    let p = atomicLoad(&ctl[CTL_STACK + i]);
+    if (p < C) {
+      atomicStore(&ctl[CTL_STACK + j], p);
+      j++;
+    }
+  }
+  atomicStore(&ctl[2], j);
+  if (atomicLoad(&ctl[0]) > C) { atomicStore(&ctl[0], C); }
+  atomicStore(&ctl[10], 0u);
+}
+@compute @workgroup_size(64)
+fn shrinkMove(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let s = gid.x;
+  if (s >= TCAP) { return; }
+  let k1 = atomicLoad(&tab[s * 4u + 1u]);
+  if (k1 >= BUSY) { return; }
+  let p = atomicLoad(&tab[s * 4u + 2u]);
+  if (p >= NOT_LOADED || p < u.r.y) { return; }
+  let dst = allocPage();
+  if (dst == NONE) { return; }
+  atomicStore(&tab[s * 4u + 2u], dst);
+  let i = atomicAdd(&ctl[10], 1u);
+  // (u32 words parked in the f32 scratch, as the table's compaction does: NS-64)
+  scr[i * 2u] = bitcast<f32>(p);
+  scr[i * 2u + 1u] = bitcast<f32>(dst);
+}
+@compute @workgroup_size(256)
+fn shrinkCopy(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let i = wid.x;
+  if (i >= atomicLoad(&ctl[10])) { return; }
+  let src = bitcast<u32>(scr[i * 2u]);
+  let dst = bitcast<u32>(scr[i * 2u + 1u]);
+  for (var w = li; w < PW; w += 256u) { pgStore(dst * PW + w, pgLoad(src * PW + w)); }
+}
+
 // ---- plan: an edit's regions on every level (the oracle's Nest.edit + propagate, as chunk rects) ----------------------
 // reg 8: the hit level (-1: none), 9-10: the hit (window columns of that level, f32), 11: radius, 12: amount (its
 // units). Slots: level m role 0 restrict m -> m-1 (parent chunks), 1 residual of m, 2 derive of m, 3 the edit on m.

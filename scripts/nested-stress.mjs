@@ -43,8 +43,33 @@ await run({ name: 'nested-stress', kind: 'behaviour', size: '960x640', dpr: 1, e
   const f1 = await page.evaluate(() => nested.app.frameCount);
   console.log(`frames flowing after: ${f1 - f0} in 1 s`);
   console.log('grows', JSON.stringify(await page.evaluate(() => nested.app.nest.growLog)));
+  // (round 7) a cruise loop at depth 2: 8 s at 1 w/s, turning, 5 s at 4 w/s, then 4 s still (the pool shrinks back)
+  const cr = await page.evaluate(async () => {
+    const a = nested.app;
+    const W = () => new Promise((r) => requestAnimationFrame(r));
+    a.pitch = 1.0;
+    nested.cruise(true, 1);
+    let t = performance.now();
+    let maxHeld = 0;
+    while (performance.now() - t < 8000) {
+      await W();
+      a.yaw += 0.006;
+      maxHeld = Math.max(maxHeld, a.nest.stats.held);
+    }
+    nested.cruise(true, 4);
+    t = performance.now();
+    while (performance.now() - t < 5000) {
+      await W();
+      maxHeld = Math.max(maxHeld, a.nest.stats.held);
+    }
+    nested.cruise(false);
+    await new Promise((r) => setTimeout(r, 4000));
+    return { maxHeld, shrinks: a.nest.stats.shrinks, waits: a.nest.stats.waits, ops: a.opLog.filter((o) => o.what === 'slide').length };
+  });
+  console.log('cruise loop', JSON.stringify(cr));
   const st = await page.evaluate(() => nested.state().stats);
-  R.check('pool: reserved at most twice the pages in use', st.cap <= 2 * st.used, `${st.used} used of ${st.cap} reserved`);
+  console.log('after the cruise loop', JSON.stringify(st));
+  R.check('pool: reserved under twice the pages in use', st.held < 2 * st.used, `${st.used} used of ${st.held} reserved`);
   R.check('pool: no refusals', st.refused === 0, `${st.refused} refused`);
   console.log('info', JSON.stringify(await page.evaluate(() => document.getElementById('info').textContent)));
   const fatal = await page.evaluate(() => [...document.querySelectorAll('.fatal')].map((d) => d.textContent.slice(0, 300)));

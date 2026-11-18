@@ -35,6 +35,12 @@ export interface StreamStats {
   cap: number;
   refused: number;
   waits: number;
+  /** the worst frame interval next to a level op, and away from one */
+  opFrameMax: number;
+  quietFrameMax: number;
+  shrinks: number;
+  grows: number;
+  held: number;
   lifts: number;
   /** the eye's height over the ground at the end, and the distance travelled (world) */
   travelled: number;
@@ -57,9 +63,11 @@ export function wantDepth(app: App): number {
 export async function measure(app: App, drive: () => Promise<void>): Promise<StreamStats> {
   const dev = app.device;
   const frames: number[] = [];
-  const st: StreamStats = { frames: 0, seconds: 0, frameP50: 0, frameP95: 0, frameMax: 0, slides: [0, 0, 0, 0, 0, 0, 0, 0], promotes: 0, demotes: 0, slideReversals: 0, zoomFlips: 0, multiOpFrames: 0, reads: 0, coarseReads: 0, coarseMax: 0, popReads: 0, popAfterOp: 0, popMax: 0, used: 0, cap: 0, refused: 0, waits: 0, lifts: 0, travelled: 0, log: [] };
+  const st: StreamStats = { frames: 0, seconds: 0, frameP50: 0, frameP95: 0, frameMax: 0, slides: [0, 0, 0, 0, 0, 0, 0, 0], promotes: 0, demotes: 0, slideReversals: 0, zoomFlips: 0, multiOpFrames: 0, reads: 0, coarseReads: 0, coarseMax: 0, popReads: 0, popAfterOp: 0, popMax: 0, used: 0, cap: 0, refused: 0, waits: 0, opFrameMax: 0, quietFrameMax: 0, shrinks: 0, grows: 0, held: 0, lifts: 0, travelled: 0, log: [] };
   const refused0 = app.nest.stats.refused;
   const waits0 = app.nest.stats.waits;
+  const shrinks0 = app.nest.stats.shrinks;
+  const grows0 = app.nest.stats.grows;
   const lifts0 = app.lifts;
   let prevWins: (Win | null)[] = app.nest.wins.slice();
   const lastSlide: { t: number; dx: number; dy: number }[][] = [[], [], [], [], [], [], [], []];
@@ -108,6 +116,10 @@ export async function measure(app: App, drive: () => Promise<void>): Promise<Str
       }
     }
     if (opsNow > 1) st.multiOpFrames++;
+    // (the interval just measured, by whether a level op ran in this frame or the one before)
+    const iv = frames[frames.length - 1];
+    if (opsNow || frameNo - lastOpFrame <= 1) st.opFrameMax = Math.max(st.opFrameMax, iv);
+    else st.quietFrameMax = Math.max(st.quietFrameMax, iv);
     frameNo++;
     if (opsNow) lastOpFrame = frameNo;
     prevWins = wins.slice().map((w) => (w ? { ...w } : null));
@@ -177,6 +189,9 @@ export async function measure(app: App, drive: () => Promise<void>): Promise<Str
     cap: app.nest.stats.cap,
     refused: app.nest.stats.refused - refused0,
     waits: app.nest.stats.waits - waits0,
+    shrinks: app.nest.stats.shrinks - shrinks0,
+    grows: app.nest.stats.grows - grows0,
+    held: app.nest.stats.held,
     lifts: app.lifts - lifts0,
   });
   return st;
