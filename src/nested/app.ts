@@ -56,8 +56,11 @@ export class App {
   /** after the frame's draw was submitted (the measurements) */
   post: (() => void) | null = null;
   private keys = new Set<string>();
-  /** the brush's radius on screen (css px) */
-  brushPx = 60;
+  /** the brush's radius as a fraction of the eye's distance to the nearest surface (the size slider; round 7: "relative
+   *  to the current camera distance from the nearest surface so click is instant") */
+  brushFrac = 0.25;
+  /** the Fwd (1) or Back (-1) button held */
+  aimHold = 0;
   /** (the benchmark) the levels left as they are */
   frozen = false;
   private limitsText = '';
@@ -124,11 +127,30 @@ export class App {
     add('dig', 'Dig', () => this.setMode('dig'));
     add('melt', 'Melt', () => this.setMode('melt'));
     add('move', 'Move', () => this.setMode('move'));
-    add('size', 'Brush: medium', () => {
-      this.brushPx = this.brushPx === 60 ? 110 : this.brushPx === 110 ? 30 : 60;
-      this.buttons.get('size')!.textContent = `Brush: ${this.brushPx === 30 ? 'small' : this.brushPx === 60 ? 'medium' : 'large'}`;
-    });
     add('orbit', 'Turn', () => this.setMode('orbit'));
+    // the brush's size: a fraction of the distance to the nearest surface (log scale, 2 % to 100 %), its radius in world
+    // units beside it
+    this.sizeText = this.slider(bar, 'Size', 65, (v) => (this.brushFrac = 0.02 * 50 ** (v / 100)));
+    // move along the aim: two hold buttons at the right edge (R and V on a keyboard; WASD stay the flight over the ground)
+    const aim = document.getElementById('aim')!;
+    for (const [label, dir] of [['Fwd', 1], ['Back', -1]] as const) {
+      const b = document.createElement('button');
+      b.textContent = label;
+      const off = () => {
+        if (this.aimHold === dir) this.aimHold = 0;
+        b.classList.remove('on');
+      };
+      b.addEventListener('pointerdown', (e) => {
+        b.setPointerCapture(e.pointerId);
+        this.aimHold = dir;
+        b.classList.add('on');
+      });
+      b.addEventListener('pointerup', off);
+      b.addEventListener('pointercancel', off);
+      b.addEventListener('lostpointercapture', off);
+      b.addEventListener('contextmenu', (e) => e.preventDefault());
+      aim.appendChild(b);
+    }
     add('tint', 'Colour levels', () => {
       this.render.tint = !this.render.tint;
       this.buttons.get('tint')!.classList.toggle('on', this.render.tint);
@@ -196,21 +218,53 @@ export class App {
       m[e.key.toLowerCase()]?.();
     });
   }
-  // ---- strokes (carve, add): hold to grow, sweep along the surface as it was when the stroke began -----------------------
-  static readonly GROW_PX_S = 40;
-  static readonly START_PX = 6;
+  /** a labelled range input (0..100) in the bar; returns the span for its readout */
+  private slider(bar: HTMLElement, label: string, v0: number, fn: (v: number) => void): HTMLSpanElement {
+    const box = document.createElement('label');
+    box.className = 'slider';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const inp = document.createElement('input');
+    inp.type = 'range';
+    inp.min = '0';
+    inp.max = '100';
+    inp.value = String(v0);
+    const out = document.createElement('span');
+    out.className = 'val';
+    inp.oninput = () => fn(Number(inp.value));
+    fn(v0);
+    box.append(name, inp, out);
+    bar.appendChild(box);
+    return out;
+  }
+  private sizeText: HTMLSpanElement | null = null;
+  /** the brush's radius now (world units) */
+  brushRadius(): number {
+    return this.brushFrac * this.dNear;
+  }
+  /** world units as text (a root column is ROOT_COLUMN_M) */
+  static metres(w: number): string {
+    const cm = w * ROOT_COLUMN_M * 100;
+    return cm >= 100 ? `${(cm / 100).toFixed(cm >= 1000 ? 0 : 2)} m` : cm >= 1 ? `${cm.toFixed(1)} cm` : `${(cm * 10).toFixed(2)} mm`;
+  }
+  /** one column of the finest live level (world units) */
+  finestCell(): number {
+    return 1 / this.k ** (this.nest.live - 1);
+  }
+
+  // ---- strokes (carve, add): a tap is the whole ball at once; a drag sweeps it along the surface as it was when the
+  // stroke began (round 7: the radius is the size slider's, fixed at the stroke's start; no hold to grow) --------------
   strokeOn = false;
   private strokeMoved = false;
   private strokeFirst = false;
-  strokePx = 0;
-  private strokeEditPx = 0;
+  /** the stroke's radius (world), fixed when it began */
+  strokeR = 0;
   private ring: HTMLDivElement | null = null;
   private beginStroke(): void {
     this.strokeOn = true;
     this.strokeFirst = true;
     this.strokeMoved = false;
-    this.strokePx = App.START_PX;
-    this.strokeEditPx = 0;
+    this.strokeR = this.brushRadius();
     this.nest.strokeBegin();
   }
   private endStroke(): void {
@@ -228,7 +282,7 @@ export class App {
     const on = this.strokeOn && this.sculptAt;
     this.ring.style.display = on ? 'block' : 'none';
     if (!on) return;
-    const r = this.strokePx;
+    const r = this.strokeR / this.perPx();
     Object.assign(this.ring.style, { left: `${this.sculptAt!.x - r}px`, top: `${this.sculptAt!.y - r}px`, width: `${2 * r}px`, height: `${2 * r}px` });
   }
 
@@ -398,6 +452,12 @@ export class App {
     this.move[0] += v * (-ky * Math.cos(this.yaw) - kx * Math.sin(this.yaw));
     this.move[1] += v * (-ky * Math.sin(this.yaw) + kx * Math.cos(this.yaw));
     this.move[2] += v * ((this.keys.has('e') ? 1 : 0) - (this.keys.has('q') ? 1 : 0));
+    // along the aim (the Fwd and Back buttons, R and V): the same speed, collided by the camera pass like any move
+    const ka = this.aimHold + (this.keys.has('r') ? 1 : 0) - (this.keys.has('v') ? 1 : 0);
+    if (ka) {
+      const f = this.forward();
+      for (let i = 0; i < 3; i++) this.move[i] += ka * v * f[i];
+    }
     // zoom: toward (or away from) the surface at the centre, eased, at most 15 % of that distance a frame
     if (this.zoomLog !== 0) {
       const step = Math.min(Math.log(1.15), Math.max(-Math.log(1.15), this.zoomLog));
@@ -418,25 +478,18 @@ export class App {
     this.placeReq = null;
     this.move = [0, 0, 0];
     this.nest.camera();
-    // hold to grow (carve, add): the ball grows while the finger is held still, up to 0.15 of the distance to the surface
-    // in the screen's centre; a drag sweeps it at its current size. An edit only when the ball grew or moved.
-    let strokeEdit = false;
-    if (this.strokeOn && this.sculptAt) {
-      const capPx = (0.15 * this.dRef()) / this.perPx();
-      if (!this.strokeMoved) this.strokePx = Math.min(capPx, this.strokePx + App.GROW_PX_S * dt);
-      strokeEdit = this.strokeFirst || this.strokeMoved || this.strokePx > this.strokeEditPx + 0.5;
-    }
+    // a stroke (carve, add): the whole ball at the first frame (a tap), then an edit each time the finger moved
+    const strokeEdit = this.strokeOn && !!this.sculptAt && (this.strokeFirst || this.strokeMoved);
     this.ringShow();
     const held = this.sculptAt && this.nest.settled && (!this.strokeOn || strokeEdit);
     const op = qd?.op ?? (held ? (this.mode as Op) : null);
     if (op) {
       const ballOp = op === 'carve' || op === 'add';
-      const px = qd?.px !== undefined ? qd.px * (ballOp ? 0.5 : 1) : this.strokeOn && !qd ? this.strokePx : this.brushPx * (ballOp ? 0.5 : 1);
-      const radius = px * this.perPx();
+      // (scripted edits: px, a radius in css px at the centre's surface; otherwise the size slider's)
+      const radius = qd?.px !== undefined ? qd.px * (ballOp ? 0.5 : 1) * this.perPx() : qd ? this.brushRadius() : this.strokeOn ? this.strokeR : this.brushRadius();
       if (this.strokeOn && !qd) {
         this.strokeFirst = false;
         this.strokeMoved = false;
-        this.strokeEditPx = this.strokePx;
       }
       const ok = this.timed('edit', -1, () => this.nest.edit({ op, radius, amount: (op === 'melt' ? 0 : 0.04) * radius, rate: 0.1 }));
       if (!ok && qd) this.queue.unshift(qd);
@@ -460,12 +513,12 @@ export class App {
       `Camera ${(this.dNear * ROOT_COLUMN_M).toFixed(this.dNear * ROOT_COLUMN_M < 10 ? 2 : 0)} m from the nearest surface. Frame ${avg.toFixed(1)} ms.`,
       `Pages: ${st.used} used of ${st.cap} reserved (${st.mb} MB in ${st.segs} of ${st.segSlots} buffers; the device's largest buffer ${this.limitsText}).`,
       live < this.maxDepth + 1 ? 'Zoom in close to the ground to open a finer level.' : 'This is the finest level.',
-      this.mode === 'move' ? 'Drag to move. Pinch or scroll to zoom. Keys: WASD to fly, Q and E down and up.' : this.mode === 'orbit' ? 'Drag to look around.' : `Drag on the ground to ${this.mode}.`,
+      this.mode === 'move' ? 'Drag to move. Pinch or scroll to zoom. Fwd and Back move along the aim. Keys: WASD to fly, Q and E down and up, R and V along the aim.' : this.mode === 'orbit' ? 'Drag to look around.' : `Drag on the ground to ${this.mode}.`,
     ];
-    if (this.strokeOn) {
-      const cm = this.strokePx * this.perPx() * ROOT_COLUMN_M * 100;
-      lines.push(`Brush radius ${cm >= 100 ? `${(cm / 100).toFixed(2)} m` : `${cm.toFixed(1)} cm`} (hold still to grow it).`);
-    }
+    const br = this.strokeOn ? this.strokeR : this.brushRadius();
+    if (this.sizeText) this.sizeText.textContent = App.metres(br);
+    if (br < this.finestCell() && this.mode !== 'move' && this.mode !== 'orbit')
+      lines.push(`The brush (${App.metres(br)}) is smaller than one column of the finest level (${App.metres(this.finestCell())}): it may change nothing. Move Size up or zoom out.`);
     if (this.lifts) lines.push(`The camera was lifted out of solid ${this.lifts} times.`);
     if (st.refused || st.mismatch || st.tableFull) lines.push(`Error: ${st.refused} pages refused, ${st.mismatch} blocks mismatched, table full ${st.tableFull} times.`);
     if (st.error) lines.push(`Memory: ${st.error}`);

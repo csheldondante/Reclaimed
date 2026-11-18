@@ -1,5 +1,6 @@
-// Nested scales: hold-to-grow and swept strokes through real pointer events. Carve: press, hold still 1.5 s (the ball
-// grows; a still with the ring), drag across, back over the same path, release; then Add the same way elsewhere.
+// Nested scales: the size slider and instant taps through real pointer events (round 7). Carve: three taps at the
+// screen's centre (each the whole ball at once; each lands on the new surface, so the centre ray's first solid gets
+// further each time), then a drag across and back (one layer: the second pass changes nothing more); then Add the same.
 // node scripts/nested-brush.mjs --chromeargs ignore-certificate-errors [--port 5461] [--tag x]
 import { run, sleep } from './lib/runner.mjs';
 
@@ -15,31 +16,43 @@ await run({ name: 'nested-brush', kind: 'behaviour', size: '960x640', dpr: 1, ec
   await page.evaluate(() => nested.setView({ yaw: 0, pitch: 0.9, d: 2.5 }));
   await sleep(4000);
   const ops = () => page.evaluate(() => nested.app.opLog.filter((o) => o.what === 'edit').length);
-  const stroke = async (mode, x0, y0, x1, y1, name) => {
+  const hit = () => page.evaluate(() => nested.eye().dHit);
+  const [cx, cy] = [480, 320];
+  for (const mode of ['carve', 'add']) {
     await page.keyboard.press(mode === 'carve' ? 'c' : 'f');
+    await page.evaluate(() => (nested.app.frozen = true));
+    const r = await page.evaluate(() => ({ radius: nested.app.brushRadius(), text: document.querySelector('#bar .slider .val').textContent }));
+    const taps = [];
+    for (let i = 0; i < 3; i++) {
+      const h0 = await hit();
+      const e0 = await ops();
+      await page.mouse.move(cx, cy);
+      await page.mouse.down();
+      await sleep(120);
+      await page.mouse.up();
+      await sleep(700);
+      taps.push({ edits: (await ops()) - e0, hitBefore: +h0.toFixed(4), hitAfter: +(await hit()).toFixed(4) });
+    }
+    await page.screenshot({ path: `local/nested/brush-${mode}-taps${tag}.png` });
     const e0 = await ops();
-    await page.mouse.move(x0, y0);
+    const [x0, x1, y] = [cx - 160, cx + 160, cy + 110];
+    await page.mouse.move(x0, y);
     await page.mouse.down();
-    await sleep(1500);
-    const r = await page.evaluate(() => ({ px: nested.app.strokePx, text: document.getElementById('info').textContent.split('\n').find((l) => l.startsWith('Brush')) }));
-    await page.screenshot({ path: `local/nested/brush-${name}-hold${tag}.png` });
-    const e1 = await ops();
     for (let i = 1; i <= 30; i++) {
-      await page.mouse.move(x0 + ((x1 - x0) * i) / 30, y0 + ((y1 - y0) * i) / 30);
+      await page.mouse.move(x0 + ((x1 - x0) * i) / 30, y);
       await sleep(30);
     }
     for (let i = 29; i >= 0; i--) {
-      await page.mouse.move(x0 + ((x1 - x0) * i) / 30, y0 + ((y1 - y0) * i) / 30);
+      await page.mouse.move(x0 + ((x1 - x0) * i) / 30, y);
       await sleep(30);
     }
     await page.mouse.up();
-    await sleep(1500);
-    const e2 = await ops();
+    await sleep(1200);
     const st = await page.evaluate(() => nested.state().stats);
-    console.log(`${name}: ring ${r.px.toFixed(1)} px after 1.5 s ("${r.text}"); edits while held ${e1 - e0}, over the stroke ${e2 - e0}; pages ${st.used} of ${st.cap}, waits ${st.waits}, refused ${st.refused}`);
-    await page.screenshot({ path: `local/nested/brush-${name}-after${tag}.png` });
-  };
-  await stroke('carve', 380, 330, 600, 330, 'carve');
-  await stroke('add', 380, 450, 600, 450, 'add');
-  await page.mouse.move(480, 200);
+    console.log(`${mode}: radius ${r.radius.toFixed(4)} world ("${r.text}"); taps ${JSON.stringify(taps)}; drag edits ${(await ops()) - e0}; pages ${st.used} of ${st.cap}, waits ${st.waits}, refused ${st.refused}`);
+    R.check(`${mode}: a tap is one edit`, taps.every((t) => t.edits === 1), JSON.stringify(taps.map((t) => t.edits)));
+    if (mode === 'carve') R.check('carve: repeated taps go deeper', taps.every((t) => t.hitAfter > t.hitBefore + 1e-4), JSON.stringify(taps));
+    await page.screenshot({ path: `local/nested/brush-${mode}-after${tag}.png` });
+    await page.evaluate(() => (nested.app.frozen = false));
+  }
 });

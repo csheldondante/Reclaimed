@@ -26630,3 +26630,21 @@ slopes the caps show as triangles, cut by the walls of the step in front (checke
 both triangles of every cap are drawn). The tunnel inside at depth 2 is a stepped bore; the level rim is a step in box
 size with walls on both sides, no gap. Through the tunnel from inside, thin soil bands of the arch and the mound are
 seen across the far mouth.
+
+## 2026-11-19 — Nested scales lab, round 7 steps 1-2: the size slider, instant taps, Fwd and Back
+
+**Why.** The owner, after round 6 on the phone: "a dig tool size slider that is relative to the current camera distance
+from the nearest surface so click is instant and so I can dig deeper by clicking repeatedly".
+
+**Built.** Hold-to-grow is gone. A Size slider (log scale, 2 % to 100 % of the eye's distance to the nearest surface, the
+dNear the camera pass already reports; default 25 %) shows the radius in metres beside it. A tap is the whole ball at
+once on the surface under the finger; the radius is fixed at the stroke's start; a drag sweeps it along the pre-stroke
+snapshot as before. Raise, Dig and Melt take the same radius (the Brush small/medium/large button is gone). Under one
+column of the finest live level the info line says the brush may change nothing. Fwd and Back (hold buttons at the right
+edge; R and V on a keyboard, since WASD already fly over the ground) move the eye along the aim at the WASD speed (1.5
+nearest distances a second), collided by the camera pass.
+
+**Checked.** scripts/nested-brush.mjs (rewritten for taps): carve, three taps at the screen's centre, one edit each, the
+centre ray's first solid 2.49 -> 3.00 -> 3.53 -> 4.07 (each tap deeper by about the radius, 0.53); add, three taps back
+to 2.51. scripts/nested-controls.mjs (412 x 915): Fwd 1.5 s moved the eye 6.74 along the aim (nearest 6.3 -> 1.1, no
+lift), Back 6.42 back.
