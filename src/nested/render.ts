@@ -28,6 +28,8 @@ export class Renderer {
   info: GPUTexture | null = null;
   readonly format: GPUTextureFormat;
   tint = false;
+  /** (diagnostics) 0 off, 1 colour by triangle parity, 2 by face kind */
+  diag = 0;
 
   constructor(
     private device: GPUDevice,
@@ -117,7 +119,7 @@ export class Renderer {
       if (!w) continue;
       new Int32Array(st, lv.depth * DU, 4).set([w.gx, w.gy, w.n, lv.depth]);
       const f = new Float32Array(st, lv.depth * DU + 16, 12);
-      f.set([0, 0, this.tint ? 1 : 0, this.nest.k], 0);
+      f.set([this.diag, 0, this.tint ? 1 : 0, this.nest.k], 0);
       f.set(lv.want ?? [1, 1, 0, 0], 4);
       f.set([0.45, -0.35, 0.82, 0], 8);
       new Uint32Array(st, lv.depth * DU + 64, 4).set([this.nest.cap, 0, 0, pages[lv.depth] ?? 0]);

@@ -218,7 +218,8 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   NS-55, NS-56, NS-57 (crack classes of the old draw), NS-58 (draw B instances), NS-59 (stripes along the stroke), NS-62
   (curtains), NS-6 (zero-thickness intervals: the partition has none).
 - `parked`: NS-18 (SDF footprints; smooth meshing returns as an optional step from the owner's sheet-and-contour idea).
-- NS-42 now: GpuNest.bakeOff (measurement only) and App.benchPause (the bench holds the frame's draw back).
+- NS-42 now: GpuNest.bakeOff and GpuNest.skip (an edit's passes left out), App.benchPause (the bench holds the frame's
+  draw back), Renderer.diag (triangle parity, face kind colours): measurement only.
 - NS-38 not re-measured: the bake is one kernel now (faceBake); startup time was not measured this round.
 - NS-64 (hack) The table's compaction (nest.wgsl tabOut / tabIn) parks the table's u32 words in the f32 scratch buffer by
   bitcast (as the melt already does with its structure hash): it relies on loads and stores keeping f32 bit patterns
@@ -230,8 +231,9 @@ Round 6 (2026-11-18, the box draw and the partition record; DECISIONS 2026-11-18
   over 2e-3): more blocks restrict by the template now that dug intervals are dropped.
 - NS-67 (limit) The pool never shrinks: after the screen check's 40 poses it held 5,120 pages for 1,781 in use (the
   gate's 2x holds in the tunnel scene and after the stress run). Shrink the last segment when its tail is free.
-- NS-68 (perf) A carve's GPU time is data dependent: 9-14 ms for most carves at level 1 in the tunnel scene, 17-21 ms
-  where the ball sits in the mound (more intervals; larger derive regions at levels 2-3). Profile the derive at level 2.
+- NS-68 (perf) A carve's GPU time is data dependent: 8-13 ms for most carves at level 1 in the tunnel scene, 14-16 ms
+  where the ball sits in the mound (more intervals; larger derive regions at levels 2-3, whose bakes add ~5 ms). The
+  derive's parent tops are cached a workgroup now; next: bake only chunks whose columns pack actually changed.
 - NS-69 (limit) While the pool grows ahead, ops wait (46 waits over the suite run); a promote can lag a few frames.
 - NS-70 (perf) Triangle counts: the root ~0.74 M, a 256 x 256 child up to ~1.2 M in the tunnel scene (walls at every
   step). Desktop draw 4-6.6 ms uncapped; not measured on the phone. Merging coplanar faces in the bake would cut it.

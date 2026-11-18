@@ -61,6 +61,7 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
   // a carve at level 1 in the tunnel scene (3 levels live round the tunnel): GPU ms with and without the bakes
   await page.evaluate((v) => nested.setView(v), views['tunnel mouth']);
   await sleep(2500);
+  if (R.opt('profile', '0') === '1') await page.evaluate(() => (window.__profile = true));
   const carve = await page.evaluate(async (h) => {
     const a = nested.app;
     const s = await a.nest.readAll();
@@ -74,8 +75,21 @@ await run({ name: 'nested-perf', kind: 'behaviour', size: '960x640', dpr: 1, ech
       // (an edit that applied a pool grow first copies the pool: not the edit's own cost)
       if (a.nest.stats.grows === g0) out.push(r);
     }
-    return { out, live: nested.state().live, log: a.opLog.slice(-40) };
+    // (--profile 1) where a slow carve's time goes: the same carve spot again with passes left out (results wrong)
+    const prof = [];
+    if (window.__profile) {
+      for (const skip of [[], ['derive'], ['residual'], ['restrict'], ['derive', 'residual', 'restrict']]) {
+        const at = { level: 1, x: (h[0] - 0.6) * 8 - w1.gx, y: (h[1] + 1.5) * 8 - w1.gy, z: (h[2] + 0.4 - zo) * 8 };
+        a.nest.skip.clear();
+        for (const s of skip) a.nest.skip.add(s);
+        const r = await nested.benchEdit({ op: 'carve', radius: 0.5, amount: 0, at });
+        prof.push(`${skip.join('+') || 'all'} ${r.withBake.toFixed(1)}/${r.without.toFixed(1)}`);
+      }
+      a.nest.skip.clear();
+    }
+    return { out, prof, live: nested.state().live, log: a.opLog.slice(-40) };
   }, h);
+  if (carve.prof.length) console.log(`profile (with bakes / without): ${carve.prof.join('; ')}`);
   console.log(`carve in order (with, without): ${carve.out.map((o) => `${o.withBake.toFixed(1)}/${o.without.toFixed(1)}`).join(' ')}`);
   const w = carve.out.map((o) => o.withBake).sort((a, b) => a - b);
   const wo = carve.out.map((o) => o.without).sort((a, b) => a - b);

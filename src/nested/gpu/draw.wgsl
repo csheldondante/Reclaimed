@@ -8,7 +8,7 @@
 
 struct DrawU {
   lvl: vec4<i32>, // gx0, gy0, n, depth
-  misc: vec4<f32>, // -, -, tint on, k
+  misc: vec4<f32>, // diagnostics mode, -, tint on, k
   want: vec4<f32>, // (metrics) where the focus wants this level's child, local units
   sun: vec4<f32>,
   misc2: vec4<u32>, // x: the pool's pages (the directory's stride), w: (capture) face pages of this level
@@ -106,6 +106,9 @@ fn vs(@builtin(vertex_index) vv: u32, @builtin(instance_index) inst: u32) -> VOu
   o.local = c.lp.xy;
   o.nrm = n;
   o.col = matColor(c.mat, n.z);
+  // (diagnostics, Renderer.diag) 1: the triangle slot's parity, 2: the face kind
+  if (d.misc.x == 1.0) { o.col = select(vec3<f32>(1.0, 0.2, 0.2), vec3<f32>(0.2, 0.4, 1.0), ((vv / 3u) & 1u) == 1u); }
+  if (d.misc.x == 2.0) { o.col = abs(n) * 0.8 + select(vec3<f32>(0.0), vec3<f32>(0.2), n.x + n.y + n.z < 0.0); }
   o.wp = worldOf(L, c.lp);
   o.lz = c.lp.z;
   return o;

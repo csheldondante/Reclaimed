@@ -26607,3 +26607,26 @@ read back (a grow sized with an in-flight op's worst case held on top had taken 
 The table's tombstones are cleared at the end of every op (two passes over the table).
 
 src/nested: 6,043 lines before (17d881d6), 5,780 now (with the new suite).
+
+## 2026-11-18 — Nested scales lab, round 6: zoom in and enhance, stills, a faster derive
+
+**Why.** The owner's gate: "verify we can zoom in and enhance detail"; and the carve's tail (17-21 ms) in the mound.
+
+**Derive** reads the parent's tops round its chunk into workgroup memory once ((16 / k + 4)^2 values), not 25 hashed
+reads a column for the PPM (the same topS of the same clamped columns, so bit-identical: self-test 27/27). Profiled by
+leaving passes out (GpuNest.skip, measurement only): the level-2 derive was ~9 of a slow carve's 16 ms. Now a carve at
+level 1 in the tunnel scene: 8-16 ms with bakes (median 12.7), 6-11 ms without; the slowest are carves into the mound
+(more intervals, larger derive regions below), where the bakes of the derived chunks add ~5 ms (NS-68).
+
+**Zoom in and enhance** (scripts/nested-stills.mjs, stills in local/nested/*-box.png, zoom-box.gif): the hillside spot
+at levels 0-3, each level drawn as its own boxes (40 cm, 5 cm, 0.63 cm columns); the detail each level adds there, as
+the mean |top - the parent's top under it|: level 1 0.67 of its columns (8.4 cm), level 2 0.62 (0.97 cm), level 3 0.66
+(0.13 cm). The zoom GIF from 120 m down to 5 cm opens levels 1, 2, 3 on the way ([1,1,2,2,3,3,4] sampled). A carve at
+level 3 (the finest open) survives zooming out until level 3 is demoted and back to the same window: 0 of 1,024 columns
+differ (records compared bit for bit). Stress again: 0 refusals, 1,624 used of 2,752.
+
+**Seen in the stills.** The hillside reads as terraced steps at every level (walls brown, tops green); on diagonal
+slopes the caps show as triangles, cut by the walls of the step in front (checked in the triangle-parity diagnostic:
+both triangles of every cap are drawn). The tunnel inside at depth 2 is a stepped bore; the level rim is a step in box
+size with walls on both sides, no gap. Through the tunnel from inside, thin soil bands of the arch and the mound are
+seen across the far mouth.

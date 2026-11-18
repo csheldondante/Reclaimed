@@ -136,6 +136,8 @@ export class GpuNest {
   private bakeNext = BAKE_SLOT;
   /** (measurement only) skip the bakes: an op's cost without them */
   bakeOff = false;
+  /** (measurement only, NS-42) an edit's passes left out: 'restrict', 'residual', 'derive' (the result is then wrong) */
+  readonly skip = new Set<string>();
   private pipes: Record<string, GPUComputePipeline> = {};
   private enc: GPUCommandEncoder | null = null;
   private pass: GPUComputePassEncoder | null = null;
@@ -676,12 +678,14 @@ export class GpuNest {
       this.mergeFrees();
     }
     for (let m = live - 1; m >= 1; m--) {
+      if (this.skip.has('restrict')) continue;
       this.runIndirect('restrictK', this.uni(({ a, r }) => ((a[3] = m), (r[0] = m * 4))), m * 4);
       this.pack(m - 1, m * 4);
       this.mergeFrees();
     }
     for (let m = 1; m < live; m++) {
-      this.runIndirect('derive', this.uni(({ a, r }) => ((a[2] = 1), (a[3] = m), (r[0] = m * 4 + 1))), m * 4 + 1);
+      if (!this.skip.has('residual')) this.runIndirect('derive', this.uni(({ a, r }) => ((a[2] = 1), (a[3] = m), (r[0] = m * 4 + 1))), m * 4 + 1);
+      if (this.skip.has('derive')) continue;
       this.runIndirect('derive', this.uni(({ a, r }) => ((a[2] = 0), (a[3] = m), (r[0] = m * 4 + 2))), m * 4 + 2);
       this.pack(m, m * 4 + 2);
       this.mergeFrees();

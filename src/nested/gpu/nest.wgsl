@@ -330,6 +330,8 @@ var<workgroup> wlive: atomic<u32>;
 var<workgroup> wKeep: u32;
 
 var<workgroup> wOrigin: vec2<i32>;
+/** derive: the parent's tops round the chunk ((16 / k + 4)^2, k >= 2) */
+var<workgroup> wPTop: array<f32, 144>;
 /** a slot's dispatch origin, uniform across the workgroup (it is read from a storage buffer) */
 fn slotOrigin(slot: u32, li: u32) -> vec2<i32> {
   if (li == 0u) { wOrigin = vec2<i32>(slotW(slot, 4u), slotW(slot, 5u)); }
@@ -527,15 +529,20 @@ fn derive(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) l
   gOff = vec2<i32>(select(0, -1, ux < 0.0), select(0, -1, uy < 0.0));
   gT = vec2<f32>(ux - f32(gOff.x), uy - f32(gOff.y));
   // the top surface: parent values are cell averages; a limited PPM along x for the five rows round the block, then
-  // along y (the oracle's ppmSub): mean-preserving per block, no new extremum at a step (NS-34)
-  let pref = topS(P, gP.x, gP.y, gN);
+  // along y (the oracle's ppmSub): mean-preserving per block, no new extremum at a step (NS-34). The parent tops round
+  // the chunk are read once a workgroup (the same values: topS of the clamped column), not 25 times a column.
+  let ps = 16 / k + 4;
+  let p0 = vec2<i32>(cx * 16 / k - 2, cy * 16 / k - 2);
+  for (var q = li; q < u32(ps * ps); q += 256u) {
+    let c = clampTo(P, p0.x + i32(q) % ps, p0.y + i32(q) / ps);
+    wPTop[q] = topS(P, c.x, c.y, colCount(P, c.x, c.y));
+  }
+  workgroupBarrier();
+  let pref = wPTop[(py - p0.y) * ps + (px - p0.x)];
   var rows = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
   for (var j = 0; j < 5; j++) {
     var q = array<f32, 5>(0.0, 0.0, 0.0, 0.0, 0.0);
-    for (var i = 0; i < 5; i++) {
-      let c = clampTo(P, px - 2 + i, py - 2 + j);
-      q[i] = topS(P, c.x, c.y, colCount(P, c.x, c.y)) - pref;
-    }
+    for (var i = 0; i < 5; i++) { q[i] = wPTop[(py - 2 + j - p0.y) * ps + (px - 2 + i - p0.x)] - pref; }
     rows[j] = ppmSub(q, f32(gA), kf);
   }
   let fsum = ppmSub(rows, f32(gB), kf);
