@@ -347,6 +347,69 @@ self-test).
   bakes read their chunk's and the parent's pages through a per-workgroup cache of the 3 x 3 chunks' page ids.
   Pages: the tunnel scene with three levels holds ~1370-1420 pages (was ~800): the tables round the tunnels at depth 2.
 
+## Footprints (round 4 step 3: the design, written before any code; NOT built yet)
+
+The owner: "I would keep heightfields and borders distinct and use SDF with masks for the latter", and for layer edges
+"let's wait for SDF and then we can have nicer material boundaries at zoom". Today the draw knows only whether an air
+region is present at a column centre (0 or 1) and cuts half way to a column that lacks it: the staircase round a mound,
+the teeth on tunnel walls, the lip ring at a rim, and (round 4 step 1) the cracks the manifold check finds where a cut
+ceiling, a cut floor and a wall each choose their own cut.
+
+**The quantity.** Every interval i carries two signed distances in plan, in its level's column units, positive inside:
+`eS` to the edge of the interval's own footprint (where the solid run exists: a blob, an overhang's lip) and `eG` to the
+edge of the gap below it (where the air between interval i - 1 and i exists: a tunnel, a cave). One word, two f16, as a
+fourth word of the interval record (page 256 + 256 x 16 x 4 words = 65 KB, +33 %; with NS-37's 32 x 32 x 4 pages the same
++33 %). Change from the coordinator's proposal (one value an interval): a tunnel's footprint is the gap's, a blob's the
+solid's, and in layer form these are different boundaries of the same interval; one value cannot place both. Packing
+both into the material word's spare 16 bits (8 bits each, 1/64 column) was considered: too coarse to scale by k = 8
+through enhance and keep the residual exact.
+
+**Ghosts (the coordinator's, kept): the structure stays constant across the edge.** The ring of columns just outside a
+footprint keeps the interval (or the gap) with a negative distance and ghost bounds: where its top and bottom (floor and
+ceiling) would be there. A ghost is not solid (not air) for every consumer: restrict's volumes, the camera, the pick,
+the brushes, melt count its thickness as zero (one helper, `present(e) = e > 0`). Why ghosts and not extrapolation from
+the inside column alone: with values on both sides of every edge, enhance is a plain interpolation that creates the
+children's structure correctly (a child inside the parent's contour gets the interval from a ghost parent, with bounds
+interpolated toward the ghost bounds), and the draw's cut is an interpolation between two stored values. Ghost bounds:
+for a ball the top and bottom meet at the equator height (the shell pinches closed at the contour); for a cut cliff
+they stay apart (a wall stands at the contour). Ring width: one column (marching needs only the neighbour across each
+edge); a brush writes ghosts within its radius + 1 column. A ghost with no present neighbour and e < -1.5 is dropped
+(when the column is next rewritten).
+
+**Cost of the ring.** A ring column gains one interval (a blob's ghost) or one zero-thickness split (a tunnel's ghost
+gap): +1 or +2 records, pages only where a column crosses K (16 today; 4 with NS-37's pages, where tunnelled terrain of
+3-4 intervals would stack a second page along the ring: to be measured). NS-6's zero-thickness intervals become the same
+thing as ghosts (a dug-out layer: thickness 0, e > 0, drawn as nothing).
+
+**The draw: one cut per edge, shared.** The bake's items keep their shape (marching triangles per air region per
+triangle); the presence field becomes the distance: a corner's s is the region's e (the gap's eG for an enclosed region,
+-eS of the run below for the sky over a blob), and the cut point on edge A-X is at t = eA / (eA - eX), its floor and
+ceiling the bounds of A and of X's ghost interpolated by the same t. Every face that meets the edge (floor, ceiling, wall,
+the neighbouring triangle's) computes that point from the same two corner records, so they share it bit for bit:
+watertight by construction, and the manifold check (step 1) must show 0 open edges before anything else. A wall joins
+floor and ceiling at the contour only where they are apart (cliff); where they meet (ball) there is no wall. Normals from
+e's gradient on the wall.
+
+**Brushes.** Analytic distances combined with what is there: a ball of radius r at the column: eBall = r_slice - d_plan
+(r_slice the ball's radius at the interval's height, so a ball's gap pinches at its equator); carve: eG = max(eG,
+eBall) for the gap it opens, eS = min(eS, -eBall) for runs it cuts away; add: eS = max(eS, eBall). Raise, dig and melt
+move bounds and keep e.
+
+**Nesting.** e is a channel like a bound: enhance interpolates it (times k: child columns are k times finer) with the same
+bilinear stencil as gaps and thicknesses, restrict averages it (divided by k) over the block's template, the residual
+keeps it exact (a third residual record per interval, or the spare halves of the existing ones). Demote then promote stays
+bit-identical; oracle and self-test cases: a ball's footprint through promote, demote, promote; a contour across a block.
+
+**Rims.** In a child's rim band its e morphs toward the parent's e interpolated at the child's corners (times k), as heights
+do now; the contour then slides continuously onto the parent's, which should remove the lip ring (NS-21). Checked in the
+rim-crossing still, tint on and off.
+
+**Build order** (each step shown; the manifold and screen checks run at every step): F1 the oracle (e in the columns,
+enhance, restrict, residual; unit tests). F2 the GPU store's fourth word and readers; self-test parity. F3 the ball
+brushes write e and ghosts; oracle parity. F4 the bake and draw cut on e; the manifold check to 0, then into ?selftest=1.
+F5 the rim morph of e. F6 the before/after stills (mound outside, tunnel inside at depth 2, tunnel mouth, rim crossing,
+arch, blob on a stalk, a zoom-out/zoom-in pair on a mixed block for NS-28).
+
 ## Open questions
 
 - Scale factor per level: 8, or smaller (4) for gentler steps?

@@ -61,7 +61,7 @@ user) · `deferred` (agreed for later).
   per block) would remove it.
 - NS-17 (limit) The test runner's server answers "not found" for a bare /nested.html (any query works). Vite's dev
   server serves it either way.
-- NS-18 (next, decided) SDF footprint masks for crisp layer edges: today a layer ends half way between two columns
+- NS-18 (next, decided; designed round 4: NESTED_SCALES.md "Footprints", not built) SDF footprint masks for crisp layer edges: today a layer ends half way between two columns
   (marching triangles), a straight cut, flat-shaded.
 - NS-19 (limit) A demoted child's per-bound residual stops applying when the structure under it changes (a carve in
   the parent splits an interval): that child's edits there are lost on re-promote. Re-express it as a whole-column
