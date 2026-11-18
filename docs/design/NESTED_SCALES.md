@@ -568,6 +568,36 @@ brushes write e and ghosts; oracle parity. F4 the bake and draw cut on e; the ma
 F5 the rim morph of e. F6 the before/after stills (mound outside, tunnel inside at depth 2, tunnel mouth, rim crossing,
 arch, blob on a stalk, a zoom-out/zoom-in pair on a mixed block for NS-28).
 
+## Recorded ideas (the owner's, 2026-11-19; not designed, not built)
+
+- **Watertight checks are tests, not runtime.** "I would probably run the watertight check only in unit tests unless it
+  is very cheap. It should be watertight by construction. Unit tests make sure that doesn't break. Runtime remains
+  optimized."
+- **Flow.** "the only difference between materials with flow and those without is a separate flow buffer linked to the
+  interval (somehow). That way exposed fluids or things like sand can animate flow." Fluids and loose material use flow
+  and an angle of repose in the tick; solids use the column-mediated support computation for collapse, which hands over
+  to the physics engine's destruction and deformation (DESIGN.md sections 7-10). Planned route here: flow on parallel
+  pages addressed by the same page and slot as the interval, allocated only where a page holds a flowing material; a
+  child's flow starts from the parent's steady flux and only the difference at its boundary goes back up.
+- **Smooth meshing (parked; optional step after boxes).** "a sheet with one vertex per cell and one sheet per layer
+  adjacent to an air interval. Then for any solid interval adjacent to air laterally we mesh between the top and bottom
+  vertex in the interval and connect to neighbors." Edge cases as in marching squares, simplified by triangulating the
+  plan grid (marching tetrahedra); preferably a signed distance and contour for the edge. Built only on the partition
+  record (no representation with unpaired bounds).
+- **Deep stacks.** Later routes, neither built early: materials with function-driven internal boundaries; an orthogonal
+  column grid for a vertical surface. Related: an interval as a thickness swept out from a baseline surface.
+- **Medial axis of interval volumes.** "you can compute this fairly cheaply in 2D by taking the midpoint along Z and
+  then doing JFA only in a bent 2d surface in that sheet." Assessment (coordinator): sound for slab-like volumes
+  (bridges, arches, roofs, tunnels as air volumes): per column, half-thickness and the JFA's lateral distance; the
+  smaller is the local radius, the ridge of the lateral distance is the spine. Caveats: tall thin shapes (use the plan
+  skeleton plus the interval's own height range); stacked intervals make the sheet multi-valued, so JFA runs over
+  interval adjacency by height overlap and long jumps can leak across breaks; plan distance, not distance along the
+  bend. Uses: necks for breaking (section 9's support x distance), edge distances for smooth meshing derived instead of
+  stored, the mid-sheet as the baseline to sweep from, tunnel centrelines for flow and routes.
+- **Many grids.** "keep the multi grid representation so I can make islands in their own reference frame floating by.
+  The enhancement only need to happen for nearby objects so we can do this for whatever the active reference frame(s)
+  grids are only."
+
 ## Open questions
 
 - Scale factor per level: 8, or smaller (4) for gentler steps?
