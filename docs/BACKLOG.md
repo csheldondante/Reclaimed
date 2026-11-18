@@ -16,7 +16,25 @@ user) · `deferred` (agreed for later).
 
 - NS-1 The user's idea: zoom in and sculpt inside a larger live scene (nested normalized scenes on interval columns,
   residual per level, depth-composed levels, flux exchanged at the rim, pattern materials such as strata). Design note
-  drafted; nothing built; no builder until the note is agreed. Lab steps 1-7 are listed in the note.
+  drafted; nothing built; no builder until the note is agreed. Lab steps 1-7 are listed in the note. `wip` on branch
+  `nested-scales` (2026-11-18, the owner asked for the lab overnight: GPU passes on pages).
+- NS-2 (departure, owner-allowed) The lab stores levels on a SQUARE lattice (exact k x k nesting, plain-mean
+  restrict). Later: hex storage with area-weighted restrict, or hex-style rendering over square storage.
+- NS-3 (hack) The lab's page table is an open-addressed hash of a build-time capacity; a full table counts a
+  refusal shown on the page. Grow it like the pool.
+- NS-4 (limit) Growing the lab's page pool copies the pool buffer once (a reallocation). Segmented pools with no
+  copy, also needed past maxStorageBufferBindingSize.
+- NS-5 (limit) Restrict needs the k x k children of a parent column to share one interval structure (count and
+  materials); a block that disagrees is counted as a mismatch and left alone. Enhance takes the parent column's
+  structure for its whole block and interpolates only between neighbours of the same structure. Matching columns of
+  different structure (a cave opening, a layer pinched out) is not designed yet.
+- NS-6 (hack) Zero-thickness intervals are kept so neighbouring columns keep matching structures after a dig. They
+  cost interval slots; dropping them needs NS-5.
+- NS-7 (limit) Dig removes from the top surface down; a dig whose cut lands in an air gap leaves the emptied
+  intervals at that height in the air. Terrain in the lab has no gaps, so it is not seen.
+- NS-8 (limit) Residuals are additive in layer form. A thickness whose enhanced value shrinks under an edit made in
+  the parent (while the child's residual removed it) is clamped at zero, which loses that volume. Multiplicative or
+  bounded residuals for thicknesses.
 
 ## Terrain: rivers first (2026-11-17, `terrain-rivers`; docs/design/TERRAIN_RIVERS.md, DECISIONS 2026-11-17)
 

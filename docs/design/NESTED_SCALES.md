@@ -79,6 +79,79 @@ the larger scene keeps running around you. Possibly with a free camera.
 6. Flow across the rim.
 7. Scatter trees; melt.
 
+## Storage (the lab, 2026-11-18; written before the code, per the owner's rulings that night)
+
+Rulings that night: the real path runs on the GPU (enhance, restrict, residual, promote, slide, brushes are compute
+passes; the draw pulls vertices from the columns; no CPU readback on the interactive path); storage follows
+DESIGN.md §1-2 with pages and no caps; f32 heights in each level's local units; a square lattice is allowed.
+
+**Departure from DESIGN.md §1: a square lattice.** The owner allowed it ("rendering can be decoupled from storage").
+Reason: a child at factor k then covers exactly k × k child columns per parent column, so restrict is a plain mean
+and enhance its exact inverse on the block, with no area weights for fine cells that straddle coarse borders.
+BACKLOG NS-2: hex storage, or hex-style rendering over square storage, later.
+
+**Pages (DESIGN.md §2, followed).**
+- A page is 16 × 16 columns × K = 16 intervals. An interval is three words: z0 (f32), z1 (f32), material | aux << 16.
+  A page also holds each column's interval count in that page. Page size 256 + 256·16·3 words = 49 KB.
+- Pages are keyed (level, cx, cy, cz) in global chunk coordinates of that level's depth. cz is interval overflow:
+  intervals 0-15 of a column are in cz 0, 16-31 in cz 1, and so on. A cz + 1 page exists only where some column of
+  the chunk has more than 16 · (cz + 1) intervals. There is no cap on intervals a column.
+- Open-ended intervals: a column's first interval is open downward (z0 = the OPEN_BOTTOM sentinel, stone); above
+  the last interval is air, open upward. Air between intervals is a gap and costs nothing.
+- One sparse table in its own binding: an open-addressed hash of entries (key0 = cx | cy << 16, key1 = level |
+  cz << 8, page, birth). Three states: page here (the page id), exists but not loaded (NOT_LOADED), no page (absent).
+  Nothing in the lab evicts to a store yet, so NOT_LOADED is defined and handled by lookups (treated like a missing
+  neighbour: the open interval is extrapolated) but never written. Table capacity is a build-time constant;
+  inserting into a full table counts a refusal shown on the page (BACKLOG NS-3: grow the table like the pool).
+- One pool of pages in one storage buffer. Pages are handed out on the GPU (a free stack, then a bump end) by the
+  kernels that discover they need one (an overflowing column, a non-zero residual). Frees go to a pending list,
+  merged into the free stack by the next operation (no push and pop race in one pass).
+
+**Levels on pages.**
+- A level is a set of chunks in the one pool, reached through table entries with its level id. Its residency shape
+  is a chunk-aligned rectangle (the planner of the lab: centred on the focus). The level table (CPU-written uniform)
+  gives each level its depth, scale k, window, z origin and parent.
+- A level's window moves by whole chunks. A chunk is 16 child columns, which is 16 / k whole parent cells for
+  k <= 16, so "a whole-cell offset" holds.
+- **Promote** allocates the child's cz 0 pages and fills them by the enhance pass (enhance(parent) + residual); the
+  pass allocates any cz + 1 pages its columns overflow into.
+- **Slide** (re-centre) changes only table entries: chunks staying keep their pages untouched (keys are global), the
+  leaving chunks' pages are freed, the entering chunks are allocated and derived. Loading never copies resident data.
+- **Demote** frees every page of the level and keeps its residual pages.
+- **Residual pages.** Level id 8 + depth. Same page shape; a column's record i holds the residual of interval i in
+  layer form (record 0: the top surface; record i >= 1: the gap below interval i and its thickness). A chunk with an
+  all-zero residual has no residual page, so a level with no edits keeps nothing when demoted. Residual pages live
+  on the GPU in the same pool (no readback at demotion).
+- **Pool full.** The CPU grows the pool before an operation when its free pages (a tiny counter read back
+  asynchronously, never awaited on the interactive path) plus the operation's worst case would not fit: a bigger
+  buffer, the old one copied in on the GPU, and the bind groups made again. If a kernel still runs out it counts a
+  refusal; the page shows the count as an error. Data is never dropped silently.
+- Departures from PAGES.md (DESIGN.md wins where they differ): no 64² regions or toroidal 1024 window (a level's
+  window is its own rectangle of chunks, keyed globally, so a slide needs no ring); pages are handed out on the GPU
+  as in the shared pagepool, not by a CPU free list; growing the pool copies the pool buffer once (a reallocation, not
+  a load: BACKLOG NS-4 for segmented pools with no copy, which is also needed past maxStorageBufferBindingSize).
+
+**Exactness with f32 (owner's ruling).** The stored truth of a promoted level is parent + residual; the live child is
+always the output of the same derive pass, so demote then promote is bit-identical on one device. After an edit,
+residual = child - enhance(restrict(child)) and the child is derived again; it may differ from the edited columns by
+rounding (stated tolerance: 1e-4 local units). Repeated demote and promote cycles cannot drift (100 run in the
+self-test).
+
+**The column maths (square lattice, k × k blocks).**
+- A column is read in layer form: S (top surface) and, for each interval i >= 1, gap_i = z0_i - z1_(i-1) and
+  thick_i = z1_i - z0_i. Interval 0 is open below. The column is rebuilt from the top down.
+- Enhance, per child block (the k × k child columns of one parent column): the block takes its parent column's
+  intervals (count and materials). S: bicubic Hermite with central-difference gradients per parent sample
+  (Catmull-Rom), plus seeded detail (value noise in global child columns, wavelengths 2..k child columns,
+  amplitude 0.06 x wavelength), then a bump correction sin²·sin² so the block mean equals the parent exactly. Gaps
+  and thicknesses: bilinear from the 2 × 2 nearest parent samples that have the same intervals (else the block's
+  own value), then scaled per block so their mean equals the parent's (non-negative, mean exact).
+- Restrict: the parent column's S is the mean of its block's S, its gaps and thicknesses the block means (in parent
+  units). Per-material volume is conserved by construction. A block whose children disagree on intervals (count or
+  materials) is counted as a mismatch and left alone; no edit in the lab makes one (BACKLOG NS-5: matching columns
+  of different structure).
+- Zero-thickness intervals are kept, so neighbouring columns keep matching structures after a dig (BACKLOG NS-6).
+
 ## Open questions
 
 - Scale factor per level: 8, or smaller (4) for gentler steps?

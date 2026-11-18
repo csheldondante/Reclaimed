@@ -26166,3 +26166,31 @@ phone proxy, 412 × 915 at dpr 2.6): flag on p50 8.3 ms, p95 10.3 ms, no stalls 
 shared GPU (not reproduced); after the changes p50 8.3, p95 21 / 11 ms (zoom 14 / 5), no stalls. Not measured: the phone itself (the owner's bench) — a phone's GPU is 10–20× slower and
 pays the long valley-JFA dispatches and private-array spills more than a desktop does (TR35, TR36).
 
+
+---
+
+## 2026-11-18 — Nested scales lab, step 1a: the storage design and the column-maths oracle (branch `nested-scales`)
+
+**Why.** docs/design/NESTED_SCALES.md, the owner's overnight request. Three rulings arrived while it started: the
+real path runs on the GPU (promotion is "a scaling factor and highly parallelizable grid operations"), storage
+follows DESIGN.md §2 (3D pages, K = 16, cz overflow, open intervals, a three-state sparse table, no caps), heights
+are free f32 in each level's local units, and a square lattice is allowed. So the note gets a "Storage" section first
+(how levels, slides, demotion and residuals map onto pages; the pool-full rule; departures from PAGES.md), then the
+maths as a small TypeScript oracle (src/nested/oracle.ts) that the GPU passes will be compared against. It is the
+test reference only, never on the page's interactive path.
+
+**The maths.** Columns in layer form (top surface, then the gap and thickness of every interval above the open
+bottom one). Enhance per k x k block: Catmull-Rom on the parent surfaces (gradients per sample, so no terraces),
+seeded value noise in global child columns (wavelengths 2..k, amplitude 0.06 x wavelength), then a sin²·sin² bump
+that puts the block's mean exactly on the parent; gaps and thicknesses bilinear between same-structure neighbours,
+scaled per block to the parent's mean (non-negative). Restrict is the block mean. So restrict(enhance(P)) = P and the
+residual of an unedited column is exactly zero (sparse by construction).
+
+**Measured.** test/unit/nested-oracle.test.ts, 8 tests, 0.24 s: (a) promote/demote/promote identical with and
+without edits; (a2) the residual of a corner edit stays inside its support (restricted cells + 2); (b) volume per
+layer conserved, worst 1e-6 child units³ over a block (f64); (c) a three-level chain, an edit at depth 2, both demoted
+and promoted again, identical; (d) a parent edit under a demoted child shows in it, the child's edit survives
+bit-identical; (e) a slide by 2 and -4 parent cells keeps the 48 x 32 overlapping columns identical; depth 3 stays in
+range (|z| < 1000, neighbour steps > 0.01, column = 1 local unit at 1/512 of the root's); a 40-interval column
+(three pages' worth) round-trips promote, dig, demote, promote with zero difference.
+
